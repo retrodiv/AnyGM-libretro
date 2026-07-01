@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+/build/
+/anygm_libretro.so
+/anygm_libretro.dll
+/anygm_libretro.dylib
+/anygm_libretro.a
+*.o
+*.d
+compile_commands.json
+/tmp/
+
+# Local fixtures and scratch data are excluded from version control.
+/.fixtures/
+/.work/
+/build-*/
+/frames/
+/cmp2/
+
+AGENTS.md

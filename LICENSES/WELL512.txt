@@ -1,0 +1,14 @@
+SPDX-License-Identifier: MIT
+Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+
+WELL512 recurrence attribution
+
+The WELL512 recurrence is adapted from Chris Lomont's public-domain C/C++
+listing in Random Number Generation, page 8. The author's public-domain
+statement accompanies the listing, and he requests a reference as a courtesy.
+Source: https://lomont.org/papers/2008/Lomont_PRNG_2008.pdf
+
+The local adaptation uses fixed-width state owned by the runtime instance.
+The state initialization and output scaling are separate from that listing.
+The SPDX notice above covers this explanatory text, not the original
+public-domain recurrence.
