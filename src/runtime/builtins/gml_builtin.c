@@ -454,11 +454,19 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
      !strncmp(nm,"font_",5)||!strncmp(nm,"window_",7)||!strncmp(nm,"instance_",9))
     return vreal(0);
 
+  /* ---- explicit no-ops (correct for libretro / SW renderer) ---- */
+  if(!strcmp(nm,"display_set_gui_size")) return vreal(0);      /* fixed native res */
+  if(!strcmp(nm,"texture_set_interpolation")) return vreal(0); /* no GPU */
+  if(!strcmp(nm,"window_get_fullscreen")) return vreal(vm->window_fullscreen);
+  if(!strcmp(nm,"window_set_fullscreen")){ vm->window_fullscreen=N(a,n,0)>=0.5; return vreal(0); }
+
   /* ---- fallback: a user script called by name (gml_Script_<name>) ---- */
   char sn[160]; snprintf(sn,sizeof sn,"gml_Script_%s",nm);
   int ci=gml_code_index_by_name(vm->win,sn);
   if(ci>=0) return gml_vm_run_code(vm,ci,vm->cur_self,vm->cur_other,a,n);
 
-  (void)g_logged;
+  /* unknown builtin: log once per run so coverage audits can spot regressions */
+  static int unk_logged=0;
+  if(!unk_logged){ fprintf(stderr,"[gml] unknown builtin: %s\n",nm); unk_logged=1; }
   return vreal(0);
 }

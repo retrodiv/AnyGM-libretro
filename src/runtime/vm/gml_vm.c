@@ -135,6 +135,7 @@ static int vm_bbox(GmlVM *vm, GmlInstance *in, double *l, double *t, double *r, 
 static GmlVal var_get(GmlVM *vm, int inst, const char *name){
   GmlVal out;
   if(!strcmp(name,"room")) return vreal(vm->room_index);   /* GM built-in: current room index */
+  if(!strcmp(name,"keyboard_lastkey")) return vreal(vm->last_key); /* GM: last key pressed */
   if(!strcmp(name,"room_width")||!strcmp(name,"room_height")){   /* GM built-in: current room size */
     GmlRoom r; if(gml_room_get(vm->win,vm->room_index,&r)==0)
       return vreal(name[5]=='w'? (double)r.width : (double)r.height);
@@ -614,8 +615,14 @@ static double get_global_arr_d(GmlVM *vm, const char *nm, int idx){
   GmlArr *A=slot->arr; return (A && idx>=0 && idx<A->len)? asnum(A->data[idx]) : 0;
 }
 void gml_room_enter(GmlVM *vm, int room_index){
-  /* clear non-persistent instances (incl. deactivated ones, which keep active=0) */
+  /* Fire Room End (Other_5) on active instances before clearing the old room. */
+  if(vm->room_index>=0){
+    for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked)
+      gml_run_event(vm,&vm->inst[i],"Other_5");
+  }
+  /* Dispatch destruction and clear non-persistent instances, including deactivated ones. */
   for(int i=0;i<vm->inst_count;i++) if((vm->inst[i].active||vm->inst[i].deactivated) && !vm->inst[i].persistent){
+    gml_run_event(vm,&vm->inst[i],"Destroy_0");
     varmap_free(&vm->inst[i].vars); vm->inst[i].active=0; vm->inst[i].deactivated=0; }
   vm->room_index=room_index; vm->pending_room=-1;
   vm->n_tile_mut=0;   /* tile-layer mutations are per-room */
@@ -755,6 +762,11 @@ void gml_vm_step(GmlVM *vm){
   }
   /* room transition requested during the step */
   if(vm->pending_room>=0){ int t=vm->pending_room; vm->pending_room=-1; gml_room_enter(vm,t); }
+  /* Fire Game End (Other_3) on active instances when game_end is set. */
+  if(vm->game_end){
+    for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked)
+      gml_run_event(vm,&vm->inst[i],"Other_3");
+  }
 }
 
 /* ---- tile-layer runtime mutations (tile_layer_delete/depth/shift) ----

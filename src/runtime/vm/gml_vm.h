@@ -64,6 +64,8 @@ typedef struct GmlVM {
   int      pending_room;      /* -1 none, else target ROOM index (play-order resolved) */
   int      game_end;
   int      started;           /* Game Start fired */
+  double   last_key;          /* GM keyboard_lastkey: last vk pressed */
+  double   window_fullscreen;  /* GM window_get/set_fullscreen: menu state */
   /* execution context */
   GmlInstance *cur_self, *cur_other;
   const char *cur_event; int cur_event_obj;   /* current event suffix + object level (for event_inherited) */
