@@ -890,6 +890,25 @@ static int vm_bbox(GmlVM *vm, GmlInstance *in, double *l, double *t, double *r, 
 static int vm_overlap(double l1,double t1,double r1,double b1,double l2,double t2,double r2,double b2){
   return l1<=r2 && l2<=r1 && t1<=b2 && t2<=b1;
 }
+static int vm_masks_overlap(GmlVM *vm, GmlInstance *a, GmlInstance *b,
+                            double l1,double t1,double r1,double b1,
+                            double l2,double t2,double r2,double b2){
+  GmlRender *R=(GmlRender*)vm->render; if(!R) return 1;
+  int as=(int)a->sprite_index, bs=(int)b->sprite_index; if(as<0||bs<0) return 1;
+  if(as>=R->n_spr||bs>=R->n_spr) return 1;
+  GmlSprite *ap=&R->spr[as], *bp=&R->spr[bs];
+  int x0=(int)floor(fmax(l1,l2)), x1=(int)ceil(fmin(r1,r2));
+  int y0=(int)floor(fmax(t1,t2)), y1=(int)ceil(fmin(b1,b2));
+  if(x1==x0) x1++;
+  if(y1==y0) y1++;
+  double ax=a->x-ap->originx, ay=a->y-ap->originy;
+  double bx=b->x-bp->originx, by=b->y-bp->originy;
+  for(int wy=y0; wy<y1; wy++) for(int wx=x0; wx<x1; wx++){
+    if(!gml_sprite_collision(R,as,(int)a->image_index,(int)(wx-ax),(int)(wy-ay))) continue;
+    if( gml_sprite_collision(R,bs,(int)b->image_index,(int)(wx-bx),(int)(wy-by))) return 1;
+  }
+  return 0;
+}
 static void parse_col_events(GmlVM *vm){
   GmlWin *w=vm->win; int cap=0;
   for(int i=0;i<w->n_code;i++) if(strstr(w->code[i].name,"_Collision_")) cap++;
@@ -911,7 +930,7 @@ static void run_collisions(GmlVM *vm){
       for(int j=0;j<vm->inst_count;j++){ GmlInstance *oi=&vm->inst[j];
         if(oi==si||!oi->active||oi->marked||!gml_object_is(vm,oi->obj,ce->target_obj)) continue;
         double l2,t2,r2,b2; if(!vm_bbox(vm,oi,&l2,&t2,&r2,&b2)) continue;
-        if(vm_overlap(l1,t1,r1,b1,l2,t2,r2,b2)){
+        if(vm_overlap(l1,t1,r1,b1,l2,t2,r2,b2) && vm_masks_overlap(vm,si,oi,l1,t1,r1,b1,l2,t2,r2,b2)){
           gml_vm_run_code(vm,ce->code,si,oi,NULL,0);
           if(!si->active||si->marked) break;   /* self destroyed by the event */
         }

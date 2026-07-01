@@ -80,6 +80,11 @@ static int masks_overlap(GmlVM *vm, GmlInstance *self, double sx, double sy, Gml
   if(!inst_bbox(vm,o,o->x,o->y,&ol,&ot,&orr,&ob)) return 0;
   int x0=(int)floor(fmax(sl,ol)), x1=(int)ceil(fmin(sr,orr));
   int y0=(int)floor(fmax(st,ot)), y1=(int)ceil(fmin(sb,ob));
+  /* GM bbox coordinates are inclusive. A common grounding probe is place_meeting(x,y+1,...),
+   * where the moved mask's bottom row exactly equals the wall's top row. The bbox precheck
+   * treats that as overlap, so the mask scan must include that single edge row/column too. */
+  if(x1==x0) x1++;
+  if(y1==y0) y1++;
   double sox=sx-sp->originx, soy=sy-sp->originy;        /* world pos of each sprite's (0,0) */
   double oox=o->x-op->originx, ooy=o->y-op->originy;
   for(int wy=y0; wy<y1; wy++) for(int wx=x0; wx<x1; wx++){
@@ -99,6 +104,31 @@ static int collision_at(GmlVM *vm, double x, double y, int obj, int solid_only){
     double ol,ot,orr,ob; if(!inst_bbox(vm,o,o->x,o->y,&ol,&ot,&orr,&ob)) continue;
     if(bbox_overlap(sl,st,sr,sb, ol,ot,orr,ob) && masks_overlap(vm,self,x,y,o)) return 1;
   }
+  return 0;
+}
+static void snap_contact_axis(GmlVM *vm, GmlInstance *s, double dx, double dy){
+  double nx=s->x, ny=s->y;
+  if(fabs(dx)<1e-9 && fabs(dy)>0.999999)
+    ny = dy>0 ? floor(s->y+1e-9) : ceil(s->y-1e-9);
+  else if(fabs(dy)<1e-9 && fabs(dx)>0.999999)
+    nx = dx>0 ? floor(s->x+1e-9) : ceil(s->x-1e-9);
+  else
+    return;
+  if(!collision_at(vm,nx,ny,0,1)){ s->x=nx; s->y=ny; }
+}
+static int resolve_landing_overlap(GmlVM *vm, GmlInstance *s, int md){
+  if(s->vspeed<=0) return 0;
+  double ox=s->x, oy=s->y;
+  int limit=md + (int)ceil(fabs(s->vspeed)) + 2;
+  if(limit<1) limit=1;
+  for(int k=0;k<=limit;k++){
+    if(!collision_at(vm,s->x,s->y,0,1)){
+      snap_contact_axis(vm,s,0,1);
+      return 1;
+    }
+    s->y-=1.0;
+  }
+  s->x=ox; s->y=oy;
   return 0;
 }
 
@@ -125,6 +155,12 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"move_contact_solid")){ GmlInstance *s=vm->cur_self; if(!s) return vreal(0);
     double dir=N(a,n,0), md=N(a,n,1); if(md<0) md=1000;
     double dx=cos(dir*M_PI/180.0), dy=-sin(dir*M_PI/180.0);
+    if(collision_at(vm,s->x,s->y,0,1)){
+      if(resolve_landing_overlap(vm,s,(int)md)) return vreal(0);
+      for(int k=0;k<(int)md;k++){ if(!collision_at(vm,s->x,s->y,0,1)) break; s->x-=dx; s->y-=dy; }
+      snap_contact_axis(vm,s,dx,dy);
+      return vreal(0);
+    }
     for(int k=0;k<(int)md;k++){ if(collision_at(vm,s->x+dx,s->y+dy,0,1)) break; s->x+=dx; s->y+=dy; }
     return vreal(0); }
   /* ---- math ---- */

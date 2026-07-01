@@ -180,10 +180,53 @@ static void blit(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, doub
     }
   }
 }
+static void blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, double x, double y,
+                         double xs, double ys, double rot, uint32_t blend, double alpha){
+  if(t->atlas<0 || t->atlas>=r->n_atlas) return;
+  GmlAtlas *a=&r->atlas[t->atlas]; if(!a->px) return;
+  if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
+  if(xs==0||ys==0) return;
+  int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
+  double ang=rot*M_PI/180.0, c=cos(ang), sn=sin(ang);
+  double ax=x-r->cam_x, ay=y-r->cam_y;
+  double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
+  double corners[4][2]={{t->tx,t->ty},{t->tx+t->sw,t->ty},{t->tx,t->ty+t->sh},{t->tx+t->sw,t->ty+t->sh}};
+  for(int i=0;i<4;i++){
+    double px=(corners[i][0]-spr->originx)*xs, py=(corners[i][1]-spr->originy)*ys;
+    double dx=ax + px*c + py*sn, dy=ay - px*sn + py*c;
+    if(dx<minx) minx=dx;
+    if(dx>maxx) maxx=dx;
+    if(dy<miny) miny=dy;
+    if(dy>maxy) maxy=dy;
+  }
+  int x0=(int)floor(minx)-1, x1=(int)ceil(maxx)+1;
+  int y0=(int)floor(miny)-1, y1=(int)ceil(maxy)+1;
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>r->fbw) x1=r->fbw;
+  if(y1>r->fbh) y1=r->fbh;
+  for(int py=y0; py<y1; py++) for(int px=x0; px<x1; px++){
+    double rx=px+0.5-ax, ry=py+0.5-ay;
+    double sxr=rx*c - ry*sn, syr=rx*sn + ry*c;
+    double lx=sxr/xs + spr->originx, ly=syr/ys + spr->originy;
+    int ix=(int)floor(lx-t->tx), iy=(int)floor(ly-t->ty);
+    if(ix<0||iy<0||ix>=t->sw||iy>=t->sh) continue;
+    int sx=t->sx+ix, sy=t->sy+iy;
+    if(sx<0||sy<0||sx>=a->w||sy>=a->h) continue;
+    uint8_t *sp=a->px + ((size_t)sy*a->w+sx)*4;
+    double sa=(sp[3]/255.0)*alpha; if(sa<=0) continue;
+    uint32_t *dp=&r->fb[(size_t)py*r->fbw+px];
+    int dr=(*dp>>16)&0xFF, dg=(*dp>>8)&0xFF, db=*dp&0xFF;
+    int sr=sp[0]*bR/255, sg=sp[1]*bG/255, sb=sp[2]*bB/255;
+    int or_=(int)(sr*sa+dr*(1-sa)); if(or_>255) or_=255; else if(or_<0) or_=0;
+    int og=(int)(sg*sa+dg*(1-sa)); if(og>255) og=255; else if(og<0) og=0;
+    int ob=(int)(sb*sa+db*(1-sa)); if(ob>255) ob=255; else if(ob<0) ob=0;
+    *dp=(or_<<16)|(og<<8)|ob;
+  }
+}
 
 void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha){
-  (void)rot;
   if(sprite<0||sprite>=r->n_spr) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   int sub = s->n_frames? ((subimg%s->n_frames)+s->n_frames)%s->n_frames : 0;
@@ -195,7 +238,9 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
   /* draw at (x - origin)*scale + target offset, minus camera */
   double dx = x - s->originx*xs + t->tx*xs - r->cam_x;
   double dy = y - s->originy*ys + t->ty*ys - r->cam_y;
-  blit(r,t,dx,dy,xs,ys,blend,alpha);
+  double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
+  if(fabs(rr)<0.001 || fabs(rr-360.0)<0.001) blit(r,t,dx,dy,xs,ys,blend,alpha);
+  else blit_rotated(r,s,t,x,y,xs,ys,rr,blend,alpha);
 }
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
   gml_draw_sprite_ext(r,sprite,subimg,x,y,1,1,0,0xFFFFFF,1);
