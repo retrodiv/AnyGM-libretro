@@ -15,12 +15,109 @@
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
+#include <time.h>
+
+typedef struct {
+  const char *label;
+  int tpag, atlas, sx, sy, sw, sh;
+  long calls;
+  unsigned long long pixels;
+  double ms;
+} RenderProfSlot;
+
+#define RPROF_MAX 1024
+static RenderProfSlot g_rprof[RPROF_MAX];
+static int g_rprof_n;
+static long g_rprof_last_frame=-1;
+
+static int rprof_enabled(void){
+  static int on=-1;
+  if(on<0) on=getenv("GML_PROFILE_RENDER") ? 1 : 0;
+  return on;
+}
+static double rprof_now(void){
+#ifdef _WIN32
+  return 0.0;
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC,&ts);
+  return ts.tv_sec + ts.tv_nsec/1000000000.0;
+#endif
+}
+static int rprof_tpag_id(GmlRender *r, GmlTpag *t){
+  if(!r || !t || !r->tpag || r->n_tpag<=0) return -1;
+  uintptr_t p=(uintptr_t)t, b=(uintptr_t)r->tpag;
+  uintptr_t e=b+(uintptr_t)r->n_tpag*sizeof(GmlTpag);
+  return (p>=b && p<e) ? (int)((p-b)/sizeof(GmlTpag)) : -1;
+}
+static void rprof_dump_maybe(void){
+  if(!rprof_enabled()) return;
+  extern long g_vm_frame;
+  long frame=g_vm_frame;
+  if(frame<=0 || frame==g_rprof_last_frame || frame%300) return;
+  g_rprof_last_frame=frame;
+  const char *labs[16]={0};
+  double lab_ms[16]={0};
+  long lab_calls[16]={0};
+  unsigned long long lab_px[16]={0};
+  int lab_n=0;
+  for(int i=0;i<g_rprof_n;i++){
+    int li=-1;
+    for(int j=0;j<lab_n;j++) if(labs[j]==g_rprof[i].label){ li=j; break; }
+    if(li<0 && lab_n<16){ li=lab_n++; labs[li]=g_rprof[i].label; }
+    if(li>=0){ lab_ms[li]+=g_rprof[i].ms; lab_calls[li]+=g_rprof[i].calls; lab_px[li]+=g_rprof[i].pixels; }
+  }
+  fprintf(stderr,"[rprof] f=%ld totals",frame);
+  for(int i=0;i<lab_n;i++) fprintf(stderr," %s=%.2fms/%ld/%llupx",labs[i],lab_ms[i],lab_calls[i],lab_px[i]);
+  fprintf(stderr,"\n");
+  int used[12]; for(int i=0;i<12;i++) used[i]=-1;
+  for(int rank=0;rank<12;rank++){
+    int best=-1;
+    for(int i=0;i<g_rprof_n;i++){
+      int seen=0; for(int j=0;j<rank;j++) if(used[j]==i){ seen=1; break; }
+      if(!seen && (best<0 || g_rprof[i].ms>g_rprof[best].ms)) best=i;
+    }
+    if(best<0 || g_rprof[best].ms<=0) break;
+    used[rank]=best;
+    RenderProfSlot *s=&g_rprof[best];
+    fprintf(stderr,"[rprof]   %7.2fms %6ld calls %10llupx %-8s tpag=%d atlas=%d src=%d,%d %dx%d\n",
+      s->ms,s->calls,s->pixels,s->label,s->tpag,s->atlas,s->sx,s->sy,s->sw,s->sh);
+  }
+  memset(g_rprof,0,sizeof g_rprof);
+  g_rprof_n=0;
+}
+static void rprof_add(const char *label, GmlRender *r, GmlTpag *t, double ms, unsigned long long pixels){
+  if(!rprof_enabled()) return;
+  int tpag=rprof_tpag_id(r,t);
+  int atlas=t?t->atlas:-1, sx=t?t->sx:0, sy=t?t->sy:0, sw=t?t->sw:0, sh=t?t->sh:0;
+  int slot=-1;
+  for(int i=0;i<g_rprof_n;i++){
+    RenderProfSlot *s=&g_rprof[i];
+    if(s->label==label && s->tpag==tpag && s->atlas==atlas && s->sx==sx && s->sy==sy && s->sw==sw && s->sh==sh){
+      slot=i; break;
+    }
+  }
+  if(slot<0){
+    if(g_rprof_n<RPROF_MAX) slot=g_rprof_n++;
+    else slot=RPROF_MAX-1;
+    g_rprof[slot]=(RenderProfSlot){label,tpag,atlas,sx,sy,sw,sh,0,0,0};
+  }
+  g_rprof[slot].calls++;
+  g_rprof[slot].pixels+=pixels;
+  g_rprof[slot].ms+=ms;
+  rprof_dump_maybe();
+}
 
 static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o]|(uint32_t)d[o+1]<<8|(uint32_t)d[o+2]<<16|(uint32_t)d[o+3]<<24;
 }
 static uint16_t u16(const uint8_t *d, uint32_t o){ return (uint16_t)(d[o]|d[o+1]<<8); }
 static uint32_t be32(const uint8_t *d){ return (uint32_t)d[0]<<24|(uint32_t)d[1]<<16|(uint32_t)d[2]<<8|(uint32_t)d[3]; }
+#define RFP_SHIFT 20
+#define RFP_ONE ((int64_t)1 << RFP_SHIFT)
+static int floor_fixed20(int64_t v){
+  return v>=0 ? (int)(v>>RFP_SHIFT) : -(int)((-v + RFP_ONE - 1) >> RFP_SHIFT);
+}
 
 /* ---- atlas (TXTR) ---- */
 /* Decode PNG, fioq, or a bzip2-compressed 2zoq container into RGBA pixels. */

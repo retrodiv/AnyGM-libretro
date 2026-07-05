@@ -852,9 +852,26 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
   if(x2<0||y2<0||x1>=R->fbw||y1>=R->fbh) return;
   if(x1<0)x1=0; if(y1<0)y1=0; if(x2>=R->fbw)x2=R->fbw-1; if(y2>=R->fbh)y2=R->fbh-1;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
+  if(!outline && alpha<=0) return;
   if(!outline && (alpha>=1 || !R->alphablend)){   /* opaque filled rect: fast per-row fill */
     uint32_t src=gm_color_to_xrgb(gmcol);
     for(int y=y1;y<=y2;y++){ uint32_t *row=&R->fb[(size_t)y*R->fbw]; for(int x=x1;x<=x2;x++) row[x]=src; }
+    return;
+  }
+  if(!outline){
+    uint32_t src=gm_color_to_xrgb(gmcol);
+    double ialpha=1.0-alpha;
+    double sr=((src>>16)&0xff)*alpha, sg=((src>>8)&0xff)*alpha, sb=(src&0xff)*alpha;
+    for(int y=y1;y<=y2;y++){
+      uint32_t *row=&R->fb[(size_t)y*R->fbw];
+      for(int x=x1;x<=x2;x++){
+        uint32_t dv=row[x];
+        int or_=(int)(sr+((dv>>16)&0xff)*ialpha);
+        int og=(int)(sg+((dv>>8)&0xff)*ialpha);
+        int ob=(int)(sb+(dv&0xff)*ialpha);
+        row[x]=0xFF000000u|(or_<<16)|(og<<8)|ob;
+      }
+    }
     return;
   }
   for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++){
@@ -1644,7 +1661,86 @@ static int async_saveload_request(GmlVM *vm, int ok){
   return req;
 }
 
+/* Short-circuit very hot draw/UI builtins before the broad legacy strcmp chain below. Keep these
+ * branches behavior-equivalent to their canonical handlers; this only avoids dispatch overhead. */
+static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out){
+  GmlRender *R=(GmlRender*)vm->render;
+  if(!nm || !out) return 0;
+  if(nm[0]=='r' && !strcmp(nm,"round")){ *out=vreal(gm_round(N(a,n,0))); return 1; }
+  if(nm[0]=='m' && (!strcmp(nm,"make_color_hsv")||!strcmp(nm,"make_colour_hsv"))){
+    double h=fmod(N(a,n,0),255.0); if(h<0) h+=255.0; double s=N(a,n,1)/255.0, v=N(a,n,2)/255.0;
+    double c=v*s, hp=h/42.5, x=c*(1-fabs(fmod(hp,2)-1)), m=v-c, r=0,g=0,b=0;
+    if(hp<1){ r=c; g=x; } else if(hp<2){ r=x; g=c; } else if(hp<3){ g=c; b=x; }
+    else if(hp<4){ g=x; b=c; } else if(hp<5){ r=x; b=c; } else { r=c; b=x; }
+    *out=vreal((int)((r+m)*255) + ((int)((g+m)*255)<<8) + ((int)((b+m)*255)<<16)); return 1;
+  }
+  if(nm[0]=='s'){
+    if(!strcmp(nm,"surface_create")){ *out=vreal(R?gml_surface_create(R,(int)N(a,n,0),(int)N(a,n,1)):-1); return 1; }
+    if(!strcmp(nm,"surface_free")){ if(R) gml_surface_free(R,(int)N(a,n,0)); *out=vreal(0); return 1; }
+    if(!strcmp(nm,"surface_set_target")){ if(getenv("GML_LOG_SURF"))fprintf(stderr,"[surf] set_target %d\n",(int)N(a,n,0)); *out=vreal(R?gml_surface_set_target(R,(int)N(a,n,0)):0); return 1; }
+    if(!strcmp(nm,"surface_reset_target")){ if(getenv("GML_LOG_SURF"))fprintf(stderr,"[surf] reset_target\n"); if(R) gml_surface_reset_target(R); *out=vreal(0); return 1; }
+    if(!strcmp(nm,"shader_set")){ if(R) R->active_shader=(int)N(a,n,0); *out=vreal(0); return 1; }
+    if(!strcmp(nm,"shader_reset")){ if(R) R->active_shader=-1; *out=vreal(0); return 1; }
+    if(!strcmp(nm,"shader_set_uniform_f")||!strcmp(nm,"shader_set_uniform_f_array")){
+      int h=(int)N(a,n,0);
+      if(R && h>=0 && (h%16)==1){ int sh=h/16;
+        if(sh<R->n_shader_pal && R->shader_pal && R->shader_pal[sh].lut) R->shader_pal[sh].lut_row=(float)N(a,n,1);
+      }
+      *out=vreal(0); return 1;
+    }
+    if(!strcmp(nm,"string_width")){ *out=vreal(R?gml_text_width(R,S(a,n,0)):(int)strlen(S(a,n,0))*8); return 1; }
+    if(!strcmp(nm,"string_height")){ *out=vreal(R?gml_text_height(R,S(a,n,0)):8); return 1; }
+  }
+  if(nm[0]=='g'){
+    if(!strcmp(nm,"gpu_set_blendenable")){ if(R) R->alphablend=N(a,n,0)>=0.5; *out=vreal(0); return 1; }
+    if(!strcmp(nm,"gpu_set_blendmode")){ int bm=(int)N(a,n,0); if(R) R->blendmode=(bm==1)?1:(bm==3)?2:0; *out=vreal(0); return 1; }
+  }
+  if(nm[0]=='p' && (!strcmp(nm,"part_system_drawit")||!strcmp(nm,"part_system_drawit_ext"))){
+    if(R) gml_part_system_drawit(R,(int)N(a,n,0)); *out=vreal(0); return 1;
+  }
+  if(nm[0]!='d' || strncmp(nm,"draw_",5)) return 0;
+  if(!strcmp(nm,"draw_sprite")){ if(R) gml_draw_sprite(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_sprite_ext")){ if(R) gml_draw_sprite_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
+      N(a,n,4),N(a,n,5),N(a,n,6),(uint32_t)N(a,n,7),N(a,n,8)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_sprite_stretched")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),0xFFFFFF,R->alpha); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_sprite_stretched_ext")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_surface")){ if(R){ int s=(int)N(a,n,0);
+      if(s>0 && s==(int)gml_global_arr(vm,"view_surface_id",0) && N(a,n,1)==0 && N(a,n,2)==0)
+        gml_draw_surface_stretched(R,s,R->cam_x,R->cam_y,R->fbw,R->fbh,0xFFFFFF,R->alpha);
+      else
+        gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),gml_surface_width(R,s),gml_surface_height(R,s),0xFFFFFF,R->alpha); }
+    *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_surface_stretched")){ if(R) gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),0xFFFFFF,R->alpha); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_surface_stretched_ext")){ if(R) gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),(uint32_t)N(a,n,5),N(a,n,6)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_surface_ext")){ if(R){ int s=(int)N(a,n,0); gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),gml_surface_width(R,s)*N(a,n,3),gml_surface_height(R,s)*N(a,n,4),(uint32_t)N(a,n,6),N(a,n,7)); } *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_surface_part_ext")){ if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),(uint32_t)N(a,n,9),N(a,n,10)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_rectangle")||!strcmp(nm,"draw_rectangle_colour")||!strcmp(nm,"draw_rectangle_color")){
+    if(R){ int plain=!strcmp(nm,"draw_rectangle"); uint32_t col=plain?R->color:(uint32_t)N(a,n,4); int outline=(int)N(a,n,plain?4:8);
+      draw_rect_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)ceil(N(a,n,2)-R->cam_x),(int)ceil(N(a,n,3)-R->cam_y),col,outline); }
+    *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_set_color")||!strcmp(nm,"draw_set_colour")){ if(R) R->color=(uint32_t)N(a,n,0); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_set_alpha")){ if(R){ R->alpha=N(a,n,0); if(R->alpha<0) R->alpha=0; if(R->alpha>1) R->alpha=1; } *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_set_font")){ if(R){ R->font=(int)N(a,n,0); if((int)N(a,n,0)<0 && getenv("GML_LOG_FONT")) fprintf(stderr,"[font] draw_set_font(%d) — default-font request\n",(int)N(a,n,0)); } *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_set_halign")){ if(R) R->halign=(int)N(a,n,0); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_set_valign")){ if(R) R->valign=(int)N(a,n,0); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_text")){ if(R) gml_draw_text(R,N(a,n,0),N(a,n,1),S(a,n,2)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_text_color")||!strcmp(nm,"draw_text_colour")){
+    if(R){ uint32_t c=R->color; double al=R->alpha; R->color=(uint32_t)N(a,n,3); R->alpha=N(a,n,7); gml_draw_text(R,N(a,n,0),N(a,n,1),S(a,n,2)); R->color=c; R->alpha=al; }
+    *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_text_ext")){ if(R) gml_draw_text_ext(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_text_ext_colour")||!strcmp(nm,"draw_text_ext_color")){
+    if(R){ uint32_t c=R->color; double al=R->alpha; R->color=(uint32_t)N(a,n,5); R->alpha=N(a,n,9); gml_draw_text_ext(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4)); R->color=c; R->alpha=al; }
+    *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_text_transformed")){ if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),R->color,R->alpha); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_text_transformed_color")||!strcmp(nm,"draw_text_transformed_colour")){ if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,10)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_text_ext_transformed")){ if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,5),N(a,n,6),N(a,n,7),R->color,R->alpha); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_text_ext_transformed_color")||!strcmp(nm,"draw_text_ext_transformed_colour")){ if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,5),N(a,n,6),N(a,n,7),(uint32_t)N(a,n,8),N(a,n,12)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_set_blend_mode")){ int bm=(int)N(a,n,0); if(R) R->blendmode=(bm==1)?1:(bm==3)?2:0; *out=vreal(0); return 1; }
+  return 0;
+}
+
 GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  { GmlVal v; if(fast_hot_builtin(vm,nm,a,n,&v)) return v; }
   /* Return zero for prefixed script names whose suffix is sleep; leave the unprefixed builtin untouched. */
   { const char *sb=NULL;
     if(!strncmp(nm,"gml_GlobalScript_",17)) sb=nm+17;
