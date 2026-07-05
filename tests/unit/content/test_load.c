@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* test_load — report container structure and decode diagnostics for an input path. */
+/* test_load - Report container structure and decode diagnostics for an input path. */
 #include "gml_win.h"
 #include <stdio.h>
 #include <string.h>
@@ -14,7 +14,7 @@ static const char *inst_name(int16_t it){
 }
 
 int main(int argc,char**argv){
-  const char *path = argc>1?argv[1]:"media/data.win";
+  const char *path = argc>1?argv[1]:"data.win";
   GmlWin w;
   if(gml_win_load(&w,path)){ fprintf(stderr,"load failed: %s\n",path); return 1; }
   printf("# %s  bytecode=%u gameid=%u  chunks=%d strings=%d code=%d refs=%d\n",
@@ -27,7 +27,7 @@ int main(int argc,char**argv){
   for(int i=0;i<w.n_code;i++){
     uint32_t a=w.code[i].start, end=a+w.code[i].length;
     while(a<end){
-      GmlInsn in; int sz=gml_decode(w.data,a,&in);
+      GmlInsn in; int sz=gml_decode_bc(w.data,a,w.bytecode,&in);
       if(sz==0){ fprintf(stderr,"decode error in %s @%u\n",w.code[i].name,a); break; }
       if(in.kind==0 || !strcmp(gml_op_mnemonic(in.kind),"?")) unknown++;
       total++; a+=sz;
@@ -35,12 +35,13 @@ int main(int argc,char**argv){
   }
   printf("\n## GLOBAL: %ld instructions, %ld unknown opcodes\n", total, unknown);
 
-  /* Sample decoded instructions of the first code entry. */
+  /* Print instructions from the first non-empty code entry. */
   for(int i=0;i<w.n_code;i++){
+    if(w.code[i].length==0) continue;
     printf("\n=== [%d] %s (%u bytes) ===\n",i,w.code[i].name,w.code[i].length);
     uint32_t a=w.code[i].start, end=a+w.code[i].length; int line=0;
     while(a<end && line<22){
-      GmlInsn in; int sz=gml_decode(w.data,a,&in);
+      GmlInsn in; int sz=gml_decode_bc(w.data,a,w.bytecode,&in);
       printf("  %5u: %s", a-w.code[i].start, gml_op_mnemonic(in.kind));
       switch(in.kind){
         case OP_CMP: printf(".%s.%s %s",DT[in.type1],DT[in.type2],CMP[in.cmp<=6?in.cmp:0]); break;

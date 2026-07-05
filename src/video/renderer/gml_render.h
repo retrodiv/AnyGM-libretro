@@ -8,27 +8,68 @@
 typedef struct { int sx,sy,sw,sh, tx,ty, bw,bh, atlas; } GmlTpag;  /* texture page item */
 typedef struct { const char *name; int originx, originy, w, h, n_frames; int *frame;
                  int ml, mr, mt, mb;                /* mask margins: left,right,top,bottom */
-                 const uint8_t *mask; int mask_rowb, mask_count; } GmlSprite; /* SPRT collision mask: 1bpp */
+                 const uint8_t *mask; int mask_rowb, mask_count;  /* SPRT collision mask: 1bpp */
+                 int collision_kind, collision_tolerance;
+                 uint8_t *runtime_rgba; int runtime_owned, runtime_extra; char *owned_name;
+                 int base_valid, base_originx, base_originy, base_w, base_h, base_n_frames;
+                 int base_ml, base_mr, base_mt, base_mb, base_mask_rowb, base_mask_count;
+                 int base_collision_kind, base_collision_tolerance;
+                 const uint8_t *base_mask; } GmlSprite;
 typedef struct { uint8_t *px; int w, h; } GmlAtlas;                /* RGBA8 */
-typedef struct { int tpag; } GmlBg;                               /* background -> texture page */
-typedef struct { int sprite, first, prop, sep; } GmlFont;         /* sprite font */
+typedef struct {
+  int tpag;
+  int tile_w, tile_h, tile_border_x, tile_border_y, tile_columns, tile_items_per_tile, tile_count;
+  const uint8_t *tile_ids;                                      /* GMS2 BGND tileset id table (little-endian u32s) */
+} GmlBg;                                                        /* background/tileset -> texture page */
+typedef struct { int32_t sx, sy, w, h; int16_t shift, offset; uint16_t ch; } GmlGlyph;
+typedef struct {
+  int sprite, first, prop, sep;
+  uint32_t *map; int map_len;                                    /* font_add_sprite_ext explicit map */
+  int map_fast[256];
+  /* real FONT-chunk font: glyph sub-rects blitted from the data.win atlas at runtime
+   * (no glyph data is bundled; parsed from the user-supplied data.win like sprites). */
+  int real, atlas, line_height;                                  /* real=1; atlas index; em/line height */
+  GmlGlyph *glyphs; int n_glyphs;
+  int glyph_by_char[256];                                        /* fast ASCII lookup, -1 = none */
+} GmlFont;                                                        /* sprite font or real FONT-chunk font */
+typedef struct { uint32_t *px; int w, h, live;
+                 int dirty;                       /* px changed since the RLE cache was built */
+                 uint8_t *rle; size_t rle_len, rle_cap;  /* cached savestate RLE (u32 nrun + pairs) */
+} GmlSurface;      /* XRGB8888 runtime surface */
 
-#define GML_MAX_FONTS 32
+#define GML_MAX_FONTS 48
+#define GML_MAX_SURFACES 16
+#define GML_SURFACE_STACK 8
 typedef struct {
   GmlWin   *win;
-  GmlAtlas  atlas[16]; int n_atlas;
+  GmlAtlas *atlas; int n_atlas;
   GmlTpag  *tpag; int n_tpag;
-  GmlSprite *spr; int n_spr;
+  GmlSprite *spr; int n_spr, base_n_spr, spr_cap, spr_has_free;
   GmlBg    *bg; int n_bg;
   GmlFont   fonts[GML_MAX_FONTS]; int n_fonts;
   /* current target framebuffer (borrowed) + camera */
   uint32_t *fb; int fbw, fbh;
+  uint32_t *base_fb; int base_fbw, base_fbh;
+  struct { uint32_t *fb; int w, h; double cx, cy; int target_id; } target_stack[GML_SURFACE_STACK]; int target_sp;
+  int target_id;
   double    cam_x, cam_y;
-  /* the application_surface: the buffer the game is rendered into (read by draw_surface_* in
-   * an overlay object's Draw GUI). Set by the frontend; same w/h as fbw/fbh. */
+  /* the application_surface: the buffer the game is rendered into and later
+   * readable by draw_surface_* calls. Set by the frontend; same w/h as fbw/fbh. */
   uint32_t *app_surface; int app_draw_enable;   /* GM application_surface_draw_enable, default 1 */
+  int app_w, app_h;                             /* app_surface dims (the view render size) */
+  GmlSurface surface[GML_MAX_SURFACES]; int next_surface_id;
   /* draw state */
-  uint32_t  color;  double alpha; int halign, valign, font;
+  uint32_t  color;  double alpha; int halign, valign, font, alphablend, circle_precision;
+  int       blendmode;   /* gpu_set_blendmode: 0=normal, 1=add (others fall back to normal). Reset per frame. */
+  /* Palette and lookup-texture state declarations. */
+  struct GmlShaderPal { int has; uint8_t L[3],M[3],D[3],S[3];
+    int lut;                    /* palette-LUT shader: out = palette[(src.r, row)] */
+    char lut_row_uniform[32];   /* uniform float selecting the palette row */
+    char lut_sampler[32];       /* sampler2D holding the palette texture */
+    float lut_row;              /* current row (normalized v), set by shader_set_uniform_f */
+  } *shader_pal; int n_shader_pal;
+  int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
+  int       active_shader;   /* shader_set asset id, -1 = none. Reset per frame. */
 } GmlRender;
 
 int  gml_render_init(GmlRender *r, GmlWin *win);
@@ -40,20 +81,60 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y);
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                                double xs, double ys, uint32_t blend, double alpha);
+void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
+                              double sw, double sh, double x, double y,
+                              double xs, double ys, uint32_t blend, double alpha);
 void gml_draw_background(GmlRender *r, int bg, double x, double y);
+void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, double sw, double sh,
+                                  double x, double y, double xs, double ys, uint32_t color, double alpha);
+void gml_draw_background_stretched(GmlRender *r, int bg, double x, double y, double w, double h, uint32_t color, double alpha);
 void gml_draw_background_tiled(GmlRender *r, int bg, double x, double y, int htiled, int vtiled);
 void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs, double ys, uint32_t color, double alpha);
 void gml_draw_background_tiled_ext(GmlRender *r, int bg, double x, double y, double xs, double ys, uint32_t color, double alpha, int htiled, int vtiled);
 void gml_draw_room_backgrounds(GmlRender *r, uint32_t bg_ptr, int want_fg);
 void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr);
 void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x, double y);
-/* Stretch the application surface or a sprite in screen space, without camera offsets. */
-void gml_draw_surface_stretched(GmlRender *r, double x, double y, double w, double h, uint32_t blend, double alpha);
+/* Stretch the application surface and sprites in screen space, without camera offsets. */
+int  gml_surface_create(GmlRender *r, int w, int h);
+void gml_surface_free(GmlRender *r, int id);
+int  gml_surface_exists(GmlRender *r, int id);
+void gml_surface_resize(GmlRender *r, int id, int w, int h);
+int  gml_surface_width(GmlRender *r, int id);
+int  gml_surface_height(GmlRender *r, int id);
+int  gml_surface_set_target(GmlRender *r, int id);
+void gml_surface_reset_target(GmlRender *r);
+int  gml_surface_get_target(GmlRender *r);
+void gml_draw_surface_stretched(GmlRender *r, int surf, double x, double y, double w, double h, uint32_t blend, double alpha);
+void gml_draw_surface_part_ext(GmlRender *r, int surf, double sx, double sy, double sw, double sh,
+                               double x, double y, double xs, double ys, uint32_t blend, double alpha);
+int  gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w, int h,
+                                    int removeback, int smooth, int xorig, int yorig);
+int  gml_sprite_replace_from_file(GmlRender *r, int sprite, const char *path, int imgnumb,
+                                  int removeback, int smooth, int xorig, int yorig);
+int  gml_sprite_replace_from_rgba(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int xorig, int yorig);
+int  gml_sprite_append_from_rgba(GmlRender *r, uint8_t *rgba, int w, int h, int xorig, int yorig, const char *name);
+int  gml_sprite_replace_from_rgba_frames(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig);
+int  gml_sprite_append_from_rgba_frames(GmlRender *r, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig, const char *name);
+void gml_render_clear_runtime_sprites(GmlRender *r);
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double x, double y, double w, double h, uint32_t blend, double alpha);
+int  gml_sprite_exists(GmlRender *r, int sprite);
+void gml_sprite_delete(GmlRender *r, int sprite);
+int  gml_sprite_collision_mask(GmlRender *r, int sprite, int sepmasks, int bboxmode,
+                               int bbleft, int bbtop, int bbright, int bbbottom,
+                               int kind, int tolerance);
 int  gml_sprite_frames(GmlRender *r, int sprite);
 int  gml_sprite_alpha(GmlRender *r, int sprite, int frame, int lx, int ly);
 int  gml_sprite_collision(GmlRender *r, int sprite, int frame, int lx, int ly);
 int  gml_font_add_sprite(GmlRender *r, int sprite, int first, int prop, int sep);
+int  gml_font_add_sprite_ext(GmlRender *r, int sprite, const char *map, int prop, int sep);
+int  gml_font_add_file(GmlRender *r, const char *path, double point_size);   /* runtime TTF (font_add) */
+int  gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeback, int xorig, int yorig);
+void gml_render_rebuild_font_maps(GmlRender *r);
 void gml_draw_text(GmlRender *r, double x, double y, const char *str);
+void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double sep, double w);
+void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str,
+                               double xs, double ys, double rot, uint32_t blend, double alpha);
+int  gml_text_width(GmlRender *r, const char *str);
+int  gml_text_height(GmlRender *r, const char *str);
 
 #endif

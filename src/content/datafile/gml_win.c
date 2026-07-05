@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* gml_win.c — data.win loader + bytecode-14 decoder. See gml_win.h. */
+/* gml_win.c - FORM container loader; versioned bytecode layouts live in gml_bc*.c. */
 #include "gml_win.h"
+#include "gml_bytecode.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,98 +10,8 @@
 static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o] | (uint32_t)d[o+1]<<8 | (uint32_t)d[o+2]<<16 | (uint32_t)d[o+3]<<24;
 }
-static int16_t i16(const uint8_t *d, uint32_t o){ return (int16_t)((uint16_t)d[o] | (uint16_t)d[o+1]<<8); }
-
-/* old (bc14) opcode byte -> new opcode byte */
-static uint8_t old2new(uint8_t k){
-  switch(k){
-    case 0x03:return 0x07; case 0x04:return 0x08; case 0x05:return 0x09; case 0x06:return 0x0A;
-    case 0x07:return 0x0B; case 0x08:return 0x0C; case 0x09:return 0x0D; case 0x0A:return 0x0E;
-    case 0x0B:return 0x0F; case 0x0C:return 0x10; case 0x0D:return 0x11; case 0x0E:return 0x12;
-    case 0x0F:return 0x13; case 0x10:return 0x14;
-    case 0x11:case 0x12:case 0x13:case 0x14:case 0x16:return 0x15;
-    case 0x41:return 0x45; case 0x82:return 0x86; case 0xB7:return 0xB6; case 0xB8:return 0xB7;
-    case 0xB9:return 0xB8; case 0xBB:return 0xBA; case 0x9D:return 0x9C; case 0x9E:return 0x9D;
-    case 0x9F:return 0x9E; case 0xBC:return 0xBB; case 0xDA:return 0xD9;
-    default:return k;
-  }
-}
-
-const char *gml_op_mnemonic(uint8_t k){
-  switch(k){
-    case OP_CONV:return"conv";case OP_MUL:return"mul";case OP_DIV:return"div";case OP_REM:return"rem";
-    case OP_MOD:return"mod";case OP_ADD:return"add";case OP_SUB:return"sub";case OP_AND:return"and";
-    case OP_OR:return"or";case OP_XOR:return"xor";case OP_NEG:return"neg";case OP_NOT:return"not";
-    case OP_SHL:return"shl";case OP_SHR:return"shr";case OP_CMP:return"cmp";case OP_POP:return"pop";
-    case OP_DUP:return"dup";case OP_RET:return"ret";case OP_EXIT:return"exit";case OP_POPZ:return"popz";
-    case OP_B:return"b";case OP_BT:return"bt";case OP_BF:return"bf";case OP_PUSHENV:return"pushenv";
-    case OP_POPENV:return"popenv";case OP_PUSH:return"push";case OP_CALL:return"call";
-    case OP_CALLV:return"callv";case OP_BREAK:return"break";default:return"?";
-  }
-}
-
-int gml_decode(const uint8_t *d, uint32_t ia, GmlInsn *o){
-  memset(o,0,sizeof(*o));
-  uint32_t fw = u32(d,ia);
-  uint8_t kb = (uint8_t)(fw>>24);
-  uint8_t nk = old2new(kb);
-  uint8_t b2 = (uint8_t)((fw>>16)&0xFF);
-  o->oldkind=kb; o->kind=nk; o->inst=(int16_t)(fw&0xFFFF);
-  switch(nk){
-    /* single */
-    case OP_NEG:case OP_NOT:case OP_DUP:case OP_RET:case OP_EXIT:case OP_POPZ:case OP_CALLV:
-      o->type1=b2&0xF; o->type2=b2>>4; o->size=4; return 4;
-    /* double */
-    case OP_CONV:case OP_MUL:case OP_DIV:case OP_REM:case OP_MOD:case OP_ADD:case OP_SUB:
-    case OP_AND:case OP_OR:case OP_XOR:case OP_SHL:case OP_SHR:
-      o->type1=b2&0xF; o->type2=b2>>4; o->size=4; return 4;
-    /* comparison: kind encoded in old opcode */
-    case OP_CMP:
-      o->type1=b2&0xF; o->type2=b2>>4; o->cmp=(uint8_t)(kb-0x10); o->size=4; return 4;
-    /* goto */
-    case OP_B:case OP_BT:case OP_BF:case OP_PUSHENV:case OP_POPENV:{
-      int32_t off = (fw & 0x800000) ? (int32_t)(fw | 0xFF000000u) : (int32_t)(fw & 0xFFFFFF);
-      o->jump=off; o->size=4; return 4;
-    }
-    /* pop */
-    case OP_POP:{
-      o->type1=b2&0xF; o->type2=b2>>4;
-      if(o->type1!=DT_INT16){ o->refaddr=ia+4; o->reftype=(uint8_t)((u32(d,ia+4)>>24)&0xF8); o->size=8; return 8; }
-      o->size=4; return 4;
-    }
-    /* push (single opcode, datatype in b2) */
-    case OP_PUSH:{
-      o->type1=b2;
-      switch(b2){
-        case DT_DOUBLE: o->dval=*(const double*)(d+ia+4); o->size=12; return 12;
-        case DT_INT32:  o->ival=(int32_t)u32(d,ia+4);     o->size=8;  return 8;
-        case DT_INT64:  memcpy(&o->lval,d+ia+4,8);        o->size=12; return 12;
-        case DT_STRING: o->strindex=u32(d,ia+4);          o->size=8;  return 8;
-        case DT_VAR:    o->refaddr=ia+4; o->reftype=(uint8_t)((u32(d,ia+4)>>24)&0xF8); o->size=8; return 8;
-        case DT_INT16:  o->sval=i16(d,ia);                o->size=4;  return 4;
-        case DT_FLOAT:  o->ival=(int32_t)u32(d,ia+4);     o->size=8;  return 8;
-        case DT_BOOL:   o->ival=(int32_t)u32(d,ia+4);     o->size=8;  return 8;
-        default:        o->size=4; return 4;
-      }
-    }
-    /* call */
-    case OP_CALL:
-      o->type1=b2; o->argc=(uint16_t)(fw&0xFFFF); o->refaddr=ia+4; o->size=8; return 8;
-    /* break */
-    case OP_BREAK:
-      o->sval=(int16_t)(fw&0xFFFF); o->type1=b2; o->size=4; return 4;
-    default:
-      o->size=0; return 0;
-  }
-}
 
 /* ---------------- loader ---------------- */
-static const uint8_t *gp; /* not thread-safe; loader is single-shot */
-
-static int cmp_refaddr(const void *a, const void *b){
-  uint32_t x=*(const uint32_t*)a, y=*(const uint32_t*)b; return x<y?-1:(x>y?1:0);
-}
-
 const GmlChunk *gml_chunk(const GmlWin *w, const char *name){
   for(int i=0;i<w->n_chunks;i++) if(!strncmp(w->chunks[i].name,name,4)) return &w->chunks[i];
   return NULL;
@@ -120,6 +31,37 @@ const char *gml_ref_name(const GmlWin *w, uint32_t addr){
   while(lo<=hi){int m=(lo+hi)/2; if(w->ref_addr[m]==addr)return w->ref_name[m];
     if(w->ref_addr[m]<addr)lo=m+1;else hi=m-1;}
   return "?";
+}
+
+
+/* Lazily build an open-addressed STRG index. Return the interned pointer
+ * on a matching string, or NULL when absent or the index cannot be allocated. */
+static uint32_t win_strhash(const char *s){
+  uint32_t h=2166136261u; while(*s){ h^=(uint8_t)*s++; h*=16777619u; } return h;
+}
+const char *gml_win_intern_lookup(GmlWin *w, const char *s){
+  if(!w || !s || w->n_strs<=0) return NULL;
+  if(!w->str_hix){
+    uint32_t cap=1; while(cap < (uint32_t)w->n_strs*2u) cap<<=1;
+    w->str_hix=malloc((size_t)cap*sizeof(int32_t));
+    if(!w->str_hix) return NULL;
+    for(uint32_t i=0;i<cap;i++) w->str_hix[i]=-1;
+    w->str_hix_cap=cap;
+    for(int i=0;i<w->n_strs;i++){
+      if(!w->strs[i]) continue;
+      uint32_t h=win_strhash(w->strs[i]) & (cap-1);
+      while(w->str_hix[h]>=0) h=(h+1)&(cap-1);
+      w->str_hix[h]=i;
+    }
+  }
+  uint32_t h=win_strhash(s) & (w->str_hix_cap-1);
+  for(uint32_t probe=0; probe<w->str_hix_cap; probe++){
+    int32_t i=w->str_hix[h];
+    if(i<0) return NULL;
+    if(w->strs[i] && !strcmp(w->strs[i],s)) return w->strs[i];
+    h=(h+1)&(w->str_hix_cap-1);
+  }
+  return NULL;
 }
 
 static void parse_strg(GmlWin *w){
@@ -145,31 +87,45 @@ static void parse_code(GmlWin *w){
     uint32_t p=u32(w->data,off+4+i*4);
     w->code[i].name=gml_str_by_ptr(w,u32(w->data,p));
     w->code[i].length=u32(w->data,p+4);
-    w->code[i].start=p+8;
+    if(!gml_bc_code_start(w,p,&w->code[i].start)) w->code[i].start=0;
   }
 }
 
+typedef struct { uint32_t addr; const char *name; } RefRec;
+static int cmp_ref_addr(const void *A, const void *B){
+  uint32_t a=((const RefRec*)A)->addr, b=((const RefRec*)B)->addr;
+  return a<b?-1:(a>b?1:0);
+}
 /* Walk VARI+FUNC occurrence chains -> ref_addr/ref_name map. */
 static void parse_refs(GmlWin *w){
   /* count total occurrences first */
-  int total=0;
+  uint32_t total=0;
   const char *chunks[2]={"VARI","FUNC"};
   for(int ci=0;ci<2;ci++){
-    const GmlChunk *c=gml_chunk(w,chunks[ci]); if(!c)continue;
-    for(uint32_t o=c->off;o+12<=c->off+c->size;o+=12) total+=(int)u32(w->data,o+4);
+    GmlRefLayout l;
+    if(!gml_bc_ref_layout(w,chunks[ci],&l)) continue;
+    for(uint32_t i=0;i<l.count;i++){
+      uint32_t o=l.start+i*l.stride;
+      uint32_t occ=u32(w->data,o+l.occ_off);
+      if(occ > (uint32_t)w->size/4) occ=(uint32_t)w->size/4;
+      if(total > UINT32_MAX-occ){ total=UINT32_MAX; break; }
+      total += occ;
+    }
   }
   w->ref_addr=calloc(total>0?total:1,sizeof(uint32_t));
   w->ref_name=calloc(total>0?total:1,sizeof(char*));
   int n=0;
   for(int ci=0;ci<2;ci++){
-    const GmlChunk *c=gml_chunk(w,chunks[ci]); if(!c)continue;
-    for(uint32_t o=c->off;o+12<=c->off+c->size;o+=12){
+    GmlRefLayout l;
+    if(!gml_bc_ref_layout(w,chunks[ci],&l)) continue;
+    for(uint32_t i=0;i<l.count;i++){
+      uint32_t o=l.start+i*l.stride;
       const char *nm=gml_str_by_ptr(w,u32(w->data,o));
-      uint32_t occ=u32(w->data,o+4), addr=u32(w->data,o+8);
+      uint32_t occ=u32(w->data,o+l.occ_off), addr=u32(w->data,o+l.addr_off);
       for(uint32_t k=0;k<occ;k++){
-        if(addr==0 || addr+8>w->size) break;
-        w->ref_addr[n]=addr+4; w->ref_name[n]=nm; n++; /* key by the reference-word addr (matches GmlInsn.refaddr) */
-        uint32_t ref=u32(w->data,addr+4);
+        if(n>=(int)total || addr==0 || addr==UINT32_MAX || addr>w->size || 8>w->size-addr) break;
+        w->ref_addr[n]=addr+l.ref_off; w->ref_name[n]=nm; n++; /* key by the reference-word addr (matches GmlInsn.refaddr) */
+        uint32_t ref=u32(w->data,addr+l.chain_off);
         uint32_t nxt=ref & 0x07FFFFFF;
         if(nxt==0) break;
         addr+=nxt;
@@ -177,14 +133,17 @@ static void parse_refs(GmlWin *w){
     }
   }
   w->n_refs=n;
-  /* sort by addr for bsearch (stable enough: addrs unique per site) */
-  /* simple insertion of parallel arrays via index sort */
-  for(int i=1;i<n;i++){
-    uint32_t a=w->ref_addr[i]; const char *nm=w->ref_name[i]; int j=i-1;
-    while(j>=0 && w->ref_addr[j]>a){ w->ref_addr[j+1]=w->ref_addr[j]; w->ref_name[j+1]=w->ref_name[j]; j--; }
-    w->ref_addr[j+1]=a; w->ref_name[j+1]=nm;
+  /* Sort address/name records together, then copy them back into the parallel
+   * arrays used for binary search. */
+  if(n>1){
+    RefRec *rec=malloc((size_t)n*sizeof(*rec));
+    if(rec){
+      for(int i=0;i<n;i++){ rec[i].addr=w->ref_addr[i]; rec[i].name=w->ref_name[i]; }
+      qsort(rec,(size_t)n,sizeof(*rec),cmp_ref_addr);
+      for(int i=0;i<n;i++){ w->ref_addr[i]=rec[i].addr; w->ref_name[i]=rec[i].name; }
+      free(rec);
+    }
   }
-  (void)cmp_refaddr; (void)gp;
 }
 
 int gml_room_count(const GmlWin *w){
@@ -237,11 +196,35 @@ int gml_win_load(GmlWin *w, const char *path){
   uint8_t *buf=malloc(sz); if(!buf){fclose(f);return -1;}
   if(fread(buf,1,sz,f)!=(size_t)sz){fclose(f);free(buf);return -1;}
   fclose(f);
-  return gml_win_from_mem(w,buf,(size_t)sz,1);
+  int rc=gml_win_from_mem(w,buf,(size_t)sz,1);
+  if(rc==0 && path){
+    const char *slash=strrchr(path,'/');
+    const char *bslash=strrchr(path,'\\');
+    if(bslash && (!slash || bslash>slash)) slash=bslash;
+    if(slash){
+      size_t n=(size_t)(slash-path);
+      if(n>=sizeof(w->content_dir)) n=sizeof(w->content_dir)-1;
+      memcpy(w->content_dir,path,n);
+      w->content_dir[n]=0;
+    } else {
+      snprintf(w->content_dir,sizeof(w->content_dir),".");
+    }
+    /* Resolve content_dir to an absolute path when possible, so paths built
+     * from working_directory do not receive the content prefix a second time. */
+#ifndef _WIN32
+    { char abs[4096];
+      if(realpath(w->content_dir,abs)) snprintf(w->content_dir,sizeof(w->content_dir),"%s",abs); }
+#else
+    { char abs[4096];
+      if(_fullpath(abs,w->content_dir,sizeof abs)) snprintf(w->content_dir,sizeof(w->content_dir),"%s",abs); }
+#endif
+  }
+  return rc;
 }
 
 void gml_win_free(GmlWin *w){
   free(w->strs); free(w->str_charoff); free(w->code);
+  free(w->str_hix);
   free(w->ref_addr); free(w->ref_name); free(w->room_order);
   if(w->owns) free(w->data);
   memset(w,0,sizeof(*w));

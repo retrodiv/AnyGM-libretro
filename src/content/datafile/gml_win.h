@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* gml_win.h — loader + bytecode-14 decoder for GameMaker: Studio containers. */
+/* gml_win.h - FORM container loader and normalized bytecode interface. */
 #ifndef GML_WIN_H
 #define GML_WIN_H
 #include <stdint.h>
 #include <stddef.h>
 
-/* ---- new-format opcodes (bc14 is decoded into these) ---- */
+/* ---- normalized opcodes (bc14 old opcodes and bc15+ split opcodes decode into these) ---- */
 enum {
   OP_CONV=0x07, OP_MUL=0x08, OP_DIV=0x09, OP_REM=0x0A, OP_MOD=0x0B, OP_ADD=0x0C,
   OP_SUB=0x0D, OP_AND=0x0E, OP_OR=0x0F, OP_XOR=0x10, OP_NEG=0x11, OP_NOT=0x12,
@@ -58,6 +58,8 @@ typedef struct {
   GmlChunk chunks[40]; int n_chunks;
   /* strings, in STRG order */
   char   **strs;  uint32_t *str_charoff; int n_strs;
+  /* content-hash index over strs (lazy; for O(1) intern lookups) */
+  int32_t *str_hix; uint32_t str_hix_cap;
   /* code entries */
   GmlCode *code;  int n_code;
   /* reference name map: addr -> name (sorted by addr) */
@@ -66,6 +68,7 @@ typedef struct {
   uint8_t bytecode; uint32_t gameid;
   uint32_t disp_w, disp_h;           /* default window / native render size */
   uint32_t *room_order; int n_room_order;
+  char content_dir[512];             /* directory containing the loaded data.win */
 } GmlWin;
 
 int          gml_win_load(GmlWin *w, const char *path);
@@ -74,11 +77,13 @@ void         gml_win_free(GmlWin *w);
 const GmlChunk *gml_chunk(const GmlWin *w, const char *name);
 const char  *gml_str_by_index(const GmlWin *w, uint32_t idx);
 const char  *gml_str_by_ptr(const GmlWin *w, uint32_t fileoff);
+const char  *gml_win_intern_lookup(GmlWin *w, const char *s);   /* O(1) STRG content lookup, NULL if absent */
 const char  *gml_ref_name(const GmlWin *w, uint32_t addr);
 int          gml_room_count(const GmlWin *w);
 int          gml_room_get(const GmlWin *w, int room_index, GmlRoom *out);
 
 /* Decode one instruction at absolute file offset ia. Returns bytes consumed (0 = error). */
+int          gml_decode_bc(const uint8_t *d, uint32_t ia, uint8_t bytecode, GmlInsn *out);
 int          gml_decode(const uint8_t *d, uint32_t ia, GmlInsn *out);
 const char  *gml_op_mnemonic(uint8_t newkind);
 
