@@ -20,6 +20,7 @@ static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o]|(uint32_t)d[o+1]<<8|(uint32_t)d[o+2]<<16|(uint32_t)d[o+3]<<24;
 }
 static uint16_t u16(const uint8_t *d, uint32_t o){ return (uint16_t)(d[o]|d[o+1]<<8); }
+static uint32_t be32(const uint8_t *d){ return (uint32_t)d[0]<<24|(uint32_t)d[1]<<16|(uint32_t)d[2]<<8|(uint32_t)d[3]; }
 
 /* ---- atlas (TXTR) ---- */
 /* Decode PNG, fioq, or a bzip2-compressed 2zoq container into RGBA pixels. */
@@ -46,11 +47,44 @@ static uint8_t *decode_texture_blob(const uint8_t *blob, size_t avail, size_t ch
   }
   return NULL;
 }
+static int texture_blob_dims(const uint8_t *blob, size_t avail, int *ow, int *oh){
+  int w=0,h=0;
+  if(avail>=24 && blob[0]==0x89 && blob[1]=='P' && blob[2]=='N' && blob[3]=='G' &&
+     !memcmp(blob+12,"IHDR",4)){
+    w=(int)be32(blob+16); h=(int)be32(blob+20);
+  } else if(avail>=12 && !memcmp(blob,"fioq",4)){
+    w=(int)u16(blob,4); h=(int)u16(blob,6);
+  } else if(avail>=8 && !memcmp(blob,"2zoq",4)){
+    w=(int)u16(blob,4); h=(int)u16(blob,6);
+  }
+  if(w<=0 || h<=0 || (uint64_t)w*(uint64_t)h>64ull*1024ull*1024ull) return 0;
+  if(ow) *ow=w; if(oh) *oh=h;
+  return 1;
+}
+static uint8_t *atlas_pixels(GmlRender *r, int idx){
+  if(!r || idx<0 || idx>=r->n_atlas || !r->atlas) return NULL;
+  GmlAtlas *a=&r->atlas[idx];
+  if(a->px) return a->px;
+  if(a->decode_attempted || !a->blob || a->blob>=r->win->size) return NULL;
+  a->decode_attempted=1;
+  int w=0,h=0;
+  uint8_t *px=decode_texture_blob(r->win->data+a->blob, a->avail, a->chunk_end, &w,&h);
+  if(!px) return NULL;
+  a->px=px; a->w=w; a->h=h;
+  if(getenv("GML_LOG_ATLAS"))
+    fprintf(stderr,"[atlas] decoded %d %dx%d (%.1f MiB)\n",idx,w,h,(double)((uint64_t)w*(uint64_t)h*4ull)/(1024.0*1024.0));
+  if(getenv("GML_DUMP_ATLAS")){ char fn[64]; snprintf(fn,sizeof fn,"builds/_atlas%d.ppm",idx);
+    FILE*f=fopen(fn,"wb"); if(f){ fprintf(f,"P6\n%d %d\n255\n",w,h);
+      for(int q=0;q<w*h;q++) fwrite(px+q*4,1,3,f); fclose(f);
+      fprintf(stderr,"[atlas] dumped %s (%dx%d)\n",fn,w,h); } }
+  return a->px;
+}
 static void parse_txtr(GmlRender *r){
   const GmlChunk *c=gml_chunk(r->win,"TXTR"); if(!c) return;
   const uint8_t *d=r->win->data; uint32_t n=u32(d,c->off);
   size_t chunk_end=(size_t)(d + c->off + c->size);
   r->atlas=calloc(n?n:1,sizeof(GmlAtlas));
+  if(!r->atlas) return;
   r->n_atlas=(int)n;
   for(uint32_t i=0;i<n;i++){
     uint32_t entry=u32(d,c->off+4+i*4);
@@ -61,13 +95,10 @@ static void parse_txtr(GmlRender *r){
       if((size_t)v+4<=r->win->size){ const uint8_t *m=d+v;
         if((m[0]==0x89&&m[1]=='P'&&m[2]=='N'&&m[3]=='G')||!memcmp(m,"fioq",4)||!memcmp(m,"2zoq",4)){ blob=v; break; } } }
     if(!blob || (size_t)blob>=r->win->size) continue;
-    int w=0,h=0;
-    uint8_t *px=decode_texture_blob(d+blob, r->win->size-blob, chunk_end, &w,&h);
-    if(px){ r->atlas[i].px=px; r->atlas[i].w=w; r->atlas[i].h=h; }
-    if(px && getenv("GML_DUMP_ATLAS")){ char fn[64]; snprintf(fn,sizeof fn,"builds/_atlas%u.ppm",i);
-      FILE*f=fopen(fn,"wb"); if(f){ fprintf(f,"P6\n%d %d\n255\n",w,h);
-        for(int q=0;q<w*h;q++) fwrite(px+q*4,1,3,f); fclose(f);
-        fprintf(stderr,"[atlas] dumped %s (%dx%d)\n",fn,w,h); } }
+    GmlAtlas *a=&r->atlas[i];
+    a->blob=blob; a->avail=r->win->size-blob; a->chunk_end=chunk_end;
+    texture_blob_dims(d+blob,a->avail,&a->w,&a->h);
+    if(getenv("GML_ATLAS_EAGER") || getenv("GML_DUMP_ATLAS")) atlas_pixels(r,(int)i);
   }
 }
 
@@ -77,6 +108,7 @@ static void parse_tpag(GmlRender *r){
   const GmlChunk *c=gml_chunk(r->win,"TPAG"); if(!c) return;
   const uint8_t *d=r->win->data; uint32_t n=u32(d,c->off);
   r->n_tpag=(int)n; r->tpag=calloc(n,sizeof(GmlTpag)); g_tpag_ptr=calloc(n,sizeof(uint32_t));
+  if(!r->tpag || !g_tpag_ptr){ free(r->tpag); free(g_tpag_ptr); r->tpag=NULL; g_tpag_ptr=NULL; r->n_tpag=0; return; }
   for(uint32_t i=0;i<n;i++){
     uint32_t p=u32(d,c->off+4+i*4); g_tpag_ptr[i]=p;
     GmlTpag *t=&r->tpag[i];
@@ -95,6 +127,7 @@ static void parse_sprt(GmlRender *r){
   const GmlChunk *c=gml_chunk(r->win,"SPRT"); if(!c) return;
   const uint8_t *d=r->win->data; uint32_t n=u32(d,c->off);
   r->n_spr=(int)n; r->spr=calloc(n,sizeof(GmlSprite)); r->spr_cap=(int)n; r->spr_has_free=0;
+  if(!r->spr){ r->n_spr=0; r->spr_cap=0; return; }
   for(uint32_t i=0;i<n;i++){
     uint32_t p=u32(d,c->off+4+i*4);
     GmlSprite *s=&r->spr[i];
@@ -119,6 +152,7 @@ static void parse_sprt(GmlRender *r){
     uint32_t fn=u32(d,list);
     if(fn>10000) fn=0;              /* guard against special-type sprites */
     s->n_frames=(int)fn; s->frame=calloc(fn?fn:1,sizeof(int));
+    if(!s->frame){ s->n_frames=0; continue; }
     for(uint32_t f=0;f<fn;f++){
       uint32_t tptr=u32(d,list+4+f*4);
       s->frame[f]=tpag_index_for_ptr(r,tptr);
@@ -164,6 +198,7 @@ static void parse_bgnd(GmlRender *r){
   const GmlChunk *c=gml_chunk(r->win,"BGND"); if(!c) return;
   const uint8_t *d=r->win->data; uint32_t n=u32(d,c->off);
   r->n_bg=(int)n; r->bg=calloc(n,sizeof(GmlBg));
+  if(!r->bg){ r->n_bg=0; return; }
   for(uint32_t i=0;i<n;i++){
 	    uint32_t p=u32(d,c->off+4+i*4);
 	    /* name, transparent, smooth, preload, texture(TPAG ptr) */
