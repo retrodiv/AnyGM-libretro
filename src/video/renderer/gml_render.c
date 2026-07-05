@@ -396,15 +396,17 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
           }
         } else if(s->frame){ int ti=s->frame[fr];
           if(ti>=0 && ti<r->n_tpag){ GmlTpag *t=&r->tpag[ti];
+          GmlTpag gt=*t;
+          if(f->prop) gt.tx=0;   /* proportional sprite-font glyphs advance by the trimmed rect */
           if(use_rot){
             double ox=(cx+s->originx)*xs;
             double oy=(base_y+s->originy)*ys;
             double gx=x + ox*ca + oy*sa;
             double gy=y - ox*sa + oy*ca;
-            blit_rotated(r,s,t,gx,gy,xs,ys,rr,blend,alpha);
+            blit_rotated(r,s,&gt,gx,gy,xs,ys,rr,blend,alpha);
           } else {
-            blit(r,t, x + cx*xs - r->cam_x + t->tx*xs,
-              y + base_y*ys - r->cam_y + t->ty*ys, xs,ys, blend, alpha);
+            blit(r,&gt, x + cx*xs - r->cam_x + gt.tx*xs,
+              y + base_y*ys - r->cam_y + gt.ty*ys, xs,ys, blend, alpha);
           } } }
         }
       cx += glyph_w(r,f,fr)+f->sep;
