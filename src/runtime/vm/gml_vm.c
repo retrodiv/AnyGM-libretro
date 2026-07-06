@@ -1723,7 +1723,7 @@ static double get_global_arr_d(GmlVM *vm, const char *nm, int idx){
 void gml_set_global_arr(GmlVM *vm, const char *nm, int idx, double val){ set_global_arr(vm,nm,idx,val); }
 /* Detect layer type-data offset 36 or 48 by checking background sprite indices.
  * Share the selected layout between drawing and room entry. */
-static int gml_room_layer_data_off(GmlVM *vm){
+int gml_room_layer_data_off(GmlVM *vm){
   if(vm->layer_data_off) return vm->layer_data_off;
   vm->layer_data_off=36;
   const GmlChunk *rc=gml_chunk(vm->win,"ROOM");
@@ -1756,9 +1756,39 @@ static GmlTileMap *gml_tilemap_new(GmlVM *vm){
   t->id=vm->next_tilemap_id++; t->used=1; t->visible=1;
   return t;
 }
+static void gml_tilemaps_clear(GmlVM *vm){
+  for(int i=0;i<vm->n_tilemaps;i++){
+    free(vm->tilemaps[i].owned_tiles);
+    vm->tilemaps[i].owned_tiles=NULL;
+  }
+  vm->n_tilemaps=0;
+}
 GmlTileMap *gml_tilemap_find(GmlVM *vm, int id){
   for(int i=0;i<vm->n_tilemaps;i++) if(vm->tilemaps[i].used && vm->tilemaps[i].id==id) return &vm->tilemaps[i];
   return NULL;
+}
+static int gml_tilemap_ensure_owned(GmlTileMap *tm){
+  if(!tm || tm->cols<=0 || tm->rows<=0 || !tm->tiles) return 0;
+  if(tm->owned_tiles) return 1;
+  if(!tm->base_tiles) tm->base_tiles=tm->tiles;
+  size_t n=(size_t)tm->cols*(size_t)tm->rows*4u;
+  if(n==0 || n>64u*1024u*1024u) return 0;
+  unsigned char *p=malloc(n);
+  if(!p) return 0;
+  memcpy(p,tm->tiles,n);
+  tm->owned_tiles=p;
+  tm->tiles=p;
+  return 1;
+}
+int gml_tilemap_set_cell(GmlTileMap *tm, int cx, int cy, uint32_t datum){
+  if(!tm || cx<0 || cy<0 || cx>=tm->cols || cy>=tm->rows) return 0;
+  if(!gml_tilemap_ensure_owned(tm)) return 0;
+  unsigned char *p=tm->owned_tiles+((size_t)cy*(size_t)tm->cols+(size_t)cx)*4u;
+  p[0]=(unsigned char)(datum&0xFFu);
+  p[1]=(unsigned char)((datum>>8)&0xFFu);
+  p[2]=(unsigned char)((datum>>16)&0xFFu);
+  p[3]=(unsigned char)((datum>>24)&0xFFu);
+  return 1;
 }
 /* find the tile layer backing a given layer id OR name (layer_tilemap_get_id accepts either) */
 GmlTileMap *gml_tilemap_by_layer(GmlVM *vm, GmlVal v){
@@ -1787,7 +1817,7 @@ static void gml_room_reload_layers(GmlVM *vm, int room_index){
     l->x=f32(rd,lp+16); l->y=f32(rd,lp+20); l->hs=f32(rd,lp+24); l->vs=f32(rd,lp+28);
     l->visible=u32(rd,lp+32)?1:0; l->touched=0;
   }
-  vm->n_tilemaps=0;
+  gml_tilemaps_clear(vm);
   int doff = gml_room_layer_data_off(vm);
   const GmlChunk *bc = gml_chunk(vm->win,"BGND");
   uint32_t bcnt = bc ? u32(rd,bc->off) : 0;
@@ -1808,7 +1838,7 @@ static void gml_room_reload_layers(GmlVM *vm, int room_index){
 	    snprintf(tm->name,sizeof tm->name,"%s",(np2&&np2<vm->win->size)?(const char*)(rd+np2):"");
 	    tm->tileset=tileset;
 	    tm->depth=(double)(int32_t)u32(rd,lp+12);
-	    tm->tw=tw; tm->th=th; tm->cols=cols; tm->rows=rows; tm->tiles=rd+tdata;
+	    tm->tw=tw; tm->th=th; tm->cols=cols; tm->rows=rows; tm->tiles=rd+tdata; tm->base_tiles=rd+tdata;
 	    tm->x=f32(rd,lp+16); tm->y=f32(rd,lp+20); tm->visible=u32(rd,lp+32)?1:0;
 	  }
   if(getenv("GML_LOG_ROOM")){ fprintf(stderr,"[room] reload_layers room=%d: %d layers, %d tilemaps\n",room_index,vm->n_rtl,vm->n_tilemaps);
@@ -2327,6 +2357,13 @@ static int cmp_draw_item(const void *pa, const void *pb){
   if(at1 && bt1) return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);   /* tiles: list order, later on top */
   return a->seq>b->seq? -1 : (a->seq<b->seq?1:0);
 }
+static int rt_layer_has_background(GmlVM *vm, int layer_id){
+  for(int i=0;i<vm->n_rte;i++){
+    GmlRtElem *e=&vm->rte[i];
+    if(e->used && e->type==1 && e->layer==layer_id) return 1;
+  }
+  return 0;
+}
 void gml_vm_draw(GmlVM *vm){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return;
   int n=vm->inst_count;
@@ -2383,6 +2420,7 @@ void gml_vm_draw(GmlVM *vm){
         if(rl && !rl->visible) continue;             /* runtime layer_set_visible(false) */
         if(!u32(d,lp+32)) continue;   /* layer hidden */
         if(ltype==1){
+          if(rl && rt_layer_has_background(vm,rl->id)) continue;
           uint32_t b=lp+doff;
           if(!u32(d,b)) continue;     /* background not visible */
           int spr=(int32_t)u32(d,b+8);
@@ -3009,12 +3047,13 @@ void gml_vm_free(GmlVM *vm){
   for(int i=0;i<vm->n_paths;i++) free(vm->paths[i].pts);
   free(vm->paths);
   free(vm->objects); free(vm->col_events); free(vm->col_pair_cache); free(vm->event_cache);
+  gml_tilemaps_clear(vm);
   free(vm->rtl); free(vm->rte); free(vm->view_ovr); free(vm->tilemaps);
 }
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -3383,9 +3422,18 @@ static void runtime_clear(GmlVM *vm){
   vm->step_alloc_base=0; vm->action_relative=0;
   vm->window_x=0; vm->window_y=0; vm->window_cursor=0;
 }
+static int tilemap_diff_count(const GmlTileMap *tm){
+  if(!tm || !tm->owned_tiles || !tm->base_tiles || tm->cols<=0 || tm->rows<=0) return 0;
+  int cells=tm->cols*tm->rows, n=0;
+  for(int c=0;c<cells;c++){
+    uint32_t off=(uint32_t)c*4u;
+    if(u32(tm->owned_tiles,off)!=u32(tm->base_tiles,off)) n++;
+  }
+  return n;
+}
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x3A564D47u); /* GMV10: GMV9 + particle pools */
+  sw_u32(s,0x3C564D47u); /* GMV12: GMV11 mutable tilemap state, stored as sparse cell diffs */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -3395,6 +3443,27 @@ static void sw_vm(StateW *s, GmlVM *vm){
   sw_i32(s,vm->rng_index); sw_u32(s,vm->rng_state);
   sw_i32(s,vm->n_tile_mut); sw_raw(s,vm->tile_mut,sizeof(vm->tile_mut));
   sw_i32(s,vm->n_tile_del_at); sw_raw(s,vm->tile_del_at,sizeof(vm->tile_del_at));
+  int mut_tm=0;
+  for(int i=0;i<vm->n_tilemaps;i++)
+    if(vm->tilemaps[i].used && vm->tilemaps[i].owned_tiles && tilemap_diff_count(&vm->tilemaps[i])>0) mut_tm++;
+  sw_i32(s,mut_tm);
+  for(int i=0;i<vm->n_tilemaps;i++) if(vm->tilemaps[i].used && vm->tilemaps[i].owned_tiles){
+    GmlTileMap *tm=&vm->tilemaps[i];
+    int diffs=tilemap_diff_count(tm);
+    if(diffs<=0) continue;
+    sw_i32(s,i);
+    sw_i32(s,tm->cols);
+    sw_i32(s,tm->rows);
+    sw_i32(s,diffs);
+    int cells=tm->cols*tm->rows;
+    for(int c=0;c<cells;c++){
+      uint32_t off=(uint32_t)c*4u;
+      uint32_t datum=u32(tm->owned_tiles,off);
+      if(datum==u32(tm->base_tiles,off)) continue;
+      sw_i32(s,c);
+      sw_u32(s,datum);
+    }
+  }
   sw_i32(s,vm->ini_n); sw_i32(s,vm->ini_open); sw_str(s,vm->ini_path);
   for(int i=0;i<vm->ini_n;i++){
     sw_str(s,vm->ini_kv[i].section); sw_str(s,vm->ini_kv[i].key);
@@ -3470,7 +3539,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   uint32_t magic=sr_u32(&s);
   if((magic!=0x31564D47u && magic!=0x32564D47u && magic!=0x33564D47u && magic!=0x34564D47u
       && magic!=0x35564D47u && magic!=0x36564D47u && magic!=0x37564D47u && magic!=0x38564D47u
-      && magic!=0x39564D47u && magic!=0x3A564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x39564D47u && magic!=0x3A564D47u && magic!=0x3B564D47u && magic!=0x3C564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -3478,6 +3547,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v8 = magic>=0x38564D47u;
   s.v9 = magic>=0x39564D47u;
   s.v10 = magic>=0x3A564D47u;
+  s.v11 = magic>=0x3B564D47u;
+  s.v12 = magic>=0x3C564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -3495,6 +3566,56 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   if(vm->n_tile_mut<0 || vm->n_tile_mut>64 || vm->n_tile_del_at<0 || vm->n_tile_del_at>64){
     state_debug("bad tile mutation counts",s.pos,(uint32_t)vm->n_tile_mut);
     s.ok=0;
+  }
+  typedef struct { int index, cols, rows, n; unsigned char *data; int *cell; uint32_t *datum; } TileMapState;
+  TileMapState *tm_state=NULL;
+  int tm_state_n=0;
+  if(s.v11 && s.ok){
+    tm_state_n=sr_i32(&s);
+    if(tm_state_n<0 || tm_state_n>512){ state_debug("bad tilemap state count",s.pos,(uint32_t)tm_state_n); s.ok=0; tm_state_n=0; }
+    tm_state=tm_state_n?calloc((size_t)tm_state_n,sizeof(*tm_state)):NULL;
+    if(tm_state_n && !tm_state) s.ok=0;
+    for(int i=0;i<tm_state_n;i++){
+      tm_state[i].index=sr_i32(&s);
+      tm_state[i].cols=sr_i32(&s);
+      tm_state[i].rows=sr_i32(&s);
+      if(tm_state[i].cols<=0 || tm_state[i].rows<=0 || tm_state[i].cols>8192 || tm_state[i].rows>8192){
+        state_debug("bad tilemap state dims",s.pos,(uint32_t)tm_state[i].cols);
+        s.ok=0;
+        tm_state[i].cols=tm_state[i].rows=0;
+      }
+      if(s.v12){
+        int maxcells=tm_state[i].cols*tm_state[i].rows;
+        tm_state[i].n=sr_i32(&s);
+        if(tm_state[i].n<0 || tm_state[i].n>maxcells){
+          state_debug("bad tilemap sparse count",s.pos,(uint32_t)tm_state[i].n);
+          s.ok=0;
+          tm_state[i].n=0;
+        }
+        if(tm_state[i].n>0){
+          tm_state[i].cell=malloc((size_t)tm_state[i].n*sizeof(int));
+          tm_state[i].datum=malloc((size_t)tm_state[i].n*sizeof(uint32_t));
+          if(!tm_state[i].cell || !tm_state[i].datum){ s.ok=0; tm_state[i].n=0; }
+        }
+        for(int j=0;j<tm_state[i].n;j++){
+          tm_state[i].cell[j]=sr_i32(&s);
+          tm_state[i].datum[j]=sr_u32(&s);
+          if(tm_state[i].cell[j]<0 || tm_state[i].cell[j]>=maxcells) s.ok=0;
+        }
+      } else {
+        size_t bytes=(size_t)tm_state[i].cols*(size_t)tm_state[i].rows*4u;
+        if(bytes>64u*1024u*1024u || s.pos>s.cap || bytes>s.cap-s.pos){
+          state_debug("bad tilemap state bytes",s.pos,(uint32_t)bytes);
+          s.ok=0;
+          bytes=0;
+        }
+        if(bytes){
+          tm_state[i].data=malloc(bytes);
+          if(!tm_state[i].data) s.ok=0;
+          else sr_raw(&s,tm_state[i].data,bytes);
+        }
+      }
+    }
   }
   vm->ini_n=sr_i32(&s); vm->ini_open=sr_i32(&s);
   char *path=sr_str_dup(&s); snprintf(vm->ini_path,sizeof(vm->ini_path),"%s",path?path:""); free(path);
@@ -3655,6 +3776,32 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   gml_obj_alive_recount(vm);   /* family live counts rebuilt from the restored pool */
   /* Rebuild derived room layers and tile maps that reference the loaded container. */
   if(vm->win && vm->room_index>=0) gml_room_reload_layers(vm, vm->room_index);
+  for(int i=0;i<tm_state_n;i++){
+    TileMapState *ts=&tm_state[i];
+    if(ts->index>=0 && ts->index<vm->n_tilemaps){
+      GmlTileMap *tm=&vm->tilemaps[ts->index];
+      if(tm->cols==ts->cols && tm->rows==ts->rows && (ts->data || ts->n>0) && gml_tilemap_ensure_owned(tm)){
+        if(ts->data){
+        memcpy(tm->owned_tiles,ts->data,(size_t)ts->cols*(size_t)ts->rows*4u);
+        } else {
+          for(int j=0;j<ts->n;j++){
+            int c=ts->cell[j];
+            if(c<0 || c>=ts->cols*ts->rows) continue;
+            unsigned char *p=tm->owned_tiles+(size_t)c*4u;
+            uint32_t datum=ts->datum[j];
+            p[0]=(unsigned char)(datum&0xFFu);
+            p[1]=(unsigned char)((datum>>8)&0xFFu);
+            p[2]=(unsigned char)((datum>>16)&0xFFu);
+            p[3]=(unsigned char)((datum>>24)&0xFFu);
+          }
+        }
+      }
+    }
+    free(ts->data);
+    free(ts->cell);
+    free(ts->datum);
+  }
+  free(tm_state);
   if(used) *used=s.pos;
   return s.ok && s.pos<=len;
 }

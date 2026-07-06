@@ -15,8 +15,10 @@ typedef struct {
   uint32_t *argb_cache;                  /* compact ARGB source pixels for hot rotated draws */
   uint32_t *fast8_draw_cache;            /* RGB plus draw-alpha for repeated large fast8 draws */
   double fast8_draw_alpha_key;
+  double fast8_draw_pending_alpha_key;
   uint32_t fast8_draw_blend_key;
-  int fast8_draw_cache_valid, fast8_draw_cache_copy_255;
+  uint32_t fast8_draw_pending_blend_key;
+  int fast8_draw_cache_valid, fast8_draw_cache_copy_255, fast8_draw_pending_count;
 } GmlTpag;
 typedef struct {
   const uint8_t *src;
@@ -88,6 +90,7 @@ typedef struct {
   /* draw state */
   uint32_t  color;  double alpha; int halign, valign, font, alphablend, circle_precision;
   int       blendmode;   /* gpu_set_blendmode: 0=normal, 1=add (others fall back to normal). Reset per frame. */
+  int       fast_alpha_cull;  /* optional fast path: drop alpha contributions <= this 8-bit step */
   /* Palette and lookup-texture state declarations. */
   struct GmlShaderPal { int has; uint8_t L[3],M[3],D[3],S[3];
     int lut;                    /* palette-LUT shader: out = palette[(src.r, row)] */

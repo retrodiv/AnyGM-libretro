@@ -86,7 +86,7 @@ typedef struct { int live; uint32_t id; GmlVal *cell; int w, h; } GmlDSGrid;   /
 typedef struct { int id, used, visible, touched; double depth, x, y, hs, vs; char name[32]; } GmlRtLayer;
 /* GMS2 tile layer (room layer type 4): a grid of tileset cells. Games read it for tile-based collision
  * (tilemap_get + tilemap_get_cell_*_at_pixel). tiles points INTO the immutable room data (no copy). */
-typedef struct { int id, used, visible; double x, y, depth; int tileset, tw, th, cols, rows; const unsigned char *tiles; char name[32]; } GmlTileMap;
+typedef struct { int id, used, visible; double x, y, depth; int tileset, tw, th, cols, rows; const unsigned char *tiles, *base_tiles; unsigned char *owned_tiles; char name[32]; } GmlTileMap;
 typedef struct { int id, used, layer, type;         /* type: 7=tile, 1=background (layerelementtype_*) */
   int sprite; double x, y; int sx, sy, w, h;        /* sx/sy/w/h = source region (tiles) */
   double xs, ys, alpha; int visible; uint32_t blend;
@@ -199,6 +199,8 @@ typedef struct GmlVM {
   GmlTileMap *tilemaps; int n_tilemaps, cap_tilemaps, next_tilemap_id;  /* per-room GMS2 tile layers (collision) */
 } GmlVM;
 GmlTileMap *gml_tilemap_find(GmlVM *vm, int id);
+int gml_tilemap_set_cell(GmlTileMap *tm, int cx, int cy, uint32_t datum);
+int gml_room_layer_data_off(GmlVM *vm);
 void gml_struct_gc(GmlVM *vm);
 
 void gml_arr_mark_escaped(GmlVal v);   /* array stored beyond its scope: locals cleanup must not free it */

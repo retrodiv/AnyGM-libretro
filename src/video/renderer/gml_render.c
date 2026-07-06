@@ -511,6 +511,14 @@ static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, 
     if(copy_255) *copy_255=t->fast8_draw_cache_copy_255;
     return t->fast8_draw_cache;
   }
+  if(t->fast8_draw_pending_blend_key==blend && t->fast8_draw_pending_alpha_key==alpha){
+    t->fast8_draw_pending_count++;
+  } else {
+    t->fast8_draw_pending_blend_key=blend;
+    t->fast8_draw_pending_alpha_key=alpha;
+    t->fast8_draw_pending_count=1;
+  }
+  if(t->fast8_draw_pending_count<8) return NULL;
   uint32_t *cache=t->fast8_draw_cache;
   if(!cache){
     cache=malloc(n*sizeof(uint32_t));
