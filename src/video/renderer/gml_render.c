@@ -242,10 +242,74 @@ static inline int alpha_span_skip_run(const GmlTpag *t, int ix, int iy, int64_t 
   }
   return 0;
 }
+static inline int alpha_qspan_skip_run(const GmlTpag *t, const uint16_t *row_min, const uint16_t *row_max,
+                                       int ix, int iy, int64_t lx_fp, int64_t ly_fp,
+                                       int64_t dlx_fp, int64_t dly_fp, int maxrun){
+  if(!t || !row_min || !row_max || iy<0 || iy>=t->sh || maxrun<=0) return 0;
+  uint16_t qmn=row_min[iy];
+  if(qmn==UINT16_MAX){
+    int run=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+    return run<1 ? 1 : run;
+  }
+  int mn=(int)qmn, mx=(int)row_max[iy];
+  if(ix<mn){
+    int run=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+    if(dlx_fp>0){
+      int xr=fixed20_run_until_at_least(lx_fp,dlx_fp,mn,maxrun);
+      if(xr<run) run=xr;
+    }
+    return run<1 ? 1 : run;
+  }
+  if(ix>mx){
+    int run=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+    if(dlx_fp<0){
+      int xr=fixed20_run_until_at_most(lx_fp,dlx_fp,mx,maxrun);
+      if(xr<run) run=xr;
+    }
+    return run<1 ? 1 : run;
+  }
+  return 0;
+}
 static inline uint32_t blend_fast8_cached(uint32_t dst, uint32_t srb, uint32_t sg, uint32_t ia){
   uint32_t rb=((srb+(dst&0x00FF00FFu)*ia)>>8)&0x00FF00FFu;
   uint32_t g=((sg+(dst&0x0000FF00u)*ia)>>8)&0x0000FF00u;
   return 0xFF000000u|rb|g;
+}
+static inline void fill_u32_run(uint32_t *dp, int run, uint32_t src){
+  for(int k=0;k<run;k++) dp[k]=src;
+}
+#if defined(__GNUC__) || defined(__clang__)
+typedef uint64_t GmlU64Alias __attribute__((__may_alias__));
+#endif
+static inline void blend_fast8_run(uint32_t *dp, int run, uint32_t src, uint32_t af){
+  if(run<=0) return;
+  if(af>=256u){ fill_u32_run(dp,run,src); return; }
+  if(!af) return;
+  uint32_t ia=256u-af;
+  uint32_t srb=(src & 0x00FF00FFu)*af;
+  uint32_t sg=(src & 0x0000FF00u)*af;
+#if defined(__GNUC__) || defined(__clang__)
+  if(run>=4){
+    if(((uintptr_t)dp & 7u) != 0){
+      *dp=blend_fast8_cached(*dp,srb,sg,ia);
+      dp++;
+      run--;
+    }
+    GmlU64Alias *p=(GmlU64Alias*)dp;
+    int pairs=run/2;
+    uint64_t srb64=(uint64_t)srb | ((uint64_t)srb<<32);
+    uint64_t sg64=(uint64_t)sg | ((uint64_t)sg<<32);
+    for(int i=0;i<pairs;i++){
+      uint64_t dv=p[i];
+      uint64_t rb=((srb64+(dv&0x00FF00FF00FF00FFull)*ia)>>8)&0x00FF00FF00FF00FFull;
+      uint64_t g=((sg64+(dv&0x0000FF000000FF00ull)*ia)>>8)&0x0000FF000000FF00ull;
+      p[i]=0xFF000000FF000000ull|rb|g;
+    }
+    dp += pairs*2;
+    run -= pairs*2;
+  }
+#endif
+  for(int k=0;k<run;k++) dp[k]=blend_fast8_cached(dp[k],srb,sg,ia);
 }
 
 /* ---- atlas (TXTR) ---- */
@@ -311,6 +375,7 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
   if(!t || !a || !a->px || t->sw<=0 || t->sh<=0) return 0;
   if(!t->alpha_scanned){
     int minx=t->sw, miny=t->sh, maxx=-1, maxy=-1;
+    int maxa=0;
     int log_alpha=getenv("GML_LOG_TPAG_ALPHA")!=NULL;
     int real_tpag = rprof_tpag_id(r,t)>=0;
     if(real_tpag && !t->alpha_row_min && !t->alpha_row_max){
@@ -333,6 +398,7 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
         if(sx<0 || sx>=a->w) continue;
         const uint8_t *sp=row+(size_t)sx*4;
         if(!sp[3]) continue;
+        if(sp[3]>maxa) maxa=sp[3];
         if(log_alpha) nz++;
         if(xx<minx) minx=xx;
         if(xx>maxx) maxx=xx;
@@ -344,13 +410,13 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
         }
       }
     }
-    t->ax0=minx; t->ay0=miny; t->ax1=maxx; t->ay1=maxy;
+    t->ax0=minx; t->ay0=miny; t->ax1=maxx; t->ay1=maxy; t->alpha_max=maxa;
     t->alpha_scanned=1;
     if(log_alpha){
       int id=rprof_tpag_id(r,t);
       unsigned long area=(unsigned long)(t->sw>0?t->sw:0)*(unsigned long)(t->sh>0?t->sh:0);
-      fprintf(stderr,"[tpag-alpha] id=%d atlas=%d src=%d,%d %dx%d nz=%lu/%lu bbox=%d,%d-%d,%d\n",
-              id,t->atlas,t->sx,t->sy,t->sw,t->sh,nz,area,t->ax0,t->ay0,t->ax1,t->ay1);
+      fprintf(stderr,"[tpag-alpha] id=%d atlas=%d src=%d,%d %dx%d nz=%lu/%lu amax=%d bbox=%d,%d-%d,%d\n",
+              id,t->atlas,t->sx,t->sy,t->sw,t->sh,nz,area,t->alpha_max,t->ax0,t->ay0,t->ax1,t->ay1);
     }
   }
   if(t->ax1<t->ax0 || t->ay1<t->ay0) return 0;
@@ -383,6 +449,47 @@ static uint32_t *tpag_argb_cache(GmlRender *r, GmlTpag *t, GmlAtlas *a){
   }
   t->argb_cache=cache;
   return cache;
+}
+static int tpag_alpha_qrows(GmlRender *r, GmlTpag *t, GmlAtlas *a, int min_alpha,
+                            const uint16_t **row_min, const uint16_t **row_max){
+  if(row_min) *row_min=NULL;
+  if(row_max) *row_max=NULL;
+  if(!r || !t || !a || !a->px || min_alpha<=1 || min_alpha>255 || t->sw<=0 || t->sh<=0) return 0;
+  if(rprof_tpag_id(r,t)<0 || t->sw>UINT16_MAX-1) return 0;
+  if(!t->alpha_qrow_min || !t->alpha_qrow_max || !t->alpha_qrow_built){
+    size_t n=(size_t)256*(size_t)t->sh;
+    uint16_t *mn=malloc(n*sizeof(uint16_t));
+    uint16_t *mx=malloc(n*sizeof(uint16_t));
+    uint8_t *built=calloc(256,1);
+    if(!mn || !mx || !built){ free(mn); free(mx); free(built); return 0; }
+    t->alpha_qrow_min=mn;
+    t->alpha_qrow_max=mx;
+    t->alpha_qrow_built=built;
+  }
+  if(!t->alpha_qrow_built[min_alpha]){
+    uint16_t *mn=t->alpha_qrow_min+(size_t)min_alpha*(size_t)t->sh;
+    uint16_t *mx=t->alpha_qrow_max+(size_t)min_alpha*(size_t)t->sh;
+    for(int yy=0; yy<t->sh; yy++){ mn[yy]=UINT16_MAX; mx[yy]=0; }
+    for(int yy=0; yy<t->sh; yy++){
+      int sy=t->sy+yy;
+      if(sy<0 || sy>=a->h) continue;
+      const uint8_t *sp=a->px+((size_t)sy*a->w)*4;
+      for(int xx=0; xx<t->sw; xx++){
+        int sx=t->sx+xx;
+        if(sx<0 || sx>=a->w) continue;
+        int aa=sp[(size_t)sx*4+3];
+        if(aa>=min_alpha){
+          if(xx<(int)mn[yy]) mn[yy]=(uint16_t)xx;
+          if(xx>(int)mx[yy]) mx[yy]=(uint16_t)xx;
+        }
+      }
+    }
+    t->alpha_qrow_built[min_alpha]=1;
+  }
+  if(!t->alpha_qrow_min || !t->alpha_qrow_max) return 0;
+  if(row_min) *row_min=t->alpha_qrow_min+(size_t)min_alpha*(size_t)t->sh;
+  if(row_max) *row_max=t->alpha_qrow_max+(size_t)min_alpha*(size_t)t->sh;
+  return 1;
 }
 static void parse_txtr(GmlRender *r){
   const GmlChunk *c=gml_chunk(r->win,"TXTR"); if(!c) return;
@@ -696,11 +803,11 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
               double gy=y - cx*xs*sa + base_y*ys*ca;
               const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)fr*s->h:NULL;
               const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)fr*s->h:NULL;
-              blit_rgba_sprite(r,fr_rgba,s->w,s->h,gx,gy,xs,ys,rr,0,0,blend,alpha,1,rmin,rmax);
+              blit_rgba_sprite(r,fr_rgba,s->w,s->h,gx,gy,xs,ys,rr,0,0,blend,alpha,1,rmin,rmax,s->runtime_opaque);
             } else {
               const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)fr*s->h:NULL;
               const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)fr*s->h:NULL;
-              blit_rgba_sprite(r,fr_rgba,s->w,s->h,x+cx*xs,y+base_y*ys,xs,ys,0,0,0,blend,alpha,1,rmin,rmax);
+              blit_rgba_sprite(r,fr_rgba,s->w,s->h,x+cx*xs,y+base_y*ys,xs,ys,0,0,0,blend,alpha,1,rmin,rmax,s->runtime_opaque);
             }
           }
         } else if(s->frame){ int ti=s->frame[fr];

@@ -8,14 +8,17 @@
 typedef struct {
   int sx,sy,sw,sh, tx,ty, bw,bh, atlas;  /* texture page item */
   int alpha_scanned, ax0, ay0, ax1, ay1; /* nontransparent source bbox, cached after atlas decode */
+  int alpha_max;                          /* max source alpha in the texture-page item */
   int *alpha_row_min, *alpha_row_max;     /* per-source-row nontransparent span, optional */
+  uint16_t *alpha_qrow_min, *alpha_qrow_max; /* per-alpha-threshold row spans, built lazily */
+  uint8_t *alpha_qrow_built;
   uint32_t *argb_cache;                  /* compact ARGB source pixels for hot rotated draws */
 } GmlTpag;
 typedef struct { const char *name; int originx, originy, w, h, n_frames; int *frame;
                  int ml, mr, mt, mb;                /* mask margins: left,right,top,bottom */
                  const uint8_t *mask; int mask_rowb, mask_count;  /* SPRT collision mask: 1bpp */
                  int collision_kind, collision_tolerance;
-                 uint8_t *runtime_rgba; int runtime_owned, runtime_extra; char *owned_name;
+                 uint8_t *runtime_rgba; int runtime_owned, runtime_extra, runtime_opaque; char *owned_name;
                  int *runtime_row_min, *runtime_row_max;
                  char *runtime_source_path; int runtime_source_imgnum, runtime_source_removeback;
                  int base_valid, base_originx, base_originy, base_w, base_h, base_n_frames;
