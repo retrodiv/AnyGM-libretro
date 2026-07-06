@@ -172,10 +172,14 @@ static uint32_t be32(const uint8_t *d){ return (uint32_t)d[0]<<24|(uint32_t)d[1]
 #else
 #define GML_HOT_RENDER
 #endif
-static int floor_fixed20(int64_t v){
+static inline int floor_fixed20(int64_t v){
+#if defined(__GNUC__) || defined(__clang__)
+  return (int)(v>>RFP_SHIFT);
+#else
   return v>=0 ? (int)(v>>RFP_SHIFT) : -(int)((-v + RFP_ONE - 1) >> RFP_SHIFT);
+#endif
 }
-static int fixed20_run_to_change(int64_t fp, int64_t step, int cell, int maxrun){
+static inline int fixed20_run_to_change(int64_t fp, int64_t step, int cell, int maxrun){
   if(maxrun<=1 || step==0) return maxrun;
   int64_t n;
   if(step>0){
@@ -191,6 +195,11 @@ static int fixed20_run_to_change(int64_t fp, int64_t step, int cell, int maxrun)
   if(n<1) return 1;
   if(n>maxrun) return maxrun;
   return (int)n;
+}
+static inline uint32_t blend_fast8_cached(uint32_t dst, uint32_t srb, uint32_t sg, uint32_t ia){
+  uint32_t rb=((srb+(dst&0x00FF00FFu)*ia)>>8)&0x00FF00FFu;
+  uint32_t g=((sg+(dst&0x0000FF00u)*ia)>>8)&0x0000FF00u;
+  return 0xFF000000u|rb|g;
 }
 
 /* ---- atlas (TXTR) ---- */
@@ -289,6 +298,30 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
   if(x1) *x1=t->ax1;
   if(y1) *y1=t->ay1;
   return 1;
+}
+static uint32_t *tpag_argb_cache(GmlRender *r, GmlTpag *t, GmlAtlas *a){
+  if(!t || !a || !a->px || t->sw<=0 || t->sh<=0) return NULL;
+  if(t->argb_cache) return t->argb_cache;
+  if(!r || !r->tpag || r->n_tpag<=0) return NULL;
+  uintptr_t p=(uintptr_t)t, b=(uintptr_t)r->tpag, e=b+(uintptr_t)r->n_tpag*sizeof(GmlTpag);
+  if(p<b || p>=e) return NULL;
+  size_t n=(size_t)t->sw*(size_t)t->sh;
+  if(n==0 || n>16777216u) return NULL;
+  uint32_t *cache=malloc(n*sizeof(uint32_t));
+  if(!cache) return NULL;
+  for(int yy=0; yy<t->sh; yy++){
+    int sy=t->sy+yy;
+    uint32_t *cp=cache+(size_t)yy*t->sw;
+    if(sy<0 || sy>=a->h){ memset(cp,0,(size_t)t->sw*sizeof(uint32_t)); continue; }
+    for(int xx=0; xx<t->sw; xx++){
+      int sx=t->sx+xx;
+      if(sx<0 || sx>=a->w){ cp[xx]=0; continue; }
+      const uint8_t *sp=a->px+((size_t)sy*a->w+sx)*4;
+      cp[xx]=((uint32_t)sp[3]<<24)|((uint32_t)sp[0]<<16)|((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
+    }
+  }
+  t->argb_cache=cache;
+  return cache;
 }
 static void parse_txtr(GmlRender *r){
   const GmlChunk *c=gml_chunk(r->win,"TXTR"); if(!c) return;
