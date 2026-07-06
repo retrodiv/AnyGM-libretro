@@ -1901,6 +1901,114 @@ static void hotprof_add(const char *name, double ms){
 static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out){
   GmlRender *R=(GmlRender*)vm->render;
   if(!nm || !out) return 0;
+  if(nm[0]=='a'){
+    if(!strncmp(nm,"array_",6)){
+      if(!strcmp(nm,"array_length")||!strcmp(nm,"array_length_1d")){ *out=vreal(n>0?gml_val_array_length(a[0]):0); return 1; }
+      if(!strcmp(nm,"array_get")){ *out=n>1?gml_arr_get(a[0],(int)N(a,n,1)):vreal(0); return 1; }
+      if(!strcmp(nm,"array_set")){ if(n>2) gml_arr_set(a[0],(int)N(a,n,1),a[2]); *out=vreal(0); return 1; }
+      if(!strcmp(nm,"array_create")){ int sz=n>0?(int)N(a,n,0):0; GmlVal fill=n>1?a[1]:vreal(0); *out=gml_arr_new(sz,fill); return 1; }
+      if(!strcmp(nm,"array_push")){ for(int i=1;i<n;i++) gml_arr_push(a[0],a[i]); *out=vreal(0); return 1; }
+      if(!strcmp(nm,"array_pop")){ *out=n>0?gml_arr_pop(a[0]):vreal(0); return 1; }
+      if(!strcmp(nm,"array_resize")){ if(n>1) gml_arr_resize(a[0],(int)N(a,n,1)); *out=vreal(0); return 1; }
+      if(!strcmp(nm,"array_copy")){ if(n>4) gml_arr_copy(a[0],(int)N(a,n,1),a[2],(int)N(a,n,3),(int)N(a,n,4)); *out=vreal(0); return 1; }
+      if(!strcmp(nm,"array_height_2d")){ *out=vreal(n>0?gml_val_array_height_2d(a[0]):0); return 1; }
+      if(!strcmp(nm,"array_length_2d")){ *out=vreal(n>0?gml_val_array_length_2d(a[0],(int)N(a,n,1)):0); return 1; }
+      return 0;
+    }
+    if(!strcmp(nm,"abs")){ *out=vreal(fabs(N(a,n,0))); return 1; }
+    if(!strcmp(nm,"arctan")){ *out=vreal(atan(N(a,n,0))); return 1; }
+    if(!strcmp(nm,"arcsin")){ *out=vreal(asin(N(a,n,0))); return 1; }
+    if(!strcmp(nm,"arccos")){ *out=vreal(acos(N(a,n,0))); return 1; }
+    if(!strcmp(nm,"arctan2")){ *out=vreal(atan2(N(a,n,0),N(a,n,1))); return 1; }
+  }
+  if(nm[0]=='b' && !strcmp(nm,"bool")){
+    if(n>=1 && a[0].t==V_STR && a[0].s) *out=vreal(!strcmp(a[0].s,"true")||!strcmp(a[0].s,"1"));
+    else *out=vreal(N(a,n,0)!=0);
+    return 1;
+  }
+  if(nm[0]=='c'){
+    if(!strcmp(nm,"ceil")){ *out=vreal(ceil(N(a,n,0))); return 1; }
+    if(!strcmp(nm,"cos")){ *out=vreal(cos(N(a,n,0))); return 1; }
+    if(!strcmp(nm,"clamp")){ double x=N(a,n,0), lo=N(a,n,1), hi=N(a,n,2); if(x<lo)x=lo; if(x>hi)x=hi; *out=vreal(x); return 1; }
+    if(!strcmp(nm,"collision_point")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; GmlInstance *o=collision_shape(vm,0,p,(int)N(a,n,2),(int)N(a,n,4)); *out=vreal(o?(double)o->id:-4); return 1; }
+    if(!strcmp(nm,"collision_rectangle")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)}; GmlInstance *o=collision_shape(vm,1,p,(int)N(a,n,4),(int)N(a,n,6)); *out=vreal(o?(double)o->id:-4); return 1; }
+    if(!strcmp(nm,"collision_circle")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)}; GmlInstance *o=collision_shape(vm,2,p,(int)N(a,n,3),(int)N(a,n,5)); *out=vreal(o?(double)o->id:-4); return 1; }
+  }
+  if(nm[0]=='d' && strncmp(nm,"draw_",5)){
+    if(!strcmp(nm,"dsin")){ *out=vreal(sin(N(a,n,0)*M_PI/180.0)); return 1; }
+    if(!strcmp(nm,"dcos")){ *out=vreal(cos(N(a,n,0)*M_PI/180.0)); return 1; }
+    if(!strcmp(nm,"dtan")){ *out=vreal(tan(N(a,n,0)*M_PI/180.0)); return 1; }
+    if(!strcmp(nm,"darcsin")){ *out=vreal(asin(N(a,n,0))*180.0/M_PI); return 1; }
+    if(!strcmp(nm,"darccos")){ *out=vreal(acos(N(a,n,0))*180.0/M_PI); return 1; }
+    if(!strcmp(nm,"darctan")){ *out=vreal(atan(N(a,n,0))*180.0/M_PI); return 1; }
+    if(!strcmp(nm,"darctan2")){ *out=vreal(atan2(N(a,n,0),N(a,n,1))*180.0/M_PI); return 1; }
+    if(!strcmp(nm,"degtorad")){ *out=vreal(N(a,n,0)*M_PI/180.0); return 1; }
+    if(!strcmp(nm,"distance_to_point")){ GmlInstance*s=vm->cur_self; *out=s?vreal(hypot(N(a,n,0)-s->x,N(a,n,1)-s->y)):vreal(0); return 1; }
+    if(!strcmp(nm,"distance_to_object")){ GmlInstance*s=vm->cur_self; if(!s){ *out=vreal(0); return 1; }
+      int obj=(int)N(a,n,0); double best=1e18;
+      for(int i=0;i<vm->inst_count;i++){ GmlInstance*o=&vm->inst[i];
+        if(o==s || !target_matches_instance(vm,s,o,obj)) continue;
+        double d=hypot(o->x-s->x,o->y-s->y); if(d<best) best=d; }
+      *out=vreal(best>1e17?-1:best); return 1; }
+  }
+  if(nm[0]=='f'){
+    if(!strcmp(nm,"floor")){ *out=vreal(floor(N(a,n,0))); return 1; }
+    if(!strcmp(nm,"frac")){ double v=N(a,n,0); *out=vreal(v-floor(v)); return 1; }
+  }
+  if(nm[0]=='i'){
+    if(!strcmp(nm,"instance_number")){ *out=vreal(gml_instance_number(vm,(int)N(a,n,0))); return 1; }
+    if(!strcmp(nm,"instance_exists")){ *out=vreal(gml_instance_number(vm,(int)N(a,n,0))>0); return 1; }
+    if(!strcmp(nm,"instance_find")){
+      int obj=(int)N(a,n,0), nth=(int)N(a,n,1), seen=0;
+      if(nth<0){ *out=vreal(-4); return 1; }
+      for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
+        if(!target_matches_instance(vm,vm->cur_self,o,obj)) continue;
+        if(seen++==nth){ *out=vreal(o->id); return 1; }
+      }
+      *out=vreal(-4); return 1;
+    }
+    if(!strcmp(nm,"instance_position")){ GmlInstance *o=instance_at_point(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2)); *out=vreal(o?(double)o->id:-4); return 1; }
+    if(!strcmp(nm,"instance_place")){ GmlInstance *o=collision_instance_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),0); *out=vreal(o?(double)o->id:-4); return 1; }
+    if(!strcmp(nm,"instance_place_list")){
+      GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,3));
+      int r=collision_instance_list_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),l,N(a,n,4)>=0.5);
+      if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cnm=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+        const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
+        if(cnm) fprintf(stderr,"[col] %s instance_place_list(%.0f,%.0f,%s)=%d\n",cnm,N(a,n,0),N(a,n,1),tn,r); }
+      *out=vreal(r); return 1;
+    }
+  }
+  if(nm[0]=='l'){
+    if(!strcmp(nm,"lerp")){ double a0=N(a,n,0), a1=N(a,n,1), t=N(a,n,2); *out=vreal(a0+(a1-a0)*t); return 1; }
+    if(!strcmp(nm,"lengthdir_x")){ *out=vreal(N(a,n,0)*cos(N(a,n,1)*M_PI/180.0)); return 1; }
+    if(!strcmp(nm,"lengthdir_y")){ *out=vreal(-N(a,n,0)*sin(N(a,n,1)*M_PI/180.0)); return 1; }
+  }
+  if(nm[0]=='m'){
+    if(!strcmp(nm,"min")){ if(n<=0){ *out=vreal(0); return 1; } double v=N(a,n,0); for(int i=1;i<n;i++){ double x=N(a,n,i); if(x<v) v=x; } *out=vreal(v); return 1; }
+    if(!strcmp(nm,"max")){ if(n<=0){ *out=vreal(0); return 1; } double v=N(a,n,0); for(int i=1;i<n;i++){ double x=N(a,n,i); if(x>v) v=x; } *out=vreal(v); return 1; }
+    if(!strcmp(nm,"mean")){ double s=0; for(int i=0;i<n;i++) s+=N(a,n,i); *out=vreal(n? s/n : 0); return 1; }
+  }
+  if(nm[0]=='p'){
+    if(!strcmp(nm,"place_meeting")){ int r=collision_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),0);
+      if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+        const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
+        if(cn) fprintf(stderr,"[col] %s place_meeting(%.0f,%.0f,%s)=%d\n",cn,N(a,n,0),N(a,n,1),tn,r); }
+      *out=vreal(r); return 1; }
+    if(!strcmp(nm,"place_free")){ int r=!collision_at(vm,N(a,n,0),N(a,n,1),0,1);
+      if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+        if(cn) fprintf(stderr,"[col] %s place_free(%.0f,%.0f)=%d\n",cn,N(a,n,0),N(a,n,1),r); }
+      *out=vreal(r); return 1; }
+    if(!strcmp(nm,"place_empty")){ *out=vreal(!collision_at(vm,N(a,n,0),N(a,n,1),IT_ALL,0)); return 1; }
+    if(!strcmp(nm,"position_meeting")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; *out=vreal(collision_shape(vm,0,p,(int)N(a,n,2),0)!=NULL); return 1; }
+    if(!strcmp(nm,"point_distance")){ *out=vreal(hypot(N(a,n,2)-N(a,n,0),N(a,n,3)-N(a,n,1))); return 1; }
+    if(!strcmp(nm,"point_direction")){ double dx=N(a,n,2)-N(a,n,0), dy=N(a,n,3)-N(a,n,1);
+      double r=atan2(-dy,dx)*180.0/M_PI; if(r<0)r+=360; *out=vreal(r); return 1; }
+    if(!strcmp(nm,"power")){ *out=vreal(pow(N(a,n,0),N(a,n,1))); return 1; }
+  }
+  if(nm[0]=='r'){
+    if(!strcmp(nm,"real")){ *out=vreal(N(a,n,0)); return 1; }
+    if(!strcmp(nm,"radtodeg")){ *out=vreal(N(a,n,0)*180.0/M_PI); return 1; }
+  }
   if(nm[0]=='r' && !strcmp(nm,"round")){ *out=vreal(gm_round(N(a,n,0))); return 1; }
   if(nm[0]=='m' && (!strcmp(nm,"make_color_hsv")||!strcmp(nm,"make_colour_hsv"))){
     double h=fmod(N(a,n,0),255.0); if(h<0) h+=255.0; double s=N(a,n,1)/255.0, v=N(a,n,2)/255.0;
@@ -1925,6 +2033,10 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     }
     if(!strcmp(nm,"string_width")){ *out=vreal(R?gml_text_width(R,S(a,n,0)):(int)strlen(S(a,n,0))*8); return 1; }
     if(!strcmp(nm,"string_height")){ *out=vreal(R?gml_text_height(R,S(a,n,0)):8); return 1; }
+    if(!strcmp(nm,"sign")){ *out=vreal(gm_sign(N(a,n,0))); return 1; }
+    if(!strcmp(nm,"sqrt")){ *out=vreal(sqrt(N(a,n,0))); return 1; }
+    if(!strcmp(nm,"sqr")){ double x=N(a,n,0); *out=vreal(x*x); return 1; }
+    if(!strcmp(nm,"sin")){ *out=vreal(sin(N(a,n,0))); return 1; }
   }
   if(nm[0]=='g'){
     if(!strcmp(nm,"gpu_set_blendenable")){ if(R) R->alphablend=N(a,n,0)>=0.5; *out=vreal(0); return 1; }
