@@ -80,7 +80,7 @@ typedef struct { uint32_t *px; int w, h, live;
 } GmlSurface;      /* XRGB8888 runtime surface */
 
 #define GML_MAX_FONTS 48
-#define GML_MAX_SURFACES 16
+#define GML_MAX_SURFACES 64   /* allow many concurrent surface allocations */
 #define GML_SURFACE_STACK 8
 typedef struct {
   GmlWin   *win;
