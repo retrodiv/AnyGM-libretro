@@ -251,6 +251,13 @@ int gml_win_load(GmlWin *w, const char *path){
 }
 
 void gml_win_free(GmlWin *w){
+  if(w->code){
+    for(int i=0;i<w->n_code;i++){
+      free(w->code[i].insn);
+      free(w->code[i].insn_pc);
+      free(w->code[i].branch_index);
+    }
+  }
   free(w->strs); free(w->str_charoff); free(w->code);
   free(w->str_hix);
   free(w->code_hix);

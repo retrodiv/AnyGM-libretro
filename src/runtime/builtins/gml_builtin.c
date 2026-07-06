@@ -3844,6 +3844,7 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"get_string_async")) return vreal(0);
   if(!strcmp(nm,"parameter_count")) return vreal(0);
   if(!strcmp(nm,"parameter_string")) return vstr("");
+  if(!strcmp(nm,"exception_unhandled_handler")) return vreal(0);
   if(!strcmp(nm,"switch_get_operation_mode")) return vreal(0);
   /* Gameframe is a native window-frame extension. A libretro core has no host HWND to style, so
    * report the extension unavailable and make its raw Win32 calls explicit no-ops. The GML wrapper

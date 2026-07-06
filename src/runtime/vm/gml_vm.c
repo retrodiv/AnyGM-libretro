@@ -736,6 +736,75 @@ int gml_code_index_find(GmlWin *w, const char *substr){
   return -1;
 }
 
+static int code_cache_branch_op(uint8_t kind){
+  return kind==OP_B || kind==OP_BT || kind==OP_BF || kind==OP_PUSHENV || kind==OP_POPENV;
+}
+static int code_cache_find_pc(const GmlCode *c, uint32_t pc){
+  int lo=0, hi=(int)c->n_insn-1;
+  while(lo<=hi){
+    int mid=lo+((hi-lo)>>1);
+    uint32_t m=c->insn_pc[mid];
+    if(m==pc) return mid;
+    if(m<pc) lo=mid+1; else hi=mid-1;
+  }
+  return -1;
+}
+static void code_cache_free(GmlCode *c){
+  if(!c) return;
+  free(c->insn); free(c->insn_pc); free(c->branch_index);
+  c->insn=NULL; c->insn_pc=NULL; c->branch_index=NULL;
+  c->n_insn=0;
+}
+static int code_cache_ensure(GmlWin *w, int ci){
+  if(!w || ci<0 || ci>=w->n_code) return 0;
+  GmlCode *c=&w->code[ci];
+  if(c->cache_bad) return 0;
+  if(c->insn && c->insn_pc && c->branch_index) return 1;
+  if(c->length==0){ c->n_insn=0; return 1; }
+  if(c->start>w->size || c->length>w->size-c->start){ c->cache_bad=1; return 0; }
+  uint32_t max=c->length/4u + 1u;
+  GmlInsn *ins=calloc(max?max:1,sizeof(*ins));
+  uint32_t *pcs=calloc(max?max:1,sizeof(*pcs));
+  int32_t *br=calloc(max?max:1,sizeof(*br));
+  if(!ins || !pcs || !br){ free(ins); free(pcs); free(br); return 0; }
+  for(uint32_t i=0;i<max;i++) br[i]=-1;
+  uint32_t pc=c->start, end=c->start+c->length, n=0;
+  while(pc<end){
+    if(n>=max || pc>w->size || 4u>w->size-pc){ c->cache_bad=1; goto fail; }
+    GmlInsn in; int sz=gml_decode_bc(w->data,pc,w->bytecode,&in);
+    if(!sz || (uint32_t)sz>end-pc){ c->cache_bad=1; goto fail; }
+    in.funcval_ci=-1;
+    if((in.kind==OP_CALL || in.kind==OP_PUSH || in.kind==OP_POP) && in.refaddr)
+      in.refname=gml_ref_name(w,in.refaddr);
+    if(in.kind==OP_PUSH && in.type1==DT_INT32 && w->bytecode>=17){
+      const char *fn=gml_ref_name(w,pc+4);
+      if(fn && fn[0]!='?' && !strncmp(fn,"gml_",4)){
+        int fci=gml_code_index_by_name(w,fn);
+        if(fci>=0) in.funcval_ci=fci;
+      }
+    }
+    ins[n]=in; pcs[n]=pc; n++;
+    pc+=(uint32_t)sz;
+  }
+  c->insn=ins; c->insn_pc=pcs; c->branch_index=br; c->n_insn=n;
+  for(uint32_t i=0;i<n;i++){
+    if(!code_cache_branch_op(ins[i].kind)) continue;
+    int64_t target64=(int64_t)pcs[i] + (int64_t)ins[i].jump*4;
+    if(target64==(int64_t)end){ br[i]=(int32_t)n; continue; }
+    if(target64<(int64_t)c->start || target64>(int64_t)end){ c->cache_bad=1; goto fail_live; }
+    int ti=code_cache_find_pc(c,(uint32_t)target64);
+    if(ti<0){ c->cache_bad=1; goto fail_live; }
+    br[i]=ti;
+  }
+  return 1;
+fail_live:
+  code_cache_free(c);
+  return 0;
+fail:
+  free(ins); free(pcs); free(br);
+  return 0;
+}
+
 /* ---------------- builtins ---------------- */
 static int g_unknown_logged=0;
 extern GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *a, int n);
@@ -806,13 +875,19 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
       for(int _i=0;_i<str_gc_n;_i++) if(str_gc[_i]==_p){ str_gc[_i]=NULL; _f=1; } \
       if(!_f){ char *_c=strdup((vv).s); if(_c) (vv)=vstr_owned(_c); } } }while(0)
   int trace = getenv("GML_TRACE") && strstr(w->code[ci].name, getenv("GML_TRACE"));
+  int use_cache = !trace && code_cache_ensure(w,ci);
+  GmlInsn *cached_ins = use_cache ? w->code[ci].insn : NULL;
+  uint32_t *cached_pc = use_cache ? w->code[ci].insn_pc : NULL;
+  int32_t *cached_branch = use_cache ? w->code[ci].branch_index : NULL;
+  uint32_t cached_n = use_cache ? w->code[ci].n_insn : 0;
   /* Watchdog: a single code run should never execute more than a few million instructions. If one
    * blows past a large budget it is a runaway loop (e.g. a control-flow condition corrupted by an
    * unimplemented opcode) — abort the run instead of freezing the whole frontend. Real per-event
    * code, even heavy tile/particle loops, stays orders of magnitude under this. */
   uint64_t watchdog=0;
   const uint64_t WATCHDOG_MAX=64000000ull;
-  while(pc<end){
+  uint32_t ip=0;
+  while(use_cache ? ip<cached_n : pc<end){
     if(++watchdog>WATCHDOG_MAX){
       static int warned=0;
       if(warned<4){ warned++; extern long g_vm_frame;
@@ -820,10 +895,17 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           g_vm_frame, w->code[ci].name, pc-start); }
       break;
     }
-    GmlInsn in; int sz=gml_decode_bc(d,pc,w->bytecode,&in); if(!sz) break;
-    uint32_t nextpc=pc+sz;
+    GmlInsn in; uint32_t nextpc; uint32_t nextip=ip+1;
+    if(use_cache){
+      in=cached_ins[ip];
+      pc=cached_pc[ip];
+      nextpc=pc+in.size;
+    } else {
+      int sz=gml_decode_bc(d,pc,w->bytecode,&in); if(!sz) break;
+      nextpc=pc+(uint32_t)sz;
+    }
     if(trace){
-      const char *rn = (in.kind==OP_CALL || in.kind==OP_PUSH || in.kind==OP_POP) ? gml_ref_name(w,in.refaddr) : "";
+      const char *rn = (in.kind==OP_CALL || in.kind==OP_PUSH || in.kind==OP_POP) ? (in.refname?in.refname:gml_ref_name(w,in.refaddr)) : "";
       fprintf(stderr,"  %4u: %-7s t1=%x rt=%02x inst=%d  sp=%d %s\n",pc-start,gml_op_mnemonic(in.kind),in.type1,in.reftype,in.inst,sp,rn); }
     switch(in.kind){
       case OP_PUSH:{
@@ -834,15 +916,20 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           /* GMS2.3 function-value: a `push.i32` whose reference word (pc+4) resolves via the FUNC
            * occurrence chain to a script code-entry is pushing that function as a value (later called
            * by OP_CALLV or bound by method()). Tag it so OP_CALLV can dispatch the code entry. */
-          if(w->bytecode>=17){ const char *fn=gml_ref_name(w,pc+4);
-            if(fn && fn[0]!='?' && !strncmp(fn,"gml_",4)){ int fci=gml_code_index_by_name(w,fn);
-              if(fci>=0){ v=vreal((double)(GML_FUNCVAL_TAG|fci));
-                if(getenv("GML_DBG_FUNCVAL")) fprintf(stderr,"[funcval] %s pc=%u i32=%d -> %s (ci=%d)\n",
-                  w->code[ci].name,pc-start,in.ival,fn,fci); } } } }
+          if(w->bytecode>=17){
+            int fci=use_cache ? in.funcval_ci : -1;
+            const char *fn=NULL;
+            if(fci<0){
+              fn=gml_ref_name(w,pc+4);
+              if(fn && fn[0]!='?' && !strncmp(fn,"gml_",4)) fci=gml_code_index_by_name(w,fn);
+            }
+            if(fci>=0){ v=vreal((double)(GML_FUNCVAL_TAG|fci));
+              if(getenv("GML_DBG_FUNCVAL")) fprintf(stderr,"[funcval] %s pc=%u i32=%d -> %s (ci=%d)\n",
+                w->code[ci].name,pc-start,in.ival,fn?fn:(w->code[fci].name?w->code[fci].name:"?"),fci); } } }
         else if(in.type1==DT_INT64) v=vreal((double)in.lval);
         else if(in.type1==DT_STRING) v=vstr(gml_str_by_index(w,in.strindex));
         else if(in.type1==DT_VAR){
-          const char *nm=gml_ref_name(w,in.refaddr);
+          const char *nm=in.refname?in.refname:gml_ref_name(w,in.refaddr);
           if(in.reftype==0x00){ /* Array */
             int idx=(int)(sp>0?asnum(stk[--sp]):0);
             GmlVal itv=sp>0?stk[--sp]:vreal(0);
@@ -896,7 +983,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         break;
       }
       case OP_POP:{
-        const char *nm=gml_ref_name(w,in.refaddr);
+        const char *nm=in.refname?in.refname:gml_ref_name(w,in.refaddr);
         if(in.reftype==0x00){ /* Direct array stores consume value/scope/index; numeric compound stores
            * consume scope/index/value. Select the order from Type1. */
           int idx; GmlVal itv, val, iv=vreal(0); GmlInstance *t=NULL;
@@ -1008,11 +1095,20 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             case CMP_NEQ:res=a!=b;break;case CMP_GTE:res=a>=b;break;case CMP_GT:res=a>b;break;} }
         stk[sp++]=vreal(res); break;
       }
-      case OP_B:  nextpc = pc + (uint32_t)(in.jump*4); break;
-      case OP_BT: { GmlVal v=sp>0?stk[--sp]:vreal(0); if(astrue(v)) nextpc=pc+(uint32_t)(in.jump*4); break; }
-      case OP_BF: { GmlVal v=sp>0?stk[--sp]:vreal(0); if(!astrue(v)) nextpc=pc+(uint32_t)(in.jump*4); break; }
+      case OP_B:
+        nextpc = pc + (uint32_t)(in.jump*4);
+        if(use_cache) nextip=(uint32_t)cached_branch[ip];
+        break;
+      case OP_BT: {
+        GmlVal v=sp>0?stk[--sp]:vreal(0);
+        if(astrue(v)){ nextpc=pc+(uint32_t)(in.jump*4); if(use_cache) nextip=(uint32_t)cached_branch[ip]; }
+        break; }
+      case OP_BF: {
+        GmlVal v=sp>0?stk[--sp]:vreal(0);
+        if(!astrue(v)){ nextpc=pc+(uint32_t)(in.jump*4); if(use_cache) nextip=(uint32_t)cached_branch[ip]; }
+        break; }
       case OP_CALL:{
-        const char *nm=gml_ref_name(w,in.refaddr); int na=in.argc;
+        const char *nm=in.refname?in.refname:gml_ref_name(w,in.refaddr); int na=in.argc;
         GmlVal a[64]; if(na>64) na=64;
         /* GM pushes args in reverse, so arg0 is on top: pop forward -> a[0]=arg0 */
         for(int i=0;i<na;i++) a[i] = sp>0? stk[--sp] : vreal(0);
@@ -1064,8 +1160,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         if(sp<STK) stk[sp++]=rv;
         break;
       }
-      case OP_RET: ret = sp>0? stk[--sp]:vreal(0); pc=end; continue;
-      case OP_EXIT: ret=vreal(0); pc=end; continue;
+      case OP_RET: ret = sp>0? stk[--sp]:vreal(0); if(use_cache) ip=cached_n; else pc=end; continue;
+      case OP_EXIT: ret=vreal(0); if(use_cache) ip=cached_n; else pc=end; continue;
       case OP_PUSHENV:{ /* with(target): pop the target, iterate matching instances */
         GmlVal tv = sp>0? stk[--sp] : vreal(0);
         /* For the StackTop environment form, consume the -9 sentinel and the target below it. */
@@ -1081,7 +1177,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         else if(T==IT_ALL){ for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active&&!vm->inst[i].marked) WADD(&vm->inst[i]); }
         else if(T>=0){ for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active&&!vm->inst[i].marked&&gml_object_is(vm,vm->inst[i].obj,T)) WADD(&vm->inst[i]); }
         #undef WADD
-        if(nn==0 || withsp>=32){ free(list); nextpc = pc + (uint32_t)(in.jump*4); }
+        if(nn==0 || withsp>=32){ free(list); nextpc = pc + (uint32_t)(in.jump*4); if(use_cache) nextip=(uint32_t)cached_branch[ip]; }
         else { withstk[withsp].list=list; withstk[withsp].n=nn; withstk[withsp].idx=0;
           withstk[withsp].ss=vm->cur_self; withstk[withsp].so=vm->cur_other; withsp++;
           vm->cur_other=vm->cur_self; vm->cur_self=list[0]; }
@@ -1090,7 +1186,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         if(withsp<=0) break;
         int wi=withsp-1;
         if(++withstk[wi].idx < withstk[wi].n){ vm->cur_self=withstk[wi].list[withstk[wi].idx];
-          nextpc = pc + (uint32_t)(in.jump*4); }
+          nextpc = pc + (uint32_t)(in.jump*4); if(use_cache) nextip=(uint32_t)cached_branch[ip]; }
         else { vm->cur_self=withstk[wi].ss; vm->cur_other=withstk[wi].so; free(withstk[wi].list); withsp--; }
         break; }
       case OP_BREAK:
@@ -1135,7 +1231,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         break;
       default: break;
     }
-    pc=nextpc;
+    if(use_cache) ip=nextip;
+    else pc=nextpc;
   }
   while(withsp>0){ withsp--; free(withstk[withsp].list); }  /* free any open with-frames */
   /* string GC: temporaries (builtin results / concatenations) are owned heap strings. Free every one

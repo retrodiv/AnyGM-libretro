@@ -40,10 +40,22 @@ typedef struct {
   uint32_t refaddr;    /* absolute file addr of the reference word (var/func site) */
   uint8_t  reftype;    /* VariableType: Array=0x00, StackTop=0x80, Normal=0xA0 */
   uint8_t  size;       /* total bytes consumed */
+  const char *refname; /* VM cache: gml_ref_name(refaddr), when applicable */
+  int32_t  funcval_ci; /* VM cache: GMS2.3 push.i32 function-value code index, -1 if none */
 } GmlInsn;
 
 typedef struct { char name[8]; uint32_t off, size; } GmlChunk;
-typedef struct { const char *name; uint32_t start, length; } GmlCode;
+typedef struct {
+  const char *name;
+  uint32_t start, length;
+  /* Lazy decoded-bytecode cache. The VM keeps byte offsets for trace/refaddr semantics and
+   * branch_index maps branch targets to decoded instruction indices, with n_insn meaning exit. */
+  GmlInsn *insn;
+  uint32_t *insn_pc;
+  int32_t *branch_index;
+  uint32_t n_insn;
+  uint8_t cache_bad;
+} GmlCode;
 
 typedef struct {
   const char *name; uint32_t width, height, speed;
