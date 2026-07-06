@@ -39,6 +39,14 @@ static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o]|(uint32_t)d[o+1]<<8|(uint32_t)d[o+2]<<16|(uint32_t)d[o+3]<<24;
 }
 static double N(GmlVal *a, int n, int i){ return (i<n)? (a[i].t==V_REAL?a[i].d:(a[i].s?atof(a[i].s):0)) : 0; }
+static void builtin_set_blendmode_ext(GmlRender *R, int src, int dst){
+  if(!R) return;
+  /* The software renderer only models the simple normal/add/subtract states.
+   * A factor-based blend call still replaces that state in GameMaker, so clear
+   * any previous simple mode instead of letting bm_subtract/bm_add leak. */
+  if(getenv("GML_DBG_BM")) fprintf(stderr,"[bm] gpu_set_blendmode_ext(%d,%d) -> normal\n",src,dst);
+  R->blendmode=0;
+}
 static double builtin_game_speed(GmlVM *vm){
   GmlVal *p=vm?gml_varmap_get(&vm->globals,"__game_speed_fps"):NULL;
   double v=p?N(p,1,0):60.0;
@@ -2041,6 +2049,8 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
   if(nm[0]=='g'){
     if(!strcmp(nm,"gpu_set_blendenable")){ if(R) R->alphablend=N(a,n,0)>=0.5; *out=vreal(0); return 1; }
     if(!strcmp(nm,"gpu_set_blendmode")){ int bm=(int)N(a,n,0); if(R) R->blendmode=(bm==1)?1:(bm==3)?2:0; *out=vreal(0); return 1; }
+    if(!strcmp(nm,"gpu_set_blendmode_ext")){ builtin_set_blendmode_ext(R,(int)N(a,n,0),(int)N(a,n,1)); *out=vreal(0); return 1; }
+    if(!strcmp(nm,"gpu_set_blendmode_ext_sepalpha")){ builtin_set_blendmode_ext(R,(int)N(a,n,0),(int)N(a,n,1)); *out=vreal(0); return 1; }
   }
   if(nm[0]=='p' && (!strcmp(nm,"part_system_drawit")||!strcmp(nm,"part_system_drawit_ext"))){
     if(R) gml_part_system_drawit(R,(int)N(a,n,0)); *out=vreal(0); return 1;
@@ -2070,6 +2080,7 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_set_color")||!strcmp(nm,"draw_set_colour")){ if(R) R->color=(uint32_t)N(a,n,0); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_set_alpha")){ if(R){ R->alpha=N(a,n,0); if(R->alpha<0) R->alpha=0; if(R->alpha>1) R->alpha=1; } *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_set_blend_mode_ext")){ builtin_set_blendmode_ext(R,(int)N(a,n,0),(int)N(a,n,1)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_set_font")){ if(R){ R->font=(int)N(a,n,0); if((int)N(a,n,0)<0 && getenv("GML_LOG_FONT")) fprintf(stderr,"[font] draw_set_font(%d) — default-font request\n",(int)N(a,n,0)); } *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_set_halign")){ if(R) R->halign=(int)N(a,n,0); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_set_valign")){ if(R) R->valign=(int)N(a,n,0); *out=vreal(0); return 1; }
@@ -2178,7 +2189,8 @@ enum {
   BID_SURFACE_SET_TARGET,
   BID_SURFACE_RESET_TARGET,
   BID_STRING_WIDTH,
-  BID_STRING_HEIGHT
+  BID_STRING_HEIGHT,
+  BID_GPU_SET_BLENDMODE_EXT
 };
 
 int gml_builtin_fast_id(const char *nm){
@@ -2239,6 +2251,7 @@ int gml_builtin_fast_id(const char *nm){
     case 'g':
       if(!strcmp(nm,"gpu_set_blendenable")) return BID_GPU_SET_BLENDENABLE;
       if(!strcmp(nm,"gpu_set_blendmode")) return BID_GPU_SET_BLENDMODE;
+      if(!strcmp(nm,"gpu_set_blendmode_ext")) return BID_GPU_SET_BLENDMODE_EXT;
       /* Route stateful input through generic dispatch to preserve keyboard/gamepad edges. */
       if(!strncmp(nm,"gamepad_",8)) return -1;
       return -1;
@@ -2393,6 +2406,9 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
       return vreal(0);
     case BID_GPU_SET_BLENDMODE:
       if(R){ int bm=(int)N(a,n,0); R->blendmode=(bm==1)?1:(bm==3)?2:0; }
+      return vreal(0);
+    case BID_GPU_SET_BLENDMODE_EXT:
+      builtin_set_blendmode_ext(R,(int)N(a,n,0),(int)N(a,n,1));
       return vreal(0);
     case BID_SHADER_SET:
       if(R) R->active_shader=(int)N(a,n,0);
@@ -4897,8 +4913,12 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(getenv("GML_DBG_BM")) fprintf(stderr,"[bm] gpu_set_blendmode(%d)\n",bm);
     if(R2) R2->blendmode = (bm==1)?1 : (bm==3)?2 : 0; return vreal(0); }
   if(!strcmp(nm,"gpu_get_blendmode")){ GmlRender *R2=(GmlRender*)vm->render; return vreal(R2?R2->blendmode:0); }
-  if(!strcmp(nm,"gpu_set_blendmode_ext")||   /* SW renderer: detailed src/dst factors not modelled */
-     !strcmp(nm,"gpu_set_sprite_cull")||!strcmp(nm,"gpu_set_alphatestenable")||
+  if(!strcmp(nm,"gpu_set_blendmode_ext")||!strcmp(nm,"gpu_set_blendmode_ext_sepalpha")||
+     !strcmp(nm,"draw_set_blend_mode_ext")){
+    builtin_set_blendmode_ext((GmlRender*)vm->render,(int)N(a,n,0),(int)N(a,n,1));
+    return vreal(0);
+  }
+  if(!strcmp(nm,"gpu_set_sprite_cull")||!strcmp(nm,"gpu_set_alphatestenable")||
      !strcmp(nm,"gpu_set_tex_filter")||!strcmp(nm,"gpu_set_colorwriteenable")||
      !strcmp(nm,"display_reset")||!strcmp(nm,"display_set_gui_maximize")||
      !strcmp(nm,"window_set_cursor")||!strcmp(nm,"keyboard_set_map")||!strcmp(nm,"keyboard_unset_map")||
