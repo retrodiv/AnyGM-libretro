@@ -16,6 +16,7 @@
 #include <math.h>
 #include <ctype.h>
 #include <time.h>
+#include <limits.h>
 #if defined(__SSE2__)
 #include <emmintrin.h>
 #endif
@@ -297,6 +298,26 @@ static inline uint32_t blend_fast8_cached(uint32_t dst, uint32_t srb, uint32_t s
   return 0xFF000000u|rb|g;
 }
 static inline void fill_u32_run(uint32_t *dp, int run, uint32_t src){
+  if(run<=0) return;
+#if defined(__SSE2__)
+  if(run>=4){
+    __m128i v=_mm_set1_epi32((int)src);
+    while(run>=4){
+      _mm_storeu_si128((__m128i*)dp,v);
+      dp+=4;
+      run-=4;
+    }
+  }
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if(run>=4){
+    uint32x4_t v=vdupq_n_u32(src);
+    while(run>=4){
+      vst1q_u32(dp,v);
+      dp+=4;
+      run-=4;
+    }
+  }
+#endif
   for(int k=0;k<run;k++) dp[k]=src;
 }
 #if defined(__GNUC__) || defined(__clang__)

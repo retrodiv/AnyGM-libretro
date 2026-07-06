@@ -15,6 +15,12 @@
 #include <limits.h>
 #include <ctype.h>
 #include <dirent.h>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 
 /* file_find_first/next state (GM exposes one active find). Wildcard match is hand-rolled:
  * mingw has no fnmatch.h and GM masks only use * and ?. Case-insensitive like Windows. */
@@ -904,6 +910,25 @@ typedef uint64_t GmlBuiltinU64Alias __attribute__((__may_alias__));
 #endif
 static void fill_xrgb_run(uint32_t *dp, int n, uint32_t src){
   if(n<=0) return;
+#if defined(__SSE2__)
+  if(n>=4){
+    __m128i v=_mm_set1_epi32((int)src);
+    while(n>=4){
+      _mm_storeu_si128((__m128i*)dp,v);
+      dp+=4;
+      n-=4;
+    }
+  }
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if(n>=4){
+    uint32x4_t v=vdupq_n_u32(src);
+    while(n>=4){
+      vst1q_u32(dp,v);
+      dp+=4;
+      n-=4;
+    }
+  }
+#endif
 #if defined(__GNUC__) || defined(__clang__)
   if(n>=4){
     if(((uintptr_t)dp & 7u) != 0){ *dp++=src; n--; }
@@ -960,11 +985,17 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(!outline && alpha<=0) return;
   if(!outline && (alpha>=1 || !R->alphablend)){   /* opaque filled rect: fast per-row fill */
+    gml_render_maybe_prepare_opaque_rect(R,x1,y1,x2+1,y2+1);
     uint32_t src=gm_color_to_xrgb(gmcol);
+    if(x1==0 && y1==0 && x2==R->fbw-1 && y2==R->fbh-1){
+      gml_render_set_pending_fill(R,src);
+      return;
+    }
     for(int y=y1;y<=y2;y++) fill_xrgb_run(R->fb+(size_t)y*R->fbw+x1,x2-x1+1,src);
     return;
   }
   if(!outline){
+    gml_render_maybe_prepare_draw(R);
     uint32_t src=gm_color_to_xrgb(gmcol);
     double ialpha=1.0-alpha;
     double sr=((src>>16)&0xff)*alpha, sg=((src>>8)&0xff)*alpha, sb=(src&0xff)*alpha;
@@ -1005,6 +1036,8 @@ static void draw_rect_colour_prim(GmlRender *R, int x1, int y1, int x2, int y2,
   if(x1<0)x1=0; if(y1<0)y1=0; if(x2>=R->fbw)x2=R->fbw-1; if(y2>=R->fbh)y2=R->fbh-1;
   double alpha=R->alpha; if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(alpha<=0) return;
+  if(alpha>=1.0 || !R->alphablend) gml_render_maybe_prepare_opaque_rect(R,x1,y1,x2+1,y2+1);
+  else gml_render_maybe_prepare_draw(R);
   uint32_t tl=gm_color_to_xrgb(c1), tr=gm_color_to_xrgb(c2), br=gm_color_to_xrgb(c3), bl=gm_color_to_xrgb(c4);
   int wden=x2-x1, hden=y2-y1, n=x2-x1+1;
   if(tl==tr && bl==br){
@@ -1096,6 +1129,7 @@ static void prim_tri_fill(GmlRender *R, double X1,double Y1,double X2,double Y2,
 }
 static void prim_flush(GmlRender *R){
   int n=g_prim_n; if(!R||n<1) return;
+  gml_render_maybe_prepare_draw(R);
   double cx=R->cam_x, cy=R->cam_y;
   switch(g_prim_kind){
     case 1: for(int i=0;i<n;i++) draw_px_alpha(R,(int)floor(g_prim_x[i]-cx),(int)floor(g_prim_y[i]-cy),g_prim_c[i],g_prim_a[i]); break;
@@ -2883,14 +2917,15 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
         if(plain) draw_rect_prim(R,x1,y1,x2,y2,R->color,outline);
         else draw_rect_colour_prim(R,x1,y1,x2,y2,(uint32_t)N(a,n,4),(uint32_t)N(a,n,5),(uint32_t)N(a,n,6),(uint32_t)N(a,n,7),outline); }
       return vreal(0); }
-    if(!strcmp(nm,"draw_point_color")||!strcmp(nm,"draw_point_colour")){ if(R) draw_px(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(uint32_t)N(a,n,2)); return vreal(0); }
+    if(!strcmp(nm,"draw_point_color")||!strcmp(nm,"draw_point_colour")){ if(R){ gml_render_maybe_prepare_draw(R); draw_px(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(uint32_t)N(a,n,2)); } return vreal(0); }
     if(!strcmp(nm,"draw_line")||!strcmp(nm,"draw_line_color")||!strcmp(nm,"draw_line_colour")||!strcmp(nm,"draw_line_width")||!strcmp(nm,"draw_line_width_color")||!strcmp(nm,"draw_line_width_colour")){
       if(R){ int has_col=strstr(nm,"color")||strstr(nm,"colour"); int has_w=strstr(nm,"width")!=NULL;
         uint32_t col=has_col?(uint32_t)N(a,n,has_w?5:4):R->color; int width=has_w?(int)N(a,n,4):1;
         draw_line_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)floor(N(a,n,2)-R->cam_x),(int)floor(N(a,n,3)-R->cam_y),col,width); }
       return vreal(0); }
-    if(!strcmp(nm,"draw_circle")){ if(R) draw_circle_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)N(a,n,2),(int)N(a,n,2),R->color,(int)N(a,n,3)); return vreal(0); }
+    if(!strcmp(nm,"draw_circle")){ if(R){ gml_render_maybe_prepare_draw(R); draw_circle_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)N(a,n,2),(int)N(a,n,2),R->color,(int)N(a,n,3)); } return vreal(0); }
     if(!strcmp(nm,"draw_ellipse_color")||!strcmp(nm,"draw_ellipse_colour")){ if(R){
+        gml_render_maybe_prepare_draw(R);
         int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y), x2=(int)floor(N(a,n,2)-R->cam_x), y2=(int)floor(N(a,n,3)-R->cam_y);
         draw_circle_prim(R,(x1+x2)/2,(y1+y2)/2,abs(x2-x1)/2,abs(y2-y1)/2,(uint32_t)N(a,n,4),(int)N(a,n,6)); } return vreal(0); }
     if(!strcmp(nm,"draw_roundrect")){ if(R) draw_rect_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)ceil(N(a,n,2)-R->cam_x),(int)ceil(N(a,n,3)-R->cam_y),R->color,(int)N(a,n,4)); return vreal(0); }
@@ -2899,6 +2934,7 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
         int x2=(int)floor(N(a,n,2)-R->cam_x), y2=(int)floor(N(a,n,3)-R->cam_y);
         int x3=(int)floor(N(a,n,4)-R->cam_x), y3=(int)floor(N(a,n,5)-R->cam_y);
         uint32_t col=!strcmp(nm,"draw_triangle")?R->color:(uint32_t)N(a,n,6); int outline=(int)N(a,n,!strcmp(nm,"draw_triangle")?6:9);
+        gml_render_maybe_prepare_draw(R);
         int minx=fmin(x1,fmin(x2,x3)), maxx=fmax(x1,fmax(x2,x3)), miny=fmin(y1,fmin(y2,y3)), maxy=fmax(y1,fmax(y2,y3));
         double den=(double)((y2-y3)*(x1-x3)+(x3-x2)*(y1-y3));
         if(fabs(den)>1e-9) for(int yy=miny;yy<=maxy;yy++) for(int xx=minx;xx<=maxx;xx++){
@@ -2916,8 +2952,9 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
         double ca=N(a,n,1); if(ca<0)ca=0; if(ca>1)ca=1;
         src=(src&0x00FFFFFFu)|((uint32_t)lround(ca*255.0)<<24);
       }
-      size_t np=(size_t)R->fbw*R->fbh; for(size_t i=0;i<np;i++) R->fb[i]=src; } return vreal(0); }
-    if(!strcmp(nm,"draw_getpixel")){ if(R){ int x=(int)N(a,n,0), y=(int)N(a,n,1); if(x>=0&&y>=0&&x<R->fbw&&y<R->fbh){ uint32_t p=R->fb[(size_t)y*R->fbw+x]; return vreal(((p>>16)&0xff) | (p&0xff00) | ((p&0xff)<<16)); } } return vreal(0); }
+      gml_render_set_pending_fill(R,src);
+    } return vreal(0); }
+    if(!strcmp(nm,"draw_getpixel")){ if(R){ gml_render_maybe_prepare_draw(R); int x=(int)N(a,n,0), y=(int)N(a,n,1); if(x>=0&&y>=0&&x<R->fbw&&y<R->fbh){ uint32_t p=R->fb[(size_t)y*R->fbw+x]; return vreal(((p>>16)&0xff) | (p&0xff00) | ((p&0xff)<<16)); } } return vreal(0); }
     if(!strcmp(nm,"draw_enable_alphablend")){ if(R) R->alphablend=N(a,n,0)>=0.5; return vreal(0); }
     if(!strcmp(nm,"draw_enable_drawevent")){ vm->draw_events_off = N(a,n,0)<0.5; return vreal(0); }
     if(!strcmp(nm,"draw_surface_part")){ if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),1,1,0xFFFFFF,R->alpha); return vreal(0); }

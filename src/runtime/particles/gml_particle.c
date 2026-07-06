@@ -290,7 +290,28 @@ static void plot_square(GmlRender *r, int cx, int cy, int half, uint32_t col, do
   int br=col&0xFF, bg=(col>>8)&0xFF, bb=(col>>16)&0xFF;   /* GM BBGGRR → r,g,b */
   int x0=cx-half, x1=cx+half+1, y0=cy-half, y1=cy+half+1;
   if(x0<0)x0=0; if(y0<0)y0=0; if(x1>r->fbw)x1=r->fbw; if(y1>r->fbh)y1=r->fbh;
+  if(x1<=x0 || y1<=y0) return;
   int ia=(int)(a*255+0.5), iia=255-ia;
+  uint32_t src=((uint32_t)br<<16)|((uint32_t)bg<<8)|(uint32_t)bb;
+  if(ia>=255 || !r->alphablend){
+    int n=x1-x0;
+    for(int y=y0;y<y1;y++){ uint32_t *dp=r->fb+(size_t)y*r->fbw+x0;
+      for(int x=0;x<n;x++) dp[x]=src; }
+    return;
+  }
+  int pixels=(x1-x0)*(y1-y0);
+  if(pixels>=64){
+    uint8_t lr[256], lg[256], lb[256];
+    for(int d=0; d<256; d++){
+      lr[d]=(uint8_t)((br*ia+d*iia)/255);
+      lg[d]=(uint8_t)((bg*ia+d*iia)/255);
+      lb[d]=(uint8_t)((bb*ia+d*iia)/255);
+    }
+    for(int y=y0;y<y1;y++){ uint32_t *dp=r->fb+(size_t)y*r->fbw;
+      for(int x=x0;x<x1;x++){ uint32_t dv=dp[x];
+        dp[x]=((uint32_t)lr[(dv>>16)&0xFF]<<16)|((uint32_t)lg[(dv>>8)&0xFF]<<8)|(uint32_t)lb[dv&0xFF]; } }
+    return;
+  }
   for(int y=y0;y<y1;y++){ uint32_t *dp=r->fb+(size_t)y*r->fbw;
     for(int x=x0;x<x1;x++){ uint32_t dv=dp[x];
       int dr=(dv>>16)&0xFF,dg=(dv>>8)&0xFF,db=dv&0xFF;
@@ -299,6 +320,7 @@ static void plot_square(GmlRender *r, int cx, int cy, int half, uint32_t col, do
 
 void gml_part_system_drawit(GmlRender *r, int id){
   PSys *s=ps(id); if(!s||!r) return;
+  if(s->n>0) gml_render_maybe_prepare_draw(r);
   for(int i=0;i<s->n;i++){ Part *p=&s->parts[i]; PType *t=pt(p->type); if(!t) continue;
     double age = p->life0>0 ? (p->life0-p->life)/p->life0 : 0; if(age<0)age=0; if(age>1)age=1;
     uint32_t col = p->has_col ? p->col_over : keyc(age,t);

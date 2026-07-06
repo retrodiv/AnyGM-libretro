@@ -86,18 +86,26 @@ typedef struct {
   /* current target framebuffer (borrowed) + camera */
   uint32_t *fb; int fbw, fbh;
   uint32_t *base_fb; int base_fbw, base_fbh;
-  struct { uint32_t *fb; int w, h; double cx, cy; int target_id; } target_stack[GML_SURFACE_STACK]; int target_sp;
+  struct {
+    uint32_t *fb; int w, h; double cx, cy; int target_id, opaque_known, all_opaque;
+    int pending_underlay, underlay_x, underlay_y, underlay_w, underlay_h;
+    int pending_fill; uint32_t fill_color;
+  } target_stack[GML_SURFACE_STACK]; int target_sp;
   int target_id;
   double    cam_x, cam_y;
   /* the application_surface: the buffer the game is rendered into and later
    * readable by draw_surface_* calls. Set by the frontend; same w/h as fbw/fbh. */
   uint32_t *app_surface; int app_draw_enable;   /* GM application_surface_draw_enable, default 1 */
   int app_w, app_h;                             /* app_surface dims (the view render size) */
+  int app_surface_opaque;                       /* frontend/render metadata: every app pixel has alpha 255 */
+  int pending_underlay, underlay_x, underlay_y, underlay_w, underlay_h;  /* deferred default app-surface blit */
+  int pending_fill; uint32_t pending_fill_color; /* deferred full-target overwrite */
   GmlSurface surface[GML_MAX_SURFACES]; int next_surface_id;
   /* draw state */
   uint32_t  color;  double alpha; int halign, valign, font, alphablend, circle_precision;
   int       blendmode;   /* gpu_set_blendmode: 0=normal, 1=add (others fall back to normal). Reset per frame. */
   int       fast_alpha_cull;  /* optional fast path: drop alpha contributions <= this 8-bit step */
+  int       fb_opaque_known, fb_all_opaque;      /* current target opacity metadata, conservative */
   /* Palette and lookup-texture state declarations. */
   struct GmlShaderPal { int has; uint8_t L[3],M[3],D[3],S[3];
     int lut;                    /* palette-LUT shader: out = palette[(src.r, row)] */
@@ -112,6 +120,20 @@ typedef struct {
 int  gml_render_init(GmlRender *r, GmlWin *win);
 void gml_render_free(GmlRender *r);
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double camx, double camy);
+void gml_render_set_pending_underlay(GmlRender *r, int x, int y, int w, int h);
+void gml_render_flush_pending_underlay(GmlRender *r);
+void gml_render_set_pending_fill(GmlRender *r, uint32_t color);
+void gml_render_flush_pending_fill(GmlRender *r);
+void gml_render_cancel_pending_fill(GmlRender *r);
+void gml_render_cancel_pending_underlay(GmlRender *r);
+void gml_render_prepare_draw(GmlRender *r);
+void gml_render_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1);
+static inline void gml_render_maybe_prepare_draw(GmlRender *r){
+  if(r && (r->pending_underlay || r->pending_fill)) gml_render_prepare_draw(r);
+}
+static inline void gml_render_maybe_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1){
+  if(r && (r->pending_underlay || r->pending_fill)) gml_render_prepare_opaque_rect(r,x0,y0,x1,y1);
+}
 
 void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha);
