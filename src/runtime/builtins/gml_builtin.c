@@ -2211,7 +2211,8 @@ enum {
   BID_FILE_TEXT_EOF,
   BID_FMOD_PREFIX,
   BID_EVENT_INHERITED,
-  BID_DS_LIST_CLEAR
+  BID_DS_LIST_CLEAR,
+  BID_INPUT_KBGP
 };
 
 int gml_builtin_fast_id(const char *nm){
@@ -2281,8 +2282,8 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"gpu_set_blendenable")) return BID_GPU_SET_BLENDENABLE;
       if(!strcmp(nm,"gpu_set_blendmode")) return BID_GPU_SET_BLENDMODE;
       if(!strcmp(nm,"gpu_set_blendmode_ext")) return BID_GPU_SET_BLENDMODE_EXT;
-      /* Route stateful input through generic dispatch to preserve keyboard/gamepad edges. */
-      if(!strncmp(nm,"gamepad_",8)) return -1;
+      /* Share keyboard/gamepad handlers between generic and cached dispatch. */
+      if(!strncmp(nm,"gamepad_",8)) return BID_INPUT_KBGP;
       return -1;
     case 'e':
       if(!strcmp(nm,"event_inherited")) return BID_EVENT_INHERITED;
@@ -2297,7 +2298,10 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"is_real")||!strcmp(nm,"is_numeric")) return BID_IS_REAL;
       return -1;
     case 'k':
-      if(!strncmp(nm,"keyboard_",9)) return -1;
+      if(!strcmp(nm,"keyboard_check")||!strcmp(nm,"keyboard_check_pressed")||
+         !strcmp(nm,"keyboard_check_released")||!strcmp(nm,"keyboard_check_direct")||
+         !strcmp(nm,"keyboard_clear")||!strcmp(nm,"keyboard_key_press")||
+         !strcmp(nm,"keyboard_key_release")) return BID_INPUT_KBGP;
       return -1;
     case 'l':
       if(!strcmp(nm,"lengthdir_x")) return BID_LENGTHDIR_X;
@@ -2345,13 +2349,54 @@ int gml_builtin_fast_id(const char *nm){
   }
 }
 
+/* keyboard/gamepad dispatch shared by the generic chain and the cached fast path — the
+ * bodies are the chain handlers verbatim (input polls run hundreds of times per frame in
+ * GMS2 input wrappers, and each one otherwise walks most of the name chain). */
+static int builtin_input_kbgp(const char *nm, GmlVal *a, int n, GmlVal *out){
+  if(!strcmp(nm,"keyboard_check")){          *out=vreal(gml_input_key((int)N(a,n,0),0)); return 1; }
+  if(!strcmp(nm,"keyboard_check_pressed")){  *out=vreal(gml_input_key((int)N(a,n,0),1)); return 1; }
+  if(!strcmp(nm,"keyboard_check_released")){ *out=vreal(gml_input_key((int)N(a,n,0),2)); return 1; }
+  if(!strcmp(nm,"keyboard_check_direct")){   *out=vreal(gml_input_key((int)N(a,n,0),0)); return 1; }
+  if(!strcmp(nm,"keyboard_clear")){ gml_input_key_clear((int)N(a,n,0)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"keyboard_key_press")){ gml_input_key_press((int)N(a,n,0)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"keyboard_key_release")){ gml_input_key_release((int)N(a,n,0)); *out=vreal(0); return 1; }
+  /* gamepad button/axis reads expose the single RetroPad slot; connection/discovery is separate. */
+  { static int dbg_gp=-1; if(dbg_gp<0) dbg_gp=getenv("GML_DBG_GP")!=NULL;
+    if(dbg_gp && !strncmp(nm,"gamepad_button",14)){
+      extern long g_vm_frame;
+      fprintf(stderr,"[gp] f%ld %s n=%d a0=%.0f a1=%.0f -> %d\n",g_vm_frame,nm,n,N(a,n,0),N(a,n,1),
+        gml_input_gamepad((int)N(a,n,1),0)); } }
+  if(!strcmp(nm,"gamepad_button_check")){          *out=vreal(gml_input_gamepad((int)N(a,n,1),0)); return 1; }
+  if(!strcmp(nm,"gamepad_button_check_pressed")){  *out=vreal(gml_input_gamepad((int)N(a,n,1),1)); return 1; }
+  if(!strcmp(nm,"gamepad_button_check_released")){ *out=vreal(gml_input_gamepad((int)N(a,n,1),2)); return 1; }
+  if(!strcmp(nm,"gamepad_is_connected")){          *out=vreal(gml_input_gamepad_connected((int)N(a,n,0))); return 1; }
+  if(!strcmp(nm,"gamepad_is_supported")){          *out=vreal(1); return 1; }
+  if(!strcmp(nm,"gamepad_get_device_count")){      *out=vreal(gml_input_gamepad_device_count()); return 1; }
+  if(!strcmp(nm,"gamepad_button_count")){          *out=vreal(16); return 1; }
+  if(!strcmp(nm,"gamepad_axis_count")){            *out=vreal(4); return 1; }
+  if(!strcmp(nm,"gamepad_get_description")){       *out=vstr(gml_input_gamepad_connected((int)N(a,n,0)) ? "libretro" : ""); return 1; }
+  if(!strcmp(nm,"gamepad_set_axis_deadzone")){ gp_deadzone_set((int)N(a,n,0), N(a,n,1)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"gamepad_set_vibration")){
+    gml_input_gamepad_set_vibration((int)N(a,n,0), N(a,n,1), N(a,n,2));
+    *out=vreal(0); return 1;
+  }
+  if(!strcmp(nm,"gamepad_axis_value")){
+    *out=vreal(gp_axis_value_filtered((int)N(a,n,0), (int)N(a,n,1))); return 1; }
+  if(!strncmp(nm,"gamepad_",8)){ *out=vreal(0); return 1; }
+  return 0;
+}
+
 static GmlVal builtin_fmod(GmlVM *vm, const char *nm, GmlVal *a, int n);
+static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n);
 GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   switch(id){
     /* the bodies below mirror their generic-chain handlers exactly; keep both in sync */
     case BID_FMOD_PREFIX:
       return builtin_fmod(vm,nm,a,n);
+    case BID_INPUT_KBGP:{
+      GmlVal v; if(builtin_input_kbgp(nm,a,n,&v)) return v;
+      return builtin_call_impl(vm,nm,a,n); }   /* unreachable for the ids we hand out; safety net */
     case BID_EVENT_INHERITED:
       gml_event_inherited(vm); return vreal(0);
     case BID_DS_LIST_CLEAR:{
@@ -4010,22 +4055,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
 
   /* ---- input (wired later; held/pressed/released) ---- */
-  if(!strcmp(nm,"keyboard_check"))          return vreal(gml_input_key((int)N(a,n,0),0));
-  if(!strcmp(nm,"keyboard_check_pressed"))  return vreal(gml_input_key((int)N(a,n,0),1));
-  if(!strcmp(nm,"keyboard_check_released")) return vreal(gml_input_key((int)N(a,n,0),2));
-  if(!strcmp(nm,"keyboard_check_direct"))   return vreal(gml_input_key((int)N(a,n,0),0));
-  if(!strcmp(nm,"keyboard_clear")){ gml_input_key_clear((int)N(a,n,0)); return vreal(0); }
-  if(!strcmp(nm,"keyboard_key_press")){ gml_input_key_press((int)N(a,n,0)); return vreal(0); }
-  if(!strcmp(nm,"keyboard_key_release")){ gml_input_key_release((int)N(a,n,0)); return vreal(0); }
-  /* gamepad button/axis reads expose the single RetroPad slot; connection/discovery is separate. */
-  if(getenv("GML_DBG_GP") && !strncmp(nm,"gamepad_button",14)){
-    extern long g_vm_frame;
-    fprintf(stderr,"[gp] f%ld %s n=%d a0=%.0f a1=%.0f -> %d\n",g_vm_frame,nm,n,N(a,n,0),N(a,n,1),
-      gml_input_gamepad((int)N(a,n,1),0)); }
-  if(!strcmp(nm,"gamepad_button_check"))          return vreal(gml_input_gamepad((int)N(a,n,1),0));
-  if(!strcmp(nm,"gamepad_button_check_pressed"))  return vreal(gml_input_gamepad((int)N(a,n,1),1));
-  if(!strcmp(nm,"gamepad_button_check_released")) return vreal(gml_input_gamepad((int)N(a,n,1),2));
-  if(!strcmp(nm,"gamepad_is_connected"))          return vreal(gml_input_gamepad_connected((int)N(a,n,0)));
+  { GmlVal v; if(builtin_input_kbgp(nm,a,n,&v)) return v; }
   /* ---- mouse (RetroArch pointer/mouse device via gml_input_mouse) ---- */
   if(!strcmp(nm,"mouse_check_button"))          return vreal(mouse_btn_check((int)N(a,n,0),0));
   if(!strcmp(nm,"mouse_check_button_pressed"))  return vreal(mouse_btn_check((int)N(a,n,0),1));
@@ -4040,19 +4070,6 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"device_mouse_raw_x")||!strcmp(nm,"window_mouse_get_x")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
   if(!strcmp(nm,"device_mouse_raw_y")||!strcmp(nm,"window_mouse_get_y")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL); return vreal(v); }
   if(!strcmp(nm,"window_mouse_set")) return vreal(0);
-  if(!strcmp(nm,"gamepad_is_supported"))          return vreal(1);
-  if(!strcmp(nm,"gamepad_get_device_count"))      return vreal(gml_input_gamepad_device_count());
-  if(!strcmp(nm,"gamepad_button_count"))          return vreal(16);
-  if(!strcmp(nm,"gamepad_axis_count"))            return vreal(4);
-  if(!strcmp(nm,"gamepad_get_description"))       return vstr(gml_input_gamepad_connected((int)N(a,n,0)) ? "libretro" : "");
-  if(!strcmp(nm,"gamepad_set_axis_deadzone")){ gp_deadzone_set((int)N(a,n,0), N(a,n,1)); return vreal(0); }
-  if(!strcmp(nm,"gamepad_set_vibration")){
-    gml_input_gamepad_set_vibration((int)N(a,n,0), N(a,n,1), N(a,n,2));
-    return vreal(0);
-  }
-  if(!strcmp(nm,"gamepad_axis_value"))
-    return vreal(gp_axis_value_filtered((int)N(a,n,0), (int)N(a,n,1)));
-  if(!strncmp(nm,"gamepad_",8))             return vreal(0);
   if(!strcmp(nm,"joystick_exists")){
     int joy=(int)N(a,n,0), dev=joy>0?joy-1:joy;
     return vreal(gml_input_gamepad_connected(dev)); }
