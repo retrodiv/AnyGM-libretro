@@ -24,15 +24,35 @@ typedef struct {
   unsigned long long pixels;
   double ms;
 } RenderProfSlot;
+typedef struct {
+  int sprite;
+  const char *name;
+  long calls;
+  double ms;
+} SpriteProfSlot;
 
 #define RPROF_MAX 1024
 static RenderProfSlot g_rprof[RPROF_MAX];
 static int g_rprof_n;
 static long g_rprof_last_frame=-1;
+#define SPROF_MAX 512
+static SpriteProfSlot g_sprof[SPROF_MAX];
+static int g_sprof_n;
+static long g_sprof_last_frame=-1;
 
 static int rprof_enabled(void){
   static int on=-1;
   if(on<0) on=getenv("GML_PROFILE_RENDER") ? 1 : 0;
+  return on;
+}
+static int log_spr_enabled(void){
+  static int on=-1;
+  if(on<0) on=getenv("GML_LOG_SPR") ? 1 : 0;
+  return on;
+}
+static int sprof_enabled(void){
+  static int on=-1;
+  if(on<0) on=getenv("GML_PROFILE_SPRITE") ? 1 : 0;
   return on;
 }
 static double rprof_now(void){
@@ -107,6 +127,38 @@ static void rprof_add(const char *label, GmlRender *r, GmlTpag *t, double ms, un
   g_rprof[slot].ms+=ms;
   rprof_dump_maybe();
 }
+static void sprof_add(int sprite, const char *name, double ms){
+  if(!sprof_enabled()) return;
+  int slot=-1;
+  for(int i=0;i<g_sprof_n;i++) if(g_sprof[i].sprite==sprite){ slot=i; break; }
+  if(slot<0){
+    if(g_sprof_n<SPROF_MAX) slot=g_sprof_n++;
+    else slot=SPROF_MAX-1;
+    g_sprof[slot]=(SpriteProfSlot){sprite,name,0,0};
+  }
+  g_sprof[slot].calls++;
+  g_sprof[slot].ms+=ms;
+  extern long g_vm_frame;
+  long frame=g_vm_frame;
+  if(frame<=0 || frame==g_sprof_last_frame || frame%300) return;
+  g_sprof_last_frame=frame;
+  fprintf(stderr,"[sprof] f=%ld top:\n",frame);
+  int used[16]; for(int i=0;i<16;i++) used[i]=-1;
+  for(int rank=0;rank<16;rank++){
+    int best=-1;
+    for(int i=0;i<g_sprof_n;i++){
+      int seen=0; for(int j=0;j<rank;j++) if(used[j]==i){ seen=1; break; }
+      if(!seen && (best<0 || g_sprof[i].ms>g_sprof[best].ms)) best=i;
+    }
+    if(best<0 || g_sprof[best].ms<=0) break;
+    used[rank]=best;
+    fprintf(stderr,"[sprof]   %7.2fms %6ld spr=%d %s\n",
+            g_sprof[best].ms,g_sprof[best].calls,g_sprof[best].sprite,
+            g_sprof[best].name?g_sprof[best].name:"?");
+  }
+  memset(g_sprof,0,sizeof g_sprof);
+  g_sprof_n=0;
+}
 
 static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o]|(uint32_t)d[o+1]<<8|(uint32_t)d[o+2]<<16|(uint32_t)d[o+3]<<24;
@@ -117,6 +169,23 @@ static uint32_t be32(const uint8_t *d){ return (uint32_t)d[0]<<24|(uint32_t)d[1]
 #define RFP_ONE ((int64_t)1 << RFP_SHIFT)
 static int floor_fixed20(int64_t v){
   return v>=0 ? (int)(v>>RFP_SHIFT) : -(int)((-v + RFP_ONE - 1) >> RFP_SHIFT);
+}
+static int fixed20_run_to_change(int64_t fp, int64_t step, int cell, int maxrun){
+  if(maxrun<=1 || step==0) return maxrun;
+  int64_t n;
+  if(step>0){
+    int64_t edge=((int64_t)cell+1) * RFP_ONE;
+    if(fp>=edge) return 1;
+    n=(edge - fp + step - 1) / step;
+  } else {
+    int64_t neg=-step;
+    int64_t edge=(int64_t)cell * RFP_ONE;
+    if(fp<edge) return 1;
+    n=(fp - edge + 1 + neg - 1) / neg;
+  }
+  if(n<1) return 1;
+  if(n>maxrun) return maxrun;
+  return (int)n;
 }
 
 /* ---- atlas (TXTR) ---- */
@@ -175,6 +244,37 @@ static uint8_t *atlas_pixels(GmlRender *r, int idx){
       for(int q=0;q<w*h;q++) fwrite(px+q*4,1,3,f); fclose(f);
       fprintf(stderr,"[atlas] dumped %s (%dx%d)\n",fn,w,h); } }
   return a->px;
+}
+static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
+                             int *x0, int *y0, int *x1, int *y1){
+  (void)r;
+  if(!t || !a || !a->px || t->sw<=0 || t->sh<=0) return 0;
+  if(!t->alpha_scanned){
+    int minx=t->sw, miny=t->sh, maxx=-1, maxy=-1;
+    for(int yy=0; yy<t->sh; yy++){
+      int sy=t->sy+yy;
+      if(sy<0 || sy>=a->h) continue;
+      const uint8_t *row=a->px+(size_t)sy*a->w*4;
+      for(int xx=0; xx<t->sw; xx++){
+        int sx=t->sx+xx;
+        if(sx<0 || sx>=a->w) continue;
+        const uint8_t *sp=row+(size_t)sx*4;
+        if(!sp[3]) continue;
+        if(xx<minx) minx=xx;
+        if(xx>maxx) maxx=xx;
+        if(yy<miny) miny=yy;
+        if(yy>maxy) maxy=yy;
+      }
+    }
+    t->ax0=minx; t->ay0=miny; t->ax1=maxx; t->ay1=maxy;
+    t->alpha_scanned=1;
+  }
+  if(t->ax1<t->ax0 || t->ay1<t->ay0) return 0;
+  if(x0) *x0=t->ax0;
+  if(y0) *y0=t->ay0;
+  if(x1) *x1=t->ax1;
+  if(y1) *y1=t->ay1;
+  return 1;
 }
 static void parse_txtr(GmlRender *r){
   const GmlChunk *c=gml_chunk(r->win,"TXTR"); if(!c) return;

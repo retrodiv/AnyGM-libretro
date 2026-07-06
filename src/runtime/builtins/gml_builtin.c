@@ -1661,6 +1661,56 @@ static int async_saveload_request(GmlVM *vm, int ok){
   return req;
 }
 
+typedef struct { const char *name; long calls; double ms; } HotBuiltinProf;
+#define HOTPROF_MAX 128
+static HotBuiltinProf g_hotprof[HOTPROF_MAX];
+static int g_hotprof_n;
+static long g_hotprof_last_frame=-1;
+
+static int hotprof_enabled(void){
+  static int on=-1;
+  if(on<0) on=getenv("GML_PROFILE_HOTBUILTIN")!=NULL;
+  return on;
+}
+static double hotprof_now(void){
+#ifdef _WIN32
+  return 0.0;
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC,&ts);
+  return ts.tv_sec + ts.tv_nsec/1000000000.0;
+#endif
+}
+static void hotprof_add(const char *name, double ms){
+  if(!hotprof_enabled() || !name) return;
+  int slot=-1;
+  for(int i=0;i<g_hotprof_n;i++) if(g_hotprof[i].name==name || !strcmp(g_hotprof[i].name,name)){ slot=i; break; }
+  if(slot<0){
+    if(g_hotprof_n<HOTPROF_MAX) slot=g_hotprof_n++;
+    else slot=HOTPROF_MAX-1;
+    g_hotprof[slot]=(HotBuiltinProf){name,0,0};
+  }
+  g_hotprof[slot].calls++;
+  g_hotprof[slot].ms+=ms;
+  extern long g_vm_frame;
+  if(g_vm_frame<=0 || g_vm_frame==g_hotprof_last_frame || g_vm_frame%300) return;
+  g_hotprof_last_frame=g_vm_frame;
+  fprintf(stderr,"[hotprof] f=%ld top:\n",g_vm_frame);
+  int used[16]; for(int i=0;i<16;i++) used[i]=-1;
+  for(int rank=0;rank<16;rank++){
+    int best=-1;
+    for(int i=0;i<g_hotprof_n;i++){
+      int seen=0; for(int j=0;j<rank;j++) if(used[j]==i){ seen=1; break; }
+      if(!seen && (best<0 || g_hotprof[i].ms>g_hotprof[best].ms)) best=i;
+    }
+    if(best<0 || g_hotprof[best].ms<=0) break;
+    used[rank]=best;
+    fprintf(stderr,"[hotprof]   %7.2fms %6ld %s\n",g_hotprof[best].ms,g_hotprof[best].calls,g_hotprof[best].name);
+  }
+  memset(g_hotprof,0,sizeof g_hotprof);
+  g_hotprof_n=0;
+}
+
 /* Short-circuit very hot draw/UI builtins before the broad legacy strcmp chain below. Keep these
  * branches behavior-equivalent to their canonical handlers; this only avoids dispatch overhead. */
 static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out){
@@ -1740,7 +1790,8 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
 }
 
 GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
-  { GmlVal v; if(fast_hot_builtin(vm,nm,a,n,&v)) return v; }
+  { GmlVal v; int hp=hotprof_enabled(); double t0=hp?hotprof_now():0.0;
+    if(fast_hot_builtin(vm,nm,a,n,&v)){ if(hp) hotprof_add(nm,(hotprof_now()-t0)*1000.0); return v; } }
   /* Return zero for prefixed script names whose suffix is sleep; leave the unprefixed builtin untouched. */
   { const char *sb=NULL;
     if(!strncmp(nm,"gml_GlobalScript_",17)) sb=nm+17;
