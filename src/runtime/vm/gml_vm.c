@@ -3206,7 +3206,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -3657,7 +3657,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x3E564D47u); /* GMV14: GMV13 plus GMS2 layer sprite elements */
+  sw_u32(s,0x3F564D47u); /* GMV15: GMV14 plus GMS2 room-start layer-state migration marker */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -3781,7 +3781,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   if((magic!=0x31564D47u && magic!=0x32564D47u && magic!=0x33564D47u && magic!=0x34564D47u
       && magic!=0x35564D47u && magic!=0x36564D47u && magic!=0x37564D47u && magic!=0x38564D47u
       && magic!=0x39564D47u && magic!=0x3A564D47u && magic!=0x3B564D47u && magic!=0x3C564D47u
-      && magic!=0x3D564D47u && magic!=0x3E564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x3D564D47u && magic!=0x3E564D47u && magic!=0x3F564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -3793,6 +3793,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v12 = magic>=0x3C564D47u;
   s.v13 = magic>=0x3D564D47u;
   s.v14 = magic>=0x3E564D47u;
+  s.v15 = magic>=0x3F564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -4068,6 +4069,80 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     free(ts->datum);
   }
   free(tm_state);
+  if(s.ok && !s.v15 && vm->win && vm->win->bytecode>=17 && vm->room_index>=0){
+    typedef struct { int id, visible; double depth; char name[32]; } MigLayer;
+    typedef struct {
+      int id, layer, type, sprite, sx, sy, w, h, visible, htiled, vtiled, stretch;
+      double x, y, xs, ys, alpha, image_index, image_speed, image_angle;
+      uint32_t blend;
+      char name[64];
+    } MigElem;
+    size_t snap_cap=gml_vm_state_size(vm), snap_wr=0;
+    unsigned char *snap=snap_cap?malloc(snap_cap):NULL;
+    if(snap && gml_vm_state_save(vm,snap,snap_cap,&snap_wr)){
+      if(getenv("GML_LOG_RTL")){
+        fprintf(stderr,"[rtl-state] migrating pre-GMV15 state: replay Room Start for GMS2 layer setup\n");
+      }
+      int n0=vm->inst_count;
+      for(int i=0;i<n0;i++) if(vm->inst[i].active && !vm->inst[i].marked)
+        gml_run_event(vm,&vm->inst[i],"Other_4");
+      reap(vm);
+      int ml_n=0, me_n=0;
+      for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used) ml_n++;
+      for(int i=0;i<vm->n_rte;i++) if(vm->rte[i].used) me_n++;
+      MigLayer *ml=ml_n?calloc((size_t)ml_n,sizeof(*ml)):NULL;
+      MigElem *me=me_n?calloc((size_t)me_n,sizeof(*me)):NULL;
+      if((ml_n && !ml) || (me_n && !me)){
+        free(ml); free(me);
+        size_t dummy=0;
+        if(!gml_vm_state_load(vm,snap,snap_wr,&dummy)) s.ok=0;
+      }else{
+        int k=0;
+        for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used){
+          GmlRtLayer *l=&vm->rtl[i];
+          ml[k].id=l->id; ml[k].visible=l->visible; ml[k].depth=l->depth;
+          memcpy(ml[k].name,l->name,sizeof(ml[k].name));
+          k++;
+        }
+        k=0;
+        for(int i=0;i<vm->n_rte;i++) if(vm->rte[i].used){
+          GmlRtElem *e=&vm->rte[i];
+          me[k].id=e->id; me[k].layer=e->layer; me[k].type=e->type; me[k].sprite=e->sprite;
+          me[k].x=e->x; me[k].y=e->y; me[k].sx=e->sx; me[k].sy=e->sy; me[k].w=e->w; me[k].h=e->h;
+          me[k].xs=e->xs; me[k].ys=e->ys; me[k].alpha=e->alpha; me[k].visible=e->visible; me[k].blend=e->blend;
+          me[k].htiled=e->htiled; me[k].vtiled=e->vtiled; me[k].stretch=e->stretch;
+          me[k].image_index=e->image_index; me[k].image_speed=e->image_speed; me[k].image_angle=e->image_angle;
+          memcpy(me[k].name,e->name,sizeof(me[k].name));
+          k++;
+        }
+        size_t dummy=0;
+        if(gml_vm_state_load(vm,snap,snap_wr,&dummy)){
+          for(int i=0;i<ml_n;i++){
+            GmlRtLayer *l=gml_rt_layer_find(vm,ml[i].id);
+            if(!l && ml[i].name[0]) l=gml_rt_layer_find_by_name(vm,ml[i].name);
+            if(l){ l->visible=ml[i].visible; l->depth=ml[i].depth; }
+          }
+          for(int i=0;i<me_n;i++){
+            GmlRtElem *e=gml_rt_elem_find(vm,me[i].id);
+            if(!e && me[i].name[0]){
+              for(int j=0;j<vm->n_rte;j++) if(vm->rte[j].used && vm->rte[j].layer==me[i].layer &&
+                   vm->rte[j].type==me[i].type && !strcmp(vm->rte[j].name,me[i].name)){ e=&vm->rte[j]; break; }
+            }
+            if(!e) continue;
+            e->layer=me[i].layer; e->type=me[i].type; e->sprite=me[i].sprite;
+            e->x=me[i].x; e->y=me[i].y; e->sx=me[i].sx; e->sy=me[i].sy; e->w=me[i].w; e->h=me[i].h;
+            e->xs=me[i].xs; e->ys=me[i].ys; e->alpha=me[i].alpha; e->visible=me[i].visible; e->blend=me[i].blend;
+            e->htiled=me[i].htiled; e->vtiled=me[i].vtiled; e->stretch=me[i].stretch;
+            e->image_index=me[i].image_index; e->image_speed=me[i].image_speed; e->image_angle=me[i].image_angle;
+            memcpy(e->name,me[i].name,sizeof(e->name));
+          }
+          if(vm->win && vm->room_index>=0) gml_room_reload_layers_mode(vm, vm->room_index, 0);
+        }else s.ok=0;
+        free(ml); free(me);
+      }
+    }
+    free(snap);
+  }
   if(used) *used=s.pos;
   return s.ok && s.pos<=len;
 }
