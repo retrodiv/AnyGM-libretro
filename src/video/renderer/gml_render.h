@@ -13,13 +13,27 @@ typedef struct {
   uint16_t *alpha_qrow_min, *alpha_qrow_max; /* per-alpha-threshold row spans, built lazily */
   uint8_t *alpha_qrow_built;
   uint32_t *argb_cache;                  /* compact ARGB source pixels for hot rotated draws */
+  uint32_t *fast8_draw_cache;            /* RGB plus draw-alpha for repeated large fast8 draws */
+  double fast8_draw_alpha_key;
+  uint32_t fast8_draw_blend_key;
+  int fast8_draw_cache_valid, fast8_draw_cache_copy_255;
 } GmlTpag;
+typedef struct {
+  const uint8_t *src;
+  int sw, sh, fbw, fbh, x0, y0, w, h, originx, originy;
+  double ax, ay, xs, ys, alpha;
+  uint32_t blend;
+} GmlRuntimeAxisKey;
 typedef struct { const char *name; int originx, originy, w, h, n_frames; int *frame;
                  int ml, mr, mt, mb;                /* mask margins: left,right,top,bottom */
                  const uint8_t *mask; int mask_rowb, mask_count;  /* SPRT collision mask: 1bpp */
                  int collision_kind, collision_tolerance;
                  uint8_t *runtime_rgba; int runtime_owned, runtime_extra, runtime_opaque; char *owned_name;
                  int *runtime_row_min, *runtime_row_max;
+                 uint32_t *runtime_axis_cache_px; uint8_t *runtime_axis_cache_alpha;
+                 int *runtime_axis_cache_row_min, *runtime_axis_cache_row_max;
+                 GmlRuntimeAxisKey runtime_axis_cache_key, runtime_axis_pending_key;
+                 int runtime_axis_cache_valid, runtime_axis_cache_copy_255, runtime_axis_pending_count;
                  char *runtime_source_path; int runtime_source_imgnum, runtime_source_removeback;
                  int base_valid, base_originx, base_originy, base_w, base_h, base_n_frames;
                  int base_ml, base_mr, base_mt, base_mb, base_mask_rowb, base_mask_count;

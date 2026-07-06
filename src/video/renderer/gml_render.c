@@ -500,6 +500,49 @@ static uint32_t *tpag_argb_cache(GmlRender *r, GmlTpag *t, GmlAtlas *a){
   t->argb_cache=cache;
   return cache;
 }
+static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, double alpha, int *copy_255){
+  if(copy_255) *copy_255=0;
+  if(!t || !a || !a->px || t->sw<=0 || t->sh<=0) return NULL;
+  size_t n=(size_t)t->sw*(size_t)t->sh;
+  if(n==0 || n>262144u) return NULL;
+  blend &= 0xFFFFFFu;
+  if(t->fast8_draw_cache_valid && t->fast8_draw_cache &&
+     t->fast8_draw_blend_key==blend && t->fast8_draw_alpha_key==alpha){
+    if(copy_255) *copy_255=t->fast8_draw_cache_copy_255;
+    return t->fast8_draw_cache;
+  }
+  uint32_t *cache=t->fast8_draw_cache;
+  if(!cache){
+    cache=malloc(n*sizeof(uint32_t));
+    if(!cache) return NULL;
+    t->fast8_draw_cache=cache;
+  }
+  int white=(blend==0xFFFFFFu);
+  int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
+  for(int yy=0; yy<t->sh; yy++){
+    int sy=t->sy+yy;
+    uint32_t *cp=cache+(size_t)yy*t->sw;
+    if(sy<0 || sy>=a->h){ memset(cp,0,(size_t)t->sw*sizeof(uint32_t)); continue; }
+    for(int xx=0; xx<t->sw; xx++){
+      int sx=t->sx+xx;
+      if(sx<0 || sx>=a->w){ cp[xx]=0; continue; }
+      const uint8_t *sp=a->px+((size_t)sy*a->w+sx)*4;
+      double sa=(sp[3]/255.0)*alpha;
+      uint32_t af=sa>=1.0 ? 256u : (uint32_t)(sa*256.0);
+      if(!af){ cp[xx]=0; continue; }
+      int sr=white?sp[0]:sp[0]*bR/255;
+      int sg=white?sp[1]:sp[1]*bG/255;
+      int sb=white?sp[2]:sp[2]*bB/255;
+      cp[xx]=((af>=256u?255u:af)<<24)|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+    }
+  }
+  t->fast8_draw_blend_key=blend;
+  t->fast8_draw_alpha_key=alpha;
+  t->fast8_draw_cache_valid=1;
+  t->fast8_draw_cache_copy_255=alpha>=1.0;
+  if(copy_255) *copy_255=t->fast8_draw_cache_copy_255;
+  return cache;
+}
 static int tpag_alpha_qrows(GmlRender *r, GmlTpag *t, GmlAtlas *a, int min_alpha,
                             const uint16_t **row_min, const uint16_t **row_max){
   if(row_min) *row_min=NULL;
@@ -566,6 +609,7 @@ static void parse_txtr(GmlRender *r){
 
 /* ---- TPAG ---- */
 static uint32_t *g_tpag_ptr; /* parallel: file offset of each tpag, for sprite frame mapping */
+static void runtime_axis_cache_free(GmlSprite *s);
 static void parse_tpag(GmlRender *r){
   const GmlChunk *c=gml_chunk(r->win,"TPAG"); if(!c) return;
   const uint8_t *d=r->win->data; uint32_t n=u32(d,c->off);
@@ -853,11 +897,11 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
               double gy=y - cx*xs*sa + base_y*ys*ca;
               const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)fr*s->h:NULL;
               const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)fr*s->h:NULL;
-              blit_rgba_sprite(r,fr_rgba,s->w,s->h,gx,gy,xs,ys,rr,0,0,blend,alpha,1,rmin,rmax,s->runtime_opaque);
+              blit_rgba_sprite(r,s,fr_rgba,s->w,s->h,gx,gy,xs,ys,rr,0,0,blend,alpha,1,rmin,rmax,s->runtime_opaque);
             } else {
               const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)fr*s->h:NULL;
               const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)fr*s->h:NULL;
-              blit_rgba_sprite(r,fr_rgba,s->w,s->h,x+cx*xs,y+base_y*ys,xs,ys,0,0,0,blend,alpha,1,rmin,rmax,s->runtime_opaque);
+              blit_rgba_sprite(r,s,fr_rgba,s->w,s->h,x+cx*xs,y+base_y*ys,xs,ys,0,0,0,blend,alpha,1,rmin,rmax,s->runtime_opaque);
             }
           }
         } else if(s->frame){ int ti=s->frame[fr];
