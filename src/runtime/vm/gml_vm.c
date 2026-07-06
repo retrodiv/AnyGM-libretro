@@ -434,6 +434,7 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
 }
 static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   GmlVal out;
+  if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
   if(!strcmp(name,"room")) return vreal(vm->room_index);   /* GM built-in: current room index */
   if(!strcmp(name,"keyboard_lastkey")) return vreal(vm->last_key); /* GM: last key pressed */
   if(!strcmp(name,"room_speed")) return vreal(room_speed_value(vm));
