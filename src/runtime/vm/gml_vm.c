@@ -3360,6 +3360,75 @@ static void vm_state_profile_globals(GmlVM *vm){
   for(int i=0;i<10 && top[i].key;i++)
     fprintf(stderr,"[vm-state-profile] global[%d] %s=%llu\n",
             i, top[i].key, (unsigned long long)top[i].bytes);
+  Top inst_top[10]; memset(inst_top,0,sizeof(inst_top));
+  size_t inst_total=0;
+  for(int i=0;i<vm->inst_count;i++){
+    StateW ts={0}; ts.ok=1; ts.vm=vm; ts.compact_strings=1; ts.array_meta=1;
+    sw_instance(&ts,&vm->inst[i]);
+    inst_total += ts.pos;
+    const char *name="?";
+    int obj=vm->inst[i].obj;
+    if(obj>=0 && obj<vm->n_objects && vm->objects[obj].name) name=vm->objects[obj].name;
+    for(int k=0;k<10;k++) if(ts.pos > inst_top[k].bytes){
+      memmove(&inst_top[k+1],&inst_top[k],(size_t)(9-k)*sizeof(inst_top[0]));
+      inst_top[k]=(Top){name,ts.pos};
+      break;
+    }
+  }
+  fprintf(stderr,"[vm-state-profile] instances_total=%llu inst_count=%d\n",
+          (unsigned long long)inst_total, vm->inst_count);
+  for(int i=0;i<10 && inst_top[i].key;i++)
+    fprintf(stderr,"[vm-state-profile] inst[%d] %s=%llu\n",
+            i, inst_top[i].key, (unsigned long long)inst_top[i].bytes);
+  Top struct_top[10]; memset(struct_top,0,sizeof(struct_top));
+  size_t struct_total=0; int struct_live=0;
+  for(int i=0;i<vm->n_structs;i++) if(vm->structs[i]){
+    struct_live++;
+    StateW ts={0}; ts.ok=1; ts.vm=vm; ts.compact_strings=1; ts.array_meta=1;
+    sw_instance(&ts,vm->structs[i]);
+    struct_total += ts.pos;
+    const char *name="?";
+    GmlVal *nm=gml_varmap_get(&vm->structs[i]->vars,"__name");
+    if(nm && nm->t==V_STR && nm->s) name=nm->s;
+    for(int k=0;k<10;k++) if(ts.pos > struct_top[k].bytes){
+      memmove(&struct_top[k+1],&struct_top[k],(size_t)(9-k)*sizeof(struct_top[0]));
+      struct_top[k]=(Top){name,ts.pos};
+      break;
+    }
+  }
+  fprintf(stderr,"[vm-state-profile] structs_total=%llu structs=%d/%d\n",
+          (unsigned long long)struct_total, struct_live, vm->n_structs);
+  for(int i=0;i<10 && struct_top[i].key;i++)
+    fprintf(stderr,"[vm-state-profile] struct[%d] %s=%llu\n",
+            i, struct_top[i].key, (unsigned long long)struct_top[i].bytes);
+  size_t ds_map_total=0, ds_list_total=0, ds_grid_total=0;
+  int ds_map_live=0, ds_list_live=0, ds_grid_live=0;
+  for(int i=0;i<GML_DS_MAP_MAX;i++) if(vm->ds_map[i].live){
+    GmlDSMap *m=&vm->ds_map[i]; ds_map_live++;
+    StateW ts={0}; ts.ok=1; ts.vm=vm; ts.compact_strings=1; ts.array_meta=1;
+    sw_u32(&ts,m->id); sw_i32(&ts,m->len);
+    for(int j=0;j<m->len;j++){ sw_str(&ts,m->entry[j].key); sw_val(&ts,m->entry[j].key_val,0); sw_val(&ts,m->entry[j].val,0); }
+    ds_map_total += ts.pos;
+  }
+  for(int i=0;i<GML_DS_LIST_MAX;i++) if(vm->ds_list[i].live){
+    GmlDSList *l=&vm->ds_list[i]; ds_list_live++;
+    StateW ts={0}; ts.ok=1; ts.vm=vm; ts.compact_strings=1; ts.array_meta=1;
+    sw_u32(&ts,l->id); sw_i32(&ts,l->len);
+    for(int j=0;j<l->len;j++) sw_val(&ts,l->item[j],0);
+    ds_list_total += ts.pos;
+  }
+  for(int i=0;i<GML_DS_GRID_MAX;i++) if(vm->ds_grid[i].live){
+    GmlDSGrid *g=&vm->ds_grid[i]; ds_grid_live++;
+    StateW ts={0}; ts.ok=1; ts.vm=vm; ts.compact_strings=1; ts.array_meta=1;
+    sw_u32(&ts,g->id); sw_i32(&ts,g->w); sw_i32(&ts,g->h);
+    long long cells=(long long)g->w*g->h;
+    for(long long j=0;j<cells;j++) sw_val(&ts,g->cell[j],0);
+    ds_grid_total += ts.pos;
+  }
+  fprintf(stderr,"[vm-state-profile] ds_map=%d/%llu ds_list=%d/%llu ds_grid=%d/%llu\n",
+          ds_map_live,(unsigned long long)ds_map_total,
+          ds_list_live,(unsigned long long)ds_list_total,
+          ds_grid_live,(unsigned long long)ds_grid_total);
 }
 static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
   if(s->v6){
@@ -3527,9 +3596,19 @@ static void sw_vm(StateW *s, GmlVM *vm){
   vm_state_profile_globals(vm);
 }
 size_t gml_vm_state_size(GmlVM *vm){
+  extern long g_vm_frame;
+  if(vm && vm->n_structs>0 && vm->structs_last_gc_frame!=g_vm_frame){
+    vm->structs_last_gc_frame=g_vm_frame;
+    gml_struct_gc(vm);
+  }
   StateW s={0}; s.ok=1; s.vm=vm; s.compact_strings=1; sw_vm(&s,vm); return s.pos;
 }
 int gml_vm_state_save(GmlVM *vm, void *data, size_t len, size_t *written){
+  extern long g_vm_frame;
+  if(vm && vm->n_structs>0 && vm->structs_last_gc_frame!=g_vm_frame){
+    vm->structs_last_gc_frame=g_vm_frame;
+    gml_struct_gc(vm);
+  }
   StateW s={.data=(uint8_t*)data,.cap=len,.pos=0,.ok=1,.vm=vm,.compact_strings=1};
   sw_vm(&s,vm); if(written) *written=s.pos; return s.ok && s.pos<=len;
 }

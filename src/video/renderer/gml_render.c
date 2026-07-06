@@ -185,18 +185,25 @@ static inline int floor_fixed20(int64_t v){
   return v>=0 ? (int)(v>>RFP_SHIFT) : -(int)((-v + RFP_ONE - 1) >> RFP_SHIFT);
 #endif
 }
+static inline int ceil_div_pos_i64(int64_t num, int64_t den){
+  if(num<=0) return 0;
+  if(den<=0) return 1;
+  if(num<=0x7fffffffll && den<=0xffffffffll && num<=0x100000000ll-den)
+    return (int)(((uint32_t)num + (uint32_t)den - 1u) / (uint32_t)den);
+  return (int)(((num - 1) / den) + 1);
+}
 static inline int fixed20_run_to_change(int64_t fp, int64_t step, int cell, int maxrun){
   if(maxrun<=1 || step==0) return maxrun;
   int64_t n;
   if(step>0){
     int64_t edge=((int64_t)cell+1) * RFP_ONE;
     if(fp>=edge) return 1;
-    n=(edge - fp + step - 1) / step;
+    n=ceil_div_pos_i64(edge - fp, step);
   } else {
     int64_t neg=-step;
     int64_t edge=(int64_t)cell * RFP_ONE;
     if(fp<edge) return 1;
-    n=(fp - edge + 1 + neg - 1) / neg;
+    n=ceil_div_pos_i64(fp - edge + 1, neg);
   }
   if(n<1) return 1;
   if(n>maxrun) return maxrun;
@@ -206,7 +213,7 @@ static inline int fixed20_run_until_at_least(int64_t fp, int64_t step, int targe
   if(maxrun<=1 || step<=0) return maxrun;
   int64_t edge=(int64_t)target * RFP_ONE;
   if(fp>=edge) return 1;
-  int64_t n=(edge - fp + step - 1) / step;
+  int64_t n=ceil_div_pos_i64(edge - fp, step);
   if(n<1) return 1;
   if(n>maxrun) return maxrun;
   return (int)n;
@@ -216,7 +223,10 @@ static inline int fixed20_run_until_at_most(int64_t fp, int64_t step, int target
   int64_t neg=-step;
   int64_t edge=(int64_t)(target + 1) * RFP_ONE;
   if(fp<edge) return 1;
-  int64_t n=(fp - edge) / neg + 1;
+  int64_t num=fp - edge;
+  int64_t n=(num<=0x7ffffffell && neg<=0x7fffffffll)
+    ? (int64_t)((uint32_t)num / (uint32_t)neg + 1u)
+    : (num / neg + 1);
   if(n<1) return 1;
   if(n>maxrun) return maxrun;
   return (int)n;
@@ -500,22 +510,28 @@ static uint32_t *tpag_argb_cache(GmlRender *r, GmlTpag *t, GmlAtlas *a){
   t->argb_cache=cache;
   return cache;
 }
-static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, double alpha, int *copy_255){
+static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, double alpha,
+                                       int alpha_floor, int *copy_255){
   if(copy_255) *copy_255=0;
   if(!t || !a || !a->px || t->sw<=0 || t->sh<=0) return NULL;
   size_t n=(size_t)t->sw*(size_t)t->sh;
   if(n==0 || n>262144u) return NULL;
   blend &= 0xFFFFFFu;
+  if(alpha_floor<0) alpha_floor=0;
+  if(alpha_floor>255) alpha_floor=255;
   if(t->fast8_draw_cache_valid && t->fast8_draw_cache &&
-     t->fast8_draw_blend_key==blend && t->fast8_draw_alpha_key==alpha){
+     t->fast8_draw_blend_key==blend && t->fast8_draw_alpha_key==alpha &&
+     t->fast8_draw_alpha_floor_key==alpha_floor){
     if(copy_255) *copy_255=t->fast8_draw_cache_copy_255;
     return t->fast8_draw_cache;
   }
-  if(t->fast8_draw_pending_blend_key==blend && t->fast8_draw_pending_alpha_key==alpha){
+  if(t->fast8_draw_pending_blend_key==blend && t->fast8_draw_pending_alpha_key==alpha &&
+     t->fast8_draw_pending_alpha_floor_key==alpha_floor){
     t->fast8_draw_pending_count++;
   } else {
     t->fast8_draw_pending_blend_key=blend;
     t->fast8_draw_pending_alpha_key=alpha;
+    t->fast8_draw_pending_alpha_floor_key=alpha_floor;
     t->fast8_draw_pending_count=1;
   }
   if(t->fast8_draw_pending_count<8) return NULL;
@@ -537,7 +553,7 @@ static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, 
       const uint8_t *sp=a->px+((size_t)sy*a->w+sx)*4;
       double sa=(sp[3]/255.0)*alpha;
       uint32_t af=sa>=1.0 ? 256u : (uint32_t)(sa*256.0);
-      if(!af){ cp[xx]=0; continue; }
+      if(af<=(uint32_t)alpha_floor){ cp[xx]=0; continue; }
       int sr=white?sp[0]:sp[0]*bR/255;
       int sg=white?sp[1]:sp[1]*bG/255;
       int sb=white?sp[2]:sp[2]*bB/255;
@@ -546,6 +562,7 @@ static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, 
   }
   t->fast8_draw_blend_key=blend;
   t->fast8_draw_alpha_key=alpha;
+  t->fast8_draw_alpha_floor_key=alpha_floor;
   t->fast8_draw_cache_valid=1;
   t->fast8_draw_cache_copy_255=alpha>=1.0;
   if(copy_255) *copy_255=t->fast8_draw_cache_copy_255;

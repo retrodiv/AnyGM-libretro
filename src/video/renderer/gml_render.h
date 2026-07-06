@@ -18,6 +18,8 @@ typedef struct {
   double fast8_draw_pending_alpha_key;
   uint32_t fast8_draw_blend_key;
   uint32_t fast8_draw_pending_blend_key;
+  int fast8_draw_alpha_floor_key;
+  int fast8_draw_pending_alpha_floor_key;
   int fast8_draw_cache_valid, fast8_draw_cache_copy_255, fast8_draw_pending_count;
 } GmlTpag;
 typedef struct {
