@@ -310,6 +310,8 @@ struct GmlFmodBanks {
   FBank  banks[FMOD_MAXBANKS]; int nbanks;
   uint32_t rng;                                /* for multi-instrument variant selection */
   FVoice voices[FMOD_MAXVOICES]; int next_handle;
+  int32_t vh[FMOD_MAXVOICES];                  /* compact mirror of voices[i].handle: lookups/alloc scan 8KB instead of striding the fat structs */
+  int32_t vhint[4096];                         /* direct-mapped handle→slot hint, verified on use */
   FCache *cache; int ncache, cap_cache;        /* decoded small samples (SFX), shared */
   double lx, ly; int have_listener;            /* 3D listener position (screen/world units) */
   struct { char name[40]; double value; } param[FMOD_MAX_PARAMS]; int nparam;
@@ -838,8 +840,15 @@ static int16_t *fmod_get_pcm(GmlFmodBanks *b, int bank, int sub, int *frames, in
 
 static FVoice *fmod_voice_by_handle(GmlFmodBanks *b, int handle){
   if(handle<=0) return NULL;
-  for(int i=0;i<FMOD_MAXVOICES;i++) if(b->voices[i].handle==handle) return &b->voices[i];
+  int hint=b->vhint[(unsigned)handle & 4095u];
+  if(hint>=0 && hint<FMOD_MAXVOICES && b->vh[hint]==handle) return &b->voices[hint];
+  for(int i=0;i<FMOD_MAXVOICES;i++) if(b->vh[i]==handle){ b->vhint[(unsigned)handle & 4095u]=i; return &b->voices[i]; }
   return NULL;
+}
+static void fmod_voice_set_handle(GmlFmodBanks *b, FVoice *v, int handle){
+  int slot=(int)(v - b->voices);
+  v->handle=handle; b->vh[slot]=handle;
+  if(handle>0) b->vhint[(unsigned)handle & 4095u]=slot;
 }
 
 /* Retain compressed Ogg data and decode PCM through a bounded window. */
@@ -926,7 +935,7 @@ int gml_fmod_start(GmlFmodBanks *b, const char *path, int play_now, int one_shot
   int bank,sub,loop;
   if(!gml_fmod_banks_resolve(b,path,&bank,&sub,&loop,NULL,NULL)) return 0;   /* unknown → silent, no voice */
   int slot=-1;
-  for(int i=0;i<FMOD_MAXVOICES;i++) if(b->voices[i].handle==0){ slot=i; break; }
+  for(int i=0;i<FMOD_MAXVOICES;i++) if(b->vh[i]==0){ slot=i; break; }
   if(slot<0){ /* steal the oldest one-shot, else a finished voice */
     for(int i=0;i<FMOD_MAXVOICES && slot<0;i++) if(b->voices[i].one_shot && !b->voices[i].active) slot=i;
     for(int i=0;i<FMOD_MAXVOICES && slot<0;i++) if(!b->voices[i].active) slot=i;
@@ -934,12 +943,13 @@ int gml_fmod_start(GmlFmodBanks *b, const char *path, int play_now, int one_shot
     fmod_voice_free_audio(&b->voices[slot]);
   }
   FVoice *v=&b->voices[slot]; memset(v,0,sizeof *v);
-  v->handle=++b->next_handle; if(b->next_handle<=0) b->next_handle=v->handle=1;
+  if(++b->next_handle<=0) b->next_handle=1;
+  fmod_voice_set_handle(b,v,b->next_handle);
   snprintf(v->path,sizeof v->path,"%s",path);   /* remember for per-play variant re-pick */
   v->bank=bank; v->sub=sub; v->loop=one_shot?0:loop; v->one_shot=one_shot?1:0; v->gain=1.0;
   if(getenv("GML_DBG_FMOD")){
     fprintf(stderr,"[fmod] %s -> h%d bank%d sub%d loop%d\n",one_shot?"one_shot":"instance",v->handle,bank,sub,v->loop); }
-  if(play_now){ fmod_voice_arm(b,v); v->active=(v->pcm!=NULL||v->vs!=NULL); if(!v->active && one_shot){ v->handle=0; return 0; } }
+  if(play_now){ fmod_voice_arm(b,v); v->active=(v->pcm!=NULL||v->vs!=NULL); if(!v->active && one_shot){ fmod_voice_set_handle(b,v,0); return 0; } }
   return v->handle;
 }
 void gml_fmod_play(GmlFmodBanks *b, int handle){
@@ -952,12 +962,13 @@ void gml_fmod_stop(GmlFmodBanks *b, int handle){
   FVoice *v=fmod_voice_by_handle(b,handle); if(!v) return;
   v->active=0; v->pos=0;
   fmod_voice_free_audio(v);   /* free stream/owned PCM; re-prepared on replay (cached SFX stay in cache) */
-  if(v->one_shot) v->handle=0;
+  if(v->one_shot) fmod_voice_set_handle(b,v,0);
 }
 void gml_fmod_release(GmlFmodBanks *b, int handle){
   FVoice *v=fmod_voice_by_handle(b,handle); if(!v) return;
   fmod_voice_free_audio(v);
   memset(v,0,sizeof *v);   /* handle=0 → slot free */
+  fmod_voice_set_handle(b,v,0);
 }
 void gml_fmod_set_paused(GmlFmodBanks *b, int handle, int paused){
   FVoice *v=fmod_voice_by_handle(b,handle); if(v) v->paused=paused?1:0;
@@ -1029,7 +1040,7 @@ void gml_fmod_set_timeline_pos(GmlFmodBanks *b, int handle, double ms){
 }
 void gml_fmod_stop_all(GmlFmodBanks *b){
   if(!b) return; for(int i=0;i<FMOD_MAXVOICES;i++){ FVoice *v=&b->voices[i]; if(!v->handle) continue;
-    v->active=0; fmod_voice_free_audio(v); if(v->one_shot) memset(v,0,sizeof *v); }
+    v->active=0; fmod_voice_free_audio(v); if(v->one_shot){ memset(v,0,sizeof *v); b->vh[(int)(v-b->voices)]=0; } }
 }
 void gml_fmod_set_listener(GmlFmodBanks *b, double x, double y){
   if(!b) return; b->lx=x; b->ly=y; b->have_listener=1;
@@ -1080,7 +1091,7 @@ void gml_fmod_mix(GmlFmodBanks *b, int16_t *out, int frames, int out_rate){
       for(int f=0;f<frames;f++){
         long i0=(long)v->pos, i1=i0+1;
         long w0=i0-v->win_start, w1=i1-v->win_start;
-        if(w1>=v->win_len || w0<0){ v->active=0; fmod_voice_free_audio(v); if(v->one_shot) memset(v,0,sizeof *v); break; }
+        if(w1>=v->win_len || w0<0){ v->active=0; fmod_voice_free_audio(v); if(v->one_shot){ memset(v,0,sizeof *v); b->vh[(int)(v-b->voices)]=0; } break; }
         double frac=v->pos-(double)i0;
         double l,r;
         if(ch>=2){ l=(1-frac)*v->win[w0*2]+frac*v->win[w1*2]; r=(1-frac)*v->win[w0*2+1]+frac*v->win[w1*2+1]; }
@@ -1094,7 +1105,7 @@ void gml_fmod_mix(GmlFmodBanks *b, int16_t *out, int frames, int out_rate){
       for(int f=0;f<frames;f++){
         if(v->pos>=hi){
           if(v->loop && hi>lo){ v->pos=lo+fmod(v->pos-lo,hi-lo); }
-          else { v->active=0; fmod_voice_free_audio(v); if(v->one_shot) memset(v,0,sizeof *v); break; }
+          else { v->active=0; fmod_voice_free_audio(v); if(v->one_shot){ memset(v,0,sizeof *v); b->vh[(int)(v-b->voices)]=0; } break; }
         }
         int i0=(int)v->pos; int i1=i0+1; if(i1>=v->frames) i1=v->frames-1;
         double frac=v->pos-(double)i0;

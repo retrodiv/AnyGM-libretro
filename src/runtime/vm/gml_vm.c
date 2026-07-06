@@ -353,7 +353,14 @@ static int inst_builtin_set(GmlInstance *in, const char *n, GmlVal v){
     return 1; }
   BT("x",x) BT("y",y) B("xprevious",xprevious) B("yprevious",yprevious)
   B("xstart",xstart) B("ystart",ystart)
-  BT("sprite_index",sprite_index) BT("mask_index",mask_index) B("image_index",image_index) B("image_speed",image_speed)
+  if(!strcmp(n,"sprite_index")){
+    in->sprite_index=d; gml_colgrid_touch(in);
+    /* queue the new sprite's atlas for the background decoder: sprite swaps often jump to a
+     * not-yet-decoded page (transformations/bosses) and the draw follows within the same frame */
+    if(g_cur_vm && g_cur_vm->render && (int)d>=0)
+      gml_render_prefetch_sprite((GmlRender*)g_cur_vm->render,(int)d);
+    return 1; }
+  BT("mask_index",mask_index) B("image_index",image_index) B("image_speed",image_speed)
   BT("image_xscale",image_xscale) BT("image_yscale",image_yscale) BT("image_angle",image_angle)
   B("image_alpha",image_alpha) B("image_blend",image_blend)
   #undef BT
@@ -452,8 +459,50 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
   if(!strcmp(name,"sprite_yoffset")){ *out=vreal(s->originy); return 1; }
   return 0;
 }
+/* hash gate for the special-variable chains in var_get_h/var_set_h: almost every variable
+ * access is a plain instance/global var, which otherwise pays the full strcmp chain on every
+ * read and write. Hash-hit => run the original chain (its strcmps confirm; collisions are
+ * safe); miss => the name is provably not special, go straight to the varmap. */
+static const char *const g_special_var_names[]={
+  "undefined","room","keyboard_lastkey","room_speed","working_directory","program_directory",
+  "fps","view_current","room_persistent","mouse_x","mouse_y","current_time","room_width",
+  "room_height","instance_count","health","lives","score","async_load","id","object_index",
+  "image_number","sprite_width","sprite_height","sprite_xoffset","sprite_yoffset","image_single",
+  "x","y","xprevious","yprevious","xstart","ystart","sprite_index","mask_index","image_index",
+  "image_speed","image_xscale","image_yscale","image_angle","image_alpha","image_blend",
+  "depth","visible","solid","persistent","hspeed","vspeed","direction","speed",
+  "gravity","gravity_direction","friction","path_index","path_position","path_speed",
+  "path_orientation","path_scale","path_positionprevious","path_endaction",
+};
+#define N_SPECIAL_VAR (int)(sizeof g_special_var_names/sizeof *g_special_var_names)
+static uint32_t g_special_var_hash[N_SPECIAL_VAR];
+static uint64_t g_special_var_bloom;
+static int g_special_var_built;
+static int var_name_maybe_special(const char *name, uint32_t nh){
+  if(!g_special_var_built){
+    for(int i=0;i<N_SPECIAL_VAR;i++){
+      uint32_t h=strhash(g_special_var_names[i]);
+      g_special_var_hash[i]=h;
+      g_special_var_bloom |= 1ull<<(h&63);
+    }
+    g_special_var_built=1;
+  }
+  if(g_special_var_bloom & (1ull<<(nh&63))){
+    for(int i=0;i<N_SPECIAL_VAR;i++) if(g_special_var_hash[i]==nh) return 1;
+  }
+  /* prefix-matched specials (argumentN / argument_count / bbox_*) */
+  if(name[0]=='a' && !strncmp(name,"argument",8)) return 1;
+  if(name[0]=='b' && !strncmp(name,"bbox_",5)) return 1;
+  return 0;
+}
 static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   GmlVal out;
+  if(!var_name_maybe_special(name,nh)){
+    if(inst==IT_GLOBAL){ GmlVal *p=gml_varmap_get_h(&vm->globals,name,nh); return p?*p:vreal(0); }
+    GmlInstance *self=var_target(vm,inst);
+    if(self){ GmlVal *p=gml_varmap_get_h(&self->vars,name,nh); if(p) return *p; }
+    return vreal(0);
+  }
   if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
   if(!strcmp(name,"room")) return vreal(vm->room_index);   /* GM built-in: current room index */
   if(!strcmp(name,"keyboard_lastkey")) return vreal(vm->last_key); /* GM: last key pressed */
@@ -505,10 +554,17 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
 }
 static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal v){
   gml_arr_mark_escaped(v);   /* target is a global/instance slot: outlives the current scope */
-  { const char *dv=getenv("GML_DBG_VARSET");
+  { static const char *dv=NULL; static int dv_init=0;
+    if(!dv_init){ dv=getenv("GML_DBG_VARSET"); dv_init=1; }
     if(dv && name && !strcmp(name,dv)){ extern long g_vm_frame;
       fprintf(stderr,"[varset] f%ld inst=%d %s = %s%.2f\n",g_vm_frame,inst,name,
         v.t==V_STR?"str:":"",v.t==V_REAL?v.d:0.0); } }
+  if(!var_name_maybe_special(name,nh)){
+    if(inst==IT_GLOBAL){ *gml_varmap_put_h(&vm->globals,name,nh)=v; return; }
+    GmlInstance *self=var_target(vm,inst);
+    if(self) *gml_varmap_put_h(&self->vars,name,nh)=v;
+    return;
+  }
   if(!strcmp(name,"room")){ vm->pending_room=(int)asnum(v); return; }  /* GM: room=X -> goto room */
   if(argument_set(vm,name,v)) return;
   if(!strcmp(name,"room_speed")||!strcmp(name,"view_current")||!strcmp(name,"room_persistent")){
@@ -836,6 +892,9 @@ static int code_cache_ensure(GmlWin *w, int ci){
       if(in.refname) in.refhash=strhash(in.refname);
     }
     if(in.kind==OP_PUSH && in.type1==DT_INT32 && w->bytecode>=17){
+      /* resolve once at decode: -2 = checked, NOT a function-value. Leaving it -1 made the
+       * interpreter redo the ref-chain walk + name lookup on every plain push.i32 execution. */
+      in.funcval_ci=-2;
       const char *fn=gml_ref_name(w,pc+4);
       if(fn && fn[0]!='?' && !strncmp(fn,"gml_",4)){
         int fci=gml_code_index_by_name(w,fn);
@@ -1060,12 +1119,13 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           if(w->bytecode>=17){
             int fci=use_cache ? in.funcval_ci : -1;
             const char *fn=NULL;
-            if(fci<0){
+            if(fci==-1){   /* -2 = decode already determined it is not a function-value */
               fn=gml_ref_name(w,pc+4);
               if(fn && fn[0]!='?' && !strncmp(fn,"gml_",4)) fci=gml_code_index_by_name(w,fn);
             }
             if(fci>=0){ v=vreal((double)(GML_FUNCVAL_TAG|fci));
-              if(getenv("GML_DBG_FUNCVAL")) fprintf(stderr,"[funcval] %s pc=%u i32=%d -> %s (ci=%d)\n",
+              static int dbg_funcval=-1; if(dbg_funcval<0) dbg_funcval=getenv("GML_DBG_FUNCVAL")!=NULL;
+              if(dbg_funcval) fprintf(stderr,"[funcval] %s pc=%u i32=%d -> %s (ci=%d)\n",
                 w->code[ci].name,pc-start,in.ival,fn?fn:(w->code[fci].name?w->code[fci].name:"?"),fci); } } }
         else if(in.type1==DT_INT64) v=vreal((double)in.lval);
         else if(in.type1==DT_STRING) v=vstr(gml_str_by_index(w,in.strindex));
@@ -1268,7 +1328,20 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           bid=gml_builtin_fast_id(nm);
           pin->builtin_id=(int16_t)bid;
         }
-        GmlVal rv = (bid>0 && !hp_builtin) ? gml_builtin_call_fast_id(vm,bid,a,na) : gml_builtin_call(vm,nm,a,na);
+        /* per-call-site script cache: once the generic dispatch resolves this name to a user
+         * script, remember its code index (in funcval_ci, unused on OP_CALL) and run it directly —
+         * otherwise repeated script calls walk the whole builtin name chain before
+         * reaching the script fallback. */
+        int sci = pin ? pin->funcval_ci : -1;
+        GmlVal rv;
+        if(bid>0 && !hp_builtin) rv=gml_builtin_call_fast_id(vm,bid,a,na);
+        else if(sci>=0 && !hp_builtin) rv=gml_vm_run_code(vm,sci,vm->cur_self,vm->cur_other,a,na);
+        else {
+          vm->call_script_ci=-1;
+          rv=gml_builtin_call(vm,nm,a,na);
+          if(pin && vm->call_script_ci>=0) pin->funcval_ci=vm->call_script_ci;
+          vm->call_script_ci=-1;
+        }
         /* track a freshly-malloc'd string result so it's freed (else string builtins leak). Skip
          * arg pass-through (the arg's owner frees it) to avoid double-tracking a var's string. */
         if(STR_IS_HEAP(rv)){ int isarg=0; for(int _k=0;_k<na;_k++) if(a[_k].t==V_STR && a[_k].s==rv.s){isarg=1;break;} if(!isarg) GC_TRACK(rv.s); }
@@ -1968,6 +2041,8 @@ static void apply_object_defaults(GmlVM *vm, GmlInstance *in, int obj){
 }
 GmlInstance *gml_instance_create(GmlVM *vm, double x, double y, int obj){
   GmlInstance *in=alloc_inst(vm); init_inst(vm,in,x,y,obj);
+  if(vm->render && (int)in->sprite_index>=0)   /* head start for the background decoder before first draw */
+    gml_render_prefetch_sprite((GmlRender*)vm->render,(int)in->sprite_index);
   if(getenv("GML_LOG_CREATE")){ extern long g_vm_frame;
     fprintf(stderr,"[create] f%ld %s @(%.0f,%.0f) spr=%d\n",g_vm_frame,
     (obj>=0&&obj<vm->n_objects)?vm->objects[obj].name:"?",x,y,(int)in->sprite_index); }
@@ -2267,6 +2342,24 @@ static void gml_room_reload_layers(GmlVM *vm, int room_index){
   gml_room_reload_layers_mode(vm,room_index,1);
 }
 
+/* queue background decodes for every atlas this room's content can touch: instance sprites
+ * and masks, GMS2 tile layers, and runtime layer elements. Draws still decode synchronously
+ * if a texture arrives before its prefetch finishes, so this only removes stalls. */
+static void vm_prefetch_room_assets(GmlVM *vm){
+  GmlRender *R=(GmlRender*)vm->render; if(!R) return;
+  for(int i=0;i<vm->inst_count;i++){ GmlInstance *in=&vm->inst[i];
+    if(!in->active || in->marked) continue;
+    gml_render_prefetch_sprite(R,(int)in->sprite_index);
+    if((int)in->mask_index>=0) gml_render_prefetch_sprite(R,(int)in->mask_index);
+  }
+  for(int i=0;i<vm->n_tilemaps;i++){ GmlTileMap *tm=&vm->tilemaps[i];
+    if(tm->used) gml_render_prefetch_bg(R,tm->tileset); }
+  for(int j=0;j<vm->n_rte;j++){ GmlRtElem *e=&vm->rte[j];
+    if(!e->used) continue;
+    if(e->type==7) gml_render_prefetch_bg(R,e->sprite);
+    else gml_render_prefetch_sprite(R,e->sprite);
+  }
+}
 void gml_room_enter(GmlVM *vm, int room_index){
   gml_colgrid_invalidate(vm);
   int prev_room=vm->room_index;
@@ -2456,6 +2549,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
   /* Dispatch the gamepad-discovered asynchronous event. */
   gml_fire_gamepad_connected(vm);
   reap(vm);
+  vm_prefetch_room_assets(vm);
 }
 void gml_vm_goto_room_order(GmlVM *vm, int order_index){
   GmlWin *w=vm->win;
@@ -4464,5 +4558,6 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     free(snap);
   }
   if(used) *used=s.pos;
+  if(s.ok && s.pos<=len) vm_prefetch_room_assets(vm);
   return s.ok && s.pos<=len;
 }

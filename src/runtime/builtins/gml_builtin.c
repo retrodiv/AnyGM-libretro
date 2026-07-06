@@ -347,6 +347,9 @@ static char *resolve_content_path(GmlVM *vm, const char *p){
   }
   return strdup(p);
 }
+static int log_ds_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_DS")!=NULL; return on; }
+static int log_col_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_COL")!=NULL; return on; }
+static int log_tilecol_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_TILECOL")!=NULL; return on; }
 static char *dup_n(const char *s, int n){
   if(n<0) n=0;
   char *o=malloc((size_t)n+1);
@@ -1980,7 +1983,7 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"instance_place_list")){
       GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,3));
       int r=collision_instance_list_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),l,N(a,n,4)>=0.5);
-      if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cnm=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+      if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cnm=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
         const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
         if(cnm) fprintf(stderr,"[col] %s instance_place_list(%.0f,%.0f,%s)=%d\n",cnm,N(a,n,0),N(a,n,1),tn,r); }
       *out=vreal(r); return 1;
@@ -1998,12 +2001,12 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
   }
   if(nm[0]=='p'){
     if(!strcmp(nm,"place_meeting")){ int r=collision_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),0);
-      if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+      if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
         const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
         if(cn) fprintf(stderr,"[col] %s place_meeting(%.0f,%.0f,%s)=%d\n",cn,N(a,n,0),N(a,n,1),tn,r); }
       *out=vreal(r); return 1; }
     if(!strcmp(nm,"place_free")){ int r=!collision_at(vm,N(a,n,0),N(a,n,1),0,1);
-      if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+      if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
         if(cn) fprintf(stderr,"[col] %s place_free(%.0f,%.0f)=%d\n",cn,N(a,n,0),N(a,n,1),r); }
       *out=vreal(r); return 1; }
     if(!strcmp(nm,"place_empty")){ *out=vreal(!collision_at(vm,N(a,n,0),N(a,n,1),IT_ALL,0)); return 1; }
@@ -2190,7 +2193,22 @@ enum {
   BID_SURFACE_RESET_TARGET,
   BID_STRING_WIDTH,
   BID_STRING_HEIGHT,
-  BID_GPU_SET_BLENDMODE_EXT
+  BID_GPU_SET_BLENDMODE_EXT,
+  BID_DS_MAP_FIND_VALUE,
+  BID_DS_MAP_FIND_NEXT,
+  BID_DS_MAP_FIND_PREVIOUS,
+  BID_DS_MAP_EXISTS,
+  BID_DS_LIST_FIND_VALUE,
+  BID_DS_LIST_SIZE,
+  BID_IS_ARRAY,
+  BID_IS_UNDEFINED,
+  BID_IS_STRING,
+  BID_IS_REAL,
+  BID_STRING_ORD_AT,
+  BID_STRING_CHAR_AT,
+  BID_STRING_LENGTH,
+  BID_ORD,
+  BID_FILE_TEXT_EOF
 };
 
 int gml_builtin_fast_id(const char *nm){
@@ -2214,6 +2232,12 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"clamp")) return BID_CLAMP;
       return -1;
     case 'd':
+      if(!strcmp(nm,"ds_map_find_value")) return log_ds_on()? -1 : BID_DS_MAP_FIND_VALUE;
+      if(!strcmp(nm,"ds_map_find_next")) return BID_DS_MAP_FIND_NEXT;
+      if(!strcmp(nm,"ds_map_find_previous")) return BID_DS_MAP_FIND_PREVIOUS;
+      if(!strcmp(nm,"ds_map_exists")) return BID_DS_MAP_EXISTS;
+      if(!strcmp(nm,"ds_list_find_value")) return BID_DS_LIST_FIND_VALUE;
+      if(!strcmp(nm,"ds_list_size")) return BID_DS_LIST_SIZE;
       if(!strcmp(nm,"draw_sprite")) return BID_DRAW_SPRITE;
       if(!strcmp(nm,"draw_sprite_ext")) return BID_DRAW_SPRITE_EXT;
       if(!strcmp(nm,"draw_surface")) return BID_DRAW_SURFACE;
@@ -2247,6 +2271,7 @@ int gml_builtin_fast_id(const char *nm){
       return -1;
     case 'f':
       if(!strcmp(nm,"floor")) return BID_FLOOR;
+      if(!strcmp(nm,"file_text_eof")) return BID_FILE_TEXT_EOF;
       return -1;
     case 'g':
       if(!strcmp(nm,"gpu_set_blendenable")) return BID_GPU_SET_BLENDENABLE;
@@ -2259,6 +2284,10 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"instance_exists")) return BID_INSTANCE_EXISTS;
       if(!strcmp(nm,"instance_number")) return BID_INSTANCE_NUMBER;
       if(!strcmp(nm,"instance_place_list")) return BID_INSTANCE_PLACE_LIST;
+      if(!strcmp(nm,"is_array")) return BID_IS_ARRAY;
+      if(!strcmp(nm,"is_undefined")) return BID_IS_UNDEFINED;
+      if(!strcmp(nm,"is_string")) return BID_IS_STRING;
+      if(!strcmp(nm,"is_real")||!strcmp(nm,"is_numeric")) return BID_IS_REAL;
       return -1;
     case 'k':
       if(!strncmp(nm,"keyboard_",9)) return -1;
@@ -2280,7 +2309,13 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"place_meeting")) return BID_PLACE_MEETING;
       if(!strcmp(nm,"point_distance")) return BID_POINT_DISTANCE;
       return -1;
+    case 'o':
+      if(!strcmp(nm,"ord")) return BID_ORD;
+      return -1;
     case 's':
+      if(!strcmp(nm,"string_ord_at")) return BID_STRING_ORD_AT;
+      if(!strcmp(nm,"string_char_at")) return BID_STRING_CHAR_AT;
+      if(!strcmp(nm,"string_length")) return BID_STRING_LENGTH;
       if(!strcmp(nm,"sin")) return BID_SIN;
       if(!strcmp(nm,"shader_set")) return BID_SHADER_SET;
       if(!strcmp(nm,"shader_reset")) return BID_SHADER_RESET;
@@ -2306,6 +2341,53 @@ int gml_builtin_fast_id(const char *nm){
 GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   switch(id){
+    /* the bodies below mirror their generic-chain handlers exactly; keep both in sync */
+    case BID_DS_MAP_FIND_VALUE:{
+      GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
+      char *key=(n>=2)?ds_key_make(a[1]):NULL;
+      int i=ds_map_find_entry(m,key);
+      GmlVal out=(i>=0)?m->entry[i].val:vundef();
+      free(key);
+      return ds_ret(out); }
+    case BID_DS_MAP_FIND_NEXT:
+    case BID_DS_MAP_FIND_PREVIOUS:{
+      GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
+      char *key=(n>=2)?ds_key_make(a[1]):NULL;
+      int i=ds_map_find_entry(m,key); free(key);
+      int j = (i<0) ? -1 : (id==BID_DS_MAP_FIND_NEXT ? i+1 : i-1);
+      if(m && j>=0 && j<m->len) return ds_ret(m->entry[j].key_val);
+      return vundef(); }
+    case BID_DS_MAP_EXISTS:{
+      GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
+      char *key=(n>=2)?ds_key_make(a[1]):NULL;
+      int i=ds_map_find_entry(m,key); free(key); return vreal(i>=0); }
+    case BID_DS_LIST_FIND_VALUE:{
+      GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
+      return (l && p>=0 && p<l->len)? ds_ret(l->item[p]) : vreal(0); }
+    case BID_DS_LIST_SIZE:{
+      GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(l?l->len:0); }
+    case BID_IS_ARRAY:
+      return vreal(n>0 && a[0].t==V_ARR);
+    case BID_IS_UNDEFINED:
+      return vreal(n>0 && a[0].t==V_UNDEF);
+    case BID_IS_STRING:
+      return vreal(n>0 && a[0].t==V_STR);
+    case BID_IS_REAL:
+      return vreal(n>0 && a[0].t==V_REAL);
+    case BID_STRING_ORD_AT:{
+      const unsigned char*s=(const unsigned char*)S(a,n,0); int idx=(int)N(a,n,1), len=(int)strlen((const char*)s);
+      return vreal((idx>=1&&idx<=len)?s[idx-1]:0); }
+    case BID_STRING_CHAR_AT:{
+      const char*s=S(a,n,0); int idx=(int)N(a,n,1), len=(int)strlen(s);
+      if(idx<1||idx>len) return vstr("");
+      return vstr_owned(dup_n(s+idx-1,1)); }
+    case BID_STRING_LENGTH:
+      return vreal((double)strlen(S(a,n,0)));
+    case BID_ORD:{
+      const unsigned char*s=(const unsigned char*)S(a,n,0); return vreal(s[0]); }
+    case BID_FILE_TEXT_EOF:{
+      int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(1);
+      FILE *f=(FILE*)vm->bin_file[i]; int c=fgetc(f); if(c==EOF) return vreal(1); ungetc(c,f); return vreal(0); }
     case BID_ARRAY_LENGTH:
     case BID_ARRAY_LENGTH_1D:
       return vreal(n>0?gml_val_array_length(a[0]):0);
@@ -2430,7 +2512,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
       return vreal(0);
     case BID_PLACE_MEETING:{
       int r=collision_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),0);
-      if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+      if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
         const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
         if(cn) fprintf(stderr,"[col] %s place_meeting(%.0f,%.0f,%s)=%d\n",cn,N(a,n,0),N(a,n,1),tn,r); }
       return vreal(r); }
@@ -2441,7 +2523,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
     case BID_INSTANCE_PLACE_LIST:{
       GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,3));
       int r=collision_instance_list_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),l,N(a,n,4)>=0.5);
-      if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cnm=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+      if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cnm=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
         const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
         if(cnm) fprintf(stderr,"[col] %s instance_place_list(%.0f,%.0f,%s)=%d\n",cnm,N(a,n,0),N(a,n,1),tn,r); }
       return vreal(r); }
@@ -2576,9 +2658,17 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
   }
 }
 
+static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n);
 GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
-  { GmlVal v; int hp=hotprof_enabled(); double t0=hp?hotprof_now():0.0;
-    if(fast_hot_builtin(vm,nm,a,n,&v)){ if(hp) hotprof_add(nm,(hotprof_now()-t0)*1000.0); return v; } }
+  if(!hotprof_enabled()) return builtin_call_impl(vm,nm,a,n);
+  double t0=hotprof_now();
+  GmlVal v=builtin_call_impl(vm,nm,a,n);
+  hotprof_add(nm,(hotprof_now()-t0)*1000.0);
+  return v;
+}
+static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  { GmlVal v;
+    if(fast_hot_builtin(vm,nm,a,n,&v)) return v; }
   /* Return zero for prefixed script names whose suffix is sleep; leave the unprefixed builtin untouched. */
   { const char *sb=NULL;
     if(!strncmp(nm,"gml_GlobalScript_",17)) sb=nm+17;
@@ -2618,12 +2708,12 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
     } }
   /* ---- collision ---- */
   if(!strcmp(nm,"place_meeting")){ int r=collision_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),0);
-    if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+    if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
       const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
       if(cn) fprintf(stderr,"[col] %s place_meeting(%.0f,%.0f,%s)=%d\n",cn,N(a,n,0),N(a,n,1),tn,r); }
     return vreal(r); }
   if(!strcmp(nm,"place_free")){ int r=!collision_at(vm,N(a,n,0),N(a,n,1),0,1);
-    if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+    if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
       if(cn) fprintf(stderr,"[col] %s place_free(%.0f,%.0f)=%d\n",cn,N(a,n,0),N(a,n,1),r); }
     return vreal(r); }
   if(!strcmp(nm,"place_empty"))   return vreal(!collision_at(vm,N(a,n,0),N(a,n,1),IT_ALL,0));
@@ -3358,7 +3448,7 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"instance_place_list")){
     GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,3));
     int r=collision_instance_list_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),l,N(a,n,4)>=0.5);
-    if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cnm=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+    if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cnm=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
       const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
       if(cnm) fprintf(stderr,"[col] %s instance_place_list(%.0f,%.0f,%s)=%d\n",cnm,N(a,n,0),N(a,n,1),tn,r); }
     return vreal(r); }
@@ -4541,7 +4631,7 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
     char *key=(n>=2)?ds_key_make(a[1]):NULL;
     int i=ds_map_find_entry(m,key);
     GmlVal out=(i>=0)?m->entry[i].val:vundef();
-    if(getenv("GML_LOG_DS")){
+    if(log_ds_on()){
       fprintf(stderr,"[ds_map_find_value] id=%d live=%d key=%s raw=",id,m?m->len:-1,key?key:"<null>");
       if(n>=2) ds_log_val(vm,a[1],0); else fprintf(stderr,"<missing>");
       fprintf(stderr," hit=%d out=",i);
@@ -4676,14 +4766,24 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
   int ci;
   if(!strncmp(nm,"gml_Script_",11)) ci=gml_code_index_by_name(vm->win,nm);
   else { char sn[160]; snprintf(sn,sizeof sn,"gml_Script_%s",nm); ci=gml_code_index_by_name(vm->win,sn); }
-  if(ci>=0) return gml_vm_run_code(vm,ci,vm->cur_self,vm->cur_other,a,n);
+  if(ci>=0){
+    GmlVal rv=gml_vm_run_code(vm,ci,vm->cur_self,vm->cur_other,a,n);
+    /* report the resolution for the caller's per-site cache — but never for names the chain
+     * above may shadow natively later (the tile_* compat shadows only engage once runtime
+     * layers exist, so caching them here would pin the slow bytecode path). Set AFTER the run:
+     * nested calls inside the script clobber the side channel while it executes. */
+    const char *bare2 = strncmp(nm,"gml_Script_",11)? nm : nm+11;
+    if(strcmp(bare2,"tile_layer_find") && strcmp(bare2,"tile_delete"))
+      vm->call_script_ci=ci;
+    return rv;
+  }
 
   /* Store runtime layer elements in vm->rte and layers in vm->rtl. Drawing merges
    * visible tile/background elements into the depth-sorted list. */
   /* Resolve tilemap IDs from layers and read raw tile data; tile_get_index extracts the tile index. */
   if(!strcmp(nm,"layer_tilemap_get_id")){ extern GmlTileMap *gml_tilemap_by_layer(GmlVM*,GmlVal);
     GmlTileMap *tm=gml_tilemap_by_layer(vm, n>0?a[0]:vreal(-1));
-    if(getenv("GML_LOG_TILECOL")){ if(n>0&&a[0].t==V_STR) fprintf(stderr,"[tilecol] layer_tilemap_get_id(\"%s\") -> %d\n",a[0].s?a[0].s:"",tm?tm->id:-1);
+    if(log_tilecol_on()){ if(n>0&&a[0].t==V_STR) fprintf(stderr,"[tilecol] layer_tilemap_get_id(\"%s\") -> %d\n",a[0].s?a[0].s:"",tm?tm->id:-1);
       else fprintf(stderr,"[tilecol] layer_tilemap_get_id(%g) -> %d (%s)\n",N(a,n,0),tm?tm->id:-1,tm?tm->name:"none"); }
     return vreal(tm?tm->id:-1); }
   if(!strcmp(nm,"tilemap_get_cell_x_at_pixel")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
@@ -4694,10 +4794,10 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(tm&&tm->th?floor((N(a,n,2)-ty)/tm->th):0); }
   if(!strcmp(nm,"tilemap_get")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
     int cx=(int)N(a,n,1),cy=(int)N(a,n,2);
-    if(!tm||cx<0||cy<0||cx>=tm->cols||cy>=tm->rows){ if(getenv("GML_LOG_TILECOL")) fprintf(stderr,"[tilecol] tilemap_get(id=%g,%d,%d) -> 0 (tm=%s oob)\n",N(a,n,0),cx,cy,tm?tm->name:"NULL"); return vreal(0); }
+    if(!tm||cx<0||cy<0||cx>=tm->cols||cy>=tm->rows){ if(log_tilecol_on()) fprintf(stderr,"[tilecol] tilemap_get(id=%g,%d,%d) -> 0 (tm=%s oob)\n",N(a,n,0),cx,cy,tm?tm->name:"NULL"); return vreal(0); }
     const unsigned char *p=tm->tiles+((size_t)cy*tm->cols+cx)*4;
     uint32_t datum=(uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);
-    if(getenv("GML_LOG_TILECOL")) fprintf(stderr,"[tilecol] tilemap_get(%s,%d,%d) -> %u (idx=%u)\n",tm->name,cx,cy,datum,datum&0x7FFFF);
+    if(log_tilecol_on()) fprintf(stderr,"[tilecol] tilemap_get(%s,%d,%d) -> %u (idx=%u)\n",tm->name,cx,cy,datum,datum&0x7FFFF);
     return vreal((double)datum); }
   if(!strcmp(nm,"tilemap_get_at_pixel")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
     if(!tm||!tm->tw||!tm->th) return vreal(0);

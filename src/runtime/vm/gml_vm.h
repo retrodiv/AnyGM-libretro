@@ -133,6 +133,7 @@ typedef struct GmlVM {
   int      action_relative;   /* D&D action_set_relative flag for following action_* calls */
   /* execution context */
   GmlInstance *cur_self, *cur_other;
+  int32_t call_script_ci;   /* side channel: generic dispatch reports "name resolved to script <ci>" for the caller's per-site cache */
   const char *cur_event; int cur_event_obj;   /* current event suffix + object level (for event_inherited) */
   GmlVal script_args[16]; int script_argc;     /* current script argumentN/argument_count */
   /* RNG: WELL512 (Lomont compact form), MSVC-LCG seed expansion,

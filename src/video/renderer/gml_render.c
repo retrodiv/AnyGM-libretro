@@ -10,6 +10,7 @@
 #include "gml_render.h"
 #include "gm_qoi.h"
 #include "bzip2/bzlib.h"
+#include "gml_thread.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,7 @@
 #if defined(__SSE2__)
 #include <emmintrin.h>
 #endif
+GML_THREAD_BRIDGE_IMPL
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
 #endif
@@ -548,23 +550,172 @@ static int texture_blob_dims(const uint8_t *blob, size_t avail, int *ow, int *oh
   if(ow) *ow=w; if(oh) *oh=h;
   return 1;
 }
+/* ---- async atlas prefetch pool ----
+ * A first draw touching an undecoded atlas costs a full BZ2+QOI decode (tens of ms on a big
+ * GMS2 atlas — a visible frame hitch). Worker threads decode queued atlases in the background
+ * (queued at room enter / state load); the draw path keeps a synchronous fallback so output
+ * never depends on prefetch timing. Disable with GML_ATLAS_THREADS=0. */
+typedef struct {
+  gml_mutex_t mu; gml_cond_t work, done;
+  gml_thread_t th[8]; int nth, shutdown;
+  unsigned qhead, qtail; int *queue; unsigned qcap;
+  uint8_t *state;                     /* per-atlas: 0 idle, 1 queued, 2 decoding */
+  GmlRender *r;
+} GmlAtlasPool;
+static int log_atlas_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_ATLAS")!=NULL; return on; }
+/* decode outside the lock, publish under it. Returns the published pixels (or NULL). */
+static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlasPool *pool){
+  GmlAtlas *a=&r->atlas[idx];
+  int w=0,h=0;
+  uint8_t *px=(a->blob && a->blob<r->win->size)?
+    decode_texture_blob(r->win->data+a->blob, a->avail, a->chunk_end, &w,&h) : NULL;
+  if(locked) gml_mutex_lock(&pool->mu);
+  a->decode_attempted=1;
+  if(px){
+    a->w=w; a->h=h;
+    __atomic_store_n(&a->px,px,__ATOMIC_RELEASE);
+    if(log_atlas_on())
+      fprintf(stderr,"[atlas] decoded %d %dx%d (%.1f MiB)\n",idx,w,h,(double)((uint64_t)w*(uint64_t)h*4ull)/(1024.0*1024.0));
+  }
+  if(locked){
+    pool->state[idx]=0;
+    gml_cond_broadcast(&pool->done);
+  }
+  return px;
+}
+static void *atlas_worker(void *arg){
+  GmlAtlasPool *pool=(GmlAtlasPool*)arg;
+  GmlRender *r=pool->r;
+  gml_mutex_lock(&pool->mu);
+  while(!pool->shutdown){
+    if(pool->qhead==pool->qtail){ gml_cond_wait(&pool->work,&pool->mu); continue; }
+    int idx=pool->queue[pool->qhead % pool->qcap]; pool->qhead++;
+    GmlAtlas *a=&r->atlas[idx];
+    if(pool->state[idx]!=1){ continue; }              /* claimed by a sync decode meanwhile */
+    if(a->px || a->decode_attempted){ pool->state[idx]=0; continue; }
+    pool->state[idx]=2;
+    gml_mutex_unlock(&pool->mu);
+    atlas_decode_publish(r,idx,1,pool);               /* relocks to publish */
+  }
+  gml_mutex_unlock(&pool->mu);
+  return NULL;
+}
+static GmlAtlasPool *atlas_pool_get(GmlRender *r){
+  if(r->prefetch_checked) return (GmlAtlasPool*)r->prefetch;
+  r->prefetch_checked=1;
+  const char *e=getenv("GML_ATLAS_THREADS");
+  int nth = e? atoi(e) : 0;
+  if(!e){
+    int nc=gml_ncpu();
+    nth = nc-1;
+    if(nth>4) nth=4;
+    if(nth<1) nth=1;
+  }
+  if(nth<=0 || r->n_atlas<=0) return NULL;
+  if(nth>8) nth=8;
+  GmlAtlasPool *pool=calloc(1,sizeof *pool);
+  if(!pool) return NULL;
+  pool->r=r;
+  pool->qcap=(unsigned)r->n_atlas;
+  pool->queue=malloc(pool->qcap*sizeof(int));
+  pool->state=calloc((size_t)r->n_atlas,1);
+  if(!pool->queue || !pool->state){ free(pool->queue); free(pool->state); free(pool); return NULL; }
+  gml_mutex_init(&pool->mu); gml_cond_init(&pool->work); gml_cond_init(&pool->done);
+  for(int i=0;i<nth;i++){
+    if(gml_thread_create(&pool->th[pool->nth],atlas_worker,pool)==0) pool->nth++;
+  }
+  if(!pool->nth){
+    gml_mutex_destroy(&pool->mu); gml_cond_destroy(&pool->work); gml_cond_destroy(&pool->done);
+    free(pool->queue); free(pool->state); free(pool);
+    return NULL;
+  }
+  r->prefetch=pool;
+  return pool;
+}
+static void atlas_pool_free(GmlRender *r){
+  GmlAtlasPool *pool=(GmlAtlasPool*)r->prefetch;
+  if(!pool) return;
+  gml_mutex_lock(&pool->mu);
+  pool->shutdown=1;
+  gml_cond_broadcast(&pool->work);
+  gml_mutex_unlock(&pool->mu);
+  for(int i=0;i<pool->nth;i++) gml_thread_join(pool->th[i]);
+  gml_mutex_destroy(&pool->mu); gml_cond_destroy(&pool->work); gml_cond_destroy(&pool->done);
+  free(pool->queue); free(pool->state); free(pool);
+  r->prefetch=NULL; r->prefetch_checked=0;
+}
+void gml_render_prefetch_atlas(GmlRender *r, int idx){
+  if(!r || idx<0 || idx>=r->n_atlas || !r->atlas) return;
+  GmlAtlas *a=&r->atlas[idx];
+  if(a->px || a->decode_attempted || !a->blob || a->blob>=r->win->size) return;
+  GmlAtlasPool *pool=atlas_pool_get(r);
+  if(!pool) return;
+  gml_mutex_lock(&pool->mu);
+  if(!a->px && !a->decode_attempted && pool->state[idx]==0 && pool->qtail-pool->qhead<pool->qcap){
+    pool->state[idx]=1;
+    pool->queue[pool->qtail % pool->qcap]=idx; pool->qtail++;
+    gml_cond_broadcast(&pool->work);
+  }
+  gml_mutex_unlock(&pool->mu);
+}
+static void prefetch_atlas_and_neighbors(GmlRender *r, int idx){
+  gml_render_prefetch_atlas(r,idx);
+  /* GM's texture packer clusters related pages: a page adjacent to a needed one is likely
+   * needed moments later (spawned effects/enemies) — cheap, bounded speculation */
+  gml_render_prefetch_atlas(r,idx-1);
+  gml_render_prefetch_atlas(r,idx+1);
+}
+void gml_render_prefetch_sprite(GmlRender *r, int sprite){
+  if(!r || sprite<0 || sprite>=r->n_spr) return;
+  GmlSprite *s=&r->spr[sprite];
+  if(s->runtime_rgba || !s->frame) return;
+  for(int f=0; f<s->n_frames; f++){
+    int ti=s->frame[f];
+    if(ti<0 || ti>=r->n_tpag) continue;
+    prefetch_atlas_and_neighbors(r,r->tpag[ti].atlas);
+  }
+}
+void gml_render_prefetch_bg(GmlRender *r, int bg){
+  if(!r || bg<0 || bg>=r->n_bg) return;
+  int ti=r->bg[bg].tpag;
+  if(ti<0 || ti>=r->n_tpag) return;
+  prefetch_atlas_and_neighbors(r,r->tpag[ti].atlas);
+}
+static void atlas_dump_maybe(GmlRender *r, int idx){
+  GmlAtlas *a=&r->atlas[idx];
+  if(!a->px || !getenv("GML_DUMP_ATLAS")) return;
+  char fn[64]; snprintf(fn,sizeof fn,"builds/_atlas%d.ppm",idx);
+  FILE*f=fopen(fn,"wb"); if(f){ fprintf(f,"P6\n%d %d\n255\n",a->w,a->h);
+    for(int q=0;q<a->w*a->h;q++) fwrite(a->px+q*4,1,3,f); fclose(f);
+    fprintf(stderr,"[atlas] dumped %s (%dx%d)\n",fn,a->w,a->h); }
+}
 static uint8_t *atlas_pixels(GmlRender *r, int idx){
   if(!r || idx<0 || idx>=r->n_atlas || !r->atlas) return NULL;
   GmlAtlas *a=&r->atlas[idx];
-  if(a->px) return a->px;
-  if(a->decode_attempted || !a->blob || a->blob>=r->win->size) return NULL;
-  a->decode_attempted=1;
-  int w=0,h=0;
-  uint8_t *px=decode_texture_blob(r->win->data+a->blob, a->avail, a->chunk_end, &w,&h);
-  if(!px) return NULL;
-  a->px=px; a->w=w; a->h=h;
-  if(getenv("GML_LOG_ATLAS"))
-    fprintf(stderr,"[atlas] decoded %d %dx%d (%.1f MiB)\n",idx,w,h,(double)((uint64_t)w*(uint64_t)h*4ull)/(1024.0*1024.0));
-  if(getenv("GML_DUMP_ATLAS")){ char fn[64]; snprintf(fn,sizeof fn,"builds/_atlas%d.ppm",idx);
-    FILE*f=fopen(fn,"wb"); if(f){ fprintf(f,"P6\n%d %d\n255\n",w,h);
-      for(int q=0;q<w*h;q++) fwrite(px+q*4,1,3,f); fclose(f);
-      fprintf(stderr,"[atlas] dumped %s (%dx%d)\n",fn,w,h); } }
-  return a->px;
+  uint8_t *p=__atomic_load_n(&a->px,__ATOMIC_ACQUIRE);
+  if(p) return p;
+  GmlAtlasPool *pool=(GmlAtlasPool*)r->prefetch;
+  if(!pool){
+    if(a->decode_attempted || !a->blob || a->blob>=r->win->size) return NULL;
+    p=atlas_decode_publish(r,idx,0,NULL);
+    if(p) atlas_dump_maybe(r,idx);
+    return p;
+  }
+  gml_mutex_lock(&pool->mu);
+  for(;;){
+    p=a->px;
+    if(p || a->decode_attempted) break;
+    if(pool->state[idx]==2){ gml_cond_wait(&pool->done,&pool->mu); continue; }
+    /* idle or queued: claim it and decode synchronously (a queued entry goes stale; workers skip it) */
+    pool->state[idx]=2;
+    gml_mutex_unlock(&pool->mu);
+    p=atlas_decode_publish(r,idx,1,pool);   /* relocks to publish */
+    break;
+  }
+  p=a->px;
+  gml_mutex_unlock(&pool->mu);
+  if(p) atlas_dump_maybe(r,idx);
+  return p;
 }
 static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
                              int *x0, int *y0, int *x1, int *y1){

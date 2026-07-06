@@ -118,10 +118,17 @@ typedef struct {
   } *shader_pal; int n_shader_pal;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
   int       active_shader;   /* shader_set asset id, -1 = none. Reset per frame. */
+  /* async atlas prefetch pool (opaque; see gml_render.c). Decodes atlases on worker threads so
+   * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
+  void     *prefetch; int prefetch_checked;
 } GmlRender;
 
 int  gml_render_init(GmlRender *r, GmlWin *win);
 void gml_render_free(GmlRender *r);
+/* queue background decodes (worker threads; safe no-ops when disabled or already decoded) */
+void gml_render_prefetch_atlas(GmlRender *r, int idx);
+void gml_render_prefetch_sprite(GmlRender *r, int sprite);
+void gml_render_prefetch_bg(GmlRender *r, int bg);
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double camx, double camy);
 void gml_render_set_pending_underlay(GmlRender *r, int x, int y, int w, int h);
 void gml_render_flush_pending_underlay(GmlRender *r);
