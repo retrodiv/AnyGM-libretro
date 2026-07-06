@@ -2111,7 +2111,23 @@ enum {
   BID_INSTANCE_EXISTS,
   BID_INSTANCE_NUMBER,
   BID_INSTANCE_PLACE_LIST,
-  BID_SIN
+  BID_SIN,
+  BID_ARRAY_PUSH,
+  BID_DRAW_RECTANGLE,
+  BID_DRAW_SET_COLOR,
+  BID_SHADER_SET,
+  BID_SHADER_RESET,
+  BID_SHADER_SET_UNIFORM_F,
+  BID_SHADER_SET_UNIFORM_F_ARRAY,
+  BID_DISTANCE_TO_OBJECT,
+  BID_FLOOR,
+  BID_ABS,
+  BID_MIN,
+  BID_MAX,
+  BID_CLAMP,
+  BID_LENGTHDIR_X,
+  BID_LENGTHDIR_Y,
+  BID_POINT_DISTANCE
 };
 
 int gml_builtin_fast_id(const char *nm){
@@ -2120,20 +2136,32 @@ int gml_builtin_fast_id(const char *nm){
     case 'a':
       if(!strcmp(nm,"array_length")) return BID_ARRAY_LENGTH;
       if(!strcmp(nm,"array_length_1d")) return BID_ARRAY_LENGTH_1D;
+      if(!strcmp(nm,"array_push")) return BID_ARRAY_PUSH;
+      if(!strcmp(nm,"abs")) return BID_ABS;
+      return -1;
+    case 'c':
+      if(!strcmp(nm,"clamp")) return BID_CLAMP;
       return -1;
     case 'd':
       if(!strcmp(nm,"draw_sprite")) return BID_DRAW_SPRITE;
       if(!strcmp(nm,"draw_sprite_ext")) return BID_DRAW_SPRITE_EXT;
       if(!strcmp(nm,"draw_surface")) return BID_DRAW_SURFACE;
       if(!strcmp(nm,"draw_surface_ext")) return BID_DRAW_SURFACE_EXT;
+      if(!strcmp(nm,"draw_rectangle")) return BID_DRAW_RECTANGLE;
       if(!strcmp(nm,"draw_rectangle_color")) return BID_DRAW_RECTANGLE_COLOR;
       if(!strcmp(nm,"draw_rectangle_colour")) return BID_DRAW_RECTANGLE_COLOUR;
       if(!strcmp(nm,"draw_text")) return BID_DRAW_TEXT;
       if(!strcmp(nm,"draw_text_ext_transformed_colour")) return BID_DRAW_TEXT_EXT_TRANSFORMED_COLOUR;
       if(!strcmp(nm,"draw_text_ext_transformed_color")) return BID_DRAW_TEXT_EXT_TRANSFORMED_COLOR;
+      if(!strcmp(nm,"draw_set_color")) return BID_DRAW_SET_COLOR;
+      if(!strcmp(nm,"draw_set_colour")) return BID_DRAW_SET_COLOR;
       if(!strcmp(nm,"draw_set_alpha")) return BID_DRAW_SET_ALPHA;
       if(!strcmp(nm,"draw_set_font")) return BID_DRAW_SET_FONT;
       if(!strcmp(nm,"draw_set_halign")) return BID_DRAW_SET_HALIGN;
+      if(!strcmp(nm,"distance_to_object")) return BID_DISTANCE_TO_OBJECT;
+      return -1;
+    case 'f':
+      if(!strcmp(nm,"floor")) return BID_FLOOR;
       return -1;
     case 'g':
       if(!strcmp(nm,"gpu_set_blendmode")) return BID_GPU_SET_BLENDMODE;
@@ -2143,13 +2171,26 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"instance_number")) return BID_INSTANCE_NUMBER;
       if(!strcmp(nm,"instance_place_list")) return BID_INSTANCE_PLACE_LIST;
       return -1;
+    case 'l':
+      if(!strcmp(nm,"lengthdir_x")) return BID_LENGTHDIR_X;
+      if(!strcmp(nm,"lengthdir_y")) return BID_LENGTHDIR_Y;
+      return -1;
+    case 'm':
+      if(!strcmp(nm,"min")) return BID_MIN;
+      if(!strcmp(nm,"max")) return BID_MAX;
+      return -1;
     case 'p':
       if(!strcmp(nm,"part_system_drawit")) return BID_PART_SYSTEM_DRAWIT;
       if(!strcmp(nm,"part_system_drawit_ext")) return BID_PART_SYSTEM_DRAWIT_EXT;
       if(!strcmp(nm,"place_meeting")) return BID_PLACE_MEETING;
+      if(!strcmp(nm,"point_distance")) return BID_POINT_DISTANCE;
       return -1;
     case 's':
       if(!strcmp(nm,"sin")) return BID_SIN;
+      if(!strcmp(nm,"shader_set")) return BID_SHADER_SET;
+      if(!strcmp(nm,"shader_reset")) return BID_SHADER_RESET;
+      if(!strcmp(nm,"shader_set_uniform_f")) return BID_SHADER_SET_UNIFORM_F;
+      if(!strcmp(nm,"shader_set_uniform_f_array")) return BID_SHADER_SET_UNIFORM_F_ARRAY;
       return -1;
     default:
       return -1;
@@ -2162,6 +2203,9 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
     case BID_ARRAY_LENGTH:
     case BID_ARRAY_LENGTH_1D:
       return vreal(n>0?gml_val_array_length(a[0]):0);
+    case BID_ARRAY_PUSH:
+      for(int i=1;i<n;i++) gml_arr_push(a[0],a[i]);
+      return vreal(0);
     case BID_DRAW_SPRITE:
       if(R) gml_draw_sprite(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3));
       return vreal(0);
@@ -2189,6 +2233,16 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
         draw_rect_colour_prim(R,x1,y1,x2,y2,(uint32_t)N(a,n,4),(uint32_t)N(a,n,5),(uint32_t)N(a,n,6),(uint32_t)N(a,n,7),outline);
       }
       return vreal(0);
+    case BID_DRAW_RECTANGLE:
+      if(R){
+        int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y);
+        int x2=(int)ceil(N(a,n,2)-R->cam_x), y2=(int)ceil(N(a,n,3)-R->cam_y);
+        draw_rect_prim(R,x1,y1,x2,y2,R->color,(int)N(a,n,4));
+      }
+      return vreal(0);
+    case BID_DRAW_SET_COLOR:
+      if(R) R->color=(uint32_t)N(a,n,0);
+      return vreal(0);
     case BID_DRAW_TEXT:
       if(R) gml_draw_text(R,N(a,n,0),N(a,n,1),S(a,n,2));
       return vreal(0);
@@ -2207,6 +2261,20 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
       return vreal(0);
     case BID_GPU_SET_BLENDMODE:
       if(R){ int bm=(int)N(a,n,0); R->blendmode=(bm==1)?1:(bm==3)?2:0; }
+      return vreal(0);
+    case BID_SHADER_SET:
+      if(R) R->active_shader=(int)N(a,n,0);
+      return vreal(0);
+    case BID_SHADER_RESET:
+      if(R) R->active_shader=-1;
+      return vreal(0);
+    case BID_SHADER_SET_UNIFORM_F:
+    case BID_SHADER_SET_UNIFORM_F_ARRAY:
+      if(R){ int h=(int)N(a,n,0);
+        if(h>=0 && (h%16)==1){ int sh=h/16;
+          if(sh<R->n_shader_pal && R->shader_pal && R->shader_pal[sh].lut) R->shader_pal[sh].lut_row=(float)N(a,n,1);
+        }
+      }
       return vreal(0);
     case BID_PART_SYSTEM_DRAWIT:
     case BID_PART_SYSTEM_DRAWIT_EXT:
@@ -2231,6 +2299,42 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
       return vreal(r); }
     case BID_SIN:
       return vreal(sin(N(a,n,0)));
+    case BID_DISTANCE_TO_OBJECT:{
+      GmlInstance*s=vm->cur_self;
+      if(!s) return vreal(0);
+      int obj=(int)N(a,n,0);
+      double best=1e18;
+      for(int i=0;i<vm->inst_count;i++){ GmlInstance*o=&vm->inst[i];
+        if(o==s || !target_matches_instance(vm,s,o,obj)) continue;
+        double d=hypot(o->x-s->x,o->y-s->y);
+        if(d<best) best=d;
+      }
+      return vreal(best>1e17?-1:best); }
+    case BID_FLOOR:
+      return vreal(floor(N(a,n,0)));
+    case BID_ABS:
+      return vreal(fabs(N(a,n,0)));
+    case BID_MIN:{
+      if(n<=0) return vreal(0);
+      double v=N(a,n,0);
+      for(int i=1;i<n;i++){ double x=N(a,n,i); if(x<v) v=x; }
+      return vreal(v); }
+    case BID_MAX:{
+      if(n<=0) return vreal(0);
+      double v=N(a,n,0);
+      for(int i=1;i<n;i++){ double x=N(a,n,i); if(x>v) v=x; }
+      return vreal(v); }
+    case BID_CLAMP:{
+      double x=N(a,n,0), lo=N(a,n,1), hi=N(a,n,2);
+      if(x<lo)x=lo;
+      if(x>hi)x=hi;
+      return vreal(x); }
+    case BID_LENGTHDIR_X:
+      return vreal(N(a,n,0)*cos(N(a,n,1)*M_PI/180.0));
+    case BID_LENGTHDIR_Y:
+      return vreal(-N(a,n,0)*sin(N(a,n,1)*M_PI/180.0));
+    case BID_POINT_DISTANCE:
+      return vreal(hypot(N(a,n,2)-N(a,n,0),N(a,n,3)-N(a,n,1)));
     default:
       return vreal(0);
   }
