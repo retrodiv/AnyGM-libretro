@@ -8,6 +8,7 @@
 typedef struct {
   int sx,sy,sw,sh, tx,ty, bw,bh, atlas;  /* texture page item */
   int alpha_scanned, ax0, ay0, ax1, ay1; /* nontransparent source bbox, cached after atlas decode */
+  int *alpha_row_min, *alpha_row_max;     /* per-source-row nontransparent span, optional */
   uint32_t *argb_cache;                  /* compact ARGB source pixels for hot rotated draws */
 } GmlTpag;
 typedef struct { const char *name; int originx, originy, w, h, n_frames; int *frame;

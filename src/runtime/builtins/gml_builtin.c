@@ -33,6 +33,17 @@ static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o]|(uint32_t)d[o+1]<<8|(uint32_t)d[o+2]<<16|(uint32_t)d[o+3]<<24;
 }
 static double N(GmlVal *a, int n, int i){ return (i<n)? (a[i].t==V_REAL?a[i].d:(a[i].s?atof(a[i].s):0)) : 0; }
+static double builtin_game_speed(GmlVM *vm){
+  GmlVal *p=vm?gml_varmap_get(&vm->globals,"__game_speed_fps"):NULL;
+  double v=p?N(p,1,0):60.0;
+  return v>0 ? v : 60.0;
+}
+static void builtin_set_game_speed(GmlVM *vm, double fps){
+  if(!vm) return;
+  if(fps<=0) fps=60.0;
+  if(fabs(fps-60.0)<0.000001 && !gml_varmap_get(&vm->globals,"__game_speed_fps")) return;
+  *gml_varmap_put(&vm->globals,"__game_speed_fps")=vreal(fps);
+}
 static const char *gm_string_tmp(GmlVal v){
   static char ring[8][64];
   static int ri;
@@ -2928,6 +2939,16 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(0); }
     /* display DPI: return a real 96 (not 0) so `x / display_get_dpi_x()` scaling code never divides by 0. */
     if(!strcmp(nm,"display_get_dpi_x")||!strcmp(nm,"display_get_dpi_y")) return vreal(96);
+    if(!strcmp(nm,"display_get_frequency")) return vreal(60.0);
+    if(!strcmp(nm,"game_set_speed")){
+      double spd=N(a,n,0), mode=N(a,n,1);
+      builtin_set_game_speed(vm, mode>=0.5 ? (spd>0 ? 1000000.0/spd : 60.0) : spd);
+      return vreal(0);
+    }
+    if(!strcmp(nm,"game_get_speed")){
+      double fps=builtin_game_speed(vm), mode=N(a,n,0);
+      return vreal(mode>=0.5 ? 1000000.0/fps : fps);
+    }
     /* Use renderer dimensions when available, otherwise the GEN8 display dimensions. */
     if(!strcmp(nm,"display_get_width")||!strcmp(nm,"window_get_width"))
       return vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288));

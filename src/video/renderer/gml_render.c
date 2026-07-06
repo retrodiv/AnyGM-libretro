@@ -196,6 +196,52 @@ static inline int fixed20_run_to_change(int64_t fp, int64_t step, int cell, int 
   if(n>maxrun) return maxrun;
   return (int)n;
 }
+static inline int fixed20_run_until_at_least(int64_t fp, int64_t step, int target, int maxrun){
+  if(maxrun<=1 || step<=0) return maxrun;
+  int64_t edge=(int64_t)target * RFP_ONE;
+  if(fp>=edge) return 1;
+  int64_t n=(edge - fp + step - 1) / step;
+  if(n<1) return 1;
+  if(n>maxrun) return maxrun;
+  return (int)n;
+}
+static inline int fixed20_run_until_at_most(int64_t fp, int64_t step, int target, int maxrun){
+  if(maxrun<=1 || step>=0) return maxrun;
+  int64_t neg=-step;
+  int64_t edge=(int64_t)(target + 1) * RFP_ONE;
+  if(fp<edge) return 1;
+  int64_t n=(fp - edge) / neg + 1;
+  if(n<1) return 1;
+  if(n>maxrun) return maxrun;
+  return (int)n;
+}
+static inline int alpha_span_skip_run(const GmlTpag *t, int ix, int iy, int64_t lx_fp,
+                                      int64_t ly_fp, int64_t dlx_fp, int64_t dly_fp,
+                                      int maxrun){
+  if(!t || !t->alpha_row_min || iy<0 || iy>=t->sh || maxrun<=0) return 0;
+  int mn=t->alpha_row_min[iy], mx=t->alpha_row_max[iy];
+  if(mx<mn){
+    int run=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+    return run<1 ? 1 : run;
+  }
+  if(ix<mn){
+    int run=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+    if(dlx_fp>0){
+      int xr=fixed20_run_until_at_least(lx_fp,dlx_fp,mn,maxrun);
+      if(xr<run) run=xr;
+    }
+    return run<1 ? 1 : run;
+  }
+  if(ix>mx){
+    int run=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+    if(dlx_fp<0){
+      int xr=fixed20_run_until_at_most(lx_fp,dlx_fp,mx,maxrun);
+      if(xr<run) run=xr;
+    }
+    return run<1 ? 1 : run;
+  }
+  return 0;
+}
 static inline uint32_t blend_fast8_cached(uint32_t dst, uint32_t srb, uint32_t sg, uint32_t ia){
   uint32_t rb=((srb+(dst&0x00FF00FFu)*ia)>>8)&0x00FF00FFu;
   uint32_t g=((sg+(dst&0x0000FF00u)*ia)>>8)&0x0000FF00u;
@@ -266,6 +312,17 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
   if(!t->alpha_scanned){
     int minx=t->sw, miny=t->sh, maxx=-1, maxy=-1;
     int log_alpha=getenv("GML_LOG_TPAG_ALPHA")!=NULL;
+    int real_tpag = rprof_tpag_id(r,t)>=0;
+    if(real_tpag && !t->alpha_row_min && !t->alpha_row_max){
+      t->alpha_row_min=malloc((size_t)t->sh*sizeof(int));
+      t->alpha_row_max=malloc((size_t)t->sh*sizeof(int));
+      if(t->alpha_row_min && t->alpha_row_max){
+        for(int yy=0; yy<t->sh; yy++){ t->alpha_row_min[yy]=t->sw; t->alpha_row_max[yy]=-1; }
+      } else {
+        free(t->alpha_row_min); free(t->alpha_row_max);
+        t->alpha_row_min=NULL; t->alpha_row_max=NULL;
+      }
+    }
     unsigned long nz=0;
     for(int yy=0; yy<t->sh; yy++){
       int sy=t->sy+yy;
@@ -281,6 +338,10 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
         if(xx>maxx) maxx=xx;
         if(yy<miny) miny=yy;
         if(yy>maxy) maxy=yy;
+        if(t->alpha_row_min){
+          if(xx<t->alpha_row_min[yy]) t->alpha_row_min[yy]=xx;
+          if(xx>t->alpha_row_max[yy]) t->alpha_row_max[yy]=xx;
+        }
       }
     }
     t->ax0=minx; t->ay0=miny; t->ax1=maxx; t->ay1=maxy;
