@@ -237,6 +237,36 @@ static inline int fixed20_run_until_at_most(int64_t fp, int64_t step, int target
   if(n>maxrun) return maxrun;
   return (int)n;
 }
+static inline int rotated_quad_row_span(const double qx[4], const double qy[4], double y,
+                                        int clip0, int clip1, int *out0, int *out1){
+  double xs[4];
+  int n=0;
+  for(int i=0;i<4;i++){
+    int j=(i+1)&3;
+    double y0=qy[i], y1=qy[j];
+    if((y0<=y && y1>y) || (y1<=y && y0>y)){
+      double den=y1-y0;
+      if(den!=0.0 && n<4){
+        double t=(y-y0)/den;
+        xs[n++]=qx[i] + t*(qx[j]-qx[i]);
+      }
+    }
+  }
+  if(n<2) return 0;
+  double mn=xs[0], mx=xs[0];
+  for(int i=1;i<n;i++){
+    if(xs[i]<mn) mn=xs[i];
+    if(xs[i]>mx) mx=xs[i];
+  }
+  int x0=(int)floor(mn)-1;
+  int x1=(int)ceil(mx)+1;
+  if(x0<clip0) x0=clip0;
+  if(x1>clip1) x1=clip1;
+  if(x1<=x0) return 0;
+  *out0=x0;
+  *out1=x1;
+  return 1;
+}
 static inline int alpha_span_skip_run(const GmlTpag *t, int ix, int iy, int64_t lx_fp,
                                       int64_t ly_fp, int64_t dlx_fp, int64_t dly_fp,
                                       int maxrun){
@@ -479,7 +509,6 @@ static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run
     dp[k]=blend_fast8_cached(dp[k],srb,sg,ia);
   }
 }
-
 /* ---- atlas (TXTR) ---- */
 /* Decode PNG, fioq, or a bzip2-compressed 2zoq container into RGBA pixels. */
 static uint8_t *decode_texture_blob(const uint8_t *blob, size_t avail, size_t chunk_end,
