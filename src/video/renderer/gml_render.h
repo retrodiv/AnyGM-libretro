@@ -28,6 +28,10 @@ typedef struct {
   double ax, ay, xs, ys, alpha;
   uint32_t blend;
 } GmlRuntimeAxisKey;
+typedef struct {
+  int y, x, len;
+  uint8_t alpha;
+} GmlRuntimeAxisRun;
 typedef struct { const char *name; int originx, originy, w, h, n_frames; int *frame;
                  int ml, mr, mt, mb;                /* mask margins: left,right,top,bottom */
                  const uint8_t *mask; int mask_rowb, mask_count;  /* SPRT collision mask: 1bpp */
@@ -36,8 +40,9 @@ typedef struct { const char *name; int originx, originy, w, h, n_frames; int *fr
                  int *runtime_row_min, *runtime_row_max;
                  uint32_t *runtime_axis_cache_px; uint8_t *runtime_axis_cache_alpha;
                  int *runtime_axis_cache_row_min, *runtime_axis_cache_row_max;
+                 GmlRuntimeAxisRun *runtime_axis_cache_runs; int runtime_axis_cache_run_count;
                  GmlRuntimeAxisKey runtime_axis_cache_key, runtime_axis_pending_key;
-                 int runtime_axis_cache_valid, runtime_axis_cache_copy_255, runtime_axis_pending_count;
+                 int runtime_axis_cache_valid, runtime_axis_cache_copy_255, runtime_axis_cache_uniform_alpha, runtime_axis_cache_full_rect, runtime_axis_pending_count;
                  char *runtime_source_path; int runtime_source_imgnum, runtime_source_removeback;
                  int base_valid, base_originx, base_originy, base_w, base_h, base_n_frames;
                  int base_ml, base_mr, base_mt, base_mb, base_mask_rowb, base_mask_count;
