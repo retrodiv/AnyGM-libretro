@@ -5,6 +5,7 @@
 #define GML_RENDER_H
 #include "gml_win.h"
 
+typedef struct { uint16_t y, x, len; uint8_t alpha; } GmlTpagAlphaRun;
 typedef struct {
   int sx,sy,sw,sh, tx,ty, bw,bh, atlas;  /* texture page item */
   int alpha_scanned, ax0, ay0, ax1, ay1; /* nontransparent source bbox, cached after atlas decode */
@@ -12,6 +13,7 @@ typedef struct {
   int *alpha_row_min, *alpha_row_max;     /* per-source-row nontransparent span, optional */
   uint16_t *alpha_qrow_min, *alpha_qrow_max; /* per-alpha-threshold row spans, built lazily */
   uint8_t *alpha_qrow_built;
+  GmlTpagAlphaRun *alpha_runs; int alpha_run_count, alpha_runs_built;
   uint32_t *argb_cache;                  /* compact ARGB source pixels for hot rotated draws */
   uint32_t *fast8_draw_cache;            /* RGB plus draw-alpha for repeated large fast8 draws */
   double fast8_draw_alpha_key;

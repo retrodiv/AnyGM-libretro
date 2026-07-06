@@ -618,6 +618,53 @@ static uint32_t *tpag_argb_cache(GmlRender *r, GmlTpag *t, GmlAtlas *a){
   t->argb_cache=cache;
   return cache;
 }
+static int tpag_alpha_runs(GmlRender *r, GmlTpag *t, GmlAtlas *a,
+                           const GmlTpagAlphaRun **runs, int *count){
+  if(runs) *runs=NULL;
+  if(count) *count=0;
+  if(!r || !t || !a || !a->px || t->sw<=0 || t->sh<=0 || t->sw>UINT16_MAX || t->sh>UINT16_MAX) return 0;
+  if(t->alpha_runs_built){
+    if(!t->alpha_runs || t->alpha_run_count<=0) return 0;
+    if(runs) *runs=t->alpha_runs;
+    if(count) *count=t->alpha_run_count;
+    return 1;
+  }
+  t->alpha_runs_built=1;
+  int bx0=0, by0=0, bx1=t->sw-1, by1=t->sh-1;
+  if(!tpag_alpha_bounds(r,t,a,&bx0,&by0,&bx1,&by1) || !t->alpha_row_min || !t->alpha_row_max) return 0;
+  uint32_t *cache=tpag_argb_cache(r,t,a);
+  if(!cache) return 0;
+  int cap=0, n=0;
+  GmlTpagAlphaRun *out=NULL;
+  for(int yy=0; yy<t->sh; yy++){
+    int mn=t->alpha_row_min[yy], mx=t->alpha_row_max[yy];
+    if(mx<mn) continue;
+    const uint32_t *row=cache+(size_t)yy*t->sw;
+    for(int xx=mn; xx<=mx; ){
+      uint32_t aa=row[xx]>>24;
+      int run=1;
+      while(xx+run<=mx && (row[xx+run]>>24)==aa && run<UINT16_MAX) run++;
+      if(aa){
+        if(n>=cap){
+          if(cap>=262144){ free(out); return 0; }
+          int nc=cap?cap*2:1024;
+          if(nc>262144) nc=262144;
+          GmlTpagAlphaRun *nr=realloc(out,(size_t)nc*sizeof(*out));
+          if(!nr){ free(out); return 0; }
+          out=nr; cap=nc;
+        }
+        out[n++]=(GmlTpagAlphaRun){(uint16_t)yy,(uint16_t)xx,(uint16_t)run,(uint8_t)aa};
+      }
+      xx+=run;
+    }
+  }
+  if(!n){ free(out); return 0; }
+  t->alpha_runs=out;
+  t->alpha_run_count=n;
+  if(runs) *runs=t->alpha_runs;
+  if(count) *count=t->alpha_run_count;
+  return 1;
+}
 static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, double alpha,
                                        int alpha_floor, int *copy_255){
   if(copy_255) *copy_255=0;
@@ -675,6 +722,79 @@ static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, 
   t->fast8_draw_cache_copy_255=alpha>=1.0;
   if(copy_255) *copy_255=t->fast8_draw_cache_copy_255;
   return cache;
+}
+static inline void blend_argb_src_over_exact(uint32_t *dp, const uint32_t *sp, int run, uint32_t aa){
+  if(run<=0 || !aa) return;
+  if(aa>=255u){ memcpy(dp,sp,(size_t)run*sizeof(uint32_t)); return; }
+  uint32_t ia=255u-aa;
+  for(int k=0; k<run; k++){
+    uint32_t src=sp[k], dst=dp[k];
+    uint32_t sr=(src>>16)&0xFFu, sg=(src>>8)&0xFFu, sb=src&0xFFu;
+    uint32_t dr=(dst>>16)&0xFFu, dg=(dst>>8)&0xFFu, db=dst&0xFFu;
+    dp[k]=0xFF000000u|(((sr*aa+dr*ia)/255u)<<16)|(((sg*aa+dg*ia)/255u)<<8)|((sb*aa+db*ia)/255u);
+  }
+}
+static inline void copy_argb_force_opaque(uint32_t *dp, const uint32_t *sp, int run){
+  if(run<=0) return;
+  for(int k=0; k<run; k++) dp[k]=0xFF000000u|(sp[k]&0x00FFFFFFu);
+}
+static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
+                                        int x0, int y0, int xx0, int xx1, int yy0, int yy1){
+  if(!r || !t || !a || !a->px || !r->fb || xx1<=xx0 || yy1<=yy0) return 0;
+  int abx0=0, aby0=0, abx1=t->sw-1, aby1=t->sh-1;
+  if(!tpag_alpha_bounds(r,t,a,&abx0,&aby0,&abx1,&aby1)) return 1;
+  if(!t->alpha_row_min || !t->alpha_row_max) return 0;
+  uint32_t *cache=tpag_argb_cache(r,t,a);
+  if(!cache) return 0;
+  const GmlTpagAlphaRun *runs=NULL;
+  int run_count=0;
+  if(tpag_alpha_runs(r,t,a,&runs,&run_count)){
+    for(int ri=0; ri<run_count; ri++){
+      const GmlTpagAlphaRun *ar=&runs[ri];
+      int yy=(int)ar->y;
+      if(yy<yy0 || yy>=yy1) continue;
+      int sx0=(int)ar->x;
+      int sx1=sx0+(int)ar->len;
+      if(sx0<xx0) sx0=xx0;
+      if(sx1>xx1) sx1=xx1;
+      if(sx1<=sx0) continue;
+      uint32_t *dp=r->fb+(size_t)(y0+yy)*r->fbw+x0+sx0;
+      const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
+      int n=sx1-sx0;
+      if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
+      else if(ar->alpha==255u) memcpy(dp,sp,(size_t)n*sizeof(uint32_t));
+      else blend_argb_src_over_exact(dp,sp,n,(uint32_t)ar->alpha);
+    }
+    return 1;
+  }
+  for(int yy=yy0; yy<yy1; yy++){
+    int mn=t->alpha_row_min[yy], mx=t->alpha_row_max[yy];
+    if(mx<mn) continue;
+    int sx0=xx0>mn?xx0:mn;
+    int sx1=(xx1-1)<mx?(xx1-1):mx;
+    if(sx1<sx0) continue;
+    uint32_t *dp=r->fb+(size_t)(y0+yy)*r->fbw+x0+sx0;
+    const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
+    int n=sx1-sx0+1;
+    if(!r->alphablend){
+      for(int i=0; i<n; ){
+        while(i<n && !(sp[i]>>24)) i++;
+        int j=i;
+        while(j<n && (sp[j]>>24)) j++;
+        if(j>i) copy_argb_force_opaque(dp+i,sp+i,j-i);
+        i=j;
+      }
+      continue;
+    }
+    for(int i=0; i<n; ){
+      uint32_t aa=sp[i]>>24;
+      int run=1;
+      while(i+run<n && (sp[i+run]>>24)==aa) run++;
+      blend_argb_src_over_exact(dp+i,sp+i,run,aa);
+      i+=run;
+    }
+  }
+  return 1;
 }
 static int tpag_alpha_qrows(GmlRender *r, GmlTpag *t, GmlAtlas *a, int min_alpha,
                             const uint16_t **row_min, const uint16_t **row_max){
