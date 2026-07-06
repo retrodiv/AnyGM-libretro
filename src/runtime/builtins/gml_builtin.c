@@ -274,6 +274,14 @@ GmlRtElem *gml_rt_elem_new(GmlVM *vm){
   e->xs=1; e->ys=1; e->alpha=1; e->blend=0xFFFFFF;
   return e;
 }
+static GmlRtElem *rt_sprite_for_layer_name(GmlVM *vm, int layer_id, const char *name){
+  if(!vm || !name) return NULL;
+  for(int i=0;i<vm->n_rte;i++){
+    GmlRtElem *e=&vm->rte[i];
+    if(e->used && e->type==3 && e->layer==layer_id && !strcmp(e->name,name)) return e;
+  }
+  return NULL;
+}
 static GmlRtElem *rt_background_for_layer(GmlVM *vm, GmlRtLayer *l, int create_from_room){
   if(!vm || !l) return NULL;
   for(int i=0;i<vm->n_rte;i++){
@@ -4145,6 +4153,44 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(e?e->type:-1); }
     if(!strcmp(sub,"get_element_layer")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0));
       return vreal(e?e->layer:-1); }
+    if(!strcmp(sub,"sprite_get_id")){
+      GmlRtLayer *l=rt_layer_resolve(vm,a,n);
+      GmlRtElem *e=rt_sprite_for_layer_name(vm,l?l->id:-1,S(a,n,1));
+      return vreal(e?e->id:-1);
+    }
+    if(!strcmp(sub,"sprite_create")){
+      GmlRtLayer *l=rt_layer_resolve(vm,a,n);
+      if(!l) return vreal(-1);
+      GmlRtElem *e=gml_rt_elem_new(vm);
+      if(!e) return vreal(-1);
+      e->type=3; e->layer=l->id; e->x=N(a,n,1); e->y=N(a,n,2); e->sprite=(int)N(a,n,3);
+      return vreal(e->id);
+    }
+    if(!strcmp(sub,"sprite_destroy")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->used=0; return vreal(0); }
+    if(!strcmp(sub,"sprite_exists")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal(e && e->type==3); }
+    if(!strcmp(sub,"sprite_x")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->x=N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"sprite_y")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->y=N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"sprite_alpha")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->alpha=N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"sprite_speed")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->image_speed=N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"sprite_index")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->image_index=N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"sprite_change")||!strcmp(sub,"sprite_sprite")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->sprite=(int)N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"sprite_xscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->xs=N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"sprite_yscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->ys=N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"sprite_angle")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->image_angle=N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"sprite_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->blend=(uint32_t)N(a,n,1)&0xFFFFFFu; return vreal(0); }
+    if(!strcmp(sub,"sprite_visible")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->visible=(int)N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"sprite_get_x")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal((e && e->type==3)?e->x:0); }
+    if(!strcmp(sub,"sprite_get_y")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal((e && e->type==3)?e->y:0); }
+    if(!strcmp(sub,"sprite_get_sprite")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal((e && e->type==3)?e->sprite:-1); }
+    if(!strcmp(sub,"sprite_get_alpha")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal((e && e->type==3)?e->alpha:0); }
+    if(!strcmp(sub,"sprite_get_speed")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal((e && e->type==3)?e->image_speed:0); }
+    if(!strcmp(sub,"sprite_get_index")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal((e && e->type==3)?e->image_index:0); }
+    if(!strcmp(sub,"sprite_get_xscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal((e && e->type==3)?e->xs:1); }
+    if(!strcmp(sub,"sprite_get_yscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal((e && e->type==3)?e->ys:1); }
+    if(!strcmp(sub,"sprite_get_angle")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal((e && e->type==3)?e->image_angle:0); }
+    if(!strcmp(sub,"sprite_get_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal((e && e->type==3)?(double)e->blend:0xFFFFFF); }
+    if(!strcmp(sub,"sprite_get_visible")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal(e && e->type==3 && e->visible); }
+    if(!strcmp(sub,"sprite_get_name")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return (e && e->type==3)?vstr_owned(strdup(e->name)):vstr(""); }
     if(!strcmp(sub,"background_get_id")){
       GmlRtLayer *l=rt_layer_resolve(vm,a,n);
       GmlRtElem *e=rt_background_for_layer(vm,l,1);

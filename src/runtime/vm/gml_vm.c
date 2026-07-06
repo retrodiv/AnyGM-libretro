@@ -1824,6 +1824,64 @@ void gml_tilemap_effective(GmlVM *vm, const GmlTileMap *tm,
   if(visible) *visible=ev;
 }
 
+static int rt_layer_has_sprite_elem(GmlVM *vm, int layer_id, const char *name){
+  if(!vm || !name || !*name) return 0;
+  for(int i=0;i<vm->n_rte;i++){
+    GmlRtElem *e=&vm->rte[i];
+    if(e->used && e->type==3 && e->layer==layer_id && !strcmp(e->name,name)) return 1;
+  }
+  return 0;
+}
+
+static void gml_room_bind_asset_sprites(GmlVM *vm, int room_index){
+  if(!vm || !vm->win || vm->win->bytecode<17 || room_index<0) return;
+  const GmlChunk *rlc=gml_chunk(vm->win,"ROOM"); const uint8_t *rd=vm->win->data;
+  uint32_t rp = rlc ? u32(rd,rlc->off+4+(uint32_t)room_index*4) : 0;
+  uint32_t lay = (rp && rp+92<vm->win->size) ? u32(rd,rp+88) : 0;
+  uint32_t lcnt = (lay && lay+4<vm->win->size) ? u32(rd,lay) : 0;
+  if(!lcnt || lcnt>=512) return;
+  int doff = gml_room_layer_data_off(vm);
+  for(uint32_t i=0;i<lcnt;i++){
+    uint32_t lp=u32(rd,lay+4+i*4);
+    if(!lp || lp+(uint32_t)doff+8>vm->win->size || u32(rd,lp+8)!=3) continue; /* Assets */
+    uint32_t np=u32(rd,lp+0);
+    const char *lname=(np&&np<vm->win->size)?(const char*)(rd+np):"";
+    GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,lname);
+    if(!rl) continue;
+    uint32_t sprites=u32(rd,lp+(uint32_t)doff+4);          /* LayerAssetsData.Sprites */
+    uint32_t scnt=(sprites && sprites+4<vm->win->size)?u32(rd,sprites):0;
+    if(scnt>100000) continue;
+    for(uint32_t k=0;k<scnt;k++){
+      uint32_t sprec=u32(rd,sprites+4+k*4);
+      if(!sprec || sprec+44>vm->win->size) continue;
+      uint32_t nmp=u32(rd,sprec+0);
+      const char *enm=(nmp&&nmp<vm->win->size)?(const char*)(rd+nmp):"";
+      char fallback_name[64];
+      if(!*enm){
+        snprintf(fallback_name,sizeof fallback_name,"__gms2_asset_%u_%u",i,k);
+        enm=fallback_name;
+      }
+      if(rt_layer_has_sprite_elem(vm,rl->id,enm)) continue;
+      GmlRtElem *e=gml_rt_elem_new(vm);
+      if(!e) return;
+      e->type=3;
+      e->layer=rl->id;
+      snprintf(e->name,sizeof e->name,"%s",enm);
+      e->sprite=(int32_t)u32(rd,sprec+4);
+      e->x=(double)(int32_t)u32(rd,sprec+8);
+      e->y=(double)(int32_t)u32(rd,sprec+12);
+      e->xs=f32(rd,sprec+16);
+      e->ys=f32(rd,sprec+20);
+      uint32_t col=u32(rd,sprec+24);
+      e->blend=col&0xFFFFFFu;
+      e->alpha=((col>>24)&0xFF)/255.0;
+      e->image_speed=f32(rd,sprec+28);
+      e->image_index=f32(rd,sprec+36);
+      e->image_angle=f32(rd,sprec+40);
+    }
+  }
+}
+
 /* Rebuild a room's derived GMS2 layer data from immutable ROOM records. Runtime layers/elements are
  * rebuilt on room enter; after modern savestate loads they are preserved and only type-4 tilemap
  * views are rebound to win data, since those grids are not serialized by pointer. */
@@ -1873,6 +1931,7 @@ static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_r
         if(rl->touched){ tm->x=rl->x; tm->y=rl->y; }
       }
 	  }
+  gml_room_bind_asset_sprites(vm, room_index);
   if(getenv("GML_LOG_ROOM")){ fprintf(stderr,"[room] reload_layers room=%d: %d layers, %d tilemaps\n",room_index,vm->n_rtl,vm->n_tilemaps);
     for(int t=0;t<vm->n_tilemaps;t++){ GmlTileMap *tm=&vm->tilemaps[t];
       int solid=0; for(int c=0;c<tm->cols*tm->rows;c++){ uint32_t d=u32(tm->tiles,(uint32_t)c*4); if((d&0x7FFFF)!=0) solid++; }
@@ -2093,6 +2152,18 @@ void gml_vm_step(GmlVM *vm){
    * untouched ones are derived on the fly from the room definition (see the draw path). */
   for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used && vm->rtl[i].touched){
     vm->rtl[i].x += vm->rtl[i].hs; vm->rtl[i].y += vm->rtl[i].vs; }
+  { GmlRender *R=(GmlRender*)vm->render;
+    for(int i=0;i<vm->n_rte;i++){
+      GmlRtElem *e=&vm->rte[i];
+      if(!e->used || e->type!=3 || e->image_speed==0) continue;
+      int nf=R?gml_sprite_frames(R,e->sprite):0;
+      e->image_index += e->image_speed;
+      if(nf>0){
+        while(e->image_index>=nf) e->image_index-=nf;
+        while(e->image_index<0) e->image_index+=nf;
+      }
+    }
+  }
   /* Struct GC between frames (stack/locals empty here). GMS2.3 games mint transient structs every step
    * (a menu returning a fresh palette/description struct ~2-12/frame) that nothing keeps — without this the
    * pool grew ~unboundedly (500MB/h under menu load, cap hit in ~1.5h). No-op for games with no structs. */
@@ -2380,7 +2451,7 @@ static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap
   }
   (*tiles)[*nt]=t; (*depth)[*nt]=dep; (*nt)++;
 }
-typedef struct { double depth; int seq, type, idx; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system */
+typedef struct { double depth; int seq, type, idx; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite */
 static int cmp_draw_item(const void *pa, const void *pb){
   const GmlDrawItem *a=pa,*b=pb;
   if(a->depth!=b->depth) return a->depth>b->depth? -1:1;     /* higher depth first (behind) */
@@ -2427,8 +2498,10 @@ void gml_vm_draw(GmlVM *vm){
    * Use the detected type-data offset, including optional effect fields. */
   struct LayBg { int sprite; int th,tv,stretch; double x,y; uint32_t blend; double alpha; double depth; };
   struct LayTile { int sprite; int sx,sy,w,h; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
+  struct LaySprite { int sprite, subimg; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
   struct LayBg *lbg=NULL; int nlb=0;
   struct LayTile *ltl=NULL; int nlt=0;
+  struct LaySprite *lsp=NULL; int nls=0;
   if(vm->win->bytecode>=17){
     const GmlChunk *rc=gml_chunk(vm->win,"ROOM");
     const uint8_t *d=vm->win->data;
@@ -2558,16 +2631,23 @@ void gml_vm_draw(GmlVM *vm){
       lbg[nlb].sprite=e->sprite; lbg[nlb].th=e->htiled; lbg[nlb].tv=e->vtiled; lbg[nlb].stretch=e->stretch;
       lbg[nlb].x=lx; lbg[nlb].y=ly; lbg[nlb].blend=e->blend; lbg[nlb].alpha=e->alpha; lbg[nlb].depth=l->depth;
       nlb++;
+    } else if(e->type==3){
+      lsp=realloc(lsp,(nls+1)*sizeof(*lsp));
+      lsp[nls].sprite=e->sprite; lsp[nls].subimg=(int)e->image_index;
+      lsp[nls].x=lx+e->x; lsp[nls].y=ly+e->y; lsp[nls].xs=e->xs; lsp[nls].ys=e->ys;
+      lsp[nls].angle=e->image_angle; lsp[nls].blend=e->blend; lsp[nls].alpha=e->alpha; lsp[nls].depth=l->depth;
+      nls++;
     }
   }
   /* unified depth-sorted draw list of instances + tiles + GMS2 layers + auto-draw particle systems */
   int npart=0; while(gml_part_system_auto_draw_nth(npart,NULL,NULL)) npart++;
-  int cap=n+nt+nlb+nlt+npart; GmlDrawItem *it=malloc((cap>0?cap:1)*sizeof(GmlDrawItem)); int m=0;
+  int cap=n+nt+nlb+nlt+nls+npart; GmlDrawItem *it=malloc((cap>0?cap:1)*sizeof(GmlDrawItem)); int m=0;
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked){
     it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; m++; }
   for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; m++; }
   for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; m++; }
   for(int i=0;i<nlb;i++){ it[m].depth=lbg[i].depth; it[m].type=3; it[m].idx=i; it[m].seq=m; m++; }
+  for(int i=0;i<nls;i++){ it[m].depth=lsp[i].depth; it[m].type=5; it[m].idx=i; it[m].seq=m; m++; }
   for(int i=0;i<npart;i++){ int pid=0; double dep=0;
     if(gml_part_system_auto_draw_nth(i,&pid,&dep)){ it[m].depth=dep; it[m].type=4; it[m].idx=pid; it[m].seq=m; m++; } }
   qsort(it,m,sizeof(GmlDrawItem),cmp_draw_item);
@@ -2584,6 +2664,9 @@ void gml_vm_draw(GmlVM *vm){
         fprintf(stderr,"   LBG spr=%d depth=%.0f @(%.0f,%.0f)\n",b->sprite,it[k].depth,b->x,b->y); }
       else if(it[k].type==4){
         fprintf(stderr,"   PARTICLES sys=%d depth=%.0f\n",it[k].idx,it[k].depth); }
+      else if(it[k].type==5){ struct LaySprite *s=&lsp[it[k].idx];
+        fprintf(stderr,"   LSPR spr=%d depth=%.0f @(%.0f,%.0f) idx=%d ang=%.0f xs=%.1f ys=%.1f a=%.2f\n",
+          s->sprite,it[k].depth,s->x,s->y,s->subimg,s->angle,s->xs,s->ys,s->alpha); }
       else { GmlInstance *in=&vm->inst[it[k].idx];
         fprintf(stderr,"   %-26s spr=%-4d vis=%.0f depth=%.0f @(%.0f,%.0f) ang=%.0f xs=%.1f ys=%.1f a=%.2f\n",
           (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",
@@ -2600,6 +2683,9 @@ void gml_vm_draw(GmlVM *vm){
       else gml_draw_sprite_ext(R,b->sprite,0,b->x,b->y,1,1,0,b->blend,b->alpha);
       continue; }
     if(it[k].type==4){ gml_part_system_drawit(R,it[k].idx); continue; }
+    if(it[k].type==5){ struct LaySprite *s=&lsp[it[k].idx];
+      gml_draw_sprite_ext(R,s->sprite,s->subimg,s->x,s->y,s->xs,s->ys,s->angle,s->blend,s->alpha);
+      continue; }
     GmlInstance *in=&vm->inst[it[k].idx];
     if(vm->draw_events_off) continue;   /* draw_enable_drawevent(false): no instance drawing */
     { const char *sk=getenv("GML_SKIP");                  /* debug: skip drawing a named object */
@@ -2617,7 +2703,7 @@ void gml_vm_draw(GmlVM *vm){
                           (uint32_t)in->image_blend,alpha);
     }
   }
-  free(it); free(tiles); free(tdepth); free(lbg); free(ltl);
+  free(it); free(tiles); free(tdepth); free(lbg); free(ltl); free(lsp);
 }
 
 /* Dispatch Draw_64 events in depth order. Set view_current to 7 when views
@@ -3090,7 +3176,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -3541,7 +3627,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x3D564D47u); /* GMV13: GMV12 plus room layer scroll age for rewind/load */
+  sw_u32(s,0x3E564D47u); /* GMV14: GMV13 plus GMS2 layer sprite elements */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -3634,7 +3720,9 @@ static void sw_vm(StateW *s, GmlVM *vm){
     sw_i32(s,e->sx); sw_i32(s,e->sy); sw_i32(s,e->w); sw_i32(s,e->h);
     sw_d(s,e->xs); sw_d(s,e->ys); sw_d(s,e->alpha);
     sw_i32(s,e->visible); sw_u32(s,e->blend);
-    sw_i32(s,e->htiled); sw_i32(s,e->vtiled); sw_i32(s,e->stretch); }
+    sw_i32(s,e->htiled); sw_i32(s,e->vtiled); sw_i32(s,e->stretch);
+    sw_raw(s,e->name,sizeof(e->name));
+    sw_d(s,e->image_index); sw_d(s,e->image_speed); sw_d(s,e->image_angle); }
   sw_i32(s,vm->window_cursor);
   sw_particle_state(s);
   vm_state_profile_globals(vm);
@@ -3663,7 +3751,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   if((magic!=0x31564D47u && magic!=0x32564D47u && magic!=0x33564D47u && magic!=0x34564D47u
       && magic!=0x35564D47u && magic!=0x36564D47u && magic!=0x37564D47u && magic!=0x38564D47u
       && magic!=0x39564D47u && magic!=0x3A564D47u && magic!=0x3B564D47u && magic!=0x3C564D47u
-      && magic!=0x3D564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x3D564D47u && magic!=0x3E564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -3674,6 +3762,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v11 = magic>=0x3B564D47u;
   s.v12 = magic>=0x3C564D47u;
   s.v13 = magic>=0x3D564D47u;
+  s.v14 = magic>=0x3E564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -3894,6 +3983,13 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       e->xs=sr_d(&s); e->ys=sr_d(&s); e->alpha=sr_d(&s);
       e->visible=sr_i32(&s); e->blend=sr_u32(&s);
       e->htiled=sr_i32(&s); e->vtiled=sr_i32(&s); e->stretch=sr_i32(&s);
+      if(s.v14){
+        sr_raw(&s,e->name,sizeof(e->name));
+        e->name[sizeof(e->name)-1]=0;
+        e->image_index=sr_d(&s); e->image_speed=sr_d(&s); e->image_angle=sr_d(&s);
+      } else {
+        e->name[0]=0; e->image_index=0; e->image_speed=0; e->image_angle=0;
+      }
       e->id=id;
     }
   }

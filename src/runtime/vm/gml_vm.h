@@ -87,10 +87,12 @@ typedef struct { int id, used, visible, touched; double depth, x, y, hs, vs; cha
 /* GMS2 tile layer (room layer type 4): a grid of tileset cells. Games read it for tile-based collision
  * (tilemap_get + tilemap_get_cell_*_at_pixel). tiles points INTO the immutable room data (no copy). */
 typedef struct { int id, used, visible; double x, y, depth; int tileset, tw, th, cols, rows; const unsigned char *tiles, *base_tiles; unsigned char *owned_tiles; char name[32]; } GmlTileMap;
-typedef struct { int id, used, layer, type;         /* type: 7=tile, 1=background (layerelementtype_*) */
+typedef struct { int id, used, layer, type;         /* type: 7=tile, 3=sprite, 1=background (layerelementtype_*) */
   int sprite; double x, y; int sx, sy, w, h;        /* sx/sy/w/h = source region (tiles) */
   double xs, ys, alpha; int visible; uint32_t blend;
-  int htiled, vtiled, stretch; } GmlRtElem;         /* background-element extras */
+  int htiled, vtiled, stretch;                      /* background-element extras */
+  char name[64];                                    /* room-authored sprite asset name */
+  double image_index, image_speed, image_angle; } GmlRtElem;
 
 typedef struct GmlVM {
   GmlWin   *win;
