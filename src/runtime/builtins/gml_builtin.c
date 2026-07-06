@@ -4557,6 +4557,10 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"is_string")) return vreal(n>0 && a[0].t==V_STR);
   if(!strcmp(nm,"is_real")||!strcmp(nm,"is_numeric")) return vreal(n>0 && a[0].t==V_REAL);
   if(!strcmp(nm,"is_array")) return vreal(n>0 && a[0].t==V_ARR);
+  if(!strcmp(nm,"is_struct")){
+    return vreal(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d) &&
+                 gml_struct_find(vm,(unsigned)a[0].d)!=NULL);
+  }
   if(!strcmp(nm,"is_bool")) return vreal(n>0 && a[0].t==V_REAL && (a[0].d==0||a[0].d==1));
   if(!strcmp(nm,"variable_global_exists")) return vreal(gml_varmap_get(&vm->globals,S(a,n,0))!=NULL);
   if(!strcmp(nm,"shader_set")){ GmlRender *R=(GmlRender*)vm->render;

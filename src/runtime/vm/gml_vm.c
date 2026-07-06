@@ -420,6 +420,26 @@ static double room_speed_value(GmlVM *vm){
   double v=p?asnum(*p):30.0;
   return v>0 ? v : 30.0;
 }
+static double cpu_clock_ms(void){
+  clock_t c=clock();
+  if(c==(clock_t)-1) return 0.0;
+  return (double)c * (1000.0 / CLOCKS_PER_SEC);
+}
+static double current_time_value(GmlVM *vm){
+  extern long g_vm_frame;
+  static long frame=-1;
+  static double frame_cpu_ms=0.0;
+  double now=cpu_clock_ms();
+  if(frame!=g_vm_frame){
+    frame=g_vm_frame;
+    frame_cpu_ms=now;
+  }
+  double intra=now-frame_cpu_ms;
+  if(intra<0.0) intra=0.0;
+  /* Keep the old frame-clock base for gameplay timers, but let the value advance while GML is
+   * executing. Some GM scripts implement sleep by spinning on current_time inside one frame. */
+  return (double)g_vm_frame * (1000.0 / room_speed_value(vm)) + intra;
+}
 static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, GmlVal *out){
   if(!in || !vm || !vm->render) return 0;
   GmlRender *R=(GmlRender*)vm->render;
@@ -446,8 +466,7 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!strcmp(name,"view_current")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
   if(!strcmp(name,"room_persistent")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
   if(!strcmp(name,"mouse_x")||!strcmp(name,"mouse_y")) return vreal(0);
-  if(!strcmp(name,"current_time")){ extern long g_vm_frame;
-    return vreal((double)g_vm_frame * (1000.0 / room_speed_value(vm))); }
+  if(!strcmp(name,"current_time")) return vreal(current_time_value(vm));
   if(argument_get(vm,name,&out)) return out;
   if(!strcmp(name,"room_width")||!strcmp(name,"room_height")){   /* GM built-in: current room size */
     GmlRoom r; if(gml_room_get(vm->win,vm->room_index,&r)==0)
