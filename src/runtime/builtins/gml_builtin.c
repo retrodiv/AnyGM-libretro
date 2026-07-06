@@ -2239,17 +2239,8 @@ int gml_builtin_fast_id(const char *nm){
     case 'g':
       if(!strcmp(nm,"gpu_set_blendenable")) return BID_GPU_SET_BLENDENABLE;
       if(!strcmp(nm,"gpu_set_blendmode")) return BID_GPU_SET_BLENDMODE;
-      if(!strcmp(nm,"gamepad_button_check")) return BID_GAMEPAD_BUTTON_CHECK;
-      if(!strcmp(nm,"gamepad_button_check_pressed")) return BID_GAMEPAD_BUTTON_CHECK_PRESSED;
-      if(!strcmp(nm,"gamepad_button_check_released")) return BID_GAMEPAD_BUTTON_CHECK_RELEASED;
-      if(!strcmp(nm,"gamepad_is_connected")) return BID_GAMEPAD_IS_CONNECTED;
-      if(!strcmp(nm,"gamepad_is_supported")) return BID_GAMEPAD_IS_SUPPORTED;
-      if(!strcmp(nm,"gamepad_get_device_count")) return BID_GAMEPAD_GET_DEVICE_COUNT;
-      if(!strcmp(nm,"gamepad_button_count")) return BID_GAMEPAD_BUTTON_COUNT;
-      if(!strcmp(nm,"gamepad_axis_count")) return BID_GAMEPAD_AXIS_COUNT;
-      if(!strcmp(nm,"gamepad_set_axis_deadzone")) return BID_GAMEPAD_SET_AXIS_DEADZONE;
-      if(!strcmp(nm,"gamepad_set_vibration")) return BID_GAMEPAD_SET_VIBRATION;
-      if(!strcmp(nm,"gamepad_axis_value")) return BID_GAMEPAD_AXIS_VALUE;
+      /* Route stateful input through generic dispatch to preserve keyboard/gamepad edges. */
+      if(!strncmp(nm,"gamepad_",8)) return -1;
       return -1;
     case 'i':
       if(!strcmp(nm,"instance_exists")) return BID_INSTANCE_EXISTS;
@@ -2257,13 +2248,7 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"instance_place_list")) return BID_INSTANCE_PLACE_LIST;
       return -1;
     case 'k':
-      if(!strcmp(nm,"keyboard_check")) return BID_KEYBOARD_CHECK;
-      if(!strcmp(nm,"keyboard_check_pressed")) return BID_KEYBOARD_CHECK_PRESSED;
-      if(!strcmp(nm,"keyboard_check_released")) return BID_KEYBOARD_CHECK_RELEASED;
-      if(!strcmp(nm,"keyboard_check_direct")) return BID_KEYBOARD_CHECK_DIRECT;
-      if(!strcmp(nm,"keyboard_clear")) return BID_KEYBOARD_CLEAR;
-      if(!strcmp(nm,"keyboard_key_press")) return BID_KEYBOARD_KEY_PRESS;
-      if(!strcmp(nm,"keyboard_key_release")) return BID_KEYBOARD_KEY_RELEASE;
+      if(!strncmp(nm,"keyboard_",9)) return -1;
       return -1;
     case 'l':
       if(!strcmp(nm,"lengthdir_x")) return BID_LENGTHDIR_X;
