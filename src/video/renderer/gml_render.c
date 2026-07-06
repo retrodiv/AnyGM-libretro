@@ -1113,7 +1113,21 @@ static void parse_sprt(GmlRender *r){
       if(stype!=0){ s->n_frames=0; s->frame=calloc(1,sizeof(int)); continue; }  /* SWF/Spine: no simple list */
       uint32_t fl=76;                         /* after PlaybackSpeed(+68)+PlaybackSpeedType(+72) */
       if(sver>=2) fl+=4;                       /* SequenceOffset */
-      if(sver>=3) fl+=4;                       /* NineSliceOffset */
+      if(sver>=3){                             /* NineSliceOffset */
+        uint32_t nso=u32(d,p+80);
+        if(nso && nso+40<=r->win->size && u32(d,nso+16)){
+          /* NineSlice layout: Left,Top,Right,Bottom (i32), Enabled, TileModes[5]
+           * (left,top,right,bottom,center). GM keeps the borders at native size when the
+           * sprite draws scaled — stretching them uniformly deforms UI boards/bubbles. */
+          s->ns_l=(int)(int32_t)u32(d,nso); s->ns_t=(int)(int32_t)u32(d,nso+4);
+          s->ns_r=(int)(int32_t)u32(d,nso+8); s->ns_b=(int)(int32_t)u32(d,nso+12);
+          for(int k=0;k<5;k++) s->ns_tile[k]=(int)(int32_t)u32(d,nso+20+4u*k);
+          if(s->ns_l>=0 && s->ns_t>=0 && s->ns_r>=0 && s->ns_b>=0 &&
+             s->ns_l+s->ns_r<=s->w && s->ns_t+s->ns_b<=s->h)
+            s->ns_enabled=1;
+        }
+        fl+=4;
+      }
       list=p+fl;
     }
     uint32_t fn=u32(d,list);

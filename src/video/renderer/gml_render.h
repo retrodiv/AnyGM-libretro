@@ -49,7 +49,10 @@ typedef struct { const char *name; int originx, originy, w, h, n_frames; int *fr
                  int base_valid, base_originx, base_originy, base_w, base_h, base_n_frames;
                  int base_ml, base_mr, base_mt, base_mb, base_mask_rowb, base_mask_count;
                  int base_collision_kind, base_collision_tolerance;
-                 const uint8_t *base_mask; } GmlSprite;
+                 const uint8_t *base_mask;
+                 /* GMS2.3+ nine-slice: draw scaled with fixed-size borders (corners never scale;
+                  * edges/center follow their tile mode: 0=stretch 1=repeat 2=mirror 3=blankrepeat 4=hide) */
+                 int ns_enabled, ns_l, ns_t, ns_r, ns_b, ns_tile[5]; } GmlSprite;
 typedef struct {
   uint8_t *px; int w, h;                                          /* RGBA8, decoded lazily */
   uint32_t blob; size_t avail, chunk_end; int decode_attempted;    /* source blob in data.win */
