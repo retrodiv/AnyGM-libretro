@@ -16,6 +16,12 @@
 #include <math.h>
 #include <ctype.h>
 #include <time.h>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
 
 typedef struct {
   const char *label;
@@ -286,6 +292,50 @@ static inline void blend_fast8_run(uint32_t *dp, int run, uint32_t src, uint32_t
   if(af>=256u){ fill_u32_run(dp,run,src); return; }
   if(!af) return;
   uint32_t ia=256u-af;
+#if defined(__SSE2__)
+  if(run>=4){
+    __m128i zero=_mm_setzero_si128();
+    __m128i vsrc=_mm_set1_epi32((int)src);
+    __m128i valpha=_mm_set1_epi32((int)0xFF000000u);
+    __m128i vaf=_mm_set1_epi16((short)af);
+    __m128i via=_mm_set1_epi16((short)ia);
+    __m128i src_lo=_mm_unpacklo_epi8(vsrc,zero);
+    __m128i src_hi=_mm_unpackhi_epi8(vsrc,zero);
+    src_lo=_mm_mullo_epi16(src_lo,vaf);
+    src_hi=_mm_mullo_epi16(src_hi,vaf);
+    while(run>=4){
+      __m128i dst=_mm_loadu_si128((const __m128i*)dp);
+      __m128i lo=_mm_unpacklo_epi8(dst,zero);
+      __m128i hi=_mm_unpackhi_epi8(dst,zero);
+      lo=_mm_add_epi16(src_lo,_mm_mullo_epi16(lo,via));
+      hi=_mm_add_epi16(src_hi,_mm_mullo_epi16(hi,via));
+      lo=_mm_srli_epi16(lo,8);
+      hi=_mm_srli_epi16(hi,8);
+      _mm_storeu_si128((__m128i*)dp,_mm_or_si128(_mm_packus_epi16(lo,hi),valpha));
+      dp+=4;
+      run-=4;
+    }
+  }
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if(run>=4){
+    uint8x16_t vsrc8=vreinterpretq_u8_u32(vdupq_n_u32(src));
+    uint8x16_t valpha8=vreinterpretq_u8_u32(vdupq_n_u32(0xFF000000u));
+    uint16x8_t vaf=vdupq_n_u16((uint16_t)af);
+    uint16x8_t via=vdupq_n_u16((uint16_t)ia);
+    uint16x8_t src_lo=vmulq_u16(vmovl_u8(vget_low_u8(vsrc8)),vaf);
+    uint16x8_t src_hi=vmulq_u16(vmovl_u8(vget_high_u8(vsrc8)),vaf);
+    while(run>=4){
+      uint8x16_t dst=vld1q_u8((const uint8_t*)dp);
+      uint16x8_t lo=vaddq_u16(src_lo,vmulq_u16(vmovl_u8(vget_low_u8(dst)),via));
+      uint16x8_t hi=vaddq_u16(src_hi,vmulq_u16(vmovl_u8(vget_high_u8(dst)),via));
+      lo=vshrq_n_u16(lo,8);
+      hi=vshrq_n_u16(hi,8);
+      vst1q_u8((uint8_t*)dp,vorrq_u8(vcombine_u8(vmovn_u16(lo),vmovn_u16(hi)),valpha8));
+      dp+=4;
+      run-=4;
+    }
+  }
+#endif
   uint32_t srb=(src & 0x00FF00FFu)*af;
   uint32_t sg=(src & 0x0000FF00u)*af;
 #if defined(__GNUC__) || defined(__clang__)
