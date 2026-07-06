@@ -72,6 +72,7 @@ typedef struct {
 } GmlFont;                                                        /* sprite font or real FONT-chunk font */
 typedef struct { uint32_t *px; int w, h, live;
                  int dirty;                       /* px changed since the RLE cache was built */
+                 int opaque_known, all_opaque;     /* coverage metadata for fast surface composites */
                  uint8_t *rle; size_t rle_len, rle_cap;  /* cached savestate RLE (u32 nrun + pairs) */
 } GmlSurface;      /* XRGB8888 runtime surface */
 
