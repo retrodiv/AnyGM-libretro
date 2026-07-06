@@ -99,6 +99,7 @@ typedef struct GmlVM {
   GmlWin   *win;
   GmlVarMap globals;
   GmlObject *objects; int n_objects;
+  int **obj_desc; int *obj_desc_n;   /* lazy per-object descendant lists (hierarchy is static) */
   int *obj_alive;    /* live instances per object INCLUDING descendants (family counts; runtime-only) */
   int *obj_head;     /* per exact object type: first live instance slot (-1 none; runtime-only) */
   int *inst_next, *inst_prev;   /* doubly-linked per-type instance lists over pool slots */

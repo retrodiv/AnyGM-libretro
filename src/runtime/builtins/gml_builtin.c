@@ -2208,7 +2208,10 @@ enum {
   BID_STRING_CHAR_AT,
   BID_STRING_LENGTH,
   BID_ORD,
-  BID_FILE_TEXT_EOF
+  BID_FILE_TEXT_EOF,
+  BID_FMOD_PREFIX,
+  BID_EVENT_INHERITED,
+  BID_DS_LIST_CLEAR
 };
 
 int gml_builtin_fast_id(const char *nm){
@@ -2272,6 +2275,7 @@ int gml_builtin_fast_id(const char *nm){
     case 'f':
       if(!strcmp(nm,"floor")) return BID_FLOOR;
       if(!strcmp(nm,"file_text_eof")) return BID_FILE_TEXT_EOF;
+      if(!strncmp(nm,"fmod_",5)) return BID_FMOD_PREFIX;
       return -1;
     case 'g':
       if(!strcmp(nm,"gpu_set_blendenable")) return BID_GPU_SET_BLENDENABLE;
@@ -2279,6 +2283,9 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"gpu_set_blendmode_ext")) return BID_GPU_SET_BLENDMODE_EXT;
       /* Route stateful input through generic dispatch to preserve keyboard/gamepad edges. */
       if(!strncmp(nm,"gamepad_",8)) return -1;
+      return -1;
+    case 'e':
+      if(!strcmp(nm,"event_inherited")) return BID_EVENT_INHERITED;
       return -1;
     case 'i':
       if(!strcmp(nm,"instance_exists")) return BID_INSTANCE_EXISTS;
@@ -2338,10 +2345,17 @@ int gml_builtin_fast_id(const char *nm){
   }
 }
 
-GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
+static GmlVal builtin_fmod(GmlVM *vm, const char *nm, GmlVal *a, int n);
+GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   switch(id){
     /* the bodies below mirror their generic-chain handlers exactly; keep both in sync */
+    case BID_FMOD_PREFIX:
+      return builtin_fmod(vm,nm,a,n);
+    case BID_EVENT_INHERITED:
+      gml_event_inherited(vm); return vreal(0);
+    case BID_DS_LIST_CLEAR:{
+      GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); if(l) l->len=0; return vreal(0); }
     case BID_DS_MAP_FIND_VALUE:{
       GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
       char *key=(n>=2)?ds_key_make(a[1]):NULL;
@@ -2656,6 +2670,81 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
     default:
       return vreal(0);
   }
+}
+
+/* full FMOD extension dispatch, shared by the generic chain and the cached fast path
+ * so extension calls use the same ordered dispatch in either path. */
+static GmlVal builtin_fmod(GmlVM *vm, const char *nm, GmlVal *a, int n){
+      const char *f=nm+5;
+      GmlFmodBanks *fb=gml_audio_get_fmod((GmlAudio*)vm->audio);
+      if(fb){
+        /* real playback path */
+        if(!strcmp(f,"event_one_shot_3d")){
+          const char *p=fmod_path_arg(a,n);
+          if(p){
+            int h=gml_fmod_start(fb,p,1,1);
+            if(h>0) gml_fmod_set_3d(fb,h,N(a,n,1),N(a,n,2));
+          }
+          return vreal(0);
+        }
+        if(!strncmp(f,"event_one_shot",14)){ const char *p=fmod_path_arg(a,n); if(p) gml_fmod_start(fb,p,1,1); return vreal(0); }
+        if(!strcmp(f,"event_create_instance")){ const char *p=fmod_path_arg(a,n); return vreal(p?gml_fmod_start(fb,p,0,0):0); }
+        if(!strcmp(f,"event_load")) return vreal(1);
+        if(!strcmp(f,"event_get_length")){ const char *p=fmod_path_arg(a,n); return vreal(p?gml_fmod_get_length(fb,p)*1000.0:0); }  /* ms */
+        if(!strcmp(f,"event_instance_play")){ gml_fmod_play(fb,(int)N(a,n,0)); return vreal(0); }
+        if(!strcmp(f,"event_instance_is_playing")) return vreal(gml_fmod_is_playing(fb,(int)N(a,n,0)));
+        if(!strcmp(f,"event_instance_get_paused")) return vreal(gml_fmod_get_paused(fb,(int)N(a,n,0)));
+        if(!strcmp(f,"event_instance_set_paused")){ gml_fmod_set_paused(fb,(int)N(a,n,0),N(a,n,1)>=0.5); return vreal(0); }
+        if(!strcmp(f,"event_instance_set_paused_all")){ gml_fmod_set_paused_all(fb,N(a,n,0)>=0.5); return vreal(0); }
+        if(!strcmp(f,"event_instance_stop")){ gml_fmod_stop(fb,(int)N(a,n,0)); return vreal(0); }
+        if(!strcmp(f,"event_instance_release")){ gml_fmod_release(fb,(int)N(a,n,0)); return vreal(0); }
+        if(!strcmp(f,"event_instance_get_timeline_pos")) return vreal(gml_fmod_get_timeline_pos(fb,(int)N(a,n,0)));
+        if(!strcmp(f,"event_instance_set_timeline_pos")){ gml_fmod_set_timeline_pos(fb,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
+        if(!strcmp(f,"event_instance_set_parameter")){ gml_fmod_set_param(fb,(int)N(a,n,0),S(a,n,1),N(a,n,2)); return vreal(0); }
+        if(!strcmp(f,"event_instance_get_parameter")) return vreal(gml_fmod_get_param(fb,(int)N(a,n,0),S(a,n,1)));
+        if(!strcmp(f,"set_parameter")){ gml_fmod_set_global_param(fb,S(a,n,0),N(a,n,1)); return vreal(0); }
+        if(!strcmp(f,"get_parameter")) return vreal(gml_fmod_get_global_param(fb,S(a,n,0)));
+        if(!strcmp(f,"bank_load")||!strcmp(f,"bank_load_sample_data")||
+           !strcmp(f,"init")||!strcmp(f,"studio_init")) return vreal(1);
+        if(!strcmp(f,"destroy")){ gml_fmod_stop_all(fb); return vreal(0); }
+        if(!strcmp(f,"set_num_listeners")||!strcmp(f,"update")) return vreal(0);
+        if(!strcmp(f,"set_listener_attributes")){ gml_fmod_set_listener(fb,N(a,n,1),N(a,n,2)); return vreal(0); }
+        if(!strcmp(f,"event_instance_set_3d_attributes")){ gml_fmod_set_3d(fb,(int)N(a,n,0),N(a,n,1),N(a,n,2)); return vreal(0); }
+        if(getenv("GML_DBG_FMOD_CALLS")){ fprintf(stderr,"[fmodcall] %s(",f);
+          for(int i=0;i<n;i++){ if(a[i].t==V_STR) fprintf(stderr,"%s\"%s\"",i?",":"",a[i].s?a[i].s:""); else fprintf(stderr,"%s%g",i?",":"",N(a,n,i)); }
+          fprintf(stderr,")\n"); }
+        return vreal(0);   /* remaining FMOD calls: no-op but harmless */
+      }
+      /* fallback lifecycle model (no bank set): keep audio-gated logic advancing */
+      static struct { int used, playing, paused; struct { char name[40]; double value; } param[16]; int nparam; } fmod_ev[512];
+      static struct { char name[40]; double value; } fmod_gp[16]; static int fmod_ngp=0;
+      if(!strcmp(f,"event_create_instance")||!strncmp(f,"event_one_shot",14)){
+        for(int i=1;i<512;i++) if(!fmod_ev[i].used){ fmod_ev[i].used=1; fmod_ev[i].playing=1; fmod_ev[i].paused=0; return vreal(i); }
+        return vreal(0); }
+      if(!strcmp(f,"event_instance_play")){ int id=(int)N(a,n,0); if(id>0&&id<512){ fmod_ev[id].used=1; fmod_ev[id].playing=1; fmod_ev[id].paused=0; } return vreal(0); }
+      if(!strcmp(f,"event_instance_is_playing")){ int id=(int)N(a,n,0); return vreal((id>0&&id<512&&fmod_ev[id].used&&fmod_ev[id].playing)?1:0); }
+      if(!strcmp(f,"event_instance_get_paused")){ int id=(int)N(a,n,0); return vreal((id>0&&id<512&&fmod_ev[id].paused)?1:0); }
+      if(!strcmp(f,"event_instance_set_paused")){ int id=(int)N(a,n,0); if(id>0&&id<512) fmod_ev[id].paused=(N(a,n,1)>=0.5); return vreal(0); }
+      if(!strcmp(f,"event_instance_stop")||!strcmp(f,"event_instance_release")){ int id=(int)N(a,n,0); if(id>0&&id<512){ fmod_ev[id].playing=0; if(!strcmp(f,"event_instance_release")) fmod_ev[id].used=0; } return vreal(0); }
+      if(!strcmp(f,"event_instance_set_parameter")){ int id=(int)N(a,n,0); const char *pn=S(a,n,1);
+        if(id>0&&id<512&&pn&&*pn){ int pi=-1; for(int i=0;i<fmod_ev[id].nparam;i++) if(!strcmp(fmod_ev[id].param[i].name,pn)){ pi=i; break; }
+          if(pi<0 && fmod_ev[id].nparam<16){ pi=fmod_ev[id].nparam++; snprintf(fmod_ev[id].param[pi].name,sizeof(fmod_ev[id].param[pi].name),"%s",pn); }
+          if(pi>=0) fmod_ev[id].param[pi].value=N(a,n,2); } return vreal(0); }
+      if(!strcmp(f,"event_instance_get_parameter")){ int id=(int)N(a,n,0); const char *pn=S(a,n,1);
+        if(id>0&&id<512&&pn&&*pn) for(int i=0;i<fmod_ev[id].nparam;i++) if(!strcmp(fmod_ev[id].param[i].name,pn)) return vreal(fmod_ev[id].param[i].value);
+        return vreal(0); }
+      if(!strcmp(f,"set_parameter")){ const char *pn=S(a,n,0);
+        if(pn&&*pn){ int pi=-1; for(int i=0;i<fmod_ngp;i++) if(!strcmp(fmod_gp[i].name,pn)){ pi=i; break; }
+          if(pi<0 && fmod_ngp<16){ pi=fmod_ngp++; snprintf(fmod_gp[pi].name,sizeof(fmod_gp[pi].name),"%s",pn); }
+          if(pi>=0) fmod_gp[pi].value=N(a,n,1); } return vreal(0); }
+      if(!strcmp(f,"get_parameter")){ const char *pn=S(a,n,0);
+        if(pn&&*pn) for(int i=0;i<fmod_ngp;i++) if(!strcmp(fmod_gp[i].name,pn)) return vreal(fmod_gp[i].value);
+        return vreal(0); }
+      if(!strcmp(f,"bank_load")||!strcmp(f,"bank_load_sample_data")||!strcmp(f,"init")||!strcmp(f,"studio_init")) return vreal(1);
+      if(!strcmp(f,"destroy")){ memset(fmod_ev,0,sizeof(fmod_ev)); fmod_ngp=0; return vreal(0); }
+      if(!strcmp(f,"set_num_listeners")||!strcmp(f,"set_listener_attributes")||
+         !strcmp(f,"event_instance_set_3d_attributes")||!strcmp(f,"update")) return vreal(0);
+      return vreal(0);
 }
 
 static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n);
@@ -3699,78 +3788,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
      * and play it through the FMOD software mixer (gml_fmod.c). If no bank set loaded (fb==NULL) we
      * still model the instance LIFECYCLE STATE so audio-gated sequences advance. Generic: any
      * GameMaker+FMOD title uses this same API. ---- */
-    if(!strncmp(nm,"fmod_",5)){
-      const char *f=nm+5;
-      GmlFmodBanks *fb=gml_audio_get_fmod((GmlAudio*)vm->audio);
-      if(fb){
-        /* real playback path */
-        if(!strcmp(f,"event_one_shot_3d")){
-          const char *p=fmod_path_arg(a,n);
-          if(p){
-            int h=gml_fmod_start(fb,p,1,1);
-            if(h>0) gml_fmod_set_3d(fb,h,N(a,n,1),N(a,n,2));
-          }
-          return vreal(0);
-        }
-        if(!strncmp(f,"event_one_shot",14)){ const char *p=fmod_path_arg(a,n); if(p) gml_fmod_start(fb,p,1,1); return vreal(0); }
-        if(!strcmp(f,"event_create_instance")){ const char *p=fmod_path_arg(a,n); return vreal(p?gml_fmod_start(fb,p,0,0):0); }
-        if(!strcmp(f,"event_load")) return vreal(1);
-        if(!strcmp(f,"event_get_length")){ const char *p=fmod_path_arg(a,n); return vreal(p?gml_fmod_get_length(fb,p)*1000.0:0); }  /* ms */
-        if(!strcmp(f,"event_instance_play")){ gml_fmod_play(fb,(int)N(a,n,0)); return vreal(0); }
-        if(!strcmp(f,"event_instance_is_playing")) return vreal(gml_fmod_is_playing(fb,(int)N(a,n,0)));
-        if(!strcmp(f,"event_instance_get_paused")) return vreal(gml_fmod_get_paused(fb,(int)N(a,n,0)));
-        if(!strcmp(f,"event_instance_set_paused")){ gml_fmod_set_paused(fb,(int)N(a,n,0),N(a,n,1)>=0.5); return vreal(0); }
-        if(!strcmp(f,"event_instance_set_paused_all")){ gml_fmod_set_paused_all(fb,N(a,n,0)>=0.5); return vreal(0); }
-        if(!strcmp(f,"event_instance_stop")){ gml_fmod_stop(fb,(int)N(a,n,0)); return vreal(0); }
-        if(!strcmp(f,"event_instance_release")){ gml_fmod_release(fb,(int)N(a,n,0)); return vreal(0); }
-        if(!strcmp(f,"event_instance_get_timeline_pos")) return vreal(gml_fmod_get_timeline_pos(fb,(int)N(a,n,0)));
-        if(!strcmp(f,"event_instance_set_timeline_pos")){ gml_fmod_set_timeline_pos(fb,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
-        if(!strcmp(f,"event_instance_set_parameter")){ gml_fmod_set_param(fb,(int)N(a,n,0),S(a,n,1),N(a,n,2)); return vreal(0); }
-        if(!strcmp(f,"event_instance_get_parameter")) return vreal(gml_fmod_get_param(fb,(int)N(a,n,0),S(a,n,1)));
-        if(!strcmp(f,"set_parameter")){ gml_fmod_set_global_param(fb,S(a,n,0),N(a,n,1)); return vreal(0); }
-        if(!strcmp(f,"get_parameter")) return vreal(gml_fmod_get_global_param(fb,S(a,n,0)));
-        if(!strcmp(f,"bank_load")||!strcmp(f,"bank_load_sample_data")||
-           !strcmp(f,"init")||!strcmp(f,"studio_init")) return vreal(1);
-        if(!strcmp(f,"destroy")){ gml_fmod_stop_all(fb); return vreal(0); }
-        if(!strcmp(f,"set_num_listeners")||!strcmp(f,"update")) return vreal(0);
-        if(!strcmp(f,"set_listener_attributes")){ gml_fmod_set_listener(fb,N(a,n,1),N(a,n,2)); return vreal(0); }
-        if(!strcmp(f,"event_instance_set_3d_attributes")){ gml_fmod_set_3d(fb,(int)N(a,n,0),N(a,n,1),N(a,n,2)); return vreal(0); }
-        if(getenv("GML_DBG_FMOD_CALLS")){ fprintf(stderr,"[fmodcall] %s(",f);
-          for(int i=0;i<n;i++){ if(a[i].t==V_STR) fprintf(stderr,"%s\"%s\"",i?",":"",a[i].s?a[i].s:""); else fprintf(stderr,"%s%g",i?",":"",N(a,n,i)); }
-          fprintf(stderr,")\n"); }
-        return vreal(0);   /* remaining FMOD calls: no-op but harmless */
-      }
-      /* fallback lifecycle model (no bank set): keep audio-gated logic advancing */
-      static struct { int used, playing, paused; struct { char name[40]; double value; } param[16]; int nparam; } fmod_ev[512];
-      static struct { char name[40]; double value; } fmod_gp[16]; static int fmod_ngp=0;
-      if(!strcmp(f,"event_create_instance")||!strncmp(f,"event_one_shot",14)){
-        for(int i=1;i<512;i++) if(!fmod_ev[i].used){ fmod_ev[i].used=1; fmod_ev[i].playing=1; fmod_ev[i].paused=0; return vreal(i); }
-        return vreal(0); }
-      if(!strcmp(f,"event_instance_play")){ int id=(int)N(a,n,0); if(id>0&&id<512){ fmod_ev[id].used=1; fmod_ev[id].playing=1; fmod_ev[id].paused=0; } return vreal(0); }
-      if(!strcmp(f,"event_instance_is_playing")){ int id=(int)N(a,n,0); return vreal((id>0&&id<512&&fmod_ev[id].used&&fmod_ev[id].playing)?1:0); }
-      if(!strcmp(f,"event_instance_get_paused")){ int id=(int)N(a,n,0); return vreal((id>0&&id<512&&fmod_ev[id].paused)?1:0); }
-      if(!strcmp(f,"event_instance_set_paused")){ int id=(int)N(a,n,0); if(id>0&&id<512) fmod_ev[id].paused=(N(a,n,1)>=0.5); return vreal(0); }
-      if(!strcmp(f,"event_instance_stop")||!strcmp(f,"event_instance_release")){ int id=(int)N(a,n,0); if(id>0&&id<512){ fmod_ev[id].playing=0; if(!strcmp(f,"event_instance_release")) fmod_ev[id].used=0; } return vreal(0); }
-      if(!strcmp(f,"event_instance_set_parameter")){ int id=(int)N(a,n,0); const char *pn=S(a,n,1);
-        if(id>0&&id<512&&pn&&*pn){ int pi=-1; for(int i=0;i<fmod_ev[id].nparam;i++) if(!strcmp(fmod_ev[id].param[i].name,pn)){ pi=i; break; }
-          if(pi<0 && fmod_ev[id].nparam<16){ pi=fmod_ev[id].nparam++; snprintf(fmod_ev[id].param[pi].name,sizeof(fmod_ev[id].param[pi].name),"%s",pn); }
-          if(pi>=0) fmod_ev[id].param[pi].value=N(a,n,2); } return vreal(0); }
-      if(!strcmp(f,"event_instance_get_parameter")){ int id=(int)N(a,n,0); const char *pn=S(a,n,1);
-        if(id>0&&id<512&&pn&&*pn) for(int i=0;i<fmod_ev[id].nparam;i++) if(!strcmp(fmod_ev[id].param[i].name,pn)) return vreal(fmod_ev[id].param[i].value);
-        return vreal(0); }
-      if(!strcmp(f,"set_parameter")){ const char *pn=S(a,n,0);
-        if(pn&&*pn){ int pi=-1; for(int i=0;i<fmod_ngp;i++) if(!strcmp(fmod_gp[i].name,pn)){ pi=i; break; }
-          if(pi<0 && fmod_ngp<16){ pi=fmod_ngp++; snprintf(fmod_gp[pi].name,sizeof(fmod_gp[pi].name),"%s",pn); }
-          if(pi>=0) fmod_gp[pi].value=N(a,n,1); } return vreal(0); }
-      if(!strcmp(f,"get_parameter")){ const char *pn=S(a,n,0);
-        if(pn&&*pn) for(int i=0;i<fmod_ngp;i++) if(!strcmp(fmod_gp[i].name,pn)) return vreal(fmod_gp[i].value);
-        return vreal(0); }
-      if(!strcmp(f,"bank_load")||!strcmp(f,"bank_load_sample_data")||!strcmp(f,"init")||!strcmp(f,"studio_init")) return vreal(1);
-      if(!strcmp(f,"destroy")){ memset(fmod_ev,0,sizeof(fmod_ev)); fmod_ngp=0; return vreal(0); }
-      if(!strcmp(f,"set_num_listeners")||!strcmp(f,"set_listener_attributes")||
-         !strcmp(f,"event_instance_set_3d_attributes")||!strcmp(f,"update")) return vreal(0);
-      return vreal(0);
-    }
+    if(!strncmp(nm,"fmod_",5)) return builtin_fmod(vm,nm,a,n);
     if(!strcmp(nm,"surface_exists")) return vreal(R?gml_surface_exists(R,(int)N(a,n,0)):0);
     if(!strcmp(nm,"surface_create")) return vreal(R?gml_surface_create(R,(int)N(a,n,0),(int)N(a,n,1)):-1);
     if(!strcmp(nm,"surface_free")){ if(R) gml_surface_free(R,(int)N(a,n,0)); return vreal(0); }

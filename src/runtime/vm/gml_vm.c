@@ -973,7 +973,7 @@ static void codeprof_add(GmlWin *w, int ci, double ms, uint64_t insn){
 static int g_unknown_logged=0;
 extern GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *a, int n);
 extern int gml_builtin_fast_id(const char *name);
-extern GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n);
+extern GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, int n);
 static inline int builtin_hotprof_on(void){
   static int on=-1;
   if(on<0) on=getenv("GML_PROFILE_HOTBUILTIN")!=NULL;
@@ -1334,7 +1334,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
          * reaching the script fallback. */
         int sci = pin ? pin->funcval_ci : -1;
         GmlVal rv;
-        if(bid>0 && !hp_builtin) rv=gml_builtin_call_fast_id(vm,bid,a,na);
+        if(bid>0 && !hp_builtin) rv=gml_builtin_call_fast_id(vm,bid,nm,a,na);
         else if(sci>=0 && !hp_builtin) rv=gml_vm_run_code(vm,sci,vm->cur_self,vm->cur_other,a,na);
         else {
           vm->call_script_ci=-1;
@@ -3365,6 +3365,29 @@ static int col_event_for_pair(GmlVM *vm, int self_obj, int other_obj,
  * frame; the shared candidate list makes it proportional to the actual target population.
  * Cached per (type, frame, obj_list_gen); any create/destroy/change bumps the gen. */
 static struct { int obj; long frame, gen; int *slots; int n, cap; } g_colcand[48];
+/* lazy per-object descendant list: the object hierarchy is fixed after parse, so "every
+ * object that is_a(target)" is computed once per target instead of scanning all objects
+ * (colcand rebuilds run every time the instance list generation changes). */
+static const int *object_descendants(GmlVM *vm, int target, int *count){
+  *count=0;
+  if(target<0 || target>=vm->n_objects) return NULL;
+  if(!vm->obj_desc){
+    vm->obj_desc=calloc((size_t)vm->n_objects,sizeof(int*));
+    vm->obj_desc_n=calloc((size_t)vm->n_objects,sizeof(int));
+    if(!vm->obj_desc || !vm->obj_desc_n){ free(vm->obj_desc); free(vm->obj_desc_n); vm->obj_desc=NULL; vm->obj_desc_n=NULL; return NULL; }
+  }
+  if(!vm->obj_desc[target]){
+    int n=0;
+    for(int d=0;d<vm->n_objects;d++) if(gml_object_is(vm,d,target)) n++;
+    int *lst=malloc((size_t)(n?n:1)*sizeof(int));
+    if(!lst) return NULL;
+    n=0;
+    for(int d=0;d<vm->n_objects;d++) if(gml_object_is(vm,d,target)) lst[n++]=d;
+    vm->obj_desc[target]=lst; vm->obj_desc_n[target]=n;
+  }
+  *count=vm->obj_desc_n[target];
+  return vm->obj_desc[target];
+}
 static int colcand_get(GmlVM *vm, int obj, int **out){
   extern long g_vm_frame;
   if(!vm->obj_head || gml_colgrid_mode()==0) return -1;
@@ -3384,10 +3407,12 @@ static int colcand_get(GmlVM *vm, int obj, int **out){
   int words=(vm->inst_count+63)/64;
   if(words>bw){ uint64_t *pp=realloc(bits,(size_t)(words?words:1)*8); if(!pp) return -1; bits=pp; bw=words; }
   memset(bits,0,(size_t)words*8);
-  for(int r=0;r<nr;r++) for(int d=0;d<vm->n_objects;d++){
-    if(!gml_object_is(vm,d,roots[r])) continue;
-    for(int i=vm->obj_head[d]; i>=0; i=vm->inst_next[i])
-      if(i<vm->inst_count) bits[i>>6]|=1ull<<(i&63);
+  for(int r=0;r<nr;r++){
+    int nd=0; const int *dl=object_descendants(vm,roots[r],&nd);
+    for(int k=0;k<nd;k++){ int d=dl[k];
+      for(int i=vm->obj_head[d]; i>=0; i=vm->inst_next[i])
+        if(i<vm->inst_count) bits[i>>6]|=1ull<<(i&63);
+    }
   }
   int n=0;
   for(int w=0;w<words;w++){ uint64_t m=bits[w];
@@ -3594,6 +3619,8 @@ static void ds_maps_free(GmlVM *vm){
 }
 void gml_vm_free(GmlVM *vm){
   gml_colgrid_invalidate(vm);
+  if(vm->obj_desc){ for(int i=0;i<vm->n_objects;i++) free(vm->obj_desc[i]); }
+  free(vm->obj_desc); vm->obj_desc=NULL; free(vm->obj_desc_n); vm->obj_desc_n=NULL;
   free(vm->obj_alive); vm->obj_alive=NULL;
   free(vm->obj_head); vm->obj_head=NULL; free(vm->inst_next); vm->inst_next=NULL; free(vm->inst_prev); vm->inst_prev=NULL;
   free(vm->cg_off); vm->cg_off=NULL; free(vm->cg_items); vm->cg_items=NULL; vm->cg_items_cap=0;
