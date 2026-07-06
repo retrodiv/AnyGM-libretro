@@ -1078,11 +1078,13 @@ static GmlGlyph *real_glyph(GmlFont *f, unsigned cp){
   for(int i=0;i<f->n_glyphs;i++) if(f->glyphs[i].ch==cp) return &f->glyphs[i];
   return NULL;
 }
-/* advance width of one line (up to '#'/NUL), '\#' counts as a literal '#'. */
+/* advance width of one line (up to '#', LF, or NUL), '\#' counts as a literal '#'. */
 static int real_line_width(GmlFont *f, const char *p, const char **end){
   int w=0;
-  while(*p && *p!='#'){
-    unsigned cp=text_next_cp(&p);
+  while(*p && !text_is_linebreak(p)){
+    unsigned cp;
+    if(p[0]=='\\' && p[1]=='#'){ cp='#'; p+=2; }
+    else cp=text_next_cp(&p);
     GmlGlyph *g=real_glyph(f,cp);
     if(g) w+=g->shift;
   }
@@ -1094,7 +1096,7 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
                            double xs, double ys, double ca, double sa, int use_rot,
                            uint32_t blend, double alpha){
   int lh=f->line_height>0? f->line_height:12;
-  int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;} if(*q=='#') nlines++; }
+  int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;} if(text_is_linebreak(q)) nlines++; }
   double base_y=0;
   if(r->valign==1) base_y=-(nlines*lh)/2.0; else if(r->valign==2) base_y=-nlines*lh;
   const char *p=str;
@@ -1114,7 +1116,7 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
       if(g) cx += g->shift;
     }
     base_y += lh;
-    if(*end=='#') p=end+1; else break;
+    if(text_is_linebreak(end)) p=end+1; else break;
   }
 }
 
@@ -1125,7 +1127,7 @@ int gml_text_width(GmlRender *r, const char *str){
   for(;;){
     const char *end; int w = f->real ? real_line_width(f,p,&end) : line_width(r,f,p,&end);
     if(w>best) best=w;
-    if(*end!='#') break;
+    if(!text_is_linebreak(end)) break;
     p=end+1;
   }
   if(getenv("GML_LOG_WIDTH")){
@@ -1147,7 +1149,7 @@ int gml_text_height(GmlRender *r, const char *str){
   int lh, nlines=1;
   if(f->real) lh=f->line_height>0?f->line_height:12;
   else { GmlSprite *s=&r->spr[f->sprite]; lh=s->h>0?s->h:8; }
-  if(str) for(const char *p=str;*p;p++){ if(*p=='\\'&&p[1]=='#'){p++;continue;} if(*p=='#') nlines++; }
+  if(str) for(const char *p=str;*p;p++){ if(*p=='\\'&&p[1]=='#'){p++;continue;} if(text_is_linebreak(p)) nlines++; }
   return lh*nlines;
 }
 void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str,
@@ -1170,7 +1172,7 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
    * glyph's trimmed sub-rect sh — otherwise text lines collapse when glyphs are cropped). */
   int lh=s->h; if(lh<=0) lh=8;
   /* count lines for valign */
-  int nlines=1; for(const char *p=str;*p;p++){ if(*p=='\\'&&p[1]=='#'){p++;continue;} if(*p=='#') nlines++; }
+  int nlines=1; for(const char *p=str;*p;p++){ if(*p=='\\'&&p[1]=='#'){p++;continue;} if(text_is_linebreak(p)) nlines++; }
   double base_y=0;
   if(r->valign==1) base_y=-(nlines*lh)/2.0; else if(r->valign==2) base_y=-nlines*lh;
   const char *p=str;
@@ -1216,7 +1218,7 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
       cx += glyph_w(r,f,fr,cp)+f->sep;
     }
     base_y += lh;
-    if(*end=='#') p=end+1; else break;
+    if(text_is_linebreak(end)) p=end+1; else break;
   }
 }
 void gml_draw_text(GmlRender *r, double x, double y, const char *str){
@@ -1234,7 +1236,7 @@ void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double
     const char *p=str;
     for(;;){
       char c=*p;
-      int end_word = (c==' '||c=='#'||c==0||(c=='\\'&&p[1]=='#'));
+      int end_word = (c==' '||c=='#'||c=='\n'||c==0||(c=='\\'&&p[1]=='#'));
       if(!end_word){ if(wl<sizeof(word)-1) word[wl++]=c; p++; continue; }
       word[wl]=0;
       if(wl){
@@ -1249,7 +1251,7 @@ void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double
         } else { snprintf(line,sizeof line,"%s",probe); ll=strlen(line); }
         wl=0;
       }
-      if(c=='#'){ for(size_t k=0;k<ll && o<sizeof(wrapped)-2;k++) wrapped[o++]=line[k];
+      if(c=='#' || c=='\n'){ for(size_t k=0;k<ll && o<sizeof(wrapped)-2;k++) wrapped[o++]=line[k];
         wrapped[o++]='#'; ll=0; line[0]=0; }
       if(c==0) break;
       p += (c=='\\')?2:1;
@@ -1260,7 +1262,7 @@ void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double
   }
   if(sep<=0){ gml_draw_text_transformed(r,x,y,str,1,1,0,r->color,r->alpha); return; }
   /* custom line separation: draw line by line at y + i*sep */
-  int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;} if(*q=='#') nlines++; }
+  int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;} if(text_is_linebreak(q)) nlines++; }
   double y0=y;
   if(r->valign==1) y0=y-(nlines*sep)/2.0; else if(r->valign==2) y0=y-nlines*sep;
   int sv=r->valign; r->valign=0;
@@ -1268,10 +1270,10 @@ void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double
   char lbuf[1024];
   while(1){
     size_t k=0;
-    while(*p && !( *p=='#' && (p==str || p[-1]!='\\') ) && k<sizeof(lbuf)-1) lbuf[k++]=*p++;
+    while(*p && !((*p=='#' && (p==str || p[-1]!='\\')) || *p=='\n') && k<sizeof(lbuf)-1) lbuf[k++]=*p++;
     lbuf[k]=0;
     gml_draw_text_transformed(r,x,y0+li*sep,lbuf,1,1,0,r->color,r->alpha);
-    if(*p!='#') break;
+    if(!text_is_linebreak(p)) break;
     p++; li++;
   }
   r->valign=sv;

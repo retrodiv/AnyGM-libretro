@@ -2940,6 +2940,23 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"string_length")) return vreal((double)strlen(S(a,n,0)));
   if(!strcmp(nm,"string_byte_length")) return vreal((double)strlen(S(a,n,0)));
   if(!strcmp(nm,"string_count")) return vreal(gm_string_count(S(a,n,0),S(a,n,1)));
+  if(!strcmp(nm,"string_split")){
+    const char *src=S(a,n,0), *sep=S(a,n,1);
+    int seplen=(int)strlen(sep);
+    GmlVal arr=gml_arr_new(0,vreal(0));
+    if(seplen<=0){ gml_arr_push(arr,vstr(src)); return arr; }
+    const char *p=src;
+    for(;;){
+      const char *q=strstr(p,sep);
+      size_t len=q ? (size_t)(q-p) : strlen(p);
+      char *part=malloc(len+1);
+      if(part){ memcpy(part,p,len); part[len]=0; gml_arr_push(arr,vstr(part)); free(part); }
+      else gml_arr_push(arr,vstr(""));
+      if(!q) break;
+      p=q+seplen;
+    }
+    return arr;
+  }
   if(!strcmp(nm,"string_copy")){ const char*s=S(a,n,0); int idx=(int)N(a,n,1), cnt=(int)N(a,n,2);
     int len=strlen(s); if(idx<1)idx=1; if(idx>len)return vstr("");
     if(cnt<0)cnt=0; if(idx-1+cnt>len)cnt=len-(idx-1);
