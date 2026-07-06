@@ -306,9 +306,19 @@ void gml_part_system_drawit(GmlRender *r, int id){
     if(alpha<=0) continue;
     if(t->sprite>=0){
       int frames=gml_sprite_frames(r,t->sprite); int sub = (t->spr_animate&&frames>0)? (int)(age*frames)%frames : 0;
+      double xs=p->size*t->xscale, ys=p->size*t->yscale;
+      if(t->sprite<r->n_spr && frames>0){
+        GmlSprite *spr=&r->spr[t->sprite];
+        double ax=fabs(xs), ay=fabs(ys);
+        double rx=fmax((double)spr->originx,(double)(spr->w-spr->originx))*ax;
+        double ry=fmax((double)spr->originy,(double)(spr->h-spr->originy))*ay;
+        double rad=hypot(rx,ry) + 2.0;
+        double sx=p->x-r->cam_x, sy=p->y-r->cam_y;
+        if(sx+rad<0 || sy+rad<0 || sx-rad>=r->fbw || sy-rad>=r->fbh) continue;
+      }
       /* gml_draw_sprite_ext applies the camera itself → pass world (x,y), NOT camera-relative. */
       gml_draw_sprite_ext(r,t->sprite,sub, p->x, p->y,
-                          p->size*t->xscale, p->size*t->yscale, p->ori, col, alpha);
+                          xs, ys, p->ori, col, alpha);
     } else {
       int half=(int)(p->size)+0; if(half<0)half=0; if(half>64)half=64;
       plot_square(r,(int)(p->x - r->cam_x),(int)(p->y - r->cam_y),half,col,alpha);

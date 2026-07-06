@@ -371,6 +371,62 @@ static inline void blend_fast8_run(uint32_t *dp, int run, uint32_t src, uint32_t
 #endif
   for(int k=0;k<run;k++) dp[k]=blend_fast8_cached(dp[k],srb,sg,ia);
 }
+static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run, uint32_t af){
+  if(run<=0) return;
+  if(af>=256u){ memcpy(dp,sp,(size_t)run*sizeof(uint32_t)); return; }
+  if(!af) return;
+  uint32_t ia=256u-af;
+#if defined(__SSE2__)
+  if(run>=4){
+    __m128i zero=_mm_setzero_si128();
+    __m128i valpha=_mm_set1_epi32((int)0xFF000000u);
+    __m128i vaf=_mm_set1_epi16((short)af);
+    __m128i via=_mm_set1_epi16((short)ia);
+    while(run>=4){
+      __m128i src=_mm_loadu_si128((const __m128i*)sp);
+      __m128i dst=_mm_loadu_si128((const __m128i*)dp);
+      __m128i slo=_mm_unpacklo_epi8(src,zero);
+      __m128i shi=_mm_unpackhi_epi8(src,zero);
+      __m128i dlo=_mm_unpacklo_epi8(dst,zero);
+      __m128i dhi=_mm_unpackhi_epi8(dst,zero);
+      slo=_mm_add_epi16(_mm_mullo_epi16(slo,vaf),_mm_mullo_epi16(dlo,via));
+      shi=_mm_add_epi16(_mm_mullo_epi16(shi,vaf),_mm_mullo_epi16(dhi,via));
+      slo=_mm_srli_epi16(slo,8);
+      shi=_mm_srli_epi16(shi,8);
+      _mm_storeu_si128((__m128i*)dp,_mm_or_si128(_mm_packus_epi16(slo,shi),valpha));
+      sp+=4;
+      dp+=4;
+      run-=4;
+    }
+  }
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if(run>=4){
+    uint8x16_t valpha8=vreinterpretq_u8_u32(vdupq_n_u32(0xFF000000u));
+    uint16x8_t vaf=vdupq_n_u16((uint16_t)af);
+    uint16x8_t via=vdupq_n_u16((uint16_t)ia);
+    while(run>=4){
+      uint8x16_t src=vld1q_u8((const uint8_t*)sp);
+      uint8x16_t dst=vld1q_u8((const uint8_t*)dp);
+      uint16x8_t lo=vaddq_u16(vmulq_u16(vmovl_u8(vget_low_u8(src)),vaf),
+                              vmulq_u16(vmovl_u8(vget_low_u8(dst)),via));
+      uint16x8_t hi=vaddq_u16(vmulq_u16(vmovl_u8(vget_high_u8(src)),vaf),
+                              vmulq_u16(vmovl_u8(vget_high_u8(dst)),via));
+      lo=vshrq_n_u16(lo,8);
+      hi=vshrq_n_u16(hi,8);
+      vst1q_u8((uint8_t*)dp,vorrq_u8(vcombine_u8(vmovn_u16(lo),vmovn_u16(hi)),valpha8));
+      sp+=4;
+      dp+=4;
+      run-=4;
+    }
+  }
+#endif
+  for(int k=0;k<run;k++){
+    uint32_t src=sp[k];
+    uint32_t srb=(src & 0x00FF00FFu)*af;
+    uint32_t sg=(src & 0x0000FF00u)*af;
+    dp[k]=blend_fast8_cached(dp[k],srb,sg,ia);
+  }
+}
 
 /* ---- atlas (TXTR) ---- */
 /* Decode PNG, fioq, or a bzip2-compressed 2zoq container into RGBA pixels. */
