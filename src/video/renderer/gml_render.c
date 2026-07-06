@@ -953,8 +953,9 @@ static void parse_sprt(GmlRender *r){
     }
   }
 }
-/* whether sprite's COLLISION MASK is solid at sprite-local (lx,ly). Falls back to the visible
- * alpha if a sprite has no mask. */
+/* whether sprite's COLLISION MASK is solid at sprite-local (lx,ly). Asset sprites without a
+ * serialized 1bpp mask use their bounding box; runtime sprites can still use alpha precision
+ * through sprite_collision_mask(kind=bboxkind_precise). */
 int gml_sprite_collision(GmlRender *r, int sprite, int frame, int lx, int ly){
   if(sprite<0||sprite>=r->n_spr) return 0;
   GmlSprite *s=&r->spr[sprite];
@@ -975,7 +976,7 @@ int gml_sprite_collision(GmlRender *r, int sprite, int frame, int lx, int ly){
     return fabs((lx-cx)/hw)+fabs((ly-cy)/hh)<=1.0;
   }
   if(s->runtime_rgba) return gml_sprite_alpha(r,sprite,frame,lx,ly)>s->collision_tolerance;
-  if(!s->mask||s->mask_count<=0) return gml_sprite_alpha(r,sprite,frame,lx,ly)>=64;
+  if(!s->mask||s->mask_count<=0) return 1;
   int mi=(s->mask_count>1 && frame>=0 && frame<s->mask_count)? frame : 0;
   const uint8_t *m=s->mask + (size_t)mi*s->mask_rowb*s->h;
   return (m[(size_t)ly*s->mask_rowb + lx/8] >> (7-(lx%8))) & 1;
@@ -1127,6 +1128,17 @@ int gml_text_width(GmlRender *r, const char *str){
     if(*end!='#') break;
     p=end+1;
   }
+  if(getenv("GML_LOG_WIDTH")){
+    static int nlog=0;
+    int max=200; const char *m=getenv("GML_LOG_WIDTH_MAX"); if(m) max=atoi(m);
+    if(nlog<max){
+      int sw=-1, nf=-1;
+      if(!f->real && f->sprite>=0 && f->sprite<r->n_spr){ sw=r->spr[f->sprite].w; nf=r->spr[f->sprite].n_frames; }
+      fprintf(stderr,"[width] font=%d real=%d sprite=%d sw=%d frames=%d prop=%d sep=%d map=%d width=%d \"%.*s\"\n",
+        r->font,f->real,f->sprite,sw,nf,f->prop,f->sep,f->map_len,best,80,str);
+      nlog++;
+    }
+  }
   return best;
 }
 int gml_text_height(GmlRender *r, const char *str){
@@ -1201,7 +1213,7 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
               y + base_y*ys - r->cam_y + gt.ty*ys, xs,ys, blend, alpha);
           } } }
         }
-      cx += glyph_w(r,f,fr)+f->sep;
+      cx += glyph_w(r,f,fr,cp)+f->sep;
     }
     base_y += lh;
     if(*end=='#') p=end+1; else break;

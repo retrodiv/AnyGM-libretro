@@ -256,7 +256,7 @@ GmlRtLayer *gml_rt_layer_new(GmlVM *vm){
   }
   GmlRtLayer *l=&vm->rtl[slot]; memset(l,0,sizeof *l);
   if(!vm->rt_next_id) vm->rt_next_id=1000001;
-  l->id=vm->rt_next_id++; l->used=1; l->visible=1;
+  l->id=vm->rt_next_id++; l->used=1; l->visible=1; l->order=slot;
   return l;
 }
 GmlRtElem *gml_rt_elem_new(GmlVM *vm){
@@ -2092,18 +2092,32 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
 enum {
   BID_ARRAY_LENGTH=1,
   BID_ARRAY_LENGTH_1D,
+  BID_ARRAY_GET,
+  BID_ARRAY_SET,
+  BID_ARRAY_CREATE,
+  BID_ARRAY_POP,
+  BID_ARRAY_RESIZE,
+  BID_ARRAY_COPY,
+  BID_ARRAY_HEIGHT_2D,
+  BID_ARRAY_LENGTH_2D,
   BID_DRAW_SPRITE,
   BID_DRAW_SPRITE_EXT,
   BID_DRAW_SURFACE,
   BID_DRAW_SURFACE_EXT,
+  BID_DRAW_SURFACE_STRETCHED,
+  BID_DRAW_SURFACE_STRETCHED_EXT,
+  BID_DRAW_SURFACE_PART_EXT,
   BID_DRAW_RECTANGLE_COLOR,
   BID_DRAW_RECTANGLE_COLOUR,
   BID_DRAW_TEXT,
+  BID_DRAW_TEXT_EXT,
   BID_DRAW_TEXT_EXT_TRANSFORMED_COLOUR,
   BID_DRAW_TEXT_EXT_TRANSFORMED_COLOR,
   BID_DRAW_SET_ALPHA,
   BID_DRAW_SET_FONT,
   BID_DRAW_SET_HALIGN,
+  BID_DRAW_SET_VALIGN,
+  BID_GPU_SET_BLENDENABLE,
   BID_GPU_SET_BLENDMODE,
   BID_PART_SYSTEM_DRAWIT,
   BID_PART_SYSTEM_DRAWIT_EXT,
@@ -2127,7 +2141,44 @@ enum {
   BID_CLAMP,
   BID_LENGTHDIR_X,
   BID_LENGTHDIR_Y,
-  BID_POINT_DISTANCE
+  BID_POINT_DISTANCE,
+  BID_KEYBOARD_CHECK,
+  BID_KEYBOARD_CHECK_PRESSED,
+  BID_KEYBOARD_CHECK_RELEASED,
+  BID_KEYBOARD_CHECK_DIRECT,
+  BID_KEYBOARD_CLEAR,
+  BID_KEYBOARD_KEY_PRESS,
+  BID_KEYBOARD_KEY_RELEASE,
+  BID_GAMEPAD_BUTTON_CHECK,
+  BID_GAMEPAD_BUTTON_CHECK_PRESSED,
+  BID_GAMEPAD_BUTTON_CHECK_RELEASED,
+  BID_GAMEPAD_IS_CONNECTED,
+  BID_GAMEPAD_IS_SUPPORTED,
+  BID_GAMEPAD_GET_DEVICE_COUNT,
+  BID_GAMEPAD_BUTTON_COUNT,
+  BID_GAMEPAD_AXIS_COUNT,
+  BID_GAMEPAD_SET_AXIS_DEADZONE,
+  BID_GAMEPAD_SET_VIBRATION,
+  BID_GAMEPAD_AXIS_VALUE,
+  BID_MOUSE_CHECK_BUTTON,
+  BID_MOUSE_CHECK_BUTTON_PRESSED,
+  BID_MOUSE_CHECK_BUTTON_RELEASED,
+  BID_DEVICE_MOUSE_CHECK_BUTTON,
+  BID_DEVICE_MOUSE_CHECK_BUTTON_PRESSED,
+  BID_DEVICE_MOUSE_CHECK_BUTTON_RELEASED,
+  BID_DEVICE_MOUSE_X,
+  BID_DEVICE_MOUSE_Y,
+  BID_DEVICE_MOUSE_X_TO_GUI,
+  BID_DEVICE_MOUSE_Y_TO_GUI,
+  BID_DEVICE_MOUSE_RAW_X,
+  BID_DEVICE_MOUSE_RAW_Y,
+  BID_WINDOW_MOUSE_SET,
+  BID_SURFACE_CREATE,
+  BID_SURFACE_FREE,
+  BID_SURFACE_SET_TARGET,
+  BID_SURFACE_RESET_TARGET,
+  BID_STRING_WIDTH,
+  BID_STRING_HEIGHT
 };
 
 int gml_builtin_fast_id(const char *nm){
@@ -2136,7 +2187,15 @@ int gml_builtin_fast_id(const char *nm){
     case 'a':
       if(!strcmp(nm,"array_length")) return BID_ARRAY_LENGTH;
       if(!strcmp(nm,"array_length_1d")) return BID_ARRAY_LENGTH_1D;
+      if(!strcmp(nm,"array_get")) return BID_ARRAY_GET;
+      if(!strcmp(nm,"array_set")) return BID_ARRAY_SET;
+      if(!strcmp(nm,"array_create")) return BID_ARRAY_CREATE;
       if(!strcmp(nm,"array_push")) return BID_ARRAY_PUSH;
+      if(!strcmp(nm,"array_pop")) return BID_ARRAY_POP;
+      if(!strcmp(nm,"array_resize")) return BID_ARRAY_RESIZE;
+      if(!strcmp(nm,"array_copy")) return BID_ARRAY_COPY;
+      if(!strcmp(nm,"array_height_2d")) return BID_ARRAY_HEIGHT_2D;
+      if(!strcmp(nm,"array_length_2d")) return BID_ARRAY_LENGTH_2D;
       if(!strcmp(nm,"abs")) return BID_ABS;
       return -1;
     case 'c':
@@ -2147,10 +2206,14 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"draw_sprite_ext")) return BID_DRAW_SPRITE_EXT;
       if(!strcmp(nm,"draw_surface")) return BID_DRAW_SURFACE;
       if(!strcmp(nm,"draw_surface_ext")) return BID_DRAW_SURFACE_EXT;
+      if(!strcmp(nm,"draw_surface_stretched")) return BID_DRAW_SURFACE_STRETCHED;
+      if(!strcmp(nm,"draw_surface_stretched_ext")) return BID_DRAW_SURFACE_STRETCHED_EXT;
+      if(!strcmp(nm,"draw_surface_part_ext")) return BID_DRAW_SURFACE_PART_EXT;
       if(!strcmp(nm,"draw_rectangle")) return BID_DRAW_RECTANGLE;
       if(!strcmp(nm,"draw_rectangle_color")) return BID_DRAW_RECTANGLE_COLOR;
       if(!strcmp(nm,"draw_rectangle_colour")) return BID_DRAW_RECTANGLE_COLOUR;
       if(!strcmp(nm,"draw_text")) return BID_DRAW_TEXT;
+      if(!strcmp(nm,"draw_text_ext")) return BID_DRAW_TEXT_EXT;
       if(!strcmp(nm,"draw_text_ext_transformed_colour")) return BID_DRAW_TEXT_EXT_TRANSFORMED_COLOUR;
       if(!strcmp(nm,"draw_text_ext_transformed_color")) return BID_DRAW_TEXT_EXT_TRANSFORMED_COLOR;
       if(!strcmp(nm,"draw_set_color")) return BID_DRAW_SET_COLOR;
@@ -2158,24 +2221,58 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"draw_set_alpha")) return BID_DRAW_SET_ALPHA;
       if(!strcmp(nm,"draw_set_font")) return BID_DRAW_SET_FONT;
       if(!strcmp(nm,"draw_set_halign")) return BID_DRAW_SET_HALIGN;
+      if(!strcmp(nm,"draw_set_valign")) return BID_DRAW_SET_VALIGN;
       if(!strcmp(nm,"distance_to_object")) return BID_DISTANCE_TO_OBJECT;
+      if(!strcmp(nm,"device_mouse_check_button")) return BID_DEVICE_MOUSE_CHECK_BUTTON;
+      if(!strcmp(nm,"device_mouse_check_button_pressed")) return BID_DEVICE_MOUSE_CHECK_BUTTON_PRESSED;
+      if(!strcmp(nm,"device_mouse_check_button_released")) return BID_DEVICE_MOUSE_CHECK_BUTTON_RELEASED;
+      if(!strcmp(nm,"device_mouse_x")) return BID_DEVICE_MOUSE_X;
+      if(!strcmp(nm,"device_mouse_y")) return BID_DEVICE_MOUSE_Y;
+      if(!strcmp(nm,"device_mouse_x_to_gui")) return BID_DEVICE_MOUSE_X_TO_GUI;
+      if(!strcmp(nm,"device_mouse_y_to_gui")) return BID_DEVICE_MOUSE_Y_TO_GUI;
+      if(!strcmp(nm,"device_mouse_raw_x")) return BID_DEVICE_MOUSE_RAW_X;
+      if(!strcmp(nm,"device_mouse_raw_y")) return BID_DEVICE_MOUSE_RAW_Y;
       return -1;
     case 'f':
       if(!strcmp(nm,"floor")) return BID_FLOOR;
       return -1;
     case 'g':
+      if(!strcmp(nm,"gpu_set_blendenable")) return BID_GPU_SET_BLENDENABLE;
       if(!strcmp(nm,"gpu_set_blendmode")) return BID_GPU_SET_BLENDMODE;
+      if(!strcmp(nm,"gamepad_button_check")) return BID_GAMEPAD_BUTTON_CHECK;
+      if(!strcmp(nm,"gamepad_button_check_pressed")) return BID_GAMEPAD_BUTTON_CHECK_PRESSED;
+      if(!strcmp(nm,"gamepad_button_check_released")) return BID_GAMEPAD_BUTTON_CHECK_RELEASED;
+      if(!strcmp(nm,"gamepad_is_connected")) return BID_GAMEPAD_IS_CONNECTED;
+      if(!strcmp(nm,"gamepad_is_supported")) return BID_GAMEPAD_IS_SUPPORTED;
+      if(!strcmp(nm,"gamepad_get_device_count")) return BID_GAMEPAD_GET_DEVICE_COUNT;
+      if(!strcmp(nm,"gamepad_button_count")) return BID_GAMEPAD_BUTTON_COUNT;
+      if(!strcmp(nm,"gamepad_axis_count")) return BID_GAMEPAD_AXIS_COUNT;
+      if(!strcmp(nm,"gamepad_set_axis_deadzone")) return BID_GAMEPAD_SET_AXIS_DEADZONE;
+      if(!strcmp(nm,"gamepad_set_vibration")) return BID_GAMEPAD_SET_VIBRATION;
+      if(!strcmp(nm,"gamepad_axis_value")) return BID_GAMEPAD_AXIS_VALUE;
       return -1;
     case 'i':
       if(!strcmp(nm,"instance_exists")) return BID_INSTANCE_EXISTS;
       if(!strcmp(nm,"instance_number")) return BID_INSTANCE_NUMBER;
       if(!strcmp(nm,"instance_place_list")) return BID_INSTANCE_PLACE_LIST;
       return -1;
+    case 'k':
+      if(!strcmp(nm,"keyboard_check")) return BID_KEYBOARD_CHECK;
+      if(!strcmp(nm,"keyboard_check_pressed")) return BID_KEYBOARD_CHECK_PRESSED;
+      if(!strcmp(nm,"keyboard_check_released")) return BID_KEYBOARD_CHECK_RELEASED;
+      if(!strcmp(nm,"keyboard_check_direct")) return BID_KEYBOARD_CHECK_DIRECT;
+      if(!strcmp(nm,"keyboard_clear")) return BID_KEYBOARD_CLEAR;
+      if(!strcmp(nm,"keyboard_key_press")) return BID_KEYBOARD_KEY_PRESS;
+      if(!strcmp(nm,"keyboard_key_release")) return BID_KEYBOARD_KEY_RELEASE;
+      return -1;
     case 'l':
       if(!strcmp(nm,"lengthdir_x")) return BID_LENGTHDIR_X;
       if(!strcmp(nm,"lengthdir_y")) return BID_LENGTHDIR_Y;
       return -1;
     case 'm':
+      if(!strcmp(nm,"mouse_check_button")) return BID_MOUSE_CHECK_BUTTON;
+      if(!strcmp(nm,"mouse_check_button_pressed")) return BID_MOUSE_CHECK_BUTTON_PRESSED;
+      if(!strcmp(nm,"mouse_check_button_released")) return BID_MOUSE_CHECK_BUTTON_RELEASED;
       if(!strcmp(nm,"min")) return BID_MIN;
       if(!strcmp(nm,"max")) return BID_MAX;
       return -1;
@@ -2191,6 +2288,17 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"shader_reset")) return BID_SHADER_RESET;
       if(!strcmp(nm,"shader_set_uniform_f")) return BID_SHADER_SET_UNIFORM_F;
       if(!strcmp(nm,"shader_set_uniform_f_array")) return BID_SHADER_SET_UNIFORM_F_ARRAY;
+      if(!strcmp(nm,"surface_create")) return BID_SURFACE_CREATE;
+      if(!strcmp(nm,"surface_free")) return BID_SURFACE_FREE;
+      if(!strcmp(nm,"surface_set_target")) return BID_SURFACE_SET_TARGET;
+      if(!strcmp(nm,"surface_reset_target")) return BID_SURFACE_RESET_TARGET;
+      if(!strcmp(nm,"string_width")) return BID_STRING_WIDTH;
+      if(!strcmp(nm,"string_height")) return BID_STRING_HEIGHT;
+      return -1;
+    case 'w':
+      if(!strcmp(nm,"window_mouse_get_x")) return BID_DEVICE_MOUSE_RAW_X;
+      if(!strcmp(nm,"window_mouse_get_y")) return BID_DEVICE_MOUSE_RAW_Y;
+      if(!strcmp(nm,"window_mouse_set")) return BID_WINDOW_MOUSE_SET;
       return -1;
     default:
       return -1;
@@ -2203,9 +2311,30 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
     case BID_ARRAY_LENGTH:
     case BID_ARRAY_LENGTH_1D:
       return vreal(n>0?gml_val_array_length(a[0]):0);
+    case BID_ARRAY_GET:
+      return n>1?gml_arr_get(a[0],(int)N(a,n,1)):vreal(0);
+    case BID_ARRAY_SET:
+      if(n>2) gml_arr_set(a[0],(int)N(a,n,1),a[2]);
+      return vreal(0);
+    case BID_ARRAY_CREATE:{
+      int sz=n>0?(int)N(a,n,0):0;
+      GmlVal fill=n>1?a[1]:vreal(0);
+      return gml_arr_new(sz,fill); }
     case BID_ARRAY_PUSH:
       for(int i=1;i<n;i++) gml_arr_push(a[0],a[i]);
       return vreal(0);
+    case BID_ARRAY_POP:
+      return n>0?gml_arr_pop(a[0]):vreal(0);
+    case BID_ARRAY_RESIZE:
+      if(n>1) gml_arr_resize(a[0],(int)N(a,n,1));
+      return vreal(0);
+    case BID_ARRAY_COPY:
+      if(n>4) gml_arr_copy(a[0],(int)N(a,n,1),a[2],(int)N(a,n,3),(int)N(a,n,4));
+      return vreal(0);
+    case BID_ARRAY_HEIGHT_2D:
+      return vreal(n>0?gml_val_array_height_2d(a[0]):0);
+    case BID_ARRAY_LENGTH_2D:
+      return vreal(n>0?gml_val_array_length_2d(a[0],(int)N(a,n,1)):0);
     case BID_DRAW_SPRITE:
       if(R) gml_draw_sprite(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3));
       return vreal(0);
@@ -2224,6 +2353,15 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
     case BID_DRAW_SURFACE_EXT:
       if(R){ int s=(int)N(a,n,0); gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),
         gml_surface_width(R,s)*N(a,n,3),gml_surface_height(R,s)*N(a,n,4),(uint32_t)N(a,n,6),N(a,n,7)); }
+      return vreal(0);
+    case BID_DRAW_SURFACE_STRETCHED:
+      if(R) gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),0xFFFFFF,R->alpha);
+      return vreal(0);
+    case BID_DRAW_SURFACE_STRETCHED_EXT:
+      if(R) gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),(uint32_t)N(a,n,5),N(a,n,6));
+      return vreal(0);
+    case BID_DRAW_SURFACE_PART_EXT:
+      if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),(uint32_t)N(a,n,9),N(a,n,10));
       return vreal(0);
     case BID_DRAW_RECTANGLE_COLOR:
     case BID_DRAW_RECTANGLE_COLOUR:
@@ -2246,6 +2384,9 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
     case BID_DRAW_TEXT:
       if(R) gml_draw_text(R,N(a,n,0),N(a,n,1),S(a,n,2));
       return vreal(0);
+    case BID_DRAW_TEXT_EXT:
+      if(R) gml_draw_text_ext(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4));
+      return vreal(0);
     case BID_DRAW_TEXT_EXT_TRANSFORMED_COLOUR:
     case BID_DRAW_TEXT_EXT_TRANSFORMED_COLOR:
       if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,5),N(a,n,6),N(a,n,7),(uint32_t)N(a,n,8),N(a,n,12));
@@ -2258,6 +2399,12 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
       return vreal(0);
     case BID_DRAW_SET_HALIGN:
       if(R) R->halign=(int)N(a,n,0);
+      return vreal(0);
+    case BID_DRAW_SET_VALIGN:
+      if(R) R->valign=(int)N(a,n,0);
+      return vreal(0);
+    case BID_GPU_SET_BLENDENABLE:
+      if(R) R->alphablend=N(a,n,0)>=0.5;
       return vreal(0);
     case BID_GPU_SET_BLENDMODE:
       if(R){ int bm=(int)N(a,n,0); R->blendmode=(bm==1)?1:(bm==3)?2:0; }
@@ -2335,6 +2482,94 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
       return vreal(-N(a,n,0)*sin(N(a,n,1)*M_PI/180.0));
     case BID_POINT_DISTANCE:
       return vreal(hypot(N(a,n,2)-N(a,n,0),N(a,n,3)-N(a,n,1)));
+    case BID_KEYBOARD_CHECK:
+    case BID_KEYBOARD_CHECK_DIRECT:
+      return vreal(gml_input_key((int)N(a,n,0),0));
+    case BID_KEYBOARD_CHECK_PRESSED:
+      return vreal(gml_input_key((int)N(a,n,0),1));
+    case BID_KEYBOARD_CHECK_RELEASED:
+      return vreal(gml_input_key((int)N(a,n,0),2));
+    case BID_KEYBOARD_CLEAR:
+      gml_input_key_clear((int)N(a,n,0));
+      return vreal(0);
+    case BID_KEYBOARD_KEY_PRESS:
+      gml_input_key_press((int)N(a,n,0));
+      return vreal(0);
+    case BID_KEYBOARD_KEY_RELEASE:
+      gml_input_key_release((int)N(a,n,0));
+      return vreal(0);
+    case BID_GAMEPAD_BUTTON_CHECK:
+      if(getenv("GML_DBG_GP")){ extern long g_vm_frame;
+        fprintf(stderr,"[gp] f%ld gamepad_button_check n=%d a0=%.0f a1=%.0f -> %d\n",g_vm_frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad((int)N(a,n,1),0)); }
+      return vreal(gml_input_gamepad((int)N(a,n,1),0));
+    case BID_GAMEPAD_BUTTON_CHECK_PRESSED:
+      if(getenv("GML_DBG_GP")){ extern long g_vm_frame;
+        fprintf(stderr,"[gp] f%ld gamepad_button_check_pressed n=%d a0=%.0f a1=%.0f -> %d\n",g_vm_frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad((int)N(a,n,1),1)); }
+      return vreal(gml_input_gamepad((int)N(a,n,1),1));
+    case BID_GAMEPAD_BUTTON_CHECK_RELEASED:
+      if(getenv("GML_DBG_GP")){ extern long g_vm_frame;
+        fprintf(stderr,"[gp] f%ld gamepad_button_check_released n=%d a0=%.0f a1=%.0f -> %d\n",g_vm_frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad((int)N(a,n,1),2)); }
+      return vreal(gml_input_gamepad((int)N(a,n,1),2));
+    case BID_GAMEPAD_IS_CONNECTED:
+      return vreal(gml_input_gamepad_connected((int)N(a,n,0)));
+    case BID_GAMEPAD_IS_SUPPORTED:
+      return vreal(1);
+    case BID_GAMEPAD_GET_DEVICE_COUNT:
+      return vreal(gml_input_gamepad_device_count());
+    case BID_GAMEPAD_BUTTON_COUNT:
+      return vreal(16);
+    case BID_GAMEPAD_AXIS_COUNT:
+      return vreal(4);
+    case BID_GAMEPAD_SET_AXIS_DEADZONE:
+      gp_deadzone_set((int)N(a,n,0),N(a,n,1));
+      return vreal(0);
+    case BID_GAMEPAD_SET_VIBRATION:
+      gml_input_gamepad_set_vibration((int)N(a,n,0),N(a,n,1),N(a,n,2));
+      return vreal(0);
+    case BID_GAMEPAD_AXIS_VALUE:
+      return vreal(gp_axis_value_filtered((int)N(a,n,0),(int)N(a,n,1)));
+    case BID_MOUSE_CHECK_BUTTON:
+      return vreal(mouse_btn_check((int)N(a,n,0),0));
+    case BID_MOUSE_CHECK_BUTTON_PRESSED:
+      return vreal(mouse_btn_check((int)N(a,n,0),1));
+    case BID_MOUSE_CHECK_BUTTON_RELEASED:
+      return vreal(mouse_btn_check((int)N(a,n,0),2));
+    case BID_DEVICE_MOUSE_CHECK_BUTTON:
+      return vreal(mouse_btn_check((int)N(a,n,1),0));
+    case BID_DEVICE_MOUSE_CHECK_BUTTON_PRESSED:
+      return vreal(mouse_btn_check((int)N(a,n,1),1));
+    case BID_DEVICE_MOUSE_CHECK_BUTTON_RELEASED:
+      return vreal(mouse_btn_check((int)N(a,n,1),2));
+    case BID_DEVICE_MOUSE_X:{
+      double v; gml_input_mouse(&v,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
+    case BID_DEVICE_MOUSE_Y:{
+      double v; gml_input_mouse(NULL,&v,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
+    case BID_DEVICE_MOUSE_X_TO_GUI:{
+      double v; gml_input_mouse(NULL,NULL,&v,NULL,NULL,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
+    case BID_DEVICE_MOUSE_Y_TO_GUI:{
+      double v; gml_input_mouse(NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
+    case BID_DEVICE_MOUSE_RAW_X:{
+      double v; gml_input_mouse(NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
+    case BID_DEVICE_MOUSE_RAW_Y:{
+      double v; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL); return vreal(v); }
+    case BID_WINDOW_MOUSE_SET:
+      return vreal(0);
+    case BID_SURFACE_CREATE:
+      return vreal(R?gml_surface_create(R,(int)N(a,n,0),(int)N(a,n,1)):-1);
+    case BID_SURFACE_FREE:
+      if(R) gml_surface_free(R,(int)N(a,n,0));
+      return vreal(0);
+    case BID_SURFACE_SET_TARGET:
+      if(getenv("GML_LOG_SURF")) fprintf(stderr,"[surf] set_target %d\n",(int)N(a,n,0));
+      return vreal(R?gml_surface_set_target(R,(int)N(a,n,0)):0);
+    case BID_SURFACE_RESET_TARGET:
+      if(getenv("GML_LOG_SURF")) fprintf(stderr,"[surf] reset_target\n");
+      if(R) gml_surface_reset_target(R);
+      return vreal(0);
+    case BID_STRING_WIDTH:
+      return vreal(R?gml_text_width(R,S(a,n,0)):(int)strlen(S(a,n,0))*8);
+    case BID_STRING_HEIGHT:
+      return vreal(R?gml_text_height(R,S(a,n,0)):8);
     default:
       return vreal(0);
   }

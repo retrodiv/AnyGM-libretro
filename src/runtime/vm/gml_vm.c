@@ -283,6 +283,26 @@ static const char *asstr_cmp(GmlVal v, char *buf, size_t n){
   snprintf(buf,n,"%g",v.t==V_REAL?v.d:0.0);
   return buf;
 }
+static void log_val_simple(GmlVal v){
+  if(v.t==V_STR){
+    const char *s=v.s?v.s:"";
+    fprintf(stderr,"\"");
+    for(int i=0;s[i] && i<96;i++) fputc((s[i]=='\n'||s[i]=='\r')?' ':s[i],stderr);
+    if(strlen(s)>96) fprintf(stderr,"...");
+    fprintf(stderr,"\"");
+  } else if(v.t==V_ARR){
+    GmlArr *A=(GmlArr*)v.arr;
+    fprintf(stderr,"<array len=%d",A?A->len:0);
+    if(A){
+      int n=A->len<5?A->len:5;
+      for(int i=0;i<n;i++){ fprintf(stderr," "); log_val_simple(A->data[i]); }
+      if(A->len>n) fprintf(stderr," ...");
+    }
+    fprintf(stderr,">");
+  }
+  else if(v.t==V_UNDEF) fprintf(stderr,"undefined");
+  else fprintf(stderr,"%g",v.t==V_REAL?v.d:0.0);
+}
 static void motion_from_components(GmlInstance *in){
   in->speed=hypot(in->hspeed,in->vspeed);
   in->direction=atan2(-in->vspeed,in->hspeed)*180.0/M_PI;
@@ -385,7 +405,7 @@ static int argument_index(const char *name){
 static int argument_get(GmlVM *vm, const char *name, GmlVal *out){
   if(!strcmp(name,"argument_count")){ *out=vreal(vm->script_argc); return 1; }
   int idx=argument_index(name);
-  if(idx>=0){ *out=(idx<vm->script_argc)? vm->script_args[idx] : vreal(0); return 1; }
+  if(idx>=0){ *out=(idx<vm->script_argc)? vm->script_args[idx] : vundef(); return 1; }
   return 0;
 }
 static int argument_set(GmlVM *vm, const char *name, GmlVal v){
@@ -518,11 +538,11 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
   if(idx>=0 && idx<A->cap) A->data[idx]=v;
 }
 static GmlVal array_get_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, uint32_t nh, int idx){
-  if(!strcmp(nm,"argument")) return (idx>=0 && idx<vm->script_argc && idx<16) ? vm->script_args[idx] : vreal(0);
+  if(!strcmp(nm,"argument")) return (idx>=0 && idx<vm->script_argc && idx<16) ? vm->script_args[idx] : vundef();
   { int aidx=argument_index(nm);   /* `argumentN[idx]`: index INTO an array-valued argument (distinct from
        `argument[idx]`, the Nth arg). Missing this, serialize's `with(actions[i])` over an array passed as
        argument0 read 0 for every element, so every input binding serialised to "" and lost its default key. */
-    if(aidx>=0){ GmlVal av=(aidx<vm->script_argc)? vm->script_args[aidx] : vreal(0);
+    if(aidx>=0){ GmlVal av=(aidx<vm->script_argc)? vm->script_args[aidx] : vundef();
       if(av.t==V_ARR && av.arr){ GmlArr *A=av.arr; if(idx>=0 && idx<A->len) return A->data[idx]; }
       return vreal(0); } }
   if(!strcmp(nm,"alarm")){ GmlInstance *s=resolve_inst(vm,inst_t);
@@ -921,7 +941,14 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   GmlVarMap locals={0};
   int argc=n_args<0?0:(n_args<16?n_args:16);
   vm->script_argc=argc;
-  for(int i=0;i<16;i++) vm->script_args[i]=(i<argc && args)? args[i] : vreal(0);
+  for(int i=0;i<16;i++) vm->script_args[i]=(i<argc && args)? args[i] : vundef();
+  const char *arglog=getenv("GML_LOG_CODE_ARGS");
+  if(arglog && *arglog && strstr(w->code[ci].name,arglog)){
+    extern long g_vm_frame;
+    fprintf(stderr,"[args] f%ld %s argc=%d self=%u obj=%d:",g_vm_frame,w->code[ci].name,argc,self?self->id:0,self?self->obj:-1);
+    for(int i=0;i<argc && i<16;i++){ fprintf(stderr," a%d=",i); log_val_simple(vm->script_args[i]); }
+    fprintf(stderr,"\n");
+  }
   /* Array arguments may alias storage in caller and callee scopes. Mark them escaped
    * so local cleanup leaves shared arrays for deduplicated full teardown. */
   for(int i=0;i<argc;i++) if(vm->script_args[i].t==V_ARR) gml_arr_mark_escaped(vm->script_args[i]);
@@ -983,6 +1010,24 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
     if(trace){
       const char *rn = (in.kind==OP_CALL || in.kind==OP_PUSH || in.kind==OP_POP) ? (in.refname?in.refname:gml_ref_name(w,in.refaddr)) : "";
       fprintf(stderr,"  %4u: %-7s t1=%x rt=%02x inst=%d  sp=%d %s\n",pc-start,gml_op_mnemonic(in.kind),in.type1,in.reftype,in.inst,sp,rn); }
+    { static int init=0; static char namebuf[128]; static long off=-1; static int maxlog=0, count=0;
+      if(!init){
+        const char *e=getenv("GML_LOG_PC"); init=1;
+        if(e && *e){
+          const char *colon=strrchr(e,':'); size_t n=colon?(size_t)(colon-e):strlen(e);
+          if(n>=sizeof namebuf) n=sizeof namebuf-1;
+          memcpy(namebuf,e,n); namebuf[n]=0; off=colon?strtol(colon+1,NULL,0):-1;
+          const char *m=getenv("GML_LOG_PC_MAX"); maxlog=m?atoi(m):200;
+          if(maxlog<=0) maxlog=200;
+        }
+      }
+      if(namebuf[0] && count<maxlog && strstr(w->code[ci].name,namebuf) && (off<0 || (long)(pc-start)==off)){
+        extern long g_vm_frame;
+        fprintf(stderr,"[pc] f%ld %s+%u sp=%d top=",g_vm_frame,w->code[ci].name,pc-start,sp);
+        if(sp>0) log_val_simple(stk[sp-1]); else fprintf(stderr,"<empty>");
+        fprintf(stderr,"\n");
+        count++;
+      } }
     switch(in.kind){
       case OP_PUSH:{
         GmlVal v;
@@ -1141,7 +1186,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         if(sp>=ncopy && sp+ncopy<=STK){ for(int k=0;k<ncopy;k++) stk[sp+k]=stk[sp-ncopy+k]; sp+=ncopy; }
         break; }
       case OP_CONV: /* values are dynamically typed; coerce lazily */ break;
-      case OP_NEG: if(sp>0) stk[sp-1]=vreal(-asnum(stk[sp-1])); break;
+      case OP_NEG: if(sp>0) stk[sp-1]=(stk[sp-1].t==V_UNDEF)?vundef():vreal(-asnum(stk[sp-1])); break;
       case OP_NOT: if(sp>0) stk[sp-1]=vreal(!astrue(stk[sp-1])); break;
       case OP_MUL: case OP_DIV: case OP_REM: case OP_MOD: case OP_ADD: case OP_SUB:
       case OP_AND: case OP_OR: case OP_XOR: case OP_SHL: case OP_SHR:{
@@ -1150,6 +1195,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           int la=strlen(l.s), lb=strlen(r.s); char *c=malloc(la+lb+1);
           memcpy(c,l.s,la); memcpy(c+la,r.s,lb+1); stk[sp++]=vstr_owned(c); GC_TRACK(c); break;
         }
+        if(l.t==V_UNDEF || r.t==V_UNDEF){ stk[sp++]=vundef(); break; }
         double a=asnum(l), b=asnum(r), o=0;
         switch(in.kind){
           case OP_MUL:o=a*b;break; case OP_DIV:o=b!=0?a/b:0;break;
@@ -1164,7 +1210,14 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
       }
       case OP_CMP:{
         if(sp<2) break; GmlVal r=stk[--sp], l=stk[--sp]; int res=0;
-        if(l.t==V_STR || r.t==V_STR){ char lb[64], rb[64];
+        if(l.t==V_UNDEF || r.t==V_UNDEF){
+          int both=(l.t==V_UNDEF && r.t==V_UNDEF);
+          switch(in.cmp){
+            case CMP_EQ: res=both; break;
+            case CMP_NEQ: res=!both; break;
+            default: res=0; break;
+          }
+        } else if(l.t==V_STR || r.t==V_STR){ char lb[64], rb[64];
           int c=strcmp(asstr_cmp(l,lb,sizeof lb),asstr_cmp(r,rb,sizeof rb));
           switch(in.cmp){case CMP_LT:res=c<0;break;case CMP_LTE:res=c<=0;break;case CMP_EQ:res=c==0;break;
             case CMP_NEQ:res=c!=0;break;case CMP_GTE:res=c>=0;break;case CMP_GT:res=c>0;break;} }
@@ -1830,6 +1883,7 @@ static void init_inst(GmlVM *vm, GmlInstance *in, double x, double y, int obj){
   in->image_xscale=in->image_yscale=1; in->image_alpha=1; in->image_speed=1;
   in->image_blend=16777215; in->visible=1; in->depth=0;
   in->gravity_direction=270;   /* GM default: gravity pulls straight down */
+  in->draw_layer_order=-1;
   in->path_index=-1; in->path_scale=1; in->path_speed=0; in->path_position=0;
   for(int a=0;a<GML_ALARMS;a++) in->alarm[a]=-1;   /* GM: inactive alarm = -1 */
   if(obj>=0 && obj<vm->n_objects){ GmlObject *o=&vm->objects[obj];
@@ -2110,12 +2164,45 @@ static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_r
     uint32_t np=u32(rd,lp+0); if(!np || np>=vm->win->size) continue;
     GmlRtLayer *l=gml_rt_layer_new(vm); if(!l) break;
     snprintf(l->name,sizeof l->name,"%s",(const char*)(rd+np));
+    l->order=(int)i;
     l->depth=(double)(int32_t)u32(rd,lp+12);
     l->x=f32(rd,lp+16); l->y=f32(rd,lp+20); l->hs=f32(rd,lp+24); l->vs=f32(rd,lp+28);
     l->visible=u32(rd,lp+32)?1:0; l->touched=0;
   }
+  if(lcnt<512){
+    for(int ii=0; ii<vm->inst_count; ii++) vm->inst[ii].draw_layer_order=-1;
+    for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(rd,lay+4+i*4);
+      if(!lp || lp+40>vm->win->size) continue;
+      uint32_t np=u32(rd,lp+0);
+      if(np && np<vm->win->size){
+        GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,(const char*)(rd+np));
+        if(rl) rl->order=(int)i;
+      }
+    }
+  }
   gml_tilemaps_clear(vm);
   int doff = gml_room_layer_data_off(vm);
+  if(lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(rd,lay+4+i*4);
+    if(!lp || lp+(uint32_t)doff+4>vm->win->size || u32(rd,lp+8)!=2) continue;
+    uint32_t ic=u32(rd,lp+(uint32_t)doff);
+    if(ic>100000) continue;
+    int ord=(int)i;
+    uint32_t np=u32(rd,lp+0);
+    if(np && np<vm->win->size){
+      GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,(const char*)(rd+np));
+      if(rl) ord=rl->order;
+    }
+    for(uint32_t k=0;k<ic;k++){
+      uint32_t ip2=lp+(uint32_t)doff+4+k*4;
+      if(ip2+4>vm->win->size) break;
+      uint32_t iid=u32(rd,ip2);
+      for(int ii=0; ii<vm->inst_count; ii++)
+        if((vm->inst[ii].active || vm->inst[ii].deactivated) && vm->inst[ii].id==iid){
+          vm->inst[ii].draw_layer_order=ord;
+          break;
+        }
+    }
+  }
   const GmlChunk *bc = gml_chunk(vm->win,"BGND");
   uint32_t bcnt = bc ? u32(rd,bc->off) : 0;
   if(lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(rd,lay+4+i*4);
@@ -2135,12 +2222,14 @@ static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_r
 	    snprintf(tm->name,sizeof tm->name,"%s",(np2&&np2<vm->win->size)?(const char*)(rd+np2):"");
 	    tm->tileset=tileset;
 	    tm->depth=(double)(int32_t)u32(rd,lp+12);
+	    tm->order=(int)i;
 	    tm->tw=tw; tm->th=th; tm->cols=cols; tm->rows=rows; tm->tiles=rd+tdata; tm->base_tiles=rd+tdata;
 	    tm->x=f32(rd,lp+16); tm->y=f32(rd,lp+20); tm->visible=u32(rd,lp+32)?1:0;
       GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,tm->name);
       if(rl){
         tm->visible=rl->visible;
         tm->depth=rl->depth;
+        tm->order=rl->order;
         if(rl->touched){ tm->x=rl->x; tm->y=rl->y; }
       }
 	  }
@@ -2283,6 +2372,12 @@ void gml_room_enter(GmlVM *vm, int room_index){
       for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(d,lay+4+i*4);
         if(!lp || lp+(uint32_t)doff+4>vm->win->size || u32(d,lp+8)!=2) continue;
         double ldep=(double)(int32_t)u32(d,lp+12);
+        int lorder=(int)i;
+        uint32_t lnp=u32(d,lp+0);
+        if(lnp && lnp<vm->win->size){
+          GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,(const char*)(d+lnp));
+          if(rl) lorder=rl->order;
+        }
         uint32_t ic=u32(d,lp+(uint32_t)doff);
         if(ic>100000) continue;
         for(uint32_t k=0;k<ic;k++){
@@ -2290,7 +2385,11 @@ void gml_room_enter(GmlVM *vm, int room_index){
           if(ip2+4>vm->win->size) break;
           uint32_t iid=u32(d,ip2);
           for(uint32_t j=0;j<cnt;j++){ int idx=room_inst_idx[j];
-            if(idx>=0 && idx<vm->inst_count && vm->inst[idx].id==iid){ vm->inst[idx].depth=ldep; break; } }
+            if(idx>=0 && idx<vm->inst_count && vm->inst[idx].id==iid){
+              vm->inst[idx].depth=ldep;
+              vm->inst[idx].draw_layer_order=lorder;
+              break;
+            } }
         }
       }
     }
@@ -2651,8 +2750,8 @@ static int tile_apply_mut(GmlVM *vm, int depth, int *eff_depth, double *ox, doub
 /* Draw phase: GM draws instances and room tiles interleaved by depth (high
  * depth = behind). Merging them preserves layer ordering between tile layers,
  * scripted background instances, and gameplay instances. */
-typedef struct { double x,y,xs,ys; int def,sx,sy,w,h; } GmlDrawTile;
-static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap, GmlDrawTile t, double dep){
+typedef struct { double x,y,xs,ys; int def,sx,sy,w,h,order; } GmlDrawTile;
+static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap, GmlDrawTile t, double dep, int order){
   if(*nt>=*cap){
     int nc=*cap?*cap*2:256;
     GmlDrawTile *n_tiles=malloc((size_t)nc*sizeof(**tiles));
@@ -2662,12 +2761,15 @@ static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap
     free(*tiles); free(*depth);
     *tiles=n_tiles; *depth=n_depth; *cap=nc;
   }
+  t.order=order;
   (*tiles)[*nt]=t; (*depth)[*nt]=dep; (*nt)++;
 }
-typedef struct { double depth; int seq, type, idx; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite */
+typedef struct { double depth; int seq, type, idx, order; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite */
 static int cmp_draw_item(const void *pa, const void *pb){
   const GmlDrawItem *a=pa,*b=pb;
   if(a->depth!=b->depth) return a->depth>b->depth? -1:1;     /* higher depth first (behind) */
+  if(a->order>=0 && b->order>=0 && a->order!=b->order)
+    return a->order>b->order? -1:1;                           /* GMS2 layer list: later/back layers first */
   /* At equal depth, order room tiles above instances and later room tiles above
    * earlier tiles. Draw newer instances before older ones. Runtime layer items
    * retain their sequence ordering. */
@@ -2717,13 +2819,13 @@ void gml_vm_draw(GmlVM *vm){
 	dt.x=tx; dt.y=ty; dt.xs=1; dt.ys=1; dt.def=(int)u32(d,p+8);
 	dt.sx=(int)u32(d,p+12); dt.sy=(int)u32(d,p+16);
 	dt.w=(int)u32(d,p+20); dt.h=(int)u32(d,p+24);
-	draw_tile_add(&tiles,&tdepth,&nt,&tcap,dt,tdep); } }
+	draw_tile_add(&tiles,&tdepth,&nt,&tcap,dt,tdep,-1); } }
   }
   /* ROOM layer records carry background, instance and asset-tile layers.
    * Use the detected type-data offset, including optional effect fields. */
-  struct LayBg { int sprite; int th,tv,stretch; double x,y; uint32_t blend; double alpha; double depth; };
-  struct LayTile { int sprite; int sx,sy,w,h; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
-  struct LaySprite { int sprite, subimg; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
+  struct LayBg { int sprite; int th,tv,stretch,order; double x,y; uint32_t blend; double alpha; double depth; };
+  struct LayTile { int sprite; int sx,sy,w,h,order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
+  struct LaySprite { int sprite, subimg,order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
   struct LayBg *lbg=NULL; int nlb=0;
   struct LayTile *ltl=NULL; int nlt=0;
   struct LaySprite *lsp=NULL; int nls=0;
@@ -2746,6 +2848,7 @@ void gml_vm_draw(GmlVM *vm){
         uint32_t lnp=u32(d,lp+0);
         GmlRtLayer *rl=(lnp && lnp<vm->win->size)? gml_rt_layer_find_by_name(vm,(const char*)(d+lnp)):NULL;
         if(rl) ldep=rl->depth;
+        int lorder = rl ? rl->order : (int)i;
         int ltouch = rl && rl->touched;
         double lox = ltouch ? rl->x : lx+lhs*fin;   /* background layer origin (scrolls) */
         double loy = ltouch ? rl->y : ly+lvs*fin;
@@ -2763,7 +2866,7 @@ void gml_vm_draw(GmlVM *vm){
           lbg[nlb].stretch=(int)u32(d,b+20);
           uint32_t col=u32(d,b+24);
           lbg[nlb].blend=col&0xFFFFFF; lbg[nlb].alpha=((col>>24)&0xFF)/255.0;
-          lbg[nlb].x=lox; lbg[nlb].y=loy; lbg[nlb].depth=ldep;
+          lbg[nlb].x=lox; lbg[nlb].y=loy; lbg[nlb].depth=ldep; lbg[nlb].order=lorder;
           nlb++;
         } else if(ltype==3){
           uint32_t tl=u32(d,lp+doff);
@@ -2777,6 +2880,7 @@ void gml_vm_draw(GmlVM *vm){
             ltl[nlt].sx=(int32_t)u32(d,tp+12); ltl[nlt].sy=(int32_t)u32(d,tp+16);
             ltl[nlt].w=(int32_t)u32(d,tp+20); ltl[nlt].h=(int32_t)u32(d,tp+24);
             ltl[nlt].depth=ldep;
+            ltl[nlt].order=lorder;
             ltl[nlt].xs=f32(d,tp+36); ltl[nlt].ys=f32(d,tp+40);
             uint32_t col=u32(d,tp+44);
             ltl[nlt].blend=col&0xFFFFFF; ltl[nlt].alpha=((col>>24)&0xFF)/255.0;
@@ -2831,7 +2935,7 @@ void gml_vm_draw(GmlVM *vm){
       if((datum>>28)&1){ dt.x += tm->tw; dt.xs=-1; }
       if((datum>>29)&1){ dt.y += tm->th; dt.ys=-1; }
       dt.def=tm->tileset; dt.sx=sx; dt.sy=sy; dt.w=w; dt.h=h;
-      draw_tile_add(&tiles,&tdepth,&nt,&tcap,dt,tmdepth);
+      draw_tile_add(&tiles,&tdepth,&nt,&tcap,dt,tmdepth,tm->order);
     }
   }
   /* runtime layer elements (layer_tile_create / layer_background_create): converted GM8 games
@@ -2849,18 +2953,18 @@ void gml_vm_draw(GmlVM *vm){
       ltl=realloc(ltl,(nlt+1)*sizeof(*ltl));
       ltl[nlt].sprite=e->sprite; ltl[nlt].sx=e->sx; ltl[nlt].sy=e->sy; ltl[nlt].w=e->w; ltl[nlt].h=e->h;
       ltl[nlt].x=lx+e->x; ltl[nlt].y=ly+e->y; ltl[nlt].xs=e->xs; ltl[nlt].ys=e->ys;
-      ltl[nlt].blend=e->blend; ltl[nlt].alpha=e->alpha; ltl[nlt].depth=l->depth;
+      ltl[nlt].blend=e->blend; ltl[nlt].alpha=e->alpha; ltl[nlt].depth=l->depth; ltl[nlt].order=l->order;
       nlt++;
     } else if(e->type==1){
       lbg=realloc(lbg,(nlb+1)*sizeof(*lbg));
       lbg[nlb].sprite=e->sprite; lbg[nlb].th=e->htiled; lbg[nlb].tv=e->vtiled; lbg[nlb].stretch=e->stretch;
-      lbg[nlb].x=lx; lbg[nlb].y=ly; lbg[nlb].blend=e->blend; lbg[nlb].alpha=e->alpha; lbg[nlb].depth=l->depth;
+      lbg[nlb].x=lx; lbg[nlb].y=ly; lbg[nlb].blend=e->blend; lbg[nlb].alpha=e->alpha; lbg[nlb].depth=l->depth; lbg[nlb].order=l->order;
       nlb++;
     } else if(e->type==3){
       lsp=realloc(lsp,(nls+1)*sizeof(*lsp));
       lsp[nls].sprite=e->sprite; lsp[nls].subimg=(int)e->image_index;
       lsp[nls].x=lx+e->x; lsp[nls].y=ly+e->y; lsp[nls].xs=e->xs; lsp[nls].ys=e->ys;
-      lsp[nls].angle=e->image_angle; lsp[nls].blend=e->blend; lsp[nls].alpha=e->alpha; lsp[nls].depth=l->depth;
+      lsp[nls].angle=e->image_angle; lsp[nls].blend=e->blend; lsp[nls].alpha=e->alpha; lsp[nls].depth=l->depth; lsp[nls].order=l->order;
       nls++;
     }
   }
@@ -2868,13 +2972,13 @@ void gml_vm_draw(GmlVM *vm){
   int npart=0; while(gml_part_system_auto_draw_nth(npart,NULL,NULL)) npart++;
   int cap=n+nt+nlb+nlt+nls+npart; GmlDrawItem *it=malloc((cap>0?cap:1)*sizeof(GmlDrawItem)); int m=0;
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked){
-    it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; m++; }
-  for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; m++; }
-  for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; m++; }
-  for(int i=0;i<nlb;i++){ it[m].depth=lbg[i].depth; it[m].type=3; it[m].idx=i; it[m].seq=m; m++; }
-  for(int i=0;i<nls;i++){ it[m].depth=lsp[i].depth; it[m].type=5; it[m].idx=i; it[m].seq=m; m++; }
+    it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; it[m].order=vm->inst[i].draw_layer_order; m++; }
+  for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; it[m].order=tiles[i].order; m++; }
+  for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; it[m].order=ltl[i].order; m++; }
+  for(int i=0;i<nlb;i++){ it[m].depth=lbg[i].depth; it[m].type=3; it[m].idx=i; it[m].seq=m; it[m].order=lbg[i].order; m++; }
+  for(int i=0;i<nls;i++){ it[m].depth=lsp[i].depth; it[m].type=5; it[m].idx=i; it[m].seq=m; it[m].order=lsp[i].order; m++; }
   for(int i=0;i<npart;i++){ int pid=0; double dep=0;
-    if(gml_part_system_auto_draw_nth(i,&pid,&dep)){ it[m].depth=dep; it[m].type=4; it[m].idx=pid; it[m].seq=m; m++; } }
+    if(gml_part_system_auto_draw_nth(i,&pid,&dep)){ it[m].depth=dep; it[m].type=4; it[m].idx=pid; it[m].seq=m; it[m].order=-1; m++; } }
   qsort(it,m,sizeof(GmlDrawItem),cmp_draw_item);
   static int dumped=0;
   { const char *li=getenv("GML_LOG_INST");

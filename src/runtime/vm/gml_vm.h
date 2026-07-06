@@ -47,6 +47,7 @@ typedef struct {
   double  path_origin_x, path_origin_y;           /* local pivot: first point for relative paths */
   unsigned char mouse_over;  /* transient hover flag for Mouse enter/leave (not serialized) */
   int cg_touch, cg_visit;    /* collision-grid stamps: touched-since-build / visited-this-query (not serialized) */
+  int draw_layer_order;      /* transient GMS2 room layer order for equal-depth draw ties */
   GmlVarMap vars;      /* custom instance variables */
 } GmlInstance;
 
@@ -83,10 +84,10 @@ typedef struct { int live; uint32_t id; GmlVal *cell; int w, h; } GmlDSGrid;   /
 /* runtime layers (GMS2 layer_create / layer_tile_create — the compat scripts GMS emits for
  * upgraded GM8 projects route tile_add/tile_delete through these, so terrain painted at
  * runtime lives here, not in the ROOM chunk). Cleared on room enter like GM tiles. */
-typedef struct { int id, used, visible, touched; double depth, x, y, hs, vs; char name[32]; } GmlRtLayer;
+typedef struct { int id, used, visible, touched, order; double depth, x, y, hs, vs; char name[32]; } GmlRtLayer;
 /* GMS2 tile layer (room layer type 4): a grid of tileset cells. Games read it for tile-based collision
  * (tilemap_get + tilemap_get_cell_*_at_pixel). tiles points INTO the immutable room data (no copy). */
-typedef struct { int id, used, visible; double x, y, depth; int tileset, tw, th, cols, rows; const unsigned char *tiles, *base_tiles; unsigned char *owned_tiles; char name[32]; } GmlTileMap;
+typedef struct { int id, used, visible, order; double x, y, depth; int tileset, tw, th, cols, rows; const unsigned char *tiles, *base_tiles; unsigned char *owned_tiles; char name[32]; } GmlTileMap;
 typedef struct { int id, used, layer, type;         /* type: 7=tile, 3=sprite, 1=background (layerelementtype_*) */
   int sprite; double x, y; int sx, sy, w, h;        /* sx/sy/w/h = source region (tiles) */
   double xs, ys, alpha; int visible; uint32_t blend;
