@@ -4058,9 +4058,11 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
       else fprintf(stderr,"[tilecol] layer_tilemap_get_id(%g) -> %d (%s)\n",N(a,n,0),tm?tm->id:-1,tm?tm->name:"none"); }
     return vreal(tm?tm->id:-1); }
   if(!strcmp(nm,"tilemap_get_cell_x_at_pixel")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
-    return vreal(tm&&tm->tw?floor((N(a,n,1)-tm->x)/tm->tw):0); }
+    double tx=0.0; gml_tilemap_effective(vm,tm,&tx,NULL,NULL,NULL);
+    return vreal(tm&&tm->tw?floor((N(a,n,1)-tx)/tm->tw):0); }
   if(!strcmp(nm,"tilemap_get_cell_y_at_pixel")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
-    return vreal(tm&&tm->th?floor((N(a,n,2)-tm->y)/tm->th):0); }
+    double ty=0.0; gml_tilemap_effective(vm,tm,NULL,&ty,NULL,NULL);
+    return vreal(tm&&tm->th?floor((N(a,n,2)-ty)/tm->th):0); }
   if(!strcmp(nm,"tilemap_get")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
     int cx=(int)N(a,n,1),cy=(int)N(a,n,2);
     if(!tm||cx<0||cy<0||cx>=tm->cols||cy>=tm->rows){ if(getenv("GML_LOG_TILECOL")) fprintf(stderr,"[tilecol] tilemap_get(id=%g,%d,%d) -> 0 (tm=%s oob)\n",N(a,n,0),cx,cy,tm?tm->name:"NULL"); return vreal(0); }
@@ -4070,7 +4072,8 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal((double)datum); }
   if(!strcmp(nm,"tilemap_get_at_pixel")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
     if(!tm||!tm->tw||!tm->th) return vreal(0);
-    int cx=(int)floor((N(a,n,1)-tm->x)/tm->tw), cy=(int)floor((N(a,n,2)-tm->y)/tm->th);
+    double tx,ty; gml_tilemap_effective(vm,tm,&tx,&ty,NULL,NULL);
+    int cx=(int)floor((N(a,n,1)-tx)/tm->tw), cy=(int)floor((N(a,n,2)-ty)/tm->th);
     if(cx<0||cy<0||cx>=tm->cols||cy>=tm->rows) return vreal(0);
     const unsigned char *p=tm->tiles+((size_t)cy*tm->cols+cx)*4;
     return vreal((double)((uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24))); }
@@ -4078,7 +4081,8 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
     gml_tilemap_set_cell(tm,(int)N(a,n,2),(int)N(a,n,3),(uint32_t)N(a,n,1)); return vreal(0); }
   if(!strcmp(nm,"tilemap_set_at_pixel")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
     if(tm&&tm->tw&&tm->th){
-      int cx=(int)floor((N(a,n,2)-tm->x)/tm->tw), cy=(int)floor((N(a,n,3)-tm->y)/tm->th);
+      double tx,ty; gml_tilemap_effective(vm,tm,&tx,&ty,NULL,NULL);
+      int cx=(int)floor((N(a,n,2)-tx)/tm->tw), cy=(int)floor((N(a,n,3)-ty)/tm->th);
       gml_tilemap_set_cell(tm,cx,cy,(uint32_t)N(a,n,1));
     }
     return vreal(0); }
@@ -4087,8 +4091,8 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"tilemap_get_tileset")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->tileset:-1); }
   if(!strcmp(nm,"tilemap_get_tile_width")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->tw:0); }
   if(!strcmp(nm,"tilemap_get_tile_height")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->th:0); }
-  if(!strcmp(nm,"tilemap_get_x")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->x:0); }
-  if(!strcmp(nm,"tilemap_get_y")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->y:0); }
+  if(!strcmp(nm,"tilemap_get_x")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); double tx=0.0; gml_tilemap_effective(vm,tm,&tx,NULL,NULL,NULL); return vreal(tm?tx:0); }
+  if(!strcmp(nm,"tilemap_get_y")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); double ty=0.0; gml_tilemap_effective(vm,tm,NULL,&ty,NULL,NULL); return vreal(tm?ty:0); }
   if(!strcmp(nm,"tilemap_get_frame")) return vreal(0);
   /* tile datum decode (GMS2 bit layout: index low 19 bits, then mirror/flip/rotate) */
   if(!strcmp(nm,"tile_get_index")){ uint32_t t=(uint32_t)N(a,n,0); return vreal(t & 0x7FFFF); }
@@ -4147,7 +4151,19 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(e?e->id:-1);
     }
     if(!strcmp(sub,"get_depth")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); return vreal(l?l->depth:0); }
-    if(!strcmp(sub,"depth")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); if(l) l->depth=N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"depth")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n);
+      if(l){
+        double old=l->depth;
+        l->depth=N(a,n,1);
+        if(getenv("GML_LOG_RTL")){ extern long g_vm_frame;
+          fprintf(stderr,"[rtl] f%ld layer_depth %s id=%d %.0f -> %.0f\n",
+                  g_vm_frame,l->name,l->id,old,l->depth); }
+      }else if(getenv("GML_LOG_RTL")){
+        extern long g_vm_frame;
+        fprintf(stderr,"[rtl] f%ld layer_depth unresolved arg0=%s value=%.0f\n",
+                g_vm_frame,S(a,n,0),N(a,n,1));
+      }
+      return vreal(0); }
     if(!strcmp(sub,"get_name")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n);
       return l?vstr_owned(strdup(l->name)):vstr(""); }
     if(!strcmp(sub,"get_id")){ for(int i=0;i<vm->n_rtl;i++)   /* by name */

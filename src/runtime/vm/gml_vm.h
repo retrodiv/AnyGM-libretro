@@ -200,6 +200,8 @@ typedef struct GmlVM {
 } GmlVM;
 GmlTileMap *gml_tilemap_find(GmlVM *vm, int id);
 int gml_tilemap_set_cell(GmlTileMap *tm, int cx, int cy, uint32_t datum);
+void gml_tilemap_effective(GmlVM *vm, const GmlTileMap *tm,
+                           double *x, double *y, double *depth, int *visible);
 int gml_room_layer_data_off(GmlVM *vm);
 void gml_struct_gc(GmlVM *vm);
 

@@ -9,6 +9,7 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+#include <limits.h>
 
 static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o]|(uint32_t)d[o+1]<<8|(uint32_t)d[o+2]<<16|(uint32_t)d[o+3]<<24;
@@ -1798,17 +1799,42 @@ GmlTileMap *gml_tilemap_by_layer(GmlVM *vm, GmlVal v){
   if(rl){ for(int i=0;i<vm->n_tilemaps;i++) if(vm->tilemaps[i].used && !strcmp(vm->tilemaps[i].name,rl->name)) return &vm->tilemaps[i]; }
   return gml_tilemap_find(vm,lid);            /* or it's already a tilemap id */
 }
+void gml_tilemap_effective(GmlVM *vm, const GmlTileMap *tm,
+                           double *x, double *y, double *depth, int *visible){
+  double ex=tm?tm->x:0.0, ey=tm?tm->y:0.0, ed=tm?tm->depth:0.0;
+  int ev=tm?tm->visible:0;
+  if(vm && tm && tm->name[0]){
+    GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,tm->name);
+    if(rl){
+      ev=rl->visible;
+      ed=rl->depth;
+      if(rl->touched){
+        ex=rl->x; ey=rl->y;
+      }else{
+        extern long g_vm_frame;
+        long fin=g_vm_frame - vm->room_enter_frame; if(fin<0) fin=0;
+        ex=rl->x + rl->hs*fin;
+        ey=rl->y + rl->vs*fin;
+      }
+    }
+  }
+  if(x) *x=ex;
+  if(y) *y=ey;
+  if(depth) *depth=ed;
+  if(visible) *visible=ev;
+}
 
-/* Rebuild runtime layers and tile-collision maps from immutable room data
- * on room entry and state load. Tile maps reference the loaded container. */
-static void gml_room_reload_layers(GmlVM *vm, int room_index){
-  vm->n_rtl=0; vm->n_rte=0;
+/* Rebuild a room's derived GMS2 layer data from immutable ROOM records. Runtime layers/elements are
+ * rebuilt on room enter; after modern savestate loads they are preserved and only type-4 tilemap
+ * views are rebound to win data, since those grids are not serialized by pointer. */
+static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runtime_layers){
+  if(rebuild_runtime_layers){ vm->n_rtl=0; vm->n_rte=0; }
   if(vm->win->bytecode<17) return;
   const GmlChunk *rlc=gml_chunk(vm->win,"ROOM"); const uint8_t *rd=vm->win->data;
   uint32_t rp = rlc ? u32(rd,rlc->off+4+room_index*4) : 0;
   uint32_t lay = (rp && rp+92<vm->win->size) ? u32(rd,rp+88) : 0;
   uint32_t lcnt = (lay && lay+4<vm->win->size) ? u32(rd,lay) : 0;
-  if(lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(rd,lay+4+i*4);
+  if(rebuild_runtime_layers && lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(rd,lay+4+i*4);
     if(!lp || lp+40>vm->win->size) continue;
     uint32_t np=u32(rd,lp+0); if(!np || np>=vm->win->size) continue;
     GmlRtLayer *l=gml_rt_layer_new(vm); if(!l) break;
@@ -1840,6 +1866,12 @@ static void gml_room_reload_layers(GmlVM *vm, int room_index){
 	    tm->depth=(double)(int32_t)u32(rd,lp+12);
 	    tm->tw=tw; tm->th=th; tm->cols=cols; tm->rows=rows; tm->tiles=rd+tdata; tm->base_tiles=rd+tdata;
 	    tm->x=f32(rd,lp+16); tm->y=f32(rd,lp+20); tm->visible=u32(rd,lp+32)?1:0;
+      GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,tm->name);
+      if(rl){
+        tm->visible=rl->visible;
+        tm->depth=rl->depth;
+        if(rl->touched){ tm->x=rl->x; tm->y=rl->y; }
+      }
 	  }
   if(getenv("GML_LOG_ROOM")){ fprintf(stderr,"[room] reload_layers room=%d: %d layers, %d tilemaps\n",room_index,vm->n_rtl,vm->n_tilemaps);
     for(int t=0;t<vm->n_tilemaps;t++){ GmlTileMap *tm=&vm->tilemaps[t];
@@ -1849,6 +1881,9 @@ static void gml_room_reload_layers(GmlVM *vm, int room_index){
         for(int rx=0;rx<tm->cols && rx<128;rx++){ uint32_t d=u32(tm->tiles,(uint32_t)(ry*tm->cols+rx)*4); line[lp++]=((d&0x7FFFF)!=0)?'#':'.'; }
         line[lp]=0; fprintf(stderr,"[grid t%d r%02d] %s\n",t,ry,line); } } }
   }
+}
+static void gml_room_reload_layers(GmlVM *vm, int room_index){
+  gml_room_reload_layers_mode(vm,room_index,1);
 }
 
 void gml_room_enter(GmlVM *vm, int room_index){
@@ -2412,13 +2447,13 @@ void gml_vm_draw(GmlVM *vm){
          * games that never script their layers). */
         uint32_t lnp=u32(d,lp+0);
         GmlRtLayer *rl=(lnp && lnp<vm->win->size)? gml_rt_layer_find_by_name(vm,(const char*)(d+lnp)):NULL;
+        if(rl) ldep=rl->depth;
         int ltouch = rl && rl->touched;
         double lox = ltouch ? rl->x : lx+lhs*fin;   /* background layer origin (scrolls) */
         double loy = ltouch ? rl->y : ly+lvs*fin;
         double ltx = ltouch ? rl->x : lx;           /* tile layer origin (room-def raw, unchanged) */
         double lty = ltouch ? rl->y : ly;
-        if(rl && !rl->visible) continue;             /* runtime layer_set_visible(false) */
-        if(!u32(d,lp+32)) continue;   /* layer hidden */
+        if(rl ? !rl->visible : !u32(d,lp+32)) continue;
         if(ltype==1){
           if(rl && rt_layer_has_background(vm,rl->id)) continue;
           uint32_t b=lp+doff;
@@ -2443,7 +2478,7 @@ void gml_vm_draw(GmlVM *vm){
             ltl[nlt].sprite=(int32_t)u32(d,tp+8);
             ltl[nlt].sx=(int32_t)u32(d,tp+12); ltl[nlt].sy=(int32_t)u32(d,tp+16);
             ltl[nlt].w=(int32_t)u32(d,tp+20); ltl[nlt].h=(int32_t)u32(d,tp+24);
-            ltl[nlt].depth=(double)(int32_t)u32(d,tp+28);
+            ltl[nlt].depth=ldep;
             ltl[nlt].xs=f32(d,tp+36); ltl[nlt].ys=f32(d,tp+40);
             uint32_t col=u32(d,tp+44);
             ltl[nlt].blend=col&0xFFFFFF; ltl[nlt].alpha=((col>>24)&0xFF)/255.0;
@@ -2457,7 +2492,9 @@ void gml_vm_draw(GmlVM *vm){
    * invisible. Expand only the camera-visible cells into the existing background-tile draw path. */
   for(int mi=0; mi<vm->n_tilemaps; mi++){
     GmlTileMap *tm=&vm->tilemaps[mi];
-    if(!tm->used || !tm->visible || !tm->tiles || tm->tileset<0 || tm->tw<=0 || tm->th<=0) continue;
+    double tmx,tmy,tmdepth; int tmvis;
+    gml_tilemap_effective(vm,tm,&tmx,&tmy,&tmdepth,&tmvis);
+    if(!tm->used || !tmvis || !tm->tiles || tm->tileset<0 || tm->tw<=0 || tm->th<=0) continue;
     if(tm->tileset>=R->n_bg) continue;
     int bti=R->bg[tm->tileset].tpag;
     if(bti<0 || bti>=R->n_tpag) continue;
@@ -2469,10 +2506,10 @@ void gml_vm_draw(GmlVM *vm){
     int srcw=bt->bw?bt->bw:bt->sw, srch=bt->bh?bt->bh:bt->sh;
     int per_row=gb->tile_columns>0?gb->tile_columns:(pitch_x>0?srcw/pitch_x:0);
     if(srcw<=0 || srch<=0 || tw<=0 || th<=0 || pitch_x<=0 || pitch_y<=0 || per_row<=0) continue;
-    int cx0=(int)floor((R->cam_x - tm->x) / tm->tw) - 1;
-    int cy0=(int)floor((R->cam_y - tm->y) / tm->th) - 1;
-    int cx1=(int)ceil((R->cam_x + R->fbw - tm->x) / tm->tw) + 1;
-    int cy1=(int)ceil((R->cam_y + R->fbh - tm->y) / tm->th) + 1;
+    int cx0=(int)floor((R->cam_x - tmx) / tm->tw) - 1;
+    int cy0=(int)floor((R->cam_y - tmy) / tm->th) - 1;
+    int cx1=(int)ceil((R->cam_x + R->fbw - tmx) / tm->tw) + 1;
+    int cy1=(int)ceil((R->cam_y + R->fbh - tmy) / tm->th) + 1;
     if(cx0<0) cx0=0; if(cy0<0) cy0=0;
     if(cx1>tm->cols) cx1=tm->cols; if(cy1>tm->rows) cy1=tm->rows;
     for(int cy=cy0; cy<cy1; cy++) for(int cx=cx0; cx<cx1; cx++){
@@ -2492,11 +2529,11 @@ void gml_vm_draw(GmlVM *vm){
       if(sy+h>srch) h=srch-sy;
       if(w<=0 || h<=0) continue;
       GmlDrawTile dt;
-      dt.x=tm->x + cx*tm->tw; dt.y=tm->y + cy*tm->th; dt.xs=1; dt.ys=1;
+      dt.x=tmx + cx*tm->tw; dt.y=tmy + cy*tm->th; dt.xs=1; dt.ys=1;
       if((datum>>28)&1){ dt.x += tm->tw; dt.xs=-1; }
       if((datum>>29)&1){ dt.y += tm->th; dt.ys=-1; }
       dt.def=tm->tileset; dt.sx=sx; dt.sy=sy; dt.w=w; dt.h=h;
-      draw_tile_add(&tiles,&tdepth,&nt,&tcap,dt,tm->depth);
+      draw_tile_add(&tiles,&tdepth,&nt,&tcap,dt,tmdepth);
     }
   }
   /* runtime layer elements (layer_tile_create / layer_background_create): converted GM8 games
@@ -3053,7 +3090,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -3074,9 +3111,11 @@ static void sr_raw(StateR *s, void *p, size_t n){
 }
 static void sw_u32(StateW *s, uint32_t v){ sw_raw(s,&v,sizeof(v)); }
 static void sw_i32(StateW *s, int v){ int32_t x=(int32_t)v; sw_raw(s,&x,sizeof(x)); }
+static void sw_i64(StateW *s, int64_t v){ sw_raw(s,&v,sizeof(v)); }
 static void sw_d(StateW *s, double v){ sw_raw(s,&v,sizeof(v)); }
 static uint32_t sr_u32(StateR *s){ uint32_t v=0; sr_raw(s,&v,sizeof(v)); return v; }
 static int sr_i32(StateR *s){ int32_t v=0; sr_raw(s,&v,sizeof(v)); return (int)v; }
+static int64_t sr_i64(StateR *s){ int64_t v=0; sr_raw(s,&v,sizeof(v)); return v; }
 static double sr_d(StateR *s){ double v=0; sr_raw(s,&v,sizeof(v)); return v; }
 static void sw_particle_state(StateW *s){
   size_t pn=gml_part_state_size();
@@ -3502,10 +3541,15 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x3C564D47u); /* GMV12: GMV11 mutable tilemap state, stored as sparse cell diffs */
+  sw_u32(s,0x3D564D47u); /* GMV13: GMV12 plus room layer scroll age for rewind/load */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
+  { extern long g_vm_frame;
+    long age=g_vm_frame - vm->room_enter_frame;
+    if(age<0) age=0;
+    sw_i64(s,(int64_t)age);
+  }
   sw_i32(s,vm->action_relative);
   sw_i32(s,vm->script_argc); for(int i=0;i<16;i++) sw_val(s,vm->script_args[i],0);
   for(int i=0;i<16;i++) sw_u32(s,vm->rng_well[i]);
@@ -3618,7 +3662,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   uint32_t magic=sr_u32(&s);
   if((magic!=0x31564D47u && magic!=0x32564D47u && magic!=0x33564D47u && magic!=0x34564D47u
       && magic!=0x35564D47u && magic!=0x36564D47u && magic!=0x37564D47u && magic!=0x38564D47u
-      && magic!=0x39564D47u && magic!=0x3A564D47u && magic!=0x3B564D47u && magic!=0x3C564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x39564D47u && magic!=0x3A564D47u && magic!=0x3B564D47u && magic!=0x3C564D47u
+      && magic!=0x3D564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -3628,6 +3673,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v10 = magic>=0x3A564D47u;
   s.v11 = magic>=0x3B564D47u;
   s.v12 = magic>=0x3C564D47u;
+  s.v13 = magic>=0x3D564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -3636,6 +3682,15 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   vm->next_id=sr_u32(&s); vm->room_index=sr_i32(&s); vm->pending_room=sr_i32(&s);
   vm->game_end=sr_i32(&s); vm->started=sr_i32(&s);
   vm->last_key=sr_d(&s); vm->window_fullscreen=sr_d(&s);
+  int64_t room_age=0;
+  if(s.v13){
+    room_age=sr_i64(&s);
+    if(room_age<0) room_age=0;
+    if(room_age>(int64_t)LONG_MAX) room_age=(int64_t)LONG_MAX;
+  }
+  { extern long g_vm_frame;
+    vm->room_enter_frame = g_vm_frame - (long)room_age;
+  }
   vm->action_relative=sr_i32(&s);
   vm->script_argc=sr_i32(&s); for(int i=0;i<16;i++){ vm->script_args[i]=sr_val(vm,&s,0); gml_arr_mark_escaped(vm->script_args[i]); }
   for(int i=0;i<16;i++) vm->rng_well[i]=sr_u32(&s);
@@ -3822,6 +3877,10 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       sr_raw(&s,l->name,sizeof(l->name)); l->name[sizeof(l->name)-1]=0;
       l->touched=sr_i32(&s);
       l->id=id;
+      if(getenv("GML_LOG_RTL")){
+        fprintf(stderr,"[rtl-state] load layer id=%d name=\"%s\" vis=%d depth=%.0f pos=(%.2f,%.2f) speed=(%.2f,%.2f) touched=%d\n",
+                l->id,l->name,l->visible,l->depth,l->x,l->y,l->hs,l->vs,l->touched);
+      }
     }
     int ne=sr_i32(&s);
     if(ne<0 || ne>1000000){ state_debug("bad rt elem count",s.pos,(uint32_t)ne); s.ok=0; ne=0; }
@@ -3853,8 +3912,10 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;
   vm->render=render; vm->audio=audio;
   gml_obj_alive_recount(vm);   /* family live counts rebuilt from the restored pool */
-  /* Rebuild derived room layers and tile maps that reference the loaded container. */
-  if(vm->win && vm->room_index>=0) gml_room_reload_layers(vm, vm->room_index);
+  /* Rebuild tile-collision maps, which point into win data and are not serialized. GMV5+
+   * states do serialize runtime layer/element state, so keep it intact; older states need the
+   * room-definition runtime layers rebuilt as a compatibility fallback. */
+  if(vm->win && vm->room_index>=0) gml_room_reload_layers_mode(vm, vm->room_index, magic<0x35564D47u);
   for(int i=0;i<tm_state_n;i++){
     TileMapState *ts=&tm_state[i];
     if(ts->index>=0 && ts->index<vm->n_tilemaps){
