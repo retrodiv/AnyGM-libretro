@@ -167,6 +167,11 @@ static uint16_t u16(const uint8_t *d, uint32_t o){ return (uint16_t)(d[o]|d[o+1]
 static uint32_t be32(const uint8_t *d){ return (uint32_t)d[0]<<24|(uint32_t)d[1]<<16|(uint32_t)d[2]<<8|(uint32_t)d[3]; }
 #define RFP_SHIFT 20
 #define RFP_ONE ((int64_t)1 << RFP_SHIFT)
+#if defined(__GNUC__) && !defined(__clang__)
+#define GML_HOT_RENDER __attribute__((hot,optimize("O3")))
+#else
+#define GML_HOT_RENDER
+#endif
 static int floor_fixed20(int64_t v){
   return v>=0 ? (int)(v>>RFP_SHIFT) : -(int)((-v + RFP_ONE - 1) >> RFP_SHIFT);
 }
@@ -251,6 +256,8 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
   if(!t || !a || !a->px || t->sw<=0 || t->sh<=0) return 0;
   if(!t->alpha_scanned){
     int minx=t->sw, miny=t->sh, maxx=-1, maxy=-1;
+    int log_alpha=getenv("GML_LOG_TPAG_ALPHA")!=NULL;
+    unsigned long nz=0;
     for(int yy=0; yy<t->sh; yy++){
       int sy=t->sy+yy;
       if(sy<0 || sy>=a->h) continue;
@@ -260,6 +267,7 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
         if(sx<0 || sx>=a->w) continue;
         const uint8_t *sp=row+(size_t)sx*4;
         if(!sp[3]) continue;
+        if(log_alpha) nz++;
         if(xx<minx) minx=xx;
         if(xx>maxx) maxx=xx;
         if(yy<miny) miny=yy;
@@ -268,6 +276,12 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
     }
     t->ax0=minx; t->ay0=miny; t->ax1=maxx; t->ay1=maxy;
     t->alpha_scanned=1;
+    if(log_alpha){
+      int id=rprof_tpag_id(r,t);
+      unsigned long area=(unsigned long)(t->sw>0?t->sw:0)*(unsigned long)(t->sh>0?t->sh:0);
+      fprintf(stderr,"[tpag-alpha] id=%d atlas=%d src=%d,%d %dx%d nz=%lu/%lu bbox=%d,%d-%d,%d\n",
+              id,t->atlas,t->sx,t->sy,t->sw,t->sh,nz,area,t->ax0,t->ay0,t->ax1,t->ay1);
+    }
   }
   if(t->ax1<t->ax0 || t->ay1<t->ay0) return 0;
   if(x0) *x0=t->ax0;
@@ -586,9 +600,13 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
             if(use_rot){
               double gx=x + cx*xs*ca + base_y*ys*sa;
               double gy=y - cx*xs*sa + base_y*ys*ca;
-              blit_rgba_sprite(r,fr_rgba,s->w,s->h,gx,gy,xs,ys,rr,0,0,blend,alpha,1);
+              const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)fr*s->h:NULL;
+              const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)fr*s->h:NULL;
+              blit_rgba_sprite(r,fr_rgba,s->w,s->h,gx,gy,xs,ys,rr,0,0,blend,alpha,1,rmin,rmax);
             } else {
-              blit_rgba_sprite(r,fr_rgba,s->w,s->h,x+cx*xs,y+base_y*ys,xs,ys,0,0,0,blend,alpha,1);
+              const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)fr*s->h:NULL;
+              const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)fr*s->h:NULL;
+              blit_rgba_sprite(r,fr_rgba,s->w,s->h,x+cx*xs,y+base_y*ys,xs,ys,0,0,0,blend,alpha,1,rmin,rmax);
             }
           }
         } else if(s->frame){ int ti=s->frame[fr];

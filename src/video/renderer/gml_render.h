@@ -14,6 +14,7 @@ typedef struct { const char *name; int originx, originy, w, h, n_frames; int *fr
                  const uint8_t *mask; int mask_rowb, mask_count;  /* SPRT collision mask: 1bpp */
                  int collision_kind, collision_tolerance;
                  uint8_t *runtime_rgba; int runtime_owned, runtime_extra; char *owned_name;
+                 int *runtime_row_min, *runtime_row_max;
                  char *runtime_source_path; int runtime_source_imgnum, runtime_source_removeback;
                  int base_valid, base_originx, base_originy, base_w, base_h, base_n_frames;
                  int base_ml, base_mr, base_mt, base_mb, base_mask_rowb, base_mask_count;
