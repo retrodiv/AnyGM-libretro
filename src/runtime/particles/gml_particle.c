@@ -320,12 +320,8 @@ static void plot_square(GmlRender *r, int cx, int cy, int half, uint32_t col, do
 
 void gml_part_system_drawit(GmlRender *r, int id){
   PSys *s=ps(id); if(!s||!r) return;
-  if(s->n>0) gml_render_maybe_prepare_draw(r);
   for(int i=0;i<s->n;i++){ Part *p=&s->parts[i]; PType *t=pt(p->type); if(!t) continue;
     double age = p->life0>0 ? (p->life0-p->life)/p->life0 : 0; if(age<0)age=0; if(age>1)age=1;
-    uint32_t col = p->has_col ? p->col_over : keyc(age,t);
-    double alpha=keyf(age,t->nalpha,t->alpha[0],t->alpha[1],t->alpha[2]);
-    if(alpha<=0) continue;
     if(t->sprite>=0){
       int frames=gml_sprite_frames(r,t->sprite); int sub = (t->spr_animate&&frames>0)? (int)(age*frames)%frames : 0;
       double xs=p->size*t->xscale, ys=p->size*t->yscale;
@@ -338,12 +334,21 @@ void gml_part_system_drawit(GmlRender *r, int id){
         double sx=p->x-r->cam_x, sy=p->y-r->cam_y;
         if(sx+rad<0 || sy+rad<0 || sx-rad>=r->fbw || sy-rad>=r->fbh) continue;
       }
+      double alpha=keyf(age,t->nalpha,t->alpha[0],t->alpha[1],t->alpha[2]);
+      if(alpha<=0) continue;
+      uint32_t col = p->has_col ? p->col_over : keyc(age,t);
       /* gml_draw_sprite_ext applies the camera itself → pass world (x,y), NOT camera-relative. */
       gml_draw_sprite_ext(r,t->sprite,sub, p->x, p->y,
                           xs, ys, p->ori, col, alpha);
     } else {
       int half=(int)(p->size)+0; if(half<0)half=0; if(half>64)half=64;
-      plot_square(r,(int)(p->x - r->cam_x),(int)(p->y - r->cam_y),half,col,alpha);
+      int cx=(int)(p->x - r->cam_x), cy=(int)(p->y - r->cam_y);
+      if(cx+half<0 || cy+half<0 || cx-half>=r->fbw || cy-half>=r->fbh) continue;
+      double alpha=keyf(age,t->nalpha,t->alpha[0],t->alpha[1],t->alpha[2]);
+      if(alpha<=0) continue;
+      uint32_t col = p->has_col ? p->col_over : keyc(age,t);
+      gml_render_maybe_prepare_draw(r);
+      plot_square(r,cx,cy,half,col,alpha);
     }
   }
 }
