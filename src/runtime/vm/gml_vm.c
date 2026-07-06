@@ -698,7 +698,37 @@ double gml_inst_var_get(GmlVM *vm, GmlInstance *in, const char *nm){
 
 /* ---------------- code lookup ---------------- */
 int gml_code_index_by_name(GmlWin *w, const char *name){
-  for(int i=0;i<w->n_code;i++) if(!strcmp(w->code[i].name,name)) return i;
+  if(!w || !name) return -1;
+  if(!w->code_hix && w->n_code>0){
+    uint32_t cap=1;
+    while(cap < (uint32_t)w->n_code*2u) cap<<=1;
+    w->code_hix=malloc((size_t)cap*sizeof(int32_t));
+    if(w->code_hix){
+      for(uint32_t i=0;i<cap;i++) w->code_hix[i]=-1;
+      w->code_hix_cap=cap;
+      for(int i=0;i<w->n_code;i++){
+        const char *nm=w->code[i].name;
+        if(!nm) continue;
+        uint32_t h=strhash(nm)&(cap-1);
+        while(w->code_hix[h]>=0){
+          if(!strcmp(w->code[w->code_hix[h]].name,nm)) break; /* preserve first duplicate */
+          h=(h+1)&(cap-1);
+        }
+        if(w->code_hix[h]<0) w->code_hix[h]=i;
+      }
+    }
+  }
+  if(w->code_hix && w->code_hix_cap){
+    uint32_t h=strhash(name)&(w->code_hix_cap-1);
+    for(uint32_t probe=0; probe<w->code_hix_cap; probe++){
+      int32_t i=w->code_hix[h];
+      if(i<0) return -1;
+      if(i<w->n_code && w->code[i].name && !strcmp(w->code[i].name,name)) return i;
+      h=(h+1)&(w->code_hix_cap-1);
+    }
+    return -1;
+  }
+  for(int i=0;i<w->n_code;i++) if(w->code[i].name && !strcmp(w->code[i].name,name)) return i;
   return -1;
 }
 int gml_code_index_find(GmlWin *w, const char *substr){

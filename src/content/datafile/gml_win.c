@@ -27,6 +27,34 @@ const char *gml_str_by_ptr(const GmlWin *w, uint32_t off){
   return "<@?>";
 }
 const char *gml_ref_name(const GmlWin *w, uint32_t addr){
+  GmlWin *mw=(GmlWin*)w;
+  if(w && !w->ref_hix && w->n_refs>0){
+    uint32_t cap=1;
+    while(cap < (uint32_t)w->n_refs*2u) cap<<=1;
+    mw->ref_hix=malloc((size_t)cap*sizeof(int32_t));
+    if(mw->ref_hix){
+      for(uint32_t i=0;i<cap;i++) mw->ref_hix[i]=-1;
+      mw->ref_hix_cap=cap;
+      for(int i=0;i<w->n_refs;i++){
+        uint32_t h=(w->ref_addr[i]*2654435761u)&(cap-1);
+        while(mw->ref_hix[h]>=0){
+          if(w->ref_addr[mw->ref_hix[h]]==w->ref_addr[i]) break; /* preserve first duplicate */
+          h=(h+1)&(cap-1);
+        }
+        if(mw->ref_hix[h]<0) mw->ref_hix[h]=i;
+      }
+    }
+  }
+  if(w && w->ref_hix && w->ref_hix_cap){
+    uint32_t h=(addr*2654435761u)&(w->ref_hix_cap-1);
+    for(uint32_t probe=0; probe<w->ref_hix_cap; probe++){
+      int32_t i=w->ref_hix[h];
+      if(i<0) return "?";
+      if(i<w->n_refs && w->ref_addr[i]==addr) return w->ref_name[i];
+      h=(h+1)&(w->ref_hix_cap-1);
+    }
+    return "?";
+  }
   int lo=0,hi=w->n_refs-1;
   while(lo<=hi){int m=(lo+hi)/2; if(w->ref_addr[m]==addr)return w->ref_name[m];
     if(w->ref_addr[m]<addr)lo=m+1;else hi=m-1;}
@@ -225,6 +253,8 @@ int gml_win_load(GmlWin *w, const char *path){
 void gml_win_free(GmlWin *w){
   free(w->strs); free(w->str_charoff); free(w->code);
   free(w->str_hix);
+  free(w->code_hix);
+  free(w->ref_hix);
   free(w->ref_addr); free(w->ref_name); free(w->room_order);
   if(w->owns) free(w->data);
   memset(w,0,sizeof(*w));

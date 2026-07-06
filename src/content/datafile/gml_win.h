@@ -62,8 +62,12 @@ typedef struct {
   int32_t *str_hix; uint32_t str_hix_cap;
   /* code entries */
   GmlCode *code;  int n_code;
+  /* content-hash index over code names (lazy; for O(1) exact code lookup) */
+  int32_t *code_hix; uint32_t code_hix_cap;
   /* reference name map: addr -> name (sorted by addr) */
   uint32_t *ref_addr; const char **ref_name; int n_refs;
+  /* address-hash index over ref_addr/ref_name (lazy; for O(1) ref lookup) */
+  int32_t *ref_hix; uint32_t ref_hix_cap;
   /* header */
   uint8_t bytecode; uint32_t gameid;
   uint32_t disp_w, disp_h;           /* default window / native render size */
