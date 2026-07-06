@@ -189,6 +189,7 @@ typedef struct GmlVM {
   struct GmlMouseEvent { int sub; char suffix[20]; } mouse_events[32];
   int n_mouse_events;
   int draw_events_off;   /* draw_enable_drawevent(false): skip all instance drawing */
+  int *draw_ord; int draw_ord_cap;  /* scratch order buffer for draw passes (runtime-only) */
   void    *render;   /* GmlRender* (set by the frontend) for draw_* builtins */
   void    *audio;    /* GmlAudio*  (set by the frontend) for audio_* builtins */
   /* GMS2.3 struct pool: standalone GmlInstances (malloc'd individually so the growable pointer

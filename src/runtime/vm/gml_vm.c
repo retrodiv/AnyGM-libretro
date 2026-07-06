@@ -2597,6 +2597,18 @@ static int rt_layer_has_background(GmlVM *vm, int layer_id){
   }
   return 0;
 }
+static int *vm_draw_order_scratch(GmlVM *vm, int need){
+  if(!vm || need<=0) return NULL;
+  if(need>vm->draw_ord_cap){
+    int nc=vm->draw_ord_cap?vm->draw_ord_cap:64;
+    while(nc<need) nc*=2;
+    int *p=realloc(vm->draw_ord,(size_t)nc*sizeof(int));
+    if(!p) return NULL;
+    vm->draw_ord=p;
+    vm->draw_ord_cap=nc;
+  }
+  return vm->draw_ord;
+}
 void gml_vm_draw(GmlVM *vm){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return;
   int n=vm->inst_count;
@@ -2840,7 +2852,8 @@ void gml_vm_draw(GmlVM *vm){
 void gml_vm_draw_pass(GmlVM *vm, const char *suffix){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return;
   int n=vm->inst_count;
-  int *ord=malloc((n>0?n:1)*sizeof(int)); int m=0;
+  int *ord=vm_draw_order_scratch(vm,n>0?n:1); if(!ord) return;
+  int m=0;
   for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i];
     if(!in->active||in->marked||in->visible<0.5) continue;
     if(event_lookup_from(vm,suffix,in->obj,NULL,NULL)) ord[m++]=i;
@@ -2848,12 +2861,12 @@ void gml_vm_draw_pass(GmlVM *vm, const char *suffix){
   for(int a=0;a<m;a++) for(int b=a+1;b<m;b++)
     if(vm->inst[ord[b]].depth>vm->inst[ord[a]].depth){ int t=ord[a]; ord[a]=ord[b]; ord[b]=t; }
   for(int k=0;k<m;k++) gml_run_event(vm,&vm->inst[ord[k]],suffix);
-  free(ord);
 }
 void gml_vm_draw_gui(GmlVM *vm){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return;
   int n=vm->inst_count;
-  int *ord=malloc((n>0?n:1)*sizeof(int)); int m=0;
+  int *ord=vm_draw_order_scratch(vm,n>0?n:1); if(!ord) return;
+  int m=0;
   for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i];
     if(!in->active||in->marked||in->visible<0.5) continue;
     if(event_lookup_from(vm,"Draw_64",in->obj,NULL,NULL)) ord[m++]=i;
@@ -2865,7 +2878,6 @@ void gml_vm_draw_gui(GmlVM *vm){
   *gml_varmap_put(&vm->globals,"view_current")=vreal(views_on?7:0);
   for(int k=0;k<m;k++) gml_run_event(vm,&vm->inst[ord[k]],"Draw_64");
   *gml_varmap_put(&vm->globals,"view_current")=vreal(0);
-  free(ord);
 }
 
 /* ---- collision events (Collision_<targetobj> handlers) ---- */
@@ -3282,6 +3294,7 @@ void gml_vm_free(GmlVM *vm){
   free(vm->obj_head); vm->obj_head=NULL; free(vm->inst_next); vm->inst_next=NULL; free(vm->inst_prev); vm->inst_prev=NULL;
   free(vm->cg_off); vm->cg_off=NULL; free(vm->cg_items); vm->cg_items=NULL; vm->cg_items_cap=0;
   free(vm->cg_overlay); vm->cg_overlay=NULL; vm->cg_overlay_cap=vm->cg_overlay_n=0;
+  free(vm->draw_ord); vm->draw_ord=NULL; vm->draw_ord_cap=0;
   freeset_begin();
   varmap_free(&vm->globals);
   for(int i=0;i<vm->inst_count;i++) varmap_free(&vm->inst[i].vars);
