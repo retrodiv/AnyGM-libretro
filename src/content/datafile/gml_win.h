@@ -41,6 +41,7 @@ typedef struct {
   uint8_t  reftype;    /* VariableType: Array=0x00, StackTop=0x80, Normal=0xA0 */
   uint8_t  size;       /* total bytes consumed */
   const char *refname; /* VM cache: gml_ref_name(refaddr), when applicable */
+  uint32_t refhash;    /* VM cache: strhash(refname), when applicable */
   int32_t  funcval_ci; /* VM cache: GMS2.3 push.i32 function-value code index, -1 if none */
 } GmlInsn;
 

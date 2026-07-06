@@ -22,29 +22,47 @@ static GmlVM *g_cur_vm;
 /* hash/compare keys by CONTENT (FNV-1a + strcmp), not pointer identity: VM names come from
  * the data.win string table while C-side writers (builtins, room init) use literals — the same
  * variable must hit the same slot regardless of which pointer carries the name. */
-static unsigned strhash(const char *p){ unsigned h=2166136261u; while(*p){ h^=(unsigned char)*p++; h*=16777619u; } return h; }
+static unsigned strhash(const char *p){ unsigned h=2166136261u; if(!p) p=""; while(*p){ h^=(unsigned char)*p++; h*=16777619u; } return h; }
+enum {
+  GML_HASH_METHOD_FN   = 0x35836763u,
+  GML_HASH_METHOD_SELF = 0x61c0232du
+};
 static void varmap_grow(GmlVarMap *m){
   int nc = m->cap? m->cap*2 : 16;
   GmlVarSlot *ns = calloc(nc,sizeof(GmlVarSlot));
   for(int i=0;i<m->cap;i++) if(m->slots[i].key){
-    unsigned h=strhash(m->slots[i].key)&(nc-1);
+    if(!m->slots[i].hash) m->slots[i].hash=strhash(m->slots[i].key);
+    unsigned h=m->slots[i].hash&(nc-1);
     while(ns[h].key) h=(h+1)&(nc-1);
     ns[h]=m->slots[i];
   }
   free(m->slots); m->slots=ns; m->cap=nc;
 }
-GmlVal *gml_varmap_get(GmlVarMap *m, const char *key){
+static GmlVal *gml_varmap_get_h(GmlVarMap *m, const char *key, uint32_t kh){
   if(!m->cap) return NULL;
-  unsigned h=strhash(key)&(m->cap-1);
-  while(m->slots[h].key){ if(!strcmp(m->slots[h].key,key)) return &m->slots[h].val; h=(h+1)&(m->cap-1); }
+  unsigned h=kh&(m->cap-1);
+  while(m->slots[h].key){
+    if(m->slots[h].hash==kh && (m->slots[h].key==key || !strcmp(m->slots[h].key,key))) return &m->slots[h].val;
+    h=(h+1)&(m->cap-1);
+  }
   return NULL;
 }
-GmlVal *gml_varmap_put(GmlVarMap *m, const char *key){
+GmlVal *gml_varmap_get(GmlVarMap *m, const char *key){
+  return key?gml_varmap_get_h(m,key,strhash(key)):NULL;
+}
+static GmlVal *gml_varmap_put_h(GmlVarMap *m, const char *key, uint32_t kh){
+  if(!key){ key=""; kh=strhash(key); }
   if(m->len*4>=m->cap*3) varmap_grow(m);
-  unsigned h=strhash(key)&(m->cap-1);
-  while(m->slots[h].key){ if(!strcmp(m->slots[h].key,key)) return &m->slots[h].val; h=(h+1)&(m->cap-1); }
-  m->slots[h].key=key; m->slots[h].val=vreal(0); m->len++;
+  unsigned h=kh&(m->cap-1);
+  while(m->slots[h].key){
+    if(m->slots[h].hash==kh && (m->slots[h].key==key || !strcmp(m->slots[h].key,key))) return &m->slots[h].val;
+    h=(h+1)&(m->cap-1);
+  }
+  m->slots[h].key=key; m->slots[h].hash=kh; m->slots[h].val=vreal(0); m->len++;
   return &m->slots[h].val;
+}
+GmlVal *gml_varmap_put(GmlVarMap *m, const char *key){
+  return gml_varmap_put_h(m,key,key?strhash(key):strhash(""));
 }
 /* ---- arrays ---- */
 #define GML_2D_STRIDE 32000
@@ -394,7 +412,7 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
   if(!strcmp(name,"sprite_yoffset")){ *out=vreal(s->originy); return 1; }
   return 0;
 }
-static GmlVal var_get(GmlVM *vm, int inst, const char *name){
+static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   GmlVal out;
   if(!strcmp(name,"room")) return vreal(vm->room_index);   /* GM built-in: current room index */
   if(!strcmp(name,"keyboard_lastkey")) return vreal(vm->last_key); /* GM: last key pressed */
@@ -422,7 +440,7 @@ static GmlVal var_get(GmlVM *vm, int inst, const char *name){
     int c=0; for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked) c++;
     return vreal(c); }
   if(inst==IT_GLOBAL || is_global_builtin(name)){
-    GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
+    GmlVal *p=gml_varmap_get_h(&vm->globals,name,nh); return p?*p:vreal(0); }
   if((inst==IT_OTHER && !vm->cur_other) || (inst==IT_SELF && !vm->cur_self)){
     if(!strcmp(name,"id") || !strcmp(name,"object_index")) return vreal(IT_NOONE);
   }
@@ -441,11 +459,11 @@ static GmlVal var_get(GmlVM *vm, int inst, const char *name){
         if(!strcmp(name,"bbox_bottom")) return vreal(b); }
       return vreal(0); }
     if(inst_builtin_get(self,name,&out)) return out;
-    GmlVal *p=gml_varmap_get(&self->vars,name); if(p) return *p;
+    GmlVal *p=gml_varmap_get_h(&self->vars,name,nh); if(p) return *p;
   }
   return vreal(0);
 }
-static void var_set(GmlVM *vm, int inst, const char *name, GmlVal v){
+static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal v){
   gml_arr_mark_escaped(v);   /* target is a global/instance slot: outlives the current scope */
   { const char *dv=getenv("GML_DBG_VARSET");
     if(dv && name && !strcmp(name,dv)){ extern long g_vm_frame;
@@ -454,17 +472,16 @@ static void var_set(GmlVM *vm, int inst, const char *name, GmlVal v){
   if(!strcmp(name,"room")){ vm->pending_room=(int)asnum(v); return; }  /* GM: room=X -> goto room */
   if(argument_set(vm,name,v)) return;
   if(!strcmp(name,"room_speed")||!strcmp(name,"view_current")||!strcmp(name,"room_persistent")){
-    *gml_varmap_put(&vm->globals,name)=v;
+    *gml_varmap_put_h(&vm->globals,name,nh)=v;
     return;
   }
-  if(inst==IT_GLOBAL || is_global_builtin(name)){ *gml_varmap_put(&vm->globals,name)=v; return; }
+  if(inst==IT_GLOBAL || is_global_builtin(name)){ *gml_varmap_put_h(&vm->globals,name,nh)=v; return; }
   GmlInstance *self = var_target(vm,inst);
   if(self){
     if(inst_builtin_set(self,name,v)) return;
-    *gml_varmap_put(&self->vars,name)=v;
+    *gml_varmap_put_h(&self->vars,name,nh)=v;
   }
 }
-
 /* resolve an array/var instance-type to the owning instance. inst_t may be a special
  * scope (self/other), a real instance id (>=100000), or an object index (first instance). */
 static GmlInstance *inst_by_id(GmlVM *vm, double idv);   /* fwd */
@@ -484,7 +501,7 @@ static GmlVarMap *scope_map(GmlVM *vm, GmlVarMap *locals, int inst_t){
  * accessed without explicit scope — route them to globals regardless of inst_t. */
 static int is_room_global_array(const char *n){
   return !strncmp(n,"background_",11) || !strncmp(n,"view_",5); }
-static void array_set(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, int idx, GmlVal v){
+static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, uint32_t nh, int idx, GmlVal v){
   if(!strcmp(nm,"argument")){
     if(idx>=0 && idx<16){
       vm->script_args[idx]=v;
@@ -495,12 +512,12 @@ static void array_set(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, 
   if(!strcmp(nm,"alarm")){ GmlInstance *s=resolve_inst(vm,inst_t);
     if(s && idx>=0 && idx<GML_ALARMS) s->alarm[idx]=v.t==V_REAL?v.d:(v.s?atof(v.s):0); return; }
   GmlVarMap *m=is_room_global_array(nm)? &vm->globals : scope_map(vm,locals,inst_t); if(!m) return;
-  GmlVal *slot=gml_varmap_put(m,nm); GmlArr *A=arr_of(slot);
+  GmlVal *slot=gml_varmap_put_h(m,nm,nh); GmlArr *A=arr_of(slot);
   if(m!=locals || A->escaped) gml_arr_mark_escaped(v);   /* element outlives scope if its owner already does */
   arr_note_2d_set(A,idx); arr_ensure(A,idx);
   if(idx>=0 && idx<A->cap) A->data[idx]=v;
 }
-static GmlVal array_get(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, int idx){
+static GmlVal array_get_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, uint32_t nh, int idx){
   if(!strcmp(nm,"argument")) return (idx>=0 && idx<vm->script_argc && idx<16) ? vm->script_args[idx] : vreal(0);
   { int aidx=argument_index(nm);   /* `argumentN[idx]`: index INTO an array-valued argument (distinct from
        `argument[idx]`, the Nth arg). Missing this, serialize's `with(actions[i])` over an array passed as
@@ -511,40 +528,39 @@ static GmlVal array_get(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
   if(!strcmp(nm,"alarm")){ GmlInstance *s=resolve_inst(vm,inst_t);
     return vreal((s&&idx>=0&&idx<GML_ALARMS)? s->alarm[idx] : -1); }
   GmlVarMap *m=is_room_global_array(nm)? &vm->globals : scope_map(vm,locals,inst_t); if(!m) return vreal(0);
-  GmlVal *slot=gml_varmap_get(m,nm);
+  GmlVal *slot=gml_varmap_get_h(m,nm,nh);
   if(!slot||slot->t!=V_ARR) return vreal(0);
   GmlArr *A=slot->arr;
   /* defend against a corrupt/garbage GmlArr (e.g. a cross-version savestate) — never deref blindly */
   if(!A || !A->data || A->len<0 || A->cap<A->len || A->cap>16000000) return vreal(0);
   return (idx>=0 && idx<A->len)? A->data[idx] : vreal(0);
 }
-static GmlVal array_get_inst_field(GmlVM *vm, GmlInstance *s, const char *nm, int idx){
+static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, uint32_t nh, int idx){
   (void)vm;
   if(!s) return vreal(0);
   if(s->obj>=0 && !strcmp(nm,"alarm"))
     return vreal((idx>=0 && idx<GML_ALARMS)? s->alarm[idx] : -1);
-  GmlVal *slot=gml_varmap_get(&s->vars,nm);
+  GmlVal *slot=gml_varmap_get_h(&s->vars,nm,nh);
   if(!slot || slot->t!=V_ARR || !slot->arr) return vreal(0);
   GmlArr *A=slot->arr;
   if(!A || !A->data || A->len<0 || A->cap<A->len || A->cap>16000000) return vreal(0);
   return (idx>=0 && idx<A->len)? A->data[idx] : vreal(0);
 }
-static void array_set_inst_field(GmlInstance *s, const char *nm, int idx, GmlVal v){
+static void array_set_inst_field_h(GmlInstance *s, const char *nm, uint32_t nh, int idx, GmlVal v){
   if(!s) return;
   if(s->obj>=0 && !strcmp(nm,"alarm")){
     if(idx>=0 && idx<GML_ALARMS) s->alarm[idx]=v.t==V_REAL?v.d:(v.s?atof(v.s):0);
     return;
   }
   gml_arr_mark_escaped(v);
-  GmlVal *slot=gml_varmap_put(&s->vars,nm);
+  GmlVal *slot=gml_varmap_put_h(&s->vars,nm,nh);
   GmlArr *A=arr_of(slot);
   arr_note_2d_set(A,idx);
   arr_ensure(A,idx);
   if(idx>=0 && idx<A->cap) A->data[idx]=v;
 }
-
 /* read/write any var on a specific instance (builtin or custom) */
-static GmlVal inst_get_any(GmlVM *vm, GmlInstance *t, const char *nm){
+static GmlVal inst_get_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t nh){
   GmlVal o; if(inst_builtin_get(t,nm,&o)) return o;
   /* Same sprite-derived builtins var_get resolves for `self.X`, so a REFERENCED instance
    * (`other.image_number`, `foo.bbox_left`) reads them too — not 0. `expr.image_number` returning
@@ -559,11 +575,11 @@ static GmlVal inst_get_any(GmlVM *vm, GmlInstance *t, const char *nm){
       if(!strcmp(nm,"bbox_top"))    return vreal(tp);
       if(!strcmp(nm,"bbox_bottom")) return vreal(b); }
     return vreal(0); }
-  GmlVal *p=gml_varmap_get(&t->vars,nm); return p?*p:vreal(0);
+  GmlVal *p=gml_varmap_get_h(&t->vars,nm,nh); return p?*p:vreal(0);
 }
-static void inst_set_any(GmlInstance *t, const char *nm, GmlVal v){
+static void inst_set_any_h(GmlInstance *t, const char *nm, uint32_t nh, GmlVal v){
   gml_arr_mark_escaped(v);   /* instance vars outlive the current scope */
-  if(inst_builtin_set(t,nm,v)) return; *gml_varmap_put(&t->vars,nm)=v;
+  if(inst_builtin_set(t,nm,v)) return; *gml_varmap_put_h(&t->vars,nm,nh)=v;
 }
 static GmlInstance *inst_by_id(GmlVM *vm, double idv){
   int id=(int)idv;
@@ -774,8 +790,10 @@ static int code_cache_ensure(GmlWin *w, int ci){
     GmlInsn in; int sz=gml_decode_bc(w->data,pc,w->bytecode,&in);
     if(!sz || (uint32_t)sz>end-pc){ c->cache_bad=1; goto fail; }
     in.funcval_ci=-1;
-    if((in.kind==OP_CALL || in.kind==OP_PUSH || in.kind==OP_POP) && in.refaddr)
+    if((in.kind==OP_CALL || in.kind==OP_PUSH || in.kind==OP_POP) && in.refaddr){
       in.refname=gml_ref_name(w,in.refaddr);
+      if(in.refname) in.refhash=strhash(in.refname);
+    }
     if(in.kind==OP_PUSH && in.type1==DT_INT32 && w->bytecode>=17){
       const char *fn=gml_ref_name(w,pc+4);
       if(fn && fn[0]!='?' && !strncmp(fn,"gml_",4)){
@@ -803,6 +821,52 @@ fail_live:
 fail:
   free(ins); free(pcs); free(br);
   return 0;
+}
+
+typedef struct { int ci; const char *name; long calls; uint64_t insn; double ms; } GmlCodeProfSlot;
+#define CODEPROF_MAX 192
+static GmlCodeProfSlot g_codeprof[CODEPROF_MAX];
+static int g_codeprof_n;
+static long g_codeprof_last_frame=-1;
+static int codeprof_on(void){ static int on=-1; if(on<0) on=getenv("GML_PROFILE_CODE")!=NULL; return on; }
+static double codeprof_now_ms(void){
+#ifndef _WIN32
+  struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts); return ts.tv_sec*1000.0+ts.tv_nsec/1e6;
+#else
+  return 0;
+#endif
+}
+static void codeprof_add(GmlWin *w, int ci, double ms, uint64_t insn){
+  if(!codeprof_on() || !w || ci<0 || ci>=w->n_code) return;
+  int slot=-1;
+  for(int i=0;i<g_codeprof_n;i++) if(g_codeprof[i].ci==ci){ slot=i; break; }
+  if(slot<0){
+    slot = g_codeprof_n<CODEPROF_MAX ? g_codeprof_n++ : CODEPROF_MAX-1;
+    g_codeprof[slot]=(GmlCodeProfSlot){ci,w->code[ci].name,0,0,0};
+  }
+  g_codeprof[slot].calls++;
+  g_codeprof[slot].insn += insn;
+  g_codeprof[slot].ms += ms;
+  extern long g_vm_frame;
+  if(g_vm_frame<=0 || g_vm_frame==g_codeprof_last_frame || g_vm_frame%300) return;
+  g_codeprof_last_frame=g_vm_frame;
+  fprintf(stderr,"[codeprof] f=%ld top:\n",g_vm_frame);
+  int used[20]; for(int i=0;i<20;i++) used[i]=-1;
+  for(int rank=0; rank<20; rank++){
+    int best=-1;
+    for(int i=0;i<g_codeprof_n;i++){
+      int seen=0; for(int j=0;j<rank;j++) if(used[j]==i){ seen=1; break; }
+      if(!seen && (best<0 || g_codeprof[i].ms>g_codeprof[best].ms)) best=i;
+    }
+    if(best<0 || g_codeprof[best].ms<=0) break;
+    used[rank]=best;
+    fprintf(stderr,"[codeprof]   %8.2fms %7ld calls %10llu insn %s\n",
+            g_codeprof[best].ms,g_codeprof[best].calls,
+            (unsigned long long)g_codeprof[best].insn,
+            g_codeprof[best].name?g_codeprof[best].name:"?");
+  }
+  memset(g_codeprof,0,sizeof g_codeprof);
+  g_codeprof_n=0;
 }
 
 /* ---------------- builtins ---------------- */
@@ -880,6 +944,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   uint32_t *cached_pc = use_cache ? w->code[ci].insn_pc : NULL;
   int32_t *cached_branch = use_cache ? w->code[ci].branch_index : NULL;
   uint32_t cached_n = use_cache ? w->code[ci].n_insn : 0;
+  int cp = codeprof_on();
+  double cp_t0 = cp ? codeprof_now_ms() : 0.0;
   /* Watchdog: a single code run should never execute more than a few million instructions. If one
    * blows past a large budget it is a runaway loop (e.g. a control-flow condition corrupted by an
    * unimplemented opcode) — abort the run instead of freezing the whole frontend. Real per-event
@@ -930,16 +996,17 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         else if(in.type1==DT_STRING) v=vstr(gml_str_by_index(w,in.strindex));
         else if(in.type1==DT_VAR){
           const char *nm=in.refname?in.refname:gml_ref_name(w,in.refaddr);
+          uint32_t nh=in.refhash?in.refhash:strhash(nm);
           if(in.reftype==0x00){ /* Array */
             int idx=(int)(sp>0?asnum(stk[--sp]):0);
             GmlVal itv=sp>0?stk[--sp]:vreal(0);
             if(w->bytecode>=17 && sp>0 && itv.t==V_REAL && itv.d==-9.0){
               GmlVal iv=stk[--sp];
               GmlInstance *t=vm_inst_from_ref(vm,iv);
-              v=t?array_get_inst_field(vm,t,nm,idx):vreal(0);
+              v=t?array_get_inst_field_h(vm,t,nm,nh,idx):vreal(0);
             } else {
               int it=(int)asnum(itv);
-              v=array_get(vm,&locals,it,nm,idx);
+              v=array_get_h(vm,&locals,it,nm,nh,idx);
             }
           } else if(in.reftype==0x10 || in.reftype==0x90){
             /* GMS2.3 array-following push (first dimension from a named variable). Stack top->down:
@@ -949,10 +1016,10 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             GmlVarMap *m=is_room_global_array(nm)? &vm->globals : scope_map(vm,&locals,it);
             v=vreal(0);
             if(m && idx>=0){
-              if(in.reftype==0x90){ GmlVal *slot=gml_varmap_put(m,nm); GmlArr *A=arr_of(slot); arr_ensure(A,idx);
+              if(in.reftype==0x90){ GmlVal *slot=gml_varmap_put_h(m,nm,nh); GmlArr *A=arr_of(slot); arr_ensure(A,idx);
                 if(idx<A->cap){ if(A->data[idx].t!=V_ARR){ A->data[idx].t=V_ARR; A->data[idx].arr=calloc(1,sizeof(GmlArr)); }
                   v=A->data[idx]; } }
-              else { GmlVal *slot=gml_varmap_get(m,nm);
+              else { GmlVal *slot=gml_varmap_get_h(m,nm,nh);
                 if(slot && slot->t==V_ARR){ GmlArr *A=slot->arr; if(idx<A->len) v=A->data[idx]; } }
             }
           } else if(in.reftype==0x80){ /* StackTop: instance.var */
@@ -966,24 +1033,25 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
              * resolved instance -9 = NULL = 0, freezing e.g. `inst.x += 14` at a constant 14. */
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
             if(w->bytecode>=17 && sp>0 && iv.t==V_REAL && iv.d==-9.0) iv=stk[--sp];
-            GmlInstance *t=vm_inst_from_ref(vm,iv); v=t?inst_get_any(vm,t,nm):vreal(0);
+            GmlInstance *t=vm_inst_from_ref(vm,iv); v=t?inst_get_any_h(vm,t,nm,nh):vreal(0);
           } else if(in.inst==IT_STACK){
             /* GMS2.3 direct StackTop read `push.v stack.var`: the instance is the top of the value
              * stack (no separate -9 marker; the -9 is the instruction's own instance-type). Used for
              * `expr.field` where expr is a temporary — notably struct method dispatch `b.method(...)`,
              * where mis-routing this to var_get(-9) read nobody and every struct method call got 0. */
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
-            GmlInstance *t=vm_inst_from_ref(vm,iv); v=t?inst_get_any(vm,t,nm):vreal(0);
+            GmlInstance *t=vm_inst_from_ref(vm,iv); v=t?inst_get_any_h(vm,t,nm,nh):vreal(0);
           } else if(in.inst==IT_LOCAL){
             if(argument_get(vm,nm,&v)){}
-            else { GmlVal *pp=gml_varmap_get(&locals,nm); v=pp?*pp:vreal(0); }
-          } else v=var_get(vm,in.inst,nm);
+            else { GmlVal *pp=gml_varmap_get_h(&locals,nm,nh); v=pp?*pp:vreal(0); }
+          } else v=var_get_h(vm,in.inst,nm,nh);
         } else v=vreal(0);
         if(sp<STK) stk[sp++]=v;
         break;
       }
       case OP_POP:{
         const char *nm=in.refname?in.refname:gml_ref_name(w,in.refaddr);
+        uint32_t nh=in.refhash?in.refhash:strhash(nm);
         if(in.reftype==0x00){ /* Direct array stores consume value/scope/index; numeric compound stores
            * consume scope/index/value. Select the order from Type1. */
           int idx; GmlVal itv, val, iv=vreal(0); GmlInstance *t=NULL;
@@ -1005,8 +1073,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             }
           }
           GC_PERSIST(val);
-          if(t) array_set_inst_field(t,nm,idx,val);
-          else array_set(vm,&locals,(int)asnum(itv),nm,idx,val);
+          if(t) array_set_inst_field_h(t,nm,nh,idx,val);
+          else array_set_h(vm,&locals,(int)asnum(itv),nm,nh,idx,val);
         } else if(in.reftype==0x80){ /* StackTop instance.var. GMS quirk: the value/instance push
            * order depends on the value's Type1 — `pop.v.*` (Type1=Variable) pushes the value FIRST
            * then [instance, -9] (marker on top); every other `pop.<num>.v` (the compound `inst.var
@@ -1026,17 +1094,17 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
              iv=sp>0?stk[--sp]:vreal(0);
            }
            GC_PERSIST(val);
-           GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any(t,nm,val);
+           GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(t,nm,nh,val);
         } else {
           GmlVal v = sp>0? stk[--sp] : vreal(0);
           /* locals/arguments die at scope exit, so their owned strings stay tracked and are freed
            * then (str_gc). Only instance/global stores persist beyond the run — untrack those so the
            * var owns the string (else it dangles at scope exit; re-assigning it later leaks it). */
-          if(in.inst==IT_LOCAL){ if(!argument_set(vm,nm,v)) *gml_varmap_put(&locals,nm)=v; }
+          if(in.inst==IT_LOCAL){ if(!argument_set(vm,nm,v)) *gml_varmap_put_h(&locals,nm,nh)=v; }
           else if(in.inst==IT_STACK){   /* `pop.v.v stack.var` — write field on the instance under the value */
             GmlVal iv=sp>0?stk[--sp]:vreal(0); GC_PERSIST(v);
-            GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any(t,nm,v); }
-          else { GC_PERSIST(v); var_set(vm,in.inst,nm,v); }
+            GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(t,nm,nh,v); }
+          else { GC_PERSIST(v); var_set_h(vm,in.inst,nm,nh,v); }
         }
         break;
       }
@@ -1131,10 +1199,11 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         GmlInstance *bm_top=NULL;
         if(sp>0){ double tv=asnum(stk[sp-1]);
           if(GML_IS_STRUCT_ID(tv)){ GmlInstance *b=gml_struct_find(vm,(unsigned)tv);
-            if(b && gml_varmap_get(&b->vars,"__fn")) bm_top=b; } }
+            if(b && gml_varmap_get_h(&b->vars,"__fn",GML_HASH_METHOD_FN)) bm_top=b; } }
         if(bm_top){
           sp--;   /* the method value */
-          GmlVal *pf=gml_varmap_get(&bm_top->vars,"__fn"), *ps=gml_varmap_get(&bm_top->vars,"__self");
+          GmlVal *pf=gml_varmap_get_h(&bm_top->vars,"__fn",GML_HASH_METHOD_FN);
+          GmlVal *ps=gml_varmap_get_h(&bm_top->vars,"__self",GML_HASH_METHOD_SELF);
           if(pf){ int f2=(int)asnum(*pf); if(GML_IS_FUNCVAL(f2)) fci=f2 & 0x00FFFFFF; }
           GmlInstance *bs = ps? vm_inst_from_ref(vm,*ps) : NULL;
           if(ps && sp>0 && asnum(stk[sp-1])==asnum(*ps)) sp--;   /* drop the accessor self (obj. in obj.method) */
@@ -1147,7 +1216,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           double fvn=asnum(fv);
           if(GML_IS_STRUCT_ID(fvn)){   /* bound method value called directly */
             GmlInstance *bm=gml_struct_find(vm,(unsigned)fvn);
-            if(bm){ GmlVal *pf=gml_varmap_get(&bm->vars,"__fn"), *ps=gml_varmap_get(&bm->vars,"__self");
+            if(bm){ GmlVal *pf=gml_varmap_get_h(&bm->vars,"__fn",GML_HASH_METHOD_FN);
+              GmlVal *ps=gml_varmap_get_h(&bm->vars,"__self",GML_HASH_METHOD_SELF);
               if(pf){ int f2=(int)asnum(*pf); if(GML_IS_FUNCVAL(f2)) fci=f2 & 0x00FFFFFF; }
               if(ps){ GmlInstance *bs=vm_inst_from_ref(vm,*ps); if(bs) call_self=bs; } } }
           else if(GML_IS_FUNCVAL((int)fvn)) fci = (int)fvn & 0x00FFFFFF;
@@ -1261,6 +1331,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   vm->script_argc=save_argc;
   for(int i=0;i<16;i++) vm->script_args[i]=save_args[i];
   (void)g_unknown_logged;
+  if(cp) codeprof_add(w,ci,codeprof_now_ms()-cp_t0,watchdog);
   g_run_depth--;
   return ret;
 }

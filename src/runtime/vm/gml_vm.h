@@ -23,7 +23,7 @@ static inline GmlVal vstr_owned(char *s){ GmlVal v; v.t=V_STR; v.d=1; v.s=s; v.a
 static inline GmlVal vundef(void){ GmlVal v; v.t=V_UNDEF; v.d=0; v.s=0; v.arr=0; return v; }
 
 /* ---- variable map: open-addressing, key = interned name pointer ---- */
-typedef struct { const char *key; GmlVal val; } GmlVarSlot;
+typedef struct { const char *key; uint32_t hash; GmlVal val; } GmlVarSlot;
 typedef struct { GmlVarSlot *slots; int cap, len; } GmlVarMap;
 
 /* ---- instance ---- */
