@@ -790,6 +790,7 @@ static int code_cache_ensure(GmlWin *w, int ci){
     GmlInsn in; int sz=gml_decode_bc(w->data,pc,w->bytecode,&in);
     if(!sz || (uint32_t)sz>end-pc){ c->cache_bad=1; goto fail; }
     in.funcval_ci=-1;
+    in.builtin_id=0;
     if((in.kind==OP_CALL || in.kind==OP_PUSH || in.kind==OP_POP) && in.refaddr){
       in.refname=gml_ref_name(w,in.refaddr);
       if(in.refname) in.refhash=strhash(in.refname);
@@ -872,6 +873,13 @@ static void codeprof_add(GmlWin *w, int ci, double ms, uint64_t insn){
 /* ---------------- builtins ---------------- */
 static int g_unknown_logged=0;
 extern GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *a, int n);
+extern int gml_builtin_fast_id(const char *name);
+extern GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n);
+static inline int builtin_hotprof_on(void){
+  static int on=-1;
+  if(on<0) on=getenv("GML_PROFILE_HOTBUILTIN")!=NULL;
+  return on;
+}
 
 /* ---------------- interpreter ---------------- */
 #define STK 512
@@ -945,6 +953,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   int32_t *cached_branch = use_cache ? w->code[ci].branch_index : NULL;
   uint32_t cached_n = use_cache ? w->code[ci].n_insn : 0;
   int cp = codeprof_on();
+  int hp_builtin = builtin_hotprof_on();
   double cp_t0 = cp ? codeprof_now_ms() : 0.0;
   /* Watchdog: a single code run should never execute more than a few million instructions. If one
    * blows past a large budget it is a runaway loop (e.g. a control-flow condition corrupted by an
@@ -961,9 +970,10 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           g_vm_frame, w->code[ci].name, pc-start); }
       break;
     }
-    GmlInsn in; uint32_t nextpc; uint32_t nextip=ip+1;
+    GmlInsn in; GmlInsn *pin=NULL; uint32_t nextpc; uint32_t nextip=ip+1;
     if(use_cache){
-      in=cached_ins[ip];
+      pin=&cached_ins[ip];
+      in=*pin;
       pc=cached_pc[ip];
       nextpc=pc+in.size;
     } else {
@@ -1180,7 +1190,12 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         GmlVal a[64]; if(na>64) na=64;
         /* GM pushes args in reverse, so arg0 is on top: pop forward -> a[0]=arg0 */
         for(int i=0;i<na;i++) a[i] = sp>0? stk[--sp] : vreal(0);
-        GmlVal rv=gml_builtin_call(vm,nm,a,na);
+        int bid = pin ? pin->builtin_id : -1;
+        if(pin && bid==0){
+          bid=gml_builtin_fast_id(nm);
+          pin->builtin_id=(int16_t)bid;
+        }
+        GmlVal rv = (bid>0 && !hp_builtin) ? gml_builtin_call_fast_id(vm,bid,a,na) : gml_builtin_call(vm,nm,a,na);
         /* track a freshly-malloc'd string result so it's freed (else string builtins leak). Skip
          * arg pass-through (the arg's owner frees it) to avoid double-tracking a var's string. */
         if(STR_IS_HEAP(rv)){ int isarg=0; for(int _k=0;_k<na;_k++) if(a[_k].t==V_STR && a[_k].s==rv.s){isarg=1;break;} if(!isarg) GC_TRACK(rv.s); }

@@ -43,6 +43,7 @@ typedef struct {
   const char *refname; /* VM cache: gml_ref_name(refaddr), when applicable */
   uint32_t refhash;    /* VM cache: strhash(refname), when applicable */
   int32_t  funcval_ci; /* VM cache: GMS2.3 push.i32 function-value code index, -1 if none */
+  int16_t  builtin_id; /* VM cache: hot builtin dispatch id; 0=unresolved, -1=generic path */
 } GmlInsn;
 
 typedef struct { char name[8]; uint32_t off, size; } GmlChunk;

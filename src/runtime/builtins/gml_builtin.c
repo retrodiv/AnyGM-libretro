@@ -2089,6 +2089,153 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
   return 0;
 }
 
+enum {
+  BID_ARRAY_LENGTH=1,
+  BID_ARRAY_LENGTH_1D,
+  BID_DRAW_SPRITE,
+  BID_DRAW_SPRITE_EXT,
+  BID_DRAW_SURFACE,
+  BID_DRAW_SURFACE_EXT,
+  BID_DRAW_RECTANGLE_COLOR,
+  BID_DRAW_RECTANGLE_COLOUR,
+  BID_DRAW_TEXT,
+  BID_DRAW_TEXT_EXT_TRANSFORMED_COLOUR,
+  BID_DRAW_TEXT_EXT_TRANSFORMED_COLOR,
+  BID_DRAW_SET_ALPHA,
+  BID_DRAW_SET_FONT,
+  BID_DRAW_SET_HALIGN,
+  BID_GPU_SET_BLENDMODE,
+  BID_PART_SYSTEM_DRAWIT,
+  BID_PART_SYSTEM_DRAWIT_EXT,
+  BID_PLACE_MEETING,
+  BID_INSTANCE_EXISTS,
+  BID_INSTANCE_NUMBER,
+  BID_INSTANCE_PLACE_LIST,
+  BID_SIN
+};
+
+int gml_builtin_fast_id(const char *nm){
+  if(!nm || !*nm) return -1;
+  switch(nm[0]){
+    case 'a':
+      if(!strcmp(nm,"array_length")) return BID_ARRAY_LENGTH;
+      if(!strcmp(nm,"array_length_1d")) return BID_ARRAY_LENGTH_1D;
+      return -1;
+    case 'd':
+      if(!strcmp(nm,"draw_sprite")) return BID_DRAW_SPRITE;
+      if(!strcmp(nm,"draw_sprite_ext")) return BID_DRAW_SPRITE_EXT;
+      if(!strcmp(nm,"draw_surface")) return BID_DRAW_SURFACE;
+      if(!strcmp(nm,"draw_surface_ext")) return BID_DRAW_SURFACE_EXT;
+      if(!strcmp(nm,"draw_rectangle_color")) return BID_DRAW_RECTANGLE_COLOR;
+      if(!strcmp(nm,"draw_rectangle_colour")) return BID_DRAW_RECTANGLE_COLOUR;
+      if(!strcmp(nm,"draw_text")) return BID_DRAW_TEXT;
+      if(!strcmp(nm,"draw_text_ext_transformed_colour")) return BID_DRAW_TEXT_EXT_TRANSFORMED_COLOUR;
+      if(!strcmp(nm,"draw_text_ext_transformed_color")) return BID_DRAW_TEXT_EXT_TRANSFORMED_COLOR;
+      if(!strcmp(nm,"draw_set_alpha")) return BID_DRAW_SET_ALPHA;
+      if(!strcmp(nm,"draw_set_font")) return BID_DRAW_SET_FONT;
+      if(!strcmp(nm,"draw_set_halign")) return BID_DRAW_SET_HALIGN;
+      return -1;
+    case 'g':
+      if(!strcmp(nm,"gpu_set_blendmode")) return BID_GPU_SET_BLENDMODE;
+      return -1;
+    case 'i':
+      if(!strcmp(nm,"instance_exists")) return BID_INSTANCE_EXISTS;
+      if(!strcmp(nm,"instance_number")) return BID_INSTANCE_NUMBER;
+      if(!strcmp(nm,"instance_place_list")) return BID_INSTANCE_PLACE_LIST;
+      return -1;
+    case 'p':
+      if(!strcmp(nm,"part_system_drawit")) return BID_PART_SYSTEM_DRAWIT;
+      if(!strcmp(nm,"part_system_drawit_ext")) return BID_PART_SYSTEM_DRAWIT_EXT;
+      if(!strcmp(nm,"place_meeting")) return BID_PLACE_MEETING;
+      return -1;
+    case 's':
+      if(!strcmp(nm,"sin")) return BID_SIN;
+      return -1;
+    default:
+      return -1;
+  }
+}
+
+GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, GmlVal *a, int n){
+  GmlRender *R=(GmlRender*)vm->render;
+  switch(id){
+    case BID_ARRAY_LENGTH:
+    case BID_ARRAY_LENGTH_1D:
+      return vreal(n>0?gml_val_array_length(a[0]):0);
+    case BID_DRAW_SPRITE:
+      if(R) gml_draw_sprite(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3));
+      return vreal(0);
+    case BID_DRAW_SPRITE_EXT:
+      if(R) gml_draw_sprite_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
+        N(a,n,4),N(a,n,5),N(a,n,6),(uint32_t)N(a,n,7),N(a,n,8));
+      return vreal(0);
+    case BID_DRAW_SURFACE:
+      if(R){ int s=(int)N(a,n,0);
+        if(s>0 && s==(int)gml_global_arr(vm,"view_surface_id",0) && N(a,n,1)==0 && N(a,n,2)==0)
+          gml_draw_surface_stretched(R,s,R->cam_x,R->cam_y,R->fbw,R->fbh,0xFFFFFF,R->alpha);
+        else
+          gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),gml_surface_width(R,s),gml_surface_height(R,s),0xFFFFFF,R->alpha);
+      }
+      return vreal(0);
+    case BID_DRAW_SURFACE_EXT:
+      if(R){ int s=(int)N(a,n,0); gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),
+        gml_surface_width(R,s)*N(a,n,3),gml_surface_height(R,s)*N(a,n,4),(uint32_t)N(a,n,6),N(a,n,7)); }
+      return vreal(0);
+    case BID_DRAW_RECTANGLE_COLOR:
+    case BID_DRAW_RECTANGLE_COLOUR:
+      if(R){ int outline=(int)N(a,n,8);
+        int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y);
+        int x2=(int)ceil(N(a,n,2)-R->cam_x), y2=(int)ceil(N(a,n,3)-R->cam_y);
+        draw_rect_colour_prim(R,x1,y1,x2,y2,(uint32_t)N(a,n,4),(uint32_t)N(a,n,5),(uint32_t)N(a,n,6),(uint32_t)N(a,n,7),outline);
+      }
+      return vreal(0);
+    case BID_DRAW_TEXT:
+      if(R) gml_draw_text(R,N(a,n,0),N(a,n,1),S(a,n,2));
+      return vreal(0);
+    case BID_DRAW_TEXT_EXT_TRANSFORMED_COLOUR:
+    case BID_DRAW_TEXT_EXT_TRANSFORMED_COLOR:
+      if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,5),N(a,n,6),N(a,n,7),(uint32_t)N(a,n,8),N(a,n,12));
+      return vreal(0);
+    case BID_DRAW_SET_ALPHA:
+      if(R){ R->alpha=N(a,n,0); if(R->alpha<0) R->alpha=0; if(R->alpha>1) R->alpha=1; }
+      return vreal(0);
+    case BID_DRAW_SET_FONT:
+      if(R){ R->font=(int)N(a,n,0); if((int)N(a,n,0)<0 && getenv("GML_LOG_FONT")) fprintf(stderr,"[font] draw_set_font(%d) — default-font request\n",(int)N(a,n,0)); }
+      return vreal(0);
+    case BID_DRAW_SET_HALIGN:
+      if(R) R->halign=(int)N(a,n,0);
+      return vreal(0);
+    case BID_GPU_SET_BLENDMODE:
+      if(R){ int bm=(int)N(a,n,0); R->blendmode=(bm==1)?1:(bm==3)?2:0; }
+      return vreal(0);
+    case BID_PART_SYSTEM_DRAWIT:
+    case BID_PART_SYSTEM_DRAWIT_EXT:
+      if(R) gml_part_system_drawit(R,(int)N(a,n,0));
+      return vreal(0);
+    case BID_PLACE_MEETING:{
+      int r=collision_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),0);
+      if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+        const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
+        if(cn) fprintf(stderr,"[col] %s place_meeting(%.0f,%.0f,%s)=%d\n",cn,N(a,n,0),N(a,n,1),tn,r); }
+      return vreal(r); }
+    case BID_INSTANCE_EXISTS:
+      return vreal(gml_instance_number(vm,(int)N(a,n,0))>0);
+    case BID_INSTANCE_NUMBER:
+      return vreal(gml_instance_number(vm,(int)N(a,n,0)));
+    case BID_INSTANCE_PLACE_LIST:{
+      GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,3));
+      int r=collision_instance_list_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),l,N(a,n,4)>=0.5);
+      if(getenv("GML_LOG_COL")){ GmlInstance*cs=vm->cur_self; const char*cnm=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
+        const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
+        if(cnm) fprintf(stderr,"[col] %s instance_place_list(%.0f,%.0f,%s)=%d\n",cnm,N(a,n,0),N(a,n,1),tn,r); }
+      return vreal(r); }
+    case BID_SIN:
+      return vreal(sin(N(a,n,0)));
+    default:
+      return vreal(0);
+  }
+}
+
 GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
   { GmlVal v; int hp=hotprof_enabled(); double t0=hp?hotprof_now():0.0;
     if(fast_hot_builtin(vm,nm,a,n,&v)){ if(hp) hotprof_add(nm,(hotprof_now()-t0)*1000.0); return v; } }
