@@ -280,6 +280,9 @@ void gml_fire_async_saveload(GmlVM *vm);  /* drain queued Other_72 (async save/l
 void gml_fire_async_http(GmlVM *vm);      /* drain queued Other_62 (async HTTP, always-fail offline) events */
 void         gml_room_enter(GmlVM *vm, int room_index);      /* instantiate + Create events */
 void         gml_vm_goto_room_order(GmlVM *vm, int order_index);
+/* Apply one generic cheat line ("room=N", "name=V", "name[i]=V"). Returns 1 if it is a
+ * sticky global write the caller should re-apply each frame (freeze), 0 for a one-shot/no-op. */
+int          gml_cheat_apply(GmlVM *vm, const char *code);
 void         gml_vm_step(GmlVM *vm);                         /* one frame of the game loop */
 void         gml_vm_draw(GmlVM *vm);                         /* draw phase (needs vm->render) */
 void         gml_vm_draw_gui(GmlVM *vm);                     /* Draw GUI (Draw_64) pass */

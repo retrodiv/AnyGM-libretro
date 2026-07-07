@@ -2647,6 +2647,30 @@ void gml_vm_goto_room_order(GmlVM *vm, int order_index){
   gml_room_enter(vm,idx);
 }
 
+/* Apply one numeric assignment from a caller-supplied string.
+ * room=N queues a room transition; name=V and name[i]=V write a global array slot.
+ * Return 1 for a global write that the caller may repeat each frame, or 0 for a
+ * room transition or parse failure. */
+#define GML_CHEAT_NAMECH(c) (((c)>='a'&&(c)<='z')||((c)>='A'&&(c)<='Z')||((c)>='0'&&(c)<='9')||(c)=='_')
+int gml_cheat_apply(GmlVM *vm, const char *code){
+  if(!vm || !code) return 0;
+  while(*code==' '||*code=='\t') code++;
+  const char *n=code; while(*code && GML_CHEAT_NAMECH(*code)) code++;
+  int nlen=(int)(code-n);
+  if(nlen<=0 || nlen>=64) return 0;
+  char name[64]; memcpy(name,n,(size_t)nlen); name[nlen]=0;
+  int idx=0;
+  if(*code=='['){ code++; idx=atoi(code); while(*code && *code!=']') code++; if(*code==']') code++; }
+  while(*code==' ') code++;
+  if(*code!='=') return 0;
+  code++; while(*code==' ') code++;
+  double val=atof(code);
+  if(!strcmp(name,"room")){ vm->pending_room=(int)val; return 0; }   /* one-shot warp (room index) */
+  if(idx<0) idx=0;
+  gml_set_global_arr(vm,name,idx,val);
+  return 1;   /* sticky: re-apply each frame to freeze */
+}
+
 static void run_collisions(GmlVM *vm);
 static void run_boundary_events(GmlVM *vm);
 long g_vm_frame=0;
