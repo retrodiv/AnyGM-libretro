@@ -525,7 +525,6 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!strcmp(name,"fps")) return vreal(room_speed_value(vm));
   if(!strcmp(name,"view_current")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
   if(!strcmp(name,"room_persistent")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
-  if(!strcmp(name,"mouse_x")||!strcmp(name,"mouse_y")) return vreal(0);
   if(!strcmp(name,"current_time")) return vreal(current_time_value(vm));
   if(argument_get(vm,name,&out)) return out;
   if(!strcmp(name,"room_width")||!strcmp(name,"room_height")){   /* GM built-in: current room size */
