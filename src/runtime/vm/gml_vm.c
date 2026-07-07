@@ -2453,10 +2453,9 @@ void gml_room_enter(GmlVM *vm, int room_index){
       gml_run_event(vm,&vm->inst[i],"Other_5");
   }
   /* clear non-persistent instances (incl. deactivated ones, which keep active=0).
-   * GM fires Destroy_0 when clearing instances during room change. */
+   * Room disposal runs Clean Up after Room End, without invoking Destroy. */
   for(int i=0;i<vm->inst_count;i++) if((vm->inst[i].active||vm->inst[i].deactivated) && !vm->inst[i].persistent){
-    gml_run_event(vm,&vm->inst[i],"Destroy_0");
-    gml_run_event(vm,&vm->inst[i],"CleanUp_0");   /* GMS2.3: Clean Up also fires on room-change disposal */
+    gml_run_event(vm,&vm->inst[i],"CleanUp_0");   /* GMS2.3: Clean Up fires on room-change disposal */
     /* Preserve escaped arrays during room cleanup because surviving globals or
      * persistent instances may reference them. Full teardown deduplicates releases. */
     gml_obj_alive_adjust(vm,vm->inst[i].obj,-1); obj_list_unlink(vm,&vm->inst[i],vm->inst[i].obj);
