@@ -3172,9 +3172,9 @@ void gml_vm_draw(GmlVM *vm){
         fprintf(stderr,"   LSPR spr=%d depth=%.0f @(%.0f,%.0f) idx=%d ang=%.0f xs=%.1f ys=%.1f a=%.2f\n",
           s->sprite,it[k].depth,s->x,s->y,s->subimg,s->angle,s->xs,s->ys,s->alpha); }
       else { GmlInstance *in=&vm->inst[it[k].idx];
-        fprintf(stderr,"   %-26s spr=%-4d vis=%.0f depth=%.0f @(%.0f,%.0f) ang=%.0f xs=%.1f ys=%.1f a=%.2f\n",
-          (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",
-          (int)in->sprite_index,in->visible,in->depth,in->x,in->y,in->image_angle,in->image_xscale,in->image_yscale,in->image_alpha); } } }
+        fprintf(stderr,"   %-26s id=%u spr=%-4d vis=%.0f depth=%.0f @(%.0f,%.0f) ang=%.0f xs=%.1f ys=%.1f a=%.2f ii=%.4f is=%.3f\n",
+          (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",in->id,
+          (int)in->sprite_index,in->visible,in->depth,in->x,in->y,in->image_angle,in->image_xscale,in->image_yscale,in->image_alpha,in->image_index,in->image_speed); } } }
   skip_instdump:
   for(int k=0;k<m;k++){
     if(it[k].type==1){ GmlDrawTile *t=&tiles[it[k].idx];
