@@ -2851,6 +2851,8 @@ void gml_vm_step(GmlVM *vm){
   }
   /* deferred async save/load completion events (Other_72) queued by buffer_*_async this step */
   gml_fire_async_saveload(vm);
+  /* deferred async HTTP failure events (Other_62) queued by http_* this step (offline core) */
+  gml_fire_async_http(vm);
   /* room transition requested during the step */
   if(vm->pending_room>=0){ int t=vm->pending_room; vm->pending_room=-1; vm->step_alloc_base=0; gml_room_enter(vm,t); }
   /* Game End (Other_3): fire on all active instances when game_end was set. */
@@ -3641,6 +3643,7 @@ static void io_free(GmlVM *vm){
   }
   vm->next_buffer_id=1;
   vm->n_async_sl=0;
+  vm->n_async_http=0;
   vm->async_group_active=0;
   vm->async_group_id=0;
   vm->async_group_status=1;

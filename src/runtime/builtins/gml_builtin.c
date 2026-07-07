@@ -1835,6 +1835,36 @@ void gml_fire_async_saveload(GmlVM *vm){
   }
 }
 
+/* Fire GM's Async HTTP event (Other_62) for every http_* request made this step. No network in
+ * the core: every response is a failure ({id, status:-1, http_status:0, result:""}), so games
+ * with online scoreboards fall into their error path instead of stalling on "downloading". */
+void gml_fire_async_http(GmlVM *vm){
+  if(!vm || vm->n_async_http<=0) return;
+  int n=vm->n_async_http; vm->n_async_http=0;
+  if(getenv("GML_LOG_ASYNC")){ extern long g_vm_frame;
+    fprintf(stderr,"[async] f%ld http drain n=%d\n",g_vm_frame,n); }
+  for(int k=0;k<n;k++){
+    int id=ds_map_create_id(vm); if(id<0) return;
+    ds_map_put(vm,id,vstr("id"),vreal(vm->async_http_q[k]),1);
+    ds_map_put(vm,id,vstr("status"),vreal(-1),1);
+    ds_map_put(vm,id,vstr("http_status"),vreal(0),1);
+    ds_map_put(vm,id,vstr("result"),vstr(""),1);
+    *gml_varmap_put(&vm->globals,"async_load")=vreal(id);
+    int n0=vm->inst_count;
+    for(int i=0;i<n0;i++) if(vm->inst[i].active && !vm->inst[i].marked)
+      gml_run_event(vm,&vm->inst[i],"Other_62");
+    *gml_varmap_put(&vm->globals,"async_load")=vreal(-1);
+    GmlDSMap *m=ds_map_slot(vm,id);
+    if(m){ for(int j=0;j<m->len;j++) ds_entry_free(&m->entry[j]); free(m->entry); memset(m,0,sizeof(*m)); }
+  }
+}
+static GmlVal builtin_http_request_stub(GmlVM *vm){
+  int req=++vm->async_seq;
+  if(vm->n_async_http<16) vm->async_http_q[vm->n_async_http++]=req;
+  if(getenv("GML_LOG_ASYNC")){ extern long g_vm_frame;
+    fprintf(stderr,"[async] f%ld http queue id=%d (offline: will fail)\n",g_vm_frame,req); }
+  return vreal(req);
+}
 static void async_saveload_queue(GmlVM *vm, int req, int ok){
   if(!vm || req<=0) return;
   if(vm->n_async_sl<16){
@@ -2904,6 +2934,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"randomize")){ uint32_t s=(uint32_t)time(NULL) ^ (uint32_t)(uintptr_t)vm; vm->rng_state=s; gml_rng_seed(vm,s); return vreal(0); }
   if(!strcmp(nm,"random_set_seed")){ uint32_t s=(uint32_t)(int64_t)N(a,n,0); vm->rng_state=s; gml_rng_seed(vm,s); return vreal(0); }
   if(!strcmp(nm,"random_get_seed")) return vreal((double)vm->rng_state);
+  if(!strncmp(nm,"http_",5)&&(!strcmp(nm,"http_get")||!strcmp(nm,"http_get_file")||!strcmp(nm,"http_post_string")||!strcmp(nm,"http_request")))
+    return builtin_http_request_stub(vm);
   if(!strcmp(nm,"random_range")){ double a0=N(a,n,0), a1=N(a,n,1); return vreal(a0 + gml_rng_value(vm)*(a1-a0)); }
   if(!strcmp(nm,"irandom")){ int mx=(int)floor(N(a,n,0)); return vreal(mx<=0?0:(int)floor(gml_rng_value(vm)*(mx+1))); }
   if(!strcmp(nm,"irandom_range")){ int lo=(int)floor(N(a,n,0)), hi=(int)floor(N(a,n,1));

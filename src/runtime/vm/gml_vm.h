@@ -161,6 +161,11 @@ typedef struct GmlVM {
    * landed before the handler compares async_load[?"id"] against it. Drained every step. */
   int async_sl_q[16]; int async_sl_status[16]; int n_async_sl; int async_seq;
   int async_group_active, async_group_id, async_group_status, async_group_count;
+  /* deferred GM Async HTTP events (Other_62): the libretro core has no network, so every
+   * http_get/http_post/http_request returns a fresh id and fires a failed response next step
+   * ({id, status:-1, http_status:0, result:""}). Games with online features (leaderboards)
+   * take their offline/error path instead of waiting forever. */
+  int async_http_q[16]; int n_async_http;
   int room_rec_stride;   /* room instance record size (36/40/48), detected lazily */
   /* presentation: runtime window size (window_set_size) and GUI canvas (display_set_gui_size).
    * 0 = unset -> window falls back to GEN8 disp, GUI falls back to the window. */
@@ -271,6 +276,7 @@ void         gml_obj_alive_recount(GmlVM *vm);                       /* rebuild 
 int          gml_colgrid_collect(GmlVM *vm, double l, double t, double r, double b, int **out);
 void         gml_fire_gamepad_connected(GmlVM *vm);
 void gml_fire_async_saveload(GmlVM *vm);  /* drain queued Other_72 (async save/load) events */ /* dispatch GM gamepad-discovered async event */
+void gml_fire_async_http(GmlVM *vm);      /* drain queued Other_62 (async HTTP, always-fail offline) events */
 void         gml_room_enter(GmlVM *vm, int room_index);      /* instantiate + Create events */
 void         gml_vm_goto_room_order(GmlVM *vm, int order_index);
 void         gml_vm_step(GmlVM *vm);                         /* one frame of the game loop */
