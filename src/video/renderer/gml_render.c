@@ -1225,19 +1225,23 @@ static void parse_font(GmlRender *r){
     uint32_t texptr=u32(d,p+28);                    /* glyph-page TPAG record */
     int tsx=u16(d,texptr), tsy=u16(d,texptr+2), tatlas=(int16_t)u16(d,texptr+20);
     f->atlas=tatlas;
-    /* glyph table position: +40 (bc14-16) or +48 (GMS2.2.6+/2.3 insert AscenderOffset and
-     * Ascender after the scales). Detect per record: the count must be sane and be followed
-     * by an in-file pointer list. */
+    /* Probe glyph-table offsets 40, 48, 52 and 56 per font record.
+     * Prefer the first candidate with a plausible count, pointer and character code;
+     * otherwise use the first structurally plausible candidate. */
     uint32_t goff=40;
-    { uint32_t c40=u32(d,p+40), c48=u32(d,p+48);
-      uint32_t q40=(c40>0&&c40<100000)?u32(d,p+44):0, q48=(c48>0&&c48<100000)?u32(d,p+52):0;
-      int ok40 = q40>p && q40+14<=r->win->size;
-      int ok48 = q48>p && q48+14<=r->win->size;
-      if(!ok40 && ok48) goff=48;
-      else if(ok40 && ok48){
-        /* both look plausible (rare): prefer the one whose first glyph has a sane char code */
-        if(u16(d,q40)>0x2FFF && u16(d,q48)<=0x2FFF) goff=48;
-      } }
+    { int first_ok=-1, best=-1;
+      static const uint32_t cand[4]={40,48,52,56};
+      for(int ci=0;ci<4 && best<0;ci++){ uint32_t co=cand[ci];
+        uint32_t cnt=u32(d,p+co);
+        if(cnt==0 || cnt>=100000) continue;
+        uint32_t q=u32(d,p+co+4);
+        if(!(q>p && q+14<=r->win->size)) continue;
+        if(first_ok<0) first_ok=(int)co;
+        if(u16(d,q)<=0x2FFF) best=(int)co;
+      }
+      if(best>=0) goff=(uint32_t)best;
+      else if(first_ok>=0) goff=(uint32_t)first_ok;
+    }
     uint32_t gc=u32(d,p+goff);
     if(gc>100000) gc=0;                             /* guard */
     f->glyphs=calloc(gc?gc:1,sizeof(GmlGlyph));
