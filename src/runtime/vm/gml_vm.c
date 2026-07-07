@@ -1702,11 +1702,23 @@ static void run_paths(GmlVM *vm){
       int ea=(int)in->path_endaction;
       double boundary=in->path_position;
       int hit_end=next_pos>=1.0;
+      GmlInstance *in_before=in;
       gml_run_event(vm,in,"Other_8");
       in=inst_by_id(vm,(double)id);
+      if(getenv("GML_DBG_PATHEND") && in!=in_before)
+        fprintf(stderr,"[pathend-slotmove] id=%u slot_before=%d(%s act=%d mk=%d) slot_after=%d(%s act=%d mk=%d)\n",
+                id,(int)(in_before-vm->inst),
+                in_before->obj>=0&&in_before->obj<vm->n_objects?vm->objects[in_before->obj].name:"?",
+                in_before->active,in_before->marked,
+                in?(int)(in-vm->inst):-1,
+                in&&in->obj>=0&&in->obj<vm->n_objects?vm->objects[in->obj].name:"?",
+                in?in->active:-1,in?in->marked:-1);
       if(!in||!in->active||in->marked) continue;
       if((int)in->path_index==pi && (int)in->path_endaction==ea && fabs(in->path_position-boundary)<1e-9)
         path_apply_endaction(vm,in,pi,ea,next_pos,hit_end);
+      else if(getenv("GML_DBG_PATHEND"))
+        fprintf(stderr,"[pathend-skip] id=%u pi=%d in_pi=%d ea=%d in_ea=%d pos=%.12f bound=%.12f\n",
+                in->id,pi,(int)in->path_index,ea,(int)in->path_endaction,in->path_position,boundary);
     }
   }
 }
@@ -3606,6 +3618,21 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
   vm->cg_built_frame=-1;   /* memset leaves 0, which would collide with g_vm_frame==0 at boot */
   { extern void gml_part_reset_all(void); gml_part_reset_all(); }   /* fresh particle pools per game */
   vm->win=win; vm->pending_room=-1; vm->room_index=-1; vm->next_id=100000; vm->rng_state=0;
+  /* Seed dynamic IDs above room-placed IDs across the project to avoid collisions
+   * between persistent dynamic instances and instances placed in later rooms. */
+  { const GmlChunk *rc=gml_chunk(win,"ROOM");
+    if(rc){ const uint8_t *d=win->data; uint32_t nr=u32(d,rc->off);
+      for(uint32_t ri=0;ri<nr;ri++){
+        uint32_t rp=u32(d,rc->off+4+ri*4); if(!rp) continue;
+        GmlRoom r; if(gml_room_get(win,(int)ri,&r)!=0 || !r.obj_ptr) continue;
+        uint32_t cnt=u32(d,r.obj_ptr);
+        for(uint32_t i=0;i<cnt;i++){
+          uint32_t ip=u32(d,r.obj_ptr+4+i*4); if(!ip) continue;
+          uint32_t rid=u32(d,ip+12);
+          if(rid>=vm->next_id && rid<0x40000000u) vm->next_id=rid+1;
+        }
+      }
+    } }
   vm->next_buffer_id=1;
   vm->next_ds_id=1;
   vm->ds_list_compat_repair=0;
