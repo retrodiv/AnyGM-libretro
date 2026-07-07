@@ -2992,6 +2992,30 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"distance_to_point")){ GmlInstance*s=vm->cur_self; if(!s)return vreal(0);
     return vreal(hypot(N(a,n,0)-s->x,N(a,n,1)-s->y)); }
   if(!strcmp(nm,"point_distance")) return vreal(hypot(N(a,n,2)-N(a,n,0),N(a,n,3)-N(a,n,1)));
+  /* Standard-GML pure predicates/getters require explicit dispatch rather than
+   * the silent catch-all -> 0. GM colours are r + (g<<8) + (b<<16); HSV is 0-255 (see
+   * make_color_hsv above: 6 sectors -> *42.5). */
+  if(!strcmp(nm,"color_get_red")||!strcmp(nm,"colour_get_red")) return vreal((int)N(a,n,0)&255);
+  if(!strcmp(nm,"color_get_green")||!strcmp(nm,"colour_get_green")) return vreal(((int)N(a,n,0)>>8)&255);
+  if(!strcmp(nm,"color_get_blue")||!strcmp(nm,"colour_get_blue")) return vreal(((int)N(a,n,0)>>16)&255);
+  if(!strcmp(nm,"color_get_hue")||!strcmp(nm,"colour_get_hue")||
+     !strcmp(nm,"color_get_saturation")||!strcmp(nm,"colour_get_saturation")||
+     !strcmp(nm,"color_get_value")||!strcmp(nm,"colour_get_value")){
+    int col=(int)N(a,n,0); double r=(col&255)/255.0,g=((col>>8)&255)/255.0,b=((col>>16)&255)/255.0;
+    double mx=r>g?(r>b?r:b):(g>b?g:b), mn=r<g?(r<b?r:b):(g<b?g:b), dl=mx-mn;
+    if(strstr(nm,"value")) return vreal((int)(mx*255+0.5));
+    if(strstr(nm,"saturation")) return vreal(mx<=0?0:(int)(dl/mx*255+0.5));
+    double h=0; if(dl>0){ if(mx==r) h=fmod((g-b)/dl,6.0); else if(mx==g) h=(b-r)/dl+2.0; else h=(r-g)/dl+4.0; if(h<0)h+=6.0; }
+    return vreal((int)(h*42.5+0.5)%255);   /* hue 0-255 */
+  }
+  if(!strcmp(nm,"point_in_rectangle")){ double px=N(a,n,0),py=N(a,n,1),x1=N(a,n,2),y1=N(a,n,3),x2=N(a,n,4),y2=N(a,n,5);
+    return vreal((px>=x1&&py>=y1&&px<=x2&&py<=y2)?1:0); }
+  if(!strcmp(nm,"point_in_circle")){ double px=N(a,n,0),py=N(a,n,1),cx=N(a,n,2),cy=N(a,n,3),rr=N(a,n,4);
+    double dx=px-cx,dy=py-cy; return vreal((dx*dx+dy*dy)<=rr*rr?1:0); }
+  if(!strcmp(nm,"point_in_triangle")){ double px=N(a,n,0),py=N(a,n,1),x1=N(a,n,2),y1=N(a,n,3),x2=N(a,n,4),y2=N(a,n,5),x3=N(a,n,6),y3=N(a,n,7);
+    double d1=(px-x2)*(y1-y2)-(x1-x2)*(py-y2), d2=(px-x3)*(y2-y3)-(x2-x3)*(py-y3), d3=(px-x1)*(y3-y1)-(x3-x1)*(py-y1);
+    int hasNeg=(d1<0)||(d2<0)||(d3<0), hasPos=(d1>0)||(d2>0)||(d3>0); return vreal(!(hasNeg&&hasPos)?1:0); }
+  if(!strcmp(nm,"angle_difference")){ double d=fmod(N(a,n,0)-N(a,n,1),360.0); if(d<-180.0)d+=360.0; if(d>180.0)d-=360.0; return vreal(d); }
   if(!strcmp(nm,"frac")) { double v=N(a,n,0); return vreal(v-floor(v)); }   /* fractional part */
   if(!strcmp(nm,"array_length_1d")) return vreal(n>0?gml_val_array_length(a[0]):0);
   /* Return the top-level array length, including the row count for a two-dimensional array. */
