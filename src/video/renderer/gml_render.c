@@ -1216,6 +1216,7 @@ static void parse_font(GmlRender *r){
     memset(f,0,sizeof(*f));
     for(int k=0;k<256;k++) f->glyph_by_char[k]=-1;
     f->real=1;
+    f->sprite=-1;   /* real fonts have no sprite: keeps state records unambiguous vs sprite fonts */
     /* Interpret EmSize as an integer or floating-point field using the checks below. */
     int em_is_float=0;
     { uint32_t rawem=u32(d,p+8); float fem; memcpy(&fem,&rawem,4);
