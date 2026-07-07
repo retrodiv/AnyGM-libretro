@@ -303,13 +303,13 @@ static GmlRtElem *rt_background_for_layer(GmlVM *vm, GmlRtLayer *l, int create_f
   uint32_t lay=(rp && rp+92<vm->win->size) ? u32(d,rp+88) : 0;
   uint32_t lcnt=(lay && lay+4<vm->win->size) ? u32(d,lay) : 0;
   if(!lcnt || lcnt>=512) return NULL;
-  int doff=gml_room_layer_data_off(vm);
   for(uint32_t i=0;i<lcnt;i++){
     uint32_t lp=u32(d,lay+4+i*4);
-    if(!lp || lp+(uint32_t)doff+28>vm->win->size || u32(d,lp+8)!=1) continue;
+    if(!lp || u32(d,lp+8)!=1) continue;
     uint32_t np=u32(d,lp+0);
     if(!np || np>=vm->win->size || strcmp((const char*)(d+np),l->name)) continue;
-    uint32_t b=lp+(uint32_t)doff;
+    uint32_t b=gml_room_layer_type_off(vm,lp);
+    if(b+28>vm->win->size) continue;
     int spr=(int32_t)u32(d,b+8);
     GmlRtElem *e=gml_rt_elem_new(vm);
     if(!e) return NULL;
@@ -1037,6 +1037,11 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
 }
 static void draw_rect_prim(GmlRender *R, int x1, int y1, int x2, int y2, uint32_t gmcol, int outline){
   draw_rect_prim_alpha(R,x1,y1,x2,y2,gmcol,outline,R?R->alpha:1);
+}
+/* Full-screen color fill for spriteless GMS2 background layers (screen space, at layer depth). */
+void gml_draw_layer_color_fill(GmlRender *R, uint32_t gmcol, double alpha){
+  if(!R) return;
+  draw_rect_prim_alpha(R,0,0,R->fbw-1,R->fbh-1,gmcol,0,alpha);
 }
 static void draw_rect_colour_prim(GmlRender *R, int x1, int y1, int x2, int y2,
                                   uint32_t c1, uint32_t c2, uint32_t c3, uint32_t c4,
@@ -2896,7 +2901,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"darctan")) return vreal(atan(N(a,n,0))*180.0/M_PI);
   if(!strcmp(nm,"darctan2")) return vreal(atan2(N(a,n,0),N(a,n,1))*180.0/M_PI);
   if(!strcmp(nm,"random")) return vreal(gml_rng_value(vm) * N(a,n,0));  /* GM WELL512: (next/2^32)*x */
-  if(!strcmp(nm,"randomize")){ gml_rng_seed(vm,(uint32_t)time(NULL) ^ (uint32_t)(uintptr_t)vm); return vreal(0); }
+  if(!strcmp(nm,"randomize")){ uint32_t s=(uint32_t)time(NULL) ^ (uint32_t)(uintptr_t)vm; vm->rng_state=s; gml_rng_seed(vm,s); return vreal(0); }
+  if(!strcmp(nm,"random_set_seed")){ uint32_t s=(uint32_t)(int64_t)N(a,n,0); vm->rng_state=s; gml_rng_seed(vm,s); return vreal(0); }
+  if(!strcmp(nm,"random_get_seed")) return vreal((double)vm->rng_state);
   if(!strcmp(nm,"random_range")){ double a0=N(a,n,0), a1=N(a,n,1); return vreal(a0 + gml_rng_value(vm)*(a1-a0)); }
   if(!strcmp(nm,"irandom")){ int mx=(int)floor(N(a,n,0)); return vreal(mx<=0?0:(int)floor(gml_rng_value(vm)*(mx+1))); }
   if(!strcmp(nm,"irandom_range")){ int lo=(int)floor(N(a,n,0)), hi=(int)floor(N(a,n,1));

@@ -2086,8 +2086,31 @@ static double get_global_arr_d(GmlVM *vm, const char *nm, int idx){
   GmlArr *A=slot->arr; return (A && idx>=0 && idx<A->len)? asnum(A->data[idx]) : 0;
 }
 void gml_set_global_arr(GmlVM *vm, const char *nm, int idx, double val){ set_global_arr(vm,nm,idx,val); }
-/* Detect layer type-data offset 36 or 48 by checking background sprite indices.
- * Share the selected layout between drawing and room entry. */
+/* Select the base or effect-field layer layout by structural voting across background records.
+ * Effect-field layers include a variable-length property list before their type data. */
+static int bg_type_data_ok(const GmlWin *w, uint32_t b, int nspr){
+  const uint8_t *d=w->data;
+  if(b+40>w->size) return 0;
+  if(u32(d,b)>1) return 0;                                   /* visible */
+  if(u32(d,b+4)>1) return 0;                                 /* foreground */
+  int32_t spr=(int32_t)u32(d,b+8);
+  if(spr<-1 || spr>=nspr) return 0;                          /* sprite id */
+  if(u32(d,b+12)>1||u32(d,b+16)>1||u32(d,b+20)>1) return 0;  /* htiled/vtiled/stretch */
+  float ff=f32(d,b+28);
+  if(!(ff>=-1.0f && ff<65536.0f)) return 0;                  /* first frame */
+  if(u32(d,b+36)>1) return 0;                                /* animation speed type */
+  return 1;
+}
+static int layer_effect_fields_ok(const GmlWin *w, uint32_t lp){
+  const uint8_t *d=w->data;
+  if(lp+48>w->size) return 0;
+  if(u32(d,lp+36)>1) return 0;                               /* effectEnabled */
+  uint32_t sp=u32(d,lp+40);                                  /* effectType: null or strptr */
+  if(sp){ if(sp<12 || sp+1>=w->size) return 0;
+    uint32_t sl=u32(d,sp-4); if(sl==0 || sl>256) return 0; }
+  if(u32(d,lp+44)>64) return 0;                              /* effect property count */
+  return 1;
+}
 int gml_room_layer_data_off(GmlVM *vm){
   if(vm->layer_data_off) return vm->layer_data_off;
   vm->layer_data_off=36;
@@ -2097,19 +2120,31 @@ int gml_room_layer_data_off(GmlVM *vm){
   const uint8_t *d=vm->win->data;
   int nspr=(int)u32(d,sc->off);
   int nrooms=gml_room_count(vm->win);
-  for(int ri=0;ri<nrooms;ri++){
+  int v36=0, v48=0, sampled=0;
+  for(int ri=0;ri<nrooms && sampled<64;ri++){
     uint32_t rp=u32(d,rc->off+4+ri*4);
     uint32_t lay=(rp && rp+92<vm->win->size)?u32(d,rp+88):0;
     uint32_t lcnt=(lay && lay+4<vm->win->size)?u32(d,lay):0;
     if(!lcnt || lcnt>=512) continue;
-    for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(d,lay+4+i*4);
+    for(uint32_t i=0;i<lcnt && sampled<64;i++){ uint32_t lp=u32(d,lay+4+i*4);
       if(!lp || lp+96>vm->win->size || u32(d,lp+8)!=1) continue;
-      int s48=(int32_t)u32(d,lp+56), v48=(int)u32(d,lp+48);
-      if(v48<=1 && s48>=-1 && s48<nspr && (u32(d,lp+72)>>24)>=0x7F) vm->layer_data_off=48;
-      return vm->layer_data_off;
+      sampled++;
+      if(bg_type_data_ok(vm->win,lp+36,nspr)) v36++;
+      if(layer_effect_fields_ok(vm->win,lp)){
+        uint32_t pc=u32(d,lp+44);
+        if(bg_type_data_ok(vm->win,lp+48+12*pc,nspr)) v48++;
+      }
     }
   }
+  if(v48>v36) vm->layer_data_off=48;
   return vm->layer_data_off;
+}
+/* Resolve each layer's type-data start after its optional effect-property list. */
+uint32_t gml_room_layer_type_off(GmlVM *vm, uint32_t lp){
+  if(gml_room_layer_data_off(vm)==36) return lp+36;
+  uint32_t pc=(lp+48<=vm->win->size)?u32(vm->win->data,lp+44):0;
+  if(pc>64) pc=0;
+  return lp+48+12*pc;
 }
 
 /* ---- GMS2 tile layers (type-4 room layers) for tile-based collision ---- */
@@ -2204,15 +2239,16 @@ static void gml_room_bind_asset_sprites(GmlVM *vm, int room_index){
   uint32_t lay = (rp && rp+92<vm->win->size) ? u32(rd,rp+88) : 0;
   uint32_t lcnt = (lay && lay+4<vm->win->size) ? u32(rd,lay) : 0;
   if(!lcnt || lcnt>=512) return;
-  int doff = gml_room_layer_data_off(vm);
   for(uint32_t i=0;i<lcnt;i++){
     uint32_t lp=u32(rd,lay+4+i*4);
-    if(!lp || lp+(uint32_t)doff+8>vm->win->size || u32(rd,lp+8)!=3) continue; /* Assets */
+    if(!lp || u32(rd,lp+8)!=3) continue; /* Assets */
+    uint32_t tb=gml_room_layer_type_off(vm,lp);
+    if(tb+8>vm->win->size) continue;
     uint32_t np=u32(rd,lp+0);
     const char *lname=(np&&np<vm->win->size)?(const char*)(rd+np):"";
     GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,lname);
     if(!rl) continue;
-    uint32_t sprites=u32(rd,lp+(uint32_t)doff+4);          /* LayerAssetsData.Sprites */
+    uint32_t sprites=u32(rd,tb+4);          /* LayerAssetsData.Sprites */
     uint32_t scnt=(sprites && sprites+4<vm->win->size)?u32(rd,sprites):0;
     if(scnt>100000) continue;
     for(uint32_t k=0;k<scnt;k++){
@@ -2278,10 +2314,11 @@ static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_r
     }
   }
   gml_tilemaps_clear(vm);
-  int doff = gml_room_layer_data_off(vm);
   if(lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(rd,lay+4+i*4);
-    if(!lp || lp+(uint32_t)doff+4>vm->win->size || u32(rd,lp+8)!=2) continue;
-    uint32_t ic=u32(rd,lp+(uint32_t)doff);
+    if(!lp || u32(rd,lp+8)!=2) continue;
+    uint32_t tb=gml_room_layer_type_off(vm,lp);
+    if(tb+4>vm->win->size) continue;
+    uint32_t ic=u32(rd,tb);
     if(ic>100000) continue;
     int ord=(int)i;
     uint32_t np=u32(rd,lp+0);
@@ -2290,7 +2327,7 @@ static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_r
       if(rl) ord=rl->order;
     }
     for(uint32_t k=0;k<ic;k++){
-      uint32_t ip2=lp+(uint32_t)doff+4+k*4;
+      uint32_t ip2=tb+4+k*4;
       if(ip2+4>vm->win->size) break;
       uint32_t iid=u32(rd,ip2);
       for(int ii=0; ii<vm->inst_count; ii++)
@@ -2303,12 +2340,13 @@ static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_r
   const GmlChunk *bc = gml_chunk(vm->win,"BGND");
   uint32_t bcnt = bc ? u32(rd,bc->off) : 0;
   if(lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(rd,lay+4+i*4);
-    if(!lp || lp+(uint32_t)doff+12>vm->win->size) continue;
-    if(u32(rd,lp+8)!=4) continue;                 /* layer type 4 = tile layer */
-    int tileset=(int32_t)u32(rd,lp+doff);
-    int cols=(int32_t)u32(rd,lp+doff+4), rows=(int32_t)u32(rd,lp+doff+8);
+    if(!lp || u32(rd,lp+8)!=4) continue;          /* layer type 4 = tile layer */
+    uint32_t tb=gml_room_layer_type_off(vm,lp);
+    if(tb+12>vm->win->size) continue;
+    int tileset=(int32_t)u32(rd,tb);
+    int cols=(int32_t)u32(rd,tb+4), rows=(int32_t)u32(rd,tb+8);
     if(cols<=0||rows<=0||cols>8192||rows>8192) continue;
-    uint32_t tdata=lp+(uint32_t)doff+12;
+    uint32_t tdata=tb+12;
     if((uint64_t)tdata + (uint64_t)cols*rows*4 > vm->win->size) continue;
     int tw=16,th=16;
     if(bc && tileset>=0 && (uint32_t)tileset<bcnt){ uint32_t bp=u32(rd,bc->off+4+tileset*4);
@@ -2484,9 +2522,10 @@ void gml_room_enter(GmlVM *vm, int room_index){
     uint32_t lay = (rp && rp+92<vm->win->size) ? u32(d,rp+88) : 0;
     uint32_t lcnt = (lay && lay+4<vm->win->size) ? u32(d,lay) : 0;
     if(lcnt>0 && lcnt<512){
-      int doff=gml_room_layer_data_off(vm);
       for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(d,lay+4+i*4);
-        if(!lp || lp+(uint32_t)doff+4>vm->win->size || u32(d,lp+8)!=2) continue;
+        if(!lp || u32(d,lp+8)!=2) continue;
+        uint32_t tb=gml_room_layer_type_off(vm,lp);
+        if(tb+4>vm->win->size) continue;
         double ldep=(double)(int32_t)u32(d,lp+12);
         int lorder=(int)i;
         uint32_t lnp=u32(d,lp+0);
@@ -2494,10 +2533,10 @@ void gml_room_enter(GmlVM *vm, int room_index){
           GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,(const char*)(d+lnp));
           if(rl) lorder=rl->order;
         }
-        uint32_t ic=u32(d,lp+(uint32_t)doff);
+        uint32_t ic=u32(d,tb);
         if(ic>100000) continue;
         for(uint32_t k=0;k<ic;k++){
-          uint32_t ip2=lp+(uint32_t)doff+4+k*4;
+          uint32_t ip2=tb+4+k*4;
           if(ip2+4>vm->win->size) break;
           uint32_t iid=u32(d,ip2);
           for(uint32_t j=0;j<cnt;j++){ int idx=room_inst_idx[j];
@@ -2953,10 +2992,9 @@ void gml_vm_draw(GmlVM *vm){
     uint32_t lay = (rp && rp+92<vm->win->size) ? u32(d,rp+88) : 0;
     uint32_t lcnt = (lay && lay+4<vm->win->size) ? u32(d,lay) : 0;
     if(lcnt>0 && lcnt<512){
-      int doff=gml_room_layer_data_off(vm);
       long fin = g_vm_frame - vm->room_enter_frame; if(fin<0) fin=0;
       for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(d,lay+4+i*4);
-        if(!lp || lp+(uint32_t)doff+40>vm->win->size) continue;
+        if(!lp || lp+44>vm->win->size) continue;
         uint32_t ltype=u32(d,lp+8); double ldep=(double)(int32_t)u32(d,lp+12);
         double lx=f32(d,lp+16), ly=f32(d,lp+20), lhs=f32(d,lp+24), lvs=f32(d,lp+28);
         /* Runtime layer control: if the game moved this layer (layer_x/layer_hspeed by name), use its
@@ -2974,19 +3012,22 @@ void gml_vm_draw(GmlVM *vm){
         if(rl ? !rl->visible : !u32(d,lp+32)) continue;
         if(ltype==1){
           if(rl && rt_layer_has_background(vm,rl->id)) continue;
-          uint32_t b=lp+doff;
+          uint32_t b=gml_room_layer_type_off(vm,lp);
+          if(b+28>vm->win->size) continue;
           if(!u32(d,b)) continue;     /* background not visible */
           int spr=(int32_t)u32(d,b+8);
-          if(spr<0) continue;
+          uint32_t col=u32(d,b+24);
+          /* Use the layer color when no sprite is assigned; skip fully transparent color. */
+          if(spr<0 && !(col>>24)) continue;
           lbg=realloc(lbg,(nlb+1)*sizeof(*lbg));
           lbg[nlb].sprite=spr; lbg[nlb].th=(int)u32(d,b+12); lbg[nlb].tv=(int)u32(d,b+16);
           lbg[nlb].stretch=(int)u32(d,b+20);
-          uint32_t col=u32(d,b+24);
           lbg[nlb].blend=col&0xFFFFFF; lbg[nlb].alpha=((col>>24)&0xFF)/255.0;
           lbg[nlb].x=lox; lbg[nlb].y=loy; lbg[nlb].depth=ldep; lbg[nlb].order=lorder;
           nlb++;
         } else if(ltype==3){
-          uint32_t tl=u32(d,lp+doff);
+          uint32_t tb3=gml_room_layer_type_off(vm,lp);
+          uint32_t tl=(tb3+4<=vm->win->size)?u32(d,tb3):0;
           uint32_t tcnt=(tl && tl+4<vm->win->size)?u32(d,tl):0;
           if(tcnt==0 || tcnt>100000) continue;
           for(uint32_t k2=0;k2<tcnt;k2++){ uint32_t tp=u32(d,tl+4+k2*4);
@@ -3125,7 +3166,8 @@ void gml_vm_draw(GmlVM *vm){
       gml_draw_sprite_part_ext(R,t->sprite,0,t->sx,t->sy,t->w,t->h,t->x,t->y,t->xs,t->ys,t->blend,t->alpha);
       continue; }
     if(it[k].type==3){ struct LayBg *b=&lbg[it[k].idx];
-      if(b->th || b->tv) gml_draw_sprite_tiled_ext(R,b->sprite,0,b->x,b->y,1,1,b->blend,b->alpha);
+      if(b->sprite<0) gml_draw_layer_color_fill(R,b->blend,b->alpha);
+      else if(b->th || b->tv) gml_draw_sprite_tiled_ext(R,b->sprite,0,b->x,b->y,1,1,b->blend,b->alpha);
       else gml_draw_sprite_ext(R,b->sprite,0,b->x,b->y,1,1,0,b->blend,b->alpha);
       continue; }
     if(it[k].type==4){ gml_part_system_drawit(R,it[k].idx); continue; }

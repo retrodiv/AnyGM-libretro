@@ -140,7 +140,7 @@ typedef struct GmlVM {
   /* RNG: WELL512 (Lomont compact form), MSVC-LCG seed expansion,
    * default seed 0. random(x) = (next()/2^32)*x. See LICENSES/WELL512.txt. */
   uint32_t rng_well[16]; int rng_index;
-  uint32_t rng_state;   /* (legacy; unused by the WELL512 path) */
+  uint32_t rng_state;   /* last seed set (randomize/random_set_seed); random_get_seed reads it */
   /* tile-layer runtime mutations (tile_layer_delete/depth/shift/hide/show), reset on room enter.
    * Pure no-op when n_tile_mut==0 → zero effect on the hot draw path for rooms that
    * never call tile_layer_*; only those that do pay the per-tile lookup. */
@@ -209,6 +209,7 @@ int gml_tilemap_set_cell(GmlTileMap *tm, int cx, int cy, uint32_t datum);
 void gml_tilemap_effective(GmlVM *vm, const GmlTileMap *tm,
                            double *x, double *y, double *depth, int *visible);
 int gml_room_layer_data_off(GmlVM *vm);
+uint32_t gml_room_layer_type_off(GmlVM *vm, uint32_t lp);  /* per-layer type-data offset with optional effect fields */
 void gml_struct_gc(GmlVM *vm);
 
 void gml_arr_mark_escaped(GmlVal v);   /* array stored beyond its scope: locals cleanup must not free it */

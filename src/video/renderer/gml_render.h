@@ -153,6 +153,7 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y);
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                                double xs, double ys, uint32_t blend, double alpha);
+void gml_draw_layer_color_fill(GmlRender *r, uint32_t gmcol, double alpha); /* spriteless GMS2 bg layer */
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha);
