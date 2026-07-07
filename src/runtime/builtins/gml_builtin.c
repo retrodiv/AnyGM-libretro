@@ -3266,6 +3266,34 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     char*o=malloc(cnt+1); memcpy(o,s+idx-1,cnt); o[cnt]=0; return vstr_owned(o); }
   if(!strcmp(nm,"chr")){ int c=(int)N(a,n,0); char b[2]={(char)(c&0xff),0}; return vstr_owned(strdup(b)); }
   if(!strcmp(nm,"ord")){ const unsigned char*s=(const unsigned char*)S(a,n,0); return vreal(s[0]); }
+  /* base64_encode(str)/base64_decode(str): standard RFC-4648 (was hitting the catch-all -> 0).
+   * Operates on the string's bytes; decode stops a returned C-string at the first NUL, so it is for
+   * text/base64 payloads (binary blobs use the buffer_* API). */
+  if(!strcmp(nm,"base64_encode")||!strcmp(nm,"base64_encode_string")){
+    static const char B64[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const unsigned char *u=(const unsigned char*)S(a,n,0); size_t L=u?strlen((const char*)u):0;
+    char *o=malloc((L+2)/3*4+1), *p=o; if(!o) return vstr("");
+    size_t i=0;
+    for(; i+3<=L; i+=3){ uint32_t v=((uint32_t)u[i]<<16)|((uint32_t)u[i+1]<<8)|u[i+2];
+      *p++=B64[(v>>18)&63]; *p++=B64[(v>>12)&63]; *p++=B64[(v>>6)&63]; *p++=B64[v&63]; }
+    if(L-i==1){ uint32_t v=(uint32_t)u[i]<<16; *p++=B64[(v>>18)&63]; *p++=B64[(v>>12)&63]; *p++='='; *p++='='; }
+    else if(L-i==2){ uint32_t v=((uint32_t)u[i]<<16)|((uint32_t)u[i+1]<<8);
+      *p++=B64[(v>>18)&63]; *p++=B64[(v>>12)&63]; *p++=B64[(v>>6)&63]; *p++='='; }
+    *p=0; return vstr_owned(o);
+  }
+  if(!strcmp(nm,"base64_decode")||!strcmp(nm,"base64_decode_string")){
+    static signed char D[256]; static int dinit=0;
+    if(!dinit){ dinit=1; for(int k=0;k<256;k++) D[k]=-1;
+      const char *B="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      for(int k=0;k<64;k++) D[(unsigned char)B[k]]=(signed char)k; }
+    const char *s=S(a,n,0); size_t L=s?strlen(s):0;
+    char *o=malloc(L/4*3+4), *p=o; if(!o) return vstr("");
+    int bits=0; uint32_t acc=0;
+    for(size_t i=0;i<L;i++){ int c=D[(unsigned char)s[i]]; if(c<0) continue;   /* skip '=' / whitespace */
+      acc=(acc<<6)|(uint32_t)c; bits+=6;
+      if(bits>=8){ bits-=8; *p++=(char)((acc>>bits)&0xff); } }
+    *p=0; return vstr_owned(o);
+  }
   if(!strcmp(nm,"string_char_at")){ const char*s=S(a,n,0); int idx=(int)N(a,n,1), len=(int)strlen(s);
     if(idx<1||idx>len) return vstr("");
     return vstr_owned(dup_n(s+idx-1,1)); }
