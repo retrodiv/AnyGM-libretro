@@ -447,6 +447,17 @@ static double current_time_value(GmlVM *vm){
    * executing. Some GM scripts implement sleep by spinning on current_time inside one frame. */
   return (double)g_vm_frame * (1000.0 / room_speed_value(vm)) + intra;
 }
+/* Return a frame-based microsecond timer with intra-frame CPU-time advance. */
+double gml_vm_get_timer_us(GmlVM *vm){
+  extern long g_vm_frame;
+  static long frame=-1;
+  static double frame_cpu_ms=0.0;
+  double now=cpu_clock_ms();
+  if(frame!=g_vm_frame){ frame=g_vm_frame; frame_cpu_ms=now; }
+  double intra_ms=now-frame_cpu_ms;
+  if(intra_ms<0.0) intra_ms=0.0;
+  return (double)g_vm_frame * (1000000.0 / room_speed_value(vm)) + intra_ms*1000.0;
+}
 static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, GmlVal *out){
   if(!in || !vm || !vm->render) return 0;
   GmlRender *R=(GmlRender*)vm->render;
@@ -2934,18 +2945,23 @@ static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap
   t.order=order;
   (*tiles)[*nt]=t; (*depth)[*nt]=dep; (*nt)++;
 }
-typedef struct { double depth; int seq, type, idx, order; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite */
+typedef struct { double depth; int seq, type, idx, order; uint32_t inst_id; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite */
+static int g_draw_newer_on_top;   /* GMS2-format rooms: same-depth instances draw newest-on-top */
 static int cmp_draw_item(const void *pa, const void *pb){
   const GmlDrawItem *a=pa,*b=pb;
   if(a->depth!=b->depth) return a->depth>b->depth? -1:1;     /* higher depth first (behind) */
   if(a->order>=0 && b->order>=0 && a->order!=b->order)
     return a->order>b->order? -1:1;                           /* GMS2 layer list: later/back layers first */
-  /* At equal depth, order room tiles above instances and later room tiles above
-   * earlier tiles. Draw newer instances before older ones. Runtime layer items
-   * retain their sequence ordering. */
+  /* At equal depth, order room tiles above instances and later tiles above earlier ones.
+   * Layer-format rooms place newer instance IDs on top; otherwise use reverse sequence order.
+   * Runtime layer items retain the sequence fallback. */
   int at1=a->type==1, bt1=b->type==1;
   if(at1!=bt1) return at1? 1 : -1;                           /* room tile sorts later (front) */
   if(at1 && bt1) return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);   /* tiles: list order, later on top */
+  if(g_draw_newer_on_top && a->type==0 && b->type==0){
+    if(a->inst_id!=b->inst_id) return a->inst_id<b->inst_id? -1 : 1;   /* older behind, newest on top */
+    return 0;
+  }
   return a->seq>b->seq? -1 : (a->seq<b->seq?1:0);
 }
 static int rt_layer_has_background(GmlVM *vm, int layer_id){
@@ -3143,14 +3159,15 @@ void gml_vm_draw(GmlVM *vm){
   /* unified depth-sorted draw list of instances + tiles + GMS2 layers + auto-draw particle systems */
   int npart=0; while(gml_part_system_auto_draw_nth(npart,NULL,NULL)) npart++;
   int cap=n+nt+nlb+nlt+nls+npart; GmlDrawItem *it=malloc((cap>0?cap:1)*sizeof(GmlDrawItem)); int m=0;
+  g_draw_newer_on_top = vm->gms2_room_format;
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked){
-    it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; it[m].order=vm->inst[i].draw_layer_order; m++; }
-  for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; it[m].order=tiles[i].order; m++; }
-  for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; it[m].order=ltl[i].order; m++; }
-  for(int i=0;i<nlb;i++){ it[m].depth=lbg[i].depth; it[m].type=3; it[m].idx=i; it[m].seq=m; it[m].order=lbg[i].order; m++; }
-  for(int i=0;i<nls;i++){ it[m].depth=lsp[i].depth; it[m].type=5; it[m].idx=i; it[m].seq=m; it[m].order=lsp[i].order; m++; }
+    it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; it[m].inst_id=vm->inst[i].id; it[m].order=vm->inst[i].draw_layer_order; m++; }
+  for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; it[m].inst_id=0; it[m].order=tiles[i].order; m++; }
+  for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; it[m].inst_id=0; it[m].order=ltl[i].order; m++; }
+  for(int i=0;i<nlb;i++){ it[m].depth=lbg[i].depth; it[m].type=3; it[m].idx=i; it[m].seq=m; it[m].inst_id=0; it[m].order=lbg[i].order; m++; }
+  for(int i=0;i<nls;i++){ it[m].depth=lsp[i].depth; it[m].type=5; it[m].idx=i; it[m].seq=m; it[m].inst_id=0; it[m].order=lsp[i].order; m++; }
   for(int i=0;i<npart;i++){ int pid=0; double dep=0;
-    if(gml_part_system_auto_draw_nth(i,&pid,&dep)){ it[m].depth=dep; it[m].type=4; it[m].idx=pid; it[m].seq=m; it[m].order=-1; m++; } }
+    if(gml_part_system_auto_draw_nth(i,&pid,&dep)){ it[m].depth=dep; it[m].type=4; it[m].idx=pid; it[m].seq=m; it[m].inst_id=0; it[m].order=-1; m++; } }
   qsort(it,m,sizeof(GmlDrawItem),cmp_draw_item);
   static int dumped=0;
   { const char *li=getenv("GML_LOG_INST");
@@ -3624,6 +3641,12 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
     if(rc){ const uint8_t *d=win->data; uint32_t nr=u32(d,rc->off);
       for(uint32_t ri=0;ri<nr;ri++){
         uint32_t rp=u32(d,rc->off+4+ri*4); if(!rp) continue;
+        /* GMS2 room format: layer list pointer at +88 (drives the same-depth draw tiebreak) */
+        if(!vm->gms2_room_format && rp+92<win->size){
+          uint32_t lay=u32(d,rp+88);
+          uint32_t lcnt=(lay && lay+4<win->size)?u32(d,lay):0;
+          if(lcnt>0 && lcnt<512) vm->gms2_room_format=1;
+        }
         GmlRoom r; if(gml_room_get(win,(int)ri,&r)!=0 || !r.obj_ptr) continue;
         uint32_t cnt=u32(d,r.obj_ptr);
         for(uint32_t i=0;i<cnt;i++){

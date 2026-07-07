@@ -172,6 +172,7 @@ typedef struct GmlVM {
   int window_w, window_h, gui_w, gui_h;
   long room_enter_frame;      /* g_vm_frame at room entry (GMS2 layer scroll phase) */
   int layer_data_off;         /* GMS2 layer type-data offset (36, or 48 with effect fields); 0=undetected */
+  int gms2_room_format;       /* 1 if any ROOM record carries a GMS2 layer list (same-depth instances draw newest-on-top) */
   int next_buffer_id;
   /* keyboard events (Keyboard_N held / KeyPress_N / KeyRelease_N): unique suffixes present in
    * the game's CODE names, fired each step against the key state (event-driven input games). */

@@ -2931,7 +2931,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"darctan")) return vreal(atan(N(a,n,0))*180.0/M_PI);
   if(!strcmp(nm,"darctan2")) return vreal(atan2(N(a,n,0),N(a,n,1))*180.0/M_PI);
   if(!strcmp(nm,"random")) return vreal(gml_rng_value(vm) * N(a,n,0));  /* GM WELL512: (next/2^32)*x */
-  if(!strcmp(nm,"randomize")){ uint32_t s=(uint32_t)time(NULL) ^ (uint32_t)(uintptr_t)vm; vm->rng_state=s; gml_rng_seed(vm,s); return vreal(0); }
+  if(!strcmp(nm,"randomize")){
+    /* GML_RANDOMIZE_SEED optionally fixes the seed; otherwise derive it from the clock and VM address. */
+    static int fixed_init=0; static long fixed=-1;
+    if(!fixed_init){ const char *e=getenv("GML_RANDOMIZE_SEED"); fixed=e?atol(e):-1; fixed_init=1; }
+    uint32_t s = fixed>=0 ? (uint32_t)fixed : ((uint32_t)time(NULL) ^ (uint32_t)(uintptr_t)vm);
+    vm->rng_state=s; gml_rng_seed(vm,s); return vreal(0); }
   if(!strcmp(nm,"random_set_seed")){ uint32_t s=(uint32_t)(int64_t)N(a,n,0); vm->rng_state=s; gml_rng_seed(vm,s); return vreal(0); }
   if(!strcmp(nm,"random_get_seed")) return vreal((double)vm->rng_state);
   if(!strncmp(nm,"http_",5)&&(!strcmp(nm,"http_get")||!strcmp(nm,"http_get_file")||!strcmp(nm,"http_post_string")||!strcmp(nm,"http_request")))
@@ -3960,8 +3965,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"display_get_gui_height"))
       return vreal(vm->gui_h>0? vm->gui_h : ((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)));
     if(!strcmp(nm,"get_timer")){
-      /* Return CPU time in microseconds using clock(), including time spent within the current VM frame. */
-      return vreal((double)clock() * (1000000.0 / CLOCKS_PER_SEC));
+      /* Return the frame-based timer plus intra-frame CPU time in microseconds. */
+      extern double gml_vm_get_timer_us(GmlVM*);
+      return vreal(gml_vm_get_timer_us(vm));
     }
     if(!strcmp(nm,"surface_get_width")) return vreal(R?gml_surface_width(R,(int)N(a,n,0)):0);
     if(!strcmp(nm,"surface_get_height")) return vreal(R?gml_surface_height(R,(int)N(a,n,0)):0);
