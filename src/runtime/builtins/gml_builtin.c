@@ -540,6 +540,28 @@ static int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite)
   ds_map_index_add(m,m->len-1);
   return 1;
 }
+static void ds_map_clear_entries(GmlDSMap *m){
+  if(!m) return;
+  for(int i=0;i<m->len;i++) ds_entry_free(&m->entry[i]);
+  m->len=0;
+  m->hdirty=1;
+}
+static void ds_map_destroy_live(GmlDSMap *m){
+  if(!m) return;
+  ds_map_clear_entries(m);
+  free(m->entry);
+  ds_map_index_free(m);
+  memset(m,0,sizeof(*m));
+}
+static int ds_map_replace_from_map(GmlVM *vm, int dst_id, int src_id){
+  GmlDSMap *dst=ds_map_slot(vm,dst_id);
+  GmlDSMap *src=ds_map_slot(vm,src_id);
+  if(!dst||!src) return 0;
+  if(dst==src) return 1;
+  ds_map_clear_entries(dst);
+  for(int i=0;i<src->len;i++) ds_map_put(vm,dst_id,src->entry[i].key_val,src->entry[i].val,1);
+  return 1;
+}
 static void ds_log_val_simple(GmlVal v){
   if(v.t==V_STR) fprintf(stderr,"\"%s\"",v.s?v.s:"");
   else if(v.t==V_ARR) fprintf(stderr,"<array>");
@@ -767,6 +789,66 @@ static GmlVal json_encode_root(GmlVM *vm, GmlVal v){
   JsonBuf b={0};
   if(!json_encode_val(vm,&b,v,0,1)){ free(b.s); return vstr_owned(strdup("{}")); }
   return vstr_owned(b.s?b.s:strdup("null"));
+}
+static GmlVal ds_map_write_text(GmlVM *vm, int id){
+  GmlDSMap *m=ds_map_slot(vm,id);
+  JsonBuf b={0};
+  if(!m || !jb_puts(&b,"{\"__gml_ds_map__\":[")){ free(b.s); return vstr_owned(strdup("{}")); }
+  for(int i=0;i<m->len;i++){
+    if(i && !jb_putc(&b,',')){ free(b.s); return vstr_owned(strdup("{}")); }
+    if(!jb_putc(&b,'[')){ free(b.s); return vstr_owned(strdup("{}")); }
+    GmlVal key=m->entry[i].key_val;
+    if(key.t==V_STR){
+      if(!jb_puts(&b,"\"s\",") || !json_encode_val(vm,&b,key,0,0)){ free(b.s); return vstr_owned(strdup("{}")); }
+    } else if(key.t==V_UNDEF){
+      if(!jb_puts(&b,"\"u\",null")){ free(b.s); return vstr_owned(strdup("{}")); }
+    } else {
+      if(!jb_puts(&b,"\"r\",") || !json_encode_val(vm,&b,vreal(key.t==V_REAL?key.d:0.0),0,0)){ free(b.s); return vstr_owned(strdup("{}")); }
+    }
+    if(!jb_putc(&b,',') || !json_encode_val(vm,&b,m->entry[i].val,0,0) || !jb_putc(&b,']')){
+      free(b.s);
+      return vstr_owned(strdup("{}"));
+    }
+  }
+  if(!jb_puts(&b,"]}")){ free(b.s); return vstr_owned(strdup("{}")); }
+  return vstr_owned(b.s?b.s:strdup("{}"));
+}
+static int ds_map_read_text(GmlVM *vm, int dst_id, const char *text){
+  GmlVal parsed=json_decode_text(vm,text);
+  if(parsed.t!=V_REAL) return 0;
+  int src_id=(int)parsed.d;
+  if(fabs(parsed.d-(double)src_id)>=1e-9) return 0;
+  GmlDSMap *src=ds_map_slot(vm,src_id);
+  if(!src) return 0;
+  char *wrap=ds_key_make(vstr("__gml_ds_map__"));
+  int wi=ds_map_find_entry(src,wrap);
+  free(wrap);
+  if(wi>=0 && src->entry[wi].val.t==V_ARR && src->entry[wi].val.arr){
+    GmlDSMap *dst=ds_map_slot(vm,dst_id);
+    if(!dst){ ds_map_destroy_live(src); return 0; }
+    ds_map_clear_entries(dst);
+    GmlArr *rows=(GmlArr*)src->entry[wi].val.arr;
+    for(int i=0;i<rows->len;i++){
+      if(rows->data[i].t!=V_ARR || !rows->data[i].arr) continue;
+      GmlArr *row=(GmlArr*)rows->data[i].arr;
+      if(row->len<3) continue;
+      const char *kind=(row->data[0].t==V_STR && row->data[0].s)?row->data[0].s:"";
+      GmlVal key=vundef();
+      if(kind[0]=='s'){
+        key = row->data[1].t==V_STR ? row->data[1] : vstr(gm_string_tmp(row->data[1]));
+      } else if(kind[0]=='r'){
+        key = row->data[1].t==V_REAL ? row->data[1] : vreal(atof(gm_string_tmp(row->data[1])));
+      } else if(kind[0]!='u') {
+        continue;
+      }
+      ds_map_put(vm,dst_id,key,row->data[2],1);
+    }
+    ds_map_destroy_live(src);
+    return 1;
+  }
+  int ok=ds_map_replace_from_map(vm,dst_id,src_id);
+  ds_map_destroy_live(src);
+  return ok;
 }
 static void ini_reset(GmlVM *vm){
   for(int i=0;i<vm->ini_n;i++){
@@ -3375,7 +3457,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     o[pos]=0; return vstr_owned(o); }
 
   /* ---- ini persistence ---- */
-  if(!strcmp(nm,"ini_open")){
+  if(!strcmp(nm,"ini_open")||!strcmp(nm,"FS_ini_open")){
     ini_reset(vm);
     vm->ini_open=1; char *fn=resolve_content_path(vm,S(a,n,0));
     snprintf(vm->ini_path,sizeof vm->ini_path,"%s",fn);
@@ -3396,13 +3478,13 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     free(fn);
     return vreal(1);
   }
-  if(!strcmp(nm,"ini_open_from_string")){
+  if(!strcmp(nm,"ini_open_from_string")||!strcmp(nm,"FS_ini_open_from_string")){
     ini_reset(vm);
     vm->ini_open=1;
     ini_parse_text(vm,S(a,n,0));
     return vreal(1);
   }
-  if(!strcmp(nm,"ini_close")){
+  if(!strcmp(nm,"ini_close")||!strcmp(nm,"FS_ini_close")){
     if(!vm->ini_open) return vreal(0);
     vm->ini_open=0;
     /* write the current key-value table back to the .ini file */
@@ -3423,7 +3505,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     ini_reset(vm);
     return vreal(0);
   }
-  if(!strcmp(nm,"ini_write_real")){
+  if(!strcmp(nm,"ini_write_real")||!strcmp(nm,"FS_ini_write_real")){
     if(!vm->ini_open||vm->ini_n>=256) return vreal(0);
     const char *sec=S(a,n,0), *key=S(a,n,1); double val=N(a,n,2);
     /* replace existing key under the same section, or append */
@@ -3433,7 +3515,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     vm->ini_kv[vm->ini_n++]=(typeof(vm->ini_kv[0])){.section=strdup(sec),.key=strdup(key),.val=val,.is_str=0};
     return vreal(0);
   }
-  if(!strcmp(nm,"ini_write_string")){
+  if(!strcmp(nm,"ini_write_string")||!strcmp(nm,"FS_ini_write_string")){
     if(!vm->ini_open||vm->ini_n>=256) return vreal(0);
     const char *sec=S(a,n,0), *key=S(a,n,1), *val=S(a,n,2);
     for(int i=0;i<vm->ini_n;i++)
@@ -3442,7 +3524,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     vm->ini_kv[vm->ini_n++]=(typeof(vm->ini_kv[0])){.section=strdup(sec),.key=strdup(key),.sval=strdup(val),.val=atof(val),.is_str=1};
     return vreal(0);
   }
-  if(!strcmp(nm,"ini_read_real")){
+  if(!strcmp(nm,"ini_read_real")||!strcmp(nm,"FS_ini_read_real")){
     if(!vm->ini_open) return vreal(N(a,n,2));  /* default */
     const char *sec=S(a,n,0), *key=S(a,n,1); double def=N(a,n,2);
     /* search the key-value table backwards so later writes override */
@@ -3451,7 +3533,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         return vreal(vm->ini_kv[i].val);
     return vreal(def);
   }
-  if(!strcmp(nm,"ini_read_string")){
+  if(!strcmp(nm,"ini_read_string")||!strcmp(nm,"FS_ini_read_string")){
     if(!vm->ini_open) return ini_default_string(a,n);
     const char *sec=S(a,n,0), *key=S(a,n,1);
     for(int i=vm->ini_n-1;i>=0;i--) if(!strcmp(vm->ini_kv[i].section,sec) && !strcmp(vm->ini_kv[i].key,key)){
@@ -3461,10 +3543,47 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       char b[64]; snprintf(b,sizeof b,"%g",vm->ini_kv[i].val); return vstr_owned(strdup(b)); }
     return ini_default_string(a,n);
   }
-  if(!strcmp(nm,"ini_section_exists")){
+  if(!strcmp(nm,"ini_section_exists")||!strcmp(nm,"FS_ini_section_exists")){
     if(!vm->ini_open) return vreal(0);
     const char *sec=S(a,n,0);
     for(int i=0;i<vm->ini_n;i++) if(!strcmp(vm->ini_kv[i].section,sec)) return vreal(1);
+    return vreal(0);
+  }
+  if(!strcmp(nm,"ini_key_exists")||!strcmp(nm,"FS_ini_key_exists")){
+    if(!vm->ini_open) return vreal(0);
+    const char *sec=S(a,n,0), *key=S(a,n,1);
+    for(int i=vm->ini_n-1;i>=0;i--)
+      if(!strcmp(vm->ini_kv[i].section,sec) && !strcmp(vm->ini_kv[i].key,key))
+        return vreal(1);
+    return vreal(0);
+  }
+  if(!strcmp(nm,"ini_key_delete")||!strcmp(nm,"FS_ini_key_delete")){
+    if(!vm->ini_open) return vreal(0);
+    const char *sec=S(a,n,0), *key=S(a,n,1);
+    for(int i=0;i<vm->ini_n;i++){
+      if(strcmp(vm->ini_kv[i].section,sec) || strcmp(vm->ini_kv[i].key,key)) continue;
+      free(vm->ini_kv[i].section);
+      free(vm->ini_kv[i].key);
+      free(vm->ini_kv[i].sval);
+      if(i+1<vm->ini_n) memmove(&vm->ini_kv[i],&vm->ini_kv[i+1],(size_t)(vm->ini_n-i-1)*sizeof(vm->ini_kv[0]));
+      vm->ini_n--;
+      memset(&vm->ini_kv[vm->ini_n],0,sizeof(vm->ini_kv[0]));
+      return vreal(0);
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"ini_section_delete")||!strcmp(nm,"FS_ini_section_delete")){
+    if(!vm->ini_open) return vreal(0);
+    const char *sec=S(a,n,0);
+    for(int i=0;i<vm->ini_n;){
+      if(strcmp(vm->ini_kv[i].section,sec)){ i++; continue; }
+      free(vm->ini_kv[i].section);
+      free(vm->ini_kv[i].key);
+      free(vm->ini_kv[i].sval);
+      if(i+1<vm->ini_n) memmove(&vm->ini_kv[i],&vm->ini_kv[i+1],(size_t)(vm->ini_n-i-1)*sizeof(vm->ini_kv[0]));
+      vm->ini_n--;
+      memset(&vm->ini_kv[vm->ini_n],0,sizeof(vm->ini_kv[0]));
+    }
     return vreal(0);
   }
 
@@ -4701,6 +4820,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(n>=3) ds_map_put(vm,(int)N(a,n,0),a[1],a[2],0);
     return vreal(0);
   }
+  if(!strcmp(nm,"ds_map_write")){
+    return ds_map_write_text(vm,(int)N(a,n,0));
+  }
+  if(!strcmp(nm,"ds_map_read")){
+    return vreal(ds_map_read_text(vm,(int)N(a,n,0),S(a,n,1)));
+  }
   /* secure (encrypted) map save/load — no persistence yet: report success on save, hand back a fresh
    * EMPTY map on load (a valid id the game can query, i.e. "no saved data" rather than a bogus 0). */
   if(!strcmp(nm,"ds_map_secure_save")||!strcmp(nm,"ds_map_secure_save_buffer")) return vreal(1);
@@ -4727,12 +4852,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"ds_map_destroy")){
     GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
-    if(m){ for(int i=0;i<m->len;i++) ds_entry_free(&m->entry[i]); free(m->entry); ds_map_index_free(m); memset(m,0,sizeof(*m)); }
+    ds_map_destroy_live(m);
     return vreal(0);
   }
   if(!strcmp(nm,"ds_map_clear")){
     GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
-    if(m){ for(int i=0;i<m->len;i++) ds_entry_free(&m->entry[i]); m->len=0; m->hdirty=1; }
+    ds_map_clear_entries(m);
     return vreal(0);
   }
   if(!strcmp(nm,"ds_list_copy")){          /* ds_list_copy(dest, src): dest := copy of src */
@@ -4897,6 +5022,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(w>0 && hh>0 && w<=16384 && hh<=16384){ vm->gui_w=w; vm->gui_h=hh; }
     return vreal(0); }
   if(!strcmp(nm,"texture_set_interpolation")) return vreal(0); /* no GPU */
+  if(!strcmp(nm,"texture_set_repeat")) return vreal(0);
   if(!strcmp(nm,"gpu_set_texfilter")||!strcmp(nm,"gpu_set_texfilter_ext")) return vreal(0);
   if(!strcmp(nm,"gpu_set_blendenable")){ GmlRender *R=(GmlRender*)vm->render; if(R) R->alphablend=N(a,n,0)>=0.5; return vreal(0); }
   if(!strcmp(nm,"gpu_get_blendenable")){ GmlRender *R=(GmlRender*)vm->render; return vreal(R?R->alphablend:1); }
