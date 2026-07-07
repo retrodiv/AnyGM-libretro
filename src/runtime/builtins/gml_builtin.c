@@ -1219,19 +1219,31 @@ static void draw_circle_prim(GmlRender *R, int cx, int cy, int rx, int ry, uint3
 static int g_prim_kind=0, g_prim_n=0;
 static double g_prim_x[GML_PRIM_MAX], g_prim_y[GML_PRIM_MAX], g_prim_a[GML_PRIM_MAX];
 static uint32_t g_prim_c[GML_PRIM_MAX];
-static void prim_tri_fill(GmlRender *R, double X1,double Y1,double X2,double Y2,double X3,double Y3,
-                          uint32_t col, double alpha){
-  int x1=(int)floor(X1), y1=(int)floor(Y1), x2=(int)floor(X2), y2=(int)floor(Y2), x3=(int)floor(X3), y3=(int)floor(Y3);
-  int minx=x1<x2?(x1<x3?x1:x3):(x2<x3?x2:x3), maxx=x1>x2?(x1>x3?x1:x3):(x2>x3?x2:x3);
-  int miny=y1<y2?(y1<y3?y1:y3):(y2<y3?y2:y3), maxy=y1>y2?(y1>y3?y1:y3):(y2>y3?y2:y3);
-  double den=(double)((y2-y3)*(x1-x3)+(x3-x2)*(y1-y3));
-  if(fabs(den)<1e-9) return;
+static void prim_tri_fill_ex(GmlRender *R, double X1,double Y1,double X2,double Y2,double X3,double Y3,
+                             uint32_t col, double alpha, int outline){
+  if(!R||!R->fb||R->fbw<=0||R->fbh<=0) return;
+  if(!isfinite(X1)||!isfinite(Y1)||!isfinite(X2)||!isfinite(Y2)||!isfinite(X3)||!isfinite(Y3)) return;
+  if(!isfinite(alpha)) return;
+  if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
+  if(alpha<=0) return;
+  double den=(Y2-Y3)*(X1-X3)+(X3-X2)*(Y1-Y3);
+  if(!isfinite(den)||fabs(den)<1e-9) return;
+  double minxd=floor(fmin(X1,fmin(X2,X3))), maxxd=floor(fmax(X1,fmax(X2,X3)));
+  double minyd=floor(fmin(Y1,fmin(Y2,Y3))), maxyd=floor(fmax(Y1,fmax(Y2,Y3)));
+  if(maxxd<0.0||maxyd<0.0||minxd>(double)(R->fbw-1)||minyd>(double)(R->fbh-1)) return;
+  int minx=minxd<0.0?0:(int)minxd, maxx=maxxd>=(double)R->fbw?R->fbw-1:(int)maxxd;
+  int miny=minyd<0.0?0:(int)minyd, maxy=maxyd>=(double)R->fbh?R->fbh-1:(int)maxyd;
   for(int yy=miny;yy<=maxy;yy++) for(int xx=minx;xx<=maxx;xx++){
-    double a0=((y2-y3)*(xx-x3)+(x3-x2)*(yy-y3))/den;
-    double b0=((y3-y1)*(xx-x3)+(x1-x3)*(yy-y3))/den;
+    double a0=((Y2-Y3)*(xx-X3)+(X3-X2)*(yy-Y3))/den;
+    double b0=((Y3-Y1)*(xx-X3)+(X1-X3)*(yy-Y3))/den;
     double c0=1-a0-b0;
+    if(outline && a0>0.04&&b0>0.04&&c0>0.04) continue;
     if(a0>=0&&b0>=0&&c0>=0) draw_px_alpha(R,xx,yy,col,alpha);
   }
+}
+static void prim_tri_fill(GmlRender *R, double X1,double Y1,double X2,double Y2,double X3,double Y3,
+                          uint32_t col, double alpha){
+  prim_tri_fill_ex(R,X1,Y1,X2,Y2,X3,Y3,col,alpha,0);
 }
 static void prim_flush(GmlRender *R){
   int n=g_prim_n; if(!R||n<1) return;
@@ -4004,20 +4016,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         draw_circle_prim(R,(x1+x2)/2,(y1+y2)/2,abs(x2-x1)/2,abs(y2-y1)/2,(uint32_t)N(a,n,4),(int)N(a,n,6)); } return vreal(0); }
     if(!strcmp(nm,"draw_roundrect")){ if(R) draw_rect_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)ceil(N(a,n,2)-R->cam_x),(int)ceil(N(a,n,3)-R->cam_y),R->color,(int)N(a,n,4)); return vreal(0); }
     if(!strcmp(nm,"draw_triangle")||!strcmp(nm,"draw_triangle_color")||!strcmp(nm,"draw_triangle_colour")){
-      if(R){ int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y);
-        int x2=(int)floor(N(a,n,2)-R->cam_x), y2=(int)floor(N(a,n,3)-R->cam_y);
-        int x3=(int)floor(N(a,n,4)-R->cam_x), y3=(int)floor(N(a,n,5)-R->cam_y);
+      if(R){ double x1=floor(N(a,n,0)-R->cam_x), y1=floor(N(a,n,1)-R->cam_y);
+        double x2=floor(N(a,n,2)-R->cam_x), y2=floor(N(a,n,3)-R->cam_y);
+        double x3=floor(N(a,n,4)-R->cam_x), y3=floor(N(a,n,5)-R->cam_y);
         uint32_t col=!strcmp(nm,"draw_triangle")?R->color:(uint32_t)N(a,n,6); int outline=(int)N(a,n,!strcmp(nm,"draw_triangle")?6:9);
         gml_render_maybe_prepare_draw(R);
-        int minx=fmin(x1,fmin(x2,x3)), maxx=fmax(x1,fmax(x2,x3)), miny=fmin(y1,fmin(y2,y3)), maxy=fmax(y1,fmax(y2,y3));
-        double den=(double)((y2-y3)*(x1-x3)+(x3-x2)*(y1-y3));
-        if(fabs(den)>1e-9) for(int yy=miny;yy<=maxy;yy++) for(int xx=minx;xx<=maxx;xx++){
-          double a0=((y2-y3)*(xx-x3)+(x3-x2)*(yy-y3))/den;
-          double b0=((y3-y1)*(xx-x3)+(x1-x3)*(yy-y3))/den;
-          double c0=1-a0-b0;
-          if(outline){ if(a0>0.04&&b0>0.04&&c0>0.04) continue; }
-          if(a0>=0&&b0>=0&&c0>=0) draw_px(R,xx,yy,col);
-        } }
+        prim_tri_fill_ex(R,x1,y1,x2,y2,x3,y3,col,R->alpha,outline); }
       return vreal(0); }
     if(!strcmp(nm,"draw_clear")||!strcmp(nm,"draw_clear_alpha")){ if(R){
       /* Pass the requested alpha through when clearing the target surface. */
@@ -4192,6 +4196,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vstr((ob>=0&&ob<vm->n_objects&&vm->objects[ob].name)?vm->objects[ob].name:""); }
   if(!strcmp(nm,"object_get_sprite")){ int ob=(int)N(a,n,0);
     return vreal((ob>=0&&ob<vm->n_objects)?vm->objects[ob].sprite_index:-1); }
+  if(!strcmp(nm,"object_exists")){ int ob=(int)N(a,n,0); return vreal(ob>=0&&ob<vm->n_objects); }
+  if(!strcmp(nm,"object_get_physics")) return vreal(0);
   if(!strcmp(nm,"asset_get_index")||!strcmp(nm,"sprite_get_index")||!strcmp(nm,"object_get_index")){
       /* Resolve asset names by searching sprites before objects; return -1 if absent. */
       const char *an=(n>0 && a[0].t==V_STR && a[0].s)? a[0].s : "";
@@ -4988,6 +4994,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strncmp(nm,"steam_",6)) return vreal(0);
   if(!strncmp(nm,"psn_",4)) return vreal(0);
   if(!strncmp(nm,"physics_",8)) return vreal(0);   /* Physics world operations are not implemented. */
+  if(!strncmp(nm,"skeleton_",9)) return vreal(0);  /* Spine skeleton state is not modeled by the software renderer. */
   /* Report Galaxy initialization as successful; other Galaxy operations return zero.
    * This does not establish an online session or authenticate an account. */
   if(!strcmp(nm,"gog_init")||!strcmp(nm,"gog_is_initialised")||!strcmp(nm,"gog_is_initialized")) return vreal(1);
@@ -5297,6 +5304,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
    * "unknown builtin" audit log. mouse_wheel_* have no input source → 0 (not scrolled). */
   if(!strcmp(nm,"mouse_wheel_up")){ int wh; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,&wh); return vreal(wh>0); }
   if(!strcmp(nm,"mouse_wheel_down")){ int wh; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,&wh); return vreal(wh<0); }
+  if(!strcmp(nm,"device_get_tilt_x")||!strcmp(nm,"device_get_tilt_y")||!strcmp(nm,"device_get_tilt_z")) return vreal(0);
   /* Select additive or subtractive blending for their enum values; use normal alpha otherwise. */
   if(!strcmp(nm,"draw_set_blend_mode")||   /* Legacy API spelling. */
      !strcmp(nm,"gpu_set_blendmode")){ GmlRender *R2=(GmlRender*)vm->render; int bm=(int)N(a,n,0);
