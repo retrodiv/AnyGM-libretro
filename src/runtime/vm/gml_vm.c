@@ -2970,6 +2970,26 @@ static int *vm_draw_order_scratch(GmlVM *vm, int need){
   }
   return vm->draw_ord;
 }
+/* GMS2 runtime-layer draw records. File scope so the per-frame scratch buffers below can persist
+ * across frames (reused, grown by doubling) instead of malloc/free + realloc(n+1) every frame. */
+struct LayBg { int sprite; int th,tv,stretch,order; double x,y; uint32_t blend; double alpha; double depth; };
+struct LayTile { int sprite; int sx,sy,w,h,order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
+struct LaySprite { int sprite, subimg,order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
+/* Persistent per-frame draw scratch (gml_vm_draw is single-threaded, once per frame). Reset counts
+ * to 0 each frame; the allocations survive so a steady room does zero malloc/free in its draw. */
+static struct LayBg    *g_dl_lbg;   static int g_dl_lbg_cap;
+static struct LayTile  *g_dl_ltl;   static int g_dl_ltl_cap;
+static struct LaySprite*g_dl_lsp;   static int g_dl_lsp_cap;
+static GmlDrawItem     *g_dl_it;    static int g_dl_it_cap;
+/* grow *pp (element size esz) to hold at least `need` elements, doubling capacity. Returns 1 on ok. */
+static int dl_grow(void **pp, int *cap, int need, size_t esz){
+  if(need<=*cap) return 1;
+  int nc = *cap>0 ? *cap : 64;
+  while(nc<need) nc*=2;
+  void *p=realloc(*pp,(size_t)nc*esz);
+  if(!p) return 0;
+  *pp=p; *cap=nc; return 1;
+}
 void gml_vm_draw(GmlVM *vm){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return;
   int n=vm->inst_count;
@@ -2996,12 +3016,9 @@ void gml_vm_draw(GmlVM *vm){
   }
   /* ROOM layer records carry background, instance and asset-tile layers.
    * Use the detected type-data offset, including optional effect fields. */
-  struct LayBg { int sprite; int th,tv,stretch,order; double x,y; uint32_t blend; double alpha; double depth; };
-  struct LayTile { int sprite; int sx,sy,w,h,order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
-  struct LaySprite { int sprite, subimg,order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
-  struct LayBg *lbg=NULL; int nlb=0;
-  struct LayTile *ltl=NULL; int nlt=0;
-  struct LaySprite *lsp=NULL; int nls=0;
+  struct LayBg *lbg=g_dl_lbg; int nlb=0;
+  struct LayTile *ltl=g_dl_ltl; int nlt=0;
+  struct LaySprite *lsp=g_dl_lsp; int nls=0;
   if(vm->win->bytecode>=17){
     const GmlChunk *rc=gml_chunk(vm->win,"ROOM");
     const uint8_t *d=vm->win->data;
@@ -3036,7 +3053,7 @@ void gml_vm_draw(GmlVM *vm){
           uint32_t col=u32(d,b+24);
           /* Use the layer color when no sprite is assigned; skip fully transparent color. */
           if(spr<0 && !(col>>24)) continue;
-          lbg=realloc(lbg,(nlb+1)*sizeof(*lbg));
+          if(!dl_grow((void**)&g_dl_lbg,&g_dl_lbg_cap,nlb+1,sizeof(*lbg))) continue; lbg=g_dl_lbg;
           lbg[nlb].sprite=spr; lbg[nlb].th=(int)u32(d,b+12); lbg[nlb].tv=(int)u32(d,b+16);
           lbg[nlb].stretch=(int)u32(d,b+20);
           lbg[nlb].blend=col&0xFFFFFF; lbg[nlb].alpha=((col>>24)&0xFF)/255.0;
@@ -3049,7 +3066,7 @@ void gml_vm_draw(GmlVM *vm){
           if(tcnt==0 || tcnt>100000) continue;
           for(uint32_t k2=0;k2<tcnt;k2++){ uint32_t tp=u32(d,tl+4+k2*4);
             if(!tp || tp+48>vm->win->size) continue;
-            ltl=realloc(ltl,(nlt+1)*sizeof(*ltl));
+            if(!dl_grow((void**)&g_dl_ltl,&g_dl_ltl_cap,nlt+1,sizeof(*ltl))) continue; ltl=g_dl_ltl;
             ltl[nlt].x=ltx+(int32_t)u32(d,tp); ltl[nlt].y=lty+(int32_t)u32(d,tp+4);
             ltl[nlt].sprite=(int32_t)u32(d,tp+8);
             ltl[nlt].sx=(int32_t)u32(d,tp+12); ltl[nlt].sy=(int32_t)u32(d,tp+16);
@@ -3125,18 +3142,18 @@ void gml_vm_draw(GmlVM *vm){
     double lx = l->touched ? l->x : l->x+l->hs*fin2;
     double ly = l->touched ? l->y : l->y+l->vs*fin2;
     if(e->type==7){
-      ltl=realloc(ltl,(nlt+1)*sizeof(*ltl));
+      if(!dl_grow((void**)&g_dl_ltl,&g_dl_ltl_cap,nlt+1,sizeof(*ltl))) continue; ltl=g_dl_ltl;
       ltl[nlt].sprite=e->sprite; ltl[nlt].sx=e->sx; ltl[nlt].sy=e->sy; ltl[nlt].w=e->w; ltl[nlt].h=e->h;
       ltl[nlt].x=lx+e->x; ltl[nlt].y=ly+e->y; ltl[nlt].xs=e->xs; ltl[nlt].ys=e->ys;
       ltl[nlt].blend=e->blend; ltl[nlt].alpha=e->alpha; ltl[nlt].depth=l->depth; ltl[nlt].order=l->order;
       nlt++;
     } else if(e->type==1){
-      lbg=realloc(lbg,(nlb+1)*sizeof(*lbg));
+      if(!dl_grow((void**)&g_dl_lbg,&g_dl_lbg_cap,nlb+1,sizeof(*lbg))) continue; lbg=g_dl_lbg;
       lbg[nlb].sprite=e->sprite; lbg[nlb].th=e->htiled; lbg[nlb].tv=e->vtiled; lbg[nlb].stretch=e->stretch;
       lbg[nlb].x=lx; lbg[nlb].y=ly; lbg[nlb].blend=e->blend; lbg[nlb].alpha=e->alpha; lbg[nlb].depth=l->depth; lbg[nlb].order=l->order;
       nlb++;
     } else if(e->type==3){
-      lsp=realloc(lsp,(nls+1)*sizeof(*lsp));
+      if(!dl_grow((void**)&g_dl_lsp,&g_dl_lsp_cap,nls+1,sizeof(*lsp))) continue; lsp=g_dl_lsp;
       lsp[nls].sprite=e->sprite; lsp[nls].subimg=(int)e->image_index;
       lsp[nls].x=lx+e->x; lsp[nls].y=ly+e->y; lsp[nls].xs=e->xs; lsp[nls].ys=e->ys;
       lsp[nls].angle=e->image_angle; lsp[nls].blend=e->blend; lsp[nls].alpha=e->alpha; lsp[nls].depth=l->depth; lsp[nls].order=l->order;
@@ -3145,7 +3162,8 @@ void gml_vm_draw(GmlVM *vm){
   }
   /* unified depth-sorted draw list of instances + tiles + GMS2 layers + auto-draw particle systems */
   int npart=0; while(gml_part_system_auto_draw_nth(npart,NULL,NULL)) npart++;
-  int cap=n+nt+nlb+nlt+nls+npart; GmlDrawItem *it=malloc((cap>0?cap:1)*sizeof(GmlDrawItem)); int m=0;
+  int cap=n+nt+nlb+nlt+nls+npart; if(!dl_grow((void**)&g_dl_it,&g_dl_it_cap,cap>0?cap:1,sizeof(GmlDrawItem))){ free(tiles); free(tdepth); return; }
+  GmlDrawItem *it=g_dl_it; int m=0;
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked){
     it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; it[m].order=vm->inst[i].draw_layer_order; m++; }
   for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; it[m].order=tiles[i].order; m++; }
@@ -3208,7 +3226,9 @@ void gml_vm_draw(GmlVM *vm){
                           (uint32_t)in->image_blend,alpha);
     }
   }
-  free(it); free(tiles); free(tdepth); free(lbg); free(ltl); free(lsp);
+  /* it/lbg/ltl/lsp are persistent scratch (g_dl_*) — reused next frame, not freed here. tiles/tdepth
+   * are still per-room; keep freeing them (a per-frame room-tile gather). */
+  free(tiles); free(tdepth);
 }
 
 /* Dispatch Draw_64 events in depth order. Set view_current to 7 when views
