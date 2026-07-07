@@ -3030,6 +3030,17 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"array_pop")){ return n>0?gml_arr_pop(a[0]):vreal(0); }
   if(!strcmp(nm,"array_resize")){ if(n>1) gml_arr_resize(a[0],(int)N(a,n,1)); return vreal(0); }
   if(!strcmp(nm,"array_copy")){ if(n>4) gml_arr_copy(a[0],(int)N(a,n,1),a[2],(int)N(a,n,3),(int)N(a,n,4)); return vreal(0); }
+  /* array_delete(arr,index,number): remove `number` elements at `index`, shifting the tail down
+   * (GMS2.3). Negative number deletes that many BEFORE index. Was a silent no-op. */
+  if(!strcmp(nm,"array_delete")){
+    if(n>2 && a[0].t==V_ARR && a[0].arr){ GmlArr *A=a[0].arr; int idx=(int)N(a,n,1), cnt=(int)N(a,n,2);
+      if(cnt<0){ idx+=cnt; cnt=-cnt; }            /* delete before index */
+      if(idx<0){ cnt+=idx; idx=0; }
+      if(cnt>0 && idx<A->len){ if(idx+cnt>A->len) cnt=A->len-idx;
+        for(int i=idx; i+cnt<A->len; i++) A->data[i]=A->data[i+cnt];
+        A->len-=cnt; } }
+    return vreal(0);
+  }
   if(!strcmp(nm,"array_height_2d")) return vreal(n>0?gml_val_array_height_2d(a[0]):0);
   if(!strcmp(nm,"array_length_2d")){
     if(n<=0) return vreal(0);
