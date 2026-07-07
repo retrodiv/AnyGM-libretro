@@ -563,6 +563,10 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   }
   return vreal(0);
 }
+/* GM: writing OBJECT.variable = value assigns to EVERY instance of that object (reading
+ * returns only the first). inst_t in [0,n_objects) is an object index; a real instance id
+ * is >=100000, so it never collides. Fans a write out to all instances of the object. */
+static int is_object_scope(GmlVM *vm, int inst_t){ return inst_t>=0 && inst_t<vm->n_objects; }
 static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal v){
   gml_arr_mark_escaped(v);   /* target is a global/instance slot: outlives the current scope */
   { static const char *dv=NULL; static int dv_init=0;
@@ -572,6 +576,11 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
         v.t==V_STR?"str:":"",v.t==V_REAL?v.d:0.0); } }
   if(!var_name_maybe_special(name,nh)){
     if(inst==IT_GLOBAL){ *gml_varmap_put_h(&vm->globals,name,nh)=v; return; }
+    if(is_object_scope(vm,inst)){   /* object.var = v -> all instances */
+      for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
+        if(o->active && !o->marked && gml_object_is(vm,o->obj,inst)) *gml_varmap_put_h(&o->vars,name,nh)=v; }
+      return;
+    }
     GmlInstance *self=var_target(vm,inst);
     if(self) *gml_varmap_put_h(&self->vars,name,nh)=v;
     return;
@@ -583,6 +592,12 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
     return;
   }
   if(inst==IT_GLOBAL || is_global_builtin(name)){ *gml_varmap_put_h(&vm->globals,name,nh)=v; return; }
+  if(is_object_scope(vm,inst)){   /* object.builtin = v (x, hspeed, visible, ...) -> all instances */
+    for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
+      if(o->active && !o->marked && gml_object_is(vm,o->obj,inst)){
+        if(!inst_builtin_set(o,name,v)) *gml_varmap_put_h(&o->vars,name,nh)=v; } }
+    return;
+  }
   GmlInstance *self = var_target(vm,inst);
   if(self){
     if(inst_builtin_set(self,name,v)) return;
@@ -616,8 +631,26 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
     }
     return;
   }
-  if(!strcmp(nm,"alarm")){ GmlInstance *s=resolve_inst(vm,inst_t);
-    if(s && idx>=0 && idx<GML_ALARMS) s->alarm[idx]=v.t==V_REAL?v.d:(v.s?atof(v.s):0); return; }
+  double alv = v.t==V_REAL?v.d:(v.s?atof(v.s):0);
+  if(!strcmp(nm,"alarm")){
+    /* Object-scope alarm writes apply to every active, unmarked matching instance. */
+    if(is_object_scope(vm,inst_t)){
+      if(idx>=0 && idx<GML_ALARMS)
+        for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
+          if(o->active && !o->marked && gml_object_is(vm,o->obj,inst_t)) o->alarm[idx]=alv; }
+      return;
+    }
+    GmlInstance *s=resolve_inst(vm,inst_t);
+    if(s && idx>=0 && idx<GML_ALARMS) s->alarm[idx]=alv; return; }
+  /* Non-alarm array write to OBJECT scope also fans out to all instances. */
+  if(is_object_scope(vm,inst_t) && !is_room_global_array(nm)){
+    for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
+      if(!o->active || o->marked || !gml_object_is(vm,o->obj,inst_t)) continue;
+      GmlVal *slot=gml_varmap_put_h(&o->vars,nm,nh); GmlArr *A=arr_of(slot);
+      gml_arr_mark_escaped(v); arr_note_2d_set(A,idx); arr_ensure(A,idx);
+      if(idx>=0 && idx<A->cap) A->data[idx]=v; }
+    return;
+  }
   GmlVarMap *m=is_room_global_array(nm)? &vm->globals : scope_map(vm,locals,inst_t); if(!m) return;
   GmlVal *slot=gml_varmap_put_h(m,nm,nh); GmlArr *A=arr_of(slot);
   if(m!=locals || A->escaped) gml_arr_mark_escaped(v);   /* element outlives scope if its owner already does */
