@@ -3467,8 +3467,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(in?(double)in->id:-4); }
   /* GMS2 creation: instance_create_depth(x,y,depth,obj) / instance_create_layer(x,y,layer,obj). The
    * object is the 4th arg (not the 3rd); without these, GMS2 games spawn nothing dynamically. */
-  if(!strcmp(nm,"instance_create_depth")){ GmlInstance*in=gml_instance_create(vm,N(a,n,0),N(a,n,1),(int)N(a,n,3));
-    if(in) in->depth=N(a,n,2); return vreal(in?(double)in->id:-4); }
+  if(!strcmp(nm,"instance_create_depth")){ GmlInstance*in=gml_instance_create_depth(vm,N(a,n,0),N(a,n,1),(int)N(a,n,3),1,N(a,n,2));
+    return vreal(in?(double)in->id:-4); }
   if(!strcmp(nm,"instance_create_layer")){ GmlInstance*in=gml_instance_create(vm,N(a,n,0),N(a,n,1),(int)N(a,n,3));
     return vreal(in?(double)in->id:-4); }
   /* ---- GMS2.3 internal function/struct machinery (partial stubs — enough for common init paths) ---- */

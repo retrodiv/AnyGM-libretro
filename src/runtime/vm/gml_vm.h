@@ -172,7 +172,6 @@ typedef struct GmlVM {
   int window_w, window_h, gui_w, gui_h;
   long room_enter_frame;      /* g_vm_frame at room entry (GMS2 layer scroll phase) */
   int layer_data_off;         /* GMS2 layer type-data offset (36, or 48 with effect fields); 0=undetected */
-  int gms2_room_format;       /* 1 if any ROOM record carries a GMS2 layer list (same-depth instances draw newest-on-top) */
   int next_buffer_id;
   /* keyboard events (Keyboard_N held / KeyPress_N / KeyRelease_N): unique suffixes present in
    * the game's CODE names, fired each step against the key state (event-driven input games). */
@@ -237,6 +236,7 @@ int     gml_code_index_find(GmlWin *win, const char *substr);   /* first contain
 
 /* instances / events / rooms */
 GmlInstance *gml_instance_create(GmlVM *vm, double x, double y, int obj);  /* runs Create */
+GmlInstance *gml_instance_create_depth(GmlVM *vm, double x, double y, int obj, int have_depth, double depth);  /* sets depth BEFORE Create */
 GmlInstance *gml_struct_new(GmlVM *vm);              /* GMS2.3: allocate a struct (standalone instance) */
 GmlInstance *gml_struct_find(GmlVM *vm, unsigned id);
 void         gml_instance_change(GmlVM *vm, GmlInstance *in, int obj, int perform_events);
