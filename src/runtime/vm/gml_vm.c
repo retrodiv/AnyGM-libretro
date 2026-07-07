@@ -2981,6 +2981,7 @@ static struct LayBg    *g_dl_lbg;   static int g_dl_lbg_cap;
 static struct LayTile  *g_dl_ltl;   static int g_dl_ltl_cap;
 static struct LaySprite*g_dl_lsp;   static int g_dl_lsp_cap;
 static GmlDrawItem     *g_dl_it;    static int g_dl_it_cap;
+static GmlDrawTile     *g_dl_tiles; static double *g_dl_tdepth; static int g_dl_tiles_cap;
 /* grow *pp (element size esz) to hold at least `need` elements, doubling capacity. Returns 1 on ok. */
 static int dl_grow(void **pp, int *cap, int need, size_t esz){
   if(need<=*cap) return 1;
@@ -2993,8 +2994,10 @@ static int dl_grow(void **pp, int *cap, int need, size_t esz){
 void gml_vm_draw(GmlVM *vm){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return;
   int n=vm->inst_count;
-  /* gather this room's tiles (pointer-list of records: x,y,def,srcx,srcy,w,h,depth,...) */
-  GmlDrawTile *tiles=NULL; int nt=0, tcap=0; double *tdepth=NULL;
+  /* gather this room's tiles (pointer-list of records: x,y,def,srcx,srcy,w,h,depth,...).
+   * Persistent scratch: draw_tile_add grows g_dl_tiles/g_dl_tdepth by doubling and they survive
+   * across frames, avoiding tile-buffer allocation while the existing capacity suffices. */
+  GmlDrawTile *tiles=g_dl_tiles; int nt=0, tcap=g_dl_tiles_cap; double *tdepth=g_dl_tdepth;
   GmlRoom rm;
   if(gml_room_get(vm->win,vm->room_index,&rm)==0 && rm.tile_ptr){
     const uint8_t *d=vm->win->data; uint32_t tc=u32(d,rm.tile_ptr);
@@ -3162,7 +3165,7 @@ void gml_vm_draw(GmlVM *vm){
   }
   /* unified depth-sorted draw list of instances + tiles + GMS2 layers + auto-draw particle systems */
   int npart=0; while(gml_part_system_auto_draw_nth(npart,NULL,NULL)) npart++;
-  int cap=n+nt+nlb+nlt+nls+npart; if(!dl_grow((void**)&g_dl_it,&g_dl_it_cap,cap>0?cap:1,sizeof(GmlDrawItem))){ free(tiles); free(tdepth); return; }
+  int cap=n+nt+nlb+nlt+nls+npart; if(!dl_grow((void**)&g_dl_it,&g_dl_it_cap,cap>0?cap:1,sizeof(GmlDrawItem))){ g_dl_tiles=tiles; g_dl_tdepth=tdepth; g_dl_tiles_cap=tcap; return; }
   GmlDrawItem *it=g_dl_it; int m=0;
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked){
     it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; it[m].order=vm->inst[i].draw_layer_order; m++; }
@@ -3226,9 +3229,9 @@ void gml_vm_draw(GmlVM *vm){
                           (uint32_t)in->image_blend,alpha);
     }
   }
-  /* it/lbg/ltl/lsp are persistent scratch (g_dl_*) — reused next frame, not freed here. tiles/tdepth
-   * are still per-room; keep freeing them (a per-frame room-tile gather). */
-  free(tiles); free(tdepth);
+  /* All draw scratch (it/lbg/ltl/lsp/tiles/tdepth) is persistent (g_dl_*) — write the possibly-grown
+   * tile buffers back and keep everything allocated for next frame; nothing is freed here. */
+  g_dl_tiles=tiles; g_dl_tdepth=tdepth; g_dl_tiles_cap=tcap;
 }
 
 /* Dispatch Draw_64 events in depth order. Set view_current to 7 when views
