@@ -3027,6 +3027,10 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
         if(o==s || !target_matches_instance(vm,s,o,obj)) continue;
         double d=hypot(o->x-s->x,o->y-s->y); if(d<best) best=d; }
       *out=vreal(best>1e17?-1:best); return 1; }
+    if(!strcmp(nm,"display_get_width")){ *out=vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)); return 1; }
+    if(!strcmp(nm,"display_get_height")){ *out=vreal((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)); return 1; }
+    if(!strcmp(nm,"display_get_gui_width")){ *out=vreal(vm->gui_w>0? vm->gui_w : ((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288))); return 1; }
+    if(!strcmp(nm,"display_get_gui_height")){ *out=vreal(vm->gui_h>0? vm->gui_h : ((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216))); return 1; }
   }
   if(nm[0]=='f'){
     if(!strcmp(nm,"floor")){ *out=vreal(floor(N(a,n,0))); return 1; }
@@ -3095,12 +3099,23 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     *out=vreal((int)((r+m)*255) + ((int)((g+m)*255)<<8) + ((int)((b+m)*255)<<16)); return 1;
   }
   if(nm[0]=='s'){
+    if(!strcmp(nm,"surface_exists")){ *out=vreal(R?gml_surface_exists(R,(int)N(a,n,0)):0); return 1; }
     if(!strcmp(nm,"surface_create")){ *out=vreal(R?gml_surface_create(R,(int)N(a,n,0),(int)N(a,n,1)):-1); return 1; }
     if(!strcmp(nm,"surface_free")){ if(R) gml_surface_free(R,(int)N(a,n,0)); *out=vreal(0); return 1; }
+    if(!strcmp(nm,"surface_get_texture")){ int sid=(int)N(a,n,0); *out=vreal((R&&gml_surface_exists(R,sid))?(double)(GML_TEX_SURF_TAG | (sid&0xFFFF)):-1); return 1; }
+    if(!strcmp(nm,"surface_get_width")){ *out=vreal(R?gml_surface_width(R,(int)N(a,n,0)):0); return 1; }
+    if(!strcmp(nm,"surface_get_height")){ *out=vreal(R?gml_surface_height(R,(int)N(a,n,0)):0); return 1; }
     if(!strcmp(nm,"surface_set_target")){ if(getenv("GML_LOG_SURF"))fprintf(stderr,"[surf] set_target %d\n",(int)N(a,n,0)); *out=vreal(R?gml_surface_set_target(R,(int)N(a,n,0)):0); return 1; }
     if(!strcmp(nm,"surface_reset_target")){ if(getenv("GML_LOG_SURF"))fprintf(stderr,"[surf] reset_target\n"); if(R) gml_surface_reset_target(R); *out=vreal(0); return 1; }
     if(!strcmp(nm,"shader_set")){ if(R) R->active_shader=(int)N(a,n,0); *out=vreal(0); return 1; }
     if(!strcmp(nm,"shader_reset")){ if(R) R->active_shader=-1; *out=vreal(0); return 1; }
+    if(!strcmp(nm,"shader_get_uniform")){
+      int sh=(int)N(a,n,0); const char *un=S(a,n,1);
+      if(R && sh>=0 && sh<R->n_shader_pal && R->shader_pal && R->shader_pal[sh].lut &&
+         !strcmp(un,R->shader_pal[sh].lut_row_uniform)) *out=vreal(sh*16+1);
+      else *out=vreal(sh>=0? sh*16+15 : -1);
+      return 1;
+    }
     if(!strcmp(nm,"shader_set_uniform_f")||!strcmp(nm,"shader_set_uniform_f_array")){
       int h=(int)N(a,n,0);
       if(R && h>=0 && (h%16)==1){ int sh=h/16;
@@ -3114,6 +3129,14 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"sqrt")){ *out=vreal(sqrt(N(a,n,0))); return 1; }
     if(!strcmp(nm,"sqr")){ double x=N(a,n,0); *out=vreal(x*x); return 1; }
     if(!strcmp(nm,"sin")){ *out=vreal(sin(N(a,n,0))); return 1; }
+  }
+  if(nm[0]=='t'){
+    if(!strcmp(nm,"texture_get_texel_width")){ double tw; *out=vreal(texture_info(R,(int)N(a,n,0),NULL,NULL,&tw,NULL)?tw:0); return 1; }
+    if(!strcmp(nm,"texture_get_texel_height")){ double th; *out=vreal(texture_info(R,(int)N(a,n,0),NULL,NULL,NULL,&th)?th:0); return 1; }
+  }
+  if(nm[0]=='w'){
+    if(!strcmp(nm,"window_get_width")){ *out=vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)); return 1; }
+    if(!strcmp(nm,"window_get_height")){ *out=vreal((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)); return 1; }
   }
   if(nm[0]=='g'){
     if(!strcmp(nm,"gpu_set_blendenable")){ if(R) R->alphablend=N(a,n,0)>=0.5; *out=vreal(0); return 1; }
@@ -3214,10 +3237,12 @@ enum {
   BID_DRAW_SET_COLOR,
   BID_SHADER_SET,
   BID_SHADER_RESET,
+  BID_SHADER_GET_UNIFORM,
   BID_SHADER_SET_UNIFORM_F,
   BID_SHADER_SET_UNIFORM_F_ARRAY,
   BID_DISTANCE_TO_OBJECT,
   BID_FLOOR,
+  BID_FRAC,
   BID_ABS,
   BID_MIN,
   BID_MAX,
@@ -3225,6 +3250,7 @@ enum {
   BID_LENGTHDIR_X,
   BID_LENGTHDIR_Y,
   BID_POINT_DISTANCE,
+  BID_POINT_DIRECTION,
   BID_KEYBOARD_CHECK,
   BID_KEYBOARD_CHECK_PRESSED,
   BID_KEYBOARD_CHECK_RELEASED,
@@ -3257,10 +3283,22 @@ enum {
   BID_DEVICE_MOUSE_RAW_X,
   BID_DEVICE_MOUSE_RAW_Y,
   BID_WINDOW_MOUSE_SET,
+  BID_DISPLAY_GET_WIDTH,
+  BID_DISPLAY_GET_HEIGHT,
+  BID_DISPLAY_GET_GUI_WIDTH,
+  BID_DISPLAY_GET_GUI_HEIGHT,
+  BID_WINDOW_GET_WIDTH,
+  BID_WINDOW_GET_HEIGHT,
+  BID_SURFACE_EXISTS,
   BID_SURFACE_CREATE,
   BID_SURFACE_FREE,
+  BID_SURFACE_GET_TEXTURE,
+  BID_SURFACE_GET_WIDTH,
+  BID_SURFACE_GET_HEIGHT,
   BID_SURFACE_SET_TARGET,
   BID_SURFACE_RESET_TARGET,
+  BID_TEXTURE_GET_TEXEL_WIDTH,
+  BID_TEXTURE_GET_TEXEL_HEIGHT,
   BID_STRING_WIDTH,
   BID_STRING_HEIGHT,
   BID_GPU_SET_BLENDMODE_EXT,
@@ -3310,6 +3348,10 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"clamp")) return BID_CLAMP;
       return -1;
     case 'd':
+      if(!strcmp(nm,"display_get_width")) return BID_DISPLAY_GET_WIDTH;
+      if(!strcmp(nm,"display_get_height")) return BID_DISPLAY_GET_HEIGHT;
+      if(!strcmp(nm,"display_get_gui_width")) return BID_DISPLAY_GET_GUI_WIDTH;
+      if(!strcmp(nm,"display_get_gui_height")) return BID_DISPLAY_GET_GUI_HEIGHT;
       if(!strcmp(nm,"ds_map_find_value")) return log_ds_on()? -1 : BID_DS_MAP_FIND_VALUE;
       if(!strcmp(nm,"ds_map_find_next")) return BID_DS_MAP_FIND_NEXT;
       if(!strcmp(nm,"ds_map_find_previous")) return BID_DS_MAP_FIND_PREVIOUS;
@@ -3354,6 +3396,7 @@ int gml_builtin_fast_id(const char *nm){
       return -1;
     case 'f':
       if(!strcmp(nm,"floor")) return BID_FLOOR;
+      if(!strcmp(nm,"frac")) return BID_FRAC;
       if(!strcmp(nm,"file_text_eof")) return BID_FILE_TEXT_EOF;
       if(!strncmp(nm,"fmod_",5)) return BID_FMOD_PREFIX;
       return -1;
@@ -3412,6 +3455,7 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"part_system_drawit_ext")) return BID_PART_SYSTEM_DRAWIT_EXT;
       if(!strcmp(nm,"place_meeting")) return BID_PLACE_MEETING;
       if(!strcmp(nm,"point_distance")) return BID_POINT_DISTANCE;
+      if(!strcmp(nm,"point_direction")) return BID_POINT_DIRECTION;
       return -1;
     case 'o':
       if(!strcmp(nm,"ord")) return BID_ORD;
@@ -3423,19 +3467,30 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"sin")) return BID_SIN;
       if(!strcmp(nm,"shader_set")) return BID_SHADER_SET;
       if(!strcmp(nm,"shader_reset")) return BID_SHADER_RESET;
+      if(!strcmp(nm,"shader_get_uniform")) return BID_SHADER_GET_UNIFORM;
       if(!strcmp(nm,"shader_set_uniform_f")) return BID_SHADER_SET_UNIFORM_F;
       if(!strcmp(nm,"shader_set_uniform_f_array")) return BID_SHADER_SET_UNIFORM_F_ARRAY;
+      if(!strcmp(nm,"surface_exists")) return BID_SURFACE_EXISTS;
       if(!strcmp(nm,"surface_create")) return BID_SURFACE_CREATE;
       if(!strcmp(nm,"surface_free")) return BID_SURFACE_FREE;
+      if(!strcmp(nm,"surface_get_texture")) return BID_SURFACE_GET_TEXTURE;
+      if(!strcmp(nm,"surface_get_width")) return BID_SURFACE_GET_WIDTH;
+      if(!strcmp(nm,"surface_get_height")) return BID_SURFACE_GET_HEIGHT;
       if(!strcmp(nm,"surface_set_target")) return BID_SURFACE_SET_TARGET;
       if(!strcmp(nm,"surface_reset_target")) return BID_SURFACE_RESET_TARGET;
       if(!strcmp(nm,"string_width")) return BID_STRING_WIDTH;
       if(!strcmp(nm,"string_height")) return BID_STRING_HEIGHT;
       return -1;
+    case 't':
+      if(!strcmp(nm,"texture_get_texel_width")) return BID_TEXTURE_GET_TEXEL_WIDTH;
+      if(!strcmp(nm,"texture_get_texel_height")) return BID_TEXTURE_GET_TEXEL_HEIGHT;
+      return -1;
     case 'w':
       if(!strcmp(nm,"window_mouse_get_x")) return BID_DEVICE_MOUSE_RAW_X;
       if(!strcmp(nm,"window_mouse_get_y")) return BID_DEVICE_MOUSE_RAW_Y;
       if(!strcmp(nm,"window_mouse_set")) return BID_WINDOW_MOUSE_SET;
+      if(!strcmp(nm,"window_get_width")) return BID_WINDOW_GET_WIDTH;
+      if(!strcmp(nm,"window_get_height")) return BID_WINDOW_GET_HEIGHT;
       return -1;
     default:
       return -1;
@@ -3670,6 +3725,11 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
     case BID_SHADER_RESET:
       if(R) R->active_shader=-1;
       return vreal(0);
+    case BID_SHADER_GET_UNIFORM:{
+      int sh=(int)N(a,n,0); const char *un=S(a,n,1);
+      if(R && sh>=0 && sh<R->n_shader_pal && R->shader_pal && R->shader_pal[sh].lut &&
+         !strcmp(un,R->shader_pal[sh].lut_row_uniform)) return vreal(sh*16+1);
+      return vreal(sh>=0? sh*16+15 : -1); }
     case BID_SHADER_SET_UNIFORM_F:
     case BID_SHADER_SET_UNIFORM_F_ARRAY:
       if(R){ int h=(int)N(a,n,0);
@@ -3714,6 +3774,8 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       return vreal(best>1e17?-1:best); }
     case BID_FLOOR:
       return vreal(floor(N(a,n,0)));
+    case BID_FRAC:{
+      double v=N(a,n,0); return vreal(v-floor(v)); }
     case BID_ABS:
       return vreal(fabs(N(a,n,0)));
     case BID_MIN:{
@@ -3737,6 +3799,9 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       return vreal(-N(a,n,0)*sin(N(a,n,1)*M_PI/180.0));
     case BID_POINT_DISTANCE:
       return vreal(hypot(N(a,n,2)-N(a,n,0),N(a,n,3)-N(a,n,1)));
+    case BID_POINT_DIRECTION:{
+      double dx=N(a,n,2)-N(a,n,0), dy=N(a,n,3)-N(a,n,1);
+      double r=atan2(-dy,dx)*180.0/M_PI; if(r<0)r+=360; return vreal(r); }
     case BID_KEYBOARD_CHECK:
     case BID_KEYBOARD_CHECK_DIRECT:
       return vreal(gml_input_key((int)N(a,n,0),0));
@@ -3813,11 +3878,30 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       double v; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL); return vreal(v); }
     case BID_WINDOW_MOUSE_SET:
       return vreal(0);
+    case BID_DISPLAY_GET_WIDTH:
+    case BID_WINDOW_GET_WIDTH:
+      return vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288));
+    case BID_DISPLAY_GET_HEIGHT:
+    case BID_WINDOW_GET_HEIGHT:
+      return vreal((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216));
+    case BID_DISPLAY_GET_GUI_WIDTH:
+      return vreal(vm->gui_w>0? vm->gui_w : ((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)));
+    case BID_DISPLAY_GET_GUI_HEIGHT:
+      return vreal(vm->gui_h>0? vm->gui_h : ((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)));
+    case BID_SURFACE_EXISTS:
+      return vreal(R?gml_surface_exists(R,(int)N(a,n,0)):0);
     case BID_SURFACE_CREATE:
       return vreal(R?gml_surface_create(R,(int)N(a,n,0),(int)N(a,n,1)):-1);
     case BID_SURFACE_FREE:
       if(R) gml_surface_free(R,(int)N(a,n,0));
       return vreal(0);
+    case BID_SURFACE_GET_TEXTURE:{
+      int sid=(int)N(a,n,0);
+      return vreal((R&&gml_surface_exists(R,sid))?(double)(GML_TEX_SURF_TAG | (sid&0xFFFF)):-1); }
+    case BID_SURFACE_GET_WIDTH:
+      return vreal(R?gml_surface_width(R,(int)N(a,n,0)):0);
+    case BID_SURFACE_GET_HEIGHT:
+      return vreal(R?gml_surface_height(R,(int)N(a,n,0)):0);
     case BID_SURFACE_SET_TARGET:
       if(getenv("GML_LOG_SURF")) fprintf(stderr,"[surf] set_target %d\n",(int)N(a,n,0));
       return vreal(R?gml_surface_set_target(R,(int)N(a,n,0)):0);
@@ -3825,6 +3909,10 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       if(getenv("GML_LOG_SURF")) fprintf(stderr,"[surf] reset_target\n");
       if(R) gml_surface_reset_target(R);
       return vreal(0);
+    case BID_TEXTURE_GET_TEXEL_WIDTH:{
+      double tw; return vreal(texture_info(R,(int)N(a,n,0),NULL,NULL,&tw,NULL)?tw:0); }
+    case BID_TEXTURE_GET_TEXEL_HEIGHT:{
+      double th; return vreal(texture_info(R,(int)N(a,n,0),NULL,NULL,NULL,&th)?th:0); }
     case BID_STRING_WIDTH:
       return vreal(R?gml_text_width(R,S(a,n,0)):(int)strlen(S(a,n,0))*8);
     case BID_STRING_HEIGHT:
