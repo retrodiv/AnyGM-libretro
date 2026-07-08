@@ -3128,6 +3128,8 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
   if(!strcmp(nm,"draw_sprite")){ if(R) gml_draw_sprite(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_sprite_ext")){ if(R) gml_draw_sprite_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
       N(a,n,4),N(a,n,5),N(a,n,6),(uint32_t)N(a,n,7),N(a,n,8)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_self")){ GmlInstance*s=vm->cur_self; if(R&&s) gml_draw_sprite_ext(R,(int)s->sprite_index,
+      (int)s->image_index,s->x,s->y,s->image_xscale,s->image_yscale,s->image_angle,(uint32_t)s->image_blend,s->image_alpha); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_sprite_stretched")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),0xFFFFFF,R->alpha); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_sprite_stretched_ext")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_surface")){ if(R){ int s=(int)N(a,n,0);
@@ -3182,6 +3184,7 @@ enum {
   BID_ARRAY_LENGTH_2D,
   BID_DRAW_SPRITE,
   BID_DRAW_SPRITE_EXT,
+  BID_DRAW_SELF,
   BID_DRAW_SURFACE,
   BID_DRAW_SURFACE_EXT,
   BID_DRAW_SURFACE_STRETCHED,
@@ -3319,6 +3322,7 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"ds_list_size")) return BID_DS_LIST_SIZE;
       if(!strcmp(nm,"draw_sprite")) return BID_DRAW_SPRITE;
       if(!strcmp(nm,"draw_sprite_ext")) return BID_DRAW_SPRITE_EXT;
+      if(!strcmp(nm,"draw_self")) return BID_DRAW_SELF;
       if(!strcmp(nm,"draw_surface")) return BID_DRAW_SURFACE;
       if(!strcmp(nm,"draw_surface_ext")) return BID_DRAW_SURFACE_EXT;
       if(!strcmp(nm,"draw_surface_stretched")) return BID_DRAW_SURFACE_STRETCHED;
@@ -3585,6 +3589,11 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       if(R) gml_draw_sprite_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
         N(a,n,4),N(a,n,5),N(a,n,6),(uint32_t)N(a,n,7),N(a,n,8));
       return vreal(0);
+    case BID_DRAW_SELF:{
+      GmlInstance*s=vm->cur_self;
+      if(R&&s) gml_draw_sprite_ext(R,(int)s->sprite_index,
+        (int)s->image_index,s->x,s->y,s->image_xscale,s->image_yscale,s->image_angle,(uint32_t)s->image_blend,s->image_alpha);
+      return vreal(0); }
     case BID_DRAW_SURFACE:
       if(R){ int s=(int)N(a,n,0);
         if(s>0 && s==(int)gml_global_arr(vm,"view_surface_id",0) && N(a,n,1)==0 && N(a,n,2)==0)
