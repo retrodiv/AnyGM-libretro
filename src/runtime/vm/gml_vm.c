@@ -1015,7 +1015,23 @@ static void code_cache_free(GmlCode *c){
   c->n_insn=0;
   c->micro_kind=0; c->micro_name=NULL; c->micro_hash=0;
 }
-enum { GML_MICRO_NONE=0, GML_MICRO_DS_MAP_GLOBAL_ARG0=1 };
+enum {
+  GML_MICRO_NONE=0,
+  GML_MICRO_DS_MAP_GLOBAL_ARG0=1,
+  GML_MICRO_APPROACH3=2,
+  GML_MICRO_CALL_GLOBAL_ARG0=3
+};
+static int insn_arg_ref(const GmlInsn *in, int arg){
+  if(!in || !in->refname || in->inst!=IT_ARG) return 0;
+  if(arg<0 || arg>9) return 0;
+  return !strncmp(in->refname,"argument",8) && in->refname[8]==(char)('0'+arg) && in->refname[9]==0;
+}
+static int insn_push_arg(const GmlInsn *in, int arg){
+  return in && in->kind==OP_PUSH && in->type1==DT_VAR && insn_arg_ref(in,arg);
+}
+static int insn_pop_arg(const GmlInsn *in, int arg){
+  return in && in->kind==OP_POP && in->type1==DT_VAR && insn_arg_ref(in,arg);
+}
 static void code_cache_analyze_micro(GmlCode *c){
   if(!c) return;
   c->micro_kind=0; c->micro_name=NULL; c->micro_hash=0;
@@ -1029,6 +1045,47 @@ static void code_cache_analyze_micro(GmlCode *c){
      in[2].refname && !strcmp(in[2].refname,"ds_map_find_value") &&
      in[3].kind==OP_RET){
     c->micro_kind=GML_MICRO_DS_MAP_GLOBAL_ARG0;
+    c->micro_name=in[1].refname;
+    c->micro_hash=in[1].refhash?in[1].refhash:strhash(in[1].refname);
+    return;
+  }
+  if(c->n_insn>=28 && c->branch_index &&
+     insn_push_arg(&in[0],0) &&
+     insn_push_arg(&in[1],1) &&
+     in[2].kind==OP_CMP && in[2].cmp==CMP_LT &&
+     in[3].kind==OP_BF && c->branch_index[3]==15 &&
+     insn_push_arg(&in[4],0) &&
+     insn_push_arg(&in[5],2) &&
+     in[6].kind==OP_ADD &&
+     insn_pop_arg(&in[7],0) &&
+     insn_push_arg(&in[8],0) &&
+     insn_push_arg(&in[9],1) &&
+     in[10].kind==OP_CMP && in[10].cmp==CMP_GT &&
+     in[11].kind==OP_BF && c->branch_index[11]==14 &&
+     insn_push_arg(&in[12],1) &&
+     in[13].kind==OP_RET &&
+     in[14].kind==OP_B && c->branch_index[14]==25 &&
+     insn_push_arg(&in[15],0) &&
+     insn_push_arg(&in[16],2) &&
+     in[17].kind==OP_SUB &&
+     insn_pop_arg(&in[18],0) &&
+     insn_push_arg(&in[19],0) &&
+     insn_push_arg(&in[20],1) &&
+     in[21].kind==OP_CMP && in[21].cmp==CMP_LT &&
+     in[22].kind==OP_BF && c->branch_index[22]==25 &&
+     insn_push_arg(&in[23],1) &&
+     in[24].kind==OP_RET &&
+     insn_push_arg(&in[25],0) &&
+     in[26].kind==OP_RET){
+    c->micro_kind=GML_MICRO_APPROACH3;
+    return;
+  }
+  if(c->n_insn>=4 &&
+     insn_push_arg(&in[0],0) &&
+     in[1].kind==OP_PUSH && in[1].type1==DT_VAR && in[1].inst==IT_GLOBAL && in[1].refname &&
+     in[2].kind==OP_CALL && in[2].argc==2 && in[2].refname &&
+     in[3].kind==OP_RET){
+    c->micro_kind=GML_MICRO_CALL_GLOBAL_ARG0;
     c->micro_name=in[1].refname;
     c->micro_hash=in[1].refhash?in[1].refhash:strhash(in[1].refname);
   }
@@ -1157,16 +1214,48 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
   const char *arglog=getenv("GML_LOG_CODE_ARGS");
   if(arglog && *arglog && c->name && strstr(c->name,arglog)) return 0;
   double t0=codeprof_on()?codeprof_now_ms():0.0;
-  GmlVal *map=gml_varmap_get_h(&vm->globals,c->micro_name,c->micro_hash);
-  GmlVal a[2]={ map?*map:vreal(0), (args && n_args>0)?args[0]:vundef() };
-  static int ds_find_value_id;
-  if(!ds_find_value_id) ds_find_value_id=gml_builtin_fast_id("ds_map_find_value");
-  int bid=ds_find_value_id;
-  *out = bid>0 ? gml_builtin_call_fast_id(vm,bid,"ds_map_find_value",a,2)
-               : gml_builtin_call(vm,"ds_map_find_value",a,2);
-  gml_arr_mark_escaped(*out);
-  if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,4);
-  return 1;
+  if(c->micro_kind==GML_MICRO_DS_MAP_GLOBAL_ARG0 && c->micro_name){
+    GmlVal *map=gml_varmap_get_h(&vm->globals,c->micro_name,c->micro_hash);
+    GmlVal a[2]={ map?*map:vreal(0), (args && n_args>0)?args[0]:vundef() };
+    static int ds_find_value_id;
+    if(!ds_find_value_id) ds_find_value_id=gml_builtin_fast_id("ds_map_find_value");
+    int bid=ds_find_value_id;
+    *out = bid>0 ? gml_builtin_call_fast_id(vm,bid,"ds_map_find_value",a,2)
+                 : gml_builtin_call(vm,"ds_map_find_value",a,2);
+    gml_arr_mark_escaped(*out);
+    if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,4);
+    return 1;
+  }
+  if(c->micro_kind==GML_MICRO_APPROACH3){
+    double cur=(args && n_args>0)?asnum(args[0]):0.0;
+    double target=(args && n_args>1)?asnum(args[1]):0.0;
+    double step=(args && n_args>2)?asnum(args[2]):0.0;
+    if(cur<target){
+      cur+=step;
+      if(cur>target) cur=target;
+    } else {
+      cur-=step;
+      if(cur<target) cur=target;
+    }
+    *out=vreal(cur);
+    if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,28);
+    return 1;
+  }
+  if(c->micro_kind==GML_MICRO_CALL_GLOBAL_ARG0 && c->micro_name && c->insn){
+    int fci=c->insn[2].funcval_ci;
+    if(fci==-1){
+      fci=gml_code_index_by_name(vm->win,c->insn[2].refname);
+      c->insn[2].funcval_ci=(fci>=0)?fci:-2;
+    }
+    if(fci>=0 && fci<vm->win->n_code){
+      GmlVal *gv=gml_varmap_get_h(&vm->globals,c->micro_name,c->micro_hash);
+      GmlVal a[2]={ gv?*gv:vreal(0), (args && n_args>0)?args[0]:vundef() };
+      *out=gml_vm_run_code(vm,fci,vm->cur_self,vm->cur_other,a,2);
+      if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,4);
+      return 1;
+    }
+  }
+  return 0;
 }
 static int code_micro_maybe(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *out){
   if(!vm || !vm->win || ci<0 || ci>=vm->win->n_code) return 0;
