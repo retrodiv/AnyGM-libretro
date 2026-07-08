@@ -583,6 +583,21 @@ static char *resolve_content_path(GmlVM *vm, const char *p){
   }
   return strdup(p);
 }
+static int copy_file_path(const char *src, const char *dst){
+  int ok=0;
+  FILE *fi=src?fopen(src,"rb"):NULL;
+  FILE *fo=(fi&&dst)?fopen(dst,"wb"):NULL;
+  if(fi&&fo){
+    char buf[8192];
+    size_t nr;
+    ok=1;
+    while((nr=fread(buf,1,sizeof(buf),fi))>0)
+      if(fwrite(buf,1,nr,fo)!=nr){ ok=0; break; }
+  }
+  if(fi) fclose(fi);
+  if(fo) fclose(fo);
+  return ok;
+}
 static int log_ds_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_DS")!=NULL; return on; }
 static int log_col_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_COL")!=NULL; return on; }
 static int log_tilecol_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_TILECOL")!=NULL; return on; }
@@ -694,6 +709,39 @@ static int ds_val_equal(GmlVal a, GmlVal b){
   if(a.t==V_UNDEF || b.t==V_UNDEF) return a.t==b.t;
   if(a.t==V_STR || b.t==V_STR) return !strcmp(gm_string_tmp(a),gm_string_tmp(b));
   return fabs((a.t==V_REAL?a.d:0.0)-(b.t==V_REAL?b.d:0.0))<1e-9;
+}
+static GmlVal ds_priority_entry(GmlVal val, double pri){
+  GmlVal e=arr_newv(2);
+  if(e.t!=V_ARR || !e.arr) return ds_val_clone(val);
+  GmlArr *A=(GmlArr*)e.arr;
+  A->data[0]=ds_val_clone(val);
+  A->data[1]=vreal(pri);
+  gml_arr_mark_escaped(e);
+  return e;
+}
+static GmlVal ds_priority_value(GmlVal e){
+  if(e.t==V_ARR && e.arr){
+    GmlArr *A=(GmlArr*)e.arr;
+    if(A->len>0) return ds_ret(A->data[0]);
+  }
+  return ds_ret(e);
+}
+static double ds_priority_priority(GmlVal e){
+  if(e.t==V_ARR && e.arr){
+    GmlArr *A=(GmlArr*)e.arr;
+    if(A->len>1) return N(&A->data[1],1,0);
+  }
+  return 0;
+}
+static int ds_priority_best_index(GmlDSList *l, int want_max){
+  if(!l || l->len<=0) return -1;
+  int bi=0;
+  double bp=ds_priority_priority(l->item[0]);
+  for(int i=1;i<l->len;i++){
+    double p=ds_priority_priority(l->item[i]);
+    if((want_max && p>bp) || (!want_max && p<bp)){ bp=p; bi=i; }
+  }
+  return bi;
 }
 static void ds_grid_store(GmlDSGrid *g, int x, int y, GmlVal v){
   if(g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h)
@@ -1508,6 +1556,115 @@ static uint64_t buffer_read_u(GmlVM *vm, int bi, int n){
   if(avail<n) n=avail;
   if(n>0){ memcpy(&v,vm->buffer[bi].data+pos,(size_t)n); vm->buffer[bi].pos=pos+n; }
   return v;
+}
+static GmlVal buffer_read_typed_at_pos(GmlVM *vm, int bi, int pos, int type){
+  if(bi<0||bi>=16||!vm->buffer[bi].live) return vreal(0);
+  int old=vm->buffer[bi].pos;
+  if(pos<0) pos=0;
+  if(pos>vm->buffer[bi].size) pos=vm->buffer[bi].size;
+  vm->buffer[bi].pos=pos;
+  GmlVal out=vreal(0);
+  if(type==11){
+    int p=vm->buffer[bi].pos, e=p;
+    while(e<vm->buffer[bi].size && vm->buffer[bi].data[e]) e++;
+    out=vstr_owned(dup_n((char*)vm->buffer[bi].data+p,e-p));
+  } else if(type==13){
+    int p=vm->buffer[bi].pos, e=vm->buffer[bi].size;
+    out=vstr_owned(dup_n((char*)vm->buffer[bi].data+p,e-p));
+  } else if(type==1||type==10) out=vreal((uint8_t)buffer_read_u(vm,bi,1));
+  else if(type==2) out=vreal((int8_t)buffer_read_u(vm,bi,1));
+  else if(type==3) out=vreal((uint16_t)buffer_read_u(vm,bi,2));
+  else if(type==4) out=vreal((int16_t)buffer_read_u(vm,bi,2));
+  else if(type==5) out=vreal((uint32_t)buffer_read_u(vm,bi,4));
+  else if(type==6) out=vreal((int32_t)buffer_read_u(vm,bi,4));
+  else if(type==7){ uint16_t h=(uint16_t)buffer_read_u(vm,bi,2);
+    uint32_t sgn=(h&0x8000)<<16, ex=(h>>10)&0x1F, mn=h&0x3FF;
+    uint32_t u = ex==0 ? sgn : (sgn|((ex+112)<<23)|(mn<<13));
+    float f; memcpy(&f,&u,4); out=vreal(f);
+  } else if(type==8){ uint32_t u=(uint32_t)buffer_read_u(vm,bi,4); float f; memcpy(&f,&u,4); out=vreal(f);
+  } else if(type==12){ uint64_t u=buffer_read_u(vm,bi,8); out=vreal((double)(int64_t)u);
+  } else { uint64_t u=buffer_read_u(vm,bi,8); double d; memcpy(&d,&u,8); out=vreal(d); }
+  vm->buffer[bi].pos=old;
+  return out;
+}
+typedef struct { uint32_t h[4]; uint64_t bits; uint8_t buf[64]; int used; } GmlMd5;
+static uint32_t md5_rot(uint32_t x, uint32_t n){ return (x<<n)|(x>>(32-n)); }
+static void md5_transform(GmlMd5 *m, const uint8_t b[64]){
+  static const uint32_t K[64]={
+    0xd76aa478u,0xe8c7b756u,0x242070dbu,0xc1bdceeeu,0xf57c0fafu,0x4787c62au,0xa8304613u,0xfd469501u,
+    0x698098d8u,0x8b44f7afu,0xffff5bb1u,0x895cd7beu,0x6b901122u,0xfd987193u,0xa679438eu,0x49b40821u,
+    0xf61e2562u,0xc040b340u,0x265e5a51u,0xe9b6c7aau,0xd62f105du,0x02441453u,0xd8a1e681u,0xe7d3fbc8u,
+    0x21e1cde6u,0xc33707d6u,0xf4d50d87u,0x455a14edu,0xa9e3e905u,0xfcefa3f8u,0x676f02d9u,0x8d2a4c8au,
+    0xfffa3942u,0x8771f681u,0x6d9d6122u,0xfde5380cu,0xa4beea44u,0x4bdecfa9u,0xf6bb4b60u,0xbebfbc70u,
+    0x289b7ec6u,0xeaa127fau,0xd4ef3085u,0x04881d05u,0xd9d4d039u,0xe6db99e5u,0x1fa27cf8u,0xc4ac5665u,
+    0xf4292244u,0x432aff97u,0xab9423a7u,0xfc93a039u,0x655b59c3u,0x8f0ccc92u,0xffeff47du,0x85845dd1u,
+    0x6fa87e4fu,0xfe2ce6e0u,0xa3014314u,0x4e0811a1u,0xf7537e82u,0xbd3af235u,0x2ad7d2bbu,0xeb86d391u};
+  static const uint8_t SFT[64]={
+    7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,
+    5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
+    4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,
+    6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21};
+  uint32_t x[16];
+  for(int i=0;i<16;i++)
+    x[i]=(uint32_t)b[i*4]|((uint32_t)b[i*4+1]<<8)|((uint32_t)b[i*4+2]<<16)|((uint32_t)b[i*4+3]<<24);
+  uint32_t A=m->h[0], B=m->h[1], C=m->h[2], D=m->h[3];
+  for(int i=0;i<64;i++){
+    uint32_t F,g;
+    if(i<16){ F=(B&C)|((~B)&D); g=(uint32_t)i; }
+    else if(i<32){ F=(D&B)|((~D)&C); g=(uint32_t)((5*i+1)&15); }
+    else if(i<48){ F=B^C^D; g=(uint32_t)((3*i+5)&15); }
+    else { F=C^(B|(~D)); g=(uint32_t)((7*i)&15); }
+    uint32_t T=D;
+    D=C; C=B;
+    B += md5_rot(A+F+K[i]+x[g],SFT[i]);
+    A=T;
+  }
+  m->h[0]+=A; m->h[1]+=B; m->h[2]+=C; m->h[3]+=D;
+}
+static void md5_init(GmlMd5 *m){
+  m->h[0]=0x67452301u; m->h[1]=0xefcdab89u; m->h[2]=0x98badcfeu; m->h[3]=0x10325476u;
+  m->bits=0; m->used=0;
+}
+static void md5_update(GmlMd5 *m, const uint8_t *p, size_t n){
+  m->bits += (uint64_t)n*8u;
+  while(n>0){
+    size_t take=64u-(size_t)m->used;
+    if(take>n) take=n;
+    memcpy(m->buf+m->used,p,take);
+    m->used += (int)take; p += take; n -= take;
+    if(m->used==64){ md5_transform(m,m->buf); m->used=0; }
+  }
+}
+static void md5_final(GmlMd5 *m, uint8_t out[16]){
+  uint64_t bits=m->bits;
+  m->buf[m->used++]=0x80;
+  if(m->used>56){
+    while(m->used<64) m->buf[m->used++]=0;
+    md5_transform(m,m->buf);
+    m->used=0;
+  }
+  while(m->used<56) m->buf[m->used++]=0;
+  for(int i=0;i<8;i++) m->buf[56+i]=(uint8_t)(bits>>(8*i));
+  md5_transform(m,m->buf);
+  for(int i=0;i<4;i++){
+    out[i*4]=(uint8_t)m->h[i];
+    out[i*4+1]=(uint8_t)(m->h[i]>>8);
+    out[i*4+2]=(uint8_t)(m->h[i]>>16);
+    out[i*4+3]=(uint8_t)(m->h[i]>>24);
+  }
+}
+static GmlVal md5_hex_val(const uint8_t *p, size_t n){
+  static const char H[]="0123456789abcdef";
+  uint8_t d[16];
+  GmlMd5 m;
+  md5_init(&m);
+  if(p && n) md5_update(&m,p,n);
+  md5_final(&m,d);
+  char *s=malloc(33);
+  if(!s) return vstr("");
+  for(int i=0;i<16;i++){ s[i*2]=H[d[i]>>4]; s[i*2+1]=H[d[i]&15]; }
+  s[32]=0;
+  return vstr_owned(s);
 }
 static unsigned char *base64_decode_alloc(const char *s, int *out_len){
   static signed char D[256]; static int dinit=0;
@@ -3715,6 +3872,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"sqr"))   { double x=N(a,n,0); return vreal(x*x); }
   if(!strcmp(nm,"sin"))   return vreal(sin(N(a,n,0)));
   if(!strcmp(nm,"cos"))   return vreal(cos(N(a,n,0)));
+  if(!strcmp(nm,"tan"))   return vreal(tan(N(a,n,0)));
+  if(!strcmp(nm,"log10")) return vreal(log10(N(a,n,0)));
+  if(!strcmp(nm,"logn"))  return vreal(log(N(a,n,1))/log(N(a,n,0)));
   if(!strcmp(nm,"dsin"))  return vreal(sin(N(a,n,0)*M_PI/180.0));   /* degree trig (GM classics) */
   if(!strcmp(nm,"dcos"))  return vreal(cos(N(a,n,0)*M_PI/180.0));
   if(!strcmp(nm,"dtan"))  return vreal(tan(N(a,n,0)*M_PI/180.0));
@@ -4019,6 +4179,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"path_get_number")){ int pi=(int)N(a,n,0);
     return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].n:0); }
+  if(!strcmp(nm,"path_get_closed")){ int pi=(int)N(a,n,0);
+    return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].closed:0); }
+  if(!strcmp(nm,"path_get_length")){ int pi=(int)N(a,n,0);
+    return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].len:0); }
   if(!strcmp(nm,"path_get_x")||!strcmp(nm,"path_get_y")){
     int pi=(int)N(a,n,0); double t=N(a,n,1);
     if(pi<0||pi>=vm->n_paths) return vreal(0);
@@ -4050,6 +4214,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"string")) return vstr_owned(strdup(S(a,n,0)));
   if(!strcmp(nm,"string_length")) return vreal((double)strlen(S(a,n,0)));
   if(!strcmp(nm,"string_byte_length")) return vreal((double)strlen(S(a,n,0)));
+  if(!strcmp(nm,"md5_string_utf8")){ const char *s=S(a,n,0); return md5_hex_val((const uint8_t*)s,strlen(s)); }
   if(!strcmp(nm,"string_count")) return vreal(gm_string_count(S(a,n,0),S(a,n,1)));
   if(!strcmp(nm,"string_split")){
     const char *src=S(a,n,0), *sep=S(a,n,1);
@@ -4629,6 +4794,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(!strcmp(nm,"part_type_gravity")){ gml_part_type_gravity((int)N(a,n,0),N(a,n,1),N(a,n,2)); return vreal(0); }
       if(!strcmp(nm,"part_type_life")){ gml_part_type_life((int)N(a,n,0),N(a,n,1),N(a,n,2)); return vreal(0); }
       if(!strcmp(nm,"part_type_orientation")){ gml_part_type_orientation((int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),(int)N(a,n,5)); return vreal(0); }
+      if(!strcmp(nm,"part_type_death")) return vreal(0);
       if(!strcmp(nm,"part_type_color1")||!strcmp(nm,"part_type_colour1")){ gml_part_type_color((int)N(a,n,0),1,(uint32_t)N(a,n,1),0,0); return vreal(0); }
       if(!strcmp(nm,"part_type_color2")||!strcmp(nm,"part_type_colour2")){ gml_part_type_color((int)N(a,n,0),2,(uint32_t)N(a,n,1),(uint32_t)N(a,n,2),0); return vreal(0); }
       if(!strcmp(nm,"part_type_color3")||!strcmp(nm,"part_type_colour3")){ gml_part_type_color((int)N(a,n,0),3,(uint32_t)N(a,n,1),(uint32_t)N(a,n,2),(uint32_t)N(a,n,3)); return vreal(0); }
@@ -4719,6 +4885,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
                                      N(a,n,6),N(a,n,7),N(a,n,8),N(a,n,9),(uint32_t)N(a,n,11),N(a,n,15));
       return vreal(0); }
     if(!strcmp(nm,"draw_background_stretched")){ if(R) gml_draw_background_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),0xFFFFFF,R->alpha); return vreal(0); }
+    if(!strcmp(nm,"draw_background_stretched_ext")){ if(R) gml_draw_background_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),(uint32_t)N(a,n,5),N(a,n,6)); return vreal(0); }
     if(!strcmp(nm,"draw_background_part_ext")){ if(R) gml_draw_background_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),(uint32_t)N(a,n,9),N(a,n,10)); return vreal(0); }
     if(!strcmp(nm,"draw_rectangle")||!strcmp(nm,"draw_rectangle_colour")||!strcmp(nm,"draw_rectangle_color")){
       if(R){ int plain=!strcmp(nm,"draw_rectangle"); int outline=(int)N(a,n,plain?4:8);
@@ -4727,6 +4894,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         if(plain) draw_rect_prim(R,x1,y1,x2,y2,R->color,outline);
         else draw_rect_colour_prim(R,x1,y1,x2,y2,(uint32_t)N(a,n,4),(uint32_t)N(a,n,5),(uint32_t)N(a,n,6),(uint32_t)N(a,n,7),outline); }
       return vreal(0); }
+    if(!strcmp(nm,"draw_point")){ if(R){ gml_render_maybe_prepare_draw(R); draw_px(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),R->color); } return vreal(0); }
     if(!strcmp(nm,"draw_point_color")||!strcmp(nm,"draw_point_colour")){ if(R){ gml_render_maybe_prepare_draw(R); draw_px(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(uint32_t)N(a,n,2)); } return vreal(0); }
     if(!strcmp(nm,"draw_line")||!strcmp(nm,"draw_line_color")||!strcmp(nm,"draw_line_colour")||!strcmp(nm,"draw_line_width")||!strcmp(nm,"draw_line_width_color")||!strcmp(nm,"draw_line_width_colour")){
       if(R){ int has_col=strstr(nm,"color")||strstr(nm,"colour"); int has_w=strstr(nm,"width")!=NULL;
@@ -4756,6 +4924,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         gml_render_maybe_prepare_draw(R);
         int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y), x2=(int)floor(N(a,n,2)-R->cam_x), y2=(int)floor(N(a,n,3)-R->cam_y);
         draw_circle_prim(R,(x1+x2)/2,(y1+y2)/2,abs(x2-x1)/2,abs(y2-y1)/2,(uint32_t)N(a,n,4),(int)N(a,n,6)); } return vreal(0); }
+    if(!strcmp(nm,"draw_ellipse")){ if(R){
+        gml_render_maybe_prepare_draw(R);
+        int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y), x2=(int)floor(N(a,n,2)-R->cam_x), y2=(int)floor(N(a,n,3)-R->cam_y);
+        draw_circle_prim(R,(x1+x2)/2,(y1+y2)/2,abs(x2-x1)/2,abs(y2-y1)/2,R->color,(int)N(a,n,4)); } return vreal(0); }
     if(!strcmp(nm,"draw_roundrect")){ if(R) draw_rect_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)ceil(N(a,n,2)-R->cam_x),(int)ceil(N(a,n,3)-R->cam_y),R->color,(int)N(a,n,4)); return vreal(0); }
     if(!strcmp(nm,"draw_roundrect_color")||!strcmp(nm,"draw_roundrect_colour")||
        !strcmp(nm,"draw_roundrect_color_ext")||!strcmp(nm,"draw_roundrect_colour_ext")){
@@ -4841,6 +5013,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"surface_reset_target")){ if(getenv("GML_LOG_SURF"))fprintf(stderr,"[surf] reset_target\n"); if(R) gml_surface_reset_target(R); return vreal(0); }
     if(!strcmp(nm,"surface_resize")){ if(R) gml_surface_resize(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2)); return vreal(0); }
     if(!strcmp(nm,"surface_copy")){ if(R) gml_surface_copy(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),(int)N(a,n,3)); return vreal(0); }
+    if(!strcmp(nm,"surface_save")||!strcmp(nm,"surface_save_part")) return vreal(0);
     if(!strcmp(nm,"application_surface_draw_enable")){ if(R) R->app_draw_enable=(int)N(a,n,0); return vreal(0); }
     if(!strcmp(nm,"application_surface_enable")){ if(R) R->app_draw_enable=(int)N(a,n,0); return vreal(0); }
     /* Map camera IDs to view indices and camera properties to view globals. */
@@ -5005,12 +5178,15 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"sprite_duplicate")) return vreal(R?gml_sprite_duplicate(R,(int)N(a,n,0)):-1);
     if(!strcmp(nm,"sprite_set_offset")){ if(R) gml_sprite_set_offset(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2)); return vreal(0); }
     if(!strcmp(nm,"sprite_save")) return vreal(0);
+    if(!strcmp(nm,"sprite_save_strip")) return vreal(0);
     if(!strcmp(nm,"sprite_collision_mask")){
       if(R) gml_sprite_collision_mask(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),
         (int)N(a,n,3),(int)N(a,n,4),(int)N(a,n,5),(int)N(a,n,6),(int)N(a,n,7),(int)N(a,n,8));
       return vreal(0);
     }
     if(!strcmp(nm,"sprite_prefetch")) return vreal(0);
+    if(!strcmp(nm,"background_add")||!strcmp(nm,"background_create_color")) return vreal(-1);
+    if(!strcmp(nm,"background_replace")||!strcmp(nm,"background_delete")||!strcmp(nm,"background_save")) return vreal(0);
     if(!strcmp(nm,"background_get_width")){ int bg=(int)N(a,n,0); if(R&&bg>=0&&bg<R->n_bg){ int ti=R->bg[bg].tpag; if(ti>=0&&ti<R->n_tpag) return vreal(R->tpag[ti].bw?R->tpag[ti].bw:R->tpag[ti].sw); } return vreal(0); }
     if(!strcmp(nm,"background_get_height")){ int bg=(int)N(a,n,0); if(R&&bg>=0&&bg<R->n_bg){ int ti=R->bg[bg].tpag; if(ti>=0&&ti<R->n_tpag) return vreal(R->tpag[ti].bh?R->tpag[ti].bh:R->tpag[ti].sh); } return vreal(0); }
     if(!strcmp(nm,"draw_text")){ if(R) gml_draw_text(R,N(a,n,0),N(a,n,1),S(a,n,2));
@@ -5131,7 +5307,36 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"joystick_pov")) return vreal(-1);
 
   /* ---- file / buffer runtime I/O ---- */
-  if(!strcmp(nm,"file_exists")){ char *path=resolve_content_path(vm,S(a,n,0));
+  if(!strcmp(nm,"FS_set_gm_save_area")||!strcmp(nm,"FS_set_working_directory")) return vreal(1);
+  if(!strcmp(nm,"FS_export_image")||!strcmp(nm,"FS_export_image_adv")||
+     !strcmp(nm,"FS_export_raw")||!strcmp(nm,"FS_import_image")) return vreal(0);
+  if(!strcmp(nm,"FS_unique_fname")){
+    const char *raw=S(a,n,0);
+    if(!raw[0]) return vstr("");
+    char *path=resolve_content_path(vm,raw);
+    struct stat st;
+    if(!path || stat(path,&st)!=0){ free(path); return vstr_owned(strdup(raw)); }
+    free(path);
+    const char *slash=strrchr(raw,'/');
+    const char *dot=strrchr(raw,'.');
+    if(dot && slash && dot<slash) dot=NULL;
+    size_t base_len=dot?(size_t)(dot-raw):strlen(raw);
+    const char *ext=dot?dot:"";
+    for(int k=1;k<10000;k++){
+      char mid[32]; snprintf(mid,sizeof mid,"_%d",k);
+      size_t need=base_len+strlen(mid)+strlen(ext)+1;
+      char *cand=malloc(need);
+      if(!cand) return vstr_owned(strdup(raw));
+      memcpy(cand,raw,base_len); strcpy(cand+base_len,mid); strcat(cand,ext);
+      char *full=resolve_content_path(vm,cand);
+      int exists=full && stat(full,&st)==0;
+      free(full);
+      if(!exists) return vstr_owned(cand);
+      free(cand);
+    }
+    return vstr_owned(strdup(raw));
+  }
+  if(!strcmp(nm,"file_exists")||!strcmp(nm,"FS_file_exists")){ char *path=resolve_content_path(vm,S(a,n,0));
     /* must be a REGULAR file: fopen() on Linux happily opens directories, so an empty/garbage
      * path (e.g. from an unset variable) reported "exists" and games loaded phantom configs */
     struct stat st; int ok = path && stat(path,&st)==0 && S_ISREG(st.st_mode);
@@ -5147,10 +5352,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     free(path); return vreal(ok); }
   if(!strcmp(nm,"directory_destroy")){ char *path=resolve_content_path(vm,S(a,n,0)); int ok=path&&GML_RMDIR(path)==0; free(path); return vreal(ok); }
   if(!strcmp(nm,"file_delete")){ char *path=resolve_content_path(vm,S(a,n,0)); int ok=remove(path)==0; free(path); return vreal(ok); }
-  if(!strcmp(nm,"file_copy")){ char *src=resolve_content_path(vm,S(a,n,0)); char *dst=resolve_content_path(vm,S(a,n,1)); int ok=0;
-    FILE *fi=src?fopen(src,"rb"):NULL; FILE *fo=(fi&&dst)?fopen(dst,"wb"):NULL;
-    if(fi&&fo){ char buf[8192]; size_t nr; ok=1; while((nr=fread(buf,1,sizeof(buf),fi))>0) if(fwrite(buf,1,nr,fo)!=nr){ ok=0; break; } }
-    if(fi) fclose(fi); if(fo) fclose(fo); free(src); free(dst); return vreal(ok); }
+  if(!strcmp(nm,"file_copy")||!strcmp(nm,"FS_file_copy")||!strcmp(nm,"FS_copy_fast")){
+    char *src=resolve_content_path(vm,S(a,n,0)); char *dst=resolve_content_path(vm,S(a,n,1));
+    int ok=copy_file_path(src,dst);
+    free(src); free(dst); return vreal(ok); }
   /* Scan a directory with a glob mask, returning basenames or an empty string at the end. */
   if(!strcmp(nm,"file_find_first")){
     ff_reset();
@@ -5181,17 +5386,19 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"file_find_close")){ ff_reset(); return vreal(0); }
   if(!strcmp(nm,"file_rename")){ char *oldp=resolve_content_path(vm,S(a,n,0)); char *newp=resolve_content_path(vm,S(a,n,1));
     int ok=rename(oldp,newp)==0; free(oldp); free(newp); return vreal(ok); }
-  if(!strcmp(nm,"file_bin_open")){ char *path=resolve_content_path(vm,S(a,n,0)); int mode=(int)N(a,n,1);
+  if(!strcmp(nm,"file_bin_open")||!strcmp(nm,"FS_file_bin_open")){ char *path=resolve_content_path(vm,S(a,n,0)); int mode=(int)N(a,n,1);
     const char *fm = mode==1 ? "wb+" : (mode==2 ? "ab+" : "rb");
     int id=vm_file_open(vm,path,fm); if(id<0 && mode==1) id=vm_file_open(vm,path,"wb+"); free(path); return vreal(id); }
-  if(!strcmp(nm,"file_bin_close")){ int i=vm_file_slot(vm,(int)N(a,n,0));
+  if(!strcmp(nm,"file_bin_close")||!strcmp(nm,"FS_file_bin_close")){ int i=vm_file_slot(vm,(int)N(a,n,0));
     if(i>=0){ fclose((FILE*)vm->bin_file[i]); vm->bin_file[i]=NULL; } return vreal(0); }
-  if(!strcmp(nm,"file_bin_size")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(0);
+  if(!strcmp(nm,"file_bin_size")||!strcmp(nm,"FS_file_bin_size")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(0);
     FILE *f=(FILE*)vm->bin_file[i]; long p=ftell(f); fseek(f,0,SEEK_END); long sz=ftell(f); fseek(f,p,SEEK_SET);
     return vreal(sz<0?0:sz); }
-  if(!strcmp(nm,"file_bin_read_byte")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(0);
+  if(!strcmp(nm,"file_bin_seek")||!strcmp(nm,"FS_file_bin_seek")){ int i=vm_file_slot(vm,(int)N(a,n,0));
+    if(i>=0){ long p=(long)N(a,n,1); if(p<0) p=0; fseek((FILE*)vm->bin_file[i],p,SEEK_SET); } return vreal(0); }
+  if(!strcmp(nm,"file_bin_read_byte")||!strcmp(nm,"FS_file_bin_read_byte")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(0);
     int c=fgetc((FILE*)vm->bin_file[i]); return vreal(c==EOF?0:(c&0xff)); }
-  if(!strcmp(nm,"file_bin_write_byte")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i>=0) fputc(((int)N(a,n,1))&0xff,(FILE*)vm->bin_file[i]); return vreal(0); }
+  if(!strcmp(nm,"file_bin_write_byte")||!strcmp(nm,"FS_file_bin_write_byte")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i>=0) fputc(((int)N(a,n,1))&0xff,(FILE*)vm->bin_file[i]); return vreal(0); }
 
   if(!strcmp(nm,"file_text_open_read")){ char *path=resolve_content_path(vm,S(a,n,0)); int id=vm_file_open(vm,path,"r"); free(path); return vreal(id); }
   if(!strcmp(nm,"file_text_open_write")){ char *path=resolve_content_path(vm,S(a,n,0)); int id=vm_file_open(vm,path,"w"); free(path); return vreal(id); }
@@ -5242,6 +5449,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"buffer_delete")){ int i=vm_buffer_slot(vm,(int)N(a,n,0));
     if(i>=0){ free(vm->buffer[i].data); memset(&vm->buffer[i],0,sizeof(vm->buffer[i])); } return vreal(0); }
   if(!strcmp(nm,"buffer_get_size")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); return vreal(i>=0?vm->buffer[i].size:0); }
+  if(!strcmp(nm,"buffer_md5")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); if(i<0) return md5_hex_val(NULL,0);
+    int off=(int)N(a,n,1), sz=(int)N(a,n,2);
+    if(off<0) off=0;
+    if(off>vm->buffer[i].size) off=vm->buffer[i].size;
+    if(sz<0 || off+sz>vm->buffer[i].size) sz=vm->buffer[i].size-off;
+    return md5_hex_val(vm->buffer[i].data+off,(size_t)sz); }
   if(!strcmp(nm,"buffer_get_address")){ int id=(int)N(a,n,0), i=vm_buffer_slot(vm,id);
     return vreal(i>=0 ? (double)(0xB0000000u | (uint32_t)(id&0xFFFF)) : 0); }
   if(!strcmp(nm,"buffer_tell")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); return vreal(i>=0?vm->buffer[i].pos:0); }
@@ -5289,6 +5502,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     else if(type==12){ uint64_t v=(uint64_t)(int64_t)dv; buffer_write_raw(vm,i,&v,8); }
     else { double v=dv; buffer_write_raw(vm,i,&v,8); }
     return vreal(0); }
+  if(!strcmp(nm,"buffer_peek")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(0);
+    return buffer_read_typed_at_pos(vm,i,(int)N(a,n,1),(int)N(a,n,2)); }
   if(!strcmp(nm,"buffer_read")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(0);
     int type=(int)N(a,n,1);
     if(type==11){ int p=vm->buffer[i].pos, e=p;   /* buffer_string: NUL-terminated */
@@ -5428,6 +5643,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* ---- audio ---- */
   { GmlAudio *AU=(GmlAudio*)vm->audio;
     if(!strcmp(nm,"audio_channel_num")){ gml_audio_channel_num(AU,(int)N(a,n,0)); return vreal(0); }
+    if(!strcmp(nm,"sound_add")) return vreal(-1);
+    if(!strcmp(nm,"sound_replace")) return vreal(0);
     if(!strcmp(nm,"audio_get_master_gain")) return vreal(gml_audio_get_master_gain(AU));
     if(!strcmp(nm,"audio_sound_get_gain")) return vreal(gml_audio_sound_get_gain(AU,(int)N(a,n,0)));
     if(!strcmp(nm,"audio_sound_get_pitch")) return vreal(gml_audio_sound_get_pitch(AU,(int)N(a,n,0)));
@@ -5561,6 +5778,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"io_clear")) return vreal(0);
   if(!strcmp(nm,"url_open")) return vreal(0);
   if(!strcmp(nm,"os_is_network_connected")) return vreal(0);
+  if(!strcmp(nm,"network_create_socket")||!strcmp(nm,"network_create_server")||
+     !strcmp(nm,"network_connect")) return vreal(-1);
+  if(!strcmp(nm,"network_send_packet")||!strcmp(nm,"network_destroy")) return vreal(0);
+  if(!strcmp(nm,"external_define")||!strcmp(nm,"external_call")) return vreal(0);
+  if(!strcmp(nm,"d3d_set_fog")||!strcmp(nm,"d3d_model_load")||!strcmp(nm,"d3d_model_save")) return vreal(0);
   if(!strcmp(nm,"keyboard_virtual_show")||!strcmp(nm,"keyboard_virtual_hide")) return vreal(0);
   if(!strcmp(nm,"virtual_key_add")) return vreal(0);
   if(!strcmp(nm,"virtual_key_delete")) return vreal(0);
@@ -5706,6 +5928,30 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     memmove(&l->item[0],&l->item[1],(size_t)(l->len-1)*sizeof(GmlVal)); l->len--; return v; }
   if(!strcmp(nm,"ds_stack_pop")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
     if(!l||l->len==0) return vreal(0); GmlVal v=l->item[--l->len]; if(v.t==V_STR) v.d=0; return v; }
+  if(!strcmp(nm,"ds_priority_create")) return vreal((double)ds_list_create_id(vm));
+  if(!strcmp(nm,"ds_priority_destroy")){ GmlDSList *l=ds_list_slot(vm,(int)N(a,n,0));
+    if(l){ free(l->item); memset(l,0,sizeof(*l)); }
+    return vreal(0); }
+  if(!strcmp(nm,"ds_priority_clear")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
+    if(l) l->len=0;
+    return vreal(0); }
+  if(!strcmp(nm,"ds_priority_size")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(l?l->len:0); }
+  if(!strcmp(nm,"ds_priority_empty")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(!l||l->len==0); }
+  if(!strcmp(nm,"ds_priority_add")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
+    if(l && n>=3) ds_list_push(l,ds_priority_entry(a[1],N(a,n,2)));
+    return vreal(0); }
+  if(!strcmp(nm,"ds_priority_find_min")||!strcmp(nm,"ds_priority_find_max")){
+    GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
+    int bi=ds_priority_best_index(l,!strcmp(nm,"ds_priority_find_max"));
+    return bi>=0?ds_priority_value(l->item[bi]):vreal(0); }
+  if(!strcmp(nm,"ds_priority_delete_min")||!strcmp(nm,"ds_priority_delete_max")){
+    GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
+    int bi=ds_priority_best_index(l,!strcmp(nm,"ds_priority_delete_max"));
+    if(bi<0) return vreal(0);
+    GmlVal v=ds_priority_value(l->item[bi]);
+    memmove(&l->item[bi],&l->item[bi+1],(size_t)(l->len-bi-1)*sizeof(GmlVal));
+    l->len--;
+    return v; }
   if(!strcmp(nm,"ds_exists")){ /* ds_exists(id, ds_type): type 0=map,1=list,4=grid — we track by id */
     int id=(int)N(a,n,0); return vreal(ds_list_slot_repair(vm,id)!=NULL || ds_map_slot(vm,id)!=NULL || ds_grid_slot(vm,id)!=NULL); }
   if(!strcmp(nm,"ds_grid_create")) return vreal((double)ds_grid_make(vm,(int)N(a,n,0),(int)N(a,n,1)));
@@ -6111,7 +6357,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(getenv("GML_LOG_DEBUGMSG")) fprintf(stderr,"[gml debug] %s\n", S(a,n,0));
     return vreal(0); }
   if(!strncmp(nm,"xboxone_",8)) return vreal(0);
-  if(!strcmp(nm,"screen_save")) return vreal(0);
+  if(!strcmp(nm,"screen_save")||!strcmp(nm,"screen_save_part")) return vreal(0);
   if(!strcmp(nm,"os_get_language")) return vstr("en");
   if(!strcmp(nm,"os_get_region")) return vstr("us");
   if(!strcmp(nm,"os_is_paused")) return vreal(0);
