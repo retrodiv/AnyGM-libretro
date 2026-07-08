@@ -3866,6 +3866,9 @@ static int *vm_draw_order_scratch(GmlVM *vm, int need){
 struct LayBg { int sprite; int th,tv,stretch,order; double x,y; uint32_t blend; double alpha; double depth; };
 struct LayTile { int sprite; int sx,sy,w,h,order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
 struct LaySprite { int sprite, subimg,order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
+static void draw_event_hook(GmlVM *vm, GmlInstance *in, const char *suffix, int begin){
+  if(vm && vm->draw_event_hook) vm->draw_event_hook(vm,in,suffix,begin,vm->draw_event_hook_user);
+}
 /* Persistent per-frame draw scratch (gml_vm_draw is single-threaded, once per frame). Reset counts
  * to 0 each frame; the allocations survive so a steady room does zero malloc/free in its draw. */
 static struct LayBg    *g_dl_lbg;   static int g_dl_lbg_cap;
@@ -4119,7 +4122,12 @@ void gml_vm_draw(GmlVM *vm){
     if(in->visible<0.5) continue;   /* GM: an invisible instance runs neither
                                        its Draw event nor the automatic sprite draw. */
     /* Draw event replaces default draw; else draw sprite_index automatically. */
-    if(gml_run_event(vm,in,"Draw_0")) continue;
+    if(event_lookup_from(vm,"Draw_0",in->obj,NULL,NULL)){
+      draw_event_hook(vm,in,"Draw_0",1);
+      int drew=gml_run_event(vm,in,"Draw_0");
+      draw_event_hook(vm,in,"Draw_0",0);
+      if(drew) continue;
+    }
     if(in->sprite_index>=0){
       double alpha=in->image_alpha;
       if(R && R->alpha<alpha) alpha=R->alpha;
@@ -4149,7 +4157,12 @@ void gml_vm_draw_pass(GmlVM *vm, const char *suffix){
   }
   for(int a=0;a<m;a++) for(int b=a+1;b<m;b++)
     if(vm->inst[ord[b]].depth>vm->inst[ord[a]].depth){ int t=ord[a]; ord[a]=ord[b]; ord[b]=t; }
-  for(int k=0;k<m;k++) gml_run_event(vm,&vm->inst[ord[k]],suffix);
+  for(int k=0;k<m;k++){
+    GmlInstance *in=&vm->inst[ord[k]];
+    draw_event_hook(vm,in,suffix,1);
+    gml_run_event(vm,in,suffix);
+    draw_event_hook(vm,in,suffix,0);
+  }
 }
 void gml_vm_draw_gui(GmlVM *vm){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return;
@@ -4165,7 +4178,12 @@ void gml_vm_draw_gui(GmlVM *vm){
   int views_on=0;
   for(int v=0;v<8;v++) if(get_global_arr_d(vm,"view_visible",v)>=0.5){ views_on=1; break; }
   *gml_varmap_put(&vm->globals,"view_current")=vreal(views_on?7:0);
-  for(int k=0;k<m;k++) gml_run_event(vm,&vm->inst[ord[k]],"Draw_64");
+  for(int k=0;k<m;k++){
+    GmlInstance *in=&vm->inst[ord[k]];
+    draw_event_hook(vm,in,"Draw_64",1);
+    gml_run_event(vm,in,"Draw_64");
+    draw_event_hook(vm,in,"Draw_64",0);
+  }
   *gml_varmap_put(&vm->globals,"view_current")=vreal(0);
 }
 

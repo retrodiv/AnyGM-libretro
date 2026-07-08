@@ -219,6 +219,8 @@ typedef struct GmlVM {
   struct GmlMouseEvent { int sub; char suffix[20]; } mouse_events[32];
   int n_mouse_events;
   int draw_events_off;   /* draw_enable_drawevent(false): skip all instance drawing */
+  void (*draw_event_hook)(struct GmlVM *vm, GmlInstance *in, const char *suffix, int begin, void *user);
+  void *draw_event_hook_user;  /* frontend-only transient hook around individual draw events */
   int *draw_ord; int draw_ord_cap;  /* scratch order buffer for draw passes (runtime-only) */
   void    *render;   /* GmlRender* (set by the frontend) for draw_* builtins */
   void    *audio;    /* GmlAudio*  (set by the frontend) for audio_* builtins */
