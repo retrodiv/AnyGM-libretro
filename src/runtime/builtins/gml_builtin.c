@@ -15,6 +15,17 @@
 #include <limits.h>
 #include <ctype.h>
 #include <dirent.h>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
+#if defined(_WIN32)
+#include <direct.h>
+#define GML_MKDIR(p) _mkdir(p)
+#define GML_RMDIR(p) _rmdir(p)
+#else
+#define GML_MKDIR(p) mkdir((p),0777)
+#define GML_RMDIR(p) rmdir(p)
+#endif
 #if defined(__SSE2__)
 #include <emmintrin.h>
 #endif
@@ -453,6 +464,15 @@ static void ds_list_push(GmlDSList *l, GmlVal v){
   if(!l) return;
   if(l->len>=l->cap){ int nc=l->cap?l->cap*2:8; GmlVal *ni=realloc(l->item,(size_t)nc*sizeof(GmlVal)); if(!ni) return; l->item=ni; l->cap=nc; }
   l->item[l->len++]=v;
+}
+static int ds_val_equal(GmlVal a, GmlVal b){
+  if(a.t==V_UNDEF || b.t==V_UNDEF) return a.t==b.t;
+  if(a.t==V_STR || b.t==V_STR) return !strcmp(gm_string_tmp(a),gm_string_tmp(b));
+  return fabs((a.t==V_REAL?a.d:0.0)-(b.t==V_REAL?b.d:0.0))<1e-9;
+}
+static void ds_grid_store(GmlDSGrid *g, int x, int y, GmlVal v){
+  if(g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h)
+    g->cell[(size_t)y*g->w+x]=ds_val_clone(v);
 }
 /* Two-dimensional value grids. */
 static GmlDSGrid *ds_grid_slot(GmlVM *vm, int id){
@@ -3205,6 +3225,19 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"point_in_triangle")){ double px=N(a,n,0),py=N(a,n,1),x1=N(a,n,2),y1=N(a,n,3),x2=N(a,n,4),y2=N(a,n,5),x3=N(a,n,6),y3=N(a,n,7);
     double d1=(px-x2)*(y1-y2)-(x1-x2)*(py-y2), d2=(px-x3)*(y2-y3)-(x2-x3)*(py-y3), d3=(px-x1)*(y3-y1)-(x3-x1)*(py-y1);
     int hasNeg=(d1<0)||(d2<0)||(d3<0), hasPos=(d1>0)||(d2>0)||(d3>0); return vreal(!(hasNeg&&hasPos)?1:0); }
+  if(!strcmp(nm,"rectangle_in_triangle")){
+    double rx1=N(a,n,0),ry1=N(a,n,1),rx2=N(a,n,2),ry2=N(a,n,3);
+    double x1=N(a,n,4),y1=N(a,n,5),x2=N(a,n,6),y2=N(a,n,7),x3=N(a,n,8),y3=N(a,n,9);
+    if(rx1>rx2){ double t=rx1; rx1=rx2; rx2=t; } if(ry1>ry2){ double t=ry1; ry1=ry2; ry2=t; }
+    double px[4]={rx1,rx2,rx1,rx2}, py[4]={ry1,ry1,ry2,ry2};
+    for(int i=0;i<4;i++){
+      double d1=(px[i]-x2)*(y1-y2)-(x1-x2)*(py[i]-y2), d2=(px[i]-x3)*(y2-y3)-(x2-x3)*(py[i]-y3);
+      double d3=(px[i]-x1)*(y3-y1)-(x3-x1)*(py[i]-y1);
+      int hasNeg=(d1<0)||(d2<0)||(d3<0), hasPos=(d1>0)||(d2>0)||(d3>0);
+      if(!(hasNeg&&hasPos)) return vreal(1);
+    }
+    return vreal(point_in_poly(x1,y1,px,py,4)||point_in_poly(x2,y2,px,py,4)||point_in_poly(x3,y3,px,py,4));
+  }
   if(!strcmp(nm,"angle_difference")){ double d=fmod(N(a,n,0)-N(a,n,1),360.0); if(d<-180.0)d+=360.0; if(d>180.0)d-=360.0; return vreal(d); }
   if(!strcmp(nm,"frac")) { double v=N(a,n,0); return vreal(v-floor(v)); }   /* fractional part */
   if(!strcmp(nm,"array_length_1d")) return vreal(n>0?gml_val_array_length(a[0]):0);
@@ -3252,7 +3285,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0); }
   /* ---- mp_grid: GM motion-planning grids (A*). Transient AI aids (games rebuild them per
    * room/level), kept in a static pool like particles — not serialized into save-states. ---- */
-  if(!strncmp(nm,"mp_grid_",8)){
+  if(!strcmp(nm,"mp_grid_create")||!strcmp(nm,"mp_grid_destroy")||
+     !strcmp(nm,"mp_grid_path")||!strcmp(nm,"mp_grid_add_instances")||
+     !strncmp(nm,"mp_grid_",8)){
     typedef struct { int live; double left, top; int hc, vc, cw, ch; uint8_t *cell; } MpGrid;
     static MpGrid mp[8];
     const char *sub=nm+8;
@@ -3488,6 +3523,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"string_char_at")){ const char*s=S(a,n,0); int idx=(int)N(a,n,1), len=(int)strlen(s);
     if(idx<1||idx>len) return vstr("");
     return vstr_owned(dup_n(s+idx-1,1)); }
+  if(!strcmp(nm,"string_byte_at")){ const unsigned char*s=(const unsigned char*)S(a,n,0); int idx=(int)N(a,n,1), len=(int)strlen((const char*)s);
+    return vreal((idx>=1&&idx<=len)?s[idx-1]:0); }
   if(!strcmp(nm,"string_ord_at")){ const unsigned char*s=(const unsigned char*)S(a,n,0); int idx=(int)N(a,n,1), len=(int)strlen((const char*)s);
     return vreal((idx>=1&&idx<=len)?s[idx-1]:0); }
   if(!strcmp(nm,"string_delete")){ const char*s=S(a,n,0); int idx=(int)N(a,n,1), cnt=(int)N(a,n,2), len=(int)strlen(s);
@@ -4106,12 +4143,52 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         uint32_t col=has_col?(uint32_t)N(a,n,has_w?5:4):R->color; int width=has_w?(int)N(a,n,4):1;
         draw_line_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)floor(N(a,n,2)-R->cam_x),(int)floor(N(a,n,3)-R->cam_y),col,width); }
       return vreal(0); }
+    if(!strcmp(nm,"draw_path")){
+      if(R){ int pi=(int)N(a,n,0), absolute=(int)N(a,n,3);
+        if(pi>=0 && pi<vm->n_paths && vm->paths[pi].n>1 && vm->paths[pi].pts){
+          GmlPath *p=&vm->paths[pi];
+          double ox=absolute?0:N(a,n,1), oy=absolute?0:N(a,n,2);
+          for(int k=1;k<p->n;k++)
+            draw_line_prim(R,(int)floor(p->pts[k-1].x+ox-R->cam_x),(int)floor(p->pts[k-1].y+oy-R->cam_y),
+                             (int)floor(p->pts[k].x+ox-R->cam_x),(int)floor(p->pts[k].y+oy-R->cam_y),R->color,1);
+          if(p->closed)
+            draw_line_prim(R,(int)floor(p->pts[p->n-1].x+ox-R->cam_x),(int)floor(p->pts[p->n-1].y+oy-R->cam_y),
+                             (int)floor(p->pts[0].x+ox-R->cam_x),(int)floor(p->pts[0].y+oy-R->cam_y),R->color,1);
+        }
+      }
+      return vreal(0); }
     if(!strcmp(nm,"draw_circle")){ if(R){ gml_render_maybe_prepare_draw(R); draw_circle_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)N(a,n,2),(int)N(a,n,2),R->color,(int)N(a,n,3)); } return vreal(0); }
+    if(!strcmp(nm,"draw_circle_color")||!strcmp(nm,"draw_circle_colour")){ if(R){
+        gml_render_maybe_prepare_draw(R);
+        draw_circle_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)N(a,n,2),(int)N(a,n,2),(uint32_t)N(a,n,3),(int)N(a,n,5)); }
+      return vreal(0); }
     if(!strcmp(nm,"draw_ellipse_color")||!strcmp(nm,"draw_ellipse_colour")){ if(R){
         gml_render_maybe_prepare_draw(R);
         int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y), x2=(int)floor(N(a,n,2)-R->cam_x), y2=(int)floor(N(a,n,3)-R->cam_y);
         draw_circle_prim(R,(x1+x2)/2,(y1+y2)/2,abs(x2-x1)/2,abs(y2-y1)/2,(uint32_t)N(a,n,4),(int)N(a,n,6)); } return vreal(0); }
     if(!strcmp(nm,"draw_roundrect")){ if(R) draw_rect_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)ceil(N(a,n,2)-R->cam_x),(int)ceil(N(a,n,3)-R->cam_y),R->color,(int)N(a,n,4)); return vreal(0); }
+    if(!strcmp(nm,"draw_roundrect_color")||!strcmp(nm,"draw_roundrect_colour")||
+       !strcmp(nm,"draw_roundrect_color_ext")||!strcmp(nm,"draw_roundrect_colour_ext")){
+      if(R){ int ext=strstr(nm,"_ext")!=NULL; int outline=(int)N(a,n,ext?8:6);
+        draw_rect_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),
+                       (int)ceil(N(a,n,2)-R->cam_x),(int)ceil(N(a,n,3)-R->cam_y),
+                       (uint32_t)N(a,n,ext?6:4),outline); }
+      return vreal(0); }
+    if(!strcmp(nm,"draw_healthbar")){
+      if(R){ double amt=N(a,n,4); if(amt<0) amt=0; if(amt>100) amt=100;
+        int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y);
+        int x2=(int)ceil(N(a,n,2)-R->cam_x), y2=(int)ceil(N(a,n,3)-R->cam_y);
+        if(x1>x2){ int t=x1; x1=x2; x2=t; } if(y1>y2){ int t=y1; y1=y2; y2=t; }
+        if((int)N(a,n,9)) draw_rect_prim(R,x1,y1,x2,y2,(uint32_t)N(a,n,5),0);
+        int dir=(int)N(a,n,8), fx1=x1,fy1=y1,fx2=x2,fy2=y2;
+        if(dir==1) fx1=x2-(int)floor((x2-x1)*amt/100.0);
+        else if(dir==2) fy2=y1+(int)floor((y2-y1)*amt/100.0);
+        else if(dir==3) fy1=y2-(int)floor((y2-y1)*amt/100.0);
+        else fx2=x1+(int)floor((x2-x1)*amt/100.0);
+        draw_rect_prim(R,fx1,fy1,fx2,fy2,(uint32_t)N(a,n,7),0);
+        if((int)N(a,n,10)) draw_rect_prim(R,x1,y1,x2,y2,0,1);
+      }
+      return vreal(0); }
     if(!strcmp(nm,"draw_triangle")||!strcmp(nm,"draw_triangle_color")||!strcmp(nm,"draw_triangle_colour")){
       if(R){ double x1=floor(N(a,n,0)-R->cam_x), y1=floor(N(a,n,1)-R->cam_y);
         double x2=floor(N(a,n,2)-R->cam_x), y2=floor(N(a,n,3)-R->cam_y);
@@ -4176,6 +4253,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"application_surface_enable")){ if(R) R->app_draw_enable=(int)N(a,n,0); return vreal(0); }
     /* Map camera IDs to view indices and camera properties to view globals. */
     if(!strcmp(nm,"view_get_camera")||!strcmp(nm,"room_get_camera")) return vreal(N(a,n,0));
+    if(!strcmp(nm,"view_set_camera")) return vreal(0);
     if(!strcmp(nm,"camera_create")) return vreal(0);
     if(!strcmp(nm,"camera_create_view")){ int c=0;
       gml_set_global_arr(vm,"view_xview",c,N(a,n,0)); gml_set_global_arr(vm,"view_yview",c,N(a,n,1));
@@ -4229,6 +4307,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     /* display DPI: return a real 96 (not 0) so `x / display_get_dpi_x()` scaling code never divides by 0. */
     if(!strcmp(nm,"display_get_dpi_x")||!strcmp(nm,"display_get_dpi_y")) return vreal(96);
     if(!strcmp(nm,"display_get_frequency")) return vreal(60.0);
+    if(!strcmp(nm,"display_get_orientation")) return vreal(0);
+    if(!strcmp(nm,"os_lock_orientation")) return vreal(0);
     if(!strcmp(nm,"game_set_speed")){
       double spd=N(a,n,0), mode=N(a,n,1);
       builtin_set_game_speed(vm, mode>=0.5 ? (spd>0 ? 1000000.0/spd : 60.0) : spd);
@@ -4254,11 +4334,21 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     if(!strcmp(nm,"surface_get_width")) return vreal(R?gml_surface_width(R,(int)N(a,n,0)):0);
     if(!strcmp(nm,"surface_get_height")) return vreal(R?gml_surface_height(R,(int)N(a,n,0)):0);
+    if(!strcmp(nm,"surface_getpixel")){ int sid=(int)N(a,n,0), x=(int)N(a,n,1), y=(int)N(a,n,2);
+      uint32_t p=0; int ok=0;
+      if(R && sid==0 && R->app_surface && x>=0 && y>=0 && x<R->app_w && y<R->app_h){ p=R->app_surface[(size_t)y*R->app_w+x]; ok=1; }
+      else if(R && sid>0 && sid<=GML_MAX_SURFACES){ GmlSurface *sf=&R->surface[sid-1];
+        if(sf->live && sf->px && x>=0 && y>=0 && x<sf->w && y<sf->h){ p=sf->px[(size_t)y*sf->w+x]; ok=1; } }
+      return vreal(ok?(((p>>16)&0xff)|(p&0xff00)|((p&0xff)<<16)):0); }
     if(!strcmp(nm,"sprite_get_width")){ int spr=(int)N(a,n,0); return vreal((R&&gml_sprite_exists(R,spr))?R->spr[spr].w:0); }
     if(!strcmp(nm,"sprite_get_height")){ int spr=(int)N(a,n,0); return vreal((R&&gml_sprite_exists(R,spr))?R->spr[spr].h:0); }
     if(!strcmp(nm,"sprite_get_number")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].n_frames:0); }
     if(!strcmp(nm,"sprite_get_xoffset")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].originx:0); }
     if(!strcmp(nm,"sprite_get_yoffset")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].originy:0); }
+    if(!strcmp(nm,"sprite_get_bbox_left")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].ml:0); }
+    if(!strcmp(nm,"sprite_get_bbox_top")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].mt:0); }
+    if(!strcmp(nm,"sprite_get_bbox_right")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].w-1-R->spr[spr].mr:0); }
+    if(!strcmp(nm,"sprite_get_bbox_bottom")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].h-1-R->spr[spr].mb:0); }
     if(!strcmp(nm,"sprite_get_uvs")) return sprite_uvs(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)));
     if(!strcmp(nm,"texture_get_width")){ double uw; return vreal(texture_info(R,(int)N(a,n,0),&uw,NULL,NULL,NULL)?uw:0); }
     if(!strcmp(nm,"texture_get_height")){ double uh; return vreal(texture_info(R,(int)N(a,n,0),NULL,&uh,NULL,NULL)?uh:0); }
@@ -4293,6 +4383,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vstr((ob>=0&&ob<vm->n_objects&&vm->objects[ob].name)?vm->objects[ob].name:""); }
   if(!strcmp(nm,"object_get_sprite")){ int ob=(int)N(a,n,0);
     return vreal((ob>=0&&ob<vm->n_objects)?vm->objects[ob].sprite_index:-1); }
+  if(!strcmp(nm,"object_get_mask")){ int ob=(int)N(a,n,0);
+    return vreal((ob>=0&&ob<vm->n_objects)?vm->objects[ob].mask_index:-1); }
+  if(!strcmp(nm,"object_is_ancestor")){ int obj=(int)N(a,n,0), anc=(int)N(a,n,1);
+    for(int p=obj; p>=0 && p<vm->n_objects; p=vm->objects[p].parent) if(p==anc) return vreal(1);
+    return vreal(0); }
   if(!strcmp(nm,"object_exists")){ int ob=(int)N(a,n,0); return vreal(ob>=0&&ob<vm->n_objects); }
   if(!strcmp(nm,"object_get_physics")) return vreal(0);
   if(!strcmp(nm,"asset_get_index")||!strcmp(nm,"sprite_get_index")||!strcmp(nm,"object_get_index")){
@@ -4366,6 +4461,19 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"font_add_sprite_ext"))
       return vreal(R? gml_font_add_sprite_ext(R,(int)N(a,n,0),S(a,n,1),(int)N(a,n,2),(int)N(a,n,3)) : 0);
     if(!strcmp(nm,"font_add_enable_aa")) return vreal(0);
+    if(!strcmp(nm,"font_get_size")){
+      int fid=(int)N(a,n,0);
+      return vreal((R && fid>=0 && fid<R->n_fonts && R->fonts[fid].line_height>0)?R->fonts[fid].line_height:0);
+    }
+    if(!strcmp(nm,"font_delete")){
+      int fid=(int)N(a,n,0);
+      if(R && fid>=0 && fid<R->n_fonts && !R->fonts[fid].real){
+        free(R->fonts[fid].map);
+        free(R->fonts[fid].glyphs);
+        memset(&R->fonts[fid],0,sizeof(R->fonts[fid]));
+      }
+      return vreal(0);
+    }
     if(!strcmp(nm,"font_get_info")){
       GmlInstance *st=gml_struct_new(vm);
       if(!st) return vreal(0);
@@ -4399,6 +4507,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"device_mouse_y_to_gui")){ double v; gml_input_mouse(NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
   if(!strcmp(nm,"device_mouse_raw_x")||!strcmp(nm,"window_mouse_get_x")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
   if(!strcmp(nm,"device_mouse_raw_y")||!strcmp(nm,"window_mouse_get_y")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL); return vreal(v); }
+  if(!strcmp(nm,"display_mouse_get_x")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
+  if(!strcmp(nm,"display_mouse_get_y")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL); return vreal(v); }
   if(!strcmp(nm,"window_mouse_set")) return vreal(0);
   if(!strcmp(nm,"joystick_exists")){
     int joy=(int)N(a,n,0), dev=joy>0?joy-1:joy;
@@ -4431,7 +4541,21 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
      * path (e.g. from an unset variable) reported "exists" and games loaded phantom configs */
     struct stat st; int ok = path && stat(path,&st)==0 && S_ISREG(st.st_mode);
     free(path); return vreal(ok); }
+  if(!strcmp(nm,"directory_exists")){ char *path=resolve_content_path(vm,S(a,n,0));
+    struct stat st; int ok = path && stat(path,&st)==0 && S_ISDIR(st.st_mode);
+    free(path); return vreal(ok); }
+  if(!strcmp(nm,"directory_create")){ char *path=resolve_content_path(vm,S(a,n,0)); int ok=0;
+    if(path && path[0]){
+      ok=(GML_MKDIR(path)==0);
+      if(!ok){ struct stat st; ok=stat(path,&st)==0 && S_ISDIR(st.st_mode); }
+    }
+    free(path); return vreal(ok); }
+  if(!strcmp(nm,"directory_destroy")){ char *path=resolve_content_path(vm,S(a,n,0)); int ok=path&&GML_RMDIR(path)==0; free(path); return vreal(ok); }
   if(!strcmp(nm,"file_delete")){ char *path=resolve_content_path(vm,S(a,n,0)); int ok=remove(path)==0; free(path); return vreal(ok); }
+  if(!strcmp(nm,"file_copy")){ char *src=resolve_content_path(vm,S(a,n,0)); char *dst=resolve_content_path(vm,S(a,n,1)); int ok=0;
+    FILE *fi=src?fopen(src,"rb"):NULL; FILE *fo=(fi&&dst)?fopen(dst,"wb"):NULL;
+    if(fi&&fo){ char buf[8192]; size_t nr; ok=1; while((nr=fread(buf,1,sizeof(buf),fi))>0) if(fwrite(buf,1,nr,fo)!=nr){ ok=0; break; } }
+    if(fi) fclose(fi); if(fo) fclose(fo); free(src); free(dst); return vreal(ok); }
   /* Scan a directory with a glob mask, returning basenames or an empty string at the end. */
   if(!strcmp(nm,"file_find_first")){
     ff_reset();
@@ -4476,6 +4600,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
 
   if(!strcmp(nm,"file_text_open_read")){ char *path=resolve_content_path(vm,S(a,n,0)); int id=vm_file_open(vm,path,"r"); free(path); return vreal(id); }
   if(!strcmp(nm,"file_text_open_write")){ char *path=resolve_content_path(vm,S(a,n,0)); int id=vm_file_open(vm,path,"w"); free(path); return vreal(id); }
+  if(!strcmp(nm,"file_text_open_append")){ char *path=resolve_content_path(vm,S(a,n,0)); int id=vm_file_open(vm,path,"a+"); free(path); return vreal(id); }
   if(!strcmp(nm,"file_text_close")){ int i=vm_file_slot(vm,(int)N(a,n,0));
     if(i>=0){ fclose((FILE*)vm->bin_file[i]); vm->bin_file[i]=NULL; } return vreal(0); }
   if(!strcmp(nm,"file_text_eof")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(1);
@@ -4671,6 +4796,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"script_exists")){ int sid=(int)N(a,n,0);
     if(GML_IS_FUNCVAL(sid)) return vreal(1);
     return vreal(script_code_of(vm,sid)>=0); }
+  if(!strcmp(nm,"script_get_name")){
+    int sid=(int)N(a,n,0);
+    int ci = GML_IS_FUNCVAL(sid) ? (sid & 0x00FFFFFF) : script_code_of(vm,sid);
+    return vstr((vm->win&&ci>=0&&ci<vm->win->n_code&&vm->win->code[ci].name)?vm->win->code[ci].name:"");
+  }
 
   /* ---- event dispatch ---- */
   if(!strcmp(nm,"event_inherited")||!strcmp(nm,"action_inherited")){
@@ -4764,6 +4894,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       /* paused state of a sound/voice: true only if some matching voice exists and is paused */
       return vreal(gml_audio_voice_paused(AU,(int)N(a,n,0))); }
     if(!strcmp(nm,"audio_get_type")) return vreal(0);          /* 0 = in-memory sample (all ours are) */
+    if(!strcmp(nm,"audio_get_name")) return vstr("");
     if(!strcmp(nm,"audio_master_gain")){ gml_audio_set_master_gain(AU,N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_group_set_gain")) return vreal(1);    /* groups not modeled; sounds embedded */
   }
@@ -4801,10 +4932,25 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"extension_stubfunc_real")) return vreal(0);
   if(!strcmp(nm,"get_string_async")) return vreal(0);
+  if(!strcmp(nm,"get_string")) return vstr(n>=2?S(a,n,1):"");
+  if(!strcmp(nm,"get_integer")) return vreal(n>=2?N(a,n,1):0);
+  if(!strcmp(nm,"get_integer_async")) return vreal(0);
+  if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")) return vreal(0);
   if(!strcmp(nm,"parameter_count")) return vreal(0);
   if(!strcmp(nm,"parameter_string")) return vstr("");
   if(!strcmp(nm,"exception_unhandled_handler")) return vreal(0);
   if(!strcmp(nm,"switch_get_operation_mode")) return vreal(0);
+  if(!strcmp(nm,"switch_save_data_commit")||
+     !strcmp(nm,"switch_save_data_mount")) return vreal(1);
+  if(!strcmp(nm,"switch_accounts_open_preselected_user")||
+     !strcmp(nm,"switch_accounts_open_user")||
+     !strcmp(nm,"switch_accounts_select_account")||
+     !strcmp(nm,"switch_controller_joycon_set_holdtype")||
+     !strcmp(nm,"switch_controller_set_supported_styles")||
+     !strcmp(nm,"switch_controller_support_get_selected_id")||
+     !strcmp(nm,"switch_controller_support_set_defaults")||
+     !strcmp(nm,"switch_controller_support_set_singleplayer_only")||
+     !strcmp(nm,"switch_controller_support_show")) return vreal(0);
   /* Gameframe is a native window-frame extension. A libretro core has no host HWND to style, so
    * report the extension unavailable and make its raw Win32 calls explicit no-ops. The GML wrapper
    * already has portable fallbacks for the unavailable path. */
@@ -4815,8 +4961,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"gameframe_mouse_in_window_raw")) return vreal(1);
   if(!strcmp(nm,"gameframe_is_natively_minimized_raw")) return vreal(0);
   if(!strcmp(nm,"gameframe_get_double_click_time_raw")) return vreal(500);
-  if(!strcmp(nm,"gameframe_get_monitors_1_raw")) return vreal(1);
-  if(!strcmp(nm,"gameframe_get_monitors_2_raw")){
+  if(!strcmp(nm,"gameframe_get_monitors_1")||!strcmp(nm,"gameframe_get_monitors_1_raw")) return vreal(1);
+  if(!strcmp(nm,"gameframe_get_monitors_2")||!strcmp(nm,"gameframe_get_monitors_2_raw")){
     int bi=vm_buffer_slot_from_addr(vm,N(a,n,0));
     if(bi>=0){
       GmlRender *R=(GmlRender*)vm->render;
@@ -4854,6 +5000,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(-1); }
   if(!strcmp(nm,"ds_list_set")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
     if(l && p>=0 && n>=3){ while(l->len<=p) ds_list_push(l,vreal(0)); l->item[p]=ds_val_clone(a[2]); } return vreal(0); }
+  if(!strcmp(nm,"ds_list_replace")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
+    if(l && p>=0 && p<l->len && n>=3) l->item[p]=ds_val_clone(a[2]); return vreal(0); }
+  if(!strcmp(nm,"ds_list_sort")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
+    if(l && l->len>1){ sort_dir=(n<2||N(a,n,1)!=0)?1:-1; qsort(l->item,(size_t)l->len,sizeof(GmlVal),gml_val_sort_cmp); }
+    return vreal(0); }
+  if(!strcmp(nm,"ds_list_shuffle")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
+    if(l) for(int i=l->len-1;i>0;i--){ int j=(int)floor(gml_rng_value(vm)*(i+1)); if(j<0) j=0; if(j>i) j=i; GmlVal t=l->item[i]; l->item[i]=l->item[j]; l->item[j]=t; }
+    return vreal(0); }
   if(!strcmp(nm,"ds_list_delete")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
     if(l && p>=0 && p<l->len){ memmove(&l->item[p],&l->item[p+1],(size_t)(l->len-p-1)*sizeof(GmlVal)); l->len--; } return vreal(0); }
   if(!strcmp(nm,"ds_list_insert")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
@@ -4885,8 +5039,23 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_grid_height")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); return vreal(g?g->h:0); }
   if(!strcmp(nm,"ds_grid_get")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
     return (g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h)? ds_ret(g->cell[(size_t)y*g->w+x]) : vreal(0); }
-  if(!strcmp(nm,"ds_grid_set")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
-    if(g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h && n>=4){ g->cell[(size_t)y*g->w+x]=ds_val_clone(a[3]); } return vreal(0); }
+  if(!strcmp(nm,"ds_grid_set")||!strcmp(nm,"ds_grid_set_post")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
+    if(n>=4) ds_grid_store(g,x,y,a[3]); return n>=4?a[3]:vreal(0); }
+  if(!strcmp(nm,"ds_grid_add")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
+    if(g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h && n>=4){
+      GmlVal old=g->cell[(size_t)y*g->w+x];
+      g->cell[(size_t)y*g->w+x]=ds_val_clone(vreal(N(&old,1,0)+N(a,n,3)));
+    }
+    return vreal(0); }
+  if(!strcmp(nm,"ds_grid_value_x")||!strcmp(nm,"ds_grid_value_y")){
+    GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x1=(int)N(a,n,1),y1=(int)N(a,n,2),x2=(int)N(a,n,3),y2=(int)N(a,n,4);
+    if(x1>x2){ int t=x1; x1=x2; x2=t; } if(y1>y2){ int t=y1; y1=y2; y2=t; }
+    if(g && g->cell){
+      if(x1<0) x1=0; if(y1<0) y1=0; if(x2>=g->w) x2=g->w-1; if(y2>=g->h) y2=g->h-1;
+      for(int yy=y1;yy<=y2;yy++) for(int xx=x1;xx<=x2;xx++)
+        if(ds_val_equal(g->cell[(size_t)yy*g->w+xx],n>=6?a[5]:vreal(0))) return vreal(nm[14]=='x'?xx:yy);
+    }
+    return vreal(-1); }
   if(!strcmp(nm,"ds_grid_clear")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); GmlVal v=n>=2?a[1]:vreal(0);
     if(g && g->cell) for(size_t i=0;i<(size_t)g->w*g->h;i++) g->cell[i]=v; return vreal(0); }
   if(!strcmp(nm,"load_csv")){
@@ -4936,6 +5105,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_map_exists")){ GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
     char *key=(n>=2)?ds_key_make(a[1]):NULL; int i=ds_map_find_entry(m,key); free(key); return vreal(i>=0); }
   if(!strcmp(nm,"ds_map_size")){ GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0)); return vreal(m?m->len:0); }
+  if(!strcmp(nm,"ds_map_empty")){ GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0)); return vreal(!m||m->len==0); }
   if(!strcmp(nm,"ds_map_set")||!strcmp(nm,"ds_map_set_post")||!strcmp(nm,"ds_map_replace")){
     if(n>=3) ds_map_put(vm,(int)N(a,n,0),a[1],a[2],1);
     return n>=3 ? a[2] : vreal(0);
@@ -5151,6 +5321,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* Report Galaxy initialization as successful; other Galaxy operations return zero.
    * This does not establish an online session or authenticate an account. */
   if(!strcmp(nm,"gog_init")||!strcmp(nm,"gog_is_initialised")||!strcmp(nm,"gog_is_initialized")) return vreal(1);
+  if(!strcmp(nm,"gog_get_achievement")||!strcmp(nm,"gog_is_user_logged_on")||
+     !strcmp(nm,"gog_set_achievement")||!strcmp(nm,"gog_stats_ready")||
+     !strcmp(nm,"gog_update")) return vreal(0);
   if(!strncmp(nm,"gog_",4)) return vreal(0);
   if(!strcmp(nm,"show_debug_message")||!strcmp(nm,"show_debug_overlay")){
     if(getenv("GML_LOG_DEBUGMSG")) fprintf(stderr,"[gml debug] %s\n", S(a,n,0));
@@ -5267,6 +5440,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(N(a,n,1)>=0.5) t|=(1u<<29); else t&=~(1u<<29); return vreal((double)t); }
   if(!strcmp(nm,"tile_set_rotate")){ uint32_t t=(uint32_t)N(a,n,0);
     if(N(a,n,1)>=0.5) t|=(1u<<30); else t&=~(1u<<30); return vreal((double)t); }
+  if(!strcmp(nm,"layer_force_draw_depth")) return vreal(0);
   if(!strncmp(nm,"layer_",6)){
     const char *sub=nm+6;
     if(!strcmp(sub,"create")){
@@ -5366,6 +5540,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         if(vm->rtl[i].used && !strcmp(vm->rtl[i].name,S(a,n,0))) return vreal(vm->rtl[i].id);
       return vreal(-1); }
     if(!strcmp(sub,"exists")){ return vreal(rt_layer_resolve(vm,a,n)!=NULL); }
+    if(!strcmp(sub,"force_draw_depth")) return vreal(0);
     if(!strcmp(sub,"set_visible")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); if(l) l->visible=(int)N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"get_visible")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); return vreal(l?l->visible:0); }
     if(!strcmp(sub,"x")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); if(l){ rt_layer_touch(vm,l); l->x=N(a,n,1); } return vreal(0); }
