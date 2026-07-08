@@ -3324,6 +3324,11 @@ enum {
   BID_FMOD_PREFIX,
   BID_EVENT_INHERITED,
   BID_DS_LIST_CLEAR,
+  BID_GPU_SET_TEXFILTER,
+  BID_WINDOW_HAS_FOCUS,
+  BID_SPRITE_EXISTS,
+  BID_SPRITE_GET_WIDTH,
+  BID_SPRITE_GET_HEIGHT,
   BID_INPUT_KBGP
 };
 
@@ -3404,6 +3409,9 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"gpu_set_blendenable")) return BID_GPU_SET_BLENDENABLE;
       if(!strcmp(nm,"gpu_set_blendmode")) return BID_GPU_SET_BLENDMODE;
       if(!strcmp(nm,"gpu_set_blendmode_ext")) return BID_GPU_SET_BLENDMODE_EXT;
+      if(!strcmp(nm,"gpu_set_texfilter")) return BID_GPU_SET_TEXFILTER;
+      if(!strcmp(nm,"gpu_set_texfilter_ext")) return BID_GPU_SET_TEXFILTER;
+      if(!strcmp(nm,"gpu_set_tex_filter")) return BID_GPU_SET_TEXFILTER;
       if(!strcmp(nm,"gamepad_button_check")) return BID_GAMEPAD_BUTTON_CHECK;
       if(!strcmp(nm,"gamepad_button_value")) return BID_GAMEPAD_BUTTON_VALUE;
       if(!strcmp(nm,"gamepad_button_check_pressed")) return BID_GAMEPAD_BUTTON_CHECK_PRESSED;
@@ -3478,6 +3486,9 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"surface_get_height")) return BID_SURFACE_GET_HEIGHT;
       if(!strcmp(nm,"surface_set_target")) return BID_SURFACE_SET_TARGET;
       if(!strcmp(nm,"surface_reset_target")) return BID_SURFACE_RESET_TARGET;
+      if(!strcmp(nm,"sprite_exists")) return BID_SPRITE_EXISTS;
+      if(!strcmp(nm,"sprite_get_width")) return BID_SPRITE_GET_WIDTH;
+      if(!strcmp(nm,"sprite_get_height")) return BID_SPRITE_GET_HEIGHT;
       if(!strcmp(nm,"string_width")) return BID_STRING_WIDTH;
       if(!strcmp(nm,"string_height")) return BID_STRING_HEIGHT;
       return -1;
@@ -3489,6 +3500,7 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"window_mouse_get_x")) return BID_DEVICE_MOUSE_RAW_X;
       if(!strcmp(nm,"window_mouse_get_y")) return BID_DEVICE_MOUSE_RAW_Y;
       if(!strcmp(nm,"window_mouse_set")) return BID_WINDOW_MOUSE_SET;
+      if(!strcmp(nm,"window_has_focus")) return BID_WINDOW_HAS_FOCUS;
       if(!strcmp(nm,"window_get_width")) return BID_WINDOW_GET_WIDTH;
       if(!strcmp(nm,"window_get_height")) return BID_WINDOW_GET_HEIGHT;
       return -1;
@@ -3557,6 +3569,16 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       gml_event_inherited(vm); return vreal(0);
     case BID_DS_LIST_CLEAR:{
       GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); if(l) l->len=0; return vreal(0); }
+    case BID_GPU_SET_TEXFILTER:
+      return vreal(0);
+    case BID_WINDOW_HAS_FOCUS:
+      return vreal(1);
+    case BID_SPRITE_EXISTS:{
+      int spr=(int)N(a,n,0); return vreal(R&&gml_sprite_exists(R,spr)); }
+    case BID_SPRITE_GET_WIDTH:{
+      int spr=(int)N(a,n,0); return vreal((R&&gml_sprite_exists(R,spr))?R->spr[spr].w:0); }
+    case BID_SPRITE_GET_HEIGHT:{
+      int spr=(int)N(a,n,0); return vreal((R&&gml_sprite_exists(R,spr))?R->spr[spr].h:0); }
     case BID_DS_MAP_FIND_VALUE:{
       return gml_ds_map_find_value_direct(vm,(int)N(a,n,0),n>=2?a[1]:vundef(),n>=2); }
     case BID_DS_MAP_FIND_NEXT:
