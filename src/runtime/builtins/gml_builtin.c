@@ -1170,6 +1170,23 @@ GmlVal gml_ds_map_find_value_direct(GmlVM *vm, int id, GmlVal keyv, int has_key)
   ds_key_temp_free(&kt);
   return ds_ret(out);
 }
+GmlVal gml_ds_map_find_first_direct(GmlVM *vm, int id){
+  GmlDSMap *m=ds_map_slot(vm,id);
+  return (m && m->len>0) ? ds_ret(m->entry[0].key_val) : vstr("");
+}
+GmlVal gml_ds_map_find_next_direct(GmlVM *vm, int id, GmlVal keyv, int has_key){
+  GmlDSMap *m=ds_map_slot(vm,id);
+  DsKeyTemp kt={0};
+  const char *key=has_key?ds_key_temp(keyv,&kt):NULL;
+  int i=ds_map_find_entry(m,key);
+  ds_key_temp_free(&kt);
+  int j=(i<0)?-1:i+1;
+  return (m && j>=0 && j<m->len) ? ds_ret(m->entry[j].key_val) : vundef();
+}
+int gml_ds_map_size_direct(GmlVM *vm, int id){
+  GmlDSMap *m=ds_map_slot(vm,id);
+  return m?m->len:0;
+}
 static GmlVal ini_default_string(GmlVal *a, int n){
   const char *s = n>2 ? S(a,n,2) : "";
   char *c = strdup(s?s:"");
@@ -2109,6 +2126,9 @@ static void gp_deadzone_set(int dev, double dz){
   if(dz > 1.0) dz = 1.0;
   g_gp_deadzone[dev] = dz;
   g_gp_deadzone_set[dev] = 1;
+}
+void gml_gamepad_set_axis_deadzone_direct(int device, double dz){
+  gp_deadzone_set(device,dz);
 }
 static double gp_axis_digital_fallback(int ax){
   if(ax == GML_GP_AXIS_LH) return gml_input_gamepad(32784,0) - gml_input_gamepad(32783,0);  /* R - L */

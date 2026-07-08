@@ -1019,7 +1019,8 @@ enum {
   GML_MICRO_NONE=0,
   GML_MICRO_DS_MAP_GLOBAL_ARG0=1,
   GML_MICRO_APPROACH3=2,
-  GML_MICRO_CALL_GLOBAL_ARG0=3
+  GML_MICRO_CALL_GLOBAL_ARG0=3,
+  GML_MICRO_DS_MAP_METHOD_LOOP1=4
 };
 static int insn_arg_ref(const GmlInsn *in, int arg){
   if(!in || !in->refname || in->inst!=IT_ARG) return 0;
@@ -1031,6 +1032,41 @@ static int insn_push_arg(const GmlInsn *in, int arg){
 }
 static int insn_pop_arg(const GmlInsn *in, int arg){
   return in && in->kind==OP_POP && in->type1==DT_VAR && insn_arg_ref(in,arg);
+}
+static int insn_push_builtin_name(const GmlInsn *in, const char *name){
+  return in && name && in->kind==OP_PUSH && in->type1==DT_VAR && in->inst==IT_BUILTIN &&
+         in->refname && !strcmp(in->refname,name);
+}
+static int insn_push_global_var(const GmlInsn *in){
+  return in && in->kind==OP_PUSH && in->type1==DT_VAR && in->inst==IT_GLOBAL && in->refname;
+}
+static int insn_pop_local_var(const GmlInsn *in){
+  return in && in->kind==OP_POP && in->type1==DT_VAR && in->inst==IT_LOCAL && in->refname;
+}
+static int insn_same_ref(const GmlInsn *a, const GmlInsn *b){
+  if(!a || !b || !a->refname || !b->refname || a->inst!=b->inst) return 0;
+  if(a->refhash && b->refhash && a->refhash!=b->refhash) return 0;
+  return !strcmp(a->refname,b->refname);
+}
+static int insn_push_same_ref(const GmlInsn *push, const GmlInsn *ref){
+  return push && push->kind==OP_PUSH && push->type1==DT_VAR && insn_same_ref(push,ref);
+}
+static int insn_pop_same_ref(const GmlInsn *pop, const GmlInsn *ref){
+  return pop && pop->kind==OP_POP && pop->type1==DT_VAR && insn_same_ref(pop,ref);
+}
+static int insn_push_num(const GmlInsn *in, double v){
+  if(!in || in->kind!=OP_PUSH) return 0;
+  double d=0.0;
+  if(in->type1==DT_INT16) d=(double)in->sval;
+  else if(in->type1==DT_INT32) d=(double)in->ival;
+  else if(in->type1==DT_INT64) d=(double)in->lval;
+  else if(in->type1==DT_DOUBLE) d=in->dval;
+  else return 0;
+  return fabs(d-v)<1e-9;
+}
+static int insn_call_name(const GmlInsn *in, const char *name, int argc){
+  return in && name && in->kind==OP_CALL && in->argc==argc &&
+         in->refname && !strcmp(in->refname,name);
 }
 static void code_cache_analyze_micro(GmlCode *c){
   if(!c) return;
@@ -1088,6 +1124,53 @@ static void code_cache_analyze_micro(GmlCode *c){
     c->micro_kind=GML_MICRO_CALL_GLOBAL_ARG0;
     c->micro_name=in[1].refname;
     c->micro_hash=in[1].refhash?in[1].refhash:strhash(in[1].refname);
+    return;
+  }
+  if(c->n_insn>=41 && c->branch_index &&
+     insn_push_arg(&in[0],0) &&
+     insn_push_builtin_name(&in[1],"undefined") &&
+     in[2].kind==OP_CMP && in[2].cmp==CMP_EQ &&
+     in[3].kind==OP_BF && c->branch_index[3]==6 &&
+     insn_push_num(&in[4],-1.0) &&
+     insn_pop_arg(&in[5],0) &&
+     insn_push_global_var(&in[6]) &&
+     insn_push_arg(&in[7],0) &&
+     insn_call_name(&in[8],"gamepad_set_axis_deadzone",2) &&
+     in[9].kind==OP_POPZ &&
+     insn_push_global_var(&in[10]) &&
+     insn_call_name(&in[11],"ds_map_find_first",1) &&
+     insn_pop_local_var(&in[12]) &&
+     insn_push_same_ref(&in[13],&in[10]) &&
+     insn_call_name(&in[14],"ds_map_size",1) &&
+     insn_pop_local_var(&in[15]) &&
+     insn_push_num(&in[16],0.0) &&
+     insn_pop_local_var(&in[17]) &&
+     insn_push_same_ref(&in[18],&in[17]) &&
+     insn_push_same_ref(&in[19],&in[15]) &&
+     in[20].kind==OP_CMP && in[20].cmp==CMP_LT &&
+     in[21].kind==OP_BF && c->branch_index[21]==40 &&
+     insn_push_same_ref(&in[22],&in[12]) &&
+     insn_push_same_ref(&in[23],&in[10]) &&
+     insn_call_name(&in[24],"ds_map_find_value",2) &&
+     insn_push_arg(&in[25],0) &&
+     in[26].kind==OP_DUP &&
+     in[27].kind==OP_DUP &&
+     in[28].kind==OP_PUSH && in[28].type1==DT_VAR && in[28].inst==IT_STACK && in[28].refname &&
+     in[29].kind==OP_CALLV && in[29].argc==1 &&
+     in[30].kind==OP_POPZ &&
+     insn_push_same_ref(&in[31],&in[12]) &&
+     insn_push_same_ref(&in[32],&in[10]) &&
+     insn_call_name(&in[33],"ds_map_find_next",2) &&
+     insn_pop_same_ref(&in[34],&in[12]) &&
+     insn_push_same_ref(&in[35],&in[17]) &&
+     insn_push_num(&in[36],1.0) &&
+     in[37].kind==OP_ADD &&
+     insn_pop_same_ref(&in[38],&in[17]) &&
+     in[39].kind==OP_B && c->branch_index[39]==18 &&
+     in[40].kind==OP_EXIT){
+    c->micro_kind=GML_MICRO_DS_MAP_METHOD_LOOP1;
+    c->micro_name=in[10].refname;
+    c->micro_hash=in[10].refhash?in[10].refhash:strhash(in[10].refname);
   }
 }
 static int code_cache_ensure(GmlWin *w, int ci){
@@ -1131,8 +1214,8 @@ static int code_cache_ensure(GmlWin *w, int ci){
   for(uint32_t i=0;i<n;i++){
     if(!code_cache_branch_op(ins[i].kind)) continue;
     int64_t target64=(int64_t)pcs[i] + (int64_t)ins[i].jump*4;
-    if(target64==(int64_t)end){ br[i]=(int32_t)n; continue; }
-    if(target64<(int64_t)c->start || target64>(int64_t)end){ c->cache_bad=1; goto fail_live; }
+    if(target64>=(int64_t)end){ br[i]=(int32_t)n; continue; }
+    if(target64<(int64_t)c->start){ c->cache_bad=1; goto fail_live; }
     int ti=code_cache_find_pc(c,(uint32_t)target64);
     if(ti<0){ c->cache_bad=1; goto fail_live; }
     br[i]=ti;
@@ -1198,10 +1281,41 @@ static int g_unknown_logged=0;
 extern GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *a, int n);
 extern int gml_builtin_fast_id(const char *name);
 extern GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, int n);
+static int code_micro_maybe(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *out);
 static inline int builtin_hotprof_on(void){
   static int on=-1;
   if(on<0) on=getenv("GML_PROFILE_HOTBUILTIN")!=NULL;
   return on;
+}
+static int vm_heap_string(GmlVal v){
+  return v.t==V_STR && v.s && v.d!=0;
+}
+static void micro_call_method_field1(GmlVM *vm, GmlVal targetv, const char *field, uint32_t hash, GmlVal arg0){
+  if(!vm || !field) return;
+  GmlInstance *target=vm_inst_from_ref(vm,targetv);
+  if(!target) return;
+  GmlVal mv=inst_get_any_h(vm,target,field,hash);
+  int fci=-1;
+  GmlInstance *call_self=vm->cur_self;
+  double fn=asnum(mv);
+  if(GML_IS_STRUCT_ID(fn)){
+    GmlInstance *bm=gml_struct_find(vm,(unsigned)fn);
+    if(bm){
+      GmlVal selfv; int have_self=0;
+      method_struct_info(bm,&fci,&selfv,&have_self);
+      if(have_self){
+        GmlInstance *bs=vm_inst_from_ref(vm,selfv);
+        if(bs) call_self=bs;
+      }
+    }
+  } else if(GML_IS_FUNCVAL((int)fn)){
+    fci=(int)fn & 0x00FFFFFF;
+  }
+  if(fci<0 || !vm->win || fci>=vm->win->n_code) return;
+  GmlVal a[1]={arg0};
+  GmlVal rv;
+  if(!code_micro_maybe(vm,fci,a,1,&rv)) rv=gml_vm_run_code(vm,fci,call_self,vm->cur_other,a,1);
+  if(vm_heap_string(rv) && !(arg0.t==V_STR && arg0.s==rv.s)) free((char*)rv.s);
 }
 static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *out){
   if(!vm || !vm->win || ci<0 || ci>=vm->win->n_code || !out) return 0;
@@ -1250,6 +1364,27 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
       if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,4);
       return 1;
     }
+  }
+  if(c->micro_kind==GML_MICRO_DS_MAP_METHOD_LOOP1 && c->micro_name && c->insn){
+    GmlVal arg0=(args && n_args>0)?args[0]:vundef();
+    if(arg0.t==V_UNDEF) arg0=vreal(-1);
+    GmlInsn *in=c->insn;
+    GmlVal *dz=gml_varmap_get_h(&vm->globals,in[6].refname,in[6].refhash?in[6].refhash:strhash(in[6].refname));
+    gml_gamepad_set_axis_deadzone_direct((int)asnum(arg0),dz?asnum(*dz):0.0);
+    GmlVal *mapv=gml_varmap_get_h(&vm->globals,c->micro_name,c->micro_hash);
+    int mapid=(int)(mapv?asnum(*mapv):0.0);
+    GmlVal key=gml_ds_map_find_first_direct(vm,mapid);
+    int num=gml_ds_map_size_direct(vm,mapid);
+    const char *method=in[28].refname;
+    uint32_t method_hash=in[28].refhash?in[28].refhash:strhash(method);
+    for(int i=0;i<num;i++){
+      GmlVal target=gml_ds_map_find_value_direct(vm,mapid,key,1);
+      micro_call_method_field1(vm,target,method,method_hash,arg0);
+      key=gml_ds_map_find_next_direct(vm,mapid,key,1);
+    }
+    *out=vreal(0);
+    if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,41);
+    return 1;
   }
   return 0;
 }
