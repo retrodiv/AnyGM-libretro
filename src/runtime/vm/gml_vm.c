@@ -701,8 +701,16 @@ static void array_set_inst_field_h(GmlInstance *s, const char *nm, uint32_t nh, 
   arr_ensure(A,idx);
   if(idx>=0 && idx<A->cap) A->data[idx]=v;
 }
+static int inst_is_struct_ref(const GmlInstance *in){
+  return in && GML_IS_STRUCT_ID((double)in->id);
+}
+
 /* read/write any var on a specific instance (builtin or custom) */
 static GmlVal inst_get_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t nh){
+  if(inst_is_struct_ref(t)){
+    GmlVal *p=gml_varmap_get_h(&t->vars,nm,nh);
+    return p?*p:vreal(0);
+  }
   GmlVal o; if(inst_builtin_get(t,nm,&o)) return o;
   /* Same sprite-derived builtins var_get resolves for `self.X`, so a REFERENCED instance
    * (`other.image_number`, `foo.bbox_left`) reads them too — not 0. `expr.image_number` returning
@@ -721,7 +729,9 @@ static GmlVal inst_get_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t
 }
 static void inst_set_any_h(GmlInstance *t, const char *nm, uint32_t nh, GmlVal v){
   gml_arr_mark_escaped(v);   /* instance vars outlive the current scope */
-  if(inst_builtin_set(t,nm,v)) return; *gml_varmap_put_h(&t->vars,nm,nh)=v;
+  if(inst_is_struct_ref(t)){ *gml_varmap_put_h(&t->vars,nm,nh)=v; return; }
+  if(inst_builtin_set(t,nm,v)) return;
+  *gml_varmap_put_h(&t->vars,nm,nh)=v;
 }
 static GmlInstance *inst_by_id(GmlVM *vm, double idv){
   int id=(int)idv;
@@ -848,6 +858,7 @@ static GmlInstance *vm_inst_from_ref(GmlVM *vm, GmlVal iv){
 }
 static int inst_has_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t nh){
   if(!t || !nm) return 0;
+  if(inst_is_struct_ref(t)) return gml_varmap_get_h(&t->vars,nm,nh)!=NULL;
   GmlVal o;
   if(inst_builtin_get(t,nm,&o)) return 1;
   if(!strcmp(nm,"image_number")) return 1;
@@ -877,8 +888,18 @@ int gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v){
   GmlInstance *t=vm_inst_from_ref(vm,ref);
   if(!t) return 0;
   gml_arr_mark_escaped(v);
-  if(inst_builtin_set(t,name,v)) return 1;
   uint32_t nh=strhash(name);
+  if(inst_is_struct_ref(t)){
+    GmlVal *p=gml_varmap_get_h(&t->vars,name,nh);
+    if(p) *p=v;
+    else {
+      char *owned=strdup(name);
+      if(!owned) return 0;
+      *gml_varmap_put_h(&t->vars,owned,strhash(owned))=v;
+    }
+    return 1;
+  }
+  if(inst_builtin_set(t,name,v)) return 1;
   GmlVal *p=gml_varmap_get_h(&t->vars,name,nh);
   if(p) *p=v;
   else {
@@ -891,7 +912,9 @@ int gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v){
 /* public accessor: read a builtin or custom instance variable by name → real value.
  * Returns 0 for absent variables (GM default). */
 double gml_inst_var_get(GmlVM *vm, GmlInstance *in, const char *nm){
-  if(!in) return 0; GmlVal o; if(inst_builtin_get(in,nm,&o)) return o.t==V_REAL?o.d:0;
+  if(!in) return 0;
+  if(inst_is_struct_ref(in)){ GmlVal *p=gml_varmap_get(&in->vars,nm); return p?(p->t==V_REAL?p->d:0):0; }
+  GmlVal o; if(inst_builtin_get(in,nm,&o)) return o.t==V_REAL?o.d:0;
   if(inst_sprite_metric_get(vm,in,nm,&o)) return o.t==V_REAL?o.d:0;
   GmlVal *p=gml_varmap_get(&in->vars,nm); return p?(p->t==V_REAL?p->d:0):0;
 }
