@@ -4613,8 +4613,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vreal(have && want>=0 && (int)pc->d==want);
   }
-  if(!strcmp(nm,"@@SetStatic@@")||!strcmp(nm,"@@GetStatic@@")||
-     !strcmp(nm,"@@try_hook@@")||!strcmp(nm,"@@try_unhook@@")||!strcmp(nm,"@@finally@@")||
+  if(!strcmp(nm,"@@SetStatic@@")||!strcmp(nm,"@@GetStatic@@")||!strcmp(nm,"@@CopyStatic@@")||
+     !strcmp(nm,"@@try_hook@@")||!strcmp(nm,"@@try_unhook@@")||
+     !strcmp(nm,"@@finish_catch@@")||!strcmp(nm,"@@finally@@")||
      !strcmp(nm,"@@throw@@")) return vreal(0);
   if(!strcmp(nm,"instance_destroy")){
     /* instance_destroy([id_or_obj, execute_event]): no-arg destroys self; with an argument, destroy
@@ -6402,7 +6403,15 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
    * (gml_Script_foo). Handle both so scripts dispatch instead of falling through to a no-op. ---- */
   int ci;
   if(!strncmp(nm,"gml_Script_",11)) ci=gml_code_index_by_name(vm->win,nm);
-  else { char sn[160]; snprintf(sn,sizeof sn,"gml_Script_%s",nm); ci=gml_code_index_by_name(vm->win,sn); }
+  else {
+    char sn[160];
+    snprintf(sn,sizeof sn,"gml_Script_%s",nm);
+    ci=gml_code_index_by_name(vm->win,sn);
+    if(ci<0){
+      snprintf(sn,sizeof sn,"gml_GlobalScript_%s",nm);
+      ci=gml_code_index_by_name(vm->win,sn);
+    }
+  }
   if(ci>=0){
     GmlVal rv=gml_vm_run_code(vm,ci,vm->cur_self,vm->cur_other,a,n);
     /* report the resolution for the caller's per-site cache — but never for names the chain
