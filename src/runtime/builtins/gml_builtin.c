@@ -601,7 +601,7 @@ static int copy_file_path(const char *src, const char *dst){
 static int log_ds_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_DS")!=NULL; return on; }
 static int log_col_on(void){
   static int on=-1;
-  if(on<0) on=(getenv("GML_LOG_COL") || getenv("GML_LOG_COL_OBJ")) != NULL;
+  if(on<0) on=(getenv("GML_LOG_COL") || getenv("GML_LOG_COL_OBJ")) ? 1 : 0;
   return on;
 }
 static const char *log_col_filter(void){
