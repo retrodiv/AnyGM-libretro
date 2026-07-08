@@ -3585,6 +3585,39 @@ static GmlVal builtin_fmod(GmlVM *vm, const char *nm, GmlVal *a, int n){
          !strcmp(f,"event_instance_set_3d_attributes")||!strcmp(f,"update")) return vreal(0);
       return vreal(0);
 }
+static int builtin_fmod_exact_name(const char *nm){
+  static const char *const names[]={
+    "fmod_bank_load",
+    "fmod_bank_load_sample_data",
+    "fmod_destroy",
+    "fmod_event_create_instance",
+    "fmod_event_get_length",
+    "fmod_event_instance_get_parameter",
+    "fmod_event_instance_get_paused",
+    "fmod_event_instance_get_timeline_pos",
+    "fmod_event_instance_is_playing",
+    "fmod_event_instance_play",
+    "fmod_event_instance_release",
+    "fmod_event_instance_set_3d_attributes",
+    "fmod_event_instance_set_parameter",
+    "fmod_event_instance_set_paused",
+    "fmod_event_instance_set_paused_all",
+    "fmod_event_instance_set_timeline_pos",
+    "fmod_event_instance_stop",
+    "fmod_event_load",
+    "fmod_event_one_shot",
+    "fmod_event_one_shot_3d",
+    "fmod_get_parameter",
+    "fmod_init",
+    "fmod_set_listener_attributes",
+    "fmod_set_num_listeners",
+    "fmod_set_parameter",
+    "fmod_studio_init",
+    "fmod_update",
+  };
+  for(size_t i=0;i<sizeof(names)/sizeof(names[0]);i++) if(!strcmp(nm,names[i])) return 1;
+  return 0;
+}
 
 static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n);
 GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
@@ -4794,6 +4827,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
      * and play it through the FMOD software mixer (gml_fmod.c). If no bank set loaded (fb==NULL) we
      * still model the instance LIFECYCLE STATE so audio-gated sequences advance. Generic: any
      * GameMaker+FMOD title uses this same API. ---- */
+    if(builtin_fmod_exact_name(nm)) return builtin_fmod(vm,nm,a,n);
     if(!strncmp(nm,"fmod_",5)) return builtin_fmod(vm,nm,a,n);
     if(!strcmp(nm,"surface_exists")) return vreal(R?gml_surface_exists(R,(int)N(a,n,0)):0);
     if(!strcmp(nm,"surface_create")) return vreal(R?gml_surface_create(R,(int)N(a,n,0),(int)N(a,n,1)):-1);
