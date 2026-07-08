@@ -2319,6 +2319,8 @@ int gml_instance_number(GmlVM *vm, int target){
       if(vm->inst[i].active && !vm->inst[i].marked && (int)vm->inst[i].id==target) return 1;
     return 0;
   }
+  /* Family counts include deactivated instances, so only zero is an exact shortcut here. */
+  if(target>=0 && target<vm->n_objects && vm->obj_alive && vm->obj_alive[target]==0) return 0;
   for(int i=0;i<vm->inst_count;i++)
     if(vm->inst[i].active && !vm->inst[i].marked && gml_object_is(vm,vm->inst[i].obj,target)) n++;
   return n;
