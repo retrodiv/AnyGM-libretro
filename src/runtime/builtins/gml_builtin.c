@@ -1930,17 +1930,21 @@ static int resolve_landing_overlap(GmlVM *vm, GmlInstance *s, int md){
 }
 
 /* first active instance of `obj` whose mask covers world point (px,py), or NULL. */
-static int point_hits_instance(GmlVM *vm, GmlInstance *o, double px, double py, int obj, GmlInstance *skip){
+static int point_hits_instance_prec(GmlVM *vm, GmlInstance *o, double px, double py, int obj, GmlInstance *skip, int precise){
   GmlRender *R=(GmlRender*)vm->render;
   if(o==skip) return 0;
   if(!target_matches_instance(vm,vm->cur_self,o,obj)) return 0;
   double ol,ot,orr,ob; if(!inst_bbox(vm,o,o->x,o->y,&ol,&ot,&orr,&ob)) return 0;
   if(px<ol||px>orr||py<ot||py>ob) return 0;
+  if(!precise) return 1;
   /* bbox hit; refine with the per-pixel mask when available */
   if(R){ int si=inst_mask_sprite_index(o);
     if(si>=0 && si<R->n_spr){ GmlSprite *s=&R->spr[si];
       if(!mask_hit_world(R,o,s,si,o->x,o->y,(int)floor(px),(int)floor(py))) return 0; } }
   return 1;
+}
+static int point_hits_instance(GmlVM *vm, GmlInstance *o, double px, double py, int obj, GmlInstance *skip){
+  return point_hits_instance_prec(vm,o,px,py,obj,skip,1);
 }
 static GmlInstance *instance_at_point_ex_linear(GmlVM *vm, double px, double py, int obj, GmlInstance *skip){
   for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
@@ -1968,6 +1972,96 @@ static GmlInstance *instance_at_point_ex(GmlVM *vm, double px, double py, int ob
 }
 static GmlInstance *instance_at_point(GmlVM *vm, double px, double py, int obj){
   return instance_at_point_ex(vm,px,py,obj,NULL);
+}
+static int line_hits_instance(GmlVM *vm, GmlInstance *o,
+                              double x1, double y1, double x2, double y2,
+                              int obj, GmlInstance *skip, int precise, int steps,
+                              double *first_d2){
+  if(!o || !o->active || o->marked) return 0;
+  for(int k=0;k<=steps;k++){
+    double t=(double)k/(double)steps;
+    double px=x1+(x2-x1)*t, py=y1+(y2-y1)*t;
+    if(point_hits_instance_prec(vm,o,px,py,obj,skip,precise)){
+      if(first_d2){
+        double dx=px-x1, dy=py-y1;
+        *first_d2=dx*dx+dy*dy;
+      }
+      return 1;
+    }
+  }
+  return 0;
+}
+static GmlInstance *collision_line_query(GmlVM *vm, double x1, double y1, double x2, double y2,
+                                         int obj, int precise, int notme){
+  int steps=(int)ceil(fmax(fabs(x2-x1),fabs(y2-y1))); if(steps<1) steps=1;
+  GmlInstance *skip=notme?vm->cur_self:NULL;
+  if(obj_family_absent(vm,obj) && gml_colgrid_mode()!=2) return NULL;
+  int *cand=NULL; int cn=-1;
+  if(gml_colgrid_mode()!=0)
+    cn=gml_colgrid_collect(vm, fmin(x1,x2), fmin(y1,y2), fmax(x1,x2), fmax(y1,y2), &cand);
+  GmlInstance *hit=NULL;
+  for(int k=0;k<=steps && !hit;k++){
+    double t=(double)k/(double)steps, px=x1+(x2-x1)*t, py=y1+(y2-y1)*t;
+    if(cn>=0){
+      for(int c=0;c<cn;c++){ GmlInstance *o=&vm->inst[cand[c]];
+        if(point_hits_instance_prec(vm,o,px,py,obj,skip,precise)){ hit=o; break; } }
+    } else {
+      for(int i=0;i<vm->inst_count;i++){
+        GmlInstance *o=&vm->inst[i];
+        if(point_hits_instance_prec(vm,o,px,py,obj,skip,precise)){ hit=o; break; }
+      }
+    }
+  }
+  if(gml_colgrid_mode()==2){
+    GmlInstance *lin=NULL;
+    for(int k=0;k<=steps && !lin;k++){
+      double t=(double)k/(double)steps, px=x1+(x2-x1)*t, py=y1+(y2-y1)*t;
+      for(int i=0;i<vm->inst_count;i++){
+        GmlInstance *o=&vm->inst[i];
+        if(point_hits_instance_prec(vm,o,px,py,obj,skip,precise)){ lin=o; break; }
+      }
+    }
+    if(lin!=hit){ extern long g_vm_frame;
+      fprintf(stderr,"[gridcheck] MISMATCH line f%ld (%.1f,%.1f)-(%.1f,%.1f) obj=%d grid=%d linear=%d\n",
+        g_vm_frame,x1,y1,x2,y2,obj,hit?(int)(hit-vm->inst):-1,lin?(int)(lin-vm->inst):-1);
+      hit=lin;
+    }
+  }
+  return hit;
+}
+static int collision_line_list_query(GmlVM *vm, double x1, double y1, double x2, double y2,
+                                     int obj, int precise, int notme, GmlDSList *list, int ordered){
+  int steps=(int)ceil(fmax(fabs(x2-x1),fabs(y2-y1))); if(steps<1) steps=1;
+  GmlInstance *skip=notme?vm->cur_self:NULL;
+  if(obj_family_absent(vm,obj) && gml_colgrid_mode()!=2) return 0;
+  int *cand=NULL; int cn=-1;
+  if(gml_colgrid_mode()!=0)
+    cn=gml_colgrid_collect(vm, fmin(x1,x2), fmin(y1,y2), fmax(x1,x2), fmax(y1,y2), &cand);
+  GmlColListHit *hits=NULL; int nhit=0, cap=0;
+  if(cn>=0){
+    for(int c=0;c<cn;c++){
+      int i=cand[c]; if(i<0 || i>=vm->inst_count) continue;
+      double d2=0;
+      if(line_hits_instance(vm,&vm->inst[i],x1,y1,x2,y2,obj,skip,precise,steps,&d2)){
+        if(!col_list_add(vm,ordered?NULL:list,ordered,&hits,&nhit,&cap,i,x1,y1)) break;
+        if(ordered && nhit>0) hits[nhit-1].d2=d2;
+      }
+    }
+  } else {
+    for(int i=0;i<vm->inst_count;i++){
+      double d2=0;
+      if(line_hits_instance(vm,&vm->inst[i],x1,y1,x2,y2,obj,skip,precise,steps,&d2)){
+        if(!col_list_add(vm,ordered?NULL:list,ordered,&hits,&nhit,&cap,i,x1,y1)) break;
+        if(ordered && nhit>0) hits[nhit-1].d2=d2;
+      }
+    }
+  }
+  if(ordered && hits){
+    qsort(hits,(size_t)nhit,sizeof(*hits),col_list_cmp);
+    if(list) for(int i=0;i<nhit;i++) ds_list_push(list,vreal((double)vm->inst[hits[i].idx].id));
+  }
+  free(hits);
+  return nhit;
 }
 static int shape_hits_instance(GmlVM *vm, GmlInstance *o, int kind, double *p, int obj, GmlInstance *skip,
                                double sl,double st,double sr,double sb){
@@ -3976,41 +4070,24 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(cnm) fprintf(stderr,"[col] %s instance_place_list(%.0f,%.0f,%s)=%d\n",cnm,N(a,n,0),N(a,n,1),tn,r); }
     return vreal(r); }
   if(!strcmp(nm,"collision_line")){
-    double x1=N(a,n,0), y1=N(a,n,1), x2=N(a,n,2), y2=N(a,n,3); int obj=(int)N(a,n,4), notme=(int)N(a,n,6);
-    GmlInstance *skip=notme?vm->cur_self:NULL;
-    int steps=(int)ceil(fmax(fabs(x2-x1),fabs(y2-y1))); if(steps<1) steps=1;
+    double x1=N(a,n,0), y1=N(a,n,1), x2=N(a,n,2), y2=N(a,n,3);
+    int obj=(int)N(a,n,4), precise=N(a,n,5)>=0.5, notme=(int)N(a,n,6);
     static const char *colline_dbg=(const char*)-1;
     if(colline_dbg==(const char*)-1) colline_dbg=getenv("GML_DBG_COLLINE");
-    /* Collect candidates once over the line bounds, then test the point walk in slot order. */
-    if(obj_family_absent(vm,obj) && gml_colgrid_mode()!=2) return vreal(-4);
-    int *cand=NULL; int cn=-1;
-    if(gml_colgrid_mode()!=0)
-      cn=gml_colgrid_collect(vm, fmin(x1,x2), fmin(y1,y2), fmax(x1,x2), fmax(y1,y2), &cand);
-    GmlInstance *hit=NULL;
-    for(int k=0;k<=steps && !hit;k++){
-      double t=(double)k/steps, px=x1+(x2-x1)*t, py=y1+(y2-y1)*t;
-      if(cn>=0){
-        for(int c=0;c<cn;c++){ GmlInstance *o=&vm->inst[cand[c]];
-          if(point_hits_instance(vm,o,px,py,obj,skip)){ hit=o; break; } }
-      } else {
-        hit=instance_at_point_ex_linear(vm,px,py,obj,skip);
-      }
-    }
-    if(gml_colgrid_mode()==2){
-      GmlInstance *lin=NULL;
-      for(int k=0;k<=steps && !lin;k++){ double t=(double)k/steps;
-        lin=instance_at_point_ex_linear(vm,x1+(x2-x1)*t,y1+(y2-y1)*t,obj,skip); }
-      if(lin!=hit){ extern long g_vm_frame;
-        fprintf(stderr,"[gridcheck] MISMATCH line f%ld (%.1f,%.1f)-(%.1f,%.1f) obj=%d grid=%d linear=%d\n",
-          g_vm_frame,x1,y1,x2,y2,obj,hit?(int)(hit-vm->inst):-1,lin?(int)(lin-vm->inst):-1);
-        hit=lin; }
-    }
+    GmlInstance *hit=collision_line_query(vm,x1,y1,x2,y2,obj,precise,notme);
     if(hit){ if(colline_dbg){ extern long g_vm_frame;
         fprintf(stderr,"[colline] f%ld (%.0f,%.0f)-(%.0f,%.0f) obj=%d HIT %s id=%u at(%.1f,%.1f)\n",
           g_vm_frame,x1,y1,x2,y2,obj,
           (hit->obj>=0&&hit->obj<vm->n_objects)?vm->objects[hit->obj].name:"?",hit->id,hit->x,hit->y); }
       return vreal(hit->id); }
     return vreal(-4);
+  }
+  if(!strcmp(nm,"collision_line_list")){
+    GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,7));
+    int r=collision_line_list_query(vm,N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),
+                                    (int)N(a,n,4),N(a,n,5)>=0.5,(int)N(a,n,6),
+                                    l,N(a,n,8)>=0.5);
+    return vreal(r);
   }
   /* move_outside_solid(direction,maxdist): step the instance along `direction` until it no longer
    * meets a solid (or maxdist px reached) — un-sticks an instance spawned inside a wall/floor. */
