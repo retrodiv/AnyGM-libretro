@@ -641,6 +641,40 @@ static char *ds_key_make(GmlVal v){
   snprintf(buf,sizeof(buf),"r:%.17g",v.t==V_REAL?v.d:0.0);
   return strdup(buf);
 }
+typedef struct { char buf[160]; char *heap; } DsKeyTemp;
+static const char *ds_key_temp(GmlVal v, DsKeyTemp *t){
+  if(!t) return NULL;
+  t->heap=NULL;
+  if(v.t==V_STR){
+    const char *s=v.s?v.s:"";
+    size_t n=strlen(s);
+    if(n+3<=sizeof(t->buf)){
+      t->buf[0]='s'; t->buf[1]=':'; memcpy(t->buf+2,s,n+1);
+      return t->buf;
+    }
+    t->heap=malloc(n+3);
+    if(!t->heap){
+      t->buf[0]='s'; t->buf[1]=':'; t->buf[2]=0;
+      return t->buf;
+    }
+    t->heap[0]='s'; t->heap[1]=':'; memcpy(t->heap+2,s,n+1);
+    return t->heap;
+  }
+  if(v.t==V_UNDEF) return "u:";
+  snprintf(t->buf,sizeof(t->buf),"r:%.17g",v.t==V_REAL?v.d:0.0);
+  return t->buf;
+}
+static void ds_key_temp_free(DsKeyTemp *t){
+  if(!t) return;
+  free(t->heap);
+  t->heap=NULL;
+}
+static char *ds_key_temp_steal(DsKeyTemp *t){
+  if(!t) return NULL;
+  char *heap=t->heap;
+  t->heap=NULL;
+  return heap;
+}
 static GmlVal ds_key_val_clone(GmlVal v){
   /* Copy stored strings so they survive the caller temporary-string cleanup. */
   if(v.t==V_STR){ char *c=v.s?strdup(v.s):NULL; return c?vstr_owned(c):vstr(""); }
@@ -817,14 +851,19 @@ static int ds_map_reserve(GmlDSMap *m, int n){
 }
 static int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite){
   GmlDSMap *m=ds_map_slot(vm,id);
-  char *key=ds_key_make(keyv);
-  if(!m||!key){ free(key); return 0; }
-  int i=ds_map_find_entry(m,key);
+  if(!m) return 0;
+  DsKeyTemp kt;
+  const char *lookup=ds_key_temp(keyv,&kt);
+  int i=ds_map_find_entry(m,lookup);
   if(i>=0){
     if(overwrite) m->entry[i].val=ds_val_clone(val);   /* old val leaks: refs may have escaped via ds_ret */
-    free(key);
+    ds_key_temp_free(&kt);
     return 1;
   }
+  char *key=ds_key_temp_steal(&kt);
+  if(!key) key=ds_key_make(keyv);
+  ds_key_temp_free(&kt);
+  if(!key) return 0;
   if(!ds_map_reserve(m,m->len+1)){ free(key); return 0; }
   m->entry[m->len].key=key;
   m->entry[m->len].key_val=ds_key_val_clone(keyv);
@@ -836,9 +875,10 @@ static int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite)
 static GmlVal ds_map_lookup_s(GmlVM *vm, int id, const char *key, int *ok){
   if(ok) *ok=0;
   GmlDSMap *m=ds_map_slot(vm,id);
-  char *dk=ds_key_make(vstr(key?key:""));
+  DsKeyTemp kt;
+  const char *dk=ds_key_temp(vstr(key?key:""),&kt);
   int i=ds_map_find_entry(m,dk);
-  free(dk);
+  ds_key_temp_free(&kt);
   if(i<0) return vundef();
   if(ok) *ok=1;
   return ds_ret(m->entry[i].val);
@@ -1399,9 +1439,7 @@ static int ds_map_read_text(GmlVM *vm, int dst_id, const char *text){
   if(fabs(parsed.d-(double)src_id)>=1e-9) return 0;
   GmlDSMap *src=ds_map_slot(vm,src_id);
   if(!src) return 0;
-  char *wrap=ds_key_make(vstr("__gml_ds_map__"));
-  int wi=ds_map_find_entry(src,wrap);
-  free(wrap);
+  int wi=ds_map_find_entry(src,"s:__gml_ds_map__");
   if(wi>=0 && src->entry[wi].val.t==V_ARR && src->entry[wi].val.arr){
     GmlDSMap *dst=ds_map_slot(vm,dst_id);
     if(!dst){ ds_map_destroy_live(src); return 0; }
@@ -3355,23 +3393,26 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); if(l) l->len=0; return vreal(0); }
     case BID_DS_MAP_FIND_VALUE:{
       GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
-      char *key=(n>=2)?ds_key_make(a[1]):NULL;
+      DsKeyTemp kt={0};
+      const char *key=(n>=2)?ds_key_temp(a[1],&kt):NULL;
       int i=ds_map_find_entry(m,key);
       GmlVal out=(i>=0)?m->entry[i].val:vundef();
-      free(key);
+      ds_key_temp_free(&kt);
       return ds_ret(out); }
     case BID_DS_MAP_FIND_NEXT:
     case BID_DS_MAP_FIND_PREVIOUS:{
       GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
-      char *key=(n>=2)?ds_key_make(a[1]):NULL;
-      int i=ds_map_find_entry(m,key); free(key);
+      DsKeyTemp kt={0};
+      const char *key=(n>=2)?ds_key_temp(a[1],&kt):NULL;
+      int i=ds_map_find_entry(m,key); ds_key_temp_free(&kt);
       int j = (i<0) ? -1 : (id==BID_DS_MAP_FIND_NEXT ? i+1 : i-1);
       if(m && j>=0 && j<m->len) return ds_ret(m->entry[j].key_val);
       return vundef(); }
     case BID_DS_MAP_EXISTS:{
       GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
-      char *key=(n>=2)?ds_key_make(a[1]):NULL;
-      int i=ds_map_find_entry(m,key); free(key); return vreal(i>=0); }
+      DsKeyTemp kt={0};
+      const char *key=(n>=2)?ds_key_temp(a[1],&kt):NULL;
+      int i=ds_map_find_entry(m,key); ds_key_temp_free(&kt); return vreal(i>=0); }
     case BID_DS_LIST_FIND_VALUE:{
       GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
       return (l && p>=0 && p<l->len)? ds_ret(l->item[p]) : vreal(0); }
@@ -6029,7 +6070,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_map_secure_save")||!strcmp(nm,"ds_map_secure_save_buffer")) return vreal(1);
   if(!strcmp(nm,"ds_map_secure_load")||!strcmp(nm,"ds_map_secure_load_buffer")) return vreal((double)ds_map_create_id(vm));
   if(!strcmp(nm,"ds_map_exists")){ GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
-    char *key=(n>=2)?ds_key_make(a[1]):NULL; int i=ds_map_find_entry(m,key); free(key); return vreal(i>=0); }
+    DsKeyTemp kt={0}; const char *key=(n>=2)?ds_key_temp(a[1],&kt):NULL;
+    int i=ds_map_find_entry(m,key); ds_key_temp_free(&kt); return vreal(i>=0); }
   if(!strcmp(nm,"ds_map_size")){ GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0)); return vreal(m?m->len:0); }
   if(!strcmp(nm,"ds_map_empty")){ GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0)); return vreal(!m||m->len==0); }
   if(!strcmp(nm,"ds_map_set")||!strcmp(nm,"ds_map_set_post")||!strcmp(nm,"ds_map_replace")){
@@ -6038,7 +6080,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"ds_map_delete")){
     GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
-    char *key=(n>=2)?ds_key_make(a[1]):NULL;
+    DsKeyTemp kt={0};
+    const char *key=(n>=2)?ds_key_temp(a[1],&kt):NULL;
     int i=ds_map_find_entry(m,key);
     if(i>=0){
       ds_entry_free(&m->entry[i]);
@@ -6046,7 +6089,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       m->len--;
       m->hdirty=1;   /* indices shifted: rebuild the hash index on next lookup */
     }
-    free(key);
+    ds_key_temp_free(&kt);
     return vreal(0);
   }
   if(!strcmp(nm,"ds_map_destroy")){
@@ -6080,8 +6123,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* Walk insertion-ordered map entries; return undefined beyond either end. */
   if(!strcmp(nm,"ds_map_find_next")||!strcmp(nm,"ds_map_find_previous")){
     GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
-    char *key=(n>=2)?ds_key_make(a[1]):NULL;
-    int i=ds_map_find_entry(m,key); free(key);
+    DsKeyTemp kt={0};
+    const char *key=(n>=2)?ds_key_temp(a[1],&kt):NULL;
+    int i=ds_map_find_entry(m,key); ds_key_temp_free(&kt);
     int j = (i<0) ? -1 : (nm[12]=='n' ? i+1 : i-1);
     if(m && j>=0 && j<m->len) return ds_ret(m->entry[j].key_val);
     return vundef();
@@ -6095,7 +6139,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_map_find_value")){
     int id=(int)N(a,n,0);
     GmlDSMap *m=ds_map_slot(vm,id);
-    char *key=(n>=2)?ds_key_make(a[1]):NULL;
+    DsKeyTemp kt={0};
+    const char *key=(n>=2)?ds_key_temp(a[1],&kt):NULL;
     int i=ds_map_find_entry(m,key);
     GmlVal out=(i>=0)?m->entry[i].val:vundef();
     if(log_ds_on()){
@@ -6105,7 +6150,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       ds_log_val(vm,out,0);
       fprintf(stderr,"\n");
     }
-    free(key);
+    ds_key_temp_free(&kt);
     return ds_ret(out);
   }
   if(!strcmp(nm,"json_decode")) return json_decode_text(vm,S(a,n,0));
