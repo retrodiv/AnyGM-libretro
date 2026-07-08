@@ -276,6 +276,7 @@ GmlRtLayer *gml_rt_layer_new(GmlVM *vm){
   GmlRtLayer *l=&vm->rtl[slot]; memset(l,0,sizeof *l);
   if(!vm->rt_next_id) vm->rt_next_id=1000001;
   l->id=vm->rt_next_id++; l->used=1; l->visible=1; l->order=slot;
+  l->script_begin=-1; l->script_end=-1;
   return l;
 }
 GmlRtElem *gml_rt_elem_new(GmlVM *vm){
@@ -1507,6 +1508,20 @@ static int script_code_of(GmlVM *vm, int sid){
   if(sid<0||(uint32_t)sid>=n) return -1;
   uint32_t p=u32(d,c->off+4+sid*4);
   return (int)u32(d,p+4);  /* codeId */
+}
+static int script_ref_code_of(GmlVM *vm, GmlVal v){
+  if(v.t!=V_REAL) return -1;
+  int iv=(int)v.d;
+  if(GML_IS_FUNCVAL(iv)) return iv & 0x00FFFFFF;
+  if(GML_IS_STRUCT_ID(v.d)){
+    GmlInstance *bm=gml_struct_find(vm,(unsigned)v.d);
+    GmlVal *pf=bm?gml_varmap_get(&bm->vars,"__fn"):NULL;
+    if(pf && pf->t==V_REAL){
+      int f=(int)pf->d;
+      if(GML_IS_FUNCVAL(f)) return f & 0x00FFFFFF;
+    }
+  }
+  return script_code_of(vm,iv);
 }
 
 /* ACRV curve records contain inline channels and points. Evaluate linearly between knots and clamp at the ends. */
@@ -4933,7 +4948,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* ---- script_execute(scriptid, args...) ---- */
   if(!strcmp(nm,"script_execute")){ int sid=(int)N(a,n,0);
     /* the argument may be a classic SCPT index or a GMS2.3 function value (tagged CODE index) */
-    int ci = GML_IS_FUNCVAL(sid) ? (sid & 0x00FFFFFF) : script_code_of(vm,sid);
+    int ci = n>0 ? script_ref_code_of(vm,a[0]) : -1;
     if(getenv("GML_DBG_SCRIPTX")){ extern long g_vm_frame;
       fprintf(stderr,"[scriptx] f%ld sid=%d -> ci=%d (%s)\n",g_vm_frame,sid,ci,
         (ci>=0&&ci<vm->win->n_code)?vm->win->code[ci].name:"?"); }
@@ -5671,6 +5686,15 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(N(a,n,1)>=0.5) t|=(1u<<29); else t&=~(1u<<29); return vreal((double)t); }
   if(!strcmp(nm,"tile_set_rotate")){ uint32_t t=(uint32_t)N(a,n,0);
     if(N(a,n,1)>=0.5) t|=(1u<<30); else t&=~(1u<<30); return vreal((double)t); }
+  if(!strcmp(nm,"layer_script_begin")||!strcmp(nm,"layer_script_end")){
+    GmlRtLayer *l=rt_layer_resolve(vm,a,n);
+    if(l){
+      int ci=(n>1)?script_ref_code_of(vm,a[1]):-1;
+      if(!strcmp(nm,"layer_script_begin")) l->script_begin=ci;
+      else l->script_end=ci;
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"layer_force_draw_depth")) return vreal(0);
   if(!strncmp(nm,"layer_",6)){
     const char *sub=nm+6;
@@ -5772,6 +5796,15 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(-1); }
     if(!strcmp(sub,"exists")){ return vreal(rt_layer_resolve(vm,a,n)!=NULL); }
     if(!strcmp(sub,"force_draw_depth")) return vreal(0);
+    if(!strcmp(sub,"script_begin")||!strcmp(sub,"script_end")){
+      GmlRtLayer *l=rt_layer_resolve(vm,a,n);
+      if(l){
+        int ci=(n>1)?script_ref_code_of(vm,a[1]):-1;
+        if(!strcmp(sub,"script_begin")) l->script_begin=ci;
+        else l->script_end=ci;
+      }
+      return vreal(0);
+    }
     if(!strcmp(sub,"set_visible")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); if(l) l->visible=(int)N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"get_visible")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); return vreal(l?l->visible:0); }
     if(!strcmp(sub,"x")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); if(l){ rt_layer_touch(vm,l); l->x=N(a,n,1); } return vreal(0); }

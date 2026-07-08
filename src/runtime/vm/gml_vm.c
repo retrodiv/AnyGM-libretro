@@ -476,7 +476,8 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
  * safe); miss => the name is provably not special, go straight to the varmap. */
 static const char *const g_special_var_names[]={
   "undefined","room","keyboard_lastkey","room_speed","working_directory","program_directory",
-  "fps","view_current","room_persistent","mouse_x","mouse_y","current_time","room_width",
+  "fps","view_current","room_persistent","event_type","event_number","mouse_x","mouse_y",
+  "current_time","room_width",
   "room_height","instance_count","health","lives","score","async_load","id","object_index",
   "image_number","sprite_width","sprite_height","sprite_xoffset","sprite_yoffset","image_single",
   "x","y","xprevious","yprevious","xstart","ystart","sprite_index","mask_index","image_index",
@@ -525,6 +526,8 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!strcmp(name,"fps")) return vreal(room_speed_value(vm));
   if(!strcmp(name,"view_current")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
   if(!strcmp(name,"room_persistent")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
+  if(!strcmp(name,"event_type")) return vreal(vm->event_type);
+  if(!strcmp(name,"event_number")) return vreal(vm->event_number);
   if(!strcmp(name,"current_time")) return vreal(current_time_value(vm));
   if(argument_get(vm,name,&out)) return out;
   if(!strcmp(name,"room_width")||!strcmp(name,"room_height")){   /* GM built-in: current room size */
@@ -1901,10 +1904,23 @@ int gml_instance_number(GmlVM *vm, int target){
 static int run_event_code_from(GmlVM *vm, GmlInstance *in, GmlInstance *other,
                                const char *suffix, int obj, int ci){
   const char *pe=vm->cur_event; int peo=vm->cur_event_obj;
+  int pet=vm->event_type, pen=vm->event_number;
+  int et=0, en=0;
+  if(suffix){
+    if(!strncmp(suffix,"Create_",7)){ et=0; en=atoi(suffix+7); }
+    else if(!strncmp(suffix,"Destroy_",8)){ et=1; en=atoi(suffix+8); }
+    else if(!strncmp(suffix,"Alarm_",6)){ et=2; en=atoi(suffix+6); }
+    else if(!strncmp(suffix,"Step_",5)){ et=3; en=atoi(suffix+5); }
+    else if(!strncmp(suffix,"Collision_",10)){ et=4; en=atoi(suffix+10); }
+    else if(!strncmp(suffix,"Other_",6)){ et=7; en=atoi(suffix+6); }
+    else if(!strncmp(suffix,"Draw_",5)){ et=8; en=atoi(suffix+5); }
+  }
   vm->cur_event=suffix; vm->cur_event_obj=obj;
+  vm->event_type=et; vm->event_number=en;
   GmlVal _r=gml_vm_run_code(vm,ci,in,other,NULL,0);
   if(_r.t==V_STR && _r.d!=0) free((char*)_r.s);   /* discarded owned return: free it */
   vm->cur_event=pe; vm->cur_event_obj=peo;
+  vm->event_type=pet; vm->event_number=pen;
   return 1;
 }
 static uint32_t suffix_hash(const char *s){
@@ -3055,6 +3071,27 @@ static int rt_layer_has_background(GmlVM *vm, int layer_id){
   }
   return 0;
 }
+static GmlRtLayer *rt_layer_by_order(GmlVM *vm, int order){
+  if(!vm || order<0) return NULL;
+  for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used && vm->rtl[i].order==order) return &vm->rtl[i];
+  return NULL;
+}
+static void gml_run_layer_script(GmlVM *vm, int ci){
+  if(!vm || !vm->win || ci<0 || ci>=vm->win->n_code) return;
+  static GmlInstance layer_scratch;
+  int pet=vm->event_type, pen=vm->event_number;
+  memset(&layer_scratch,0,sizeof layer_scratch);
+  layer_scratch.active=1; layer_scratch.obj=-1; layer_scratch.id=0;
+  layer_scratch.image_xscale=layer_scratch.image_yscale=1; layer_scratch.image_alpha=1;
+  layer_scratch.sprite_index=-1; layer_scratch.mask_index=-1; layer_scratch.path_index=-1;
+  for(int a2=0;a2<GML_ALARMS;a2++) layer_scratch.alarm[a2]=-1;
+  vm->event_type=8; vm->event_number=0;
+  GmlVal _r=gml_vm_run_code(vm,ci,&layer_scratch,NULL,NULL,0);
+  if(_r.t==V_STR && _r.d!=0) free((char*)_r.s);
+  varmap_free_ex(&layer_scratch.vars,0);
+  memset(&layer_scratch.vars,0,sizeof layer_scratch.vars);
+  vm->event_type=pet; vm->event_number=pen;
+}
 static int *vm_draw_order_scratch(GmlVM *vm, int need){
   if(!vm || need<=0) return NULL;
   if(need>vm->draw_ord_cap){
@@ -3294,7 +3331,15 @@ void gml_vm_draw(GmlVM *vm){
           (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",in->id,
           (int)in->sprite_index,in->visible,in->depth,in->x,in->y,in->image_angle,in->image_xscale,in->image_yscale,in->image_alpha,in->image_index,in->image_speed); } } }
   skip_instdump:
+  int active_layer_order=-1;
+  GmlRtLayer *active_layer=NULL;
   for(int k=0;k<m;k++){
+    if(it[k].order!=active_layer_order){
+      if(active_layer) gml_run_layer_script(vm,active_layer->script_end);
+      active_layer_order=it[k].order;
+      active_layer=rt_layer_by_order(vm,active_layer_order);
+      if(active_layer) gml_run_layer_script(vm,active_layer->script_begin);
+    }
     if(it[k].type==1){ GmlDrawTile *t=&tiles[it[k].idx];
       gml_draw_background_part_ext(R,t->def,t->sx,t->sy,t->w,t->h,t->x,t->y,t->xs,t->ys,0xFFFFFF,1); continue; }
     if(it[k].type==2){ struct LayTile *t=&ltl[it[k].idx];
@@ -3326,6 +3371,7 @@ void gml_vm_draw(GmlVM *vm){
                           (uint32_t)in->image_blend,alpha);
     }
   }
+  if(active_layer) gml_run_layer_script(vm,active_layer->script_end);
   /* All draw scratch (it/lbg/ltl/lsp/tiles/tdepth) is persistent (g_dl_*) — write the possibly-grown
    * tile buffers back and keep everything allocated for next frame; nothing is freed here. */
   g_dl_tiles=tiles; g_dl_tdepth=tdepth; g_dl_tiles_cap=tcap;
@@ -3845,7 +3891,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -4282,6 +4328,7 @@ static void runtime_clear(GmlVM *vm){
   io_free(vm);
   ds_maps_free(vm);
   vm->inst_count=0; vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;
+  vm->event_type=0; vm->event_number=0;
   vm->step_alloc_base=0; vm->action_relative=0;
   vm->window_x=0; vm->window_y=0; vm->window_cursor=0;
 }
@@ -4296,7 +4343,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x3F564D47u); /* GMV15: GMV14 plus GMS2 room-start layer-state migration marker */
+  sw_u32(s,0x40564D47u); /* GMV16: GMV15 plus runtime layer draw-script callbacks */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -4380,7 +4427,8 @@ static void sw_vm(StateW *s, GmlVM *vm){
   for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used){ GmlRtLayer *l=&vm->rtl[i];
     sw_i32(s,l->id); sw_i32(s,l->visible); sw_d(s,l->depth);
     sw_d(s,l->x); sw_d(s,l->y); sw_d(s,l->hs); sw_d(s,l->vs);
-    sw_raw(s,l->name,sizeof(l->name)); sw_i32(s,l->touched); }
+    sw_raw(s,l->name,sizeof(l->name)); sw_i32(s,l->touched);
+    sw_i32(s,l->script_begin); sw_i32(s,l->script_end); }
   int live_e=0; for(int i=0;i<vm->n_rte;i++) if(vm->rte[i].used) live_e++;
   sw_i32(s,live_e);
   for(int i=0;i<vm->n_rte;i++) if(vm->rte[i].used){ GmlRtElem *e=&vm->rte[i];
@@ -4420,7 +4468,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   if((magic!=0x31564D47u && magic!=0x32564D47u && magic!=0x33564D47u && magic!=0x34564D47u
       && magic!=0x35564D47u && magic!=0x36564D47u && magic!=0x37564D47u && magic!=0x38564D47u
       && magic!=0x39564D47u && magic!=0x3A564D47u && magic!=0x3B564D47u && magic!=0x3C564D47u
-      && magic!=0x3D564D47u && magic!=0x3E564D47u && magic!=0x3F564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x3D564D47u && magic!=0x3E564D47u && magic!=0x3F564D47u
+      && magic!=0x40564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -4433,6 +4482,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v13 = magic>=0x3D564D47u;
   s.v14 = magic>=0x3E564D47u;
   s.v15 = magic>=0x3F564D47u;
+  s.v16 = magic>=0x40564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -4635,6 +4685,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       l->x=sr_d(&s); l->y=sr_d(&s); l->hs=sr_d(&s); l->vs=sr_d(&s);
       sr_raw(&s,l->name,sizeof(l->name)); l->name[sizeof(l->name)-1]=0;
       l->touched=sr_i32(&s);
+      if(s.v16){ l->script_begin=sr_i32(&s); l->script_end=sr_i32(&s); }
+      else { l->script_begin=-1; l->script_end=-1; }
       l->id=id;
       if(getenv("GML_LOG_RTL")){
         fprintf(stderr,"[rtl-state] load layer id=%d name=\"%s\" vis=%d depth=%.0f pos=(%.2f,%.2f) speed=(%.2f,%.2f) touched=%d\n",
@@ -4709,7 +4761,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   }
   free(tm_state);
   if(s.ok && !s.v15 && vm->win && vm->win->bytecode>=17 && vm->room_index>=0){
-    typedef struct { int id, visible; double depth; char name[32]; } MigLayer;
+    typedef struct { int id, visible, script_begin, script_end; double depth; char name[32]; } MigLayer;
     typedef struct {
       int id, layer, type, sprite, sx, sy, w, h, visible, htiled, vtiled, stretch;
       double x, y, xs, ys, alpha, image_index, image_speed, image_angle;
@@ -4740,6 +4792,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
         for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used){
           GmlRtLayer *l=&vm->rtl[i];
           ml[k].id=l->id; ml[k].visible=l->visible; ml[k].depth=l->depth;
+          ml[k].script_begin=l->script_begin; ml[k].script_end=l->script_end;
           memcpy(ml[k].name,l->name,sizeof(ml[k].name));
           k++;
         }
@@ -4759,7 +4812,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
           for(int i=0;i<ml_n;i++){
             GmlRtLayer *l=gml_rt_layer_find(vm,ml[i].id);
             if(!l && ml[i].name[0]) l=gml_rt_layer_find_by_name(vm,ml[i].name);
-            if(l){ l->visible=ml[i].visible; l->depth=ml[i].depth; }
+            if(l){ l->visible=ml[i].visible; l->depth=ml[i].depth;
+              l->script_begin=ml[i].script_begin; l->script_end=ml[i].script_end; }
           }
           for(int i=0;i<me_n;i++){
             GmlRtElem *e=gml_rt_elem_find(vm,me[i].id);

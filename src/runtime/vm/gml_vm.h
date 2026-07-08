@@ -84,7 +84,7 @@ typedef struct { int live; uint32_t id; GmlVal *cell; int w, h; } GmlDSGrid;   /
 /* runtime layers (GMS2 layer_create / layer_tile_create — the compat scripts GMS emits for
  * upgraded GM8 projects route tile_add/tile_delete through these, so terrain painted at
  * runtime lives here, not in the ROOM chunk). Cleared on room enter like GM tiles. */
-typedef struct { int id, used, visible, touched, order; double depth, x, y, hs, vs; char name[32]; } GmlRtLayer;
+typedef struct { int id, used, visible, touched, order, script_begin, script_end; double depth, x, y, hs, vs; char name[32]; } GmlRtLayer;
 /* GMS2 tile layer (room layer type 4): a grid of tileset cells. Games read it for tile-based collision
  * (tilemap_get + tilemap_get_cell_*_at_pixel). tiles points INTO the immutable room data (no copy). */
 typedef struct { int id, used, visible, order; double x, y, depth; int tileset, tw, th, cols, rows; const unsigned char *tiles, *base_tiles; unsigned char *owned_tiles; char name[32]; } GmlTileMap;
@@ -136,6 +136,7 @@ typedef struct GmlVM {
   GmlInstance *cur_self, *cur_other;
   int32_t call_script_ci;   /* side channel: generic dispatch reports "name resolved to script <ci>" for the caller's per-site cache */
   const char *cur_event; int cur_event_obj;   /* current event suffix + object level (for event_inherited) */
+  int      event_type, event_number;          /* transient GM event_type/event_number builtins */
   GmlVal script_args[16]; int script_argc;     /* current script argumentN/argument_count */
   /* RNG: WELL512 (Lomont compact form), MSVC-LCG seed expansion,
    * default seed 0. random(x) = (next()/2^32)*x. See LICENSES/WELL512.txt. */
