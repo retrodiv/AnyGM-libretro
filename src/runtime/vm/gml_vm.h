@@ -77,7 +77,8 @@ typedef struct { char *key; GmlVal key_val, val; } GmlDSMapEntry;
 /* hidx: lazy open-addressing index over entry[] (built past ~48 entries, rebuilt when hdirty).
  * Runtime-only — never serialized; state load leaves it NULL and the first lookup rebuilds. */
 typedef struct { int live; uint32_t id; GmlDSMapEntry *entry; int len, cap;
-                 int *hidx; int hcap; int hdirty; } GmlDSMap;
+                 int *hidx; int hcap; int hdirty;
+                 int last_lookup; } GmlDSMap;
 typedef struct { int live; uint32_t id; GmlVal *item; int len, cap; } GmlDSList;
 typedef struct { int live; uint32_t id; GmlVal *cell; int w, h; } GmlDSGrid;   /* row-major w*h cells */
 #define GML_DS_MAP_MAX 256
@@ -208,6 +209,7 @@ typedef struct GmlVM {
   GmlDSList ds_list[GML_DS_LIST_MAX];
   GmlDSGrid ds_grid[GML_DS_GRID_MAX];
   int next_ds_id;
+  int ds_map_last_slot;       /* transient slot-id cache for repeated DS-map ops */
   int ds_list_compat_repair;  /* old save-states did not serialize ds_list payloads */
 #define GML_MAX_EMITTERS 32
   unsigned char emitter_live[GML_MAX_EMITTERS];   /* audio emitters = gain cells (ids 3000000+i) */

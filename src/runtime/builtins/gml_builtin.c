@@ -695,13 +695,22 @@ static GmlVal ds_val_clone(GmlVal v){
   return vreal(v.t==V_REAL?v.d:0.0);
 }
 static GmlDSMap *ds_map_slot(GmlVM *vm, int id){
-  for(int i=0;i<GML_DS_MAP_MAX;i++) if(vm->ds_map[i].live && (int)vm->ds_map[i].id==id) return &vm->ds_map[i];
+  if(!vm) return NULL;
+  int li=vm->ds_map_last_slot;
+  if(li>=0 && li<GML_DS_MAP_MAX && vm->ds_map[li].live && (int)vm->ds_map[li].id==id)
+    return &vm->ds_map[li];
+  for(int i=0;i<GML_DS_MAP_MAX;i++) if(vm->ds_map[i].live && (int)vm->ds_map[i].id==id){
+    vm->ds_map_last_slot=i;
+    return &vm->ds_map[i];
+  }
   return NULL;
 }
 static int ds_map_create_id(GmlVM *vm){
   for(int i=0;i<GML_DS_MAP_MAX;i++) if(!vm->ds_map[i].live){
     vm->ds_map[i].live=1;
     vm->ds_map[i].id=(uint32_t)vm->next_ds_id++;
+    vm->ds_map[i].last_lookup=-1;
+    vm->ds_map_last_slot=i;
     if(vm->next_ds_id<=0) vm->next_ds_id=1;
     return (int)vm->ds_map[i].id;
   }
@@ -826,19 +835,37 @@ static void ds_map_index_add(GmlDSMap *m, int i){
 }
 static int ds_map_find_entry(GmlDSMap *m, const char *key){
   if(!m||!key) return -1;
+  int li=m->last_lookup;
+  if(li>=0 && li<m->len && m->entry[li].key && !strcmp(m->entry[li].key,key)) return li;
+  int ni=li+1;
+  if(ni>=0 && ni<m->len && m->entry[ni].key && !strcmp(m->entry[ni].key,key)){
+    m->last_lookup=ni;
+    return ni;
+  }
+  int pi=li-1;
+  if(pi>=0 && pi<m->len && m->entry[pi].key && !strcmp(m->entry[pi].key,key)){
+    m->last_lookup=pi;
+    return pi;
+  }
   if(m->len>=48){
     if(!m->hidx || m->hdirty) ds_map_index_rebuild(m);
     if(m->hidx){
       uint32_t h=ds_key_hash(key)&(uint32_t)(m->hcap-1);
       while(m->hidx[h]>=0){
         int i=m->hidx[h];
-        if(i<m->len && m->entry[i].key && !strcmp(m->entry[i].key,key)) return i;
+        if(i<m->len && m->entry[i].key && !strcmp(m->entry[i].key,key)){
+          m->last_lookup=i;
+          return i;
+        }
         h=(h+1)&(uint32_t)(m->hcap-1);
       }
       return -1;
     }
   }
-  for(int i=0;i<m->len;i++) if(m->entry[i].key && !strcmp(m->entry[i].key,key)) return i;
+  for(int i=0;i<m->len;i++) if(m->entry[i].key && !strcmp(m->entry[i].key,key)){
+    m->last_lookup=i;
+    return i;
+  }
   return -1;
 }
 static int ds_map_reserve(GmlDSMap *m, int n){
@@ -1068,6 +1095,7 @@ static void ds_map_clear_entries(GmlDSMap *m){
   for(int i=0;i<m->len;i++) ds_entry_free(&m->entry[i]);
   m->len=0;
   m->hdirty=1;
+  m->last_lookup=-1;
 }
 static void ds_map_destroy_live(GmlDSMap *m){
   if(!m) return;
@@ -6111,6 +6139,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       memmove(&m->entry[i],&m->entry[i+1],(size_t)(m->len-i-1)*sizeof(m->entry[0]));
       m->len--;
       m->hdirty=1;   /* indices shifted: rebuild the hash index on next lookup */
+      m->last_lookup=-1;
     }
     ds_key_temp_free(&kt);
     return vreal(0);

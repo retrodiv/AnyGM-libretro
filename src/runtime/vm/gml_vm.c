@@ -3965,7 +3965,9 @@ static void ds_maps_free(GmlVM *vm){
     free(m->entry);
     free(m->hidx);
     memset(m,0,sizeof(*m));
+    m->last_lookup=-1;
   }
+  vm->ds_map_last_slot=-1;
   for(int i=0;i<GML_DS_LIST_MAX;i++){
     free(vm->ds_list[i].item);
     memset(&vm->ds_list[i],0,sizeof(vm->ds_list[i]));
@@ -4728,6 +4730,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     if(slot<0){ s.ok=0; break; }
     GmlDSMap *m=&vm->ds_map[slot];
     m->live=1; m->id=sr_u32(&s); m->len=sr_i32(&s);
+    m->last_lookup=-1;
     if(m->len<0 || m->len>100000){ state_debug("bad ds_map len",s.pos,(uint32_t)m->len); s.ok=0; m->len=0; }
     m->cap=m->len; m->entry=m->cap?calloc((size_t)m->cap,sizeof(GmlDSMapEntry)):NULL;
     for(int j=0;j<m->len;j++){
