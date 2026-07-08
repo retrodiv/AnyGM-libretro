@@ -3317,6 +3317,7 @@ static int builtin_input_kbgp(const char *nm, GmlVal *a, int n, GmlVal *out){
       fprintf(stderr,"[gp] f%ld %s n=%d a0=%.0f a1=%.0f -> %d\n",g_vm_frame,nm,n,N(a,n,0),N(a,n,1),
         gml_input_gamepad((int)N(a,n,1),0)); } }
   if(!strcmp(nm,"gamepad_button_check")){          *out=vreal(gml_input_gamepad((int)N(a,n,1),0)); return 1; }
+  if(!strcmp(nm,"gamepad_button_value")){          *out=vreal(gml_input_gamepad((int)N(a,n,1),0) ? 1.0 : 0.0); return 1; }
   if(!strcmp(nm,"gamepad_button_check_pressed")){  *out=vreal(gml_input_gamepad((int)N(a,n,1),1)); return 1; }
   if(!strcmp(nm,"gamepad_button_check_released")){ *out=vreal(gml_input_gamepad((int)N(a,n,1),2)); return 1; }
   if(!strcmp(nm,"gamepad_is_connected")){          *out=vreal(gml_input_gamepad_connected((int)N(a,n,0))); return 1; }
