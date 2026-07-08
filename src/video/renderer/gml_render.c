@@ -978,6 +978,19 @@ static inline void blend_argb_src_over_double_reverse(uint32_t *dp, const uint32
     dp[-k]=0xFF000000u|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
   }
 }
+static inline void blend_argb_src_over_draw_alpha(uint32_t *dp, const uint32_t *sp, int run, uint32_t aa, double alpha){
+  if(run<=0 || !aa || alpha<=0.0) return;
+  double sa=(aa/255.0)*alpha, ia=1.0-sa;
+  for(int k=0; k<run; k++){
+    uint32_t src=sp[k], dst=dp[k];
+    int sr=(src>>16)&0xFF, sg=(src>>8)&0xFF, sb=src&0xFF;
+    int dr=(dst>>16)&0xFF, dg=(dst>>8)&0xFF, db=dst&0xFF;
+    int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
+    int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
+    int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
+    dp[k]=0xFF000000u|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
+  }
+}
 static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
                                         int x0, int y0, int xx0, int xx1, int yy0, int yy1){
   if(!r || !t || !a || !a->px || !r->fb || xx1<=xx0 || yy1<=yy0) return 0;
@@ -1033,6 +1046,34 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
       blend_argb_src_over_exact(dp+i,sp+i,run,aa);
       i+=run;
     }
+  }
+  return 1;
+}
+static int blit_tpag_scale1_white_draw_alpha(GmlRender *r, GmlTpag *t, GmlAtlas *a,
+                                             int x0, int y0, int xx0, int xx1, int yy0, int yy1,
+                                             double alpha){
+  if(!r || !t || !a || !a->px || !r->fb || xx1<=xx0 || yy1<=yy0 || alpha<=0.0 || alpha>=1.0) return 0;
+  int abx0=0, aby0=0, abx1=t->sw-1, aby1=t->sh-1;
+  if(!tpag_alpha_bounds(r,t,a,&abx0,&aby0,&abx1,&aby1)) return 1;
+  uint32_t *cache=tpag_argb_cache(r,t,a);
+  if(!cache) return 0;
+  const GmlTpagAlphaRun *runs=NULL;
+  int run_count=0;
+  if(!tpag_alpha_runs(r,t,a,&runs,&run_count)) return 0;
+  for(int ri=0; ri<run_count; ri++){
+    const GmlTpagAlphaRun *ar=&runs[ri];
+    int yy=(int)ar->y;
+    if(yy<yy0 || yy>=yy1) continue;
+    int sx0=(int)ar->x;
+    int sx1=sx0+(int)ar->len;
+    if(sx0<xx0) sx0=xx0;
+    if(sx1>xx1) sx1=xx1;
+    if(sx1<=sx0) continue;
+    uint32_t *dp=r->fb+(size_t)(y0+yy)*r->fbw+x0+sx0;
+    const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
+    int n=sx1-sx0;
+    if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
+    else blend_argb_src_over_draw_alpha(dp,sp,n,(uint32_t)ar->alpha,alpha);
   }
   return 1;
 }
