@@ -124,6 +124,7 @@ typedef struct {
   /* async atlas prefetch pool (opaque; see gml_render.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;
+  size_t   atlas_decoded_bytes;
 } GmlRender;
 
 int  gml_render_init(GmlRender *r, GmlWin *win);

@@ -563,7 +563,6 @@ typedef struct {
   GmlRender *r;
 } GmlAtlasPool;
 static int log_atlas_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_ATLAS")!=NULL; return on; }
-static size_t g_atlas_decoded_bytes;   /* published atlas pixels, all sources */
 static size_t atlas_spec_budget(void){
   static size_t budget=(size_t)-1;
   if(budget==(size_t)-1){
@@ -596,7 +595,7 @@ static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlas
   a->decode_attempted=1;
   if(px){
     a->w=w; a->h=h;
-    g_atlas_decoded_bytes += (size_t)w*(size_t)h*4u;
+    r->atlas_decoded_bytes += (size_t)w*(size_t)h*4u;
     __atomic_store_n(&a->px,px,__ATOMIC_RELEASE);
     if(log_atlas_on())
       fprintf(stderr,"[atlas] decoded %d %dx%d (%.1f MiB)\n",idx,w,h,(double)((uint64_t)w*(uint64_t)h*4ull)/(1024.0*1024.0));
@@ -672,7 +671,7 @@ void gml_render_prefetch_atlas(GmlRender *r, int idx){
   if(!r || idx<0 || idx>=r->n_atlas || !r->atlas) return;
   GmlAtlas *a=&r->atlas[idx];
   if(a->px || a->decode_attempted || !a->blob || a->blob>=r->win->size) return;
-  if(g_atlas_decoded_bytes > 2*atlas_spec_budget()) return;   /* prefetch cap; draws still decode on demand */
+  if(r->atlas_decoded_bytes > 2*atlas_spec_budget()) return;   /* prefetch cap; draws still decode on demand */
   GmlAtlasPool *pool=atlas_pool_get(r);
   if(!pool) return;
   gml_mutex_lock(&pool->mu);
@@ -688,7 +687,7 @@ static void prefetch_atlas_and_neighbors(GmlRender *r, int idx){
   /* GM's texture packer clusters related pages: a page adjacent to a needed one is likely
    * needed moments later (spawned effects/enemies). Speculative, so budget-gated: past the
    * cap only directly-referenced pages keep prefetching (draws still decode on demand). */
-  if(g_atlas_decoded_bytes < atlas_spec_budget()){
+  if(r->atlas_decoded_bytes < atlas_spec_budget()){
     gml_render_prefetch_atlas(r,idx-1);
     gml_render_prefetch_atlas(r,idx+1);
   }
