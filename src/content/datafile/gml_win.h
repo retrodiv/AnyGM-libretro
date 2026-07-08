@@ -57,6 +57,10 @@ typedef struct {
   int32_t *branch_index;
   uint32_t n_insn;
   uint8_t cache_bad;
+  /* VM-only micro-specialization for tiny wrapper scripts. Not serialized. */
+  uint8_t micro_kind;
+  const char *micro_name;
+  uint32_t micro_hash;
 } GmlCode;
 
 typedef struct {

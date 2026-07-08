@@ -954,6 +954,25 @@ static void code_cache_free(GmlCode *c){
   free(c->insn); free(c->insn_pc); free(c->branch_index);
   c->insn=NULL; c->insn_pc=NULL; c->branch_index=NULL;
   c->n_insn=0;
+  c->micro_kind=0; c->micro_name=NULL; c->micro_hash=0;
+}
+enum { GML_MICRO_NONE=0, GML_MICRO_DS_MAP_GLOBAL_ARG0=1 };
+static void code_cache_analyze_micro(GmlCode *c){
+  if(!c) return;
+  c->micro_kind=0; c->micro_name=NULL; c->micro_hash=0;
+  if(c->n_insn<4 || !c->insn) return;
+  GmlInsn *in=c->insn;
+  if(in[0].kind==OP_PUSH && in[0].type1==DT_VAR && in[0].inst==IT_ARG &&
+     in[0].refname && !strcmp(in[0].refname,"argument0") &&
+     in[1].kind==OP_PUSH && in[1].type1==DT_VAR && in[1].inst==IT_GLOBAL &&
+     in[1].refname &&
+     in[2].kind==OP_CALL && in[2].argc==2 &&
+     in[2].refname && !strcmp(in[2].refname,"ds_map_find_value") &&
+     in[3].kind==OP_RET){
+    c->micro_kind=GML_MICRO_DS_MAP_GLOBAL_ARG0;
+    c->micro_name=in[1].refname;
+    c->micro_hash=in[1].refhash?in[1].refhash:strhash(in[1].refname);
+  }
 }
 static int code_cache_ensure(GmlWin *w, int ci){
   if(!w || ci<0 || ci>=w->n_code) return 0;
@@ -1002,6 +1021,7 @@ static int code_cache_ensure(GmlWin *w, int ci){
     if(ti<0){ c->cache_bad=1; goto fail_live; }
     br[i]=ti;
   }
+  code_cache_analyze_micro(c);
   return 1;
 fail_live:
   code_cache_free(c);
@@ -1066,6 +1086,34 @@ static inline int builtin_hotprof_on(void){
   static int on=-1;
   if(on<0) on=getenv("GML_PROFILE_HOTBUILTIN")!=NULL;
   return on;
+}
+static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *out){
+  if(!vm || !vm->win || ci<0 || ci>=vm->win->n_code || !out) return 0;
+  GmlCode *c=&vm->win->code[ci];
+  const char *trace=getenv("GML_TRACE");
+  if(trace && *trace && c->name && strstr(c->name,trace)) return 0;
+  if(!code_cache_ensure(vm->win,ci)) return 0;
+  if(c->micro_kind!=GML_MICRO_DS_MAP_GLOBAL_ARG0 || !c->micro_name) return 0;
+  if(builtin_hotprof_on()) return 0;
+  const char *arglog=getenv("GML_LOG_CODE_ARGS");
+  if(arglog && *arglog && c->name && strstr(c->name,arglog)) return 0;
+  double t0=codeprof_on()?codeprof_now_ms():0.0;
+  GmlVal *map=gml_varmap_get_h(&vm->globals,c->micro_name,c->micro_hash);
+  GmlVal a[2]={ map?*map:vreal(0), (args && n_args>0)?args[0]:vundef() };
+  static int ds_find_value_id;
+  if(!ds_find_value_id) ds_find_value_id=gml_builtin_fast_id("ds_map_find_value");
+  int bid=ds_find_value_id;
+  *out = bid>0 ? gml_builtin_call_fast_id(vm,bid,"ds_map_find_value",a,2)
+               : gml_builtin_call(vm,"ds_map_find_value",a,2);
+  gml_arr_mark_escaped(*out);
+  if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,4);
+  return 1;
+}
+static int code_micro_maybe(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *out){
+  if(!vm || !vm->win || ci<0 || ci>=vm->win->n_code) return 0;
+  GmlCode *c=&vm->win->code[ci];
+  if(c->cache_bad || (c->insn && c->micro_kind==GML_MICRO_NONE)) return 0;
+  return code_micro_try(vm,ci,args,n_args,out);
 }
 
 /* ---------------- interpreter ---------------- */
@@ -1423,7 +1471,9 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         int sci = pin ? pin->funcval_ci : -1;
         GmlVal rv;
         if(bid>0 && !hp_builtin) rv=gml_builtin_call_fast_id(vm,bid,nm,a,na);
-        else if(sci>=0 && !hp_builtin) rv=gml_vm_run_code(vm,sci,vm->cur_self,vm->cur_other,a,na);
+        else if(sci>=0 && !hp_builtin){
+          if(!code_micro_maybe(vm,sci,a,na,&rv)) rv=gml_vm_run_code(vm,sci,vm->cur_self,vm->cur_other,a,na);
+        }
         else {
           vm->call_script_ci=-1;
           rv=gml_builtin_call(vm,nm,a,na);
@@ -1472,7 +1522,9 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           else if(GML_IS_FUNCVAL((int)fvn)) fci = (int)fvn & 0x00FFFFFF;
         }
         GmlVal rv=vreal(0);
-        if(fci>=0 && fci<w->n_code) rv=gml_vm_run_code(vm,fci,call_self,vm->cur_other,a,na);
+        if(fci>=0 && fci<w->n_code){
+          if(!code_micro_maybe(vm,fci,a,na,&rv)) rv=gml_vm_run_code(vm,fci,call_self,vm->cur_other,a,na);
+        }
         /* track a heap-string result so it's freed at scope exit (mirror OP_CALL); args stay owned
          * by this frame's str_gc and are freed there, so don't touch them. */
         if(STR_IS_HEAP(rv)){ int isarg=0; for(int _k=0;_k<na;_k++) if(a[_k].t==V_STR && a[_k].s==rv.s){isarg=1;break;} if(!isarg) GC_TRACK(rv.s); }
