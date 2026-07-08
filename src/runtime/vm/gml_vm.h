@@ -249,6 +249,9 @@ void         gml_tile_layer_delete_at(GmlVM *vm, int depth, double x, double y);
 void         gml_tile_layer_hide(GmlVM *vm, int depth, int hidden);
 int          gml_event_inherited(GmlVM *vm);   /* run the current event on the parent object */
 double       gml_inst_var_get(GmlVM *vm, GmlInstance *in, const char *name); /* read a builtin or custom var */
+int          gml_inst_var_exists(GmlVM *vm, GmlVal ref, const char *name);
+GmlVal       gml_inst_var_get_val(GmlVM *vm, GmlVal ref, const char *name, int *ok);
+int          gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v);
 int          gml_val_array_length(GmlVal v);   /* array_length_1d: logical length of a V_ARR value, else 0 */
 int          gml_val_array_height_2d(GmlVal v);
 int          gml_val_array_length_2d(GmlVal v, int row);

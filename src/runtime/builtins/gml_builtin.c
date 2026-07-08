@@ -744,6 +744,37 @@ static int js_arr_push(GmlArr *A, GmlVal v){
   }
   A->data[A->len++]=v; return 1;
 }
+static int sort_dir;
+static int gml_val_sort_rank(GmlVal v){
+  if(v.t==V_REAL) return 0;
+  if(v.t==V_STR) return 1;
+  if(v.t==V_ARR) return 2;
+  return 3;
+}
+static int gml_val_sort_cmp(const void *pa, const void *pb){
+  const GmlVal *a=(const GmlVal*)pa, *b=(const GmlVal*)pb;
+  int r=0;
+  if(a->t==V_REAL && b->t==V_REAL){
+    double ad=a->d, bd=b->d;
+    if(isnan(ad) && isnan(bd)) r=0;
+    else if(isnan(ad)) r=1;
+    else if(isnan(bd)) r=-1;
+    else r=(ad>bd)-(ad<bd);
+  } else if(a->t==V_STR && b->t==V_STR){
+    r=strcmp(a->s?a->s:"",b->s?b->s:"");
+  } else {
+    int ar=gml_val_sort_rank(*a), br=gml_val_sort_rank(*b);
+    r=(ar>br)-(ar<br);
+  }
+  return sort_dir>=0 ? r : -r;
+}
+static void gml_array_sort(GmlVal arr, int ascending){
+  if(arr.t!=V_ARR || !arr.arr) return;
+  GmlArr *A=(GmlArr*)arr.arr;
+  if(A->len<=1 || !A->data) return;
+  sort_dir=ascending?1:-1;
+  qsort(A->data,(size_t)A->len,sizeof(GmlVal),gml_val_sort_cmp);
+}
 static GmlVal json_parse_value(JsonIn *j, int depth);
 static GmlVal json_parse_array(JsonIn *j, int depth){
   if(!js_consume(j,'[')){ j->ok=0; return vreal(0); }
@@ -2115,6 +2146,7 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
       if(!strcmp(nm,"array_pop")){ *out=n>0?gml_arr_pop(a[0]):vreal(0); return 1; }
       if(!strcmp(nm,"array_resize")){ if(n>1) gml_arr_resize(a[0],(int)N(a,n,1)); *out=vreal(0); return 1; }
       if(!strcmp(nm,"array_copy")){ if(n>4) gml_arr_copy(a[0],(int)N(a,n,1),a[2],(int)N(a,n,3),(int)N(a,n,4)); *out=vreal(0); return 1; }
+      if(!strcmp(nm,"array_sort")){ if(n>0) gml_array_sort(a[0], n<2 || N(a,n,1)!=0); *out=vreal(0); return 1; }
       if(!strcmp(nm,"array_height_2d")){ *out=vreal(n>0?gml_val_array_height_2d(a[0]):0); return 1; }
       if(!strcmp(nm,"array_length_2d")){ *out=vreal(n>0?gml_val_array_length_2d(a[0],(int)N(a,n,1)):0); return 1; }
       return 0;
@@ -3188,6 +3220,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"array_pop")){ return n>0?gml_arr_pop(a[0]):vreal(0); }
   if(!strcmp(nm,"array_resize")){ if(n>1) gml_arr_resize(a[0],(int)N(a,n,1)); return vreal(0); }
   if(!strcmp(nm,"array_copy")){ if(n>4) gml_arr_copy(a[0],(int)N(a,n,1),a[2],(int)N(a,n,3),(int)N(a,n,4)); return vreal(0); }
+  if(!strcmp(nm,"array_sort")){ if(n>0) gml_array_sort(a[0], n<2 || N(a,n,1)!=0); return vreal(0); }
   /* array_delete(arr,index,number): remove `number` elements at `index`, shifting the tail down
    * (GMS2.3). Negative number deletes that many BEFORE index. Was a silent no-op. */
   if(!strcmp(nm,"array_delete")){
@@ -4993,6 +5026,35 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"is_bool")) return vreal(n>0 && a[0].t==V_REAL && (a[0].d==0||a[0].d==1));
   if(!strcmp(nm,"variable_global_exists")) return vreal(gml_varmap_get(&vm->globals,S(a,n,0))!=NULL);
+  if(!strcmp(nm,"variable_global_get")){
+    GmlVal *p=gml_varmap_get(&vm->globals,S(a,n,0));
+    if(!p) return vundef();
+    GmlVal out=*p; if(out.t==V_STR) out.d=0;
+    return out;
+  }
+  if(!strcmp(nm,"variable_global_set")){
+    if(n>1){
+      const char *key=S(a,n,0);
+      GmlVal *p=gml_varmap_get(&vm->globals,key);
+      if(p) *p=var_store_clone(a[1]);
+      else {
+        char *owned=strdup(key?key:"");
+        if(owned) *gml_varmap_put(&vm->globals,owned)=var_store_clone(a[1]);
+      }
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"variable_instance_exists")||!strcmp(nm,"variable_instance_get")||
+     !strcmp(nm,"variable_instance_set")){
+    const char *key=S(a,n,1);
+    if(!strcmp(nm,"variable_instance_exists")) return vreal(n>1 && gml_inst_var_exists(vm,a[0],key));
+    if(!strcmp(nm,"variable_instance_get")){
+      int ok=0; GmlVal out=(n>1)?gml_inst_var_get_val(vm,a[0],key,&ok):vundef();
+      return ok?out:vundef();
+    }
+    if(n>2) gml_inst_var_set_val(vm,a[0],key,var_store_clone(a[2]));
+    return vreal(0);
+  }
   if(!strcmp(nm,"variable_struct_exists")||!strcmp(nm,"variable_struct_get")||
      !strcmp(nm,"variable_struct_set")||!strcmp(nm,"variable_struct_remove")){
     GmlInstance *st=(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;

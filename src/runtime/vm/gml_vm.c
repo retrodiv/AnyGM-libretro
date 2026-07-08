@@ -843,6 +843,48 @@ static GmlInstance *vm_inst_from_ref(GmlVM *vm, GmlVal iv){
   if(v<100000.0) return gml_find_instance(vm,(int)v);
   return inst_by_id(vm,v);
 }
+static int inst_has_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t nh){
+  if(!t || !nm) return 0;
+  GmlVal o;
+  if(inst_builtin_get(t,nm,&o)) return 1;
+  if(!strcmp(nm,"image_number")) return 1;
+  if(inst_sprite_metric_get(vm,t,nm,&o)) return 1;
+  if(!strcmp(nm,"bbox_left")||!strcmp(nm,"bbox_right")||
+     !strcmp(nm,"bbox_top") ||!strcmp(nm,"bbox_bottom")) return 1;
+  return gml_varmap_get_h(&t->vars,nm,nh)!=NULL;
+}
+int gml_inst_var_exists(GmlVM *vm, GmlVal ref, const char *name){
+  if(!vm || !name) return 0;
+  GmlInstance *t=vm_inst_from_ref(vm,ref);
+  return inst_has_any_h(vm,t,name,strhash(name));
+}
+GmlVal gml_inst_var_get_val(GmlVM *vm, GmlVal ref, const char *name, int *ok){
+  if(ok) *ok=0;
+  if(!vm || !name) return vundef();
+  uint32_t nh=strhash(name);
+  GmlInstance *t=vm_inst_from_ref(vm,ref);
+  if(!inst_has_any_h(vm,t,name,nh)) return vundef();
+  if(ok) *ok=1;
+  GmlVal out=inst_get_any_h(vm,t,name,nh);
+  if(out.t==V_STR) out.d=0;
+  return out;
+}
+int gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v){
+  if(!vm || !name) return 0;
+  GmlInstance *t=vm_inst_from_ref(vm,ref);
+  if(!t) return 0;
+  gml_arr_mark_escaped(v);
+  if(inst_builtin_set(t,name,v)) return 1;
+  uint32_t nh=strhash(name);
+  GmlVal *p=gml_varmap_get_h(&t->vars,name,nh);
+  if(p) *p=v;
+  else {
+    char *owned=strdup(name);
+    if(!owned) return 0;
+    *gml_varmap_put_h(&t->vars,owned,strhash(owned))=v;
+  }
+  return 1;
+}
 /* public accessor: read a builtin or custom instance variable by name → real value.
  * Returns 0 for absent variables (GM default). */
 double gml_inst_var_get(GmlVM *vm, GmlInstance *in, const char *nm){
