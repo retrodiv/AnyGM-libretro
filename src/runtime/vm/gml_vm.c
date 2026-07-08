@@ -1021,7 +1021,8 @@ enum {
   GML_MICRO_APPROACH3=2,
   GML_MICRO_CALL_GLOBAL_ARG0=3,
   GML_MICRO_DS_MAP_METHOD_LOOP1=4,
-  GML_MICRO_DS_MAP_NESTED_FALLBACK=5
+  GML_MICRO_DS_MAP_NESTED_FALLBACK=5,
+  GML_MICRO_ARRAY_METHOD_FLAGS=6
 };
 static int insn_arg_ref(const GmlInsn *in, int arg){
   if(!in || !in->refname || in->inst!=IT_ARG) return 0;
@@ -1047,8 +1048,25 @@ static int insn_push_string(const GmlInsn *in){
 static int insn_pop_local_var(const GmlInsn *in){
   return in && in->kind==OP_POP && in->type1==DT_VAR && in->inst==IT_LOCAL && in->refname;
 }
+static int insn_push_self_var(const GmlInsn *in){
+  return in && in->kind==OP_PUSH && in->type1==DT_VAR && in->inst==IT_SELF && in->refname;
+}
+static int insn_pop_self_var(const GmlInsn *in){
+  return in && in->kind==OP_POP && in->type1==DT_VAR && in->inst==IT_SELF && in->refname;
+}
+static int insn_push_stack_var(const GmlInsn *in){
+  return in && in->kind==OP_PUSH && in->type1==DT_VAR && in->inst==IT_STACK && in->refname;
+}
+static int insn_push_stacktop_var(const GmlInsn *in){
+  return in && in->kind==OP_PUSH && in->type1==DT_VAR && in->reftype==0x80 && in->refname;
+}
 static int insn_same_ref(const GmlInsn *a, const GmlInsn *b){
   if(!a || !b || !a->refname || !b->refname || a->inst!=b->inst) return 0;
+  if(a->refhash && b->refhash && a->refhash!=b->refhash) return 0;
+  return !strcmp(a->refname,b->refname);
+}
+static int insn_same_name(const GmlInsn *a, const GmlInsn *b){
+  if(!a || !b || !a->refname || !b->refname) return 0;
   if(a->refhash && b->refhash && a->refhash!=b->refhash) return 0;
   return !strcmp(a->refname,b->refname);
 }
@@ -1194,6 +1212,77 @@ static void code_cache_analyze_micro(GmlCode *c){
     c->micro_name=in[10].refname;
     c->micro_hash=in[10].refhash?in[10].refhash:strhash(in[10].refname);
     micro_debug(c,"ds-map-method-loop1");
+    return;
+  }
+  if(c->n_insn>=67 && c->branch_index &&
+     insn_push_arg(&in[0],0) &&
+     insn_push_builtin_name(&in[1],"undefined") &&
+     in[2].kind==OP_CMP && in[2].cmp==CMP_EQ &&
+     in[3].kind==OP_BF && c->branch_index[3]==6 &&
+     insn_push_num(&in[4],-1.0) &&
+     insn_pop_arg(&in[5],0) &&
+     insn_push_num(&in[6],0.0) && insn_pop_self_var(&in[7]) &&
+     insn_push_num(&in[8],0.0) && insn_pop_self_var(&in[9]) &&
+     insn_push_num(&in[10],0.0) && insn_pop_self_var(&in[11]) &&
+     insn_push_num(&in[12],0.0) && insn_pop_self_var(&in[13]) &&
+     insn_push_num(&in[14],0.0) && insn_pop_local_var(&in[15]) &&
+     insn_push_same_ref(&in[16],&in[15]) &&
+     insn_push_self_var(&in[17]) &&
+     insn_call_name(&in[18],"array_length",1) &&
+     in[19].kind==OP_CMP && in[19].cmp==CMP_LT &&
+     in[20].kind==OP_BF && c->branch_index[20]==66 &&
+     insn_push_num(&in[21],-1.0) &&
+     insn_push_same_ref(&in[22],&in[15]) &&
+     in[23].kind==OP_CONV &&
+     in[24].kind==OP_PUSH && in[24].type1==DT_VAR && in[24].reftype==0x00 &&
+     insn_same_name(&in[24],&in[17]) &&
+     insn_pop_local_var(&in[25]) &&
+     insn_push_same_ref(&in[26],&in[25]) &&
+     insn_push_arg(&in[27],0) &&
+     in[28].kind==OP_DUP &&
+     in[29].kind==OP_DUP &&
+     insn_push_stack_var(&in[30]) &&
+     in[31].kind==OP_CALLV && in[31].argc==1 &&
+     in[32].kind==OP_POPZ &&
+     insn_push_same_ref(&in[33],&in[25]) &&
+     insn_push_num(&in[34],-9.0) &&
+     insn_push_stacktop_var(&in[35]) &&
+     in[36].kind==OP_CONV &&
+     in[37].kind==OP_BF && c->branch_index[37]==40 &&
+     insn_push_num(&in[38],1.0) &&
+     insn_pop_self_var(&in[39]) && insn_same_name(&in[39],&in[35]) &&
+     insn_push_same_ref(&in[40],&in[25]) &&
+     insn_push_num(&in[41],-9.0) &&
+     insn_push_stacktop_var(&in[42]) &&
+     in[43].kind==OP_CONV &&
+     in[44].kind==OP_BF && c->branch_index[44]==47 &&
+     insn_push_num(&in[45],1.0) &&
+     insn_pop_self_var(&in[46]) && insn_same_name(&in[46],&in[42]) &&
+     insn_push_same_ref(&in[47],&in[25]) &&
+     insn_push_num(&in[48],-9.0) &&
+     insn_push_stacktop_var(&in[49]) &&
+     in[50].kind==OP_CONV &&
+     in[51].kind==OP_BF && c->branch_index[51]==54 &&
+     insn_push_num(&in[52],1.0) &&
+     insn_pop_self_var(&in[53]) && insn_same_name(&in[53],&in[49]) &&
+     in[54].kind==OP_PUSH && in[54].type1==DT_INT32 &&
+     in[55].kind==OP_BREAK &&
+     insn_push_same_ref(&in[56],&in[25]) &&
+     insn_push_num(&in[57],-1.0) &&
+     insn_push_same_ref(&in[58],&in[15]) &&
+     in[59].kind==OP_CONV &&
+     in[60].kind==OP_POP && in[60].type1==DT_VAR && in[60].reftype==0x00 &&
+     insn_same_name(&in[60],&in[17]) &&
+     insn_push_same_ref(&in[61],&in[15]) &&
+     insn_push_num(&in[62],1.0) &&
+     in[63].kind==OP_ADD &&
+     insn_pop_same_ref(&in[64],&in[15]) &&
+     in[65].kind==OP_B && c->branch_index[65]==16 &&
+     in[66].kind==OP_EXIT){
+    c->micro_kind=GML_MICRO_ARRAY_METHOD_FLAGS;
+    c->micro_name=in[17].refname;
+    c->micro_hash=in[17].refhash?in[17].refhash:strhash(in[17].refname);
+    micro_debug(c,"array-method-flags");
     return;
   }
   if(c->n_insn>=23 && c->branch_index &&
@@ -1378,7 +1467,11 @@ static void micro_call_method_field1(GmlVM *vm, GmlVal targetv, const char *fiel
   if(fci<0 || !vm->win || fci>=vm->win->n_code) return;
   GmlVal a[1]={arg0};
   GmlVal rv;
-  if(!code_micro_maybe(vm,fci,a,1,&rv)) rv=gml_vm_run_code(vm,fci,call_self,vm->cur_other,a,1);
+  GmlInstance *old_self=vm->cur_self;
+  vm->cur_self=call_self;
+  int micro_ok=code_micro_maybe(vm,fci,a,1,&rv);
+  vm->cur_self=old_self;
+  if(!micro_ok) rv=gml_vm_run_code(vm,fci,call_self,vm->cur_other,a,1);
   if(vm_heap_string(rv) && !(arg0.t==V_STR && arg0.s==rv.s)) free((char*)rv.s);
 }
 static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *out){
@@ -1478,6 +1571,46 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
       }
     }
     return 0;
+  }
+  if(c->micro_kind==GML_MICRO_ARRAY_METHOD_FLAGS && c->micro_name && c->insn){
+    GmlInstance *self=vm->cur_self;
+    if(!self) return 0;
+    GmlInsn *in=c->insn;
+    GmlVal arg0=(args && n_args>0)?args[0]:vundef();
+    if(arg0.t==V_UNDEF) arg0=vreal(-1);
+    const char *arr_name=in[17].refname;
+    uint32_t arr_hash=c->micro_hash;
+    const char *method=in[30].refname;
+    uint32_t method_hash=in[30].refhash?in[30].refhash:strhash(method);
+    const char *flag0=in[7].refname, *flag1=in[9].refname, *flag2=in[11].refname, *field3=in[13].refname;
+    uint32_t flag0_hash=in[7].refhash?in[7].refhash:strhash(flag0);
+    uint32_t flag1_hash=in[9].refhash?in[9].refhash:strhash(flag1);
+    uint32_t flag2_hash=in[11].refhash?in[11].refhash:strhash(flag2);
+    uint32_t field3_hash=in[13].refhash?in[13].refhash:strhash(field3);
+    inst_set_any_h(self,flag0,flag0_hash,vreal(0));
+    inst_set_any_h(self,flag1,flag1_hash,vreal(0));
+    inst_set_any_h(self,flag2,flag2_hash,vreal(0));
+    inst_set_any_h(self,field3,field3_hash,vreal(0));
+    GmlVal arr=inst_get_any_h(vm,self,arr_name,arr_hash);
+    if(arr.t==V_ARR && arr.arr){
+      GmlArr *A=(GmlArr*)arr.arr;
+      int len=A->len;
+      if(len<0 || A->cap<len || A->cap>16000000 || !A->data) return 0;
+      for(int i=0;i<len;i++){
+        GmlVal item=A->data[i];
+        micro_call_method_field1(vm,item,method,method_hash,arg0);
+        GmlInstance *st=vm_inst_from_ref(vm,item);
+        if(st){
+          if(astrue(inst_get_any_h(vm,st,flag0,flag0_hash))) inst_set_any_h(self,flag0,flag0_hash,vreal(1));
+          if(astrue(inst_get_any_h(vm,st,flag1,flag1_hash))) inst_set_any_h(self,flag1,flag1_hash,vreal(1));
+          if(astrue(inst_get_any_h(vm,st,flag2,flag2_hash))) inst_set_any_h(self,flag2,flag2_hash,vreal(1));
+        }
+        array_set_inst_field_h(self,arr_name,arr_hash,i,item);
+      }
+    }
+    *out=vreal(0);
+    if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,67);
+    return 1;
   }
   return 0;
 }
@@ -1893,7 +2026,11 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         }
         GmlVal rv=vreal(0);
         if(fci>=0 && fci<w->n_code){
-          if(!code_micro_maybe(vm,fci,a,na,&rv)) rv=gml_vm_run_code(vm,fci,call_self,vm->cur_other,a,na);
+          GmlInstance *old_self=vm->cur_self;
+          vm->cur_self=call_self;
+          int micro_ok=code_micro_maybe(vm,fci,a,na,&rv);
+          vm->cur_self=old_self;
+          if(!micro_ok) rv=gml_vm_run_code(vm,fci,call_self,vm->cur_other,a,na);
         }
         /* track a heap-string result so it's freed at scope exit (mirror OP_CALL); args stay owned
          * by this frame's str_gc and are freed there, so don't touch them. */
