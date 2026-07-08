@@ -1209,7 +1209,7 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
   const char *trace=getenv("GML_TRACE");
   if(trace && *trace && c->name && strstr(c->name,trace)) return 0;
   if(!code_cache_ensure(vm->win,ci)) return 0;
-  if(c->micro_kind!=GML_MICRO_DS_MAP_GLOBAL_ARG0 || !c->micro_name) return 0;
+  if(c->micro_kind==GML_MICRO_NONE) return 0;
   if(builtin_hotprof_on()) return 0;
   const char *arglog=getenv("GML_LOG_CODE_ARGS");
   if(arglog && *arglog && c->name && strstr(c->name,arglog)) return 0;
