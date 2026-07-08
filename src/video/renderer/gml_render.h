@@ -174,6 +174,7 @@ int  gml_surface_exists(GmlRender *r, int id);
 void gml_surface_resize(GmlRender *r, int id, int w, int h);
 int  gml_surface_width(GmlRender *r, int id);
 int  gml_surface_height(GmlRender *r, int id);
+void gml_surface_copy(GmlRender *r, int dst, int x, int y, int src);
 int  gml_surface_set_target(GmlRender *r, int id);
 void gml_surface_reset_target(GmlRender *r);
 int  gml_surface_get_target(GmlRender *r);
@@ -191,6 +192,8 @@ int  gml_sprite_append_from_rgba_frames(GmlRender *r, uint8_t *rgba, int w, int 
 void gml_render_clear_runtime_sprites(GmlRender *r);
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double x, double y, double w, double h, uint32_t blend, double alpha);
 int  gml_sprite_exists(GmlRender *r, int sprite);
+int  gml_sprite_duplicate(GmlRender *r, int sprite);
+void gml_sprite_set_offset(GmlRender *r, int sprite, int xorig, int yorig);
 void gml_sprite_delete(GmlRender *r, int sprite);
 int  gml_sprite_collision_mask(GmlRender *r, int sprite, int sepmasks, int bboxmode,
                                int bbleft, int bbtop, int bbright, int bbbottom,

@@ -1093,6 +1093,30 @@ static uint64_t buffer_read_u(GmlVM *vm, int bi, int n){
   if(n>0){ memcpy(&v,vm->buffer[bi].data+pos,(size_t)n); vm->buffer[bi].pos=pos+n; }
   return v;
 }
+static unsigned char *base64_decode_alloc(const char *s, int *out_len){
+  static signed char D[256]; static int dinit=0;
+  if(!dinit){
+    dinit=1;
+    for(int k=0;k<256;k++) D[k]=-1;
+    const char *B="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for(int k=0;k<64;k++) D[(unsigned char)B[k]]=(signed char)k;
+  }
+  size_t L=s?strlen(s):0;
+  unsigned char *o=malloc(L/4*3+4);
+  if(!o){ if(out_len) *out_len=0; return NULL; }
+  unsigned char *p=o;
+  int bits=0; uint32_t acc=0;
+  for(size_t i=0;i<L;i++){
+    unsigned char ch=(unsigned char)s[i];
+    if(ch=='=') break;
+    int c=D[ch];
+    if(c<0) continue;
+    acc=(acc<<6)|(uint32_t)c; bits+=6;
+    if(bits>=8){ bits-=8; *p++=(unsigned char)((acc>>bits)&0xff); }
+  }
+  if(out_len) *out_len=(int)(p-o);
+  return o;
+}
 
 /* A manual draw_background_tiled[_ext] doesn't carry the layer's tiling axes, so recover them from
  * the room's background layer that uses this background def (background_htiled[]/vtiled[]). Default
@@ -2621,6 +2645,7 @@ static int builtin_input_kbgp(const char *nm, GmlVal *a, int n, GmlVal *out){
   if(!strcmp(nm,"gamepad_axis_count")){            *out=vreal(4); return 1; }
   if(!strcmp(nm,"gamepad_get_description")){       *out=vstr(gml_input_gamepad_connected((int)N(a,n,0)) ? "libretro" : ""); return 1; }
   if(!strcmp(nm,"gamepad_set_axis_deadzone")){ gp_deadzone_set((int)N(a,n,0), N(a,n,1)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"gamepad_set_button_threshold")){ *out=vreal(0); return 1; }
   if(!strcmp(nm,"gamepad_set_vibration")){
     gml_input_gamepad_set_vibration((int)N(a,n,0), N(a,n,1), N(a,n,2));
     *out=vreal(0); return 1;
@@ -3508,17 +3533,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     *p=0; return vstr_owned(o);
   }
   if(!strcmp(nm,"base64_decode")||!strcmp(nm,"base64_decode_string")){
-    static signed char D[256]; static int dinit=0;
-    if(!dinit){ dinit=1; for(int k=0;k<256;k++) D[k]=-1;
-      const char *B="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-      for(int k=0;k<64;k++) D[(unsigned char)B[k]]=(signed char)k; }
-    const char *s=S(a,n,0); size_t L=s?strlen(s):0;
-    char *o=malloc(L/4*3+4), *p=o; if(!o) return vstr("");
-    int bits=0; uint32_t acc=0;
-    for(size_t i=0;i<L;i++){ int c=D[(unsigned char)s[i]]; if(c<0) continue;   /* skip '=' / whitespace */
-      acc=(acc<<6)|(uint32_t)c; bits+=6;
-      if(bits>=8){ bits-=8; *p++=(char)((acc>>bits)&0xff); } }
-    *p=0; return vstr_owned(o);
+    int len=0; unsigned char *o=base64_decode_alloc(S(a,n,0),&len);
+    if(!o) return vstr("");
+    o[len]=0; return vstr_owned((char*)o);
   }
   if(!strcmp(nm,"string_char_at")){ const char*s=S(a,n,0); int idx=(int)N(a,n,1), len=(int)strlen(s);
     if(idx<1||idx>len) return vstr("");
@@ -4064,6 +4081,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(!strcmp(nm,"part_system_update")){ gml_part_system_update((int)N(a,n,0)); return vreal(0); }
       if(!strcmp(nm,"part_system_drawit")||!strcmp(nm,"part_system_drawit_ext")){ if(R) gml_part_system_drawit(R,(int)N(a,n,0)); return vreal(0); }
       if(!strcmp(nm,"part_system_depth")){ gml_part_system_depth((int)N(a,n,0),N(a,n,1)); return vreal(0); }
+      if(!strcmp(nm,"part_system_layer")){
+        GmlRtLayer *l=(n>1 && a[1].t==V_STR && a[1].s) ? gml_rt_layer_find_by_name(vm,a[1].s) : gml_rt_layer_find(vm,(int)N(a,n,1));
+        if(l) gml_part_system_depth((int)N(a,n,0),l->depth);
+        return vreal(0);
+      }
       if(!strcmp(nm,"part_particles_count")) return vreal(gml_part_system_count((int)N(a,n,0)));
       if(!strcmp(nm,"part_particles_create")){ gml_part_particles_create((int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3),(int)N(a,n,4)); return vreal(0); }
       if(!strcmp(nm,"part_particles_create_color")||!strcmp(nm,"part_particles_create_colour")){ gml_part_particles_create_color((int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3),(uint32_t)N(a,n,4),(int)N(a,n,5)); return vreal(0); }
@@ -4249,6 +4271,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"surface_set_target")){ if(getenv("GML_LOG_SURF"))fprintf(stderr,"[surf] set_target %d\n",(int)N(a,n,0)); return vreal(R?gml_surface_set_target(R,(int)N(a,n,0)):0); }
     if(!strcmp(nm,"surface_reset_target")){ if(getenv("GML_LOG_SURF"))fprintf(stderr,"[surf] reset_target\n"); if(R) gml_surface_reset_target(R); return vreal(0); }
     if(!strcmp(nm,"surface_resize")){ if(R) gml_surface_resize(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2)); return vreal(0); }
+    if(!strcmp(nm,"surface_copy")){ if(R) gml_surface_copy(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),(int)N(a,n,3)); return vreal(0); }
     if(!strcmp(nm,"application_surface_draw_enable")){ if(R) R->app_draw_enable=(int)N(a,n,0); return vreal(0); }
     if(!strcmp(nm,"application_surface_enable")){ if(R) R->app_draw_enable=(int)N(a,n,0); return vreal(0); }
     /* Map camera IDs to view indices and camera properties to view globals. */
@@ -4410,6 +4433,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(ok);
     }
     if(!strcmp(nm,"sprite_delete")){ if(R) gml_sprite_delete(R,(int)N(a,n,0)); return vreal(0); }
+    if(!strcmp(nm,"sprite_duplicate")) return vreal(R?gml_sprite_duplicate(R,(int)N(a,n,0)):-1);
+    if(!strcmp(nm,"sprite_set_offset")){ if(R) gml_sprite_set_offset(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2)); return vreal(0); }
+    if(!strcmp(nm,"sprite_save")) return vreal(0);
     if(!strcmp(nm,"sprite_collision_mask")){
       if(R) gml_sprite_collision_mask(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),
         (int)N(a,n,3),(int)N(a,n,4),(int)N(a,n,5),(int)N(a,n,6),(int)N(a,n,7),(int)N(a,n,8));
@@ -4631,6 +4657,19 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"file_text_writeln")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i>=0) fputc('\n',(FILE*)vm->bin_file[i]); return vreal(0); }
 
   if(!strcmp(nm,"buffer_create")){ int id=buffer_alloc(vm,(int)N(a,n,0)); return vreal(id); }
+  if(!strcmp(nm,"buffer_base64_decode")){
+    int len=0; unsigned char *bytes=base64_decode_alloc(S(a,n,0),&len);
+    if(!bytes) return vreal(-1);
+    int id=buffer_alloc(vm,len>0?len:1);
+    int bi=vm_buffer_slot(vm,id);
+    if(bi>=0){
+      buffer_resize_slot(vm,bi,len);
+      if(len>0) memcpy(vm->buffer[bi].data,bytes,(size_t)len);
+      vm->buffer[bi].pos=0;
+    }
+    free(bytes);
+    return vreal(id);
+  }
   if(!strcmp(nm,"buffer_delete")){ int i=vm_buffer_slot(vm,(int)N(a,n,0));
     if(i>=0){ free(vm->buffer[i].data); memset(&vm->buffer[i],0,sizeof(vm->buffer[i])); } return vreal(0); }
   if(!strcmp(nm,"buffer_get_size")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); return vreal(i>=0?vm->buffer[i].size:0); }
@@ -4815,6 +4854,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         case 3:pre="Step";break; case 4:pre="Collision";break; case 7:pre="Other";break; case 8:pre="Draw";break; }
       if(pre){ char s[24]; snprintf(s,sizeof s,"%s_%d",pre,nb); gml_run_event(vm,vm->cur_self,s); } }
     return vreal(0); }
+  if(!strcmp(nm,"event_perform_object")) return vreal(0);
 
   /* ---- audio ---- */
   { GmlAudio *AU=(GmlAudio*)vm->audio;
@@ -4831,10 +4871,17 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       int h=gml_audio_play(AU,(int)N(a,n,0),(int)N(a,n,2));
       if(getenv("GML_LOG_AUDIO")) fprintf(stderr,"[audio] play_sound id=%d loop=%d -> handle=%d\n",(int)N(a,n,0),(int)N(a,n,2),h);
       return vreal(h); }
+    if(!strcmp(nm,"audio_play_sound_at")){
+      int h=gml_audio_play(AU,(int)N(a,n,0),(int)N(a,n,6));
+      if(getenv("GML_LOG_AUDIO")) fprintf(stderr,"[audio] play_sound_at id=%d loop=%d -> handle=%d\n",(int)N(a,n,0),(int)N(a,n,6),h);
+      return vreal(h); }
+    if(!strcmp(nm,"audio_get_listener_count")) return vreal(1);
+    if(!strcmp(nm,"audio_get_listener_info")) return arr8(0,0,0,0,0,1,0,1);
     /* Report audio groups as loaded through this status interface. */
     if(!strcmp(nm,"audio_group_is_loaded")) return vreal(1);
     if(!strcmp(nm,"audio_group_load_progress")) return vreal(1.0);
     if(!strcmp(nm,"audio_group_load")||!strcmp(nm,"audio_group_unload")) return vreal(1);
+    if(!strcmp(nm,"audio_group_stop_all")) return vreal(0);
     if(!strcmp(nm,"audio_stop_sound")||!strcmp(nm,"sound_stop")){ gml_audio_stop(AU,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_stop_all")||!strcmp(nm,"sound_stop_all")){ gml_audio_stop_all(AU); return vreal(0); }
     if(!strcmp(nm,"audio_pause_sound")){ gml_audio_pause_sound(AU,(int)N(a,n,0),1); return vreal(0); }
@@ -4931,15 +4978,75 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(tmv.tm_year+1900);
   }
   if(!strcmp(nm,"extension_stubfunc_real")) return vreal(0);
+  if(!strcmp(nm,"extension_stubfunc_string")) return vstr("");
+  if(!strcmp(nm,"extension_get_option_value")) return vstr("");
   if(!strcmp(nm,"get_string_async")) return vreal(0);
   if(!strcmp(nm,"get_string")) return vstr(n>=2?S(a,n,1):"");
   if(!strcmp(nm,"get_integer")) return vreal(n>=2?N(a,n,1):0);
   if(!strcmp(nm,"get_integer_async")) return vreal(0);
+  if(!strcmp(nm,"get_open_filename")||!strcmp(nm,"get_save_filename")) return vstr("");
   if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")) return vreal(0);
   if(!strcmp(nm,"parameter_count")) return vreal(0);
   if(!strcmp(nm,"parameter_string")) return vstr("");
   if(!strcmp(nm,"exception_unhandled_handler")) return vreal(0);
+  if(!strcmp(nm,"io_clear")) return vreal(0);
+  if(!strcmp(nm,"url_open")) return vreal(0);
+  if(!strcmp(nm,"os_is_network_connected")) return vreal(0);
+  if(!strcmp(nm,"keyboard_virtual_show")||!strcmp(nm,"keyboard_virtual_hide")) return vreal(0);
+  if(!strcmp(nm,"virtual_key_add")) return vreal(0);
+  if(!strcmp(nm,"virtual_key_delete")) return vreal(0);
+  if(!strcmp(nm,"achievement_available")||!strcmp(nm,"achievement_post_score")||
+     !strcmp(nm,"achievement_show_leaderboards")) return vreal(0);
+  if(!strcmp(nm,"analytics_addDesignEvent_windows")||
+     !strcmp(nm,"addBusinessEventJson_windows")||
+     !strcmp(nm,"addDesignEventWithValue_windows")||
+     !strcmp(nm,"addDesignEvent_windows")||
+     !strcmp(nm,"addErrorEvent_windows")||
+     !strcmp(nm,"addProgressionEventWithScoreJson_windows")||
+     !strcmp(nm,"addProgressionEvent_windows")||
+     !strcmp(nm,"addResourceEventJson_windows")||
+     !strcmp(nm,"analytics_configureAvailableCustomDimensions01_windows")||
+     !strcmp(nm,"analytics_configureAvailableCustomDimensions02_windows")||
+     !strcmp(nm,"analytics_configureAvailableCustomDimensions03_windows")||
+     !strcmp(nm,"analytics_configureAvailableResourceCurrencies_windows")||
+     !strcmp(nm,"analytics_configureAvailableResourceItemTypes_windows")||
+     !strcmp(nm,"analytics_configureBuild_windows")||
+     !strcmp(nm,"analytics_configureSdkGameEngineVersion_windows")||
+     !strcmp(nm,"analytics_configureSdkWrapperVersion_windows")||
+     !strcmp(nm,"analytics_configureUserId_windows")||
+     !strcmp(nm,"analytics_initialize_windows")||
+     !strcmp(nm,"analytics_setEnabledInfoLog_windows")||
+     !strcmp(nm,"analytics_setEnabledManualSessionHandling_windows")||
+     !strcmp(nm,"analytics_setEnabledVerboseLog_windows")||
+     !strcmp(nm,"analytics_startSession_windows")||
+     !strcmp(nm,"analytics_endSession_windows")||
+     !strcmp(nm,"configureAvailableCustomDimensions01_windows")||
+     !strcmp(nm,"configureAvailableCustomDimensions02_windows")||
+     !strcmp(nm,"configureAvailableCustomDimensions03_windows")||
+     !strcmp(nm,"configureAvailableResourceCurrencies_windows")||
+     !strcmp(nm,"configureAvailableResourceItemTypes_windows")||
+     !strcmp(nm,"configureBuild_windows")||
+     !strcmp(nm,"configureSdkGameEngineVersion_windows")||
+     !strcmp(nm,"configureUserId_windows")||
+     !strcmp(nm,"endSession_windows")||
+     !strcmp(nm,"native_ga_initialize_windows")||
+     !strcmp(nm,"onResume_windows")||
+     !strcmp(nm,"onStop_windows")||
+     !strcmp(nm,"setCustomDimension01_windows")||
+     !strcmp(nm,"setCustomDimension02_windows")||
+     !strcmp(nm,"setCustomDimension03_windows")||
+     !strcmp(nm,"setEnabledEventSubmission_windows")||
+     !strcmp(nm,"setEnabledInfoLog_windows")||
+     !strcmp(nm,"setEnabledManualSessionHandling_windows")||
+     !strcmp(nm,"setEnabledVerboseLog_windows")||
+     !strcmp(nm,"startSession_windows")) return vreal(0);
+  if(!strcmp(nm,"isRemoteConfigsReady_windows")) return vreal(0);
+  if(!strcmp(nm,"getRemoteConfigsContentAsString_windows")||
+     !strcmp(nm,"getRemoteConfigsValueAsString_windows")) return vstr("");
+  if(!strcmp(nm,"getRemoteConfigsValueAsStringWithDefaultValue_windows")) return vstr(n>=2?S(a,n,1):"");
   if(!strcmp(nm,"switch_get_operation_mode")) return vreal(0);
+  if(!strcmp(nm,"switch_controller_support_set_player_max")||
+     !strcmp(nm,"switch_controller_support_set_player_min")) return vreal(0);
   if(!strcmp(nm,"switch_save_data_commit")||
      !strcmp(nm,"switch_save_data_mount")) return vreal(1);
   if(!strcmp(nm,"switch_accounts_open_preselected_user")||
@@ -5250,6 +5357,20 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vreal(varmap_delete_key(&st->vars,key));
   }
+  if(!strcmp(nm,"struct_get_from_hash")){
+    GmlInstance *st=(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;
+    if(!st || st->vars.cap<=0) return vundef();
+    double hv=N(a,n,1);
+    uint32_t want = hv < 0 ? (uint32_t)(int32_t)hv : (uint32_t)hv;
+    for(int i=0;i<st->vars.cap;i++){
+      GmlVarSlot *slot=&st->vars.slots[i];
+      if(slot->key && slot->hash==want){
+        GmlVal out=slot->val; if(out.t==V_STR) out.d=0;
+        return out;
+      }
+    }
+    return vundef();
+  }
   if(!strcmp(nm,"shader_set")){ GmlRender *R=(GmlRender*)vm->render;
     if(R) R->active_shader=(int)N(a,n,0);
     if(getenv("GML_LOG_SHADER")){ static long c=0; if(c++<8){ extern long g_vm_frame;
@@ -5344,6 +5465,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"window_center")){ vm->window_x=0; vm->window_y=0; return vreal(0); }
   if(!strcmp(nm,"window_set_position")){ vm->window_x=N(a,n,0); vm->window_y=N(a,n,1); return vreal(0); }
   if(!strcmp(nm,"window_set_size")){ int w=(int)N(a,n,0), hh=(int)N(a,n,1);
+    if(w>0 && hh>0 && w<=16384 && hh<=16384){ vm->window_w=w; vm->window_h=hh; }
+    return vreal(0); }
+  if(!strcmp(nm,"window_set_rectangle")){ int w=(int)N(a,n,2), hh=(int)N(a,n,3);
+    vm->window_x=N(a,n,0); vm->window_y=N(a,n,1);
     if(w>0 && hh>0 && w<=16384 && hh<=16384){ vm->window_w=w; vm->window_h=hh; }
     return vreal(0); }
   if(!strcmp(nm,"window_set_cursor")){ vm->window_cursor=(int)N(a,n,0); return vreal(0); }
