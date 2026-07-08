@@ -3120,6 +3120,24 @@ void gml_vm_step(GmlVM *vm){
           (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",nf);
           gml_run_event(vm,in,"Other_7"); } } } }
   VMPROF_MARK(anim);
+  /* Override an explicitly selected object family alarm using debug parameters. */
+  { static int god_env=-1, god_alarm=0, god_value=120; static const char *god_obj=(const char*)-1;
+    if(god_env<0){
+      const char *g=getenv("GML_GOD");
+      const char *o=getenv("GML_GOD_OBJ");
+      god_env=g!=NULL;
+      if((!o || !*o) && g && *g && strcmp(g,"1") && strcmp(g,"on") && strcmp(g,"true")) o=g;
+      god_obj=(o && *o)?o:NULL;
+      const char *a=getenv("GML_GOD_ALARM"); if(a && *a) god_alarm=atoi(a);
+      if(god_alarm<0 || god_alarm>=GML_ALARMS) god_alarm=0;
+      const char *v=getenv("GML_GOD_VALUE"); if(v && *v) god_value=atoi(v);
+      if(god_value<0) god_value=0;
+    }
+    if((god_env || vm->god_mode) && god_obj){
+      int po=gml_object_index_by_name(vm,god_obj);
+      GmlInstance *pl = po>=0 ? gml_find_instance(vm,po) : NULL;
+      if(pl) pl->alarm[god_alarm]=god_value;
+    } }
   /* begin step */
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_1");
   VMPROF_MARK(step1);

@@ -599,7 +599,21 @@ static int copy_file_path(const char *src, const char *dst){
   return ok;
 }
 static int log_ds_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_DS")!=NULL; return on; }
-static int log_col_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_COL")!=NULL; return on; }
+static int log_col_on(void){
+  static int on=-1;
+  if(on<0) on=(getenv("GML_LOG_COL") || getenv("GML_LOG_COL_OBJ")) != NULL;
+  return on;
+}
+static const char *log_col_filter(void){
+  static const char *f=(const char*)-1;
+  if(f==(const char*)-1){ f=getenv("GML_LOG_COL_OBJ"); if(!f) f=""; }
+  return f;
+}
+static int log_col_match(const char *obj_name){
+  if(!log_col_on()) return 0;
+  const char *f=log_col_filter();
+  return !f || !*f || (obj_name && strstr(obj_name,f));
+}
 static int log_tilecol_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_TILECOL")!=NULL; return on; }
 static char *dup_n(const char *s, int n){
   if(n<0) n=0;
@@ -3037,7 +3051,7 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
       int r=collision_instance_list_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),l,N(a,n,4)>=0.5);
       if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cnm=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
         const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
-        if(cnm) fprintf(stderr,"[col] %s instance_place_list(%.0f,%.0f,%s)=%d\n",cnm,N(a,n,0),N(a,n,1),tn,r); }
+        if(log_col_match(cnm)) fprintf(stderr,"[col] %s instance_place_list(%.0f,%.0f,%s)=%d\n",cnm,N(a,n,0),N(a,n,1),tn,r); }
       *out=vreal(r); return 1;
     }
   }
@@ -3055,11 +3069,11 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"place_meeting")){ int r=collision_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),0);
       if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
         const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
-        if(cn) fprintf(stderr,"[col] %s place_meeting(%.0f,%.0f,%s)=%d\n",cn,N(a,n,0),N(a,n,1),tn,r); }
+        if(log_col_match(cn)) fprintf(stderr,"[col] %s place_meeting(%.0f,%.0f,%s)=%d\n",cn,N(a,n,0),N(a,n,1),tn,r); }
       *out=vreal(r); return 1; }
     if(!strcmp(nm,"place_free")){ int r=!collision_at(vm,N(a,n,0),N(a,n,1),0,1);
       if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
-        if(cn) fprintf(stderr,"[col] %s place_free(%.0f,%.0f)=%d\n",cn,N(a,n,0),N(a,n,1),r); }
+        if(log_col_match(cn)) fprintf(stderr,"[col] %s place_free(%.0f,%.0f)=%d\n",cn,N(a,n,0),N(a,n,1),r); }
       *out=vreal(r); return 1; }
     if(!strcmp(nm,"place_empty")){ *out=vreal(!collision_at(vm,N(a,n,0),N(a,n,1),IT_ALL,0)); return 1; }
     if(!strcmp(nm,"position_meeting")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; *out=vreal(collision_shape(vm,0,p,(int)N(a,n,2),0)!=NULL); return 1; }
@@ -3663,7 +3677,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       int r=collision_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),0);
       if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
         const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
-        if(cn) fprintf(stderr,"[col] %s place_meeting(%.0f,%.0f,%s)=%d\n",cn,N(a,n,0),N(a,n,1),tn,r); }
+        if(log_col_match(cn)) fprintf(stderr,"[col] %s place_meeting(%.0f,%.0f,%s)=%d\n",cn,N(a,n,0),N(a,n,1),tn,r); }
       return vreal(r); }
     case BID_INSTANCE_EXISTS:
       return vreal(gml_instance_number(vm,(int)N(a,n,0))>0);
@@ -3674,7 +3688,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       int r=collision_instance_list_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),l,N(a,n,4)>=0.5);
       if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cnm=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
         const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
-        if(cnm) fprintf(stderr,"[col] %s instance_place_list(%.0f,%.0f,%s)=%d\n",cnm,N(a,n,0),N(a,n,1),tn,r); }
+        if(log_col_match(cnm)) fprintf(stderr,"[col] %s instance_place_list(%.0f,%.0f,%s)=%d\n",cnm,N(a,n,0),N(a,n,1),tn,r); }
       return vreal(r); }
     case BID_SIN:
       return vreal(sin(N(a,n,0)));
@@ -3971,11 +3985,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"place_meeting")){ int r=collision_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),0);
     if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
       const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
-      if(cn) fprintf(stderr,"[col] %s place_meeting(%.0f,%.0f,%s)=%d\n",cn,N(a,n,0),N(a,n,1),tn,r); }
+      if(log_col_match(cn)) fprintf(stderr,"[col] %s place_meeting(%.0f,%.0f,%s)=%d\n",cn,N(a,n,0),N(a,n,1),tn,r); }
     return vreal(r); }
   if(!strcmp(nm,"place_free")){ int r=!collision_at(vm,N(a,n,0),N(a,n,1),0,1);
     if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
-      if(cn) fprintf(stderr,"[col] %s place_free(%.0f,%.0f)=%d\n",cn,N(a,n,0),N(a,n,1),r); }
+      if(log_col_match(cn)) fprintf(stderr,"[col] %s place_free(%.0f,%.0f)=%d\n",cn,N(a,n,0),N(a,n,1),r); }
     return vreal(r); }
   if(!strcmp(nm,"place_empty"))   return vreal(!collision_at(vm,N(a,n,0),N(a,n,1),IT_ALL,0));
   if(!strcmp(nm,"collision_point")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; GmlInstance *o=collision_shape(vm,0,p,(int)N(a,n,2),(int)N(a,n,4)); return vreal(o?(double)o->id:-4); }
@@ -4872,7 +4886,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int r=collision_instance_list_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),l,N(a,n,4)>=0.5);
     if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cnm=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
       const char*tn=((int)N(a,n,2)>=0&&(int)N(a,n,2)<vm->n_objects)?vm->objects[(int)N(a,n,2)].name:"?";
-      if(cnm) fprintf(stderr,"[col] %s instance_place_list(%.0f,%.0f,%s)=%d\n",cnm,N(a,n,0),N(a,n,1),tn,r); }
+      if(log_col_match(cnm)) fprintf(stderr,"[col] %s instance_place_list(%.0f,%.0f,%s)=%d\n",cnm,N(a,n,0),N(a,n,1),tn,r); }
     return vreal(r); }
   if(!strcmp(nm,"collision_line")){
     double x1=N(a,n,0), y1=N(a,n,1), x2=N(a,n,2), y2=N(a,n,3);

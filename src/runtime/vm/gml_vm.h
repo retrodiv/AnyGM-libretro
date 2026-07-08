@@ -151,6 +151,7 @@ typedef struct GmlVM {
   double   window_x, window_y; /* logical window position for window_get/set_position */
   int      window_cursor;      /* GM window_get/set_cursor logical cursor id (-1 hidden) */
   int      action_relative;   /* D&D action_set_relative flag for following action_* calls */
+  int      god_mode;          /* frontend core option; requires GML_GOD_OBJ to name a target family */
   /* execution context */
   GmlInstance *cur_self, *cur_other;
   int32_t call_script_ci;   /* side channel: generic dispatch reports "name resolved to script <ci>" for the caller's per-site cache */
