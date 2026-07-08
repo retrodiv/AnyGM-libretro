@@ -1599,6 +1599,80 @@ static void ini_parse_text(GmlVM *vm, const char *text){
   free(sec);
   free(copy);
 }
+static GmlVal builtin_ini_open_file(GmlVM *vm, GmlVal *a, int n){
+  ini_reset(vm);
+  vm->ini_open=1;
+  char *fn=resolve_content_path(vm,S(a,n,0));
+  snprintf(vm->ini_path,sizeof vm->ini_path,"%s",fn);
+  FILE *f=fopen(fn,"r");
+  if(!f){ free(fn); return vreal(1); }
+  char line[512], *sec=NULL;
+  while(fgets(line,sizeof line,f)){
+    int len=strlen(line);
+    while(len>0 && (line[len-1]=='\n'||line[len-1]=='\r')) line[--len]=0;
+    char *t=trim_ws(line);
+    if(!*t || *t==';' || *t=='#') continue;
+    if(t[0]=='['){ char *e=strchr(t,']'); if(e){ *e=0; free(sec); sec=strdup(trim_ws(t+1)); } continue; }
+    if(!sec) continue;
+    char *eq=strchr(t,'=');
+    if(!eq) continue;
+    *eq=0;
+    ini_add_kv(vm,sec,trim_ws(t),trim_ws(eq+1));
+  }
+  free(sec);
+  fclose(f);
+  free(fn);
+  return vreal(1);
+}
+static GmlVal builtin_file_text_open_read(GmlVM *vm, GmlVal *a, int n){
+  char *path=resolve_content_path(vm,S(a,n,0));
+  int id=vm_file_open(vm,path,"r");
+  free(path);
+  return vreal(id);
+}
+static GmlVal builtin_file_text_read_string(GmlVM *vm, GmlVal *a, int n){
+  int i=vm_file_slot(vm,(int)N(a,n,0));
+  if(i<0) return vstr_owned(strdup(""));
+  FILE *f=(FILE*)vm->bin_file[i];
+  size_t cap=4096, k=0;
+  int c;
+  char *b=malloc(cap);
+  if(!b) return vstr_owned(strdup(""));
+  while((c=fgetc(f))!=EOF){
+    if(c=='\n' || c=='\r'){ ungetc(c,f); break; }
+    if(k+1>=cap){
+      if(cap>=16*1024*1024) break;
+      cap*=2;
+      char *nb=realloc(b,cap);
+      if(!nb) break;
+      b=nb;
+    }
+    b[k++]=(char)c;
+  }
+  b[k]=0;
+  return vstr_owned(b);
+}
+static GmlVal builtin_file_text_readln(GmlVM *vm, GmlVal *a, int n){
+  int i=vm_file_slot(vm,(int)N(a,n,0));
+  if(i<0) return vstr_owned(strdup(""));
+  FILE *f=(FILE*)vm->bin_file[i];
+  size_t cap=256, k=0;
+  int c;
+  char *b=malloc(cap);
+  if(!b) return vstr_owned(strdup(""));
+  while((c=fgetc(f))!=EOF && c!='\n'){
+    if(c=='\r') continue;
+    if(k+1>=cap){
+      cap*=2;
+      char *nb=realloc(b,cap);
+      if(!nb) break;
+      b=nb;
+    }
+    b[k++]=(char)c;
+  }
+  b[k]=0;
+  return vstr_owned(b);
+}
 static int buffer_alloc(GmlVM *vm, int cap){
   for(int k=0;k<16;k++){
     int i=(vm->next_buffer_id+k-1)%16;
@@ -3321,6 +3395,10 @@ enum {
   BID_STRING_LENGTH,
   BID_ORD,
   BID_FILE_TEXT_EOF,
+  BID_FILE_TEXT_OPEN_READ,
+  BID_FILE_TEXT_READ_STRING,
+  BID_FILE_TEXT_READLN,
+  BID_INI_OPEN,
   BID_FMOD_PREFIX,
   BID_EVENT_INHERITED,
   BID_DS_LIST_CLEAR,
@@ -3403,6 +3481,9 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"floor")) return BID_FLOOR;
       if(!strcmp(nm,"frac")) return BID_FRAC;
       if(!strcmp(nm,"file_text_eof")) return BID_FILE_TEXT_EOF;
+      if(!strcmp(nm,"file_text_open_read")) return BID_FILE_TEXT_OPEN_READ;
+      if(!strcmp(nm,"file_text_read_string")) return BID_FILE_TEXT_READ_STRING;
+      if(!strcmp(nm,"file_text_readln")) return BID_FILE_TEXT_READLN;
       if(!strncmp(nm,"fmod_",5)) return BID_FMOD_PREFIX;
       return -1;
     case 'g':
@@ -3429,7 +3510,11 @@ int gml_builtin_fast_id(const char *nm){
     case 'e':
       if(!strcmp(nm,"event_inherited")) return BID_EVENT_INHERITED;
       return -1;
+    case 'F':
+      if(!strcmp(nm,"FS_ini_open")) return BID_INI_OPEN;
+      return -1;
     case 'i':
+      if(!strcmp(nm,"ini_open")) return BID_INI_OPEN;
       if(!strcmp(nm,"instance_exists")) return BID_INSTANCE_EXISTS;
       if(!strcmp(nm,"instance_number")) return BID_INSTANCE_NUMBER;
       if(!strcmp(nm,"instance_place_list")) return BID_INSTANCE_PLACE_LIST;
@@ -3632,6 +3717,14 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
     case BID_FILE_TEXT_EOF:{
       int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(1);
       FILE *f=(FILE*)vm->bin_file[i]; int c=fgetc(f); if(c==EOF) return vreal(1); ungetc(c,f); return vreal(0); }
+    case BID_FILE_TEXT_OPEN_READ:
+      return builtin_file_text_open_read(vm,a,n);
+    case BID_FILE_TEXT_READ_STRING:
+      return builtin_file_text_read_string(vm,a,n);
+    case BID_FILE_TEXT_READLN:
+      return builtin_file_text_readln(vm,a,n);
+    case BID_INI_OPEN:
+      return builtin_ini_open_file(vm,a,n);
     case BID_ARRAY_LENGTH:
     case BID_ARRAY_LENGTH_1D:
       return vreal(n>0?gml_val_array_length(a[0]):0);
@@ -4618,27 +4711,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     o[pos]=0; return vstr_owned(o); }
 
   /* ---- ini persistence ---- */
-  if(!strcmp(nm,"ini_open")||!strcmp(nm,"FS_ini_open")){
-    ini_reset(vm);
-    vm->ini_open=1; char *fn=resolve_content_path(vm,S(a,n,0));
-    snprintf(vm->ini_path,sizeof vm->ini_path,"%s",fn);
-    /* load existing .ini into the key-value table */
-    FILE *f=fopen(fn,"r"); if(!f){ free(fn); return vreal(1); }
-    char line[512], *sec=NULL;
-    while(fgets(line,sizeof line,f)){
-      int len=strlen(line); while(len>0 && (line[len-1]=='\n'||line[len-1]=='\r')) line[--len]=0;
-      char *t=trim_ws(line);
-      if(!*t || *t==';' || *t=='#') continue;
-      if(t[0]=='['){ char *e=strchr(t,']'); if(e){ *e=0; free(sec); sec=strdup(trim_ws(t+1)); } continue; }
-      if(!sec) continue;
-      char *eq=strchr(t,'='); if(!eq) continue; *eq=0;
-      ini_add_kv(vm,sec,trim_ws(t),trim_ws(eq+1));
-    }
-    free(sec);
-    fclose(f);
-    free(fn);
-    return vreal(1);
-  }
+  if(!strcmp(nm,"ini_open")||!strcmp(nm,"FS_ini_open")) return builtin_ini_open_file(vm,a,n);
   if(!strcmp(nm,"ini_open_from_string")||!strcmp(nm,"FS_ini_open_from_string")){
     ini_reset(vm);
     vm->ini_open=1;
@@ -5682,7 +5755,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int c=fgetc((FILE*)vm->bin_file[i]); return vreal(c==EOF?0:(c&0xff)); }
   if(!strcmp(nm,"file_bin_write_byte")||!strcmp(nm,"FS_file_bin_write_byte")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i>=0) fputc(((int)N(a,n,1))&0xff,(FILE*)vm->bin_file[i]); return vreal(0); }
 
-  if(!strcmp(nm,"file_text_open_read")){ char *path=resolve_content_path(vm,S(a,n,0)); int id=vm_file_open(vm,path,"r"); free(path); return vreal(id); }
+  if(!strcmp(nm,"file_text_open_read")) return builtin_file_text_open_read(vm,a,n);
   if(!strcmp(nm,"file_text_open_write")){ char *path=resolve_content_path(vm,S(a,n,0)); int id=vm_file_open(vm,path,"w"); free(path); return vreal(id); }
   if(!strcmp(nm,"file_text_open_append")){ char *path=resolve_content_path(vm,S(a,n,0)); int id=vm_file_open(vm,path,"a+"); free(path); return vreal(id); }
   if(!strcmp(nm,"file_text_close")){ int i=vm_file_slot(vm,(int)N(a,n,0));
@@ -5690,26 +5763,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"file_text_eof")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(1);
     FILE *f=(FILE*)vm->bin_file[i]; int c=fgetc(f); if(c==EOF) return vreal(1); ungetc(c,f); return vreal(0); }
   if(!strcmp(nm,"file_text_read_real")){ int i=vm_file_slot(vm,(int)N(a,n,0)); double v=0; if(i>=0) fscanf((FILE*)vm->bin_file[i],"%lf",&v); return vreal(v); }
-  if(!strcmp(nm,"file_text_read_string")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vstr_owned(strdup(""));
+  if(!strcmp(nm,"file_text_read_string")){
     /* Read the remainder of the current line, retaining leading spaces and leaving its newline unread. */
-    FILE *f=(FILE*)vm->bin_file[i];
-    size_t cap=4096, k=0; int c;
-    char *b=malloc(cap); if(!b) return vstr_owned(strdup(""));
-    while((c=fgetc(f))!=EOF){
-      if(c=='\n' || c=='\r'){ ungetc(c,f); break; }
-      if(k+1>=cap){
-        if(cap>=16*1024*1024) break;
-        cap*=2; char *nb=realloc(b,cap); if(!nb) break; b=nb;
-      }
-      b[k++]=(char)c;
-    }
-    b[k]=0; return vstr_owned(b); }
-  if(!strcmp(nm,"file_text_readln")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vstr_owned(strdup(""));
+    return builtin_file_text_read_string(vm,a,n); }
+  if(!strcmp(nm,"file_text_readln")){
     /* Return the remaining line content without its newline, and advance past that newline. */
-    FILE *f=(FILE*)vm->bin_file[i]; size_t cap=256,k=0; int c; char *b=malloc(cap); if(!b) return vstr_owned(strdup(""));
-    while((c=fgetc(f))!=EOF && c!='\n'){ if(c=='\r') continue;
-      if(k+1>=cap){ cap*=2; char *nb=realloc(b,cap); if(!nb) break; b=nb; } b[k++]=(char)c; }
-    b[k]=0; return vstr_owned(b); }
+    return builtin_file_text_readln(vm,a,n); }
   if(!strcmp(nm,"file_text_write_real")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i>=0) fprintf((FILE*)vm->bin_file[i],"%g",N(a,n,1)); return vreal(0); }
   if(!strcmp(nm,"file_text_write_string")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i>=0) fputs(S(a,n,1),(FILE*)vm->bin_file[i]); return vreal(0); }
   if(!strcmp(nm,"file_text_writeln")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i>=0) fputc('\n',(FILE*)vm->bin_file[i]); return vreal(0); }
