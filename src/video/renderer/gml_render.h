@@ -75,7 +75,7 @@ typedef struct {
 } GmlFont;                                                        /* sprite font or real FONT-chunk font */
 typedef struct { uint32_t *px; int w, h, live;
                  int dirty;                       /* px changed since the RLE cache was built */
-                 int opaque_known, all_opaque;     /* coverage metadata for fast surface composites */
+                 int opaque_known, all_opaque, all_transparent;  /* conservative coverage metadata */
                  uint8_t *rle; size_t rle_len, rle_cap;  /* cached savestate RLE (u32 nrun + pairs) */
 } GmlSurface;      /* XRGB8888 runtime surface */
 
@@ -93,7 +93,7 @@ typedef struct {
   uint32_t *fb; int fbw, fbh;
   uint32_t *base_fb; int base_fbw, base_fbh;
   struct {
-    uint32_t *fb; int w, h; double cx, cy; int target_id, opaque_known, all_opaque;
+    uint32_t *fb; int w, h; double cx, cy; int target_id, opaque_known, all_opaque, all_transparent;
     int pending_underlay, underlay_x, underlay_y, underlay_w, underlay_h;
     int pending_fill; uint32_t fill_color;
   } target_stack[GML_SURFACE_STACK]; int target_sp;
@@ -111,7 +111,7 @@ typedef struct {
   uint32_t  color;  double alpha; int halign, valign, font, alphablend, circle_precision;
   int       blendmode;   /* gpu_set_blendmode: 0=normal, 1=add (others fall back to normal). Reset per frame. */
   int       fast_alpha_cull;  /* optional fast path: drop alpha contributions <= this 8-bit step */
-  int       fb_opaque_known, fb_all_opaque;      /* current target opacity metadata, conservative */
+  int       fb_opaque_known, fb_all_opaque, fb_all_transparent;  /* current target coverage metadata */
   /* Palette and lookup-texture state declarations. */
   struct GmlShaderPal { int has; uint8_t L[3],M[3],D[3],S[3];
     int lut;                    /* palette-LUT shader: out = palette[(src.r, row)] */
@@ -142,10 +142,16 @@ void gml_render_cancel_pending_underlay(GmlRender *r);
 void gml_render_prepare_draw(GmlRender *r);
 void gml_render_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1);
 static inline void gml_render_maybe_prepare_draw(GmlRender *r){
-  if(r && (r->pending_underlay || r->pending_fill)) gml_render_prepare_draw(r);
+  if(r){
+    if(r->pending_underlay || r->pending_fill) gml_render_prepare_draw(r);
+    r->fb_all_transparent=0;
+  }
 }
 static inline void gml_render_maybe_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1){
-  if(r && (r->pending_underlay || r->pending_fill)) gml_render_prepare_opaque_rect(r,x0,y0,x1,y1);
+  if(r){
+    if(r->pending_underlay || r->pending_fill) gml_render_prepare_opaque_rect(r,x0,y0,x1,y1);
+    r->fb_all_transparent=0;
+  }
 }
 
 void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
