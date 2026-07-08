@@ -4628,6 +4628,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     *gml_varmap_put(&bm->vars,"__fn")=gml_arr_store_clone(a[1]);
     *gml_varmap_put(&bm->vars,"__self")=gml_arr_store_clone(selfv);
+    if(GML_IS_FUNCVAL(fv)){
+      bm->method_bound=1;
+      bm->method_fci=fv & 0x00FFFFFF;
+      bm->method_self=selfv;
+    }
     return vreal((double)bm->id);
   }
   /* GMS2.3 struct construction: @@NewGMLObject@@(constructor_func [, ctor_args...]). Allocate a struct
@@ -6228,6 +6233,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     if(!strcmp(nm,"variable_struct_set")){
       if(n>2){
+        if(key && (!strcmp(key,"__fn") || !strcmp(key,"__self"))) st->method_bound=0;
         GmlVal *p=gml_varmap_get(&st->vars,key);
         if(p) *p=var_store_clone(a[2]);
         else {
@@ -6237,6 +6243,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       }
       return vreal(0);
     }
+    if(key && (!strcmp(key,"__fn") || !strcmp(key,"__self"))) st->method_bound=0;
     return vreal(varmap_delete_key(&st->vars,key));
   }
   if(!strcmp(nm,"struct_get_from_hash")){

@@ -704,6 +704,41 @@ static void array_set_inst_field_h(GmlInstance *s, const char *nm, uint32_t nh, 
 static int inst_is_struct_ref(const GmlInstance *in){
   return in && GML_IS_STRUCT_ID((double)in->id);
 }
+static int method_cache_key(const char *nm){
+  return nm && (!strcmp(nm,"__fn") || !strcmp(nm,"__self"));
+}
+static void method_cache_invalidate(GmlInstance *in, const char *nm){
+  if(inst_is_struct_ref(in) && method_cache_key(nm)) in->method_bound=0;
+}
+static int method_struct_info(GmlInstance *bm, int *fci, GmlVal *selfv, int *have_self){
+  if(fci) *fci=-1;
+  if(selfv) *selfv=vundef();
+  if(have_self) *have_self=0;
+  if(!bm) return 0;
+  if(bm->method_bound){
+    if(fci) *fci=bm->method_fci;
+    if(selfv) *selfv=bm->method_self;
+    if(have_self) *have_self=1;
+    return 1;
+  }
+  GmlVal *pf=gml_varmap_get_h(&bm->vars,"__fn",GML_HASH_METHOD_FN);
+  if(!pf) return 0;
+  GmlVal *ps=gml_varmap_get_h(&bm->vars,"__self",GML_HASH_METHOD_SELF);
+  int ci=-1;
+  int f=(int)asnum(*pf);
+  if(GML_IS_FUNCVAL(f)) ci=f & 0x00FFFFFF;
+  if(ci>=0 && ps){
+    bm->method_bound=1;
+    bm->method_fci=ci;
+    bm->method_self=*ps;
+  }
+  if(fci) *fci=ci;
+  if(ps){
+    if(selfv) *selfv=*ps;
+    if(have_self) *have_self=1;
+  }
+  return 1;
+}
 
 /* read/write any var on a specific instance (builtin or custom) */
 static GmlVal inst_get_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t nh){
@@ -729,7 +764,7 @@ static GmlVal inst_get_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t
 }
 static void inst_set_any_h(GmlInstance *t, const char *nm, uint32_t nh, GmlVal v){
   gml_arr_mark_escaped(v);   /* instance vars outlive the current scope */
-  if(inst_is_struct_ref(t)){ *gml_varmap_put_h(&t->vars,nm,nh)=v; return; }
+  if(inst_is_struct_ref(t)){ method_cache_invalidate(t,nm); *gml_varmap_put_h(&t->vars,nm,nh)=v; return; }
   if(inst_builtin_set(t,nm,v)) return;
   *gml_varmap_put_h(&t->vars,nm,nh)=v;
 }
@@ -890,6 +925,7 @@ int gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v){
   gml_arr_mark_escaped(v);
   uint32_t nh=strhash(name);
   if(inst_is_struct_ref(t)){
+    method_cache_invalidate(t,name);
     GmlVal *p=gml_varmap_get_h(&t->vars,name,nh);
     if(p) *p=v;
     else {
@@ -1521,14 +1557,13 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         GmlInstance *bm_top=NULL;
         if(sp>0){ double tv=asnum(stk[sp-1]);
           if(GML_IS_STRUCT_ID(tv)){ GmlInstance *b=gml_struct_find(vm,(unsigned)tv);
-            if(b && gml_varmap_get_h(&b->vars,"__fn",GML_HASH_METHOD_FN)) bm_top=b; } }
+            if(method_struct_info(b,NULL,NULL,NULL)) bm_top=b; } }
         if(bm_top){
           sp--;   /* the method value */
-          GmlVal *pf=gml_varmap_get_h(&bm_top->vars,"__fn",GML_HASH_METHOD_FN);
-          GmlVal *ps=gml_varmap_get_h(&bm_top->vars,"__self",GML_HASH_METHOD_SELF);
-          if(pf){ int f2=(int)asnum(*pf); if(GML_IS_FUNCVAL(f2)) fci=f2 & 0x00FFFFFF; }
-          GmlInstance *bs = ps? vm_inst_from_ref(vm,*ps) : NULL;
-          if(ps && sp>0 && asnum(stk[sp-1])==asnum(*ps)) sp--;   /* drop the accessor self (obj. in obj.method) */
+          GmlVal selfv; int have_self=0;
+          method_struct_info(bm_top,&fci,&selfv,&have_self);
+          GmlInstance *bs = have_self? vm_inst_from_ref(vm,selfv) : NULL;
+          if(have_self && sp>0 && asnum(stk[sp-1])==asnum(selfv)) sp--;   /* drop the accessor self (obj. in obj.method) */
           if(bs) call_self=bs;
           for(int i=0;i<na;i++) a[i]= sp>0? stk[--sp] : vreal(0);
         } else {
@@ -1538,10 +1573,9 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           double fvn=asnum(fv);
           if(GML_IS_STRUCT_ID(fvn)){   /* bound method value called directly */
             GmlInstance *bm=gml_struct_find(vm,(unsigned)fvn);
-            if(bm){ GmlVal *pf=gml_varmap_get_h(&bm->vars,"__fn",GML_HASH_METHOD_FN);
-              GmlVal *ps=gml_varmap_get_h(&bm->vars,"__self",GML_HASH_METHOD_SELF);
-              if(pf){ int f2=(int)asnum(*pf); if(GML_IS_FUNCVAL(f2)) fci=f2 & 0x00FFFFFF; }
-              if(ps){ GmlInstance *bs=vm_inst_from_ref(vm,*ps); if(bs) call_self=bs; } } }
+            if(bm){ GmlVal selfv; int have_self=0;
+              method_struct_info(bm,&fci,&selfv,&have_self);
+              if(have_self){ GmlInstance *bs=vm_inst_from_ref(vm,selfv); if(bs) call_self=bs; } } }
           else if(GML_IS_FUNCVAL((int)fvn)) fci = (int)fvn & 0x00FFFFFF;
         }
         GmlVal rv=vreal(0);

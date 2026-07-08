@@ -48,6 +48,9 @@ typedef struct {
   unsigned char mouse_over;  /* transient hover flag for Mouse enter/leave (not serialized) */
   int cg_touch, cg_visit;    /* collision-grid stamps: touched-since-build / visited-this-query (not serialized) */
   int draw_layer_order;      /* transient GMS2 room layer order for equal-depth draw ties */
+  unsigned char method_bound;/* transient cache for bound-method structs; rebuilt from vars when absent */
+  int method_fci;
+  GmlVal method_self;
   GmlVarMap vars;      /* custom instance variables */
 } GmlInstance;
 
