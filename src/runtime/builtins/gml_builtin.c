@@ -3186,6 +3186,10 @@ enum {
   BID_DS_MAP_FIND_NEXT,
   BID_DS_MAP_FIND_PREVIOUS,
   BID_DS_MAP_EXISTS,
+  BID_DS_MAP_SIZE,
+  BID_DS_MAP_EMPTY,
+  BID_DS_MAP_FIND_FIRST,
+  BID_DS_MAP_FIND_LAST,
   BID_DS_LIST_FIND_VALUE,
   BID_DS_LIST_SIZE,
   BID_IS_ARRAY,
@@ -3228,6 +3232,10 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"ds_map_find_next")) return BID_DS_MAP_FIND_NEXT;
       if(!strcmp(nm,"ds_map_find_previous")) return BID_DS_MAP_FIND_PREVIOUS;
       if(!strcmp(nm,"ds_map_exists")) return BID_DS_MAP_EXISTS;
+      if(!strcmp(nm,"ds_map_size")) return BID_DS_MAP_SIZE;
+      if(!strcmp(nm,"ds_map_empty")) return BID_DS_MAP_EMPTY;
+      if(!strcmp(nm,"ds_map_find_first")) return BID_DS_MAP_FIND_FIRST;
+      if(!strcmp(nm,"ds_map_find_last")) return BID_DS_MAP_FIND_LAST;
       if(!strcmp(nm,"ds_list_find_value")) return BID_DS_LIST_FIND_VALUE;
       if(!strcmp(nm,"ds_list_size")) return BID_DS_LIST_SIZE;
       if(!strcmp(nm,"draw_sprite")) return BID_DRAW_SPRITE;
@@ -3413,6 +3421,16 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       DsKeyTemp kt={0};
       const char *key=(n>=2)?ds_key_temp(a[1],&kt):NULL;
       int i=ds_map_find_entry(m,key); ds_key_temp_free(&kt); return vreal(i>=0); }
+    case BID_DS_MAP_SIZE:{
+      GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0)); return vreal(m?m->len:0); }
+    case BID_DS_MAP_EMPTY:{
+      GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0)); return vreal(!m||m->len==0); }
+    case BID_DS_MAP_FIND_FIRST:{
+      GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
+      return (m && m->len>0) ? ds_ret(m->entry[0].key_val) : vstr(""); }
+    case BID_DS_MAP_FIND_LAST:{
+      GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
+      return (m && m->len>0) ? ds_ret(m->entry[m->len-1].key_val) : vstr(""); }
     case BID_DS_LIST_FIND_VALUE:{
       GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
       return (l && p>=0 && p<l->len)? ds_ret(l->item[p]) : vreal(0); }
