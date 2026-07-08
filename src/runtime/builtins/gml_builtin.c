@@ -3180,6 +3180,7 @@ enum {
   BID_KEYBOARD_KEY_PRESS,
   BID_KEYBOARD_KEY_RELEASE,
   BID_GAMEPAD_BUTTON_CHECK,
+  BID_GAMEPAD_BUTTON_VALUE,
   BID_GAMEPAD_BUTTON_CHECK_PRESSED,
   BID_GAMEPAD_BUTTON_CHECK_RELEASED,
   BID_GAMEPAD_IS_CONNECTED,
@@ -3306,7 +3307,18 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"gpu_set_blendenable")) return BID_GPU_SET_BLENDENABLE;
       if(!strcmp(nm,"gpu_set_blendmode")) return BID_GPU_SET_BLENDMODE;
       if(!strcmp(nm,"gpu_set_blendmode_ext")) return BID_GPU_SET_BLENDMODE_EXT;
-      /* Share keyboard/gamepad handlers between generic and cached dispatch. */
+      if(!strcmp(nm,"gamepad_button_check")) return BID_GAMEPAD_BUTTON_CHECK;
+      if(!strcmp(nm,"gamepad_button_value")) return BID_GAMEPAD_BUTTON_VALUE;
+      if(!strcmp(nm,"gamepad_button_check_pressed")) return BID_GAMEPAD_BUTTON_CHECK_PRESSED;
+      if(!strcmp(nm,"gamepad_button_check_released")) return BID_GAMEPAD_BUTTON_CHECK_RELEASED;
+      if(!strcmp(nm,"gamepad_is_connected")) return BID_GAMEPAD_IS_CONNECTED;
+      if(!strcmp(nm,"gamepad_is_supported")) return BID_GAMEPAD_IS_SUPPORTED;
+      if(!strcmp(nm,"gamepad_get_device_count")) return BID_GAMEPAD_GET_DEVICE_COUNT;
+      if(!strcmp(nm,"gamepad_button_count")) return BID_GAMEPAD_BUTTON_COUNT;
+      if(!strcmp(nm,"gamepad_axis_count")) return BID_GAMEPAD_AXIS_COUNT;
+      if(!strcmp(nm,"gamepad_set_axis_deadzone")) return BID_GAMEPAD_SET_AXIS_DEADZONE;
+      if(!strcmp(nm,"gamepad_set_vibration")) return BID_GAMEPAD_SET_VIBRATION;
+      if(!strcmp(nm,"gamepad_axis_value")) return BID_GAMEPAD_AXIS_VALUE;
       if(!strncmp(nm,"gamepad_",8)) return BID_INPUT_KBGP;
       return -1;
     case 'e':
@@ -3322,10 +3334,13 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"is_real")||!strcmp(nm,"is_numeric")) return BID_IS_REAL;
       return -1;
     case 'k':
-      if(!strcmp(nm,"keyboard_check")||!strcmp(nm,"keyboard_check_pressed")||
-         !strcmp(nm,"keyboard_check_released")||!strcmp(nm,"keyboard_check_direct")||
-         !strcmp(nm,"keyboard_clear")||!strcmp(nm,"keyboard_key_press")||
-         !strcmp(nm,"keyboard_key_release")) return BID_INPUT_KBGP;
+      if(!strcmp(nm,"keyboard_check")) return BID_KEYBOARD_CHECK;
+      if(!strcmp(nm,"keyboard_check_pressed")) return BID_KEYBOARD_CHECK_PRESSED;
+      if(!strcmp(nm,"keyboard_check_released")) return BID_KEYBOARD_CHECK_RELEASED;
+      if(!strcmp(nm,"keyboard_check_direct")) return BID_KEYBOARD_CHECK_DIRECT;
+      if(!strcmp(nm,"keyboard_clear")) return BID_KEYBOARD_CLEAR;
+      if(!strcmp(nm,"keyboard_key_press")) return BID_KEYBOARD_KEY_PRESS;
+      if(!strcmp(nm,"keyboard_key_release")) return BID_KEYBOARD_KEY_RELEASE;
       return -1;
     case 'l':
       if(!strcmp(nm,"lengthdir_x")) return BID_LENGTHDIR_X;
@@ -3373,6 +3388,12 @@ int gml_builtin_fast_id(const char *nm){
   }
 }
 
+static int gp_debug_on(void){
+  static int dbg=-1;
+  if(dbg<0) dbg=getenv("GML_DBG_GP")!=NULL;
+  return dbg;
+}
+
 /* keyboard/gamepad dispatch shared by the generic chain and the cached fast path — the
  * bodies are the chain handlers verbatim (input polls run hundreds of times per frame in
  * GMS2 input wrappers, and each one otherwise walks most of the name chain). */
@@ -3385,8 +3406,8 @@ static int builtin_input_kbgp(const char *nm, GmlVal *a, int n, GmlVal *out){
   if(!strcmp(nm,"keyboard_key_press")){ gml_input_key_press((int)N(a,n,0)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"keyboard_key_release")){ gml_input_key_release((int)N(a,n,0)); *out=vreal(0); return 1; }
   /* gamepad button/axis reads expose the single RetroPad slot; connection/discovery is separate. */
-  { static int dbg_gp=-1; if(dbg_gp<0) dbg_gp=getenv("GML_DBG_GP")!=NULL;
-    if(dbg_gp && !strncmp(nm,"gamepad_button",14)){
+  {
+    if(gp_debug_on() && !strncmp(nm,"gamepad_button",14)){
       extern long g_vm_frame;
       fprintf(stderr,"[gp] f%ld %s n=%d a0=%.0f a1=%.0f -> %d\n",g_vm_frame,nm,n,N(a,n,0),N(a,n,1),
         gml_input_gamepad((int)N(a,n,1),0)); } }
@@ -3680,15 +3701,19 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       gml_input_key_release((int)N(a,n,0));
       return vreal(0);
     case BID_GAMEPAD_BUTTON_CHECK:
-      if(getenv("GML_DBG_GP")){ extern long g_vm_frame;
+      if(gp_debug_on()){ extern long g_vm_frame;
         fprintf(stderr,"[gp] f%ld gamepad_button_check n=%d a0=%.0f a1=%.0f -> %d\n",g_vm_frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad((int)N(a,n,1),0)); }
       return vreal(gml_input_gamepad((int)N(a,n,1),0));
+    case BID_GAMEPAD_BUTTON_VALUE:
+      if(gp_debug_on()){ extern long g_vm_frame;
+        fprintf(stderr,"[gp] f%ld gamepad_button_value n=%d a0=%.0f a1=%.0f -> %d\n",g_vm_frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad((int)N(a,n,1),0)); }
+      return vreal(gml_input_gamepad((int)N(a,n,1),0) ? 1.0 : 0.0);
     case BID_GAMEPAD_BUTTON_CHECK_PRESSED:
-      if(getenv("GML_DBG_GP")){ extern long g_vm_frame;
+      if(gp_debug_on()){ extern long g_vm_frame;
         fprintf(stderr,"[gp] f%ld gamepad_button_check_pressed n=%d a0=%.0f a1=%.0f -> %d\n",g_vm_frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad((int)N(a,n,1),1)); }
       return vreal(gml_input_gamepad((int)N(a,n,1),1));
     case BID_GAMEPAD_BUTTON_CHECK_RELEASED:
-      if(getenv("GML_DBG_GP")){ extern long g_vm_frame;
+      if(gp_debug_on()){ extern long g_vm_frame;
         fprintf(stderr,"[gp] f%ld gamepad_button_check_released n=%d a0=%.0f a1=%.0f -> %d\n",g_vm_frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad((int)N(a,n,1),2)); }
       return vreal(gml_input_gamepad((int)N(a,n,1),2));
     case BID_GAMEPAD_IS_CONNECTED:
