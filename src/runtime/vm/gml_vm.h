@@ -94,6 +94,21 @@ typedef struct { int id, used, layer, type;         /* type: 7=tile, 3=sprite, 1
   int htiled, vtiled, stretch;                      /* background-element extras */
   char name[64];                                    /* room-authored sprite asset name */
   double image_index, image_speed, image_angle; } GmlRtElem;
+#define GML_PHYS_FIXTURE_MAX 128
+#define GML_PHYS_JOINT_MAX 256
+#define GML_PHYS_FIXTURE_POINTS 16
+typedef struct {
+  int live, shape, bound_inst, points;
+  uint32_t id;
+  double density, friction, restitution, lin_damp, ang_damp, awake;
+  double radius, w, h, x1, y1, x2, y2;
+  double px[GML_PHYS_FIXTURE_POINTS], py[GML_PHYS_FIXTURE_POINTS];
+} GmlPhysicsFixture;
+typedef struct {
+  int live, type, value_count;
+  uint32_t id;
+  double a, b, x1, y1, x2, y2, params[24];
+} GmlPhysicsJoint;
 
 typedef struct GmlVM {
   GmlWin   *win;
@@ -209,6 +224,11 @@ typedef struct GmlVM {
   int *struct_free, n_struct_free, cap_struct_free;  /* GC free-list: reclaimed struct slots for reuse (bounded pool) */
   long structs_last_gc_frame;
   GmlTileMap *tilemaps; int n_tilemaps, cap_tilemaps, next_tilemap_id;  /* per-room GMS2 tile layers (collision) */
+  GmlPhysicsFixture phys_fixture[GML_PHYS_FIXTURE_MAX];
+  GmlPhysicsJoint phys_joint[GML_PHYS_JOINT_MAX];
+  uint32_t phys_next_id;
+  double phys_gravity_x, phys_gravity_y, phys_update_speed;
+  int phys_update_iterations, phys_paused, phys_debug_draw;
 } GmlVM;
 GmlTileMap *gml_tilemap_find(GmlVM *vm, int id);
 int gml_tilemap_set_cell(GmlTileMap *tm, int cx, int cy, uint32_t datum);

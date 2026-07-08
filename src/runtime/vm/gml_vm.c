@@ -2554,6 +2554,10 @@ void gml_room_enter(GmlVM *vm, int room_index){
   { extern long g_vm_frame; vm->room_enter_frame=g_vm_frame; }
   vm->n_tile_mut=0;   /* tile-layer mutations are per-room */
   vm->n_tile_del_at=0; /* tile_layer_delete_at marks are per-room */
+  memset(vm->phys_fixture,0,sizeof(vm->phys_fixture));
+  memset(vm->phys_joint,0,sizeof(vm->phys_joint));
+  vm->phys_next_id=0; vm->phys_gravity_x=0; vm->phys_gravity_y=0;
+  vm->phys_update_speed=0; vm->phys_update_iterations=0; vm->phys_paused=0; vm->phys_debug_draw=0;
   /* Register this room's GMS2 runtime layers (addressable by name) + type-4 tile-collision maps. */
   gml_room_reload_layers(vm, room_index);
   if(getenv("GML_LOG_ROOM")) fprintf(stderr,"[room] enter %d\n",room_index);
@@ -3891,7 +3895,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -4331,6 +4335,10 @@ static void runtime_clear(GmlVM *vm){
   vm->event_type=0; vm->event_number=0;
   vm->step_alloc_base=0; vm->action_relative=0;
   vm->window_x=0; vm->window_y=0; vm->window_cursor=0;
+  memset(vm->phys_fixture,0,sizeof(vm->phys_fixture));
+  memset(vm->phys_joint,0,sizeof(vm->phys_joint));
+  vm->phys_next_id=0; vm->phys_gravity_x=0; vm->phys_gravity_y=0;
+  vm->phys_update_speed=0; vm->phys_update_iterations=0; vm->phys_paused=0; vm->phys_debug_draw=0;
 }
 static int tilemap_diff_count(const GmlTileMap *tm){
   if(!tm || !tm->owned_tiles || !tm->base_tiles || tm->cols<=0 || tm->rows<=0) return 0;
@@ -4343,7 +4351,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x40564D47u); /* GMV16: GMV15 plus runtime layer draw-script callbacks */
+  sw_u32(s,0x41564D47u); /* GMV17: GMV16 plus lightweight physics handle state */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -4440,6 +4448,28 @@ static void sw_vm(StateW *s, GmlVM *vm){
     sw_i32(s,e->htiled); sw_i32(s,e->vtiled); sw_i32(s,e->stretch);
     sw_raw(s,e->name,sizeof(e->name));
     sw_d(s,e->image_index); sw_d(s,e->image_speed); sw_d(s,e->image_angle); }
+  sw_u32(s,vm->phys_next_id);
+  sw_d(s,vm->phys_gravity_x); sw_d(s,vm->phys_gravity_y); sw_d(s,vm->phys_update_speed);
+  sw_i32(s,vm->phys_update_iterations); sw_i32(s,vm->phys_paused); sw_i32(s,vm->phys_debug_draw);
+  int live_pf=0; for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++) if(vm->phys_fixture[i].live) live_pf++;
+  sw_i32(s,live_pf);
+  for(int i=0;i<GML_PHYS_FIXTURE_MAX;i++) if(vm->phys_fixture[i].live){
+    GmlPhysicsFixture *f=&vm->phys_fixture[i];
+    sw_u32(s,f->id); sw_i32(s,f->shape); sw_i32(s,f->bound_inst); sw_i32(s,f->points);
+    sw_d(s,f->density); sw_d(s,f->friction); sw_d(s,f->restitution);
+    sw_d(s,f->lin_damp); sw_d(s,f->ang_damp); sw_d(s,f->awake);
+    sw_d(s,f->radius); sw_d(s,f->w); sw_d(s,f->h);
+    sw_d(s,f->x1); sw_d(s,f->y1); sw_d(s,f->x2); sw_d(s,f->y2);
+    for(int p=0;p<GML_PHYS_FIXTURE_POINTS;p++){ sw_d(s,f->px[p]); sw_d(s,f->py[p]); }
+  }
+  int live_pj=0; for(int i=0;i<GML_PHYS_JOINT_MAX;i++) if(vm->phys_joint[i].live) live_pj++;
+  sw_i32(s,live_pj);
+  for(int i=0;i<GML_PHYS_JOINT_MAX;i++) if(vm->phys_joint[i].live){
+    GmlPhysicsJoint *j=&vm->phys_joint[i];
+    sw_u32(s,j->id); sw_i32(s,j->type); sw_i32(s,j->value_count);
+    sw_d(s,j->a); sw_d(s,j->b); sw_d(s,j->x1); sw_d(s,j->y1); sw_d(s,j->x2); sw_d(s,j->y2);
+    for(int p=0;p<24;p++) sw_d(s,j->params[p]);
+  }
   sw_i32(s,vm->window_cursor);
   sw_particle_state(s);
   vm_state_profile_globals(vm);
@@ -4469,7 +4499,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       && magic!=0x35564D47u && magic!=0x36564D47u && magic!=0x37564D47u && magic!=0x38564D47u
       && magic!=0x39564D47u && magic!=0x3A564D47u && magic!=0x3B564D47u && magic!=0x3C564D47u
       && magic!=0x3D564D47u && magic!=0x3E564D47u && magic!=0x3F564D47u
-      && magic!=0x40564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x40564D47u && magic!=0x41564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -4483,6 +4513,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v14 = magic>=0x3E564D47u;
   s.v15 = magic>=0x3F564D47u;
   s.v16 = magic>=0x40564D47u;
+  s.v17 = magic>=0x41564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -4713,6 +4744,36 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
         e->name[0]=0; e->image_index=0; e->image_speed=0; e->image_angle=0;
       }
       e->id=id;
+    }
+  }
+  if(s.v17 && s.ok){
+    vm->phys_next_id=sr_u32(&s);
+    vm->phys_gravity_x=sr_d(&s); vm->phys_gravity_y=sr_d(&s); vm->phys_update_speed=sr_d(&s);
+    vm->phys_update_iterations=sr_i32(&s); vm->phys_paused=sr_i32(&s); vm->phys_debug_draw=sr_i32(&s);
+    int nf=sr_i32(&s);
+    if(nf<0 || nf>GML_PHYS_FIXTURE_MAX){ state_debug("bad physics fixture count",s.pos,(uint32_t)nf); s.ok=0; nf=0; }
+    for(int i=0;i<nf && s.ok;i++){
+      GmlPhysicsFixture *f=&vm->phys_fixture[i];
+      memset(f,0,sizeof(*f));
+      f->live=1; f->id=sr_u32(&s); f->shape=sr_i32(&s); f->bound_inst=sr_i32(&s); f->points=sr_i32(&s);
+      if(f->points<0) f->points=0;
+      if(f->points>GML_PHYS_FIXTURE_POINTS) f->points=GML_PHYS_FIXTURE_POINTS;
+      f->density=sr_d(&s); f->friction=sr_d(&s); f->restitution=sr_d(&s);
+      f->lin_damp=sr_d(&s); f->ang_damp=sr_d(&s); f->awake=sr_d(&s);
+      f->radius=sr_d(&s); f->w=sr_d(&s); f->h=sr_d(&s);
+      f->x1=sr_d(&s); f->y1=sr_d(&s); f->x2=sr_d(&s); f->y2=sr_d(&s);
+      for(int p=0;p<GML_PHYS_FIXTURE_POINTS;p++){ f->px[p]=sr_d(&s); f->py[p]=sr_d(&s); }
+    }
+    int nj=sr_i32(&s);
+    if(nj<0 || nj>GML_PHYS_JOINT_MAX){ state_debug("bad physics joint count",s.pos,(uint32_t)nj); s.ok=0; nj=0; }
+    for(int i=0;i<nj && s.ok;i++){
+      GmlPhysicsJoint *j=&vm->phys_joint[i];
+      memset(j,0,sizeof(*j));
+      j->live=1; j->id=sr_u32(&s); j->type=sr_i32(&s); j->value_count=sr_i32(&s);
+      if(j->value_count<0) j->value_count=0;
+      if(j->value_count>24) j->value_count=24;
+      j->a=sr_d(&s); j->b=sr_d(&s); j->x1=sr_d(&s); j->y1=sr_d(&s); j->x2=sr_d(&s); j->y2=sr_d(&s);
+      for(int p=0;p<24;p++) j->params[p]=sr_d(&s);
     }
   }
   if(s.v9 && s.ok) vm->window_cursor=sr_i32(&s);
