@@ -597,6 +597,196 @@ static int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite)
   ds_map_index_add(m,m->len-1);
   return 1;
 }
+static GmlVal ds_map_lookup_s(GmlVM *vm, int id, const char *key, int *ok){
+  if(ok) *ok=0;
+  GmlDSMap *m=ds_map_slot(vm,id);
+  char *dk=ds_key_make(vstr(key?key:""));
+  int i=ds_map_find_entry(m,dk);
+  free(dk);
+  if(i<0) return vundef();
+  if(ok) *ok=1;
+  return ds_ret(m->entry[i].val);
+}
+static void inst_store_val(GmlInstance *in, const char *key, GmlVal v){
+  if(!in || !key) return;
+  GmlVal *p=gml_varmap_get(&in->vars,key);
+  if(p){ *p=v; return; }
+  char *owned=strdup(key);
+  if(!owned) return;
+  *gml_varmap_put(&in->vars,owned)=v;
+}
+static void inst_store_real(GmlInstance *in, const char *key, double v){
+  inst_store_val(in,key,vreal(v));
+}
+static void inst_store_string(GmlInstance *in, const char *key, const char *s){
+  char *copy=strdup(s?s:"");
+  if(!copy) return;
+  inst_store_val(in,key,vstr(copy));
+}
+static GmlVal inst_lookup(GmlInstance *in, const char *key){
+  GmlVal *p=(in&&key)?gml_varmap_get(&in->vars,key):NULL;
+  return p?*p:vundef();
+}
+static int skel_key(char *out, size_t cap, const char *kind, const char *name, const char *field){
+  int n=snprintf(out,cap,"__skel_%s:%s:%s",kind?kind:"",name?name:"",field?field:"");
+  return n>=0 && (size_t)n<cap;
+}
+static double skel_bone_num(GmlInstance *in, const char *kind, const char *bone, const char *field, double def){
+  char key[384];
+  if(!skel_key(key,sizeof(key),kind,bone,field)) return def;
+  GmlVal v=inst_lookup(in,key);
+  if(v.t==V_UNDEF) return def;
+  return N(&v,1,0);
+}
+static const char *skel_bone_str(GmlInstance *in, const char *kind, const char *bone, const char *field, const char *def){
+  char key[384];
+  if(!skel_key(key,sizeof(key),kind,bone,field)) return def;
+  GmlVal v=inst_lookup(in,key);
+  return v.t==V_STR ? (v.s?v.s:"") : def;
+}
+static int skel_bone_has(GmlInstance *in, const char *kind, const char *bone, const char *field){
+  char key[384];
+  return skel_key(key,sizeof(key),kind,bone,field) && inst_lookup(in,key).t!=V_UNDEF;
+}
+static void skel_store_map_num(GmlVM *vm, GmlInstance *in, int mapid,
+                               const char *kind, const char *bone, const char *field, double def){
+  int ok=0;
+  GmlVal mv=ds_map_lookup_s(vm,mapid,field,&ok);
+  double v=ok?N(&mv,1,0):skel_bone_num(in,kind,bone,field,def);
+  char key[384];
+  if(skel_key(key,sizeof(key),kind,bone,field)) inst_store_real(in,key,v);
+}
+static void skel_store_map_str(GmlVM *vm, GmlInstance *in, int mapid,
+                               const char *kind, const char *bone, const char *field, const char *def){
+  int ok=0;
+  GmlVal mv=ds_map_lookup_s(vm,mapid,field,&ok);
+  const char *v=(ok && mv.t==V_STR) ? (mv.s?mv.s:"") : skel_bone_str(in,kind,bone,field,def);
+  char key[384];
+  if(skel_key(key,sizeof(key),kind,bone,field)) inst_store_string(in,key,v);
+}
+static void skel_bone_map_put_base(GmlVM *vm, GmlInstance *in, int mapid, const char *kind, const char *bone){
+  ds_map_put(vm,mapid,vstr("x"),vreal(skel_bone_num(in,kind,bone,"x",0)),1);
+  ds_map_put(vm,mapid,vstr("y"),vreal(skel_bone_num(in,kind,bone,"y",0)),1);
+  ds_map_put(vm,mapid,vstr("angle"),vreal(skel_bone_num(in,kind,bone,"angle",0)),1);
+  ds_map_put(vm,mapid,vstr("xscale"),vreal(skel_bone_num(in,kind,bone,"xscale",1)),1);
+  ds_map_put(vm,mapid,vstr("yscale"),vreal(skel_bone_num(in,kind,bone,"yscale",1)),1);
+  ds_map_put(vm,mapid,vstr("parent"),vstr(skel_bone_str(in,kind,bone,"parent","")),1);
+}
+static GmlVal builtin_skeleton(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  GmlInstance *in=vm?vm->cur_self:NULL;
+  if(getenv("GML_LOG_SKEL")){
+    static long c=0;
+    if(c<256){
+      extern long g_vm_frame;
+      fprintf(stderr,"[skel] f%ld self=%u %s",g_vm_frame,in?in->id:0,nm);
+      for(int i=0;i<n && i<3;i++){
+        if(a[i].t==V_STR) fprintf(stderr,"%s\"%s\"",i?" ":" ",a[i].s?a[i].s:"");
+        else fprintf(stderr,"%s%g",i?" ":" ",N(a,n,i));
+      }
+      fprintf(stderr,"\n");
+    }
+    c++;
+  }
+  if(!strcmp(nm,"skeleton_animation_set")){
+    if(in) inst_store_string(in,"__skel_animation",S(a,n,0));
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_animation_get")){
+    GmlVal v=inst_lookup(in,"__skel_animation");
+    return v.t==V_STR ? vstr(v.s?v.s:"") : vstr("");
+  }
+  if(!strcmp(nm,"skeleton_animation_mix")){
+    if(in){
+      char key[384];
+      int k=snprintf(key,sizeof(key),"__skel_mix:%s:%s",S(a,n,0),S(a,n,1));
+      if(k>=0 && (size_t)k<sizeof(key)) inst_store_real(in,key,N(a,n,2));
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_skin_set")){
+    if(in) inst_store_string(in,"__skel_skin",S(a,n,0));
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_skin_get")){
+    GmlVal v=inst_lookup(in,"__skel_skin");
+    return v.t==V_STR ? vstr(v.s?v.s:"") : vstr("");
+  }
+  if(!strcmp(nm,"skeleton_attachment_set")){
+    if(in){
+      char key[384];
+      int k=snprintf(key,sizeof(key),"__skel_attachment:%s",S(a,n,0));
+      if(k>=0 && (size_t)k<sizeof(key)) inst_store_string(in,key,S(a,n,1));
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_attachment_get")){
+    char key[384];
+    int k=snprintf(key,sizeof(key),"__skel_attachment:%s",S(a,n,0));
+    GmlVal v=(k>=0 && (size_t)k<sizeof(key))?inst_lookup(in,key):vundef();
+    return v.t==V_STR ? vstr(v.s?v.s:"") : vstr("");
+  }
+  if(!strcmp(nm,"skeleton_bone_data_get")){
+    if(in && n>=2) skel_bone_map_put_base(vm,in,(int)N(a,n,1),"bone_data",S(a,n,0));
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_bone_data_set")){
+    if(in && n>=2){
+      int mapid=(int)N(a,n,1);
+      const char *bone=S(a,n,0);
+      skel_store_map_num(vm,in,mapid,"bone_data",bone,"x",0);
+      skel_store_map_num(vm,in,mapid,"bone_data",bone,"y",0);
+      skel_store_map_num(vm,in,mapid,"bone_data",bone,"angle",0);
+      skel_store_map_num(vm,in,mapid,"bone_data",bone,"xscale",1);
+      skel_store_map_num(vm,in,mapid,"bone_data",bone,"yscale",1);
+      skel_store_map_str(vm,in,mapid,"bone_data",bone,"parent","");
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_bone_state_get")){
+    if(in && n>=2){
+      int mapid=(int)N(a,n,1);
+      const char *bone=S(a,n,0);
+      if(!skel_bone_has(in,"bone_state",bone,"angle") &&
+         !skel_bone_has(in,"bone_state",bone,"x") &&
+         !skel_bone_has(in,"bone_state",bone,"y"))
+        return vreal(0);
+      double x=skel_bone_num(in,"bone_state",bone,"x",skel_bone_num(in,"bone_data",bone,"x",0));
+      double y=skel_bone_num(in,"bone_state",bone,"y",skel_bone_num(in,"bone_data",bone,"y",0));
+      double angle=skel_bone_num(in,"bone_state",bone,"angle",skel_bone_num(in,"bone_data",bone,"angle",0));
+      double xs=skel_bone_num(in,"bone_state",bone,"xscale",skel_bone_num(in,"bone_data",bone,"xscale",1));
+      double ys=skel_bone_num(in,"bone_state",bone,"yscale",skel_bone_num(in,"bone_data",bone,"yscale",1));
+      ds_map_put(vm,mapid,vstr("x"),vreal(x),1);
+      ds_map_put(vm,mapid,vstr("y"),vreal(y),1);
+      ds_map_put(vm,mapid,vstr("angle"),vreal(angle),1);
+      ds_map_put(vm,mapid,vstr("xscale"),vreal(xs),1);
+      ds_map_put(vm,mapid,vstr("yscale"),vreal(ys),1);
+      ds_map_put(vm,mapid,vstr("worldX"),vreal(x),1);
+      ds_map_put(vm,mapid,vstr("worldY"),vreal(y),1);
+      ds_map_put(vm,mapid,vstr("worldAngleX"),vreal(angle),1);
+      ds_map_put(vm,mapid,vstr("worldAngleY"),vreal(angle),1);
+      ds_map_put(vm,mapid,vstr("worldScaleX"),vreal(fabs(xs)),1);
+      ds_map_put(vm,mapid,vstr("worldScaleY"),vreal(fabs(ys)),1);
+      ds_map_put(vm,mapid,vstr("appliedAngle"),vreal(angle),1);
+      ds_map_put(vm,mapid,vstr("parent"),vstr(skel_bone_str(in,"bone_state",bone,"parent",
+        skel_bone_str(in,"bone_data",bone,"parent",""))),1);
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_bone_state_set")){
+    if(in && n>=2){
+      int mapid=(int)N(a,n,1);
+      const char *bone=S(a,n,0);
+      skel_store_map_num(vm,in,mapid,"bone_state",bone,"x",skel_bone_num(in,"bone_data",bone,"x",0));
+      skel_store_map_num(vm,in,mapid,"bone_state",bone,"y",skel_bone_num(in,"bone_data",bone,"y",0));
+      skel_store_map_num(vm,in,mapid,"bone_state",bone,"angle",skel_bone_num(in,"bone_data",bone,"angle",0));
+      skel_store_map_num(vm,in,mapid,"bone_state",bone,"xscale",skel_bone_num(in,"bone_data",bone,"xscale",1));
+      skel_store_map_num(vm,in,mapid,"bone_state",bone,"yscale",skel_bone_num(in,"bone_data",bone,"yscale",1));
+      skel_store_map_str(vm,in,mapid,"bone_state",bone,"parent",skel_bone_str(in,"bone_data",bone,"parent",""));
+    }
+    return vreal(0);
+  }
+  return vreal(0);
+}
 static void ds_map_clear_entries(GmlDSMap *m){
   if(!m) return;
   for(int i=0;i<m->len;i++) ds_entry_free(&m->entry[i]);
@@ -5687,7 +5877,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"physics_world_draw_debug")){ vm->phys_debug_draw=(int)N(a,n,0); return vreal(0); }
   if(!strcmp(nm,"physics_apply_local_force")) return vreal(0);
   if(!strncmp(nm,"physics_",8)) return vreal(0);
-  if(!strncmp(nm,"skeleton_",9)) return vreal(0);  /* Spine skeleton state is not modeled by the software renderer. */
+  if(!strncmp(nm,"skeleton_",9)) return builtin_skeleton(vm,nm,a,n);
   /* Report Galaxy initialization as successful; other Galaxy operations return zero.
    * This does not establish an online session or authenticate an account. */
   if(!strcmp(nm,"gog_init")||!strcmp(nm,"gog_is_initialised")||!strcmp(nm,"gog_is_initialized")) return vreal(1);
