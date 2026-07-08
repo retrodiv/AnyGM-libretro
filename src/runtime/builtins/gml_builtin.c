@@ -644,6 +644,25 @@ static int jb_put_json_string(JsonBuf *b, const char *s){
   return jb_putc(b,'"');
 }
 static int json_encode_val(GmlVM *vm, JsonBuf *b, GmlVal v, int depth, int allow_ds);
+static GmlVal var_store_clone(GmlVal v);
+static int json_struct_skip_key(const char *key){
+  return key && (!strcmp(key,"__fn") || !strcmp(key,"__self") || !strcmp(key,"__name"));
+}
+static int json_encode_struct(GmlVM *vm, JsonBuf *b, GmlInstance *st, int depth, int allow_ds){
+  if(depth>16) return jb_puts(b,"null");
+  if(!st) return jb_puts(b,"null");
+  if(!jb_putc(b,'{')) return 0;
+  int first=1;
+  for(int i=0;i<st->vars.cap;i++){
+    GmlVarSlot *slot=&st->vars.slots[i];
+    if(!slot->key || json_struct_skip_key(slot->key)) continue;
+    if(!first && !jb_putc(b,',')) return 0;
+    first=0;
+    if(!jb_put_json_string(b,slot->key) || !jb_putc(b,':')) return 0;
+    if(!json_encode_val(vm,b,slot->val,depth+1,allow_ds)) return 0;
+  }
+  return jb_putc(b,'}');
+}
 static int json_encode_map(GmlVM *vm, JsonBuf *b, int id, int depth){
   if(depth>16) return jb_puts(b,"null");
   GmlDSMap *m=ds_map_slot(vm,id);
@@ -675,6 +694,7 @@ static int json_encode_val(GmlVM *vm, JsonBuf *b, GmlVal v, int depth, int allow
   if(v.t==V_ARR) return json_encode_arr(vm,b,(GmlArr*)v.arr,depth);
   if(v.t==V_REAL){
     int id=(int)v.d;
+    if(GML_IS_STRUCT_ID(v.d)) return json_encode_struct(vm,b,gml_struct_find(vm,(unsigned)v.d),depth,allow_ds);
     if(allow_ds && fabs(v.d-(double)id)<1e-9 && ds_map_slot(vm,id)) return json_encode_map(vm,b,id,depth);
     if(!isfinite(v.d)) return jb_puts(b,"null");
     char num[64]; snprintf(num,sizeof(num),"%.17g",v.d); return jb_puts(b,num);
@@ -682,7 +702,7 @@ static int json_encode_val(GmlVM *vm, JsonBuf *b, GmlVal v, int depth, int allow
   return jb_puts(b,"null");
 }
 
-typedef struct { const char *s; size_t p, n; GmlVM *vm; int ok; } JsonIn;
+typedef struct { const char *s; size_t p, n; GmlVM *vm; int ok, obj_as_struct; } JsonIn;
 static void js_ws(JsonIn *j){ while(j->p<j->n && (j->s[j->p]==' '||j->s[j->p]=='\n'||j->s[j->p]=='\r'||j->s[j->p]=='\t')) j->p++; }
 static int js_consume(JsonIn *j, char c){ js_ws(j); if(j->p<j->n && j->s[j->p]==c){ j->p++; return 1; } return 0; }
 static char *js_string(JsonIn *j){
@@ -728,6 +748,7 @@ static GmlVal json_parse_value(JsonIn *j, int depth);
 static GmlVal json_parse_array(JsonIn *j, int depth){
   if(!js_consume(j,'[')){ j->ok=0; return vreal(0); }
   GmlArr *A=calloc(1,sizeof(*A)); if(!A){ j->ok=0; return vreal(0); }
+  A->escaped=1;
   js_ws(j);
   if(js_consume(j,']')){ GmlVal v=vreal(0); v.t=V_ARR; v.arr=A; return v; }
   for(;;){
@@ -740,6 +761,23 @@ static GmlVal json_parse_array(JsonIn *j, int depth){
 }
 static GmlVal json_parse_object(JsonIn *j, int depth){
   if(!js_consume(j,'{')){ j->ok=0; return vreal(0); }
+  if(j->obj_as_struct){
+    GmlInstance *st=gml_struct_new(j->vm);
+    if(!st){ j->ok=0; return vreal(0); }
+    js_ws(j);
+    if(js_consume(j,'}')) return vreal((double)st->id);
+    for(;;){
+      char *key=js_string(j);
+      if(!j->ok){ free(key); return vreal(0); }
+      if(!js_consume(j,':')){ free(key); j->ok=0; return vreal(0); }
+      GmlVal val=json_parse_value(j,depth+1);
+      if(!j->ok){ free(key); return vreal(0); }
+      *gml_varmap_put(&st->vars,key)=var_store_clone(val);
+      if(js_consume(j,'}')) break;
+      if(!js_consume(j,',')){ j->ok=0; return vreal(0); }
+    }
+    return vreal((double)st->id);
+  }
   int id=ds_map_create_id(j->vm); if(id<0){ j->ok=0; return vreal(0); }
   js_ws(j);
   if(js_consume(j,'}')) return vreal(id);
@@ -775,8 +813,8 @@ static GmlVal json_parse_value(JsonIn *j, int depth){
   if(end==j->s+j->p){ j->ok=0; return vreal(0); }
   j->p=(size_t)(end-j->s); return vreal(d);
 }
-static GmlVal json_decode_text(GmlVM *vm, const char *s){
-  JsonIn j={s?s:"",0,s?strlen(s):0,vm,1};
+static GmlVal json_decode_text_mode(GmlVM *vm, const char *s, int obj_as_struct){
+  JsonIn j={s?s:"",0,s?strlen(s):0,vm,1,obj_as_struct};
   GmlVal v=json_parse_value(&j,0);
   js_ws(&j);
   if(getenv("GML_DBG_JSON")){ static int c=0; if(c++<12)
@@ -785,10 +823,36 @@ static GmlVal json_decode_text(GmlVM *vm, const char *s){
   if(!j.ok || j.p!=j.n) return vreal(0);
   return v;
 }
+static GmlVal json_decode_text(GmlVM *vm, const char *s){
+  return json_decode_text_mode(vm,s,0);
+}
 static GmlVal json_encode_root(GmlVM *vm, GmlVal v){
   JsonBuf b={0};
   if(!json_encode_val(vm,&b,v,0,1)){ free(b.s); return vstr_owned(strdup("{}")); }
   return vstr_owned(b.s?b.s:strdup("null"));
+}
+static int varmap_delete_key(GmlVarMap *m, const char *key){
+  if(!m||!m->slots||!key) return 0;
+  int found=-1;
+  for(int i=0;i<m->cap;i++) if(m->slots[i].key && !strcmp(m->slots[i].key,key)){ found=i; break; }
+  if(found<0) return 0;
+  GmlVarMap nm={0};
+  for(int i=0;i<m->cap;i++){
+    if(i==found || !m->slots[i].key) continue;
+    *gml_varmap_put(&nm,m->slots[i].key)=m->slots[i].val;
+  }
+  free(m->slots);
+  *m=nm;
+  return 1;
+}
+static GmlVal var_store_clone(GmlVal v){
+  if(v.t==V_STR){
+    char *c=v.s?strdup(v.s):NULL;
+    return c?vstr(c):vstr("");
+  }
+  if(v.t==V_ARR){ gml_arr_mark_escaped(v); return v; }
+  if(v.t==V_UNDEF) return vundef();
+  return vreal(v.t==V_REAL?v.d:0.0);
 }
 static GmlVal ds_map_write_text(GmlVM *vm, int id){
   GmlDSMap *m=ds_map_slot(vm,id);
@@ -4917,6 +4981,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"json_decode")) return json_decode_text(vm,S(a,n,0));
   if(!strcmp(nm,"json_encode")) return json_encode_root(vm,n>0?a[0]:vundef());
+  if(!strcmp(nm,"json_parse")) return json_decode_text_mode(vm,S(a,n,0),1);
+  if(!strcmp(nm,"json_stringify")) return json_encode_root(vm,n>0?a[0]:vundef());
   if(!strcmp(nm,"is_undefined")) return vreal(n>0 && a[0].t==V_UNDEF);
   if(!strcmp(nm,"is_string")) return vreal(n>0 && a[0].t==V_STR);
   if(!strcmp(nm,"is_real")||!strcmp(nm,"is_numeric")) return vreal(n>0 && a[0].t==V_REAL);
@@ -4927,6 +4993,31 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"is_bool")) return vreal(n>0 && a[0].t==V_REAL && (a[0].d==0||a[0].d==1));
   if(!strcmp(nm,"variable_global_exists")) return vreal(gml_varmap_get(&vm->globals,S(a,n,0))!=NULL);
+  if(!strcmp(nm,"variable_struct_exists")||!strcmp(nm,"variable_struct_get")||
+     !strcmp(nm,"variable_struct_set")||!strcmp(nm,"variable_struct_remove")){
+    GmlInstance *st=(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;
+    const char *key=S(a,n,1);
+    if(!st) return !strcmp(nm,"variable_struct_get") ? vundef() : vreal(0);
+    if(!strcmp(nm,"variable_struct_exists")) return vreal(gml_varmap_get(&st->vars,key)!=NULL);
+    if(!strcmp(nm,"variable_struct_get")){
+      GmlVal *p=gml_varmap_get(&st->vars,key);
+      if(!p) return vundef();
+      GmlVal out=*p; if(out.t==V_STR) out.d=0;
+      return out;
+    }
+    if(!strcmp(nm,"variable_struct_set")){
+      if(n>2){
+        GmlVal *p=gml_varmap_get(&st->vars,key);
+        if(p) *p=var_store_clone(a[2]);
+        else {
+          char *owned=strdup(key?key:"");
+          if(owned) *gml_varmap_put(&st->vars,owned)=var_store_clone(a[2]);
+        }
+      }
+      return vreal(0);
+    }
+    return vreal(varmap_delete_key(&st->vars,key));
+  }
   if(!strcmp(nm,"shader_set")){ GmlRender *R=(GmlRender*)vm->render;
     if(R) R->active_shader=(int)N(a,n,0);
     if(getenv("GML_LOG_SHADER")){ static long c=0; if(c++<8){ extern long g_vm_frame;
