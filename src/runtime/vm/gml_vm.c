@@ -1022,7 +1022,8 @@ enum {
   GML_MICRO_CALL_GLOBAL_ARG0=3,
   GML_MICRO_DS_MAP_METHOD_LOOP1=4,
   GML_MICRO_DS_MAP_NESTED_FALLBACK=5,
-  GML_MICRO_ARRAY_METHOD_FLAGS=6
+  GML_MICRO_ARRAY_METHOD_FLAGS=6,
+  GML_MICRO_INPUT_ACTION_UPDATE=7
 };
 static int insn_arg_ref(const GmlInsn *in, int arg){
   if(!in || !in->refname || in->inst!=IT_ARG) return 0;
@@ -1285,6 +1286,138 @@ static void code_cache_analyze_micro(GmlCode *c){
     micro_debug(c,"array-method-flags");
     return;
   }
+  if(c->n_insn>=347 && c->branch_index &&
+     insn_push_arg(&in[0],0) &&
+     insn_push_builtin_name(&in[1],"undefined") &&
+     in[2].kind==OP_CMP && in[2].cmp==CMP_EQ &&
+     in[3].kind==OP_BF && c->branch_index[3]==6 &&
+     insn_push_num(&in[4],-1.0) &&
+     insn_pop_arg(&in[5],0) &&
+     insn_push_self_var(&in[6]) &&
+     in[7].kind==OP_DUP &&
+     insn_push_num(&in[8],0.0) &&
+     in[9].kind==OP_CMP && in[9].cmp==CMP_EQ &&
+     in[10].kind==OP_BT && c->branch_index[10]==20 &&
+     in[11].kind==OP_DUP &&
+     insn_push_num(&in[12],1.0) &&
+     in[13].kind==OP_CMP && in[13].cmp==CMP_EQ &&
+     in[14].kind==OP_BT && c->branch_index[14]==72 &&
+     in[15].kind==OP_DUP &&
+     insn_push_num(&in[16],2.0) &&
+     in[17].kind==OP_CMP && in[17].cmp==CMP_EQ &&
+     in[18].kind==OP_BT && c->branch_index[18]==131 &&
+     in[19].kind==OP_B && c->branch_index[19]==345 &&
+     insn_push_self_var(&in[20]) &&
+     insn_call_name(&in[21],"is_array",1) &&
+     in[22].kind==OP_CONV &&
+     in[23].kind==OP_BF && c->branch_index[23]==62 &&
+     insn_push_self_var(&in[24]) &&
+     insn_pop_local_var(&in[25]) &&
+     insn_push_num(&in[26],-1.0) && insn_push_num(&in[27],1.0) &&
+     in[28].kind==OP_PUSH && in[28].type1==DT_VAR && in[28].reftype==0x00 && insn_same_name(&in[28],&in[20]) &&
+     insn_call_name(&in[29],"keyboard_check",1) &&
+     insn_push_num(&in[30],-1.0) && insn_push_num(&in[31],0.0) &&
+     in[32].kind==OP_PUSH && in[32].type1==DT_VAR && in[32].reftype==0x00 && insn_same_name(&in[32],&in[20]) &&
+     insn_call_name(&in[33],"keyboard_check",1) &&
+     in[34].kind==OP_SUB &&
+     insn_pop_self_var(&in[35]) &&
+     insn_push_num(&in[36],-1.0) && insn_push_num(&in[37],1.0) &&
+     in[38].kind==OP_PUSH && in[38].type1==DT_VAR && in[38].reftype==0x00 && insn_same_name(&in[38],&in[20]) &&
+     insn_call_name(&in[39],"keyboard_check_pressed",1) &&
+     insn_push_num(&in[40],-1.0) && insn_push_num(&in[41],0.0) &&
+     in[42].kind==OP_PUSH && in[42].type1==DT_VAR && in[42].reftype==0x00 && insn_same_name(&in[42],&in[20]) &&
+     insn_call_name(&in[43],"keyboard_check_pressed",1) &&
+     in[44].kind==OP_SUB &&
+     insn_push_num(&in[45],0.0) &&
+     in[46].kind==OP_CMP && in[46].cmp==CMP_NEQ &&
+     insn_pop_self_var(&in[47]) &&
+     insn_push_self_var(&in[48]) && insn_same_name(&in[48],&in[35]) &&
+     insn_push_num(&in[49],0.0) &&
+     in[50].kind==OP_CMP && in[50].cmp==CMP_NEQ &&
+     insn_pop_self_var(&in[51]) && insn_same_name(&in[51],&in[24]) &&
+     insn_push_self_var(&in[52]) && insn_same_name(&in[52],&in[35]) &&
+     insn_push_num(&in[53],0.0) &&
+     in[54].kind==OP_CMP && in[54].cmp==CMP_EQ &&
+     in[55].kind==OP_BF && c->branch_index[55]==59 &&
+     insn_push_same_ref(&in[56],&in[25]) &&
+     in[57].kind==OP_CONV &&
+     in[58].kind==OP_B && c->branch_index[58]==60 &&
+     insn_push_num(&in[59],0.0) &&
+     insn_pop_self_var(&in[60]) &&
+     in[61].kind==OP_B && c->branch_index[61]==71 &&
+     insn_push_self_var(&in[62]) && insn_same_name(&in[62],&in[20]) &&
+     insn_call_name(&in[63],"keyboard_check_pressed",1) &&
+     insn_pop_self_var(&in[64]) && insn_same_name(&in[64],&in[47]) &&
+     insn_push_self_var(&in[65]) && insn_same_name(&in[65],&in[20]) &&
+     insn_call_name(&in[66],"keyboard_check",1) &&
+     insn_pop_self_var(&in[67]) && insn_same_name(&in[67],&in[24]) &&
+     insn_push_self_var(&in[68]) && insn_same_name(&in[68],&in[20]) &&
+     insn_call_name(&in[69],"keyboard_check_released",1) &&
+     insn_pop_self_var(&in[70]) && insn_same_name(&in[70],&in[60]) &&
+     in[71].kind==OP_B && c->branch_index[71]==345 &&
+     insn_push_self_var(&in[72]) && insn_same_name(&in[72],&in[20]) &&
+     insn_call_name(&in[73],"is_array",1) &&
+     in[74].kind==OP_CONV &&
+     in[75].kind==OP_BF && c->branch_index[75]==118 &&
+     insn_push_self_var(&in[76]) && insn_same_name(&in[76],&in[24]) &&
+     insn_pop_local_var(&in[77]) &&
+     insn_push_num(&in[78],-1.0) && insn_push_num(&in[79],1.0) &&
+     in[80].kind==OP_PUSH && in[80].type1==DT_VAR && in[80].reftype==0x00 && insn_same_name(&in[80],&in[20]) &&
+     insn_push_arg(&in[81],0) &&
+     insn_call_name(&in[82],"gamepad_button_check",2) &&
+     insn_push_num(&in[83],-1.0) && insn_push_num(&in[84],0.0) &&
+     in[85].kind==OP_PUSH && in[85].type1==DT_VAR && in[85].reftype==0x00 && insn_same_name(&in[85],&in[20]) &&
+     insn_push_arg(&in[86],0) &&
+     insn_call_name(&in[87],"gamepad_button_check",2) &&
+     in[88].kind==OP_SUB &&
+     insn_pop_self_var(&in[89]) && insn_same_name(&in[89],&in[35]) &&
+     insn_push_num(&in[90],-1.0) && insn_push_num(&in[91],1.0) &&
+     in[92].kind==OP_PUSH && in[92].type1==DT_VAR && in[92].reftype==0x00 && insn_same_name(&in[92],&in[20]) &&
+     insn_push_arg(&in[93],0) &&
+     insn_call_name(&in[94],"gamepad_button_check_pressed",2) &&
+     insn_push_num(&in[95],-1.0) && insn_push_num(&in[96],0.0) &&
+     in[97].kind==OP_PUSH && in[97].type1==DT_VAR && in[97].reftype==0x00 && insn_same_name(&in[97],&in[20]) &&
+     insn_push_arg(&in[98],0) &&
+     insn_call_name(&in[99],"gamepad_button_check_pressed",2) &&
+     in[100].kind==OP_SUB &&
+     insn_push_num(&in[101],0.0) &&
+     in[102].kind==OP_CMP && in[102].cmp==CMP_NEQ &&
+     insn_pop_self_var(&in[103]) && insn_same_name(&in[103],&in[47]) &&
+     insn_push_self_var(&in[104]) && insn_same_name(&in[104],&in[35]) &&
+     insn_push_num(&in[105],0.0) &&
+     in[106].kind==OP_CMP && in[106].cmp==CMP_NEQ &&
+     insn_pop_self_var(&in[107]) && insn_same_name(&in[107],&in[24]) &&
+     insn_push_self_var(&in[108]) && insn_same_name(&in[108],&in[35]) &&
+     insn_push_num(&in[109],0.0) &&
+     in[110].kind==OP_CMP && in[110].cmp==CMP_EQ &&
+     in[111].kind==OP_BF && c->branch_index[111]==115 &&
+     insn_push_same_ref(&in[112],&in[77]) &&
+     in[113].kind==OP_CONV &&
+     in[114].kind==OP_B && c->branch_index[114]==116 &&
+     insn_push_num(&in[115],0.0) &&
+     insn_pop_self_var(&in[116]) && insn_same_name(&in[116],&in[60]) &&
+     in[117].kind==OP_B && c->branch_index[117]==130 &&
+     insn_push_self_var(&in[118]) && insn_same_name(&in[118],&in[20]) &&
+     insn_push_arg(&in[119],0) &&
+     insn_call_name(&in[120],"gamepad_button_check_pressed",2) &&
+     insn_pop_self_var(&in[121]) && insn_same_name(&in[121],&in[47]) &&
+     insn_push_self_var(&in[122]) && insn_same_name(&in[122],&in[20]) &&
+     insn_push_arg(&in[123],0) &&
+     insn_call_name(&in[124],"gamepad_button_check",2) &&
+     insn_pop_self_var(&in[125]) && insn_same_name(&in[125],&in[24]) &&
+     insn_push_self_var(&in[126]) && insn_same_name(&in[126],&in[20]) &&
+     insn_push_arg(&in[127],0) &&
+     insn_call_name(&in[128],"gamepad_button_check_released",2) &&
+     insn_pop_self_var(&in[129]) && insn_same_name(&in[129],&in[60]) &&
+     in[130].kind==OP_B && c->branch_index[130]==345 &&
+     in[345].kind==OP_POPZ &&
+     in[346].kind==OP_EXIT){
+    c->micro_kind=GML_MICRO_INPUT_ACTION_UPDATE;
+    c->micro_name=in[6].refname;
+    c->micro_hash=in[6].refhash?in[6].refhash:strhash(in[6].refname);
+    micro_debug(c,"input-action-update");
+    return;
+  }
   if(c->n_insn>=23 && c->branch_index &&
      insn_push_arg(&in[0],1) &&
      insn_push_arg(&in[1],0) &&
@@ -1434,6 +1567,8 @@ static int g_unknown_logged=0;
 extern GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *a, int n);
 extern int gml_builtin_fast_id(const char *name);
 extern GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, int n);
+extern int gml_input_key(int vk, int edge);
+extern int gml_input_gamepad(int button, int edge);
 static int code_micro_maybe(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *out);
 static inline int builtin_hotprof_on(void){
   static int on=-1;
@@ -1442,6 +1577,16 @@ static inline int builtin_hotprof_on(void){
 }
 static int vm_heap_string(GmlVal v){
   return v.t==V_STR && v.s && v.d!=0;
+}
+static void micro_set_bool_fields(GmlInstance *self,
+                                  const GmlInsn *pressed_in, const GmlInsn *held_in, const GmlInsn *released_in,
+                                  int pressed, int held, int released){
+  inst_set_any_h(self,pressed_in->refname,pressed_in->refhash?pressed_in->refhash:strhash(pressed_in->refname),vreal(pressed?1:0));
+  inst_set_any_h(self,held_in->refname,held_in->refhash?held_in->refhash:strhash(held_in->refname),vreal(held?1:0));
+  inst_set_any_h(self,released_in->refname,released_in->refhash?released_in->refhash:strhash(released_in->refname),vreal(released?1:0));
+}
+static int micro_input_edge(int type, int key, int edge){
+  return type==0 ? gml_input_key(key,edge) : gml_input_gamepad(key,edge);
 }
 static void micro_call_method_field1(GmlVM *vm, GmlVal targetv, const char *field, uint32_t hash, GmlVal arg0){
   if(!vm || !field) return;
@@ -1610,6 +1755,35 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
     }
     *out=vreal(0);
     if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,67);
+    return 1;
+  }
+  if(c->micro_kind==GML_MICRO_INPUT_ACTION_UPDATE && c->insn){
+    GmlInstance *self=vm->cur_self;
+    if(!self) return 0;
+    GmlInsn *in=c->insn;
+    GmlVal typev=inst_get_any_h(vm,self,in[6].refname,in[6].refhash?in[6].refhash:strhash(in[6].refname));
+    int type=(int)asnum(typev);
+    if(type!=0 && type!=1) return 0;
+    if(type==1 && getenv("GML_DBG_GP")) return 0;
+    GmlVal value=inst_get_any_h(vm,self,in[20].refname,in[20].refhash?in[20].refhash:strhash(in[20].refname));
+    if(value.t==V_ARR && value.arr){
+      int a0=(int)asnum(gml_arr_get(value,0));
+      int a1=(int)asnum(gml_arr_get(value,1));
+      int axis=micro_input_edge(type,a1,0)-micro_input_edge(type,a0,0);
+      int pressed=(micro_input_edge(type,a1,1)-micro_input_edge(type,a0,1))!=0;
+      int held=axis!=0;
+      int released=(axis==0) && astrue(inst_get_any_h(vm,self,in[24].refname,in[24].refhash?in[24].refhash:strhash(in[24].refname)));
+      inst_set_any_h(self,in[35].refname,in[35].refhash?in[35].refhash:strhash(in[35].refname),vreal(axis));
+      micro_set_bool_fields(self,&in[47],&in[24],&in[60],pressed,held,released);
+    } else {
+      int key=(int)asnum(value);
+      int pressed=micro_input_edge(type,key,1);
+      int held=micro_input_edge(type,key,0);
+      int released=micro_input_edge(type,key,2);
+      micro_set_bool_fields(self,&in[47],&in[24],&in[60],pressed,held,released);
+    }
+    *out=vreal(0);
+    if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,42);
     return 1;
   }
   return 0;
