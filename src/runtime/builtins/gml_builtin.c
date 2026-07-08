@@ -666,7 +666,8 @@ static int jb_put_json_string(JsonBuf *b, const char *s){
 static int json_encode_val(GmlVM *vm, JsonBuf *b, GmlVal v, int depth, int allow_ds);
 static GmlVal var_store_clone(GmlVal v);
 static int json_struct_skip_key(const char *key){
-  return key && (!strcmp(key,"__fn") || !strcmp(key,"__self") || !strcmp(key,"__name"));
+  return key && (!strcmp(key,"__fn") || !strcmp(key,"__self") ||
+                 !strcmp(key,"__name") || !strcmp(key,"__ctor"));
 }
 static int json_encode_struct(GmlVM *vm, JsonBuf *b, GmlInstance *st, int depth, int allow_ds){
   if(depth>16) return jb_puts(b,"null");
@@ -3954,8 +3955,36 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(GML_IS_FUNCVAL((int)a0)) fci=(int)a0 & 0x00FFFFFF;
       else if(GML_IS_STRUCT_ID(a0)){ GmlInstance *bm=gml_struct_find(vm,(unsigned)a0);
         if(bm){ GmlVal *pf=gml_varmap_get(&bm->vars,"__fn"); if(pf && pf->t==V_REAL){ int f=(int)pf->d; if(GML_IS_FUNCVAL(f)) fci=f & 0x00FFFFFF; } } }
-      if(fci>=0) gml_vm_run_code(vm,fci,st,vm->cur_self,(n>1)?a+1:0,n-1); }
+      if(fci>=0){
+        *gml_varmap_put(&st->vars,"__ctor")=vreal((double)fci);
+        const char *cn=(vm->win&&fci<vm->win->n_code&&vm->win->code[fci].name)?vm->win->code[fci].name:"";
+        if(!strncmp(cn,"gml_Script_",11)) cn+=11;
+        *gml_varmap_put(&st->vars,"__name")=vstr_owned(strdup(cn));
+        gml_vm_run_code(vm,fci,st,vm->cur_self,(n>1)?a+1:0,n-1);
+      } }
     return vreal((double)st->id);
+  }
+  if(!strcmp(nm,"instanceof")){
+    GmlInstance *st=(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;
+    GmlVal *pc=st?gml_varmap_get(&st->vars,"__ctor"):NULL;
+    int have=(pc && pc->t==V_REAL);
+    if(n<2){
+      if(!st) return vstr("");
+      GmlVal *pn=gml_varmap_get(&st->vars,"__name");
+      if(pn && pn->t==V_STR && pn->s) return vstr(pn->s);
+      int ci=have?(int)pc->d:-1;
+      return vstr((vm->win&&ci>=0&&ci<vm->win->n_code&&vm->win->code[ci].name)?vm->win->code[ci].name:"");
+    }
+    int want=-1;
+    if(a[1].t==V_REAL){
+      int iv=(int)a[1].d;
+      if(GML_IS_FUNCVAL(iv)) want=iv & 0x00FFFFFF;
+      else if(GML_IS_STRUCT_ID(a[1].d)){ GmlInstance *bm=gml_struct_find(vm,(unsigned)a[1].d);
+        GmlVal *pf=bm?gml_varmap_get(&bm->vars,"__fn"):NULL;
+        if(pf && pf->t==V_REAL){ int f=(int)pf->d; if(GML_IS_FUNCVAL(f)) want=f & 0x00FFFFFF; }
+      }
+    }
+    return vreal(have && want>=0 && (int)pc->d==want);
   }
   if(!strcmp(nm,"@@SetStatic@@")||!strcmp(nm,"@@GetStatic@@")||
      !strcmp(nm,"@@try_hook@@")||!strcmp(nm,"@@try_unhook@@")||!strcmp(nm,"@@finally@@")||
