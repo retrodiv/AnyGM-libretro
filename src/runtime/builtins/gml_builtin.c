@@ -1154,6 +1154,22 @@ static void ds_log_val(GmlVM *vm, GmlVal v, int depth){
   }
   ds_log_val_simple(v);
 }
+GmlVal gml_ds_map_find_value_direct(GmlVM *vm, int id, GmlVal keyv, int has_key){
+  GmlDSMap *m=ds_map_slot(vm,id);
+  DsKeyTemp kt={0};
+  const char *key=has_key?ds_key_temp(keyv,&kt):NULL;
+  int i=ds_map_find_entry(m,key);
+  GmlVal out=(i>=0)?m->entry[i].val:vundef();
+  if(log_ds_on()){
+    fprintf(stderr,"[ds_map_find_value] id=%d live=%d key=%s raw=",id,m?m->len:-1,key?key:"<null>");
+    if(has_key) ds_log_val(vm,keyv,0); else fprintf(stderr,"<missing>");
+    fprintf(stderr," hit=%d out=",i);
+    ds_log_val(vm,out,0);
+    fprintf(stderr,"\n");
+  }
+  ds_key_temp_free(&kt);
+  return ds_ret(out);
+}
 static GmlVal ini_default_string(GmlVal *a, int n){
   const char *s = n>2 ? S(a,n,2) : "";
   char *c = strdup(s?s:"");
@@ -3449,13 +3465,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
     case BID_DS_LIST_CLEAR:{
       GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); if(l) l->len=0; return vreal(0); }
     case BID_DS_MAP_FIND_VALUE:{
-      GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
-      DsKeyTemp kt={0};
-      const char *key=(n>=2)?ds_key_temp(a[1],&kt):NULL;
-      int i=ds_map_find_entry(m,key);
-      GmlVal out=(i>=0)?m->entry[i].val:vundef();
-      ds_key_temp_free(&kt);
-      return ds_ret(out); }
+      return gml_ds_map_find_value_direct(vm,(int)N(a,n,0),n>=2?a[1]:vundef(),n>=2); }
     case BID_DS_MAP_FIND_NEXT:
     case BID_DS_MAP_FIND_PREVIOUS:{
       GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
@@ -6215,20 +6225,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"ds_map_find_value")){
     int id=(int)N(a,n,0);
-    GmlDSMap *m=ds_map_slot(vm,id);
-    DsKeyTemp kt={0};
-    const char *key=(n>=2)?ds_key_temp(a[1],&kt):NULL;
-    int i=ds_map_find_entry(m,key);
-    GmlVal out=(i>=0)?m->entry[i].val:vundef();
-    if(log_ds_on()){
-      fprintf(stderr,"[ds_map_find_value] id=%d live=%d key=%s raw=",id,m?m->len:-1,key?key:"<null>");
-      if(n>=2) ds_log_val(vm,a[1],0); else fprintf(stderr,"<missing>");
-      fprintf(stderr," hit=%d out=",i);
-      ds_log_val(vm,out,0);
-      fprintf(stderr,"\n");
-    }
-    ds_key_temp_free(&kt);
-    return ds_ret(out);
+    return gml_ds_map_find_value_direct(vm,id,n>=2?a[1]:vundef(),n>=2);
   }
   if(!strcmp(nm,"json_decode")) return json_decode_text(vm,S(a,n,0));
   if(!strcmp(nm,"json_encode")) return json_encode_root(vm,n>0?a[0]:vundef());

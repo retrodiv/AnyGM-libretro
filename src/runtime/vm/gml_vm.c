@@ -1216,12 +1216,8 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
   double t0=codeprof_on()?codeprof_now_ms():0.0;
   if(c->micro_kind==GML_MICRO_DS_MAP_GLOBAL_ARG0 && c->micro_name){
     GmlVal *map=gml_varmap_get_h(&vm->globals,c->micro_name,c->micro_hash);
-    GmlVal a[2]={ map?*map:vreal(0), (args && n_args>0)?args[0]:vundef() };
-    static int ds_find_value_id;
-    if(!ds_find_value_id) ds_find_value_id=gml_builtin_fast_id("ds_map_find_value");
-    int bid=ds_find_value_id;
-    *out = bid>0 ? gml_builtin_call_fast_id(vm,bid,"ds_map_find_value",a,2)
-                 : gml_builtin_call(vm,"ds_map_find_value",a,2);
+    *out = gml_ds_map_find_value_direct(vm,(int)(map?asnum(*map):0.0),
+      (args && n_args>0)?args[0]:vundef(), args && n_args>0);
     gml_arr_mark_escaped(*out);
     if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,4);
     return 1;

@@ -290,6 +290,7 @@ void         gml_arr_push(GmlVal arr, GmlVal val);
 GmlVal       gml_arr_pop(GmlVal arr);
 void         gml_arr_resize(GmlVal arr, int size);
 void         gml_arr_copy(GmlVal dst, int di, GmlVal src, int si, int count);
+GmlVal       gml_ds_map_find_value_direct(GmlVM *vm, int id, GmlVal keyv, int has_key);
 void         gml_instance_destroy(GmlVM *vm, GmlInstance *in);
 int          gml_instance_number(GmlVM *vm, int target); /* object index, special scope, or real instance id */
 int          gml_object_is(GmlVM *vm, int obj, int target);  /* obj == target or descends from it */
