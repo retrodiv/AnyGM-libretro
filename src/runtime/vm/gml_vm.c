@@ -4065,7 +4065,8 @@ static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
     int sparse = s->compact_strings && (raw_len&0x80000000u);
     uint32_t len = raw_len&0x7fffffffu;
     size_t remain = s->pos <= s->cap ? s->cap - s->pos : 0;
-    if(len>1000000 || (!sparse && len>remain/4)){
+    uint32_t max_len = sparse ? 16000000u : 1000000u;
+    if(len>max_len || (!sparse && len>remain/4)){
       state_debug("array too large",s->pos,len);
       s->ok=0; return vreal(0);
     }
@@ -4115,7 +4116,10 @@ static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
 }
 static void sw_varmap(StateW *s, GmlVarMap *m){
   static int dbg=-1; if(dbg<0) dbg=getenv("GML_DBG_STATEVAR")!=NULL;
-  sw_u32(s,(uint32_t)m->len);
+  uint32_t n=0;
+  for(int i=0;i<m->cap;i++) if(m->slots[i].key) n++;
+  if(n!=(uint32_t)m->len) state_debug("varmap len mismatch",s->pos,(uint32_t)m->len);
+  sw_u32(s,n);
   for(int i=0;i<m->cap;i++) if(m->slots[i].key){
     if(dbg) fprintf(stderr,"[svar] %s t=%d\n",m->slots[i].key,m->slots[i].val.t);
     sw_str(s,m->slots[i].key);
@@ -4123,11 +4127,15 @@ static void sw_varmap(StateW *s, GmlVarMap *m){
   }
 }
 static int sr_varmap(GmlVM *vm, StateR *s, GmlVarMap *m){
+  static int dbg=-1; if(dbg<0) dbg=getenv("GML_DBG_STATEVAR_LOAD")!=NULL;
   uint32_t n=sr_u32(s);
   if(n>100000){ state_debug("varmap too large",s->pos,n); s->ok=0; return 0; }
-  for(uint32_t i=0;i<n;i++){
+  for(uint32_t i=0;i<n && s->ok;i++){
+    size_t key_pos=s->pos;
     char *k=sr_str_dup(s); const char *key=state_intern(vm,k);
+    if(dbg) fprintf(stderr,"[lvar] pos=%llu key=%s\n",(unsigned long long)key_pos,key?key:"");
     GmlVal v=sr_val(vm,s,0);
+    if(!s->ok) break;
     gml_arr_mark_escaped(v);
     *gml_varmap_put(m,key)=v;
   }
