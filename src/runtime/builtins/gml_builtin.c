@@ -5778,8 +5778,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"parameter_string")) return vstr("");
   if(!strcmp(nm,"exception_unhandled_handler")) return vreal(0);
   if(!strcmp(nm,"io_clear")) return vreal(0);
+  if(!strcmp(nm,"display_set_windows_alternate_sync")) return vreal(0);
   if(!strcmp(nm,"url_open")) return vreal(0);
   if(!strcmp(nm,"os_is_network_connected")) return vreal(0);
+  if(!strcmp(nm,"network_resolve")) return vstr("");
   if(!strcmp(nm,"network_create_socket")||!strcmp(nm,"network_create_server")||
      !strcmp(nm,"network_connect")) return vreal(-1);
   if(!strcmp(nm,"network_send_packet")||!strcmp(nm,"network_destroy")) return vreal(0);
