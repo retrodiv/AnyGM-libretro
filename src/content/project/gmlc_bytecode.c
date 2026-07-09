@@ -190,6 +190,10 @@ static int emit_call(Compiler *c, const char *name, int argc){
   return add_ref(c,name,GMLC_REF_FUNC,instr,ref,0);
 }
 
+static int emit_callv(Compiler *c, int argc){
+  return emit_u32(&c->code,fw(OP_CALLV,DT_VAR,(int16_t)argc));
+}
+
 static size_t emit_branch(Compiler *c, uint8_t op){
   size_t pos=c->code.len;
   emit_u32(&c->code,fw(op,0,0));
@@ -363,6 +367,24 @@ static int resolve_asset(Compiler *c, const char *name, double *out){
   for(int i=0;i<c->project->n_tilesets;i++) if(!strcmp(c->project->tilesets[i].name,name)){ *out=i; return 1; }
   for(int i=0;i<c->project->n_scripts;i++) if(!strcmp(c->project->scripts[i].name,name)){ *out=i; return 1; }
   return 0;
+}
+
+static int source_room_code_count(const GmlcProject *p){
+  return p->n_rooms>0 ? p->n_rooms : 1;
+}
+
+static int resolve_script_code_index(Compiler *c, const char *name, int *out){
+  for(int i=0;i<c->project->n_scripts;i++){
+    if(!strcmp(c->project->scripts[i].name,name)){
+      *out=source_room_code_count(c->project)+i;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int emit_script_funcval(Compiler *c, int code_index){
+  return emit_push_real(c,(double)(0x40000000u | (uint32_t)(code_index & 0x00FFFFFF)));
 }
 
 static int resolve_const(Compiler *c, const char *name, double *out){
@@ -898,6 +920,11 @@ static int parse_primary(Compiler *c){
     char name[128]; snprintf(name,sizeof(name),"%s",c->lex.tok.text); lx_next(&c->lex);
     if(eat(c,"(")){
       int argc=0;
+      if(local_index(c,name)>=0 || !strncmp(name,"argument",8)){
+        if(!emit_push_var(c,IT_LOCAL,name,0xA0)) return 0;
+        if(!parse_call_args_reversed(c,&argc)) return 0;
+        return emit_callv(c,argc);
+      }
       if(!parse_call_args_reversed(c,&argc)) return 0;
       return emit_call(c,name,argc);
     }
@@ -909,6 +936,8 @@ static int parse_primary(Compiler *c){
       return ok;
     }
     double cv=0;
+    int sci=-1;
+    if(resolve_script_code_index(c,name,&sci)) return emit_script_funcval(c,sci);
     if(resolve_const(c,name,&cv)) return emit_push_real(c,cv);
     int inst=(local_index(c,name)>=0 || !strncmp(name,"argument",8)) ? IT_LOCAL : IT_SELF;
     return emit_push_var(c,inst,name,0xA0);
@@ -1361,6 +1390,14 @@ static int parse_simple_or_assign(Compiler *c){
   if(tok_is(c,"(")){
     lx_next(&c->lex);
     int argc=0;
+    if(local_index(c,first)>=0 || !strncmp(first,"argument",8)){
+      if(!emit_push_var(c,IT_LOCAL,first,0xA0)) return 0;
+      if(!parse_call_args_reversed(c,&argc)) return 0;
+      if(!emit_callv(c,argc)) return 0;
+      emit_u32(&c->code,fw(OP_POPZ,0,0));
+      eat(c,";");
+      return 1;
+    }
     if(!parse_call_args_reversed(c,&argc)) return 0;
     if(!emit_call(c,first,argc)) return 0;
     emit_u32(&c->code,fw(OP_POPZ,0,0));
@@ -1368,7 +1405,9 @@ static int parse_simple_or_assign(Compiler *c){
     return 1;
   }
   double cv=0;
-  if(resolve_const(c,first,&cv)) emit_push_real(c,cv);
+  int sci=-1;
+  if(resolve_script_code_index(c,first,&sci)) emit_script_funcval(c,sci);
+  else if(resolve_const(c,first,&cv)) emit_push_real(c,cv);
   else emit_push_var(c,(local_index(c,first)>=0 || !strncmp(first,"argument",8))?IT_LOCAL:IT_SELF,first,0xA0);
   eat(c,";");
   emit_u32(&c->code,fw(OP_POPZ,0,0));
