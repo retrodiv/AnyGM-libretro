@@ -73,9 +73,15 @@ void gmlc_project_free(GmlcProject *p){
   free(p->sounds);
   for(int i=0;i<p->n_scripts;i++){ free(p->scripts[i].id); free(p->scripts[i].name); free(p->scripts[i].source_path); }
   free(p->scripts);
+  for(int i=0;i<p->n_script_order;i++) free(p->script_order_ids[i]);
+  free(p->script_order_ids);
   for(int i=0;i<p->n_objects;i++){
     free(p->objects[i].id); free(p->objects[i].name);
-    for(int e=0;e<p->objects[i].n_events;e++) free(p->objects[i].events[e].source_path);
+    for(int e=0;e<p->objects[i].n_events;e++){
+      free(p->objects[i].events[e].id);
+      free(p->objects[i].events[e].collision_id);
+      free(p->objects[i].events[e].source_path);
+    }
     free(p->objects[i].events);
   }
   free(p->objects);
@@ -187,6 +193,28 @@ int gmlc_project_load_yyp(GmlcProject *p, const char *path, char *err, size_t er
       gmlc_json_free(root);
       snprintf(err,errcap,"out of memory while loading resources");
       return 0;
+    }
+  }
+  const GmlcJson *script_order=gmlc_json_obj(root,"script_order");
+  if(script_order && script_order->type==GMLC_JSON_ARRAY){
+    int n=gmlc_json_len(script_order);
+    if(n>0){
+      p->script_order_ids=(char**)calloc((size_t)n,sizeof(char*));
+      if(!p->script_order_ids){
+        gmlc_json_free(root);
+        snprintf(err,errcap,"out of memory while loading script_order");
+        return 0;
+      }
+      for(int i=0;i<n;i++){
+        const char *sid=gmlc_json_str(gmlc_json_index(script_order,i),"");
+        p->script_order_ids[i]=gmlc_strdup(sid);
+        if(!p->script_order_ids[i]){
+          gmlc_json_free(root);
+          snprintf(err,errcap,"out of memory while loading script_order");
+          return 0;
+        }
+        p->n_script_order++;
+      }
     }
   }
   gmlc_json_free(root);

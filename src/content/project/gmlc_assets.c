@@ -569,8 +569,14 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
       ev.event_type=gmlc_json_int(gmlc_json_obj(je,"eventtype"),0);
       ev.event_number=gmlc_json_int(gmlc_json_obj(je,"enumb"),0);
       const char *event_uuid=gmlc_json_str(gmlc_json_obj(je,"id"),NULL);
+      ev.id=gmlc_strdup(event_uuid?event_uuid:"");
       const char *col_uuid=gmlc_json_str(gmlc_json_obj(je,"collisionObjectId"),NULL);
-      ev.collision_object_id=gmlc_project_find_object(p,col_uuid);
+      int col_zero=(!col_uuid || !strcmp(col_uuid,"00000000-0000-0000-0000-000000000000"));
+      ev.collision_object_id=(ev.event_type==4 && col_zero) ? ev.event_number : gmlc_project_find_object(p,col_uuid);
+      const char *col_name_id=col_uuid;
+      if(ev.event_type==4 && col_zero && ev.collision_object_id>=0 && ev.collision_object_id<p->n_objects)
+        col_name_id=p->objects[ev.collision_object_id].id;
+      ev.collision_id=gmlc_strdup(col_name_id?col_name_id:"");
       char file[256];
       switch(ev.event_type){
         case 0: snprintf(file,sizeof(file),"Create_%d.gml",ev.event_number); break;
@@ -589,7 +595,7 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
       ev.source_path=gmlc_path_join(dir,file);
       if(!object_add_event(&o,&ev)){
         snprintf(err,errcap,"out of memory while loading object events");
-        free(o.id); free(o.name); free(ev.source_path); free(o.events);
+        free(o.id); free(o.name); free(ev.id); free(ev.collision_id); free(ev.source_path); free(o.events);
         free(dir);
         return 0;
       }
@@ -679,6 +685,35 @@ static int load_one(GmlcProject *p, GmlcResource *r, char *err, size_t errcap){
   return ok;
 }
 
+static int apply_script_order(GmlcProject *p, char *err, size_t errcap){
+  if(!p->script_order_ids || p->n_script_order<=0 || p->n_scripts<=1) return 1;
+  GmlcScript *ordered=(GmlcScript*)calloc((size_t)p->n_scripts,sizeof(*ordered));
+  unsigned char *used=(unsigned char*)calloc((size_t)p->n_scripts,1);
+  if(!ordered || !used){
+    free(ordered); free(used);
+    snprintf(err,errcap,"out of memory while ordering scripts");
+    return 0;
+  }
+  int n=0;
+  for(int oi=0; oi<p->n_script_order; oi++){
+    const char *id=p->script_order_ids[oi];
+    for(int si=0; si<p->n_scripts; si++){
+      if(!used[si] && p->scripts[si].id && id && !strcmp(p->scripts[si].id,id)){
+        ordered[n++]=p->scripts[si];
+        used[si]=1;
+        break;
+      }
+    }
+  }
+  for(int si=0; si<p->n_scripts; si++){
+    if(!used[si]) ordered[n++]=p->scripts[si];
+  }
+  free(used);
+  free(p->scripts);
+  p->scripts=ordered;
+  return 1;
+}
+
 int gmlc_assets_load(GmlcProject *p, char *err, size_t errcap){
   for(int pass=0; pass<3; pass++){
     for(int i=0;i<p->n_resources;i++){
@@ -689,6 +724,7 @@ int gmlc_assets_load(GmlcProject *p, char *err, size_t errcap){
         if(!load_one(p,r,err,errcap)) return 0;
       }
     }
+    if(pass==0 && !apply_script_order(p,err,errcap)) return 0;
   }
   return 1;
 }

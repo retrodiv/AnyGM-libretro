@@ -56,6 +56,7 @@ typedef struct {
   int n_continue_sites, cap_continue_sites;
   int continue_depth;
   int temp_id;
+  int expr_boolish;
   Lexer lex;
   int unsupported;
 } Compiler;
@@ -161,6 +162,10 @@ static int emit_push_real(Compiler *c, double d){
   return emit_double(&c->code,d);
 }
 
+static int emit_push_i16_full(Compiler *c, int16_t v){
+  return emit_u32(&c->code,fw(OP_PUSH,DT_INT16,v));
+}
+
 static int emit_push_string_literal(Compiler *c, const char *s){
   if(!emit_u32(&c->code,fw(OP_PUSH,DT_STRING,0))) return 0;
   uint32_t payload=(uint32_t)c->code.len;
@@ -216,6 +221,14 @@ static int emit_binary(Compiler *c, uint8_t op){
 
 static int emit_cmp(Compiler *c, uint8_t cmp){
   return emit_u32(&c->code,((uint32_t)OP_CMP<<24) | ((uint32_t)((DT_VAR<<4)|DT_VAR)<<16) | ((uint32_t)cmp<<8));
+}
+
+static int emit_conv(Compiler *c, uint8_t type1, uint8_t type2){
+  return emit_u32(&c->code,fw(OP_CONV,(uint8_t)((type2<<4)|(type1&0xF)),0));
+}
+
+static int emit_condition_bool(Compiler *c){
+  return c->expr_boolish || emit_conv(c,DT_VAR,DT_BOOL);
 }
 
 static void lx_skip(Lexer *l){
@@ -373,7 +386,10 @@ static int resolve_asset(Compiler *c, const char *name, double *out){
 }
 
 static int source_room_code_count(const GmlcProject *p){
-  return p->n_rooms>0 ? p->n_rooms : 1;
+  int n=0;
+  for(int i=0;i<p->n_rooms;i++)
+    if(p->rooms[i].creation_code_path && *p->rooms[i].creation_code_path) n++;
+  return n;
 }
 
 static int resolve_script_code_index(Compiler *c, const char *name, int *out){
@@ -449,18 +465,18 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   if(!strcmp(name,"vk_numpad2")){ *out=98; return 1; }
   if(!strcmp(name,"vk_numpad3")){ *out=99; return 1; }
   if(!strcmp(name,"vk_numpad5")){ *out=101; return 1; }
-  if(!strcmp(name,"gp_face1")){ *out=0; return 1; }
-  if(!strcmp(name,"gp_face2")){ *out=1; return 1; }
-  if(!strcmp(name,"gp_face3")){ *out=2; return 1; }
-  if(!strcmp(name,"gp_face4")){ *out=3; return 1; }
-  if(!strcmp(name,"gp_start")){ *out=6; return 1; }
-  if(!strcmp(name,"gp_shoulderr")){ *out=5; return 1; }
-  if(!strcmp(name,"gp_padr")){ *out=15; return 1; }
-  if(!strcmp(name,"gp_padl")){ *out=14; return 1; }
-  if(!strcmp(name,"gp_padu")){ *out=12; return 1; }
-  if(!strcmp(name,"gp_padd")){ *out=13; return 1; }
-  if(!strcmp(name,"gp_axislh")){ *out=0; return 1; }
-  if(!strcmp(name,"gp_axislv")){ *out=1; return 1; }
+  if(!strcmp(name,"gp_face1")){ *out=32769; return 1; }
+  if(!strcmp(name,"gp_face2")){ *out=32770; return 1; }
+  if(!strcmp(name,"gp_face3")){ *out=32771; return 1; }
+  if(!strcmp(name,"gp_face4")){ *out=32772; return 1; }
+  if(!strcmp(name,"gp_start")){ *out=32778; return 1; }
+  if(!strcmp(name,"gp_shoulderr")){ *out=32774; return 1; }
+  if(!strcmp(name,"gp_padr")){ *out=32784; return 1; }
+  if(!strcmp(name,"gp_padl")){ *out=32783; return 1; }
+  if(!strcmp(name,"gp_padu")){ *out=32781; return 1; }
+  if(!strcmp(name,"gp_padd")){ *out=32782; return 1; }
+  if(!strcmp(name,"gp_axislh")){ *out=32785; return 1; }
+  if(!strcmp(name,"gp_axislv")){ *out=32786; return 1; }
   return macro_value(c,name,out) || resolve_asset(c,name,out);
 }
 
@@ -975,7 +991,7 @@ enum {
 static int emit_lvalue_address(Compiler *c, LValue *lv){
   if(lv->is_stacktop){
     if(!emit_receiver_value(c,lv->receiver)) return 0;
-    if(!emit_push_real(c,-9)) return 0;
+    if(!emit_conv(c,DT_VAR,DT_INT32)) return 0;
   }
   else if(lv->is_array){
     if(!emit_push_real(c,lv->inst)) return 0;
@@ -994,7 +1010,8 @@ static int emit_lvalue_address(Compiler *c, LValue *lv){
 
 static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv);
 static int emit_lvalue_read(Compiler *c, LValue *lv);
-static int emit_popz(Compiler *c){ return emit_u32(&c->code,fw(OP_POPZ,0,0)); }
+static int emit_popz(Compiler *c){ return emit_u32(&c->code,fw(OP_POPZ,DT_VAR,0)); }
+static int emit_dup(Compiler *c, uint8_t type1){ return emit_u32(&c->code,fw(OP_DUP,type1,0)); }
 
 static int function_shape_at(const char *src, size_t pos){
   if(!word_match_at(src,pos,"function")) return 0;
@@ -1056,22 +1073,32 @@ static int parse_function_value(Compiler *c, int emit_value){
 }
 
 static int parse_primary(Compiler *c){
-  if(c->lex.tok.kind==TOK_NUM){ double d=c->lex.tok.num; lx_next(&c->lex); return emit_push_real(c,d); }
+  if(c->lex.tok.kind==TOK_NUM){ double d=c->lex.tok.num; lx_next(&c->lex); c->expr_boolish=0; return emit_push_real(c,d); }
   if(c->lex.tok.kind==TOK_STR){
     char value[128];
     snprintf(value,sizeof(value),"%s",c->lex.tok.text);
     lx_next(&c->lex);
+    c->expr_boolish=0;
     return emit_push_string_literal(c,value);
   }
   int allow_postfix_call=1;
   if(is_id(c,"function") && function_shape_at(c->lex.src,c->lex.tok.start)){
     if(!parse_function_value(c,1)) return 0;
+    c->expr_boolish=0;
     goto postfix_calls;
   }
   if(eat(c,"(")){ if(!parse_expr(c)) return 0; if(!need(c,")")) return 0; }
   if(c->lex.tok.kind==TOK_ID){
     char name[128]; snprintf(name,sizeof(name),"%s",c->lex.tok.text); lx_next(&c->lex);
     if(eat(c,"(")){
+      if(!strcmp(name,"ord") && c->lex.tok.kind==TOK_STR){
+        unsigned char ch=(unsigned char)c->lex.tok.text[0];
+        lx_next(&c->lex);
+        if(!need(c,")")) return 0;
+        if(!emit_push_real(c,(double)ch)) return 0;
+        c->expr_boolish=0;
+        goto postfix_calls;
+      }
       int argc=0;
       if(local_index(c,name)>=0 || !strncmp(name,"argument",8)){
         if(!emit_push_var(c,IT_LOCAL,name,0xA0)) return 0;
@@ -1081,6 +1108,7 @@ static int parse_primary(Compiler *c){
         if(!parse_call_args_reversed(c,&argc)) return 0;
         if(!emit_call(c,name,argc)) return 0;
       }
+      c->expr_boolish=0;
       allow_postfix_call=1;
       goto postfix_calls;
     }
@@ -1090,20 +1118,24 @@ static int parse_primary(Compiler *c){
       int ok=emit_lvalue_read(c,&lv);
       free(lv.index_src);
       if(!ok) return 0;
+      c->expr_boolish=0;
       goto postfix_calls;
     }
     double cv=0;
+    if(resolve_const(c,name,&cv)){
+      if(!emit_push_real(c,cv)) return 0;
+      c->expr_boolish=0;
+      goto postfix_calls;
+    }
     int sci=-1;
     if(resolve_function_code_index(c,name,&sci)){
       if(!emit_script_funcval(c,sci)) return 0;
-      goto postfix_calls;
-    }
-    if(resolve_const(c,name,&cv)){
-      if(!emit_push_real(c,cv)) return 0;
+      c->expr_boolish=0;
       goto postfix_calls;
     }
     int inst=(local_index(c,name)>=0 || !strncmp(name,"argument",8)) ? IT_LOCAL : IT_SELF;
     if(!emit_push_var(c,inst,name,0xA0)) return 0;
+    c->expr_boolish=0;
     goto postfix_calls;
   }
   if(allow_postfix_call) goto postfix_calls;
@@ -1117,69 +1149,130 @@ postfix_calls:
     int argc=0;
     if(!parse_call_args_reversed(c,&argc)) return 0;
     if(!emit_callv(c,argc)) return 0;
+    c->expr_boolish=0;
   }
   return 1;
 }
 
 static int parse_unary(Compiler *c){
-  if(eat(c,"!")){ if(!parse_unary(c)) return 0; return emit_u32(&c->code,fw(OP_NOT,(uint8_t)((DT_VAR<<4)|DT_VAR),0)); }
-  if(eat(c,"-")){ if(!parse_unary(c)) return 0; return emit_u32(&c->code,fw(OP_NEG,(uint8_t)((DT_VAR<<4)|DT_VAR),0)); }
+  if(eat(c,"!")){
+    if(!parse_unary(c) || !emit_conv(c,DT_VAR,DT_BOOL)) return 0;
+    if(!emit_u32(&c->code,fw(OP_NOT,DT_BOOL,0))) return 0;
+    c->expr_boolish=1;
+    return 1;
+  }
+  if(eat(c,"-")){ if(!parse_unary(c)) return 0; c->expr_boolish=0; return emit_u32(&c->code,fw(OP_NEG,(uint8_t)((DT_VAR<<4)|DT_VAR),0)); }
   return parse_primary(c);
 }
 
 static int parse_mul(Compiler *c){
   if(!parse_unary(c)) return 0;
+  int did=0;
   while(tok_is(c,"*")||tok_is(c,"/")||is_id(c,"div")||is_id(c,"mod")){
     int op=tok_is(c,"*")?OP_MUL:tok_is(c,"/")?OP_DIV:is_id(c,"div")?OP_REM:OP_MOD;
     lx_next(&c->lex);
     if(!parse_unary(c)) return 0;
     emit_binary(c,(uint8_t)op);
+    did=1;
   }
+  if(did) c->expr_boolish=0;
   return 1;
 }
 
 static int parse_add(Compiler *c){
   if(!parse_mul(c)) return 0;
+  int did=0;
   while(tok_is(c,"+")||tok_is(c,"-")){
     int sub=tok_is(c,"-"); lx_next(&c->lex);
     if(!parse_mul(c)) return 0;
     emit_binary(c,sub?OP_SUB:OP_ADD);
+    did=1;
   }
+  if(did) c->expr_boolish=0;
   return 1;
 }
 
 static int parse_cmp_expr(Compiler *c){
   if(!parse_add(c)) return 0;
+  int did=0;
   while(tok_is(c,"<")||tok_is(c,"<=")||tok_is(c,">")||tok_is(c,">=")){
     uint8_t cmp=tok_is(c,"<")?CMP_LT:tok_is(c,"<=")?CMP_LTE:tok_is(c,">")?CMP_GT:CMP_GTE;
     lx_next(&c->lex);
     if(!parse_add(c)) return 0;
     emit_cmp(c,cmp);
+    did=1;
   }
+  if(did) c->expr_boolish=1;
   return 1;
 }
 
 static int parse_eq(Compiler *c){
   if(!parse_cmp_expr(c)) return 0;
+  int did=0;
   while(tok_is(c,"==")||tok_is(c,"!=")){
     int ne=tok_is(c,"!="); lx_next(&c->lex);
     if(!parse_cmp_expr(c)) return 0;
     emit_cmp(c,ne?CMP_NEQ:CMP_EQ);
+    did=1;
   }
+  if(did) c->expr_boolish=1;
   return 1;
 }
 
 static int parse_and(Compiler *c){
   if(!parse_eq(c)) return 0;
-  while(tok_is(c,"&&")){ lx_next(&c->lex); if(!parse_eq(c)) return 0; emit_binary(c,OP_AND); }
+  size_t false_sites[128];
+  int n_false=0;
+  while(tok_is(c,"&&")){
+    lx_next(&c->lex);
+    if(n_false>=(int)(sizeof(false_sites)/sizeof(false_sites[0]))){
+      c->unsupported=1;
+      snprintf(c->lex.err,sizeof(c->lex.err),"too many logical-and terms");
+      return 0;
+    }
+    if(!emit_condition_bool(c)) return 0;
+    false_sites[n_false++]=emit_branch(c,OP_BF);
+    if(!parse_eq(c)) return 0;
+  }
+  if(n_false>0){
+    if(!emit_condition_bool(c)) return 0;
+    size_t b=emit_branch(c,OP_B);
+    size_t false_pos=c->code.len;
+    if(!emit_push_i16_full(c,0)) return 0;
+    for(int i=0;i<n_false;i++) patch_branch(c,false_sites[i],false_pos);
+    patch_branch(c,b,c->code.len);
+    c->expr_boolish=1;
+  }
   return 1;
 }
 
 static int parse_expr(Compiler *c){
   if(!parse_and(c)) return 0;
-  while(tok_is(c,"||")){ lx_next(&c->lex); if(!parse_and(c)) return 0; emit_binary(c,OP_OR); }
+  size_t true_sites[128];
+  int n_true=0;
+  while(tok_is(c,"||")){
+    lx_next(&c->lex);
+    if(n_true>=(int)(sizeof(true_sites)/sizeof(true_sites[0]))){
+      c->unsupported=1;
+      snprintf(c->lex.err,sizeof(c->lex.err),"too many logical-or terms");
+      return 0;
+    }
+    if(!emit_condition_bool(c)) return 0;
+    true_sites[n_true++]=emit_branch(c,OP_BT);
+    if(!parse_and(c)) return 0;
+  }
+  if(n_true>0){
+    if(!emit_condition_bool(c)) return 0;
+    size_t b=emit_branch(c,OP_B);
+    size_t true_pos=c->code.len;
+    if(!emit_push_i16_full(c,1)) return 0;
+    for(int i=0;i<n_true;i++) patch_branch(c,true_sites[i],true_pos);
+    patch_branch(c,b,c->code.len);
+    c->expr_boolish=1;
+  }
   if(tok_is(c,"?")){
     lx_next(&c->lex);
+    if(!emit_condition_bool(c)) return 0;
     size_t bf=emit_branch(c,OP_BF);
     if(!parse_expr(c)) return 0;
     if(!need(c,":")) return 0;
@@ -1187,6 +1280,7 @@ static int parse_expr(Compiler *c){
     patch_branch(c,bf,c->code.len);
     if(!parse_expr(c)) return 0;
     patch_branch(c,b,c->code.len);
+    c->expr_boolish=0;
   }
   return 1;
 }
@@ -1201,7 +1295,9 @@ static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv){
     if(c->lex.tok.kind!=TOK_ID){ c->unsupported=1; snprintf(c->lex.err,sizeof(c->lex.err),"expected field name"); return 0; }
     char field[128]; snprintf(field,sizeof(field),"%s",c->lex.tok.text); lx_next(&c->lex);
     double cv=0;
-    if(!strcmp(first,"global")) lv->inst=IT_GLOBAL;
+    if(!strcmp(first,"self")) lv->inst=IT_SELF;
+    else if(!strcmp(first,"other")) lv->inst=IT_OTHER;
+    else if(!strcmp(first,"global")) lv->inst=IT_GLOBAL;
     else if(resolve_asset(c,first,&cv)) lv->inst=(int)cv;
     else { lv->is_stacktop=1; lv->inst=IT_STACK; }
     snprintf(lv->name,sizeof(lv->name),"%s",field);
@@ -1242,6 +1338,7 @@ static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv){
         return 0;
       }
     } else {
+      if(!strcmp(lv->name,"argument")) lv->inst=IT_SELF;
       lv->is_array=1;
       if(find_top_comma(c->lex.src,lv->index_span,&comma)){
         lv->is_array_2d=1;
@@ -1262,7 +1359,7 @@ static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv){
 static int emit_lvalue_base_read(Compiler *c, LValue *lv){
   if(lv->is_stacktop){
     if(!emit_lvalue_address(c,lv)) return 0;
-    return emit_push_var(c,IT_STACK,lv->name,0x80);
+    return emit_push_var(c,0,lv->name,0x80);
   }
   return emit_push_var(c,lv->inst,lv->name,0xA0);
 }
@@ -1300,19 +1397,19 @@ static int emit_lvalue_read(Compiler *c, LValue *lv){
   if(lv->accessor) return emit_accessor_read(c,lv);
   if(lv->is_array){
     if(!emit_lvalue_address(c,lv)) return 0;
-    return emit_push_var(c,IT_SELF,lv->name,0x00);
+    return emit_push_var(c,0,lv->name,0x00);
   }
   if(lv->is_stacktop){
     if(!emit_lvalue_address(c,lv)) return 0;
-    return emit_push_var(c,IT_STACK,lv->name,0x80);
+    return emit_push_var(c,0,lv->name,0x80);
   }
   return emit_push_var(c,lv->inst,lv->name,0xA0);
 }
 
 static int emit_lvalue_write(Compiler *c, LValue *lv, uint8_t type1){
   if(lv->accessor) return emit_accessor_write(c,lv);
-  if(lv->is_array) return emit_pop_var(c,IT_SELF,lv->name,0x00,type1);
-  if(lv->is_stacktop) return emit_pop_var(c,IT_STACK,lv->name,0x80,type1);
+  if(lv->is_array) return emit_pop_var(c,0,lv->name,0x00,type1);
+  if(lv->is_stacktop) return emit_pop_var(c,0,lv->name,0x80,type1);
   return emit_pop_var(c,lv->inst,lv->name,0xA0,type1);
 }
 
@@ -1341,6 +1438,7 @@ static int parse_var_decl(Compiler *c){
 static int parse_if(Compiler *c){
   lx_next(&c->lex);
   if(!need(c,"(") || !parse_expr(c) || !need(c,")")) return 0;
+  if(!emit_condition_bool(c)) return 0;
   size_t bf=emit_branch(c,OP_BF);
   if(!parse_block_or_stmt(c)) return 0;
   if(is_id(c,"else")){
@@ -1359,6 +1457,7 @@ static int parse_while(Compiler *c){
   lx_next(&c->lex);
   size_t start=c->code.len;
   if(!need(c,"(") || !parse_expr(c) || !need(c,")")) return 0;
+  if(!emit_condition_bool(c)) return 0;
   int break_mark=c->n_break_sites;
   int continue_mark=c->n_continue_sites;
   c->continue_depth++;
@@ -1385,6 +1484,7 @@ static int parse_for(Compiler *c){
   size_t bf=(size_t)-1;
   if(parts[1].start<parts[1].end){
     if(!compile_expr_slice(c,src+parts[1].start,parts[1].end-parts[1].start)) return 0;
+    if(!emit_condition_bool(c)) return 0;
     bf=emit_branch(c,OP_BF);
   }
   c->lex.pos=close_pos+1;
@@ -1446,7 +1546,7 @@ static int parse_with(Compiler *c){
   size_t pop=emit_branch(c,OP_POPENV);
   patch_continues_from(c,continue_mark,pop);
   patch_branch(c,pop,body_start);
-  patch_branch(c,push,c->code.len);
+  patch_branch(c,push,pop);
   patch_breaks_from(c,break_mark,c->code.len);
   return 1;
 }
@@ -1454,10 +1554,6 @@ static int parse_with(Compiler *c){
 static int parse_switch(Compiler *c){
   lx_next(&c->lex);
   if(!need(c,"(") || !parse_expr(c) || !need(c,")")) return 0;
-  char tmpname[64];
-  snprintf(tmpname,sizeof(tmpname),"__gmlc_switch_%d",c->temp_id++);
-  if(!add_local(c,tmpname)) return 0;
-  if(!emit_pop_var(c,IT_LOCAL,tmpname,0xA0,DT_VAR)) return 0;
   Span body={0,0};
   size_t close_pos=0;
   if(!scan_brace_body(c,&body,&close_pos)) return 0;
@@ -1477,7 +1573,7 @@ static int parse_switch(Compiler *c){
   }
   for(int i=0;i<n_cases;i++){
     if(cases[i].is_default) continue;
-    if(!emit_push_var(c,IT_LOCAL,tmpname,0xA0) ||
+    if(!emit_dup(c,DT_VAR) ||
        !compile_expr_slice(c,c->lex.src+cases[i].label.start,cases[i].label.end-cases[i].label.start) ||
        !emit_cmp(c,CMP_EQ)){
       free(cases); free(targets); free(case_br); free(body_pos);
@@ -1496,10 +1592,11 @@ static int parse_switch(Compiler *c){
       }
     }
   }
-  size_t end=c->code.len;
+  size_t cleanup=c->code.len;
+  if(!emit_popz(c)){ free(cases); free(targets); free(case_br); free(body_pos); return 0; }
   for(int i=0;i<n_cases;i++) if(case_br[i]) patch_branch(c,case_br[i],body_pos[targets[i]]);
-  patch_branch(c,dispatch_end,default_idx>=0?body_pos[default_idx]:end);
-  patch_breaks_from(c,break_mark,end);
+  patch_branch(c,dispatch_end,default_idx>=0?body_pos[default_idx]:cleanup);
+  patch_breaks_from(c,break_mark,cleanup);
   c->lex.pos=close_pos+1;
   lx_next(&c->lex);
   free(cases); free(targets); free(case_br); free(body_pos);
@@ -1538,7 +1635,7 @@ static int parse_assignment_tail(Compiler *c, LValue *lv){
 }
 
 static int parse_simple_or_assign(Compiler *c){
-  if(c->lex.tok.kind!=TOK_ID){ if(!parse_expr(c)) return 0; eat(c,";"); emit_u32(&c->code,fw(OP_POPZ,0,0)); return 1; }
+  if(c->lex.tok.kind!=TOK_ID){ if(!parse_expr(c)) return 0; eat(c,";"); emit_popz(c); return 1; }
   char first[128]; snprintf(first,sizeof(first),"%s",c->lex.tok.text); lx_next(&c->lex);
   if(tok_is(c,"=")||tok_is(c,"+=")||tok_is(c,"-=")||tok_is(c,"*=")||tok_is(c,"/=")||tok_is(c,"++")||tok_is(c,"--")){
     LValue lv;
@@ -1564,7 +1661,7 @@ static int parse_simple_or_assign(Compiler *c){
       if(!emit_callv(c,argc)) return 0;
     }
     eat(c,";");
-    emit_u32(&c->code,fw(OP_POPZ,0,0));
+    emit_popz(c);
     return 1;
   }
   if(tok_is(c,"(")){
@@ -1574,23 +1671,23 @@ static int parse_simple_or_assign(Compiler *c){
       if(!emit_push_var(c,IT_LOCAL,first,0xA0)) return 0;
       if(!parse_call_args_reversed(c,&argc)) return 0;
       if(!emit_callv(c,argc)) return 0;
-      emit_u32(&c->code,fw(OP_POPZ,0,0));
+      emit_popz(c);
       eat(c,";");
       return 1;
     }
     if(!parse_call_args_reversed(c,&argc)) return 0;
     if(!emit_call(c,first,argc)) return 0;
-    emit_u32(&c->code,fw(OP_POPZ,0,0));
+    emit_popz(c);
     eat(c,";");
     return 1;
   }
   double cv=0;
   int sci=-1;
-  if(resolve_function_code_index(c,first,&sci)) emit_script_funcval(c,sci);
-  else if(resolve_const(c,first,&cv)) emit_push_real(c,cv);
+  if(resolve_const(c,first,&cv)) emit_push_real(c,cv);
+  else if(resolve_function_code_index(c,first,&sci)) emit_script_funcval(c,sci);
   else emit_push_var(c,(local_index(c,first)>=0 || !strncmp(first,"argument",8))?IT_LOCAL:IT_SELF,first,0xA0);
   eat(c,";");
-  emit_u32(&c->code,fw(OP_POPZ,0,0));
+  emit_popz(c);
   return 1;
 }
 
@@ -2035,6 +2132,7 @@ static int emit_param_prologue(Compiler *c, const char *params){
 static int compile_text_internal(const GmlcProject *project, const GmlcFunctionRegistry *funcs, int script_index, const char *source_path, const char *text, const char *params, GmlcCodeBlob *out, char *err, size_t errcap){
   Compiler c;
   memset(&c,0,sizeof(c));
+  int success=0;
   c.project=project;
   c.funcs=funcs;
   c.source_path=source_path;
@@ -2049,7 +2147,6 @@ static int compile_text_internal(const GmlcProject *project, const GmlcFunctionR
     if(!parse_statement(&c)) break;
   }
   if(!c.unsupported && c.lex.tok.kind==TOK_EOF){
-    emit_u32(&c.code,fw(OP_EXIT,0,0));
     out->data=c.code.data;
     out->size=c.code.len;
     out->refs=c.refs;
@@ -2058,6 +2155,7 @@ static int compile_text_internal(const GmlcProject *project, const GmlcFunctionR
     out->strings=c.strings;
     out->n_strings=c.n_strings;
     out->cap_strings=c.cap_strings;
+    success=1;
     c.code.data=NULL; c.refs=NULL; c.n_refs=c.cap_refs=0;
     c.strings=NULL; c.n_strings=c.cap_strings=0;
   } else {
@@ -2075,7 +2173,7 @@ static int compile_text_internal(const GmlcProject *project, const GmlcFunctionR
   for(int i=0;i<c.n_strings;i++) free(c.strings[i].value);
   free(c.strings);
   free(c.code.data);
-  if(out->data) return 1;
+  if(success) return 1;
   snprintf(err,errcap,"%s: compile failed",source_path?source_path:"<source>");
   return 0;
 }

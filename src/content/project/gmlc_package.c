@@ -10,6 +10,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
 #include "stb_image.h"
+#define STB_IMAGE_WRITE_STATIC
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
@@ -63,6 +66,11 @@ typedef struct {
 } CodeNameRef;
 
 typedef struct {
+  uint16_t sx, sy, sw, sh;
+  uint16_t atlas;
+} TexturePlacement;
+
+typedef struct {
   Buf b;
   Buf code_data;
   StrTab strs;
@@ -76,6 +84,9 @@ typedef struct {
   uint32_t *font_tpag_ptr;
   int n_frames;
   int n_texture_pages;
+  TexturePlacement *texture_place;
+  int n_texture_items;
+  int n_atlas_pages;
   CodeRef *code_refs;
   int n_code_refs, cap_code_refs;
   CodeBlobPatch *code_blob_patches;
@@ -101,6 +112,7 @@ static int reserve(Buf *b, size_t n){
 }
 
 static int wbytes(Buf *b, const void *p, size_t n){
+  if(n==0) return 1;
   if(!reserve(b,n)) return 0;
   memcpy(b->data+b->len,p,n);
   b->len+=n;
@@ -348,6 +360,161 @@ static int total_texture_pages(const GmlcProject *p){
   return total_sprite_frames(p) + p->n_fonts;
 }
 
+#define GMLC_ATLAS_DIM 2048
+#define GMLC_ATLAS_PAD 2
+
+typedef struct {
+  int idx, w, h;
+} TextureRequest;
+
+typedef struct {
+  int x, y, w, h;
+} PackRect;
+
+typedef struct {
+  PackRect *rects;
+  int n, cap;
+} PackPage;
+
+static int texture_request_cmp(const void *a, const void *b){
+  const TextureRequest *ra=(const TextureRequest*)a;
+  const TextureRequest *rb=(const TextureRequest*)b;
+  int aa=ra->w*ra->h, ab=rb->w*rb->h;
+  if(aa!=ab) return ab-aa;
+  if(ra->h!=rb->h) return rb->h-ra->h;
+  return rb->w-ra->w;
+}
+
+static int pack_page_add(PackPage *p, PackRect r){
+  if(r.w<=0 || r.h<=0) return 1;
+  if(p->n>=p->cap){
+    int nc=p->cap?p->cap*2:64;
+    PackRect *nr=(PackRect*)realloc(p->rects,(size_t)nc*sizeof(*nr));
+    if(!nr) return 0;
+    p->rects=nr; p->cap=nc;
+  }
+  p->rects[p->n++]=r;
+  return 1;
+}
+
+static int pack_rect_contains(PackRect a, PackRect b){
+  return b.x>=a.x && b.y>=a.y && b.x+b.w<=a.x+a.w && b.y+b.h<=a.y+a.h;
+}
+
+static void pack_page_prune(PackPage *p){
+  for(int i=0;i<p->n;i++){
+    for(int j=i+1;j<p->n;j++){
+      if(pack_rect_contains(p->rects[i],p->rects[j])){
+        memmove(&p->rects[j],&p->rects[j+1],(size_t)(p->n-j-1)*sizeof(*p->rects));
+        p->n--; j--;
+      } else if(pack_rect_contains(p->rects[j],p->rects[i])){
+        memmove(&p->rects[i],&p->rects[i+1],(size_t)(p->n-i-1)*sizeof(*p->rects));
+        p->n--; i--; break;
+      }
+    }
+  }
+}
+
+static int pack_page_split(PackPage *p, PackRect used){
+  for(int i=0;i<p->n;i++){
+    PackRect fr=p->rects[i];
+    if(used.x>=fr.x+fr.w || used.x+used.w<=fr.x || used.y>=fr.y+fr.h || used.y+used.h<=fr.y)
+      continue;
+    memmove(&p->rects[i],&p->rects[i+1],(size_t)(p->n-i-1)*sizeof(*p->rects));
+    p->n--; i--;
+    if(used.x>fr.x && !pack_page_add(p,(PackRect){fr.x,fr.y,used.x-fr.x,fr.h})) return 0;
+    if(used.x+used.w<fr.x+fr.w && !pack_page_add(p,(PackRect){used.x+used.w,fr.y,fr.x+fr.w-(used.x+used.w),fr.h})) return 0;
+    if(used.y>fr.y && !pack_page_add(p,(PackRect){fr.x,fr.y,fr.w,used.y-fr.y})) return 0;
+    if(used.y+used.h<fr.y+fr.h && !pack_page_add(p,(PackRect){fr.x,used.y+used.h,fr.w,fr.y+fr.h-(used.y+used.h)})) return 0;
+  }
+  pack_page_prune(p);
+  return 1;
+}
+
+static int pack_page_place(PackPage *p, int w, int h, int *out_x, int *out_y){
+  int rw=w+GMLC_ATLAS_PAD, rh=h+GMLC_ATLAS_PAD;
+  int best=-1, best_score=INT_MAX, best_y=INT_MAX, best_x=INT_MAX;
+  for(int i=0;i<p->n;i++){
+    PackRect fr=p->rects[i];
+    if(rw>fr.w || rh>fr.h) continue;
+    int score=fr.w*fr.h-rw*rh;
+    if(score<best_score || (score==best_score && (fr.y<best_y || (fr.y==best_y && fr.x<best_x)))){
+      best=i; best_score=score; best_y=fr.y; best_x=fr.x;
+    }
+  }
+  if(best<0) return 0;
+  PackRect fr=p->rects[best];
+  PackRect used={fr.x,fr.y,rw,rh};
+  *out_x=fr.x; *out_y=fr.y;
+  return pack_page_split(p,used);
+}
+
+static int build_texture_layout(Pkg *pkg, const GmlcProject *p){
+  int n=total_texture_pages(p);
+  pkg->n_texture_items=n;
+  pkg->texture_place=(TexturePlacement*)calloc((size_t)(n?n:1),sizeof(*pkg->texture_place));
+  if(!pkg->texture_place) return 0;
+  if(n<=0){
+    pkg->n_atlas_pages=0;
+    return 1;
+  }
+  TextureRequest *req=(TextureRequest*)calloc((size_t)n,sizeof(*req));
+  PackPage *pages=NULL;
+  if(!req) return 0;
+  int idx=0;
+  for(int i=0;i<p->n_sprites;i++){
+    const GmlcSprite *sp=&p->sprites[i];
+    for(int f=0;f<sp->n_frames;f++,idx++){
+      int w=sp->width>0?sp->width:1;
+      int h=sp->height>0?sp->height:1;
+      if(w+GMLC_ATLAS_PAD>GMLC_ATLAS_DIM || h+GMLC_ATLAS_PAD>GMLC_ATLAS_DIM){ free(req); return 0; }
+      req[idx]=(TextureRequest){idx,w,h};
+    }
+  }
+  for(int i=0;i<p->n_fonts;i++,idx++){
+    const GmlcFont *f=&p->fonts[i];
+    int w=f->width>0?f->width:1;
+    int h=f->height>0?f->height:1;
+    if(w+GMLC_ATLAS_PAD>GMLC_ATLAS_DIM || h+GMLC_ATLAS_PAD>GMLC_ATLAS_DIM){ free(req); return 0; }
+    req[idx]=(TextureRequest){idx,w,h};
+  }
+  qsort(req,(size_t)n,sizeof(*req),texture_request_cmp);
+  int n_pages=0, cap_pages=0;
+  for(int ri=0;ri<n;ri++){
+    TextureRequest *r=&req[ri];
+    int px=0, py=0, page=-1;
+    for(int pi=0;pi<n_pages;pi++){
+      if(pack_page_place(&pages[pi],r->w,r->h,&px,&py)){ page=pi; break; }
+    }
+    if(page<0){
+      if(n_pages>=cap_pages){
+        int nc=cap_pages?cap_pages*2:2;
+        PackPage *np=(PackPage*)realloc(pages,(size_t)nc*sizeof(*np));
+        if(!np){ free(req); return 0; }
+        pages=np;
+        memset(&pages[cap_pages],0,(size_t)(nc-cap_pages)*sizeof(*pages));
+        cap_pages=nc;
+      }
+      page=n_pages++;
+      if(!pack_page_add(&pages[page],(PackRect){0,0,GMLC_ATLAS_DIM,GMLC_ATLAS_DIM}) ||
+         !pack_page_place(&pages[page],r->w,r->h,&px,&py)){
+        for(int i=0;i<n_pages;i++) free(pages[i].rects);
+        free(pages); free(req);
+        return 0;
+      }
+    }
+    TexturePlacement *tp=&pkg->texture_place[r->idx];
+    tp->sx=(uint16_t)px; tp->sy=(uint16_t)py;
+    tp->sw=(uint16_t)r->w; tp->sh=(uint16_t)r->h;
+    tp->atlas=(uint16_t)page;
+  }
+  pkg->n_atlas_pages=n_pages;
+  for(int i=0;i<n_pages;i++) free(pages[i].rects);
+  free(pages);
+  free(req);
+  return 1;
+}
+
 static int global_frame_index(const GmlcProject *p, int sprite, int frame){
   int n=0;
   for(int i=0;i<sprite;i++) n += p->sprites[i].n_frames;
@@ -483,6 +650,7 @@ static int write_bgnd(Pkg *pkg, const GmlcProject *p){
 static int write_tpag(Pkg *pkg, const GmlcProject *p){
   pkg->n_frames=total_sprite_frames(p);
   pkg->n_texture_pages=total_texture_pages(p);
+  if(!build_texture_layout(pkg,p)) return 0;
   pkg->frame_tpag_ptr=(uint32_t*)calloc((size_t)(pkg->n_frames?pkg->n_frames:1),sizeof(uint32_t));
   pkg->font_tpag_ptr=(uint32_t*)calloc((size_t)(p->n_fonts?p->n_fonts:1),sizeof(uint32_t));
   if(!pkg->frame_tpag_ptr || !pkg->font_tpag_ptr) return 0;
@@ -497,12 +665,13 @@ static int write_tpag(Pkg *pkg, const GmlcProject *p){
       uint32_t rec=(uint32_t)pkg->b.len;
       pkg->frame_tpag_ptr[gf]=rec;
       patch32(&pkg->b,table+(size_t)gf*4,rec);
+      const TexturePlacement *tp=&pkg->texture_place[gf];
+      wu16(&pkg->b,tp->sx); wu16(&pkg->b,tp->sy);
+      wu16(&pkg->b,tp->sw); wu16(&pkg->b,tp->sh);
       wu16(&pkg->b,0); wu16(&pkg->b,0);
       wu16(&pkg->b,(uint16_t)sp->width); wu16(&pkg->b,(uint16_t)sp->height);
-      wu16(&pkg->b,0); wu16(&pkg->b,0);
       wu16(&pkg->b,(uint16_t)sp->width); wu16(&pkg->b,(uint16_t)sp->height);
-      wu16(&pkg->b,(uint16_t)sp->width); wu16(&pkg->b,(uint16_t)sp->height);
-      wu16(&pkg->b,(uint16_t)gf);
+      wu16(&pkg->b,tp->atlas);
     }
   }
   for(int i=0;i<p->n_fonts;i++){
@@ -510,12 +679,13 @@ static int write_tpag(Pkg *pkg, const GmlcProject *p){
     uint32_t rec=(uint32_t)pkg->b.len;
     pkg->font_tpag_ptr[i]=rec;
     patch32(&pkg->b,table+(size_t)(pkg->n_frames+i)*4,rec);
+    const TexturePlacement *tp=&pkg->texture_place[pkg->n_frames+i];
+    wu16(&pkg->b,tp->sx); wu16(&pkg->b,tp->sy);
+    wu16(&pkg->b,tp->sw); wu16(&pkg->b,tp->sh);
     wu16(&pkg->b,0); wu16(&pkg->b,0);
     wu16(&pkg->b,(uint16_t)f->width); wu16(&pkg->b,(uint16_t)f->height);
-    wu16(&pkg->b,0); wu16(&pkg->b,0);
     wu16(&pkg->b,(uint16_t)f->width); wu16(&pkg->b,(uint16_t)f->height);
-    wu16(&pkg->b,(uint16_t)f->width); wu16(&pkg->b,(uint16_t)f->height);
-    wu16(&pkg->b,(uint16_t)(pkg->n_frames+i));
+    wu16(&pkg->b,tp->atlas);
   }
   chunk_end(pkg,s);
   for(int i=0;i<pkg->n_frame_patches;i++){
@@ -544,9 +714,88 @@ static int read_blob(const char *path, uint8_t **out, size_t *out_len){
   return 1;
 }
 
+typedef struct {
+  Buf b;
+  int ok;
+} PngOut;
+
+static void png_out_write(void *ctx, void *data, int size){
+  PngOut *out=(PngOut*)ctx;
+  if(!out || !out->ok || size<=0) return;
+  if(!wbytes(&out->b,data,(size_t)size)) out->ok=0;
+}
+
+static int atlas_copy_png(uint8_t *atlas, int atlas_dim, const TexturePlacement *tp, const char *path, char *err, size_t errcap){
+  int w=0,h=0,comp=0;
+  unsigned char *rgba=path?stbi_load(path,&w,&h,&comp,4):NULL;
+  if(!rgba){
+    snprintf(err,errcap,"%s: texture image read failed",path?path:"<missing>");
+    return 0;
+  }
+  int cw=w<(int)tp->sw?w:(int)tp->sw;
+  int ch=h<(int)tp->sh?h:(int)tp->sh;
+  for(int y=0;y<ch;y++){
+    uint8_t *dst=atlas+(((size_t)tp->sy+(size_t)y)*(size_t)atlas_dim+(size_t)tp->sx)*4u;
+    const uint8_t *src=rgba+((size_t)y*(size_t)w)*4u;
+    memcpy(dst,src,(size_t)cw*4u);
+  }
+  stbi_image_free(rgba);
+  return 1;
+}
+
+static int write_atlas_blob(Pkg *pkg, const GmlcProject *p, int page, size_t blob_pos, char *err, size_t errcap){
+  size_t pixels_len=(size_t)GMLC_ATLAS_DIM*(size_t)GMLC_ATLAS_DIM*4u;
+  uint8_t *pixels=(uint8_t*)calloc(pixels_len?pixels_len:1,1);
+  if(!pixels){
+    snprintf(err,errcap,"out of memory while building texture atlas");
+    return 0;
+  }
+  int idx=0;
+  for(int i=0;i<p->n_sprites;i++){
+    const GmlcSprite *sp=&p->sprites[i];
+    for(int f=0;f<sp->n_frames;f++,idx++){
+      const TexturePlacement *tp=&pkg->texture_place[idx];
+      if(tp->atlas!=(uint16_t)page) continue;
+      const char *path=(sp->frame_paths && sp->frame_paths[f]) ? sp->frame_paths[f] : NULL;
+      if(!atlas_copy_png(pixels,GMLC_ATLAS_DIM,tp,path,err,errcap)){
+        free(pixels);
+        return 0;
+      }
+    }
+  }
+  for(int i=0;i<p->n_fonts;i++,idx++){
+    const TexturePlacement *tp=&pkg->texture_place[idx];
+    if(tp->atlas!=(uint16_t)page) continue;
+    if(!atlas_copy_png(pixels,GMLC_ATLAS_DIM,tp,p->fonts[i].png_path,err,errcap)){
+      free(pixels);
+      return 0;
+    }
+  }
+  PngOut out;
+  memset(&out,0,sizeof(out));
+  out.ok=1;
+  stbi_write_png_compression_level=8;
+  int wrote=stbi_write_png_to_func(png_out_write,&out,GMLC_ATLAS_DIM,GMLC_ATLAS_DIM,4,pixels,GMLC_ATLAS_DIM*4);
+  free(pixels);
+  if(!wrote || !out.ok || out.b.len==0){
+    free(out.b.data);
+    snprintf(err,errcap,"texture atlas PNG encode failed");
+    return 0;
+  }
+  while(pkg->b.len % 0x80) wu8(&pkg->b,0);
+  patch32(&pkg->b,blob_pos,(uint32_t)pkg->b.len);
+  int ok=wbytes(&pkg->b,out.b.data,out.b.len);
+  free(out.b.data);
+  if(!ok){
+    snprintf(err,errcap,"out of memory while writing texture atlas");
+    return 0;
+  }
+  while(pkg->b.len % 4) wu8(&pkg->b,0);
+  return 1;
+}
+
 static int write_txtr(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
-  int nf=total_texture_pages(p);
-  int sprite_frames=total_sprite_frames(p);
+  int nf=pkg->n_atlas_pages;
   size_t s=chunk_begin(pkg,"TXTR");
   wu32(&pkg->b,(uint32_t)nf);
   size_t table=pkg->b.len;
@@ -559,34 +808,11 @@ static int write_txtr(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
     blob_patch[i]=pkg->b.len;
     wu32(&pkg->b,0);
   }
-  int gf=0;
-  for(int i=0;i<p->n_sprites;i++){
-    const GmlcSprite *sp=&p->sprites[i];
-    for(int f=0;f<sp->n_frames;f++,gf++){
-      uint8_t *blob=NULL; size_t blen=0;
-      if(!sp->frame_paths || !sp->frame_paths[f] || !read_blob(sp->frame_paths[f],&blob,&blen)){
-        snprintf(err,errcap,"%s: sprite frame read failed",sp->frame_paths&&sp->frame_paths[f]?sp->frame_paths[f]:"<missing>");
-        free(blob_patch);
-        return 0;
-      }
-      while(pkg->b.len % 0x80) wu8(&pkg->b,0);
-      patch32(&pkg->b,blob_patch[gf],(uint32_t)pkg->b.len);
-      wbytes(&pkg->b,blob,blen);
-      free(blob);
-    }
-  }
-  for(int i=0;i<p->n_fonts;i++){
-    const GmlcFont *font=&p->fonts[i];
-    uint8_t *blob=NULL; size_t blen=0;
-    if(!font->png_path || !read_blob(font->png_path,&blob,&blen)){
-      snprintf(err,errcap,"%s: font texture read failed",font->png_path?font->png_path:"<missing>");
+  for(int i=0;i<nf;i++){
+    if(!write_atlas_blob(pkg,p,i,blob_patch[i],err,errcap)){
       free(blob_patch);
       return 0;
     }
-    while(pkg->b.len % 0x80) wu8(&pkg->b,0);
-    patch32(&pkg->b,blob_patch[sprite_frames+i],(uint32_t)pkg->b.len);
-    wbytes(&pkg->b,blob,blen);
-    free(blob);
   }
   free(blob_patch);
   chunk_end(pkg,s);
@@ -599,8 +825,14 @@ static int total_object_events(const GmlcProject *p){
   return n;
 }
 
+static int room_has_creation_code(const GmlcRoom *r){
+  return r && r->creation_code_path && *r->creation_code_path;
+}
+
 static int room_code_count(const GmlcProject *p){
-  return p->n_rooms>0 ? p->n_rooms : 1;
+  int n=0;
+  for(int i=0;i<p->n_rooms;i++) if(room_has_creation_code(&p->rooms[i])) n++;
+  return n;
 }
 
 static int script_code_index(const GmlcProject *p, int script_index){
@@ -639,13 +871,29 @@ static int room_instance_creation_code_index(const GmlcProject *p, int room_inde
   return idx;
 }
 
+static void id_token(char *dst, size_t cap, const char *src){
+  if(!dst || cap==0) return;
+  size_t j=0;
+  if(src){
+    for(size_t i=0;src[i] && j+1<cap;i++) dst[j++]=(src[i]=='-')?'_':src[i];
+  }
+  dst[j]=0;
+}
+
 static const char *event_suffix(const GmlcObjectEvent *ev, char *buf, size_t cap){
   switch(ev->event_type){
     case 0: snprintf(buf,cap,"Create_0"); break;
     case 1: snprintf(buf,cap,"Destroy_0"); break;
     case 2: snprintf(buf,cap,"Alarm_%d",ev->event_number); break;
     case 3: snprintf(buf,cap,"Step_%d",ev->event_number); break;
-    case 4: snprintf(buf,cap,"Collision_%d",ev->collision_object_id); break;
+    case 4:
+      if(ev->collision_id && *ev->collision_id && strcmp(ev->collision_id,"00000000-0000-0000-0000-000000000000")){
+        char idbuf[64];
+        id_token(idbuf,sizeof(idbuf),ev->collision_id);
+        snprintf(buf,cap,"Collision_%s",idbuf);
+      }
+      else snprintf(buf,cap,"Collision_%d",ev->collision_object_id);
+      break;
     case 5: snprintf(buf,cap,"Keyboard_%d",ev->event_number); break;
     case 6: snprintf(buf,cap,"Mouse_%d",ev->event_number); break;
     case 7: snprintf(buf,cap,"Other_%d",ev->event_number); break;
@@ -658,7 +906,7 @@ static const char *event_suffix(const GmlcObjectEvent *ev, char *buf, size_t cap
 }
 
 static char *object_event_code_name(const GmlcObject *obj, const GmlcObjectEvent *ev){
-  char suffix[64];
+  char suffix[96];
   event_suffix(ev,suffix,sizeof(suffix));
   size_t n=strlen(obj->name?obj->name:"")+strlen(suffix)+16;
   char *out=(char*)malloc(n);
@@ -1393,12 +1641,12 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   }
   int ci=0;
   int ok=0;
-  for(int i=0;i<room_code_count(p);i++){
+  for(int i=0;i<p->n_rooms;i++){
+    if(!room_has_creation_code(&p->rooms[i])) continue;
     char name[64];
     snprintf(name,sizeof(name),"gml_RoomCC_%d",i);
     int sid=intern(pkg,name);
-    const char *path=(i<p->n_rooms)?p->rooms[i].creation_code_path:NULL;
-    if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,sid,path,err,errcap)) goto done;
+    if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,sid,p->rooms[i].creation_code_path,err,errcap)) goto done;
   }
   for(int i=0;i<p->n_scripts;i++){
     char *name=script_code_name(&p->scripts[i]);
@@ -1558,6 +1806,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
     free(pkg.strs.items); free(pkg.strs.char_off); free(pkg.patches);
     free(pkg.frame_patches); free(pkg.font_patches);
     free(pkg.frame_tpag_ptr); free(pkg.font_tpag_ptr);
+    free(pkg.texture_place);
     free(pkg.code_blob_patches);
     free(pkg.code_name_refs);
     for(int i=0;i<pkg.n_code_refs;i++) free(pkg.code_refs[i].name);
@@ -1572,6 +1821,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
   free(pkg.strs.items); free(pkg.strs.char_off); free(pkg.patches);
   free(pkg.frame_patches); free(pkg.font_patches);
   free(pkg.frame_tpag_ptr); free(pkg.font_tpag_ptr);
+  free(pkg.texture_place);
   free(pkg.code_blob_patches);
   free(pkg.code_name_refs);
   for(int i=0;i<pkg.n_code_refs;i++) free(pkg.code_refs[i].name);

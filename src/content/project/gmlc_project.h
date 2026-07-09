@@ -79,9 +79,11 @@ typedef struct {
 } GmlcRoom;
 
 typedef struct {
+  char *id;
   int event_type;
   int event_number;
   int collision_object_id;
+  char *collision_id;
   char *source_path;
 } GmlcObjectEvent;
 
@@ -158,6 +160,8 @@ typedef struct {
   int n_sounds, cap_sounds;
   GmlcScript *scripts;
   int n_scripts, cap_scripts;
+  char **script_order_ids;
+  int n_script_order;
   GmlcObject *objects;
   int n_objects, cap_objects;
   GmlcRoom *rooms;

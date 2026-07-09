@@ -1920,6 +1920,17 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
       int sz=gml_decode_bc(d,pc,w->bytecode,&in); if(!sz) break;
       nextpc=pc+(uint32_t)sz;
     }
+    int prev_conv_v_i32=0;
+    if(use_cache){
+      if(ip>0){
+        GmlInsn *prev=&cached_ins[ip-1];
+        prev_conv_v_i32 = prev->kind==OP_CONV && prev->type1==DT_VAR && prev->type2==DT_INT32;
+      }
+    } else if(pc>=start+4){
+      GmlInsn prev;
+      if(gml_decode_bc(d,pc-4,w->bytecode,&prev)==4)
+        prev_conv_v_i32 = prev.kind==OP_CONV && prev.type1==DT_VAR && prev.type2==DT_INT32;
+    }
     if(trace){
       const char *rn = (in.kind==OP_CALL || in.kind==OP_PUSH || in.kind==OP_POP) ? (in.refname?in.refname:gml_ref_name(w,in.refaddr)) : "";
       fprintf(stderr,"  %4u: %-7s t1=%x rt=%02x inst=%d  sp=%d %s\n",pc-start,gml_op_mnemonic(in.kind),in.type1,in.reftype,in.inst,sp,rn); }
@@ -2010,6 +2021,10 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
              * where mis-routing this to var_get(-9) read nobody and every struct method call got 0. */
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
             GmlInstance *t=vm_inst_from_ref(vm,iv); v=t?inst_get_any_h(vm,t,nm,nh):vreal(0);
+          } else if(in.inst==0 && in.reftype==0xA0 && prev_conv_v_i32){
+            GmlVal iv=sp>0?stk[--sp]:vreal(0);
+            GmlInstance *t=vm_inst_from_ref(vm,iv);
+            v=t?inst_get_any_h(vm,t,nm,nh):vreal(0);
           } else if(in.inst==IT_LOCAL){
             if(argument_get(vm,nm,&v)){}
             else { GmlVal *pp=gml_varmap_get_h(&locals,nm,nh); v=pp?*pp:vreal(0); }
@@ -2065,6 +2080,13 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
            GC_PERSIST(val);
            GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(t,nm,nh,val);
         } else {
+          if(in.inst==0 && in.reftype==0xA0 && prev_conv_v_i32){
+            GmlVal iv=sp>0?stk[--sp]:vreal(0);
+            GmlVal v=sp>0?stk[--sp]:vreal(0);
+            GC_PERSIST(v);
+            GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(t,nm,nh,v);
+            break;
+          }
           GmlVal v = sp>0? stk[--sp] : vreal(0);
           /* locals/arguments die at scope exit, so their owned strings stay tracked and are freed
            * then (str_gc). Only instance/global stores persist beyond the run — untrack those so the
