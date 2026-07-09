@@ -17,6 +17,8 @@ static uint32_t u32(const uint8_t *d, uint32_t o){
 static float f32(const uint8_t *d, uint32_t o){ uint32_t v=u32(d,o); float f; memcpy(&f,&v,4); return f; }
 static const char *g_cur_code_name;
 static GmlVM *g_cur_vm;
+static int inst_is_struct_ref(const GmlInstance *in);
+static void method_cache_invalidate(GmlInstance *in, const char *nm);
 
 /* ---------------- var map (key = interned name pointer) ---------------- */
 /* hash/compare keys by CONTENT (FNV-1a + strcmp), not pointer identity: VM names come from
@@ -548,6 +550,10 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   }
   GmlInstance *self = var_target(vm,inst);
   if(self){
+    if(inst_is_struct_ref(self)){
+      GmlVal *p=gml_varmap_get_h(&self->vars,name,nh);
+      return p?*p:vreal(0);
+    }
     /* image_number = frame count of the current sprite (needs the renderer) */
     if(!strcmp(name,"image_number")){ GmlRender *R=(GmlRender*)vm->render;
       return vreal(R? gml_sprite_frames(R,(int)self->sprite_index):0); }
@@ -584,7 +590,10 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
       return;
     }
     GmlInstance *self=var_target(vm,inst);
-    if(self) *gml_varmap_put_h(&self->vars,name,nh)=v;
+    if(self){
+      if(inst_is_struct_ref(self)) method_cache_invalidate(self,name);
+      *gml_varmap_put_h(&self->vars,name,nh)=v;
+    }
     return;
   }
   if(!strcmp(name,"room")){ vm->pending_room=(int)asnum(v); return; }  /* GM: room=X -> goto room */
@@ -602,6 +611,11 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
   }
   GmlInstance *self = var_target(vm,inst);
   if(self){
+    if(inst_is_struct_ref(self)){
+      method_cache_invalidate(self,name);
+      *gml_varmap_put_h(&self->vars,name,nh)=v;
+      return;
+    }
     if(inst_builtin_set(self,name,v)) return;
     *gml_varmap_put_h(&self->vars,name,nh)=v;
   }
