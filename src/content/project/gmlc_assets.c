@@ -73,6 +73,17 @@ static int add_room(GmlcProject *p, GmlcRoom *r){
   return 1;
 }
 
+static int add_shader(GmlcProject *p, GmlcShader *s){
+  if(p->n_shaders>=p->cap_shaders){
+    int nc=p->cap_shaders?p->cap_shaders*2:16;
+    GmlcShader *ns=(GmlcShader*)realloc(p->shaders,(size_t)nc*sizeof(*ns));
+    if(!ns) return 0;
+    p->shaders=ns; p->cap_shaders=nc;
+  }
+  p->shaders[p->n_shaders++]=*s;
+  return 1;
+}
+
 static int room_add_instance(GmlcRoom *r, GmlcRoomInstance *in){
   if(r->n_instances>=r->cap_instances){
     int nc=r->cap_instances?r->cap_instances*2:32;
@@ -135,6 +146,21 @@ static void free_room_fields(GmlcRoom *r){
   free(r->instances);
   for(int l=0;l<r->n_layers;l++) free_room_layer_fields(&r->layers[l]);
   free(r->layers);
+}
+
+static char *read_text_file(const char *path){
+  FILE *f=fopen(path,"rb");
+  if(!f) return NULL;
+  fseek(f,0,SEEK_END);
+  long sz=ftell(f);
+  rewind(f);
+  if(sz<0){ fclose(f); return NULL; }
+  char *buf=(char*)malloc((size_t)sz+1);
+  if(!buf){ fclose(f); return NULL; }
+  if(fread(buf,1,(size_t)sz,f)!=(size_t)sz){ fclose(f); free(buf); return NULL; }
+  fclose(f);
+  buf[sz]=0;
+  return buf;
 }
 
 static int parse_u32_color(const GmlcJson *v, uint32_t fallback){
@@ -250,6 +276,31 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
       return 0;
     }
   }
+  return 1;
+}
+
+static int parse_shader(GmlcProject *p, const GmlcResource *res, const GmlcJson *yy, char *err, size_t errcap){
+  GmlcShader s;
+  memset(&s,0,sizeof(s));
+  s.id=gmlc_strdup(res->id);
+  s.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(yy,"name"),res->name?res->name:""));
+  char *dir=gmlc_path_dirname(res->abs_path);
+  size_t n=strlen(s.name?s.name:"")+5;
+  char *vfile=(char*)malloc(n);
+  char *ffile=(char*)malloc(n);
+  if(vfile) snprintf(vfile,n,"%s.vsh",s.name?s.name:"");
+  if(ffile) snprintf(ffile,n,"%s.fsh",s.name?s.name:"");
+  char *vpath=gmlc_path_join(dir,vfile?vfile:"");
+  char *fpath=gmlc_path_join(dir,ffile?ffile:"");
+  s.vertex_source=read_text_file(vpath);
+  s.fragment_source=read_text_file(fpath);
+  if(!s.id || !s.name || !s.vertex_source || !s.fragment_source || !add_shader(p,&s)){
+    snprintf(err,errcap,"failed to load shader source for %s",s.name?s.name:"shader resource");
+    free(s.id); free(s.name); free(s.vertex_source); free(s.fragment_source);
+    free(dir); free(vfile); free(ffile); free(vpath); free(fpath);
+    return 0;
+  }
+  free(dir); free(vfile); free(ffile); free(vpath); free(fpath);
   return 1;
 }
 
@@ -443,7 +494,7 @@ static int load_one(GmlcProject *p, GmlcResource *r, char *err, size_t errcap){
     case GMLC_RES_SCRIPT: ok=parse_script(p,r,yy,err,errcap); break;
     case GMLC_RES_OBJECT: ok=parse_object(p,r,yy,err,errcap); break;
     case GMLC_RES_ROOM: ok=parse_room(p,r,yy,err,errcap); break;
-    case GMLC_RES_SHADER: p->n_shaders++; break;
+    case GMLC_RES_SHADER: ok=parse_shader(p,r,yy,err,errcap); break;
     case GMLC_RES_FONT: p->n_fonts++; break;
     default: break;
   }

@@ -454,17 +454,21 @@ static int write_shdr(Pkg *pkg, const GmlcProject *p){
   wu32(&pkg->b,n);
   size_t table=pkg->b.len;
   zfill(&pkg->b,(size_t)n*4);
-  uint32_t out_i=0;
-  for(int i=0;i<p->n_resources;i++){
-    const GmlcResource *r=&p->resources[i];
-    if(r->kind!=GMLC_RES_SHADER) continue;
-    patch32(&pkg->b,table+(size_t)out_i*4,(uint32_t)pkg->b.len);
-    int sid=intern(pkg,r->name?r->name:"");
+  for(uint32_t i=0;i<n;i++){
+    const GmlcShader *sh=&p->shaders[i];
+    patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
+    int sid=intern(pkg,sh->name?sh->name:"");
+    int vsid=intern(pkg,sh->vertex_source?sh->vertex_source:"");
+    int fsid=intern(pkg,sh->fragment_source?sh->fragment_source:"");
+    if(sid<0 || vsid<0 || fsid<0) return 0;
     wstrptr(pkg,sid);
     wu32(&pkg->b,0x80000001u);
-    wu32(&pkg->b,0);
-    wu32(&pkg->b,0);
-    out_i++;
+    wstrptr(pkg,vsid);
+    wstrptr(pkg,fsid);
+    wstrptr(pkg,vsid);
+    wstrptr(pkg,fsid);
+    wstrptr(pkg,vsid);
+    wstrptr(pkg,fsid);
   }
   chunk_end(pkg,s);
   return 1;

@@ -95,6 +95,11 @@ void gmlc_project_free(GmlcProject *p){
     free(r->layers);
   }
   free(p->rooms);
+  for(int i=0;i<p->n_shaders;i++){
+    free(p->shaders[i].id); free(p->shaders[i].name);
+    free(p->shaders[i].vertex_source); free(p->shaders[i].fragment_source);
+  }
+  free(p->shaders);
   memset(p,0,sizeof(*p));
 }
 

@@ -113,6 +113,13 @@ typedef struct {
 } GmlcSound;
 
 typedef struct {
+  char *id;
+  char *name;
+  char *vertex_source;
+  char *fragment_source;
+} GmlcShader;
+
+typedef struct {
   char *root_dir;
   char *yyp_path;
   char *name;
@@ -130,7 +137,9 @@ typedef struct {
   int n_rooms, cap_rooms;
   int next_instance_id;
   int next_layer_id;
-  int n_shaders, n_fonts;
+  GmlcShader *shaders;
+  int n_shaders, cap_shaders;
+  int n_fonts;
 } GmlcProject;
 
 void gmlc_project_init(GmlcProject *p);
