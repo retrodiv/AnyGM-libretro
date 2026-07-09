@@ -29,6 +29,11 @@ typedef struct {
 } FramePatch;
 
 typedef struct {
+  uint32_t pos;
+  int font;
+} FontPatch;
+
+typedef struct {
   char *name;
   GmlcRefKind kind;
   uint32_t instr_abs;
@@ -43,8 +48,12 @@ typedef struct {
   int n_patches, cap_patches;
   FramePatch *frame_patches;
   int n_frame_patches, cap_frame_patches;
+  FontPatch *font_patches;
+  int n_font_patches, cap_font_patches;
   uint32_t *frame_tpag_ptr;
+  uint32_t *font_tpag_ptr;
   int n_frames;
+  int n_texture_pages;
   CodeRef *code_refs;
   int n_code_refs, cap_code_refs;
   int refs_patched;
@@ -115,6 +124,19 @@ static int add_frame_patch(Pkg *p, uint32_t pos, int frame){
   p->frame_patches[p->n_frame_patches].pos=pos;
   p->frame_patches[p->n_frame_patches].frame=frame;
   p->n_frame_patches++;
+  return 1;
+}
+
+static int add_font_patch(Pkg *p, uint32_t pos, int font){
+  if(p->n_font_patches>=p->cap_font_patches){
+    int nc=p->cap_font_patches?p->cap_font_patches*2:16;
+    FontPatch *np=(FontPatch*)realloc(p->font_patches,(size_t)nc*sizeof(*np));
+    if(!np) return 0;
+    p->font_patches=np; p->cap_font_patches=nc;
+  }
+  p->font_patches[p->n_font_patches].pos=pos;
+  p->font_patches[p->n_font_patches].font=font;
+  p->n_font_patches++;
   return 1;
 }
 
@@ -235,6 +257,10 @@ static int total_sprite_frames(const GmlcProject *p){
   return n;
 }
 
+static int total_texture_pages(const GmlcProject *p){
+  return total_sprite_frames(p) + p->n_fonts;
+}
+
 static int global_frame_index(const GmlcProject *p, int sprite, int frame){
   int n=0;
   for(int i=0;i<sprite;i++) n += p->sprites[i].n_frames;
@@ -279,12 +305,14 @@ static int write_sprt(Pkg *pkg, const GmlcProject *p){
 
 static int write_tpag(Pkg *pkg, const GmlcProject *p){
   pkg->n_frames=total_sprite_frames(p);
+  pkg->n_texture_pages=total_texture_pages(p);
   pkg->frame_tpag_ptr=(uint32_t*)calloc((size_t)(pkg->n_frames?pkg->n_frames:1),sizeof(uint32_t));
-  if(!pkg->frame_tpag_ptr) return 0;
+  pkg->font_tpag_ptr=(uint32_t*)calloc((size_t)(p->n_fonts?p->n_fonts:1),sizeof(uint32_t));
+  if(!pkg->frame_tpag_ptr || !pkg->font_tpag_ptr) return 0;
   size_t s=chunk_begin(pkg,"TPAG");
-  wu32(&pkg->b,(uint32_t)pkg->n_frames);
+  wu32(&pkg->b,(uint32_t)pkg->n_texture_pages);
   size_t table=pkg->b.len;
-  zfill(&pkg->b,(size_t)pkg->n_frames*4);
+  zfill(&pkg->b,(size_t)pkg->n_texture_pages*4);
   int gf=0;
   for(int i=0;i<p->n_sprites;i++){
     const GmlcSprite *sp=&p->sprites[i];
@@ -301,10 +329,27 @@ static int write_tpag(Pkg *pkg, const GmlcProject *p){
       wu16(&pkg->b,0);
     }
   }
+  for(int i=0;i<p->n_fonts;i++){
+    const GmlcFont *f=&p->fonts[i];
+    uint32_t rec=(uint32_t)pkg->b.len;
+    pkg->font_tpag_ptr[i]=rec;
+    patch32(&pkg->b,table+(size_t)(pkg->n_frames+i)*4,rec);
+    wu16(&pkg->b,0); wu16(&pkg->b,0);
+    wu16(&pkg->b,(uint16_t)f->width); wu16(&pkg->b,(uint16_t)f->height);
+    wu16(&pkg->b,0); wu16(&pkg->b,0);
+    wu16(&pkg->b,(uint16_t)f->width); wu16(&pkg->b,(uint16_t)f->height);
+    wu16(&pkg->b,(uint16_t)f->width); wu16(&pkg->b,(uint16_t)f->height);
+    wu16(&pkg->b,(uint16_t)(pkg->n_frames+i));
+    wu16(&pkg->b,0);
+  }
   chunk_end(pkg,s);
   for(int i=0;i<pkg->n_frame_patches;i++){
     FramePatch *fp=&pkg->frame_patches[i];
     if(fp->frame>=0 && fp->frame<pkg->n_frames) patch32(&pkg->b,fp->pos,pkg->frame_tpag_ptr[fp->frame]);
+  }
+  for(int i=0;i<pkg->n_font_patches;i++){
+    FontPatch *fp=&pkg->font_patches[i];
+    if(fp->font>=0 && fp->font<p->n_fonts) patch32(&pkg->b,fp->pos,pkg->font_tpag_ptr[fp->font]);
   }
   return 1;
 }
@@ -325,7 +370,8 @@ static int read_blob(const char *path, uint8_t **out, size_t *out_len){
 }
 
 static int write_txtr(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
-  int nf=total_sprite_frames(p);
+  int nf=total_texture_pages(p);
+  int sprite_frames=total_sprite_frames(p);
   size_t s=chunk_begin(pkg,"TXTR");
   wu32(&pkg->b,(uint32_t)nf);
   size_t table=pkg->b.len;
@@ -352,6 +398,18 @@ static int write_txtr(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
       wbytes(&pkg->b,blob,blen);
       free(blob);
     }
+  }
+  for(int i=0;i<p->n_fonts;i++){
+    const GmlcFont *font=&p->fonts[i];
+    uint8_t *blob=NULL; size_t blen=0;
+    if(!font->png_path || !read_blob(font->png_path,&blob,&blen)){
+      snprintf(err,errcap,"%s: font texture read failed",font->png_path?font->png_path:"<missing>");
+      free(blob_patch);
+      return 0;
+    }
+    patch32(&pkg->b,blob_patch[sprite_frames+i],(uint32_t)pkg->b.len);
+    wbytes(&pkg->b,blob,blen);
+    free(blob);
   }
   free(blob_patch);
   chunk_end(pkg,s);
@@ -469,6 +527,47 @@ static int write_shdr(Pkg *pkg, const GmlcProject *p){
     wstrptr(pkg,fsid);
     wstrptr(pkg,vsid);
     wstrptr(pkg,fsid);
+  }
+  chunk_end(pkg,s);
+  return 1;
+}
+
+static int write_font(Pkg *pkg, const GmlcProject *p){
+  size_t s=chunk_begin(pkg,"FONT");
+  uint32_t n=(uint32_t)p->n_fonts;
+  wu32(&pkg->b,n);
+  size_t table=pkg->b.len;
+  zfill(&pkg->b,(size_t)n*4);
+  for(uint32_t i=0;i<n;i++){
+    const GmlcFont *font=&p->fonts[i];
+    patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
+    int sid=intern(pkg,font->name?font->name:"");
+    wstrptr(pkg,sid);
+    wu32(&pkg->b,0);
+    wi32(&pkg->b,font->em_size>0?font->em_size:12);
+    wu32(&pkg->b,0);
+    wu32(&pkg->b,0);
+    wu32(&pkg->b,0);
+    wu32(&pkg->b,0);
+    uint32_t tex_pos=(uint32_t)pkg->b.len;
+    wu32(&pkg->b,0);
+    if(!add_font_patch(pkg,tex_pos,(int)i)) return 0;
+    wf32(&pkg->b,1.0f);
+    wf32(&pkg->b,1.0f);
+    wu32(&pkg->b,(uint32_t)font->n_glyphs);
+    size_t gtable=pkg->b.len;
+    zfill(&pkg->b,(size_t)font->n_glyphs*4);
+    for(int g=0;g<font->n_glyphs;g++){
+      const GmlcFontGlyph *gl=&font->glyphs[g];
+      patch32(&pkg->b,gtable+(size_t)g*4,(uint32_t)pkg->b.len);
+      wu16(&pkg->b,(uint16_t)gl->ch);
+      wu16(&pkg->b,(uint16_t)gl->x);
+      wu16(&pkg->b,(uint16_t)gl->y);
+      wu16(&pkg->b,(uint16_t)gl->w);
+      wu16(&pkg->b,(uint16_t)gl->h);
+      wu16(&pkg->b,(uint16_t)gl->shift);
+      wu16(&pkg->b,(uint16_t)gl->offset);
+    }
   }
   chunk_end(pkg,s);
   return 1;
@@ -906,7 +1005,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
      !write_scpt(&pkg,p) ||
      !empty_list_chunk(&pkg,"GLOB") ||
      !write_shdr(&pkg,p) ||
-     !empty_list_chunk(&pkg,"FONT") ||
+     !write_font(&pkg,p) ||
      !empty_list_chunk(&pkg,"TMLN") ||
      !write_objt(&pkg,p) ||
      !write_room_chunk(&pkg,p) ||
@@ -923,7 +1022,8 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
     free(pkg.b.data);
     for(int i=0;i<pkg.strs.n;i++) free(pkg.strs.items[i]);
     free(pkg.strs.items); free(pkg.strs.char_off); free(pkg.patches);
-    free(pkg.frame_patches); free(pkg.frame_tpag_ptr);
+    free(pkg.frame_patches); free(pkg.font_patches);
+    free(pkg.frame_tpag_ptr); free(pkg.font_tpag_ptr);
     for(int i=0;i<pkg.n_code_refs;i++) free(pkg.code_refs[i].name);
     free(pkg.code_refs);
     return 0;
@@ -933,7 +1033,8 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
   free(pkg.b.data);
   for(int i=0;i<pkg.strs.n;i++) free(pkg.strs.items[i]);
   free(pkg.strs.items); free(pkg.strs.char_off); free(pkg.patches);
-  free(pkg.frame_patches); free(pkg.frame_tpag_ptr);
+  free(pkg.frame_patches); free(pkg.font_patches);
+  free(pkg.frame_tpag_ptr); free(pkg.font_tpag_ptr);
   for(int i=0;i<pkg.n_code_refs;i++) free(pkg.code_refs[i].name);
   free(pkg.code_refs);
   return ok;

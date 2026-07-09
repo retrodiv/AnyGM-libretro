@@ -120,6 +120,19 @@ typedef struct {
 } GmlcShader;
 
 typedef struct {
+  int ch, x, y, w, h, shift, offset;
+} GmlcFontGlyph;
+
+typedef struct {
+  char *id;
+  char *name;
+  char *png_path;
+  int width, height, em_size;
+  GmlcFontGlyph *glyphs;
+  int n_glyphs, cap_glyphs;
+} GmlcFont;
+
+typedef struct {
   char *root_dir;
   char *yyp_path;
   char *name;
@@ -139,7 +152,8 @@ typedef struct {
   int next_layer_id;
   GmlcShader *shaders;
   int n_shaders, cap_shaders;
-  int n_fonts;
+  GmlcFont *fonts;
+  int n_fonts, cap_fonts;
 } GmlcProject;
 
 void gmlc_project_init(GmlcProject *p);

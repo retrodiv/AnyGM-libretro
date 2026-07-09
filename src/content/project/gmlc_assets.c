@@ -84,6 +84,28 @@ static int add_shader(GmlcProject *p, GmlcShader *s){
   return 1;
 }
 
+static int add_font(GmlcProject *p, GmlcFont *f){
+  if(p->n_fonts>=p->cap_fonts){
+    int nc=p->cap_fonts?p->cap_fonts*2:8;
+    GmlcFont *nf=(GmlcFont*)realloc(p->fonts,(size_t)nc*sizeof(*nf));
+    if(!nf) return 0;
+    p->fonts=nf; p->cap_fonts=nc;
+  }
+  p->fonts[p->n_fonts++]=*f;
+  return 1;
+}
+
+static int font_add_glyph(GmlcFont *f, GmlcFontGlyph *g){
+  if(f->n_glyphs>=f->cap_glyphs){
+    int nc=f->cap_glyphs?f->cap_glyphs*2:128;
+    GmlcFontGlyph *ng=(GmlcFontGlyph*)realloc(f->glyphs,(size_t)nc*sizeof(*ng));
+    if(!ng) return 0;
+    f->glyphs=ng; f->cap_glyphs=nc;
+  }
+  f->glyphs[f->n_glyphs++]=*g;
+  return 1;
+}
+
 static int room_add_instance(GmlcRoom *r, GmlcRoomInstance *in){
   if(r->n_instances>=r->cap_instances){
     int nc=r->cap_instances?r->cap_instances*2:32;
@@ -161,6 +183,23 @@ static char *read_text_file(const char *path){
   fclose(f);
   buf[sz]=0;
   return buf;
+}
+
+static uint32_t be32u(const unsigned char *p){
+  return ((uint32_t)p[0]<<24) | ((uint32_t)p[1]<<16) | ((uint32_t)p[2]<<8) | (uint32_t)p[3];
+}
+
+static int png_file_dims(const char *path, int *w, int *h){
+  unsigned char hdr[24];
+  FILE *f=fopen(path,"rb");
+  if(!f) return 0;
+  size_t n=fread(hdr,1,sizeof(hdr),f);
+  fclose(f);
+  if(n<24 || hdr[0]!=0x89 || hdr[1]!='P' || hdr[2]!='N' || hdr[3]!='G' || memcmp(hdr+12,"IHDR",4)) return 0;
+  uint32_t pw=be32u(hdr+16), ph=be32u(hdr+20);
+  if(pw==0 || ph==0 || pw>65535 || ph>65535) return 0;
+  *w=(int)pw; *h=(int)ph;
+  return 1;
 }
 
 static int parse_u32_color(const GmlcJson *v, uint32_t fallback){
@@ -301,6 +340,52 @@ static int parse_shader(GmlcProject *p, const GmlcResource *res, const GmlcJson 
     return 0;
   }
   free(dir); free(vfile); free(ffile); free(vpath); free(fpath);
+  return 1;
+}
+
+static int parse_font(GmlcProject *p, const GmlcResource *res, const GmlcJson *yy, char *err, size_t errcap){
+  GmlcFont f;
+  memset(&f,0,sizeof(f));
+  f.id=gmlc_strdup(res->id);
+  f.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(yy,"name"),res->name?res->name:""));
+  char *dir=gmlc_path_dirname(res->abs_path);
+  size_t n=strlen(f.name?f.name:"")+5;
+  char *file=(char*)malloc(n);
+  if(file) snprintf(file,n,"%s.png",f.name?f.name:"");
+  f.png_path=gmlc_path_join(dir,file?file:"");
+  f.em_size=gmlc_json_int(gmlc_json_obj(yy,"size"),12);
+  if(!f.id || !f.name || !f.png_path || !png_file_dims(f.png_path,&f.width,&f.height)){
+    snprintf(err,errcap,"failed to load font texture for %s",f.name?f.name:"font resource");
+    free(f.id); free(f.name); free(f.png_path); free(dir); free(file);
+    return 0;
+  }
+  const GmlcJson *glyphs=gmlc_json_obj(yy,"glyphs");
+  if(glyphs && glyphs->type==GMLC_JSON_ARRAY){
+    for(const GmlcJson *jg=glyphs->child;jg;jg=jg->next){
+      const GmlcJson *gv=gmlc_json_obj(jg,"Value");
+      GmlcFontGlyph g;
+      memset(&g,0,sizeof(g));
+      g.ch=gmlc_json_int(gmlc_json_obj(gv,"character"),gmlc_json_int(gmlc_json_obj(jg,"Key"),0));
+      g.x=gmlc_json_int(gmlc_json_obj(gv,"x"),0);
+      g.y=gmlc_json_int(gmlc_json_obj(gv,"y"),0);
+      g.w=gmlc_json_int(gmlc_json_obj(gv,"w"),0);
+      g.h=gmlc_json_int(gmlc_json_obj(gv,"h"),0);
+      g.shift=gmlc_json_int(gmlc_json_obj(gv,"shift"),0);
+      g.offset=gmlc_json_int(gmlc_json_obj(gv,"offset"),0);
+      if(g.h>f.em_size) f.em_size=g.h;
+      if(!font_add_glyph(&f,&g)){
+        snprintf(err,errcap,"out of memory while loading font glyphs");
+        free(f.id); free(f.name); free(f.png_path); free(f.glyphs); free(dir); free(file);
+        return 0;
+      }
+    }
+  }
+  if(!add_font(p,&f)){
+    snprintf(err,errcap,"out of memory while loading font resource");
+    free(f.id); free(f.name); free(f.png_path); free(f.glyphs); free(dir); free(file);
+    return 0;
+  }
+  free(dir); free(file);
   return 1;
 }
 
@@ -495,7 +580,7 @@ static int load_one(GmlcProject *p, GmlcResource *r, char *err, size_t errcap){
     case GMLC_RES_OBJECT: ok=parse_object(p,r,yy,err,errcap); break;
     case GMLC_RES_ROOM: ok=parse_room(p,r,yy,err,errcap); break;
     case GMLC_RES_SHADER: ok=parse_shader(p,r,yy,err,errcap); break;
-    case GMLC_RES_FONT: p->n_fonts++; break;
+    case GMLC_RES_FONT: ok=parse_font(p,r,yy,err,errcap); break;
     default: break;
   }
   gmlc_json_free(yy);

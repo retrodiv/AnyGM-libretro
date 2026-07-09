@@ -100,6 +100,11 @@ void gmlc_project_free(GmlcProject *p){
     free(p->shaders[i].vertex_source); free(p->shaders[i].fragment_source);
   }
   free(p->shaders);
+  for(int i=0;i<p->n_fonts;i++){
+    free(p->fonts[i].id); free(p->fonts[i].name); free(p->fonts[i].png_path);
+    free(p->fonts[i].glyphs);
+  }
+  free(p->fonts);
   memset(p,0,sizeof(*p));
 }
 
