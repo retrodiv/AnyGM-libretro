@@ -152,7 +152,7 @@ static int add_string_site(Compiler *c, const char *value, uint32_t payload_off)
 
 static int emit_push_real(Compiler *c, double d){
   if(floor(d)==d && d>=-32768.0 && d<=32767.0)
-    return emit_u32(&c->code,fw(0x84,0,(int16_t)d));
+    return emit_u32(&c->code,fw(0x84,DT_INT16,(int16_t)d));
   if(floor(d)==d && d>=-2147483648.0 && d<=2147483647.0){
     if(!emit_u32(&c->code,fw(OP_PUSH,DT_INT32,0))) return 0;
     return emit_i32(&c->code,(int32_t)d);
@@ -187,7 +187,7 @@ static int emit_pop_var(Compiler *c, int inst, const char *name, uint8_t reftype
 
 static int emit_call(Compiler *c, const char *name, int argc){
   uint32_t instr=(uint32_t)c->code.len;
-  if(!emit_u32(&c->code,fw(OP_CALL,DT_VAR,(int16_t)argc))) return 0;
+  if(!emit_u32(&c->code,fw(OP_CALL,DT_INT32,(int16_t)argc))) return 0;
   uint32_t ref=(uint32_t)c->code.len;
   if(!emit_u32(&c->code,0)) return 0;
   return add_ref(c,name,GMLC_REF_FUNC,instr,ref,0);

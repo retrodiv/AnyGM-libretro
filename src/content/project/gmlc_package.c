@@ -54,7 +54,17 @@ typedef struct {
 } CodeRef;
 
 typedef struct {
+  uint32_t rel_pos;
+  uint32_t blob_off;
+} CodeBlobPatch;
+
+typedef struct {
+  int sid;
+} CodeNameRef;
+
+typedef struct {
   Buf b;
+  Buf code_data;
   StrTab strs;
   StrPatch *patches;
   int n_patches, cap_patches;
@@ -68,6 +78,13 @@ typedef struct {
   int n_texture_pages;
   CodeRef *code_refs;
   int n_code_refs, cap_code_refs;
+  CodeBlobPatch *code_blob_patches;
+  int n_code_blob_patches, cap_code_blob_patches;
+  CodeNameRef *code_name_refs;
+  int n_code_name_refs, cap_code_name_refs;
+  uint32_t code_blob_base;
+  int code_data_emitted;
+  int code_blobs_finalized;
   int refs_patched;
   int compiled_code;
   int placeholder_code;
@@ -170,6 +187,58 @@ static int add_code_ref(Pkg *p, const GmlcRefSite *src, uint32_t code_start){
   return r->name!=NULL;
 }
 
+static int add_code_blob_patch(Pkg *p, uint32_t rel_pos, uint32_t blob_off){
+  if(p->n_code_blob_patches>=p->cap_code_blob_patches){
+    int nc=p->cap_code_blob_patches?p->cap_code_blob_patches*2:128;
+    CodeBlobPatch *np=(CodeBlobPatch*)realloc(p->code_blob_patches,(size_t)nc*sizeof(*np));
+    if(!np) return 0;
+    p->code_blob_patches=np; p->cap_code_blob_patches=nc;
+  }
+  p->code_blob_patches[p->n_code_blob_patches].rel_pos=rel_pos;
+  p->code_blob_patches[p->n_code_blob_patches].blob_off=blob_off;
+  p->n_code_blob_patches++;
+  return 1;
+}
+
+static int add_code_name_ref(Pkg *p, int sid){
+  if(p->n_code_name_refs>=p->cap_code_name_refs){
+    int nc=p->cap_code_name_refs?p->cap_code_name_refs*2:128;
+    CodeNameRef *np=(CodeNameRef*)realloc(p->code_name_refs,(size_t)nc*sizeof(*np));
+    if(!np) return 0;
+    p->code_name_refs=np; p->cap_code_name_refs=nc;
+  }
+  p->code_name_refs[p->n_code_name_refs++].sid=sid;
+  return 1;
+}
+
+static int emit_code_data_prefix(Pkg *p){
+  if(p->code_data_emitted) return 1;
+  if(p->b.len>UINT32_MAX) return 0;
+  p->code_blob_base=(uint32_t)p->b.len;
+  if(p->code_data.len && !wbytes(&p->b,p->code_data.data,p->code_data.len)) return 0;
+  for(int i=0;i<p->n_code_refs;i++){
+    p->code_refs[i].instr_abs+=p->code_blob_base;
+    p->code_refs[i].ref_abs+=p->code_blob_base;
+  }
+  p->code_data_emitted=1;
+  return 1;
+}
+
+static int finalize_code_blobs(Pkg *p){
+  if(p->code_blobs_finalized) return 1;
+  if(!p->code_data_emitted && !emit_code_data_prefix(p)) return 0;
+  uint32_t blob_base=p->code_blob_base;
+  for(int i=0;i<p->n_code_blob_patches;i++){
+    const CodeBlobPatch *bp=&p->code_blob_patches[i];
+    uint32_t blob_abs=blob_base+bp->blob_off;
+    int64_t rel=(int64_t)blob_abs-(int64_t)bp->rel_pos;
+    if(rel<INT32_MIN || rel>INT32_MAX) return 0;
+    patch32(&p->b,bp->rel_pos,(uint32_t)(int32_t)rel);
+  }
+  p->code_blobs_finalized=1;
+  return 1;
+}
+
 static int same_ref_name(const CodeRef *a, const CodeRef *b){
   return a->kind==b->kind && a->name && b->name && !strcmp(a->name,b->name);
 }
@@ -208,6 +277,10 @@ static int patch_ref_chains(Pkg *p){
         uint32_t next=p->code_refs[ord[k+1].index].instr_abs;
         if(next<r->instr_abs || next-r->instr_abs>0x07FFFFFFu){ free(ord); return 0; }
         delta=next-r->instr_abs;
+      } else {
+        int sid=intern(p,r->name?r->name:"");
+        if(sid<0 || sid>0x07FFFFFF){ free(ord); return 0; }
+        delta=(uint32_t)sid;
       }
       patch32(&p->b,r->ref_abs,(r->high_bits & 0xF8000000u) | delta);
     }
@@ -291,11 +364,13 @@ static int write_sprite_masks(Pkg *pkg, const GmlcSprite *sp, char *err, size_t 
     wu32(&pkg->b,0);
     return 1;
   }
-  wu32(&pkg->b,(uint32_t)sp->n_frames);
+  int mask_count=sp->sep_masks ? sp->n_frames : 1;
+  if(mask_count<=0) mask_count=1;
+  wu32(&pkg->b,(uint32_t)mask_count);
   int tol=sp->col_tolerance;
   if(tol<0) tol=0;
   if(tol>255) tol=255;
-  for(int f=0;f<sp->n_frames;f++){
+  for(int f=0;f<mask_count;f++){
     int w=0,h=0,comp=0;
     const char *path=(sp->frame_paths && sp->frame_paths[f]) ? sp->frame_paths[f] : NULL;
     unsigned char *rgba=path?stbi_load(path,&w,&h,&comp,4):NULL;
@@ -324,6 +399,8 @@ static int write_sprite_masks(Pkg *pkg, const GmlcSprite *sp, char *err, size_t 
     }
     free(mask);
   }
+  size_t total=(size_t)rowb*(size_t)sp->height*(size_t)mask_count;
+  while(total % 4){ if(!wu8(&pkg->b,0)) return 0; total++; }
   return 1;
 }
 
@@ -351,6 +428,11 @@ static int write_sprt(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
     wu32(&pkg->b,(uint32_t)(sp->sep_masks?1:0));
     wi32(&pkg->b,sp->xorig);
     wi32(&pkg->b,sp->yorig);
+    wi32(&pkg->b,-1);
+    wu32(&pkg->b,1);
+    wu32(&pkg->b,0);
+    wf32(&pkg->b,15.0f);
+    wu32(&pkg->b,0);
     wu32(&pkg->b,(uint32_t)sp->n_frames);
     for(int f=0;f<sp->n_frames;f++){
       uint32_t pos=(uint32_t)pkg->b.len;
@@ -421,7 +503,6 @@ static int write_tpag(Pkg *pkg, const GmlcProject *p){
       wu16(&pkg->b,(uint16_t)sp->width); wu16(&pkg->b,(uint16_t)sp->height);
       wu16(&pkg->b,(uint16_t)sp->width); wu16(&pkg->b,(uint16_t)sp->height);
       wu16(&pkg->b,(uint16_t)gf);
-      wu16(&pkg->b,0);
     }
   }
   for(int i=0;i<p->n_fonts;i++){
@@ -435,7 +516,6 @@ static int write_tpag(Pkg *pkg, const GmlcProject *p){
     wu16(&pkg->b,(uint16_t)f->width); wu16(&pkg->b,(uint16_t)f->height);
     wu16(&pkg->b,(uint16_t)f->width); wu16(&pkg->b,(uint16_t)f->height);
     wu16(&pkg->b,(uint16_t)(pkg->n_frames+i));
-    wu16(&pkg->b,0);
   }
   chunk_end(pkg,s);
   for(int i=0;i<pkg->n_frame_patches;i++){
@@ -475,7 +555,7 @@ static int write_txtr(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   if(!blob_patch) return 0;
   for(int i=0;i<nf;i++){
     patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
-    wu32(&pkg->b,0);
+    wu32(&pkg->b,1);
     blob_patch[i]=pkg->b.len;
     wu32(&pkg->b,0);
   }
@@ -489,6 +569,7 @@ static int write_txtr(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
         free(blob_patch);
         return 0;
       }
+      while(pkg->b.len % 0x80) wu8(&pkg->b,0);
       patch32(&pkg->b,blob_patch[gf],(uint32_t)pkg->b.len);
       wbytes(&pkg->b,blob,blen);
       free(blob);
@@ -502,6 +583,7 @@ static int write_txtr(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
       free(blob_patch);
       return 0;
     }
+    while(pkg->b.len % 0x80) wu8(&pkg->b,0);
     patch32(&pkg->b,blob_patch[sprite_frames+i],(uint32_t)pkg->b.len);
     wbytes(&pkg->b,blob,blen);
     free(blob);
@@ -726,6 +808,7 @@ static int write_audo(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
     patch32(&pkg->b,table+i*4,(uint32_t)pkg->b.len);
     wu32(&pkg->b,(uint32_t)blen);
     wbytes(&pkg->b,blob,blen);
+    if(i+1<n) while(pkg->b.len % 4) wu8(&pkg->b,0);
     free(blob);
   }
   chunk_end(pkg,s);
@@ -764,9 +847,9 @@ static int write_optn(Pkg *p){
   wu32(&p->b,0);
   wu32(&p->b,1);
   wu32(&p->b,0);
-  wi32(&p->b,-1);
-  wi32(&p->b,-1);
-  wi32(&p->b,-1);
+  wu32(&p->b,0);
+  wu32(&p->b,0);
+  wu32(&p->b,0);
   wu32(&p->b,255);
   wu32(&p->b,0);
   chunk_end(p,s);
@@ -1110,7 +1193,7 @@ static int write_room(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, int roo
   *record_ptr=(uint32_t)pkg->b.len;
   int sid=intern(pkg,r->name);
   wstrptr(pkg,sid);
-  wi32(&pkg->b,room_index);
+  wu32(&pkg->b,0);
   wu32(&pkg->b,(uint32_t)r->width);
   wu32(&pkg->b,(uint32_t)r->height);
   wu32(&pkg->b,(uint32_t)(r->speed>0?r->speed:60));
@@ -1169,6 +1252,7 @@ static int write_strg(Pkg *pkg){
     wbytes(&pkg->b,pkg->strs.items[i],len);
     wu8(&pkg->b,0);
   }
+  while(pkg->b.len % 0x80) wu8(&pkg->b,0);
   chunk_end(pkg,s);
   for(int i=0;i<pkg->n_patches;i++){
     StrPatch *sp=&pkg->patches[i];
@@ -1177,7 +1261,13 @@ static int write_strg(Pkg *pkg){
   return 1;
 }
 
-static int write_one_code_blob(Pkg *pkg, int sid, GmlcCodeBlob *blob, char *err, size_t errcap){
+typedef struct {
+  int sid;
+  uint32_t size;
+  uint32_t blob_off;
+} CodeEntryPlan;
+
+static int prepare_code_blob(Pkg *pkg, int sid, GmlcCodeBlob *blob, CodeEntryPlan *entry, char *err, size_t errcap){
   for(int i=0;i<blob->n_strings;i++){
     GmlcStringSite *s=&blob->strings[i];
     if(s->payload_off+4>blob->size){
@@ -1191,15 +1281,24 @@ static int write_one_code_blob(Pkg *pkg, int sid, GmlcCodeBlob *blob, char *err,
     blob->data[s->payload_off+2]=(uint8_t)(sid_lit>>16);
     blob->data[s->payload_off+3]=(uint8_t)(sid_lit>>24);
   }
-  wstrptr(pkg,sid);
-  wu32(&pkg->b,(uint32_t)blob->size);
-  wu32(&pkg->b,0);
-  wi32(&pkg->b,8);
-  wu32(&pkg->b,0);
-  uint32_t code_start=(uint32_t)pkg->b.len;
-  if(!wbytes(&pkg->b,blob->data,blob->size)) return 0;
+  if(!add_code_name_ref(pkg,sid)) return 0;
+  uint32_t code_start=(uint32_t)pkg->code_data.len;
+  entry->sid=sid;
+  entry->size=(uint32_t)blob->size;
+  entry->blob_off=code_start;
+  if(!wbytes(&pkg->code_data,blob->data,blob->size)) return 0;
   for(int i=0;i<blob->n_refs;i++) if(!add_code_ref(pkg,&blob->refs[i],code_start)) return 0;
   return 1;
+}
+
+static int write_code_entry_header(Pkg *pkg, const CodeEntryPlan *entry){
+  wstrptr(pkg,entry->sid);
+  wu32(&pkg->b,entry->size);
+  wu32(&pkg->b,0);
+  uint32_t rel_pos=(uint32_t)pkg->b.len;
+  wi32(&pkg->b,0);
+  wu32(&pkg->b,0);
+  return add_code_blob_patch(pkg,rel_pos,entry->blob_off);
 }
 
 static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, int script_index, const char *path, GmlcCodeBlob *blob){
@@ -1227,11 +1326,11 @@ static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const GmlcFunctionR
   return 1;
 }
 
-static int write_compiled_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, int script_index, size_t table, int *ci, int sid, const char *path, char *err, size_t errcap){
+static int write_compiled_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, int script_index, CodeEntryPlan *entries, int *ci, int sid, const char *path, char *err, size_t errcap){
   GmlcCodeBlob blob;
   if(!compile_code_blob(pkg,p,funcs,script_index,path,&blob)) return 0;
-  patch32(&pkg->b,table+(size_t)(*ci)++*4,(uint32_t)pkg->b.len);
-  int ok=write_one_code_blob(pkg,sid,&blob,err,errcap);
+  int ok=prepare_code_blob(pkg,sid,&blob,&entries[*ci],err,errcap);
+  if(ok) (*ci)++;
   gmlc_bytecode_free(&blob);
   return ok;
 }
@@ -1248,7 +1347,7 @@ static char *function_code_name(const GmlcFunctionDef *def){
   return gmlc_strdup(tmp);
 }
 
-static int write_function_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, size_t table, int *ci, const GmlcFunctionDef *def, char *err, size_t errcap){
+static int write_function_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, CodeEntryPlan *entries, int *ci, const GmlcFunctionDef *def, char *err, size_t errcap){
   if(*ci!=def->code_index){
     snprintf(err,errcap,"function code index mismatch");
     return 0;
@@ -1271,8 +1370,8 @@ static int write_function_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcF
   } else {
     pkg->compiled_code++;
   }
-  patch32(&pkg->b,table+(size_t)(*ci)++*4,(uint32_t)pkg->b.len);
-  int ok=write_one_code_blob(pkg,sid,&blob,err,errcap);
+  int ok=prepare_code_blob(pkg,sid,&blob,&entries[*ci],err,errcap);
+  if(ok) (*ci)++;
   gmlc_bytecode_free(&blob);
   return ok;
 }
@@ -1286,6 +1385,12 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   wu32(&pkg->b,(uint32_t)count);
   size_t table=pkg->b.len;
   zfill(&pkg->b,(size_t)count*4);
+  CodeEntryPlan *entries=(CodeEntryPlan*)calloc((size_t)(count?count:1),sizeof(*entries));
+  if(!entries){
+    gmlc_function_registry_free(&funcs);
+    snprintf(err,errcap,"out of memory while writing code entries");
+    return 0;
+  }
   int ci=0;
   int ok=0;
   for(int i=0;i<room_code_count(p);i++){
@@ -1293,13 +1398,13 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
     snprintf(name,sizeof(name),"gml_RoomCC_%d",i);
     int sid=intern(pkg,name);
     const char *path=(i<p->n_rooms)?p->rooms[i].creation_code_path:NULL;
-    if(!write_compiled_code_entry(pkg,p,&funcs,-1,table,&ci,sid,path,err,errcap)) goto done;
+    if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,sid,path,err,errcap)) goto done;
   }
   for(int i=0;i<p->n_scripts;i++){
     char *name=script_code_name(&p->scripts[i]);
     int nsid=intern(pkg,name?name:"");
     free(name);
-    if(!write_compiled_code_entry(pkg,p,&funcs,i,table,&ci,nsid,p->scripts[i].source_path,err,errcap)) goto done;
+    if(!write_compiled_code_entry(pkg,p,&funcs,i,entries,&ci,nsid,p->scripts[i].source_path,err,errcap)) goto done;
   }
   for(int oi=0;oi<p->n_objects;oi++){
     const GmlcObject *obj=&p->objects[oi];
@@ -1307,7 +1412,7 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
       char *name=object_event_code_name(obj,&obj->events[ei]);
       int nsid=intern(pkg,name?name:"");
       free(name);
-      if(!write_compiled_code_entry(pkg,p,&funcs,-1,table,&ci,nsid,obj->events[ei].source_path,err,errcap)) goto done;
+      if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,nsid,obj->events[ei].source_path,err,errcap)) goto done;
     }
   }
   for(int ri=0;ri<p->n_rooms;ri++){
@@ -1318,12 +1423,31 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
       char name[96];
       snprintf(name,sizeof(name),"gml_RoomInstanceCC_%d_%d",ri,ii);
       int sid=intern(pkg,name);
-      if(!write_compiled_code_entry(pkg,p,&funcs,-1,table,&ci,sid,in->creation_code_path,err,errcap)) goto done;
+      if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,sid,in->creation_code_path,err,errcap)) goto done;
     }
   }
   for(int i=0;i<funcs.n_defs;i++){
     if(funcs.defs[i].is_script_wrapper) continue;
-    if(!write_function_code_entry(pkg,p,&funcs,table,&ci,&funcs.defs[i],err,errcap)) goto done;
+    if(!write_function_code_entry(pkg,p,&funcs,entries,&ci,&funcs.defs[i],err,errcap)) goto done;
+  }
+  if(ci!=count){
+    snprintf(err,errcap,"code entry count mismatch");
+    goto done;
+  }
+  if(!emit_code_data_prefix(pkg)){
+    snprintf(err,errcap,"code blob write failed");
+    goto done;
+  }
+  for(int i=0;i<count;i++){
+    patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
+    if(!write_code_entry_header(pkg,&entries[i])){
+      snprintf(err,errcap,"code entry header write failed");
+      goto done;
+    }
+  }
+  if(!finalize_code_blobs(pkg)){
+    snprintf(err,errcap,"code blob layout patch failed");
+    goto done;
   }
   if(!patch_ref_chains(pkg)){
     snprintf(err,errcap,"reference chain patch failed");
@@ -1332,6 +1456,7 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   chunk_end(pkg,s);
   ok=1;
 done:
+  free(entries);
   gmlc_function_registry_free(&funcs);
   return ok;
 }
@@ -1373,6 +1498,15 @@ static int write_func(Pkg *pkg){
     wstrptr(pkg,sid);
     wu32(&pkg->b,occ);
     wu32(&pkg->b,first);
+  }
+  int arguments_sid=intern(pkg,"arguments");
+  if(arguments_sid<0) return 0;
+  wu32(&pkg->b,(uint32_t)pkg->n_code_name_refs);
+  for(int i=0;i<pkg->n_code_name_refs;i++){
+    wu32(&pkg->b,1);
+    wstrptr(pkg,pkg->code_name_refs[i].sid);
+    wu32(&pkg->b,0);
+    wstrptr(pkg,arguments_sid);
   }
   chunk_end(pkg,s);
   return 1;
@@ -1419,10 +1553,13 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
      !write_audo(&pkg,p,err,errcap)){
     if(!err[0]) snprintf(err,errcap,"out of memory while writing package");
     free(pkg.b.data);
+    free(pkg.code_data.data);
     for(int i=0;i<pkg.strs.n;i++) free(pkg.strs.items[i]);
     free(pkg.strs.items); free(pkg.strs.char_off); free(pkg.patches);
     free(pkg.frame_patches); free(pkg.font_patches);
     free(pkg.frame_tpag_ptr); free(pkg.font_tpag_ptr);
+    free(pkg.code_blob_patches);
+    free(pkg.code_name_refs);
     for(int i=0;i<pkg.n_code_refs;i++) free(pkg.code_refs[i].name);
     free(pkg.code_refs);
     return 0;
@@ -1430,10 +1567,13 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
   patch32(&pkg.b,form_size_pos,(uint32_t)(pkg.b.len-8));
   int ok=write_file(out_path,pkg.b.data,pkg.b.len,err,errcap);
   free(pkg.b.data);
+  free(pkg.code_data.data);
   for(int i=0;i<pkg.strs.n;i++) free(pkg.strs.items[i]);
   free(pkg.strs.items); free(pkg.strs.char_off); free(pkg.patches);
   free(pkg.frame_patches); free(pkg.font_patches);
   free(pkg.frame_tpag_ptr); free(pkg.font_tpag_ptr);
+  free(pkg.code_blob_patches);
+  free(pkg.code_name_refs);
   for(int i=0;i<pkg.n_code_refs;i++) free(pkg.code_refs[i].name);
   free(pkg.code_refs);
   return ok;
