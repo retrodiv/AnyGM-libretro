@@ -3242,17 +3242,32 @@ static void gml_room_reload_layers(GmlVM *vm, int room_index){
  * if a texture arrives before its prefetch finishes, so this only removes stalls. */
 static void vm_prefetch_room_assets(GmlVM *vm){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return;
+  int warm = 1;
+  const char *we = getenv("GML_ATLAS_ROOM_WARM");
+  if(we && (!strcmp(we,"0") || !strcmp(we,"off") || !strcmp(we,"false"))) warm = 0;
   for(int i=0;i<vm->inst_count;i++){ GmlInstance *in=&vm->inst[i];
     if(!in->active || in->marked) continue;
     gml_render_prefetch_sprite(R,(int)in->sprite_index);
     if((int)in->mask_index>=0) gml_render_prefetch_sprite(R,(int)in->mask_index);
+    if(warm){
+      gml_render_warm_sprite(R,(int)in->sprite_index);
+      if((int)in->mask_index>=0) gml_render_warm_sprite(R,(int)in->mask_index);
+    }
   }
   for(int i=0;i<vm->n_tilemaps;i++){ GmlTileMap *tm=&vm->tilemaps[i];
-    if(tm->used) gml_render_prefetch_bg(R,tm->tileset); }
+    if(tm->used){
+      gml_render_prefetch_bg(R,tm->tileset);
+      if(warm) gml_render_warm_bg(R,tm->tileset);
+    } }
   for(int j=0;j<vm->n_rte;j++){ GmlRtElem *e=&vm->rte[j];
     if(!e->used) continue;
-    if(e->type==7) gml_render_prefetch_bg(R,e->sprite);
-    else gml_render_prefetch_sprite(R,e->sprite);
+    if(e->type==7){
+      gml_render_prefetch_bg(R,e->sprite);
+      if(warm) gml_render_warm_bg(R,e->sprite);
+    } else {
+      gml_render_prefetch_sprite(R,e->sprite);
+      if(warm) gml_render_warm_sprite(R,e->sprite);
+    }
   }
 }
 void gml_room_enter(GmlVM *vm, int room_index){

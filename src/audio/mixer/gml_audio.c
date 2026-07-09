@@ -2,7 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
 /* Software mixer for AUDO/SOND sounds and FMOD bank voices.
  * WAV PCM is referenced in place. Embedded and grouped OGG data is decoded
- * on first playback; external OGG registration decodes immediately.
+ * mostly on first playback, with initial warming; external OGG registration decodes immediately.
  */
 #define STB_VORBIS_NO_PUSHDATA_API
 #define STB_VORBIS_NO_STDIO
@@ -47,6 +47,7 @@ static int audio_voice_limit(GmlAudio *a){
   if(!a || a->channel_num<=0) return 0;
   return a->channel_num<GML_MAX_VOICES ? a->channel_num : GML_MAX_VOICES;
 }
+static void audio_warm_initial_ogg(GmlAudio *a);
 
 /* Load an indexed audiogroup<N>.dat FORM/AUDO container on demand. */
 static int audio_group_load_dat(GmlAudio *a, int g){
@@ -147,6 +148,7 @@ GmlAudio *gml_audio_create(GmlWin *win){
     }
   }
   a->n_base_snd=a->n_snd;
+  audio_warm_initial_ogg(a);
   return a;
 }
 struct GmlFmodBanks *gml_audio_get_fmod(GmlAudio *a){ return a?a->fmod:NULL; }
@@ -208,6 +210,37 @@ static int sound_ensure_pcm(GmlSound *s){
   s->channels=ch>0?ch:1;
   s->own=out;
   return 1;
+}
+static uint32_t audio_initial_ogg_warm_budget(void){
+  const char *e=getenv("GML_AUDIO_WARM_OGG_BYTES");
+  if(e && (!strcmp(e,"0") || !strcmp(e,"off") || !strcmp(e,"false"))) return 0;
+  if(e && *e){
+    long v=strtol(e,NULL,0);
+    return v>0 ? (uint32_t)v : 0;
+  }
+  return 2u*1024u*1024u;
+}
+static void audio_warm_initial_ogg(GmlAudio *a){
+  if(!a || !a->snd) return;
+  uint32_t budget=audio_initial_ogg_warm_budget();
+  if(!budget) return;
+  int warmed=0;
+  uint32_t used=0;
+  for(int i=0;i<a->n_snd;i++){
+    GmlSound *s=&a->snd[i];
+    if(s->pcm || !s->ogg || s->ogg_failed) continue;
+    if(s->ogg_len>budget-used){
+      if(warmed) break;
+      continue;
+    }
+    if(sound_ensure_pcm(s)){
+      used += s->ogg_len;
+      warmed++;
+      if(getenv("GML_LOG_AUDIO"))
+        fprintf(stderr,"[audio] warm_ogg sound=%d ogg=%u pcm=%u budget=%u\n",i,s->ogg_len,s->nval,budget);
+    }
+    if(used>=budget) break;
+  }
 }
 static int audio_voice_prepare(GmlAudio *a, GmlVoice *v){
   if(!a || !v || !v->active) return 0;

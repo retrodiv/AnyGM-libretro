@@ -133,6 +133,9 @@ void gml_render_free(GmlRender *r);
 void gml_render_prefetch_atlas(GmlRender *r, int idx);
 void gml_render_prefetch_sprite(GmlRender *r, int sprite);
 void gml_render_prefetch_bg(GmlRender *r, int bg);
+/* synchronously decode directly referenced pages; used at room boundaries to avoid first-draw hitches */
+void gml_render_warm_sprite(GmlRender *r, int sprite);
+void gml_render_warm_bg(GmlRender *r, int bg);
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double camx, double camy);
 void gml_render_set_pending_underlay(GmlRender *r, int x, int y, int w, int h);
 void gml_render_flush_pending_underlay(GmlRender *r);

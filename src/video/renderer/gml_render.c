@@ -744,6 +744,28 @@ static uint8_t *atlas_pixels(GmlRender *r, int idx){
   if(p) atlas_dump_maybe(r,idx);
   return p;
 }
+static void warm_atlas_direct(GmlRender *r, int idx){
+  if(!r || idx<0 || idx>=r->n_atlas || !r->atlas) return;
+  GmlAtlas *a=&r->atlas[idx];
+  if(a->px || a->decode_attempted || !a->blob || a->blob>=r->win->size) return;
+  (void)atlas_pixels(r,idx);
+}
+void gml_render_warm_sprite(GmlRender *r, int sprite){
+  if(!r || sprite<0 || sprite>=r->n_spr) return;
+  GmlSprite *s=&r->spr[sprite];
+  if(s->runtime_rgba || !s->frame) return;
+  for(int f=0; f<s->n_frames; f++){
+    int ti=s->frame[f];
+    if(ti<0 || ti>=r->n_tpag) continue;
+    warm_atlas_direct(r,r->tpag[ti].atlas);
+  }
+}
+void gml_render_warm_bg(GmlRender *r, int bg){
+  if(!r || bg<0 || bg>=r->n_bg) return;
+  int ti=r->bg[bg].tpag;
+  if(ti<0 || ti>=r->n_tpag) return;
+  warm_atlas_direct(r,r->tpag[ti].atlas);
+}
 static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
                              int *x0, int *y0, int *x1, int *y1){
   (void)r;
