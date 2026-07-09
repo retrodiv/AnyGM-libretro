@@ -71,11 +71,16 @@ void gmlc_project_free(GmlcProject *p){
   free(p->sounds);
   for(int i=0;i<p->n_scripts;i++){ free(p->scripts[i].id); free(p->scripts[i].name); free(p->scripts[i].source_path); }
   free(p->scripts);
-  for(int i=0;i<p->n_objects;i++){ free(p->objects[i].id); free(p->objects[i].name); free(p->objects[i].events); }
+  for(int i=0;i<p->n_objects;i++){
+    free(p->objects[i].id); free(p->objects[i].name);
+    for(int e=0;e<p->objects[i].n_events;e++) free(p->objects[i].events[e].source_path);
+    free(p->objects[i].events);
+  }
   free(p->objects);
   for(int i=0;i<p->n_rooms;i++){
     GmlcRoom *r=&p->rooms[i];
     free(r->id); free(r->name);
+    free(r->creation_code_path);
     for(int k=0;k<r->n_instances;k++){ free(r->instances[k].id); free(r->instances[k].name); }
     free(r->instances);
   }

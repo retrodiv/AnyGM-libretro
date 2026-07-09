@@ -58,18 +58,20 @@ int gmlc_source_scan_project(const GmlcProject *p, GmlcSourceReport *out, char *
     scan_text(txt,out);
     free(txt);
   }
-  for(int i=0;i<p->n_resources;i++){
-    if(p->resources[i].kind!=GMLC_RES_OBJECT) continue;
-    char *dir=gmlc_path_dirname(p->resources[i].abs_path);
-    if(!dir) continue;
-    static const char *names[]={"Create_0.gml","Step_0.gml","Step_1.gml","Step_2.gml","Draw_0.gml","Draw_64.gml","Draw_73.gml","Destroy_0.gml","CleanUp_0.gml","Other_0.gml","Other_2.gml","Other_3.gml","Other_4.gml","Other_5.gml","Other_7.gml","Alarm_0.gml","Alarm_1.gml","Alarm_2.gml","Alarm_3.gml","Alarm_4.gml","Alarm_5.gml","Alarm_6.gml","Alarm_7.gml","Alarm_8.gml","Alarm_9.gml","Alarm_10.gml","Alarm_11.gml"};
-    for(size_t k=0;k<sizeof(names)/sizeof(names[0]);k++){
-      char *path=gmlc_path_join(dir,names[k]);
-      FILE *f=path?fopen(path,"rb"):NULL;
-      if(f){ fclose(f); char *txt=read_text(path); if(txt){ out->files++; scan_text(txt,out); free(txt); } }
-      free(path);
+  for(int i=0;i<p->n_objects;i++){
+    const GmlcObject *obj=&p->objects[i];
+    for(int e=0;e<obj->n_events;e++){
+      const char *path=obj->events[e].source_path;
+      if(!path || !*path) continue;
+      char *txt=read_text(path);
+      if(!txt){
+        snprintf(err,errcap,"%s: read failed",path);
+        return 0;
+      }
+      out->files++;
+      scan_text(txt,out);
+      free(txt);
     }
-    free(dir);
   }
   return 1;
 }

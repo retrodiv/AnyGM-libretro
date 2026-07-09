@@ -43,12 +43,14 @@ typedef struct {
   int view_w, view_h, port_w, port_h;
   GmlcRoomInstance *instances;
   int n_instances, cap_instances;
+  char *creation_code_path;
 } GmlcRoom;
 
 typedef struct {
   int event_type;
   int event_number;
   int collision_object_id;
+  char *source_path;
 } GmlcObjectEvent;
 
 typedef struct {

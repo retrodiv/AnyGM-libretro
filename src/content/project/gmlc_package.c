@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
 #include "gmlc_package.h"
+#include "gmlc_bytecode.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +29,14 @@ typedef struct {
 } FramePatch;
 
 typedef struct {
+  char *name;
+  GmlcRefKind kind;
+  uint32_t instr_abs;
+  uint32_t ref_abs;
+  uint32_t high_bits;
+} CodeRef;
+
+typedef struct {
   Buf b;
   StrTab strs;
   StrPatch *patches;
@@ -36,6 +45,11 @@ typedef struct {
   int n_frame_patches, cap_frame_patches;
   uint32_t *frame_tpag_ptr;
   int n_frames;
+  CodeRef *code_refs;
+  int n_code_refs, cap_code_refs;
+  int refs_patched;
+  int compiled_code;
+  int placeholder_code;
 } Pkg;
 
 static int reserve(Buf *b, size_t n){
@@ -101,6 +115,93 @@ static int add_frame_patch(Pkg *p, uint32_t pos, int frame){
   p->frame_patches[p->n_frame_patches].pos=pos;
   p->frame_patches[p->n_frame_patches].frame=frame;
   p->n_frame_patches++;
+  return 1;
+}
+
+static int add_code_ref(Pkg *p, const GmlcRefSite *src, uint32_t code_start){
+  if(p->n_code_refs>=p->cap_code_refs){
+    int nc=p->cap_code_refs?p->cap_code_refs*2:256;
+    CodeRef *nr=(CodeRef*)realloc(p->code_refs,(size_t)nc*sizeof(*nr));
+    if(!nr) return 0;
+    p->code_refs=nr; p->cap_code_refs=nc;
+  }
+  CodeRef *r=&p->code_refs[p->n_code_refs++];
+  r->name=gmlc_strdup(src->name?src->name:"");
+  r->kind=src->kind;
+  r->instr_abs=code_start+src->instr_off;
+  r->ref_abs=code_start+src->ref_off;
+  r->high_bits=src->high_bits;
+  return r->name!=NULL;
+}
+
+static int same_ref_name(const CodeRef *a, const CodeRef *b){
+  return a->kind==b->kind && a->name && b->name && !strcmp(a->name,b->name);
+}
+
+typedef struct {
+  int index;
+  uint32_t addr;
+} RefOrder;
+
+static int cmp_ref_order(const void *A, const void *B){
+  const RefOrder *a=(const RefOrder*)A, *b=(const RefOrder*)B;
+  return a->addr<b->addr?-1:(a->addr>b->addr?1:0);
+}
+
+static int patch_ref_chains(Pkg *p){
+  if(p->refs_patched) return 1;
+  for(int i=0;i<p->n_code_refs;i++){
+    int seen=0;
+    for(int j=0;j<i;j++) if(same_ref_name(&p->code_refs[i],&p->code_refs[j])){ seen=1; break; }
+    if(seen) continue;
+    int count=0;
+    for(int j=i;j<p->n_code_refs;j++) if(same_ref_name(&p->code_refs[i],&p->code_refs[j])) count++;
+    RefOrder *ord=(RefOrder*)malloc((size_t)(count?count:1)*sizeof(*ord));
+    if(!ord) return 0;
+    int n=0;
+    for(int j=i;j<p->n_code_refs;j++) if(same_ref_name(&p->code_refs[i],&p->code_refs[j])){
+      ord[n].index=j;
+      ord[n].addr=p->code_refs[j].instr_abs;
+      n++;
+    }
+    qsort(ord,(size_t)n,sizeof(*ord),cmp_ref_order);
+    for(int k=0;k<n;k++){
+      CodeRef *r=&p->code_refs[ord[k].index];
+      uint32_t delta=0;
+      if(k+1<n){
+        uint32_t next=p->code_refs[ord[k+1].index].instr_abs;
+        if(next<r->instr_abs || next-r->instr_abs>0x07FFFFFFu){ free(ord); return 0; }
+        delta=next-r->instr_abs;
+      }
+      patch32(&p->b,r->ref_abs,(r->high_bits & 0xF8000000u) | delta);
+    }
+    free(ord);
+  }
+  p->refs_patched=1;
+  return 1;
+}
+
+static int ref_group_count(const Pkg *p, GmlcRefKind kind){
+  int n=0;
+  for(int i=0;i<p->n_code_refs;i++){
+    if(p->code_refs[i].kind!=kind) continue;
+    int seen=0;
+    for(int j=0;j<i;j++) if(p->code_refs[j].kind==kind && same_ref_name(&p->code_refs[i],&p->code_refs[j])){ seen=1; break; }
+    if(!seen) n++;
+  }
+  return n;
+}
+
+static int ref_group_stats(const Pkg *p, int idx, uint32_t *occ, uint32_t *first_addr){
+  const CodeRef *base=&p->code_refs[idx];
+  uint32_t n=0, first=0xFFFFFFFFu;
+  for(int i=0;i<p->n_code_refs;i++){
+    if(!same_ref_name(base,&p->code_refs[i])) continue;
+    n++;
+    if(p->code_refs[i].instr_abs<first) first=p->code_refs[i].instr_abs;
+  }
+  *occ=n;
+  *first_addr=first==0xFFFFFFFFu?0:first;
   return 1;
 }
 
@@ -263,8 +364,12 @@ static int total_object_events(const GmlcProject *p){
   return n;
 }
 
-static int script_code_index(int script_index){
-  return 1 + script_index;
+static int room_code_count(const GmlcProject *p){
+  return p->n_rooms>0 ? p->n_rooms : 1;
+}
+
+static int script_code_index(const GmlcProject *p, int script_index){
+  return room_code_count(p) + script_index;
 }
 
 static const char *event_suffix(const GmlcObjectEvent *ev, char *buf, size_t cap){
@@ -337,7 +442,7 @@ static int write_scpt(Pkg *pkg, const GmlcProject *p){
     patch32(&pkg->b,table+i*4,(uint32_t)pkg->b.len);
     int sid=intern(pkg,sc->name);
     wstrptr(pkg,sid);
-    wi32(&pkg->b,script_code_index((int)i));
+    wi32(&pkg->b,script_code_index(p,(int)i));
   }
   chunk_end(pkg,s);
   return 1;
@@ -500,11 +605,11 @@ static int write_room_empty_list(Pkg *pkg, uint32_t *out_ptr){
   return wu32(&pkg->b,0);
 }
 
-static int write_room(Pkg *pkg, const GmlcRoom *r, uint32_t *record_ptr){
+static int write_room(Pkg *pkg, const GmlcRoom *r, int room_index, uint32_t *record_ptr){
   *record_ptr=(uint32_t)pkg->b.len;
   int sid=intern(pkg,r->name);
   wstrptr(pkg,sid);
-  wi32(&pkg->b,0);
+  wi32(&pkg->b,room_index);
   wu32(&pkg->b,(uint32_t)r->width);
   wu32(&pkg->b,(uint32_t)r->height);
   wu32(&pkg->b,(uint32_t)(r->speed>0?r->speed:60));
@@ -537,7 +642,7 @@ static int write_room_chunk(Pkg *pkg, const GmlcProject *p){
   zfill(&pkg->b,(size_t)n*4);
   for(uint32_t i=0;i<n;i++){
     uint32_t ptr=0;
-    write_room(pkg,&p->rooms[i],&ptr);
+    write_room(pkg,&p->rooms[i],(int)i,&ptr);
     patch32(&pkg->b,table+i*4,ptr);
   }
   chunk_end(pkg,s);
@@ -565,32 +670,84 @@ static int write_strg(Pkg *pkg){
   return 1;
 }
 
-static int write_one_empty_code(Pkg *pkg, int sid){
+static int write_one_code_blob(Pkg *pkg, int sid, GmlcCodeBlob *blob, char *err, size_t errcap){
+  for(int i=0;i<blob->n_strings;i++){
+    GmlcStringSite *s=&blob->strings[i];
+    if(s->payload_off+4>blob->size){
+      snprintf(err,errcap,"string literal patch outside code blob");
+      return 0;
+    }
+    int sid_lit=intern(pkg,s->value?s->value:"");
+    if(sid_lit<0) return 0;
+    blob->data[s->payload_off]=(uint8_t)sid_lit;
+    blob->data[s->payload_off+1]=(uint8_t)(sid_lit>>8);
+    blob->data[s->payload_off+2]=(uint8_t)(sid_lit>>16);
+    blob->data[s->payload_off+3]=(uint8_t)(sid_lit>>24);
+  }
   wstrptr(pkg,sid);
-  wu32(&pkg->b,4);
+  wu32(&pkg->b,(uint32_t)blob->size);
   wu32(&pkg->b,0);
   wi32(&pkg->b,8);
   wu32(&pkg->b,0);
-  wu32(&pkg->b,0x9D000000u);
+  uint32_t code_start=(uint32_t)pkg->b.len;
+  if(!wbytes(&pkg->b,blob->data,blob->size)) return 0;
+  for(int i=0;i<blob->n_refs;i++) if(!add_code_ref(pkg,&blob->refs[i],code_start)) return 0;
   return 1;
 }
 
-static int write_code(Pkg *pkg, const GmlcProject *p){
+static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const char *path, GmlcCodeBlob *blob){
+  memset(blob,0,sizeof(*blob));
+  if(path && *path){
+    char berr[512]={0};
+    if(gmlc_bytecode_compile_source(p,path,blob,berr,sizeof(berr))){
+      if(blob->is_placeholder){
+        pkg->placeholder_code++;
+        if(blob->diagnostic)
+          fprintf(stderr,"source_to_win: code placeholder: %s: %s\n",path,blob->diagnostic);
+      } else {
+        pkg->compiled_code++;
+      }
+      return 1;
+    }
+    if(!gmlc_bytecode_emit_empty(blob)) return 0;
+    blob->diagnostic=gmlc_strdup(berr[0]?berr:"source read failed");
+    pkg->placeholder_code++;
+    fprintf(stderr,"source_to_win: code placeholder: %s: %s\n",path,blob->diagnostic?blob->diagnostic:"source read failed");
+    return 1;
+  }
+  if(!gmlc_bytecode_emit_empty(blob)) return 0;
+  pkg->placeholder_code++;
+  return 1;
+}
+
+static int write_compiled_code_entry(Pkg *pkg, const GmlcProject *p, size_t table, int *ci, int sid, const char *path, char *err, size_t errcap){
+  GmlcCodeBlob blob;
+  if(!compile_code_blob(pkg,p,path,&blob)) return 0;
+  patch32(&pkg->b,table+(size_t)(*ci)++*4,(uint32_t)pkg->b.len);
+  int ok=write_one_code_blob(pkg,sid,&blob,err,errcap);
+  gmlc_bytecode_free(&blob);
+  return ok;
+}
+
+static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   size_t s=chunk_begin(pkg,"CODE");
-  int sid=intern(pkg,"gml_RoomCC_0");
-  int count=1 + p->n_scripts + total_object_events(p);
+  int count=room_code_count(p) + p->n_scripts + total_object_events(p);
   wu32(&pkg->b,(uint32_t)count);
   size_t table=pkg->b.len;
   zfill(&pkg->b,(size_t)count*4);
   int ci=0;
-  patch32(&pkg->b,table+(size_t)ci++*4,(uint32_t)pkg->b.len);
-  write_one_empty_code(pkg,sid);
+  for(int i=0;i<room_code_count(p);i++){
+    char name[64];
+    snprintf(name,sizeof(name),"gml_RoomCC_%d",i);
+    int sid=intern(pkg,name);
+    const char *path=(i<p->n_rooms)?p->rooms[i].creation_code_path:NULL;
+    if(!write_compiled_code_entry(pkg,p,table,&ci,sid,path,err,errcap)) return 0;
+  }
   for(int i=0;i<p->n_scripts;i++){
     char *name=script_code_name(&p->scripts[i]);
     int nsid=intern(pkg,name?name:"");
     free(name);
-    patch32(&pkg->b,table+(size_t)ci++*4,(uint32_t)pkg->b.len);
-    write_one_empty_code(pkg,nsid);
+    if(!write_compiled_code_entry(pkg,p,table,&ci,nsid,p->scripts[i].source_path,err,errcap)) return 0;
   }
   for(int oi=0;oi<p->n_objects;oi++){
     const GmlcObject *obj=&p->objects[oi];
@@ -598,24 +755,55 @@ static int write_code(Pkg *pkg, const GmlcProject *p){
       char *name=object_event_code_name(obj,&obj->events[ei]);
       int nsid=intern(pkg,name?name:"");
       free(name);
-      patch32(&pkg->b,table+(size_t)ci++*4,(uint32_t)pkg->b.len);
-      write_one_empty_code(pkg,nsid);
+      if(!write_compiled_code_entry(pkg,p,table,&ci,nsid,obj->events[ei].source_path,err,errcap)) return 0;
     }
+  }
+  if(!patch_ref_chains(pkg)){
+    snprintf(err,errcap,"reference chain patch failed");
+    return 0;
   }
   chunk_end(pkg,s);
   return 1;
 }
 
 static int write_vari(Pkg *pkg){
+  if(!patch_ref_chains(pkg)) return 0;
   size_t s=chunk_begin(pkg,"VARI");
   zfill(&pkg->b,12);
+  for(int i=0;i<pkg->n_code_refs;i++){
+    if(pkg->code_refs[i].kind!=GMLC_REF_VARI) continue;
+    int seen=0;
+    for(int j=0;j<i;j++) if(pkg->code_refs[j].kind==GMLC_REF_VARI && same_ref_name(&pkg->code_refs[i],&pkg->code_refs[j])){ seen=1; break; }
+    if(seen) continue;
+    uint32_t occ=0, first=0;
+    ref_group_stats(pkg,i,&occ,&first);
+    int sid=intern(pkg,pkg->code_refs[i].name);
+    wstrptr(pkg,sid);
+    wu32(&pkg->b,0);
+    wu32(&pkg->b,0);
+    wu32(&pkg->b,occ);
+    wu32(&pkg->b,first);
+  }
   chunk_end(pkg,s);
   return 1;
 }
 
 static int write_func(Pkg *pkg){
+  if(!patch_ref_chains(pkg)) return 0;
   size_t s=chunk_begin(pkg,"FUNC");
-  wu32(&pkg->b,0);
+  wu32(&pkg->b,(uint32_t)ref_group_count(pkg,GMLC_REF_FUNC));
+  for(int i=0;i<pkg->n_code_refs;i++){
+    if(pkg->code_refs[i].kind!=GMLC_REF_FUNC) continue;
+    int seen=0;
+    for(int j=0;j<i;j++) if(pkg->code_refs[j].kind==GMLC_REF_FUNC && same_ref_name(&pkg->code_refs[i],&pkg->code_refs[j])){ seen=1; break; }
+    if(seen) continue;
+    uint32_t occ=0, first=0;
+    ref_group_stats(pkg,i,&occ,&first);
+    int sid=intern(pkg,pkg->code_refs[i].name);
+    wstrptr(pkg,sid);
+    wu32(&pkg->b,occ);
+    wu32(&pkg->b,first);
+  }
   chunk_end(pkg,s);
   return 1;
 }
@@ -653,7 +841,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
      !fixed_zero_chunk(&pkg,"DAFL",0) ||
      !fixed_zero_chunk(&pkg,"EMBI",8) ||
      !write_tpag(&pkg,p) ||
-     !write_code(&pkg,p) ||
+     !write_code(&pkg,p,err,errcap) ||
      !write_vari(&pkg) ||
      !write_func(&pkg) ||
      !write_strg(&pkg) ||
@@ -664,6 +852,8 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
     for(int i=0;i<pkg.strs.n;i++) free(pkg.strs.items[i]);
     free(pkg.strs.items); free(pkg.strs.char_off); free(pkg.patches);
     free(pkg.frame_patches); free(pkg.frame_tpag_ptr);
+    for(int i=0;i<pkg.n_code_refs;i++) free(pkg.code_refs[i].name);
+    free(pkg.code_refs);
     return 0;
   }
   patch32(&pkg.b,form_size_pos,(uint32_t)(pkg.b.len-8));
@@ -672,5 +862,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
   for(int i=0;i<pkg.strs.n;i++) free(pkg.strs.items[i]);
   free(pkg.strs.items); free(pkg.strs.char_off); free(pkg.patches);
   free(pkg.frame_patches); free(pkg.frame_tpag_ptr);
+  for(int i=0;i<pkg.n_code_refs;i++) free(pkg.code_refs[i].name);
+  free(pkg.code_refs);
   return ok;
 }

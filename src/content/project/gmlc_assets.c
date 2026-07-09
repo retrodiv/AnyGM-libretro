@@ -207,18 +207,39 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
   o.persistent=gmlc_json_bool(gmlc_json_obj(yy,"persistent"),0);
   const GmlcJson *events=gmlc_json_obj(yy,"eventList");
   if(events && events->type==GMLC_JSON_ARRAY){
+    char *dir=gmlc_path_dirname(res->abs_path);
     for(const GmlcJson *je=events->child;je;je=je->next){
       GmlcObjectEvent ev;
       memset(&ev,0,sizeof(ev));
       ev.event_type=gmlc_json_int(gmlc_json_obj(je,"eventtype"),0);
       ev.event_number=gmlc_json_int(gmlc_json_obj(je,"enumb"),0);
-      ev.collision_object_id=gmlc_project_find_object(p,gmlc_json_str(gmlc_json_obj(je,"collisionObjectId"),NULL));
+      const char *event_uuid=gmlc_json_str(gmlc_json_obj(je,"id"),NULL);
+      const char *col_uuid=gmlc_json_str(gmlc_json_obj(je,"collisionObjectId"),NULL);
+      ev.collision_object_id=gmlc_project_find_object(p,col_uuid);
+      char file[256];
+      switch(ev.event_type){
+        case 0: snprintf(file,sizeof(file),"Create_%d.gml",ev.event_number); break;
+        case 1: snprintf(file,sizeof(file),"Destroy_%d.gml",ev.event_number); break;
+        case 2: snprintf(file,sizeof(file),"Alarm_%d.gml",ev.event_number); break;
+        case 3: snprintf(file,sizeof(file),"Step_%d.gml",ev.event_number); break;
+        case 4: snprintf(file,sizeof(file),"Collision_%s.gml",event_uuid?event_uuid:""); break;
+        case 5: snprintf(file,sizeof(file),"Keyboard_%d.gml",ev.event_number); break;
+        case 6: snprintf(file,sizeof(file),"Mouse_%d.gml",ev.event_number); break;
+        case 7: snprintf(file,sizeof(file),"Other_%d.gml",ev.event_number); break;
+        case 8: snprintf(file,sizeof(file),"Draw_%d.gml",ev.event_number); break;
+        case 9: snprintf(file,sizeof(file),"KeyPress_%d.gml",ev.event_number); break;
+        case 10: snprintf(file,sizeof(file),"KeyRelease_%d.gml",ev.event_number); break;
+        default: snprintf(file,sizeof(file),"Other_%d.gml",ev.event_number); break;
+      }
+      ev.source_path=gmlc_path_join(dir,file);
       if(!object_add_event(&o,&ev)){
         snprintf(err,errcap,"out of memory while loading object events");
-        free(o.id); free(o.name); free(o.events);
+        free(o.id); free(o.name); free(ev.source_path); free(o.events);
+        free(dir);
         return 0;
       }
     }
+    free(dir);
   }
   if(!o.id || !o.name || !add_object(p,&o)){
     snprintf(err,errcap,"out of memory while loading object resource");
@@ -244,6 +265,12 @@ static int parse_room(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
   r.view_h=gmlc_json_int(gmlc_json_obj(v0,"hview"),r.height);
   r.port_w=gmlc_json_int(gmlc_json_obj(v0,"wport"),r.width);
   r.port_h=gmlc_json_int(gmlc_json_obj(v0,"hport"),r.height);
+  const char *cc=gmlc_json_str(gmlc_json_obj(yy,"creationCodeFile"),"");
+  if(cc && *cc){
+    char *dir=gmlc_path_dirname(res->abs_path);
+    r.creation_code_path=gmlc_path_join(dir,cc);
+    free(dir);
+  }
   int next_id=100000;
   scan_instances(p,&r,gmlc_json_obj(yy,"layers"),&next_id);
   if(!r.id || !r.name || !add_room(p,&r)){
