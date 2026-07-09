@@ -211,6 +211,15 @@ static int sound_ensure_pcm(GmlSound *s){
   s->own=out;
   return 1;
 }
+int gml_audio_warm_sound(GmlAudio *a, int snd){
+  if(!a || snd<0 || snd>=a->n_snd) return 0;
+  GmlSound *s=&a->snd[snd];
+  int had_pcm=s->pcm!=NULL;
+  if(!sound_ensure_pcm(s)) return 0;
+  if(!had_pcm && getenv("GML_LOG_AUDIO"))
+    fprintf(stderr,"[audio] warm_sound sound=%d ogg=%u pcm=%u\n",snd,s->ogg_len,s->nval);
+  return 1;
+}
 static uint32_t audio_initial_ogg_warm_budget(void){
   const char *e=getenv("GML_AUDIO_WARM_OGG_BYTES");
   if(e && (!strcmp(e,"0") || !strcmp(e,"off") || !strcmp(e,"false"))) return 0;
@@ -229,10 +238,8 @@ static void audio_warm_initial_ogg(GmlAudio *a){
   for(int i=0;i<a->n_snd;i++){
     GmlSound *s=&a->snd[i];
     if(s->pcm || !s->ogg || s->ogg_failed) continue;
-    if(s->ogg_len>budget-used){
-      if(warmed) break;
-      continue;
-    }
+    if(used>=budget) break;
+    if(s->ogg_len>budget-used) continue;
     if(sound_ensure_pcm(s)){
       used += s->ogg_len;
       warmed++;

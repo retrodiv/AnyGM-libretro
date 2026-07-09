@@ -4858,22 +4858,29 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"room_goto")||!strcmp(nm,"room_restart")||!strcmp(nm,"room_goto_next")){
     if(getenv("GML_LOG_ROOMGOTO")){ const char*w=(vm->cur_self&&vm->cur_self->obj>=0&&vm->cur_self->obj<vm->n_objects)?vm->objects[vm->cur_self->obj].name:"?";
       fprintf(stderr,"[rg] %s by=%s from=%d\n",nm,w,vm->room_index); } }
-  if(!strcmp(nm,"room_goto")){ vm->pending_room=(int)N(a,n,0); return vreal(0); }
+  if(!strcmp(nm,"room_goto")){
+    int target=(int)N(a,n,0);
+    gml_vm_warm_audio_for_room(vm,target);
+    vm->pending_room=target;
+    return vreal(0); }
   if(!strcmp(nm,"room_goto_next")||!strcmp(nm,"room_next")){
     int cur = !strcmp(nm,"room_next")? (int)N(a,n,0) : vm->room_index;
     int pos=order_pos(vm,cur);
     int nxt = (pos>=0 && pos+1<vm->win->n_room_order)? (int)vm->win->room_order[pos+1] : -1;
     if(!strcmp(nm,"room_next")) return vreal(nxt);
-    if(nxt>=0) vm->pending_room=nxt;
+    if(nxt>=0){ gml_vm_warm_audio_for_room(vm,nxt); vm->pending_room=nxt; }
     return vreal(0); }
   if(!strcmp(nm,"room_goto_previous")||!strcmp(nm,"room_previous")){
     int cur = !strcmp(nm,"room_previous")? (int)N(a,n,0) : vm->room_index;
     int pos=order_pos(vm,cur);
     int prv = (pos>0)? (int)vm->win->room_order[pos-1] : -1;
     if(!strcmp(nm,"room_previous")) return vreal(prv);
-    if(prv>=0) vm->pending_room=prv;
+    if(prv>=0){ gml_vm_warm_audio_for_room(vm,prv); vm->pending_room=prv; }
     return vreal(0); }
-  if(!strcmp(nm,"room_restart")){ vm->pending_room=vm->room_index; return vreal(0); }
+  if(!strcmp(nm,"room_restart")){
+    gml_vm_warm_audio_for_room(vm,vm->room_index);
+    vm->pending_room=vm->room_index;
+    return vreal(0); }
   if(!strcmp(nm,"room_set_persistent")) return vreal(0);
   if(!strcmp(nm,"game_end")){ vm->game_end=1; return vreal(0); }
   if(!strcmp(nm,"game_restart")){ vm->game_end=2; return vreal(0); }
@@ -5003,7 +5010,13 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(vm->action_relative && s){ x+=s->x; y+=s->y; }
     gml_instance_create(vm,x,y,(int)N(a,n,0)); return vreal(0); }
   if(!strcmp(nm,"action_previous_room")){
-    int pos=order_pos(vm,vm->room_index); if(pos>0) vm->pending_room=(int)vm->win->room_order[pos-1]; return vreal(0); }
+    int pos=order_pos(vm,vm->room_index);
+    if(pos>0){
+      int target=(int)vm->win->room_order[pos-1];
+      gml_vm_warm_audio_for_room(vm,target);
+      vm->pending_room=target;
+    }
+    return vreal(0); }
   if(!strcmp(nm,"action_move_to")){ GmlInstance*s=vm->cur_self; if(s){
       double x=N(a,n,0), y=N(a,n,1);
       if(vm->action_relative){ s->x+=x; s->y+=y; } else { s->x=x; s->y=y; } gml_colgrid_touch(s); } return vreal(0); }

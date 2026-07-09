@@ -224,6 +224,7 @@ typedef struct GmlVM {
   int *draw_ord; int draw_ord_cap;  /* scratch order buffer for draw passes (runtime-only) */
   void    *render;   /* GmlRender* (set by the frontend) for draw_* builtins */
   void    *audio;    /* GmlAudio*  (set by the frontend) for audio_* builtins */
+  unsigned char *audio_room_warm_scan; int audio_room_warm_scan_n;
   /* GMS2.3 struct pool: standalone GmlInstances (malloc'd individually so the growable pointer
    * array can realloc without dangling them). Field access resolves struct ids here via vm_inst_from_ref. */
   GmlInstance **structs; int n_structs, cap_structs; unsigned next_struct_id;
@@ -317,6 +318,7 @@ void gml_fire_async_saveload(GmlVM *vm);  /* drain queued Other_72 (async save/l
 void gml_fire_async_http(GmlVM *vm);      /* drain queued Other_62 (async HTTP, always-fail offline) events */
 void         gml_room_enter(GmlVM *vm, int room_index);      /* instantiate + Create events */
 void         gml_vm_goto_room_order(GmlVM *vm, int order_index);
+void         gml_vm_warm_audio_for_room(GmlVM *vm, int room_index);
 /* Apply one generic cheat line ("room=N", "name=V", "name[i]=V"). Returns 1 if it is a
  * sticky global write the caller should re-apply each frame (freeze), 0 for a one-shot/no-op. */
 int          gml_cheat_apply(GmlVM *vm, const char *code);

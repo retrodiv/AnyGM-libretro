@@ -18,6 +18,7 @@ void gml_audio_free(GmlAudio *a);
 
 /* play sound resource `snd` (SOND index); loop!=0 repeats. Returns a voice handle. */
 int  gml_audio_play(GmlAudio *a, int snd, int loop);
+int  gml_audio_warm_sound(GmlAudio *a, int snd);
 /* Decode an external OGG blob and register it as a new sound.
  * The returned sound index works with gml_audio_play/stop/gain/pitch.
  * Handles are recycled after caster_free. */

@@ -3,6 +3,7 @@
 /* gml_vm.c — normalized GML bytecode interpreter. See gml_vm.h. */
 #include "gml_vm.h"
 #include "gml_render.h"
+#include "gml_audio.h"
 #include "gml_particle.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -596,7 +597,11 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
     }
     return;
   }
-  if(!strcmp(name,"room")){ vm->pending_room=(int)asnum(v); return; }  /* GM: room=X -> goto room */
+  if(!strcmp(name,"room")){
+    int target=(int)asnum(v);
+    gml_vm_warm_audio_for_room(vm,target);
+    vm->pending_room=target;
+    return; }  /* GM: room=X -> goto room */
   if(argument_set(vm,name,v)) return;
   if(!strcmp(name,"room_speed")||!strcmp(name,"view_current")||!strcmp(name,"room_persistent")){
     *gml_varmap_put_h(&vm->globals,name,nh)=v;
@@ -3270,6 +3275,158 @@ static void vm_prefetch_room_assets(GmlVM *vm){
     }
   }
 }
+static int vm_audio_room_warm_disabled(void){
+  static int disabled=-1;
+  if(disabled<0){
+    const char *e=getenv("GML_AUDIO_ROOM_WARM");
+    disabled = e && (!strcmp(e,"0") || !strcmp(e,"off") || !strcmp(e,"false"));
+  }
+  return disabled;
+}
+static int vm_audio_room_warm_debug(void){
+  static int enabled=-1;
+  if(enabled<0) enabled=getenv("GML_DBG_AUDIO_ROOM_WARM")!=NULL;
+  return enabled;
+}
+static int insn_push_var_named(const GmlInsn *in, const char *name){
+  return in && name && in->kind==OP_PUSH && in->type1==DT_VAR && in->refname &&
+         !strcmp(in->refname,name);
+}
+static int insn_push_int_const(const GmlInsn *in, int *out){
+  if(!in || in->kind!=OP_PUSH || !out) return 0;
+  double d=0.0;
+  if(in->type1==DT_INT16) d=(double)in->sval;
+  else if(in->type1==DT_INT32) d=(double)in->ival;
+  else if(in->type1==DT_INT64) d=(double)in->lval;
+  else if(in->type1==DT_DOUBLE) d=in->dval;
+  else if(in->type1==DT_BOOL) d=(double)(in->ival!=0);
+  else return 0;
+  if(!isfinite(d)) return 0;
+  int iv=(int)(d<0.0?d-0.5:d+0.5);
+  if(fabs(d-(double)iv)>1e-6) return 0;
+  *out=iv;
+  return 1;
+}
+static int insn_audio_call_direct_sound(const GmlInsn *in){
+  if(!in || in->kind!=OP_CALL || !in->refname) return 0;
+  return !strcmp(in->refname,"audio_play_sound") ||
+         !strcmp(in->refname,"sound_play") ||
+         !strcmp(in->refname,"audio_play_sound_at");
+}
+static int code_audio_call_sound_const(const GmlCode *c, int call_i, int *sound){
+  if(!c || !c->insn || call_i<=0 || call_i>=(int)c->n_insn ||
+     !insn_audio_call_direct_sound(&c->insn[call_i])) return 0;
+  for(int j=call_i-1, scanned=0; j>=0 && scanned<16; j--, scanned++){
+    const GmlInsn *in=&c->insn[j];
+    if(in->kind==OP_CONV) continue;
+    return insn_push_int_const(in,sound);
+  }
+  return 0;
+}
+static int code_room_eq_at(const GmlCode *c, int cmp_i, int room_index){
+  if(!c || !c->insn || cmp_i<2 || cmp_i>=(int)c->n_insn) return 0;
+  const GmlInsn *a=&c->insn[cmp_i-2], *b=&c->insn[cmp_i-1], *cmp=&c->insn[cmp_i];
+  if(cmp->kind!=OP_CMP || cmp->cmp!=CMP_EQ) return 0;
+  int room_const=INT_MIN;
+  if(insn_push_var_named(a,"room") && insn_push_int_const(b,&room_const)) return room_const==room_index;
+  if(insn_push_int_const(a,&room_const) && insn_push_var_named(b,"room")) return room_const==room_index;
+  return 0;
+}
+static void vm_warm_audio_code_for_room(GmlVM *vm, int ci, int room_index){
+  if(!vm || !vm->win || !vm->audio || room_index<0 || ci<0 || ci>=vm->win->n_code) return;
+  if(!code_cache_ensure(vm->win,ci)) return;
+  GmlCode *c=&vm->win->code[ci];
+  if(!c->insn || !c->branch_index) return;
+  for(int i=2;i+1<(int)c->n_insn;i++){
+    if(!code_room_eq_at(c,i,room_index)) continue;
+    if(c->insn[i+1].kind!=OP_BF) continue;
+    int end=c->branch_index[i+1];
+    if(end<=i+1 || end>(int)c->n_insn) end=(int)c->n_insn;
+    for(int j=i+2;j<end;j++){
+      int snd=-1;
+      if(code_audio_call_sound_const(c,j,&snd)){
+        if(vm_audio_room_warm_debug())
+          fprintf(stderr,"[audio-warm-code] room=%d code=%s call=%d sound=%d\n",
+                  room_index,c->name?c->name:"?",j,snd);
+        gml_audio_warm_sound((GmlAudio*)vm->audio,snd);
+      }
+    }
+  }
+}
+static int vm_room_order_neighbor(GmlVM *vm, int room_index, int delta){
+  if(!vm || !vm->win || !vm->win->room_order || vm->win->n_room_order<=0) return -1;
+  for(int i=0;i<vm->win->n_room_order;i++){
+    if((int)vm->win->room_order[i]!=room_index) continue;
+    int j=i+delta;
+    return (j>=0 && j<vm->win->n_room_order) ? (int)vm->win->room_order[j] : -1;
+  }
+  return -1;
+}
+static void vm_warm_audio_object_alarm_codes(GmlVM *vm, int obj, int room_index){
+  if(!vm || obj<0 || obj>=vm->n_objects) return;
+  for(int a=0;a<GML_ALARMS;a++){
+    char suffix[16];
+    snprintf(suffix,sizeof suffix,"Alarm_%d",a);
+    int ci=-1;
+    if(event_lookup_from(vm,suffix,obj,NULL,&ci)) vm_warm_audio_code_for_room(vm,ci,room_index);
+  }
+}
+static void vm_warm_audio_room_placed_alarm_codes(GmlVM *vm, int room_index){
+  if(!vm || !vm->win || room_index<0) return;
+  GmlRoom r;
+  if(gml_room_get(vm->win,room_index,&r)!=0 || !r.obj_ptr) return;
+  const uint8_t *d=vm->win->data;
+  if(r.obj_ptr+4>vm->win->size) return;
+  uint32_t cnt=u32(d,r.obj_ptr);
+  if(cnt>100000) return;
+  for(uint32_t i=0;i<cnt;i++){
+    uint32_t ip=u32(d,r.obj_ptr+4+i*4);
+    if(!ip || ip+12>vm->win->size) continue;
+    vm_warm_audio_object_alarm_codes(vm,(int32_t)u32(d,ip+8),room_index);
+  }
+}
+static int vm_audio_room_global_scan_already_done(GmlVM *vm, int room_index){
+  if(!vm || !vm->win || room_index<0) return 1;
+  int nr=gml_room_count(vm->win);
+  if(nr<=0 || room_index>=nr) return 1;
+  if(vm->audio_room_warm_scan_n!=nr){
+    free(vm->audio_room_warm_scan);
+    vm->audio_room_warm_scan=calloc((size_t)nr,1);
+    vm->audio_room_warm_scan_n=vm->audio_room_warm_scan?nr:0;
+  }
+  if(!vm->audio_room_warm_scan) return 0;
+  if(vm->audio_room_warm_scan[room_index]) return 1;
+  vm->audio_room_warm_scan[room_index]=1;
+  return 0;
+}
+static void vm_warm_audio_global_code_for_room(GmlVM *vm, int room_index){
+  if(!vm || !vm->win || room_index<0) return;
+  if(vm_audio_room_global_scan_already_done(vm,room_index)) return;
+  for(int ci=0;ci<vm->win->n_code;ci++) vm_warm_audio_code_for_room(vm,ci,room_index);
+}
+void gml_vm_warm_audio_for_room(GmlVM *vm, int room_index){
+  if(!vm || !vm->win || !vm->audio || room_index<0 || vm_audio_room_warm_disabled()) return;
+  vm_warm_audio_global_code_for_room(vm,room_index);
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(!in->active || in->marked || in->obj<0 || in->obj>=vm->n_objects) continue;
+    vm_warm_audio_object_alarm_codes(vm,in->obj,room_index);
+  }
+  vm_warm_audio_room_placed_alarm_codes(vm,room_index);
+}
+static void vm_warm_audio_for_room_window(GmlVM *vm){
+  if(!vm || vm_audio_room_warm_disabled()) return;
+  int rooms[3]={ vm->room_index,
+                 vm_room_order_neighbor(vm,vm->room_index,1),
+                 vm_room_order_neighbor(vm,vm->room_index,-1) };
+  for(int i=0;i<3;i++){
+    int room=rooms[i];
+    if(room<0) continue;
+    int seen=0;
+    for(int j=0;j<i;j++) if(rooms[j]==room) seen=1;
+    if(!seen) gml_vm_warm_audio_for_room(vm,room);
+  }
+}
 void gml_room_enter(GmlVM *vm, int room_index){
   gml_colgrid_invalidate(vm);
   int prev_room=vm->room_index;
@@ -3464,6 +3621,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
   /* Dispatch the gamepad-discovered asynchronous event. */
   gml_fire_gamepad_connected(vm);
   reap(vm);
+  gml_vm_warm_audio_for_room(vm,vm->room_index);
   vm_prefetch_room_assets(vm);
 }
 void gml_vm_goto_room_order(GmlVM *vm, int order_index){
@@ -3490,7 +3648,11 @@ int gml_cheat_apply(GmlVM *vm, const char *code){
   if(*code!='=') return 0;
   code++; while(*code==' ') code++;
   double val=atof(code);
-  if(!strcmp(name,"room")){ vm->pending_room=(int)val; return 0; }   /* one-shot warp (room index) */
+  if(!strcmp(name,"room")){
+    int target=(int)val;
+    gml_vm_warm_audio_for_room(vm,target);
+    vm->pending_room=target;
+    return 0; }   /* one-shot warp (room index) */
   if(idx<0) idx=0;
   gml_set_global_arr(vm,name,idx,val);
   return 1;   /* sticky: re-apply each frame to freeze */
@@ -4693,6 +4855,7 @@ void gml_vm_free(GmlVM *vm){
   free(vm->objects); free(vm->col_events); free(vm->col_pair_cache); free(vm->event_cache);
   gml_tilemaps_clear(vm);
   free(vm->rtl); free(vm->rte); free(vm->view_ovr); free(vm->tilemaps);
+  free(vm->audio_room_warm_scan); vm->audio_room_warm_scan=NULL; vm->audio_room_warm_scan_n=0;
 }
 
 /* ---------------- save-state runtime serialization ---------------- */
@@ -5709,6 +5872,9 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     free(snap);
   }
   if(used) *used=s.pos;
-  if(s.ok && s.pos<=len) vm_prefetch_room_assets(vm);
+  if(s.ok && s.pos<=len){
+    vm_warm_audio_for_room_window(vm);
+    vm_prefetch_room_assets(vm);
+  }
   return s.ok && s.pos<=len;
 }
