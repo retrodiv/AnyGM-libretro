@@ -216,7 +216,13 @@ static void lx_skip(Lexer *l){
     while(isspace((unsigned char)l->src[l->pos])) l->pos++;
     if(l->src[l->pos]=='/' && l->src[l->pos+1]=='/'){ while(l->src[l->pos] && l->src[l->pos]!='\n') l->pos++; continue; }
     if(l->src[l->pos]=='/' && l->src[l->pos+1]=='*'){ l->pos+=2; while(l->src[l->pos] && !(l->src[l->pos]=='*'&&l->src[l->pos+1]=='/')) l->pos++; if(l->src[l->pos]) l->pos+=2; continue; }
-    if(l->src[l->pos]=='#'){ while(l->src[l->pos] && l->src[l->pos]!='\n') l->pos++; continue; }
+    if(l->src[l->pos]=='#'){
+      size_t bol=l->pos;
+      while(bol>0 && l->src[bol-1]!='\n' && l->src[bol-1]!='\r') bol--;
+      int line_directive=1;
+      for(size_t p=bol;p<l->pos;p++) if(!isspace((unsigned char)l->src[p])){ line_directive=0; break; }
+      if(line_directive){ while(l->src[l->pos] && l->src[l->pos]!='\n') l->pos++; continue; }
+    }
     break;
   }
 }
@@ -842,10 +848,18 @@ typedef struct {
   int is_stacktop;
   int is_array;
   int is_array_2d;
+  int accessor;
   Span index_span;
   Span index2_span;
   char *index_src;
 } LValue;
+
+enum {
+  ACCESS_NONE=0,
+  ACCESS_MAP,
+  ACCESS_LIST,
+  ACCESS_GRID
+};
 
 static int emit_lvalue_address(Compiler *c, LValue *lv){
   if(lv->is_stacktop){
@@ -869,6 +883,7 @@ static int emit_lvalue_address(Compiler *c, LValue *lv){
 
 static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv);
 static int emit_lvalue_read(Compiler *c, LValue *lv);
+static int emit_popz(Compiler *c){ return emit_u32(&c->code,fw(OP_POPZ,0,0)); }
 
 static int parse_primary(Compiler *c){
   if(c->lex.tok.kind==TOK_NUM){ double d=c->lex.tok.num; lx_next(&c->lex); return emit_push_real(c,d); }
@@ -989,28 +1004,97 @@ static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv){
     snprintf(lv->name,sizeof(lv->name),"%s",field);
   }
   if(eat(c,"[")){
-    lv->is_array=1;
     size_t close_pos=0;
     if(!scan_square_span(c,c->lex.tok.start,&lv->index_span,&close_pos)) return 0;
     lv->index_src=gmlc_strdup(c->lex.src);
     if(!lv->index_src) return 0;
+    if(lv->index_span.start<lv->index_span.end){
+      char ch=c->lex.src[lv->index_span.start];
+      if(ch=='?' || ch=='|' || ch=='#'){
+        lv->accessor=(ch=='?')?ACCESS_MAP:(ch=='|')?ACCESS_LIST:ACCESS_GRID;
+        lv->index_span.start++;
+        trim_span(c->lex.src,&lv->index_span);
+      }
+    }
     size_t comma=0;
-    if(find_top_comma(c->lex.src,lv->index_span,&comma)){
-      lv->is_array_2d=1;
+    if(lv->accessor==ACCESS_GRID){
+      if(!find_top_comma(c->lex.src,lv->index_span,&comma)){
+        c->unsupported=1;
+        snprintf(c->lex.err,sizeof(c->lex.err),"grid accessor requires two indices");
+        free(lv->index_src);
+        lv->index_src=NULL;
+        return 0;
+      }
       lv->index2_span.start=comma+1;
       lv->index2_span.end=lv->index_span.end;
       lv->index_span.end=comma;
       trim_span(c->lex.src,&lv->index_span);
       trim_span(c->lex.src,&lv->index2_span);
+    } else if(lv->accessor==ACCESS_MAP || lv->accessor==ACCESS_LIST){
+      if(find_top_comma(c->lex.src,lv->index_span,&comma)){
+        c->unsupported=1;
+        snprintf(c->lex.err,sizeof(c->lex.err),"accessor requires one index");
+        free(lv->index_src);
+        lv->index_src=NULL;
+        return 0;
+      }
+    } else {
+      lv->is_array=1;
+      if(find_top_comma(c->lex.src,lv->index_span,&comma)){
+        lv->is_array_2d=1;
+        lv->index2_span.start=comma+1;
+        lv->index2_span.end=lv->index_span.end;
+        lv->index_span.end=comma;
+        trim_span(c->lex.src,&lv->index_span);
+        trim_span(c->lex.src,&lv->index2_span);
+      }
+      lv->reftype=0x00;
     }
     c->lex.pos=close_pos+1;
     lx_next(&c->lex);
-    lv->reftype=0x00;
   }
   return 1;
 }
 
+static int emit_lvalue_base_read(Compiler *c, LValue *lv){
+  if(lv->is_stacktop){
+    if(!emit_lvalue_address(c,lv)) return 0;
+    return emit_push_var(c,IT_STACK,lv->name,0x80);
+  }
+  return emit_push_var(c,lv->inst,lv->name,0xA0);
+}
+
+static int emit_accessor_key_args(Compiler *c, LValue *lv){
+  if(!lv->index_src) return 0;
+  if(lv->accessor==ACCESS_GRID){
+    if(!compile_expr_slice(c,lv->index_src+lv->index2_span.start,lv->index2_span.end-lv->index2_span.start)) return 0;
+    if(!compile_expr_slice(c,lv->index_src+lv->index_span.start,lv->index_span.end-lv->index_span.start)) return 0;
+    return 1;
+  }
+  return compile_expr_slice(c,lv->index_src+lv->index_span.start,lv->index_span.end-lv->index_span.start);
+}
+
+static int emit_accessor_read(Compiler *c, LValue *lv){
+  const char *fn = lv->accessor==ACCESS_MAP ? "ds_map_find_value" :
+                   lv->accessor==ACCESS_LIST ? "ds_list_find_value" : "ds_grid_get";
+  int argc = lv->accessor==ACCESS_GRID ? 3 : 2;
+  if(!emit_accessor_key_args(c,lv)) return 0;
+  if(!emit_lvalue_base_read(c,lv)) return 0;
+  return emit_call(c,fn,argc);
+}
+
+static int emit_accessor_write(Compiler *c, LValue *lv){
+  const char *fn = lv->accessor==ACCESS_MAP ? "ds_map_set" :
+                   lv->accessor==ACCESS_LIST ? "ds_list_replace" : "ds_grid_set";
+  int argc = lv->accessor==ACCESS_GRID ? 4 : 3;
+  if(!emit_accessor_key_args(c,lv)) return 0;
+  if(!emit_lvalue_base_read(c,lv)) return 0;
+  if(!emit_call(c,fn,argc)) return 0;
+  return emit_popz(c);
+}
+
 static int emit_lvalue_read(Compiler *c, LValue *lv){
+  if(lv->accessor) return emit_accessor_read(c,lv);
   if(lv->is_array){
     if(!emit_lvalue_address(c,lv)) return 0;
     return emit_push_var(c,IT_SELF,lv->name,0x00);
@@ -1023,6 +1107,7 @@ static int emit_lvalue_read(Compiler *c, LValue *lv){
 }
 
 static int emit_lvalue_write(Compiler *c, LValue *lv, uint8_t type1){
+  if(lv->accessor) return emit_accessor_write(c,lv);
   if(lv->is_array) return emit_pop_var(c,IT_SELF,lv->name,0x00,type1);
   if(lv->is_stacktop) return emit_pop_var(c,IT_STACK,lv->name,0x80,type1);
   return emit_pop_var(c,lv->inst,lv->name,0xA0,type1);
