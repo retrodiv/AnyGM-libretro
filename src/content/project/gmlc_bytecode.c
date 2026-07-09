@@ -49,6 +49,9 @@ typedef struct {
   int n_locals, cap_locals;
   size_t *break_sites;
   int n_break_sites, cap_break_sites;
+  size_t *continue_sites;
+  int n_continue_sites, cap_continue_sites;
+  int continue_depth;
   int temp_id;
   Lexer lex;
   int unsupported;
@@ -303,6 +306,27 @@ static int emit_break_branch(Compiler *c){
 static void patch_breaks_from(Compiler *c, int mark, size_t target){
   for(int i=mark;i<c->n_break_sites;i++) patch_branch(c,c->break_sites[i],target);
   c->n_break_sites=mark;
+}
+
+static int add_continue_site(Compiler *c, size_t pos){
+  if(c->n_continue_sites>=c->cap_continue_sites){
+    int nc=c->cap_continue_sites?c->cap_continue_sites*2:32;
+    size_t *ns=(size_t*)realloc(c->continue_sites,(size_t)nc*sizeof(*ns));
+    if(!ns) return 0;
+    c->continue_sites=ns; c->cap_continue_sites=nc;
+  }
+  c->continue_sites[c->n_continue_sites++]=pos;
+  return 1;
+}
+
+static int emit_continue_branch(Compiler *c){
+  size_t b=emit_branch(c,OP_B);
+  return add_continue_site(c,b);
+}
+
+static void patch_continues_from(Compiler *c, int mark, size_t target){
+  for(int i=mark;i<c->n_continue_sites;i++) patch_branch(c,c->continue_sites[i],target);
+  c->n_continue_sites=mark;
 }
 
 static int macro_value(Compiler *c, const char *name, double *out){
@@ -1045,8 +1069,12 @@ static int parse_while(Compiler *c){
   size_t start=c->code.len;
   if(!need(c,"(") || !parse_expr(c) || !need(c,")")) return 0;
   int break_mark=c->n_break_sites;
+  int continue_mark=c->n_continue_sites;
+  c->continue_depth++;
   size_t bf=emit_branch(c,OP_BF);
   if(!parse_block_or_stmt(c)) return 0;
+  c->continue_depth--;
+  patch_continues_from(c,continue_mark,start);
   size_t b=emit_branch(c,OP_B);
   patch_branch(c,b,start);
   patch_branch(c,bf,c->code.len);
@@ -1071,7 +1099,12 @@ static int parse_for(Compiler *c){
   c->lex.pos=close_pos+1;
   lx_next(&c->lex);
   int break_mark=c->n_break_sites;
+  int continue_mark=c->n_continue_sites;
+  c->continue_depth++;
   if(!parse_block_or_stmt(c)) return 0;
+  c->continue_depth--;
+  size_t continue_target=c->code.len;
+  patch_continues_from(c,continue_mark,continue_target);
   if(parts[2].start<parts[2].end && !compile_statement_slice(c,src+parts[2].start,parts[2].end-parts[2].start)) return 0;
   size_t b=emit_branch(c,OP_B);
   patch_branch(c,b,loop_start);
@@ -1080,14 +1113,47 @@ static int parse_for(Compiler *c){
   return 1;
 }
 
+static int parse_repeat(Compiler *c){
+  lx_next(&c->lex);
+  char tmpname[64];
+  snprintf(tmpname,sizeof(tmpname),"__gmlc_repeat_%d",c->temp_id++);
+  if(!add_local(c,tmpname)) return 0;
+  if(!need(c,"(") || !parse_expr(c) || !need(c,")")) return 0;
+  if(!emit_pop_var(c,IT_LOCAL,tmpname,0xA0,DT_VAR)) return 0;
+  size_t loop_start=c->code.len;
+  if(!emit_push_var(c,IT_LOCAL,tmpname,0xA0) ||
+     !emit_push_real(c,0) ||
+     !emit_cmp(c,CMP_LTE)) return 0;
+  size_t done=emit_branch(c,OP_BT);
+  if(!emit_push_var(c,IT_LOCAL,tmpname,0xA0) ||
+     !emit_push_real(c,1) ||
+     !emit_binary(c,OP_SUB) ||
+     !emit_pop_var(c,IT_LOCAL,tmpname,0xA0,DT_VAR)) return 0;
+  int break_mark=c->n_break_sites;
+  int continue_mark=c->n_continue_sites;
+  c->continue_depth++;
+  if(!parse_block_or_stmt(c)) return 0;
+  c->continue_depth--;
+  patch_continues_from(c,continue_mark,loop_start);
+  size_t b=emit_branch(c,OP_B);
+  patch_branch(c,b,loop_start);
+  patch_branch(c,done,c->code.len);
+  patch_breaks_from(c,break_mark,c->code.len);
+  return 1;
+}
+
 static int parse_with(Compiler *c){
   lx_next(&c->lex);
   if(!need(c,"(") || !parse_expr(c) || !need(c,")")) return 0;
   int break_mark=c->n_break_sites;
+  int continue_mark=c->n_continue_sites;
+  c->continue_depth++;
   size_t push=emit_branch(c,OP_PUSHENV);
   size_t body_start=c->code.len;
   if(!parse_block_or_stmt(c)) return 0;
+  c->continue_depth--;
   size_t pop=emit_branch(c,OP_POPENV);
+  patch_continues_from(c,continue_mark,pop);
   patch_branch(c,pop,body_start);
   patch_branch(c,push,c->code.len);
   patch_breaks_from(c,break_mark,c->code.len);
@@ -1228,15 +1294,22 @@ static int parse_statement(Compiler *c){
   if(is_id(c,"if")) return parse_if(c);
   if(is_id(c,"while")) return parse_while(c);
   if(is_id(c,"for")) return parse_for(c);
+  if(is_id(c,"repeat")) return parse_repeat(c);
   if(is_id(c,"switch")) return parse_switch(c);
   if(is_id(c,"with")) return parse_with(c);
   if(is_id(c,"return")) return parse_return_stmt(c);
   if(is_id(c,"exit")){ lx_next(&c->lex); emit_u32(&c->code,fw(OP_EXIT,0,0)); eat(c,";"); return 1; }
   if(is_id(c,"break")){ lx_next(&c->lex); if(!emit_break_branch(c)) return 0; eat(c,";"); return 1; }
-  if(is_id(c,"repeat")||is_id(c,"continue")){
-    c->unsupported=1;
-    snprintf(c->lex.err,sizeof(c->lex.err),"unsupported statement '%s'",c->lex.tok.text);
-    return 0;
+  if(is_id(c,"continue")){
+    if(c->continue_depth<=0){
+      c->unsupported=1;
+      snprintf(c->lex.err,sizeof(c->lex.err),"continue outside loop");
+      return 0;
+    }
+    lx_next(&c->lex);
+    if(!emit_continue_branch(c)) return 0;
+    eat(c,";");
+    return 1;
   }
   if(tok_is(c,"{")) return parse_block_or_stmt(c);
   return parse_simple_or_assign(c);
@@ -1312,6 +1385,7 @@ int gmlc_bytecode_compile_source(const GmlcProject *project, const char *path, G
   for(int i=0;i<c.n_locals;i++) free(c.locals[i]);
   free(c.locals);
   free(c.break_sites);
+  free(c.continue_sites);
   for(int i=0;i<c.n_refs;i++) free(c.refs[i].name);
   free(c.refs);
   for(int i=0;i<c.n_strings;i++) free(c.strings[i].value);
