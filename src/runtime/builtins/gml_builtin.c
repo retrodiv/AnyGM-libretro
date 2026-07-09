@@ -5467,8 +5467,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"sprite_get_yoffset")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].originy:0); }
     if(!strcmp(nm,"sprite_get_bbox_left")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].ml:0); }
     if(!strcmp(nm,"sprite_get_bbox_top")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].mt:0); }
-    if(!strcmp(nm,"sprite_get_bbox_right")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].w-1-R->spr[spr].mr:0); }
-    if(!strcmp(nm,"sprite_get_bbox_bottom")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].h-1-R->spr[spr].mb:0); }
+    if(!strcmp(nm,"sprite_get_bbox_right")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].mr:0); }
+    if(!strcmp(nm,"sprite_get_bbox_bottom")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].mb:0); }
     if(!strcmp(nm,"sprite_get_uvs")) return sprite_uvs(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)));
     if(!strcmp(nm,"texture_get_width")){ double uw; return vreal(texture_info(R,(int)N(a,n,0),&uw,NULL,NULL,NULL)?uw:0); }
     if(!strcmp(nm,"texture_get_height")){ double uh; return vreal(texture_info(R,(int)N(a,n,0),NULL,&uh,NULL,NULL)?uh:0); }
