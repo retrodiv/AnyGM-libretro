@@ -99,6 +99,7 @@ typedef struct {
   char *name;
   int width, height, xorig, yorig;
   int bbox_left, bbox_right, bbox_top, bbox_bottom;
+  int bbox_mode, col_kind, col_tolerance, sep_masks;
   int n_frames;
   char **frame_paths;
 } GmlcSprite;

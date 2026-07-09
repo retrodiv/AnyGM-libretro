@@ -2,6 +2,16 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
 #include "gmlc_package.h"
 #include "gmlc_bytecode.h"
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#include "stb_image.h"
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -267,7 +277,53 @@ static int global_frame_index(const GmlcProject *p, int sprite, int frame){
   return n+frame;
 }
 
-static int write_sprt(Pkg *pkg, const GmlcProject *p){
+static int write_sprite_masks(Pkg *pkg, const GmlcSprite *sp, char *err, size_t errcap){
+  if(sp->n_frames<=0 || sp->width<=0 || sp->height<=0){
+    wu32(&pkg->b,0);
+    return 1;
+  }
+  int rowb=(sp->width+7)/8;
+  if(rowb<=0 || sp->height<=0){
+    wu32(&pkg->b,0);
+    return 1;
+  }
+  wu32(&pkg->b,(uint32_t)sp->n_frames);
+  int tol=sp->col_tolerance;
+  if(tol<0) tol=0;
+  if(tol>255) tol=255;
+  for(int f=0;f<sp->n_frames;f++){
+    int w=0,h=0,comp=0;
+    const char *path=(sp->frame_paths && sp->frame_paths[f]) ? sp->frame_paths[f] : NULL;
+    unsigned char *rgba=path?stbi_load(path,&w,&h,&comp,4):NULL;
+    if(!rgba){
+      snprintf(err,errcap,"%s: sprite mask image read failed",path?path:"<missing>");
+      return 0;
+    }
+    size_t mask_bytes=(size_t)rowb*(size_t)sp->height;
+    uint8_t *mask=(uint8_t*)calloc(mask_bytes?mask_bytes:1,1);
+    if(!mask){
+      stbi_image_free(rgba);
+      snprintf(err,errcap,"out of memory while writing sprite mask");
+      return 0;
+    }
+    int mw=w<sp->width?w:sp->width;
+    int mh=h<sp->height?h:sp->height;
+    for(int y=0;y<mh;y++) for(int x=0;x<mw;x++){
+      unsigned char a=rgba[((size_t)y*(size_t)w+(size_t)x)*4u+3u];
+      if(a>tol) mask[(size_t)y*(size_t)rowb+(size_t)x/8u] |= (uint8_t)(1u<<(7-(x&7)));
+    }
+    stbi_image_free(rgba);
+    if(!wbytes(&pkg->b,mask,mask_bytes)){
+      free(mask);
+      snprintf(err,errcap,"out of memory while writing sprite mask");
+      return 0;
+    }
+    free(mask);
+  }
+  return 1;
+}
+
+static int write_sprt(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   size_t s=chunk_begin(pkg,"SPRT");
   uint32_t n=(uint32_t)p->n_sprites;
   wu32(&pkg->b,n);
@@ -287,8 +343,8 @@ static int write_sprt(Pkg *pkg, const GmlcProject *p){
     wu32(&pkg->b,0);
     wu32(&pkg->b,0);
     wu32(&pkg->b,1);
-    wu32(&pkg->b,0);
-    wu32(&pkg->b,0);
+    wi32(&pkg->b,sp->bbox_mode);
+    wu32(&pkg->b,(uint32_t)(sp->sep_masks?1:0));
     wi32(&pkg->b,sp->xorig);
     wi32(&pkg->b,sp->yorig);
     wu32(&pkg->b,(uint32_t)sp->n_frames);
@@ -297,7 +353,7 @@ static int write_sprt(Pkg *pkg, const GmlcProject *p){
       wu32(&pkg->b,0);
       add_frame_patch(pkg,pos,global_frame_index(p,(int)i,f));
     }
-    wu32(&pkg->b,0);
+    if(!write_sprite_masks(pkg,sp,err,errcap)) return 0;
   }
   chunk_end(pkg,s);
   return 1;
@@ -1134,7 +1190,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
      !empty_list_chunk(&pkg,"EXTN") ||
      !write_sond(&pkg,p) ||
      !write_agrp(&pkg) ||
-     !write_sprt(&pkg,p) ||
+     !write_sprt(&pkg,p,err,errcap) ||
      !write_bgnd(&pkg,p) ||
      !empty_list_chunk(&pkg,"PATH") ||
      !write_scpt(&pkg,p) ||

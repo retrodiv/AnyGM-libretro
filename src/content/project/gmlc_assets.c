@@ -482,6 +482,10 @@ static int parse_sprite(GmlcProject *p, const GmlcResource *res, const GmlcJson 
   s.bbox_right=gmlc_json_int(gmlc_json_obj(yy,"bbox_right"),s.width?s.width-1:0);
   s.bbox_top=gmlc_json_int(gmlc_json_obj(yy,"bbox_top"),0);
   s.bbox_bottom=gmlc_json_int(gmlc_json_obj(yy,"bbox_bottom"),s.height?s.height-1:0);
+  s.bbox_mode=gmlc_json_int(gmlc_json_obj(yy,"bboxmode"),0);
+  s.col_kind=gmlc_json_int(gmlc_json_obj(yy,"colkind"),0);
+  s.col_tolerance=gmlc_json_int(gmlc_json_obj(yy,"coltolerance"),0);
+  s.sep_masks=gmlc_json_bool(gmlc_json_obj(yy,"sepmasks"),0);
   const GmlcJson *frames=gmlc_json_obj(yy,"frames");
   s.n_frames=gmlc_json_len(frames);
   if(s.n_frames>0){
