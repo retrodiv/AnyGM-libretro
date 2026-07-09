@@ -83,7 +83,10 @@ void gmlc_project_free(GmlcProject *p){
     GmlcRoom *r=&p->rooms[i];
     free(r->id); free(r->name);
     free(r->creation_code_path);
-    for(int k=0;k<r->n_instances;k++){ free(r->instances[k].id); free(r->instances[k].name); }
+    for(int k=0;k<r->n_instances;k++){
+      free(r->instances[k].id); free(r->instances[k].name);
+      free(r->instances[k].creation_code_path);
+    }
     free(r->instances);
     for(int l=0;l<r->n_layers;l++){
       GmlcRoomLayer *ly=&r->layers[l];

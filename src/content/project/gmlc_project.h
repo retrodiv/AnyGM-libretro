@@ -30,6 +30,7 @@ typedef struct {
 typedef struct {
   char *id;
   char *name;
+  char *creation_code_path;
   int x, y, object_id, instance_id;
   float sx, sy, rotation;
   uint32_t color;

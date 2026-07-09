@@ -164,6 +164,7 @@ static void free_room_fields(GmlcRoom *r){
   for(int i=0;i<r->n_instances;i++){
     free(r->instances[i].id);
     free(r->instances[i].name);
+    free(r->instances[i].creation_code_path);
   }
   free(r->instances);
   for(int l=0;l<r->n_layers;l++) free_room_layer_fields(&r->layers[l]);
@@ -217,11 +218,11 @@ static int layer_type_from_model(const char *model){
   return 0;
 }
 
-static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers, char *err, size_t errcap){
+static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers, const char *room_dir, char *err, size_t errcap){
   if(!layers || layers->type!=GMLC_JSON_ARRAY) return 1;
   for(const GmlcJson *ly=layers->child;ly;ly=ly->next){
     const GmlcJson *sub=gmlc_json_obj(ly,"layers");
-    if(sub && sub->type==GMLC_JSON_ARRAY && !scan_room_layers(p,r,sub,err,errcap)) return 0;
+    if(sub && sub->type==GMLC_JSON_ARRAY && !scan_room_layers(p,r,sub,room_dir,err,errcap)) return 0;
     int type=layer_type_from_model(gmlc_json_str(gmlc_json_obj(ly,"modelName"),NULL));
     if(type<=0) continue;
     if(type==4){
@@ -275,9 +276,19 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
           in.sy=(float)gmlc_json_num(gmlc_json_obj(ji,"scaleY"),1.0);
           in.rotation=(float)gmlc_json_num(gmlc_json_obj(ji,"rotation"),0.0);
           in.color=parse_u32_color(gmlc_json_obj(ji,"colour"),0xFFFFFFFFu);
+          const char *cc=gmlc_json_str(gmlc_json_obj(ji,"creationCodeFile"),"");
+          if(cc && *cc){
+            in.creation_code_path=gmlc_path_join(room_dir,cc);
+            if(!in.creation_code_path){
+              snprintf(err,errcap,"out of memory while loading instance creation code path");
+              free(in.id); free(in.name);
+              free_room_layer_fields(&out);
+              return 0;
+            }
+          }
           if(!layer_add_instance_id(&out,(uint32_t)in.instance_id) || !room_add_instance(r,&in)){
             snprintf(err,errcap,"out of memory while loading room instances");
-            free(in.id); free(in.name);
+            free(in.id); free(in.name); free(in.creation_code_path);
             free_room_layer_fields(&out);
             return 0;
           }
@@ -536,16 +547,23 @@ static int parse_room(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
   r.view_h=gmlc_json_int(gmlc_json_obj(v0,"hview"),r.height);
   r.port_w=gmlc_json_int(gmlc_json_obj(v0,"wport"),r.width);
   r.port_h=gmlc_json_int(gmlc_json_obj(v0,"hport"),r.height);
+  char *dir=gmlc_path_dirname(res->abs_path);
   const char *cc=gmlc_json_str(gmlc_json_obj(yy,"creationCodeFile"),"");
   if(cc && *cc){
-    char *dir=gmlc_path_dirname(res->abs_path);
     r.creation_code_path=gmlc_path_join(dir,cc);
-    free(dir);
+    if(!r.creation_code_path){
+      free(dir);
+      snprintf(err,errcap,"out of memory while loading room creation code path");
+      free_room_fields(&r);
+      return 0;
+    }
   }
-  if(!scan_room_layers(p,&r,gmlc_json_obj(yy,"layers"),err,errcap)){
+  if(!scan_room_layers(p,&r,gmlc_json_obj(yy,"layers"),dir,err,errcap)){
+    free(dir);
     free_room_fields(&r);
     return 0;
   }
+  free(dir);
   if(!r.id || !r.name || !add_room(p,&r)){
     snprintf(err,errcap,"out of memory while loading room resource");
     free_room_fields(&r);
