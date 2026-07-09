@@ -14,6 +14,7 @@ typedef enum {
   GMLC_RES_ROOM,
   GMLC_RES_SHADER,
   GMLC_RES_FONT,
+  GMLC_RES_TILESET,
   GMLC_RES_OTHER
 } GmlcResKind;
 
@@ -56,6 +57,8 @@ typedef struct {
   int bg_htiled, bg_vtiled, bg_stretch;
   uint32_t bg_color;
   float bg_frame, bg_speed;
+  int tile_tileset_id, tile_cols, tile_rows;
+  uint32_t *tile_data;
   uint32_t *instance_ids;
   int n_instance_ids, cap_instance_ids;
   GmlcRoomAsset *assets;
@@ -134,6 +137,15 @@ typedef struct {
 } GmlcFont;
 
 typedef struct {
+  char *id;
+  char *name;
+  int sprite_id;
+  int tile_width, tile_height;
+  int border_x, border_y;
+  int columns, tile_count;
+} GmlcTileset;
+
+typedef struct {
   char *root_dir;
   char *yyp_path;
   char *name;
@@ -155,6 +167,8 @@ typedef struct {
   int n_shaders, cap_shaders;
   GmlcFont *fonts;
   int n_fonts, cap_fonts;
+  GmlcTileset *tilesets;
+  int n_tilesets, cap_tilesets;
 } GmlcProject;
 
 void gmlc_project_init(GmlcProject *p);
@@ -164,6 +178,7 @@ int gmlc_project_find_object(const GmlcProject *p, const char *id);
 int gmlc_project_find_sprite(const GmlcProject *p, const char *id);
 int gmlc_project_find_sound(const GmlcProject *p, const char *id);
 int gmlc_project_find_room(const GmlcProject *p, const char *id);
+int gmlc_project_find_tileset(const GmlcProject *p, const char *id);
 char *gmlc_strdup(const char *s);
 char *gmlc_path_dirname(const char *path);
 char *gmlc_path_join(const char *a, const char *b);

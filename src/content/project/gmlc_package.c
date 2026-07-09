@@ -303,6 +303,41 @@ static int write_sprt(Pkg *pkg, const GmlcProject *p){
   return 1;
 }
 
+static int write_bgnd(Pkg *pkg, const GmlcProject *p){
+  size_t s=chunk_begin(pkg,"BGND");
+  uint32_t n=(uint32_t)p->n_tilesets;
+  wu32(&pkg->b,n);
+  size_t table=pkg->b.len;
+  zfill(&pkg->b,(size_t)n*4);
+  for(uint32_t i=0;i<n;i++){
+    const GmlcTileset *ts=&p->tilesets[i];
+    patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
+    size_t rec=pkg->b.len;
+    int sid=intern(pkg,ts->name?ts->name:"");
+    wstrptr(pkg,sid);
+    wu32(&pkg->b,0);
+    wu32(&pkg->b,0);
+    wu32(&pkg->b,1);
+    uint32_t tex_pos=(uint32_t)pkg->b.len;
+    wu32(&pkg->b,0);
+    if(ts->sprite_id>=0 && ts->sprite_id<p->n_sprites && p->sprites[ts->sprite_id].n_frames>0){
+      if(!add_frame_patch(pkg,tex_pos,global_frame_index(p,ts->sprite_id,0))) return 0;
+    }
+    wu32(&pkg->b,1);
+    wi32(&pkg->b,ts->tile_width>0?ts->tile_width:16);
+    wi32(&pkg->b,ts->tile_height>0?ts->tile_height:16);
+    wi32(&pkg->b,ts->border_x);
+    wi32(&pkg->b,ts->border_y);
+    wi32(&pkg->b,ts->columns);
+    wi32(&pkg->b,1);
+    wi32(&pkg->b,ts->tile_count);
+    while(pkg->b.len<rec+64) wu8(&pkg->b,0);
+    for(int id=0;id<ts->tile_count;id++) wi32(&pkg->b,id>0?id-1:0);
+  }
+  chunk_end(pkg,s);
+  return 1;
+}
+
 static int write_tpag(Pkg *pkg, const GmlcProject *p){
   pkg->n_frames=total_sprite_frames(p);
   pkg->n_texture_pages=total_texture_pages(p);
@@ -740,6 +775,57 @@ static int write_room_empty_list(Pkg *pkg, uint32_t *out_ptr){
   return wu32(&pkg->b,0);
 }
 
+static int count_room_tile_cells(const GmlcProject *p, const GmlcRoom *r){
+  int n=0;
+  for(int i=0;i<r->n_layers;i++){
+    const GmlcRoomLayer *ly=&r->layers[i];
+    if(ly->type!=4 || !ly->tile_data || ly->tile_cols<=0 || ly->tile_rows<=0) continue;
+    if(ly->tile_tileset_id<0 || ly->tile_tileset_id>=p->n_tilesets) continue;
+    int cells=ly->tile_cols*ly->tile_rows;
+    for(int c=0;c<cells;c++) if((ly->tile_data[c]&0x7FFFFu)!=0) n++;
+  }
+  return n;
+}
+
+static int write_room_tiles(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, uint32_t *out_ptr){
+  int n=count_room_tile_cells(p,r);
+  *out_ptr=(uint32_t)pkg->b.len;
+  wu32(&pkg->b,(uint32_t)n);
+  size_t table=pkg->b.len;
+  zfill(&pkg->b,(size_t)n*4);
+  int ti=0;
+  for(int li=0;li<r->n_layers;li++){
+    const GmlcRoomLayer *ly=&r->layers[li];
+    if(ly->type!=4 || !ly->tile_data || ly->tile_cols<=0 || ly->tile_rows<=0) continue;
+    if(ly->tile_tileset_id<0 || ly->tile_tileset_id>=p->n_tilesets) continue;
+    const GmlcTileset *ts=&p->tilesets[ly->tile_tileset_id];
+    int tw=ts->tile_width>0?ts->tile_width:16;
+    int th=ts->tile_height>0?ts->tile_height:16;
+    int cols=ts->columns>0?ts->columns:1;
+    int pitch_x=tw + 2*ts->border_x;
+    int pitch_y=th + 2*ts->border_y;
+    if(pitch_x<=0) pitch_x=tw;
+    if(pitch_y<=0) pitch_y=th;
+    for(int y=0;y<ly->tile_rows;y++) for(int x=0;x<ly->tile_cols;x++){
+      uint32_t datum=ly->tile_data[(size_t)y*(size_t)ly->tile_cols+(size_t)x];
+      int idx=(int)(datum&0x7FFFFu);
+      if(idx<=0) continue;
+      int src_idx=idx-1;
+      patch32(&pkg->b,table+(size_t)ti*4,(uint32_t)pkg->b.len);
+      ti++;
+      wi32(&pkg->b,(int)ly->x + x*tw);
+      wi32(&pkg->b,(int)ly->y + y*th);
+      wi32(&pkg->b,ly->tile_tileset_id);
+      wi32(&pkg->b,(src_idx%cols)*pitch_x + ts->border_x);
+      wi32(&pkg->b,(src_idx/cols)*pitch_y + ts->border_y);
+      wi32(&pkg->b,tw);
+      wi32(&pkg->b,th);
+      wi32(&pkg->b,ly->depth);
+    }
+  }
+  return 1;
+}
+
 static int write_room_layer_list(Pkg *pkg, const GmlcRoom *r, uint32_t *out_ptr){
   *out_ptr=(uint32_t)pkg->b.len;
   wu32(&pkg->b,(uint32_t)r->n_layers);
@@ -797,6 +883,12 @@ static int write_room_layer_list(Pkg *pkg, const GmlcRoom *r, uint32_t *out_ptr)
         wf32(&pkg->b,ra->frame);
         wf32(&pkg->b,ra->rotation);
       }
+    } else if(ly->type==4){
+      wi32(&pkg->b,ly->tile_tileset_id);
+      wi32(&pkg->b,ly->tile_cols);
+      wi32(&pkg->b,ly->tile_rows);
+      int cells=ly->tile_cols>0 && ly->tile_rows>0 ? ly->tile_cols*ly->tile_rows : 0;
+      for(int c=0;c<cells;c++) wu32(&pkg->b,ly->tile_data?ly->tile_data[c]:0);
     }
   }
   return 1;
@@ -827,7 +919,7 @@ static int write_room(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, int roo
   write_room_empty_list(pkg,&bg);
   write_room_views(pkg,r,&view);
   write_room_instances(pkg,p,room_index,r,&obj);
-  write_room_empty_list(pkg,&tile);
+  write_room_tiles(pkg,p,r,&tile);
   write_room_layer_list(pkg,r,&layers);
   patch32(&pkg->b,bg_pos,bg);
   patch32(&pkg->b,view_pos,view);
@@ -1043,7 +1135,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
      !write_sond(&pkg,p) ||
      !write_agrp(&pkg) ||
      !write_sprt(&pkg,p) ||
-     !empty_list_chunk(&pkg,"BGND") ||
+     !write_bgnd(&pkg,p) ||
      !empty_list_chunk(&pkg,"PATH") ||
      !write_scpt(&pkg,p) ||
      !empty_list_chunk(&pkg,"GLOB") ||

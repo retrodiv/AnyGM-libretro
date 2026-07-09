@@ -354,6 +354,7 @@ static int resolve_asset(Compiler *c, const char *name, double *out){
   for(int i=0;i<c->project->n_rooms;i++) if(!strcmp(c->project->rooms[i].name,name)){ *out=i; return 1; }
   for(int i=0;i<c->project->n_shaders;i++) if(!strcmp(c->project->shaders[i].name,name)){ *out=i; return 1; }
   for(int i=0;i<c->project->n_fonts;i++) if(!strcmp(c->project->fonts[i].name,name)){ *out=i; return 1; }
+  for(int i=0;i<c->project->n_tilesets;i++) if(!strcmp(c->project->tilesets[i].name,name)){ *out=i; return 1; }
   for(int i=0;i<c->project->n_scripts;i++) if(!strcmp(c->project->scripts[i].name,name)){ *out=i; return 1; }
   return 0;
 }

@@ -95,6 +95,17 @@ static int add_font(GmlcProject *p, GmlcFont *f){
   return 1;
 }
 
+static int add_tileset(GmlcProject *p, GmlcTileset *t){
+  if(p->n_tilesets>=p->cap_tilesets){
+    int nc=p->cap_tilesets?p->cap_tilesets*2:8;
+    GmlcTileset *nt=(GmlcTileset*)realloc(p->tilesets,(size_t)nc*sizeof(*nt));
+    if(!nt) return 0;
+    p->tilesets=nt; p->cap_tilesets=nc;
+  }
+  p->tilesets[p->n_tilesets++]=*t;
+  return 1;
+}
+
 static int font_add_glyph(GmlcFont *f, GmlcFontGlyph *g){
   if(f->n_glyphs>=f->cap_glyphs){
     int nc=f->cap_glyphs?f->cap_glyphs*2:128;
@@ -153,6 +164,7 @@ static int layer_add_asset(GmlcRoomLayer *ly, GmlcRoomAsset *a){
 static void free_room_layer_fields(GmlcRoomLayer *ly){
   if(!ly) return;
   free(ly->id); free(ly->name);
+  free(ly->tile_data);
   free(ly->instance_ids);
   for(int a=0;a<ly->n_assets;a++) free(ly->assets[a].name);
   free(ly->assets);
@@ -225,10 +237,6 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
     if(sub && sub->type==GMLC_JSON_ARRAY && !scan_room_layers(p,r,sub,room_dir,err,errcap)) return 0;
     int type=layer_type_from_model(gmlc_json_str(gmlc_json_obj(ly,"modelName"),NULL));
     if(type<=0) continue;
-    if(type==4){
-      snprintf(err,errcap,"unsupported room layer type %d in room resource",type);
-      return 0;
-    }
     GmlcRoomLayer out;
     memset(&out,0,sizeof(out));
     out.id=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ly,"id"),""));
@@ -247,6 +255,7 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
     out.hspeed=(float)gmlc_json_num(gmlc_json_obj(ly,"hspeed"),0.0);
     out.vspeed=(float)gmlc_json_num(gmlc_json_obj(ly,"vspeed"),0.0);
     out.bg_sprite_id=-1;
+    out.tile_tileset_id=-1;
     out.bg_color=0xFFFFFFFFu;
     if(type==1){
       out.bg_sprite_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(ly,"spriteId"),NULL));
@@ -317,6 +326,34 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
             free_room_layer_fields(&out);
             return 0;
           }
+        }
+      }
+    } else if(type==4){
+      out.tile_tileset_id=gmlc_project_find_tileset(p,gmlc_json_str(gmlc_json_obj(ly,"tilesetId"),NULL));
+      const GmlcJson *tiles=gmlc_json_obj(ly,"tiles");
+      int cols=gmlc_json_int(gmlc_json_obj(tiles,"SerialiseWidth"),gmlc_json_int(gmlc_json_obj(tiles,"serialiseWidth"),0));
+      int rows=gmlc_json_int(gmlc_json_obj(tiles,"SerialiseHeight"),gmlc_json_int(gmlc_json_obj(tiles,"serialiseHeight"),0));
+      if(cols<0 || rows<0 || cols>8192 || rows>8192 || (uint64_t)cols*(uint64_t)rows>16000000ull){
+        snprintf(err,errcap,"invalid tile layer dimensions");
+        free_room_layer_fields(&out);
+        return 0;
+      }
+      out.tile_cols=cols;
+      out.tile_rows=rows;
+      if(cols>0 && rows>0){
+        size_t cells=(size_t)cols*(size_t)rows;
+        out.tile_data=(uint32_t*)calloc(cells,sizeof(uint32_t));
+        if(!out.tile_data){
+          snprintf(err,errcap,"out of memory while loading tile layer");
+          free_room_layer_fields(&out);
+          return 0;
+        }
+        const GmlcJson *data=gmlc_json_obj(tiles,"TileSerialiseData");
+        if(!data) data=gmlc_json_obj(tiles,"tileSerialiseData");
+        if(data && data->type==GMLC_JSON_ARRAY){
+          size_t idx=0;
+          for(const GmlcJson *jt=data->child;jt && idx<cells;jt=jt->next,idx++)
+            out.tile_data[idx]=(uint32_t)gmlc_json_num(jt,0.0);
         }
       }
     }
@@ -397,6 +434,38 @@ static int parse_font(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
     return 0;
   }
   free(dir); free(file);
+  return 1;
+}
+
+static int parse_tileset(GmlcProject *p, const GmlcResource *res, const GmlcJson *yy, char *err, size_t errcap){
+  GmlcTileset t;
+  memset(&t,0,sizeof(t));
+  t.id=gmlc_strdup(res->id);
+  t.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(yy,"name"),res->name?res->name:""));
+  t.sprite_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(yy,"spriteId"),NULL));
+  t.tile_width=gmlc_json_int(gmlc_json_obj(yy,"tilewidth"),gmlc_json_int(gmlc_json_obj(yy,"tileWidth"),16));
+  t.tile_height=gmlc_json_int(gmlc_json_obj(yy,"tileheight"),gmlc_json_int(gmlc_json_obj(yy,"tileHeight"),16));
+  t.border_x=gmlc_json_int(gmlc_json_obj(yy,"out_tilehborder"),gmlc_json_int(gmlc_json_obj(yy,"tilehborder"),0));
+  t.border_y=gmlc_json_int(gmlc_json_obj(yy,"out_tilevborder"),gmlc_json_int(gmlc_json_obj(yy,"tilevborder"),0));
+  t.columns=gmlc_json_int(gmlc_json_obj(yy,"tile_columns"),0);
+  t.tile_count=gmlc_json_int(gmlc_json_obj(yy,"tile_count"),gmlc_json_int(gmlc_json_obj(yy,"tilecount"),0));
+  if(t.sprite_id>=0 && t.sprite_id<p->n_sprites){
+    const GmlcSprite *sp=&p->sprites[t.sprite_id];
+    int pitch_x=t.tile_width + 2*t.border_x;
+    int pitch_y=t.tile_height + 2*t.border_y;
+    if(t.columns<=0 && pitch_x>0) t.columns=sp->width/pitch_x;
+    if(t.tile_count<=0 && pitch_x>0 && pitch_y>0){
+      int rows=sp->height/pitch_y;
+      t.tile_count=t.columns>0 ? t.columns*rows : 0;
+    }
+  }
+  if(t.tile_width<=0) t.tile_width=16;
+  if(t.tile_height<=0) t.tile_height=16;
+  if(!t.id || !t.name || !add_tileset(p,&t)){
+    snprintf(err,errcap,"out of memory while loading tileset resource");
+    free(t.id); free(t.name);
+    return 0;
+  }
   return 1;
 }
 
@@ -599,6 +668,7 @@ static int load_one(GmlcProject *p, GmlcResource *r, char *err, size_t errcap){
     case GMLC_RES_ROOM: ok=parse_room(p,r,yy,err,errcap); break;
     case GMLC_RES_SHADER: ok=parse_shader(p,r,yy,err,errcap); break;
     case GMLC_RES_FONT: ok=parse_font(p,r,yy,err,errcap); break;
+    case GMLC_RES_TILESET: ok=parse_tileset(p,r,yy,err,errcap); break;
     default: break;
   }
   gmlc_json_free(yy);
@@ -610,7 +680,7 @@ int gmlc_assets_load(GmlcProject *p, char *err, size_t errcap){
     for(int i=0;i<p->n_resources;i++){
       GmlcResource *r=&p->resources[i];
       if((pass==0 && (r->kind==GMLC_RES_SPRITE || r->kind==GMLC_RES_SOUND || r->kind==GMLC_RES_SCRIPT || r->kind==GMLC_RES_SHADER || r->kind==GMLC_RES_FONT)) ||
-         (pass==1 && r->kind==GMLC_RES_OBJECT) ||
+         (pass==1 && (r->kind==GMLC_RES_OBJECT || r->kind==GMLC_RES_TILESET)) ||
          (pass==2 && r->kind==GMLC_RES_ROOM)){
         if(!load_one(p,r,err,errcap)) return 0;
       }

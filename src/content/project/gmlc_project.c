@@ -91,6 +91,7 @@ void gmlc_project_free(GmlcProject *p){
     for(int l=0;l<r->n_layers;l++){
       GmlcRoomLayer *ly=&r->layers[l];
       free(ly->id); free(ly->name);
+      free(ly->tile_data);
       free(ly->instance_ids);
       for(int a=0;a<ly->n_assets;a++) free(ly->assets[a].name);
       free(ly->assets);
@@ -108,6 +109,10 @@ void gmlc_project_free(GmlcProject *p){
     free(p->fonts[i].glyphs);
   }
   free(p->fonts);
+  for(int i=0;i<p->n_tilesets;i++){
+    free(p->tilesets[i].id); free(p->tilesets[i].name);
+  }
+  free(p->tilesets);
   memset(p,0,sizeof(*p));
 }
 
@@ -120,6 +125,7 @@ static GmlcResKind kind_from_type(const char *type){
   if(!strcmp(type,"GMRoom")) return GMLC_RES_ROOM;
   if(!strcmp(type,"GMShader")) return GMLC_RES_SHADER;
   if(!strcmp(type,"GMFont")) return GMLC_RES_FONT;
+  if(!strcmp(type,"GMTileSet")) return GMLC_RES_TILESET;
   return GMLC_RES_OTHER;
 }
 
@@ -212,6 +218,12 @@ int gmlc_project_find_room(const GmlcProject *p, const char *id){
   return -1;
 }
 
+int gmlc_project_find_tileset(const GmlcProject *p, const char *id){
+  if(!id || !strcmp(id,"00000000-0000-0000-0000-000000000000")) return -1;
+  for(int i=0;i<p->n_tilesets;i++) if(p->tilesets[i].id && !strcmp(p->tilesets[i].id,id)) return i;
+  return -1;
+}
+
 const char *gmlc_res_kind_name(GmlcResKind k){
   switch(k){
     case GMLC_RES_SPRITE: return "sprite";
@@ -221,6 +233,7 @@ const char *gmlc_res_kind_name(GmlcResKind k){
     case GMLC_RES_ROOM: return "room";
     case GMLC_RES_SHADER: return "shader";
     case GMLC_RES_FONT: return "font";
+    case GMLC_RES_TILESET: return "tileset";
     default: return "other";
   }
 }
