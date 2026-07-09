@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 typedef struct {
   uint8_t *data;
@@ -92,10 +93,12 @@ static int wbytes(Buf *b, const void *p, size_t n){
 static int wu8(Buf *b, uint8_t v){ return wbytes(b,&v,1); }
 static int wu16(Buf *b, uint16_t v){ uint8_t x[2]={(uint8_t)v,(uint8_t)(v>>8)}; return wbytes(b,x,2); }
 static int wu32(Buf *b, uint32_t v){ uint8_t x[4]={(uint8_t)v,(uint8_t)(v>>8),(uint8_t)(v>>16),(uint8_t)(v>>24)}; return wbytes(b,x,4); }
+static int wu64(Buf *b, uint64_t v){ return wu32(b,(uint32_t)v) && wu32(b,(uint32_t)(v>>32)); }
 static int wi32(Buf *b, int32_t v){ return wu32(b,(uint32_t)v); }
 static int wf32(Buf *b, float f){ uint32_t u; memcpy(&u,&f,4); return wu32(b,u); }
 static int zfill(Buf *b, size_t n){ if(!reserve(b,n)) return 0; memset(b->data+b->len,0,n); b->len+=n; return 1; }
 static void patch32(Buf *b, size_t pos, uint32_t v){ b->data[pos]=(uint8_t)v; b->data[pos+1]=(uint8_t)(v>>8); b->data[pos+2]=(uint8_t)(v>>16); b->data[pos+3]=(uint8_t)(v>>24); }
+static void patch64(Buf *b, size_t pos, uint64_t v){ patch32(b,pos,(uint32_t)v); patch32(b,pos+4,(uint32_t)(v>>32)); }
 
 static int intern(Pkg *p, const char *s){
   if(!s) s="";
@@ -600,7 +603,7 @@ static int write_sond(Pkg *pkg, const GmlcProject *p){
     int sid_name=intern(pkg,snd->name);
     int sid_file=intern(pkg,snd->name);
     wstrptr(pkg,sid_name);
-    wu32(&pkg->b,0);
+    wu32(&pkg->b,0x65);
     wu32(&pkg->b,0);
     wstrptr(pkg,sid_file);
     wu32(&pkg->b,0);
@@ -651,6 +654,14 @@ static int write_shdr(Pkg *pkg, const GmlcProject *p){
     wstrptr(pkg,fsid);
     wstrptr(pkg,vsid);
     wstrptr(pkg,fsid);
+    wu32(&pkg->b,0);
+    wu32(&pkg->b,0);
+    wu32(&pkg->b,0);
+    wi32(&pkg->b,2);
+    for(int j=0;j<6;j++){
+      wu32(&pkg->b,0);
+      wu32(&pkg->b,0);
+    }
   }
   chunk_end(pkg,s);
   return 1;
@@ -693,6 +704,8 @@ static int write_font(Pkg *pkg, const GmlcProject *p){
       wu16(&pkg->b,(uint16_t)gl->offset);
     }
   }
+  for(uint16_t i=0;i<0x80;i++) wu16(&pkg->b,i);
+  for(uint16_t i=0;i<0x80;i++) wu16(&pkg->b,0x3f);
   chunk_end(pkg,s);
   return 1;
 }
@@ -727,37 +740,163 @@ static int fixed_zero_chunk(Pkg *p, const char name[4], size_t n){
 }
 
 static int write_agrp(Pkg *p){
+  int sid=intern(p,"audiogroup_default");
+  if(sid<0) return 0;
   size_t s=chunk_begin(p,"AGRP");
   wu32(&p->b,1);
+  size_t table=p->b.len;
   wu32(&p->b,0);
+  patch32(&p->b,table,(uint32_t)p->b.len);
+  wstrptr(p,sid);
+  chunk_end(p,s);
+  return 1;
+}
+
+static int write_optn(Pkg *p){
+  size_t s=chunk_begin(p,"OPTN");
+  wu32(&p->b,0x80000000u);
+  wu32(&p->b,2);
+  wu64(&p->b,0x0000000000480214ull);
+  wi32(&p->b,0);
+  wu32(&p->b,0);
+  wu32(&p->b,0);
+  wu32(&p->b,0);
+  wu32(&p->b,0);
+  wu32(&p->b,1);
+  wu32(&p->b,0);
+  wi32(&p->b,-1);
+  wi32(&p->b,-1);
+  wi32(&p->b,-1);
+  wu32(&p->b,255);
   wu32(&p->b,0);
   chunk_end(p,s);
   return 1;
 }
 
+static int write_embi(Pkg *p){
+  size_t s=chunk_begin(p,"EMBI");
+  wu32(&p->b,1);
+  wu32(&p->b,0);
+  chunk_end(p,s);
+  return 1;
+}
+
+/* GEN8 ends with a "random UID" block: a first-random word, four more 32-bit words the
+ * GameMaker IDE fills to make an exported data.win look unique, then a frame-time float, a
+ * flag byte and a 16-byte pad. This runtime writes a data.win only for its own loader, which
+ * reads the header fields and the room order and never these words (nor the +92 timestamp),
+ * so a fixed zero block keeps the chunk well-formed, the same size and fully deterministic. */
+static int write_gen8_uid_block(Buf *b){
+  for(int i=0;i<5;i++) if(!wu64(b,0)) return 0;   /* first-random word + four UID words */
+  if(!wf32(b,60.0f) || !wu8(b,1) || !zfill(b,16)) return 0;
+  return 1;
+}
 static int write_gen8(Pkg *pkg, const GmlcProject *p){
   int sid_name=intern(pkg,p->name?p->name:"source_project");
   int sid_cfg=intern(pkg,"default");
   if(sid_name<0 || sid_cfg<0) return 0;
-  int dw=640, dh=480;
-  if(p->n_rooms>0){ dw=p->rooms[0].port_w>0?p->rooms[0].port_w:p->rooms[0].width; dh=p->rooms[0].port_h>0?p->rooms[0].port_h:p->rooms[0].height; }
+  uint32_t dw=640, dh=480;
+  if(p->n_rooms>0){
+    dw=(uint32_t)(p->rooms[0].port_w>0?p->rooms[0].port_w:p->rooms[0].width);
+    dh=(uint32_t)(p->rooms[0].port_h>0?p->rooms[0].port_h:p->rooms[0].height);
+  }
+  const uint8_t bytecode_version=15;
+  const uint32_t game_id=0;
+  const uint32_t info_flags=0x000000B2u;
+  const uint64_t timestamp=0;
   size_t s=chunk_begin(pkg,"GEN8");
   size_t base=pkg->b.len;
   zfill(&pkg->b,128);
   pkg->b.data[base+0]=1;
-  pkg->b.data[base+1]=15;
+  pkg->b.data[base+1]=bytecode_version;
   add_str_patch(pkg,(uint32_t)(base+4),sid_name);
   add_str_patch(pkg,(uint32_t)(base+8),sid_cfg);
   patch32(&pkg->b,base+12,(uint32_t)(p->next_instance_id>100000?p->next_instance_id:100000));
   patch32(&pkg->b,base+16,10000000);
-  patch32(&pkg->b,base+20,0);
-  add_str_patch(pkg,(uint32_t)(base+44),sid_name);
+  patch32(&pkg->b,base+20,game_id);
+  add_str_patch(pkg,(uint32_t)(base+40),sid_name);
+  patch32(&pkg->b,base+44,2);
+  patch32(&pkg->b,base+48,0);
+  patch32(&pkg->b,base+52,0);
+  patch32(&pkg->b,base+56,0);
   patch32(&pkg->b,base+60,(uint32_t)dw);
   patch32(&pkg->b,base+64,(uint32_t)dh);
+  patch32(&pkg->b,base+68,info_flags);
+  patch64(&pkg->b,base+92,timestamp);
+  add_str_patch(pkg,(uint32_t)(base+100),sid_name);
+  patch32(&pkg->b,base+124,6502);
   wu32(&pkg->b,(uint32_t)p->n_rooms);
   for(int i=0;i<p->n_rooms;i++) wu32(&pkg->b,(uint32_t)i);
-  while(pkg->b.len < base+208) wu8(&pkg->b,0);
+  if(!write_gen8_uid_block(&pkg->b)) return 0;
+  while((pkg->b.len-base)&3) wu8(&pkg->b,0);
   chunk_end(pkg,s);
+  return 1;
+}
+
+static int object_event_code_index(const GmlcProject *p, int obj_index, int event_index){
+  if(obj_index<0 || obj_index>=p->n_objects) return -1;
+  const GmlcObject *obj=&p->objects[obj_index];
+  if(event_index<0 || event_index>=obj->n_events) return -1;
+  int idx=room_code_count(p) + p->n_scripts;
+  for(int i=0;i<obj_index;i++) idx += p->objects[i].n_events;
+  return idx + event_index;
+}
+
+static int write_objt_event_action(Pkg *pkg, int code_index, int empty_sid){
+  wu32(&pkg->b,1);
+  wu32(&pkg->b,603);
+  wu32(&pkg->b,7);
+  wu32(&pkg->b,0);
+  wu32(&pkg->b,0);
+  wu32(&pkg->b,1);
+  wu32(&pkg->b,2);
+  wstrptr(pkg,empty_sid);
+  wi32(&pkg->b,code_index);
+  wu32(&pkg->b,1);
+  wi32(&pkg->b,-1);
+  wu32(&pkg->b,0);
+  wu32(&pkg->b,0);
+  wu32(&pkg->b,0);
+  return 1;
+}
+
+static int write_objt_event(Pkg *pkg, const GmlcObjectEvent *ev,
+                            int code_index, int empty_sid){
+  uint32_t subtype=(uint32_t)ev->event_number;
+  if(ev->event_type==4 && ev->collision_object_id>=0)
+    subtype=(uint32_t)ev->collision_object_id;
+  wu32(&pkg->b,subtype);
+  wu32(&pkg->b,1);
+  size_t table=pkg->b.len;
+  wu32(&pkg->b,0);
+  patch32(&pkg->b,table,(uint32_t)pkg->b.len);
+  return write_objt_event_action(pkg,code_index,empty_sid);
+}
+
+static int write_objt_events(Pkg *pkg, const GmlcProject *p,
+                             int obj_index, int empty_sid){
+  const int event_type_count=13;
+  const GmlcObject *obj=&p->objects[obj_index];
+  wu32(&pkg->b,(uint32_t)event_type_count);
+  size_t table=pkg->b.len;
+  zfill(&pkg->b,(size_t)event_type_count*4);
+  for(int t=0;t<event_type_count;t++){
+    patch32(&pkg->b,table+(size_t)t*4,(uint32_t)pkg->b.len);
+    int count=0;
+    for(int ei=0;ei<obj->n_events;ei++) if(obj->events[ei].event_type==t) count++;
+    wu32(&pkg->b,(uint32_t)count);
+    size_t subtable=pkg->b.len;
+    zfill(&pkg->b,(size_t)count*4);
+    int wi=0;
+    for(int ei=0;ei<obj->n_events;ei++){
+      if(obj->events[ei].event_type!=t) continue;
+      patch32(&pkg->b,subtable+(size_t)wi*4,(uint32_t)pkg->b.len);
+      if(!write_objt_event(pkg,&obj->events[ei],
+                           object_event_code_index(p,obj_index,ei),
+                           empty_sid)) return 0;
+      wi++;
+    }
+  }
   return 1;
 }
 
@@ -767,10 +906,13 @@ static int write_objt(Pkg *pkg, const GmlcProject *p){
   wu32(&pkg->b,n);
   size_t table=pkg->b.len;
   zfill(&pkg->b,(size_t)n*4);
+  int empty_sid=intern(pkg,"");
+  if(empty_sid<0) return 0;
   for(uint32_t i=0;i<n;i++){
     patch32(&pkg->b,table+i*4,(uint32_t)pkg->b.len);
     const GmlcObject *o=&p->objects[i];
     int sid=intern(pkg,o->name);
+    if(sid<0) return 0;
     wstrptr(pkg,sid);
     wi32(&pkg->b,o->sprite_id);
     wu32(&pkg->b,(uint32_t)(o->visible?1:0));
@@ -779,6 +921,19 @@ static int write_objt(Pkg *pkg, const GmlcProject *p){
     wu32(&pkg->b,(uint32_t)(o->persistent?1:0));
     wi32(&pkg->b,o->parent_id>=0?o->parent_id:-100);
     wi32(&pkg->b,o->mask_id);
+    wu32(&pkg->b,0);
+    wu32(&pkg->b,0);
+    wu32(&pkg->b,1);
+    wf32(&pkg->b,0.5f);
+    wf32(&pkg->b,0.1f);
+    wu32(&pkg->b,0);
+    wf32(&pkg->b,0.1f);
+    wf32(&pkg->b,0.1f);
+    wi32(&pkg->b,0);
+    wf32(&pkg->b,0.2f);
+    wu32(&pkg->b,1);
+    wu32(&pkg->b,0);
+    if(!write_objt_events(pkg,p,(int)i,empty_sid)) return 0;
   }
   chunk_end(pkg,s);
   return 1;
@@ -1238,7 +1393,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
   size_t form_size_pos=pkg.b.len;
   wu32(&pkg.b,0);
   if(!write_gen8(&pkg,p) ||
-     !fixed_zero_chunk(&pkg,"OPTN",80) ||
+     !write_optn(&pkg) ||
      !fixed_zero_chunk(&pkg,"LANG",12) ||
      !empty_list_chunk(&pkg,"EXTN") ||
      !write_sond(&pkg,p) ||
@@ -1254,7 +1409,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
      !write_objt(&pkg,p) ||
      !write_room_chunk(&pkg,p) ||
      !fixed_zero_chunk(&pkg,"DAFL",0) ||
-     !fixed_zero_chunk(&pkg,"EMBI",8) ||
+     !write_embi(&pkg) ||
      !write_tpag(&pkg,p) ||
      !write_code(&pkg,p,err,errcap) ||
      !write_vari(&pkg) ||
