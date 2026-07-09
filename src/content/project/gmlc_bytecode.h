@@ -36,8 +36,28 @@ typedef struct {
   char *diagnostic;
 } GmlcCodeBlob;
 
+typedef struct {
+  char *name;
+  char *params;
+  char *body;
+  char *source_path;
+  size_t start, end;
+  int code_index;
+  int is_script_wrapper;
+} GmlcFunctionDef;
+
+typedef struct {
+  GmlcFunctionDef *defs;
+  int n_defs, cap_defs;
+} GmlcFunctionRegistry;
+
 int gmlc_bytecode_emit_empty(GmlcCodeBlob *out);
 int gmlc_bytecode_compile_source(const GmlcProject *project, const char *path, GmlcCodeBlob *out, char *err, size_t errcap);
+int gmlc_bytecode_compile_source_ex(const GmlcProject *project, const GmlcFunctionRegistry *funcs, int script_index, const char *path, GmlcCodeBlob *out, char *err, size_t errcap);
+int gmlc_bytecode_compile_function_body(const GmlcProject *project, const GmlcFunctionRegistry *funcs, const GmlcFunctionDef *def, GmlcCodeBlob *out, char *err, size_t errcap);
+int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_base, GmlcFunctionRegistry *out, char *err, size_t errcap);
+int gmlc_function_registry_extra_count(const GmlcFunctionRegistry *r);
+void gmlc_function_registry_free(GmlcFunctionRegistry *r);
 void gmlc_bytecode_free(GmlcCodeBlob *b);
 
 #endif

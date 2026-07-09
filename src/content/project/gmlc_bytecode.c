@@ -38,6 +38,9 @@ typedef struct {
 
 typedef struct {
   const GmlcProject *project;
+  const GmlcFunctionRegistry *funcs;
+  const char *source_path;
+  int script_index;
   Macro *macros;
   int n_macros, cap_macros;
   CodeBuf code;
@@ -383,6 +386,38 @@ static int resolve_script_code_index(Compiler *c, const char *name, int *out){
   return 0;
 }
 
+static int resolve_function_code_index(Compiler *c, const char *name, int *out){
+  if(resolve_script_code_index(c,name,out)) return 1;
+  if(!c->funcs) return 0;
+  for(int i=0;i<c->funcs->n_defs;i++){
+    const GmlcFunctionDef *d=&c->funcs->defs[i];
+    if(d->name && !strcmp(d->name,name)){
+      *out=d->code_index;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int find_function_literal_index(Compiler *c, const char *name, const char *params, const char *body, int *out){
+  if(name && *name && resolve_function_code_index(c,name,out)) return 1;
+  if(!c->funcs) return 0;
+  for(int i=0;i<c->funcs->n_defs;i++){
+    const GmlcFunctionDef *d=&c->funcs->defs[i];
+    if(name && *name){
+      if(d->name && !strcmp(d->name,name)){ *out=d->code_index; return 1; }
+      continue;
+    }
+    if(!d->name && d->params && d->body &&
+       !strcmp(d->params,params?params:"") &&
+       !strcmp(d->body,body?body:"")){
+      *out=d->code_index;
+      return 1;
+    }
+  }
+  return 0;
+}
+
 static int emit_script_funcval(Compiler *c, int code_index){
   return emit_push_real(c,(double)(0x40000000u | (uint32_t)(code_index & 0x00FFFFFF)));
 }
@@ -467,6 +502,60 @@ static int span_empty(const char *src, Span s){
     return 0;
   }
   return 1;
+}
+
+static size_t skip_ws_comments_at(const char *src, size_t pos){
+  for(;;){
+    while(isspace((unsigned char)src[pos])) pos++;
+    if(src[pos]=='/' && src[pos+1]=='/'){
+      pos+=2;
+      while(src[pos] && src[pos]!='\n') pos++;
+      continue;
+    }
+    if(src[pos]=='/' && src[pos+1]=='*'){
+      pos+=2;
+      while(src[pos] && !(src[pos]=='*' && src[pos+1]=='/')) pos++;
+      if(src[pos]) pos+=2;
+      continue;
+    }
+    break;
+  }
+  return pos;
+}
+
+static int scan_matching_delim(const char *src, size_t open_pos, char open_ch, char close_ch, size_t *out_close){
+  int depth=0;
+  for(size_t pos=open_pos; src[pos]; pos++){
+    char ch=src[pos];
+    if(ch=='"'){
+      pos++;
+      while(src[pos]){
+        if(src[pos]=='\\' && src[pos+1]){ pos++; continue; }
+        if(src[pos]=='"') break;
+        pos++;
+      }
+      continue;
+    }
+    if(ch=='/' && src[pos+1]=='/'){
+      pos+=2;
+      while(src[pos] && src[pos]!='\n') pos++;
+      if(!src[pos]) break;
+      continue;
+    }
+    if(ch=='/' && src[pos+1]=='*'){
+      pos+=2;
+      while(src[pos] && !(src[pos]=='*' && src[pos+1]=='/')) pos++;
+      if(!src[pos]) break;
+      pos++;
+      continue;
+    }
+    if(ch==open_ch){ depth++; continue; }
+    if(ch==close_ch){
+      depth--;
+      if(depth==0){ *out_close=pos; return 1; }
+    }
+  }
+  return 0;
 }
 
 static int compile_expr_slice(Compiler *c, const char *start, size_t len){
@@ -907,6 +996,65 @@ static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv);
 static int emit_lvalue_read(Compiler *c, LValue *lv);
 static int emit_popz(Compiler *c){ return emit_u32(&c->code,fw(OP_POPZ,0,0)); }
 
+static int function_shape_at(const char *src, size_t pos){
+  if(!word_match_at(src,pos,"function")) return 0;
+  pos=skip_ws_comments_at(src,pos+8);
+  if(src[pos]=='(') return 1;
+  if(isalpha((unsigned char)src[pos]) || src[pos]=='_'){
+    pos++;
+    while(isalnum((unsigned char)src[pos]) || src[pos]=='_') pos++;
+    pos=skip_ws_comments_at(src,pos);
+    return src[pos]=='(';
+  }
+  return 0;
+}
+
+static int parse_function_value(Compiler *c, int emit_value){
+  if(!is_id(c,"function") || !function_shape_at(c->lex.src,c->lex.tok.start)){
+    c->unsupported=1;
+    snprintf(c->lex.err,sizeof(c->lex.err),"expected function literal");
+    return 0;
+  }
+  lx_next(&c->lex);
+  char name[128]={0};
+  if(c->lex.tok.kind==TOK_ID){
+    size_t p=skip_ws_comments_at(c->lex.src,c->lex.tok.end);
+    if(c->lex.src[p]=='('){
+      snprintf(name,sizeof(name),"%s",c->lex.tok.text);
+      lx_next(&c->lex);
+    }
+  }
+  if(!tok_is(c,"(")) return need(c,"(");
+  size_t paren_open=c->lex.tok.start, paren_close=0;
+  if(!scan_matching_delim(c->lex.src,paren_open,'(',')',&paren_close)){
+    c->unsupported=1;
+    snprintf(c->lex.err,sizeof(c->lex.err),"unterminated function parameter list");
+    return 0;
+  }
+  Span params={paren_open+1,paren_close};
+  trim_span(c->lex.src,&params);
+  c->lex.pos=paren_close+1;
+  lx_next(&c->lex);
+  Span body={0,0};
+  size_t body_close=0;
+  if(!scan_brace_body(c,&body,&body_close)) return 0;
+  char *params_text=dup_range(c->lex.src+params.start,params.end-params.start);
+  char *body_text=dup_range(c->lex.src+body.start,body.end-body.start);
+  if(!params_text || !body_text){ free(params_text); free(body_text); return 0; }
+  int ci=-1;
+  int found=find_function_literal_index(c,name,params_text,body_text,&ci);
+  free(params_text);
+  free(body_text);
+  if(!found){
+    c->unsupported=1;
+    snprintf(c->lex.err,sizeof(c->lex.err),"function literal not indexed");
+    return 0;
+  }
+  c->lex.pos=body_close+1;
+  lx_next(&c->lex);
+  return emit_value ? emit_script_funcval(c,ci) : 1;
+}
+
 static int parse_primary(Compiler *c){
   if(c->lex.tok.kind==TOK_NUM){ double d=c->lex.tok.num; lx_next(&c->lex); return emit_push_real(c,d); }
   if(c->lex.tok.kind==TOK_STR){
@@ -915,7 +1063,12 @@ static int parse_primary(Compiler *c){
     lx_next(&c->lex);
     return emit_push_string_literal(c,value);
   }
-  if(eat(c,"(")){ if(!parse_expr(c)) return 0; return need(c,")"); }
+  int allow_postfix_call=1;
+  if(is_id(c,"function") && function_shape_at(c->lex.src,c->lex.tok.start)){
+    if(!parse_function_value(c,1)) return 0;
+    goto postfix_calls;
+  }
+  if(eat(c,"(")){ if(!parse_expr(c)) return 0; if(!need(c,")")) return 0; }
   if(c->lex.tok.kind==TOK_ID){
     char name[128]; snprintf(name,sizeof(name),"%s",c->lex.tok.text); lx_next(&c->lex);
     if(eat(c,"(")){
@@ -923,28 +1076,49 @@ static int parse_primary(Compiler *c){
       if(local_index(c,name)>=0 || !strncmp(name,"argument",8)){
         if(!emit_push_var(c,IT_LOCAL,name,0xA0)) return 0;
         if(!parse_call_args_reversed(c,&argc)) return 0;
-        return emit_callv(c,argc);
+        if(!emit_callv(c,argc)) return 0;
+      } else {
+        if(!parse_call_args_reversed(c,&argc)) return 0;
+        if(!emit_call(c,name,argc)) return 0;
       }
-      if(!parse_call_args_reversed(c,&argc)) return 0;
-      return emit_call(c,name,argc);
+      allow_postfix_call=1;
+      goto postfix_calls;
     }
     if(tok_is(c,".") || tok_is(c,"[")){
       LValue lv;
       if(!parse_lvalue_from_name(c,name,&lv)) return 0;
       int ok=emit_lvalue_read(c,&lv);
       free(lv.index_src);
-      return ok;
+      if(!ok) return 0;
+      goto postfix_calls;
     }
     double cv=0;
     int sci=-1;
-    if(resolve_script_code_index(c,name,&sci)) return emit_script_funcval(c,sci);
-    if(resolve_const(c,name,&cv)) return emit_push_real(c,cv);
+    if(resolve_function_code_index(c,name,&sci)){
+      if(!emit_script_funcval(c,sci)) return 0;
+      goto postfix_calls;
+    }
+    if(resolve_const(c,name,&cv)){
+      if(!emit_push_real(c,cv)) return 0;
+      goto postfix_calls;
+    }
     int inst=(local_index(c,name)>=0 || !strncmp(name,"argument",8)) ? IT_LOCAL : IT_SELF;
-    return emit_push_var(c,inst,name,0xA0);
+    if(!emit_push_var(c,inst,name,0xA0)) return 0;
+    goto postfix_calls;
   }
+  if(allow_postfix_call) goto postfix_calls;
   c->unsupported=1;
   snprintf(c->lex.err,sizeof(c->lex.err),"unexpected expression token '%s'",c->lex.tok.text);
   return 0;
+
+postfix_calls:
+  while(tok_is(c,"(")){
+    lx_next(&c->lex);
+    int argc=0;
+    if(!parse_call_args_reversed(c,&argc)) return 0;
+    if(!emit_callv(c,argc)) return 0;
+  }
+  return 1;
 }
 
 static int parse_unary(Compiler *c){
@@ -1383,6 +1557,12 @@ static int parse_simple_or_assign(Compiler *c){
     }
     if(!emit_lvalue_read(c,&lv)){ free(lv.index_src); return 0; }
     free(lv.index_src);
+    while(tok_is(c,"(")){
+      lx_next(&c->lex);
+      int argc=0;
+      if(!parse_call_args_reversed(c,&argc)) return 0;
+      if(!emit_callv(c,argc)) return 0;
+    }
     eat(c,";");
     emit_u32(&c->code,fw(OP_POPZ,0,0));
     return 1;
@@ -1406,7 +1586,7 @@ static int parse_simple_or_assign(Compiler *c){
   }
   double cv=0;
   int sci=-1;
-  if(resolve_script_code_index(c,first,&sci)) emit_script_funcval(c,sci);
+  if(resolve_function_code_index(c,first,&sci)) emit_script_funcval(c,sci);
   else if(resolve_const(c,first,&cv)) emit_push_real(c,cv);
   else emit_push_var(c,(local_index(c,first)>=0 || !strncmp(first,"argument",8))?IT_LOCAL:IT_SELF,first,0xA0);
   eat(c,";");
@@ -1417,6 +1597,7 @@ static int parse_simple_or_assign(Compiler *c){
 static int parse_statement(Compiler *c){
   if(c->lex.tok.kind==TOK_EOF) return 1;
   if(eat(c,";")) return 1;
+  if(is_id(c,"function") && function_shape_at(c->lex.src,c->lex.tok.start)) return parse_function_value(c,0);
   if(is_id(c,"var")) return parse_var_decl(c);
   if(is_id(c,"if")) return parse_if(c);
   if(is_id(c,"while")) return parse_while(c);
@@ -1465,29 +1646,209 @@ static int collect_macros(Compiler *c){
   return 1;
 }
 
-int gmlc_bytecode_emit_empty(GmlcCodeBlob *out){
-  memset(out,0,sizeof(*out));
-  out->data=(uint8_t*)malloc(4);
-  if(!out->data) return 0;
-  out->data[0]=0; out->data[1]=0; out->data[2]=0; out->data[3]=0x9D;
-  out->size=4;
-  out->is_placeholder=1;
+static int registry_extra_so_far(const GmlcFunctionRegistry *r){
+  int n=0;
+  for(int i=0;i<r->n_defs;i++) if(!r->defs[i].is_script_wrapper) n++;
+  return n;
+}
+
+int gmlc_function_registry_extra_count(const GmlcFunctionRegistry *r){
+  return r ? registry_extra_so_far(r) : 0;
+}
+
+static int registry_add_function(GmlcFunctionRegistry *r, const char *path, const char *name, Span params, Span body, const char *src, int code_index, int is_wrapper){
+  for(int i=0;i<r->n_defs;i++){
+    if(r->defs[i].source_path && path && !strcmp(r->defs[i].source_path,path) && r->defs[i].start==body.start)
+      return 1;
+  }
+  if(r->n_defs>=r->cap_defs){
+    int nc=r->cap_defs?r->cap_defs*2:16;
+    GmlcFunctionDef *nd=(GmlcFunctionDef*)realloc(r->defs,(size_t)nc*sizeof(*nd));
+    if(!nd) return 0;
+    r->defs=nd; r->cap_defs=nc;
+  }
+  GmlcFunctionDef *d=&r->defs[r->n_defs++];
+  memset(d,0,sizeof(*d));
+  d->name=(name && *name)?gmlc_strdup(name):NULL;
+  d->params=dup_range(src+params.start,params.end-params.start);
+  d->body=dup_range(src+body.start,body.end-body.start);
+  d->source_path=path?gmlc_strdup(path):NULL;
+  d->start=body.start;
+  d->end=body.end;
+  d->code_index=code_index;
+  d->is_script_wrapper=is_wrapper;
+  if((name && *name && !d->name) || !d->params || !d->body || (path && !d->source_path)) return 0;
   return 1;
 }
 
-int gmlc_bytecode_compile_source(const GmlcProject *project, const char *path, GmlcCodeBlob *out, char *err, size_t errcap){
-  memset(out,0,sizeof(*out));
-  char *txt=read_text(path);
-  if(!txt){
-    snprintf(err,errcap,"%s: read failed",path);
-    return 0;
+static int scan_function_at(const char *src, size_t pos, char *name, size_t name_cap, Span *params, Span *body, size_t *out_end){
+  if(!function_shape_at(src,pos)) return 0;
+  pos=skip_ws_comments_at(src,pos+8);
+  name[0]=0;
+  if(isalpha((unsigned char)src[pos]) || src[pos]=='_'){
+    size_t ns=pos;
+    pos++;
+    while(isalnum((unsigned char)src[pos]) || src[pos]=='_') pos++;
+    size_t n=pos-ns;
+    if(n>=name_cap) n=name_cap-1;
+    memcpy(name,src+ns,n);
+    name[n]=0;
+    pos=skip_ws_comments_at(src,pos);
   }
+  if(src[pos]!='(') return 0;
+  size_t paren_close=0;
+  if(!scan_matching_delim(src,pos,'(',')',&paren_close)) return 0;
+  params->start=pos+1;
+  params->end=paren_close;
+  trim_span(src,params);
+  pos=skip_ws_comments_at(src,paren_close+1);
+  if(src[pos]!='{') return 0;
+  size_t brace_close=0;
+  if(!scan_matching_delim(src,pos,'{','}',&brace_close)) return 0;
+  body->start=pos+1;
+  body->end=brace_close;
+  *out_end=brace_close+1;
+  return 1;
+}
+
+static int collect_functions_from_text(GmlcFunctionRegistry *r, const char *path, const char *script_name, int script_code_index, int appended_base, const char *src){
+  size_t len=strlen(src);
+  size_t pos=0;
+  while(src[pos]){
+    if(src[pos]=='"'){
+      pos++;
+      while(src[pos]){
+        if(src[pos]=='\\' && src[pos+1]){ pos+=2; continue; }
+        if(src[pos]=='"'){ pos++; break; }
+        pos++;
+      }
+      continue;
+    }
+    if(src[pos]=='/' && src[pos+1]=='/'){ pos+=2; while(src[pos] && src[pos]!='\n') pos++; continue; }
+    if(src[pos]=='/' && src[pos+1]=='*'){ pos+=2; while(src[pos] && !(src[pos]=='*' && src[pos+1]=='/')) pos++; if(src[pos]) pos+=2; continue; }
+    if(word_match_at(src,pos,"function") && function_shape_at(src,pos)){
+      char name[128];
+      Span params={0,0}, body={0,0};
+      size_t end=0;
+      if(scan_function_at(src,pos,name,sizeof(name),&params,&body,&end)){
+        Span before={0,pos}, after={end,len};
+        int is_wrapper=script_name && *script_name && name[0] && !strcmp(name,script_name) && span_empty(src,before) && span_empty(src,after);
+        int code_index=is_wrapper ? script_code_index : appended_base + registry_extra_so_far(r);
+        if(!registry_add_function(r,path,name,params,body,src,code_index,is_wrapper)) return 0;
+        pos=end;
+        continue;
+      }
+    }
+    pos++;
+  }
+  return 1;
+}
+
+int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_base, GmlcFunctionRegistry *out, char *err, size_t errcap){
+  memset(out,0,sizeof(*out));
+  for(int i=0;i<project->n_rooms;i++){
+    const char *path=project->rooms[i].creation_code_path;
+    if(path && *path){
+      char *txt=read_text(path);
+      if(txt){ int ok=collect_functions_from_text(out,path,NULL,-1,appended_base,txt); free(txt); if(!ok) goto oom; }
+    }
+  }
+  for(int i=0;i<project->n_scripts;i++){
+    const char *path=project->scripts[i].source_path;
+    if(path && *path){
+      char *txt=read_text(path);
+      if(txt){
+        int ci=source_room_code_count(project)+i;
+        int ok=collect_functions_from_text(out,path,project->scripts[i].name,ci,appended_base,txt);
+        free(txt);
+        if(!ok) goto oom;
+      }
+    }
+  }
+  for(int oi=0;oi<project->n_objects;oi++){
+    const GmlcObject *obj=&project->objects[oi];
+    for(int ei=0;ei<obj->n_events;ei++){
+      const char *path=obj->events[ei].source_path;
+      if(path && *path){
+        char *txt=read_text(path);
+        if(txt){ int ok=collect_functions_from_text(out,path,NULL,-1,appended_base,txt); free(txt); if(!ok) goto oom; }
+      }
+    }
+  }
+  for(int ri=0;ri<project->n_rooms;ri++){
+    const GmlcRoom *room=&project->rooms[ri];
+    for(int ii=0;ii<room->n_instances;ii++){
+      const char *path=room->instances[ii].creation_code_path;
+      if(path && *path){
+        char *txt=read_text(path);
+        if(txt){ int ok=collect_functions_from_text(out,path,NULL,-1,appended_base,txt); free(txt); if(!ok) goto oom; }
+      }
+    }
+  }
+  return 1;
+oom:
+  snprintf(err,errcap,"function registry allocation failed");
+  gmlc_function_registry_free(out);
+  return 0;
+}
+
+static const GmlcFunctionDef *find_script_wrapper(const GmlcFunctionRegistry *funcs, const char *path, int script_index){
+  if(!funcs || !path || script_index<0) return NULL;
+  for(int i=0;i<funcs->n_defs;i++){
+    const GmlcFunctionDef *d=&funcs->defs[i];
+    if(d->is_script_wrapper && d->source_path && !strcmp(d->source_path,path))
+      return d;
+  }
+  return NULL;
+}
+
+static int emit_param_prologue(Compiler *c, const char *params){
+  if(!params || !*params) return 1;
+  size_t len=strlen(params), pos=0;
+  int arg=0;
+  while(pos<len){
+    while(pos<len && (isspace((unsigned char)params[pos]) || params[pos]==',')) pos++;
+    if(pos>=len) break;
+    if(!(isalpha((unsigned char)params[pos]) || params[pos]=='_')){
+      c->unsupported=1;
+      snprintf(c->lex.err,sizeof(c->lex.err),"unsupported function parameter");
+      return 0;
+    }
+    size_t ns=pos;
+    pos++;
+    while(pos<len && (isalnum((unsigned char)params[pos]) || params[pos]=='_')) pos++;
+    char *name=dup_range(params+ns,pos-ns);
+    if(!name) return 0;
+    if(!add_local(c,name)){ free(name); return 0; }
+    char argname[32];
+    snprintf(argname,sizeof(argname),"argument%d",arg++);
+    int ok=emit_push_var(c,IT_LOCAL,argname,0xA0) && emit_pop_var(c,IT_LOCAL,name,0xA0,DT_VAR);
+    free(name);
+    if(!ok) return 0;
+    while(pos<len && isspace((unsigned char)params[pos])) pos++;
+    if(pos<len && params[pos]==',') pos++;
+    else if(pos<len){
+      c->unsupported=1;
+      snprintf(c->lex.err,sizeof(c->lex.err),"unsupported function parameter list");
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static int compile_text_internal(const GmlcProject *project, const GmlcFunctionRegistry *funcs, int script_index, const char *source_path, const char *text, const char *params, GmlcCodeBlob *out, char *err, size_t errcap){
   Compiler c;
   memset(&c,0,sizeof(c));
   c.project=project;
+  c.funcs=funcs;
+  c.source_path=source_path;
+  c.script_index=script_index;
   collect_macros(&c);
-  c.lex.src=txt;
+  c.lex.src=text;
   lx_next(&c.lex);
+  if(!emit_param_prologue(&c,params)){
+    c.unsupported=1;
+  }
   while(c.lex.tok.kind!=TOK_EOF && !c.unsupported){
     if(!parse_statement(&c)) break;
   }
@@ -1518,8 +1879,59 @@ int gmlc_bytecode_compile_source(const GmlcProject *project, const char *path, G
   for(int i=0;i<c.n_strings;i++) free(c.strings[i].value);
   free(c.strings);
   free(c.code.data);
-  free(txt);
+  if(out->data) return 1;
+  snprintf(err,errcap,"%s: compile failed",source_path?source_path:"<source>");
+  return 0;
+}
+
+int gmlc_bytecode_emit_empty(GmlcCodeBlob *out){
+  memset(out,0,sizeof(*out));
+  out->data=(uint8_t*)malloc(4);
+  if(!out->data) return 0;
+  out->data[0]=0; out->data[1]=0; out->data[2]=0; out->data[3]=0x9D;
+  out->size=4;
+  out->is_placeholder=1;
   return 1;
+}
+
+int gmlc_bytecode_compile_source_ex(const GmlcProject *project, const GmlcFunctionRegistry *funcs, int script_index, const char *path, GmlcCodeBlob *out, char *err, size_t errcap){
+  memset(out,0,sizeof(*out));
+  char *txt=read_text(path);
+  if(!txt){
+    snprintf(err,errcap,"%s: read failed",path);
+    return 0;
+  }
+  const GmlcFunctionDef *wrapper=find_script_wrapper(funcs,path,script_index);
+  int ok=wrapper ?
+    compile_text_internal(project,funcs,script_index,path,wrapper->body,wrapper->params,out,err,errcap) :
+    compile_text_internal(project,funcs,script_index,path,txt,NULL,out,err,errcap);
+  free(txt);
+  return ok;
+}
+
+int gmlc_bytecode_compile_source(const GmlcProject *project, const char *path, GmlcCodeBlob *out, char *err, size_t errcap){
+  return gmlc_bytecode_compile_source_ex(project,NULL,-1,path,out,err,errcap);
+}
+
+int gmlc_bytecode_compile_function_body(const GmlcProject *project, const GmlcFunctionRegistry *funcs, const GmlcFunctionDef *def, GmlcCodeBlob *out, char *err, size_t errcap){
+  memset(out,0,sizeof(*out));
+  if(!def || !def->body){
+    snprintf(err,errcap,"missing function body");
+    return 0;
+  }
+  return compile_text_internal(project,funcs,-1,def->source_path,def->body,def->params,out,err,errcap);
+}
+
+void gmlc_function_registry_free(GmlcFunctionRegistry *r){
+  if(!r) return;
+  for(int i=0;i<r->n_defs;i++){
+    free(r->defs[i].name);
+    free(r->defs[i].params);
+    free(r->defs[i].body);
+    free(r->defs[i].source_path);
+  }
+  free(r->defs);
+  memset(r,0,sizeof(*r));
 }
 
 void gmlc_bytecode_free(GmlcCodeBlob *b){

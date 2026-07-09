@@ -1046,11 +1046,11 @@ static int write_one_code_blob(Pkg *pkg, int sid, GmlcCodeBlob *blob, char *err,
   return 1;
 }
 
-static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const char *path, GmlcCodeBlob *blob){
+static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, int script_index, const char *path, GmlcCodeBlob *blob){
   memset(blob,0,sizeof(*blob));
   if(path && *path){
     char berr[512]={0};
-    if(gmlc_bytecode_compile_source(p,path,blob,berr,sizeof(berr))){
+    if(gmlc_bytecode_compile_source_ex(p,funcs,script_index,path,blob,berr,sizeof(berr))){
       if(blob->is_placeholder){
         pkg->placeholder_code++;
         if(blob->diagnostic)
@@ -1071,9 +1071,50 @@ static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const char *path, G
   return 1;
 }
 
-static int write_compiled_code_entry(Pkg *pkg, const GmlcProject *p, size_t table, int *ci, int sid, const char *path, char *err, size_t errcap){
+static int write_compiled_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, int script_index, size_t table, int *ci, int sid, const char *path, char *err, size_t errcap){
   GmlcCodeBlob blob;
-  if(!compile_code_blob(pkg,p,path,&blob)) return 0;
+  if(!compile_code_blob(pkg,p,funcs,script_index,path,&blob)) return 0;
+  patch32(&pkg->b,table+(size_t)(*ci)++*4,(uint32_t)pkg->b.len);
+  int ok=write_one_code_blob(pkg,sid,&blob,err,errcap);
+  gmlc_bytecode_free(&blob);
+  return ok;
+}
+
+static char *function_code_name(const GmlcFunctionDef *def){
+  if(def->name && *def->name){
+    size_t n=strlen(def->name)+12;
+    char *out=(char*)malloc(n);
+    if(out) snprintf(out,n,"gml_Script_%s",def->name);
+    return out;
+  }
+  char tmp[64];
+  snprintf(tmp,sizeof(tmp),"gml_Function_%d",def->code_index);
+  return gmlc_strdup(tmp);
+}
+
+static int write_function_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, size_t table, int *ci, const GmlcFunctionDef *def, char *err, size_t errcap){
+  if(*ci!=def->code_index){
+    snprintf(err,errcap,"function code index mismatch");
+    return 0;
+  }
+  char *name=function_code_name(def);
+  if(!name) return 0;
+  int sid=intern(pkg,name);
+  free(name);
+  GmlcCodeBlob blob;
+  char berr[512]={0};
+  if(!gmlc_bytecode_compile_function_body(p,funcs,def,&blob,berr,sizeof(berr))){
+    if(!gmlc_bytecode_emit_empty(&blob)) return 0;
+    blob.diagnostic=gmlc_strdup(berr[0]?berr:"function source read failed");
+    pkg->placeholder_code++;
+    fprintf(stderr,"source_to_win: code placeholder: function %d: %s\n",def->code_index,blob.diagnostic?blob.diagnostic:"function source read failed");
+  } else if(blob.is_placeholder){
+    pkg->placeholder_code++;
+    if(blob.diagnostic)
+      fprintf(stderr,"source_to_win: code placeholder: function %d: %s\n",def->code_index,blob.diagnostic);
+  } else {
+    pkg->compiled_code++;
+  }
   patch32(&pkg->b,table+(size_t)(*ci)++*4,(uint32_t)pkg->b.len);
   int ok=write_one_code_blob(pkg,sid,&blob,err,errcap);
   gmlc_bytecode_free(&blob);
@@ -1082,23 +1123,27 @@ static int write_compiled_code_entry(Pkg *pkg, const GmlcProject *p, size_t tabl
 
 static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   size_t s=chunk_begin(pkg,"CODE");
-  int count=room_code_count(p) + p->n_scripts + total_object_events(p) + room_instance_creation_code_count(p);
+  int base_count=room_code_count(p) + p->n_scripts + total_object_events(p) + room_instance_creation_code_count(p);
+  GmlcFunctionRegistry funcs;
+  if(!gmlc_bytecode_collect_functions(p,base_count,&funcs,err,errcap)) return 0;
+  int count=base_count + gmlc_function_registry_extra_count(&funcs);
   wu32(&pkg->b,(uint32_t)count);
   size_t table=pkg->b.len;
   zfill(&pkg->b,(size_t)count*4);
   int ci=0;
+  int ok=0;
   for(int i=0;i<room_code_count(p);i++){
     char name[64];
     snprintf(name,sizeof(name),"gml_RoomCC_%d",i);
     int sid=intern(pkg,name);
     const char *path=(i<p->n_rooms)?p->rooms[i].creation_code_path:NULL;
-    if(!write_compiled_code_entry(pkg,p,table,&ci,sid,path,err,errcap)) return 0;
+    if(!write_compiled_code_entry(pkg,p,&funcs,-1,table,&ci,sid,path,err,errcap)) goto done;
   }
   for(int i=0;i<p->n_scripts;i++){
     char *name=script_code_name(&p->scripts[i]);
     int nsid=intern(pkg,name?name:"");
     free(name);
-    if(!write_compiled_code_entry(pkg,p,table,&ci,nsid,p->scripts[i].source_path,err,errcap)) return 0;
+    if(!write_compiled_code_entry(pkg,p,&funcs,i,table,&ci,nsid,p->scripts[i].source_path,err,errcap)) goto done;
   }
   for(int oi=0;oi<p->n_objects;oi++){
     const GmlcObject *obj=&p->objects[oi];
@@ -1106,7 +1151,7 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
       char *name=object_event_code_name(obj,&obj->events[ei]);
       int nsid=intern(pkg,name?name:"");
       free(name);
-      if(!write_compiled_code_entry(pkg,p,table,&ci,nsid,obj->events[ei].source_path,err,errcap)) return 0;
+      if(!write_compiled_code_entry(pkg,p,&funcs,-1,table,&ci,nsid,obj->events[ei].source_path,err,errcap)) goto done;
     }
   }
   for(int ri=0;ri<p->n_rooms;ri++){
@@ -1117,15 +1162,22 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
       char name[96];
       snprintf(name,sizeof(name),"gml_RoomInstanceCC_%d_%d",ri,ii);
       int sid=intern(pkg,name);
-      if(!write_compiled_code_entry(pkg,p,table,&ci,sid,in->creation_code_path,err,errcap)) return 0;
+      if(!write_compiled_code_entry(pkg,p,&funcs,-1,table,&ci,sid,in->creation_code_path,err,errcap)) goto done;
     }
+  }
+  for(int i=0;i<funcs.n_defs;i++){
+    if(funcs.defs[i].is_script_wrapper) continue;
+    if(!write_function_code_entry(pkg,p,&funcs,table,&ci,&funcs.defs[i],err,errcap)) goto done;
   }
   if(!patch_ref_chains(pkg)){
     snprintf(err,errcap,"reference chain patch failed");
-    return 0;
+    goto done;
   }
   chunk_end(pkg,s);
-  return 1;
+  ok=1;
+done:
+  gmlc_function_registry_free(&funcs);
+  return ok;
 }
 
 static int write_vari(Pkg *pkg){
