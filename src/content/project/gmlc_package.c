@@ -521,8 +521,8 @@ static int write_gen8(Pkg *pkg, const GmlcProject *p){
   pkg->b.data[base+1]=15;
   add_str_patch(pkg,(uint32_t)(base+4),sid_name);
   add_str_patch(pkg,(uint32_t)(base+8),sid_cfg);
-  patch32(&pkg->b,base+12,100000);
-  patch32(&pkg->b,base+16,100000);
+  patch32(&pkg->b,base+12,(uint32_t)(p->next_instance_id>100000?p->next_instance_id:100000));
+  patch32(&pkg->b,base+16,10000000);
   patch32(&pkg->b,base+20,0);
   add_str_patch(pkg,(uint32_t)(base+44),sid_name);
   patch32(&pkg->b,base+60,(uint32_t)dw);
@@ -605,6 +605,68 @@ static int write_room_empty_list(Pkg *pkg, uint32_t *out_ptr){
   return wu32(&pkg->b,0);
 }
 
+static int write_room_layer_list(Pkg *pkg, const GmlcRoom *r, uint32_t *out_ptr){
+  *out_ptr=(uint32_t)pkg->b.len;
+  wu32(&pkg->b,(uint32_t)r->n_layers);
+  size_t table=pkg->b.len;
+  zfill(&pkg->b,(size_t)r->n_layers*4);
+  for(int i=0;i<r->n_layers;i++){
+    const GmlcRoomLayer *ly=&r->layers[i];
+    patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
+    int sid=intern(pkg,ly->name?ly->name:"");
+    wstrptr(pkg,sid);
+    wi32(&pkg->b,ly->layer_id);
+    wi32(&pkg->b,ly->type);
+    wi32(&pkg->b,ly->depth);
+    wf32(&pkg->b,ly->x);
+    wf32(&pkg->b,ly->y);
+    wf32(&pkg->b,ly->hspeed);
+    wf32(&pkg->b,ly->vspeed);
+    wu32(&pkg->b,(uint32_t)(ly->visible?1:0));
+    if(ly->type==1){
+      wu32(&pkg->b,(uint32_t)(ly->visible?1:0));
+      wu32(&pkg->b,0);
+      wi32(&pkg->b,ly->bg_sprite_id);
+      wu32(&pkg->b,(uint32_t)(ly->bg_htiled?1:0));
+      wu32(&pkg->b,(uint32_t)(ly->bg_vtiled?1:0));
+      wu32(&pkg->b,(uint32_t)(ly->bg_stretch?1:0));
+      wu32(&pkg->b,ly->bg_color);
+      wf32(&pkg->b,ly->bg_frame);
+      wf32(&pkg->b,ly->bg_speed);
+      wu32(&pkg->b,0);
+    } else if(ly->type==2){
+      wu32(&pkg->b,(uint32_t)ly->n_instance_ids);
+      for(int k=0;k<ly->n_instance_ids;k++) wu32(&pkg->b,ly->instance_ids[k]);
+    } else if(ly->type==3){
+      size_t tiles_pos=pkg->b.len; wu32(&pkg->b,0);
+      size_t sprites_pos=pkg->b.len; wu32(&pkg->b,0);
+      patch32(&pkg->b,tiles_pos,(uint32_t)pkg->b.len);
+      wu32(&pkg->b,0);
+      patch32(&pkg->b,sprites_pos,(uint32_t)pkg->b.len);
+      wu32(&pkg->b,(uint32_t)ly->n_assets);
+      size_t stable=pkg->b.len;
+      zfill(&pkg->b,(size_t)ly->n_assets*4);
+      for(int a=0;a<ly->n_assets;a++){
+        const GmlcRoomAsset *ra=&ly->assets[a];
+        patch32(&pkg->b,stable+(size_t)a*4,(uint32_t)pkg->b.len);
+        int asid=intern(pkg,ra->name?ra->name:"");
+        wstrptr(pkg,asid);
+        wi32(&pkg->b,ra->sprite_id);
+        wi32(&pkg->b,ra->x);
+        wi32(&pkg->b,ra->y);
+        wf32(&pkg->b,ra->sx==0.0f?1.0f:ra->sx);
+        wf32(&pkg->b,ra->sy==0.0f?1.0f:ra->sy);
+        wu32(&pkg->b,ra->color?ra->color:0xFFFFFFFFu);
+        wf32(&pkg->b,ra->speed);
+        wu32(&pkg->b,0);
+        wf32(&pkg->b,ra->frame);
+        wf32(&pkg->b,ra->rotation);
+      }
+    }
+  }
+  return 1;
+}
+
 static int write_room(Pkg *pkg, const GmlcRoom *r, int room_index, uint32_t *record_ptr){
   *record_ptr=(uint32_t)pkg->b.len;
   int sid=intern(pkg,r->name);
@@ -622,15 +684,21 @@ static int write_room(Pkg *pkg, const GmlcRoom *r, int room_index, uint32_t *rec
   size_t view_pos=pkg->b.len; wu32(&pkg->b,0);
   size_t obj_pos=pkg->b.len; wu32(&pkg->b,0);
   size_t tile_pos=pkg->b.len; wu32(&pkg->b,0);
-  uint32_t bg=0, view=0, obj=0, tile=0;
+  wu32(&pkg->b,1);
+  zfill(&pkg->b,24);
+  wf32(&pkg->b,0.1f);
+  size_t layer_pos=pkg->b.len; wu32(&pkg->b,0);
+  uint32_t bg=0, view=0, obj=0, tile=0, layers=0;
   write_room_empty_list(pkg,&bg);
   write_room_views(pkg,r,&view);
   write_room_instances(pkg,r,&obj);
   write_room_empty_list(pkg,&tile);
+  write_room_layer_list(pkg,r,&layers);
   patch32(&pkg->b,bg_pos,bg);
   patch32(&pkg->b,view_pos,view);
   patch32(&pkg->b,obj_pos,obj);
   patch32(&pkg->b,tile_pos,tile);
+  patch32(&pkg->b,layer_pos,layers);
   return 1;
 }
 

@@ -36,6 +36,32 @@ typedef struct {
 } GmlcRoomInstance;
 
 typedef struct {
+  char *name;
+  int sprite_id;
+  int x, y;
+  float sx, sy, rotation, frame, speed;
+  uint32_t color;
+} GmlcRoomAsset;
+
+typedef struct {
+  char *id;
+  char *name;
+  int layer_id;
+  int type;
+  int depth;
+  int visible;
+  float x, y, hspeed, vspeed;
+  int bg_sprite_id;
+  int bg_htiled, bg_vtiled, bg_stretch;
+  uint32_t bg_color;
+  float bg_frame, bg_speed;
+  uint32_t *instance_ids;
+  int n_instance_ids, cap_instance_ids;
+  GmlcRoomAsset *assets;
+  int n_assets, cap_assets;
+} GmlcRoomLayer;
+
+typedef struct {
   char *id;
   char *name;
   int width, height, speed;
@@ -43,6 +69,8 @@ typedef struct {
   int view_w, view_h, port_w, port_h;
   GmlcRoomInstance *instances;
   int n_instances, cap_instances;
+  GmlcRoomLayer *layers;
+  int n_layers, cap_layers;
   char *creation_code_path;
 } GmlcRoom;
 
@@ -100,6 +128,8 @@ typedef struct {
   int n_objects, cap_objects;
   GmlcRoom *rooms;
   int n_rooms, cap_rooms;
+  int next_instance_id;
+  int next_layer_id;
   int n_shaders, n_fonts;
 } GmlcProject;
 

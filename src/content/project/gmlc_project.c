@@ -50,6 +50,8 @@ char *gmlc_path_join(const char *a, const char *b){
 
 void gmlc_project_init(GmlcProject *p){
   memset(p,0,sizeof(*p));
+  p->next_instance_id=100000;
+  p->next_layer_id=0;
 }
 
 static void free_resource(GmlcResource *r){
@@ -83,6 +85,14 @@ void gmlc_project_free(GmlcProject *p){
     free(r->creation_code_path);
     for(int k=0;k<r->n_instances;k++){ free(r->instances[k].id); free(r->instances[k].name); }
     free(r->instances);
+    for(int l=0;l<r->n_layers;l++){
+      GmlcRoomLayer *ly=&r->layers[l];
+      free(ly->id); free(ly->name);
+      free(ly->instance_ids);
+      for(int a=0;a<ly->n_assets;a++) free(ly->assets[a].name);
+      free(ly->assets);
+    }
+    free(r->layers);
   }
   free(p->rooms);
   memset(p,0,sizeof(*p));

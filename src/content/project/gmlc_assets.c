@@ -84,38 +84,173 @@ static int room_add_instance(GmlcRoom *r, GmlcRoomInstance *in){
   return 1;
 }
 
+static int room_add_layer(GmlcRoom *r, GmlcRoomLayer *ly){
+  if(r->n_layers>=r->cap_layers){
+    int nc=r->cap_layers?r->cap_layers*2:8;
+    GmlcRoomLayer *nl=(GmlcRoomLayer*)realloc(r->layers,(size_t)nc*sizeof(*nl));
+    if(!nl) return 0;
+    r->layers=nl; r->cap_layers=nc;
+  }
+  r->layers[r->n_layers++]=*ly;
+  return 1;
+}
+
+static int layer_add_instance_id(GmlcRoomLayer *ly, uint32_t id){
+  if(ly->n_instance_ids>=ly->cap_instance_ids){
+    int nc=ly->cap_instance_ids?ly->cap_instance_ids*2:16;
+    uint32_t *ni=(uint32_t*)realloc(ly->instance_ids,(size_t)nc*sizeof(*ni));
+    if(!ni) return 0;
+    ly->instance_ids=ni; ly->cap_instance_ids=nc;
+  }
+  ly->instance_ids[ly->n_instance_ids++]=id;
+  return 1;
+}
+
+static int layer_add_asset(GmlcRoomLayer *ly, GmlcRoomAsset *a){
+  if(ly->n_assets>=ly->cap_assets){
+    int nc=ly->cap_assets?ly->cap_assets*2:8;
+    GmlcRoomAsset *na=(GmlcRoomAsset*)realloc(ly->assets,(size_t)nc*sizeof(*na));
+    if(!na) return 0;
+    ly->assets=na; ly->cap_assets=nc;
+  }
+  ly->assets[ly->n_assets++]=*a;
+  return 1;
+}
+
+static void free_room_layer_fields(GmlcRoomLayer *ly){
+  if(!ly) return;
+  free(ly->id); free(ly->name);
+  free(ly->instance_ids);
+  for(int a=0;a<ly->n_assets;a++) free(ly->assets[a].name);
+  free(ly->assets);
+}
+
+static void free_room_fields(GmlcRoom *r){
+  if(!r) return;
+  free(r->id); free(r->name); free(r->creation_code_path);
+  for(int i=0;i<r->n_instances;i++){
+    free(r->instances[i].id);
+    free(r->instances[i].name);
+  }
+  free(r->instances);
+  for(int l=0;l<r->n_layers;l++) free_room_layer_fields(&r->layers[l]);
+  free(r->layers);
+}
+
 static int parse_u32_color(const GmlcJson *v, uint32_t fallback){
   const GmlcJson *vv=gmlc_json_obj(v,"Value");
   if(vv) return (uint32_t)gmlc_json_num(vv,(double)fallback);
   return fallback;
 }
 
-static void scan_instances(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers, int *next_id){
-  if(!layers || layers->type!=GMLC_JSON_ARRAY) return;
+static int layer_type_from_model(const char *model){
+  if(!model) return 0;
+  if(!strcmp(model,"GMRBackgroundLayer")) return 1;
+  if(!strcmp(model,"GMRInstanceLayer")) return 2;
+  if(!strcmp(model,"GMRAssetLayer")) return 3;
+  if(!strcmp(model,"GMRTileLayer")) return 4;
+  return 0;
+}
+
+static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers, char *err, size_t errcap){
+  if(!layers || layers->type!=GMLC_JSON_ARRAY) return 1;
   for(const GmlcJson *ly=layers->child;ly;ly=ly->next){
     const GmlcJson *sub=gmlc_json_obj(ly,"layers");
-    if(sub) scan_instances(p,r,sub,next_id);
-    const GmlcJson *arr=gmlc_json_obj(ly,"instances");
-    if(!arr || arr->type!=GMLC_JSON_ARRAY) continue;
-    for(const GmlcJson *ji=arr->child;ji;ji=ji->next){
-      const char *oid=gmlc_json_str(gmlc_json_obj(ji,"objId"),NULL);
-      int obj=gmlc_project_find_object(p,oid);
-      if(obj<0) continue;
-      GmlcRoomInstance in;
-      memset(&in,0,sizeof(in));
-      in.id=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ji,"id"),""));
-      in.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ji,"name"),""));
-      in.x=gmlc_json_int(gmlc_json_obj(ji,"x"),0);
-      in.y=gmlc_json_int(gmlc_json_obj(ji,"y"),0);
-      in.object_id=obj;
-      in.instance_id=(*next_id)++;
-      in.sx=(float)gmlc_json_num(gmlc_json_obj(ji,"scaleX"),1.0);
-      in.sy=(float)gmlc_json_num(gmlc_json_obj(ji,"scaleY"),1.0);
-      in.rotation=(float)gmlc_json_num(gmlc_json_obj(ji,"rotation"),0.0);
-      in.color=parse_u32_color(gmlc_json_obj(ji,"colour"),0xFFFFFFFFu);
-      room_add_instance(r,&in);
+    if(sub && sub->type==GMLC_JSON_ARRAY && !scan_room_layers(p,r,sub,err,errcap)) return 0;
+    int type=layer_type_from_model(gmlc_json_str(gmlc_json_obj(ly,"modelName"),NULL));
+    if(type<=0) continue;
+    if(type==4){
+      snprintf(err,errcap,"unsupported room layer type %d in room resource",type);
+      return 0;
+    }
+    GmlcRoomLayer out;
+    memset(&out,0,sizeof(out));
+    out.id=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ly,"id"),""));
+    out.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ly,"name"),""));
+    if(!out.id || !out.name){
+      snprintf(err,errcap,"out of memory while loading room layer");
+      free_room_layer_fields(&out);
+      return 0;
+    }
+    out.layer_id=p->next_layer_id++;
+    out.type=type;
+    out.depth=gmlc_json_int(gmlc_json_obj(ly,"depth"),0);
+    out.visible=gmlc_json_bool(gmlc_json_obj(ly,"visible"),1);
+    out.x=(float)gmlc_json_num(gmlc_json_obj(ly,"x"),0.0);
+    out.y=(float)gmlc_json_num(gmlc_json_obj(ly,"y"),0.0);
+    out.hspeed=(float)gmlc_json_num(gmlc_json_obj(ly,"hspeed"),0.0);
+    out.vspeed=(float)gmlc_json_num(gmlc_json_obj(ly,"vspeed"),0.0);
+    out.bg_sprite_id=-1;
+    out.bg_color=0xFFFFFFFFu;
+    if(type==1){
+      out.bg_sprite_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(ly,"spriteId"),NULL));
+      out.bg_htiled=gmlc_json_bool(gmlc_json_obj(ly,"htiled"),0);
+      out.bg_vtiled=gmlc_json_bool(gmlc_json_obj(ly,"vtiled"),0);
+      out.bg_stretch=gmlc_json_bool(gmlc_json_obj(ly,"stretch"),0);
+      out.bg_color=parse_u32_color(gmlc_json_obj(ly,"colour"),0xFFFFFFFFu);
+      out.bg_frame=(float)gmlc_json_num(gmlc_json_obj(ly,"frameIndex"),0.0);
+      out.bg_speed=(float)gmlc_json_num(gmlc_json_obj(ly,"animationFPS"),0.0);
+    } else if(type==2){
+      const GmlcJson *arr=gmlc_json_obj(ly,"instances");
+      if(arr && arr->type==GMLC_JSON_ARRAY){
+        for(const GmlcJson *ji=arr->child;ji;ji=ji->next){
+          const char *oid=gmlc_json_str(gmlc_json_obj(ji,"objId"),NULL);
+          int obj=gmlc_project_find_object(p,oid);
+          if(obj<0) continue;
+          GmlcRoomInstance in;
+          memset(&in,0,sizeof(in));
+          in.id=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ji,"id"),""));
+          in.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ji,"name"),""));
+          in.x=gmlc_json_int(gmlc_json_obj(ji,"x"),0);
+          in.y=gmlc_json_int(gmlc_json_obj(ji,"y"),0);
+          in.object_id=obj;
+          if(p->next_instance_id<100000) p->next_instance_id=100000;
+          in.instance_id=p->next_instance_id++;
+          in.sx=(float)gmlc_json_num(gmlc_json_obj(ji,"scaleX"),1.0);
+          in.sy=(float)gmlc_json_num(gmlc_json_obj(ji,"scaleY"),1.0);
+          in.rotation=(float)gmlc_json_num(gmlc_json_obj(ji,"rotation"),0.0);
+          in.color=parse_u32_color(gmlc_json_obj(ji,"colour"),0xFFFFFFFFu);
+          if(!layer_add_instance_id(&out,(uint32_t)in.instance_id) || !room_add_instance(r,&in)){
+            snprintf(err,errcap,"out of memory while loading room instances");
+            free(in.id); free(in.name);
+            free_room_layer_fields(&out);
+            return 0;
+          }
+        }
+      }
+    } else if(type==3){
+      const GmlcJson *assets=gmlc_json_obj(ly,"assets");
+      if(assets && assets->type==GMLC_JSON_ARRAY){
+        for(const GmlcJson *ja=assets->child;ja;ja=ja->next){
+          if(gmlc_json_bool(gmlc_json_obj(ja,"ignore"),0)) continue;
+          GmlcRoomAsset a;
+          memset(&a,0,sizeof(a));
+          a.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ja,"name"),""));
+          a.sprite_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(ja,"spriteId"),NULL));
+          a.x=gmlc_json_int(gmlc_json_obj(ja,"x"),0);
+          a.y=gmlc_json_int(gmlc_json_obj(ja,"y"),0);
+          a.sx=(float)gmlc_json_num(gmlc_json_obj(ja,"scaleX"),1.0);
+          a.sy=(float)gmlc_json_num(gmlc_json_obj(ja,"scaleY"),1.0);
+          a.rotation=(float)gmlc_json_num(gmlc_json_obj(ja,"rotation"),0.0);
+          a.frame=(float)gmlc_json_num(gmlc_json_obj(ja,"frameIndex"),0.0);
+          a.speed=(float)gmlc_json_num(gmlc_json_obj(ja,"animationFPS"),0.0);
+          a.color=parse_u32_color(gmlc_json_obj(ja,"colour"),0xFFFFFFFFu);
+          if(!layer_add_asset(&out,&a)){
+            snprintf(err,errcap,"out of memory while loading room asset layer");
+            free(a.name);
+            free_room_layer_fields(&out);
+            return 0;
+          }
+        }
+      }
+    }
+    if(!room_add_layer(r,&out)){
+      snprintf(err,errcap,"out of memory while loading room layers");
+      free_room_layer_fields(&out);
+      return 0;
     }
   }
+  return 1;
 }
 
 static int parse_sprite(GmlcProject *p, const GmlcResource *res, const GmlcJson *yy, char *err, size_t errcap){
@@ -271,11 +406,13 @@ static int parse_room(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
     r.creation_code_path=gmlc_path_join(dir,cc);
     free(dir);
   }
-  int next_id=100000;
-  scan_instances(p,&r,gmlc_json_obj(yy,"layers"),&next_id);
+  if(!scan_room_layers(p,&r,gmlc_json_obj(yy,"layers"),err,errcap)){
+    free_room_fields(&r);
+    return 0;
+  }
   if(!r.id || !r.name || !add_room(p,&r)){
     snprintf(err,errcap,"out of memory while loading room resource");
-    free(r.id); free(r.name); free(r.instances);
+    free_room_fields(&r);
     return 0;
   }
   return 1;
