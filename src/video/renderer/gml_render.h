@@ -144,6 +144,10 @@ typedef struct {
                               * CRT surface renders at that multiple; the GUI/present canvas is sized
                               * to match. 1 = native (no supersample). Set from the gml_crt_scale core
                               * option / GML_CRT_SCALE env by the frontend. */
+  int       crt_shader_enable; /* run recognized embedded CRT post-process shaders (default 1). 0 =
+                              * report them not-compiled and never execute them, so games fall back
+                              * to their no-shader video modes (pre-emulation behavior). Palette/LUT
+                              * shaders are NOT gated: they are integral to those games' rendering. */
   /* async atlas prefetch pool (opaque; see gml_render.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;

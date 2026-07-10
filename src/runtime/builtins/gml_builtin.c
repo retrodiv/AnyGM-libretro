@@ -6577,7 +6577,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* report palette shaders (template or LUT) as compiled so games keep using them (unknown -> 0) */
   if(!strcmp(nm,"shader_is_compiled")){ GmlRender *R=(GmlRender*)vm->render; int sid=(int)N(a,n,0);
     int ok = R && sid>=0 && sid<R->n_shader_pal && R->shader_pal &&
-             (R->shader_pal[sid].has || R->shader_pal[sid].lut || R->shader_pal[sid].crt);
+             (R->shader_pal[sid].has || R->shader_pal[sid].lut ||
+              (R->shader_pal[sid].crt && R->crt_shader_enable));
     if(getenv("GML_LOG_SHADER")){ static long c=0; if(c++<6){ extern long g_vm_frame;
       fprintf(stderr,"[shader] f%ld shader_is_compiled(%d)=%d\n",g_vm_frame,sid,ok); } }
     return vreal(ok); }
