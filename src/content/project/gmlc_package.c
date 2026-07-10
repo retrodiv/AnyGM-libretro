@@ -76,6 +76,20 @@ typedef struct {
 } TexturePlacement;
 
 typedef struct {
+  char *sprite_name;
+  int frame;
+  TexturePlacement place;
+} RefTextureFrame;
+
+typedef struct {
+  int enabled;
+  RefTextureFrame *frames;
+  int n_frames, cap_frames;
+  uint8_t *png;
+  size_t png_len;
+} RefTextureLayout;
+
+typedef struct {
   Buf b;
   Buf code_data;
   StrTab strs;
@@ -104,7 +118,20 @@ typedef struct {
   int refs_patched;
   int compiled_code;
   int placeholder_code;
+  RefTextureLayout ref_tex;
 } Pkg;
+
+static int ref_texture_find_frame(const RefTextureLayout *r, const char *name, int frame){
+  if(!r || !name) return -1;
+  for(int i=0;i<r->n_frames;i++){
+    if(r->frames[i].frame==frame &&
+       r->frames[i].sprite_name &&
+       !strcmp(r->frames[i].sprite_name,name)){
+      return i;
+    }
+  }
+  return -1;
+}
 
 static int reserve(Buf *b, size_t n){
   if(b->len+n<=b->cap) return 1;
@@ -511,6 +538,20 @@ static int build_texture_layout(Pkg *pkg, const GmlcProject *p){
     pkg->n_atlas_pages=0;
     return 1;
   }
+  if(pkg->ref_tex.enabled){
+    int idx=0;
+    for(int i=0;i<p->n_sprites;i++){
+      const GmlcSprite *sp=&p->sprites[i];
+      for(int f=0;f<sp->n_frames;f++,idx++){
+        int found=ref_texture_find_frame(&pkg->ref_tex,sp->name,f);
+        if(found<0) return 0;
+        pkg->texture_place[idx]=pkg->ref_tex.frames[found].place;
+      }
+    }
+    if(p->n_fonts>0) return 0;
+    pkg->n_atlas_pages=1;
+    return 1;
+  }
   TextureRequest *req=(TextureRequest*)calloc((size_t)n,sizeof(*req));
   PackPage *pages=NULL;
   if(!req) return 0;
@@ -795,6 +836,229 @@ static int read_blob(const char *path, uint8_t **out, size_t *out_len){
 }
 
 typedef struct {
+  size_t off, size;
+} RefChunk;
+
+static uint16_t ref_rd16(const uint8_t *p){
+  return (uint16_t)p[0] | ((uint16_t)p[1]<<8);
+}
+
+static uint32_t ref_rd32(const uint8_t *p){
+  return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
+}
+
+static uint32_t ref_rd32be(const uint8_t *p){
+  return ((uint32_t)p[0]<<24) | ((uint32_t)p[1]<<16) | ((uint32_t)p[2]<<8) | (uint32_t)p[3];
+}
+
+static int ref_has(size_t len, size_t off, size_t n){
+  return off<=len && n<=len-off;
+}
+
+static int ref_find_chunk(const uint8_t *data, size_t len, const char name[4], RefChunk *out){
+  if(!data || len<8 || memcmp(data,"FORM",4)) return 0;
+  size_t pos=8;
+  while(pos+8<=len){
+    uint32_t sz=ref_rd32(data+pos+4);
+    size_t body=pos+8;
+    if(!ref_has(len,body,(size_t)sz)) return 0;
+    if(!memcmp(data+pos,name,4)){
+      out->off=body;
+      out->size=(size_t)sz;
+      return 1;
+    }
+    pos=body+(size_t)sz;
+    if(pos&1) pos++;
+  }
+  return 0;
+}
+
+static char *ref_read_string(const uint8_t *data, size_t len, RefChunk strg, uint32_t ptr){
+  size_t p=(size_t)ptr;
+  if(p<4 || !ref_has(len,p-4,4)) return NULL;
+  uint32_t slen=ref_rd32(data+p-4);
+  if(slen>0x100000u) return NULL;
+  if(p<strg.off || p>strg.off+strg.size || (size_t)slen>strg.off+strg.size-p) return NULL;
+  if(!ref_has(len,p,(size_t)slen)) return NULL;
+  char *s=(char*)malloc((size_t)slen+1);
+  if(!s) return NULL;
+  memcpy(s,data+p,(size_t)slen);
+  s[slen]=0;
+  return s;
+}
+
+static void free_ref_texture_layout(RefTextureLayout *r){
+  if(!r) return;
+  for(int i=0;i<r->n_frames;i++) free(r->frames[i].sprite_name);
+  free(r->frames);
+  free(r->png);
+  memset(r,0,sizeof(*r));
+}
+
+static int ref_add_texture_frame(RefTextureLayout *r, const char *name, int frame, TexturePlacement place){
+  if(r->n_frames>=r->cap_frames){
+    int nc=r->cap_frames?r->cap_frames*2:128;
+    RefTextureFrame *nf=(RefTextureFrame*)realloc(r->frames,(size_t)nc*sizeof(*nf));
+    if(!nf) return 0;
+    r->frames=nf;
+    r->cap_frames=nc;
+  }
+  RefTextureFrame *f=&r->frames[r->n_frames++];
+  f->sprite_name=gmlc_strdup(name?name:"");
+  f->frame=frame;
+  f->place=place;
+  return f->sprite_name!=NULL;
+}
+
+static int ref_png_len(const uint8_t *data, size_t len, size_t off, size_t *out_len){
+  static const uint8_t sig[8]={137,80,78,71,13,10,26,10};
+  if(!ref_has(len,off,8) || memcmp(data+off,sig,8)) return 0;
+  size_t pos=off+8;
+  while(ref_has(len,pos,12)){
+    uint32_t chunk_len=ref_rd32be(data+pos);
+    const uint8_t *type=data+pos+4;
+    size_t payload=pos+8;
+    if(!ref_has(len,payload,(size_t)chunk_len+4)) return 0;
+    pos=payload+(size_t)chunk_len+4;
+    if(!memcmp(type,"IEND",4)){
+      *out_len=pos-off;
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int validate_reference_texture_layout(const RefTextureLayout *r, const GmlcProject *p, char *err, size_t errcap){
+  if(p->n_fonts>0){
+    snprintf(err,errcap,"reference texture layout does not include generated font pages");
+    return 0;
+  }
+  for(int i=0;i<p->n_sprites;i++){
+    const GmlcSprite *sp=&p->sprites[i];
+    for(int f=0;f<sp->n_frames;f++){
+      int idx=ref_texture_find_frame(r,sp->name,f);
+      if(idx<0){
+        snprintf(err,errcap,"reference texture layout is missing a source sprite frame");
+        return 0;
+      }
+      if(r->frames[idx].place.atlas!=0){
+        snprintf(err,errcap,"reference texture layout uses multiple texture pages");
+        return 0;
+      }
+    }
+  }
+  return 1;
+}
+
+static int load_reference_texture_layout(Pkg *pkg, const GmlcProject *p, const char *path, char *err, size_t errcap){
+  uint8_t *data=NULL;
+  size_t len=0;
+  RefTextureLayout tmp;
+  memset(&tmp,0,sizeof(tmp));
+  if(!read_blob(path,&data,&len)){
+    snprintf(err,errcap,"%s: reference package read failed",path?path:"<missing>");
+    return 0;
+  }
+  RefChunk strg, sprt, tpag, txtr;
+  if(!ref_find_chunk(data,len,"STRG",&strg) ||
+     !ref_find_chunk(data,len,"SPRT",&sprt) ||
+     !ref_find_chunk(data,len,"TPAG",&tpag) ||
+     !ref_find_chunk(data,len,"TXTR",&txtr)){
+    snprintf(err,errcap,"%s: reference package is missing texture metadata",path);
+    goto fail;
+  }
+  if(!ref_has(len,sprt.off,4)){
+    snprintf(err,errcap,"%s: invalid reference sprite table",path);
+    goto fail;
+  }
+  uint32_t ns=ref_rd32(data+sprt.off);
+  if(ns>100000u || !ref_has(len,sprt.off+4,(size_t)ns*4)){
+    snprintf(err,errcap,"%s: invalid reference sprite count",path);
+    goto fail;
+  }
+  for(uint32_t i=0;i<ns;i++){
+    uint32_t rec=ref_rd32(data+sprt.off+4+(size_t)i*4);
+    if(!ref_has(len,(size_t)rec,80)){
+      snprintf(err,errcap,"%s: invalid reference sprite record",path);
+      goto fail;
+    }
+    char *name=ref_read_string(data,len,strg,ref_rd32(data+rec));
+    if(!name){
+      snprintf(err,errcap,"%s: invalid reference sprite name",path);
+      goto fail;
+    }
+    uint32_t frames=ref_rd32(data+rec+76);
+    if(frames>100000u || !ref_has(len,(size_t)rec+80,(size_t)frames*4)){
+      free(name);
+      snprintf(err,errcap,"%s: invalid reference frame table",path);
+      goto fail;
+    }
+    for(uint32_t f=0;f<frames;f++){
+      uint32_t tr=ref_rd32(data+rec+80+(size_t)f*4);
+      if((size_t)tr<tpag.off || !ref_has(len,(size_t)tr,22) || (size_t)tr+22>tpag.off+tpag.size){
+        free(name);
+        snprintf(err,errcap,"%s: invalid reference texture page record",path);
+        goto fail;
+      }
+      TexturePlacement place;
+      memset(&place,0,sizeof(place));
+      place.sx=ref_rd16(data+tr+0);
+      place.sy=ref_rd16(data+tr+2);
+      place.sw=ref_rd16(data+tr+4);
+      place.sh=ref_rd16(data+tr+6);
+      place.xoff=ref_rd16(data+tr+8);
+      place.yoff=ref_rd16(data+tr+10);
+      place.atlas=ref_rd16(data+tr+20);
+      if(!ref_add_texture_frame(&tmp,name,(int)f,place)){
+        free(name);
+        snprintf(err,errcap,"out of memory while reading reference texture layout");
+        goto fail;
+      }
+    }
+    free(name);
+  }
+  if(!ref_has(len,txtr.off,4)){
+    snprintf(err,errcap,"%s: invalid reference texture table",path);
+    goto fail;
+  }
+  uint32_t nt=ref_rd32(data+txtr.off);
+  if(nt!=1u || !ref_has(len,txtr.off+4,(size_t)nt*4)){
+    snprintf(err,errcap,"%s: reference texture layout uses multiple texture pages",path);
+    goto fail;
+  }
+  uint32_t tex_rec=ref_rd32(data+txtr.off+4);
+  if(!ref_has(len,(size_t)tex_rec,8) || ref_rd32(data+tex_rec)!=1u){
+    snprintf(err,errcap,"%s: invalid reference texture record",path);
+    goto fail;
+  }
+  uint32_t png_ptr=ref_rd32(data+tex_rec+4);
+  size_t png_len=0;
+  if(!ref_png_len(data,len,(size_t)png_ptr,&png_len)){
+    snprintf(err,errcap,"%s: invalid reference texture PNG",path);
+    goto fail;
+  }
+  tmp.png=(uint8_t*)malloc(png_len);
+  if(!tmp.png){
+    snprintf(err,errcap,"out of memory while reading reference texture PNG");
+    goto fail;
+  }
+  memcpy(tmp.png,data+png_ptr,png_len);
+  tmp.png_len=png_len;
+  tmp.enabled=1;
+  if(!validate_reference_texture_layout(&tmp,p,err,errcap)) goto fail;
+  free_ref_texture_layout(&pkg->ref_tex);
+  pkg->ref_tex=tmp;
+  memset(&tmp,0,sizeof(tmp));
+  free(data);
+  return 1;
+
+fail:
+  free_ref_texture_layout(&tmp);
+  free(data);
+  return 0;
+}
+
+typedef struct {
   Buf b;
   int ok;
 } PngOut;
@@ -891,8 +1155,23 @@ static int write_atlas_blob(Pkg *pkg, const GmlcProject *p, int page, size_t blo
   return 1;
 }
 
+static int write_reference_atlas_blob(Pkg *pkg, size_t blob_pos, char *err, size_t errcap){
+  if(!pkg->ref_tex.png || pkg->ref_tex.png_len==0){
+    snprintf(err,errcap,"reference texture PNG is empty");
+    return 0;
+  }
+  while(pkg->b.len % 0x80) wu8(&pkg->b,0);
+  patch32(&pkg->b,blob_pos,(uint32_t)pkg->b.len);
+  if(!wbytes(&pkg->b,pkg->ref_tex.png,pkg->ref_tex.png_len)){
+    snprintf(err,errcap,"out of memory while writing reference texture atlas");
+    return 0;
+  }
+  while(pkg->b.len % 4) wu8(&pkg->b,0);
+  return 1;
+}
+
 static int write_txtr(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
-  int nf=pkg->n_atlas_pages;
+  int nf=pkg->ref_tex.enabled ? 1 : pkg->n_atlas_pages;
   size_t s=chunk_begin(pkg,"TXTR");
   wu32(&pkg->b,(uint32_t)nf);
   size_t table=pkg->b.len;
@@ -906,7 +1185,10 @@ static int write_txtr(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
     wu32(&pkg->b,0);
   }
   for(int i=0;i<nf;i++){
-    if(!write_atlas_blob(pkg,p,i,blob_patch[i],err,errcap)){
+    int ok=pkg->ref_tex.enabled
+      ? write_reference_atlas_blob(pkg,blob_patch[i],err,errcap)
+      : write_atlas_blob(pkg,p,i,blob_patch[i],err,errcap);
+    if(!ok){
       free(blob_patch);
       return 0;
     }
@@ -2442,9 +2724,33 @@ static int write_file(const char *path, const uint8_t *data, size_t len, char *e
   return 1;
 }
 
+static void free_pkg(Pkg *pkg){
+  free(pkg->b.data);
+  free(pkg->code_data.data);
+  for(int i=0;i<pkg->strs.n;i++) free(pkg->strs.items[i]);
+  free(pkg->strs.items);
+  free(pkg->strs.char_off);
+  free(pkg->patches);
+  free(pkg->frame_patches);
+  free(pkg->font_patches);
+  free(pkg->frame_tpag_ptr);
+  free(pkg->font_tpag_ptr);
+  free(pkg->texture_place);
+  free(pkg->code_blob_patches);
+  free(pkg->code_name_refs);
+  for(int i=0;i<pkg->n_code_refs;i++) free(pkg->code_refs[i].name);
+  free(pkg->code_refs);
+  free_ref_texture_layout(&pkg->ref_tex);
+}
+
 int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, char *err, size_t errcap){
   Pkg pkg;
   memset(&pkg,0,sizeof(pkg));
+  const char *ref_path=getenv("GMLC_REFERENCE_WIN");
+  if(ref_path && *ref_path && !load_reference_texture_layout(&pkg,p,ref_path,err,errcap)){
+    free_pkg(&pkg);
+    return 0;
+  }
   wbytes(&pkg.b,"FORM",4);
   size_t form_size_pos=pkg.b.len;
   wu32(&pkg.b,0);
@@ -2475,31 +2781,11 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
      !write_txtr(&pkg,p,err,errcap) ||
      !write_audo(&pkg,p,err,errcap)){
     if(!err[0]) snprintf(err,errcap,"out of memory while writing package");
-    free(pkg.b.data);
-    free(pkg.code_data.data);
-    for(int i=0;i<pkg.strs.n;i++) free(pkg.strs.items[i]);
-    free(pkg.strs.items); free(pkg.strs.char_off); free(pkg.patches);
-    free(pkg.frame_patches); free(pkg.font_patches);
-    free(pkg.frame_tpag_ptr); free(pkg.font_tpag_ptr);
-    free(pkg.texture_place);
-    free(pkg.code_blob_patches);
-    free(pkg.code_name_refs);
-    for(int i=0;i<pkg.n_code_refs;i++) free(pkg.code_refs[i].name);
-    free(pkg.code_refs);
+    free_pkg(&pkg);
     return 0;
   }
   patch32(&pkg.b,form_size_pos,(uint32_t)(pkg.b.len-8));
   int ok=write_file(out_path,pkg.b.data,pkg.b.len,err,errcap);
-  free(pkg.b.data);
-  free(pkg.code_data.data);
-  for(int i=0;i<pkg.strs.n;i++) free(pkg.strs.items[i]);
-  free(pkg.strs.items); free(pkg.strs.char_off); free(pkg.patches);
-  free(pkg.frame_patches); free(pkg.font_patches);
-  free(pkg.frame_tpag_ptr); free(pkg.font_tpag_ptr);
-  free(pkg.texture_place);
-  free(pkg.code_blob_patches);
-  free(pkg.code_name_refs);
-  for(int i=0;i<pkg.n_code_refs;i++) free(pkg.code_refs[i].name);
-  free(pkg.code_refs);
+  free_pkg(&pkg);
   return ok;
 }
