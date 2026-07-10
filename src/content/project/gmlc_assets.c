@@ -614,10 +614,14 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
       const char *event_uuid=gmlc_json_str(gmlc_json_obj(je,"id"),NULL);
       ev.id=gmlc_strdup(event_uuid?event_uuid:"");
       const char *col_uuid=gmlc_json_str(gmlc_json_obj(je,"collisionObjectId"),NULL);
-      int col_zero=(!col_uuid || !strcmp(col_uuid,"00000000-0000-0000-0000-000000000000"));
-      ev.collision_object_id=(ev.event_type==4 && col_zero) ? ev.event_number : gmlc_project_find_object(p,col_uuid);
+      int col_missing=(!col_uuid || !*col_uuid);
+      int col_zero=(col_uuid && !strcmp(col_uuid,"00000000-0000-0000-0000-000000000000"));
+      ev.collision_object_id=(ev.event_type==4 && col_missing) ? p->n_objects :
+                             ((ev.event_type==4 && col_zero) ? ev.event_number : gmlc_project_find_object(p,col_uuid));
       const char *col_name_id=col_uuid;
-      if(ev.event_type==4 && col_zero && ev.collision_object_id>=0 && ev.collision_object_id<p->n_objects)
+      if(ev.event_type==4 && col_missing)
+        col_name_id=o.name;
+      else if(ev.event_type==4 && col_zero && ev.collision_object_id>=0 && ev.collision_object_id<p->n_objects)
         col_name_id=p->objects[ev.collision_object_id].id;
       ev.collision_id=gmlc_strdup(col_name_id?col_name_id:"");
       char file[256];

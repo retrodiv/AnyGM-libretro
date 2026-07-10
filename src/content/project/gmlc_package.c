@@ -119,6 +119,7 @@ typedef struct {
   int compiled_code;
   int placeholder_code;
   int code_placeholders;
+  int log_code_compile;
   RefTextureLayout ref_tex;
 } Pkg;
 
@@ -2471,6 +2472,12 @@ static int write_code_entry_header(Pkg *pkg, const CodeEntryPlan *entry){
   return add_code_blob_patch(pkg,rel_pos,entry->blob_off);
 }
 
+static int keep_or_emit_placeholder_blob(GmlcCodeBlob *blob){
+  if(blob->data && blob->size>0 && blob->is_placeholder) return 1;
+  gmlc_bytecode_free(blob);
+  return gmlc_bytecode_emit_empty(blob);
+}
+
 static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, int script_index, const char *path, GmlcCodeBlob *blob){
   memset(blob,0,sizeof(*blob));
   if(pkg->code_placeholders){
@@ -2479,6 +2486,8 @@ static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const GmlcFunctionR
     return 1;
   }
   if(path && *path){
+    if(pkg->log_code_compile)
+      fprintf(stderr,"source_to_win: compiling code: %s\n",path);
     char berr[512]={0};
     if(gmlc_bytecode_compile_source_ex(p,funcs,script_index,path,blob,berr,sizeof(berr))){
       if(blob->is_placeholder){
@@ -2490,8 +2499,15 @@ static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const GmlcFunctionR
       }
       return 1;
     }
-    if(!gmlc_bytecode_emit_empty(blob)) return 0;
-    blob->diagnostic=gmlc_strdup(berr[0]?berr:"source read failed");
+    char *diagnostic=blob->diagnostic ? gmlc_strdup(blob->diagnostic) : NULL;
+    if(!keep_or_emit_placeholder_blob(blob)){
+      free(diagnostic);
+      return 0;
+    }
+    if(!blob->diagnostic)
+      blob->diagnostic=diagnostic ? diagnostic : gmlc_strdup(berr[0]?berr:"source read failed");
+    else
+      free(diagnostic);
     pkg->placeholder_code++;
     fprintf(stderr,"source_to_win: code placeholder: %s: %s\n",path,blob->diagnostic?blob->diagnostic:"source read failed");
     return 1;
@@ -2541,9 +2557,18 @@ static int write_function_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcF
     return ok;
   }
   char berr[512]={0};
+  if(pkg->log_code_compile)
+    fprintf(stderr,"source_to_win: compiling function: %d\n",def->code_index);
   if(!gmlc_bytecode_compile_function_body(p,funcs,def,&blob,berr,sizeof(berr))){
-    if(!gmlc_bytecode_emit_empty(&blob)) return 0;
-    blob.diagnostic=gmlc_strdup(berr[0]?berr:"function source read failed");
+    char *diagnostic=blob.diagnostic ? gmlc_strdup(blob.diagnostic) : NULL;
+    if(!keep_or_emit_placeholder_blob(&blob)){
+      free(diagnostic);
+      return 0;
+    }
+    if(!blob.diagnostic)
+      blob.diagnostic=diagnostic ? diagnostic : gmlc_strdup(berr[0]?berr:"function source read failed");
+    else
+      free(diagnostic);
     pkg->placeholder_code++;
     fprintf(stderr,"source_to_win: code placeholder: function %d: %s\n",def->code_index,blob.diagnostic?blob.diagnostic:"function source read failed");
   } else if(blob.is_placeholder){
@@ -2779,6 +2804,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
   Pkg pkg;
   memset(&pkg,0,sizeof(pkg));
   pkg.code_placeholders=env_flag_enabled("GMLC_CODE_PLACEHOLDERS");
+  pkg.log_code_compile=env_flag_enabled("GMLC_LOG_CODE_COMPILE");
   const char *ref_path=getenv("GMLC_REFERENCE_WIN");
   if(ref_path && *ref_path && !load_reference_texture_layout(&pkg,p,ref_path,err,errcap)){
     free_pkg(&pkg);

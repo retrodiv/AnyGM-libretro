@@ -62,6 +62,7 @@ typedef struct {
   size_t expr_const_start;
   Lexer lex;
   int unsupported;
+  int log_statements;
 } Compiler;
 
 static char *dup_range(const char *s, size_t n){
@@ -296,12 +297,13 @@ static void lx_next(Lexer *l){
     memcpy(l->tok.text,s,n); l->tok.text[n]=0;
     l->tok.kind=TOK_NUM; l->pos+=(size_t)(end-s); l->tok.end=l->pos; return;
   }
-  if(*s=='"'){
-    l->pos++;
+  if((*s=='@' && s[1]=='"') || *s=='"'){
+    int verbatim=(*s=='@');
+    l->pos += verbatim ? 2 : 1;
     size_t n=0;
     while(l->src[l->pos] && l->src[l->pos]!='"'){
       char ch=l->src[l->pos++];
-      if(ch=='\\' && l->src[l->pos]){
+      if(!verbatim && ch=='\\' && l->src[l->pos]){
         char e=l->src[l->pos++];
         if(e=='n') ch='\n'; else if(e=='t') ch='\t'; else ch=e;
       }
@@ -310,7 +312,7 @@ static void lx_next(Lexer *l){
     if(l->src[l->pos]=='"') l->pos++;
     l->tok.text[n]=0; l->tok.kind=TOK_STR; l->tok.end=l->pos; return;
   }
-  static const char *ops[]={"==","!=","<=",">=","&&","||","+=","-=","*=","/=","++","--",NULL};
+  static const char *ops[]={"==","!=","<=",">=","&&","||","<<",">>","+=","-=","*=","/=","%=","++","--",NULL};
   for(int i=0;ops[i];i++){
     size_t n=strlen(ops[i]);
     if(!strncmp(s,ops[i],n)){ snprintf(l->tok.text,sizeof(l->tok.text),"%s",ops[i]); l->tok.kind=TOK_SYM; l->pos+=n; l->tok.end=l->pos; return; }
@@ -840,7 +842,15 @@ static int scan_for_header(Compiler *c, size_t start, Span out[3], size_t *out_c
     }
     if((ch==']' || ch=='}') && depth>0){ depth--; pos++; continue; }
     if(ch==';' && depth==0){
-      if(part>=2) break;
+      if(part>=2){
+        out[part].start=seg; out[part].end=pos; trim_span(src,&out[part]);
+        pos=skip_ws_comments_at(src,pos+1);
+        if(src[pos]==')'){
+          *out_close=pos;
+          return 1;
+        }
+        break;
+      }
       out[part].start=seg; out[part].end=pos; trim_span(src,&out[part]);
       part++;
       seg=pos+1;
@@ -1057,6 +1067,7 @@ static int emit_array_2d_index_cast(Compiler *c, Span s){
 
 static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv);
 static int emit_lvalue_read(Compiler *c, LValue *lv);
+static int emit_lvalue_write(Compiler *c, LValue *lv, uint8_t type1);
 static int emit_popz(Compiler *c){ return emit_u32(&c->code,fw(OP_POPZ,DT_VAR,0)); }
 static int emit_dup(Compiler *c, uint8_t type1){ return emit_u32(&c->code,fw(OP_DUP,type1,0)); }
 
@@ -1129,16 +1140,37 @@ static int parse_primary(Compiler *c){
     c->expr_boolish=0;
     return emit_push_string_literal(c,value);
   }
-  int allow_postfix_call=1;
   if(is_id(c,"function") && function_shape_at(c->lex.src,c->lex.tok.start)){
     if(!parse_function_value(c,1)) return 0;
     expr_not_const(c);
     c->expr_boolish=0;
     goto postfix_calls;
   }
-  if(eat(c,"(")){ if(!parse_expr(c)) return 0; if(!need(c,")")) return 0; }
+  if(eat(c,"(")){
+    if(!parse_expr(c)) return 0;
+    if(!need(c,")")) return 0;
+    goto postfix_calls;
+  }
   if(c->lex.tok.kind==TOK_ID){
     char name[128]; snprintf(name,sizeof(name),"%s",c->lex.tok.text); lx_next(&c->lex);
+    if(tok_is(c,"=")){
+      LValue lv;
+      if(!parse_lvalue_from_name(c,name,&lv)) return 0;
+      lx_next(&c->lex);
+      if(!parse_expr(c)){ free(lv.index_src); return 0; }
+      if(lv.is_array || lv.is_stacktop || lv.accessor){
+        free(lv.index_src);
+        c->unsupported=1;
+        snprintf(c->lex.err,sizeof(c->lex.err),"unsupported assignment expression target");
+        return 0;
+      }
+      int ok=emit_dup(c,DT_VAR) && emit_lvalue_write(c,&lv,DT_VAR);
+      free(lv.index_src);
+      if(!ok) return 0;
+      expr_not_const(c);
+      c->expr_boolish=0;
+      goto postfix_calls;
+    }
     if(eat(c,"(")){
       if(!strcmp(name,"ord") && c->lex.tok.kind==TOK_STR){
         unsigned char ch=(unsigned char)c->lex.tok.text[0];
@@ -1158,12 +1190,27 @@ static int parse_primary(Compiler *c){
       }
       expr_not_const(c);
       c->expr_boolish=0;
-      allow_postfix_call=1;
       goto postfix_calls;
     }
     if(tok_is(c,".") || tok_is(c,"[")){
       LValue lv;
       if(!parse_lvalue_from_name(c,name,&lv)) return 0;
+      if(tok_is(c,"=")){
+        lx_next(&c->lex);
+        if(!parse_expr(c)){ free(lv.index_src); return 0; }
+        if(lv.is_array || lv.is_stacktop || lv.accessor){
+          free(lv.index_src);
+          c->unsupported=1;
+          snprintf(c->lex.err,sizeof(c->lex.err),"unsupported assignment expression target");
+          return 0;
+        }
+        int ok=emit_dup(c,DT_VAR) && emit_lvalue_write(c,&lv,DT_VAR);
+        free(lv.index_src);
+        if(!ok) return 0;
+        expr_not_const(c);
+        c->expr_boolish=0;
+        goto postfix_calls;
+      }
       int ok=emit_lvalue_read(c,&lv);
       free(lv.index_src);
       if(!ok) return 0;
@@ -1191,7 +1238,6 @@ static int parse_primary(Compiler *c){
     c->expr_boolish=0;
     goto postfix_calls;
   }
-  if(allow_postfix_call) goto postfix_calls;
   c->unsupported=1;
   snprintf(c->lex.err,sizeof(c->lex.err),"unexpected expression token '%s'",c->lex.tok.text);
   return 0;
@@ -1237,7 +1283,7 @@ static int parse_mul(Compiler *c){
   double left_val=c->expr_const_value;
   size_t left_start=c->expr_const_start;
   int did=0;
-  while(tok_is(c,"*")||tok_is(c,"/")||is_id(c,"div")||is_id(c,"mod")){
+  while(tok_is(c,"*")||tok_is(c,"/")||tok_is(c,"%")||is_id(c,"div")||is_id(c,"mod")){
     int op=tok_is(c,"*")?OP_MUL:tok_is(c,"/")?OP_DIV:is_id(c,"div")?OP_REM:OP_MOD;
     lx_next(&c->lex);
     if(!parse_unary(c)) return 0;
@@ -1290,13 +1336,28 @@ static int parse_add(Compiler *c){
   return 1;
 }
 
-static int parse_cmp_expr(Compiler *c){
+static int parse_shift(Compiler *c){
   if(!parse_add(c)) return 0;
+  int did=0;
+  while(tok_is(c,"<<")||tok_is(c,">>")){
+    uint8_t op=tok_is(c,"<<") ? OP_SHL : OP_SHR;
+    lx_next(&c->lex);
+    if(!parse_add(c)) return 0;
+    if(!emit_binary(c,op)) return 0;
+    expr_not_const(c);
+    did=1;
+  }
+  if(did) c->expr_boolish=0;
+  return 1;
+}
+
+static int parse_cmp_expr(Compiler *c){
+  if(!parse_shift(c)) return 0;
   int did=0;
   while(tok_is(c,"<")||tok_is(c,"<=")||tok_is(c,">")||tok_is(c,">=")){
     uint8_t cmp=tok_is(c,"<")?CMP_LT:tok_is(c,"<=")?CMP_LTE:tok_is(c,">")?CMP_GT:CMP_GTE;
     lx_next(&c->lex);
-    if(!parse_add(c)) return 0;
+    if(!parse_shift(c)) return 0;
     emit_cmp(c,cmp);
     did=1;
   }
@@ -1317,8 +1378,50 @@ static int parse_eq(Compiler *c){
   return 1;
 }
 
-static int parse_and(Compiler *c){
+static int parse_bit_and(Compiler *c){
   if(!parse_eq(c)) return 0;
+  int did=0;
+  while(tok_is(c,"&")){
+    lx_next(&c->lex);
+    if(!parse_eq(c)) return 0;
+    if(!emit_binary(c,OP_AND)) return 0;
+    expr_not_const(c);
+    did=1;
+  }
+  if(did) c->expr_boolish=0;
+  return 1;
+}
+
+static int parse_bit_xor(Compiler *c){
+  if(!parse_bit_and(c)) return 0;
+  int did=0;
+  while(tok_is(c,"^")){
+    lx_next(&c->lex);
+    if(!parse_bit_and(c)) return 0;
+    if(!emit_binary(c,OP_XOR)) return 0;
+    expr_not_const(c);
+    did=1;
+  }
+  if(did) c->expr_boolish=0;
+  return 1;
+}
+
+static int parse_bit_or(Compiler *c){
+  if(!parse_bit_xor(c)) return 0;
+  int did=0;
+  while(tok_is(c,"|")){
+    lx_next(&c->lex);
+    if(!parse_bit_xor(c)) return 0;
+    if(!emit_binary(c,OP_OR)) return 0;
+    expr_not_const(c);
+    did=1;
+  }
+  if(did) c->expr_boolish=0;
+  return 1;
+}
+
+static int parse_and(Compiler *c){
+  if(!parse_bit_or(c)) return 0;
   size_t false_sites[128];
   int n_false=0;
   while(tok_is(c,"&&")){
@@ -1330,7 +1433,7 @@ static int parse_and(Compiler *c){
     }
     if(!emit_condition_bool(c)) return 0;
     false_sites[n_false++]=emit_branch(c,OP_BF);
-    if(!parse_eq(c)) return 0;
+    if(!parse_bit_or(c)) return 0;
   }
   if(n_false>0){
     if(!emit_condition_bool(c)) return 0;
@@ -1538,7 +1641,7 @@ static int parse_var_decl(Compiler *c){
 
 static int parse_if(Compiler *c){
   lx_next(&c->lex);
-  if(!need(c,"(") || !parse_expr(c) || !need(c,")")) return 0;
+  if(!parse_expr(c)) return 0;
   if(!emit_condition_bool(c)) return 0;
   size_t bf=emit_branch(c,OP_BF);
   if(!parse_block_or_stmt(c)) return 0;
@@ -1557,7 +1660,7 @@ static int parse_if(Compiler *c){
 static int parse_while(Compiler *c){
   lx_next(&c->lex);
   size_t start=c->code.len;
-  if(!need(c,"(") || !parse_expr(c) || !need(c,")")) return 0;
+  if(!parse_expr(c)) return 0;
   if(!emit_condition_bool(c)) return 0;
   int break_mark=c->n_break_sites;
   int continue_mark=c->n_continue_sites;
@@ -1610,7 +1713,7 @@ static int parse_repeat(Compiler *c){
   char tmpname[64];
   snprintf(tmpname,sizeof(tmpname),"__gmlc_repeat_%d",c->temp_id++);
   if(!add_local(c,tmpname)) return 0;
-  if(!need(c,"(") || !parse_expr(c) || !need(c,")")) return 0;
+  if(!parse_expr(c)) return 0;
   if(!emit_pop_var(c,IT_LOCAL,tmpname,0xA0,DT_VAR)) return 0;
   size_t loop_start=c->code.len;
   if(!emit_push_var(c,IT_LOCAL,tmpname,0xA0) ||
@@ -1665,7 +1768,7 @@ static int parse_with(Compiler *c){
 
 static int parse_switch(Compiler *c){
   lx_next(&c->lex);
-  if(!need(c,"(") || !parse_expr(c) || !need(c,")")) return 0;
+  if(!parse_expr(c)) return 0;
   Span body={0,0};
   size_t close_pos=0;
   if(!scan_brace_body(c,&body,&close_pos)) return 0;
@@ -1727,7 +1830,7 @@ static int parse_assignment_tail(Compiler *c, LValue *lv){
   int is_assign=tok_is(c,"=");
   int is_inc=tok_is(c,"++");
   int is_dec=tok_is(c,"--");
-  uint8_t binop=tok_is(c,"+=")?OP_ADD:tok_is(c,"-=")?OP_SUB:tok_is(c,"*=")?OP_MUL:OP_DIV;
+  uint8_t binop=tok_is(c,"+=")?OP_ADD:tok_is(c,"-=")?OP_SUB:tok_is(c,"*=")?OP_MUL:tok_is(c,"/=")?OP_DIV:OP_MOD;
   lx_next(&c->lex);
   if(is_assign){
     if(!parse_expr(c)) return 0;
@@ -1766,7 +1869,7 @@ static int parse_assignment_tail(Compiler *c, LValue *lv){
 static int parse_simple_or_assign(Compiler *c){
   if(c->lex.tok.kind!=TOK_ID){ if(!parse_expr(c)) return 0; eat(c,";"); emit_popz(c); return 1; }
   char first[128]; snprintf(first,sizeof(first),"%s",c->lex.tok.text); lx_next(&c->lex);
-  if(tok_is(c,"=")||tok_is(c,"+=")||tok_is(c,"-=")||tok_is(c,"*=")||tok_is(c,"/=")||tok_is(c,"++")||tok_is(c,"--")){
+  if(tok_is(c,"=")||tok_is(c,"+=")||tok_is(c,"-=")||tok_is(c,"*=")||tok_is(c,"/=")||tok_is(c,"%=")||tok_is(c,"++")||tok_is(c,"--")){
     LValue lv;
     if(!parse_lvalue_from_name(c,first,&lv)) return 0;
     int ok=parse_assignment_tail(c,&lv);
@@ -1776,7 +1879,7 @@ static int parse_simple_or_assign(Compiler *c){
   if(tok_is(c,".") || tok_is(c,"[")){
     LValue lv;
     if(!parse_lvalue_from_name(c,first,&lv)) return 0;
-    if(tok_is(c,"=")||tok_is(c,"+=")||tok_is(c,"-=")||tok_is(c,"*=")||tok_is(c,"/=")||tok_is(c,"++")||tok_is(c,"--")){
+    if(tok_is(c,"=")||tok_is(c,"+=")||tok_is(c,"-=")||tok_is(c,"*=")||tok_is(c,"/=")||tok_is(c,"%=")||tok_is(c,"++")||tok_is(c,"--")){
       int ok=parse_assignment_tail(c,&lv);
       free(lv.index_src);
       return ok;
@@ -1822,6 +1925,11 @@ static int parse_simple_or_assign(Compiler *c){
 
 static int parse_statement(Compiler *c){
   if(c->lex.tok.kind==TOK_EOF) return 1;
+  if(c->log_statements)
+    fprintf(stderr,"gmlc: statement: %s: %s @ %zu\n",
+            c->source_path?c->source_path:"<source>",
+            c->lex.tok.text,
+            c->lex.tok.start);
   if(eat(c,";")) return 1;
   if(is_id(c,"function") && function_shape_at(c->lex.src,c->lex.tok.start)) return parse_function_value(c,0);
   if(is_id(c,"var")) return parse_var_decl(c);
@@ -2266,6 +2374,7 @@ static int compile_text_internal(const GmlcProject *project, const GmlcFunctionR
   c.funcs=funcs;
   c.source_path=source_path;
   c.script_index=script_index;
+  c.log_statements=getenv("GMLC_LOG_STATEMENTS")!=NULL;
   collect_macros(&c);
   c.lex.src=text;
   lx_next(&c.lex);
@@ -2303,7 +2412,9 @@ static int compile_text_internal(const GmlcProject *project, const GmlcFunctionR
   free(c.strings);
   free(c.code.data);
   if(success) return 1;
-  snprintf(err,errcap,"%s: compile failed",source_path?source_path:"<source>");
+  snprintf(err,errcap,"%s: %s",
+           source_path?source_path:"<source>",
+           out->diagnostic?out->diagnostic:"compile failed");
   return 0;
 }
 
