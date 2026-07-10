@@ -102,6 +102,11 @@ typedef struct {
   /* the application_surface: the buffer the game is rendered into and later
    * readable by draw_surface_* calls. Set by the frontend; same w/h as fbw/fbh. */
   uint32_t *app_surface; int app_draw_enable;   /* GM application_surface_draw_enable, default 1 */
+  int       interp;   /* texture_set_interpolation state: 0 nearest (GM default), 1 bilinear. Only
+                       * upscaling surface/sprite blits honor it (nearest is exact for pixel art). */
+  int       composites_app;  /* set by a draw when the game blits the application_surface stretched in
+                              * the GUI/post pass. Read
+                              * next frame to supersample that pass so its bilinear bloom renders. */
   int app_w, app_h;                             /* app_surface dims (the view render size) */
   int app_surface_opaque;                       /* frontend/render metadata: every app pixel has alpha 255 */
   int pending_underlay, underlay_x, underlay_y, underlay_w, underlay_h;  /* deferred default app-surface blit */

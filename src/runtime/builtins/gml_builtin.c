@@ -6763,7 +6763,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"display_set_gui_size")){ int w=(int)N(a,n,0), hh=(int)N(a,n,1);
     if(w>0 && hh>0 && w<=16384 && hh<=16384){ vm->gui_w=w; vm->gui_h=hh; }
     return vreal(0); }
-  if(!strcmp(nm,"texture_set_interpolation")) return vreal(0); /* no GPU */
+  if(!strcmp(nm,"texture_set_interpolation")){ GmlRender *R=(GmlRender*)vm->render;
+    if(R) R->interp = (N(a,n,0)!=0.0); return vreal(0); }
   if(!strcmp(nm,"texture_set_repeat")) return vreal(0);
   if(!strcmp(nm,"gpu_set_texfilter")||!strcmp(nm,"gpu_set_texfilter_ext")) return vreal(0);
   if(!strcmp(nm,"gpu_set_blendenable")){ GmlRender *R=(GmlRender*)vm->render; if(R) R->alphablend=N(a,n,0)>=0.5; return vreal(0); }
