@@ -1059,30 +1059,390 @@ static int write_scpt(Pkg *pkg, const GmlcProject *p){
   return 1;
 }
 
+/* GLSL preambles provide matrix, lighting, fog and alpha-test interfaces. */
+static const char gms2_glsles_vertex_prefix[] =
+  "#define LOWPREC lowp\n"
+  "#define MATRIX_VIEW 0\n"
+  "#define MATRIX_PROJECTION 1\n"
+  "#define MATRIX_WORLD 2\n"
+  "#define MATRIX_WORLD_VIEW 3\n"
+  "#define MATRIX_WORLD_VIEW_PROJECTION 4\n"
+  "#define MATRICES_MAX 5\n"
+  "#define MAX_VS_LIGHTS 8\n"
+  "\n"
+  "uniform mat4 gm_Matrices[MATRICES_MAX];\n"
+  "uniform bool gm_LightingEnabled;\n"
+  "uniform bool gm_VS_FogEnabled;\n"
+  "uniform float gm_FogStart;\n"
+  "uniform float gm_RcpFogRange;\n"
+  "uniform vec4 gm_AmbientColour;\n"
+  "uniform vec4 gm_Lights_Direction[MAX_VS_LIGHTS];\n"
+  "uniform vec4 gm_Lights_PosRange[MAX_VS_LIGHTS];\n"
+  "uniform vec4 gm_Lights_Colour[MAX_VS_LIGHTS];\n"
+  "\n"
+  "float CalcFogFactor(vec4 pos)\n"
+  "{\n"
+  "  if (!gm_VS_FogEnabled) return 0.0;\n"
+  "  vec4 viewpos = gm_Matrices[MATRIX_WORLD_VIEW] * pos;\n"
+  "  return (viewpos.z - gm_FogStart) * gm_RcpFogRange;\n"
+  "}\n"
+  "\n"
+  "vec4 DoDirLight(vec3 normal, vec4 direction, vec4 tint)\n"
+  "{\n"
+  "  return max(0.0, dot(normal, direction.xyz)) * tint;\n"
+  "}\n"
+  "\n"
+  "vec4 DoPointLight(vec3 position, vec3 normal, vec4 posrange, vec4 tint)\n"
+  "{\n"
+  "  vec3 offset = position - posrange.xyz;\n"
+  "  float dist = length(offset);\n"
+  "  float atten = dist > posrange.w ? 0.0 : posrange.w / dist;\n"
+  "  return max(0.0, dot(normal, offset / dist)) * atten * tint;\n"
+  "}\n"
+  "\n"
+  "vec4 DoLighting(vec4 base, vec4 pos, vec3 srcnormal)\n"
+  "{\n"
+  "  if (!gm_LightingEnabled) return base;\n"
+  "  vec3 normal = -normalize((gm_Matrices[MATRIX_WORLD_VIEW] * vec4(srcnormal, 0.0)).xyz);\n"
+  "  vec3 position = (gm_Matrices[MATRIX_WORLD] * pos).xyz;\n"
+  "  vec4 lit = vec4(0.0);\n"
+  "  for (int i = 0; i < MAX_VS_LIGHTS; i++)\n"
+  "    lit += DoDirLight(normal, gm_Lights_Direction[i], gm_Lights_Colour[i]);\n"
+  "  for (int i = 0; i < MAX_VS_LIGHTS; i++)\n"
+  "    lit += DoPointLight(position, normal, gm_Lights_PosRange[i], gm_Lights_Colour[i]);\n"
+  "  return min(vec4(1.0), lit * base + gm_AmbientColour);\n"
+  "}\n"
+  "\n"
+  "#define _YY_GLSLES_ 1\n";
+
+static const char gms2_glsl_vertex_prefix[] =
+  "#version 120\n"
+  "#define LOWPREC\n"
+  "#define MATRIX_VIEW 0\n"
+  "#define MATRIX_PROJECTION 1\n"
+  "#define MATRIX_WORLD 2\n"
+  "#define MATRIX_WORLD_VIEW 3\n"
+  "#define MATRIX_WORLD_VIEW_PROJECTION 4\n"
+  "#define MATRICES_MAX 5\n"
+  "#define MAX_VS_LIGHTS 8\n"
+  "\n"
+  "uniform mat4 gm_Matrices[MATRICES_MAX];\n"
+  "uniform bool gm_LightingEnabled;\n"
+  "uniform bool gm_VS_FogEnabled;\n"
+  "uniform float gm_FogStart;\n"
+  "uniform float gm_RcpFogRange;\n"
+  "uniform vec4 gm_AmbientColour;\n"
+  "uniform vec4 gm_Lights_Direction[MAX_VS_LIGHTS];\n"
+  "uniform vec4 gm_Lights_PosRange[MAX_VS_LIGHTS];\n"
+  "uniform vec4 gm_Lights_Colour[MAX_VS_LIGHTS];\n"
+  "\n"
+  "float CalcFogFactor(vec4 pos)\n"
+  "{\n"
+  "  if (!gm_VS_FogEnabled) return 0.0;\n"
+  "  vec4 viewpos = gm_Matrices[MATRIX_WORLD_VIEW] * pos;\n"
+  "  return (viewpos.z - gm_FogStart) * gm_RcpFogRange;\n"
+  "}\n"
+  "\n"
+  "vec4 DoDirLight(vec3 normal, vec4 direction, vec4 tint)\n"
+  "{\n"
+  "  return max(0.0, dot(normal, direction.xyz)) * tint;\n"
+  "}\n"
+  "\n"
+  "vec4 DoPointLight(vec3 position, vec3 normal, vec4 posrange, vec4 tint)\n"
+  "{\n"
+  "  vec3 offset = position - posrange.xyz;\n"
+  "  float dist = length(offset);\n"
+  "  float atten = dist > posrange.w ? 0.0 : posrange.w / dist;\n"
+  "  return max(0.0, dot(normal, offset / dist)) * atten * tint;\n"
+  "}\n"
+  "\n"
+  "vec4 DoLighting(vec4 base, vec4 pos, vec3 srcnormal)\n"
+  "{\n"
+  "  if (!gm_LightingEnabled) return base;\n"
+  "  vec3 normal = -normalize((gm_Matrices[MATRIX_WORLD_VIEW] * vec4(srcnormal, 0.0)).xyz);\n"
+  "  vec3 position = (gm_Matrices[MATRIX_WORLD] * pos).xyz;\n"
+  "  vec4 lit = vec4(0.0);\n"
+  "  for (int i = 0; i < MAX_VS_LIGHTS; i++)\n"
+  "    lit += DoDirLight(normal, gm_Lights_Direction[i], gm_Lights_Colour[i]);\n"
+  "  for (int i = 0; i < MAX_VS_LIGHTS; i++)\n"
+  "    lit += DoPointLight(position, normal, gm_Lights_PosRange[i], gm_Lights_Colour[i]);\n"
+  "  return min(vec4(1.0), lit * base + gm_AmbientColour);\n"
+  "}\n"
+  "\n"
+  "#define _YY_GLSL_ 1\n";
+
+static const char gms2_glsles_fragment_prefix[] =
+  "precision mediump float;\n"
+  "#define LOWPREC lowp\n"
+  "uniform sampler2D gm_BaseTexture;\n"
+  "uniform bool gm_PS_FogEnabled;\n"
+  "uniform vec4 gm_FogColour;\n"
+  "uniform bool gm_AlphaTestEnabled;\n"
+  "uniform float gm_AlphaRefValue;\n"
+  "\n"
+  "void DoAlphaTest(vec4 colour)\n"
+  "{\n"
+  "  if (gm_AlphaTestEnabled && colour.a <= gm_AlphaRefValue) discard;\n"
+  "}\n"
+  "\n"
+  "void DoFog(inout vec4 colour, float amount)\n"
+  "{\n"
+  "  if (gm_PS_FogEnabled) colour = mix(colour, gm_FogColour, clamp(amount, 0.0, 1.0));\n"
+  "}\n"
+  "\n"
+  "#define _YY_GLSLES_ 1\n";
+
+static const char gms2_glsl_fragment_prefix[] =
+  "#version 120\n"
+  "#define LOWPREC\n"
+  "uniform sampler2D gm_BaseTexture;\n"
+  "uniform bool gm_PS_FogEnabled;\n"
+  "uniform vec4 gm_FogColour;\n"
+  "uniform bool gm_AlphaTestEnabled;\n"
+  "uniform float gm_AlphaRefValue;\n"
+  "\n"
+  "void DoAlphaTest(vec4 colour)\n"
+  "{\n"
+  "  if (gm_AlphaTestEnabled && colour.a <= gm_AlphaRefValue) discard;\n"
+  "}\n"
+  "\n"
+  "void DoFog(inout vec4 colour, float amount)\n"
+  "{\n"
+  "  if (gm_PS_FogEnabled) colour = mix(colour, gm_FogColour, clamp(amount, 0.0, 1.0));\n"
+  "}\n"
+  "\n"
+  "#define _YY_GLSL_ 1\n";
+
+static char *join2(const char *a, const char *b){
+  size_t na=strlen(a?a:""), nb=strlen(b?b:"");
+  char *out=(char*)malloc(na+nb+1);
+  if(!out) return NULL;
+  memcpy(out,a?a:"",na);
+  memcpy(out+na,b?b:"",nb);
+  out[na+nb]=0;
+  return out;
+}
+
+static char *join3(const char *a, const char *b, const char *c){
+  char *ab=join2(a,b);
+  if(!ab) return NULL;
+  char *out=join2(ab,c);
+  free(ab);
+  return out;
+}
+
+static char *with_crlf_first_newlines(const char *s, int count){
+  if(!s) return gmlc_strdup("");
+  size_t extra=0;
+  int seen=0;
+  for(size_t i=0;s[i];i++){
+    if(s[i]=='\n'){
+      if(seen<count && (i==0 || s[i-1]!='\r')) extra++;
+      seen++;
+    }
+  }
+  size_t n=strlen(s);
+  char *out=(char*)malloc(n+extra+1);
+  if(!out) return NULL;
+  size_t j=0;
+  seen=0;
+  for(size_t i=0;i<n;i++){
+    if(s[i]=='\n'){
+      if(seen<count && (i==0 || s[i-1]!='\r')) out[j++]='\r';
+      seen++;
+    }
+    out[j++]=s[i];
+  }
+  out[j]=0;
+  return out;
+}
+
+/* HLSL entries provide fixed vertex layouts and limited fragment variants. */
+static const char gms2_hlsl_vertex_shared[] =
+  "#define MATRIX_VIEW 0\n"
+  "#define MATRIX_PROJECTION 1\n"
+  "#define MATRIX_WORLD 2\n"
+  "#define MATRIX_WORLD_VIEW 3\n"
+  "#define MATRIX_WORLD_VIEW_PROJECTION 4\n"
+  "#define MATRICES_MAX 5\n"
+  "#define MAX_VS_LIGHTS 8\n"
+  "\n"
+  "float4x4 gm_Matrices[MATRICES_MAX] : register(c0);\n"
+  "bool gm_LightingEnabled;\n"
+  "bool gm_VS_FogEnabled;\n"
+  "float gm_FogStart;\n"
+  "float gm_RcpFogRange;\n"
+  "float4 gm_AmbientColour;\n"
+  "float3 gm_Lights_Direction[MAX_VS_LIGHTS];\n"
+  "float4 gm_Lights_PosRange[MAX_VS_LIGHTS];\n"
+  "float4 gm_Lights_Colour[MAX_VS_LIGHTS];\n"
+  "uniform float4 dx_ViewAdjust : register(c1);\n"
+  "\n"
+  "struct VS_INPUT\n"
+  "{\n"
+  "  float4 colour : COLOR0;\n"
+  "  float3 position : POSITION;\n"
+  "  float2 texcoord : TEXCOORD0;\n"
+  "};\n";
+
+static const char gms2_hlsl_vertex_color_tail[] =
+  "\n"
+  "struct VS_OUTPUT\n"
+  "{\n"
+  "  float4 position : POSITION;\n"
+  "  float4 colour : TEXCOORD0;\n"
+  "  float2 texcoord : TEXCOORD1;\n"
+  "};\n"
+  "\n"
+  "VS_OUTPUT main(VS_INPUT input)\n"
+  "{\n"
+  "  VS_OUTPUT output;\n"
+  "  output.position = mul(transpose(gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION]), float4(input.position, 1.0));\n"
+  "  output.colour = input.colour;\n"
+  "  output.texcoord = input.texcoord;\n"
+  "  return output;\n"
+  "}\n";
+
+static const char gms2_hlsl_vertex_texcoord_tail[] =
+  "\n"
+  "struct VS_OUTPUT\n"
+  "{\n"
+  "  float4 position : POSITION;\n"
+  "  float2 texcoord : TEXCOORD0;\n"
+  "};\n"
+  "\n"
+  "VS_OUTPUT main(VS_INPUT input)\n"
+  "{\n"
+  "  VS_OUTPUT output;\n"
+  "  output.position = mul(transpose(gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION]), float4(input.position, 1.0));\n"
+  "  output.texcoord = input.texcoord;\n"
+  "  return output;\n"
+  "}\n";
+
+static const char gms2_hlsl_fragment_color_prefix[] =
+  "sampler2D gm_BaseTexture : register(s0);\n"
+  "bool gm_PS_FogEnabled;\n"
+  "float4 gm_FogColour;\n"
+  "bool gm_AlphaTestEnabled;\n"
+  "float gm_AlphaRefValue;\n"
+  "\n"
+  "struct PS_INPUT\n"
+  "{\n"
+  "  float4 colour : TEXCOORD0;\n"
+  "  float2 texcoord : TEXCOORD1;\n"
+  "};\n"
+  "\n"
+  "struct PS_OUTPUT\n"
+  "{\n"
+  "  float4 colour : COLOR0;\n"
+  "};\n"
+  "\n"
+  "PS_OUTPUT main(PS_INPUT input)\n"
+  "{\n"
+  "  float4 shaded = input.colour * tex2D(gm_BaseTexture, input.texcoord);\n";
+
+static const char gms2_hlsl_fragment_color_suffix[] =
+  "  PS_OUTPUT output;\n"
+  "  output.colour = shaded;\n"
+  "  return output;\n"
+  "}\n";
+
+static const char gms2_hlsl_fragment_gray[] =
+  "sampler2D gm_BaseTexture : register(s0);\n"
+  "\n"
+  "struct PS_INPUT\n"
+  "{\n"
+  "  float2 texcoord : TEXCOORD0;\n"
+  "};\n"
+  "\n"
+  "struct PS_OUTPUT\n"
+  "{\n"
+  "  float4 colour : COLOR0;\n"
+  "};\n"
+  "\n"
+  "PS_OUTPUT main(PS_INPUT input)\n"
+  "{\n"
+  "  float4 texel = tex2D(gm_BaseTexture, input.texcoord);\n"
+  "  float level = (texel.r + texel.g + texel.b) / 3.0;\n"
+  "  PS_OUTPUT output;\n"
+  "  output.colour = float4(level, level, level, 1.0);\n"
+  "  return output;\n"
+  "}\n";
+
+static const char *hlsl_zero_swizzle(const char *fragment_source){
+  if(!fragment_source) return NULL;
+  if(strstr(fragment_source,"gl_FragColor.br")) return "(gl_Color[0].zx = float2(0.0, 0.0));";
+  if(strstr(fragment_source,"gl_FragColor.bg")) return "(gl_Color[0].zy = float2(0.0, 0.0));";
+  if(strstr(fragment_source,"gl_FragColor.gr")) return "(gl_Color[0].yx = float2(0.0, 0.0));";
+  return NULL;
+}
+
+static int shader_looks_grayscale(const char *fragment_source){
+  return fragment_source &&
+         strstr(fragment_source,"original_color") &&
+         strstr(fragment_source,"average") &&
+         strstr(fragment_source,"gl_FragColor = new_color");
+}
+
 static int write_shdr(Pkg *pkg, const GmlcProject *p){
   size_t s=chunk_begin(pkg,"SHDR");
   uint32_t n=(uint32_t)p->n_shaders;
   wu32(&pkg->b,n);
   size_t table=pkg->b.len;
   zfill(&pkg->b,(size_t)n*4);
+  int attr_pos=intern(pkg,"in_Position");
+  int attr_col=intern(pkg,"in_Colour");
+  int attr_tex=intern(pkg,"in_TextureCoord");
+  if(attr_pos<0 || attr_col<0 || attr_tex<0) return 0;
   for(uint32_t i=0;i<n;i++){
     const GmlcShader *sh=&p->shaders[i];
     patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
+    char *v_gles=join2(gms2_glsles_vertex_prefix,sh->vertex_source?sh->vertex_source:"");
+    char *f_gles=join2(gms2_glsles_fragment_prefix,sh->fragment_source?sh->fragment_source:"");
+    char *v_gl=join2(gms2_glsl_vertex_prefix,sh->vertex_source?sh->vertex_source:"");
+    char *f_gl=join2(gms2_glsl_fragment_prefix,sh->fragment_source?sh->fragment_source:"");
+    int hlsl_gray=shader_looks_grayscale(sh->fragment_source);
+    int hlsl_uses_color=!hlsl_gray && sh->fragment_source && strstr(sh->fragment_source,"v_vColour");
+    char *v_hlsl_lf=join2(gms2_hlsl_vertex_shared,hlsl_uses_color?gms2_hlsl_vertex_color_tail:gms2_hlsl_vertex_texcoord_tail);
+    char *f_hlsl_lf=NULL;
+    const char *swiz=hlsl_zero_swizzle(sh->fragment_source);
+    if(hlsl_gray){
+      f_hlsl_lf=join2("",gms2_hlsl_fragment_gray);
+    } else if(swiz){
+      f_hlsl_lf=join3(gms2_hlsl_fragment_color_prefix,swiz,gms2_hlsl_fragment_color_suffix);
+    } else {
+      f_hlsl_lf=join2("",sh->fragment_source?sh->fragment_source:"");
+    }
+    char *v_hlsl=with_crlf_first_newlines(v_hlsl_lf,20);
+    char *f_hlsl=with_crlf_first_newlines(f_hlsl_lf,8);
+    free(v_hlsl_lf); free(f_hlsl_lf);
+    if(!v_gles || !f_gles || !v_gl || !f_gl || !v_hlsl || !f_hlsl){
+      free(v_gles); free(f_gles); free(v_gl); free(f_gl); free(v_hlsl); free(f_hlsl);
+      return 0;
+    }
     int sid=intern(pkg,sh->name?sh->name:"");
-    int vsid=intern(pkg,sh->vertex_source?sh->vertex_source:"");
-    int fsid=intern(pkg,sh->fragment_source?sh->fragment_source:"");
-    if(sid<0 || vsid<0 || fsid<0) return 0;
+    int vgles_sid=intern(pkg,v_gles);
+    int fgles_sid=intern(pkg,f_gles);
+    int vgl_sid=intern(pkg,v_gl);
+    int fgl_sid=intern(pkg,f_gl);
+    int vhlsl_sid=intern(pkg,v_hlsl);
+    int fhlsl_sid=intern(pkg,f_hlsl);
+    free(v_gles); free(f_gles); free(v_gl); free(f_gl); free(v_hlsl); free(f_hlsl);
+    if(sid<0 || vgles_sid<0 || fgles_sid<0 || vgl_sid<0 || fgl_sid<0 || vhlsl_sid<0 || fhlsl_sid<0) return 0;
     wstrptr(pkg,sid);
     wu32(&pkg->b,0x80000001u);
-    wstrptr(pkg,vsid);
-    wstrptr(pkg,fsid);
-    wstrptr(pkg,vsid);
-    wstrptr(pkg,fsid);
-    wstrptr(pkg,vsid);
-    wstrptr(pkg,fsid);
+    wstrptr(pkg,vgles_sid);
+    wstrptr(pkg,fgles_sid);
+    wstrptr(pkg,vgl_sid);
+    wstrptr(pkg,fgl_sid);
+    wstrptr(pkg,vhlsl_sid);
+    wstrptr(pkg,fhlsl_sid);
     wu32(&pkg->b,0);
     wu32(&pkg->b,0);
-    wu32(&pkg->b,0);
+    wu32(&pkg->b,3);
+    wstrptr(pkg,attr_pos);
+    wstrptr(pkg,attr_col);
+    wstrptr(pkg,attr_tex);
     wi32(&pkg->b,2);
     for(int j=0;j<6;j++){
       wu32(&pkg->b,0);
@@ -1167,7 +1527,7 @@ static int fixed_zero_chunk(Pkg *p, const char name[4], size_t n){
 }
 
 static int write_agrp(Pkg *p){
-  int sid=intern(p,"audiogroup_default");
+  int sid=intern(p,"Default");
   if(sid<0) return 0;
   size_t s=chunk_begin(p,"AGRP");
   wu32(&p->b,1);
@@ -1180,11 +1540,16 @@ static int write_agrp(Pkg *p){
 }
 
 static int write_optn(Pkg *p){
+  int sleep_sid=intern(p,"@@SleepMargin");
+  int draw_sid=intern(p,"@@DrawColour");
+  int sleep_value_sid=intern(p,"10");
+  int draw_value_sid=intern(p,"4294967295");
+  if(sleep_sid<0 || draw_sid<0 || sleep_value_sid<0 || draw_value_sid<0) return 0;
   size_t s=chunk_begin(p,"OPTN");
   wu32(&p->b,0x80000000u);
   wu32(&p->b,2);
   wu64(&p->b,0x0000000000480214ull);
-  wi32(&p->b,0);
+  wi32(&p->b,1);
   wu32(&p->b,0);
   wu32(&p->b,0);
   wu32(&p->b,0);
@@ -1194,8 +1559,12 @@ static int write_optn(Pkg *p){
   wu32(&p->b,0);
   wu32(&p->b,0);
   wu32(&p->b,0);
-  wu32(&p->b,255);
   wu32(&p->b,0);
+  wu32(&p->b,2);
+  wstrptr(p,sleep_sid);
+  wstrptr(p,sleep_value_sid);
+  wstrptr(p,draw_sid);
+  wstrptr(p,draw_value_sid);
   chunk_end(p,s);
   return 1;
 }
