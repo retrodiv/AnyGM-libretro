@@ -89,6 +89,7 @@ typedef struct {
   GmlSprite *spr; int n_spr, base_n_spr, spr_cap, spr_has_free;
   GmlBg    *bg; int n_bg;
   GmlFont   fonts[GML_MAX_FONTS]; int n_fonts;
+  GmlFont   default_font;                                          /* built-in font selected by id -1 */
   /* current target framebuffer (borrowed) + camera */
   uint32_t *fb; int fbw, fbh;
   uint32_t *base_fb; int base_fbw, base_fbh;

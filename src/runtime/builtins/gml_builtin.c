@@ -1977,7 +1977,12 @@ static void fill_xrgb_run(uint32_t *dp, int n, uint32_t src){
 static void draw_xrgb_run_alpha(GmlRender *R, uint32_t *dp, int n, uint32_t src, double alpha){
   if(n<=0) return;
   if(!R->alphablend || alpha>=1.0){
-    fill_xrgb_run(dp,n,src);
+    uint32_t out=src;
+    if(R->target_sp>0 && !R->alphablend){
+      uint32_t sa=(uint32_t)lround(alpha*255.0);
+      out=(src&0x00FFFFFFu)|(sa<<24);
+    }
+    fill_xrgb_run(dp,n,out);
     return;
   }
   uint32_t af=(uint32_t)(alpha*256.0);
@@ -1986,11 +1991,17 @@ static void draw_xrgb_run_alpha(GmlRender *R, uint32_t *dp, int n, uint32_t src,
   uint32_t ia=256u-af;
   uint32_t srb=(src&0x00FF00FFu)*af;
   uint32_t sg=(src&0x0000FF00u)*af;
+  uint32_t sa=(uint32_t)lround(alpha*255.0);
   for(int i=0;i<n;i++){
     uint32_t dv=dp[i];
     uint32_t rb=((srb+(dv&0x00FF00FFu)*ia)>>8)&0x00FF00FFu;
     uint32_t g=((sg+(dv&0x0000FF00u)*ia)>>8)&0x0000FF00u;
-    dp[i]=0xFF000000u|rb|g;
+    uint32_t oa=0xFF;
+    if(R->target_sp>0){
+      uint32_t da=dv>>24;
+      oa=(sa*sa+da*(255u-sa)+127u)/255u;
+    }
+    dp[i]=(oa<<24)|rb|g;
   }
 }
 static void draw_px_alpha(GmlRender *R, int x, int y, uint32_t gmcol, double alpha){
@@ -1998,13 +2009,45 @@ static void draw_px_alpha(GmlRender *R, int x, int y, uint32_t gmcol, double alp
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(alpha<=0) return;
   uint32_t src=gm_color_to_xrgb(gmcol), *dp=&R->fb[(size_t)y*R->fbw+x];
-  if(!R->alphablend || alpha>=1){ *dp=src; return; }
+  if(R->alphablend && R->blendmode!=0){
+    int sr=(src>>16)&0xff, sg=(src>>8)&0xff, sb=src&0xff;
+    int dr=(*dp>>16)&0xff, dg=(*dp>>8)&0xff, db=*dp&0xff;
+    int or_,og,ob;
+    uint32_t oc=R->target_sp>0 ? *dp>>24 : 0xff;
+    if(R->blendmode==1){
+      or_=dr+(int)(sr*alpha); og=dg+(int)(sg*alpha); ob=db+(int)(sb*alpha);
+      if(or_>255) or_=255;
+      if(og>255) og=255;
+      if(ob>255) ob=255;
+      if(R->target_sp>0){ uint32_t a=oc+(uint32_t)(255*alpha); oc=a>255?255:a; }
+    } else {
+      or_=dr-(int)(sr*alpha); og=dg-(int)(sg*alpha); ob=db-(int)(sb*alpha);
+      if(or_<0) or_=0;
+      if(og<0) og=0;
+      if(ob<0) ob=0;
+      if(R->target_sp>0){ int a=(int)oc-(int)(255*alpha); oc=a<0?0:(uint32_t)a; }
+    }
+    *dp=(oc<<24)|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
+    return;
+  }
+  if(!R->alphablend || alpha>=1){
+    if(R->target_sp>0 && !R->alphablend){
+      uint32_t sa=(uint32_t)lround(alpha*255.0);
+      src=(src&0x00FFFFFFu)|(sa<<24);
+    }
+    *dp=src; return;
+  }
   int sr=(src>>16)&0xff, sg=(src>>8)&0xff, sb=src&0xff;
   int dr=(*dp>>16)&0xff, dg=(*dp>>8)&0xff, db=*dp&0xff;
   int or_=(int)(sr*alpha+dr*(1-alpha)); if(or_>255) or_=255; else if(or_<0) or_=0;
   int og=(int)(sg*alpha+dg*(1-alpha)); if(og>255) og=255; else if(og<0) og=0;
   int ob=(int)(sb*alpha+db*(1-alpha)); if(ob>255) ob=255; else if(ob<0) ob=0;
-  *dp=0xFF000000u|(or_<<16)|(og<<8)|ob;
+  uint32_t oa=0xFF;
+  if(R->target_sp>0){
+    uint32_t sa=(uint32_t)lround(alpha*255.0), da=*dp>>24;
+    oa=(sa*sa+da*(255u-sa)+127u)/255u;
+  }
+  *dp=(oa<<24)|(or_<<16)|(og<<8)|ob;
 }
 static void draw_px(GmlRender *R, int x, int y, uint32_t gmcol){
   draw_px_alpha(R,x,y,gmcol,R?R->alpha:1);
@@ -2016,7 +2059,7 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
   if(x1<0)x1=0; if(y1<0)y1=0; if(x2>=R->fbw)x2=R->fbw-1; if(y2>=R->fbh)y2=R->fbh-1;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(!outline && alpha<=0) return;
-  if(!outline && (alpha>=1 || !R->alphablend)){   /* opaque filled rect: fast per-row fill */
+  if(!outline && R->blendmode==0 && (alpha>=1 || !R->alphablend)){   /* opaque filled rect: fast per-row fill */
     gml_render_maybe_prepare_opaque_rect(R,x1,y1,x2+1,y2+1);
     uint32_t src=gm_color_to_xrgb(gmcol);
     if(x1==0 && y1==0 && x2==R->fbw-1 && y2==R->fbh-1){
@@ -2028,19 +2071,13 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
   }
   if(!outline){
     gml_render_maybe_prepare_draw(R);
-    uint32_t src=gm_color_to_xrgb(gmcol);
-    double ialpha=1.0-alpha;
-    double sr=((src>>16)&0xff)*alpha, sg=((src>>8)&0xff)*alpha, sb=(src&0xff)*alpha;
-    for(int y=y1;y<=y2;y++){
-      uint32_t *row=&R->fb[(size_t)y*R->fbw];
-      for(int x=x1;x<=x2;x++){
-        uint32_t dv=row[x];
-        int or_=(int)(sr+((dv>>16)&0xff)*ialpha);
-        int og=(int)(sg+((dv>>8)&0xff)*ialpha);
-        int ob=(int)(sb+(dv&0xff)*ialpha);
-        row[x]=0xFF000000u|(or_<<16)|(og<<8)|ob;
-      }
+    if(R->blendmode!=0){
+      for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++) draw_px_alpha(R,x,y,gmcol,alpha);
+      return;
     }
+    uint32_t src=gm_color_to_xrgb(gmcol);
+    for(int y=y1;y<=y2;y++)
+      draw_xrgb_run_alpha(R,&R->fb[(size_t)y*R->fbw+x1],x2-x1+1,src,alpha);
     return;
   }
   for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++){
@@ -2139,8 +2176,22 @@ static void draw_circle_prim(GmlRender *R, int cx, int cy, int rx, int ry, uint3
       draw_line_prim(R,(int)lround(vx[i]),(int)lround(vy[i]),(int)lround(vx[j]),(int)lround(vy[j]),gmcol,1);
     }
   } else {
-    for(int y=cy-ry;y<=cy+ry;y++) for(int x=cx-rx;x<=cx+rx;x++)
-      if(point_in_poly(x+0.5,y+0.5,vx,vy,n)) draw_px(R,x,y,gmcol);
+    /* The regular polygon is convex, so each scanline has at most one filled span. This is
+     * pixel-identical to point_in_poly(x+0.5,y+0.5) but avoids testing every edge per pixel. */
+    for(int y=cy-ry;y<=cy+ry;y++){
+      double py=y+0.5, xl=1e30, xr=-1e30;
+      for(int i=0,j=n-1;i<n;j=i++){
+        if((vy[i]>py)==(vy[j]>py)) continue;
+        double xi=(vx[j]-vx[i])*(py-vy[i])/(vy[j]-vy[i])+vx[i];
+        if(xi<xl) xl=xi;
+        if(xi>xr) xr=xi;
+      }
+      if(xr<xl) continue;
+      int x0=(int)ceil(xl-0.5), x1=(int)ceil(xr-0.5)-1;
+      if(x0<cx-rx) x0=cx-rx;
+      if(x1>cx+rx) x1=cx+rx;
+      for(int x=x0;x<=x1;x++) draw_px(R,x,y,gmcol);
+    }
   }
 }
 
@@ -2202,6 +2253,36 @@ static void motion_from_components(GmlInstance *in){
   in->speed=hypot(in->hspeed,in->vspeed);
   in->direction=atan2(-in->vspeed,in->hspeed)*180.0/M_PI;
   if(in->direction<0) in->direction+=360;
+}
+
+static double physics_room_scale(GmlVM *vm){
+  if(!vm || !vm->win) return 0.0;
+  GmlVal *dynamic=gml_varmap_get(&vm->globals,"__physics_world_scale");
+  GmlVal *dynamic_room=gml_varmap_get(&vm->globals,"__physics_world_scale_room");
+  if(dynamic && dynamic->t==V_REAL && dynamic->d>0.0 && dynamic_room &&
+     dynamic_room->t==V_REAL && (int)dynamic_room->d==vm->room_index) return dynamic->d;
+  const GmlChunk *rc=gml_chunk(vm->win,"ROOM");
+  if(!rc || vm->room_index<0) return 0.0;
+  uint64_t rend=(uint64_t)rc->off+rc->size;
+  uint64_t slot=(uint64_t)rc->off+4u+(uint64_t)(uint32_t)vm->room_index*4u;
+  if(slot+4u>rend) return 0.0;
+  const uint8_t *d=vm->win->data;
+  uint32_t rp=u32(d,(uint32_t)slot);
+  if(rp<rc->off || (uint64_t)rp+88u>rend || u32(d,rp+56)!=1) return 0.0;
+  uint32_t bits=u32(d,rp+84); float scale;
+  memcpy(&scale,&bits,sizeof(scale));
+  return isfinite(scale) && scale>0.000001f && scale<=1000.0f ? scale : 0.0;
+}
+
+static double physics_instance_mass(GmlVM *vm, GmlInstance *in, double scale){
+  if(!vm || !in || scale<=0.0) return 0.0;
+  GmlVal *explicit_mass=gml_varmap_get(&in->vars,"phy_mass");
+  if(explicit_mass && explicit_mass->t==V_REAL && explicit_mass->d>0.0) return explicit_mass->d;
+  if(in->obj<0 || in->obj>=vm->n_objects) return 0.0;
+  GmlObject *o=&vm->objects[in->obj];
+  if(!o->physics_enabled || o->physics_kinematic || o->physics_density<=0.0 || o->physics_area_px<=0.0)
+    return 0.0;
+  return o->physics_density*o->physics_area_px*scale*scale;
 }
 
 /* hooks provided elsewhere */
@@ -5139,12 +5220,16 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
                                     l,N(a,n,8)>=0.5);
     return vreal(r);
   }
-  /* move_outside_solid(direction,maxdist): step the instance along `direction` until it no longer
-   * meets a solid (or maxdist px reached) — un-sticks an instance spawned inside a wall/floor. */
-  if(!strcmp(nm,"move_outside_solid")){ GmlInstance *s=vm->cur_self; if(s){
-      double dir=N(a,n,0), md=N(a,n,1); if(md<1) md=1;
+  /* Step an overlapping instance along `direction` until it clears either solids or every
+   * instance, subject to maxdist. Both variants use the same mask-precise collision path. */
+  if(!strcmp(nm,"move_outside_solid")||!strcmp(nm,"move_outside_all")){ GmlInstance *s=vm->cur_self; if(s){
+      int all=!strcmp(nm,"move_outside_all");
+      double dir=N(a,n,0), md=N(a,n,1); if(md<=0) md=1000;
       double dx=cos(dir*M_PI/180.0), dy=-sin(dir*M_PI/180.0);
-      for(int k=0;k<(int)md;k++){ if(!collision_at(vm,s->x,s->y,0,1)) break; s->x+=dx; s->y+=dy; }
+      for(int k=0;k<(int)md;k++){
+        if(!collision_at(vm,s->x,s->y,all?IT_ALL:0,!all)) break;
+        s->x+=dx; s->y+=dy;
+      }
       gml_colgrid_touch(s); }
     return vreal(0); }
   if(!strcmp(nm,"move_bounce_solid")){ GmlInstance *s=vm->cur_self; if(s){
@@ -5632,6 +5717,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"font_add_enable_aa")) return vreal(0);
     if(!strcmp(nm,"font_get_size")){
       int fid=(int)N(a,n,0);
+      if(R && fid<0) return vreal(R->default_font.line_height);
       return vreal((R && fid>=0 && fid<R->n_fonts && R->fonts[fid].line_height>0)?R->fonts[fid].line_height:0);
     }
     if(!strcmp(nm,"font_delete")){
@@ -6712,11 +6798,42 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vreal(0);
   }
+  if(!strcmp(nm,"physics_world_create")){
+    double scale=N(a,n,0);
+    if(scale>0.0){
+      *gml_varmap_put(&vm->globals,"__physics_world_scale")=vreal(scale);
+      *gml_varmap_put(&vm->globals,"__physics_world_scale_room")=vreal(vm->room_index);
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"physics_world_gravity")){ vm->phys_gravity_x=N(a,n,0); vm->phys_gravity_y=N(a,n,1); return vreal(0); }
   if(!strcmp(nm,"physics_world_update_speed")){ vm->phys_update_speed=N(a,n,0); return vreal(0); }
   if(!strcmp(nm,"physics_world_update_iterations")){ vm->phys_update_iterations=(int)N(a,n,0); return vreal(0); }
   if(!strcmp(nm,"physics_pause_enable")){ vm->phys_paused=(int)N(a,n,0); return vreal(0); }
   if(!strcmp(nm,"physics_world_draw_debug")){ vm->phys_debug_draw=(int)N(a,n,0); return vreal(0); }
+  if(!strcmp(nm,"physics_apply_impulse")){
+    /* Convert Box2D's metre/second impulse response to the lightweight backend's pixels/step.
+     * The two-metre translation cap is the public engine's per-step tunnelling guard. */
+    GmlInstance *s=vm->cur_self;
+    if(s && !vm->phys_paused){
+      double scale=physics_room_scale(vm);
+      double mass=physics_instance_mass(vm,s,scale);
+      double hz=gml_room_speed(vm);
+      if(mass>0.0 && hz>0.0){
+        double ix=N(a,n,2), iy=N(a,n,3);
+        double vx=s->hspeed+ix/(mass*scale*hz);
+        double vy=s->vspeed+iy/(mass*scale*hz);
+        double max_step=2.0/scale, step=hypot(vx,vy);
+        if(step>max_step){ double k=max_step/step; vx*=k; vy*=k; }
+        s->hspeed=vx; s->vspeed=vy;
+        motion_from_components(s);
+        if(getenv("GML_LOG_PHYSICS"))
+          fprintf(stderr,"[physics] impulse id=%u mass=%.6g scale=%.6g vel=(%.6g,%.6g)\n",
+                  s->id,mass,scale,s->hspeed,s->vspeed);
+      }
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"physics_apply_local_force")) return vreal(0);
   if(!strncmp(nm,"physics_",8)) return vreal(0);
   if(!strncmp(nm,"skeleton_",9)) return builtin_skeleton(vm,nm,a,n);

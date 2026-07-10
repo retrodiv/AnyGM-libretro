@@ -8,6 +8,7 @@
 #define STBTT_STATIC
 #include "stb_truetype.h"
 #include "gml_render.h"
+#include "gml_default_font_data.h"
 #include "gm_qoi.h"
 #include "bzip2/bzlib.h"
 #include "gml_thread.h"
@@ -1402,6 +1403,55 @@ static void parse_font(GmlRender *r){
   if(r->n_fonts<nf) r->n_fonts=nf;                  /* sprite fonts number after real fonts */
 }
 
+/* The built-in default font remains available when FONT contains no user resources. Keep it
+ * separate from the asset-id namespace: draw_set_font(-1) selects this data, while ids 0..n-1
+ * continue to resolve only to fonts supplied by the loaded package. */
+static int build_default_font(GmlRender *r){
+  enum { AW=512, AH=128 };
+  const int ng=GML_DEFAULT_FONT_LAST-GML_DEFAULT_FONT_FIRST+1;
+  GmlGlyph *glyphs=calloc((size_t)ng,sizeof(*glyphs));
+  uint8_t *px=calloc((size_t)AW*AH,4);
+  if(!glyphs || !px){ free(glyphs); free(px); return 0; }
+  GmlAtlas *na=realloc(r->atlas,(size_t)(r->n_atlas+1)*sizeof(*na));
+  if(!na){ free(glyphs); free(px); return 0; }
+  r->atlas=na;
+  int atlas_id=r->n_atlas++;
+  GmlAtlas *a=&r->atlas[atlas_id];
+  memset(a,0,sizeof(*a));
+  a->px=px; a->w=AW; a->h=AH; a->decode_attempted=1;
+
+  GmlFont *f=&r->default_font;
+  memset(f,0,sizeof(*f));
+  for(int i=0;i<256;i++) f->glyph_by_char[i]=-1;
+  f->real=1; f->sprite=-1; f->atlas=atlas_id;
+  f->line_height=GML_DEFAULT_FONT_LINE_HEIGHT;
+  f->glyphs=glyphs; f->n_glyphs=ng;
+  int ax=0, ay=0;
+  for(int i=0;i<ng;i++){
+    const GmlDefaultGlyph *src=&gml_default_glyphs[i];
+    int w=src->width;
+    if(ax+w>AW){ ax=0; ay+=GML_DEFAULT_FONT_LINE_HEIGHT; }
+    if(ay+GML_DEFAULT_FONT_LINE_HEIGHT>AH) break;
+    GmlGlyph *g=&glyphs[i];
+    g->ch=(uint16_t)(GML_DEFAULT_FONT_FIRST+i);
+    g->sx=ax; g->sy=ay; g->w=w; g->h=GML_DEFAULT_FONT_LINE_HEIGHT;
+    g->shift=src->shift; g->offset=src->offset;
+    f->glyph_by_char[g->ch]=i;
+    const uint8_t *cov=gml_default_font_alpha+src->off;
+    for(int y=0;y<GML_DEFAULT_FONT_LINE_HEIGHT;y++) for(int x=0;x<w;x++){
+      uint8_t alpha=cov[y*w+x];
+      if(alpha){
+        uint8_t *q=px+((size_t)(ay+y)*AW+ax+x)*4;
+        q[0]=q[1]=q[2]=255; q[3]=alpha;
+      }
+    }
+    ax+=w;
+  }
+  if(getenv("GML_LOG_FONT"))
+    fprintf(stderr,"[font] built-in atlas=%d glyphs=%d line=%d\n",atlas_id,ng,f->line_height);
+  return 1;
+}
+
 /* ---- recognized display post-processes: none retained in this revision ---- */
 
 /* ---- real FONT-chunk font helpers ---- */
@@ -1452,9 +1502,16 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
   }
 }
 
+static GmlFont *active_font(GmlRender *r){
+  if(!r) return NULL;
+  if(r->font<0)
+    return r->default_font.glyphs && r->default_font.n_glyphs>0 ? &r->default_font : NULL;
+  return r->font<r->n_fonts ? &r->fonts[r->font] : NULL;
+}
+
 int gml_text_width(GmlRender *r, const char *str){
-  if(r->font<0||r->font>=r->n_fonts||!str) return 0;
-  GmlFont *f=&r->fonts[r->font];
+  GmlFont *f=active_font(r);
+  if(!f||!str) return 0;
   int best=0; const char *p=str;
   for(;;){
     const char *end; int w = f->real ? real_line_width(f,p,&end) : line_width(r,f,p,&end);
@@ -1476,8 +1533,8 @@ int gml_text_width(GmlRender *r, const char *str){
   return best;
 }
 int gml_text_height(GmlRender *r, const char *str){
-  if(r->font<0||r->font>=r->n_fonts) return 0;
-  GmlFont *f=&r->fonts[r->font];
+  GmlFont *f=active_font(r);
+  if(!f) return 0;
   int lh, nlines=1;
   if(f->real) lh=f->line_height>0?f->line_height:12;
   else { GmlSprite *s=&r->spr[f->sprite]; lh=s->h>0?s->h:8; }
@@ -1486,8 +1543,8 @@ int gml_text_height(GmlRender *r, const char *str){
 }
 void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str,
                                double xs, double ys, double rot, uint32_t blend, double alpha){
-  if(r->font<0 && str && str[0] && getenv("GML_LOG_FONT")) fprintf(stderr,"[font] draw_text font=%d str=\"%.30s\" — INVISIBLE (no default font)\n",r->font,str);
-  if(r->font<0||r->font>=r->n_fonts||!str) return;
+  GmlFont *f=active_font(r);
+  if(!f||!str) return;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(xs==0||ys==0||alpha<=0) return;
   double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
@@ -1495,7 +1552,6 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
   int use_rot = fabs(rr)>0.001 && fabs(rr-360.0)>0.001;
   if(getenv("GML_LOG_TEXT")) fprintf(stderr,"[text] x=%.0f y=%.0f font=%d halign=%d valign=%d scale=(%.2f,%.2f) rot=%.1f col=%06X a=%.2f \"%s\"\n",
     x,y,r->font,r->halign,r->valign,xs,ys,rr,(unsigned)(blend&0xffffff),alpha,str);
-  GmlFont *f=&r->fonts[r->font];
   if(f->real){ draw_text_real(r,f,x,y,str,xs,ys,ca,sa,use_rot,blend,alpha); return; }
   if(f->sprite<0 || f->sprite>=r->n_spr) return;
   GmlSprite *s=&r->spr[f->sprite];
@@ -1560,7 +1616,7 @@ void gml_draw_text(GmlRender *r, double x, double y, const char *str){
 /* Wrap between words at pixel width w (-1 disables wrapping).
  * sep selects line separation; -1 selects the font default. */
 void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double sep, double w){
-  if(!r || !str || r->font<0 || r->font>=r->n_fonts){ return; }
+  if(!r || !str || !active_font(r)){ return; }
   char wrapped[2048]; size_t o=0;
   if(w>0){
     char word[256]; size_t wl=0;

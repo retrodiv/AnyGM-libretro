@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o] | (uint32_t)d[o+1]<<8 | (uint32_t)d[o+2]<<16 | (uint32_t)d[o+3]<<24;
@@ -212,6 +213,15 @@ int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
     if(cnt>0 && cnt<=nroom){
       w->n_room_order=(int)cnt; w->room_order=malloc(cnt*sizeof(uint32_t));
       for(uint32_t i=0;i<cnt;i++) w->room_order[i]=u32(data,ro+4+i*4);
+      /* GMS2 stores the global game cadence after RoomOrder and its 40-byte project hash block.
+       * Older formats end the chunk at RoomOrder, so the bounds/range checks leave their speed at 0. */
+      uint64_t so=(uint64_t)ro+4u+(uint64_t)cnt*4u+40u;
+      uint64_t gend=(uint64_t)g->off+g->size;
+      if(so+4u<=gend && so+4u<=w->size){
+        uint32_t bits=u32(data,(uint32_t)so); float speed;
+        memcpy(&speed,&bits,sizeof(speed));
+        if(isfinite(speed) && speed>=1.0f && speed<=1000.0f) w->game_speed=speed;
+      }
     }
   }
   parse_strg(w); parse_code(w); parse_refs(w);

@@ -321,6 +321,7 @@ static int inst_builtin_get(GmlInstance *in, const char *n, GmlVal *out){
   if(!strcmp(n,"image_single")){ *out=vreal(in->image_speed==0? in->image_index : -1); return 1; }
   #define B(name,field) if(!strcmp(n,name)){ *out=vreal(in->field); return 1; }
   B("x",x) B("y",y) B("xprevious",xprevious) B("yprevious",yprevious)
+  B("phy_position_x",x) B("phy_position_y",y)
   B("xstart",xstart) B("ystart",ystart)
   B("sprite_index",sprite_index) B("mask_index",mask_index) B("image_index",image_index) B("image_speed",image_speed)
   B("image_xscale",image_xscale) B("image_yscale",image_yscale) B("image_angle",image_angle)
@@ -354,7 +355,8 @@ static int inst_builtin_set(GmlInstance *in, const char *n, GmlVal v){
     if(d>=0){ in->image_index=d; in->image_speed=0; }
     else in->image_speed=1;
     return 1; }
-  BT("x",x) BT("y",y) B("xprevious",xprevious) B("yprevious",yprevious)
+  BT("x",x) BT("y",y) BT("phy_position_x",x) BT("phy_position_y",y)
+  B("xprevious",xprevious) B("yprevious",yprevious)
   B("xstart",xstart) B("ystart",ystart)
   if(!strcmp(n,"sprite_index")){
     in->sprite_index=d; gml_colgrid_touch(in);
@@ -425,10 +427,15 @@ static int argument_set(GmlVM *vm, const char *name, GmlVal v){
   if(idx>=vm->script_argc) vm->script_argc=idx+1;
   return 1;
 }
-static double room_speed_value(GmlVM *vm){
+double gml_room_speed(GmlVM *vm){
   GmlVal *p=gml_varmap_get(&vm->globals,"room_speed");
-  double v=p?asnum(*p):30.0;
-  return v>0 ? v : 30.0;
+  double v=p?asnum(*p):0.0;
+  if(v>0) return v;
+  GmlRoom room;
+  if(vm && vm->win && vm->room_index>=0 && gml_room_get(vm->win,vm->room_index,&room)==0 && room.speed>0)
+    return room.speed;
+  if(vm && vm->win && vm->win->game_speed>0) return vm->win->game_speed;
+  return 30.0;
 }
 static double cpu_clock_ms(void){
   clock_t c=clock();
@@ -448,7 +455,7 @@ static double current_time_value(GmlVM *vm){
   if(intra<0.0) intra=0.0;
   /* Keep the old frame-clock base for gameplay timers, but let the value advance while GML is
    * executing. Some GM scripts implement sleep by spinning on current_time inside one frame. */
-  return (double)g_vm_frame * (1000.0 / room_speed_value(vm)) + intra;
+  return (double)g_vm_frame * (1000.0 / gml_room_speed(vm)) + intra;
 }
 /* Return a frame-based microsecond timer with intra-frame CPU-time advance. */
 double gml_vm_get_timer_us(GmlVM *vm){
@@ -459,7 +466,7 @@ double gml_vm_get_timer_us(GmlVM *vm){
   if(frame!=g_vm_frame){ frame=g_vm_frame; frame_cpu_ms=now; }
   double intra_ms=now-frame_cpu_ms;
   if(intra_ms<0.0) intra_ms=0.0;
-  return (double)g_vm_frame * (1000000.0 / room_speed_value(vm)) + intra_ms*1000.0;
+  return (double)g_vm_frame * (1000000.0 / gml_room_speed(vm)) + intra_ms*1000.0;
 }
 static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, GmlVal *out){
   if(!in || !vm || !vm->render) return 0;
@@ -487,6 +494,7 @@ static const char *const g_special_var_names[]={
   "x","y","xprevious","yprevious","xstart","ystart","sprite_index","mask_index","image_index",
   "image_speed","image_xscale","image_yscale","image_angle","image_alpha","image_blend",
   "depth","visible","solid","persistent","hspeed","vspeed","direction","speed",
+  "phy_position_x","phy_position_y",
   "gravity","gravity_direction","friction","path_index","path_position","path_speed",
   "path_orientation","path_scale","path_positionprevious","path_endaction",
 };
@@ -522,12 +530,12 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
   if(!strcmp(name,"room")) return vreal(vm->room_index);   /* GM built-in: current room index */
   if(!strcmp(name,"keyboard_lastkey")) return vreal(vm->last_key); /* GM: last key pressed */
-  if(!strcmp(name,"room_speed")) return vreal(room_speed_value(vm));
+  if(!strcmp(name,"room_speed")) return vreal(gml_room_speed(vm));
   if(!strcmp(name,"working_directory")||!strcmp(name,"program_directory")){
     /* Return the content directory with a trailing slash as a string. */
     static char wd[560]; snprintf(wd,sizeof wd,"%s/",vm->win->content_dir);
     return vstr(wd); }
-  if(!strcmp(name,"fps")) return vreal(room_speed_value(vm));
+  if(!strcmp(name,"fps")) return vreal(gml_room_speed(vm));
   /* Report os_windows by default; GML_OS_TYPE overrides the platform value for testing.
    * Provide OS constants for runtime lookups as well as compiled literal values. */
   if(!strcmp(name,"os_type")){ const char *e=getenv("GML_OS_TYPE"); return vreal(e?atof(e):0 /*os_windows*/); }
@@ -2620,6 +2628,37 @@ static void parse_objects(GmlVM *vm){
     o->depth=(int)u32(d,p+16+shift); o->persistent=(int)u32(d,p+20+shift);
     o->parent=(int)u32(d,p+poff);
     o->mask_index=(int)u32(d,p+poff+4);
+    /* Physics metadata follows parent/mask in both classic and managed GMS2 OBJT layouts. Retain
+     * only the mass inputs needed by the lightweight backend, after validating the variable-length
+     * vertex list entirely inside OBJT. Coordinates are fixture-local pixels. */
+    uint32_t q=p+(uint32_t)poff+8u;
+    uint64_t cend=(uint64_t)c->off+c->size;
+    if((uint64_t)q+48u<=cend && (uint64_t)q+48u<=w->size){
+      uint32_t enabled=u32(d,q), nvert=u32(d,q+32), kinematic=u32(d,q+44);
+      double density=f32(d,q+12);
+      uint64_t vend=(uint64_t)q+48u+(uint64_t)nvert*8u;
+      if(enabled<=1 && kinematic<=1 && isfinite(density) && density>=0.0 && density<=1000000.0 &&
+         nvert<=128 && vend<=cend && vend<=w->size){
+        o->physics_enabled=(int)enabled;
+        o->physics_kinematic=(int)kinematic;
+        o->physics_density=density;
+        if(nvert>=3){
+          double twice_area=0.0;
+          int valid=1;
+          for(uint32_t vi=0;vi<nvert;vi++){
+            uint32_t vj=(vi+1u)%nvert;
+            double xi=f32(d,q+48u+vi*8u), yi=f32(d,q+52u+vi*8u);
+            double xj=f32(d,q+48u+vj*8u), yj=f32(d,q+52u+vj*8u);
+            if(!isfinite(xi)||!isfinite(yi)||!isfinite(xj)||!isfinite(yj) ||
+               fabs(xi)>1000000.0||fabs(yi)>1000000.0||fabs(xj)>1000000.0||fabs(yj)>1000000.0){
+              valid=0; break;
+            }
+            twice_area+=xi*yj-xj*yi;
+          }
+          if(valid) o->physics_area_px=fabs(twice_area)*0.5;
+        }
+      }
+    }
     /* events parsed lazily via code-name matching for now */
   }
   if(getenv("GML_LOG_OBJ")) fprintf(stderr,"[obj] OBJT parent_off=+%d (%s layout)\n", poff,
@@ -2986,6 +3025,38 @@ static double get_global_arr_d(GmlVM *vm, const char *nm, int idx){
   GmlArr *A=slot->arr; return (A && idx>=0 && idx<A->len)? asnum(A->data[idx]) : 0;
 }
 void gml_set_global_arr(GmlVM *vm, const char *nm, int idx, double val){ set_global_arr(vm,nm,idx,val); }
+
+/* GMS2-style ROOM layers are a data-layout feature, not a bytecode-version feature. Early
+ * GMS2 exports can still use bytecode 15 while carrying the same layer pointer at ROOM+88 as
+ * later bytecode-17 packages. Validate the pointer entirely inside the ROOM chunk so classic
+ * GMS1 records, whose bytes at +88 are unrelated, cannot be mistaken for a layer list. */
+static uint32_t gml_room_layer_list(GmlVM *vm, int room_index, uint32_t *out_count){
+  if(out_count) *out_count=0;
+  if(!vm || !vm->win || room_index<0 || room_index>=gml_room_count(vm->win)) return 0;
+  const GmlChunk *rc=gml_chunk(vm->win,"ROOM");
+  if(!rc) return 0;
+  const uint8_t *d=vm->win->data;
+  uint64_t rend=(uint64_t)rc->off+rc->size;
+  uint64_t slot=(uint64_t)rc->off+4u+(uint64_t)(uint32_t)room_index*4u;
+  if(slot+4u>rend) return 0;
+  uint32_t rp=u32(d,(uint32_t)slot);
+  if(rp<rc->off || (uint64_t)rp+92u>rend) return 0;
+  uint32_t lay=u32(d,rp+88);
+  if(lay<rc->off || (uint64_t)lay+4u>rend) return 0;
+  uint32_t lcnt=u32(d,lay);
+  if(lcnt>=512 || (uint64_t)lay+4u+(uint64_t)lcnt*4u>rend) return 0;
+  for(uint32_t i=0;i<lcnt;i++){
+    uint32_t lp=u32(d,lay+4+i*4);
+    if(lp<rc->off || (uint64_t)lp+36u>rend) return 0;
+    uint32_t type=u32(d,lp+8);
+    if(type<1 || type>8 || u32(d,lp+32)>1) return 0;
+    uint32_t name=u32(d,lp);
+    if(name && name>=vm->win->size) return 0;
+  }
+  if(out_count) *out_count=lcnt;
+  return lay;
+}
+
 /* Select the base or effect-field layer layout by structural voting across background records.
  * Effect-field layers include a variable-length property list before their type data. */
 static int bg_type_data_ok(const GmlWin *w, uint32_t b, int nspr){
@@ -3022,9 +3093,8 @@ int gml_room_layer_data_off(GmlVM *vm){
   int nrooms=gml_room_count(vm->win);
   int v36=0, v48=0, sampled=0;
   for(int ri=0;ri<nrooms && sampled<64;ri++){
-    uint32_t rp=u32(d,rc->off+4+ri*4);
-    uint32_t lay=(rp && rp+92<vm->win->size)?u32(d,rp+88):0;
-    uint32_t lcnt=(lay && lay+4<vm->win->size)?u32(d,lay):0;
+    uint32_t lcnt=0;
+    uint32_t lay=gml_room_layer_list(vm,ri,&lcnt);
     if(!lcnt || lcnt>=512) continue;
     for(uint32_t i=0;i<lcnt && sampled<64;i++){ uint32_t lp=u32(d,lay+4+i*4);
       if(!lp || lp+96>vm->win->size || u32(d,lp+8)!=1) continue;
@@ -3133,11 +3203,10 @@ static int rt_layer_has_sprite_elem(GmlVM *vm, int layer_id, const char *name){
 }
 
 static void gml_room_bind_asset_sprites(GmlVM *vm, int room_index){
-  if(!vm || !vm->win || vm->win->bytecode<17 || room_index<0) return;
-  const GmlChunk *rlc=gml_chunk(vm->win,"ROOM"); const uint8_t *rd=vm->win->data;
-  uint32_t rp = rlc ? u32(rd,rlc->off+4+(uint32_t)room_index*4) : 0;
-  uint32_t lay = (rp && rp+92<vm->win->size) ? u32(rd,rp+88) : 0;
-  uint32_t lcnt = (lay && lay+4<vm->win->size) ? u32(rd,lay) : 0;
+  if(!vm || !vm->win || room_index<0) return;
+  const uint8_t *rd=vm->win->data;
+  uint32_t lcnt=0;
+  uint32_t lay=gml_room_layer_list(vm,room_index,&lcnt);
   if(!lcnt || lcnt>=512) return;
   for(uint32_t i=0;i<lcnt;i++){
     uint32_t lp=u32(rd,lay+4+i*4);
@@ -3187,11 +3256,10 @@ static void gml_room_bind_asset_sprites(GmlVM *vm, int room_index){
  * views are rebound to win data, since those grids are not serialized by pointer. */
 static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runtime_layers){
   if(rebuild_runtime_layers){ vm->n_rtl=0; vm->n_rte=0; }
-  if(vm->win->bytecode<17) return;
-  const GmlChunk *rlc=gml_chunk(vm->win,"ROOM"); const uint8_t *rd=vm->win->data;
-  uint32_t rp = rlc ? u32(rd,rlc->off+4+room_index*4) : 0;
-  uint32_t lay = (rp && rp+92<vm->win->size) ? u32(rd,rp+88) : 0;
-  uint32_t lcnt = (lay && lay+4<vm->win->size) ? u32(rd,lay) : 0;
+  const uint8_t *rd=vm->win->data;
+  uint32_t lcnt=0;
+  uint32_t lay=gml_room_layer_list(vm,room_index,&lcnt);
+  if(!lay) return;
   if(rebuild_runtime_layers && lcnt<512) for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(rd,lay+4+i*4);
     if(!lp || lp+40>vm->win->size) continue;
     uint32_t np=u32(rd,lp+0); if(!np || np>=vm->win->size) continue;
@@ -3586,11 +3654,9 @@ void gml_room_enter(GmlVM *vm, int room_index){
     room_inst_idx[i]=(int)(in-vm->inst);
   }
   /* Assign placed-instance depths from their type-2 room layers before Create events. */
-  if(vm->win->bytecode>=17){
-    const GmlChunk *rc=gml_chunk(vm->win,"ROOM");
-    uint32_t rp = rc ? u32(d,rc->off+4+room_index*4) : 0;
-    uint32_t lay = (rp && rp+92<vm->win->size) ? u32(d,rp+88) : 0;
-    uint32_t lcnt = (lay && lay+4<vm->win->size) ? u32(d,lay) : 0;
+  {
+    uint32_t lcnt=0;
+    uint32_t lay=gml_room_layer_list(vm,room_index,&lcnt);
     if(lcnt>0 && lcnt<512){
       for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(d,lay+4+i*4);
         if(!lp || u32(d,lp+8)!=2) continue;
@@ -4147,12 +4213,10 @@ void gml_vm_draw(GmlVM *vm){
   struct LayBg *lbg=g_dl_lbg; int nlb=0;
   struct LayTile *ltl=g_dl_ltl; int nlt=0;
   struct LaySprite *lsp=g_dl_lsp; int nls=0;
-  if(vm->win->bytecode>=17){
-    const GmlChunk *rc=gml_chunk(vm->win,"ROOM");
+  {
     const uint8_t *d=vm->win->data;
-    uint32_t rp = rc ? u32(d,rc->off+4+vm->room_index*4) : 0;
-    uint32_t lay = (rp && rp+92<vm->win->size) ? u32(d,rp+88) : 0;
-    uint32_t lcnt = (lay && lay+4<vm->win->size) ? u32(d,lay) : 0;
+    uint32_t lcnt=0;
+    uint32_t lay=gml_room_layer_list(vm,vm->room_index,&lcnt);
     if(lcnt>0 && lcnt<512){
       long fin = g_vm_frame - vm->room_enter_frame; if(fin<0) fin=0;
       for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(d,lay+4+i*4);
@@ -5835,7 +5899,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     free(ts->datum);
   }
   free(tm_state);
-  if(s.ok && !s.v15 && vm->win && vm->win->bytecode>=17 && vm->room_index>=0){
+  if(s.ok && !s.v15 && vm->win && vm->room_index>=0 &&
+     gml_room_layer_list(vm,vm->room_index,NULL)){
     typedef struct { int id, visible, script_begin, script_end; double depth; char name[32]; } MigLayer;
     typedef struct {
       int id, layer, type, sprite, sx, sy, w, h, visible, htiled, vtiled, stretch;

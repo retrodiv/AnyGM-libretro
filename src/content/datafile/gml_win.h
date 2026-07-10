@@ -88,6 +88,7 @@ typedef struct {
   int32_t *ref_hix; uint32_t ref_hix_cap;
   /* header */
   uint8_t bytecode; uint32_t gameid;
+  double game_speed;                     /* GEN8 global cadence when present (GMS2 exports) */
   uint32_t disp_w, disp_h;           /* default window / native render size */
   uint32_t *room_order; int n_room_order;
   char content_dir[512];             /* directory containing the loaded data.win */

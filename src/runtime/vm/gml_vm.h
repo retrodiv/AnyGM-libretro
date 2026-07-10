@@ -62,6 +62,8 @@ typedef struct { GmlPathPt *pts; int n; int kind, closed, precision; double len;
 typedef struct {
   const char *name;
   int sprite_index, mask_index, parent, depth, visible, solid, persistent;
+  int physics_enabled, physics_kinematic;
+  double physics_density, physics_area_px;
   int bevents;   /* boundary-event flags: 1=Outside Room, 2=Intersect Room, 4=Outside View0, 8=Intersect View0 */
   int colself;   /* this object (or an ancestor) owns >=1 Collision_* handler — run_collisions outer filter */
   /* (collision-grid stamps live per-instance, see GmlInstance.cg_*) */
@@ -345,6 +347,7 @@ GmlVal *gml_varmap_put(GmlVarMap *m, const char *key);   /* get-or-create slot *
  * content (not interned ptr) so the frontend can query e.g. "view_xview". */
 double  gml_global_num(GmlVM *vm, const char *name);
 double  gml_global_arr(GmlVM *vm, const char *name, int idx);
+double  gml_room_speed(GmlVM *vm);
 void    gml_set_global_arr(GmlVM *vm, const char *name, int idx, double val);
 
 /* save-state payload for the VM runtime only. Static data parsed from data.win is not included. */
