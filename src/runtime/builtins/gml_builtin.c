@@ -3235,8 +3235,8 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"texture_get_texel_height")){ double th; *out=vreal(texture_info(R,(int)N(a,n,0),NULL,NULL,NULL,&th)?th:0); return 1; }
   }
   if(nm[0]=='w'){
-    if(!strcmp(nm,"window_get_width")){ int cs=(R&&R->crt_scale>1)?R->crt_scale:1; int b=(R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288); if(cs>1) b=(vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)*cs; *out=vreal(b); return 1; }
-    if(!strcmp(nm,"window_get_height")){ int cs=(R&&R->crt_scale>1)?R->crt_scale:1; int b=(R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216); if(cs>1) b=(vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)*cs; *out=vreal(b); return 1; }
+    if(!strcmp(nm,"window_get_width")){ int cs=(R&&R->crt_scale>1&&R->crt_shader_present&&R->crt_shader_enable)?R->crt_scale:1; int b=(R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288); if(cs>1) b=(vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)*cs; *out=vreal(b); return 1; }
+    if(!strcmp(nm,"window_get_height")){ int cs=(R&&R->crt_scale>1&&R->crt_shader_present&&R->crt_shader_enable)?R->crt_scale:1; int b=(R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216); if(cs>1) b=(vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)*cs; *out=vreal(b); return 1; }
   }
   if(nm[0]=='g'){
     if(!strcmp(nm,"gpu_set_blendenable")){ if(R) R->alphablend=N(a,n,0)>=0.5; *out=vreal(0); return 1; }
@@ -4016,13 +4016,13 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
     case BID_DISPLAY_GET_WIDTH:
       return vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288));
     case BID_WINDOW_GET_WIDTH:{
-      int cs=(R&&R->crt_scale>1)?R->crt_scale:1;
+      int cs=(R&&R->crt_scale>1&&R->crt_shader_present&&R->crt_shader_enable)?R->crt_scale:1;
       if(cs>1) return vreal((vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)*cs);
       return vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)); }
     case BID_DISPLAY_GET_HEIGHT:
       return vreal((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216));
     case BID_WINDOW_GET_HEIGHT:{
-      int cs=(R&&R->crt_scale>1)?R->crt_scale:1;
+      int cs=(R&&R->crt_scale>1&&R->crt_shader_present&&R->crt_shader_enable)?R->crt_scale:1;
       if(cs>1) return vreal((vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)*cs);
       return vreal((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)); }
     case BID_DISPLAY_GET_GUI_WIDTH:
@@ -5478,9 +5478,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(mode>=0.5 ? 1000000.0/fps : fps);
     }
     /* Use renderer dimensions when available, otherwise the GEN8 display dimensions. */
-    if(!strcmp(nm,"window_get_width") && R && R->crt_scale>1)
+    if(!strcmp(nm,"window_get_width") && R && R->crt_scale>1 && R->crt_shader_present && R->crt_shader_enable)
       return vreal((vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)*R->crt_scale);
-    if(!strcmp(nm,"window_get_height") && R && R->crt_scale>1)
+    if(!strcmp(nm,"window_get_height") && R && R->crt_scale>1 && R->crt_shader_present && R->crt_shader_enable)
       return vreal((vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)*R->crt_scale);
     if(!strcmp(nm,"display_get_width")||!strcmp(nm,"window_get_width"))
       return vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288));

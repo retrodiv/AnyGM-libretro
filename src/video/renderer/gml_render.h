@@ -148,6 +148,9 @@ typedef struct {
                               * report them not-compiled and never execute them, so games fall back
                               * to their no-shader video modes (pre-emulation behavior). Palette/LUT
                               * shaders are NOT gated: they are integral to those games' rendering. */
+  int       crt_shader_present; /* set at init when the SHDR chunk contains a recognized CRT-geom
+                              * fragment. Gates crt_scale's virtual window/supersample so the option
+                              * has zero effect on games without an embedded CRT shader. */
   /* async atlas prefetch pool (opaque; see gml_render.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;
