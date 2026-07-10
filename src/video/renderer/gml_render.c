@@ -1361,13 +1361,13 @@ static void parse_font(GmlRender *r){
     uint32_t texptr=u32(d,p+28);                    /* glyph-page TPAG record */
     int tsx=u16(d,texptr), tsy=u16(d,texptr+2), tatlas=(int16_t)u16(d,texptr+20);
     f->atlas=tatlas;
-    /* Probe glyph-table offsets 40, 48, 52 and 56 per font record.
+    /* Probe glyph-table offsets 40, 44, 48, 52 and 56 per font record.
      * Prefer the first candidate with a plausible count, pointer and character code;
      * otherwise use the first structurally plausible candidate. */
     uint32_t goff=40;
     { int first_ok=-1, best=-1;
-      static const uint32_t cand[4]={40,48,52,56};
-      for(int ci=0;ci<4 && best<0;ci++){ uint32_t co=cand[ci];
+      static const uint32_t cand[5]={40,44,48,52,56};
+      for(int ci=0;ci<5 && best<0;ci++){ uint32_t co=cand[ci];
         uint32_t cnt=u32(d,p+co);
         if(cnt==0 || cnt>=100000) continue;
         uint32_t q=u32(d,p+co+4);

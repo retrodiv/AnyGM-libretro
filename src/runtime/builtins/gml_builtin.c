@@ -81,6 +81,8 @@ static int presentation_base_size(const GmlVM *vm, const GmlRender *r, int heigh
   return height?216:288;
 }
 static int presentation_size(const GmlVM *vm, const GmlRender *r, int height){
+  int effective=r?(height?r->presentation_h:r->presentation_w):0;
+  if(effective>0) return effective;
   int configured=r?(height?r->resolution_h:r->resolution_w):0;
   if(configured>0) return configured;
   return presentation_base_size(vm,r,height);
@@ -6858,6 +6860,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"screen_save")||!strcmp(nm,"screen_save_part")) return vreal(0);
   if(!strcmp(nm,"os_get_language")) return vstr("en");
   if(!strcmp(nm,"os_get_region")) return vstr("us");
+  if(!strcmp(nm,"os_get_config")) return vstr("default");
+  if(!strcmp(nm,"gml_release_mode")) return vreal(0);
   if(!strcmp(nm,"os_is_paused")) return vreal(0);
   if(!strcmp(nm,"window_has_focus")) return vreal(1);
   if(!strcmp(nm,"window_get_x")) return vreal(vm->window_x);

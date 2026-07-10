@@ -149,6 +149,10 @@ typedef struct {
                               * Window/display getters expose the same value so window-sized render
                               * surfaces and the frontend framebuffer stay in one coordinate space. */
   int       resolution_h;    /* requested final presentation height, or 0 for the game's base size. */
+  int       presentation_w;  /* effective final width after presentation policies (for example an
+                              * aspect override derived from the requested height). The requested
+                              * core-option axes above stay unchanged. */
+  int       presentation_h;  /* effective final height; recomputed by the libretro wrapper. */
   int       crt_shader_enable; /* run recognized embedded CRT post-process shaders (default 1). 0 =
                               * report them not-compiled and never execute them, so games fall back
                               * to their no-shader video modes (pre-emulation behavior). Palette/LUT
@@ -172,6 +176,12 @@ typedef struct {
                                    * dimensions (below) so the game sizes its CRT surface to full width
                                    * instead of a centered 4:3 sub-rect. 0 = normal. */
   int       aspect_wide_w, aspect_wide_h; /* the forced-wide base dimensions. */
+  /* Reusable software-CRT workspaces. High-resolution compositing used to allocate tens of
+   * megabytes plus two convolution rows per worker every frame. These grow on demand and live
+   * with the renderer. */
+  void     *crt_gamma_scratch; size_t crt_gamma_scratch_cap;
+  void     *crt_cols_scratch;  size_t crt_cols_scratch_cap;
+  void     *crt_conv_scratch;  size_t crt_conv_scratch_cap;
   /* async atlas prefetch pool (opaque; see gml_render.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;

@@ -2134,6 +2134,15 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           break; }
         int ncopy = in.inst>0 ? in.inst+1 : 1;
         if(ncopy>8) ncopy=1;
+        /* For the array-compound sequence [scope,index] dup(0); push array; op;
+         * pop array, duplicate the two-slot reference when the next instruction
+         * is an array-variable push. Preserve both scope and index. */
+        if(w->bytecode>=17 && in.inst==0 && sp>=2){
+          GmlInsn ni; int have=0;
+          if(use_cache && ip+1<cached_n){ ni=cached_ins[ip+1]; have=1; }
+          else if(!use_cache && nextpc<end && gml_decode_bc(d,nextpc,w->bytecode,&ni)>0) have=1;
+          if(have && ni.kind==OP_PUSH && ni.type1==DT_VAR && ni.reftype==0x00) ncopy=2;
+        }
         /* GMS2.3 reference dup for the compound `inst.var op= v` (`push inst; push.e -9; dup;
          * read; op; write`): the operand encodes in.inst=4 -> the formula's 5, which overshoots sp
          * so the dup silently no-op'd and the ref was never duplicated -> the write landed on the
@@ -3202,6 +3211,54 @@ static int rt_layer_has_sprite_elem(GmlVM *vm, int layer_id, const char *name){
   return 0;
 }
 
+/* Bind immutable GMS2 room-background records to the runtime element API. Converted projects use
+ * layer_get_all_elements/layer_background_* to implement the legacy background[] compatibility
+ * functions; registering only the parent layer makes those functions report that the background
+ * does not exist even though it is visibly drawn from the ROOM record. */
+static void gml_room_bind_backgrounds(GmlVM *vm, int room_index){
+  if(!vm || !vm->win || room_index<0) return;
+  const uint8_t *rd=vm->win->data;
+  uint32_t lcnt=0;
+  uint32_t lay=gml_room_layer_list(vm,room_index,&lcnt);
+  if(!lay || lcnt>=512) return;
+  for(uint32_t i=0;i<lcnt;i++){
+    uint32_t lp=u32(rd,lay+4+i*4);
+    if(!lp || u32(rd,lp+8)!=1) continue;
+    uint32_t np=u32(rd,lp);
+    const char *lname=(np && np<vm->win->size)?(const char*)(rd+np):"";
+    GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,lname);
+    if(!rl) continue;
+    int exists=0;
+    for(int j=0;j<vm->n_rte;j++){
+      GmlRtElem *old=&vm->rte[j];
+      if(old->used && old->type==1 && old->layer==rl->id){ exists=1; break; }
+    }
+    if(exists) continue;
+    uint32_t b=gml_room_layer_type_off(vm,lp);
+    if(b+40>vm->win->size) continue;
+    GmlRtElem *e=gml_rt_elem_new(vm);
+    if(!e) return;
+    e->type=1;
+    e->layer=rl->id;
+    snprintf(e->name,sizeof e->name,"%s",lname);
+    e->visible=u32(rd,b)?1:0;
+    e->sprite=(int32_t)u32(rd,b+8);
+    e->htiled=(int)u32(rd,b+12);
+    e->vtiled=(int)u32(rd,b+16);
+    e->stretch=(int)u32(rd,b+20);
+    uint32_t col=u32(rd,b+24);
+    e->blend=col&0xFFFFFFu;
+    e->alpha=((col>>24)&0xFF)/255.0;
+    e->image_index=f32(rd,b+28);
+    e->image_speed=f32(rd,b+32);
+    if(getenv("GML_LOG_RTL")){
+      extern long g_vm_frame;
+      fprintf(stderr,"[rtl] f%ld bind background layer='%s' lid=%d eid=%d sprite=%d\n",
+              g_vm_frame,lname,rl->id,e->id,e->sprite);
+    }
+  }
+}
+
 static void gml_room_bind_asset_sprites(GmlVM *vm, int room_index){
   if(!vm || !vm->win || room_index<0) return;
   const uint8_t *rd=vm->win->data;
@@ -3336,6 +3393,7 @@ static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_r
         if(rl->touched){ tm->x=rl->x; tm->y=rl->y; }
       }
 	  }
+  gml_room_bind_backgrounds(vm, room_index);
   gml_room_bind_asset_sprites(vm, room_index);
   if(getenv("GML_LOG_ROOM")){ fprintf(stderr,"[room] reload_layers room=%d: %d layers, %d tilemaps\n",room_index,vm->n_rtl,vm->n_tilemaps);
     for(int t=0;t<vm->n_tilemaps;t++){ GmlTileMap *tm=&vm->tilemaps[t];
@@ -4327,7 +4385,7 @@ void gml_vm_draw(GmlVM *vm){
    * records so the unified draw list needs no new item types. */
   for(int i=0;i<vm->n_rte;i++){
     GmlRtElem *e=&vm->rte[i];
-    if(!e->used || !e->visible || e->sprite<0) continue;
+    if(!e->used || !e->visible || (e->sprite<0 && e->type!=1)) continue;
     GmlRtLayer *l=gml_rt_layer_find(vm,e->layer);
     if(!l || !l->visible) continue;
     long fin2 = g_vm_frame - vm->room_enter_frame; if(fin2<0) fin2=0;
