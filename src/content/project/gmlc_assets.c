@@ -106,6 +106,13 @@ static int add_tileset(GmlcProject *p, GmlcTileset *t){
   return 1;
 }
 
+static char *join_source_path(const GmlcProject *p, const char *dir, const char *path){
+  static const char prefix[]="${project_dir}/";
+  if(path && !strncmp(path,prefix,sizeof(prefix)-1))
+    return gmlc_path_join(p->root_dir,path+sizeof(prefix)-1);
+  return gmlc_path_join(dir,path?path:"");
+}
+
 #define DEFINE_APPLY_RESOURCE_ORDER(fn, Type, field, count_field, label) \
 static int fn(GmlcProject *p, char *err, size_t errcap){ \
   int count=p->count_field; \
@@ -324,7 +331,7 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
           in.color=parse_u32_color(gmlc_json_obj(ji,"colour"),0xFFFFFFFFu);
           const char *cc=gmlc_json_str(gmlc_json_obj(ji,"creationCodeFile"),"");
           if(cc && *cc){
-            in.creation_code_path=gmlc_path_join(room_dir,cc);
+            in.creation_code_path=join_source_path(p,room_dir,cc);
             if(!in.creation_code_path){
               snprintf(err,errcap,"out of memory while loading instance creation code path");
               free(in.id); free(in.name);
@@ -637,6 +644,7 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
         case 8: snprintf(file,sizeof(file),"Draw_%d.gml",ev.event_number); break;
         case 9: snprintf(file,sizeof(file),"KeyPress_%d.gml",ev.event_number); break;
         case 10: snprintf(file,sizeof(file),"KeyRelease_%d.gml",ev.event_number); break;
+        case 12: snprintf(file,sizeof(file),"CleanUp_%d.gml",ev.event_number); break;
         default: snprintf(file,sizeof(file),"Other_%d.gml",ev.event_number); break;
       }
       ev.source_path=gmlc_path_join(dir,file);
@@ -676,7 +684,7 @@ static int parse_room(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
   char *dir=gmlc_path_dirname(res->abs_path);
   const char *cc=gmlc_json_str(gmlc_json_obj(yy,"creationCodeFile"),"");
   if(cc && *cc){
-    r.creation_code_path=gmlc_path_join(dir,cc);
+    r.creation_code_path=join_source_path(p,dir,cc);
     if(!r.creation_code_path){
       free(dir);
       snprintf(err,errcap,"out of memory while loading room creation code path");

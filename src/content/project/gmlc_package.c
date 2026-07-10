@@ -1229,6 +1229,7 @@ static int event_type_rank(int event_type){
     case 8: return 8;   /* Draw */
     case 9: return 9;   /* KeyPress */
     case 10: return 10; /* KeyRelease */
+    case 12: return 12; /* CleanUp */
     default: return 11 + event_type;
   }
 }
@@ -1308,6 +1309,7 @@ static const char *event_suffix(const GmlcObjectEvent *ev, char *buf, size_t cap
     case 8: snprintf(buf,cap,"Draw_%d",ev->event_number); break;
     case 9: snprintf(buf,cap,"KeyPress_%d",ev->event_number); break;
     case 10: snprintf(buf,cap,"KeyRelease_%d",ev->event_number); break;
+    case 12: snprintf(buf,cap,"CleanUp_%d",ev->event_number); break;
     default: snprintf(buf,cap,"Other_%d",ev->event_number); break;
   }
   return buf;

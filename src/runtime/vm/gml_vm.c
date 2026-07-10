@@ -2705,6 +2705,9 @@ static int run_event_code_from(GmlVM *vm, GmlInstance *in, GmlInstance *other,
     else if(!strncmp(suffix,"Collision_",10)){ et=4; en=atoi(suffix+10); }
     else if(!strncmp(suffix,"Other_",6)){ et=7; en=atoi(suffix+6); }
     else if(!strncmp(suffix,"Draw_",5)){ et=8; en=atoi(suffix+5); }
+    else if(!strncmp(suffix,"KeyPress_",9)){ et=9; en=atoi(suffix+9); }
+    else if(!strncmp(suffix,"KeyRelease_",11)){ et=10; en=atoi(suffix+11); }
+    else if(!strncmp(suffix,"CleanUp_",8)){ et=12; en=atoi(suffix+8); }
   }
   vm->cur_event=suffix; vm->cur_event_obj=obj;
   vm->event_type=et; vm->event_number=en;

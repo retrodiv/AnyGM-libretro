@@ -56,6 +56,7 @@ typedef struct {
   int n_continue_sites, cap_continue_sites;
   int continue_depth;
   int temp_id;
+  int array_depth;
   int expr_boolish;
   int expr_const;
   double expr_const_value;
@@ -627,6 +628,8 @@ static int compile_expr_slice(Compiler *c, const char *start, size_t len){
   return ok;
 }
 
+static int emit_popz(Compiler *c);
+
 static int compile_statement_slice(Compiler *c, const char *start, size_t len){
   char *tmp=dup_range(start,len);
   if(!tmp) return 0;
@@ -646,7 +649,7 @@ static int compile_statement_slice(Compiler *c, const char *start, size_t len){
   return ok;
 }
 
-static int scan_comma_spans(Compiler *c, size_t start, Span **out_spans, int *out_n, size_t *out_close){
+static int scan_comma_spans_until(Compiler *c, size_t start, char close_ch, Span **out_spans, int *out_n, size_t *out_close){
   const char *src=c->lex.src;
   Span *spans=NULL;
   int n=0, cap=0, depth=0;
@@ -674,7 +677,7 @@ static int scan_comma_spans(Compiler *c, size_t start, Span **out_spans, int *ou
       continue;
     }
     if(ch=='(' || ch=='[' || ch=='{'){ depth++; pos++; continue; }
-    if(ch==')'){
+    if(ch==close_ch){
       if(depth==0){
         Span s={seg,pos};
         trim_span(src,&s);
@@ -711,8 +714,12 @@ static int scan_comma_spans(Compiler *c, size_t start, Span **out_spans, int *ou
   }
   free(spans);
   c->unsupported=1;
-  snprintf(c->lex.err,sizeof(c->lex.err),"unterminated argument list");
+  snprintf(c->lex.err,sizeof(c->lex.err),"unterminated delimited list");
   return 0;
+}
+
+static int scan_comma_spans(Compiler *c, size_t start, Span **out_spans, int *out_n, size_t *out_close){
+  return scan_comma_spans_until(c,start,')',out_spans,out_n,out_close);
 }
 
 static int parse_call_args_reversed(Compiler *c, int *argc){
@@ -735,6 +742,35 @@ static int parse_call_args_reversed(Compiler *c, int *argc){
   c->lex.pos=close_pos+1;
   lx_next(&c->lex);
   *argc=n;
+  return 1;
+}
+
+static int parse_array_literal(Compiler *c){
+  size_t content_start=c->lex.tok.end;
+  Span *spans=NULL;
+  int n=0;
+  size_t close_pos=0;
+  if(!scan_comma_spans_until(c,content_start,']',&spans,&n,&close_pos)) return 0;
+  char temp[64];
+  snprintf(temp,sizeof(temp),"@@array@@%d",c->array_depth++);
+  int ok=emit_push_i32_full(c,n) &&
+         emit_call(c,"array_create",1) &&
+         emit_pop_var(c,IT_LOCAL,temp,0xA0,DT_VAR);
+  for(int i=0;ok && i<n;i++){
+    ok=compile_expr_slice(c,c->lex.src+spans[i].start,spans[i].end-spans[i].start) &&
+       emit_push_i32_full(c,i) &&
+       emit_push_var(c,IT_LOCAL,temp,0xA0) &&
+       emit_call(c,"array_set",3) &&
+       emit_popz(c);
+  }
+  if(ok) ok=emit_push_var(c,IT_LOCAL,temp,0xA0);
+  c->array_depth--;
+  free(spans);
+  if(!ok) return 0;
+  c->lex.pos=close_pos+1;
+  lx_next(&c->lex);
+  expr_not_const(c);
+  c->expr_boolish=0;
   return 1;
 }
 
@@ -1144,6 +1180,10 @@ static int parse_primary(Compiler *c){
     if(!parse_function_value(c,1)) return 0;
     expr_not_const(c);
     c->expr_boolish=0;
+    goto postfix_calls;
+  }
+  if(tok_is(c,"[")){
+    if(!parse_array_literal(c)) return 0;
     goto postfix_calls;
   }
   if(eat(c,"(")){
