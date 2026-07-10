@@ -81,6 +81,38 @@ static const char *gm_string_tmp(GmlVal v){
   return b;
 }
 static const char *S(GmlVal *a, int n, int i){ return (i<n)? gm_string_tmp(a[i]) : ""; }
+/* Shared shader uniform handling (LUT row + CRT-geom parameters). Handle = sh*16 + slot:
+ *   slot 1 = LUT row, 3 = CRT sizes vec4, 4 = CRT distortion, 5 = CRT distort bool,
+ *   6 = CRT border bool, 15 = accepted-and-ignored. See parse_shader_palettes / draw_surface_crt. */
+static double gml_shader_get_uniform(GmlRender *R, int sh, const char *un){
+  if(R && sh>=0 && sh<R->n_shader_pal && R->shader_pal){
+    struct GmlShaderPal *p=&R->shader_pal[sh];
+    if(p->lut && !strcmp(un,p->lut_row_uniform)) return sh*16+1;
+    if(p->crt){
+      if(p->crt_sizes_uniform[0]      && !strcmp(un,p->crt_sizes_uniform))      return sh*16+3;
+      if(p->crt_distortion_uniform[0] && !strcmp(un,p->crt_distortion_uniform)) return sh*16+4;
+      if(p->crt_distort_uniform[0]    && !strcmp(un,p->crt_distort_uniform))    return sh*16+5;
+      if(p->crt_border_uniform[0]     && !strcmp(un,p->crt_border_uniform))     return sh*16+6;
+    }
+  }
+  return sh>=0? sh*16+15 : -1;
+}
+static void gml_shader_set_uniform_f(GmlRender *R, int h, GmlVal *a, int n){
+  if(!R || h<0) return;
+  int sh=h/16, slot=h%16;
+  if(sh<0 || sh>=R->n_shader_pal || !R->shader_pal) return;
+  struct GmlShaderPal *p=&R->shader_pal[sh];
+  if(slot==1){ if(p->lut) p->lut_row=(float)N(a,n,1); return; }
+  if(!p->crt) return;
+  switch(slot){
+    case 3: p->crt_sizes[0]=(float)N(a,n,1); p->crt_sizes[1]=(float)N(a,n,2);
+            p->crt_sizes[2]=(float)N(a,n,3); p->crt_sizes[3]=(float)N(a,n,4); break;
+    case 4: p->crt_distortion=(float)N(a,n,1); break;
+    case 5: p->crt_distort=(N(a,n,1)!=0.0); break;
+    case 6: p->crt_border=(N(a,n,1)!=0.0); break;
+    default: break;
+  }
+}
 /* the event path argument of an fmod_* call: first "event:/..." string, else first non-empty string */
 static const char *fmod_path_arg(GmlVal *a, int n){
   const char *first=NULL;
@@ -3184,17 +3216,11 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"shader_set")){ if(R) R->active_shader=(int)N(a,n,0); *out=vreal(0); return 1; }
     if(!strcmp(nm,"shader_reset")){ if(R) R->active_shader=-1; *out=vreal(0); return 1; }
     if(!strcmp(nm,"shader_get_uniform")){
-      int sh=(int)N(a,n,0); const char *un=S(a,n,1);
-      if(R && sh>=0 && sh<R->n_shader_pal && R->shader_pal && R->shader_pal[sh].lut &&
-         !strcmp(un,R->shader_pal[sh].lut_row_uniform)) *out=vreal(sh*16+1);
-      else *out=vreal(sh>=0? sh*16+15 : -1);
+      *out=vreal(gml_shader_get_uniform(R,(int)N(a,n,0),S(a,n,1)));
       return 1;
     }
     if(!strcmp(nm,"shader_set_uniform_f")||!strcmp(nm,"shader_set_uniform_f_array")){
-      int h=(int)N(a,n,0);
-      if(R && h>=0 && (h%16)==1){ int sh=h/16;
-        if(sh<R->n_shader_pal && R->shader_pal && R->shader_pal[sh].lut) R->shader_pal[sh].lut_row=(float)N(a,n,1);
-      }
+      gml_shader_set_uniform_f(R,(int)N(a,n,0),a,n);
       *out=vreal(0); return 1;
     }
     if(!strcmp(nm,"string_width")){ *out=vreal(R?gml_text_width(R,S(a,n,0)):(int)strlen(S(a,n,0))*8); return 1; }
@@ -3209,8 +3235,8 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"texture_get_texel_height")){ double th; *out=vreal(texture_info(R,(int)N(a,n,0),NULL,NULL,NULL,&th)?th:0); return 1; }
   }
   if(nm[0]=='w'){
-    if(!strcmp(nm,"window_get_width")){ *out=vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)); return 1; }
-    if(!strcmp(nm,"window_get_height")){ *out=vreal((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)); return 1; }
+    if(!strcmp(nm,"window_get_width")){ int cs=(R&&R->crt_scale>1)?R->crt_scale:1; int b=(R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288); if(cs>1) b=(vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)*cs; *out=vreal(b); return 1; }
+    if(!strcmp(nm,"window_get_height")){ int cs=(R&&R->crt_scale>1)?R->crt_scale:1; int b=(R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216); if(cs>1) b=(vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)*cs; *out=vreal(b); return 1; }
   }
   if(nm[0]=='g'){
     if(!strcmp(nm,"gpu_set_blendenable")){ if(R) R->alphablend=N(a,n,0)>=0.5; *out=vreal(0); return 1; }
@@ -3842,16 +3868,10 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       return vreal(0);
     case BID_SHADER_GET_UNIFORM:{
       int sh=(int)N(a,n,0); const char *un=S(a,n,1);
-      if(R && sh>=0 && sh<R->n_shader_pal && R->shader_pal && R->shader_pal[sh].lut &&
-         !strcmp(un,R->shader_pal[sh].lut_row_uniform)) return vreal(sh*16+1);
-      return vreal(sh>=0? sh*16+15 : -1); }
+      return vreal(gml_shader_get_uniform(R,sh,un)); }
     case BID_SHADER_SET_UNIFORM_F:
     case BID_SHADER_SET_UNIFORM_F_ARRAY:
-      if(R){ int h=(int)N(a,n,0);
-        if(h>=0 && (h%16)==1){ int sh=h/16;
-          if(sh<R->n_shader_pal && R->shader_pal && R->shader_pal[sh].lut) R->shader_pal[sh].lut_row=(float)N(a,n,1);
-        }
-      }
+      if(R) gml_shader_set_uniform_f(R,(int)N(a,n,0),a,n);
       return vreal(0);
     case BID_PART_SYSTEM_DRAWIT:
     case BID_PART_SYSTEM_DRAWIT_EXT:
@@ -3994,11 +4014,17 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
     case BID_WINDOW_MOUSE_SET:
       return vreal(0);
     case BID_DISPLAY_GET_WIDTH:
-    case BID_WINDOW_GET_WIDTH:
       return vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288));
+    case BID_WINDOW_GET_WIDTH:{
+      int cs=(R&&R->crt_scale>1)?R->crt_scale:1;
+      if(cs>1) return vreal((vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)*cs);
+      return vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)); }
     case BID_DISPLAY_GET_HEIGHT:
-    case BID_WINDOW_GET_HEIGHT:
       return vreal((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216));
+    case BID_WINDOW_GET_HEIGHT:{
+      int cs=(R&&R->crt_scale>1)?R->crt_scale:1;
+      if(cs>1) return vreal((vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)*cs);
+      return vreal((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)); }
     case BID_DISPLAY_GET_GUI_WIDTH:
       return vreal(vm->gui_w>0? vm->gui_w : ((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)));
     case BID_DISPLAY_GET_GUI_HEIGHT:
@@ -5452,6 +5478,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(mode>=0.5 ? 1000000.0/fps : fps);
     }
     /* Use renderer dimensions when available, otherwise the GEN8 display dimensions. */
+    if(!strcmp(nm,"window_get_width") && R && R->crt_scale>1)
+      return vreal((vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)*R->crt_scale);
+    if(!strcmp(nm,"window_get_height") && R && R->crt_scale>1)
+      return vreal((vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)*R->crt_scale);
     if(!strcmp(nm,"display_get_width")||!strcmp(nm,"window_get_width"))
       return vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288));
     if(!strcmp(nm,"display_get_height")||!strcmp(nm,"window_get_height"))
@@ -6547,25 +6577,18 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* report palette shaders (template or LUT) as compiled so games keep using them (unknown -> 0) */
   if(!strcmp(nm,"shader_is_compiled")){ GmlRender *R=(GmlRender*)vm->render; int sid=(int)N(a,n,0);
     int ok = R && sid>=0 && sid<R->n_shader_pal && R->shader_pal &&
-             (R->shader_pal[sid].has || R->shader_pal[sid].lut);
+             (R->shader_pal[sid].has || R->shader_pal[sid].lut || R->shader_pal[sid].crt);
     if(getenv("GML_LOG_SHADER")){ static long c=0; if(c++<6){ extern long g_vm_frame;
       fprintf(stderr,"[shader] f%ld shader_is_compiled(%d)=%d\n",g_vm_frame,sid,ok); } }
     return vreal(ok); }
   /* uniform/sampler handles: sh*16+slot. Slot 1 = the LUT row uniform (the only one the software
    * renderer models); anything else gets slot 15, whose sets are accepted and ignored. */
   if(!strcmp(nm,"shader_get_uniform")){ GmlRender *R=(GmlRender*)vm->render;
-    int sh=(int)N(a,n,0); const char *un=S(a,n,1);
-    if(R && sh>=0 && sh<R->n_shader_pal && R->shader_pal && R->shader_pal[sh].lut &&
-       !strcmp(un,R->shader_pal[sh].lut_row_uniform)) return vreal(sh*16+1);
-    return vreal(sh>=0? sh*16+15 : -1); }
+    return vreal(gml_shader_get_uniform(R,(int)N(a,n,0),S(a,n,1))); }
   if(!strcmp(nm,"shader_get_sampler_index")){ int sh=(int)N(a,n,0); return vreal(sh>=0? sh*16+2 : -1); }
   if(!strcmp(nm,"shader_set_uniform_f")||!strcmp(nm,"shader_set_uniform_f_array")){
-    GmlRender *R=(GmlRender*)vm->render; int h=(int)N(a,n,0);
-    if(R && h>=0 && (h%16)==1){ int sh=h/16;
-      if(sh<R->n_shader_pal && R->shader_pal && R->shader_pal[sh].lut){
-        R->shader_pal[sh].lut_row=(float)N(a,n,1);
-        if(getenv("GML_LOG_SHADER")) fprintf(stderr,"[shader] lut[%d] row=%f\n",sh,N(a,n,1));
-      } }
+    GmlRender *R=(GmlRender*)vm->render;
+    gml_shader_set_uniform_f(R,(int)N(a,n,0),a,n);
     return vreal(0); }
   if(!strcmp(nm,"texture_set_stage")){ GmlRender *R=(GmlRender*)vm->render;
     int tex=(int)N(a,n,1);

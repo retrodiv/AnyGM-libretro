@@ -118,9 +118,32 @@ typedef struct {
     char lut_row_uniform[32];   /* uniform float selecting the palette row */
     char lut_sampler[32];       /* sampler2D holding the palette texture */
     float lut_row;              /* current row (normalized v), set by shader_set_uniform_f */
+    /* CRT-geom post-process template (scanline + aperture-mask + gamma + optional radial warp and
+     * corner vignette). Detected structurally from the SHDR GLSL; tunable constants parsed from it
+     * so it stays data-driven (any GameMaker game shipping this shader family gets it). The full-
+     * screen fragment runs per OUTPUT pixel in draw_surface_* when this shader is active. */
+    int   crt;                  /* 1 = recognized CRT-geom fragment */
+    float crt_input_gamma;      /* GLSL inputGamma  (e.g. 2.8) */
+    float crt_output_gamma;     /* GLSL outputGamma (e.g. 3.2) */
+    float crt_overscan_x, crt_overscan_y; /* GLSL overscan (e.g. 0.99,0.99) */
+    float crt_cornersize;       /* GLSL cornersize   (e.g. 0.03) */
+    float crt_cornersmooth;     /* GLSL cornersmooth (e.g. 80.0) */
+    char  crt_sizes_uniform[32];      /* vec4 (src_w,src_h,out_w,out_h) uniform name */
+    char  crt_distortion_uniform[32]; /* float distortion-amount uniform name */
+    char  crt_distort_uniform[32];    /* bool  enable-radial-warp uniform name */
+    char  crt_border_uniform[32];     /* bool  enable-corner-vignette uniform name */
+    float crt_sizes[4];         /* current uniform value: (src_w,src_h,out_w,out_h) */
+    float crt_distortion;       /* current distortion amount */
+    int   crt_distort;          /* current bool: radial warp on */
+    int   crt_border;           /* current bool: corner vignette on */
   } *shader_pal; int n_shader_pal;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
   int       active_shader;   /* shader_set asset id, -1 = none. Reset per frame. */
+  int       crt_scale;       /* virtual-window supersample factor (>=1) for shader-CRT games: the
+                              * game reads window_get_width/height * crt_scale so its window-scaled
+                              * CRT surface renders at that multiple; the GUI/present canvas is sized
+                              * to match. 1 = native (no supersample). Set from the gml_crt_scale core
+                              * option / GML_CRT_SCALE env by the frontend. */
   /* async atlas prefetch pool (opaque; see gml_render.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;

@@ -480,7 +480,8 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
 static const char *const g_special_var_names[]={
   "undefined","room","keyboard_lastkey","room_speed","working_directory","program_directory",
   "fps","view_current","room_persistent","event_type","event_number","mouse_x","mouse_y",
-  "current_time","room_width",
+  "current_time","os_type","os_windows","os_uwp","os_xboxone","os_ps3","os_ps4","os_psvita",
+  "os_macosx","os_linux","os_ios","os_android","os_unknown","os_switch_operating_system","room_width",
   "room_height","instance_count","health","lives","score","async_load","id","object_index",
   "image_number","sprite_width","sprite_height","sprite_xoffset","sprite_yoffset","image_single",
   "x","y","xprevious","yprevious","xstart","ystart","sprite_index","mask_index","image_index",
@@ -527,6 +528,20 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
     static char wd[560]; snprintf(wd,sizeof wd,"%s/",vm->win->content_dir);
     return vstr(wd); }
   if(!strcmp(name,"fps")) return vreal(room_speed_value(vm));
+  /* Report os_windows by default; GML_OS_TYPE overrides the platform value for testing.
+   * Provide OS constants for runtime lookups as well as compiled literal values. */
+  if(!strcmp(name,"os_type")){ const char *e=getenv("GML_OS_TYPE"); return vreal(e?atof(e):0 /*os_windows*/); }
+  if(!strcmp(name,"os_windows")) return vreal(0);
+  if(!strcmp(name,"os_macosx")) return vreal(1);
+  if(!strcmp(name,"os_ios")) return vreal(3);
+  if(!strcmp(name,"os_android")) return vreal(4);
+  if(!strcmp(name,"os_linux")) return vreal(6);
+  if(!strcmp(name,"os_psvita")) return vreal(12);
+  if(!strcmp(name,"os_ps4")) return vreal(14);
+  if(!strcmp(name,"os_xboxone")) return vreal(15);
+  if(!strcmp(name,"os_ps3")) return vreal(16);
+  if(!strcmp(name,"os_uwp")) return vreal(18);
+  if(!strcmp(name,"os_unknown")) return vreal(-1);
   if(!strcmp(name,"view_current")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
   if(!strcmp(name,"room_persistent")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
   if(!strcmp(name,"event_type")) return vreal(vm->event_type);
