@@ -69,6 +69,22 @@ static void builtin_set_game_speed(GmlVM *vm, double fps){
   if(fabs(fps-60.0)<0.000001 && !gml_varmap_get(&vm->globals,"__game_speed_fps")) return;
   *gml_varmap_put(&vm->globals,"__game_speed_fps")=vreal(fps);
 }
+static int presentation_base_size(const GmlVM *vm, const GmlRender *r, int height){
+  if(r && r->aspect_fullwidth){
+    int wide=height?r->aspect_wide_h:r->aspect_wide_w;
+    if(wide>0) return wide;
+  }
+  if(vm && vm->win){
+    int native=height?(int)vm->win->disp_h:(int)vm->win->disp_w;
+    if(native>0) return native;
+  }
+  return height?216:288;
+}
+static int presentation_size(const GmlVM *vm, const GmlRender *r, int height){
+  int configured=r?(height?r->resolution_h:r->resolution_w):0;
+  if(configured>0 && !(r&&r->crt_ff)) return configured;
+  return presentation_base_size(vm,r,height);
+}
 static const char *gm_string_tmp(GmlVal v){
   static char ring[8][64];
   static int ri;
@@ -3214,8 +3230,8 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
         if(o==s || !target_matches_instance(vm,s,o,obj)) continue;
         double d=hypot(o->x-s->x,o->y-s->y); if(d<best) best=d; }
       *out=vreal(best>1e17?-1:best); return 1; }
-    if(!strcmp(nm,"display_get_width")){ *out=vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)); return 1; }
-    if(!strcmp(nm,"display_get_height")){ *out=vreal((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)); return 1; }
+    if(!strcmp(nm,"display_get_width")){ *out=vreal(presentation_size(vm,R,0)); return 1; }
+    if(!strcmp(nm,"display_get_height")){ *out=vreal(presentation_size(vm,R,1)); return 1; }
     if(!strcmp(nm,"display_get_gui_width")){ *out=vreal(vm->gui_w>0? vm->gui_w : ((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288))); return 1; }
     if(!strcmp(nm,"display_get_gui_height")){ *out=vreal(vm->gui_h>0? vm->gui_h : ((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216))); return 1; }
   }
@@ -3316,8 +3332,8 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"texture_get_texel_height")){ double th; *out=vreal(texture_info(R,(int)N(a,n,0),NULL,NULL,NULL,&th)?th:0); return 1; }
   }
   if(nm[0]=='w'){
-    if(!strcmp(nm,"window_get_width")){ int cs=(R&&R->crt_scale>1&&R->crt_shader_present&&R->crt_shader_enable)?R->crt_scale:1; int b=(R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288); if(cs>1) b=(vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)*cs; *out=vreal(b); return 1; }
-    if(!strcmp(nm,"window_get_height")){ int cs=(R&&R->crt_scale>1&&R->crt_shader_present&&R->crt_shader_enable)?R->crt_scale:1; int b=(R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216); if(cs>1) b=(vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)*cs; *out=vreal(b); return 1; }
+    if(!strcmp(nm,"window_get_width")){ *out=vreal(presentation_size(vm,R,0)); return 1; }
+    if(!strcmp(nm,"window_get_height")){ *out=vreal(presentation_size(vm,R,1)); return 1; }
   }
   if(nm[0]=='g'){
     if(!strcmp(nm,"gpu_set_blendenable")){ if(R) R->alphablend=N(a,n,0)>=0.5; *out=vreal(0); return 1; }
@@ -4095,17 +4111,11 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
     case BID_WINDOW_MOUSE_SET:
       return vreal(0);
     case BID_DISPLAY_GET_WIDTH:
-      return vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288));
-    case BID_WINDOW_GET_WIDTH:{
-      int cs=(R&&R->crt_scale>1&&R->crt_shader_present&&R->crt_shader_enable)?R->crt_scale:1;
-      if(cs>1) return vreal((vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)*cs);
-      return vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)); }
+    case BID_WINDOW_GET_WIDTH:
+      return vreal(presentation_size(vm,R,0));
     case BID_DISPLAY_GET_HEIGHT:
-      return vreal((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216));
-    case BID_WINDOW_GET_HEIGHT:{
-      int cs=(R&&R->crt_scale>1&&R->crt_shader_present&&R->crt_shader_enable)?R->crt_scale:1;
-      if(cs>1) return vreal((vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)*cs);
-      return vreal((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)); }
+    case BID_WINDOW_GET_HEIGHT:
+      return vreal(presentation_size(vm,R,1));
     case BID_DISPLAY_GET_GUI_WIDTH:
       return vreal(vm->gui_w>0? vm->gui_w : ((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)));
     case BID_DISPLAY_GET_GUI_HEIGHT:
@@ -5562,15 +5572,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       double fps=builtin_game_speed(vm), mode=N(a,n,0);
       return vreal(mode>=0.5 ? 1000000.0/fps : fps);
     }
-    /* Use renderer dimensions when available, otherwise the GEN8 display dimensions. */
-    if(!strcmp(nm,"window_get_width") && R && R->crt_scale>1 && R->crt_shader_present && R->crt_shader_enable)
-      return vreal((vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)*R->crt_scale);
-    if(!strcmp(nm,"window_get_height") && R && R->crt_scale>1 && R->crt_shader_present && R->crt_shader_enable)
-      return vreal((vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216)*R->crt_scale);
+    /* Display/window size is the selected presentation size from the first startup call onward.
+     * This keeps window-sized surfaces aligned with the frontend framebuffer across live changes. */
     if(!strcmp(nm,"display_get_width")||!strcmp(nm,"window_get_width"))
-      return vreal((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288));
+      return vreal(presentation_size(vm,R,0));
     if(!strcmp(nm,"display_get_height")||!strcmp(nm,"window_get_height"))
-      return vreal((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216));
+      return vreal(presentation_size(vm,R,1));
     if(!strcmp(nm,"display_get_gui_width"))
       return vreal(vm->gui_w>0? vm->gui_w : ((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)));
     if(!strcmp(nm,"display_get_gui_height"))
@@ -6218,8 +6225,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* ---- platform/service stubs: libretro/offline/software-renderer environment ---- */
   if(!strcmp(nm,"application_get_position")){
     GmlRender *R=(GmlRender*)vm->render;
-    double w=R?(double)R->fbw:(double)((vm&&vm->win&&vm->win->disp_w)?vm->win->disp_w:288u);
-    double h=R?(double)R->fbh:(double)((vm&&vm->win&&vm->win->disp_h)?vm->win->disp_h:216u);
+    double w=(double)presentation_size(vm,R,0);
+    double h=(double)presentation_size(vm,R,1);
     return array4(0,0,w,h);
   }
   if(!strcmp(nm,"date_current_datetime")) return vreal(25569.0 + (double)time(NULL)/86400.0);

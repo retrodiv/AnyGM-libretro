@@ -145,18 +145,16 @@ typedef struct {
   } *shader_pal; int n_shader_pal;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
   int       active_shader;   /* shader_set asset id, -1 = none. Reset per frame. */
-  int       crt_scale;       /* virtual-window supersample factor (>=1) for shader-CRT games: the
-                              * game reads window_get_width/height * crt_scale so its window-scaled
-                              * CRT surface renders at that multiple; the GUI/present canvas is sized
-                              * to match. 1 = native (no supersample). Set from the gml_crt_scale core
-                              * option / GML_CRT_SCALE env by the frontend. */
+  int       resolution_w;    /* requested final presentation width, or 0 for the game's base size.
+                              * Window/display getters expose the same value so window-sized render
+                              * surfaces and the frontend framebuffer stay in one coordinate space. */
+  int       resolution_h;    /* requested final presentation height, or 0 for the game's base size. */
   int       crt_shader_enable; /* run recognized embedded CRT post-process shaders (default 1). 0 =
                               * report them not-compiled and never execute them, so games fall back
                               * to their no-shader video modes (pre-emulation behavior). Palette/LUT
                               * shaders are NOT gated: they are integral to those games' rendering. */
   int       crt_shader_present; /* set at init when the SHDR chunk contains a recognized CRT-geom
-                              * fragment. Gates crt_scale's virtual window/supersample so the option
-                              * has zero effect on games without an embedded CRT shader. */
+                              * fragment. */
   /* Individually toggleable components of the recognized CRT-geom fragment (the 5 features intrinsic
    * to that shader family; generic, no game names). Each defaults to reproducing the shader as
    * shipped. crt_curvature/crt_vignette are -1=auto (follow the game's distort/border uniforms),
@@ -167,6 +165,14 @@ typedef struct {
   int       crt_gamma_enable;     /* input/output gamma curve. Off -> linear (no CRT gamma). */
   int       crt_curvature;        /* radial warp (distort uniform): -1 auto / 0 off / 1 on. */
   int       crt_vignette;         /* corner darkening (border uniform): -1 auto / 0 off / 1 on. */
+  int       crt_ff;               /* frontend is fast-forwarding: bypass an explicit presentation
+                                   * resolution and expose the base size consistently to the game.
+                                   * Restored when fast-forward ends. Set per-frame by the frontend. */
+  int       aspect_fullwidth;     /* a forced-wide aspect is active AND this game's compositor should
+                                   * span the whole frame: window_get_width/height report the widened
+                                   * dimensions (below) so the game sizes its CRT surface to full width
+                                   * instead of a centered 4:3 sub-rect. 0 = normal. */
+  int       aspect_wide_w, aspect_wide_h; /* the forced-wide base dimensions. */
   /* async atlas prefetch pool (opaque; see gml_render.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;
