@@ -151,6 +151,12 @@ typedef struct {
   int       crt_shader_present; /* set at init when the SHDR chunk contains a recognized CRT-geom
                               * fragment. Gates crt_scale's virtual window/supersample so the option
                               * has zero effect on games without an embedded CRT shader. */
+  int       crt_mask_enable; /* aperture (dot) mask of the CRT fragment (default 1). The mask is a
+                              * per-raster-pixel chroma pattern; any non-1:1 frontend scaling turns
+                              * it into wide two-tone bands (the original games avoid this by forcing
+                              * their window to integer multiples). 0 = replace it with its spatial
+                              * average (0.9 uniform: same brightness, no chroma) so scaled
+                              * presentations keep the scanline look without banding. */
   /* async atlas prefetch pool (opaque; see gml_render.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;
