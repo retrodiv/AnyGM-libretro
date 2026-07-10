@@ -124,6 +124,8 @@ static GmlcJson *parse_array(JsonParser *p){
     if(*p->p==']'){ p->p++; return a; }
     if(*p->p!=','){ json_err(p,"expected comma"); gmlc_json_free(a); return NULL; }
     p->p++;
+    skip_ws(p);
+    if(p->p<p->end && *p->p==']'){ p->p++; return a; }
   }
 }
 
@@ -150,6 +152,8 @@ static GmlcJson *parse_object(JsonParser *p){
     if(*p->p=='}'){ p->p++; return o; }
     if(*p->p!=','){ json_err(p,"expected comma"); gmlc_json_free(o); return NULL; }
     p->p++;
+    skip_ws(p);
+    if(p->p<p->end && *p->p=='}'){ p->p++; return o; }
   }
 }
 
@@ -278,7 +282,14 @@ int gmlc_json_len(const GmlcJson *v){
 }
 
 const char *gmlc_json_str(const GmlcJson *v, const char *fallback){
-  return (v && v->type==GMLC_JSON_STRING && v->s) ? v->s : fallback;
+  if(v && v->type==GMLC_JSON_STRING && v->s) return v->s;
+  if(v && v->type==GMLC_JSON_OBJECT){
+    const GmlcJson *name=gmlc_json_obj(v,"name");
+    if(name && name->type==GMLC_JSON_STRING && name->s) return name->s;
+    const GmlcJson *path=gmlc_json_obj(v,"path");
+    if(path && path->type==GMLC_JSON_STRING && path->s) return path->s;
+  }
+  return fallback;
 }
 
 double gmlc_json_num(const GmlcJson *v, double fallback){

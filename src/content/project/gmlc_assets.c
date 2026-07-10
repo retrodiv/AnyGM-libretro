@@ -592,7 +592,7 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
   o.id=gmlc_strdup(res->id);
   o.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(yy,"name"),res->name?res->name:""));
   o.sprite_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(yy,"spriteId"),NULL));
-  o.mask_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(yy,"maskSpriteId"),NULL));
+  o.mask_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(yy,"maskSpriteId"),gmlc_json_str(gmlc_json_obj(yy,"spriteMaskId"),NULL)));
   o.parent_id=gmlc_project_find_object(p,gmlc_json_str(gmlc_json_obj(yy,"parentObjectId"),NULL));
   o.visible=gmlc_json_bool(gmlc_json_obj(yy,"visible"),1);
   o.solid=gmlc_json_bool(gmlc_json_obj(yy,"solid"),0);
@@ -603,8 +603,8 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
     for(const GmlcJson *je=events->child;je;je=je->next){
       GmlcObjectEvent ev;
       memset(&ev,0,sizeof(ev));
-      ev.event_type=gmlc_json_int(gmlc_json_obj(je,"eventtype"),0);
-      ev.event_number=gmlc_json_int(gmlc_json_obj(je,"enumb"),0);
+      ev.event_type=gmlc_json_int(gmlc_json_obj(je,"eventtype"),gmlc_json_int(gmlc_json_obj(je,"eventType"),0));
+      ev.event_number=gmlc_json_int(gmlc_json_obj(je,"enumb"),gmlc_json_int(gmlc_json_obj(je,"eventNum"),0));
       const char *event_uuid=gmlc_json_str(gmlc_json_obj(je,"id"),NULL);
       ev.id=gmlc_strdup(event_uuid?event_uuid:"");
       const char *col_uuid=gmlc_json_str(gmlc_json_obj(je,"collisionObjectId"),NULL);
@@ -620,7 +620,7 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
         case 1: snprintf(file,sizeof(file),"Destroy_%d.gml",ev.event_number); break;
         case 2: snprintf(file,sizeof(file),"Alarm_%d.gml",ev.event_number); break;
         case 3: snprintf(file,sizeof(file),"Step_%d.gml",ev.event_number); break;
-        case 4: snprintf(file,sizeof(file),"Collision_%s.gml",event_uuid?event_uuid:""); break;
+        case 4: snprintf(file,sizeof(file),"Collision_%s.gml",(event_uuid&&*event_uuid)?event_uuid:(col_name_id?col_name_id:"")); break;
         case 5: snprintf(file,sizeof(file),"Keyboard_%d.gml",ev.event_number); break;
         case 6: snprintf(file,sizeof(file),"Mouse_%d.gml",ev.event_number); break;
         case 7: snprintf(file,sizeof(file),"Other_%d.gml",ev.event_number); break;

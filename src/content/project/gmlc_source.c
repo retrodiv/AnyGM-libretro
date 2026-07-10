@@ -51,8 +51,9 @@ int gmlc_source_scan_project(const GmlcProject *p, GmlcSourceReport *out, char *
   for(int i=0;i<p->n_scripts;i++){
     char *txt=read_text(p->scripts[i].source_path);
     if(!txt){
-      snprintf(err,errcap,"%s: read failed",p->scripts[i].source_path);
-      return 0;
+      (void)err; (void)errcap;
+      out->missing_files++;
+      continue;
     }
     out->files++;
     scan_text(txt,out);
@@ -65,8 +66,9 @@ int gmlc_source_scan_project(const GmlcProject *p, GmlcSourceReport *out, char *
       if(!path || !*path) continue;
       char *txt=read_text(path);
       if(!txt){
-        snprintf(err,errcap,"%s: read failed",path);
-        return 0;
+        (void)err; (void)errcap;
+        out->missing_files++;
+        continue;
       }
       out->files++;
       scan_text(txt,out);
@@ -77,6 +79,6 @@ int gmlc_source_scan_project(const GmlcProject *p, GmlcSourceReport *out, char *
 }
 
 void gmlc_source_print_report(const GmlcSourceReport *r){
-  printf("source files=%d nonempty=%d macros=%d if=%d loops=%d switch=%d with=%d return/exit=%d call-sites-ish=%d arrays=%d\n",
-    r->files,r->nonempty_files,r->macros,r->ifs,r->loops,r->switches,r->withs,r->returns,r->calls,r->arrays);
+  printf("source files=%d missing=%d nonempty=%d macros=%d if=%d loops=%d switch=%d with=%d return/exit=%d call-sites-ish=%d arrays=%d\n",
+    r->files,r->missing_files,r->nonempty_files,r->macros,r->ifs,r->loops,r->switches,r->withs,r->returns,r->calls,r->arrays);
 }

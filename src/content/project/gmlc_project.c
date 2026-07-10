@@ -137,6 +137,21 @@ static GmlcResKind kind_from_type(const char *type){
   return GMLC_RES_OTHER;
 }
 
+static char *basename_no_ext(const char *path);
+
+static const char *type_from_path(const char *path){
+  if(!path) return "";
+  if(!strncmp(path,"sprites/",8)) return "GMSprite";
+  if(!strncmp(path,"sounds/",7)) return "GMSound";
+  if(!strncmp(path,"scripts/",8)) return "GMScript";
+  if(!strncmp(path,"objects/",8)) return "GMObject";
+  if(!strncmp(path,"rooms/",6)) return "GMRoom";
+  if(!strncmp(path,"shaders/",8)) return "GMShader";
+  if(!strncmp(path,"fonts/",6)) return "GMFont";
+  if(!strncmp(path,"tilesets/",9)) return "GMTileSet";
+  return "";
+}
+
 static int resource_type_counter(GmlcProject *p, GmlcResKind k){
   int n=0;
   for(int i=0;i<p->n_resources;i++) if(p->resources[i].kind==k) n++;
@@ -153,13 +168,15 @@ static int add_resource(GmlcProject *p, const char *id, const char *type, const 
   GmlcResource *r=&p->resources[p->n_resources++];
   memset(r,0,sizeof(*r));
   r->id=gmlc_strdup(id?id:"");
-  r->type_name=gmlc_strdup(type?type:"");
+  const char *actual_type=(type && *type) ? type : type_from_path(path);
+  r->type_name=gmlc_strdup(actual_type);
   r->path=gmlc_strdup(path?path:"");
   if(r->path) gmlc_path_slashes(r->path);
   r->abs_path=gmlc_path_join(p->root_dir,r->path);
-  r->kind=kind_from_type(type);
+  r->kind=kind_from_type(actual_type);
+  r->name=basename_no_ext(r->path?r->path:"");
   r->type_id=resource_type_counter(p,r->kind)-1;
-  return r->id && r->type_name && r->path && r->abs_path;
+  return r->id && r->name && r->type_name && r->path && r->abs_path;
 }
 
 static char *basename_no_ext(const char *path){
@@ -323,9 +340,12 @@ int gmlc_project_load_yyp(GmlcProject *p, const char *path, char *err, size_t er
   }
   for(const GmlcJson *it=resources->child;it;it=it->next){
     const GmlcJson *val=gmlc_json_obj(it,"Value");
+    const GmlcJson *idobj=gmlc_json_obj(it,"id");
     const char *rid=gmlc_json_str(gmlc_json_obj(it,"Key"),gmlc_json_str(gmlc_json_obj(val,"id"),""));
+    if(!*rid) rid=gmlc_json_str(gmlc_json_obj(idobj,"name"),"");
     const char *rtype=gmlc_json_str(gmlc_json_obj(val,"resourceType"),"");
     const char *rpath=gmlc_json_str(gmlc_json_obj(val,"resourcePath"),"");
+    if(!*rpath) rpath=gmlc_json_str(gmlc_json_obj(idobj,"path"),"");
     if(!*rpath) continue;
     if(!add_resource(p,rid,rtype,rpath)){
       gmlc_json_free(root);
@@ -367,31 +387,46 @@ int gmlc_project_load_yyp(GmlcProject *p, const char *path, char *err, size_t er
 
 int gmlc_project_find_object(const GmlcProject *p, const char *id){
   if(!id || !strcmp(id,"00000000-0000-0000-0000-000000000000")) return -1;
-  for(int i=0;i<p->n_objects;i++) if(p->objects[i].id && !strcmp(p->objects[i].id,id)) return i;
+  for(int i=0;i<p->n_objects;i++){
+    if((p->objects[i].id && !strcmp(p->objects[i].id,id)) ||
+       (p->objects[i].name && !strcmp(p->objects[i].name,id))) return i;
+  }
   return -1;
 }
 
 int gmlc_project_find_sprite(const GmlcProject *p, const char *id){
   if(!id || !strcmp(id,"00000000-0000-0000-0000-000000000000")) return -1;
-  for(int i=0;i<p->n_sprites;i++) if(p->sprites[i].id && !strcmp(p->sprites[i].id,id)) return i;
+  for(int i=0;i<p->n_sprites;i++){
+    if((p->sprites[i].id && !strcmp(p->sprites[i].id,id)) ||
+       (p->sprites[i].name && !strcmp(p->sprites[i].name,id))) return i;
+  }
   return -1;
 }
 
 int gmlc_project_find_sound(const GmlcProject *p, const char *id){
   if(!id || !strcmp(id,"00000000-0000-0000-0000-000000000000")) return -1;
-  for(int i=0;i<p->n_sounds;i++) if(p->sounds[i].id && !strcmp(p->sounds[i].id,id)) return i;
+  for(int i=0;i<p->n_sounds;i++){
+    if((p->sounds[i].id && !strcmp(p->sounds[i].id,id)) ||
+       (p->sounds[i].name && !strcmp(p->sounds[i].name,id))) return i;
+  }
   return -1;
 }
 
 int gmlc_project_find_room(const GmlcProject *p, const char *id){
   if(!id || !strcmp(id,"00000000-0000-0000-0000-000000000000")) return -1;
-  for(int i=0;i<p->n_rooms;i++) if(p->rooms[i].id && !strcmp(p->rooms[i].id,id)) return i;
+  for(int i=0;i<p->n_rooms;i++){
+    if((p->rooms[i].id && !strcmp(p->rooms[i].id,id)) ||
+       (p->rooms[i].name && !strcmp(p->rooms[i].name,id))) return i;
+  }
   return -1;
 }
 
 int gmlc_project_find_tileset(const GmlcProject *p, const char *id){
   if(!id || !strcmp(id,"00000000-0000-0000-0000-000000000000")) return -1;
-  for(int i=0;i<p->n_tilesets;i++) if(p->tilesets[i].id && !strcmp(p->tilesets[i].id,id)) return i;
+  for(int i=0;i<p->n_tilesets;i++){
+    if((p->tilesets[i].id && !strcmp(p->tilesets[i].id,id)) ||
+       (p->tilesets[i].name && !strcmp(p->tilesets[i].name,id))) return i;
+  }
   return -1;
 }
 

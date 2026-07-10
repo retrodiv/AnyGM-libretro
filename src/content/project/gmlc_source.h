@@ -7,6 +7,7 @@
 
 typedef struct {
   int files;
+  int missing_files;
   int nonempty_files;
   int macros;
   int ifs, loops, switches, withs, returns, calls, arrays;
