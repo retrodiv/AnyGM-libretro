@@ -66,11 +66,23 @@ typedef struct {
 } GmlcRoomLayer;
 
 typedef struct {
+  int visible;
+  int xview, yview, wview, hview;
+  int xport, yport, wport, hport;
+  int hborder, vborder, hspeed, vspeed;
+  int object_id;
+} GmlcRoomView;
+
+typedef struct {
   char *id;
   char *name;
   int width, height, speed;
+  int physics_world;
+  float physics_gravity_x, physics_gravity_y, physics_scale;
   int view_enabled;
   int view_w, view_h, port_w, port_h;
+  GmlcRoomView views[8];
+  int n_views;
   GmlcRoomInstance *instances;
   int n_instances, cap_instances;
   GmlcRoomLayer *layers;
@@ -92,13 +104,25 @@ typedef struct {
   char *name;
   int sprite_id, mask_id, parent_id;
   int visible, solid, persistent;
+  int physics_enabled, physics_sensor, physics_shape, physics_group;
+  int physics_awake, physics_kinematic;
+  float physics_density, physics_restitution, physics_linear_damping;
+  float physics_angular_damping, physics_friction;
+  struct GmlcPhysicsPoint *physics_points;
+  int n_physics_points;
   GmlcObjectEvent *events;
   int n_events, cap_events;
 } GmlcObject;
 
+typedef struct GmlcPhysicsPoint {
+  float x, y;
+} GmlcPhysicsPoint;
+
 typedef struct {
   char *id;
   char *name;
+  int runtime_id;
+  int tileset_source;
   int width, height, xorig, yorig;
   int bbox_left, bbox_right, bbox_top, bbox_bottom;
   int bbox_mode, col_kind, col_tolerance, sep_masks;
@@ -143,6 +167,7 @@ typedef struct {
   char *id;
   char *name;
   int sprite_id;
+  int sprite_no_export;
   int tile_width, tile_height;
   int border_x, border_y;
   int columns, tile_count;
@@ -183,6 +208,8 @@ void gmlc_project_free(GmlcProject *p);
 int gmlc_project_load_yyp(GmlcProject *p, const char *path, char *err, size_t errcap);
 int gmlc_project_find_object(const GmlcProject *p, const char *id);
 int gmlc_project_find_sprite(const GmlcProject *p, const char *id);
+int gmlc_project_sprite_runtime_id(const GmlcProject *p, int sprite_index);
+int gmlc_project_runtime_sprite_count(const GmlcProject *p);
 int gmlc_project_find_sound(const GmlcProject *p, const char *id);
 int gmlc_project_find_room(const GmlcProject *p, const char *id);
 int gmlc_project_find_tileset(const GmlcProject *p, const char *id);

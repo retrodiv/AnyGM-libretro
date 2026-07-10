@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
 /* Software mixer for AUDO/SOND sounds and FMOD bank voices.
- * WAV PCM is referenced in place. Embedded and grouped OGG data is decoded
+ * WAV PCM is referenced in place. Embedded and grouped OGG/MP3 data is decoded
  * mostly on first playback, with initial warming; external OGG registration decodes immediately.
  */
 #define STB_VORBIS_NO_PUSHDATA_API
@@ -9,6 +9,9 @@
 #include "deps/stb_vorbis.c"
 #undef STB_VORBIS_NO_STDIO
 #undef STB_VORBIS_NO_PUSHDATA_API
+#define MINIMP3_ONLY_MP3
+#define MINIMP3_NO_STDIO
+#include "deps/minimp3_ex.h"
 #include "gml_audio.h"
 #include "gml_fmod.h"
 #include <stdlib.h>
@@ -19,11 +22,13 @@
 static uint32_t rd32(const uint8_t *d, uint32_t o){ return d[o]|d[o+1]<<8|d[o+2]<<16|(uint32_t)d[o+3]<<24; }
 static uint16_t rd16(const uint8_t *d, uint32_t o){ return (uint16_t)(d[o]|d[o+1]<<8); }
 static float    rdf32(const uint8_t *d, uint32_t o){ float f; memcpy(&f,d+o,4); return f; }
+static int      is_mp3_blob(const uint8_t *d, uint32_t len){ return d && len>=10 && mp3dec_detect_buf(d,len)==0; }
 
 typedef struct {
-  const int16_t *pcm; uint32_t nval; int channels; float vol; double gain, pitch; int16_t *own;
+  const int16_t *pcm; uint32_t nval; int channels, sample_rate; float vol; double gain, pitch; int16_t *own;
   const uint8_t *ogg; uint32_t ogg_len; int ogg_failed;
-} GmlSound; /* own!=NULL if malloc'd OGG decode */
+  const uint8_t *mp3; uint32_t mp3_len; int mp3_failed;
+} GmlSound; /* own!=NULL if a compressed blob was decoded to PCM */
 typedef struct { int snd, loop, active, paused, id; double pos, gain, pitch; } GmlVoice;
 
 #define GML_MAX_VOICES 32
@@ -31,7 +36,7 @@ typedef struct { int snd, loop, active, paused, id; double pos, gain, pitch; } G
 #define GML_MAX_AUDIOGROUPS 17
 struct GmlAudio {
   GmlWin *win;
-  GmlSound *snd; int n_snd, n_base_snd;   /* n_base_snd = SOND resources; caster OGG appended after */
+  GmlSound *snd; int n_snd, n_base_snd;   /* n_base_snd = SOND resources; dynamic sounds follow */
   GmlVoice voice[GML_MAX_VOICES];
   int paused;          /* audio_pause_all: freeze all voices (keep position) */
   int next_voice_id;
@@ -80,6 +85,7 @@ GmlAudio *gml_audio_create(GmlWin *win){
     uint32_t p=rd32(d,sc->off+4+i*4);
     a->snd[i].gain=1.0;
     a->snd[i].pitch=1.0;
+    a->snd[i].sample_rate=44100;
     a->snd[i].vol=rdf32(d,p+20);                  /* SOND: vol(+20 f), pitch(+24 f), group(+28 i), audoid(+32 i) */
     int32_t group=(int32_t)rd32(d,p+28);
     int32_t audoid=(int32_t)rd32(d,p+32);
@@ -95,32 +101,40 @@ GmlAudio *gml_audio_create(GmlWin *win){
           uint32_t o=gbase+12; const uint8_t *pcm=NULL; uint32_t plen=0;
           while(o+8<=end){
             uint32_t csz=rd32(gd,o+4);
-            if(memcmp(gd+o,"fmt ",4)==0)      a->snd[i].channels=rd16(gd,o+10);
+            if(memcmp(gd+o,"fmt ",4)==0){
+              a->snd[i].channels=rd16(gd,o+10);
+              a->snd[i].sample_rate=(int)rd32(gd,o+12);
+            }
             else if(memcmp(gd+o,"data",4)==0){ pcm=gd+o+8; plen=csz; }
             o+=8+csz+(csz&1);
           }
           if(pcm){ a->snd[i].pcm=(const int16_t*)pcm; a->snd[i].nval=plen/2; }
         } else if(memcmp(gd+gbase,"OggS",4)==0){
           a->snd[i].ogg=gd+gbase; a->snd[i].ogg_len=gblen;
+        } else if(is_mp3_blob(gd+gbase,gblen)){
+          a->snd[i].mp3=gd+gbase; a->snd[i].mp3_len=gblen;
         }
       }
       continue;
     }
     if(audoid<0){
       /* Resolve the loose filename from SOND +12 beside the data file.
-       * Retain the compressed bytes for lazy OGG decoding. */
+       * Retain the compressed bytes for lazy OGG/MP3 decoding. */
       const char *fn=gml_str_by_ptr(win,rd32(d,p+12));
       size_t fl=fn?strlen(fn):0;
-      if(fn && fl>4 && !strcmp(fn+fl-4,".ogg")){
+      if(fn && fl>4 && (!strcmp(fn+fl-4,".ogg") || !strcmp(fn+fl-4,".mp3"))){
         char path[600];
         snprintf(path,sizeof path,"%s/%s",win->content_dir[0]?win->content_dir:".",fn);
         FILE *f=fopen(path,"rb");
         if(f){ fseek(f,0,SEEK_END); long szf=ftell(f); fseek(f,0,SEEK_SET);
           if(szf>4){ uint8_t *buf=malloc((size_t)szf);
-            if(buf && fread(buf,1,(size_t)szf,f)==(size_t)szf && !memcmp(buf,"OggS",4)){
+            if(buf && fread(buf,1,(size_t)szf,f)==(size_t)szf &&
+               (!memcmp(buf,"OggS",4) || is_mp3_blob(buf,(uint32_t)szf))){
               uint8_t **ne=realloc(a->extbuf,(a->n_ext+1)*sizeof(*ne));
               if(ne){ a->extbuf=ne; a->extbuf[a->n_ext++]=buf;
-                a->snd[i].ogg=buf; a->snd[i].ogg_len=(uint32_t)szf; buf=NULL; } }
+                if(!memcmp(buf,"OggS",4)){ a->snd[i].ogg=buf; a->snd[i].ogg_len=(uint32_t)szf; }
+                else { a->snd[i].mp3=buf; a->snd[i].mp3_len=(uint32_t)szf; }
+                buf=NULL; } }
             free(buf); }
           fclose(f); } }
       continue;
@@ -135,7 +149,10 @@ GmlAudio *gml_audio_create(GmlWin *win){
       uint32_t o=base+12; const uint8_t *pcm=NULL; uint32_t plen=0;
       while(o+8<=end){
         uint32_t csz=rd32(d,o+4);
-        if(memcmp(d+o,"fmt ",4)==0)      a->snd[i].channels=rd16(d,o+10);
+        if(memcmp(d+o,"fmt ",4)==0){
+          a->snd[i].channels=rd16(d,o+10);
+          a->snd[i].sample_rate=(int)rd32(d,o+12);
+        }
         else if(memcmp(d+o,"data",4)==0){ pcm=d+o+8; plen=csz; }
         o+=8+csz+(csz&1);
       }
@@ -145,6 +162,10 @@ GmlAudio *gml_audio_create(GmlWin *win){
     else if(memcmp(d+base,"OggS",4)==0){
       a->snd[i].ogg=d+base;
       a->snd[i].ogg_len=blen;
+    }
+    else if(is_mp3_blob(d+base,blen)){
+      a->snd[i].mp3=d+base;
+      a->snd[i].mp3_len=blen;
     }
   }
   a->n_base_snd=a->n_snd;
@@ -167,7 +188,6 @@ int gml_audio_add_ogg(GmlAudio *a, const uint8_t *ogg, int len){
   if(!a || !ogg || len<=0) return -1;
   int ch=0, rate=0; int16_t *out=NULL;
   int nsamp=stb_vorbis_decode_memory(ogg,len,&ch,&rate,&out);
-  (void)rate;
   if(nsamp<=0 || !out){ free(out); return -1; }
   int slot=-1;                                   /* reuse a freed caster slot */
   for(int i=a->n_base_snd;i<a->n_snd;i++)
@@ -181,6 +201,7 @@ int gml_audio_add_ogg(GmlAudio *a, const uint8_t *ogg, int len){
   a->snd[slot].pcm=out; a->snd[slot].own=out;
   a->snd[slot].nval=(uint32_t)(nsamp*(ch>0?ch:1));
   a->snd[slot].channels=ch>0?ch:1;
+  a->snd[slot].sample_rate=rate>0?rate:44100;
   a->snd[slot].vol=1.0f; a->snd[slot].gain=1.0; a->snd[slot].pitch=1.0;
   if(getenv("GML_LOG_AUDIO")){ int live=0; for(int i=a->n_base_snd;i<a->n_snd;i++) if(a->snd[i].own) live++;
     fprintf(stderr,"[add_ogg] slot=%d n_snd=%d live=%d nval=%u\n",slot,a->n_snd,live,a->snd[slot].nval); }
@@ -200,16 +221,35 @@ void gml_audio_caster_free_all(GmlAudio *a){
 static int sound_ensure_pcm(GmlSound *s){
   if(!s) return 0;
   if(s->pcm) return 1;
-  if(!s->ogg || s->ogg_failed) return 0;
-  int ch=0, rate=0; int16_t *out=NULL;
-  int nsamp=stb_vorbis_decode_memory(s->ogg,(int)s->ogg_len,&ch,&rate,&out);
-  (void)rate;
-  if(nsamp<=0 || !out){ s->ogg_failed=1; return 0; }
-  s->pcm=out;
-  s->nval=(uint32_t)(nsamp*ch);
-  s->channels=ch>0?ch:1;
-  s->own=out;
-  return 1;
+  if(s->ogg && !s->ogg_failed){
+    int ch=0, rate=0; int16_t *out=NULL;
+    int nsamp=stb_vorbis_decode_memory(s->ogg,(int)s->ogg_len,&ch,&rate,&out);
+    if(nsamp<=0 || !out){ s->ogg_failed=1; return 0; }
+    s->pcm=out;
+    s->nval=(uint32_t)(nsamp*ch);
+    s->channels=ch>0?ch:1;
+    s->sample_rate=rate>0?rate:44100;
+    s->own=out;
+    return 1;
+  }
+  if(s->mp3 && !s->mp3_failed){
+    mp3dec_t dec;
+    mp3dec_file_info_t info;
+    memset(&dec,0,sizeof(dec));
+    memset(&info,0,sizeof(info));
+    if(mp3dec_load_buf(&dec,s->mp3,s->mp3_len,&info,NULL,NULL) || !info.buffer || !info.samples){
+      free(info.buffer);
+      s->mp3_failed=1;
+      return 0;
+    }
+    s->pcm=info.buffer;
+    s->nval=info.samples>UINT32_MAX ? UINT32_MAX : (uint32_t)info.samples;
+    s->channels=info.channels>0?info.channels:1;
+    s->sample_rate=info.hz>0?info.hz:44100;
+    s->own=info.buffer;
+    return 1;
+  }
+  return 0;
 }
 int gml_audio_warm_sound(GmlAudio *a, int snd){
   if(!a || snd<0 || snd>=a->n_snd) return 0;
@@ -353,7 +393,8 @@ void gml_audio_sound_set_track_position(GmlAudio *a, int target, double seconds)
   if(seconds<0) seconds=0;
   for(int i=0;i<GML_MAX_VOICES;i++) if(voice_matches(a,&a->voice[i],target)){
     GmlSound *s=&a->snd[a->voice[i].snd]; int ch=s->channels>0?s->channels:1;
-    double pos=seconds*44100.0*ch;
+    int rate=s->sample_rate>0?s->sample_rate:44100;
+    double pos=seconds*(double)rate*ch;
     if(pos<0) pos=0;
     if(pos>(double)s->nval) pos=(double)s->nval;
     a->voice[i].pos=pos;
@@ -363,7 +404,8 @@ double gml_audio_sound_get_track_position(GmlAudio *a, int target){
   if(!a) return 0.0;
   for(int i=0;i<GML_MAX_VOICES;i++) if(voice_matches(a,&a->voice[i],target)){
     GmlSound *s=&a->snd[a->voice[i].snd]; int ch=s->channels>0?s->channels:1;
-    return a->voice[i].pos/(44100.0*ch);
+    int rate=s->sample_rate>0?s->sample_rate:44100;
+    return a->voice[i].pos/((double)rate*ch);
   }
   return 0.0;
 }
@@ -395,6 +437,7 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
     if(!audio_voice_prepare(a,vo)) continue;
     GmlSound *s=&a->snd[vo->snd];
     double vol=s->vol*vo->gain*a->master_gain; int ch=s->channels;
+    double rate_scale=(double)(s->sample_rate>0?s->sample_rate:44100)/44100.0;
     for(int f=0;f<frames;f++){
       if(vo->pos>=s->nval){
         if(vo->loop && s->nval>0) vo->pos=fmod(vo->pos,(double)s->nval);
@@ -408,12 +451,12 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
         uint32_t i0=fr*2, i1=i0+2;
         l=pcm_lerp(s->pcm,s->nval,i0,i1,frac);
         r=pcm_lerp(s->pcm,s->nval,i0+1,i1+1,frac);
-        vo->pos+=2.0*vo->pitch;
+        vo->pos+=2.0*vo->pitch*rate_scale;
       } else {
         uint32_t i0=(uint32_t)floor(vo->pos);
         double frac=vo->pos-(double)i0;
         l=r=pcm_lerp(s->pcm,s->nval,i0,i0+1,frac);
-        vo->pos+=vo->pitch;
+        vo->pos+=vo->pitch*rate_scale;
       }
       mix[f*2]   += (int32_t)lrint(l*vol);
       mix[f*2+1] += (int32_t)lrint(r*vol);

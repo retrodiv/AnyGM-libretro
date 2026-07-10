@@ -79,6 +79,7 @@ void gmlc_project_free(GmlcProject *p){
   free(p->script_order_ids);
   for(int i=0;i<p->n_objects;i++){
     free(p->objects[i].id); free(p->objects[i].name);
+    free(p->objects[i].physics_points);
     for(int e=0;e<p->objects[i].n_events;e++){
       free(p->objects[i].events[e].id);
       free(p->objects[i].events[e].collision_id);
@@ -401,6 +402,18 @@ int gmlc_project_find_sprite(const GmlcProject *p, const char *id){
        (p->sprites[i].name && !strcmp(p->sprites[i].name,id))) return i;
   }
   return -1;
+}
+
+int gmlc_project_sprite_runtime_id(const GmlcProject *p, int sprite_index){
+  if(!p || sprite_index<0 || sprite_index>=p->n_sprites) return -1;
+  return p->sprites[sprite_index].runtime_id;
+}
+
+int gmlc_project_runtime_sprite_count(const GmlcProject *p){
+  int n=0;
+  if(!p) return 0;
+  for(int i=0;i<p->n_sprites;i++) if(p->sprites[i].runtime_id>=0) n++;
+  return n;
 }
 
 int gmlc_project_find_sound(const GmlcProject *p, const char *id){

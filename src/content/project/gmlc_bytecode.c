@@ -55,7 +55,6 @@ typedef struct {
   size_t *continue_sites;
   int n_continue_sites, cap_continue_sites;
   int continue_depth;
-  int temp_id;
   int array_depth;
   int expr_boolish;
   int expr_const;
@@ -253,6 +252,11 @@ static int emit_cmp(Compiler *c, uint8_t cmp){
   return emit_u32(&c->code,((uint32_t)OP_CMP<<24) | ((uint32_t)((DT_VAR<<4)|DT_VAR)<<16) | ((uint32_t)cmp<<8));
 }
 
+static int emit_cmp_typed(Compiler *c, uint8_t cmp, uint8_t type1, uint8_t type2){
+  uint8_t types=(uint8_t)((type2<<4)|(type1&0xF));
+  return emit_u32(&c->code,((uint32_t)OP_CMP<<24) | ((uint32_t)types<<16) | ((uint32_t)cmp<<8));
+}
+
 static int emit_conv(Compiler *c, uint8_t type1, uint8_t type2){
   return emit_u32(&c->code,fw(OP_CONV,(uint8_t)((type2<<4)|(type1&0xF)),0));
 }
@@ -405,7 +409,10 @@ static int add_macro(Compiler *c, const char *name, double value){
 }
 
 static int resolve_asset(Compiler *c, const char *name, double *out){
-  for(int i=0;i<c->project->n_sprites;i++) if(!strcmp(c->project->sprites[i].name,name)){ *out=i; return 1; }
+  for(int i=0;i<c->project->n_sprites;i++) if(!strcmp(c->project->sprites[i].name,name)){
+    *out=gmlc_project_sprite_runtime_id(c->project,i);
+    return 1;
+  }
   for(int i=0;i<c->project->n_sounds;i++) if(!strcmp(c->project->sounds[i].name,name)){ *out=i; return 1; }
   for(int i=0;i<c->project->n_objects;i++) if(!strcmp(c->project->objects[i].name,name)){ *out=i; return 1; }
   for(int i=0;i<c->project->n_rooms;i++) if(!strcmp(c->project->rooms[i].name,name)){ *out=i; return 1; }
@@ -485,6 +492,14 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   if(!strcmp(name,"mb_left")){ *out=1; return 1; }
   if(!strcmp(name,"bm_normal")){ *out=0; return 1; }
   if(!strcmp(name,"bm_subtract")){ *out=3; return 1; }
+  if(!strcmp(name,"pi")){ *out=M_PI; return 1; }
+  if(!strcmp(name,"fa_left") || !strcmp(name,"fa_top")){ *out=0; return 1; }
+  if(!strcmp(name,"fa_center") || !strcmp(name,"fa_middle")){ *out=1; return 1; }
+  if(!strcmp(name,"fa_right") || !strcmp(name,"fa_bottom")){ *out=2; return 1; }
+  if(!strcmp(name,"ps_shape_rectangle") || !strcmp(name,"ps_distr_linear")){ *out=0; return 1; }
+  if(!strcmp(name,"ps_shape_ellipse") || !strcmp(name,"ps_distr_gaussian")){ *out=1; return 1; }
+  if(!strcmp(name,"ps_shape_diamond") || !strcmp(name,"ps_distr_invgaussian")){ *out=2; return 1; }
+  if(!strcmp(name,"ps_shape_line")){ *out=3; return 1; }
   if(!strcmp(name,"vk_space")){ *out=32; return 1; }
   if(!strcmp(name,"vk_enter")){ *out=13; return 1; }
   if(!strcmp(name,"vk_escape")){ *out=27; return 1; }
@@ -1105,6 +1120,7 @@ static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv);
 static int emit_lvalue_read(Compiler *c, LValue *lv);
 static int emit_lvalue_write(Compiler *c, LValue *lv, uint8_t type1);
 static int emit_popz(Compiler *c){ return emit_u32(&c->code,fw(OP_POPZ,DT_VAR,0)); }
+static int emit_popz_typed(Compiler *c, uint8_t type1){ return emit_u32(&c->code,fw(OP_POPZ,type1,0)); }
 static int emit_dup(Compiler *c, uint8_t type1){ return emit_u32(&c->code,fw(OP_DUP,type1,0)); }
 
 static int function_shape_at(const char *src, size_t pos){
@@ -1193,24 +1209,6 @@ static int parse_primary(Compiler *c){
   }
   if(c->lex.tok.kind==TOK_ID){
     char name[128]; snprintf(name,sizeof(name),"%s",c->lex.tok.text); lx_next(&c->lex);
-    if(tok_is(c,"=")){
-      LValue lv;
-      if(!parse_lvalue_from_name(c,name,&lv)) return 0;
-      lx_next(&c->lex);
-      if(!parse_expr(c)){ free(lv.index_src); return 0; }
-      if(lv.is_array || lv.is_stacktop || lv.accessor){
-        free(lv.index_src);
-        c->unsupported=1;
-        snprintf(c->lex.err,sizeof(c->lex.err),"unsupported assignment expression target");
-        return 0;
-      }
-      int ok=emit_dup(c,DT_VAR) && emit_lvalue_write(c,&lv,DT_VAR);
-      free(lv.index_src);
-      if(!ok) return 0;
-      expr_not_const(c);
-      c->expr_boolish=0;
-      goto postfix_calls;
-    }
     if(eat(c,"(")){
       if(!strcmp(name,"ord") && c->lex.tok.kind==TOK_STR){
         unsigned char ch=(unsigned char)c->lex.tok.text[0];
@@ -1235,22 +1233,6 @@ static int parse_primary(Compiler *c){
     if(tok_is(c,".") || tok_is(c,"[")){
       LValue lv;
       if(!parse_lvalue_from_name(c,name,&lv)) return 0;
-      if(tok_is(c,"=")){
-        lx_next(&c->lex);
-        if(!parse_expr(c)){ free(lv.index_src); return 0; }
-        if(lv.is_array || lv.is_stacktop || lv.accessor){
-          free(lv.index_src);
-          c->unsupported=1;
-          snprintf(c->lex.err,sizeof(c->lex.err),"unsupported assignment expression target");
-          return 0;
-        }
-        int ok=emit_dup(c,DT_VAR) && emit_lvalue_write(c,&lv,DT_VAR);
-        free(lv.index_src);
-        if(!ok) return 0;
-        expr_not_const(c);
-        c->expr_boolish=0;
-        goto postfix_calls;
-      }
       int ok=emit_lvalue_read(c,&lv);
       free(lv.index_src);
       if(!ok) return 0;
@@ -1260,6 +1242,10 @@ static int parse_primary(Compiler *c){
     }
     double cv=0;
     if(resolve_const(c,name,&cv)){
+      if(!strcmp(name,"pi")){
+        if(!emit_const_number(c,cv)) return 0;
+        goto postfix_calls;
+      }
       if(!emit_push_real(c,cv)) return 0;
       expr_not_const(c);
       c->expr_boolish=0;
@@ -1408,7 +1394,7 @@ static int parse_cmp_expr(Compiler *c){
 static int parse_eq(Compiler *c){
   if(!parse_cmp_expr(c)) return 0;
   int did=0;
-  while(tok_is(c,"==")||tok_is(c,"!=")){
+  while(tok_is(c,"=")||tok_is(c,"==")||tok_is(c,"!=")){
     int ne=tok_is(c,"!="); lx_next(&c->lex);
     if(!parse_cmp_expr(c)) return 0;
     emit_cmp(c,ne?CMP_NEQ:CMP_EQ);
@@ -1716,6 +1702,30 @@ static int parse_while(Compiler *c){
   return 1;
 }
 
+static int parse_do_until(Compiler *c){
+  lx_next(&c->lex);
+  size_t start=c->code.len;
+  int break_mark=c->n_break_sites;
+  int continue_mark=c->n_continue_sites;
+  c->continue_depth++;
+  if(!parse_block_or_stmt(c)) return 0;
+  c->continue_depth--;
+  size_t condition=c->code.len;
+  patch_continues_from(c,continue_mark,condition);
+  if(!is_id(c,"until")){
+    c->unsupported=1;
+    snprintf(c->lex.err,sizeof(c->lex.err),"expected until after do body");
+    return 0;
+  }
+  lx_next(&c->lex);
+  if(!parse_expr(c) || !emit_condition_bool(c)) return 0;
+  size_t bf=emit_branch(c,OP_BF);
+  patch_branch(c,bf,start);
+  eat(c,";");
+  patch_breaks_from(c,break_mark,c->code.len);
+  return 1;
+}
+
 static int parse_for(Compiler *c){
   lx_next(&c->lex);
   if(!need(c,"(")) return 0;
@@ -1750,30 +1760,30 @@ static int parse_for(Compiler *c){
 
 static int parse_repeat(Compiler *c){
   lx_next(&c->lex);
-  char tmpname[64];
-  snprintf(tmpname,sizeof(tmpname),"__gmlc_repeat_%d",c->temp_id++);
-  if(!add_local(c,tmpname)) return 0;
-  if(!parse_expr(c)) return 0;
-  if(!emit_pop_var(c,IT_LOCAL,tmpname,0xA0,DT_VAR)) return 0;
-  size_t loop_start=c->code.len;
-  if(!emit_push_var(c,IT_LOCAL,tmpname,0xA0) ||
-     !emit_push_real(c,0) ||
-     !emit_cmp(c,CMP_LTE)) return 0;
+  if(!parse_expr(c) ||
+     !emit_conv(c,DT_VAR,DT_INT32) ||
+     !emit_dup(c,DT_INT32) ||
+     !emit_push_i32_full(c,0) ||
+     !emit_cmp_typed(c,CMP_LTE,DT_INT32,DT_INT32)) return 0;
   size_t done=emit_branch(c,OP_BT);
-  if(!emit_push_var(c,IT_LOCAL,tmpname,0xA0) ||
-     !emit_push_real(c,1) ||
-     !emit_binary(c,OP_SUB) ||
-     !emit_pop_var(c,IT_LOCAL,tmpname,0xA0,DT_VAR)) return 0;
+  size_t loop_start=c->code.len;
   int break_mark=c->n_break_sites;
   int continue_mark=c->n_continue_sites;
   c->continue_depth++;
   if(!parse_block_or_stmt(c)) return 0;
   c->continue_depth--;
-  patch_continues_from(c,continue_mark,loop_start);
-  size_t b=emit_branch(c,OP_B);
-  patch_branch(c,b,loop_start);
-  patch_branch(c,done,c->code.len);
-  patch_breaks_from(c,break_mark,c->code.len);
+  size_t step=c->code.len;
+  patch_continues_from(c,continue_mark,step);
+  if(!emit_push_i32_full(c,1) ||
+     !emit_binary_typed(c,OP_SUB,DT_INT32,DT_INT32) ||
+     !emit_dup(c,DT_INT32) ||
+     !emit_conv(c,DT_INT32,DT_BOOL)) return 0;
+  size_t again=emit_branch(c,OP_BT);
+  patch_branch(c,again,loop_start);
+  size_t cleanup=c->code.len;
+  if(!emit_popz_typed(c,DT_INT32)) return 0;
+  patch_branch(c,done,cleanup);
+  patch_breaks_from(c,break_mark,cleanup);
   return 1;
 }
 
@@ -1975,6 +1985,7 @@ static int parse_statement(Compiler *c){
   if(is_id(c,"var")) return parse_var_decl(c);
   if(is_id(c,"if")) return parse_if(c);
   if(is_id(c,"while")) return parse_while(c);
+  if(is_id(c,"do")) return parse_do_until(c);
   if(is_id(c,"for")) return parse_for(c);
   if(is_id(c,"repeat")) return parse_repeat(c);
   if(is_id(c,"switch")) return parse_switch(c);

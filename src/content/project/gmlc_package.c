@@ -705,13 +705,14 @@ static int write_sprite_masks(Pkg *pkg, const GmlcSprite *sp, char *err, size_t 
 
 static int write_sprt(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   size_t s=chunk_begin(pkg,"SPRT");
-  uint32_t n=(uint32_t)p->n_sprites;
+  uint32_t n=(uint32_t)gmlc_project_runtime_sprite_count(p);
   wu32(&pkg->b,n);
   size_t table=pkg->b.len;
   zfill(&pkg->b,(size_t)n*4);
-  for(uint32_t i=0;i<n;i++){
+  for(int i=0;i<p->n_sprites;i++){
     const GmlcSprite *sp=&p->sprites[i];
-    patch32(&pkg->b,table+i*4,(uint32_t)pkg->b.len);
+    if(sp->runtime_id<0) continue;
+    patch32(&pkg->b,table+(size_t)sp->runtime_id*4,(uint32_t)pkg->b.len);
     int sid=intern(pkg,sp->name);
     wstrptr(pkg,sid);
     wu32(&pkg->b,(uint32_t)sp->width);
@@ -736,7 +737,7 @@ static int write_sprt(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
     for(int f=0;f<sp->n_frames;f++){
       uint32_t pos=(uint32_t)pkg->b.len;
       wu32(&pkg->b,0);
-      add_frame_patch(pkg,pos,global_frame_index(p,(int)i,f));
+      add_frame_patch(pkg,pos,global_frame_index(p,i,f));
     }
     if(!write_sprite_masks(pkg,sp,err,errcap)) return 0;
   }
@@ -1244,6 +1245,14 @@ static int room_code_count(const GmlcProject *p){
   return n;
 }
 
+static int room_creation_code_index(const GmlcProject *p, int room_index){
+  if(!p || room_index<0 || room_index>=p->n_rooms ||
+     !room_has_creation_code(&p->rooms[room_index])) return -1;
+  int idx=0;
+  for(int i=0;i<room_index;i++) if(room_has_creation_code(&p->rooms[i])) idx++;
+  return idx;
+}
+
 static int script_code_index(const GmlcProject *p, int script_index){
   return room_code_count(p) + script_index;
 }
@@ -1278,6 +1287,42 @@ static int room_instance_creation_code_index(const GmlcProject *p, int room_inde
   for(int ii=0;ii<inst_index;ii++)
     if(target->instances[ii].creation_code_path && *target->instances[ii].creation_code_path) idx++;
   return idx;
+}
+
+static int room_instance_index_by_id(const GmlcRoom *r, uint32_t instance_id){
+  for(int i=0;i<r->n_instances;i++){
+    if((uint32_t)r->instances[i].instance_id==instance_id) return i;
+  }
+  return -1;
+}
+
+static int room_layer_contains_instance(const GmlcRoom *r, int inst_index){
+  uint32_t instance_id=(uint32_t)r->instances[inst_index].instance_id;
+  for(int li=0;li<r->n_layers;li++){
+    const GmlcRoomLayer *ly=&r->layers[li];
+    for(int k=0;k<ly->n_instance_ids;k++) if(ly->instance_ids[k]==instance_id) return 1;
+  }
+  return 0;
+}
+
+static int room_instance_creation_ordinal(const GmlcRoom *r, int target_index){
+  int ordinal=0;
+  for(int li=r->n_layers-1;li>=0;li--){
+    const GmlcRoomLayer *ly=&r->layers[li];
+    for(int k=0;k<ly->n_instance_ids;k++){
+      int ii=room_instance_index_by_id(r,ly->instance_ids[k]);
+      if(ii<0 || !r->instances[ii].creation_code_path || !*r->instances[ii].creation_code_path) continue;
+      if(ii==target_index) return ordinal;
+      ordinal++;
+    }
+  }
+  for(int ii=0;ii<r->n_instances;ii++){
+    if(room_layer_contains_instance(r,ii) ||
+       !r->instances[ii].creation_code_path || !*r->instances[ii].creation_code_path) continue;
+    if(ii==target_index) return ordinal;
+    ordinal++;
+  }
+  return -1;
 }
 
 static void id_token(char *dst, size_t cap, const char *src){
@@ -1805,6 +1850,7 @@ static int write_font(Pkg *pkg, const GmlcProject *p){
       wu16(&pkg->b,(uint16_t)gl->h);
       wu16(&pkg->b,(uint16_t)gl->shift);
       wu16(&pkg->b,(uint16_t)gl->offset);
+      wu16(&pkg->b,0); /* empty GMS2 glyph-kerning list */
     }
   }
   for(uint16_t i=0;i<0x80;i++) wu16(&pkg->b,i);
@@ -2051,25 +2097,29 @@ static int write_objt(Pkg *pkg, const GmlcProject *p){
     int sid=intern(pkg,o->name);
     if(sid<0) return 0;
     wstrptr(pkg,sid);
-    wi32(&pkg->b,o->sprite_id);
+    wi32(&pkg->b,gmlc_project_sprite_runtime_id(p,o->sprite_id));
     wu32(&pkg->b,(uint32_t)(o->visible?1:0));
     wu32(&pkg->b,(uint32_t)(o->solid?1:0));
     wi32(&pkg->b,0);
     wu32(&pkg->b,(uint32_t)(o->persistent?1:0));
     wi32(&pkg->b,o->parent_id>=0?o->parent_id:-100);
-    wi32(&pkg->b,o->mask_id);
-    wu32(&pkg->b,0);
-    wu32(&pkg->b,0);
-    wu32(&pkg->b,1);
-    wf32(&pkg->b,0.5f);
-    wf32(&pkg->b,0.1f);
-    wu32(&pkg->b,0);
-    wf32(&pkg->b,0.1f);
-    wf32(&pkg->b,0.1f);
-    wi32(&pkg->b,0);
-    wf32(&pkg->b,0.2f);
-    wu32(&pkg->b,1);
-    wu32(&pkg->b,0);
+    wi32(&pkg->b,gmlc_project_sprite_runtime_id(p,o->mask_id));
+    wu32(&pkg->b,(uint32_t)(o->physics_enabled?1:0));
+    wu32(&pkg->b,(uint32_t)(o->physics_sensor?1:0));
+    wi32(&pkg->b,o->physics_shape);
+    wf32(&pkg->b,o->physics_density);
+    wf32(&pkg->b,o->physics_restitution);
+    wi32(&pkg->b,o->physics_group);
+    wf32(&pkg->b,o->physics_linear_damping);
+    wf32(&pkg->b,o->physics_angular_damping);
+    wu32(&pkg->b,(uint32_t)o->n_physics_points);
+    wf32(&pkg->b,o->physics_friction);
+    wu32(&pkg->b,(uint32_t)(o->physics_awake?1:0));
+    wu32(&pkg->b,(uint32_t)(o->physics_kinematic?1:0));
+    for(int pi=0;pi<o->n_physics_points;pi++){
+      wf32(&pkg->b,o->physics_points[pi].x);
+      wf32(&pkg->b,o->physics_points[pi].y);
+    }
     if(!write_objt_events(pkg,p,(int)i,empty_sid)) return 0;
   }
   chunk_end(pkg,s);
@@ -2083,17 +2133,17 @@ static int write_room_views(Pkg *pkg, const GmlcRoom *r, uint32_t *out_ptr){
   zfill(&pkg->b,8*4);
   for(int i=0;i<8;i++){
     patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
-    int visible=(i==0 && r->view_enabled)?1:0;
-    wu32(&pkg->b,(uint32_t)visible);
-    wi32(&pkg->b,0); wi32(&pkg->b,0);
-    wi32(&pkg->b,r->view_w>0?r->view_w:r->width);
-    wi32(&pkg->b,r->view_h>0?r->view_h:r->height);
-    wi32(&pkg->b,0); wi32(&pkg->b,0);
-    wi32(&pkg->b,r->port_w>0?r->port_w:r->width);
-    wi32(&pkg->b,r->port_h>0?r->port_h:r->height);
-    wi32(&pkg->b,32); wi32(&pkg->b,32);
-    wi32(&pkg->b,-1); wi32(&pkg->b,-1);
-    wi32(&pkg->b,-1);
+    const GmlcRoomView *view=&r->views[i];
+    wu32(&pkg->b,(uint32_t)(view->visible?1:0));
+    wi32(&pkg->b,view->xview); wi32(&pkg->b,view->yview);
+    wi32(&pkg->b,view->wview>0?view->wview:r->width);
+    wi32(&pkg->b,view->hview>0?view->hview:r->height);
+    wi32(&pkg->b,view->xport); wi32(&pkg->b,view->yport);
+    wi32(&pkg->b,view->wport>0?view->wport:r->width);
+    wi32(&pkg->b,view->hport>0?view->hport:r->height);
+    wi32(&pkg->b,view->hborder); wi32(&pkg->b,view->vborder);
+    wi32(&pkg->b,view->hspeed); wi32(&pkg->b,view->vspeed);
+    wi32(&pkg->b,view->object_id);
   }
   return 1;
 }
@@ -2124,58 +2174,15 @@ static int write_room_empty_list(Pkg *pkg, uint32_t *out_ptr){
   return wu32(&pkg->b,0);
 }
 
-static int count_room_tile_cells(const GmlcProject *p, const GmlcRoom *r){
-  int n=0;
-  for(int i=0;i<r->n_layers;i++){
-    const GmlcRoomLayer *ly=&r->layers[i];
-    if(ly->type!=4 || !ly->tile_data || ly->tile_cols<=0 || ly->tile_rows<=0) continue;
-    if(ly->tile_tileset_id<0 || ly->tile_tileset_id>=p->n_tilesets) continue;
-    int cells=ly->tile_cols*ly->tile_rows;
-    for(int c=0;c<cells;c++) if((ly->tile_data[c]&0x7FFFFu)!=0) n++;
-  }
-  return n;
-}
-
 static int write_room_tiles(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, uint32_t *out_ptr){
-  int n=count_room_tile_cells(p,r);
-  *out_ptr=(uint32_t)pkg->b.len;
-  wu32(&pkg->b,(uint32_t)n);
-  size_t table=pkg->b.len;
-  zfill(&pkg->b,(size_t)n*4);
-  int ti=0;
-  for(int li=0;li<r->n_layers;li++){
-    const GmlcRoomLayer *ly=&r->layers[li];
-    if(ly->type!=4 || !ly->tile_data || ly->tile_cols<=0 || ly->tile_rows<=0) continue;
-    if(ly->tile_tileset_id<0 || ly->tile_tileset_id>=p->n_tilesets) continue;
-    const GmlcTileset *ts=&p->tilesets[ly->tile_tileset_id];
-    int tw=ts->tile_width>0?ts->tile_width:16;
-    int th=ts->tile_height>0?ts->tile_height:16;
-    int cols=ts->columns>0?ts->columns:1;
-    int pitch_x=tw + 2*ts->border_x;
-    int pitch_y=th + 2*ts->border_y;
-    if(pitch_x<=0) pitch_x=tw;
-    if(pitch_y<=0) pitch_y=th;
-    for(int y=0;y<ly->tile_rows;y++) for(int x=0;x<ly->tile_cols;x++){
-      uint32_t datum=ly->tile_data[(size_t)y*(size_t)ly->tile_cols+(size_t)x];
-      int idx=(int)(datum&0x7FFFFu);
-      if(idx<=0) continue;
-      int src_idx=idx-1;
-      patch32(&pkg->b,table+(size_t)ti*4,(uint32_t)pkg->b.len);
-      ti++;
-      wi32(&pkg->b,(int)ly->x + x*tw);
-      wi32(&pkg->b,(int)ly->y + y*th);
-      wi32(&pkg->b,ly->tile_tileset_id);
-      wi32(&pkg->b,(src_idx%cols)*pitch_x + ts->border_x);
-      wi32(&pkg->b,(src_idx/cols)*pitch_y + ts->border_y);
-      wi32(&pkg->b,tw);
-      wi32(&pkg->b,th);
-      wi32(&pkg->b,ly->depth);
-    }
-  }
-  return 1;
+  (void)p;
+  (void)r;
+  /* GMS2 tilemaps live in the type-4 layer payload. The legacy room tile list uses a
+   * different 48-byte sprite-tile record and must remain empty for this package shape. */
+  return write_room_empty_list(pkg,out_ptr);
 }
 
-static int write_room_layer_list(Pkg *pkg, const GmlcRoom *r, uint32_t *out_ptr){
+static int write_room_layer_list(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, uint32_t *out_ptr){
   *out_ptr=(uint32_t)pkg->b.len;
   wu32(&pkg->b,(uint32_t)r->n_layers);
   size_t table=pkg->b.len;
@@ -2196,7 +2203,7 @@ static int write_room_layer_list(Pkg *pkg, const GmlcRoom *r, uint32_t *out_ptr)
     if(ly->type==1){
       wu32(&pkg->b,(uint32_t)(ly->visible?1:0));
       wu32(&pkg->b,0);
-      wi32(&pkg->b,ly->bg_sprite_id);
+      wi32(&pkg->b,gmlc_project_sprite_runtime_id(p,ly->bg_sprite_id));
       wu32(&pkg->b,(uint32_t)(ly->bg_htiled?1:0));
       wu32(&pkg->b,(uint32_t)(ly->bg_vtiled?1:0));
       wu32(&pkg->b,(uint32_t)(ly->bg_stretch?1:0));
@@ -2221,7 +2228,7 @@ static int write_room_layer_list(Pkg *pkg, const GmlcRoom *r, uint32_t *out_ptr)
         patch32(&pkg->b,stable+(size_t)a*4,(uint32_t)pkg->b.len);
         int asid=intern(pkg,ra->name?ra->name:"");
         wstrptr(pkg,asid);
-        wi32(&pkg->b,ra->sprite_id);
+        wi32(&pkg->b,gmlc_project_sprite_runtime_id(p,ra->sprite_id));
         wi32(&pkg->b,ra->x);
         wi32(&pkg->b,ra->y);
         wf32(&pkg->b,ra->sx==0.0f?1.0f:ra->sx);
@@ -2254,22 +2261,24 @@ static int write_room(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, int roo
   wi32(&pkg->b,0);
   wu32(&pkg->b,0xFF000000u);
   wu32(&pkg->b,1);
-  wi32(&pkg->b,0);
+  wi32(&pkg->b,room_creation_code_index(p,room_index));
   wi32(&pkg->b,0);
   size_t bg_pos=pkg->b.len; wu32(&pkg->b,0);
   size_t view_pos=pkg->b.len; wu32(&pkg->b,0);
   size_t obj_pos=pkg->b.len; wu32(&pkg->b,0);
   size_t tile_pos=pkg->b.len; wu32(&pkg->b,0);
-  wu32(&pkg->b,1);
-  zfill(&pkg->b,24);
-  wf32(&pkg->b,0.1f);
+  wu32(&pkg->b,(uint32_t)(r->physics_world?1:0));
+  zfill(&pkg->b,16);
+  wf32(&pkg->b,r->physics_gravity_x);
+  wf32(&pkg->b,r->physics_gravity_y);
+  wf32(&pkg->b,r->physics_scale>0.0f?r->physics_scale:0.1f);
   size_t layer_pos=pkg->b.len; wu32(&pkg->b,0);
   uint32_t bg=0, view=0, obj=0, tile=0, layers=0;
   write_room_empty_list(pkg,&bg);
   write_room_views(pkg,r,&view);
   write_room_instances(pkg,p,room_index,r,&obj);
   write_room_tiles(pkg,p,r,&tile);
-  write_room_layer_list(pkg,r,&layers);
+  write_room_layer_list(pkg,p,r,&layers);
   patch32(&pkg->b,bg_pos,bg);
   patch32(&pkg->b,view_pos,view);
   patch32(&pkg->b,obj_pos,obj);
@@ -2606,8 +2615,8 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   int ok=0;
   for(int i=0;i<p->n_rooms;i++){
     if(!room_has_creation_code(&p->rooms[i])) continue;
-    char name[64];
-    snprintf(name,sizeof(name),"gml_RoomCC_%d",i);
+    char name[256];
+    snprintf(name,sizeof(name),"gml_Room_%s_Create",p->rooms[i].name?p->rooms[i].name:"");
     int sid=intern(pkg,name);
     if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,sid,p->rooms[i].creation_code_path,err,errcap)) goto done;
   }
@@ -2639,8 +2648,10 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
     for(int ii=0;ii<r->n_instances;ii++){
       const GmlcRoomInstance *in=&r->instances[ii];
       if(!in->creation_code_path || !*in->creation_code_path) continue;
-      char name[96];
-      snprintf(name,sizeof(name),"gml_RoomInstanceCC_%d_%d",ri,ii);
+      int creation_ordinal=room_instance_creation_ordinal(r,ii);
+      if(creation_ordinal<0) creation_ordinal=ii;
+      char name[256];
+      snprintf(name,sizeof(name),"gml_RoomCC_%s_%d_Create",r->name?r->name:"",creation_ordinal);
       int sid=intern(pkg,name);
       if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,sid,in->creation_code_path,err,errcap)) goto done;
     }

@@ -113,6 +113,13 @@ static char *join_source_path(const GmlcProject *p, const char *dir, const char 
   return gmlc_path_join(dir,path?path:"");
 }
 
+static int source_path_exists(const char *path){
+  FILE *f=path ? fopen(path,"rb") : NULL;
+  if(!f) return 0;
+  fclose(f);
+  return 1;
+}
+
 #define DEFINE_APPLY_RESOURCE_ORDER(fn, Type, field, count_field, label) \
 static int fn(GmlcProject *p, char *err, size_t errcap){ \
   int count=p->count_field; \
@@ -338,6 +345,10 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
               free_room_layer_fields(&out);
               return 0;
             }
+            if(!source_path_exists(in.creation_code_path)){
+              free(in.creation_code_path);
+              in.creation_code_path=NULL;
+            }
           }
           if(!layer_add_instance_id(&out,(uint32_t)in.instance_id) || !room_add_instance(r,&in)){
             snprintf(err,errcap,"out of memory while loading room instances");
@@ -487,6 +498,8 @@ static int parse_tileset(GmlcProject *p, const GmlcResource *res, const GmlcJson
   t.id=gmlc_strdup(res->id);
   t.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(yy,"name"),res->name?res->name:""));
   t.sprite_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(yy,"spriteId"),NULL));
+  t.sprite_no_export=gmlc_json_bool(gmlc_json_obj(yy,"sprite_no_export"),
+                                    gmlc_json_bool(gmlc_json_obj(yy,"spriteNoExport"),0));
   t.tile_width=gmlc_json_int(gmlc_json_obj(yy,"tilewidth"),gmlc_json_int(gmlc_json_obj(yy,"tileWidth"),16));
   t.tile_height=gmlc_json_int(gmlc_json_obj(yy,"tileheight"),gmlc_json_int(gmlc_json_obj(yy,"tileHeight"),16));
   t.border_x=gmlc_json_int(gmlc_json_obj(yy,"out_tilehborder"),gmlc_json_int(gmlc_json_obj(yy,"tilehborder"),0));
@@ -610,6 +623,38 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
   o.visible=gmlc_json_bool(gmlc_json_obj(yy,"visible"),1);
   o.solid=gmlc_json_bool(gmlc_json_obj(yy,"solid"),0);
   o.persistent=gmlc_json_bool(gmlc_json_obj(yy,"persistent"),0);
+  o.physics_enabled=gmlc_json_bool(gmlc_json_obj(yy,"physicsObject"),0);
+  o.physics_sensor=gmlc_json_bool(gmlc_json_obj(yy,"physicsSensor"),0);
+  o.physics_shape=gmlc_json_int(gmlc_json_obj(yy,"physicsShape"),1);
+  o.physics_density=(float)gmlc_json_num(gmlc_json_obj(yy,"physicsDensity"),0.5);
+  o.physics_restitution=(float)gmlc_json_num(gmlc_json_obj(yy,"physicsRestitution"),0.1);
+  o.physics_group=gmlc_json_int(gmlc_json_obj(yy,"physicsGroup"),0);
+  o.physics_linear_damping=(float)gmlc_json_num(gmlc_json_obj(yy,"physicsLinearDamping"),0.1);
+  o.physics_angular_damping=(float)gmlc_json_num(gmlc_json_obj(yy,"physicsAngularDamping"),0.1);
+  o.physics_friction=(float)gmlc_json_num(gmlc_json_obj(yy,"physicsFriction"),0.2);
+  o.physics_awake=gmlc_json_bool(gmlc_json_obj(yy,"physicsStartAwake"),1);
+  o.physics_kinematic=gmlc_json_bool(gmlc_json_obj(yy,"physicsKinematic"),0);
+  const GmlcJson *physics_points=gmlc_json_obj(yy,"physicsShapePoints");
+  int n_physics_points=gmlc_json_len(physics_points);
+  if(n_physics_points<0 || n_physics_points>128){
+    snprintf(err,errcap,"unsupported physics shape point count for object resource");
+    free(o.id); free(o.name);
+    return 0;
+  }
+  if(n_physics_points>0){
+    o.physics_points=(GmlcPhysicsPoint*)calloc((size_t)n_physics_points,sizeof(*o.physics_points));
+    if(!o.physics_points){
+      snprintf(err,errcap,"out of memory while loading object physics shape");
+      free(o.id); free(o.name);
+      return 0;
+    }
+    int pi=0;
+    for(const GmlcJson *jp=physics_points->child;jp && pi<n_physics_points;jp=jp->next,pi++){
+      o.physics_points[pi].x=(float)gmlc_json_num(gmlc_json_obj(jp,"x"),0.0);
+      o.physics_points[pi].y=(float)gmlc_json_num(gmlc_json_obj(jp,"y"),0.0);
+    }
+    o.n_physics_points=n_physics_points;
+  }
   const GmlcJson *events=gmlc_json_obj(yy,"eventList");
   if(events && events->type==GMLC_JSON_ARRAY){
     char *dir=gmlc_path_dirname(res->abs_path);
@@ -650,7 +695,7 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
       ev.source_path=gmlc_path_join(dir,file);
       if(!object_add_event(&o,&ev)){
         snprintf(err,errcap,"out of memory while loading object events");
-        free(o.id); free(o.name); free(ev.id); free(ev.collision_id); free(ev.source_path); free(o.events);
+        free(o.id); free(o.name); free(o.physics_points); free(ev.id); free(ev.collision_id); free(ev.source_path); free(o.events);
         free(dir);
         return 0;
       }
@@ -659,7 +704,7 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
   }
   if(!o.id || !o.name || !add_object(p,&o)){
     snprintf(err,errcap,"out of memory while loading object resource");
-    free(o.id); free(o.name); free(o.events);
+    free(o.id); free(o.name); free(o.physics_points); free(o.events);
     return 0;
   }
   return 1;
@@ -674,9 +719,43 @@ static int parse_room(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
   r.width=gmlc_json_int(gmlc_json_obj(settings,"Width"),640);
   r.height=gmlc_json_int(gmlc_json_obj(settings,"Height"),480);
   r.speed=60;
+  const GmlcJson *physics_settings=gmlc_json_obj(yy,"physicsSettings");
+  r.physics_world=gmlc_json_bool(gmlc_json_obj(physics_settings,"PhysicsWorld"),0);
+  r.physics_gravity_x=(float)gmlc_json_num(gmlc_json_obj(physics_settings,"PhysicsWorldGravityX"),0.0);
+  r.physics_gravity_y=(float)gmlc_json_num(gmlc_json_obj(physics_settings,"PhysicsWorldGravityY"),10.0);
+  r.physics_scale=(float)gmlc_json_num(gmlc_json_obj(physics_settings,"PhysicsWorldPixToMeters"),0.1);
+  if(r.physics_scale<=0.0f) r.physics_scale=0.1f;
   const GmlcJson *view_settings=gmlc_json_obj(yy,"viewSettings");
   r.view_enabled=gmlc_json_bool(gmlc_json_obj(view_settings,"enableViews"),0);
-  const GmlcJson *v0=gmlc_json_index(gmlc_json_obj(yy,"views"),0);
+  const GmlcJson *source_views=gmlc_json_obj(yy,"views");
+  int source_view_count=gmlc_json_len(source_views);
+  if(source_view_count<0) source_view_count=0;
+  if(source_view_count>8) source_view_count=8;
+  r.n_views=8;
+  for(int vi=0;vi<8;vi++){
+    GmlcRoomView *view=&r.views[vi];
+    view->wview=r.width; view->hview=r.height;
+    view->wport=r.width; view->hport=r.height;
+    view->hborder=32; view->vborder=32;
+    view->hspeed=-1; view->vspeed=-1; view->object_id=-1;
+    const GmlcJson *jv=vi<source_view_count?gmlc_json_index(source_views,vi):NULL;
+    if(!jv) continue;
+    view->visible=gmlc_json_bool(gmlc_json_obj(jv,"visible"),vi==0 && r.view_enabled);
+    view->xview=gmlc_json_int(gmlc_json_obj(jv,"xview"),0);
+    view->yview=gmlc_json_int(gmlc_json_obj(jv,"yview"),0);
+    view->wview=gmlc_json_int(gmlc_json_obj(jv,"wview"),r.width);
+    view->hview=gmlc_json_int(gmlc_json_obj(jv,"hview"),r.height);
+    view->xport=gmlc_json_int(gmlc_json_obj(jv,"xport"),0);
+    view->yport=gmlc_json_int(gmlc_json_obj(jv,"yport"),0);
+    view->wport=gmlc_json_int(gmlc_json_obj(jv,"wport"),r.width);
+    view->hport=gmlc_json_int(gmlc_json_obj(jv,"hport"),r.height);
+    view->hborder=gmlc_json_int(gmlc_json_obj(jv,"hborder"),32);
+    view->vborder=gmlc_json_int(gmlc_json_obj(jv,"vborder"),32);
+    view->hspeed=gmlc_json_int(gmlc_json_obj(jv,"hspeed"),-1);
+    view->vspeed=gmlc_json_int(gmlc_json_obj(jv,"vspeed"),-1);
+    view->object_id=gmlc_project_find_object(p,gmlc_json_str(gmlc_json_obj(jv,"objId"),NULL));
+  }
+  const GmlcJson *v0=gmlc_json_index(source_views,0);
   r.view_w=gmlc_json_int(gmlc_json_obj(v0,"wview"),r.width);
   r.view_h=gmlc_json_int(gmlc_json_obj(v0,"hview"),r.height);
   r.port_w=gmlc_json_int(gmlc_json_obj(v0,"wport"),r.width);
@@ -690,6 +769,10 @@ static int parse_room(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
       snprintf(err,errcap,"out of memory while loading room creation code path");
       free_room_fields(&r);
       return 0;
+    }
+    if(!source_path_exists(r.creation_code_path)){
+      free(r.creation_code_path);
+      r.creation_code_path=NULL;
     }
   }
   if(!scan_room_layers(p,&r,gmlc_json_obj(yy,"layers"),dir,err,errcap)){
@@ -814,6 +897,22 @@ static int apply_object_order(GmlcProject *p, char *err, size_t errcap){
   return 1;
 }
 
+static void assign_runtime_sprite_ids(GmlcProject *p){
+  for(int i=0;i<p->n_sprites;i++){
+    p->sprites[i].tileset_source=0;
+    p->sprites[i].runtime_id=-1;
+  }
+  for(int i=0;i<p->n_tilesets;i++){
+    int source=p->tilesets[i].sprite_id;
+    if(p->tilesets[i].sprite_no_export && source>=0 && source<p->n_sprites)
+      p->sprites[source].tileset_source=1;
+  }
+  int next=0;
+  for(int i=0;i<p->n_sprites;i++){
+    if(!p->sprites[i].tileset_source) p->sprites[i].runtime_id=next++;
+  }
+}
+
 int gmlc_assets_load(GmlcProject *p, char *err, size_t errcap){
   for(int pass=0; pass<3; pass++){
     for(int i=0;i<p->n_resources;i++){
@@ -834,6 +933,7 @@ int gmlc_assets_load(GmlcProject *p, char *err, size_t errcap){
     } else if(pass==1){
       if(!apply_object_order(p,err,errcap) ||
          !apply_tileset_order(p,err,errcap)) return 0;
+      assign_runtime_sprite_ids(p);
     } else if(pass==2){
       if(!apply_room_order(p,err,errcap)) return 0;
     }

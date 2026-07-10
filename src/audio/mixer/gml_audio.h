@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
 /* Software mixer for AUDO/SOND sounds and FMOD bank voices.
- * WAV PCM is referenced in place. Embedded and grouped OGG data is decoded
+ * WAV PCM is referenced in place. Embedded and grouped OGG/MP3 data is decoded
  * on first playback; external OGG registration decodes immediately.
  */
 #ifndef GML_AUDIO_H
