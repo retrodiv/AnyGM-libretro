@@ -151,12 +151,16 @@ typedef struct {
   int       crt_shader_present; /* set at init when the SHDR chunk contains a recognized CRT-geom
                               * fragment. Gates crt_scale's virtual window/supersample so the option
                               * has zero effect on games without an embedded CRT shader. */
-  int       crt_mask_enable; /* aperture (dot) mask of the CRT fragment (default 1). The mask is a
-                              * per-raster-pixel chroma pattern; any non-1:1 frontend scaling turns
-                              * it into wide two-tone bands (the original games avoid this by forcing
-                              * their window to integer multiples). 0 = replace it with its spatial
-                              * average (0.9 uniform: same brightness, no chroma) so scaled
-                              * presentations keep the scanline look without banding. */
+  /* Individually toggleable components of the recognized CRT-geom fragment (the 5 features intrinsic
+   * to that shader family; generic, no game names). Each defaults to reproducing the shader as
+   * shipped. crt_curvature/crt_vignette are -1=auto (follow the game's distort/border uniforms),
+   * 0=force off, 1=force on; the others are 0/1 with default 1. */
+  int       crt_mask_enable;      /* aperture (dot) mask (the aperture mask). Off -> flat 0.9 average:
+                                   * same brightness, no chroma, so non-1:1 scaling shows no bands. */
+  int       crt_scanlines_enable; /* scanline beam profile (the scanline profile). Off -> flat vertical. */
+  int       crt_gamma_enable;     /* input/output gamma curve. Off -> linear (no CRT gamma). */
+  int       crt_curvature;        /* radial warp (distort uniform): -1 auto / 0 off / 1 on. */
+  int       crt_vignette;         /* corner darkening (border uniform): -1 auto / 0 off / 1 on. */
   /* async atlas prefetch pool (opaque; see gml_render.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;
