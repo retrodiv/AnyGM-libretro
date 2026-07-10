@@ -17,6 +17,7 @@ typedef struct {
   uint32_t instr_off;
   uint32_t ref_off;
   uint32_t high_bits;
+  int inst;
   GmlcRefKind kind;
 } GmlcRefSite;
 

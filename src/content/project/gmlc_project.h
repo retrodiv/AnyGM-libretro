@@ -160,6 +160,8 @@ typedef struct {
   int n_sounds, cap_sounds;
   GmlcScript *scripts;
   int n_scripts, cap_scripts;
+  char **resource_order_ids;
+  int n_resource_order;
   char **script_order_ids;
   int n_script_order;
   GmlcObject *objects;

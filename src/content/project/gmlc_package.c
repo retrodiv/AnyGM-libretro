@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
 #include "gmlc_package.h"
 #include "gmlc_bytecode.h"
+#include "gml_win.h"
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
@@ -21,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <ctype.h>
 
 typedef struct {
   uint8_t *data;
@@ -54,6 +56,8 @@ typedef struct {
   uint32_t instr_abs;
   uint32_t ref_abs;
   uint32_t high_bits;
+  int code_index;
+  int inst;
 } CodeRef;
 
 typedef struct {
@@ -67,6 +71,7 @@ typedef struct {
 
 typedef struct {
   uint16_t sx, sy, sw, sh;
+  uint16_t xoff, yoff;
   uint16_t atlas;
 } TexturePlacement;
 
@@ -183,7 +188,7 @@ static int add_font_patch(Pkg *p, uint32_t pos, int font){
   return 1;
 }
 
-static int add_code_ref(Pkg *p, const GmlcRefSite *src, uint32_t code_start){
+static int add_code_ref(Pkg *p, const GmlcRefSite *src, uint32_t code_start, int code_index){
   if(p->n_code_refs>=p->cap_code_refs){
     int nc=p->cap_code_refs?p->cap_code_refs*2:256;
     CodeRef *nr=(CodeRef*)realloc(p->code_refs,(size_t)nc*sizeof(*nr));
@@ -196,6 +201,8 @@ static int add_code_ref(Pkg *p, const GmlcRefSite *src, uint32_t code_start){
   r->instr_abs=code_start+src->instr_off;
   r->ref_abs=code_start+src->ref_off;
   r->high_bits=src->high_bits;
+  r->code_index=code_index;
+  r->inst=src->inst;
   return r->name!=NULL;
 }
 
@@ -361,10 +368,11 @@ static int total_texture_pages(const GmlcProject *p){
 }
 
 #define GMLC_ATLAS_DIM 2048
-#define GMLC_ATLAS_PAD 2
+#define GMLC_ATLAS_BORDER 2
 
 typedef struct {
-  int idx, w, h;
+  int idx, w, h, xoff, yoff;
+  uint64_t hash;
 } TextureRequest;
 
 typedef struct {
@@ -383,6 +391,51 @@ static int texture_request_cmp(const void *a, const void *b){
   if(aa!=ab) return ab-aa;
   if(ra->h!=rb->h) return rb->h-ra->h;
   return rb->w-ra->w;
+}
+
+static int texture_alpha_bounds(const char *path, int canvas_w, int canvas_h,
+                                int *out_x, int *out_y, int *out_w, int *out_h,
+                                uint64_t *out_hash){
+  int w=0,h=0,comp=0;
+  unsigned char *rgba=path?stbi_load(path,&w,&h,&comp,4):NULL;
+  if(!rgba) return 0;
+  int minx=w, miny=h, maxx=-1, maxy=-1;
+  for(int y=0;y<h;y++) for(int x=0;x<w;x++){
+    if(rgba[((size_t)y*(size_t)w+(size_t)x)*4u+3u]){
+      if(x<minx) minx=x;
+      if(y<miny) miny=y;
+      if(x>maxx) maxx=x;
+      if(y>maxy) maxy=y;
+    }
+  }
+  if(maxx<0){
+    *out_x=0; *out_y=0; *out_w=1; *out_h=1;
+  } else {
+    *out_x=minx; *out_y=miny; *out_w=maxx-minx+1; *out_h=maxy-miny+1;
+  }
+  if(*out_x<0) *out_x=0;
+  if(*out_y<0) *out_y=0;
+  if(*out_w<1) *out_w=1;
+  if(*out_h<1) *out_h=1;
+  if(canvas_w>0 && *out_x+*out_w>canvas_w) *out_w=canvas_w-*out_x;
+  if(canvas_h>0 && *out_y+*out_h>canvas_h) *out_h=canvas_h-*out_y;
+  if(*out_w<1) *out_w=1;
+  if(*out_h<1) *out_h=1;
+  if(out_hash){
+    uint64_t hash=1469598103934665603ull;
+    for(int y=*out_y;y<*out_y+*out_h && y<h;y++){
+      const unsigned char *row=rgba+((size_t)y*(size_t)w+(size_t)*out_x)*4u;
+      for(int x=0;x<*out_w && *out_x+x<w;x++){
+        for(int c=0;c<4;c++){
+          hash ^= (uint64_t)row[(size_t)x*4u+(size_t)c];
+          hash *= 1099511628211ull;
+        }
+      }
+    }
+    *out_hash=hash;
+  }
+  stbi_image_free(rgba);
+  return 1;
 }
 
 static int pack_page_add(PackPage *p, PackRect r){
@@ -432,7 +485,7 @@ static int pack_page_split(PackPage *p, PackRect used){
 }
 
 static int pack_page_place(PackPage *p, int w, int h, int *out_x, int *out_y){
-  int rw=w+GMLC_ATLAS_PAD, rh=h+GMLC_ATLAS_PAD;
+  int rw=w+GMLC_ATLAS_BORDER*2, rh=h+GMLC_ATLAS_BORDER*2;
   int best=-1, best_score=INT_MAX, best_y=INT_MAX, best_x=INT_MAX;
   for(int i=0;i<p->n;i++){
     PackRect fr=p->rects[i];
@@ -445,7 +498,7 @@ static int pack_page_place(PackPage *p, int w, int h, int *out_x, int *out_y){
   if(best<0) return 0;
   PackRect fr=p->rects[best];
   PackRect used={fr.x,fr.y,rw,rh};
-  *out_x=fr.x; *out_y=fr.y;
+  *out_x=fr.x+GMLC_ATLAS_BORDER; *out_y=fr.y+GMLC_ATLAS_BORDER;
   return pack_page_split(p,used);
 }
 
@@ -465,23 +518,48 @@ static int build_texture_layout(Pkg *pkg, const GmlcProject *p){
   for(int i=0;i<p->n_sprites;i++){
     const GmlcSprite *sp=&p->sprites[i];
     for(int f=0;f<sp->n_frames;f++,idx++){
-      int w=sp->width>0?sp->width:1;
-      int h=sp->height>0?sp->height:1;
-      if(w+GMLC_ATLAS_PAD>GMLC_ATLAS_DIM || h+GMLC_ATLAS_PAD>GMLC_ATLAS_DIM){ free(req); return 0; }
-      req[idx]=(TextureRequest){idx,w,h};
+      int cw=sp->width>0?sp->width:1;
+      int ch=sp->height>0?sp->height:1;
+      int xoff=0, yoff=0, w=cw, h=ch;
+      uint64_t hash=0;
+      const char *path=(sp->frame_paths && sp->frame_paths[f]) ? sp->frame_paths[f] : NULL;
+      if(!texture_alpha_bounds(path,cw,ch,&xoff,&yoff,&w,&h,&hash)){
+        free(req);
+        return 0;
+      }
+      if(w+GMLC_ATLAS_BORDER*2>GMLC_ATLAS_DIM || h+GMLC_ATLAS_BORDER*2>GMLC_ATLAS_DIM){ free(req); return 0; }
+      req[idx]=(TextureRequest){idx,w,h,xoff,yoff,hash};
     }
   }
   for(int i=0;i<p->n_fonts;i++,idx++){
     const GmlcFont *f=&p->fonts[i];
     int w=f->width>0?f->width:1;
     int h=f->height>0?f->height:1;
-    if(w+GMLC_ATLAS_PAD>GMLC_ATLAS_DIM || h+GMLC_ATLAS_PAD>GMLC_ATLAS_DIM){ free(req); return 0; }
-    req[idx]=(TextureRequest){idx,w,h};
+    if(w+GMLC_ATLAS_BORDER*2>GMLC_ATLAS_DIM || h+GMLC_ATLAS_BORDER*2>GMLC_ATLAS_DIM){ free(req); return 0; }
+    req[idx]=(TextureRequest){idx,w,h,0,0,0};
   }
   qsort(req,(size_t)n,sizeof(*req),texture_request_cmp);
   int n_pages=0, cap_pages=0;
   for(int ri=0;ri<n;ri++){
     TextureRequest *r=&req[ri];
+    int dup=-1;
+    if(r->hash){
+      for(int pi=0;pi<ri;pi++){
+        if(req[pi].hash==r->hash && req[pi].w==r->w && req[pi].h==r->h){
+          dup=req[pi].idx;
+          break;
+        }
+      }
+    }
+    if(dup>=0){
+      TexturePlacement *tp=&pkg->texture_place[r->idx];
+      const TexturePlacement *dp=&pkg->texture_place[dup];
+      tp->sx=dp->sx; tp->sy=dp->sy;
+      tp->sw=(uint16_t)r->w; tp->sh=(uint16_t)r->h;
+      tp->xoff=(uint16_t)r->xoff; tp->yoff=(uint16_t)r->yoff;
+      tp->atlas=dp->atlas;
+      continue;
+    }
     int px=0, py=0, page=-1;
     for(int pi=0;pi<n_pages;pi++){
       if(pack_page_place(&pages[pi],r->w,r->h,&px,&py)){ page=pi; break; }
@@ -506,6 +584,7 @@ static int build_texture_layout(Pkg *pkg, const GmlcProject *p){
     TexturePlacement *tp=&pkg->texture_place[r->idx];
     tp->sx=(uint16_t)px; tp->sy=(uint16_t)py;
     tp->sw=(uint16_t)r->w; tp->sh=(uint16_t)r->h;
+    tp->xoff=(uint16_t)r->xoff; tp->yoff=(uint16_t)r->yoff;
     tp->atlas=(uint16_t)page;
   }
   pkg->n_atlas_pages=n_pages;
@@ -668,8 +747,8 @@ static int write_tpag(Pkg *pkg, const GmlcProject *p){
       const TexturePlacement *tp=&pkg->texture_place[gf];
       wu16(&pkg->b,tp->sx); wu16(&pkg->b,tp->sy);
       wu16(&pkg->b,tp->sw); wu16(&pkg->b,tp->sh);
-      wu16(&pkg->b,0); wu16(&pkg->b,0);
-      wu16(&pkg->b,(uint16_t)sp->width); wu16(&pkg->b,(uint16_t)sp->height);
+      wu16(&pkg->b,tp->xoff); wu16(&pkg->b,tp->yoff);
+      wu16(&pkg->b,tp->sw); wu16(&pkg->b,tp->sh);
       wu16(&pkg->b,(uint16_t)sp->width); wu16(&pkg->b,(uint16_t)sp->height);
       wu16(&pkg->b,tp->atlas);
     }
@@ -682,8 +761,8 @@ static int write_tpag(Pkg *pkg, const GmlcProject *p){
     const TexturePlacement *tp=&pkg->texture_place[pkg->n_frames+i];
     wu16(&pkg->b,tp->sx); wu16(&pkg->b,tp->sy);
     wu16(&pkg->b,tp->sw); wu16(&pkg->b,tp->sh);
-    wu16(&pkg->b,0); wu16(&pkg->b,0);
-    wu16(&pkg->b,(uint16_t)f->width); wu16(&pkg->b,(uint16_t)f->height);
+    wu16(&pkg->b,tp->xoff); wu16(&pkg->b,tp->yoff);
+    wu16(&pkg->b,tp->sw); wu16(&pkg->b,tp->sh);
     wu16(&pkg->b,(uint16_t)f->width); wu16(&pkg->b,(uint16_t)f->height);
     wu16(&pkg->b,tp->atlas);
   }
@@ -732,12 +811,29 @@ static int atlas_copy_png(uint8_t *atlas, int atlas_dim, const TexturePlacement 
     snprintf(err,errcap,"%s: texture image read failed",path?path:"<missing>");
     return 0;
   }
-  int cw=w<(int)tp->sw?w:(int)tp->sw;
-  int ch=h<(int)tp->sh?h:(int)tp->sh;
-  for(int y=0;y<ch;y++){
-    uint8_t *dst=atlas+(((size_t)tp->sy+(size_t)y)*(size_t)atlas_dim+(size_t)tp->sx)*4u;
-    const uint8_t *src=rgba+((size_t)y*(size_t)w)*4u;
-    memcpy(dst,src,(size_t)cw*4u);
+  int src_x=(int)tp->xoff, src_y=(int)tp->yoff;
+  int cw=(int)tp->sw;
+  int ch=(int)tp->sh;
+  if(src_x<0) src_x=0;
+  if(src_y<0) src_y=0;
+  if(src_x>=w) src_x=0;
+  if(src_y>=h) src_y=0;
+  if(src_x+cw>w) cw=w-src_x;
+  if(src_y+ch>h) ch=h-src_y;
+  if(cw<0) cw=0;
+  if(ch<0) ch=0;
+  for(int y=-GMLC_ATLAS_BORDER;y<ch+GMLC_ATLAS_BORDER;y++){
+    int dy=(int)tp->sy+y;
+    if(dy<0 || dy>=atlas_dim) continue;
+    int sy=y<0?0:(y>=ch?ch-1:y);
+    for(int x=-GMLC_ATLAS_BORDER;x<cw+GMLC_ATLAS_BORDER;x++){
+      int dx=(int)tp->sx+x;
+      if(dx<0 || dx>=atlas_dim) continue;
+      int sx=x<0?0:(x>=cw?cw-1:x);
+      uint8_t *dst=atlas+((size_t)dy*(size_t)atlas_dim+(size_t)dx)*4u;
+      const uint8_t *src=rgba+(((size_t)src_y+(size_t)sy)*(size_t)w+(size_t)src_x+(size_t)sx)*4u;
+      memcpy(dst,src,4);
+    }
   }
   stbi_image_free(rgba);
   return 1;
@@ -1122,10 +1218,29 @@ static int write_gen8_uid_block(Buf *b){
   if(!wf32(b,60.0f) || !wu8(b,1) || !zfill(b,16)) return 0;
   return 1;
 }
+static char *identifier_from_name(const char *name){
+  if(!name || !*name) return gmlc_strdup("source_project");
+  size_t n=strlen(name);
+  char *out=(char*)malloc(n+1);
+  if(!out) return NULL;
+  for(size_t i=0;i<n;i++){
+    unsigned char ch=(unsigned char)name[i];
+    out[i]=(isalnum(ch) || ch=='_') ? (char)ch : '_';
+  }
+  out[n]=0;
+  if(!isalpha((unsigned char)out[0]) && out[0]!='_') out[0]='_';
+  return out;
+}
+
 static int write_gen8(Pkg *pkg, const GmlcProject *p){
-  int sid_name=intern(pkg,p->name?p->name:"source_project");
+  const char *display_name=p->name?p->name:"source_project";
+  char *identifier=identifier_from_name(display_name);
+  if(!identifier) return 0;
+  int sid_name=intern(pkg,display_name);
   int sid_cfg=intern(pkg,"default");
-  if(sid_name<0 || sid_cfg<0) return 0;
+  int sid_id=intern(pkg,identifier);
+  free(identifier);
+  if(sid_name<0 || sid_cfg<0 || sid_id<0) return 0;
   uint32_t dw=640, dh=480;
   if(p->n_rooms>0){
     dw=(uint32_t)(p->rooms[0].port_w>0?p->rooms[0].port_w:p->rooms[0].width);
@@ -1145,7 +1260,7 @@ static int write_gen8(Pkg *pkg, const GmlcProject *p){
   patch32(&pkg->b,base+12,(uint32_t)(p->next_instance_id>100000?p->next_instance_id:100000));
   patch32(&pkg->b,base+16,10000000);
   patch32(&pkg->b,base+20,game_id);
-  add_str_patch(pkg,(uint32_t)(base+40),sid_name);
+  add_str_patch(pkg,(uint32_t)(base+40),sid_id);
   patch32(&pkg->b,base+44,2);
   patch32(&pkg->b,base+48,0);
   patch32(&pkg->b,base+52,0);
@@ -1515,7 +1630,7 @@ typedef struct {
   uint32_t blob_off;
 } CodeEntryPlan;
 
-static int prepare_code_blob(Pkg *pkg, int sid, GmlcCodeBlob *blob, CodeEntryPlan *entry, char *err, size_t errcap){
+static int prepare_code_blob(Pkg *pkg, int sid, int code_index, GmlcCodeBlob *blob, CodeEntryPlan *entry, char *err, size_t errcap){
   for(int i=0;i<blob->n_strings;i++){
     GmlcStringSite *s=&blob->strings[i];
     if(s->payload_off+4>blob->size){
@@ -1535,7 +1650,7 @@ static int prepare_code_blob(Pkg *pkg, int sid, GmlcCodeBlob *blob, CodeEntryPla
   entry->size=(uint32_t)blob->size;
   entry->blob_off=code_start;
   if(!wbytes(&pkg->code_data,blob->data,blob->size)) return 0;
-  for(int i=0;i<blob->n_refs;i++) if(!add_code_ref(pkg,&blob->refs[i],code_start)) return 0;
+  for(int i=0;i<blob->n_refs;i++) if(!add_code_ref(pkg,&blob->refs[i],code_start,code_index)) return 0;
   return 1;
 }
 
@@ -1577,7 +1692,7 @@ static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const GmlcFunctionR
 static int write_compiled_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, int script_index, CodeEntryPlan *entries, int *ci, int sid, const char *path, char *err, size_t errcap){
   GmlcCodeBlob blob;
   if(!compile_code_blob(pkg,p,funcs,script_index,path,&blob)) return 0;
-  int ok=prepare_code_blob(pkg,sid,&blob,&entries[*ci],err,errcap);
+  int ok=prepare_code_blob(pkg,sid,*ci,&blob,&entries[*ci],err,errcap);
   if(ok) (*ci)++;
   gmlc_bytecode_free(&blob);
   return ok;
@@ -1618,7 +1733,7 @@ static int write_function_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcF
   } else {
     pkg->compiled_code++;
   }
-  int ok=prepare_code_blob(pkg,sid,&blob,&entries[*ci],err,errcap);
+  int ok=prepare_code_blob(pkg,sid,*ci,&blob,&entries[*ci],err,errcap);
   if(ok) (*ci)++;
   gmlc_bytecode_free(&blob);
   return ok;
@@ -1713,6 +1828,17 @@ static int write_vari(Pkg *pkg){
   if(!patch_ref_chains(pkg)) return 0;
   size_t s=chunk_begin(pkg,"VARI");
   zfill(&pkg->b,12);
+  int sid=intern(pkg,"prototype");
+  if(sid<0) return 0;
+  wstrptr(pkg,sid); wu32(&pkg->b,0); wu32(&pkg->b,0); wu32(&pkg->b,0); wu32(&pkg->b,UINT32_MAX);
+  sid=intern(pkg,"@@array@@");
+  if(sid<0) return 0;
+  wstrptr(pkg,sid); wu32(&pkg->b,0); wu32(&pkg->b,0); wu32(&pkg->b,0); wu32(&pkg->b,UINT32_MAX);
+  int arguments_sid=intern(pkg,"arguments");
+  if(arguments_sid<0) return 0;
+  for(int i=0;i<pkg->n_code_name_refs;i++){
+    wstrptr(pkg,arguments_sid); wu32(&pkg->b,0); wu32(&pkg->b,0); wu32(&pkg->b,0); wu32(&pkg->b,UINT32_MAX);
+  }
   for(int i=0;i<pkg->n_code_refs;i++){
     if(pkg->code_refs[i].kind!=GMLC_REF_VARI) continue;
     int seen=0;
@@ -1726,6 +1852,39 @@ static int write_vari(Pkg *pkg){
     wu32(&pkg->b,0);
     wu32(&pkg->b,occ);
     wu32(&pkg->b,first);
+  }
+  for(int i=0;i<pkg->n_code_refs;i++){
+    if(pkg->code_refs[i].kind!=GMLC_REF_VARI) continue;
+    int seen=0;
+    for(int j=0;j<i;j++) if(pkg->code_refs[j].kind==GMLC_REF_VARI && same_ref_name(&pkg->code_refs[i],&pkg->code_refs[j])){ seen=1; break; }
+    if(seen) continue;
+    if(pkg->code_refs[i].name && !strncmp(pkg->code_refs[i].name,"argument",8)) continue;
+    int groups=0;
+    int has_nonlocal=0;
+    for(int j=i;j<pkg->n_code_refs;j++){
+      if(!same_ref_name(&pkg->code_refs[i],&pkg->code_refs[j])) continue;
+      if(pkg->code_refs[j].inst!=IT_LOCAL){
+        has_nonlocal=1;
+        continue;
+      }
+      int group_seen=0;
+      for(int k=i;k<j;k++){
+        if(same_ref_name(&pkg->code_refs[i],&pkg->code_refs[k]) &&
+           pkg->code_refs[k].inst==IT_LOCAL &&
+           pkg->code_refs[k].code_index==pkg->code_refs[j].code_index){
+          group_seen=1;
+          break;
+        }
+      }
+      if(!group_seen) groups++;
+    }
+    if(groups<=0) continue;
+    if(has_nonlocal) groups++;
+    int dup_sid=intern(pkg,pkg->code_refs[i].name);
+    if(dup_sid<0) return 0;
+    for(int g=1;g<groups;g++){
+      wstrptr(pkg,dup_sid); wu32(&pkg->b,0); wu32(&pkg->b,0); wu32(&pkg->b,0); wu32(&pkg->b,UINT32_MAX);
+    }
   }
   chunk_end(pkg,s);
   return 1;

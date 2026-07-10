@@ -106,6 +106,43 @@ static int add_tileset(GmlcProject *p, GmlcTileset *t){
   return 1;
 }
 
+#define DEFINE_APPLY_RESOURCE_ORDER(fn, Type, field, count_field, label) \
+static int fn(GmlcProject *p, char *err, size_t errcap){ \
+  int count=p->count_field; \
+  if(count<=1 || p->n_resource_order<=0) return 1; \
+  Type *ordered=(Type*)calloc((size_t)count,sizeof(*ordered)); \
+  unsigned char *used=(unsigned char*)calloc((size_t)count,1); \
+  if(!ordered || !used){ \
+    free(ordered); free(used); \
+    snprintf(err,errcap,"out of memory while ordering %s",label); \
+    return 0; \
+  } \
+  int n=0; \
+  for(int oi=0; oi<p->n_resource_order; oi++){ \
+    const char *id=p->resource_order_ids[oi]; \
+    for(int i=0;i<count;i++){ \
+      if(!used[i] && p->field[i].id && id && !strcmp(p->field[i].id,id)){ \
+        ordered[n++]=p->field[i]; \
+        used[i]=1; \
+        break; \
+      } \
+    } \
+  } \
+  for(int i=0;i<count;i++) if(!used[i]) ordered[n++]=p->field[i]; \
+  free(used); \
+  free(p->field); \
+  p->field=ordered; \
+  return 1; \
+}
+
+DEFINE_APPLY_RESOURCE_ORDER(apply_sprite_order, GmlcSprite, sprites, n_sprites, "sprites")
+DEFINE_APPLY_RESOURCE_ORDER(apply_sound_order, GmlcSound, sounds, n_sounds, "sounds")
+DEFINE_APPLY_RESOURCE_ORDER(apply_script_resource_order, GmlcScript, scripts, n_scripts, "scripts")
+DEFINE_APPLY_RESOURCE_ORDER(apply_shader_order, GmlcShader, shaders, n_shaders, "shaders")
+DEFINE_APPLY_RESOURCE_ORDER(apply_font_order, GmlcFont, fonts, n_fonts, "fonts")
+DEFINE_APPLY_RESOURCE_ORDER(apply_tileset_order, GmlcTileset, tilesets, n_tilesets, "tilesets")
+DEFINE_APPLY_RESOURCE_ORDER(apply_room_order, GmlcRoom, rooms, n_rooms, "rooms")
+
 static int font_add_glyph(GmlcFont *f, GmlcFontGlyph *g){
   if(f->n_glyphs>=f->cap_glyphs){
     int nc=f->cap_glyphs?f->cap_glyphs*2:128;
@@ -714,6 +751,51 @@ static int apply_script_order(GmlcProject *p, char *err, size_t errcap){
   return 1;
 }
 
+static int apply_object_order(GmlcProject *p, char *err, size_t errcap){
+  int count=p->n_objects;
+  if(count<=1 || p->n_resource_order<=0) return 1;
+  GmlcObject *ordered=(GmlcObject*)calloc((size_t)count,sizeof(*ordered));
+  unsigned char *used=(unsigned char*)calloc((size_t)count,1);
+  int *old_to_new=(int*)malloc((size_t)count*sizeof(*old_to_new));
+  if(!ordered || !used || !old_to_new){
+    free(ordered); free(used); free(old_to_new);
+    snprintf(err,errcap,"out of memory while ordering objects");
+    return 0;
+  }
+  for(int i=0;i<count;i++) old_to_new[i]=i;
+  int n=0;
+  for(int oi=0; oi<p->n_resource_order; oi++){
+    const char *id=p->resource_order_ids[oi];
+    for(int i=0;i<count;i++){
+      if(!used[i] && p->objects[i].id && id && !strcmp(p->objects[i].id,id)){
+        old_to_new[i]=n;
+        ordered[n++]=p->objects[i];
+        used[i]=1;
+        break;
+      }
+    }
+  }
+  for(int i=0;i<count;i++){
+    if(!used[i]){
+      old_to_new[i]=n;
+      ordered[n++]=p->objects[i];
+    }
+  }
+  free(used);
+  free(p->objects);
+  p->objects=ordered;
+  for(int i=0;i<count;i++){
+    GmlcObject *o=&p->objects[i];
+    if(o->parent_id>=0 && o->parent_id<count) o->parent_id=old_to_new[o->parent_id];
+    for(int e=0;e<o->n_events;e++){
+      if(o->events[e].collision_object_id>=0 && o->events[e].collision_object_id<count)
+        o->events[e].collision_object_id=old_to_new[o->events[e].collision_object_id];
+    }
+  }
+  free(old_to_new);
+  return 1;
+}
+
 int gmlc_assets_load(GmlcProject *p, char *err, size_t errcap){
   for(int pass=0; pass<3; pass++){
     for(int i=0;i<p->n_resources;i++){
@@ -724,7 +806,19 @@ int gmlc_assets_load(GmlcProject *p, char *err, size_t errcap){
         if(!load_one(p,r,err,errcap)) return 0;
       }
     }
-    if(pass==0 && !apply_script_order(p,err,errcap)) return 0;
+    if(pass==0){
+      if(!apply_sprite_order(p,err,errcap) ||
+         !apply_sound_order(p,err,errcap) ||
+         !apply_script_resource_order(p,err,errcap) ||
+         !apply_script_order(p,err,errcap) ||
+         !apply_shader_order(p,err,errcap) ||
+         !apply_font_order(p,err,errcap)) return 0;
+    } else if(pass==1){
+      if(!apply_object_order(p,err,errcap) ||
+         !apply_tileset_order(p,err,errcap)) return 0;
+    } else if(pass==2){
+      if(!apply_room_order(p,err,errcap)) return 0;
+    }
   }
   return 1;
 }

@@ -73,6 +73,8 @@ void gmlc_project_free(GmlcProject *p){
   free(p->sounds);
   for(int i=0;i<p->n_scripts;i++){ free(p->scripts[i].id); free(p->scripts[i].name); free(p->scripts[i].source_path); }
   free(p->scripts);
+  for(int i=0;i<p->n_resource_order;i++) free(p->resource_order_ids[i]);
+  free(p->resource_order_ids);
   for(int i=0;i<p->n_script_order;i++) free(p->script_order_ids[i]);
   free(p->script_order_ids);
   for(int i=0;i<p->n_objects;i++){
@@ -160,6 +162,146 @@ static int add_resource(GmlcProject *p, const char *id, const char *type, const 
   return r->id && r->type_name && r->path && r->abs_path;
 }
 
+static char *basename_no_ext(const char *path){
+  const char *base=strrchr(path,'/');
+  const char *bslash=strrchr(path,'\\');
+  if(bslash && (!base || bslash>base)) base=bslash;
+  base=base?base+1:path;
+  size_t n=strlen(base);
+  const char *dot=strrchr(base,'.');
+  if(dot && dot>base) n=(size_t)(dot-base);
+  char *out=(char*)malloc(n+1);
+  if(!out) return NULL;
+  memcpy(out,base,n);
+  out[n]=0;
+  return out;
+}
+
+typedef struct {
+  char *id;
+  char **children;
+  int n_children;
+} GmlcFolderOrder;
+
+static void free_folder_orders(GmlcFolderOrder *folders, int n){
+  if(!folders) return;
+  for(int i=0;i<n;i++){
+    free(folders[i].id);
+    for(int c=0;c<folders[i].n_children;c++) free(folders[i].children[c]);
+    free(folders[i].children);
+  }
+  free(folders);
+}
+
+static int folder_order_index(GmlcFolderOrder *folders, int n, const char *id){
+  if(!id) return -1;
+  for(int i=0;i<n;i++) if(folders[i].id && !strcmp(folders[i].id,id)) return i;
+  return -1;
+}
+
+static int resource_order_has(const GmlcProject *p, const char *id){
+  if(!id) return 1;
+  for(int i=0;i<p->n_resource_order;i++)
+    if(p->resource_order_ids[i] && !strcmp(p->resource_order_ids[i],id)) return 1;
+  return 0;
+}
+
+static int append_resource_order(GmlcProject *p, const char *id){
+  if(!id || !*id || resource_order_has(p,id)) return 1;
+  char **nr=(char**)realloc(p->resource_order_ids,(size_t)(p->n_resource_order+1)*sizeof(*nr));
+  if(!nr) return 0;
+  p->resource_order_ids=nr;
+  p->resource_order_ids[p->n_resource_order]=gmlc_strdup(id);
+  if(!p->resource_order_ids[p->n_resource_order]) return 0;
+  p->n_resource_order++;
+  return 1;
+}
+
+static int traverse_folder_order(GmlcProject *p, GmlcFolderOrder *folders, int n, int idx){
+  if(idx<0 || idx>=n) return 1;
+  for(int i=0;i<folders[idx].n_children;i++){
+    const char *child=folders[idx].children[i];
+    int fi=folder_order_index(folders,n,child);
+    if(fi>=0){
+      if(!traverse_folder_order(p,folders,n,fi)) return 0;
+    } else if(!append_resource_order(p,child)) return 0;
+  }
+  return 1;
+}
+
+static int load_resource_order(GmlcProject *p){
+  int cap=0, n=0;
+  GmlcFolderOrder *folders=NULL;
+  for(int i=0;i<p->n_resources;i++){
+    GmlcResource *r=&p->resources[i];
+    if(!r->type_name || strcmp(r->type_name,"GMFolder")) continue;
+    if(n>=cap){
+      int nc=cap?cap*2:16;
+      GmlcFolderOrder *nf=(GmlcFolderOrder*)realloc(folders,(size_t)nc*sizeof(*nf));
+      if(!nf){ free_folder_orders(folders,n); return 0; }
+      folders=nf;
+      memset(&folders[cap],0,(size_t)(nc-cap)*sizeof(*folders));
+      cap=nc;
+    }
+    char local_err[256]={0};
+    GmlcJson *yy=gmlc_json_parse_file(r->abs_path,local_err,sizeof(local_err));
+    if(!yy) continue;
+    const char *id=gmlc_json_str(gmlc_json_obj(yy,"id"),r->id?r->id:"");
+    folders[n].id=gmlc_strdup(id);
+    const GmlcJson *children=gmlc_json_obj(yy,"children");
+    int cn=(children && children->type==GMLC_JSON_ARRAY) ? gmlc_json_len(children) : 0;
+    if(cn>0){
+      folders[n].children=(char**)calloc((size_t)cn,sizeof(char*));
+      if(!folders[n].children){
+        gmlc_json_free(yy);
+        free_folder_orders(folders,n+1);
+        return 0;
+      }
+      for(int c=0;c<cn;c++){
+        folders[n].children[c]=gmlc_strdup(gmlc_json_str(gmlc_json_index(children,c),""));
+        if(!folders[n].children[c]){
+          gmlc_json_free(yy);
+          free_folder_orders(folders,n+1);
+          return 0;
+        }
+        folders[n].n_children++;
+      }
+    }
+    gmlc_json_free(yy);
+    if(!folders[n].id){
+      free_folder_orders(folders,n+1);
+      return 0;
+    }
+    n++;
+  }
+  if(n<=0){
+    free(folders);
+    return 1;
+  }
+  unsigned char *is_child=(unsigned char*)calloc((size_t)n,1);
+  if(!is_child){ free_folder_orders(folders,n); return 0; }
+  for(int i=0;i<n;i++){
+    for(int c=0;c<folders[i].n_children;c++){
+      int fi=folder_order_index(folders,n,folders[i].children[c]);
+      if(fi>=0) is_child[fi]=1;
+    }
+  }
+  int roots=0, ok=1;
+  for(int i=0;i<n;i++){
+    if(is_child[i]) continue;
+    roots++;
+    if(!traverse_folder_order(p,folders,n,i)){ ok=0; break; }
+  }
+  if(ok && roots==0){
+    for(int i=0;i<n;i++){
+      if(!traverse_folder_order(p,folders,n,i)){ ok=0; break; }
+    }
+  }
+  free(is_child);
+  free_folder_orders(folders,n);
+  return ok;
+}
+
 int gmlc_project_load_yyp(GmlcProject *p, const char *path, char *err, size_t errcap){
   gmlc_project_init(p);
   p->yyp_path=gmlc_strdup(path);
@@ -169,11 +311,7 @@ int gmlc_project_load_yyp(GmlcProject *p, const char *path, char *err, size_t er
   if(!root) return 0;
   const char *nm=gmlc_json_str(gmlc_json_obj(root,"name"),NULL);
   if(!nm || !*nm){
-    const char *base=strrchr(path,'/');
-    const char *bslash=strrchr(path,'\\');
-    if(bslash && (!base || bslash>base)) base=bslash;
-    base=base?base+1:path;
-    p->name=gmlc_strdup(base);
+    p->name=basename_no_ext(path);
   } else {
     p->name=gmlc_strdup(nm);
   }
@@ -194,6 +332,11 @@ int gmlc_project_load_yyp(GmlcProject *p, const char *path, char *err, size_t er
       snprintf(err,errcap,"out of memory while loading resources");
       return 0;
     }
+  }
+  if(!load_resource_order(p)){
+    gmlc_json_free(root);
+    snprintf(err,errcap,"out of memory while loading resource order");
+    return 0;
   }
   const GmlcJson *script_order=gmlc_json_obj(root,"script_order");
   if(script_order && script_order->type==GMLC_JSON_ARRAY){
