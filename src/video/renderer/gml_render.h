@@ -165,9 +165,8 @@ typedef struct {
   int       crt_gamma_enable;     /* input/output gamma curve. Off -> linear (no CRT gamma). */
   int       crt_curvature;        /* radial warp (distort uniform): -1 auto / 0 off / 1 on. */
   int       crt_vignette;         /* corner darkening (border uniform): -1 auto / 0 off / 1 on. */
-  int       crt_ff;               /* frontend is fast-forwarding: bypass an explicit presentation
-                                   * resolution and expose the base size consistently to the game.
-                                   * Restored when fast-forward ends. Set per-frame by the frontend. */
+  int       crt_ff;               /* frontend is fast-forwarding. Presentation resolution and CRT
+                                   * state remain unchanged; this is only an optimization hint. */
   int       aspect_fullwidth;     /* a forced-wide aspect is active AND this game's compositor should
                                    * span the whole frame: window_get_width/height report the widened
                                    * dimensions (below) so the game sizes its CRT surface to full width

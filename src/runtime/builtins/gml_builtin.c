@@ -82,7 +82,7 @@ static int presentation_base_size(const GmlVM *vm, const GmlRender *r, int heigh
 }
 static int presentation_size(const GmlVM *vm, const GmlRender *r, int height){
   int configured=r?(height?r->resolution_h:r->resolution_w):0;
-  if(configured>0 && !(r&&r->crt_ff)) return configured;
+  if(configured>0) return configured;
   return presentation_base_size(vm,r,height);
 }
 static const char *gm_string_tmp(GmlVal v){
