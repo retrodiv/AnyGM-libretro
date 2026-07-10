@@ -766,6 +766,7 @@ static int write_tpag(Pkg *pkg, const GmlcProject *p){
     wu16(&pkg->b,(uint16_t)f->width); wu16(&pkg->b,(uint16_t)f->height);
     wu16(&pkg->b,tp->atlas);
   }
+  while(pkg->b.len % 4) wu8(&pkg->b,0);
   chunk_end(pkg,s);
   for(int i=0;i<pkg->n_frame_patches;i++){
     FramePatch *fp=&pkg->frame_patches[i];
@@ -919,6 +920,23 @@ static int total_object_events(const GmlcProject *p){
   int n=0;
   for(int i=0;i<p->n_objects;i++) n += p->objects[i].n_events;
   return n;
+}
+
+static int event_type_rank(int event_type){
+  switch(event_type){
+    case 0: return 0;   /* Create */
+    case 1: return 1;   /* Destroy */
+    case 2: return 2;   /* Alarm */
+    case 3: return 3;   /* Step */
+    case 4: return 4;   /* Collision */
+    case 5: return 5;   /* Keyboard */
+    case 6: return 6;   /* Mouse */
+    case 7: return 7;   /* Other */
+    case 8: return 8;   /* Draw */
+    case 9: return 9;   /* KeyPress */
+    case 10: return 10; /* KeyRelease */
+    default: return 11 + event_type;
+  }
 }
 
 static int room_has_creation_code(const GmlcRoom *r){
@@ -1390,10 +1408,7 @@ static int write_shdr(Pkg *pkg, const GmlcProject *p){
   wu32(&pkg->b,n);
   size_t table=pkg->b.len;
   zfill(&pkg->b,(size_t)n*4);
-  int attr_pos=intern(pkg,"in_Position");
-  int attr_col=intern(pkg,"in_Colour");
-  int attr_tex=intern(pkg,"in_TextureCoord");
-  if(attr_pos<0 || attr_col<0 || attr_tex<0) return 0;
+  int attr_pos=-1, attr_col=-1, attr_tex=-1;
   for(uint32_t i=0;i<n;i++){
     const GmlcShader *sh=&p->shaders[i];
     patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
@@ -1429,6 +1444,12 @@ static int write_shdr(Pkg *pkg, const GmlcProject *p){
     int fhlsl_sid=intern(pkg,f_hlsl);
     free(v_gles); free(f_gles); free(v_gl); free(f_gl); free(v_hlsl); free(f_hlsl);
     if(sid<0 || vgles_sid<0 || fgles_sid<0 || vgl_sid<0 || fgl_sid<0 || vhlsl_sid<0 || fhlsl_sid<0) return 0;
+    if(attr_pos<0){
+      attr_pos=intern(pkg,"in_Position");
+      attr_col=intern(pkg,"in_Colour");
+      attr_tex=intern(pkg,"in_TextureCoord");
+      if(attr_pos<0 || attr_col<0 || attr_tex<0) return 0;
+    }
     wstrptr(pkg,sid);
     wu32(&pkg->b,0x80000001u);
     wstrptr(pkg,vgles_sid);
@@ -1541,8 +1562,8 @@ static int write_agrp(Pkg *p){
 
 static int write_optn(Pkg *p){
   int sleep_sid=intern(p,"@@SleepMargin");
-  int draw_sid=intern(p,"@@DrawColour");
   int sleep_value_sid=intern(p,"10");
+  int draw_sid=intern(p,"@@DrawColour");
   int draw_value_sid=intern(p,"4294967295");
   if(sleep_sid<0 || draw_sid<0 || sleep_value_sid<0 || draw_value_sid<0) return 0;
   size_t s=chunk_begin(p,"OPTN");
@@ -1654,7 +1675,12 @@ static int object_event_code_index(const GmlcProject *p, int obj_index, int even
   if(event_index<0 || event_index>=obj->n_events) return -1;
   int idx=room_code_count(p) + p->n_scripts;
   for(int i=0;i<obj_index;i++) idx += p->objects[i].n_events;
-  return idx + event_index;
+  int rank=event_type_rank(obj->events[event_index].event_type);
+  for(int i=0;i<obj->n_events;i++){
+    int r=event_type_rank(obj->events[i].event_type);
+    if(r<rank || (r==rank && i<event_index)) idx++;
+  }
+  return idx;
 }
 
 static int write_objt_event_action(Pkg *pkg, int code_index, int empty_sid){
@@ -1999,6 +2025,118 @@ typedef struct {
   uint32_t blob_off;
 } CodeEntryPlan;
 
+static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, int script_index, const char *path, GmlcCodeBlob *blob);
+
+typedef struct {
+  uint32_t off;
+  int kind;
+  int index;
+} StringSeedEvent;
+
+static int cmp_string_seed_event(const void *A, const void *B){
+  const StringSeedEvent *a=(const StringSeedEvent*)A, *b=(const StringSeedEvent*)B;
+  if(a->off<b->off) return -1;
+  if(a->off>b->off) return 1;
+  return a->kind-b->kind;
+}
+
+static int seed_code_blob_strings(Pkg *pkg, const GmlcCodeBlob *blob){
+  int n=blob->n_refs + blob->n_strings;
+  if(n<=0) return 1;
+  StringSeedEvent *ev=(StringSeedEvent*)malloc((size_t)n*sizeof(*ev));
+  if(!ev) return 0;
+  int k=0;
+  for(int i=0;i<blob->n_refs;i++){
+    ev[k].off=blob->refs[i].instr_off;
+    ev[k].kind=0;
+    ev[k].index=i;
+    k++;
+  }
+  for(int i=0;i<blob->n_strings;i++){
+    ev[k].off=blob->strings[i].payload_off;
+    ev[k].kind=1;
+    ev[k].index=i;
+    k++;
+  }
+  qsort(ev,(size_t)n,sizeof(*ev),cmp_string_seed_event);
+  for(int i=0;i<n;i++){
+    int sid = ev[i].kind==0
+      ? intern(pkg,blob->refs[ev[i].index].name?blob->refs[ev[i].index].name:"")
+      : intern(pkg,blob->strings[ev[i].index].value?blob->strings[ev[i].index].value:"");
+    if(sid<0){ free(ev); return 0; }
+  }
+  free(ev);
+  return 1;
+}
+
+static int seed_compiled_path_strings(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, int script_index, const char *path){
+  GmlcCodeBlob blob;
+  int compiled_save=pkg->compiled_code;
+  int placeholder_save=pkg->placeholder_code;
+  if(!compile_code_blob(pkg,p,funcs,script_index,path,&blob)) return 0;
+  pkg->compiled_code=compiled_save;
+  pkg->placeholder_code=placeholder_save;
+  int ok=seed_code_blob_strings(pkg,&blob);
+  gmlc_bytecode_free(&blob);
+  return ok;
+}
+
+static int seed_function_strings(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, const GmlcFunctionDef *def){
+  GmlcCodeBlob blob;
+  char berr[512]={0};
+  if(!gmlc_bytecode_compile_function_body(p,funcs,def,&blob,berr,sizeof(berr))){
+    if(!gmlc_bytecode_emit_empty(&blob)) return 0;
+  }
+  int ok=seed_code_blob_strings(pkg,&blob);
+  gmlc_bytecode_free(&blob);
+  return ok;
+}
+
+static int seed_code_string_order(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
+  if(intern(pkg,"prototype")<0 || intern(pkg,"@@array@@")<0 || intern(pkg,"arguments")<0) return 0;
+  int base_count=room_code_count(p) + p->n_scripts + total_object_events(p) + room_instance_creation_code_count(p);
+  GmlcFunctionRegistry funcs;
+  if(!gmlc_bytecode_collect_functions(p,base_count,&funcs,err,errcap)) return 0;
+  int ok=0;
+  for(int i=0;i<p->n_rooms;i++){
+    if(!room_has_creation_code(&p->rooms[i])) continue;
+    if(!seed_compiled_path_strings(pkg,p,&funcs,-1,p->rooms[i].creation_code_path)) goto done;
+  }
+  for(int i=0;i<p->n_scripts;i++){
+    if(!seed_compiled_path_strings(pkg,p,&funcs,i,p->scripts[i].source_path)) goto done;
+  }
+  for(int oi=0;oi<p->n_objects;oi++){
+    const GmlcObject *obj=&p->objects[oi];
+    int max_rank=-1;
+    for(int ei=0;ei<obj->n_events;ei++){
+      int rank=event_type_rank(obj->events[ei].event_type);
+      if(rank>max_rank) max_rank=rank;
+    }
+    for(int rank=0;rank<=max_rank;rank++){
+      for(int ei=0;ei<obj->n_events;ei++){
+        if(event_type_rank(obj->events[ei].event_type)!=rank) continue;
+        if(!seed_compiled_path_strings(pkg,p,&funcs,-1,obj->events[ei].source_path)) goto done;
+      }
+    }
+  }
+  for(int ri=0;ri<p->n_rooms;ri++){
+    const GmlcRoom *r=&p->rooms[ri];
+    for(int ii=0;ii<r->n_instances;ii++){
+      const GmlcRoomInstance *in=&r->instances[ii];
+      if(!in->creation_code_path || !*in->creation_code_path) continue;
+      if(!seed_compiled_path_strings(pkg,p,&funcs,-1,in->creation_code_path)) goto done;
+    }
+  }
+  for(int i=0;i<funcs.n_defs;i++){
+    if(funcs.defs[i].is_script_wrapper) continue;
+    if(!seed_function_strings(pkg,p,&funcs,&funcs.defs[i])) goto done;
+  }
+  ok=1;
+done:
+  gmlc_function_registry_free(&funcs);
+  return ok;
+}
+
 static int prepare_code_blob(Pkg *pkg, int sid, int code_index, GmlcCodeBlob *blob, CodeEntryPlan *entry, char *err, size_t errcap){
   for(int i=0;i<blob->n_strings;i++){
     GmlcStringSite *s=&blob->strings[i];
@@ -2140,11 +2278,19 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   }
   for(int oi=0;oi<p->n_objects;oi++){
     const GmlcObject *obj=&p->objects[oi];
+    int max_rank=-1;
     for(int ei=0;ei<obj->n_events;ei++){
-      char *name=object_event_code_name(obj,&obj->events[ei]);
-      int nsid=intern(pkg,name?name:"");
-      free(name);
-      if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,nsid,obj->events[ei].source_path,err,errcap)) goto done;
+      int rank=event_type_rank(obj->events[ei].event_type);
+      if(rank>max_rank) max_rank=rank;
+    }
+    for(int rank=0;rank<=max_rank;rank++){
+      for(int ei=0;ei<obj->n_events;ei++){
+        if(event_type_rank(obj->events[ei].event_type)!=rank) continue;
+        char *name=object_event_code_name(obj,&obj->events[ei]);
+        int nsid=intern(pkg,name?name:"");
+        free(name);
+        if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,nsid,obj->events[ei].source_path,err,errcap)) goto done;
+      }
     }
   }
   for(int ri=0;ri<p->n_rooms;ri++){
@@ -2302,7 +2448,8 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
   wbytes(&pkg.b,"FORM",4);
   size_t form_size_pos=pkg.b.len;
   wu32(&pkg.b,0);
-  if(!write_gen8(&pkg,p) ||
+  if(!seed_code_string_order(&pkg,p,err,errcap) ||
+     !write_gen8(&pkg,p) ||
      !write_optn(&pkg) ||
      !fixed_zero_chunk(&pkg,"LANG",12) ||
      !empty_list_chunk(&pkg,"EXTN") ||
