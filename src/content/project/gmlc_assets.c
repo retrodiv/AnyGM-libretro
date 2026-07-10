@@ -513,15 +513,16 @@ static int parse_sprite(GmlcProject *p, const GmlcResource *res, const GmlcJson 
   s.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(yy,"name"),res->name?res->name:""));
   s.width=gmlc_json_int(gmlc_json_obj(yy,"width"),0);
   s.height=gmlc_json_int(gmlc_json_obj(yy,"height"),0);
-  s.xorig=gmlc_json_int(gmlc_json_obj(yy,"xorig"),0);
-  s.yorig=gmlc_json_int(gmlc_json_obj(yy,"yorig"),0);
+  const GmlcJson *seq=gmlc_json_obj(yy,"sequence");
+  s.xorig=gmlc_json_int(gmlc_json_obj(yy,"xorig"),gmlc_json_int(gmlc_json_obj(seq,"xorigin"),0));
+  s.yorig=gmlc_json_int(gmlc_json_obj(yy,"yorig"),gmlc_json_int(gmlc_json_obj(seq,"yorigin"),0));
   s.bbox_left=gmlc_json_int(gmlc_json_obj(yy,"bbox_left"),0);
   s.bbox_right=gmlc_json_int(gmlc_json_obj(yy,"bbox_right"),s.width?s.width-1:0);
   s.bbox_top=gmlc_json_int(gmlc_json_obj(yy,"bbox_top"),0);
   s.bbox_bottom=gmlc_json_int(gmlc_json_obj(yy,"bbox_bottom"),s.height?s.height-1:0);
-  s.bbox_mode=gmlc_json_int(gmlc_json_obj(yy,"bboxmode"),0);
-  s.col_kind=gmlc_json_int(gmlc_json_obj(yy,"colkind"),0);
-  s.col_tolerance=gmlc_json_int(gmlc_json_obj(yy,"coltolerance"),0);
+  s.bbox_mode=gmlc_json_int(gmlc_json_obj(yy,"bboxmode"),gmlc_json_int(gmlc_json_obj(yy,"bboxMode"),0));
+  s.col_kind=gmlc_json_int(gmlc_json_obj(yy,"colkind"),gmlc_json_int(gmlc_json_obj(yy,"collisionKind"),0));
+  s.col_tolerance=gmlc_json_int(gmlc_json_obj(yy,"coltolerance"),gmlc_json_int(gmlc_json_obj(yy,"collisionTolerance"),0));
   s.sep_masks=gmlc_json_bool(gmlc_json_obj(yy,"sepmasks"),0);
   const GmlcJson *frames=gmlc_json_obj(yy,"frames");
   s.n_frames=gmlc_json_len(frames);
@@ -530,7 +531,9 @@ static int parse_sprite(GmlcProject *p, const GmlcResource *res, const GmlcJson 
     char *dir=gmlc_path_dirname(res->abs_path);
     int fi=0;
     for(const GmlcJson *fr=frames?frames->child:NULL; fr && fi<s.n_frames; fr=fr->next,fi++){
-      const char *fid=gmlc_json_str(gmlc_json_obj(fr,"id"),"");
+      const char *fid=gmlc_json_str(gmlc_json_obj(fr,"id"),
+                       gmlc_json_str(gmlc_json_obj(fr,"name"),
+                         gmlc_json_str(gmlc_json_obj(fr,"%Name"),"")));
       size_t n=strlen(fid)+5;
       char *file=(char*)malloc(n);
       if(file) snprintf(file,n,"%s.png",fid);
@@ -557,7 +560,10 @@ static int parse_sound(GmlcProject *p, const GmlcResource *res, const GmlcJson *
   s.volume=(float)gmlc_json_num(gmlc_json_obj(yy,"volume"),1.0);
   s.pitch=1.0f;
   char *dir=gmlc_path_dirname(res->abs_path);
-  s.data_path=gmlc_path_join(dir,s.name);
+  const char *sound_file=gmlc_json_str(gmlc_json_obj(yy,"soundFile"),
+                         gmlc_json_str(gmlc_json_obj(yy,"dataFile"),
+                           gmlc_json_str(gmlc_json_obj(yy,"fileName"),s.name?s.name:"")));
+  s.data_path=gmlc_path_join(dir,sound_file?sound_file:"");
   free(dir);
   if(!s.id || !s.name || !s.data_path || !add_sound(p,&s)){
     snprintf(err,errcap,"out of memory while loading sound resource");

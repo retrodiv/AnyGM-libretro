@@ -118,8 +118,19 @@ typedef struct {
   int refs_patched;
   int compiled_code;
   int placeholder_code;
+  int code_placeholders;
   RefTextureLayout ref_tex;
 } Pkg;
+
+static int env_flag_enabled(const char *name){
+  const char *v=getenv(name);
+  if(!v || !*v) return 0;
+  if(!strcmp(v,"0") || !strcmp(v,"false") || !strcmp(v,"FALSE") ||
+     !strcmp(v,"no") || !strcmp(v,"NO")){
+    return 0;
+  }
+  return 1;
+}
 
 static int ref_texture_find_frame(const RefTextureLayout *r, const char *name, int frame){
   if(!r || !name) return -1;
@@ -2365,6 +2376,12 @@ static int seed_compiled_path_strings(Pkg *pkg, const GmlcProject *p, const Gmlc
 
 static int seed_function_strings(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, const GmlcFunctionDef *def){
   GmlcCodeBlob blob;
+  if(pkg->code_placeholders){
+    if(!gmlc_bytecode_emit_empty(&blob)) return 0;
+    int ok=seed_code_blob_strings(pkg,&blob);
+    gmlc_bytecode_free(&blob);
+    return ok;
+  }
   char berr[512]={0};
   if(!gmlc_bytecode_compile_function_body(p,funcs,def,&blob,berr,sizeof(berr))){
     if(!gmlc_bytecode_emit_empty(&blob)) return 0;
@@ -2376,6 +2393,7 @@ static int seed_function_strings(Pkg *pkg, const GmlcProject *p, const GmlcFunct
 
 static int seed_code_string_order(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   if(intern(pkg,"prototype")<0 || intern(pkg,"@@array@@")<0 || intern(pkg,"arguments")<0) return 0;
+  if(pkg->code_placeholders) return 1;
   int base_count=room_code_count(p) + p->n_scripts + total_object_events(p) + room_instance_creation_code_count(p);
   GmlcFunctionRegistry funcs;
   if(!gmlc_bytecode_collect_functions(p,base_count,&funcs,err,errcap)) return 0;
@@ -2455,6 +2473,11 @@ static int write_code_entry_header(Pkg *pkg, const CodeEntryPlan *entry){
 
 static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const GmlcFunctionRegistry *funcs, int script_index, const char *path, GmlcCodeBlob *blob){
   memset(blob,0,sizeof(*blob));
+  if(pkg->code_placeholders){
+    if(!gmlc_bytecode_emit_empty(blob)) return 0;
+    pkg->placeholder_code++;
+    return 1;
+  }
   if(path && *path){
     char berr[512]={0};
     if(gmlc_bytecode_compile_source_ex(p,funcs,script_index,path,blob,berr,sizeof(berr))){
@@ -2509,6 +2532,14 @@ static int write_function_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcF
   int sid=intern(pkg,name);
   free(name);
   GmlcCodeBlob blob;
+  if(pkg->code_placeholders){
+    if(!gmlc_bytecode_emit_empty(&blob)) return 0;
+    pkg->placeholder_code++;
+    int ok=prepare_code_blob(pkg,sid,*ci,&blob,&entries[*ci],err,errcap);
+    if(ok) (*ci)++;
+    gmlc_bytecode_free(&blob);
+    return ok;
+  }
   char berr[512]={0};
   if(!gmlc_bytecode_compile_function_body(p,funcs,def,&blob,berr,sizeof(berr))){
     if(!gmlc_bytecode_emit_empty(&blob)) return 0;
@@ -2532,7 +2563,8 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   size_t s=chunk_begin(pkg,"CODE");
   int base_count=room_code_count(p) + p->n_scripts + total_object_events(p) + room_instance_creation_code_count(p);
   GmlcFunctionRegistry funcs;
-  if(!gmlc_bytecode_collect_functions(p,base_count,&funcs,err,errcap)) return 0;
+  memset(&funcs,0,sizeof(funcs));
+  if(!pkg->code_placeholders && !gmlc_bytecode_collect_functions(p,base_count,&funcs,err,errcap)) return 0;
   int count=base_count + gmlc_function_registry_extra_count(&funcs);
   wu32(&pkg->b,(uint32_t)count);
   size_t table=pkg->b.len;
@@ -2746,6 +2778,7 @@ static void free_pkg(Pkg *pkg){
 int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, char *err, size_t errcap){
   Pkg pkg;
   memset(&pkg,0,sizeof(pkg));
+  pkg.code_placeholders=env_flag_enabled("GMLC_CODE_PLACEHOLDERS");
   const char *ref_path=getenv("GMLC_REFERENCE_WIN");
   if(ref_path && *ref_path && !load_reference_texture_layout(&pkg,p,ref_path,err,errcap)){
     free_pkg(&pkg);
