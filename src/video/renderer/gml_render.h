@@ -221,6 +221,9 @@ static inline void gml_render_maybe_prepare_opaque_rect(GmlRender *r, int x0, in
 
 void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha);
+int  gml_d3_draw_sprite_2d(GmlRender *r, int sprite, int subimg, double x, double y,
+                           double xs, double ys, double rot, uint32_t blend, double alpha);
+void gml_d3_set_draw_depth(double depth);
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y);
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                                double xs, double ys, uint32_t blend, double alpha);
@@ -245,6 +248,7 @@ int  gml_surface_exists(GmlRender *r, int id);
 void gml_surface_resize(GmlRender *r, int id, int w, int h);
 int  gml_surface_width(GmlRender *r, int id);
 int  gml_surface_height(GmlRender *r, int id);
+const uint32_t *gml_surface_pixels_read(GmlRender *r, int id, int *w, int *h);
 void gml_surface_copy(GmlRender *r, int dst, int x, int y, int src);
 int  gml_surface_set_target(GmlRender *r, int id);
 void gml_surface_reset_target(GmlRender *r);

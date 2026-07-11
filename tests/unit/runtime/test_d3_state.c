@@ -33,6 +33,7 @@ static int raster_fixtures(void){
   GmlRender render; GmlVM vm;
   memset(&render,0,sizeof(render)); memset(&vm,0,sizeof(vm));
   render.color=0xFFFFFFu; render.alpha=1; render.alphablend=1;
+  render.next_surface_id=1;
   vm.render=&render;
 
   gml_d3_reset();
@@ -95,6 +96,74 @@ static int raster_fixtures(void){
     fprintf(stderr,"software D3 immediate triangle mismatch: center=%06x\n",center);
     return 0;
   }
+
+  int surface=gml_surface_create(&render,2,2);
+  if(surface<=0){ fprintf(stderr,"software D3 texture surface create mismatch\n"); return 0; }
+  GmlSurface *surface_data=&render.surface[surface-1];
+  surface_data->px[0]=0xFFFF0000u; surface_data->px[1]=0xFF00FF00u;
+  surface_data->px[2]=0xFF0000FFu; surface_data->px[3]=0xFFFFFFFFu;
+  GmlVal surface_arg=vreal(surface);
+  GmlVal surface_texture=call_values(&vm,"surface_get_texture",&surface_arg,1);
+  double textured_begin[2]={4,surface_texture.d};
+  const double textured_a[]={8,8,0,0,0};
+  const double textured_b[]={56,8,0,1,0};
+  const double textured_c[]={56,40,0,1,1};
+  const double textured_d[]={8,40,0,0,1};
+  memset(pixels,0,sizeof(pixels));
+  call_numbers(&vm,"d3d_primitive_begin_texture",textured_begin,2);
+  call_numbers(&vm,"d3d_vertex_texture",textured_a,5);
+  call_numbers(&vm,"d3d_vertex_texture",textured_b,5);
+  call_numbers(&vm,"d3d_vertex_texture",textured_c,5);
+  call_numbers(&vm,"d3d_vertex_texture",textured_a,5);
+  call_numbers(&vm,"d3d_vertex_texture",textured_c,5);
+  call_numbers(&vm,"d3d_vertex_texture",textured_d,5);
+  call_numbers(&vm,"d3d_primitive_end",NULL,0);
+  if((pixels[14*WIDTH+16]&0x00FFFFFFu)!=0xFF0000u ||
+     (pixels[14*WIDTH+48]&0x00FFFFFFu)!=0x00FF00u ||
+     (pixels[34*WIDTH+16]&0x00FFFFFFu)!=0x0000FFu){
+    fprintf(stderr,"software D3 surface texture mismatch: %06x %06x %06x\n",
+      pixels[14*WIDTH+16]&0xFFFFFFu,pixels[14*WIDTH+48]&0xFFFFFFu,pixels[34*WIDTH+16]&0xFFFFFFu);
+    return 0;
+  }
+  int runtime_sprite=gml_sprite_create_from_surface(&render,surface,0,0,2,2,0,0,0,0);
+  GmlVal sprite_args[2]={vreal(runtime_sprite),vreal(0)};
+  GmlVal sprite_texture=call_values(&vm,"sprite_get_texture",sprite_args,2);
+  double sprite_begin[2]={1,sprite_texture.d};
+  const double sprite_point[]={30,20,0,.25,.25};
+  memset(pixels,0,sizeof(pixels));
+  call_numbers(&vm,"d3d_primitive_begin_texture",sprite_begin,2);
+  call_numbers(&vm,"d3d_vertex_texture",sprite_point,5);
+  call_numbers(&vm,"d3d_primitive_end",NULL,0);
+  if((pixels[20*WIDTH+30]&0x00FFFFFFu)!=0xFF0000u){
+    fprintf(stderr,"software D3 runtime sprite texture mismatch\n");
+    return 0;
+  }
+  for(int i=0;i<4;i++) surface_data->px[i]=0xFFFFFFFFu;
+  int depth_sprite=gml_sprite_create_from_surface(&render,surface,0,0,2,2,0,0,0,0);
+  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  call_numbers(&vm,"d3d_start",NULL,0);
+  call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
+  call_numbers(&vm,"d3d_set_hidden",enable,1);
+  const double far_depth[]={10},farther_depth[]={20},near_depth[]={-10};
+  call_numbers(&vm,"d3d_set_depth",far_depth,1);
+  gml_draw_sprite_ext(&render,depth_sprite,0,24,12,8,8,0,0x0000FF,1);
+  call_numbers(&vm,"d3d_set_depth",farther_depth,1);
+  gml_draw_sprite_ext(&render,depth_sprite,0,24,12,8,8,0,0x00FF00,1);
+  if((pixels[18*WIDTH+30]&0x00FFFFFFu)!=0xFF0000u){
+    fprintf(stderr,"software D3 2D sprite far-depth mismatch\n");
+    return 0;
+  }
+  call_numbers(&vm,"d3d_set_depth",near_depth,1);
+  gml_draw_sprite_ext(&render,depth_sprite,0,24,12,8,8,0,0x00FF00,1);
+  if((pixels[18*WIDTH+30]&0x00FFFFFFu)!=0x00FF00u){
+    fprintf(stderr,"software D3 2D sprite near-depth mismatch\n");
+    return 0;
+  }
+  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  call_numbers(&vm,"d3d_start",NULL,0);
+  call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
 
   memset(pixels,0,sizeof(pixels));
   const double point_kind[]={1};
@@ -172,6 +241,22 @@ static int raster_fixtures(void){
   int bright_sum=(bright&255)+((bright>>8)&255)+((bright>>16)&255);
   if(dark_sum>=200 || bright_sum<700){
     fprintf(stderr,"software D3 normal lighting mismatch: dark=%06x bright=%06x\n",dark,bright);
+    return 0;
+  }
+  const double light_disable[]={0,0};
+  const double ambient_white[]={0xFFFFFF};
+  call_numbers(&vm,"d3d_light_enable",light_disable,2);
+  call_numbers(&vm,"d3d_light_define_ambient",ambient_white,1);
+  memset(pixels,0,sizeof(pixels));
+  call_numbers(&vm,"d3d_primitive_begin",triangle_kind,1);
+  call_numbers(&vm,"d3d_vertex_normal_color",normal_a,8);
+  call_numbers(&vm,"d3d_vertex_normal_color",normal_b,8);
+  call_numbers(&vm,"d3d_vertex_normal_color",normal_c,8);
+  call_numbers(&vm,"d3d_primitive_end",NULL,0);
+  uint32_t ambient=pixels[20*WIDTH+32]&0x00FFFFFFu;
+  int ambient_sum=(ambient&255)+((ambient>>8)&255)+((ambient>>16)&255);
+  if(ambient_sum<700){
+    fprintf(stderr,"software D3 ambient lighting mismatch: pixel=%06x\n",ambient);
     return 0;
   }
 
@@ -350,6 +435,7 @@ static int raster_fixtures(void){
     return 0;
   }
   gml_d3_reset();
+  gml_render_free(&render);
   return 1;
 }
 

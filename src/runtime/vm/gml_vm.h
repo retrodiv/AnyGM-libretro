@@ -371,7 +371,7 @@ int     gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used)
  * active projection, culling, lighting, or light definitions mid-frame. */
 #define GML_D3_STATE_FLAG_COUNT 26
 #define GML_D3_STATE_VALUE_COUNT 584
-#define GML_D3_STATE_COLOR_COUNT 9
+#define GML_D3_STATE_COLOR_COUNT 10
 void    gml_d3_reset(void);
 void    gml_d3_state_get(int flags[GML_D3_STATE_FLAG_COUNT],
                          double values[GML_D3_STATE_VALUE_COUNT],
