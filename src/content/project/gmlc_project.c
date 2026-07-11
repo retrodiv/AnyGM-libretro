@@ -101,6 +101,8 @@ void gmlc_project_free(GmlcProject *p){
       free(r->instances[k].creation_code_path);
     }
     free(r->instances);
+    free(r->backgrounds);
+    free(r->tiles);
     for(int l=0;l<r->n_layers;l++){
       GmlcRoomLayer *ly=&r->layers[l];
       free(ly->id); free(ly->name);

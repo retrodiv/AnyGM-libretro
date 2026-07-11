@@ -566,6 +566,72 @@ static int expect_object_import(void){
   return ok;
 }
 
+static int expect_room_import(void){
+  GmlcClassicManifest manifest;
+  memset(&manifest, 0, sizeof(manifest));
+  manifest.inventory.resource_slots[GMLC_CLASSIC_ROOM] = 1;
+  manifest.inventory.last_instance_id = 100001;
+  manifest.existing[GMLC_CLASSIC_ROOM] = 1;
+  manifest.slots[GMLC_CLASSIC_ROOM] = (GmlcClassicResourceSlot*)calloc(1, sizeof(GmlcClassicResourceSlot));
+  if(!manifest.slots[GMLC_CLASSIC_ROOM]) return 0;
+  GmlcClassicResourceSlot *slot = &manifest.slots[GMLC_CLASSIC_ROOM][0];
+  slot->exists = 1; slot->name = strdup("resource_room");
+  Fixture payload = {{0}, 0};
+  fixture_string(&payload, "caption");
+  fixture_u32(&payload, 320); fixture_u32(&payload, 240); fixture_u32(&payload, 16);
+  fixture_u32(&payload, 16); fixture_u32(&payload, 0); fixture_u32(&payload, 30);
+  fixture_u32(&payload, 0); fixture_u32(&payload, 0x00112233); fixture_u32(&payload, 1);
+  fixture_string(&payload, "global.room_ready = 1;");
+  fixture_u32(&payload, 1);
+  fixture_u32(&payload, 1); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+  fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 1);
+  fixture_u32(&payload, 1); fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+  fixture_u32(&payload, 0); fixture_u32(&payload, 1);
+  for(int field = 0; field < 14; ++field) fixture_u32(&payload, field == 3 ? 320 : field == 4 ? 240 : 0);
+  fixture_u32(&payload, 1);
+  fixture_u32(&payload, 12); fixture_u32(&payload, 34); fixture_u32(&payload, 0); fixture_u32(&payload, 100001);
+  fixture_string(&payload, "x += 1;"); fixture_u32(&payload, 0);
+  fixture_u32(&payload, 1);
+  fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+  fixture_u32(&payload, 2); fixture_u32(&payload, 3); fixture_u32(&payload, 16);
+  fixture_u32(&payload, 16); fixture_u32(&payload, 100); fixture_u32(&payload, 1000001); fixture_u32(&payload, 0);
+  for(int field = 0; field < 14; ++field) fixture_u32(&payload, 0);
+  slot->payload = (uint8_t*)malloc(payload.size);
+  if(!slot->name || !slot->payload){ gmlc_classic_manifest_free(&manifest); return 0; }
+  memcpy(slot->payload, payload.data, payload.size); slot->payload_size = payload.size;
+
+  GmlcProject project;
+  memset(&project, 0, sizeof(project));
+  char err[256], dir[128] = "tmp/classic_room_fixture";
+#ifdef _WIN32
+  _mkdir(dir);
+#else
+  mkdir(dir, 0777);
+#endif
+  int ok = gmlc_classic_import_rooms(&manifest, &project, dir, err, sizeof(err));
+  if(!ok) fprintf(stderr, "room import failed: %s\n", err);
+  if(ok) ok = project.n_rooms == 1 && project.rooms[0].width == 320 &&
+              project.rooms[0].n_backgrounds == 1 && project.rooms[0].n_instances == 1 &&
+              project.rooms[0].instances[0].instance_id == 100001 && project.rooms[0].n_tiles == 1 &&
+              project.rooms[0].tiles[0].depth == 100 && project.next_instance_id == 100002;
+  if(project.n_rooms){
+    GmlcRoom *room = &project.rooms[0];
+    if(room->creation_code_path) remove(room->creation_code_path);
+    free(room->creation_code_path); free(room->id); free(room->name);
+    for(int i = 0; i < room->n_instances; ++i){
+      if(room->instances[i].creation_code_path) remove(room->instances[i].creation_code_path);
+      free(room->instances[i].creation_code_path); free(room->instances[i].id); free(room->instances[i].name);
+    }
+    free(room->instances); free(room->backgrounds); free(room->tiles);
+  }
+  free(project.rooms);
+  gmlc_classic_manifest_free(&manifest);
+#ifndef _WIN32
+  rmdir(dir);
+#endif
+  return ok;
+}
+
 static void discard_imported_objects(GmlcProject *project, int remove_sources){
   for(int i = 0; i < project->n_objects; ++i){
     free(project->objects[i].id);
@@ -602,6 +668,23 @@ static void discard_imported_backgrounds(GmlcProject *project, int remove_source
   memset(project, 0, sizeof(*project));
 }
 
+static void discard_imported_rooms(GmlcProject *project, int remove_sources){
+  for(int i = 0; i < project->n_rooms; ++i){
+    GmlcRoom *room = &project->rooms[i];
+    if(remove_sources && room->creation_code_path) remove(room->creation_code_path);
+    free(room->creation_code_path); free(room->id); free(room->name);
+    for(int instance = 0; instance < room->n_instances; ++instance){
+      if(remove_sources && room->instances[instance].creation_code_path)
+        remove(room->instances[instance].creation_code_path);
+      free(room->instances[instance].creation_code_path);
+      free(room->instances[instance].id); free(room->instances[instance].name);
+    }
+    free(room->instances); free(room->backgrounds); free(room->tiles);
+  }
+  free(project->rooms);
+  memset(project, 0, sizeof(*project));
+}
+
 int main(int argc, char **argv){
   const unsigned versions[] = {600, 701, 702, 800, 810};
   int passed = 0, failed = 0;
@@ -625,6 +708,7 @@ int main(int argc, char **argv){
   if(expect_sound_import()) ++passed; else ++failed;
   if(expect_path_import()) ++passed; else ++failed;
   if(expect_object_import()) ++passed; else ++failed;
+  if(expect_room_import()) ++passed; else ++failed;
 
   for(int i = 1; i < argc; ++i){
     GmlcClassicInventory in;
@@ -676,6 +760,13 @@ int main(int argc, char **argv){
         continue;
       }
       discard_imported_backgrounds(&project, 1);
+      if(!gmlc_classic_import_rooms(&manifest, &project, object_dir, err, sizeof(err))){
+        fprintf(stderr, "%s: %s\n", argv[i], err);
+        gmlc_classic_manifest_free(&manifest);
+        ++failed;
+        continue;
+      }
+      discard_imported_rooms(&project, 1);
       gmlc_classic_manifest_free(&manifest);
     } else {
       printf("%s\t%u\t%s\n", argv[i], (unsigned)h.version,

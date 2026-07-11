@@ -230,6 +230,8 @@ static void free_room_fields(GmlcRoom *r){
     free(r->instances[i].creation_code_path);
   }
   free(r->instances);
+  free(r->backgrounds);
+  free(r->tiles);
   for(int l=0;l<r->n_layers;l++) free_room_layer_fields(&r->layers[l]);
   free(r->layers);
 }
@@ -719,6 +721,8 @@ static int parse_room(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
   r.width=gmlc_json_int(gmlc_json_obj(settings,"Width"),640);
   r.height=gmlc_json_int(gmlc_json_obj(settings,"Height"),480);
   r.speed=60;
+  r.background_color=0xFF000000u;
+  r.draw_background_color=1;
   const GmlcJson *physics_settings=gmlc_json_obj(yy,"physicsSettings");
   r.physics_world=gmlc_json_bool(gmlc_json_obj(physics_settings,"PhysicsWorld"),0);
   r.physics_gravity_x=(float)gmlc_json_num(gmlc_json_obj(physics_settings,"PhysicsWorldGravityX"),0.0);

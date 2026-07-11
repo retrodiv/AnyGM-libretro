@@ -3663,7 +3663,9 @@ void gml_room_enter(GmlVM *vm, int room_index){
       set_global_arr(vm,"background_x",i,bx);  set_global_arr(vm,"background_y",i,by);
       set_global_arr(vm,"background_htiled",i,htl?1:0); set_global_arr(vm,"background_vtiled",i,vtl?1:0);
       set_global_arr(vm,"background_hspeed",i,bh); set_global_arr(vm,"background_vspeed",i,bv);
+      set_global_arr(vm,"background_stretch",i,(int)u32(d,lp+36)?1:0);
       set_global_arr(vm,"background_alpha",i,1.0);          /* GM default */
+      set_global_arr(vm,"background_blend",i,0xFFFFFF);
       if(getenv("GML_LOG_BG")) fprintf(stderr,"[bg-init] layer%u en=%d fg=%d def=%d pos=(%d,%d) htiled=%d vtiled=%d speed=(%d,%d)\n",i,en,fg,def,bx,by,htl,vtl,bh,bv);
     } }
   /* view settings → globals (GM auto-follows view_object each step; see gml_vm_step). View record
@@ -4163,7 +4165,7 @@ static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap
   t.order=order;
   (*tiles)[*nt]=t; (*depth)[*nt]=dep; (*nt)++;
 }
-typedef struct { double depth; int seq, type, idx, order; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite */
+typedef struct { double depth; int seq, type, idx, order; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite, 6=classic bg */
 static int cmp_draw_item(const void *pa, const void *pb){
   const GmlDrawItem *a=pa,*b=pb;
   if(a->depth!=b->depth) return a->depth>b->depth? -1:1;     /* higher depth first (behind) */
@@ -4221,6 +4223,7 @@ static int *vm_draw_order_scratch(GmlVM *vm, int need){
 struct LayBg { int sprite; int th,tv,stretch,order; double x,y; uint32_t blend; double alpha; double depth; };
 struct LayTile { int sprite; int sx,sy,w,h,order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
 struct LaySprite { int sprite, subimg,order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
+struct ClassicBg { int def,th,tv,stretch; double x,y; uint32_t blend; double alpha,depth; };
 static void draw_event_hook(GmlVM *vm, GmlInstance *in, const char *suffix, int begin){
   if(vm && vm->draw_event_hook) vm->draw_event_hook(vm,in,suffix,begin,vm->draw_event_hook_user);
 }
@@ -4271,6 +4274,26 @@ void gml_vm_draw(GmlVM *vm){
   struct LayBg *lbg=g_dl_lbg; int nlb=0;
   struct LayTile *ltl=g_dl_ltl; int nlt=0;
   struct LaySprite *lsp=g_dl_lsp; int nls=0;
+  struct ClassicBg cbg[9]; int ncb=0;
+  if(rm.draw_bg){
+    cbg[ncb].def=-1; cbg[ncb].th=cbg[ncb].tv=cbg[ncb].stretch=0;
+    cbg[ncb].x=cbg[ncb].y=0; cbg[ncb].blend=rm.bgcolor&0xFFFFFFu;
+    cbg[ncb].alpha=((rm.bgcolor>>24)&0xFF)/255.0; cbg[ncb].depth=1.1e300; ncb++;
+  }
+  for(int i=0;i<8;i++){
+    if(get_global_arr_d(vm,"background_visible",i)<0.5) continue;
+    int def=(int)get_global_arr_d(vm,"background_index",i);
+    if(def<0 || def>=R->n_bg) continue;
+    struct ClassicBg *bg=&cbg[ncb++];
+    bg->def=def;
+    bg->x=get_global_arr_d(vm,"background_x",i); bg->y=get_global_arr_d(vm,"background_y",i);
+    bg->th=get_global_arr_d(vm,"background_htiled",i)>=0.5;
+    bg->tv=get_global_arr_d(vm,"background_vtiled",i)>=0.5;
+    bg->stretch=get_global_arr_d(vm,"background_stretch",i)>=0.5;
+    bg->blend=(uint32_t)get_global_arr_d(vm,"background_blend",i);
+    bg->alpha=get_global_arr_d(vm,"background_alpha",i);
+    bg->depth=get_global_arr_d(vm,"background_foreground",i)>=0.5 ? -1.0e300 : 1.0e300;
+  }
   {
     const uint8_t *d=vm->win->data;
     uint32_t lcnt=0;
@@ -4412,7 +4435,7 @@ void gml_vm_draw(GmlVM *vm){
   }
   /* unified depth-sorted draw list of instances + tiles + GMS2 layers + auto-draw particle systems */
   int npart=0; while(gml_part_system_auto_draw_nth(npart,NULL,NULL)) npart++;
-  int cap=n+nt+nlb+nlt+nls+npart; if(!dl_grow((void**)&g_dl_it,&g_dl_it_cap,cap>0?cap:1,sizeof(GmlDrawItem))){ g_dl_tiles=tiles; g_dl_tdepth=tdepth; g_dl_tiles_cap=tcap; return; }
+  int cap=n+nt+nlb+nlt+nls+ncb+npart; if(!dl_grow((void**)&g_dl_it,&g_dl_it_cap,cap>0?cap:1,sizeof(GmlDrawItem))){ g_dl_tiles=tiles; g_dl_tdepth=tdepth; g_dl_tiles_cap=tcap; return; }
   GmlDrawItem *it=g_dl_it; int m=0;
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked){
     it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; it[m].order=vm->inst[i].draw_layer_order; m++; }
@@ -4420,6 +4443,7 @@ void gml_vm_draw(GmlVM *vm){
   for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; it[m].order=ltl[i].order; m++; }
   for(int i=0;i<nlb;i++){ it[m].depth=lbg[i].depth; it[m].type=3; it[m].idx=i; it[m].seq=m; it[m].order=lbg[i].order; m++; }
   for(int i=0;i<nls;i++){ it[m].depth=lsp[i].depth; it[m].type=5; it[m].idx=i; it[m].seq=m; it[m].order=lsp[i].order; m++; }
+  for(int i=0;i<ncb;i++){ it[m].depth=cbg[i].depth; it[m].type=6; it[m].idx=i; it[m].seq=m; it[m].order=-1; m++; }
   for(int i=0;i<npart;i++){ int pid=0; double dep=0;
     if(gml_part_system_auto_draw_nth(i,&pid,&dep)){ it[m].depth=dep; it[m].type=4; it[m].idx=pid; it[m].seq=m; it[m].order=-1; m++; } }
   qsort(it,m,sizeof(GmlDrawItem),cmp_draw_item);
@@ -4466,6 +4490,12 @@ void gml_vm_draw(GmlVM *vm){
     if(it[k].type==4){ gml_part_system_drawit(R,it[k].idx); continue; }
     if(it[k].type==5){ struct LaySprite *s=&lsp[it[k].idx];
       gml_draw_sprite_ext(R,s->sprite,s->subimg,s->x,s->y,s->xs,s->ys,s->angle,s->blend,s->alpha);
+      continue; }
+    if(it[k].type==6){ struct ClassicBg *b=&cbg[it[k].idx];
+      if(b->def<0) gml_draw_layer_color_fill(R,b->blend,b->alpha);
+      else if(b->stretch) gml_draw_background_stretched(R,b->def,b->x,b->y,rm.width,rm.height,b->blend,b->alpha);
+      else if(b->th || b->tv) gml_draw_background_tiled_ext(R,b->def,b->x,b->y,1,1,b->blend,b->alpha,b->th,b->tv);
+      else gml_draw_background_ext(R,b->def,b->x,b->y,1,1,b->blend,b->alpha);
       continue; }
     GmlInstance *in=&vm->inst[it[k].idx];
     if(vm->draw_events_off) continue;   /* draw_enable_drawevent(false): no instance drawing */

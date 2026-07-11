@@ -2195,17 +2195,43 @@ static int write_room_instances(Pkg *pkg, const GmlcProject *p, int room_index, 
   return 1;
 }
 
-static int write_room_empty_list(Pkg *pkg, uint32_t *out_ptr){
+static int write_room_backgrounds(Pkg *pkg, const GmlcRoom *r, uint32_t *out_ptr){
   *out_ptr=(uint32_t)pkg->b.len;
-  return wu32(&pkg->b,0);
+  wu32(&pkg->b,(uint32_t)r->n_backgrounds);
+  size_t table=pkg->b.len;
+  zfill(&pkg->b,(size_t)r->n_backgrounds*4);
+  for(int i=0;i<r->n_backgrounds;i++){
+    const GmlcRoomBackground *bg=&r->backgrounds[i];
+    patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
+    wu32(&pkg->b,(uint32_t)(bg->visible?1:0));
+    wu32(&pkg->b,(uint32_t)(bg->foreground?1:0));
+    wi32(&pkg->b,bg->background_id);
+    wi32(&pkg->b,bg->x); wi32(&pkg->b,bg->y);
+    wu32(&pkg->b,(uint32_t)(bg->htiled?1:0));
+    wu32(&pkg->b,(uint32_t)(bg->vtiled?1:0));
+    wi32(&pkg->b,bg->hspeed); wi32(&pkg->b,bg->vspeed);
+    wu32(&pkg->b,(uint32_t)(bg->stretch?1:0));
+  }
+  return 1;
 }
 
 static int write_room_tiles(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, uint32_t *out_ptr){
   (void)p;
-  (void)r;
-  /* GMS2 tilemaps live in the type-4 layer payload. The legacy room tile list uses a
-   * different 48-byte sprite-tile record and must remain empty for this package shape. */
-  return write_room_empty_list(pkg,out_ptr);
+  *out_ptr=(uint32_t)pkg->b.len;
+  wu32(&pkg->b,(uint32_t)r->n_tiles);
+  size_t table=pkg->b.len;
+  zfill(&pkg->b,(size_t)r->n_tiles*4);
+  for(int i=0;i<r->n_tiles;i++){
+    const GmlcRoomTile *tile=&r->tiles[i];
+    patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
+    wi32(&pkg->b,tile->x); wi32(&pkg->b,tile->y);
+    wi32(&pkg->b,tile->background_id);
+    wi32(&pkg->b,tile->source_x); wi32(&pkg->b,tile->source_y);
+    wi32(&pkg->b,tile->width); wi32(&pkg->b,tile->height);
+    wi32(&pkg->b,tile->depth); wi32(&pkg->b,tile->tile_id);
+    wf32(&pkg->b,1.0f); wf32(&pkg->b,1.0f); wu32(&pkg->b,0xFFFFFFFFu);
+  }
+  return 1;
 }
 
 static int write_room_layer_list(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, uint32_t *out_ptr){
@@ -2285,8 +2311,8 @@ static int write_room(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, int roo
   wu32(&pkg->b,(uint32_t)r->height);
   wu32(&pkg->b,(uint32_t)(r->speed>0?r->speed:60));
   wi32(&pkg->b,0);
-  wu32(&pkg->b,0xFF000000u);
-  wu32(&pkg->b,1);
+  wu32(&pkg->b,r->background_color);
+  wu32(&pkg->b,(uint32_t)(r->draw_background_color?1:0));
   wi32(&pkg->b,room_creation_code_index(p,room_index));
   wi32(&pkg->b,0);
   size_t bg_pos=pkg->b.len; wu32(&pkg->b,0);
@@ -2300,7 +2326,7 @@ static int write_room(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, int roo
   wf32(&pkg->b,r->physics_scale>0.0f?r->physics_scale:0.1f);
   size_t layer_pos=pkg->b.len; wu32(&pkg->b,0);
   uint32_t bg=0, view=0, obj=0, tile=0, layers=0;
-  write_room_empty_list(pkg,&bg);
+  write_room_backgrounds(pkg,r,&bg);
   write_room_views(pkg,r,&view);
   write_room_instances(pkg,p,room_index,r,&obj);
   write_room_tiles(pkg,p,r,&tile);

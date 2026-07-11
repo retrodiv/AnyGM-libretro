@@ -74,15 +74,30 @@ typedef struct {
 } GmlcRoomView;
 
 typedef struct {
+  int visible, foreground, background_id;
+  int x, y, htiled, vtiled, hspeed, vspeed, stretch;
+} GmlcRoomBackground;
+
+typedef struct {
+  int x, y, background_id, source_x, source_y, width, height, depth, tile_id;
+} GmlcRoomTile;
+
+typedef struct {
   char *id;
   char *name;
-  int width, height, speed;
+  int width, height, speed, persistent;
+  uint32_t background_color;
+  int draw_background_color;
   int physics_world;
   float physics_gravity_x, physics_gravity_y, physics_scale;
   int view_enabled;
   int view_w, view_h, port_w, port_h;
   GmlcRoomView views[8];
   int n_views;
+  GmlcRoomBackground *backgrounds;
+  int n_backgrounds, cap_backgrounds;
+  GmlcRoomTile *tiles;
+  int n_tiles, cap_tiles;
   GmlcRoomInstance *instances;
   int n_instances, cap_instances;
   GmlcRoomLayer *layers;
