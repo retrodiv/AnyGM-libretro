@@ -54,6 +54,10 @@ typedef struct {
   char *name;
   /* Populated for script resources; NULL for other resource kinds. */
   char *source;
+  /* Type-specific bytes immediately after the resource-format version. */
+  uint8_t *payload;
+  size_t payload_size;
+  int legacy_layout;
 } GmlcClassicResourceSlot;
 
 typedef struct {

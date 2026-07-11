@@ -313,6 +313,60 @@ static int expect_script_import(void){
   return ok;
 }
 
+static int expect_sprite_import(void){
+  GmlcClassicManifest manifest;
+  memset(&manifest, 0, sizeof(manifest));
+  manifest.inventory.resource_slots[GMLC_CLASSIC_SPRITE] = 1;
+  manifest.existing[GMLC_CLASSIC_SPRITE] = 1;
+  manifest.slots[GMLC_CLASSIC_SPRITE] = (GmlcClassicResourceSlot*)calloc(1, sizeof(GmlcClassicResourceSlot));
+  if(!manifest.slots[GMLC_CLASSIC_SPRITE]) return 0;
+  GmlcClassicResourceSlot *slot = &manifest.slots[GMLC_CLASSIC_SPRITE][0];
+  slot->exists = 1;
+  slot->name = strdup("resource_sprite");
+  Fixture payload = {{0}, 0};
+  fixture_u32(&payload, 1); fixture_u32(&payload, 2); fixture_u32(&payload, 1);
+  fixture_u32(&payload, 800); fixture_u32(&payload, 2); fixture_u32(&payload, 1);
+  const unsigned char bgra[8] = {3, 2, 1, 255, 6, 5, 4, 128};
+  fixture_u32(&payload, sizeof(bgra));
+  memcpy(payload.data + payload.size, bgra, sizeof(bgra)); payload.size += sizeof(bgra);
+  fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+  fixture_u32(&payload, 0); fixture_u32(&payload, 1); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+  slot->payload = (uint8_t*)malloc(payload.size);
+  if(!slot->name || !slot->payload){ gmlc_classic_manifest_free(&manifest); return 0; }
+  memcpy(slot->payload, payload.data, payload.size); slot->payload_size = payload.size;
+
+  GmlcProject project;
+  memset(&project, 0, sizeof(project));
+  char err[256], dir[128] = "tmp/classic_sprite_fixture";
+#ifdef _WIN32
+  _mkdir(dir);
+#else
+  mkdir(dir, 0777);
+#endif
+  int ok = gmlc_classic_import_sprites(&manifest, &project, dir, err, sizeof(err));
+  if(!ok) fprintf(stderr, "sprite import failed: %s\n", err);
+  if(ok){
+    struct stat st;
+    ok = project.n_sprites == 1 && project.sprites[0].runtime_id == 0 &&
+         project.sprites[0].width == 2 && project.sprites[0].height == 1 &&
+         project.sprites[0].xorig == 1 && project.sprites[0].yorig == 2 &&
+         project.sprites[0].bbox_right == 1 &&
+         !stat(project.sprites[0].frame_paths[0], &st) && st.st_size > 0;
+    remove(project.sprites[0].frame_paths[0]);
+  }
+  for(int i = 0; i < project.n_sprites; ++i){
+    free(project.sprites[i].id); free(project.sprites[i].name);
+    for(int frame = 0; frame < project.sprites[i].n_frames; ++frame) free(project.sprites[i].frame_paths[frame]);
+    free(project.sprites[i].frame_paths);
+  }
+  free(project.sprites);
+  gmlc_classic_manifest_free(&manifest);
+#ifndef _WIN32
+  rmdir(dir);
+#endif
+  return ok;
+}
+
 int main(int argc, char **argv){
   const unsigned versions[] = {600, 701, 702, 800, 810};
   int passed = 0, failed = 0;
@@ -331,6 +385,7 @@ int main(int argc, char **argv){
   if(expect_legacy_manifest(600)) ++passed; else ++failed;
   if(expect_legacy_manifest(701)) ++passed; else ++failed;
   if(expect_script_import()) ++passed; else ++failed;
+  if(expect_sprite_import()) ++passed; else ++failed;
 
   for(int i = 1; i < argc; ++i){
     GmlcClassicInventory in;

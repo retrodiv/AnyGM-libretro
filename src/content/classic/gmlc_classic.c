@@ -410,13 +410,14 @@ static int validate_legacy_background_payload(ClassicReader *r){
 }
 
 static int parse_legacy_slot(ClassicReader *r, GmlcClassicResourceType type,
-                             GmlcClassicResourceSlot *slot){
+                             GmlcClassicResourceSlot *slot, int retain_payload){
   uint32_t exists;
   if(!reader_u32(r, &exists, "legacy resource existence flag")) return 0;
   slot->exists = exists != 0;
   if(!slot->exists) return 1;
   if(!reader_string_copy(r, &slot->name, "legacy resource name") ||
      !reader_u32(r, &slot->version, "legacy resource version")) return 0;
+  size_t payload_start = r->pos;
   int valid = 0;
   switch(type){
     case GMLC_CLASSIC_SOUND: valid = validate_sound_payload(r); break;
@@ -434,6 +435,17 @@ static int parse_legacy_slot(ClassicReader *r, GmlcClassicResourceType type,
   if(!valid){
     free(slot->name); slot->name = NULL;
     free(slot->source); slot->source = NULL;
+  } else if(retain_payload && r->pos > payload_start){
+    slot->payload_size = r->pos - payload_start;
+    slot->payload = (uint8_t*)malloc(slot->payload_size);
+    if(!slot->payload){
+      if(r->err && r->errcap) snprintf(r->err, r->errcap, "classic project: out of memory retaining legacy payload");
+      free(slot->name); slot->name = NULL;
+      free(slot->source); slot->source = NULL;
+      return 0;
+    }
+    memcpy(slot->payload, r->data + payload_start, slot->payload_size);
+    slot->legacy_layout = 1;
   }
   return valid;
 }
@@ -484,12 +496,12 @@ static int parse_legacy_project(const void *data, size_t size,
     for(uint32_t i = 0; i < count; ++i){
       GmlcClassicResourceSlot temporary = {0};
       GmlcClassicResourceSlot *slot = slots ? &slots[i] : &temporary;
-      if(!parse_legacy_slot(&r, (GmlcClassicResourceType)type, slot)){
-        free(temporary.name); free(temporary.source);
+      if(!parse_legacy_slot(&r, (GmlcClassicResourceType)type, slot, slots != NULL)){
+        free(temporary.name); free(temporary.source); free(temporary.payload);
         goto fail;
       }
       if(slot->exists && manifest) ++manifest->existing[type];
-      if(!slots){ free(temporary.name); free(temporary.source); }
+      if(!slots){ free(temporary.name); free(temporary.source); free(temporary.payload); }
     }
   }
   if(!reader_u32(&r, &inventory->last_instance_id, "last legacy instance id") ||
@@ -587,6 +599,7 @@ static int parse_manifest_slot(GmlcClassicResourceType type,
     return 0;
   }
   slot->exists = exists != 0;
+  size_t payload_start = 0;
   if(slot->exists &&
      (!reader_string_copy(&r, &slot->name, "resource name") ||
       !reader_skip(&r, 8, "resource timestamp") ||
@@ -596,6 +609,7 @@ static int parse_manifest_slot(GmlcClassicResourceType type,
     STBI_FREE(raw);
     return 0;
   }
+  if(slot->exists) payload_start = r.pos;
   if(slot->exists && type == GMLC_CLASSIC_SCRIPT &&
      !reader_string_copy(&r, &slot->source, "script source")){
     free(slot->name);
@@ -627,6 +641,18 @@ static int parse_manifest_slot(GmlcClassicResourceType type,
     STBI_FREE(raw);
     return 0;
   }
+  if(slot->exists && r.pos > payload_start){
+    slot->payload_size = r.pos - payload_start;
+    slot->payload = (uint8_t*)malloc(slot->payload_size);
+    if(!slot->payload){
+      if(err && errcap) snprintf(err, errcap, "classic project: out of memory retaining resource payload");
+      free(slot->name); slot->name = NULL;
+      free(slot->source); slot->source = NULL;
+      STBI_FREE(raw);
+      return 0;
+    }
+    memcpy(slot->payload, (const uint8_t*)raw + payload_start, slot->payload_size);
+  }
   STBI_FREE(raw);
   return 1;
 }
@@ -638,6 +664,7 @@ void gmlc_classic_manifest_free(GmlcClassicManifest *manifest){
     for(uint32_t i = 0; i < count; ++i){
       free(manifest->slots[type][i].name);
       free(manifest->slots[type][i].source);
+      free(manifest->slots[type][i].payload);
     }
     free(manifest->slots[type]);
   }

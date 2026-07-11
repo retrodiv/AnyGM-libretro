@@ -13,5 +13,8 @@
 int gmlc_classic_import_scripts(const GmlcClassicManifest *classic,
                                 GmlcProject *project, const char *cache_dir,
                                 char *err, size_t errcap);
+int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
+                                GmlcProject *project, const char *cache_dir,
+                                char *err, size_t errcap);
 
 #endif
