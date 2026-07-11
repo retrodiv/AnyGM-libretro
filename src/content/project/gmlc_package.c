@@ -780,6 +780,32 @@ static int write_bgnd(Pkg *pkg, const GmlcProject *p){
   return 1;
 }
 
+static int write_path(Pkg *pkg, const GmlcProject *p){
+  size_t s=chunk_begin(pkg,"PATH");
+  uint32_t n=(uint32_t)p->n_paths;
+  wu32(&pkg->b,n);
+  size_t table=pkg->b.len;
+  zfill(&pkg->b,(size_t)n*4);
+  for(uint32_t i=0;i<n;i++){
+    const GmlcPath *path=&p->paths[i];
+    patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
+    int sid=intern(pkg,path->name?path->name:"");
+    if(sid<0) return 0;
+    wstrptr(pkg,sid);
+    wi32(&pkg->b,path->kind);
+    wu32(&pkg->b,(uint32_t)(path->closed?1:0));
+    wi32(&pkg->b,path->precision);
+    wu32(&pkg->b,(uint32_t)path->n_points);
+    for(int point=0;point<path->n_points;point++){
+      wf32(&pkg->b,path->points[point].x);
+      wf32(&pkg->b,path->points[point].y);
+      wf32(&pkg->b,path->points[point].speed);
+    }
+  }
+  chunk_end(pkg,s);
+  return 1;
+}
+
 static int write_tpag(Pkg *pkg, const GmlcProject *p){
   pkg->n_frames=total_sprite_frames(p);
   pkg->n_texture_pages=total_texture_pages(p);
@@ -2835,7 +2861,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
      !write_agrp(&pkg) ||
      !write_sprt(&pkg,p,err,errcap) ||
      !write_bgnd(&pkg,p) ||
-     !empty_list_chunk(&pkg,"PATH") ||
+     !write_path(&pkg,p) ||
      !write_scpt(&pkg,p) ||
      !empty_list_chunk(&pkg,"GLOB") ||
      !write_shdr(&pkg,p) ||

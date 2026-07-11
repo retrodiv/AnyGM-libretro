@@ -137,6 +137,18 @@ typedef struct {
 } GmlcScript;
 
 typedef struct {
+  float x, y, speed;
+} GmlcPathPoint;
+
+typedef struct {
+  char *id;
+  char *name;
+  int kind, closed, precision;
+  GmlcPathPoint *points;
+  int n_points;
+} GmlcPath;
+
+typedef struct {
   char *id;
   char *name;
   char *data_path;
@@ -185,6 +197,8 @@ typedef struct {
   int n_sounds, cap_sounds;
   GmlcScript *scripts;
   int n_scripts, cap_scripts;
+  GmlcPath *paths;
+  int n_paths, cap_paths;
   char **resource_order_ids;
   int n_resource_order;
   char **script_order_ids;

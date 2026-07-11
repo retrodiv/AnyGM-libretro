@@ -73,6 +73,10 @@ void gmlc_project_free(GmlcProject *p){
   free(p->sounds);
   for(int i=0;i<p->n_scripts;i++){ free(p->scripts[i].id); free(p->scripts[i].name); free(p->scripts[i].source_path); }
   free(p->scripts);
+  for(int i=0;i<p->n_paths;i++){
+    free(p->paths[i].id); free(p->paths[i].name); free(p->paths[i].points);
+  }
+  free(p->paths);
   for(int i=0;i<p->n_resource_order;i++) free(p->resource_order_ids[i]);
   free(p->resource_order_ids);
   for(int i=0;i<p->n_script_order;i++) free(p->script_order_ids[i]);
