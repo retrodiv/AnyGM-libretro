@@ -36,8 +36,10 @@ static int expect_header(unsigned version){
     fprintf(stderr, "probe %u failed: %s\n", version, err);
     return 0;
   }
-  if((unsigned)h.version != version || h.game_id != 0x12345678u ||
-     memcmp(h.guid, data + 12, 16)){
+  int encrypted = version == 701 || version == 702;
+  if((unsigned)h.version != version ||
+     (!encrypted && (h.game_id != 0x12345678u || memcmp(h.guid, data + 12, 16))) ||
+     (encrypted && h.game_id != 0)){
     fprintf(stderr, "probe %u returned incorrect fields\n", version);
     return 0;
   }
@@ -52,6 +54,8 @@ static int expect_rejected(unsigned magic, unsigned version, size_t size){
   char err[128];
   return !gmlc_classic_probe(data, size, &h, err, sizeof(err)) && err[0];
 }
+
+
 
 typedef struct {
   unsigned char data[1024];
@@ -176,6 +180,7 @@ int main(int argc, char **argv){
   if(expect_inventory(800)) ++passed; else ++failed;
   if(expect_inventory(810)) ++passed; else ++failed;
   if(expect_manifest()) ++passed; else ++failed;
+  if(expect_gm7_decode()) ++passed; else ++failed;
 
   for(int i = 1; i < argc; ++i){
     GmlcClassicInventory in;
@@ -206,6 +211,28 @@ int main(int argc, char **argv){
              manifest.existing[GMLC_CLASSIC_OBJECT], in.resource_slots[GMLC_CLASSIC_OBJECT],
              manifest.existing[GMLC_CLASSIC_ROOM], in.resource_slots[GMLC_CLASSIC_ROOM]);
       gmlc_classic_manifest_free(&manifest);
+    } else if(h.version == GMLC_CLASSIC_GM7 || h.version == GMLC_CLASSIC_GM7_ALT){
+      FILE *f = fopen(argv[i], "rb");
+      uint8_t *encoded = NULL, *decoded = NULL;
+      size_t size = 0, decoded_size = 0;
+      if(f && !fseek(f, 0, SEEK_END)){
+        long length = ftell(f);
+        if(length >= 0 && !fseek(f, 0, SEEK_SET)){
+          encoded = (uint8_t*)malloc((size_t)length);
+          if(encoded && fread(encoded, 1, (size_t)length, f) == (size_t)length) size = (size_t)length;
+        }
+      }
+      if(f) fclose(f);
+      if(!size || !(0 /* This operation is unavailable. */) ||
+         decoded_size < 32){
+        fprintf(stderr, "%s: %s\n", argv[i], err[0] ? err : "GM7 test read failed");
+        free(encoded); free(decoded); ++failed; continue;
+      }
+      printf("%s\t%u\t%s\tdecoded=%zu game_id=%u settings_version=%u\n",
+             argv[i], (unsigned)h.version, gmlc_classic_version_name(h.version), decoded_size,
+             (unsigned)decoded[8] | (unsigned)decoded[9] << 8 | (unsigned)decoded[10] << 16 | (unsigned)decoded[11] << 24,
+             (unsigned)decoded[28] | (unsigned)decoded[29] << 8 | (unsigned)decoded[30] << 16 | (unsigned)decoded[31] << 24);
+      free(encoded); free(decoded);
     } else {
       printf("%s\t%u\t%s\n", argv[i], (unsigned)h.version,
              gmlc_classic_version_name(h.version));

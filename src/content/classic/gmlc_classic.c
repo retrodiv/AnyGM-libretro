@@ -296,7 +296,7 @@ int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
     if(err && errcap) snprintf(err, errcap, "classic project: invalid probe arguments");
     return 0;
   }
-  if(size < 28){
+  if(size < 8){
     if(err && errcap) snprintf(err, errcap, "classic project: truncated common header (%zu bytes)", size);
     return 0;
   }
@@ -313,10 +313,19 @@ int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
   }
   memset(out, 0, sizeof(*out));
   out->version = (GmlcClassicVersion)version;
-  out->game_id = read_u32le(p + 8);
-  memcpy(out->guid, p + 12, sizeof(out->guid));
+  
+  if(version != GMLC_CLASSIC_GM7 && version != GMLC_CLASSIC_GM7_ALT){
+    if(size < 28){
+      if(err && errcap) snprintf(err, errcap, "classic project: truncated common header (%zu bytes)", size);
+      return 0;
+    }
+    out->game_id = read_u32le(p + 8);
+    memcpy(out->guid, p + 12, sizeof(out->guid));
+  }
   return 1;
 }
+
+
 
 int gmlc_classic_probe_file(const char *path, GmlcClassicHeader *out,
                             char *err, size_t errcap){

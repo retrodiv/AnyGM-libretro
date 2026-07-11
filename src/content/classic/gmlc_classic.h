@@ -68,6 +68,7 @@ int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
                        char *err, size_t errcap);
 int gmlc_classic_probe_file(const char *path, GmlcClassicHeader *out,
                             char *err, size_t errcap);
+
 /* Parse the length-delimited top-level inventory used by GM8/8.1 projects.
  * Individual resource payloads are not interpreted by this function. */
 int gmlc_classic_inventory(const void *data, size_t size,
