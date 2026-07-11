@@ -50,6 +50,8 @@ typedef struct {
 typedef struct {
   GmlcFunctionDef *defs;
   int n_defs, cap_defs;
+  char **globals;
+  int n_globals, cap_globals;
 } GmlcFunctionRegistry;
 
 int gmlc_bytecode_emit_empty(GmlcCodeBlob *out);

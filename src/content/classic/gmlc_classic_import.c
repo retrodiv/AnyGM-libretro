@@ -14,6 +14,12 @@
 #define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_BMP
+#define STBI_ONLY_PNG
+#define STBI_NO_GIF
+#include "stb_image.h"
 #if defined(__GNUC__)
 #pragma GCC pop_options
 #pragma GCC diagnostic pop
@@ -224,7 +230,7 @@ static int write_rgba_png(const char *path, const uint8_t *source_rgba, uint32_t
     return 0;
   }
   size_t pixels = (size_t)out_width * (size_t)out_height;
-  if(width > 0 && height > 0 && bytes < pixels * 4u){
+  if(width > 0 && height > 0 && source_rgba && bytes < pixels * 4u){
     if(err && errcap) snprintf(err, errcap, "classic import: truncated sprite BGRA pixels");
     return 0;
   }
@@ -233,13 +239,49 @@ static int write_rgba_png(const char *path, const uint8_t *source_rgba, uint32_t
     if(err && errcap) snprintf(err, errcap, "classic import: out of memory converting sprite pixels");
     return 0;
   }
-  if(width > 0 && height > 0){
+  if(width > 0 && height > 0 && source_rgba){
     memcpy(rgba, source_rgba, pixels * 4u);
   }
   int ok = stbi_write_png(path, out_width, out_height, 4, rgba, out_width * 4);
   free(rgba);
   if(!ok && err && errcap) snprintf(err, errcap, "classic import: cannot write %s", path);
   return ok != 0;
+}
+
+static int decode_legacy_image(ImportReader *r, int expected_width, int expected_height,
+                               int transparent, uint8_t **rgba_out, uint32_t *bytes_out,
+                               const char *what){
+  uint32_t marker;
+  *rgba_out=NULL; *bytes_out=0;
+  if(!import_u32(r,&marker,what)) return 0;
+  if(marker==UINT32_MAX) return 1;
+  const uint8_t *compressed; uint32_t compressed_size;
+  if(!import_blob(r,&compressed,&compressed_size,what) || compressed_size>INT32_MAX) return 0;
+  int raw_size=0;
+  char *raw=stbi_zlib_decode_malloc((const char*)compressed,(int)compressed_size,&raw_size);
+  if(!raw || raw_size<=0){
+    if(r->err && r->errcap) snprintf(r->err,r->errcap,"classic import: invalid compressed %s",what);
+    STBI_FREE(raw); return 0;
+  }
+  int width=0,height=0,components=0;
+  uint8_t *rgba=stbi_load_from_memory((const stbi_uc*)raw,raw_size,&width,&height,&components,4);
+  STBI_FREE(raw);
+  if(!rgba || width!=expected_width || height!=expected_height ||
+     width<0 || height<0 || (size_t)width>UINT32_MAX/(size_t)(height?height:1)/4u){
+    if(r->err && r->errcap) snprintf(r->err,r->errcap,"classic import: invalid %s dimensions",what);
+    stbi_image_free(rgba); return 0;
+  }
+  uint32_t bytes=(uint32_t)((size_t)width*(size_t)height*4u);
+  if(transparent && width>0 && height>0){
+    const uint8_t *key=rgba+((size_t)(height-1)*(size_t)width)*4u;
+    uint8_t kr=key[0],kg=key[1],kb=key[2];
+    for(size_t p=0;p<(size_t)width*(size_t)height;p++){
+      uint8_t *pixel=rgba+p*4u;
+      if(pixel[0]==kr && pixel[1]==kg && pixel[2]==kb) pixel[3]=0;
+    }
+  }
+  *rgba_out=rgba; *bytes_out=bytes;
+  return 1;
 }
 
 int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
@@ -266,17 +308,46 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
   for(uint32_t slot_index = 0; slot_index < slots_count; ++slot_index){
     const GmlcClassicResourceSlot *source = &slots[slot_index];
     if(!source->exists) continue;
-    if(source->legacy_layout){
-      if(err && errcap) snprintf(err, errcap, "classic import: legacy sprite pixel conversion is not implemented yet");
-      free_imported_sprites(project);
-      return 0;
-    }
     GmlcSprite *sprite = &project->sprites[project->n_sprites++];
     sprite->id = copy_string(source->name);
     sprite->name = copy_string(source->name);
     sprite->runtime_id = (int)slot_index;
     ImportReader r = {source->payload, source->payload_size, 0, err, errcap};
     uint32_t xorigin, yorigin, frames;
+    if(source->legacy_layout){
+      uint32_t fields[13];
+      for(int field=0;field<13;field++) if(!import_u32(&r,&fields[field],"legacy sprite field")){
+        free_imported_sprites(project); return 0;
+      }
+      if(!import_u32(&r,&frames,"legacy sprite frame count") || frames>INT32_MAX ||
+         fields[0]>INT32_MAX || fields[1]>INT32_MAX){
+        free_imported_sprites(project); return 0;
+      }
+      sprite->width=(int)fields[0]; sprite->height=(int)fields[1];
+      sprite->bbox_left=(int32_t)fields[2]; sprite->bbox_right=(int32_t)fields[3];
+      sprite->bbox_bottom=(int32_t)fields[4]; sprite->bbox_top=(int32_t)fields[5];
+      sprite->bbox_mode=(int32_t)fields[9]; sprite->col_kind=(int32_t)fields[10];
+      sprite->xorig=(int32_t)fields[11]; sprite->yorig=(int32_t)fields[12];
+      sprite->n_frames=(int)frames;
+      sprite->frame_paths=(char**)calloc(frames?frames:1,sizeof(*sprite->frame_paths));
+      if(!sprite->id || !sprite->name || !sprite->frame_paths){ free_imported_sprites(project); return 0; }
+      for(uint32_t frame=0;frame<frames;frame++){
+        uint8_t *rgba=NULL; uint32_t rgba_bytes=0;
+        if(!decode_legacy_image(&r,sprite->width,sprite->height,fields[6]!=0,
+                                &rgba,&rgba_bytes,"legacy sprite image")){
+          free_imported_sprites(project); return 0;
+        }
+        char leaf[96];
+        snprintf(leaf,sizeof(leaf),"classic_sprite_%06u_%06u.png",slot_index,frame);
+        sprite->frame_paths[frame]=cache_path(cache_dir,leaf);
+        int ok=sprite->frame_paths[frame] &&
+          write_rgba_png(sprite->frame_paths[frame],rgba,rgba_bytes,sprite->width,sprite->height,err,errcap);
+        stbi_image_free(rgba);
+        if(!ok){ free_imported_sprites(project); return 0; }
+      }
+      if(r.pos!=r.size){ if(err && errcap) snprintf(err,errcap,"classic import: trailing legacy sprite payload"); free_imported_sprites(project); return 0; }
+      continue;
+    }
     if(!sprite->id || !sprite->name || !import_u32(&r, &xorigin, "sprite x origin") ||
        !import_u32(&r, &yorigin, "sprite y origin") || !import_u32(&r, &frames, "sprite frame count") ||
        frames > INT32_MAX){
@@ -411,9 +482,49 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
     }
     if(!slots[i].exists) continue;
     if(slots[i].legacy_layout){
-      if(err && errcap) snprintf(err, errcap, "classic import: legacy background pixel conversion is not implemented yet");
-      free_imported_backgrounds(project, first_sprite);
-      return 0;
+      ImportReader r={slots[i].payload,slots[i].payload_size,0,err,errcap};
+      uint32_t fields[12],has_image;
+      for(int field=0;field<12;field++) if(!import_u32(&r,&fields[field],"legacy background field")){
+        free_imported_backgrounds(project,first_sprite); return 0;
+      }
+      if(!import_u32(&r,&has_image,"legacy background image flag") ||
+         fields[0]>INT32_MAX || fields[1]>INT32_MAX){
+        free_imported_backgrounds(project,first_sprite); return 0;
+      }
+      uint8_t *rgba=NULL; uint32_t rgba_bytes=0;
+      if(has_image && !decode_legacy_image(&r,(int)fields[0],(int)fields[1],fields[2]!=0,
+                                           &rgba,&rgba_bytes,"legacy background image")){
+        free_imported_backgrounds(project,first_sprite); return 0;
+      }
+      if(r.pos!=r.size){ stbi_image_free(rgba); if(err && errcap) snprintf(err,errcap,"classic import: trailing legacy background payload"); free_imported_backgrounds(project,first_sprite); return 0; }
+      GmlcSprite *sprite=&project->sprites[project->n_sprites++];
+      sprite->id=copy_string(name); sprite->name=copy_string(name);
+      sprite->runtime_id=-1; sprite->tileset_source=1;
+      sprite->width=(int)fields[0]; sprite->height=(int)fields[1];
+      sprite->bbox_right=sprite->width?sprite->width-1:0;
+      sprite->bbox_bottom=sprite->height?sprite->height-1:0;
+      sprite->n_frames=1; sprite->frame_paths=(char**)calloc(1,sizeof(*sprite->frame_paths));
+      char leaf[80]; snprintf(leaf,sizeof(leaf),"classic_background_%06u.png",i);
+      if(sprite->frame_paths) sprite->frame_paths[0]=cache_path(cache_dir,leaf);
+      int image_ok=sprite->id && sprite->name && sprite->frame_paths && sprite->frame_paths[0] &&
+        write_rgba_png(sprite->frame_paths[0],rgba,rgba_bytes,sprite->width,sprite->height,err,errcap);
+      stbi_image_free(rgba);
+      if(!image_ok){ free_imported_backgrounds(project,first_sprite); return 0; }
+      background->sprite_id=project->n_sprites-1;
+      background->sprite_no_export=fields[5]?0:1;
+      background->tile_width=(int32_t)fields[6]; background->tile_height=(int32_t)fields[7];
+      background->border_x=(int32_t)fields[8]; background->border_y=(int32_t)fields[9];
+      int step_x=background->tile_width+(int32_t)fields[10];
+      int step_y=background->tile_height+(int32_t)fields[11];
+      background->columns=step_x>0 && sprite->width>background->border_x
+        ? (sprite->width-background->border_x+(int32_t)fields[10])/step_x : 1;
+      int rows=step_y>0 && sprite->height>background->border_y
+        ? (sprite->height-background->border_y+(int32_t)fields[11])/step_y : 1;
+      if(background->columns<1) background->columns=1;
+      if(rows<1) rows=1;
+      int64_t tile_count=(int64_t)background->columns*(int64_t)rows+1;
+      background->tile_count=tile_count>INT32_MAX?INT32_MAX:(int)tile_count;
+      continue;
     }
     ImportReader r = {slots[i].payload, slots[i].payload_size, 0, err, errcap};
     uint32_t fields[7], image_version, width, height, pixel_bytes = 0;
@@ -622,15 +733,11 @@ int gmlc_classic_import_sounds(const GmlcClassicManifest *classic,
     const char *name = source->exists && source->name ? source->name : fallback;
     const uint8_t *audio = silent_wav;
     size_t audio_size = sizeof(silent_wav);
+    char *owned_audio = NULL;
     char extension_buffer[12];
     const char *extension = ".wav";
     double volume = 1.0;
     if(source->exists){
-      if(source->legacy_layout){
-        if(err && errcap) snprintf(err, errcap, "classic import: legacy sound decompression is not implemented yet");
-        free_imported_sounds(project);
-        return 0;
-      }
       ImportReader r = {source->payload, source->payload_size, 0, err, errcap};
       uint32_t kind, type_length, filename_length, has_data, blob_size = 0, ignored;
       const uint8_t *type_text = NULL, *filename_text = NULL, *blob = NULL;
@@ -647,7 +754,17 @@ int gmlc_classic_import_sounds(const GmlcClassicManifest *classic,
         return 0;
       }
       (void)kind; (void)filename_text; (void)filename_length; (void)pan;
-      if(has_data){ audio = blob; audio_size = blob_size; }
+      if(has_data){
+        if(source->legacy_layout){
+          int decoded_size=0;
+          if(blob_size>INT32_MAX ||
+             !(owned_audio=stbi_zlib_decode_malloc((const char*)blob,(int)blob_size,&decoded_size)) || decoded_size<0){
+            if(err && errcap) snprintf(err,errcap,"classic import: invalid compressed legacy sound");
+            STBI_FREE(owned_audio); free_imported_sounds(project); return 0;
+          }
+          audio=(const uint8_t*)owned_audio; audio_size=(size_t)decoded_size;
+        } else { audio = blob; audio_size = blob_size; }
+      }
       if(type_length > 1 && type_length < 12 && type_text[0] == '.'){
         int safe = 1;
         for(uint32_t c = 1; c < type_length; ++c)
@@ -667,8 +784,10 @@ int gmlc_classic_import_sounds(const GmlcClassicManifest *classic,
     sound->data_path = cache_path(cache_dir, leaf);
     sound->volume = (float)volume;
     sound->pitch = 1.0f;
-    if(!sound->id || !sound->name || !sound->data_path ||
-       !write_binary(sound->data_path, audio, audio_size, err, errcap)){
+    int wrote=sound->id && sound->name && sound->data_path &&
+      write_binary(sound->data_path,audio,audio_size,err,errcap);
+    STBI_FREE(owned_audio);
+    if(!wrote){
       if(err && errcap && !err[0]) snprintf(err, errcap, "classic import: out of memory importing sound %u", i);
       free_imported_sounds(project);
       return 0;
@@ -820,7 +939,7 @@ static int text_append_quoted(ImportText *text, const char *value){
 
 static int emit_action_call(ImportText *text, const char *function_name,
                             char **arguments, uint32_t *argument_kinds,
-                            uint32_t used_arguments){
+                            uint32_t used_arguments, int append_relative, int relative){
   if(!function_name || !*function_name) return text_append(text, "/* empty action */");
   if(!text_append(text, function_name) || !text_append(text, "(")) return 0;
   for(uint32_t i = 0; i < used_arguments; ++i){
@@ -840,6 +959,10 @@ static int emit_action_call(ImportText *text, const char *function_name,
     if(quote){
       if(!text_append_quoted(text, arguments[i])) return 0;
     } else if(!text_append(text, arguments[i] && *arguments[i] ? arguments[i] : "0")) return 0;
+  }
+  if(append_relative){
+    if(used_arguments && !text_append(text,",")) return 0;
+    if(!text_append(text,relative?"1":"0")) return 0;
   }
   return text_append(text, ")");
 }
@@ -902,7 +1025,8 @@ static int import_actions(ImportReader *r, ImportText *text){
           ok = text_append(text, action_code);
         }
         else ok = emit_action_call(text, function_name, arguments, argument_kinds,
-                                   used_arguments < argument_count ? used_arguments : argument_count);
+                                   used_arguments < argument_count ? used_arguments : argument_count,
+                                   question, relative!=0);
       }
       if(ok && question) ok = text_append(text, ")\n");
       else if(ok) ok = text_append(text, ";\n");

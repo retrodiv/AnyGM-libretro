@@ -123,6 +123,19 @@ static void fixture_compressed(Fixture *f, const unsigned char *raw, int raw_siz
   STBIW_FREE(compressed);
 }
 
+static void fixture_legacy_bmp_image(Fixture *f){
+  unsigned char bmp[62] = {0};
+  bmp[0]='B'; bmp[1]='M';
+  put_u32le(bmp+2,sizeof(bmp)); put_u32le(bmp+10,54); put_u32le(bmp+14,40);
+  put_u32le(bmp+18,2); put_u32le(bmp+22,1);
+  bmp[26]=1; bmp[28]=24; put_u32le(bmp+34,8);
+  /* Bottom-up BGR row: magenta transparency key, then RGB(1,2,3), plus padding. */
+  bmp[54]=255; bmp[55]=0; bmp[56]=255;
+  bmp[57]=3; bmp[58]=2; bmp[59]=1;
+  fixture_u32(f,10);
+  fixture_compressed(f,bmp,sizeof(bmp));
+}
+
 static Fixture inventory_fixture(unsigned container_version){
   Fixture f = {{0}, 0};
   fixture_u32(&f, GMLC_CLASSIC_MAGIC);
@@ -424,6 +437,86 @@ static int expect_sound_import(void){
 #ifndef _WIN32
   rmdir(dir);
 #endif
+  return ok;
+}
+
+static int setup_legacy_slot(GmlcClassicManifest *manifest, GmlcClassicResourceType type,
+                             const char *name, const Fixture *payload){
+  memset(manifest,0,sizeof(*manifest));
+  manifest->inventory.resource_slots[type]=1;
+  manifest->existing[type]=1;
+  manifest->slots[type]=(GmlcClassicResourceSlot*)calloc(1,sizeof(GmlcClassicResourceSlot));
+  if(!manifest->slots[type]) return 0;
+  GmlcClassicResourceSlot *slot=&manifest->slots[type][0];
+  slot->exists=1; slot->legacy_layout=1; slot->version=600; slot->name=strdup(name);
+  slot->payload=(uint8_t*)malloc(payload->size); slot->payload_size=payload->size;
+  if(!slot->name || !slot->payload){ gmlc_classic_manifest_free(manifest); return 0; }
+  memcpy(slot->payload,payload->data,payload->size);
+  return 1;
+}
+
+static int expect_legacy_media_import(void){
+  char err[256],dir[128]="tmp/classic_legacy_media_fixture";
+  err[0]='\0';
+#ifdef _WIN32
+  _mkdir(dir);
+#else
+  mkdir(dir,0777);
+#endif
+  int ok=1;
+  {
+    Fixture payload={{0},0};
+    fixture_u32(&payload,0); fixture_string(&payload,".wav"); fixture_string(&payload,"fixture.wav");
+    fixture_u32(&payload,1); const unsigned char raw[]={'R','I','F','F'}; fixture_compressed(&payload,raw,sizeof(raw));
+    fixture_u32(&payload,0); fixture_double(&payload,0.75); fixture_double(&payload,0); fixture_u32(&payload,1);
+    GmlcClassicManifest manifest; GmlcProject project; memset(&project,0,sizeof(project));
+    ok=setup_legacy_slot(&manifest,GMLC_CLASSIC_SOUND,"legacy_sound",&payload) &&
+       gmlc_classic_import_sounds(&manifest,&project,dir,err,sizeof(err));
+    if(ok){ unsigned char got[4]={0}; FILE *file=fopen(project.sounds[0].data_path,"rb");
+      size_t count=file?fread(got,1,4,file):0; if(file) fclose(file);
+      ok=count==4 && !memcmp(got,raw,4) && project.sounds[0].volume>0.74f;
+      remove(project.sounds[0].data_path);
+    }
+    for(int i=0;i<project.n_sounds;i++){ free(project.sounds[i].id); free(project.sounds[i].name); free(project.sounds[i].data_path); }
+    free(project.sounds); gmlc_classic_manifest_free(&manifest);
+  }
+  {
+    Fixture payload={{0},0};
+    const unsigned fields[13]={2,1,0,1,0,0,1,0,1,0,1,1,0};
+    for(int i=0;i<13;i++) fixture_u32(&payload,fields[i]);
+    fixture_u32(&payload,1); fixture_legacy_bmp_image(&payload);
+    GmlcClassicManifest manifest; GmlcProject project; memset(&project,0,sizeof(project));
+    int stage=setup_legacy_slot(&manifest,GMLC_CLASSIC_SPRITE,"legacy_sprite",&payload) &&
+      gmlc_classic_import_sprites(&manifest,&project,dir,err,sizeof(err));
+    if(stage){ struct stat st; stage=project.n_sprites==1 && project.sprites[0].width==2 &&
+      project.sprites[0].xorig==1 && !stat(project.sprites[0].frame_paths[0],&st) && st.st_size>0;
+      remove(project.sprites[0].frame_paths[0]); }
+    ok=ok&&stage;
+    for(int i=0;i<project.n_sprites;i++){ free(project.sprites[i].id); free(project.sprites[i].name);
+      for(int f=0;f<project.sprites[i].n_frames;f++) free(project.sprites[i].frame_paths[f]); free(project.sprites[i].frame_paths); }
+    free(project.sprites); gmlc_classic_manifest_free(&manifest);
+  }
+  {
+    Fixture payload={{0},0};
+    const unsigned fields[12]={2,1,1,0,1,1,1,1,0,0,0,0};
+    for(int i=0;i<12;i++) fixture_u32(&payload,fields[i]);
+    fixture_u32(&payload,1); fixture_legacy_bmp_image(&payload);
+    GmlcClassicManifest manifest; GmlcProject project; memset(&project,0,sizeof(project));
+    int stage=setup_legacy_slot(&manifest,GMLC_CLASSIC_BACKGROUND,"legacy_background",&payload) &&
+      gmlc_classic_import_backgrounds(&manifest,&project,dir,err,sizeof(err));
+    if(stage){ struct stat st; stage=project.n_tilesets==1 && project.n_sprites==1 &&
+      project.tilesets[0].tile_width==1 && !stat(project.sprites[0].frame_paths[0],&st) && st.st_size>0;
+      remove(project.sprites[0].frame_paths[0]); }
+    ok=ok&&stage;
+    for(int i=0;i<project.n_sprites;i++){ free(project.sprites[i].id); free(project.sprites[i].name);
+      for(int f=0;f<project.sprites[i].n_frames;f++) free(project.sprites[i].frame_paths[f]); free(project.sprites[i].frame_paths); }
+    for(int i=0;i<project.n_tilesets;i++){ free(project.tilesets[i].id); free(project.tilesets[i].name); }
+    free(project.sprites); free(project.tilesets); gmlc_classic_manifest_free(&manifest);
+  }
+#ifndef _WIN32
+  rmdir(dir);
+#endif
+  if(!ok) fprintf(stderr,"legacy media import failed: %s\n",err);
   return ok;
 }
 
@@ -820,6 +913,7 @@ int main(int argc, char **argv){
   if(expect_background_import()) ++passed; else ++failed;
   if(expect_font_import()) ++passed; else ++failed;
   if(expect_sound_import()) ++passed; else ++failed;
+  if(expect_legacy_media_import()) ++passed; else ++failed;
   if(expect_path_import()) ++passed; else ++failed;
   if(expect_timeline_import()) ++passed; else ++failed;
   if(expect_object_import()) ++passed; else ++failed;

@@ -99,6 +99,48 @@ static const char *gm_string_tmp(GmlVal v){
   return b;
 }
 static const char *S(GmlVal *a, int n, int i){ return (i<n)? gm_string_tmp(a[i]) : ""; }
+
+/* A bounded classic execute_string compatibility path. Old projects commonly construct a
+ * resource assignment such as "sprite_index=spr_name" at runtime. Resolve that controlled
+ * assignment without introducing a second runtime compiler into the core. */
+static int classic_execute_assignment(GmlVM *vm, const char *source){
+  if(!vm || !source) return 0;
+  while(isspace((unsigned char)*source)) source++;
+  const char *eq=strchr(source,'='); if(!eq) return 0;
+  const char *lhs_end=eq; while(lhs_end>source && isspace((unsigned char)lhs_end[-1])) lhs_end--;
+  const char *rhs=eq+1; while(isspace((unsigned char)*rhs)) rhs++;
+  const char *rhs_end=rhs+strlen(rhs); while(rhs_end>rhs && (isspace((unsigned char)rhs_end[-1])||rhs_end[-1]==';')) rhs_end--;
+  char lhs[192],value_name[192]; size_t ln=(size_t)(lhs_end-source),rn=(size_t)(rhs_end-rhs);
+  if(!ln || ln>=sizeof(lhs) || !rn || rn>=sizeof(value_name)) return 0;
+  memcpy(lhs,source,ln); lhs[ln]=0; memcpy(value_name,rhs,rn); value_name[rn]=0;
+  char *dot=strrchr(lhs,'.'); const char *field=dot?dot+1:lhs;
+  GmlInstance *target=vm->cur_self;
+  if(dot){
+    *dot=0; target=NULL;
+    if(!strcmp(lhs,"self")) target=vm->cur_self;
+    else if(!strcmp(lhs,"other")) target=vm->cur_other;
+    else {
+      GmlVal *ref=vm->cur_self?gml_varmap_get(&vm->cur_self->vars,lhs):NULL;
+      if(ref && ref->t==V_REAL){
+        int id=(int)ref->d;
+        for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked && (int)vm->inst[i].id==id){ target=&vm->inst[i]; break; }
+        if(!target && id>=0 && id<vm->n_objects) target=gml_find_instance(vm,id);
+      }
+      if(!target){ int object=gml_object_index_by_name(vm,lhs); if(object>=0) target=gml_find_instance(vm,object); }
+    }
+  }
+  if(!target || !*field) return 0;
+  char *end=NULL; double value=strtod(value_name,&end);
+  if(!end || *end){
+    value=0; int found=0; GmlRender *render=(GmlRender*)vm->render;
+    if(render) for(int i=0;i<render->n_spr;i++) if(render->spr[i].name && !strcmp(render->spr[i].name,value_name)){
+      value=i; found=1; break;
+    }
+    if(!found){ int object=gml_object_index_by_name(vm,value_name); if(object>=0){ value=object; found=1; } }
+    if(!found) return 0;
+  }
+  return gml_inst_var_set_val(vm,vreal(target->id),field,vreal(value));
+}
 /* Shared shader uniform handling (LUT row + CRT-geom parameters). Handle = sh*16 + slot:
  *   slot 1 = LUT row, 3 = CRT sizes vec4, 4 = CRT distortion, 5 = CRT distort bool,
  *   6 = CRT border bool, 15 = accepted-and-ignored. See parse_shader_palettes / draw_surface_crt. */
@@ -5119,6 +5161,13 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     double vv=N(a,n,0), cv=N(a,n,1); int r=0;
     switch(op){ case 0: r=(vv==cv); break; case 1: r=(vv<cv); break; case 2: r=(vv>cv); break; }
     return vreal(r); }
+  if(!strcmp(nm,"action_if_empty") || !strcmp(nm,"action_if_collision")){
+    GmlInstance *s=vm->cur_self; double x=N(a,n,0),y=N(a,n,1);
+    int relative=n>=4 ? N(a,n,3)!=0 : vm->action_relative;
+    if(relative && s){ x+=s->x; y+=s->y; }
+    int include_all=N(a,n,2)!=0;
+    int hit=collision_at(vm,x,y,include_all?IT_ALL:0,include_all?0:1);
+    return vreal(!strcmp(nm,"action_if_collision")?hit:!hit); }
   if(!strcmp(nm,"action_reverse_xdir")){ if(vm->cur_self){
       vm->cur_self->hspeed=-vm->cur_self->hspeed; motion_from_components(vm->cur_self); } return vreal(0); }
   if(!strcmp(nm,"action_reverse_ydir")){ if(vm->cur_self){
@@ -5128,6 +5177,13 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     double x=N(a,n,1), y=N(a,n,2);
     if(vm->action_relative && s){ x+=s->x; y+=s->y; }
     gml_instance_create(vm,x,y,(int)N(a,n,0)); return vreal(0); }
+  if(!strcmp(nm,"action_create_object_motion")){ GmlInstance *s=vm->cur_self;
+    double x=N(a,n,1),y=N(a,n,2); if(vm->action_relative && s){ x+=s->x; y+=s->y; }
+    GmlInstance *created=gml_instance_create(vm,x,y,(int)N(a,n,0));
+    if(created){ created->speed=N(a,n,3); created->direction=N(a,n,4);
+      created->hspeed=created->speed*cos(created->direction*M_PI/180.0);
+      created->vspeed=-created->speed*sin(created->direction*M_PI/180.0); }
+    return vreal(0); }
   if(!strcmp(nm,"action_previous_room")){
     int pos=order_pos(vm,vm->room_index);
     if(pos>0){
@@ -5136,6 +5192,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       vm->pending_room=target;
     }
     return vreal(0); }
+  if(!strcmp(nm,"action_current_room")){ gml_vm_warm_audio_for_room(vm,vm->room_index); vm->pending_room=vm->room_index; return vreal(0); }
   if(!strcmp(nm,"action_move_to")){ GmlInstance*s=vm->cur_self; if(s){
       double x=N(a,n,0), y=N(a,n,1);
       if(vm->action_relative){ s->x+=x; s->y+=y; } else { s->x=x; s->y=y; } gml_colgrid_touch(s); } return vreal(0); }
@@ -5153,12 +5210,34 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"action_set_hspeed")){ GmlInstance*s=vm->cur_self; if(s){
       if(vm->action_relative) s->hspeed+=N(a,n,0); else s->hspeed=N(a,n,0);
       motion_from_components(s); } return vreal(0); }
+  if(!strcmp(nm,"action_set_vspeed")){ GmlInstance*s=vm->cur_self; if(s){
+      if(vm->action_relative) s->vspeed+=N(a,n,0); else s->vspeed=N(a,n,0);
+      motion_from_components(s); } return vreal(0); }
   if(!strcmp(nm,"action_set_gravity")){ GmlInstance*s=vm->cur_self; if(s){
       if(vm->action_relative){ s->gravity+=N(a,n,0); s->gravity_direction+=N(a,n,1); }
       else { s->gravity=N(a,n,0); s->gravity_direction=N(a,n,1); } } return vreal(0); }
   if(!strcmp(nm,"action_set_friction")){ GmlInstance*s=vm->cur_self; if(s){
       if(vm->action_relative) s->friction+=N(a,n,0); else s->friction=N(a,n,0); } return vreal(0); }
   if(!strcmp(nm,"action_set_relative")){ vm->action_relative=N(a,n,0)>=0.5; return vreal(0); }
+  if(!strcmp(nm,"action_sprite_set")){ GmlInstance *s=vm->cur_self; if(s){
+      s->sprite_index=N(a,n,0); s->image_index=N(a,n,1); s->image_speed=N(a,n,2);
+      gml_colgrid_touch(s);
+      if(vm->render && (int)s->sprite_index>=0) gml_render_prefetch_sprite((GmlRender*)vm->render,(int)s->sprite_index);
+    } return vreal(0); }
+  if(!strcmp(nm,"action_sprite_color") || !strcmp(nm,"action_sprite_colour")){ GmlInstance *s=vm->cur_self; if(s){
+      s->image_blend=N(a,n,0); s->image_alpha=N(a,n,1); } return vreal(0); }
+  if(!strcmp(nm,"action_color") || !strcmp(nm,"action_colour")){ GmlRender *r=(GmlRender*)vm->render;
+    if(r) r->color=(uint32_t)N(a,n,0); return vreal(0); }
+  if(!strcmp(nm,"action_draw_sprite")){ GmlVal draw_args[4]={vreal(N(a,n,0)),vreal(N(a,n,3)),vreal(N(a,n,1)),vreal(N(a,n,2))};
+    return gml_builtin_call(vm,"draw_sprite",draw_args,4); }
+  if(!strcmp(nm,"action_draw_variable")){ GmlVal draw_args[3]={vreal(N(a,n,1)),vreal(N(a,n,2)),n>0?a[0]:vreal(0)};
+    return gml_builtin_call(vm,"draw_text",draw_args,3); }
+  if(!strcmp(nm,"action_wrap")){ GmlInstance *s=vm->cur_self; GmlRoom room; int dir=(int)N(a,n,0);
+    if(s && gml_room_get(vm->win,vm->room_index,&room)==0){
+      if((dir==0||dir==2) && room.width>0){ while(s->x<0)s->x+=room.width; while(s->x>=room.width)s->x-=room.width; }
+      if((dir==1||dir==2) && room.height>0){ while(s->y<0)s->y+=room.height; while(s->y>=room.height)s->y-=room.height; }
+      gml_colgrid_touch(s);
+    } return vreal(0); }
   if(!strcmp(nm,"instance_number")) return vreal(gml_instance_number(vm,(int)N(a,n,0)));
   if(!strcmp(nm,"instance_exists")) return vreal(gml_instance_number(vm,(int)N(a,n,0))>0);
   if(!strcmp(nm,"instance_find")){
@@ -6088,7 +6167,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"buffer_async_group_option")) return vreal(0);
 
   /* ---- script_execute(scriptid, args...) ---- */
-  if(!strcmp(nm,"script_execute")){ int sid=(int)N(a,n,0);
+  if(!strcmp(nm,"script_execute") || !strcmp(nm,"action_execute_script")){ int sid=(int)N(a,n,0);
     /* the argument may be a classic SCPT index or a GMS2.3 function value (tagged CODE index) */
     int ci = n>0 ? script_ref_code_of(vm,a[0]) : -1;
     if(getenv("GML_DBG_SCRIPTX")){ extern long g_vm_frame;
@@ -6132,9 +6211,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"audio_sound_gain")){ gml_audio_sound_gain(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"audio_sound_pitch")){ gml_audio_sound_pitch(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"audio_sound_set_track_position")){ gml_audio_sound_set_track_position(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
-    if(!strcmp(nm,"audio_play_sound")||!strcmp(nm,"sound_play")){
-      int h=gml_audio_play(AU,(int)N(a,n,0),(int)N(a,n,2));
-      if(getenv("GML_LOG_AUDIO")) fprintf(stderr,"[audio] play_sound id=%d loop=%d -> handle=%d\n",(int)N(a,n,0),(int)N(a,n,2),h);
+    if(!strcmp(nm,"audio_play_sound")||!strcmp(nm,"sound_play")||!strcmp(nm,"sound_loop")){
+      int loop=!strcmp(nm,"sound_loop") ? 1 : (int)N(a,n,2);
+      int h=gml_audio_play(AU,(int)N(a,n,0),loop);
+      if(getenv("GML_LOG_AUDIO")) fprintf(stderr,"[audio] play_sound id=%d loop=%d -> handle=%d\n",(int)N(a,n,0),loop,h);
       return vreal(h); }
     if(!strcmp(nm,"audio_play_sound_at")){
       int h=gml_audio_play(AU,(int)N(a,n,0),(int)N(a,n,6));
@@ -6265,7 +6345,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"get_integer")) return vreal(n>=2?N(a,n,1):0);
   if(!strcmp(nm,"get_integer_async")) return vreal(0);
   if(!strcmp(nm,"get_open_filename")||!strcmp(nm,"get_save_filename")) return vstr("");
+  if(!strcmp(nm,"execute_string")){
+    int handled=classic_execute_assignment(vm,S(a,n,0));
+    if(!handled && getenv("GML_LOG_UNKNOWN")) fprintf(stderr,"[gml] unsupported execute_string: %s\n",S(a,n,0));
+    return vreal(0); }
   if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")) return vreal(0);
+  if(!strcmp(nm,"show_info")) return vreal(0); /* classic game-information dialog: unavailable in libretro */
   if(!strcmp(nm,"parameter_count")) return vreal(0);
   if(!strcmp(nm,"parameter_string")) return vstr("");
   if(!strcmp(nm,"exception_unhandled_handler")) return vreal(0);

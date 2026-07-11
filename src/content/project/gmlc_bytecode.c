@@ -50,6 +50,8 @@ typedef struct {
   int n_strings, cap_strings;
   char **locals;
   int n_locals, cap_locals;
+  char **globals;
+  int n_globals, cap_globals;
   size_t *break_sites;
   int n_break_sites, cap_break_sites;
   size_t *continue_sites;
@@ -318,10 +320,10 @@ static void lx_next(Lexer *l){
     if(l->src[l->pos]==quote) l->pos++;
     l->tok.text[n]=0; l->tok.kind=TOK_STR; l->tok.end=l->pos; return;
   }
-  static const char *ops[]={"==","!=","<=",">=","&&","||","<<",">>","+=","-=","*=","/=","%=","++","--",NULL};
+  static const char *ops[]={"==","!=","<>","<=",">=","&&","||","<<",">>","+=","-=","*=","/=","%=","++","--",NULL};
   for(int i=0;ops[i];i++){
     size_t n=strlen(ops[i]);
-    if(!strncmp(s,ops[i],n)){ snprintf(l->tok.text,sizeof(l->tok.text),"%s",ops[i]); l->tok.kind=TOK_SYM; l->pos+=n; l->tok.end=l->pos; return; }
+    if(!strncmp(s,ops[i],n)){ snprintf(l->tok.text,sizeof(l->tok.text),"%s",!strcmp(ops[i],"<>")?"!=":ops[i]); l->tok.kind=TOK_SYM; l->pos+=n; l->tok.end=l->pos; return; }
   }
   l->tok.kind=TOK_SYM; l->tok.text[0]=*s; l->tok.text[1]=0; l->pos++;
   l->tok.end=l->pos;
@@ -347,6 +349,30 @@ static int add_local(Compiler *c, const char *name){
   }
   c->locals[c->n_locals++]=gmlc_strdup(name);
   return c->locals[c->n_locals-1]!=NULL;
+}
+
+static int global_index(Compiler *c, const char *name){
+  for(int i=0;i<c->n_globals;i++) if(!strcmp(c->globals[i],name)) return i;
+  if(c->funcs) for(int i=0;i<c->funcs->n_globals;i++) if(!strcmp(c->funcs->globals[i],name)) return i;
+  return -1;
+}
+
+static int add_global(Compiler *c, const char *name){
+  if(global_index(c,name)>=0) return 1;
+  if(c->n_globals>=c->cap_globals){
+    int nc=c->cap_globals?c->cap_globals*2:16;
+    char **ng=(char**)realloc(c->globals,(size_t)nc*sizeof(*ng));
+    if(!ng) return 0;
+    c->globals=ng; c->cap_globals=nc;
+  }
+  c->globals[c->n_globals++]=gmlc_strdup(name);
+  return c->globals[c->n_globals-1]!=NULL;
+}
+
+static int plain_scope(Compiler *c, const char *name){
+  if(local_index(c,name)>=0 || !strncmp(name,"argument",8)) return IT_LOCAL;
+  if(global_index(c,name)>=0) return IT_GLOBAL;
+  return IT_SELF;
 }
 
 static int add_break_site(Compiler *c, size_t pos){
@@ -1063,8 +1089,7 @@ static int scan_switch_cases(Compiler *c, Span body, CaseRec **out_cases, int *o
 static int emit_receiver_value(Compiler *c, const char *name){
   double cv=0;
   if(resolve_const(c,name,&cv)) return emit_push_real(c,cv);
-  if(local_index(c,name)>=0 || !strncmp(name,"argument",8)) return emit_push_var(c,IT_LOCAL,name,0xA0);
-  return emit_push_var(c,IT_SELF,name,0xA0);
+  return emit_push_var(c,plain_scope(c,name),name,0xA0);
 }
 
 typedef struct {
@@ -1229,8 +1254,9 @@ static int parse_primary(Compiler *c){
         goto postfix_calls;
       }
       int argc=0;
-      if(local_index(c,name)>=0 || !strncmp(name,"argument",8)){
-        if(!emit_push_var(c,IT_LOCAL,name,0xA0)) return 0;
+      int scope=plain_scope(c,name);
+      if(scope!=IT_SELF){
+        if(!emit_push_var(c,scope,name,0xA0)) return 0;
         if(!parse_call_args_reversed(c,&argc)) return 0;
         if(!emit_callv(c,argc)) return 0;
       } else {
@@ -1269,7 +1295,7 @@ static int parse_primary(Compiler *c){
       c->expr_boolish=0;
       goto postfix_calls;
     }
-    int inst=(local_index(c,name)>=0 || !strncmp(name,"argument",8)) ? IT_LOCAL : IT_SELF;
+    int inst=plain_scope(c,name);
     if(!emit_push_var(c,inst,name,0xA0)) return 0;
     expr_not_const(c);
     c->expr_boolish=0;
@@ -1531,7 +1557,7 @@ static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv){
   memset(lv,0,sizeof(*lv));
   snprintf(lv->name,sizeof(lv->name),"%s",first);
   snprintf(lv->receiver,sizeof(lv->receiver),"%s",first);
-  lv->inst=(local_index(c,first)>=0 || !strncmp(first,"argument",8)) ? IT_LOCAL : IT_SELF;
+  lv->inst=plain_scope(c,first);
   lv->reftype=0xA0;
   if(eat(c,".")){
     if(c->lex.tok.kind!=TOK_ID){ c->unsupported=1; snprintf(c->lex.err,sizeof(c->lex.err),"expected field name"); return 0; }
@@ -1667,11 +1693,25 @@ static int parse_block_or_stmt(Compiler *c){
 
 static int parse_var_decl(Compiler *c){
   lx_next(&c->lex);
+  /* An empty `var;` action fragment is a no-op. Handle it before parsing
+   * named locals. */
+  if(eat(c,";")) return 1;
   do {
     if(c->lex.tok.kind!=TOK_ID){ c->unsupported=1; snprintf(c->lex.err,sizeof(c->lex.err),"expected local name"); return 0; }
     char name[128]; snprintf(name,sizeof(name),"%s",c->lex.tok.text); lx_next(&c->lex);
     add_local(c,name);
     if(eat(c,"=")){ if(!parse_expr(c)) return 0; if(!emit_pop_var(c,IT_LOCAL,name,0xA0,DT_VAR)) return 0; }
+  } while(eat(c,","));
+  eat(c,";");
+  return 1;
+}
+
+static int parse_globalvar_decl(Compiler *c){
+  lx_next(&c->lex);
+  do {
+    if(c->lex.tok.kind!=TOK_ID){ c->unsupported=1; snprintf(c->lex.err,sizeof(c->lex.err),"expected global name"); return 0; }
+    char name[128]; snprintf(name,sizeof(name),"%s",c->lex.tok.text); lx_next(&c->lex);
+    if(!add_global(c,name)) return 0;
   } while(eat(c,","));
   eat(c,";");
   return 1;
@@ -1801,18 +1841,19 @@ static int parse_repeat(Compiler *c){
 
 static int parse_with(Compiler *c){
   lx_next(&c->lex);
-  if(!need(c,"(")) return 0;
+  int parenthesized=eat(c,"(");
   if(c->lex.tok.kind==TOK_ID &&
      (!strcmp(c->lex.tok.text,"self") || !strcmp(c->lex.tok.text,"other"))){
     size_t after=skip_ws_comments_at(c->lex.src,c->lex.tok.end);
-    if(c->lex.src[after]==')'){
+    if(!parenthesized || c->lex.src[after]==')'){
       int inst=!strcmp(c->lex.tok.text,"self") ? IT_SELF : IT_OTHER;
       lx_next(&c->lex);
-      if(!emit_push_var(c,inst,"id",0xA0) || !emit_conv(c,DT_VAR,DT_INT32) || !need(c,")")) return 0;
+      if(!emit_push_var(c,inst,"id",0xA0) || !emit_conv(c,DT_VAR,DT_INT32) ||
+         (parenthesized && !need(c,")"))) return 0;
     } else {
-      if(!parse_expr(c) || !need(c,")")) return 0;
+      if(!parse_expr(c) || (parenthesized && !need(c,")"))) return 0;
     }
-  } else if(!parse_expr(c) || !need(c,")")) return 0;
+  } else if(!parse_expr(c) || (parenthesized && !need(c,")"))) return 0;
   int break_mark=c->n_break_sites;
   int continue_mark=c->n_continue_sites;
   c->continue_depth++;
@@ -1961,8 +2002,9 @@ static int parse_simple_or_assign(Compiler *c){
   if(tok_is(c,"(")){
     lx_next(&c->lex);
     int argc=0;
-    if(local_index(c,first)>=0 || !strncmp(first,"argument",8)){
-      if(!emit_push_var(c,IT_LOCAL,first,0xA0)) return 0;
+    int scope=plain_scope(c,first);
+    if(scope!=IT_SELF){
+      if(!emit_push_var(c,scope,first,0xA0)) return 0;
       if(!parse_call_args_reversed(c,&argc)) return 0;
       if(!emit_callv(c,argc)) return 0;
       emit_popz(c);
@@ -1979,7 +2021,7 @@ static int parse_simple_or_assign(Compiler *c){
   int sci=-1;
   if(resolve_const(c,first,&cv)) emit_push_real(c,cv);
   else if(resolve_function_code_index(c,first,&sci)) emit_script_funcval(c,sci);
-  else emit_push_var(c,(local_index(c,first)>=0 || !strncmp(first,"argument",8))?IT_LOCAL:IT_SELF,first,0xA0);
+  else emit_push_var(c,plain_scope(c,first),first,0xA0);
   eat(c,";");
   emit_popz(c);
   return 1;
@@ -1995,6 +2037,7 @@ static int parse_statement(Compiler *c){
   if(eat(c,";")) return 1;
   if(is_id(c,"function") && function_shape_at(c->lex.src,c->lex.tok.start)) return parse_function_value(c,0);
   if(is_id(c,"var")) return parse_var_decl(c);
+  if(is_id(c,"globalvar")) return parse_globalvar_decl(c);
   if(is_id(c,"if")) return parse_if(c);
   if(is_id(c,"while")) return parse_while(c);
   if(is_id(c,"do")) return parse_do_until(c);
@@ -2051,6 +2094,39 @@ static int registry_extra_so_far(const GmlcFunctionRegistry *r){
 
 int gmlc_function_registry_extra_count(const GmlcFunctionRegistry *r){
   return r ? registry_extra_so_far(r) : 0;
+}
+
+static int registry_add_global(GmlcFunctionRegistry *r, const char *name){
+  for(int i=0;i<r->n_globals;i++) if(!strcmp(r->globals[i],name)) return 1;
+  if(r->n_globals>=r->cap_globals){
+    int nc=r->cap_globals?r->cap_globals*2:16;
+    char **ng=(char**)realloc(r->globals,(size_t)nc*sizeof(*ng));
+    if(!ng) return 0;
+    r->globals=ng; r->cap_globals=nc;
+  }
+  r->globals[r->n_globals++]=gmlc_strdup(name);
+  return r->globals[r->n_globals-1]!=NULL;
+}
+
+static int collect_globalvars_from_text(GmlcFunctionRegistry *r, const char *src){
+  Lexer lex; memset(&lex,0,sizeof(lex)); lex.src=src; lx_next(&lex);
+  while(lex.tok.kind!=TOK_EOF){
+    size_t before=lex.tok.start;
+    while(before>0 && isspace((unsigned char)src[before-1])) before--;
+    if(lex.tok.kind==TOK_ID && !strcmp(lex.tok.text,"globalvar") &&
+       !(before>0 && src[before-1]=='.')){
+      lx_next(&lex);
+      while(lex.tok.kind==TOK_ID){
+        if(!registry_add_global(r,lex.tok.text)) return 0;
+        lx_next(&lex);
+        if(strcmp(lex.tok.text,",")) break;
+        lx_next(&lex);
+      }
+      continue;
+    }
+    lx_next(&lex);
+  }
+  return 1;
 }
 
 static int registry_add_function(GmlcFunctionRegistry *r, const char *path, const char *name, Span params, Span body, const char *src, int code_index, int is_wrapper){
@@ -2296,6 +2372,10 @@ done:
 }
 
 static int collect_functions_from_text(GmlcFunctionRegistry *r, const char *path, const char *script_name, int script_code_index, int appended_base, const char *src, char *err, size_t errcap){
+  if(!collect_globalvars_from_text(r,src)){
+    if(err && errcap) snprintf(err,errcap,"out of memory collecting global variables");
+    return 0;
+  }
   size_t len=strlen(src);
   size_t pos=0;
   while(src[pos]){
@@ -2479,6 +2559,8 @@ static int compile_text_internal(const GmlcProject *project, const GmlcFunctionR
   free(c.macros);
   for(int i=0;i<c.n_locals;i++) free(c.locals[i]);
   free(c.locals);
+  for(int i=0;i<c.n_globals;i++) free(c.globals[i]);
+  free(c.globals);
   free(c.break_sites);
   free(c.continue_sites);
   for(int i=0;i<c.n_refs;i++) free(c.refs[i].name);
@@ -2540,6 +2622,8 @@ void gmlc_function_registry_free(GmlcFunctionRegistry *r){
     free(r->defs[i].source_path);
   }
   free(r->defs);
+  for(int i=0;i<r->n_globals;i++) free(r->globals[i]);
+  free(r->globals);
   memset(r,0,sizeof(*r));
 }
 
