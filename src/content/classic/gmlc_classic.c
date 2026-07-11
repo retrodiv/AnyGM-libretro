@@ -122,7 +122,7 @@ static int validate_sound_payload(ClassicReader *r){
      !reader_string(r, "sound filename") || !reader_u32(r, &has_data, "sound data flag")) return 0;
   if(has_data && !reader_blob(r, "sound data")) return 0;
   return reader_words(r, 1, "sound effects") && reader_doubles(r, 2, "sound volume and pan") &&
-         reader_words(r, 1, "sound preload") && require_payload_end(r, "sound resource");
+         reader_words(r, 1, "sound preload");
 }
 
 static int validate_sprite_payload(ClassicReader *r){
@@ -140,7 +140,7 @@ static int validate_sprite_payload(ClassicReader *r){
     }
     if(width && height && !reader_blob(r, "sprite BGRA pixels")) return 0;
   }
-  return reader_words(r, 8, "sprite collision fields") && require_payload_end(r, "sprite resource");
+  return reader_words(r, 8, "sprite collision fields");
 }
 
 static int validate_background_payload(ClassicReader *r){
@@ -154,19 +154,17 @@ static int validate_background_payload(ClassicReader *r){
     return 0;
   }
   if(width && height && !reader_blob(r, "background BGRA pixels")) return 0;
-  return require_payload_end(r, "background resource");
+  return 1;
 }
 
 static int validate_path_payload(ClassicReader *r){
   uint32_t points;
   if(!reader_words(r, 6, "path fields") || !reader_u32(r, &points, "path point count")) return 0;
-  return reader_doubles(r, points > UINT32_MAX / 3 ? UINT32_MAX : points * 3, "path points") &&
-         require_payload_end(r, "path resource");
+  return reader_doubles(r, points > UINT32_MAX / 3 ? UINT32_MAX : points * 3, "path points");
 }
 
 static int validate_font_payload(ClassicReader *r){
-  return reader_string(r, "font face") && reader_words(r, 5, "font fields") &&
-         require_payload_end(r, "font resource");
+  return reader_string(r, "font face") && reader_words(r, 5, "font fields");
 }
 
 static int validate_actions(ClassicReader *r){
@@ -206,7 +204,7 @@ static int validate_timeline_payload(ClassicReader *r){
   if(moments > (r->size - r->pos) / 4) return reader_fail(r, "timeline moments");
   for(uint32_t i = 0; i < moments; ++i)
     if(!reader_words(r, 1, "timeline moment") || !validate_actions(r)) return 0;
-  return require_payload_end(r, "timeline resource");
+  return 1;
 }
 
 static int validate_object_payload(ClassicReader *r){
@@ -225,7 +223,7 @@ static int validate_object_payload(ClassicReader *r){
       if(!validate_actions(r)) return 0;
     }
   }
-  return require_payload_end(r, "object resource");
+  return 1;
 }
 
 static int validate_room_payload(ClassicReader *r){
@@ -247,7 +245,7 @@ static int validate_room_payload(ClassicReader *r){
   if(!reader_u32(r, &tiles, "room tile count")) return 0;
   if(!reader_words(r, tiles > UINT32_MAX / 10 ? UINT32_MAX : tiles * 10, "room tiles") ||
      !reader_words(r, 14, "room editor fields")) return 0;
-  return require_payload_end(r, "room resource");
+  return 1;
 }
 
 static int read_file(const char *path, uint8_t **data, size_t *size,
@@ -350,6 +348,161 @@ int gmlc_classic_probe_file(const char *path, GmlcClassicHeader *out,
   return gmlc_classic_probe(header, got, out, err, errcap);
 }
 
+static int skip_legacy_image(ClassicReader *r, const char *what){
+  uint32_t marker;
+  if(!reader_u32(r, &marker, what)) return 0;
+  return marker == UINT32_MAX || reader_blob(r, what);
+}
+
+static int skip_legacy_settings(ClassicReader *r, uint32_t container_version,
+                                uint32_t *settings_version){
+  uint32_t loading_bar, own_loading_image, constants;
+  if(!reader_u32(r, settings_version, "legacy settings version")) return 0;
+  int gm7 = container_version == GMLC_CLASSIC_GM7 || container_version == GMLC_CLASSIC_GM7_ALT;
+  uint32_t fixed_before_loading = gm7 ? 22u : 20u;
+  if(!reader_words(r, fixed_before_loading, "legacy game settings") ||
+     !reader_u32(r, &loading_bar, "loading-bar mode")) return 0;
+  if(loading_bar == 2 &&
+     (!skip_legacy_image(r, "loading-bar background") ||
+      !skip_legacy_image(r, "loading-bar foreground"))) return 0;
+  if(!reader_u32(r, &own_loading_image, "custom loading-image flag")) return 0;
+  if(own_loading_image && !skip_legacy_image(r, "custom loading image")) return 0;
+  if(!reader_words(r, 3, "loading-image settings") || !reader_blob(r, "game icon") ||
+     !reader_words(r, 4, "legacy error settings") || !reader_string(r, "game author")) return 0;
+  if(gm7){
+    if(!reader_string(r, "game version")) return 0;
+  } else if(!reader_words(r, 1, "numeric game version")) return 0;
+  if(!reader_skip(r, 8, "settings timestamp") || !reader_string(r, "game information") ||
+     !reader_u32(r, &constants, "settings constant count")) return 0;
+  if(constants > (r->size - r->pos) / 8) return reader_fail(r, "settings constants");
+  for(uint32_t i = 0; i < constants; ++i)
+    if(!reader_string(r, "constant name") || !reader_string(r, "constant value")) return 0;
+  if(gm7){
+    if(!reader_words(r, 4, "game version components") ||
+       !reader_string(r, "company") || !reader_string(r, "product") ||
+       !reader_string(r, "copyright") || !reader_string(r, "description")) return 0;
+  } else {
+    uint32_t includes;
+    if(!reader_u32(r, &includes, "legacy include count")) return 0;
+    if(includes > (r->size - r->pos) / 4) return reader_fail(r, "legacy includes");
+    for(uint32_t i = 0; i < includes; ++i)
+      if(!reader_string(r, "legacy include filename")) return 0;
+    if(!reader_words(r, 3, "legacy include settings")) return 0;
+  }
+  return 1;
+}
+
+static int validate_legacy_sprite_payload(ClassicReader *r){
+  uint32_t frames;
+  if(!reader_words(r, 13, "legacy sprite fields") ||
+     !reader_u32(r, &frames, "legacy sprite frame count")) return 0;
+  if(frames > (r->size - r->pos) / 4) return reader_fail(r, "legacy sprite frames");
+  for(uint32_t i = 0; i < frames; ++i)
+    if(!skip_legacy_image(r, "legacy sprite image")) return 0;
+  return 1;
+}
+
+static int validate_legacy_background_payload(ClassicReader *r){
+  uint32_t has_image;
+  if(!reader_words(r, 12, "legacy background fields") ||
+     !reader_u32(r, &has_image, "legacy background image flag")) return 0;
+  return !has_image || skip_legacy_image(r, "legacy background image");
+}
+
+static int parse_legacy_slot(ClassicReader *r, GmlcClassicResourceType type,
+                             GmlcClassicResourceSlot *slot){
+  uint32_t exists;
+  if(!reader_u32(r, &exists, "legacy resource existence flag")) return 0;
+  slot->exists = exists != 0;
+  if(!slot->exists) return 1;
+  if(!reader_string_copy(r, &slot->name, "legacy resource name") ||
+     !reader_u32(r, &slot->version, "legacy resource version")) return 0;
+  int valid = 0;
+  switch(type){
+    case GMLC_CLASSIC_SOUND: valid = validate_sound_payload(r); break;
+    case GMLC_CLASSIC_SPRITE: valid = validate_legacy_sprite_payload(r); break;
+    case GMLC_CLASSIC_BACKGROUND: valid = validate_legacy_background_payload(r); break;
+    case GMLC_CLASSIC_PATH: valid = validate_path_payload(r); break;
+    case GMLC_CLASSIC_SCRIPT:
+      valid = reader_string_copy(r, &slot->source, "legacy script source"); break;
+    case GMLC_CLASSIC_FONT: valid = validate_font_payload(r); break;
+    case GMLC_CLASSIC_TIMELINE: valid = validate_timeline_payload(r); break;
+    case GMLC_CLASSIC_OBJECT: valid = validate_object_payload(r); break;
+    case GMLC_CLASSIC_ROOM: valid = validate_room_payload(r); break;
+    default: break;
+  }
+  if(!valid){
+    free(slot->name); slot->name = NULL;
+    free(slot->source); slot->source = NULL;
+  }
+  return valid;
+}
+
+static int parse_legacy_project(const void *data, size_t size,
+                                GmlcClassicInventory *inventory,
+                                GmlcClassicManifest *manifest,
+                                char *err, size_t errcap){
+  const uint8_t *plain = (const uint8_t*)data;
+  size_t plain_size = size;
+  uint8_t *decoded = NULL;
+  uint32_t container_version = size >= 8 ? read_u32le(plain + 4) : 0;
+  if(container_version == GMLC_CLASSIC_GM7 || container_version == GMLC_CLASSIC_GM7_ALT){
+    if(!(0 /* This operation is unavailable. */)) return 0;
+    plain = decoded;
+  }
+  if(plain_size < 28 || read_u32le(plain) != GMLC_CLASSIC_MAGIC){
+    if(err && errcap) snprintf(err, errcap, "classic project: truncated legacy project header");
+    free(decoded);
+    return 0;
+  }
+  memset(inventory, 0, sizeof(*inventory));
+  inventory->header.version = (GmlcClassicVersion)container_version;
+  inventory->header.game_id = read_u32le(plain + 8);
+  memcpy(inventory->header.guid, plain + 12, 16);
+  ClassicReader r = {plain, plain_size, 28, err, errcap};
+  if(!skip_legacy_settings(&r, container_version, &inventory->settings_version)){
+    free(decoded);
+    return 0;
+  }
+  for(int type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
+    uint32_t section_version, count;
+    inventory->resource_section_offsets[type] = r.pos;
+    if(!reader_u32(&r, &section_version, "legacy resource section version") ||
+       !reader_u32(&r, &count, "legacy resource count")) goto fail;
+    (void)section_version;
+    inventory->resource_slots[type] = count;
+    if(count > (r.size - r.pos) / 4){ reader_fail(&r, "legacy resource slots"); goto fail; }
+    GmlcClassicResourceSlot *slots = NULL;
+    if(manifest && count){
+      slots = (GmlcClassicResourceSlot*)calloc(count, sizeof(*slots));
+      if(!slots){
+        if(err && errcap) snprintf(err, errcap, "classic project: out of memory allocating legacy resources");
+        goto fail;
+      }
+      manifest->slots[type] = slots;
+    }
+    for(uint32_t i = 0; i < count; ++i){
+      GmlcClassicResourceSlot temporary = {0};
+      GmlcClassicResourceSlot *slot = slots ? &slots[i] : &temporary;
+      if(!parse_legacy_slot(&r, (GmlcClassicResourceType)type, slot)){
+        free(temporary.name); free(temporary.source);
+        goto fail;
+      }
+      if(slot->exists && manifest) ++manifest->existing[type];
+      if(!slots){ free(temporary.name); free(temporary.source); }
+    }
+  }
+  if(!reader_u32(&r, &inventory->last_instance_id, "last legacy instance id") ||
+     !reader_u32(&r, &inventory->last_tile_id, "last legacy tile id")) goto fail;
+  inventory->payload_end = r.pos;
+  free(decoded);
+  return 1;
+fail:
+  free(decoded);
+  if(manifest) gmlc_classic_manifest_free(manifest);
+  return 0;
+}
+
 int gmlc_classic_inventory(const void *data, size_t size,
                            GmlcClassicInventory *out, char *err, size_t errcap){
   if(err && errcap) err[0] = '\0';
@@ -359,6 +512,9 @@ int gmlc_classic_inventory(const void *data, size_t size,
   }
   memset(out, 0, sizeof(*out));
   if(!gmlc_classic_probe(data, size, &out->header, err, errcap)) return 0;
+  if(out->header.version == GMLC_CLASSIC_GM6 || out->header.version == GMLC_CLASSIC_GM7 ||
+     out->header.version == GMLC_CLASSIC_GM7_ALT)
+    return parse_legacy_project(data, size, out, NULL, err, errcap);
   if(out->header.version != GMLC_CLASSIC_GM8 && out->header.version != GMLC_CLASSIC_GM81){
     if(err && errcap)
       snprintf(err, errcap, "classic project: inventory for container version %u is not implemented yet",
@@ -454,13 +610,14 @@ static int parse_manifest_slot(GmlcClassicResourceType type,
       case GMLC_CLASSIC_SPRITE: valid = validate_sprite_payload(&r); break;
       case GMLC_CLASSIC_BACKGROUND: valid = validate_background_payload(&r); break;
       case GMLC_CLASSIC_PATH: valid = validate_path_payload(&r); break;
-      case GMLC_CLASSIC_SCRIPT: valid = require_payload_end(&r, "script resource"); break;
+      case GMLC_CLASSIC_SCRIPT: break;
       case GMLC_CLASSIC_FONT: valid = validate_font_payload(&r); break;
       case GMLC_CLASSIC_TIMELINE: valid = validate_timeline_payload(&r); break;
       case GMLC_CLASSIC_OBJECT: valid = validate_object_payload(&r); break;
       case GMLC_CLASSIC_ROOM: valid = validate_room_payload(&r); break;
       default: break;
     }
+    if(valid) valid = require_payload_end(&r, "resource payload");
   } else {
     valid = require_payload_end(&r, "absent resource slot");
   }
@@ -495,6 +652,11 @@ int gmlc_classic_manifest(const void *data, size_t size,
     return 0;
   }
   memset(out, 0, sizeof(*out));
+  GmlcClassicHeader header;
+  if(!gmlc_classic_probe(data, size, &header, err, errcap)) return 0;
+  if(header.version == GMLC_CLASSIC_GM6 || header.version == GMLC_CLASSIC_GM7 ||
+     header.version == GMLC_CLASSIC_GM7_ALT)
+    return parse_legacy_project(data, size, &out->inventory, out, err, errcap);
   if(!gmlc_classic_inventory(data, size, &out->inventory, err, errcap)) return 0;
   for(int type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
     uint32_t count = out->inventory.resource_slots[type];

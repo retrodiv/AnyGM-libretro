@@ -57,6 +57,25 @@ static int expect_rejected(unsigned magic, unsigned version, size_t size){
 
 
 
+static int expect_gm7_decode(void){
+  unsigned char plain[64] = {0};
+  put_u32le(plain, GMLC_CLASSIC_MAGIC);
+  put_u32le(plain + 4, 701);
+  for(size_t i = 8; i < sizeof(plain); ++i) plain[i] = (unsigned char)(i * 3 + 1);
+  size_t encoded_size = 0;
+  unsigned char *encoded = encode_gm7(plain, sizeof(plain), &encoded_size);
+  if(!encoded) return 0;
+  uint8_t *decoded = NULL;
+  size_t decoded_size = 0;
+  char err[128];
+  int ok = (0 /* This operation is unavailable. */) &&
+           decoded_size == sizeof(plain) && !memcmp(decoded, plain, sizeof(plain));
+  if(!ok) fprintf(stderr, "GM7 decode fixture failed: %s\n", err);
+  free(decoded);
+  free(encoded);
+  return ok;
+}
+
 typedef struct {
   unsigned char data[1024];
   size_t size;
@@ -70,6 +89,15 @@ static void fixture_u32(Fixture *f, unsigned value){
 static void fixture_zero(Fixture *f, size_t count){
   memset(f->data + f->size, 0, count);
   f->size += count;
+}
+
+static void fixture_string(Fixture *f, const char *text){
+  size_t length = text ? strlen(text) : 0;
+  fixture_u32(f, (unsigned)length);
+  if(length){
+    memcpy(f->data + f->size, text, length);
+    f->size += length;
+  }
 }
 
 static void fixture_compressed(Fixture *f, const unsigned char *raw, int raw_size){
@@ -117,9 +145,9 @@ static int expect_inventory(unsigned version){
   return 1;
 }
 
-static Fixture manifest_fixture(void){
+static Fixture manifest_fixture(unsigned container_version){
   Fixture f = {{0}, 0};
-  fixture_u32(&f, GMLC_CLASSIC_MAGIC); fixture_u32(&f, 800);
+  fixture_u32(&f, GMLC_CLASSIC_MAGIC); fixture_u32(&f, container_version);
   fixture_u32(&f, 9); fixture_zero(&f, 16);
   fixture_u32(&f, 800); fixture_u32(&f, 0);
   fixture_u32(&f, 800); fixture_u32(&f, 0); fixture_zero(&f, 8);
@@ -149,7 +177,7 @@ static Fixture manifest_fixture(void){
 }
 
 static int expect_manifest(void){
-  Fixture f = manifest_fixture();
+  Fixture f = manifest_fixture(800);
   GmlcClassicManifest manifest;
   char err[128];
   if(!gmlc_classic_manifest(f.data, f.size, &manifest, err, sizeof(err))){
@@ -167,6 +195,78 @@ static int expect_manifest(void){
   return ok;
 }
 
+static int expect_manifest_810(void){
+  Fixture f = manifest_fixture(810);
+  GmlcClassicManifest manifest;
+  char err[128];
+  if(!gmlc_classic_manifest(f.data, f.size, &manifest, err, sizeof(err))){
+    fprintf(stderr, "manifest 810 failed: %s\n", err);
+    return 0;
+  }
+  int ok = manifest.inventory.header.version == GMLC_CLASSIC_GM81 &&
+           manifest.existing[GMLC_CLASSIC_SCRIPT] == 1;
+  gmlc_classic_manifest_free(&manifest);
+  return ok;
+}
+
+static Fixture legacy_fixture(unsigned container_version){
+  Fixture f = {{0}, 0};
+  int gm7 = container_version == 701 || container_version == 702;
+  fixture_u32(&f, GMLC_CLASSIC_MAGIC); fixture_u32(&f, container_version);
+  fixture_u32(&f, 42); fixture_zero(&f, 16);
+  fixture_u32(&f, gm7 ? 702 : 600);
+  for(unsigned i = 0; i < (gm7 ? 22u : 20u); ++i) fixture_u32(&f, 0);
+  fixture_u32(&f, 0); /* loading bar */
+  fixture_u32(&f, 0); /* custom loading image */
+  fixture_u32(&f, 0); fixture_u32(&f, 255); fixture_u32(&f, 1);
+  fixture_u32(&f, 0); /* icon blob */
+  for(unsigned i = 0; i < 4; ++i) fixture_u32(&f, 0);
+  fixture_string(&f, "");
+  if(gm7) fixture_string(&f, "100"); else fixture_u32(&f, 100);
+  fixture_zero(&f, 8);
+  fixture_string(&f, "");
+  fixture_u32(&f, 0); /* constants */
+  if(gm7){
+    for(unsigned i = 0; i < 4; ++i) fixture_u32(&f, i == 0 ? 1 : 0);
+    for(unsigned i = 0; i < 4; ++i) fixture_string(&f, "");
+  } else {
+    fixture_u32(&f, 0); /* includes */
+    fixture_u32(&f, 0); fixture_u32(&f, 0); fixture_u32(&f, 0);
+  }
+  const unsigned section_versions[GMLC_CLASSIC_RESOURCE_TYPES] =
+    {400, 400, 400, 420, 400, 540, 500, 400, 420};
+  for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
+    fixture_u32(&f, section_versions[type]);
+    fixture_u32(&f, 0);
+  }
+  fixture_u32(&f, 100000); fixture_u32(&f, 1000000);
+  return f;
+}
+
+static int expect_legacy_manifest(unsigned version){
+  Fixture plain = legacy_fixture(version);
+  const unsigned char *data = plain.data;
+  size_t size = plain.size;
+  unsigned char *encoded = NULL;
+  if(version == 701 || version == 702){
+    encoded = encode_gm7(plain.data, plain.size, &size);
+    if(!encoded) return 0;
+    data = encoded;
+  }
+  GmlcClassicManifest manifest;
+  char err[128];
+  int ok = gmlc_classic_manifest(data, size, &manifest, err, sizeof(err));
+  if(!ok) fprintf(stderr, "legacy manifest %u failed: %s\n", version, err);
+  if(ok){
+    ok = manifest.inventory.settings_version == (version == 600 ? 600u : 702u) &&
+         manifest.inventory.last_instance_id == 100000 &&
+         manifest.inventory.last_tile_id == 1000000;
+    gmlc_classic_manifest_free(&manifest);
+  }
+  free(encoded);
+  return ok;
+}
+
 int main(int argc, char **argv){
   const unsigned versions[] = {600, 701, 702, 800, 810};
   int passed = 0, failed = 0;
@@ -180,7 +280,10 @@ int main(int argc, char **argv){
   if(expect_inventory(800)) ++passed; else ++failed;
   if(expect_inventory(810)) ++passed; else ++failed;
   if(expect_manifest()) ++passed; else ++failed;
+  if(expect_manifest_810()) ++passed; else ++failed;
   if(expect_gm7_decode()) ++passed; else ++failed;
+  if(expect_legacy_manifest(600)) ++passed; else ++failed;
+  if(expect_legacy_manifest(701)) ++passed; else ++failed;
 
   for(int i = 1; i < argc; ++i){
     GmlcClassicInventory in;
@@ -191,16 +294,15 @@ int main(int argc, char **argv){
       ++failed;
       continue;
     }
-    if((h.version == GMLC_CLASSIC_GM8 || h.version == GMLC_CLASSIC_GM81) &&
-       gmlc_classic_inventory_file(argv[i], &in, err, sizeof(err))){
+    if(gmlc_classic_inventory_file(argv[i], &in, err, sizeof(err))){
       GmlcClassicManifest manifest;
       if(!gmlc_classic_manifest_file(argv[i], &manifest, err, sizeof(err))){
         fprintf(stderr, "%s: %s\n", argv[i], err);
         ++failed;
         continue;
       }
-      printf("%s\t%u\t%s\tsounds=%u/%u sprites=%u/%u backgrounds=%u/%u paths=%u/%u scripts=%u/%u fonts=%u/%u timelines=%u/%u objects=%u/%u rooms=%u/%u\n",
-             argv[i], (unsigned)h.version, gmlc_classic_version_name(h.version),
+      printf("%s\t%u\t%s\tsettings=%u sounds=%u/%u sprites=%u/%u backgrounds=%u/%u paths=%u/%u scripts=%u/%u fonts=%u/%u timelines=%u/%u objects=%u/%u rooms=%u/%u\n",
+             argv[i], (unsigned)h.version, gmlc_classic_version_name(h.version), in.settings_version,
              manifest.existing[GMLC_CLASSIC_SOUND], in.resource_slots[GMLC_CLASSIC_SOUND],
              manifest.existing[GMLC_CLASSIC_SPRITE], in.resource_slots[GMLC_CLASSIC_SPRITE],
              manifest.existing[GMLC_CLASSIC_BACKGROUND], in.resource_slots[GMLC_CLASSIC_BACKGROUND],
@@ -211,28 +313,6 @@ int main(int argc, char **argv){
              manifest.existing[GMLC_CLASSIC_OBJECT], in.resource_slots[GMLC_CLASSIC_OBJECT],
              manifest.existing[GMLC_CLASSIC_ROOM], in.resource_slots[GMLC_CLASSIC_ROOM]);
       gmlc_classic_manifest_free(&manifest);
-    } else if(h.version == GMLC_CLASSIC_GM7 || h.version == GMLC_CLASSIC_GM7_ALT){
-      FILE *f = fopen(argv[i], "rb");
-      uint8_t *encoded = NULL, *decoded = NULL;
-      size_t size = 0, decoded_size = 0;
-      if(f && !fseek(f, 0, SEEK_END)){
-        long length = ftell(f);
-        if(length >= 0 && !fseek(f, 0, SEEK_SET)){
-          encoded = (uint8_t*)malloc((size_t)length);
-          if(encoded && fread(encoded, 1, (size_t)length, f) == (size_t)length) size = (size_t)length;
-        }
-      }
-      if(f) fclose(f);
-      if(!size || !(0 /* This operation is unavailable. */) ||
-         decoded_size < 32){
-        fprintf(stderr, "%s: %s\n", argv[i], err[0] ? err : "GM7 test read failed");
-        free(encoded); free(decoded); ++failed; continue;
-      }
-      printf("%s\t%u\t%s\tdecoded=%zu game_id=%u settings_version=%u\n",
-             argv[i], (unsigned)h.version, gmlc_classic_version_name(h.version), decoded_size,
-             (unsigned)decoded[8] | (unsigned)decoded[9] << 8 | (unsigned)decoded[10] << 16 | (unsigned)decoded[11] << 24,
-             (unsigned)decoded[28] | (unsigned)decoded[29] << 8 | (unsigned)decoded[30] << 16 | (unsigned)decoded[31] << 24);
-      free(encoded); free(decoded);
     } else {
       printf("%s\t%u\t%s\n", argv[i], (unsigned)h.version,
              gmlc_classic_version_name(h.version));
