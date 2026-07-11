@@ -87,7 +87,8 @@ typedef struct {
   /* address-hash index over ref_addr/ref_name (lazy; for O(1) ref lookup) */
   int32_t *ref_hix; uint32_t ref_hix_cap;
   /* header */
-  uint8_t bytecode; uint32_t gameid;
+  uint8_t bytecode; uint32_t gameid; int classic_version;
+  int classic_scaling, classic_interpolate;
   double game_speed;                     /* GEN8 global cadence when present (GMS2 exports) */
   uint32_t disp_w, disp_h;           /* default window / native render size */
   uint32_t *room_order; int n_room_order;

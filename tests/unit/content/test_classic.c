@@ -143,7 +143,10 @@ static Fixture inventory_fixture(unsigned container_version){
   fixture_u32(&f, 7);
   fixture_zero(&f, 16);
   fixture_u32(&f, 800); /* settings version */
-  fixture_u32(&f, 0);   /* compressed settings */
+  unsigned char settings[14 * 4] = {0};
+  put_u32le(settings + 4, 1);      /* interpolation */
+  put_u32le(settings + 16, 200);   /* fixed two-times scaling */
+  fixture_compressed(&f, settings, sizeof(settings));
   fixture_u32(&f, 800); fixture_u32(&f, 0); fixture_zero(&f, 8); /* triggers */
   fixture_u32(&f, 800); fixture_u32(&f, 0); fixture_zero(&f, 8); /* constants */
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
@@ -164,7 +167,8 @@ static int expect_inventory(unsigned version){
     fprintf(stderr, "inventory %u failed: %s\n", version, err);
     return 0;
   }
-  if(in.payload_end != f.size || in.last_instance_id != 100123 || in.last_tile_id != 1000456)
+  if(in.payload_end != f.size || in.last_instance_id != 100123 || in.last_tile_id != 1000456 ||
+     in.settings.interpolate != 1 || in.settings.scaling != 200)
     return 0;
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type)
     if(in.resource_slots[type] != type) return 0;
@@ -240,7 +244,7 @@ static int expect_manifest_810(void){
   return ok;
 }
 
-static int expect_executable_manifest(void){
+static int build_executable_fixture(Fixture *executable){
   Fixture decoded={{0},0};
   fixture_u32(&decoded,0); /* leading junk */
   fixture_u32(&decoded,1); fixture_u32(&decoded,0x13572468); fixture_zero(&decoded,16);
@@ -248,7 +252,16 @@ static int expect_executable_manifest(void){
   fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* triggers */
   fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* constants */
   for(unsigned type=0;type<GMLC_CLASSIC_RESOURCE_TYPES;type++){
-    fixture_u32(&decoded,800); fixture_u32(&decoded,0);
+    fixture_u32(&decoded,800);
+    if(type==GMLC_CLASSIC_SCRIPT){
+      Fixture script={{0},0};
+      fixture_u32(&decoded,1);
+      fixture_u32(&script,1);
+      fixture_string(&script,"fixture_script");
+      fixture_u32(&script,800);
+      fixture_string(&script,"exit;");
+      fixture_compressed(&decoded,script.data,(int)script.size);
+    } else fixture_u32(&decoded,0);
   }
   fixture_u32(&decoded,100000); fixture_u32(&decoded,1000000);
   fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* includes */
@@ -256,29 +269,37 @@ static int expect_executable_manifest(void){
   fixture_u32(&decoded,500); fixture_u32(&decoded,0); /* library code */
   fixture_u32(&decoded,700); fixture_u32(&decoded,0); /* room order */
 
-  Fixture executable={{0},0};
-  executable.data[0]='M'; executable.data[1]='Z'; executable.size=16;
-  fixture_u32(&executable,20); /* embedded-data self pointer */
-  fixture_u32(&executable,GMLC_CLASSIC_MAGIC); fixture_u32(&executable,800);
-  fixture_u32(&executable,0); fixture_u32(&executable,800);
-  fixture_u32(&executable,0); /* settings */
-  fixture_u32(&executable,0); fixture_u32(&executable,0); /* wrapper strings */
-  fixture_u32(&executable,0); fixture_u32(&executable,0); /* junk counts */
-  for(unsigned i=0;i<256;i++) executable.data[executable.size++]=(unsigned char)i;
-  fixture_u32(&executable,(unsigned)decoded.size+1);
+  memset(executable,0,sizeof(*executable));
+  executable->data[0]='M'; executable->data[1]='Z'; executable->size=16;
+  fixture_u32(executable,20); /* embedded-data self pointer */
+  fixture_u32(executable,GMLC_CLASSIC_MAGIC); fixture_u32(executable,800);
+  fixture_u32(executable,0); fixture_u32(executable,800);
+  fixture_u32(executable,0); /* settings */
+  fixture_u32(executable,0); fixture_u32(executable,0); /* wrapper strings */
+  fixture_u32(executable,0); fixture_u32(executable,0); /* junk counts */
+  for(unsigned i=0;i<256;i++) executable->data[executable->size++]=(unsigned char)i;
+  fixture_u32(executable,(unsigned)decoded.size+1);
   unsigned char previous=0;
-  executable.data[executable.size++]=previous;
+  executable->data[executable->size++]=previous;
   for(size_t i=0;i<decoded.size;i++){
     previous=(unsigned char)(previous+decoded.data[i]+(unsigned char)(i+1));
-    executable.data[executable.size++]=previous;
+    executable->data[executable->size++]=previous;
   }
+  return 1;
+}
+
+static int expect_executable_manifest(void){
+  Fixture executable;
+  if(!build_executable_fixture(&executable)) return 0;
   GmlcClassicManifest manifest;
   char err[256]={0};
   int ok=gmlc_classic_manifest(executable.data,executable.size,&manifest,err,sizeof(err));
   if(!ok) fprintf(stderr,"executable manifest failed: %s\n",err);
   if(ok){
     ok=manifest.inventory.header.version==GMLC_CLASSIC_GM8 &&
-       manifest.inventory.header.game_id==0x13572468 && manifest.room_order_count==0;
+       manifest.inventory.header.game_id==0x13572468 && manifest.room_order_count==0 &&
+       manifest.existing[GMLC_CLASSIC_SCRIPT]==1 &&
+       !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source,"exit;");
     gmlc_classic_manifest_free(&manifest);
   }
   return ok;
@@ -316,6 +337,23 @@ static Fixture legacy_fixture(unsigned container_version){
   }
   fixture_u32(&f, 100000); fixture_u32(&f, 1000000);
   return f;
+}
+
+static int build_project_fixture(unsigned version, Fixture *out){
+  if(version==600){ *out=legacy_fixture(version); return 1; }
+  if(version==701 || version==702){
+    Fixture plain=legacy_fixture(version);
+    size_t encoded_size=0;
+    unsigned char *encoded=encode_gm7(plain.data,plain.size,&encoded_size);
+    if(!encoded || encoded_size>sizeof(out->data)){ free(encoded); return 0; }
+    memset(out,0,sizeof(*out));
+    memcpy(out->data,encoded,encoded_size);
+    out->size=encoded_size;
+    free(encoded);
+    return 1;
+  }
+  if(version==800 || version==810){ *out=manifest_fixture(version); return 1; }
+  return 0;
 }
 
 static int expect_legacy_manifest(unsigned version){
@@ -938,6 +976,30 @@ static void discard_imported_rooms(GmlcProject *project, int remove_sources){
 }
 
 int main(int argc, char **argv){
+  if(argc==3 && !strcmp(argv[1],"--write-exe-fixture")){
+    Fixture executable;
+    if(!build_executable_fixture(&executable)) return 1;
+    FILE *file=fopen(argv[2],"wb");
+    int ok=file && fwrite(executable.data,1,executable.size,file)==executable.size;
+    if(file && fclose(file)!=0) ok=0;
+    if(!ok){ fprintf(stderr,"cannot write executable fixture: %s\n",argv[2]); return 1; }
+    printf("wrote executable fixture: %s (%zu bytes)\n",argv[2],executable.size);
+    return 0;
+  }
+  if(argc==4 && !strcmp(argv[1],"--write-project-fixture")){
+    unsigned version=(unsigned)strtoul(argv[2],NULL,10);
+    Fixture project;
+    if(!build_project_fixture(version,&project)){
+      fprintf(stderr,"unsupported project fixture version: %s\n",argv[2]);
+      return 1;
+    }
+    FILE *file=fopen(argv[3],"wb");
+    int ok=file && fwrite(project.data,1,project.size,file)==project.size;
+    if(file && fclose(file)!=0) ok=0;
+    if(!ok){ fprintf(stderr,"cannot write project fixture: %s\n",argv[3]); return 1; }
+    printf("wrote project fixture %u: %s (%zu bytes)\n",version,argv[3],project.size);
+    return 0;
+  }
   const unsigned versions[] = {600, 701, 702, 800, 810};
   int passed = 0, failed = 0;
   for(size_t i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i){

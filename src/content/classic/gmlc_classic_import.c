@@ -179,11 +179,11 @@ int gmlc_classic_import_scripts(const GmlcClassicManifest *classic,
   project->n_scripts = project->cap_scripts = (int)count;
   const GmlcClassicResourceSlot *slots = classic->slots[GMLC_CLASSIC_SCRIPT];
   for(uint32_t i = 0; i < count; ++i){
-    char fallback[64], leaf[64];
-    snprintf(fallback, sizeof(fallback), "__classic_missing_script_%u", i);
+    if(!slots || !slots[i].exists) continue;
+    char leaf[64];
     snprintf(leaf, sizeof(leaf), "classic_script_%06u.gml", i);
-    const char *name = slots && slots[i].exists && slots[i].name ? slots[i].name : fallback;
-    const char *source = slots && slots[i].exists && slots[i].source ? slots[i].source : "exit;\n";
+    const char *name = slots[i].name ? slots[i].name : "";
+    const char *source = slots[i].source ? slots[i].source : "exit;\n";
     GmlcScript *script = &project->scripts[i];
     script->id = copy_string(name);
     script->name = copy_string(name);
@@ -194,15 +194,13 @@ int gmlc_classic_import_scripts(const GmlcClassicManifest *classic,
       free_imported_scripts(project);
       return 0;
     }
-    if(slots && slots[i].exists){
-      project->script_order_ids[project->n_script_order] = copy_string(name);
-      if(!project->script_order_ids[project->n_script_order]){
-        if(err && errcap) snprintf(err, errcap, "classic import: out of memory recording script order");
-        free_imported_scripts(project);
-        return 0;
-      }
-      ++project->n_script_order;
+    project->script_order_ids[project->n_script_order] = copy_string(name);
+    if(!project->script_order_ids[project->n_script_order]){
+      if(err && errcap) snprintf(err, errcap, "classic import: out of memory recording script order");
+      free_imported_scripts(project);
+      return 0;
     }
+    ++project->n_script_order;
   }
   return 1;
 }
@@ -728,16 +726,16 @@ int gmlc_classic_import_sounds(const GmlcClassicManifest *classic,
   const GmlcClassicResourceSlot *slots = classic->slots[GMLC_CLASSIC_SOUND];
   for(uint32_t i = 0; i < count; ++i){
     const GmlcClassicResourceSlot *source = &slots[i];
-    char fallback[64], leaf[96];
-    snprintf(fallback, sizeof(fallback), "__classic_missing_sound_%u", i);
-    const char *name = source->exists && source->name ? source->name : fallback;
+    if(!source->exists) continue;
+    char leaf[96];
+    const char *name = source->name ? source->name : "";
     const uint8_t *audio = silent_wav;
     size_t audio_size = sizeof(silent_wav);
     char *owned_audio = NULL;
     char extension_buffer[12];
     const char *extension = ".wav";
     double volume = 1.0;
-    if(source->exists){
+    {
       ImportReader r = {source->payload, source->payload_size, 0, err, errcap};
       uint32_t kind, type_length, filename_length, has_data, blob_size = 0, ignored;
       const uint8_t *type_text = NULL, *filename_text = NULL, *blob = NULL;

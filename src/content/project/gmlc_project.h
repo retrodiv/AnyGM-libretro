@@ -216,6 +216,9 @@ typedef struct {
   char *root_dir;
   char *yyp_path;
   char *name;
+  int classic_version;
+  int classic_scaling;
+  int classic_interpolate;
   GmlcResource *resources;
   int n_resources, cap_resources;
   GmlcSprite *sprites;

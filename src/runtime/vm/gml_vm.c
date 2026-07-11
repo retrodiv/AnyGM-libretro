@@ -2753,6 +2753,11 @@ int gml_object_index_by_name(GmlVM *vm, const char *name){
   return -1;
 }
 GmlInstance *gml_find_instance(GmlVM *vm, int obj){
+  if(obj>=100000){
+    for(int i=0;i<vm->inst_count;i++)
+      if(vm->inst[i].active && !vm->inst[i].marked && (int)vm->inst[i].id==obj) return &vm->inst[i];
+    return NULL;
+  }
   for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked && gml_object_is(vm,vm->inst[i].obj,obj)) return &vm->inst[i];
   return NULL;
 }
@@ -4030,7 +4035,7 @@ void gml_vm_step(GmlVM *vm){
   /* Alarm thresholds depend on bytecode version: below 16, decrement values
    * greater than -1 and fire below zero; later versions decrement positive values
    * and fire at or below zero. Set -1 before dispatch so handlers can re-arm. */
-  int alarm_at_zero = vm->win && vm->win->bytecode >= 16;
+  int alarm_at_zero = vm->win && (vm->win->classic_version || vm->win->bytecode >= 16);
   for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked) continue;
     for(int a=0;a<GML_ALARMS;a++){
       if(alarm_at_zero){ if(!(in->alarm[a]>0)) continue; } else { if(!(in->alarm[a]>-1)) continue; }

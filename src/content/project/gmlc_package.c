@@ -106,6 +106,7 @@ typedef struct {
   TexturePlacement *texture_place;
   int n_texture_items;
   int n_atlas_pages;
+  int atlas_dim;
   CodeRef *code_refs;
   int n_code_refs, cap_code_refs;
   CodeBlobPatch *code_blob_patches;
@@ -406,7 +407,8 @@ static int total_texture_pages(const GmlcProject *p){
   return total_sprite_frames(p) + p->n_fonts;
 }
 
-#define GMLC_ATLAS_DIM 2048
+#define GMLC_ATLAS_BASE_DIM 2048
+#define GMLC_ATLAS_MAX_DIM 8192
 #define GMLC_ATLAS_BORDER 2
 
 typedef struct {
@@ -543,6 +545,7 @@ static int pack_page_place(PackPage *p, int w, int h, int *out_x, int *out_y){
 
 static int build_texture_layout(Pkg *pkg, const GmlcProject *p){
   int n=total_texture_pages(p);
+  pkg->atlas_dim=GMLC_ATLAS_BASE_DIM;
   pkg->n_texture_items=n;
   pkg->texture_place=(TexturePlacement*)calloc((size_t)(n?n:1),sizeof(*pkg->texture_place));
   if(!pkg->texture_place) return 0;
@@ -580,7 +583,9 @@ static int build_texture_layout(Pkg *pkg, const GmlcProject *p){
         free(req);
         return 0;
       }
-      if(w+GMLC_ATLAS_BORDER*2>GMLC_ATLAS_DIM || h+GMLC_ATLAS_BORDER*2>GMLC_ATLAS_DIM){ free(req); return 0; }
+      int required=(w>h?w:h)+GMLC_ATLAS_BORDER*2;
+      while(pkg->atlas_dim<required && pkg->atlas_dim<GMLC_ATLAS_MAX_DIM) pkg->atlas_dim*=2;
+      if(required>pkg->atlas_dim){ free(req); return 0; }
       req[idx]=(TextureRequest){idx,w,h,xoff,yoff,hash};
     }
   }
@@ -588,7 +593,9 @@ static int build_texture_layout(Pkg *pkg, const GmlcProject *p){
     const GmlcFont *f=&p->fonts[i];
     int w=f->width>0?f->width:1;
     int h=f->height>0?f->height:1;
-    if(w+GMLC_ATLAS_BORDER*2>GMLC_ATLAS_DIM || h+GMLC_ATLAS_BORDER*2>GMLC_ATLAS_DIM){ free(req); return 0; }
+    int required=(w>h?w:h)+GMLC_ATLAS_BORDER*2;
+    while(pkg->atlas_dim<required && pkg->atlas_dim<GMLC_ATLAS_MAX_DIM) pkg->atlas_dim*=2;
+    if(required>pkg->atlas_dim){ free(req); return 0; }
     req[idx]=(TextureRequest){idx,w,h,0,0,0};
   }
   qsort(req,(size_t)n,sizeof(*req),texture_request_cmp);
@@ -627,7 +634,7 @@ static int build_texture_layout(Pkg *pkg, const GmlcProject *p){
         cap_pages=nc;
       }
       page=n_pages++;
-      if(!pack_page_add(&pages[page],(PackRect){0,0,GMLC_ATLAS_DIM,GMLC_ATLAS_DIM}) ||
+      if(!pack_page_add(&pages[page],(PackRect){0,0,pkg->atlas_dim,pkg->atlas_dim}) ||
          !pack_page_place(&pages[page],r->w,r->h,&px,&py)){
         for(int i=0;i<n_pages;i++) free(pages[i].rects);
         free(pages); free(req);
@@ -1144,7 +1151,8 @@ static int atlas_copy_png(uint8_t *atlas, int atlas_dim, const TexturePlacement 
 }
 
 static int write_atlas_blob(Pkg *pkg, const GmlcProject *p, int page, size_t blob_pos, char *err, size_t errcap){
-  size_t pixels_len=(size_t)GMLC_ATLAS_DIM*(size_t)GMLC_ATLAS_DIM*4u;
+  int atlas_dim=pkg->atlas_dim>0?pkg->atlas_dim:GMLC_ATLAS_BASE_DIM;
+  size_t pixels_len=(size_t)atlas_dim*(size_t)atlas_dim*4u;
   uint8_t *pixels=(uint8_t*)calloc(pixels_len?pixels_len:1,1);
   if(!pixels){
     snprintf(err,errcap,"out of memory while building texture atlas");
@@ -1157,7 +1165,7 @@ static int write_atlas_blob(Pkg *pkg, const GmlcProject *p, int page, size_t blo
       const TexturePlacement *tp=&pkg->texture_place[idx];
       if(tp->atlas!=(uint16_t)page) continue;
       const char *path=(sp->frame_paths && sp->frame_paths[f]) ? sp->frame_paths[f] : NULL;
-      if(!atlas_copy_png(pixels,GMLC_ATLAS_DIM,tp,path,err,errcap)){
+      if(!atlas_copy_png(pixels,atlas_dim,tp,path,err,errcap)){
         free(pixels);
         return 0;
       }
@@ -1166,7 +1174,7 @@ static int write_atlas_blob(Pkg *pkg, const GmlcProject *p, int page, size_t blo
   for(int i=0;i<p->n_fonts;i++,idx++){
     const TexturePlacement *tp=&pkg->texture_place[idx];
     if(tp->atlas!=(uint16_t)page) continue;
-    if(!atlas_copy_png(pixels,GMLC_ATLAS_DIM,tp,p->fonts[i].png_path,err,errcap)){
+    if(!atlas_copy_png(pixels,atlas_dim,tp,p->fonts[i].png_path,err,errcap)){
       free(pixels);
       return 0;
     }
@@ -1174,8 +1182,10 @@ static int write_atlas_blob(Pkg *pkg, const GmlcProject *p, int page, size_t blo
   PngOut out;
   memset(&out,0,sizeof(out));
   out.ok=1;
-  stbi_write_png_compression_level=8;
-  int wrote=stbi_write_png_to_func(png_out_write,&out,GMLC_ATLAS_DIM,GMLC_ATLAS_DIM,4,pixels,GMLC_ATLAS_DIM*4);
+  /* The bundled encoder's high-quality search is superlinear on large, mostly transparent
+   * software atlases. Level 1 preserves identical decoded pixels and keeps content builds bounded. */
+  stbi_write_png_compression_level=1;
+  int wrote=stbi_write_png_to_func(png_out_write,&out,atlas_dim,atlas_dim,4,pixels,atlas_dim*4);
   free(pixels);
   if(!wrote || !out.ok || out.b.len==0){
     free(out.b.data);
@@ -1283,10 +1293,6 @@ static int room_creation_code_index(const GmlcProject *p, int room_index){
   int idx=0;
   for(int i=0;i<room_index;i++) if(room_has_creation_code(&p->rooms[i])) idx++;
   return idx;
-}
-
-static int script_code_index(const GmlcProject *p, int script_index){
-  return room_code_count(p) + script_index;
 }
 
 static int timeline_moment_code_index(const GmlcProject *p, int timeline_index, int moment_index){
@@ -1445,12 +1451,13 @@ static int write_scpt(Pkg *pkg, const GmlcProject *p){
   wu32(&pkg->b,n);
   size_t table=pkg->b.len;
   zfill(&pkg->b,(size_t)n*4);
+  int code_base=room_code_count(p);
   for(uint32_t i=0;i<n;i++){
     const GmlcScript *sc=&p->scripts[i];
     patch32(&pkg->b,table+i*4,(uint32_t)pkg->b.len);
     int sid=intern(pkg,sc->name);
     wstrptr(pkg,sid);
-    wi32(&pkg->b,script_code_index(p,(int)i));
+    wi32(&pkg->b,code_base+(int)i);
   }
   chunk_end(pkg,s);
   return 1;
@@ -1927,7 +1934,13 @@ static int write_audo(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   for(uint32_t i=0;i<n;i++){
     const GmlcSound *snd=&p->sounds[i];
     uint8_t *blob=NULL; size_t blen=0;
-    if(!snd->data_path || !read_blob(snd->data_path,&blob,&blen)){
+    if(!snd->data_path){
+      patch32(&pkg->b,table+i*4,(uint32_t)pkg->b.len);
+      wu32(&pkg->b,0);
+      if(i+1<n) while(pkg->b.len % 4) wu8(&pkg->b,0);
+      continue;
+    }
+    if(!read_blob(snd->data_path,&blob,&blen)){
       snprintf(err,errcap,"%s: sound blob read failed",snd->data_path?snd->data_path:"<missing>");
       return 0;
     }
@@ -1945,6 +1958,16 @@ static int fixed_zero_chunk(Pkg *p, const char name[4], size_t n){
   size_t s=chunk_begin(p,name);
   if(!zfill(&p->b,n)) return 0;
   chunk_end(p,s);
+  return 1;
+}
+
+static int write_classic_marker(Pkg *pkg, const GmlcProject *project){
+  if(!project->classic_version) return 1;
+  size_t s=chunk_begin(pkg,"CLSC");
+  wu32(&pkg->b,(uint32_t)project->classic_version);
+  wi32(&pkg->b,project->classic_scaling);
+  wu32(&pkg->b,(uint32_t)(project->classic_interpolate?1:0));
+  chunk_end(pkg,s);
   return 1;
 }
 
@@ -2034,8 +2057,27 @@ static int write_gen8(Pkg *pkg, const GmlcProject *p){
   if(sid_name<0 || sid_cfg<0 || sid_id<0) return 0;
   uint32_t dw=640, dh=480;
   if(p->n_rooms>0){
-    dw=(uint32_t)(p->rooms[0].port_w>0?p->rooms[0].port_w:p->rooms[0].width);
-    dh=(uint32_t)(p->rooms[0].port_h>0?p->rooms[0].port_h:p->rooms[0].height);
+    const GmlcRoom *room=&p->rooms[0];
+    dw=(uint32_t)(room->width>0?room->width:640);
+    dh=(uint32_t)(room->height>0?room->height:480);
+    if(room->view_enabled){
+      int right=0,bottom=0;
+      for(int i=0;i<room->n_views && i<8;i++) if(room->views[i].visible){
+        int w=room->views[i].wport>0?room->views[i].wport:room->width;
+        int h=room->views[i].hport>0?room->views[i].hport:room->height;
+        int r=room->views[i].xport+w, b=room->views[i].yport+h;
+        if(r>right) right=r;
+        if(b>bottom) bottom=b;
+      }
+      if(right>0) dw=(uint32_t)right;
+      if(bottom>0) dh=(uint32_t)bottom;
+    }
+  }
+  if(p->classic_version && p->classic_scaling>0){
+    uint64_t scaled_w=((uint64_t)dw*(uint32_t)p->classic_scaling+50u)/100u;
+    uint64_t scaled_h=((uint64_t)dh*(uint32_t)p->classic_scaling+50u)/100u;
+    if(scaled_w>0 && scaled_w<=UINT32_MAX) dw=(uint32_t)scaled_w;
+    if(scaled_h>0 && scaled_h<=UINT32_MAX) dh=(uint32_t)scaled_h;
   }
   const uint8_t bytecode_version=15;
   const uint32_t game_id=0;
@@ -2925,36 +2967,41 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
   wbytes(&pkg.b,"FORM",4);
   size_t form_size_pos=pkg.b.len;
   wu32(&pkg.b,0);
-  if(!seed_code_string_order(&pkg,p,err,errcap) ||
-     !write_gen8(&pkg,p) ||
-     !write_optn(&pkg) ||
-     !fixed_zero_chunk(&pkg,"LANG",12) ||
-     !empty_list_chunk(&pkg,"EXTN") ||
-     !write_sond(&pkg,p) ||
-     !write_agrp(&pkg) ||
-     !write_sprt(&pkg,p,err,errcap) ||
-     !write_bgnd(&pkg,p) ||
-     !write_path(&pkg,p) ||
-     !write_scpt(&pkg,p) ||
-     !empty_list_chunk(&pkg,"GLOB") ||
-     !write_shdr(&pkg,p) ||
-     !write_font(&pkg,p) ||
-     !write_tmln(&pkg,p) ||
-     !write_objt(&pkg,p) ||
-     !write_room_chunk(&pkg,p) ||
-     !fixed_zero_chunk(&pkg,"DAFL",0) ||
-     !write_embi(&pkg) ||
-     !write_tpag(&pkg,p) ||
-     !write_code(&pkg,p,err,errcap) ||
-     !write_vari(&pkg) ||
-     !write_func(&pkg) ||
-     !write_strg(&pkg) ||
-     !write_txtr(&pkg,p,err,errcap) ||
-     !write_audo(&pkg,p,err,errcap)){
-    if(!err[0]) snprintf(err,errcap,"out of memory while writing package");
+  const char *stage="initialization";
+#define PACKAGE_STEP(label, call) (stage=(label),(call))
+  if(!PACKAGE_STEP("code-string seed",seed_code_string_order(&pkg,p,err,errcap)) ||
+     !PACKAGE_STEP("general info",write_gen8(&pkg,p)) ||
+     !PACKAGE_STEP("classic marker",write_classic_marker(&pkg,p)) ||
+     !PACKAGE_STEP("options",write_optn(&pkg)) ||
+     !PACKAGE_STEP("language",fixed_zero_chunk(&pkg,"LANG",12)) ||
+     !PACKAGE_STEP("extensions",empty_list_chunk(&pkg,"EXTN")) ||
+     !PACKAGE_STEP("sounds",write_sond(&pkg,p)) ||
+     !PACKAGE_STEP("audio groups",write_agrp(&pkg)) ||
+     !PACKAGE_STEP("sprites",write_sprt(&pkg,p,err,errcap)) ||
+     !PACKAGE_STEP("backgrounds",write_bgnd(&pkg,p)) ||
+     !PACKAGE_STEP("paths",write_path(&pkg,p)) ||
+     !PACKAGE_STEP("scripts",write_scpt(&pkg,p)) ||
+     !PACKAGE_STEP("globals",empty_list_chunk(&pkg,"GLOB")) ||
+     !PACKAGE_STEP("shaders",write_shdr(&pkg,p)) ||
+     !PACKAGE_STEP("fonts",write_font(&pkg,p)) ||
+     !PACKAGE_STEP("timelines",write_tmln(&pkg,p)) ||
+     !PACKAGE_STEP("objects",write_objt(&pkg,p)) ||
+     !PACKAGE_STEP("rooms",write_room_chunk(&pkg,p)) ||
+     !PACKAGE_STEP("data files",fixed_zero_chunk(&pkg,"DAFL",0)) ||
+     !PACKAGE_STEP("embedded images",write_embi(&pkg)) ||
+     !PACKAGE_STEP("texture pages",write_tpag(&pkg,p)) ||
+     !PACKAGE_STEP("code",write_code(&pkg,p,err,errcap)) ||
+     !PACKAGE_STEP("variables",write_vari(&pkg)) ||
+     !PACKAGE_STEP("functions",write_func(&pkg)) ||
+     !PACKAGE_STEP("strings",write_strg(&pkg)) ||
+     !PACKAGE_STEP("textures",write_txtr(&pkg,p,err,errcap)) ||
+     !PACKAGE_STEP("audio",write_audo(&pkg,p,err,errcap))){
+    if(!err[0]) snprintf(err,errcap,"package %s stage failed",stage);
+#undef PACKAGE_STEP
     free_pkg(&pkg);
     return 0;
   }
+#undef PACKAGE_STEP
   patch32(&pkg.b,form_size_pos,(uint32_t)(pkg.b.len-8));
   int ok=write_file(out_path,pkg.b.data,pkg.b.len,err,errcap);
   free_pkg(&pkg);

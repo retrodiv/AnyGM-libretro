@@ -242,6 +242,7 @@ static GmlVal arr_newv(int n){
 }
 #define GML_TEX_SPR_TAG  0x54000000u
 #define GML_TEX_SURF_TAG 0x55000000u
+#define GML_TEX_BG_TAG   0x56000000u
 #define GML_TEX_KIND_MASK 0xFF000000u
 static GmlVal arr8(double a0,double a1,double a2,double a3,double a4,double a5,double a6,double a7){
   GmlVal v=arr_newv(8);
@@ -2111,6 +2112,164 @@ static void draw_px_alpha(GmlRender *R, int x, int y, uint32_t gmcol, double alp
 }
 static void draw_px(GmlRender *R, int x, int y, uint32_t gmcol){
   draw_px_alpha(R,x,y,gmcol,R?R->alpha:1);
+}
+
+typedef struct { double x,y,z,u,v; } GmlD3Vertex;
+typedef struct {
+  int active, hidden;
+  double eye[3], right[3], up[3], forward[3];
+  float *depth; size_t depth_cap;
+  int depth_w, depth_h;
+  long depth_frame;
+} GmlD3State;
+static GmlD3State g_d3={0,0,{0},{0},{0},{0},NULL,0,0,0,-1};
+
+static double d3_dot(const double a[3], const double b[3]){
+  return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+}
+static int d3_normalize(double v[3]){
+  double length=sqrt(d3_dot(v,v));
+  if(length<1e-12) return 0;
+  v[0]/=length; v[1]/=length; v[2]/=length;
+  return 1;
+}
+static void d3_cross(const double a[3], const double b[3], double out[3]){
+  out[0]=a[1]*b[2]-a[2]*b[1];
+  out[1]=a[2]*b[0]-a[0]*b[2];
+  out[2]=a[0]*b[1]-a[1]*b[0];
+}
+static int d3_depth_prepare(GmlRender *R){
+  extern long g_vm_frame;
+  if(!R || R->fbw<=0 || R->fbh<=0) return 0;
+  size_t count=(size_t)R->fbw*(size_t)R->fbh;
+  if(count>g_d3.depth_cap){
+    float *depth=(float*)realloc(g_d3.depth,count*sizeof(*depth));
+    if(!depth) return 0;
+    g_d3.depth=depth; g_d3.depth_cap=count;
+  }
+  if(g_d3.depth_frame!=g_vm_frame || g_d3.depth_w!=R->fbw || g_d3.depth_h!=R->fbh){
+    memset(g_d3.depth,0,count*sizeof(*g_d3.depth));
+    g_d3.depth_frame=g_vm_frame; g_d3.depth_w=R->fbw; g_d3.depth_h=R->fbh;
+  }
+  return 1;
+}
+static int d3_background_texture(GmlRender *R, int handle, GmlTpag **out_t, GmlAtlas **out_a){
+  if(out_t) *out_t=NULL; if(out_a) *out_a=NULL;
+  if(!R || (((uint32_t)handle&GML_TEX_KIND_MASK)!=GML_TEX_BG_TAG)){
+    if(getenv("GML_LOG_D3D")) fprintf(stderr,"[d3d] invalid texture handle %d\n",handle);
+    return 0;
+  }
+  int bg=handle&0x00FFFFFF;
+  if(bg<0 || bg>=R->n_bg) return 0;
+  gml_render_warm_bg(R,bg);
+  int ti=R->bg[bg].tpag;
+  if(ti<0 || ti>=R->n_tpag) return 0;
+  GmlTpag *t=&R->tpag[ti];
+  if(t->atlas<0 || t->atlas>=R->n_atlas) return 0;
+  GmlAtlas *a=&R->atlas[t->atlas];
+  if(!a->px || t->sw<=0 || t->sh<=0) return 0;
+  if(getenv("GML_LOG_D3D")){ static int logged=0; if(logged++<8)
+    fprintf(stderr,"[d3d] texture bg=%d tpag=%d atlas=%d rect=%dx%d\n",bg,ti,t->atlas,t->sw,t->sh); }
+  if(out_t) *out_t=t; if(out_a) *out_a=a;
+  return 1;
+}
+static uint32_t d3_sample(GmlRender *R, GmlTpag *t, GmlAtlas *a, double u, double v, double *alpha){
+  if(!isfinite(u) || !isfinite(v)){
+    if(alpha) *alpha=0.0;
+    return 0;
+  }
+  u-=floor(u); v-=floor(v);
+  double fx=u*t->sw-0.5, fy=v*t->sh-0.5;
+  int x0=(int)floor(fx), y0=(int)floor(fy);
+  double ax=fx-floor(fx), ay=fy-floor(fy);
+  x0%=t->sw; y0%=t->sh;
+  if(x0<0) x0+=t->sw; if(y0<0) y0+=t->sh;
+  int x1=(x0+1)%t->sw, y1=(y0+1)%t->sh;
+  const uint8_t *p[4]={
+    a->px+((size_t)(t->sy+y0)*a->w+t->sx+x0)*4,
+    a->px+((size_t)(t->sy+y0)*a->w+t->sx+x1)*4,
+    a->px+((size_t)(t->sy+y1)*a->w+t->sx+x0)*4,
+    a->px+((size_t)(t->sy+y1)*a->w+t->sx+x1)*4 };
+  double w[4]={(1-ax)*(1-ay),ax*(1-ay),(1-ax)*ay,ax*ay};
+  int channel[4]={0};
+  if(R->interp){
+    for(int c=0;c<4;c++) channel[c]=(int)lround(p[0][c]*w[0]+p[1][c]*w[1]+p[2][c]*w[2]+p[3][c]*w[3]);
+  } else {
+    const uint8_t *q=p[(ay>=0.5)*2+(ax>=0.5)];
+    for(int c=0;c<4;c++) channel[c]=q[c];
+  }
+  if(alpha) *alpha=channel[3]/255.0;
+  return (uint32_t)channel[0]|((uint32_t)channel[1]<<8)|((uint32_t)channel[2]<<16);
+}
+static double d3_edge(double ax,double ay,double bx,double by,double px,double py){
+  return (px-ax)*(by-ay)-(py-ay)*(bx-ax);
+}
+static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], GmlTpag *t, GmlAtlas *a){
+  if(!d3_depth_prepare(R)) return;
+  const char *fov_text=getenv("GML_D3D_FOV");
+  double fov=fov_text?atof(fov_text):41.2;
+  if(fov<1.0 || fov>170.0) fov=41.2;
+  double focal=(R->fbh*0.5)/tan(fov*M_PI/360.0);
+  double sx[3],sy[3],iz[3],uz[3],vz[3];
+  for(int i=0;i<3;i++){
+    if(in[i].z<=1e-6) return;
+    iz[i]=1.0/in[i].z; uz[i]=in[i].u*iz[i]; vz[i]=in[i].v*iz[i];
+    sx[i]=R->fbw*0.5+in[i].x*focal*iz[i];
+    sy[i]=R->fbh*0.5-in[i].y*focal*iz[i];
+  }
+  double area=d3_edge(sx[0],sy[0],sx[1],sy[1],sx[2],sy[2]);
+  if(fabs(area)<1e-9) return;
+  int minx=(int)floor(fmin(sx[0],fmin(sx[1],sx[2]))), maxx=(int)ceil(fmax(sx[0],fmax(sx[1],sx[2])));
+  int miny=(int)floor(fmin(sy[0],fmin(sy[1],sy[2]))), maxy=(int)ceil(fmax(sy[0],fmax(sy[1],sy[2])));
+  if(minx<0) minx=0; if(miny<0) miny=0;
+  if(maxx>=R->fbw) maxx=R->fbw-1; if(maxy>=R->fbh) maxy=R->fbh-1;
+  for(int y=miny;y<=maxy;y++) for(int x=minx;x<=maxx;x++){
+    double px=x+0.5,py=y+0.5;
+    double b0=d3_edge(sx[1],sy[1],sx[2],sy[2],px,py)/area;
+    double b1=d3_edge(sx[2],sy[2],sx[0],sy[0],px,py)/area;
+    double b2=1.0-b0-b1;
+    if(b0<-1e-9 || b1<-1e-9 || b2<-1e-9) continue;
+    double invz=b0*iz[0]+b1*iz[1]+b2*iz[2];
+    size_t di=(size_t)y*R->fbw+x;
+    if(g_d3.hidden && invz<=g_d3.depth[di]) continue;
+    double alpha=1.0;
+    uint32_t color=t&&a ? d3_sample(R,t,a,(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz,
+                                    (b0*vz[0]+b1*vz[1]+b2*vz[2])/invz,&alpha) : R->color;
+    draw_px_alpha(R,x,y,color,alpha*R->alpha);
+    if(g_d3.hidden && alpha>0.0) g_d3.depth[di]=(float)invz;
+  }
+}
+static GmlD3Vertex d3_camera_vertex(double x,double y,double z,double u,double v){
+  double d[3]={x-g_d3.eye[0],y-g_d3.eye[1],z-g_d3.eye[2]};
+  GmlD3Vertex out={d3_dot(d,g_d3.right),d3_dot(d,g_d3.up),d3_dot(d,g_d3.forward),u,v};
+  return out;
+}
+static int d3_clip_near(const GmlD3Vertex *input, int count, GmlD3Vertex *output){
+  const double nearz=0.05;
+  int n=0;
+  for(int i=0;i<count;i++){
+    GmlD3Vertex a=input[i], b=input[(i+1)%count];
+    int ain=a.z>=nearz, bin=b.z>=nearz;
+    if(ain) output[n++]=a;
+    if(ain!=bin){
+      double k=(nearz-a.z)/(b.z-a.z);
+      output[n++]=(GmlD3Vertex){a.x+(b.x-a.x)*k,a.y+(b.y-a.y)*k,nearz,
+                                a.u+(b.u-a.u)*k,a.v+(b.v-a.v)*k};
+    }
+  }
+  return n;
+}
+static void d3_draw_quad(GmlRender *R, const double p[4][3], int texture, double hrep, double vrep){
+  GmlTpag *t=NULL; GmlAtlas *a=NULL;
+  d3_background_texture(R,texture,&t,&a);
+  static const double uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
+  GmlD3Vertex q[4], clipped[8];
+  for(int i=0;i<4;i++) q[i]=d3_camera_vertex(p[i][0],p[i][1],p[i][2],uv[i][0]*hrep,uv[i][1]*vrep);
+  int count=d3_clip_near(q,4,clipped);
+  for(int i=1;i+1<count;i++){
+    GmlD3Vertex tri[3]={clipped[0],clipped[i],clipped[i+1]};
+    d3_raster_triangle(R,tri,t,a);
+  }
 }
 static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, uint32_t gmcol, int outline, double alpha){
   if(!R) return;
@@ -4555,6 +4714,16 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       double dir=atan2(-(N(a,n,1)-s->y),N(a,n,0)-s->x)*180.0/M_PI; double sp=N(a,n,2);
       s->direction=dir; s->speed=sp; s->hspeed=sp*cos(dir*M_PI/180.0); s->vspeed=-sp*sin(dir*M_PI/180.0); }
     return vreal(0); }
+  if(!strcmp(nm,"motion_set")){ GmlInstance*s=vm->cur_self; if(s){
+      s->direction=N(a,n,0); s->speed=N(a,n,1);
+      s->hspeed=s->speed*cos(s->direction*M_PI/180.0);
+      s->vspeed=-s->speed*sin(s->direction*M_PI/180.0); }
+    return vreal(0); }
+  if(!strcmp(nm,"motion_add")){ GmlInstance*s=vm->cur_self; if(s){
+      double dir=N(a,n,0)*M_PI/180.0, amount=N(a,n,1);
+      s->hspeed+=amount*cos(dir); s->vspeed-=amount*sin(dir);
+      motion_from_components(s); }
+    return vreal(0); }
   /* ---- mp_grid: GM motion-planning grids (A*). Transient AI aids (games rebuild them per
    * room/level), kept in a static pool like particles — not serialized into save-states. ---- */
   if(!strcmp(nm,"mp_grid_create")||!strcmp(nm,"mp_grid_destroy")||
@@ -4731,6 +4900,27 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     double tx=N(a,n,0), ty=N(a,n,1), sp=N(a,n,2); double dx=tx-s->x, dy=ty-s->y, d=hypot(dx,dy);
     if(d<=sp || d<1e-9){ s->x=tx; s->y=ty; gml_colgrid_touch(s); return vreal(1); }
     s->x += dx/d*sp; s->y += dy/d*sp; gml_colgrid_touch(s); return vreal(0); }
+  if(!strcmp(nm,"mp_potential_step")){
+    GmlInstance*s=vm->cur_self; if(!s) return vreal(0);
+    double tx=N(a,n,0), ty=N(a,n,1), amount=fabs(N(a,n,2));
+    double dx=tx-s->x, dy=ty-s->y, distance=hypot(dx,dy);
+    if(distance<=amount || distance<1e-9){ s->x=tx; s->y=ty; gml_colgrid_touch(s); return vreal(1); }
+    double heading=atan2(dy,dx), step=amount;
+    int all=N(a,n,3)!=0.0, moved=0;
+    static const int turns[]={0,10,-10,20,-20,30,-30};
+    for(size_t i=0;i<sizeof(turns)/sizeof(turns[0]);i++){
+      double angle=heading+(double)turns[i]*M_PI/180.0;
+      double nx=s->x+cos(angle)*step, ny=s->y+sin(angle)*step;
+      if(collision_at(vm,nx,ny,all?IT_ALL:0,!all)) continue;
+      s->x=nx; s->y=ny;
+      s->direction=-angle*180.0/M_PI;
+      while(s->direction<0) s->direction+=360.0;
+      while(s->direction>=360.0) s->direction-=360.0;
+      gml_colgrid_touch(s); moved=1; break;
+    }
+    return vreal(moved && distance<=amount);
+  }
+  if(!strcmp(nm,"action_potential_step")) return vreal(0);
   /* instance_nearest/furthest(x,y,obj): id of the nearest/furthest instance of obj (noone=-4). */
   if(!strcmp(nm,"instance_nearest")||!strcmp(nm,"instance_furthest")){
     int far=!strcmp(nm,"instance_furthest"); double px=N(a,n,0),py=N(a,n,1); int obj=(int)N(a,n,2);
@@ -5197,8 +5387,17 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       double x=N(a,n,0), y=N(a,n,1);
       if(vm->action_relative){ s->x+=x; s->y+=y; } else { s->x=x; s->y=y; } gml_colgrid_touch(s); } return vreal(0); }
   if(!strcmp(nm,"action_move")||!strcmp(nm,"action_set_motion")){ GmlInstance*s=vm->cur_self; if(s){
-      if(vm->action_relative){ s->direction+=N(a,n,0); s->speed+=N(a,n,1); }
-      else { s->direction=N(a,n,0); s->speed=N(a,n,1); }
+      double direction=N(a,n,0), amount=N(a,n,1);
+      if(!strcmp(nm,"action_move") && n>0 && a[0].t==V_STR){
+        static const int directions[9]={225,270,315,180,-1,0,135,90,45};
+        int choices[9], count=0;
+        const char *mask=S(a,n,0);
+        for(int i=0;i<9 && mask[i];i++) if(mask[i]!='0') choices[count++]=directions[i];
+        if(count){ int choice=(int)floor(gml_rng_value(vm)*count); if(choice>=count) choice=count-1;
+          direction=choices[choice]; if(direction<0) amount=0; }
+      }
+      if(vm->action_relative){ s->direction+=direction; s->speed+=amount; }
+      else { s->direction=direction; s->speed=amount; }
       s->hspeed=s->speed*cos(s->direction*M_PI/180.0); s->vspeed=-s->speed*sin(s->direction*M_PI/180.0); }
     return vreal(0); }
   if(!strcmp(nm,"action_move_point")){ GmlInstance*s=vm->cur_self; if(s){
@@ -5228,6 +5427,32 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       s->image_blend=N(a,n,0); s->image_alpha=N(a,n,1); } return vreal(0); }
   if(!strcmp(nm,"action_color") || !strcmp(nm,"action_colour")){ GmlRender *r=(GmlRender*)vm->render;
     if(r) r->color=(uint32_t)N(a,n,0); return vreal(0); }
+  if(!strcmp(nm,"action_font")){ GmlRender *r=(GmlRender*)vm->render; if(r){
+      r->font=(int)N(a,n,0); r->halign=(int)N(a,n,1); } return vreal(0); }
+  if(!strcmp(nm,"action_if_aligned")){ GmlInstance *s=vm->cur_self; if(!s) return vreal(0);
+    double sx=fabs(N(a,n,0)),sy=fabs(N(a,n,1));
+    int ax=sx<=0.0 || fabs(s->x/sx-round(s->x/sx))<1e-7;
+    int ay=sy<=0.0 || fabs(s->y/sy-round(s->y/sy))<1e-7;
+    return vreal(ax&&ay); }
+  if(!strcmp(nm,"action_if_life")||!strcmp(nm,"action_if_score")||!strcmp(nm,"action_if_health")){
+    const char *key=!strcmp(nm,"action_if_life")?"lives":!strcmp(nm,"action_if_score")?"score":"health";
+    GmlVal *value=gml_varmap_get(&vm->globals,key);
+    double current=value&&value->t==V_REAL?value->d:0.0, target=N(a,n,0);
+    switch((int)N(a,n,1)){ case 1:return vreal(current<target); case 2:return vreal(current>target); default:return vreal(current==target); }
+  }
+  if(!strcmp(nm,"action_set_life")||!strcmp(nm,"action_set_score")||!strcmp(nm,"action_set_health")){
+    const char *key=!strcmp(nm,"action_set_life")?"lives":!strcmp(nm,"action_set_score")?"score":"health";
+    GmlVal *value=gml_varmap_put(&vm->globals,key);
+    double next=N(a,n,0);
+    if(vm->action_relative) next+=(value&&value->t==V_REAL)?value->d:0.0;
+    if(value) *value=vreal(next);
+    return vreal(0); }
+  if(!strcmp(nm,"action_draw_score")||!strcmp(nm,"action_draw_life")||!strcmp(nm,"action_draw_health")){
+    const char *key=!strcmp(nm,"action_draw_score")?"score":!strcmp(nm,"action_draw_life")?"lives":"health";
+    GmlVal *value=gml_varmap_get(&vm->globals,key);
+    char text[256]; snprintf(text,sizeof(text),"%s%.0f",S(a,n,2),value&&value->t==V_REAL?value->d:0.0);
+    GmlRender *r=(GmlRender*)vm->render; if(r) gml_draw_text(r,N(a,n,0),N(a,n,1),text);
+    return vreal(0); }
   if(!strcmp(nm,"action_draw_sprite")){ GmlVal draw_args[4]={vreal(N(a,n,0)),vreal(N(a,n,3)),vreal(N(a,n,1)),vreal(N(a,n,2))};
     return gml_builtin_call(vm,"draw_sprite",draw_args,4); }
   if(!strcmp(nm,"action_draw_variable")){ GmlVal draw_args[3]={vreal(N(a,n,1)),vreal(N(a,n,2)),n>0?a[0]:vreal(0)};
@@ -5760,6 +5985,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"background_replace")||!strcmp(nm,"background_delete")||!strcmp(nm,"background_save")) return vreal(0);
     if(!strcmp(nm,"background_get_width")){ int bg=(int)N(a,n,0); if(R&&bg>=0&&bg<R->n_bg){ int ti=R->bg[bg].tpag; if(ti>=0&&ti<R->n_tpag) return vreal(R->tpag[ti].bw?R->tpag[ti].bw:R->tpag[ti].sw); } return vreal(0); }
     if(!strcmp(nm,"background_get_height")){ int bg=(int)N(a,n,0); if(R&&bg>=0&&bg<R->n_bg){ int ti=R->bg[bg].tpag; if(ti>=0&&ti<R->n_tpag) return vreal(R->tpag[ti].bh?R->tpag[ti].bh:R->tpag[ti].sh); } return vreal(0); }
+    if(!strcmp(nm,"background_get_texture")){ int bg=(int)N(a,n,0);
+      return vreal(R&&bg>=0&&bg<R->n_bg ? (double)(GML_TEX_BG_TAG|(bg&0x00FFFFFF)) : -1); }
     if(!strcmp(nm,"draw_text")){ if(R) gml_draw_text(R,N(a,n,0),N(a,n,1),S(a,n,2));
       if(getenv("GML_DBG_TEXT")){ extern long g_vm_frame;
         fprintf(stderr,"[text] f%ld font=%d (%.0f,%.0f) \"%s\"\n",g_vm_frame,R?R->font:-1,N(a,n,0),N(a,n,1),S(a,n,2)); }
@@ -6200,6 +6427,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
 
   /* ---- audio ---- */
   { GmlAudio *AU=(GmlAudio*)vm->audio;
+    if(!strcmp(nm,"action_sound")){ gml_audio_play(AU,(int)N(a,n,0),(int)N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"audio_channel_num")){ gml_audio_channel_num(AU,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"sound_add")) return vreal(-1);
     if(!strcmp(nm,"sound_replace")) return vreal(0);
@@ -6349,7 +6577,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int handled=classic_execute_assignment(vm,S(a,n,0));
     if(!handled && getenv("GML_LOG_UNKNOWN")) fprintf(stderr,"[gml] unsupported execute_string: %s\n",S(a,n,0));
     return vreal(0); }
-  if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")) return vreal(0);
+  if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")||
+     !strcmp(nm,"message_button")||!strcmp(nm,"message_background")||
+     !strcmp(nm,"message_text_font")||!strcmp(nm,"message_button_font")||
+     !strcmp(nm,"message_input_font")||!strcmp(nm,"message_alpha")||
+     !strcmp(nm,"message_position")) return vreal(0);
   if(!strcmp(nm,"show_info")) return vreal(0); /* classic game-information dialog: unavailable in libretro */
   if(!strcmp(nm,"parameter_count")) return vreal(0);
   if(!strcmp(nm,"parameter_string")) return vstr("");
@@ -6761,6 +6993,54 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vundef();
   }
+  if(!strcmp(nm,"d3d_start")){ g_d3.active=1; g_d3.depth_frame=-1; return vreal(0); }
+  if(!strcmp(nm,"d3d_end")){ g_d3.active=0; return vreal(0); }
+  if(!strcmp(nm,"d3d_set_hidden")){
+    g_d3.hidden=N(a,n,0)!=0.0 && !getenv("GML_D3D_NO_DEPTH");
+    return vreal(0);
+  }
+  if(!strcmp(nm,"d3d_set_projection")){
+    g_d3.eye[0]=N(a,n,0); g_d3.eye[1]=N(a,n,1); g_d3.eye[2]=N(a,n,2);
+    g_d3.forward[0]=N(a,n,3)-g_d3.eye[0];
+    g_d3.forward[1]=N(a,n,4)-g_d3.eye[1];
+    g_d3.forward[2]=N(a,n,5)-g_d3.eye[2];
+    double supplied_up[3]={N(a,n,6),N(a,n,7),N(a,n,8)};
+    if(!d3_normalize(g_d3.forward)) g_d3.forward[0]=1;
+    d3_cross(supplied_up,g_d3.forward,g_d3.right);
+    if(!d3_normalize(g_d3.right)){ g_d3.right[0]=0; g_d3.right[1]=1; g_d3.right[2]=0; }
+    d3_cross(g_d3.forward,g_d3.right,g_d3.up);
+    d3_normalize(g_d3.up);
+    return vreal(0);
+  }
+  if(!strcmp(nm,"d3d_draw_floor")||!strcmp(nm,"d3d_draw_wall")){
+    GmlRender *R=(GmlRender*)vm->render;
+    if(!strcmp(nm,"d3d_draw_wall") && getenv("GML_D3D_SKIP_WALLS")) return vreal(0);
+    if(!strcmp(nm,"d3d_draw_wall")){
+      const char *limit_text=getenv("GML_D3D_WALL_LIMIT");
+      if(limit_text){ extern long g_vm_frame; static long limit_frame=-1; static int wall_count=0;
+        if(limit_frame!=g_vm_frame){ limit_frame=g_vm_frame; wall_count=0; }
+        if(wall_count++>=atoi(limit_text)) return vreal(0);
+      }
+    }
+    if(R && g_d3.active){
+      double x1=N(a,n,0),y1=N(a,n,1),z1=N(a,n,2),x2=N(a,n,3),y2=N(a,n,4),z2=N(a,n,5);
+      double p[4][3];
+      if(!strcmp(nm,"d3d_draw_floor")){
+        double floor_points[4][3]={{x1,y1,z1},{x2,y1,z1},{x2,y2,z2},{x1,y2,z2}};
+        memcpy(p,floor_points,sizeof(p));
+      } else {
+        double wall_points[4][3]={{x1,y1,z1},{x2,y2,z1},{x2,y2,z2},{x1,y1,z2}};
+        memcpy(p,wall_points,sizeof(p));
+      }
+      gml_render_maybe_prepare_draw(R);
+      if(getenv("GML_LOG_D3D")){ static int logged=0; if(logged++<16)
+        fprintf(stderr,"[d3d] %s tex=%d rep=(%.3f,%.3f) p1=(%.1f,%.1f,%.1f) p2=(%.1f,%.1f,%.1f)\n",
+                nm,(int)N(a,n,6),N(a,n,7),N(a,n,8),x1,y1,z1,x2,y2,z2); }
+      d3_draw_quad(R,p,(int)N(a,n,6),N(a,n,7),N(a,n,8));
+    }
+    return vreal(0);
+  }
+  if(!strncmp(nm,"d3d_set_",8)) return vreal(0);
   if(!strcmp(nm,"shader_set")){ GmlRender *R=(GmlRender*)vm->render;
     if(R) R->active_shader=(int)N(a,n,0);
     if(getenv("GML_LOG_SHADER")){ static long c=0; if(c++<8){ extern long g_vm_frame;

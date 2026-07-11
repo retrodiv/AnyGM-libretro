@@ -224,6 +224,12 @@ int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
       }
     }
   }
+  const GmlChunk *classic=gml_chunk(w,"CLSC");
+  if(classic && classic->size>=4){
+    w->classic_version=(int)u32(data,classic->off);
+    if(classic->size>=8) w->classic_scaling=(int32_t)u32(data,classic->off+4);
+    if(classic->size>=12) w->classic_interpolate=(int)u32(data,classic->off+8);
+  }
   parse_strg(w); parse_code(w); parse_refs(w);
   return 0;
 }

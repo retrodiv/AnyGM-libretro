@@ -20,6 +20,45 @@ static char *classic_stem(const char *path){
   return stem;
 }
 
+static int classic_add_empty_room(GmlcProject *project, const char *cache_dir,
+                                  char *err, size_t errcap){
+  if(project->n_rooms) return 1;
+  GmlcRoom *room=(GmlcRoom*)calloc(1,sizeof(*room));
+  int *order=(int*)calloc(1,sizeof(*order));
+  char *source_path=gmlc_path_join(cache_dir,"classic_empty_room_create.gml");
+  if(!room || !order || !source_path){
+    free(room); free(order); free(source_path);
+    if(err && errcap) snprintf(err,errcap,"classic project: empty-room allocation failed");
+    return 0;
+  }
+  room->id=gmlc_strdup("__classic_empty_room");
+  room->name=gmlc_strdup("__classic_empty_room");
+  room->creation_code_path=source_path;
+  room->width=640; room->height=480; room->speed=30;
+  room->background_color=0xFF000000u; room->draw_background_color=1;
+  for(int i=0;i<8;i++){
+    room->views[i].wview=room->views[i].wport=room->width;
+    room->views[i].hview=room->views[i].hport=room->height;
+    room->views[i].hspeed=room->views[i].vspeed=-1;
+    room->views[i].object_id=-1;
+  }
+  FILE *file=fopen(source_path,"wb");
+  int wrote=0;
+  if(file){
+    wrote=fwrite("exit;\n",1,6,file)==6;
+    if(fclose(file)!=0) wrote=0;
+  }
+  if(!room->id || !room->name || !wrote){
+    if(err && errcap) snprintf(err,errcap,"classic project: cannot create empty-room source");
+    free(room->id); free(room->name); free(room->creation_code_path);
+    free(room); free(order);
+    return 0;
+  }
+  project->rooms=room; project->n_rooms=project->cap_rooms=1;
+  project->room_order=order; project->n_room_order=1;
+  return 1;
+}
+
 int gmlc_classic_project_load(GmlcProject *project, const char *project_path,
                               const char *cache_dir, char *err, size_t errcap){
   if(err && errcap) err[0] = '\0';
@@ -30,6 +69,9 @@ int gmlc_classic_project_load(GmlcProject *project, const char *project_path,
   gmlc_project_init(project);
   GmlcClassicManifest manifest;
   if(!gmlc_classic_manifest_file(project_path, &manifest, err, errcap)) return 0;
+  project->classic_version=(int)manifest.inventory.header.version;
+  project->classic_scaling=manifest.inventory.settings.scaling;
+  project->classic_interpolate=manifest.inventory.settings.interpolate;
   project->name = classic_stem(project_path);
   project->root_dir = gmlc_path_dirname(project_path);
   project->yyp_path = gmlc_strdup(project_path);
@@ -43,6 +85,7 @@ int gmlc_classic_project_load(GmlcProject *project, const char *project_path,
     gmlc_classic_import_timelines(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_objects(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_rooms(&manifest, project, cache_dir, err, errcap);
+  if(ok) ok=classic_add_empty_room(project,cache_dir,err,errcap);
   if(ok && manifest.room_order_count){
     project->room_order=(int*)calloc(manifest.room_order_count,sizeof(*project->room_order));
     if(!project->room_order) ok=0;

@@ -16,6 +16,7 @@
 #endif
 
 #include <errno.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -101,6 +102,47 @@ static int reader_blob(ClassicReader *r, const char *what){
 static int reader_words(ClassicReader *r, uint32_t count, const char *what){
   if(count > (r->size - r->pos) / 4) return reader_fail(r, what);
   return reader_skip(r, (size_t)count * 4, what);
+}
+
+static int read_settings_prefix(ClassicReader *r, GmlcClassicSettings *out){
+  uint32_t field[14];
+  for(size_t i=0;i<sizeof(field)/sizeof(field[0]);i++)
+    if(!reader_u32(r,&field[i],"game settings")) return 0;
+  out->start_fullscreen=(int)field[0];
+  out->interpolate=(int)field[1];
+  out->borderless=(int)field[2];
+  out->show_cursor=(int)field[3];
+  out->scaling=(int32_t)field[4];
+  out->resizable=(int)field[5];
+  out->always_on_top=(int)field[6];
+  out->outside_color=field[7];
+  out->set_resolution=(int)field[8];
+  out->color_depth=(int)field[9];
+  out->resolution=(int)field[10];
+  out->frequency=(int)field[11];
+  out->hide_caption_buttons=(int)field[12];
+  out->synchronize=(int)field[13];
+  return 1;
+}
+
+static int read_compressed_settings(const uint8_t *compressed, uint32_t compressed_size,
+                                    GmlcClassicSettings *out, char *err, size_t errcap){
+  if(!compressed_size) return 1;
+  if(compressed_size>INT_MAX){
+    if(err&&errcap) snprintf(err,errcap,"classic project: compressed settings are too large");
+    return 0;
+  }
+  int raw_size=0;
+  char *raw=stbi_zlib_decode_malloc((const char*)compressed,(int)compressed_size,&raw_size);
+  if(!raw || raw_size<0){
+    if(err&&errcap) snprintf(err,errcap,"classic project: invalid compressed settings");
+    STBI_FREE(raw);
+    return 0;
+  }
+  ClassicReader settings={(const uint8_t*)raw,(size_t)raw_size,0,err,errcap};
+  int ok=read_settings_prefix(&settings,out);
+  STBI_FREE(raw);
+  return ok;
 }
 
 static int reader_doubles(ClassicReader *r, uint32_t count, const char *what){
@@ -430,12 +472,13 @@ static int skip_legacy_image(ClassicReader *r, const char *what){
 }
 
 static int skip_legacy_settings(ClassicReader *r, uint32_t container_version,
-                                uint32_t *settings_version){
+                                uint32_t *settings_version, GmlcClassicSettings *settings){
   uint32_t loading_bar, own_loading_image, constants;
   if(!reader_u32(r, settings_version, "legacy settings version")) return 0;
   int gm7 = container_version == GMLC_CLASSIC_GM7 || container_version == GMLC_CLASSIC_GM7_ALT;
   uint32_t fixed_before_loading = gm7 ? 22u : 20u;
-  if(!reader_words(r, fixed_before_loading, "legacy game settings") ||
+  if(!read_settings_prefix(r,settings) ||
+     !reader_words(r, fixed_before_loading-14u, "legacy game settings") ||
      !reader_u32(r, &loading_bar, "loading-bar mode")) return 0;
   if(loading_bar == 2 &&
      (!skip_legacy_image(r, "loading-bar background") ||
@@ -547,7 +590,8 @@ static int parse_legacy_project(const void *data, size_t size,
   inventory->header.game_id = read_u32le(plain + 8);
   memcpy(inventory->header.guid, plain + 12, 16);
   ClassicReader r = {plain, plain_size, 28, err, errcap};
-  if(!skip_legacy_settings(&r, container_version, &inventory->settings_version)){
+  if(!skip_legacy_settings(&r, container_version, &inventory->settings_version,
+                           &inventory->settings)){
     free(decoded);
     return 0;
   }
@@ -612,7 +656,9 @@ int gmlc_classic_inventory(const void *data, size_t size,
   ClassicReader r = {(const uint8_t*)data, size, 28, err, errcap};
   uint32_t compressed_length, section_version;
   if(!reader_u32(&r, &out->settings_version, "settings version") ||
-     !reader_u32(&r, &compressed_length, "compressed settings length") ||
+     !reader_u32(&r, &compressed_length, "compressed settings length")) return 0;
+  if(r.pos>r.size || compressed_length>r.size-r.pos) return reader_fail(&r,"compressed settings");
+  if(!read_compressed_settings(r.data+r.pos,compressed_length,&out->settings,err,errcap) ||
      !reader_skip(&r, compressed_length, "compressed settings")) return 0;
 
   if(!reader_u32(&r, &section_version, "trigger section version") ||

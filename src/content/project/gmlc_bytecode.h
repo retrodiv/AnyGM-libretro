@@ -48,10 +48,21 @@ typedef struct {
 } GmlcFunctionDef;
 
 typedef struct {
+  char *name;
+  double value;
+  int script_code_index;
+} GmlcAssetBinding;
+
+typedef struct {
   GmlcFunctionDef *defs;
   int n_defs, cap_defs;
   char **globals;
   int n_globals, cap_globals;
+  GmlcAssetBinding *assets;
+  int n_assets, cap_assets;
+  char **macro_names;
+  double *macro_values;
+  int n_macros, cap_macros;
 } GmlcFunctionRegistry;
 
 int gmlc_bytecode_emit_empty(GmlcCodeBlob *out);

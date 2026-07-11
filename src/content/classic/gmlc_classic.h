@@ -37,8 +37,26 @@ typedef enum {
 } GmlcClassicResourceType;
 
 typedef struct {
+  int start_fullscreen;
+  int interpolate;
+  int borderless;
+  int show_cursor;
+  int scaling;
+  int resizable;
+  int always_on_top;
+  uint32_t outside_color;
+  int set_resolution;
+  int color_depth;
+  int resolution;
+  int frequency;
+  int hide_caption_buttons;
+  int synchronize;
+} GmlcClassicSettings;
+
+typedef struct {
   GmlcClassicHeader header;
   uint32_t settings_version;
+  GmlcClassicSettings settings;
   uint32_t trigger_slots;
   uint32_t constants;
   uint32_t resource_slots[GMLC_CLASSIC_RESOURCE_TYPES];

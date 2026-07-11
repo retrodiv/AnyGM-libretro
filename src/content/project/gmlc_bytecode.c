@@ -57,6 +57,7 @@ typedef struct {
   size_t *continue_sites;
   int n_continue_sites, cap_continue_sites;
   int continue_depth;
+  int break_depth;
   int array_depth;
   int expr_boolish;
   int expr_const;
@@ -436,19 +437,33 @@ static int add_macro(Compiler *c, const char *name, double value){
 }
 
 static int resolve_asset(Compiler *c, const char *name, double *out){
-  for(int i=0;i<c->project->n_sprites;i++) if(!strcmp(c->project->sprites[i].name,name)){
+  if(c->funcs && c->funcs->assets){
+    int lo=0,hi=c->funcs->n_assets;
+    while(lo<hi){
+      int mid=lo+(hi-lo)/2;
+      int cmp=strcmp(c->funcs->assets[mid].name,name);
+      if(cmp<0) lo=mid+1; else hi=mid;
+    }
+    if(lo<c->funcs->n_assets && !strcmp(c->funcs->assets[lo].name,name)){
+      *out=c->funcs->assets[lo].value;
+      return 1;
+    }
+    return 0;
+  }
+  for(int i=0;i<c->project->n_sprites;i++) if(c->project->sprites[i].runtime_id>=0 &&
+      c->project->sprites[i].name && !strcmp(c->project->sprites[i].name,name)){
     *out=gmlc_project_sprite_runtime_id(c->project,i);
     return 1;
   }
-  for(int i=0;i<c->project->n_sounds;i++) if(!strcmp(c->project->sounds[i].name,name)){ *out=i; return 1; }
-  for(int i=0;i<c->project->n_objects;i++) if(!strcmp(c->project->objects[i].name,name)){ *out=i; return 1; }
-  for(int i=0;i<c->project->n_rooms;i++) if(!strcmp(c->project->rooms[i].name,name)){ *out=i; return 1; }
-  for(int i=0;i<c->project->n_shaders;i++) if(!strcmp(c->project->shaders[i].name,name)){ *out=i; return 1; }
-  for(int i=0;i<c->project->n_fonts;i++) if(!strcmp(c->project->fonts[i].name,name)){ *out=i; return 1; }
-  for(int i=0;i<c->project->n_tilesets;i++) if(!strcmp(c->project->tilesets[i].name,name)){ *out=i; return 1; }
-  for(int i=0;i<c->project->n_scripts;i++) if(!strcmp(c->project->scripts[i].name,name)){ *out=i; return 1; }
-  for(int i=0;i<c->project->n_paths;i++) if(!strcmp(c->project->paths[i].name,name)){ *out=i; return 1; }
-  for(int i=0;i<c->project->n_timelines;i++) if(!strcmp(c->project->timelines[i].name,name)){ *out=i; return 1; }
+  for(int i=0;i<c->project->n_sounds;i++) if(c->project->sounds[i].name && !strcmp(c->project->sounds[i].name,name)){ *out=i; return 1; }
+  for(int i=0;i<c->project->n_objects;i++) if(c->project->objects[i].name && !strcmp(c->project->objects[i].name,name)){ *out=i; return 1; }
+  for(int i=0;i<c->project->n_rooms;i++) if(c->project->rooms[i].name && !strcmp(c->project->rooms[i].name,name)){ *out=i; return 1; }
+  for(int i=0;i<c->project->n_shaders;i++) if(c->project->shaders[i].name && !strcmp(c->project->shaders[i].name,name)){ *out=i; return 1; }
+  for(int i=0;i<c->project->n_fonts;i++) if(c->project->fonts[i].name && !strcmp(c->project->fonts[i].name,name)){ *out=i; return 1; }
+  for(int i=0;i<c->project->n_tilesets;i++) if(c->project->tilesets[i].name && !strcmp(c->project->tilesets[i].name,name)){ *out=i; return 1; }
+  for(int i=0;i<c->project->n_scripts;i++) if(c->project->scripts[i].name && !strcmp(c->project->scripts[i].name,name)){ *out=i; return 1; }
+  for(int i=0;i<c->project->n_paths;i++) if(c->project->paths[i].name && !strcmp(c->project->paths[i].name,name)){ *out=i; return 1; }
+  for(int i=0;i<c->project->n_timelines;i++) if(c->project->timelines[i].name && !strcmp(c->project->timelines[i].name,name)){ *out=i; return 1; }
   return 0;
 }
 
@@ -460,8 +475,22 @@ static int source_room_code_count(const GmlcProject *p){
 }
 
 static int resolve_script_code_index(Compiler *c, const char *name, int *out){
+  if(c->funcs && c->funcs->assets){
+    int lo=0,hi=c->funcs->n_assets;
+    while(lo<hi){
+      int mid=lo+(hi-lo)/2;
+      int cmp=strcmp(c->funcs->assets[mid].name,name);
+      if(cmp<0) lo=mid+1; else hi=mid;
+    }
+    if(lo<c->funcs->n_assets && !strcmp(c->funcs->assets[lo].name,name) &&
+       c->funcs->assets[lo].script_code_index>=0){
+      *out=c->funcs->assets[lo].script_code_index;
+      return 1;
+    }
+    return 0;
+  }
   for(int i=0;i<c->project->n_scripts;i++){
-    if(!strcmp(c->project->scripts[i].name,name)){
+    if(c->project->scripts[i].name && !strcmp(c->project->scripts[i].name,name)){
       *out=source_room_code_count(c->project)+i;
       return 1;
     }
@@ -516,6 +545,18 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   if(!strcmp(name,"c_maroon")){ *out=128; return 1; }
   if(!strcmp(name,"c_green")){ *out=32768; return 1; }
   if(!strcmp(name,"c_red")){ *out=255; return 1; }
+  if(!strcmp(name,"c_navy")){ *out=0x800000; return 1; }
+  if(!strcmp(name,"c_blue")){ *out=0xFF0000; return 1; }
+  if(!strcmp(name,"c_teal")){ *out=0x808000; return 1; }
+  if(!strcmp(name,"c_aqua")){ *out=0xFFFF00; return 1; }
+  if(!strcmp(name,"c_olive")){ *out=0x008080; return 1; }
+  if(!strcmp(name,"c_yellow")){ *out=0x00FFFF; return 1; }
+  if(!strcmp(name,"c_purple")){ *out=0x800080; return 1; }
+  if(!strcmp(name,"c_fuchsia")){ *out=0xFF00FF; return 1; }
+  if(!strcmp(name,"c_gray") || !strcmp(name,"c_grey")){ *out=0x808080; return 1; }
+  if(!strcmp(name,"c_ltgray") || !strcmp(name,"c_ltgrey") || !strcmp(name,"c_silver")){ *out=0xC0C0C0; return 1; }
+  if(!strcmp(name,"c_dkgray") || !strcmp(name,"c_dkgrey")){ *out=0x404040; return 1; }
+  if(!strcmp(name,"c_orange")){ *out=0x0040FF; return 1; }
   if(!strcmp(name,"c_white")){ *out=16777215; return 1; }
   if(!strcmp(name,"c_lime")){ *out=65280; return 1; }
   if(!strcmp(name,"mb_left")){ *out=1; return 1; }
@@ -1318,6 +1359,7 @@ postfix_calls:
 }
 
 static int parse_unary(Compiler *c){
+  if(eat(c,"+")) return parse_unary(c);
   if(tok_is(c,"!") || is_id(c,"not")){
     lx_next(&c->lex);
     if(!parse_unary(c) || !emit_conv(c,DT_VAR,DT_BOOL)) return 0;
@@ -1742,10 +1784,12 @@ static int parse_while(Compiler *c){
   if(!emit_condition_bool(c)) return 0;
   int break_mark=c->n_break_sites;
   int continue_mark=c->n_continue_sites;
+  c->break_depth++;
   c->continue_depth++;
   size_t bf=emit_branch(c,OP_BF);
   if(!parse_block_or_stmt(c)) return 0;
   c->continue_depth--;
+  c->break_depth--;
   patch_continues_from(c,continue_mark,start);
   size_t b=emit_branch(c,OP_B);
   patch_branch(c,b,start);
@@ -1759,9 +1803,11 @@ static int parse_do_until(Compiler *c){
   size_t start=c->code.len;
   int break_mark=c->n_break_sites;
   int continue_mark=c->n_continue_sites;
+  c->break_depth++;
   c->continue_depth++;
   if(!parse_block_or_stmt(c)) return 0;
   c->continue_depth--;
+  c->break_depth--;
   size_t condition=c->code.len;
   patch_continues_from(c,continue_mark,condition);
   if(!is_id(c,"until")){
@@ -1797,9 +1843,11 @@ static int parse_for(Compiler *c){
   lx_next(&c->lex);
   int break_mark=c->n_break_sites;
   int continue_mark=c->n_continue_sites;
+  c->break_depth++;
   c->continue_depth++;
   if(!parse_block_or_stmt(c)) return 0;
   c->continue_depth--;
+  c->break_depth--;
   size_t continue_target=c->code.len;
   patch_continues_from(c,continue_mark,continue_target);
   if(parts[2].start<parts[2].end && !compile_statement_slice(c,src+parts[2].start,parts[2].end-parts[2].start)) return 0;
@@ -1821,9 +1869,11 @@ static int parse_repeat(Compiler *c){
   size_t loop_start=c->code.len;
   int break_mark=c->n_break_sites;
   int continue_mark=c->n_continue_sites;
+  c->break_depth++;
   c->continue_depth++;
   if(!parse_block_or_stmt(c)) return 0;
   c->continue_depth--;
+  c->break_depth--;
   size_t step=c->code.len;
   patch_continues_from(c,continue_mark,step);
   if(!emit_push_i32_full(c,1) ||
@@ -1856,11 +1906,13 @@ static int parse_with(Compiler *c){
   } else if(!parse_expr(c) || (parenthesized && !need(c,")"))) return 0;
   int break_mark=c->n_break_sites;
   int continue_mark=c->n_continue_sites;
+  c->break_depth++;
   c->continue_depth++;
   size_t push=emit_branch(c,OP_PUSHENV);
   size_t body_start=c->code.len;
   if(!parse_block_or_stmt(c)) return 0;
   c->continue_depth--;
+  c->break_depth--;
   size_t pop=emit_branch(c,OP_POPENV);
   patch_continues_from(c,continue_mark,pop);
   patch_branch(c,pop,body_start);
@@ -1901,6 +1953,7 @@ static int parse_switch(Compiler *c){
   }
   size_t dispatch_end=emit_branch(c,OP_B);
   int break_mark=c->n_break_sites;
+  c->break_depth++;
   for(int i=0;i<n_cases;i++){
     body_pos[i]=c->code.len;
     if(!span_empty(c->lex.src,cases[i].body)){
@@ -1911,6 +1964,7 @@ static int parse_switch(Compiler *c){
     }
   }
   size_t cleanup=c->code.len;
+  c->break_depth--;
   if(!emit_popz(c)){ free(cases); free(targets); free(case_br); free(body_pos); return 0; }
   for(int i=0;i<n_cases;i++) if(case_br[i]) patch_branch(c,case_br[i],body_pos[targets[i]]);
   patch_branch(c,dispatch_end,default_idx>=0?body_pos[default_idx]:cleanup);
@@ -2047,7 +2101,17 @@ static int parse_statement(Compiler *c){
   if(is_id(c,"with")) return parse_with(c);
   if(is_id(c,"return")) return parse_return_stmt(c);
   if(is_id(c,"exit")){ lx_next(&c->lex); emit_u32(&c->code,fw(OP_EXIT,0,0)); eat(c,";"); return 1; }
-  if(is_id(c,"break")){ lx_next(&c->lex); if(!emit_break_branch(c)) return 0; eat(c,";"); return 1; }
+  if(is_id(c,"break")){
+    lx_next(&c->lex);
+    /* Classic drag-and-drop actions can emit a top-level break to stop the
+     * current event. A zero-offset branch would loop forever, so encode that
+     * form as an event exit while retaining normal loop/switch patching. */
+    if(c->break_depth>0){
+      if(!emit_break_branch(c)) return 0;
+    } else if(!emit_u32(&c->code,fw(OP_EXIT,0,0))) return 0;
+    eat(c,";");
+    return 1;
+  }
   if(is_id(c,"continue")){
     if(c->continue_depth<=0){
       c->unsupported=1;
@@ -2106,6 +2170,100 @@ static int registry_add_global(GmlcFunctionRegistry *r, const char *name){
   }
   r->globals[r->n_globals++]=gmlc_strdup(name);
   return r->globals[r->n_globals-1]!=NULL;
+}
+
+static int registry_add_macro(GmlcFunctionRegistry *r, const char *name, double value){
+  for(int i=0;i<r->n_macros;i++) if(!strcmp(r->macro_names[i],name)){
+    r->macro_values[i]=value;
+    return 1;
+  }
+  if(r->n_macros>=r->cap_macros){
+    int nc=r->cap_macros?r->cap_macros*2:16;
+    char **names=(char**)realloc(r->macro_names,(size_t)nc*sizeof(*names));
+    if(!names) return 0;
+    r->macro_names=names;
+    double *values=(double*)realloc(r->macro_values,(size_t)nc*sizeof(*values));
+    if(!values) return 0;
+    r->macro_values=values; r->cap_macros=nc;
+  }
+  r->macro_names[r->n_macros]=gmlc_strdup(name);
+  if(!r->macro_names[r->n_macros]) return 0;
+  r->macro_values[r->n_macros]=value;
+  r->n_macros++;
+  return 1;
+}
+
+static int registry_collect_macros_from_text(GmlcFunctionRegistry *r, const char *text){
+  const char *p=text;
+  while((p=strstr(p,"#macro"))){
+    p+=6;
+    while(*p==' ' || *p=='\t') p++;
+    const char *start=p;
+    while(isalnum((unsigned char)*p) || *p=='_') p++;
+    if(p==start) continue;
+    char *name=dup_range(start,(size_t)(p-start));
+    while(*p==' ' || *p=='\t') p++;
+    char *end=NULL;
+    double value=strtod(p,&end);
+    int ok=end==p || !name ? 1 : registry_add_macro(r,name,value);
+    free(name);
+    if(!ok) return 0;
+  }
+  return 1;
+}
+
+static int registry_add_asset(GmlcFunctionRegistry *r, const char *name, double value,
+                              int script_code_index){
+  if(!name || !*name) return 1;
+  for(int i=0;i<r->n_assets;i++) if(!strcmp(r->assets[i].name,name)){
+    if(script_code_index>=0) r->assets[i].script_code_index=script_code_index;
+    return 1;
+  }
+  if(r->n_assets>=r->cap_assets){
+    int nc=r->cap_assets?r->cap_assets*2:128;
+    GmlcAssetBinding *assets=(GmlcAssetBinding*)realloc(r->assets,(size_t)nc*sizeof(*assets));
+    if(!assets) return 0;
+    r->assets=assets; r->cap_assets=nc;
+  }
+  GmlcAssetBinding *asset=&r->assets[r->n_assets++];
+  asset->name=gmlc_strdup(name);
+  asset->value=value;
+  asset->script_code_index=script_code_index;
+  return asset->name!=NULL;
+}
+
+static int asset_binding_cmp(const void *a, const void *b){
+  const GmlcAssetBinding *aa=(const GmlcAssetBinding*)a;
+  const GmlcAssetBinding *bb=(const GmlcAssetBinding*)b;
+  return strcmp(aa->name,bb->name);
+}
+
+static int registry_collect_assets(GmlcFunctionRegistry *r, const GmlcProject *p){
+  int room_codes=source_room_code_count(p);
+  for(int i=0;i<p->n_sprites;i++){
+    int runtime_id=gmlc_project_sprite_runtime_id(p,i);
+    if(runtime_id>=0 && !registry_add_asset(r,p->sprites[i].name,runtime_id,-1)) return 0;
+  }
+  for(int i=0;i<p->n_sounds;i++)
+    if(!registry_add_asset(r,p->sounds[i].name,i,-1)) return 0;
+  for(int i=0;i<p->n_objects;i++)
+    if(!registry_add_asset(r,p->objects[i].name,i,-1)) return 0;
+  for(int i=0;i<p->n_rooms;i++)
+    if(!registry_add_asset(r,p->rooms[i].name,i,-1)) return 0;
+  for(int i=0;i<p->n_shaders;i++)
+    if(!registry_add_asset(r,p->shaders[i].name,i,-1)) return 0;
+  for(int i=0;i<p->n_fonts;i++)
+    if(!registry_add_asset(r,p->fonts[i].name,i,-1)) return 0;
+  for(int i=0;i<p->n_tilesets;i++)
+    if(!registry_add_asset(r,p->tilesets[i].name,i,-1)) return 0;
+  for(int i=0;i<p->n_scripts;i++)
+    if(!registry_add_asset(r,p->scripts[i].name,i,room_codes+i)) return 0;
+  for(int i=0;i<p->n_paths;i++)
+    if(!registry_add_asset(r,p->paths[i].name,i,-1)) return 0;
+  for(int i=0;i<p->n_timelines;i++)
+    if(!registry_add_asset(r,p->timelines[i].name,i,-1)) return 0;
+  qsort(r->assets,(size_t)r->n_assets,sizeof(*r->assets),asset_binding_cmp);
+  return 1;
 }
 
 static int collect_globalvars_from_text(GmlcFunctionRegistry *r, const char *src){
@@ -2421,6 +2579,7 @@ static int collect_functions_from_text(GmlcFunctionRegistry *r, const char *path
 
 int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_base, GmlcFunctionRegistry *out, char *err, size_t errcap){
   memset(out,0,sizeof(*out));
+  if(!registry_collect_assets(out,project)) goto fail;
   for(int i=0;i<project->n_rooms;i++){
     const char *path=project->rooms[i].creation_code_path;
     if(path && *path){
@@ -2434,7 +2593,8 @@ int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_bas
       char *txt=read_text(path);
       if(txt){
         int ci=source_room_code_count(project)+i;
-        int ok=collect_functions_from_text(out,path,project->scripts[i].name,ci,appended_base,txt,err,errcap);
+        int ok=registry_collect_macros_from_text(out,txt) &&
+          collect_functions_from_text(out,path,project->scripts[i].name,ci,appended_base,txt,err,errcap);
         free(txt);
         if(!ok) goto fail;
       }
@@ -2472,7 +2632,7 @@ int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_bas
   }
   return 1;
 fail:
-  if(!err[0]) snprintf(err,errcap,"function registry allocation failed");
+  if(err && errcap && !err[0]) snprintf(err,errcap,"function registry allocation failed");
   gmlc_function_registry_free(out);
   return 0;
 }
@@ -2530,7 +2690,13 @@ static int compile_text_internal(const GmlcProject *project, const GmlcFunctionR
   c.source_path=source_path;
   c.script_index=script_index;
   c.log_statements=getenv("GMLC_LOG_STATEMENTS")!=NULL;
-  collect_macros(&c);
+  if(funcs){
+    for(int i=0;i<funcs->n_macros;i++) if(!add_macro(&c,funcs->macro_names[i],funcs->macro_values[i])){
+      c.unsupported=1;
+      snprintf(c.lex.err,sizeof(c.lex.err),"macro registry allocation failed");
+      break;
+    }
+  } else collect_macros(&c);
   c.lex.src=text;
   lx_next(&c.lex);
   if(!emit_param_prologue(&c,params)){
@@ -2624,6 +2790,11 @@ void gmlc_function_registry_free(GmlcFunctionRegistry *r){
   free(r->defs);
   for(int i=0;i<r->n_globals;i++) free(r->globals[i]);
   free(r->globals);
+  for(int i=0;i<r->n_assets;i++) free(r->assets[i].name);
+  free(r->assets);
+  for(int i=0;i<r->n_macros;i++) free(r->macro_names[i]);
+  free(r->macro_names);
+  free(r->macro_values);
   memset(r,0,sizeof(*r));
 }
 
