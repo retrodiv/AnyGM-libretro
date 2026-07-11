@@ -2,7 +2,20 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
 #include "gmlc_classic.h"
 
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#include "stb_image.h"
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
 #include <errno.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -15,6 +28,107 @@ static int known_version(uint32_t version){
   return version == GMLC_CLASSIC_GM6 || version == GMLC_CLASSIC_GM7 ||
          version == GMLC_CLASSIC_GM7_ALT || version == GMLC_CLASSIC_GM8 ||
          version == GMLC_CLASSIC_GM81;
+}
+
+typedef struct {
+  const uint8_t *data;
+  size_t size;
+  size_t pos;
+  char *err;
+  size_t errcap;
+} ClassicReader;
+
+static int reader_fail(ClassicReader *r, const char *what){
+  if(r->err && r->errcap)
+    snprintf(r->err, r->errcap, "classic project: truncated %s at offset %zu", what, r->pos);
+  return 0;
+}
+
+static int reader_u32(ClassicReader *r, uint32_t *out, const char *what){
+  if(r->pos > r->size || r->size - r->pos < 4) return reader_fail(r, what);
+  *out = read_u32le(r->data + r->pos);
+  r->pos += 4;
+  return 1;
+}
+
+static int reader_skip(ClassicReader *r, size_t count, const char *what){
+  if(r->pos > r->size || count > r->size - r->pos) return reader_fail(r, what);
+  r->pos += count;
+  return 1;
+}
+
+static int reader_string(ClassicReader *r, const char *what){
+  uint32_t length;
+  return reader_u32(r, &length, what) && reader_skip(r, length, what);
+}
+
+static int reader_string_copy(ClassicReader *r, char **out, const char *what){
+  uint32_t length;
+  *out = NULL;
+  if(!reader_u32(r, &length, what)) return 0;
+  if(r->pos > r->size || length > r->size - r->pos) return reader_fail(r, what);
+  char *s = (char*)malloc((size_t)length + 1);
+  if(!s){
+    if(r->err && r->errcap) snprintf(r->err, r->errcap, "classic project: out of memory reading %s", what);
+    return 0;
+  }
+  memcpy(s, r->data + r->pos, length);
+  s[length] = '\0';
+  r->pos += length;
+  *out = s;
+  return 1;
+}
+
+static int reader_blocks(ClassicReader *r, uint32_t count, const char *what){
+  if(count > (r->size - r->pos) / 4){
+    if(r->err && r->errcap)
+      snprintf(r->err, r->errcap, "classic project: impossible %s count %u at offset %zu", what, count, r->pos);
+    return 0;
+  }
+  for(uint32_t i = 0; i < count; ++i){
+    uint32_t length;
+    if(!reader_u32(r, &length, what) || !reader_skip(r, length, what)) return 0;
+  }
+  return 1;
+}
+
+static int read_file(const char *path, uint8_t **data, size_t *size,
+                     char *err, size_t errcap){
+  *data = NULL;
+  *size = 0;
+  FILE *f = fopen(path, "rb");
+  if(!f){
+    if(err && errcap) snprintf(err, errcap, "classic project: cannot open %s: %s", path, strerror(errno));
+    return 0;
+  }
+  if(fseek(f, 0, SEEK_END) || ftell(f) < 0){
+    if(err && errcap) snprintf(err, errcap, "classic project: cannot size %s", path);
+    fclose(f);
+    return 0;
+  }
+  long length = ftell(f);
+  if(fseek(f, 0, SEEK_SET) || (unsigned long)length > SIZE_MAX){
+    if(err && errcap) snprintf(err, errcap, "classic project: invalid size for %s", path);
+    fclose(f);
+    return 0;
+  }
+  uint8_t *bytes = (uint8_t*)malloc(length ? (size_t)length : 1);
+  if(!bytes){
+    if(err && errcap) snprintf(err, errcap, "classic project: out of memory reading %s", path);
+    fclose(f);
+    return 0;
+  }
+  size_t got = fread(bytes, 1, (size_t)length, f);
+  int ok = got == (size_t)length && !ferror(f);
+  fclose(f);
+  if(!ok){
+    if(err && errcap) snprintf(err, errcap, "classic project: cannot read %s", path);
+    free(bytes);
+    return 0;
+  }
+  *data = bytes;
+  *size = got;
+  return 1;
 }
 
 int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
@@ -69,6 +183,176 @@ int gmlc_classic_probe_file(const char *path, GmlcClassicHeader *out,
   return gmlc_classic_probe(header, got, out, err, errcap);
 }
 
+int gmlc_classic_inventory(const void *data, size_t size,
+                           GmlcClassicInventory *out, char *err, size_t errcap){
+  if(err && errcap) err[0] = '\0';
+  if(!data || !out){
+    if(err && errcap) snprintf(err, errcap, "classic project: invalid inventory arguments");
+    return 0;
+  }
+  memset(out, 0, sizeof(*out));
+  if(!gmlc_classic_probe(data, size, &out->header, err, errcap)) return 0;
+  if(out->header.version != GMLC_CLASSIC_GM8 && out->header.version != GMLC_CLASSIC_GM81){
+    if(err && errcap)
+      snprintf(err, errcap, "classic project: inventory for container version %u is not implemented yet",
+               (unsigned)out->header.version);
+    return 0;
+  }
+
+  ClassicReader r = {(const uint8_t*)data, size, 28, err, errcap};
+  uint32_t compressed_length, section_version;
+  if(!reader_u32(&r, &out->settings_version, "settings version") ||
+     !reader_u32(&r, &compressed_length, "compressed settings length") ||
+     !reader_skip(&r, compressed_length, "compressed settings")) return 0;
+
+  if(!reader_u32(&r, &section_version, "trigger section version") ||
+     !reader_u32(&r, &out->trigger_slots, "trigger count") ||
+     !reader_blocks(&r, out->trigger_slots, "trigger block") ||
+     !reader_skip(&r, 8, "trigger timestamp")) return 0;
+  if(section_version < 800){
+    if(err && errcap) snprintf(err, errcap, "classic project: unsupported trigger section version %u", section_version);
+    return 0;
+  }
+
+  if(!reader_u32(&r, &section_version, "constant section version") ||
+     !reader_u32(&r, &out->constants, "constant count")) return 0;
+  if(section_version < 800){
+    if(err && errcap) snprintf(err, errcap, "classic project: unsupported constant section version %u", section_version);
+    return 0;
+  }
+  for(uint32_t i = 0; i < out->constants; ++i)
+    if(!reader_string(&r, "constant name") || !reader_string(&r, "constant value")) return 0;
+  if(!reader_skip(&r, 8, "constant timestamp")) return 0;
+
+  for(int type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
+    out->resource_section_offsets[type] = r.pos;
+    if(!reader_u32(&r, &section_version, "resource section version") ||
+       !reader_u32(&r, &out->resource_slots[type], "resource count") ||
+       !reader_blocks(&r, out->resource_slots[type], gmlc_classic_resource_name((GmlcClassicResourceType)type)))
+      return 0;
+    if(section_version < 800){
+      if(err && errcap)
+        snprintf(err, errcap, "classic project: unsupported %s section version %u",
+                 gmlc_classic_resource_name((GmlcClassicResourceType)type), section_version);
+      return 0;
+    }
+  }
+  if(!reader_u32(&r, &out->last_instance_id, "last instance id") ||
+     !reader_u32(&r, &out->last_tile_id, "last tile id")) return 0;
+  out->payload_end = r.pos;
+  return 1;
+}
+
+static int parse_manifest_slot(const uint8_t *compressed, uint32_t compressed_size,
+                               GmlcClassicResourceSlot *slot, char *err, size_t errcap){
+  if(compressed_size > INT_MAX){
+    if(err && errcap) snprintf(err, errcap, "classic project: compressed resource is too large");
+    return 0;
+  }
+  int raw_size = 0;
+  char *raw = stbi_zlib_decode_malloc((const char*)compressed, (int)compressed_size, &raw_size);
+  if(!raw || raw_size < 4){
+    if(err && errcap) snprintf(err, errcap, "classic project: invalid compressed resource block");
+    STBI_FREE(raw);
+    return 0;
+  }
+  ClassicReader r = {(const uint8_t*)raw, (size_t)raw_size, 0, err, errcap};
+  uint32_t exists;
+  if(!reader_u32(&r, &exists, "resource existence flag")){
+    STBI_FREE(raw);
+    return 0;
+  }
+  slot->exists = exists != 0;
+  if(slot->exists &&
+     (!reader_string_copy(&r, &slot->name, "resource name") ||
+      !reader_skip(&r, 8, "resource timestamp") ||
+      !reader_u32(&r, &slot->version, "resource format version"))){
+    free(slot->name);
+    slot->name = NULL;
+    STBI_FREE(raw);
+    return 0;
+  }
+  STBI_FREE(raw);
+  return 1;
+}
+
+void gmlc_classic_manifest_free(GmlcClassicManifest *manifest){
+  if(!manifest) return;
+  for(int type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
+    uint32_t count = manifest->inventory.resource_slots[type];
+    for(uint32_t i = 0; i < count; ++i) free(manifest->slots[type][i].name);
+    free(manifest->slots[type]);
+  }
+  memset(manifest, 0, sizeof(*manifest));
+}
+
+int gmlc_classic_manifest(const void *data, size_t size,
+                          GmlcClassicManifest *out, char *err, size_t errcap){
+  if(err && errcap) err[0] = '\0';
+  if(!data || !out){
+    if(err && errcap) snprintf(err, errcap, "classic project: invalid manifest arguments");
+    return 0;
+  }
+  memset(out, 0, sizeof(*out));
+  if(!gmlc_classic_inventory(data, size, &out->inventory, err, errcap)) return 0;
+  for(int type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
+    uint32_t count = out->inventory.resource_slots[type];
+    if(count){
+      out->slots[type] = (GmlcClassicResourceSlot*)calloc(count, sizeof(*out->slots[type]));
+      if(!out->slots[type]){
+        if(err && errcap) snprintf(err, errcap, "classic project: out of memory allocating %s slots",
+                                  gmlc_classic_resource_name((GmlcClassicResourceType)type));
+        gmlc_classic_manifest_free(out);
+        return 0;
+      }
+    }
+    ClassicReader r = {(const uint8_t*)data, size, out->inventory.resource_section_offsets[type], err, errcap};
+    uint32_t section_version, observed_count;
+    if(!reader_u32(&r, &section_version, "resource section version") ||
+       !reader_u32(&r, &observed_count, "resource count") || observed_count != count){
+      if(err && errcap && !err[0]) snprintf(err, errcap, "classic project: inconsistent resource inventory");
+      gmlc_classic_manifest_free(out);
+      return 0;
+    }
+    (void)section_version;
+    for(uint32_t i = 0; i < count; ++i){
+      uint32_t compressed_size;
+      if(!reader_u32(&r, &compressed_size, "compressed resource length") ||
+         r.pos > r.size || compressed_size > r.size - r.pos ||
+         !parse_manifest_slot(r.data + r.pos, compressed_size, &out->slots[type][i], err, errcap)){
+        if(err && errcap && !err[0])
+          snprintf(err, errcap, "classic project: invalid %s slot %u",
+                   gmlc_classic_resource_name((GmlcClassicResourceType)type), i);
+        gmlc_classic_manifest_free(out);
+        return 0;
+      }
+      r.pos += compressed_size;
+      if(out->slots[type][i].exists) ++out->existing[type];
+    }
+  }
+  return 1;
+}
+
+int gmlc_classic_manifest_file(const char *path, GmlcClassicManifest *out,
+                               char *err, size_t errcap){
+  uint8_t *data;
+  size_t size;
+  if(!read_file(path, &data, &size, err, errcap)) return 0;
+  int ok = gmlc_classic_manifest(data, size, out, err, errcap);
+  free(data);
+  return ok;
+}
+
+int gmlc_classic_inventory_file(const char *path, GmlcClassicInventory *out,
+                                char *err, size_t errcap){
+  uint8_t *data;
+  size_t size;
+  if(!read_file(path, &data, &size, err, errcap)) return 0;
+  int ok = gmlc_classic_inventory(data, size, out, err, errcap);
+  free(data);
+  return ok;
+}
+
 const char *gmlc_classic_version_name(GmlcClassicVersion version){
   switch(version){
     case GMLC_CLASSIC_GM6: return "GameMaker 6";
@@ -78,4 +362,12 @@ const char *gmlc_classic_version_name(GmlcClassicVersion version){
     case GMLC_CLASSIC_GM81: return "GameMaker 8.1";
     default: return "unknown classic GameMaker";
   }
+}
+
+const char *gmlc_classic_resource_name(GmlcClassicResourceType type){
+  static const char *const names[GMLC_CLASSIC_RESOURCE_TYPES] = {
+    "sound", "sprite", "background", "path", "script", "font",
+    "timeline", "object", "room"
+  };
+  return type >= 0 && type < GMLC_CLASSIC_RESOURCE_TYPES ? names[type] : "resource";
 }
