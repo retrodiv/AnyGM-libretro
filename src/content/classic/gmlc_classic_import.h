@@ -21,5 +21,8 @@ int gmlc_classic_import_sounds(const GmlcClassicManifest *classic,
                                char *err, size_t errcap);
 int gmlc_classic_import_paths(const GmlcClassicManifest *classic,
                               GmlcProject *project, char *err, size_t errcap);
+int gmlc_classic_import_objects(const GmlcClassicManifest *classic,
+                                GmlcProject *project, const char *cache_dir,
+                                char *err, size_t errcap);
 
 #endif

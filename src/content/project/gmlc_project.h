@@ -102,7 +102,7 @@ typedef struct {
 typedef struct {
   char *id;
   char *name;
-  int sprite_id, mask_id, parent_id;
+  int sprite_id, mask_id, parent_id, depth;
   int visible, solid, persistent;
   int physics_enabled, physics_sensor, physics_shape, physics_group;
   int physics_awake, physics_kinematic;

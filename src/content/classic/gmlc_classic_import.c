@@ -61,6 +61,22 @@ static int import_skip_string(ImportReader *r, const uint8_t **text, uint32_t *l
   return 1;
 }
 
+static int import_copy_string(ImportReader *r, char **text, const char *what){
+  const uint8_t *bytes;
+  uint32_t length;
+  *text = NULL;
+  if(!import_skip_string(r, &bytes, &length, what)) return 0;
+  char *copy = (char*)malloc((size_t)length + 1);
+  if(!copy){
+    if(r->err && r->errcap) snprintf(r->err, r->errcap, "classic import: out of memory reading %s", what);
+    return 0;
+  }
+  memcpy(copy, bytes, length);
+  copy[length] = '\0';
+  *text = copy;
+  return 1;
+}
+
 static int import_double(ImportReader *r, double *value, const char *what){
   if(r->pos > r->size || r->size - r->pos < 8){
     if(r->err && r->errcap) snprintf(r->err, r->errcap, "classic import: truncated %s", what);
@@ -508,6 +524,265 @@ int gmlc_classic_import_paths(const GmlcClassicManifest *classic,
       if(err && errcap) snprintf(err, errcap, "classic import: trailing path payload");
       free_imported_paths(project);
       return 0;
+    }
+  }
+  return 1;
+}
+
+typedef struct {
+  char *data;
+  size_t length, capacity;
+} ImportText;
+
+static int text_reserve(ImportText *text, size_t extra){
+  if(extra > SIZE_MAX - text->length - 1) return 0;
+  size_t need = text->length + extra + 1;
+  if(need <= text->capacity) return 1;
+  size_t capacity = text->capacity ? text->capacity : 256;
+  while(capacity < need){
+    if(capacity > SIZE_MAX / 2){ capacity = need; break; }
+    capacity *= 2;
+  }
+  char *data = (char*)realloc(text->data, capacity);
+  if(!data) return 0;
+  text->data = data;
+  text->capacity = capacity;
+  return 1;
+}
+
+static int text_append_n(ImportText *text, const char *value, size_t length){
+  if(!text_reserve(text, length)) return 0;
+  memcpy(text->data + text->length, value, length);
+  text->length += length;
+  text->data[text->length] = '\0';
+  return 1;
+}
+
+static int text_append(ImportText *text, const char *value){
+  return text_append_n(text, value ? value : "", value ? strlen(value) : 0);
+}
+
+static int text_append_int(ImportText *text, int32_t value){
+  char number[32];
+  snprintf(number, sizeof(number), "%d", value);
+  return text_append(text, number);
+}
+
+static int text_append_quoted(ImportText *text, const char *value){
+  if(!text_append(text, "\"")) return 0;
+  for(const unsigned char *p = (const unsigned char*)(value ? value : ""); *p; ++p){
+    char escaped[2] = {(char)*p, '\0'};
+    if(*p == '\\' || *p == '"'){
+      if(!text_append(text, "\\")) return 0;
+    } else if(*p == '\n'){
+      if(!text_append(text, "\\n")) return 0;
+      continue;
+    } else if(*p == '\r'){
+      if(!text_append(text, "\\r")) return 0;
+      continue;
+    }
+    if(!text_append(text, escaped)) return 0;
+  }
+  return text_append(text, "\"");
+}
+
+static int emit_action_call(ImportText *text, const char *function_name,
+                            char **arguments, uint32_t *argument_kinds,
+                            uint32_t used_arguments){
+  if(!function_name || !*function_name) return text_append(text, "/* empty action */");
+  if(!text_append(text, function_name) || !text_append(text, "(")) return 0;
+  for(uint32_t i = 0; i < used_arguments; ++i){
+    if(i && !text_append(text, ",")) return 0;
+    if(argument_kinds && argument_kinds[i] == 1){
+      if(!text_append_quoted(text, arguments[i])) return 0;
+    } else if(!text_append(text, arguments[i] && *arguments[i] ? arguments[i] : "0")) return 0;
+  }
+  return text_append(text, ")");
+}
+
+static int import_actions(ImportReader *r, ImportText *text){
+  uint32_t list_version, count;
+  if(!import_u32(r, &list_version, "action-list version") || !import_u32(r, &count, "action count")) return 0;
+  (void)list_version;
+  for(uint32_t action_index = 0; action_index < count; ++action_index){
+    uint32_t action_version = 0, library_id = 0, action_id = 0, kind = 0;
+    uint32_t may_relative = 0, question = 0, applies = 0, type = 0;
+    uint32_t used_arguments = 0, kind_count = 0, target = 0, relative = 0;
+    uint32_t argument_count = 0, negate = 0;
+    char *function_name = NULL, *code = NULL;
+    uint32_t *argument_kinds = NULL;
+    char **arguments = NULL;
+    int ok = import_u32(r, &action_version, "action version") &&
+      import_u32(r, &library_id, "action library") && import_u32(r, &action_id, "action id") &&
+      import_u32(r, &kind, "action kind") && import_u32(r, &may_relative, "action relative capability") &&
+      import_u32(r, &question, "action question flag") && import_u32(r, &applies, "action target flag") &&
+      import_u32(r, &type, "action type") && import_copy_string(r, &function_name, "action function") &&
+      import_copy_string(r, &code, "action code") && import_u32(r, &used_arguments, "used action arguments") &&
+      import_u32(r, &kind_count, "action argument-kind count");
+    if(!ok) goto action_done;
+    if(kind_count > 1024 || used_arguments > kind_count){ ok = 0; goto action_done; }
+    argument_kinds = (uint32_t*)calloc(kind_count ? kind_count : 1, sizeof(*argument_kinds));
+    if(!argument_kinds){ ok = 0; goto action_done; }
+    for(uint32_t i = 0; i < kind_count; ++i)
+      if(!import_u32(r, &argument_kinds[i], "action argument kind")){ ok = 0; goto action_done; }
+    if(!import_u32(r, &target, "action target") || !import_u32(r, &relative, "action relative flag") ||
+       !import_u32(r, &argument_count, "action argument count") || argument_count > 1024){ ok = 0; goto action_done; }
+    arguments = (char**)calloc(argument_count ? argument_count : 1, sizeof(*arguments));
+    if(!arguments){ ok = 0; goto action_done; }
+    for(uint32_t i = 0; i < argument_count; ++i)
+      if(!import_copy_string(r, &arguments[i], "action argument")){ ok = 0; goto action_done; }
+    if(!import_u32(r, &negate, "action negation flag")){ ok = 0; goto action_done; }
+    (void)action_version; (void)library_id; (void)action_id; (void)may_relative;
+
+    if(kind == 1) ok = text_append(text, "{\n");
+    else if(kind == 2) ok = text_append(text, "}\n");
+    else if(kind == 3) ok = text_append(text, "else\n");
+    else if(kind == 4) ok = text_append(text, "exit;\n");
+    else if(kind == 5){
+      ok = text_append(text, "repeat (") && text_append(text, argument_count && arguments[0][0] ? arguments[0] : "0") &&
+           text_append(text, ")\n");
+    } else if(kind == 6){
+      const char *lhs = argument_count > 0 && arguments[0][0] ? arguments[0] : "__classic_variable";
+      const char *rhs = argument_count > 1 && arguments[1][0] ? arguments[1] : "0";
+      ok = text_append(text, lhs) && text_append(text, relative ? " += " : " = ") && text_append(text, rhs) && text_append(text, ";\n");
+    } else {
+      int wrapped_target = applies && !question && (int32_t)target != -1;
+      if(wrapped_target){
+        ok = text_append(text, "with (") && text_append_int(text, (int32_t)target) && text_append(text, ") {\n");
+      }
+      if(ok && relative && !question) ok = text_append(text, "action_set_relative(1);\n");
+      if(ok && question) ok = text_append(text, "if (") && (!negate || text_append(text, "!"));
+      if(ok){
+        if(type == 2 || kind == 7) ok = text_append(text, code && *code ? code : "/* empty code action */");
+        else ok = emit_action_call(text, function_name, arguments, argument_kinds,
+                                   used_arguments < argument_count ? used_arguments : argument_count);
+      }
+      if(ok && question) ok = text_append(text, ")\n");
+      else if(ok) ok = text_append(text, ";\n");
+      if(ok && relative && !question) ok = text_append(text, "action_set_relative(0);\n");
+      if(ok && wrapped_target) ok = text_append(text, "}\n");
+    }
+action_done:
+    for(uint32_t i = 0; arguments && i < argument_count; ++i) free(arguments[i]);
+    free(arguments); free(argument_kinds); free(function_name); free(code);
+    if(!ok){
+      if(r->err && r->errcap && !r->err[0]) snprintf(r->err, r->errcap, "classic import: invalid action %u", action_index);
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static void free_imported_objects(GmlcProject *project){
+  for(int i = 0; i < project->n_objects; ++i){
+    GmlcObject *object = &project->objects[i];
+    free(object->id); free(object->name);
+    for(int event = 0; event < object->n_events; ++event){
+      free(object->events[event].id); free(object->events[event].collision_id);
+      free(object->events[event].source_path);
+    }
+    free(object->events);
+  }
+  free(project->objects);
+  project->objects = NULL;
+  project->n_objects = project->cap_objects = 0;
+}
+
+static int append_object_event(GmlcObject *object, GmlcObjectEvent event){
+  if(object->n_events >= object->cap_events){
+    int capacity = object->cap_events ? object->cap_events * 2 : 4;
+    GmlcObjectEvent *events = (GmlcObjectEvent*)realloc(object->events, (size_t)capacity * sizeof(*events));
+    if(!events) return 0;
+    object->events = events;
+    object->cap_events = capacity;
+  }
+  object->events[object->n_events++] = event;
+  return 1;
+}
+
+int gmlc_classic_import_objects(const GmlcClassicManifest *classic,
+                                GmlcProject *project, const char *cache_dir,
+                                char *err, size_t errcap){
+  if(err && errcap) err[0] = '\0';
+  if(!classic || !project || !cache_dir || !*cache_dir || project->objects || project->n_objects){
+    if(err && errcap) snprintf(err, errcap, "classic import: invalid object-import arguments");
+    return 0;
+  }
+  uint32_t count = classic->inventory.resource_slots[GMLC_CLASSIC_OBJECT];
+  if(count > INT32_MAX){
+    if(err && errcap) snprintf(err, errcap, "classic import: too many object slots");
+    return 0;
+  }
+  project->objects = (GmlcObject*)calloc(count ? count : 1, sizeof(*project->objects));
+  if(!project->objects){
+    if(err && errcap) snprintf(err, errcap, "classic import: out of memory allocating objects");
+    return 0;
+  }
+  project->n_objects = project->cap_objects = (int)count;
+  const GmlcClassicResourceSlot *slots = classic->slots[GMLC_CLASSIC_OBJECT];
+  for(uint32_t i = 0; i < count; ++i){
+    char fallback[64];
+    snprintf(fallback, sizeof(fallback), "__classic_missing_object_%u", i);
+    const char *name = slots[i].exists && slots[i].name ? slots[i].name : fallback;
+    project->objects[i].id = copy_string(name);
+    project->objects[i].name = copy_string(name);
+    project->objects[i].sprite_id = project->objects[i].mask_id = -1;
+    project->objects[i].parent_id = -100;
+    project->objects[i].visible = slots[i].exists ? 1 : 0;
+    if(!project->objects[i].id || !project->objects[i].name){
+      if(err && errcap) snprintf(err, errcap, "classic import: out of memory naming object %u", i);
+      free_imported_objects(project);
+      return 0;
+    }
+  }
+  for(uint32_t i = 0; i < count; ++i){
+    const GmlcClassicResourceSlot *source = &slots[i];
+    if(!source->exists) continue;
+    ImportReader r = {source->payload, source->payload_size, 0, err, errcap};
+    uint32_t sprite, solid, visible, depth, persistent, parent, mask, last_event_type;
+    if(!import_u32(&r, &sprite, "object sprite") || !import_u32(&r, &solid, "object solid flag") ||
+       !import_u32(&r, &visible, "object visible flag") || !import_u32(&r, &depth, "object depth") ||
+       !import_u32(&r, &persistent, "object persistent flag") || !import_u32(&r, &parent, "object parent") ||
+       !import_u32(&r, &mask, "object mask") || !import_u32(&r, &last_event_type, "object event-type count") ||
+       last_event_type > 64){ free_imported_objects(project); return 0; }
+    GmlcObject *object = &project->objects[i];
+    object->sprite_id = (int32_t)sprite; object->solid = solid != 0; object->visible = visible != 0;
+    object->depth = (int32_t)depth; object->persistent = persistent != 0;
+    object->parent_id = (int32_t)parent; object->mask_id = (int32_t)mask;
+    for(uint32_t event_type = 0; event_type <= last_event_type; ++event_type){
+      for(;;){
+        uint32_t event_number;
+        if(!import_u32(&r, &event_number, "object event number")){ free_imported_objects(project); return 0; }
+        if(event_number == UINT32_MAX) break;
+        ImportText text = {0};
+        if(!import_actions(&r, &text)){
+          free(text.data); free_imported_objects(project); return 0;
+        }
+        if(!text.data && !text_append(&text, "exit;\n")){
+          free_imported_objects(project); return 0;
+        }
+        char leaf[112], event_id[64];
+        snprintf(leaf, sizeof(leaf), "classic_object_%06u_event_%02u_%010u.gml", i, event_type, event_number);
+        snprintf(event_id, sizeof(event_id), "classic_event_%u_%u_%u", i, event_type, event_number);
+        GmlcObjectEvent event;
+        memset(&event, 0, sizeof(event));
+        event.id = copy_string(event_id);
+        event.event_type = (int)event_type;
+        event.event_number = (int32_t)event_number;
+        event.collision_object_id = event_type == 4 ? (int32_t)event_number : -1;
+        event.source_path = cache_path(cache_dir, leaf);
+        if(!event.id || !event.source_path || !write_source(event.source_path, text.data, err, errcap) ||
+           !append_object_event(object, event)){
+          free(event.id); free(event.source_path); free(text.data);
+          if(err && errcap && !err[0]) snprintf(err, errcap, "classic import: out of memory importing object event");
+          free_imported_objects(project); return 0;
+        }
+        free(text.data);
+      }
+    }
+    if(r.pos != r.size){
+      if(err && errcap) snprintf(err, errcap, "classic import: trailing object payload");
+      free_imported_objects(project); return 0;
     }
   }
   return 1;

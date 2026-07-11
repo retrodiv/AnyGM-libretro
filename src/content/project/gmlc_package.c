@@ -2126,7 +2126,7 @@ static int write_objt(Pkg *pkg, const GmlcProject *p){
     wi32(&pkg->b,gmlc_project_sprite_runtime_id(p,o->sprite_id));
     wu32(&pkg->b,(uint32_t)(o->visible?1:0));
     wu32(&pkg->b,(uint32_t)(o->solid?1:0));
-    wi32(&pkg->b,0);
+    wi32(&pkg->b,o->depth);
     wu32(&pkg->b,(uint32_t)(o->persistent?1:0));
     wi32(&pkg->b,o->parent_id>=0?o->parent_id:-100);
     wi32(&pkg->b,gmlc_project_sprite_runtime_id(p,o->mask_id));
