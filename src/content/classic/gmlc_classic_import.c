@@ -50,6 +50,31 @@ static int import_blob(ImportReader *r, const uint8_t **data, uint32_t *size, co
   return 1;
 }
 
+static int import_skip_string(ImportReader *r, const uint8_t **text, uint32_t *length, const char *what){
+  if(!import_u32(r, length, what)) return 0;
+  if(r->pos > r->size || *length > r->size - r->pos){
+    if(r->err && r->errcap) snprintf(r->err, r->errcap, "classic import: truncated %s", what);
+    return 0;
+  }
+  if(text) *text = r->data + r->pos;
+  r->pos += *length;
+  return 1;
+}
+
+static int import_double(ImportReader *r, double *value, const char *what){
+  if(r->pos > r->size || r->size - r->pos < 8){
+    if(r->err && r->errcap) snprintf(r->err, r->errcap, "classic import: truncated %s", what);
+    return 0;
+  }
+  uint64_t bits = (uint64_t)r->data[r->pos] | (uint64_t)r->data[r->pos + 1] << 8 |
+                  (uint64_t)r->data[r->pos + 2] << 16 | (uint64_t)r->data[r->pos + 3] << 24 |
+                  (uint64_t)r->data[r->pos + 4] << 32 | (uint64_t)r->data[r->pos + 5] << 40 |
+                  (uint64_t)r->data[r->pos + 6] << 48 | (uint64_t)r->data[r->pos + 7] << 56;
+  memcpy(value, &bits, sizeof(bits));
+  r->pos += 8;
+  return 1;
+}
+
 static char *copy_string(const char *text){
   size_t length = text ? strlen(text) : 0;
   char *copy = (char*)malloc(length + 1);
@@ -290,6 +315,116 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
     sprite->bbox_right = (int32_t)collision[5];
     sprite->bbox_bottom = (int32_t)collision[6];
     sprite->bbox_top = (int32_t)collision[7];
+  }
+  return 1;
+}
+
+static int write_binary(const char *path, const uint8_t *data, size_t size,
+                        char *err, size_t errcap){
+  FILE *file = fopen(path, "wb");
+  if(!file){
+    if(err && errcap) snprintf(err, errcap, "classic import: cannot create %s: %s", path, strerror(errno));
+    return 0;
+  }
+  int wrote = !size || fwrite(data, 1, size, file) == size;
+  int closed = fclose(file) == 0;
+  if((!wrote || !closed) && err && errcap) snprintf(err, errcap, "classic import: cannot write %s", path);
+  return wrote && closed;
+}
+
+static void free_imported_sounds(GmlcProject *project){
+  for(int i = 0; i < project->n_sounds; ++i){
+    free(project->sounds[i].id);
+    free(project->sounds[i].name);
+    free(project->sounds[i].data_path);
+  }
+  free(project->sounds);
+  project->sounds = NULL;
+  project->n_sounds = project->cap_sounds = 0;
+}
+
+int gmlc_classic_import_sounds(const GmlcClassicManifest *classic,
+                               GmlcProject *project, const char *cache_dir,
+                               char *err, size_t errcap){
+  static const uint8_t silent_wav[44] = {
+    'R','I','F','F',36,0,0,0,'W','A','V','E','f','m','t',' ',16,0,0,0,
+    1,0,1,0,0x44,0xAC,0,0,0x88,0x58,1,0,2,0,16,0,'d','a','t','a',0,0,0,0
+  };
+  if(err && errcap) err[0] = '\0';
+  if(!classic || !project || !cache_dir || !*cache_dir || project->sounds || project->n_sounds){
+    if(err && errcap) snprintf(err, errcap, "classic import: invalid sound-import arguments");
+    return 0;
+  }
+  uint32_t count = classic->inventory.resource_slots[GMLC_CLASSIC_SOUND];
+  if(count > INT32_MAX){
+    if(err && errcap) snprintf(err, errcap, "classic import: too many sound slots");
+    return 0;
+  }
+  project->sounds = (GmlcSound*)calloc(count ? count : 1, sizeof(*project->sounds));
+  if(!project->sounds){
+    if(err && errcap) snprintf(err, errcap, "classic import: out of memory allocating sounds");
+    return 0;
+  }
+  project->n_sounds = project->cap_sounds = (int)count;
+  const GmlcClassicResourceSlot *slots = classic->slots[GMLC_CLASSIC_SOUND];
+  for(uint32_t i = 0; i < count; ++i){
+    const GmlcClassicResourceSlot *source = &slots[i];
+    char fallback[64], leaf[96];
+    snprintf(fallback, sizeof(fallback), "__classic_missing_sound_%u", i);
+    const char *name = source->exists && source->name ? source->name : fallback;
+    const uint8_t *audio = silent_wav;
+    size_t audio_size = sizeof(silent_wav);
+    char extension_buffer[12];
+    const char *extension = ".wav";
+    double volume = 1.0;
+    if(source->exists){
+      if(source->legacy_layout){
+        if(err && errcap) snprintf(err, errcap, "classic import: legacy sound decompression is not implemented yet");
+        free_imported_sounds(project);
+        return 0;
+      }
+      ImportReader r = {source->payload, source->payload_size, 0, err, errcap};
+      uint32_t kind, type_length, filename_length, has_data, blob_size = 0, ignored;
+      const uint8_t *type_text = NULL, *filename_text = NULL, *blob = NULL;
+      double pan;
+      if(!import_u32(&r, &kind, "sound kind") ||
+         !import_skip_string(&r, &type_text, &type_length, "sound file type") ||
+         !import_skip_string(&r, &filename_text, &filename_length, "sound filename") ||
+         !import_u32(&r, &has_data, "sound data flag") ||
+         (has_data && !import_blob(&r, &blob, &blob_size, "sound data")) ||
+         !import_u32(&r, &ignored, "sound effects") || !import_double(&r, &volume, "sound volume") ||
+         !import_double(&r, &pan, "sound pan") || !import_u32(&r, &ignored, "sound preload") ||
+         r.pos != r.size){
+        free_imported_sounds(project);
+        return 0;
+      }
+      (void)kind; (void)filename_text; (void)filename_length; (void)pan;
+      if(has_data){ audio = blob; audio_size = blob_size; }
+      if(type_length > 1 && type_length < 12 && type_text[0] == '.'){
+        int safe = 1;
+        for(uint32_t c = 1; c < type_length; ++c)
+          if(!((type_text[c] >= 'a' && type_text[c] <= 'z') ||
+               (type_text[c] >= 'A' && type_text[c] <= 'Z') ||
+               (type_text[c] >= '0' && type_text[c] <= '9'))) safe = 0;
+        if(safe){
+          memcpy(extension_buffer, type_text, type_length); extension_buffer[type_length] = '\0';
+          extension = extension_buffer;
+        }
+      }
+    }
+    snprintf(leaf, sizeof(leaf), "classic_sound_%06u%s", i, extension);
+    GmlcSound *sound = &project->sounds[i];
+    sound->id = copy_string(name);
+    sound->name = copy_string(name);
+    sound->data_path = cache_path(cache_dir, leaf);
+    sound->volume = (float)volume;
+    sound->pitch = 1.0f;
+    if(!sound->id || !sound->name || !sound->data_path ||
+       !write_binary(sound->data_path, audio, audio_size, err, errcap)){
+      if(err && errcap && !err[0]) snprintf(err, errcap, "classic import: out of memory importing sound %u", i);
+      free_imported_sounds(project);
+      return 0;
+    }
   }
   return 1;
 }
