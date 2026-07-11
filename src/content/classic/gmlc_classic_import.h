@@ -19,6 +19,10 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
 int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
                                     GmlcProject *project, const char *cache_dir,
                                     char *err, size_t errcap);
+/* Only existing classic font slots are emitted, in slot order. Named GML references bind to the
+ * resulting compact FONT ids, so deleted/empty slots do not consume the fixed runtime capacity.
+ * Limitation: a numeric literal containing an original sparse font slot id has no type information
+ * at compile time and cannot be remapped; source should refer to the font resource by name. */
 int gmlc_classic_import_fonts(const GmlcClassicManifest *classic,
                               GmlcProject *project, const char *cache_dir,
                               char *err, size_t errcap);

@@ -619,40 +619,50 @@ int gmlc_classic_import_fonts(const GmlcClassicManifest *classic,
     if(err && errcap) snprintf(err,errcap,"classic import: invalid font-import arguments");
     return 0;
   }
-  uint32_t count=classic->inventory.resource_slots[GMLC_CLASSIC_FONT];
-  if(count>INT32_MAX){ if(err && errcap) snprintf(err,errcap,"classic import: too many font slots"); return 0; }
-  project->fonts=(GmlcFont*)calloc(count?count:1,sizeof(*project->fonts));
+  uint32_t slot_count=classic->inventory.resource_slots[GMLC_CLASSIC_FONT];
+  const GmlcClassicResourceSlot *slots=classic->slots[GMLC_CLASSIC_FONT];
+  if(slot_count && !slots){
+    if(err && errcap) snprintf(err,errcap,"classic import: missing font slots");
+    return 0;
+  }
+  uint32_t count=0;
+  for(uint32_t i=0;i<slot_count;i++) if(slots[i].exists) count++;
+  if(count>INT32_MAX){ if(err && errcap) snprintf(err,errcap,"classic import: too many fonts"); return 0; }
+  /* Empty and deleted classic slots are not resources. In particular, do not create an atlas or
+   * reserve runtime font ids for them: sparse projects can have thousands of slots and no fonts. */
+  if(!count) return 1;
+  project->fonts=(GmlcFont*)calloc(count,sizeof(*project->fonts));
   if(!project->fonts){ if(err && errcap) snprintf(err,errcap,"classic import: out of memory allocating fonts"); return 0; }
-  project->n_fonts=project->cap_fonts=(int)count;
+  project->cap_fonts=(int)count;
   char *atlas_path=cache_path(cache_dir,"classic_font_fallback.png");
-  if(!atlas_path || (count && !write_default_font_png(atlas_path,err,errcap))){
+  if(!atlas_path || !write_default_font_png(atlas_path,err,errcap)){
     free(atlas_path); free_imported_fonts(project); return 0;
   }
-  const GmlcClassicResourceSlot *slots=classic->slots[GMLC_CLASSIC_FONT];
-  for(uint32_t i=0;i<count;i++){
+  for(uint32_t i=0;i<slot_count;i++){
+    if(!slots[i].exists) continue;
     char fallback[64];
-    snprintf(fallback,sizeof(fallback),"__classic_missing_font_%u",i);
-    const char *name=slots[i].exists && slots[i].name?slots[i].name:fallback;
-    GmlcFont *font=&project->fonts[i];
+    snprintf(fallback,sizeof(fallback),"__classic_font_slot_%u",i);
+    const char *name=slots[i].name?slots[i].name:fallback;
+    /* Dense FONT records are required by data.win. The compiler subsequently binds this resource
+     * name to its dense index; the original sparse slot number is deliberately not emitted. */
+    GmlcFont *font=&project->fonts[project->n_fonts++];
     font->id=copy_string(name); font->name=copy_string(name); font->png_path=copy_string(atlas_path);
     font->width=512; font->height=128; font->em_size=GML_DEFAULT_FONT_LINE_HEIGHT;
     int first=GML_DEFAULT_FONT_FIRST,last=GML_DEFAULT_FONT_LAST;
-    if(slots[i].exists){
-      ImportReader r={slots[i].payload,slots[i].payload_size,0,err,errcap};
-      const uint8_t *face; uint32_t face_length,fields[5];
-      if(!import_skip_string(&r,&face,&face_length,"font face")){
-        free(atlas_path); free_imported_fonts(project); return 0;
-      }
-      (void)face; (void)face_length;
-      for(int field=0;field<5;field++) if(!import_u32(&r,&fields[field],"font field")){
-        free(atlas_path); free_imported_fonts(project); return 0;
-      }
-      if(r.pos!=r.size){ if(err && errcap) snprintf(err,errcap,"classic import: trailing font payload"); free(atlas_path); free_imported_fonts(project); return 0; }
-      first=(int32_t)fields[3]; last=(int32_t)fields[4];
-      if(first<GML_DEFAULT_FONT_FIRST) first=GML_DEFAULT_FONT_FIRST;
-      if(last>GML_DEFAULT_FONT_LAST) last=GML_DEFAULT_FONT_LAST;
-      if(last<first){ first=GML_DEFAULT_FONT_FIRST; last=GML_DEFAULT_FONT_LAST; }
+    ImportReader r={slots[i].payload,slots[i].payload_size,0,err,errcap};
+    const uint8_t *face; uint32_t face_length,fields[5];
+    if(!import_skip_string(&r,&face,&face_length,"font face")){
+      free(atlas_path); free_imported_fonts(project); return 0;
     }
+    (void)face; (void)face_length;
+    for(int field=0;field<5;field++) if(!import_u32(&r,&fields[field],"font field")){
+      free(atlas_path); free_imported_fonts(project); return 0;
+    }
+    if(r.pos!=r.size){ if(err && errcap) snprintf(err,errcap,"classic import: trailing font payload"); free(atlas_path); free_imported_fonts(project); return 0; }
+    first=(int32_t)fields[3]; last=(int32_t)fields[4];
+    if(first<GML_DEFAULT_FONT_FIRST) first=GML_DEFAULT_FONT_FIRST;
+    if(last>GML_DEFAULT_FONT_LAST) last=GML_DEFAULT_FONT_LAST;
+    if(last<first){ first=GML_DEFAULT_FONT_FIRST; last=GML_DEFAULT_FONT_LAST; }
     font->n_glyphs=font->cap_glyphs=last-first+1;
     font->glyphs=(GmlcFontGlyph*)calloc((size_t)font->n_glyphs,sizeof(*font->glyphs));
     if(!font->id || !font->name || !font->png_path || !font->glyphs){
