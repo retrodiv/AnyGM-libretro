@@ -79,11 +79,21 @@ static int classic_import_metadata(const GmlcClassicManifest *manifest,
       trigger->runtime_id=(int)i;
       FILE *file=trigger->condition_path?fopen(trigger->condition_path,"wb"):NULL;
       int ok=file!=NULL;
-      const char *prefix="return ("; const char *suffix=");\n";
-      size_t condition_length=source->condition?strlen(source->condition):0;
-      if(ok && fwrite(prefix,1,strlen(prefix),file)!=strlen(prefix)) ok=0;
-      if(ok && condition_length && fwrite(source->condition,1,condition_length,file)!=condition_length) ok=0;
-      if(ok && fwrite(suffix,1,strlen(suffix),file)!=strlen(suffix)) ok=0;
+      const char *condition=source->condition?source->condition:"";
+      while(*condition==' ' || *condition=='\t' || *condition=='\r' || *condition=='\n') condition++;
+      size_t condition_length=strlen(condition);
+      if(!condition_length){
+        const char *disabled="return false;\n";
+        if(ok && fwrite(disabled,1,strlen(disabled),file)!=strlen(disabled)) ok=0;
+      } else if(*condition=='{'){
+        if(ok && fwrite(condition,1,condition_length,file)!=condition_length) ok=0;
+        if(ok && fwrite("\n",1,1,file)!=1) ok=0;
+      } else {
+        const char *prefix="return ("; const char *suffix=");\n";
+        if(ok && fwrite(prefix,1,strlen(prefix),file)!=strlen(prefix)) ok=0;
+        if(ok && fwrite(condition,1,condition_length,file)!=condition_length) ok=0;
+        if(ok && fwrite(suffix,1,strlen(suffix),file)!=strlen(suffix)) ok=0;
+      }
       if(file && fclose(file)!=0) ok=0;
       if(!trigger->name || !trigger->condition_path || !ok){
         if(err && errcap) snprintf(err,errcap,"classic project: cannot normalize trigger condition");
