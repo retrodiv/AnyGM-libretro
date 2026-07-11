@@ -213,9 +213,31 @@ typedef struct {
 } GmlcTileset;
 
 typedef struct {
+  char *name;
+  char *expression;
+} GmlcProjectConstant;
+
+typedef struct {
+  char *name;
+  char *condition_path;
+  int moment;
+  int runtime_id;
+} GmlcProjectTrigger;
+
+typedef struct {
+  char *file_name;
+  char *custom_folder;
+  uint8_t *data;
+  size_t data_size;
+  int export_mode;
+  int overwrite_file;
+} GmlcProjectIncludedFile;
+
+typedef struct {
   char *root_dir;
   char *yyp_path;
   char *name;
+  char *startup_code_path;
   int classic_version;
   int classic_scaling;
   int classic_interpolate;
@@ -249,6 +271,12 @@ typedef struct {
   int n_fonts, cap_fonts;
   GmlcTileset *tilesets;
   int n_tilesets, cap_tilesets;
+  GmlcProjectConstant *constants;
+  int n_constants, cap_constants;
+  GmlcProjectTrigger *triggers;
+  int n_triggers, cap_triggers;
+  GmlcProjectIncludedFile *included_files;
+  int n_included_files, cap_included_files;
 } GmlcProject;
 
 void gmlc_project_init(GmlcProject *p);

@@ -180,8 +180,17 @@ static Fixture manifest_fixture(unsigned container_version){
   fixture_u32(&f, GMLC_CLASSIC_MAGIC); fixture_u32(&f, container_version);
   fixture_u32(&f, 9); fixture_zero(&f, 16);
   fixture_u32(&f, 800); fixture_u32(&f, 0);
-  fixture_u32(&f, 800); fixture_u32(&f, 0); fixture_zero(&f, 8);
-  fixture_u32(&f, 800); fixture_u32(&f, 0); fixture_zero(&f, 8);
+  fixture_u32(&f, 800); fixture_u32(&f, 1);
+  { Fixture trigger={{0},0};
+    fixture_u32(&trigger,1); fixture_u32(&trigger,800);
+    fixture_string(&trigger,"fixture_trigger"); fixture_string(&trigger,"global.ready");
+    fixture_u32(&trigger,1); fixture_string(&trigger,"fixture_trigger_constant");
+    fixture_compressed(&f,trigger.data,(int)trigger.size); }
+  fixture_zero(&f, 8);
+  fixture_u32(&f, 800); fixture_u32(&f, 2);
+  fixture_string(&f,"fixture_number"); fixture_string(&f,"6*7");
+  fixture_string(&f,"fixture_text"); fixture_string(&f,"\"ready\"");
+  fixture_zero(&f, 8);
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
     fixture_u32(&f, 800); fixture_u32(&f, 1);
     if(type == GMLC_CLASSIC_SCRIPT){
@@ -203,10 +212,20 @@ static Fixture manifest_fixture(unsigned container_version){
     }
   }
   fixture_u32(&f, 100001); fixture_u32(&f, 1000001);
-  fixture_u32(&f, 800); fixture_u32(&f, 0); /* included files */
-  fixture_u32(&f, 700); fixture_u32(&f, 0); /* extensions */
+  fixture_u32(&f, 800); fixture_u32(&f, 1); /* included files */
+  { Fixture included={{0},0}; const unsigned char contents[]={4,5,6,7};
+    fixture_zero(&included,8); fixture_u32(&included,800);
+    fixture_string(&included,"fixture.dat"); fixture_string(&included,"source/fixture.dat");
+    fixture_u32(&included,1); fixture_u32(&included,sizeof(contents)); fixture_u32(&included,1);
+    fixture_u32(&included,sizeof(contents)); memcpy(included.data+included.size,contents,sizeof(contents)); included.size+=sizeof(contents);
+    fixture_u32(&included,2); fixture_string(&included,"");
+    fixture_u32(&included,1); fixture_u32(&included,0); fixture_u32(&included,0);
+    fixture_compressed(&f,included.data,(int)included.size); }
+  fixture_u32(&f, 700); fixture_u32(&f, 1); /* extensions */
+  fixture_string(&f,"fixture_extension");
   fixture_u32(&f, 800); fixture_u32(&f, 0); /* game information */
-  fixture_u32(&f, 500); fixture_u32(&f, 0); /* library code */
+  fixture_u32(&f, 500); fixture_u32(&f, 1); /* library code */
+  fixture_string(&f,"global.fixture_started = 1;");
   fixture_u32(&f, 700); fixture_u32(&f, 0); /* executable rooms */
   return f;
 }
@@ -223,7 +242,21 @@ static int expect_manifest(void){
            manifest.slots[GMLC_CLASSIC_SCRIPT][0].exists &&
            manifest.slots[GMLC_CLASSIC_SCRIPT][0].version == 800 &&
            !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].name, "resource_script") &&
-           !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source, "return 7;");
+           !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source, "return 7;") &&
+           manifest.trigger_def_count==1 && manifest.trigger_defs[0].exists &&
+           !strcmp(manifest.trigger_defs[0].condition,"global.ready") &&
+           !strcmp(manifest.trigger_defs[0].constant_name,"fixture_trigger_constant") &&
+           manifest.trigger_defs[0].moment==1 &&
+           manifest.constant_def_count==2 &&
+           !strcmp(manifest.constant_defs[0].name,"fixture_number") &&
+           !strcmp(manifest.constant_defs[0].value,"6*7") &&
+           manifest.included_file_count==1 && manifest.included_files[0].data_size==4 &&
+           !strcmp(manifest.included_files[0].file_name,"fixture.dat") &&
+           manifest.included_files[0].export_mode==2 &&
+           manifest.extension_count==1 &&
+           !strcmp(manifest.extension_names[0],"fixture_extension") &&
+           manifest.library_creation_code_count==1 &&
+           !strcmp(manifest.library_creation_code[0],"global.fixture_started = 1;");
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type)
     if(type != GMLC_CLASSIC_SCRIPT && manifest.existing[type]) ok = 0;
   gmlc_classic_manifest_free(&manifest);
@@ -248,9 +281,21 @@ static int build_executable_fixture(Fixture *executable){
   Fixture decoded={{0},0};
   fixture_u32(&decoded,0); /* leading junk */
   fixture_u32(&decoded,1); fixture_u32(&decoded,0x13572468); fixture_zero(&decoded,16);
-  fixture_u32(&decoded,700); fixture_u32(&decoded,0); /* extensions */
-  fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* triggers */
-  fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* constants */
+  fixture_u32(&decoded,700); fixture_u32(&decoded,1); /* extensions */
+  fixture_u32(&decoded,700); fixture_string(&decoded,"fixture_executable_extension"); fixture_string(&decoded,"fixture_folder");
+  fixture_u32(&decoded,1); fixture_u32(&decoded,700); fixture_string(&decoded,"fixture.bin");
+  fixture_u32(&decoded,4); fixture_string(&decoded,"global.fixture_extension_started = 1;"); fixture_string(&decoded,"");
+  fixture_u32(&decoded,0); fixture_u32(&decoded,1); /* functions, constants */
+  fixture_u32(&decoded,700); fixture_string(&decoded,"fixture_extension_constant"); fixture_string(&decoded,"7*6");
+  fixture_u32(&decoded,4); fixture_u32(&decoded,0); 
+  fixture_u32(&decoded,800); fixture_u32(&decoded,1); /* triggers */
+  { Fixture trigger={{0},0};
+    fixture_u32(&trigger,1); fixture_u32(&trigger,800);
+    fixture_string(&trigger,"fixture_executable_trigger"); fixture_string(&trigger,"global.ready");
+    fixture_u32(&trigger,2); fixture_string(&trigger,"fixture_executable_trigger_constant");
+    fixture_compressed(&decoded,trigger.data,(int)trigger.size); }
+  fixture_u32(&decoded,800); fixture_u32(&decoded,1); /* constants */
+  fixture_string(&decoded,"fixture_executable_constant"); fixture_string(&decoded,"21*2");
   for(unsigned type=0;type<GMLC_CLASSIC_RESOURCE_TYPES;type++){
     fixture_u32(&decoded,800);
     if(type==GMLC_CLASSIC_SCRIPT){
@@ -264,9 +309,17 @@ static int build_executable_fixture(Fixture *executable){
     } else fixture_u32(&decoded,0);
   }
   fixture_u32(&decoded,100000); fixture_u32(&decoded,1000000);
-  fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* includes */
+  fixture_u32(&decoded,800); fixture_u32(&decoded,1); /* includes */
+  { Fixture included={{0},0}; const unsigned char contents[]={10,11};
+    fixture_u32(&included,800); fixture_string(&included,"executable.dat"); fixture_string(&included,"");
+    fixture_u32(&included,1); fixture_u32(&included,sizeof(contents)); fixture_u32(&included,1);
+    fixture_u32(&included,sizeof(contents)); memcpy(included.data+included.size,contents,sizeof(contents)); included.size+=sizeof(contents);
+    fixture_u32(&included,1); fixture_string(&included,"");
+    fixture_u32(&included,1); fixture_u32(&included,0); fixture_u32(&included,1);
+    fixture_compressed(&decoded,included.data,(int)included.size); }
   fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* help */
-  fixture_u32(&decoded,500); fixture_u32(&decoded,0); /* library code */
+  fixture_u32(&decoded,500); fixture_u32(&decoded,1); /* library code */
+  fixture_string(&decoded,"global.fixture_executable_started = 1;");
   fixture_u32(&decoded,700); fixture_u32(&decoded,0); /* room order */
 
   memset(executable,0,sizeof(*executable));
@@ -298,8 +351,14 @@ static int expect_executable_manifest(void){
   if(ok){
     ok=manifest.inventory.header.version==GMLC_CLASSIC_GM8 &&
        manifest.inventory.header.game_id==0x13572468 && manifest.room_order_count==0 &&
+       manifest.extension_count==1 && !strcmp(manifest.extension_names[0],"fixture_executable_extension") &&
        manifest.existing[GMLC_CLASSIC_SCRIPT]==1 &&
-       !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source,"exit;");
+       !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source,"exit;") &&
+       manifest.trigger_def_count==1 && manifest.constant_def_count==2 &&
+       !strcmp(manifest.constant_defs[0].value,"7*6") && !strcmp(manifest.constant_defs[1].value,"21*2") &&
+       manifest.included_file_count==1 && manifest.included_files[0].data_size==2 &&
+       !strcmp(manifest.included_files[0].file_name,"executable.dat") &&
+       manifest.library_creation_code_count==2;
     gmlc_classic_manifest_free(&manifest);
   }
   return ok;

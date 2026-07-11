@@ -63,6 +63,8 @@ typedef struct {
   int expr_const;
   double expr_const_value;
   size_t expr_const_start;
+  const char *constant_stack[64];
+  int constant_depth;
   Lexer lex;
   int unsupported;
   int log_statements;
@@ -614,7 +616,18 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   if(!strcmp(name,"gp_padd")){ *out=32782; return 1; }
   if(!strcmp(name,"gp_axislh")){ *out=32785; return 1; }
   if(!strcmp(name,"gp_axislv")){ *out=32786; return 1; }
-  return macro_value(c,name,out) || resolve_asset(c,name,out);
+  if(macro_value(c,name,out) || resolve_asset(c,name,out)) return 1;
+  if(c->funcs){
+    for(int i=c->funcs->n_constants-1;i>=0;i--) if(!strcmp(c->funcs->constant_names[i],name)){
+      const char *expr=c->funcs->constant_exprs[i];
+      char *end=NULL;
+      double value=strtod(expr,&end);
+      while(end && isspace((unsigned char)*end)) end++;
+      if(end && end!=expr && !*end){ *out=value; return 1; }
+      break;
+    }
+  }
+  return 0;
 }
 
 static int parse_expr(Compiler *c);
@@ -1323,6 +1336,41 @@ static int parse_value_postfix(Compiler *c){
   }
 }
 
+/* Classic project constants are textual GML expressions, not merely numeric
+ * defines. Compile the expression at each use so strings, asset references and
+ * references to other project constants retain their normal language meaning. */
+static int emit_project_constant(Compiler *c, const char *name){
+  if(!c->funcs) return 0;
+  const char *expr=NULL;
+  for(int i=c->funcs->n_constants-1;i>=0;i--)
+    if(!strcmp(c->funcs->constant_names[i],name)){ expr=c->funcs->constant_exprs[i]; break; }
+  if(!expr) return 0;
+  if(c->constant_depth>=64){
+    c->unsupported=1; snprintf(c->lex.err,sizeof(c->lex.err),"project constant expansion is too deep");
+    return -1;
+  }
+  for(int i=0;i<c->constant_depth;i++) if(!strcmp(c->constant_stack[i],name)){
+    c->unsupported=1; snprintf(c->lex.err,sizeof(c->lex.err),"cyclic project constant '%s'",name);
+    return -1;
+  }
+  Lexer outer=c->lex, nested;
+  memset(&nested,0,sizeof(nested)); nested.src=expr;
+  c->constant_stack[c->constant_depth++]=name;
+  c->lex=nested; lx_next(&c->lex);
+  int ok=parse_expr(c);
+  if(ok && c->lex.tok.kind!=TOK_EOF){
+    c->unsupported=1;
+    snprintf(c->lex.err,sizeof(c->lex.err),"trailing token in project constant '%s'",name);
+    ok=0;
+  }
+  char nested_error[sizeof(c->lex.err)];
+  snprintf(nested_error,sizeof(nested_error),"%s",c->lex.err);
+  c->constant_depth--;
+  c->lex=outer;
+  if(!ok && nested_error[0]) snprintf(c->lex.err,sizeof(c->lex.err),"%s",nested_error);
+  return ok?1:-1;
+}
+
 static int parse_primary(Compiler *c){
   if(c->lex.tok.kind==TOK_NUM){ double d=c->lex.tok.num; lx_next(&c->lex); return emit_const_number(c,d); }
   if(c->lex.tok.kind==TOK_STR){
@@ -1382,6 +1430,9 @@ static int parse_primary(Compiler *c){
       c->expr_boolish=0;
       goto postfix_calls;
     }
+    int project_constant=emit_project_constant(c,name);
+    if(project_constant<0) return 0;
+    if(project_constant>0) goto postfix_calls;
     double cv=0;
     if(resolve_const(c,name,&cv)){
       if(!strcmp(name,"pi")){
@@ -2339,6 +2390,27 @@ static int registry_add_macro(GmlcFunctionRegistry *r, const char *name, double 
   return 1;
 }
 
+static int registry_add_constant(GmlcFunctionRegistry *r, const char *name, const char *expression){
+  if(!name || !*name || !expression) return 1;
+  if(r->n_constants>=r->cap_constants){
+    int nc=r->cap_constants?r->cap_constants*2:16;
+    char **names=(char**)realloc(r->constant_names,(size_t)nc*sizeof(*names));
+    if(!names) return 0;
+    r->constant_names=names;
+    char **exprs=(char**)realloc(r->constant_exprs,(size_t)nc*sizeof(*exprs));
+    if(!exprs) return 0;
+    r->constant_exprs=exprs; r->cap_constants=nc;
+  }
+  r->constant_names[r->n_constants]=gmlc_strdup(name);
+  r->constant_exprs[r->n_constants]=gmlc_strdup(expression);
+  if(!r->constant_names[r->n_constants] || !r->constant_exprs[r->n_constants]){
+    free(r->constant_names[r->n_constants]); free(r->constant_exprs[r->n_constants]);
+    return 0;
+  }
+  r->n_constants++;
+  return 1;
+}
+
 static int registry_collect_macros_from_text(GmlcFunctionRegistry *r, const char *text){
   const char *p=text;
   while((p=strstr(p,"#macro"))){
@@ -2725,6 +2797,8 @@ static int collect_functions_from_text(GmlcFunctionRegistry *r, const char *path
 
 int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_base, GmlcFunctionRegistry *out, char *err, size_t errcap){
   memset(out,0,sizeof(*out));
+  for(int i=0;i<project->n_constants;i++)
+    if(!registry_add_constant(out,project->constants[i].name,project->constants[i].expression)) goto fail;
   if(!registry_collect_assets(out,project)) goto fail;
   for(int i=0;i<project->n_rooms;i++){
     const char *path=project->rooms[i].creation_code_path;
@@ -2941,6 +3015,10 @@ void gmlc_function_registry_free(GmlcFunctionRegistry *r){
   for(int i=0;i<r->n_macros;i++) free(r->macro_names[i]);
   free(r->macro_names);
   free(r->macro_values);
+  for(int i=0;i<r->n_constants;i++){
+    free(r->constant_names[i]); free(r->constant_exprs[i]);
+  }
+  free(r->constant_names); free(r->constant_exprs);
   memset(r,0,sizeof(*r));
 }
 

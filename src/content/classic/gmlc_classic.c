@@ -99,6 +99,24 @@ static int reader_blob(ClassicReader *r, const char *what){
   return reader_u32(r, &length, what) && reader_skip(r, length, what);
 }
 
+static int reader_blob_copy(ClassicReader *r, GmlcClassicBlob *out, const char *what){
+  uint32_t length;
+  memset(out,0,sizeof(*out));
+  if(!reader_u32(r,&length,what)) return 0;
+  if(r->pos>r->size || length>r->size-r->pos) return reader_fail(r,what);
+  if(length){
+    out->data=(uint8_t*)malloc(length);
+    if(!out->data){
+      if(r->err && r->errcap) snprintf(r->err,r->errcap,"classic project: out of memory reading %s",what);
+      return 0;
+    }
+    memcpy(out->data,r->data+r->pos,length);
+    out->size=length;
+  }
+  r->pos+=length;
+  return 1;
+}
+
 static int reader_words(ClassicReader *r, uint32_t count, const char *what){
   if(count > (r->size - r->pos) / 4) return reader_fail(r, what);
   return reader_skip(r, (size_t)count * 4, what);
@@ -142,6 +160,97 @@ static int read_compressed_settings(const uint8_t *compressed, uint32_t compress
   ClassicReader settings={(const uint8_t*)raw,(size_t)raw_size,0,err,errcap};
   int ok=read_settings_prefix(&settings,out);
   STBI_FREE(raw);
+  return ok;
+}
+
+static int reader_trigger(ClassicReader *outer, GmlcClassicTrigger *out, const char *what){
+  uint32_t compressed_size;
+  memset(out,0,sizeof(*out));
+  if(!reader_u32(outer,&compressed_size,what)) return 0;
+  if(outer->pos>outer->size || compressed_size>outer->size-outer->pos || compressed_size>INT_MAX)
+    return reader_fail(outer,what);
+  int raw_size=0;
+  char *raw=stbi_zlib_decode_malloc((const char*)outer->data+outer->pos,(int)compressed_size,&raw_size);
+  if(!raw && compressed_size>=6)
+    raw=stbi_zlib_decode_noheader_malloc((const char*)outer->data+outer->pos+2,
+                                         (int)compressed_size-6,&raw_size);
+  if(!raw || raw_size<4){
+    STBI_FREE(raw);
+    if(outer->err && outer->errcap) snprintf(outer->err,outer->errcap,"classic project: invalid %s",what);
+    return 0;
+  }
+  ClassicReader r={(const uint8_t*)raw,(size_t)raw_size,0,outer->err,outer->errcap};
+  uint32_t exists=0,version=0;
+  int ok=reader_u32(&r,&exists,"trigger existence flag");
+  out->exists=exists!=0;
+  if(ok && out->exists){
+    ok=reader_u32(&r,&version,"trigger version") && version>=800 &&
+       reader_string_copy(&r,&out->name,"trigger name") &&
+       reader_string_copy(&r,&out->condition,"trigger condition") &&
+       reader_u32(&r,&out->moment,"trigger moment") &&
+       reader_string_copy(&r,&out->constant_name,"trigger constant name");
+  }
+  if(ok && r.pos!=r.size && !(r.pos+1==r.size && r.data[r.pos]==0)){
+    if(outer->err && outer->errcap)
+      snprintf(outer->err,outer->errcap,"classic project: trigger has %zu trailing bytes",r.size-r.pos);
+    ok=0;
+  }
+  if(!ok){
+    free(out->name); free(out->condition); free(out->constant_name);
+    memset(out,0,sizeof(*out));
+  }
+  STBI_FREE(raw);
+  if(ok) outer->pos+=compressed_size;
+  return ok;
+}
+
+static int reader_included_file(ClassicReader *outer, GmlcClassicIncludedFile *out,
+                                int has_timestamp, const char *what){
+  uint32_t compressed_size;
+  memset(out,0,sizeof(*out));
+  if(!reader_u32(outer,&compressed_size,what)) return 0;
+  if(outer->pos>outer->size || compressed_size>outer->size-outer->pos || compressed_size>INT_MAX)
+    return reader_fail(outer,what);
+  int raw_size=0;
+  char *raw=stbi_zlib_decode_malloc((const char*)outer->data+outer->pos,(int)compressed_size,&raw_size);
+  if(!raw && compressed_size>=6)
+    raw=stbi_zlib_decode_noheader_malloc((const char*)outer->data+outer->pos+2,
+                                         (int)compressed_size-6,&raw_size);
+  if(!raw || raw_size<4){
+    STBI_FREE(raw);
+    if(outer->err && outer->errcap) snprintf(outer->err,outer->errcap,"classic project: invalid %s",what);
+    return 0;
+  }
+  ClassicReader r={(const uint8_t*)raw,(size_t)raw_size,0,outer->err,outer->errcap};
+  uint32_t version=0,data_exists=0,stored=0,overwrite=0,free_memory=0,remove_at_end=0;
+  GmlcClassicBlob embedded={0};
+  int ok=(!has_timestamp || reader_skip(&r,8,"included-file timestamp")) &&
+         reader_u32(&r,&version,"included-file version") && version>=800 &&
+         reader_string_copy(&r,&out->file_name,"included-file name") &&
+         reader_string_copy(&r,&out->source_path,"included-file source path") &&
+         reader_u32(&r,&data_exists,"included-file data flag") &&
+         reader_u32(&r,&out->source_length,"included-file source length") &&
+         reader_u32(&r,&stored,"included-file storage flag");
+  if(ok && data_exists && stored) ok=reader_blob_copy(&r,&embedded,"included-file data");
+  if(ok) ok=reader_u32(&r,&out->export_mode,"included-file export mode") &&
+            reader_string_copy(&r,&out->custom_folder,"included-file custom folder") &&
+            reader_u32(&r,&overwrite,"included-file overwrite flag") &&
+            reader_u32(&r,&free_memory,"included-file free-memory flag") &&
+            reader_u32(&r,&remove_at_end,"included-file remove flag");
+  if(ok && r.pos!=r.size && !(r.pos+1==r.size && r.data[r.pos]==0)){
+    if(outer->err && outer->errcap)
+      snprintf(outer->err,outer->errcap,"classic project: included file has %zu trailing bytes",r.size-r.pos);
+    ok=0;
+  }
+  out->data_exists=data_exists!=0; out->stored_in_project=stored!=0;
+  out->overwrite_file=overwrite!=0; out->free_memory=free_memory!=0;
+  out->remove_at_end=remove_at_end!=0; out->data=embedded.data; out->data_size=embedded.size;
+  if(!ok){
+    free(out->file_name); free(out->source_path); free(out->custom_folder); free(out->data);
+    memset(out,0,sizeof(*out));
+  }
+  STBI_FREE(raw);
+  if(ok) outer->pos+=compressed_size;
   return ok;
 }
 
@@ -472,7 +581,8 @@ static int skip_legacy_image(ClassicReader *r, const char *what){
 }
 
 static int skip_legacy_settings(ClassicReader *r, uint32_t container_version,
-                                uint32_t *settings_version, GmlcClassicSettings *settings){
+                                uint32_t *settings_version, GmlcClassicSettings *settings,
+                                uint32_t *constant_count, GmlcClassicManifest *manifest){
   uint32_t loading_bar, own_loading_image, constants;
   if(!reader_u32(r, settings_version, "legacy settings version")) return 0;
   int gm7 = container_version == GMLC_CLASSIC_GM7 || container_version == GMLC_CLASSIC_GM7_ALT;
@@ -493,8 +603,18 @@ static int skip_legacy_settings(ClassicReader *r, uint32_t container_version,
   if(!reader_skip(r, 8, "settings timestamp") || !reader_string(r, "game information") ||
      !reader_u32(r, &constants, "settings constant count")) return 0;
   if(constants > (r->size - r->pos) / 8) return reader_fail(r, "settings constants");
-  for(uint32_t i = 0; i < constants; ++i)
-    if(!reader_string(r, "constant name") || !reader_string(r, "constant value")) return 0;
+  if(constant_count) *constant_count=constants;
+  if(manifest && constants){
+    manifest->constant_defs=(GmlcClassicConstant*)calloc(constants,sizeof(*manifest->constant_defs));
+    if(!manifest->constant_defs) return reader_fail(r,"settings constants allocation");
+    manifest->constant_def_count=constants;
+  }
+  for(uint32_t i = 0; i < constants; ++i){
+    if(manifest){
+      if(!reader_string_copy(r,&manifest->constant_defs[i].name,"constant name") ||
+         !reader_string_copy(r,&manifest->constant_defs[i].value,"constant value")) return 0;
+    } else if(!reader_string(r, "constant name") || !reader_string(r, "constant value")) return 0;
+  }
   if(gm7){
     if(!reader_words(r, 4, "game version components") ||
        !reader_string(r, "company") || !reader_string(r, "product") ||
@@ -591,7 +711,7 @@ static int parse_legacy_project(const void *data, size_t size,
   memcpy(inventory->header.guid, plain + 12, 16);
   ClassicReader r = {plain, plain_size, 28, err, errcap};
   if(!skip_legacy_settings(&r, container_version, &inventory->settings_version,
-                           &inventory->settings)){
+                           &inventory->settings,&inventory->constants,manifest)){
     free(decoded);
     return 0;
   }
@@ -825,32 +945,101 @@ void gmlc_classic_manifest_free(GmlcClassicManifest *manifest){
     }
     free(manifest->slots[type]);
   }
+  for(uint32_t i=0;i<manifest->constant_def_count;i++){
+    free(manifest->constant_defs[i].name); free(manifest->constant_defs[i].value);
+  }
+  free(manifest->constant_defs);
+  for(uint32_t i=0;i<manifest->trigger_def_count;i++){
+    free(manifest->trigger_defs[i].name);
+    free(manifest->trigger_defs[i].condition);
+    free(manifest->trigger_defs[i].constant_name);
+  }
+  free(manifest->trigger_defs);
+  for(uint32_t i=0;i<manifest->included_file_count;i++){
+    free(manifest->included_files[i].file_name);
+    free(manifest->included_files[i].source_path);
+    free(manifest->included_files[i].custom_folder);
+    free(manifest->included_files[i].data);
+  }
+  free(manifest->included_files);
+  for(uint32_t i=0;i<manifest->extension_count;i++) free(manifest->extension_names[i]);
+  free(manifest->extension_names);
+  for(uint32_t i=0;i<manifest->library_creation_code_count;i++) free(manifest->library_creation_code[i]);
+  free(manifest->library_creation_code);
   free(manifest->room_order);
   memset(manifest, 0, sizeof(*manifest));
 }
 
-static int parse_modern_room_order(const void *data, size_t size,
-                                   GmlcClassicManifest *manifest,
-                                   char *err, size_t errcap){
+static int parse_modern_metadata(const void *data, size_t size,
+                                 GmlcClassicManifest *manifest,
+                                 char *err, size_t errcap){
+  ClassicReader r={(const uint8_t*)data,size,28,err,errcap};
+  uint32_t version,count,compressed_length;
+  if(!reader_u32(&r,&version,"settings version") ||
+     !reader_u32(&r,&compressed_length,"compressed settings length") ||
+     !reader_skip(&r,compressed_length,"compressed settings") ||
+     !reader_u32(&r,&version,"trigger section version") || version<800 ||
+     !reader_u32(&r,&count,"trigger count") || count!=manifest->inventory.trigger_slots)
+    return reader_fail(&r,"trigger metadata");
+  if(count){
+    manifest->trigger_defs=(GmlcClassicTrigger*)calloc(count,sizeof(*manifest->trigger_defs));
+    if(!manifest->trigger_defs) return reader_fail(&r,"trigger allocation");
+    manifest->trigger_def_count=count;
+  }
+  for(uint32_t i=0;i<count;i++)
+    if(!reader_trigger(&r,&manifest->trigger_defs[i],"trigger block")) return 0;
+  if(!reader_skip(&r,8,"trigger timestamp") ||
+     !reader_u32(&r,&version,"constant section version") || version<800 ||
+     !reader_u32(&r,&count,"constant count") || count!=manifest->inventory.constants)
+    return reader_fail(&r,"constant metadata");
+  if(count){
+    manifest->constant_defs=(GmlcClassicConstant*)calloc(count,sizeof(*manifest->constant_defs));
+    if(!manifest->constant_defs) return reader_fail(&r,"constant allocation");
+    manifest->constant_def_count=count;
+  }
+  for(uint32_t i=0;i<count;i++)
+    if(!reader_string_copy(&r,&manifest->constant_defs[i].name,"constant name") ||
+       !reader_string_copy(&r,&manifest->constant_defs[i].value,"constant value")) return 0;
+  return reader_skip(&r,8,"constant timestamp");
+}
+
+static int parse_modern_tail(const void *data, size_t size,
+                             GmlcClassicManifest *manifest,
+                             char *err, size_t errcap){
   ClassicReader r = {(const uint8_t*)data, size, manifest->inventory.payload_end, err, errcap};
   uint32_t version, count;
   if(!reader_u32(&r, &version, "included-file section version") || version < 620 ||
      !reader_u32(&r, &count, "included-file count")) return 0;
   if(count > (r.size - r.pos) / 4) return reader_fail(&r, "included files");
+  if(count){
+    manifest->included_files=(GmlcClassicIncludedFile*)calloc(count,sizeof(*manifest->included_files));
+    if(!manifest->included_files) return reader_fail(&r,"included-file allocation");
+    manifest->included_file_count=count;
+  }
   for(uint32_t i = 0; i < count; ++i)
-    if(!reader_blob(&r, "included file")) return 0;
+    if(!reader_included_file(&r,&manifest->included_files[i],1,"included file")) return 0;
   if(!reader_u32(&r, &version, "extension section version") || version < 700 ||
      !reader_u32(&r, &count, "extension count")) return 0;
   if(count > (r.size - r.pos) / 4) return reader_fail(&r, "extensions");
+  if(count){
+    manifest->extension_names=(char**)calloc(count,sizeof(*manifest->extension_names));
+    if(!manifest->extension_names) return reader_fail(&r,"extension allocation");
+    manifest->extension_count=count;
+  }
   for(uint32_t i = 0; i < count; ++i)
-    if(!reader_string(&r, "extension name")) return 0;
+    if(!reader_string_copy(&r,&manifest->extension_names[i], "extension name")) return 0;
   if(!reader_u32(&r, &version, "game-information version") || version < 600 ||
      !reader_blob(&r, "game information") ||
      !reader_u32(&r, &version, "library-code section version") || version < 500 ||
      !reader_u32(&r, &count, "library-code count")) return 0;
   if(count > (r.size - r.pos) / 4) return reader_fail(&r, "library creation code");
+  if(count){
+    manifest->library_creation_code=(char**)calloc(count,sizeof(*manifest->library_creation_code));
+    if(!manifest->library_creation_code) return reader_fail(&r,"library creation-code allocation");
+    manifest->library_creation_code_count=count;
+  }
   for(uint32_t i = 0; i < count; ++i)
-    if(!reader_string(&r, "library creation code")) return 0;
+    if(!reader_string_copy(&r,&manifest->library_creation_code[i], "library creation code")) return 0;
   if(!reader_u32(&r, &version, "room-order section version") || version < 500 ||
      !reader_u32(&r, &count, "executable room count") ||
      count > manifest->inventory.resource_slots[GMLC_CLASSIC_ROOM] ||
@@ -872,6 +1061,81 @@ static int parse_modern_room_order(const void *data, size_t size,
   return 1;
 }
 
+static int manifest_append_constant(GmlcClassicManifest *manifest, char *name, char *value){
+  uint32_t count=manifest->constant_def_count;
+  GmlcClassicConstant *items=(GmlcClassicConstant*)realloc(
+    manifest->constant_defs,(size_t)(count+1)*sizeof(*items));
+  if(!items) return 0;
+  manifest->constant_defs=items;
+  items[count].name=name; items[count].value=value;
+  manifest->constant_def_count=count+1;
+  return 1;
+}
+
+static int manifest_append_library_code(GmlcClassicManifest *manifest, char *source){
+  uint32_t count=manifest->library_creation_code_count;
+  char **items=(char**)realloc(manifest->library_creation_code,(size_t)(count+1)*sizeof(*items));
+  if(!items) return 0;
+  manifest->library_creation_code=items; items[count]=source;
+  manifest->library_creation_code_count=count+1;
+  return 1;
+}
+
+static int parse_executable_extensions(ClassicReader *r, GmlcClassicManifest *out,
+                                       uint32_t count){
+  if(count){
+    out->extension_names=(char**)calloc(count,sizeof(*out->extension_names));
+    if(!out->extension_names) return reader_fail(r,"executable extension allocation");
+    out->extension_count=count;
+  }
+  for(uint32_t extension=0;extension<count;extension++){
+    uint32_t version=0,file_count=0;
+    if(!reader_u32(r,&version,"executable extension version") || version<700 ||
+       !reader_string_copy(r,&out->extension_names[extension],"executable extension name") ||
+       !reader_string(r,"executable extension folder") ||
+       !reader_u32(r,&file_count,"executable extension file count")) return 0;
+    if(file_count>(r->size-r->pos)/20) return reader_fail(r,"executable extension files");
+    for(uint32_t file=0;file<file_count;file++){
+      uint32_t kind=0,function_count=0,constant_count=0;
+      char *initializer=NULL,*finalizer=NULL;
+      if(!reader_u32(r,&version,"executable extension-file version") || version<700 ||
+         !reader_string(r,"executable extension-file name") ||
+         !reader_u32(r,&kind,"executable extension-file kind") ||
+         !reader_string_copy(r,&initializer,"executable extension initializer") ||
+         !reader_string_copy(r,&finalizer,"executable extension finalizer") ||
+         !reader_u32(r,&function_count,"executable extension function count")){
+        free(initializer); free(finalizer); return 0;
+      }
+      if(initializer && *initializer){
+        if(!manifest_append_library_code(out,initializer)){ free(initializer); free(finalizer); return 0; }
+      } else free(initializer);
+      free(finalizer);
+      (void)kind;
+      if(function_count>(r->size-r->pos)/96) return reader_fail(r,"executable extension functions");
+      for(uint32_t function=0;function<function_count;function++)
+        if(!reader_u32(r,&version,"executable extension-function version") || version<700 ||
+           !reader_string(r,"executable extension-function name") ||
+           !reader_string(r,"executable extension-function external name") ||
+           !reader_words(r,21,"executable extension-function signature")) return 0;
+      if(!reader_u32(r,&constant_count,"executable extension constant count")) return 0;
+      if(constant_count>(r->size-r->pos)/12) return reader_fail(r,"executable extension constants");
+      for(uint32_t constant=0;constant<constant_count;constant++){
+        char *name=NULL,*value=NULL;
+        if(!reader_u32(r,&version,"executable extension-constant version") || version<700 ||
+           !reader_string_copy(r,&name,"executable extension-constant name") ||
+           !reader_string_copy(r,&value,"executable extension-constant value") ||
+           !manifest_append_constant(out,name,value)){
+          free(name); free(value); return 0;
+        }
+      }
+    }
+    uint32_t encrypted_size=0;
+    if(!reader_u32(r,&encrypted_size,"executable extension data length") || encrypted_size<4 ||
+       !reader_skip(r,encrypted_size,"executable extension data")) return 0;
+  }
+  return 1;
+}
+
 static int parse_executable_data(const uint8_t *data, size_t size,
                                  uint32_t version, uint32_t settings_version,
                                  GmlcClassicManifest *out, char *err, size_t errcap){
@@ -888,17 +1152,26 @@ static int parse_executable_data(const uint8_t *data, size_t size,
   (void)pro;
   if(!reader_u32(&r,&section_version,"executable extension version") ||
      !reader_u32(&r,&count,"executable extension count")) return 0;
-  if(count){
-    if(err && errcap) snprintf(err,errcap,"classic executable: extensions are not supported yet");
-    return 0;
-  }
+  if(section_version<700 || !parse_executable_extensions(&r,out,count)) return 0;
   if(!reader_u32(&r,&section_version,"executable trigger version") || section_version<800 ||
      !reader_u32(&r,&out->inventory.trigger_slots,"executable trigger count")) return 0;
-  for(uint32_t i=0;i<out->inventory.trigger_slots;i++) if(!reader_blob(&r,"executable trigger")) return 0;
+  if(out->inventory.trigger_slots){
+    out->trigger_defs=(GmlcClassicTrigger*)calloc(out->inventory.trigger_slots,sizeof(*out->trigger_defs));
+    if(!out->trigger_defs) return reader_fail(&r,"executable trigger allocation");
+    out->trigger_def_count=out->inventory.trigger_slots;
+  }
+  for(uint32_t i=0;i<out->inventory.trigger_slots;i++)
+    if(!reader_trigger(&r,&out->trigger_defs[i],"executable trigger")) return 0;
   if(!reader_u32(&r,&section_version,"executable constant version") || section_version<800 ||
      !reader_u32(&r,&out->inventory.constants,"executable constant count")) return 0;
-  for(uint32_t i=0;i<out->inventory.constants;i++)
-    if(!reader_string(&r,"executable constant name") || !reader_string(&r,"executable constant value")) return 0;
+  for(uint32_t i=0;i<out->inventory.constants;i++){
+    char *name=NULL,*value=NULL;
+    if(!reader_string_copy(&r,&name,"executable constant name") ||
+       !reader_string_copy(&r,&value,"executable constant value") ||
+       !manifest_append_constant(out,name,value)){
+      free(name); free(value); return 0;
+    }
+  }
   for(int type=0;type<GMLC_CLASSIC_RESOURCE_TYPES;type++){
     if(!reader_u32(&r,&section_version,"executable resource version") || section_version<800 ||
        !reader_u32(&r,&count,"executable resource count")) return 0;
@@ -923,11 +1196,23 @@ static int parse_executable_data(const uint8_t *data, size_t size,
   out->inventory.payload_end=r.pos;
   if(!reader_u32(&r,&section_version,"executable include version") ||
      !reader_u32(&r,&count,"executable include count")) return 0;
-  for(uint32_t i=0;i<count;i++) if(!reader_blob(&r,"executable include")) return 0;
+  if(count){
+    out->included_files=(GmlcClassicIncludedFile*)calloc(count,sizeof(*out->included_files));
+    if(!out->included_files) return reader_fail(&r,"executable include allocation");
+    out->included_file_count=count;
+  }
+  for(uint32_t i=0;i<count;i++)
+    if(!reader_included_file(&r,&out->included_files[i],0,"executable include")) return 0;
   if(!reader_u32(&r,&section_version,"executable help version") || !reader_blob(&r,"executable help")) return 0;
   if(!reader_u32(&r,&section_version,"executable library version") ||
      !reader_u32(&r,&count,"executable library count")) return 0;
-  for(uint32_t i=0;i<count;i++) if(!reader_string(&r,"executable library code")) return 0;
+  for(uint32_t i=0;i<count;i++){
+    char *source=NULL;
+    if(!reader_string_copy(&r,&source,"executable library code") ||
+       !manifest_append_library_code(out,source)){
+      free(source); return 0;
+    }
+  }
   if(!reader_u32(&r,&section_version,"executable room-order version") ||
      !reader_u32(&r,&count,"executable room-order count")) return 0;
   if(count>out->inventory.resource_slots[GMLC_CLASSIC_ROOM]){
@@ -978,6 +1263,10 @@ int gmlc_classic_manifest(const void *data, size_t size,
      header.version == GMLC_CLASSIC_GM7_ALT)
     return parse_legacy_project(data, size, &out->inventory, out, err, errcap);
   if(!gmlc_classic_inventory(data, size, &out->inventory, err, errcap)) return 0;
+  if(!parse_modern_metadata(data,size,out,err,errcap)){
+    gmlc_classic_manifest_free(out);
+    return 0;
+  }
   for(int type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
     uint32_t count = out->inventory.resource_slots[type];
     if(count){
@@ -1015,7 +1304,7 @@ int gmlc_classic_manifest(const void *data, size_t size,
     }
   }
   if(header.version >= GMLC_CLASSIC_GM8 &&
-     !parse_modern_room_order(data, size, out, err, errcap)){
+     !parse_modern_tail(data, size, out, err, errcap)){
     gmlc_classic_manifest_free(out);
     return 0;
   }

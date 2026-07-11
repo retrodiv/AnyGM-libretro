@@ -18,9 +18,16 @@ static int compile_fixture(const GmlcProject *project, const char *text, int exp
   fclose(file);
   if(!wrote){ remove(path); return 0; }
   GmlcCodeBlob blob;
+  GmlcFunctionRegistry registry;
   char err[256]={0};
   memset(&blob,0,sizeof(blob));
-  int ok=gmlc_bytecode_compile_source(project,path,&blob,err,sizeof(err));
+  memset(&registry,0,sizeof(registry));
+  int have_registry=project->n_constants>0;
+  int registry_ok=!have_registry ||
+    gmlc_bytecode_collect_functions(project,0,&registry,err,sizeof(err));
+  int ok=registry_ok && (have_registry
+    ? gmlc_bytecode_compile_source_ex(project,&registry,-1,path,&blob,err,sizeof(err))
+    : gmlc_bytecode_compile_source(project,path,&blob,err,sizeof(err)));
   remove(path);
   int matched=expect_ok ? (ok && !blob.is_placeholder && blob.size>0) :
                           (!ok && blob.is_placeholder && blob.diagnostic);
@@ -29,6 +36,7 @@ static int compile_fixture(const GmlcProject *project, const char *text, int exp
       ok?"compiled":"failed",err,
       blob.diagnostic?" / ":"",blob.diagnostic?blob.diagnostic:"");
   gmlc_bytecode_free(&blob);
+  gmlc_function_registry_free(&registry);
   return matched;
 }
 
@@ -67,6 +75,15 @@ int main(int argc, char **argv){
   ok &= compile_fixture(&project,
     "speed=0\n(instance_create(1,2,3)).hspeed=-.5\ninstance_create(4,5,6)\n"
     "(instance_create(7,8,9)).hspeed=.5\n",1);
+  GmlcProjectConstant constants[]={
+    {(char*)"fixture_base",(char*)"6*7"},
+    {(char*)"fixture_nested",(char*)"fixture_base+1"},
+    {(char*)"fixture_string",(char*)"\"ready\""}
+  };
+  project.constants=constants; project.n_constants=project.cap_constants=3;
+  ok &= compile_fixture(&project,
+    "result=fixture_nested; label=fixture_string+string(fixture_base);\n",1);
+  project.constants=NULL; project.n_constants=project.cap_constants=0;
   ok &= compile_fixture(&project,"result=;\n",0);
   if(ok) puts("gmlc bytecode fixtures: ok");
   return ok?0:1;

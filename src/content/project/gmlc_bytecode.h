@@ -63,6 +63,9 @@ typedef struct {
   char **macro_names;
   double *macro_values;
   int n_macros, cap_macros;
+  char **constant_names;
+  char **constant_exprs;
+  int n_constants, cap_constants;
 } GmlcFunctionRegistry;
 
 int gmlc_bytecode_emit_empty(GmlcCodeBlob *out);

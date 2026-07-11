@@ -23,6 +23,11 @@
 #include <string.h>
 #include <limits.h>
 #include <ctype.h>
+#include <errno.h>
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
 
 typedef struct {
   uint8_t *data;
@@ -1288,6 +1293,10 @@ static int room_code_count(const GmlcProject *p){
   return n;
 }
 
+static int startup_code_count(const GmlcProject *p){
+  return p && p->startup_code_path && *p->startup_code_path ? 1 : 0;
+}
+
 static int room_creation_code_index(const GmlcProject *p, int room_index){
   if(!p || room_index<0 || room_index>=p->n_rooms ||
      !room_has_creation_code(&p->rooms[room_index])) return -1;
@@ -1311,6 +1320,11 @@ static int room_instance_creation_code_count(const GmlcProject *p){
     }
   }
   return n;
+}
+
+static int trigger_code_base(const GmlcProject *p){
+  return room_code_count(p)+p->n_scripts+total_timeline_moments(p)+total_object_events(p)+
+         room_instance_creation_code_count(p)+startup_code_count(p);
 }
 
 static int room_instance_creation_code_base(const GmlcProject *p){
@@ -1399,6 +1413,7 @@ static const char *event_suffix(const GmlcObjectEvent *ev, char *buf, size_t cap
     case 8: snprintf(buf,cap,"Draw_%d",ev->event_number); break;
     case 9: snprintf(buf,cap,"KeyPress_%d",ev->event_number); break;
     case 10: snprintf(buf,cap,"KeyRelease_%d",ev->event_number); break;
+    case 11: snprintf(buf,cap,"Trigger_%d",ev->event_number); break;
     case 12: snprintf(buf,cap,"CleanUp_%d",ev->event_number); break;
     default: snprintf(buf,cap,"Other_%d",ev->event_number); break;
   }
@@ -2536,7 +2551,7 @@ static int seed_function_strings(Pkg *pkg, const GmlcProject *p, const GmlcFunct
 static int seed_code_string_order(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   if(intern(pkg,"prototype")<0 || intern(pkg,"@@array@@")<0 || intern(pkg,"arguments")<0) return 0;
   if(pkg->code_placeholders) return 1;
-  int base_count=room_code_count(p) + p->n_scripts + total_timeline_moments(p) + total_object_events(p) + room_instance_creation_code_count(p);
+  int base_count=trigger_code_base(p)+p->n_triggers;
   GmlcFunctionRegistry funcs;
   if(!gmlc_bytecode_collect_functions(p,base_count,&funcs,err,errcap)) return 0;
   int ok=0;
@@ -2572,6 +2587,10 @@ static int seed_code_string_order(Pkg *pkg, const GmlcProject *p, char *err, siz
       if(!seed_compiled_path_strings(pkg,p,&funcs,-1,in->creation_code_path)) goto done;
     }
   }
+  if(startup_code_count(p) &&
+     !seed_compiled_path_strings(pkg,p,&funcs,-1,p->startup_code_path)) goto done;
+  for(int i=0;i<p->n_triggers;i++)
+    if(!seed_compiled_path_strings(pkg,p,&funcs,-1,p->triggers[i].condition_path)) goto done;
   for(int i=0;i<funcs.n_defs;i++){
     if(funcs.defs[i].is_script_wrapper) continue;
     if(!seed_function_strings(pkg,p,&funcs,&funcs.defs[i])) goto done;
@@ -2730,7 +2749,7 @@ static int write_function_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcF
 
 static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   size_t s=chunk_begin(pkg,"CODE");
-  int base_count=room_code_count(p) + p->n_scripts + total_timeline_moments(p) + total_object_events(p) + room_instance_creation_code_count(p);
+  int base_count=trigger_code_base(p)+p->n_triggers;
   GmlcFunctionRegistry funcs;
   memset(&funcs,0,sizeof(funcs));
   if(!pkg->code_placeholders && !gmlc_bytecode_collect_functions(p,base_count,&funcs,err,errcap)) return 0;
@@ -2798,6 +2817,15 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
       if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,sid,in->creation_code_path,err,errcap)) goto done;
     }
   }
+  if(startup_code_count(p)){
+    int sid=intern(pkg,"gml_GlobalScript___gmlc_classic_startup");
+    if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,sid,p->startup_code_path,err,errcap)) goto done;
+  }
+  for(int i=0;i<p->n_triggers;i++){
+    char name[64]; snprintf(name,sizeof(name),"gml_TriggerCondition_%d",p->triggers[i].runtime_id);
+    int sid=intern(pkg,name);
+    if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,sid,p->triggers[i].condition_path,err,errcap)) goto done;
+  }
   for(int i=0;i<funcs.n_defs;i++){
     if(funcs.defs[i].is_script_wrapper) continue;
     if(!write_function_code_entry(pkg,p,&funcs,entries,&ci,&funcs.defs[i],err,errcap)) goto done;
@@ -2831,6 +2859,19 @@ done:
   free(entries);
   gmlc_function_registry_free(&funcs);
   return ok;
+}
+
+static int write_trig(Pkg *pkg, const GmlcProject *p){
+  size_t s=chunk_begin(pkg,"TRIG");
+  wu32(&pkg->b,(uint32_t)p->n_triggers);
+  int base=trigger_code_base(p);
+  for(int i=0;i<p->n_triggers;i++){
+    wi32(&pkg->b,p->triggers[i].runtime_id);
+    wi32(&pkg->b,p->triggers[i].moment);
+    wi32(&pkg->b,base+i);
+  }
+  chunk_end(pkg,s);
+  return 1;
 }
 
 static int write_vari(Pkg *pkg){
@@ -2936,6 +2977,81 @@ static int write_file(const char *path, const uint8_t *data, size_t len, char *e
   return 1;
 }
 
+static int package_mkdir(const char *path){
+#ifdef _WIN32
+  return _mkdir(path)==0 || errno==EEXIST;
+#else
+  return mkdir(path,0777)==0 || errno==EEXIST;
+#endif
+}
+
+static int package_mkdir_tree(char *path){
+  char *start=path+1;
+  if(isalpha((unsigned char)path[0]) && path[1]==':' && (path[2]=='/' || path[2]=='\\')) start=path+3;
+  for(char *cursor=start;*cursor;cursor++) if(*cursor=='/' || *cursor=='\\'){
+    char saved=*cursor; *cursor='\0';
+    if(*path && !package_mkdir(path)){ *cursor=saved; return 0; }
+    *cursor=saved;
+  }
+  return !*path || package_mkdir(path);
+}
+
+static int safe_relative_folder(const char *folder){
+  if(!folder || !*folder) return 1;
+  if(folder[0]=='/' || folder[0]=='\\' || strchr(folder,':')) return 0;
+  const char *part=folder;
+  for(const char *cursor=folder;;cursor++) if(!*cursor || *cursor=='/' || *cursor=='\\'){
+    size_t length=(size_t)(cursor-part);
+    if(length==2 && part[0]=='.' && part[1]=='.') return 0;
+    if(!*cursor) break;
+    part=cursor+1;
+  }
+  return 1;
+}
+
+static const char *package_leaf_name(const char *name){
+  const char *leaf=name?name:"";
+  for(const char *cursor=leaf;*cursor;cursor++)
+    if(*cursor=='/' || *cursor=='\\') leaf=cursor+1;
+  return leaf;
+}
+
+static int materialize_included_files(const GmlcProject *project, const char *out_path,
+                                      char *err, size_t errcap){
+  if(!project || project->n_included_files<=0) return 1;
+  char *base=gmlc_path_dirname(out_path);
+  if(!base) return 0;
+  for(int i=0;i<project->n_included_files;i++){
+    const GmlcProjectIncludedFile *included=&project->included_files[i];
+    if(included->export_mode==0 || !included->data) continue;
+    const char *leaf=package_leaf_name(included->file_name);
+    if(!*leaf || !strcmp(leaf,".") || !strcmp(leaf,"..") ||
+       !safe_relative_folder(included->custom_folder)){
+      if(err && errcap) snprintf(err,errcap,"unsafe included-file export path");
+      free(base); return 0;
+    }
+    char *folder=included->export_mode>2 && included->custom_folder && *included->custom_folder
+      ? gmlc_path_join(base,included->custom_folder) : gmlc_strdup(base);
+    if(!folder || !package_mkdir_tree(folder)){
+      if(err && errcap) snprintf(err,errcap,"cannot create included-file export directory");
+      free(folder); free(base); return 0;
+    }
+    char *path=gmlc_path_join(folder,leaf);
+    free(folder);
+    if(!path){ free(base); return 0; }
+    if(!included->overwrite_file){
+      FILE *existing=fopen(path,"rb");
+      if(existing){ fclose(existing); free(path); continue; }
+    }
+    if(!write_file(path,included->data,included->data_size,err,errcap)){
+      free(path); free(base); return 0;
+    }
+    free(path);
+  }
+  free(base);
+  return 1;
+}
+
 static void free_pkg(Pkg *pkg){
   free(pkg->b.data);
   free(pkg->code_data.data);
@@ -2989,6 +3105,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
      !PACKAGE_STEP("timelines",write_tmln(&pkg,p)) ||
      !PACKAGE_STEP("objects",write_objt(&pkg,p)) ||
      !PACKAGE_STEP("rooms",write_room_chunk(&pkg,p)) ||
+     !PACKAGE_STEP("classic triggers",write_trig(&pkg,p)) ||
      !PACKAGE_STEP("data files",fixed_zero_chunk(&pkg,"DAFL",0)) ||
      !PACKAGE_STEP("embedded images",write_embi(&pkg)) ||
      !PACKAGE_STEP("texture pages",write_tpag(&pkg,p)) ||
@@ -3011,7 +3128,8 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
     return 0;
   }
   patch32(&pkg.b,form_size_pos,(uint32_t)(pkg.b.len-8));
-  int ok=write_file(out_path,pkg.b.data,pkg.b.len,err,errcap);
+  int ok=materialize_included_files(p,out_path,err,errcap) &&
+         write_file(out_path,pkg.b.data,pkg.b.len,err,errcap);
   free_pkg(&pkg);
   return ok;
 }

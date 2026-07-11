@@ -60,7 +60,7 @@ static void free_resource(GmlcResource *r){
 
 void gmlc_project_free(GmlcProject *p){
   if(!p) return;
-  free(p->root_dir); free(p->yyp_path); free(p->name);
+  free(p->root_dir); free(p->yyp_path); free(p->name); free(p->startup_code_path);
   for(int i=0;i<p->n_resources;i++) free_resource(&p->resources[i]);
   free(p->resources);
   for(int i=0;i<p->n_sprites;i++){
@@ -135,6 +135,19 @@ void gmlc_project_free(GmlcProject *p){
     free(p->tilesets[i].id); free(p->tilesets[i].name);
   }
   free(p->tilesets);
+  for(int i=0;i<p->n_constants;i++){
+    free(p->constants[i].name); free(p->constants[i].expression);
+  }
+  free(p->constants);
+  for(int i=0;i<p->n_triggers;i++){
+    free(p->triggers[i].name); free(p->triggers[i].condition_path);
+  }
+  free(p->triggers);
+  for(int i=0;i<p->n_included_files;i++){
+    free(p->included_files[i].file_name); free(p->included_files[i].custom_folder);
+    free(p->included_files[i].data);
+  }
+  free(p->included_files);
   memset(p,0,sizeof(*p));
 }
 

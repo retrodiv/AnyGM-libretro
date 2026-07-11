@@ -3990,6 +3990,38 @@ static void run_timelines(GmlVM *vm, int count){
   }
 }
 
+static void run_classic_triggers(GmlVM *vm, int moment){
+  const GmlChunk *chunk=vm && vm->win ? gml_chunk(vm->win,"TRIG") : NULL;
+  if(!chunk || chunk->size<4) return;
+  const uint8_t *data=vm->win->data;
+  uint32_t count=u32(data,chunk->off);
+  if(count>(chunk->size-4)/12) return;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t entry=chunk->off+4+i*12;
+    int trigger_id=(int32_t)u32(data,entry);
+    int trigger_moment=(int32_t)u32(data,entry+4);
+    int code_index=(int32_t)u32(data,entry+8);
+    if(trigger_moment!=moment || code_index<0 || code_index>=vm->win->n_code) continue;
+    GmlInstance scratch;
+    memset(&scratch,0,sizeof(scratch));
+    scratch.active=1; scratch.obj=-1; scratch.id=0;
+    scratch.image_xscale=scratch.image_yscale=1; scratch.image_alpha=1;
+    scratch.sprite_index=-1; scratch.mask_index=-1; scratch.path_index=-1;
+    scratch.timeline_index=-1; scratch.timeline_speed=1;
+    for(int a=0;a<GML_ALARMS;a++) scratch.alarm[a]=-1;
+    GmlVal result=gml_vm_run_code(vm,code_index,&scratch,NULL,NULL,0);
+    int fire=astrue(result);
+    if(result.t==V_STR && result.d!=0) free((char*)result.s);
+    varmap_free_ex(&scratch.vars,0);
+    if(!fire) continue;
+    char suffix[32]; snprintf(suffix,sizeof(suffix),"Trigger_%d",trigger_id);
+    int n=vm->inst_count;
+    for(int instance=0;instance<n;instance++)
+      if(vm->inst[instance].active && !vm->inst[instance].marked)
+        gml_run_event(vm,&vm->inst[instance],suffix);
+  }
+}
+
 long g_vm_frame=0;
 /* GML_PROFILE_VM: per-phase wall time of gml_vm_step, printed every 300 frames (Linux dev aid) */
 static struct { double anim,step1,alarms,input,step0,move,coll,step2,rest; long frames; } g_vmprof;
@@ -4066,6 +4098,7 @@ void gml_vm_step(GmlVM *vm){
       if(pl) pl->alarm[god_alarm]=god_value;
     } }
   /* begin step */
+  run_classic_triggers(vm,1);
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_1");
   VMPROF_MARK(step1);
   run_timelines(vm,n);
@@ -4128,6 +4161,7 @@ void gml_vm_step(GmlVM *vm){
   }
   VMPROF_MARK(input);
   /* normal step */
+  run_classic_triggers(vm,0);
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_0");
   VMPROF_MARK(step0);
   /* movement */
@@ -4151,6 +4185,7 @@ void gml_vm_step(GmlVM *vm){
   run_collisions(vm);
   VMPROF_MARK(coll);
   /* end step */
+  run_classic_triggers(vm,2);
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_2");
   VMPROF_MARK(step2);
   reap(vm);
@@ -5161,6 +5196,24 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
   vm->event_cache_cap=32768;
   vm->event_cache=calloc((size_t)vm->event_cache_cap,sizeof(GmlEventCache));
   vm->inst_cap=16384; vm->inst=calloc(vm->inst_cap,sizeof(GmlInstance)); /* fixed pool: never realloc-move */
+  /* Classic action libraries can carry creation code executed once before the
+   * first room. The compiler emits one reserved CODE
+   * entry only when such code exists; ordinary packages take this fast miss. */
+  {
+    int ci=gml_code_index_by_name(win,"gml_GlobalScript___gmlc_classic_startup");
+    if(ci>=0){
+      GmlInstance scratch;
+      memset(&scratch,0,sizeof(scratch));
+      scratch.active=1; scratch.obj=-1; scratch.id=0;
+      scratch.image_xscale=scratch.image_yscale=1; scratch.image_alpha=1;
+      scratch.sprite_index=-1; scratch.mask_index=-1; scratch.path_index=-1;
+      scratch.timeline_index=-1; scratch.timeline_speed=1;
+      for(int a=0;a<GML_ALARMS;a++) scratch.alarm[a]=-1;
+      GmlVal result=gml_vm_run_code(vm,ci,&scratch,NULL,NULL,0);
+      if(result.t==V_STR && result.d!=0) free((char*)result.s);
+      varmap_free_ex(&scratch.vars,0);
+    }
+  }
   return 0;
 }
 static void ini_free(GmlVM *vm){

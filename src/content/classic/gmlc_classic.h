@@ -79,9 +79,52 @@ typedef struct {
 } GmlcClassicResourceSlot;
 
 typedef struct {
+  char *name;
+  char *value;
+} GmlcClassicConstant;
+
+typedef struct {
+  uint8_t *data;
+  size_t size;
+} GmlcClassicBlob;
+
+typedef struct {
+  int exists;
+  char *name;
+  char *condition;
+  char *constant_name;
+  uint32_t moment;
+} GmlcClassicTrigger;
+
+typedef struct {
+  char *file_name;
+  char *source_path;
+  uint8_t *data;
+  size_t data_size;
+  uint32_t source_length;
+  uint32_t export_mode;
+  char *custom_folder;
+  int data_exists;
+  int stored_in_project;
+  int overwrite_file;
+  int free_memory;
+  int remove_at_end;
+} GmlcClassicIncludedFile;
+
+typedef struct {
   GmlcClassicInventory inventory;
   GmlcClassicResourceSlot *slots[GMLC_CLASSIC_RESOURCE_TYPES];
   uint32_t existing[GMLC_CLASSIC_RESOURCE_TYPES];
+  GmlcClassicConstant *constant_defs;
+  uint32_t constant_def_count;
+  GmlcClassicTrigger *trigger_defs;
+  uint32_t trigger_def_count;
+  GmlcClassicIncludedFile *included_files;
+  uint32_t included_file_count;
+  char **extension_names;
+  uint32_t extension_count;
+  char **library_creation_code;
+  uint32_t library_creation_code_count;
   uint32_t *room_order;
   uint32_t room_order_count;
 } GmlcClassicManifest;

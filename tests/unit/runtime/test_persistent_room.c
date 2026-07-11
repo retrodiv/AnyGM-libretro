@@ -18,19 +18,62 @@ static GmlInstance *find_slot(GmlVM *vm,uint32_t id){
 
 int main(void){
   GmlcProject project; GmlcObject object; GmlcRoom rooms[2];
+  GmlcObjectEvent trigger_event;
+  GmlcProjectTrigger trigger;
+  GmlcProjectIncludedFile included;
+  unsigned char included_data[]={1,3,5,7};
+  char included_name[64];
+  GmlcProjectConstant constant={(char*)"fixture_constant",(char*)"6*7"};
   memset(&project,0,sizeof(project)); memset(&object,0,sizeof(object)); memset(rooms,0,sizeof(rooms));
+  memset(&trigger_event,0,sizeof(trigger_event)); memset(&trigger,0,sizeof(trigger)); memset(&included,0,sizeof(included));
   project.name="persistent-room-fixture"; project.objects=&object; project.n_objects=1;
+  project.constants=&constant; project.n_constants=project.cap_constants=1;
+  project.triggers=&trigger; project.n_triggers=project.cap_triggers=1;
+  snprintf(included_name,sizeof(included_name),"gml-included-%ld.dat",(long)getpid());
+  included.file_name=included_name; included.data=included_data; included.data_size=sizeof(included_data);
+  included.export_mode=2; included.overwrite_file=1;
+  project.included_files=&included; project.n_included_files=project.cap_included_files=1;
   project.rooms=rooms; project.n_rooms=2;
   object.name="obj_fixture"; object.sprite_id=-1; object.mask_id=-1; object.parent_id=-1; object.visible=1;
+  object.events=&trigger_event; object.n_events=object.cap_events=1;
+  trigger_event.event_type=11; trigger_event.event_number=0;
+  trigger.name=(char*)"fixture_trigger"; trigger.moment=1; trigger.runtime_id=0;
   for(int i=0;i<2;i++){ rooms[i].name=i?"room_b":"room_a"; rooms[i].width=320; rooms[i].height=240; rooms[i].speed=30; }
   rooms[0].persistent=1;
+  char startup[]="/tmp/gml-startup-XXXXXX"; int startup_fd=mkstemp(startup); if(startup_fd<0)return 1;
+  FILE *startup_file=fdopen(startup_fd,"wb");
+  const char startup_source[]="global.startup_value = fixture_constant;\n";
+  if(!startup_file || fwrite(startup_source,1,sizeof(startup_source)-1,startup_file)!=sizeof(startup_source)-1 ||
+     fclose(startup_file)!=0){ unlink(startup); return 1; }
+  project.startup_code_path=startup;
+  char condition[]="/tmp/gml-trigger-condition-XXXXXX"; int condition_fd=mkstemp(condition); if(condition_fd<0)return 1;
+  FILE *condition_file=fdopen(condition_fd,"wb"); const char condition_source[]="return (global.startup_value == 42);\n";
+  if(!condition_file || fwrite(condition_source,1,sizeof(condition_source)-1,condition_file)!=sizeof(condition_source)-1 || fclose(condition_file)!=0)return 1;
+  trigger.condition_path=condition;
+  char event[]="/tmp/gml-trigger-event-XXXXXX"; int event_fd=mkstemp(event); if(event_fd<0)return 1;
+  FILE *event_file=fdopen(event_fd,"wb"); const char event_source[]="global.trigger_hits += 1;\n";
+  if(!event_file || fwrite(event_source,1,sizeof(event_source)-1,event_file)!=sizeof(event_source)-1 || fclose(event_file)!=0)return 1;
+  trigger_event.source_path=event;
   char path[]="/tmp/gml-persistent-room-XXXXXX"; int fd=mkstemp(path); if(fd<0)return 1; close(fd);
   char err[256]={0};
-  if(!gmlc_package_write_structural(&project,path,err,sizeof(err))){ fprintf(stderr,"package: %s\n",err); unlink(path); return 1; }
+  if(!gmlc_package_write_structural(&project,path,err,sizeof(err))){ fprintf(stderr,"package: %s\n",err); unlink(path); unlink(startup); return 1; }
+  char included_path[96]; snprintf(included_path,sizeof(included_path),"/tmp/%s",included_name);
+  FILE *included_file=fopen(included_path,"rb"); unsigned char observed[sizeof(included_data)]={0};
+  int included_ok=included_file && fread(observed,1,sizeof(observed),included_file)==sizeof(observed) &&
+                  !memcmp(observed,included_data,sizeof(observed));
+  if(included_file) fclose(included_file);
+  if(!included_ok){ fprintf(stderr,"included file was not exported\n"); return 1; }
   GmlWin win; if(gml_win_load(&win,path)){ unlink(path); return 1; }
   GmlVM vm; if(gml_vm_init(&vm,&win)){ gml_win_free(&win); unlink(path); return 1; }
+  GmlVal *startup_value=gml_varmap_get(&vm.globals,"startup_value");
+  if(!startup_value || startup_value->t!=V_REAL || startup_value->d!=42){
+    fprintf(stderr,"startup code or project constant did not run\n"); return 1;
+  }
   gml_room_enter(&vm,0);
   GmlInstance *created=gml_instance_create(&vm,12,34,0); if(!created)return 1;
+  gml_vm_step(&vm);
+  GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
+  if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=1){ fprintf(stderr,"classic trigger did not fire\n"); return 1; }
   uint32_t id=created->id; *gml_varmap_put(&created->vars,"value")=vreal(42);
   gml_room_enter(&vm,1);
   GmlInstance *slot=find_slot(&vm,id);
@@ -45,7 +88,7 @@ int main(void){
   GmlVal *value=slot?gml_varmap_get(&slot->vars,"value"):NULL;
   int ok=slot&&slot->active&&!slot->room_dormant&&value&&value->t==V_REAL&&value->d==42;
   if(!ok) fprintf(stderr,"persistent room state did not roundtrip\n");
-  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path);
+  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(condition); unlink(event); unlink(included_path);
   if(ok) puts("persistent room fixtures: ok");
   return ok?0:1;
 }
