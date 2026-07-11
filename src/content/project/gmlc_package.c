@@ -120,6 +120,7 @@ typedef struct {
   int compiled_code;
   int placeholder_code;
   int code_placeholders;
+  int fail_on_placeholder;
   int log_code_compile;
   RefTextureLayout ref_tex;
 } Pkg;
@@ -2387,7 +2388,7 @@ static int write_room(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, int roo
   wu32(&pkg->b,(uint32_t)r->width);
   wu32(&pkg->b,(uint32_t)r->height);
   wu32(&pkg->b,(uint32_t)(r->speed>0?r->speed:60));
-  wi32(&pkg->b,0);
+  wu32(&pkg->b,(uint32_t)(r->persistent?1:0));
   wu32(&pkg->b,r->background_color);
   wu32(&pkg->b,(uint32_t)(r->draw_background_color?1:0));
   wi32(&pkg->b,room_creation_code_index(p,room_index));
@@ -2656,7 +2657,7 @@ static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const GmlcFunctionR
     return 1;
   }
   if(!gmlc_bytecode_emit_empty(blob)) return 0;
-  pkg->placeholder_code++;
+  /* An event/action with no source is a genuine no-op, not a failed compile. */
   return 1;
 }
 
@@ -2958,6 +2959,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
   Pkg pkg;
   memset(&pkg,0,sizeof(pkg));
   pkg.code_placeholders=env_flag_enabled("GMLC_CODE_PLACEHOLDERS");
+  pkg.fail_on_placeholder=env_flag_enabled("GMLC_FAIL_ON_PLACEHOLDER");
   pkg.log_code_compile=env_flag_enabled("GMLC_LOG_CODE_COMPILE");
   const char *ref_path=getenv("GMLC_REFERENCE_WIN");
   if(ref_path && *ref_path && !load_reference_texture_layout(&pkg,p,ref_path,err,errcap)){
@@ -3002,6 +3004,12 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
     return 0;
   }
 #undef PACKAGE_STEP
+  if(pkg.fail_on_placeholder && pkg.placeholder_code>0){
+    snprintf(err,errcap,"refusing package with %d code placeholder%s",
+      pkg.placeholder_code,pkg.placeholder_code==1?"":"s");
+    free_pkg(&pkg);
+    return 0;
+  }
   patch32(&pkg.b,form_size_pos,(uint32_t)(pkg.b.len-8));
   int ok=write_file(out_path,pkg.b.data,pkg.b.len,err,errcap);
   free_pkg(&pkg);

@@ -2118,11 +2118,48 @@ typedef struct { double x,y,z,u,v; } GmlD3Vertex;
 typedef struct {
   int active, hidden;
   double eye[3], right[3], up[3], forward[3];
+  int lighting;
+  struct { int defined, enabled; double x,y,z,range; uint32_t color; } light[8];
+  double shade_r, shade_g, shade_b;
   float *depth; size_t depth_cap;
   int depth_w, depth_h;
   long depth_frame;
 } GmlD3State;
-static GmlD3State g_d3={0,0,{0},{0},{0},{0},NULL,0,0,0,-1};
+static GmlD3State g_d3={.shade_r=1,.shade_g=1,.shade_b=1,.depth_frame=-1};
+
+void gml_d3_reset(void){
+  float *depth=g_d3.depth; size_t cap=g_d3.depth_cap;
+  memset(&g_d3,0,sizeof(g_d3));
+  g_d3.depth=depth; g_d3.depth_cap=cap; g_d3.depth_frame=-1;
+  g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
+}
+void gml_d3_state_get(int flags[19], double values[44], uint32_t colors[8]){
+  flags[0]=g_d3.active; flags[1]=g_d3.hidden; flags[2]=g_d3.lighting;
+  int v=0; for(int i=0;i<3;i++) values[v++]=g_d3.eye[i];
+  for(int i=0;i<3;i++) values[v++]=g_d3.right[i];
+  for(int i=0;i<3;i++) values[v++]=g_d3.up[i];
+  for(int i=0;i<3;i++) values[v++]=g_d3.forward[i];
+  for(int i=0;i<8;i++){
+    flags[3+i*2]=g_d3.light[i].defined; flags[4+i*2]=g_d3.light[i].enabled;
+    values[v++]=g_d3.light[i].x; values[v++]=g_d3.light[i].y;
+    values[v++]=g_d3.light[i].z; values[v++]=g_d3.light[i].range;
+    colors[i]=g_d3.light[i].color;
+  }
+}
+void gml_d3_state_set(const int flags[19], const double values[44], const uint32_t colors[8]){
+  gml_d3_reset();
+  g_d3.active=flags[0]; g_d3.hidden=flags[1]; g_d3.lighting=flags[2];
+  int v=0; for(int i=0;i<3;i++) g_d3.eye[i]=values[v++];
+  for(int i=0;i<3;i++) g_d3.right[i]=values[v++];
+  for(int i=0;i<3;i++) g_d3.up[i]=values[v++];
+  for(int i=0;i<3;i++) g_d3.forward[i]=values[v++];
+  for(int i=0;i<8;i++){
+    g_d3.light[i].defined=flags[3+i*2]; g_d3.light[i].enabled=flags[4+i*2];
+    g_d3.light[i].x=values[v++]; g_d3.light[i].y=values[v++];
+    g_d3.light[i].z=values[v++]; g_d3.light[i].range=values[v++];
+    g_d3.light[i].color=colors[i];
+  }
+}
 
 static double d3_dot(const double a[3], const double b[3]){
   return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
@@ -2235,6 +2272,12 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], GmlTpag *t
     double alpha=1.0;
     uint32_t color=t&&a ? d3_sample(R,t,a,(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz,
                                     (b0*vz[0]+b1*vz[1]+b2*vz[2])/invz,&alpha) : R->color;
+    if(g_d3.lighting){
+      int cr=(int)((color&255)*g_d3.shade_r), cg=(int)(((color>>8)&255)*g_d3.shade_g);
+      int cb=(int)(((color>>16)&255)*g_d3.shade_b);
+      if(cr>255)cr=255; if(cg>255)cg=255; if(cb>255)cb=255;
+      color=(uint32_t)cr|((uint32_t)cg<<8)|((uint32_t)cb<<16);
+    }
     draw_px_alpha(R,x,y,color,alpha*R->alpha);
     if(g_d3.hidden && alpha>0.0) g_d3.depth[di]=(float)invz;
   }
@@ -2262,6 +2305,23 @@ static int d3_clip_near(const GmlD3Vertex *input, int count, GmlD3Vertex *output
 static void d3_draw_quad(GmlRender *R, const double p[4][3], int texture, double hrep, double vrep){
   GmlTpag *t=NULL; GmlAtlas *a=NULL;
   d3_background_texture(R,texture,&t,&a);
+  g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
+  if(g_d3.lighting){
+    double e1[3]={p[1][0]-p[0][0],p[1][1]-p[0][1],p[1][2]-p[0][2]};
+    double e2[3]={p[2][0]-p[0][0],p[2][1]-p[0][1],p[2][2]-p[0][2]}, normal[3];
+    d3_cross(e1,e2,normal); d3_normalize(normal);
+    double center[3]={0,0,0}; for(int i=0;i<4;i++) for(int k=0;k<3;k++) center[k]+=p[i][k]*.25;
+    double lr=.15,lg=.15,lb=.15;
+    for(int i=0;i<8;i++) if(g_d3.light[i].defined&&g_d3.light[i].enabled){
+      double ray[3]={g_d3.light[i].x-center[0],g_d3.light[i].y-center[1],g_d3.light[i].z-center[2]};
+      double dist=sqrt(d3_dot(ray,ray)); if(dist<=1e-9 || dist>=g_d3.light[i].range) continue;
+      ray[0]/=dist; ray[1]/=dist; ray[2]/=dist;
+      double diffuse=fabs(d3_dot(normal,ray))*(1.0-dist/g_d3.light[i].range);
+      uint32_t col=g_d3.light[i].color;
+      lr+=diffuse*(col&255)/255.0; lg+=diffuse*((col>>8)&255)/255.0; lb+=diffuse*((col>>16)&255)/255.0;
+    }
+    g_d3.shade_r=lr; g_d3.shade_g=lg; g_d3.shade_b=lb;
+  }
   static const double uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
   GmlD3Vertex q[4], clipped[8];
   for(int i=0;i<4;i++) q[i]=d3_camera_vertex(p[i][0],p[i][1],p[i][2],uv[i][0]*hrep,uv[i][1]*vrep);
@@ -2574,6 +2634,7 @@ void __attribute__((weak)) gml_input_mouse(double *rx, double *ry, double *gx, d
   if(rx)*rx=0; if(ry)*ry=0; if(gx)*gx=0; if(gy)*gy=0; if(wx)*wx=0; if(wy)*wy=0;
   if(held)*held=0; if(pressed)*pressed=0; if(released)*released=0; if(wheel)*wheel=0;
 }
+void __attribute__((weak)) gml_input_mouse_set(double x, double y){ (void)x; (void)y; }
 /* GM mouse button constant -> state bitmask: mb_left=1,mb_right=2,mb_middle=3,mb_any=-1,mb_none=0 */
 static int mb_mask(int mb){
   switch(mb){ case 1: return 1; case 2: return 2; case 3: return 4; case -1: return 7; default: return 0; }
@@ -4538,7 +4599,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(!(ax2<bx1 || bx2<ax1 || ay2<by1 || by2<ay1));
   }
   if(!strcmp(nm,"collision_circle")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)}; GmlInstance *o=collision_shape(vm,2,p,(int)N(a,n,3),(int)N(a,n,5)); return vreal(o?(double)o->id:-4); }
-  if(!strcmp(nm,"move_contact_solid")){ GmlInstance *s=vm->cur_self; if(!s) return vreal(0);
+  if(!strcmp(nm,"move_contact_solid")||!strcmp(nm,"move_contact")){ GmlInstance *s=vm->cur_self; if(!s) return vreal(0);
     double dir=N(a,n,0), md=N(a,n,1); if(md<0) md=1000;
     double dx=cos(dir*M_PI/180.0), dy=-sin(dir*M_PI/180.0);
     if(collision_at(vm,s->x,s->y,0,1)){
@@ -4579,7 +4640,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     uint32_t s = fixed>=0 ? (uint32_t)fixed : ((uint32_t)time(NULL) ^ (uint32_t)(uintptr_t)vm);
     vm->rng_state=s; gml_rng_seed(vm,s); return vreal(0); }
   if(!strcmp(nm,"random_set_seed")){ uint32_t s=(uint32_t)(int64_t)N(a,n,0); vm->rng_state=s; gml_rng_seed(vm,s); return vreal(0); }
-  if(!strcmp(nm,"random_get_seed")) return vreal((double)vm->rng_state);
+  if(!strcmp(nm,"random_get_seed"))
+    return vreal((double)((vm->win&&vm->win->classic_version)?vm->rng_classic_state:vm->rng_state));
   if(!strncmp(nm,"http_",5)&&(!strcmp(nm,"http_get")||!strcmp(nm,"http_get_file")||!strcmp(nm,"http_post_string")||!strcmp(nm,"http_request")))
     return builtin_http_request_stub(vm);
   if(!strcmp(nm,"random_range")){ double a0=N(a,n,0), a1=N(a,n,1); return vreal(a0 + gml_rng_value(vm)*(a1-a0)); }
@@ -4914,6 +4976,24 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(collision_at(vm,nx,ny,all?IT_ALL:0,!all)) continue;
       s->x=nx; s->y=ny;
       s->direction=-angle*180.0/M_PI;
+      while(s->direction<0) s->direction+=360.0;
+      while(s->direction>=360.0) s->direction-=360.0;
+      gml_colgrid_touch(s); moved=1; break;
+    }
+    return vreal(moved && distance<=amount);
+  }
+  if(!strcmp(nm,"mp_potential_step_object")){
+    GmlInstance*s=vm->cur_self; if(!s) return vreal(0);
+    double tx=N(a,n,0), ty=N(a,n,1), amount=fabs(N(a,n,2));
+    double dx=tx-s->x, dy=ty-s->y, distance=hypot(dx,dy);
+    if(distance<=amount || distance<1e-9){ s->x=tx; s->y=ty; gml_colgrid_touch(s); return vreal(1); }
+    double heading=atan2(dy,dx); int object=(int)N(a,n,3), moved=0;
+    static const int turns[]={0,10,-10,20,-20,30,-30};
+    for(size_t i=0;i<sizeof(turns)/sizeof(turns[0]);i++){
+      double angle=heading+(double)turns[i]*M_PI/180.0;
+      double nx=s->x+cos(angle)*amount, ny=s->y+sin(angle)*amount;
+      if(collision_at(vm,nx,ny,object,0)) continue;
+      s->x=nx; s->y=ny; s->direction=-angle*180.0/M_PI;
       while(s->direction<0) s->direction+=360.0;
       while(s->direction>=360.0) s->direction-=360.0;
       gml_colgrid_touch(s); moved=1; break;
@@ -5351,6 +5431,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     double vv=N(a,n,0), cv=N(a,n,1); int r=0;
     switch(op){ case 0: r=(vv==cv); break; case 1: r=(vv<cv); break; case 2: r=(vv>cv); break; }
     return vreal(r); }
+  if(!strcmp(nm,"action_if_dice")){
+    int sides=(int)floor(fabs(N(a,n,0)));
+    return vreal(sides<=1 || (int)floor(gml_rng_value(vm)*sides)==0);
+  }
+  if(!strcmp(nm,"action_if_next_room")){
+    int pos=order_pos(vm,vm->room_index);
+    return vreal(pos>=0 && vm->win && pos+1<vm->win->n_room_order);
+  }
   if(!strcmp(nm,"action_if_empty") || !strcmp(nm,"action_if_collision")){
     GmlInstance *s=vm->cur_self; double x=N(a,n,0),y=N(a,n,1);
     int relative=n>=4 ? N(a,n,3)!=0 : vm->action_relative;
@@ -5383,6 +5471,13 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vreal(0); }
   if(!strcmp(nm,"action_current_room")){ gml_vm_warm_audio_for_room(vm,vm->room_index); vm->pending_room=vm->room_index; return vreal(0); }
+  if(!strcmp(nm,"action_next_room")){
+    int pos=order_pos(vm,vm->room_index);
+    if(vm->win && pos>=0 && pos+1<vm->win->n_room_order){
+      int target=(int)vm->win->room_order[pos+1]; gml_vm_warm_audio_for_room(vm,target); vm->pending_room=target;
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"action_move_to")){ GmlInstance*s=vm->cur_self; if(s){
       double x=N(a,n,0), y=N(a,n,1);
       if(vm->action_relative){ s->x+=x; s->y+=y; } else { s->x=x; s->y=y; } gml_colgrid_touch(s); } return vreal(0); }
@@ -5457,6 +5552,29 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return gml_builtin_call(vm,"draw_sprite",draw_args,4); }
   if(!strcmp(nm,"action_draw_variable")){ GmlVal draw_args[3]={vreal(N(a,n,1)),vreal(N(a,n,2)),n>0?a[0]:vreal(0)};
     return gml_builtin_call(vm,"draw_text",draw_args,3); }
+  if(!strcmp(nm,"action_draw_text")){
+    GmlRender *r=(GmlRender*)vm->render;
+    if(r) gml_draw_text(r,N(a,n,1),N(a,n,2),S(a,n,0));
+    return vreal(0);
+  }
+  if(!strcmp(nm,"action_draw_life_images")){
+    GmlRender *r=(GmlRender*)vm->render; GmlVal *value=gml_varmap_get(&vm->globals,"lives");
+    int count=(int)floor(value&&value->t==V_REAL?value->d:0), sprite=(int)N(a,n,2);
+    int width=(r&&gml_sprite_exists(r,sprite))?r->spr[sprite].w:0;
+    if(r) for(int i=0;i<count;i++) gml_draw_sprite(r,sprite,0,N(a,n,0)+i*width,N(a,n,1));
+    return vreal(0);
+  }
+  if(!strcmp(nm,"action_set_cursor")){ vm->window_cursor=(int)N(a,n,0); return vreal(0); }
+  if(!strcmp(nm,"effect_create_above")||!strcmp(nm,"effect_create_below")){
+    gml_effect_create(!strcmp(nm,"effect_create_above"),(int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3),(uint32_t)N(a,n,4));
+    return vreal(0);
+  }
+  if(!strcmp(nm,"action_effect")){
+    double x=N(a,n,1),y=N(a,n,2); GmlInstance *s=vm->cur_self;
+    if(N(a,n,5)!=0 && s){ x+=s->x; y+=s->y; }
+    gml_effect_create(1,(int)N(a,n,0),x,y,(int)N(a,n,3),(uint32_t)N(a,n,4));
+    return vreal(0);
+  }
   if(!strcmp(nm,"action_wrap")){ GmlInstance *s=vm->cur_self; GmlRoom room; int dir=(int)N(a,n,0);
     if(s && gml_room_get(vm->win,vm->room_index,&room)==0){
       if((dir==0||dir==2) && room.width>0){ while(s->x<0)s->x+=room.width; while(s->x>=room.width)s->x-=room.width; }
@@ -5548,13 +5666,23 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       }
       gml_colgrid_touch(s); }
     return vreal(0); }
-  if(!strcmp(nm,"move_bounce_solid")){ GmlInstance *s=vm->cur_self; if(s){
+  if(!strcmp(nm,"move_bounce_solid")||!strcmp(nm,"move_bounce_all")){ GmlInstance *s=vm->cur_self; if(s){
       double hs=s->hspeed, vs=s->vspeed;
-      int bh=collision_at(vm,s->x+hs,s->y,0,1);
-      int bv=collision_at(vm,s->x,s->y+vs,0,1);
+      int all=!strcmp(nm,"move_bounce_all");
+      int bh=collision_at(vm,s->x+hs,s->y,all?IT_ALL:0,!all);
+      int bv=collision_at(vm,s->x,s->y+vs,all?IT_ALL:0,!all);
       if(bh) s->hspeed=-hs; if(bv) s->vspeed=-vs;
       if(bh||bv) motion_from_components(s); }
     return vreal(0); }
+  if(!strcmp(nm,"move_wrap")){ GmlInstance *s=vm->cur_self; GmlRoom room;
+    if(s && gml_room_get(vm->win,vm->room_index,&room)==0){
+      int horizontal=N(a,n,0)!=0, vertical=N(a,n,1)!=0; double margin=fabs(N(a,n,2));
+      if(horizontal){ if(s->x < -margin) s->x=room.width+margin; else if(s->x>room.width+margin) s->x=-margin; }
+      if(vertical){ if(s->y < -margin) s->y=room.height+margin; else if(s->y>room.height+margin) s->y=-margin; }
+      gml_colgrid_touch(s);
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"move_snap")){ GmlInstance *s=vm->cur_self; if(s){
       double xs=N(a,n,0), ys=N(a,n,1); if(xs>0) s->x=round(s->x/xs)*xs; if(ys>0) s->y=round(s->y/ys)*ys; gml_colgrid_touch(s); }
     return vreal(0); }
@@ -5972,6 +6100,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     if(!strcmp(nm,"sprite_delete")){ if(R) gml_sprite_delete(R,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"sprite_duplicate")) return vreal(R?gml_sprite_duplicate(R,(int)N(a,n,0)):-1);
+    if(!strcmp(nm,"sprite_set_alpha_from_sprite")) return vreal(R?gml_sprite_set_alpha_from_sprite(R,(int)N(a,n,0),(int)N(a,n,1)):0);
     if(!strcmp(nm,"sprite_set_offset")){ if(R) gml_sprite_set_offset(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2)); return vreal(0); }
     if(!strcmp(nm,"sprite_save")) return vreal(0);
     if(!strcmp(nm,"sprite_save_strip")) return vreal(0);
@@ -6079,6 +6208,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"device_mouse_raw_y")||!strcmp(nm,"window_mouse_get_y")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL); return vreal(v); }
   if(!strcmp(nm,"display_mouse_get_x")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
   if(!strcmp(nm,"display_mouse_get_y")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL); return vreal(v); }
+  if(!strcmp(nm,"display_mouse_set")){ gml_input_mouse_set(N(a,n,0),N(a,n,1)); return vreal(0); }
   if(!strcmp(nm,"window_mouse_set")) return vreal(0);
   if(!strcmp(nm,"joystick_exists")){
     int joy=(int)N(a,n,0), dev=joy>0?joy-1:joy;
@@ -6185,6 +6315,27 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"file_find_close")){ ff_reset(); return vreal(0); }
   if(!strcmp(nm,"file_rename")){ char *oldp=resolve_content_path(vm,S(a,n,0)); char *newp=resolve_content_path(vm,S(a,n,1));
     int ok=rename(oldp,newp)==0; free(oldp); free(newp); return vreal(ok); }
+  if(!strcmp(nm,"game_save")){
+    char *path=resolve_content_path(vm,S(a,n,0));
+    size_t size=gml_vm_state_size(vm), written=0; unsigned char *data=size?malloc(size):NULL;
+    int ok=path && data && gml_vm_state_save(vm,data,size,&written) && written==size;
+    FILE *file=ok?fopen(path,"wb"):NULL;
+    if(!file || fwrite(data,1,written,file)!=written) ok=0;
+    if(file) fclose(file); free(data); free(path); (void)ok;
+    return vreal(0);
+  }
+  if(!strcmp(nm,"game_load")){
+    char *path=resolve_content_path(vm,S(a,n,0)); FILE *file=path?fopen(path,"rb"):NULL;
+    long length=-1; unsigned char *data=NULL; int ok=0;
+    if(file && !fseek(file,0,SEEK_END) && (length=ftell(file))>0 && length<=268435456L &&
+       !fseek(file,0,SEEK_SET)){
+      data=(unsigned char*)malloc((size_t)length);
+      if(data && fread(data,1,(size_t)length,file)==(size_t)length){ size_t used=0;
+        ok=gml_vm_state_load(vm,data,(size_t)length,&used) && used==(size_t)length; }
+    }
+    if(file) fclose(file); free(data); free(path); (void)ok;
+    return vreal(0);
+  }
   if(!strcmp(nm,"file_bin_open")||!strcmp(nm,"FS_file_bin_open")){ char *path=resolve_content_path(vm,S(a,n,0)); int mode=(int)N(a,n,1);
     const char *fm = mode==1 ? "wb+" : (mode==2 ? "ab+" : "rb");
     int id=vm_file_open(vm,path,fm); if(id<0 && mode==1) id=vm_file_open(vm,path,"wb+"); free(path); return vreal(id); }
@@ -6522,6 +6673,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* ---- paths (path_start / path_end): instance follows a PATH each step ---- */
   if(!strcmp(nm,"path_start")){ if(vm->cur_self)
       gml_path_start(vm,vm->cur_self,(int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3)); return vreal(0); }
+  if(!strcmp(nm,"action_path")){ if(vm->cur_self)
+      gml_path_start(vm,vm->cur_self,(int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3)); return vreal(0); }
   if(!strcmp(nm,"path_end")){ if(vm->cur_self) vm->cur_self->path_index=-1; return vreal(0); }
 
   /* ---- classic timelines ---- */
@@ -6581,7 +6734,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
      !strcmp(nm,"message_button")||!strcmp(nm,"message_background")||
      !strcmp(nm,"message_text_font")||!strcmp(nm,"message_button_font")||
      !strcmp(nm,"message_input_font")||!strcmp(nm,"message_alpha")||
-     !strcmp(nm,"message_position")) return vreal(0);
+     !strcmp(nm,"message_position")||!strcmp(nm,"message_caption")||
+     !strcmp(nm,"message_size")||!strcmp(nm,"action_show_info")) return vreal(0);
+  /* Host-process priority and MIDI tempo have no portable libretro control surface. They are
+   * explicit compatibility no-ops rather than unresolved calls. */
+  if(!strcmp(nm,"set_program_priority")||!strcmp(nm,"sound_background_tempo")) return vreal(0);
   if(!strcmp(nm,"show_info")) return vreal(0); /* classic game-information dialog: unavailable in libretro */
   if(!strcmp(nm,"parameter_count")) return vreal(0);
   if(!strcmp(nm,"parameter_string")) return vstr("");
@@ -6999,6 +7156,18 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     g_d3.hidden=N(a,n,0)!=0.0 && !getenv("GML_D3D_NO_DEPTH");
     return vreal(0);
   }
+  if(!strcmp(nm,"d3d_set_lighting")){ g_d3.lighting=N(a,n,0)!=0; return vreal(0); }
+  if(!strcmp(nm,"d3d_light_define_point")){
+    int id=(int)N(a,n,0); if(id<0||id>=8) return vreal(0);
+    g_d3.light[id].defined=1; g_d3.light[id].x=N(a,n,1); g_d3.light[id].y=N(a,n,2);
+    g_d3.light[id].z=N(a,n,3); g_d3.light[id].range=fabs(N(a,n,4));
+    g_d3.light[id].color=(uint32_t)N(a,n,5)&0xFFFFFFu;
+    return vreal(1);
+  }
+  if(!strcmp(nm,"d3d_light_enable")){
+    int id=(int)N(a,n,0); if(id>=0&&id<8) g_d3.light[id].enabled=N(a,n,1)!=0;
+    return vreal(id>=0&&id<8);
+  }
   if(!strcmp(nm,"d3d_set_projection")){
     g_d3.eye[0]=N(a,n,0); g_d3.eye[1]=N(a,n,1); g_d3.eye[2]=N(a,n,2);
     g_d3.forward[0]=N(a,n,3)-g_d3.eye[0];
@@ -7010,6 +7179,64 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!d3_normalize(g_d3.right)){ g_d3.right[0]=0; g_d3.right[1]=1; g_d3.right[2]=0; }
     d3_cross(g_d3.forward,g_d3.right,g_d3.up);
     d3_normalize(g_d3.up);
+    return vreal(0);
+  }
+  if(!strcmp(nm,"d3d_draw_block")){
+    GmlRender *R=(GmlRender*)vm->render;
+    if(R && g_d3.active){
+      double x1=N(a,n,0),y1=N(a,n,1),z1=N(a,n,2),x2=N(a,n,3),y2=N(a,n,4),z2=N(a,n,5);
+      double face[6][4][3]={
+        {{x1,y1,z1},{x2,y1,z1},{x2,y2,z1},{x1,y2,z1}},
+        {{x1,y2,z2},{x2,y2,z2},{x2,y1,z2},{x1,y1,z2}},
+        {{x1,y1,z2},{x2,y1,z2},{x2,y1,z1},{x1,y1,z1}},
+        {{x1,y2,z1},{x2,y2,z1},{x2,y2,z2},{x1,y2,z2}},
+        {{x1,y1,z1},{x1,y2,z1},{x1,y2,z2},{x1,y1,z2}},
+        {{x2,y1,z2},{x2,y2,z2},{x2,y2,z1},{x2,y1,z1}}};
+      gml_render_maybe_prepare_draw(R);
+      for(int i=0;i<6;i++) d3_draw_quad(R,face[i],(int)N(a,n,6),N(a,n,7),N(a,n,8));
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"d3d_draw_cylinder")){
+    GmlRender *R=(GmlRender*)vm->render;
+    if(R && g_d3.active){
+      double x1=N(a,n,0),y1=N(a,n,1),z1=N(a,n,2),x2=N(a,n,3),y2=N(a,n,4),z2=N(a,n,5);
+      double cx=(x1+x2)*.5,cy=(y1+y2)*.5,rx=fabs(x2-x1)*.5,ry=fabs(y2-y1)*.5;
+      int closed=N(a,n,9)!=0, steps=(int)N(a,n,10); if(steps<3)steps=3; if(steps>128)steps=128;
+      gml_render_maybe_prepare_draw(R);
+      for(int i=0;i<steps;i++){
+        double q0=2*M_PI*i/steps,q1=2*M_PI*(i+1)/steps;
+        double side[4][3]={{cx+cos(q0)*rx,cy+sin(q0)*ry,z1},{cx+cos(q1)*rx,cy+sin(q1)*ry,z1},
+                           {cx+cos(q1)*rx,cy+sin(q1)*ry,z2},{cx+cos(q0)*rx,cy+sin(q0)*ry,z2}};
+        d3_draw_quad(R,side,(int)N(a,n,6),N(a,n,7)/steps,N(a,n,8));
+        if(closed){
+          double cap0[4][3]={{cx,cy,z1},{cx+cos(q1)*rx,cy+sin(q1)*ry,z1},{cx+cos(q0)*rx,cy+sin(q0)*ry,z1},{cx,cy,z1}};
+          double cap1[4][3]={{cx,cy,z2},{cx+cos(q0)*rx,cy+sin(q0)*ry,z2},{cx+cos(q1)*rx,cy+sin(q1)*ry,z2},{cx,cy,z2}};
+          d3_draw_quad(R,cap0,(int)N(a,n,6),N(a,n,7),N(a,n,8));
+          d3_draw_quad(R,cap1,(int)N(a,n,6),N(a,n,7),N(a,n,8));
+        }
+      }
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"d3d_draw_ellipsoid")){
+    GmlRender *R=(GmlRender*)vm->render;
+    if(R && g_d3.active){
+      double x1=N(a,n,0),y1=N(a,n,1),z1=N(a,n,2),x2=N(a,n,3),y2=N(a,n,4),z2=N(a,n,5);
+      double cx=(x1+x2)*.5,cy=(y1+y2)*.5,cz=(z1+z2)*.5;
+      double rx=fabs(x2-x1)*.5,ry=fabs(y2-y1)*.5,rz=fabs(z2-z1)*.5;
+      int steps=(int)N(a,n,9); if(steps<4)steps=4; if(steps>64)steps=64;
+      gml_render_maybe_prepare_draw(R);
+      for(int lat=0;lat<steps;lat++) for(int lon=0;lon<steps*2;lon++){
+        double a0=-M_PI*.5+M_PI*lat/steps,a1=-M_PI*.5+M_PI*(lat+1)/steps;
+        double b0=M_PI*lon/steps,b1=M_PI*(lon+1)/steps;
+        double p[4][3]={{cx+rx*cos(a0)*cos(b0),cy+ry*cos(a0)*sin(b0),cz+rz*sin(a0)},
+                        {cx+rx*cos(a0)*cos(b1),cy+ry*cos(a0)*sin(b1),cz+rz*sin(a0)},
+                        {cx+rx*cos(a1)*cos(b1),cy+ry*cos(a1)*sin(b1),cz+rz*sin(a1)},
+                        {cx+rx*cos(a1)*cos(b0),cy+ry*cos(a1)*sin(b0),cz+rz*sin(a1)}};
+        d3_draw_quad(R,p,(int)N(a,n,6),N(a,n,7)/steps,N(a,n,8)/steps);
+      }
+    }
     return vreal(0);
   }
   if(!strcmp(nm,"d3d_draw_floor")||!strcmp(nm,"d3d_draw_wall")){

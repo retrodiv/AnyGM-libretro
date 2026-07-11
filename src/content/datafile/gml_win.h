@@ -65,6 +65,7 @@ typedef struct {
 
 typedef struct {
   const char *name; uint32_t width, height, speed;
+  int persistent;
   uint32_t bgcolor;  /* 0xAARRGGBB-ish; GM stores 0xAABBGGRR, alpha forced 0xFF */
   int draw_bg;
   int creation_code;  /* CODE index for the room's creation code, -1 if none */

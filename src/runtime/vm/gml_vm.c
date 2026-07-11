@@ -2905,7 +2905,7 @@ static void obj_list_unlink(GmlVM *vm, GmlInstance *in, int obj);
 static GmlInstance *alloc_inst(GmlVM *vm){
   /* a deactivated instance keeps active=0 but must NOT have its slot reused (it still exists). */
   int first = vm->step_alloc_base > 0 ? vm->step_alloc_base : 0;
-  for(int i=first;i<vm->inst_count;i++) if(!vm->inst[i].active && !vm->inst[i].deactivated){ memset(&vm->inst[i],0,sizeof(GmlInstance)); return &vm->inst[i]; }
+  for(int i=first;i<vm->inst_count;i++) if(!vm->inst[i].active && !vm->inst[i].deactivated && !vm->inst[i].room_dormant){ memset(&vm->inst[i],0,sizeof(GmlInstance)); return &vm->inst[i]; }
   if(vm->inst_count>=vm->inst_cap){
     /* pool full: do NOT realloc — moving the array would dangle every held instance pointer
      * (cur_self/cur_other, with-frames, the room-enter loop) and segfault. Reuse the last slot. */
@@ -2953,6 +2953,7 @@ void gml_obj_alive_recount(GmlVM *vm){
 }
 static void init_inst(GmlVM *vm, GmlInstance *in, double x, double y, int obj){
   in->active=1; in->marked=0; in->obj=obj; in->id=vm->next_id++;
+  in->room_owner=vm->room_index;
   gml_obj_alive_adjust(vm,obj,1); obj_list_link(vm,in);
   in->x=in->xstart=x; in->y=in->ystart=y; in->xprevious=x; in->yprevious=y;
   gml_colgrid_touch(in);   /* fresh instance: unknown to the current grid build */
@@ -3672,6 +3673,22 @@ void gml_room_enter(GmlVM *vm, int room_index){
     for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked)
       gml_run_event(vm,&vm->inst[i],"Other_5");
   }
+  int store_previous=0;
+  if(prev_room>=0){
+    GmlVal *persistent=gml_varmap_get(&vm->globals,"room_persistent");
+    if(persistent) store_previous=asnum(*persistent)!=0.0;
+    else { GmlRoom previous; if(gml_room_get(vm->win,prev_room,&previous)==0) store_previous=previous.persistent; }
+    if(prev_room<vm->room_state_count && vm->room_stored) vm->room_stored[prev_room]=store_previous?1:0;
+  }
+  if(store_previous){
+    for(int i=0;i<vm->inst_count;i++){
+      GmlInstance *in=&vm->inst[i];
+      if(in->persistent || in->marked || in->room_owner!=prev_room || (!in->active&&!in->deactivated)) continue;
+      gml_obj_alive_adjust(vm,in->obj,-1); obj_list_unlink(vm,in,in->obj);
+      in->room_was_deactivated=in->deactivated?1:0;
+      in->active=0; in->deactivated=0; in->room_dormant=1;
+    }
+  }
   /* clear non-persistent instances (incl. deactivated ones, which keep active=0).
    * Room disposal runs Clean Up after Room End, without invoking Destroy. */
   for(int i=0;i<vm->inst_count;i++) if((vm->inst[i].active||vm->inst[i].deactivated) && !vm->inst[i].persistent){
@@ -3681,6 +3698,8 @@ void gml_room_enter(GmlVM *vm, int room_index){
     gml_obj_alive_adjust(vm,vm->inst[i].obj,-1); obj_list_unlink(vm,&vm->inst[i],vm->inst[i].obj);
     varmap_free_ex(&vm->inst[i].vars,1); vm->inst[i].active=0; vm->inst[i].deactivated=0; }
   vm->room_index=room_index; vm->pending_room=-1;
+  for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].persistent && (vm->inst[i].active||vm->inst[i].deactivated))
+    vm->inst[i].room_owner=room_index;
   { extern long g_vm_frame; vm->room_enter_frame=g_vm_frame; }
   vm->n_tile_mut=0;   /* tile-layer mutations are per-room */
   vm->n_tile_del_at=0; /* tile_layer_delete_at marks are per-room */
@@ -3692,6 +3711,24 @@ void gml_room_enter(GmlVM *vm, int room_index){
   gml_room_reload_layers(vm, room_index);
   if(getenv("GML_LOG_ROOM")) fprintf(stderr,"[room] enter %d\n",room_index);
   GmlRoom r; if(gml_room_get(vm->win,room_index,&r)!=0) return;
+  *gml_varmap_put(&vm->globals,"room_persistent")=vreal(r.persistent?1.0:0.0);
+  if(room_index>=0 && room_index<vm->room_state_count && vm->room_stored && vm->room_stored[room_index]){
+    vm->room_stored[room_index]=0;
+    *gml_varmap_put(&vm->globals,"room_persistent")=vreal(1);
+    for(int i=0;i<vm->inst_count;i++){
+      GmlInstance *in=&vm->inst[i];
+      if(!in->room_dormant || in->room_owner!=room_index) continue;
+      in->room_dormant=0; in->deactivated=in->room_was_deactivated?1:0;
+      in->active=in->deactivated?0:1; in->room_was_deactivated=0;
+      gml_obj_alive_adjust(vm,in->obj,1); obj_list_link(vm,in);
+    }
+    int n0=vm->inst_count;
+    for(int i=0;i<n0;i++) if(vm->inst[i].active && !vm->inst[i].marked)
+      gml_run_event(vm,&vm->inst[i],"Other_4");
+    gml_fire_gamepad_connected(vm);
+    reap(vm); gml_vm_warm_audio_for_room(vm,vm->room_index); vm_prefetch_room_assets(vm);
+    return;
+  }
   const uint8_t *d=vm->win->data; uint32_t op=r.obj_ptr, cnt=u32(d,op);
   /* Initialise the built-in background_* arrays from the room's background
    * layers. GML draw code can read this state during room startup. */
@@ -5052,8 +5089,13 @@ void gml_rng_seed(GmlVM *vm, uint32_t seed){
   uint32_t s=seed;
   for(int i=0;i<16;i++){ s=((s*214013u+2531011u)>>16)&0x7fffffffu; vm->rng_well[i]=s; }
   vm->rng_index=0;
+  vm->rng_classic_state=seed;
 }
 static uint32_t gml_rng_next(GmlVM *vm){
+  if(vm->win && vm->win->classic_version){
+    vm->rng_classic_state=vm->rng_classic_state*0x08088405u+1u;
+    return vm->rng_classic_state;
+  }
   uint32_t *st=vm->rng_well; uint32_t idx=vm->rng_index;
   uint32_t a,b,c,d;
   a=st[idx];
@@ -5073,9 +5115,13 @@ double gml_rng_value(GmlVM *vm){ return (double)gml_rng_next(vm) / 4294967296.0;
 
 int gml_vm_init(GmlVM *vm, GmlWin *win){
   memset(vm,0,sizeof(*vm));
+  { extern void gml_d3_reset(void); gml_d3_reset(); }
   vm->cg_built_frame=-1;   /* memset leaves 0, which would collide with g_vm_frame==0 at boot */
   { extern void gml_part_reset_all(void); gml_part_reset_all(); }   /* fresh particle pools per game */
   vm->win=win; vm->pending_room=-1; vm->room_index=-1; vm->next_id=100000; vm->rng_state=0;
+  vm->rng_classic_state=0;
+  vm->room_state_count=gml_room_count(win);
+  vm->room_stored=calloc((size_t)(vm->room_state_count>0?vm->room_state_count:1),1);
   /* Seed dynamic IDs above room-placed IDs across the project to avoid collisions
    * between persistent dynamic instances and instances placed in later rooms. */
   { const GmlChunk *rc=gml_chunk(win,"ROOM");
@@ -5181,12 +5227,13 @@ void gml_vm_free(GmlVM *vm){
   free(vm->objects); free(vm->col_events); free(vm->col_pair_cache); free(vm->event_cache);
   gml_tilemaps_clear(vm);
   free(vm->rtl); free(vm->rte); free(vm->view_ovr); free(vm->tilemaps);
+  free(vm->room_stored); vm->room_stored=NULL; vm->room_state_count=0;
   free(vm->audio_room_warm_scan); vm->audio_room_warm_scan=NULL; vm->audio_room_warm_scan_n=0;
 }
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -5458,9 +5505,10 @@ static int gmv6_timeline_present(GmlInstance *in){
          in->timeline_running!=0 || in->timeline_loop!=0;
 }
 static void sw_instance(StateW *s, GmlInstance *in){
-  uint8_t fl=(in->active?1:0)|(in->marked?2:0)|(in->deactivated?4:0);
+  uint8_t fl=(in->active?1:0)|(in->marked?2:0)|(in->deactivated?4:0)|
+             (in->room_dormant?8:0)|(in->room_was_deactivated?16:0);
   sw_raw(s,&fl,1);
-  sw_u32(s,in->id); sw_i32(s,in->obj);
+  sw_u32(s,in->id); sw_i32(s,in->obj); sw_i32(s,in->room_owner);
   uint32_t fm=0;
   #define FCHK(bit,field) if(in->field!=gmv6_def[bit]) fm|=1u<<(bit);
   GMV6_FIELDS(FCHK)
@@ -5587,7 +5635,9 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
   if(s->v6){
     uint8_t fl=0; sr_raw(s,&fl,1);
     in->active=fl&1; in->marked=(fl>>1)&1; in->deactivated=(fl>>2)&1;
+    in->room_dormant=(fl>>3)&1; in->room_was_deactivated=(fl>>4)&1;
     in->id=sr_u32(s); in->obj=sr_i32(s);
+    in->room_owner=s->v19?sr_i32(s):vm->room_index;
     uint32_t fm=sr_u32(s);
     in->x=sr_d(s); in->y=sr_d(s); in->xprevious=sr_d(s); in->yprevious=sr_d(s);
     in->xstart=sr_d(s); in->ystart=sr_d(s);
@@ -5669,7 +5719,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x42564D47u); /* GMV18: GMV17 plus compact per-instance timeline state */
+  sw_u32(s,0x43564D47u); /* GMV19: GMV18 plus classic RNG live state */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -5682,6 +5732,16 @@ static void sw_vm(StateW *s, GmlVM *vm){
   sw_i32(s,vm->script_argc); for(int i=0;i<16;i++) sw_val(s,vm->script_args[i],0);
   for(int i=0;i<16;i++) sw_u32(s,vm->rng_well[i]);
   sw_i32(s,vm->rng_index); sw_u32(s,vm->rng_state);
+  sw_u32(s,vm->rng_classic_state);
+  { int flags[19]; double values[44]; uint32_t colors[8];
+    extern void gml_d3_state_get(int[19],double[44],uint32_t[8]);
+    gml_d3_state_get(flags,values,colors);
+    for(int i=0;i<19;i++) sw_i32(s,flags[i]);
+    for(int i=0;i<44;i++) sw_d(s,values[i]);
+    for(int i=0;i<8;i++) sw_u32(s,colors[i]);
+  }
+  sw_i32(s,vm->room_state_count);
+  if(vm->room_state_count>0) sw_raw(s,vm->room_stored,(size_t)vm->room_state_count);
   sw_i32(s,vm->n_tile_mut); sw_raw(s,vm->tile_mut,sizeof(vm->tile_mut));
   sw_i32(s,vm->n_tile_del_at); sw_raw(s,vm->tile_del_at,sizeof(vm->tile_del_at));
   int mut_tm=0;
@@ -5817,7 +5877,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       && magic!=0x35564D47u && magic!=0x36564D47u && magic!=0x37564D47u && magic!=0x38564D47u
       && magic!=0x39564D47u && magic!=0x3A564D47u && magic!=0x3B564D47u && magic!=0x3C564D47u
       && magic!=0x3D564D47u && magic!=0x3E564D47u && magic!=0x3F564D47u
-      && magic!=0x40564D47u && magic!=0x41564D47u && magic!=0x42564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x40564D47u && magic!=0x41564D47u && magic!=0x42564D47u
+      && magic!=0x43564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -5833,6 +5894,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v16 = magic>=0x40564D47u;
   s.v17 = magic>=0x41564D47u;
   s.v18 = magic>=0x42564D47u;
+  s.v19 = magic>=0x43564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -5854,6 +5916,25 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   vm->script_argc=sr_i32(&s); for(int i=0;i<16;i++){ vm->script_args[i]=sr_val(vm,&s,0); gml_arr_mark_escaped(vm->script_args[i]); }
   for(int i=0;i<16;i++) vm->rng_well[i]=sr_u32(&s);
   vm->rng_index=sr_i32(&s); vm->rng_state=sr_u32(&s);
+  vm->rng_classic_state=s.v19?sr_u32(&s):vm->rng_state;
+  if(s.v19){ int flags[19]; double values[44]; uint32_t colors[8];
+    extern void gml_d3_state_set(const int[19],const double[44],const uint32_t[8]);
+    for(int i=0;i<19;i++) flags[i]=sr_i32(&s);
+    for(int i=0;i<44;i++) values[i]=sr_d(&s);
+    for(int i=0;i<8;i++) colors[i]=sr_u32(&s);
+    if(s.ok) gml_d3_state_set(flags,values,colors);
+  } else { extern void gml_d3_reset(void); gml_d3_reset(); }
+  if(s.v19){
+    int count=sr_i32(&s);
+    if(count<0 || count>100000){ s.ok=0; count=0; }
+    if(count!=vm->room_state_count){
+      unsigned char *stored=calloc((size_t)(count>0?count:1),1);
+      if(!stored && count>0) s.ok=0;
+      else { free(vm->room_stored); vm->room_stored=stored; vm->room_state_count=count; }
+    }
+    if(count>0) sr_raw(&s,vm->room_stored,(size_t)count);
+  } else if(vm->room_stored && vm->room_state_count>0)
+    memset(vm->room_stored,0,(size_t)vm->room_state_count);
   vm->n_tile_mut=sr_i32(&s); sr_raw(&s,vm->tile_mut,sizeof(vm->tile_mut));
   vm->n_tile_del_at=sr_i32(&s); sr_raw(&s,vm->tile_del_at,sizeof(vm->tile_del_at));
   if(vm->n_tile_mut<0 || vm->n_tile_mut>64 || vm->n_tile_del_at<0 || vm->n_tile_del_at>64){

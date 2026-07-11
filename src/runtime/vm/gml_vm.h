@@ -32,6 +32,8 @@ typedef struct {
   int     active;      /* slot in use */
   int     marked;      /* pending destroy */
   int     deactivated; /* instance_deactivate_*: exists but skipped by step/draw/collision/queries */
+  int     room_owner;
+  unsigned char room_dormant, room_was_deactivated;
   uint32_t id;         /* instance id */
   int     obj;         /* object index */
   /* builtin vars */
@@ -141,6 +143,7 @@ typedef struct GmlVM {
   uint32_t next_id;
   int      room_index;        /* current room (ROOM index) */
   int      pending_room;      /* -1 none, else target ROOM index (play-order resolved) */
+  unsigned char *room_stored; int room_state_count;
   int      game_end;
   int      started;           /* Game Start fired */
   int      gs_roots_run;      /* GMS2.3 GlobalScript root entries executed (once per session) */
@@ -171,6 +174,7 @@ typedef struct GmlVM {
    * default seed 0. random(x) = (next()/2^32)*x. See LICENSES/WELL512.txt. */
   uint32_t rng_well[16]; int rng_index;
   uint32_t rng_state;   /* last seed set (randomize/random_set_seed); random_get_seed reads it */
+  uint32_t rng_classic_state; /* GM6-8 live linear-generator state */
   /* tile-layer runtime mutations (tile_layer_delete/depth/shift/hide/show), reset on room enter.
    * Pure no-op when n_tile_mut==0 → zero effect on the hot draw path for rooms that
    * never call tile_layer_*; only those that do pay the per-tile lookup. */

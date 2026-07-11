@@ -184,6 +184,7 @@ int gml_room_get(const GmlWin *w, int idx, GmlRoom *o){
   uint32_t p=u32(w->data,c->off+4+idx*4); const uint8_t *d=w->data;
   o->name=gml_str_by_ptr(w,u32(d,p));
   o->width=u32(d,p+8); o->height=u32(d,p+12); o->speed=u32(d,p+16);
+  o->persistent=(int)u32(d,p+20);
   o->bgcolor=u32(d,p+24); o->draw_bg=(int)u32(d,p+28);
   o->creation_code=(int)u32(d,p+32);
   o->bg_ptr=u32(d,p+40); o->view_ptr=u32(d,p+44);

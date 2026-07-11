@@ -104,6 +104,8 @@ static void pemit_from_v1(PEmit *e, const PEmitV1 *o){
 static PType g_pt[PT_MAX];
 static PSys  g_ps[PS_MAX];
 static PEmit g_pe[PE_MAX];
+static int g_effect_sys[2];
+static int g_effect_type[2][12][3];
 
 static uint32_t g_prng = 0x2545F491u;
 static double prnd(void){ g_prng = g_prng*1664525u + 1013904223u; return ((g_prng>>8) & 0xFFFFFF)/(double)0x1000000; }
@@ -137,6 +139,7 @@ static PEmit *pe(int id){ int i=id-1; return (i>=0 && i<PE_MAX && g_pe[i].used) 
 void gml_part_reset_all(void){
   for(int i=0;i<PS_MAX;i++){ free(g_ps[i].parts); }
   memset(g_pt,0,sizeof g_pt); memset(g_ps,0,sizeof g_ps); memset(g_pe,0,sizeof g_pe);
+  memset(g_effect_sys,0,sizeof g_effect_sys); memset(g_effect_type,0,sizeof g_effect_type);
 }
 
 int gml_part_type_create(void){
@@ -221,6 +224,31 @@ static void sys_spawn(PSys *s, double x, double y, int type, int number, int col
 }
 void gml_part_particles_create(int sysid,double x,double y,int type,int number){ PSys *s=ps(sysid); if(s) sys_spawn(s,x+s->px,y+s->py,type,number,-1); }
 void gml_part_particles_create_color(int sysid,double x,double y,int type,uint32_t col,int number){ PSys *s=ps(sysid); if(s) sys_spawn(s,x+s->px,y+s->py,type,number,(int)(col&0xFFFFFF)); }
+
+void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t color){
+  int layer=above?1:0; if(kind<0)kind=0; if(kind>11)kind=11; if(size<0)size=0; if(size>2)size=2;
+  if(!g_effect_sys[layer]){
+    g_effect_sys[layer]=gml_part_system_create();
+    gml_part_system_depth(g_effect_sys[layer],above?-100000.0:100000.0);
+  }
+  int type=g_effect_type[layer][kind][size];
+  if(!type){
+    type=gml_part_type_create(); if(!type) return;
+    g_effect_type[layer][kind][size]=type;
+    double scale=size==0?.8:(size==1?1.6:2.8);
+    gml_part_type_shape(type,0);
+    gml_part_type_size(type,scale,scale*1.8,kind==6||kind==7?-.03:.02,0);
+    gml_part_type_life(type,kind==4||kind==5?35:18,kind==4||kind==5?60:34);
+    gml_part_type_alpha(type,3,0.0,0.9,0.0);
+    gml_part_type_direction(type,0,360,0,0);
+    if(kind==4||kind==5){ gml_part_type_speed(type,.2*scale,1.0*scale,-.01,0); gml_part_type_gravity(type,.025,90); }
+    else if(kind==10){ gml_part_type_speed(type,4*scale,7*scale,0,0); gml_part_type_direction(type,250,290,0,0); }
+    else if(kind==11){ gml_part_type_speed(type,.3*scale,1.2*scale,0,0); gml_part_type_direction(type,240,300,0,0); }
+    else gml_part_type_speed(type,.5*scale,2.5*scale,-.03,0);
+  }
+  int number=size==0?8:(size==1?16:28); if(kind==10||kind==11) number*=2;
+  gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,number);
+}
 
 int  gml_part_emitter_create(int sysid){ (void)sysid; for(int i=0;i<PE_MAX;i++) if(!g_pe[i].used){ memset(&g_pe[i],0,sizeof g_pe[i]); g_pe[i].used=1; g_pe[i].sys=sysid; return i+1; } return 0; }
 int  gml_part_emitter_exists(int sysid,int em){ PEmit *e=pe(em); return e && (sysid<=0 || e->sys==sysid); }

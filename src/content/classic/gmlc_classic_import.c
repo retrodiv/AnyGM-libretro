@@ -965,6 +965,20 @@ static int emit_action_call(ImportText *text, const char *function_name,
   return text_append(text, ")");
 }
 
+static int emit_action_code_call(ImportText *text, const char *code,
+                                 char **arguments, uint32_t *argument_kinds,
+                                 uint32_t used_arguments){
+  if(!text_append(text,"(function(){\n") || !text_append(text,code) ||
+     !text_append(text,"\n})(")) return 0;
+  for(uint32_t i=0;i<used_arguments;i++){
+    if(i && !text_append(text,",")) return 0;
+    if(argument_kinds && argument_kinds[i]==1){
+      if(!text_append_quoted(text,arguments[i])) return 0;
+    } else if(!text_append(text,arguments[i] && *arguments[i] ? arguments[i] : "0")) return 0;
+  }
+  return text_append(text,")");
+}
+
 static int import_actions(ImportReader *r, ImportText *text){
   uint32_t list_version, count;
   if(!import_u32(r, &list_version, "action-list version") || !import_u32(r, &count, "action count")) return 0;
@@ -1018,9 +1032,14 @@ static int import_actions(ImportReader *r, ImportText *text){
       if(ok && question) ok = text_append(text, "if (") && (!negate || text_append(text, "!"));
       if(ok){
         if(type == 2 || kind == 7){
-          const char *action_code = code && *code ? code :
-            (argument_count && arguments[0] && arguments[0][0] ? arguments[0] : "/* empty code action */");
-          ok = text_append(text, action_code);
+          if(code && *code)
+            ok = emit_action_code_call(text,code,arguments,argument_kinds,
+              used_arguments < argument_count ? used_arguments : argument_count);
+          else {
+            const char *action_code = argument_count && arguments[0] && arguments[0][0] ?
+              arguments[0] : "/* empty code action */";
+            ok = text_append(text, action_code);
+          }
         }
         else ok = emit_action_call(text, function_name, arguments, argument_kinds,
                                    used_arguments < argument_count ? used_arguments : argument_count,

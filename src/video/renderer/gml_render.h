@@ -271,6 +271,7 @@ int  gml_sprite_collision_mask(GmlRender *r, int sprite, int sepmasks, int bboxm
                                int kind, int tolerance);
 int  gml_sprite_frames(GmlRender *r, int sprite);
 int  gml_sprite_alpha(GmlRender *r, int sprite, int frame, int lx, int ly);
+int  gml_sprite_set_alpha_from_sprite(GmlRender *r, int sprite, int alpha_sprite);
 int  gml_sprite_collision(GmlRender *r, int sprite, int frame, int lx, int ly);
 int  gml_font_add_sprite(GmlRender *r, int sprite, int first, int prop, int sep);
 int  gml_font_add_sprite_ext(GmlRender *r, int sprite, const char *map, int prop, int sep);

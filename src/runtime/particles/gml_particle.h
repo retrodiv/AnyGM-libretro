@@ -59,5 +59,6 @@ void gml_part_emitter_clear(int sysid,int em);
 void gml_part_emitter_region(int sysid,int em,double xmin,double xmax,double ymin,double ymax,int shape,int dist);
 void gml_part_emitter_burst(int sysid,int em,int type,int number);
 void gml_part_emitter_stream(int sysid,int em,int type,int number);
+void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t color);
 
 #endif

@@ -298,6 +298,25 @@ static void lx_next(Lexer *l){
     l->tok.kind=TOK_ID; l->pos+=(size_t)n; l->tok.end=l->pos; return;
   }
   if(isdigit((unsigned char)*s) || (*s=='.' && isdigit((unsigned char)s[1]))){
+    /* The classic lexer accepts an extra dot in a numeric token (old action
+     * editors can produce values such as `.5.25`).  Keep the final dot as the
+     * decimal separator and ignore earlier ones. */
+    size_t raw=0, dots=0, last_dot=0;
+    while(isdigit((unsigned char)s[raw]) ||
+          (s[raw]=='.' && isdigit((unsigned char)s[raw+1]))){
+      if(s[raw]=='.'){ dots++; last_dot=raw; }
+      raw++;
+    }
+    if(dots>1){
+      char normalized[128]; size_t nn=0;
+      for(size_t i=0;i<raw && nn+1<sizeof(normalized);i++)
+        if(s[i]!='.' || i==last_dot) normalized[nn++]=s[i];
+      normalized[nn]=0;
+      l->tok.num=strtod(normalized,NULL);
+      size_t n=raw<sizeof(l->tok.text)?raw:sizeof(l->tok.text)-1;
+      memcpy(l->tok.text,s,n); l->tok.text[n]=0;
+      l->tok.kind=TOK_NUM; l->pos+=raw; l->tok.end=l->pos; return;
+    }
     char *end=NULL;
     l->tok.num=strtod(s,&end);
     size_t n=(size_t)(end-s);
@@ -330,7 +349,9 @@ static void lx_next(Lexer *l){
   l->tok.end=l->pos;
 }
 
-static int tok_is(Compiler *c, const char *s){ return !strcmp(c->lex.tok.text,s); }
+static int tok_is(Compiler *c, const char *s){
+  return c->lex.tok.kind==TOK_SYM && !strcmp(c->lex.tok.text,s);
+}
 static int eat(Compiler *c, const char *s){ if(tok_is(c,s)){ lx_next(&c->lex); return 1; } return 0; }
 static int need(Compiler *c, const char *s){ if(eat(c,s)) return 1; snprintf(c->lex.err,sizeof(c->lex.err),"expected '%s'",s); c->unsupported=1; return 0; }
 static int is_id(Compiler *c, const char *s){ return c->lex.tok.kind==TOK_ID && !strcmp(c->lex.tok.text,s); }
@@ -1139,6 +1160,7 @@ typedef struct {
   int inst;
   uint8_t reftype;
   int is_stacktop;
+  int receiver_on_stack;
   int is_array;
   int is_array_2d;
   int accessor;
@@ -1158,8 +1180,10 @@ static int emit_array_2d_index_cast(Compiler *c, Span s);
 
 static int emit_lvalue_address(Compiler *c, LValue *lv){
   if(lv->is_stacktop){
-    if(!emit_receiver_value(c,lv->receiver)) return 0;
-    if(!emit_conv(c,DT_VAR,DT_INT32)) return 0;
+    if(!lv->receiver_on_stack){
+      if(!emit_receiver_value(c,lv->receiver)) return 0;
+      if(!emit_conv(c,DT_VAR,DT_INT32)) return 0;
+    }
   }
   else if(lv->is_array){
     if(!emit_push_real(c,lv->inst)) return 0;
@@ -1259,6 +1283,46 @@ static int parse_function_value(Compiler *c, int emit_value){
   return emit_value ? emit_script_funcval(c,ci) : 1;
 }
 
+/* Compile postfix operations whose receiver is already on the value stack. Classic
+ * GML commonly dereferences a value returned by a call, for example
+ * `(instance_place(x,y,obj)).object_index`.  Named receivers use LValue below;
+ * this path deliberately handles expression receivers without reconstructing or
+ * re-evaluating the expression. */
+static int parse_value_postfix(Compiler *c){
+  for(;;){
+    if(eat(c,".")){
+      if(c->lex.tok.kind!=TOK_ID){
+        c->unsupported=1;
+        snprintf(c->lex.err,sizeof(c->lex.err),"expected field name");
+        return 0;
+      }
+      char field[128];
+      snprintf(field,sizeof(field),"%s",c->lex.tok.text);
+      lx_next(&c->lex);
+      if(!emit_conv(c,DT_VAR,DT_INT32) || !emit_push_var(c,0,field,0x80)) return 0;
+      expr_not_const(c);
+      c->expr_boolish=0;
+      continue;
+    }
+    if(tok_is(c,"(")){
+      size_t gap=c->lex.tok.start;
+      int line_break=0;
+      while(gap>0 && isspace((unsigned char)c->lex.src[gap-1])){
+        if(c->lex.src[gap-1]=='\n' || c->lex.src[gap-1]=='\r') line_break=1;
+        gap--;
+      }
+      if(line_break) return 1;
+      lx_next(&c->lex);
+      int argc=0;
+      if(!parse_call_args_reversed(c,&argc) || !emit_callv(c,argc)) return 0;
+      expr_not_const(c);
+      c->expr_boolish=0;
+      continue;
+    }
+    return 1;
+  }
+}
+
 static int parse_primary(Compiler *c){
   if(c->lex.tok.kind==TOK_NUM){ double d=c->lex.tok.num; lx_next(&c->lex); return emit_const_number(c,d); }
   if(c->lex.tok.kind==TOK_STR){
@@ -1347,15 +1411,7 @@ static int parse_primary(Compiler *c){
   return 0;
 
 postfix_calls:
-  while(tok_is(c,"(")){
-    lx_next(&c->lex);
-    int argc=0;
-    if(!parse_call_args_reversed(c,&argc)) return 0;
-    if(!emit_callv(c,argc)) return 0;
-    expr_not_const(c);
-    c->expr_boolish=0;
-  }
-  return 1;
+  return parse_value_postfix(c);
 }
 
 static int parse_unary(Compiler *c){
@@ -1419,7 +1475,7 @@ static int parse_add(Compiler *c){
   double left_val=c->expr_const_value;
   size_t left_start=c->expr_const_start;
   int did=0;
-  while(tok_is(c,"+")||tok_is(c,"-")){
+  while(tok_is(c,"+")||tok_is(c,"-")||tok_is(c,"++")){
     int sub=tok_is(c,"-"); lx_next(&c->lex);
     if(!parse_mul(c)) return 0;
     int right_const=c->expr_const;
@@ -1611,6 +1667,19 @@ static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv){
     else if(resolve_asset(c,first,&cv)) lv->inst=(int)cv;
     else { lv->is_stacktop=1; lv->inst=IT_STACK; }
     snprintf(lv->name,sizeof(lv->name),"%s",field);
+    while(eat(c,".")){
+      if(c->lex.tok.kind!=TOK_ID){
+        c->unsupported=1;
+        snprintf(c->lex.err,sizeof(c->lex.err),"expected field name");
+        return 0;
+      }
+      if(!emit_lvalue_read(c,lv) || !emit_conv(c,DT_VAR,DT_INT32)) return 0;
+      snprintf(lv->name,sizeof(lv->name),"%s",c->lex.tok.text);
+      lv->inst=IT_STACK;
+      lv->is_stacktop=1;
+      lv->receiver_on_stack=1;
+      lx_next(&c->lex);
+    }
   }
   if(eat(c,"[")){
     size_t close_pos=0;
@@ -2023,7 +2092,82 @@ static int parse_assignment_tail(Compiler *c, LValue *lv){
   return 1;
 }
 
+/* Some classic action libraries emit an expression followed directly by case
+ * labels instead of spelling out `switch (expression)`.  The classic grammar
+ * treats the expression value as the selector.  At entry that selector is the
+ * only value on the stack; leave the closing brace to the enclosing block. */
+static int parse_implicit_cases(Compiler *c){
+  size_t done_sites[128];
+  int n_done=0;
+  while(is_id(c,"case") || is_id(c,"default")){
+    int is_default=is_id(c,"default");
+    lx_next(&c->lex);
+    size_t skip=(size_t)-1;
+    if(!is_default){
+      if(!emit_dup(c,DT_VAR) || !parse_expr(c) || !emit_cmp(c,CMP_EQ)) return 0;
+      skip=emit_branch(c,OP_BF);
+    }
+    if(!need(c,":")) return 0;
+    while(c->lex.tok.kind!=TOK_EOF && !tok_is(c,"}") &&
+          !is_id(c,"case") && !is_id(c,"default")){
+      if(!parse_statement(c)) return 0;
+    }
+    if(n_done>=(int)(sizeof(done_sites)/sizeof(done_sites[0]))){
+      c->unsupported=1;
+      snprintf(c->lex.err,sizeof(c->lex.err),"too many implicit case labels");
+      return 0;
+    }
+    done_sites[n_done++]=emit_branch(c,OP_B);
+    if(skip!=(size_t)-1) patch_branch(c,skip,c->code.len);
+  }
+  size_t cleanup=c->code.len;
+  if(!emit_popz(c)) return 0;
+  for(int i=0;i<n_done;i++) patch_branch(c,done_sites[i],cleanup);
+  return 1;
+}
+
 static int parse_simple_or_assign(Compiler *c){
+  if(tok_is(c,"(")){
+    lx_next(&c->lex);
+    if(!parse_expr(c) || !need(c,")")) return 0;
+    if(eat(c,".")){
+      if(c->lex.tok.kind!=TOK_ID){
+        c->unsupported=1;
+        snprintf(c->lex.err,sizeof(c->lex.err),"expected field name");
+        return 0;
+      }
+      char receiver[128];
+      snprintf(receiver,sizeof(receiver),"__postfix_receiver_%zu",c->code.len);
+      if(!add_local(c,receiver) || !emit_pop_var(c,IT_LOCAL,receiver,0xA0,DT_VAR)) return 0;
+      LValue lv;
+      memset(&lv,0,sizeof(lv));
+      snprintf(lv.receiver,sizeof(lv.receiver),"%s",receiver);
+      snprintf(lv.name,sizeof(lv.name),"%s",c->lex.tok.text);
+      lv.inst=IT_STACK;
+      lv.is_stacktop=1;
+      lx_next(&c->lex);
+      while(eat(c,".")){
+        if(c->lex.tok.kind!=TOK_ID){
+          c->unsupported=1;
+          snprintf(c->lex.err,sizeof(c->lex.err),"expected field name");
+          return 0;
+        }
+        if(!emit_lvalue_read(c,&lv) ||
+           !emit_pop_var(c,IT_LOCAL,receiver,0xA0,DT_VAR)) return 0;
+        snprintf(lv.name,sizeof(lv.name),"%s",c->lex.tok.text);
+        lx_next(&c->lex);
+      }
+      if(tok_is(c,"=")||tok_is(c,"+=")||tok_is(c,"-=")||tok_is(c,"*=")||
+         tok_is(c,"/=")||tok_is(c,"%=")||tok_is(c,"++")||tok_is(c,"--"))
+        return parse_assignment_tail(c,&lv);
+      if(!emit_lvalue_read(c,&lv) || !parse_value_postfix(c)) return 0;
+      eat(c,";");
+      return emit_popz(c);
+    }
+    if(!parse_value_postfix(c)) return 0;
+    eat(c,";");
+    return emit_popz(c);
+  }
   if(c->lex.tok.kind!=TOK_ID){ if(!parse_expr(c)) return 0; eat(c,";"); emit_popz(c); return 1; }
   char first[128]; snprintf(first,sizeof(first),"%s",c->lex.tok.text); lx_next(&c->lex);
   if(tok_is(c,"=")||tok_is(c,"+=")||tok_is(c,"-=")||tok_is(c,"*=")||tok_is(c,"/=")||tok_is(c,"%=")||tok_is(c,"++")||tok_is(c,"--")){
@@ -2060,13 +2204,15 @@ static int parse_simple_or_assign(Compiler *c){
     if(scope!=IT_SELF){
       if(!emit_push_var(c,scope,first,0xA0)) return 0;
       if(!parse_call_args_reversed(c,&argc)) return 0;
-      if(!emit_callv(c,argc)) return 0;
+      if(!emit_callv(c,argc) || !parse_value_postfix(c)) return 0;
+      if(is_id(c,"case") || is_id(c,"default")) return parse_implicit_cases(c);
       emit_popz(c);
       eat(c,";");
       return 1;
     }
     if(!parse_call_args_reversed(c,&argc)) return 0;
-    if(!emit_call(c,first,argc)) return 0;
+    if(!emit_call(c,first,argc) || !parse_value_postfix(c)) return 0;
+    if(is_id(c,"case") || is_id(c,"default")) return parse_implicit_cases(c);
     emit_popz(c);
     eat(c,";");
     return 1;
