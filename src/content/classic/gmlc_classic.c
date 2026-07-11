@@ -668,7 +668,51 @@ void gmlc_classic_manifest_free(GmlcClassicManifest *manifest){
     }
     free(manifest->slots[type]);
   }
+  free(manifest->room_order);
   memset(manifest, 0, sizeof(*manifest));
+}
+
+static int parse_modern_room_order(const void *data, size_t size,
+                                   GmlcClassicManifest *manifest,
+                                   char *err, size_t errcap){
+  ClassicReader r = {(const uint8_t*)data, size, manifest->inventory.payload_end, err, errcap};
+  uint32_t version, count;
+  if(!reader_u32(&r, &version, "included-file section version") || version < 620 ||
+     !reader_u32(&r, &count, "included-file count")) return 0;
+  if(count > (r.size - r.pos) / 4) return reader_fail(&r, "included files");
+  for(uint32_t i = 0; i < count; ++i)
+    if(!reader_blob(&r, "included file")) return 0;
+  if(!reader_u32(&r, &version, "extension section version") || version < 700 ||
+     !reader_u32(&r, &count, "extension count")) return 0;
+  if(count > (r.size - r.pos) / 4) return reader_fail(&r, "extensions");
+  for(uint32_t i = 0; i < count; ++i)
+    if(!reader_string(&r, "extension name")) return 0;
+  if(!reader_u32(&r, &version, "game-information version") || version < 600 ||
+     !reader_blob(&r, "game information") ||
+     !reader_u32(&r, &version, "library-code section version") || version < 500 ||
+     !reader_u32(&r, &count, "library-code count")) return 0;
+  if(count > (r.size - r.pos) / 4) return reader_fail(&r, "library creation code");
+  for(uint32_t i = 0; i < count; ++i)
+    if(!reader_string(&r, "library creation code")) return 0;
+  if(!reader_u32(&r, &version, "room-order section version") || version < 500 ||
+     !reader_u32(&r, &count, "executable room count") ||
+     count > manifest->inventory.resource_slots[GMLC_CLASSIC_ROOM] ||
+     count > (r.size - r.pos) / 4) return reader_fail(&r, "executable room order");
+  manifest->room_order = (uint32_t*)calloc(count ? count : 1, sizeof(*manifest->room_order));
+  if(!manifest->room_order){
+    if(err && errcap) snprintf(err, errcap, "classic project: out of memory reading room order");
+    return 0;
+  }
+  manifest->room_order_count = count;
+  for(uint32_t i = 0; i < count; ++i){
+    if(!reader_u32(&r, &manifest->room_order[i], "executable room index")) return 0;
+    if(manifest->room_order[i] >= manifest->inventory.resource_slots[GMLC_CLASSIC_ROOM]){
+      if(err && errcap) snprintf(err, errcap, "classic project: invalid executable room index %u",
+                                 manifest->room_order[i]);
+      return 0;
+    }
+  }
+  return 1;
 }
 
 int gmlc_classic_manifest(const void *data, size_t size,
@@ -720,6 +764,11 @@ int gmlc_classic_manifest(const void *data, size_t size,
       r.pos += compressed_size;
       if(out->slots[type][i].exists) ++out->existing[type];
     }
+  }
+  if(header.version >= GMLC_CLASSIC_GM8 &&
+     !parse_modern_room_order(data, size, out, err, errcap)){
+    gmlc_classic_manifest_free(out);
+    return 0;
   }
   return 1;
 }

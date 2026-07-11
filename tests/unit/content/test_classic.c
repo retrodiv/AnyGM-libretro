@@ -186,6 +186,11 @@ static Fixture manifest_fixture(unsigned container_version){
     }
   }
   fixture_u32(&f, 100001); fixture_u32(&f, 1000001);
+  fixture_u32(&f, 800); fixture_u32(&f, 0); /* included files */
+  fixture_u32(&f, 700); fixture_u32(&f, 0); /* extensions */
+  fixture_u32(&f, 800); fixture_u32(&f, 0); /* game information */
+  fixture_u32(&f, 500); fixture_u32(&f, 0); /* library code */
+  fixture_u32(&f, 700); fixture_u32(&f, 0); /* executable rooms */
   return f;
 }
 
@@ -521,11 +526,12 @@ static int expect_object_import(void){
   fixture_u32(&payload, 440); fixture_u32(&payload, 1); fixture_u32(&payload, 603);
   fixture_u32(&payload, 7); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
   fixture_u32(&payload, 0); fixture_u32(&payload, 2);
-  fixture_string(&payload, ""); fixture_string(&payload, "x = 4;");
-  fixture_u32(&payload, 0); fixture_u32(&payload, 8);
+  fixture_string(&payload, ""); fixture_string(&payload, "");
+  fixture_u32(&payload, 1); fixture_u32(&payload, 8);
   for(int i = 0; i < 8; ++i) fixture_u32(&payload, 0);
   fixture_u32(&payload, (unsigned)-1); fixture_u32(&payload, 0); fixture_u32(&payload, 8);
-  for(int i = 0; i < 8; ++i) fixture_string(&payload, "");
+  fixture_string(&payload, "x = 4;");
+  for(int i = 1; i < 8; ++i) fixture_string(&payload, "");
   fixture_u32(&payload, 0);
   fixture_u32(&payload, (unsigned)-1); /* end Create event list */
   slot->payload = (uint8_t*)malloc(payload.size);

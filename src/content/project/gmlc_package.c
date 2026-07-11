@@ -2029,8 +2029,10 @@ static int write_gen8(Pkg *pkg, const GmlcProject *p){
   patch64(&pkg->b,base+92,timestamp);
   add_str_patch(pkg,(uint32_t)(base+100),sid_name);
   patch32(&pkg->b,base+124,6502);
-  wu32(&pkg->b,(uint32_t)p->n_rooms);
-  for(int i=0;i<p->n_rooms;i++) wu32(&pkg->b,(uint32_t)i);
+  int room_order_count=p->n_room_order>0?p->n_room_order:p->n_rooms;
+  wu32(&pkg->b,(uint32_t)room_order_count);
+  for(int i=0;i<room_order_count;i++)
+    wu32(&pkg->b,(uint32_t)(p->n_room_order>0?p->room_order[i]:i));
   if(!write_gen8_uid_block(&pkg->b)) return 0;
   while((pkg->b.len-base)&3) wu8(&pkg->b,0);
   chunk_end(pkg,s);

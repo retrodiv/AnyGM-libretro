@@ -5,11 +5,17 @@
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC push_options
+/* This bundled stb_image_write revision miscompiles its PNG compressor at
+ * GCC -O2 (the encoded scanline contains allocator data after its first
+ * pixel). Keep just the third-party implementation at its verified level. */
+#pragma GCC optimize ("O1")
 #endif
 #define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 #if defined(__GNUC__)
+#pragma GCC pop_options
 #pragma GCC diagnostic pop
 #endif
 
@@ -206,7 +212,7 @@ static void free_imported_sprites(GmlcProject *project){
   project->n_sprites = project->cap_sprites = 0;
 }
 
-static int write_bgra_png(const char *path, const uint8_t *bgra, uint32_t bytes,
+static int write_rgba_png(const char *path, const uint8_t *source_rgba, uint32_t bytes,
                           int width, int height, char *err, size_t errcap){
   int out_width = width > 0 ? width : 1;
   int out_height = height > 0 ? height : 1;
@@ -225,12 +231,7 @@ static int write_bgra_png(const char *path, const uint8_t *bgra, uint32_t bytes,
     return 0;
   }
   if(width > 0 && height > 0){
-    for(size_t i = 0; i < pixels; ++i){
-      rgba[i * 4] = bgra[i * 4 + 2];
-      rgba[i * 4 + 1] = bgra[i * 4 + 1];
-      rgba[i * 4 + 2] = bgra[i * 4];
-      rgba[i * 4 + 3] = bgra[i * 4 + 3];
-    }
+    memcpy(rgba, source_rgba, pixels * 4u);
   }
   int ok = stbi_write_png(path, out_width, out_height, 4, rgba, out_width * 4);
   free(rgba);
@@ -310,7 +311,7 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
       snprintf(leaf, sizeof(leaf), "classic_sprite_%06u_%06u.png", slot_index, frame);
       sprite->frame_paths[frame] = cache_path(cache_dir, leaf);
       if(!sprite->frame_paths[frame] ||
-         !write_bgra_png(sprite->frame_paths[frame], pixels, pixel_bytes, (int)width, (int)height, err, errcap)){
+         !write_rgba_png(sprite->frame_paths[frame], pixels, pixel_bytes, (int)width, (int)height, err, errcap)){
         free_imported_sprites(project);
         return 0;
       }
@@ -439,7 +440,7 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
     snprintf(leaf, sizeof(leaf), "classic_background_%06u.png", i);
     if(sprite->frame_paths) sprite->frame_paths[0] = cache_path(cache_dir, leaf);
     if(!sprite->id || !sprite->name || !sprite->frame_paths || !sprite->frame_paths[0] ||
-       !write_bgra_png(sprite->frame_paths[0], pixels, pixel_bytes, (int)width, (int)height, err, errcap)){
+       !write_rgba_png(sprite->frame_paths[0], pixels, pixel_bytes, (int)width, (int)height, err, errcap)){
       if(err && errcap && !err[0]) snprintf(err, errcap, "classic import: out of memory importing background %u", i);
       free_imported_backgrounds(project, first_sprite);
       return 0;
@@ -762,7 +763,6 @@ static int import_actions(ImportReader *r, ImportText *text){
       if(!import_copy_string(r, &arguments[i], "action argument")){ ok = 0; goto action_done; }
     if(!import_u32(r, &negate, "action negation flag")){ ok = 0; goto action_done; }
     (void)action_version; (void)library_id; (void)action_id; (void)may_relative;
-
     if(kind == 1) ok = text_append(text, "{\n");
     else if(kind == 2) ok = text_append(text, "}\n");
     else if(kind == 3) ok = text_append(text, "else\n");
@@ -782,7 +782,11 @@ static int import_actions(ImportReader *r, ImportText *text){
       if(ok && relative && !question) ok = text_append(text, "action_set_relative(1);\n");
       if(ok && question) ok = text_append(text, "if (") && (!negate || text_append(text, "!"));
       if(ok){
-        if(type == 2 || kind == 7) ok = text_append(text, code && *code ? code : "/* empty code action */");
+        if(type == 2 || kind == 7){
+          const char *action_code = code && *code ? code :
+            (argument_count && arguments[0] && arguments[0][0] ? arguments[0] : "/* empty code action */");
+          ok = text_append(text, action_code);
+        }
         else ok = emit_action_call(text, function_name, arguments, argument_kinds,
                                    used_arguments < argument_count ? used_arguments : argument_count);
       }
@@ -827,6 +831,13 @@ static int append_object_event(GmlcObject *object, GmlcObjectEvent event){
   }
   object->events[object->n_events++] = event;
   return 1;
+}
+
+static int classic_sprite_project_index(const GmlcProject *project, int32_t runtime_id){
+  if(runtime_id < 0) return -1;
+  for(int i = 0; i < project->n_sprites; ++i)
+    if(project->sprites[i].runtime_id == runtime_id) return i;
+  return -1;
 }
 
 int gmlc_classic_import_objects(const GmlcClassicManifest *classic,
@@ -875,9 +886,11 @@ int gmlc_classic_import_objects(const GmlcClassicManifest *classic,
        !import_u32(&r, &mask, "object mask") || !import_u32(&r, &last_event_type, "object event-type count") ||
        last_event_type > 64){ free_imported_objects(project); return 0; }
     GmlcObject *object = &project->objects[i];
-    object->sprite_id = (int32_t)sprite; object->solid = solid != 0; object->visible = visible != 0;
+    object->sprite_id = classic_sprite_project_index(project, (int32_t)sprite);
+    object->solid = solid != 0; object->visible = visible != 0;
     object->depth = (int32_t)depth; object->persistent = persistent != 0;
-    object->parent_id = (int32_t)parent; object->mask_id = (int32_t)mask;
+    object->parent_id = (int32_t)parent;
+    object->mask_id = classic_sprite_project_index(project, (int32_t)mask);
     for(uint32_t event_type = 0; event_type <= last_event_type; ++event_type){
       for(;;){
         uint32_t event_number;

@@ -4463,6 +4463,9 @@ void gml_vm_draw(GmlVM *vm){
       else if(it[k].type==5){ struct LaySprite *s=&lsp[it[k].idx];
         fprintf(stderr,"   LSPR spr=%d depth=%.0f @(%.0f,%.0f) idx=%d ang=%.0f xs=%.1f ys=%.1f a=%.2f\n",
           s->sprite,it[k].depth,s->x,s->y,s->subimg,s->angle,s->xs,s->ys,s->alpha); }
+      else if(it[k].type==6){ struct ClassicBg *b=&cbg[it[k].idx];
+        fprintf(stderr,"   CBG def=%d depth=%.0f @(%.0f,%.0f) tiled=%d/%d stretch=%d\n",
+          b->def,it[k].depth,b->x,b->y,b->th,b->tv,b->stretch); }
       else { GmlInstance *in=&vm->inst[it[k].idx];
         fprintf(stderr,"   %-26s id=%u spr=%-4d vis=%.0f depth=%.0f @(%.0f,%.0f) ang=%.0f xs=%.1f ys=%.1f a=%.2f ii=%.4f is=%.3f\n",
           (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",in->id,

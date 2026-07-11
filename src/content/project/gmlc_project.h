@@ -222,6 +222,8 @@ typedef struct {
   int n_objects, cap_objects;
   GmlcRoom *rooms;
   int n_rooms, cap_rooms;
+  int *room_order;
+  int n_room_order;
   int next_instance_id;
   int next_layer_id;
   GmlcShader *shaders;

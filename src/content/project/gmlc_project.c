@@ -114,6 +114,7 @@ void gmlc_project_free(GmlcProject *p){
     free(r->layers);
   }
   free(p->rooms);
+  free(p->room_order);
   for(int i=0;i<p->n_shaders;i++){
     free(p->shaders[i].id); free(p->shaders[i].name);
     free(p->shaders[i].vertex_source); free(p->shaders[i].fragment_source);
@@ -418,7 +419,8 @@ int gmlc_project_sprite_runtime_id(const GmlcProject *p, int sprite_index){
 int gmlc_project_runtime_sprite_count(const GmlcProject *p){
   int n=0;
   if(!p) return 0;
-  for(int i=0;i<p->n_sprites;i++) if(p->sprites[i].runtime_id>=0) n++;
+  for(int i=0;i<p->n_sprites;i++)
+    if(p->sprites[i].runtime_id>=n) n=p->sprites[i].runtime_id+1;
   return n;
 }
 

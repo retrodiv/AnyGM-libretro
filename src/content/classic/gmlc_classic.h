@@ -64,6 +64,8 @@ typedef struct {
   GmlcClassicInventory inventory;
   GmlcClassicResourceSlot *slots[GMLC_CLASSIC_RESOURCE_TYPES];
   uint32_t existing[GMLC_CLASSIC_RESOURCE_TYPES];
+  uint32_t *room_order;
+  uint32_t room_order_count;
 } GmlcClassicManifest;
 
 /* Inspect only the unencrypted common project header. This deliberately does
