@@ -5061,6 +5061,12 @@ static int col_event_for_pair(GmlVM *vm, int self_obj, int other_obj,
  * frame; the shared candidate list makes it proportional to the actual target population.
  * Cached per (type, frame, obj_list_gen); any create/destroy/change bumps the gen. */
 static struct { int obj; long frame, gen; int *slots; int n, cap; } g_colcand[48];
+static void colcand_reset(void){
+  for(int i=0;i<48;i++){
+    free(g_colcand[i].slots);
+    memset(&g_colcand[i],0,sizeof(g_colcand[i]));
+  }
+}
 /* lazy per-object descendant list: the object hierarchy is fixed after parse, so "every
  * object that is_a(target)" is computed once per target instead of scanning all objects
  * (colcand rebuilds run every time the instance list generation changes). */
@@ -5260,6 +5266,7 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
   { extern void gml_d3_reset(void); gml_d3_reset(); }
   vm->cg_built_frame=-1;   /* memset leaves 0, which would collide with g_vm_frame==0 at boot */
   { extern void gml_part_reset_all(void); gml_part_reset_all(); }   /* fresh particle pools per game */
+  colcand_reset();          /* cache slots belong to the previous VM across a cold Restart */
   vm->win=win; vm->pending_room=-1; vm->room_index=-1; vm->next_id=100000; vm->rng_state=0;
   vm->rng_classic_state=0;
   vm->room_state_count=gml_room_count(win);

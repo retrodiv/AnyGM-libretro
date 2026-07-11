@@ -140,6 +140,7 @@ void gml_part_reset_all(void){
   for(int i=0;i<PS_MAX;i++){ free(g_ps[i].parts); }
   memset(g_pt,0,sizeof g_pt); memset(g_ps,0,sizeof g_ps); memset(g_pe,0,sizeof g_pe);
   memset(g_effect_sys,0,sizeof g_effect_sys); memset(g_effect_type,0,sizeof g_effect_type);
+  g_prng=0x2545F491u;
 }
 
 int gml_part_type_create(void){
