@@ -913,6 +913,23 @@ static int ds_grid_make(GmlVM *vm, int w, int h){
   }
   return -1;
 }
+static int ds_grid_find_value(GmlDSGrid *g, int x1, int y1, int x2, int y2,
+                              GmlVal value, int *found_x, int *found_y){
+  if(x1>x2){ int t=x1; x1=x2; x2=t; }
+  if(y1>y2){ int t=y1; y1=y2; y2=t; }
+  if(!g || !g->cell) return 0;
+  if(x1<0) x1=0;
+  if(y1<0) y1=0;
+  if(x2>=g->w) x2=g->w-1;
+  if(y2>=g->h) y2=g->h-1;
+  for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++){
+    if(!ds_val_equal(g->cell[(size_t)y*g->w+x],value)) continue;
+    if(found_x) *found_x=x;
+    if(found_y) *found_y=y;
+    return 1;
+  }
+  return 0;
+}
 /* Use linear lookup for small maps and a lazy open-addressed index for larger maps. */
 static uint32_t ds_key_hash(const char *k){
   uint32_t h=2166136261u; while(*k){ h^=(unsigned char)*k++; h*=16777619u; } return h;
@@ -8075,15 +8092,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       g->cell[(size_t)y*g->w+x]=ds_val_clone(vreal(N(&old,1,0)+N(a,n,3)));
     }
     return vreal(0); }
-  if(!strcmp(nm,"ds_grid_value_x")||!strcmp(nm,"ds_grid_value_y")){
+  if(!strcmp(nm,"ds_grid_value_exists")||!strcmp(nm,"ds_grid_value_x")||!strcmp(nm,"ds_grid_value_y")){
     GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x1=(int)N(a,n,1),y1=(int)N(a,n,2),x2=(int)N(a,n,3),y2=(int)N(a,n,4);
-    if(x1>x2){ int t=x1; x1=x2; x2=t; } if(y1>y2){ int t=y1; y1=y2; y2=t; }
-    if(g && g->cell){
-      if(x1<0) x1=0; if(y1<0) y1=0; if(x2>=g->w) x2=g->w-1; if(y2>=g->h) y2=g->h-1;
-      for(int yy=y1;yy<=y2;yy++) for(int xx=x1;xx<=x2;xx++)
-        if(ds_val_equal(g->cell[(size_t)yy*g->w+xx],n>=6?a[5]:vreal(0))) return vreal(nm[14]=='x'?xx:yy);
-    }
-    return vreal(-1); }
+    int found_x=-1,found_y=-1;
+    int found=ds_grid_find_value(g,x1,y1,x2,y2,n>=6?a[5]:vreal(0),&found_x,&found_y);
+    if(!strcmp(nm,"ds_grid_value_exists")) return vreal(found);
+    return vreal(found?(!strcmp(nm,"ds_grid_value_x")?found_x:found_y):-1); }
   if(!strcmp(nm,"ds_grid_clear")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); GmlVal v=n>=2?a[1]:vreal(0);
     if(g && g->cell) for(size_t i=0;i<(size_t)g->w*g->h;i++) g->cell[i]=v; return vreal(0); }
   if(!strcmp(nm,"load_csv")){
