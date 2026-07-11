@@ -52,6 +52,8 @@ typedef struct {
   int exists;
   uint32_t version;
   char *name;
+  /* Populated for script resources; NULL for other resource kinds. */
+  char *source;
 } GmlcClassicResourceSlot;
 
 typedef struct {

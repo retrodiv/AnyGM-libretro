@@ -9,6 +9,7 @@
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
+#define STBI_NO_GIF
 #include "stb_image.h"
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
@@ -90,6 +91,82 @@ static int reader_blocks(ClassicReader *r, uint32_t count, const char *what){
     if(!reader_u32(r, &length, what) || !reader_skip(r, length, what)) return 0;
   }
   return 1;
+}
+
+static int reader_blob(ClassicReader *r, const char *what){
+  uint32_t length;
+  return reader_u32(r, &length, what) && reader_skip(r, length, what);
+}
+
+static int reader_words(ClassicReader *r, uint32_t count, const char *what){
+  if(count > (r->size - r->pos) / 4) return reader_fail(r, what);
+  return reader_skip(r, (size_t)count * 4, what);
+}
+
+static int reader_doubles(ClassicReader *r, uint32_t count, const char *what){
+  if(count > (r->size - r->pos) / 8) return reader_fail(r, what);
+  return reader_skip(r, (size_t)count * 8, what);
+}
+
+static int require_payload_end(ClassicReader *r, const char *what){
+  if(r->pos == r->size) return 1;
+  if(r->err && r->errcap)
+    snprintf(r->err, r->errcap, "classic project: %s has %zu unexplained trailing bytes",
+             what, r->size - r->pos);
+  return 0;
+}
+
+static int validate_sound_payload(ClassicReader *r){
+  uint32_t has_data;
+  if(!reader_words(r, 1, "sound kind") || !reader_string(r, "sound file type") ||
+     !reader_string(r, "sound filename") || !reader_u32(r, &has_data, "sound data flag")) return 0;
+  if(has_data && !reader_blob(r, "sound data")) return 0;
+  return reader_words(r, 1, "sound effects") && reader_doubles(r, 2, "sound volume and pan") &&
+         reader_words(r, 1, "sound preload") && require_payload_end(r, "sound resource");
+}
+
+static int validate_sprite_payload(ClassicReader *r){
+  uint32_t frames;
+  if(!reader_words(r, 2, "sprite origin") || !reader_u32(r, &frames, "sprite frame count")) return 0;
+  if(frames > (r->size - r->pos) / 12) return reader_fail(r, "sprite frames");
+  for(uint32_t i = 0; i < frames; ++i){
+    uint32_t frame_version, width, height;
+    if(!reader_u32(r, &frame_version, "sprite frame version") ||
+       !reader_u32(r, &width, "sprite frame width") ||
+       !reader_u32(r, &height, "sprite frame height")) return 0;
+    if(frame_version < 800){
+      if(r->err && r->errcap) snprintf(r->err, r->errcap, "classic project: unsupported sprite frame version %u", frame_version);
+      return 0;
+    }
+    if(width && height && !reader_blob(r, "sprite BGRA pixels")) return 0;
+  }
+  return reader_words(r, 8, "sprite collision fields") && require_payload_end(r, "sprite resource");
+}
+
+static int validate_background_payload(ClassicReader *r){
+  uint32_t image_version, width, height;
+  if(!reader_words(r, 7, "background tile fields") ||
+     !reader_u32(r, &image_version, "background image version") ||
+     !reader_u32(r, &width, "background width") ||
+     !reader_u32(r, &height, "background height")) return 0;
+  if(image_version < 710){
+    if(r->err && r->errcap) snprintf(r->err, r->errcap, "classic project: unsupported background image version %u", image_version);
+    return 0;
+  }
+  if(width && height && !reader_blob(r, "background BGRA pixels")) return 0;
+  return require_payload_end(r, "background resource");
+}
+
+static int validate_path_payload(ClassicReader *r){
+  uint32_t points;
+  if(!reader_words(r, 6, "path fields") || !reader_u32(r, &points, "path point count")) return 0;
+  return reader_doubles(r, points > UINT32_MAX / 3 ? UINT32_MAX : points * 3, "path points") &&
+         require_payload_end(r, "path resource");
+}
+
+static int validate_font_payload(ClassicReader *r){
+  return reader_string(r, "font face") && reader_words(r, 5, "font fields") &&
+         require_payload_end(r, "font resource");
 }
 
 static int read_file(const char *path, uint8_t **data, size_t *size,
@@ -243,7 +320,8 @@ int gmlc_classic_inventory(const void *data, size_t size,
   return 1;
 }
 
-static int parse_manifest_slot(const uint8_t *compressed, uint32_t compressed_size,
+static int parse_manifest_slot(GmlcClassicResourceType type,
+                               const uint8_t *compressed, uint32_t compressed_size,
                                GmlcClassicResourceSlot *slot, char *err, size_t errcap){
   if(compressed_size > INT_MAX){
     if(err && errcap) snprintf(err, errcap, "classic project: compressed resource is too large");
@@ -272,6 +350,33 @@ static int parse_manifest_slot(const uint8_t *compressed, uint32_t compressed_si
     STBI_FREE(raw);
     return 0;
   }
+  if(slot->exists && type == GMLC_CLASSIC_SCRIPT &&
+     !reader_string_copy(&r, &slot->source, "script source")){
+    free(slot->name);
+    slot->name = NULL;
+    STBI_FREE(raw);
+    return 0;
+  }
+  int valid = 1;
+  if(slot->exists){
+    switch(type){
+      case GMLC_CLASSIC_SOUND: valid = validate_sound_payload(&r); break;
+      case GMLC_CLASSIC_SPRITE: valid = validate_sprite_payload(&r); break;
+      case GMLC_CLASSIC_BACKGROUND: valid = validate_background_payload(&r); break;
+      case GMLC_CLASSIC_PATH: valid = validate_path_payload(&r); break;
+      case GMLC_CLASSIC_SCRIPT: valid = require_payload_end(&r, "script resource"); break;
+      case GMLC_CLASSIC_FONT: valid = validate_font_payload(&r); break;
+      default: break;
+    }
+  } else {
+    valid = require_payload_end(&r, "absent resource slot");
+  }
+  if(!valid){
+    free(slot->name); slot->name = NULL;
+    free(slot->source); slot->source = NULL;
+    STBI_FREE(raw);
+    return 0;
+  }
   STBI_FREE(raw);
   return 1;
 }
@@ -280,7 +385,10 @@ void gmlc_classic_manifest_free(GmlcClassicManifest *manifest){
   if(!manifest) return;
   for(int type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
     uint32_t count = manifest->inventory.resource_slots[type];
-    for(uint32_t i = 0; i < count; ++i) free(manifest->slots[type][i].name);
+    for(uint32_t i = 0; i < count; ++i){
+      free(manifest->slots[type][i].name);
+      free(manifest->slots[type][i].source);
+    }
     free(manifest->slots[type]);
   }
   memset(manifest, 0, sizeof(*manifest));
@@ -319,7 +427,8 @@ int gmlc_classic_manifest(const void *data, size_t size,
       uint32_t compressed_size;
       if(!reader_u32(&r, &compressed_size, "compressed resource length") ||
          r.pos > r.size || compressed_size > r.size - r.pos ||
-         !parse_manifest_slot(r.data + r.pos, compressed_size, &out->slots[type][i], err, errcap)){
+         !parse_manifest_slot((GmlcClassicResourceType)type, r.data + r.pos, compressed_size,
+                              &out->slots[type][i], err, errcap)){
         if(err && errcap && !err[0])
           snprintf(err, errcap, "classic project: invalid %s slot %u",
                    gmlc_classic_resource_name((GmlcClassicResourceType)type), i);

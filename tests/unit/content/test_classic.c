@@ -131,6 +131,9 @@ static Fixture manifest_fixture(void){
       memcpy(raw + n, name, sizeof(name) - 1); n += sizeof(name) - 1;
       n += 8;
       put_u32le(raw + n, 800); n += 4;
+      const char source[] = "return 7;";
+      put_u32le(raw + n, sizeof(source) - 1); n += 4;
+      memcpy(raw + n, source, sizeof(source) - 1); n += sizeof(source) - 1;
       fixture_compressed(&f, raw, (int)n);
     } else {
       const unsigned char absent[4] = {0, 0, 0, 0};
@@ -152,7 +155,8 @@ static int expect_manifest(void){
   int ok = manifest.existing[GMLC_CLASSIC_SCRIPT] == 1 &&
            manifest.slots[GMLC_CLASSIC_SCRIPT][0].exists &&
            manifest.slots[GMLC_CLASSIC_SCRIPT][0].version == 800 &&
-           !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].name, "resource_script");
+           !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].name, "resource_script") &&
+           !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source, "return 7;");
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type)
     if(type != GMLC_CLASSIC_SCRIPT && manifest.existing[type]) ok = 0;
   gmlc_classic_manifest_free(&manifest);
