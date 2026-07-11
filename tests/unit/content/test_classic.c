@@ -422,6 +422,53 @@ static int expect_sound_import(void){
   return ok;
 }
 
+static int expect_background_import(void){
+  GmlcClassicManifest manifest;
+  memset(&manifest, 0, sizeof(manifest));
+  manifest.inventory.resource_slots[GMLC_CLASSIC_BACKGROUND] = 1;
+  manifest.existing[GMLC_CLASSIC_BACKGROUND] = 1;
+  manifest.slots[GMLC_CLASSIC_BACKGROUND] = (GmlcClassicResourceSlot*)calloc(1, sizeof(GmlcClassicResourceSlot));
+  if(!manifest.slots[GMLC_CLASSIC_BACKGROUND]) return 0;
+  GmlcClassicResourceSlot *slot = &manifest.slots[GMLC_CLASSIC_BACKGROUND][0];
+  slot->exists = 1; slot->name = strdup("resource_background");
+  Fixture payload = {{0}, 0};
+  fixture_u32(&payload, 1); fixture_u32(&payload, 1); fixture_u32(&payload, 1);
+  fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+  fixture_u32(&payload, 800); fixture_u32(&payload, 1); fixture_u32(&payload, 1);
+  fixture_u32(&payload, 4);
+  payload.data[payload.size++] = 3; payload.data[payload.size++] = 2;
+  payload.data[payload.size++] = 1; payload.data[payload.size++] = 255;
+  slot->payload = (uint8_t*)malloc(payload.size);
+  if(!slot->name || !slot->payload){ gmlc_classic_manifest_free(&manifest); return 0; }
+  memcpy(slot->payload, payload.data, payload.size); slot->payload_size = payload.size;
+
+  GmlcProject project;
+  memset(&project, 0, sizeof(project));
+  char err[256], dir[128] = "tmp/classic_background_fixture";
+#ifdef _WIN32
+  _mkdir(dir);
+#else
+  mkdir(dir, 0777);
+#endif
+  int ok = gmlc_classic_import_backgrounds(&manifest, &project, dir, err, sizeof(err));
+  if(!ok) fprintf(stderr, "background import failed: %s\n", err);
+  if(ok) ok = project.n_sprites == 1 && project.sprites[0].runtime_id == -1 &&
+              project.n_tilesets == 1 && project.tilesets[0].sprite_id == 0;
+  if(project.n_sprites){
+    remove(project.sprites[0].frame_paths[0]);
+    free(project.sprites[0].frame_paths[0]); free(project.sprites[0].frame_paths);
+    free(project.sprites[0].id); free(project.sprites[0].name);
+  }
+  free(project.sprites);
+  if(project.n_tilesets){ free(project.tilesets[0].id); free(project.tilesets[0].name); }
+  free(project.tilesets);
+  gmlc_classic_manifest_free(&manifest);
+#ifndef _WIN32
+  rmdir(dir);
+#endif
+  return ok;
+}
+
 static int expect_path_import(void){
   GmlcClassicManifest manifest;
   memset(&manifest, 0, sizeof(manifest));
@@ -537,6 +584,24 @@ static void discard_imported_objects(GmlcProject *project, int remove_sources){
   project->n_objects = project->cap_objects = 0;
 }
 
+static void discard_imported_backgrounds(GmlcProject *project, int remove_sources){
+  for(int i = 0; i < project->n_sprites; ++i){
+    free(project->sprites[i].id); free(project->sprites[i].name);
+    for(int frame = 0; frame < project->sprites[i].n_frames; ++frame){
+      if(remove_sources && project->sprites[i].frame_paths && project->sprites[i].frame_paths[frame])
+        remove(project->sprites[i].frame_paths[frame]);
+      free(project->sprites[i].frame_paths ? project->sprites[i].frame_paths[frame] : NULL);
+    }
+    free(project->sprites[i].frame_paths);
+  }
+  free(project->sprites);
+  for(int i = 0; i < project->n_tilesets; ++i){
+    free(project->tilesets[i].id); free(project->tilesets[i].name);
+  }
+  free(project->tilesets);
+  memset(project, 0, sizeof(*project));
+}
+
 int main(int argc, char **argv){
   const unsigned versions[] = {600, 701, 702, 800, 810};
   int passed = 0, failed = 0;
@@ -556,6 +621,7 @@ int main(int argc, char **argv){
   if(expect_legacy_manifest(701)) ++passed; else ++failed;
   if(expect_script_import()) ++passed; else ++failed;
   if(expect_sprite_import()) ++passed; else ++failed;
+  if(expect_background_import()) ++passed; else ++failed;
   if(expect_sound_import()) ++passed; else ++failed;
   if(expect_path_import()) ++passed; else ++failed;
   if(expect_object_import()) ++passed; else ++failed;
@@ -602,6 +668,14 @@ int main(int argc, char **argv){
         continue;
       }
       discard_imported_objects(&project, 1);
+      if(h.version >= GMLC_CLASSIC_GM8 &&
+         !gmlc_classic_import_backgrounds(&manifest, &project, object_dir, err, sizeof(err))){
+        fprintf(stderr, "%s: %s\n", argv[i], err);
+        gmlc_classic_manifest_free(&manifest);
+        ++failed;
+        continue;
+      }
+      discard_imported_backgrounds(&project, 1);
       gmlc_classic_manifest_free(&manifest);
     } else {
       printf("%s\t%u\t%s\n", argv[i], (unsigned)h.version,

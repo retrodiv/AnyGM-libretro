@@ -335,6 +335,135 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
   return 1;
 }
 
+static void free_sprite_range(GmlcProject *project, int first){
+  for(int i = first; i < project->n_sprites; ++i){
+    GmlcSprite *sprite = &project->sprites[i];
+    free(sprite->id); free(sprite->name);
+    for(int frame = 0; frame < sprite->n_frames; ++frame)
+      free(sprite->frame_paths ? sprite->frame_paths[frame] : NULL);
+    free(sprite->frame_paths);
+  }
+  project->n_sprites = first;
+}
+
+static void free_imported_backgrounds(GmlcProject *project, int first_sprite){
+  free_sprite_range(project, first_sprite);
+  for(int i = 0; i < project->n_tilesets; ++i){
+    free(project->tilesets[i].id);
+    free(project->tilesets[i].name);
+  }
+  free(project->tilesets);
+  project->tilesets = NULL;
+  project->n_tilesets = project->cap_tilesets = 0;
+}
+
+int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
+                                    GmlcProject *project, const char *cache_dir,
+                                    char *err, size_t errcap){
+  if(err && errcap) err[0] = '\0';
+  if(!classic || !project || !cache_dir || !*cache_dir || project->tilesets || project->n_tilesets){
+    if(err && errcap) snprintf(err, errcap, "classic import: invalid background-import arguments");
+    return 0;
+  }
+  uint32_t slot_count = classic->inventory.resource_slots[GMLC_CLASSIC_BACKGROUND];
+  uint32_t existing = classic->existing[GMLC_CLASSIC_BACKGROUND];
+  if(slot_count > INT32_MAX || existing > INT32_MAX ||
+     project->n_sprites > INT32_MAX - (int)existing){
+    if(err && errcap) snprintf(err, errcap, "classic import: too many backgrounds");
+    return 0;
+  }
+  int first_sprite = project->n_sprites;
+  int needed = first_sprite + (int)existing;
+  GmlcSprite *sprites = (GmlcSprite*)realloc(project->sprites,
+                                              (size_t)(needed ? needed : 1) * sizeof(*sprites));
+  if(!sprites){
+    if(err && errcap) snprintf(err, errcap, "classic import: out of memory allocating background images");
+    return 0;
+  }
+  project->sprites = sprites;
+  if(needed > first_sprite)
+    memset(project->sprites + first_sprite, 0, (size_t)(needed - first_sprite) * sizeof(*sprites));
+  project->cap_sprites = needed;
+  project->tilesets = (GmlcTileset*)calloc(slot_count ? slot_count : 1, sizeof(*project->tilesets));
+  if(!project->tilesets){
+    if(err && errcap) snprintf(err, errcap, "classic import: out of memory allocating backgrounds");
+    return 0;
+  }
+  project->n_tilesets = project->cap_tilesets = (int)slot_count;
+  const GmlcClassicResourceSlot *slots = classic->slots[GMLC_CLASSIC_BACKGROUND];
+  for(uint32_t i = 0; i < slot_count; ++i){
+    char fallback[64];
+    snprintf(fallback, sizeof(fallback), "__classic_missing_background_%u", i);
+    const char *name = slots[i].exists && slots[i].name ? slots[i].name : fallback;
+    GmlcTileset *background = &project->tilesets[i];
+    background->id = copy_string(name);
+    background->name = copy_string(name);
+    background->sprite_id = -1;
+    background->tile_width = background->tile_height = 16;
+    if(!background->id || !background->name){
+      if(err && errcap) snprintf(err, errcap, "classic import: out of memory naming background %u", i);
+      free_imported_backgrounds(project, first_sprite);
+      return 0;
+    }
+    if(!slots[i].exists) continue;
+    if(slots[i].legacy_layout){
+      if(err && errcap) snprintf(err, errcap, "classic import: legacy background pixel conversion is not implemented yet");
+      free_imported_backgrounds(project, first_sprite);
+      return 0;
+    }
+    ImportReader r = {slots[i].payload, slots[i].payload_size, 0, err, errcap};
+    uint32_t fields[7], image_version, width, height, pixel_bytes = 0;
+    const uint8_t *pixels = NULL;
+    for(int field = 0; field < 7; ++field)
+      if(!import_u32(&r, &fields[field], "background tile field")){
+        free_imported_backgrounds(project, first_sprite); return 0;
+      }
+    if(!import_u32(&r, &image_version, "background image version") ||
+       !import_u32(&r, &width, "background width") || !import_u32(&r, &height, "background height") ||
+       (width && height && !import_blob(&r, &pixels, &pixel_bytes, "background pixels")) ||
+       width > INT32_MAX || height > INT32_MAX || r.pos != r.size){
+      if(err && errcap && !err[0]) snprintf(err, errcap, "classic import: invalid background %u", i);
+      free_imported_backgrounds(project, first_sprite);
+      return 0;
+    }
+    (void)image_version;
+    GmlcSprite *sprite = &project->sprites[project->n_sprites++];
+    sprite->id = copy_string(name); sprite->name = copy_string(name);
+    sprite->runtime_id = -1; sprite->tileset_source = 1;
+    sprite->width = (int)width; sprite->height = (int)height;
+    sprite->bbox_right = width ? (int)width - 1 : 0;
+    sprite->bbox_bottom = height ? (int)height - 1 : 0;
+    sprite->n_frames = 1;
+    sprite->frame_paths = (char**)calloc(1, sizeof(*sprite->frame_paths));
+    char leaf[80];
+    snprintf(leaf, sizeof(leaf), "classic_background_%06u.png", i);
+    if(sprite->frame_paths) sprite->frame_paths[0] = cache_path(cache_dir, leaf);
+    if(!sprite->id || !sprite->name || !sprite->frame_paths || !sprite->frame_paths[0] ||
+       !write_bgra_png(sprite->frame_paths[0], pixels, pixel_bytes, (int)width, (int)height, err, errcap)){
+      if(err && errcap && !err[0]) snprintf(err, errcap, "classic import: out of memory importing background %u", i);
+      free_imported_backgrounds(project, first_sprite);
+      return 0;
+    }
+    background->sprite_id = project->n_sprites - 1;
+    background->sprite_no_export = fields[0] ? 0 : 1;
+    background->tile_width = (int32_t)fields[1];
+    background->tile_height = (int32_t)fields[2];
+    background->border_x = (int32_t)fields[3];
+    background->border_y = (int32_t)fields[4];
+    int step_x = background->tile_width + (int32_t)fields[5];
+    int step_y = background->tile_height + (int32_t)fields[6];
+    background->columns = step_x > 0 && (int)width > background->border_x
+      ? ((int)width - background->border_x + (int32_t)fields[5]) / step_x : 1;
+    int rows = step_y > 0 && (int)height > background->border_y
+      ? ((int)height - background->border_y + (int32_t)fields[6]) / step_y : 1;
+    if(background->columns < 1) background->columns = 1;
+    if(rows < 1) rows = 1;
+    int64_t tile_count = (int64_t)background->columns * (int64_t)rows + 1;
+    background->tile_count = tile_count > INT32_MAX ? INT32_MAX : (int)tile_count;
+  }
+  return 1;
+}
+
 static int write_binary(const char *path, const uint8_t *data, size_t size,
                         char *err, size_t errcap){
   FILE *file = fopen(path, "wb");
