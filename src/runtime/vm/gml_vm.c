@@ -3079,6 +3079,91 @@ static double get_global_arr_d(GmlVM *vm, const char *nm, int idx){
 }
 void gml_set_global_arr(GmlVM *vm, const char *nm, int idx, double val){ set_global_arr(vm,nm,idx,val); }
 
+static void room_state_key(char *out, size_t cap, int room, const char *field, int index){
+  snprintf(out,cap,"__gmlc_room_state_%d_%s_%d",room,field,index);
+}
+
+static void room_state_store_number(GmlVM *vm, int room, const char *field, int index, double value){
+  char key[128]; room_state_key(key,sizeof(key),room,field,index);
+  *gml_varmap_put(&vm->globals,key)=vreal(value);
+}
+
+static double room_state_restore_number(GmlVM *vm, int room, const char *field, int index){
+  char key[128]; room_state_key(key,sizeof(key),room,field,index);
+  GmlVal *value=gml_varmap_get(&vm->globals,key);
+  return value?asnum(*value):0.0;
+}
+
+static const char *const room_background_fields[]={
+  "background_visible","background_foreground","background_index","background_x","background_y",
+  "background_htiled","background_vtiled","background_hspeed","background_vspeed","background_stretch",
+  "background_alpha","background_blend"
+};
+static const char *const room_view_fields[]={
+  "view_visible","view_xview","view_yview","view_wview","view_hview","view_xport","view_yport",
+  "view_wport","view_hport","view_hborder","view_vborder","view_hspeed","view_vspeed","view_object"
+};
+
+static void room_runtime_state_store(GmlVM *vm, int room){
+  room_state_store_number(vm,room,"present",0,1);
+  for(size_t field=0;field<sizeof(room_background_fields)/sizeof(room_background_fields[0]);field++)
+    for(int i=0;i<8;i++) room_state_store_number(vm,room,room_background_fields[field],i,
+                                                  get_global_arr_d(vm,room_background_fields[field],i));
+  for(size_t field=0;field<sizeof(room_view_fields)/sizeof(room_view_fields[0]);field++)
+    for(int i=0;i<8;i++) room_state_store_number(vm,room,room_view_fields[field],i,
+                                                  get_global_arr_d(vm,room_view_fields[field],i));
+  GmlVal *speed=gml_varmap_get(&vm->globals,"room_speed");
+  room_state_store_number(vm,room,"room_speed",0,speed?asnum(*speed):gml_room_speed(vm));
+  GmlVal *view_current=gml_varmap_get(&vm->globals,"view_current");
+  room_state_store_number(vm,room,"view_current",0,view_current?asnum(*view_current):0);
+  room_state_store_number(vm,room,"tile_mut_count",0,vm->n_tile_mut);
+  for(int i=0;i<vm->n_tile_mut;i++){
+    room_state_store_number(vm,room,"tile_mut_depth",i,vm->tile_mut[i].depth);
+    room_state_store_number(vm,room,"tile_mut_flags",i,vm->tile_mut[i].flags);
+    room_state_store_number(vm,room,"tile_mut_has_remap",i,vm->tile_mut[i].has_remap);
+    room_state_store_number(vm,room,"tile_mut_remap",i,vm->tile_mut[i].remap);
+    room_state_store_number(vm,room,"tile_mut_dx",i,vm->tile_mut[i].dx);
+    room_state_store_number(vm,room,"tile_mut_dy",i,vm->tile_mut[i].dy);
+  }
+  room_state_store_number(vm,room,"tile_del_count",0,vm->n_tile_del_at);
+  for(int i=0;i<vm->n_tile_del_at;i++){
+    room_state_store_number(vm,room,"tile_del_depth",i,vm->tile_del_at[i].depth);
+    room_state_store_number(vm,room,"tile_del_x",i,vm->tile_del_at[i].x);
+    room_state_store_number(vm,room,"tile_del_y",i,vm->tile_del_at[i].y);
+  }
+}
+
+static void room_runtime_state_restore(GmlVM *vm, int room){
+  if(room_state_restore_number(vm,room,"present",0)==0) return;
+  for(size_t field=0;field<sizeof(room_background_fields)/sizeof(room_background_fields[0]);field++)
+    for(int i=0;i<8;i++) set_global_arr(vm,room_background_fields[field],i,
+                                        room_state_restore_number(vm,room,room_background_fields[field],i));
+  for(size_t field=0;field<sizeof(room_view_fields)/sizeof(room_view_fields[0]);field++)
+    for(int i=0;i<8;i++) set_global_arr(vm,room_view_fields[field],i,
+                                        room_state_restore_number(vm,room,room_view_fields[field],i));
+  *gml_varmap_put(&vm->globals,"room_speed")=vreal(room_state_restore_number(vm,room,"room_speed",0));
+  *gml_varmap_put(&vm->globals,"view_current")=vreal(room_state_restore_number(vm,room,"view_current",0));
+  vm->n_tile_mut=(int)room_state_restore_number(vm,room,"tile_mut_count",0);
+  if(vm->n_tile_mut<0) vm->n_tile_mut=0;
+  if(vm->n_tile_mut>64) vm->n_tile_mut=64;
+  for(int i=0;i<vm->n_tile_mut;i++){
+    vm->tile_mut[i].depth=(int)room_state_restore_number(vm,room,"tile_mut_depth",i);
+    vm->tile_mut[i].flags=(int)room_state_restore_number(vm,room,"tile_mut_flags",i);
+    vm->tile_mut[i].has_remap=(int)room_state_restore_number(vm,room,"tile_mut_has_remap",i);
+    vm->tile_mut[i].remap=(int)room_state_restore_number(vm,room,"tile_mut_remap",i);
+    vm->tile_mut[i].dx=room_state_restore_number(vm,room,"tile_mut_dx",i);
+    vm->tile_mut[i].dy=room_state_restore_number(vm,room,"tile_mut_dy",i);
+  }
+  vm->n_tile_del_at=(int)room_state_restore_number(vm,room,"tile_del_count",0);
+  if(vm->n_tile_del_at<0) vm->n_tile_del_at=0;
+  if(vm->n_tile_del_at>64) vm->n_tile_del_at=64;
+  for(int i=0;i<vm->n_tile_del_at;i++){
+    vm->tile_del_at[i].depth=(int)room_state_restore_number(vm,room,"tile_del_depth",i);
+    vm->tile_del_at[i].x=(int)room_state_restore_number(vm,room,"tile_del_x",i);
+    vm->tile_del_at[i].y=(int)room_state_restore_number(vm,room,"tile_del_y",i);
+  }
+}
+
 /* GMS2-style ROOM layers are a data-layout feature, not a bytecode-version feature. Early
  * GMS2 exports can still use bytecode 15 while carrying the same layer pointer at ROOM+88 as
  * later bytecode-17 packages. Validate the pointer entirely inside the ROOM chunk so classic
@@ -3680,6 +3765,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
     else { GmlRoom previous; if(gml_room_get(vm->win,prev_room,&previous)==0) store_previous=previous.persistent; }
     if(prev_room<vm->room_state_count && vm->room_stored) vm->room_stored[prev_room]=store_previous?1:0;
   }
+  if(store_previous) room_runtime_state_store(vm,prev_room);
   if(store_previous){
     for(int i=0;i<vm->inst_count;i++){
       GmlInstance *in=&vm->inst[i];
@@ -3712,9 +3798,11 @@ void gml_room_enter(GmlVM *vm, int room_index){
   if(getenv("GML_LOG_ROOM")) fprintf(stderr,"[room] enter %d\n",room_index);
   GmlRoom r; if(gml_room_get(vm->win,room_index,&r)!=0) return;
   *gml_varmap_put(&vm->globals,"room_persistent")=vreal(r.persistent?1.0:0.0);
+  *gml_varmap_put(&vm->globals,"room_speed")=vreal(r.speed>0?r.speed:30);
   if(room_index>=0 && room_index<vm->room_state_count && vm->room_stored && vm->room_stored[room_index]){
     vm->room_stored[room_index]=0;
     *gml_varmap_put(&vm->globals,"room_persistent")=vreal(1);
+    room_runtime_state_restore(vm,room_index);
     for(int i=0;i<vm->inst_count;i++){
       GmlInstance *in=&vm->inst[i];
       if(!in->room_dormant || in->room_owner!=room_index) continue;
@@ -3730,6 +3818,17 @@ void gml_room_enter(GmlVM *vm, int room_index){
     return;
   }
   const uint8_t *d=vm->win->data; uint32_t op=r.obj_ptr, cnt=u32(d,op);
+  for(int i=0;i<8;i++){
+    set_global_arr(vm,"background_visible",i,0); set_global_arr(vm,"background_foreground",i,0);
+    set_global_arr(vm,"background_index",i,-1); set_global_arr(vm,"background_x",i,0);
+    set_global_arr(vm,"background_y",i,0); set_global_arr(vm,"background_htiled",i,0);
+    set_global_arr(vm,"background_vtiled",i,0); set_global_arr(vm,"background_hspeed",i,0);
+    set_global_arr(vm,"background_vspeed",i,0); set_global_arr(vm,"background_stretch",i,0);
+    set_global_arr(vm,"background_alpha",i,1); set_global_arr(vm,"background_blend",i,0xFFFFFF);
+    for(size_t field=0;field<sizeof(room_view_fields)/sizeof(room_view_fields[0]);field++)
+      set_global_arr(vm,room_view_fields[field],i,0);
+    set_global_arr(vm,"view_object",i,-1);
+  }
   /* Initialise the built-in background_* arrays from the room's background
    * layers. GML draw code can read this state during room startup. */
   if(r.bg_ptr){ uint32_t bc=u32(d,r.bg_ptr);

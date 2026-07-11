@@ -16,6 +16,13 @@ static GmlInstance *find_slot(GmlVM *vm,uint32_t id){
   return NULL;
 }
 
+
+static double global_array_value(GmlVM *vm,const char *name,int index){
+  GmlVal *value=gml_varmap_get(&vm->globals,name);
+  GmlArr *array=value&&value->t==V_ARR?(GmlArr*)value->arr:NULL;
+  return array&&index>=0&&index<array->len&&array->data[index].t==V_REAL?array->data[index].d:0;
+}
+
 int main(void){
   GmlcProject project; GmlcObject object; GmlcRoom rooms[2];
   GmlcObjectEvent trigger_event;
@@ -74,6 +81,10 @@ int main(void){
   gml_vm_step(&vm);
   GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
   if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=1){ fprintf(stderr,"classic trigger did not fire\n"); return 1; }
+  gml_set_global_arr(&vm,"background_x",0,123);
+  gml_set_global_arr(&vm,"view_xview",0,77);
+  *gml_varmap_put(&vm.globals,"room_speed")=vreal(55);
+  gml_tile_layer_shift(&vm,300,8,9);
   uint32_t id=created->id; *gml_varmap_put(&created->vars,"value")=vreal(42);
   gml_room_enter(&vm,1);
   GmlInstance *slot=find_slot(&vm,id);
@@ -86,7 +97,11 @@ int main(void){
   if(!gml_vm_state_load(&vm,state,written,&used)||used!=written)return 1;
   gml_room_enter(&vm,0); slot=find_slot(&vm,id);
   GmlVal *value=slot?gml_varmap_get(&slot->vars,"value"):NULL;
-  int ok=slot&&slot->active&&!slot->room_dormant&&value&&value->t==V_REAL&&value->d==42;
+  GmlVal *room_speed=gml_varmap_get(&vm.globals,"room_speed");
+  int ok=slot&&slot->active&&!slot->room_dormant&&value&&value->t==V_REAL&&value->d==42 &&
+    global_array_value(&vm,"background_x",0)==123 && global_array_value(&vm,"view_xview",0)==77 &&
+    room_speed&&room_speed->t==V_REAL&&room_speed->d==55 && vm.n_tile_mut==1 &&
+    vm.tile_mut[0].depth==300&&vm.tile_mut[0].dx==8&&vm.tile_mut[0].dy==9;
   if(!ok) fprintf(stderr,"persistent room state did not roundtrip\n");
   free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(condition); unlink(event); unlink(included_path);
   if(ok) puts("persistent room fixtures: ok");
