@@ -19,6 +19,9 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
 int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
                                     GmlcProject *project, const char *cache_dir,
                                     char *err, size_t errcap);
+int gmlc_classic_import_fonts(const GmlcClassicManifest *classic,
+                              GmlcProject *project, const char *cache_dir,
+                              char *err, size_t errcap);
 int gmlc_classic_import_sounds(const GmlcClassicManifest *classic,
                                GmlcProject *project, const char *cache_dir,
                                char *err, size_t errcap);

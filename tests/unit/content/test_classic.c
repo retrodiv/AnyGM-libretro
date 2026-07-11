@@ -474,6 +474,42 @@ static int expect_background_import(void){
   return ok;
 }
 
+static int expect_font_import(void){
+  GmlcClassicManifest manifest;
+  memset(&manifest,0,sizeof(manifest));
+  manifest.inventory.resource_slots[GMLC_CLASSIC_FONT]=1;
+  manifest.existing[GMLC_CLASSIC_FONT]=1;
+  manifest.slots[GMLC_CLASSIC_FONT]=(GmlcClassicResourceSlot*)calloc(1,sizeof(GmlcClassicResourceSlot));
+  if(!manifest.slots[GMLC_CLASSIC_FONT]) return 0;
+  GmlcClassicResourceSlot *slot=&manifest.slots[GMLC_CLASSIC_FONT][0];
+  slot->exists=1; slot->name=strdup("resource_font");
+  Fixture payload={{0},0};
+  fixture_string(&payload,"sans"); fixture_u32(&payload,12); fixture_u32(&payload,0);
+  fixture_u32(&payload,0); fixture_u32(&payload,32); fixture_u32(&payload,127);
+  slot->payload=(uint8_t*)malloc(payload.size);
+  if(!slot->name || !slot->payload){ gmlc_classic_manifest_free(&manifest); return 0; }
+  memcpy(slot->payload,payload.data,payload.size); slot->payload_size=payload.size;
+  GmlcProject project; memset(&project,0,sizeof(project));
+  char err[256],dir[128]="tmp/classic_font_fixture";
+#ifdef _WIN32
+  _mkdir(dir);
+#else
+  mkdir(dir,0777);
+#endif
+  int ok=gmlc_classic_import_fonts(&manifest,&project,dir,err,sizeof(err));
+  if(!ok) fprintf(stderr,"font import failed: %s\n",err);
+  if(ok) ok=project.n_fonts==1 && project.fonts[0].n_glyphs==96 && project.fonts[0].png_path;
+  if(project.n_fonts){
+    remove(project.fonts[0].png_path); free(project.fonts[0].id); free(project.fonts[0].name);
+    free(project.fonts[0].png_path); free(project.fonts[0].glyphs);
+  }
+  free(project.fonts); gmlc_classic_manifest_free(&manifest);
+#ifndef _WIN32
+  rmdir(dir);
+#endif
+  return ok;
+}
+
 static int expect_path_import(void){
   GmlcClassicManifest manifest;
   memset(&manifest, 0, sizeof(manifest));
@@ -711,6 +747,7 @@ int main(int argc, char **argv){
   if(expect_script_import()) ++passed; else ++failed;
   if(expect_sprite_import()) ++passed; else ++failed;
   if(expect_background_import()) ++passed; else ++failed;
+  if(expect_font_import()) ++passed; else ++failed;
   if(expect_sound_import()) ++passed; else ++failed;
   if(expect_path_import()) ++passed; else ++failed;
   if(expect_object_import()) ++passed; else ++failed;

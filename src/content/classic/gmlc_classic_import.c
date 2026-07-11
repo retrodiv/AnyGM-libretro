@@ -19,6 +19,8 @@
 #pragma GCC diagnostic pop
 #endif
 
+#include "gml_default_font_data.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
@@ -463,6 +465,105 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
     int64_t tile_count = (int64_t)background->columns * (int64_t)rows + 1;
     background->tile_count = tile_count > INT32_MAX ? INT32_MAX : (int)tile_count;
   }
+  return 1;
+}
+
+static void free_imported_fonts(GmlcProject *project){
+  for(int i = 0; i < project->n_fonts; ++i){
+    free(project->fonts[i].id); free(project->fonts[i].name);
+    free(project->fonts[i].png_path); free(project->fonts[i].glyphs);
+  }
+  free(project->fonts);
+  project->fonts = NULL;
+  project->n_fonts = project->cap_fonts = 0;
+}
+
+static int write_default_font_png(const char *path, char *err, size_t errcap){
+  enum { WIDTH=512, HEIGHT=128 };
+  uint8_t *rgba=(uint8_t*)calloc((size_t)WIDTH*HEIGHT,4);
+  if(!rgba){ if(err && errcap) snprintf(err,errcap,"classic import: out of memory building font fallback"); return 0; }
+  int x=0,y=0;
+  int count=GML_DEFAULT_FONT_LAST-GML_DEFAULT_FONT_FIRST+1;
+  for(int i=0;i<count;i++){
+    const GmlDefaultGlyph *glyph=&gml_default_glyphs[i];
+    if(x+glyph->width>WIDTH){ x=0; y+=GML_DEFAULT_FONT_LINE_HEIGHT; }
+    if(y+GML_DEFAULT_FONT_LINE_HEIGHT>HEIGHT) break;
+    const uint8_t *alpha=gml_default_font_alpha+glyph->off;
+    for(int gy=0;gy<GML_DEFAULT_FONT_LINE_HEIGHT;gy++) for(int gx=0;gx<glyph->width;gx++){
+      uint8_t *pixel=rgba+((size_t)(y+gy)*WIDTH+x+gx)*4u;
+      pixel[0]=pixel[1]=pixel[2]=255;
+      pixel[3]=alpha[gy*glyph->width+gx];
+    }
+    x+=glyph->width;
+  }
+  int ok=stbi_write_png(path,WIDTH,HEIGHT,4,rgba,WIDTH*4);
+  free(rgba);
+  if(!ok && err && errcap) snprintf(err,errcap,"classic import: cannot write %s",path);
+  return ok!=0;
+}
+
+int gmlc_classic_import_fonts(const GmlcClassicManifest *classic,
+                              GmlcProject *project, const char *cache_dir,
+                              char *err, size_t errcap){
+  if(err && errcap) err[0]='\0';
+  if(!classic || !project || !cache_dir || !*cache_dir || project->fonts || project->n_fonts){
+    if(err && errcap) snprintf(err,errcap,"classic import: invalid font-import arguments");
+    return 0;
+  }
+  uint32_t count=classic->inventory.resource_slots[GMLC_CLASSIC_FONT];
+  if(count>INT32_MAX){ if(err && errcap) snprintf(err,errcap,"classic import: too many font slots"); return 0; }
+  project->fonts=(GmlcFont*)calloc(count?count:1,sizeof(*project->fonts));
+  if(!project->fonts){ if(err && errcap) snprintf(err,errcap,"classic import: out of memory allocating fonts"); return 0; }
+  project->n_fonts=project->cap_fonts=(int)count;
+  char *atlas_path=cache_path(cache_dir,"classic_font_fallback.png");
+  if(!atlas_path || (count && !write_default_font_png(atlas_path,err,errcap))){
+    free(atlas_path); free_imported_fonts(project); return 0;
+  }
+  const GmlcClassicResourceSlot *slots=classic->slots[GMLC_CLASSIC_FONT];
+  for(uint32_t i=0;i<count;i++){
+    char fallback[64];
+    snprintf(fallback,sizeof(fallback),"__classic_missing_font_%u",i);
+    const char *name=slots[i].exists && slots[i].name?slots[i].name:fallback;
+    GmlcFont *font=&project->fonts[i];
+    font->id=copy_string(name); font->name=copy_string(name); font->png_path=copy_string(atlas_path);
+    font->width=512; font->height=128; font->em_size=GML_DEFAULT_FONT_LINE_HEIGHT;
+    int first=GML_DEFAULT_FONT_FIRST,last=GML_DEFAULT_FONT_LAST;
+    if(slots[i].exists){
+      ImportReader r={slots[i].payload,slots[i].payload_size,0,err,errcap};
+      const uint8_t *face; uint32_t face_length,fields[5];
+      if(!import_skip_string(&r,&face,&face_length,"font face")){
+        free(atlas_path); free_imported_fonts(project); return 0;
+      }
+      (void)face; (void)face_length;
+      for(int field=0;field<5;field++) if(!import_u32(&r,&fields[field],"font field")){
+        free(atlas_path); free_imported_fonts(project); return 0;
+      }
+      if(r.pos!=r.size){ if(err && errcap) snprintf(err,errcap,"classic import: trailing font payload"); free(atlas_path); free_imported_fonts(project); return 0; }
+      first=(int32_t)fields[3]; last=(int32_t)fields[4];
+      if(first<GML_DEFAULT_FONT_FIRST) first=GML_DEFAULT_FONT_FIRST;
+      if(last>GML_DEFAULT_FONT_LAST) last=GML_DEFAULT_FONT_LAST;
+      if(last<first){ first=GML_DEFAULT_FONT_FIRST; last=GML_DEFAULT_FONT_LAST; }
+    }
+    font->n_glyphs=font->cap_glyphs=last-first+1;
+    font->glyphs=(GmlcFontGlyph*)calloc((size_t)font->n_glyphs,sizeof(*font->glyphs));
+    if(!font->id || !font->name || !font->png_path || !font->glyphs){
+      free(atlas_path); free_imported_fonts(project); return 0;
+    }
+    int x=0,y=0,glyph_index=0;
+    int all_count=GML_DEFAULT_FONT_LAST-GML_DEFAULT_FONT_FIRST+1;
+    for(int glyph=0;glyph<all_count;glyph++){
+      const GmlDefaultGlyph *source=&gml_default_glyphs[glyph];
+      if(x+source->width>512){ x=0; y+=GML_DEFAULT_FONT_LINE_HEIGHT; }
+      int ch=GML_DEFAULT_FONT_FIRST+glyph;
+      if(ch>=first && ch<=last){
+        GmlcFontGlyph *target=&font->glyphs[glyph_index++];
+        target->ch=ch; target->x=x; target->y=y; target->w=source->width;
+        target->h=GML_DEFAULT_FONT_LINE_HEIGHT; target->shift=source->shift; target->offset=source->offset;
+      }
+      x+=source->width;
+    }
+  }
+  free(atlas_path);
   return 1;
 }
 
