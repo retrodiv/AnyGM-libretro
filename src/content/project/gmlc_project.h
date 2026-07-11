@@ -164,6 +164,18 @@ typedef struct {
 } GmlcPath;
 
 typedef struct {
+  int step;
+  char *source_path;
+} GmlcTimelineMoment;
+
+typedef struct {
+  char *id;
+  char *name;
+  GmlcTimelineMoment *moments;
+  int n_moments, cap_moments;
+} GmlcTimeline;
+
+typedef struct {
   char *id;
   char *name;
   char *data_path;
@@ -214,6 +226,8 @@ typedef struct {
   int n_scripts, cap_scripts;
   GmlcPath *paths;
   int n_paths, cap_paths;
+  GmlcTimeline *timelines;
+  int n_timelines, cap_timelines;
   char **resource_order_ids;
   int n_resource_order;
   char **script_order_ids;

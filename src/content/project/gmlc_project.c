@@ -77,6 +77,12 @@ void gmlc_project_free(GmlcProject *p){
     free(p->paths[i].id); free(p->paths[i].name); free(p->paths[i].points);
   }
   free(p->paths);
+  for(int i=0;i<p->n_timelines;i++){
+    free(p->timelines[i].id); free(p->timelines[i].name);
+    for(int m=0;m<p->timelines[i].n_moments;m++) free(p->timelines[i].moments[m].source_path);
+    free(p->timelines[i].moments);
+  }
+  free(p->timelines);
   for(int i=0;i<p->n_resource_order;i++) free(p->resource_order_ids[i]);
   free(p->resource_order_ids);
   for(int i=0;i<p->n_script_order;i++) free(p->script_order_ids[i]);

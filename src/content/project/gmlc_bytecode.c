@@ -422,6 +422,7 @@ static int resolve_asset(Compiler *c, const char *name, double *out){
   for(int i=0;i<c->project->n_tilesets;i++) if(!strcmp(c->project->tilesets[i].name,name)){ *out=i; return 1; }
   for(int i=0;i<c->project->n_scripts;i++) if(!strcmp(c->project->scripts[i].name,name)){ *out=i; return 1; }
   for(int i=0;i<c->project->n_paths;i++) if(!strcmp(c->project->paths[i].name,name)){ *out=i; return 1; }
+  for(int i=0;i<c->project->n_timelines;i++) if(!strcmp(c->project->timelines[i].name,name)){ *out=i; return 1; }
   return 0;
 }
 
@@ -2356,6 +2357,16 @@ int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_bas
         int ok=collect_functions_from_text(out,path,project->scripts[i].name,ci,appended_base,txt,err,errcap);
         free(txt);
         if(!ok) goto fail;
+      }
+    }
+  }
+  for(int i=0;i<project->n_timelines;i++){
+    const GmlcTimeline *timeline=&project->timelines[i];
+    for(int m=0;m<timeline->n_moments;m++){
+      const char *path=timeline->moments[m].source_path;
+      if(path && *path){
+        char *txt=read_text(path);
+        if(txt){ int ok=collect_functions_from_text(out,path,NULL,-1,appended_base,txt,err,errcap); free(txt); if(!ok) goto fail; }
       }
     }
   }

@@ -332,6 +332,8 @@ static int inst_builtin_get(GmlInstance *in, const char *n, GmlVal *out){
   B("path_index",path_index) B("path_position",path_position) B("path_speed",path_speed)
   B("path_orientation",path_orientation) B("path_scale",path_scale)
   B("path_positionprevious",path_positionprevious) B("path_endaction",path_endaction)
+  B("timeline_index",timeline_index) B("timeline_position",timeline_position)
+  B("timeline_speed",timeline_speed) B("timeline_running",timeline_running) B("timeline_loop",timeline_loop)
   #undef B
   if(!strcmp(n,"object_index")){ *out=vreal(in->obj); return 1; }
   if(!strcmp(n,"id")){ *out=vreal(in->id); return 1; }
@@ -374,8 +376,11 @@ static int inst_builtin_set(GmlInstance *in, const char *n, GmlVal v){
   B("path_position",path_position) B("path_speed",path_speed)
   B("path_orientation",path_orientation) B("path_scale",path_scale)
   B("path_positionprevious",path_positionprevious) B("path_endaction",path_endaction)
+  B("timeline_position",timeline_position) B("timeline_speed",timeline_speed)
+  B("timeline_running",timeline_running) B("timeline_loop",timeline_loop)
   #undef B
   if(!strcmp(n,"path_index")){ in->path_index=d; return 1; }   /* set directly = follow that path */
+  if(!strcmp(n,"timeline_index")){ in->timeline_index=d; return 1; }
   /* speed/direction/hspeed/vspeed are linked in GM */
   if(!strcmp(n,"hspeed")){ in->hspeed=d; motion_from_components(in); return 1; }
   if(!strcmp(n,"vspeed")){ in->vspeed=d; motion_from_components(in); return 1; }
@@ -497,6 +502,7 @@ static const char *const g_special_var_names[]={
   "phy_position_x","phy_position_y",
   "gravity","gravity_direction","friction","path_index","path_position","path_speed",
   "path_orientation","path_scale","path_positionprevious","path_endaction",
+  "timeline_index","timeline_position","timeline_speed","timeline_running","timeline_loop",
 };
 #define N_SPECIAL_VAR (int)(sizeof g_special_var_names/sizeof *g_special_var_names)
 static uint32_t g_special_var_hash[N_SPECIAL_VAR];
@@ -2476,6 +2482,36 @@ static void parse_paths(GmlVM *vm){
     p->len=L;
   }
 }
+
+/* The source compiler writes a deliberately tagged TMLN record. Untagged TMLN layouts
+ * vary across format revisions, so only consume records bearing our TMLC signature; unrelated
+ * packages keep their historical behaviour instead of being guessed at here. */
+static void parse_timelines(GmlVM *vm){
+  GmlWin *w=vm->win; const GmlChunk *c=gml_chunk(w,"TMLN");
+  if(!c || c->size<4 || (size_t)c->off+4>w->size) return;
+  const uint8_t *d=w->data; uint32_t base=c->off, n=u32(d,base);
+  size_t end=(size_t)c->off+c->size;
+  if(n>100000 || (size_t)base+4+(size_t)n*4>end || end>w->size) return;
+  GmlTimeline *timelines=calloc(n?n:1,sizeof(*timelines));
+  if(!timelines) return;
+  for(uint32_t i=0;i<n;i++){
+    uint32_t ep=u32(d,base+4+i*4);
+    if((size_t)ep+12>end || u32(d,ep+4)!=0x434C4D54u) continue;
+    uint32_t count=u32(d,ep+8);
+    if(count>100000 || (size_t)ep+12+(size_t)count*8>end) continue;
+    GmlTimeline *t=&timelines[i];
+    t->name=gml_str_by_ptr(w,u32(d,ep));
+    t->moments=calloc(count?count:1,sizeof(*t->moments));
+    if(!t->moments) continue;
+    t->n=(int)count; t->last_step=-1;
+    for(uint32_t m=0;m<count;m++){
+      t->moments[m].step=(int)u32(d,ep+12+m*8);
+      t->moments[m].code=(int)u32(d,ep+16+m*8);
+      if(t->moments[m].step>t->last_step) t->last_step=t->moments[m].step;
+    }
+  }
+  vm->timelines=timelines; vm->n_timelines=(int)n;
+}
 /* evaluate a path at position t in [0,1] -> (x,y) in path-local coords */
 static void path_eval_ex(GmlPath *p, double t, double *ox, double *oy, double *osp){
   if(p->n<=0){ *ox=*oy=0; if(osp) *osp=100; return; }
@@ -2921,6 +2957,8 @@ static void init_inst(GmlVM *vm, GmlInstance *in, double x, double y, int obj){
   in->gravity_direction=270;   /* GM default: gravity pulls straight down */
   in->draw_layer_order=-1;
   in->path_index=-1; in->path_scale=1; in->path_speed=0; in->path_position=0;
+  in->timeline_index=-1; in->timeline_position=0; in->timeline_speed=1;
+  in->timeline_running=0; in->timeline_loop=0;
   for(int a=0;a<GML_ALARMS;a++) in->alarm[a]=-1;   /* GM: inactive alarm = -1 */
   if(obj>=0 && obj<vm->n_objects){ GmlObject *o=&vm->objects[obj];
     in->sprite_index=o->sprite_index; in->mask_index=o->mask_index; in->depth=o->depth;
@@ -3774,6 +3812,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
     cc_scratch.active=1; cc_scratch.obj=-1; cc_scratch.id=0;
     cc_scratch.image_xscale=cc_scratch.image_yscale=1; cc_scratch.image_alpha=1;
     cc_scratch.sprite_index=-1; cc_scratch.mask_index=-1; cc_scratch.path_index=-1;
+    cc_scratch.timeline_index=-1; cc_scratch.timeline_speed=1;
     for(int a2=0;a2<GML_ALARMS;a2++) cc_scratch.alarm[a2]=-1;
     GmlVal _r=gml_vm_run_code(vm,r.creation_code,&cc_scratch,NULL,NULL,0);
     if(_r.t==V_STR && _r.d!=0) free((char*)_r.s);
@@ -3826,6 +3865,89 @@ int gml_cheat_apply(GmlVM *vm, const char *code){
 
 static void run_collisions(GmlVM *vm);
 static void run_boundary_events(GmlVM *vm);
+
+static int timeline_fire_range(GmlVM *vm, GmlInstance *in, GmlTimeline *timeline,
+                               double from, double to, int forward,
+                               int expected_index, double expected_position){
+  if(forward){
+    for(int m=0;m<timeline->n;m++){
+      GmlTimelineMoment *moment=&timeline->moments[m];
+      if(moment->step<=from || moment->step>to) continue;
+      if(moment->code>=0 && moment->code<vm->win->n_code){
+        GmlVal r=gml_vm_run_code(vm,moment->code,in,NULL,NULL,0);
+        if(r.t==V_STR && r.d!=0) free((char*)r.s);
+      }
+      if(!in->active || in->marked || !in->timeline_running ||
+         (int)in->timeline_index!=expected_index || in->timeline_position!=expected_position) return 0;
+    }
+  } else {
+    for(int m=timeline->n-1;m>=0;m--){
+      GmlTimelineMoment *moment=&timeline->moments[m];
+      if(moment->step>=from || moment->step<to) continue;
+      if(moment->code>=0 && moment->code<vm->win->n_code){
+        GmlVal r=gml_vm_run_code(vm,moment->code,in,NULL,NULL,0);
+        if(r.t==V_STR && r.d!=0) free((char*)r.s);
+      }
+      if(!in->active || in->marked || !in->timeline_running ||
+         (int)in->timeline_index!=expected_index || in->timeline_position!=expected_position) return 0;
+    }
+  }
+  return 1;
+}
+
+/* Classic timelines advance between Begin Step and Alarm processing. A moment is crossed when
+ * its integer position lies after the old position and at/before the new one (reversed for a
+ * negative speed). Playback mutations made by a moment take effect immediately. */
+static void run_timelines(GmlVM *vm, int count){
+  for(int i=0;i<count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(!in->active || in->marked || !in->timeline_running || in->timeline_speed==0) continue;
+    int ti=(int)in->timeline_index;
+    if(ti<0 || ti>=vm->n_timelines){ in->timeline_running=0; continue; }
+    GmlTimeline *timeline=&vm->timelines[ti];
+    if(timeline->n<=0 || timeline->last_step<0){ in->timeline_running=0; continue; }
+    double old=in->timeline_position, speed=in->timeline_speed;
+    double length=(double)timeline->last_step+1.0;
+    if(!in->timeline_loop){
+      double next=old+speed;
+      int stop=0;
+      if(speed>0 && next>timeline->last_step){ next=timeline->last_step; stop=1; }
+      if(speed<0 && next<0){ next=0; stop=1; }
+      in->timeline_position=next;
+      int ok=timeline_fire_range(vm,in,timeline,old,next,speed>0,ti,next);
+      if(ok && stop && in->active && !in->marked && (int)in->timeline_index==ti &&
+         in->timeline_position==next) in->timeline_running=0;
+      continue;
+    }
+    old=fmod(old,length); if(old<0) old+=length;
+    double next=fmod(old+speed,length); if(next<0) next+=length;
+    in->timeline_position=next;
+    double pos=old, remaining=fabs(speed);
+    int guard=0, ok=1;
+    if(speed>0){
+      while(remaining>0 && ok && guard++<4096){
+        double distance=length-pos;
+        if(remaining<distance){ ok=timeline_fire_range(vm,in,timeline,pos,pos+remaining,1,ti,next); break; }
+        ok=timeline_fire_range(vm,in,timeline,pos,timeline->last_step,1,ti,next);
+        if(!ok) break;
+        remaining-=distance;
+        ok=timeline_fire_range(vm,in,timeline,-1,0,1,ti,next);
+        pos=0;
+      }
+    } else {
+      while(remaining>0 && ok && guard++<4096){
+        double distance=pos+1.0;
+        if(remaining<distance){ ok=timeline_fire_range(vm,in,timeline,pos,pos-remaining,0,ti,next); break; }
+        ok=timeline_fire_range(vm,in,timeline,pos,0,0,ti,next);
+        if(!ok) break;
+        remaining-=distance;
+        ok=timeline_fire_range(vm,in,timeline,length,timeline->last_step,0,ti,next);
+        pos=timeline->last_step;
+      }
+    }
+  }
+}
+
 long g_vm_frame=0;
 /* GML_PROFILE_VM: per-phase wall time of gml_vm_step, printed every 300 frames (Linux dev aid) */
 static struct { double anim,step1,alarms,input,step0,move,coll,step2,rest; long frames; } g_vmprof;
@@ -3904,6 +4026,7 @@ void gml_vm_step(GmlVM *vm){
   /* begin step */
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_1");
   VMPROF_MARK(step1);
+  run_timelines(vm,n);
   /* Alarm thresholds depend on bytecode version: below 16, decrement values
    * greater than -1 and fire below zero; later versions decrement positive values
    * and fire at or below zero. Set -1 before dispatch so handlers can re-arm. */
@@ -4969,6 +5092,7 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
   gml_rng_seed(vm,0);   /* GM default seed */
   parse_objects(vm);
   parse_paths(vm);
+  parse_timelines(vm);
   parse_boundary_events(vm);
   free(vm->obj_alive); vm->obj_alive=calloc(vm->n_objects?vm->n_objects:1,sizeof(int));
   free(vm->obj_head); vm->obj_head=malloc((vm->n_objects?vm->n_objects:1)*sizeof(int));
@@ -5047,6 +5171,8 @@ void gml_vm_free(GmlVM *vm){
   for(int i=0;i<vm->n_objects;i++) free(vm->objects[i].events);
   for(int i=0;i<vm->n_paths;i++) free(vm->paths[i].pts);
   free(vm->paths);
+  for(int i=0;i<vm->n_timelines;i++) free(vm->timelines[i].moments);
+  free(vm->timelines);
   free(vm->objects); free(vm->col_events); free(vm->col_pair_cache); free(vm->event_cache);
   gml_tilemaps_clear(vm);
   free(vm->rtl); free(vm->rte); free(vm->view_ovr); free(vm->tilemaps);
@@ -5055,7 +5181,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -5305,7 +5431,8 @@ static int sr_varmap(GmlVM *vm, StateR *s, GmlVarMap *m){
  *  flags byte (active|marked<<1|deactivated<<2), id u32, obj i32,
  *  field mask u32 (bit set = value differs from its default and follows as a double, in bit
  *  order), x/y/xprev/yprev/xstart/ystart always as doubles, alarm mask u16 (bit = alarm != -1,
- *  set ones follow), path block (11 doubles) only when mask bit 20 is set, then the varmap.
+ *  set ones follow), path block (11 doubles) only when mask bit 20 is set, timeline block
+ *  (5 doubles) only when mask bit 21 is set, then the varmap.
  *  Defaults mirror init_inst; equality is exact, so untouched fields round-trip bit-perfectly
  *  and anything else is written verbatim. Typical terrain instance: 308 -> ~80 bytes. */
 #define GMV6_NOPT 20
@@ -5321,6 +5448,10 @@ static int gmv6_path_present(GmlInstance *in){
          in->path_endaction!=0 || in->path_xoff!=0 || in->path_yoff!=0 ||
          in->path_origin_x!=0 || in->path_origin_y!=0;
 }
+static int gmv6_timeline_present(GmlInstance *in){
+  return in->timeline_index!=-1 || in->timeline_position!=0 || in->timeline_speed!=1 ||
+         in->timeline_running!=0 || in->timeline_loop!=0;
+}
 static void sw_instance(StateW *s, GmlInstance *in){
   uint8_t fl=(in->active?1:0)|(in->marked?2:0)|(in->deactivated?4:0);
   sw_raw(s,&fl,1);
@@ -5330,6 +5461,7 @@ static void sw_instance(StateW *s, GmlInstance *in){
   GMV6_FIELDS(FCHK)
   #undef FCHK
   if(gmv6_path_present(in)) fm|=1u<<20;
+  if(gmv6_timeline_present(in)) fm|=1u<<21;
   sw_u32(s,fm);
   sw_d(s,in->x); sw_d(s,in->y); sw_d(s,in->xprevious); sw_d(s,in->yprevious);
   sw_d(s,in->xstart); sw_d(s,in->ystart);
@@ -5345,6 +5477,10 @@ static void sw_instance(StateW *s, GmlInstance *in){
     sw_d(s,in->path_speed); sw_d(s,in->path_orientation); sw_d(s,in->path_scale);
     sw_d(s,in->path_endaction); sw_d(s,in->path_xoff); sw_d(s,in->path_yoff);
     sw_d(s,in->path_origin_x); sw_d(s,in->path_origin_y);
+  }
+  if(fm&(1u<<21)){
+    sw_d(s,in->timeline_index); sw_d(s,in->timeline_position); sw_d(s,in->timeline_speed);
+    sw_d(s,in->timeline_running); sw_d(s,in->timeline_loop);
   }
   sw_varmap(s,&in->vars);
 }
@@ -5466,6 +5602,13 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
       in->path_endaction=0; in->path_xoff=0; in->path_yoff=0;
       in->path_origin_x=0; in->path_origin_y=0;
     }
+    if(fm&(1u<<21)){
+      in->timeline_index=sr_d(s); in->timeline_position=sr_d(s); in->timeline_speed=sr_d(s);
+      in->timeline_running=sr_d(s); in->timeline_loop=sr_d(s);
+    } else {
+      in->timeline_index=-1; in->timeline_position=0; in->timeline_speed=1;
+      in->timeline_running=0; in->timeline_loop=0;
+    }
     sr_varmap(vm,s,&in->vars);
     return;
   }
@@ -5484,6 +5627,8 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
   in->path_speed=sr_d(s); in->path_orientation=sr_d(s); in->path_scale=sr_d(s);
   in->path_endaction=sr_d(s); in->path_xoff=sr_d(s); in->path_yoff=sr_d(s);
   in->path_origin_x=sr_d(s); in->path_origin_y=sr_d(s);
+  in->timeline_index=-1; in->timeline_position=0; in->timeline_speed=1;
+  in->timeline_running=0; in->timeline_loop=0;
   sr_varmap(vm,s,&in->vars);
 }
 static void runtime_clear(GmlVM *vm){
@@ -5519,7 +5664,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x41564D47u); /* GMV17: GMV16 plus lightweight physics handle state */
+  sw_u32(s,0x42564D47u); /* GMV18: GMV17 plus compact per-instance timeline state */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -5667,7 +5812,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       && magic!=0x35564D47u && magic!=0x36564D47u && magic!=0x37564D47u && magic!=0x38564D47u
       && magic!=0x39564D47u && magic!=0x3A564D47u && magic!=0x3B564D47u && magic!=0x3C564D47u
       && magic!=0x3D564D47u && magic!=0x3E564D47u && magic!=0x3F564D47u
-      && magic!=0x40564D47u && magic!=0x41564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x40564D47u && magic!=0x41564D47u && magic!=0x42564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -5682,6 +5827,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v15 = magic>=0x3F564D47u;
   s.v16 = magic>=0x40564D47u;
   s.v17 = magic>=0x41564D47u;
+  s.v18 = magic>=0x42564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;

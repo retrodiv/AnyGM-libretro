@@ -6216,6 +6216,21 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       gml_path_start(vm,vm->cur_self,(int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3)); return vreal(0); }
   if(!strcmp(nm,"path_end")){ if(vm->cur_self) vm->cur_self->path_index=-1; return vreal(0); }
 
+  /* ---- classic timelines ---- */
+  if(!strcmp(nm,"timeline_exists")){ int ti=(int)N(a,n,0);
+    return vreal(ti>=0 && ti<vm->n_timelines && vm->timelines[ti].name!=NULL); }
+  if(!strcmp(nm,"timeline_get_name")){ int ti=(int)N(a,n,0);
+    return vstr((ti>=0 && ti<vm->n_timelines && vm->timelines[ti].name)?vm->timelines[ti].name:""); }
+  if(!strcmp(nm,"action_set_timeline")){ if(vm->cur_self){
+      vm->cur_self->timeline_index=N(a,n,0); vm->cur_self->timeline_position=N(a,n,1);
+      vm->cur_self->timeline_running=N(a,n,2)!=0; vm->cur_self->timeline_loop=N(a,n,3)!=0; }
+    return vreal(0); }
+  if(!strcmp(nm,"action_set_timeline_position")){ if(vm->cur_self) vm->cur_self->timeline_position=N(a,n,0); return vreal(0); }
+  if(!strcmp(nm,"action_set_timeline_speed")){ if(vm->cur_self) vm->cur_self->timeline_speed=N(a,n,0); return vreal(0); }
+  if(!strcmp(nm,"action_timeline_start")){ if(vm->cur_self) vm->cur_self->timeline_running=1; return vreal(0); }
+  if(!strcmp(nm,"action_timeline_pause")){ if(vm->cur_self) vm->cur_self->timeline_running=0; return vreal(0); }
+  if(!strcmp(nm,"action_timeline_stop")){ if(vm->cur_self){ vm->cur_self->timeline_running=0; vm->cur_self->timeline_position=0; } return vreal(0); }
+
   /* ---- tile-layer manipulation (mutations applied to the room's tiles at draw) ---- */
   if(!strcmp(nm,"tile_layer_delete")){ gml_tile_layer_delete(vm,(int)N(a,n,0)); return vreal(0); }
   if(!strcmp(nm,"tile_layer_depth")){ gml_tile_layer_depth(vm,(int)N(a,n,0),(int)N(a,n,1)); return vreal(0); }

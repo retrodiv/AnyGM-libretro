@@ -1243,6 +1243,12 @@ static int total_object_events(const GmlcProject *p){
   return n;
 }
 
+static int total_timeline_moments(const GmlcProject *p){
+  int n=0;
+  for(int i=0;i<p->n_timelines;i++) n+=p->timelines[i].n_moments;
+  return n;
+}
+
 static int event_type_rank(int event_type){
   switch(event_type){
     case 0: return 0;   /* Create */
@@ -1283,6 +1289,12 @@ static int script_code_index(const GmlcProject *p, int script_index){
   return room_code_count(p) + script_index;
 }
 
+static int timeline_moment_code_index(const GmlcProject *p, int timeline_index, int moment_index){
+  int index=room_code_count(p)+p->n_scripts;
+  for(int i=0;i<timeline_index;i++) index+=p->timelines[i].n_moments;
+  return index+moment_index;
+}
+
 static int room_instance_creation_code_count(const GmlcProject *p){
   int n=0;
   for(int ri=0;ri<p->n_rooms;ri++){
@@ -1295,7 +1307,7 @@ static int room_instance_creation_code_count(const GmlcProject *p){
 }
 
 static int room_instance_creation_code_base(const GmlcProject *p){
-  return room_code_count(p) + p->n_scripts + total_object_events(p);
+  return room_code_count(p) + p->n_scripts + total_timeline_moments(p) + total_object_events(p);
 }
 
 static int room_instance_creation_code_index(const GmlcProject *p, int room_index, int inst_index){
@@ -1841,6 +1853,27 @@ static int write_shdr(Pkg *pkg, const GmlcProject *p){
   return 1;
 }
 
+static int write_tmln(Pkg *pkg, const GmlcProject *p){
+  size_t s=chunk_begin(pkg,"TMLN");
+  wu32(&pkg->b,(uint32_t)p->n_timelines);
+  size_t table=pkg->b.len;
+  zfill(&pkg->b,(size_t)p->n_timelines*4);
+  for(int i=0;i<p->n_timelines;i++){
+    const GmlcTimeline *timeline=&p->timelines[i];
+    patch32(&pkg->b,table+(size_t)i*4,(uint32_t)pkg->b.len);
+    int sid=intern(pkg,timeline->name?timeline->name:"");
+    wstrptr(pkg,sid);
+    wu32(&pkg->b,0x434C4D54u); /* TMLC: controlled compiler timeline record */
+    wu32(&pkg->b,(uint32_t)timeline->n_moments);
+    for(int m=0;m<timeline->n_moments;m++){
+      wi32(&pkg->b,timeline->moments[m].step);
+      wi32(&pkg->b,timeline_moment_code_index(p,i,m));
+    }
+  }
+  chunk_end(pkg,s);
+  return 1;
+}
+
 static int write_font(Pkg *pkg, const GmlcProject *p){
   size_t s=chunk_begin(pkg,"FONT");
   uint32_t n=(uint32_t)p->n_fonts;
@@ -2043,7 +2076,7 @@ static int object_event_code_index(const GmlcProject *p, int obj_index, int even
   if(obj_index<0 || obj_index>=p->n_objects) return -1;
   const GmlcObject *obj=&p->objects[obj_index];
   if(event_index<0 || event_index>=obj->n_events) return -1;
-  int idx=room_code_count(p) + p->n_scripts;
+  int idx=room_code_count(p) + p->n_scripts + total_timeline_moments(p);
   for(int i=0;i<obj_index;i++) idx += p->objects[i].n_events;
   int rank=event_type_rank(obj->events[event_index].event_type);
   for(int i=0;i<obj->n_events;i++){
@@ -2460,7 +2493,7 @@ static int seed_function_strings(Pkg *pkg, const GmlcProject *p, const GmlcFunct
 static int seed_code_string_order(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   if(intern(pkg,"prototype")<0 || intern(pkg,"@@array@@")<0 || intern(pkg,"arguments")<0) return 0;
   if(pkg->code_placeholders) return 1;
-  int base_count=room_code_count(p) + p->n_scripts + total_object_events(p) + room_instance_creation_code_count(p);
+  int base_count=room_code_count(p) + p->n_scripts + total_timeline_moments(p) + total_object_events(p) + room_instance_creation_code_count(p);
   GmlcFunctionRegistry funcs;
   if(!gmlc_bytecode_collect_functions(p,base_count,&funcs,err,errcap)) return 0;
   int ok=0;
@@ -2470,6 +2503,9 @@ static int seed_code_string_order(Pkg *pkg, const GmlcProject *p, char *err, siz
   }
   for(int i=0;i<p->n_scripts;i++){
     if(!seed_compiled_path_strings(pkg,p,&funcs,i,p->scripts[i].source_path)) goto done;
+  }
+  for(int i=0;i<p->n_timelines;i++) for(int m=0;m<p->timelines[i].n_moments;m++){
+    if(!seed_compiled_path_strings(pkg,p,&funcs,-1,p->timelines[i].moments[m].source_path)) goto done;
   }
   for(int oi=0;oi<p->n_objects;oi++){
     const GmlcObject *obj=&p->objects[oi];
@@ -2651,7 +2687,7 @@ static int write_function_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcF
 
 static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
   size_t s=chunk_begin(pkg,"CODE");
-  int base_count=room_code_count(p) + p->n_scripts + total_object_events(p) + room_instance_creation_code_count(p);
+  int base_count=room_code_count(p) + p->n_scripts + total_timeline_moments(p) + total_object_events(p) + room_instance_creation_code_count(p);
   GmlcFunctionRegistry funcs;
   memset(&funcs,0,sizeof(funcs));
   if(!pkg->code_placeholders && !gmlc_bytecode_collect_functions(p,base_count,&funcs,err,errcap)) return 0;
@@ -2679,6 +2715,15 @@ static int write_code(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
     int nsid=intern(pkg,name?name:"");
     free(name);
     if(!write_compiled_code_entry(pkg,p,&funcs,i,entries,&ci,nsid,p->scripts[i].source_path,err,errcap)) goto done;
+  }
+  for(int i=0;i<p->n_timelines;i++){
+    const GmlcTimeline *timeline=&p->timelines[i];
+    for(int m=0;m<timeline->n_moments;m++){
+      char name[256];
+      snprintf(name,sizeof(name),"gml_Timeline_%s_%d",timeline->name?timeline->name:"",timeline->moments[m].step);
+      int sid=intern(pkg,name);
+      if(!write_compiled_code_entry(pkg,p,&funcs,-1,entries,&ci,sid,timeline->moments[m].source_path,err,errcap)) goto done;
+    }
   }
   for(int oi=0;oi<p->n_objects;oi++){
     const GmlcObject *obj=&p->objects[oi];
@@ -2894,7 +2939,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
      !empty_list_chunk(&pkg,"GLOB") ||
      !write_shdr(&pkg,p) ||
      !write_font(&pkg,p) ||
-     !empty_list_chunk(&pkg,"TMLN") ||
+     !write_tmln(&pkg,p) ||
      !write_objt(&pkg,p) ||
      !write_room_chunk(&pkg,p) ||
      !fixed_zero_chunk(&pkg,"DAFL",0) ||

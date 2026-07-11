@@ -134,6 +134,19 @@ int main(int argc,char**argv){
   gml_vm_goto_room_order(&vm, sr?atoi(sr):0);
   printf("\n[enter order0] room='%s' idx=%d instances=%d pending=%d\n",
          room_name(&vm), vm.room_index, vm.inst_count, vm.pending_room);
+  /* Generic timeline probe: index,position,speed,loop. Useful for exercising imported TMLN
+   * records independently of a project's own Create-event playback setup. */
+  { const char *tp=getenv("GML_START_TIMELINE");
+    if(tp && *tp){ int ti=0,loop=0; double pos=-1,speed=1;
+      if(sscanf(tp,"%d,%lf,%lf,%d",&ti,&pos,&speed,&loop)>=1){
+        for(int i=0;i<vm.inst_count;i++) if(vm.inst[i].active && !vm.inst[i].marked){
+          vm.inst[i].timeline_index=ti; vm.inst[i].timeline_position=pos;
+          vm.inst[i].timeline_speed=speed; vm.inst[i].timeline_running=1; vm.inst[i].timeline_loop=loop;
+          break;
+        }
+      }
+    }
+  }
   maybe_spawn_env_obj(&vm);
   maybe_call_env_code(&vm,&w);
   maybe_dump_ds_maps(&vm);

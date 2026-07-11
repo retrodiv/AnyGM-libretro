@@ -59,6 +59,11 @@ int gmlc_source_scan_project(const GmlcProject *p, GmlcSourceReport *out, char *
     scan_text(txt,out);
     free(txt);
   }
+  for(int i=0;i<p->n_timelines;i++) for(int m=0;m<p->timelines[i].n_moments;m++){
+    char *txt=read_text(p->timelines[i].moments[m].source_path);
+    if(!txt){ out->missing_files++; continue; }
+    out->files++; scan_text(txt,out); free(txt);
+  }
   for(int i=0;i<p->n_objects;i++){
     const GmlcObject *obj=&p->objects[i];
     for(int e=0;e<obj->n_events;e++){

@@ -45,6 +45,8 @@ typedef struct {
   double  path_index, path_position, path_positionprevious, path_speed, path_orientation, path_scale;
   double  path_endaction, path_xoff, path_yoff;   /* world anchor for transformed path coords */
   double  path_origin_x, path_origin_y;           /* local pivot: first point for relative paths */
+  /* classic GameMaker timeline playback */
+  double  timeline_index, timeline_position, timeline_speed, timeline_running, timeline_loop;
   unsigned char mouse_over;  /* transient hover flag for Mouse enter/leave (not serialized) */
   int cg_touch, cg_visit;    /* collision-grid stamps: touched-since-build / visited-this-query (not serialized) */
   int draw_layer_order;      /* transient GMS2 room layer order for equal-depth draw ties */
@@ -57,6 +59,10 @@ typedef struct {
 /* ---- path (parsed from PATH) ---- */
 typedef struct { double x, y, sp, clen; } GmlPathPt;   /* sp = point speed factor, clen = cumulative length */
 typedef struct { GmlPathPt *pts; int n; int kind, closed, precision; double len; } GmlPath;
+
+/* ---- controlled classic timeline records (parsed from compiler-authored TMLN) ---- */
+typedef struct { int step, code; } GmlTimelineMoment;
+typedef struct { const char *name; GmlTimelineMoment *moments; int n, last_step; } GmlTimeline;
 
 /* ---- object (parsed from OBJT) ---- */
 typedef struct {
@@ -126,6 +132,7 @@ typedef struct GmlVM {
   int *inst_next, *inst_prev;   /* doubly-linked per-type instance lists over pool slots */
   long obj_list_gen; /* bumped on any create/destroy/change — invalidates per-frame candidate caches */
   GmlPath *paths; int n_paths;
+  GmlTimeline *timelines; int n_timelines;
   GmlColEvent *col_events; int n_col_events;
   GmlColPairCache *col_pair_cache; int col_pair_cache_cap;
   GmlEventCache *event_cache; int event_cache_cap;

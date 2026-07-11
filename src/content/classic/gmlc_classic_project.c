@@ -40,6 +40,7 @@ int gmlc_classic_project_load(GmlcProject *project, const char *project_path,
     gmlc_classic_import_sounds(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_paths(&manifest, project, err, errcap) &&
     gmlc_classic_import_fonts(&manifest, project, cache_dir, err, errcap) &&
+    gmlc_classic_import_timelines(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_objects(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_rooms(&manifest, project, cache_dir, err, errcap);
   if(ok && manifest.room_order_count){
