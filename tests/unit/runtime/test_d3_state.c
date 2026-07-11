@@ -139,6 +139,38 @@ static int raster_fixtures(void){
     return 0;
   }
 
+  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  call_numbers(&vm,"d3d_start",NULL,0);
+  call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
+  call_numbers(&vm,"d3d_set_lighting",enable,1);
+  const double normal_a[]={8,8,0,0,0,1,0xFFFFFF,1};
+  const double normal_b[]={56,8,0,0,0,1,0xFFFFFF,1};
+  const double normal_c[]={32,40,0,0,0,1,0xFFFFFF,1};
+  call_numbers(&vm,"d3d_primitive_begin",triangle_kind,1);
+  call_numbers(&vm,"d3d_vertex_normal_color",normal_a,8);
+  call_numbers(&vm,"d3d_vertex_normal_color",normal_b,8);
+  call_numbers(&vm,"d3d_vertex_normal_color",normal_c,8);
+  call_numbers(&vm,"d3d_primitive_end",NULL,0);
+  uint32_t dark=pixels[20*WIDTH+32]&0x00FFFFFFu;
+  const double directional[]={0,0,0,-1,0xFFFFFF};
+  const double light_enable[]={0,1};
+  call_numbers(&vm,"d3d_light_define_direction",directional,5);
+  call_numbers(&vm,"d3d_light_enable",light_enable,2);
+  memset(pixels,0,sizeof(pixels));
+  call_numbers(&vm,"d3d_primitive_begin",triangle_kind,1);
+  call_numbers(&vm,"d3d_vertex_normal_color",normal_a,8);
+  call_numbers(&vm,"d3d_vertex_normal_color",normal_b,8);
+  call_numbers(&vm,"d3d_vertex_normal_color",normal_c,8);
+  call_numbers(&vm,"d3d_primitive_end",NULL,0);
+  uint32_t bright=pixels[20*WIDTH+32]&0x00FFFFFFu;
+  int dark_sum=(dark&255)+((dark>>8)&255)+((dark>>16)&255);
+  int bright_sum=(bright&255)+((bright>>8)&255)+((bright>>16)&255);
+  if(dark_sum>=200 || bright_sum<700){
+    fprintf(stderr,"software D3 normal lighting mismatch: dark=%06x bright=%06x\n",dark,bright);
+    return 0;
+  }
+
   const double projection[]={0,-10,0, 0,0,0, 0,0,1};
   const double front_wall[]={-2,0,-2, 2,0,2, -1,1,1};
   const double back_wall[]={2,0,-2, -2,0,2, -1,1,1};

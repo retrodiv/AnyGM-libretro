@@ -2525,9 +2525,67 @@ static GmlD3Vertex d3_vertex_camera(GmlD3Vertex input){
   output.nx=input.nx; output.ny=input.ny; output.nz=input.nz; output.has_normal=input.has_normal;
   return output;
 }
+static int d3_transform_normal(const GmlD3Vertex *vertex,double output[3]){
+  double a00=g_d3.transform[0],a01=g_d3.transform[4],a02=g_d3.transform[8];
+  double a10=g_d3.transform[1],a11=g_d3.transform[5],a12=g_d3.transform[9];
+  double a20=g_d3.transform[2],a21=g_d3.transform[6],a22=g_d3.transform[10];
+  double c00=a11*a22-a12*a21,c01=a12*a20-a10*a22,c02=a10*a21-a11*a20;
+  double c10=a02*a21-a01*a22,c11=a00*a22-a02*a20,c12=a01*a20-a00*a21;
+  double c20=a01*a12-a02*a11,c21=a02*a10-a00*a12,c22=a00*a11-a01*a10;
+  double determinant=a00*c00+a01*c01+a02*c02;
+  if(fabs(determinant)<1e-12) return 0;
+  output[0]=(c00*vertex->nx+c01*vertex->ny+c02*vertex->nz)/determinant;
+  output[1]=(c10*vertex->nx+c11*vertex->ny+c12*vertex->nz)/determinant;
+  output[2]=(c20*vertex->nx+c21*vertex->ny+c22*vertex->nz)/determinant;
+  return d3_normalize(output);
+}
+static int d3_vertex_light_factor(const GmlD3Vertex *vertex,double factor[3]){
+  if(!vertex->has_normal) return 0;
+  double normal[3];
+  if(!d3_transform_normal(vertex,normal)) return 0;
+  double x=vertex->x,y=vertex->y,z=vertex->z;
+  d3_transform_point(&x,&y,&z);
+  factor[0]=factor[1]=factor[2]=.15;
+  for(int i=0;i<8;i++) if(g_d3.light[i].defined&&g_d3.light[i].enabled){
+    uint32_t color=g_d3.light[i].color;
+    double diffuse=0;
+    if(g_d3.light[i].range<0){
+      double ray[3]={-g_d3.light[i].x,-g_d3.light[i].y,-g_d3.light[i].z};
+      if(!d3_normalize(ray)) continue;
+      diffuse=fabs(d3_dot(normal,ray));
+    } else {
+      double ray[3]={g_d3.light[i].x-x,g_d3.light[i].y-y,g_d3.light[i].z-z};
+      double distance=sqrt(d3_dot(ray,ray));
+      if(distance<=1e-9 || distance>=g_d3.light[i].range) continue;
+      ray[0]/=distance; ray[1]/=distance; ray[2]/=distance;
+      diffuse=fabs(d3_dot(normal,ray))*(1-distance/g_d3.light[i].range);
+    }
+    factor[0]+=diffuse*(color&255)/255.0;
+    factor[1]+=diffuse*((color>>8)&255)/255.0;
+    factor[2]+=diffuse*((color>>16)&255)/255.0;
+  }
+  return 1;
+}
+static void d3_apply_light_factor(GmlD3Vertex *vertex,const double factor[3]){
+  vertex->r*=factor[0]; vertex->g*=factor[1]; vertex->b*=factor[2];
+  if(vertex->r>255) vertex->r=255;
+  if(vertex->g>255) vertex->g=255;
+  if(vertex->b>255) vertex->b=255;
+}
 static void d3_emit_triangle(GmlRender *R,const GmlD3Vertex world[3],GmlTpag *texture,GmlAtlas *atlas){
   GmlD3Vertex camera[3],near_clipped[12],far_clipped[12];
-  for(int i=0;i<3;i++) camera[i]=d3_vertex_camera(world[i]);
+  GmlD3Vertex lit[3]={world[0],world[1],world[2]};
+  if(g_d3.lighting){
+    double flat[3]; int have_flat=0;
+    if(!g_d3.smooth) for(int i=0;i<3&&!have_flat;i++) have_flat=d3_vertex_light_factor(&lit[i],flat);
+    for(int i=0;i<3;i++){
+      double factor[3]; int have=have_flat;
+      if(have_flat) memcpy(factor,flat,sizeof(factor));
+      else have=d3_vertex_light_factor(&lit[i],factor);
+      if(have) d3_apply_light_factor(&lit[i],factor);
+    }
+  }
+  for(int i=0;i<3;i++) camera[i]=d3_vertex_camera(lit[i]);
   int count;
   if(g_d3.ortho){ memcpy(near_clipped,camera,sizeof(camera)); count=3; }
   else {
@@ -2612,6 +2670,7 @@ static int d3_clip_segment_plane(GmlD3Vertex *a,GmlD3Vertex *b,double plane,int 
   return 1;
 }
 static void d3_emit_point(GmlRender *R,GmlD3Vertex world,GmlTpag *texture,GmlAtlas *atlas){
+  if(g_d3.lighting){ double factor[3]; if(d3_vertex_light_factor(&world,factor)) d3_apply_light_factor(&world,factor); }
   GmlD3Vertex camera=d3_vertex_camera(world);
   double x,y,inverse_z,depth,distance;
   if(!d3_project_vertex(R,&camera,&x,&y,&inverse_z,&depth,&distance)) return;
@@ -2620,6 +2679,12 @@ static void d3_emit_point(GmlRender *R,GmlD3Vertex world,GmlTpag *texture,GmlAtl
                    camera.r,camera.g,camera.b,camera.alpha,texture,atlas);
 }
 static void d3_emit_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,GmlTpag *texture,GmlAtlas *atlas){
+  if(g_d3.lighting){
+    double factor[3]; int have=d3_vertex_light_factor(&a,factor);
+    if(have) d3_apply_light_factor(&a,factor);
+    if(g_d3.smooth){ if(d3_vertex_light_factor(&b,factor)) d3_apply_light_factor(&b,factor); }
+    else if(have) d3_apply_light_factor(&b,factor);
+  }
   a=d3_vertex_camera(a); b=d3_vertex_camera(b);
   if(!g_d3.ortho){
     double nearz=g_d3.near_clip>1e-6?g_d3.near_clip:.05;
