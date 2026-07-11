@@ -3085,7 +3085,13 @@ static void room_state_key(char *out, size_t cap, int room, const char *field, i
 
 static void room_state_store_number(GmlVM *vm, int room, const char *field, int index, double value){
   char key[128]; room_state_key(key,sizeof(key),room,field,index);
-  *gml_varmap_put(&vm->globals,key)=vreal(value);
+  GmlVal *slot=gml_varmap_get(&vm->globals,key);
+  if(!slot){
+    char *stable=strdup(key);
+    if(!stable) return;
+    slot=gml_varmap_put(&vm->globals,stable);
+  }
+  *slot=vreal(value);
 }
 
 static double room_state_restore_number(GmlVM *vm, int room, const char *field, int index){
@@ -3798,7 +3804,8 @@ void gml_room_enter(GmlVM *vm, int room_index){
   if(getenv("GML_LOG_ROOM")) fprintf(stderr,"[room] enter %d\n",room_index);
   GmlRoom r; if(gml_room_get(vm->win,room_index,&r)!=0) return;
   *gml_varmap_put(&vm->globals,"room_persistent")=vreal(r.persistent?1.0:0.0);
-  *gml_varmap_put(&vm->globals,"room_speed")=vreal(r.speed>0?r.speed:30);
+  if(vm->win->classic_version)
+    *gml_varmap_put(&vm->globals,"room_speed")=vreal(r.speed>0?r.speed:30);
   if(room_index>=0 && room_index<vm->room_state_count && vm->room_stored && vm->room_stored[room_index]){
     vm->room_stored[room_index]=0;
     *gml_varmap_put(&vm->globals,"room_persistent")=vreal(1);
@@ -3818,7 +3825,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
     return;
   }
   const uint8_t *d=vm->win->data; uint32_t op=r.obj_ptr, cnt=u32(d,op);
-  for(int i=0;i<8;i++){
+  for(int i=0;vm->win->classic_version && i<8;i++){
     set_global_arr(vm,"background_visible",i,0); set_global_arr(vm,"background_foreground",i,0);
     set_global_arr(vm,"background_index",i,-1); set_global_arr(vm,"background_x",i,0);
     set_global_arr(vm,"background_y",i,0); set_global_arr(vm,"background_htiled",i,0);

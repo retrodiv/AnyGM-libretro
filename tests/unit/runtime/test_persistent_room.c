@@ -34,6 +34,7 @@ int main(void){
   memset(&project,0,sizeof(project)); memset(&object,0,sizeof(object)); memset(rooms,0,sizeof(rooms));
   memset(&trigger_event,0,sizeof(trigger_event)); memset(&trigger,0,sizeof(trigger)); memset(&included,0,sizeof(included));
   project.name="persistent-room-fixture"; project.objects=&object; project.n_objects=1;
+  project.classic_version=800;
   project.constants=&constant; project.n_constants=project.cap_constants=1;
   project.triggers=&trigger; project.n_triggers=project.cap_triggers=1;
   snprintf(included_name,sizeof(included_name),"gml-included-%ld.dat",(long)getpid());
@@ -102,7 +103,12 @@ int main(void){
     global_array_value(&vm,"background_x",0)==123 && global_array_value(&vm,"view_xview",0)==77 &&
     room_speed&&room_speed->t==V_REAL&&room_speed->d==55 && vm.n_tile_mut==1 &&
     vm.tile_mut[0].depth==300&&vm.tile_mut[0].dx==8&&vm.tile_mut[0].dy==9;
-  if(!ok) fprintf(stderr,"persistent room state did not roundtrip\n");
+  if(!ok) fprintf(stderr,
+    "persistent room state did not roundtrip: slot=%d value=%.0f bg=%.0f view=%.0f speed=%.0f tiles=%d depth=%d shift=(%.0f,%.0f)\n",
+    slot&&slot->active&&!slot->room_dormant,value&&value->t==V_REAL?value->d:-1,
+    global_array_value(&vm,"background_x",0),global_array_value(&vm,"view_xview",0),
+    room_speed&&room_speed->t==V_REAL?room_speed->d:-1,vm.n_tile_mut,
+    vm.n_tile_mut?vm.tile_mut[0].depth:-1,vm.n_tile_mut?vm.tile_mut[0].dx:0,vm.n_tile_mut?vm.tile_mut[0].dy:0);
   free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(condition); unlink(event); unlink(included_path);
   if(ok) puts("persistent room fixtures: ok");
   return ok?0:1;
