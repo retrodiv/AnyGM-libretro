@@ -226,7 +226,7 @@ static int validate_object_payload(ClassicReader *r){
   return 1;
 }
 
-static int validate_room_payload(ClassicReader *r){
+static int validate_room_gameplay_payload(ClassicReader *r){
   uint32_t backgrounds, views, instances, tiles;
   if(!reader_string(r, "room caption") || !reader_words(r, 9, "room fields") ||
      !reader_string(r, "room creation code") ||
@@ -243,8 +243,83 @@ static int validate_room_payload(ClassicReader *r){
        !reader_string(r, "room instance creation code") ||
        !reader_words(r, 1, "room instance locked flag")) return 0;
   if(!reader_u32(r, &tiles, "room tile count")) return 0;
-  if(!reader_words(r, tiles > UINT32_MAX / 10 ? UINT32_MAX : tiles * 10, "room tiles") ||
-     !reader_words(r, 14, "room editor fields")) return 0;
+  return reader_words(r, tiles > UINT32_MAX / 10 ? UINT32_MAX : tiles * 10, "room tiles");
+}
+
+static int validate_room_payload(ClassicReader *r){
+  return validate_room_gameplay_payload(r) && reader_words(r, 14, "room editor fields");
+}
+
+/* Some GM8 executables compact the tail of an object block: trailing zero bytes are elided and
+ * event lists after the primary Draw event are replaced by compact executable metadata. Rebuild the
+ * self-contained object payload expected by the project normalizer when that compact form is
+ * detected. */
+static int repair_executable_object(char **raw_io, int *raw_size_io){
+  int original=*raw_size_io;
+  char *raw=(char*)realloc(*raw_io,(size_t)original+64);
+  if(!raw) return 0;
+  memset(raw+original,0,64);
+  *raw_io=raw;
+  ClassicReader r={(const uint8_t*)raw,(size_t)original+64,0,NULL,0};
+  uint32_t exists,version,event;
+  if(!reader_u32(&r,&exists,"object exists") || !exists ||
+     !reader_string(&r,"object name") || !reader_u32(&r,&version,"object version") ||
+     !reader_words(&r,7,"object fields")) return 0;
+  (void)version;
+  size_t last_type_off=r.pos;
+  if(!reader_u32(&r,&event,"object event count")) return 0;
+  raw[last_type_off]=8; raw[last_type_off+1]=raw[last_type_off+2]=raw[last_type_off+3]=0;
+  for(int type=0;type<=8;type++){
+    for(;;){
+      if(r.pos+4>(size_t)original){
+        if(r.pos+4>r.size) return 0;
+        memset(raw+r.pos,0xFF,4); r.pos+=4; break;
+      }
+      if(!reader_u32(&r,&event,"object event")) return 0;
+      if(event==UINT32_MAX) break;
+      if(!validate_actions(&r)) return 0;
+    }
+  }
+  *raw_size_io=(int)r.pos;
+  return 1;
+}
+
+/* Executable room blocks omit project-editor state. Insert the three grid fields used by the
+ * project representation and append a neutral editor tail so the regular room importer can be
+ * shared by projects and executables. */
+static int normalize_executable_room(char **raw_io, int *raw_size_io){
+  int original=*raw_size_io;
+  ClassicReader r={(const uint8_t*)*raw_io,(size_t)original,0,NULL,0};
+  uint32_t exists,version;
+  if(!reader_u32(&r,&exists,"room exists")) return 0;
+  if(!exists) return r.pos==(size_t)original;
+  if(!reader_string(&r,"room name") || !reader_u32(&r,&version,"room version") ||
+     !reader_string(&r,"room caption") || !reader_words(&r,2,"room dimensions")) return 0;
+  (void)version;
+  size_t insert_at=r.pos;
+  size_t working_size=(size_t)original+12+64;
+  char *normalized=(char*)malloc(working_size);
+  if(!normalized) return 0;
+  memcpy(normalized,*raw_io,insert_at);
+  memset(normalized+insert_at,0,12);
+  normalized[insert_at]=16;
+  normalized[insert_at+4]=16;
+  memcpy(normalized+insert_at+12,*raw_io+insert_at,(size_t)original-insert_at);
+  memset(normalized+original+12,0,64);
+  ClassicReader body={(const uint8_t*)normalized,working_size,0,NULL,0};
+  if(!reader_u32(&body,&exists,"room exists") || !reader_string(&body,"room name") ||
+     !reader_u32(&body,&version,"room version") || !validate_room_gameplay_payload(&body)){
+    free(normalized);
+    return 0;
+  }
+  size_t normalized_size=body.pos+56;
+  char *complete=(char*)realloc(normalized,normalized_size);
+  if(!complete){ free(normalized); return 0; }
+  normalized=complete;
+  memset(normalized+body.pos,0,56);
+  STBI_FREE(*raw_io);
+  *raw_io=normalized;
+  *raw_size_io=(int)normalized_size;
   return 1;
 }
 
@@ -578,19 +653,45 @@ int gmlc_classic_inventory(const void *data, size_t size,
   return 1;
 }
 
-static int parse_manifest_slot(GmlcClassicResourceType type,
-                               const uint8_t *compressed, uint32_t compressed_size,
-                               GmlcClassicResourceSlot *slot, char *err, size_t errcap){
+static int parse_manifest_slot_layout(GmlcClassicResourceType type,
+                                      const uint8_t *compressed, uint32_t compressed_size,
+                                      GmlcClassicResourceSlot *slot, int has_timestamp,
+                                      int raw_deflate, char *err, size_t errcap){
   if(compressed_size > INT_MAX){
     if(err && errcap) snprintf(err, errcap, "classic project: compressed resource is too large");
     return 0;
   }
   int raw_size = 0;
-  char *raw = stbi_zlib_decode_malloc((const char*)compressed, (int)compressed_size, &raw_size);
+  char *raw = raw_deflate && compressed_size>=6
+    ? stbi_zlib_decode_noheader_malloc((const char*)compressed+2,(int)compressed_size-6,&raw_size)
+    : stbi_zlib_decode_malloc((const char*)compressed, (int)compressed_size, &raw_size);
   if(!raw || raw_size < 4){
     if(err && errcap) snprintf(err, errcap, "classic project: invalid compressed resource block");
     STBI_FREE(raw);
     return 0;
+  }
+  if(raw_deflate){
+    char *p=(char*)realloc(raw,(size_t)raw_size+1);
+    if(!p){ STBI_FREE(raw); return 0; }
+    raw=p; raw[raw_size++]=0; /* tolerate the compact form's elided final zero byte */
+    if(type==GMLC_CLASSIC_OBJECT){
+      ClassicReader probe={(const uint8_t*)raw,(size_t)raw_size,0,NULL,0};
+      uint32_t exists=0,version=0;
+      int complete=reader_u32(&probe,&exists,"object exists") &&
+        (!exists || (reader_string(&probe,"object name") && reader_u32(&probe,&version,"object version") &&
+                     validate_object_payload(&probe))) &&
+        (probe.pos==probe.size || (probe.pos+1==probe.size && probe.data[probe.pos]==0));
+      (void)version;
+      if(!complete){ raw_size--;
+        if(!repair_executable_object(&raw,&raw_size)){ STBI_FREE(raw); return 0; }
+      }
+    } else if(type==GMLC_CLASSIC_ROOM){
+      raw_size--;
+      if(!normalize_executable_room(&raw,&raw_size)){
+        if(err && errcap) snprintf(err,errcap,"classic executable: invalid compact room block");
+        STBI_FREE(raw); return 0;
+      }
+    }
   }
   ClassicReader r = {(const uint8_t*)raw, (size_t)raw_size, 0, err, errcap};
   uint32_t exists;
@@ -602,7 +703,7 @@ static int parse_manifest_slot(GmlcClassicResourceType type,
   size_t payload_start = 0;
   if(slot->exists &&
      (!reader_string_copy(&r, &slot->name, "resource name") ||
-      !reader_skip(&r, 8, "resource timestamp") ||
+      (has_timestamp && !reader_skip(&r, 8, "resource timestamp")) ||
       !reader_u32(&r, &slot->version, "resource format version"))){
     free(slot->name);
     slot->name = NULL;
@@ -631,9 +732,13 @@ static int parse_manifest_slot(GmlcClassicResourceType type,
       case GMLC_CLASSIC_ROOM: valid = validate_room_payload(&r); break;
       default: break;
     }
-    if(valid) valid = require_payload_end(&r, "resource payload");
+    if(valid){
+      if(raw_deflate && r.pos+1==r.size && r.data[r.pos]==0) { /* synthetic padding */ }
+      else valid = require_payload_end(&r, "resource payload");
+    }
   } else {
-    valid = require_payload_end(&r, "absent resource slot");
+    if(raw_deflate && r.pos+1==r.size && r.data[r.pos]==0) { /* synthetic padding */ }
+    else valid = require_payload_end(&r, "absent resource slot");
   }
   if(!valid){
     free(slot->name); slot->name = NULL;
@@ -655,6 +760,12 @@ static int parse_manifest_slot(GmlcClassicResourceType type,
   }
   STBI_FREE(raw);
   return 1;
+}
+
+static int parse_manifest_slot(GmlcClassicResourceType type,
+                               const uint8_t *compressed, uint32_t compressed_size,
+                               GmlcClassicResourceSlot *slot, char *err, size_t errcap){
+  return parse_manifest_slot_layout(type,compressed,compressed_size,slot,1,0,err,errcap);
 }
 
 void gmlc_classic_manifest_free(GmlcClassicManifest *manifest){
@@ -715,6 +826,96 @@ static int parse_modern_room_order(const void *data, size_t size,
   return 1;
 }
 
+static int parse_executable_data(const uint8_t *data, size_t size,
+                                 uint32_t version, uint32_t settings_version,
+                                 GmlcClassicManifest *out, char *err, size_t errcap){
+  ClassicReader r={data,size,0,err,errcap};
+  uint32_t count,section_version,pro;
+  if(!reader_u32(&r,&count,"executable leading junk count") ||
+     count>(r.size-r.pos)/4 || !reader_words(&r,count,"executable leading junk") ||
+     !reader_u32(&r,&pro,"executable edition flag") ||
+     !reader_u32(&r,&out->inventory.header.game_id,"executable game id") ||
+     !reader_skip(&r,16,"executable guid")) return 0;
+  memcpy(out->inventory.header.guid,data+r.pos-16,16);
+  out->inventory.header.version=(GmlcClassicVersion)version;
+  out->inventory.settings_version=settings_version;
+  (void)pro;
+  if(!reader_u32(&r,&section_version,"executable extension version") ||
+     !reader_u32(&r,&count,"executable extension count")) return 0;
+  if(count){
+    if(err && errcap) snprintf(err,errcap,"classic executable: extensions are not supported yet");
+    return 0;
+  }
+  if(!reader_u32(&r,&section_version,"executable trigger version") || section_version<800 ||
+     !reader_u32(&r,&out->inventory.trigger_slots,"executable trigger count")) return 0;
+  for(uint32_t i=0;i<out->inventory.trigger_slots;i++) if(!reader_blob(&r,"executable trigger")) return 0;
+  if(!reader_u32(&r,&section_version,"executable constant version") || section_version<800 ||
+     !reader_u32(&r,&out->inventory.constants,"executable constant count")) return 0;
+  for(uint32_t i=0;i<out->inventory.constants;i++)
+    if(!reader_string(&r,"executable constant name") || !reader_string(&r,"executable constant value")) return 0;
+  for(int type=0;type<GMLC_CLASSIC_RESOURCE_TYPES;type++){
+    if(!reader_u32(&r,&section_version,"executable resource version") || section_version<800 ||
+       !reader_u32(&r,&count,"executable resource count")) return 0;
+    out->inventory.resource_section_offsets[type]=r.pos-8;
+    out->inventory.resource_slots[type]=count;
+    if(count){
+      out->slots[type]=(GmlcClassicResourceSlot*)calloc(count,sizeof(*out->slots[type]));
+      if(!out->slots[type]) return reader_fail(&r,"executable resource allocation");
+    }
+    for(uint32_t i=0;i<count;i++){
+      uint32_t compressed_size;
+      if(!reader_u32(&r,&compressed_size,"executable resource length") ||
+         r.pos>r.size || compressed_size>r.size-r.pos ||
+         !parse_manifest_slot_layout((GmlcClassicResourceType)type,r.data+r.pos,compressed_size,
+                                     &out->slots[type][i],0,1,err,errcap)) return 0;
+      r.pos+=compressed_size;
+      if(out->slots[type][i].exists) out->existing[type]++;
+    }
+  }
+  if(!reader_u32(&r,&out->inventory.last_instance_id,"last executable instance id") ||
+     !reader_u32(&r,&out->inventory.last_tile_id,"last executable tile id")) return 0;
+  out->inventory.payload_end=r.pos;
+  if(!reader_u32(&r,&section_version,"executable include version") ||
+     !reader_u32(&r,&count,"executable include count")) return 0;
+  for(uint32_t i=0;i<count;i++) if(!reader_blob(&r,"executable include")) return 0;
+  if(!reader_u32(&r,&section_version,"executable help version") || !reader_blob(&r,"executable help")) return 0;
+  if(!reader_u32(&r,&section_version,"executable library version") ||
+     !reader_u32(&r,&count,"executable library count")) return 0;
+  for(uint32_t i=0;i<count;i++) if(!reader_string(&r,"executable library code")) return 0;
+  if(!reader_u32(&r,&section_version,"executable room-order version") ||
+     !reader_u32(&r,&count,"executable room-order count")) return 0;
+  if(count>out->inventory.resource_slots[GMLC_CLASSIC_ROOM]){
+    if(err && errcap) snprintf(err,errcap,"classic executable: invalid room-order count %u at offset %llu",
+                               count,(unsigned long long)r.pos);
+    return 0;
+  }
+  out->room_order=(uint32_t*)calloc(count?count:1,sizeof(*out->room_order));
+  if(!out->room_order) return reader_fail(&r,"executable room order allocation");
+  out->room_order_count=count;
+  for(uint32_t i=0;i<count;i++){
+    if(r.size-r.pos<4){
+      if(i+1!=count){
+        if(err && errcap) snprintf(err,errcap,"classic executable: truncated room order at offset %llu",
+                                   (unsigned long long)r.pos);
+        return 0;
+      }
+      uint32_t index=0;
+      for(size_t byte=0;byte<r.size-r.pos;byte++) index|=(uint32_t)r.data[r.pos+byte]<<(byte*8);
+      out->room_order[i]=index;
+      r.pos=r.size;
+    } else if(!reader_u32(&r,&out->room_order[i],"executable room index")) return 0;
+    if(out->room_order[i]>=out->inventory.resource_slots[GMLC_CLASSIC_ROOM]){
+      if(err && errcap && !err[0])
+        snprintf(err,errcap,"classic executable: invalid room index at offset %llu",
+                 (unsigned long long)r.pos);
+      return 0;
+    }
+  }
+  return 1;
+}
+
+
+
 int gmlc_classic_manifest(const void *data, size_t size,
                           GmlcClassicManifest *out, char *err, size_t errcap){
   if(err && errcap) err[0] = '\0';
@@ -723,6 +924,8 @@ int gmlc_classic_manifest(const void *data, size_t size,
     return 0;
   }
   memset(out, 0, sizeof(*out));
+  if(size>=2 && ((const uint8_t*)data)[0]=='M' && ((const uint8_t*)data)[1]=='Z')
+    return parse_executable_manifest((const uint8_t*)data,size,out,err,errcap);
   GmlcClassicHeader header;
   if(!gmlc_classic_probe(data, size, &header, err, errcap)) return 0;
   if(header.version == GMLC_CLASSIC_GM6 || header.version == GMLC_CLASSIC_GM7 ||

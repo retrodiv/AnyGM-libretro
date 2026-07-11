@@ -240,6 +240,50 @@ static int expect_manifest_810(void){
   return ok;
 }
 
+static int expect_executable_manifest(void){
+  Fixture decoded={{0},0};
+  fixture_u32(&decoded,0); /* leading junk */
+  fixture_u32(&decoded,1); fixture_u32(&decoded,0x13572468); fixture_zero(&decoded,16);
+  fixture_u32(&decoded,700); fixture_u32(&decoded,0); /* extensions */
+  fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* triggers */
+  fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* constants */
+  for(unsigned type=0;type<GMLC_CLASSIC_RESOURCE_TYPES;type++){
+    fixture_u32(&decoded,800); fixture_u32(&decoded,0);
+  }
+  fixture_u32(&decoded,100000); fixture_u32(&decoded,1000000);
+  fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* includes */
+  fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* help */
+  fixture_u32(&decoded,500); fixture_u32(&decoded,0); /* library code */
+  fixture_u32(&decoded,700); fixture_u32(&decoded,0); /* room order */
+
+  Fixture executable={{0},0};
+  executable.data[0]='M'; executable.data[1]='Z'; executable.size=16;
+  fixture_u32(&executable,20); /* embedded-data self pointer */
+  fixture_u32(&executable,GMLC_CLASSIC_MAGIC); fixture_u32(&executable,800);
+  fixture_u32(&executable,0); fixture_u32(&executable,800);
+  fixture_u32(&executable,0); /* settings */
+  fixture_u32(&executable,0); fixture_u32(&executable,0); /* wrapper strings */
+  fixture_u32(&executable,0); fixture_u32(&executable,0); /* junk counts */
+  for(unsigned i=0;i<256;i++) executable.data[executable.size++]=(unsigned char)i;
+  fixture_u32(&executable,(unsigned)decoded.size+1);
+  unsigned char previous=0;
+  executable.data[executable.size++]=previous;
+  for(size_t i=0;i<decoded.size;i++){
+    previous=(unsigned char)(previous+decoded.data[i]+(unsigned char)(i+1));
+    executable.data[executable.size++]=previous;
+  }
+  GmlcClassicManifest manifest;
+  char err[256]={0};
+  int ok=gmlc_classic_manifest(executable.data,executable.size,&manifest,err,sizeof(err));
+  if(!ok) fprintf(stderr,"executable manifest failed: %s\n",err);
+  if(ok){
+    ok=manifest.inventory.header.version==GMLC_CLASSIC_GM8 &&
+       manifest.inventory.header.game_id==0x13572468 && manifest.room_order_count==0;
+    gmlc_classic_manifest_free(&manifest);
+  }
+  return ok;
+}
+
 static Fixture legacy_fixture(unsigned container_version){
   Fixture f = {{0}, 0};
   int gm7 = container_version == 701 || container_version == 702;
@@ -493,7 +537,8 @@ static int expect_legacy_media_import(void){
       remove(project.sprites[0].frame_paths[0]); }
     ok=ok&&stage;
     for(int i=0;i<project.n_sprites;i++){ free(project.sprites[i].id); free(project.sprites[i].name);
-      for(int f=0;f<project.sprites[i].n_frames;f++) free(project.sprites[i].frame_paths[f]); free(project.sprites[i].frame_paths); }
+      for(int f=0;f<project.sprites[i].n_frames;f++) free(project.sprites[i].frame_paths[f]);
+      free(project.sprites[i].frame_paths); }
     free(project.sprites); gmlc_classic_manifest_free(&manifest);
   }
   {
@@ -509,7 +554,8 @@ static int expect_legacy_media_import(void){
       remove(project.sprites[0].frame_paths[0]); }
     ok=ok&&stage;
     for(int i=0;i<project.n_sprites;i++){ free(project.sprites[i].id); free(project.sprites[i].name);
-      for(int f=0;f<project.sprites[i].n_frames;f++) free(project.sprites[i].frame_paths[f]); free(project.sprites[i].frame_paths); }
+      for(int f=0;f<project.sprites[i].n_frames;f++) free(project.sprites[i].frame_paths[f]);
+      free(project.sprites[i].frame_paths); }
     for(int i=0;i<project.n_tilesets;i++){ free(project.tilesets[i].id); free(project.tilesets[i].name); }
     free(project.sprites); free(project.tilesets); gmlc_classic_manifest_free(&manifest);
   }
@@ -905,6 +951,7 @@ int main(int argc, char **argv){
   if(expect_inventory(810)) ++passed; else ++failed;
   if(expect_manifest()) ++passed; else ++failed;
   if(expect_manifest_810()) ++passed; else ++failed;
+  if(expect_executable_manifest()) ++passed; else ++failed;
   if(expect_gm7_decode()) ++passed; else ++failed;
   if(expect_legacy_manifest(600)) ++passed; else ++failed;
   if(expect_legacy_manifest(701)) ++passed; else ++failed;
@@ -922,19 +969,15 @@ int main(int argc, char **argv){
   for(int i = 1; i < argc; ++i){
     GmlcClassicInventory in;
     GmlcClassicHeader h;
+    GmlcClassicManifest manifest;
     char err[512];
-    if(!gmlc_classic_probe_file(argv[i], &h, err, sizeof(err))){
+    if(!gmlc_classic_manifest_file(argv[i], &manifest, err, sizeof(err))){
       fprintf(stderr, "%s: %s\n", argv[i], err);
       ++failed;
       continue;
     }
-    if(gmlc_classic_inventory_file(argv[i], &in, err, sizeof(err))){
-      GmlcClassicManifest manifest;
-      if(!gmlc_classic_manifest_file(argv[i], &manifest, err, sizeof(err))){
-        fprintf(stderr, "%s: %s\n", argv[i], err);
-        ++failed;
-        continue;
-      }
+    in=manifest.inventory;
+    h=in.header;
       printf("%s\t%u\t%s\tsettings=%u sounds=%u/%u sprites=%u/%u backgrounds=%u/%u paths=%u/%u scripts=%u/%u fonts=%u/%u timelines=%u/%u objects=%u/%u rooms=%u/%u\n",
              argv[i], (unsigned)h.version, gmlc_classic_version_name(h.version), in.settings_version,
              manifest.existing[GMLC_CLASSIC_SOUND], in.resource_slots[GMLC_CLASSIC_SOUND],
@@ -955,14 +998,14 @@ int main(int argc, char **argv){
       mkdir(object_dir, 0777);
 #endif
       if(!gmlc_classic_import_objects(&manifest, &project, object_dir, err, sizeof(err))){
-        fprintf(stderr, "%s: %s\n", argv[i], err);
+        fprintf(stderr, "%s: object import: %s\n", argv[i], err);
         gmlc_classic_manifest_free(&manifest);
         ++failed;
         continue;
       }
       discard_imported_objects(&project, 1);
       if(!gmlc_classic_import_timelines(&manifest, &project, object_dir, err, sizeof(err))){
-        fprintf(stderr, "%s: %s\n", argv[i], err);
+        fprintf(stderr, "%s: timeline import: %s\n", argv[i], err);
         gmlc_classic_manifest_free(&manifest);
         ++failed;
         continue;
@@ -970,24 +1013,20 @@ int main(int argc, char **argv){
       discard_imported_timelines(&project, 1);
       if(h.version >= GMLC_CLASSIC_GM8 &&
          !gmlc_classic_import_backgrounds(&manifest, &project, object_dir, err, sizeof(err))){
-        fprintf(stderr, "%s: %s\n", argv[i], err);
+        fprintf(stderr, "%s: background import: %s\n", argv[i], err);
         gmlc_classic_manifest_free(&manifest);
         ++failed;
         continue;
       }
       discard_imported_backgrounds(&project, 1);
       if(!gmlc_classic_import_rooms(&manifest, &project, object_dir, err, sizeof(err))){
-        fprintf(stderr, "%s: %s\n", argv[i], err);
+        fprintf(stderr, "%s: room import: %s\n", argv[i], err);
         gmlc_classic_manifest_free(&manifest);
         ++failed;
         continue;
       }
       discard_imported_rooms(&project, 1);
       gmlc_classic_manifest_free(&manifest);
-    } else {
-      printf("%s\t%u\t%s\n", argv[i], (unsigned)h.version,
-             gmlc_classic_version_name(h.version));
-    }
     ++passed;
   }
   printf("classic probe: passed=%d failed=%d\n", passed, failed);
