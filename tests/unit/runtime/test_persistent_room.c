@@ -10,6 +10,7 @@
 
 int gml_input_key(int key,int edge){ (void)key;(void)edge;return 0; }
 int gml_input_gamepad(int button,int edge){ (void)button;(void)edge;return 0; }
+GmlVal gml_builtin_call(GmlVM *vm,const char *name,GmlVal *args,int count);
 
 static GmlInstance *find_slot(GmlVM *vm,uint32_t id){
   for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].id==id) return &vm->inst[i];
@@ -79,6 +80,30 @@ int main(void){
   }
   gml_room_enter(&vm,0);
   GmlInstance *created=gml_instance_create(&vm,12,34,0); if(!created)return 1;
+  vm.cur_self=created;
+  GmlVal distance_arg=vreal(0);
+  GmlVal object_distance=gml_builtin_call(&vm,"distance_to_object",&distance_arg,1);
+  distance_arg=vreal((double)created->id);
+  GmlVal self_distance=gml_builtin_call(&vm,"distance_to_object",&distance_arg,1);
+  vm.cur_self=NULL;
+  if(object_distance.t!=V_REAL || object_distance.d!=1000000 ||
+     self_distance.t!=V_REAL || self_distance.d!=1000000){
+    fprintf(stderr,"distance_to_object missing/self sentinel mismatch: object=%.0f self=%.0f\n",
+      object_distance.d,self_distance.d); return 1;
+  }
+  *gml_varmap_put(&created->vars,"side")=vreal(180);
+  GmlVal local_name=vstr("side");
+  vm.cur_self=created;
+  GmlVal local_exists=gml_builtin_call(&vm,"variable_local_exists",&local_name,1);
+  if(local_exists.t!=V_REAL || local_exists.d!=1){
+    fprintf(stderr,"classic instance-local field was reported missing\n"); return 1;
+  }
+  GmlVal alarm_args[2]={vreal(1.6),vreal(0)};
+  (void)gml_builtin_call(&vm,"action_set_alarm",alarm_args,2);
+  vm.cur_self=NULL;
+  if(created->alarm[0]!=2){
+    fprintf(stderr,"classic fractional alarm was not rounded: %.3f\n",created->alarm[0]); return 1;
+  }
   gml_vm_step(&vm);
   GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
   if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=1){ fprintf(stderr,"classic trigger did not fire\n"); return 1; }

@@ -954,7 +954,8 @@ static int expect_object_import(void){
     size_t got = file ? fread(source, 1, sizeof(source) - 1, file) : 0;
     if(file) fclose(file);
     ok = project.n_objects == 1 && project.objects[0].depth == -10 && project.objects[0].n_events == 1 &&
-         project.objects[0].events[0].event_type == 0 && got && strstr(source, "x = 4;");
+         project.objects[0].events[0].event_type == 0 && got && strstr(source, "(function(){") &&
+         strstr(source, "x = 4;") && strstr(source, "})()");
     remove(project.objects[0].events[0].source_path);
   }
   for(int i = 0; i < project.n_objects; ++i){

@@ -700,8 +700,23 @@ static int write_sprite_masks(Pkg *pkg, const GmlcSprite *sp, char *err, size_t 
     int mw=w<sp->width?w:sp->width;
     int mh=h<sp->height?h:sp->height;
     for(int y=0;y<mh;y++) for(int x=0;x<mw;x++){
-      unsigned char a=rgba[((size_t)y*(size_t)w+(size_t)x)*4u+3u];
-      if(a>tol) mask[(size_t)y*(size_t)rowb+(size_t)x/8u] |= (uint8_t)(1u<<(7-(x&7)));
+      int inside=x>=sp->bbox_left && x<=sp->bbox_right &&
+                 y>=sp->bbox_top && y<=sp->bbox_bottom;
+      int solid=0;
+      if(inside && sp->col_kind==1) solid=1;
+      else if(inside && (sp->col_kind==2 || sp->col_kind==3)){
+        double hw=(sp->bbox_right-sp->bbox_left+1)/2.0;
+        double hh=(sp->bbox_bottom-sp->bbox_top+1)/2.0;
+        if(hw>0.0 && hh>0.0){
+          double cx=sp->bbox_left+hw-0.5, cy=sp->bbox_top+hh-0.5;
+          double dx=fabs((x-cx)/hw), dy=fabs((y-cy)/hh);
+          solid=sp->col_kind==2 ? dx*dx+dy*dy<=1.0 : dx+dy<=1.0;
+        }
+      } else if(inside){
+        unsigned char a=rgba[((size_t)y*(size_t)w+(size_t)x)*4u+3u];
+        solid=a>tol;
+      }
+      if(solid) mask[(size_t)y*(size_t)rowb+(size_t)x/8u] |= (uint8_t)(1u<<(7-(x&7)));
     }
     stbi_image_free(rgba);
     if(!wbytes(&pkg->b,mask,mask_bytes)){

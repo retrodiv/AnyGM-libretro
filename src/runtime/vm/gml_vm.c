@@ -525,8 +525,22 @@ static int var_name_maybe_special(const char *name, uint32_t nh){
   if(name[0]=='b' && !strncmp(name,"bbox_",5)) return 1;
   return 0;
 }
+static int is_room_global_array(const char *n);
 static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   GmlVal out;
+  /* GM6/7/8 variables retain their old scalar-at-index-zero behaviour even when the same
+   * built-in also exposes indexed view/background slots. Classic source commonly reads
+   * `view_wview` with no brackets; returning the array value coerces to zero and can pin every
+   * moving instance to the left edge. Keep this compatibility local to classic containers so
+   * Studio arrays continue to use normal value semantics. */
+  if(vm->win && vm->win->classic_version && strcmp(name,"view_current") &&
+     is_room_global_array(name)){
+    GmlVal *slot=gml_varmap_get_h(&vm->globals,name,nh);
+    if(!slot) return vreal(0);
+    if(slot->t!=V_ARR || !slot->arr) return *slot;
+    GmlArr *a=slot->arr;
+    return (a->data && a->len>0)?a->data[0]:vreal(0);
+  }
   if(!var_name_maybe_special(name,nh)){
     if(inst==IT_GLOBAL){ GmlVal *p=gml_varmap_get_h(&vm->globals,name,nh); return p?*p:vreal(0); }
     GmlInstance *self=var_target(vm,inst);
@@ -612,6 +626,14 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
     if(dv && name && !strcmp(name,dv)){ extern long g_vm_frame;
       fprintf(stderr,"[varset] f%ld inst=%d %s = %s%.2f\n",g_vm_frame,inst,name,
         v.t==V_STR?"str:":"",v.t==V_REAL?v.d:0.0); } }
+  if(vm->win && vm->win->classic_version && strcmp(name,"view_current") &&
+     is_room_global_array(name)){
+    GmlVal *slot=gml_varmap_put_h(&vm->globals,name,nh);
+    GmlArr *a=arr_of(slot);
+    arr_ensure(a,0);
+    if(a && a->cap>0) a->data[0]=v;
+    return;
+  }
   if(!var_name_maybe_special(name,nh)){
     if(inst==IT_GLOBAL){ *gml_varmap_put_h(&vm->globals,name,nh)=v; return; }
     if(is_object_scope(vm,inst)){   /* object.var = v -> all instances */
@@ -673,6 +695,13 @@ static GmlVarMap *scope_map(GmlVM *vm, GmlVarMap *locals, int inst_t){
  * accessed without explicit scope — route them to globals regardless of inst_t. */
 static int is_room_global_array(const char *n){
   return !strncmp(n,"background_",11) || !strncmp(n,"view_",5); }
+static double alarm_store_value(GmlVM *vm,GmlVal v){
+  double value=v.t==V_REAL?v.d:(v.s?atof(v.s):0);
+  /* GM6/7/8 stores alarms as integers. Delphi's Math.Round uses ties-to-even; nearbyint
+   * supplies the same result under the process' default IEEE rounding mode. Studio semantics
+   * retain fractional alarms, which several typewriter effects deliberately use. */
+  return vm && vm->win && vm->win->classic_version ? nearbyint(value) : value;
+}
 static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, uint32_t nh, int idx, GmlVal v){
   if(!strcmp(nm,"argument")){
     if(idx>=0 && idx<16){
@@ -681,8 +710,8 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
     }
     return;
   }
-  double alv = v.t==V_REAL?v.d:(v.s?atof(v.s):0);
   if(!strcmp(nm,"alarm")){
+    double alv=alarm_store_value(vm,v);
     /* Object-scope alarm writes apply to every active, unmarked matching instance. */
     if(is_object_scope(vm,inst_t)){
       if(idx>=0 && idx<GML_ALARMS)
@@ -736,10 +765,10 @@ static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, 
   if(!A || !A->data || A->len<0 || A->cap<A->len || A->cap>16000000) return vreal(0);
   return (idx>=0 && idx<A->len)? A->data[idx] : vreal(0);
 }
-static void array_set_inst_field_h(GmlInstance *s, const char *nm, uint32_t nh, int idx, GmlVal v){
+static void array_set_inst_field_h(GmlVM *vm,GmlInstance *s,const char *nm,uint32_t nh,int idx,GmlVal v){
   if(!s) return;
   if(s->obj>=0 && !strcmp(nm,"alarm")){
-    if(idx>=0 && idx<GML_ALARMS) s->alarm[idx]=v.t==V_REAL?v.d:(v.s?atof(v.s):0);
+    if(idx>=0 && idx<GML_ALARMS) s->alarm[idx]=alarm_store_value(vm,v);
     return;
   }
   gml_arr_mark_escaped(v);
@@ -1798,7 +1827,7 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
           if(astrue(inst_get_any_h(vm,st,flag1,flag1_hash))) inst_set_any_h(self,flag1,flag1_hash,vreal(1));
           if(astrue(inst_get_any_h(vm,st,flag2,flag2_hash))) inst_set_any_h(self,flag2,flag2_hash,vreal(1));
         }
-        array_set_inst_field_h(self,arr_name,arr_hash,i,item);
+        array_set_inst_field_h(vm,self,arr_name,arr_hash,i,item);
       }
     }
     *out=vreal(0);
@@ -2086,7 +2115,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             }
           }
           GC_PERSIST(val);
-          if(t) array_set_inst_field_h(t,nm,nh,idx,val);
+          if(t) array_set_inst_field_h(vm,t,nm,nh,idx,val);
           else array_set_h(vm,&locals,(int)asnum(itv),nm,nh,idx,val);
         } else if(in.reftype==0x80){ /* StackTop instance.var. GMS quirk: the value/instance push
            * order depends on the value's Type1 — `pop.v.*` (Type1=Variable) pushes the value FIRST
@@ -3033,8 +3062,12 @@ GmlInstance *gml_instance_create_depth(GmlVM *vm, double x, double y, int obj, i
   if(vm->render && (int)in->sprite_index>=0)   /* head start for the background decoder before first draw */
     gml_render_prefetch_sprite((GmlRender*)vm->render,(int)in->sprite_index);
   if(getenv("GML_LOG_CREATE")){ extern long g_vm_frame;
-    fprintf(stderr,"[create] f%ld %s @(%.0f,%.0f) spr=%d\n",g_vm_frame,
-    (obj>=0&&obj<vm->n_objects)?vm->objects[obj].name:"?",x,y,(int)in->sprite_index); }
+    GmlInstance *caller=vm->cur_self;
+    const char *caller_name=(caller&&caller->obj>=0&&caller->obj<vm->n_objects)
+      ?vm->objects[caller->obj].name:"?";
+    fprintf(stderr,"[create] f%ld %s id=%u @(%.0f,%.0f) spr=%d caller=%s/%u event=%s\n",g_vm_frame,
+      (obj>=0&&obj<vm->n_objects)?vm->objects[obj].name:"?",in->id,x,y,(int)in->sprite_index,
+      caller_name?caller_name:"?",caller?caller->id:0,vm->cur_event?vm->cur_event:"?"); }
   gml_run_event(vm,in,"PreCreate_0");   /* GMS2: runs before Create; sets IDE variable-definitions */
   gml_run_event(vm,in,"Create_0");
   return in;
@@ -4141,6 +4174,32 @@ static double vmprof_now(void){
 static int vmprof_on(void){ static int on=-1; if(on<0) on=getenv("GML_PROFILE_VM")!=NULL; return on; }
 #define VMPROF_MARK(field) do{ if(pv){ double _t=vmprof_now(); g_vmprof.field += _t-pv_t; pv_t=_t; } }while(0)
 
+static void advance_instance_animations(GmlVM *vm){
+  GmlRender *R=(GmlRender*)vm->render;
+  const char *anim_dbg=getenv("GML_ANIM_OBJ");
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked) continue;
+    int nf=R?gml_sprite_frames(R,(int)in->sprite_index):0;
+    if(anim_dbg){ const char *on=(in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"";
+      if(on && strstr(on,anim_dbg)){
+        int si=(int)in->sprite_index;
+        const char *sn=(R&&si>=0&&si<R->n_spr&&R->spr[si].name)?R->spr[si].name:"?";
+        fprintf(stderr,"[anim] %s x=%.1f y=%.1f vs=%.1f spr=%d(%s) idx=%.2f nf=%d\n",
+          on,in->x,in->y,in->vspeed,si,sn,in->image_index,nf);
+      }
+    }
+    if(nf>0 && in->image_speed!=0){
+      double ni=in->image_index+in->image_speed; int wrapped=(ni>=nf)||(ni<0);
+      while(ni>=nf) ni-=nf; while(ni<0) ni+=nf; in->image_index=ni;
+      if(wrapped){
+        if(getenv("GML_LOG_ANIM")) fprintf(stderr,"[anim-end] %s (nf=%d)\n",
+          (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",nf);
+        gml_run_event(vm,in,"Other_7");
+      }
+    }
+  }
+}
+
 void gml_vm_step(GmlVM *vm){
   g_vm_frame++;
   /* GMS2 layers scroll by their hspeed/vspeed each step. Runtime-scripted layers accumulate here;
@@ -4168,22 +4227,10 @@ void gml_vm_step(GmlVM *vm){
   int n=vm->inst_count;
   int prev_alloc_base=vm->step_alloc_base;
   vm->step_alloc_base=n;
-  /* Advance sprite animation and dispatch Animation End before Begin Step. */
-  { GmlRender *R=(GmlRender*)vm->render;
-    const char *anim_dbg=getenv("GML_ANIM_OBJ");   /* hoisted out of the loop (diagnostic only) */
-    for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked) continue;
-      int nf = R? gml_sprite_frames(R,(int)in->sprite_index):0;
-      if(anim_dbg){ const char*on=(in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"";
-        if(on && strstr(on,anim_dbg)){
-          int si=(int)in->sprite_index; const char*sn=(R&&si>=0&&si<R->n_spr&&R->spr[si].name)?R->spr[si].name:"?";
-          fprintf(stderr,"[anim] %s x=%.1f y=%.1f vs=%.1f spr=%d(%s) idx=%.2f nf=%d\n",on,in->x,in->y,in->vspeed,si,sn,in->image_index,nf); } }
-      if(nf>0 && in->image_speed!=0){
-        double ni=in->image_index+in->image_speed; int wrapped=(ni>=nf)||(ni<0);
-        while(ni>=nf) ni-=nf; while(ni<0) ni+=nf; in->image_index=ni;
-        /* event may create/destroy instances or stop this anim (image_single); don't touch `in` after */
-        if(wrapped){ if(getenv("GML_LOG_ANIM")) fprintf(stderr,"[anim-end] %s (nf=%d)\n",
-          (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",nf);
-          gml_run_event(vm,in,"Other_7"); } } } }
+  /* Advance sprite animations before Step. Keeping this shared phase preserves the verified
+   * frame alignment of both imported and Studio projects; newly-created Step participation is
+   * handled independently by the live normal-Step iterator below. */
+  advance_instance_animations(vm);
   VMPROF_MARK(anim);
   /* Override an explicitly selected object family alarm using debug parameters. */
   { static int god_env=-1, god_alarm=0, god_value=120; static const char *god_obj=(const char*)-1;
@@ -4266,9 +4313,14 @@ void gml_vm_step(GmlVM *vm){
     }
   }
   VMPROF_MARK(input);
-  /* normal step */
+  /* Normal Step uses the live instance count. GM8's object-event iterator can reach an instance
+   * created earlier in this same phase (for example, a controller that spawns an actor whose
+   * object event is still ahead). A frame-start snapshot delays that actor's initialisation and
+   * can select a completely different state on its first draw. Other phases retain their
+   * existing snapshot until independently verified. */
   run_classic_triggers(vm,0);
-  for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_0");
+  for(int i=0;i<vm->inst_count;i++)
+    if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_0");
   VMPROF_MARK(step0);
   /* movement */
   for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked) continue;
@@ -4295,11 +4347,15 @@ void gml_vm_step(GmlVM *vm){
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_2");
   VMPROF_MARK(step2);
   reap(vm);
-  { const char *iv=getenv("GML_LOG_INSTVAR");   /* obj_name:var1,var2 — dump instance vars per frame */
+  { const char *iv=getenv("GML_LOG_INSTVAR");   /* obj_name[@id]:var1,var2 — dump instance vars per frame */
     if(iv && *iv){ char buf[256]; snprintf(buf,sizeof buf,"%s",iv);
       char *colon=strchr(buf,':');
-      if(colon){ *colon=0; int oi=gml_object_index_by_name(vm,buf);
-        GmlInstance *in = oi>=0 ? gml_find_instance(vm,oi) : NULL;
+      if(colon){ *colon=0; unsigned wanted_id=0; char *at=strchr(buf,'@');
+        if(at){ *at=0; wanted_id=(unsigned)strtoul(at+1,NULL,10); }
+        int oi=gml_object_index_by_name(vm,buf); GmlInstance *in=NULL;
+        if(wanted_id){ for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active &&
+            !vm->inst[i].marked && vm->inst[i].id==wanted_id){ in=&vm->inst[i]; break; } }
+        else if(oi>=0) in=gml_find_instance(vm,oi);
         if(in){ fprintf(stderr,"[ivar] f%ld %s id=%u",g_vm_frame,buf,in->id);
           for(char *tok=strtok(colon+1,",");tok;tok=strtok(NULL,",")){
             GmlVal *p=gml_varmap_get(&in->vars,tok);
@@ -4482,6 +4538,12 @@ static int cmp_draw_item(const void *pa, const void *pb){
   int at1=a->type==1, bt1=b->type==1;
   if(at1!=bt1) return at1? 1 : -1;                           /* room tile sorts later (front) */
   if(at1 && bt1) return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);   /* tiles: list order, later on top */
+  /* Classic background slots are painted in array order. They deliberately share one
+   * synthetic depth, so keep the lower slot behind and let later slots overlay it. The
+   * generic instance tie-break below does the opposite and would place slot zero last,
+   * allowing an opaque sky layer to hide every following scenery layer. */
+  if(a->type==6 && b->type==6)
+    return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);
   return a->seq>b->seq? -1 : (a->seq<b->seq?1:0);
 }
 static int rt_layer_has_background(GmlVM *vm, int layer_id){
@@ -5242,6 +5304,15 @@ void gml_rng_seed(GmlVM *vm, uint32_t seed){
 static uint32_t gml_rng_next(GmlVM *vm){
   if(vm->win && vm->win->classic_version){
     vm->rng_classic_state=vm->rng_classic_state*0x08088405u+1u;
+    static int log_calls=-1;
+    if(log_calls<0) log_calls=getenv("GML_LOG_RNG_CALL")?1:0;
+    if(log_calls){
+      const char *object=(vm->cur_self && vm->cur_self->obj>=0 && vm->cur_self->obj<vm->n_objects)
+        ? vm->objects[vm->cur_self->obj].name : "?";
+      fprintf(stderr,"[rng-call] f%ld seed=%u id=%u object=%s event=%s\n",g_vm_frame,
+        vm->rng_classic_state,vm->cur_self?vm->cur_self->id:0,object?object:"?",
+        vm->cur_event?vm->cur_event:"?");
+    }
     return vm->rng_classic_state;
   }
   uint32_t *st=vm->rng_well; uint32_t idx=vm->rng_index;
@@ -5289,7 +5360,13 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
   vm->next_buffer_id=1;
   vm->next_ds_id=1;
   vm->ds_list_compat_repair=0;
-  gml_rng_seed(vm,0);   /* GM default seed */
+  { /* Optional initial seed for deterministic cross-run fidelity captures. Games that call
+     * randomize() still use GML_RANDOMIZE_SEED at that call site; without this variable the
+     * runtime uses the normal default seed. */
+    const char *fixed=getenv("GML_RNG_SEED");
+    uint32_t seed=fixed ? (uint32_t)strtoll(fixed,NULL,10) : 0u;
+    gml_rng_seed(vm,seed);
+  }
   parse_objects(vm);
   parse_paths(vm);
   parse_timelines(vm);

@@ -3722,6 +3722,26 @@ static int inst_bbox(GmlVM *vm, GmlInstance *in, double atx, double aty,
   GmlSprite *s=&R->spr[si]; if(s->mr<s->ml || s->mb<s->mt) return 0;
   double xs=in->image_xscale, ys=in->image_yscale;
   if(fabs(xs)<1e-9 || fabs(ys)<1e-9) return 0;
+  if(vm->win && vm->win->classic_version){
+    /* GM8 builds the inclusive bottom/right corner as top-left + scaled size - 1, rotates
+     * those four pixel coordinates, then rounds each bbox edge to the nearest integer. This
+     * differs from floor/ceil whenever an instance rests on a half-pixel and is the source of
+     * visible one-pixel grounding errors. */
+    double x0=(s->ml-s->originx)*xs, y0=(s->mt-s->originy)*ys;
+    double x1=x0+(s->mr+1.0-s->ml)*xs-1.0;
+    double y1=y0+(s->mb+1.0-s->mt)*ys-1.0;
+    double ang=in->image_angle*M_PI/180.0, c=cos(ang), sn=sin(ang);
+    double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
+    double corners[4][2]={{x0,y0},{x1,y0},{x0,y1},{x1,y1}};
+    for(int i=0;i<4;i++){
+      double wx=atx + corners[i][0]*c + corners[i][1]*sn;
+      double wy=aty - corners[i][0]*sn + corners[i][1]*c;
+      if(wx<minx) minx=wx; if(wx>maxx) maxx=wx;
+      if(wy<miny) miny=wy; if(wy>maxy) maxy=wy;
+    }
+    *l=nearbyint(minx); *t=nearbyint(miny); *r=nearbyint(maxx); *b=nearbyint(maxy);
+    return 1;
+  }
   if(in->image_angle==0){
     /* unrotated fast path — the overwhelming majority of collision candidates (terrain) sit at
      * angle 0; the generic path costs a cos+sin per candidate per query (many trig calls per frame in a
@@ -3746,6 +3766,37 @@ static int inst_bbox(GmlVM *vm, GmlInstance *in, double atx, double aty,
     if(wy>maxy) maxy=wy;
   }
   *l=floor(minx); *t=floor(miny); *r=ceil(maxx)-1.0; *b=ceil(maxy)-1.0; return 1;
+}
+static double point_to_instance_distance(GmlVM *vm,GmlInstance *in,double x,double y){
+  double l,t,r,b;
+  if(!inst_bbox(vm,in,in->x,in->y,&l,&t,&r,&b)) return hypot(x-in->x,y-in->y);
+  double dx=x<l?x-l:(x>r?x-r:0.0);
+  double dy=y<t?y-t:(y>b?y-b:0.0);
+  return hypot(dx,dy);
+}
+static double instance_to_instance_distance(GmlVM *vm,GmlInstance *a,GmlInstance *b){
+  double al,at,ar,ab,bl,bt,br,bb;
+  if(!inst_bbox(vm,a,a->x,a->y,&al,&at,&ar,&ab) ||
+     !inst_bbox(vm,b,b->x,b->y,&bl,&bt,&br,&bb))
+    return hypot(a->x-b->x,a->y-b->y);
+  double dx=al>br?al-br:(bl>ar?bl-ar:0.0);
+  double dy=at>bb?at-bb:(bt>ab?bt-ab:0.0);
+  return hypot(dx,dy);
+}
+static double distance_to_target(GmlVM *vm,GmlInstance *self,int target){
+  if(!self) return 0.0;
+  /* GM returns this sentinel when the target does not exist (including an explicit reference
+   * to self). A negative result is especially harmful because every ordinary upper-bound
+   * proximity test then succeeds. */
+  double best=1000000.0;
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *other=&vm->inst[i];
+    if(other==self || !target_matches_instance(vm,self,other,target)) continue;
+    double d=instance_to_instance_distance(vm,self,other);
+    if(d<best) best=d;
+    if(target>=100000 || target==IT_OTHER) break;
+  }
+  return best;
 }
 static int bbox_overlap(double l1,double t1,double r1,double b1, double l2,double t2,double r2,double b2){
   return l1<=r2 && l2<=r1 && t1<=b2 && t2<=b1;
@@ -4636,13 +4687,9 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"darctan")){ *out=vreal(atan(N(a,n,0))*180.0/M_PI); return 1; }
     if(!strcmp(nm,"darctan2")){ *out=vreal(atan2(N(a,n,0),N(a,n,1))*180.0/M_PI); return 1; }
     if(!strcmp(nm,"degtorad")){ *out=vreal(N(a,n,0)*M_PI/180.0); return 1; }
-    if(!strcmp(nm,"distance_to_point")){ GmlInstance*s=vm->cur_self; *out=s?vreal(hypot(N(a,n,0)-s->x,N(a,n,1)-s->y)):vreal(0); return 1; }
-    if(!strcmp(nm,"distance_to_object")){ GmlInstance*s=vm->cur_self; if(!s){ *out=vreal(0); return 1; }
-      int obj=(int)N(a,n,0); double best=1e18;
-      for(int i=0;i<vm->inst_count;i++){ GmlInstance*o=&vm->inst[i];
-        if(o==s || !target_matches_instance(vm,s,o,obj)) continue;
-        double d=hypot(o->x-s->x,o->y-s->y); if(d<best) best=d; }
-      *out=vreal(best>1e17?-1:best); return 1; }
+    if(!strcmp(nm,"distance_to_point")){ GmlInstance*s=vm->cur_self;
+      *out=s?vreal(point_to_instance_distance(vm,s,N(a,n,0),N(a,n,1))):vreal(0); return 1; }
+    if(!strcmp(nm,"distance_to_object")){ *out=vreal(distance_to_target(vm,vm->cur_self,(int)N(a,n,0))); return 1; }
     if(!strcmp(nm,"display_get_width")){ *out=vreal(presentation_size(vm,R,0)); return 1; }
     if(!strcmp(nm,"display_get_height")){ *out=vreal(presentation_size(vm,R,1)); return 1; }
     if(!strcmp(nm,"display_get_gui_width")){ *out=vreal(vm->gui_w>0? vm->gui_w : ((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288))); return 1; }
@@ -5407,16 +5454,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
     case BID_SIN:
       return vreal(sin(N(a,n,0)));
     case BID_DISTANCE_TO_OBJECT:{
-      GmlInstance*s=vm->cur_self;
-      if(!s) return vreal(0);
-      int obj=(int)N(a,n,0);
-      double best=1e18;
-      for(int i=0;i<vm->inst_count;i++){ GmlInstance*o=&vm->inst[i];
-        if(o==s || !target_matches_instance(vm,s,o,obj)) continue;
-        double d=hypot(o->x-s->x,o->y-s->y);
-        if(d<best) best=d;
-      }
-      return vreal(best>1e17?-1:best); }
+      return vreal(distance_to_target(vm,vm->cur_self,(int)N(a,n,0))); }
     case BID_FLOOR:
       return vreal(floor(N(a,n,0)));
     case BID_FRAC:{
@@ -5842,7 +5880,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"point_direction")){ double dx=N(a,n,2)-N(a,n,0), dy=N(a,n,3)-N(a,n,1);
     double r=atan2(-dy,dx)*180.0/M_PI; if(r<0)r+=360; return vreal(r); }
   if(!strcmp(nm,"distance_to_point")){ GmlInstance*s=vm->cur_self; if(!s)return vreal(0);
-    return vreal(hypot(N(a,n,0)-s->x,N(a,n,1)-s->y)); }
+    return vreal(point_to_instance_distance(vm,s,N(a,n,0),N(a,n,1))); }
   if(!strcmp(nm,"point_distance")) return vreal(hypot(N(a,n,2)-N(a,n,0),N(a,n,3)-N(a,n,1)));
   /* Standard-GML pure predicates/getters require explicit dispatch rather than
    * the silent catch-all -> 0. GM colours are r + (g<<8) + (b<<16); HSV is 0-255 (see
@@ -5914,12 +5952,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"lengthdir_x")) return vreal(N(a,n,0)*cos(N(a,n,1)*M_PI/180.0));
   if(!strcmp(nm,"lengthdir_y")) return vreal(-N(a,n,0)*sin(N(a,n,1)*M_PI/180.0));  /* GM y down */
-  if(!strcmp(nm,"distance_to_object")){ GmlInstance*s=vm->cur_self; if(!s) return vreal(0);
-    int obj=(int)N(a,n,0); double best=1e18;
-    for(int i=0;i<vm->inst_count;i++){ GmlInstance*o=&vm->inst[i];
-      if(o==s || !target_matches_instance(vm,s,o,obj)) continue;
-      double d=hypot(o->x-s->x,o->y-s->y); if(d<best) best=d; }
-    return vreal(best>1e17?-1:best); }
+  if(!strcmp(nm,"distance_to_object"))
+    return vreal(distance_to_target(vm,vm->cur_self,(int)N(a,n,0)));
   /* move_towards_point(x,y,sp): head toward (x,y) at speed sp (sets direction+speed → hspeed/vspeed). */
   if(!strcmp(nm,"move_towards_point")){ GmlInstance*s=vm->cur_self; if(s){
       double dir=atan2(-(N(a,n,1)-s->y),N(a,n,0)-s->x)*180.0/M_PI; double sp=N(a,n,2);
@@ -6763,6 +6797,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int act=!strcmp(nm,"instance_activate_region");
     for(int i=0;i<vm->inst_count;i++){ GmlInstance*o=&vm->inst[i];
       if(act ? !o->deactivated : (!o->active||o->marked)) continue;
+      if(!act && n>=6 && N(a,n,5)!=0 && o==vm->cur_self) continue;
       int inreg=instance_region_hit(vm,o,rx,ry,rw,rh);
       if(inreg==(inside!=0)){ if(act){ o->active=1; o->deactivated=0; } else { o->active=0; o->deactivated=1; } } }
     return vreal(0); }
@@ -6837,7 +6872,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0); }
   /* action_set_alarm(value,index): D&D Set Alarm → self.alarm[index] = value. */
   if(!strcmp(nm,"action_set_alarm")){ GmlInstance *s=vm->cur_self; int idx=(int)N(a,n,1);
-    if(s && idx>=0 && idx<GML_ALARMS) s->alarm[idx]=N(a,n,0); return vreal(0); }
+    double value=N(a,n,0);
+    if(vm->win && vm->win->classic_version) value=nearbyint(value);
+    if(s && idx>=0 && idx<GML_ALARMS) s->alarm[idx]=value; return vreal(0); }
   /* action_bounce(advanced,against): D&D Bounce. against 0=solid, 1=all. Non-advanced: reverse the
    * velocity component(s) whose next step meets a blocker, then relink direction/speed. */
   if(!strcmp(nm,"action_bounce")){ GmlInstance *s=vm->cur_self; if(s){
@@ -8229,6 +8266,18 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
                  gml_struct_find(vm,(unsigned)a[0].d)!=NULL);
   }
   if(!strcmp(nm,"is_bool")) return vreal(n>0 && a[0].t==V_REAL && (a[0].d==0||a[0].d==1));
+  /* In GM6/7/8 "local" means a field on the current instance, not a temporary VM stack
+   * local. Classic projects use this to initialise a field only once from a Step event. */
+  if(!strcmp(nm,"variable_local_exists"))
+    return vreal(n>0 && gml_inst_var_exists(vm,vreal(IT_SELF),S(a,n,0)));
+  if(!strcmp(nm,"variable_local_get")){
+    int ok=0; GmlVal out=n>0?gml_inst_var_get_val(vm,vreal(IT_SELF),S(a,n,0),&ok):vundef();
+    return ok?out:vreal(0);
+  }
+  if(!strcmp(nm,"variable_local_set")){
+    if(n>1) gml_inst_var_set_val(vm,vreal(IT_SELF),S(a,n,0),var_store_clone(a[1]));
+    return vreal(0);
+  }
   if(!strcmp(nm,"variable_global_exists")) return vreal(gml_varmap_get(&vm->globals,S(a,n,0))!=NULL);
   if(!strcmp(nm,"variable_global_get")){
     GmlVal *p=gml_varmap_get(&vm->globals,S(a,n,0));

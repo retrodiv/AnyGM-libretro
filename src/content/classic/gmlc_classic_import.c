@@ -1048,7 +1048,11 @@ static int import_actions(ImportReader *r, ImportText *text){
           else {
             const char *action_code = argument_count && arguments[0] && arguments[0][0] ?
               arguments[0] : "/* empty code action */";
-            ok = text_append(text, action_code);
+            /* Execute Code is one D&D action, not the whole event. An
+             * `exit` inside it ends that action before the dispatcher continues with later actions.
+             * A small invoked function preserves that boundary after the action list is
+             * normalized into one source file. */
+            ok = emit_action_code_call(text,action_code,NULL,NULL,0);
           }
         }
         else ok = emit_action_call(text, function_name, arguments, argument_kinds,

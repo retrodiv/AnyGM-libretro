@@ -1236,6 +1236,7 @@ static int emit_lvalue_write(Compiler *c, LValue *lv, uint8_t type1);
 static int emit_popz(Compiler *c){ return emit_u32(&c->code,fw(OP_POPZ,DT_VAR,0)); }
 static int emit_popz_typed(Compiler *c, uint8_t type1){ return emit_u32(&c->code,fw(OP_POPZ,type1,0)); }
 static int emit_dup(Compiler *c, uint8_t type1){ return emit_u32(&c->code,fw(OP_DUP,type1,0)); }
+static int emit_swap_top(Compiler *c){ return emit_u32(&c->code,fw(OP_DUP,DT_VAR,(int16_t)0x8800)); }
 
 static int function_shape_at(const char *src, size_t pos){
   if(!word_match_at(src,pos,"function")) return 0;
@@ -2111,6 +2112,12 @@ static int parse_assignment_tail(Compiler *c, LValue *lv){
   lx_next(&c->lex);
   if(is_assign){
     if(!parse_expr(c)) return 0;
+    /* A chained receiver such as global.actor.position.x is resolved while the
+     * lvalue is parsed, leaving the final instance below the assignment value.
+     * StackTop stores require the opposite order. Preserve ordinary `actor.x`
+     * evaluation (whose receiver is emitted after the value) and swap only a
+     * receiver that is already resident on the stack. */
+    if(lv->receiver_on_stack && !emit_swap_top(c)) return 0;
     if((lv->is_array || lv->is_stacktop) && !emit_lvalue_address(c,lv)) return 0;
   } else {
     if(lv->is_stacktop && !lv->is_array && !lv->accessor){

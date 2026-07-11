@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
 #include "gmlc_bytecode.h"
+#include "gml_win.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +41,34 @@ static int compile_fixture(const GmlcProject *project, const char *text, int exp
   return matched;
 }
 
+static int compile_fixture_has_swap(const GmlcProject *project, const char *text){
+  char path[]="/tmp/gmlc-bytecode-swap-XXXXXX";
+  int descriptor=mkstemp(path);
+  if(descriptor<0) return 0;
+  FILE *file=fdopen(descriptor,"wb");
+  if(!file) return 0;
+  size_t length=strlen(text);
+  int wrote=fwrite(text,1,length,file)==length;
+  fclose(file);
+  if(!wrote){ remove(path); return 0; }
+  GmlcCodeBlob blob; char err[256]={0};
+  memset(&blob,0,sizeof(blob));
+  int ok=gmlc_bytecode_compile_source(project,path,&blob,err,sizeof(err));
+  remove(path);
+  int found=0;
+  for(size_t i=0;ok && i+4<=blob.size;i+=4){
+    uint32_t word=(uint32_t)blob.data[i] | ((uint32_t)blob.data[i+1]<<8) |
+                  ((uint32_t)blob.data[i+2]<<16) | ((uint32_t)blob.data[i+3]<<24);
+    if((word>>24)==OP_DUP && ((word>>16)&0xFF)==DT_VAR && (word&0xFFFF)==0x8800){
+      found=1;
+      break;
+    }
+  }
+  if(!found) fprintf(stderr,"chained assignment did not preserve its resolved receiver: %s\n",err);
+  gmlc_bytecode_free(&blob);
+  return ok && found;
+}
+
 int main(int argc, char **argv){
   GmlcProject project;
   memset(&project,0,sizeof(project));
@@ -72,6 +101,8 @@ int main(int argc, char **argv){
     "show_message(\"first\")\nshow_message(\"second \"+global.name+\"!\");\n",1);
   ok &= compile_fixture(&project,
     "global.actor.part.node.x=4; result=global.actor.part.node.x;\n",1);
+  ok &= compile_fixture_has_swap(&project,
+    "global.actor.y=10;\n");
   ok &= compile_fixture(&project,
     "speed=0\n(instance_create(1,2,3)).hspeed=-.5\ninstance_create(4,5,6)\n"
     "(instance_create(7,8,9)).hspeed=.5\n",1);
