@@ -302,11 +302,12 @@ static void lx_next(Lexer *l){
     memcpy(l->tok.text,s,n); l->tok.text[n]=0;
     l->tok.kind=TOK_NUM; l->pos+=(size_t)(end-s); l->tok.end=l->pos; return;
   }
-  if((*s=='@' && s[1]=='"') || *s=='"'){
+  if((*s=='@' && s[1]=='"') || *s=='"' || *s=='\''){
     int verbatim=(*s=='@');
+    char quote=verbatim?'"':*s;
     l->pos += verbatim ? 2 : 1;
     size_t n=0;
-    while(l->src[l->pos] && l->src[l->pos]!='"'){
+    while(l->src[l->pos] && l->src[l->pos]!=quote){
       char ch=l->src[l->pos++];
       if(!verbatim && ch=='\\' && l->src[l->pos]){
         char e=l->src[l->pos++];
@@ -314,7 +315,7 @@ static void lx_next(Lexer *l){
       }
       if(n+1<sizeof(l->tok.text)) l->tok.text[n++]=ch;
     }
-    if(l->src[l->pos]=='"') l->pos++;
+    if(l->src[l->pos]==quote) l->pos++;
     l->tok.text[n]=0; l->tok.kind=TOK_STR; l->tok.end=l->pos; return;
   }
   static const char *ops[]={"==","!=","<=",">=","&&","||","<<",">>","+=","-=","*=","/=","%=","++","--",NULL};
@@ -590,11 +591,12 @@ static int scan_matching_delim(const char *src, size_t open_pos, char open_ch, c
   int depth=0;
   for(size_t pos=open_pos; src[pos]; pos++){
     char ch=src[pos];
-    if(ch=='"'){
+    if(ch=='"' || ch=='\''){
+      char quote=ch;
       pos++;
       while(src[pos]){
         if(src[pos]=='\\' && src[pos+1]){ pos++; continue; }
-        if(src[pos]=='"') break;
+        if(src[pos]==quote) break;
         pos++;
       }
       continue;
@@ -672,11 +674,12 @@ static int scan_comma_spans_until(Compiler *c, size_t start, char close_ch, Span
   size_t pos=start, seg=start;
   while(src[pos]){
     char ch=src[pos];
-    if(ch=='"'){
+    if(ch=='"' || ch=='\''){
+      char quote=ch;
       pos++;
       while(src[pos]){
         if(src[pos]=='\\' && src[pos+1]){ pos+=2; continue; }
-        if(src[pos]=='"'){ pos++; break; }
+        if(src[pos]==quote){ pos++; break; }
         pos++;
       }
       continue;
@@ -796,11 +799,12 @@ static int scan_square_span(Compiler *c, size_t start, Span *out, size_t *out_cl
   size_t pos=start;
   while(src[pos]){
     char ch=src[pos];
-    if(ch=='"'){
+    if(ch=='"' || ch=='\''){
+      char quote=ch;
       pos++;
       while(src[pos]){
         if(src[pos]=='\\' && src[pos+1]){ pos+=2; continue; }
-        if(src[pos]=='"'){ pos++; break; }
+        if(src[pos]==quote){ pos++; break; }
         pos++;
       }
       continue;
@@ -839,11 +843,12 @@ static int find_top_comma(const char *src, Span s, size_t *comma_pos){
   int depth=0;
   for(size_t pos=s.start; pos<s.end; pos++){
     char ch=src[pos];
-    if(ch=='"'){
+    if(ch=='"' || ch=='\''){
+      char quote=ch;
       pos++;
       while(pos<s.end){
         if(src[pos]=='\\' && pos+1<s.end){ pos++; pos++; continue; }
-        if(src[pos]=='"') break;
+        if(src[pos]==quote) break;
         pos++;
       }
       continue;
@@ -862,11 +867,12 @@ static int scan_for_header(Compiler *c, size_t start, Span out[3], size_t *out_c
   memset(out,0,3*sizeof(*out));
   while(src[pos]){
     char ch=src[pos];
-    if(ch=='"'){
+    if(ch=='"' || ch=='\''){
+      char quote=ch;
       pos++;
       while(src[pos]){
         if(src[pos]=='\\' && src[pos+1]){ pos+=2; continue; }
-        if(src[pos]=='"'){ pos++; break; }
+        if(src[pos]==quote){ pos++; break; }
         pos++;
       }
       continue;
@@ -922,11 +928,12 @@ static int scan_brace_body(Compiler *c, Span *body, size_t *out_close){
   int depth=0;
   while(src[pos]){
     char ch=src[pos];
-    if(ch=='"'){
+    if(ch=='"' || ch=='\''){
+      char quote=ch;
       pos++;
       while(src[pos]){
         if(src[pos]=='\\' && src[pos+1]){ pos+=2; continue; }
-        if(src[pos]=='"'){ pos++; break; }
+        if(src[pos]==quote){ pos++; break; }
         pos++;
       }
       continue;
@@ -980,11 +987,12 @@ static int scan_colon_top(const char *src, size_t start, size_t end, size_t *col
   int depth=0;
   for(size_t pos=start; pos<end; pos++){
     char ch=src[pos];
-    if(ch=='"'){
+    if(ch=='"' || ch=='\''){
+      char quote=ch;
       pos++;
       while(pos<end){
         if(src[pos]=='\\' && pos+1<end){ pos++; pos++; continue; }
-        if(src[pos]=='"') break;
+        if(src[pos]==quote) break;
         pos++;
       }
       continue;
@@ -1003,11 +1011,12 @@ static int scan_switch_cases(Compiler *c, Span body, CaseRec **out_cases, int *o
   size_t pos=body.start;
   while(pos<body.end){
     char ch=src[pos];
-    if(ch=='"'){
+    if(ch=='"' || ch=='\''){
+      char quote=ch;
       pos++;
       while(pos<body.end){
         if(src[pos]=='\\' && pos+1<body.end){ pos+=2; continue; }
-        if(src[pos]=='"'){ pos++; break; }
+        if(src[pos]==quote){ pos++; break; }
         pos++;
       }
       continue;
@@ -1423,7 +1432,7 @@ static int parse_bit_and(Compiler *c){
 static int parse_bit_xor(Compiler *c){
   if(!parse_bit_and(c)) return 0;
   int did=0;
-  while(tok_is(c,"^")){
+  while(tok_is(c,"^") || is_id(c,"xor")){
     lx_next(&c->lex);
     if(!parse_bit_and(c)) return 0;
     if(!emit_binary(c,OP_XOR)) return 0;
@@ -1452,7 +1461,7 @@ static int parse_and(Compiler *c){
   if(!parse_bit_or(c)) return 0;
   size_t false_sites[128];
   int n_false=0;
-  while(tok_is(c,"&&")){
+  while(tok_is(c,"&&") || is_id(c,"and")){
     lx_next(&c->lex);
     if(n_false>=(int)(sizeof(false_sites)/sizeof(false_sites[0]))){
       c->unsupported=1;
@@ -1480,7 +1489,7 @@ static int parse_expr(Compiler *c){
   if(!parse_and(c)) return 0;
   size_t true_sites[128];
   int n_true=0;
-  while(tok_is(c,"||")){
+  while(tok_is(c,"||") || is_id(c,"or")){
     lx_next(&c->lex);
     if(n_true>=(int)(sizeof(true_sites)/sizeof(true_sites[0]))){
       c->unsupported=1;
@@ -2142,11 +2151,12 @@ static int prev_nonspace_is_dot(const char *src, size_t pos){
 
 static size_t skip_string_or_comment(const char *src, size_t pos, size_t end){
   if(pos>=end) return pos;
-  if(src[pos]=='"'){
+  if(src[pos]=='"' || src[pos]=='\''){
+    char quote=src[pos];
     pos++;
     while(pos<end && src[pos]){
       if(src[pos]=='\\' && pos+1<end){ pos+=2; continue; }
-      if(src[pos]=='"'){ pos++; break; }
+      if(src[pos]==quote){ pos++; break; }
       pos++;
     }
     return pos;
@@ -2288,11 +2298,12 @@ static int collect_functions_from_text(GmlcFunctionRegistry *r, const char *path
   size_t len=strlen(src);
   size_t pos=0;
   while(src[pos]){
-    if(src[pos]=='"'){
+    if(src[pos]=='"' || src[pos]=='\''){
+      char quote=src[pos];
       pos++;
       while(src[pos]){
         if(src[pos]=='\\' && src[pos+1]){ pos+=2; continue; }
-        if(src[pos]=='"'){ pos++; break; }
+        if(src[pos]==quote){ pos++; break; }
         pos++;
       }
       continue;

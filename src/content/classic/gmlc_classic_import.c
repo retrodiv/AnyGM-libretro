@@ -19,6 +19,7 @@
 #pragma GCC diagnostic pop
 #endif
 
+#include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -723,7 +724,19 @@ static int emit_action_call(ImportText *text, const char *function_name,
   if(!text_append(text, function_name) || !text_append(text, "(")) return 0;
   for(uint32_t i = 0; i < used_arguments; ++i){
     if(i && !text_append(text, ",")) return 0;
-    if(argument_kinds && argument_kinds[i] == 1){
+    int quote = argument_kinds && argument_kinds[i] == 1;
+    if(!quote && i == 0 && argument_kinds && argument_kinds[i] == 2 &&
+       (!strcmp(function_name, "action_message") || !strcmp(function_name, "action_draw_text") ||
+        !strcmp(function_name, "action_question"))){
+      const char *value = arguments[i] ? arguments[i] : "";
+      int plain_text = strchr(value, ':') != NULL;
+      for(const unsigned char *p=(const unsigned char*)value; !plain_text && *p; ++p){
+        if(isspace(*p)) plain_text=1;
+        if(p!=(const unsigned char*)value && strchr("+-*/()[]\"'",*p)){ plain_text=0; break; }
+      }
+      quote=plain_text;
+    }
+    if(quote){
       if(!text_append_quoted(text, arguments[i])) return 0;
     } else if(!text_append(text, arguments[i] && *arguments[i] ? arguments[i] : "0")) return 0;
   }
