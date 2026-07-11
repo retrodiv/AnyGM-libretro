@@ -1,0 +1,125 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+#include "gml_vm.h"
+#include "gml_render.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int gml_input_key(int key, int edge){ (void)key; (void)edge; return 0; }
+int gml_input_gamepad(int button, int edge){ (void)button; (void)edge; return 0; }
+GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);
+
+static void call_numbers(GmlVM *vm,const char *name,const double *numbers,int count){
+  GmlVal args[16];
+  for(int i=0;i<count;i++) args[i]=vreal(numbers[i]);
+  (void)gml_builtin_call(vm,name,args,count);
+}
+
+static int colored_pixels(const uint32_t *pixels,int count){
+  int colored=0;
+  for(int i=0;i<count;i++) if((pixels[i]&0x00FFFFFFu)!=0) colored++;
+  return colored;
+}
+
+static int raster_fixtures(void){
+  enum { WIDTH=64, HEIGHT=48 };
+  uint32_t pixels[WIDTH*HEIGHT];
+  GmlRender render; GmlVM vm;
+  memset(&render,0,sizeof(render)); memset(&vm,0,sizeof(vm));
+  render.color=0xFFFFFFu; render.alpha=1; render.alphablend=1;
+  vm.render=&render;
+
+  memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  call_numbers(&vm,"d3d_start",NULL,0);
+  const double ortho[]={0,0,WIDTH,HEIGHT,0};
+  const double enable[]={1};
+  const double floor_args[]={8,6,0,24,18,0,-1,1,1};
+  call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
+  call_numbers(&vm,"d3d_set_culling",enable,1);
+  call_numbers(&vm,"d3d_draw_floor",floor_args,9);
+  if((pixels[10*WIDTH+10]&0x00FFFFFFu)==0 || pixels[4*WIDTH+4]!=0 ||
+     colored_pixels(pixels,WIDTH*HEIGHT)<150){
+    fprintf(stderr,"software D3 orthographic raster mismatch\n");
+    return 0;
+  }
+
+  const double projection[]={0,-10,0, 0,0,0, 0,0,1};
+  const double front_wall[]={-2,0,-2, 2,0,2, -1,1,1};
+  const double back_wall[]={2,0,-2, -2,0,2, -1,1,1};
+  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  call_numbers(&vm,"d3d_start",NULL,0);
+  call_numbers(&vm,"d3d_set_projection",projection,9);
+  call_numbers(&vm,"d3d_set_culling",enable,1);
+  call_numbers(&vm,"d3d_draw_wall",front_wall,9);
+  int front_count=colored_pixels(pixels,WIDTH*HEIGHT);
+  if(front_count<100){
+    fprintf(stderr,"software D3 front face was culled\n");
+    return 0;
+  }
+
+  memset(pixels,0,sizeof(pixels));
+  call_numbers(&vm,"d3d_draw_wall",back_wall,9);
+  if(colored_pixels(pixels,WIDTH*HEIGHT)!=0){
+    fprintf(stderr,"software D3 back face was not culled\n");
+    return 0;
+  }
+  gml_d3_reset();
+  return 1;
+}
+
+static int state_matches(const int expected_flags[GML_D3_STATE_FLAG_COUNT],
+                         const double expected_values[GML_D3_STATE_VALUE_COUNT],
+                         const uint32_t expected_colors[8]){
+  int flags[GML_D3_STATE_FLAG_COUNT];
+  double values[GML_D3_STATE_VALUE_COUNT];
+  uint32_t colors[8];
+  gml_d3_state_get(flags,values,colors);
+  return !memcmp(flags,expected_flags,sizeof(flags)) &&
+         !memcmp(values,expected_values,sizeof(values)) &&
+         !memcmp(colors,expected_colors,sizeof(colors));
+}
+
+int main(void){
+  int flags[GML_D3_STATE_FLAG_COUNT]={0};
+  double values[GML_D3_STATE_VALUE_COUNT]={0};
+  uint32_t colors[8]={0};
+  flags[0]=1; flags[1]=1; flags[2]=1; flags[19]=1; flags[20]=1;
+  for(int i=0;i<8;i++){
+    flags[3+i*2]=1; flags[4+i*2]=(i&1)==0;
+    colors[i]=0x010203u*(uint32_t)(i+1);
+  }
+  for(int i=0;i<GML_D3_STATE_VALUE_COUNT;i++) values[i]=(double)(i+1)*1.25;
+  values[44]=-13.5; values[45]=27.25; values[46]=640; values[47]=360; values[48]=33;
+  gml_d3_state_set(flags,values,colors);
+  if(!state_matches(flags,values,colors)){
+    fprintf(stderr,"software D3 direct state mismatch\n");
+    return 1;
+  }
+
+  GmlWin win; GmlVM vm;
+  memset(&win,0,sizeof(win)); memset(&vm,0,sizeof(vm)); vm.win=&win;
+  size_t size=gml_vm_state_size(&vm),written=0,used=0;
+  void *state=malloc(size);
+  if(!state || !gml_vm_state_save(&vm,state,size,&written) || written!=size){
+    fprintf(stderr,"software D3 state save failed\n");
+    free(state); return 1;
+  }
+  gml_d3_reset();
+  if(state_matches(flags,values,colors)){
+    fprintf(stderr,"software D3 reset did not clear state\n");
+    free(state); return 1;
+  }
+  if(!gml_vm_state_load(&vm,state,written,&used) || used!=written ||
+     !state_matches(flags,values,colors)){
+    fprintf(stderr,"software D3 savestate roundtrip mismatch\n");
+    free(state); return 1;
+  }
+  free(state);
+  if(!raster_fixtures()) return 1;
+  puts("software D3 state fixtures: ok");
+  return 0;
+}

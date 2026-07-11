@@ -2116,8 +2116,9 @@ static void draw_px(GmlRender *R, int x, int y, uint32_t gmcol){
 
 typedef struct { double x,y,z,u,v; } GmlD3Vertex;
 typedef struct {
-  int active, hidden;
+  int active, hidden, culling, ortho;
   double eye[3], right[3], up[3], forward[3];
+  double ortho_x, ortho_y, ortho_w, ortho_h, ortho_angle;
   int lighting;
   struct { int defined, enabled; double x,y,z,range; uint32_t color; } light[8];
   double shade_r, shade_g, shade_b;
@@ -2133,7 +2134,8 @@ void gml_d3_reset(void){
   g_d3.depth=depth; g_d3.depth_cap=cap; g_d3.depth_frame=-1;
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
 }
-void gml_d3_state_get(int flags[19], double values[44], uint32_t colors[8]){
+void gml_d3_state_get(int flags[GML_D3_STATE_FLAG_COUNT],
+                      double values[GML_D3_STATE_VALUE_COUNT], uint32_t colors[8]){
   flags[0]=g_d3.active; flags[1]=g_d3.hidden; flags[2]=g_d3.lighting;
   int v=0; for(int i=0;i<3;i++) values[v++]=g_d3.eye[i];
   for(int i=0;i<3;i++) values[v++]=g_d3.right[i];
@@ -2145,8 +2147,12 @@ void gml_d3_state_get(int flags[19], double values[44], uint32_t colors[8]){
     values[v++]=g_d3.light[i].z; values[v++]=g_d3.light[i].range;
     colors[i]=g_d3.light[i].color;
   }
+  flags[19]=g_d3.culling; flags[20]=g_d3.ortho;
+  values[44]=g_d3.ortho_x; values[45]=g_d3.ortho_y;
+  values[46]=g_d3.ortho_w; values[47]=g_d3.ortho_h; values[48]=g_d3.ortho_angle;
 }
-void gml_d3_state_set(const int flags[19], const double values[44], const uint32_t colors[8]){
+void gml_d3_state_set(const int flags[GML_D3_STATE_FLAG_COUNT],
+                      const double values[GML_D3_STATE_VALUE_COUNT], const uint32_t colors[8]){
   gml_d3_reset();
   g_d3.active=flags[0]; g_d3.hidden=flags[1]; g_d3.lighting=flags[2];
   int v=0; for(int i=0;i<3;i++) g_d3.eye[i]=values[v++];
@@ -2159,6 +2165,9 @@ void gml_d3_state_set(const int flags[19], const double values[44], const uint32
     g_d3.light[i].z=values[v++]; g_d3.light[i].range=values[v++];
     g_d3.light[i].color=colors[i];
   }
+  g_d3.culling=flags[19]; g_d3.ortho=flags[20];
+  g_d3.ortho_x=values[44]; g_d3.ortho_y=values[45];
+  g_d3.ortho_w=values[46]; g_d3.ortho_h=values[47]; g_d3.ortho_angle=values[48];
 }
 
 static double d3_dot(const double a[3], const double b[3]){
@@ -2247,15 +2256,25 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], GmlTpag *t
   double fov=fov_text?atof(fov_text):41.2;
   if(fov<1.0 || fov>170.0) fov=41.2;
   double focal=(R->fbh*0.5)/tan(fov*M_PI/360.0);
-  double sx[3],sy[3],iz[3],uz[3],vz[3];
+  double sx[3],sy[3],iz[3],uz[3],vz[3],depth_value[3];
   for(int i=0;i<3;i++){
-    if(in[i].z<=1e-6) return;
-    iz[i]=1.0/in[i].z; uz[i]=in[i].u*iz[i]; vz[i]=in[i].v*iz[i];
-    sx[i]=R->fbw*0.5+in[i].x*focal*iz[i];
-    sy[i]=R->fbh*0.5-in[i].y*focal*iz[i];
+    if(g_d3.ortho){
+      double ow=fabs(g_d3.ortho_w)>1e-9?g_d3.ortho_w:1;
+      double oh=fabs(g_d3.ortho_h)>1e-9?g_d3.ortho_h:1;
+      iz[i]=1; uz[i]=in[i].u; vz[i]=in[i].v;
+      sx[i]=in[i].x*R->fbw/ow; sy[i]=in[i].y*R->fbh/oh;
+      depth_value[i]=1000000.0-in[i].z;
+    } else {
+      if(in[i].z<=1e-6) return;
+      iz[i]=1.0/in[i].z; uz[i]=in[i].u*iz[i]; vz[i]=in[i].v*iz[i];
+      sx[i]=R->fbw*0.5+in[i].x*focal*iz[i];
+      sy[i]=R->fbh*0.5-in[i].y*focal*iz[i];
+      depth_value[i]=iz[i];
+    }
   }
   double area=d3_edge(sx[0],sy[0],sx[1],sy[1],sx[2],sy[2]);
   if(fabs(area)<1e-9) return;
+  if(g_d3.culling && area>=0) return;
   int minx=(int)floor(fmin(sx[0],fmin(sx[1],sx[2]))), maxx=(int)ceil(fmax(sx[0],fmax(sx[1],sx[2])));
   int miny=(int)floor(fmin(sy[0],fmin(sy[1],sy[2]))), maxy=(int)ceil(fmax(sy[0],fmax(sy[1],sy[2])));
   if(minx<0) minx=0; if(miny<0) miny=0;
@@ -2267,8 +2286,9 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], GmlTpag *t
     double b2=1.0-b0-b1;
     if(b0<-1e-9 || b1<-1e-9 || b2<-1e-9) continue;
     double invz=b0*iz[0]+b1*iz[1]+b2*iz[2];
+    double ztest=b0*depth_value[0]+b1*depth_value[1]+b2*depth_value[2];
     size_t di=(size_t)y*R->fbw+x;
-    if(g_d3.hidden && invz<=g_d3.depth[di]) continue;
+    if(g_d3.hidden && ztest<=g_d3.depth[di]) continue;
     double alpha=1.0;
     uint32_t color=t&&a ? d3_sample(R,t,a,(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz,
                                     (b0*vz[0]+b1*vz[1]+b2*vz[2])/invz,&alpha) : R->color;
@@ -2279,10 +2299,16 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], GmlTpag *t
       color=(uint32_t)cr|((uint32_t)cg<<8)|((uint32_t)cb<<16);
     }
     draw_px_alpha(R,x,y,color,alpha*R->alpha);
-    if(g_d3.hidden && alpha>0.0) g_d3.depth[di]=(float)invz;
+    if(g_d3.hidden && alpha>0.0) g_d3.depth[di]=(float)ztest;
   }
 }
 static GmlD3Vertex d3_camera_vertex(double x,double y,double z,double u,double v){
+  if(g_d3.ortho){
+    double dx=x-g_d3.ortho_x,dy=y-g_d3.ortho_y;
+    double angle=g_d3.ortho_angle*M_PI/180.0,cs=cos(angle),sn=sin(angle);
+    GmlD3Vertex out={cs*dx+sn*dy,-sn*dx+cs*dy,z,u,v};
+    return out;
+  }
   double d[3]={x-g_d3.eye[0],y-g_d3.eye[1],z-g_d3.eye[2]};
   GmlD3Vertex out={d3_dot(d,g_d3.right),d3_dot(d,g_d3.up),d3_dot(d,g_d3.forward),u,v};
   return out;
@@ -2325,7 +2351,9 @@ static void d3_draw_quad(GmlRender *R, const double p[4][3], int texture, double
   static const double uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
   GmlD3Vertex q[4], clipped[8];
   for(int i=0;i<4;i++) q[i]=d3_camera_vertex(p[i][0],p[i][1],p[i][2],uv[i][0]*hrep,uv[i][1]*vrep);
-  int count=d3_clip_near(q,4,clipped);
+  int count;
+  if(g_d3.ortho){ memcpy(clipped,q,sizeof(q)); count=4; }
+  else count=d3_clip_near(q,4,clipped);
   for(int i=1;i+1<count;i++){
     GmlD3Vertex tri[3]={clipped[0],clipped[i],clipped[i+1]};
     d3_raster_triangle(R,tri,t,a);
@@ -7156,6 +7184,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     g_d3.hidden=N(a,n,0)!=0.0 && !getenv("GML_D3D_NO_DEPTH");
     return vreal(0);
   }
+  if(!strcmp(nm,"d3d_set_culling")){ g_d3.culling=N(a,n,0)!=0; return vreal(0); }
   if(!strcmp(nm,"d3d_set_lighting")){ g_d3.lighting=N(a,n,0)!=0; return vreal(0); }
   if(!strcmp(nm,"d3d_light_define_point")){
     int id=(int)N(a,n,0); if(id<0||id>=8) return vreal(0);
@@ -7169,6 +7198,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(id>=0&&id<8);
   }
   if(!strcmp(nm,"d3d_set_projection")){
+    g_d3.ortho=0;
     g_d3.eye[0]=N(a,n,0); g_d3.eye[1]=N(a,n,1); g_d3.eye[2]=N(a,n,2);
     g_d3.forward[0]=N(a,n,3)-g_d3.eye[0];
     g_d3.forward[1]=N(a,n,4)-g_d3.eye[1];
@@ -7179,6 +7209,13 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!d3_normalize(g_d3.right)){ g_d3.right[0]=0; g_d3.right[1]=1; g_d3.right[2]=0; }
     d3_cross(g_d3.forward,g_d3.right,g_d3.up);
     d3_normalize(g_d3.up);
+    return vreal(0);
+  }
+  if(!strcmp(nm,"d3d_set_projection_ortho")){
+    g_d3.ortho=1; g_d3.ortho_x=N(a,n,0); g_d3.ortho_y=N(a,n,1);
+    g_d3.ortho_w=N(a,n,2); g_d3.ortho_h=N(a,n,3); g_d3.ortho_angle=N(a,n,4);
+    if(fabs(g_d3.ortho_w)<1e-9) g_d3.ortho_w=1;
+    if(fabs(g_d3.ortho_h)<1e-9) g_d3.ortho_h=1;
     return vreal(0);
   }
   if(!strcmp(nm,"d3d_draw_block")){

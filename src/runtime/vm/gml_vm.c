@@ -5392,7 +5392,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -5878,7 +5878,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x43564D47u); /* GMV19: GMV18 plus classic RNG live state */
+  sw_u32(s,0x44564D47u); /* GMV20: GMV19 plus complete software-D3 projection state */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -5892,11 +5892,10 @@ static void sw_vm(StateW *s, GmlVM *vm){
   for(int i=0;i<16;i++) sw_u32(s,vm->rng_well[i]);
   sw_i32(s,vm->rng_index); sw_u32(s,vm->rng_state);
   sw_u32(s,vm->rng_classic_state);
-  { int flags[19]; double values[44]; uint32_t colors[8];
-    extern void gml_d3_state_get(int[19],double[44],uint32_t[8]);
+  { int flags[GML_D3_STATE_FLAG_COUNT]; double values[GML_D3_STATE_VALUE_COUNT]; uint32_t colors[8];
     gml_d3_state_get(flags,values,colors);
-    for(int i=0;i<19;i++) sw_i32(s,flags[i]);
-    for(int i=0;i<44;i++) sw_d(s,values[i]);
+    for(int i=0;i<GML_D3_STATE_FLAG_COUNT;i++) sw_i32(s,flags[i]);
+    for(int i=0;i<GML_D3_STATE_VALUE_COUNT;i++) sw_d(s,values[i]);
     for(int i=0;i<8;i++) sw_u32(s,colors[i]);
   }
   sw_i32(s,vm->room_state_count);
@@ -6037,7 +6036,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       && magic!=0x39564D47u && magic!=0x3A564D47u && magic!=0x3B564D47u && magic!=0x3C564D47u
       && magic!=0x3D564D47u && magic!=0x3E564D47u && magic!=0x3F564D47u
       && magic!=0x40564D47u && magic!=0x41564D47u && magic!=0x42564D47u
-      && magic!=0x43564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x43564D47u && magic!=0x44564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -6054,6 +6053,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v17 = magic>=0x41564D47u;
   s.v18 = magic>=0x42564D47u;
   s.v19 = magic>=0x43564D47u;
+  s.v20 = magic>=0x44564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -6076,13 +6076,15 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   for(int i=0;i<16;i++) vm->rng_well[i]=sr_u32(&s);
   vm->rng_index=sr_i32(&s); vm->rng_state=sr_u32(&s);
   vm->rng_classic_state=s.v19?sr_u32(&s):vm->rng_state;
-  if(s.v19){ int flags[19]; double values[44]; uint32_t colors[8];
-    extern void gml_d3_state_set(const int[19],const double[44],const uint32_t[8]);
-    for(int i=0;i<19;i++) flags[i]=sr_i32(&s);
-    for(int i=0;i<44;i++) values[i]=sr_d(&s);
+  if(s.v19){ int flags[GML_D3_STATE_FLAG_COUNT]={0};
+    double values[GML_D3_STATE_VALUE_COUNT]={0}; uint32_t colors[8];
+    int flag_count=s.v20?GML_D3_STATE_FLAG_COUNT:19;
+    int value_count=s.v20?GML_D3_STATE_VALUE_COUNT:44;
+    for(int i=0;i<flag_count;i++) flags[i]=sr_i32(&s);
+    for(int i=0;i<value_count;i++) values[i]=sr_d(&s);
     for(int i=0;i<8;i++) colors[i]=sr_u32(&s);
     if(s.ok) gml_d3_state_set(flags,values,colors);
-  } else { extern void gml_d3_reset(void); gml_d3_reset(); }
+  } else gml_d3_reset();
   if(s.v19){
     int count=sr_i32(&s);
     if(count<0 || count>100000){ s.ok=0; count=0; }
