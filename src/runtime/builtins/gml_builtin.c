@@ -2426,11 +2426,14 @@ static GmlD3Vertex d3_camera_vertex(double x,double y,double z,double u,double v
   if(g_d3.ortho){
     double dx=x-g_d3.ortho_x,dy=y-g_d3.ortho_y;
     double angle=g_d3.ortho_angle*M_PI/180.0,cs=cos(angle),sn=sin(angle);
-    GmlD3Vertex out={cs*dx+sn*dy,-sn*dx+cs*dy,z,u,v};
+    GmlD3Vertex out={0};
+    out.x=cs*dx+sn*dy; out.y=-sn*dx+cs*dy; out.z=z; out.u=u; out.v=v;
     return out;
   }
   double d[3]={x-g_d3.eye[0],y-g_d3.eye[1],z-g_d3.eye[2]};
-  GmlD3Vertex out={d3_dot(d,g_d3.right),d3_dot(d,g_d3.up),d3_dot(d,g_d3.forward),u,v};
+  GmlD3Vertex out={0};
+  out.x=d3_dot(d,g_d3.right); out.y=d3_dot(d,g_d3.up);
+  out.z=d3_dot(d,g_d3.forward); out.u=u; out.v=v;
   return out;
 }
 static GmlD3Vertex d3_vertex_lerp(GmlD3Vertex a,GmlD3Vertex b,double amount){
@@ -2541,13 +2544,122 @@ static void d3_emit_triangle(GmlRender *R,const GmlD3Vertex world[3],GmlTpag *te
     d3_raster_triangle(R,triangle,texture,atlas);
   }
 }
+static int d3_project_vertex(GmlRender *R,const GmlD3Vertex *vertex,
+                             double *screen_x,double *screen_y,double *inverse_z,
+                             double *depth,double *distance){
+  if(!R || !vertex) return 0;
+  if(g_d3.ortho){
+    double width=fabs(g_d3.ortho_w)>1e-9?g_d3.ortho_w:1;
+    double height=fabs(g_d3.ortho_h)>1e-9?g_d3.ortho_h:1;
+    *screen_x=vertex->x*R->fbw/width; *screen_y=vertex->y*R->fbh/height;
+    *inverse_z=1; *depth=1000000.0-vertex->z; *distance=fabs(vertex->z);
+    return 1;
+  }
+  double nearz=g_d3.near_clip>1e-6?g_d3.near_clip:.05;
+  double farz=g_d3.far_clip>nearz?g_d3.far_clip:32000;
+  if(vertex->z<nearz || vertex->z>farz) return 0;
+  double fov=g_d3.fov;
+  if(fov<1.0 || fov>170.0) fov=41.2;
+  double tangent=tan(fov*M_PI/360.0);
+  double focal_y=(R->fbh*.5)/tangent;
+  double focal_x=g_d3.aspect>1e-9?(R->fbw*.5)/(tangent*g_d3.aspect):focal_y;
+  *inverse_z=1.0/vertex->z;
+  *screen_x=R->fbw*.5+vertex->x*focal_x*(*inverse_z);
+  *screen_y=R->fbh*.5-vertex->y*focal_y*(*inverse_z);
+  *depth=*inverse_z; *distance=vertex->z;
+  return 1;
+}
+static void d3_raster_sample(GmlRender *R,int x,int y,double depth,double distance,
+                             double u,double v,double red,double green,double blue,double alpha,
+                             GmlTpag *texture,GmlAtlas *atlas){
+  if(!R || x<0 || y<0 || x>=R->fbw || y>=R->fbh || alpha<=0) return;
+  size_t index=(size_t)y*R->fbw+x;
+  if(g_d3.hidden && depth<=g_d3.depth[index]) return;
+  double texture_alpha=1;
+  uint32_t color=texture&&atlas?d3_sample(R,texture,atlas,u,v,&texture_alpha):0xFFFFFFu;
+  if(red<0) red=0; else if(red>255) red=255;
+  if(green<0) green=0; else if(green>255) green=255;
+  if(blue<0) blue=0; else if(blue>255) blue=255;
+  int cr=(int)lround((color&255)*red/255.0);
+  int cg=(int)lround(((color>>8)&255)*green/255.0);
+  int cb=(int)lround(((color>>16)&255)*blue/255.0);
+  if(g_d3.lighting){
+    cr=(int)(cr*g_d3.shade_r); cg=(int)(cg*g_d3.shade_g); cb=(int)(cb*g_d3.shade_b);
+    if(cr>255) cr=255; if(cg>255) cg=255; if(cb>255) cb=255;
+  }
+  if(g_d3.fog){
+    double span=g_d3.fog_end-g_d3.fog_start;
+    double amount=span>1e-9?(distance-g_d3.fog_start)/span:(distance>=g_d3.fog_end?1:0);
+    if(amount<0) amount=0; else if(amount>1) amount=1;
+    uint32_t fog=g_d3.fog_color;
+    cr=(int)lround(cr*(1-amount)+(fog&255)*amount);
+    cg=(int)lround(cg*(1-amount)+((fog>>8)&255)*amount);
+    cb=(int)lround(cb*(1-amount)+((fog>>16)&255)*amount);
+  }
+  double final_alpha=texture_alpha*alpha;
+  draw_px_alpha(R,x,y,(uint32_t)cr|((uint32_t)cg<<8)|((uint32_t)cb<<16),final_alpha);
+  if(g_d3.hidden && g_d3.zwrite && final_alpha>0) g_d3.depth[index]=(float)depth;
+}
+static int d3_clip_segment_plane(GmlD3Vertex *a,GmlD3Vertex *b,double plane,int keep_greater){
+  int a_inside=keep_greater?a->z>=plane:a->z<=plane;
+  int b_inside=keep_greater?b->z>=plane:b->z<=plane;
+  if(!a_inside&&!b_inside) return 0;
+  if(a_inside!=b_inside){
+    double amount=(plane-a->z)/(b->z-a->z);
+    GmlD3Vertex intersection=d3_vertex_lerp(*a,*b,amount); intersection.z=plane;
+    if(!a_inside) *a=intersection; else *b=intersection;
+  }
+  return 1;
+}
+static void d3_emit_point(GmlRender *R,GmlD3Vertex world,GmlTpag *texture,GmlAtlas *atlas){
+  GmlD3Vertex camera=d3_vertex_camera(world);
+  double x,y,inverse_z,depth,distance;
+  if(!d3_project_vertex(R,&camera,&x,&y,&inverse_z,&depth,&distance)) return;
+  (void)inverse_z;
+  d3_raster_sample(R,(int)lround(x),(int)lround(y),depth,distance,camera.u,camera.v,
+                   camera.r,camera.g,camera.b,camera.alpha,texture,atlas);
+}
+static void d3_emit_line(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,GmlTpag *texture,GmlAtlas *atlas){
+  a=d3_vertex_camera(a); b=d3_vertex_camera(b);
+  if(!g_d3.ortho){
+    double nearz=g_d3.near_clip>1e-6?g_d3.near_clip:.05;
+    double farz=g_d3.far_clip>nearz?g_d3.far_clip:32000;
+    if(!d3_clip_segment_plane(&a,&b,nearz,1) || !d3_clip_segment_plane(&a,&b,farz,0)) return;
+  }
+  double ax,ay,a_inverse_z,a_depth,a_distance,bx,by,b_inverse_z,b_depth,b_distance;
+  if(!d3_project_vertex(R,&a,&ax,&ay,&a_inverse_z,&a_depth,&a_distance) ||
+     !d3_project_vertex(R,&b,&bx,&by,&b_inverse_z,&b_depth,&b_distance)) return;
+  int steps=(int)ceil(fmax(fabs(bx-ax),fabs(by-ay)));
+  if(steps<1) steps=1;
+  for(int i=0;i<=steps;i++){
+    double amount=(double)i/steps;
+    double inverse_z=a_inverse_z+(b_inverse_z-a_inverse_z)*amount;
+    double denominator=g_d3.ortho?1:inverse_z;
+#define D3_LINE_ATTR(field) ((a.field*a_inverse_z+(b.field*b_inverse_z-a.field*a_inverse_z)*amount)/denominator)
+    double u=D3_LINE_ATTR(u),v=D3_LINE_ATTR(v);
+    double red=D3_LINE_ATTR(r),green=D3_LINE_ATTR(g),blue=D3_LINE_ATTR(b);
+    double alpha=D3_LINE_ATTR(alpha);
+#undef D3_LINE_ATTR
+    double distance=g_d3.ortho?a_distance+(b_distance-a_distance)*amount:1.0/inverse_z;
+    double depth=a_depth+(b_depth-a_depth)*amount;
+    int x=(int)lround(ax+(bx-ax)*amount),y=(int)lround(ay+(by-ay)*amount);
+    d3_raster_sample(R,x,y,depth,distance,u,v,red,green,blue,alpha,texture,atlas);
+  }
+}
 static void d3_primitive_flush(GmlRender *R){
   if(!R || g_d3_prim_n<=0) return;
   GmlTpag *texture=NULL; GmlAtlas *atlas=NULL;
-  d3_texture(R,g_d3_prim_texture,&texture,&atlas);
+  if(g_d3_prim_texture!=-1) d3_texture(R,g_d3_prim_texture,&texture,&atlas);
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
   gml_render_maybe_prepare_draw(R);
-  if(g_d3_prim_kind==4){
+  if(!d3_depth_prepare(R)) return;
+  if(g_d3_prim_kind==1){
+    for(int i=0;i<g_d3_prim_n;i++) d3_emit_point(R,g_d3_prim[i],texture,atlas);
+  } else if(g_d3_prim_kind==2){
+    for(int i=0;i+1<g_d3_prim_n;i+=2) d3_emit_line(R,g_d3_prim[i],g_d3_prim[i+1],texture,atlas);
+  } else if(g_d3_prim_kind==3){
+    for(int i=0;i+1<g_d3_prim_n;i++) d3_emit_line(R,g_d3_prim[i],g_d3_prim[i+1],texture,atlas);
+  } else if(g_d3_prim_kind==4){
     for(int i=0;i+2<g_d3_prim_n;i+=3) d3_emit_triangle(R,&g_d3_prim[i],texture,atlas);
   } else if(g_d3_prim_kind==5){
     for(int i=2;i<g_d3_prim_n;i++){

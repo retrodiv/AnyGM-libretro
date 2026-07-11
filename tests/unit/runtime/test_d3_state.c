@@ -92,6 +92,53 @@ static int raster_fixtures(void){
     return 0;
   }
 
+  memset(pixels,0,sizeof(pixels));
+  const double point_kind[]={1};
+  const double point_a[]={10,12,0,0x0000FF,1};
+  const double point_b[]={20,14,0,0x00FF00,1};
+  call_numbers(&vm,"d3d_primitive_begin",point_kind,1);
+  call_numbers(&vm,"d3d_vertex_color",point_a,5);
+  call_numbers(&vm,"d3d_vertex_color",point_b,5);
+  call_numbers(&vm,"d3d_primitive_end",NULL,0);
+  if((pixels[12*WIDTH+10]&0x00FFFFFFu)!=0xFF0000u ||
+     (pixels[14*WIDTH+20]&0x00FFFFFFu)!=0x00FF00u ||
+     colored_pixels(pixels,WIDTH*HEIGHT)!=2){
+    fprintf(stderr,"software D3 immediate point-list mismatch: a=%06x b=%06x count=%d\n",
+            pixels[12*WIDTH+10]&0x00FFFFFFu,pixels[14*WIDTH+20]&0x00FFFFFFu,
+            colored_pixels(pixels,WIDTH*HEIGHT));
+    return 0;
+  }
+
+  memset(pixels,0,sizeof(pixels));
+  const double line_kind[]={2};
+  const double line_a[]={4,4,0,0x0000FF,1};
+  const double line_b[]={60,40,0,0xFF0000,1};
+  call_numbers(&vm,"d3d_primitive_begin",line_kind,1);
+  call_numbers(&vm,"d3d_vertex_color",line_a,5);
+  call_numbers(&vm,"d3d_vertex_color",line_b,5);
+  call_numbers(&vm,"d3d_primitive_end",NULL,0);
+  center=pixels[22*WIDTH+32]&0x00FFFFFFu;
+  if(colored_pixels(pixels,WIDTH*HEIGHT)<50 || (center&255)<40 || ((center>>16)&255)<40){
+    fprintf(stderr,"software D3 immediate line-list mismatch: center=%06x\n",center);
+    return 0;
+  }
+
+  memset(pixels,0,sizeof(pixels));
+  const double strip_kind[]={3};
+  const double strip_a[]={8,8,0,0xFFFFFF,1};
+  const double strip_b[]={8,32,0,0xFFFFFF,1};
+  const double strip_c[]={40,32,0,0xFFFFFF,1};
+  call_numbers(&vm,"d3d_primitive_begin",strip_kind,1);
+  call_numbers(&vm,"d3d_vertex_color",strip_a,5);
+  call_numbers(&vm,"d3d_vertex_color",strip_b,5);
+  call_numbers(&vm,"d3d_vertex_color",strip_c,5);
+  call_numbers(&vm,"d3d_primitive_end",NULL,0);
+  if((pixels[20*WIDTH+8]&0x00FFFFFFu)!=0xFFFFFFu ||
+     (pixels[32*WIDTH+24]&0x00FFFFFFu)!=0xFFFFFFu){
+    fprintf(stderr,"software D3 immediate line-strip mismatch\n");
+    return 0;
+  }
+
   const double projection[]={0,-10,0, 0,0,0, 0,0,1};
   const double front_wall[]={-2,0,-2, 2,0,2, -1,1,1};
   const double back_wall[]={2,0,-2, -2,0,2, -1,1,1};
