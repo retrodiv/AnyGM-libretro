@@ -6099,7 +6099,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     uint32_t colors[GML_D3_STATE_COLOR_COUNT]={0};
     colors[9]=0x262626u;
     flags[21]=1; flags[22]=1; flags[24]=1;
-    values[49]=41.2; values[51]=.05; values[52]=32000;
+    values[49]=41.2; values[51]=1; values[52]=32000;
     values[56]=values[61]=values[66]=values[71]=1;
     int flag_count=s.v21?GML_D3_STATE_FLAG_COUNT:(s.v20?21:19);
     int value_count=s.v21?GML_D3_STATE_VALUE_COUNT:(s.v20?49:44);

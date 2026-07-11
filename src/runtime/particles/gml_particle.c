@@ -376,7 +376,8 @@ void gml_part_system_drawit(GmlRender *r, int id){
       if(alpha<=0) continue;
       uint32_t col = p->has_col ? p->col_over : keyc(age,t);
       gml_render_maybe_prepare_draw(r);
-      plot_square(r,cx,cy,half,col,alpha);
+      if(!gml_d3_draw_rectangle_2d(r,p->x-half,p->y-half,p->x+half+1,p->y+half+1,col,alpha,0))
+        plot_square(r,cx,cy,half,col,alpha);
     }
   }
 }

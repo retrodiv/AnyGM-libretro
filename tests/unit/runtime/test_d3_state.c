@@ -3,6 +3,7 @@
 #include "gml_vm.h"
 #include "gml_render.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,11 +40,33 @@ static int raster_fixtures(void){
   gml_d3_reset();
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  GmlVal start_result=call_values(&vm,"d3d_start",NULL,0);
+  int default_flags[GML_D3_STATE_FLAG_COUNT];
+  double default_values[GML_D3_STATE_VALUE_COUNT];
+  uint32_t default_colors[GML_D3_STATE_COLOR_COUNT];
+  gml_d3_state_get(default_flags,default_values,default_colors);
+  if(start_result.t!=V_REAL || start_result.d!=1 || !default_flags[0] ||
+     !default_flags[1] || !default_flags[21] || !default_flags[24] ||
+     default_flags[20] || default_values[0]!=WIDTH*.5 ||
+     default_values[1]!=HEIGHT*.5 || default_values[2]!=WIDTH ||
+     default_values[9]!=0 || default_values[10]!=0 || default_values[11]!=-1 ||
+     fabs(default_values[51]-1)>1e-12 || fabs(default_values[52]-32000)>1e-12){
+    fprintf(stderr,"software D3 historical start defaults mismatch\n");
+    return 0;
+  }
+  GmlVal end_result=call_values(&vm,"d3d_end",NULL,0);
+  gml_d3_state_get(default_flags,default_values,default_colors);
+  if(end_result.t!=V_REAL || end_result.d!=1 || default_flags[0]){
+    fprintf(stderr,"software D3 historical end result mismatch\n");
+    return 0;
+  }
   call_numbers(&vm,"d3d_start",NULL,0);
   const double ortho[]={0,0,WIDTH,HEIGHT,0};
   const double enable[]={1};
+  const double disable[]={0};
   const double floor_args[]={8,6,0,24,18,0,-1,1,1};
   call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
+  call_numbers(&vm,"d3d_set_hidden",disable,1);
   call_numbers(&vm,"d3d_set_culling",enable,1);
   call_numbers(&vm,"d3d_draw_floor",floor_args,9);
   if((pixels[10*WIDTH+10]&0x00FFFFFFu)==0 || pixels[4*WIDTH+4]!=0 ||
@@ -81,6 +104,7 @@ static int raster_fixtures(void){
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
+  call_numbers(&vm,"d3d_set_hidden",disable,1);
   const double triangle_kind[]={4};
   const double vertex_a[]={8,8,0,0x0000FF,1};
   const double vertex_b[]={56,8,0,0x00FF00,1};
@@ -144,6 +168,7 @@ static int raster_fixtures(void){
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
+  call_numbers(&vm,"d3d_set_hidden",disable,1);
   call_numbers(&vm,"d3d_set_hidden",enable,1);
   const double far_depth[]={10},farther_depth[]={20},near_depth[]={-10};
   call_numbers(&vm,"d3d_set_depth",far_depth,1);
@@ -201,6 +226,45 @@ static int raster_fixtures(void){
     fprintf(stderr,"software D3 2D atlas-part depth mismatch\n");
     return 0;
   }
+  const double rectangle_2d[]={34,30,50,44,0};
+  call_numbers(&vm,"d3d_set_depth",far_depth,1); render.color=0x0000FFu;
+  call_numbers(&vm,"draw_rectangle",rectangle_2d,5);
+  call_numbers(&vm,"d3d_set_depth",farther_depth,1); render.color=0x00FF00u;
+  call_numbers(&vm,"draw_rectangle",rectangle_2d,5);
+  if((pixels[36*WIDTH+40]&0x00FFFFFFu)!=0xFF0000u){
+    fprintf(stderr,"software D3 2D rectangle depth mismatch\n");
+    return 0;
+  }
+  const double circle_2d[]={42,37,5,0};
+  call_numbers(&vm,"d3d_set_depth",near_depth,1); render.color=0xFF0000u;
+  call_numbers(&vm,"draw_circle",circle_2d,4);
+  if((pixels[37*WIDTH+42]&0x00FFFFFFu)!=0x0000FFu){
+    fprintf(stderr,"software D3 2D circle depth mismatch\n");
+    return 0;
+  }
+  call_numbers(&vm,"d3d_set_depth",far_depth,1);
+  gml_draw_surface_stretched(&render,surface,2,30,8,8,0x0000FF,1);
+  call_numbers(&vm,"d3d_set_depth",farther_depth,1);
+  gml_draw_surface_stretched(&render,surface,2,30,8,8,0x00FF00,1);
+  if((pixels[34*WIDTH+6]&0x00FFFFFFu)!=0xFF0000u){
+    fprintf(stderr,"software D3 2D surface depth mismatch\n");
+    return 0;
+  }
+  const double draw_primitive_kind[]={4};
+  const double draw_vertex_a[]={52,30,0x0000FF,1};
+  const double draw_vertex_b[]={62,30,0x0000FF,1};
+  const double draw_vertex_c[]={57,44,0x0000FF,1};
+  call_numbers(&vm,"d3d_set_depth",far_depth,1);
+  call_numbers(&vm,"draw_primitive_begin",draw_primitive_kind,1);
+  call_numbers(&vm,"draw_vertex_color",draw_vertex_a,4);
+  call_numbers(&vm,"draw_vertex_color",draw_vertex_b,4);
+  call_numbers(&vm,"draw_vertex_color",draw_vertex_c,4);
+  call_numbers(&vm,"draw_primitive_end",NULL,0);
+  if((pixels[35*WIDTH+57]&0x00FFFFFFu)!=0xFF0000u){
+    fprintf(stderr,"software D3 2D immediate primitive mismatch\n");
+    return 0;
+  }
+  render.color=0xFFFFFFu;
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
@@ -257,6 +321,7 @@ static int raster_fixtures(void){
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
+  call_numbers(&vm,"d3d_set_hidden",disable,1);
   call_numbers(&vm,"d3d_set_lighting",enable,1);
   const double normal_a[]={8,8,0,0,0,1,0xFFFFFF,1};
   const double normal_b[]={56,8,0,0,0,1,0xFFFFFF,1};
@@ -305,6 +370,7 @@ static int raster_fixtures(void){
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
+  call_numbers(&vm,"d3d_set_hidden",disable,1);
   GmlVal created=call_values(&vm,"d3d_model_create",NULL,0);
   if(created.t!=V_REAL || created.d!=0){
     fprintf(stderr,"software D3 model create mismatch\n");
@@ -389,6 +455,7 @@ static int raster_fixtures(void){
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection",projection,9);
+  call_numbers(&vm,"d3d_set_hidden",disable,1);
   call_numbers(&vm,"d3d_set_culling",enable,1);
   call_numbers(&vm,"d3d_draw_wall",front_wall,9);
   int front_count=colored_pixels(pixels,WIDTH*HEIGHT);
@@ -404,7 +471,6 @@ static int raster_fixtures(void){
     return 0;
   }
 
-  const double disable[]={0};
   const double far_wall[]={-2,4,-2, 2,4,2, -1,1,1};
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);

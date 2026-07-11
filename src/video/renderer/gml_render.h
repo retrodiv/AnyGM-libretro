@@ -236,7 +236,14 @@ int  gml_d3_draw_background_part_2d(GmlRender *r, int background,
 int  gml_d3_draw_atlas_part_2d(GmlRender *r, int atlas, int sx, int sy, int w, int h,
                                double x, double y, double xs, double ys,
                                uint32_t blend, double alpha);
+int  gml_d3_draw_surface_part_2d(GmlRender *r, int surface,
+                                 double sx, double sy, double sw, double sh,
+                                 double x, double y, double xs, double ys,
+                                 uint32_t blend, double alpha);
 void gml_d3_set_draw_depth(double depth);
+int  gml_d3_is_active(void);
+int  gml_d3_draw_rectangle_2d(GmlRender *r,double x1,double y1,double x2,double y2,
+                               uint32_t color,double alpha,int outline);
 int  gml_render_warm_atlas(GmlRender *r, int atlas);
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y);
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,

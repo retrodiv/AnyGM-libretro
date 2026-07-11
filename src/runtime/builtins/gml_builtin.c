@@ -2179,7 +2179,7 @@ void gml_d3_reset(void){
   g_d3.depth=depth; g_d3.depth_cap=cap; g_d3.depth_frame=-1;
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
   g_d3.zwrite=1; g_d3.smooth=1; g_d3.perspective=1;
-  g_d3.fov=41.2; g_d3.near_clip=.05; g_d3.far_clip=32000;
+  g_d3.fov=41.2; g_d3.near_clip=1; g_d3.far_clip=32000;
   g_d3.ambient_color=0x262626u;
   d3_matrix_identity(g_d3.transform);
   g_d3_prim_n=0; g_d3_prim_kind=0; g_d3_prim_texture=-1;
@@ -2583,6 +2583,20 @@ static void d3_set_camera(double xfrom,double yfrom,double zfrom,
   d3_cross(g_d3.forward,g_d3.right,g_d3.up);
   d3_normalize(g_d3.up);
 }
+static void d3_set_default_projection(GmlRender *R,double x,double y,double width,double height,double angle){
+  if(fabs(width)<1e-9) width=R&&R->fbw>0?R->fbw:640;
+  if(fabs(height)<1e-9) height=R&&R->fbh>0?R->fbh:480;
+  double distance=fabs(width); if(distance<1) distance=1;
+  double radians=angle*M_PI/180.0,cs=cos(radians),sn=sin(radians);
+  g_d3.ortho=0; g_d3.perspective=1;
+  g_d3.eye[0]=x+width*.5; g_d3.eye[1]=y+height*.5; g_d3.eye[2]=distance;
+  g_d3.forward[0]=0; g_d3.forward[1]=0; g_d3.forward[2]=-1;
+  g_d3.right[0]=cs; g_d3.right[1]=sn; g_d3.right[2]=0;
+  g_d3.up[0]=-sn; g_d3.up[1]=cs; g_d3.up[2]=0;
+  g_d3.fov=2*atan(fabs(height)*.5/distance)*180.0/M_PI;
+  if(g_d3.fov<1||g_d3.fov>170) g_d3.fov=41.2;
+  g_d3.aspect=fabs(width/height); g_d3.near_clip=1; g_d3.far_clip=32000;
+}
 static GmlD3Vertex d3_vertex_camera(GmlD3Vertex input){
   GmlD3Vertex output=d3_camera_vertex(input.x,input.y,input.z,input.u,input.v);
   output.r=input.r; output.g=input.g; output.b=input.b; output.alpha=input.alpha;
@@ -2669,6 +2683,7 @@ static void d3_emit_triangle(GmlRender *R,const GmlD3Vertex world[3],const GmlD3
   }
 }
 void gml_d3_set_draw_depth(double depth){ g_d3.draw_depth=depth; }
+int gml_d3_is_active(void){ return g_d3.active; }
 int gml_d3_draw_sprite_2d(GmlRender *R,int sprite_id,int subimg,double x,double y,
                           double xs,double ys,double rotation,uint32_t blend,double alpha){
   if(!g_d3.active) return 0;
@@ -2811,6 +2826,15 @@ int gml_d3_draw_atlas_part_2d(GmlRender *R,int atlas_id,int sx,int sy,int width,
   GmlD3Vertex second[3]={vertex[0],vertex[2],vertex[3]};
   d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
   return 1;
+}
+int gml_d3_draw_surface_part_2d(GmlRender *R,int surface,
+                                double sx,double sy,double sw,double sh,double x,double y,
+                                double xs,double ys,uint32_t blend,double alpha){
+  if(!g_d3.active) return 0;
+  int width=R?gml_surface_width(R,surface):0,height=R?gml_surface_height(R,surface):0;
+  if(width<=0 || height<=0) return 1;
+  return d3_draw_texture_part_2d(R,(int)(GML_TEX_SURF_TAG|(surface&0xFFFF)),
+    0,0,width,height,sx,sy,sw,sh,x,y,xs,ys,blend,alpha);
 }
 static int d3_project_vertex(GmlRender *R,const GmlD3Vertex *vertex,
                              double *screen_x,double *screen_y,double *inverse_z,
@@ -3428,7 +3452,8 @@ static void draw_circle_prim(GmlRender *R, int cx, int cy, int rx, int ry, uint3
  * Transient within a single draw call, so plain statics are safe. */
 #define GML_PRIM_MAX 256
 static int g_prim_kind=0, g_prim_n=0;
-static double g_prim_x[GML_PRIM_MAX], g_prim_y[GML_PRIM_MAX], g_prim_a[GML_PRIM_MAX];
+static int g_prim_texture=-1;
+static double g_prim_x[GML_PRIM_MAX], g_prim_y[GML_PRIM_MAX], g_prim_u[GML_PRIM_MAX], g_prim_v[GML_PRIM_MAX], g_prim_a[GML_PRIM_MAX];
 static uint32_t g_prim_c[GML_PRIM_MAX];
 static void prim_tri_fill_ex(GmlRender *R, double X1,double Y1,double X2,double Y2,double X3,double Y3,
                              uint32_t col, double alpha, int outline){
@@ -4389,11 +4414,168 @@ static void hotprof_add(const char *name, double ms){
   g_hotprof_n=0;
 }
 
+static GmlD3Vertex d3_2d_vertex(double x,double y,uint32_t color,double alpha){
+  GmlD3Vertex vertex={0}; vertex.x=x; vertex.y=y; vertex.z=g_d3.draw_depth;
+  vertex.r=color&255; vertex.g=(color>>8)&255; vertex.b=(color>>16)&255; vertex.alpha=alpha;
+  return vertex;
+}
+static void d3_2d_line(GmlRender *R,double x1,double y1,double x2,double y2,
+                       uint32_t color1,uint32_t color2,double alpha,double width){
+  GmlD3Texture texture={0};
+  if(width<=1){
+    d3_emit_line(R,d3_2d_vertex(x1,y1,color1,alpha),d3_2d_vertex(x2,y2,color2,alpha),&texture);
+    return;
+  }
+  double dx=x2-x1,dy=y2-y1,length=hypot(dx,dy);
+  if(length<=1e-9){
+    double half=width*.5;
+    GmlD3Vertex triangle1[3]={d3_2d_vertex(x1-half,y1-half,color1,alpha),d3_2d_vertex(x1+half,y1-half,color1,alpha),d3_2d_vertex(x1+half,y1+half,color1,alpha)};
+    GmlD3Vertex triangle2[3]={triangle1[0],triangle1[2],d3_2d_vertex(x1-half,y1+half,color1,alpha)};
+    d3_emit_triangle(R,triangle1,&texture); d3_emit_triangle(R,triangle2,&texture); return;
+  }
+  double nx=-dy/length*width*.5,ny=dx/length*width*.5;
+  GmlD3Vertex quad[4]={d3_2d_vertex(x1-nx,y1-ny,color1,alpha),d3_2d_vertex(x2-nx,y2-ny,color2,alpha),
+                       d3_2d_vertex(x2+nx,y2+ny,color2,alpha),d3_2d_vertex(x1+nx,y1+ny,color1,alpha)};
+  GmlD3Vertex triangle1[3]={quad[0],quad[1],quad[2]},triangle2[3]={quad[0],quad[2],quad[3]};
+  d3_emit_triangle(R,triangle1,&texture); d3_emit_triangle(R,triangle2,&texture);
+}
+static void d3_2d_triangle(GmlRender *R,GmlD3Vertex a,GmlD3Vertex b,GmlD3Vertex c,int outline){
+  GmlD3Texture texture={0};
+  if(outline){
+    d3_emit_line(R,a,b,&texture); d3_emit_line(R,b,c,&texture); d3_emit_line(R,c,a,&texture);
+  } else { GmlD3Vertex triangle[3]={a,b,c}; d3_emit_triangle(R,triangle,&texture); }
+}
+static void d3_2d_rectangle(GmlRender *R,double x1,double y1,double x2,double y2,
+                            const uint32_t color[4],double alpha,int outline){
+  GmlD3Vertex vertex[4]={d3_2d_vertex(x1,y1,color[0],alpha),d3_2d_vertex(x2,y1,color[1],alpha),
+                         d3_2d_vertex(x2,y2,color[2],alpha),d3_2d_vertex(x1,y2,color[3],alpha)};
+  GmlD3Texture texture={0};
+  if(outline){ for(int i=0;i<4;i++) d3_emit_line(R,vertex[i],vertex[(i+1)&3],&texture); }
+  else {
+    GmlD3Vertex first[3]={vertex[0],vertex[1],vertex[2]},second[3]={vertex[0],vertex[2],vertex[3]};
+    d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
+  }
+}
+int gml_d3_draw_rectangle_2d(GmlRender *R,double x1,double y1,double x2,double y2,
+                              uint32_t color,double alpha,int outline){
+  if(!g_d3.active) return 0;
+  uint32_t colors[4]={color,color,color,color};
+  d3_2d_rectangle(R,x1,y1,x2,y2,colors,alpha,outline);
+  return 1;
+}
+static void d3_2d_ellipse(GmlRender *R,double cx,double cy,double rx,double ry,
+                          uint32_t inner,uint32_t outer,double alpha,int outline){
+  int segments=R&&R->circle_precision>=3?R->circle_precision:24; if(segments>256) segments=256;
+  GmlD3Texture texture={0}; GmlD3Vertex center=d3_2d_vertex(cx,cy,inner,alpha);
+  for(int i=0;i<segments;i++){
+    double angle0=2*M_PI*i/segments,angle1=2*M_PI*(i+1)/segments;
+    GmlD3Vertex a=d3_2d_vertex(cx+cos(angle0)*rx,cy+sin(angle0)*ry,outer,alpha);
+    GmlD3Vertex b=d3_2d_vertex(cx+cos(angle1)*rx,cy+sin(angle1)*ry,outer,alpha);
+    if(outline) d3_emit_line(R,a,b,&texture);
+    else { GmlD3Vertex triangle[3]={center,a,b}; d3_emit_triangle(R,triangle,&texture); }
+  }
+}
+static void d3_flush_2d_primitive(GmlRender *R){
+  if(!R || g_prim_n<=0) return;
+  GmlD3Texture texture={0}; if(g_prim_texture!=-1) d3_texture(R,g_prim_texture,&texture);
+  GmlD3Vertex vertex[GML_PRIM_MAX];
+  for(int i=0;i<g_prim_n;i++){
+    vertex[i]=d3_2d_vertex(g_prim_x[i],g_prim_y[i],g_prim_c[i],g_prim_a[i]);
+    vertex[i].u=g_prim_u[i]; vertex[i].v=g_prim_v[i];
+  }
+  if(g_prim_kind==1){ for(int i=0;i<g_prim_n;i++) d3_emit_point(R,vertex[i],&texture); }
+  else if(g_prim_kind==2){ for(int i=0;i+1<g_prim_n;i+=2) d3_emit_line(R,vertex[i],vertex[i+1],&texture); }
+  else if(g_prim_kind==3){ for(int i=0;i+1<g_prim_n;i++) d3_emit_line(R,vertex[i],vertex[i+1],&texture); }
+  else if(g_prim_kind==4){
+    for(int i=0;i+2<g_prim_n;i+=3){ GmlD3Vertex triangle[3]={vertex[i],vertex[i+1],vertex[i+2]}; d3_emit_triangle(R,triangle,&texture); }
+  } else if(g_prim_kind==5){
+    for(int i=2;i<g_prim_n;i++){
+      GmlD3Vertex triangle[3];
+      if(i&1){ triangle[0]=vertex[i-1]; triangle[1]=vertex[i-2]; }
+      else { triangle[0]=vertex[i-2]; triangle[1]=vertex[i-1]; }
+      triangle[2]=vertex[i]; d3_emit_triangle(R,triangle,&texture);
+    }
+  } else if(g_prim_kind==6){
+    for(int i=1;i+1<g_prim_n;i++){ GmlD3Vertex triangle[3]={vertex[0],vertex[i],vertex[i+1]}; d3_emit_triangle(R,triangle,&texture); }
+  }
+}
+static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int count){
+  GmlRender *R=vm?(GmlRender*)vm->render:NULL;
+  if(!g_d3.active || !R || !name || strncmp(name,"draw_",5)) return 0;
+  double alpha=R->alpha; gml_render_maybe_prepare_draw(R);
+  if(!strcmp(name,"draw_point")||!strcmp(name,"draw_point_color")||!strcmp(name,"draw_point_colour")){
+    uint32_t color=!strcmp(name,"draw_point")?R->color:(uint32_t)N(args,count,2);
+    GmlD3Texture texture={0}; d3_emit_point(R,d3_2d_vertex(N(args,count,0),N(args,count,1),color,alpha),&texture); return 1;
+  }
+  if(!strcmp(name,"draw_line")||!strcmp(name,"draw_line_color")||!strcmp(name,"draw_line_colour")||
+     !strcmp(name,"draw_line_width")||!strcmp(name,"draw_line_width_color")||!strcmp(name,"draw_line_width_colour")){
+    int colored=strstr(name,"color")||strstr(name,"colour"),wide=strstr(name,"width")!=NULL;
+    int color_index=wide?5:4; uint32_t c1=colored?(uint32_t)N(args,count,color_index):R->color;
+    uint32_t c2=colored?(uint32_t)N(args,count,color_index+1):c1;
+    d3_2d_line(R,N(args,count,0),N(args,count,1),N(args,count,2),N(args,count,3),c1,c2,alpha,wide?N(args,count,4):1); return 1;
+  }
+  if(!strcmp(name,"draw_rectangle")||!strcmp(name,"draw_rectangle_color")||!strcmp(name,"draw_rectangle_colour")){
+    int plain=!strcmp(name,"draw_rectangle"); uint32_t colors[4];
+    for(int i=0;i<4;i++) colors[i]=plain?R->color:(uint32_t)N(args,count,4+i);
+    d3_2d_rectangle(R,N(args,count,0),N(args,count,1),N(args,count,2),N(args,count,3),colors,alpha,(int)N(args,count,plain?4:8)); return 1;
+  }
+  if(!strcmp(name,"draw_triangle")||!strcmp(name,"draw_triangle_color")||!strcmp(name,"draw_triangle_colour")){
+    int plain=!strcmp(name,"draw_triangle"); uint32_t c1=plain?R->color:(uint32_t)N(args,count,6);
+    uint32_t c2=plain?c1:(uint32_t)N(args,count,7),c3=plain?c1:(uint32_t)N(args,count,8);
+    d3_2d_triangle(R,d3_2d_vertex(N(args,count,0),N(args,count,1),c1,alpha),
+      d3_2d_vertex(N(args,count,2),N(args,count,3),c2,alpha),d3_2d_vertex(N(args,count,4),N(args,count,5),c3,alpha),
+      (int)N(args,count,plain?6:9)); return 1;
+  }
+  if(!strcmp(name,"draw_circle")||!strcmp(name,"draw_circle_color")||!strcmp(name,"draw_circle_colour")){
+    int plain=!strcmp(name,"draw_circle"); uint32_t inner=plain?R->color:(uint32_t)N(args,count,3);
+    uint32_t outer=plain?inner:(uint32_t)N(args,count,4);
+    d3_2d_ellipse(R,N(args,count,0),N(args,count,1),fabs(N(args,count,2)),fabs(N(args,count,2)),inner,outer,alpha,(int)N(args,count,plain?3:5)); return 1;
+  }
+  if(!strcmp(name,"draw_ellipse")||!strcmp(name,"draw_ellipse_color")||!strcmp(name,"draw_ellipse_colour")){
+    int plain=!strcmp(name,"draw_ellipse"); double x1=N(args,count,0),y1=N(args,count,1),x2=N(args,count,2),y2=N(args,count,3);
+    uint32_t inner=plain?R->color:(uint32_t)N(args,count,4),outer=plain?inner:(uint32_t)N(args,count,5);
+    d3_2d_ellipse(R,(x1+x2)*.5,(y1+y2)*.5,fabs(x2-x1)*.5,fabs(y2-y1)*.5,inner,outer,alpha,(int)N(args,count,plain?4:6)); return 1;
+  }
+  if(!strcmp(name,"draw_roundrect")||!strcmp(name,"draw_roundrect_color")||!strcmp(name,"draw_roundrect_colour")||
+     !strcmp(name,"draw_roundrect_color_ext")||!strcmp(name,"draw_roundrect_colour_ext")){
+    int plain=!strcmp(name,"draw_roundrect"),extended=strstr(name,"_ext")!=NULL;
+    uint32_t c1=plain?R->color:(uint32_t)N(args,count,extended?6:4);
+    uint32_t c2=plain?c1:(uint32_t)N(args,count,extended?7:5),colors[4]={c1,c1,c2,c2};
+    d3_2d_rectangle(R,N(args,count,0),N(args,count,1),N(args,count,2),N(args,count,3),colors,alpha,
+                    (int)N(args,count,plain?4:(extended?8:6))); return 1;
+  }
+  if(!strcmp(name,"draw_healthbar")){
+    double x1=N(args,count,0),y1=N(args,count,1),x2=N(args,count,2),y2=N(args,count,3);
+    double amount=N(args,count,4); if(amount<0) amount=0; if(amount>100) amount=100;
+    uint32_t back=(uint32_t)N(args,count,5),fill=(uint32_t)N(args,count,7),solid[4];
+    if((int)N(args,count,9)){ for(int i=0;i<4;i++) solid[i]=back; d3_2d_rectangle(R,x1,y1,x2,y2,solid,alpha,0); }
+    double fx1=x1,fy1=y1,fx2=x2,fy2=y2; int direction=(int)N(args,count,8);
+    if(direction==1) fx1=x2-(x2-x1)*amount/100.0;
+    else if(direction==2) fy2=y1+(y2-y1)*amount/100.0;
+    else if(direction==3) fy1=y2-(y2-y1)*amount/100.0;
+    else fx2=x1+(x2-x1)*amount/100.0;
+    for(int i=0;i<4;i++) solid[i]=fill; d3_2d_rectangle(R,fx1,fy1,fx2,fy2,solid,alpha,0);
+    if((int)N(args,count,10)){ for(int i=0;i<4;i++) solid[i]=0; d3_2d_rectangle(R,x1,y1,x2,y2,solid,alpha,1); }
+    return 1;
+  }
+  if(!strcmp(name,"draw_path")){
+    int path=(int)N(args,count,0),absolute=(int)N(args,count,3);
+    if(path>=0&&path<vm->n_paths&&vm->paths[path].n>1&&vm->paths[path].pts){
+      GmlPath *p=&vm->paths[path]; double ox=absolute?0:N(args,count,1),oy=absolute?0:N(args,count,2);
+      for(int i=1;i<p->n;i++) d3_2d_line(R,p->pts[i-1].x+ox,p->pts[i-1].y+oy,p->pts[i].x+ox,p->pts[i].y+oy,R->color,R->color,alpha,1);
+      if(p->closed) d3_2d_line(R,p->pts[p->n-1].x+ox,p->pts[p->n-1].y+oy,p->pts[0].x+ox,p->pts[0].y+oy,R->color,R->color,alpha,1);
+    }
+    return 1;
+  }
+  return 0;
+}
+
 /* Short-circuit very hot draw/UI builtins before the broad legacy strcmp chain below. Keep these
  * branches behavior-equivalent to their canonical handlers; this only avoids dispatch overhead. */
 static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out){
   GmlRender *R=(GmlRender*)vm->render;
   if(!nm || !out) return 0;
+  if(d3_try_draw_2d_builtin(vm,nm,a,n)){ *out=vreal(0); return 1; }
   if(nm[0]=='a'){
     if(!strncmp(nm,"array_",6)){
       if(!strcmp(nm,"array_length")||!strcmp(nm,"array_length_1d")){ *out=vreal(n>0?gml_val_array_length(a[0]):0); return 1; }
@@ -6853,18 +7035,23 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"draw_get_valign")) return vreal(R?R->valign:0);
     /* Draw points and lines directly; fill triangle lists, strips and fans with flat per-triangle color. */
     if(!strcmp(nm,"draw_primitive_begin")||!strcmp(nm,"draw_primitive_begin_texture")){
-      g_prim_kind=(int)N(a,n,0); g_prim_n=0; return vreal(0); }
+      g_prim_kind=(int)N(a,n,0); g_prim_n=0;
+      g_prim_texture=!strcmp(nm,"draw_primitive_begin_texture")?(int)N(a,n,1):-1;
+      return vreal(0); }
     if(!strcmp(nm,"draw_vertex")||!strcmp(nm,"draw_vertex_colour")||!strcmp(nm,"draw_vertex_color")||
        !strcmp(nm,"draw_vertex_texture")||!strcmp(nm,"draw_vertex_texture_colour")||!strcmp(nm,"draw_vertex_texture_color")){
       if(g_prim_n<GML_PRIM_MAX){
         int tex=!strncmp(nm,"draw_vertex_texture",19);
         int coli=tex?4:2;                                 /* texture form: (x,y,u,v[,col,alpha]) */
         g_prim_x[g_prim_n]=N(a,n,0); g_prim_y[g_prim_n]=N(a,n,1);
+        g_prim_u[g_prim_n]=tex?N(a,n,2):0; g_prim_v[g_prim_n]=tex?N(a,n,3):0;
         g_prim_c[g_prim_n]=(n>coli)?(uint32_t)N(a,n,coli):(R?R->color:0xFFFFFF);
         g_prim_a[g_prim_n]=(n>coli+1)?N(a,n,coli+1):(R?R->alpha:1.0);
         g_prim_n++; }
       return vreal(0); }
-    if(!strcmp(nm,"draw_primitive_end")){ if(R) prim_flush(R); g_prim_n=0; return vreal(0); }
+    if(!strcmp(nm,"draw_primitive_end")){
+      if(R){ if(g_d3.active) d3_flush_2d_primitive(R); else prim_flush(R); }
+      g_prim_n=0; return vreal(0); }
     if(!strcmp(nm,"draw_set_circle_precision")){ if(R){ int p=(int)N(a,n,0); if(p<4) p=4; if(p>64) p=64; p=(p/4)*4; if(p<4) p=4; R->circle_precision=p; } return vreal(0); }
     if(!strcmp(nm,"application_surface")) return vreal(0);
     /* ---- FMOD Studio extension (fmod-gamemaker): games route ALL audio through it (their AUDO chunk
@@ -8099,8 +8286,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vundef();
   }
-  if(!strcmp(nm,"d3d_start")){ g_d3.active=1; g_d3.depth_frame=-1; return vreal(0); }
-  if(!strcmp(nm,"d3d_end")){ g_d3.active=0; return vreal(0); }
+  if(!strcmp(nm,"d3d_start")){
+    GmlRender *R=(GmlRender*)vm->render;
+    double width=R&&R->fbw>0?R->fbw:640,height=R&&R->fbh>0?R->fbh:480;
+    d3_set_default_projection(R,R?R->cam_x:0,R?R->cam_y:0,width,height,0);
+    g_d3.active=1; g_d3.hidden=1; g_d3.zwrite=1; g_d3.depth_frame=-1;
+    return vreal(1);
+  }
+  if(!strcmp(nm,"d3d_end")){ g_d3.active=0; return vreal(1); }
   if(!strcmp(nm,"d3d_set_hidden")){
     g_d3.hidden=N(a,n,0)!=0.0 && !getenv("GML_D3D_NO_DEPTH");
     return vreal(0);
@@ -8148,7 +8341,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
                   N(a,n,6),N(a,n,7),N(a,n,8));
     g_d3.fov=N(a,n,9); if(g_d3.fov<1||g_d3.fov>170) g_d3.fov=41.2;
     g_d3.aspect=N(a,n,10); if(g_d3.aspect<=0) g_d3.aspect=0;
-    g_d3.near_clip=N(a,n,11); if(g_d3.near_clip<=1e-6) g_d3.near_clip=.05;
+    g_d3.near_clip=N(a,n,11); if(g_d3.near_clip<=1e-6) g_d3.near_clip=1;
     g_d3.far_clip=N(a,n,12); if(g_d3.far_clip<=g_d3.near_clip) g_d3.far_clip=32000;
     return vreal(0);
   }
@@ -8161,23 +8354,15 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"d3d_set_projection_perspective")){
     double x=N(a,n,0),y=N(a,n,1),w=N(a,n,2),h=N(a,n,3),angle=N(a,n,4);
-    if(fabs(w)<1e-9) w=1;
-    if(fabs(h)<1e-9) h=1;
-    double center_x=x+w*.5,center_y=y+h*.5,distance=fabs(w);
-    double radians=angle*M_PI/180.0;
-    d3_set_camera(center_x,center_y,distance,center_x,center_y,0,-sin(radians),cos(radians),0);
-    g_d3.fov=2*atan(fabs(h)*.5/distance)*180.0/M_PI;
-    if(g_d3.fov<1||g_d3.fov>170) g_d3.fov=41.2;
-    g_d3.aspect=fabs(w/h); g_d3.near_clip=.05; g_d3.far_clip=32000;
+    d3_set_default_projection((GmlRender*)vm->render,x,y,w,h,angle);
     return vreal(0);
   }
   if(!strcmp(nm,"d3d_set_perspective")){
     GmlRender *R=(GmlRender*)vm->render;
     if(N(a,n,0)!=0){
       double w=R&&R->fbw>0?R->fbw:640,h=R&&R->fbh>0?R->fbh:480;
-      double args[5]={R?R->cam_x:0,R?R->cam_y:0,w,h,0};
-      GmlVal values[5]; for(int i=0;i<5;i++) values[i]=vreal(args[i]);
-      return builtin_call_impl(vm,"d3d_set_projection_perspective",values,5);
+      d3_set_default_projection(R,R?R->cam_x:0,R?R->cam_y:0,w,h,0);
+      return vreal(0);
     }
     g_d3.ortho=1; g_d3.perspective=0;
     g_d3.ortho_x=R?R->cam_x:0; g_d3.ortho_y=R?R->cam_y:0;
