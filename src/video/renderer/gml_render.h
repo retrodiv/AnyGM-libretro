@@ -223,7 +223,21 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
                          double xs, double ys, double rot, uint32_t blend, double alpha);
 int  gml_d3_draw_sprite_2d(GmlRender *r, int sprite, int subimg, double x, double y,
                            double xs, double ys, double rot, uint32_t blend, double alpha);
+int  gml_d3_draw_background_2d(GmlRender *r, int background, double x, double y,
+                               double xs, double ys, uint32_t blend, double alpha);
+int  gml_d3_draw_sprite_part_2d(GmlRender *r, int sprite, int subimg,
+                                double sx, double sy, double sw, double sh,
+                                double x, double y, double xs, double ys,
+                                uint32_t blend, double alpha);
+int  gml_d3_draw_background_part_2d(GmlRender *r, int background,
+                                    double sx, double sy, double sw, double sh,
+                                    double x, double y, double xs, double ys,
+                                    uint32_t blend, double alpha);
+int  gml_d3_draw_atlas_part_2d(GmlRender *r, int atlas, int sx, int sy, int w, int h,
+                               double x, double y, double xs, double ys,
+                               uint32_t blend, double alpha);
 void gml_d3_set_draw_depth(double depth);
+int  gml_render_warm_atlas(GmlRender *r, int atlas);
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y);
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                                double xs, double ys, uint32_t blend, double alpha);

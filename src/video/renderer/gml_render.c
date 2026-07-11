@@ -751,6 +751,9 @@ static void warm_atlas_direct(GmlRender *r, int idx){
   if(a->px || a->decode_attempted || !a->blob || a->blob>=r->win->size) return;
   (void)atlas_pixels(r,idx);
 }
+int gml_render_warm_atlas(GmlRender *r,int atlas){
+  return r&&atlas>=0&&atlas<r->n_atlas&&atlas_pixels(r,atlas)!=NULL;
+}
 void gml_render_warm_sprite(GmlRender *r, int sprite){
   if(!r || sprite<0 || sprite>=r->n_spr) return;
   GmlSprite *s=&r->spr[sprite];
@@ -1492,8 +1495,13 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
       if(g && g->w>0 && g->h>0){
         GmlTpag gt={ .sx=g->sx,.sy=g->sy,.sw=g->w,.sh=g->h,.tx=0,.ty=0,.bw=g->w,.bh=g->h,.atlas=f->atlas };
         double dx=(cx+g->offset)*xs, dy=base_y*ys;
-        if(use_rot) blit(r,&gt, x + dx*ca + dy*sa - r->cam_x, y - dx*sa + dy*ca - r->cam_y, xs,ys, blend, alpha);
-        else        blit(r,&gt, x + dx - r->cam_x, y + dy - r->cam_y, xs,ys, blend, alpha);
+        double glyph_x=use_rot?x+dx*ca+dy*sa:x+dx;
+        double glyph_y=use_rot?y-dx*sa+dy*ca:y+dy;
+        if(!gml_d3_draw_atlas_part_2d(r,f->atlas,g->sx,g->sy,g->w,g->h,
+                                      glyph_x,glyph_y,xs,ys,blend,alpha)){
+          if(use_rot) blit(r,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,blend,alpha);
+          else        blit(r,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,blend,alpha);
+        }
       }
       if(g) cx += g->shift;
     }
@@ -1573,7 +1581,12 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
       unsigned cp=text_next_cp(&p);
       int fr=glyph_frame(f,cp);
       if(fr>=0 && fr<s->n_frames){
-        if(s->runtime_rgba){
+        double glyph_ox=(cx+s->originx)*xs,glyph_oy=(base_y+s->originy)*ys;
+        double glyph_x=use_rot?x+glyph_ox*ca+glyph_oy*sa:x+glyph_ox;
+        double glyph_y=use_rot?y-glyph_ox*sa+glyph_oy*ca:y+glyph_oy;
+        if(gml_d3_draw_sprite_2d(r,f->sprite,fr,glyph_x,glyph_y,xs,ys,rr,blend,alpha)){
+          /* The D3 hook projects the glyph quad at the current draw depth. */
+        } else if(s->runtime_rgba){
           const uint8_t *fr_rgba=runtime_frame_rgba(s,fr);
           if(fr_rgba){
             if(use_rot){

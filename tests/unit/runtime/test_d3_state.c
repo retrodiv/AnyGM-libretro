@@ -160,6 +160,47 @@ static int raster_fixtures(void){
     fprintf(stderr,"software D3 2D sprite near-depth mismatch\n");
     return 0;
   }
+  render.atlas=calloc(1,sizeof(*render.atlas)); render.tpag=calloc(1,sizeof(*render.tpag));
+  render.bg=calloc(1,sizeof(*render.bg)); render.n_atlas=render.n_tpag=render.n_bg=1;
+  if(!render.atlas || !render.tpag || !render.bg || !(render.atlas[0].px=malloc(16))){
+    fprintf(stderr,"software D3 background texture allocation mismatch\n");
+    return 0;
+  }
+  render.atlas[0].w=render.atlas[0].h=2;
+  for(int i=0;i<4;i++){
+    render.atlas[0].px[i*4]=render.atlas[0].px[i*4+1]=render.atlas[0].px[i*4+2]=render.atlas[0].px[i*4+3]=255;
+  }
+  render.tpag[0].atlas=0; render.tpag[0].sw=render.tpag[0].sh=2;
+  render.tpag[0].bw=render.tpag[0].bh=2; render.bg[0].tpag=0;
+  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  call_numbers(&vm,"d3d_start",NULL,0);
+  call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
+  call_numbers(&vm,"d3d_set_hidden",enable,1);
+  call_numbers(&vm,"d3d_set_depth",far_depth,1);
+  gml_draw_background_ext(&render,0,40,10,8,8,0x0000FF,1);
+  call_numbers(&vm,"d3d_set_depth",farther_depth,1);
+  gml_draw_background_ext(&render,0,40,10,8,8,0x00FF00,1);
+  if((pixels[16*WIDTH+46]&0x00FFFFFFu)!=0xFF0000u){
+    fprintf(stderr,"software D3 2D background depth mismatch\n");
+    return 0;
+  }
+  call_numbers(&vm,"d3d_set_depth",far_depth,1);
+  gml_draw_sprite_part_ext(&render,depth_sprite,0,0,0,1,1,10,30,8,8,0x0000FF,1);
+  call_numbers(&vm,"d3d_set_depth",farther_depth,1);
+  gml_draw_sprite_part_ext(&render,depth_sprite,0,0,0,1,1,10,30,8,8,0x00FF00,1);
+  if((pixels[34*WIDTH+14]&0x00FFFFFFu)!=0xFF0000u){
+    fprintf(stderr,"software D3 2D sprite-part depth mismatch\n");
+    return 0;
+  }
+  call_numbers(&vm,"d3d_set_depth",far_depth,1);
+  gml_d3_draw_atlas_part_2d(&render,0,0,0,1,1,22,30,8,8,0x0000FF,1);
+  call_numbers(&vm,"d3d_set_depth",farther_depth,1);
+  gml_d3_draw_atlas_part_2d(&render,0,0,0,1,1,22,30,8,8,0x00FF00,1);
+  if((pixels[34*WIDTH+26]&0x00FFFFFFu)!=0xFF0000u){
+    fprintf(stderr,"software D3 2D atlas-part depth mismatch\n");
+    return 0;
+  }
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);

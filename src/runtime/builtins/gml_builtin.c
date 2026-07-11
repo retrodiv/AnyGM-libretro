@@ -2703,6 +2703,115 @@ int gml_d3_draw_sprite_2d(GmlRender *R,int sprite_id,int subimg,double x,double 
   d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
   return 1;
 }
+int gml_d3_draw_background_2d(GmlRender *R,int background,double x,double y,
+                              double xs,double ys,uint32_t blend,double alpha){
+  if(!g_d3.active) return 0;
+  if(!R || background<0 || background>=R->n_bg || alpha<=0) return 1;
+  GmlD3Texture texture={0};
+  if(!d3_texture(R,(int)(GML_TEX_BG_TAG|(background&0x00FFFFFF)),&texture)) return 1;
+  int page_id=R->bg[background].tpag;
+  if(page_id<0 || page_id>=R->n_tpag) return 1;
+  GmlTpag *page=&R->tpag[page_id];
+  double left=x+page->tx*xs,top=y+page->ty*ys;
+  double right=left+page->sw*xs,bottom=top+page->sh*ys;
+  const double point[4][2]={{left,top},{right,top},{right,bottom},{left,bottom}};
+  const double uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
+  GmlD3Vertex vertex[4];
+  for(int i=0;i<4;i++){
+    memset(&vertex[i],0,sizeof(vertex[i]));
+    vertex[i].x=point[i][0]; vertex[i].y=point[i][1]; vertex[i].z=g_d3.draw_depth;
+    vertex[i].u=uv[i][0]; vertex[i].v=uv[i][1];
+    vertex[i].r=blend&255; vertex[i].g=(blend>>8)&255; vertex[i].b=(blend>>16)&255; vertex[i].alpha=alpha;
+  }
+  g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
+  gml_render_maybe_prepare_draw(R);
+  GmlD3Vertex first[3]={vertex[0],vertex[1],vertex[2]};
+  GmlD3Vertex second[3]={vertex[0],vertex[2],vertex[3]};
+  d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
+  return 1;
+}
+static int d3_draw_texture_part_2d(GmlRender *R,int handle,double trim_x,double trim_y,
+                                   double texture_w,double texture_h,
+                                   double sx,double sy,double sw,double sh,
+                                   double x,double y,double xs,double ys,uint32_t blend,double alpha){
+  if(!g_d3.active) return 0;
+  if(!R || sw<=0 || sh<=0 || texture_w<=0 || texture_h<=0 || alpha<=0) return 1;
+  double source_left=fmax(sx,trim_x),source_top=fmax(sy,trim_y);
+  double source_right=fmin(sx+sw,trim_x+texture_w),source_bottom=fmin(sy+sh,trim_y+texture_h);
+  if(source_right<=source_left || source_bottom<=source_top) return 1;
+  GmlD3Texture texture={0}; if(!d3_texture(R,handle,&texture)) return 1;
+  double left=x+(source_left-sx)*xs,top=y+(source_top-sy)*ys;
+  double right=x+(source_right-sx)*xs,bottom=y+(source_bottom-sy)*ys;
+  double u0=(source_left-trim_x)/texture_w,v0=(source_top-trim_y)/texture_h;
+  double u1=(source_right-trim_x)/texture_w,v1=(source_bottom-trim_y)/texture_h;
+  const double point[4][2]={{left,top},{right,top},{right,bottom},{left,bottom}};
+  const double uv[4][2]={{u0,v0},{u1,v0},{u1,v1},{u0,v1}};
+  GmlD3Vertex vertex[4];
+  for(int i=0;i<4;i++){
+    memset(&vertex[i],0,sizeof(vertex[i]));
+    vertex[i].x=point[i][0]; vertex[i].y=point[i][1]; vertex[i].z=g_d3.draw_depth;
+    vertex[i].u=uv[i][0]; vertex[i].v=uv[i][1];
+    vertex[i].r=blend&255; vertex[i].g=(blend>>8)&255; vertex[i].b=(blend>>16)&255; vertex[i].alpha=alpha;
+  }
+  g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
+  gml_render_maybe_prepare_draw(R);
+  GmlD3Vertex first[3]={vertex[0],vertex[1],vertex[2]};
+  GmlD3Vertex second[3]={vertex[0],vertex[2],vertex[3]};
+  d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
+  return 1;
+}
+int gml_d3_draw_sprite_part_2d(GmlRender *R,int sprite_id,int subimg,
+                               double sx,double sy,double sw,double sh,double x,double y,
+                               double xs,double ys,uint32_t blend,double alpha){
+  if(!g_d3.active) return 0;
+  if(!R || sprite_id<0 || sprite_id>=R->n_spr) return 1;
+  GmlSprite *sprite=NULL; GmlTpag *page=NULL; GmlAtlas *atlas=NULL;
+  gml_render_warm_sprite(R,sprite_id);
+  int kind=sprite_tpag_info(R,sprite_id,subimg,&sprite,&page,&atlas);
+  if(kind==1&&page) return d3_draw_texture_part_2d(R,
+    (int)(GML_TEX_SPR_TAG|((sprite_id&0xFFFF)<<10)|(subimg&0x3FF)),page->tx,page->ty,page->sw,page->sh,
+    sx,sy,sw,sh,x,y,xs,ys,blend,alpha);
+  if(kind==2&&sprite) return d3_draw_texture_part_2d(R,
+    (int)(GML_TEX_SPR_TAG|((sprite_id&0xFFFF)<<10)|(subimg&0x3FF)),0,0,sprite->w,sprite->h,
+    sx,sy,sw,sh,x,y,xs,ys,blend,alpha);
+  return 1;
+}
+int gml_d3_draw_background_part_2d(GmlRender *R,int background,
+                                   double sx,double sy,double sw,double sh,double x,double y,
+                                   double xs,double ys,uint32_t blend,double alpha){
+  if(!g_d3.active) return 0;
+  if(!R || background<0 || background>=R->n_bg) return 1;
+  int page_id=R->bg[background].tpag; if(page_id<0 || page_id>=R->n_tpag) return 1;
+  gml_render_warm_bg(R,background); GmlTpag *page=&R->tpag[page_id];
+  return d3_draw_texture_part_2d(R,(int)(GML_TEX_BG_TAG|(background&0x00FFFFFF)),
+    page->tx,page->ty,page->sw,page->sh,sx,sy,sw,sh,x,y,xs,ys,blend,alpha);
+}
+int gml_d3_draw_atlas_part_2d(GmlRender *R,int atlas_id,int sx,int sy,int width,int height,
+                              double x,double y,double xs,double ys,uint32_t blend,double alpha){
+  if(!g_d3.active) return 0;
+  if(!R || atlas_id<0 || atlas_id>=R->n_atlas || width<=0 || height<=0 || alpha<=0 ||
+     !gml_render_warm_atlas(R,atlas_id)) return 1;
+  GmlAtlas *atlas=&R->atlas[atlas_id];
+  if(sx<0 || sy<0 || sx+width>atlas->w || sy+height>atlas->h) return 1;
+  GmlD3Texture texture={.kind=1,.w=width,.h=height,.stride=atlas->w,
+    .offset_x=sx,.offset_y=sy,.rgba=atlas->px};
+  double right=x+width*xs,bottom=y+height*ys;
+  const double point[4][2]={{x,y},{right,y},{right,bottom},{x,bottom}};
+  const double uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
+  GmlD3Vertex vertex[4];
+  for(int i=0;i<4;i++){
+    memset(&vertex[i],0,sizeof(vertex[i]));
+    vertex[i].x=point[i][0]; vertex[i].y=point[i][1]; vertex[i].z=g_d3.draw_depth;
+    vertex[i].u=uv[i][0]; vertex[i].v=uv[i][1];
+    vertex[i].r=blend&255; vertex[i].g=(blend>>8)&255; vertex[i].b=(blend>>16)&255; vertex[i].alpha=alpha;
+  }
+  g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
+  gml_render_maybe_prepare_draw(R);
+  GmlD3Vertex first[3]={vertex[0],vertex[1],vertex[2]};
+  GmlD3Vertex second[3]={vertex[0],vertex[2],vertex[3]};
+  d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
+  return 1;
+}
 static int d3_project_vertex(GmlRender *R,const GmlD3Vertex *vertex,
                              double *screen_x,double *screen_y,double *inverse_z,
                              double *depth,double *distance){
