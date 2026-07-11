@@ -369,12 +369,15 @@ int     gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used)
 
 /* Software D3 state is serialized with the VM so rewind/load cannot change the
  * active projection, culling, lighting, or light definitions mid-frame. */
-#define GML_D3_STATE_FLAG_COUNT 21
-#define GML_D3_STATE_VALUE_COUNT 49
+#define GML_D3_STATE_FLAG_COUNT 26
+#define GML_D3_STATE_VALUE_COUNT 584
+#define GML_D3_STATE_COLOR_COUNT 9
 void    gml_d3_reset(void);
 void    gml_d3_state_get(int flags[GML_D3_STATE_FLAG_COUNT],
-                         double values[GML_D3_STATE_VALUE_COUNT], uint32_t colors[8]);
+                         double values[GML_D3_STATE_VALUE_COUNT],
+                         uint32_t colors[GML_D3_STATE_COLOR_COUNT]);
 void    gml_d3_state_set(const int flags[GML_D3_STATE_FLAG_COUNT],
-                         const double values[GML_D3_STATE_VALUE_COUNT], const uint32_t colors[8]);
+                         const double values[GML_D3_STATE_VALUE_COUNT],
+                         const uint32_t colors[GML_D3_STATE_COLOR_COUNT]);
 
 #endif

@@ -5392,7 +5392,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -5878,7 +5878,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x44564D47u); /* GMV20: GMV19 plus complete software-D3 projection state */
+  sw_u32(s,0x45564D47u); /* GMV21: GMV20 plus complete software-D3 world/render state */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -5892,11 +5892,12 @@ static void sw_vm(StateW *s, GmlVM *vm){
   for(int i=0;i<16;i++) sw_u32(s,vm->rng_well[i]);
   sw_i32(s,vm->rng_index); sw_u32(s,vm->rng_state);
   sw_u32(s,vm->rng_classic_state);
-  { int flags[GML_D3_STATE_FLAG_COUNT]; double values[GML_D3_STATE_VALUE_COUNT]; uint32_t colors[8];
+  { int flags[GML_D3_STATE_FLAG_COUNT]; double values[GML_D3_STATE_VALUE_COUNT];
+    uint32_t colors[GML_D3_STATE_COLOR_COUNT];
     gml_d3_state_get(flags,values,colors);
     for(int i=0;i<GML_D3_STATE_FLAG_COUNT;i++) sw_i32(s,flags[i]);
     for(int i=0;i<GML_D3_STATE_VALUE_COUNT;i++) sw_d(s,values[i]);
-    for(int i=0;i<8;i++) sw_u32(s,colors[i]);
+    for(int i=0;i<GML_D3_STATE_COLOR_COUNT;i++) sw_u32(s,colors[i]);
   }
   sw_i32(s,vm->room_state_count);
   if(vm->room_state_count>0) sw_raw(s,vm->room_stored,(size_t)vm->room_state_count);
@@ -6036,7 +6037,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       && magic!=0x39564D47u && magic!=0x3A564D47u && magic!=0x3B564D47u && magic!=0x3C564D47u
       && magic!=0x3D564D47u && magic!=0x3E564D47u && magic!=0x3F564D47u
       && magic!=0x40564D47u && magic!=0x41564D47u && magic!=0x42564D47u
-      && magic!=0x43564D47u && magic!=0x44564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x43564D47u && magic!=0x44564D47u && magic!=0x45564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -6054,6 +6055,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v18 = magic>=0x42564D47u;
   s.v19 = magic>=0x43564D47u;
   s.v20 = magic>=0x44564D47u;
+  s.v21 = magic>=0x45564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -6077,12 +6079,17 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   vm->rng_index=sr_i32(&s); vm->rng_state=sr_u32(&s);
   vm->rng_classic_state=s.v19?sr_u32(&s):vm->rng_state;
   if(s.v19){ int flags[GML_D3_STATE_FLAG_COUNT]={0};
-    double values[GML_D3_STATE_VALUE_COUNT]={0}; uint32_t colors[8];
-    int flag_count=s.v20?GML_D3_STATE_FLAG_COUNT:19;
-    int value_count=s.v20?GML_D3_STATE_VALUE_COUNT:44;
+    double values[GML_D3_STATE_VALUE_COUNT]={0};
+    uint32_t colors[GML_D3_STATE_COLOR_COUNT]={0};
+    flags[21]=1; flags[22]=1; flags[24]=1;
+    values[49]=41.2; values[51]=.05; values[52]=32000;
+    values[56]=values[61]=values[66]=values[71]=1;
+    int flag_count=s.v21?GML_D3_STATE_FLAG_COUNT:(s.v20?21:19);
+    int value_count=s.v21?GML_D3_STATE_VALUE_COUNT:(s.v20?49:44);
+    int color_count=s.v21?GML_D3_STATE_COLOR_COUNT:8;
     for(int i=0;i<flag_count;i++) flags[i]=sr_i32(&s);
     for(int i=0;i<value_count;i++) values[i]=sr_d(&s);
-    for(int i=0;i<8;i++) colors[i]=sr_u32(&s);
+    for(int i=0;i<color_count;i++) colors[i]=sr_u32(&s);
     if(s.ok) gml_d3_state_set(flags,values,colors);
   } else gml_d3_reset();
   if(s.v19){
