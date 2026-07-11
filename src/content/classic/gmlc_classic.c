@@ -169,6 +169,87 @@ static int validate_font_payload(ClassicReader *r){
          require_payload_end(r, "font resource");
 }
 
+static int validate_actions(ClassicReader *r){
+  uint32_t version, count;
+  if(!reader_u32(r, &version, "action-list version") ||
+     !reader_u32(r, &count, "action count")) return 0;
+  if(version < 400){
+    if(r->err && r->errcap) snprintf(r->err, r->errcap, "classic project: unsupported action-list version %u", version);
+    return 0;
+  }
+  if(count > (r->size - r->pos) / 4) return reader_fail(r, "actions");
+  for(uint32_t i = 0; i < count; ++i){
+    uint32_t action_version, kinds, arguments;
+    if(!reader_u32(r, &action_version, "action version") ||
+       !reader_words(r, 7, "action identity and flags") ||
+       !reader_string(r, "action function") || !reader_string(r, "action code") ||
+       !reader_words(r, 1, "action used-argument count") ||
+       !reader_u32(r, &kinds, "action argument-kind count") ||
+       !reader_words(r, kinds, "action argument kinds") ||
+       !reader_words(r, 2, "action target and relative flag") ||
+       !reader_u32(r, &arguments, "action argument count")) return 0;
+    if(action_version < 440){
+      if(r->err && r->errcap) snprintf(r->err, r->errcap, "classic project: unsupported action version %u", action_version);
+      return 0;
+    }
+    if(arguments > (r->size - r->pos) / 4) return reader_fail(r, "action arguments");
+    for(uint32_t arg = 0; arg < arguments; ++arg)
+      if(!reader_string(r, "action argument")) return 0;
+    if(!reader_words(r, 1, "action negation flag")) return 0;
+  }
+  return 1;
+}
+
+static int validate_timeline_payload(ClassicReader *r){
+  uint32_t moments;
+  if(!reader_u32(r, &moments, "timeline moment count")) return 0;
+  if(moments > (r->size - r->pos) / 4) return reader_fail(r, "timeline moments");
+  for(uint32_t i = 0; i < moments; ++i)
+    if(!reader_words(r, 1, "timeline moment") || !validate_actions(r)) return 0;
+  return require_payload_end(r, "timeline resource");
+}
+
+static int validate_object_payload(ClassicReader *r){
+  uint32_t last_event_type;
+  if(!reader_words(r, 7, "object fields") ||
+     !reader_u32(r, &last_event_type, "object event-type count")) return 0;
+  if(last_event_type > 64){
+    if(r->err && r->errcap) snprintf(r->err, r->errcap, "classic project: unreasonable object event-type value %u", last_event_type);
+    return 0;
+  }
+  for(uint32_t type = 0; type <= last_event_type; ++type){
+    for(;;){
+      uint32_t event_number;
+      if(!reader_u32(r, &event_number, "object event number")) return 0;
+      if(event_number == UINT32_MAX) break;
+      if(!validate_actions(r)) return 0;
+    }
+  }
+  return require_payload_end(r, "object resource");
+}
+
+static int validate_room_payload(ClassicReader *r){
+  uint32_t backgrounds, views, instances, tiles;
+  if(!reader_string(r, "room caption") || !reader_words(r, 9, "room fields") ||
+     !reader_string(r, "room creation code") ||
+     !reader_u32(r, &backgrounds, "room background count") ||
+     !reader_words(r, backgrounds > UINT32_MAX / 10 ? UINT32_MAX : backgrounds * 10,
+                   "room backgrounds") ||
+     !reader_words(r, 1, "room view-enabled flag") ||
+     !reader_u32(r, &views, "room view count") ||
+     !reader_words(r, views > UINT32_MAX / 14 ? UINT32_MAX : views * 14, "room views") ||
+     !reader_u32(r, &instances, "room instance count")) return 0;
+  if(instances > (r->size - r->pos) / 24) return reader_fail(r, "room instances");
+  for(uint32_t i = 0; i < instances; ++i)
+    if(!reader_words(r, 4, "room instance fields") ||
+       !reader_string(r, "room instance creation code") ||
+       !reader_words(r, 1, "room instance locked flag")) return 0;
+  if(!reader_u32(r, &tiles, "room tile count")) return 0;
+  if(!reader_words(r, tiles > UINT32_MAX / 10 ? UINT32_MAX : tiles * 10, "room tiles") ||
+     !reader_words(r, 14, "room editor fields")) return 0;
+  return require_payload_end(r, "room resource");
+}
+
 static int read_file(const char *path, uint8_t **data, size_t *size,
                      char *err, size_t errcap){
   *data = NULL;
@@ -366,6 +447,9 @@ static int parse_manifest_slot(GmlcClassicResourceType type,
       case GMLC_CLASSIC_PATH: valid = validate_path_payload(&r); break;
       case GMLC_CLASSIC_SCRIPT: valid = require_payload_end(&r, "script resource"); break;
       case GMLC_CLASSIC_FONT: valid = validate_font_payload(&r); break;
+      case GMLC_CLASSIC_TIMELINE: valid = validate_timeline_payload(&r); break;
+      case GMLC_CLASSIC_OBJECT: valid = validate_object_payload(&r); break;
+      case GMLC_CLASSIC_ROOM: valid = validate_room_payload(&r); break;
       default: break;
     }
   } else {
