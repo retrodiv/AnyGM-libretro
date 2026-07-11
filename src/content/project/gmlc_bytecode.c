@@ -1282,7 +1282,8 @@ postfix_calls:
 }
 
 static int parse_unary(Compiler *c){
-  if(eat(c,"!")){
+  if(tok_is(c,"!") || is_id(c,"not")){
+    lx_next(&c->lex);
     if(!parse_unary(c) || !emit_conv(c,DT_VAR,DT_BOOL)) return 0;
     if(!emit_u32(&c->code,fw(OP_NOT,DT_BOOL,0))) return 0;
     expr_not_const(c);
