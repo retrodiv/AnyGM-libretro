@@ -5388,11 +5388,12 @@ void gml_vm_free(GmlVM *vm){
   free(vm->rtl); free(vm->rte); free(vm->view_ovr); free(vm->tilemaps);
   free(vm->room_stored); vm->room_stored=NULL; vm->room_state_count=0;
   free(vm->audio_room_warm_scan); vm->audio_room_warm_scan=NULL; vm->audio_room_warm_scan_n=0;
+  gml_d3_reset();
 }
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -5878,7 +5879,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x45564D47u); /* GMV21: GMV20 plus complete software-D3 world/render state */
+  sw_u32(s,0x46564D47u); /* GMV22: GMV21 plus dynamic software-D3 models */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -5898,6 +5899,17 @@ static void sw_vm(StateW *s, GmlVM *vm){
     for(int i=0;i<GML_D3_STATE_FLAG_COUNT;i++) sw_i32(s,flags[i]);
     for(int i=0;i<GML_D3_STATE_VALUE_COUNT;i++) sw_d(s,values[i]);
     for(int i=0;i<GML_D3_STATE_COLOR_COUNT;i++) sw_u32(s,colors[i]);
+  }
+  {
+    size_t model_size=gml_d3_models_state_size();
+    if(model_size>UINT32_MAX){ s->ok=0; model_size=0; }
+    sw_u32(s,(uint32_t)model_size);
+    if(s->data){
+      if(s->pos<=s->cap && model_size<=s->cap-s->pos){
+        if(!gml_d3_models_state_save(s->data+s->pos,model_size)) s->ok=0;
+      } else s->ok=0;
+    }
+    s->pos+=model_size;
   }
   sw_i32(s,vm->room_state_count);
   if(vm->room_state_count>0) sw_raw(s,vm->room_stored,(size_t)vm->room_state_count);
@@ -6037,7 +6049,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       && magic!=0x39564D47u && magic!=0x3A564D47u && magic!=0x3B564D47u && magic!=0x3C564D47u
       && magic!=0x3D564D47u && magic!=0x3E564D47u && magic!=0x3F564D47u
       && magic!=0x40564D47u && magic!=0x41564D47u && magic!=0x42564D47u
-      && magic!=0x43564D47u && magic!=0x44564D47u && magic!=0x45564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x43564D47u && magic!=0x44564D47u && magic!=0x45564D47u
+      && magic!=0x46564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -6056,6 +6069,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v19 = magic>=0x43564D47u;
   s.v20 = magic>=0x44564D47u;
   s.v21 = magic>=0x45564D47u;
+  s.v22 = magic>=0x46564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -6092,6 +6106,13 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     for(int i=0;i<color_count;i++) colors[i]=sr_u32(&s);
     if(s.ok) gml_d3_state_set(flags,values,colors);
   } else gml_d3_reset();
+  if(s.v22){
+    uint32_t model_size=sr_u32(&s);
+    if(s.ok && s.pos<=s.cap && model_size<=s.cap-s.pos){
+      if(!gml_d3_models_state_load(s.data+s.pos,model_size)) s.ok=0;
+      s.pos+=model_size;
+    } else s.ok=0;
+  }
   if(s.v19){
     int count=sr_i32(&s);
     if(count<0 || count>100000){ s.ok=0; count=0; }

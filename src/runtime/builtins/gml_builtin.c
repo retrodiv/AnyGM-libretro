@@ -2142,6 +2142,32 @@ static GmlD3State g_d3={.shade_r=1,.shade_g=1,.shade_b=1,.depth_frame=-1};
 static GmlD3Vertex g_d3_prim[GML_D3_PRIM_MAX];
 static int g_d3_prim_kind, g_d3_prim_texture=-1, g_d3_prim_n;
 
+#define GML_D3_MODEL_MAX 256
+#define GML_D3_MODEL_VERTEX_MAX 1048576
+typedef struct { int kind,first,count; } GmlD3Batch;
+typedef struct {
+  int used,building;
+  GmlD3Vertex *vertex;
+  int vertex_n,vertex_cap;
+  GmlD3Batch *batch;
+  int batch_n,batch_cap;
+} GmlD3Model;
+static GmlD3Model g_d3_model[GML_D3_MODEL_MAX];
+
+static void d3_model_clear_data(GmlD3Model *model){
+  if(!model) return;
+  free(model->vertex); free(model->batch);
+  model->vertex=NULL; model->batch=NULL;
+  model->vertex_n=model->vertex_cap=model->batch_n=model->batch_cap=0;
+  model->building=-1;
+}
+static void d3_models_clear_all(void){
+  for(int i=0;i<GML_D3_MODEL_MAX;i++){
+    d3_model_clear_data(&g_d3_model[i]);
+    g_d3_model[i].used=0;
+  }
+}
+
 static void d3_matrix_identity(double matrix[16]){
   memset(matrix,0,16*sizeof(*matrix));
   matrix[0]=matrix[5]=matrix[10]=matrix[15]=1;
@@ -2156,6 +2182,7 @@ void gml_d3_reset(void){
   g_d3.fov=41.2; g_d3.near_clip=.05; g_d3.far_clip=32000;
   d3_matrix_identity(g_d3.transform);
   g_d3_prim_n=0; g_d3_prim_kind=0; g_d3_prim_texture=-1;
+  d3_models_clear_all();
 }
 void gml_d3_state_get(int flags[GML_D3_STATE_FLAG_COUNT],
                       double values[GML_D3_STATE_VALUE_COUNT],
@@ -2739,6 +2766,337 @@ static void d3_primitive_flush(GmlRender *R){
       d3_emit_triangle(R,triangle,texture,atlas);
     }
   }
+}
+static int d3_model_grow_vertices(GmlD3Model *model,int needed){
+  if(!model || needed<0 || needed>GML_D3_MODEL_VERTEX_MAX) return 0;
+  if(needed<=model->vertex_cap) return 1;
+  int capacity=model->vertex_cap?model->vertex_cap:64;
+  while(capacity<needed){
+    if(capacity>GML_D3_MODEL_VERTEX_MAX/2){ capacity=GML_D3_MODEL_VERTEX_MAX; break; }
+    capacity*=2;
+  }
+  GmlD3Vertex *grown=realloc(model->vertex,(size_t)capacity*sizeof(*grown));
+  if(!grown) return 0;
+  model->vertex=grown; model->vertex_cap=capacity;
+  return 1;
+}
+static int d3_model_grow_batches(GmlD3Model *model,int needed){
+  if(!model || needed<0 || needed>GML_D3_MODEL_VERTEX_MAX) return 0;
+  if(needed<=model->batch_cap) return 1;
+  int capacity=model->batch_cap?model->batch_cap:16;
+  while(capacity<needed){
+    if(capacity>GML_D3_MODEL_VERTEX_MAX/2){ capacity=GML_D3_MODEL_VERTEX_MAX; break; }
+    capacity*=2;
+  }
+  GmlD3Batch *grown=realloc(model->batch,(size_t)capacity*sizeof(*grown));
+  if(!grown) return 0;
+  model->batch=grown; model->batch_cap=capacity;
+  return 1;
+}
+static int d3_model_begin_batch(GmlD3Model *model,int kind){
+  if(!model || !model->used || kind<1 || kind>6 ||
+     !d3_model_grow_batches(model,model->batch_n+1)) return 0;
+  model->building=model->batch_n;
+  model->batch[model->batch_n++]=(GmlD3Batch){kind,model->vertex_n,0};
+  return 1;
+}
+static int d3_model_append_vertex(GmlD3Model *model,GmlD3Vertex vertex){
+  if(!model || !model->used || model->building<0 || model->building>=model->batch_n ||
+     !d3_model_grow_vertices(model,model->vertex_n+1)) return 0;
+  model->vertex[model->vertex_n++]=vertex;
+  model->batch[model->building].count++;
+  return 1;
+}
+static int d3_model_append_quad(GmlD3Model *model,const double point[4][3],double hrepeat,double vrepeat){
+  double edge_a[3]={point[1][0]-point[0][0],point[1][1]-point[0][1],point[1][2]-point[0][2]};
+  double edge_b[3]={point[2][0]-point[0][0],point[2][1]-point[0][1],point[2][2]-point[0][2]};
+  double normal[3]; d3_cross(edge_a,edge_b,normal); int has_normal=d3_normalize(normal);
+  static const int corner[6]={0,1,2,0,2,3};
+  static const double uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
+  for(int i=0;i<6;i++){
+    int c=corner[i]; GmlD3Vertex vertex={0};
+    vertex.x=point[c][0]; vertex.y=point[c][1]; vertex.z=point[c][2];
+    vertex.u=uv[c][0]*hrepeat; vertex.v=uv[c][1]*vrepeat;
+    vertex.r=vertex.g=vertex.b=255; vertex.alpha=1;
+    vertex.nx=normal[0]; vertex.ny=normal[1]; vertex.nz=normal[2]; vertex.has_normal=has_normal;
+    if(!d3_model_append_vertex(model,vertex)) return 0;
+  }
+  return 1;
+}
+static int d3_model_add_shape(GmlD3Model *model,int shape,double x1,double y1,double z1,
+                              double x2,double y2,double z2,double hrepeat,double vrepeat,
+                              int closed,int requested_steps){
+  if(!d3_model_begin_batch(model,4)) return 0;
+  int ok=1;
+  if(shape==14 || shape==15){
+    double point[4][3];
+    if(shape==15){
+      double vertices[4][3]={{x1,y1,z1},{x2,y1,z1},{x2,y2,z2},{x1,y2,z2}};
+      memcpy(point,vertices,sizeof(point));
+    } else {
+      double vertices[4][3]={{x1,y1,z1},{x2,y2,z1},{x2,y2,z2},{x1,y1,z2}};
+      memcpy(point,vertices,sizeof(point));
+    }
+    ok=d3_model_append_quad(model,point,hrepeat,vrepeat);
+  } else if(shape==10){
+    double face[6][4][3]={
+      {{x1,y1,z1},{x2,y1,z1},{x2,y2,z1},{x1,y2,z1}},
+      {{x1,y2,z2},{x2,y2,z2},{x2,y1,z2},{x1,y1,z2}},
+      {{x1,y1,z2},{x2,y1,z2},{x2,y1,z1},{x1,y1,z1}},
+      {{x1,y2,z1},{x2,y2,z1},{x2,y2,z2},{x1,y2,z2}},
+      {{x1,y1,z1},{x1,y2,z1},{x1,y2,z2},{x1,y1,z2}},
+      {{x2,y1,z2},{x2,y2,z2},{x2,y2,z1},{x2,y1,z1}}};
+    for(int i=0;i<6&&ok;i++) ok=d3_model_append_quad(model,face[i],hrepeat,vrepeat);
+  } else if(shape==11 || shape==12){
+    double cx=(x1+x2)*.5,cy=(y1+y2)*.5,rx=fabs(x2-x1)*.5,ry=fabs(y2-y1)*.5;
+    int steps=requested_steps; if(steps<3) steps=3; if(steps>128) steps=128;
+    int cone=shape==12;
+    for(int i=0;i<steps&&ok;i++){
+      double q0=2*M_PI*i/steps,q1=2*M_PI*(i+1)/steps;
+      double top0x=cone?cx:cx+cos(q0)*rx,top0y=cone?cy:cy+sin(q0)*ry;
+      double top1x=cone?cx:cx+cos(q1)*rx,top1y=cone?cy:cy+sin(q1)*ry;
+      double side[4][3]={{cx+cos(q0)*rx,cy+sin(q0)*ry,z1},{cx+cos(q1)*rx,cy+sin(q1)*ry,z1},
+                         {top1x,top1y,z2},{top0x,top0y,z2}};
+      ok=d3_model_append_quad(model,side,hrepeat/steps,vrepeat);
+      if(closed&&ok){
+        double cap0[4][3]={{cx,cy,z1},{cx+cos(q1)*rx,cy+sin(q1)*ry,z1},
+                            {cx+cos(q0)*rx,cy+sin(q0)*ry,z1},{cx,cy,z1}};
+        ok=d3_model_append_quad(model,cap0,hrepeat,vrepeat);
+        if(!cone&&ok){
+          double cap1[4][3]={{cx,cy,z2},{cx+cos(q0)*rx,cy+sin(q0)*ry,z2},
+                              {cx+cos(q1)*rx,cy+sin(q1)*ry,z2},{cx,cy,z2}};
+          ok=d3_model_append_quad(model,cap1,hrepeat,vrepeat);
+        }
+      }
+    }
+  } else if(shape==13){
+    double cx=(x1+x2)*.5,cy=(y1+y2)*.5,cz=(z1+z2)*.5;
+    double rx=fabs(x2-x1)*.5,ry=fabs(y2-y1)*.5,rz=fabs(z2-z1)*.5;
+    int steps=requested_steps; if(steps<4) steps=4; if(steps>64) steps=64;
+    for(int lat=0;lat<steps&&ok;lat++) for(int lon=0;lon<steps*2&&ok;lon++){
+      double latitude0=-M_PI*.5+M_PI*lat/steps,latitude1=-M_PI*.5+M_PI*(lat+1)/steps;
+      double longitude0=M_PI*lon/steps,longitude1=M_PI*(lon+1)/steps;
+      double point[4][3]={{cx+rx*cos(latitude0)*cos(longitude0),cy+ry*cos(latitude0)*sin(longitude0),cz+rz*sin(latitude0)},
+                          {cx+rx*cos(latitude0)*cos(longitude1),cy+ry*cos(latitude0)*sin(longitude1),cz+rz*sin(latitude0)},
+                          {cx+rx*cos(latitude1)*cos(longitude1),cy+ry*cos(latitude1)*sin(longitude1),cz+rz*sin(latitude1)},
+                          {cx+rx*cos(latitude1)*cos(longitude0),cy+ry*cos(latitude1)*sin(longitude0),cz+rz*sin(latitude1)}};
+      ok=d3_model_append_quad(model,point,hrepeat/steps,vrepeat/steps);
+    }
+  } else ok=0;
+  model->building=-1;
+  if(!ok){
+    GmlD3Batch *batch=&model->batch[model->batch_n-1];
+    model->vertex_n=batch->first; model->batch_n--;
+  }
+  return ok;
+}
+static void d3_model_draw(GmlRender *R,const GmlD3Model *model,double x,double y,double z,int texture_handle){
+  if(!R || !model || !model->used) return;
+  GmlTpag *texture=NULL; GmlAtlas *atlas=NULL;
+  if(texture_handle!=-1) d3_texture(R,texture_handle,&texture,&atlas);
+  g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
+  gml_render_maybe_prepare_draw(R);
+  if(!d3_depth_prepare(R)) return;
+  for(int b=0;b<model->batch_n;b++){
+    const GmlD3Batch *batch=&model->batch[b];
+    if(batch->first<0 || batch->count<0 || batch->first+batch->count>model->vertex_n) continue;
+#define D3_MODEL_VERTEX(index) ({ GmlD3Vertex _v=model->vertex[batch->first+(index)]; _v.x+=x; _v.y+=y; _v.z+=z; _v; })
+    if(batch->kind==1){
+      for(int i=0;i<batch->count;i++) d3_emit_point(R,D3_MODEL_VERTEX(i),texture,atlas);
+    } else if(batch->kind==2){
+      for(int i=0;i+1<batch->count;i+=2) d3_emit_line(R,D3_MODEL_VERTEX(i),D3_MODEL_VERTEX(i+1),texture,atlas);
+    } else if(batch->kind==3){
+      for(int i=0;i+1<batch->count;i++) d3_emit_line(R,D3_MODEL_VERTEX(i),D3_MODEL_VERTEX(i+1),texture,atlas);
+    } else if(batch->kind==4){
+      for(int i=0;i+2<batch->count;i+=3){
+        GmlD3Vertex triangle[3]={D3_MODEL_VERTEX(i),D3_MODEL_VERTEX(i+1),D3_MODEL_VERTEX(i+2)};
+        d3_emit_triangle(R,triangle,texture,atlas);
+      }
+    } else if(batch->kind==5){
+      for(int i=2;i<batch->count;i++){
+        GmlD3Vertex triangle[3];
+        if(i&1){ triangle[0]=D3_MODEL_VERTEX(i-1); triangle[1]=D3_MODEL_VERTEX(i-2); }
+        else { triangle[0]=D3_MODEL_VERTEX(i-2); triangle[1]=D3_MODEL_VERTEX(i-1); }
+        triangle[2]=D3_MODEL_VERTEX(i); d3_emit_triangle(R,triangle,texture,atlas);
+      }
+    } else if(batch->kind==6){
+      for(int i=1;i+1<batch->count;i++){
+        GmlD3Vertex triangle[3]={D3_MODEL_VERTEX(0),D3_MODEL_VERTEX(i),D3_MODEL_VERTEX(i+1)};
+        d3_emit_triangle(R,triangle,texture,atlas);
+      }
+    }
+#undef D3_MODEL_VERTEX
+  }
+}
+
+typedef struct { unsigned char *data; size_t cap,pos; int ok; } D3BlobW;
+typedef struct { const unsigned char *data; size_t cap,pos; int ok; } D3BlobR;
+static void d3_blob_write(D3BlobW *writer,const void *data,size_t size){
+  if(writer->data){
+    if(writer->pos<=writer->cap && size<=writer->cap-writer->pos) memcpy(writer->data+writer->pos,data,size);
+    else writer->ok=0;
+  }
+  if(size>SIZE_MAX-writer->pos){ writer->ok=0; return; }
+  writer->pos+=size;
+}
+static void d3_blob_read(D3BlobR *reader,void *data,size_t size){
+  if(reader->pos<=reader->cap && size<=reader->cap-reader->pos) memcpy(data,reader->data+reader->pos,size);
+  else { memset(data,0,size); reader->ok=0; }
+  if(size>SIZE_MAX-reader->pos){ reader->ok=0; return; }
+  reader->pos+=size;
+}
+static void d3_blob_u32(D3BlobW *writer,uint32_t value){ d3_blob_write(writer,&value,sizeof(value)); }
+static uint32_t d3_blob_read_u32(D3BlobR *reader){ uint32_t value=0; d3_blob_read(reader,&value,sizeof(value)); return value; }
+static void d3_blob_write_model(D3BlobW *writer,const GmlD3Model *model){
+  d3_blob_u32(writer,(uint32_t)model->vertex_n); d3_blob_u32(writer,(uint32_t)model->batch_n);
+  for(int i=0;i<model->vertex_n;i++){
+    const GmlD3Vertex *vertex=&model->vertex[i];
+    const double values[12]={vertex->x,vertex->y,vertex->z,vertex->u,vertex->v,
+      vertex->r,vertex->g,vertex->b,vertex->alpha,vertex->nx,vertex->ny,vertex->nz};
+    d3_blob_write(writer,values,sizeof(values)); d3_blob_u32(writer,(uint32_t)vertex->has_normal);
+  }
+  for(int i=0;i<model->batch_n;i++){
+    d3_blob_u32(writer,(uint32_t)model->batch[i].kind);
+    d3_blob_u32(writer,(uint32_t)model->batch[i].first);
+    d3_blob_u32(writer,(uint32_t)model->batch[i].count);
+  }
+}
+static int d3_blob_read_model(D3BlobR *reader,GmlD3Model *model){
+  uint32_t vertex_n=d3_blob_read_u32(reader),batch_n=d3_blob_read_u32(reader);
+  if(!reader->ok || vertex_n>GML_D3_MODEL_VERTEX_MAX || batch_n>GML_D3_MODEL_VERTEX_MAX ||
+     !d3_model_grow_vertices(model,(int)vertex_n) || !d3_model_grow_batches(model,(int)batch_n)) return 0;
+  model->vertex_n=(int)vertex_n; model->batch_n=(int)batch_n; model->building=-1;
+  for(int i=0;i<model->vertex_n;i++){
+    double values[12]; d3_blob_read(reader,values,sizeof(values));
+    GmlD3Vertex *vertex=&model->vertex[i];
+    vertex->x=values[0]; vertex->y=values[1]; vertex->z=values[2];
+    vertex->u=values[3]; vertex->v=values[4]; vertex->r=values[5]; vertex->g=values[6];
+    vertex->b=values[7]; vertex->alpha=values[8]; vertex->nx=values[9]; vertex->ny=values[10]; vertex->nz=values[11];
+    vertex->has_normal=(int)d3_blob_read_u32(reader);
+  }
+  for(int i=0;i<model->batch_n;i++){
+    GmlD3Batch *batch=&model->batch[i];
+    batch->kind=(int)d3_blob_read_u32(reader); batch->first=(int)d3_blob_read_u32(reader);
+    batch->count=(int)d3_blob_read_u32(reader);
+    if(batch->kind<1 || batch->kind>6 || batch->first<0 || batch->count<0 ||
+       batch->first>model->vertex_n-batch->count) reader->ok=0;
+  }
+  return reader->ok;
+}
+size_t gml_d3_models_state_size(void){
+  D3BlobW writer={.ok=1};
+  d3_blob_u32(&writer,0x31534D44u);
+  int count=0; for(int i=0;i<GML_D3_MODEL_MAX;i++) if(g_d3_model[i].used) count++;
+  d3_blob_u32(&writer,(uint32_t)count);
+  for(int i=0;i<GML_D3_MODEL_MAX;i++) if(g_d3_model[i].used){
+    d3_blob_u32(&writer,(uint32_t)i); d3_blob_write_model(&writer,&g_d3_model[i]);
+  }
+  return writer.ok?writer.pos:0;
+}
+int gml_d3_models_state_save(void *data,size_t capacity){
+  D3BlobW writer={.data=data,.cap=capacity,.ok=1};
+  d3_blob_u32(&writer,0x31534D44u);
+  int count=0; for(int i=0;i<GML_D3_MODEL_MAX;i++) if(g_d3_model[i].used) count++;
+  d3_blob_u32(&writer,(uint32_t)count);
+  for(int i=0;i<GML_D3_MODEL_MAX;i++) if(g_d3_model[i].used){
+    d3_blob_u32(&writer,(uint32_t)i); d3_blob_write_model(&writer,&g_d3_model[i]);
+  }
+  return writer.ok&&writer.pos==capacity;
+}
+int gml_d3_models_state_load(const void *data,size_t size){
+  d3_models_clear_all();
+  if(!data || size<8) return size==0;
+  D3BlobR reader={.data=data,.cap=size,.ok=1};
+  uint32_t magic=d3_blob_read_u32(&reader),count=d3_blob_read_u32(&reader);
+  if(magic!=0x31534D44u || count>GML_D3_MODEL_MAX) reader.ok=0;
+  for(uint32_t i=0;i<count&&reader.ok;i++){
+    uint32_t id=d3_blob_read_u32(&reader);
+    if(id>=GML_D3_MODEL_MAX || g_d3_model[id].used){ reader.ok=0; break; }
+    g_d3_model[id].used=1; g_d3_model[id].building=-1;
+    if(!d3_blob_read_model(&reader,&g_d3_model[id])) break;
+  }
+  if(!reader.ok || reader.pos!=size){ d3_models_clear_all(); return 0; }
+  return 1;
+}
+static int d3_model_file_save(const char *path,const GmlD3Model *model){
+  if(!path || !model || !model->used) return 0;
+  FILE *file=fopen(path,"w"); if(!file) return 0;
+  size_t records=(size_t)model->vertex_n+(size_t)model->batch_n*2;
+  int ok=fprintf(file,"100\n%zu\n",records)>0;
+  for(int b=0;b<model->batch_n&&ok;b++){
+    const GmlD3Batch *batch=&model->batch[b];
+    ok=fprintf(file,"0 %d\n",batch->kind)>0;
+    for(int i=0;i<batch->count&&ok;i++){
+      const GmlD3Vertex *vertex=&model->vertex[batch->first+i];
+      int red=(int)lround(vertex->r),green=(int)lround(vertex->g),blue=(int)lround(vertex->b);
+      if(red<0) red=0; else if(red>255) red=255;
+      if(green<0) green=0; else if(green>255) green=255;
+      if(blue<0) blue=0; else if(blue>255) blue=255;
+      uint32_t color=(uint32_t)red|((uint32_t)green<<8)|((uint32_t)blue<<16);
+      ok=fprintf(file,"9 %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %u %.17g\n",
+        vertex->x,vertex->y,vertex->z,vertex->nx,vertex->ny,vertex->nz,
+        vertex->u,vertex->v,color,vertex->alpha)>0;
+    }
+    if(ok) ok=fprintf(file,"1\n")>0;
+  }
+  if(fclose(file)!=0) ok=0;
+  return ok;
+}
+static int d3_model_file_load(const char *path,GmlD3Model *model){
+  if(!path || !model || !model->used) return 0;
+  d3_model_clear_data(model);
+  FILE *file=fopen(path,"r"); if(!file) return 0;
+  unsigned header=0,record_count=0;
+  int ok=fscanf(file,"%u",&header)==1 && header==100 && fscanf(file,"%u",&record_count)==1 &&
+         record_count<=GML_D3_MODEL_VERTEX_MAX*2u;
+  char line[2048]; if(ok) (void)fgets(line,sizeof(line),file);
+  for(unsigned record=0;record<record_count&&ok;record++){
+    if(!fgets(line,sizeof(line),file)){ ok=0; break; }
+    char *cursor=line,*end=NULL; double token[16]; int token_n=0;
+    while(token_n<16){
+      while(*cursor==' '||*cursor=='\t'||*cursor=='\r'||*cursor=='\n') cursor++;
+      if(!*cursor) break;
+      token[token_n]=strtod(cursor,&end); if(end==cursor){ ok=0; break; }
+      token_n++; cursor=end;
+    }
+    if(!ok || token_n<1) { ok=0; break; }
+    int opcode=(int)token[0];
+    if(opcode==0){ ok=token_n>=2&&d3_model_begin_batch(model,(int)token[1]); continue; }
+    if(opcode==1){ model->building=-1; continue; }
+    if(opcode>=2&&opcode<=9){
+      GmlD3Vertex vertex={0}; vertex.r=vertex.g=vertex.b=255; vertex.alpha=1;
+      if(token_n<4){ ok=0; break; }
+      vertex.x=token[1]; vertex.y=token[2]; vertex.z=token[3]; int index=4;
+      int normal=opcode>=6,texture=opcode==4||opcode==5||opcode==8||opcode==9;
+      int colored=opcode==3||opcode==5||opcode==7||opcode==9;
+      if(normal){ if(token_n<index+3){ ok=0; break; }
+        vertex.nx=token[index++]; vertex.ny=token[index++]; vertex.nz=token[index++]; vertex.has_normal=1; }
+      if(texture){ if(token_n<index+2){ ok=0; break; } vertex.u=token[index++]; vertex.v=token[index++]; }
+      if(colored){ if(token_n<index+2){ ok=0; break; } uint32_t color=(uint32_t)token[index++];
+        vertex.r=color&255; vertex.g=(color>>8)&255; vertex.b=(color>>16)&255; vertex.alpha=token[index++]; }
+      ok=d3_model_append_vertex(model,vertex); continue;
+    }
+    if(opcode>=10&&opcode<=15){
+      if(token_n<9){ ok=0; break; }
+      double vrepeat=token[8];
+      int closed=1,steps=16;
+      if(opcode==11||opcode==12){
+        int base=9;
+        if(token_n>=12){ vrepeat=token[9]; base=10; }
+        if(token_n<=base+1){ ok=0; break; }
+        closed=(int)token[base]; steps=(int)token[base+1];
+      } else if(opcode==13){
+        int at=9; if(token_n>=11){ vrepeat=token[9]; at=10; }
+        if(token_n<=at){ ok=0; break; } steps=(int)token[at];
+      } else if(token_n>=10) vrepeat=token[9];
+      ok=d3_model_add_shape(model,opcode,token[1],token[2],token[3],token[4],token[5],token[6],token[7],vrepeat,closed,steps);
+      continue;
+    }
+    ok=0;
+  }
+  if(fclose(file)!=0) ok=0;
+  if(!ok) d3_model_clear_data(model);
+  return ok;
 }
 static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, uint32_t gmcol, int outline, double alpha){
   if(!R) return;
@@ -7161,7 +7519,6 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
      !strcmp(nm,"network_connect")) return vreal(-1);
   if(!strcmp(nm,"network_send_packet")||!strcmp(nm,"network_destroy")) return vreal(0);
   if(!strcmp(nm,"external_define")||!strcmp(nm,"external_call")) return vreal(0);
-  if(!strcmp(nm,"d3d_model_load")||!strcmp(nm,"d3d_model_save")) return vreal(0);
   if(!strcmp(nm,"keyboard_virtual_show")||!strcmp(nm,"keyboard_virtual_hide")) return vreal(0);
   if(!strcmp(nm,"virtual_key_add")) return vreal(0);
   if(!strcmp(nm,"virtual_key_delete")) return vreal(0);
@@ -7676,6 +8033,128 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"d3d_transform_stack_discard")){
     if(g_d3.transform_stack_n<=0) return vreal(0);
     g_d3.transform_stack_n--; return vreal(1);
+  }
+  if(!strcmp(nm,"d3d_model_create")){
+    for(int id=0;id<GML_D3_MODEL_MAX;id++) if(!g_d3_model[id].used){
+      d3_model_clear_data(&g_d3_model[id]); g_d3_model[id].used=1; g_d3_model[id].building=-1;
+      return vreal(id);
+    }
+    return vreal(-1);
+  }
+  if(!strcmp(nm,"d3d_model_destroy")){
+    int id=(int)N(a,n,0); if(id<0 || id>=GML_D3_MODEL_MAX || !g_d3_model[id].used) return vreal(0);
+    d3_model_clear_data(&g_d3_model[id]); g_d3_model[id].used=0; return vreal(1);
+  }
+  if(!strcmp(nm,"d3d_model_clear")){
+    int id=(int)N(a,n,0); if(id<0 || id>=GML_D3_MODEL_MAX || !g_d3_model[id].used) return vreal(0);
+    d3_model_clear_data(&g_d3_model[id]); return vreal(1);
+  }
+  if(!strcmp(nm,"d3d_model_primitive_begin")){
+    int id=(int)N(a,n,0),kind=(int)N(a,n,1);
+    return vreal(id>=0&&id<GML_D3_MODEL_MAX&&d3_model_begin_batch(&g_d3_model[id],kind));
+  }
+  if(!strcmp(nm,"d3d_model_primitive_end")){
+    int id=(int)N(a,n,0); if(id<0 || id>=GML_D3_MODEL_MAX || !g_d3_model[id].used) return vreal(0);
+    g_d3_model[id].building=-1; return vreal(1);
+  }
+  if(!strncmp(nm,"d3d_model_vertex",16)){
+    int id=(int)N(a,n,0); if(id<0 || id>=GML_D3_MODEL_MAX || !g_d3_model[id].used) return vreal(0);
+    GmlRender *R=(GmlRender*)vm->render;
+    GmlD3Vertex vertex; memset(&vertex,0,sizeof(vertex));
+    vertex.x=N(a,n,1); vertex.y=N(a,n,2); vertex.z=N(a,n,3);
+    uint32_t color=R?R->color:0xFFFFFFu; vertex.alpha=R?R->alpha:1;
+    int normal=strstr(nm,"_normal")!=NULL;
+    int texture=strstr(nm,"_texture")!=NULL;
+    int colored=strstr(nm,"_color")!=NULL||strstr(nm,"_colour")!=NULL;
+    int index=4;
+    if(normal){ vertex.nx=N(a,n,index++); vertex.ny=N(a,n,index++); vertex.nz=N(a,n,index++); vertex.has_normal=1; }
+    if(texture){ vertex.u=N(a,n,index++); vertex.v=N(a,n,index++); }
+    if(colored){ color=(uint32_t)N(a,n,index++)&0xFFFFFFu; vertex.alpha=N(a,n,index); }
+    vertex.r=color&255; vertex.g=(color>>8)&255; vertex.b=(color>>16)&255;
+    return vreal(d3_model_append_vertex(&g_d3_model[id],vertex));
+  }
+  if(!strcmp(nm,"d3d_model_floor")||!strcmp(nm,"d3d_model_wall")||
+     !strcmp(nm,"d3d_model_block")||!strcmp(nm,"d3d_model_cylinder")||
+     !strcmp(nm,"d3d_model_cone")||!strcmp(nm,"d3d_model_ellipsoid")){
+    int id=(int)N(a,n,0); if(id<0 || id>=GML_D3_MODEL_MAX || !g_d3_model[id].used) return vreal(0);
+    GmlD3Model *model=&g_d3_model[id];
+    if(!d3_model_begin_batch(model,4)) return vreal(0);
+    double x1=N(a,n,1),y1=N(a,n,2),z1=N(a,n,3),x2=N(a,n,4),y2=N(a,n,5),z2=N(a,n,6);
+    double hrepeat=N(a,n,7),vrepeat=N(a,n,8); int ok=1;
+    if(!strcmp(nm,"d3d_model_floor")||!strcmp(nm,"d3d_model_wall")){
+      double point[4][3];
+      if(!strcmp(nm,"d3d_model_floor")){
+        double shape[4][3]={{x1,y1,z1},{x2,y1,z1},{x2,y2,z2},{x1,y2,z2}};
+        memcpy(point,shape,sizeof(point));
+      } else {
+        double shape[4][3]={{x1,y1,z1},{x2,y2,z1},{x2,y2,z2},{x1,y1,z2}};
+        memcpy(point,shape,sizeof(point));
+      }
+      ok=d3_model_append_quad(model,point,hrepeat,vrepeat);
+    } else if(!strcmp(nm,"d3d_model_block")){
+      double face[6][4][3]={
+        {{x1,y1,z1},{x2,y1,z1},{x2,y2,z1},{x1,y2,z1}},
+        {{x1,y2,z2},{x2,y2,z2},{x2,y1,z2},{x1,y1,z2}},
+        {{x1,y1,z2},{x2,y1,z2},{x2,y1,z1},{x1,y1,z1}},
+        {{x1,y2,z1},{x2,y2,z1},{x2,y2,z2},{x1,y2,z2}},
+        {{x1,y1,z1},{x1,y2,z1},{x1,y2,z2},{x1,y1,z2}},
+        {{x2,y1,z2},{x2,y2,z2},{x2,y2,z1},{x2,y1,z1}}};
+      for(int i=0;i<6&&ok;i++) ok=d3_model_append_quad(model,face[i],hrepeat,vrepeat);
+    } else if(!strcmp(nm,"d3d_model_cylinder")||!strcmp(nm,"d3d_model_cone")){
+      double cx=(x1+x2)*.5,cy=(y1+y2)*.5,rx=fabs(x2-x1)*.5,ry=fabs(y2-y1)*.5;
+      int closed=N(a,n,9)!=0,steps=(int)N(a,n,10); if(steps<3) steps=3; if(steps>128) steps=128;
+      int cone=!strcmp(nm,"d3d_model_cone");
+      for(int i=0;i<steps&&ok;i++){
+        double q0=2*M_PI*i/steps,q1=2*M_PI*(i+1)/steps;
+        double top0x=cone?cx:cx+cos(q0)*rx,top0y=cone?cy:cy+sin(q0)*ry;
+        double top1x=cone?cx:cx+cos(q1)*rx,top1y=cone?cy:cy+sin(q1)*ry;
+        double side[4][3]={{cx+cos(q0)*rx,cy+sin(q0)*ry,z1},{cx+cos(q1)*rx,cy+sin(q1)*ry,z1},
+                           {top1x,top1y,z2},{top0x,top0y,z2}};
+        ok=d3_model_append_quad(model,side,hrepeat/steps,vrepeat);
+        if(closed&&ok){
+          double cap0[4][3]={{cx,cy,z1},{cx+cos(q1)*rx,cy+sin(q1)*ry,z1},
+                              {cx+cos(q0)*rx,cy+sin(q0)*ry,z1},{cx,cy,z1}};
+          ok=d3_model_append_quad(model,cap0,hrepeat,vrepeat);
+          if(!cone&&ok){
+            double cap1[4][3]={{cx,cy,z2},{cx+cos(q0)*rx,cy+sin(q0)*ry,z2},
+                                {cx+cos(q1)*rx,cy+sin(q1)*ry,z2},{cx,cy,z2}};
+            ok=d3_model_append_quad(model,cap1,hrepeat,vrepeat);
+          }
+        }
+      }
+    } else {
+      double cx=(x1+x2)*.5,cy=(y1+y2)*.5,cz=(z1+z2)*.5;
+      double rx=fabs(x2-x1)*.5,ry=fabs(y2-y1)*.5,rz=fabs(z2-z1)*.5;
+      int steps=(int)N(a,n,9); if(steps<4) steps=4; if(steps>64) steps=64;
+      for(int lat=0;lat<steps&&ok;lat++) for(int lon=0;lon<steps*2&&ok;lon++){
+        double latitude0=-M_PI*.5+M_PI*lat/steps,latitude1=-M_PI*.5+M_PI*(lat+1)/steps;
+        double longitude0=M_PI*lon/steps,longitude1=M_PI*(lon+1)/steps;
+        double point[4][3]={{cx+rx*cos(latitude0)*cos(longitude0),cy+ry*cos(latitude0)*sin(longitude0),cz+rz*sin(latitude0)},
+                            {cx+rx*cos(latitude0)*cos(longitude1),cy+ry*cos(latitude0)*sin(longitude1),cz+rz*sin(latitude0)},
+                            {cx+rx*cos(latitude1)*cos(longitude1),cy+ry*cos(latitude1)*sin(longitude1),cz+rz*sin(latitude1)},
+                            {cx+rx*cos(latitude1)*cos(longitude0),cy+ry*cos(latitude1)*sin(longitude0),cz+rz*sin(latitude1)}};
+        ok=d3_model_append_quad(model,point,hrepeat/steps,vrepeat/steps);
+      }
+    }
+    model->building=-1;
+    if(!ok){
+      GmlD3Batch *batch=&model->batch[model->batch_n-1];
+      model->vertex_n=batch->first; model->batch_n--;
+    }
+    return vreal(ok);
+  }
+  if(!strcmp(nm,"d3d_model_draw")){
+    int id=(int)N(a,n,0); if(id<0 || id>=GML_D3_MODEL_MAX || !g_d3_model[id].used) return vreal(0);
+    d3_model_draw((GmlRender*)vm->render,&g_d3_model[id],N(a,n,1),N(a,n,2),N(a,n,3),(int)N(a,n,4));
+    return vreal(1);
+  }
+  if(!strcmp(nm,"d3d_model_save")){
+    int id=(int)N(a,n,0); if(id<0 || id>=GML_D3_MODEL_MAX || !g_d3_model[id].used) return vreal(0);
+    char *path=resolve_content_path(vm,S(a,n,1)); int ok=d3_model_file_save(path,&g_d3_model[id]); free(path); return vreal(ok);
+  }
+  if(!strcmp(nm,"d3d_model_load")){
+    int id=(int)N(a,n,0); if(id<0 || id>=GML_D3_MODEL_MAX || !g_d3_model[id].used) return vreal(0);
+    char *path=resolve_content_path(vm,S(a,n,1)); int ok=d3_model_file_load(path,&g_d3_model[id]); free(path); return vreal(ok);
   }
   if(!strcmp(nm,"d3d_primitive_begin")||!strcmp(nm,"d3d_primitive_begin_texture")){
     g_d3_prim_kind=(int)N(a,n,0); g_d3_prim_n=0;

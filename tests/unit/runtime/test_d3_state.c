@@ -17,6 +17,10 @@ static void call_numbers(GmlVM *vm,const char *name,const double *numbers,int co
   (void)gml_builtin_call(vm,name,args,count);
 }
 
+static GmlVal call_values(GmlVM *vm,const char *name,GmlVal *args,int count){
+  return gml_builtin_call(vm,name,args,count);
+}
+
 static int colored_pixels(const uint32_t *pixels,int count){
   int colored=0;
   for(int i=0;i<count;i++) if((pixels[i]&0x00FFFFFFu)!=0) colored++;
@@ -168,6 +172,87 @@ static int raster_fixtures(void){
   int bright_sum=(bright&255)+((bright>>8)&255)+((bright>>16)&255);
   if(dark_sum>=200 || bright_sum<700){
     fprintf(stderr,"software D3 normal lighting mismatch: dark=%06x bright=%06x\n",dark,bright);
+    return 0;
+  }
+
+  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  call_numbers(&vm,"d3d_start",NULL,0);
+  call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
+  GmlVal created=call_values(&vm,"d3d_model_create",NULL,0);
+  if(created.t!=V_REAL || created.d!=0){
+    fprintf(stderr,"software D3 model create mismatch\n");
+    return 0;
+  }
+  const double model_begin[]={0,4};
+  const double model_a[]={0,8,8,0,0x0000FF,1};
+  const double model_b[]={0,56,8,0,0x00FF00,1};
+  const double model_c[]={0,32,40,0,0xFF0000,1};
+  const double model_id[]={0};
+  const double model_draw[]={0,0,0,0,-1};
+  call_numbers(&vm,"d3d_model_primitive_begin",model_begin,2);
+  call_numbers(&vm,"d3d_model_vertex_color",model_a,6);
+  call_numbers(&vm,"d3d_model_vertex_color",model_b,6);
+  call_numbers(&vm,"d3d_model_vertex_color",model_c,6);
+  call_numbers(&vm,"d3d_model_primitive_end",model_id,1);
+  call_numbers(&vm,"d3d_model_draw",model_draw,5);
+  if(colored_pixels(pixels,WIDTH*HEIGHT)<600){
+    fprintf(stderr,"software D3 model draw mismatch\n");
+    return 0;
+  }
+  const char *model_path="/tmp/gml_d3_model_fixture.bin";
+  GmlVal file_args[2]={vreal(0),vstr(model_path)};
+  if(call_values(&vm,"d3d_model_save",file_args,2).d!=1){
+    fprintf(stderr,"software D3 model save mismatch\n");
+    return 0;
+  }
+  call_numbers(&vm,"d3d_model_clear",model_id,1);
+  if(call_values(&vm,"d3d_model_load",file_args,2).d!=1){
+    fprintf(stderr,"software D3 model load mismatch\n");
+    remove(model_path); return 0;
+  }
+  remove(model_path);
+  size_t model_state_size=gml_vm_state_size(&vm),model_written=0,model_used=0;
+  void *model_state=malloc(model_state_size);
+  if(!model_state || !gml_vm_state_save(&vm,model_state,model_state_size,&model_written)){
+    fprintf(stderr,"software D3 model state save mismatch\n");
+    free(model_state); return 0;
+  }
+  call_numbers(&vm,"d3d_model_destroy",model_id,1);
+  if(!gml_vm_state_load(&vm,model_state,model_written,&model_used) || model_used!=model_written){
+    fprintf(stderr,"software D3 model state load mismatch\n");
+    free(model_state); return 0;
+  }
+  free(model_state); memset(pixels,0,sizeof(pixels));
+  call_numbers(&vm,"d3d_model_draw",model_draw,5);
+  if(colored_pixels(pixels,WIDTH*HEIGHT)<600){
+    fprintf(stderr,"software D3 restored model draw mismatch\n");
+    return 0;
+  }
+  call_numbers(&vm,"d3d_model_clear",model_id,1);
+  const double model_floor[]={0,8,6,0,24,18,0,1,1};
+  call_numbers(&vm,"d3d_model_floor",model_floor,9);
+  memset(pixels,0,sizeof(pixels));
+  call_numbers(&vm,"d3d_model_draw",model_draw,5);
+  if(colored_pixels(pixels,WIDTH*HEIGHT)<150){
+    fprintf(stderr,"software D3 generated model shape mismatch\n");
+    return 0;
+  }
+  FILE *legacy=fopen(model_path,"w");
+  int legacy_ok=legacy&&fprintf(legacy,"100\n1\n15 8 6 0 24 18 0 1 1\n")>=0;
+  if(legacy && fclose(legacy)!=0) legacy_ok=0;
+  if(!legacy_ok){
+    fprintf(stderr,"software D3 legacy model fixture write mismatch\n");
+    return 0;
+  }
+  if(call_values(&vm,"d3d_model_load",file_args,2).d!=1){
+    fprintf(stderr,"software D3 legacy model load mismatch\n");
+    remove(model_path); return 0;
+  }
+  remove(model_path); memset(pixels,0,sizeof(pixels));
+  call_numbers(&vm,"d3d_model_draw",model_draw,5);
+  if(colored_pixels(pixels,WIDTH*HEIGHT)<150){
+    fprintf(stderr,"software D3 legacy model raster mismatch\n");
     return 0;
   }
 

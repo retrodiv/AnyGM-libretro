@@ -379,5 +379,8 @@ void    gml_d3_state_get(int flags[GML_D3_STATE_FLAG_COUNT],
 void    gml_d3_state_set(const int flags[GML_D3_STATE_FLAG_COUNT],
                          const double values[GML_D3_STATE_VALUE_COUNT],
                          const uint32_t colors[GML_D3_STATE_COLOR_COUNT]);
+size_t  gml_d3_models_state_size(void);
+int     gml_d3_models_state_save(void *data, size_t capacity);
+int     gml_d3_models_state_load(const void *data, size_t size);
 
 #endif
