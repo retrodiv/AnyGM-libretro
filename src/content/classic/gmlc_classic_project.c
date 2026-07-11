@@ -233,14 +233,7 @@ int gmlc_classic_project_load(GmlcProject *project, const char *project_path,
     gmlc_classic_import_objects(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_rooms(&manifest, project, cache_dir, err, errcap);
   if(ok) ok=classic_add_empty_room(project,cache_dir,err,errcap);
-  if(ok && manifest.room_order_count){
-    project->room_order=(int*)calloc(manifest.room_order_count,sizeof(*project->room_order));
-    if(!project->room_order) ok=0;
-    else {
-      project->n_room_order=(int)manifest.room_order_count;
-      for(uint32_t i=0;i<manifest.room_order_count;i++) project->room_order[i]=(int)manifest.room_order[i];
-    }
-  }
+  if(ok) ok=gmlc_classic_import_room_order(&manifest,project,err,errcap);
   gmlc_classic_manifest_free(&manifest);
   if(!ok){
     if(err && errcap && !err[0]) snprintf(err, errcap, "classic project: normalization failed");

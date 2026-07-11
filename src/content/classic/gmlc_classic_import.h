@@ -37,4 +37,10 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
                               GmlcProject *project, const char *cache_dir,
                               char *err, size_t errcap);
 
+/* Copy and validate the explicit room execution order retained by the classic
+ * container parser. */
+int gmlc_classic_import_room_order(const GmlcClassicManifest *classic,
+                                   GmlcProject *project,
+                                   char *err, size_t errcap);
+
 #endif

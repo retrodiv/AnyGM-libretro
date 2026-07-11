@@ -688,6 +688,109 @@ static int parse_legacy_slot(ClassicReader *r, GmlcClassicResourceType type,
   return valid;
 }
 
+static int read_legacy_included_file(ClassicReader *r, GmlcClassicIncludedFile *out){
+  uint32_t version=0,data_exists=0,stored=0,overwrite=0,free_memory=0,remove_at_end=0;
+  GmlcClassicBlob embedded={0};
+  memset(out,0,sizeof(*out));
+  int ok=reader_u32(r,&version,"legacy included-file version") && version>=620 &&
+    reader_string_copy(r,&out->file_name,"legacy included-file name") &&
+    reader_string_copy(r,&out->source_path,"legacy included-file source path") &&
+    reader_u32(r,&data_exists,"legacy included-file data flag") &&
+    reader_u32(r,&out->source_length,"legacy included-file source length") &&
+    reader_u32(r,&stored,"legacy included-file storage flag");
+  if(ok && data_exists && stored) ok=reader_blob_copy(r,&embedded,"legacy included-file data");
+  if(ok) ok=reader_u32(r,&out->export_mode,"legacy included-file export mode") &&
+    reader_string_copy(r,&out->custom_folder,"legacy included-file custom folder") &&
+    reader_u32(r,&overwrite,"legacy included-file overwrite flag") &&
+    reader_u32(r,&free_memory,"legacy included-file free-memory flag") &&
+    reader_u32(r,&remove_at_end,"legacy included-file remove flag");
+  out->data_exists=data_exists!=0; out->stored_in_project=stored!=0;
+  out->overwrite_file=overwrite!=0; out->free_memory=free_memory!=0;
+  out->remove_at_end=remove_at_end!=0; out->data=embedded.data; out->data_size=embedded.size;
+  if(!ok){
+    free(out->file_name); free(out->source_path); free(out->custom_folder); free(out->data);
+    memset(out,0,sizeof(*out));
+  }
+  return ok;
+}
+
+/* GM6/7 keep project metadata and the executable room order after the resource
+ * arrays. The resource tree follows this data, but room sequencing is already
+ * represented explicitly here and must not be inferred from sparse slot ids. */
+static int parse_legacy_tail(ClassicReader *r, uint32_t container_version,
+                             GmlcClassicManifest *manifest){
+  if(r->pos==r->size || !manifest) return 1;
+  uint32_t version=0,count=0;
+  int gm7=container_version==GMLC_CLASSIC_GM7 || container_version==GMLC_CLASSIC_GM7_ALT;
+  if(gm7){
+    if(!reader_u32(r,&version,"legacy included-file section version") || version<620 ||
+       !reader_u32(r,&count,"legacy included-file count")) return 0;
+    if(count>(r->size-r->pos)/36) return reader_fail(r,"legacy included files");
+    if(count){
+      manifest->included_files=(GmlcClassicIncludedFile*)calloc(count,sizeof(*manifest->included_files));
+      if(!manifest->included_files) return reader_fail(r,"legacy included-file allocation");
+      manifest->included_file_count=count;
+    }
+    for(uint32_t i=0;i<count;i++) if(!read_legacy_included_file(r,&manifest->included_files[i])) return 0;
+
+    if(!reader_u32(r,&version,"legacy extension section version") || version<700 ||
+       !reader_u32(r,&count,"legacy extension count")) return 0;
+    if(count>(r->size-r->pos)/4) return reader_fail(r,"legacy extensions");
+    if(count){
+      manifest->extension_names=(char**)calloc(count,sizeof(*manifest->extension_names));
+      if(!manifest->extension_names) return reader_fail(r,"legacy extension allocation");
+      manifest->extension_count=count;
+    }
+    for(uint32_t i=0;i<count;i++)
+      if(!reader_string_copy(r,&manifest->extension_names[i],"legacy extension name")) return 0;
+  }
+
+  if(!reader_u32(r,&version,"legacy game-information version") || version<430 ||
+     !reader_words(r,2,"legacy game-information fields")) return 0;
+  if(version>=600 &&
+     (!reader_string(r,"legacy game-information caption") ||
+      !reader_words(r,8,"legacy game-information window fields"))) return 0;
+  if(!reader_string(r,"legacy game information")) return 0;
+
+  if(!reader_u32(r,&version,"legacy library-code section version") || version<500 ||
+     !reader_u32(r,&count,"legacy library-code count")) return 0;
+  if(count>(r->size-r->pos)/4) return reader_fail(r,"legacy library creation code");
+  if(count){
+    manifest->library_creation_code=(char**)calloc(count,sizeof(*manifest->library_creation_code));
+    if(!manifest->library_creation_code) return reader_fail(r,"legacy library-code allocation");
+    manifest->library_creation_code_count=count;
+  }
+  for(uint32_t i=0;i<count;i++)
+    if(!reader_string_copy(r,&manifest->library_creation_code[i],"legacy library creation code")) return 0;
+
+  uint32_t slots_count=manifest->inventory.resource_slots[GMLC_CLASSIC_ROOM];
+  if(!reader_u32(r,&version,"legacy room-order section version") || version<500 ||
+     !reader_u32(r,&count,"legacy room-order count") || count>slots_count ||
+     count>(r->size-r->pos)/4) return reader_fail(r,"legacy room order");
+  if(count!=manifest->existing[GMLC_CLASSIC_ROOM]){
+    if(r->err && r->errcap)
+      snprintf(r->err,r->errcap,"classic project: legacy room order has %u entries for %u rooms",
+               count,manifest->existing[GMLC_CLASSIC_ROOM]);
+    return 0;
+  }
+  manifest->room_order=(uint32_t*)calloc(count?count:1,sizeof(*manifest->room_order));
+  unsigned char *seen=(unsigned char*)calloc(slots_count?slots_count:1,1);
+  if(!manifest->room_order || !seen){ free(seen); return reader_fail(r,"legacy room-order allocation"); }
+  manifest->room_order_count=count;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t slot=0;
+    if(!reader_u32(r,&slot,"legacy room index")){ free(seen); return 0; }
+    if(slot>=slots_count || !manifest->slots[GMLC_CLASSIC_ROOM][slot].exists || seen[slot]){
+      free(seen);
+      if(r->err && r->errcap) snprintf(r->err,r->errcap,"classic project: invalid legacy room index %u",slot);
+      return 0;
+    }
+    seen[slot]=1; manifest->room_order[i]=slot;
+  }
+  free(seen);
+  return 1;
+}
+
 static int parse_legacy_project(const void *data, size_t size,
                                 GmlcClassicInventory *inventory,
                                 GmlcClassicManifest *manifest,
@@ -746,6 +849,7 @@ static int parse_legacy_project(const void *data, size_t size,
   if(!reader_u32(&r, &inventory->last_instance_id, "last legacy instance id") ||
      !reader_u32(&r, &inventory->last_tile_id, "last legacy tile id")) goto fail;
   inventory->payload_end = r.pos;
+  if(!parse_legacy_tail(&r,container_version,manifest)) goto fail;
   free(decoded);
   return 1;
 fail:

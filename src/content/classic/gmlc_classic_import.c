@@ -1455,3 +1455,67 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
   }
   return 1;
 }
+
+int gmlc_classic_import_room_order(const GmlcClassicManifest *classic,
+                                   GmlcProject *project,
+                                   char *err, size_t errcap){
+  if(err && errcap) err[0] = '\0';
+  if(!classic || !project){
+    if(err && errcap) snprintf(err, errcap, "classic import: invalid room-order arguments");
+    return 0;
+  }
+  uint32_t slots_count = classic->inventory.resource_slots[GMLC_CLASSIC_ROOM];
+  const GmlcClassicResourceSlot *slots = classic->slots[GMLC_CLASSIC_ROOM];
+  if(project->room_order || project->n_room_order){
+    /* The synthetic room used by a genuinely roomless project already owns a
+     * complete one-entry order. */
+    if(!slots_count && project->room_order && project->n_room_order == 1) return 1;
+    if(err && errcap) snprintf(err, errcap, "classic import: room order is already populated");
+    return 0;
+  }
+  if(slots_count && !slots){
+    if(err && errcap) snprintf(err, errcap, "classic import: room slots are unavailable");
+    return 0;
+  }
+
+  uint32_t count = classic->room_order_count;
+  if(count > INT32_MAX){
+    if(err && errcap) snprintf(err, errcap, "classic import: too many ordered rooms");
+    return 0;
+  }
+  if(!count){
+    if(classic->existing[GMLC_CLASSIC_ROOM]){
+      if(err && errcap) snprintf(err, errcap, "classic import: explicit room order is unavailable");
+      return 0;
+    }
+    return 1;
+  }
+  if(count != classic->existing[GMLC_CLASSIC_ROOM]){
+    if(err && errcap) snprintf(err, errcap, "classic import: room order does not cover every room");
+    return 0;
+  }
+
+  int *order = (int*)calloc(count, sizeof(*order));
+  unsigned char *seen = (unsigned char*)calloc(slots_count ? slots_count : 1, 1);
+  if(!order || !seen){
+    free(order); free(seen);
+    if(err && errcap) snprintf(err, errcap, "classic import: out of memory recording room order");
+    return 0;
+  }
+
+  uint32_t written = 0;
+  for(uint32_t i = 0; i < classic->room_order_count; ++i){
+    uint32_t slot = classic->room_order[i];
+    if(slot >= slots_count || !slots[slot].exists || seen[slot]){
+      free(order); free(seen);
+      if(err && errcap) snprintf(err, errcap, "classic import: invalid room order entry %u", slot);
+      return 0;
+    }
+    seen[slot] = 1;
+    order[written++] = (int)slot;
+  }
+  free(seen);
+  project->room_order = order;
+  project->n_room_order = (int)written;
+  return 1;
+}

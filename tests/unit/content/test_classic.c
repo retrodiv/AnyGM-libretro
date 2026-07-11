@@ -364,7 +364,20 @@ static int expect_executable_manifest(void){
   return ok;
 }
 
-static Fixture legacy_fixture(unsigned container_version){
+static void fixture_legacy_room(Fixture *f, const char *name){
+  fixture_u32(f,1); fixture_string(f,name); fixture_u32(f,541);
+  fixture_string(f,"");
+  fixture_u32(f,320); fixture_u32(f,240); fixture_u32(f,16); fixture_u32(f,16);
+  fixture_u32(f,0); fixture_u32(f,30); fixture_u32(f,0); fixture_u32(f,0); fixture_u32(f,1);
+  fixture_string(f,"");
+  fixture_u32(f,0); /* backgrounds */
+  fixture_u32(f,0); fixture_u32(f,0); /* views enabled/count */
+  fixture_u32(f,0); /* instances */
+  fixture_u32(f,0); /* tiles */
+  for(unsigned i=0;i<14;i++) fixture_u32(f,0);
+}
+
+static Fixture legacy_fixture_variant(unsigned container_version, int sparse_rooms){
   Fixture f = {{0}, 0};
   int gm7 = container_version == 701 || container_version == 702;
   fixture_u32(&f, GMLC_CLASSIC_MAGIC); fixture_u32(&f, container_version);
@@ -392,10 +405,36 @@ static Fixture legacy_fixture(unsigned container_version){
     {400, 400, 400, 420, 400, 540, 500, 400, 420};
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
     fixture_u32(&f, section_versions[type]);
-    fixture_u32(&f, 0);
+    if(sparse_rooms && type==GMLC_CLASSIC_ROOM){
+      fixture_u32(&f,8);
+      fixture_u32(&f,0); fixture_u32(&f,0);
+      fixture_legacy_room(&f,"resource_room_two");
+      fixture_u32(&f,0); fixture_u32(&f,0); fixture_u32(&f,0);
+      fixture_legacy_room(&f,"resource_room_six");
+      fixture_u32(&f,0);
+    } else fixture_u32(&f, 0);
   }
   fixture_u32(&f, 100000); fixture_u32(&f, 1000000);
+  if(sparse_rooms){
+    if(gm7){
+      fixture_u32(&f,620); fixture_u32(&f,0); /* included files */
+      fixture_u32(&f,700); fixture_u32(&f,0); /* extensions */
+    }
+    fixture_u32(&f,600); fixture_u32(&f,0x00ffffff); fixture_u32(&f,1);
+    fixture_string(&f,"Game Information");
+    fixture_u32(&f,(unsigned)-1); fixture_u32(&f,(unsigned)-1);
+    fixture_u32(&f,600); fixture_u32(&f,400);
+    fixture_u32(&f,1); fixture_u32(&f,1); fixture_u32(&f,0); fixture_u32(&f,1);
+    fixture_string(&f,"");
+    fixture_u32(&f,500); fixture_u32(&f,0); /* library code */
+    fixture_u32(&f,700); fixture_u32(&f,2); /* explicit room order */
+    fixture_u32(&f,6); fixture_u32(&f,2);
+  }
   return f;
+}
+
+static Fixture legacy_fixture(unsigned container_version){
+  return legacy_fixture_variant(container_version,0);
 }
 
 static int build_project_fixture(unsigned version, Fixture *out){
@@ -967,6 +1006,29 @@ static int expect_room_import(void){
   return ok;
 }
 
+static int expect_sparse_room_order(void){
+  Fixture plain=legacy_fixture_variant(701,1);
+  size_t encoded_size=0;
+  unsigned char *encoded=encode_gm7(plain.data,plain.size,&encoded_size);
+  if(!encoded) return 0;
+  GmlcClassicManifest manifest;
+  GmlcProject project;
+  memset(&manifest,0,sizeof(manifest));
+  memset(&project,0,sizeof(project));
+  char err[256]={0};
+  int ok=gmlc_classic_manifest(encoded,encoded_size,&manifest,err,sizeof(err));
+  if(!ok) fprintf(stderr,"sparse room-order manifest failed: %s\n",err);
+  if(ok) ok=manifest.existing[GMLC_CLASSIC_ROOM]==2 && manifest.room_order_count==2 &&
+            manifest.room_order[0]==6 && manifest.room_order[1]==2;
+  if(ok) ok=gmlc_classic_import_room_order(&manifest,&project,err,sizeof(err));
+  if(!ok && err[0]) fprintf(stderr,"sparse room-order import failed: %s\n",err);
+  if(ok) ok=project.n_room_order==2 && project.room_order[0]==6 && project.room_order[1]==2;
+  free(project.room_order);
+  if(manifest.inventory.header.version) gmlc_classic_manifest_free(&manifest);
+  free(encoded);
+  return ok;
+}
+
 static void discard_imported_objects(GmlcProject *project, int remove_sources){
   for(int i = 0; i < project->n_objects; ++i){
     free(project->objects[i].id);
@@ -1086,6 +1148,7 @@ int main(int argc, char **argv){
   if(expect_timeline_import()) ++passed; else ++failed;
   if(expect_object_import()) ++passed; else ++failed;
   if(expect_room_import()) ++passed; else ++failed;
+  if(expect_sparse_room_order()) ++passed; else ++failed;
 
   for(int i = 1; i < argc; ++i){
     GmlcClassicInventory in;
