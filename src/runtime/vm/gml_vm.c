@@ -2933,18 +2933,23 @@ int gml_run_event(GmlVM *vm, GmlInstance *in, const char *suffix){
  * order within that object. Snapshot one object group at a time: creations from an earlier object
  * can join a later group, but a same-object creation waits until the next dispatch. The linked
  * lists are newest-first, so reverse the collected slots into insertion order. */
-static void run_classic_object_event(GmlVM *vm, const char *suffix){
+static int classic_collect_object_slots(GmlVM *vm, int object){
   if(vm->inst_count>vm->event_ord_cap){
     int nc=vm->event_ord_cap?vm->event_ord_cap:64; while(nc<vm->inst_count) nc*=2;
     int *np=realloc(vm->event_ord,(size_t)nc*sizeof(*np));
     if(np){ vm->event_ord=np; vm->event_ord_cap=nc; }
   }
+  if(!vm->event_ord || !vm->obj_head) return -1;
+  int count=0;
+  for(int i=vm->obj_head[object];i>=0;i=vm->inst_next[i])
+    if(vm->inst[i].active && !vm->inst[i].marked && count<vm->event_ord_cap) vm->event_ord[count++]=i;
+  return count;
+}
+static void run_classic_object_event(GmlVM *vm, const char *suffix){
   for(int object=0;object<vm->n_objects;object++){
     if(!event_lookup_from(vm,suffix,object,NULL,NULL)) continue;
-    int count=0;
-    if(vm->event_ord && vm->obj_head){
-      for(int i=vm->obj_head[object];i>=0;i=vm->inst_next[i])
-        if(vm->inst[i].active && !vm->inst[i].marked && count<vm->event_ord_cap) vm->event_ord[count++]=i;
+    int count=classic_collect_object_slots(vm,object);
+    if(count>=0){
       for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
         if(i<vm->inst_count && vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==object)
           gml_run_event(vm,&vm->inst[i],suffix); }
@@ -4325,8 +4330,28 @@ void gml_vm_step(GmlVM *vm){
   /* Alarm thresholds depend on bytecode version: below 16, decrement values
    * greater than -1 and fire below zero; later versions decrement positive values
    * and fire at or below zero. Set -1 before dispatch so handlers can re-arm. */
-  int alarm_at_zero = vm->win && (vm->win->classic_version || vm->win->bytecode >= 16);
-  for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked) continue;
+  int classic_alarm_order=vm->win && vm->win->classic_version;
+  int alarm_at_zero = vm->win && (classic_alarm_order || vm->win->bytecode >= 16);
+  if(classic_alarm_order){
+    for(int a=0;a<GML_ALARMS;a++){
+      char s[16]; snprintf(s,sizeof s,"Alarm_%d",a);
+      for(int object=0;object<vm->n_objects;object++){
+        if(!event_lookup_from(vm,s,object,NULL,NULL)) continue;
+        int count=classic_collect_object_slots(vm,object);
+        if(count<0) continue;
+        for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
+          if(i>=vm->inst_count) continue;
+          GmlInstance *in=&vm->inst[i];
+          if(!in->active||in->marked||in->obj!=object||!(in->alarm[a]>0)) continue;
+          in->alarm[a]-=1;
+          if(in->alarm[a]<=0){ in->alarm[a]=-1;
+            if(getenv("GML_LOG_ALARM")) fprintf(stderr,"[alarm] f%ld %s.%s\n",g_vm_frame,
+              vm->objects[in->obj].name,s);
+            gml_run_event(vm,in,s); }
+        }
+      }
+    }
+  } else for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked) continue;
     for(int a=0;a<GML_ALARMS;a++){
       if(alarm_at_zero){ if(!(in->alarm[a]>0)) continue; } else { if(!(in->alarm[a]>-1)) continue; }
       in->alarm[a]-=1;
