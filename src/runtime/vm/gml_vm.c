@@ -3209,6 +3209,72 @@ static double get_global_arr_d(GmlVM *vm, const char *nm, int idx){
   GmlArr *A=slot->arr; return (A && idx>=0 && idx<A->len)? asnum(A->data[idx]) : 0;
 }
 void gml_set_global_arr(GmlVM *vm, const char *nm, int idx, double val){ set_global_arr(vm,nm,idx,val); }
+/* Write a global as a plain SCALAR (V_REAL), not as an array. This is the counterpart the generic
+ * cheat interface needs for GameMaker Studio games: they read most globals as scalars, and a value
+ * left as V_ARR (what set_global_arr produces) coerces to 0 in numeric/boolean context (asnum),
+ * so an array-write to a scalar-read global silently does nothing. Overwrites the slot in place. */
+void gml_set_global_scalar(GmlVM *vm, const char *nm, double val){
+  if(!vm||!nm) return;
+  GmlVal *slot=gml_varmap_put(&vm->globals,nm); if(slot) *slot=vreal(val);
+}
+/* Freeze/set a numeric instance variable on EVERY active instance of an object (or its descendants),
+ * resolved by name. Returns how many instances were written. No game-specific knowledge: the object
+ * name and variable name are supplied by the caller (a cheat line), never baked in. */
+int gml_set_inst_var_all(GmlVM *vm, const char *objname, const char *var, double val){
+  if(!vm||!objname||!var) return 0;
+  int obj=gml_object_index_by_name(vm,objname); if(obj<0) return 0;
+  int n=0;
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(!in->active || in->marked) continue;
+    if(!gml_object_is(vm,in->obj,obj)) continue;
+    GmlVal *slot=gml_varmap_put(&in->vars,var); if(slot){ *slot=vreal(val); n++; }
+  }
+  return n;
+}
+/* --- generic pause-menu injection helpers (used by the frontend menu editor; no game specifics) --- */
+int gml_inst_get_num(const GmlInstance *in, const char *var){
+  if(!in||!var) return 0;
+  GmlVal *v=gml_varmap_get((GmlVarMap*)&in->vars,var);
+  return (v && v->t==V_REAL) ? (int)v->d : 0;
+}
+/* Number of items the game itself placed in a 1D or 2D menu array (height2d for 2D, len for 1D). */
+int gml_inst_array_count(const GmlInstance *in, const char *var){
+  if(!in||!var) return 0;
+  GmlVal *slot=gml_varmap_get((GmlVarMap*)&in->vars,var);
+  if(!slot || slot->t!=V_ARR || !slot->arr) return 0;
+  return gml_val_array_length(*slot);
+}
+/* Set instance-array element [row] (1D, col=0) or [row,col] (2D), reusing the interpreter's own
+ * flat 2D layout + metadata path. Frees any prior owned string in the slot so repeated label
+ * rewrites don't leak. */
+static void inst_array_set(GmlInstance *in, const char *var, int idx, GmlVal v){
+  GmlVal *slot=gml_varmap_put(&in->vars,var); if(!slot) return;
+  GmlArr *A=arr_of(slot);
+  arr_note_2d_set(A,idx); arr_ensure(A,idx);
+  if(idx>=0 && idx<A->cap){
+    if(A->data[idx].t==V_STR && A->data[idx].d && A->data[idx].s) free((char*)A->data[idx].s);
+    A->data[idx]=v;
+  }
+}
+/* Flat index: 1D arrays index by row; 2D arrays use the interpreter's row*GML_2D_STRIDE+col layout. */
+static int inst_array_idx(int is2d, int row, int col){ return is2d ? row*GML_2D_STRIDE + col : row; }
+void gml_inst_array_set_str(GmlInstance *in, const char *var, int is2d, int row, int col, const char *str){
+  if(!in||!var||!str) return;
+  char *c=strdup(str);
+  inst_array_set(in,var,inst_array_idx(is2d,row,col), c?vstr_owned(c):vstr(""));
+}
+void gml_inst_array_set_num(GmlInstance *in, const char *var, int is2d, int row, int col, double num){
+  if(!in||!var) return;
+  inst_array_set(in,var,inst_array_idx(is2d,row,col), vreal(num));
+}
+/* Resolve a room by name to its index (for a data-driven stage/warp list). -1 if not found. */
+int gml_room_index_by_name(GmlWin *win, const char *name){
+  if(!win||!name||!*name) return -1;
+  int n=gml_room_count(win);
+  for(int i=0;i<n;i++){ GmlRoom r; if(gml_room_get(win,i,&r)==0 && r.name && !strcmp(r.name,name)) return i; }
+  return -1;
+}
 
 static void room_state_key(char *out, size_t cap, int room, const char *field, int index){
   snprintf(out,cap,"__gmlc_room_state_%d_%s_%d",room,field,index);

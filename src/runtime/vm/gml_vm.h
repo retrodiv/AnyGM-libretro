@@ -363,6 +363,14 @@ double  gml_global_num(GmlVM *vm, const char *name);
 double  gml_global_arr(GmlVM *vm, const char *name, int idx);
 double  gml_room_speed(GmlVM *vm);
 void    gml_set_global_arr(GmlVM *vm, const char *name, int idx, double val);
+void    gml_set_global_scalar(GmlVM *vm, const char *name, double val);           /* write V_REAL, not array */
+int     gml_set_inst_var_all(GmlVM *vm, const char *objname, const char *var, double val); /* freeze inst var; returns count */
+/* generic pause-menu injection helpers (frontend menu editor) */
+int     gml_inst_get_num(const GmlInstance *in, const char *var);
+int     gml_inst_array_count(const GmlInstance *in, const char *var);
+void    gml_inst_array_set_str(GmlInstance *in, const char *var, int is2d, int row, int col, const char *str);
+void    gml_inst_array_set_num(GmlInstance *in, const char *var, int is2d, int row, int col, double num);
+int     gml_room_index_by_name(GmlWin *win, const char *name);
 
 /* save-state payload for the VM runtime only. Static data parsed from data.win is not included. */
 size_t  gml_vm_state_size(GmlVM *vm);
