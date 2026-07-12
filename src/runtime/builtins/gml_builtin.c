@@ -6972,15 +6972,24 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     double value=N(a,n,0);
     if(vm->win && vm->win->classic_version) value=nearbyint(value);
     if(s && idx>=0 && idx<GML_ALARMS) s->alarm[idx]=value; return vreal(0); }
-  /* action_bounce(advanced,against): D&D Bounce. against 0=solid, 1=all. Non-advanced: reverse the
-   * velocity component(s) whose next step meets a blocker, then relink direction/speed. */
+  /* action_bounce(advanced,against): D&D Bounce. against 0=solid, 1=all. */
   if(!strcmp(nm,"action_bounce")){ GmlInstance *s=vm->cur_self; if(s){
-      int solid=(int)N(a,n,1)==0; double hs=s->hspeed, vs=s->vspeed;
-      int bh = solid ? collision_at(vm,s->x+hs,s->y,0,1) : collision_at(vm,s->x+hs,s->y,IT_ALL,0);
-      int bv = solid ? collision_at(vm,s->x,s->y+vs,0,1) : collision_at(vm,s->x,s->y+vs,IT_ALL,0);
+      int advanced=N(a,n,0)!=0, solid=(int)N(a,n,1)==0;
+      double hs=s->hspeed, vs=s->vspeed;
+      double bx=advanced?s->xprevious:s->x, by=advanced?s->yprevious:s->y;
+      if(advanced){ s->x=bx; s->y=by; gml_colgrid_touch(s); }
+      GmlInstance *contact=advanced?vm->cur_other:NULL;
+      int bh = contact ? masks_overlap(vm,s,bx+hs,by,contact) :
+        (solid ? collision_at(vm,bx+hs,by,0,1) : collision_at(vm,bx+hs,by,IT_ALL,0));
+      int bv = contact ? masks_overlap(vm,s,bx,by+vs,contact) :
+        (solid ? collision_at(vm,bx,by+vs,0,1) : collision_at(vm,bx,by+vs,IT_ALL,0));
       if(bh) s->hspeed=-hs; if(bv) s->vspeed=-vs;
       if(bh||bv){ s->speed=hypot(s->hspeed,s->vspeed);
-        s->direction=atan2(-s->vspeed,s->hspeed)*180.0/M_PI; if(s->direction<0) s->direction+=360; } }
+        s->direction=atan2(-s->vspeed,s->hspeed)*180.0/M_PI; if(s->direction<0) s->direction+=360;
+        if(advanced){ s->direction=round(s->direction/10.0)*10.0;
+          s->hspeed=s->speed*cos(s->direction*M_PI/180.0);
+          s->vspeed=-s->speed*sin(s->direction*M_PI/180.0); }
+      } }
     return vreal(0); }
 
   /* ---- drawing ---- */
