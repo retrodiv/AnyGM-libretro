@@ -4598,10 +4598,12 @@ static int cmp_draw_item(const void *pa, const void *pb){
   if(a->type==6 && b->type==6)
     return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);
   /* Classic draw ordering groups equal-depth instances by object resource. Higher
-   * object indices are painted first (behind); the established instance tie
-   * below still applies within one object's list. */
+   * object indices are painted first (behind); within one resource older room
+   * instances paint first so later-created peers overlay them. */
   if(a->type==0 && b->type==0 && a->classic && b->classic && a->obj!=b->obj)
     return a->obj>b->obj? -1:1;
+  if(a->type==0 && b->type==0 && a->classic && b->classic)
+    return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);
   return a->seq>b->seq? -1 : (a->seq<b->seq?1:0);
 }
 static int rt_layer_has_background(GmlVM *vm, int layer_id){
