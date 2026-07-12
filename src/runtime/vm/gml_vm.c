@@ -3228,7 +3228,9 @@ int gml_set_inst_var_all(GmlVM *vm, const char *objname, const char *var, double
     GmlInstance *in=&vm->inst[i];
     if(!in->active || in->marked) continue;
     if(!gml_object_is(vm,in->obj,obj)) continue;
-    GmlVal *slot=gml_varmap_put(&in->vars,var); if(slot){ *slot=vreal(val); n++; }
+    GmlVal v=vreal(val);
+    if(inst_builtin_set(in,var,v)){ n++; continue; }
+    GmlVal *slot=gml_varmap_put(&in->vars,var); if(slot){ *slot=v; n++; }
   }
   return n;
 }
