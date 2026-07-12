@@ -4362,8 +4362,12 @@ void gml_vm_step(GmlVM *vm){
   for(int i=0;i<vm->inst_count;i++)
     if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_0");
   VMPROF_MARK(step0);
-  /* movement */
-  for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked) continue;
+  /* Classic object iteration remains live through automatic movement. An instance
+   * created by an earlier normal-Step handler already participates in that Step
+   * phase, and GM6-8 also applies its freshly assigned speed/gravity before the
+   * first draw. Studio keeps the frame-start snapshot verified by its fixtures. */
+  int movement_count=(vm->win && vm->win->classic_version)?vm->inst_count:n;
+  for(int i=0;i<movement_count;i++){ GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked) continue;
     if(in->gravity!=0){ in->hspeed+=in->gravity*cos(in->gravity_direction*M_PI/180.0);
       in->vspeed-=in->gravity*sin(in->gravity_direction*M_PI/180.0); motion_from_components(in); }
     if(in->friction!=0 && in->speed!=0){

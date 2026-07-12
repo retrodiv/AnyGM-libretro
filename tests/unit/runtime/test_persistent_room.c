@@ -69,7 +69,11 @@ int main(void){
   object_events[0].source_path=event;
   char step[]="/tmp/gml-step-event-XXXXXX"; int step_fd=mkstemp(step); if(step_fd<0)return 1;
   FILE *step_file=fdopen(step_fd,"wb");
-  const char step_source[]="if (hspeed > 0) hspeed -= 1; if (hspeed < 0) hspeed += 1; hspeed = round(hspeed); x += 5;\n";
+  const char step_source[]=
+    "if (!global.spawned_once) { global.spawned_once=1; "
+    "with(instance_create(50,50,obj_changed)){ hspeed=3; } } "
+    "if (hspeed > 0) hspeed -= 1; if (hspeed < 0) hspeed += 1; "
+    "hspeed = round(hspeed); x += 5;\n";
   if(!step_file || fwrite(step_source,1,sizeof(step_source)-1,step_file)!=sizeof(step_source)-1 || fclose(step_file)!=0)return 1;
   object_events[1].source_path=step;
   char path[]="/tmp/gml-persistent-room-XXXXXX"; int fd=mkstemp(path); if(fd<0)return 1; close(fd);
@@ -246,6 +250,13 @@ int main(void){
   if(created->x!=position_before_step+5 || created->xprevious!=position_before_step || created->hspeed!=0){
     fprintf(stderr,"previous position/cardinal gravity mismatch: x=%.0f previous=%.0f hspeed=%.17g\n",
       created->x,created->xprevious,created->hspeed); return 1;
+  }
+  GmlInstance *same_step_spawn=NULL;
+  for(int i=0;i<vm.inst_count;i++) if(vm.inst[i].active && !vm.inst[i].marked &&
+      vm.inst[i].obj==1 && vm.inst[i].x>=50 && vm.inst[i].x<60){ same_step_spawn=&vm.inst[i]; break; }
+  if(!same_step_spawn || same_step_spawn->x!=53){
+    fprintf(stderr,"classic same-step automatic movement mismatch: x=%.0f\n",
+      same_step_spawn?same_step_spawn->x:-1.0); return 1;
   }
   created->gravity=created->vspeed=0;
   GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
