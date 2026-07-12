@@ -4168,6 +4168,48 @@ static GmlInstance *collision_instance_at(GmlVM *vm, double x, double y, int obj
 static int collision_at(GmlVM *vm, double x, double y, int obj, int solid_only){
   return collision_instance_at(vm,x,y,obj,solid_only)!=NULL;
 }
+static double potential_dir_norm(double d){
+  d=fmod(d,360.0); return d<0?d+360.0:d;
+}
+/* Potential motion keeps the current heading within the configured turn cone,
+ * probes farther along each candidate ray, then commits exactly one step. */
+static int potential_step_move(GmlVM *vm, GmlInstance *s, double tx, double ty,
+                               double amount, int target, int solid_only){
+  double ox=s->x, oy=s->y, dx=tx-ox, dy=ty-oy, distance=hypot(dx,dy);
+  if(distance<1e-12) return 1;
+  double desired=potential_dir_norm(-atan2(dy,dx)*180.0/M_PI);
+  if(distance<=amount){
+    if(collision_at(vm,tx,ty,target,solid_only)) return 0;
+    s->x=tx; s->y=ty; s->direction=desired; gml_colgrid_touch(s); return 1;
+  }
+  double current=potential_dir_norm(s->direction);
+  double rotate=fabs(vm->potential_rotate_step);
+  int attempts=0;
+  for(int ring=0;attempts<4096;ring++){
+    double mag=ring*rotate;
+    if(ring>0 && (rotate<=0 || mag>=180.0)) break;
+    int sides=ring?2:1;
+    for(int side=0;side<sides && attempts<4096;side++,attempts++){
+      double offset=ring?(side? -mag:mag):0;
+      double candidate=potential_dir_norm(desired-offset);
+      double change=potential_dir_norm(candidate-current);
+      double maxrot=vm->potential_max_rotation;
+      if(change>maxrot && change<360.0-maxrot) continue;
+      double rad=candidate*M_PI/180.0;
+      double ux=cos(rad), uy=-sin(rad);
+      double ax=ox+ux*amount*vm->potential_check_distance;
+      double ay=oy+uy*amount*vm->potential_check_distance;
+      if(collision_at(vm,ax,ay,target,solid_only)) continue;
+      double nx=ox+ux*amount, ny=oy+uy*amount;
+      if(collision_at(vm,nx,ny,target,solid_only)) continue;
+      s->x=nx; s->y=ny; s->direction=candidate; gml_colgrid_touch(s); return 0;
+    }
+    if(rotate<=0) break;
+  }
+  if(vm->potential_rotate_on_spot)
+    s->direction=potential_dir_norm(current+vm->potential_max_rotation);
+  return 0;
+}
 static int instance_region_hit(GmlVM *vm, GmlInstance *o, double rx, double ry, double rw, double rh){
   double rl=rx, rt=ry, rr=rx+rw, rb=ry+rh;
   if(rr<rl){ double t=rl; rl=rr; rr=t; }
@@ -6214,58 +6256,25 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     double tx=N(a,n,0), ty=N(a,n,1), sp=N(a,n,2); double dx=tx-s->x, dy=ty-s->y, d=hypot(dx,dy);
     if(d<=sp || d<1e-9){ s->x=tx; s->y=ty; gml_colgrid_touch(s); return vreal(1); }
     s->x += dx/d*sp; s->y += dy/d*sp; gml_colgrid_touch(s); return vreal(0); }
+  if(!strcmp(nm,"mp_potential_settings")){
+    vm->potential_max_rotation=N(a,n,0); vm->potential_rotate_step=N(a,n,1);
+    vm->potential_check_distance=N(a,n,2); vm->potential_rotate_on_spot=N(a,n,3)!=0;
+    return vreal(0);
+  }
   if(!strcmp(nm,"mp_potential_step")){
     GmlInstance*s=vm->cur_self; if(!s) return vreal(0);
-    double tx=N(a,n,0), ty=N(a,n,1), amount=fabs(N(a,n,2));
-    double dx=tx-s->x, dy=ty-s->y, distance=hypot(dx,dy);
-    if(distance<=amount || distance<1e-9){ s->x=tx; s->y=ty; gml_colgrid_touch(s); return vreal(1); }
-    double desired=-atan2(dy,dx)*180.0/M_PI;
-    while(desired<0) desired+=360.0; while(desired>=360.0) desired-=360.0;
-    double current=s->direction;
-    while(current<0) current+=360.0; while(current>=360.0) current-=360.0;
-    double delta=desired-current;
-    while(delta>180.0) delta-=360.0; while(delta<=-180.0) delta+=360.0;
-    if(delta>30.0) delta=30.0; else if(delta<-30.0) delta=-30.0;
-    double heading=-(current+delta)*M_PI/180.0, step=amount;
-    int all=N(a,n,3)!=0.0, moved=0;
-    static const int turns[]={0,10,-10,20,-20,30,-30,40,-40,50,-50,60,-60,
-      70,-70,80,-80,90,-90,100,-100,110,-110,120,-120,130,-130,140,-140,
-      150,-150,160,-160,170,-170,180};
-    for(size_t i=0;i<sizeof(turns)/sizeof(turns[0]);i++){
-      double angle=heading+(double)turns[i]*M_PI/180.0;
-      double nx=s->x+cos(angle)*step, ny=s->y+sin(angle)*step;
-      if(collision_at(vm,nx,ny,all?IT_ALL:0,!all)) continue;
-      s->x=nx; s->y=ny;
-      s->direction=-angle*180.0/M_PI;
-      while(s->direction<0) s->direction+=360.0;
-      while(s->direction>=360.0) s->direction-=360.0;
-      gml_colgrid_touch(s); moved=1; break;
-    }
-    return vreal(moved && distance<=amount);
+    int all=N(a,n,3)!=0;
+    return vreal(potential_step_move(vm,s,N(a,n,0),N(a,n,1),N(a,n,2),all?IT_ALL:0,!all));
   }
   if(!strcmp(nm,"mp_potential_step_object")){
     GmlInstance*s=vm->cur_self; if(!s) return vreal(0);
-    double tx=N(a,n,0), ty=N(a,n,1), amount=fabs(N(a,n,2));
-    double dx=tx-s->x, dy=ty-s->y, distance=hypot(dx,dy);
-    if(distance<=amount || distance<1e-9){ s->x=tx; s->y=ty; gml_colgrid_touch(s); return vreal(1); }
-    double heading=atan2(dy,dx); int object=(int)N(a,n,3), moved=0;
-    static const int turns[]={0,10,-10,20,-20,30,-30,40,-40,50,-50,60,-60,
-      70,-70,80,-80,90,-90,100,-100,110,-110,120,-120,130,-130,140,-140,
-      150,-150,160,-160,170,-170,180};
-    for(size_t i=0;i<sizeof(turns)/sizeof(turns[0]);i++){
-      double angle=heading+(double)turns[i]*M_PI/180.0;
-      double nx=s->x+cos(angle)*amount, ny=s->y+sin(angle)*amount;
-      if(collision_at(vm,nx,ny,object,0)) continue;
-      s->x=nx; s->y=ny; s->direction=-angle*180.0/M_PI;
-      while(s->direction<0) s->direction+=360.0;
-      while(s->direction>=360.0) s->direction-=360.0;
-      gml_colgrid_touch(s); moved=1; break;
-    }
-    return vreal(moved && distance<=amount);
+    return vreal(potential_step_move(vm,s,N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3),0));
   }
   if(!strcmp(nm,"action_potential_step")){
-    GmlVal args[4]={vreal(N(a,n,0)),vreal(N(a,n,1)),vreal(N(a,n,2)),vreal(N(a,n,3))};
-    return gml_builtin_call(vm,"mp_potential_step",args,4);
+    GmlInstance*s=vm->cur_self; if(!s) return vreal(0);
+    double tx=N(a,n,0), ty=N(a,n,1); if(vm->action_relative){ tx+=s->x; ty+=s->y; }
+    int all=N(a,n,3)!=0;
+    return vreal(potential_step_move(vm,s,tx,ty,N(a,n,2),all?IT_ALL:0,!all));
   }
   /* instance_nearest/furthest(x,y,obj): id of the nearest/furthest instance of obj (noone=-4). */
   if(!strcmp(nm,"instance_nearest")||!strcmp(nm,"instance_furthest")){

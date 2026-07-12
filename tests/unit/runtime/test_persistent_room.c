@@ -181,6 +181,36 @@ int main(void){
   if(created->x!=3){
     fprintf(stderr,"move_contact_solid did not stop before a solid: x=%.0f\n",created->x); return 1;
   }
+  GmlVal potential_settings[4]={vreal(30),vreal(10),vreal(3),vreal(1)};
+  (void)gml_builtin_call(&vm,"mp_potential_settings",potential_settings,4);
+  created->x=0; created->y=100; created->direction=0; contact->x=5; contact->y=100;
+  GmlVal blocked_goal[4]={vreal(5),vreal(100),vreal(10),vreal(0)};
+  GmlVal reached=gml_builtin_call(&vm,"mp_potential_step",blocked_goal,4);
+  if(reached.t!=V_REAL || reached.d!=0 || created->x!=0 || created->y!=100){
+    fprintf(stderr,"potential-step moved into a blocked nearby goal: reached=%.0f pos=(%.1f,%.1f)\n",
+      reached.d,created->x,created->y); return 1;
+  }
+  GmlVal ahead_goal[4]={vreal(20),vreal(100),vreal(2),vreal(0)};
+  (void)gml_builtin_call(&vm,"mp_potential_step",ahead_goal,4);
+  if(created->x==2 && created->y==100){
+    fprintf(stderr,"potential-step ignored its forward obstacle probe\n"); return 1;
+  }
+  potential_settings[2]=vreal(1);
+  (void)gml_builtin_call(&vm,"mp_potential_settings",potential_settings,4);
+  created->x=0; created->y=100; created->direction=0;
+  (void)gml_builtin_call(&vm,"mp_potential_step",ahead_goal,4);
+  if(created->x!=2 || created->y!=100){
+    fprintf(stderr,"potential-step settings did not update check distance: (%.1f,%.1f)\n",
+      created->x,created->y); return 1;
+  }
+  contact->x=100; created->x=10; created->y=100; vm.action_relative=1;
+  GmlVal relative_goal[4]={vreal(2),vreal(0),vreal(2),vreal(0)};
+  reached=gml_builtin_call(&vm,"action_potential_step",relative_goal,4);
+  vm.action_relative=0;
+  if(reached.t!=V_REAL || reached.d!=1 || created->x!=12 || created->y!=100){
+    fprintf(stderr,"relative potential-step target mismatch: reached=%.0f pos=(%.1f,%.1f)\n",
+      reached.d,created->x,created->y); return 1;
+  }
   *gml_varmap_put(&created->vars,"side")=vreal(180);
   GmlVal local_name=vstr("side");
   vm.cur_self=created;
@@ -257,7 +287,9 @@ int main(void){
   int ok=slot&&slot->active&&!slot->room_dormant&&value&&value->t==V_REAL&&value->d==42 &&
     global_array_value(&vm,"background_x",0)==123 && global_array_value(&vm,"view_xview",0)==77 &&
     room_speed&&room_speed->t==V_REAL&&room_speed->d==55 && vm.n_tile_mut==1 &&
-    vm.tile_mut[0].depth==300&&vm.tile_mut[0].dx==8&&vm.tile_mut[0].dy==9;
+    vm.tile_mut[0].depth==300&&vm.tile_mut[0].dx==8&&vm.tile_mut[0].dy==9 &&
+    vm.potential_max_rotation==30 && vm.potential_rotate_step==10 &&
+    vm.potential_check_distance==1 && vm.potential_rotate_on_spot==1;
   if(!ok) fprintf(stderr,
     "persistent room state did not roundtrip: slot=%d value=%.0f bg=%.0f view=%.0f speed=%.0f tiles=%d depth=%d shift=(%.0f,%.0f)\n",
     slot&&slot->active&&!slot->room_dormant,value&&value->t==V_REAL?value->d:-1,

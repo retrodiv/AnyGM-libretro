@@ -5506,6 +5506,8 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
   colcand_reset();          /* cache slots belong to the previous VM across a cold Restart */
   vm->win=win; vm->pending_room=-1; vm->room_index=-1; vm->next_id=100000; vm->rng_state=0;
   vm->rng_classic_state=0;
+  vm->potential_max_rotation=30; vm->potential_rotate_step=10;
+  vm->potential_check_distance=3; vm->potential_rotate_on_spot=1;
   vm->room_state_count=gml_room_count(win);
   vm->room_stored=calloc((size_t)(vm->room_state_count>0?vm->room_state_count:1),1);
   /* Seed dynamic IDs above room-placed IDs across the project to avoid collisions
@@ -5645,7 +5647,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -6114,6 +6116,8 @@ static void runtime_clear(GmlVM *vm){
   vm->inst_count=0; vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;
   vm->event_type=0; vm->event_number=0;
   vm->step_alloc_base=0; vm->action_relative=0;
+  vm->potential_max_rotation=30; vm->potential_rotate_step=10;
+  vm->potential_check_distance=3; vm->potential_rotate_on_spot=1;
   vm->window_x=0; vm->window_y=0; vm->window_cursor=0;
   memset(vm->phys_fixture,0,sizeof(vm->phys_fixture));
   memset(vm->phys_joint,0,sizeof(vm->phys_joint));
@@ -6131,7 +6135,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x47564D47u); /* GMV23: GMV22 plus explicit software-D3 ambient light */
+  sw_u32(s,0x48564D47u); /* GMV24: GMV23 plus potential-step settings */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -6141,6 +6145,8 @@ static void sw_vm(StateW *s, GmlVM *vm){
     sw_i64(s,(int64_t)age);
   }
   sw_i32(s,vm->action_relative);
+  sw_d(s,vm->potential_max_rotation); sw_d(s,vm->potential_rotate_step);
+  sw_d(s,vm->potential_check_distance); sw_i32(s,vm->potential_rotate_on_spot);
   sw_i32(s,vm->script_argc); for(int i=0;i<16;i++) sw_val(s,vm->script_args[i],0);
   for(int i=0;i<16;i++) sw_u32(s,vm->rng_well[i]);
   sw_i32(s,vm->rng_index); sw_u32(s,vm->rng_state);
@@ -6302,7 +6308,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       && magic!=0x3D564D47u && magic!=0x3E564D47u && magic!=0x3F564D47u
       && magic!=0x40564D47u && magic!=0x41564D47u && magic!=0x42564D47u
       && magic!=0x43564D47u && magic!=0x44564D47u && magic!=0x45564D47u
-      && magic!=0x46564D47u && magic!=0x47564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x46564D47u && magic!=0x47564D47u && magic!=0x48564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -6323,6 +6329,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v21 = magic>=0x45564D47u;
   s.v22 = magic>=0x46564D47u;
   s.v23 = magic>=0x47564D47u;
+  s.v24 = magic>=0x48564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -6341,6 +6348,10 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     vm->room_enter_frame = g_vm_frame - (long)room_age;
   }
   vm->action_relative=sr_i32(&s);
+  if(s.v24){
+    vm->potential_max_rotation=sr_d(&s); vm->potential_rotate_step=sr_d(&s);
+    vm->potential_check_distance=sr_d(&s); vm->potential_rotate_on_spot=sr_i32(&s);
+  }
   vm->script_argc=sr_i32(&s); for(int i=0;i<16;i++){ vm->script_args[i]=sr_val(vm,&s,0); gml_arr_mark_escaped(vm->script_args[i]); }
   for(int i=0;i<16;i++) vm->rng_well[i]=sr_u32(&s);
   vm->rng_index=sr_i32(&s); vm->rng_state=sr_u32(&s);

@@ -163,6 +163,8 @@ typedef struct GmlVM {
   double   window_x, window_y; /* logical window position for window_get/set_position */
   int      window_cursor;      /* GM window_get/set_cursor logical cursor id (-1 hidden) */
   int      action_relative;   /* D&D action_set_relative flag for following action_* calls */
+  double   potential_max_rotation, potential_rotate_step, potential_check_distance;
+  int      potential_rotate_on_spot;
   int      god_mode;          /* frontend core option; requires GML_GOD_OBJ to name a target family */
   /* execution context */
   GmlInstance *cur_self, *cur_other;
