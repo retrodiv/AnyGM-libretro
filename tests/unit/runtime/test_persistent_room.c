@@ -33,7 +33,7 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 int main(void){
   GmlcProject project; GmlcObject objects[2]; GmlcRoom rooms[2];
   int room_order[2]={0,1};
-  GmlcObjectEvent object_events[12];
+  GmlcObjectEvent object_events[14];
   GmlcProjectTrigger trigger;
   GmlcProjectIncludedFile included;
   unsigned char included_data[]={1,3,5,7};
@@ -51,21 +51,23 @@ int main(void){
   project.included_files=&included; project.n_included_files=project.cap_included_files=1;
   project.rooms=rooms; project.n_rooms=2; project.room_order=room_order; project.n_room_order=2;
   objects[0].name="obj_fixture"; objects[0].sprite_id=-1; objects[0].mask_id=-1; objects[0].parent_id=-1; objects[0].visible=1;
-  objects[0].events=object_events; objects[0].n_events=objects[0].cap_events=6;
+  objects[0].events=object_events; objects[0].n_events=objects[0].cap_events=7;
   objects[1].name="obj_changed"; objects[1].sprite_id=-1; objects[1].mask_id=-1; objects[1].parent_id=-1; objects[1].visible=1;
-  objects[1].events=&object_events[6]; objects[1].n_events=objects[1].cap_events=6;
+  objects[1].events=&object_events[7]; objects[1].n_events=objects[1].cap_events=7;
   object_events[0].event_type=11; object_events[0].event_number=0;
   object_events[1].event_type=3; object_events[1].event_number=0;
   object_events[2].event_type=2; object_events[2].event_number=0;
   object_events[3].event_type=2; object_events[3].event_number=1;
   object_events[4].event_type=5; object_events[4].event_number=65;
   object_events[5].event_type=6; object_events[5].event_number=50;
-  object_events[6].event_type=3; object_events[6].event_number=2;
-  object_events[7].event_type=3; object_events[7].event_number=0;
-  object_events[8].event_type=2; object_events[8].event_number=0;
-  object_events[9].event_type=2; object_events[9].event_number=1;
-  object_events[10].event_type=5; object_events[10].event_number=65;
-  object_events[11].event_type=6; object_events[11].event_number=50;
+  object_events[6].event_type=7; object_events[6].event_number=0;
+  object_events[7].event_type=3; object_events[7].event_number=2;
+  object_events[8].event_type=3; object_events[8].event_number=0;
+  object_events[9].event_type=2; object_events[9].event_number=0;
+  object_events[10].event_type=2; object_events[10].event_number=1;
+  object_events[11].event_type=5; object_events[11].event_number=65;
+  object_events[12].event_type=6; object_events[12].event_number=50;
+  object_events[13].event_type=7; object_events[13].event_number=0;
   trigger.name=(char*)"fixture_trigger"; trigger.moment=1; trigger.runtime_id=0;
   for(int i=0;i<2;i++){ rooms[i].name=i?"room_b":"room_a"; rooms[i].width=320; rooms[i].height=240; rooms[i].speed=30; }
   rooms[0].persistent=1;
@@ -96,12 +98,12 @@ int main(void){
   char end_step[]="/tmp/gml-end-step-event-XXXXXX"; int end_step_fd=mkstemp(end_step); if(end_step_fd<0)return 1;
   FILE *end_step_file=fdopen(end_step_fd,"wb"); const char end_step_source[]="x += 7;\n";
   if(!end_step_file || fwrite(end_step_source,1,sizeof(end_step_source)-1,end_step_file)!=sizeof(end_step_source)-1 || fclose(end_step_file)!=0)return 1;
-  object_events[6].source_path=end_step;
+  object_events[7].source_path=end_step;
   char changed_step[]="/tmp/gml-changed-step-event-XXXXXX"; int changed_step_fd=mkstemp(changed_step); if(changed_step_fd<0)return 1;
   FILE *changed_step_file=fdopen(changed_step_fd,"wb");
   const char changed_step_source[]="global.step_order=global.step_order*10+2;\n";
   if(!changed_step_file || fwrite(changed_step_source,1,sizeof(changed_step_source)-1,changed_step_file)!=sizeof(changed_step_source)-1 || fclose(changed_step_file)!=0)return 1;
-  object_events[7].source_path=changed_step;
+  object_events[8].source_path=changed_step;
   char alarm_files[4][40];
   const char *alarm_sources[4]={
     "global.alarm_order=global.alarm_order*10+1;\n",
@@ -109,7 +111,7 @@ int main(void){
     "global.alarm_order=global.alarm_order*10+2;\n",
     "global.alarm_order=global.alarm_order*10+4;\n"
   };
-  const int alarm_events[4]={2,3,8,9};
+  const int alarm_events[4]={2,3,9,10};
   for(int i=0;i<4;i++){
     snprintf(alarm_files[i],sizeof(alarm_files[i]),"/tmp/gml-alarm-order-%d-XXXXXX",i);
     int alarm_fd=mkstemp(alarm_files[i]); if(alarm_fd<0)return 1;
@@ -117,7 +119,7 @@ int main(void){
     if(!alarm_file || fwrite(alarm_sources[i],1,alarm_len,alarm_file)!=alarm_len || fclose(alarm_file)!=0)return 1;
     object_events[alarm_events[i]].source_path=alarm_files[i];
   }
-  char key_files[2][40]; const int key_events[2]={4,10};
+  char key_files[2][40]; const int key_events[2]={4,11};
   for(int i=0;i<2;i++){
     snprintf(key_files[i],sizeof(key_files[i]),"/tmp/gml-key-order-%d-XXXXXX",i);
     int key_fd=mkstemp(key_files[i]); if(key_fd<0)return 1;
@@ -127,7 +129,7 @@ int main(void){
     if(!key_file || fwrite(key_source,1,(size_t)key_len,key_file)!=(size_t)key_len || fclose(key_file)!=0)return 1;
     object_events[key_events[i]].source_path=key_files[i];
   }
-  char mouse_files[2][40]; const int mouse_events[2]={5,11};
+  char mouse_files[2][40]; const int mouse_events[2]={5,12};
   for(int i=0;i<2;i++){
     snprintf(mouse_files[i],sizeof(mouse_files[i]),"/tmp/gml-mouse-order-%d-XXXXXX",i);
     int mouse_fd=mkstemp(mouse_files[i]); if(mouse_fd<0)return 1;
@@ -136,6 +138,17 @@ int main(void){
       "global.mouse_order=global.mouse_order*10+%d;\n",i+1);
     if(!mouse_file || fwrite(mouse_source,1,(size_t)mouse_len,mouse_file)!=(size_t)mouse_len || fclose(mouse_file)!=0)return 1;
     object_events[mouse_events[i]].source_path=mouse_files[i];
+  }
+  char boundary_files[2][44]; const int boundary_events[2]={6,13};
+  for(int i=0;i<2;i++){
+    snprintf(boundary_files[i],sizeof(boundary_files[i]),"/tmp/gml-boundary-order-%d-XXXXXX",i);
+    int boundary_fd=mkstemp(boundary_files[i]); if(boundary_fd<0)return 1;
+    FILE *boundary_file=fdopen(boundary_fd,"wb");
+    char boundary_source[80]; int boundary_len=snprintf(boundary_source,sizeof(boundary_source),
+      "global.boundary_order=global.boundary_order*10+%d;\n",i+1);
+    if(!boundary_file || fwrite(boundary_source,1,(size_t)boundary_len,boundary_file)!=(size_t)boundary_len ||
+       fclose(boundary_file)!=0)return 1;
+    object_events[boundary_events[i]].source_path=boundary_files[i];
   }
   char path[]="/tmp/gml-persistent-room-XXXXXX"; int fd=mkstemp(path); if(fd<0)return 1; close(fd);
   char err[256]={0};
@@ -343,9 +356,23 @@ int main(void){
     fprintf(stderr,"classic mouse/object order mismatch: %.0f\n",
       mouse_order&&mouse_order->t==V_REAL?mouse_order->d:-1.0); return 1;
   }
-  created->gravity=created->vspeed=0;
   GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
-  if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=2){ fprintf(stderr,"classic trigger did not fire\n"); return 1; }
+  if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=2){
+    fprintf(stderr,"classic trigger did not fire\n"); return 1;
+  }
+  for(int i=0;i<vm.inst_count;i++) if(vm.inst[i].active && !vm.inst[i].marked){
+    vm.inst[i].x=400; vm.inst[i].y=100;
+    vm.inst[i].hspeed=vm.inst[i].vspeed=vm.inst[i].gravity=0;
+    vm.inst[i].sprite_index=vm.inst[i].mask_index=0;
+    vm.inst[i].image_xscale=vm.inst[i].image_yscale=1;
+  }
+  gml_vm_step(&vm);
+  GmlVal *boundary_order=gml_varmap_get(&vm.globals,"boundary_order");
+  if(!boundary_order || boundary_order->t!=V_REAL || boundary_order->d!=1122){
+    fprintf(stderr,"classic boundary/object order mismatch: %.0f\n",
+      boundary_order&&boundary_order->t==V_REAL?boundary_order->d:-1.0); return 1;
+  }
+  created->gravity=created->vspeed=0;
   created->x=200.6; created->y=100.4;
   created->hspeed=created->vspeed=created->gravity=0;
   gml_set_global_arr(&vm,"view_visible",0,0);
@@ -400,6 +427,7 @@ int main(void){
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
   for(int i=0;i<2;i++) unlink(key_files[i]);
   for(int i=0;i<2;i++) unlink(mouse_files[i]);
+  for(int i=0;i<2;i++) unlink(boundary_files[i]);
   if(ok) puts("persistent room fixtures: ok");
   return ok?0:1;
 }

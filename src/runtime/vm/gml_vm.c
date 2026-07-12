@@ -5543,6 +5543,33 @@ static void run_boundary_events(GmlVM *vm){
   double vx=get_global_arr_d(vm,"view_xview",0), vy=get_global_arr_d(vm,"view_yview",0);
   double vw=get_global_arr_d(vm,"view_wview",0), vh=get_global_arr_d(vm,"view_hview",0);
   int has_view=(vw>0 && vh>0);
+  /* Classic dispatch completes one boundary subtype at a time, grouped by exact object
+   * resource inside that subtype. Keep Studio's instance-major dispatch below unchanged. */
+  if(vm->win && vm->win->classic_version){
+    static const struct { int bit; const char *suffix; } phase[]={
+      {1,"Other_0"},{2,"Other_1"},{4,"Other_40"},{8,"Other_50"}
+    };
+    for(unsigned e=0;e<sizeof phase/sizeof phase[0];e++){
+      if((phase[e].bit<=2 && !hr) || (phase[e].bit>=4 && !has_view)) continue;
+      for(int object=0;object<vm->n_objects;object++){
+        if(!(vm->objects[object].bevents&phase[e].bit)) continue;
+        int count=classic_collect_object_slots(vm,object); if(count<0) continue;
+        for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
+          if(i>=vm->inst_count) continue;
+          GmlInstance *in=&vm->inst[i];
+          if(!in->active||in->marked||in->obj!=object) continue;
+          double l,t,r,b; if(!vm_bbox(vm,in,&l,&t,&r,&b)) continue;
+          int fire=phase[e].bit==1 ? (r<0||l>rm.width||b<0||t>rm.height) :
+                   phase[e].bit==2 ? (!(l>=0&&r<=rm.width&&t>=0&&b<=rm.height) &&
+                                      (r>=0&&l<=rm.width&&b>=0&&t<=rm.height)) :
+                   phase[e].bit==4 ? (r<vx||l>vx+vw||b<vy||t>vy+vh) :
+                                     !(l>=vx&&r<=vx+vw&&t>=vy&&b<=vy+vh);
+          if(fire) gml_run_event(vm,in,phase[e].suffix);
+        }
+      }
+    }
+    return;
+  }
   int n=vm->inst_count;
   for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i];
     if(!in->active||in->marked||in->obj<0||in->obj>=vm->n_objects) continue;
