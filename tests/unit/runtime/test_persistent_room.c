@@ -114,6 +114,16 @@ int main(void){
      created->timeline_running!=1 || created->timeline_loop!=0 || vm.window_fullscreen!=1){
     fprintf(stderr,"classic path/timeline/fullscreen actions did not update state\n"); return 1;
   }
+  GmlVal gravity_args[2]={vreal(270),vreal(1)};
+  (void)gml_builtin_call(&vm,"action_set_gravity",gravity_args,2);
+  vm.action_relative=1; gravity_args[0]=vreal(10); gravity_args[1]=vreal(0.5);
+  (void)gml_builtin_call(&vm,"action_set_gravity",gravity_args,2);
+  vm.action_relative=0;
+  if(created->gravity_direction!=280 || created->gravity!=1.5){
+    fprintf(stderr,"classic gravity action argument order mismatch: direction=%.0f gravity=%.1f\n",
+      created->gravity_direction,created->gravity); return 1;
+  }
+  created->gravity=0;
   GmlVal potential_args[4]={vreal(22),vreal(34),vreal(2),vreal(0)};
   (void)gml_builtin_call(&vm,"action_potential_step",potential_args,4);
   if(created->x!=14 || created->y!=34){

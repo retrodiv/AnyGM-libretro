@@ -6796,8 +6796,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(vm->action_relative) s->vspeed+=N(a,n,0); else s->vspeed=N(a,n,0);
       motion_from_components(s); } return vreal(0); }
   if(!strcmp(nm,"action_set_gravity")){ GmlInstance*s=vm->cur_self; if(s){
-      if(vm->action_relative){ s->gravity+=N(a,n,0); s->gravity_direction+=N(a,n,1); }
-      else { s->gravity=N(a,n,0); s->gravity_direction=N(a,n,1); } } return vreal(0); }
+      if(vm->action_relative){ s->gravity_direction+=N(a,n,0); s->gravity+=N(a,n,1); }
+      else { s->gravity_direction=N(a,n,0); s->gravity=N(a,n,1); } } return vreal(0); }
   if(!strcmp(nm,"action_set_friction")){ GmlInstance*s=vm->cur_self; if(s){
       if(vm->action_relative) s->friction+=N(a,n,0); else s->friction=N(a,n,0); } return vreal(0); }
   if(!strcmp(nm,"action_set_relative")){ vm->action_relative=N(a,n,0)>=0.5; return vreal(0); }
