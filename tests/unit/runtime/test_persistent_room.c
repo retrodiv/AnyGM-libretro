@@ -26,14 +26,14 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 
 int main(void){
   GmlcProject project; GmlcObject object; GmlcRoom rooms[2];
-  GmlcObjectEvent trigger_event;
+  GmlcObjectEvent object_events[2];
   GmlcProjectTrigger trigger;
   GmlcProjectIncludedFile included;
   unsigned char included_data[]={1,3,5,7};
   char included_name[64];
   GmlcProjectConstant constant={(char*)"fixture_constant",(char*)"6*7"};
   memset(&project,0,sizeof(project)); memset(&object,0,sizeof(object)); memset(rooms,0,sizeof(rooms));
-  memset(&trigger_event,0,sizeof(trigger_event)); memset(&trigger,0,sizeof(trigger)); memset(&included,0,sizeof(included));
+  memset(object_events,0,sizeof(object_events)); memset(&trigger,0,sizeof(trigger)); memset(&included,0,sizeof(included));
   project.name="persistent-room-fixture"; project.objects=&object; project.n_objects=1;
   project.classic_version=800;
   project.constants=&constant; project.n_constants=project.cap_constants=1;
@@ -44,8 +44,9 @@ int main(void){
   project.included_files=&included; project.n_included_files=project.cap_included_files=1;
   project.rooms=rooms; project.n_rooms=2;
   object.name="obj_fixture"; object.sprite_id=-1; object.mask_id=-1; object.parent_id=-1; object.visible=1;
-  object.events=&trigger_event; object.n_events=object.cap_events=1;
-  trigger_event.event_type=11; trigger_event.event_number=0;
+  object.events=object_events; object.n_events=object.cap_events=2;
+  object_events[0].event_type=11; object_events[0].event_number=0;
+  object_events[1].event_type=3; object_events[1].event_number=0;
   trigger.name=(char*)"fixture_trigger"; trigger.moment=1; trigger.runtime_id=0;
   for(int i=0;i<2;i++){ rooms[i].name=i?"room_b":"room_a"; rooms[i].width=320; rooms[i].height=240; rooms[i].speed=30; }
   rooms[0].persistent=1;
@@ -62,7 +63,11 @@ int main(void){
   char event[]="/tmp/gml-trigger-event-XXXXXX"; int event_fd=mkstemp(event); if(event_fd<0)return 1;
   FILE *event_file=fdopen(event_fd,"wb"); const char event_source[]="global.trigger_hits += 1;\n";
   if(!event_file || fwrite(event_source,1,sizeof(event_source)-1,event_file)!=sizeof(event_source)-1 || fclose(event_file)!=0)return 1;
-  trigger_event.source_path=event;
+  object_events[0].source_path=event;
+  char step[]="/tmp/gml-step-event-XXXXXX"; int step_fd=mkstemp(step); if(step_fd<0)return 1;
+  FILE *step_file=fdopen(step_fd,"wb"); const char step_source[]="x += 5;\n";
+  if(!step_file || fwrite(step_source,1,sizeof(step_source)-1,step_file)!=sizeof(step_source)-1 || fclose(step_file)!=0)return 1;
+  object_events[1].source_path=step;
   char path[]="/tmp/gml-persistent-room-XXXXXX"; int fd=mkstemp(path); if(fd<0)return 1; close(fd);
   char err[256]={0};
   if(!gmlc_package_write_structural(&project,path,err,sizeof(err))){ fprintf(stderr,"package: %s\n",err); unlink(path); unlink(startup); return 1; }
@@ -109,7 +114,12 @@ int main(void){
   if(message_result.t!=V_REAL || message_result.d!=2){
     fprintf(stderr,"non-interactive message button selection mismatch: %.0f\n",message_result.d); return 1;
   }
+  double position_before_step=created->x;
   gml_vm_step(&vm);
+  if(created->x!=position_before_step+5 || created->xprevious!=position_before_step){
+    fprintf(stderr,"previous position was not captured before Step movement: x=%.0f previous=%.0f\n",
+      created->x,created->xprevious); return 1;
+  }
   GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
   if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=1){ fprintf(stderr,"classic trigger did not fire\n"); return 1; }
   gml_set_global_arr(&vm,"background_x",0,123);
@@ -139,7 +149,7 @@ int main(void){
     global_array_value(&vm,"background_x",0),global_array_value(&vm,"view_xview",0),
     room_speed&&room_speed->t==V_REAL?room_speed->d:-1,vm.n_tile_mut,
     vm.n_tile_mut?vm.tile_mut[0].depth:-1,vm.n_tile_mut?vm.tile_mut[0].dx:0,vm.n_tile_mut?vm.tile_mut[0].dy:0);
-  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(condition); unlink(event); unlink(included_path);
+  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(condition); unlink(event); unlink(step); unlink(included_path);
   if(ok) puts("persistent room fixtures: ok");
   return ok?0:1;
 }

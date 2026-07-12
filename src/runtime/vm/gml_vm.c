@@ -4254,6 +4254,14 @@ void gml_vm_step(GmlVM *vm){
   int n=vm->inst_count;
   int prev_alloc_base=vm->step_alloc_base;
   vm->step_alloc_base=n;
+  /* xprevious/yprevious describe the position at the start of this step. This
+   * must precede user Step code: classic games commonly move by assigning x/y
+   * directly, and solid collision rollback needs the position from before
+   * those assignments. */
+  for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked){
+    vm->inst[i].xprevious=vm->inst[i].x;
+    vm->inst[i].yprevious=vm->inst[i].y;
+  }
   /* Advance sprite animations before Step. Keeping this shared phase preserves the verified
    * frame alignment of both imported and Studio projects; newly-created Step participation is
    * handled independently by the live normal-Step iterator below. */
@@ -4351,7 +4359,6 @@ void gml_vm_step(GmlVM *vm){
   VMPROF_MARK(step0);
   /* movement */
   for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked) continue;
-    in->xprevious=in->x; in->yprevious=in->y;
     if(in->gravity!=0){ in->hspeed+=in->gravity*cos(in->gravity_direction*M_PI/180.0);
       in->vspeed-=in->gravity*sin(in->gravity_direction*M_PI/180.0); motion_from_components(in); }
     if(in->friction!=0 && in->speed!=0){
@@ -5282,6 +5289,10 @@ static void run_collisions(GmlVM *vm){
             fprintf(stderr,"[collision] f%ld %s id=%u -> %s id=%u event=Collision_%d\n",
               g_vm_frame,sn,si->id,on,oi->id,target_obj);
         }
+        /* Remember which participant entered the contact during this step. The
+         * Collision code gets the first opportunity to resolve the overlap. */
+        int oi_moved=oi->x!=oi->xprevious || oi->y!=oi->yprevious;
+        int oi_kinematic=oi->hspeed!=0.0 || oi->vspeed!=0.0;
         char suffix[32]; snprintf(suffix,sizeof suffix,"Collision_%d",target_obj);
         { static int evt=-1; if(evt<0) evt=getenv("GML_DBG_EVTIME")!=NULL;
           if(evt){ double t0=vmprof_now();
@@ -5291,6 +5302,21 @@ static void run_collisions(GmlVM *vm){
               (si->obj>=0&&si->obj<vm->n_objects)?vm->objects[si->obj].name:"?",
               (oi->obj>=0&&oi->obj<vm->n_objects)?vm->objects[oi->obj].name:"?",dt);
           } else run_event_code_from(vm,si,oi,suffix,handler_obj,code); }
+        /* If Collision code left the pair intersecting, apply the classic solid
+         * fallback to the participant that entered the contact. This preserves
+         * explicit move-to-contact handlers while still stopping unresolved
+         * direct x/y movement against solid instances. */
+        if(si->active && !si->marked && oi->active && !oi->marked &&
+           si->solid && oi_moved && !oi_kinematic){
+          double pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2;
+          int post_hit=vm_bbox(vm,si,&pl1,&pt1,&pr1,&pb1) &&
+                       vm_bbox(vm,oi,&pl2,&pt2,&pr2,&pb2) &&
+                       vm_overlap(pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2) &&
+                       vm_masks_overlap(vm,si,oi,pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2);
+          if(post_hit){
+            oi->x=oi->xprevious; oi->y=oi->yprevious; gml_colgrid_touch(oi);
+          }
+        }
         if(!si->active||si->marked) break;   /* self destroyed by the event */
         if(!vm_bbox(vm,si,&l1,&t1,&r1,&b1)) break;
         /* the event may have mutated the world (and the shared candidate cache): finish this
