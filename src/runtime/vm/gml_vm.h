@@ -139,6 +139,7 @@ typedef struct GmlVM {
   GmlColPairCache *col_pair_cache; int col_pair_cache_cap;
   GmlEventCache *event_cache; int event_cache_cap;
   GmlInstance *inst; int inst_cap, inst_count;
+  int *event_ord; int event_ord_cap; /* reusable classic per-object event-order scratch */
   int      step_alloc_base;   /* while stepping, new instances must not reuse slots in the current frame snapshot */
   uint32_t next_id;
   int      room_index;        /* current room (ROOM index) */

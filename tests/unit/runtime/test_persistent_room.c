@@ -28,7 +28,7 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 int main(void){
   GmlcProject project; GmlcObject objects[2]; GmlcRoom rooms[2];
   int room_order[2]={0,1};
-  GmlcObjectEvent object_events[3];
+  GmlcObjectEvent object_events[4];
   GmlcProjectTrigger trigger;
   GmlcProjectIncludedFile included;
   unsigned char included_data[]={1,3,5,7};
@@ -48,10 +48,11 @@ int main(void){
   objects[0].name="obj_fixture"; objects[0].sprite_id=-1; objects[0].mask_id=-1; objects[0].parent_id=-1; objects[0].visible=1;
   objects[0].events=object_events; objects[0].n_events=objects[0].cap_events=2;
   objects[1].name="obj_changed"; objects[1].sprite_id=-1; objects[1].mask_id=-1; objects[1].parent_id=-1; objects[1].visible=1;
-  objects[1].events=&object_events[2]; objects[1].n_events=objects[1].cap_events=1;
+  objects[1].events=&object_events[2]; objects[1].n_events=objects[1].cap_events=2;
   object_events[0].event_type=11; object_events[0].event_number=0;
   object_events[1].event_type=3; object_events[1].event_number=0;
   object_events[2].event_type=3; object_events[2].event_number=2;
+  object_events[3].event_type=3; object_events[3].event_number=0;
   trigger.name=(char*)"fixture_trigger"; trigger.moment=1; trigger.runtime_id=0;
   for(int i=0;i<2;i++){ rooms[i].name=i?"room_b":"room_a"; rooms[i].width=320; rooms[i].height=240; rooms[i].speed=30; }
   rooms[0].persistent=1;
@@ -72,6 +73,7 @@ int main(void){
   char step[]="/tmp/gml-step-event-XXXXXX"; int step_fd=mkstemp(step); if(step_fd<0)return 1;
   FILE *step_file=fdopen(step_fd,"wb");
   const char step_source[]=
+    "global.step_order=global.step_order*10+1; "
     "if (!global.spawned_once) { global.spawned_once=1; "
     "with(instance_create(50,50,obj_changed)){ hspeed=3; } } "
     "if (hspeed > 0) hspeed -= 1; if (hspeed < 0) hspeed += 1; "
@@ -82,6 +84,11 @@ int main(void){
   FILE *end_step_file=fdopen(end_step_fd,"wb"); const char end_step_source[]="x += 7;\n";
   if(!end_step_file || fwrite(end_step_source,1,sizeof(end_step_source)-1,end_step_file)!=sizeof(end_step_source)-1 || fclose(end_step_file)!=0)return 1;
   object_events[2].source_path=end_step;
+  char changed_step[]="/tmp/gml-changed-step-event-XXXXXX"; int changed_step_fd=mkstemp(changed_step); if(changed_step_fd<0)return 1;
+  FILE *changed_step_file=fdopen(changed_step_fd,"wb");
+  const char changed_step_source[]="global.step_order=global.step_order*10+2;\n";
+  if(!changed_step_file || fwrite(changed_step_source,1,sizeof(changed_step_source)-1,changed_step_file)!=sizeof(changed_step_source)-1 || fclose(changed_step_file)!=0)return 1;
+  object_events[3].source_path=changed_step;
   char path[]="/tmp/gml-persistent-room-XXXXXX"; int fd=mkstemp(path); if(fd<0)return 1; close(fd);
   char err[256]={0};
   if(!gmlc_package_write_structural(&project,path,err,sizeof(err))){ fprintf(stderr,"package: %s\n",err); unlink(path); unlink(startup); return 1; }
@@ -175,6 +182,7 @@ int main(void){
   contact->sprite_index=contact->mask_index=0;
   contact->image_xscale=contact->image_yscale=1;
   contact->solid=0;
+  GmlInstance *late_order=gml_instance_create(&vm,300,100,0); if(!late_order)return 1;
   vm.cur_self=created;
   GmlVal contact_direction=vreal(0);
   (void)gml_builtin_call(&vm,"move_contact",&contact_direction,1);
@@ -264,9 +272,14 @@ int main(void){
     fprintf(stderr,"classic same-step movement/end-step mismatch: x=%.0f\n",
       same_step_spawn?same_step_spawn->x:-1.0); return 1;
   }
+  GmlVal *step_order=gml_varmap_get(&vm.globals,"step_order");
+  if(!step_order || step_order->t!=V_REAL || step_order->d!=1122){
+    fprintf(stderr,"classic object-group Step order mismatch: %.0f\n",
+      step_order&&step_order->t==V_REAL?step_order->d:-1.0); return 1;
+  }
   created->gravity=created->vspeed=0;
   GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
-  if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=1){ fprintf(stderr,"classic trigger did not fire\n"); return 1; }
+  if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=2){ fprintf(stderr,"classic trigger did not fire\n"); return 1; }
   created->x=200.6; created->y=100.4;
   created->hspeed=created->vspeed=created->gravity=0;
   gml_set_global_arr(&vm,"view_visible",0,0);
@@ -317,7 +330,7 @@ int main(void){
     global_array_value(&vm,"background_x",0),global_array_value(&vm,"view_xview",0),
     room_speed&&room_speed->t==V_REAL?room_speed->d:-1,vm.n_tile_mut,
     vm.n_tile_mut?vm.tile_mut[0].depth:-1,vm.n_tile_mut?vm.tile_mut[0].dx:0,vm.n_tile_mut?vm.tile_mut[0].dy:0);
-  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(condition); unlink(event); unlink(step); unlink(end_step); unlink(included_path);
+  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(condition); unlink(event); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   if(ok) puts("persistent room fixtures: ok");
   return ok?0:1;
 }

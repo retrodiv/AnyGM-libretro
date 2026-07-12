@@ -2929,6 +2929,32 @@ int gml_run_event(GmlVM *vm, GmlInstance *in, const char *suffix){
   if(!in||in->obj<0||in->obj>=vm->n_objects) return 0;
   return run_event_from(vm,in,suffix,in->obj);
 }
+/* Classic all-instance events are dispatched by ascending exact object resource and insertion
+ * order within that object. Snapshot one object group at a time: creations from an earlier object
+ * can join a later group, but a same-object creation waits until the next dispatch. The linked
+ * lists are newest-first, so reverse the collected slots into insertion order. */
+static void run_classic_object_event(GmlVM *vm, const char *suffix){
+  if(vm->inst_count>vm->event_ord_cap){
+    int nc=vm->event_ord_cap?vm->event_ord_cap:64; while(nc<vm->inst_count) nc*=2;
+    int *np=realloc(vm->event_ord,(size_t)nc*sizeof(*np));
+    if(np){ vm->event_ord=np; vm->event_ord_cap=nc; }
+  }
+  for(int object=0;object<vm->n_objects;object++){
+    if(!event_lookup_from(vm,suffix,object,NULL,NULL)) continue;
+    int count=0;
+    if(vm->event_ord && vm->obj_head){
+      for(int i=vm->obj_head[object];i>=0;i=vm->inst_next[i])
+        if(vm->inst[i].active && !vm->inst[i].marked && count<vm->event_ord_cap) vm->event_ord[count++]=i;
+      for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
+        if(i<vm->inst_count && vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==object)
+          gml_run_event(vm,&vm->inst[i],suffix); }
+    } else {
+      int extent=vm->inst_count;
+      for(int i=0;i<extent;i++) if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==object)
+        gml_run_event(vm,&vm->inst[i],suffix);
+    }
+  }
+}
 /* event_inherited(): from inside a child's event, also run the PARENT's version of that same event. */
 int gml_event_inherited(GmlVM *vm){
   if(!vm->cur_self||!vm->cur_event||vm->cur_event_obj<0||vm->cur_event_obj>=vm->n_objects) return 0;
@@ -4292,7 +4318,8 @@ void gml_vm_step(GmlVM *vm){
     } }
   /* begin step */
   run_classic_triggers(vm,1);
-  for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_1");
+  if(vm->win && vm->win->classic_version) run_classic_object_event(vm,"Step_1");
+  else for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_1");
   VMPROF_MARK(step1);
   run_timelines(vm,n);
   /* Alarm thresholds depend on bytecode version: below 16, decrement values
@@ -4353,14 +4380,16 @@ void gml_vm_step(GmlVM *vm){
     }
   }
   VMPROF_MARK(input);
-  /* Normal Step uses the live instance count. GM8's object-event iterator can reach an instance
-   * created earlier in this same phase (for example, a controller that spawns an actor whose
-   * object event is still ahead). A frame-start snapshot delays that actor's initialisation and
-   * can select a completely different state on its first draw. Other phases retain their
-   * existing snapshot until independently verified. */
+  /* Classic Normal Step is grouped by ascending object resource, with insertion order
+   * inside each exact object. Each object takes its extent when that group begins: an earlier
+   * object can create an instance whose later object group still sees it, while a same-object
+   * creation waits until the next Step. Studio retains its verified flat snapshot. */
   run_classic_triggers(vm,0);
-  for(int i=0;i<vm->inst_count;i++)
-    if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_0");
+  if(vm->win && vm->win->classic_version) run_classic_object_event(vm,"Step_0");
+  else {
+    for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked)
+      gml_run_event(vm,&vm->inst[i],"Step_0");
+  }
   VMPROF_MARK(step0);
   /* Classic object iteration remains live through automatic movement. An instance
    * created by an earlier normal-Step handler already participates in that Step
@@ -4387,8 +4416,8 @@ void gml_vm_step(GmlVM *vm){
   VMPROF_MARK(coll);
   /* end step */
   run_classic_triggers(vm,2);
-  int end_step_count=(vm->win && vm->win->classic_version)?vm->inst_count:n;
-  for(int i=0;i<end_step_count;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_2");
+  if(vm->win && vm->win->classic_version) run_classic_object_event(vm,"Step_2");
+  else for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_2");
   VMPROF_MARK(step2);
   reap(vm);
   { const char *iv=getenv("GML_LOG_INSTVAR");   /* obj_name[@id]:var1,var2 — dump instance vars per frame */
@@ -5628,6 +5657,7 @@ void gml_vm_free(GmlVM *vm){
   free(vm->obj_desc); vm->obj_desc=NULL; free(vm->obj_desc_n); vm->obj_desc_n=NULL;
   free(vm->obj_alive); vm->obj_alive=NULL;
   free(vm->obj_head); vm->obj_head=NULL; free(vm->inst_next); vm->inst_next=NULL; free(vm->inst_prev); vm->inst_prev=NULL;
+  free(vm->event_ord); vm->event_ord=NULL; vm->event_ord_cap=0;
   free(vm->cg_off); vm->cg_off=NULL; free(vm->cg_items); vm->cg_items=NULL; vm->cg_items_cap=0;
   free(vm->cg_overlay); vm->cg_overlay=NULL; vm->cg_overlay_cap=vm->cg_overlay_n=0;
   free(vm->draw_ord); vm->draw_ord=NULL; vm->draw_ord_cap=0;
