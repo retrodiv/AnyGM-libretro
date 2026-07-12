@@ -1429,19 +1429,20 @@ static int build_default_font(GmlRender *r){
   f->real=1; f->sprite=-1; f->atlas=atlas_id;
   f->line_height=GML_DEFAULT_FONT_LINE_HEIGHT;
   f->glyphs=glyphs; f->n_glyphs=ng;
-  int ax=0, ay=0;
+  int ax=0, ay=0, row_height=0;
   for(int i=0;i<ng;i++){
     const GmlDefaultGlyph *src=&gml_default_glyphs[i];
-    int w=src->width;
-    if(ax+w>AW){ ax=0; ay+=GML_DEFAULT_FONT_LINE_HEIGHT; }
-    if(ay+GML_DEFAULT_FONT_LINE_HEIGHT>AH) break;
+    int w=src->width, h=src->height;
+    if(ax+w>AW){ ax=0; ay+=row_height; row_height=0; }
+    if(h>row_height) row_height=h;
+    if(ay+h>AH) break;
     GmlGlyph *g=&glyphs[i];
     g->ch=(uint16_t)(GML_DEFAULT_FONT_FIRST+i);
-    g->sx=ax; g->sy=ay; g->w=w; g->h=GML_DEFAULT_FONT_LINE_HEIGHT;
+    g->sx=ax; g->sy=ay; g->w=w; g->h=h;
     g->shift=src->shift; g->offset=src->offset;
     f->glyph_by_char[g->ch]=i;
     const uint8_t *cov=gml_default_font_alpha+src->off;
-    for(int y=0;y<GML_DEFAULT_FONT_LINE_HEIGHT;y++) for(int x=0;x<w;x++){
+    for(int y=0;y<h;y++) for(int x=0;x<w;x++){
       uint8_t alpha=cov[y*w+x];
       if(alpha){
         uint8_t *q=px+((size_t)(ay+y)*AW+ax+x)*4;

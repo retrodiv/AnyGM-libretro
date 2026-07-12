@@ -1353,6 +1353,10 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
     room->speed = (int32_t)fields[5]; room->persistent = fields[6] != 0;
     room->background_color = fields[7] | 0xFF000000u;
     room->draw_background_color = fields[8] != 0;
+    if(getenv("GMLC_LOG_ROOM"))
+      fprintf(stderr,"[classic-room] index=%u size=%dx%d speed=%d persistent=%d colour=%08x clear=%d\n",
+              i,room->width,room->height,room->speed,room->persistent,
+              room->background_color,room->draw_background_color);
     char leaf[112];
     snprintf(leaf, sizeof(leaf), "classic_room_%06u_create.gml", i);
     if(!import_room_code(&r, cache_dir, leaf, &room->creation_code_path, err, errcap)){
