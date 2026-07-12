@@ -86,6 +86,12 @@ int main(void){
   gml_room_enter(&vm,0);
   GmlInstance *created=gml_instance_create(&vm,12,34,0); if(!created)return 1;
   vm.cur_self=created;
+  GmlVal potential_args[4]={vreal(22),vreal(34),vreal(2),vreal(0)};
+  (void)gml_builtin_call(&vm,"action_potential_step",potential_args,4);
+  if(created->x!=14 || created->y!=34){
+    fprintf(stderr,"classic potential-step action did not move toward its target: (%.0f,%.0f)\n",
+      created->x,created->y); return 1;
+  }
   GmlVal distance_arg=vreal(0);
   GmlVal object_distance=gml_builtin_call(&vm,"distance_to_object",&distance_arg,1);
   distance_arg=vreal((double)created->id);

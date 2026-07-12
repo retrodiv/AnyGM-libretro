@@ -6217,9 +6217,18 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     double tx=N(a,n,0), ty=N(a,n,1), amount=fabs(N(a,n,2));
     double dx=tx-s->x, dy=ty-s->y, distance=hypot(dx,dy);
     if(distance<=amount || distance<1e-9){ s->x=tx; s->y=ty; gml_colgrid_touch(s); return vreal(1); }
-    double heading=atan2(dy,dx), step=amount;
+    double desired=-atan2(dy,dx)*180.0/M_PI;
+    while(desired<0) desired+=360.0; while(desired>=360.0) desired-=360.0;
+    double current=s->direction;
+    while(current<0) current+=360.0; while(current>=360.0) current-=360.0;
+    double delta=desired-current;
+    while(delta>180.0) delta-=360.0; while(delta<=-180.0) delta+=360.0;
+    if(delta>30.0) delta=30.0; else if(delta<-30.0) delta=-30.0;
+    double heading=-(current+delta)*M_PI/180.0, step=amount;
     int all=N(a,n,3)!=0.0, moved=0;
-    static const int turns[]={0,10,-10,20,-20,30,-30};
+    static const int turns[]={0,10,-10,20,-20,30,-30,40,-40,50,-50,60,-60,
+      70,-70,80,-80,90,-90,100,-100,110,-110,120,-120,130,-130,140,-140,
+      150,-150,160,-160,170,-170,180};
     for(size_t i=0;i<sizeof(turns)/sizeof(turns[0]);i++){
       double angle=heading+(double)turns[i]*M_PI/180.0;
       double nx=s->x+cos(angle)*step, ny=s->y+sin(angle)*step;
@@ -6238,7 +6247,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     double dx=tx-s->x, dy=ty-s->y, distance=hypot(dx,dy);
     if(distance<=amount || distance<1e-9){ s->x=tx; s->y=ty; gml_colgrid_touch(s); return vreal(1); }
     double heading=atan2(dy,dx); int object=(int)N(a,n,3), moved=0;
-    static const int turns[]={0,10,-10,20,-20,30,-30};
+    static const int turns[]={0,10,-10,20,-20,30,-30,40,-40,50,-50,60,-60,
+      70,-70,80,-80,90,-90,100,-100,110,-110,120,-120,130,-130,140,-140,
+      150,-150,160,-160,170,-170,180};
     for(size_t i=0;i<sizeof(turns)/sizeof(turns[0]);i++){
       double angle=heading+(double)turns[i]*M_PI/180.0;
       double nx=s->x+cos(angle)*amount, ny=s->y+sin(angle)*amount;
@@ -6250,7 +6261,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vreal(moved && distance<=amount);
   }
-  if(!strcmp(nm,"action_potential_step")) return vreal(0);
+  if(!strcmp(nm,"action_potential_step")){
+    GmlVal args[4]={vreal(N(a,n,0)),vreal(N(a,n,1)),vreal(N(a,n,2)),vreal(N(a,n,3))};
+    return gml_builtin_call(vm,"mp_potential_step",args,4);
+  }
   /* instance_nearest/furthest(x,y,obj): id of the nearest/furthest instance of obj (noone=-4). */
   if(!strcmp(nm,"instance_nearest")||!strcmp(nm,"instance_furthest")){
     int far=!strcmp(nm,"instance_furthest"); double px=N(a,n,0),py=N(a,n,1); int obj=(int)N(a,n,2);
