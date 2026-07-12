@@ -1005,16 +1005,18 @@ static inline void blend_argb_src_over_double_reverse(uint32_t *dp, const uint32
     dp[-k]=0xFF000000u|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
   }
 }
-static inline void blend_argb_src_over_draw_alpha(uint32_t *dp, const uint32_t *sp, int run, uint32_t aa, double alpha){
+static inline void blend_argb_src_over_draw_alpha(uint32_t *dp, const uint32_t *sp, int run,
+                                                  uint32_t aa, double alpha, int round_nearest){
   if(run<=0 || !aa || alpha<=0.0) return;
   double sa=(aa/255.0)*alpha, ia=1.0-sa;
+  double bias=round_nearest?0.5:0.0;
   for(int k=0; k<run; k++){
     uint32_t src=sp[k], dst=dp[k];
     int sr=(src>>16)&0xFF, sg=(src>>8)&0xFF, sb=src&0xFF;
     int dr=(dst>>16)&0xFF, dg=(dst>>8)&0xFF, db=dst&0xFF;
-    int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
-    int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
-    int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
+    int or_=(int)(sr*sa+dr*ia+bias); if(or_>255) or_=255; else if(or_<0) or_=0;
+    int og=(int)(sg*sa+dg*ia+bias); if(og>255) og=255; else if(og<0) og=0;
+    int ob=(int)(sb*sa+db*ia+bias); if(ob>255) ob=255; else if(ob<0) ob=0;
     dp[k]=0xFF000000u|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
   }
 }
@@ -1100,7 +1102,7 @@ static int blit_tpag_scale1_white_draw_alpha(GmlRender *r, GmlTpag *t, GmlAtlas 
     const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
     int n=sx1-sx0;
     if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
-    else blend_argb_src_over_draw_alpha(dp,sp,n,(uint32_t)ar->alpha,alpha);
+    else blend_argb_src_over_draw_alpha(dp,sp,n,(uint32_t)ar->alpha,alpha,r->classic);
   }
   return 1;
 }
