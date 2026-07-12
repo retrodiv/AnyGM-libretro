@@ -2138,7 +2138,7 @@ typedef struct {
   int has_normal;
 } GmlD3Vertex;
 typedef struct {
-  int active, hidden, culling, ortho;
+  int active, hidden, culling, ortho, classic;
   double eye[3], right[3], up[3], forward[3];
   double ortho_x, ortho_y, ortho_w, ortho_h, ortho_angle;
   int zwrite, smooth, fog, perspective;
@@ -2197,7 +2197,7 @@ void gml_d3_reset(void){
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
   g_d3.zwrite=1; g_d3.smooth=1; g_d3.perspective=1;
   g_d3.fov=41.2; g_d3.near_clip=1; g_d3.far_clip=32000;
-  g_d3.ambient_color=0x262626u;
+  g_d3.ambient_color=0;
   d3_matrix_identity(g_d3.transform);
   g_d3_prim_n=0; g_d3_prim_kind=0; g_d3_prim_texture=-1;
   d3_models_clear_all();
@@ -2427,21 +2427,22 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
   double focal_x=g_d3.aspect>1e-9?(R->fbw*0.5)/(tangent*g_d3.aspect):focal_y;
   double sx[3],sy[3],iz[3],uz[3],vz[3],riz[3],giz[3],biz[3],aiz[3];
   double depth_value[3],view_distance[3];
+  double pixel_offset=g_d3.classic?0.5:0.0;
   for(int i=0;i<3;i++){
     if(g_d3.ortho){
       double ow=fabs(g_d3.ortho_w)>1e-9?g_d3.ortho_w:1;
       double oh=fabs(g_d3.ortho_h)>1e-9?g_d3.ortho_h:1;
       iz[i]=1; uz[i]=in[i].u; vz[i]=in[i].v;
       riz[i]=in[i].r; giz[i]=in[i].g; biz[i]=in[i].b; aiz[i]=in[i].alpha;
-      sx[i]=in[i].x*R->fbw/ow; sy[i]=in[i].y*R->fbh/oh;
+      sx[i]=in[i].x*R->fbw/ow+pixel_offset; sy[i]=in[i].y*R->fbh/oh+pixel_offset;
       depth_value[i]=1000000.0-in[i].z;
       view_distance[i]=fabs(in[i].z);
     } else {
       if(in[i].z<=1e-6) return;
       iz[i]=1.0/in[i].z; uz[i]=in[i].u*iz[i]; vz[i]=in[i].v*iz[i];
       riz[i]=in[i].r*iz[i]; giz[i]=in[i].g*iz[i]; biz[i]=in[i].b*iz[i]; aiz[i]=in[i].alpha*iz[i];
-      sx[i]=R->fbw*0.5+in[i].x*focal_x*iz[i];
-      sy[i]=R->fbh*0.5-in[i].y*focal_y*iz[i];
+      sx[i]=R->fbw*0.5+in[i].x*focal_x*iz[i]+pixel_offset;
+      sy[i]=R->fbh*0.5-in[i].y*focal_y*iz[i]+pixel_offset;
       depth_value[i]=iz[i];
       view_distance[i]=in[i].z;
     }
@@ -2539,14 +2540,18 @@ static int d3_clip_z(const GmlD3Vertex *input,int count,GmlD3Vertex *output,doub
   }
   return n;
 }
-static void d3_draw_quad(GmlRender *R, const double p[4][3], int texture, double hrep, double vrep){
+static void d3_emit_triangle(GmlRender *R,const GmlD3Vertex world[3],const GmlD3Texture *texture);
+static void d3_draw_quad(GmlRender *R, const double p[4][3], int texture, double hrep, double vrep,
+                         uint32_t vertex_color,int reverse_normal,int uv_mode){
   GmlD3Texture resolved={0};
   if(texture!=-1) d3_texture(R,texture,&resolved);
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
+  double normal[3]={0,0,1};
   if(g_d3.lighting){
     double e1[3]={p[1][0]-p[0][0],p[1][1]-p[0][1],p[1][2]-p[0][2]};
-    double e2[3]={p[2][0]-p[0][0],p[2][1]-p[0][1],p[2][2]-p[0][2]}, normal[3];
+    double e2[3]={p[2][0]-p[0][0],p[2][1]-p[0][1],p[2][2]-p[0][2]};
     d3_cross(e1,e2,normal); d3_normalize(normal);
+    if(reverse_normal) for(int i=0;i<3;i++) normal[i]=-normal[i];
     double center[3]={0,0,0}; for(int i=0;i<4;i++) for(int k=0;k<3;k++) center[k]+=p[i][k]*.25;
     double lr=(g_d3.ambient_color&255)/255.0;
     double lg=((g_d3.ambient_color>>8)&255)/255.0;
@@ -2556,23 +2561,47 @@ static void d3_draw_quad(GmlRender *R, const double p[4][3], int texture, double
       if(g_d3.light[i].range<0){
         double ray[3]={-g_d3.light[i].x,-g_d3.light[i].y,-g_d3.light[i].z};
         if(!d3_normalize(ray)) continue;
-        double diffuse=fabs(d3_dot(normal,ray));
+        double diffuse=fmax(0.0,d3_dot(normal,ray));
         lr+=diffuse*(col&255)/255.0; lg+=diffuse*((col>>8)&255)/255.0; lb+=diffuse*((col>>16)&255)/255.0;
         continue;
       }
       double ray[3]={g_d3.light[i].x-center[0],g_d3.light[i].y-center[1],g_d3.light[i].z-center[2]};
       double dist=sqrt(d3_dot(ray,ray)); if(dist<=1e-9 || dist>=g_d3.light[i].range) continue;
       ray[0]/=dist; ray[1]/=dist; ray[2]/=dist;
-      double diffuse=fabs(d3_dot(normal,ray))*(1.0-dist/g_d3.light[i].range);
+      double diffuse=fmax(0.0,d3_dot(normal,ray))/(1.0+4.0*dist/g_d3.light[i].range);
       lr+=diffuse*(col&255)/255.0; lg+=diffuse*((col>>8)&255)/255.0; lb+=diffuse*((col>>16)&255)/255.0;
     }
     g_d3.shade_r=lr; g_d3.shade_g=lg; g_d3.shade_b=lb;
   }
   static const double uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
+  if(g_d3.lighting&&g_d3.smooth){
+    GmlD3Vertex world[4];
+    for(int i=0;i<4;i++){
+      double u=uv[i][0],v=uv[i][1];
+      if(uv_mode&4){ double swap=u; u=v; v=swap; }
+      if(uv_mode&1) u=1-u;
+      if(uv_mode&2) v=1-v;
+      memset(&world[i],0,sizeof(world[i]));
+      world[i].x=p[i][0]; world[i].y=p[i][1]; world[i].z=p[i][2];
+      world[i].u=u*hrep; world[i].v=v*vrep;
+      world[i].r=vertex_color&255; world[i].g=(vertex_color>>8)&255;
+      world[i].b=(vertex_color>>16)&255; world[i].alpha=R->alpha;
+      world[i].nx=normal[0]; world[i].ny=normal[1]; world[i].nz=normal[2]; world[i].has_normal=1;
+    }
+    GmlD3Vertex first[3]={world[0],world[1],world[2]};
+    GmlD3Vertex second[3]={world[0],world[2],world[3]};
+    d3_emit_triangle(R,first,&resolved); d3_emit_triangle(R,second,&resolved);
+    return;
+  }
   GmlD3Vertex q[4], clipped[12], far_clipped[12];
   for(int i=0;i<4;i++){
-    q[i]=d3_camera_vertex(p[i][0],p[i][1],p[i][2],uv[i][0]*hrep,uv[i][1]*vrep);
-    q[i].r=R->color&255; q[i].g=(R->color>>8)&255; q[i].b=(R->color>>16)&255; q[i].alpha=R->alpha;
+    double u=uv[i][0],v=uv[i][1];
+    if(uv_mode&4){ double swap=u; u=v; v=swap; }
+    if(uv_mode&1) u=1-u;
+    if(uv_mode&2) v=1-v;
+    q[i]=d3_camera_vertex(p[i][0],p[i][1],p[i][2],u*hrep,v*vrep);
+    q[i].r=vertex_color&255; q[i].g=(vertex_color>>8)&255;
+    q[i].b=(vertex_color>>16)&255; q[i].alpha=R->alpha;
   }
   int count;
   if(g_d3.ortho){ memcpy(clipped,q,sizeof(q)); count=4; }
@@ -2649,13 +2678,13 @@ static int d3_vertex_light_factor(const GmlD3Vertex *vertex,double factor[3]){
     if(g_d3.light[i].range<0){
       double ray[3]={-g_d3.light[i].x,-g_d3.light[i].y,-g_d3.light[i].z};
       if(!d3_normalize(ray)) continue;
-      diffuse=fabs(d3_dot(normal,ray));
+      diffuse=fmax(0.0,d3_dot(normal,ray));
     } else {
       double ray[3]={g_d3.light[i].x-x,g_d3.light[i].y-y,g_d3.light[i].z-z};
       double distance=sqrt(d3_dot(ray,ray));
       if(distance<=1e-9 || distance>=g_d3.light[i].range) continue;
       ray[0]/=distance; ray[1]/=distance; ray[2]/=distance;
-      diffuse=fabs(d3_dot(normal,ray))*(1-distance/g_d3.light[i].range);
+      diffuse=fmax(0.0,d3_dot(normal,ray))/(1.0+4.0*distance/g_d3.light[i].range);
     }
     factor[0]+=diffuse*(color&255)/255.0;
     factor[1]+=diffuse*((color>>8)&255)/255.0;
@@ -2672,6 +2701,7 @@ static void d3_apply_light_factor(GmlD3Vertex *vertex,const double factor[3]){
 static void d3_emit_triangle(GmlRender *R,const GmlD3Vertex world[3],const GmlD3Texture *texture){
   GmlD3Vertex camera[3],near_clipped[12],far_clipped[12];
   GmlD3Vertex lit[3]={world[0],world[1],world[2]};
+  g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
   if(g_d3.lighting){
     double flat[3]; int have_flat=0;
     if(!g_d3.smooth) for(int i=0;i<3&&!have_flat;i++) have_flat=d3_vertex_light_factor(&lit[i],flat);
@@ -2697,6 +2727,40 @@ static void d3_emit_triangle(GmlRender *R,const GmlD3Vertex world[3],const GmlD3
   for(int i=1;i+1<count;i++){
     GmlD3Vertex triangle[3]={near_clipped[0],near_clipped[i],near_clipped[i+1]};
     d3_raster_triangle(R,triangle,texture);
+  }
+}
+static uint32_t d3_vertex_color(GmlVM *vm,uint32_t color,int explicitly_colored){
+  if(!vm || !vm->win || !vm->win->classic_version) return color&0xFFFFFFu;
+  return explicitly_colored ? (color|0x010000u) : (color&0xFEFFFFu);
+}
+static void d3_draw_ellipsoid(GmlRender *R,double x1,double y1,double z1,
+                              double x2,double y2,double z2,int texture,
+                              double hrep,double vrep,int steps,uint32_t color){
+  if(!R) return;
+  if(steps<3) steps=3; else if(steps>128) steps=128;
+  int rows=(steps+1)/2;
+  double cx=(x1+x2)*.5,cy=(y1+y2)*.5,cz=(z1+z2)*.5;
+  double rx=(x2-x1)*.5,ry=(y2-y1)*.5,rz=(z2-z1)*.5;
+  GmlD3Texture resolved={0};
+  if(texture!=-1) d3_texture(R,texture,&resolved);
+  for(int row=0;row<rows;row++){
+    double t0=M_PI*row/rows,t1=M_PI*(row+1)/rows;
+    double st[2]={sin(t0),sin(t1)},ct[2]={cos(t0),cos(t1)};
+    for(int column=0;column<steps;column++){
+      double p0=2*M_PI*column/steps,p1=2*M_PI*(column+1)/steps;
+      double sp[2]={sin(p0),sin(p1)},cp[2]={cos(p0),cos(p1)};
+      GmlD3Vertex q[4]; memset(q,0,sizeof(q));
+      const int latitude[4]={0,0,1,1},longitude[4]={0,1,1,0};
+      for(int i=0;i<4;i++){
+        int a=latitude[i],b=longitude[i];
+        q[i].x=cx+rx*st[a]*cp[b]; q[i].y=cy+ry*st[a]*sp[b]; q[i].z=cz+rz*ct[a];
+        q[i].nx=st[a]*cp[b]; q[i].ny=st[a]*sp[b]; q[i].nz=ct[a]; q[i].has_normal=1;
+        q[i].u=hrep*(column+b)/steps; q[i].v=vrep*(row+a)/rows;
+        q[i].r=color&255; q[i].g=(color>>8)&255; q[i].b=(color>>16)&255; q[i].alpha=R->alpha;
+      }
+      GmlD3Vertex first[3]={q[0],q[1],q[2]},second[3]={q[0],q[2],q[3]};
+      d3_emit_triangle(R,first,&resolved); d3_emit_triangle(R,second,&resolved);
+    }
   }
 }
 void gml_d3_set_draw_depth(double depth){ g_d3.draw_depth=depth; }
@@ -2860,7 +2924,9 @@ static int d3_project_vertex(GmlRender *R,const GmlD3Vertex *vertex,
   if(g_d3.ortho){
     double width=fabs(g_d3.ortho_w)>1e-9?g_d3.ortho_w:1;
     double height=fabs(g_d3.ortho_h)>1e-9?g_d3.ortho_h:1;
-    *screen_x=vertex->x*R->fbw/width; *screen_y=vertex->y*R->fbh/height;
+    double pixel_offset=g_d3.classic?0.5:0.0;
+    *screen_x=vertex->x*R->fbw/width+pixel_offset;
+    *screen_y=vertex->y*R->fbh/height+pixel_offset;
     *inverse_z=1; *depth=1000000.0-vertex->z; *distance=fabs(vertex->z);
     return 1;
   }
@@ -2873,8 +2939,9 @@ static int d3_project_vertex(GmlRender *R,const GmlD3Vertex *vertex,
   double focal_y=(R->fbh*.5)/tangent;
   double focal_x=g_d3.aspect>1e-9?(R->fbw*.5)/(tangent*g_d3.aspect):focal_y;
   *inverse_z=1.0/vertex->z;
-  *screen_x=R->fbw*.5+vertex->x*focal_x*(*inverse_z);
-  *screen_y=R->fbh*.5-vertex->y*focal_y*(*inverse_z);
+  double pixel_offset=g_d3.classic?0.5:0.0;
+  *screen_x=R->fbw*.5+vertex->x*focal_x*(*inverse_z)+pixel_offset;
+  *screen_y=R->fbh*.5-vertex->y*focal_y*(*inverse_z)+pixel_offset;
   *depth=*inverse_z; *distance=vertex->z;
   return 1;
 }
@@ -8349,6 +8416,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vundef();
   }
+  if(!strncmp(nm,"d3d_",4))
+    g_d3.classic=vm->win&&vm->win->classic_version;
   if(!strcmp(nm,"d3d_start")){
     GmlRender *R=(GmlRender*)vm->render;
     double width=R&&R->fbw>0?R->fbw:640,height=R&&R->fbh>0?R->fbh:480;
@@ -8396,7 +8465,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"d3d_set_projection")){
     d3_set_camera(N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),
                   N(a,n,6),N(a,n,7),N(a,n,8));
-    g_d3.fov=41.2; g_d3.aspect=0; g_d3.near_clip=.05; g_d3.far_clip=32000;
+    g_d3.aspect=0; g_d3.near_clip=.05; g_d3.far_clip=32000;
     return vreal(0);
   }
   if(!strcmp(nm,"d3d_set_projection_ext")){
@@ -8609,6 +8678,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(normal){ vertex.nx=N(a,n,index++); vertex.ny=N(a,n,index++); vertex.nz=N(a,n,index++); vertex.has_normal=1; }
     if(texture){ vertex.u=N(a,n,index++); vertex.v=N(a,n,index++); }
     if(colored){ color=(uint32_t)N(a,n,index++)&0xFFFFFFu; vertex.alpha=N(a,n,index); }
+    color=d3_vertex_color(vm,color,colored);
     vertex.r=color&255; vertex.g=(color>>8)&255; vertex.b=(color>>16)&255;
     g_d3_prim[g_d3_prim_n++]=vertex;
     return vreal(0);
@@ -8621,14 +8691,15 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(R && g_d3.active){
       double x1=N(a,n,0),y1=N(a,n,1),z1=N(a,n,2),x2=N(a,n,3),y2=N(a,n,4),z2=N(a,n,5);
       double face[6][4][3]={
-        {{x1,y1,z1},{x2,y1,z1},{x2,y2,z1},{x1,y2,z1}},
-        {{x1,y2,z2},{x2,y2,z2},{x2,y1,z2},{x1,y1,z2}},
-        {{x1,y1,z2},{x2,y1,z2},{x2,y1,z1},{x1,y1,z1}},
-        {{x1,y2,z1},{x2,y2,z1},{x2,y2,z2},{x1,y2,z2}},
-        {{x1,y1,z1},{x1,y2,z1},{x1,y2,z2},{x1,y1,z2}},
-        {{x2,y1,z2},{x2,y2,z2},{x2,y2,z1},{x2,y1,z1}}};
+        {{x1,y1,z1},{x1,y2,z1},{x2,y2,z1},{x2,y1,z1}},
+        {{x1,y1,z2},{x2,y1,z2},{x2,y2,z2},{x1,y2,z2}},
+        {{x1,y2,z1},{x1,y2,z2},{x2,y2,z2},{x2,y2,z1}},
+        {{x2,y2,z1},{x2,y2,z2},{x2,y1,z2},{x2,y1,z1}},
+        {{x2,y1,z1},{x2,y1,z2},{x1,y1,z2},{x1,y1,z1}},
+        {{x1,y1,z1},{x1,y1,z2},{x1,y2,z2},{x1,y2,z1}}};
+      uint32_t color=d3_vertex_color(vm,R->color,0);
       gml_render_maybe_prepare_draw(R);
-      for(int i=0;i<6;i++) d3_draw_quad(R,face[i],(int)N(a,n,6),N(a,n,7),N(a,n,8));
+      for(int i=0;i<6;i++) d3_draw_quad(R,face[i],(int)N(a,n,6),N(a,n,7),N(a,n,8),color,0,4);
     }
     return vreal(0);
   }
@@ -8638,17 +8709,18 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       double x1=N(a,n,0),y1=N(a,n,1),z1=N(a,n,2),x2=N(a,n,3),y2=N(a,n,4),z2=N(a,n,5);
       double cx=(x1+x2)*.5,cy=(y1+y2)*.5,rx=fabs(x2-x1)*.5,ry=fabs(y2-y1)*.5;
       int closed=N(a,n,9)!=0, steps=(int)N(a,n,10); if(steps<3)steps=3; if(steps>128)steps=128;
+      uint32_t color=d3_vertex_color(vm,R->color,0);
       gml_render_maybe_prepare_draw(R);
       for(int i=0;i<steps;i++){
         double q0=2*M_PI*i/steps,q1=2*M_PI*(i+1)/steps;
         double side[4][3]={{cx+cos(q0)*rx,cy+sin(q0)*ry,z1},{cx+cos(q1)*rx,cy+sin(q1)*ry,z1},
                            {cx+cos(q1)*rx,cy+sin(q1)*ry,z2},{cx+cos(q0)*rx,cy+sin(q0)*ry,z2}};
-        d3_draw_quad(R,side,(int)N(a,n,6),N(a,n,7)/steps,N(a,n,8));
+        d3_draw_quad(R,side,(int)N(a,n,6),N(a,n,7)/steps,N(a,n,8),color,0,0);
         if(closed){
           double cap0[4][3]={{cx,cy,z1},{cx+cos(q1)*rx,cy+sin(q1)*ry,z1},{cx+cos(q0)*rx,cy+sin(q0)*ry,z1},{cx,cy,z1}};
           double cap1[4][3]={{cx,cy,z2},{cx+cos(q0)*rx,cy+sin(q0)*ry,z2},{cx+cos(q1)*rx,cy+sin(q1)*ry,z2},{cx,cy,z2}};
-          d3_draw_quad(R,cap0,(int)N(a,n,6),N(a,n,7),N(a,n,8));
-          d3_draw_quad(R,cap1,(int)N(a,n,6),N(a,n,7),N(a,n,8));
+          d3_draw_quad(R,cap0,(int)N(a,n,6),N(a,n,7),N(a,n,8),color,0,0);
+          d3_draw_quad(R,cap1,(int)N(a,n,6),N(a,n,7),N(a,n,8),color,0,0);
         }
       }
     }
@@ -8660,16 +8732,17 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       double x1=N(a,n,0),y1=N(a,n,1),z1=N(a,n,2),x2=N(a,n,3),y2=N(a,n,4),z2=N(a,n,5);
       double cx=(x1+x2)*.5,cy=(y1+y2)*.5,rx=fabs(x2-x1)*.5,ry=fabs(y2-y1)*.5;
       int closed=N(a,n,9)!=0,steps=(int)N(a,n,10); if(steps<3)steps=3; if(steps>128)steps=128;
+      uint32_t color=d3_vertex_color(vm,R->color,0);
       gml_render_maybe_prepare_draw(R);
       for(int i=0;i<steps;i++){
         double q0=2*M_PI*i/steps,q1=2*M_PI*(i+1)/steps;
         double side[4][3]={{cx+cos(q0)*rx,cy+sin(q0)*ry,z1},{cx+cos(q1)*rx,cy+sin(q1)*ry,z1},
                            {cx,cy,z2},{cx,cy,z2}};
-        d3_draw_quad(R,side,(int)N(a,n,6),N(a,n,7)/steps,N(a,n,8));
+        d3_draw_quad(R,side,(int)N(a,n,6),N(a,n,7)/steps,N(a,n,8),color,0,0);
         if(closed){
           double cap[4][3]={{cx,cy,z1},{cx+cos(q1)*rx,cy+sin(q1)*ry,z1},
                             {cx+cos(q0)*rx,cy+sin(q0)*ry,z1},{cx,cy,z1}};
-          d3_draw_quad(R,cap,(int)N(a,n,6),N(a,n,7),N(a,n,8));
+          d3_draw_quad(R,cap,(int)N(a,n,6),N(a,n,7),N(a,n,8),color,0,0);
         }
       }
     }
@@ -8678,20 +8751,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"d3d_draw_ellipsoid")){
     GmlRender *R=(GmlRender*)vm->render;
     if(R && g_d3.active){
-      double x1=N(a,n,0),y1=N(a,n,1),z1=N(a,n,2),x2=N(a,n,3),y2=N(a,n,4),z2=N(a,n,5);
-      double cx=(x1+x2)*.5,cy=(y1+y2)*.5,cz=(z1+z2)*.5;
-      double rx=fabs(x2-x1)*.5,ry=fabs(y2-y1)*.5,rz=fabs(z2-z1)*.5;
-      int steps=(int)N(a,n,9); if(steps<4)steps=4; if(steps>64)steps=64;
+      uint32_t color=d3_vertex_color(vm,R->color,0);
       gml_render_maybe_prepare_draw(R);
-      for(int lat=0;lat<steps;lat++) for(int lon=0;lon<steps*2;lon++){
-        double a0=-M_PI*.5+M_PI*lat/steps,a1=-M_PI*.5+M_PI*(lat+1)/steps;
-        double b0=M_PI*lon/steps,b1=M_PI*(lon+1)/steps;
-        double p[4][3]={{cx+rx*cos(a0)*cos(b0),cy+ry*cos(a0)*sin(b0),cz+rz*sin(a0)},
-                        {cx+rx*cos(a0)*cos(b1),cy+ry*cos(a0)*sin(b1),cz+rz*sin(a0)},
-                        {cx+rx*cos(a1)*cos(b1),cy+ry*cos(a1)*sin(b1),cz+rz*sin(a1)},
-                        {cx+rx*cos(a1)*cos(b0),cy+ry*cos(a1)*sin(b0),cz+rz*sin(a1)}};
-        d3_draw_quad(R,p,(int)N(a,n,6),N(a,n,7)/steps,N(a,n,8)/steps);
-      }
+      d3_draw_ellipsoid(R,N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),
+                        (int)N(a,n,6),N(a,n,7),N(a,n,8),(int)N(a,n,9),color);
     }
     return vreal(0);
   }
@@ -8715,11 +8778,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         double wall_points[4][3]={{x1,y1,z1},{x2,y2,z1},{x2,y2,z2},{x1,y1,z2}};
         memcpy(p,wall_points,sizeof(p));
       }
+      uint32_t color=d3_vertex_color(vm,R->color,0);
       gml_render_maybe_prepare_draw(R);
       if(getenv("GML_LOG_D3D")){ static int logged=0; if(logged++<16)
         fprintf(stderr,"[d3d] %s tex=%d rep=(%.3f,%.3f) p1=(%.1f,%.1f,%.1f) p2=(%.1f,%.1f,%.1f)\n",
                 nm,(int)N(a,n,6),N(a,n,7),N(a,n,8),x1,y1,z1,x2,y2,z2); }
-      d3_draw_quad(R,p,(int)N(a,n,6),N(a,n,7),N(a,n,8));
+      d3_draw_quad(R,p,(int)N(a,n,6),N(a,n,7),N(a,n,8),color,0,0);
     }
     return vreal(0);
   }

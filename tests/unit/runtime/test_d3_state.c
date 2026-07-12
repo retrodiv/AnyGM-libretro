@@ -75,6 +75,31 @@ static int raster_fixtures(void){
     return 0;
   }
 
+  /* A floor crossing the perspective near plane must remain a continuous projected polygon.
+   * This is the common outdoor-camera shape; a bad clipped-fan depth interpolation used to leave
+   * whole alternating scanline bands untouched. */
+  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  call_numbers(&vm,"d3d_start",NULL,0);
+  const double perspective[]={32,14,5,32,24,0,0,0,1};
+  const double perspective_floor[]={0,0,0,64,48,0,-1,5,5};
+  call_numbers(&vm,"d3d_set_projection",perspective,9);
+  call_numbers(&vm,"d3d_set_hidden",disable,1);
+  call_numbers(&vm,"d3d_draw_floor",perspective_floor,9);
+  int first_row=-1,last_row=-1,empty_inside=0;
+  for(int y=0;y<HEIGHT;y++){
+    int row=colored_pixels(pixels+y*WIDTH,WIDTH);
+    if(row){ if(first_row<0) first_row=y; last_row=y; }
+  }
+  if(first_row>=0) for(int y=first_row;y<=last_row;y++)
+    if(colored_pixels(pixels+y*WIDTH,WIDTH)==0) empty_inside++;
+  if(first_row<0 || empty_inside){
+    fprintf(stderr,"software D3 perspective floor has %d empty interior rows (%d..%d)\n",
+            empty_inside,first_row,last_row);
+    return 0;
+  }
+  call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
+
   call_numbers(&vm,"d3d_transform_set_identity",NULL,0);
   call_numbers(&vm,"d3d_transform_stack_push",NULL,0);
   const double translation[]={16,8,0};
@@ -128,6 +153,30 @@ static int raster_fixtures(void){
   surface_data->px[2]=0xFF0000FFu; surface_data->px[3]=0xFFFFFFFFu;
   GmlVal surface_arg=vreal(surface);
   GmlVal surface_texture=call_values(&vm,"surface_get_texture",&surface_arg,1);
+  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  call_numbers(&vm,"d3d_start",NULL,0);
+  call_numbers(&vm,"d3d_set_projection",perspective,9);
+  call_numbers(&vm,"d3d_set_hidden",disable,1);
+  double textured_floor[]={0,0,0,64,48,0,surface_texture.d,5,5};
+  call_numbers(&vm,"d3d_draw_floor",textured_floor,9);
+  first_row=last_row=-1; empty_inside=0;
+  for(int y=0;y<HEIGHT;y++){
+    int row=colored_pixels(pixels+y*WIDTH,WIDTH);
+    if(row){ if(first_row<0) first_row=y; last_row=y; }
+  }
+  if(first_row>=0) for(int y=first_row;y<=last_row;y++)
+    if(colored_pixels(pixels+y*WIDTH,WIDTH)==0) empty_inside++;
+  if(first_row<0 || empty_inside){
+    fprintf(stderr,"software D3 textured floor has %d empty interior rows (%d..%d)\n",
+            empty_inside,first_row,last_row);
+    return 0;
+  }
+  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  call_numbers(&vm,"d3d_start",NULL,0);
+  call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
+  call_numbers(&vm,"d3d_set_hidden",disable,1);
   double textured_begin[2]={4,surface_texture.d};
   const double textured_a[]={8,8,0,0,0};
   const double textured_b[]={56,8,0,1,0};
