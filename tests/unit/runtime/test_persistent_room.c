@@ -4,6 +4,7 @@
 #include "gml_render.h"
 #include "gmlc/gmlc_package.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -389,11 +390,19 @@ int main(void){
   late_order->alarm[0]=late_order->alarm[1]=1;
   created->gravity=0; created->gravity_direction=270;
   created->hspeed=-1e-16; created->vspeed=0;
+  GmlInstance *friction_probe=find_slot(&vm,100000); if(!friction_probe)return 1;
+  friction_probe->direction=0; friction_probe->speed=-0.4;
+  friction_probe->hspeed=-0.4; friction_probe->vspeed=0; friction_probe->friction=0.2;
+  double friction_position=friction_probe->x;
   double position_before_step=created->x;
   gml_vm_step(&vm);
   if(created->x!=position_before_step+5 || created->xprevious!=position_before_step || created->hspeed!=0){
     fprintf(stderr,"previous position/cardinal gravity mismatch: x=%.0f previous=%.0f hspeed=%.17g\n",
       created->x,created->xprevious,created->hspeed); return 1;
+  }
+  if(fabs(friction_probe->speed+0.2)>1e-9 || fabs(friction_probe->x-(friction_position-0.2))>1e-9){
+    fprintf(stderr,"classic negative-speed friction mismatch: speed=%.3f x=%.3f\n",
+      friction_probe->speed,friction_probe->x); return 1;
   }
   GmlInstance *same_step_spawn=NULL;
   for(int i=0;i<vm.inst_count;i++) if(vm.inst[i].active && !vm.inst[i].marked &&

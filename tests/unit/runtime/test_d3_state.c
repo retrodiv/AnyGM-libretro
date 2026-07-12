@@ -198,6 +198,23 @@ static int raster_fixtures(void){
       pixels[14*WIDTH+16]&0xFFFFFFu,pixels[14*WIDTH+48]&0xFFFFFFu,pixels[34*WIDTH+16]&0xFFFFFFu);
     return 0;
   }
+  surface_data->px[0]=0xFF020000u;
+  surface_data->px[1]=surface_data->px[2]=surface_data->px[3]=0xFF000000u;
+  call_numbers(&vm,"texture_set_interpolation",enable,1);
+  const double interpolated_point[]={30,20,0,.5,.5,0x0000FE,1};
+  memset(pixels,0,sizeof(pixels));
+  double interpolated_begin[2]={1,surface_texture.d};
+  call_numbers(&vm,"d3d_primitive_begin_texture",interpolated_begin,2);
+  call_numbers(&vm,"d3d_vertex_texture_color",interpolated_point,7);
+  call_numbers(&vm,"d3d_primitive_end",NULL,0);
+  if((pixels[20*WIDTH+30]&0x00FFFFFFu)!=0){
+    fprintf(stderr,"software D3 bilinear modulation quantized early: %06x\n",
+      pixels[20*WIDTH+30]&0x00FFFFFFu);
+    return 0;
+  }
+  call_numbers(&vm,"texture_set_interpolation",disable,1);
+  surface_data->px[0]=0xFFFF0000u; surface_data->px[1]=0xFF00FF00u;
+  surface_data->px[2]=0xFF0000FFu; surface_data->px[3]=0xFFFFFFFFu;
   int runtime_sprite=gml_sprite_create_from_surface(&render,surface,0,0,2,2,0,0,0,0);
   GmlVal sprite_args[2]={vreal(runtime_sprite),vreal(0)};
   GmlVal sprite_texture=call_values(&vm,"sprite_get_texture",sprite_args,2);

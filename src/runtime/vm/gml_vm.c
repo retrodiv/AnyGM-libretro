@@ -4619,8 +4619,13 @@ void gml_vm_step(GmlVM *vm){
     if(in->gravity!=0){ in->hspeed+=in->gravity*cos(in->gravity_direction*M_PI/180.0);
       in->vspeed-=in->gravity*sin(in->gravity_direction*M_PI/180.0); motion_from_components(in); }
     if(in->friction!=0 && in->speed!=0){
-      if(in->friction>0 && in->speed<=in->friction) in->speed=0;
-      else in->speed-=in->friction;
+      if(in->speed>0){
+        if(in->friction>in->speed) in->speed=0;
+        else in->speed-=in->friction;
+      } else {
+        if(in->friction>-in->speed) in->speed=0;
+        else in->speed+=in->friction;
+      }
       motion_from_speed_dir(in);
     }
     in->x+=in->hspeed; in->y+=in->vspeed;

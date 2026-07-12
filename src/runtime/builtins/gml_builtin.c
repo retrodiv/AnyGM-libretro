@@ -2388,10 +2388,10 @@ static void d3_texture_texel(const GmlD3Texture *texture,int x,int y,int channel
     channel[2]=pixel&255; channel[3]=(pixel>>24)&255;
   }
 }
-static uint32_t d3_sample(GmlRender *R, const GmlD3Texture *texture, double u, double v, double *alpha){
+static void d3_sample(GmlRender *R, const GmlD3Texture *texture, double u, double v, double channel[4]){
   if(!isfinite(u) || !isfinite(v)){
-    if(alpha) *alpha=0.0;
-    return 0;
+    for(int c=0;c<4;c++) channel[c]=0;
+    return;
   }
   u-=floor(u); v-=floor(v);
   double fx=u*texture->w-0.5, fy=v*texture->h-0.5;
@@ -2404,15 +2404,12 @@ static uint32_t d3_sample(GmlRender *R, const GmlD3Texture *texture, double u, d
   d3_texture_texel(texture,x0,y0,p[0]); d3_texture_texel(texture,x1,y0,p[1]);
   d3_texture_texel(texture,x0,y1,p[2]); d3_texture_texel(texture,x1,y1,p[3]);
   double w[4]={(1-ax)*(1-ay),ax*(1-ay),(1-ax)*ay,ax*ay};
-  int channel[4]={0};
   if(R->interp){
-    for(int c=0;c<4;c++) channel[c]=(int)lround(p[0][c]*w[0]+p[1][c]*w[1]+p[2][c]*w[2]+p[3][c]*w[3]);
+    for(int c=0;c<4;c++) channel[c]=p[0][c]*w[0]+p[1][c]*w[1]+p[2][c]*w[2]+p[3][c]*w[3];
   } else {
     const int *q=p[(ay>=0.5)*2+(ax>=0.5)];
     for(int c=0;c<4;c++) channel[c]=q[c];
   }
-  if(alpha) *alpha=channel[3]/255.0;
-  return (uint32_t)channel[0]|((uint32_t)channel[1]<<8)|((uint32_t)channel[2]<<16);
 }
 static double d3_edge(double ax,double ay,double bx,double by,double px,double py){
   return (px-ax)*(by-ay)-(py-ay)*(bx-ax);
@@ -2464,9 +2461,9 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     double ztest=b0*depth_value[0]+b1*depth_value[1]+b2*depth_value[2];
     size_t di=(size_t)y*R->fbw+x;
     if(g_d3.hidden && ztest<=g_d3.depth[di]) continue;
-    double texture_alpha=1.0;
-    uint32_t color=texture&&texture->kind ? d3_sample(R,texture,(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz,
-                                    (b0*vz[0]+b1*vz[1]+b2*vz[2])/invz,&texture_alpha) : 0xFFFFFFu;
+    double sampled[4]={255,255,255,255};
+    if(texture&&texture->kind) d3_sample(R,texture,(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz,
+                                        (b0*vz[0]+b1*vz[1]+b2*vz[2])/invz,sampled);
     double vr=(b0*riz[0]+b1*riz[1]+b2*riz[2])/invz;
     double vg=(b0*giz[0]+b1*giz[1]+b2*giz[2])/invz;
     double vb=(b0*biz[0]+b1*biz[1]+b2*biz[2])/invz;
@@ -2474,10 +2471,10 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     if(vr<0)vr=0; else if(vr>255)vr=255;
     if(vg<0)vg=0; else if(vg>255)vg=255;
     if(vb<0)vb=0; else if(vb>255)vb=255;
-    int mod_r=(int)lround((color&255)*vr/255.0);
-    int mod_g=(int)lround(((color>>8)&255)*vg/255.0);
-    int mod_b=(int)lround(((color>>16)&255)*vb/255.0);
-    color=(uint32_t)mod_r|((uint32_t)mod_g<<8)|((uint32_t)mod_b<<16);
+    int mod_r=(int)lround(sampled[0]*vr/255.0);
+    int mod_g=(int)lround(sampled[1]*vg/255.0);
+    int mod_b=(int)lround(sampled[2]*vb/255.0);
+    uint32_t color=(uint32_t)mod_r|((uint32_t)mod_g<<8)|((uint32_t)mod_b<<16);
     if(g_d3.lighting){
       int cr=(int)((color&255)*g_d3.shade_r), cg=(int)(((color>>8)&255)*g_d3.shade_g);
       int cb=(int)(((color>>16)&255)*g_d3.shade_b);
@@ -2496,7 +2493,7 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
       int cb=(int)lround(((color>>16)&255)*(1-amount)+((fog>>16)&255)*amount);
       color=(uint32_t)cr|((uint32_t)cg<<8)|((uint32_t)cb<<16);
     }
-    double alpha=texture_alpha*vertex_alpha;
+    double alpha=(sampled[3]/255.0)*vertex_alpha;
     draw_px_alpha(R,x,y,color,alpha);
     if(g_d3.hidden && g_d3.zwrite && alpha>0.0) g_d3.depth[di]=(float)ztest;
   }
@@ -2951,14 +2948,14 @@ static void d3_raster_sample(GmlRender *R,int x,int y,double depth,double distan
   if(!R || x<0 || y<0 || x>=R->fbw || y>=R->fbh || alpha<=0) return;
   size_t index=(size_t)y*R->fbw+x;
   if(g_d3.hidden && depth<=g_d3.depth[index]) return;
-  double texture_alpha=1;
-  uint32_t color=texture&&texture->kind?d3_sample(R,texture,u,v,&texture_alpha):0xFFFFFFu;
+  double sampled[4]={255,255,255,255};
+  if(texture&&texture->kind) d3_sample(R,texture,u,v,sampled);
   if(red<0) red=0; else if(red>255) red=255;
   if(green<0) green=0; else if(green>255) green=255;
   if(blue<0) blue=0; else if(blue>255) blue=255;
-  int cr=(int)lround((color&255)*red/255.0);
-  int cg=(int)lround(((color>>8)&255)*green/255.0);
-  int cb=(int)lround(((color>>16)&255)*blue/255.0);
+  int cr=(int)lround(sampled[0]*red/255.0);
+  int cg=(int)lround(sampled[1]*green/255.0);
+  int cb=(int)lround(sampled[2]*blue/255.0);
   if(g_d3.lighting){
     cr=(int)(cr*g_d3.shade_r); cg=(int)(cg*g_d3.shade_g); cb=(int)(cb*g_d3.shade_b);
     if(cr>255) cr=255; if(cg>255) cg=255; if(cb>255) cb=255;
@@ -2972,7 +2969,7 @@ static void d3_raster_sample(GmlRender *R,int x,int y,double depth,double distan
     cg=(int)lround(cg*(1-amount)+((fog>>8)&255)*amount);
     cb=(int)lround(cb*(1-amount)+((fog>>16)&255)*amount);
   }
-  double final_alpha=texture_alpha*alpha;
+  double final_alpha=(sampled[3]/255.0)*alpha;
   draw_px_alpha(R,x,y,(uint32_t)cr|((uint32_t)cg<<8)|((uint32_t)cb<<16),final_alpha);
   if(g_d3.hidden && g_d3.zwrite && final_alpha>0) g_d3.depth[index]=(float)depth;
 }
