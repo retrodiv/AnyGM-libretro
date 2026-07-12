@@ -25,16 +25,16 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 }
 
 int main(void){
-  GmlcProject project; GmlcObject object; GmlcRoom rooms[2];
+  GmlcProject project; GmlcObject objects[2]; GmlcRoom rooms[2];
   GmlcObjectEvent object_events[2];
   GmlcProjectTrigger trigger;
   GmlcProjectIncludedFile included;
   unsigned char included_data[]={1,3,5,7};
   char included_name[64];
   GmlcProjectConstant constant={(char*)"fixture_constant",(char*)"6*7"};
-  memset(&project,0,sizeof(project)); memset(&object,0,sizeof(object)); memset(rooms,0,sizeof(rooms));
+  memset(&project,0,sizeof(project)); memset(objects,0,sizeof(objects)); memset(rooms,0,sizeof(rooms));
   memset(object_events,0,sizeof(object_events)); memset(&trigger,0,sizeof(trigger)); memset(&included,0,sizeof(included));
-  project.name="persistent-room-fixture"; project.objects=&object; project.n_objects=1;
+  project.name="persistent-room-fixture"; project.objects=objects; project.n_objects=2;
   project.classic_version=800;
   project.constants=&constant; project.n_constants=project.cap_constants=1;
   project.triggers=&trigger; project.n_triggers=project.cap_triggers=1;
@@ -43,8 +43,9 @@ int main(void){
   included.export_mode=2; included.overwrite_file=1;
   project.included_files=&included; project.n_included_files=project.cap_included_files=1;
   project.rooms=rooms; project.n_rooms=2;
-  object.name="obj_fixture"; object.sprite_id=-1; object.mask_id=-1; object.parent_id=-1; object.visible=1;
-  object.events=object_events; object.n_events=object.cap_events=2;
+  objects[0].name="obj_fixture"; objects[0].sprite_id=-1; objects[0].mask_id=-1; objects[0].parent_id=-1; objects[0].visible=1;
+  objects[0].events=object_events; objects[0].n_events=objects[0].cap_events=2;
+  objects[1].name="obj_changed"; objects[1].sprite_id=-1; objects[1].mask_id=-1; objects[1].parent_id=-1; objects[1].visible=1;
   object_events[0].event_type=11; object_events[0].event_number=0;
   object_events[1].event_type=3; object_events[1].event_number=0;
   trigger.name=(char*)"fixture_trigger"; trigger.moment=1; trigger.runtime_id=0;
@@ -86,6 +87,11 @@ int main(void){
   gml_room_enter(&vm,0);
   GmlInstance *created=gml_instance_create(&vm,12,34,0); if(!created)return 1;
   vm.cur_self=created;
+  GmlVal change_args[2]={vreal(1),vreal(0)};
+  (void)gml_builtin_call(&vm,"action_change_object",change_args,2);
+  if(created->obj!=1){ fprintf(stderr,"classic change-object action did not replace the object\n"); return 1; }
+  change_args[0]=vreal(0);
+  (void)gml_builtin_call(&vm,"action_change_object",change_args,2);
   GmlVal potential_args[4]={vreal(22),vreal(34),vreal(2),vreal(0)};
   (void)gml_builtin_call(&vm,"action_potential_step",potential_args,4);
   if(created->x!=14 || created->y!=34){
@@ -130,6 +136,7 @@ int main(void){
   }
   GmlVal sleep_args[2]={vreal(1000),vreal(1)};
   (void)gml_builtin_call(&vm,"action_sleep",sleep_args,2);
+  (void)gml_builtin_call(&vm,"sleep",sleep_args,1);
   (void)gml_builtin_call(&vm,"action_restart_game",NULL,0);
   if(vm.game_end!=2){ fprintf(stderr,"classic restart action did not request a cold boot\n"); return 1; }
   vm.game_end=0;
