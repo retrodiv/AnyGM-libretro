@@ -4387,7 +4387,8 @@ void gml_vm_step(GmlVM *vm){
   VMPROF_MARK(coll);
   /* end step */
   run_classic_triggers(vm,2);
-  for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_2");
+  int end_step_count=(vm->win && vm->win->classic_version)?vm->inst_count:n;
+  for(int i=0;i<end_step_count;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_2");
   VMPROF_MARK(step2);
   reap(vm);
   { const char *iv=getenv("GML_LOG_INSTVAR");   /* obj_name[@id]:var1,var2 — dump instance vars per frame */
