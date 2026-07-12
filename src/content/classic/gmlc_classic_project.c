@@ -234,6 +234,7 @@ int gmlc_classic_project_load(GmlcProject *project, const char *project_path,
   project->classic_version=(int)manifest.inventory.header.version;
   project->classic_scaling=manifest.inventory.settings.scaling;
   project->classic_interpolate=manifest.inventory.settings.interpolate;
+  project->classic_swap_creation_events=manifest.inventory.settings.swap_creation_events;
   project->classic_outside_color=manifest.inventory.settings.outside_color;
   project->name = classic_stem(project_path);
   project->root_dir = gmlc_path_dirname(project_path);

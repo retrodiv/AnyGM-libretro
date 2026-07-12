@@ -143,9 +143,10 @@ static Fixture inventory_fixture(unsigned container_version){
   fixture_u32(&f, 7);
   fixture_zero(&f, 16);
   fixture_u32(&f, 800); /* settings version */
-  unsigned char settings[14 * 4] = {0};
+  unsigned char settings[35 * 4] = {0};
   put_u32le(settings + 4, 1);      /* interpolation */
   put_u32le(settings + 16, 200);   /* fixed two-times scaling */
+  put_u32le(settings + 34 * 4, 1); /* Create runs before room-instance code */
   fixture_compressed(&f, settings, sizeof(settings));
   fixture_u32(&f, 800); fixture_u32(&f, 0); fixture_zero(&f, 8); /* triggers */
   fixture_u32(&f, 800); fixture_u32(&f, 0); fixture_zero(&f, 8); /* constants */
@@ -168,7 +169,8 @@ static int expect_inventory(unsigned version){
     return 0;
   }
   if(in.payload_end != f.size || in.last_instance_id != 100123 || in.last_tile_id != 1000456 ||
-     in.settings.interpolate != 1 || in.settings.scaling != 200)
+     in.settings.interpolate != 1 || in.settings.scaling != 200 ||
+     in.settings.swap_creation_events != 1)
     return 0;
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type)
     if(in.resource_slots[type] != type) return 0;
@@ -1196,8 +1198,9 @@ int main(int argc, char **argv){
     }
     in=manifest.inventory;
     h=in.header;
-      printf("%s\t%u\t%s\tsettings=%u sounds=%u/%u sprites=%u/%u backgrounds=%u/%u paths=%u/%u scripts=%u/%u fonts=%u/%u timelines=%u/%u objects=%u/%u rooms=%u/%u\n",
+      printf("%s\t%u\t%s\tsettings=%u swapcreate=%d sounds=%u/%u sprites=%u/%u backgrounds=%u/%u paths=%u/%u scripts=%u/%u fonts=%u/%u timelines=%u/%u objects=%u/%u rooms=%u/%u\n",
              argv[i], (unsigned)h.version, gmlc_classic_version_name(h.version), in.settings_version,
+             in.settings.swap_creation_events,
              manifest.existing[GMLC_CLASSIC_SOUND], in.resource_slots[GMLC_CLASSIC_SOUND],
              manifest.existing[GMLC_CLASSIC_SPRITE], in.resource_slots[GMLC_CLASSIC_SPRITE],
              manifest.existing[GMLC_CLASSIC_BACKGROUND], in.resource_slots[GMLC_CLASSIC_BACKGROUND],

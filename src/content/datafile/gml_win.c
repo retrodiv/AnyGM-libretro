@@ -231,6 +231,7 @@ int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
     if(classic->size>=8) w->classic_scaling=(int32_t)u32(data,classic->off+4);
     if(classic->size>=12) w->classic_interpolate=(int)u32(data,classic->off+8);
     if(classic->size>=16) w->classic_outside_color=u32(data,classic->off+12);
+    if(classic->size>=20) w->classic_swap_creation_events=(int)u32(data,classic->off+16);
   }
   parse_strg(w); parse_code(w); parse_refs(w);
   return 0;

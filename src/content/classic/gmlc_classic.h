@@ -51,6 +51,7 @@ typedef struct {
   int frequency;
   int hide_caption_buttons;
   int synchronize;
+  int swap_creation_events;
 } GmlcClassicSettings;
 
 typedef struct {

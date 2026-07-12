@@ -89,7 +89,7 @@ typedef struct {
   int32_t *ref_hix; uint32_t ref_hix_cap;
   /* header */
   uint8_t bytecode; uint32_t gameid; int classic_version;
-  int classic_scaling, classic_interpolate;
+  int classic_scaling, classic_interpolate, classic_swap_creation_events;
   uint32_t classic_outside_color;
   double game_speed;                     /* GEN8 global cadence when present (GMS2 exports) */
   uint32_t disp_w, disp_h;           /* default window / native render size */

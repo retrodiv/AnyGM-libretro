@@ -143,6 +143,50 @@ static int read_settings_prefix(ClassicReader *r, GmlcClassicSettings *out){
   return 1;
 }
 
+/* The optional tail grew after the original GM8 settings prefix. Read only the
+ * creation-order flag needed by the runtime and leave truncated/older tails at
+ * their historical default. Length-prefixed images are skipped without
+ * inflating them. */
+static int settings_tail_u32(ClassicReader *r, uint32_t *out){
+  if(!r || r->pos>r->size || r->size-r->pos<4) return 0;
+  const uint8_t *p=r->data+r->pos;
+  *out=(uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);
+  r->pos+=4;
+  return 1;
+}
+static int settings_tail_skip_bytes(ClassicReader *r, uint32_t size){
+  if(!r || r->pos>r->size || size>r->size-r->pos) return 0;
+  r->pos+=size;
+  return 1;
+}
+static int settings_tail_skip_data(ClassicReader *r){
+  uint32_t present=0,size=0;
+  if(!settings_tail_u32(r,&present)) return 0;
+  if(!present) return 1;
+  return settings_tail_u32(r,&size) && settings_tail_skip_bytes(r,size);
+}
+static void read_settings_tail(ClassicReader *r, GmlcClassicSettings *out){
+  ClassicReader q=*r;
+  uint32_t field=0,loading_bar=0;
+  /* screensaver, F4, F1, Escape, F5/F6, F9, close-as-Escape,
+   * priority and freeze-on-focus-loss */
+  for(int i=0;i<9;i++) if(!settings_tail_u32(&q,&field)) return;
+  if(!settings_tail_u32(&q,&loading_bar)) return;
+  if(loading_bar==2 && (!settings_tail_skip_data(&q) || !settings_tail_skip_data(&q))) return;
+  /* Custom loading image has an outer enable followed by the ordinary data flag. */
+  if(!settings_tail_u32(&q,&field)) return;
+  if(field && !settings_tail_skip_data(&q)) return;
+  /* transparency, translucency, scale-progress */
+  for(int i=0;i<3;i++) if(!settings_tail_u32(&q,&field)) return;
+  /* raw icon */
+  if(!settings_tail_u32(&q,&field) || !settings_tail_skip_bytes(&q,field)) return;
+  /* show/log/abort errors and uninitialized-variable policy */
+  for(int i=0;i<4;i++) if(!settings_tail_u32(&q,&field)) return;
+  /* Later writers append WebGL and then the Create-vs-instance-code order. */
+  if(!settings_tail_u32(&q,&field)) return;
+  if(settings_tail_u32(&q,&field)) out->swap_creation_events=field!=0;
+}
+
 static int read_compressed_settings(const uint8_t *compressed, uint32_t compressed_size,
                                     GmlcClassicSettings *out, char *err, size_t errcap){
   if(!compressed_size) return 1;
@@ -159,6 +203,7 @@ static int read_compressed_settings(const uint8_t *compressed, uint32_t compress
   }
   ClassicReader settings={(const uint8_t*)raw,(size_t)raw_size,0,err,errcap};
   int ok=read_settings_prefix(&settings,out);
+  if(ok) read_settings_tail(&settings,out);
   STBI_FREE(raw);
   return ok;
 }

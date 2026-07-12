@@ -4130,17 +4130,26 @@ void gml_room_enter(GmlVM *vm, int room_index){
       }
     }
   }
-  /* Create + per-instance creation code, in room order, after every placed instance exists. */
+  /* Create + per-instance creation code, in room order, after every placed instance exists.
+   * Classic projects serialize which side of Create the room-authored instance code occupies. */
   for(uint32_t i=0;i<cnt;i++){
     int idx=room_inst_idx[i]; if(idx<0 || idx>=vm->inst_count) continue;
     GmlInstance *in=&vm->inst[idx]; if(!in->active || in->marked) continue;
-    gml_run_event(vm,in,"PreCreate_0");   /* GMS2: variable-definitions, before Create */
-    gml_run_event(vm,in,"Create_0");
-    /* Per-instance room creation code (ip+16 = CODE index, -1 if none) runs
-     * after Create; this is how room-authored instance setup is applied. */
     uint32_t ip=u32(d,op+4+i*4);
     int cc=(int32_t)u32(d,ip+16);
-    if(in->active && !in->marked && cc>=0 && cc<vm->win->n_code){ GmlVal _r=gml_vm_run_code(vm,cc,in,NULL,NULL,0); if(_r.t==V_STR && _r.d!=0) free((char*)_r.s); }
+    int code_before_create=vm->win->classic_version && !vm->win->classic_swap_creation_events;
+    if(code_before_create && cc>=0 && cc<vm->win->n_code){
+      GmlVal _r=gml_vm_run_code(vm,cc,in,NULL,NULL,0);
+      if(_r.t==V_STR && _r.d!=0) free((char*)_r.s);
+    }
+    if(in->active && !in->marked){
+      gml_run_event(vm,in,"PreCreate_0");   /* GMS2: variable-definitions, before Create */
+      gml_run_event(vm,in,"Create_0");
+    }
+    if(!code_before_create && in->active && !in->marked && cc>=0 && cc<vm->win->n_code){
+      GmlVal _r=gml_vm_run_code(vm,cc,in,NULL,NULL,0);
+      if(_r.t==V_STR && _r.d!=0) free((char*)_r.s);
+    }
   }
   free(room_inst_idx);
   /* Game Start / Room Start fire only on the instances present at room start.

@@ -31,17 +31,19 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 }
 
 int main(void){
-  GmlcProject project; GmlcObject objects[2]; GmlcRoom rooms[2];
+  GmlcProject project; GmlcObject objects[3]; GmlcRoom rooms[2];
+  GmlcRoomInstance placed_instance;
   int room_order[2]={0,1};
-  GmlcObjectEvent object_events[21];
+  GmlcObjectEvent object_events[22];
   GmlcProjectTrigger trigger;
   GmlcProjectIncludedFile included;
   unsigned char included_data[]={1,3,5,7};
   char included_name[64];
   GmlcProjectConstant constant={(char*)"fixture_constant",(char*)"6*7"};
   memset(&project,0,sizeof(project)); memset(objects,0,sizeof(objects)); memset(rooms,0,sizeof(rooms));
+  memset(&placed_instance,0,sizeof(placed_instance));
   memset(object_events,0,sizeof(object_events)); memset(&trigger,0,sizeof(trigger)); memset(&included,0,sizeof(included));
-  project.name="persistent-room-fixture"; project.objects=objects; project.n_objects=2;
+  project.name="persistent-room-fixture"; project.objects=objects; project.n_objects=3;
   project.classic_version=800;
   project.constants=&constant; project.n_constants=project.cap_constants=1;
   project.triggers=&trigger; project.n_triggers=project.cap_triggers=1;
@@ -54,6 +56,8 @@ int main(void){
   objects[0].events=object_events; objects[0].n_events=objects[0].cap_events=10;
   objects[1].name="obj_changed"; objects[1].sprite_id=-1; objects[1].mask_id=-1; objects[1].parent_id=-1; objects[1].visible=1;
   objects[1].events=&object_events[10]; objects[1].n_events=objects[1].cap_events=11;
+  objects[2].name="obj_create_order"; objects[2].sprite_id=-1; objects[2].mask_id=-1; objects[2].parent_id=-1; objects[2].visible=0;
+  objects[2].events=&object_events[21]; objects[2].n_events=objects[2].cap_events=1;
   object_events[0].event_type=11; object_events[0].event_number=0;
   object_events[1].event_type=3; object_events[1].event_number=0;
   object_events[2].event_type=2; object_events[2].event_number=0;
@@ -75,6 +79,7 @@ int main(void){
   object_events[18].event_type=7; object_events[18].event_number=41;
   object_events[19].event_type=7; object_events[19].event_number=51;
   object_events[20].event_type=11; object_events[20].event_number=0;
+  object_events[21].event_type=0; object_events[21].event_number=0;
   trigger.name=(char*)"fixture_trigger"; trigger.moment=1; trigger.runtime_id=0;
   for(int i=0;i<2;i++){
     rooms[i].name=i?"room_b":"room_a"; rooms[i].width=320; rooms[i].height=240; rooms[i].speed=30;
@@ -87,6 +92,10 @@ int main(void){
     }
   }
   rooms[0].persistent=1;
+  placed_instance.id=(char*)"placed_create_order";
+  placed_instance.name=(char*)"placed_create_order";
+  placed_instance.object_id=2; placed_instance.instance_id=100000;
+  rooms[0].instances=&placed_instance; rooms[0].n_instances=rooms[0].cap_instances=1;
   char startup[]="/tmp/gml-startup-XXXXXX"; int startup_fd=mkstemp(startup); if(startup_fd<0)return 1;
   FILE *startup_file=fdopen(startup_fd,"wb");
   const char startup_source[]=
@@ -110,6 +119,18 @@ int main(void){
   if(!changed_trigger_file || fwrite(changed_trigger_source,1,sizeof(changed_trigger_source)-1,changed_trigger_file)!=sizeof(changed_trigger_source)-1 ||
      fclose(changed_trigger_file)!=0)return 1;
   object_events[20].source_path=changed_trigger;
+  char create_order[]="/tmp/gml-create-order-XXXXXX"; int create_order_fd=mkstemp(create_order); if(create_order_fd<0)return 1;
+  FILE *create_order_file=fdopen(create_order_fd,"wb");
+  const char create_order_source[]="global.create_order=global.create_order*10+2;\n";
+  if(!create_order_file || fwrite(create_order_source,1,sizeof(create_order_source)-1,create_order_file)!=sizeof(create_order_source)-1 ||
+     fclose(create_order_file)!=0)return 1;
+  object_events[21].source_path=create_order;
+  char instance_order[]="/tmp/gml-instance-order-XXXXXX"; int instance_order_fd=mkstemp(instance_order); if(instance_order_fd<0)return 1;
+  FILE *instance_order_file=fdopen(instance_order_fd,"wb");
+  const char instance_order_source[]="global.create_order=global.create_order*10+1;\n";
+  if(!instance_order_file || fwrite(instance_order_source,1,sizeof(instance_order_source)-1,instance_order_file)!=sizeof(instance_order_source)-1 ||
+     fclose(instance_order_file)!=0)return 1;
+  placed_instance.creation_code_path=instance_order;
   char step[]="/tmp/gml-step-event-XXXXXX"; int step_fd=mkstemp(step); if(step_fd<0)return 1;
   FILE *step_file=fdopen(step_fd,"wb");
   const char step_source[]=
@@ -206,6 +227,11 @@ int main(void){
     fprintf(stderr,"startup code or project constant did not run\n"); return 1;
   }
   gml_room_enter(&vm,0);
+  GmlVal *create_order_value=gml_varmap_get(&vm.globals,"create_order");
+  if(!create_order_value || create_order_value->t!=V_REAL || create_order_value->d!=12){
+    fprintf(stderr,"classic instance/Create order mismatch: %.0f\n",
+      create_order_value&&create_order_value->t==V_REAL?create_order_value->d:-1.0); return 1;
+  }
   GmlInstance *created=gml_instance_create(&vm,12,34,0); if(!created)return 1;
   vm.cur_self=created;
   GmlVal change_args[2]={vreal(1),vreal(0)};
@@ -471,7 +497,7 @@ int main(void){
     global_array_value(&vm,"background_x",0),global_array_value(&vm,"view_xview",0),
     room_speed&&room_speed->t==V_REAL?room_speed->d:-1,vm.n_tile_mut,
     vm.n_tile_mut?vm.tile_mut[0].depth:-1,vm.n_tile_mut?vm.tile_mut[0].dx:0,vm.n_tile_mut?vm.tile_mut[0].dy:0);
-  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(condition); unlink(event); unlink(changed_trigger); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
+  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
   for(int i=0;i<2;i++) unlink(key_files[i]);
   for(int i=0;i<2;i++) unlink(mouse_files[i]);

@@ -2081,6 +2081,7 @@ static int write_classic_marker(Pkg *pkg, const GmlcProject *project){
   wi32(&pkg->b,project->classic_scaling);
   wu32(&pkg->b,(uint32_t)(project->classic_interpolate?1:0));
   wu32(&pkg->b,project->classic_outside_color);
+  wu32(&pkg->b,(uint32_t)(project->classic_swap_creation_events?1:0));
   chunk_end(pkg,s);
   return 1;
 }

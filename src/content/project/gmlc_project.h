@@ -254,6 +254,7 @@ typedef struct {
   int classic_version;
   int classic_scaling;
   int classic_interpolate;
+  int classic_swap_creation_events;
   uint32_t classic_outside_color;
   GmlcResource *resources;
   int n_resources, cap_resources;
