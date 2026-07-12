@@ -216,6 +216,27 @@ int main(void){
   }
   GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
   if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=1){ fprintf(stderr,"classic trigger did not fire\n"); return 1; }
+  created->x=200.6; created->y=100.4;
+  created->hspeed=created->vspeed=created->gravity=0;
+  gml_set_global_arr(&vm,"view_visible",0,0);
+  gml_set_global_arr(&vm,"view_visible",1,1);
+  gml_set_global_arr(&vm,"view_xview",1,0); gml_set_global_arr(&vm,"view_yview",1,0);
+  gml_set_global_arr(&vm,"view_wview",1,100); gml_set_global_arr(&vm,"view_hview",1,100);
+  gml_set_global_arr(&vm,"view_hborder",1,10); gml_set_global_arr(&vm,"view_vborder",1,50);
+  gml_set_global_arr(&vm,"view_hspeed",1,4); gml_set_global_arr(&vm,"view_vspeed",1,-1);
+  gml_set_global_arr(&vm,"view_object",1,(double)created->id);
+  gml_vm_step(&vm);
+  if(global_array_value(&vm,"view_xview",1)!=4 || global_array_value(&vm,"view_yview",1)!=50){
+    fprintf(stderr,"classic secondary-view limited follow mismatch: x=%.0f y=%.0f\n",
+      global_array_value(&vm,"view_xview",1),global_array_value(&vm,"view_yview",1)); return 1;
+  }
+  gml_set_global_arr(&vm,"view_xview",1,0);
+  gml_set_global_arr(&vm,"view_hspeed",1,-1);
+  gml_vm_step(&vm);
+  if(global_array_value(&vm,"view_xview",1)!=121){
+    fprintf(stderr,"classic secondary-view snap/round mismatch: x=%.0f\n",
+      global_array_value(&vm,"view_xview",1)); return 1;
+  }
   gml_set_global_arr(&vm,"background_x",0,123);
   gml_set_global_arr(&vm,"view_xview",0,77);
   *gml_varmap_put(&vm.globals,"room_speed")=vreal(55);

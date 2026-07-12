@@ -4450,34 +4450,53 @@ void gml_vm_step(GmlVM *vm){
       get_global_arr_d(vm,"view_visible",0),vo,
       get_global_arr_d(vm,"view_wview",0),
       get_global_arr_d(vm,"view_xview",0),get_global_arr_d(vm,"view_yview",0)); } }
-  if(get_global_arr_d(vm,"view_visible",0)>=0.5){
-    int vobj=(int)get_global_arr_d(vm,"view_object",0);
+  int follow_views=(vm->win && vm->win->classic_version)?8:1;
+  for(int view=0;view<follow_views;view++) if(get_global_arr_d(vm,"view_visible",view)>=0.5){
+    int vobj=(int)get_global_arr_d(vm,"view_object",view);
     GmlInstance *fo = vobj>=0 ? gml_find_instance(vm,vobj) : NULL;
-    if(fo && getenv("GML_LOG_FOLLOW")){ static int f2=0; if(f2++%60==0)
+    if(fo && view==0 && getenv("GML_LOG_FOLLOW")){ static int f2=0; if(f2++%60==0)
       fprintf(stderr,"[follow-target] obj=%d(%s) id=%u at(%.0f,%.0f) hb=%.0f\n",
         fo->obj,(fo->obj>=0&&fo->obj<vm->n_objects)?vm->objects[fo->obj].name:"?",fo->id,fo->x,fo->y,
-        get_global_arr_d(vm,"view_hborder",0)); }
+        get_global_arr_d(vm,"view_hborder",view)); }
     if(fo){
-      double vx=get_global_arr_d(vm,"view_xview",0), vy=get_global_arr_d(vm,"view_yview",0);
-      double wv=get_global_arr_d(vm,"view_wview",0), hv=get_global_arr_d(vm,"view_hview",0);
-      double hb=get_global_arr_d(vm,"view_hborder",0), vb=get_global_arr_d(vm,"view_vborder",0);
-      /* Center the target on axes whose border is at least half the view size. */
-      if(2*hb >= wv)         vx = fo->x - wv/2;
-      else {
-        if(fo->x-vx < hb)    vx = fo->x - hb;
-        if(fo->x-vx > wv-hb) vx = fo->x - (wv-hb);
+      double vx=get_global_arr_d(vm,"view_xview",view), vy=get_global_arr_d(vm,"view_yview",view);
+      double wv=get_global_arr_d(vm,"view_wview",view), hv=get_global_arr_d(vm,"view_hview",view);
+      double hb=get_global_arr_d(vm,"view_hborder",view), vb=get_global_arr_d(vm,"view_vborder",view);
+      double tx=fo->x, ty=fo->y;
+      int classic=vm->win && vm->win->classic_version;
+      if(classic){ tx=round(tx); ty=round(ty); }
+      /* A border of at least half the view centers the target. Otherwise a classic positive
+       * speed caps the correction per step; zero holds the view and a negative value snaps. */
+      if(2*hb >= wv) vx=tx-wv/2;
+      else if(tx-hb < vx){
+        double wanted=tx-hb;
+        if(classic){ double speed=get_global_arr_d(vm,"view_hspeed",view);
+          vx=speed<0?wanted:vx-fmin(vx-wanted,fmax(speed,0)); }
+        else vx=wanted;
+      } else if(tx+hb > vx+wv){
+        double wanted=tx+hb-wv;
+        if(classic){ double speed=get_global_arr_d(vm,"view_hspeed",view);
+          vx=speed<0?wanted:vx+fmin(wanted-vx,fmax(speed,0)); }
+        else vx=wanted;
       }
-      if(2*vb >= hv)         vy = fo->y - hv/2;
-      else {
-        if(fo->y-vy < vb)    vy = fo->y - vb;
-        if(fo->y-vy > hv-vb) vy = fo->y - (hv-vb);
+      if(2*vb >= hv) vy=ty-hv/2;
+      else if(ty-vb < vy){
+        double wanted=ty-vb;
+        if(classic){ double speed=get_global_arr_d(vm,"view_vspeed",view);
+          vy=speed<0?wanted:vy-fmin(vy-wanted,fmax(speed,0)); }
+        else vy=wanted;
+      } else if(ty+vb > vy+hv){
+        double wanted=ty+vb-hv;
+        if(classic){ double speed=get_global_arr_d(vm,"view_vspeed",view);
+          vy=speed<0?wanted:vy+fmin(wanted-vy,fmax(speed,0)); }
+        else vy=wanted;
       }
       GmlRoom rm; if(gml_room_get(vm->win,vm->room_index,&rm)==0){
         double mx=rm.width-wv, my=rm.height-hv;
         if(vx<0)vx=0; if(mx>0&&vx>mx)vx=mx; if(mx<=0)vx=0;
         if(vy<0)vy=0; if(my>0&&vy>my)vy=my; if(my<=0)vy=0;
       }
-      set_global_arr(vm,"view_xview",0,vx); set_global_arr(vm,"view_yview",0,vy);
+      set_global_arr(vm,"view_xview",view,vx); set_global_arr(vm,"view_yview",view,vy);
     }
   }
   /* room transition requested during the step */
