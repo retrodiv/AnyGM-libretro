@@ -67,12 +67,7 @@ int main(void){
   if(!event_file || fwrite(event_source,1,sizeof(event_source)-1,event_file)!=sizeof(event_source)-1 || fclose(event_file)!=0)return 1;
   object_events[0].source_path=event;
   char step[]="/tmp/gml-step-event-XXXXXX"; int step_fd=mkstemp(step); if(step_fd<0)return 1;
-  FILE *step_file=fdopen(step_fd,"wb");
-  const char step_source[]=
-    "x += 5;\n"
-    "global.scope_read = obj_fixture.scope_marker;\n"
-    "global.scope_array = obj_fixture.scope_values[0];\n"
-    "obj_fixture.scope_written = 7;\n";
+  FILE *step_file=fdopen(step_fd,"wb"); const char step_source[]="x += 5;\n";
   if(!step_file || fwrite(step_source,1,sizeof(step_source)-1,step_file)!=sizeof(step_source)-1 || fclose(step_file)!=0)return 1;
   object_events[1].source_path=step;
   char path[]="/tmp/gml-persistent-room-XXXXXX"; int fd=mkstemp(path); if(fd<0)return 1; close(fd);
@@ -181,38 +176,13 @@ int main(void){
   if(vm.game_end!=1){ fprintf(stderr,"classic end action did not request shutdown\n"); return 1; }
   vm.game_end=0;
   double position_before_step=created->x;
-  *gml_varmap_put(&created->vars,"scope_marker")=vreal(1);
-  *gml_varmap_put(&created->vars,"scope_values")=gml_arr_new(1,vreal(11));
-  GmlInstance *scope_newer=gml_instance_create(&vm,40,34,0);
-  if(!scope_newer)return 1;
-  *gml_varmap_put(&scope_newer->vars,"scope_marker")=vreal(2);
-  *gml_varmap_put(&scope_newer->vars,"scope_values")=gml_arr_new(1,vreal(22));
-  if(gml_find_instance(&vm,0)!=scope_newer){
-    fprintf(stderr,"classic object lookup did not select the newest active instance\n"); return 1;
-  }
   gml_vm_step(&vm);
   if(created->x!=position_before_step+5 || created->xprevious!=position_before_step){
     fprintf(stderr,"previous position was not captured before Step movement: x=%.0f previous=%.0f\n",
       created->x,created->xprevious); return 1;
   }
-  GmlVal *scope_read=gml_varmap_get(&vm.globals,"scope_read");
-  GmlVal *scope_array=gml_varmap_get(&vm.globals,"scope_array");
-  GmlVal *scope_written_old=gml_varmap_get(&created->vars,"scope_written");
-  GmlVal *scope_written_new=gml_varmap_get(&scope_newer->vars,"scope_written");
-  if(!scope_read || scope_read->t!=V_REAL || scope_read->d!=2 ||
-     !scope_array || scope_array->t!=V_REAL || scope_array->d!=22 ||
-     !scope_written_old || scope_written_old->t!=V_REAL || scope_written_old->d!=7 ||
-     !scope_written_new || scope_written_new->t!=V_REAL || scope_written_new->d!=7){
-    fprintf(stderr,"classic object scope mismatch: read=%.0f array=%.0f write-old=%.0f write-new=%.0f\n",
-      scope_read&&scope_read->t==V_REAL?scope_read->d:-1,
-      scope_array&&scope_array->t==V_REAL?scope_array->d:-1,
-      scope_written_old&&scope_written_old->t==V_REAL?scope_written_old->d:-1,
-      scope_written_new&&scope_written_new->t==V_REAL?scope_written_new->d:-1);
-    return 1;
-  }
-  gml_instance_destroy(&vm,scope_newer);
   GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
-  if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=2){ fprintf(stderr,"classic trigger did not fire for both active instances\n"); return 1; }
+  if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=1){ fprintf(stderr,"classic trigger did not fire\n"); return 1; }
   gml_set_global_arr(&vm,"background_x",0,123);
   gml_set_global_arr(&vm,"view_xview",0,77);
   *gml_varmap_put(&vm.globals,"room_speed")=vreal(55);

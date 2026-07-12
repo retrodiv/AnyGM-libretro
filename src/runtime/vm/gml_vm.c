@@ -393,18 +393,11 @@ static int inst_builtin_set(GmlInstance *in, const char *n, GmlVal v){
 }
 
 /* ---------------- variable access by scope ---------------- */
-/* Resolve an instance-type to the target instance: other, self (negatives), or the
- * first active instance of an object (instance-type >= 0 is an object index).
- * GM6/7/8 expose their compatibility instance list newest-first for object-scoped reads;
- * Studio exposes the package/pool order used by this VM. Writes still fan out below. */
+/* resolve an instance-type to the target instance: other, self (negatives), or the
+ * first active instance of an object (instance-type >= 0 is an object index). */
 static GmlInstance *var_target(GmlVM *vm, int inst){
   if(inst==IT_OTHER) return vm->cur_other;
   if(inst<0)         return vm->cur_self;     /* self, all, noone, etc. -> current self */
-  if(vm->win && vm->win->classic_version){
-    for(int i=vm->inst_count-1;i>=0;i--){ GmlInstance *o=&vm->inst[i];
-      if(o->active && !o->marked && gml_object_is(vm,o->obj,inst)) return o; }
-    return NULL;
-  }
   for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
     if(o->active && !o->marked && gml_object_is(vm,o->obj,inst)) return o; }
   return NULL;
@@ -855,11 +848,6 @@ static void inst_set_any_h(GmlInstance *t, const char *nm, uint32_t nh, GmlVal v
 static GmlInstance *inst_by_id(GmlVM *vm, double idv){
   int id=(int)idv;
   for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked && (int)vm->inst[i].id==id) return &vm->inst[i];
-  if(vm->win && vm->win->classic_version){
-    for(int i=vm->inst_count-1;i>=0;i--)
-      if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==id) return &vm->inst[i];
-    return NULL;
-  }
   for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==id) return &vm->inst[i];
   return NULL;
 }
@@ -2797,11 +2785,6 @@ GmlInstance *gml_find_instance(GmlVM *vm, int obj){
   if(obj>=100000){
     for(int i=0;i<vm->inst_count;i++)
       if(vm->inst[i].active && !vm->inst[i].marked && (int)vm->inst[i].id==obj) return &vm->inst[i];
-    return NULL;
-  }
-  if(vm->win && vm->win->classic_version){
-    for(int i=vm->inst_count-1;i>=0;i--)
-      if(vm->inst[i].active && !vm->inst[i].marked && gml_object_is(vm,vm->inst[i].obj,obj)) return &vm->inst[i];
     return NULL;
   }
   for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked && gml_object_is(vm,vm->inst[i].obj,obj)) return &vm->inst[i];
