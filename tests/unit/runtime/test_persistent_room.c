@@ -104,6 +104,11 @@ int main(void){
   if(created->alarm[0]!=2){
     fprintf(stderr,"classic fractional alarm was not rounded: %.3f\n",created->alarm[0]); return 1;
   }
+  GmlVal message_args[4]={vstr("prompt"),vstr(""),vstr("accept"),vstr("cancel")};
+  GmlVal message_result=gml_builtin_call(&vm,"show_message_ext",message_args,4);
+  if(message_result.t!=V_REAL || message_result.d!=2){
+    fprintf(stderr,"non-interactive message button selection mismatch: %.0f\n",message_result.d); return 1;
+  }
   gml_vm_step(&vm);
   GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
   if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=1){ fprintf(stderr,"classic trigger did not fire\n"); return 1; }

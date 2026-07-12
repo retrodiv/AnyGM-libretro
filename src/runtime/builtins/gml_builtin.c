@@ -7984,6 +7984,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"get_integer")) return vreal(n>=2?N(a,n,1):0);
   if(!strcmp(nm,"get_integer_async")) return vreal(0);
   if(!strcmp(nm,"get_open_filename")||!strcmp(nm,"get_save_filename")) return vstr("");
+  /* A libretro core cannot open a modal desktop dialog. Preserve deterministic
+   * control flow by accepting the first button the game actually supplied;
+   * classic show_message_ext returns that button's one-based slot. */
+  if(!strcmp(nm,"show_message_ext")){
+    for(int button=1;button<=3 && button<n;button++)
+      if(S(a,n,button)[0]) return vreal(button);
+    return vreal(0);
+  }
   if(!strcmp(nm,"execute_string")){
     int handled=classic_execute_assignment(vm,S(a,n,0));
     if(!handled && getenv("GML_LOG_UNKNOWN")) fprintf(stderr,"[gml] unsupported execute_string: %s\n",S(a,n,0));
