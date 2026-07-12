@@ -120,6 +120,14 @@ int main(void){
   if(message_result.t!=V_REAL || message_result.d!=2){
     fprintf(stderr,"non-interactive message button selection mismatch: %.0f\n",message_result.d); return 1;
   }
+  GmlVal sleep_args[2]={vreal(1000),vreal(1)};
+  (void)gml_builtin_call(&vm,"action_sleep",sleep_args,2);
+  (void)gml_builtin_call(&vm,"action_restart_game",NULL,0);
+  if(vm.game_end!=2){ fprintf(stderr,"classic restart action did not request a cold boot\n"); return 1; }
+  vm.game_end=0;
+  (void)gml_builtin_call(&vm,"action_end_game",NULL,0);
+  if(vm.game_end!=1){ fprintf(stderr,"classic end action did not request shutdown\n"); return 1; }
+  vm.game_end=0;
   double position_before_step=created->x;
   gml_vm_step(&vm);
   if(created->x!=position_before_step+5 || created->xprevious!=position_before_step){

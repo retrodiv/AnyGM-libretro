@@ -6577,8 +6577,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     vm->pending_room=vm->room_index;
     return vreal(0); }
   if(!strcmp(nm,"room_set_persistent")) return vreal(0);
-  if(!strcmp(nm,"game_end")){ vm->game_end=1; return vreal(0); }
-  if(!strcmp(nm,"game_restart")){ vm->game_end=2; return vreal(0); }
+  if(!strcmp(nm,"game_end") || !strcmp(nm,"action_end_game")){
+    vm->game_end=1; return vreal(0); }
+  if(!strcmp(nm,"game_restart") || !strcmp(nm,"action_restart_game")){
+    vm->game_end=2; return vreal(0); }
 
   /* ---- instances ---- */
   if(!strcmp(nm,"instance_create")){ GmlInstance*in=gml_instance_create(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2));
@@ -6685,6 +6687,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     else if(vm->cur_self) gml_instance_destroy(vm,vm->cur_self);
     return vreal(0); }
   /* drag-and-drop actions (compiled to builtin calls) acting on the current instance */
+  /* The desktop action blocks only wall-clock time; no simulation ticks occur while it sleeps.
+   * A libretro core must not stall the frontend thread, so consuming the action without advancing
+   * game state produces the same next rendered frame while preserving realtime performance. */
+  if(!strcmp(nm,"action_sleep")) return vreal(0);
   /* action_if(expr): D&D single-expression conditional. expr was evaluated on the stack by the
    * bytecode before this call → arg0 is the truth value. Returns the value (0 or 1). */
   if(!strcmp(nm,"action_if")) return vreal(N(a,n,0));
