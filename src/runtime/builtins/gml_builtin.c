@@ -3806,7 +3806,7 @@ static int inst_bbox(GmlVM *vm, GmlInstance *in, double atx, double aty,
       if(wx<minx) minx=wx; if(wx>maxx) maxx=wx;
       if(wy<miny) miny=wy; if(wy>maxy) maxy=wy;
     }
-    *l=nearbyint(minx); *t=nearbyint(miny); *r=nearbyint(maxx); *b=nearbyint(maxy);
+    *l=round(minx); *t=round(miny); *r=round(maxx); *b=round(maxy);
     return 1;
   }
   if(in->image_angle==0){
@@ -5854,16 +5854,18 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"collision_circle")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)}; GmlInstance *o=collision_shape(vm,2,p,(int)N(a,n,3),(int)N(a,n,5)); return vreal(o?(double)o->id:-4); }
   if(!strcmp(nm,"move_contact_solid")||!strcmp(nm,"move_contact")){ GmlInstance *s=vm->cur_self; if(!s) return vreal(0);
-    double dir=N(a,n,0), md=N(a,n,1); if(md<0) md=1000;
+    int solid_only=!strcmp(nm,"move_contact_solid");
+    int target=solid_only?0:IT_ALL;
+    double dir=N(a,n,0), md=n>=2?N(a,n,1):1000; if(md<=0) md=1000;
     double dx=cos(dir*M_PI/180.0), dy=-sin(dir*M_PI/180.0);
-    if(collision_at(vm,s->x,s->y,0,1)){
+    if(collision_at(vm,s->x,s->y,target,solid_only)){
       if(resolve_landing_overlap(vm,s,(int)md)) return vreal(0);
-      for(int k=0;k<(int)md;k++){ if(!collision_at(vm,s->x,s->y,0,1)) break; s->x-=dx; s->y-=dy; }
+      for(int k=0;k<(int)md;k++){ if(!collision_at(vm,s->x,s->y,target,solid_only)) break; s->x-=dx; s->y-=dy; }
       gml_colgrid_touch(s);
       snap_contact_axis(vm,s,dx,dy);
       return vreal(0);
     }
-    for(int k=0;k<(int)md;k++){ if(collision_at(vm,s->x+dx,s->y+dy,0,1)) break; s->x+=dx; s->y+=dy; }
+    for(int k=0;k<(int)md;k++){ if(collision_at(vm,s->x+dx,s->y+dy,target,solid_only)) break; s->x+=dx; s->y+=dy; }
     gml_colgrid_touch(s);
     return vreal(0); }
   /* ---- math ---- */

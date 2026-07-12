@@ -5016,10 +5016,20 @@ static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
   if(fabs(xs)<1e-9 || fabs(ys)<1e-9) return 0;
   double ang=in->image_angle*M_PI/180.0, c=cos(ang), sn=sin(ang);
   double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
-  double x0=s->ml, x1=s->mr+1.0, y0=s->mt, y1=s->mb+1.0;
+  double x0, x1, y0, y1;
+  if(vm->win && vm->win->classic_version){
+    x0=(s->ml-s->originx)*xs;
+    y0=(s->mt-s->originy)*ys;
+    x1=x0+(s->mr+1.0-s->ml)*xs-1.0;
+    y1=y0+(s->mb+1.0-s->mt)*ys-1.0;
+  } else {
+    x0=s->ml; x1=s->mr+1.0; y0=s->mt; y1=s->mb+1.0;
+  }
   double corners[4][2]={{x0,y0},{x1,y0},{x0,y1},{x1,y1}};
   for(int i=0;i<4;i++){
-    double px=(corners[i][0]-s->originx)*xs, py=(corners[i][1]-s->originy)*ys;
+    double px, py;
+    if(vm->win && vm->win->classic_version){ px=corners[i][0]; py=corners[i][1]; }
+    else { px=(corners[i][0]-s->originx)*xs; py=(corners[i][1]-s->originy)*ys; }
     double wx=atx + px*c + py*sn;
     double wy=aty - px*sn + py*c;
     if(wx<minx) minx=wx;
@@ -5027,7 +5037,12 @@ static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
     if(wy<miny) miny=wy;
     if(wy>maxy) maxy=wy;
   }
-  *l=floor(minx); *t=floor(miny); *r=ceil(maxx)-1.0; *b=ceil(maxy)-1.0; return 1;
+  if(vm->win && vm->win->classic_version){
+    *l=round(minx); *t=round(miny); *r=round(maxx); *b=round(maxy);
+  } else {
+    *l=floor(minx); *t=floor(miny); *r=ceil(maxx)-1.0; *b=ceil(maxy)-1.0;
+  }
+  return 1;
 }
 static int vm_bbox(GmlVM *vm, GmlInstance *in, double *l, double *t, double *r, double *b){
   return vm_bbox_at(vm,in,in->x,in->y,l,t,r,b);
@@ -5258,6 +5273,8 @@ static void run_collisions(GmlVM *vm){
   if(!vm->render) return;
   const char *clog=getenv("GML_LOG_COLLISION");   /* hoisted: this ran PER PAIR (1.3M getenv/frame) */
   int cmode=gml_colgrid_mode();
+  uint64_t *classic_done=NULL;
+  int classic_done_n=0, classic_done_cap=0;
   for(int i=0;i<vm->inst_count;i++){ GmlInstance *si=&vm->inst[i];
     if(!si->active||si->marked||si->obj<0||si->obj>=vm->n_objects) continue;
     if(!vm->objects[si->obj].colself) continue;   /* no Collision_* handler anywhere in its chain */
@@ -5272,6 +5289,12 @@ static void run_collisions(GmlVM *vm){
       }
       GmlInstance *oi=&vm->inst[j];
       if(oi==si||!oi->active||oi->marked||oi->obj<0||oi->obj>=vm->n_objects) continue;
+      int classic_pair=vm->win && vm->win->classic_version && (si->solid || oi->solid);
+      uint64_t pair_key=((uint64_t)(unsigned)(i<j?i:j)<<32)|(unsigned)(i<j?j:i);
+      int pair_done=0;
+      if(classic_pair)
+        for(int p=0;p<classic_done_n;p++) if(classic_done[p]==pair_key){ pair_done=1; break; }
+      if(pair_done) continue;
       int handler_obj=-1, target_obj=-1, code=-1;
       if(!col_event_for_pair(vm,si->obj,oi->obj,&handler_obj,&target_obj,&code)) continue;
       if(cmode==2 && vm->obj_head){   /* verify: a firing-capable pair must be in the candidate set */
@@ -5301,6 +5324,18 @@ static void run_collisions(GmlVM *vm){
          * Collision code gets the first opportunity to resolve the overlap. */
         int oi_moved=oi->x!=oi->xprevious || oi->y!=oi->yprevious;
         int oi_kinematic=oi->hspeed!=0.0 || oi->vspeed!=0.0;
+        /* Classic semantics present solid Collision events at the pre-movement
+         * positions of both participants. Event code may then resolve the contact
+         * explicitly; restoring only the colliding axis incorrectly preserves
+         * same-Step lateral motion on a vertical landing. */
+        int classic_solid=classic_pair;
+        if(classic_solid){
+          si->x=si->xprevious; si->y=si->yprevious;
+          oi->x=oi->xprevious; oi->y=oi->yprevious;
+          si->path_position=si->path_positionprevious;
+          oi->path_position=oi->path_positionprevious;
+          gml_colgrid_touch(si); gml_colgrid_touch(oi);
+        }
         char suffix[32]; snprintf(suffix,sizeof suffix,"Collision_%d",target_obj);
         { static int evt=-1; if(evt<0) evt=getenv("GML_DBG_EVTIME")!=NULL;
           if(evt){ double t0=vmprof_now();
@@ -5310,12 +5345,41 @@ static void run_collisions(GmlVM *vm){
               (si->obj>=0&&si->obj<vm->n_objects)?vm->objects[si->obj].name:"?",
               (oi->obj>=0&&oi->obj<vm->n_objects)?vm->objects[oi->obj].name:"?",dt);
           } else run_event_code_from(vm,si,oi,suffix,handler_obj,code); }
+        if(classic_solid){
+          if(si->active && !si->marked && oi->active && !oi->marked){
+            int reverse_handler=-1, reverse_target=-1, reverse_code=-1;
+            if(col_event_for_pair(vm,oi->obj,si->obj,&reverse_handler,&reverse_target,&reverse_code)){
+              char reverse_suffix[32]; snprintf(reverse_suffix,sizeof reverse_suffix,"Collision_%d",reverse_target);
+              run_event_code_from(vm,oi,si,reverse_suffix,reverse_handler,reverse_code);
+            }
+          }
+          if(si->active && !si->marked){ si->x+=si->hspeed; si->y+=si->vspeed; gml_colgrid_touch(si); }
+          if(oi->active && !oi->marked){ oi->x+=oi->hspeed; oi->y+=oi->vspeed; gml_colgrid_touch(oi); }
+          if(si->active && !si->marked && oi->active && !oi->marked){
+            double cl1,ct1,cr1,cb1,cl2,ct2,cr2,cb2;
+            int still_hit=vm_bbox(vm,si,&cl1,&ct1,&cr1,&cb1) &&
+                          vm_bbox(vm,oi,&cl2,&ct2,&cr2,&cb2) &&
+                          vm_overlap(cl1,ct1,cr1,cb1,cl2,ct2,cr2,cb2) &&
+                          vm_masks_overlap(vm,si,oi,cl1,ct1,cr1,cb1,cl2,ct2,cr2,cb2);
+            if(still_hit){
+              si->x=si->xprevious; si->y=si->yprevious; si->path_position=si->path_positionprevious;
+              oi->x=oi->xprevious; oi->y=oi->yprevious; oi->path_position=oi->path_positionprevious;
+              gml_colgrid_touch(si); gml_colgrid_touch(oi);
+            }
+          }
+          if(classic_done_n>=classic_done_cap){
+            int nc=classic_done_cap?classic_done_cap*2:16;
+            uint64_t *np=realloc(classic_done,(size_t)nc*sizeof(*np));
+            if(np){ classic_done=np; classic_done_cap=nc; }
+          }
+          if(classic_done_n<classic_done_cap) classic_done[classic_done_n++]=pair_key;
+        }
         /* If Collision code left the pair intersecting, apply the solid fallback
          * to the participant that entered the contact. Classic actions that stop
          * an incoming motion restore the pre-contact coordinate too; motion that
          * remains active stays under the event's explicit contact resolution. */
         int oi_stopped=oi->hspeed==0.0 && oi->vspeed==0.0;
-        if(si->active && !si->marked && oi->active && !oi->marked &&
+        if(!classic_solid && si->active && !si->marked && oi->active && !oi->marked &&
            si->solid && oi_moved && (!oi_kinematic ||
              (vm->win && vm->win->classic_version && oi_stopped))){
           double pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2;
@@ -5335,6 +5399,7 @@ static void run_collisions(GmlVM *vm){
       }
     }
   }
+  free(classic_done);
 }
 /* precompute which objects have boundary-event handlers (incl. via parent), so run_boundary_events
  * only checks instances that care. bits: 1 OutsideRoom(Other_0) 2 IntersectRoom(Other_1)

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
 #include "gml_vm.h"
+#include "gml_render.h"
 #include "gmlc/gmlc_package.h"
 
 #include <stdio.h>
@@ -147,6 +148,38 @@ int main(void){
      self_distance.t!=V_REAL || self_distance.d!=1000000){
     fprintf(stderr,"distance_to_object missing/self sentinel mismatch: object=%.0f self=%.0f\n",
       object_distance.d,self_distance.d); return 1;
+  }
+  GmlRender collision_render; GmlSprite collision_sprites[1];
+  memset(&collision_render,0,sizeof(collision_render));
+  memset(collision_sprites,0,sizeof(collision_sprites));
+  collision_render.n_spr=1; collision_render.spr=collision_sprites;
+  collision_sprites[0].w=2; collision_sprites[0].h=2;
+  collision_sprites[0].ml=collision_sprites[0].mt=0;
+  collision_sprites[0].mr=collision_sprites[0].mb=1;
+  collision_sprites[0].collision_kind=1;
+  vm.render=&collision_render;
+  created->x=0; created->y=100; created->sprite_index=created->mask_index=0;
+  created->image_xscale=created->image_yscale=1;
+  GmlInstance *contact=gml_instance_create(&vm,5,100,1); if(!contact)return 1;
+  contact->sprite_index=contact->mask_index=0;
+  contact->image_xscale=contact->image_yscale=1;
+  contact->solid=0;
+  vm.cur_self=created;
+  GmlVal contact_direction=vreal(0);
+  (void)gml_builtin_call(&vm,"move_contact",&contact_direction,1);
+  if(created->x!=3){
+    fprintf(stderr,"move_contact omitted-distance/any-instance mismatch: x=%.0f\n",created->x); return 1;
+  }
+  created->x=0;
+  GmlVal contact_solid_args[2]={vreal(0),vreal(5)};
+  (void)gml_builtin_call(&vm,"move_contact_solid",contact_solid_args,2);
+  if(created->x!=5){
+    fprintf(stderr,"move_contact_solid incorrectly stopped at a non-solid: x=%.0f\n",created->x); return 1;
+  }
+  created->x=0; contact->solid=1;
+  (void)gml_builtin_call(&vm,"move_contact_solid",contact_solid_args,2);
+  if(created->x!=3){
+    fprintf(stderr,"move_contact_solid did not stop before a solid: x=%.0f\n",created->x); return 1;
   }
   *gml_varmap_put(&created->vars,"side")=vreal(180);
   GmlVal local_name=vstr("side");
