@@ -84,6 +84,7 @@ typedef struct { uint32_t *px; int w, h, live;
 #define GML_SURFACE_STACK 8
 typedef struct {
   GmlWin   *win;
+  int classic;                    /* GM6/7/8 pixel rules that differ from Studio */
   GmlAtlas *atlas; int n_atlas;
   GmlTpag  *tpag; int n_tpag;
   GmlSprite *spr; int n_spr, base_n_spr, spr_cap, spr_has_free;

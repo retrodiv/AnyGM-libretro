@@ -956,7 +956,7 @@ static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, 
   if(copy_255) *copy_255=t->fast8_draw_cache_copy_255;
   return cache;
 }
-static inline void blend_argb_src_over_exact(uint32_t *dp, const uint32_t *sp, int run, uint32_t aa){
+static inline void blend_argb_src_over_exact(uint32_t *dp, const uint32_t *sp, int run, uint32_t aa,int round_nearest){
   if(run<=0 || !aa) return;
   if(aa>=255u){ memcpy(dp,sp,(size_t)run*sizeof(uint32_t)); return; }
   uint32_t ia=255u-aa;
@@ -964,7 +964,9 @@ static inline void blend_argb_src_over_exact(uint32_t *dp, const uint32_t *sp, i
     uint32_t src=sp[k], dst=dp[k];
     uint32_t sr=(src>>16)&0xFFu, sg=(src>>8)&0xFFu, sb=src&0xFFu;
     uint32_t dr=(dst>>16)&0xFFu, dg=(dst>>8)&0xFFu, db=dst&0xFFu;
-    dp[k]=0xFF000000u|(((sr*aa+dr*ia)/255u)<<16)|(((sg*aa+dg*ia)/255u)<<8)|((sb*aa+db*ia)/255u);
+    uint32_t bias=round_nearest?127u:0u;
+    dp[k]=0xFF000000u|(((sr*aa+dr*ia+bias)/255u)<<16)|
+          (((sg*aa+dg*ia+bias)/255u)<<8)|((sb*aa+db*ia+bias)/255u);
   }
 }
 static inline void copy_argb_force_opaque(uint32_t *dp, const uint32_t *sp, int run){
@@ -1041,7 +1043,7 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
       int n=sx1-sx0;
       if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
       else if(ar->alpha==255u) memcpy(dp,sp,(size_t)n*sizeof(uint32_t));
-      else blend_argb_src_over_exact(dp,sp,n,(uint32_t)ar->alpha);
+      else blend_argb_src_over_exact(dp,sp,n,(uint32_t)ar->alpha,r->classic);
     }
     return 1;
   }
@@ -1068,7 +1070,7 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
       uint32_t aa=sp[i]>>24;
       int run=1;
       while(i+run<n && (sp[i+run]>>24)==aa) run++;
-      blend_argb_src_over_exact(dp+i,sp+i,run,aa);
+      blend_argb_src_over_exact(dp+i,sp+i,run,aa,r->classic);
       i+=run;
     }
   }
