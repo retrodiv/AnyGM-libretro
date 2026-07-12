@@ -233,6 +233,19 @@ typedef struct {
   int overwrite_file;
 } GmlcProjectIncludedFile;
 
+typedef enum {
+  GMLC_MEMORY_BLOB,
+  GMLC_MEMORY_TEXT,
+  GMLC_MEMORY_RGBA
+} GmlcMemoryFileKind;
+
+typedef struct {
+  uint8_t *data;
+  size_t size;
+  int width, height;
+  GmlcMemoryFileKind kind;
+} GmlcMemoryFile;
+
 typedef struct {
   char *root_dir;
   char *yyp_path;
@@ -277,6 +290,9 @@ typedef struct {
   int n_triggers, cap_triggers;
   GmlcProjectIncludedFile *included_files;
   int n_included_files, cap_included_files;
+  GmlcMemoryFile *memory_files;
+  int n_memory_files, cap_memory_files;
+  int prefer_memory_files;
 } GmlcProject;
 
 void gmlc_project_init(GmlcProject *p);
@@ -293,5 +309,11 @@ char *gmlc_strdup(const char *s);
 char *gmlc_path_dirname(const char *path);
 char *gmlc_path_join(const char *a, const char *b);
 void gmlc_path_slashes(char *s);
+char *gmlc_project_add_memory_file(GmlcProject *p, const char *label,
+                                   GmlcMemoryFileKind kind, const void *data,
+                                   size_t size, int width, int height);
+const GmlcMemoryFile *gmlc_project_find_memory_file(const GmlcProject *p,
+                                                    const char *path);
+char *gmlc_project_read_source(const GmlcProject *p, const char *path);
 
 #endif

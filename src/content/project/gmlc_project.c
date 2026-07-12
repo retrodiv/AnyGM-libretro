@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 char *gmlc_strdup(const char *s){
   if(!s) return NULL;
@@ -13,6 +14,73 @@ char *gmlc_strdup(const char *s){
   char *d=(char*)malloc(n+1);
   if(d) memcpy(d,s,n+1);
   return d;
+}
+
+#define GMLC_MEMORY_PATH_PREFIX "gmlc-memory://"
+
+char *gmlc_project_add_memory_file(GmlcProject *p, const char *label,
+                                   GmlcMemoryFileKind kind, const void *data,
+                                   size_t size, int width, int height){
+  if(!p || (size && !data)) return NULL;
+  if(kind==GMLC_MEMORY_TEXT && size==SIZE_MAX) return NULL;
+  if(p->n_memory_files>=p->cap_memory_files){
+    if(p->cap_memory_files>INT_MAX/2) return NULL;
+    int nc=p->cap_memory_files?p->cap_memory_files*2:64;
+    GmlcMemoryFile *nf=(GmlcMemoryFile*)realloc(p->memory_files,(size_t)nc*sizeof(*nf));
+    if(!nf) return NULL;
+    p->memory_files=nf;
+    p->cap_memory_files=nc;
+  }
+  size_t allocation=size+((kind==GMLC_MEMORY_TEXT)?1u:0u);
+  uint8_t *copy=(uint8_t*)malloc(allocation?allocation:1u);
+  if(!copy) return NULL;
+  if(size) memcpy(copy,data,size);
+  if(kind==GMLC_MEMORY_TEXT) copy[size]=0;
+  int index=p->n_memory_files;
+  p->memory_files[index]=(GmlcMemoryFile){copy,size,width,height,kind};
+  p->n_memory_files++;
+  const char *name=label&&*label?label:"resource";
+  size_t cap=strlen(GMLC_MEMORY_PATH_PREFIX)+32+strlen(name)+1;
+  char *path=(char*)malloc(cap);
+  if(!path){
+    free(copy);
+    p->n_memory_files--;
+    return NULL;
+  }
+  snprintf(path,cap,GMLC_MEMORY_PATH_PREFIX "%d/%s",index,name);
+  return path;
+}
+
+const GmlcMemoryFile *gmlc_project_find_memory_file(const GmlcProject *p,
+                                                    const char *path){
+  if(!p || !path || strncmp(path,GMLC_MEMORY_PATH_PREFIX,
+                             sizeof(GMLC_MEMORY_PATH_PREFIX)-1)) return NULL;
+  const char *number=path+sizeof(GMLC_MEMORY_PATH_PREFIX)-1;
+  char *end=NULL;
+  long index=strtol(number,&end,10);
+  if(end==number || (*end!='/' && *end!='\0') || index<0 || index>=p->n_memory_files)
+    return NULL;
+  return &p->memory_files[index];
+}
+
+char *gmlc_project_read_source(const GmlcProject *p, const char *path){
+  const GmlcMemoryFile *memory=gmlc_project_find_memory_file(p,path);
+  if(memory){
+    if(memory->kind!=GMLC_MEMORY_TEXT) return NULL;
+    return gmlc_strdup((const char*)memory->data);
+  }
+  FILE *f=path?fopen(path,"rb"):NULL;
+  if(!f) return NULL;
+  if(fseek(f,0,SEEK_END)!=0){ fclose(f); return NULL; }
+  long size=ftell(f);
+  if(size<0 || fseek(f,0,SEEK_SET)!=0){ fclose(f); return NULL; }
+  char *text=(char*)malloc((size_t)size+1);
+  if(!text){ fclose(f); return NULL; }
+  int ok=fread(text,1,(size_t)size,f)==(size_t)size;
+  if(fclose(f)!=0) ok=0;
+  if(!ok){ free(text); return NULL; }
+  text[size]=0;
+  return text;
 }
 
 void gmlc_path_slashes(char *s){
@@ -148,6 +216,8 @@ void gmlc_project_free(GmlcProject *p){
     free(p->included_files[i].data);
   }
   free(p->included_files);
+  for(int i=0;i<p->n_memory_files;i++) free(p->memory_files[i].data);
+  free(p->memory_files);
   memset(p,0,sizeof(*p));
 }
 

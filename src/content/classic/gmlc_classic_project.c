@@ -36,6 +36,20 @@ static int classic_read_file(const char *path, uint8_t **data, size_t *size){
   return 1;
 }
 
+static char *classic_store_source(GmlcProject *project, const char *cache_dir,
+                                  const char *leaf, const char *source){
+  if(project->prefer_memory_files)
+    return gmlc_project_add_memory_file(project,leaf,GMLC_MEMORY_TEXT,source,
+                                        strlen(source),0,0);
+  char *path=gmlc_path_join(cache_dir,leaf);
+  FILE *file=path?fopen(path,"wb"):NULL;
+  size_t length=strlen(source);
+  int ok=file && (!length || fwrite(source,1,length,file)==length);
+  if(file && fclose(file)!=0) ok=0;
+  if(!ok){ free(path); return NULL; }
+  return path;
+}
+
 static int classic_import_metadata(const GmlcClassicManifest *manifest,
                                    GmlcProject *project, const char *cache_dir,
                                    char *err, size_t errcap){
@@ -74,28 +88,31 @@ static int classic_import_metadata(const GmlcClassicManifest *manifest,
       GmlcProjectTrigger *trigger=&project->triggers[project->n_triggers++];
       char leaf[64]; snprintf(leaf,sizeof(leaf),"classic_trigger_%06u.gml",i);
       trigger->name=gmlc_strdup(source->name);
-      trigger->condition_path=gmlc_path_join(cache_dir,leaf);
       trigger->moment=(int)source->moment;
       trigger->runtime_id=(int)i;
-      FILE *file=trigger->condition_path?fopen(trigger->condition_path,"wb"):NULL;
-      int ok=file!=NULL;
       const char *condition=source->condition?source->condition:"";
       while(*condition==' ' || *condition=='\t' || *condition=='\r' || *condition=='\n') condition++;
       size_t condition_length=strlen(condition);
+      const char *prefix="", *suffix="";
       if(!condition_length){
-        const char *disabled="return false;\n";
-        if(ok && fwrite(disabled,1,strlen(disabled),file)!=strlen(disabled)) ok=0;
+        condition="return false;";
+        condition_length=strlen(condition);
+        suffix="\n";
       } else if(*condition=='{'){
-        if(ok && fwrite(condition,1,condition_length,file)!=condition_length) ok=0;
-        if(ok && fwrite("\n",1,1,file)!=1) ok=0;
+        suffix="\n";
       } else {
-        const char *prefix="return ("; const char *suffix=");\n";
-        if(ok && fwrite(prefix,1,strlen(prefix),file)!=strlen(prefix)) ok=0;
-        if(ok && fwrite(condition,1,condition_length,file)!=condition_length) ok=0;
-        if(ok && fwrite(suffix,1,strlen(suffix),file)!=strlen(suffix)) ok=0;
+        prefix="return (";
+        suffix=");\n";
       }
-      if(file && fclose(file)!=0) ok=0;
-      if(!trigger->name || !trigger->condition_path || !ok){
+      size_t normalized_length=strlen(prefix)+condition_length+strlen(suffix);
+      char *normalized=(char*)malloc(normalized_length+1);
+      if(normalized){
+        snprintf(normalized,normalized_length+1,"%s%.*s%s",prefix,(int)condition_length,
+                 condition,suffix);
+        trigger->condition_path=classic_store_source(project,cache_dir,leaf,normalized);
+      }
+      free(normalized);
+      if(!trigger->name || !trigger->condition_path){
         if(err && errcap) snprintf(err,errcap,"classic project: cannot normalize trigger condition");
         return 0;
       }
@@ -146,17 +163,21 @@ static int classic_import_metadata(const GmlcClassicManifest *manifest,
     }
   }
   if(manifest->library_creation_code_count){
-    char *path=gmlc_path_join(cache_dir,"classic_library_startup.gml");
-    FILE *file=path?fopen(path,"wb"):NULL;
-    int ok=file!=NULL;
-    for(uint32_t i=0;ok && i<manifest->library_creation_code_count;i++){
-      const char *source=manifest->library_creation_code[i]?manifest->library_creation_code[i]:"";
-      size_t length=strlen(source);
-      if(length && fwrite(source,1,length,file)!=length) ok=0;
-      if(ok && fwrite("\n",1,1,file)!=1) ok=0;
+    size_t length=0;
+    for(uint32_t i=0;i<manifest->library_creation_code_count;i++)
+      length+=strlen(manifest->library_creation_code[i]?manifest->library_creation_code[i]:"")+1;
+    char *source=(char*)malloc(length+1);
+    size_t at=0;
+    if(source) for(uint32_t i=0;i<manifest->library_creation_code_count;i++){
+      const char *part=manifest->library_creation_code[i]?manifest->library_creation_code[i]:"";
+      size_t part_length=strlen(part);
+      memcpy(source+at,part,part_length); at+=part_length;
+      source[at++]='\n';
     }
-    if(file && fclose(file)!=0) ok=0;
-    if(!ok){
+    if(source) source[at]=0;
+    char *path=source?classic_store_source(project,cache_dir,"classic_library_startup.gml",source):NULL;
+    free(source);
+    if(!path){
       if(err && errcap) snprintf(err,errcap,"classic project: cannot write library startup source");
       free(path);
       return 0;
@@ -171,7 +192,7 @@ static int classic_add_empty_room(GmlcProject *project, const char *cache_dir,
   if(project->n_rooms) return 1;
   GmlcRoom *room=(GmlcRoom*)calloc(1,sizeof(*room));
   int *order=(int*)calloc(1,sizeof(*order));
-  char *source_path=gmlc_path_join(cache_dir,"classic_empty_room_create.gml");
+  char *source_path=classic_store_source(project,cache_dir,"classic_empty_room_create.gml","exit;\n");
   if(!room || !order || !source_path){
     free(room); free(order); free(source_path);
     if(err && errcap) snprintf(err,errcap,"classic project: empty-room allocation failed");
@@ -188,13 +209,7 @@ static int classic_add_empty_room(GmlcProject *project, const char *cache_dir,
     room->views[i].hspeed=room->views[i].vspeed=-1;
     room->views[i].object_id=-1;
   }
-  FILE *file=fopen(source_path,"wb");
-  int wrote=0;
-  if(file){
-    wrote=fwrite("exit;\n",1,6,file)==6;
-    if(fclose(file)!=0) wrote=0;
-  }
-  if(!room->id || !room->name || !wrote){
+  if(!room->id || !room->name){
     if(err && errcap) snprintf(err,errcap,"classic project: cannot create empty-room source");
     free(room->id); free(room->name); free(room->creation_code_path);
     free(room); free(order);
@@ -213,6 +228,7 @@ int gmlc_classic_project_load(GmlcProject *project, const char *project_path,
     return 0;
   }
   gmlc_project_init(project);
+  project->prefer_memory_files=1;
   GmlcClassicManifest manifest;
   if(!gmlc_classic_manifest_file(project_path, &manifest, err, errcap)) return 0;
   project->classic_version=(int)manifest.inventory.header.version;

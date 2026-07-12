@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 typedef struct {
   uint8_t *data;
@@ -74,21 +75,6 @@ static char *dup_range(const char *s, size_t n){
   char *out=(char*)malloc(n+1);
   if(out){ memcpy(out,s,n); out[n]=0; }
   return out;
-}
-
-static char *read_text(const char *path){
-  FILE *f=fopen(path,"rb");
-  if(!f) return NULL;
-  fseek(f,0,SEEK_END);
-  long sz=ftell(f);
-  rewind(f);
-  if(sz<0){ fclose(f); return NULL; }
-  char *buf=(char*)malloc((size_t)sz+1);
-  if(!buf){ fclose(f); return NULL; }
-  if(fread(buf,1,(size_t)sz,f)!=(size_t)sz){ fclose(f); free(buf); return NULL; }
-  fclose(f);
-  buf[sz]=0;
-  return buf;
 }
 
 static int reserve(CodeBuf *b, size_t n){
@@ -2346,7 +2332,7 @@ static int parse_statement(Compiler *c){
 
 static int collect_macros(Compiler *c){
   for(int i=0;i<c->project->n_scripts;i++){
-    char *txt=read_text(c->project->scripts[i].source_path);
+    char *txt=gmlc_project_read_source(c->project,c->project->scripts[i].source_path);
     if(!txt) continue;
     const char *p=txt;
     while((p=strstr(p,"#macro"))){
@@ -2453,9 +2439,39 @@ static int registry_collect_macros_from_text(GmlcFunctionRegistry *r, const char
 static int registry_add_asset(GmlcFunctionRegistry *r, const char *name, double value,
                               int script_code_index){
   if(!name || !*name) return 1;
-  for(int i=0;i<r->n_assets;i++) if(!strcmp(r->assets[i].name,name)){
-    if(script_code_index>=0) r->assets[i].script_code_index=script_code_index;
-    return 1;
+  uint64_t hash=1469598103934665603ull;
+  for(const char *p=name;*p;p++){
+    hash^=(uint8_t)*p;
+    hash*=1099511628211ull;
+  }
+  if(!r->asset_hash_cap || (int64_t)(r->n_assets+1)*10>=(int64_t)r->asset_hash_cap*7){
+    if(r->asset_hash_cap>INT_MAX/2) return 0;
+    int capacity=r->asset_hash_cap?r->asset_hash_cap*2:256;
+    int *slots=(int*)malloc((size_t)capacity*sizeof(*slots));
+    if(!slots) return 0;
+    for(int i=0;i<capacity;i++) slots[i]=-1;
+    for(int i=0;i<r->n_assets;i++){
+      uint64_t existing_hash=1469598103934665603ull;
+      for(const char *p=r->assets[i].name;*p;p++){
+        existing_hash^=(uint8_t)*p;
+        existing_hash*=1099511628211ull;
+      }
+      size_t at=(size_t)existing_hash&((size_t)capacity-1u);
+      while(slots[at]>=0) at=(at+1u)&((size_t)capacity-1u);
+      slots[at]=i;
+    }
+    free(r->asset_hash_slots);
+    r->asset_hash_slots=slots;
+    r->asset_hash_cap=capacity;
+  }
+  size_t slot=(size_t)hash&((size_t)r->asset_hash_cap-1u);
+  while(r->asset_hash_slots[slot]>=0){
+    int index=r->asset_hash_slots[slot];
+    if(!strcmp(r->assets[index].name,name)){
+      if(script_code_index>=0) r->assets[index].script_code_index=script_code_index;
+      return 1;
+    }
+    slot=(slot+1u)&((size_t)r->asset_hash_cap-1u);
   }
   if(r->n_assets>=r->cap_assets){
     int nc=r->cap_assets?r->cap_assets*2:128;
@@ -2463,11 +2479,14 @@ static int registry_add_asset(GmlcFunctionRegistry *r, const char *name, double 
     if(!assets) return 0;
     r->assets=assets; r->cap_assets=nc;
   }
-  GmlcAssetBinding *asset=&r->assets[r->n_assets++];
+  int index=r->n_assets++;
+  GmlcAssetBinding *asset=&r->assets[index];
   asset->name=gmlc_strdup(name);
   asset->value=value;
   asset->script_code_index=script_code_index;
-  return asset->name!=NULL;
+  if(!asset->name){ r->n_assets--; return 0; }
+  r->asset_hash_slots[slot]=index;
+  return 1;
 }
 
 static int asset_binding_cmp(const void *a, const void *b){
@@ -2823,14 +2842,14 @@ int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_bas
   for(int i=0;i<project->n_rooms;i++){
     const char *path=project->rooms[i].creation_code_path;
     if(path && *path){
-      char *txt=read_text(path);
+      char *txt=gmlc_project_read_source(project,path);
       if(txt){ int ok=collect_functions_from_text(out,path,NULL,-1,appended_base,txt,err,errcap); free(txt); if(!ok) goto fail; }
     }
   }
   for(int i=0;i<project->n_scripts;i++){
     const char *path=project->scripts[i].source_path;
     if(path && *path){
-      char *txt=read_text(path);
+      char *txt=gmlc_project_read_source(project,path);
       if(txt){
         int ci=source_room_code_count(project)+i;
         int ok=registry_collect_macros_from_text(out,txt) &&
@@ -2845,7 +2864,7 @@ int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_bas
     for(int m=0;m<timeline->n_moments;m++){
       const char *path=timeline->moments[m].source_path;
       if(path && *path){
-        char *txt=read_text(path);
+        char *txt=gmlc_project_read_source(project,path);
         if(txt){ int ok=collect_functions_from_text(out,path,NULL,-1,appended_base,txt,err,errcap); free(txt); if(!ok) goto fail; }
       }
     }
@@ -2855,7 +2874,7 @@ int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_bas
     for(int ei=0;ei<obj->n_events;ei++){
       const char *path=obj->events[ei].source_path;
       if(path && *path){
-        char *txt=read_text(path);
+        char *txt=gmlc_project_read_source(project,path);
         if(txt){ int ok=collect_functions_from_text(out,path,NULL,-1,appended_base,txt,err,errcap); free(txt); if(!ok) goto fail; }
       }
     }
@@ -2865,7 +2884,7 @@ int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_bas
     for(int ii=0;ii<room->n_instances;ii++){
       const char *path=room->instances[ii].creation_code_path;
       if(path && *path){
-        char *txt=read_text(path);
+        char *txt=gmlc_project_read_source(project,path);
         if(txt){ int ok=collect_functions_from_text(out,path,NULL,-1,appended_base,txt,err,errcap); free(txt); if(!ok) goto fail; }
       }
     }
@@ -2993,7 +3012,7 @@ int gmlc_bytecode_emit_empty(GmlcCodeBlob *out){
 
 int gmlc_bytecode_compile_source_ex(const GmlcProject *project, const GmlcFunctionRegistry *funcs, int script_index, const char *path, GmlcCodeBlob *out, char *err, size_t errcap){
   memset(out,0,sizeof(*out));
-  char *txt=read_text(path);
+  char *txt=gmlc_project_read_source(project,path);
   if(!txt){
     snprintf(err,errcap,"%s: read failed",path);
     return 0;
@@ -3032,6 +3051,7 @@ void gmlc_function_registry_free(GmlcFunctionRegistry *r){
   free(r->globals);
   for(int i=0;i<r->n_assets;i++) free(r->assets[i].name);
   free(r->assets);
+  free(r->asset_hash_slots);
   for(int i=0;i<r->n_macros;i++) free(r->macro_names[i]);
   free(r->macro_names);
   free(r->macro_values);

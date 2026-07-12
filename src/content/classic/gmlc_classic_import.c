@@ -141,6 +141,25 @@ static int write_source(const char *path, const char *source, char *err, size_t 
   return ok;
 }
 
+static char *import_source_path(GmlcProject *project, const char *cache_dir,
+                                const char *leaf, const char *source,
+                                char *err, size_t errcap){
+  if(project->prefer_memory_files){
+    const char *text=source?source:"";
+    char *path=gmlc_project_add_memory_file(project,leaf,GMLC_MEMORY_TEXT,
+                                            text,strlen(text),0,0);
+    if(!path && err && errcap)
+      snprintf(err,errcap,"classic import: out of memory retaining %s",leaf);
+    return path;
+  }
+  char *path=cache_path(cache_dir,leaf);
+  if(!path || !write_source(path,source,err,errcap)){
+    free(path);
+    return NULL;
+  }
+  return path;
+}
+
 static void free_imported_scripts(GmlcProject *project){
   for(int i = 0; i < project->n_scripts; ++i){
     free(project->scripts[i].id);
@@ -187,9 +206,8 @@ int gmlc_classic_import_scripts(const GmlcClassicManifest *classic,
     GmlcScript *script = &project->scripts[i];
     script->id = copy_string(name);
     script->name = copy_string(name);
-    script->source_path = cache_path(cache_dir, leaf);
-    if(!script->id || !script->name || !script->source_path ||
-       !write_source(script->source_path, source, err, errcap)){
+    script->source_path = import_source_path(project,cache_dir,leaf,source,err,errcap);
+    if(!script->id || !script->name || !script->source_path){
       if(err && errcap && !err[0]) snprintf(err, errcap, "classic import: out of memory importing script %u", i);
       free_imported_scripts(project);
       return 0;
@@ -244,6 +262,41 @@ static int write_rgba_png(const char *path, const uint8_t *source_rgba, uint32_t
   free(rgba);
   if(!ok && err && errcap) snprintf(err, errcap, "classic import: cannot write %s", path);
   return ok != 0;
+}
+
+static char *import_rgba_path(GmlcProject *project, const char *cache_dir,
+                              const char *leaf, const uint8_t *source_rgba,
+                              uint32_t bytes, int width, int height,
+                              char *err, size_t errcap){
+  if(!project->prefer_memory_files){
+    char *path=cache_path(cache_dir,leaf);
+    if(!path || !write_rgba_png(path,source_rgba,bytes,width,height,err,errcap)){
+      free(path);
+      return NULL;
+    }
+    return path;
+  }
+  int out_width=width>0?width:1, out_height=height>0?height:1;
+  if((size_t)out_width>SIZE_MAX/(size_t)out_height/4u){
+    if(err && errcap) snprintf(err,errcap,"classic import: image dimensions overflow");
+    return NULL;
+  }
+  size_t size=(size_t)out_width*(size_t)out_height*4u;
+  if(bytes && bytes<size){
+    if(err && errcap) snprintf(err,errcap,"classic import: truncated image pixels");
+    return NULL;
+  }
+  uint8_t *zero=NULL;
+  const void *pixels=source_rgba;
+  if(width<=0 || height<=0 || !pixels){
+    zero=(uint8_t*)calloc(size?size:1u,1);
+    if(!zero) return NULL;
+    pixels=zero;
+  }
+  char *path=gmlc_project_add_memory_file(project,leaf,GMLC_MEMORY_RGBA,pixels,size,
+                                          out_width,out_height);
+  free(zero);
+  return path;
 }
 
 static int decode_legacy_image(ImportReader *r, int expected_width, int expected_height,
@@ -337,9 +390,9 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
         }
         char leaf[96];
         snprintf(leaf,sizeof(leaf),"classic_sprite_%06u_%06u.png",slot_index,frame);
-        sprite->frame_paths[frame]=cache_path(cache_dir,leaf);
-        int ok=sprite->frame_paths[frame] &&
-          write_rgba_png(sprite->frame_paths[frame],rgba,rgba_bytes,sprite->width,sprite->height,err,errcap);
+        sprite->frame_paths[frame]=import_rgba_path(project,cache_dir,leaf,rgba,rgba_bytes,
+                                                    sprite->width,sprite->height,err,errcap);
+        int ok=sprite->frame_paths[frame]!=NULL;
         stbi_image_free(rgba);
         if(!ok){ free_imported_sprites(project); return 0; }
       }
@@ -381,9 +434,9 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
       }
       char leaf[96];
       snprintf(leaf, sizeof(leaf), "classic_sprite_%06u_%06u.png", slot_index, frame);
-      sprite->frame_paths[frame] = cache_path(cache_dir, leaf);
-      if(!sprite->frame_paths[frame] ||
-         !write_rgba_png(sprite->frame_paths[frame], pixels, pixel_bytes, (int)width, (int)height, err, errcap)){
+      sprite->frame_paths[frame] = import_rgba_path(project,cache_dir,leaf,pixels,pixel_bytes,
+                                                    (int)width,(int)height,err,errcap);
+      if(!sprite->frame_paths[frame]){
         free_imported_sprites(project);
         return 0;
       }
@@ -503,9 +556,10 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
       sprite->bbox_bottom=sprite->height?sprite->height-1:0;
       sprite->n_frames=1; sprite->frame_paths=(char**)calloc(1,sizeof(*sprite->frame_paths));
       char leaf[80]; snprintf(leaf,sizeof(leaf),"classic_background_%06u.png",i);
-      if(sprite->frame_paths) sprite->frame_paths[0]=cache_path(cache_dir,leaf);
-      int image_ok=sprite->id && sprite->name && sprite->frame_paths && sprite->frame_paths[0] &&
-        write_rgba_png(sprite->frame_paths[0],rgba,rgba_bytes,sprite->width,sprite->height,err,errcap);
+      if(sprite->frame_paths)
+        sprite->frame_paths[0]=import_rgba_path(project,cache_dir,leaf,rgba,rgba_bytes,
+                                                sprite->width,sprite->height,err,errcap);
+      int image_ok=sprite->id && sprite->name && sprite->frame_paths && sprite->frame_paths[0];
       stbi_image_free(rgba);
       if(!image_ok){ free_imported_backgrounds(project,first_sprite); return 0; }
       background->sprite_id=project->n_sprites-1;
@@ -550,9 +604,10 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
     sprite->frame_paths = (char**)calloc(1, sizeof(*sprite->frame_paths));
     char leaf[80];
     snprintf(leaf, sizeof(leaf), "classic_background_%06u.png", i);
-    if(sprite->frame_paths) sprite->frame_paths[0] = cache_path(cache_dir, leaf);
-    if(!sprite->id || !sprite->name || !sprite->frame_paths || !sprite->frame_paths[0] ||
-       !write_rgba_png(sprite->frame_paths[0], pixels, pixel_bytes, (int)width, (int)height, err, errcap)){
+    if(sprite->frame_paths)
+      sprite->frame_paths[0]=import_rgba_path(project,cache_dir,leaf,pixels,pixel_bytes,
+                                              (int)width,(int)height,err,errcap);
+    if(!sprite->id || !sprite->name || !sprite->frame_paths || !sprite->frame_paths[0]){
       if(err && errcap && !err[0]) snprintf(err, errcap, "classic import: out of memory importing background %u", i);
       free_imported_backgrounds(project, first_sprite);
       return 0;
@@ -587,10 +642,13 @@ static void free_imported_fonts(GmlcProject *project){
   project->n_fonts = project->cap_fonts = 0;
 }
 
-static int write_default_font_png(const char *path, char *err, size_t errcap){
+static uint8_t *build_default_font_rgba(char *err, size_t errcap){
   enum { WIDTH=512, HEIGHT=128 };
   uint8_t *rgba=(uint8_t*)calloc((size_t)WIDTH*HEIGHT,4);
-  if(!rgba){ if(err && errcap) snprintf(err,errcap,"classic import: out of memory building font fallback"); return 0; }
+  if(!rgba){
+    if(err && errcap) snprintf(err,errcap,"classic import: out of memory building font fallback");
+    return NULL;
+  }
   int x=0,y=0;
   int count=GML_DEFAULT_FONT_LAST-GML_DEFAULT_FONT_FIRST+1;
   for(int i=0;i<count;i++){
@@ -605,7 +663,13 @@ static int write_default_font_png(const char *path, char *err, size_t errcap){
     }
     x+=glyph->width;
   }
-  int ok=stbi_write_png(path,WIDTH,HEIGHT,4,rgba,WIDTH*4);
+  return rgba;
+}
+
+static int write_default_font_png(const char *path, char *err, size_t errcap){
+  uint8_t *rgba=build_default_font_rgba(err,errcap);
+  if(!rgba) return 0;
+  int ok=stbi_write_png(path,512,128,4,rgba,512*4);
   free(rgba);
   if(!ok && err && errcap) snprintf(err,errcap,"classic import: cannot write %s",path);
   return ok!=0;
@@ -634,8 +698,22 @@ int gmlc_classic_import_fonts(const GmlcClassicManifest *classic,
   project->fonts=(GmlcFont*)calloc(count,sizeof(*project->fonts));
   if(!project->fonts){ if(err && errcap) snprintf(err,errcap,"classic import: out of memory allocating fonts"); return 0; }
   project->cap_fonts=(int)count;
-  char *atlas_path=cache_path(cache_dir,"classic_font_fallback.png");
-  if(!atlas_path || !write_default_font_png(atlas_path,err,errcap)){
+  char *atlas_path=NULL;
+  if(project->prefer_memory_files){
+    uint8_t *rgba=build_default_font_rgba(err,errcap);
+    if(rgba){
+      atlas_path=gmlc_project_add_memory_file(project,"classic_font_fallback.png",
+                                              GMLC_MEMORY_RGBA,rgba,512u*128u*4u,512,128);
+      free(rgba);
+    }
+  } else {
+    atlas_path=cache_path(cache_dir,"classic_font_fallback.png");
+    if(atlas_path && !write_default_font_png(atlas_path,err,errcap)){
+      free(atlas_path);
+      atlas_path=NULL;
+    }
+  }
+  if(!atlas_path){
     free(atlas_path); free_imported_fonts(project); return 0;
   }
   for(uint32_t i=0;i<slot_count;i++){
@@ -697,6 +775,24 @@ static int write_binary(const char *path, const uint8_t *data, size_t size,
   int closed = fclose(file) == 0;
   if((!wrote || !closed) && err && errcap) snprintf(err, errcap, "classic import: cannot write %s", path);
   return wrote && closed;
+}
+
+static char *import_binary_path(GmlcProject *project, const char *cache_dir,
+                                const char *leaf, const uint8_t *data, size_t size,
+                                char *err, size_t errcap){
+  if(project->prefer_memory_files){
+    char *path=gmlc_project_add_memory_file(project,leaf,GMLC_MEMORY_BLOB,
+                                            data,size,0,0);
+    if(!path && err && errcap)
+      snprintf(err,errcap,"classic import: out of memory retaining %s",leaf);
+    return path;
+  }
+  char *path=cache_path(cache_dir,leaf);
+  if(!path || !write_binary(path,data,size,err,errcap)){
+    free(path);
+    return NULL;
+  }
+  return path;
 }
 
 static void free_imported_sounds(GmlcProject *project){
@@ -789,11 +885,10 @@ int gmlc_classic_import_sounds(const GmlcClassicManifest *classic,
     GmlcSound *sound = &project->sounds[i];
     sound->id = copy_string(name);
     sound->name = copy_string(name);
-    sound->data_path = cache_path(cache_dir, leaf);
+    sound->data_path = import_binary_path(project,cache_dir,leaf,audio,audio_size,err,errcap);
     sound->volume = (float)volume;
     sound->pitch = 1.0f;
-    int wrote=sound->id && sound->name && sound->data_path &&
-      write_binary(sound->data_path,audio,audio_size,err,errcap);
+    int wrote=sound->id && sound->name && sound->data_path;
     STBI_FREE(owned_audio);
     if(!wrote){
       if(err && errcap && !err[0]) snprintf(err, errcap, "classic import: out of memory importing sound %u", i);
@@ -1181,8 +1276,8 @@ int gmlc_classic_import_objects(const GmlcClassicManifest *classic,
         event.event_type = (int)event_type;
         event.event_number = (int32_t)event_number;
         event.collision_object_id = event_type == 4 ? (int32_t)event_number : -1;
-        event.source_path = cache_path(cache_dir, leaf);
-        if(!event.id || !event.source_path || !write_source(event.source_path, text.data, err, errcap) ||
+        event.source_path = import_source_path(project,cache_dir,leaf,text.data,err,errcap);
+        if(!event.id || !event.source_path ||
            !append_object_event(object, event)){
           free(event.id); free(event.source_path); free(text.data);
           if(err && errcap && !err[0]) snprintf(err, errcap, "classic import: out of memory importing object event");
@@ -1250,9 +1345,9 @@ int gmlc_classic_import_timelines(const GmlcClassicManifest *classic,
       char leaf[112];
       snprintf(leaf,sizeof(leaf),"classic_timeline_%06u_moment_%06u.gml",i,moment);
       timeline->moments[moment].step=(int32_t)step;
-      timeline->moments[moment].source_path=cache_path(cache_dir,leaf);
-      if(!timeline->moments[moment].source_path ||
-         !write_source(timeline->moments[moment].source_path,text.data,err,errcap)){
+      timeline->moments[moment].source_path=import_source_path(project,cache_dir,leaf,
+                                                               text.data,err,errcap);
+      if(!timeline->moments[moment].source_path){
         free(text.data); free_imported_timelines(project); return 0;
       }
       free(text.data);
@@ -1281,14 +1376,15 @@ static void free_imported_rooms(GmlcProject *project){
   project->n_rooms = project->cap_rooms = 0;
 }
 
-static int import_room_code(ImportReader *r, const char *cache_dir, const char *leaf,
+static int import_room_code(ImportReader *r, GmlcProject *project,
+                            const char *cache_dir, const char *leaf,
                             char **out_path, char *err, size_t errcap){
   char *code = NULL;
   *out_path = NULL;
   if(!import_copy_string(r, &code, "room creation code")) return 0;
   if(code[0]){
-    *out_path = cache_path(cache_dir, leaf);
-    if(!*out_path || !write_source(*out_path, code, err, errcap)){
+    *out_path = import_source_path(project,cache_dir,leaf,code,err,errcap);
+    if(!*out_path){
       free(code); free(*out_path); *out_path = NULL;
       return 0;
     }
@@ -1359,7 +1455,7 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
               room->background_color,room->draw_background_color);
     char leaf[112];
     snprintf(leaf, sizeof(leaf), "classic_room_%06u_create.gml", i);
-    if(!import_room_code(&r, cache_dir, leaf, &room->creation_code_path, err, errcap)){
+    if(!import_room_code(&r,project,cache_dir,leaf,&room->creation_code_path,err,errcap)){
       free_imported_rooms(project); return 0;
     }
     uint32_t backgrounds;
@@ -1435,7 +1531,7 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
       target->instance_id = (int32_t)instance_id; target->sx = target->sy = 1.0f;
       target->color = 0xFFFFFFFFu;
       if(!target->id || !target->name ||
-         !import_room_code(&r, cache_dir, instance_leaf, &target->creation_code_path, err, errcap) ||
+         !import_room_code(&r,project,cache_dir,instance_leaf,&target->creation_code_path,err,errcap) ||
          !import_u32(&r, &locked, "room instance locked flag")){
         free_imported_rooms(project); return 0;
       }

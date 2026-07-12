@@ -6,21 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static char *read_text(const char *path){
-  FILE *f=fopen(path,"rb");
-  if(!f) return NULL;
-  fseek(f,0,SEEK_END);
-  long sz=ftell(f);
-  rewind(f);
-  if(sz<0){ fclose(f); return NULL; }
-  char *buf=(char*)malloc((size_t)sz+1);
-  if(!buf){ fclose(f); return NULL; }
-  if(fread(buf,1,(size_t)sz,f)!=(size_t)sz){ fclose(f); free(buf); return NULL; }
-  fclose(f);
-  buf[sz]=0;
-  return buf;
-}
-
 static int word_at(const char *base, const char *p, const char *w){
   size_t n=strlen(w);
   if(strncmp(p,w,n)) return 0;
@@ -49,7 +34,7 @@ static void scan_text(const char *s, GmlcSourceReport *r){
 int gmlc_source_scan_project(const GmlcProject *p, GmlcSourceReport *out, char *err, size_t errcap){
   memset(out,0,sizeof(*out));
   for(int i=0;i<p->n_scripts;i++){
-    char *txt=read_text(p->scripts[i].source_path);
+    char *txt=gmlc_project_read_source(p,p->scripts[i].source_path);
     if(!txt){
       (void)err; (void)errcap;
       out->missing_files++;
@@ -60,7 +45,7 @@ int gmlc_source_scan_project(const GmlcProject *p, GmlcSourceReport *out, char *
     free(txt);
   }
   for(int i=0;i<p->n_timelines;i++) for(int m=0;m<p->timelines[i].n_moments;m++){
-    char *txt=read_text(p->timelines[i].moments[m].source_path);
+    char *txt=gmlc_project_read_source(p,p->timelines[i].moments[m].source_path);
     if(!txt){ out->missing_files++; continue; }
     out->files++; scan_text(txt,out); free(txt);
   }
@@ -69,7 +54,7 @@ int gmlc_source_scan_project(const GmlcProject *p, GmlcSourceReport *out, char *
     for(int e=0;e<obj->n_events;e++){
       const char *path=obj->events[e].source_path;
       if(!path || !*path) continue;
-      char *txt=read_text(path);
+      char *txt=gmlc_project_read_source(p,path);
       if(!txt){
         (void)err; (void)errcap;
         out->missing_files++;

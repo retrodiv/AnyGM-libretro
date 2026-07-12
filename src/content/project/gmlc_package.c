@@ -37,6 +37,8 @@ typedef struct {
 typedef struct {
   char **items;
   uint32_t *char_off;
+  int *hash_slots;
+  int hash_cap;
   int n, cap;
 } StrTab;
 
@@ -180,19 +182,63 @@ static int zfill(Buf *b, size_t n){ if(!reserve(b,n)) return 0; memset(b->data+b
 static void patch32(Buf *b, size_t pos, uint32_t v){ b->data[pos]=(uint8_t)v; b->data[pos+1]=(uint8_t)(v>>8); b->data[pos+2]=(uint8_t)(v>>16); b->data[pos+3]=(uint8_t)(v>>24); }
 static void patch64(Buf *b, size_t pos, uint64_t v){ patch32(b,pos,(uint32_t)v); patch32(b,pos+4,(uint32_t)(v>>32)); }
 
+static uint64_t string_hash(const char *s){
+  uint64_t hash=1469598103934665603ull;
+  for(;*s;s++){
+    hash^=(uint8_t)*s;
+    hash*=1099511628211ull;
+  }
+  return hash;
+}
+
+static int strtab_rehash(StrTab *table, int capacity){
+  int *slots=(int*)malloc((size_t)capacity*sizeof(*slots));
+  if(!slots) return 0;
+  for(int i=0;i<capacity;i++) slots[i]=-1;
+  for(int i=0;i<table->n;i++){
+    size_t at=(size_t)string_hash(table->items[i])&((size_t)capacity-1u);
+    while(slots[at]>=0) at=(at+1u)&((size_t)capacity-1u);
+    slots[at]=i;
+  }
+  free(table->hash_slots);
+  table->hash_slots=slots;
+  table->hash_cap=capacity;
+  return 1;
+}
+
 static int intern(Pkg *p, const char *s){
   if(!s) s="";
-  for(int i=0;i<p->strs.n;i++) if(!strcmp(p->strs.items[i],s)) return i;
+  if(!p->strs.hash_cap){
+    if(!strtab_rehash(&p->strs,256)) return -1;
+  } else if((int64_t)(p->strs.n+1)*10>=(int64_t)p->strs.hash_cap*7){
+    if(p->strs.hash_cap>INT_MAX/2 || !strtab_rehash(&p->strs,p->strs.hash_cap*2)) return -1;
+  }
+  size_t slot=(size_t)string_hash(s)&((size_t)p->strs.hash_cap-1u);
+  while(p->strs.hash_slots[slot]>=0){
+    int index=p->strs.hash_slots[slot];
+    if(!strcmp(p->strs.items[index],s)) return index;
+    slot=(slot+1u)&((size_t)p->strs.hash_cap-1u);
+  }
   if(p->strs.n>=p->strs.cap){
     int nc=p->strs.cap?p->strs.cap*2:128;
-    char **ni=(char**)realloc(p->strs.items,(size_t)nc*sizeof(*ni));
-    uint32_t *no=(uint32_t*)realloc(p->strs.char_off,(size_t)nc*sizeof(*no));
+    char **ni=(char**)malloc((size_t)nc*sizeof(*ni));
+    uint32_t *no=(uint32_t*)malloc((size_t)nc*sizeof(*no));
     if(!ni || !no){ free(ni); free(no); return -1; }
+    if(p->strs.n){
+      memcpy(ni,p->strs.items,(size_t)p->strs.n*sizeof(*ni));
+      memcpy(no,p->strs.char_off,(size_t)p->strs.n*sizeof(*no));
+    }
+    free(p->strs.items);
+    free(p->strs.char_off);
     p->strs.items=ni; p->strs.char_off=no; p->strs.cap=nc;
   }
-  p->strs.items[p->strs.n]=gmlc_strdup(s);
-  p->strs.char_off[p->strs.n]=0;
-  return p->strs.items[p->strs.n] ? p->strs.n++ : -1;
+  int index=p->strs.n;
+  p->strs.items[index]=gmlc_strdup(s);
+  p->strs.char_off[index]=0;
+  if(!p->strs.items[index]) return -1;
+  p->strs.hash_slots[slot]=index;
+  p->strs.n++;
+  return index;
 }
 
 static int add_str_patch(Pkg *p, uint32_t pos, int sid){
@@ -440,11 +486,34 @@ static int texture_request_cmp(const void *a, const void *b){
   return rb->w-ra->w;
 }
 
-static int texture_alpha_bounds(const char *path, int canvas_w, int canvas_h,
+static unsigned char *load_project_rgba(const GmlcProject *project, const char *path,
+                                        int *width, int *height, int *components){
+  const GmlcMemoryFile *memory=gmlc_project_find_memory_file(project,path);
+  if(memory){
+    if(memory->kind==GMLC_MEMORY_RGBA){
+      if(memory->width<=0 || memory->height<=0 ||
+         (size_t)memory->width>SIZE_MAX/(size_t)memory->height/4u ||
+         memory->size<(size_t)memory->width*(size_t)memory->height*4u) return NULL;
+      unsigned char *rgba=(unsigned char*)malloc(memory->size?memory->size:1u);
+      if(!rgba) return NULL;
+      memcpy(rgba,memory->data,memory->size);
+      *width=memory->width; *height=memory->height;
+      if(components) *components=4;
+      return rgba;
+    }
+    if(memory->kind==GMLC_MEMORY_BLOB && memory->size<=INT_MAX)
+      return stbi_load_from_memory(memory->data,(int)memory->size,width,height,components,4);
+    return NULL;
+  }
+  return path?stbi_load(path,width,height,components,4):NULL;
+}
+
+static int texture_alpha_bounds(const GmlcProject *project, const char *path,
+                                int canvas_w, int canvas_h,
                                 int *out_x, int *out_y, int *out_w, int *out_h,
                                 uint64_t *out_hash){
   int w=0,h=0,comp=0;
-  unsigned char *rgba=path?stbi_load(path,&w,&h,&comp,4):NULL;
+  unsigned char *rgba=load_project_rgba(project,path,&w,&h,&comp);
   if(!rgba) return 0;
   int minx=w, miny=h, maxx=-1, maxy=-1;
   for(int y=0;y<h;y++) for(int x=0;x<w;x++){
@@ -585,7 +654,7 @@ static int build_texture_layout(Pkg *pkg, const GmlcProject *p){
       int xoff=0, yoff=0, w=cw, h=ch;
       uint64_t hash=0;
       const char *path=(sp->frame_paths && sp->frame_paths[f]) ? sp->frame_paths[f] : NULL;
-      if(!texture_alpha_bounds(path,cw,ch,&xoff,&yoff,&w,&h,&hash)){
+      if(!texture_alpha_bounds(p,path,cw,ch,&xoff,&yoff,&w,&h,&hash)){
         free(req);
         return 0;
       }
@@ -666,7 +735,8 @@ static int global_frame_index(const GmlcProject *p, int sprite, int frame){
   return n+frame;
 }
 
-static int write_sprite_masks(Pkg *pkg, const GmlcSprite *sp, char *err, size_t errcap){
+static int write_sprite_masks(Pkg *pkg, const GmlcProject *project,
+                              const GmlcSprite *sp, char *err, size_t errcap){
   if(sp->n_frames<=0 || sp->width<=0 || sp->height<=0){
     wu32(&pkg->b,0);
     return 1;
@@ -685,7 +755,7 @@ static int write_sprite_masks(Pkg *pkg, const GmlcSprite *sp, char *err, size_t 
   for(int f=0;f<mask_count;f++){
     int w=0,h=0,comp=0;
     const char *path=(sp->frame_paths && sp->frame_paths[f]) ? sp->frame_paths[f] : NULL;
-    unsigned char *rgba=path?stbi_load(path,&w,&h,&comp,4):NULL;
+    unsigned char *rgba=load_project_rgba(project,path,&w,&h,&comp);
     if(!rgba){
       snprintf(err,errcap,"%s: sprite mask image read failed",path?path:"<missing>");
       return 0;
@@ -767,7 +837,7 @@ static int write_sprt(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
       wu32(&pkg->b,0);
       add_frame_patch(pkg,pos,global_frame_index(p,i,f));
     }
-    if(!write_sprite_masks(pkg,sp,err,errcap)) return 0;
+    if(!write_sprite_masks(pkg,p,sp,err,errcap)) return 0;
   }
   chunk_end(pkg,s);
   return 1;
@@ -887,8 +957,18 @@ static int write_tpag(Pkg *pkg, const GmlcProject *p){
   return 1;
 }
 
-static int read_blob(const char *path, uint8_t **out, size_t *out_len){
-  FILE *f=fopen(path,"rb");
+static int read_blob(const GmlcProject *project, const char *path,
+                     uint8_t **out, size_t *out_len){
+  const GmlcMemoryFile *memory=gmlc_project_find_memory_file(project,path);
+  if(memory){
+    if(memory->kind==GMLC_MEMORY_TEXT || !memory->size) return 0;
+    uint8_t *copy=(uint8_t*)malloc(memory->size);
+    if(!copy) return 0;
+    memcpy(copy,memory->data,memory->size);
+    *out=copy; *out_len=memory->size;
+    return 1;
+  }
+  FILE *f=path?fopen(path,"rb"):NULL;
   if(!f) return 0;
   fseek(f,0,SEEK_END);
   long sz=ftell(f);
@@ -1022,7 +1102,7 @@ static int load_reference_texture_layout(Pkg *pkg, const GmlcProject *p, const c
   size_t len=0;
   RefTextureLayout tmp;
   memset(&tmp,0,sizeof(tmp));
-  if(!read_blob(path,&data,&len)){
+  if(!read_blob(NULL,path,&data,&len)){
     snprintf(err,errcap,"%s: reference package read failed",path?path:"<missing>");
     return 0;
   }
@@ -1136,9 +1216,11 @@ static void png_out_write(void *ctx, void *data, int size){
   if(!wbytes(&out->b,data,(size_t)size)) out->ok=0;
 }
 
-static int atlas_copy_png(uint8_t *atlas, int atlas_dim, const TexturePlacement *tp, const char *path, char *err, size_t errcap){
+static int atlas_copy_png(const GmlcProject *project, uint8_t *atlas, int atlas_dim,
+                          const TexturePlacement *tp, const char *path,
+                          char *err, size_t errcap){
   int w=0,h=0,comp=0;
-  unsigned char *rgba=path?stbi_load(path,&w,&h,&comp,4):NULL;
+  unsigned char *rgba=load_project_rgba(project,path,&w,&h,&comp);
   if(!rgba){
     snprintf(err,errcap,"%s: texture image read failed",path?path:"<missing>");
     return 0;
@@ -1186,7 +1268,7 @@ static int write_atlas_blob(Pkg *pkg, const GmlcProject *p, int page, size_t blo
       const TexturePlacement *tp=&pkg->texture_place[idx];
       if(tp->atlas!=(uint16_t)page) continue;
       const char *path=(sp->frame_paths && sp->frame_paths[f]) ? sp->frame_paths[f] : NULL;
-      if(!atlas_copy_png(pixels,atlas_dim,tp,path,err,errcap)){
+      if(!atlas_copy_png(p,pixels,atlas_dim,tp,path,err,errcap)){
         free(pixels);
         return 0;
       }
@@ -1195,7 +1277,7 @@ static int write_atlas_blob(Pkg *pkg, const GmlcProject *p, int page, size_t blo
   for(int i=0;i<p->n_fonts;i++,idx++){
     const TexturePlacement *tp=&pkg->texture_place[idx];
     if(tp->atlas!=(uint16_t)page) continue;
-    if(!atlas_copy_png(pixels,atlas_dim,tp,p->fonts[i].png_path,err,errcap)){
+    if(!atlas_copy_png(p,pixels,atlas_dim,tp,p->fonts[i].png_path,err,errcap)){
       free(pixels);
       return 0;
     }
@@ -1971,7 +2053,7 @@ static int write_audo(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
       if(i+1<n) while(pkg->b.len % 4) wu8(&pkg->b,0);
       continue;
     }
-    if(!read_blob(snd->data_path,&blob,&blen)){
+    if(!read_blob(p,snd->data_path,&blob,&blen)){
       snprintf(err,errcap,"%s: sound blob read failed",snd->data_path?snd->data_path:"<missing>");
       return 0;
     }
@@ -3073,6 +3155,7 @@ static void free_pkg(Pkg *pkg){
   for(int i=0;i<pkg->strs.n;i++) free(pkg->strs.items[i]);
   free(pkg->strs.items);
   free(pkg->strs.char_off);
+  free(pkg->strs.hash_slots);
   free(pkg->patches);
   free(pkg->frame_patches);
   free(pkg->font_patches);

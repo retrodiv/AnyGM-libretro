@@ -60,6 +60,8 @@ typedef struct {
   int n_globals, cap_globals;
   GmlcAssetBinding *assets;
   int n_assets, cap_assets;
+  int *asset_hash_slots;
+  int asset_hash_cap;
   char **macro_names;
   double *macro_values;
   int n_macros, cap_macros;
