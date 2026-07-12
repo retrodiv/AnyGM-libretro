@@ -33,7 +33,7 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 int main(void){
   GmlcProject project; GmlcObject objects[2]; GmlcRoom rooms[2];
   int room_order[2]={0,1};
-  GmlcObjectEvent object_events[20];
+  GmlcObjectEvent object_events[21];
   GmlcProjectTrigger trigger;
   GmlcProjectIncludedFile included;
   unsigned char included_data[]={1,3,5,7};
@@ -53,7 +53,7 @@ int main(void){
   objects[0].name="obj_fixture"; objects[0].sprite_id=-1; objects[0].mask_id=-1; objects[0].parent_id=-1; objects[0].visible=1;
   objects[0].events=object_events; objects[0].n_events=objects[0].cap_events=10;
   objects[1].name="obj_changed"; objects[1].sprite_id=-1; objects[1].mask_id=-1; objects[1].parent_id=-1; objects[1].visible=1;
-  objects[1].events=&object_events[10]; objects[1].n_events=objects[1].cap_events=10;
+  objects[1].events=&object_events[10]; objects[1].n_events=objects[1].cap_events=11;
   object_events[0].event_type=11; object_events[0].event_number=0;
   object_events[1].event_type=3; object_events[1].event_number=0;
   object_events[2].event_type=2; object_events[2].event_number=0;
@@ -74,6 +74,7 @@ int main(void){
   object_events[17].event_type=7; object_events[17].event_number=1;
   object_events[18].event_type=7; object_events[18].event_number=41;
   object_events[19].event_type=7; object_events[19].event_number=51;
+  object_events[20].event_type=11; object_events[20].event_number=0;
   trigger.name=(char*)"fixture_trigger"; trigger.moment=1; trigger.runtime_id=0;
   for(int i=0;i<2;i++){
     rooms[i].name=i?"room_b":"room_a"; rooms[i].width=320; rooms[i].height=240; rooms[i].speed=30;
@@ -99,9 +100,16 @@ int main(void){
   if(!condition_file || fwrite(condition_source,1,sizeof(condition_source)-1,condition_file)!=sizeof(condition_source)-1 || fclose(condition_file)!=0)return 1;
   trigger.condition_path=condition;
   char event[]="/tmp/gml-trigger-event-XXXXXX"; int event_fd=mkstemp(event); if(event_fd<0)return 1;
-  FILE *event_file=fdopen(event_fd,"wb"); const char event_source[]="global.trigger_hits += 1;\n";
+  FILE *event_file=fdopen(event_fd,"wb");
+  const char event_source[]="global.trigger_hits += 1; global.trigger_order=global.trigger_order*10+1;\n";
   if(!event_file || fwrite(event_source,1,sizeof(event_source)-1,event_file)!=sizeof(event_source)-1 || fclose(event_file)!=0)return 1;
   object_events[0].source_path=event;
+  char changed_trigger[]="/tmp/gml-trigger-changed-XXXXXX"; int changed_trigger_fd=mkstemp(changed_trigger); if(changed_trigger_fd<0)return 1;
+  FILE *changed_trigger_file=fdopen(changed_trigger_fd,"wb");
+  const char changed_trigger_source[]="global.trigger_hits += 1; global.trigger_order=global.trigger_order*10+2;\n";
+  if(!changed_trigger_file || fwrite(changed_trigger_source,1,sizeof(changed_trigger_source)-1,changed_trigger_file)!=sizeof(changed_trigger_source)-1 ||
+     fclose(changed_trigger_file)!=0)return 1;
+  object_events[20].source_path=changed_trigger;
   char step[]="/tmp/gml-step-event-XXXXXX"; int step_fd=mkstemp(step); if(step_fd<0)return 1;
   FILE *step_file=fdopen(step_fd,"wb");
   const char step_source[]=
@@ -389,7 +397,9 @@ int main(void){
       mouse_order&&mouse_order->t==V_REAL?mouse_order->d:-1.0); return 1;
   }
   GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
-  if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=2){
+  GmlVal *trigger_order=gml_varmap_get(&vm.globals,"trigger_order");
+  if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=3 ||
+     !trigger_order || trigger_order->t!=V_REAL || trigger_order->d!=112){
     fprintf(stderr,"classic trigger did not fire\n"); return 1;
   }
   *gml_varmap_put(&vm.globals,"secondary_boundary_order")=vreal(0);
@@ -461,7 +471,7 @@ int main(void){
     global_array_value(&vm,"background_x",0),global_array_value(&vm,"view_xview",0),
     room_speed&&room_speed->t==V_REAL?room_speed->d:-1,vm.n_tile_mut,
     vm.n_tile_mut?vm.tile_mut[0].depth:-1,vm.n_tile_mut?vm.tile_mut[0].dx:0,vm.n_tile_mut?vm.tile_mut[0].dy:0);
-  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(condition); unlink(event); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
+  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(condition); unlink(event); unlink(changed_trigger); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
   for(int i=0;i<2;i++) unlink(key_files[i]);
   for(int i=0;i<2;i++) unlink(mouse_files[i]);

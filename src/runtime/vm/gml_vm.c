@@ -4193,6 +4193,26 @@ static void run_classic_triggers(GmlVM *vm, int moment){
     int trigger_moment=(int32_t)u32(data,entry+4);
     int code_index=(int32_t)u32(data,entry+8);
     if(trigger_moment!=moment || code_index<0 || code_index>=vm->win->n_code) continue;
+    char suffix[32]; snprintf(suffix,sizeof(suffix),"Trigger_%d",trigger_id);
+    if(vm->win && vm->win->classic_version){
+      for(int object=0;object<vm->n_objects;object++){
+        if(!event_lookup_from(vm,suffix,object,NULL,NULL)) continue;
+        int count=classic_collect_object_slots(vm,object); if(count<0) continue;
+        for(int k=count-1;k>=0;k--){ int slot=vm->event_ord[k];
+          if(slot>=vm->inst_count) continue;
+          GmlInstance *in=&vm->inst[slot];
+          if(!in->active||in->marked||in->obj!=object) continue;
+          int old_type=vm->event_type, old_number=vm->event_number;
+          vm->event_type=11; vm->event_number=trigger_id;
+          GmlVal result=gml_vm_run_code(vm,code_index,in,NULL,NULL,0);
+          vm->event_type=old_type; vm->event_number=old_number;
+          int fire=astrue(result);
+          if(result.t==V_STR && result.d!=0) free((char*)result.s);
+          if(fire && in->active && !in->marked) gml_run_event(vm,in,suffix);
+        }
+      }
+      continue;
+    }
     GmlInstance scratch;
     memset(&scratch,0,sizeof(scratch));
     scratch.active=1; scratch.obj=-1; scratch.id=0;
@@ -4205,7 +4225,6 @@ static void run_classic_triggers(GmlVM *vm, int moment){
     if(result.t==V_STR && result.d!=0) free((char*)result.s);
     varmap_free_ex(&scratch.vars,0);
     if(!fire) continue;
-    char suffix[32]; snprintf(suffix,sizeof(suffix),"Trigger_%d",trigger_id);
     int n=vm->inst_count;
     for(int instance=0;instance<n;instance++)
       if(vm->inst[instance].active && !vm->inst[instance].marked)
