@@ -5310,12 +5310,14 @@ static void run_collisions(GmlVM *vm){
               (si->obj>=0&&si->obj<vm->n_objects)?vm->objects[si->obj].name:"?",
               (oi->obj>=0&&oi->obj<vm->n_objects)?vm->objects[oi->obj].name:"?",dt);
           } else run_event_code_from(vm,si,oi,suffix,handler_obj,code); }
-        /* If Collision code left the pair intersecting, apply the classic solid
-         * fallback to the participant that entered the contact. This preserves
-         * explicit move-to-contact handlers while still stopping unresolved
-         * direct x/y movement against solid instances. */
+        /* If Collision code left the pair intersecting, apply the solid fallback
+         * to the participant that entered the contact. Classic actions that stop
+         * an incoming motion restore the pre-contact coordinate too; motion that
+         * remains active stays under the event's explicit contact resolution. */
+        int oi_stopped=oi->hspeed==0.0 && oi->vspeed==0.0;
         if(si->active && !si->marked && oi->active && !oi->marked &&
-           si->solid && oi_moved && !oi_kinematic){
+           si->solid && oi_moved && (!oi_kinematic ||
+             (vm->win && vm->win->classic_version && oi_stopped))){
           double pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2;
           int post_hit=vm_bbox(vm,si,&pl1,&pt1,&pr1,&pb1) &&
                        vm_bbox(vm,oi,&pl2,&pt2,&pr2,&pb2) &&
