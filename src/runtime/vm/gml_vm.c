@@ -4580,7 +4580,7 @@ static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap
   t.order=order;
   (*tiles)[*nt]=t; (*depth)[*nt]=dep; (*nt)++;
 }
-typedef struct { double depth; int seq, type, idx, order; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite, 6=classic bg */
+typedef struct { double depth; int seq, type, idx, order, classic, obj; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite, 6=classic bg */
 static int cmp_draw_item(const void *pa, const void *pb){
   const GmlDrawItem *a=pa,*b=pb;
   if(a->depth!=b->depth) return a->depth>b->depth? -1:1;     /* higher depth first (behind) */
@@ -4597,6 +4597,11 @@ static int cmp_draw_item(const void *pa, const void *pb){
    * allowing an opaque sky layer to hide every following scenery layer. */
   if(a->type==6 && b->type==6)
     return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);
+  /* Classic draw ordering groups equal-depth instances by object resource. Higher
+   * object indices are painted first (behind); the established instance tie
+   * below still applies within one object's list. */
+  if(a->type==0 && b->type==0 && a->classic && b->classic && a->obj!=b->obj)
+    return a->obj>b->obj? -1:1;
   return a->seq>b->seq? -1 : (a->seq<b->seq?1:0);
 }
 static int rt_layer_has_background(GmlVM *vm, int layer_id){
@@ -4859,14 +4864,15 @@ void gml_vm_draw(GmlVM *vm){
   int cap=n+nt+nlb+nlt+nls+ncb+npart; if(!dl_grow((void**)&g_dl_it,&g_dl_it_cap,cap>0?cap:1,sizeof(GmlDrawItem))){ g_dl_tiles=tiles; g_dl_tdepth=tdepth; g_dl_tiles_cap=tcap; return; }
   GmlDrawItem *it=g_dl_it; int m=0;
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked){
-    it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; it[m].order=vm->inst[i].draw_layer_order; m++; }
-  for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; it[m].order=tiles[i].order; m++; }
-  for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; it[m].order=ltl[i].order; m++; }
-  for(int i=0;i<nlb;i++){ it[m].depth=lbg[i].depth; it[m].type=3; it[m].idx=i; it[m].seq=m; it[m].order=lbg[i].order; m++; }
-  for(int i=0;i<nls;i++){ it[m].depth=lsp[i].depth; it[m].type=5; it[m].idx=i; it[m].seq=m; it[m].order=lsp[i].order; m++; }
-  for(int i=0;i<ncb;i++){ it[m].depth=cbg[i].depth; it[m].type=6; it[m].idx=i; it[m].seq=m; it[m].order=-1; m++; }
+    it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; it[m].order=vm->inst[i].draw_layer_order;
+    it[m].classic=vm->win&&vm->win->classic_version; it[m].obj=vm->inst[i].obj; m++; }
+  for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; it[m].order=tiles[i].order; it[m].classic=0; it[m].obj=-1; m++; }
+  for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; it[m].order=ltl[i].order; it[m].classic=0; it[m].obj=-1; m++; }
+  for(int i=0;i<nlb;i++){ it[m].depth=lbg[i].depth; it[m].type=3; it[m].idx=i; it[m].seq=m; it[m].order=lbg[i].order; it[m].classic=0; it[m].obj=-1; m++; }
+  for(int i=0;i<nls;i++){ it[m].depth=lsp[i].depth; it[m].type=5; it[m].idx=i; it[m].seq=m; it[m].order=lsp[i].order; it[m].classic=0; it[m].obj=-1; m++; }
+  for(int i=0;i<ncb;i++){ it[m].depth=cbg[i].depth; it[m].type=6; it[m].idx=i; it[m].seq=m; it[m].order=-1; it[m].classic=0; it[m].obj=-1; m++; }
   for(int i=0;i<npart;i++){ int pid=0; double dep=0;
-    if(gml_part_system_auto_draw_nth(i,&pid,&dep)){ it[m].depth=dep; it[m].type=4; it[m].idx=pid; it[m].seq=m; it[m].order=-1; m++; } }
+    if(gml_part_system_auto_draw_nth(i,&pid,&dep)){ it[m].depth=dep; it[m].type=4; it[m].idx=pid; it[m].seq=m; it[m].order=-1; it[m].classic=0; it[m].obj=-1; m++; } }
   qsort(it,m,sizeof(GmlDrawItem),cmp_draw_item);
   static int dumped=0;
   { const char *li=getenv("GML_LOG_INST");
