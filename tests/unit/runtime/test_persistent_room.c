@@ -68,7 +68,8 @@ int main(void){
   if(!event_file || fwrite(event_source,1,sizeof(event_source)-1,event_file)!=sizeof(event_source)-1 || fclose(event_file)!=0)return 1;
   object_events[0].source_path=event;
   char step[]="/tmp/gml-step-event-XXXXXX"; int step_fd=mkstemp(step); if(step_fd<0)return 1;
-  FILE *step_file=fdopen(step_fd,"wb"); const char step_source[]="x += 5;\n";
+  FILE *step_file=fdopen(step_fd,"wb");
+  const char step_source[]="if (hspeed > 0) hspeed -= 1; if (hspeed < 0) hspeed += 1; hspeed = round(hspeed); x += 5;\n";
   if(!step_file || fwrite(step_source,1,sizeof(step_source)-1,step_file)!=sizeof(step_source)-1 || fclose(step_file)!=0)return 1;
   object_events[1].source_path=step;
   char path[]="/tmp/gml-persistent-room-XXXXXX"; int fd=mkstemp(path); if(fd<0)return 1; close(fd);
@@ -238,12 +239,15 @@ int main(void){
   (void)gml_builtin_call(&vm,"action_end_game",NULL,0);
   if(vm.game_end!=1){ fprintf(stderr,"classic end action did not request shutdown\n"); return 1; }
   vm.game_end=0;
+  created->gravity=0; created->gravity_direction=270;
+  created->hspeed=-1e-16; created->vspeed=0;
   double position_before_step=created->x;
   gml_vm_step(&vm);
-  if(created->x!=position_before_step+5 || created->xprevious!=position_before_step){
-    fprintf(stderr,"previous position was not captured before Step movement: x=%.0f previous=%.0f\n",
-      created->x,created->xprevious); return 1;
+  if(created->x!=position_before_step+5 || created->xprevious!=position_before_step || created->hspeed!=0){
+    fprintf(stderr,"previous position/cardinal gravity mismatch: x=%.0f previous=%.0f hspeed=%.17g\n",
+      created->x,created->xprevious,created->hspeed); return 1;
   }
+  created->gravity=created->vspeed=0;
   GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
   if(!trigger_hits || trigger_hits->t!=V_REAL || trigger_hits->d!=1){ fprintf(stderr,"classic trigger did not fire\n"); return 1; }
   created->x=200.6; created->y=100.4;

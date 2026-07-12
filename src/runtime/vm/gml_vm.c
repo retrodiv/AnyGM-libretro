@@ -327,7 +327,12 @@ static int inst_builtin_get(GmlInstance *in, const char *n, GmlVal *out){
   B("image_xscale",image_xscale) B("image_yscale",image_yscale) B("image_angle",image_angle)
   B("image_alpha",image_alpha) B("image_blend",image_blend)
   B("depth",depth) B("visible",visible) B("solid",solid) B("persistent",persistent)
-  B("hspeed",hspeed) B("vspeed",vspeed) B("direction",direction) B("speed",speed)
+  if(!strcmp(n,"hspeed") || !strcmp(n,"vspeed")){
+    double d=!strcmp(n,"hspeed")?in->hspeed:in->vspeed;
+    if(g_cur_vm && g_cur_vm->win && g_cur_vm->win->classic_version && fabs(d)<1e-12) d=0;
+    *out=vreal(d); return 1;
+  }
+  B("direction",direction) B("speed",speed)
   B("gravity",gravity) B("gravity_direction",gravity_direction) B("friction",friction)
   B("path_index",path_index) B("path_position",path_position) B("path_speed",path_speed)
   B("path_orientation",path_orientation) B("path_scale",path_scale)
