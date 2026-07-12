@@ -6755,11 +6755,21 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       double direction=N(a,n,0), amount=N(a,n,1);
       if(!strcmp(nm,"action_move") && n>0 && a[0].t==V_STR){
         static const int directions[9]={225,270,315,180,-1,0,135,90,45};
-        int choices[9], count=0;
         const char *mask=S(a,n,0);
-        for(int i=0;i<9 && mask[i];i++) if(mask[i]!='0') choices[count++]=directions[i];
-        if(count){ int choice=(int)floor(gml_rng_value(vm)*count); if(choice>=count) choice=count-1;
-          direction=choices[choice]; if(direction<0) amount=0; }
+        int choices[9], count=0;
+        for(int i=0;i<9 && mask[i];i++) if(mask[i]!='0') choices[count++]=i;
+        if(count){ int choice;
+          if(vm->win && vm->win->classic_version){
+            /* The classic action samples the whole 3x3 direction pad and retries disabled
+             * cells. This deliberately consumes a variable number of RNG values. */
+            do { choice=(int)floor(gml_rng_value(vm)*9.0); } while(choice<0 || choice>=9 || !mask[choice] || mask[choice]=='0');
+          } else {
+            int selected=(int)floor(gml_rng_value(vm)*count);
+            if(selected<0) selected=0;
+            if(selected>=count) selected=count-1;
+            choice=choices[selected];
+          }
+          direction=directions[choice]; if(direction<0) amount=0; }
       }
       if(vm->action_relative){ s->direction+=direction; s->speed+=amount; }
       else { s->direction=direction; s->speed=amount; }

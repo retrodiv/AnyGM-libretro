@@ -92,6 +92,14 @@ int main(void){
     fprintf(stderr,"classic potential-step action did not move toward its target: (%.0f,%.0f)\n",
       created->x,created->y); return 1;
   }
+  gml_rng_seed(&vm,4);
+  GmlVal move_args[2]={vstr("101101101"),vreal(5)};
+  (void)gml_builtin_call(&vm,"action_move",move_args,2);
+  if(created->direction!=180 || vm.rng_classic_state!=1503470698u){
+    fprintf(stderr,"classic direction-pad rejection mismatch: direction=%.0f seed=%u\n",
+      created->direction,vm.rng_classic_state); return 1;
+  }
+  created->direction=created->speed=created->hspeed=created->vspeed=0;
   GmlVal distance_arg=vreal(0);
   GmlVal object_distance=gml_builtin_call(&vm,"distance_to_object",&distance_arg,1);
   distance_arg=vreal((double)created->id);
