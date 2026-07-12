@@ -26,6 +26,7 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 
 int main(void){
   GmlcProject project; GmlcObject objects[2]; GmlcRoom rooms[2];
+  int room_order[2]={0,1};
   GmlcObjectEvent object_events[2];
   GmlcProjectTrigger trigger;
   GmlcProjectIncludedFile included;
@@ -42,7 +43,7 @@ int main(void){
   included.file_name=included_name; included.data=included_data; included.data_size=sizeof(included_data);
   included.export_mode=2; included.overwrite_file=1;
   project.included_files=&included; project.n_included_files=project.cap_included_files=1;
-  project.rooms=rooms; project.n_rooms=2;
+  project.rooms=rooms; project.n_rooms=2; project.room_order=room_order; project.n_room_order=2;
   objects[0].name="obj_fixture"; objects[0].sprite_id=-1; objects[0].mask_id=-1; objects[0].parent_id=-1; objects[0].visible=1;
   objects[0].events=object_events; objects[0].n_events=objects[0].cap_events=2;
   objects[1].name="obj_changed"; objects[1].sprite_id=-1; objects[1].mask_id=-1; objects[1].parent_id=-1; objects[1].visible=1;
@@ -92,6 +93,27 @@ int main(void){
   if(created->obj!=1){ fprintf(stderr,"classic change-object action did not replace the object\n"); return 1; }
   change_args[0]=vreal(0);
   (void)gml_builtin_call(&vm,"action_change_object",change_args,2);
+  vm.cur_self=created;
+  GmlVal object_args[4]={vreal(1),vreal(32),vreal(0),vreal(1)};
+  GmlVal object_hit=gml_builtin_call(&vm,"action_if_object",object_args,4);
+  GmlVal previous_room=gml_builtin_call(&vm,"action_if_previous_room",NULL,0);
+  if(object_hit.t!=V_REAL || object_hit.d!=0 || previous_room.t!=V_REAL || previous_room.d!=0){
+    fprintf(stderr,"classic object/previous-room conditions did not match: object=%.0f previous=%.0f\n",
+      object_hit.d,previous_room.d); return 1;
+  }
+  created->path_index=0;
+  GmlVal path_speed=vreal(0.75);
+  (void)gml_builtin_call(&vm,"action_path_speed",&path_speed,1);
+  (void)gml_builtin_call(&vm,"action_path_end",NULL,0);
+  GmlVal timeline_args[4]={vreal(1),vreal(3),vreal(1),vreal(0)};
+  (void)gml_builtin_call(&vm,"action_timeline_set",timeline_args,4);
+  GmlVal fullscreen=vreal(2);
+  (void)gml_builtin_call(&vm,"action_fullscreen",&fullscreen,1);
+  if(created->path_index!=-1 || created->path_speed!=0.75 ||
+     created->timeline_index!=1 || created->timeline_position!=3 ||
+     created->timeline_running!=1 || created->timeline_loop!=0 || vm.window_fullscreen!=1){
+    fprintf(stderr,"classic path/timeline/fullscreen actions did not update state\n"); return 1;
+  }
   GmlVal potential_args[4]={vreal(22),vreal(34),vreal(2),vreal(0)};
   (void)gml_builtin_call(&vm,"action_potential_step",potential_args,4);
   if(created->x!=14 || created->y!=34){

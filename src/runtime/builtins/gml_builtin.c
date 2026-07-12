@@ -6709,6 +6709,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int pos=order_pos(vm,vm->room_index);
     return vreal(pos>=0 && vm->win && pos+1<vm->win->n_room_order);
   }
+  if(!strcmp(nm,"action_if_previous_room"))
+    return vreal(order_pos(vm,vm->room_index)>0);
+  if(!strcmp(nm,"action_if_object")){
+    GmlInstance *s=vm->cur_self;
+    double x=N(a,n,1), y=N(a,n,2);
+    if(n>=4 && N(a,n,3)!=0 && s){ x+=s->x; y+=s->y; }
+    return vreal(instance_at_point(vm,x,y,(int)N(a,n,0))!=NULL);
+  }
   if(!strcmp(nm,"action_if_empty") || !strcmp(nm,"action_if_collision")){
     GmlInstance *s=vm->cur_self; double x=N(a,n,0),y=N(a,n,1);
     int relative=n>=4 ? N(a,n,3)!=0 : vm->action_relative;
@@ -7876,6 +7884,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* ---- audio ---- */
   { GmlAudio *AU=(GmlAudio*)vm->audio;
     if(!strcmp(nm,"action_sound")){ gml_audio_play(AU,(int)N(a,n,0),(int)N(a,n,1)); return vreal(0); }
+    if(!strcmp(nm,"action_end_sound")){ gml_audio_stop(AU,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_channel_num")){ gml_audio_channel_num(AU,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"sound_add")) return vreal(-1);
     if(!strcmp(nm,"sound_replace")) return vreal(0);
@@ -7972,14 +7981,21 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       gml_path_start(vm,vm->cur_self,(int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3)); return vreal(0); }
   if(!strcmp(nm,"action_path")){ if(vm->cur_self)
       gml_path_start(vm,vm->cur_self,(int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3)); return vreal(0); }
-  if(!strcmp(nm,"path_end")){ if(vm->cur_self) vm->cur_self->path_index=-1; return vreal(0); }
+  if(!strcmp(nm,"path_end") || !strcmp(nm,"action_path_end")){
+    if(vm->cur_self) vm->cur_self->path_index=-1;
+    return vreal(0);
+  }
+  if(!strcmp(nm,"action_path_speed")){
+    if(vm->cur_self) vm->cur_self->path_speed=N(a,n,0);
+    return vreal(0);
+  }
 
   /* ---- classic timelines ---- */
   if(!strcmp(nm,"timeline_exists")){ int ti=(int)N(a,n,0);
     return vreal(ti>=0 && ti<vm->n_timelines && vm->timelines[ti].name!=NULL); }
   if(!strcmp(nm,"timeline_get_name")){ int ti=(int)N(a,n,0);
     return vstr((ti>=0 && ti<vm->n_timelines && vm->timelines[ti].name)?vm->timelines[ti].name:""); }
-  if(!strcmp(nm,"action_set_timeline")){ if(vm->cur_self){
+  if(!strcmp(nm,"action_set_timeline") || !strcmp(nm,"action_timeline_set")){ if(vm->cur_self){
       vm->cur_self->timeline_index=N(a,n,0); vm->cur_self->timeline_position=N(a,n,1);
       vm->cur_self->timeline_running=N(a,n,2)!=0; vm->cur_self->timeline_loop=N(a,n,3)!=0; }
     return vreal(0); }
@@ -8035,7 +8051,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int handled=classic_execute_assignment(vm,S(a,n,0));
     if(!handled && getenv("GML_LOG_UNKNOWN")) fprintf(stderr,"[gml] unsupported execute_string: %s\n",S(a,n,0));
     return vreal(0); }
-  if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")||
+  if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")||!strcmp(nm,"action_message")||
      !strcmp(nm,"message_button")||!strcmp(nm,"message_background")||
      !strcmp(nm,"message_text_font")||!strcmp(nm,"message_button_font")||
      !strcmp(nm,"message_input_font")||!strcmp(nm,"message_alpha")||
@@ -9045,6 +9061,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"window_handle")) return vreal(1);
   if(!strcmp(nm,"window_get_fullscreen")) return vreal(vm->window_fullscreen);
   if(!strcmp(nm,"window_set_fullscreen")){ vm->window_fullscreen=N(a,n,0)>=0.5; return vreal(0); }
+  if(!strcmp(nm,"action_fullscreen")){
+    int mode=(int)N(a,n,0);
+    vm->window_fullscreen=mode==2?!vm->window_fullscreen:(mode!=0);
+    return vreal(0);
+  }
   if(!strcmp(nm,"window_center")){ vm->window_x=0; vm->window_y=0; return vreal(0); }
   if(!strcmp(nm,"window_set_position")){ vm->window_x=N(a,n,0); vm->window_y=N(a,n,1); return vreal(0); }
   if(!strcmp(nm,"window_set_size")){ int w=(int)N(a,n,0), hh=(int)N(a,n,1);
