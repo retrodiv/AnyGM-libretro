@@ -69,6 +69,31 @@ static int compile_fixture_has_swap(const GmlcProject *project, const char *text
   return ok && found;
 }
 
+static int compile_fixture_lacks_ref(const GmlcProject *project, const char *text,
+                                     const char *forbidden){
+  char path[]="/tmp/gmlc-bytecode-ref-XXXXXX";
+  int descriptor=mkstemp(path);
+  if(descriptor<0) return 0;
+  FILE *file=fdopen(descriptor,"wb");
+  if(!file) return 0;
+  size_t length=strlen(text);
+  int wrote=fwrite(text,1,length,file)==length;
+  fclose(file);
+  if(!wrote){ remove(path); return 0; }
+  GmlcCodeBlob blob; char err[256]={0};
+  memset(&blob,0,sizeof(blob));
+  int ok=gmlc_bytecode_compile_source(project,path,&blob,err,sizeof(err));
+  remove(path);
+  int found=0;
+  for(int i=0;ok && i<blob.n_refs;i++)
+    if(blob.refs[i].name && !strcmp(blob.refs[i].name,forbidden)){ found=1; break; }
+  if(!ok || found)
+    fprintf(stderr,"classic conditional syntax leaked a '%s' variable reference: %s\n",
+            forbidden,err);
+  gmlc_bytecode_free(&blob);
+  return ok && !found;
+}
+
 int main(int argc, char **argv){
   GmlcProject project;
   memset(&project,0,sizeof(project));
@@ -99,6 +124,8 @@ int main(int argc, char **argv){
     "result=\"x\"+global.name+\"!\";\n",1);
   ok &= compile_fixture(&project,
     "show_message(\"first\")\nshow_message(\"second \"+global.name+\"!\");\n",1);
+  ok &= compile_fixture_lacks_ref(&project,
+    "if (score=0) then { result=1; } else result=2;\n","then");
   ok &= compile_fixture(&project,
     "global.actor.part.node.x=4; result=global.actor.part.node.x;\n",1);
   ok &= compile_fixture_has_swap(&project,

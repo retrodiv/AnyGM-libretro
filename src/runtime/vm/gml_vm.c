@@ -4200,6 +4200,33 @@ static void advance_instance_animations(GmlVM *vm){
   }
 }
 
+/* A classic room transition completes after the ordinary animation phase of
+ * the current step, but the newly entered room is still drawn by that step.
+ * Its fresh instances therefore receive their first animation tick before the
+ * first draw. Persistent survivors already received the tick above and must
+ * not be advanced twice. */
+static void advance_classic_room_entry_animations(GmlVM *vm,
+                                                  const uint32_t *survivor_ids,
+                                                  int survivor_count){
+  if(!vm || !vm->win || !vm->win->classic_version || !survivor_ids) return;
+  GmlRender *R=(GmlRender*)vm->render;
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(!in->active || in->marked || in->image_speed==0) continue;
+    int survived=0;
+    for(int k=0;k<survivor_count;k++) if(survivor_ids[k]==in->id){ survived=1; break; }
+    if(survived) continue;
+    int nf=R?gml_sprite_frames(R,(int)in->sprite_index):0;
+    if(nf<=0) continue;
+    double ni=in->image_index+in->image_speed;
+    int wrapped=(ni>=nf)||(ni<0);
+    while(ni>=nf) ni-=nf;
+    while(ni<0) ni+=nf;
+    in->image_index=ni;
+    if(wrapped) gml_run_event(vm,in,"Other_7");
+  }
+}
+
 void gml_vm_step(GmlVM *vm){
   g_vm_frame++;
   /* GMS2 layers scroll by their hspeed/vspeed each step. Runtime-scripted layers accumulate here;
@@ -4463,7 +4490,22 @@ void gml_vm_step(GmlVM *vm){
   /* deferred async HTTP failure events (Other_62) queued by http_* this step (offline core) */
   gml_fire_async_http(vm);
   /* room transition requested during the step */
-  if(vm->pending_room>=0){ int t=vm->pending_room; vm->pending_room=-1; vm->step_alloc_base=0; gml_room_enter(vm,t); }
+  if(vm->pending_room>=0){
+    int t=vm->pending_room;
+    uint32_t *survivor_ids=NULL;
+    int survivor_count=0;
+    if(vm->win && vm->win->classic_version){
+      survivor_ids=malloc((size_t)(vm->inst_count>0?vm->inst_count:1)*sizeof(*survivor_ids));
+      if(survivor_ids) for(int i=0;i<vm->inst_count;i++)
+        if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].persistent)
+          survivor_ids[survivor_count++]=vm->inst[i].id;
+    }
+    vm->pending_room=-1;
+    vm->step_alloc_base=0;
+    gml_room_enter(vm,t);
+    advance_classic_room_entry_animations(vm,survivor_ids,survivor_count);
+    free(survivor_ids);
+  }
   /* Game End (Other_3): fire on all active instances when game_end was set. */
   if(vm->game_end){
     for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked)

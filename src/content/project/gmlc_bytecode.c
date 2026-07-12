@@ -1892,6 +1892,12 @@ static int parse_if(Compiler *c){
   if(!parse_expr(c)) return 0;
   if(!emit_condition_bool(c)) return 0;
   size_t bf=emit_branch(c,OP_BF);
+  /* GM6-GM8 accept an optional Pascal-style `then` between the condition and
+   * its statement.  It is syntax, not an identifier expression: leaving it
+   * for parse_block_or_stmt() makes the branch guard only a throwaway read of
+   * a variable named `then`, while the following braced body runs
+   * unconditionally. */
+  if(is_id(c,"then")) lx_next(&c->lex);
   if(!parse_block_or_stmt(c)) return 0;
   if(is_id(c,"else")){
     size_t b=emit_branch(c,OP_B);
