@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include "gml_render.h"
 #include "gml_particle.h"
+#include "gml_vm.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -107,9 +108,17 @@ static PEmit g_pe[PE_MAX];
 static int g_effect_sys[2];
 static int g_effect_type[2][12][3];
 
+static GmlVM *g_particle_vm;
 static uint32_t g_prng = 0x2545F491u;
-static double prnd(void){ g_prng = g_prng*1664525u + 1013904223u; return ((g_prng>>8) & 0xFFFFFF)/(double)0x1000000; }
+void gml_part_bind_vm(GmlVM *vm){ g_particle_vm=vm; }
+static double prnd(void){
+  if(g_particle_vm && g_particle_vm->win && g_particle_vm->win->classic_version)
+    return gml_rng_value(g_particle_vm);
+  g_prng = g_prng*1664525u + 1013904223u;
+  return ((g_prng>>8) & 0xFFFFFF)/(double)0x1000000;
+}
 static double prnd_r(double a, double b){ return b>a ? a + prnd()*(b-a) : a; }
+static double particle_range(double a,double b){ return a+prnd()*(b-a); }
 static int clamp255(double v){ if(v<0) return 0; if(v>255) return 255; return (int)(v+0.5); }
 static uint32_t rgb_col(int r,int g,int b){ return ((uint32_t)clamp255(b)<<16)|((uint32_t)clamp255(g)<<8)|(uint32_t)clamp255(r); }
 static uint32_t mix_col(uint32_t a, uint32_t b, double t){
@@ -211,16 +220,18 @@ static void sys_spawn(PSys *s, double x, double y, int type, int number, int col
     if(s->n>=s->cap){ int nc=s->cap? s->cap*2:64; Part *np=realloc(s->parts,(size_t)nc*sizeof(Part)); if(!np) return; s->parts=np; s->cap=nc; }
     Part *p=&s->parts[s->n++]; memset(p,0,sizeof *p);
     p->x=x; p->y=y; p->type=type;
-    if(col>=0){ p->has_col=1; p->col_over=(uint32_t)col; }
-    else if(t->color_mode==1){ p->has_col=1; p->col_over=rgb_col((int)prnd_r(t->cmin[0],t->cmax[0]),(int)prnd_r(t->cmin[1],t->cmax[1]),(int)prnd_r(t->cmin[2],t->cmax[2])); }
+    p->speed=particle_range(t->sp_min,t->sp_max);
+    p->dir=particle_range(t->dir_min,t->dir_max);
+    p->ori=particle_range(t->ori_min,t->ori_max); p->ori_incr=t->ori_incr;
+    p->life=p->life0=floor(particle_range(t->life_min,t->life_max)+0.5); if(p->life<1) p->life=p->life0=1;
+    if(t->color_mode==1){ p->has_col=1; p->col_over=rgb_col((int)floor(particle_range(t->cmin[0],t->cmax[0])+0.5),(int)floor(particle_range(t->cmin[1],t->cmax[1])+0.5),(int)floor(particle_range(t->cmin[2],t->cmax[2])+0.5)); }
     else if(t->color_mode==2){ p->has_col=1; p->col_over=mix_col(t->mix_a,t->mix_b,prnd()); }
-    else if(t->color_mode==3){ p->has_col=1; p->col_over=hsv_col(prnd_r(t->cmin[0],t->cmax[0]),prnd_r(t->cmin[1],t->cmax[1]),prnd_r(t->cmin[2],t->cmax[2])); }
-    p->speed=prnd_r(t->sp_min,t->sp_max);
-    p->dir=prnd_r(t->dir_min,t->dir_max);
+    else if(t->color_mode==3){ p->has_col=1; p->col_over=hsv_col(particle_range(t->cmin[0],t->cmax[0]),particle_range(t->cmin[1],t->cmax[1]),particle_range(t->cmin[2],t->cmax[2])); }
+    if(col>=0){ p->has_col=1; p->col_over=(uint32_t)col; }
+    p->size=particle_range(t->sz_min,t->sz_max); p->size_incr=t->sz_incr;
+    if(t->sprite>=0 && t->spr_random) (void)prnd();
+    (void)prnd(); /* per-particle wiggle/animation phase */
     p->grav_amt=t->grav_amt; p->grav_dir=t->grav_dir;
-    p->life=p->life0=floor(prnd_r(t->life_min,t->life_max)); if(p->life<1) p->life=p->life0=1;
-    p->size=prnd_r(t->sz_min,t->sz_max); p->size_incr=t->sz_incr;
-    p->ori=prnd_r(t->ori_min,t->ori_max); p->ori_incr=t->ori_incr;
   }
 }
 void gml_part_particles_create(int sysid,double x,double y,int type,int number){ PSys *s=ps(sysid); if(s) sys_spawn(s,x+s->px,y+s->py,type,number,-1); }
@@ -347,6 +358,26 @@ static void plot_square(GmlRender *r, int cx, int cy, int half, uint32_t col, do
       dp[x]=(((br*ia+dr*iia)/255)<<16)|(((bg*ia+dg*iia)/255)<<8)|((bb*ia+db*iia)/255); } }
 }
 
+static void plot_circle_shape(GmlRender *r,double cx,double cy,double xs,double ys,
+                              uint32_t color,double alpha,int hollow){
+  double rx=32.0*fabs(xs),ry=32.0*fabs(ys);
+  if(!r || rx<0.25 || ry<0.25 || alpha<=0) return;
+  int x0=(int)floor(cx-rx),x1=(int)ceil(cx+rx);
+  int y0=(int)floor(cy-ry),y1=(int)ceil(cy+ry);
+  if(x0<0)x0=0; if(y0<0)y0=0; if(x1>=r->fbw)x1=r->fbw-1; if(y1>=r->fbh)y1=r->fbh-1;
+  for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
+    double nx=(x+0.5-cx)/rx,ny=(y+0.5-cy)/ry,d=sqrt(nx*nx+ny*ny);
+    double coverage;
+    if(hollow){
+      double thickness=fmax(1.5/fmin(rx,ry),0.10);
+      coverage=1.0-fabs(d-0.78)/thickness;
+    } else coverage=(1.0-d)*fmin(rx,ry);
+    if(coverage<=0) continue;
+    if(coverage>1) coverage=1;
+    plot_square(r,x,y,0,color,alpha*coverage);
+  }
+}
+
 void gml_part_system_drawit(GmlRender *r, int id){
   PSys *s=ps(id); if(!s||!r) return;
   for(int i=0;i<s->n;i++){ Part *p=&s->parts[i]; PType *t=pt(p->type); if(!t) continue;
@@ -372,12 +403,19 @@ void gml_part_system_drawit(GmlRender *r, int id){
     } else {
       int half=(int)(p->size)+0; if(half<0)half=0; if(half>64)half=64;
       int cx=(int)(p->x - r->cam_x), cy=(int)(p->y - r->cam_y);
-      if(cx+half<0 || cy+half<0 || cx-half>=r->fbw || cy-half>=r->fbh) continue;
+      double shape_rx=(t->shape==1||t->shape==5||t->shape==6||t->shape==7)?
+        32.0*fabs(p->size*t->xscale):half;
+      double shape_ry=(t->shape==1||t->shape==5||t->shape==6||t->shape==7)?
+        32.0*fabs(p->size*t->yscale):half;
+      if(cx+shape_rx<0 || cy+shape_ry<0 || cx-shape_rx>=r->fbw || cy-shape_ry>=r->fbh) continue;
       double alpha=keyf(age,t->nalpha,t->alpha[0],t->alpha[1],t->alpha[2]);
       if(alpha<=0) continue;
       uint32_t col = p->has_col ? p->col_over : keyc(age,t);
       gml_render_maybe_prepare_draw(r);
-      if(!gml_d3_draw_rectangle_2d(r,p->x-half,p->y-half,p->x+half+1,p->y+half+1,col,alpha,0))
+      if(t->shape==1 || t->shape==5 || t->shape==6 || t->shape==7){
+        plot_circle_shape(r,p->x-r->cam_x,p->y-r->cam_y,
+                          p->size*t->xscale,p->size*t->yscale,col,alpha,t->shape==5||t->shape==6);
+      } else if(!gml_d3_draw_rectangle_2d(r,p->x-half,p->y-half,p->x+half+1,p->y+half+1,col,alpha,0))
         plot_square(r,cx,cy,half,col,alpha);
     }
   }

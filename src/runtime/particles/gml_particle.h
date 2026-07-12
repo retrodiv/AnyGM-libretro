@@ -7,6 +7,8 @@
 #include <stdint.h>
 #include "gml_render.h"
 
+struct GmlVM;
+void gml_part_bind_vm(struct GmlVM *vm); /* share the runtime RNG when attached to a live VM */
 void gml_part_reset_all(void);       /* clear all types/systems/emitters/particles */
 void gml_part_update_all(void);      /* advance every auto-update system one step */
 void gml_part_system_draw_all(GmlRender *r);   /* draw every auto-draw system */

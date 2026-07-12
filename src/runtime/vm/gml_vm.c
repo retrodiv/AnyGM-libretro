@@ -5371,6 +5371,7 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
     uint32_t seed=fixed ? (uint32_t)strtoll(fixed,NULL,10) : 0u;
     gml_rng_seed(vm,seed);
   }
+  gml_part_bind_vm(vm);
   parse_objects(vm);
   parse_paths(vm);
   parse_timelines(vm);

@@ -593,6 +593,13 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   if(!strcmp(name,"ps_shape_ellipse") || !strcmp(name,"ps_distr_gaussian")){ *out=1; return 1; }
   if(!strcmp(name,"ps_shape_diamond") || !strcmp(name,"ps_distr_invgaussian")){ *out=2; return 1; }
   if(!strcmp(name,"ps_shape_line")){ *out=3; return 1; }
+  static const char *particle_shapes[]={
+    "pt_shape_pixel","pt_shape_disk","pt_shape_square","pt_shape_line","pt_shape_star",
+    "pt_shape_circle","pt_shape_ring","pt_shape_sphere","pt_shape_flare","pt_shape_spark",
+    "pt_shape_explosion","pt_shape_cloud","pt_shape_smoke","pt_shape_snow"
+  };
+  for(int i=0;i<(int)(sizeof(particle_shapes)/sizeof(*particle_shapes));i++)
+    if(!strcmp(name,particle_shapes[i])){ *out=i; return 1; }
   if(!strcmp(name,"vk_space")){ *out=32; return 1; }
   if(!strcmp(name,"vk_enter")){ *out=13; return 1; }
   if(!strcmp(name,"vk_escape")){ *out=27; return 1; }
