@@ -5537,6 +5537,13 @@ static void parse_boundary_events(GmlVM *vm){
 }
 /* fire the room/view boundary "Other" events for instances whose bbox left the room/view. GM:
  * "Outside" = bbox entirely outside; "Intersect Boundary" = bbox not entirely inside (partly OR fully out). */
+static void classic_boundary_box(GmlVM *vm, GmlInstance *in,
+                                 double *l, double *t, double *r, double *b){
+  if(vm_bbox(vm,in,l,t,r,b)) return;
+  /* Sprite-less classic instances use their point, with the same directed rounding as the
+   * historical rectangle test. Boundary events are commonly used by invisible controllers. */
+  *l=floor(in->x); *t=floor(in->y); *r=ceil(in->x); *b=ceil(in->y);
+}
 static void run_boundary_events(GmlVM *vm){
   if(!vm->render) return;
   GmlRoom rm; int hr=(gml_room_get(vm->win,vm->room_index,&rm)==0);
@@ -5558,10 +5565,9 @@ static void run_boundary_events(GmlVM *vm){
           if(i>=vm->inst_count) continue;
           GmlInstance *in=&vm->inst[i];
           if(!in->active||in->marked||in->obj!=object) continue;
-          double l,t,r,b; if(!vm_bbox(vm,in,&l,&t,&r,&b)) continue;
+          double l,t,r,b; classic_boundary_box(vm,in,&l,&t,&r,&b);
           int fire=phase[e].bit==1 ? (r<0||l>rm.width||b<0||t>rm.height) :
-                   phase[e].bit==2 ? (!(l>=0&&r<=rm.width&&t>=0&&b<=rm.height) &&
-                                      (r>=0&&l<=rm.width&&b>=0&&t<=rm.height)) :
+                   phase[e].bit==2 ? !(l>=0&&r<=rm.width&&t>=0&&b<=rm.height) :
                    phase[e].bit==4 ? (r<vx||l>vx+vw||b<vy||t>vy+vh) :
                                      !(l>=vx&&r<=vx+vw&&t>=vy&&b<=vy+vh);
           if(fire) gml_run_event(vm,in,phase[e].suffix);
