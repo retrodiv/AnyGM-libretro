@@ -4447,13 +4447,17 @@ void gml_vm_step(GmlVM *vm){
     }
   }
   /* room transition requested during the step */
-  for(int i=0;i<8;i++){
-    double hx=get_global_arr_d(vm,"background_hspeed",i), vy=get_global_arr_d(vm,"background_vspeed",i);
-    if(hx!=0 || vy!=0){
-      set_global_arr(vm,"background_x",i,get_global_arr_d(vm,"background_x",i)+hx);
-      set_global_arr(vm,"background_y",i,get_global_arr_d(vm,"background_y",i)+vy);
+  /* Classic room backgrounds start at their authored position for the first rendered frame;
+   * their automatic speed is applied between frames. The step precedes drawing in this runtime,
+   * so skip the first room step to preserve that phase. */
+  if(!vm->win || !vm->win->classic_version || g_vm_frame-vm->room_enter_frame>1)
+    for(int i=0;i<8;i++){
+      double hx=get_global_arr_d(vm,"background_hspeed",i), vy=get_global_arr_d(vm,"background_vspeed",i);
+      if(hx!=0 || vy!=0){
+        set_global_arr(vm,"background_x",i,get_global_arr_d(vm,"background_x",i)+hx);
+        set_global_arr(vm,"background_y",i,get_global_arr_d(vm,"background_y",i)+vy);
+      }
     }
-  }
   /* deferred async save/load completion events (Other_72) queued by buffer_*_async this step */
   gml_fire_async_saveload(vm);
   /* deferred async HTTP failure events (Other_62) queued by http_* this step (offline core) */
