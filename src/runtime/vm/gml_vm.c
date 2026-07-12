@@ -699,7 +699,23 @@ static GmlVarMap *scope_map(GmlVM *vm, GmlVarMap *locals, int inst_t){
 /* GM built-in room/view ARRAYS (background_index[], view_xview[], ...) are global state,
  * accessed without explicit scope — route them to globals regardless of inst_t. */
 static int is_room_global_array(const char *n){
-  return !strncmp(n,"background_",11) || !strncmp(n,"view_",5); }
+  if(!strncmp(n,"background_",11)){
+    const char *s=n+11;
+    return !strcmp(s,"visible") || !strcmp(s,"foreground") || !strcmp(s,"index") ||
+           !strcmp(s,"x") || !strcmp(s,"y") || !strcmp(s,"htiled") || !strcmp(s,"vtiled") ||
+           !strcmp(s,"hspeed") || !strcmp(s,"vspeed") || !strcmp(s,"stretch") ||
+           !strcmp(s,"alpha") || !strcmp(s,"blend");
+  }
+  if(!strncmp(n,"view_",5)){
+    const char *s=n+5;
+    return !strcmp(s,"visible") || !strcmp(s,"xview") || !strcmp(s,"yview") ||
+           !strcmp(s,"wview") || !strcmp(s,"hview") || !strcmp(s,"xport") ||
+           !strcmp(s,"yport") || !strcmp(s,"wport") || !strcmp(s,"hport") ||
+           !strcmp(s,"hborder") || !strcmp(s,"vborder") || !strcmp(s,"hspeed") ||
+           !strcmp(s,"vspeed") || !strcmp(s,"object");
+  }
+  return 0;
+}
 static double alarm_store_value(GmlVM *vm,GmlVal v){
   double value=v.t==V_REAL?v.d:(v.s?atof(v.s):0);
   /* GM6/7/8 stores alarms as integers. Delphi's Math.Round uses ties-to-even; nearbyint
