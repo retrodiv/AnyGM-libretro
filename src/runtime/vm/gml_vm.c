@@ -4366,8 +4366,10 @@ void gml_vm_step(GmlVM *vm){
     extern int gml_input_key(int vk, int edge);
     for(int e=0;e<vm->n_key_events;e++){
       if(!gml_input_key(vm->key_events[e].vk, vm->key_events[e].kind)) continue;
-      for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked)
-        gml_run_event(vm,&vm->inst[i],vm->key_events[e].suffix);
+      if(vm->win && vm->win->classic_version)
+        run_classic_object_event(vm,vm->key_events[e].suffix);
+      else for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked)
+          gml_run_event(vm,&vm->inst[i],vm->key_events[e].suffix);
     }
   }
   /* instance Mouse_<n> events (with the other input events). Hover = pointer (room coords)
@@ -5182,6 +5184,13 @@ static void parse_key_events(GmlVM *vm){
         vm->n_key_events++;
       }
       break;
+    }
+  }
+  if(vm->win && vm->win->classic_version){
+    for(int i=0;i<vm->n_key_events;i++) for(int j=i+1;j<vm->n_key_events;j++){
+      int swap=vm->key_events[j].kind<vm->key_events[i].kind ||
+        (vm->key_events[j].kind==vm->key_events[i].kind && vm->key_events[j].vk<vm->key_events[i].vk);
+      if(swap){ typeof(vm->key_events[0]) t=vm->key_events[i]; vm->key_events[i]=vm->key_events[j]; vm->key_events[j]=t; }
     }
   }
 }
