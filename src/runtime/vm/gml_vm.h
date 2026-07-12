@@ -72,7 +72,7 @@ typedef struct {
   int sprite_index, mask_index, parent, depth, visible, solid, persistent;
   int physics_enabled, physics_kinematic;
   double physics_density, physics_area_px;
-  int bevents;   /* boundary-event flags: 1=Outside Room, 2=Intersect Room, 4=Outside View0, 8=Intersect View0 */
+  int bevents;   /* classic boundary flags: room bits 0..1, outside-view 2..9, intersect-view 10..17 */
   int colself;   /* this object (or an ancestor) owns >=1 Collision_* handler — run_collisions outer filter */
   /* (collision-grid stamps live per-instance, see GmlInstance.cg_*) */
   /* event code: indexed [evtype][slot]; we keep a small dynamic list */

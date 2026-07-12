@@ -5520,16 +5520,15 @@ static void run_collisions(GmlVM *vm){
   }
   free(classic_done);
 }
-/* precompute which objects have boundary-event handlers (incl. via parent), so run_boundary_events
- * only checks instances that care. bits: 1 OutsideRoom(Other_0) 2 IntersectRoom(Other_1)
- * 4 OutsideView0(Other_40) 8 IntersectView0(Other_50). */
+/* Precompute boundary handlers (including inherited ones). Bits 0..1 are room events,
+ * 2..9 are Outside View 0..7 and 10..17 are Intersect View 0..7. */
 static void parse_boundary_events(GmlVM *vm){
-  const struct { int sub, bit; } map[]={{0,1},{1,2},{40,4},{50,8}};
   for(int o=0;o<vm->n_objects;o++){ int bits=0; char name[160];
-    for(unsigned m=0;m<sizeof map/sizeof map[0];m++){
+    for(int phase=0;phase<18;phase++){
+      int sub=phase<2?phase:(phase<10?38+phase:40+phase);
       for(int p=o; p>=0 && p<vm->n_objects; p=vm->objects[p].parent){
-        snprintf(name,sizeof name,"gml_Object_%s_Other_%d",vm->objects[p].name,map[m].sub);
-        if(gml_code_index_by_name(vm->win,name)>=0){ bits|=map[m].bit; break; }
+        snprintf(name,sizeof name,"gml_Object_%s_Other_%d",vm->objects[p].name,sub);
+        if(gml_code_index_by_name(vm->win,name)>=0){ bits|=1<<phase; break; }
       }
     }
     vm->objects[o].bevents=bits;
@@ -5553,24 +5552,31 @@ static void run_boundary_events(GmlVM *vm){
   /* Classic dispatch completes one boundary subtype at a time, grouped by exact object
    * resource inside that subtype. Keep Studio's instance-major dispatch below unchanged. */
   if(vm->win && vm->win->classic_version){
-    static const struct { int bit; const char *suffix; } phase[]={
-      {1,"Other_0"},{2,"Other_1"},{4,"Other_40"},{8,"Other_50"}
-    };
-    for(unsigned e=0;e<sizeof phase/sizeof phase[0];e++){
-      if((phase[e].bit<=2 && !hr) || (phase[e].bit>=4 && !has_view)) continue;
+    int view_count=0;
+    if(hr && rm.view_ptr){ view_count=(int)u32(vm->win->data,rm.view_ptr); if(view_count>8)view_count=8; }
+    for(int phase=0;phase<18;phase++){
+      int bit=1<<phase, sub=phase<2?phase:(phase<10?38+phase:40+phase);
+      int view=phase<2?-1:(phase<10?phase-2:phase-10);
+      if((view<0 && !hr) || (view>=0 && view>=view_count)) continue;
+      double x1=0,y1=0,x2=rm.width,y2=rm.height;
+      if(view>=0){
+        x1=get_global_arr_d(vm,"view_xview",view); y1=get_global_arr_d(vm,"view_yview",view);
+        x2=x1+get_global_arr_d(vm,"view_wview",view);
+        y2=y1+get_global_arr_d(vm,"view_hview",view);
+      }
+      char suffix[16]; snprintf(suffix,sizeof suffix,"Other_%d",sub);
       for(int object=0;object<vm->n_objects;object++){
-        if(!(vm->objects[object].bevents&phase[e].bit)) continue;
+        if(!(vm->objects[object].bevents&bit)) continue;
         int count=classic_collect_object_slots(vm,object); if(count<0) continue;
         for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
           if(i>=vm->inst_count) continue;
           GmlInstance *in=&vm->inst[i];
           if(!in->active||in->marked||in->obj!=object) continue;
           double l,t,r,b; classic_boundary_box(vm,in,&l,&t,&r,&b);
-          int fire=phase[e].bit==1 ? (r<0||l>rm.width||b<0||t>rm.height) :
-                   phase[e].bit==2 ? !(l>=0&&r<=rm.width&&t>=0&&b<=rm.height) :
-                   phase[e].bit==4 ? (r<vx||l>vx+vw||b<vy||t>vy+vh) :
-                                     !(l>=vx&&r<=vx+vw&&t>=vy&&b<=vy+vh);
-          if(fire) gml_run_event(vm,in,phase[e].suffix);
+          int outside=phase==0 || (phase>=2 && phase<10);
+          int fire=outside ? (r<x1||l>x2||b<y1||t>y2) :
+                             !(l>=x1&&r<=x2&&t>=y1&&b<=y2);
+          if(fire) gml_run_event(vm,in,suffix);
         }
       }
     }
@@ -5588,7 +5594,7 @@ static void run_boundary_events(GmlVM *vm){
     if(!in->active||in->marked) continue;
     if((bits&4) && has_view && (r<vx||l>vx+vw||b<vy||t>vy+vh)) gml_run_event(vm,in,"Other_40");
     if(!in->active||in->marked) continue;
-    if((bits&8) && has_view && !(l>=vx&&r<=vx+vw&&t>=vy&&b<=vy+vh)) gml_run_event(vm,in,"Other_50");
+    if((bits&(1<<10)) && has_view && !(l>=vx&&r<=vx+vw&&t>=vy&&b<=vy+vh)) gml_run_event(vm,in,"Other_50");
   }
 }
 
