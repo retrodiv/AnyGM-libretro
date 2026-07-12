@@ -90,6 +90,7 @@ typedef struct {
   /* header */
   uint8_t bytecode; uint32_t gameid; int classic_version;
   int classic_scaling, classic_interpolate;
+  uint32_t classic_outside_color;
   double game_speed;                     /* GEN8 global cadence when present (GMS2 exports) */
   uint32_t disp_w, disp_h;           /* default window / native render size */
   uint32_t *room_order; int n_room_order;

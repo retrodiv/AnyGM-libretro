@@ -2961,9 +2961,55 @@ static int classic_collect_object_slots(GmlVM *vm, int object){
     if(vm->inst[i].active && !vm->inst[i].marked && count<vm->event_ord_cap) vm->event_ord[count++]=i;
   return count;
 }
-static void run_classic_object_event(GmlVM *vm, const char *suffix){
+/* Sparse classic projects retain authored resource ids, so the object array can contain very
+ * large gaps. Cache the ascending object ids that resolve each event suffix (including inherited
+ * handlers): this preserves object-major event order without rescanning every empty slot on
+ * every frame. The object hierarchy and code table are immutable for the lifetime of a VM. */
+typedef struct { char suffix[32]; int *objects, n, cap, used; } ClassicDispatchCache;
+#define CLASSIC_DISPATCH_CACHE_MAX 128
+static ClassicDispatchCache g_classic_dispatch[CLASSIC_DISPATCH_CACHE_MAX];
+static int g_classic_dispatch_empty;
+static void classic_dispatch_cache_reset(void){
+  for(int i=0;i<CLASSIC_DISPATCH_CACHE_MAX;i++) free(g_classic_dispatch[i].objects);
+  memset(g_classic_dispatch,0,sizeof(g_classic_dispatch));
+}
+static const int *classic_event_objects(GmlVM *vm, const char *suffix, int *count){
+  *count=0;
+  if(!vm || !suffix || strlen(suffix)>=sizeof(g_classic_dispatch[0].suffix)) return NULL;
+  int slot=-1;
+  for(int i=0;i<CLASSIC_DISPATCH_CACHE_MAX;i++){
+    if(g_classic_dispatch[i].used && !strcmp(g_classic_dispatch[i].suffix,suffix)){
+      *count=g_classic_dispatch[i].n;
+      return g_classic_dispatch[i].n ? g_classic_dispatch[i].objects : &g_classic_dispatch_empty;
+    }
+    if(slot<0 && !g_classic_dispatch[i].used) slot=i;
+  }
+  if(slot<0) return NULL;
+  ClassicDispatchCache *cache=&g_classic_dispatch[slot];
+  cache->used=1;
+  snprintf(cache->suffix,sizeof(cache->suffix),"%s",suffix);
   for(int object=0;object<vm->n_objects;object++){
     if(!event_lookup_from(vm,suffix,object,NULL,NULL)) continue;
+    if(cache->n>=cache->cap){
+      int nc=cache->cap?cache->cap*2:16;
+      int *objects=realloc(cache->objects,(size_t)nc*sizeof(*objects));
+      if(!objects){ free(cache->objects); memset(cache,0,sizeof(*cache)); return NULL; }
+      cache->objects=objects; cache->cap=nc;
+    }
+    cache->objects[cache->n++]=object;
+  }
+  *count=cache->n;
+  if(getenv("GML_LOG_CLASSIC_DISPATCH"))
+    fprintf(stderr,"[classic-dispatch] %s objects=%d/%d\n",suffix,cache->n,vm->n_objects);
+  return cache->n ? cache->objects : &g_classic_dispatch_empty;
+}
+static void run_classic_object_event(GmlVM *vm, const char *suffix){
+  int object_count=0;
+  const int *objects=classic_event_objects(vm,suffix,&object_count);
+  int extent=objects?object_count:vm->n_objects;
+  for(int oi=0;oi<extent;oi++){
+    int object=objects?objects[oi]:oi;
+    if(!objects && !event_lookup_from(vm,suffix,object,NULL,NULL)) continue;
     int count=classic_collect_object_slots(vm,object);
     if(count>=0){
       for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
@@ -4195,8 +4241,12 @@ static void run_classic_triggers(GmlVM *vm, int moment){
     if(trigger_moment!=moment || code_index<0 || code_index>=vm->win->n_code) continue;
     char suffix[32]; snprintf(suffix,sizeof(suffix),"Trigger_%d",trigger_id);
     if(vm->win && vm->win->classic_version){
-      for(int object=0;object<vm->n_objects;object++){
-        if(!event_lookup_from(vm,suffix,object,NULL,NULL)) continue;
+      int object_count=0;
+      const int *objects=classic_event_objects(vm,suffix,&object_count);
+      int extent=objects?object_count:vm->n_objects;
+      for(int oi=0;oi<extent;oi++){
+        int object=objects?objects[oi]:oi;
+        if(!objects && !event_lookup_from(vm,suffix,object,NULL,NULL)) continue;
         int count=classic_collect_object_slots(vm,object); if(count<0) continue;
         for(int k=count-1;k>=0;k--){ int slot=vm->event_ord[k];
           if(slot>=vm->inst_count) continue;
@@ -4386,8 +4436,12 @@ void gml_vm_step(GmlVM *vm){
   if(classic_alarm_order){
     for(int a=0;a<GML_ALARMS;a++){
       char s[16]; snprintf(s,sizeof s,"Alarm_%d",a);
-      for(int object=0;object<vm->n_objects;object++){
-        if(!event_lookup_from(vm,s,object,NULL,NULL)) continue;
+      int object_count=0;
+      const int *objects=classic_event_objects(vm,s,&object_count);
+      int extent=objects?object_count:vm->n_objects;
+      for(int oi=0;oi<extent;oi++){
+        int object=objects?objects[oi]:oi;
+        if(!objects && !event_lookup_from(vm,s,object,NULL,NULL)) continue;
         int count=classic_collect_object_slots(vm,object);
         if(count<0) continue;
         for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
@@ -4434,8 +4488,12 @@ void gml_vm_step(GmlVM *vm){
     if(vm->win && vm->win->classic_version){
       for(int e=0;e<vm->n_mouse_events;e++){
         int s=vm->mouse_events[e].sub;
-        for(int object=0;object<vm->n_objects;object++){
-          if(!event_lookup_from(vm,vm->mouse_events[e].suffix,object,NULL,NULL)) continue;
+        int object_count=0;
+        const int *objects=classic_event_objects(vm,vm->mouse_events[e].suffix,&object_count);
+        int extent=objects?object_count:vm->n_objects;
+        for(int oi=0;oi<extent;oi++){
+          int object=objects?objects[oi]:oi;
+          if(!objects && !event_lookup_from(vm,vm->mouse_events[e].suffix,object,NULL,NULL)) continue;
           int count=classic_collect_object_slots(vm,object); if(count<0) continue;
           for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
             if(i>=vm->inst_count) continue;
@@ -5673,6 +5731,7 @@ static uint32_t gml_rng_next(GmlVM *vm){
 double gml_rng_value(GmlVM *vm){ return (double)gml_rng_next(vm) / 4294967296.0; }  /* [0,1) */
 
 int gml_vm_init(GmlVM *vm, GmlWin *win){
+  classic_dispatch_cache_reset();
   memset(vm,0,sizeof(*vm));
   { extern void gml_d3_reset(void); gml_d3_reset(); }
   vm->cg_built_frame=-1;   /* memset leaves 0, which would collide with g_vm_frame==0 at boot */
@@ -5787,6 +5846,7 @@ static void ds_maps_free(GmlVM *vm){
   vm->ds_list_compat_repair=0;
 }
 void gml_vm_free(GmlVM *vm){
+  classic_dispatch_cache_reset();
   gml_colgrid_invalidate(vm);
   if(vm->obj_desc){ for(int i=0;i<vm->n_objects;i++) free(vm->obj_desc[i]); }
   free(vm->obj_desc); vm->obj_desc=NULL; free(vm->obj_desc_n); vm->obj_desc_n=NULL;
