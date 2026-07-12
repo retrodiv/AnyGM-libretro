@@ -4263,6 +4263,22 @@ static void advance_classic_room_entry_animations(GmlVM *vm,
   }
 }
 
+static int mouse_event_fires(int s,int hov,int was,int held,int pressed,int released,int wheel){
+  switch(s){
+    case 0: return hov&&(held&1);       case 1: return hov&&(held&2);
+    case 2: return hov&&(held&4);       case 3: return hov&&!(held&7);
+    case 4: return hov&&(pressed&1);    case 5: return hov&&(pressed&2);
+    case 6: return hov&&(pressed&4);    case 7: return hov&&(released&1);
+    case 8: return hov&&(released&2);   case 9: return hov&&(released&4);
+    case 10:return hov&&!was;           case 11:return !hov&&was;
+    case 50:return (held&1)!=0;         case 51:return (held&2)!=0;
+    case 52:return (held&4)!=0;         case 53:return (pressed&1)!=0;
+    case 54:return (pressed&2)!=0;      case 55:return (pressed&4)!=0;
+    case 56:return (released&1)!=0;     case 57:return (released&2)!=0;
+    case 58:return (released&4)!=0;     case 60:return wheel>0;
+    case 61:return wheel<0;             default:return 0;
+  }
+}
 void gml_vm_step(GmlVM *vm){
   g_vm_frame++;
   /* GMS2 layers scroll by their hspeed/vspeed each step. Runtime-scripted layers accumulate here;
@@ -4380,30 +4396,36 @@ void gml_vm_step(GmlVM *vm){
     extern void gml_input_mouse(double*,double*,double*,double*,double*,double*,int*,int*,int*,int*);
     double mx,my; int mheld,mpressed,mreleased,mwheel;
     gml_input_mouse(&mx,&my,NULL,NULL,NULL,NULL,&mheld,&mpressed,&mreleased,&mwheel);
-    for(int i=0;i<n;i++){
+    if(vm->win && vm->win->classic_version){
+      for(int e=0;e<vm->n_mouse_events;e++){
+        int s=vm->mouse_events[e].sub;
+        for(int object=0;object<vm->n_objects;object++){
+          if(!event_lookup_from(vm,vm->mouse_events[e].suffix,object,NULL,NULL)) continue;
+          int count=classic_collect_object_slots(vm,object); if(count<0) continue;
+          for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
+            if(i>=vm->inst_count) continue;
+            GmlInstance *in=&vm->inst[i];
+            if(!in->active||in->marked||in->deactivated||in->obj!=object) continue;
+            double l,t,r2,b; int hov=0;
+            if(vm_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
+            if(mouse_event_fires(s,hov,in->mouse_over,mheld,mpressed,mreleased,mwheel))
+              gml_run_event(vm,in,vm->mouse_events[e].suffix);
+          }
+        }
+      }
+      for(int i=0;i<vm->inst_count;i++){ GmlInstance *in=&vm->inst[i];
+        if(!in->active||in->marked||in->deactivated) continue;
+        double l,t,r2,b; int hov=0;
+        if(vm_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
+        in->mouse_over=(unsigned char)hov;
+      }
+    } else for(int i=0;i<n;i++){
       GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked||in->deactivated) continue;
       double l,t,r2,b; int hov=0;
-      if(vm_bbox(vm,in,&l,&t,&r2,&b)) hov = mx>=l && mx<=r2 && my>=t && my<=b;
+      if(vm_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
       unsigned char was=in->mouse_over; in->mouse_over=(unsigned char)hov;
-      for(int e=0;e<vm->n_mouse_events;e++){
-        int s=vm->mouse_events[e].sub, fire=0;
-        switch(s){
-          case 0: fire=hov&&(mheld&1); break;      case 1: fire=hov&&(mheld&2); break;
-          case 2: fire=hov&&(mheld&4); break;      case 3: fire=hov&&!(mheld&7); break;
-          case 4: fire=hov&&(mpressed&1); break;   case 5: fire=hov&&(mpressed&2); break;
-          case 6: fire=hov&&(mpressed&4); break;   case 7: fire=hov&&(mreleased&1); break;
-          case 8: fire=hov&&(mreleased&2); break;  case 9: fire=hov&&(mreleased&4); break;
-          case 10: fire=hov&&!was; break;          case 11: fire=!hov&&was; break;
-          case 50: fire=(mheld&1)!=0; break;       case 51: fire=(mheld&2)!=0; break;
-          case 52: fire=(mheld&4)!=0; break;       case 53: fire=(mpressed&1)!=0; break;
-          case 54: fire=(mpressed&2)!=0; break;    case 55: fire=(mpressed&4)!=0; break;
-          case 56: fire=(mreleased&1)!=0; break;   case 57: fire=(mreleased&2)!=0; break;
-          case 58: fire=(mreleased&4)!=0; break;
-          case 60: fire=mwheel>0; break;           case 61: fire=mwheel<0; break;
-          default: break;
-        }
-        if(fire) gml_run_event(vm,in,vm->mouse_events[e].suffix);
-      }
+      for(int e=0;e<vm->n_mouse_events;e++) if(mouse_event_fires(vm->mouse_events[e].sub,hov,was,mheld,mpressed,mreleased,mwheel))
+        gml_run_event(vm,in,vm->mouse_events[e].suffix);
     }
   }
   VMPROF_MARK(input);
@@ -5212,6 +5234,11 @@ static void parse_mouse_events(GmlVM *vm){
       vm->n_mouse_events++;
     }
   }
+  if(vm->win && vm->win->classic_version)
+    for(int i=0;i<vm->n_mouse_events;i++) for(int j=i+1;j<vm->n_mouse_events;j++)
+      if(vm->mouse_events[j].sub<vm->mouse_events[i].sub){
+        typeof(vm->mouse_events[0]) t=vm->mouse_events[i]; vm->mouse_events[i]=vm->mouse_events[j]; vm->mouse_events[j]=t;
+      }
 }
 static void parse_col_events(GmlVM *vm){
   GmlWin *w=vm->win; int cap=0;
