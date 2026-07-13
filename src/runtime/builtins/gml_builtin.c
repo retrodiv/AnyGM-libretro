@@ -87,6 +87,13 @@ static int presentation_size(const GmlVM *vm, const GmlRender *r, int height){
   if(configured>0) return configured;
   return presentation_base_size(vm,r,height);
 }
+/* GM7/8 distinguishes the desktop display from the game window. A libretro core has no host
+ * desktop to query, so expose the same deterministic virtual display required by the classic presentation contract.
+ * Keep window_get_* tied to the presented framebuffer; modern projects also rely on that size. */
+static int display_size(const GmlVM *vm, const GmlRender *r, int height){
+  if(vm && vm->win && vm->win->classic_version) return height?720:1280;
+  return presentation_size(vm,r,height);
+}
 static const char *gm_string_tmp(GmlVal v){
   static char ring[8][64];
   static int ri;
@@ -4796,8 +4803,8 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"distance_to_point")){ GmlInstance*s=vm->cur_self;
       *out=s?vreal(point_to_instance_distance(vm,s,N(a,n,0),N(a,n,1))):vreal(0); return 1; }
     if(!strcmp(nm,"distance_to_object")){ *out=vreal(distance_to_target(vm,vm->cur_self,(int)N(a,n,0))); return 1; }
-    if(!strcmp(nm,"display_get_width")){ *out=vreal(presentation_size(vm,R,0)); return 1; }
-    if(!strcmp(nm,"display_get_height")){ *out=vreal(presentation_size(vm,R,1)); return 1; }
+    if(!strcmp(nm,"display_get_width")){ *out=vreal(display_size(vm,R,0)); return 1; }
+    if(!strcmp(nm,"display_get_height")){ *out=vreal(display_size(vm,R,1)); return 1; }
     if(!strcmp(nm,"display_get_gui_width")){ *out=vreal(vm->gui_w>0? vm->gui_w : ((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288))); return 1; }
     if(!strcmp(nm,"display_get_gui_height")){ *out=vreal(vm->gui_h>0? vm->gui_h : ((R&&R->fbh>0)? R->fbh : (vm->win&&vm->win->disp_h? (int)vm->win->disp_h : 216))); return 1; }
   }
@@ -5668,9 +5675,11 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
     case BID_WINDOW_MOUSE_SET:
       return vreal(0);
     case BID_DISPLAY_GET_WIDTH:
+      return vreal(display_size(vm,R,0));
+    case BID_DISPLAY_GET_HEIGHT:
+      return vreal(display_size(vm,R,1));
     case BID_WINDOW_GET_WIDTH:
       return vreal(presentation_size(vm,R,0));
-    case BID_DISPLAY_GET_HEIGHT:
     case BID_WINDOW_GET_HEIGHT:
       return vreal(presentation_size(vm,R,1));
     case BID_DISPLAY_GET_GUI_WIDTH:
@@ -7380,12 +7389,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       double fps=builtin_game_speed(vm), mode=N(a,n,0);
       return vreal(mode>=0.5 ? 1000000.0/fps : fps);
     }
-    /* Display/window size is the selected presentation size from the first startup call onward.
-     * This keeps window-sized surfaces aligned with the frontend framebuffer across live changes. */
-    if(!strcmp(nm,"display_get_width")||!strcmp(nm,"window_get_width"))
-      return vreal(presentation_size(vm,R,0));
-    if(!strcmp(nm,"display_get_height")||!strcmp(nm,"window_get_height"))
-      return vreal(presentation_size(vm,R,1));
+    /* Window size follows the selected presentation from startup onward; classic display size
+     * remains the separate virtual desktop reported by display_size(). */
+    if(!strcmp(nm,"display_get_width")) return vreal(display_size(vm,R,0));
+    if(!strcmp(nm,"display_get_height")) return vreal(display_size(vm,R,1));
+    if(!strcmp(nm,"window_get_width")) return vreal(presentation_size(vm,R,0));
+    if(!strcmp(nm,"window_get_height")) return vreal(presentation_size(vm,R,1));
     if(!strcmp(nm,"display_get_gui_width"))
       return vreal(vm->gui_w>0? vm->gui_w : ((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)));
     if(!strcmp(nm,"display_get_gui_height"))

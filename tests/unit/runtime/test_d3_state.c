@@ -40,6 +40,28 @@ static int raster_fixtures(void){
 
   {
     GmlWin win={0};
+    win.classic_version=800;
+    vm.win=&win;
+    render.presentation_w=640; render.presentation_h=480;
+    if(call_values(&vm,"display_get_width",NULL,0).d!=1280 ||
+       call_values(&vm,"display_get_height",NULL,0).d!=720 ||
+       call_values(&vm,"window_get_width",NULL,0).d!=640 ||
+       call_values(&vm,"window_get_height",NULL,0).d!=480){
+      fprintf(stderr,"classic virtual display/window size mismatch\n");
+      return 0;
+    }
+    win.classic_version=0;
+    if(call_values(&vm,"display_get_width",NULL,0).d!=640 ||
+       call_values(&vm,"display_get_height",NULL,0).d!=480){
+      fprintf(stderr,"modern presentation display size changed\n");
+      return 0;
+    }
+    render.presentation_w=render.presentation_h=0;
+    vm.win=NULL;
+  }
+
+  {
+    GmlWin win={0};
     uint32_t source[2]={0xFFFF0000u,0xFF0000FFu};
     uint32_t target[3]={0,0,0};
     render.app_surface=source; render.app_w=2; render.app_h=1;
