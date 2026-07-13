@@ -16,6 +16,12 @@ static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o]|(uint32_t)d[o+1]<<8|(uint32_t)d[o+2]<<16|(uint32_t)d[o+3]<<24;
 }
 static float f32(const uint8_t *d, uint32_t o){ uint32_t v=u32(d,o); float f; memcpy(&f,&v,4); return f; }
+static double classic_round_even(double x){
+  double f=floor(x), diff=x-f;
+  if(diff<0.5) return f;
+  if(diff>0.5) return f+1.0;
+  return fmod(f,2.0)==0.0 ? f : f+1.0;
+}
 static const char *g_cur_code_name;
 static GmlVM *g_cur_vm;
 static int inst_is_struct_ref(const GmlInstance *in);
@@ -4739,7 +4745,7 @@ void gml_vm_step(GmlVM *vm){
       double hb=get_global_arr_d(vm,"view_hborder",view), vb=get_global_arr_d(vm,"view_vborder",view);
       double tx=fo->x, ty=fo->y;
       int classic=vm->win && vm->win->classic_version;
-      if(classic){ tx=round(tx); ty=round(ty); }
+      if(classic){ tx=classic_round_even(tx); ty=classic_round_even(ty); }
       /* A border of at least half the view centers the target. Otherwise a classic positive
        * speed caps the correction per step; zero holds the view and a negative value snaps. */
       if(2*hb >= wv) vx=tx-wv/2;
@@ -5322,7 +5328,8 @@ static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
     if(wy>maxy) maxy=wy;
   }
   if(vm->win && vm->win->classic_version){
-    *l=round(minx); *t=round(miny); *r=round(maxx); *b=round(maxy);
+    *l=classic_round_even(minx); *t=classic_round_even(miny);
+    *r=classic_round_even(maxx); *b=classic_round_even(maxy);
   } else {
     *l=floor(minx); *t=floor(miny); *r=ceil(maxx)-1.0; *b=ceil(maxy)-1.0;
   }
@@ -5340,7 +5347,9 @@ static int vm_mask_hit_world(GmlVM *vm, GmlRender *R, GmlInstance *in, GmlSprite
   if(fabs(xs)<1e-9 || fabs(ys)<1e-9) return 0;
   double ang=in->image_angle*M_PI/180.0, c=cos(ang), sn=sin(ang);
   double ox=in->x, oy=in->y;
-  if(vm->win && vm->win->classic_version){ ox=round(ox); oy=round(oy); }
+  if(vm->win && vm->win->classic_version){
+    ox=classic_round_even(ox); oy=classic_round_even(oy);
+  }
   double rx=(double)wx-ox, ry=(double)wy-oy;
   double sxr=rx*c - ry*sn, syr=rx*sn + ry*c;
   int lx=(int)floor(sxr/xs + s->originx);

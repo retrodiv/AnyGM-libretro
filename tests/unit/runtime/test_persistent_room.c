@@ -404,6 +404,21 @@ int main(void){
   if(rounded_mask_hit.t!=V_REAL || rounded_mask_hit.d!=1){
     fprintf(stderr,"classic precise mask did not use its rounded instance origin\n"); return 1;
   }
+  uint8_t edge_mask=0x80;
+  collision_sprites[0].w=2; collision_sprites[0].h=1;
+  collision_sprites[0].mr=1; collision_sprites[0].mb=0;
+  collision_sprites[0].collision_kind=0;
+  collision_sprites[0].mask=&edge_mask;
+  collision_sprites[0].mask_rowb=collision_sprites[0].mask_count=1;
+  created->x=0.5; contact->x=0;
+  rounded_mask_args[0]=vreal(created->x);
+  rounded_mask_hit=gml_builtin_call(&vm,"place_meeting",rounded_mask_args,3);
+  if(rounded_mask_hit.t!=V_REAL || rounded_mask_hit.d!=1){
+    fprintf(stderr,"classic collision geometry did not round a half coordinate to even\n"); return 1;
+  }
+  collision_sprites[0].mask=NULL;
+  collision_sprites[0].mask_rowb=collision_sprites[0].mask_count=0;
+  collision_sprites[0].collision_kind=1;
   collision_sprites[0].w=collision_sprites[0].h=2;
   collision_sprites[0].mr=collision_sprites[0].mb=1;
   contact->x=5; contact->y=100;

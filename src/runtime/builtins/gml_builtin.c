@@ -3810,7 +3810,7 @@ static int inst_bbox(GmlVM *vm, GmlInstance *in, double atx, double aty,
       if(wx<minx) minx=wx; if(wx>maxx) maxx=wx;
       if(wy<miny) miny=wy; if(wy>maxy) maxy=wy;
     }
-    *l=round(minx); *t=round(miny); *r=round(maxx); *b=round(maxy);
+    *l=gm_round(minx); *t=gm_round(miny); *r=gm_round(maxx); *b=gm_round(maxy);
     return 1;
   }
   if(in->image_angle==0){
@@ -3878,7 +3878,7 @@ static int mask_hit_world(GmlRender *R, GmlInstance *in, GmlSprite *s, int sprit
   if(fabs(xs)<1e-9 || fabs(ys)<1e-9) return 0;
   /* GM6-8 samples precise masks relative to the integer instance origin even while
    * retaining the fractional position for movement and bbox construction. */
-  if(classic){ atx=round(atx); aty=round(aty); }
+  if(classic){ atx=gm_round(atx); aty=gm_round(aty); }
   if(in->image_angle==0){   /* unrotated fast path: the generic one pays cos+sin PER PIXEL */
     int lx=(int)floor(((double)wx-atx)/xs + s->originx);
     int ly=(int)floor(((double)wy-aty)/ys + s->originy);
