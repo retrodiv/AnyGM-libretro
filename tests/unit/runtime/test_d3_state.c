@@ -96,6 +96,13 @@ static int raster_fixtures(void){
   }
   gml_part_reset_all();
 
+  gml_effect_create(1,0,32,24,0,0x40A0FF);
+  if(gml_part_system_count(1)!=21){
+    fprintf(stderr,"small explosion particle count mismatch\n");
+    return 0;
+  }
+  gml_part_reset_all();
+
   gml_d3_reset();
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);

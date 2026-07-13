@@ -108,6 +108,7 @@ static PSys  g_ps[PS_MAX];
 static PEmit g_pe[PE_MAX];
 static int g_effect_sys[2];
 static int g_effect_type[2][12][3];
+static int g_effect_explosion_core[2][3];
 
 static GmlVM *g_particle_vm;
 static uint32_t g_prng = 0x2545F491u;
@@ -151,6 +152,7 @@ void gml_part_reset_all(void){
   for(int i=0;i<PS_MAX;i++){ free(g_ps[i].parts); }
   memset(g_pt,0,sizeof g_pt); memset(g_ps,0,sizeof g_ps); memset(g_pe,0,sizeof g_pe);
   memset(g_effect_sys,0,sizeof g_effect_sys); memset(g_effect_type,0,sizeof g_effect_type);
+  memset(g_effect_explosion_core,0,sizeof g_effect_explosion_core);
   g_prng=0x2545F491u;
 }
 
@@ -277,6 +279,47 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     else if(kind==10){ gml_part_type_speed(type,4*scale,7*scale,0,0); gml_part_type_direction(type,250,290,0,0); }
     else if(kind==11){ gml_part_type_speed(type,.3*scale,1.2*scale,0,0); gml_part_type_direction(type,240,300,0,0); }
     else gml_part_type_speed(type,.5*scale,2.5*scale,-.03,0);
+  }
+  if(kind==0){
+    PType *burst=pt(type); if(!burst) return;
+    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    (void)width; (void)height;
+    double cadence=fmax(30.0/speed,1.0);
+    static const double initial_size[3]={.1,.3,.4};
+    static const double size_growth[3]={.05,.10,.20};
+    static const double initial_speed[3]={2,4,7};
+    static const double speed_decay[3]={-.10,-.18,-.20};
+    static const double life_min[3]={10,12,15};
+    static const double life_max[3]={15,17,20};
+    burst->sprite=-1; burst->shape=10;
+    burst->sz_min=burst->sz_max=initial_size[size]; burst->sz_incr=size_growth[size]*cadence; burst->sz_wig=0;
+    burst->xscale=burst->yscale=1;
+    burst->sp_min=burst->sp_max=initial_speed[size]*cadence; burst->sp_incr=speed_decay[size]*cadence; burst->sp_wig=0;
+    burst->dir_min=0; burst->dir_max=360; burst->dir_incr=burst->dir_wig=0;
+    burst->grav_amt=0; burst->grav_dir=270;
+    burst->life_min=floor(life_min[size]/cadence+.5); burst->life_max=floor(life_max[size]/cadence+.5);
+    burst->alpha[0]=.6; burst->alpha[1]=.3; burst->alpha[2]=0; burst->nalpha=3;
+    burst->ori_min=0; burst->ori_max=360; burst->ori_incr=burst->ori_wig=0; burst->ori_rel=0;
+    burst->additive=0;
+
+    int core_id=g_effect_explosion_core[layer][size];
+    if(!core_id){ core_id=gml_part_type_create(); g_effect_explosion_core[layer][size]=core_id; }
+    PType *core=pt(core_id); if(!core) return;
+    static const double core_growth[3]={.10,.20,.40};
+    static const double core_life[3]={15,17,20};
+    core->sprite=-1; core->shape=10;
+    core->sz_min=core->sz_max=initial_size[size]; core->sz_incr=core_growth[size]*cadence; core->sz_wig=0;
+    core->xscale=core->yscale=1;
+    core->sp_min=core->sp_max=core->sp_incr=core->sp_wig=0;
+    core->dir_min=core->dir_max=core->dir_incr=core->dir_wig=0;
+    core->grav_amt=0; core->grav_dir=270;
+    core->life_min=core->life_max=floor(core_life[size]/cadence+.5);
+    core->alpha[0]=.8; core->alpha[1]=.4; core->alpha[2]=0; core->nalpha=3;
+    core->ori_min=core->ori_max=core->ori_incr=core->ori_wig=0; core->ori_rel=0;
+    core->additive=0;
+    gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,20);
+    gml_part_particles_create_color(g_effect_sys[layer],x,y,core_id,0,1);
+    return;
   }
   if(kind==3){
     PType *firework=pt(type); if(!firework) return;
