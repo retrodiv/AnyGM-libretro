@@ -438,6 +438,25 @@ static int raster_fixtures(void){
     fprintf(stderr,"software classic atlas fixed-point blend mismatch: %08x\n",pixels[5*WIDTH+5]);
     return 0;
   }
+  for(int i=0;i<4;i++){
+    render.atlas[0].px[i*4]=255;
+    render.atlas[0].px[i*4+1]=64;
+    render.atlas[0].px[i*4+2]=64;
+    render.atlas[0].px[i*4+3]=111;
+  }
+  pixels[5*WIDTH+5]=0xFF46AB70u;
+  gml_draw_background_ext(&render,0,5,5,1,1,0xFFFFFF,1);
+  if(pixels[5*WIDTH+5]!=0xFF977D5Bu){
+    fprintf(stderr,"software classic cached atlas blend mismatch: %08x\n",pixels[5*WIDTH+5]);
+    return 0;
+  }
+  free(render.tpag[0].alpha_row_min); render.tpag[0].alpha_row_min=NULL;
+  free(render.tpag[0].alpha_row_max); render.tpag[0].alpha_row_max=NULL;
+  free(render.tpag[0].alpha_runs); render.tpag[0].alpha_runs=NULL;
+  free(render.tpag[0].argb_cache); render.tpag[0].argb_cache=NULL;
+  render.tpag[0].alpha_scanned=0;
+  render.tpag[0].alpha_runs_built=0;
+  render.tpag[0].alpha_run_count=0;
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   for(int i=0;i<4;i++) render.atlas[0].px[i*4+3]=255;

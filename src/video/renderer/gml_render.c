@@ -964,9 +964,18 @@ static inline void blend_argb_src_over_exact(uint32_t *dp, const uint32_t *sp, i
     uint32_t src=sp[k], dst=dp[k];
     uint32_t sr=(src>>16)&0xFFu, sg=(src>>8)&0xFFu, sb=src&0xFFu;
     uint32_t dr=(dst>>16)&0xFFu, dg=(dst>>8)&0xFFu, db=dst&0xFFu;
-    uint32_t bias=round_nearest?127u:0u;
-    dp[k]=0xFF000000u|(((sr*aa+dr*ia+bias)/255u)<<16)|
-          (((sg*aa+dg*ia+bias)/255u)<<8)|((sb*aa+db*ia+bias)/255u);
+    if(round_nearest){
+      uint32_t rr=(sr*aa+127u)/255u+(dr*ia+127u)/255u;
+      uint32_t rg=(sg*aa+127u)/255u+(dg*ia+127u)/255u;
+      uint32_t rb=(sb*aa+127u)/255u+(db*ia+127u)/255u;
+      if(rr>255u) rr=255u;
+      if(rg>255u) rg=255u;
+      if(rb>255u) rb=255u;
+      dp[k]=0xFF000000u|(rr<<16)|(rg<<8)|rb;
+    } else {
+      dp[k]=0xFF000000u|(((sr*aa+dr*ia)/255u)<<16)|
+            (((sg*aa+dg*ia)/255u)<<8)|((sb*aa+db*ia)/255u);
+    }
   }
 }
 static inline void copy_argb_force_opaque(uint32_t *dp, const uint32_t *sp, int run){
