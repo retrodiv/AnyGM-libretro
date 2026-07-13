@@ -119,7 +119,8 @@ static double prnd(void){
   return ((g_prng>>8) & 0xFFFFFF)/(double)0x1000000;
 }
 static double prnd_r(double a, double b){ return b>a ? a + prnd()*(b-a) : a; }
-static double particle_range(double a,double b){ return a+prnd()*(b-a); }
+/* A fixed particle property is assigned directly; only a real interval samples the RNG. */
+static double particle_range(double a,double b){ return b>a ? a+prnd()*(b-a) : a; }
 static int clamp255(double v){ if(v<0) return 0; if(v>255) return 255; return (int)(v+0.5); }
 static uint32_t rgb_col(int r,int g,int b){ return ((uint32_t)clamp255(b)<<16)|((uint32_t)clamp255(g)<<8)|(uint32_t)clamp255(r); }
 static uint32_t mix_col(uint32_t a, uint32_t b, double t){

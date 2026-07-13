@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
 #include "gml_vm.h"
+#include "gml_particle.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -39,6 +40,25 @@ int main(void){
     return 1;
   }
   free(state);
+
+  gml_part_reset_all();
+  gml_part_bind_vm(&vm);
+  gml_rng_seed(&vm,0);
+  int system=gml_part_system_create();
+  int type=gml_part_type_create();
+  gml_part_particles_create(system,0,0,type,1);
+  if(vm.rng_classic_state!=1u){
+    fprintf(stderr,"constant particle ranges advanced the classic RNG\n");
+    return 1;
+  }
+  gml_part_type_size(type,1,2,0,0);
+  gml_rng_seed(&vm,0);
+  gml_part_particles_create(system,0,0,type,1);
+  if(vm.rng_classic_state!=0x08088406u){
+    fprintf(stderr,"variable particle range RNG sequence mismatch\n");
+    return 1;
+  }
+  gml_part_reset_all();
   puts("classic RNG fixtures: ok");
   return 0;
 }
