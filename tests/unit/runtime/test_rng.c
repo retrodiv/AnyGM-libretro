@@ -11,11 +11,37 @@
 int gml_input_key(int key, int edge){ (void)key; (void)edge; return 0; }
 int gml_input_gamepad(int button, int edge){ (void)button; (void)edge; return 0; }
 
+static int check_classic_comparisons(void){
+  double accumulated=0.0;
+  for(int i=0;i<100;i++) accumulated+=0.06;
+  if(accumulated>=6.0 ||
+     !gml_real_compare(accumulated,6.0,CMP_EQ,1) ||
+     gml_real_compare(accumulated,6.0,CMP_NEQ,1) ||
+     gml_real_compare(accumulated,6.0,CMP_LT,1) ||
+     !gml_real_compare(accumulated,6.0,CMP_LTE,1) ||
+     gml_real_compare(accumulated,6.0,CMP_GT,1) ||
+     !gml_real_compare(accumulated,6.0,CMP_GTE,1) ||
+     gml_real_compare(accumulated,6.0,CMP_EQ,0) ||
+     !gml_real_compare(accumulated,6.0,CMP_LT,0)){
+    fprintf(stderr,"classic real comparison tolerance mismatch: %.17g\n",accumulated);
+    return 0;
+  }
+  if(gml_real_compare(6.0-1e-12,6.0,CMP_EQ,1) ||
+     !gml_real_compare(6.0-1e-12,6.0,CMP_LT,1) ||
+     gml_real_compare(6.0+1e-12,6.0,CMP_EQ,1) ||
+     !gml_real_compare(6.0+1e-12,6.0,CMP_GT,1)){
+    fprintf(stderr,"classic real comparison tolerance exceeded its boundary\n");
+    return 0;
+  }
+  return 1;
+}
+
 int main(void){
   GmlWin classic;
   GmlVM vm;
   memset(&classic,0,sizeof(classic));
   memset(&vm,0,sizeof(vm));
+  if(!check_classic_comparisons()) return 1;
   classic.classic_version=810;
   vm.win=&classic;
   gml_rng_seed(&vm,0);

@@ -275,6 +275,7 @@ int     gml_vm_init(GmlVM *vm, GmlWin *win);
 void    gml_vm_free(GmlVM *vm);
 void    gml_rng_seed(GmlVM *vm, uint32_t seed);   /* WELL512 seeding (MSVC LCG expand) */
 double  gml_rng_value(GmlVM *vm);                 /* next()/2^32 -> [0,1) */
+int     gml_real_compare(double lhs, double rhs, int cmp, int classic);
 GmlVal  gml_vm_run_code(GmlVM *vm, int code_index, GmlInstance *self, GmlInstance *other,
                         GmlVal *args, int n_args);
 int     gml_code_index_by_name(GmlWin *win, const char *name);  /* exact */

@@ -22,6 +22,26 @@ static double classic_round_even(double x){
   if(diff>0.5) return f+1.0;
   return fmod(f,2.0)==0.0 ? f : f+1.0;
 }
+int gml_real_compare(double lhs, double rhs, int cmp, int classic){
+  int order;
+  if(classic){
+    double delta=lhs-rhs;
+    if(isnan(delta)) return 0;
+    order=fabs(delta)<1e-13 ? 0 : (delta<0.0 ? -1 : 1);
+  } else {
+    if(isnan(lhs) || isnan(rhs)) return cmp==CMP_NEQ;
+    order=lhs<rhs ? -1 : (lhs>rhs ? 1 : 0);
+  }
+  switch(cmp){
+    case CMP_LT: return order<0;
+    case CMP_LTE: return order<=0;
+    case CMP_EQ: return order==0;
+    case CMP_NEQ: return order!=0;
+    case CMP_GTE: return order>=0;
+    case CMP_GT: return order>0;
+    default: return 0;
+  }
+}
 static const char *g_cur_code_name;
 static GmlVM *g_cur_vm;
 static int inst_is_struct_ref(const GmlInstance *in);
@@ -2279,9 +2299,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           int c=strcmp(asstr_cmp(l,lb,sizeof lb),asstr_cmp(r,rb,sizeof rb));
           switch(in.cmp){case CMP_LT:res=c<0;break;case CMP_LTE:res=c<=0;break;case CMP_EQ:res=c==0;break;
             case CMP_NEQ:res=c!=0;break;case CMP_GTE:res=c>=0;break;case CMP_GT:res=c>0;break;} }
-        else { double a=asnum(l), b=asnum(r);
-          switch(in.cmp){case CMP_LT:res=a<b;break;case CMP_LTE:res=a<=b;break;case CMP_EQ:res=a==b;break;
-            case CMP_NEQ:res=a!=b;break;case CMP_GTE:res=a>=b;break;case CMP_GT:res=a>b;break;} }
+        else res=gml_real_compare(asnum(l),asnum(r),in.cmp,w->classic_version!=0);
         stk[sp++]=vreal(res); break;
       }
       case OP_B:
