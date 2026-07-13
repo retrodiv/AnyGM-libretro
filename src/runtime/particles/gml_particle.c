@@ -239,6 +239,21 @@ static void sys_spawn(PSys *s, double x, double y, int type, int number, int col
 void gml_part_particles_create(int sysid,double x,double y,int type,int number){ PSys *s=ps(sysid); if(s) sys_spawn(s,x+s->px,y+s->py,type,number,-1); }
 void gml_part_particles_create_color(int sysid,double x,double y,int type,uint32_t col,int number){ PSys *s=ps(sysid); if(s) sys_spawn(s,x+s->px,y+s->py,type,number,(int)(col&0xFFFFFF)); }
 
+static void effect_room_metrics(int *width,int *height,int *speed){
+  *width=640; *height=480; *speed=30;
+  if(!g_particle_vm) return;
+  GmlRoom room;
+  if(g_particle_vm->win && gml_room_get(g_particle_vm->win,g_particle_vm->room_index,&room)==0){
+    if(room.width>0) *width=room.width;
+    if(room.height>0) *height=room.height;
+    if(room.speed>0) *speed=room.speed;
+  } else if(g_particle_vm->render){
+    GmlRender *render=(GmlRender*)g_particle_vm->render;
+    if(render->fbw>0) *width=render->fbw;
+    if(render->fbh>0) *height=render->fbh;
+  }
+}
+
 void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t color){
   int layer=above?1:0; if(kind<0)kind=0; if(kind>11)kind=11; if(size<0)size=0; if(size>2)size=2;
   if(getenv("GML_LOG_PART"))
@@ -263,21 +278,34 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     else if(kind==11){ gml_part_type_speed(type,.3*scale,1.2*scale,0,0); gml_part_type_direction(type,240,300,0,0); }
     else gml_part_type_speed(type,.5*scale,2.5*scale,-.03,0);
   }
+  if(kind==3){
+    PType *firework=pt(type); if(!firework) return;
+    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    (void)width; (void)height;
+    double cadence=fmax(30.0/speed,1.0);
+    static const double max_speed[3]={3,6,8};
+    static const double life_min[3]={15,20,30};
+    static const double life_max[3]={25,30,40};
+    static const double gravity[3]={.10,.15,.17};
+    static const int count[3]={75,150,250};
+    firework->sprite=-1; firework->shape=8;
+    firework->sz_min=.1; firework->sz_max=.2; firework->sz_incr=firework->sz_wig=0;
+    firework->xscale=firework->yscale=1;
+    firework->sp_min=.5*cadence; firework->sp_max=max_speed[size]*cadence;
+    firework->sp_incr=firework->sp_wig=0;
+    firework->dir_min=0; firework->dir_max=360; firework->dir_incr=firework->dir_wig=0;
+    firework->grav_amt=gravity[size]; firework->grav_dir=270;
+    firework->life_min=floor(life_min[size]/cadence+.5);
+    firework->life_max=floor(life_max[size]/cadence+.5);
+    firework->alpha[0]=1; firework->alpha[1]=.7; firework->alpha[2]=.4; firework->nalpha=3;
+    firework->ori_min=firework->ori_max=firework->ori_incr=firework->ori_wig=0;
+    firework->ori_rel=0; firework->additive=0;
+    gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,count[size]);
+    return;
+  }
   if(kind==10){
     PType *rain=pt(type); if(!rain) return;
-    int width=640,height=480,speed=30;
-    if(g_particle_vm){
-      GmlRoom room;
-      if(g_particle_vm->win && gml_room_get(g_particle_vm->win,g_particle_vm->room_index,&room)==0){
-        if(room.width>0) width=room.width;
-        if(room.height>0) height=room.height;
-        if(room.speed>0) speed=room.speed;
-      } else if(g_particle_vm->render){
-        GmlRender *render=(GmlRender*)g_particle_vm->render;
-        if(render->fbw>0) width=render->fbw;
-        if(render->fbh>0) height=render->fbh;
-      }
-    }
+    int width,height,speed; effect_room_metrics(&width,&height,&speed);
     double cadence=fmax(30.0/speed,1.0);
     rain->shape=3;
     rain->sz_min=.2; rain->sz_max=.3; rain->sz_incr=rain->sz_wig=0;
