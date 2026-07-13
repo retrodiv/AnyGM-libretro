@@ -206,12 +206,29 @@ static int emit_pop_var(Compiler *c, int inst, const char *name, uint8_t reftype
   return add_ref(c,name,GMLC_REF_VARI,instr,ref,(uint32_t)reftype<<24,inst);
 }
 
+static int classic_identifier_equal(const char *a, const char *b){
+  while(*a && *b){
+    if(tolower((unsigned char)*a)!=tolower((unsigned char)*b)) return 0;
+    a++; b++;
+  }
+  return *a==*b;
+}
+
+static const char *canonical_call_name(Compiler *c, const char *name){
+  if(!c->project || !c->project->classic_version) return name;
+  for(int i=0;i<c->project->n_scripts;i++){
+    const char *candidate=c->project->scripts[i].name;
+    if(candidate && classic_identifier_equal(candidate,name)) return candidate;
+  }
+  return name;
+}
+
 static int emit_call(Compiler *c, const char *name, int argc){
   uint32_t instr=(uint32_t)c->code.len;
   if(!emit_u32(&c->code,fw(OP_CALL,DT_INT32,(int16_t)argc))) return 0;
   uint32_t ref=(uint32_t)c->code.len;
   if(!emit_u32(&c->code,0)) return 0;
-  return add_ref(c,name,GMLC_REF_FUNC,instr,ref,0,0);
+  return add_ref(c,canonical_call_name(c,name),GMLC_REF_FUNC,instr,ref,0,0);
 }
 
 static int emit_callv(Compiler *c, int argc){

@@ -94,6 +94,33 @@ static int compile_fixture_lacks_ref(const GmlcProject *project, const char *tex
   return ok && !found;
 }
 
+static int compile_fixture_function_ref(const GmlcProject *project, const char *text,
+                                        const char *expected, const char *unexpected){
+  char path[]="/tmp/gmlc-bytecode-func-ref-XXXXXX";
+  int descriptor=mkstemp(path);
+  if(descriptor<0) return 0;
+  FILE *file=fdopen(descriptor,"wb");
+  if(!file) return 0;
+  size_t length=strlen(text);
+  int wrote=fwrite(text,1,length,file)==length;
+  fclose(file);
+  if(!wrote){ remove(path); return 0; }
+  GmlcCodeBlob blob; char err[256]={0};
+  memset(&blob,0,sizeof(blob));
+  int ok=gmlc_bytecode_compile_source(project,path,&blob,err,sizeof(err));
+  remove(path);
+  int found_expected=0, found_unexpected=0;
+  for(int i=0;ok && i<blob.n_refs;i++) if(blob.refs[i].kind==GMLC_REF_FUNC){
+    if(blob.refs[i].name && !strcmp(blob.refs[i].name,expected)) found_expected=1;
+    if(blob.refs[i].name && !strcmp(blob.refs[i].name,unexpected)) found_unexpected=1;
+  }
+  if(!ok || !found_expected || found_unexpected)
+    fprintf(stderr,"function reference canonicalization mismatch: expected=%s unexpected=%s error=%s\n",
+            expected,unexpected,err);
+  gmlc_bytecode_free(&blob);
+  return ok && found_expected && !found_unexpected;
+}
+
 int main(int argc, char **argv){
   GmlcProject project;
   memset(&project,0,sizeof(project));
@@ -130,6 +157,15 @@ int main(int argc, char **argv){
     "global.actor.part.node.x=4; result=global.actor.part.node.x;\n",1);
   ok &= compile_fixture_has_swap(&project,
     "global.actor.y=10;\n");
+  GmlcScript case_script;
+  memset(&case_script,0,sizeof(case_script));
+  case_script.name=(char*)"FixtureMotion";
+  project.scripts=&case_script; project.n_scripts=project.cap_scripts=1;
+  project.classic_version=800;
+  ok &= compile_fixture_function_ref(&project,"fixturemotion();\n","FixtureMotion","fixturemotion");
+  project.classic_version=0;
+  ok &= compile_fixture_function_ref(&project,"fixturemotion();\n","fixturemotion","FixtureMotion");
+  project.scripts=NULL; project.n_scripts=project.cap_scripts=0;
   ok &= compile_fixture(&project,
     "speed=0\n(instance_create(1,2,3)).hspeed=-.5\ninstance_create(4,5,6)\n"
     "(instance_create(7,8,9)).hspeed=.5\n",1);
