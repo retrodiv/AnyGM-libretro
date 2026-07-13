@@ -92,6 +92,27 @@ static int raster_fixtures(void){
   gml_d3_reset();
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  int motion_system=gml_part_system_create();
+  int motion_type=gml_part_type_create();
+  gml_part_type_size(motion_type,0,0,0,0);
+  gml_part_type_speed(motion_type,1,1,2,0);
+  gml_part_type_direction(motion_type,0,0,0,0);
+  gml_part_particles_create(motion_system,10,10,motion_type,1);
+  gml_part_update_all();
+  gml_part_system_draw_all(&render);
+  if((pixels[10*WIDTH+13]&0x00FFFFFFu)==0 || pixels[10*WIDTH+11]!=0){
+    int first=-1;
+    for(int i=0;i<WIDTH*HEIGHT;i++) if(pixels[i]){ first=i; break; }
+    fprintf(stderr,"particle speed increment phase mismatch: x13=%08x x11=%08x first=(%d,%d) count=%d\n",
+      pixels[10*WIDTH+13],pixels[10*WIDTH+11],first<0?-1:first%WIDTH,
+      first<0?-1:first/WIDTH,colored_pixels(pixels,WIDTH*HEIGHT));
+    return 0;
+  }
+  gml_part_reset_all();
+
+  gml_d3_reset();
+  memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   GmlVal start_result=call_values(&vm,"d3d_start",NULL,0);
   int default_flags[GML_D3_STATE_FLAG_COUNT];
   double default_values[GML_D3_STATE_VALUE_COUNT];

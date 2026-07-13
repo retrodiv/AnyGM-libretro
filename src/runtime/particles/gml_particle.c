@@ -327,12 +327,16 @@ static void update_sys(int sysid, PSys *s){
   emit_streams(sysid,s);
   for(int i=0;i<s->n;){
     Part *p=&s->parts[i]; PType *t=pt(p->type);
-    /* velocity from speed+direction, then add gravity, then move */
+    if(t){
+      p->speed += t->sp_incr; if(p->speed<0) p->speed=0;
+      p->dir += t->dir_incr; p->ori += p->ori_incr;
+    }
+    /* Step increments affect this step's velocity; gravity then adjusts its vector. */
     double vx=p->speed*cos(DEG2RAD(p->dir)), vy=-p->speed*sin(DEG2RAD(p->dir));
     if(p->grav_amt!=0){ vx += p->grav_amt*cos(DEG2RAD(p->grav_dir)); vy += -p->grav_amt*sin(DEG2RAD(p->grav_dir));
       p->speed=hypot(vx,vy); p->dir = atan2(-vy,vx)*180.0/M_PI; }
     p->x += vx; p->y += vy;
-    if(t){ p->speed += t->sp_incr; p->dir += t->dir_incr; p->size += p->size_incr; p->ori += p->ori_incr; }
+    if(t) p->size += p->size_incr;
     if(p->size<0) p->size=0;
     p->life -= 1;
     if(p->life<=0){ s->parts[i]=s->parts[--s->n]; continue; }   /* swap-remove */
