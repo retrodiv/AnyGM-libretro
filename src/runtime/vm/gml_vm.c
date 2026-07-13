@@ -5329,11 +5329,14 @@ static int vm_bbox(GmlVM *vm, GmlInstance *in, double *l, double *t, double *r, 
 static int vm_overlap(double l1,double t1,double r1,double b1,double l2,double t2,double r2,double b2){
   return l1<=r2 && l2<=r1 && t1<=b2 && t2<=b1;
 }
-static int vm_mask_hit_world(GmlRender *R, GmlInstance *in, GmlSprite *s, int sprite, int wx, int wy){
+static int vm_mask_hit_world(GmlVM *vm, GmlRender *R, GmlInstance *in, GmlSprite *s,
+                             int sprite, int wx, int wy){
   double xs=in->image_xscale, ys=in->image_yscale;
   if(fabs(xs)<1e-9 || fabs(ys)<1e-9) return 0;
   double ang=in->image_angle*M_PI/180.0, c=cos(ang), sn=sin(ang);
-  double rx=(double)wx-in->x, ry=(double)wy-in->y;
+  double ox=in->x, oy=in->y;
+  if(vm->win && vm->win->classic_version){ ox=round(ox); oy=round(oy); }
+  double rx=(double)wx-ox, ry=(double)wy-oy;
   double sxr=rx*c - ry*sn, syr=rx*sn + ry*c;
   int lx=(int)floor(sxr/xs + s->originx);
   int ly=(int)floor(syr/ys + s->originy);
@@ -5351,8 +5354,8 @@ static int vm_masks_overlap(GmlVM *vm, GmlInstance *a, GmlInstance *b,
   if(x1==x0) x1++;
   if(y1==y0) y1++;
   for(int wy=y0; wy<y1; wy++) for(int wx=x0; wx<x1; wx++){
-    if(!vm_mask_hit_world(R,a,ap,as,wx,wy)) continue;
-    if( vm_mask_hit_world(R,b,bp,bs,wx,wy)) return 1;
+    if(!vm_mask_hit_world(vm,R,a,ap,as,wx,wy)) continue;
+    if( vm_mask_hit_world(vm,R,b,bp,bs,wx,wy)) return 1;
   }
   return 0;
 }

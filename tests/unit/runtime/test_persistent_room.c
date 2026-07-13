@@ -393,6 +393,17 @@ int main(void){
   if(created->x!=5){
     fprintf(stderr,"move_contact_solid did not round a positive maximum distance: x=%.0f\n",created->x); return 1;
   }
+  collision_sprites[0].w=collision_sprites[0].h=1;
+  collision_sprites[0].mr=collision_sprites[0].mb=0;
+  created->x=0.49; created->y=100; contact->x=0; contact->y=100;
+  GmlVal rounded_mask_args[3]={vreal(created->x),vreal(created->y),vreal(1)};
+  GmlVal rounded_mask_hit=gml_builtin_call(&vm,"place_meeting",rounded_mask_args,3);
+  if(rounded_mask_hit.t!=V_REAL || rounded_mask_hit.d!=1){
+    fprintf(stderr,"classic precise mask did not use its rounded instance origin\n"); return 1;
+  }
+  collision_sprites[0].w=collision_sprites[0].h=2;
+  collision_sprites[0].mr=collision_sprites[0].mb=1;
+  contact->x=5; contact->y=100;
   win.classic_version=0;
   created->x=4; contact->solid=1;
   (void)gml_builtin_call(&vm,"move_contact_solid",contact_solid_args,2);

@@ -39,6 +39,7 @@ void gml_audio_sound_gain(GmlAudio *a, int target, double gain);
 double gml_audio_sound_get_gain(GmlAudio *a, int target);
 void gml_audio_sound_pitch(GmlAudio *a, int target, double pitch);
 double gml_audio_sound_get_pitch(GmlAudio *a, int target);
+double gml_audio_sound_length(GmlAudio *a, int sound);
 void gml_audio_sound_set_track_position(GmlAudio *a, int target, double seconds);
 double gml_audio_sound_get_track_position(GmlAudio *a, int target);
 

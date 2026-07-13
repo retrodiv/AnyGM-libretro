@@ -28,6 +28,7 @@ typedef struct {
   const int16_t *pcm; uint32_t nval; int channels, sample_rate; float vol; double gain, pitch; int16_t *own;
   const uint8_t *ogg; uint32_t ogg_len; int ogg_failed;
   const uint8_t *mp3; uint32_t mp3_len; int mp3_failed;
+  double length_seconds; int length_known;
 } GmlSound; /* own!=NULL if a compressed blob was decoded to PCM */
 typedef struct { int snd, loop, active, paused, id; double pos, gain, pitch; } GmlVoice;
 
@@ -387,6 +388,46 @@ double gml_audio_sound_get_pitch(GmlAudio *a, int target){
   if(target>=0 && target<a->n_snd) return a->snd[target].pitch;
   for(int i=0;i<GML_MAX_VOICES;i++) if(voice_matches(a,&a->voice[i],target)) return a->voice[i].pitch;
   return 1.0;
+}
+double gml_audio_sound_length(GmlAudio *a, int sound){
+  if(!a) return 0.0;
+  if(sound>=1000000){
+    for(int i=0;i<GML_MAX_VOICES;i++) if(a->voice[i].active && a->voice[i].id==sound){
+      sound=a->voice[i].snd;
+      break;
+    }
+  }
+  if(sound<0 || sound>=a->n_snd) return 0.0;
+  GmlSound *s=&a->snd[sound];
+  if(s->length_known) return s->length_seconds;
+
+  double seconds=0.0;
+  if(s->pcm && s->nval){
+    int channels=s->channels>0?s->channels:1;
+    int rate=s->sample_rate>0?s->sample_rate:44100;
+    seconds=(double)s->nval/((double)channels*(double)rate);
+  } else if(s->ogg && s->ogg_len){
+    int error=0;
+    stb_vorbis *stream=stb_vorbis_open_memory(s->ogg,(int)s->ogg_len,&error,NULL);
+    if(stream){
+      seconds=stb_vorbis_stream_length_in_seconds(stream);
+      stb_vorbis_close(stream);
+    }
+  } else if(s->mp3 && s->mp3_len){
+    mp3dec_ex_t stream;
+    if(mp3dec_ex_open_buf(&stream,s->mp3,s->mp3_len,MP3D_SEEK_TO_SAMPLE)==0){
+      int channels=stream.info.channels>0?stream.info.channels:1;
+      int rate=stream.info.hz>0?stream.info.hz:44100;
+      seconds=(double)stream.samples/((double)channels*(double)rate);
+      mp3dec_ex_close(&stream);
+    }
+  }
+  if(!isfinite(seconds) || seconds<0.0) seconds=0.0;
+  s->length_seconds=seconds;
+  s->length_known=1;
+  if(getenv("GML_LOG_AUDIO"))
+    fprintf(stderr,"[audio] sound_length id=%d seconds=%.6f\n",sound,seconds);
+  return seconds;
 }
 void gml_audio_sound_set_track_position(GmlAudio *a, int target, double seconds){
   if(!a) return;

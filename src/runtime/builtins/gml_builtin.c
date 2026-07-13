@@ -3872,9 +3872,13 @@ static double distance_to_target(GmlVM *vm,GmlInstance *self,int target){
 static int bbox_overlap(double l1,double t1,double r1,double b1, double l2,double t2,double r2,double b2){
   return l1<=r2 && l2<=r1 && t1<=b2 && t2<=b1;
 }
-static int mask_hit_world(GmlRender *R, GmlInstance *in, GmlSprite *s, int sprite, double atx, double aty, int wx, int wy){
+static int mask_hit_world(GmlRender *R, GmlInstance *in, GmlSprite *s, int sprite,
+                          double atx, double aty, int classic, int wx, int wy){
   double xs=in->image_xscale, ys=in->image_yscale;
   if(fabs(xs)<1e-9 || fabs(ys)<1e-9) return 0;
+  /* GM6-8 samples precise masks relative to the integer instance origin even while
+   * retaining the fractional position for movement and bbox construction. */
+  if(classic){ atx=round(atx); aty=round(aty); }
   if(in->image_angle==0){   /* unrotated fast path: the generic one pays cos+sin PER PIXEL */
     int lx=(int)floor(((double)wx-atx)/xs + s->originx);
     int ly=(int)floor(((double)wy-aty)/ys + s->originy);
@@ -3895,6 +3899,7 @@ static int masks_overlap(GmlVM *vm, GmlInstance *self, double sx, double sy, Gml
   GmlRender *R=(GmlRender*)vm->render; if(!R) return 1;
   int ss=inst_mask_sprite_index(self), os=inst_mask_sprite_index(o); if(ss<0||os<0) return 1;
   GmlSprite *sp=&R->spr[ss], *op=&R->spr[os];
+  int classic=vm->win && vm->win->classic_version;
   double sl,st,sr,sb,ol,ot,orr,ob;
   if(!inst_bbox(vm,self,sx,sy,&sl,&st,&sr,&sb)) return 0;
   if(!inst_bbox(vm,o,o->x,o->y,&ol,&ot,&orr,&ob)) return 0;
@@ -3906,8 +3911,8 @@ static int masks_overlap(GmlVM *vm, GmlInstance *self, double sx, double sy, Gml
   if(x1==x0) x1++;
   if(y1==y0) y1++;
   for(int wy=y0; wy<y1; wy++) for(int wx=x0; wx<x1; wx++){
-    if(!mask_hit_world(R,self,sp,ss,sx,sy,wx,wy)) continue;
-    if( mask_hit_world(R,o,op,os,o->x,o->y,wx,wy)) return 1;
+    if(!mask_hit_world(R,self,sp,ss,sx,sy,classic,wx,wy)) continue;
+    if( mask_hit_world(R,o,op,os,o->x,o->y,classic,wx,wy)) return 1;
   }
   return 0;
 }
@@ -4266,7 +4271,8 @@ static int point_hits_instance_prec(GmlVM *vm, GmlInstance *o, double px, double
   /* bbox hit; refine with the per-pixel mask when available */
   if(R){ int si=inst_mask_sprite_index(o);
     if(si>=0 && si<R->n_spr){ GmlSprite *s=&R->spr[si];
-      if(!mask_hit_world(R,o,s,si,o->x,o->y,(int)floor(px),(int)floor(py))) return 0; } }
+      if(!mask_hit_world(R,o,s,si,o->x,o->y,vm->win&&vm->win->classic_version,
+                         (int)floor(px),(int)floor(py))) return 0; } }
   return 1;
 }
 static int point_hits_instance(GmlVM *vm, GmlInstance *o, double px, double py, int obj, GmlInstance *skip){
@@ -4403,7 +4409,7 @@ static int shape_hits_instance(GmlVM *vm, GmlInstance *o, int kind, double *p, i
     if(kind==2){ double dx=wx-p[0], dy=wy-p[1]; if(dx*dx+dy*dy>p[2]*p[2]) continue; }
     if(R){ int si=inst_mask_sprite_index(o);
       if(si>=0 && si<R->n_spr){ GmlSprite *s=&R->spr[si];
-        if(!mask_hit_world(R,o,s,si,o->x,o->y,wx,wy)) continue; } }
+        if(!mask_hit_world(R,o,s,si,o->x,o->y,vm->win&&vm->win->classic_version,wx,wy)) continue; } }
     return 1;
   }
   return 0;
@@ -7988,6 +7994,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"audio_get_master_gain")) return vreal(gml_audio_get_master_gain(AU));
     if(!strcmp(nm,"audio_sound_get_gain")) return vreal(gml_audio_sound_get_gain(AU,(int)N(a,n,0)));
     if(!strcmp(nm,"audio_sound_get_pitch")) return vreal(gml_audio_sound_get_pitch(AU,(int)N(a,n,0)));
+    if(!strcmp(nm,"audio_sound_length")||!strcmp(nm,"sound_get_length"))
+      return vreal(gml_audio_sound_length(AU,(int)N(a,n,0)));
     if(!strcmp(nm,"audio_sound_get_track_position")) return vreal(gml_audio_sound_get_track_position(AU,(int)N(a,n,0)));
     if(!strcmp(nm,"audio_set_master_gain")){ gml_audio_set_master_gain(AU,n>=2?N(a,n,1):N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_sound_gain")){ gml_audio_sound_gain(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
