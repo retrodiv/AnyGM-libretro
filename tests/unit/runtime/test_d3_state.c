@@ -330,6 +330,34 @@ static int raster_fixtures(void){
     fprintf(stderr,"software D3 runtime sprite texture mismatch\n");
     return 0;
   }
+  uint8_t *round_rgba=malloc(4);
+  if(!round_rgba){
+    fprintf(stderr,"software runtime alpha fixture allocation mismatch\n");
+    return 0;
+  }
+  round_rgba[0]=round_rgba[1]=round_rgba[2]=0; round_rgba[3]=1;
+  int round_sprite=gml_sprite_append_from_rgba(&render,round_rgba,1,1,0,0,"<runtime-alpha>");
+  if(round_sprite<0){
+    fprintf(stderr,"software runtime alpha fixture creation mismatch\n");
+    return 0;
+  }
+  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  render.classic=1;
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  pixels[10*WIDTH+10]=0xFF4984ACu;
+  gml_draw_sprite_ext(&render,round_sprite,0,10,10,1,1,0,0xFFFFFF,1);
+  if(pixels[10*WIDTH+10]!=0xFF4983ABu){
+    fprintf(stderr,"software classic runtime alpha rounding mismatch\n");
+    return 0;
+  }
+  render.classic=0; memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  pixels[10*WIDTH+10]=0xFF4984ACu;
+  gml_draw_sprite_ext(&render,round_sprite,0,10,10,1,1,0,0xFFFFFF,1);
+  if(pixels[10*WIDTH+10]!=0xFF4883ABu){
+    fprintf(stderr,"software modern runtime alpha rounding changed\n");
+    return 0;
+  }
   for(int i=0;i<4;i++) surface_data->px[i]=0xFFFFFFFFu;
   int depth_sprite=gml_sprite_create_from_surface(&render,surface,0,0,2,2,0,0,0,0);
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));
