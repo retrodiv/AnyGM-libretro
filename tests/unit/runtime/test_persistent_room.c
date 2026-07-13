@@ -269,6 +269,9 @@ int main(void){
       create_order_value&&create_order_value->t==V_REAL?create_order_value->d:-1.0); return 1;
   }
   GmlInstance *created=gml_instance_create(&vm,12,34,0); if(!created)return 1;
+  if(created->id!=100001){
+    fprintf(stderr,"placed instances consumed a dynamic instance id: %u\n",created->id); return 1;
+  }
   vm.cur_self=created;
   GmlVal change_args[2]={vreal(1),vreal(0)};
   (void)gml_builtin_call(&vm,"action_change_object",change_args,2);

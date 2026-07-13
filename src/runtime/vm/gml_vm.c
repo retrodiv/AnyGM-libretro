@@ -4118,6 +4118,10 @@ void gml_room_enter(GmlVM *vm, int room_index){
     uint32_t rid=u32(d,ip+12);
     if(rid>=vm->next_id) vm->next_id=rid+1;
   }
+  /* Placed ids are authored resource data, not allocations from the dynamic-id sequence.
+   * init_inst() still performs all ordinary instance initialization below, so preserve the
+   * already-reserved dynamic id here and restore it once every placed slot exists. */
+  uint32_t next_dynamic_id=vm->next_id;
   /* Room-placed instances are all present before any Create event runs. Some
    * room setup code relies on seeing other already-placed instances. */
   int *room_inst_idx=malloc((cnt?cnt:1)*sizeof(int));
@@ -4129,6 +4133,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
     apply_room_instance_transform(vm,in,ip);
     room_inst_idx[i]=(int)(in-vm->inst);
   }
+  vm->next_id=next_dynamic_id;
   /* Assign placed-instance depths from their type-2 room layers before Create events. */
   {
     uint32_t lcnt=0;
