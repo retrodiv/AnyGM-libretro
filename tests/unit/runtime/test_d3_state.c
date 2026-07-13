@@ -106,6 +106,31 @@ static int raster_fixtures(void){
     }
   }
 
+  {
+    GmlWin win={0};
+    int x=9,y=9,w=9,h=9;
+    win.classic_version=701;
+    if(!gml_classic_present_explicit_port(&win,1,480,432,0,0,160,144,
+                                          &x,&y,&w,&h) ||
+       x!=0 || y!=0 || w!=160 || h!=144){
+      fprintf(stderr,"classic explicit-window port mismatch\n");
+      return 0;
+    }
+    x=y=w=h=9;
+    if(gml_classic_present_explicit_port(&win,0,480,432,0,0,160,144,
+                                         &x,&y,&w,&h) ||
+       x!=9 || y!=9 || w!=9 || h!=9){
+      fprintf(stderr,"implicit classic window changed port\n");
+      return 0;
+    }
+    win.classic_version=0;
+    if(gml_classic_present_explicit_port(&win,1,480,432,5,7,160,144,
+                                         &x,&y,&w,&h)){
+      fprintf(stderr,"modern explicit window used classic port\n");
+      return 0;
+    }
+  }
+
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   gml_part_reset_all(); gml_part_bind_vm(&vm);
