@@ -368,6 +368,27 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,count[size]);
     return;
   }
+  if(kind==6){
+    PType *flash=pt(type); if(!flash) return;
+    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    (void)width; (void)height;
+    double cadence=fmax(30.0/speed,1.0);
+    static const double initial_size[3]={.4,.75,1.2};
+    static const double shrink[3]={-.02,-.03,-.04};
+    static const double lifetime[3]={20,25,30};
+    flash->sprite=-1; flash->shape=4;
+    flash->sz_min=flash->sz_max=initial_size[size]; flash->sz_incr=shrink[size]*cadence; flash->sz_wig=0;
+    flash->xscale=flash->yscale=1;
+    flash->sp_min=flash->sp_max=flash->sp_incr=flash->sp_wig=0;
+    flash->dir_min=flash->dir_max=flash->dir_incr=flash->dir_wig=0;
+    flash->grav_amt=0; flash->grav_dir=270;
+    flash->life_min=flash->life_max=floor(lifetime[size]/cadence+.5);
+    flash->alpha[0]=flash->alpha[1]=flash->alpha[2]=1; flash->nalpha=3;
+    flash->ori_min=0; flash->ori_max=360; flash->ori_incr=flash->ori_wig=0; flash->ori_rel=0;
+    flash->additive=0;
+    gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,1);
+    return;
+  }
   if(kind==10){
     PType *rain=pt(type); if(!rain) return;
     int width,height,speed; effect_room_metrics(&width,&height,&speed);
