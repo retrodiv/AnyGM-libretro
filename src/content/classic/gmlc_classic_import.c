@@ -1070,11 +1070,38 @@ static int emit_action_call(ImportText *text, const char *function_name,
   return text_append(text, ")");
 }
 
+static int action_code_has_open_block_comment(const char *code){
+  enum { ACTION_NORMAL, ACTION_QUOTE, ACTION_LINE_COMMENT, ACTION_BLOCK_COMMENT } state=ACTION_NORMAL;
+  char quote='\0';
+  for(size_t i=0; code && code[i]; ++i){
+    char ch=code[i], next=code[i+1];
+    if(state==ACTION_QUOTE){
+      if(ch=='\\' && next){ ++i; continue; }
+      if(ch==quote) state=ACTION_NORMAL;
+    } else if(state==ACTION_LINE_COMMENT){
+      if(ch=='\n' || ch=='\r') state=ACTION_NORMAL;
+    } else if(state==ACTION_BLOCK_COMMENT){
+      if(ch=='*' && next=='/'){ state=ACTION_NORMAL; ++i; }
+    } else if(ch=='"' || ch=='\''){
+      state=ACTION_QUOTE; quote=ch;
+    } else if(ch=='/' && next=='/'){
+      state=ACTION_LINE_COMMENT; ++i;
+    } else if(ch=='/' && next=='*'){
+      state=ACTION_BLOCK_COMMENT; ++i;
+    }
+  }
+  return state==ACTION_BLOCK_COMMENT;
+}
+
 static int emit_action_code_call(ImportText *text, const char *code,
                                  char **arguments, uint32_t *argument_kinds,
                                  uint32_t used_arguments){
-  if(!text_append(text,"(function(){\n") || !text_append(text,code) ||
-     !text_append(text,"\n})(")) return 0;
+  if(!text_append(text,"(function(){\n") || !text_append(text,code)) return 0;
+  /* Each classic Execute Code action is compiled as a separate unit. An open
+   * block comment therefore ends with that action; close it before appending
+   * the synthetic function boundary used by the structural importer. */
+  if(action_code_has_open_block_comment(code) && !text_append(text,"\n*/")) return 0;
+  if(!text_append(text,"\n})(")) return 0;
   for(uint32_t i=0;i<used_arguments;i++){
     if(i && !text_append(text,",")) return 0;
     if(argument_kinds && argument_kinds[i]==1){

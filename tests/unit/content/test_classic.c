@@ -924,7 +924,7 @@ static int expect_object_import(void){
   fixture_u32(&payload, (unsigned)-10); fixture_u32(&payload, 0); fixture_u32(&payload, (unsigned)-100);
   fixture_u32(&payload, (unsigned)-1); fixture_u32(&payload, 0); /* fields + final event type */
   fixture_u32(&payload, 0); /* Create subtype */
-  fixture_u32(&payload, 400); fixture_u32(&payload, 1);
+  fixture_u32(&payload, 400); fixture_u32(&payload, 2);
   fixture_u32(&payload, 440); fixture_u32(&payload, 1); fixture_u32(&payload, 603);
   fixture_u32(&payload, 7); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
   fixture_u32(&payload, 0); fixture_u32(&payload, 2);
@@ -933,6 +933,16 @@ static int expect_object_import(void){
   for(int i = 0; i < 8; ++i) fixture_u32(&payload, 0);
   fixture_u32(&payload, (unsigned)-1); fixture_u32(&payload, 0); fixture_u32(&payload, 8);
   fixture_string(&payload, "x = 4;");
+  for(int i = 1; i < 8; ++i) fixture_string(&payload, "");
+  fixture_u32(&payload, 0);
+  fixture_u32(&payload, 440); fixture_u32(&payload, 1); fixture_u32(&payload, 603);
+  fixture_u32(&payload, 7); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+  fixture_u32(&payload, 0); fixture_u32(&payload, 2);
+  fixture_string(&payload, ""); fixture_string(&payload, "");
+  fixture_u32(&payload, 1); fixture_u32(&payload, 8);
+  for(int i = 0; i < 8; ++i) fixture_u32(&payload, 0);
+  fixture_u32(&payload, (unsigned)-1); fixture_u32(&payload, 0); fixture_u32(&payload, 8);
+  fixture_string(&payload, "/* disabled action");
   for(int i = 1; i < 8; ++i) fixture_string(&payload, "");
   fixture_u32(&payload, 0);
   fixture_u32(&payload, (unsigned)-1); /* end Create event list */
@@ -951,13 +961,14 @@ static int expect_object_import(void){
   int ok = gmlc_classic_import_objects(&manifest, &project, dir, err, sizeof(err));
   if(!ok) fprintf(stderr, "object import failed: %s\n", err);
   if(ok){
-    char source[64] = {0};
+    char source[256] = {0};
     FILE *file = fopen(project.objects[0].events[0].source_path, "rb");
     size_t got = file ? fread(source, 1, sizeof(source) - 1, file) : 0;
     if(file) fclose(file);
     ok = project.n_objects == 1 && project.objects[0].depth == -10 && project.objects[0].n_events == 1 &&
          project.objects[0].events[0].event_type == 0 && got && strstr(source, "(function(){") &&
-         strstr(source, "x = 4;") && strstr(source, "})()");
+         strstr(source, "x = 4;") && strstr(source, "/* disabled action\n*/\n})()") &&
+         strstr(source, "})()");
     remove(project.objects[0].events[0].source_path);
   }
   for(int i = 0; i < project.n_objects; ++i){
