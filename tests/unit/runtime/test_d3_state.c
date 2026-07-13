@@ -426,6 +426,20 @@ static int raster_fixtures(void){
   }
   render.tpag[0].atlas=0; render.tpag[0].sw=render.tpag[0].sh=2;
   render.tpag[0].bw=render.tpag[0].bh=2; render.bg[0].tpag=0;
+  render.classic=1; gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  for(int i=0;i<4;i++){
+    render.atlas[0].px[i*4]=render.atlas[0].px[i*4+1]=render.atlas[0].px[i*4+2]=192;
+    render.atlas[0].px[i*4+3]=254;
+  }
+  pixels[5*WIDTH+5]=0xFF8F4848u;
+  gml_draw_background_part_ext(&render,0,0,0,2,2,5,5,1,1,0xFFFFFF,1);
+  if(pixels[5*WIDTH+5]!=0xFFC0BFBFu){
+    fprintf(stderr,"software classic atlas fixed-point blend mismatch: %08x\n",pixels[5*WIDTH+5]);
+    return 0;
+  }
+  for(int i=0;i<4;i++)
+    render.atlas[0].px[i*4]=render.atlas[0].px[i*4+1]=render.atlas[0].px[i*4+2]=render.atlas[0].px[i*4+3]=255;
   int flipped_sprite=render.n_spr++;
   GmlSprite *grown_sprites=realloc(render.spr,(size_t)render.n_spr*sizeof(*render.spr));
   if(!grown_sprites){
