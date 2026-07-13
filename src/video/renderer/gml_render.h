@@ -287,6 +287,8 @@ int  gml_sprite_append_from_rgba(GmlRender *r, uint8_t *rgba, int w, int h, int 
 int  gml_sprite_replace_from_rgba_frames(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig);
 int  gml_sprite_append_from_rgba_frames(GmlRender *r, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig, const char *name);
 void gml_render_clear_runtime_sprites(GmlRender *r);
+void gml_classic_present_adjust(const GmlWin *win, int source_w, int source_h,
+                                int target_w, int target_h, int *target_x, int *target_y);
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double x, double y, double w, double h, uint32_t blend, double alpha);
 int  gml_sprite_exists(GmlRender *r, int sprite);
 int  gml_sprite_duplicate(GmlRender *r, int sprite);
