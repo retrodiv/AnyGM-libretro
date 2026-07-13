@@ -107,7 +107,8 @@ int main(void){
   FILE *startup_file=fdopen(startup_fd,"wb");
   const char startup_source[]=
     "global.startup_value = fixture_constant; "
-    "global.view_fixture_scalar = 7; global.background_fixture_scalar = 9;\n";
+    "global.view_fixture_scalar = 7; global.background_fixture_scalar = 9; "
+    "global.fixture_orange = c_orange;\n";
   if(!startup_file || fwrite(startup_source,1,sizeof(startup_source)-1,startup_file)!=sizeof(startup_source)-1 ||
      fclose(startup_file)!=0){ unlink(startup); return 1; }
   project.startup_code_path=startup;
@@ -238,9 +239,11 @@ int main(void){
   GmlVal *startup_value=gml_varmap_get(&vm.globals,"startup_value");
   GmlVal *view_fixture_scalar=gml_varmap_get(&vm.globals,"view_fixture_scalar");
   GmlVal *background_fixture_scalar=gml_varmap_get(&vm.globals,"background_fixture_scalar");
+  GmlVal *fixture_orange=gml_varmap_get(&vm.globals,"fixture_orange");
   if(!startup_value || startup_value->t!=V_REAL || startup_value->d!=42 ||
      !view_fixture_scalar || view_fixture_scalar->t!=V_REAL || view_fixture_scalar->d!=7 ||
-     !background_fixture_scalar || background_fixture_scalar->t!=V_REAL || background_fixture_scalar->d!=9){
+     !background_fixture_scalar || background_fixture_scalar->t!=V_REAL || background_fixture_scalar->d!=9 ||
+     !fixture_orange || fixture_orange->t!=V_REAL || fixture_orange->d!=0x40A0FF){
     fprintf(stderr,"startup code or project constant did not run\n"); return 1;
   }
   gml_room_enter(&vm,0);

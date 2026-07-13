@@ -565,7 +565,7 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   if(!strcmp(name,"c_gray") || !strcmp(name,"c_grey")){ *out=0x808080; return 1; }
   if(!strcmp(name,"c_ltgray") || !strcmp(name,"c_ltgrey") || !strcmp(name,"c_silver")){ *out=0xC0C0C0; return 1; }
   if(!strcmp(name,"c_dkgray") || !strcmp(name,"c_dkgrey")){ *out=0x404040; return 1; }
-  if(!strcmp(name,"c_orange")){ *out=0x0040FF; return 1; }
+  if(!strcmp(name,"c_orange")){ *out=0x40A0FF; return 1; }
   if(!strcmp(name,"c_white")){ *out=16777215; return 1; }
   if(!strcmp(name,"c_lime")){ *out=65280; return 1; }
   if(!strcmp(name,"mb_left")){ *out=1; return 1; }

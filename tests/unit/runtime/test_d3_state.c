@@ -303,6 +303,23 @@ static int raster_fixtures(void){
     fprintf(stderr,"software modern negative sprite scale anchor mismatch\n");
     return 0;
   }
+  render.classic=1;
+  render.tpag[0].tx=render.tpag[0].ty=1;
+  render.tpag[0].bw=render.tpag[0].bh=4;
+  memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  gml_draw_background_tiled(&render,0,0,0,1,1);
+  if((pixels[1*WIDTH+1]&0x00FFFFFFu)==0 ||
+     (pixels[2*WIDTH+2]&0x00FFFFFFu)==0 ||
+     (pixels[1*WIDTH+5]&0x00FFFFFFu)==0 ||
+     (pixels[2*WIDTH+6]&0x00FFFFFFu)==0 ||
+     pixels[1*WIDTH+3]!=0 || pixels[1*WIDTH+4]!=0){
+    fprintf(stderr,"software trimmed tiled background period mismatch\n");
+    return 0;
+  }
+  render.classic=0;
+  render.tpag[0].tx=render.tpag[0].ty=0;
+  render.tpag[0].bw=render.tpag[0].bh=2;
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
