@@ -320,6 +320,20 @@ int main(void){
       created->direction,vm.rng_classic_state); return 1;
   }
   created->direction=created->speed=created->hspeed=created->vspeed=0;
+  vm.cur_self=created;
+  GmlVal cardinal_motion[2]={vreal(450),vreal(1)};
+  (void)gml_builtin_call(&vm,"motion_set",cardinal_motion,2);
+  if(created->direction!=90 || created->hspeed!=0 || created->vspeed!=-1){
+    fprintf(stderr,"classic cardinal motion normalization mismatch: direction=%.17g velocity=(%.17g,%.17g)\n",
+      created->direction,created->hspeed,created->vspeed); return 1;
+  }
+  GmlVal cardinal_target[3]={vreal(created->x),vreal(created->y+10),vreal(1)};
+  (void)gml_builtin_call(&vm,"move_towards_point",cardinal_target,3);
+  if(created->direction!=270 || created->hspeed!=0 || created->vspeed!=1){
+    fprintf(stderr,"classic cardinal target motion mismatch: direction=%.17g velocity=(%.17g,%.17g)\n",
+      created->direction,created->hspeed,created->vspeed); return 1;
+  }
+  created->direction=created->speed=created->hspeed=created->vspeed=0;
   GmlVal distance_arg=vreal(0);
   GmlVal object_distance=gml_builtin_call(&vm,"distance_to_object",&distance_arg,1);
   distance_arg=vreal((double)created->id);

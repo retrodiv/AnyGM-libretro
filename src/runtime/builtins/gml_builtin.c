@@ -6100,12 +6100,31 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* move_towards_point(x,y,sp): head toward (x,y) at speed sp (sets direction+speed → hspeed/vspeed). */
   if(!strcmp(nm,"move_towards_point")){ GmlInstance*s=vm->cur_self; if(s){
       double dir=atan2(-(N(a,n,1)-s->y),N(a,n,0)-s->x)*180.0/M_PI; double sp=N(a,n,2);
-      s->direction=dir; s->speed=sp; s->hspeed=sp*cos(dir*M_PI/180.0); s->vspeed=-sp*sin(dir*M_PI/180.0); }
+      if(vm->win && vm->win->classic_version){
+        dir=fmod(dir,360.0); if(dir<0) dir+=360.0;
+      }
+      s->direction=dir; s->speed=sp;
+      s->hspeed=sp*cos(dir*M_PI/180.0); s->vspeed=-sp*sin(dir*M_PI/180.0);
+      if(vm->win && vm->win->classic_version){
+        double rounded=round(s->hspeed);
+        if(fabs(rounded-s->hspeed)<0.0001) s->hspeed=rounded;
+        rounded=round(s->vspeed);
+        if(fabs(rounded-s->vspeed)<0.0001) s->vspeed=rounded;
+      } }
     return vreal(0); }
   if(!strcmp(nm,"motion_set")){ GmlInstance*s=vm->cur_self; if(s){
       s->direction=N(a,n,0); s->speed=N(a,n,1);
+      if(vm->win && vm->win->classic_version){
+        s->direction=fmod(s->direction,360.0); if(s->direction<0) s->direction+=360.0;
+      }
       s->hspeed=s->speed*cos(s->direction*M_PI/180.0);
-      s->vspeed=-s->speed*sin(s->direction*M_PI/180.0); }
+      s->vspeed=-s->speed*sin(s->direction*M_PI/180.0);
+      if(vm->win && vm->win->classic_version){
+        double rounded=round(s->hspeed);
+        if(fabs(rounded-s->hspeed)<0.0001) s->hspeed=rounded;
+        rounded=round(s->vspeed);
+        if(fabs(rounded-s->vspeed)<0.0001) s->vspeed=rounded;
+      } }
     return vreal(0); }
   if(!strcmp(nm,"motion_add")){ GmlInstance*s=vm->cur_self; if(s){
       double dir=N(a,n,0)*M_PI/180.0, amount=N(a,n,1);

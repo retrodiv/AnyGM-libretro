@@ -309,10 +309,27 @@ static void log_val_simple(GmlVal v){
 static void motion_from_components(GmlInstance *in){
   in->speed=hypot(in->hspeed,in->vspeed);
   in->direction=atan2(-in->vspeed,in->hspeed)*180.0/M_PI;
+  if(g_cur_vm && g_cur_vm->win && g_cur_vm->win->classic_version){
+    in->direction=fmod(in->direction,360.0);
+    if(in->direction<0) in->direction+=360.0;
+    double rounded=round(in->direction);
+    if(fabs(rounded-in->direction)<0.0001) in->direction=rounded;
+    if(in->direction>=360.0) in->direction-=360.0;
+  }
 }
 static void motion_from_speed_dir(GmlInstance *in){
+  if(g_cur_vm && g_cur_vm->win && g_cur_vm->win->classic_version){
+    in->direction=fmod(in->direction,360.0);
+    if(in->direction<0) in->direction+=360.0;
+  }
   in->hspeed=in->speed*cos(in->direction*M_PI/180.0);
   in->vspeed=-in->speed*sin(in->direction*M_PI/180.0);
+  if(g_cur_vm && g_cur_vm->win && g_cur_vm->win->classic_version){
+    double rounded=round(in->hspeed);
+    if(fabs(rounded-in->hspeed)<0.0001) in->hspeed=rounded;
+    rounded=round(in->vspeed);
+    if(fabs(rounded-in->vspeed)<0.0001) in->vspeed=rounded;
+  }
 }
 
 /* ---------------- builtin instance variables ---------------- */
