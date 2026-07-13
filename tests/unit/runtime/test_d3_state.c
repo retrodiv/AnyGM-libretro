@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
 #include "gml_vm.h"
 #include "gml_render.h"
+#include "gml_particle.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -36,6 +37,23 @@ static int raster_fixtures(void){
   render.color=0xFFFFFFu; render.alpha=1; render.alphablend=1;
   render.next_surface_id=1;
   vm.render=&render;
+
+  memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  gml_part_reset_all(); gml_part_bind_vm(&vm);
+  gml_effect_create(1,10,0,0,0,0xFFFF00);
+  for(int i=0;i<5;i++) gml_part_update_all();
+  gml_part_system_draw_all(&render);
+  int rain_pixels=0,rain_far_pixels=0,rain_alpha_pixels=0;
+  for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++) if(pixels[y*WIDTH+x]&0x00FFFFFFu){
+    rain_pixels++; if(x>8) rain_far_pixels++;
+    if(pixels[y*WIDTH+x]>>24) rain_alpha_pixels++;
+  }
+  if(rain_pixels<4 || rain_far_pixels<4 || rain_alpha_pixels!=rain_pixels){
+    fprintf(stderr,"software rain effect distribution mismatch\n");
+    return 0;
+  }
+  gml_part_reset_all();
 
   gml_d3_reset();
   memset(pixels,0,sizeof(pixels));

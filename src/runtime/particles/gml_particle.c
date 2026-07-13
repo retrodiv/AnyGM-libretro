@@ -10,6 +10,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
+#include <limits.h>
 #include "gml_render.h"
 #include "gml_particle.h"
 #include "gml_vm.h"
@@ -239,6 +240,9 @@ void gml_part_particles_create_color(int sysid,double x,double y,int type,uint32
 
 void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t color){
   int layer=above?1:0; if(kind<0)kind=0; if(kind>11)kind=11; if(size<0)size=0; if(size>2)size=2;
+  if(getenv("GML_LOG_PART"))
+    fprintf(stderr,"[part] effect kind=%d pos=(%.1f,%.1f) size=%d color=%06x layer=%d\n",
+            kind,x,y,size,color&0xFFFFFF,layer);
   if(!g_effect_sys[layer]){
     g_effect_sys[layer]=gml_part_system_create();
     gml_part_system_depth(g_effect_sys[layer],above?-100000.0:100000.0);
@@ -257,6 +261,35 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     else if(kind==10){ gml_part_type_speed(type,4*scale,7*scale,0,0); gml_part_type_direction(type,250,290,0,0); }
     else if(kind==11){ gml_part_type_speed(type,.3*scale,1.2*scale,0,0); gml_part_type_direction(type,240,300,0,0); }
     else gml_part_type_speed(type,.5*scale,2.5*scale,-.03,0);
+  }
+  if(kind==10){
+    PType *rain=pt(type); if(!rain) return;
+    int width=640,height=480,speed=30;
+    if(g_particle_vm){
+      GmlRoom room;
+      if(g_particle_vm->win && gml_room_get(g_particle_vm->win,g_particle_vm->room_index,&room)==0){
+        if(room.width>0) width=room.width;
+        if(room.height>0) height=room.height;
+        if(room.speed>0) speed=room.speed;
+      } else if(g_particle_vm->render){
+        GmlRender *render=(GmlRender*)g_particle_vm->render;
+        if(render->fbw>0) width=render->fbw;
+        if(render->fbh>0) height=render->fbh;
+      }
+    }
+    double cadence=fmax(30.0/speed,1.0);
+    rain->shape=3;
+    rain->sz_min=.2; rain->sz_max=.3; rain->sz_incr=rain->sz_wig=0;
+    rain->sp_min=rain->sp_max=7*cadence; rain->sp_incr=rain->sp_wig=0;
+    rain->dir_min=rain->dir_max=260; rain->dir_incr=rain->dir_wig=0;
+    rain->ori_min=rain->ori_max=rain->ori_incr=rain->ori_wig=0; rain->ori_rel=1;
+    rain->alpha[0]=rain->alpha[1]=rain->alpha[2]=.4; rain->nalpha=3;
+    rain->life_min=rain->life_max=fmax(1.0,floor(.2*height/cadence+.5));
+    int number=size==0?2:(size==1?5:9);
+    PSys *system=ps(g_effect_sys[layer]);
+    for(int i=0;system && i<number;i++)
+      sys_spawn(system,prnd()*width*1.2,-30+floor(prnd()*20),type,1,(int)(color&0xFFFFFF));
+    return;
   }
   int number=size==0?8:(size==1?16:28); if(kind==10||kind==11) number*=2;
   gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,number);
@@ -332,7 +365,7 @@ static void plot_square(GmlRender *r, int cx, int cy, int half, uint32_t col, do
   if(x0<0)x0=0; if(y0<0)y0=0; if(x1>r->fbw)x1=r->fbw; if(y1>r->fbh)y1=r->fbh;
   if(x1<=x0 || y1<=y0) return;
   int ia=(int)(a*255+0.5), iia=255-ia;
-  uint32_t src=((uint32_t)br<<16)|((uint32_t)bg<<8)|(uint32_t)bb;
+  uint32_t src=0xFF000000u|((uint32_t)br<<16)|((uint32_t)bg<<8)|(uint32_t)bb;
   if(ia>=255 || !r->alphablend){
     int n=x1-x0;
     for(int y=y0;y<y1;y++){ uint32_t *dp=r->fb+(size_t)y*r->fbw+x0;
@@ -341,21 +374,25 @@ static void plot_square(GmlRender *r, int cx, int cy, int half, uint32_t col, do
   }
   int pixels=(x1-x0)*(y1-y0);
   if(pixels>=64){
-    uint8_t lr[256], lg[256], lb[256];
+    uint8_t lr[256], lg[256], lb[256], la[256];
     for(int d=0; d<256; d++){
       lr[d]=(uint8_t)((br*ia+d*iia)/255);
       lg[d]=(uint8_t)((bg*ia+d*iia)/255);
       lb[d]=(uint8_t)((bb*ia+d*iia)/255);
+      la[d]=(uint8_t)(ia+(d*iia)/255);
     }
     for(int y=y0;y<y1;y++){ uint32_t *dp=r->fb+(size_t)y*r->fbw;
       for(int x=x0;x<x1;x++){ uint32_t dv=dp[x];
-        dp[x]=((uint32_t)lr[(dv>>16)&0xFF]<<16)|((uint32_t)lg[(dv>>8)&0xFF]<<8)|(uint32_t)lb[dv&0xFF]; } }
+        dp[x]=((uint32_t)la[(dv>>24)&0xFF]<<24)|((uint32_t)lr[(dv>>16)&0xFF]<<16)|
+              ((uint32_t)lg[(dv>>8)&0xFF]<<8)|(uint32_t)lb[dv&0xFF]; } }
     return;
   }
   for(int y=y0;y<y1;y++){ uint32_t *dp=r->fb+(size_t)y*r->fbw;
     for(int x=x0;x<x1;x++){ uint32_t dv=dp[x];
       int dr=(dv>>16)&0xFF,dg=(dv>>8)&0xFF,db=dv&0xFF;
-      dp[x]=(((br*ia+dr*iia)/255)<<16)|(((bg*ia+dg*iia)/255)<<8)|((bb*ia+db*iia)/255); } }
+      int da=(dv>>24)&0xFF,oa=ia+(da*iia)/255;
+      dp[x]=((uint32_t)oa<<24)|(((br*ia+dr*iia)/255)<<16)|
+            (((bg*ia+dg*iia)/255)<<8)|((bb*ia+db*iia)/255); } }
 }
 
 static void plot_circle_shape(GmlRender *r,double cx,double cy,double xs,double ys,
@@ -375,6 +412,21 @@ static void plot_circle_shape(GmlRender *r,double cx,double cy,double xs,double 
     if(coverage<=0) continue;
     if(coverage>1) coverage=1;
     plot_square(r,x,y,0,color,alpha*coverage);
+  }
+}
+
+static void plot_line_shape(GmlRender *r,double cx,double cy,double size,double angle,
+                            uint32_t color,double alpha){
+  double length=64.0*fabs(size);
+  if(!r || length<.5 || alpha<=0) return;
+  double rad=DEG2RAD(angle), dx=cos(rad)*length, dy=-sin(rad)*length;
+  int steps=(int)ceil(fmax(fabs(dx),fabs(dy))); if(steps<1) steps=1;
+  double x0=cx-dx*.5,y0=cy-dy*.5;
+  int last_x=INT_MIN,last_y=INT_MIN;
+  for(int step=0;step<=steps;step++){
+    int x=(int)floor(x0+dx*step/steps+.5),y=(int)floor(y0+dy*step/steps+.5);
+    if(x==last_x && y==last_y) continue;
+    plot_square(r,x,y,0,color,alpha); last_x=x; last_y=y;
   }
 }
 
@@ -415,6 +467,9 @@ void gml_part_system_drawit(GmlRender *r, int id){
       if(t->shape==1 || t->shape==5 || t->shape==6 || t->shape==7){
         plot_circle_shape(r,p->x-r->cam_x,p->y-r->cam_y,
                           p->size*t->xscale,p->size*t->yscale,col,alpha,t->shape==5||t->shape==6);
+      } else if(t->shape==3){
+        double angle=p->ori+(t->ori_rel?p->dir:0);
+        plot_line_shape(r,p->x-r->cam_x,p->y-r->cam_y,p->size,angle,col,alpha);
       } else if(!gml_d3_draw_rectangle_2d(r,p->x-half,p->y-half,p->x+half+1,p->y+half+1,col,alpha,0))
         plot_square(r,cx,cy,half,col,alpha);
     }

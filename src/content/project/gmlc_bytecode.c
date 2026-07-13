@@ -571,6 +571,12 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   if(!strcmp(name,"mb_left")){ *out=1; return 1; }
   if(!strcmp(name,"bm_normal")){ *out=0; return 1; }
   if(!strcmp(name,"bm_subtract")){ *out=3; return 1; }
+  static const char *effect_kinds[]={
+    "ef_explosion","ef_ring","ef_ellipse","ef_firework","ef_smoke","ef_smokeup",
+    "ef_star","ef_spark","ef_flare","ef_cloud","ef_rain","ef_snow"
+  };
+  for(int i=0;i<(int)(sizeof(effect_kinds)/sizeof(*effect_kinds));i++)
+    if(!strcmp(name,effect_kinds[i])){ *out=i; return 1; }
   if(!strcmp(name,"pi")){ *out=M_PI; return 1; }
   if(!strcmp(name,"fa_left") || !strcmp(name,"fa_top")){ *out=0; return 1; }
   if(!strcmp(name,"fa_center") || !strcmp(name,"fa_middle")){ *out=1; return 1; }
