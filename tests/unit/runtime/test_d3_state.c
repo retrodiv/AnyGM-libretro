@@ -38,6 +38,40 @@ static int raster_fixtures(void){
   render.next_surface_id=1;
   vm.render=&render;
 
+  {
+    GmlWin win={0};
+    uint32_t source[2]={0xFFFF0000u,0xFF0000FFu};
+    uint32_t target[3]={0,0,0};
+    render.app_surface=source; render.app_w=2; render.app_h=1;
+    render.app_surface_opaque=1; render.classic=1; render.win=&win;
+    win.classic_version=800; win.classic_scaling=-1;
+    gml_render_begin(&render,target,3,1,0,0);
+    gml_render_set_pending_underlay(&render,0,0,3,1);
+    gml_render_flush_pending_underlay(&render);
+    if(target[0]!=0xFFFF0000u || target[1]!=0xFF0000FFu || target[2]!=0xFF0000FFu){
+      fprintf(stderr,"classic centre-sampled presentation mismatch\n");
+      return 0;
+    }
+    memset(target,0,sizeof(target)); render.classic=0;
+    gml_render_begin(&render,target,3,1,0,0);
+    gml_render_set_pending_underlay(&render,0,0,3,1);
+    gml_render_flush_pending_underlay(&render);
+    if(target[0]!=0xFFFF0000u || target[1]!=0xFFFF0000u || target[2]!=0xFF0000FFu){
+      fprintf(stderr,"modern leading-edge presentation changed\n");
+      return 0;
+    }
+    memset(target,0,sizeof(target)); render.classic=1; win.classic_scaling=0;
+    gml_render_begin(&render,target,3,1,0,0);
+    gml_render_set_pending_underlay(&render,0,0,3,1);
+    gml_render_flush_pending_underlay(&render);
+    if(target[0]!=0xFFFF0000u || target[1]!=0xFFFF0000u || target[2]!=0xFF0000FFu){
+      fprintf(stderr,"classic full-scale presentation changed\n");
+      return 0;
+    }
+    render.app_surface=NULL; render.app_w=render.app_h=0; render.classic=0; render.win=NULL;
+    win.classic_version=0; win.classic_scaling=0;
+  }
+
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   gml_part_reset_all(); gml_part_bind_vm(&vm);
