@@ -39,6 +39,24 @@ static int raster_fixtures(void){
   vm.render=&render;
 
   {
+    GmlWin settings={0};
+    GmlRender initialized;
+    settings.classic_version=800;
+    settings.classic_interpolate=1;
+    if(gml_render_init(&initialized,&settings)!=0 || !initialized.interp){
+      fprintf(stderr,"classic texture interpolation setting was ignored\n");
+      return 0;
+    }
+    gml_render_free(&initialized);
+    settings.classic_version=0;
+    if(gml_render_init(&initialized,&settings)!=0 || initialized.interp){
+      fprintf(stderr,"classic texture interpolation leaked into modern content\n");
+      return 0;
+    }
+    gml_render_free(&initialized);
+  }
+
+  {
     GmlWin win={0};
     win.classic_version=800;
     vm.win=&win;
