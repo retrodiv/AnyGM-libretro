@@ -33,6 +33,7 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 
 int main(void){
   GmlcProject project; GmlcObject objects[3]; GmlcRoom rooms[2];
+  GmlcScript scripts[1]; char *script_order[1];
   GmlcRoomInstance placed_instance;
   int room_order[2]={0,1};
   GmlcObjectEvent object_events[22];
@@ -42,10 +43,15 @@ int main(void){
   char included_name[64];
   GmlcProjectConstant constant={(char*)"fixture_constant",(char*)"6*7"};
   memset(&project,0,sizeof(project)); memset(objects,0,sizeof(objects)); memset(rooms,0,sizeof(rooms));
+  memset(scripts,0,sizeof(scripts));
   memset(&placed_instance,0,sizeof(placed_instance));
   memset(object_events,0,sizeof(object_events)); memset(&trigger,0,sizeof(trigger)); memset(&included,0,sizeof(included));
   project.name="persistent-room-fixture"; project.objects=objects; project.n_objects=3;
   project.classic_version=800;
+  scripts[0].id=scripts[0].name=(char*)"script_implicit_result";
+  script_order[0]=scripts[0].id;
+  project.scripts=scripts; project.n_scripts=project.cap_scripts=1;
+  project.script_order_ids=script_order; project.n_script_order=1;
   project.constants=&constant; project.n_constants=project.cap_constants=1;
   project.triggers=&trigger; project.n_triggers=project.cap_triggers=1;
   snprintf(included_name,sizeof(included_name),"gml-included-%ld.dat",(long)getpid());
@@ -105,6 +111,16 @@ int main(void){
   if(!startup_file || fwrite(startup_source,1,sizeof(startup_source)-1,startup_file)!=sizeof(startup_source)-1 ||
      fclose(startup_file)!=0){ unlink(startup); return 1; }
   project.startup_code_path=startup;
+  char implicit_script[]="/tmp/gml-implicit-script-XXXXXX";
+  int implicit_script_fd=mkstemp(implicit_script); if(implicit_script_fd<0)return 1;
+  FILE *implicit_script_file=fdopen(implicit_script_fd,"wb");
+  const char implicit_script_source[]=
+    "if (argument0 >= 0) instance_exists(argument0); "
+    "else global.implicit_assignment = 42;\n";
+  if(!implicit_script_file ||
+     fwrite(implicit_script_source,1,sizeof(implicit_script_source)-1,implicit_script_file)!=sizeof(implicit_script_source)-1 ||
+     fclose(implicit_script_file)!=0)return 1;
+  scripts[0].source_path=implicit_script;
   char condition[]="/tmp/gml-trigger-condition-XXXXXX"; int condition_fd=mkstemp(condition); if(condition_fd<0)return 1;
   FILE *condition_file=fdopen(condition_fd,"wb"); const char condition_source[]="return (global.startup_value == 42);\n";
   if(!condition_file || fwrite(condition_source,1,sizeof(condition_source)-1,condition_file)!=sizeof(condition_source)-1 || fclose(condition_file)!=0)return 1;
@@ -228,6 +244,20 @@ int main(void){
     fprintf(stderr,"startup code or project constant did not run\n"); return 1;
   }
   gml_room_enter(&vm,0);
+  int implicit_code=gml_code_index_by_name(&win,"gml_Script_script_implicit_result");
+  GmlVal implicit_arg=vreal(2);
+  GmlVal implicit_result=implicit_code>=0?
+    gml_vm_run_code(&vm,implicit_code,NULL,NULL,&implicit_arg,1):vreal(0);
+  if(implicit_code<0 || implicit_result.t!=V_REAL || implicit_result.d!=1){
+    fprintf(stderr,"classic script implicit result mismatch: code=%d result=%.0f\n",
+      implicit_code,implicit_result.t==V_REAL?implicit_result.d:-1.0); return 1;
+  }
+  implicit_arg=vreal(-1);
+  implicit_result=gml_vm_run_code(&vm,implicit_code,NULL,NULL,&implicit_arg,1);
+  if(implicit_result.t!=V_REAL || implicit_result.d!=42){
+    fprintf(stderr,"classic script implicit assignment result mismatch: %.0f\n",
+      implicit_result.t==V_REAL?implicit_result.d:-1.0); return 1;
+  }
   GmlVal *create_order_value=gml_varmap_get(&vm.globals,"create_order");
   if(!create_order_value || create_order_value->t!=V_REAL || create_order_value->d!=12){
     fprintf(stderr,"classic instance/Create order mismatch: %.0f\n",
@@ -506,7 +536,7 @@ int main(void){
     global_array_value(&vm,"background_x",0),global_array_value(&vm,"view_xview",0),
     room_speed&&room_speed->t==V_REAL?room_speed->d:-1,vm.n_tile_mut,
     vm.n_tile_mut?vm.tile_mut[0].depth:-1,vm.n_tile_mut?vm.tile_mut[0].dx:0,vm.n_tile_mut?vm.tile_mut[0].dy:0);
-  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
+  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
   for(int i=0;i<2;i++) unlink(key_files[i]);
   for(int i=0;i<2;i++) unlink(mouse_files[i]);

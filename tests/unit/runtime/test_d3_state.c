@@ -263,6 +263,46 @@ static int raster_fixtures(void){
   }
   render.tpag[0].atlas=0; render.tpag[0].sw=render.tpag[0].sh=2;
   render.tpag[0].bw=render.tpag[0].bh=2; render.bg[0].tpag=0;
+  int flipped_sprite=render.n_spr++;
+  GmlSprite *grown_sprites=realloc(render.spr,(size_t)render.n_spr*sizeof(*render.spr));
+  if(!grown_sprites){
+    fprintf(stderr,"software sprite flip allocation mismatch\n");
+    return 0;
+  }
+  render.spr=grown_sprites;
+  GmlSprite *flipped=&render.spr[flipped_sprite];
+  memset(flipped,0,sizeof(*flipped));
+  flipped->w=flipped->h=2; flipped->n_frames=1;
+  flipped->frame=malloc(sizeof(*flipped->frame));
+  if(!flipped->frame){
+    fprintf(stderr,"software sprite flip frame allocation mismatch\n");
+    return 0;
+  }
+  flipped->frame[0]=0;
+  render.classic=1;
+  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  gml_draw_sprite_ext(&render,flipped_sprite,0,20,20,-1,1,0,0xFFFFFF,1);
+  gml_draw_sprite_ext(&render,flipped_sprite,0,30,30,1,-1,0,0xFFFFFF,1);
+  if((pixels[20*WIDTH+18]&0x00FFFFFFu)==0 ||
+     (pixels[20*WIDTH+19]&0x00FFFFFFu)==0 || pixels[20*WIDTH+20]!=0 ||
+     (pixels[28*WIDTH+30]&0x00FFFFFFu)==0 ||
+     (pixels[29*WIDTH+30]&0x00FFFFFFu)==0 || pixels[30*WIDTH+30]!=0){
+    fprintf(stderr,"software negative sprite scale anchor mismatch\n");
+    return 0;
+  }
+  render.classic=0;
+  memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  gml_draw_sprite_ext(&render,flipped_sprite,0,20,20,-1,1,0,0xFFFFFF,1);
+  gml_draw_sprite_ext(&render,flipped_sprite,0,30,30,1,-1,0,0xFFFFFF,1);
+  if((pixels[20*WIDTH+19]&0x00FFFFFFu)==0 ||
+     (pixels[20*WIDTH+20]&0x00FFFFFFu)==0 || pixels[20*WIDTH+18]!=0 ||
+     (pixels[29*WIDTH+30]&0x00FFFFFFu)==0 ||
+     (pixels[30*WIDTH+30]&0x00FFFFFFu)==0 || pixels[28*WIDTH+30]!=0){
+    fprintf(stderr,"software modern negative sprite scale anchor mismatch\n");
+    return 0;
+  }
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);

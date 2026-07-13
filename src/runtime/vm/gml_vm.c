@@ -1951,6 +1951,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   struct { GmlArr *arr; int idx; int base; } aref[16]; int aref_n=0;
   uint32_t pc=start;
   GmlVal ret=vreal(0);
+  int classic_implicit_return=w->classic_version && w->code[ci].name &&
+    !strncmp(w->code[ci].name,"gml_Script_",11);
   /* with-statement (pushenv/popenv) loop frames */
   struct { GmlInstance **list; int n, idx; GmlInstance *ss, *so; } withstk[32]; int withsp=0;
   /* string GC: track malloc'd strings so they can be freed at scope exit */
@@ -2136,6 +2138,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             }
           }
           GC_PERSIST(val);
+          if(classic_implicit_return) ret=val;
           if(t) array_set_inst_field_h(vm,t,nm,nh,idx,val);
           else array_set_h(vm,&locals,(int)asnum(itv),nm,nh,idx,val);
         } else if(in.reftype==0x80){ /* StackTop instance.var. GMS quirk: the value/instance push
@@ -2157,12 +2160,14 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
              iv=sp>0?stk[--sp]:vreal(0);
            }
            GC_PERSIST(val);
+           if(classic_implicit_return) ret=val;
            GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(t,nm,nh,val);
         } else {
           if(in.inst==0 && in.reftype==0xA0 && prev_conv_v_i32){
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
             GmlVal v=sp>0?stk[--sp]:vreal(0);
             GC_PERSIST(v);
+            if(classic_implicit_return) ret=v;
             GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(t,nm,nh,v);
             break;
           }
@@ -2175,10 +2180,16 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             GmlVal iv=sp>0?stk[--sp]:vreal(0); GC_PERSIST(v);
             GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(t,nm,nh,v); }
           else { GC_PERSIST(v); var_set_h(vm,in.inst,nm,nh,v); }
+          if(classic_implicit_return) ret=v;
         }
         break;
       }
-      case OP_POPZ: if(sp>0) sp--; break;
+      case OP_POPZ:
+        if(sp>0){
+          if(classic_implicit_return) ret=stk[sp-1];
+          sp--;
+        }
+        break;
       case OP_DUP: {
         /* Use the low-word size parameter to duplicate the top extra+1 stack slots. */
         /* GMS2.3 DUP-SWAP (method call `obj.method(args)`): non-zero HIGH byte in the operand (0x88xx),
@@ -2342,7 +2353,10 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         break;
       }
       case OP_RET: ret = sp>0? stk[--sp]:vreal(0); if(use_cache) ip=cached_n; else pc=end; continue;
-      case OP_EXIT: ret=vreal(0); if(use_cache) ip=cached_n; else pc=end; continue;
+      case OP_EXIT:
+        if(!classic_implicit_return) ret=vreal(0);
+        if(use_cache) ip=cached_n; else pc=end;
+        continue;
       case OP_PUSHENV:{ /* with(target): pop the target, iterate matching instances */
         GmlVal tv = sp>0? stk[--sp] : vreal(0);
         /* For the StackTop environment form, consume the -9 sentinel and the target below it. */
