@@ -363,6 +363,23 @@ int main(void){
   if(created->x!=3){
     fprintf(stderr,"move_contact_solid did not stop before a solid: x=%.0f\n",created->x); return 1;
   }
+  created->x=4;
+  (void)gml_builtin_call(&vm,"move_contact_solid",contact_solid_args,2);
+  if(created->x!=4){
+    fprintf(stderr,"move_contact_solid moved an initially overlapping instance: x=%.0f\n",created->x); return 1;
+  }
+  contact->solid=0;
+  (void)gml_builtin_call(&vm,"move_contact",&contact_direction,1);
+  if(created->x!=4){
+    fprintf(stderr,"move_contact moved an initially overlapping instance: x=%.0f\n",created->x); return 1;
+  }
+  created->x=0;
+  GmlVal fractional_contact_args[2]={vreal(0),vreal(4.6)};
+  (void)gml_builtin_call(&vm,"move_contact_solid",fractional_contact_args,2);
+  if(created->x!=5){
+    fprintf(stderr,"move_contact_solid did not round a positive maximum distance: x=%.0f\n",created->x); return 1;
+  }
+  contact->solid=1;
   GmlVal potential_settings[4]={vreal(30),vreal(10),vreal(3),vreal(1)};
   (void)gml_builtin_call(&vm,"mp_potential_settings",potential_settings,4);
   created->x=0; created->y=100; created->direction=0; contact->x=5; contact->y=100;

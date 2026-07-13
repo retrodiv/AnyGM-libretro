@@ -4216,38 +4216,6 @@ static int instance_region_hit(GmlVM *vm, GmlInstance *o, double rx, double ry, 
     return bbox_overlap(l,t,r,b,rl,rt,rr,rb);
   return o->x>=rl && o->x<=rr && o->y>=rt && o->y<=rb;
 }
-static void snap_contact_axis(GmlVM *vm, GmlInstance *s, double dx, double dy){
-  double nx=s->x, ny=s->y;
-  if(fabs(dx)<1e-9 && fabs(dy)>0.999999)
-    ny = dy>0 ? floor(s->y+1e-9) : ceil(s->y-1e-9);
-  else if(fabs(dy)<1e-9 && fabs(dx)>0.999999)
-    nx = dx>0 ? floor(s->x+1e-9) : ceil(s->x-1e-9);
-  else
-    return;
-  if(!collision_at(vm,nx,ny,0,1)){ s->x=nx; s->y=ny; gml_colgrid_touch(s); }
-}
-static int resolve_landing_overlap(GmlVM *vm, GmlInstance *s, int md){
-  if(s->vspeed<=0) return 0;
-  double ox=s->x, oy=s->y;
-  int limit=md + (int)ceil(fabs(s->vspeed)) + 2;
-  if(limit<1) limit=1;
-  for(int k=0;k<=limit;k++){
-    if(!collision_at(vm,s->x,s->y,0,1)){
-      double free_y=s->y, hit_y=s->y+1.0;
-      for(int i=0;i<10;i++){
-        double mid=(free_y+hit_y)*0.5;
-        if(collision_at(vm,s->x,mid,0,1)) hit_y=mid;
-        else free_y=mid;
-      }
-      s->y=free_y; gml_colgrid_touch(s);
-      return 1;
-    }
-    s->y-=1.0; gml_colgrid_touch(s);
-  }
-  s->x=ox; s->y=oy; gml_colgrid_touch(s);
-  return 0;
-}
-
 /* first active instance of `obj` whose mask covers world point (px,py), or NULL. */
 static int point_hits_instance_prec(GmlVM *vm, GmlInstance *o, double px, double py, int obj, GmlInstance *skip, int precise){
   GmlRender *R=(GmlRender*)vm->render;
@@ -5895,15 +5863,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"move_contact_solid")||!strcmp(nm,"move_contact")){ GmlInstance *s=vm->cur_self; if(!s) return vreal(0);
     int solid_only=!strcmp(nm,"move_contact_solid");
     int target=solid_only?0:IT_ALL;
-    double dir=N(a,n,0), md=n>=2?N(a,n,1):1000; if(md<=0) md=1000;
+    double dir=N(a,n,0), md=n>=2?N(a,n,1):1000; if(md<=0) md=1000; else md=gm_round(md);
     double dx=cos(dir*M_PI/180.0), dy=-sin(dir*M_PI/180.0);
-    if(collision_at(vm,s->x,s->y,target,solid_only)){
-      if(resolve_landing_overlap(vm,s,(int)md)) return vreal(0);
-      for(int k=0;k<(int)md;k++){ if(!collision_at(vm,s->x,s->y,target,solid_only)) break; s->x-=dx; s->y-=dy; }
-      gml_colgrid_touch(s);
-      snap_contact_axis(vm,s,dx,dy);
-      return vreal(0);
-    }
+    if(collision_at(vm,s->x,s->y,target,solid_only)) return vreal(0);
     for(int k=0;k<(int)md;k++){ if(collision_at(vm,s->x+dx,s->y+dy,target,solid_only)) break; s->x+=dx; s->y+=dy; }
     gml_colgrid_touch(s);
     return vreal(0); }
