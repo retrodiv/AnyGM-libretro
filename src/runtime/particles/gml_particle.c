@@ -321,6 +321,28 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     gml_part_particles_create_color(g_effect_sys[layer],x,y,core_id,0,1);
     return;
   }
+  if(kind==1 || kind==2){
+    PType *wave=pt(type); if(!wave) return;
+    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    (void)width; (void)height;
+    double cadence=fmax(30.0/speed,1.0);
+    static const double growth[2][3]={{.15,.25,.40},{.20,.35,.60}};
+    static const double life_min[3]={10,13,18};
+    static const double life_max[3]={12,15,20};
+    wave->sprite=-1; wave->shape=6;
+    wave->sz_min=wave->sz_max=0; wave->sz_incr=growth[kind-1][size]*cadence; wave->sz_wig=0;
+    wave->xscale=1; wave->yscale=kind==2?.5:1;
+    wave->sp_min=wave->sp_max=wave->sp_incr=wave->sp_wig=0;
+    wave->dir_min=wave->dir_max=wave->dir_incr=wave->dir_wig=0;
+    wave->grav_amt=0; wave->grav_dir=270;
+    wave->life_min=floor(life_min[size]/cadence+.5);
+    wave->life_max=floor(life_max[size]/cadence+.5);
+    wave->alpha[0]=1; wave->alpha[1]=.5; wave->alpha[2]=0; wave->nalpha=3;
+    wave->ori_min=wave->ori_max=wave->ori_incr=wave->ori_wig=0; wave->ori_rel=0;
+    wave->additive=0;
+    gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,1);
+    return;
+  }
   if(kind==3){
     PType *firework=pt(type); if(!firework) return;
     int width,height,speed; effect_room_metrics(&width,&height,&speed);
