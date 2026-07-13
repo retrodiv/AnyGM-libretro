@@ -358,6 +358,39 @@ static int raster_fixtures(void){
     fprintf(stderr,"software modern runtime alpha rounding changed\n");
     return 0;
   }
+  {
+    GmlInstance relative_self={0}; relative_self.x=13; relative_self.y=17;
+    GmlVal relative_on=vreal(1),relative_off=vreal(0);
+    GmlVal action_sprite_args[4]={vreal(runtime_sprite),vreal(2),vreal(3),vreal(0)};
+    vm.cur_self=&relative_self;
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    (void)call_values(&vm,"action_set_relative",&relative_on,1);
+    (void)call_values(&vm,"action_draw_sprite",action_sprite_args,4);
+    if((pixels[20*WIDTH+15]&0x00FFFFFFu)!=0xFF0000u || pixels[3*WIDTH+2]!=0){
+      fprintf(stderr,"software relative action sprite position mismatch\n");
+      return 0;
+    }
+    *gml_varmap_put(&vm.globals,"lives")=vreal(2);
+    GmlVal life_args[3]={vreal(2),vreal(3),vreal(runtime_sprite)};
+    memset(pixels,0,sizeof(pixels));
+    (void)call_values(&vm,"action_draw_life_images",life_args,3);
+    if((pixels[20*WIDTH+15]&0x00FFFFFFu)!=0xFF0000u ||
+       (pixels[20*WIDTH+17]&0x00FFFFFFu)!=0xFF0000u){
+      fprintf(stderr,"software relative action life-image position mismatch\n");
+      return 0;
+    }
+    *gml_varmap_put(&vm.globals,"health")=vreal(50);
+    GmlVal health_args[6]={vreal(1),vreal(2),vreal(21),vreal(6),vreal(0),vreal(0)};
+    memset(pixels,0,sizeof(pixels));
+    (void)call_values(&vm,"action_draw_health",health_args,6);
+    if((pixels[21*WIDTH+18]&0x00FFFFFFu)!=0xFFFF00u || pixels[21*WIDTH+30]!=0){
+      fprintf(stderr,"software relative action health-bar mismatch\n");
+      return 0;
+    }
+    (void)call_values(&vm,"action_set_relative",&relative_off,1);
+    vm.cur_self=NULL;
+  }
   for(int i=0;i<4;i++) surface_data->px[i]=0xFFFFFFFFu;
   int depth_sprite=gml_sprite_create_from_surface(&render,surface,0,0,2,2,0,0,0,0);
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));

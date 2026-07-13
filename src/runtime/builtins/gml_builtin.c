@@ -5827,6 +5827,30 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
   hotprof_add(nm,(hotprof_now()-t0)*1000.0);
   return v;
 }
+
+static void action_relative_point(GmlVM *vm,double *x,double *y){
+  if(vm->action_relative && vm->cur_self){
+    *x+=vm->cur_self->x;
+    *y+=vm->cur_self->y;
+  }
+}
+
+static uint32_t action_health_palette(int index){
+  static const uint32_t colors[]={
+    0x000000,0x808080,0xC0C0C0,0xFFFFFF,
+    0x000080,0x008000,0x008080,0x800000,
+    0x800080,0x808000,0x0000FF,0x00FF00,
+    0x00FFFF,0xFF0000,0xFF00FF,0xFFFF00
+  };
+  return index>=0 && index<(int)(sizeof(colors)/sizeof(colors[0])) ? colors[index] : 0x800080;
+}
+
+static int action_health_component(double value){
+  if(value<0) return 0;
+  if(value>255) return 255;
+  return (int)value;
+}
+
 static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   { GmlVal v;
     if(fast_hot_builtin(vm,nm,a,n,&v)) return v; }
@@ -6840,26 +6864,61 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(vm->action_relative) next+=(value&&value->t==V_REAL)?value->d:0.0;
     if(value) *value=vreal(next);
     return vreal(0); }
-  if(!strcmp(nm,"action_draw_score")||!strcmp(nm,"action_draw_life")||!strcmp(nm,"action_draw_health")){
+  if(!strcmp(nm,"action_draw_score")||!strcmp(nm,"action_draw_life")){
     const char *key=!strcmp(nm,"action_draw_score")?"score":!strcmp(nm,"action_draw_life")?"lives":"health";
     GmlVal *value=gml_varmap_get(&vm->globals,key);
+    double x=N(a,n,0),y=N(a,n,1); action_relative_point(vm,&x,&y);
     char text[256]; snprintf(text,sizeof(text),"%s%.0f",S(a,n,2),value&&value->t==V_REAL?value->d:0.0);
-    GmlRender *r=(GmlRender*)vm->render; if(r) gml_draw_text(r,N(a,n,0),N(a,n,1),text);
+    GmlRender *r=(GmlRender*)vm->render; if(r) gml_draw_text(r,x,y,text);
     return vreal(0); }
-  if(!strcmp(nm,"action_draw_sprite")){ GmlVal draw_args[4]={vreal(N(a,n,0)),vreal(N(a,n,3)),vreal(N(a,n,1)),vreal(N(a,n,2))};
+  if(!strcmp(nm,"action_draw_health")){
+    GmlRender *r=(GmlRender*)vm->render;
+    double x1=N(a,n,0),y1=N(a,n,1),x2=N(a,n,2),y2=N(a,n,3);
+    action_relative_point(vm,&x1,&y1); action_relative_point(vm,&x2,&y2);
+    GmlVal *value=gml_varmap_get(&vm->globals,"health");
+    double health=value&&value->t==V_REAL?value->d:0.0,ratio=health/100.0;
+    int back=(int)N(a,n,4),bar=(int)N(a,n,5);
+    uint32_t fill;
+    if(bar==0){
+      int red,green;
+      if(ratio>0.5){ red=action_health_component((1.0-ratio)*510.0); green=255; }
+      else { red=255; green=action_health_component(ratio*510.0); }
+      fill=(uint32_t)red|((uint32_t)green<<8);
+    } else if(bar==1){
+      int component=action_health_component(ratio*255.0);
+      fill=(uint32_t)component|((uint32_t)component<<8)|((uint32_t)component<<16);
+    } else fill=action_health_palette(bar-2);
+    if(r){
+      int ix1=(int)floor(x1-r->cam_x),iy1=(int)floor(y1-r->cam_y);
+      int ix2=(int)ceil(x2-r->cam_x),iy2=(int)ceil(y2-r->cam_y);
+      if(back){
+        draw_rect_prim(r,ix1,iy1,ix2,iy2,action_health_palette(back-1),0);
+        draw_rect_prim(r,ix1,iy1,ix2,iy2,0,1);
+      }
+      int fill_x2=(int)ceil(x1+(x2-x1)*ratio-r->cam_x);
+      draw_rect_prim(r,ix1,iy1,fill_x2,iy2,fill,0);
+      draw_rect_prim(r,ix1,iy1,fill_x2,iy2,0,1);
+    }
+    return vreal(0); }
+  if(!strcmp(nm,"action_draw_sprite")){ double x=N(a,n,1),y=N(a,n,2);
+    action_relative_point(vm,&x,&y);
+    GmlVal draw_args[4]={vreal(N(a,n,0)),vreal(N(a,n,3)),vreal(x),vreal(y)};
     return gml_builtin_call(vm,"draw_sprite",draw_args,4); }
-  if(!strcmp(nm,"action_draw_variable")){ GmlVal draw_args[3]={vreal(N(a,n,1)),vreal(N(a,n,2)),n>0?a[0]:vreal(0)};
+  if(!strcmp(nm,"action_draw_variable")){ double x=N(a,n,1),y=N(a,n,2); action_relative_point(vm,&x,&y);
+    GmlVal draw_args[3]={vreal(x),vreal(y),n>0?a[0]:vreal(0)};
     return gml_builtin_call(vm,"draw_text",draw_args,3); }
   if(!strcmp(nm,"action_draw_text")){
+    double x=N(a,n,1),y=N(a,n,2); action_relative_point(vm,&x,&y);
     GmlRender *r=(GmlRender*)vm->render;
-    if(r) gml_draw_text(r,N(a,n,1),N(a,n,2),S(a,n,0));
+    if(r) gml_draw_text(r,x,y,S(a,n,0));
     return vreal(0);
   }
   if(!strcmp(nm,"action_draw_life_images")){
     GmlRender *r=(GmlRender*)vm->render; GmlVal *value=gml_varmap_get(&vm->globals,"lives");
     int count=(int)floor(value&&value->t==V_REAL?value->d:0), sprite=(int)N(a,n,2);
+    double x=N(a,n,0),y=N(a,n,1); action_relative_point(vm,&x,&y);
     int width=(r&&gml_sprite_exists(r,sprite))?r->spr[sprite].w:0;
-    if(r) for(int i=0;i<count;i++) gml_draw_sprite(r,sprite,0,N(a,n,0)+i*width,N(a,n,1));
+    if(r) for(int i=0;i<count;i++) gml_draw_sprite(r,sprite,0,x+i*width,y);
     return vreal(0);
   }
   if(!strcmp(nm,"action_set_cursor")){ vm->window_cursor=(int)N(a,n,0); return vreal(0); }
