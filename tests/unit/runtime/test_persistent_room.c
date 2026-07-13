@@ -379,6 +379,18 @@ int main(void){
   if(created->x!=5){
     fprintf(stderr,"move_contact_solid did not round a positive maximum distance: x=%.0f\n",created->x); return 1;
   }
+  win.classic_version=0;
+  created->x=4; contact->solid=1;
+  (void)gml_builtin_call(&vm,"move_contact_solid",contact_solid_args,2);
+  if(created->x!=3){
+    fprintf(stderr,"Studio move_contact_solid did not recover an initial overlap: x=%.0f\n",created->x); return 1;
+  }
+  created->x=0; contact->solid=0;
+  (void)gml_builtin_call(&vm,"move_contact_solid",fractional_contact_args,2);
+  if(created->x!=4){
+    fprintf(stderr,"Studio move_contact_solid did not retain fractional-distance truncation: x=%.0f\n",created->x); return 1;
+  }
+  win.classic_version=800;
   contact->solid=1;
   GmlVal potential_settings[4]={vreal(30),vreal(10),vreal(3),vreal(1)};
   (void)gml_builtin_call(&vm,"mp_potential_settings",potential_settings,4);
@@ -558,6 +570,21 @@ int main(void){
     global_array_value(&vm,"background_x",0),global_array_value(&vm,"view_xview",0),
     room_speed&&room_speed->t==V_REAL?room_speed->d:-1,vm.n_tile_mut,
     vm.n_tile_mut?vm.tile_mut[0].depth:-1,vm.n_tile_mut?vm.tile_mut[0].dx:0,vm.n_tile_mut?vm.tile_mut[0].dy:0);
+  collision_sprites[0].n_frames=2;
+  slot->sprite_index=slot->mask_index=0;
+  slot->image_index=0;
+  slot->image_speed=0.5;
+  uint32_t animation_id=slot->id;
+  gml_vm_step(&vm);
+  slot=find_slot(&vm,animation_id);
+  if(!slot){ fprintf(stderr,"classic animation fixture instance disappeared\n"); return 1; }
+  if(slot->image_index!=0){
+    fprintf(stderr,"classic animation advanced before the draw phase: index=%.2f\n",slot->image_index); return 1;
+  }
+  gml_vm_post_draw(&vm);
+  if(slot->image_index!=0.5){
+    fprintf(stderr,"classic animation did not advance after the draw phase: index=%.2f\n",slot->image_index); return 1;
+  }
   free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
   for(int i=0;i<2;i++) unlink(key_files[i]);

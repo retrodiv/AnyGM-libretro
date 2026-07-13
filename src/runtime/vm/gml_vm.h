@@ -340,6 +340,7 @@ void         gml_vm_warm_audio_for_room(GmlVM *vm, int room_index);
 int          gml_cheat_apply(GmlVM *vm, const char *code);
 void         gml_vm_step(GmlVM *vm);                         /* one frame of the game loop */
 void         gml_vm_draw(GmlVM *vm);                         /* draw phase (needs vm->render) */
+void         gml_vm_post_draw(GmlVM *vm);                    /* classic animation phase */
 void         gml_vm_draw_gui(GmlVM *vm);                     /* Draw GUI (Draw_64) pass */
 
 /* var map */
