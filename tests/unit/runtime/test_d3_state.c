@@ -438,6 +438,25 @@ static int raster_fixtures(void){
     fprintf(stderr,"software classic atlas fixed-point blend mismatch: %08x\n",pixels[5*WIDTH+5]);
     return 0;
   }
+  memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  for(int i=0;i<4;i++) render.atlas[0].px[i*4+3]=255;
+  render.atlas[0].px[0]=0;   render.atlas[0].px[1]=16; render.atlas[0].px[2]=255;
+  render.atlas[0].px[4]=255; render.atlas[0].px[5]=0;  render.atlas[0].px[6]=0;
+  pixels[5*WIDTH+5]=pixels[5*WIDTH+6]=0xFFC0C0C0u;
+  gml_draw_background_ext(&render,0,5.2,5.2,.75,1,0xFFFFFF,231.0/255.0);
+  if(pixels[5*WIDTH+5]!=0xFF1220F9u || pixels[5*WIDTH+6]!=0xFFF91212u){
+    fprintf(stderr,"software classic scaled atlas phase/blend mismatch: %08x %08x\n",
+            pixels[5*WIDTH+5],pixels[5*WIDTH+6]);
+    return 0;
+  }
+  pixels[8*WIDTH+6]=0xFFC0C0C0u;
+  gml_draw_background_ext(&render,0,5.5,8,.5,1,0xFFFFFF,1);
+  if(pixels[8*WIDTH+6]!=0xFFFF0000u){
+    fprintf(stderr,"software classic reciprocal-scale texel tie mismatch: %08x\n",
+            pixels[8*WIDTH+6]);
+    return 0;
+  }
   for(int i=0;i<4;i++)
     render.atlas[0].px[i*4]=render.atlas[0].px[i*4+1]=render.atlas[0].px[i*4+2]=render.atlas[0].px[i*4+3]=255;
   int flipped_sprite=render.n_spr++;
