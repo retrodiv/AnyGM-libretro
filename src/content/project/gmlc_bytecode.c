@@ -1908,6 +1908,12 @@ static int parse_if(Compiler *c){
    * unconditionally. */
   if(is_id(c,"then")) lx_next(&c->lex);
   if(!parse_block_or_stmt(c)) return 0;
+  /* Classic drag-and-drop actions terminate a braced true arm before emitting
+   * `else` ("if (...) { ... }; else { ... }").  GM keeps that else attached
+   * to the conditional.  Treat the intervening empty statements the same way;
+   * otherwise `else` is compiled as a variable read and its block runs
+   * unconditionally. */
+  while(eat(c,";")) {}
   if(is_id(c,"else")){
     size_t b=emit_branch(c,OP_B);
     patch_branch(c,bf,c->code.len);

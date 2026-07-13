@@ -153,6 +153,8 @@ int main(int argc, char **argv){
     "show_message(\"first\")\nshow_message(\"second \"+global.name+\"!\");\n",1);
   ok &= compile_fixture_lacks_ref(&project,
     "if (score=0) then { result=1; } else result=2;\n","then");
+  ok &= compile_fixture_lacks_ref(&project,
+    "if (score=0) { result=1; }; else { result=2; };\n","else");
   ok &= compile_fixture(&project,
     "global.actor.part.node.x=4; result=global.actor.part.node.x;\n",1);
   ok &= compile_fixture_has_swap(&project,
