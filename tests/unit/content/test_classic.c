@@ -332,12 +332,23 @@ static int build_executable_fixture(Fixture *executable){
   fixture_u32(executable,0); /* settings */
   fixture_u32(executable,0); fixture_u32(executable,0); /* wrapper strings */
   fixture_u32(executable,0); fixture_u32(executable,0); /* junk counts */
-  for(unsigned i=0;i<256;i++) executable->data[executable->size++]=(unsigned char)i;
-  fixture_u32(executable,(unsigned)decoded.size+1);
-  unsigned char previous=0;
-  executable->data[executable->size++]=previous;
+  unsigned char table[256];
+  for(unsigned i=0;i<256;i++){
+    table[i]=(unsigned char)(i*73u+41u);
+    executable->data[executable->size++]=table[i];
+  }
+  fixture_u32(executable,(unsigned)decoded.size);
+  unsigned char encoded_data[sizeof(decoded.data)];
+  memcpy(encoded_data,decoded.data,decoded.size);
   for(size_t i=0;i<decoded.size;i++){
-    previous=(unsigned char)(previous+decoded.data[i]+(unsigned char)(i+1));
+    size_t offset=table[i&255u];
+    size_t other=i>offset?i-offset:0;
+    unsigned char swap=encoded_data[i]; encoded_data[i]=encoded_data[other]; encoded_data[other]=swap;
+  }
+  unsigned char previous=encoded_data[0];
+  executable->data[executable->size++]=previous;
+  for(size_t i=1;i<decoded.size;i++){
+    previous=table[(unsigned char)(encoded_data[i]+previous+(unsigned char)i)];
     executable->data[executable->size++]=previous;
   }
   return 1;
