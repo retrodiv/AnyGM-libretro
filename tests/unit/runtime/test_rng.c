@@ -98,6 +98,18 @@ int main(void){
     return 1;
   }
   gml_part_reset_all();
+  gml_rng_seed(&vm,0);
+  gml_effect_create(1,7,32,24,0,0x40A0FF);
+  memset(&expected,0,sizeof(expected));
+  expected.win=&classic;
+  gml_rng_seed(&expected,0);
+  for(int i=0;i<2;i++) (void)gml_rng_value(&expected);
+  if(vm.rng_classic_state!=expected.rng_classic_state){
+    fprintf(stderr,"classic spark RNG consumption mismatch: got=%08x expected=%08x\n",
+            vm.rng_classic_state,expected.rng_classic_state);
+    return 1;
+  }
+  gml_part_reset_all();
   puts("classic RNG fixtures: ok");
   return 0;
 }

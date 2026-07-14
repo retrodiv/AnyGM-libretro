@@ -368,7 +368,7 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,count[size]);
     return;
   }
-  if(kind==6){
+  if(kind==6 || kind==7 || kind==8){
     PType *flash=pt(type); if(!flash) return;
     int width,height,speed; effect_room_metrics(&width,&height,&speed);
     (void)width; (void)height;
@@ -376,7 +376,7 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     static const double initial_size[3]={.4,.75,1.2};
     static const double shrink[3]={-.02,-.03,-.04};
     static const double lifetime[3]={20,25,30};
-    flash->sprite=-1; flash->shape=4;
+    flash->sprite=-1; flash->shape=kind==6?4:(kind==7?9:8);
     flash->sz_min=flash->sz_max=initial_size[size]; flash->sz_incr=shrink[size]*cadence; flash->sz_wig=0;
     flash->xscale=flash->yscale=1;
     flash->sp_min=flash->sp_max=flash->sp_incr=flash->sp_wig=0;
@@ -563,9 +563,72 @@ static void plot_line_shape(GmlRender *r,double cx,double cy,double size,double 
  * every frame. */
 static uint8_t explosion_shape_mask[64*64];
 static int explosion_shape_mask_ready;
+static uint8_t glint_shape_mask[3][64*64];
+static unsigned glint_shape_mask_ready;
 
 static double unit_clamp(double v){ return v<0?0:(v>1?1:v); }
 static double smooth_unit(double v){ v=unit_clamp(v); return v*v*(3.0-2.0*v); }
+
+static double point_segment_distance(double px,double py,double ax,double ay,double bx,double by){
+  double dx=bx-ax,dy=by-ay,den=dx*dx+dy*dy;
+  double t=den>0?((px-ax)*dx+(py-ay)*dy)/den:0;
+  if(t<0)t=0; else if(t>1)t=1;
+  return hypot(px-(ax+t*dx),py-(ay+t*dy));
+}
+
+/* Generate the classic glint family procedurally inside transparent 64x64
+ * particle cells: a faceted five-point star, a soft radial flare and a fine
+ * multi-ray spark. */
+static void prepare_glint_shape_mask(int shape){
+  int slot=shape==4?0:(shape==8?1:2);
+  unsigned bit=1u<<slot;
+  if(glint_shape_mask_ready&bit) return;
+  uint8_t *mask=glint_shape_mask[slot];
+  for(int y=0;y<64;y++) for(int x=0;x<64;x++){
+    double px=x+.5-32.0,py=y+.5-32.0;
+    double radius=hypot(px,py),angle=atan2(py,px);
+    double coverage=0;
+    if(shape==4){
+      double vx[10],vy[10];
+      int inside=0;
+      double edge=64;
+      for(int i=0;i<10;i++){
+        double a=-M_PI*.5+i*M_PI/5.0;
+        double r=(i&1)?12.0:28.0;
+        vx[i]=cos(a)*r; vy[i]=sin(a)*r;
+      }
+      for(int i=0,j=9;i<10;j=i++){
+        if(((vy[i]>py)!=(vy[j]>py)) &&
+           px<(vx[j]-vx[i])*(py-vy[i])/(vy[j]-vy[i])+vx[i]) inside=!inside;
+        double d=point_segment_distance(px,py,vx[i],vy[i],vx[j],vy[j]);
+        if(d<edge) edge=d;
+      }
+      double antialias=smooth_unit((inside?edge:-edge)+.75);
+      double facets=.58+.42*(.5+.5*cos(angle*5.0+M_PI*.5));
+      double centre=.72+.28*smooth_unit(radius/15.0);
+      coverage=antialias*facets*centre;
+    } else if(shape==8){
+      double glow=exp(-(radius*radius)/(2.0*11.5*11.5))*.72;
+      double core=smooth_unit((4.7-radius)*.55+.5);
+      double major=exp(-pow(radius*fabs(sin(angle*4.0))/.85,2.0))
+                  *smooth_unit((30.0-radius)/8.0);
+      double minor=exp(-pow(radius*fabs(sin(angle*8.0))/.65,2.0))
+                  *smooth_unit((23.0-radius)/7.0)*.45;
+      double envelope=smooth_unit((31.5-radius)/3.0);
+      coverage=fmax(core,fmax(glow,fmax(major*.70,minor)))*envelope;
+    } else {
+      double core=exp(-(radius*radius)/(2.0*3.2*3.2));
+      double long_rays=exp(-pow(radius*fabs(sin(angle*8.0))/.42,2.0))
+                      *smooth_unit((31.0-radius)/9.0);
+      double fine_rays=exp(-pow(radius*fabs(sin(angle*12.0))/.32,2.0))
+                      *smooth_unit((25.0-radius)/8.0)*.65;
+      double irregular=.72+.28*(.5+.5*sin(angle*37.0+1.1));
+      coverage=fmax(core,fmax(long_rays,fine_rays))*irregular;
+    }
+    mask[y*64+x]=(uint8_t)(255.0*unit_clamp(coverage)+.5);
+  }
+  glint_shape_mask_ready|=bit;
+}
 
 static void prepare_explosion_shape_mask(void){
   if(explosion_shape_mask_ready) return;
@@ -598,6 +661,20 @@ static double sample_explosion_shape(double x,double y){
   return ((a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy)/255.0;
 }
 
+static double sample_glint_shape(int shape,double x,double y){
+  prepare_glint_shape_mask(shape);
+  int slot=shape==4?0:(shape==8?1:2);
+  const uint8_t *mask=glint_shape_mask[slot];
+  double tx=x+31.5,ty=y+31.5;
+  if(tx<0 || ty<0 || tx>63 || ty>63) return 0;
+  int x0=(int)floor(tx),y0=(int)floor(ty);
+  int x1=x0<63?x0+1:x0,y1=y0<63?y0+1:y0;
+  double fx=tx-x0,fy=ty-y0;
+  double a=mask[y0*64+x0],b=mask[y0*64+x1];
+  double c=mask[y1*64+x0],d=mask[y1*64+x1];
+  return ((a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy)/255.0;
+}
+
 static void plot_explosion_shape(GmlRender *r,double cx,double cy,double xs,double ys,
                                  double angle,uint32_t color,double alpha){
   if(!r || !r->fb || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
@@ -614,6 +691,26 @@ static void plot_explosion_shape(GmlRender *r,double cx,double cy,double xs,doub
     double dx=x+.5-cx,dy=y+.5-cy;
     double lx=co*dx-si*dy,ly=si*dx+co*dy;
     double coverage=sample_explosion_shape(lx/xs,ly/ys);
+    if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
+  }
+}
+
+static void plot_glint_shape(GmlRender *r,int shape,double cx,double cy,double xs,double ys,
+                             double angle,uint32_t color,double alpha){
+  if(!r || !r->fb || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
+  double rad=DEG2RAD(angle),co=cos(rad),si=sin(rad);
+  double sx=32.0*fabs(xs),sy=32.0*fabs(ys);
+  double ex=fabs(co)*sx+fabs(si)*sy,ey=fabs(si)*sx+fabs(co)*sy;
+  int x0=(int)floor(cx-ex),x1=(int)ceil(cx+ex);
+  int y0=(int)floor(cy-ey),y1=(int)ceil(cy+ey);
+  if(x0<0)x0=0;
+  if(y0<0)y0=0;
+  if(x1>=r->fbw)x1=r->fbw-1;
+  if(y1>=r->fbh)y1=r->fbh-1;
+  for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
+    double dx=x+.5-cx,dy=y+.5-cy;
+    double lx=co*dx-si*dy,ly=si*dx+co*dy;
+    double coverage=sample_glint_shape(shape,lx/xs,ly/ys);
     if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
   }
 }
@@ -647,7 +744,7 @@ void gml_part_system_drawit(GmlRender *r, int id){
         32.0*fabs(p->size*t->xscale):half;
       double shape_ry=(t->shape==1||t->shape==5||t->shape==6||t->shape==7)?
         32.0*fabs(p->size*t->yscale):half;
-      if(t->shape==10){
+      if(t->shape==4 || t->shape==8 || t->shape==9 || t->shape==10){
         shape_rx=shape_ry=32.0*hypot(p->size*t->xscale,p->size*t->yscale);
       }
       if(cx+shape_rx<0 || cy+shape_ry<0 || cx-shape_rx>=r->fbw || cy-shape_ry>=r->fbh) continue;
@@ -661,6 +758,10 @@ void gml_part_system_drawit(GmlRender *r, int id){
       } else if(t->shape==3){
         double angle=p->ori+(t->ori_rel?p->dir:0);
         plot_line_shape(r,p->x-r->cam_x,p->y-r->cam_y,p->size,angle,col,alpha);
+      } else if(t->shape==4 || t->shape==8 || t->shape==9){
+        double angle=p->ori+(t->ori_rel?p->dir:0);
+        plot_glint_shape(r,t->shape,p->x-r->cam_x,p->y-r->cam_y,
+                         p->size*t->xscale,p->size*t->yscale,angle,col,alpha);
       } else if(t->shape==10){
         double angle=p->ori+(t->ori_rel?p->dir:0);
         plot_explosion_shape(r,p->x-r->cam_x,p->y-r->cam_y,

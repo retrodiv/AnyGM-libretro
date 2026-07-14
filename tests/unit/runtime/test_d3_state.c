@@ -285,6 +285,64 @@ static int raster_fixtures(void){
   }
   gml_part_reset_all();
 
+  {
+    static const int shapes[3]={4,8,9};
+    static const int min_pixels[3]={180,220,60};
+    for(int k=0;k<3;k++){
+      for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF202020u;
+      gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+      int system=gml_part_system_create();
+      int type=gml_part_type_create();
+      gml_part_type_shape(type,shapes[k]);
+      gml_part_type_size(type,.5,.5,0,0);
+      gml_part_type_orientation(type,0,0,0,0,0);
+      gml_part_type_alpha(type,1,1,1,1);
+      gml_part_particles_create_color(system,32,24,type,0x40A0FF,1);
+      gml_part_system_draw_all(&render);
+      int changed=0,minx=WIDTH,maxx=-1,miny=HEIGHT,maxy=-1;
+      for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++)
+        if(pixels[y*WIDTH+x]!=0xFF202020u){
+          changed++;
+          if(x<minx)minx=x;
+          if(x>maxx)maxx=x;
+          if(y<miny)miny=y;
+          if(y>maxy)maxy=y;
+        }
+      if(changed<min_pixels[k] || maxx-minx<18 || maxy-miny<18){
+        fprintf(stderr,"classic glint shape coverage mismatch: shape=%d pixels=%d span=%dx%d\n",
+                shapes[k],changed,maxx-minx+1,maxy-miny+1);
+        return 0;
+      }
+      gml_part_reset_all();
+    }
+  }
+
+  {
+    static const double scales[3]={.10,.15,.20};
+    static const int min_pixels[3]={28,65,113};
+    static const int max_pixels[3]={36,77,129};
+    for(int k=0;k<3;k++){
+      for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF202020u;
+      gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+      int system=gml_part_system_create();
+      int type=gml_part_type_create();
+      gml_part_type_shape(type,8);
+      gml_part_type_size(type,scales[k],scales[k],0,0);
+      gml_part_type_orientation(type,0,0,0,0,0);
+      gml_part_type_alpha(type,1,1,1,1);
+      gml_part_particles_create_color(system,32,24,type,0x40FFA0,1);
+      gml_part_system_draw_all(&render);
+      int changed=0;
+      for(int i=0;i<WIDTH*HEIGHT;i++) if(pixels[i]!=0xFF202020u) changed++;
+      if(changed<min_pixels[k] || changed>max_pixels[k]){
+        fprintf(stderr,"classic small flare footprint mismatch: scale=%.2f pixels=%d expected=%d..%d\n",
+                scales[k],changed,min_pixels[k],max_pixels[k]);
+        return 0;
+      }
+      gml_part_reset_all();
+    }
+  }
+
   gml_effect_create(1,3,32,24,0,0x40A0FF);
   if(gml_part_system_count(1)!=75){
     fprintf(stderr,"small firework particle count mismatch\n");
@@ -328,6 +386,14 @@ static int raster_fixtures(void){
   gml_effect_create(1,6,32,24,0,0x40A0FF);
   if(gml_part_system_count(1)!=1){
     fprintf(stderr,"shrinking star particle count mismatch\n");
+    return 0;
+  }
+  gml_part_reset_all();
+
+  gml_effect_create(1,7,32,24,0,0x40A0FF);
+  gml_effect_create(1,8,32,24,0,0x40A0FF);
+  if(gml_part_system_count(1)!=2){
+    fprintf(stderr,"shrinking glint particle count mismatch\n");
     return 0;
   }
   gml_part_reset_all();
