@@ -4669,8 +4669,13 @@ void gml_vm_step(GmlVM *vm){
             if(i>=vm->inst_count) continue;
             GmlInstance *in=&vm->inst[i];
             if(!in->active||in->marked||in->deactivated||in->obj!=object) continue;
-            double l,t,r2,b; int hov=0;
-            if(vm_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
+            double l=0,t=0,r2=0,b=0; int hov=0;
+            int have_bbox=vm_bbox(vm,in,&l,&t,&r2,&b);
+            if(have_bbox) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
+            if(getenv("GML_LOG_MOUSE_HIT") && mpressed)
+              fprintf(stderr,"[mouse-hit] %s at=%.1f,%.1f bbox=%d:%.1f,%.1f..%.1f,%.1f hover=%d event=%s\n",
+                (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",
+                mx,my,have_bbox,l,t,r2,b,hov,vm->mouse_events[e].suffix);
             if(mouse_event_fires(s,hov,in->mouse_over,mheld,mpressed,mreleased,mwheel))
               gml_run_event(vm,in,vm->mouse_events[e].suffix);
           }
