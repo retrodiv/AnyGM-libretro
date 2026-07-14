@@ -63,6 +63,15 @@ static int import_u32(ImportReader *r, uint32_t *value, const char *what){
   return 1;
 }
 
+static int import_skip_words(ImportReader *r,uint64_t count,const char *what){
+  if(r->pos>r->size || count>(r->size-r->pos)/4u){
+    if(r->err&&r->errcap) snprintf(r->err,r->errcap,"classic import: truncated %s",what);
+    return 0;
+  }
+  r->pos+=(size_t)count*4u;
+  return 1;
+}
+
 static int import_blob(ImportReader *r, const uint8_t **data, uint32_t *size, const char *what){
   if(!import_u32(r, size, what)) return 0;
   if(r->pos > r->size || *size > r->size - r->pos){
@@ -443,16 +452,67 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
       }
       char leaf[96];
       snprintf(leaf, sizeof(leaf), "classic_sprite_%06u_%06u.png", slot_index, frame);
-      sprite->frame_paths[frame] = import_rgba_path(project,cache_dir,leaf,pixels,pixel_bytes,
+      uint8_t *converted=NULL;
+      const uint8_t *frame_pixels=pixels;
+      if(source->executable_layout && pixels && width && height){
+        size_t count=(size_t)width*(size_t)height;
+        if(count>SIZE_MAX/4u || pixel_bytes<count*4u){
+          if(err&&errcap) snprintf(err,errcap,"classic import: truncated executable sprite pixels");
+          free_imported_sprites(project); return 0;
+        }
+        converted=(uint8_t*)malloc(count*4u);
+        if(!converted){ free_imported_sprites(project); return 0; }
+        for(size_t p=0;p<count;p++){
+          converted[p*4u]=pixels[p*4u+2u];
+          converted[p*4u+1u]=pixels[p*4u+1u];
+          converted[p*4u+2u]=pixels[p*4u];
+          converted[p*4u+3u]=pixels[p*4u+3u];
+        }
+        frame_pixels=converted;
+      }
+      sprite->frame_paths[frame] = import_rgba_path(project,cache_dir,leaf,frame_pixels,pixel_bytes,
                                                     (int)width,(int)height,err,errcap);
+      free(converted);
       if(!sprite->frame_paths[frame]){
         free_imported_sprites(project);
         return 0;
       }
     }
-    uint32_t collision[8];
-    for(int i = 0; i < 8; ++i)
-      if(!import_u32(&r, &collision[i], "sprite collision field")){ free_imported_sprites(project); return 0; }
+    uint32_t collision[8]={0};
+    if(source->executable_layout && frames){
+      if(source->version>=810 && !import_skip_words(&r,1,"sprite collision shape")){
+        free_imported_sprites(project); return 0;
+      }
+      uint32_t separate;
+      if(!import_u32(&r,&separate,"sprite separate collision maps")){
+        free_imported_sprites(project); return 0;
+      }
+      uint32_t maps=separate?frames:1;
+      int32_t left=INT32_MAX,right=INT32_MIN,top=INT32_MAX,bottom=INT32_MIN;
+      for(uint32_t map=0;map<maps;map++){
+        uint32_t fields[7];
+        for(size_t i=0;i<sizeof(fields)/sizeof(fields[0]);i++)
+          if(!import_u32(&r,&fields[i],"sprite collision map")){
+            free_imported_sprites(project); return 0;
+          }
+        uint64_t pixels=(uint64_t)fields[1]*(uint64_t)fields[2];
+        if(!import_skip_words(&r,pixels,"sprite collision pixels")){
+          free_imported_sprites(project); return 0;
+        }
+        if((int32_t)fields[3]<left) left=(int32_t)fields[3];
+        if((int32_t)fields[4]>right) right=(int32_t)fields[4];
+        if((int32_t)fields[6]<top) top=(int32_t)fields[6];
+        if((int32_t)fields[5]>bottom) bottom=(int32_t)fields[5];
+      }
+      collision[0]=0; collision[1]=0; collision[2]=separate!=0; collision[3]=2;
+      collision[4]=(uint32_t)(left==INT32_MAX?0:left);
+      collision[5]=(uint32_t)(right==INT32_MIN?sprite->width-1:right);
+      collision[6]=(uint32_t)(bottom==INT32_MIN?sprite->height-1:bottom);
+      collision[7]=(uint32_t)(top==INT32_MAX?0:top);
+    } else if(!source->executable_layout){
+      for(int i = 0; i < 8; ++i)
+        if(!import_u32(&r, &collision[i], "sprite collision field")){ free_imported_sprites(project); return 0; }
+    }
     if(r.pos != r.size){
       if(err && errcap) snprintf(err, errcap, "classic import: trailing sprite payload");
       free_imported_sprites(project);

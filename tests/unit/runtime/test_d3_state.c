@@ -316,13 +316,44 @@ static int raster_fixtures(void){
     gml_part_type_alpha(type,1,1,1,1);
     gml_part_particles_create_color(system,32,24,type,0x0000FF,1);
     gml_part_system_draw_all(&render);
-    int line_pixels=0,line_off_axis=0;
+    int line_pixels=0,minx=WIDTH,maxx=-1,miny=HEIGHT,maxy=-1;
     for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++)
-      if(pixels[y*WIDTH+x]&0x00FFFFFFu){ line_pixels++; if(y!=24) line_off_axis++; }
-    int edge_red=(pixels[24*WIDTH+5]>>16)&0xFF;
-    int core_red=(pixels[24*WIDTH+6]>>16)&0xFF;
-    if(line_pixels!=55 || line_off_axis || edge_red<126 || edge_red>129 || core_red!=255){
+      if(pixels[y*WIDTH+x]&0x00FFFFFFu){
+        line_pixels++;
+        if(x<minx)minx=x; if(x>maxx)maxx=x;
+        if(y<miny)miny=y; if(y>maxy)maxy=y;
+      }
+    int edge_red=(pixels[24*WIDTH+4]>>16)&0xFF;
+    int core_red=(pixels[24*WIDTH+8]>>16)&0xFF;
+    int top_red=(pixels[19*WIDTH+32]>>16)&0xFF;
+    if(line_pixels!=560 || minx!=4 || maxx!=59 || miny!=19 || maxy!=28 ||
+       edge_red<50 || edge_red>52 || core_red!=255 || top_red<76 || top_red>78){
       fprintf(stderr,"classic particle line cell geometry mismatch\n");
+      return 0;
+    }
+  }
+  gml_part_reset_all();
+
+  memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  {
+    int system=gml_part_system_create();
+    int type=gml_part_type_create();
+    gml_part_type_shape(type,3);
+    gml_part_type_size(type,.2,.2,0,0);
+    gml_part_type_orientation(type,260,260,0,0,0);
+    gml_part_type_alpha(type,1,1,1,1);
+    gml_part_particles_create_color(system,32,24,type,0x0000FF,1);
+    gml_part_system_draw_all(&render);
+    int line_pixels=0,minx=WIDTH,maxx=-1,miny=HEIGHT,maxy=-1;
+    for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++)
+      if(pixels[y*WIDTH+x]&0x00FFFFFFu){
+        line_pixels++;
+        if(x<minx)minx=x; if(x>maxx)maxx=x;
+        if(y<miny)miny=y; if(y>maxy)maxy=y;
+      }
+    if(line_pixels!=23 || minx!=31 || maxx!=34 || miny!=18 || maxy!=29){
+      fprintf(stderr,"classic small rotated particle line geometry mismatch\n");
       return 0;
     }
   }
@@ -1428,6 +1459,37 @@ static int raster_fixtures(void){
   if((pixels[(HEIGHT/2)*WIDTH+WIDTH/2]&0x00FFFFFFu)!=0xFFFFFFu){
     fprintf(stderr,"software D3 fog mismatch: pixel=%08x\n",pixels[(HEIGHT/2)*WIDTH+WIDTH/2]);
     return 0;
+  }
+
+  {
+    uint32_t phase[3][WIDTH*HEIGHT];
+    int phase_surface=gml_surface_create(&render,2,2);
+    if(phase_surface<=0){
+      fprintf(stderr,"software classic interpolation surface create mismatch\n");
+      return 0;
+    }
+    GmlSurface *phase_surface_data=&render.surface[phase_surface-1];
+    memset(pixels,0,sizeof(pixels)); memset(phase,0,sizeof(phase));
+    phase_surface_data->px[0]=0xFF7F405Fu; phase_surface_data->px[1]=0xFFA060E0u;
+    phase_surface_data->px[2]=0xFF20C0FFu; phase_surface_data->px[3]=0xFFFF0010u;
+    phase_surface_data->dirty=1; phase_surface_data->opaque_known=0;
+    phase_surface_data->all_opaque=0; phase_surface_data->all_transparent=0;
+    gml_d3_reset(); render.classic=1; render.interp=1;
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    for(int q=0;q<3;q++) render.classic_interp_phase[q]=phase[q];
+    gml_draw_surface_stretched(&render,phase_surface,8,8,2,2,0xFFFFFF,1);
+    if(pixels[8*WIDTH+8]!=0xFF7F405Fu ||
+       phase[0][8*WIDTH+7]!=0xFF7F405Fu || phase[0][8*WIDTH+8]!=0xFF8F509Fu ||
+       phase[1][7*WIDTH+8]!=0xFF7F405Fu || phase[1][8*WIDTH+8]!=0xFF4F80AFu ||
+       phase[2][7*WIDTH+7]!=0xFF7F405Fu || phase[2][8*WIDTH+8]!=0xFF8F5893u){
+      fprintf(stderr,"software classic surface interpolation phase mismatch: %08x %08x %08x %08x %08x %08x %08x\n",
+              pixels[8*WIDTH+8],phase[0][8*WIDTH+7],phase[0][8*WIDTH+8],
+              phase[1][7*WIDTH+8],phase[1][8*WIDTH+8],
+              phase[2][7*WIDTH+7],phase[2][8*WIDTH+8]);
+      return 0;
+    }
+    for(int q=0;q<3;q++) render.classic_interp_phase[q]=NULL;
+    render.classic=0; render.interp=0;
   }
 
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));

@@ -321,7 +321,7 @@ static int validate_sound_payload(ClassicReader *r){
          reader_words(r, 1, "sound preload");
 }
 
-static int validate_sprite_payload(ClassicReader *r){
+static int validate_sprite_payload(ClassicReader *r,int executable_layout,uint32_t resource_version){
   uint32_t frames;
   if(!reader_words(r, 2, "sprite origin") || !reader_u32(r, &frames, "sprite frame count")) return 0;
   if(frames > (r->size - r->pos) / 12) return reader_fail(r, "sprite frames");
@@ -336,7 +336,20 @@ static int validate_sprite_payload(ClassicReader *r){
     }
     if(width && height && !reader_blob(r, "sprite BGRA pixels")) return 0;
   }
-  return reader_words(r, 8, "sprite collision fields");
+  if(!executable_layout) return reader_words(r, 8, "sprite collision fields");
+  if(!frames) return 1;
+  if(resource_version>=810 && !reader_words(r,1,"sprite collision shape")) return 0;
+  uint32_t separate;
+  if(!reader_u32(r,&separate,"sprite separate collision maps")) return 0;
+  uint32_t maps=separate?frames:1;
+  for(uint32_t map=0;map<maps;map++){
+    uint32_t fields[7];
+    for(size_t i=0;i<sizeof(fields)/sizeof(fields[0]);i++)
+      if(!reader_u32(r,&fields[i],"sprite collision map")) return 0;
+    uint64_t pixels=(uint64_t)fields[1]*(uint64_t)fields[2];
+    if(pixels>UINT32_MAX || !reader_words(r,(uint32_t)pixels,"sprite collision pixels")) return 0;
+  }
+  return 1;
 }
 
 static int validate_background_payload(ClassicReader *r){
@@ -1009,6 +1022,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
     }
   }
   ClassicReader r = {(const uint8_t*)raw, (size_t)raw_size, 0, err, errcap};
+  slot->executable_layout=raw_deflate;
   uint32_t exists;
   if(!reader_u32(&r, &exists, "resource existence flag")){
     STBI_FREE(raw);
@@ -1037,7 +1051,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
   if(slot->exists){
     switch(type){
       case GMLC_CLASSIC_SOUND: valid = validate_sound_payload(&r); break;
-      case GMLC_CLASSIC_SPRITE: valid = validate_sprite_payload(&r); break;
+      case GMLC_CLASSIC_SPRITE: valid = validate_sprite_payload(&r,raw_deflate,slot->version); break;
       case GMLC_CLASSIC_BACKGROUND: valid = validate_background_payload(&r); break;
       case GMLC_CLASSIC_PATH: valid = validate_path_payload(&r); break;
       case GMLC_CLASSIC_SCRIPT: break;

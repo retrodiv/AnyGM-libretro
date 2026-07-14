@@ -530,7 +530,7 @@ static int expect_script_import(void){
   return ok;
 }
 
-static int expect_sprite_import(void){
+static int expect_sprite_import(int executable_layout){
   GmlcClassicManifest manifest;
   memset(&manifest, 0, sizeof(manifest));
   manifest.inventory.resource_slots[GMLC_CLASSIC_SPRITE] = 1;
@@ -539,6 +539,8 @@ static int expect_sprite_import(void){
   if(!manifest.slots[GMLC_CLASSIC_SPRITE]) return 0;
   GmlcClassicResourceSlot *slot = &manifest.slots[GMLC_CLASSIC_SPRITE][0];
   slot->exists = 1;
+  slot->version = 800;
+  slot->executable_layout = executable_layout;
   slot->name = strdup("resource_sprite");
   Fixture payload = {{0}, 0};
   fixture_u32(&payload, 1); fixture_u32(&payload, 2); fixture_u32(&payload, 1);
@@ -546,15 +548,24 @@ static int expect_sprite_import(void){
   const unsigned char bgra[8] = {3, 2, 1, 255, 6, 5, 4, 128};
   fixture_u32(&payload, sizeof(bgra));
   memcpy(payload.data + payload.size, bgra, sizeof(bgra)); payload.size += sizeof(bgra);
-  fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
-  fixture_u32(&payload, 0); fixture_u32(&payload, 1); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+  if(executable_layout){
+    fixture_u32(&payload, 0);
+    fixture_u32(&payload, 800); fixture_u32(&payload, 2); fixture_u32(&payload, 1);
+    fixture_u32(&payload, 0); fixture_u32(&payload, 1);
+    fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+    fixture_u32(&payload, 1); fixture_u32(&payload, 1);
+  } else {
+    fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+    fixture_u32(&payload, 0); fixture_u32(&payload, 1); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+  }
   slot->payload = (uint8_t*)malloc(payload.size);
   if(!slot->name || !slot->payload){ gmlc_classic_manifest_free(&manifest); return 0; }
   memcpy(slot->payload, payload.data, payload.size); slot->payload_size = payload.size;
 
   GmlcProject project;
   memset(&project, 0, sizeof(project));
-  char err[256], dir[128] = "tmp/classic_sprite_fixture";
+  char err[256], dir[128];
+  snprintf(dir,sizeof(dir),"tmp/classic_sprite_%s_fixture",executable_layout?"executable":"project");
 #ifdef _WIN32
   _mkdir(dir);
 #else
@@ -1228,7 +1239,8 @@ int main(int argc, char **argv){
   if(expect_legacy_manifest(600)) ++passed; else ++failed;
   if(expect_legacy_manifest(701)) ++passed; else ++failed;
   if(expect_script_import()) ++passed; else ++failed;
-  if(expect_sprite_import()) ++passed; else ++failed;
+  if(expect_sprite_import(0)) ++passed; else ++failed;
+  if(expect_sprite_import(1)) ++passed; else ++failed;
   if(expect_background_import()) ++passed; else ++failed;
   if(expect_sparse_font_import()) ++passed; else ++failed;
   if(expect_empty_font_import()) ++passed; else ++failed;

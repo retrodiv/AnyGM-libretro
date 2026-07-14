@@ -650,26 +650,67 @@ static void plot_circle_shape(GmlRender *r,double cx,double cy,double xs,double 
   }
 }
 
-static void plot_line_shape(GmlRender *r,double cx,double cy,double size,double angle,
-                            uint32_t color,double alpha){
-  /* The classic line primitive lives inside a 64x64 particle cell, but its
-   * visible bar spans only the central 56 texels.  Treating the transparent
-   * cell padding as line geometry makes small rain drops visibly too long.
-   * The outer two texels at each end are a soft coverage ramp. */
-  double length=56.0*fabs(size);
-  if(!r || length<.5 || alpha<=0) return;
-  double rad=DEG2RAD(angle), dx=cos(rad)*length, dy=-sin(rad)*length;
-  int steps=(int)ceil(fmax(fabs(dx),fabs(dy))); if(steps<1) steps=1;
-  double x0=cx-dx*.5,y0=cy-dy*.5;
-  int last_x=INT_MIN,last_y=INT_MIN;
-  for(int step=0;step<=steps;step++){
-    int x=(int)floor(x0+dx*step/steps+.5),y=(int)floor(y0+dy*step/steps+.5);
-    if(x==last_x && y==last_y) continue;
-    double u=-28.0+56.0*step/steps;
-    double coverage=(28.0-fabs(u))*.5;
-    if(coverage>1) coverage=1;
+/* Shape 3 is a slender soft-edged bar inside the standard 64x64 particle cell.
+ * Evaluate its coverage procedurally. The long and short edge ramps are
+ * separable, which also lets the exact-2x path evaluate real half-pixel
+ * samples rather than filtering a rasterized line. */
+static double sample_line_shape(double x,double y){
+  double horizontal=fmin((x+29.0)/5.0,(28.0-x)/5.0);
+  double vertical=fmin((y+5.75)/2.5,(4.75-y)/2.5);
+  if(horizontal<=0 || vertical<=0) return 0;
+  if(horizontal>1) horizontal=1;
+  if(vertical>1) vertical=1;
+  return horizontal*vertical;
+}
+
+static double sample_line_shape_texture(double x,double y,int interpolate){
+  if(!interpolate)
+    return sample_line_shape(floor(x+.5),floor(y+.5));
+  double x0=floor(x),y0=floor(y),fx=x-x0,fy=y-y0;
+  double a=sample_line_shape(x0,y0),b=sample_line_shape(x0+1.0,y0);
+  double c=sample_line_shape(x0,y0+1.0),d=sample_line_shape(x0+1.0,y0+1.0);
+  return (a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy;
+}
+
+static void plot_line_shape_plane(GmlRender *r,uint32_t *plane,
+                                  double cx,double cy,double xs,double ys,
+                                  double co,double si,double ex,double ey,
+                                  double sample_x,double sample_y,
+                                  uint32_t color,double alpha){
+  if(!r || !plane || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
+  int x0=(int)floor(cx-ex-sample_x),x1=(int)ceil(cx+ex-sample_x);
+  int y0=(int)floor(cy-ey-sample_y),y1=(int)ceil(cy+ey-sample_y);
+  if(x0<0)x0=0; if(y0<0)y0=0;
+  if(x1>=r->fbw)x1=r->fbw-1; if(y1>=r->fbh)y1=r->fbh-1;
+  uint32_t *saved_fb=r->fb;
+  r->fb=plane;
+  for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
+    double dx=x+sample_x-cx,dy=y+sample_y-cy;
+    double lx=co*dx-si*dy,ly=si*dx+co*dy;
+    /* The historical sprite quad applies its half-pixel correction before
+     * scale and rotation.  Convert the screen sample back to a virtual source
+     * texel, then use the active nearest/linear texture filter. */
+    double source_x=(lx+.5)/xs-.5,source_y=(ly+.5)/ys-.5;
+    double coverage=sample_line_shape_texture(source_x,source_y,r->interp);
     if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
-    last_x=x; last_y=y;
+  }
+  r->fb=saved_fb;
+}
+
+static void plot_line_shape(GmlRender *r,double cx,double cy,double xs,double ys,double angle,
+                            uint32_t color,double alpha){
+  if(!r || !r->fb || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
+  double rad=DEG2RAD(angle),co=cos(rad),si=sin(rad);
+  double ex=fabs(co)*29.0*fabs(xs)+fabs(si)*6.0*fabs(ys)+1.0;
+  double ey=fabs(si)*29.0*fabs(xs)+fabs(co)*6.0*fabs(ys)+1.0;
+  uint32_t *base=r->fb;
+  plot_line_shape_plane(r,base,cx,cy,xs,ys,co,si,ex,ey,0,0,color,alpha);
+  if(r->target_sp==0 && base==r->base_fb &&
+     r->classic_interp_phase[0] && r->classic_interp_phase[1] &&
+     r->classic_interp_phase[2]){
+    plot_line_shape_plane(r,r->classic_interp_phase[0],cx,cy,xs,ys,co,si,ex,ey,.5,0,color,alpha);
+    plot_line_shape_plane(r,r->classic_interp_phase[1],cx,cy,xs,ys,co,si,ex,ey,0,.5,color,alpha);
+    plot_line_shape_plane(r,r->classic_interp_phase[2],cx,cy,xs,ys,co,si,ex,ey,.5,.5,color,alpha);
   }
 }
 
@@ -914,7 +955,7 @@ void gml_part_system_drawit(GmlRender *r, int id){
         32.0*fabs(draw_size*t->xscale):half;
       double shape_ry=(t->shape==1||t->shape==5||t->shape==6||t->shape==7)?
         32.0*fabs(draw_size*t->yscale):half;
-      if(t->shape==4 || t->shape==8 || t->shape==9 || t->shape==10 || t->shape==13){
+      if(t->shape==3 || t->shape==4 || t->shape==8 || t->shape==9 || t->shape==10 || t->shape==13){
         shape_rx=shape_ry=32.0*hypot(draw_size*t->xscale,draw_size*t->yscale);
       }
       if(cx+shape_rx<0 || cy+shape_ry<0 || cx-shape_rx>=r->fbw || cy-shape_ry>=r->fbh) continue;
@@ -927,7 +968,8 @@ void gml_part_system_drawit(GmlRender *r, int id){
                           draw_size*t->xscale,draw_size*t->yscale,col,alpha,t->shape==5||t->shape==6);
       } else if(t->shape==3){
         double angle=draw_ori+(t->ori_rel?p->dir:0);
-        plot_line_shape(r,p->x-r->cam_x,p->y-r->cam_y,draw_size,angle,col,alpha);
+        plot_line_shape(r,p->x-r->cam_x,p->y-r->cam_y,
+                        draw_size*t->xscale,draw_size*t->yscale,angle,col,alpha);
       } else if(t->shape==4 || t->shape==8 || t->shape==9){
         double angle=draw_ori+(t->ori_rel?p->dir:0);
         plot_glint_shape(r,t->shape,p->x-r->cam_x,p->y-r->cam_y,

@@ -77,6 +77,7 @@ typedef struct {
   uint8_t *payload;
   size_t payload_size;
   int legacy_layout;
+  int executable_layout;
 } GmlcClassicResourceSlot;
 
 typedef struct {
