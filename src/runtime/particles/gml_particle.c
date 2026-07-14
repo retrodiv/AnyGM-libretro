@@ -536,7 +536,11 @@ static void plot_circle_shape(GmlRender *r,double cx,double cy,double xs,double 
 
 static void plot_line_shape(GmlRender *r,double cx,double cy,double size,double angle,
                             uint32_t color,double alpha){
-  double length=64.0*fabs(size);
+  /* The classic line primitive lives inside a 64x64 particle cell, but its
+   * visible bar spans only the central 56 texels.  Treating the transparent
+   * cell padding as line geometry makes small rain drops visibly too long.
+   * The outer two texels at each end are a soft coverage ramp. */
+  double length=56.0*fabs(size);
   if(!r || length<.5 || alpha<=0) return;
   double rad=DEG2RAD(angle), dx=cos(rad)*length, dy=-sin(rad)*length;
   int steps=(int)ceil(fmax(fabs(dx),fabs(dy))); if(steps<1) steps=1;
@@ -545,7 +549,11 @@ static void plot_line_shape(GmlRender *r,double cx,double cy,double size,double 
   for(int step=0;step<=steps;step++){
     int x=(int)floor(x0+dx*step/steps+.5),y=(int)floor(y0+dy*step/steps+.5);
     if(x==last_x && y==last_y) continue;
-    plot_square(r,x,y,0,color,alpha); last_x=x; last_y=y;
+    double u=-28.0+56.0*step/steps;
+    double coverage=(28.0-fabs(u))*.5;
+    if(coverage>1) coverage=1;
+    if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
+    last_x=x; last_y=y;
   }
 }
 

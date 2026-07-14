@@ -216,6 +216,29 @@ static int raster_fixtures(void){
   }
   gml_part_reset_all();
 
+  memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  {
+    int system=gml_part_system_create();
+    int type=gml_part_type_create();
+    gml_part_type_shape(type,3);
+    gml_part_type_size(type,1,1,0,0);
+    gml_part_type_orientation(type,0,0,0,0,0);
+    gml_part_type_alpha(type,1,1,1,1);
+    gml_part_particles_create_color(system,32,24,type,0x0000FF,1);
+    gml_part_system_draw_all(&render);
+    int line_pixels=0,line_off_axis=0;
+    for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++)
+      if(pixels[y*WIDTH+x]&0x00FFFFFFu){ line_pixels++; if(y!=24) line_off_axis++; }
+    int edge_red=(pixels[24*WIDTH+5]>>16)&0xFF;
+    int core_red=(pixels[24*WIDTH+6]>>16)&0xFF;
+    if(line_pixels!=55 || line_off_axis || edge_red<126 || edge_red>129 || core_red!=255){
+      fprintf(stderr,"classic particle line cell geometry mismatch\n");
+      return 0;
+    }
+  }
+  gml_part_reset_all();
+
   gml_effect_create(1,3,32,24,0,0x40A0FF);
   if(gml_part_system_count(1)!=75){
     fprintf(stderr,"small firework particle count mismatch\n");
