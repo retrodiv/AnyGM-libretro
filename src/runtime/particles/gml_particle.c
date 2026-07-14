@@ -64,7 +64,24 @@ typedef struct {
   double life, life0, size, size_incr, ori, ori_incr;
   int type;
   int has_col; uint32_t col_over;   /* part_particles_create_color override (else use the type's colour) */
+  int random_start;                 /* shared phase used by all four classic wiggle waves */
 } Part;
+
+typedef struct {
+  double x, y, speed, dir, grav_amt, grav_dir;
+  double life, life0, size, size_incr, ori, ori_incr;
+  int type;
+  int has_col; uint32_t col_over;
+} PartV2;
+
+static void part_from_v2(Part *p,const PartV2 *o){
+  memset(p,0,sizeof(*p));
+  p->x=o->x; p->y=o->y; p->speed=o->speed; p->dir=o->dir;
+  p->grav_amt=o->grav_amt; p->grav_dir=o->grav_dir;
+  p->life=o->life; p->life0=o->life0; p->size=o->size; p->size_incr=o->size_incr;
+  p->ori=o->ori; p->ori_incr=o->ori_incr; p->type=o->type;
+  p->has_col=o->has_col; p->col_over=o->col_over;
+}
 
 typedef struct {
   int used, auto_update, auto_draw;
@@ -234,7 +251,7 @@ static void sys_spawn(PSys *s, double x, double y, int type, int number, int col
     if(col>=0){ p->has_col=1; p->col_over=(uint32_t)col; }
     p->size=particle_range(t->sz_min,t->sz_max); p->size_incr=t->sz_incr;
     if(t->sprite>=0 && t->spr_random) (void)prnd();
-    (void)prnd(); /* per-particle wiggle/animation phase */
+    p->random_start=(int)floor(prnd()*100001.0); /* inclusive classic irandom(100000) */
     p->grav_amt=t->grav_amt; p->grav_dir=t->grav_dir;
   }
 }
@@ -460,12 +477,37 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     rain->life_min=rain->life_max=fmax(1.0,floor(.2*height/cadence+.5));
     int number=size==0?2:(size==1?5:9);
     PSys *system=ps(g_effect_sys[layer]);
-    for(int i=0;system && i<number;i++)
-      sys_spawn(system,prnd()*width*1.2,-30+floor(prnd()*20),type,1,(int)(color&0xFFFFFF));
+    for(int i=0;system && i<number;i++){
+      double spawn_x=prnd()*width*1.2;
+      double spawn_y=-30+floor(prnd()*20);
+      sys_spawn(system,spawn_x,spawn_y,type,1,(int)(color&0xFFFFFF));
+    }
     return;
   }
-  int number=size==0?8:(size==1?16:28); if(kind==10||kind==11) number*=2;
-  gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,number);
+  if(kind==11){
+    PType *snow=pt(type); if(!snow) return;
+    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    double cadence=fmax(30.0/speed,1.0);
+    snow->sprite=-1; snow->shape=13;
+    snow->sz_min=.1; snow->sz_max=.25; snow->sz_incr=snow->sz_wig=0;
+    snow->xscale=snow->yscale=1;
+    snow->sp_min=2.5*cadence; snow->sp_max=3.0*cadence;
+    snow->sp_incr=snow->sp_wig=0;
+    snow->dir_min=240; snow->dir_max=300; snow->dir_incr=0; snow->dir_wig=20;
+    snow->grav_amt=0; snow->grav_dir=270;
+    snow->life_min=snow->life_max=fmax(1.0,floor(.5*height/cadence+.5));
+    snow->alpha[0]=snow->alpha[1]=snow->alpha[2]=.6; snow->nalpha=3;
+    snow->ori_min=0; snow->ori_max=360; snow->ori_incr=snow->ori_wig=0;
+    snow->ori_rel=0; snow->additive=0;
+    int number=size==0?1:(size==1?3:7);
+    PSys *system=ps(g_effect_sys[layer]);
+    for(int i=0;system && i<number;i++){
+      double spawn_x=prnd()*width*1.2-60;
+      double spawn_y=floor(prnd()*20)-30;
+      sys_spawn(system,spawn_x,spawn_y,type,1,(int)(color&0xFFFFFF));
+    }
+    return;
+  }
 }
 
 int  gml_part_emitter_create(int sysid){ (void)sysid; for(int i=0;i<PE_MAX;i++) if(!g_pe[i].used){ memset(&g_pe[i],0,sizeof g_pe[i]); g_pe[i].used=1; g_pe[i].sys=sysid; return i+1; } return 0; }
@@ -495,6 +537,13 @@ static void emit_streams(int sysid, PSys *s){
   }
 }
 
+static double particle_wiggle(long long tick,int period,int quarter){
+  int step=(int)(tick%period); if(step<0) step+=period;
+  double factor=step/(double)quarter;
+  if(factor>2.0) factor=4.0-factor;
+  return factor-1.0;
+}
+
 static void update_sys(int sysid, PSys *s){
   emit_streams(sysid,s);
   for(int i=0;i<s->n;){
@@ -507,7 +556,16 @@ static void update_sys(int sysid, PSys *s){
     double vx=p->speed*cos(DEG2RAD(p->dir)), vy=-p->speed*sin(DEG2RAD(p->dir));
     if(p->grav_amt!=0){ vx += p->grav_amt*cos(DEG2RAD(p->grav_dir)); vy += -p->grav_amt*sin(DEG2RAD(p->grav_dir));
       p->speed=hypot(vx,vy); p->dir = atan2(-vy,vx)*180.0/M_PI; }
-    p->x += vx; p->y += vy;
+    double move_speed=p->speed,move_dir=p->dir;
+    if(t){
+      long long timer=(long long)floor(p->life0-p->life)+1;
+      if(t->dir_wig!=0)
+        move_dir += t->dir_wig*particle_wiggle(timer+(long long)p->random_start*3,24,6);
+      if(t->sp_wig!=0)
+        move_speed += t->sp_wig*particle_wiggle(timer+(long long)p->random_start*4,20,5);
+    }
+    p->x += move_speed*cos(DEG2RAD(move_dir));
+    p->y += -move_speed*sin(DEG2RAD(move_dir));
     if(t) p->size += p->size_incr;
     if(p->size<0) p->size=0;
     p->life -= 1;
@@ -623,6 +681,8 @@ static uint8_t explosion_shape_mask[64*64];
 static int explosion_shape_mask_ready;
 static uint8_t glint_shape_mask[3][64*64];
 static unsigned glint_shape_mask_ready;
+static uint8_t snow_shape_mask[64*64];
+static int snow_shape_mask_ready;
 
 static double unit_clamp(double v){ return v<0?0:(v>1?1:v); }
 static double smooth_unit(double v){ v=unit_clamp(v); return v*v*(3.0-2.0*v); }
@@ -705,6 +765,21 @@ static void prepare_explosion_shape_mask(void){
   explosion_shape_mask_ready=1;
 }
 
+/* The classic snow cell is a soft, filled six-lobed flake rather than a
+ * branching line drawing.  A radial boundary keeps the generated mask
+ * symmetric under rotation while the broad edge reproduces its soft halo. */
+static void prepare_snow_shape_mask(void){
+  if(snow_shape_mask_ready) return;
+  for(int y=0;y<64;y++) for(int x=0;x<64;x++){
+    double px=x+.5-32.0,py=y+.5-32.0;
+    double radius=hypot(px,py),angle=atan2(py,px);
+    double boundary=23.0-3.0*cos(angle*6.0);
+    double coverage=smooth_unit((boundary-radius)*.07+.5);
+    snow_shape_mask[y*64+x]=(uint8_t)(255.0*coverage+.5);
+  }
+  snow_shape_mask_ready=1;
+}
+
 static double sample_explosion_shape(double x,double y){
   prepare_explosion_shape_mask();
   double tx=x+31.5,ty=y+31.5;
@@ -730,6 +805,18 @@ static double sample_glint_shape(int shape,double x,double y){
   double fx=tx-x0,fy=ty-y0;
   double a=mask[y0*64+x0],b=mask[y0*64+x1];
   double c=mask[y1*64+x0],d=mask[y1*64+x1];
+  return ((a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy)/255.0;
+}
+
+static double sample_snow_shape(double x,double y){
+  prepare_snow_shape_mask();
+  double tx=x+31.5,ty=y+31.5;
+  if(tx<0 || ty<0 || tx>63 || ty>63) return 0;
+  int x0=(int)floor(tx),y0=(int)floor(ty);
+  int x1=x0<63?x0+1:x0,y1=y0<63?y0+1:y0;
+  double fx=tx-x0,fy=ty-y0;
+  double a=snow_shape_mask[y0*64+x0],b=snow_shape_mask[y0*64+x1];
+  double c=snow_shape_mask[y1*64+x0],d=snow_shape_mask[y1*64+x1];
   return ((a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy)/255.0;
 }
 
@@ -773,13 +860,38 @@ static void plot_glint_shape(GmlRender *r,int shape,double cx,double cy,double x
   }
 }
 
+static void plot_snow_shape(GmlRender *r,double cx,double cy,double xs,double ys,
+                            double angle,uint32_t color,double alpha){
+  if(!r || !r->fb || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
+  double rad=DEG2RAD(angle),co=cos(rad),si=sin(rad);
+  double sx=32.0*fabs(xs),sy=32.0*fabs(ys);
+  double ex=fabs(co)*sx+fabs(si)*sy,ey=fabs(si)*sx+fabs(co)*sy;
+  int x0=(int)floor(cx-ex),x1=(int)ceil(cx+ex);
+  int y0=(int)floor(cy-ey),y1=(int)ceil(cy+ey);
+  if(x0<0)x0=0;
+  if(y0<0)y0=0;
+  if(x1>=r->fbw)x1=r->fbw-1;
+  if(y1>=r->fbh)y1=r->fbh-1;
+  for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
+    double dx=x+.5-cx,dy=y+.5-cy;
+    double lx=co*dx-si*dy,ly=si*dx+co*dy;
+    double coverage=sample_snow_shape(lx/xs,ly/ys);
+    if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
+  }
+}
+
 void gml_part_system_drawit(GmlRender *r, int id){
   PSys *s=ps(id); if(!s||!r) return;
   for(int i=0;i<s->n;i++){ Part *p=&s->parts[i]; PType *t=pt(p->type); if(!t) continue;
     double age = p->life0>0 ? (p->life0-p->life)/p->life0 : 0; if(age<0)age=0; if(age>1)age=1;
+    long long timer=(long long)floor(p->life0-p->life);
+    double draw_size=p->size;
+    double draw_ori=p->ori;
+    if(t->sz_wig!=0) draw_size += t->sz_wig*particle_wiggle(timer+p->random_start,16,4);
+    if(t->ori_wig!=0) draw_ori += t->ori_wig*particle_wiggle(timer+(long long)p->random_start*2,16,4);
     if(t->sprite>=0){
       int frames=gml_sprite_frames(r,t->sprite); int sub = (t->spr_animate&&frames>0)? (int)(age*frames)%frames : 0;
-      double xs=p->size*t->xscale, ys=p->size*t->yscale;
+      double xs=draw_size*t->xscale, ys=draw_size*t->yscale;
       if(t->sprite<r->n_spr && frames>0){
         GmlSprite *spr=&r->spr[t->sprite];
         double ax=fabs(xs), ay=fabs(ys);
@@ -794,16 +906,16 @@ void gml_part_system_drawit(GmlRender *r, int id){
       uint32_t col = p->has_col ? p->col_over : keyc(age,t);
       /* gml_draw_sprite_ext applies the camera itself → pass world (x,y), NOT camera-relative. */
       gml_draw_sprite_ext(r,t->sprite,sub, p->x, p->y,
-                          xs, ys, p->ori, col, alpha);
+                          xs, ys, draw_ori+(t->ori_rel?p->dir:0), col, alpha);
     } else {
-      int half=(int)(p->size)+0; if(half<0)half=0; if(half>64)half=64;
+      int half=(int)(draw_size)+0; if(half<0)half=0; if(half>64)half=64;
       int cx=(int)(p->x - r->cam_x), cy=(int)(p->y - r->cam_y);
       double shape_rx=(t->shape==1||t->shape==5||t->shape==6||t->shape==7)?
-        32.0*fabs(p->size*t->xscale):half;
+        32.0*fabs(draw_size*t->xscale):half;
       double shape_ry=(t->shape==1||t->shape==5||t->shape==6||t->shape==7)?
-        32.0*fabs(p->size*t->yscale):half;
-      if(t->shape==4 || t->shape==8 || t->shape==9 || t->shape==10){
-        shape_rx=shape_ry=32.0*hypot(p->size*t->xscale,p->size*t->yscale);
+        32.0*fabs(draw_size*t->yscale):half;
+      if(t->shape==4 || t->shape==8 || t->shape==9 || t->shape==10 || t->shape==13){
+        shape_rx=shape_ry=32.0*hypot(draw_size*t->xscale,draw_size*t->yscale);
       }
       if(cx+shape_rx<0 || cy+shape_ry<0 || cx-shape_rx>=r->fbw || cy-shape_ry>=r->fbh) continue;
       double alpha=keyf(age,t->nalpha,t->alpha[0],t->alpha[1],t->alpha[2]);
@@ -812,18 +924,22 @@ void gml_part_system_drawit(GmlRender *r, int id){
       gml_render_maybe_prepare_draw(r);
       if(t->shape==1 || t->shape==5 || t->shape==6 || t->shape==7){
         plot_circle_shape(r,p->x-r->cam_x,p->y-r->cam_y,
-                          p->size*t->xscale,p->size*t->yscale,col,alpha,t->shape==5||t->shape==6);
+                          draw_size*t->xscale,draw_size*t->yscale,col,alpha,t->shape==5||t->shape==6);
       } else if(t->shape==3){
-        double angle=p->ori+(t->ori_rel?p->dir:0);
-        plot_line_shape(r,p->x-r->cam_x,p->y-r->cam_y,p->size,angle,col,alpha);
+        double angle=draw_ori+(t->ori_rel?p->dir:0);
+        plot_line_shape(r,p->x-r->cam_x,p->y-r->cam_y,draw_size,angle,col,alpha);
       } else if(t->shape==4 || t->shape==8 || t->shape==9){
-        double angle=p->ori+(t->ori_rel?p->dir:0);
+        double angle=draw_ori+(t->ori_rel?p->dir:0);
         plot_glint_shape(r,t->shape,p->x-r->cam_x,p->y-r->cam_y,
-                         p->size*t->xscale,p->size*t->yscale,angle,col,alpha);
+                         draw_size*t->xscale,draw_size*t->yscale,angle,col,alpha);
       } else if(t->shape==10){
-        double angle=p->ori+(t->ori_rel?p->dir:0);
+        double angle=draw_ori+(t->ori_rel?p->dir:0);
         plot_explosion_shape(r,p->x-r->cam_x,p->y-r->cam_y,
-                             p->size*t->xscale,p->size*t->yscale,angle,col,alpha);
+                             draw_size*t->xscale,draw_size*t->yscale,angle,col,alpha);
+      } else if(t->shape==13){
+        double angle=draw_ori+(t->ori_rel?p->dir:0);
+        plot_snow_shape(r,p->x-r->cam_x,p->y-r->cam_y,
+                        draw_size*t->xscale,draw_size*t->yscale,angle,col,alpha);
       } else if(!gml_d3_draw_rectangle_2d(r,p->x-half,p->y-half,p->x+half+1,p->y+half+1,col,alpha,0))
         plot_square(r,cx,cy,half,col,alpha);
     }
@@ -854,7 +970,7 @@ static int pr_i32(PartR *r){ int32_t v=0; pr_raw(r,&v,sizeof(v)); return (int)v;
 static double pr_d(PartR *r){ double v=0; pr_raw(r,&v,sizeof(v)); return v; }
 
 static void part_state_write(PartW *w){
-  pw_u32(w,0x32545250u); /* PTR2: PTR1 + particle colour modes + emitter stream state */
+  pw_u32(w,0x33545250u); /* PTR3: PTR2 + persisted classic wiggle phase */
   pw_u32(w,g_prng);
   int nt=0; for(int i=0;i<PT_MAX;i++) if(g_pt[i].used) nt++;
   pw_i32(w,nt);
@@ -885,8 +1001,8 @@ int gml_part_state_save(void *data, size_t len, size_t *written){
 int gml_part_state_load(const void *data, size_t len, size_t *used){
   PartR r={(const uint8_t*)data,len,0,1};
   uint32_t magic=pr_u32(&r);
-  int v2=(magic==0x32545250u), v1=(magic==0x31545250u);
-  if(!v1 && !v2){ if(used) *used=r.pos; return 0; }
+  int v3=(magic==0x33545250u), v2=(magic==0x32545250u), v1=(magic==0x31545250u);
+  if(!v1 && !v2 && !v3){ if(used) *used=r.pos; return 0; }
   gml_part_reset_all();
   g_prng=pr_u32(&r);
   int nt=pr_i32(&r);
@@ -894,7 +1010,7 @@ int gml_part_state_load(const void *data, size_t len, size_t *used){
   for(int k=0;k<nt;k++){
     int id=pr_i32(&r);
     PType tmp; memset(&tmp,0,sizeof(tmp));
-    if(v2) pr_raw(&r,&tmp,sizeof(tmp));
+    if(v2 || v3) pr_raw(&r,&tmp,sizeof(tmp));
     else { PTypeV1 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old)); ptype_from_v1(&tmp,&old); }
     if(id>=1 && id<=PT_MAX){ g_pt[id-1]=tmp; g_pt[id-1].used=1; }
   }
@@ -906,14 +1022,18 @@ int gml_part_state_load(const void *data, size_t len, size_t *used){
     double depth=pr_d(&r), px=pr_d(&r), py=pr_d(&r);
     int n=pr_i32(&r);
     if(n<0 || n>200000){ r.ok=0; n=0; }
-    size_t bytes=(size_t)n*sizeof(Part);
+    size_t bytes=(size_t)n*(v3?sizeof(Part):sizeof(PartV2));
     Part *parts=n?calloc((size_t)n,sizeof(Part)):NULL;
     if(n && !parts){
       r.ok=0;
       if(r.pos+bytes<=r.cap) r.pos+=bytes; else { r.pos+=bytes; r.ok=0; }
       n=0;
     } else if(n) {
-      pr_raw(&r,parts,bytes);
+      if(v3) pr_raw(&r,parts,bytes);
+      else for(int i=0;i<n;i++){
+        PartV2 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old));
+        part_from_v2(&parts[i],&old);
+      }
     }
     if(id>=1 && id<=PS_MAX){
       PSys *s=&g_ps[id-1]; memset(s,0,sizeof(*s));

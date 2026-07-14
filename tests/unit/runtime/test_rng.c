@@ -146,6 +146,18 @@ int main(void){
     return 1;
   }
   gml_part_reset_all();
+  gml_rng_seed(&vm,0);
+  gml_effect_create(1,11,32,24,2,0xFFFFFF);
+  memset(&expected,0,sizeof(expected));
+  expected.win=&classic;
+  gml_rng_seed(&expected,0);
+  for(int i=0;i<49;i++) (void)gml_rng_value(&expected);
+  if(vm.rng_classic_state!=expected.rng_classic_state){
+    fprintf(stderr,"classic snowfall RNG consumption mismatch: got=%08x expected=%08x\n",
+            vm.rng_classic_state,expected.rng_classic_state);
+    return 1;
+  }
+  gml_part_reset_all();
   puts("classic RNG fixtures: ok");
   return 0;
 }

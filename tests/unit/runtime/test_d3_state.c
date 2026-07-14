@@ -251,12 +251,13 @@ static int raster_fixtures(void){
   gml_effect_create(1,10,0,0,0,0xFFFF00);
   for(int i=0;i<5;i++) gml_part_update_all();
   gml_part_system_draw_all(&render);
-  int rain_pixels=0,rain_far_pixels=0,rain_alpha_pixels=0;
+  int rain_pixels=0,rain_far_pixels=0,rain_right_pixels=0,rain_alpha_pixels=0;
   for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++) if(pixels[y*WIDTH+x]&0x00FFFFFFu){
     rain_pixels++; if(x>8) rain_far_pixels++;
+    if(x>56) rain_right_pixels++;
     if(pixels[y*WIDTH+x]>>24) rain_alpha_pixels++;
   }
-  if(rain_pixels<4 || rain_far_pixels<4 || rain_alpha_pixels!=rain_pixels){
+  if(rain_pixels<4 || rain_far_pixels<4 || rain_right_pixels<4 || rain_alpha_pixels!=rain_pixels){
     fprintf(stderr,"software rain effect distribution mismatch\n");
     return 0;
   }
@@ -343,6 +344,43 @@ static int raster_fixtures(void){
     }
   }
 
+  {
+    static const double scales[3]={.5,.5,.2};
+    static const double angles[3]={0,30,0};
+    static const int min_pixels[3]={680,670,100};
+    static const int max_pixels[3]={730,720,120};
+    static const int min_span_x[3]={28,30,10};
+    static const int min_span_y[3]={30,28,10};
+    for(int k=0;k<3;k++){
+      for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF504030u;
+      gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+      int system=gml_part_system_create();
+      int type=gml_part_type_create();
+      gml_part_type_shape(type,13);
+      gml_part_type_size(type,scales[k],scales[k],0,0);
+      gml_part_type_orientation(type,angles[k],angles[k],0,0,0);
+      gml_part_type_alpha(type,1,.6,.6,.6);
+      gml_part_particles_create_color(system,32,24,type,0xFFFFFF,1);
+      gml_part_system_draw_all(&render);
+      int changed=0,minx=WIDTH,maxx=-1,miny=HEIGHT,maxy=-1;
+      for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++)
+        if(pixels[y*WIDTH+x]!=0xFF504030u){
+          changed++;
+          if(x<minx)minx=x;
+          if(x>maxx)maxx=x;
+          if(y<miny)miny=y;
+          if(y>maxy)maxy=y;
+        }
+      if(changed<min_pixels[k] || changed>max_pixels[k] ||
+         maxx-minx+1<min_span_x[k] || maxy-miny+1<min_span_y[k]){
+        fprintf(stderr,"classic six-lobed particle footprint mismatch: scale=%.2f angle=%.0f pixels=%d span=%dx%d\n",
+                scales[k],angles[k],changed,maxx-minx+1,maxy-miny+1);
+        return 0;
+      }
+      gml_part_reset_all();
+    }
+  }
+
   gml_effect_create(1,3,32,24,0,0x40A0FF);
   if(gml_part_system_count(1)!=75){
     fprintf(stderr,"small firework particle count mismatch\n");
@@ -418,6 +456,62 @@ static int raster_fixtures(void){
     return 0;
   }
   gml_part_reset_all();
+
+  gml_effect_create(1,11,32,24,2,0xFFFFFF);
+  if(gml_part_system_count(1)!=7){
+    fprintf(stderr,"large snowfall particle count mismatch\n");
+    return 0;
+  }
+  gml_part_reset_all();
+
+  {
+    gml_d3_reset();
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    int system=gml_part_system_create();
+    int type=gml_part_type_create();
+    gml_part_type_size(type,1,1,0,0);
+    gml_part_type_speed(type,8,8,0,0);
+    gml_part_type_direction(type,0,0,0,90);
+    gml_part_particles_create(system,20,20,type,1);
+    size_t particle_state_size=gml_part_state_size(),particle_written=0,particle_used=0;
+    void *particle_state=malloc(particle_state_size);
+    if(!particle_state || !gml_part_state_save(particle_state,particle_state_size,&particle_written) ||
+       particle_written!=particle_state_size){
+      fprintf(stderr,"particle wiggle phase state save failed\n");
+      free(particle_state);
+      return 0;
+    }
+    gml_part_update_all();
+    gml_part_system_draw_all(&render);
+    uint32_t expected_pixels[WIDTH*HEIGHT];
+    memcpy(expected_pixels,pixels,sizeof(expected_pixels));
+    if(colored_pixels(pixels,WIDTH*HEIGHT)<1 || pixels[20*WIDTH+28]!=0){
+      int first=-1;
+      for(int i=0;i<WIDTH*HEIGHT;i++) if(pixels[i]){ first=i; break; }
+      fprintf(stderr,"particle direction wiggle phase mismatch: first=(%d,%d) count=%d straight=%08x\n",
+              first<0?-1:first%WIDTH,first<0?-1:first/WIDTH,
+              colored_pixels(pixels,WIDTH*HEIGHT),pixels[20*WIDTH+28]);
+      free(particle_state);
+      return 0;
+    }
+    if(!gml_part_state_load(particle_state,particle_written,&particle_used) ||
+       particle_used!=particle_written){
+      fprintf(stderr,"particle wiggle phase state load failed\n");
+      free(particle_state);
+      return 0;
+    }
+    free(particle_state);
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    gml_part_update_all();
+    gml_part_system_draw_all(&render);
+    if(memcmp(pixels,expected_pixels,sizeof(expected_pixels))){
+      fprintf(stderr,"particle wiggle phase state roundtrip mismatch\n");
+      return 0;
+    }
+    gml_part_reset_all();
+  }
 
   gml_d3_reset();
   memset(pixels,0,sizeof(pixels));
