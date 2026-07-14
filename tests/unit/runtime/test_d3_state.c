@@ -92,6 +92,20 @@ static int raster_fixtures(void){
       fprintf(stderr,"classic centre-sampled presentation mismatch\n");
       return 0;
     }
+    {
+      uint32_t fractional_source[3]={0xFFFF0000u,0xFF00FF00u,0xFF0000FFu};
+      uint32_t fractional_target[4]={0,0,0,0};
+      render.app_surface=fractional_source; render.app_w=3;
+      gml_render_begin(&render,fractional_target,4,1,0,0);
+      gml_render_set_pending_underlay(&render,0,0,4,1);
+      gml_render_flush_pending_underlay(&render);
+      if(fractional_target[0]!=0xFFFF0000u || fractional_target[1]!=0xFF00FF00u ||
+         fractional_target[2]!=0xFF0000FFu || fractional_target[3]!=0xFF0000FFu){
+        fprintf(stderr,"classic fractional presentation phase mismatch\n");
+        return 0;
+      }
+      render.app_surface=source; render.app_w=2;
+    }
     memset(target,0,sizeof(target)); render.classic=0;
     gml_render_begin(&render,target,3,1,0,0);
     gml_render_set_pending_underlay(&render,0,0,3,1);
