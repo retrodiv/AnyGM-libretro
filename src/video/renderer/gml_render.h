@@ -104,6 +104,11 @@ typedef struct {
   /* the application_surface: the buffer the game is rendered into and later
    * readable by draw_surface_* calls. Set by the frontend; same w/h as fbw/fbh. */
   uint32_t *app_surface; int app_draw_enable;   /* GM application_surface_draw_enable, default 1 */
+  /* Optional classic 2x vertical coverage plane.  The game pass replays texture draws at the
+   * half-row samples as well as at logical pixel centres; the presentation pass then interleaves
+   * them without a GPU.  This is a borrowed scratch buffer owned by the frontend. */
+  uint32_t *classic_phase_y;
+  uint32_t *app_phase_y;
   int       interp;   /* texture_set_interpolation state: 0 nearest (GM default), 1 bilinear. Only
                        * upscaling surface/sprite blits honor it (nearest is exact for pixel art). */
   int       composites_app;  /* set by a draw when the game blits the application_surface stretched in
