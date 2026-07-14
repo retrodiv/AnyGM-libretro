@@ -289,13 +289,6 @@ int main(void){
     fprintf(stderr,"classic object/existence/previous-room conditions did not match: object=%.0f exists=%.0f previous=%.0f\n",
       object_hit.d,legacy_exists.d,previous_room.d); return 1;
   }
-  GmlVal another_room_args[2]={vreal(1),vreal(21)};
-  (void)gml_builtin_call(&vm,"action_another_room",another_room_args,2);
-  GmlVal *transition_kind=gml_varmap_get(&vm.globals,"transition_kind");
-  if(vm.pending_room!=1 || !transition_kind || transition_kind->t!=V_REAL || transition_kind->d!=21){
-    fprintf(stderr,"classic room action did not retain its target/transition\n"); return 1;
-  }
-  vm.pending_room=-1;
   created->path_index=0;
   GmlVal path_speed=vreal(0.75);
   (void)gml_builtin_call(&vm,"action_path_speed",&path_speed,1);

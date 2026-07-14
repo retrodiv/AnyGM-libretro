@@ -6808,12 +6808,6 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       created->hspeed=created->speed*cos(created->direction*M_PI/180.0);
       created->vspeed=-created->speed*sin(created->direction*M_PI/180.0); }
     return vreal(0); }
-  if(!strcmp(nm,"action_another_room")){
-    int target=(int)N(a,n,0);
-    gml_set_global_scalar(vm,"transition_kind",N(a,n,1));
-    gml_vm_warm_audio_for_room(vm,target);
-    vm->pending_room=target;
-    return vreal(0); }
   if(!strcmp(nm,"action_previous_room")){
     gml_set_global_scalar(vm,"transition_kind",N(a,n,0));
     int pos=order_pos(vm,vm->room_index);
