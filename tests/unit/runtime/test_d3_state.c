@@ -297,6 +297,24 @@ static int raster_fixtures(void){
     fprintf(stderr,"small explosion particle count mismatch\n");
     return 0;
   }
+  for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFFB0B0B0u;
+  gml_part_update_all();
+  gml_part_system_draw_all(&render);
+  int explosion_pixels=0,explosion_minx=WIDTH,explosion_maxx=-1;
+  int explosion_miny=HEIGHT,explosion_maxy=-1;
+  for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++)
+    if(pixels[y*WIDTH+x]!=0xFFB0B0B0u){
+      explosion_pixels++;
+      if(x<explosion_minx) explosion_minx=x;
+      if(x>explosion_maxx) explosion_maxx=x;
+      if(y<explosion_miny) explosion_miny=y;
+      if(y>explosion_maxy) explosion_maxy=y;
+    }
+  if(explosion_pixels<80 || explosion_maxx-explosion_minx<10 || explosion_maxy-explosion_miny<10){
+    fprintf(stderr,"classic explosion shape coverage mismatch: pixels=%d span=%dx%d\n",
+            explosion_pixels,explosion_maxx-explosion_minx+1,explosion_maxy-explosion_miny+1);
+    return 0;
+  }
   gml_part_reset_all();
 
   gml_effect_create(1,1,32,24,0,0x40A0FF);

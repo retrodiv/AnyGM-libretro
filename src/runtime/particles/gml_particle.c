@@ -315,7 +315,7 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     core->grav_amt=0; core->grav_dir=270;
     core->life_min=core->life_max=floor(core_life[size]/cadence+.5);
     core->alpha[0]=.8; core->alpha[1]=.4; core->alpha[2]=0; core->nalpha=3;
-    core->ori_min=core->ori_max=core->ori_incr=core->ori_wig=0; core->ori_rel=0;
+    core->ori_min=0; core->ori_max=360; core->ori_incr=core->ori_wig=0; core->ori_rel=0;
     core->additive=0;
     gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,20);
     gml_part_particles_create_color(g_effect_sys[layer],x,y,core_id,0,1);
@@ -557,6 +557,67 @@ static void plot_line_shape(GmlRender *r,double cx,double cy,double size,double 
   }
 }
 
+/* The textured classic shapes occupy a 64x64 cell. Generate the soft,
+ * irregular explosion field procedurally at startup. Keeping the field in a
+ * small mask also avoids evaluating trigonometry for every live particle and
+ * every frame. */
+static uint8_t explosion_shape_mask[64*64];
+static int explosion_shape_mask_ready;
+
+static double unit_clamp(double v){ return v<0?0:(v>1?1:v); }
+static double smooth_unit(double v){ v=unit_clamp(v); return v*v*(3.0-2.0*v); }
+
+static void prepare_explosion_shape_mask(void){
+  if(explosion_shape_mask_ready) return;
+  for(int y=0;y<64;y++) for(int x=0;x<64;x++){
+    double nx=(x+.5-32.0)/32.0,ny=(y+.5-32.0)/32.0;
+    double radius=hypot(nx,ny),angle=atan2(ny,nx);
+    double rim=.82 + .065*sin(angle*5.0+.4) + .045*sin(angle*9.0-1.1)
+                    + .025*sin(angle*17.0+.8);
+    double edge=smooth_unit((rim-radius)*5.5+.5);
+    double grain=.80 + .12*sin(nx*13.0+ny*7.0+.6)
+                       *sin(nx*5.0-ny*17.0-.3)
+                       + .08*cos(nx*21.0+ny*11.0);
+    double centre=.82+.18*smooth_unit(radius*3.0);
+    explosion_shape_mask[y*64+x]=(uint8_t)(255.0*unit_clamp(edge*grain*centre)+.5);
+  }
+  explosion_shape_mask_ready=1;
+}
+
+static double sample_explosion_shape(double x,double y){
+  prepare_explosion_shape_mask();
+  double tx=x+31.5,ty=y+31.5;
+  if(tx<0 || ty<0 || tx>63 || ty>63) return 0;
+  int x0=(int)floor(tx),y0=(int)floor(ty);
+  int x1=x0<63?x0+1:x0,y1=y0<63?y0+1:y0;
+  double fx=tx-x0,fy=ty-y0;
+  double a=explosion_shape_mask[y0*64+x0];
+  double b=explosion_shape_mask[y0*64+x1];
+  double c=explosion_shape_mask[y1*64+x0];
+  double d=explosion_shape_mask[y1*64+x1];
+  return ((a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy)/255.0;
+}
+
+static void plot_explosion_shape(GmlRender *r,double cx,double cy,double xs,double ys,
+                                 double angle,uint32_t color,double alpha){
+  if(!r || !r->fb || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
+  double rad=DEG2RAD(angle),co=cos(rad),si=sin(rad);
+  double sx=32.0*fabs(xs),sy=32.0*fabs(ys);
+  double ex=fabs(co)*sx+fabs(si)*sy,ey=fabs(si)*sx+fabs(co)*sy;
+  int x0=(int)floor(cx-ex),x1=(int)ceil(cx+ex);
+  int y0=(int)floor(cy-ey),y1=(int)ceil(cy+ey);
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>=r->fbw) x1=r->fbw-1;
+  if(y1>=r->fbh) y1=r->fbh-1;
+  for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
+    double dx=x+.5-cx,dy=y+.5-cy;
+    double lx=co*dx-si*dy,ly=si*dx+co*dy;
+    double coverage=sample_explosion_shape(lx/xs,ly/ys);
+    if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
+  }
+}
+
 void gml_part_system_drawit(GmlRender *r, int id){
   PSys *s=ps(id); if(!s||!r) return;
   for(int i=0;i<s->n;i++){ Part *p=&s->parts[i]; PType *t=pt(p->type); if(!t) continue;
@@ -586,6 +647,9 @@ void gml_part_system_drawit(GmlRender *r, int id){
         32.0*fabs(p->size*t->xscale):half;
       double shape_ry=(t->shape==1||t->shape==5||t->shape==6||t->shape==7)?
         32.0*fabs(p->size*t->yscale):half;
+      if(t->shape==10){
+        shape_rx=shape_ry=32.0*hypot(p->size*t->xscale,p->size*t->yscale);
+      }
       if(cx+shape_rx<0 || cy+shape_ry<0 || cx-shape_rx>=r->fbw || cy-shape_ry>=r->fbh) continue;
       double alpha=keyf(age,t->nalpha,t->alpha[0],t->alpha[1],t->alpha[2]);
       if(alpha<=0) continue;
@@ -597,6 +661,10 @@ void gml_part_system_drawit(GmlRender *r, int id){
       } else if(t->shape==3){
         double angle=p->ori+(t->ori_rel?p->dir:0);
         plot_line_shape(r,p->x-r->cam_x,p->y-r->cam_y,p->size,angle,col,alpha);
+      } else if(t->shape==10){
+        double angle=p->ori+(t->ori_rel?p->dir:0);
+        plot_explosion_shape(r,p->x-r->cam_x,p->y-r->cam_y,
+                             p->size*t->xscale,p->size*t->yscale,angle,col,alpha);
       } else if(!gml_d3_draw_rectangle_2d(r,p->x-half,p->y-half,p->x+half+1,p->y+half+1,col,alpha,0))
         plot_square(r,cx,cy,half,col,alpha);
     }
