@@ -60,6 +60,8 @@ typedef struct {
 } GmlAtlas;
 typedef struct {
   int atlas, sx, sy, sw, sh;
+  int projected_x, projected_y, dest_x0, dest_y0;
+  double edge_x0, edge_x1, edge_y0, edge_y1;
   uint32_t *phase[3];
 } GmlInterpSubrectCache;
 typedef struct {

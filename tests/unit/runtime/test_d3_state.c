@@ -944,6 +944,52 @@ static int raster_fixtures(void){
   render.tpag[0].bw=render.tpag[0].bh=2; render.bg[0].tpag=0;
   render.classic=1; gml_d3_reset(); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  {
+    enum { PROJECTED_W=62, PROJECTED_H=47 };
+    uint32_t phase[3][WIDTH*HEIGHT];
+    const uint8_t rgba[16]={
+      255,0,0,255, 0,255,0,255,
+      0,0,255,255, 255,255,255,255
+    };
+    memcpy(render.atlas[0].px,rgba,sizeof(rgba));
+    memset(pixels,0,sizeof(pixels)); memset(phase,0,sizeof(phase));
+    render.interp=1;
+    gml_render_begin(&render,pixels,PROJECTED_W,PROJECTED_H,340,0);
+    for(int q=0;q<3;q++) render.classic_interp_phase[q]=phase[q];
+    gml_draw_background_ext(&render,0,340,0,1,1,0xFFFFFF,1);
+    if(render.interp_subrect_count!=1 || render.interp_subrect_bytes!=48 ||
+       !render.interp_subrect_cache[0].projected_x ||
+       render.interp_subrect_cache[0].projected_y ||
+       !render.interp_subrect_cache[0].phase[0] ||
+       !render.interp_subrect_cache[0].phase[1] ||
+       !render.interp_subrect_cache[0].phase[2] ||
+       phase[0][0]!=render.interp_subrect_cache[0].phase[0][1] ||
+       phase[1][0]!=render.interp_subrect_cache[0].phase[1][2] ||
+       phase[2][0]!=render.interp_subrect_cache[0].phase[2][3]){
+      fprintf(stderr,"software classic projected interpolation cache mismatch\n");
+      return 0;
+    }
+    size_t cached_bytes=render.interp_subrect_bytes;
+    render.interp_subrect_bytes=16u*1024u*1024u;
+    memset(pixels,0,sizeof(pixels)); memset(phase,0,sizeof(phase));
+    gml_render_begin(&render,pixels,PROJECTED_W,PROJECTED_H,340,0);
+    for(int q=0;q<3;q++) render.classic_interp_phase[q]=phase[q];
+    gml_draw_background_ext(&render,0,340,0,1,1,0xFFFFFF,1);
+    if(render.interp_subrect_count!=1 || render.interp_subrect_bytes!=16u*1024u*1024u){
+      fprintf(stderr,"software classic projected interpolation cache reuse mismatch\n");
+      return 0;
+    }
+    render.interp_subrect_bytes=cached_bytes;
+    render.interp=0;
+    free(render.tpag[0].alpha_row_min); render.tpag[0].alpha_row_min=NULL;
+    free(render.tpag[0].alpha_row_max); render.tpag[0].alpha_row_max=NULL;
+    free(render.tpag[0].alpha_runs); render.tpag[0].alpha_runs=NULL;
+    free(render.tpag[0].argb_cache); render.tpag[0].argb_cache=NULL;
+    render.tpag[0].alpha_scanned=0;
+    render.tpag[0].alpha_runs_built=0;
+    render.tpag[0].alpha_run_count=0;
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  }
   for(int i=0;i<4;i++){
     render.atlas[0].px[i*4]=render.atlas[0].px[i*4+1]=render.atlas[0].px[i*4+2]=192;
     render.atlas[0].px[i*4+3]=254;
