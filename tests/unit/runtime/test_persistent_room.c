@@ -379,6 +379,37 @@ int main(void){
   contact->image_xscale=contact->image_yscale=1;
   contact->solid=0;
   GmlInstance *late_order=gml_instance_create(&vm,300,100,0); if(!late_order)return 1;
+  collision_sprites[0].w=collision_sprites[0].h=1;
+  collision_sprites[0].mr=collision_sprites[0].mb=0;
+  created->x=created->y=created->xprevious=created->yprevious=0;
+  contact->x=1; contact->y=0; contact->solid=1;
+  vm.cur_self=created;
+  GmlVal bounce_motion[2]={vreal(0),vreal(1)};
+  (void)gml_builtin_call(&vm,"motion_set",bounce_motion,2);
+  GmlVal advanced_bounce=vreal(1);
+  gml_colgrid_invalidate(&vm);
+  (void)gml_builtin_call(&vm,"move_bounce_solid",&advanced_bounce,1);
+  if(created->direction!=180 || created->hspeed!=-1 || created->vspeed!=0){
+    fprintf(stderr,"classic advanced bounce did not reflect around the sampled free directions: direction=%.17g velocity=(%.17g,%.17g)\n",
+      created->direction,created->hspeed,created->vspeed); return 1;
+  }
+  contact->x=1; contact->y=1;
+  bounce_motion[0]=vreal(315);
+  (void)gml_builtin_call(&vm,"motion_set",bounce_motion,2);
+  GmlVal basic_bounce=vreal(0);
+  gml_colgrid_invalidate(&vm);
+  (void)gml_builtin_call(&vm,"move_bounce_solid",&basic_bounce,1);
+  if(fabs(created->direction-135)>1e-9 ||
+     fabs(created->hspeed+sqrt(0.5))>1e-9 || fabs(created->vspeed+sqrt(0.5))>1e-9){
+    fprintf(stderr,"classic basic bounce omitted the diagonal contact: direction=%.17g velocity=(%.17g,%.17g)\n",
+      created->direction,created->hspeed,created->vspeed); return 1;
+  }
+  collision_sprites[0].w=collision_sprites[0].h=2;
+  collision_sprites[0].mr=collision_sprites[0].mb=1;
+  created->x=0; created->y=100; created->xprevious=0; created->yprevious=100;
+  created->direction=created->speed=created->hspeed=created->vspeed=0;
+  contact->x=5; contact->y=100; contact->solid=0;
+  gml_colgrid_invalidate(&vm);
   vm.cur_self=created;
   GmlVal contact_direction=vreal(0);
   (void)gml_builtin_call(&vm,"move_contact",&contact_direction,1);

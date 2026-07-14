@@ -4191,6 +4191,57 @@ static GmlInstance *collision_instance_at(GmlVM *vm, double x, double y, int obj
 static int collision_at(GmlVM *vm, double x, double y, int obj, int solid_only){
   return collision_instance_at(vm,x,y,obj,solid_only)!=NULL;
 }
+/* Classic bounce queries leave the instance at its pre-contact position.  The basic
+ * variant reflects axis contacts and falls back to a diagonal reflection; the advanced
+ * variant samples the free directions on both sides in 10-degree steps. */
+static void classic_move_bounce(GmlVM *vm, GmlInstance *s, int all, int advanced){
+  int target=all?IT_ALL:0, solid_only=!all;
+  double bx=s->x, by=s->y;
+  int bounced=collision_at(vm,bx,by,target,solid_only);
+  if(bounced){ bx=s->xprevious; by=s->yprevious; }
+
+  if(advanced){
+    double start=gm_round(s->direction/10.0)*10.0;
+    double clockwise=start, counterclockwise=start;
+    for(int step=0;step<36;step++){
+      clockwise-=10.0;
+      double radians=clockwise*M_PI/180.0;
+      if(!collision_at(vm,bx+s->speed*cos(radians),by-s->speed*sin(radians),
+                       target,solid_only)) break;
+      bounced=1;
+    }
+    for(int step=0;step<36;step++){
+      counterclockwise+=10.0;
+      double radians=counterclockwise*M_PI/180.0;
+      if(!collision_at(vm,bx+s->speed*cos(radians),by-s->speed*sin(radians),
+                       target,solid_only)) break;
+      bounced=1;
+    }
+    if(bounced){
+      s->direction=clockwise+counterclockwise+180.0-start;
+      motion_from_speed_direction(vm,s);
+    }
+  } else {
+    double hs=s->hspeed, vs=s->vspeed;
+    int horizontal=collision_at(vm,bx+hs,by,target,solid_only);
+    int vertical=collision_at(vm,bx,by+vs,target,solid_only);
+    if(horizontal) s->hspeed=-hs;
+    if(vertical) s->vspeed=-vs;
+    if(!horizontal && !vertical &&
+       collision_at(vm,bx+hs,by+vs,target,solid_only)){
+      s->hspeed=-hs;
+      s->vspeed=-vs;
+      horizontal=vertical=1;
+    }
+    if(horizontal||vertical) motion_from_components(s);
+  }
+
+  if(s->x!=bx || s->y!=by){
+    s->x=bx;
+    s->y=by;
+    gml_colgrid_touch(s);
+  }
+}
 static double potential_dir_norm(double d){
   d=fmod(d,360.0); return d<0?d+360.0:d;
 }
@@ -7089,12 +7140,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       gml_colgrid_touch(s); }
     return vreal(0); }
   if(!strcmp(nm,"move_bounce_solid")||!strcmp(nm,"move_bounce_all")){ GmlInstance *s=vm->cur_self; if(s){
-      double hs=s->hspeed, vs=s->vspeed;
       int all=!strcmp(nm,"move_bounce_all");
-      int bh=collision_at(vm,s->x+hs,s->y,all?IT_ALL:0,!all);
-      int bv=collision_at(vm,s->x,s->y+vs,all?IT_ALL:0,!all);
-      if(bh) s->hspeed=-hs; if(bv) s->vspeed=-vs;
-      if(bh||bv) motion_from_components(s); }
+      classic_move_bounce(vm,s,all,N(a,n,0)!=0.0); }
     return vreal(0); }
   if(!strcmp(nm,"move_wrap")){ GmlInstance *s=vm->cur_self; GmlRoom room;
     if(s && gml_room_get(vm->win,vm->room_index,&room)==0){
@@ -7115,22 +7162,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(s && idx>=0 && idx<GML_ALARMS) s->alarm[idx]=value; return vreal(0); }
   /* action_bounce(advanced,against): D&D Bounce. against 0=solid, 1=all. */
   if(!strcmp(nm,"action_bounce")){ GmlInstance *s=vm->cur_self; if(s){
-      int advanced=N(a,n,0)!=0, solid=(int)N(a,n,1)==0;
-      double hs=s->hspeed, vs=s->vspeed;
-      double bx=advanced?s->xprevious:s->x, by=advanced?s->yprevious:s->y;
-      if(advanced){ s->x=bx; s->y=by; gml_colgrid_touch(s); }
-      GmlInstance *contact=advanced?vm->cur_other:NULL;
-      int bh = contact ? masks_overlap(vm,s,bx+hs,by,contact) :
-        (solid ? collision_at(vm,bx+hs,by,0,1) : collision_at(vm,bx+hs,by,IT_ALL,0));
-      int bv = contact ? masks_overlap(vm,s,bx,by+vs,contact) :
-        (solid ? collision_at(vm,bx,by+vs,0,1) : collision_at(vm,bx,by+vs,IT_ALL,0));
-      if(bh) s->hspeed=-hs; if(bv) s->vspeed=-vs;
-      if(bh||bv){ s->speed=hypot(s->hspeed,s->vspeed);
-        s->direction=atan2(-s->vspeed,s->hspeed)*180.0/M_PI; if(s->direction<0) s->direction+=360;
-        if(advanced){ s->direction=round(s->direction/10.0)*10.0;
-          s->hspeed=s->speed*cos(s->direction*M_PI/180.0);
-          s->vspeed=-s->speed*sin(s->direction*M_PI/180.0); }
-      } }
+      int advanced=N(a,n,0)!=0, all=(int)N(a,n,1)!=0;
+      classic_move_bounce(vm,s,all,advanced); }
     return vreal(0); }
 
   /* ---- drawing ---- */
