@@ -213,6 +213,38 @@ static int raster_fixtures(void){
     }
   }
 
+  {
+    int visible[8]={0}, xport[8]={0}, yport[8]={0};
+    int wport[8]={0}, hport[8]={0};
+    int w=0,h=0;
+    gml_classic_room_window_size(550,400,-1,640,480,
+                                 visible,xport,yport,wport,hport,&w,&h);
+    if(w!=550 || h!=400){
+      fprintf(stderr,"viewless classic room window mismatch\n");
+      return 0;
+    }
+    visible[0]=1; wport[0]=320; hport[0]=240;
+    gml_classic_room_window_size(800,600,-1,640,480,
+                                 visible,xport,yport,wport,hport,&w,&h);
+    if(w!=320 || h!=240){
+      fprintf(stderr,"single-port classic room window mismatch\n");
+      return 0;
+    }
+    visible[1]=1; xport[1]=320; yport[1]=240; wport[1]=320; hport[1]=240;
+    gml_classic_room_window_size(800,600,-1,640,480,
+                                 visible,xport,yport,wport,hport,&w,&h);
+    if(w!=640 || h!=480){
+      fprintf(stderr,"multi-port classic room window mismatch\n");
+      return 0;
+    }
+    gml_classic_room_window_size(320,240,200,640,480,
+                                 visible,xport,yport,wport,hport,&w,&h);
+    if(w!=640 || h!=480){
+      fprintf(stderr,"fixed-scale classic window mismatch\n");
+      return 0;
+    }
+  }
+
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   gml_part_reset_all(); gml_part_bind_vm(&vm);

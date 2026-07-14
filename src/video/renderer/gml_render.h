@@ -296,6 +296,13 @@ int  gml_classic_present_explicit_port(const GmlWin *win, int explicit_window,
                                        int port_x, int port_y, int port_w, int port_h,
                                        int *target_x, int *target_y,
                                        int *target_w, int *target_h);
+void gml_classic_room_window_size(int room_w, int room_h,
+                                  int fixed_scale_pct,
+                                  int configured_w, int configured_h,
+                                  const int visible[8],
+                                  const int xport[8], const int yport[8],
+                                  const int wport[8], const int hport[8],
+                                  int *window_w, int *window_h);
 void gml_classic_present_adjust(const GmlWin *win, int source_w, int source_h,
                                 int target_w, int target_h, int interpolated,
                                 int *target_x, int *target_y);
