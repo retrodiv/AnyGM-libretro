@@ -222,8 +222,12 @@ static inline void gml_render_maybe_prepare_opaque_rect(GmlRender *r, int x0, in
 
 void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha);
+void gml_draw_sprite_pos(GmlRender *r, int sprite, int subimg,
+                         const double x[4], const double y[4], double alpha);
 int  gml_d3_draw_sprite_2d(GmlRender *r, int sprite, int subimg, double x, double y,
                            double xs, double ys, double rot, uint32_t blend, double alpha);
+int  gml_d3_draw_sprite_pos_2d(GmlRender *r, int sprite, int subimg,
+                               const double x[4], const double y[4], double alpha);
 int  gml_d3_draw_background_2d(GmlRender *r, int background, double x, double y,
                                double xs, double ys, uint32_t blend, double alpha);
 int  gml_d3_draw_sprite_part_2d(GmlRender *r, int sprite, int subimg,

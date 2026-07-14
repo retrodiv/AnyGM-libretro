@@ -2803,6 +2803,28 @@ int gml_d3_draw_sprite_2d(GmlRender *R,int sprite_id,int subimg,double x,double 
   d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
   return 1;
 }
+int gml_d3_draw_sprite_pos_2d(GmlRender *R,int sprite_id,int subimg,
+                              const double x[4],const double y[4],double alpha){
+  if(!g_d3.active) return 0;
+  if(!R||sprite_id<0||sprite_id>=R->n_spr||alpha<=0) return 1;
+  GmlD3Texture texture={0};
+  int handle=(int)(GML_TEX_SPR_TAG|((sprite_id&0xFFFF)<<10)|(subimg&0x3FF));
+  if(!d3_texture(R,handle,&texture)) return 1;
+  static const double uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
+  GmlD3Vertex vertex[4];
+  for(int i=0;i<4;i++){
+    memset(&vertex[i],0,sizeof(vertex[i]));
+    vertex[i].x=x[i]; vertex[i].y=y[i]; vertex[i].z=g_d3.draw_depth;
+    vertex[i].u=uv[i][0]; vertex[i].v=uv[i][1];
+    vertex[i].r=vertex[i].g=vertex[i].b=255; vertex[i].alpha=alpha;
+  }
+  g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
+  gml_render_maybe_prepare_draw(R);
+  GmlD3Vertex first[3]={vertex[0],vertex[1],vertex[2]};
+  GmlD3Vertex second[3]={vertex[0],vertex[2],vertex[3]};
+  d3_emit_triangle(R,first,&texture); d3_emit_triangle(R,second,&texture);
+  return 1;
+}
 int gml_d3_draw_background_2d(GmlRender *R,int background,double x,double y,
                               double xs,double ys,uint32_t blend,double alpha){
   if(!g_d3.active) return 0;
@@ -4992,6 +5014,11 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
   if(!strcmp(nm,"draw_sprite")){ if(R) gml_draw_sprite(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_sprite_ext")){ if(R) gml_draw_sprite_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
       N(a,n,4),N(a,n,5),N(a,n,6),(uint32_t)N(a,n,7),N(a,n,8)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_sprite_pos")){
+    if(R){ double x[4]={N(a,n,2),N(a,n,4),N(a,n,6),N(a,n,8)};
+      double y[4]={N(a,n,3),N(a,n,5),N(a,n,7),N(a,n,9)};
+      gml_draw_sprite_pos(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),x,y,N(a,n,10)); }
+    *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_self")){ GmlInstance*s=vm->cur_self; if(R&&s) gml_draw_sprite_ext(R,(int)s->sprite_index,
       (int)s->image_index,s->x,s->y,s->image_xscale,s->image_yscale,s->image_angle,(uint32_t)s->image_blend,s->image_alpha); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_sprite_stretched")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),0xFFFFFF,R->alpha); *out=vreal(0); return 1; }
@@ -7227,6 +7254,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"draw_sprite")){ if(R) gml_draw_sprite(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3)); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_ext")){ if(R) gml_draw_sprite_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
         N(a,n,4),N(a,n,5),N(a,n,6),(uint32_t)N(a,n,7),N(a,n,8)); return vreal(0); }
+    if(!strcmp(nm,"draw_sprite_pos")){
+      if(R){ double x[4]={N(a,n,2),N(a,n,4),N(a,n,6),N(a,n,8)};
+        double y[4]={N(a,n,3),N(a,n,5),N(a,n,7),N(a,n,9)};
+        gml_draw_sprite_pos(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),x,y,N(a,n,10)); }
+      return vreal(0); }
     /* draw_sprite_tiled(sprite,subimg,x,y) / _ext(...,xs,ys,color,alpha): tile a sprite to fill the screen */
     if(!strcmp(nm,"draw_sprite_tiled")){ if(R) gml_draw_sprite_tiled_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),1,1,0xFFFFFF,R->alpha); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_tiled_ext")){ if(R) gml_draw_sprite_tiled_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),

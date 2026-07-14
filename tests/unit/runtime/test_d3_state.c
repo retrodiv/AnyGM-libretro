@@ -429,6 +429,20 @@ static int raster_fixtures(void){
     fprintf(stderr,"software D3 runtime sprite texture mismatch\n");
     return 0;
   }
+  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  GmlVal positioned[11]={vreal(runtime_sprite),vreal(0),
+    vreal(10),vreal(10),vreal(18),vreal(10),vreal(20),vreal(18),vreal(8),vreal(18),vreal(1)};
+  (void)call_values(&vm,"draw_sprite_pos",positioned,11);
+  if((pixels[10*WIDTH+10]&0x00FFFFFFu)!=0xFF0000u ||
+     (pixels[10*WIDTH+17]&0x00FFFFFFu)!=0x00FF00u ||
+     (pixels[17*WIDTH+9]&0x00FFFFFFu)!=0x0000FFu ||
+     (pixels[17*WIDTH+18]&0x00FFFFFFu)!=0xFFFFFFu || pixels[5*WIDTH+5]!=0){
+    fprintf(stderr,"software positioned sprite quad mismatch: %06x %06x %06x %06x\n",
+      pixels[10*WIDTH+10]&0xFFFFFFu,pixels[10*WIDTH+17]&0xFFFFFFu,
+      pixels[17*WIDTH+9]&0xFFFFFFu,pixels[17*WIDTH+18]&0xFFFFFFu);
+    return 0;
+  }
   uint8_t *round_rgba=malloc(4);
   if(!round_rgba){
     fprintf(stderr,"software runtime alpha fixture allocation mismatch\n");
