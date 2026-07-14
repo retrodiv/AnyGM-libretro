@@ -117,6 +117,8 @@ int main(void){
   FILE *implicit_script_file=fdopen(implicit_script_fd,"wb");
   const char implicit_script_source[]=
     "if (argument0 >= 0) instance_exists(argument0); "
+    "else if (argument0 == -2) return all.fixture_all_scope; "
+    "else if (argument0 == -3) { all.fixture_all_scope=77; return 77; } "
     "else global.implicit_assignment = 42;\n";
   if(!implicit_script_file ||
      fwrite(implicit_script_source,1,sizeof(implicit_script_source)-1,implicit_script_file)!=sizeof(implicit_script_source)-1 ||
@@ -271,6 +273,25 @@ int main(void){
   GmlInstance *created=gml_instance_create(&vm,12,34,0); if(!created)return 1;
   if(created->id!=100001){
     fprintf(stderr,"placed instances consumed a dynamic instance id: %u\n",created->id); return 1;
+  }
+  GmlInstance *all_first=NULL;
+  for(int i=0;i<vm.inst_count;i++) if(vm.inst[i].active && !vm.inst[i].marked){ all_first=&vm.inst[i]; break; }
+  if(!all_first || all_first==created) return 1;
+  *gml_varmap_put(&all_first->vars,"fixture_all_scope")=vreal(11);
+  *gml_varmap_put(&created->vars,"fixture_all_scope")=vreal(22);
+  implicit_arg=vreal(-2);
+  implicit_result=gml_vm_run_code(&vm,implicit_code,created,NULL,&implicit_arg,1);
+  if(implicit_result.t!=V_REAL || implicit_result.d!=11){
+    fprintf(stderr,"all-scope read did not use the first active instance: %.0f\n",
+      implicit_result.t==V_REAL?implicit_result.d:-1.0); return 1;
+  }
+  implicit_arg=vreal(-3);
+  implicit_result=gml_vm_run_code(&vm,implicit_code,created,NULL,&implicit_arg,1);
+  for(int i=0;i<vm.inst_count;i++) if(vm.inst[i].active && !vm.inst[i].marked){
+    GmlVal *all_value=gml_varmap_get(&vm.inst[i].vars,"fixture_all_scope");
+    if(!all_value || all_value->t!=V_REAL || all_value->d!=77){
+      fprintf(stderr,"all-scope write did not fan out to instance %u\n",vm.inst[i].id); return 1;
+    }
   }
   vm.cur_self=created;
   GmlVal change_args[2]={vreal(1),vreal(0)};

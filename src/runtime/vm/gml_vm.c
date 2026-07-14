@@ -441,11 +441,21 @@ static int inst_builtin_set(GmlInstance *in, const char *n, GmlVal v){
 }
 
 /* ---------------- variable access by scope ---------------- */
-/* resolve an instance-type to the target instance: other, self (negatives), or the
- * first active instance of an object (instance-type >= 0 is an object index). */
+static GmlInstance *first_active_instance(GmlVM *vm){
+  if(!vm) return NULL;
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *o=&vm->inst[i];
+    if(o->active && !o->marked) return o;
+  }
+  return NULL;
+}
+/* Resolve an instance-type to the target instance. GM reads `all.variable` from the first
+ * active instance (writes are handled as a fan-out below); treating every negative selector as
+ * self made `all.variable` accidentally private to the caller. */
 static GmlInstance *var_target(GmlVM *vm, int inst){
   if(inst==IT_OTHER) return vm->cur_other;
-  if(inst<0)         return vm->cur_self;     /* self, all, noone, etc. -> current self */
+  if(inst==IT_ALL)   return first_active_instance(vm);
+  if(inst<0)         return vm->cur_self;
   for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
     if(o->active && !o->marked && gml_object_is(vm,o->obj,inst)) return o; }
   return NULL;
@@ -684,6 +694,11 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
   }
   if(!var_name_maybe_special(name,nh)){
     if(inst==IT_GLOBAL){ *gml_varmap_put_h(&vm->globals,name,nh)=v; return; }
+    if(inst==IT_ALL){
+      for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
+        if(o->active && !o->marked) *gml_varmap_put_h(&o->vars,name,nh)=v; }
+      return;
+    }
     if(is_object_scope(vm,inst)){   /* object.var = v -> all instances */
       for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
         if(o->active && !o->marked && gml_object_is(vm,o->obj,inst)) *gml_varmap_put_h(&o->vars,name,nh)=v; }
@@ -707,6 +722,12 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
     return;
   }
   if(inst==IT_GLOBAL || is_global_builtin(name)){ *gml_varmap_put_h(&vm->globals,name,nh)=v; return; }
+  if(inst==IT_ALL){
+    for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
+      if(o->active && !o->marked && !inst_builtin_set(o,name,v))
+        *gml_varmap_put_h(&o->vars,name,nh)=v; }
+    return;
+  }
   if(is_object_scope(vm,inst)){   /* object.builtin = v (x, hspeed, visible, ...) -> all instances */
     for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
       if(o->active && !o->marked && gml_object_is(vm,o->obj,inst)){
@@ -729,7 +750,8 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
 static GmlInstance *inst_by_id(GmlVM *vm, double idv);   /* fwd */
 static GmlInstance *resolve_inst(GmlVM *vm, int inst_t){
   if(inst_t==IT_OTHER) return vm->cur_other;
-  if(inst_t<0)         return vm->cur_self;   /* self/all/noone/... */
+  if(inst_t==IT_ALL)   return first_active_instance(vm);
+  if(inst_t<0)         return vm->cur_self;
   return inst_by_id(vm,inst_t);               /* instance id OR object index */
 }
 /* scope map for array access (global/local/self/other/instance/object) */
@@ -777,6 +799,12 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
   if(!strcmp(nm,"alarm")){
     double alv=alarm_store_value(vm,v);
     /* Object-scope alarm writes apply to every active, unmarked matching instance. */
+    if(inst_t==IT_ALL){
+      if(idx>=0 && idx<GML_ALARMS)
+        for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
+          if(o->active && !o->marked) o->alarm[idx]=alv; }
+      return;
+    }
     if(is_object_scope(vm,inst_t)){
       if(idx>=0 && idx<GML_ALARMS)
         for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
@@ -785,6 +813,14 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
     }
     GmlInstance *s=resolve_inst(vm,inst_t);
     if(s && idx>=0 && idx<GML_ALARMS) s->alarm[idx]=alv; return; }
+  if(inst_t==IT_ALL && !is_room_global_array(nm)){
+    for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
+      if(!o->active || o->marked) continue;
+      GmlVal *slot=gml_varmap_put_h(&o->vars,nm,nh); GmlArr *A=arr_of(slot);
+      gml_arr_mark_escaped(v); arr_note_2d_set(A,idx); arr_ensure(A,idx);
+      if(idx>=0 && idx<A->cap) A->data[idx]=v; }
+    return;
+  }
   /* Non-alarm array write to OBJECT scope also fans out to all instances. */
   if(is_object_scope(vm,inst_t) && !is_room_global_array(nm)){
     for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
@@ -2137,7 +2173,13 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
              * resolved instance -9 = NULL = 0, freezing e.g. `inst.x += 14` at a constant 14. */
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
             if(w->bytecode>=17 && sp>0 && iv.t==V_REAL && iv.d==-9.0) iv=stk[--sp];
-            GmlInstance *t=vm_inst_from_ref(vm,iv); v=t?inst_get_any_h(vm,t,nm,nh):vreal(0);
+            int it=(int)asnum(iv);
+            if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) && it<100000)
+              v=var_get_h(vm,it,nm,nh);
+            else {
+              GmlInstance *t=vm_inst_from_ref(vm,iv);
+              v=t?inst_get_any_h(vm,t,nm,nh):vreal(0);
+            }
           } else if(in.inst==IT_STACK){
             /* GMS2.3 direct StackTop read `push.v stack.var`: the instance is the top of the value
              * stack (no separate -9 marker; the -9 is the instruction's own instance-type). Used for
@@ -2147,8 +2189,13 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             GmlInstance *t=vm_inst_from_ref(vm,iv); v=t?inst_get_any_h(vm,t,nm,nh):vreal(0);
           } else if(in.inst==0 && in.reftype==0xA0 && prev_conv_v_i32){
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
-            GmlInstance *t=vm_inst_from_ref(vm,iv);
-            v=t?inst_get_any_h(vm,t,nm,nh):vreal(0);
+            int it=(int)asnum(iv);
+            if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) && it<100000)
+              v=var_get_h(vm,it,nm,nh);
+            else {
+              GmlInstance *t=vm_inst_from_ref(vm,iv);
+              v=t?inst_get_any_h(vm,t,nm,nh):vreal(0);
+            }
           } else if(in.inst==IT_LOCAL){
             if(argument_get(vm,nm,&v)){}
             else { GmlVal *pp=gml_varmap_get_h(&locals,nm,nh); v=pp?*pp:vreal(0); }
@@ -2204,14 +2251,24 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
            }
            GC_PERSIST(val);
            if(classic_implicit_return) ret=val;
-           GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(t,nm,nh,val);
+           int it=(int)asnum(iv);
+           if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) && it<100000)
+             var_set_h(vm,it,nm,nh,val);
+           else {
+             GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(t,nm,nh,val);
+           }
         } else {
           if(in.inst==0 && in.reftype==0xA0 && prev_conv_v_i32){
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
             GmlVal v=sp>0?stk[--sp]:vreal(0);
             GC_PERSIST(v);
             if(classic_implicit_return) ret=v;
-            GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(t,nm,nh,v);
+            int it=(int)asnum(iv);
+            if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) && it<100000)
+              var_set_h(vm,it,nm,nh,v);
+            else {
+              GmlInstance *t=vm_inst_from_ref(vm,iv); if(t) inst_set_any_h(t,nm,nh,v);
+            }
             break;
           }
           GmlVal v = sp>0? stk[--sp] : vreal(0);
