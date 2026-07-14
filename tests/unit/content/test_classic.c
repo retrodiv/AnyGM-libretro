@@ -752,11 +752,12 @@ static int expect_background_import(void){
 }
 
 static int fixture_font_slot(GmlcClassicResourceSlot *slot, const char *name,
+                             unsigned size, unsigned bold, unsigned italic,
                              unsigned first, unsigned last){
   slot->exists=1; slot->name=strdup(name);
   Fixture payload={{0},0};
-  fixture_string(&payload,"sans"); fixture_u32(&payload,12); fixture_u32(&payload,0);
-  fixture_u32(&payload,0); fixture_u32(&payload,first); fixture_u32(&payload,last);
+  fixture_string(&payload,"sans"); fixture_u32(&payload,size); fixture_u32(&payload,bold);
+  fixture_u32(&payload,italic); fixture_u32(&payload,first); fixture_u32(&payload,last);
   slot->payload=(uint8_t*)malloc(payload.size);
   if(!slot->name || !slot->payload) return 0;
   memcpy(slot->payload,payload.data,payload.size); slot->payload_size=payload.size;
@@ -764,12 +765,11 @@ static int fixture_font_slot(GmlcClassicResourceSlot *slot, const char *name,
 }
 
 static void free_font_fixture_project(GmlcProject *project){
-  if(project->n_fonts && project->fonts[0].png_path) remove(project->fonts[0].png_path);
   for(int i=0;i<project->n_fonts;i++){
-    free(project->fonts[i].id); free(project->fonts[i].name);
-    free(project->fonts[i].png_path); free(project->fonts[i].glyphs);
+    const char *path=project->fonts[i].png_path;
+    if(path && strncmp(path,"gmlc-memory://",14)) remove(path);
   }
-  free(project->fonts);
+  gmlc_project_free(project);
 }
 
 static int expect_sparse_font_import(void){
@@ -779,8 +779,8 @@ static int expect_sparse_font_import(void){
   manifest.existing[GMLC_CLASSIC_FONT]=2;
   manifest.slots[GMLC_CLASSIC_FONT]=(GmlcClassicResourceSlot*)calloc(5,sizeof(GmlcClassicResourceSlot));
   if(!manifest.slots[GMLC_CLASSIC_FONT]) return 0;
-  if(!fixture_font_slot(&manifest.slots[GMLC_CLASSIC_FONT][1],"font_first",32,127) ||
-     !fixture_font_slot(&manifest.slots[GMLC_CLASSIC_FONT][4],"font_second",65,90)){
+  if(!fixture_font_slot(&manifest.slots[GMLC_CLASSIC_FONT][1],"font_first",12,0,0,32,127) ||
+     !fixture_font_slot(&manifest.slots[GMLC_CLASSIC_FONT][4],"font_second",8,1,1,65,90)){
     gmlc_classic_manifest_free(&manifest); return 0;
   }
   GmlcProject project; memset(&project,0,sizeof(project));
@@ -794,9 +794,11 @@ static int expect_sparse_font_import(void){
   if(!ok) fprintf(stderr,"font import failed: %s\n",err);
   if(ok) ok=project.n_fonts==2 && project.cap_fonts==2 &&
     !strcmp(project.fonts[0].name,"font_first") && project.fonts[0].n_glyphs==96 &&
-    project.fonts[0].glyphs[0].ch==32 &&
+    project.fonts[0].glyphs[0].ch==32 && project.fonts[0].em_size==18 &&
     !strcmp(project.fonts[1].name,"font_second") && project.fonts[1].n_glyphs==26 &&
-    project.fonts[1].glyphs[0].ch==65 && project.fonts[0].png_path;
+    project.fonts[1].glyphs[0].ch==65 && project.fonts[1].em_size==12 &&
+    project.fonts[1].glyphs[0].h==10 && project.fonts[1].glyphs[0].shift==8 &&
+    project.fonts[0].png_path;
   free_font_fixture_project(&project); gmlc_classic_manifest_free(&manifest);
 #ifndef _WIN32
   rmdir(dir);
@@ -816,6 +818,36 @@ static int expect_empty_font_import(void){
   if(!ok) fprintf(stderr,"empty font import failed: %s\n",err);
   if(ok) ok=project.n_fonts==0 && project.cap_fonts==0 && project.fonts==NULL;
   free_font_fixture_project(&project); gmlc_classic_manifest_free(&manifest);
+  return ok;
+}
+
+static int expect_gm81_font_metadata(void){
+  GmlcClassicManifest manifest;
+  memset(&manifest,0,sizeof(manifest));
+  manifest.inventory.header.version=GMLC_CLASSIC_GM81;
+  manifest.inventory.resource_slots[GMLC_CLASSIC_FONT]=1;
+  manifest.existing[GMLC_CLASSIC_FONT]=1;
+  manifest.slots[GMLC_CLASSIC_FONT]=(GmlcClassicResourceSlot*)calloc(1,sizeof(GmlcClassicResourceSlot));
+  if(!manifest.slots[GMLC_CLASSIC_FONT]) return 0;
+  unsigned packed_first=(3u<<24)|(177u<<16)|33u;
+  if(!fixture_font_slot(&manifest.slots[GMLC_CLASSIC_FONT][0],"font_packed",12,0,0,
+                        packed_first,33)){
+    gmlc_classic_manifest_free(&manifest);
+    return 0;
+  }
+  GmlcProject project;
+  memset(&project,0,sizeof(project));
+  project.prefer_memory_files=1;
+  char err[256];
+  int ok=gmlc_classic_import_fonts(&manifest,&project,"tmp/classic_font_metadata_fixture",
+                                   err,sizeof(err));
+  if(!ok) fprintf(stderr,"packed font import failed: %s\n",err);
+  if(ok) ok=project.n_fonts==1 && project.fonts[0].n_glyphs==1 &&
+    project.fonts[0].glyphs[0].ch==33 && project.fonts[0].glyphs[0].h==15 &&
+    project.fonts[0].em_size==18 && project.n_memory_files==1 &&
+    project.memory_files[0].kind==GMLC_MEMORY_RGBA;
+  free_font_fixture_project(&project);
+  gmlc_classic_manifest_free(&manifest);
   return ok;
 }
 
@@ -1189,6 +1221,7 @@ int main(int argc, char **argv){
   if(expect_background_import()) ++passed; else ++failed;
   if(expect_sparse_font_import()) ++passed; else ++failed;
   if(expect_empty_font_import()) ++passed; else ++failed;
+  if(expect_gm81_font_metadata()) ++passed; else ++failed;
   if(expect_sound_import()) ++passed; else ++failed;
   if(expect_legacy_media_import()) ++passed; else ++failed;
   if(expect_path_import()) ++passed; else ++failed;
