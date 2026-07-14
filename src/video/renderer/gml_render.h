@@ -297,7 +297,8 @@ int  gml_classic_present_explicit_port(const GmlWin *win, int explicit_window,
                                        int *target_x, int *target_y,
                                        int *target_w, int *target_h);
 void gml_classic_present_adjust(const GmlWin *win, int source_w, int source_h,
-                                int target_w, int target_h, int *target_x, int *target_y);
+                                int target_w, int target_h, int interpolated,
+                                int *target_x, int *target_y);
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double x, double y, double w, double h, uint32_t blend, double alpha);
 int  gml_sprite_exists(GmlRender *r, int sprite);
 int  gml_sprite_duplicate(GmlRender *r, int sprite);

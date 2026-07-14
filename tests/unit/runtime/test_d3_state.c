@@ -114,32 +114,60 @@ static int raster_fixtures(void){
 
   {
     GmlWin win={0};
+    uint32_t source[4]={0xFFFF0000u,0xFF0000FFu,0xFFFF0000u,0xFF0000FFu};
+    uint32_t target[16]={0};
+    render.app_surface=source; render.app_w=2; render.app_h=2;
+    render.app_surface_opaque=1; render.classic=1; render.interp=1; render.win=&win;
+    win.classic_version=800; win.classic_scaling=0; win.classic_interpolate=1;
+    gml_render_begin(&render,target,4,4,0,0);
+    gml_render_set_pending_underlay(&render,0,0,4,4);
+    gml_render_flush_pending_underlay(&render);
+    for(int y=0;y<4;y++){
+      if(target[y*4+0]!=0xFFFF0000u || target[y*4+1]!=0xFF800080u ||
+         target[y*4+2]!=0xFF0000FFu || target[y*4+3]!=0xFF0000FFu){
+        fprintf(stderr,"classic interpolated presentation mismatch\n");
+        return 0;
+      }
+    }
+    render.app_surface=NULL; render.app_w=render.app_h=0;
+    render.classic=0; render.interp=0; render.win=NULL;
+  }
+
+  {
+    GmlWin win={0};
     int x=0,y=0;
     win.classic_version=800; win.classic_scaling=-1;
-    gml_classic_present_adjust(&win,250,180,500,360,&x,&y);
+    gml_classic_present_adjust(&win,250,180,500,360,0,&x,&y);
     if(x!=-1 || y!=-1){
       fprintf(stderr,"classic doubled presentation origin mismatch\n");
       return 0;
     }
+    x=0; y=0; win.classic_interpolate=1;
+    gml_classic_present_adjust(&win,250,180,500,360,1,&x,&y);
+    if(x!=0 || y!=0){
+      fprintf(stderr,"classic interpolated presentation origin mismatch\n");
+      return 0;
+    }
+    win.classic_interpolate=0;
     x=3; y=4;
-    gml_classic_present_adjust(&win,250,180,512,362,&x,&y);
+    gml_classic_present_adjust(&win,250,180,512,362,0,&x,&y);
     if(x!=3 || y!=4){
       fprintf(stderr,"classic centred fractional presentation changed\n");
       return 0;
     }
     win.classic_scaling=0;
-    gml_classic_present_adjust(&win,250,180,512,362,&x,&y);
+    gml_classic_present_adjust(&win,250,180,512,362,0,&x,&y);
     if(x!=2 || y!=3){
       fprintf(stderr,"classic fixed fractional presentation mismatch\n");
       return 0;
     }
     win.classic_version=701;
-    gml_classic_present_adjust(&win,320,240,641,481,&x,&y);
+    gml_classic_present_adjust(&win,320,240,641,481,0,&x,&y);
     if(x!=1 || y!=2){
       fprintf(stderr,"legacy fractional presentation mismatch\n");
       return 0;
     }
-    gml_classic_present_adjust(&win,320,240,320,240,&x,&y);
+    gml_classic_present_adjust(&win,320,240,320,240,0,&x,&y);
     if(x!=1 || y!=2){
       fprintf(stderr,"native classic presentation changed\n");
       return 0;
