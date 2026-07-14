@@ -368,6 +368,45 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,count[size]);
     return;
   }
+  if(kind==4 || kind==5){
+    PType *smoke=pt(type); if(!smoke) return;
+    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    (void)width; (void)height;
+    double cadence=fmax(30.0/speed,1.0);
+    static const double min_size[3]={.2,.4,.4};
+    static const double max_size[3]={.4,.7,1.0};
+    static const double lifetime[3]={25,30,50};
+    static const double rise_min[3]={3,5,6};
+    static const double rise_max[3]={4,6,7};
+    static const int count[3]={6,11,16};
+    static const int spread[3]={10,30,60};
+    smoke->sprite=-1; smoke->shape=10;
+    smoke->sz_min=min_size[size]; smoke->sz_max=max_size[size];
+    smoke->sz_incr=-.01*cadence; smoke->sz_wig=0;
+    smoke->xscale=smoke->yscale=1;
+    if(kind==5){
+      smoke->sp_min=rise_min[size]*cadence; smoke->sp_max=rise_max[size]*cadence;
+      smoke->dir_min=smoke->dir_max=90;
+    } else {
+      smoke->sp_min=smoke->sp_max=0;
+      smoke->dir_min=smoke->dir_max=0;
+    }
+    smoke->sp_incr=smoke->sp_wig=0;
+    smoke->dir_incr=smoke->dir_wig=0;
+    smoke->grav_amt=0; smoke->grav_dir=270;
+    smoke->life_min=smoke->life_max=fmax(1.0,floor(lifetime[size]/cadence+.5));
+    smoke->alpha[0]=.4; smoke->alpha[1]=.2; smoke->alpha[2]=0; smoke->nalpha=3;
+    smoke->ori_min=smoke->ori_max=smoke->ori_incr=smoke->ori_wig=0; smoke->ori_rel=0;
+    smoke->additive=0;
+    PSys *system=ps(g_effect_sys[layer]);
+    int half=spread[size]/2;
+    for(int i=0;system && i<count[size];i++){
+      double dx=floor(prnd()*spread[size])-half;
+      double dy=floor(prnd()*spread[size])-half;
+      sys_spawn(system,x+dx,y+dy,type,1,(int)(color&0xFFFFFF));
+    }
+    return;
+  }
   if(kind==6 || kind==7 || kind==8){
     PType *flash=pt(type); if(!flash) return;
     int width,height,speed; effect_room_metrics(&width,&height,&speed);
@@ -386,6 +425,25 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     flash->alpha[0]=flash->alpha[1]=flash->alpha[2]=1; flash->nalpha=3;
     flash->ori_min=0; flash->ori_max=360; flash->ori_incr=flash->ori_wig=0; flash->ori_rel=0;
     flash->additive=0;
+    gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,1);
+    return;
+  }
+  if(kind==9){
+    PType *cloud=pt(type); if(!cloud) return;
+    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    (void)width; (void)height;
+    double cadence=fmax(30.0/speed,1.0);
+    static const double cloud_size[3]={2,4,8};
+    cloud->sprite=-1; cloud->shape=10;
+    cloud->sz_min=cloud->sz_max=cloud_size[size]; cloud->sz_incr=cloud->sz_wig=0;
+    cloud->xscale=1; cloud->yscale=.5;
+    cloud->sp_min=cloud->sp_max=cloud->sp_incr=cloud->sp_wig=0;
+    cloud->dir_min=cloud->dir_max=cloud->dir_incr=cloud->dir_wig=0;
+    cloud->grav_amt=0; cloud->grav_dir=270;
+    cloud->life_min=cloud->life_max=fmax(1.0,floor(100.0/cadence+.5));
+    cloud->alpha[0]=0; cloud->alpha[1]=.3; cloud->alpha[2]=0; cloud->nalpha=3;
+    cloud->ori_min=cloud->ori_max=cloud->ori_incr=cloud->ori_wig=0; cloud->ori_rel=0;
+    cloud->additive=0;
     gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,1);
     return;
   }
@@ -635,14 +693,14 @@ static void prepare_explosion_shape_mask(void){
   for(int y=0;y<64;y++) for(int x=0;x<64;x++){
     double nx=(x+.5-32.0)/32.0,ny=(y+.5-32.0)/32.0;
     double radius=hypot(nx,ny),angle=atan2(ny,nx);
-    double rim=.82 + .065*sin(angle*5.0+.4) + .045*sin(angle*9.0-1.1)
+    double rim=.84 + .065*sin(angle*5.0+.4) + .045*sin(angle*9.0-1.1)
                     + .025*sin(angle*17.0+.8);
-    double edge=smooth_unit((rim-radius)*5.5+.5);
+    double edge=smooth_unit((rim-radius)*4.0+.5);
     double grain=.80 + .12*sin(nx*13.0+ny*7.0+.6)
                        *sin(nx*5.0-ny*17.0-.3)
                        + .08*cos(nx*21.0+ny*11.0);
     double centre=.82+.18*smooth_unit(radius*3.0);
-    explosion_shape_mask[y*64+x]=(uint8_t)(255.0*unit_clamp(edge*grain*centre)+.5);
+    explosion_shape_mask[y*64+x]=(uint8_t)(255.0*unit_clamp(edge*grain*centre*.92)+.5);
   }
   explosion_shape_mask_ready=1;
 }

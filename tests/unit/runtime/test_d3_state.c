@@ -398,6 +398,27 @@ static int raster_fixtures(void){
   }
   gml_part_reset_all();
 
+  gml_effect_create(1,4,32,24,0,0x808080);
+  if(gml_part_system_count(1)!=6){
+    fprintf(stderr,"small smoke particle count mismatch\n");
+    return 0;
+  }
+  gml_part_reset_all();
+
+  gml_effect_create(1,5,32,24,1,0x808080);
+  if(gml_part_system_count(1)!=11){
+    fprintf(stderr,"medium rising smoke particle count mismatch\n");
+    return 0;
+  }
+  gml_part_reset_all();
+
+  gml_effect_create(1,9,32,24,2,0xFFFFFF);
+  if(gml_part_system_count(1)!=1){
+    fprintf(stderr,"large cloud particle count mismatch\n");
+    return 0;
+  }
+  gml_part_reset_all();
+
   gml_d3_reset();
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
