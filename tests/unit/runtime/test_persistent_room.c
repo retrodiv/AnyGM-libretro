@@ -281,11 +281,21 @@ int main(void){
   vm.cur_self=created;
   GmlVal object_args[4]={vreal(1),vreal(32),vreal(0),vreal(1)};
   GmlVal object_hit=gml_builtin_call(&vm,"action_if_object",object_args,4);
+  GmlVal exists_arg=vreal((double)created->id);
+  GmlVal legacy_exists=gml_builtin_call(&vm,"existe",&exists_arg,1);
   GmlVal previous_room=gml_builtin_call(&vm,"action_if_previous_room",NULL,0);
-  if(object_hit.t!=V_REAL || object_hit.d!=0 || previous_room.t!=V_REAL || previous_room.d!=0){
-    fprintf(stderr,"classic object/previous-room conditions did not match: object=%.0f previous=%.0f\n",
-      object_hit.d,previous_room.d); return 1;
+  if(object_hit.t!=V_REAL || object_hit.d!=0 || legacy_exists.t!=V_REAL || legacy_exists.d!=1 ||
+     previous_room.t!=V_REAL || previous_room.d!=0){
+    fprintf(stderr,"classic object/existence/previous-room conditions did not match: object=%.0f exists=%.0f previous=%.0f\n",
+      object_hit.d,legacy_exists.d,previous_room.d); return 1;
   }
+  GmlVal another_room_args[2]={vreal(1),vreal(21)};
+  (void)gml_builtin_call(&vm,"action_another_room",another_room_args,2);
+  GmlVal *transition_kind=gml_varmap_get(&vm.globals,"transition_kind");
+  if(vm.pending_room!=1 || !transition_kind || transition_kind->t!=V_REAL || transition_kind->d!=21){
+    fprintf(stderr,"classic room action did not retain its target/transition\n"); return 1;
+  }
+  vm.pending_room=-1;
   created->path_index=0;
   GmlVal path_speed=vreal(0.75);
   (void)gml_builtin_call(&vm,"action_path_speed",&path_speed,1);

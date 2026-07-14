@@ -6808,7 +6808,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       created->hspeed=created->speed*cos(created->direction*M_PI/180.0);
       created->vspeed=-created->speed*sin(created->direction*M_PI/180.0); }
     return vreal(0); }
+  if(!strcmp(nm,"action_another_room")){
+    int target=(int)N(a,n,0);
+    gml_set_global_scalar(vm,"transition_kind",N(a,n,1));
+    gml_vm_warm_audio_for_room(vm,target);
+    vm->pending_room=target;
+    return vreal(0); }
   if(!strcmp(nm,"action_previous_room")){
+    gml_set_global_scalar(vm,"transition_kind",N(a,n,0));
     int pos=order_pos(vm,vm->room_index);
     if(pos>0){
       int target=(int)vm->win->room_order[pos-1];
@@ -6816,8 +6823,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       vm->pending_room=target;
     }
     return vreal(0); }
-  if(!strcmp(nm,"action_current_room")){ gml_vm_warm_audio_for_room(vm,vm->room_index); vm->pending_room=vm->room_index; return vreal(0); }
+  if(!strcmp(nm,"action_current_room")){
+    gml_set_global_scalar(vm,"transition_kind",N(a,n,0));
+    gml_vm_warm_audio_for_room(vm,vm->room_index); vm->pending_room=vm->room_index; return vreal(0); }
   if(!strcmp(nm,"action_next_room")){
+    gml_set_global_scalar(vm,"transition_kind",N(a,n,0));
     int pos=order_pos(vm,vm->room_index);
     if(vm->win && pos>=0 && pos+1<vm->win->n_room_order){
       int target=(int)vm->win->room_order[pos+1]; gml_vm_warm_audio_for_room(vm,target); vm->pending_room=target;
@@ -6973,7 +6983,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       gml_colgrid_touch(s);
     } return vreal(0); }
   if(!strcmp(nm,"instance_number")) return vreal(gml_instance_number(vm,(int)N(a,n,0)));
-  if(!strcmp(nm,"instance_exists")) return vreal(gml_instance_number(vm,(int)N(a,n,0))>0);
+  if(!strcmp(nm,"instance_exists")||!strcmp(nm,"existe"))
+    return vreal(gml_instance_number(vm,(int)N(a,n,0))>0);
   if(!strcmp(nm,"instance_find")){
     int obj=(int)N(a,n,0), nth=(int)N(a,n,1), seen=0;
     if(nth<0) return vreal(-4);
@@ -7999,6 +8010,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"audio_sound_get_track_position")) return vreal(gml_audio_sound_get_track_position(AU,(int)N(a,n,0)));
     if(!strcmp(nm,"audio_set_master_gain")){ gml_audio_set_master_gain(AU,n>=2?N(a,n,1):N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_sound_gain")){ gml_audio_sound_gain(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
+    if(!strcmp(nm,"sound_volume")){ gml_audio_sound_gain(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"audio_sound_pitch")){ gml_audio_sound_pitch(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"audio_sound_set_track_position")){ gml_audio_sound_set_track_position(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"audio_play_sound")||!strcmp(nm,"sound_play")||!strcmp(nm,"sound_loop")){
@@ -8156,7 +8168,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int handled=classic_execute_assignment(vm,S(a,n,0));
     if(!handled && getenv("GML_LOG_UNKNOWN")) fprintf(stderr,"[gml] unsupported execute_string: %s\n",S(a,n,0));
     return vreal(0); }
-  if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")||!strcmp(nm,"action_message")||
+  if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")||!strcmp(nm,"show_question")||!strcmp(nm,"action_message")||
      !strcmp(nm,"message_button")||!strcmp(nm,"message_background")||
      !strcmp(nm,"message_text_font")||!strcmp(nm,"message_button_font")||
      !strcmp(nm,"message_input_font")||!strcmp(nm,"message_alpha")||
@@ -9152,7 +9164,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(getenv("GML_LOG_DEBUGMSG")) fprintf(stderr,"[gml debug] %s\n", S(a,n,0));
     return vreal(0); }
   if(!strncmp(nm,"xboxone_",8)) return vreal(0);
-  if(!strcmp(nm,"screen_save")||!strcmp(nm,"screen_save_part")) return vreal(0);
+  /* The frontend receives one completed video frame per retro_run. Desktop refresh/vsync calls
+   * cannot expose an intermediate buffer here, and waiting would only stall emulation. */
+  if(!strcmp(nm,"screen_redraw")||!strcmp(nm,"screen_refresh")||!strcmp(nm,"screen_wait_vsync")||
+     !strcmp(nm,"screen_save")||!strcmp(nm,"screen_save_part")) return vreal(0);
   if(!strcmp(nm,"os_get_language")) return vstr("en");
   if(!strcmp(nm,"os_get_region")) return vstr("us");
   if(!strcmp(nm,"os_get_config")) return vstr("default");
