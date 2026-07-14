@@ -7027,9 +7027,20 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(vm->action_relative) s->friction+=N(a,n,0); else s->friction=N(a,n,0); } return vreal(0); }
   if(!strcmp(nm,"action_set_relative")){ vm->action_relative=N(a,n,0)>=0.5; return vreal(0); }
   if(!strcmp(nm,"action_sprite_set")){ GmlInstance *s=vm->cur_self; if(s){
-      s->sprite_index=N(a,n,0); s->image_index=N(a,n,1); s->image_speed=N(a,n,2);
+      int sprite=(int)N(a,n,0); double subimage=N(a,n,1);
+      s->sprite_index=sprite;
+      /* The classic Change Sprite action uses a negative subimage as "keep the
+       * current animation position".  It is not a drawable frame index.  When
+       * the retained position does not exist in the new sprite,
+       * start that sprite at frame zero. */
+      if(subimage>=0) s->image_index=subimage;
+      else {
+        int frames=vm->render?gml_sprite_frames((GmlRender*)vm->render,sprite):0;
+        if(frames>0 && floor(s->image_index)>=frames) s->image_index=0;
+      }
+      s->image_speed=N(a,n,2);
       gml_colgrid_touch(s);
-      if(vm->render && (int)s->sprite_index>=0) gml_render_prefetch_sprite((GmlRender*)vm->render,(int)s->sprite_index);
+      if(vm->render && sprite>=0) gml_render_prefetch_sprite((GmlRender*)vm->render,sprite);
     } return vreal(0); }
   if(!strcmp(nm,"action_sprite_color") || !strcmp(nm,"action_sprite_colour")){ GmlInstance *s=vm->cur_self; if(s){
       s->image_blend=N(a,n,0); s->image_alpha=N(a,n,1); } return vreal(0); }

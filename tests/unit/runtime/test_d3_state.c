@@ -828,6 +828,41 @@ static int raster_fixtures(void){
       return 0;
     }
     (void)call_values(&vm,"action_set_relative",&relative_off,1);
+
+    uint8_t *animated_rgba=malloc(4*4);
+    if(!animated_rgba){
+      fprintf(stderr,"software action sprite fixture allocation mismatch\n");
+      return 0;
+    }
+    memset(animated_rgba,255,4*4);
+    int animated_sprite=gml_sprite_append_from_rgba_frames(
+      &render,animated_rgba,1,1,4,0,0,"<action-animation>");
+    if(animated_sprite<0){
+      fprintf(stderr,"software action sprite fixture creation mismatch\n");
+      return 0;
+    }
+    relative_self.sprite_index=runtime_sprite;
+    relative_self.image_index=2.25;
+    relative_self.image_speed=0;
+    GmlVal keep_frame[3]={vreal(animated_sprite),vreal(-1),vreal(.5)};
+    (void)call_values(&vm,"action_sprite_set",keep_frame,3);
+    if(relative_self.sprite_index!=animated_sprite || relative_self.image_index!=2.25 ||
+       relative_self.image_speed!=.5){
+      fprintf(stderr,"software action sprite retained-frame mismatch\n");
+      return 0;
+    }
+    relative_self.image_index=8.25;
+    (void)call_values(&vm,"action_sprite_set",keep_frame,3);
+    if(relative_self.image_index!=0){
+      fprintf(stderr,"software action sprite out-of-range reset mismatch\n");
+      return 0;
+    }
+    GmlVal select_frame[3]={vreal(animated_sprite),vreal(3),vreal(0)};
+    (void)call_values(&vm,"action_sprite_set",select_frame,3);
+    if(relative_self.image_index!=3 || relative_self.image_speed!=0){
+      fprintf(stderr,"software action sprite explicit-frame mismatch\n");
+      return 0;
+    }
     vm.cur_self=NULL;
   }
   for(int i=0;i<4;i++) surface_data->px[i]=0xFFFFFFFFu;
