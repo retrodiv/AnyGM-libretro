@@ -15,6 +15,7 @@ typedef struct {
   uint8_t *alpha_qrow_built;
   GmlTpagAlphaRun *alpha_runs; int alpha_run_count, alpha_runs_built;
   uint32_t *argb_cache;                  /* compact ARGB source pixels for hot rotated draws */
+  uint32_t *interp_phase_cache[3];       /* lazy x/y/xy half-sample ARGB for exact-2x ports */
   uint32_t *fast8_draw_cache;            /* RGB plus draw-alpha for repeated large fast8 draws */
   double fast8_draw_alpha_key;
   double fast8_draw_pending_alpha_key;
@@ -58,6 +59,10 @@ typedef struct {
   uint32_t blob; size_t avail, chunk_end; int decode_attempted;    /* source blob in data.win */
 } GmlAtlas;
 typedef struct {
+  int atlas, sx, sy, sw, sh;
+  uint32_t *phase[3];
+} GmlInterpSubrectCache;
+typedef struct {
   int tpag;
   int tile_w, tile_h, tile_border_x, tile_border_y, tile_columns, tile_items_per_tile, tile_count;
   const uint8_t *tile_ids;                                      /* GMS2 BGND tileset id table (little-endian u32s) */
@@ -87,6 +92,9 @@ typedef struct {
   int classic;                    /* GM6/7/8 pixel rules that differ from Studio */
   GmlAtlas *atlas; int n_atlas;
   GmlTpag  *tpag; int n_tpag;
+  GmlInterpSubrectCache *interp_subrect_cache;
+  int interp_subrect_count, interp_subrect_capacity;
+  size_t interp_subrect_bytes;
   GmlSprite *spr; int n_spr, base_n_spr, spr_cap, spr_has_free;
   GmlBg    *bg; int n_bg;
   GmlFont   fonts[GML_MAX_FONTS]; int n_fonts;
@@ -109,6 +117,11 @@ typedef struct {
    * them without a GPU.  This is a borrowed scratch buffer owned by the frontend. */
   uint32_t *classic_phase_y;
   uint32_t *app_phase_y;
+  /* Optional exact-2x interpolation samples.  Each logical-size plane stores the result of
+   * composing textured draws at the horizontal, vertical or diagonal half-pixel sample.  This
+   * reproduces a scaled classic viewport without requiring a GPU-sized render target. */
+  uint32_t *classic_interp_phase[3];
+  uint32_t *app_interp_phase[3];
   int       interp;   /* texture_set_interpolation state: 0 nearest (GM default), 1 bilinear. Only
                        * upscaling surface/sprite blits honor it (nearest is exact for pixel art). */
   int       composites_app;  /* set by a draw when the game blits the application_surface stretched in

@@ -143,6 +143,48 @@ static int raster_fixtures(void){
         return 0;
       }
     }
+    {
+      uint32_t phase_x[4]={0xFF00FF00u,0xFF008800u,0xFF004400u,0xFF002200u};
+      uint32_t phase_y[4]={0xFFFFFF00u,0xFF888800u,0xFF444400u,0xFF222200u};
+      uint32_t phase_xy[4]={0xFF00FFFFu,0xFF008888u,0xFF004444u,0xFF002222u};
+      const uint32_t expected[16]={
+        source[0],phase_x[0],source[1],phase_x[1],
+        phase_y[0],phase_xy[0],phase_y[1],phase_xy[1],
+        source[2],phase_x[2],source[3],phase_x[3],
+        phase_y[2],phase_xy[2],phase_y[3],phase_xy[3]
+      };
+      memset(target,0,sizeof(target));
+      render.app_interp_phase[0]=phase_x;
+      render.app_interp_phase[1]=phase_y;
+      render.app_interp_phase[2]=phase_xy;
+      gml_render_begin(&render,target,4,4,0,0);
+      gml_render_set_pending_underlay(&render,0,0,4,4);
+      gml_render_flush_pending_underlay(&render);
+      if(memcmp(target,expected,sizeof(expected))!=0){
+        fprintf(stderr,"classic interpolated phase-plane presentation mismatch\n");
+        return 0;
+      }
+      memset(phase_x,0,sizeof(phase_x));
+      memset(phase_y,0,sizeof(phase_y));
+      memset(phase_xy,0,sizeof(phase_xy));
+      gml_render_begin(&render,target,2,2,0,0);
+      render.classic_interp_phase[0]=phase_x;
+      render.classic_interp_phase[1]=phase_y;
+      render.classic_interp_phase[2]=phase_xy;
+      gml_render_set_pending_fill(&render,0xFF123456u);
+      for(int i=0;i<4;i++) if(phase_x[i]!=0xFF123456u ||
+                                phase_y[i]!=0xFF123456u ||
+                                phase_xy[i]!=0xFF123456u){
+        fprintf(stderr,"classic interpolated phase-plane clear mismatch\n");
+        return 0;
+      }
+      render.classic_interp_phase[0]=NULL;
+      render.classic_interp_phase[1]=NULL;
+      render.classic_interp_phase[2]=NULL;
+      render.app_interp_phase[0]=NULL;
+      render.app_interp_phase[1]=NULL;
+      render.app_interp_phase[2]=NULL;
+    }
     render.app_surface=NULL; render.app_w=render.app_h=0;
     render.classic=0; render.interp=0; render.win=NULL;
   }
