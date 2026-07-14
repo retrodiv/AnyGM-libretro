@@ -321,9 +321,22 @@ int main(void){
   gml_rng_seed(&vm,4);
   GmlVal move_args[2]={vstr("101101101"),vreal(5)};
   (void)gml_builtin_call(&vm,"action_move",move_args,2);
-  if(created->direction!=180 || vm.rng_classic_state!=1503470698u){
-    fprintf(stderr,"classic direction-pad rejection mismatch: direction=%.0f seed=%u\n",
-      created->direction,vm.rng_classic_state); return 1;
+  if(created->direction!=180 || created->hspeed!=-5 || created->vspeed!=0 ||
+     vm.rng_classic_state!=1503470698u){
+    fprintf(stderr,"classic direction-pad rejection mismatch: direction=%.0f velocity=(%.17g,%.17g) seed=%u\n",
+      created->direction,created->hspeed,created->vspeed,vm.rng_classic_state); return 1;
+  }
+  created->hspeed=3; created->vspeed=4;
+  created->speed=5; created->direction=atan2(-4.0,3.0)*180.0/M_PI+360.0;
+  vm.action_relative=1;
+  GmlVal relative_motion[2]={vreal(0),vreal(2)};
+  (void)gml_builtin_call(&vm,"action_set_motion",relative_motion,2);
+  vm.action_relative=0;
+  if(created->hspeed!=5 || created->vspeed!=4 ||
+     fabs(created->speed-sqrt(41.0))>1e-12 ||
+     fabs(created->direction-(atan2(-4.0,5.0)*180.0/M_PI+360.0))>1e-12){
+    fprintf(stderr,"classic relative motion did not add vector components: direction=%.17g speed=%.17g velocity=(%.17g,%.17g)\n",
+      created->direction,created->speed,created->hspeed,created->vspeed); return 1;
   }
   created->direction=created->speed=created->hspeed=created->vspeed=0;
   vm.cur_self=created;

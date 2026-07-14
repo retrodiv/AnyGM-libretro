@@ -3596,6 +3596,20 @@ static void motion_from_components(GmlInstance *in){
   in->direction=atan2(-in->vspeed,in->hspeed)*180.0/M_PI;
   if(in->direction<0) in->direction+=360;
 }
+static void motion_from_speed_direction(GmlVM *vm,GmlInstance *in){
+  if(vm && vm->win && vm->win->classic_version){
+    in->direction=fmod(in->direction,360.0);
+    if(in->direction<0) in->direction+=360.0;
+  }
+  in->hspeed=in->speed*cos(in->direction*M_PI/180.0);
+  in->vspeed=-in->speed*sin(in->direction*M_PI/180.0);
+  if(vm && vm->win && vm->win->classic_version){
+    double rounded=round(in->hspeed);
+    if(fabs(rounded-in->hspeed)<0.0001) in->hspeed=rounded;
+    rounded=round(in->vspeed);
+    if(fabs(rounded-in->vspeed)<0.0001) in->vspeed=rounded;
+  }
+}
 
 static double physics_room_scale(GmlVM *vm){
   if(!vm || !vm->win) return 0.0;
@@ -6849,11 +6863,22 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
             if(selected>=count) selected=count-1;
             choice=choices[selected];
           }
-          direction=directions[choice]; if(direction<0) amount=0; }
+          direction=directions[choice]; if(direction<0){ direction=0; amount=0; } }
       }
-      if(vm->action_relative){ s->direction+=direction; s->speed+=amount; }
-      else { s->direction=direction; s->speed=amount; }
-      s->hspeed=s->speed*cos(s->direction*M_PI/180.0); s->vspeed=-s->speed*sin(s->direction*M_PI/180.0); }
+      if(vm->action_relative){
+        double radians=direction*M_PI/180.0;
+        s->hspeed+=amount*cos(radians); s->vspeed-=amount*sin(radians);
+        motion_from_components(s);
+        if(vm->win && vm->win->classic_version){
+          s->direction=fmod(s->direction,360.0); if(s->direction<0) s->direction+=360.0;
+          double rounded=round(s->direction);
+          if(fabs(rounded-s->direction)<0.0001) s->direction=rounded;
+          if(s->direction>=360.0) s->direction-=360.0;
+        }
+      } else {
+        s->direction=direction; s->speed=amount;
+        motion_from_speed_direction(vm,s);
+      } }
     return vreal(0); }
   if(!strcmp(nm,"action_move_point")){ GmlInstance*s=vm->cur_self; if(s){
       double tx=N(a,n,0), ty=N(a,n,1);
