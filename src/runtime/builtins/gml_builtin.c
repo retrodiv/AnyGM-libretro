@@ -2059,6 +2059,38 @@ static void fill_xrgb_run(uint32_t *dp, int n, uint32_t src){
 #endif
   for(int i=0;i<n;i++) dp[i]=src;
 }
+typedef struct {
+  uint8_t red[256],green[256],blue[256];
+  uint32_t surface_alpha;
+} GmlClassicFlatBlend;
+static void classic_flat_blend_init(GmlClassicFlatBlend *blend,uint32_t src,double alpha){
+  double ia=1.0-alpha;
+  int sr=(src>>16)&0xff,sg=(src>>8)&0xff,sb=src&0xff;
+  for(int d=0;d<256;d++){
+    blend->red[d]=(uint8_t)(sr*alpha+d*ia+0.5);
+    blend->green[d]=(uint8_t)(sg*alpha+d*ia+0.5);
+    blend->blue[d]=(uint8_t)(sb*alpha+d*ia+0.5);
+  }
+  blend->surface_alpha=(uint32_t)lround(alpha*255.0);
+}
+static void classic_flat_blend_run(GmlRender *R,uint32_t *dp,int n,const GmlClassicFlatBlend *blend){
+  for(int i=0;i<n;i++){
+    uint32_t dv=dp[i],oa=0xFF;
+    if(R->target_sp>0){
+      uint32_t sa=blend->surface_alpha,da=dv>>24;
+      oa=(sa*sa+da*(255u-sa)+127u)/255u;
+    }
+    dp[i]=(oa<<24)|((uint32_t)blend->red[(dv>>16)&0xff]<<16)|
+          ((uint32_t)blend->green[(dv>>8)&0xff]<<8)|blend->blue[dv&0xff];
+  }
+}
+static int classic_flat_blend_uses_float_alpha(double alpha){
+  /* Exact N/256 alpha values use the classic tie behavior and retain the truncating
+   * 8-bit fast path. Other values (notably 0.4 and 0.8) retain their requested
+   * fractional weight and round the final channels. */
+  double scaled=alpha*256.0;
+  return fabs(scaled-floor(scaled+0.5))>1e-12;
+}
 static void draw_xrgb_run_alpha(GmlRender *R, uint32_t *dp, int n, uint32_t src, double alpha){
   if(n<=0) return;
   if(!R->alphablend || alpha>=1.0){
@@ -2073,6 +2105,17 @@ static void draw_xrgb_run_alpha(GmlRender *R, uint32_t *dp, int n, uint32_t src,
   uint32_t af=(uint32_t)(alpha*256.0);
   if(af>=256u){ fill_xrgb_run(dp,n,src); return; }
   if(!af) return;
+  if(R->classic && classic_flat_blend_uses_float_alpha(alpha)){
+    /* Classic compatibility keeps the requested draw alpha as a float and rounds the
+     * resulting colour channels to the nearest 8-bit value. Quantizing alpha to 1/256 first
+     * produces different channel values for translucent primitives such as alpha 0.4. The
+     * source colour is constant across this run, so small channel lookup tables preserve that
+     * arithmetic without putting floating-point work in the per-pixel loop. */
+    GmlClassicFlatBlend blend;
+    classic_flat_blend_init(&blend,src,alpha);
+    classic_flat_blend_run(R,dp,n,&blend);
+    return;
+  }
   uint32_t ia=256u-af;
   uint32_t srb=(src&0x00FF00FFu)*af;
   uint32_t sg=(src&0x0000FF00u)*af;
@@ -3439,6 +3482,13 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
       return;
     }
     uint32_t src=gm_color_to_xrgb(gmcol);
+    if(R->classic && classic_flat_blend_uses_float_alpha(alpha)){
+      GmlClassicFlatBlend blend;
+      classic_flat_blend_init(&blend,src,alpha);
+      for(int y=y1;y<=y2;y++)
+        classic_flat_blend_run(R,&R->fb[(size_t)y*R->fbw+x1],x2-x1+1,&blend);
+      return;
+    }
     for(int y=y1;y<=y2;y++)
       draw_xrgb_run_alpha(R,&R->fb[(size_t)y*R->fbw+x1],x2-x1+1,src,alpha);
     return;

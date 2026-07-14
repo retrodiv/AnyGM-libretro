@@ -569,6 +569,36 @@ static int raster_fixtures(void){
     return 0;
   }
   {
+    const double rectangle[]={10,10,10,10,0};
+    render.classic=1; render.color=0x0000FFu; render.alpha=.4;
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    pixels[10*WIDTH+10]=0xFFE9D6BDu;
+    call_numbers(&vm,"draw_rectangle",rectangle,5);
+    if(pixels[10*WIDTH+10]!=0xFFF28071u){
+      fprintf(stderr,"software classic primitive alpha rounding mismatch: %08x\n",pixels[10*WIDTH+10]);
+      return 0;
+    }
+    render.alpha=.5;
+    pixels[10*WIDTH+10]=0xFFEAD5BDu;
+    call_numbers(&vm,"draw_rectangle",rectangle,5);
+    if(pixels[10*WIDTH+10]!=0xFFF46A5Eu){
+      fprintf(stderr,"software classic primitive fixed-alpha tie mismatch: %08x\n",pixels[10*WIDTH+10]);
+      return 0;
+    }
+    render.classic=0;
+    render.alpha=.4;
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    pixels[10*WIDTH+10]=0xFFE9D6BDu;
+    call_numbers(&vm,"draw_rectangle",rectangle,5);
+    if(pixels[10*WIDTH+10]!=0xFFF18071u){
+      fprintf(stderr,"software modern primitive alpha rounding changed: %08x\n",pixels[10*WIDTH+10]);
+      return 0;
+    }
+    render.color=0xFFFFFFu; render.alpha=1;
+  }
+  {
     GmlInstance relative_self={0}; relative_self.x=13; relative_self.y=17;
     GmlVal relative_on=vreal(1),relative_off=vreal(0);
     GmlVal action_sprite_args[4]={vreal(runtime_sprite),vreal(2),vreal(3),vreal(0)};
