@@ -12,6 +12,7 @@
 int gml_input_key(int key, int edge){ (void)key; (void)edge; return 0; }
 int gml_input_gamepad(int button, int edge){ (void)button; (void)edge; return 0; }
 GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);
+int gml_builtin_fast_id(const char *name);
 
 static void call_numbers(GmlVM *vm,const char *name,const double *numbers,int count){
   GmlVal args[16];
@@ -979,6 +980,13 @@ static int raster_fixtures(void){
     for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
     render.alpha=.25;
+    draw_vm.cur_self=&draw_instance;
+    (void)call_values(&draw_vm,"draw_full_sprite",NULL,0);
+    draw_vm.cur_self=NULL;
+    unsigned full_sprite=(pixels[4*WIDTH+4]>>16)&255u;
+    for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    render.alpha=.25;
     gml_draw_sprite(&render,depth_sprite,0,4,4);
     unsigned classic_basic=(pixels[4*WIDTH+4]>>16)&255u;
     for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
@@ -991,10 +999,11 @@ static int raster_fixtures(void){
     render.alpha=.25;
     gml_draw_sprite(&render,depth_sprite,0,4,4);
     unsigned modern_basic=(pixels[4*WIDTH+4]>>16)&255u;
-    if(automatic<185 || automatic>195 || classic_basic!=255 ||
+    if(automatic<185 || automatic>195 || full_sprite!=automatic ||
+       gml_builtin_fast_id("draw_full_sprite")!=gml_builtin_fast_id("draw_self") || classic_basic!=255 ||
        explicit_alpha<55 || explicit_alpha>70 || modern_basic<55 || modern_basic>70){
-      fprintf(stderr,"default/basic/explicit draw alpha isolation mismatch: automatic=%u classic=%u explicit=%u modern=%u\n",
-        automatic,classic_basic,explicit_alpha,modern_basic);
+      fprintf(stderr,"default/full/basic/explicit draw alpha isolation mismatch: automatic=%u full=%u classic=%u explicit=%u modern=%u\n",
+        automatic,full_sprite,classic_basic,explicit_alpha,modern_basic);
       return 0;
     }
     render.classic=0;

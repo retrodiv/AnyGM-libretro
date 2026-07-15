@@ -5069,7 +5069,7 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
       double y[4]={N(a,n,3),N(a,n,5),N(a,n,7),N(a,n,9)};
       gml_draw_sprite_pos(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),x,y,N(a,n,10)); }
     *out=vreal(0); return 1; }
-  if(!strcmp(nm,"draw_self")){ GmlInstance*s=vm->cur_self; if(R&&s) gml_draw_sprite_ext(R,(int)s->sprite_index,
+  if(!strcmp(nm,"draw_self") || (!strcmp(nm,"draw_full_sprite") && n==0)){ GmlInstance*s=vm->cur_self; if(R&&s) gml_draw_sprite_ext(R,(int)s->sprite_index,
       (int)s->image_index,s->x,s->y,s->image_xscale,s->image_yscale,s->image_angle,(uint32_t)s->image_blend,s->image_alpha); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_sprite_stretched")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),0xFFFFFF,R->alpha); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_sprite_stretched_ext")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); *out=vreal(0); return 1; }
@@ -5291,7 +5291,7 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"ds_list_size")) return BID_DS_LIST_SIZE;
       if(!strcmp(nm,"draw_sprite")) return BID_DRAW_SPRITE;
       if(!strcmp(nm,"draw_sprite_ext")) return BID_DRAW_SPRITE_EXT;
-      if(!strcmp(nm,"draw_self")) return BID_DRAW_SELF;
+      if(!strcmp(nm,"draw_self") || !strcmp(nm,"draw_full_sprite")) return BID_DRAW_SELF;
       if(!strcmp(nm,"draw_surface")) return BID_DRAW_SURFACE;
       if(!strcmp(nm,"draw_surface_ext")) return BID_DRAW_SURFACE_EXT;
       if(!strcmp(nm,"draw_surface_stretched")) return BID_DRAW_SURFACE_STRETCHED;
@@ -5604,6 +5604,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
         N(a,n,4),N(a,n,5),N(a,n,6),(uint32_t)N(a,n,7),N(a,n,8));
       return vreal(0);
     case BID_DRAW_SELF:{
+      if(!strcmp(nm,"draw_full_sprite") && n!=0) return vreal(0);
       GmlInstance*s=vm->cur_self;
       if(R&&s) gml_draw_sprite_ext(R,(int)s->sprite_index,
         (int)s->image_index,s->x,s->y,s->image_xscale,s->image_yscale,s->image_angle,(uint32_t)s->image_blend,s->image_alpha);
@@ -7324,7 +7325,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"draw_sprite_tiled")){ if(R) gml_draw_sprite_tiled_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),1,1,0xFFFFFF,R->alpha); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_tiled_ext")){ if(R) gml_draw_sprite_tiled_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
         N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); return vreal(0); }
-    if(!strcmp(nm,"draw_self")){ GmlInstance*s=vm->cur_self; if(R&&s) gml_draw_sprite_ext(R,(int)s->sprite_index,
+    if(!strcmp(nm,"draw_self") || (!strcmp(nm,"draw_full_sprite") && n==0)){ GmlInstance*s=vm->cur_self; if(R&&s) gml_draw_sprite_ext(R,(int)s->sprite_index,
         (int)s->image_index,s->x,s->y,s->image_xscale,s->image_yscale,s->image_angle,(uint32_t)s->image_blend,s->image_alpha); return vreal(0); }
     if(!strcmp(nm,"draw_set_color")||!strcmp(nm,"draw_set_colour")){ if(R){ R->color=(uint32_t)N(a,n,0); } return vreal(0); }
     if(!strcmp(nm,"draw_set_alpha")){ if(R){ R->alpha=N(a,n,0); if(R->alpha<0) R->alpha=0; if(R->alpha>1) R->alpha=1; } return vreal(0); }
