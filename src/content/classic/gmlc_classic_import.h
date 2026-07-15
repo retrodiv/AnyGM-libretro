@@ -13,10 +13,9 @@
 int gmlc_classic_import_scripts(const GmlcClassicManifest *classic,
                                 GmlcProject *project, const char *cache_dir,
                                 char *err, size_t errcap);
-/* Load public-to-internal GML function mappings from extension packages next
- * to a classic project. Only packages named by the project and mappings to an
- * already imported script are retained; missing or malformed packages are a
- * non-fatal compatibility fallback. */
+/* Load GML scripts and public-to-internal function mappings from extension
+ * packages next to a classic project. Project scripts take priority; missing,
+ * unrelated or malformed packages are a non-fatal compatibility fallback. */
 int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
                                           GmlcProject *project,
                                           const char *project_dir,

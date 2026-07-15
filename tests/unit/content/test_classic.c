@@ -88,6 +88,8 @@ typedef struct {
   size_t size;
 } Fixture;
 
+static void fixture_compressed(Fixture *f, const unsigned char *raw, int raw_size);
+
 static void fixture_u32(Fixture *f, unsigned value){
   put_u32le(f->data + f->size, value);
   f->size += 4;
@@ -129,17 +131,25 @@ static int expect_extension_alias_import(void){
     "tmp/classic_extension_fixture/secondary.GEX",
     "tmp/classic_extension_fixture/conflict.gex",
     "tmp/classic_extension_fixture/unrelated.gex",
-    "tmp/classic_extension_fixture/truncated.gex"
+    "tmp/classic_extension_fixture/truncated.gex",
+    "tmp/classic_extension_fixture/embedded.gex"
   };
   Fixture fixtures[]={
-    extension_fixture("fixtureextension","fixture_route","fixture_target"),
-    extension_fixture("Fixture Extension","fixture_action","fixture_target"),
-    extension_fixture("Fixture Extension","fixture_route","alternate_target"),
-    extension_fixture("Different Extension","unrelated_action","fixture_target"),
-    extension_fixture("Fixture Extension","broken_action","fixture_target")
+    extension_fixture("fixtureextension","fixture_route","fixture_target",
+                      "#define fixture_target\nreturn 1;\n"),
+    extension_fixture("Fixture Extension","fixture_action","fixture_target",
+                      "#define fixture_target\nreturn 2;\n"),
+    extension_fixture("Fixture Extension","fixture_route","alternate_target",
+                      "#define alternate_target\nreturn 3;\n"),
+    extension_fixture("Different Extension","unrelated_action","fixture_target",
+                      "#define fixture_target\nreturn 4;\n"),
+    extension_fixture("Fixture Extension","broken_action","fixture_target",
+                      "#define fixture_target\nreturn 5;\n"),
+    extension_fixture("Fixture Extension","embedded_action","embedded_target",
+                      "#define helper_target\nreturn 6;\n#define embedded_target\nreturn 37;\n")
   };
   int files_ok=1;
-  for(int i=0;i<5;i++)
+  for(int i=0;i<6;i++)
     files_ok &= write_fixture_file(paths[i],&fixtures[i],i==4 ? 48u : SIZE_MAX);
 
   char *extension_names[]={(char*)"Fixture Extension"};
@@ -149,6 +159,7 @@ static int expect_extension_alias_import(void){
   manifest.extension_count=1;
   GmlcProject project;
   gmlc_project_init(&project);
+  project.prefer_memory_files=1;
   project.scripts=(GmlcScript*)calloc(2,sizeof(*project.scripts));
   project.n_scripts=project.cap_scripts=2;
   if(project.scripts){
@@ -159,6 +170,7 @@ static int expect_extension_alias_import(void){
   int imported=files_ok && project.scripts && project.scripts[0].name && project.scripts[1].name &&
     gmlc_classic_import_extension_aliases(&manifest,&project,dir,err,sizeof(err));
   int found_action=0, found_ambiguous=0, found_unrelated=0, found_broken=0;
+  int found_embedded=0, embedded_script=0;
   for(int i=0;i<project.n_function_aliases;i++){
     GmlcFunctionAlias *alias=&project.function_aliases[i];
     if(!strcmp(alias->public_name,"fixture_action") &&
@@ -166,13 +178,23 @@ static int expect_extension_alias_import(void){
     if(!strcmp(alias->public_name,"fixture_route") && alias->ambiguous) found_ambiguous=1;
     if(!strcmp(alias->public_name,"unrelated_action")) found_unrelated=1;
     if(!strcmp(alias->public_name,"broken_action")) found_broken=1;
+    if(!strcmp(alias->public_name,"embedded_action") &&
+       !strcmp(alias->target_name,"embedded_target") && !alias->ambiguous) found_embedded=1;
   }
-  int ok=imported && !err[0] && project.n_function_aliases==2 &&
-         found_action && found_ambiguous && !found_unrelated && !found_broken;
+  for(int i=0;i<project.n_scripts;i++){
+    GmlcScript *script=&project.scripts[i];
+    if(!script->name || strcmp(script->name,"embedded_target")) continue;
+    char *source=gmlc_project_read_source(&project,script->source_path);
+    embedded_script=source && !strcmp(source,"return 37;\n");
+    free(source);
+  }
+  int ok=imported && !err[0] && project.n_function_aliases==3 && project.n_scripts==3 &&
+         found_action && found_ambiguous && !found_unrelated && !found_broken &&
+         found_embedded && embedded_script;
   if(!ok) fprintf(stderr,"extension alias fixture failed: aliases=%d error=%s\n",
                   project.n_function_aliases,err);
   gmlc_project_free(&project);
-  for(int i=0;i<5;i++) remove(paths[i]);
+  for(int i=0;i<6;i++) remove(paths[i]);
 #ifdef _WIN32
   _rmdir(dir);
 #else

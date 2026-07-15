@@ -242,7 +242,11 @@ int gmlc_classic_import_scripts(const GmlcClassicManifest *classic,
   return 1;
 }
 
-enum { CLASSIC_EXTENSION_PREFIX_LIMIT = 4 * 1024 * 1024 };
+enum {
+  CLASSIC_EXTENSION_FILE_LIMIT = 16 * 1024 * 1024,
+  CLASSIC_EXTENSION_COMPRESSED_SCRIPT_LIMIT = 4 * 1024 * 1024,
+  CLASSIC_EXTENSION_SCRIPT_LIMIT = 8 * 1024 * 1024
+};
 
 typedef struct {
   const uint8_t *data;
@@ -253,6 +257,7 @@ typedef struct {
 typedef struct {
   char *public_name;
   char *target_name;
+  uint32_t file_index;
 } ClassicExtensionAlias;
 
 
@@ -270,6 +275,13 @@ static int classic_extension_skip_string(ClassicExtensionReader *reader){
   return classic_extension_u32(reader,&length) && length<=1024u*1024u &&
          classic_extension_skip(reader,length);
 }
+
+static int classic_extension_skip_blob(ClassicExtensionReader *reader){
+  uint32_t size=0;
+  return classic_extension_u32(reader,&size) && classic_extension_skip(reader,size);
+}
+
+
 
 static int classic_extension_identifier_equal(const char *left, const char *right){
   while(left && right && *left && *right){
@@ -316,6 +328,194 @@ static const char *classic_extension_script_target(const GmlcProject *project,
     if(candidate && classic_extension_identifier_equal(candidate,name)) return candidate;
   }
   return NULL;
+}
+
+static int classic_extension_span_identifier_equal(const char *span, size_t length,
+                                                    const char *name){
+  size_t name_length=name?strlen(name):0;
+  if(length!=name_length) return 0;
+  for(size_t i=0;i<length;i++){
+    unsigned char a=(unsigned char)span[i], b=(unsigned char)name[i];
+    if(a>='A' && a<='Z') a=(unsigned char)(a-'A'+'a');
+    if(b>='A' && b<='Z') b=(unsigned char)(b-'A'+'a');
+    if(a!=b) return 0;
+  }
+  return 1;
+}
+
+static int classic_extension_identifier_char(unsigned char c){
+  return (c>='a' && c<='z') || (c>='A' && c<='Z') ||
+         (c>='0' && c<='9') || c=='_';
+}
+
+static int classic_extension_define(const char *source, size_t start, size_t end,
+                                    size_t *name_start, size_t *name_length){
+  size_t at=start;
+  while(at<end && (source[at]==' ' || source[at]=='\t')) at++;
+  if(at+7u>end || source[at]!='#' ||
+     (source[at+1]!='d' && source[at+1]!='D') ||
+     (source[at+2]!='e' && source[at+2]!='E') ||
+     (source[at+3]!='f' && source[at+3]!='F') ||
+     (source[at+4]!='i' && source[at+4]!='I') ||
+     (source[at+5]!='n' && source[at+5]!='N') ||
+     (source[at+6]!='e' && source[at+6]!='E')) return 0;
+  at+=7;
+  if(at>=end || (source[at]!=' ' && source[at]!='\t')) return 0;
+  while(at<end && (source[at]==' ' || source[at]=='\t')) at++;
+  size_t first=at;
+  while(at<end && classic_extension_identifier_char((unsigned char)source[at])) at++;
+  if(at==first) return 0;
+  *name_start=first;
+  *name_length=at-first;
+  return 1;
+}
+
+static int classic_extension_definition(const char *source, size_t size,
+                                        const char *target,
+                                        const char **body, size_t *body_size){
+  size_t line=0;
+  if(size>=3u && (unsigned char)source[0]==0xefu &&
+     (unsigned char)source[1]==0xbbu && (unsigned char)source[2]==0xbfu) line=3;
+  while(line<size){
+    size_t end=line;
+    while(end<size && source[end]!='\n') end++;
+    size_t text_end=end;
+    if(text_end>line && source[text_end-1]=='\r') text_end--;
+    size_t name_start=0, name_length=0;
+    if(classic_extension_define(source,line,text_end,&name_start,&name_length) &&
+       classic_extension_span_identifier_equal(source+name_start,name_length,target)){
+      size_t first=end<size ? end+1u : end;
+      size_t next=first;
+      while(next<size){
+        size_t next_end=next;
+        while(next_end<size && source[next_end]!='\n') next_end++;
+        size_t next_text_end=next_end;
+        if(next_text_end>next && source[next_text_end-1]=='\r') next_text_end--;
+        if(classic_extension_define(source,next,next_text_end,&name_start,&name_length)) break;
+        next=next_end<size ? next_end+1u : next_end;
+      }
+      *body=source+first;
+      *body_size=next-first;
+      return 1;
+    }
+    line=end<size ? end+1u : end;
+  }
+  return 0;
+}
+
+static int classic_extension_add_project_script(GmlcProject *project,
+                                                 const char *target,
+                                                 const char *source,
+                                                 size_t source_size){
+  if(project->n_scripts==INT32_MAX || project->n_script_order==INT32_MAX ||
+     source_size==SIZE_MAX) return 0;
+  char *text=(char*)malloc(source_size+1u);
+  if(!text) return 0;
+  memcpy(text,source,source_size);
+  text[source_size]='\0';
+  char leaf[80];
+  snprintf(leaf,sizeof(leaf),"classic_extension_script_%06d.gml",project->n_scripts);
+  char *id=copy_string(target), *name=copy_string(target);
+  char *source_path=gmlc_project_add_memory_file(project,leaf,GMLC_MEMORY_TEXT,
+                                                  text,source_size,0,0);
+  char *order_id=copy_string(target);
+  free(text);
+  if(!id || !name || !source_path || !order_id){
+    free(id); free(name); free(source_path); free(order_id);
+    return 0;
+  }
+  if(project->n_scripts>=project->cap_scripts){
+    if(project->cap_scripts>INT32_MAX/2){
+      free(id); free(name); free(source_path); free(order_id);
+      return 0;
+    }
+    int capacity=project->cap_scripts ? project->cap_scripts*2 : 16;
+    if(capacity<=project->cap_scripts || capacity<project->n_scripts+1){
+      free(id); free(name); free(source_path); free(order_id);
+      return 0;
+    }
+    GmlcScript *scripts=(GmlcScript*)realloc(project->scripts,
+                                             (size_t)capacity*sizeof(*scripts));
+    if(!scripts){
+      free(id); free(name); free(source_path); free(order_id);
+      return 0;
+    }
+    memset(scripts+project->cap_scripts,0,
+           (size_t)(capacity-project->cap_scripts)*sizeof(*scripts));
+    project->scripts=scripts;
+    project->cap_scripts=capacity;
+  }
+  char **order=(char**)realloc(project->script_order_ids,
+                              (size_t)(project->n_script_order+1)*sizeof(*order));
+  if(!order){
+    free(id); free(name); free(source_path); free(order_id);
+    return 0;
+  }
+  project->script_order_ids=order;
+  project->scripts[project->n_scripts]=(GmlcScript){id,name,source_path};
+  project->script_order_ids[project->n_script_order]=order_id;
+  project->n_scripts++;
+  project->n_script_order++;
+  return 1;
+}
+
+static void classic_extension_rollback_scripts(GmlcProject *project,
+                                               int scripts_before,
+                                               int order_before,
+                                               int memory_before){
+  for(int i=scripts_before;i<project->n_scripts;i++){
+    free(project->scripts[i].id);
+    free(project->scripts[i].name);
+    free(project->scripts[i].source_path);
+    memset(&project->scripts[i],0,sizeof(project->scripts[i]));
+  }
+  project->n_scripts=scripts_before;
+  for(int i=order_before;i<project->n_script_order;i++){
+    free(project->script_order_ids[i]);
+    project->script_order_ids[i]=NULL;
+  }
+  project->n_script_order=order_before;
+  for(int i=memory_before;i<project->n_memory_files;i++){
+    free(project->memory_files[i].data);
+    memset(&project->memory_files[i],0,sizeof(project->memory_files[i]));
+  }
+  project->n_memory_files=memory_before;
+}
+
+static int classic_extension_decode_script(ClassicExtensionReader *reader,
+                                           char **source, size_t *source_size){
+  uint8_t *compressed=NULL;
+  uint32_t compressed_size=0;
+  *source=NULL; *source_size=0;
+  if(!classic_extension_blob(reader,&compressed,&compressed_size,
+                             CLASSIC_EXTENSION_COMPRESSED_SCRIPT_LIMIT) ||
+     !compressed_size) return 0;
+  size_t capacity=(size_t)compressed_size*4u;
+  if(capacity<4096u) capacity=4096u;
+  if(capacity>CLASSIC_EXTENSION_SCRIPT_LIMIT) capacity=CLASSIC_EXTENSION_SCRIPT_LIMIT;
+  char *decoded=NULL;
+  int decoded_size=0;
+  for(;;){
+    decoded=(char*)malloc(capacity+1u);
+    if(!decoded){ reader->oom=1; break; }
+    decoded_size=stbi_zlib_decode_buffer(decoded,(int)capacity,
+                                         (const char*)compressed,(int)compressed_size);
+    if(decoded_size>0) break;
+    free(decoded); decoded=NULL;
+    if(capacity==CLASSIC_EXTENSION_SCRIPT_LIMIT) break;
+    capacity*=2u;
+    if(capacity>CLASSIC_EXTENSION_SCRIPT_LIMIT) capacity=CLASSIC_EXTENSION_SCRIPT_LIMIT;
+  }
+  free(compressed);
+  if(!decoded) return 0;
+  if(memchr(decoded,'\0',(size_t)decoded_size)){
+    free(decoded);
+    return 0;
+  }
+  decoded[decoded_size]='\0';
+  *source=decoded;
+  *source_size=(size_t)decoded_size;
+  return 1;
 }
 
 static int classic_extension_add_project_alias(GmlcProject *project,
@@ -375,7 +575,7 @@ static int classic_extension_read_prefix(const char *path, uint8_t **data, size_
   long length=ftell(file);
   if(length<12 || fseek(file,0,SEEK_SET)!=0){ fclose(file); return 0; }
   size_t wanted=(size_t)length;
-  if(wanted>CLASSIC_EXTENSION_PREFIX_LIMIT) wanted=CLASSIC_EXTENSION_PREFIX_LIMIT;
+  if(wanted>CLASSIC_EXTENSION_FILE_LIMIT) wanted=CLASSIC_EXTENSION_FILE_LIMIT;
   uint8_t *bytes=(uint8_t*)malloc(wanted);
   if(!bytes){ fclose(file); return -1; }
   int ok=fread(bytes,1,wanted,file)==wanted;
@@ -396,6 +596,7 @@ int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
   }
   if(!classic->extension_count) return 1;
   int aliases_before=project->n_function_aliases;
+  int scripts_before=project->n_scripts;
   DIR *directory=opendir(project_dir);
   if(!directory) return 1;
   int ok=1;
@@ -421,7 +622,8 @@ int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
   if(!ok && err && errcap)
     snprintf(err,errcap,"classic import: out of memory reading extension metadata");
   if(ok && getenv("GMLC_LOG_CLASSIC_EXTENSIONS")){
-    fprintf(stderr,"classic extensions: retained %d alias(es) from %s\n",
+    fprintf(stderr,"classic extensions: imported %d script(s), retained %d alias(es) from %s\n",
+            project->n_scripts-scripts_before,
             project->n_function_aliases-aliases_before,project_dir);
     for(int i=aliases_before;i<project->n_function_aliases;i++){
       const GmlcFunctionAlias *alias=&project->function_aliases[i];
