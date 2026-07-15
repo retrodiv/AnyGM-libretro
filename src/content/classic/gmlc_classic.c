@@ -26,6 +26,11 @@ static uint32_t read_u32le(const uint8_t *p){
          (uint32_t)p[3] << 24;
 }
 
+static void write_u32le(uint8_t *p,uint32_t value){
+  p[0]=(uint8_t)value; p[1]=(uint8_t)(value>>8);
+  p[2]=(uint8_t)(value>>16); p[3]=(uint8_t)(value>>24);
+}
+
 static int known_version(uint32_t version){
   return version == GMLC_CLASSIC_GM6 || version == GMLC_CLASSIC_GM7 ||
          version == GMLC_CLASSIC_GM7_ALT || version == GMLC_CLASSIC_GM8 ||
@@ -352,9 +357,9 @@ static int validate_sprite_payload(ClassicReader *r,int executable_layout,uint32
   return 1;
 }
 
-static int validate_background_payload(ClassicReader *r){
+static int validate_background_payload(ClassicReader *r,int executable_layout){
   uint32_t image_version, width, height;
-  if(!reader_words(r, 7, "background tile fields") ||
+  if((!executable_layout && !reader_words(r, 7, "background tile fields")) ||
      !reader_u32(r, &image_version, "background image version") ||
      !reader_u32(r, &width, "background width") ||
      !reader_u32(r, &height, "background height")) return 0;
@@ -498,6 +503,7 @@ static int repair_executable_object(char **raw_io, int *raw_size_io){
  * shared by projects and executables. */
 static int normalize_executable_room(char **raw_io, int *raw_size_io){
   int original=*raw_size_io;
+  if(original<0 || (size_t)original>SIZE_MAX-76u) return 0;
   ClassicReader r={(const uint8_t*)*raw_io,(size_t)original,0,NULL,0};
   uint32_t exists,version;
   if(!reader_u32(&r,&exists,"room exists")) return 0;
@@ -515,13 +521,48 @@ static int normalize_executable_room(char **raw_io, int *raw_size_io){
   normalized[insert_at+4]=16;
   memcpy(normalized+insert_at+12,*raw_io+insert_at,(size_t)original-insert_at);
   memset(normalized+original+12,0,64);
+  size_t data_size=(size_t)original+12;
+  ClassicReader compact={(const uint8_t*)normalized,data_size,0,NULL,0};
+  uint32_t count=0,instances=0;
+  if(!reader_u32(&compact,&exists,"room exists") || !reader_string(&compact,"room name") ||
+     !reader_u32(&compact,&version,"room version") || !reader_string(&compact,"room caption") ||
+     !reader_words(&compact,9,"room fields") || !reader_string(&compact,"room creation code") ||
+     !reader_u32(&compact,&count,"room backgrounds") ||
+     !reader_words(&compact,count>UINT32_MAX/10?UINT32_MAX:count*10,"room backgrounds") ||
+     !reader_words(&compact,1,"room views enabled") || !reader_u32(&compact,&count,"room views") ||
+     !reader_words(&compact,count>UINT32_MAX/14?UINT32_MAX:count*14,"room views") ||
+     !reader_u32(&compact,&instances,"room instances") || instances>UINT32_MAX/5){
+    free(normalized); return 0;
+  }
+  size_t records_start=compact.pos;
+  if(!reader_words(&compact,instances*5,"compact room instances")){
+    free(normalized); return 0;
+  }
+  size_t tail_start=compact.pos,growth=(size_t)instances*4u;
+  if(growth>SIZE_MAX-data_size-64u){ free(normalized); return 0; }
+  working_size=data_size+growth+64u;
+  char *expanded=(char*)realloc(normalized,working_size);
+  if(!expanded){ free(normalized); return 0; }
+  normalized=expanded;
+  memmove(normalized+tail_start+growth,normalized+tail_start,data_size-tail_start);
+  for(uint32_t instance=instances;instance-- > 0;){
+    uint8_t *source=(uint8_t*)normalized+records_start+(size_t)instance*20u;
+    uint8_t *target=(uint8_t*)normalized+records_start+(size_t)instance*24u;
+    uint32_t locked=read_u32le(source+16);
+    memmove(target,source,16);
+    write_u32le(target+16,0); /* executable rooms omit the editor source string */
+    write_u32le(target+20,locked);
+  }
+  data_size+=growth;
+  memset(normalized+data_size,0,64);
   ClassicReader body={(const uint8_t*)normalized,working_size,0,NULL,0};
   if(!reader_u32(&body,&exists,"room exists") || !reader_string(&body,"room name") ||
      !reader_u32(&body,&version,"room version") || !validate_room_gameplay_payload(&body)){
     free(normalized);
     return 0;
   }
-  size_t normalized_size=body.pos+56;
+  if(body.pos>(size_t)INT_MAX-56u){ free(normalized); return 0; }
+  size_t normalized_size=body.pos+56u;
   char *complete=(char*)realloc(normalized,normalized_size);
   if(!complete){ free(normalized); return 0; }
   normalized=complete;
@@ -1052,7 +1093,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
     switch(type){
       case GMLC_CLASSIC_SOUND: valid = validate_sound_payload(&r); break;
       case GMLC_CLASSIC_SPRITE: valid = validate_sprite_payload(&r,raw_deflate,slot->version); break;
-      case GMLC_CLASSIC_BACKGROUND: valid = validate_background_payload(&r); break;
+      case GMLC_CLASSIC_BACKGROUND: valid = validate_background_payload(&r,raw_deflate); break;
       case GMLC_CLASSIC_PATH: valid = validate_path_payload(&r); break;
       case GMLC_CLASSIC_SCRIPT: break;
       case GMLC_CLASSIC_FONT: valid = validate_font_payload(&r); break;

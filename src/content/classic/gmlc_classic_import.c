@@ -1117,12 +1117,13 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
       continue;
     }
     ImportReader r = {slots[i].payload, slots[i].payload_size, 0, err, errcap};
-    uint32_t fields[7], image_version, width, height, pixel_bytes = 0;
+    uint32_t fields[7] = {0}, image_version, width, height, pixel_bytes = 0;
     const uint8_t *pixels = NULL;
-    for(int field = 0; field < 7; ++field)
-      if(!import_u32(&r, &fields[field], "background tile field")){
-        free_imported_backgrounds(project, first_sprite); return 0;
-      }
+    if(!slots[i].executable_layout)
+      for(int field = 0; field < 7; ++field)
+        if(!import_u32(&r, &fields[field], "background tile field")){
+          free_imported_backgrounds(project, first_sprite); return 0;
+        }
     if(!import_u32(&r, &image_version, "background image version") ||
        !import_u32(&r, &width, "background width") || !import_u32(&r, &height, "background height") ||
        (width && height && !import_blob(&r, &pixels, &pixel_bytes, "background pixels")) ||
@@ -1142,9 +1143,32 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
     sprite->frame_paths = (char**)calloc(1, sizeof(*sprite->frame_paths));
     char leaf[80];
     snprintf(leaf, sizeof(leaf), "classic_background_%06u.png", i);
+    uint8_t *converted = NULL;
+    const uint8_t *image_pixels = pixels;
+    if(slots[i].executable_layout && pixels && width && height){
+      if((size_t)height>SIZE_MAX/(size_t)width){
+        if(err && errcap) snprintf(err,errcap,"classic import: oversized executable background");
+        free_imported_backgrounds(project,first_sprite); return 0;
+      }
+      size_t count = (size_t)width * (size_t)height;
+      if(count > SIZE_MAX / 4u || pixel_bytes < count * 4u){
+        if(err && errcap) snprintf(err,errcap,"classic import: truncated executable background pixels");
+        free_imported_backgrounds(project,first_sprite); return 0;
+      }
+      converted=(uint8_t*)malloc(count*4u);
+      if(!converted){ free_imported_backgrounds(project,first_sprite); return 0; }
+      for(size_t pixel=0;pixel<count;pixel++){
+        converted[pixel*4u]=pixels[pixel*4u+2u];
+        converted[pixel*4u+1u]=pixels[pixel*4u+1u];
+        converted[pixel*4u+2u]=pixels[pixel*4u];
+        converted[pixel*4u+3u]=pixels[pixel*4u+3u];
+      }
+      image_pixels=converted;
+    }
     if(sprite->frame_paths)
-      sprite->frame_paths[0]=import_rgba_path(project,cache_dir,leaf,pixels,pixel_bytes,
+      sprite->frame_paths[0]=import_rgba_path(project,cache_dir,leaf,image_pixels,pixel_bytes,
                                               (int)width,(int)height,err,errcap);
+    free(converted);
     if(!sprite->id || !sprite->name || !sprite->frame_paths || !sprite->frame_paths[0]){
       if(err && errcap && !err[0]) snprintf(err, errcap, "classic import: out of memory importing background %u", i);
       free_imported_backgrounds(project, first_sprite);

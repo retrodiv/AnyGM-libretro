@@ -84,7 +84,7 @@ static int expect_gm7_decode(void){
 }
 
 typedef struct {
-  unsigned char data[1024];
+  unsigned char data[4096];
   size_t size;
 } Fixture;
 
@@ -415,6 +415,26 @@ static int build_executable_fixture(Fixture *executable){
       fixture_u32(&script,800);
       fixture_string(&script,"exit;");
       fixture_compressed(&decoded,script.data,(int)script.size);
+    } else if(type==GMLC_CLASSIC_BACKGROUND){
+      Fixture background={{0},0}; const unsigned char bgra[]={3,2,1,255};
+      fixture_u32(&decoded,1);
+      fixture_u32(&background,1); fixture_string(&background,"fixture_executable_background");
+      fixture_u32(&background,800); fixture_u32(&background,800);
+      fixture_u32(&background,1); fixture_u32(&background,1); fixture_u32(&background,sizeof(bgra));
+      memcpy(background.data+background.size,bgra,sizeof(bgra)); background.size+=sizeof(bgra);
+      fixture_compressed(&decoded,background.data,(int)background.size);
+    } else if(type==GMLC_CLASSIC_ROOM){
+      Fixture room={{0},0};
+      fixture_u32(&decoded,1);
+      fixture_u32(&room,1); fixture_string(&room,"fixture_executable_room"); fixture_u32(&room,800);
+      fixture_string(&room,""); fixture_u32(&room,320); fixture_u32(&room,240);
+      fixture_u32(&room,30); fixture_u32(&room,0); fixture_u32(&room,0); fixture_u32(&room,1);
+      fixture_string(&room,""); fixture_u32(&room,0);
+      fixture_u32(&room,0); fixture_u32(&room,0);
+      fixture_u32(&room,1); fixture_u32(&room,10); fixture_u32(&room,20);
+      fixture_u32(&room,0); fixture_u32(&room,100001); fixture_u32(&room,1);
+      fixture_u32(&room,0);
+      fixture_compressed(&decoded,room.data,(int)room.size);
     } else fixture_u32(&decoded,0);
   }
   fixture_u32(&decoded,100000); fixture_u32(&decoded,1000000);
@@ -461,18 +481,18 @@ static int build_executable_fixture(Fixture *executable){
   return 1;
 }
 
-static int expect_executable_manifest(void){
-  Fixture executable;
-  if(!build_executable_fixture(&executable)) return 0;
+static int expect_executable_manifest_variant(const Fixture *executable){
   GmlcClassicManifest manifest;
   char err[256]={0};
-  int ok=gmlc_classic_manifest(executable.data,executable.size,&manifest,err,sizeof(err));
+  int ok=gmlc_classic_manifest(executable->data,executable->size,&manifest,err,sizeof(err));
   if(!ok) fprintf(stderr,"executable manifest failed: %s\n",err);
   if(ok){
     ok=manifest.inventory.header.version==GMLC_CLASSIC_GM8 &&
        manifest.inventory.header.game_id==0x13572468 && manifest.room_order_count==0 &&
        manifest.extension_count==1 && !strcmp(manifest.extension_names[0],"fixture_executable_extension") &&
        manifest.existing[GMLC_CLASSIC_SCRIPT]==1 &&
+       manifest.existing[GMLC_CLASSIC_BACKGROUND]==1 &&
+       manifest.existing[GMLC_CLASSIC_ROOM]==1 &&
        !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source,"exit;") &&
        manifest.trigger_def_count==1 && manifest.constant_def_count==2 &&
        !strcmp(manifest.constant_defs[0].value,"7*6") && !strcmp(manifest.constant_defs[1].value,"21*2") &&
@@ -482,6 +502,15 @@ static int expect_executable_manifest(void){
     gmlc_classic_manifest_free(&manifest);
   }
   return ok;
+}
+
+static int expect_executable_manifest(void){
+  Fixture executable;
+  if(!build_executable_fixture(&executable) || !expect_executable_manifest_variant(&executable)) return 0;
+  /* The direct-header wrapper omits the optional self-offset word. */
+  memmove(executable.data+16,executable.data+20,executable.size-20);
+  executable.size-=4;
+  return expect_executable_manifest_variant(&executable);
 }
 
 static void fixture_legacy_room(Fixture *f, const char *name){
@@ -833,7 +862,7 @@ static int expect_legacy_media_import(void){
   return ok;
 }
 
-static int expect_background_import(void){
+static int expect_background_import(int executable_layout){
   GmlcClassicManifest manifest;
   memset(&manifest, 0, sizeof(manifest));
   manifest.inventory.resource_slots[GMLC_CLASSIC_BACKGROUND] = 1;
@@ -842,9 +871,12 @@ static int expect_background_import(void){
   if(!manifest.slots[GMLC_CLASSIC_BACKGROUND]) return 0;
   GmlcClassicResourceSlot *slot = &manifest.slots[GMLC_CLASSIC_BACKGROUND][0];
   slot->exists = 1; slot->name = strdup("resource_background");
+  slot->version = 800; slot->executable_layout = executable_layout;
   Fixture payload = {{0}, 0};
-  fixture_u32(&payload, 1); fixture_u32(&payload, 1); fixture_u32(&payload, 1);
-  fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+  if(!executable_layout){
+    fixture_u32(&payload, 1); fixture_u32(&payload, 1); fixture_u32(&payload, 1);
+    fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
+  }
   fixture_u32(&payload, 800); fixture_u32(&payload, 1); fixture_u32(&payload, 1);
   fixture_u32(&payload, 4);
   payload.data[payload.size++] = 3; payload.data[payload.size++] = 2;
@@ -855,7 +887,8 @@ static int expect_background_import(void){
 
   GmlcProject project;
   memset(&project, 0, sizeof(project));
-  char err[256], dir[128] = "tmp/classic_background_fixture";
+  char err[256], dir[128];
+  snprintf(dir,sizeof(dir),"tmp/classic_background_%s_fixture",executable_layout?"executable":"project");
 #ifdef _WIN32
   _mkdir(dir);
 #else
@@ -1349,7 +1382,8 @@ int main(int argc, char **argv){
   if(expect_extension_alias_import()) ++passed; else ++failed;
   if(expect_sprite_import(0)) ++passed; else ++failed;
   if(expect_sprite_import(1)) ++passed; else ++failed;
-  if(expect_background_import()) ++passed; else ++failed;
+  if(expect_background_import(0)) ++passed; else ++failed;
+  if(expect_background_import(1)) ++passed; else ++failed;
   if(expect_sparse_font_import()) ++passed; else ++failed;
   if(expect_empty_font_import()) ++passed; else ++failed;
   if(expect_gm81_font_metadata()) ++passed; else ++failed;
