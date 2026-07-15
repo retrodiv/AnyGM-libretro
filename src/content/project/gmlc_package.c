@@ -539,11 +539,24 @@ static int texture_alpha_bounds(const GmlcProject *project, const char *path,
   if(*out_h<1) *out_h=1;
   if(out_hash){
     uint64_t hash=1469598103934665603ull;
-    for(int y=*out_y;y<*out_y+*out_h && y<h;y++){
-      const unsigned char *row=rgba+((size_t)y*(size_t)w+(size_t)*out_x)*4u;
-      for(int x=0;x<*out_w && *out_x+x<w;x++){
+    int hash_x=*out_x, hash_y=*out_y;
+    int hash_x1=*out_x+*out_w, hash_y1=*out_y+*out_h;
+    /* A classic linear-filtered sprite can sample the transparent texel immediately outside
+     * its alpha crop.  Include the copied atlas fringe in duplicate detection so two frames with
+     * identical visible pixels but different hidden RGB do not incorrectly share one placement. */
+    if(project->classic_version){
+      hash_x-=GMLC_ATLAS_BORDER; hash_y-=GMLC_ATLAS_BORDER;
+      hash_x1+=GMLC_ATLAS_BORDER; hash_y1+=GMLC_ATLAS_BORDER;
+      if(hash_x<0) hash_x=0;
+      if(hash_y<0) hash_y=0;
+      if(hash_x1>w) hash_x1=w;
+      if(hash_y1>h) hash_y1=h;
+    }
+    for(int y=hash_y;y<hash_y1;y++){
+      const unsigned char *row=rgba+((size_t)y*(size_t)w+(size_t)hash_x)*4u;
+      for(int x=hash_x;x<hash_x1;x++){
         for(int c=0;c<4;c++){
-          hash ^= (uint64_t)row[(size_t)x*4u+(size_t)c];
+          hash ^= (uint64_t)row[(size_t)(x-hash_x)*4u+(size_t)c];
           hash *= 1099511628211ull;
         }
       }
@@ -1240,12 +1253,22 @@ static int atlas_copy_png(const GmlcProject *project, uint8_t *atlas, int atlas_
     int dy=(int)tp->sy+y;
     if(dy<0 || dy>=atlas_dim) continue;
     int sy=y<0?0:(y>=ch?ch-1:y);
+    int sample_y=src_y+sy;
+    if(project->classic_version){
+      sample_y=src_y+y;
+      if(sample_y<0) sample_y=0; else if(sample_y>=h) sample_y=h-1;
+    }
     for(int x=-GMLC_ATLAS_BORDER;x<cw+GMLC_ATLAS_BORDER;x++){
       int dx=(int)tp->sx+x;
       if(dx<0 || dx>=atlas_dim) continue;
       int sx=x<0?0:(x>=cw?cw-1:x);
+      int sample_x=src_x+sx;
+      if(project->classic_version){
+        sample_x=src_x+x;
+        if(sample_x<0) sample_x=0; else if(sample_x>=w) sample_x=w-1;
+      }
       uint8_t *dst=atlas+((size_t)dy*(size_t)atlas_dim+(size_t)dx)*4u;
-      const uint8_t *src=rgba+(((size_t)src_y+(size_t)sy)*(size_t)w+(size_t)src_x+(size_t)sx)*4u;
+      const uint8_t *src=rgba+((size_t)sample_y*(size_t)w+(size_t)sample_x)*4u;
       memcpy(dst,src,4);
     }
   }

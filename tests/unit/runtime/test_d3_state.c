@@ -1302,6 +1302,62 @@ static int raster_fixtures(void){
     render.tpag[0].alpha_run_count=0;
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   }
+  {
+    uint32_t phase[3][WIDTH*HEIGHT];
+    uint8_t *fringe_atlas=(uint8_t*)realloc(render.atlas[0].px,12);
+    if(!fringe_atlas){
+      fprintf(stderr,"software classic transparent-fringe allocation mismatch\n");
+      return 0;
+    }
+    render.atlas[0].px=fringe_atlas;
+    render.atlas[0].w=3; render.atlas[0].h=1;
+    const uint8_t rgba[12]={
+      200,0,0,0, 100,100,100,255, 0,200,0,0
+    };
+    memcpy(render.atlas[0].px,rgba,sizeof(rgba));
+    render.tpag[0].sx=1; render.tpag[0].sy=0;
+    render.tpag[0].sw=render.tpag[0].sh=1;
+    render.tpag[0].tx=1; render.tpag[0].ty=0;
+    render.tpag[0].bw=3; render.tpag[0].bh=1;
+    for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF202020u;
+    for(int q=0;q<3;q++) for(int i=0;i<WIDTH*HEIGHT;i++) phase[q][i]=0xFF202020u;
+    render.interp=1; render.blendmode=0; render.alphablend=1;
+    gml_render_begin(&render,pixels,WIDTH,32,0,0);
+    for(int q=0;q<3;q++) render.classic_interp_phase[q]=phase[q];
+    gml_draw_background_ext(&render,0,4,4,1,1,0xFFFFFF,1);
+    if(phase[0][4*WIDTH+4]!=0xFF5B2929u ||
+       phase[0][4*WIDTH+5]!=0xFF295B29u ||
+       !render.tpag[0].interp_phase_cache[0]){
+      fprintf(stderr,"software classic transparent-fringe interpolation mismatch: %08x %08x\n",
+              phase[0][4*WIDTH+4],phase[0][4*WIDTH+5]);
+      return 0;
+    }
+    for(int q=0;q<3;q++){
+      render.classic_interp_phase[q]=NULL;
+      free(render.tpag[0].interp_phase_cache[q]);
+      render.tpag[0].interp_phase_cache[q]=NULL;
+    }
+    render.interp=0;
+    uint8_t *restored_atlas=(uint8_t*)realloc(render.atlas[0].px,16);
+    if(!restored_atlas){
+      fprintf(stderr,"software classic atlas restore allocation mismatch\n");
+      return 0;
+    }
+    render.atlas[0].px=restored_atlas;
+    render.atlas[0].w=render.atlas[0].h=2;
+    render.tpag[0].sx=render.tpag[0].sy=0;
+    render.tpag[0].sw=render.tpag[0].sh=2;
+    render.tpag[0].tx=render.tpag[0].ty=0;
+    render.tpag[0].bw=render.tpag[0].bh=2;
+    free(render.tpag[0].alpha_row_min); render.tpag[0].alpha_row_min=NULL;
+    free(render.tpag[0].alpha_row_max); render.tpag[0].alpha_row_max=NULL;
+    free(render.tpag[0].alpha_runs); render.tpag[0].alpha_runs=NULL;
+    free(render.tpag[0].argb_cache); render.tpag[0].argb_cache=NULL;
+    render.tpag[0].alpha_scanned=0;
+    render.tpag[0].alpha_runs_built=0;
+    render.tpag[0].alpha_run_count=0;
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  }
   for(int i=0;i<4;i++){
     render.atlas[0].px[i*4]=render.atlas[0].px[i*4+1]=render.atlas[0].px[i*4+2]=192;
     render.atlas[0].px[i*4+3]=254;
