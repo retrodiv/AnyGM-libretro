@@ -637,17 +637,28 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   };
   for(int i=0;i<(int)(sizeof(particle_shapes)/sizeof(*particle_shapes));i++)
     if(!strcmp(name,particle_shapes[i])){ *out=i; return 1; }
-  if(!strcmp(name,"vk_space")){ *out=32; return 1; }
-  if(!strcmp(name,"vk_enter")){ *out=13; return 1; }
-  if(!strcmp(name,"vk_escape")){ *out=27; return 1; }
-  if(!strcmp(name,"vk_left")){ *out=37; return 1; }
-  if(!strcmp(name,"vk_up")){ *out=38; return 1; }
-  if(!strcmp(name,"vk_right")){ *out=39; return 1; }
-  if(!strcmp(name,"vk_down")){ *out=40; return 1; }
-  if(!strcmp(name,"vk_numpad1")){ *out=97; return 1; }
-  if(!strcmp(name,"vk_numpad2")){ *out=98; return 1; }
-  if(!strcmp(name,"vk_numpad3")){ *out=99; return 1; }
-  if(!strcmp(name,"vk_numpad5")){ *out=101; return 1; }
+  /* Classic projects encode Win32 virtual-key values. Keep the
+   * complete named-key family here: an unresolved constant otherwise becomes an instance
+   * variable and silently reads as zero, which is especially hard to spot in modifier checks. */
+  static const struct { const char *name; int value; } virtual_keys[]={
+    {"vk_nokey",0}, {"vk_anykey",1},
+    {"vk_backspace",8}, {"vk_tab",9}, {"vk_enter",13},
+    {"vk_shift",16}, {"vk_control",17}, {"vk_alt",18}, {"vk_pause",19},
+    {"vk_escape",27}, {"vk_space",32}, {"vk_pageup",33}, {"vk_pagedown",34},
+    {"vk_end",35}, {"vk_home",36}, {"vk_left",37}, {"vk_up",38},
+    {"vk_right",39}, {"vk_down",40}, {"vk_printscreen",44},
+    {"vk_insert",45}, {"vk_delete",46},
+    {"vk_numpad0",96}, {"vk_numpad1",97}, {"vk_numpad2",98},
+    {"vk_numpad3",99}, {"vk_numpad4",100}, {"vk_numpad5",101},
+    {"vk_numpad6",102}, {"vk_numpad7",103}, {"vk_numpad8",104},
+    {"vk_numpad9",105}, {"vk_multiply",106}, {"vk_add",107},
+    {"vk_subtract",109}, {"vk_decimal",110}, {"vk_divide",111},
+    {"vk_f1",112}, {"vk_f2",113}, {"vk_f3",114}, {"vk_f4",115},
+    {"vk_f5",116}, {"vk_f6",117}, {"vk_f7",118}, {"vk_f8",119},
+    {"vk_f9",120}, {"vk_f10",121}, {"vk_f11",122}, {"vk_f12",123}
+  };
+  for(int i=0;i<(int)(sizeof(virtual_keys)/sizeof(*virtual_keys));i++)
+    if(!strcmp(name,virtual_keys[i].name)){ *out=virtual_keys[i].value; return 1; }
   if(!strcmp(name,"gp_face1")){ *out=32769; return 1; }
   if(!strcmp(name,"gp_face2")){ *out=32770; return 1; }
   if(!strcmp(name,"gp_face3")){ *out=32771; return 1; }

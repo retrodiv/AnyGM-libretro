@@ -36,7 +36,8 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 
 int main(void){
   GmlcProject project; GmlcObject objects[3]; GmlcRoom rooms[2];
-  GmlcScript scripts[1]; char *script_order[1];
+  GmlcScript scripts[2]; char *script_order[2];
+  GmlcTimeline timeline; GmlcTimelineMoment timeline_moments[3];
   GmlcRoomInstance placed_instance;
   int room_order[2]={0,1};
   GmlcObjectEvent object_events[23];
@@ -47,14 +48,21 @@ int main(void){
   GmlcProjectConstant constant={(char*)"fixture_constant",(char*)"6*7"};
   memset(&project,0,sizeof(project)); memset(objects,0,sizeof(objects)); memset(rooms,0,sizeof(rooms));
   memset(scripts,0,sizeof(scripts));
+  memset(&timeline,0,sizeof(timeline)); memset(timeline_moments,0,sizeof(timeline_moments));
   memset(&placed_instance,0,sizeof(placed_instance));
   memset(object_events,0,sizeof(object_events)); memset(&trigger,0,sizeof(trigger)); memset(&included,0,sizeof(included));
   project.name="persistent-room-fixture"; project.objects=objects; project.n_objects=3;
   project.classic_version=800;
   scripts[0].id=scripts[0].name=(char*)"script_implicit_result";
+  scripts[1].id=scripts[1].name=(char*)"crear";
   script_order[0]=scripts[0].id;
-  project.scripts=scripts; project.n_scripts=project.cap_scripts=1;
-  project.script_order_ids=script_order; project.n_script_order=1;
+  script_order[1]=scripts[1].id;
+  project.scripts=scripts; project.n_scripts=project.cap_scripts=2;
+  project.script_order_ids=script_order; project.n_script_order=2;
+  timeline.id=timeline.name=(char*)"fixture_timeline";
+  timeline.moments=timeline_moments; timeline.n_moments=timeline.cap_moments=3;
+  timeline_moments[0].step=0; timeline_moments[1].step=2; timeline_moments[2].step=4;
+  project.timelines=&timeline; project.n_timelines=project.cap_timelines=1;
   project.constants=&constant; project.n_constants=project.cap_constants=1;
   project.triggers=&trigger; project.n_triggers=project.cap_triggers=1;
   snprintf(included_name,sizeof(included_name),"gml-included-%ld.dat",(long)getpid());
@@ -128,6 +136,14 @@ int main(void){
      fwrite(implicit_script_source,1,sizeof(implicit_script_source)-1,implicit_script_file)!=sizeof(implicit_script_source)-1 ||
      fclose(implicit_script_file)!=0)return 1;
   scripts[0].source_path=implicit_script;
+  char shadowed_alias_script[]="/tmp/gml-shadowed-alias-script-XXXXXX";
+  int shadowed_alias_fd=mkstemp(shadowed_alias_script); if(shadowed_alias_fd<0)return 1;
+  FILE *shadowed_alias_file=fdopen(shadowed_alias_fd,"wb");
+  const char shadowed_alias_source[]="global.user_crear_hits += argument0;\n";
+  if(!shadowed_alias_file ||
+     fwrite(shadowed_alias_source,1,sizeof(shadowed_alias_source)-1,shadowed_alias_file)!=sizeof(shadowed_alias_source)-1 ||
+     fclose(shadowed_alias_file)!=0)return 1;
+  scripts[1].source_path=shadowed_alias_script;
   char condition[]="/tmp/gml-trigger-condition-XXXXXX"; int condition_fd=mkstemp(condition); if(condition_fd<0)return 1;
   FILE *condition_file=fdopen(condition_fd,"wb"); const char condition_source[]="return (global.startup_value == 42);\n";
   if(!condition_file || fwrite(condition_source,1,sizeof(condition_source)-1,condition_file)!=sizeof(condition_source)-1 || fclose(condition_file)!=0)return 1;
@@ -145,7 +161,10 @@ int main(void){
   object_events[20].source_path=changed_trigger;
   char create_order[]="/tmp/gml-create-order-XXXXXX"; int create_order_fd=mkstemp(create_order); if(create_order_fd<0)return 1;
   FILE *create_order_file=fdopen(create_order_fd,"wb");
-  const char create_order_source[]="global.create_order=global.create_order*10+2;\n";
+  const char create_order_source[]=
+    "global.create_order=global.create_order*10+2; "
+    "crear(5); "
+    "image_speed=0.5; image_single[0]=7; global.image_single_indexed=image_single[13];\n";
   if(!create_order_file || fwrite(create_order_source,1,sizeof(create_order_source)-1,create_order_file)!=sizeof(create_order_source)-1 ||
      fclose(create_order_file)!=0)return 1;
   object_events[21].source_path=create_order;
@@ -237,6 +256,20 @@ int main(void){
        fclose(view_boundary_file)!=0)return 1;
     object_events[view_boundary_events[i]].source_path=view_boundary_files[i];
   }
+  char timeline_files[3][44];
+  const char *timeline_sources[3]={
+    "global.timeline_order=global.timeline_order*10+1;\n",
+    "global.timeline_order=global.timeline_order*10+2;\n",
+    "global.timeline_order=global.timeline_order*10+3;\n"
+  };
+  for(int i=0;i<3;i++){
+    snprintf(timeline_files[i],sizeof(timeline_files[i]),"/tmp/gml-timeline-moment-%d-XXXXXX",i);
+    int timeline_fd=mkstemp(timeline_files[i]); if(timeline_fd<0)return 1;
+    FILE *timeline_file=fdopen(timeline_fd,"wb"); size_t timeline_len=strlen(timeline_sources[i]);
+    if(!timeline_file || fwrite(timeline_sources[i],1,timeline_len,timeline_file)!=timeline_len ||
+       fclose(timeline_file)!=0)return 1;
+    timeline_moments[i].source_path=timeline_files[i];
+  }
   char path[]="/tmp/gml-persistent-room-XXXXXX"; int fd=mkstemp(path); if(fd<0)return 1; close(fd);
   char err[256]={0};
   if(!gmlc_package_write_structural(&project,path,err,sizeof(err))){ fprintf(stderr,"package: %s\n",err); unlink(path); unlink(startup); return 1; }
@@ -261,6 +294,50 @@ int main(void){
     fprintf(stderr,"startup code or project constant did not run\n"); return 1;
   }
   gml_room_enter(&vm,0);
+  GmlInstance *timeline_probe=find_slot(&vm,100000); if(!timeline_probe)return 1;
+  GmlVal *image_single_indexed=gml_varmap_get(&vm.globals,"image_single_indexed");
+  GmlVal *user_crear_hits=gml_varmap_get(&vm.globals,"user_crear_hits");
+  if(timeline_probe->image_index!=7 || timeline_probe->image_speed!=0 ||
+     !image_single_indexed || image_single_indexed->t!=V_REAL || image_single_indexed->d!=7 ||
+     !user_crear_hits || user_crear_hits->t!=V_REAL || user_crear_hits->d!=5){
+    fprintf(stderr,"classic indexed image_single or project-script precedence mismatch: index=%.1f speed=%.1f read=%.1f script=%.1f\n",
+      timeline_probe->image_index,timeline_probe->image_speed,
+      image_single_indexed&&image_single_indexed->t==V_REAL?image_single_indexed->d:-1.0,
+      user_crear_hits&&user_crear_hits->t==V_REAL?user_crear_hits->d:-1.0); return 1;
+  }
+  *gml_varmap_put(&vm.globals,"timeline_order")=vreal(0);
+  timeline_probe->timeline_index=0; timeline_probe->timeline_position=0;
+  timeline_probe->timeline_speed=-1; timeline_probe->timeline_running=1; timeline_probe->timeline_loop=0;
+  gml_vm_step(&vm);
+  GmlVal *timeline_order=gml_varmap_get(&vm.globals,"timeline_order");
+  if(!timeline_order || timeline_order->t!=V_REAL || timeline_order->d!=1 ||
+     timeline_probe->timeline_position!=0 || timeline_probe->timeline_running!=0){
+    fprintf(stderr,"reverse timeline did not fire its initial moment: order=%.0f pos=%.1f running=%.0f\n",
+      timeline_order&&timeline_order->t==V_REAL?timeline_order->d:-1.0,
+      timeline_probe->timeline_position,timeline_probe->timeline_running); return 1;
+  }
+  timeline_order->d=0; timeline_probe->timeline_position=0; timeline_probe->timeline_speed=1;
+  timeline_probe->timeline_running=1; timeline_probe->timeline_loop=0;
+  gml_vm_step(&vm); gml_vm_step(&vm); gml_vm_step(&vm);
+  if(timeline_order->d!=12 || timeline_probe->timeline_position!=3 || !timeline_probe->timeline_running){
+    fprintf(stderr,"forward timeline endpoint ownership mismatch: order=%.0f pos=%.1f running=%.0f\n",
+      timeline_order->d,timeline_probe->timeline_position,timeline_probe->timeline_running); return 1;
+  }
+  timeline_order->d=0; timeline_probe->timeline_position=4; timeline_probe->timeline_speed=2;
+  timeline_probe->timeline_running=1; timeline_probe->timeline_loop=1;
+  gml_vm_step(&vm);
+  if(timeline_order->d!=31 || timeline_probe->timeline_position!=1){
+    fprintf(stderr,"forward timeline wrap mismatch: order=%.0f pos=%.1f\n",
+      timeline_order->d,timeline_probe->timeline_position); return 1;
+  }
+  timeline_order->d=0; timeline_probe->timeline_position=0; timeline_probe->timeline_speed=-2;
+  timeline_probe->timeline_running=1; timeline_probe->timeline_loop=1;
+  gml_vm_step(&vm);
+  if(timeline_order->d!=13 || timeline_probe->timeline_position!=3){
+    fprintf(stderr,"reverse timeline wrap mismatch: order=%.0f pos=%.1f\n",
+      timeline_order->d,timeline_probe->timeline_position); return 1;
+  }
+  timeline_probe->timeline_running=0; timeline_probe->timeline_loop=0;
   int implicit_code=gml_code_index_by_name(&win,"gml_Script_script_implicit_result");
   GmlVal implicit_arg=vreal(2);
   GmlVal implicit_result=implicit_code>=0?
@@ -564,6 +641,16 @@ int main(void){
   GmlVal sleep_args[2]={vreal(1000),vreal(1)};
   (void)gml_builtin_call(&vm,"action_sleep",sleep_args,2);
   (void)gml_builtin_call(&vm,"sleep",sleep_args,1);
+  GmlVal another_room_args[2]={vreal(1),vreal(21)};
+  (void)gml_builtin_call(&vm,"action_another_room",another_room_args,2);
+  GmlVal *transition_kind=gml_varmap_get(&vm.globals,"transition_kind");
+  if(vm.pending_room!=1 || !transition_kind || transition_kind->t!=V_REAL ||
+     transition_kind->d!=21){
+    fprintf(stderr,"classic another-room action mismatch: pending=%d transition=%.0f\n",
+      vm.pending_room,transition_kind&&transition_kind->t==V_REAL?transition_kind->d:-1.0);
+    return 1;
+  }
+  vm.pending_room=-1;
   (void)gml_builtin_call(&vm,"action_restart_game",NULL,0);
   if(vm.game_end!=2){ fprintf(stderr,"classic restart action did not request a cold boot\n"); return 1; }
   vm.game_end=0;
@@ -720,12 +807,13 @@ int main(void){
   if(slot->image_index!=0.5){
     fprintf(stderr,"classic sprite-less drawing frame did not advance: index=%.2f\n",slot->image_index); return 1;
   }
-  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
+  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(shadowed_alias_script); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
   for(int i=0;i<2;i++) unlink(key_files[i]);
   for(int i=0;i<2;i++) unlink(mouse_files[i]);
   for(int i=0;i<4;i++) unlink(boundary_files[i]);
   for(int i=0;i<4;i++) unlink(view_boundary_files[i]);
+  for(int i=0;i<3;i++) unlink(timeline_files[i]);
   if(ok) puts("persistent room fixtures: ok");
   return ok?0:1;
 }

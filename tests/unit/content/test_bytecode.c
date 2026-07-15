@@ -121,6 +121,38 @@ static int compile_fixture_function_ref(const GmlcProject *project, const char *
   return ok && found_expected && !found_unexpected;
 }
 
+static int compile_fixture_named_constant(const GmlcProject *project, const char *name,
+                                          int expected){
+  char source[128];
+  snprintf(source,sizeof(source),"show_debug_message(%s);\n",name);
+  char path[]="/tmp/gmlc-bytecode-constant-XXXXXX";
+  int descriptor=mkstemp(path);
+  if(descriptor<0) return 0;
+  FILE *file=fdopen(descriptor,"wb");
+  if(!file) return 0;
+  size_t length=strlen(source);
+  int wrote=fwrite(source,1,length,file)==length;
+  fclose(file);
+  if(!wrote){ remove(path); return 0; }
+  GmlcCodeBlob blob; char err[256]={0};
+  memset(&blob,0,sizeof(blob));
+  int ok=gmlc_bytecode_compile_source(project,path,&blob,err,sizeof(err));
+  remove(path);
+  int matched=0;
+  if(ok && blob.size>=4){
+    uint32_t word=(uint32_t)blob.data[0] | ((uint32_t)blob.data[1]<<8) |
+                  ((uint32_t)blob.data[2]<<16) | ((uint32_t)blob.data[3]<<24);
+    matched=(word>>24)==0x84 && (int16_t)(word&0xFFFF)==expected;
+  }
+  for(int i=0;ok && i<blob.n_refs;i++)
+    if(blob.refs[i].kind==GMLC_REF_VARI && blob.refs[i].name &&
+       !strcmp(blob.refs[i].name,name)) matched=0;
+  if(!matched)
+    fprintf(stderr,"named constant %s did not compile to %d: %s\n",name,expected,err);
+  gmlc_bytecode_free(&blob);
+  return ok && matched;
+}
+
 int main(int argc, char **argv){
   GmlcProject project;
   memset(&project,0,sizeof(project));
@@ -151,6 +183,12 @@ int main(int argc, char **argv){
     "result=\"x\"+global.name+\"!\";\n",1);
   ok &= compile_fixture(&project,
     "show_message(\"first\")\nshow_message(\"second \"+global.name+\"!\");\n",1);
+  ok &= compile_fixture_named_constant(&project,"vk_shift",16);
+  ok &= compile_fixture_named_constant(&project,"vk_control",17);
+  ok &= compile_fixture_named_constant(&project,"vk_alt",18);
+  ok &= compile_fixture_named_constant(&project,"vk_numpad0",96);
+  ok &= compile_fixture_named_constant(&project,"vk_numpad9",105);
+  ok &= compile_fixture_named_constant(&project,"vk_f12",123);
   ok &= compile_fixture_lacks_ref(&project,
     "if (score=0) then { result=1; } else result=2;\n","then");
   ok &= compile_fixture_lacks_ref(&project,

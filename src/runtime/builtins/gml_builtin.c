@@ -2136,6 +2136,12 @@ static void draw_px_alpha(GmlRender *R, int x, int y, uint32_t gmcol, double alp
   if(!R||x<0||y<0||x>=R->fbw||y>=R->fbh) return;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(alpha<=0) return;
+  /* Pixel-at-a-time primitives (outlines, lines, circles and primitive batches) can be the
+   * first draw after the frame's deferred clear.  They must materialize that underlay before
+   * touching a pixel; otherwise the end-of-frame flush paints over the completed primitive.
+   * Keep the check here so every such path has the same ordering semantics. */
+  if(R->pending_underlay || R->pending_fill) gml_render_prepare_draw(R);
+  R->fb_all_transparent=0;
   uint32_t src=gm_color_to_xrgb(gmcol), *dp=&R->fb[(size_t)y*R->fbw+x];
   if(R->alphablend && R->blendmode!=0){
     int sr=(src>>16)&0xff, sg=(src>>8)&0xff, sb=src&0xff;
@@ -4967,6 +4973,42 @@ static void legacy_move_rpg(GmlVM *vm,GmlVal *args,int count){
   if(motion_changed) motion_from_components(self);
 }
 
+/* Additional contracts exported by common classic GML extension packages.  Keep these as
+ * behavior-level helpers: classic projects frequently retain the public calls while omitting the
+ * package source that originally routed them to ordinary project scripts. */
+static void legacy_direction_rpg(GmlVM *vm,GmlVal *args,int count){
+  GmlInstance *self=vm?vm->cur_self:NULL;
+  if(!self || count!=4) return;
+  double direction=fmod(self->direction,360.0);
+  if(direction<0) direction+=360.0;
+  if(direction<=45.0 || direction>315.0){
+    self->sprite_index=N(args,count,0);
+    self->image_xscale=1;
+  } else if(direction<=135.0){
+    self->sprite_index=N(args,count,1);
+  } else if(direction<=225.0){
+    self->sprite_index=N(args,count,0);
+    self->image_xscale=-1;
+  } else {
+    self->sprite_index=N(args,count,2);
+  }
+  self->image_speed=N(args,count,3);
+}
+
+static GmlVal builtin_call_impl(GmlVM *vm,const char *nm,GmlVal *args,int count);
+static void legacy_friction_platform(GmlVM *vm,GmlVal *args,int count){
+  (void)args;
+  GmlInstance *self=vm?vm->cur_self:NULL;
+  if(!self || count!=0) return;
+  GmlVal contact[2]={vreal(self->direction),vreal(12)};
+  (void)builtin_call_impl(vm,"move_contact_solid",contact,2);
+  self->vspeed=0;
+}
+
+static void legacy_destroy_self(GmlVM *vm,int count){
+  if(vm && vm->cur_self && count==0) gml_instance_destroy(vm,vm->cur_self);
+}
+
 /* Short-circuit very hot draw/UI builtins before the broad legacy strcmp chain below. Keep these
  * branches behavior-equivalent to their canonical handlers; this only avoids dispatch overhead. */
 static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out){
@@ -5337,7 +5379,10 @@ enum {
   BID_DRAW_SHADOW,
   BID_LEGACY_DEPTH_BY_Y,
   BID_LEGACY_CREATE,
-  BID_LEGACY_MOVE_RPG
+  BID_LEGACY_MOVE_RPG,
+  BID_LEGACY_DIRECTION_RPG,
+  BID_LEGACY_FRICTION_PLATFORM,
+  BID_LEGACY_DESTROY_SELF
 };
 
 int gml_builtin_fast_id(const char *nm){
@@ -5391,6 +5436,8 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"draw_text")) return BID_DRAW_TEXT;
       if(!strcmp(nm,"draw_text_ext")) return BID_DRAW_TEXT_EXT;
       if(!strcmp(nm,"depthy")) return BID_LEGACY_DEPTH_BY_Y;
+      if(!strcmp(nm,"direction_rpg")) return BID_LEGACY_DIRECTION_RPG;
+      if(!strcmp(nm,"destruir")) return BID_LEGACY_DESTROY_SELF;
       if(!strcmp(nm,"draw_text_ext_transformed_colour")) return BID_DRAW_TEXT_EXT_TRANSFORMED_COLOUR;
       if(!strcmp(nm,"draw_text_ext_transformed_color")) return BID_DRAW_TEXT_EXT_TRANSFORMED_COLOR;
       if(!strcmp(nm,"draw_set_color")) return BID_DRAW_SET_COLOR;
@@ -5413,6 +5460,7 @@ int gml_builtin_fast_id(const char *nm){
     case 'f':
       if(!strcmp(nm,"floor")) return BID_FLOOR;
       if(!strcmp(nm,"frac")) return BID_FRAC;
+      if(!strcmp(nm,"friction_platform")) return BID_LEGACY_FRICTION_PLATFORM;
       if(!strcmp(nm,"file_text_eof")) return BID_FILE_TEXT_EOF;
       if(!strcmp(nm,"file_text_open_read")) return BID_FILE_TEXT_OPEN_READ;
       if(!strcmp(nm,"file_text_read_string")) return BID_FILE_TEXT_READ_STRING;
@@ -5715,6 +5763,15 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       return vreal(0);
     case BID_LEGACY_MOVE_RPG:
       legacy_move_rpg(vm,a,n);
+      return vreal(0);
+    case BID_LEGACY_DIRECTION_RPG:
+      legacy_direction_rpg(vm,a,n);
+      return vreal(0);
+    case BID_LEGACY_FRICTION_PLATFORM:
+      legacy_friction_platform(vm,a,n);
+      return vreal(0);
+    case BID_LEGACY_DESTROY_SELF:
+      legacy_destroy_self(vm,n);
       return vreal(0);
     case BID_DRAW_SURFACE:
       if(R){ int s=(int)N(a,n,0);
@@ -6910,6 +6967,15 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"move_rpg")){
     legacy_move_rpg(vm,a,n);
     return vreal(0); }
+  if(!strcmp(nm,"direction_rpg")){
+    legacy_direction_rpg(vm,a,n);
+    return vreal(0); }
+  if(!strcmp(nm,"friction_platform")){
+    legacy_friction_platform(vm,a,n);
+    return vreal(0); }
+  if(!strcmp(nm,"destruir")){
+    legacy_destroy_self(vm,n);
+    return vreal(0); }
 
   /* ---- instances ---- */
   if(!strcmp(nm,"instance_create")){ GmlInstance*in=gml_instance_create(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2));
@@ -7068,6 +7134,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(created){ created->speed=N(a,n,3); created->direction=N(a,n,4);
       created->hspeed=created->speed*cos(created->direction*M_PI/180.0);
       created->vspeed=-created->speed*sin(created->direction*M_PI/180.0); }
+    return vreal(0); }
+  if(!strcmp(nm,"action_another_room")){
+    int target=(int)N(a,n,0);
+    gml_set_global_scalar(vm,"transition_kind",N(a,n,1));
+    if(vm->win && target>=0 && target<gml_room_count(vm->win)){
+      gml_vm_warm_audio_for_room(vm,target);
+      vm->pending_room=target;
+    }
     return vreal(0); }
   if(!strcmp(nm,"action_previous_room")){
     gml_set_global_scalar(vm,"transition_kind",N(a,n,0));
@@ -8446,7 +8520,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"parameter_count")) return vreal(0);
   if(!strcmp(nm,"parameter_string")) return vstr("");
   if(!strcmp(nm,"exception_unhandled_handler")) return vreal(0);
-  if(!strcmp(nm,"io_clear")) return vreal(0);
+  if(!strcmp(nm,"io_clear")||!strcmp(nm,"keyboard_wait")) return vreal(0);
   if(!strcmp(nm,"display_set_windows_alternate_sync")) return vreal(0);
   if(!strcmp(nm,"url_open")) return vreal(0);
   if(!strcmp(nm,"os_is_network_connected")) return vreal(0);

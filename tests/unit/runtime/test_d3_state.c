@@ -878,6 +878,20 @@ static int raster_fixtures(void){
       fprintf(stderr,"software modern primitive alpha rounding changed: %08x\n",pixels[10*WIDTH+10]);
       return 0;
     }
+    {
+      const double outline_rectangle[]={8,8,12,12,1};
+      render.classic=1; render.color=0x0000FFu; render.alpha=1;
+      memset(pixels,0,sizeof(pixels));
+      gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+      gml_render_set_pending_fill(&render,0xFF123456u);
+      call_numbers(&vm,"draw_rectangle",outline_rectangle,5);
+      gml_render_flush_pending_fill(&render);
+      if(pixels[8*WIDTH+8]!=0xFFFF0000u || pixels[10*WIDTH+10]!=0xFF123456u){
+        fprintf(stderr,"software outlined primitive deferred-clear ordering mismatch: edge=%08x centre=%08x\n",
+          pixels[8*WIDTH+8],pixels[10*WIDTH+10]);
+        return 0;
+      }
+    }
     render.color=0xFFFFFFu; render.alpha=1;
   }
   {
@@ -1156,6 +1170,51 @@ static int raster_fixtures(void){
       (void)call_values(&extension_vm,"move_rpg",movement_args,4);
       if(moving->hspeed!=7){
         fprintf(stderr,"legacy extension movement arity mismatch\n");
+        free(extension_vm.inst);
+        return 0;
+      }
+
+      GmlVal direction_args[4]={vreal(20),vreal(10),vreal(30),vreal(.25)};
+      moving->direction=0; moving->image_xscale=-1;
+      (void)call_values(&extension_vm,"direction_rpg",direction_args,4);
+      if(moving->sprite_index!=20 || moving->image_xscale!=1 || moving->image_speed!=.25 ||
+         gml_builtin_fast_id("direction_rpg")<0){
+        fprintf(stderr,"legacy extension right-facing animation mismatch\n");
+        free(extension_vm.inst);
+        return 0;
+      }
+      moving->direction=90;
+      (void)call_values(&extension_vm,"direction_rpg",direction_args,4);
+      if(moving->sprite_index!=10){
+        fprintf(stderr,"legacy extension upward animation mismatch\n");
+        free(extension_vm.inst);
+        return 0;
+      }
+      moving->direction=180;
+      (void)call_values(&extension_vm,"direction_rpg",direction_args,4);
+      if(moving->sprite_index!=20 || moving->image_xscale!=-1){
+        fprintf(stderr,"legacy extension left-facing animation mismatch\n");
+        free(extension_vm.inst);
+        return 0;
+      }
+      moving->direction=270;
+      (void)call_values(&extension_vm,"direction_rpg",direction_args,4);
+      if(moving->sprite_index!=30){
+        fprintf(stderr,"legacy extension downward animation mismatch\n");
+        free(extension_vm.inst);
+        return 0;
+      }
+      moving->direction=270; moving->y=0; moving->vspeed=9;
+      (void)call_values(&extension_vm,"friction_platform",NULL,0);
+      if(moving->y!=12 || moving->vspeed!=0 || gml_builtin_fast_id("friction_platform")<0){
+        fprintf(stderr,"legacy extension platform-contact mismatch\n");
+        free(extension_vm.inst);
+        return 0;
+      }
+      (void)call_values(&extension_vm,"keyboard_wait",NULL,0);
+      (void)call_values(&extension_vm,"destruir",NULL,0);
+      if(!moving->marked || gml_builtin_fast_id("destruir")<0){
+        fprintf(stderr,"legacy extension destroy-self mismatch\n");
         free(extension_vm.inst);
         return 0;
       }

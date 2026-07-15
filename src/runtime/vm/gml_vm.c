@@ -385,8 +385,6 @@ static int inst_builtin_get(GmlInstance *in, const char *n, GmlVal *out){
   #undef B
   if(!strcmp(n,"object_index")){ *out=vreal(in->obj); return 1; }
   if(!strcmp(n,"id")){ *out=vreal(in->id); return 1; }
-  /* image_single (legacy): -1 while animating, else the frozen sub-image */
-  if(!strcmp(n,"image_single")){ *out=vreal(in->image_speed!=0? -1 : in->image_index); return 1; }
   return 0;
 }
 static int inst_builtin_set(GmlInstance *in, const char *n, GmlVal v){
@@ -434,9 +432,6 @@ static int inst_builtin_set(GmlInstance *in, const char *n, GmlVal v){
   if(!strcmp(n,"vspeed")){ in->vspeed=d; motion_from_components(in); return 1; }
   if(!strcmp(n,"direction")){ in->direction=d; motion_from_speed_dir(in); return 1; }
   if(!strcmp(n,"speed")){ in->speed=d; motion_from_speed_dir(in); return 1; }
-  /* image_single (legacy alias): >=0 freezes that sub-image (image_speed 0); -1 resumes */
-  if(!strcmp(n,"image_single")){
-    if(d>=0){ in->image_index=d; in->image_speed=0; } else in->image_speed=1; return 1; }
   return 0;
 }
 
@@ -813,6 +808,29 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
     }
     GmlInstance *s=resolve_inst(vm,inst_t);
     if(s && idx>=0 && idx<GML_ALARMS) s->alarm[idx]=alv; return; }
+  /* In classic GML every variable accessor carries an optional array index, including scalar
+   * built-ins.  For scalar instance variables that index is ignored: `image_single[0]=7` is the
+   * same built-in write as `image_single=7`, while alarm[] remains genuinely indexed above.
+   * Letting the generic array path create a user field instead left the displayed sub-image at
+   * frame zero in projects that use the old indexed spelling. */
+  if(var_name_maybe_special(nm,nh) && !is_room_global_array(nm) &&
+     inst_t!=IT_GLOBAL && inst_t!=IT_LOCAL){
+    int handled=0;
+    if(inst_t==IT_ALL){
+      for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
+        if(o->active && !o->marked && !inst_is_struct_ref(o))
+          handled |= inst_builtin_set(o,nm,v); }
+      if(handled) return;
+    } else if(is_object_scope(vm,inst_t)){
+      for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
+        if(o->active && !o->marked && gml_object_is(vm,o->obj,inst_t) && !inst_is_struct_ref(o))
+          handled |= inst_builtin_set(o,nm,v); }
+      if(handled) return;
+    } else {
+      GmlInstance *s=resolve_inst(vm,inst_t);
+      if(s && !inst_is_struct_ref(s) && inst_builtin_set(s,nm,v)) return;
+    }
+  }
   if(inst_t==IT_ALL && !is_room_global_array(nm)){
     for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
       if(!o->active || o->marked) continue;
@@ -846,6 +864,11 @@ static GmlVal array_get_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *
       return vreal(0); } }
   if(!strcmp(nm,"alarm")){ GmlInstance *s=resolve_inst(vm,inst_t);
     return vreal((s&&idx>=0&&idx<GML_ALARMS)? s->alarm[idx] : -1); }
+  if(var_name_maybe_special(nm,nh) && !is_room_global_array(nm) &&
+     inst_t!=IT_GLOBAL && inst_t!=IT_LOCAL){
+    GmlInstance *s=resolve_inst(vm,inst_t); GmlVal out;
+    if(s && !inst_is_struct_ref(s) && inst_builtin_get(s,nm,&out)) return out;
+  }
   GmlVarMap *m=is_room_global_array(nm)? &vm->globals : scope_map(vm,locals,inst_t); if(!m) return vreal(0);
   GmlVal *slot=gml_varmap_get_h(m,nm,nh);
   if(!slot||slot->t!=V_ARR) return vreal(0);
@@ -859,6 +882,8 @@ static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, 
   if(!s) return vreal(0);
   if(s->obj>=0 && !strcmp(nm,"alarm"))
     return vreal((idx>=0 && idx<GML_ALARMS)? s->alarm[idx] : -1);
+  GmlVal out;
+  if(!inst_is_struct_ref(s) && inst_builtin_get(s,nm,&out)) return out;
   GmlVal *slot=gml_varmap_get_h(&s->vars,nm,nh);
   if(!slot || slot->t!=V_ARR || !slot->arr) return vreal(0);
   GmlArr *A=slot->arr;
@@ -871,6 +896,7 @@ static void array_set_inst_field_h(GmlVM *vm,GmlInstance *s,const char *nm,uint3
     if(idx>=0 && idx<GML_ALARMS) s->alarm[idx]=alarm_store_value(vm,v);
     return;
   }
+  if(!inst_is_struct_ref(s) && inst_builtin_set(s,nm,v)) return;
   gml_arr_mark_escaped(v);
   GmlVal *slot=gml_varmap_put_h(&s->vars,nm,nh);
   GmlArr *A=arr_of(slot);
@@ -1972,6 +1998,24 @@ static int code_micro_maybe(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal 
   return code_micro_try(vm,ci,args,n_args,out);
 }
 
+/* Some classic extension packages exported small helpers under these names.  The software
+ * runtime supplies portable fallbacks for projects whose extension code is unavailable, but a
+ * project may also contain a real script with the same name.  That script is the authoritative
+ * implementation; only fall back to the compatibility builtin when no exact script resource
+ * exists.  Keep this deliberately limited to names invented by our legacy-compat layer -- native
+ * builtins retain their normal dispatch precedence. */
+static int classic_extension_script_code(GmlVM *vm,const char *name){
+  if(!vm || !vm->win || !vm->win->classic_version || !name) return -1;
+  if(strcmp(name,"crear") && strcmp(name,"depthy") && strcmp(name,"move_rpg") &&
+     strcmp(name,"direction_rpg") && strcmp(name,"friction_platform") &&
+     strcmp(name,"destruir") &&
+     strcmp(name,"draw_full_sprite") && strcmp(name,"draw_shadow") &&
+     strcmp(name,"draw_shadow_ext")) return -1;
+  char code_name[192];
+  snprintf(code_name,sizeof code_name,"gml_Script_%s",name);
+  return gml_code_index_by_name(vm->win,code_name);
+}
+
 /* ---------------- interpreter ---------------- */
 #define STK 512
 /* Function-value encoding: a GMS2.3 script/method reference pushed on the value stack (via a
@@ -2376,6 +2420,11 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         GmlVal a[64]; if(na>64) na=64;
         /* GM pushes args in reverse, so arg0 is on top: pop forward -> a[0]=arg0 */
         for(int i=0;i<na;i++) a[i] = sp>0? stk[--sp] : vreal(0);
+        int sci = pin ? pin->funcval_ci : -1;
+        if(sci<0){
+          sci=classic_extension_script_code(vm,nm);
+          if(pin && sci>=0) pin->funcval_ci=sci;
+        }
         int bid = pin ? pin->builtin_id : -1;
         if(pin && bid==0){
           bid=gml_builtin_fast_id(nm);
@@ -2385,12 +2434,11 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
          * script, remember its code index (in funcval_ci, unused on OP_CALL) and run it directly —
          * otherwise repeated script calls walk the whole builtin name chain before
          * reaching the script fallback. */
-        int sci = pin ? pin->funcval_ci : -1;
         GmlVal rv;
-        if(bid>0 && !hp_builtin) rv=gml_builtin_call_fast_id(vm,bid,nm,a,na);
-        else if(sci>=0 && !hp_builtin){
+        if(sci>=0 && !hp_builtin){
           if(!code_micro_maybe(vm,sci,a,na,&rv)) rv=gml_vm_run_code(vm,sci,vm->cur_self,vm->cur_other,a,na);
         }
+        else if(bid>0 && !hp_builtin) rv=gml_builtin_call_fast_id(vm,bid,nm,a,na);
         else {
           vm->call_script_ci=-1;
           rv=gml_builtin_call(vm,nm,a,na);
@@ -4345,7 +4393,7 @@ static int timeline_fire_range(GmlVM *vm, GmlInstance *in, GmlTimeline *timeline
   if(forward){
     for(int m=0;m<timeline->n;m++){
       GmlTimelineMoment *moment=&timeline->moments[m];
-      if(moment->step<=from || moment->step>to) continue;
+      if(moment->step<from || moment->step>=to) continue;
       if(moment->code>=0 && moment->code<vm->win->n_code){
         GmlVal r=gml_vm_run_code(vm,moment->code,in,NULL,NULL,0);
         if(r.t==V_STR && r.d!=0) free((char*)r.s);
@@ -4356,7 +4404,7 @@ static int timeline_fire_range(GmlVM *vm, GmlInstance *in, GmlTimeline *timeline
   } else {
     for(int m=timeline->n-1;m>=0;m--){
       GmlTimelineMoment *moment=&timeline->moments[m];
-      if(moment->step>=from || moment->step<to) continue;
+      if(moment->step>from || moment->step<=to) continue;
       if(moment->code>=0 && moment->code<vm->win->n_code){
         GmlVal r=gml_vm_run_code(vm,moment->code,in,NULL,NULL,0);
         if(r.t==V_STR && r.d!=0) free((char*)r.s);
@@ -4368,9 +4416,10 @@ static int timeline_fire_range(GmlVM *vm, GmlInstance *in, GmlTimeline *timeline
   return 1;
 }
 
-/* Classic timelines advance between Begin Step and Alarm processing. A moment is crossed when
- * its integer position lies after the old position and at/before the new one (reversed for a
- * negative speed). Playback mutations made by a moment take effect immediately. */
+/* Timelines advance between Begin Step and Alarm processing. Each step owns the interval that
+ * starts at its old position: forward playback includes the old endpoint and excludes the new
+ * one, with the inverse interval for reverse playback. This makes moment zero run when playback
+ * first leaves position zero in either direction. Playback mutations take effect immediately. */
 static void run_timelines(GmlVM *vm, int count){
   for(int i=0;i<count;i++){
     GmlInstance *in=&vm->inst[i];
@@ -4382,12 +4431,12 @@ static void run_timelines(GmlVM *vm, int count){
     double old=in->timeline_position, speed=in->timeline_speed;
     double length=(double)timeline->last_step+1.0;
     if(!in->timeline_loop){
-      double next=old+speed;
+      double raw=old+speed, next=raw;
       int stop=0;
       if(speed>0 && next>timeline->last_step){ next=timeline->last_step; stop=1; }
       if(speed<0 && next<0){ next=0; stop=1; }
       in->timeline_position=next;
-      int ok=timeline_fire_range(vm,in,timeline,old,next,speed>0,ti,next);
+      int ok=timeline_fire_range(vm,in,timeline,old,raw,speed>0,ti,next);
       if(ok && stop && in->active && !in->marked && (int)in->timeline_index==ti &&
          in->timeline_position==next) in->timeline_running=0;
       continue;
@@ -4401,20 +4450,18 @@ static void run_timelines(GmlVM *vm, int count){
       while(remaining>0 && ok && guard++<4096){
         double distance=length-pos;
         if(remaining<distance){ ok=timeline_fire_range(vm,in,timeline,pos,pos+remaining,1,ti,next); break; }
-        ok=timeline_fire_range(vm,in,timeline,pos,timeline->last_step,1,ti,next);
+        ok=timeline_fire_range(vm,in,timeline,pos,length,1,ti,next);
         if(!ok) break;
         remaining-=distance;
-        ok=timeline_fire_range(vm,in,timeline,-1,0,1,ti,next);
         pos=0;
       }
     } else {
       while(remaining>0 && ok && guard++<4096){
         double distance=pos+1.0;
         if(remaining<distance){ ok=timeline_fire_range(vm,in,timeline,pos,pos-remaining,0,ti,next); break; }
-        ok=timeline_fire_range(vm,in,timeline,pos,0,0,ti,next);
+        ok=timeline_fire_range(vm,in,timeline,pos,-1,0,ti,next);
         if(!ok) break;
         remaining-=distance;
-        ok=timeline_fire_range(vm,in,timeline,length,timeline->last_step,0,ti,next);
         pos=timeline->last_step;
       }
     }
@@ -5271,7 +5318,11 @@ void gml_vm_draw(GmlVM *vm){
   if(getenv("GML_LOG_INST") && !dumped){ dumped=1;
     fprintf(stderr,"[draw] room=%d, %d instances + %d tiles (back->front):\n",vm->room_index,n,nt);
     for(int k=0;k<m && k<2000;k++){ if(it[k].type==1){ GmlDrawTile *t=&tiles[it[k].idx];
-        fprintf(stderr,"   TILE def=%d depth=%.0f @(%.0f,%.0f) %dx%d src=(%d,%d)\n",t->def,it[k].depth,t->x,t->y,t->w,t->h,t->sx,t->sy); }
+        fprintf(stderr,"   TILE def=%d depth=%.0f @(%.0f,%.0f) %dx%d src=(%d,%d)",t->def,it[k].depth,t->x,t->y,t->w,t->h,t->sx,t->sy);
+        if(t->def>=0 && t->def<R->n_bg){ int ti=R->bg[t->def].tpag;
+          if(ti>=0 && ti<R->n_tpag){ GmlTpag *p=&R->tpag[ti];
+            fprintf(stderr," tpag=%d atlas=%d packed=(%d,%d %dx%d) trim=(%d,%d) logical=%dx%d",ti,p->atlas,p->sx,p->sy,p->sw,p->sh,p->tx,p->ty,p->bw,p->bh); } }
+        fputc('\n',stderr); }
       else if(it[k].type==2){ struct LayTile *t=&ltl[it[k].idx];
         fprintf(stderr,"   LTILE spr=%d depth=%.0f @(%.0f,%.0f) %dx%d\n",t->sprite,it[k].depth,t->x,t->y,t->w,t->h); }
       else if(it[k].type==3){ struct LayBg *b=&lbg[it[k].idx];
@@ -5282,8 +5333,8 @@ void gml_vm_draw(GmlVM *vm){
         fprintf(stderr,"   LSPR spr=%d depth=%.0f @(%.0f,%.0f) idx=%d ang=%.0f xs=%.1f ys=%.1f a=%.2f\n",
           s->sprite,it[k].depth,s->x,s->y,s->subimg,s->angle,s->xs,s->ys,s->alpha); }
       else if(it[k].type==6){ struct ClassicBg *b=&cbg[it[k].idx];
-        fprintf(stderr,"   CBG def=%d depth=%.0f @(%.0f,%.0f) tiled=%d/%d stretch=%d\n",
-          b->def,it[k].depth,b->x,b->y,b->th,b->tv,b->stretch); }
+        fprintf(stderr,"   CBG def=%d depth=%.0f @(%.0f,%.0f) tiled=%d/%d stretch=%d colour=%06x alpha=%.3f\n",
+          b->def,it[k].depth,b->x,b->y,b->th,b->tv,b->stretch,b->blend&0xFFFFFFu,b->alpha); }
       else { GmlInstance *in=&vm->inst[it[k].idx];
         fprintf(stderr,"   %-26s id=%u spr=%-4d vis=%.0f depth=%.0f @(%.0f,%.0f) ang=%.0f xs=%.1f ys=%.1f a=%.2f ii=%.4f is=%.3f\n",
           (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",in->id,
