@@ -2702,7 +2702,8 @@ static void parse_timelines(GmlVM *vm){
   const uint8_t *d=w->data; uint32_t base=c->off, n=u32(d,base);
   size_t end=(size_t)c->off+c->size;
   if(n>100000 || (size_t)base+4+(size_t)n*4>end || end>w->size) return;
-  GmlTimeline *timelines=calloc(n?n:1,sizeof(*timelines));
+  int cap=n>0?(int)n:4;
+  GmlTimeline *timelines=calloc((size_t)cap,sizeof(*timelines));
   if(!timelines) return;
   for(uint32_t i=0;i<n;i++){
     uint32_t ep=u32(d,base+4+i*4);
@@ -2720,7 +2721,38 @@ static void parse_timelines(GmlVM *vm){
       if(t->moments[m].step>t->last_step) t->last_step=t->moments[m].step;
     }
   }
-  vm->timelines=timelines; vm->n_timelines=(int)n;
+  vm->timelines=timelines; vm->n_timelines=(int)n; vm->cap_timelines=cap;
+}
+
+int gml_timeline_add(GmlVM *vm){
+  if(!vm) return -1;
+  if(vm->n_timelines>=vm->cap_timelines){
+    int cap=vm->cap_timelines>0?vm->cap_timelines*2:4;
+    if(cap<=vm->n_timelines) cap=vm->n_timelines+1;
+    GmlTimeline *grown=realloc(vm->timelines,(size_t)cap*sizeof(*grown));
+    if(!grown) return -1;
+    memset(grown+vm->cap_timelines,0,(size_t)(cap-vm->cap_timelines)*sizeof(*grown));
+    vm->timelines=grown; vm->cap_timelines=cap;
+  }
+  int index=vm->n_timelines;
+  char label[48]; snprintf(label,sizeof(label),"__newtimeline%d",index);
+  size_t bytes=strlen(label)+1;
+  char *name=malloc(bytes);
+  if(!name) return -1;
+  memcpy(name,label,bytes);
+  GmlTimeline *timeline=&vm->timelines[index];
+  memset(timeline,0,sizeof(*timeline));
+  timeline->owned_name=name; timeline->name=name; timeline->last_step=-1;
+  vm->n_timelines++;
+  return index;
+}
+
+void gml_timeline_clear(GmlVM *vm, int index){
+  if(!vm || index<0 || index>=vm->n_timelines || !vm->timelines[index].name) return;
+  GmlTimeline *timeline=&vm->timelines[index];
+  /* Keep the old allocation alive: this may be called by a moment that is currently being
+   * interpreted. The generation check stops that playback before it can visit another moment. */
+  timeline->n=0; timeline->last_step=-1; timeline->generation++;
 }
 /* evaluate a path at position t in [0,1] -> (x,y) in path-local coords */
 static void path_eval_ex(GmlPath *p, double t, double *ox, double *oy, double *osp){
@@ -3124,7 +3156,7 @@ static int classic_collect_object_slots(GmlVM *vm, int object){
 /* Sparse classic projects retain authored resource ids, so the object array can contain very
  * large gaps. Cache the ascending object ids that resolve each event suffix (including inherited
  * handlers): this preserves object-major event order without rescanning every empty slot on
- * every frame. The object hierarchy and code table are immutable for the lifetime of a VM. */
+ * every frame. Runtime hierarchy mutation resets this cache before the next dispatch. */
 typedef struct { char suffix[32]; int *objects, n, cap, used; } ClassicDispatchCache;
 #define CLASSIC_DISPATCH_CACHE_MAX 128
 static ClassicDispatchCache g_classic_dispatch[CLASSIC_DISPATCH_CACHE_MAX];
@@ -4389,7 +4421,8 @@ static void run_boundary_events(GmlVM *vm);
 
 static int timeline_fire_range(GmlVM *vm, GmlInstance *in, GmlTimeline *timeline,
                                double from, double to, int forward,
-                               int expected_index, double expected_position){
+                               int expected_index, double expected_position,
+                               unsigned expected_generation){
   if(forward){
     for(int m=0;m<timeline->n;m++){
       GmlTimelineMoment *moment=&timeline->moments[m];
@@ -4399,6 +4432,8 @@ static int timeline_fire_range(GmlVM *vm, GmlInstance *in, GmlTimeline *timeline
         if(r.t==V_STR && r.d!=0) free((char*)r.s);
       }
       if(!in->active || in->marked || !in->timeline_running ||
+         expected_index<0 || expected_index>=vm->n_timelines ||
+         vm->timelines[expected_index].generation!=expected_generation ||
          (int)in->timeline_index!=expected_index || in->timeline_position!=expected_position) return 0;
     }
   } else {
@@ -4410,6 +4445,8 @@ static int timeline_fire_range(GmlVM *vm, GmlInstance *in, GmlTimeline *timeline
         if(r.t==V_STR && r.d!=0) free((char*)r.s);
       }
       if(!in->active || in->marked || !in->timeline_running ||
+         expected_index<0 || expected_index>=vm->n_timelines ||
+         vm->timelines[expected_index].generation!=expected_generation ||
          (int)in->timeline_index!=expected_index || in->timeline_position!=expected_position) return 0;
     }
   }
@@ -4426,7 +4463,8 @@ static void run_timelines(GmlVM *vm, int count){
     if(!in->active || in->marked || !in->timeline_running || in->timeline_speed==0) continue;
     int ti=(int)in->timeline_index;
     if(ti<0 || ti>=vm->n_timelines){ in->timeline_running=0; continue; }
-    GmlTimeline *timeline=&vm->timelines[ti];
+    GmlTimeline snapshot=vm->timelines[ti];
+    GmlTimeline *timeline=&snapshot;
     if(timeline->n<=0 || timeline->last_step<0){ in->timeline_running=0; continue; }
     double old=in->timeline_position, speed=in->timeline_speed;
     double length=(double)timeline->last_step+1.0;
@@ -4436,7 +4474,7 @@ static void run_timelines(GmlVM *vm, int count){
       if(speed>0 && next>timeline->last_step){ next=timeline->last_step; stop=1; }
       if(speed<0 && next<0){ next=0; stop=1; }
       in->timeline_position=next;
-      int ok=timeline_fire_range(vm,in,timeline,old,raw,speed>0,ti,next);
+      int ok=timeline_fire_range(vm,in,timeline,old,raw,speed>0,ti,next,timeline->generation);
       if(ok && stop && in->active && !in->marked && (int)in->timeline_index==ti &&
          in->timeline_position==next) in->timeline_running=0;
       continue;
@@ -4449,8 +4487,8 @@ static void run_timelines(GmlVM *vm, int count){
     if(speed>0){
       while(remaining>0 && ok && guard++<4096){
         double distance=length-pos;
-        if(remaining<distance){ ok=timeline_fire_range(vm,in,timeline,pos,pos+remaining,1,ti,next); break; }
-        ok=timeline_fire_range(vm,in,timeline,pos,length,1,ti,next);
+        if(remaining<distance){ ok=timeline_fire_range(vm,in,timeline,pos,pos+remaining,1,ti,next,timeline->generation); break; }
+        ok=timeline_fire_range(vm,in,timeline,pos,length,1,ti,next,timeline->generation);
         if(!ok) break;
         remaining-=distance;
         pos=0;
@@ -4458,8 +4496,8 @@ static void run_timelines(GmlVM *vm, int count){
     } else {
       while(remaining>0 && ok && guard++<4096){
         double distance=pos+1.0;
-        if(remaining<distance){ ok=timeline_fire_range(vm,in,timeline,pos,pos-remaining,0,ti,next); break; }
-        ok=timeline_fire_range(vm,in,timeline,pos,-1,0,ti,next);
+        if(remaining<distance){ ok=timeline_fire_range(vm,in,timeline,pos,pos-remaining,0,ti,next,timeline->generation); break; }
+        ok=timeline_fire_range(vm,in,timeline,pos,-1,0,ti,next,timeline->generation);
         if(!ok) break;
         remaining-=distance;
         pos=timeline->last_step;
@@ -5660,9 +5698,9 @@ static void colcand_reset(void){
     memset(&g_colcand[i],0,sizeof(g_colcand[i]));
   }
 }
-/* lazy per-object descendant list: the object hierarchy is fixed after parse, so "every
- * object that is_a(target)" is computed once per target instead of scanning all objects
- * (colcand rebuilds run every time the instance list generation changes). */
+/* lazy per-object descendant list: "every object that is_a(target)" is computed once per
+ * target instead of scanning all objects. Runtime hierarchy mutation drops these lists and
+ * bumps the instance-list generation before the next collision candidate build. */
 static const int *object_descendants(GmlVM *vm, int target, int *count){
   *count=0;
   if(target<0 || target>=vm->n_objects) return NULL;
@@ -5869,6 +5907,37 @@ static void parse_boundary_events(GmlVM *vm){
     }
     vm->objects[o].bevents=bits;
   }
+}
+
+int gml_object_set_parent(GmlVM *vm, int object, int parent){
+  if(!vm || object<0 || object>=vm->n_objects) return 0;
+  if(parent<0 || parent>=vm->n_objects) parent=-1;
+  if(parent==object) return 0;
+  for(int p=parent, guard=0; p>=0 && p<vm->n_objects && guard++<vm->n_objects;
+      p=vm->objects[p].parent)
+    if(p==object) return 0;
+  if(vm->objects[object].parent==parent) return 1;
+  vm->objects[object].parent=parent;
+
+  classic_dispatch_cache_reset();
+  if(vm->event_cache) memset(vm->event_cache,0,(size_t)vm->event_cache_cap*sizeof(*vm->event_cache));
+  if(vm->col_pair_cache) memset(vm->col_pair_cache,0,(size_t)vm->col_pair_cache_cap*sizeof(*vm->col_pair_cache));
+  if(vm->obj_desc){
+    for(int i=0;i<vm->n_objects;i++){ free(vm->obj_desc[i]); vm->obj_desc[i]=NULL; }
+    if(vm->obj_desc_n) memset(vm->obj_desc_n,0,(size_t)vm->n_objects*sizeof(*vm->obj_desc_n));
+  }
+  for(int o=0;o<vm->n_objects;o++){
+    vm->objects[o].colself=0;
+    for(int p=o; p>=0 && p<vm->n_objects; p=vm->objects[p].parent){
+      for(int e=0;e<vm->n_col_events;e++) if(vm->col_events[e].self_obj==p){ vm->objects[o].colself=1; break; }
+      if(vm->objects[o].colself) break;
+    }
+  }
+  parse_boundary_events(vm);
+  gml_obj_alive_recount(vm);
+  colcand_reset();
+  gml_colgrid_invalidate(vm);
+  return 1;
 }
 /* fire the room/view boundary "Other" events for instances whose bbox left the room/view. GM:
  * "Outside" = bbox entirely outside; "Intersect Boundary" = bbox not entirely inside (partly OR fully out). */
@@ -6113,7 +6182,10 @@ void gml_vm_free(GmlVM *vm){
   for(int i=0;i<vm->n_objects;i++) free(vm->objects[i].events);
   for(int i=0;i<vm->n_paths;i++) free(vm->paths[i].pts);
   free(vm->paths);
-  for(int i=0;i<vm->n_timelines;i++) free(vm->timelines[i].moments);
+  for(int i=0;i<vm->n_timelines;i++){
+    free(vm->timelines[i].moments);
+    free(vm->timelines[i].owned_name);
+  }
   free(vm->timelines);
   free(vm->objects); free(vm->col_events); free(vm->col_pair_cache); free(vm->event_cache);
   gml_tilemaps_clear(vm);

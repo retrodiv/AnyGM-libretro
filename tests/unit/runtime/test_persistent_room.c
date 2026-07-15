@@ -258,7 +258,7 @@ int main(void){
   }
   char timeline_files[3][44];
   const char *timeline_sources[3]={
-    "global.timeline_order=global.timeline_order*10+1;\n",
+    "global.timeline_order=global.timeline_order*10+1; global.dynamic_timeline=timeline_add();\n",
     "global.timeline_order=global.timeline_order*10+2;\n",
     "global.timeline_order=global.timeline_order*10+3;\n"
   };
@@ -338,6 +338,25 @@ int main(void){
       timeline_order->d,timeline_probe->timeline_position); return 1;
   }
   timeline_probe->timeline_running=0; timeline_probe->timeline_loop=0;
+  if(vm.n_timelines<2 || !vm.timelines[vm.n_timelines-1].name){
+    fprintf(stderr,"timeline_add from a running moment did not append an asset\n"); return 1;
+  }
+  int timeline_count=vm.n_timelines;
+  GmlVal added_timeline=gml_builtin_call(&vm,"timeline_add",NULL,0);
+  GmlVal added_arg=added_timeline;
+  GmlVal added_exists=gml_builtin_call(&vm,"timeline_exists",&added_arg,1);
+  if(added_timeline.t!=V_REAL || added_timeline.d!=timeline_count ||
+     added_exists.t!=V_REAL || added_exists.d!=1 || vm.n_timelines!=timeline_count+1){
+    fprintf(stderr,"runtime timeline allocation mismatch: index=%.0f count=%d exists=%.0f\n",
+      added_timeline.d,vm.n_timelines,added_exists.d); return 1;
+  }
+  GmlVal imported_timeline=vreal(0);
+  (void)gml_builtin_call(&vm,"timeline_clear",&imported_timeline,1);
+  GmlVal imported_exists=gml_builtin_call(&vm,"timeline_exists",&imported_timeline,1);
+  if(vm.timelines[0].n!=0 || vm.timelines[0].last_step!=-1 ||
+     imported_exists.t!=V_REAL || imported_exists.d!=1){
+    fprintf(stderr,"timeline_clear removed the asset or retained its moments\n"); return 1;
+  }
   int implicit_code=gml_code_index_by_name(&win,"gml_Script_script_implicit_result");
   GmlVal implicit_arg=vreal(2);
   GmlVal implicit_result=implicit_code>=0?
@@ -360,6 +379,25 @@ int main(void){
   GmlInstance *created=gml_instance_create(&vm,12,34,0); if(!created)return 1;
   if(created->id!=100001){
     fprintf(stderr,"placed instances consumed a dynamic instance id: %u\n",created->id); return 1;
+  }
+  int exact_family=gml_instance_number(&vm,0);
+  GmlVal parent_args[2]={vreal(0),vreal(1)};
+  (void)gml_builtin_call(&vm,"object_set_parent",parent_args,2);
+  GmlVal child_arg=vreal(0);
+  GmlVal observed_parent=gml_builtin_call(&vm,"object_get_parent",&child_arg,1);
+  if(observed_parent.t!=V_REAL || observed_parent.d!=1 || !gml_object_is(&vm,0,1) ||
+     gml_instance_number(&vm,1)!=exact_family){
+    fprintf(stderr,"runtime object parent did not update hierarchy queries\n"); return 1;
+  }
+  parent_args[0]=vreal(1); parent_args[1]=vreal(0);
+  (void)gml_builtin_call(&vm,"object_set_parent",parent_args,2);
+  if(vm.objects[1].parent==0 || gml_object_is(&vm,1,0)){
+    fprintf(stderr,"runtime object parent accepted an inheritance cycle\n"); return 1;
+  }
+  parent_args[0]=vreal(0); parent_args[1]=vreal(-100);
+  (void)gml_builtin_call(&vm,"object_set_parent",parent_args,2);
+  if(vm.objects[0].parent!=-1 || gml_instance_number(&vm,1)!=0){
+    fprintf(stderr,"runtime object parent detach did not rebuild family counts\n"); return 1;
   }
   GmlInstance *all_first=NULL;
   for(int i=0;i<vm.inst_count;i++) if(vm.inst[i].active && !vm.inst[i].marked){ all_first=&vm.inst[i]; break; }

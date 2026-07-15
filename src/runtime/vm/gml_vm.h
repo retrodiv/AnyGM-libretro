@@ -64,7 +64,13 @@ typedef struct { GmlPathPt *pts; int n; int kind, closed, precision; double len;
 
 /* ---- controlled classic timeline records (parsed from compiler-authored TMLN) ---- */
 typedef struct { int step, code; } GmlTimelineMoment;
-typedef struct { const char *name; GmlTimelineMoment *moments; int n, last_step; } GmlTimeline;
+typedef struct {
+  const char *name;
+  char *owned_name;                 /* non-NULL only for timeline_add() assets */
+  GmlTimelineMoment *moments;
+  int n, last_step;
+  unsigned generation;             /* invalidates playback snapshots after a runtime clear */
+} GmlTimeline;
 
 /* ---- object (parsed from OBJT) ---- */
 typedef struct {
@@ -128,13 +134,13 @@ typedef struct GmlVM {
   GmlWin   *win;
   GmlVarMap globals;
   GmlObject *objects; int n_objects;
-  int **obj_desc; int *obj_desc_n;   /* lazy per-object descendant lists (hierarchy is static) */
+  int **obj_desc; int *obj_desc_n;   /* lazy per-object descendant lists; reset after hierarchy changes */
   int *obj_alive;    /* live instances per object INCLUDING descendants (family counts; runtime-only) */
   int *obj_head;     /* per exact object type: first live instance slot (-1 none; runtime-only) */
   int *inst_next, *inst_prev;   /* doubly-linked per-type instance lists over pool slots */
   long obj_list_gen; /* bumped on any create/destroy/change — invalidates per-frame candidate caches */
   GmlPath *paths; int n_paths;
-  GmlTimeline *timelines; int n_timelines;
+  GmlTimeline *timelines; int n_timelines, cap_timelines;
   GmlColEvent *col_events; int n_col_events;
   GmlColPairCache *col_pair_cache; int col_pair_cache_cap;
   GmlEventCache *event_cache; int event_cache_cap;
@@ -319,9 +325,12 @@ void         gml_gamepad_set_axis_deadzone_direct(int device, double dz);
 void         gml_instance_destroy(GmlVM *vm, GmlInstance *in);
 int          gml_instance_number(GmlVM *vm, int target); /* object index, special scope, or real instance id */
 int          gml_object_is(GmlVM *vm, int obj, int target);  /* obj == target or descends from it */
+int          gml_object_set_parent(GmlVM *vm, int obj, int parent); /* cycle-safe runtime hierarchy mutation */
 int          gml_object_index_by_name(GmlVM *vm, const char *name);  /* -1 if not found */
 GmlInstance *gml_find_instance(GmlVM *vm, int obj);          /* first active instance of obj (or child) */
 int          gml_run_event(GmlVM *vm, GmlInstance *in, const char *suffix); /* e.g. "Create_0" */
+int          gml_timeline_add(GmlVM *vm);                    /* append an empty runtime timeline */
+void         gml_timeline_clear(GmlVM *vm, int timeline);    /* remove every moment, retaining the asset */
 /* collision-candidate grid hooks (gml_builtin.c): touch = a bbox input (x/y/scale/angle/
  * sprite/mask) of `in` was written after the current build; invalidate = drop the build. */
 void         gml_colgrid_touch(GmlInstance *in);

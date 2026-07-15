@@ -7826,6 +7826,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(ob<0||ob>=vm->n_objects) return vreal(-100);
     int par=vm->objects[ob].parent;
     return vreal((par>=0&&par<vm->n_objects)?par:-100); }
+  if(!strcmp(nm,"object_set_parent")){
+    gml_object_set_parent(vm,(int)N(a,n,0),(int)N(a,n,1));
+    return vreal(0); }
   if(!strcmp(nm,"object_get_name")){ int ob=(int)N(a,n,0);
     return vstr((ob>=0&&ob<vm->n_objects&&vm->objects[ob].name)?vm->objects[ob].name:""); }
   if(!strcmp(nm,"object_get_sprite")){ int ob=(int)N(a,n,0);
@@ -8451,6 +8454,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(ti>=0 && ti<vm->n_timelines && vm->timelines[ti].name!=NULL); }
   if(!strcmp(nm,"timeline_get_name")){ int ti=(int)N(a,n,0);
     return vstr((ti>=0 && ti<vm->n_timelines && vm->timelines[ti].name)?vm->timelines[ti].name:""); }
+  if(!strcmp(nm,"timeline_add")) return vreal(gml_timeline_add(vm));
+  if(!strcmp(nm,"timeline_clear")){ gml_timeline_clear(vm,(int)N(a,n,0)); return vreal(0); }
   if(!strcmp(nm,"action_set_timeline") || !strcmp(nm,"action_timeline_set")){ if(vm->cur_self){
       vm->cur_self->timeline_index=N(a,n,0); vm->cur_self->timeline_position=N(a,n,1);
       vm->cur_self->timeline_running=N(a,n,2)!=0; vm->cur_self->timeline_loop=N(a,n,3)!=0; }
@@ -8508,6 +8513,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!handled && getenv("GML_LOG_UNKNOWN")) fprintf(stderr,"[gml] unsupported execute_string: %s\n",S(a,n,0));
     return vreal(0); }
   if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")||!strcmp(nm,"show_question")||!strcmp(nm,"action_message")||
+     !strcmp(nm,"wd_message_simple")||
      !strcmp(nm,"message_button")||!strcmp(nm,"message_background")||
      !strcmp(nm,"message_text_font")||!strcmp(nm,"message_button_font")||
      !strcmp(nm,"message_input_font")||!strcmp(nm,"message_alpha")||
