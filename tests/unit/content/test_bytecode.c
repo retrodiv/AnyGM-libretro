@@ -159,15 +159,31 @@ int main(int argc, char **argv){
     "global.actor.part.node.x=4; result=global.actor.part.node.x;\n",1);
   ok &= compile_fixture_has_swap(&project,
     "global.actor.y=10;\n");
-  GmlcScript case_script;
-  memset(&case_script,0,sizeof(case_script));
-  case_script.name=(char*)"FixtureMotion";
-  project.scripts=&case_script; project.n_scripts=project.cap_scripts=1;
+  GmlcScript case_scripts[2];
+  memset(case_scripts,0,sizeof(case_scripts));
+  case_scripts[0].name=(char*)"FixtureMotion";
+  case_scripts[1].name=(char*)"AlternateMotion";
+  project.scripts=case_scripts; project.n_scripts=project.cap_scripts=2;
   project.classic_version=800;
   ok &= compile_fixture_function_ref(&project,"fixturemotion();\n","FixtureMotion","fixturemotion");
+  GmlcFunctionAlias aliases[]={
+    {(char*)"fixture_alias",(char*)"FixtureMotion",0},
+    {(char*)"fixture_route",(char*)"AlternateMotion",0},
+    {(char*)"uncertain_alias",(char*)"AlternateMotion",1},
+    {(char*)"fixturemotion",(char*)"AlternateMotion",0}
+  };
+  project.function_aliases=aliases;
+  project.n_function_aliases=project.cap_function_aliases=4;
+  ok &= compile_fixture_function_ref(&project,"FIXTURE_ALIAS();\n","FixtureMotion","FIXTURE_ALIAS");
+  ok &= compile_fixture_function_ref(&project,"FixtureRoute();\n","AlternateMotion","FixtureRoute");
+  ok &= compile_fixture_function_ref(&project,"uncertain_alias();\n","uncertain_alias","AlternateMotion");
+  ok &= compile_fixture_function_ref(&project,"fixturemotion();\n","FixtureMotion","AlternateMotion");
   project.classic_version=0;
   ok &= compile_fixture_function_ref(&project,"fixturemotion();\n","fixturemotion","FixtureMotion");
+  ok &= compile_fixture_function_ref(&project,"fixture_alias();\n","fixture_alias","FixtureMotion");
   project.scripts=NULL; project.n_scripts=project.cap_scripts=0;
+  project.function_aliases=NULL;
+  project.n_function_aliases=project.cap_function_aliases=0;
   ok &= compile_fixture(&project,
     "speed=0\n(instance_create(1,2,3)).hspeed=-.5\ninstance_create(4,5,6)\n"
     "(instance_create(7,8,9)).hspeed=.5\n",1);

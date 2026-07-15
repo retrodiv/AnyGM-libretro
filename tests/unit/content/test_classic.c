@@ -107,6 +107,80 @@ static void fixture_string(Fixture *f, const char *text){
   }
 }
 
+
+
+static int write_fixture_file(const char *path, const Fixture *fixture, size_t limit){
+  FILE *file=fopen(path,"wb");
+  size_t size=fixture->size<limit ? fixture->size : limit;
+  int ok=file && fwrite(fixture->data,1,size,file)==size;
+  if(file && fclose(file)!=0) ok=0;
+  return ok;
+}
+
+static int expect_extension_alias_import(void){
+  const char *dir="tmp/classic_extension_fixture";
+#ifdef _WIN32
+  _mkdir("tmp"); _mkdir(dir);
+#else
+  mkdir("tmp",0777); mkdir(dir,0777);
+#endif
+  const char *paths[]={
+    "tmp/classic_extension_fixture/base.gex",
+    "tmp/classic_extension_fixture/secondary.GEX",
+    "tmp/classic_extension_fixture/conflict.gex",
+    "tmp/classic_extension_fixture/unrelated.gex",
+    "tmp/classic_extension_fixture/truncated.gex"
+  };
+  Fixture fixtures[]={
+    extension_fixture("fixtureextension","fixture_route","fixture_target"),
+    extension_fixture("Fixture Extension","fixture_action","fixture_target"),
+    extension_fixture("Fixture Extension","fixture_route","alternate_target"),
+    extension_fixture("Different Extension","unrelated_action","fixture_target"),
+    extension_fixture("Fixture Extension","broken_action","fixture_target")
+  };
+  int files_ok=1;
+  for(int i=0;i<5;i++)
+    files_ok &= write_fixture_file(paths[i],&fixtures[i],i==4 ? 48u : SIZE_MAX);
+
+  char *extension_names[]={(char*)"Fixture Extension"};
+  GmlcClassicManifest manifest;
+  memset(&manifest,0,sizeof(manifest));
+  manifest.extension_names=extension_names;
+  manifest.extension_count=1;
+  GmlcProject project;
+  gmlc_project_init(&project);
+  project.scripts=(GmlcScript*)calloc(2,sizeof(*project.scripts));
+  project.n_scripts=project.cap_scripts=2;
+  if(project.scripts){
+    project.scripts[0].name=gmlc_strdup("fixture_target");
+    project.scripts[1].name=gmlc_strdup("alternate_target");
+  }
+  char err[256]={0};
+  int imported=files_ok && project.scripts && project.scripts[0].name && project.scripts[1].name &&
+    gmlc_classic_import_extension_aliases(&manifest,&project,dir,err,sizeof(err));
+  int found_action=0, found_ambiguous=0, found_unrelated=0, found_broken=0;
+  for(int i=0;i<project.n_function_aliases;i++){
+    GmlcFunctionAlias *alias=&project.function_aliases[i];
+    if(!strcmp(alias->public_name,"fixture_action") &&
+       !strcmp(alias->target_name,"fixture_target") && !alias->ambiguous) found_action=1;
+    if(!strcmp(alias->public_name,"fixture_route") && alias->ambiguous) found_ambiguous=1;
+    if(!strcmp(alias->public_name,"unrelated_action")) found_unrelated=1;
+    if(!strcmp(alias->public_name,"broken_action")) found_broken=1;
+  }
+  int ok=imported && !err[0] && project.n_function_aliases==2 &&
+         found_action && found_ambiguous && !found_unrelated && !found_broken;
+  if(!ok) fprintf(stderr,"extension alias fixture failed: aliases=%d error=%s\n",
+                  project.n_function_aliases,err);
+  gmlc_project_free(&project);
+  for(int i=0;i<5;i++) remove(paths[i]);
+#ifdef _WIN32
+  _rmdir(dir);
+#else
+  rmdir(dir);
+#endif
+  return ok;
+}
+
 static void fixture_double(Fixture *f, double value){
   uint64_t bits;
   memcpy(&bits, &value, sizeof(bits));
@@ -1239,6 +1313,7 @@ int main(int argc, char **argv){
   if(expect_legacy_manifest(600)) ++passed; else ++failed;
   if(expect_legacy_manifest(701)) ++passed; else ++failed;
   if(expect_script_import()) ++passed; else ++failed;
+  if(expect_extension_alias_import()) ++passed; else ++failed;
   if(expect_sprite_import(0)) ++passed; else ++failed;
   if(expect_sprite_import(1)) ++passed; else ++failed;
   if(expect_background_import()) ++passed; else ++failed;

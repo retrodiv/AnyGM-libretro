@@ -152,6 +152,12 @@ typedef struct {
 } GmlcScript;
 
 typedef struct {
+  char *public_name;
+  char *target_name;
+  int ambiguous;
+} GmlcFunctionAlias;
+
+typedef struct {
   float x, y, speed;
 } GmlcPathPoint;
 
@@ -264,6 +270,8 @@ typedef struct {
   int n_sounds, cap_sounds;
   GmlcScript *scripts;
   int n_scripts, cap_scripts;
+  GmlcFunctionAlias *function_aliases;
+  int n_function_aliases, cap_function_aliases;
   GmlcPath *paths;
   int n_paths, cap_paths;
   GmlcTimeline *timelines;

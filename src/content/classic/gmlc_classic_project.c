@@ -242,6 +242,7 @@ int gmlc_classic_project_load(GmlcProject *project, const char *project_path,
   int ok = project->name && project->root_dir && project->yyp_path &&
     classic_import_metadata(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_scripts(&manifest, project, cache_dir, err, errcap) &&
+    gmlc_classic_import_extension_aliases(&manifest, project, project->root_dir, err, errcap) &&
     gmlc_classic_import_sprites(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_backgrounds(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_sounds(&manifest, project, cache_dir, err, errcap) &&

@@ -141,6 +141,11 @@ void gmlc_project_free(GmlcProject *p){
   free(p->sounds);
   for(int i=0;i<p->n_scripts;i++){ free(p->scripts[i].id); free(p->scripts[i].name); free(p->scripts[i].source_path); }
   free(p->scripts);
+  for(int i=0;i<p->n_function_aliases;i++){
+    free(p->function_aliases[i].public_name);
+    free(p->function_aliases[i].target_name);
+  }
+  free(p->function_aliases);
   for(int i=0;i<p->n_paths;i++){
     free(p->paths[i].id); free(p->paths[i].name); free(p->paths[i].points);
   }

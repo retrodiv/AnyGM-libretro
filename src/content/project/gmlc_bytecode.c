@@ -214,12 +214,40 @@ static int classic_identifier_equal(const char *a, const char *b){
   return *a==*b;
 }
 
+static int classic_alias_identifier_equal(const char *a, const char *b){
+  while(1){
+    while(*a=='_') a++;
+    while(*b=='_') b++;
+    if(!*a || !*b) break;
+    if(tolower((unsigned char)*a)!=tolower((unsigned char)*b)) return 0;
+    a++; b++;
+  }
+  while(*a=='_') a++;
+  while(*b=='_') b++;
+  return *a==*b;
+}
+
 static const char *canonical_call_name(Compiler *c, const char *name){
   if(!c->project || !c->project->classic_version) return name;
   for(int i=0;i<c->project->n_scripts;i++){
     const char *candidate=c->project->scripts[i].name;
     if(candidate && classic_identifier_equal(candidate,name)) return candidate;
   }
+  for(int i=0;i<c->project->n_function_aliases;i++){
+    const GmlcFunctionAlias *alias=&c->project->function_aliases[i];
+    if(!alias->ambiguous && alias->public_name && alias->target_name &&
+       classic_identifier_equal(alias->public_name,name)) return alias->target_name;
+  }
+  const char *target=NULL;
+  for(int i=0;i<c->project->n_function_aliases;i++){
+    const GmlcFunctionAlias *alias=&c->project->function_aliases[i];
+    if(!alias->public_name || !alias->target_name ||
+       !classic_alias_identifier_equal(alias->public_name,name)) continue;
+    if(alias->ambiguous) return name;
+    if(target && !classic_identifier_equal(target,alias->target_name)) return name;
+    target=alias->target_name;
+  }
+  if(target) return target;
   return name;
 }
 
@@ -2548,7 +2576,8 @@ static int registry_collect_assets(GmlcFunctionRegistry *r, const GmlcProject *p
     if(!registry_add_asset(r,p->paths[i].name,i,-1)) return 0;
   for(int i=0;i<p->n_timelines;i++)
     if(!registry_add_asset(r,p->timelines[i].name,i,-1)) return 0;
-  qsort(r->assets,(size_t)r->n_assets,sizeof(*r->assets),asset_binding_cmp);
+  if(r->n_assets>1)
+    qsort(r->assets,(size_t)r->n_assets,sizeof(*r->assets),asset_binding_cmp);
   return 1;
 }
 
