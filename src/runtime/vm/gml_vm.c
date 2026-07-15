@@ -79,16 +79,27 @@ static GmlVal *gml_varmap_get_h(GmlVarMap *m, const char *key, uint32_t kh){
 GmlVal *gml_varmap_get(GmlVarMap *m, const char *key){
   return key?gml_varmap_get_h(m,key,strhash(key)):NULL;
 }
-static GmlVal *gml_varmap_put_h(GmlVarMap *m, const char *key, uint32_t kh){
-  if(!key){ key=""; kh=strhash(key); }
+static GmlVarSlot *gml_varmap_put_slot_h(GmlVarMap *m, const char *key, uint32_t kh,
+                                         int key_owned){
+  if(!key){ key=""; kh=strhash(key); key_owned=0; }
   if(m->len*4>=m->cap*3) varmap_grow(m);
   unsigned h=kh&(m->cap-1);
   while(m->slots[h].key){
-    if(m->slots[h].hash==kh && (m->slots[h].key==key || !strcmp(m->slots[h].key,key))) return &m->slots[h].val;
+    if(m->slots[h].hash==kh && (m->slots[h].key==key || !strcmp(m->slots[h].key,key))){
+      if(key_owned) free((char*)key);
+      return &m->slots[h];
+    }
     h=(h+1)&(m->cap-1);
   }
-  m->slots[h].key=key; m->slots[h].hash=kh; m->slots[h].val=vreal(0); m->len++;
-  return &m->slots[h].val;
+  m->slots[h].key=key; m->slots[h].hash=kh; m->slots[h].val=vreal(0);
+  m->slots[h].key_owned=(unsigned char)(key_owned!=0); m->len++;
+  return &m->slots[h];
+}
+static GmlVal *gml_varmap_put_h(GmlVarMap *m, const char *key, uint32_t kh){
+  return &gml_varmap_put_slot_h(m,key,kh,0)->val;
+}
+static GmlVal *gml_varmap_put_owned_h(GmlVarMap *m, char *key, uint32_t kh){
+  return &gml_varmap_put_slot_h(m,key,kh,1)->val;
 }
 GmlVal *gml_varmap_put(GmlVarMap *m, const char *key){
   return gml_varmap_put_h(m,key,key?strhash(key):strhash(""));
@@ -275,6 +286,8 @@ static void varmap_free_ex(GmlVarMap *m, int skip_escaped){
   }
   for(int i=0;i<m->cap;i++) if(m->slots && m->slots[i].key && m->slots[i].val.t==V_ARR){
     val_free(m->slots[i].val); }
+  for(int i=0;i<m->cap;i++) if(m->slots && m->slots[i].key_owned){
+    free((char*)m->slots[i].key); }
   if(skip_escaped){
     g_free_skip_escaped=prev_skip;
     if(local_freeset) freeset_end();
@@ -1134,7 +1147,7 @@ int gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v){
     else {
       char *owned=strdup(name);
       if(!owned) return 0;
-      *gml_varmap_put_h(&t->vars,owned,strhash(owned))=v;
+      *gml_varmap_put_owned_h(&t->vars,owned,strhash(owned))=v;
     }
     return 1;
   }
@@ -1144,7 +1157,7 @@ int gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v){
   else {
     char *owned=strdup(name);
     if(!owned) return 0;
-    *gml_varmap_put_h(&t->vars,owned,strhash(owned))=v;
+    *gml_varmap_put_owned_h(&t->vars,owned,strhash(owned))=v;
   }
   return 1;
 }
@@ -3480,7 +3493,7 @@ static void room_state_store_number(GmlVM *vm, int room, const char *field, int 
   if(!slot){
     char *stable=strdup(key);
     if(!stable) return;
-    slot=gml_varmap_put(&vm->globals,stable);
+    slot=gml_varmap_put_owned_h(&vm->globals,stable,strhash(stable));
   }
   *slot=vreal(value);
 }
@@ -6273,11 +6286,16 @@ static char *sr_str_dup(StateR *s){
   if(!p){ s->ok=0; return NULL; }
   sr_raw(s,p,n); p[n]=0; return p;
 }
-static const char *state_intern(GmlVM *vm, char *owned){
+static const char *state_intern_ex(GmlVM *vm, char *owned, int *remains_owned){
+  if(remains_owned) *remains_owned=0;
   if(!owned) return "";
   const char *hit=gml_win_intern_lookup(vm->win,owned);   /* Look up an existing interned STRG string. */
   if(hit){ free(owned); return hit; }
-  return owned; /* intentionally kept alive like other runtime strings in this VM */
+  if(remains_owned) *remains_owned=1;
+  return owned; /* the caller retains it as an owned map key or runtime string */
+}
+static const char *state_intern(GmlVM *vm, char *owned){
+  return state_intern_ex(vm,owned,NULL);
 }
 static int state_val_is_default_zero(GmlVal v){
   return v.t==V_REAL && v.d==0.0;
@@ -6434,12 +6452,14 @@ static int sr_varmap(GmlVM *vm, StateR *s, GmlVarMap *m){
   if(n>100000){ state_debug("varmap too large",s->pos,n); s->ok=0; return 0; }
   for(uint32_t i=0;i<n && s->ok;i++){
     size_t key_pos=s->pos;
-    char *k=sr_str_dup(s); const char *key=state_intern(vm,k);
+    int key_owned=0;
+    char *k=sr_str_dup(s); const char *key=state_intern_ex(vm,k,&key_owned);
     if(dbg) fprintf(stderr,"[lvar] pos=%llu key=%s\n",(unsigned long long)key_pos,key?key:"");
     GmlVal v=sr_val(vm,s,0);
-    if(!s->ok) break;
+    if(!s->ok){ if(key_owned) free((char*)key); break; }
     gml_arr_mark_escaped(v);
-    *gml_varmap_put(m,key)=v;
+    if(key_owned) *gml_varmap_put_owned_h(m,(char*)key,strhash(key))=v;
+    else *gml_varmap_put(m,key)=v;
   }
   return s->ok;
 }
