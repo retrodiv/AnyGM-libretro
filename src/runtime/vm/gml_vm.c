@@ -4503,10 +4503,12 @@ static void advance_instance_animations(GmlVM *vm){
           on,in->x,in->y,in->vspeed,si,sn,in->image_index,nf);
       }
     }
-    if(nf>0 && in->image_speed!=0){
-      double ni=in->image_index+in->image_speed; int wrapped=(ni>=nf)||(ni<0);
-      while(ni>=nf) ni-=nf; while(ni<0) ni+=nf; in->image_index=ni;
-      if(wrapped){
+    if(in->image_speed!=0 && (nf>0 || (vm->win && vm->win->classic_version))){
+      double ni=in->image_index+in->image_speed;
+      int wrapped=nf>0 && ((ni>=nf)||(ni<0));
+      if(nf>0){ while(ni>=nf) ni-=nf; while(ni<0) ni+=nf; }
+      in->image_index=ni;
+      if(wrapped || (nf<=0 && ni>=0)){
         if(getenv("GML_LOG_ANIM")) fprintf(stderr,"[anim-end] %s (nf=%d)\n",
           (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",nf);
         gml_run_event(vm,in,"Other_7");
@@ -4519,6 +4521,22 @@ void gml_vm_post_draw(GmlVM *vm){
   if(vm && vm->win && vm->win->classic_version) advance_instance_animations(vm);
 }
 
+static int classic_joystick_event_fires(int s){
+  extern int gml_input_gamepad(int button,int edge);
+  int device=-1, control=-1;
+  if(s>=16 && s<=19){
+    static const int directions[4]={32783,32784,32781,32782};
+    device=0; control=directions[s-16];
+  } else if(s>=21 && s<=28){
+    device=0; control=32768+(s-20);
+  } else if(s>=31 && s<=34){
+    static const int directions[4]={32783,32784,32781,32782};
+    device=1; control=directions[s-31];
+  } else if(s>=36 && s<=43){
+    device=1; control=32768+(s-35);
+  }
+  return device==0 && gml_input_gamepad(control,0);
+}
 static int mouse_event_fires(int s,int hov,int was,int held,int pressed,int released,int wheel){
   switch(s){
     case 0: return hov&&(held&1);       case 1: return hov&&(held&2);
@@ -4532,7 +4550,7 @@ static int mouse_event_fires(int s,int hov,int was,int held,int pressed,int rele
     case 54:return (pressed&2)!=0;      case 55:return (pressed&4)!=0;
     case 56:return (released&1)!=0;     case 57:return (released&2)!=0;
     case 58:return (released&4)!=0;     case 60:return wheel>0;
-    case 61:return wheel<0;             default:return 0;
+    case 61:return wheel<0;             default:return classic_joystick_event_fires(s);
   }
 }
 void gml_vm_step(GmlVM *vm){
@@ -4650,7 +4668,8 @@ void gml_vm_step(GmlVM *vm){
   /* instance Mouse_<n> events (with the other input events). Hover = pointer (room coords)
    * inside the instance bbox; enter/leave tracked per instance in mouse_over. Subtypes per GM:
    * 0-2 button held over it, 3 no-button over it, 4-6 pressed, 7-9 released, 10 enter, 11 leave,
-   * 50-58 global (no hover), 60/61 wheel. Only games that define Mouse_* events pay any cost. */
+   * 16-28/31-43 joystick 1/2, 50-58 global (no hover), 60/61 wheel. Only games that define
+   * Mouse_* events pay any cost. */
   if(vm->n_mouse_events){
     extern void gml_input_mouse(double*,double*,double*,double*,double*,double*,int*,int*,int*,int*);
     double mx,my; int mheld,mpressed,mreleased,mwheel;
@@ -5314,13 +5333,10 @@ void gml_vm_draw(GmlVM *vm){
       draw_event_hook(vm,in,"Draw_0",0);
       if(drew) continue;
     }
-    if(in->sprite_index>=0){
-      double alpha=in->image_alpha;
-      if(R && R->alpha<alpha) alpha=R->alpha;
+    if(in->sprite_index>=0)
       gml_draw_sprite_ext(R,(int)in->sprite_index,(int)in->image_index,in->x,in->y,
                           in->image_xscale,in->image_yscale,in->image_angle,
-                          (uint32_t)in->image_blend,alpha);
-    }
+                          (uint32_t)in->image_blend,in->image_alpha);
   }
   if(active_layer) gml_run_layer_script(vm,active_layer->script_end);
   /* All draw scratch (it/lbg/ltl/lsp/tiles/tdepth) is persistent (g_dl_*) — write the possibly-grown

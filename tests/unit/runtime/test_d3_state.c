@@ -29,6 +29,13 @@ static int colored_pixels(const uint32_t *pixels,int count){
   return colored;
 }
 
+static void store_u32le(uint8_t *dst,uint32_t value){
+  dst[0]=(uint8_t)value;
+  dst[1]=(uint8_t)(value>>8);
+  dst[2]=(uint8_t)(value>>16);
+  dst[3]=(uint8_t)(value>>24);
+}
+
 static int raster_fixtures(void){
   enum { WIDTH=64, HEIGHT=48 };
   uint32_t pixels[WIDTH*HEIGHT];
@@ -940,6 +947,59 @@ static int raster_fixtures(void){
   }
   for(int i=0;i<4;i++) surface_data->px[i]=0xFFFFFFFFu;
   int depth_sprite=gml_sprite_create_from_surface(&render,surface,0,0,2,2,0,0,0,0);
+  {
+    uint8_t room_data[128]={0};
+    GmlWin draw_win={0}; GmlVM draw_vm={0};
+    GmlObject draw_object={0}; GmlInstance draw_instance={0};
+    store_u32le(room_data,1);
+    store_u32le(room_data+4,16);
+    store_u32le(room_data+16+8,WIDTH);
+    store_u32le(room_data+16+12,HEIGHT);
+    store_u32le(room_data+16+16,30);
+    draw_win.data=room_data; draw_win.size=sizeof(room_data);
+    draw_win.n_chunks=1; memcpy(draw_win.chunks[0].name,"ROOM",5);
+    draw_win.chunks[0].off=0; draw_win.chunks[0].size=sizeof(room_data);
+    draw_win.classic_version=800;
+    draw_object.name="neutral_default_draw"; draw_object.parent=-1;
+    draw_vm.win=&draw_win; draw_vm.render=&render; draw_vm.room_index=0;
+    draw_vm.objects=&draw_object; draw_vm.n_objects=1;
+    draw_vm.inst=&draw_instance; draw_vm.inst_count=draw_vm.inst_cap=1;
+    draw_instance.active=1; draw_instance.obj=0; draw_instance.visible=1;
+    draw_instance.sprite_index=depth_sprite; draw_instance.mask_index=-1;
+    draw_instance.x=4; draw_instance.y=4;
+    draw_instance.image_xscale=draw_instance.image_yscale=1;
+    draw_instance.image_alpha=.75; draw_instance.image_blend=0xFFFFFF;
+    draw_instance.draw_layer_order=-1;
+    for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+    render.classic=1;
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    render.alpha=.25;
+    gml_vm_draw(&draw_vm);
+    unsigned automatic=(pixels[4*WIDTH+4]>>16)&255u;
+    for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    render.alpha=.25;
+    gml_draw_sprite(&render,depth_sprite,0,4,4);
+    unsigned classic_basic=(pixels[4*WIDTH+4]>>16)&255u;
+    for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    gml_draw_sprite_ext(&render,depth_sprite,0,4,4,1,1,0,0xFFFFFF,.25);
+    unsigned explicit_alpha=(pixels[4*WIDTH+4]>>16)&255u;
+    for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+    render.classic=0;
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    render.alpha=.25;
+    gml_draw_sprite(&render,depth_sprite,0,4,4);
+    unsigned modern_basic=(pixels[4*WIDTH+4]>>16)&255u;
+    if(automatic<185 || automatic>195 || classic_basic!=255 ||
+       explicit_alpha<55 || explicit_alpha>70 || modern_basic<55 || modern_basic>70){
+      fprintf(stderr,"default/basic/explicit draw alpha isolation mismatch: automatic=%u classic=%u explicit=%u modern=%u\n",
+        automatic,classic_basic,explicit_alpha,modern_basic);
+      return 0;
+    }
+    render.classic=0;
+    render.alpha=1;
+  }
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
@@ -1050,6 +1110,28 @@ static int raster_fixtures(void){
   render.tpag[0].alpha_scanned=0;
   render.tpag[0].alpha_runs_built=0;
   render.tpag[0].alpha_run_count=0;
+  {
+    uint8_t atlas_backup[16];
+    memcpy(atlas_backup,render.atlas[0].px,sizeof(atlas_backup));
+    for(int i=0;i<4;i++){
+      render.atlas[0].px[i*4]=render.atlas[0].px[i*4+1]=render.atlas[0].px[i*4+2]=0;
+      render.atlas[0].px[i*4+3]=1;
+    }
+    pixels[5*WIDTH+5]=0xFF858585u;
+    gml_draw_background_ext(&render,0,5,5,1,1,0xFFFFFF,.5);
+    if(pixels[5*WIDTH+5]!=0xFF848484u){
+      fprintf(stderr,"software classic draw-alpha quantization mismatch: %08x\n",pixels[5*WIDTH+5]);
+      return 0;
+    }
+    memcpy(render.atlas[0].px,atlas_backup,sizeof(atlas_backup));
+    free(render.tpag[0].alpha_row_min); render.tpag[0].alpha_row_min=NULL;
+    free(render.tpag[0].alpha_row_max); render.tpag[0].alpha_row_max=NULL;
+    free(render.tpag[0].alpha_runs); render.tpag[0].alpha_runs=NULL;
+    free(render.tpag[0].argb_cache); render.tpag[0].argb_cache=NULL;
+    render.tpag[0].alpha_scanned=0;
+    render.tpag[0].alpha_runs_built=0;
+    render.tpag[0].alpha_run_count=0;
+  }
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   for(int i=0;i<4;i++) render.atlas[0].px[i*4+3]=255;
@@ -1163,7 +1245,8 @@ static int raster_fixtures(void){
   call_numbers(&vm,"d3d_set_depth",farther_depth,1); render.color=0x00FF00u;
   call_numbers(&vm,"draw_rectangle",rectangle_2d,5);
   if((pixels[36*WIDTH+40]&0x00FFFFFFu)!=0xFF0000u){
-    fprintf(stderr,"software D3 2D rectangle depth mismatch\n");
+    fprintf(stderr,"software D3 2D rectangle depth mismatch: pixel=%08x alpha=%.6f classic=%d\n",
+      pixels[36*WIDTH+40],render.alpha,render.classic);
     return 0;
   }
   const double circle_2d[]={42,37,5,0};

@@ -10,8 +10,11 @@
 #include <string.h>
 #include <unistd.h>
 
+static int fixture_joystick_button3;
 int gml_input_key(int key,int edge){ return key==65 && edge==0; }
-int gml_input_gamepad(int button,int edge){ (void)button;(void)edge;return 0; }
+int gml_input_gamepad(int button,int edge){
+  return fixture_joystick_button3 && button==32771 && edge==0;
+}
 void gml_input_mouse(double *rx,double *ry,double *gx,double *gy,double *wx,double *wy,
                      int *held,int *pressed,int *released,int *wheel){
   if(rx)*rx=0; if(ry)*ry=0; if(gx)*gx=0; if(gy)*gy=0; if(wx)*wx=0; if(wy)*wy=0;
@@ -36,7 +39,7 @@ int main(void){
   GmlcScript scripts[1]; char *script_order[1];
   GmlcRoomInstance placed_instance;
   int room_order[2]={0,1};
-  GmlcObjectEvent object_events[22];
+  GmlcObjectEvent object_events[23];
   GmlcProjectTrigger trigger;
   GmlcProjectIncludedFile included;
   unsigned char included_data[]={1,3,5,7};
@@ -64,7 +67,7 @@ int main(void){
   objects[1].name="obj_changed"; objects[1].sprite_id=-1; objects[1].mask_id=-1; objects[1].parent_id=-1; objects[1].visible=1;
   objects[1].events=&object_events[10]; objects[1].n_events=objects[1].cap_events=11;
   objects[2].name="obj_create_order"; objects[2].sprite_id=-1; objects[2].mask_id=-1; objects[2].parent_id=-1; objects[2].visible=0;
-  objects[2].events=&object_events[21]; objects[2].n_events=objects[2].cap_events=1;
+  objects[2].events=&object_events[21]; objects[2].n_events=objects[2].cap_events=2;
   object_events[0].event_type=11; object_events[0].event_number=0;
   object_events[1].event_type=3; object_events[1].event_number=0;
   object_events[2].event_type=2; object_events[2].event_number=0;
@@ -87,6 +90,7 @@ int main(void){
   object_events[19].event_type=7; object_events[19].event_number=51;
   object_events[20].event_type=11; object_events[20].event_number=0;
   object_events[21].event_type=0; object_events[21].event_number=0;
+  object_events[22].event_type=6; object_events[22].event_number=23;
   trigger.name=(char*)"fixture_trigger"; trigger.moment=1; trigger.runtime_id=0;
   for(int i=0;i<2;i++){
     rooms[i].name=i?"room_b":"room_a"; rooms[i].width=320; rooms[i].height=240; rooms[i].speed=30;
@@ -145,6 +149,12 @@ int main(void){
   if(!create_order_file || fwrite(create_order_source,1,sizeof(create_order_source)-1,create_order_file)!=sizeof(create_order_source)-1 ||
      fclose(create_order_file)!=0)return 1;
   object_events[21].source_path=create_order;
+  char joystick_event[]="/tmp/gml-joystick-event-XXXXXX"; int joystick_event_fd=mkstemp(joystick_event); if(joystick_event_fd<0)return 1;
+  FILE *joystick_event_file=fdopen(joystick_event_fd,"wb");
+  const char joystick_event_source[]="global.joystick_event_hits += 1;\n";
+  if(!joystick_event_file || fwrite(joystick_event_source,1,sizeof(joystick_event_source)-1,joystick_event_file)!=sizeof(joystick_event_source)-1 ||
+     fclose(joystick_event_file)!=0)return 1;
+  object_events[22].source_path=joystick_event;
   char instance_order[]="/tmp/gml-instance-order-XXXXXX"; int instance_order_fd=mkstemp(instance_order); if(instance_order_fd<0)return 1;
   FILE *instance_order_file=fdopen(instance_order_fd,"wb");
   const char instance_order_source[]="global.create_order=global.create_order*10+1;\n";
@@ -570,7 +580,9 @@ int main(void){
   friction_probe->hspeed=-0.4; friction_probe->vspeed=0; friction_probe->friction=0.2;
   double friction_position=friction_probe->x;
   double position_before_step=created->x;
+  fixture_joystick_button3=1;
   gml_vm_step(&vm);
+  fixture_joystick_button3=0;
   if(created->x!=position_before_step+5 || created->xprevious!=position_before_step || created->hspeed!=0){
     fprintf(stderr,"previous position/cardinal gravity mismatch: x=%.0f previous=%.0f hspeed=%.17g\n",
       created->x,created->xprevious,created->hspeed); return 1;
@@ -605,6 +617,11 @@ int main(void){
   if(!mouse_order || mouse_order->t!=V_REAL || mouse_order->d!=112){
     fprintf(stderr,"classic mouse/object order mismatch: %.0f\n",
       mouse_order&&mouse_order->t==V_REAL?mouse_order->d:-1.0); return 1;
+  }
+  GmlVal *joystick_event_hits=gml_varmap_get(&vm.globals,"joystick_event_hits");
+  if(!joystick_event_hits || joystick_event_hits->t!=V_REAL || joystick_event_hits->d!=1){
+    fprintf(stderr,"classic joystick button event mismatch: %.0f\n",
+      joystick_event_hits&&joystick_event_hits->t==V_REAL?joystick_event_hits->d:-1.0); return 1;
   }
   GmlVal *trigger_hits=gml_varmap_get(&vm.globals,"trigger_hits");
   GmlVal *trigger_order=gml_varmap_get(&vm.globals,"trigger_order");
@@ -696,7 +713,14 @@ int main(void){
   if(slot->image_index!=0.5){
     fprintf(stderr,"classic animation did not advance after the draw phase: index=%.2f\n",slot->image_index); return 1;
   }
-  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
+  slot->sprite_index=slot->mask_index=-1;
+  slot->image_index=0;
+  slot->image_speed=0.5;
+  gml_vm_post_draw(&vm);
+  if(slot->image_index!=0.5){
+    fprintf(stderr,"classic sprite-less drawing frame did not advance: index=%.2f\n",slot->image_index); return 1;
+  }
+  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
   for(int i=0;i<2;i++) unlink(key_files[i]);
   for(int i=0;i<2;i++) unlink(mouse_files[i]);

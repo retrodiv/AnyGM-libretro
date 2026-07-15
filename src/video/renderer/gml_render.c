@@ -1017,15 +1017,32 @@ static inline void blend_argb_src_over_double_reverse(uint32_t *dp, const uint32
 static inline void blend_argb_src_over_draw_alpha(uint32_t *dp, const uint32_t *sp, int run,
                                                   uint32_t aa, double alpha, int round_nearest){
   if(run<=0 || !aa || alpha<=0.0) return;
+  if(round_nearest){
+    uint32_t effective=(uint32_t)(aa*alpha+0.5);
+    if(effective>255u) effective=255u;
+    uint32_t inverse=255u-effective;
+    for(int k=0; k<run; k++){
+      uint32_t src=sp[k], dst=dp[k];
+      uint32_t sr=(src>>16)&0xFFu, sg=(src>>8)&0xFFu, sb=src&0xFFu;
+      uint32_t dr=(dst>>16)&0xFFu, dg=(dst>>8)&0xFFu, db=dst&0xFFu;
+      uint32_t rr=(sr*effective+127u)/255u+(dr*inverse+127u)/255u;
+      uint32_t rg=(sg*effective+127u)/255u+(dg*inverse+127u)/255u;
+      uint32_t rb=(sb*effective+127u)/255u+(db*inverse+127u)/255u;
+      if(rr>255u) rr=255u;
+      if(rg>255u) rg=255u;
+      if(rb>255u) rb=255u;
+      dp[k]=0xFF000000u|(rr<<16)|(rg<<8)|rb;
+    }
+    return;
+  }
   double sa=(aa/255.0)*alpha, ia=1.0-sa;
-  double bias=round_nearest?0.5:0.0;
   for(int k=0; k<run; k++){
     uint32_t src=sp[k], dst=dp[k];
     int sr=(src>>16)&0xFF, sg=(src>>8)&0xFF, sb=src&0xFF;
     int dr=(dst>>16)&0xFF, dg=(dst>>8)&0xFF, db=dst&0xFF;
-    int or_=(int)(sr*sa+dr*ia+bias); if(or_>255) or_=255; else if(or_<0) or_=0;
-    int og=(int)(sg*sa+dg*ia+bias); if(og>255) og=255; else if(og<0) og=0;
-    int ob=(int)(sb*sa+db*ia+bias); if(ob>255) ob=255; else if(ob<0) ob=0;
+    int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
+    int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
+    int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
     dp[k]=0xFF000000u|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
   }
 }
