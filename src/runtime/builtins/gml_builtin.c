@@ -4894,6 +4894,79 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
   return 0;
 }
 
+/* Portable contract for the legacy shadow helpers distributed as GML extension
+ * functions.  Their geometry is expressed in unscaled sprite-space metrics,
+ * using the unscaled sprite_width and sprite_height metrics. */
+static void draw_legacy_sprite_shadow(GmlVM *vm,double vertical_extra,double alpha){
+  GmlRender *R=vm?(GmlRender*)vm->render:NULL;
+  GmlInstance *self=vm?vm->cur_self:NULL;
+  if(!R) return;
+  if(alpha<0) alpha=0;
+  if(alpha>1) alpha=1;
+  R->alpha=alpha;
+  if(self){
+    double width=0,height=0;
+    int sprite=(int)self->sprite_index;
+    if(sprite>=0 && sprite<R->n_spr){
+      width=R->spr[sprite].w;
+      height=R->spr[sprite].h;
+    }
+    double x1=self->x-width*.5,y1=self->y;
+    double x2=self->x+width*.5,y2=self->y+height*.5+vertical_extra;
+    gml_render_maybe_prepare_draw(R);
+    if(g_d3.active){
+      d3_2d_ellipse(R,(x1+x2)*.5,(y1+y2)*.5,fabs(x2-x1)*.5,
+                    fabs(y2-y1)*.5,0x404040u,0x404040u,alpha,0);
+    } else {
+      int left=(int)floor(x1-R->cam_x),top=(int)floor(y1-R->cam_y);
+      int right=(int)floor(x2-R->cam_x),bottom=(int)floor(y2-R->cam_y);
+      draw_circle_prim(R,(left+right)/2,(top+bottom)/2,
+                       abs(right-left)/2,abs(bottom-top)/2,0x404040u,0);
+    }
+  }
+  /* These helpers intentionally leave the global draw alpha at one. */
+  R->alpha=1;
+}
+
+/* Four-direction movement contract used by classic GML extension packages.  The
+ * public function declares five arguments; the optional sixth selector is zero
+ * when omitted, which selects the cursor keys. */
+static void legacy_move_rpg(GmlVM *vm,GmlVal *args,int count){
+  GmlInstance *self=vm?vm->cur_self:NULL;
+  if(!self || (count!=5 && count!=6)) return;
+  double selector=count==6?N(args,count,5):0;
+  if(selector!=0 && selector!=1) return;
+  int left=selector==0?37:'A';
+  int up=selector==0?38:'W';
+  int right=selector==0?39:'D';
+  int down=selector==0?40:'S';
+  double pace=N(args,count,3),animation=N(args,count,4);
+  int motion_changed=0;
+  if(gml_input_key(left,0) && self->vspeed==0){
+    self->hspeed=-pace; self->sprite_index=N(args,count,1);
+    self->image_xscale=-1; self->image_speed=animation; motion_changed=1;
+  }
+  if(gml_input_key(right,0) && self->vspeed==0){
+    self->hspeed=pace; self->sprite_index=N(args,count,1);
+    self->image_xscale=1; self->image_speed=animation; motion_changed=1;
+  }
+  if(gml_input_key(up,0) && self->hspeed==0){
+    self->vspeed=-pace; self->sprite_index=N(args,count,0);
+    self->image_speed=animation; motion_changed=1;
+  }
+  if(gml_input_key(down,0) && self->hspeed==0){
+    self->vspeed=pace; self->sprite_index=N(args,count,2);
+    self->image_speed=animation; motion_changed=1;
+  }
+  if(gml_input_key(left,2) || gml_input_key(right,2)){
+    self->image_speed=0; self->image_index=0; self->hspeed=0; motion_changed=1;
+  }
+  if(gml_input_key(up,2) || gml_input_key(down,2)){
+    self->image_speed=0; self->image_index=0; self->vspeed=0; motion_changed=1;
+  }
+  if(motion_changed) motion_from_components(self);
+}
+
 /* Short-circuit very hot draw/UI builtins before the broad legacy strcmp chain below. Keep these
  * branches behavior-equivalent to their canonical handlers; this only avoids dispatch overhead. */
 static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out){
@@ -5070,7 +5143,16 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
       gml_draw_sprite_pos(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),x,y,N(a,n,10)); }
     *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_self") || (!strcmp(nm,"draw_full_sprite") && n==0)){ GmlInstance*s=vm->cur_self; if(R&&s) gml_draw_sprite_ext(R,(int)s->sprite_index,
-      (int)s->image_index,s->x,s->y,s->image_xscale,s->image_yscale,s->image_angle,(uint32_t)s->image_blend,s->image_alpha); *out=vreal(0); return 1; }
+      (int)s->image_index,s->x,s->y,s->image_xscale,s->image_yscale,s->image_angle,(uint32_t)s->image_blend,
+      !strcmp(nm,"draw_full_sprite")?1:s->image_alpha); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_shadow")){
+    if(n==0) draw_legacy_sprite_shadow(vm,4,.5);
+    *out=vreal(0); return 1;
+  }
+  if(!strcmp(nm,"draw_shadow_ext")){
+    if(n==2) draw_legacy_sprite_shadow(vm,N(a,n,0),N(a,n,1));
+    *out=vreal(0); return 1;
+  }
   if(!strcmp(nm,"draw_sprite_stretched")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),0xFFFFFF,R->alpha); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_sprite_stretched_ext")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_surface")){ if(R){ int s=(int)N(a,n,0);
@@ -5251,7 +5333,11 @@ enum {
   BID_SPRITE_EXISTS,
   BID_SPRITE_GET_WIDTH,
   BID_SPRITE_GET_HEIGHT,
-  BID_INPUT_KBGP
+  BID_INPUT_KBGP,
+  BID_DRAW_SHADOW,
+  BID_LEGACY_DEPTH_BY_Y,
+  BID_LEGACY_CREATE,
+  BID_LEGACY_MOVE_RPG
 };
 
 int gml_builtin_fast_id(const char *nm){
@@ -5272,6 +5358,7 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"abs")) return BID_ABS;
       return -1;
     case 'c':
+      if(!strcmp(nm,"crear")) return BID_LEGACY_CREATE;
       if(!strcmp(nm,"clamp")) return BID_CLAMP;
       return -1;
     case 'd':
@@ -5292,6 +5379,7 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"draw_sprite")) return BID_DRAW_SPRITE;
       if(!strcmp(nm,"draw_sprite_ext")) return BID_DRAW_SPRITE_EXT;
       if(!strcmp(nm,"draw_self") || !strcmp(nm,"draw_full_sprite")) return BID_DRAW_SELF;
+      if(!strcmp(nm,"draw_shadow") || !strcmp(nm,"draw_shadow_ext")) return BID_DRAW_SHADOW;
       if(!strcmp(nm,"draw_surface")) return BID_DRAW_SURFACE;
       if(!strcmp(nm,"draw_surface_ext")) return BID_DRAW_SURFACE_EXT;
       if(!strcmp(nm,"draw_surface_stretched")) return BID_DRAW_SURFACE_STRETCHED;
@@ -5302,6 +5390,7 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"draw_rectangle_colour")) return BID_DRAW_RECTANGLE_COLOUR;
       if(!strcmp(nm,"draw_text")) return BID_DRAW_TEXT;
       if(!strcmp(nm,"draw_text_ext")) return BID_DRAW_TEXT_EXT;
+      if(!strcmp(nm,"depthy")) return BID_LEGACY_DEPTH_BY_Y;
       if(!strcmp(nm,"draw_text_ext_transformed_colour")) return BID_DRAW_TEXT_EXT_TRANSFORMED_COLOUR;
       if(!strcmp(nm,"draw_text_ext_transformed_color")) return BID_DRAW_TEXT_EXT_TRANSFORMED_COLOR;
       if(!strcmp(nm,"draw_set_color")) return BID_DRAW_SET_COLOR;
@@ -5381,6 +5470,7 @@ int gml_builtin_fast_id(const char *nm){
       if(!strcmp(nm,"lengthdir_y")) return BID_LENGTHDIR_Y;
       return -1;
     case 'm':
+      if(!strcmp(nm,"move_rpg")) return BID_LEGACY_MOVE_RPG;
       if(!strcmp(nm,"mouse_check_button")) return BID_MOUSE_CHECK_BUTTON;
       if(!strcmp(nm,"mouse_check_button_pressed")) return BID_MOUSE_CHECK_BUTTON_PRESSED;
       if(!strcmp(nm,"mouse_check_button_released")) return BID_MOUSE_CHECK_BUTTON_RELEASED;
@@ -5607,8 +5697,25 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       if(!strcmp(nm,"draw_full_sprite") && n!=0) return vreal(0);
       GmlInstance*s=vm->cur_self;
       if(R&&s) gml_draw_sprite_ext(R,(int)s->sprite_index,
-        (int)s->image_index,s->x,s->y,s->image_xscale,s->image_yscale,s->image_angle,(uint32_t)s->image_blend,s->image_alpha);
+        (int)s->image_index,s->x,s->y,s->image_xscale,s->image_yscale,s->image_angle,(uint32_t)s->image_blend,
+        !strcmp(nm,"draw_full_sprite")?1:s->image_alpha);
       return vreal(0); }
+    case BID_DRAW_SHADOW:
+      if(!strcmp(nm,"draw_shadow")){
+        if(n==0) draw_legacy_sprite_shadow(vm,4,.5);
+      } else if(!strcmp(nm,"draw_shadow_ext") && n==2){
+        draw_legacy_sprite_shadow(vm,N(a,n,0),N(a,n,1));
+      }
+      return vreal(0);
+    case BID_LEGACY_DEPTH_BY_Y:
+      if(n==0 && vm->cur_self) vm->cur_self->depth=-(vm->cur_self->y/100.0);
+      return vreal(0);
+    case BID_LEGACY_CREATE:
+      if(n==3) (void)gml_instance_create(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2));
+      return vreal(0);
+    case BID_LEGACY_MOVE_RPG:
+      legacy_move_rpg(vm,a,n);
+      return vreal(0);
     case BID_DRAW_SURFACE:
       if(R){ int s=(int)N(a,n,0);
         if(s>0 && s==(int)gml_global_arr(vm,"view_surface_id",0) && N(a,n,1)==0 && N(a,n,2)==0)
@@ -6793,6 +6900,17 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"game_restart") || !strcmp(nm,"action_restart_game")){
     vm->game_end=2; return vreal(0); }
 
+  /* ---- portable legacy extension helpers ---- */
+  if(!strcmp(nm,"depthy")){
+    if(n==0 && vm->cur_self) vm->cur_self->depth=-(vm->cur_self->y/100.0);
+    return vreal(0); }
+  if(!strcmp(nm,"crear")){
+    if(n==3) (void)gml_instance_create(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2));
+    return vreal(0); }
+  if(!strcmp(nm,"move_rpg")){
+    legacy_move_rpg(vm,a,n);
+    return vreal(0); }
+
   /* ---- instances ---- */
   if(!strcmp(nm,"instance_create")){ GmlInstance*in=gml_instance_create(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2));
     return vreal(in?(double)in->id:-4); }
@@ -7326,7 +7444,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"draw_sprite_tiled_ext")){ if(R) gml_draw_sprite_tiled_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
         N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); return vreal(0); }
     if(!strcmp(nm,"draw_self") || (!strcmp(nm,"draw_full_sprite") && n==0)){ GmlInstance*s=vm->cur_self; if(R&&s) gml_draw_sprite_ext(R,(int)s->sprite_index,
-        (int)s->image_index,s->x,s->y,s->image_xscale,s->image_yscale,s->image_angle,(uint32_t)s->image_blend,s->image_alpha); return vreal(0); }
+        (int)s->image_index,s->x,s->y,s->image_xscale,s->image_yscale,s->image_angle,(uint32_t)s->image_blend,
+        !strcmp(nm,"draw_full_sprite")?1:s->image_alpha); return vreal(0); }
     if(!strcmp(nm,"draw_set_color")||!strcmp(nm,"draw_set_colour")){ if(R){ R->color=(uint32_t)N(a,n,0); } return vreal(0); }
     if(!strcmp(nm,"draw_set_alpha")){ if(R){ R->alpha=N(a,n,0); if(R->alpha<0) R->alpha=0; if(R->alpha>1) R->alpha=1; } return vreal(0); }
     if(!strcmp(nm,"draw_set_font")){ if(R){ R->font=(int)N(a,n,0); if((int)N(a,n,0)<0 && getenv("GML_LOG_FONT")) fprintf(stderr,"[font] draw_set_font(%d) — default-font request\n",(int)N(a,n,0)); } return vreal(0); }

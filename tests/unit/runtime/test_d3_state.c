@@ -9,7 +9,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-int gml_input_key(int key, int edge){ (void)key; (void)edge; return 0; }
+static int fixture_key=-1;
+static int fixture_key_edge=-1;
+int gml_input_key(int key, int edge){ return key==fixture_key && edge==fixture_key_edge; }
 int gml_input_gamepad(int button, int edge){ (void)button; (void)edge; return 0; }
 GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);
 int gml_builtin_fast_id(const char *name);
@@ -981,6 +983,13 @@ static int raster_fixtures(void){
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
     render.alpha=.25;
     draw_vm.cur_self=&draw_instance;
+    (void)call_values(&draw_vm,"draw_self",NULL,0);
+    draw_vm.cur_self=NULL;
+    unsigned self_draw=(pixels[4*WIDTH+4]>>16)&255u;
+    for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    render.alpha=.25;
+    draw_vm.cur_self=&draw_instance;
     (void)call_values(&draw_vm,"draw_full_sprite",NULL,0);
     draw_vm.cur_self=NULL;
     unsigned full_sprite=(pixels[4*WIDTH+4]>>16)&255u;
@@ -999,15 +1008,159 @@ static int raster_fixtures(void){
     render.alpha=.25;
     gml_draw_sprite(&render,depth_sprite,0,4,4);
     unsigned modern_basic=(pixels[4*WIDTH+4]>>16)&255u;
-    if(automatic<185 || automatic>195 || full_sprite!=automatic ||
+    if(automatic<185 || automatic>195 || self_draw!=automatic || full_sprite!=255 ||
        gml_builtin_fast_id("draw_full_sprite")!=gml_builtin_fast_id("draw_self") || classic_basic!=255 ||
        explicit_alpha<55 || explicit_alpha>70 || modern_basic<55 || modern_basic>70){
-      fprintf(stderr,"default/full/basic/explicit draw alpha isolation mismatch: automatic=%u full=%u classic=%u explicit=%u modern=%u\n",
-        automatic,full_sprite,classic_basic,explicit_alpha,modern_basic);
+      fprintf(stderr,"default/self/full/basic/explicit draw alpha isolation mismatch: automatic=%u self=%u full=%u classic=%u explicit=%u modern=%u\n",
+        automatic,self_draw,full_sprite,classic_basic,explicit_alpha,modern_basic);
       return 0;
+    }
+    {
+      uint32_t shadow_pixels[WIDTH*HEIGHT];
+      const double simple_geometry[]={3,4,5,9,0x404040,0x404040,0};
+      const double extended_geometry[]={3,4,5,7,0x404040,0x404040,0};
+      GmlVal extended_args[2]={vreal(2),vreal(.25)};
+      GmlVal invalid_arg=vreal(9);
+      render.classic=1;
+      for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+      gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+      render.alpha=.9; draw_vm.cur_self=&draw_instance;
+      (void)call_values(&draw_vm,"draw_shadow",NULL,0);
+      draw_vm.cur_self=NULL;
+      memcpy(shadow_pixels,pixels,sizeof(shadow_pixels));
+      if(render.alpha!=1){
+        fprintf(stderr,"legacy simple shadow alpha reset mismatch: %.6f\n",render.alpha);
+        return 0;
+      }
+      for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+      gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+      render.alpha=.5;
+      call_numbers(&draw_vm,"draw_ellipse_color",simple_geometry,7);
+      if(memcmp(shadow_pixels,pixels,sizeof(shadow_pixels))){
+        fprintf(stderr,"legacy simple shadow geometry mismatch\n");
+        return 0;
+      }
+      for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+      gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+      render.alpha=.8; draw_vm.cur_self=&draw_instance;
+      (void)call_values(&draw_vm,"draw_shadow_ext",extended_args,2);
+      draw_vm.cur_self=NULL;
+      memcpy(shadow_pixels,pixels,sizeof(shadow_pixels));
+      if(render.alpha!=1){
+        fprintf(stderr,"legacy extended shadow alpha reset mismatch: %.6f\n",render.alpha);
+        return 0;
+      }
+      for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+      gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+      render.alpha=.25;
+      call_numbers(&draw_vm,"draw_ellipse_color",extended_geometry,7);
+      if(memcmp(shadow_pixels,pixels,sizeof(shadow_pixels)) ||
+         gml_builtin_fast_id("draw_shadow")<0 ||
+         gml_builtin_fast_id("draw_shadow")!=gml_builtin_fast_id("draw_shadow_ext")){
+        fprintf(stderr,"legacy extended shadow geometry/dispatch mismatch\n");
+        return 0;
+      }
+      for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+      gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+      render.alpha=.3; draw_vm.cur_self=&draw_instance;
+      (void)call_values(&draw_vm,"draw_shadow",&invalid_arg,1);
+      draw_vm.cur_self=NULL;
+      if(render.alpha!=.3 || colored_pixels(pixels,WIDTH*HEIGHT)!=0){
+        fprintf(stderr,"legacy shadow invalid-arity guard mismatch\n");
+        return 0;
+      }
     }
     render.classic=0;
     render.alpha=1;
+  }
+  {
+    GmlVM extension_vm={0};
+    GmlWin extension_win={0};
+    GmlObject extension_object={0};
+    GmlVal create_args[3]={vreal(12.5),vreal(34.5),vreal(0)};
+    GmlVal invalid_arg=vreal(0);
+    extension_object.name="neutral_extension_object";
+    extension_object.parent=-1;
+    extension_object.sprite_index=extension_object.mask_index=-1;
+    extension_object.visible=1;
+    extension_vm.win=&extension_win;
+    extension_vm.objects=&extension_object;
+    extension_vm.n_objects=1;
+    extension_vm.inst=calloc(4,sizeof(*extension_vm.inst));
+    extension_vm.inst_cap=4;
+    extension_vm.next_id=100001;
+    if(!extension_vm.inst){
+      fprintf(stderr,"legacy extension instance fixture allocation mismatch\n");
+      return 0;
+    }
+    GmlVal create_result=call_values(&extension_vm,"crear",create_args,3);
+    if(create_result.d!=0 || extension_vm.inst_count!=1 ||
+       extension_vm.inst[0].x!=12.5 || extension_vm.inst[0].y!=34.5 ||
+       extension_vm.inst[0].obj!=0 ||
+       gml_builtin_fast_id("crear")<0){
+      fprintf(stderr,"legacy extension instance-create alias mismatch\n");
+      free(extension_vm.inst);
+      return 0;
+    }
+    (void)call_values(&extension_vm,"crear",&invalid_arg,1);
+    if(extension_vm.inst_count!=1){
+      fprintf(stderr,"legacy extension instance-create arity mismatch\n");
+      free(extension_vm.inst);
+      return 0;
+    }
+    extension_vm.cur_self=&extension_vm.inst[0];
+    extension_vm.cur_self->y=250;
+    extension_vm.cur_self->depth=77;
+    (void)call_values(&extension_vm,"depthy",NULL,0);
+    if(extension_vm.cur_self->depth!=-2.5 || gml_builtin_fast_id("depthy")<0){
+      fprintf(stderr,"legacy extension depth-by-y mismatch: %.6f\n",extension_vm.cur_self->depth);
+      free(extension_vm.inst);
+      return 0;
+    }
+    extension_vm.cur_self->depth=19;
+    (void)call_values(&extension_vm,"depthy",&invalid_arg,1);
+    if(extension_vm.cur_self->depth!=19){
+      fprintf(stderr,"legacy extension depth-by-y arity mismatch\n");
+      free(extension_vm.inst);
+      return 0;
+    }
+    {
+      GmlVal movement_args[6]={vreal(10),vreal(20),vreal(30),vreal(3),vreal(.5),vreal(1)};
+      GmlInstance *moving=extension_vm.cur_self;
+      moving->vspeed=0; moving->hspeed=0; moving->image_index=4;
+      fixture_key=37; fixture_key_edge=0;
+      (void)call_values(&extension_vm,"move_rpg",movement_args,5);
+      if(moving->hspeed!=-3 || moving->vspeed!=0 || moving->sprite_index!=20 ||
+         moving->image_xscale!=-1 || moving->image_speed!=.5 || moving->speed!=3 ||
+         moving->direction!=180 || gml_builtin_fast_id("move_rpg")<0){
+        fprintf(stderr,"legacy extension cursor movement mismatch\n");
+        free(extension_vm.inst);
+        return 0;
+      }
+      fixture_key_edge=2;
+      (void)call_values(&extension_vm,"move_rpg",movement_args,5);
+      if(moving->hspeed!=0 || moving->image_speed!=0 || moving->image_index!=0 || moving->speed!=0){
+        fprintf(stderr,"legacy extension movement release mismatch\n");
+        free(extension_vm.inst);
+        return 0;
+      }
+      fixture_key='D'; fixture_key_edge=0;
+      (void)call_values(&extension_vm,"move_rpg",movement_args,6);
+      if(moving->hspeed!=3 || moving->sprite_index!=20 || moving->image_xscale!=1 || moving->image_speed!=.5){
+        fprintf(stderr,"legacy extension letter movement mismatch\n");
+        free(extension_vm.inst);
+        return 0;
+      }
+      fixture_key=fixture_key_edge=-1;
+      moving->hspeed=7;
+      (void)call_values(&extension_vm,"move_rpg",movement_args,4);
+      if(moving->hspeed!=7){
+        fprintf(stderr,"legacy extension movement arity mismatch\n");
+        free(extension_vm.inst);
+        return 0;
+      }
+    }
+    free(extension_vm.inst);
   }
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
