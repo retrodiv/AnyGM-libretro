@@ -567,6 +567,44 @@ static int classic_extension_suffix(const char *name){
          (name[length-1]=='x' || name[length-1]=='X');
 }
 
+static int classic_extension_name_compare(const void *left, const void *right){
+  const char *a=*(const char * const*)left;
+  const char *b=*(const char * const*)right;
+  int folded=strcasecmp(a,b);
+  return folded ? folded : strcmp(a,b);
+}
+
+static void classic_extension_names_free(char **names, size_t count){
+  for(size_t i=0;i<count;i++) free(names[i]);
+  free(names);
+}
+
+static int classic_extension_names(const char *project_dir,
+                                   char ***names_out, size_t *count_out){
+  *names_out=NULL; *count_out=0;
+  DIR *directory=opendir(project_dir);
+  if(!directory) return 1;
+  char **names=NULL;
+  size_t count=0,capacity=0;
+  struct dirent *entry;
+  while((entry=readdir(directory))){
+    if(!classic_extension_suffix(entry->d_name)) continue;
+    if(count==capacity){
+      size_t next=capacity ? capacity*2u : 8u;
+      char **grown=(char**)realloc(names,next*sizeof(*grown));
+      if(!grown){ classic_extension_names_free(names,count); closedir(directory); return 0; }
+      names=grown; capacity=next;
+    }
+    names[count]=gmlc_strdup(entry->d_name);
+    if(!names[count]){ classic_extension_names_free(names,count); closedir(directory); return 0; }
+    count++;
+  }
+  closedir(directory);
+  if(count>1) qsort(names,count,sizeof(*names),classic_extension_name_compare);
+  *names_out=names; *count_out=count;
+  return 1;
+}
+
 static int classic_extension_read_prefix(const char *path, uint8_t **data, size_t *size){
   *data=NULL; *size=0;
   FILE *file=fopen(path,"rb");
@@ -585,6 +623,47 @@ static int classic_extension_read_prefix(const char *path, uint8_t **data, size_
   return 1;
 }
 
+static void classic_extension_hash_bytes(uint64_t *hash, const void *data, size_t size){
+  const uint8_t *bytes=(const uint8_t*)data;
+  for(size_t i=0;i<size;i++){
+    *hash^=(uint64_t)bytes[i];
+    *hash*=1099511628211ull;
+  }
+}
+
+static void classic_extension_hash_u64(uint64_t *hash, uint64_t value){
+  uint8_t bytes[8];
+  for(unsigned i=0;i<8;i++) bytes[i]=(uint8_t)(value>>(i*8u));
+  classic_extension_hash_bytes(hash,bytes,sizeof(bytes));
+}
+
+int gmlc_classic_extension_dependency_hash(const char *project_dir,
+                                           uint64_t seed, uint64_t *hash_out){
+  if(!project_dir || !*project_dir || !hash_out) return 0;
+  char **names=NULL; size_t count=0;
+  if(!classic_extension_names(project_dir,&names,&count)) return 0;
+  uint64_t hash=seed;
+  const uint8_t domain[4]={'G','E','X',0};
+  classic_extension_hash_bytes(&hash,domain,sizeof(domain));
+  uint64_t live=0;
+  for(size_t i=0;i<count;i++){
+    char *path=gmlc_path_join(project_dir,names[i]);
+    uint8_t *data=NULL; size_t size=0;
+    int read=path ? classic_extension_read_prefix(path,&data,&size) : -1;
+    free(path);
+    if(read<0){ free(data); classic_extension_names_free(names,count); return 0; }
+    if(read==0){ free(data); continue; }
+    live++;
+    classic_extension_hash_u64(&hash,(uint64_t)size);
+    classic_extension_hash_bytes(&hash,data,size);
+    free(data);
+  }
+  classic_extension_hash_u64(&hash,live);
+  classic_extension_names_free(names,count);
+  *hash_out=hash;
+  return 1;
+}
+
 int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
                                           GmlcProject *project,
                                           const char *project_dir,
@@ -597,13 +676,10 @@ int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
   if(!classic->extension_count) return 1;
   int aliases_before=project->n_function_aliases;
   int scripts_before=project->n_scripts;
-  DIR *directory=opendir(project_dir);
-  if(!directory) return 1;
-  int ok=1;
-  struct dirent *entry;
-  while(ok && (entry=readdir(directory))){
-    if(!classic_extension_suffix(entry->d_name)) continue;
-    char *path=gmlc_path_join(project_dir,entry->d_name);
+  char **names=NULL; size_t count=0;
+  int ok=classic_extension_names(project_dir,&names,&count);
+  for(size_t i=0;ok && i<count;i++){
+    char *path=gmlc_path_join(project_dir,names[i]);
     if(!path){ ok=0; break; }
     uint8_t *data=NULL; size_t size=0;
     int read=classic_extension_read_prefix(path,&data,&size);
@@ -613,12 +689,12 @@ int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
       int parsed=classic_extension_parse(classic,project,data,size);
       free(data);
       if(getenv("GMLC_LOG_CLASSIC_EXTENSIONS"))
-        fprintf(stderr,"classic extension package: %s (%s)\n",entry->d_name,
+        fprintf(stderr,"classic extension package: %s (%s)\n",names[i],
                 parsed>0?"parsed":parsed<0?"out of memory":"ignored malformed metadata");
       if(parsed<0){ ok=0; break; }
     }
   }
-  closedir(directory);
+  classic_extension_names_free(names,count);
   if(!ok && err && errcap)
     snprintf(err,errcap,"classic import: out of memory reading extension metadata");
   if(ok && getenv("GMLC_LOG_CLASSIC_EXTENSIONS")){

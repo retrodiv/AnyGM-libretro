@@ -151,6 +151,11 @@ static int expect_extension_alias_import(void){
   int files_ok=1;
   for(int i=0;i<6;i++)
     files_ok &= write_fixture_file(paths[i],&fixtures[i],i==4 ? 48u : SIZE_MAX);
+  uint64_t dependency_before=0,dependency_repeat=0,dependency_after=0;
+  int dependency_ok=files_ok &&
+    gmlc_classic_extension_dependency_hash(dir,123u,&dependency_before) &&
+    gmlc_classic_extension_dependency_hash(dir,123u,&dependency_repeat) &&
+    dependency_before==dependency_repeat;
 
   char *extension_names[]={(char*)"Fixture Extension"};
   GmlcClassicManifest manifest;
@@ -188,9 +193,15 @@ static int expect_extension_alias_import(void){
     embedded_script=source && !strcmp(source,"return 37;\n");
     free(source);
   }
+  FILE *changed=fopen(paths[5],"ab");
+  int changed_ok=changed && fputc(0x5a,changed)!=EOF;
+  if(changed && fclose(changed)!=0) changed_ok=0;
+  dependency_ok = dependency_ok && changed_ok &&
+    gmlc_classic_extension_dependency_hash(dir,123u,&dependency_after) &&
+    dependency_after!=dependency_before;
   int ok=imported && !err[0] && project.n_function_aliases==3 && project.n_scripts==3 &&
          found_action && found_ambiguous && !found_unrelated && !found_broken &&
-         found_embedded && embedded_script;
+         found_embedded && embedded_script && dependency_ok;
   if(!ok) fprintf(stderr,"extension alias fixture failed: aliases=%d error=%s\n",
                   project.n_function_aliases,err);
   gmlc_project_free(&project);
