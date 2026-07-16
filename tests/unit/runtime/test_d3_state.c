@@ -1584,6 +1584,35 @@ static int raster_fixtures(void){
     fprintf(stderr,"software modern negative sprite scale anchor mismatch\n");
     return 0;
   }
+  {
+    uint32_t phase[3][WIDTH*HEIGHT];
+    render.classic=1;
+    render.interp=0;
+    memset(pixels,0,sizeof(pixels));
+    memset(phase,0,sizeof(phase));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    render.classic_phase_y=phase[0];
+    gml_draw_sprite_ext(&render,flipped_sprite,0,24,20,3,3,37,0xFFFFFF,1);
+    if(colored_pixels(pixels,WIDTH*HEIGHT)==0 || colored_pixels(phase[0],WIDTH*HEIGHT)==0){
+      fprintf(stderr,"software classic rotated sprite phase mismatch\n");
+      return 0;
+    }
+    render.interp=1;
+    memset(pixels,0,sizeof(pixels));
+    memset(phase,0,sizeof(phase));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    for(int q=0;q<3;q++) render.classic_interp_phase[q]=phase[q];
+    gml_draw_sprite_ext(&render,flipped_sprite,0,24,20,3,3,37,0xFFFFFF,1);
+    if(colored_pixels(pixels,WIDTH*HEIGHT)==0 ||
+       colored_pixels(phase[0],WIDTH*HEIGHT)==0 ||
+       colored_pixels(phase[1],WIDTH*HEIGHT)==0 ||
+       colored_pixels(phase[2],WIDTH*HEIGHT)==0){
+      fprintf(stderr,"software classic rotated sprite interpolation phase mismatch\n");
+      return 0;
+    }
+    for(int q=0;q<3;q++) render.classic_interp_phase[q]=NULL;
+    render.interp=0;
+  }
   render.classic=1;
   render.tpag[0].tx=render.tpag[0].ty=1;
   render.tpag[0].bw=render.tpag[0].bh=4;
