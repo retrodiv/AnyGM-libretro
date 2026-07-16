@@ -141,21 +141,23 @@ static int expect_extension_alias_import(void){
   };
   Fixture fixtures[]={
     extension_fixture("fixtureextension","fixture_route","fixture_target",
-                      "#define fixture_target\nreturn 1;\n"),
+                      "#define fixture_target\nreturn 1;\n","extension_truth","1"),
     extension_fixture("Fixture Extension","fixture_action","fixture_target",
-                      "#define fixture_target\nreturn 2;\n"),
+                      "#define fixture_target\nreturn 2;\n","project_truth","9"),
     extension_fixture("Fixture Extension","fixture_route","alternate_target",
-                      "#define alternate_target\nreturn 3;\n"),
+                      "#define alternate_target\nreturn 3;\n",NULL,NULL),
     extension_fixture("Different Extension","unrelated_action","fixture_target",
-                      "#define fixture_target\nreturn 4;\n"),
+                      "#define fixture_target\nreturn 4;\n","unrelated_constant","9"),
     extension_fixture("Fixture Extension","broken_action","fixture_target",
-                      "#define fixture_target\nreturn 5;\n"),
+                      "#define fixture_target\nreturn 5;\n","broken_constant","5"),
     extension_fixture("Fixture Extension","embedded_action","embedded_target",
-                      "#define helper_target\nreturn 6;\n#define embedded_target\nreturn 37;\n")
+                      "#define helper_target\nreturn 6;\n#define embedded_target\nreturn 37;\n",
+                      NULL,NULL)
   };
   int files_ok=1;
   for(int i=0;i<6;i++)
-    files_ok &= write_fixture_file(paths[i],&fixtures[i],i==4 ? 48u : SIZE_MAX);
+    files_ok &= write_fixture_file(paths[i],&fixtures[i],
+                                   i==4 ? fixtures[i].size-3u : SIZE_MAX);
   uint64_t dependency_before=0,dependency_repeat=0,dependency_after=0;
   int dependency_ok=files_ok &&
     gmlc_classic_extension_dependency_hash(dir,123u,&dependency_before) &&
@@ -176,11 +178,19 @@ static int expect_extension_alias_import(void){
     project.scripts[0].name=gmlc_strdup("fixture_target");
     project.scripts[1].name=gmlc_strdup("alternate_target");
   }
+  project.constants=(GmlcProjectConstant*)calloc(1,sizeof(*project.constants));
+  project.n_constants=project.cap_constants=project.constants ? 1 : 0;
+  if(project.constants){
+    project.constants[0].name=gmlc_strdup("project_truth");
+    project.constants[0].expression=gmlc_strdup("42");
+  }
   char err[256]={0};
   int imported=files_ok && project.scripts && project.scripts[0].name && project.scripts[1].name &&
+    project.constants && project.constants[0].name && project.constants[0].expression &&
     gmlc_classic_import_extension_aliases(&manifest,&project,dir,err,sizeof(err));
   int found_action=0, found_ambiguous=0, found_unrelated=0, found_broken=0;
-  int found_embedded=0, embedded_script=0;
+  int found_embedded=0, embedded_script=0, found_extension_constant=0;
+  int found_project_constant=0, found_unrelated_constant=0, found_broken_constant=0;
   for(int i=0;i<project.n_function_aliases;i++){
     GmlcFunctionAlias *alias=&project.function_aliases[i];
     if(!strcmp(alias->public_name,"fixture_action") &&
@@ -198,6 +208,15 @@ static int expect_extension_alias_import(void){
     embedded_script=source && !strcmp(source,"return 37;\n");
     free(source);
   }
+  for(int i=0;i<project.n_constants;i++){
+    GmlcProjectConstant *constant=&project.constants[i];
+    if(!strcmp(constant->name,"extension_truth") &&
+       !strcmp(constant->expression,"1")) found_extension_constant=1;
+    if(!strcmp(constant->name,"project_truth") &&
+       !strcmp(constant->expression,"42")) found_project_constant=1;
+    if(!strcmp(constant->name,"unrelated_constant")) found_unrelated_constant=1;
+    if(!strcmp(constant->name,"broken_constant")) found_broken_constant=1;
+  }
   FILE *changed=fopen(paths[5],"ab");
   int changed_ok=changed && fputc(0x5a,changed)!=EOF;
   if(changed && fclose(changed)!=0) changed_ok=0;
@@ -206,7 +225,9 @@ static int expect_extension_alias_import(void){
     dependency_after!=dependency_before;
   int ok=imported && !err[0] && project.n_function_aliases==3 && project.n_scripts==3 &&
          found_action && found_ambiguous && !found_unrelated && !found_broken &&
-         found_embedded && embedded_script && dependency_ok;
+         found_embedded && embedded_script && found_extension_constant && found_project_constant &&
+         !found_unrelated_constant && !found_broken_constant && project.n_constants==2 &&
+         dependency_ok;
   if(!ok) fprintf(stderr,"extension alias fixture failed: aliases=%d error=%s\n",
                   project.n_function_aliases,err);
   gmlc_project_free(&project);

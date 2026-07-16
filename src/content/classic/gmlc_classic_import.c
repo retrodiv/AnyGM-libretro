@@ -548,6 +548,39 @@ static int classic_extension_add_project_alias(GmlcProject *project,
   return 1;
 }
 
+static int classic_extension_add_project_constant(GmlcProject *project,
+                                                   const char *name,
+                                                   const char *expression){
+  if(!name || !name[0] || !expression) return 1;
+  /* Project constants are loaded before sibling extension packages and remain
+   * authoritative on a duplicate name.  Likewise, the first declared package
+   * wins when two installed copies expose the same constant. */
+  for(int i=0;i<project->n_constants;i++)
+    if(classic_extension_identifier_equal(project->constants[i].name,name)) return 1;
+  if(project->n_constants>=project->cap_constants){
+    if(project->cap_constants>INT32_MAX/2) return 0;
+    int capacity=project->cap_constants ? project->cap_constants*2 : 16;
+    if(capacity<=project->cap_constants || capacity<project->n_constants+1) return 0;
+    GmlcProjectConstant *constants=(GmlcProjectConstant*)realloc(
+      project->constants,(size_t)capacity*sizeof(*constants));
+    if(!constants) return 0;
+    memset(constants+project->cap_constants,0,
+           (size_t)(capacity-project->cap_constants)*sizeof(*constants));
+    project->constants=constants;
+    project->cap_constants=capacity;
+  }
+  GmlcProjectConstant *constant=&project->constants[project->n_constants];
+  constant->name=copy_string(name);
+  constant->expression=copy_string(expression);
+  if(!constant->name || !constant->expression){
+    free(constant->name); free(constant->expression);
+    memset(constant,0,sizeof(*constant));
+    return 0;
+  }
+  project->n_constants++;
+  return 1;
+}
+
 static void classic_extension_free_aliases(ClassicExtensionAlias *aliases, int count){
   for(int i=0;i<count;i++){
     free(aliases[i].public_name);
