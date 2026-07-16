@@ -236,10 +236,15 @@ int gmlc_classic_project_load(GmlcProject *project, const char *project_path,
   project->classic_interpolate=manifest.inventory.settings.interpolate;
   project->classic_swap_creation_events=manifest.inventory.settings.swap_creation_events;
   project->classic_outside_color=manifest.inventory.settings.outside_color;
+  GmlcClassicBlob game_information={0};
+  int game_information_ok=gmlc_classic_game_information_decode(
+    &manifest.game_information,&game_information,err,errcap);
+  project->classic_game_information=game_information.data;
+  project->classic_game_information_size=game_information.size;
   project->name = classic_stem(project_path);
   project->root_dir = gmlc_path_dirname(project_path);
   project->yyp_path = gmlc_strdup(project_path);
-  int ok = project->name && project->root_dir && project->yyp_path &&
+  int ok = game_information_ok && project->name && project->root_dir && project->yyp_path &&
     classic_import_metadata(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_scripts(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_extension_aliases(&manifest, project, project->root_dir, err, errcap) &&

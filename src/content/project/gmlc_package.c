@@ -2099,12 +2099,17 @@ static int fixed_zero_chunk(Pkg *p, const char name[4], size_t n){
 
 static int write_classic_marker(Pkg *pkg, const GmlcProject *project){
   if(!project->classic_version) return 1;
+  if(project->classic_game_information_size>UINT32_MAX) return 0;
   size_t s=chunk_begin(pkg,"CLSC");
   wu32(&pkg->b,(uint32_t)project->classic_version);
   wi32(&pkg->b,project->classic_scaling);
   wu32(&pkg->b,(uint32_t)(project->classic_interpolate?1:0));
   wu32(&pkg->b,project->classic_outside_color);
   wu32(&pkg->b,(uint32_t)(project->classic_swap_creation_events?1:0));
+  wu32(&pkg->b,(uint32_t)project->classic_game_information_size);
+  if(project->classic_game_information_size &&
+     !wbytes(&pkg->b,project->classic_game_information,
+             project->classic_game_information_size)) return 0;
   chunk_end(pkg,s);
   return 1;
 }

@@ -6,10 +6,11 @@ and license below apply to the derived font data and remain unchanged.
 Built-in fallback font data
 ==========================
 
-The font data in src/generated/gml_default_font_data.h is derived from
-Liberation Sans 2.1.5. The following upstream license and copyright notices
-apply to that data. Distributions containing it must include these notices
-and the full license, including binary distributions.
+The generated glyph coverage in src/generated/gml_default_font_data.h and
+src/generated/gml_classic_info_font_data.h is derived from Liberation Sans
+2.1.5. The following upstream license and copyright notices apply to that data.
+Distributions containing it must include these notices and the full license,
+including binary distributions.
 
 Digitized data copyright (c) 2010 Google Corporation
 	with Reserved Font Arimo, Tinos and Cousine.

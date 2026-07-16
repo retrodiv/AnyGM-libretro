@@ -125,6 +125,9 @@ typedef struct {
   uint32_t included_file_count;
   char **extension_names;
   uint32_t extension_count;
+  /* Raw, versioned game-information payload.  The project converter owns the
+   * bytes and decides how much of the legacy rich-text metadata to preserve. */
+  GmlcClassicBlob game_information;
   char **library_creation_code;
   uint32_t library_creation_code_count;
   uint32_t *room_order;
@@ -150,6 +153,11 @@ int gmlc_classic_manifest(const void *data, size_t size,
                           GmlcClassicManifest *out, char *err, size_t errcap);
 int gmlc_classic_manifest_file(const char *path, GmlcClassicManifest *out,
                                char *err, size_t errcap);
+/* Normalize the versioned game-information blob to its bounded, uncompressed
+ * record.  Empty projects produce an empty output blob. */
+int gmlc_classic_game_information_decode(const GmlcClassicBlob *source,
+                                         GmlcClassicBlob *decoded,
+                                         char *err, size_t errcap);
 void gmlc_classic_manifest_free(GmlcClassicManifest *manifest);
 const char *gmlc_classic_version_name(GmlcClassicVersion version);
 const char *gmlc_classic_resource_name(GmlcClassicResourceType type);

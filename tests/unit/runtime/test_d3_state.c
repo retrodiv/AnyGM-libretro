@@ -39,6 +39,23 @@ static void store_u32le(uint8_t *dst,uint32_t value){
   dst[3]=(uint8_t)(value>>24);
 }
 
+static size_t classic_information_record(uint8_t *dst,size_t capacity){
+  const char caption[]="Information";
+  const char text[]="{\\rtf1\\ansi\\pard\\qc\\b\\fs32 Generic information\\par\\b0\\fs24 Neutral \\ul underlined\\ulnone  fixture text\\par}";
+  size_t need=8+4+sizeof(caption)-1+8*4+8+4+sizeof(text)-1;
+  if(!dst || capacity<need) return 0;
+  size_t at=0;
+#define INFO_U32(v) do{ store_u32le(dst+at,(uint32_t)(v)); at+=4; }while(0)
+  INFO_U32(0xFF000018u); INFO_U32(1);
+  INFO_U32(sizeof(caption)-1); memcpy(dst+at,caption,sizeof(caption)-1); at+=sizeof(caption)-1;
+  INFO_U32((uint32_t)-1); INFO_U32((uint32_t)-1); INFO_U32(600); INFO_U32(400);
+  INFO_U32(1); INFO_U32(1); INFO_U32(0); INFO_U32(1);
+  memset(dst+at,0,8); at+=8;
+  INFO_U32(sizeof(text)-1); memcpy(dst+at,text,sizeof(text)-1); at+=sizeof(text)-1;
+#undef INFO_U32
+  return at;
+}
+
 static int raster_fixtures(void){
   enum { WIDTH=64, HEIGHT=48 };
   uint32_t pixels[WIDTH*HEIGHT];
@@ -64,6 +81,81 @@ static int raster_fixtures(void){
       return 0;
     }
     gml_render_free(&initialized);
+  }
+
+  {
+    enum { INFO_W=320, INFO_H=180 };
+    static uint32_t information_pixels[INFO_W*INFO_H];
+    uint8_t information[256];
+    size_t information_size=classic_information_record(information,sizeof(information));
+    GmlWin win={0}; GmlRender initialized;
+    win.classic_version=800;
+    if(!information_size || gml_render_init(&initialized,&win)!=0){
+      fprintf(stderr,"classic information fixture initialization failed\n");
+      return 0;
+    }
+    initialized.color=0x123456u; initialized.alpha=0.375;
+    initialized.halign=2; initialized.valign=2; initialized.font=7;
+    initialized.alphablend=0;
+    memset(information_pixels,0,sizeof(information_pixels));
+    gml_draw_classic_game_information(&initialized,information_pixels,INFO_W,INFO_H,
+                                      information,information_size);
+    int ink=0;
+    for(int i=0;i<INFO_W*INFO_H;i++)
+      if(information_pixels[i]!=0xFFFFFFu && information_pixels[i]!=0xAEAEAEu) ink++;
+    if(information_pixels[0]!=0xAEAEAEu ||
+       information_pixels[INFO_W*INFO_H-1]!=0xAEAEAEu ||
+       information_pixels[INFO_W+1]!=0xFFFFFFu || ink<20 ||
+       initialized.color!=0x123456u || initialized.alpha!=0.375 ||
+       initialized.halign!=2 || initialized.valign!=2 || initialized.font!=7 ||
+       initialized.alphablend!=0){
+      fprintf(stderr,"classic information software render mismatch: edge=%06x,%06x inside=%06x ink=%d state=%06x,%.3f,%d,%d,%d,%d font=%d atlas=%d\n",
+              information_pixels[0]&0xFFFFFFu,
+              information_pixels[INFO_W*INFO_H-1]&0xFFFFFFu,
+              information_pixels[INFO_W+1]&0xFFFFFFu,ink,
+              initialized.color&0xFFFFFFu,initialized.alpha,initialized.halign,
+              initialized.valign,initialized.font,initialized.alphablend,
+              initialized.default_font.n_glyphs,initialized.n_atlas);
+      gml_render_free(&initialized);
+      return 0;
+    }
+    information_pixels[0]=0x123456u;
+    gml_draw_classic_game_information(&initialized,information_pixels,INFO_W,INFO_H,
+                                      information,11);
+    if(information_pixels[0]!=0x123456u){
+      fprintf(stderr,"invalid classic information record was rendered\n");
+      gml_render_free(&initialized);
+      return 0;
+    }
+    gml_render_free(&initialized);
+
+    GmlVM modal={0};
+    win.classic_game_information=information;
+    win.classic_game_information_size=information_size;
+    modal.win=&win;
+    (void)call_values(&modal,"show_info",NULL,0);
+    if(!modal.classic_info_active){
+      fprintf(stderr,"classic information modal did not activate\n");
+      return 0;
+    }
+    fixture_key=1; fixture_key_edge=1;
+    gml_vm_step(&modal);
+    fixture_key=fixture_key_edge=-1;
+    if(modal.classic_info_active){
+      fprintf(stderr,"classic information modal did not dismiss\n");
+      return 0;
+    }
+    (void)call_values(&modal,"action_show_info",NULL,0);
+    if(!modal.classic_info_active){
+      fprintf(stderr,"classic information action did not activate\n");
+      return 0;
+    }
+    modal.classic_info_active=0; win.classic_version=0;
+    (void)call_values(&modal,"show_info",NULL,0);
+    if(modal.classic_info_active){
+      fprintf(stderr,"classic information leaked into modern content\n");
+      return 0;
+    }
   }
 
   {
@@ -1923,18 +2015,21 @@ int main(void){
 
   GmlWin win; GmlVM vm;
   memset(&win,0,sizeof(win)); memset(&vm,0,sizeof(vm)); vm.win=&win;
+  vm.classic_info_active=1;
   size_t size=gml_vm_state_size(&vm),written=0,used=0;
   void *state=malloc(size);
   if(!state || !gml_vm_state_save(&vm,state,size,&written) || written!=size){
     fprintf(stderr,"software D3 state save failed\n");
     free(state); return 1;
   }
+  vm.classic_info_active=0;
   gml_d3_reset();
   if(state_matches(flags,values,colors)){
     fprintf(stderr,"software D3 reset did not clear state\n");
     free(state); return 1;
   }
   if(!gml_vm_state_load(&vm,state,written,&used) || used!=written ||
+     !vm.classic_info_active ||
      !state_matches(flags,values,colors)){
     fprintf(stderr,"software D3 savestate roundtrip mismatch\n");
     free(state); return 1;

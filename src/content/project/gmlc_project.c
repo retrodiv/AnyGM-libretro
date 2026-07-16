@@ -129,6 +129,7 @@ static void free_resource(GmlcResource *r){
 void gmlc_project_free(GmlcProject *p){
   if(!p) return;
   free(p->root_dir); free(p->yyp_path); free(p->name); free(p->startup_code_path);
+  free(p->classic_game_information);
   for(int i=0;i<p->n_resources;i++) free_resource(&p->resources[i]);
   free(p->resources);
   for(int i=0;i<p->n_sprites;i++){

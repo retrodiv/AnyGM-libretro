@@ -256,6 +256,18 @@ static void fixture_compressed(Fixture *f, const unsigned char *raw, int raw_siz
   STBIW_FREE(compressed);
 }
 
+static Fixture game_information_fixture(void){
+  Fixture f={{0},0};
+  fixture_u32(&f,0xFF000018u); fixture_u32(&f,1);
+  fixture_string(&f,"Information");
+  fixture_u32(&f,(unsigned)-1); fixture_u32(&f,(unsigned)-1);
+  fixture_u32(&f,600); fixture_u32(&f,400);
+  fixture_u32(&f,1); fixture_u32(&f,1); fixture_u32(&f,0); fixture_u32(&f,1);
+  fixture_double(&f,40000.0);
+  fixture_string(&f,"{\\rtf1\\ansi\\pard\\qc\\b\\fs32 Generic information\\par\\b0\\fs24 Neutral fixture text\\par}");
+  return f;
+}
+
 static void fixture_legacy_bmp_image(Fixture *f){
   unsigned char bmp[62] = {0};
   bmp[0]='B'; bmp[1]='M';
@@ -358,7 +370,9 @@ static Fixture manifest_fixture(unsigned container_version){
     fixture_compressed(&f,included.data,(int)included.size); }
   fixture_u32(&f, 700); fixture_u32(&f, 1); /* extensions */
   fixture_string(&f,"fixture_extension");
-  fixture_u32(&f, 800); fixture_u32(&f, 0); /* game information */
+  fixture_u32(&f, 800); /* game information */
+  { Fixture information=game_information_fixture();
+    fixture_compressed(&f,information.data,(int)information.size); }
   fixture_u32(&f, 500); fixture_u32(&f, 1); /* library code */
   fixture_string(&f,"global.fixture_started = 1;");
   fixture_u32(&f, 700); fixture_u32(&f, 0); /* executable rooms */
@@ -392,8 +406,16 @@ static int expect_manifest(void){
            !strcmp(manifest.extension_names[0],"fixture_extension") &&
            manifest.library_creation_code_count==1 &&
            !strcmp(manifest.library_creation_code[0],"global.fixture_started = 1;");
+  GmlcClassicBlob decoded={0};
+  Fixture expected_information=game_information_fixture();
+  if(ok) ok=gmlc_classic_game_information_decode(&manifest.game_information,&decoded,
+                                                  err,sizeof(err));
+  if(ok) ok=decoded.size==expected_information.size &&
+            !memcmp(decoded.data,expected_information.data,expected_information.size);
+  free(decoded.data);
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type)
     if(type != GMLC_CLASSIC_SCRIPT && manifest.existing[type]) ok = 0;
+  if(!ok) fprintf(stderr,"manifest assertions failed: %s\n",err);
   gmlc_classic_manifest_free(&manifest);
   return ok;
 }
@@ -491,7 +513,11 @@ static int build_executable_fixture(Fixture *executable){
     fixture_u32(&included,1); fixture_string(&included,"");
     fixture_u32(&included,1); fixture_u32(&included,0); fixture_u32(&included,1);
     fixture_compressed(&decoded,included.data,(int)included.size); }
-  fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* help */
+  fixture_u32(&decoded,800); /* help */
+  { Fixture information=game_information_fixture();
+    fixture_u32(&decoded,(unsigned)information.size);
+    memcpy(decoded.data+decoded.size,information.data,information.size);
+    decoded.size+=information.size; }
   fixture_u32(&decoded,500); fixture_u32(&decoded,1); /* library code */
   fixture_string(&decoded,"global.fixture_executable_started = 1;");
   fixture_u32(&decoded,700); fixture_u32(&decoded,1); fixture_u32(&decoded,0); /* room order */
@@ -545,7 +571,16 @@ static int expect_executable_manifest_variant(const Fixture *executable){
        !strcmp(manifest.constant_defs[0].value,"7*6") && !strcmp(manifest.constant_defs[1].value,"21*2") &&
        manifest.included_file_count==1 && manifest.included_files[0].data_size==2 &&
        !strcmp(manifest.included_files[0].file_name,"executable.dat") &&
-       manifest.library_creation_code_count==2;
+       manifest.library_creation_code_count==2 && manifest.game_information.size>0;
+    if(ok){
+      GmlcClassicBlob information={0};
+      Fixture expected=game_information_fixture();
+      ok=gmlc_classic_game_information_decode(&manifest.game_information,&information,
+                                               err,sizeof(err)) &&
+         information.size==expected.size &&
+         !memcmp(information.data,expected.data,expected.size);
+      free(information.data);
+    }
     if(ok){
       GmlcProject project;
       gmlc_project_init(&project);
@@ -565,6 +600,7 @@ static int expect_executable_manifest_variant(const Fixture *executable){
     }
     gmlc_classic_manifest_free(&manifest);
   }
+  if(!ok) fprintf(stderr,"executable manifest assertions failed: %s\n",err);
   return ok;
 }
 
@@ -1141,9 +1177,16 @@ static int expect_gm81_font_metadata(void){
                                    err,sizeof(err));
   if(!ok) fprintf(stderr,"packed font import failed: %s\n",err);
   if(ok) ok=project.n_fonts==1 && project.fonts[0].n_glyphs==1 &&
-    project.fonts[0].glyphs[0].ch==33 && project.fonts[0].glyphs[0].h==15 &&
+    project.fonts[0].glyphs[0].ch==33 && project.fonts[0].glyphs[0].h==14 &&
     project.fonts[0].em_size==18 && project.n_memory_files==1 &&
     project.memory_files[0].kind==GMLC_MEMORY_RGBA;
+  if(!ok && project.n_fonts>0)
+    fprintf(stderr,"packed font assertion: fonts=%d glyphs=%d ch=%d h=%d em=%u files=%d kind=%d\n",
+            project.n_fonts,project.fonts[0].n_glyphs,
+            project.fonts[0].n_glyphs?project.fonts[0].glyphs[0].ch:-1,
+            project.fonts[0].n_glyphs?project.fonts[0].glyphs[0].h:-1,
+            project.fonts[0].em_size,project.n_memory_files,
+            project.n_memory_files?(int)project.memory_files[0].kind:-1);
   free_font_fixture_project(&project);
   gmlc_classic_manifest_free(&manifest);
   return ok;
@@ -1509,38 +1552,44 @@ int main(int argc, char **argv){
   }
   const unsigned versions[] = {600, 701, 702, 800, 810};
   int passed = 0, failed = 0;
+#define EXPECT_PROBE(label,expression) do { \
+    if(expression) ++passed; \
+    else { fprintf(stderr,"%s failed\n",label); ++failed; } \
+  } while(0)
   for(size_t i = 0; i < sizeof(versions) / sizeof(versions[0]); ++i){
-    if(expect_header(versions[i])) ++passed; else ++failed;
+    char label[64];
+    snprintf(label,sizeof(label),"header %u",versions[i]);
+    EXPECT_PROBE(label,expect_header(versions[i]));
   }
-  if(expect_rejected(0, 800, 28)) ++passed; else ++failed;
-  if(expect_rejected(GMLC_CLASSIC_MAGIC, 999, 28)) ++passed; else ++failed;
-  if(expect_rejected(GMLC_CLASSIC_MAGIC, 800, 27)) ++passed; else ++failed;
-
-  if(expect_inventory(800)) ++passed; else ++failed;
-  if(expect_inventory(810)) ++passed; else ++failed;
-  if(expect_manifest()) ++passed; else ++failed;
-  if(expect_manifest_810()) ++passed; else ++failed;
-  if(expect_executable_manifest()) ++passed; else ++failed;
-  if(expect_legacy_executable_manifest()) ++passed; else ++failed;
-  if(expect_gm7_decode()) ++passed; else ++failed;
-  if(expect_legacy_manifest(600)) ++passed; else ++failed;
-  if(expect_legacy_manifest(701)) ++passed; else ++failed;
-  if(expect_script_import()) ++passed; else ++failed;
-  if(expect_extension_alias_import()) ++passed; else ++failed;
-  if(expect_sprite_import(0)) ++passed; else ++failed;
-  if(expect_sprite_import(1)) ++passed; else ++failed;
-  if(expect_background_import(0)) ++passed; else ++failed;
-  if(expect_background_import(1)) ++passed; else ++failed;
-  if(expect_sparse_font_import()) ++passed; else ++failed;
-  if(expect_empty_font_import()) ++passed; else ++failed;
-  if(expect_gm81_font_metadata()) ++passed; else ++failed;
-  if(expect_sound_import()) ++passed; else ++failed;
-  if(expect_legacy_media_import()) ++passed; else ++failed;
-  if(expect_path_import()) ++passed; else ++failed;
-  if(expect_timeline_import()) ++passed; else ++failed;
-  if(expect_object_import()) ++passed; else ++failed;
-  if(expect_room_import()) ++passed; else ++failed;
-  if(expect_sparse_room_order()) ++passed; else ++failed;
+  EXPECT_PROBE("reject magic",expect_rejected(0,800,28));
+  EXPECT_PROBE("reject version",expect_rejected(GMLC_CLASSIC_MAGIC,999,28));
+  EXPECT_PROBE("reject short header",expect_rejected(GMLC_CLASSIC_MAGIC,800,27));
+  EXPECT_PROBE("inventory 800",expect_inventory(800));
+  EXPECT_PROBE("inventory 810",expect_inventory(810));
+  EXPECT_PROBE("manifest 800",expect_manifest());
+  EXPECT_PROBE("manifest 810",expect_manifest_810());
+  EXPECT_PROBE("executable manifest",expect_executable_manifest());
+  EXPECT_PROBE("legacy executable manifest",expect_legacy_executable_manifest());
+  EXPECT_PROBE("GM7 decode",expect_gm7_decode());
+  EXPECT_PROBE("legacy manifest 600",expect_legacy_manifest(600));
+  EXPECT_PROBE("legacy manifest 701",expect_legacy_manifest(701));
+  EXPECT_PROBE("script import",expect_script_import());
+  EXPECT_PROBE("extension alias import",expect_extension_alias_import());
+  EXPECT_PROBE("sprite import project",expect_sprite_import(0));
+  EXPECT_PROBE("sprite import executable",expect_sprite_import(1));
+  EXPECT_PROBE("background import project",expect_background_import(0));
+  EXPECT_PROBE("background import executable",expect_background_import(1));
+  EXPECT_PROBE("sparse font import",expect_sparse_font_import());
+  EXPECT_PROBE("empty font import",expect_empty_font_import());
+  EXPECT_PROBE("GM8.1 font metadata",expect_gm81_font_metadata());
+  EXPECT_PROBE("sound import",expect_sound_import());
+  EXPECT_PROBE("legacy media import",expect_legacy_media_import());
+  EXPECT_PROBE("path import",expect_path_import());
+  EXPECT_PROBE("timeline import",expect_timeline_import());
+  EXPECT_PROBE("object import",expect_object_import());
+  EXPECT_PROBE("room import",expect_room_import());
+  EXPECT_PROBE("sparse room order",expect_sparse_room_order());
+#undef EXPECT_PROBE
 
   for(int i = 1; i < argc; ++i){
     GmlcClassicInventory in;

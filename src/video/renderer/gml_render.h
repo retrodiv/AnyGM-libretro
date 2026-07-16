@@ -77,6 +77,7 @@ typedef struct {
   /* real FONT-chunk font: glyph sub-rects blitted from the data.win atlas at runtime
    * (no glyph data is bundled; parsed from the user-supplied data.win like sprites). */
   int real, atlas, line_height;                                  /* real=1; atlas index; em/line height */
+  int subpixel;                                                   /* per-channel GDI coverage for classic info */
   GmlGlyph *glyphs; int n_glyphs;
   int glyph_by_char[256];                                        /* fast ASCII lookup, -1 = none */
 } GmlFont;                                                        /* sprite font or real FONT-chunk font */
@@ -101,6 +102,9 @@ typedef struct {
   GmlBg    *bg; int n_bg;
   GmlFont   fonts[GML_MAX_FONTS]; int n_fonts;
   GmlFont   default_font;                                          /* built-in font selected by id -1 */
+  struct {
+    int source_index, font_id;
+  } classic_info_font_cache[32]; int classic_info_font_cache_count;
   /* current target framebuffer (borrowed) + camera */
   uint32_t *fb; int fbw, fbh;
   uint32_t *base_fb; int base_fbw, base_fbh;
@@ -136,6 +140,7 @@ typedef struct {
   GmlSurface surface[GML_MAX_SURFACES]; int next_surface_id;
   /* draw state */
   uint32_t  color;  double alpha; int halign, valign, font, alphablend, circle_precision;
+  int       software_overlay; /* bypass world-space D3 projection for a final 2D modal pass */
   int       blendmode;   /* gpu_set_blendmode: 0=normal, 1=add (others fall back to normal). Reset per frame. */
   int       fast_alpha_cull;  /* optional fast path: drop alpha contributions <= this 8-bit step */
   int       fb_opaque_known, fb_all_opaque, fb_all_transparent;  /* current target coverage metadata */
@@ -349,5 +354,8 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
                                double xs, double ys, double rot, uint32_t blend, double alpha);
 int  gml_text_width(GmlRender *r, const char *str);
 int  gml_text_height(GmlRender *r, const char *str);
+void gml_draw_classic_game_information(GmlRender *r, uint32_t *framebuffer,
+                                       int width, int height,
+                                       const uint8_t *record, size_t record_size);
 
 #endif

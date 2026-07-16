@@ -8533,11 +8533,16 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
      !strcmp(nm,"message_text_font")||!strcmp(nm,"message_button_font")||
      !strcmp(nm,"message_input_font")||!strcmp(nm,"message_alpha")||
      !strcmp(nm,"message_position")||!strcmp(nm,"message_caption")||
-     !strcmp(nm,"message_size")||!strcmp(nm,"action_show_info")) return vreal(0);
+     !strcmp(nm,"message_size")) return vreal(0);
   /* Host-process priority and MIDI tempo have no portable libretro control surface. They are
    * explicit compatibility no-ops rather than unresolved calls. */
   if(!strcmp(nm,"set_program_priority")||!strcmp(nm,"sound_background_tempo")) return vreal(0);
-  if(!strcmp(nm,"show_info")) return vreal(0); /* classic game-information dialog: unavailable in libretro */
+  if(!strcmp(nm,"show_info")||!strcmp(nm,"action_show_info")){
+    if(vm && vm->win && vm->win->classic_version &&
+       vm->win->classic_game_information_size)
+      vm->classic_info_active=1;
+    return vreal(0);
+  }
   if(!strcmp(nm,"parameter_count")) return vreal(0);
   if(!strcmp(nm,"parameter_string")) return vstr("");
   if(!strcmp(nm,"exception_unhandled_handler")) return vreal(0);

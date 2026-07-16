@@ -122,6 +122,61 @@ static int reader_blob_copy(ClassicReader *r, GmlcClassicBlob *out, const char *
   return 1;
 }
 
+static int game_information_record_valid(const uint8_t *data,size_t size){
+  if(!data || size<12) return 0;
+  uint32_t caption=read_u32le(data+8);
+  size_t fixed=12u+(size_t)caption+8u*4u+8u;
+  if(fixed>size || size-fixed<4u) return 0;
+  uint32_t text=read_u32le(data+fixed);
+  return (size_t)text<=size-fixed-4u;
+}
+
+int gmlc_classic_game_information_decode(const GmlcClassicBlob *source,
+                                         GmlcClassicBlob *decoded,
+                                         char *err,size_t errcap){
+  enum { GAME_INFORMATION_LIMIT=8*1024*1024 };
+  if(err && errcap) err[0]='\0';
+  if(!decoded){
+    if(err && errcap) snprintf(err,errcap,"classic project: missing game-information output");
+    return 0;
+  }
+  memset(decoded,0,sizeof(*decoded));
+  if(!source || !source->size) return 1;
+  if(!source->data || source->size>GAME_INFORMATION_LIMIT || source->size>INT_MAX){
+    if(err && errcap) snprintf(err,errcap,"classic project: game information is too large");
+    return 0;
+  }
+  const uint8_t *record=source->data;
+  size_t record_size=source->size;
+  int inflated_size=0;
+  char *inflated=stbi_zlib_decode_malloc((const char*)source->data,
+                                          (int)source->size,&inflated_size);
+  if(inflated){
+    if(inflated_size<0 || inflated_size>GAME_INFORMATION_LIMIT){
+      STBI_FREE(inflated);
+      if(err && errcap) snprintf(err,errcap,"classic project: game information expands beyond its limit");
+      return 0;
+    }
+    record=(const uint8_t*)inflated;
+    record_size=(size_t)inflated_size;
+  }
+  if(!game_information_record_valid(record,record_size)){
+    STBI_FREE(inflated);
+    if(err && errcap) snprintf(err,errcap,"classic project: invalid game-information record");
+    return 0;
+  }
+  decoded->data=(uint8_t*)malloc(record_size?record_size:1u);
+  if(!decoded->data){
+    STBI_FREE(inflated);
+    if(err && errcap) snprintf(err,errcap,"classic project: out of memory decoding game information");
+    return 0;
+  }
+  memcpy(decoded->data,record,record_size);
+  decoded->size=record_size;
+  STBI_FREE(inflated);
+  return 1;
+}
+
 static int reader_words(ClassicReader *r, uint32_t count, const char *what){
   if(count > (r->size - r->pos) / 4) return reader_fail(r, what);
   return reader_skip(r, (size_t)count * 4, what);
@@ -1277,6 +1332,7 @@ void gmlc_classic_manifest_free(GmlcClassicManifest *manifest){
   free(manifest->included_files);
   for(uint32_t i=0;i<manifest->extension_count;i++) free(manifest->extension_names[i]);
   free(manifest->extension_names);
+  free(manifest->game_information.data);
   for(uint32_t i=0;i<manifest->library_creation_code_count;i++) free(manifest->library_creation_code[i]);
   free(manifest->library_creation_code);
   free(manifest->room_order);
@@ -1342,7 +1398,7 @@ static int parse_modern_tail(const void *data, size_t size,
   for(uint32_t i = 0; i < count; ++i)
     if(!reader_string_copy(&r,&manifest->extension_names[i], "extension name")) return 0;
   if(!reader_u32(&r, &version, "game-information version") || version < 600 ||
-     !reader_blob(&r, "game information") ||
+     !reader_blob_copy(&r, &manifest->game_information, "game information") ||
      !reader_u32(&r, &version, "library-code section version") || version < 500 ||
      !reader_u32(&r, &count, "library-code count")) return 0;
   if(count > (r.size - r.pos) / 4) return reader_fail(&r, "library creation code");
@@ -1651,7 +1707,8 @@ static int parse_executable_data(const uint8_t *data, size_t size,
   }
   for(uint32_t i=0;i<count;i++)
     if(!reader_included_file(&r,&out->included_files[i],0,"executable include")) return 0;
-  if(!reader_u32(&r,&section_version,"executable help version") || !reader_blob(&r,"executable help")) return 0;
+  if(!reader_u32(&r,&section_version,"executable help version") ||
+     !reader_blob_copy(&r,&out->game_information,"executable help")) return 0;
   if(!reader_u32(&r,&section_version,"executable library version") ||
      !reader_u32(&r,&count,"executable library count")) return 0;
   for(uint32_t i=0;i<count;i++){

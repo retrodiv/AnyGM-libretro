@@ -157,6 +157,7 @@ typedef struct GmlVM {
   int      pending_room;      /* -1 none, else target ROOM index (play-order resolved) */
   unsigned char *room_stored; int room_state_count;
   int      game_end;
+  int      classic_info_active; /* modal classic game-information page */
   int      started;           /* Game Start fired */
   int      gs_roots_run;      /* GMS2.3 GlobalScript root entries executed (once per session) */
   /* collision-candidate grid (built lazily once per frame over all instances; queries take grid

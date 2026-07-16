@@ -262,6 +262,8 @@ typedef struct {
   int classic_interpolate;
   int classic_swap_creation_events;
   uint32_t classic_outside_color;
+  uint8_t *classic_game_information;
+  size_t classic_game_information_size;
   GmlcResource *resources;
   int n_resources, cap_resources;
   GmlcSprite *sprites;
