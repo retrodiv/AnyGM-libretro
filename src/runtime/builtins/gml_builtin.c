@@ -2459,6 +2459,21 @@ static void d3_sample(GmlRender *R, const GmlD3Texture *texture, double u, doubl
   int p[4][4];
   d3_texture_texel(texture,x0,y0,p[0]); d3_texture_texel(texture,x1,y0,p[1]);
   d3_texture_texel(texture,x0,y1,p[2]); d3_texture_texel(texture,x1,y1,p[3]);
+  if(R->interp && g_d3.classic){
+    /* The classic fixed-function filter quantizes each texture fraction to eight bits and
+     * rounds after both the horizontal and vertical lerps. Keeping the two stages separate is
+     * observable: collapsing them to one floating-point expression moves many channels by one. */
+    enum { BITS=8, LEVELS=1<<BITS, BIAS=LEVELS/2 };
+    int ix=(int)floor(ax*LEVELS+.5),iy=(int)floor(ay*LEVELS+.5);
+    if(ix<0) ix=0; else if(ix>LEVELS) ix=LEVELS;
+    if(iy<0) iy=0; else if(iy>LEVELS) iy=LEVELS;
+    for(int c=0;c<4;c++){
+      int top=(p[0][c]*(LEVELS-ix)+p[1][c]*ix+BIAS)>>BITS;
+      int bottom=(p[2][c]*(LEVELS-ix)+p[3][c]*ix+BIAS)>>BITS;
+      channel[c]=(top*(LEVELS-iy)+bottom*iy+BIAS)>>BITS;
+    }
+    return;
+  }
   double w[4]={(1-ax)*(1-ay),ax*(1-ay),(1-ax)*ay,ax*ay};
   if(R->interp){
     for(int c=0;c<4;c++) channel[c]=p[0][c]*w[0]+p[1][c]*w[1]+p[2][c]*w[2]+p[3][c]*w[3];
@@ -2784,7 +2799,7 @@ static void d3_emit_triangle(GmlRender *R,const GmlD3Vertex world[3],const GmlD3
 }
 static uint32_t d3_vertex_color(GmlVM *vm,uint32_t color,int explicitly_colored){
   if(!vm || !vm->win || !vm->win->classic_version) return color&0xFFFFFFu;
-  return explicitly_colored ? (color|0x010000u) : (color&0xFEFFFFu);
+  return explicitly_colored ? (color|0x010000u) : (color&0xFFFFFFu);
 }
 static void d3_draw_ellipsoid(GmlRender *R,double x1,double y1,double z1,
                               double x2,double y2,double z2,int texture,

@@ -792,6 +792,28 @@ static int raster_fixtures(void){
       pixels[20*WIDTH+30]&0x00FFFFFFu);
     return 0;
   }
+  {
+    /* Classic fixed-function filtering uses rounded eight-bit fractions and two rounded lerps.
+     * The blue component also proves an implicit white vertex colour is not reduced to 254. */
+    GmlWin classic_win={0}; classic_win.classic_version=800; vm.win=&classic_win;
+    surface_data->px[0]=0xFF0A141Eu; surface_data->px[1]=0xFF6E7882u;
+    surface_data->px[2]=0xFFD2DCE6u; surface_data->px[3]=0xFFFAF0C8u;
+    render.color=0xFFFFFFu;
+    const double classic_filtered_point[]={30,20,0,.72,.28};
+    memset(pixels,0,sizeof(pixels));
+    call_numbers(&vm,"d3d_primitive_begin_texture",interpolated_begin,2);
+    call_numbers(&vm,"d3d_vertex_texture",classic_filtered_point,5);
+    call_numbers(&vm,"d3d_primitive_end",NULL,0);
+    vm.win=NULL;
+    if((pixels[21*WIDTH+31]&0x00FFFFFFu)!=0x707981u){
+      int first=-1;
+      for(int i=0;i<WIDTH*HEIGHT;i++) if(pixels[i]&0x00FFFFFFu){ first=i; break; }
+      fprintf(stderr,"software classic fixed-function filter mismatch: %06x first=(%d,%d) %06x\n",
+        pixels[21*WIDTH+31]&0x00FFFFFFu,first<0?-1:first%WIDTH,first<0?-1:first/WIDTH,
+        first<0?0:pixels[first]&0x00FFFFFFu);
+      return 0;
+    }
+  }
   call_numbers(&vm,"texture_set_interpolation",disable,1);
   surface_data->px[0]=0xFFFF0000u; surface_data->px[1]=0xFF00FF00u;
   surface_data->px[2]=0xFF0000FFu; surface_data->px[3]=0xFFFFFFFFu;
@@ -1865,6 +1887,7 @@ static int raster_fixtures(void){
   }
   gml_d3_reset();
   gml_render_free(&render);
+  gml_vm_free(&vm);
   return 1;
 }
 
@@ -1917,7 +1940,9 @@ int main(void){
     free(state); return 1;
   }
   free(state);
-  if(!raster_fixtures()) return 1;
+  int raster_ok=raster_fixtures();
+  gml_vm_free(&vm);
+  if(!raster_ok) return 1;
   puts("software D3 state fixtures: ok");
   return 0;
 }
