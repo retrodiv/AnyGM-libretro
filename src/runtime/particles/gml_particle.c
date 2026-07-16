@@ -136,7 +136,6 @@ static double prnd(void){
   g_prng = g_prng*1664525u + 1013904223u;
   return ((g_prng>>8) & 0xFFFFFF)/(double)0x1000000;
 }
-static double prnd_r(double a, double b){ return b>a ? a + prnd()*(b-a) : a; }
 /* A fixed particle property is assigned directly; only a real interval samples the RNG. */
 static double particle_range(double a,double b){ return b>a ? a+prnd()*(b-a) : a; }
 static int clamp255(double v){ if(v<0) return 0; if(v>255) return 255; return (int)(v+0.5); }
@@ -517,8 +516,11 @@ void gml_part_emitter_destroy_all(int sysid){ for(int i=0;i<PE_MAX;i++) if(g_pe[
 void gml_part_emitter_clear(int sysid,int em){ PEmit *e=pe(em); if(e && (sysid<=0 || e->sys==sysid)){ int used=e->used, sys=e->sys; memset(e,0,sizeof(*e)); e->used=used; e->sys=sys; } }
 void gml_part_emitter_region(int sysid,int em,double xmin,double xmax,double ymin,double ymax,int shape,int dist){ (void)sysid; PEmit *e=pe(em); if(e){ e->xmin=xmin; e->xmax=xmax; e->ymin=ymin; e->ymax=ymax; e->shape=shape; e->dist=dist; } }
 static void emit_point(PEmit *e, double *ox, double *oy){
-  /* Sample the bounding rectangle for every shape value. */
-  *ox=prnd_r(e->xmin,e->xmax); *oy=prnd_r(e->ymin,e->ymax);
+  /* Sample normalized coordinates even for a zero-area region: the classic emitter advances both
+   * axes before mapping them into the bounds. Diamond/ellipse still use the bounding rectangle. */
+  double nx=prnd(),ny=prnd();
+  *ox=e->xmin+nx*(e->xmax-e->xmin);
+  *oy=e->ymin+ny*(e->ymax-e->ymin);
 }
 static void emitter_burst(PSys *s,PEmit *e,int type,int number){
   if(!s||!e||number<=0) return;
@@ -632,6 +634,32 @@ static void plot_square(GmlRender *r, int cx, int cy, int half, uint32_t col, do
             (((bg*ia+dg*iia)/255)<<8)|((bb*ia+db*iia)/255); } }
 }
 
+static double sample_ring_shape(double x,double y){
+  static uint8_t mask[64*64];
+  static int ready;
+  if(!ready){
+    /* Classic particle shapes are filtered from a 64x64 cell.  Build the soft ring
+     * procedurally, then sample that cell below so small particles retain the same
+     * filtered edge and thickness instead of turning into scale-dependent vectors. */
+    for(int py=0;py<64;py++) for(int px=0;px<64;px++){
+      double nx=(px-31.5)/32.0,ny=(py-31.5)/32.0;
+      double radial=sqrt(nx*nx+ny*ny);
+      double coverage=(1.0-fabs(radial-0.795)/0.085)*0.90;
+      if(coverage<0.0) coverage=0.0;
+      if(coverage>1.0) coverage=1.0;
+      mask[py*64+px]=(uint8_t)(coverage*255.0+0.5);
+    }
+    ready=1;
+  }
+  double sx=x+31.5,sy=y+31.5;
+  int ix=(int)floor(sx),iy=(int)floor(sy);
+  if(ix<0 || iy<0 || ix>=63 || iy>=63) return 0.0;
+  double fx=sx-ix,fy=sy-iy;
+  double a=mask[iy*64+ix]*(1.0-fx)+mask[iy*64+ix+1]*fx;
+  double b=mask[(iy+1)*64+ix]*(1.0-fx)+mask[(iy+1)*64+ix+1]*fx;
+  return (a*(1.0-fy)+b*fy)/255.0;
+}
+
 static void plot_circle_shape(GmlRender *r,double cx,double cy,double xs,double ys,
                               uint32_t color,double alpha,int hollow){
   double rx=32.0*fabs(xs),ry=32.0*fabs(ys);
@@ -642,10 +670,8 @@ static void plot_circle_shape(GmlRender *r,double cx,double cy,double xs,double 
   for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
     double nx=(x+0.5-cx)/rx,ny=(y+0.5-cy)/ry,d=sqrt(nx*nx+ny*ny);
     double coverage;
-    if(hollow){
-      double thickness=fmax(1.5/fmin(rx,ry),0.10);
-      coverage=1.0-fabs(d-0.78)/thickness;
-    } else coverage=(1.0-d)*fmin(rx,ry);
+    if(hollow) coverage=sample_ring_shape(nx*32.0,ny*32.0);
+    else coverage=(1.0-d)*fmin(rx,ry);
     if(coverage<=0) continue;
     if(coverage>1) coverage=1;
     plot_square(r,x,y,0,color,alpha*coverage);

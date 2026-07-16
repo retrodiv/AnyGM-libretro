@@ -412,6 +412,34 @@ static int raster_fixtures(void){
   {
     int system=gml_part_system_create();
     int type=gml_part_type_create();
+    gml_part_type_shape(type,5);
+    gml_part_type_size(type,.5,.5,0,0);
+    gml_part_type_alpha(type,1,1,1,1);
+    gml_part_particles_create_color(system,32,24,type,0x0000FF,1);
+    gml_part_system_draw_all(&render);
+    int ring_pixels=0,ring_mass=0,minx=WIDTH,maxx=-1,miny=HEIGHT,maxy=-1;
+    for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++){
+      int red=(pixels[y*WIDTH+x]>>16)&0xFF;
+      if(red){
+        ring_pixels++; ring_mass+=red;
+        if(x<minx)minx=x; if(x>maxx)maxx=x;
+        if(y<miny)miny=y; if(y>maxy)maxy=y;
+      }
+    }
+    if(ring_pixels!=264 || ring_mass!=25004 ||
+       minx!=18 || maxx!=45 || miny!=10 || maxy!=37){
+      fprintf(stderr,"classic filtered particle ring mismatch: pixels=%d mass=%d span=(%d,%d)-(%d,%d)\n",
+              ring_pixels,ring_mass,minx,miny,maxx,maxy);
+      return 0;
+    }
+  }
+  gml_part_reset_all();
+
+  memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  {
+    int system=gml_part_system_create();
+    int type=gml_part_type_create();
     gml_part_type_shape(type,3);
     gml_part_type_size(type,1,1,0,0);
     gml_part_type_orientation(type,0,0,0,0,0);
