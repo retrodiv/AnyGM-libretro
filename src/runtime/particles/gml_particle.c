@@ -1040,7 +1040,7 @@ static int pr_i32(PartR *r){ int32_t v=0; pr_raw(r,&v,sizeof(v)); return (int)v;
 static double pr_d(PartR *r){ double v=0; pr_raw(r,&v,sizeof(v)); return v; }
 
 static void part_state_write(PartW *w){
-  pw_u32(w,0x33545250u); /* PTR3: PTR2 + persisted classic wiggle phase */
+  pw_u32(w,0x34545250u); /* PTR4: PTR3 plus built-in effect pool identities */
   pw_u32(w,g_prng);
   int nt=0; for(int i=0;i<PT_MAX;i++) if(g_pt[i].used) nt++;
   pw_i32(w,nt);
@@ -1057,6 +1057,11 @@ static void part_state_write(PartW *w){
   int ne=0; for(int i=0;i<PE_MAX;i++) if(g_pe[i].used) ne++;
   pw_i32(w,ne);
   for(int i=0;i<PE_MAX;i++) if(g_pe[i].used){ pw_i32(w,i+1); pw_raw(w,&g_pe[i],sizeof(g_pe[i])); }
+  for(int layer=0;layer<2;layer++) pw_i32(w,g_effect_sys[layer]);
+  for(int layer=0;layer<2;layer++) for(int kind=0;kind<12;kind++) for(int size=0;size<3;size++)
+    pw_i32(w,g_effect_type[layer][kind][size]);
+  for(int layer=0;layer<2;layer++) for(int size=0;size<3;size++)
+    pw_i32(w,g_effect_explosion_core[layer][size]);
 }
 
 size_t gml_part_state_size(void){
@@ -1071,8 +1076,9 @@ int gml_part_state_save(void *data, size_t len, size_t *written){
 int gml_part_state_load(const void *data, size_t len, size_t *used){
   PartR r={(const uint8_t*)data,len,0,1};
   uint32_t magic=pr_u32(&r);
-  int v3=(magic==0x33545250u), v2=(magic==0x32545250u), v1=(magic==0x31545250u);
-  if(!v1 && !v2 && !v3){ if(used) *used=r.pos; return 0; }
+  int v4=(magic==0x34545250u), v3=(magic==0x33545250u);
+  int v2=(magic==0x32545250u), v1=(magic==0x31545250u);
+  if(!v1 && !v2 && !v3 && !v4){ if(used) *used=r.pos; return 0; }
   gml_part_reset_all();
   g_prng=pr_u32(&r);
   int nt=pr_i32(&r);
@@ -1080,7 +1086,7 @@ int gml_part_state_load(const void *data, size_t len, size_t *used){
   for(int k=0;k<nt;k++){
     int id=pr_i32(&r);
     PType tmp; memset(&tmp,0,sizeof(tmp));
-    if(v2 || v3) pr_raw(&r,&tmp,sizeof(tmp));
+    if(v2 || v3 || v4) pr_raw(&r,&tmp,sizeof(tmp));
     else { PTypeV1 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old)); ptype_from_v1(&tmp,&old); }
     if(id>=1 && id<=PT_MAX){ g_pt[id-1]=tmp; g_pt[id-1].used=1; }
   }
@@ -1092,14 +1098,14 @@ int gml_part_state_load(const void *data, size_t len, size_t *used){
     double depth=pr_d(&r), px=pr_d(&r), py=pr_d(&r);
     int n=pr_i32(&r);
     if(n<0 || n>200000){ r.ok=0; n=0; }
-    size_t bytes=(size_t)n*(v3?sizeof(Part):sizeof(PartV2));
+    size_t bytes=(size_t)n*((v3||v4)?sizeof(Part):sizeof(PartV2));
     Part *parts=n?calloc((size_t)n,sizeof(Part)):NULL;
     if(n && !parts){
       r.ok=0;
       if(r.pos+bytes<=r.cap) r.pos+=bytes; else { r.pos+=bytes; r.ok=0; }
       n=0;
     } else if(n) {
-      if(v3) pr_raw(&r,parts,bytes);
+      if(v3 || v4) pr_raw(&r,parts,bytes);
       else for(int i=0;i<n;i++){
         PartV2 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old));
         part_from_v2(&parts[i],&old);
@@ -1118,9 +1124,26 @@ int gml_part_state_load(const void *data, size_t len, size_t *used){
   for(int k=0;k<ne;k++){
     int id=pr_i32(&r);
     PEmit tmp; memset(&tmp,0,sizeof(tmp));
-    if(v2) pr_raw(&r,&tmp,sizeof(tmp));
+    if(v2 || v3 || v4) pr_raw(&r,&tmp,sizeof(tmp));
     else { PEmitV1 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old)); pemit_from_v1(&tmp,&old); }
     if(id>=1 && id<=PE_MAX){ g_pe[id-1]=tmp; g_pe[id-1].used=1; }
+  }
+  if(v4){
+    for(int layer=0;layer<2;layer++){
+      int id=pr_i32(&r);
+      if(id<0 || id>PS_MAX || (id && !g_ps[id-1].used)){ r.ok=0; id=0; }
+      g_effect_sys[layer]=id;
+    }
+    for(int layer=0;layer<2;layer++) for(int kind=0;kind<12;kind++) for(int size=0;size<3;size++){
+      int id=pr_i32(&r);
+      if(id<0 || id>PT_MAX || (id && !g_pt[id-1].used)){ r.ok=0; id=0; }
+      g_effect_type[layer][kind][size]=id;
+    }
+    for(int layer=0;layer<2;layer++) for(int size=0;size<3;size++){
+      int id=pr_i32(&r);
+      if(id<0 || id>PT_MAX || (id && !g_pt[id-1].used)){ r.ok=0; id=0; }
+      g_effect_explosion_core[layer][size]=id;
+    }
   }
   if(used) *used=r.pos;
   return r.ok && r.pos<=len;

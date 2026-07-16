@@ -38,7 +38,7 @@ typedef struct {
   int     marked;      /* pending destroy */
   int     deactivated; /* instance_deactivate_*: exists but skipped by step/draw/collision/queries */
   int     room_owner;
-  unsigned char room_dormant, room_was_deactivated;
+  unsigned char room_dormant, room_was_deactivated, room_placed;
   uint32_t id;         /* instance id */
   int     obj;         /* object index */
   /* builtin vars */

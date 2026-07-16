@@ -3294,6 +3294,7 @@ static void init_inst(GmlVM *vm, GmlInstance *in, double x, double y, int obj){
   in->image_blend=16777215; in->visible=1; in->depth=0;
   in->gravity_direction=270;   /* GM default: gravity pulls straight down */
   in->draw_layer_order=-1;
+  in->room_placed=0;
   in->path_index=-1; in->path_scale=1; in->path_speed=0; in->path_position=0;
   in->timeline_index=-1; in->timeline_position=0; in->timeline_speed=1;
   in->timeline_running=0; in->timeline_loop=0;
@@ -4305,6 +4306,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
     GmlInstance *in=alloc_inst(vm); init_inst(vm,in,x,y,obj);
     in->id=u32(d,ip+12);  /* room-assigned instance id */
     apply_room_instance_transform(vm,in,ip);
+    in->room_placed=1;
     room_inst_idx[i]=(int)(in-vm->inst);
   }
   vm->next_id=next_dynamic_id;
@@ -5072,7 +5074,7 @@ static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap
   t.order=order;
   (*tiles)[*nt]=t; (*depth)[*nt]=dep; (*nt)++;
 }
-typedef struct { double depth; int seq, type, idx, order, classic, obj; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite, 6=classic bg */
+typedef struct { double depth; int seq, type, idx, order, classic, obj, placed; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite, 6=classic bg */
 static int cmp_draw_item(const void *pa, const void *pb){
   const GmlDrawItem *a=pa,*b=pb;
   if(a->depth!=b->depth) return a->depth>b->depth? -1:1;     /* higher depth first (behind) */
@@ -5089,10 +5091,11 @@ static int cmp_draw_item(const void *pa, const void *pb){
    * allowing an opaque sky layer to hide every following scenery layer. */
   if(a->type==6 && b->type==6)
     return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);
-  /* Classic draw ordering groups equal-depth instances by object resource. Higher
-   * object indices are painted first (behind); within one resource older room
-   * instances paint first so later-created peers overlay them. */
-  if(a->type==0 && b->type==0 && a->classic && b->classic && a->obj!=b->obj)
+  /* Classic room actors use the resource grouping encoded by the room, while
+   * runtime-created peers retain insertion order and overlay room content. */
+  if(a->type==0 && b->type==0 && a->classic && b->classic && a->placed!=b->placed)
+    return a->placed? -1:1;
+  if(a->type==0 && b->type==0 && a->classic && b->classic && a->placed && a->obj!=b->obj)
     return a->obj>b->obj? -1:1;
   if(a->type==0 && b->type==0 && a->classic && b->classic)
     return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);
@@ -5359,7 +5362,8 @@ void gml_vm_draw(GmlVM *vm){
   GmlDrawItem *it=g_dl_it; int m=0;
   for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked){
     it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; it[m].order=vm->inst[i].draw_layer_order;
-    it[m].classic=vm->win&&vm->win->classic_version; it[m].obj=vm->inst[i].obj; m++; }
+    it[m].classic=vm->win&&vm->win->classic_version; it[m].obj=vm->inst[i].obj;
+    it[m].placed=it[m].classic && vm->inst[i].room_placed; m++; }
   for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; it[m].order=tiles[i].order; it[m].classic=0; it[m].obj=-1; m++; }
   for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; it[m].order=ltl[i].order; it[m].classic=0; it[m].obj=-1; m++; }
   for(int i=0;i<nlb;i++){ it[m].depth=lbg[i].depth; it[m].type=3; it[m].idx=i; it[m].seq=m; it[m].order=lbg[i].order; it[m].classic=0; it[m].obj=-1; m++; }
@@ -6215,7 +6219,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -6495,7 +6499,7 @@ static int gmv6_timeline_present(GmlInstance *in){
 }
 static void sw_instance(StateW *s, GmlInstance *in){
   uint8_t fl=(in->active?1:0)|(in->marked?2:0)|(in->deactivated?4:0)|
-             (in->room_dormant?8:0)|(in->room_was_deactivated?16:0);
+             (in->room_dormant?8:0)|(in->room_was_deactivated?16:0)|(in->room_placed?32:0);
   sw_raw(s,&fl,1);
   sw_u32(s,in->id); sw_i32(s,in->obj); sw_i32(s,in->room_owner);
   uint32_t fm=0;
@@ -6625,6 +6629,7 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
     uint8_t fl=0; sr_raw(s,&fl,1);
     in->active=fl&1; in->marked=(fl>>1)&1; in->deactivated=(fl>>2)&1;
     in->room_dormant=(fl>>3)&1; in->room_was_deactivated=(fl>>4)&1;
+    in->room_placed=s->v26?((fl>>5)&1):0;
     in->id=sr_u32(s); in->obj=sr_i32(s);
     in->room_owner=s->v19?sr_i32(s):vm->room_index;
     uint32_t fm=sr_u32(s);
@@ -6675,6 +6680,22 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
   in->timeline_running=0; in->timeline_loop=0;
   sr_varmap(vm,s,&in->vars);
 }
+
+static int state_instance_is_room_placed(GmlVM *vm, const GmlInstance *in){
+  if(!vm || !vm->win || !in || in->room_owner<0) return 0;
+  GmlRoom room;
+  if(gml_room_get(vm->win,in->room_owner,&room)!=0 || !room.obj_ptr ||
+     room.obj_ptr>vm->win->size || vm->win->size-room.obj_ptr<4) return 0;
+  const uint8_t *data=vm->win->data;
+  uint32_t count=u32(data,room.obj_ptr);
+  if(count>100000 || (uint64_t)room.obj_ptr+4u+(uint64_t)count*4u>vm->win->size) return 0;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t ptr=u32(data,room.obj_ptr+4+i*4);
+    if(ptr<=vm->win->size && vm->win->size-ptr>=16 && u32(data,ptr+12)==in->id) return 1;
+  }
+  return 0;
+}
+
 static void runtime_clear(GmlVM *vm){
   freeset_begin();
   varmap_free(&vm->globals);
@@ -6710,7 +6731,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x49564D47u); /* GMV25: GMV24 plus the classic modal-page state */
+  sw_u32(s,0x4A564D47u); /* GMV26: GMV25 plus room-authored instance draw identity */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -6885,7 +6906,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       && magic!=0x40564D47u && magic!=0x41564D47u && magic!=0x42564D47u
       && magic!=0x43564D47u && magic!=0x44564D47u && magic!=0x45564D47u
       && magic!=0x46564D47u && magic!=0x47564D47u && magic!=0x48564D47u
-      && magic!=0x49564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x49564D47u && magic!=0x4A564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -6908,6 +6929,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v23 = magic>=0x47564D47u;
   s.v24 = magic>=0x48564D47u;
   s.v25 = magic>=0x49564D47u;
+  s.v26 = magic>=0x4A564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -7106,6 +7128,9 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     sr_instance(vm,&s,&vm->inst[i]);
     if(!s.ok){ state_debug("instance failed",s.pos,(uint32_t)i); break; }
   }
+  if(!s.v26 && vm->win && vm->win->classic_version)
+    for(int i=0;i<vm->inst_count;i++)
+      vm->inst[i].room_placed=(unsigned char)state_instance_is_room_placed(vm,&vm->inst[i]);
   if(s.v7 && s.ok){
     int ns=sr_i32(&s);
     if(ns<0 || ns>GML_STRUCT_SLOT_MAX){ state_debug("bad struct count",s.pos,(uint32_t)ns); s.ok=0; ns=0; }

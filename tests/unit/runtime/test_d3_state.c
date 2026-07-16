@@ -32,6 +32,16 @@ static int colored_pixels(const uint32_t *pixels,int count){
   return colored;
 }
 
+static void free_extension_fixture(GmlVM *vm){
+  if(!vm) return;
+  gml_colgrid_invalidate(vm);
+  free(vm->cg_off);
+  free(vm->cg_items);
+  free(vm->cg_overlay);
+  free(vm->inst);
+  vm->cg_off=NULL; vm->cg_items=NULL; vm->cg_overlay=NULL; vm->inst=NULL;
+}
+
 static void store_u32le(uint8_t *dst,uint32_t value){
   dst[0]=(uint8_t)value;
   dst[1]=(uint8_t)(value>>8);
@@ -716,6 +726,44 @@ static int raster_fixtures(void){
     gml_part_reset_all();
   }
 
+  {
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    gml_part_reset_all();
+    gml_effect_create(1,3,32,24,0,0x0080FF);
+    for(int i=0;i<10;i++) gml_part_update_all();
+    size_t particle_state_size=gml_part_state_size(),particle_written=0,particle_used=0;
+    void *particle_state=malloc(particle_state_size);
+    if(!particle_state || !gml_part_state_save(particle_state,particle_state_size,&particle_written) ||
+       particle_written!=particle_state_size){
+      fprintf(stderr,"built-in effect identity state save failed\n");
+      free(particle_state);
+      return 0;
+    }
+    gml_effect_create(1,3,32,24,0,0xFF8000);
+    for(int i=0;i<12;i++) gml_part_update_all();
+    gml_part_system_draw_all(&render);
+    uint32_t expected_pixels[WIDTH*HEIGHT];
+    memcpy(expected_pixels,pixels,sizeof(expected_pixels));
+    if(!gml_part_state_load(particle_state,particle_written,&particle_used) ||
+       particle_used!=particle_written){
+      fprintf(stderr,"built-in effect identity state load failed\n");
+      free(particle_state);
+      return 0;
+    }
+    free(particle_state);
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    gml_effect_create(1,3,32,24,0,0xFF8000);
+    for(int i=0;i<12;i++) gml_part_update_all();
+    gml_part_system_draw_all(&render);
+    if(memcmp(pixels,expected_pixels,sizeof(expected_pixels))){
+      fprintf(stderr,"built-in effect identity state roundtrip mismatch\n");
+      return 0;
+    }
+    gml_part_reset_all();
+  }
+
   gml_d3_reset();
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
@@ -1361,7 +1409,7 @@ static int raster_fixtures(void){
         return 0;
       }
     }
-    free(extension_vm.inst);
+    free_extension_fixture(&extension_vm);
   }
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
