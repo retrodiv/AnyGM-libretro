@@ -759,6 +759,57 @@ static int validate_legacy_background_payload(ClassicReader *r){
   return !has_image || skip_legacy_image(r, "legacy background image");
 }
 
+static int validate_legacy_executable_image(ClassicReader *r, const char *what){
+  uint32_t version=0,exists=0,width=0,height=0,bytes=0;
+  if(!reader_u32(r,&version,what) || version<400 ||
+     !reader_u32(r,&exists,what) || exists>1) return 0;
+  if(!exists) return 1;
+  if(!reader_u32(r,&width,what) || !reader_u32(r,&height,what) ||
+     width>65536u || height>65536u ||
+     (uint64_t)width*(uint64_t)height*4u>SIZE_MAX ||
+     !reader_u32(r,&bytes,what)) return 0;
+  return reader_skip(r,bytes,what);
+}
+
+static int validate_legacy_executable_sprite_payload(ClassicReader *r){
+  uint32_t frames=0;
+  if(!reader_words(r,13,"compiled legacy sprite fields") ||
+     !reader_u32(r,&frames,"compiled legacy sprite frame count") ||
+     frames>(r->size-r->pos)/8u) return 0;
+  for(uint32_t frame=0;frame<frames;frame++)
+    if(!validate_legacy_executable_image(r,"compiled legacy sprite image")) return 0;
+  return 1;
+}
+
+static int validate_legacy_executable_background_payload(ClassicReader *r){
+  uint32_t has_image=0;
+  if(!reader_words(r,5,"compiled legacy background fields") ||
+     !reader_u32(r,&has_image,"compiled legacy background image flag") || has_image>1) return 0;
+  return !has_image || validate_legacy_executable_image(r,"compiled legacy background image");
+}
+
+static int validate_legacy_executable_room_payload(ClassicReader *r){
+  uint32_t backgrounds=0,views=0,instances=0,tiles=0;
+  if(!reader_string(r,"compiled legacy room caption") ||
+     !reader_words(r,6,"compiled legacy room fields") ||
+     !reader_string(r,"compiled legacy room creation code") ||
+     !reader_u32(r,&backgrounds,"compiled legacy room background count") ||
+     backgrounds>UINT32_MAX/10u ||
+     !reader_words(r,backgrounds*10u,"compiled legacy room backgrounds") ||
+     !reader_words(r,1,"compiled legacy room view-enabled flag") ||
+     !reader_u32(r,&views,"compiled legacy room view count") ||
+     views>UINT32_MAX/14u ||
+     !reader_words(r,views*14u,"compiled legacy room views") ||
+     !reader_u32(r,&instances,"compiled legacy room instance count") ||
+     instances>(r->size-r->pos)/20u) return 0;
+  for(uint32_t instance=0;instance<instances;instance++)
+    if(!reader_words(r,4,"compiled legacy room instance fields") ||
+       !reader_string(r,"compiled legacy room instance code")) return 0;
+  if(!reader_u32(r,&tiles,"compiled legacy room tile count") ||
+     tiles>UINT32_MAX/9u) return 0;
+  return reader_words(r,tiles*9u,"compiled legacy room tiles");
+}
+
 static int parse_legacy_slot(ClassicReader *r, GmlcClassicResourceType type,
                              GmlcClassicResourceSlot *slot, int retain_payload){
   uint32_t exists;
@@ -798,6 +849,51 @@ static int parse_legacy_slot(ClassicReader *r, GmlcClassicResourceType type,
     slot->legacy_layout = 1;
   }
   return valid;
+}
+
+
+
+static int parse_legacy_executable_slot(ClassicReader *r,GmlcClassicResourceType type,
+                                        GmlcClassicResourceSlot *slot){
+  uint32_t exists=0;
+  if(!reader_u32(r,&exists,"compiled legacy resource existence flag")) return 0;
+  slot->exists=exists!=0;
+  if(!slot->exists) return 1;
+  if(!reader_string_copy(r,&slot->name,"compiled legacy resource name") ||
+     !reader_u32(r,&slot->version,"compiled legacy resource version")) return 0;
+  size_t payload_start=r->pos;
+  int valid=0;
+  switch(type){
+    case GMLC_CLASSIC_SOUND: valid=validate_sound_payload(r); break;
+    case GMLC_CLASSIC_SPRITE: valid=validate_legacy_executable_sprite_payload(r); break;
+    case GMLC_CLASSIC_BACKGROUND: valid=validate_legacy_executable_background_payload(r); break;
+    case GMLC_CLASSIC_PATH: valid=validate_path_payload(r); break;
+    case GMLC_CLASSIC_SCRIPT:
+      valid=reader_legacy_executable_script(r,&slot->source); break;
+    case GMLC_CLASSIC_FONT: valid=validate_font_payload(r,0); break;
+    case GMLC_CLASSIC_TIMELINE: valid=validate_timeline_payload(r); break;
+    case GMLC_CLASSIC_OBJECT: valid=validate_object_payload(r); break;
+    case GMLC_CLASSIC_ROOM: valid=validate_legacy_executable_room_payload(r); break;
+    default: break;
+  }
+  if(!valid){
+    free(slot->name); slot->name=NULL;
+    free(slot->source); slot->source=NULL;
+    return 0;
+  }
+  slot->payload_size=r->pos-payload_start;
+  if(slot->payload_size){
+    slot->payload=(uint8_t*)malloc(slot->payload_size);
+    if(!slot->payload){
+      free(slot->name); slot->name=NULL;
+      free(slot->source); slot->source=NULL;
+      return reader_fail(r,"compiled legacy resource allocation");
+    }
+    memcpy(slot->payload,r->data+payload_start,slot->payload_size);
+  }
+  slot->legacy_layout=1;
+  slot->executable_layout=1;
+  return 1;
 }
 
 static int read_legacy_included_file(ClassicReader *r, GmlcClassicIncludedFile *out){
@@ -1351,6 +1447,141 @@ static int parse_executable_extensions(ClassicReader *r, GmlcClassicManifest *ou
        !reader_skip(r,encrypted_size,"executable extension data")) return 0;
   }
   return 1;
+}
+
+
+
+static int parse_legacy_executable_data(const uint8_t *data,size_t size,
+                                        uint32_t settings_version,
+                                        const GmlcClassicSettings *settings,
+                                        GmlcClassicManifest *out,char *err,size_t errcap){
+  ClassicReader r={data,size,0,err,errcap};
+  uint32_t runner_id=0,version=0,count=0;
+  if(!reader_u32(&r,&runner_id,"legacy executable runtime id") ||
+     !reader_u32(&r,&out->inventory.header.game_id,"legacy executable game id") ||
+     !reader_skip(&r,16,"legacy executable guid")) return 0;
+  memcpy(out->inventory.header.guid,data+r.pos-16u,16u);
+  out->inventory.header.version=GMLC_CLASSIC_GM7;
+  out->inventory.settings_version=settings_version;
+  if(settings) out->inventory.settings=*settings;
+  (void)runner_id;
+
+  if(!reader_u32(&r,&version,"legacy executable extension version") || version<700 ||
+     !reader_u32(&r,&count,"legacy executable extension count") ||
+     !parse_executable_extensions(&r,out,count)) return 0;
+
+  for(int type=0;type<GMLC_CLASSIC_RESOURCE_TYPES;type++){
+    if(!reader_u32(&r,&version,"legacy executable resource version") || version<400 ||
+       !reader_u32(&r,&count,"legacy executable resource count") ||
+       count>(r.size-r.pos)/4u) return 0;
+    out->inventory.resource_section_offsets[type]=r.pos-8u;
+    out->inventory.resource_slots[type]=count;
+    if(count){
+      out->slots[type]=(GmlcClassicResourceSlot*)calloc(count,sizeof(*out->slots[type]));
+      if(!out->slots[type]) return reader_fail(&r,"legacy executable resource allocation");
+    }
+    for(uint32_t slot=0;slot<count;slot++){
+      if(!parse_legacy_executable_slot(&r,(GmlcClassicResourceType)type,&out->slots[type][slot]))
+        return 0;
+      if(out->slots[type][slot].exists) out->existing[type]++;
+    }
+  }
+  if(!reader_u32(&r,&out->inventory.last_instance_id,"legacy executable last instance id") ||
+     !reader_u32(&r,&out->inventory.last_tile_id,"legacy executable last tile id")) return 0;
+  out->inventory.payload_end=r.pos;
+
+  if(!reader_u32(&r,&version,"legacy executable include version") || version<620 ||
+     !reader_u32(&r,&count,"legacy executable include count") ||
+     count>(r.size-r.pos)/36u) return 0;
+  if(count){
+    out->included_files=(GmlcClassicIncludedFile*)calloc(count,sizeof(*out->included_files));
+    if(!out->included_files) return reader_fail(&r,"legacy executable include allocation");
+    out->included_file_count=count;
+  }
+  for(uint32_t include=0;include<count;include++)
+    if(!read_legacy_included_file(&r,&out->included_files[include])) return 0;
+
+  if(!reader_u32(&r,&version,"legacy executable game-information version") || version<430 ||
+     !reader_words(&r,2,"legacy executable game-information fields")) return 0;
+  if(version>=600 &&
+     (!reader_string(&r,"legacy executable game-information caption") ||
+      !reader_words(&r,8,"legacy executable game-information window fields"))) return 0;
+  if(!reader_blob(&r,"legacy executable game information") ||
+     !reader_u32(&r,&version,"legacy executable library-code version") || version<500 ||
+     !reader_u32(&r,&count,"legacy executable library-code count") ||
+     count>(r.size-r.pos)/4u) return 0;
+  for(uint32_t code=0;code<count;code++){
+    char *source=NULL;
+    if(!reader_string_copy(&r,&source,"legacy executable library creation code") ||
+       !manifest_append_library_code(out,source)){
+      free(source); return 0;
+    }
+  }
+
+  if(!reader_u32(&r,&version,"legacy executable room-order version") || version<500 ||
+     !reader_u32(&r,&count,"legacy executable room-order count") ||
+     count!=out->existing[GMLC_CLASSIC_ROOM] ||
+     count>out->inventory.resource_slots[GMLC_CLASSIC_ROOM] ||
+     count>(r.size-r.pos)/4u) return 0;
+  out->room_order=(uint32_t*)calloc(count?count:1u,sizeof(*out->room_order));
+  unsigned char *seen=(unsigned char*)calloc(
+    out->inventory.resource_slots[GMLC_CLASSIC_ROOM]?
+      out->inventory.resource_slots[GMLC_CLASSIC_ROOM]:1u,1u);
+  if(!out->room_order || !seen){ free(seen); return reader_fail(&r,"legacy executable room order allocation"); }
+  out->room_order_count=count;
+  for(uint32_t room=0;room<count;room++){
+    uint32_t slot=0;
+    if(!reader_u32(&r,&slot,"legacy executable room index") ||
+       slot>=out->inventory.resource_slots[GMLC_CLASSIC_ROOM] ||
+       !out->slots[GMLC_CLASSIC_ROOM][slot].exists || seen[slot]){
+      free(seen); return reader_fail(&r,"legacy executable room order");
+    }
+    seen[slot]=1; out->room_order[room]=slot;
+  }
+  free(seen);
+  return 1;
+}
+
+static int parse_legacy_executable_manifest(const uint8_t *file,size_t size,size_t payload,
+                                            GmlcClassicManifest *out,char *err,size_t errcap){
+  if(payload>size || size-payload<16u){
+    if(err && errcap) snprintf(err,errcap,"classic executable: truncated legacy header");
+    return 0;
+  }
+  uint32_t settings_version=read_u32le(file+payload+12u);
+  GmlcClassicSettings settings={0};
+  ClassicReader settings_reader={file,size,payload+16u,NULL,0};
+  (void)read_settings_prefix(&settings_reader,&settings);
+
+  size_t compressed_pos=(size_t)-1;
+  uint32_t compressed_size=0;
+  for(size_t pos=payload+16u;pos+6u<=size;pos++){
+    uint32_t candidate=read_u32le(file+pos);
+    if(candidate>=2u && candidate<=INT_MAX && (size_t)candidate==size-pos-4u &&
+       file[pos+4u]==0x78u){
+      compressed_pos=pos+4u; compressed_size=candidate;
+    }
+  }
+  if(compressed_pos==(size_t)-1){
+    if(err && errcap) snprintf(err,errcap,"classic executable: legacy data block not found");
+    return 0;
+  }
+  int envelope_size=0;
+  char *envelope=stbi_zlib_decode_malloc((const char*)file+compressed_pos,
+                                         (int)compressed_size,&envelope_size);
+  if(!envelope || envelope_size<13){
+    STBI_FREE(envelope);
+    if(err && errcap) snprintf(err,errcap,"classic executable: invalid compressed legacy data");
+    return 0;
+  }
+  uint8_t *decoded=NULL; size_t decoded_size=0;
+  int ok=0; /* This operation is unavailable. */
+  STBI_FREE(envelope);
+  if(ok) ok=parse_legacy_executable_data(decoded,decoded_size,settings_version,
+                                         &settings,out,err,errcap);
+  free(decoded);
+  if(!ok) gmlc_classic_manifest_free(out);
+  return ok;
 }
 
 static int parse_executable_data(const uint8_t *data, size_t size,

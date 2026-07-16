@@ -556,6 +556,59 @@ static int expect_executable_manifest(void){
   return expect_executable_manifest_variant(&executable);
 }
 
+
+
+static int expect_legacy_executable_manifest(void){
+  Fixture executable;
+  if(!build_legacy_executable_fixture(&executable)) return 0;
+  GmlcClassicManifest manifest={0}; char err[256]={0};
+  int ok=gmlc_classic_manifest(executable.data,executable.size,&manifest,err,sizeof(err));
+  if(!ok) fprintf(stderr,"legacy executable manifest failed: %s\n",err);
+  if(ok){
+    ok=manifest.inventory.header.version==GMLC_CLASSIC_GM7 &&
+       manifest.inventory.header.game_id==0x24681357 && manifest.inventory.settings_version==702 &&
+       manifest.inventory.settings.interpolate==1 && manifest.inventory.settings.scaling==150 &&
+       manifest.existing[GMLC_CLASSIC_SPRITE]==1 &&
+       manifest.existing[GMLC_CLASSIC_BACKGROUND]==1 &&
+       manifest.existing[GMLC_CLASSIC_SCRIPT]==1 && manifest.existing[GMLC_CLASSIC_ROOM]==1 &&
+       !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source,"return 42;") &&
+       manifest.room_order_count==1 && manifest.room_order[0]==0 &&
+       manifest.library_creation_code_count==1;
+    if(!ok) fprintf(stderr,"legacy executable manifest values were not preserved\n");
+  }
+  if(ok){
+    GmlcProject project; gmlc_project_init(&project); project.prefer_memory_files=1;
+    ok=gmlc_classic_import_sprites(&manifest,&project,"tmp",err,sizeof(err)) &&
+       gmlc_classic_import_backgrounds(&manifest,&project,"tmp",err,sizeof(err)) &&
+       gmlc_classic_import_rooms(&manifest,&project,"tmp",err,sizeof(err));
+    if(!ok) fprintf(stderr,"legacy executable import failed: %s\n",err);
+    if(ok) ok=project.n_sprites==2 && project.n_memory_files>=2 &&
+      project.memory_files[0].kind==GMLC_MEMORY_RGBA && project.memory_files[0].size==8 &&
+      project.memory_files[0].data[0]==1 && project.memory_files[0].data[1]==2 &&
+      project.memory_files[0].data[2]==3 && project.memory_files[0].data[7]==0 &&
+      project.memory_files[1].data[0]==11 && project.memory_files[1].data[2]==13 &&
+      project.n_rooms==1 && project.rooms[0].width==320 && project.rooms[0].height==240 &&
+      project.rooms[0].speed==60 && project.rooms[0].background_color==0xff112233u &&
+      project.rooms[0].n_instances==1 && project.rooms[0].instances[0].instance_id==100001 &&
+      project.rooms[0].n_tiles==1 && project.rooms[0].tiles[0].tile_id==1000001;
+    if(!ok) fprintf(stderr,"legacy executable imported values were not preserved: sprites=%d files=%d "
+                           "rooms=%d size=%dx%d speed=%d colour=%08x instances=%d instance=%d "
+                           "tiles=%d tile=%d\n",
+                           project.n_sprites,project.n_memory_files,project.n_rooms,
+                           project.n_rooms?project.rooms[0].width:0,
+                           project.n_rooms?project.rooms[0].height:0,
+                           project.n_rooms?project.rooms[0].speed:0,
+                           project.n_rooms?project.rooms[0].background_color:0,
+                           project.n_rooms?project.rooms[0].n_instances:0,
+                           project.n_rooms&&project.rooms[0].n_instances?project.rooms[0].instances[0].instance_id:0,
+                           project.n_rooms?project.rooms[0].n_tiles:0,
+                           project.n_rooms&&project.rooms[0].n_tiles?project.rooms[0].tiles[0].tile_id:0);
+    gmlc_project_free(&project);
+  }
+  gmlc_classic_manifest_free(&manifest);
+  return ok;
+}
+
 static void fixture_legacy_room(Fixture *f, const char *name){
   fixture_u32(f,1); fixture_string(f,name); fixture_u32(f,541);
   fixture_string(f,"");
@@ -1399,6 +1452,16 @@ static void discard_imported_rooms(GmlcProject *project, int remove_sources){
 }
 
 int main(int argc, char **argv){
+  if(argc==3 && !strcmp(argv[1],"--write-legacy-exe-fixture")){
+    Fixture executable;
+    if(!build_legacy_executable_fixture(&executable)) return 1;
+    FILE *file=fopen(argv[2],"wb");
+    int ok=file && fwrite(executable.data,1,executable.size,file)==executable.size;
+    if(file && fclose(file)!=0) ok=0;
+    if(!ok){ fprintf(stderr,"cannot write legacy executable fixture: %s\n",argv[2]); return 1; }
+    printf("wrote legacy executable fixture: %s (%zu bytes)\n",argv[2],executable.size);
+    return 0;
+  }
   if(argc==3 && !strcmp(argv[1],"--write-exe-fixture")){
     Fixture executable;
     if(!build_executable_fixture(&executable)) return 1;
@@ -1437,6 +1500,7 @@ int main(int argc, char **argv){
   if(expect_manifest()) ++passed; else ++failed;
   if(expect_manifest_810()) ++passed; else ++failed;
   if(expect_executable_manifest()) ++passed; else ++failed;
+  if(expect_legacy_executable_manifest()) ++passed; else ++failed;
   if(expect_gm7_decode()) ++passed; else ++failed;
   if(expect_legacy_manifest(600)) ++passed; else ++failed;
   if(expect_legacy_manifest(701)) ++passed; else ++failed;

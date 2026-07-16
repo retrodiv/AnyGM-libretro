@@ -817,12 +817,36 @@ static uint8_t *import_bgra_to_rgba(const uint8_t *bgra, uint32_t bytes,
 }
 
 static int decode_legacy_image(ImportReader *r, int expected_width, int expected_height,
-                               int transparent, uint8_t **rgba_out, uint32_t *bytes_out,
+                               int transparent, int executable_layout,
+                               uint8_t **rgba_out, uint32_t *bytes_out,
                                const char *what){
   uint32_t marker;
   *rgba_out=NULL; *bytes_out=0;
   if(!import_u32(r,&marker,what)) return 0;
   if(marker==UINT32_MAX) return 1;
+  if(executable_layout){
+    uint32_t exists=0,width=0,height=0;
+    const uint8_t *compressed=NULL; uint32_t compressed_size=0;
+    if(marker<400 || !import_u32(r,&exists,what) || exists>1) return 0;
+    if(!exists) return 1;
+    if(!import_u32(r,&width,what) || !import_u32(r,&height,what) ||
+       width!=(uint32_t)expected_width || height!=(uint32_t)expected_height ||
+       !import_blob(r,&compressed,&compressed_size,what) || compressed_size>INT32_MAX ||
+       (uint64_t)width*(uint64_t)height*4u>UINT32_MAX) return 0;
+    int raw_size=0;
+    char *raw=stbi_zlib_decode_malloc((const char*)compressed,(int)compressed_size,&raw_size);
+    uint32_t expected_bytes=(uint32_t)((uint64_t)width*(uint64_t)height*4u);
+    if(!raw || raw_size<0 || (uint32_t)raw_size!=expected_bytes){
+      if(r->err && r->errcap) snprintf(r->err,r->errcap,"classic import: invalid compressed %s",what);
+      STBI_FREE(raw); return 0;
+    }
+    uint8_t *rgba=import_bgra_to_rgba((const uint8_t*)raw,expected_bytes,width,height,what,
+                                      r->err,r->errcap);
+    STBI_FREE(raw);
+    if(!rgba) return 0;
+    *rgba_out=rgba; *bytes_out=expected_bytes;
+    return 1;
+  }
   const uint8_t *compressed; uint32_t compressed_size;
   if(!import_blob(r,&compressed,&compressed_size,what) || compressed_size>INT32_MAX) return 0;
   int raw_size=0;
@@ -902,6 +926,7 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
       for(uint32_t frame=0;frame<frames;frame++){
         uint8_t *rgba=NULL; uint32_t rgba_bytes=0;
         if(!decode_legacy_image(&r,sprite->width,sprite->height,fields[6]!=0,
+                                source->executable_layout,
                                 &rgba,&rgba_bytes,"legacy sprite image")){
           free_imported_sprites(project); return 0;
         }
@@ -1091,8 +1116,9 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
     if(!slots[i].exists) continue;
     if(slots[i].legacy_layout){
       ImportReader r={slots[i].payload,slots[i].payload_size,0,err,errcap};
-      uint32_t fields[12],has_image;
-      for(int field=0;field<12;field++) if(!import_u32(&r,&fields[field],"legacy background field")){
+      uint32_t fields[12]={0},has_image;
+      int field_count=slots[i].executable_layout?5:12;
+      for(int field=0;field<field_count;field++) if(!import_u32(&r,&fields[field],"legacy background field")){
         free_imported_backgrounds(project,first_sprite); return 0;
       }
       if(!import_u32(&r,&has_image,"legacy background image flag") ||
@@ -1101,6 +1127,7 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
       }
       uint8_t *rgba=NULL; uint32_t rgba_bytes=0;
       if(has_image && !decode_legacy_image(&r,(int)fields[0],(int)fields[1],fields[2]!=0,
+                                           slots[i].executable_layout,
                                            &rgba,&rgba_bytes,"legacy background image")){
         free_imported_backgrounds(project,first_sprite); return 0;
       }
@@ -1120,9 +1147,11 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
       stbi_image_free(rgba);
       if(!image_ok){ free_imported_backgrounds(project,first_sprite); return 0; }
       background->sprite_id=project->n_sprites-1;
-      background->sprite_no_export=fields[5]?0:1;
-      background->tile_width=(int32_t)fields[6]; background->tile_height=(int32_t)fields[7];
-      background->border_x=(int32_t)fields[8]; background->border_y=(int32_t)fields[9];
+      background->sprite_no_export=slots[i].executable_layout?1:(fields[5]?0:1);
+      if(!slots[i].executable_layout){
+        background->tile_width=(int32_t)fields[6]; background->tile_height=(int32_t)fields[7];
+        background->border_x=(int32_t)fields[8]; background->border_y=(int32_t)fields[9];
+      }
       int step_x=background->tile_width+(int32_t)fields[10];
       int step_y=background->tile_height+(int32_t)fields[11];
       background->columns=step_x>0 && sprite->width>background->border_x
@@ -2540,19 +2569,23 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
     if(!slots[i].exists) continue;
     ImportReader r = {slots[i].payload, slots[i].payload_size, 0, err, errcap};
     const uint8_t *caption = NULL; uint32_t caption_length = 0;
-    uint32_t fields[9];
+    uint32_t fields[9]={0};
     if(!import_skip_string(&r, &caption, &caption_length, "room caption")){
       free_imported_rooms(project); return 0;
     }
     (void)caption; (void)caption_length;
-    for(int field = 0; field < 9; ++field)
+    int compact_legacy=slots[i].legacy_layout && slots[i].executable_layout;
+    int room_field_count=compact_legacy?6:9;
+    for(int field = 0; field < room_field_count; ++field)
       if(!import_u32(&r, &fields[field], "room field")){
         free_imported_rooms(project); return 0;
       }
     room->width = (int32_t)fields[0]; room->height = (int32_t)fields[1];
-    room->speed = (int32_t)fields[5]; room->persistent = fields[6] != 0;
-    room->background_color = fields[7] | 0xFF000000u;
-    room->draw_background_color = fields[8] != 0;
+    int runtime_fields=compact_legacy?2:5;
+    room->speed = (int32_t)fields[runtime_fields];
+    room->persistent = fields[runtime_fields+1] != 0;
+    room->background_color = fields[runtime_fields+2] | 0xFF000000u;
+    room->draw_background_color = fields[runtime_fields+3] != 0;
     if(getenv("GMLC_LOG_ROOM"))
       fprintf(stderr,"[classic-room] index=%u size=%dx%d speed=%d persistent=%d colour=%08x clear=%d\n",
               i,room->width,room->height,room->speed,room->persistent,
@@ -2620,7 +2653,7 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
     if(!room->instances){ free_imported_rooms(project); return 0; }
     room->n_instances = room->cap_instances = (int)instances;
     for(uint32_t instance = 0; instance < instances; ++instance){
-      uint32_t x, y, object_id, instance_id, locked;
+      uint32_t x, y, object_id, instance_id, locked=0;
       if(!import_u32(&r, &x, "room instance x") || !import_u32(&r, &y, "room instance y") ||
          !import_u32(&r, &object_id, "room instance object") ||
          !import_u32(&r, &instance_id, "room instance id")){
@@ -2636,7 +2669,8 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
       target->color = 0xFFFFFFFFu;
       if(!target->id || !target->name ||
          !import_room_code(&r,project,cache_dir,instance_leaf,&target->creation_code_path,err,errcap) ||
-         !import_u32(&r, &locked, "room instance locked flag")){
+         (!compact_legacy &&
+          !import_u32(&r, &locked, "room instance locked flag"))){
         free_imported_rooms(project); return 0;
       }
       (void)locked;
@@ -2649,8 +2683,9 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
     if(!room->tiles){ free_imported_rooms(project); return 0; }
     room->n_tiles = room->cap_tiles = (int)tiles;
     for(uint32_t tile = 0; tile < tiles; ++tile){
-      uint32_t value[10];
-      for(int field = 0; field < 10; ++field)
+      uint32_t value[10]={0};
+      int tile_field_count=compact_legacy?9:10;
+      for(int field = 0; field < tile_field_count; ++field)
         if(!import_u32(&r, &value[field], "room tile field")){
           free_imported_rooms(project); return 0;
         }
@@ -2661,11 +2696,13 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
       target->height = (int32_t)value[6]; target->depth = (int32_t)value[7];
       target->tile_id = (int32_t)value[8];
     }
-    uint32_t editor_field;
-    for(int field = 0; field < 14; ++field)
-      if(!import_u32(&r, &editor_field, "room editor field")){
-        free_imported_rooms(project); return 0;
-      }
+    if(!compact_legacy){
+      uint32_t editor_field;
+      for(int field = 0; field < 14; ++field)
+        if(!import_u32(&r, &editor_field, "room editor field")){
+          free_imported_rooms(project); return 0;
+        }
+    }
     if(r.pos != r.size){
       if(err && errcap) snprintf(err, errcap, "classic import: trailing room payload");
       free_imported_rooms(project); return 0;
