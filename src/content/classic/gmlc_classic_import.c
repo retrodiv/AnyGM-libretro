@@ -786,6 +786,36 @@ static char *import_rgba_path(GmlcProject *project, const char *cache_dir,
   return path;
 }
 
+/* GM8 stores uncompressed project and executable image blobs in BGRA byte order.  The legacy
+ * layouts above contain encoded bitmap files, which stb_image has already converted to RGBA, so
+ * only raw blobs pass through this helper. */
+static uint8_t *import_bgra_to_rgba(const uint8_t *bgra, uint32_t bytes,
+                                    uint32_t width, uint32_t height,
+                                    const char *what, char *err, size_t errcap){
+  if(!bgra || !width || !height) return NULL;
+  if((size_t)height>SIZE_MAX/(size_t)width){
+    if(err && errcap) snprintf(err,errcap,"classic import: oversized %s",what);
+    return NULL;
+  }
+  size_t count=(size_t)width*(size_t)height;
+  if(count>SIZE_MAX/4u || bytes<count*4u){
+    if(err && errcap) snprintf(err,errcap,"classic import: truncated %s BGRA pixels",what);
+    return NULL;
+  }
+  uint8_t *rgba=(uint8_t*)malloc(count*4u);
+  if(!rgba){
+    if(err && errcap) snprintf(err,errcap,"classic import: out of memory converting %s pixels",what);
+    return NULL;
+  }
+  for(size_t pixel=0;pixel<count;pixel++){
+    rgba[pixel*4u]=bgra[pixel*4u+2u];
+    rgba[pixel*4u+1u]=bgra[pixel*4u+1u];
+    rgba[pixel*4u+2u]=bgra[pixel*4u];
+    rgba[pixel*4u+3u]=bgra[pixel*4u+3u];
+  }
+  return rgba;
+}
+
 static int decode_legacy_image(ImportReader *r, int expected_width, int expected_height,
                                int transparent, uint8_t **rgba_out, uint32_t *bytes_out,
                                const char *what){
@@ -923,20 +953,9 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
       snprintf(leaf, sizeof(leaf), "classic_sprite_%06u_%06u.png", slot_index, frame);
       uint8_t *converted=NULL;
       const uint8_t *frame_pixels=pixels;
-      if(source->executable_layout && pixels && width && height){
-        size_t count=(size_t)width*(size_t)height;
-        if(count>SIZE_MAX/4u || pixel_bytes<count*4u){
-          if(err&&errcap) snprintf(err,errcap,"classic import: truncated executable sprite pixels");
-          free_imported_sprites(project); return 0;
-        }
-        converted=(uint8_t*)malloc(count*4u);
+      if(pixels && width && height){
+        converted=import_bgra_to_rgba(pixels,pixel_bytes,width,height,"sprite",err,errcap);
         if(!converted){ free_imported_sprites(project); return 0; }
-        for(size_t p=0;p<count;p++){
-          converted[p*4u]=pixels[p*4u+2u];
-          converted[p*4u+1u]=pixels[p*4u+1u];
-          converted[p*4u+2u]=pixels[p*4u];
-          converted[p*4u+3u]=pixels[p*4u+3u];
-        }
         frame_pixels=converted;
       }
       sprite->frame_paths[frame] = import_rgba_path(project,cache_dir,leaf,frame_pixels,pixel_bytes,
@@ -1145,24 +1164,9 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
     snprintf(leaf, sizeof(leaf), "classic_background_%06u.png", i);
     uint8_t *converted = NULL;
     const uint8_t *image_pixels = pixels;
-    if(slots[i].executable_layout && pixels && width && height){
-      if((size_t)height>SIZE_MAX/(size_t)width){
-        if(err && errcap) snprintf(err,errcap,"classic import: oversized executable background");
-        free_imported_backgrounds(project,first_sprite); return 0;
-      }
-      size_t count = (size_t)width * (size_t)height;
-      if(count > SIZE_MAX / 4u || pixel_bytes < count * 4u){
-        if(err && errcap) snprintf(err,errcap,"classic import: truncated executable background pixels");
-        free_imported_backgrounds(project,first_sprite); return 0;
-      }
-      converted=(uint8_t*)malloc(count*4u);
+    if(pixels && width && height){
+      converted=import_bgra_to_rgba(pixels,pixel_bytes,width,height,"background",err,errcap);
       if(!converted){ free_imported_backgrounds(project,first_sprite); return 0; }
-      for(size_t pixel=0;pixel<count;pixel++){
-        converted[pixel*4u]=pixels[pixel*4u+2u];
-        converted[pixel*4u+1u]=pixels[pixel*4u+1u];
-        converted[pixel*4u+2u]=pixels[pixel*4u];
-        converted[pixel*4u+3u]=pixels[pixel*4u+3u];
-      }
       image_pixels=converted;
     }
     if(sprite->frame_paths)
@@ -1241,7 +1245,7 @@ static int classic_font_parse(const GmlcClassicManifest *classic,
     classic_font_spec_free(spec);
     return 0;
   }
-  if(r.pos!=r.size){
+  if(r.pos!=r.size && !slot->executable_layout){
     if(err && errcap) snprintf(err,errcap,"classic import: trailing font payload");
     classic_font_spec_free(spec);
     return 0;
@@ -1268,6 +1272,68 @@ static int classic_font_parse(const GmlcClassicManifest *classic,
   }
   spec->first=range_first;
   spec->last=range_last;
+  return 1;
+}
+
+/* A compiled GM8 resource carries the compiler's complete alpha atlas after the ordinary project
+ * metadata. Importing it verbatim preserves the original glyph hints, metrics and host-font
+ * choice. Return zero for a metadata-only resource, one for an imported atlas and -1 on error. */
+static int classic_font_build_compiled(const GmlcClassicResourceSlot *slot,
+                                       const ClassicFontSpec *spec,
+                                       ClassicFontRaster *raster,
+                                       char *err, size_t errcap){
+  memset(raster,0,sizeof(*raster));
+  if(!slot || !slot->executable_layout) return 0;
+  ImportReader r={slot->payload,slot->payload_size,0,err,errcap};
+  uint32_t ignored=0;
+  if(!import_skip_string(&r,NULL,&ignored,"compiled font face") ||
+     !import_skip_words(&r,5,"compiled font fields")) return -1;
+  if(r.pos==r.size) return 0;
+
+  uint32_t map[256u*6u];
+  for(size_t i=0;i<sizeof(map)/sizeof(map[0]);i++)
+    if(!import_u32(&r,&map[i],"compiled font glyph map")) return -1;
+  uint32_t width=0,height=0,alpha_size=0;
+  const uint8_t *alpha=NULL;
+  if(!import_u32(&r,&width,"compiled font atlas width") ||
+     !import_u32(&r,&height,"compiled font atlas height") ||
+     !import_blob(&r,&alpha,&alpha_size,"compiled font atlas") || r.pos!=r.size ||
+     !width || !height || width>4096 || height>4096 ||
+     (uint64_t)width*(uint64_t)height!=alpha_size){
+    if(err && errcap && !err[0]) snprintf(err,errcap,"classic import: invalid compiled font atlas");
+    return -1;
+  }
+  uint8_t *rgba=(uint8_t*)malloc((size_t)alpha_size*4u);
+  int count=spec->last-spec->first+1;
+  GmlcFontGlyph *glyphs=(GmlcFontGlyph*)calloc((size_t)count,sizeof(*glyphs));
+  if(!rgba || !glyphs){
+    free(rgba); free(glyphs);
+    if(err && errcap) snprintf(err,errcap,"classic import: out of memory loading compiled font");
+    return -1;
+  }
+  for(uint32_t pixel=0;pixel<alpha_size;pixel++){
+    rgba[pixel*4u]=rgba[pixel*4u+1u]=rgba[pixel*4u+2u]=255;
+    rgba[pixel*4u+3u]=alpha[pixel];
+  }
+  int line_height=0;
+  for(int i=0;i<count;i++){
+    int ch=spec->first+i;
+    const uint32_t *entry=map+(size_t)ch*6u;
+    uint32_t x=entry[0],y=entry[1],w=entry[2],h=entry[3];
+    if(x>width || y>height || w>width-x || h>height-y ||
+       x>INT32_MAX || y>INT32_MAX || w>INT32_MAX || h>INT32_MAX){
+      free(rgba); free(glyphs);
+      if(err && errcap) snprintf(err,errcap,"classic import: invalid compiled glyph bounds");
+      return -1;
+    }
+    glyphs[i].ch=ch; glyphs[i].x=(int)x; glyphs[i].y=(int)y;
+    glyphs[i].w=(int)w; glyphs[i].h=(int)h;
+    glyphs[i].shift=(int32_t)entry[4]; glyphs[i].offset=(int32_t)entry[5];
+    if((int)h>line_height) line_height=(int)h;
+  }
+  if(line_height<1) line_height=1;
+  raster->rgba=rgba; raster->width=(int)width; raster->height=(int)height;
+  raster->line_height=line_height; raster->glyphs=glyphs; raster->n_glyphs=count;
   return 1;
 }
 
@@ -1742,9 +1808,15 @@ int gmlc_classic_import_fonts(const GmlcClassicManifest *classic,
     if(!classic_font_parse(classic,&slots[i],&spec,err,errcap)){
       classic_font_spec_free(&spec); free_imported_fonts(project); return 0;
     }
-    ClassicFontFile file=classic_font_resolve_file(&spec);
-    int rasterized=file.path && classic_font_build_truetype(&spec,&file,&raster,err,errcap);
-    if(!rasterized){
+    ClassicFontFile file={0};
+    int compiled=classic_font_build_compiled(&slots[i],&spec,&raster,err,errcap);
+    if(compiled<0){ classic_font_spec_free(&spec); free_imported_fonts(project); return 0; }
+    int rasterized=0;
+    if(!compiled){
+      file=classic_font_resolve_file(&spec);
+      rasterized=file.path && classic_font_build_truetype(&spec,&file,&raster,err,errcap);
+    }
+    if(!compiled && !rasterized){
       if(err && errcap) err[0]='\0';
       if(!classic_font_build_fallback(&spec,&raster,err,errcap)){
         free(file.path); classic_font_spec_free(&spec); free_imported_fonts(project); return 0;
@@ -1753,7 +1825,8 @@ int gmlc_classic_import_fonts(const GmlcClassicManifest *classic,
     if(getenv("GML_LOG_FONT"))
       fprintf(stderr,"[font] classic face=%s pt=%d bold=%d italic=%d source=%s line=%d glyphs=%d\n",
               spec.face?spec.face:"",spec.point_size,spec.bold,spec.italic,
-              rasterized?file.path:"embedded fallback",raster.line_height,raster.n_glyphs);
+              compiled?"compiled atlas":rasterized?file.path:"embedded fallback",
+              raster.line_height,raster.n_glyphs);
     font->png_path=classic_font_store_raster(project,cache_dir,i,&raster,err,errcap);
     font->width=raster.width; font->height=raster.height; font->em_size=raster.line_height;
     font->glyphs=raster.glyphs; font->n_glyphs=font->cap_glyphs=raster.n_glyphs;

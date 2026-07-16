@@ -10,6 +10,11 @@
 #define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#define STBI_NO_GIF
+#include "stb_image.h"
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
@@ -84,7 +89,7 @@ static int expect_gm7_decode(void){
 }
 
 typedef struct {
-  unsigned char data[4096];
+  unsigned char data[16384];
   size_t size;
 } Fixture;
 
@@ -423,6 +428,25 @@ static int build_executable_fixture(Fixture *executable){
       fixture_u32(&background,1); fixture_u32(&background,1); fixture_u32(&background,sizeof(bgra));
       memcpy(background.data+background.size,bgra,sizeof(bgra)); background.size+=sizeof(bgra);
       fixture_compressed(&decoded,background.data,(int)background.size);
+    } else if(type==GMLC_CLASSIC_FONT){
+      Fixture font={{0},0};
+      fixture_u32(&decoded,1);
+      fixture_u32(&font,1); fixture_string(&font,"fixture_compiled_font"); fixture_u32(&font,800);
+      fixture_string(&font,"fixture face"); fixture_u32(&font,10); fixture_u32(&font,1);
+      fixture_u32(&font,0); fixture_u32(&font,65); fixture_u32(&font,66);
+      for(unsigned entry=0;entry<256u*6u;entry++){
+        unsigned value=0;
+        if(entry==65u*6u+2u || entry==65u*6u+3u) value=1;
+        else if(entry==65u*6u+4u) value=3;
+        else if(entry==66u*6u) value=1;
+        else if(entry==66u*6u+2u || entry==66u*6u+3u) value=1;
+        else if(entry==66u*6u+4u) value=4;
+        else if(entry==66u*6u+5u) value=(unsigned)-1;
+        fixture_u32(&font,value);
+      }
+      fixture_u32(&font,2); fixture_u32(&font,1); fixture_u32(&font,2);
+      font.data[font.size++]=17; font.data[font.size++]=231;
+      fixture_compressed(&decoded,font.data,(int)font.size);
     } else if(type==GMLC_CLASSIC_ROOM){
       Fixture room={{0},0};
       fixture_u32(&decoded,1);
@@ -449,7 +473,7 @@ static int build_executable_fixture(Fixture *executable){
   fixture_u32(&decoded,800); fixture_u32(&decoded,0); /* help */
   fixture_u32(&decoded,500); fixture_u32(&decoded,1); /* library code */
   fixture_string(&decoded,"global.fixture_executable_started = 1;");
-  fixture_u32(&decoded,700); fixture_u32(&decoded,0); /* room order */
+  fixture_u32(&decoded,700); fixture_u32(&decoded,1); fixture_u32(&decoded,0); /* room order */
 
   memset(executable,0,sizeof(*executable));
   executable->data[0]='M'; executable->data[1]='Z'; executable->size=16;
@@ -488,10 +512,12 @@ static int expect_executable_manifest_variant(const Fixture *executable){
   if(!ok) fprintf(stderr,"executable manifest failed: %s\n",err);
   if(ok){
     ok=manifest.inventory.header.version==GMLC_CLASSIC_GM8 &&
-       manifest.inventory.header.game_id==0x13572468 && manifest.room_order_count==0 &&
+       manifest.inventory.header.game_id==0x13572468 && manifest.room_order_count==1 &&
+       manifest.room_order[0]==0 &&
        manifest.extension_count==1 && !strcmp(manifest.extension_names[0],"fixture_executable_extension") &&
        manifest.existing[GMLC_CLASSIC_SCRIPT]==1 &&
        manifest.existing[GMLC_CLASSIC_BACKGROUND]==1 &&
+       manifest.existing[GMLC_CLASSIC_FONT]==1 &&
        manifest.existing[GMLC_CLASSIC_ROOM]==1 &&
        !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source,"exit;") &&
        manifest.trigger_def_count==1 && manifest.constant_def_count==2 &&
@@ -499,6 +525,23 @@ static int expect_executable_manifest_variant(const Fixture *executable){
        manifest.included_file_count==1 && manifest.included_files[0].data_size==2 &&
        !strcmp(manifest.included_files[0].file_name,"executable.dat") &&
        manifest.library_creation_code_count==2;
+    if(ok){
+      GmlcProject project;
+      gmlc_project_init(&project);
+      project.prefer_memory_files=1;
+      ok=gmlc_classic_import_fonts(&manifest,&project,"tmp",err,sizeof(err));
+      if(ok) ok=project.n_fonts==1 && project.fonts[0].n_glyphs==2 &&
+        project.fonts[0].em_size==1 && project.fonts[0].glyphs[0].ch==65 &&
+        project.fonts[0].glyphs[0].x==0 && project.fonts[0].glyphs[0].w==1 &&
+        project.fonts[0].glyphs[0].shift==3 && project.fonts[0].glyphs[0].offset==0 &&
+        project.fonts[0].glyphs[1].ch==66 && project.fonts[0].glyphs[1].x==1 &&
+        project.fonts[0].glyphs[1].shift==4 && project.fonts[0].glyphs[1].offset==-1 &&
+        project.n_memory_files==1 && project.memory_files[0].kind==GMLC_MEMORY_RGBA &&
+        project.memory_files[0].width==2 && project.memory_files[0].height==1 &&
+        project.memory_files[0].size==8 && project.memory_files[0].data[3]==17 &&
+        project.memory_files[0].data[7]==231;
+      gmlc_project_free(&project);
+    }
     gmlc_classic_manifest_free(&manifest);
   }
   return ok;
@@ -711,11 +754,20 @@ static int expect_sprite_import(int executable_layout){
   if(!ok) fprintf(stderr, "sprite import failed: %s\n", err);
   if(ok){
     struct stat st;
-    ok = project.n_sprites == 1 && project.sprites[0].runtime_id == 0 &&
+    int width=0,height=0,components=0;
+    unsigned char *rgba=NULL;
+    if(project.n_sprites==1 && project.sprites[0].frame_paths)
+      rgba=stbi_load(project.sprites[0].frame_paths[0],&width,&height,&components,4);
+    ok = project.n_sprites == 1 && project.sprites[0].frame_paths &&
+         project.sprites[0].runtime_id == 0 &&
          project.sprites[0].width == 2 && project.sprites[0].height == 1 &&
          project.sprites[0].xorig == 1 && project.sprites[0].yorig == 2 &&
          project.sprites[0].bbox_right == 1 &&
-         !stat(project.sprites[0].frame_paths[0], &st) && st.st_size > 0;
+         !stat(project.sprites[0].frame_paths[0], &st) && st.st_size > 0 &&
+         rgba && width==2 && height==1 &&
+         rgba[0]==1 && rgba[1]==2 && rgba[2]==3 && rgba[3]==255 &&
+         rgba[4]==4 && rgba[5]==5 && rgba[6]==6 && rgba[7]==128;
+    stbi_image_free(rgba);
     remove(project.sprites[0].frame_paths[0]);
   }
   for(int i = 0; i < project.n_sprites; ++i){
@@ -896,8 +948,18 @@ static int expect_background_import(int executable_layout){
 #endif
   int ok = gmlc_classic_import_backgrounds(&manifest, &project, dir, err, sizeof(err));
   if(!ok) fprintf(stderr, "background import failed: %s\n", err);
-  if(ok) ok = project.n_sprites == 1 && project.sprites[0].runtime_id == -1 &&
-              project.n_tilesets == 1 && project.tilesets[0].sprite_id == 0;
+  if(ok){
+    int width=0,height=0,components=0;
+    unsigned char *rgba=NULL;
+    if(project.n_sprites==1 && project.sprites[0].frame_paths)
+      rgba=stbi_load(project.sprites[0].frame_paths[0],&width,&height,&components,4);
+    ok = project.n_sprites == 1 && project.sprites[0].frame_paths &&
+         project.sprites[0].runtime_id == -1 &&
+         project.n_tilesets == 1 && project.tilesets[0].sprite_id == 0 &&
+         rgba && width==1 && height==1 &&
+         rgba[0]==1 && rgba[1]==2 && rgba[2]==3 && rgba[3]==255;
+    stbi_image_free(rgba);
+  }
   if(project.n_sprites){
     remove(project.sprites[0].frame_paths[0]);
     free(project.sprites[0].frame_paths[0]); free(project.sprites[0].frame_paths);

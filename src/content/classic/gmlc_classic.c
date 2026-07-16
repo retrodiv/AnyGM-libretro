@@ -377,8 +377,21 @@ static int validate_path_payload(ClassicReader *r){
   return reader_doubles(r, points > UINT32_MAX / 3 ? UINT32_MAX : points * 3, "path points");
 }
 
-static int validate_font_payload(ClassicReader *r){
-  return reader_string(r, "font face") && reader_words(r, 5, "font fields");
+static int validate_font_payload(ClassicReader *r,int executable_layout){
+  if(!reader_string(r,"font face") || !reader_words(r,5,"font fields")) return 0;
+  /* Project files stop at the typeface metadata. Compiled executable
+   * containers append a fixed 256-entry glyph map and compiler-produced
+   * alpha atlas. Retain that authoritative raster instead of asking the host
+   * to recreate it with a potentially different installed font. */
+  if(!executable_layout || (r->pos+1==r->size && r->data[r->pos]==0)) return 1;
+  if(!reader_words(r,256u*6u,"compiled font glyph map")) return 0;
+  uint32_t width=0,height=0,bytes=0;
+  if(!reader_u32(r,&width,"compiled font atlas width") ||
+     !reader_u32(r,&height,"compiled font atlas height") ||
+     !reader_u32(r,&bytes,"compiled font atlas size")) return 0;
+  if(width>4096 || height>4096 || (uint64_t)width*(uint64_t)height!=bytes)
+    return reader_fail(r,"compiled font atlas dimensions");
+  return reader_skip(r,bytes,"compiled font atlas pixels");
 }
 
 static int validate_actions(ClassicReader *r){
@@ -763,7 +776,7 @@ static int parse_legacy_slot(ClassicReader *r, GmlcClassicResourceType type,
     case GMLC_CLASSIC_PATH: valid = validate_path_payload(r); break;
     case GMLC_CLASSIC_SCRIPT:
       valid = reader_string_copy(r, &slot->source, "legacy script source"); break;
-    case GMLC_CLASSIC_FONT: valid = validate_font_payload(r); break;
+    case GMLC_CLASSIC_FONT: valid = validate_font_payload(r,0); break;
     case GMLC_CLASSIC_TIMELINE: valid = validate_timeline_payload(r); break;
     case GMLC_CLASSIC_OBJECT: valid = validate_object_payload(r); break;
     case GMLC_CLASSIC_ROOM: valid = validate_room_payload(r); break;
@@ -1096,7 +1109,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
       case GMLC_CLASSIC_BACKGROUND: valid = validate_background_payload(&r,raw_deflate); break;
       case GMLC_CLASSIC_PATH: valid = validate_path_payload(&r); break;
       case GMLC_CLASSIC_SCRIPT: break;
-      case GMLC_CLASSIC_FONT: valid = validate_font_payload(&r); break;
+      case GMLC_CLASSIC_FONT: valid = validate_font_payload(&r,raw_deflate); break;
       case GMLC_CLASSIC_TIMELINE: valid = validate_timeline_payload(&r); break;
       case GMLC_CLASSIC_OBJECT: valid = validate_object_payload(&r); break;
       case GMLC_CLASSIC_ROOM: valid = validate_room_payload(&r); break;
