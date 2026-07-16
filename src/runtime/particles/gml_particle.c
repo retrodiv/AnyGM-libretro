@@ -545,7 +545,6 @@ static double particle_wiggle(long long tick,int period,int quarter){
 }
 
 static void update_sys(int sysid, PSys *s){
-  emit_streams(sysid,s);
   for(int i=0;i<s->n;){
     Part *p=&s->parts[i]; PType *t=pt(p->type);
     if(t){
@@ -572,6 +571,9 @@ static void update_sys(int sysid, PSys *s){
     if(p->life<=0){ s->parts[i]=s->parts[--s->n]; continue; }   /* swap-remove */
     i++;
   }
+  /* Stream particles are born after the current population advances. They are therefore drawn at
+   * their initial position/alpha once and only start ageing on the following particle update. */
+  emit_streams(sysid,s);
 }
 void gml_part_system_update(int id){ PSys *s=ps(id); if(s) update_sys(id,s); }
 void gml_part_update_all(void){ for(int i=0;i<PS_MAX;i++) if(g_ps[i].used && g_ps[i].auto_update) update_sys(i+1,&g_ps[i]); }
