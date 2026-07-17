@@ -11,8 +11,23 @@
 
 static int fixture_key=-1;
 static int fixture_key_edge=-1;
+static double fixture_mouse_x,fixture_mouse_y,fixture_mouse_set_x,fixture_mouse_set_y;
 int gml_input_key(int key, int edge){ return key==fixture_key && edge==fixture_key_edge; }
 int gml_input_gamepad(int button, int edge){ (void)button; (void)edge; return 0; }
+void gml_input_mouse(double *rx,double *ry,double *gx,double *gy,double *wx,double *wy,
+                     int *held,int *pressed,int *released,int *wheel){
+  if(rx) *rx=fixture_mouse_x;
+  if(ry) *ry=fixture_mouse_y;
+  if(gx) *gx=fixture_mouse_x;
+  if(gy) *gy=fixture_mouse_y;
+  if(wx) *wx=fixture_mouse_x;
+  if(wy) *wy=fixture_mouse_y;
+  if(held) *held=0;
+  if(pressed) *pressed=0;
+  if(released) *released=0;
+  if(wheel) *wheel=0;
+}
+void gml_input_mouse_set(double x,double y){ fixture_mouse_set_x=x; fixture_mouse_set_y=y; }
 GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);
 int gml_builtin_fast_id(const char *name);
 
@@ -180,10 +195,31 @@ static int raster_fixtures(void){
       fprintf(stderr,"classic virtual display/window size mismatch\n");
       return 0;
     }
+    fixture_mouse_x=320; fixture_mouse_y=240;
+    if(call_values(&vm,"window_mouse_get_x",NULL,0).d!=320 ||
+       call_values(&vm,"window_mouse_get_y",NULL,0).d!=240 ||
+       call_values(&vm,"display_mouse_get_x",NULL,0).d!=640 ||
+       call_values(&vm,"display_mouse_get_y",NULL,0).d!=360){
+      fprintf(stderr,"classic display/window mouse coordinate mismatch\n");
+      return 0;
+    }
+    { double p[2]={640,360}; call_numbers(&vm,"display_mouse_set",p,2); }
+    if(fixture_mouse_set_x!=320 || fixture_mouse_set_y!=240){
+      fprintf(stderr,"classic display mouse warp mismatch: %.3f,%.3f\n",
+              fixture_mouse_set_x,fixture_mouse_set_y);
+      return 0;
+    }
     win.classic_version=0;
     if(call_values(&vm,"display_get_width",NULL,0).d!=640 ||
-       call_values(&vm,"display_get_height",NULL,0).d!=480){
+       call_values(&vm,"display_get_height",NULL,0).d!=480 ||
+       call_values(&vm,"display_mouse_get_x",NULL,0).d!=320 ||
+       call_values(&vm,"display_mouse_get_y",NULL,0).d!=240){
       fprintf(stderr,"modern presentation display size changed\n");
+      return 0;
+    }
+    { double p[2]={123,45}; call_numbers(&vm,"display_mouse_set",p,2); }
+    if(fixture_mouse_set_x!=123 || fixture_mouse_set_y!=45){
+      fprintf(stderr,"modern display mouse coordinates changed\n");
       return 0;
     }
     render.presentation_w=render.presentation_h=0;

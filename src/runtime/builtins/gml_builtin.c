@@ -94,6 +94,18 @@ static int display_size(const GmlVM *vm, const GmlRender *r, int height){
   if(vm && vm->win && vm->win->classic_version) return height?720:1280;
   return presentation_size(vm,r,height);
 }
+/* GM7/8 display_mouse_* is expressed in desktop-display coordinates, while window_mouse_* and
+ * the libretro pointer are expressed in presented-window pixels.  Keeping both spaces identical
+ * made a centred absolute pointer look off-centre whenever the deterministic classic virtual
+ * display differed from the game window (continuous rotation in mouse-look projects). */
+static double classic_display_mouse_coord(const GmlVM *vm,const GmlRender *r,double value,
+                                          int height,int to_window){
+  if(!vm || !vm->win || !vm->win->classic_version) return value;
+  int display=display_size(vm,r,height), window=presentation_size(vm,r,height);
+  if(display<=0 || window<=0) return value;
+  return to_window ? value*(double)window/(double)display
+                   : value*(double)display/(double)window;
+}
 static const char *gm_string_tmp(GmlVal v){
   static char ring[8][64];
   static int ri;
@@ -2455,6 +2467,14 @@ static void d3_sample(GmlRender *R, const GmlD3Texture *texture, double u, doubl
   double ax=fx-floor(fx), ay=fy-floor(fy);
   x0%=texture->w; y0%=texture->h;
   if(x0<0) x0+=texture->w; if(y0<0) y0+=texture->h;
+  if(!R->interp){
+    x0=(x0+(ax>=0.5))%texture->w;
+    y0=(y0+(ay>=0.5))%texture->h;
+    int nearest[4];
+    d3_texture_texel(texture,x0,y0,nearest);
+    for(int c=0;c<4;c++) channel[c]=nearest[c];
+    return;
+  }
   int x1=(x0+1)%texture->w, y1=(y0+1)%texture->h;
   int p[4][4];
   d3_texture_texel(texture,x0,y0,p[0]); d3_texture_texel(texture,x1,y0,p[1]);
@@ -2475,12 +2495,7 @@ static void d3_sample(GmlRender *R, const GmlD3Texture *texture, double u, doubl
     return;
   }
   double w[4]={(1-ax)*(1-ay),ax*(1-ay),(1-ax)*ay,ax*ay};
-  if(R->interp){
-    for(int c=0;c<4;c++) channel[c]=p[0][c]*w[0]+p[1][c]*w[1]+p[2][c]*w[2]+p[3][c]*w[3];
-  } else {
-    const int *q=p[(ay>=0.5)*2+(ax>=0.5)];
-    for(int c=0;c<4;c++) channel[c]=q[c];
-  }
+  for(int c=0;c<4;c++) channel[c]=p[0][c]*w[0]+p[1][c]*w[1]+p[2][c]*w[2]+p[3][c]*w[3];
 }
 static double d3_edge(double ax,double ay,double bx,double by,double px,double py){
   return (px-ax)*(by-ay)-(py-ay)*(bx-ax);
@@ -2495,20 +2510,37 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
   double focal_x=g_d3.aspect>1e-9?(R->fbw*0.5)/(tangent*g_d3.aspect):focal_y;
   double sx[3],sy[3],iz[3],uz[3],vz[3],riz[3],giz[3],biz[3],aiz[3];
   double depth_value[3],view_distance[3];
-  double pixel_offset=g_d3.classic?0.5:0.0;
+  int flat_color=in[0].r==in[1].r&&in[0].r==in[2].r&&
+                 in[0].g==in[1].g&&in[0].g==in[2].g&&
+                 in[0].b==in[1].b&&in[0].b==in[2].b&&
+                 in[0].alpha==in[1].alpha&&in[0].alpha==in[2].alpha;
+  int opaque_white=flat_color&&in[0].r==255.0&&in[0].g==255.0&&in[0].b==255.0&&
+                   in[0].alpha>=1.0&&!g_d3.lighting&&!g_d3.fog&&
+                   (!R->alphablend||R->blendmode==0);
+  /* The fixed-function viewport uses a half-pixel anchor represented just below 0.5.
+   * Keeping the 11-bit phase avoids pushing boundary samples into the next texel. */
+  double pixel_offset=g_d3.classic?0.5-1.0/2048.0:0.0;
+  /* Bias the vertices once: perspective interpolation preserves a constant phase exactly, while
+   * keeping this work out of the per-pixel inner loop. */
+  double u_phase=(g_d3.classic&&!R->interp)?1.0/65536.0:0.0;
+  double v_phase=(g_d3.classic&&!R->interp)?-1.0/524288.0:0.0;
   for(int i=0;i<3;i++){
     if(g_d3.ortho){
       double ow=fabs(g_d3.ortho_w)>1e-9?g_d3.ortho_w:1;
       double oh=fabs(g_d3.ortho_h)>1e-9?g_d3.ortho_h:1;
-      iz[i]=1; uz[i]=in[i].u; vz[i]=in[i].v;
-      riz[i]=in[i].r; giz[i]=in[i].g; biz[i]=in[i].b; aiz[i]=in[i].alpha;
+      iz[i]=1; uz[i]=in[i].u+u_phase; vz[i]=in[i].v+v_phase;
+      if(!flat_color){
+        riz[i]=in[i].r; giz[i]=in[i].g; biz[i]=in[i].b; aiz[i]=in[i].alpha;
+      }
       sx[i]=in[i].x*R->fbw/ow+pixel_offset; sy[i]=in[i].y*R->fbh/oh+pixel_offset;
       depth_value[i]=1000000.0-in[i].z;
       view_distance[i]=fabs(in[i].z);
     } else {
       if(in[i].z<=1e-6) return;
-      iz[i]=1.0/in[i].z; uz[i]=in[i].u*iz[i]; vz[i]=in[i].v*iz[i];
-      riz[i]=in[i].r*iz[i]; giz[i]=in[i].g*iz[i]; biz[i]=in[i].b*iz[i]; aiz[i]=in[i].alpha*iz[i];
+      iz[i]=1.0/in[i].z; uz[i]=(in[i].u+u_phase)*iz[i]; vz[i]=(in[i].v+v_phase)*iz[i];
+      if(!flat_color){
+        riz[i]=in[i].r*iz[i]; giz[i]=in[i].g*iz[i]; biz[i]=in[i].b*iz[i]; aiz[i]=in[i].alpha*iz[i];
+      }
       sx[i]=R->fbw*0.5+in[i].x*focal_x*iz[i]+pixel_offset;
       sy[i]=R->fbh*0.5-in[i].y*focal_y*iz[i]+pixel_offset;
       depth_value[i]=iz[i];
@@ -2522,10 +2554,15 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
   int miny=(int)floor(fmin(sy[0],fmin(sy[1],sy[2]))), maxy=(int)ceil(fmax(sy[0],fmax(sy[1],sy[2])));
   if(minx<0) minx=0; if(miny<0) miny=0;
   if(maxx>=R->fbw) maxx=R->fbw-1; if(maxy>=R->fbh) maxy=R->fbh-1;
-  for(int y=miny;y<=maxy;y++) for(int x=minx;x<=maxx;x++){
-    double px=x+0.5,py=y+0.5;
-    double b0=d3_edge(sx[1],sy[1],sx[2],sy[2],px,py)/area;
-    double b1=d3_edge(sx[2],sy[2],sx[0],sy[0],px,py)/area;
+  double inv_area=1.0/area;
+  double edge0_step=sy[2]-sy[1],edge1_step=sy[0]-sy[2];
+  for(int y=miny;y<=maxy;y++){
+    double py=y+0.5,px=minx+0.5;
+    double edge0=d3_edge(sx[1],sy[1],sx[2],sy[2],px,py);
+    double edge1=d3_edge(sx[2],sy[2],sx[0],sy[0],px,py);
+    for(int x=minx;x<=maxx;x++,edge0+=edge0_step,edge1+=edge1_step){
+    double b0=edge0*inv_area;
+    double b1=edge1*inv_area;
     double b2=1.0-b0-b1;
     if(b0<-1e-9 || b1<-1e-9 || b2<-1e-9) continue;
     double invz=b0*iz[0]+b1*iz[1]+b2*iz[2];
@@ -2533,12 +2570,26 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     size_t di=(size_t)y*R->fbw+x;
     if(g_d3.hidden && ztest<=g_d3.depth[di]) continue;
     double sampled[4]={255,255,255,255};
-    if(texture&&texture->kind) d3_sample(R,texture,(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz,
-                                        (b0*vz[0]+b1*vz[1]+b2*vz[2])/invz,sampled);
-    double vr=(b0*riz[0]+b1*riz[1]+b2*riz[2])/invz;
-    double vg=(b0*giz[0]+b1*giz[1]+b2*giz[2])/invz;
-    double vb=(b0*biz[0]+b1*biz[1]+b2*biz[2])/invz;
-    double vertex_alpha=(b0*aiz[0]+b1*aiz[1]+b2*aiz[2])/invz;
+    if(texture&&texture->kind){
+      double u=(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz;
+      double v=(b0*vz[0]+b1*vz[1]+b2*vz[2])/invz;
+      d3_sample(R,texture,u,v,sampled);
+    }
+    if(opaque_white&&sampled[3]>=255.0){
+      if(R->pending_underlay||R->pending_fill) gml_render_prepare_draw(R);
+      R->fb_all_transparent=0;
+      R->fb[di]=0xFF000000u|((uint32_t)sampled[0]<<16)|
+                ((uint32_t)sampled[1]<<8)|(uint32_t)sampled[2];
+      if(g_d3.hidden&&g_d3.zwrite) g_d3.depth[di]=(float)ztest;
+      continue;
+    }
+    double vr=in[0].r,vg=in[0].g,vb=in[0].b,vertex_alpha=in[0].alpha;
+    if(!flat_color){
+      vr=(b0*riz[0]+b1*riz[1]+b2*riz[2])/invz;
+      vg=(b0*giz[0]+b1*giz[1]+b2*giz[2])/invz;
+      vb=(b0*biz[0]+b1*biz[1]+b2*biz[2])/invz;
+      vertex_alpha=(b0*aiz[0]+b1*aiz[1]+b2*aiz[2])/invz;
+    }
     if(vr<0)vr=0; else if(vr>255)vr=255;
     if(vg<0)vg=0; else if(vg>255)vg=255;
     if(vb<0)vb=0; else if(vb>255)vb=255;
@@ -2567,6 +2618,7 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     double alpha=(sampled[3]/255.0)*vertex_alpha;
     draw_px_alpha(R,x,y,color,alpha);
     if(g_d3.hidden && g_d3.zwrite && alpha>0.0) g_d3.depth[di]=(float)ztest;
+  }
   }
 }
 static GmlD3Vertex d3_camera_vertex(double x,double y,double z,double u,double v){
@@ -7982,9 +8034,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"device_mouse_y_to_gui")){ double v; gml_input_mouse(NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
   if(!strcmp(nm,"device_mouse_raw_x")||!strcmp(nm,"window_mouse_get_x")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
   if(!strcmp(nm,"device_mouse_raw_y")||!strcmp(nm,"window_mouse_get_y")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL); return vreal(v); }
-  if(!strcmp(nm,"display_mouse_get_x")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL,NULL); return vreal(v); }
-  if(!strcmp(nm,"display_mouse_get_y")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL); return vreal(v); }
-  if(!strcmp(nm,"display_mouse_set")){ gml_input_mouse_set(N(a,n,0),N(a,n,1)); return vreal(0); }
+  if(!strcmp(nm,"display_mouse_get_x")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL,NULL);
+    return vreal(classic_display_mouse_coord(vm,(GmlRender*)vm->render,v,0,0)); }
+  if(!strcmp(nm,"display_mouse_get_y")){ double v; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,&v,NULL,NULL,NULL,NULL);
+    return vreal(classic_display_mouse_coord(vm,(GmlRender*)vm->render,v,1,0)); }
+  if(!strcmp(nm,"display_mouse_set")){
+    GmlRender *render=(GmlRender*)vm->render;
+    gml_input_mouse_set(classic_display_mouse_coord(vm,render,N(a,n,0),0,1),
+                        classic_display_mouse_coord(vm,render,N(a,n,1),1,1)); return vreal(0); }
   if(!strcmp(nm,"window_mouse_set")) return vreal(0);
   if(!strcmp(nm,"joystick_exists")){
     int joy=(int)N(a,n,0), dev=joy>0?joy-1:joy;
@@ -9010,6 +9067,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"d3d_set_projection")){
     d3_set_camera(N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),
                   N(a,n,6),N(a,n,7),N(a,n,8));
+    /* The legacy overload uses the classic fixed projection aperture. Its single-precision
+     * matrix lands slightly below the ideal 640-pixel focal length at a 4:3 framebuffer. */
+    if(g_d3.classic) g_d3.fov=41.1125;
     g_d3.aspect=0; g_d3.near_clip=.05; g_d3.far_clip=32000;
     return vreal(0);
   }
