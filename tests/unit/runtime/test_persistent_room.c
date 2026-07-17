@@ -37,10 +37,11 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 int main(void){
   GmlcProject project; GmlcObject objects[3]; GmlcRoom rooms[2];
   GmlcScript scripts[2]; char *script_order[2];
+  GmlcPath fixture_path; GmlcPathPoint fixture_path_points[2];
   GmlcTimeline timeline; GmlcTimelineMoment timeline_moments[3];
   GmlcRoomInstance placed_instance;
   int room_order[2]={0,1};
-  GmlcObjectEvent object_events[23];
+  GmlcObjectEvent object_events[24];
   GmlcProjectTrigger trigger;
   GmlcProjectIncludedFile included;
   unsigned char included_data[]={1,3,5,7};
@@ -48,6 +49,7 @@ int main(void){
   GmlcProjectConstant constant={(char*)"fixture_constant",(char*)"6*7"};
   memset(&project,0,sizeof(project)); memset(objects,0,sizeof(objects)); memset(rooms,0,sizeof(rooms));
   memset(scripts,0,sizeof(scripts));
+  memset(&fixture_path,0,sizeof(fixture_path)); memset(fixture_path_points,0,sizeof(fixture_path_points));
   memset(&timeline,0,sizeof(timeline)); memset(timeline_moments,0,sizeof(timeline_moments));
   memset(&placed_instance,0,sizeof(placed_instance));
   memset(object_events,0,sizeof(object_events)); memset(&trigger,0,sizeof(trigger)); memset(&included,0,sizeof(included));
@@ -59,6 +61,11 @@ int main(void){
   script_order[1]=scripts[1].id;
   project.scripts=scripts; project.n_scripts=project.cap_scripts=2;
   project.script_order_ids=script_order; project.n_script_order=2;
+  fixture_path.id=fixture_path.name=(char*)"fixture_path";
+  fixture_path.precision=4; fixture_path.points=fixture_path_points; fixture_path.n_points=2;
+  fixture_path_points[0].speed=fixture_path_points[1].speed=100;
+  fixture_path_points[1].x=100;
+  project.paths=&fixture_path; project.n_paths=project.cap_paths=1;
   timeline.id=timeline.name=(char*)"fixture_timeline";
   timeline.moments=timeline_moments; timeline.n_moments=timeline.cap_moments=3;
   timeline_moments[0].step=0; timeline_moments[1].step=2; timeline_moments[2].step=4;
@@ -75,7 +82,7 @@ int main(void){
   objects[1].name="obj_changed"; objects[1].sprite_id=-1; objects[1].mask_id=-1; objects[1].parent_id=-1; objects[1].visible=1;
   objects[1].events=&object_events[10]; objects[1].n_events=objects[1].cap_events=11;
   objects[2].name="obj_create_order"; objects[2].sprite_id=-1; objects[2].mask_id=-1; objects[2].parent_id=-1; objects[2].visible=0;
-  objects[2].events=&object_events[21]; objects[2].n_events=objects[2].cap_events=2;
+  objects[2].events=&object_events[21]; objects[2].n_events=objects[2].cap_events=3;
   object_events[0].event_type=11; object_events[0].event_number=0;
   object_events[1].event_type=3; object_events[1].event_number=0;
   object_events[2].event_type=2; object_events[2].event_number=0;
@@ -99,6 +106,8 @@ int main(void){
   object_events[20].event_type=11; object_events[20].event_number=0;
   object_events[21].event_type=0; object_events[21].event_number=0;
   object_events[22].event_type=6; object_events[22].event_number=23;
+  object_events[23].event_type=4; object_events[23].event_number=1;
+  object_events[23].collision_object_id=1;
   trigger.name=(char*)"fixture_trigger"; trigger.moment=1; trigger.runtime_id=0;
   for(int i=0;i<2;i++){
     rooms[i].name=i?"room_b":"room_a"; rooms[i].width=320; rooms[i].height=240; rooms[i].speed=30;
@@ -175,6 +184,14 @@ int main(void){
   if(!joystick_event_file || fwrite(joystick_event_source,1,sizeof(joystick_event_source)-1,joystick_event_file)!=sizeof(joystick_event_source)-1 ||
      fclose(joystick_event_file)!=0)return 1;
   object_events[22].source_path=joystick_event;
+  char solid_collision[]="/tmp/gml-solid-collision-XXXXXX";
+  int solid_collision_fd=mkstemp(solid_collision); if(solid_collision_fd<0)return 1;
+  FILE *solid_collision_file=fdopen(solid_collision_fd,"wb");
+  const char solid_collision_source[]="y -= 1; global.studio_solid_hits += 1;\n";
+  if(!solid_collision_file ||
+     fwrite(solid_collision_source,1,sizeof(solid_collision_source)-1,solid_collision_file)!=sizeof(solid_collision_source)-1 ||
+     fclose(solid_collision_file)!=0)return 1;
+  object_events[23].source_path=solid_collision;
   char instance_order[]="/tmp/gml-instance-order-XXXXXX"; int instance_order_fd=mkstemp(instance_order); if(instance_order_fd<0)return 1;
   FILE *instance_order_file=fdopen(instance_order_fd,"wb");
   const char instance_order_source[]="global.create_order=global.create_order*10+1;\n";
@@ -317,6 +334,38 @@ int main(void){
       image_single_indexed&&image_single_indexed->t==V_REAL?image_single_indexed->d:-1.0,
       user_crear_hits&&user_crear_hits->t==V_REAL?user_crear_hits->d:-1.0); return 1;
   }
+  uint32_t path_next_id=vm.next_id;
+  GmlInstance *path_probe=gml_instance_create(&vm,100,100,2); if(!path_probe)return 1;
+  GmlInstance *path_control=gml_instance_create(&vm,100,100,2); if(!path_control)return 1;
+  gml_set_global_scalar(&vm,"create_order",12);
+  uint32_t path_probe_id=path_probe->id, path_control_id=path_control->id;
+  path_probe=find_slot(&vm,path_probe_id); path_control=find_slot(&vm,path_control_id);
+  if(!path_probe || !path_control)return 1;
+  gml_path_start(&vm,path_probe,0,10,0,0);
+  gml_path_start(&vm,path_control,0,10,0,0);
+  path_probe->hspeed=7; path_probe->vspeed=0; path_probe->speed=7; path_probe->direction=0;
+  gml_vm_step(&vm);
+  path_probe=find_slot(&vm,path_probe_id); path_control=find_slot(&vm,path_control_id);
+  if(!path_probe || !path_control)return 1;
+  if(fabs(path_probe->x-path_control->x)>1e-6 || fabs(path_probe->y-path_control->y)>1e-6 ||
+     path_probe->hspeed!=0 || path_probe->vspeed!=0 || path_probe->speed!=0 ||
+     fabs(path_probe->direction)>1e-9){
+    fprintf(stderr,"path motion retained stale ordinary velocity: probe=(%.6f,%.6f) control=(%.6f,%.6f) direction=%.6f velocity=(%.6f,%.6f) speed=%.6f\n",
+      path_probe->x,path_probe->y,path_control->x,path_control->y,path_probe->direction,
+      path_probe->hspeed,path_probe->vspeed,path_probe->speed);
+    return 1;
+  }
+  double paused_start=path_probe->x;
+  path_probe->path_speed=0; path_probe->hspeed=2; path_probe->speed=2; path_probe->direction=0;
+  gml_vm_step(&vm);
+  path_probe=find_slot(&vm,path_probe_id); path_control=find_slot(&vm,path_control_id);
+  if(!path_probe || !path_control)return 1;
+  if(fabs(path_probe->x-(paused_start+2))>1e-6 || path_probe->hspeed!=2 || path_probe->speed!=2){
+    fprintf(stderr,"paused path suppressed ordinary velocity: start=%.6f expected=%.6f x=%.6f hspeed=%.6f speed=%.6f\n",
+      paused_start,paused_start+2,path_probe->x,path_probe->hspeed,path_probe->speed); return 1;
+  }
+  gml_instance_destroy(&vm,path_probe); gml_instance_destroy(&vm,path_control);
+  vm.next_id=path_next_id;
   *gml_varmap_put(&vm.globals,"timeline_order")=vreal(0);
   timeline_probe->timeline_index=0; timeline_probe->timeline_position=0;
   timeline_probe->timeline_speed=-1; timeline_probe->timeline_running=1; timeline_probe->timeline_loop=0;
@@ -863,7 +912,31 @@ int main(void){
   if(slot->image_index!=0.5){
     fprintf(stderr,"classic sprite-less drawing frame did not advance: index=%.2f\n",slot->image_index); return 1;
   }
-  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(shadowed_alias_script); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
+  win.classic_version=0;
+  GmlInstance *studio_contact=gml_instance_create(&vm,40,40,1); if(!studio_contact)return 1;
+  uint32_t studio_contact_id=studio_contact->id;
+  GmlInstance *studio_actor=gml_instance_create(&vm,40,40,2); if(!studio_actor)return 1;
+  uint32_t studio_actor_id=studio_actor->id;
+  studio_contact=find_slot(&vm,studio_contact_id); studio_actor=find_slot(&vm,studio_actor_id);
+  if(!studio_contact || !studio_actor)return 1;
+  studio_contact->sprite_index=studio_contact->mask_index=0;
+  studio_actor->sprite_index=studio_actor->mask_index=0;
+  studio_contact->image_xscale=studio_contact->image_yscale=1;
+  studio_actor->image_xscale=studio_actor->image_yscale=1;
+  studio_contact->solid=1;
+  studio_contact->speed=studio_contact->hspeed=studio_contact->vspeed=0;
+  studio_actor->speed=studio_actor->hspeed=studio_actor->vspeed=0;
+  gml_colgrid_invalidate(&vm);
+  gml_vm_step(&vm);
+  studio_actor=find_slot(&vm,studio_actor_id);
+  GmlVal *studio_solid_hits=gml_varmap_get(&vm.globals,"studio_solid_hits");
+  if(!studio_actor || studio_actor->y!=40 || !studio_solid_hits ||
+     studio_solid_hits->t!=V_REAL || studio_solid_hits->d!=1){
+    fprintf(stderr,"Studio solid collision transaction mismatch: y=%.0f hits=%.0f\n",
+      studio_actor?studio_actor->y:-1.0,
+      studio_solid_hits&&studio_solid_hits->t==V_REAL?studio_solid_hits->d:-1.0); return 1;
+  }
+  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(shadowed_alias_script); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(solid_collision); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
   for(int i=0;i<2;i++) unlink(key_files[i]);
   for(int i=0;i<2;i++) unlink(mouse_files[i]);

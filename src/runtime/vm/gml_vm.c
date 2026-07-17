@@ -2170,7 +2170,17 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
       }
       if(namebuf[0] && count<maxlog && strstr(w->code[ci].name,namebuf) && (off<0 || (long)(pc-start)==off)){
         extern long g_vm_frame;
-        fprintf(stderr,"[pc] f%ld %s+%u sp=%d top=",g_vm_frame,w->code[ci].name,pc-start,sp);
+        GmlInstance *dbg_self=vm->cur_self, *dbg_other=vm->cur_other;
+        const char *dbg_self_name=(dbg_self && dbg_self->obj>=0 && dbg_self->obj<vm->n_objects)
+          ? vm->objects[dbg_self->obj].name : "?";
+        const char *dbg_other_name=(dbg_other && dbg_other->obj>=0 && dbg_other->obj<vm->n_objects)
+          ? vm->objects[dbg_other->obj].name : "?";
+        fprintf(stderr,"[pc] f%ld %s+%u sp=%d self=%s/%u(hsp=%.3f,xs=%.1f) other=%s/%u(hsp=%.3f,xs=%.1f) top=",
+          g_vm_frame,w->code[ci].name,pc-start,sp,
+          dbg_self_name?dbg_self_name:"?",dbg_self?dbg_self->id:0,
+          dbg_self?dbg_self->hspeed:0.0,dbg_self?dbg_self->image_xscale:0.0,
+          dbg_other_name?dbg_other_name:"?",dbg_other?dbg_other->id:0,
+          dbg_other?dbg_other->hspeed:0.0,dbg_other?dbg_other->image_xscale:0.0);
         if(sp>0) log_val_simple(stk[sp-1]); else fprintf(stderr,"<empty>");
         fprintf(stderr,"\n");
         count++;
@@ -2874,7 +2884,8 @@ static void run_paths(GmlVM *vm){
   for(int i=0;i<vm->inst_count;i++){ GmlInstance *in=&vm->inst[i];
     if(!in->active||in->marked) continue;
     int pi=(int)in->path_index; if(pi<0||pi>=vm->n_paths) continue;
-    GmlPath *p=&vm->paths[pi]; if(p->len<=0){ continue; }
+    GmlPath *p=&vm->paths[pi]; if(p->len<=0 || in->path_speed==0){ continue; }
+    double before_x=in->x, before_y=in->y;
     in->path_positionprevious=in->path_position;
     double scl=in->path_scale!=0?fabs(in->path_scale):1;
     double sf=path_speed_factor(p,in->path_position)/100.0;
@@ -2883,8 +2894,16 @@ static void run_paths(GmlVM *vm){
     int ended=(next_pos>=1.0 || next_pos<0.0);
     if(ended) in->path_position=(next_pos>=1.0)?1.0:0.0;
     else in->path_position=next_pos;
-    double px,py; path_eval(p,in->path_position,&px,&py);
-    path_world_xy(in,px,py,&in->x,&in->y); gml_colgrid_touch(in);
+    double px,py,new_x,new_y; path_eval(p,in->path_position,&px,&py);
+    path_world_xy(in,px,py,&new_x,&new_y);
+    /* Path movement owns speed/direction for this step. GameMaker derives direction from the
+     * path displacement, then clears the ordinary speed components so a pre-path hspeed is not
+     * observable as stale motion (or applied again on the following step). */
+    in->direction=atan2(before_y-new_y,new_x-before_x)*180.0/M_PI;
+    if(in->direction<0) in->direction+=360.0;
+    if(in->direction>=360.0) in->direction=fmod(in->direction,360.0);
+    in->speed=0; in->hspeed=0; in->vspeed=0;
+    in->x=new_x; in->y=new_y; gml_colgrid_touch(in);
     path_log_step(vm,in,pi);
     /* GM "End of Path" event (Other, subtype 8): fired when the path reaches its end. Many objects
      * chain off this (an intro object flies in on a path, then a later event spawns the enemy). */
@@ -5810,7 +5829,9 @@ static void run_collisions(GmlVM *vm){
       }
       GmlInstance *oi=&vm->inst[j];
       if(oi==si||!oi->active||oi->marked||oi->obj<0||oi->obj>=vm->n_objects) continue;
-      int classic_pair=vm->win && vm->win->classic_version && (si->solid || oi->solid);
+      int solid_pair=si->solid || oi->solid;
+      int classic_pair=solid_pair && vm->win && vm->win->classic_version;
+      int legacy_solid_pair=solid_pair && (!vm->win || vm->win->bytecode<17);
       uint64_t pair_key=((uint64_t)(unsigned)(i<j?i:j)<<32)|(unsigned)(i<j?j:i);
       int pair_done=0;
       if(classic_pair)
@@ -5849,8 +5870,7 @@ static void run_collisions(GmlVM *vm){
          * positions of both participants. Event code may then resolve the contact
          * explicitly; restoring only the colliding axis incorrectly preserves
          * same-Step lateral motion on a vertical landing. */
-        int classic_solid=classic_pair;
-        if(classic_solid){
+        if(solid_pair){
           si->x=si->xprevious; si->y=si->yprevious;
           oi->x=oi->xprevious; oi->y=oi->yprevious;
           si->path_position=si->path_positionprevious;
@@ -5866,8 +5886,11 @@ static void run_collisions(GmlVM *vm){
               (si->obj>=0&&si->obj<vm->n_objects)?vm->objects[si->obj].name:"?",
               (oi->obj>=0&&oi->obj<vm->n_objects)?vm->objects[oi->obj].name:"?",dt);
           } else run_event_code_from(vm,si,oi,suffix,handler_obj,code); }
-        if(classic_solid){
-          if(si->active && !si->marked && oi->active && !oi->marked){
+        if(legacy_solid_pair){
+          /* Classic collision dispatch treats the two directed events as one
+           * transaction. Studio dispatches each registered direction in its
+           * normal instance order, while retaining the same solid rollback. */
+          if(classic_pair && si->active && !si->marked && oi->active && !oi->marked){
             int reverse_handler=-1, reverse_target=-1, reverse_code=-1;
             if(col_event_for_pair(vm,oi->obj,si->obj,&reverse_handler,&reverse_target,&reverse_code)){
               char reverse_suffix[32]; snprintf(reverse_suffix,sizeof reverse_suffix,"Collision_%d",reverse_target);
@@ -5888,19 +5911,19 @@ static void run_collisions(GmlVM *vm){
               gml_colgrid_touch(si); gml_colgrid_touch(oi);
             }
           }
-          if(classic_done_n>=classic_done_cap){
+          if(classic_pair && classic_done_n>=classic_done_cap){
             int nc=classic_done_cap?classic_done_cap*2:16;
             uint64_t *np=realloc(classic_done,(size_t)nc*sizeof(*np));
             if(np){ classic_done=np; classic_done_cap=nc; }
           }
-          if(classic_done_n<classic_done_cap) classic_done[classic_done_n++]=pair_key;
+          if(classic_pair && classic_done_n<classic_done_cap) classic_done[classic_done_n++]=pair_key;
         }
         /* If Collision code left the pair intersecting, apply the solid fallback
          * to the participant that entered the contact. Classic actions that stop
          * an incoming motion restore the pre-contact coordinate too; motion that
          * remains active stays under the event's explicit contact resolution. */
         int oi_stopped=oi->hspeed==0.0 && oi->vspeed==0.0;
-        if(!classic_solid && si->active && !si->marked && oi->active && !oi->marked &&
+        if(!solid_pair && si->active && !si->marked && oi->active && !oi->marked &&
            si->solid && oi_moved && (!oi_kinematic ||
              (vm->win && vm->win->classic_version && oi_stopped))){
           double pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2;
