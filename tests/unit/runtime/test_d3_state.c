@@ -127,9 +127,9 @@ static int raster_fixtures(void){
                                       information,information_size);
     int ink=0;
     for(int i=0;i<INFO_W*INFO_H;i++)
-      if(information_pixels[i]!=0xFFFFFFu && information_pixels[i]!=0xAEAEAEu) ink++;
-    if(information_pixels[0]!=0xAEAEAEu ||
-       information_pixels[INFO_W*INFO_H-1]!=0xAEAEAEu ||
+      if(information_pixels[i]!=0xFFFFFFu && information_pixels[i]!=0xABADB3u) ink++;
+    if(information_pixels[0]!=0xABADB3u ||
+       information_pixels[INFO_W*INFO_H-1]!=0xABADB3u ||
        information_pixels[INFO_W+1]!=0xFFFFFFu || ink<20 ||
        initialized.color!=0x123456u || initialized.alpha!=0.375 ||
        initialized.halign!=2 || initialized.valign!=2 || initialized.font!=7 ||

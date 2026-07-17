@@ -36,6 +36,11 @@ static void put_u32le(unsigned char *p, unsigned value){
   p[3] = (unsigned char)(value >> 24);
 }
 
+static unsigned get_u32le(const unsigned char *p){
+  return (unsigned)p[0] | (unsigned)p[1] << 8 |
+         (unsigned)p[2] << 16 | (unsigned)p[3] << 24;
+}
+
 static int expect_header(unsigned version){
   unsigned char data[28] = {0};
   put_u32le(data, GMLC_CLASSIC_MAGIC);
@@ -1445,7 +1450,10 @@ static int expect_sparse_room_order(void){
   int ok=gmlc_classic_manifest(encoded,encoded_size,&manifest,err,sizeof(err));
   if(!ok) fprintf(stderr,"sparse room-order manifest failed: %s\n",err);
   if(ok) ok=manifest.existing[GMLC_CLASSIC_ROOM]==2 && manifest.room_order_count==2 &&
-            manifest.room_order[0]==6 && manifest.room_order[1]==2;
+            manifest.room_order[0]==6 && manifest.room_order[1]==2 &&
+            manifest.game_information.size>=12 &&
+            get_u32le(manifest.game_information.data)==0x00ffffffu &&
+            get_u32le(manifest.game_information.data+8)==strlen("Game Information");
   if(ok) ok=gmlc_classic_import_room_order(&manifest,&project,err,sizeof(err));
   if(!ok && err[0]) fprintf(stderr,"sparse room-order import failed: %s\n",err);
   if(ok) ok=project.n_room_order==2 && project.room_order[0]==6 && project.room_order[1]==2;

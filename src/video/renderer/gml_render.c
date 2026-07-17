@@ -20,6 +20,13 @@
 #include <ctype.h>
 #include <time.h>
 #include <limits.h>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <richedit.h>
+#endif
 #if defined(__SSE2__)
 #include <emmintrin.h>
 #endif
@@ -1511,25 +1518,45 @@ static int real_line_width(GmlFont *f, const char *p, const char **end){
 /* ClearType uses a separate coverage value for each LCD channel.  The bundled
  * classic-info atlases retain those three coverages; apply them to the requested
  * foreground colour over the already-painted information-page background. */
+static int classic_info_gdi_black_component(int value){
+  /* Match the integer endpoints of GDI's six-level ClearType transfer ramp. */
+  if(value==15) return 14;
+  if(value==26) return 25;
+  if(value==46) return 45;
+  if(value==56) return 54;
+  if(value==29) return 28;
+  if(value==72) return 71;
+  return value;
+}
+
 static int classic_info_subpixel_glyph(GmlRender *r,GmlFont *font,GmlGlyph *glyph,
-                                       double x,double y,uint32_t color,double alpha){
+                                       double x,double y,double xscale,double yscale,
+                                       uint32_t color,double alpha){
   if(!r||!font||!glyph||!font->subpixel||font->atlas<0||font->atlas>=r->n_atlas||
-     alpha<0.999||!r->alphablend||r->blendmode!=0) return 0;
+     alpha<0.999||!r->alphablend||r->blendmode!=0||xscale<=0||yscale<=0) return 0;
   GmlAtlas *atlas=&r->atlas[font->atlas];
   if(!atlas_pixels(r,font->atlas)) return 0;
   int x0=(int)floor(x+0.5),y0=(int)floor(y+0.5);
+  int destination_width=(int)ceil(glyph->w*xscale);
+  int destination_height=(int)ceil(glyph->h*yscale);
   int first_x=x0<0?-x0:0,first_y=y0<0?-y0:0;
-  int last_x=glyph->w,last_y=glyph->h;
+  int last_x=destination_width,last_y=destination_height;
   if(x0+last_x>r->fbw) last_x=r->fbw-x0;
   if(y0+last_y>r->fbh) last_y=r->fbh-y0;
   if(first_x>=last_x||first_y>=last_y) return 1;
   int foreground_r=color&255,foreground_g=(color>>8)&255,foreground_b=(color>>16)&255;
   gml_render_maybe_prepare_draw(r);
   for(int yy=first_y;yy<last_y;yy++){
-    const uint8_t *source=atlas->px+
-      ((size_t)(glyph->sy+yy)*atlas->w+glyph->sx+first_x)*4;
     uint32_t *destination=r->fb+(size_t)(y0+yy)*r->fbw+x0+first_x;
-    for(int xx=first_x;xx<last_x;xx++,source+=4,destination++){
+    int source_y=(int)floor((yy+0.5)/yscale);
+    if(source_y<0) source_y=0;
+    if(source_y>=glyph->h) source_y=glyph->h-1;
+    for(int xx=first_x;xx<last_x;xx++,destination++){
+      int source_x=(int)floor((xx+0.5)/xscale);
+      if(source_x<0) source_x=0;
+      if(source_x>=glyph->w) source_x=glyph->w-1;
+      const uint8_t *source=atlas->px+
+        ((size_t)(glyph->sy+source_y)*atlas->w+glyph->sx+source_x)*4;
       if(!source[3]) continue;
       int coverage_r=255-source[0],coverage_g=255-source[1],coverage_b=255-source[2];
       uint32_t previous=*destination;
@@ -1537,6 +1564,9 @@ static int classic_info_subpixel_glyph(GmlRender *r,GmlFont *font,GmlGlyph *glyp
       int output_r=(foreground_r*coverage_r+background_r*(255-coverage_r)+127)/255;
       int output_g=(foreground_g*coverage_g+background_g*(255-coverage_g)+127)/255;
       int output_b=(foreground_b*coverage_b+background_b*(255-coverage_b)+127)/255;
+      if(foreground_r==0) output_r=classic_info_gdi_black_component(output_r);
+      if(foreground_g==0) output_g=classic_info_gdi_black_component(output_g);
+      if(foreground_b==0) output_b=classic_info_gdi_black_component(output_b);
       *destination=0xFF000000u|((uint32_t)output_r<<16)|((uint32_t)output_g<<8)|(uint32_t)output_b;
     }
   }
@@ -1567,8 +1597,8 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
         double glyph_y=use_rot?y-dx*sa+dy*ca:y+dy;
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
         if(f->subpixel && r->software_overlay && !use_rot &&
-           fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 &&
-           classic_info_subpixel_glyph(r,f,g,glyph_x-r->cam_x,glyph_y-r->cam_y,blend,alpha)){
+           classic_info_subpixel_glyph(r,f,g,glyph_x-r->cam_x,glyph_y-r->cam_y,
+                                       xs,ys,blend,alpha)){
           /* Per-channel coverage was composed directly above. */
         } else if(r->software_overlay ||
            !gml_d3_draw_atlas_part_2d(r,f->atlas,g->sx,g->sy,g->w,g->h,
@@ -1892,7 +1922,8 @@ static int classic_info_font_build(GmlRender *r,int source_index){
   return id;
 }
 
-static int classic_info_font(GmlRender *r,int half_points,int bold,int italic,double *scale){
+static int classic_info_font(GmlRender *r,int half_points,int bold,int italic,
+                             double *scale,int *source_index){
   int best=-1,best_distance=INT_MAX;
   for(int i=0;i<GML_CLASSIC_INFO_FONT_SOURCE_COUNT;i++){
     const GmlClassicInfoFontSource *source=&gml_classic_info_font_sources[i];
@@ -1901,17 +1932,22 @@ static int classic_info_font(GmlRender *r,int half_points,int bold,int italic,do
     if(distance<best_distance){ best=i; best_distance=distance; }
   }
   if(best<0) return -1;
+  if(source_index) *source_index=best;
   if(scale) *scale=(double)half_points/gml_classic_info_font_sources[best].half_points;
   return classic_info_font_build(r,best);
 }
 
-typedef struct { int font_id; double scale; int line_height; } ClassicInfoResolvedFont;
+typedef struct { int font_id; double scale; int line_height,y_offset; } ClassicInfoResolvedFont;
 
 static ClassicInfoResolvedFont classic_info_resolve_font(GmlRender *r,int half_points,
                                                           int bold,int italic){
-  ClassicInfoResolvedFont resolved={-1,1,0};
-  resolved.font_id=classic_info_font(r,half_points,bold,italic,&resolved.scale);
-  if(resolved.font_id>=0) resolved.line_height=r->fonts[resolved.font_id].line_height;
+  ClassicInfoResolvedFont resolved={-1,1,0,0};
+  int source_index=-1;
+  resolved.font_id=classic_info_font(r,half_points,bold,italic,&resolved.scale,&source_index);
+  if(resolved.font_id>=0){
+    resolved.line_height=r->fonts[resolved.font_id].line_height;
+    resolved.y_offset=gml_classic_info_font_sources[source_index].y_offset;
+  }
   return resolved;
 }
 
@@ -1941,12 +1977,12 @@ static double classic_info_range_width(GmlRender *r,ClassicInfoLine *line,int fi
 
 static double classic_info_row_step(int half_points,int bold,int line_height){
   double step=ceil(half_points*(2.0/3.0)*1.06);
-  if(half_points<=20&&!bold&&line_height>step) step=line_height;
+  if(line_height>step) step=line_height;
   return step<1?1:step;
 }
 
 static double classic_info_draw_row(GmlRender *r,ClassicInfoLine *line,int first,int last,
-                                    double y,int page_width){
+                                    double y,int page_width,uint32_t text_background){
   int maximum_height=0,maximum_half_points=line->font_size,step_bold=line->bold;
   for(int i=0;i<line->run_count;i++){
     ClassicInfoRun *run=&line->runs[i];
@@ -1963,6 +1999,19 @@ static double classic_info_draw_row(GmlRender *r,ClassicInfoLine *line,int first
   double row_width=classic_info_range_width(r,line,first,last);
   double pen=line->align==1?page_width*0.5-0.5-row_width*0.5:
              (line->align==2?page_width-3-row_width:3);
+  int background_x0=(int)floor(pen+0.5);
+  int background_x1=(int)ceil(pen+row_width)+1;
+  int background_y0=(int)floor(y)-1;
+  int background_y1=background_y0+maximum_height;
+  if(background_x0<0) background_x0=0;
+  if(background_y0<0) background_y0=0;
+  if(background_x1>r->fbw) background_x1=r->fbw;
+  if(background_y1>r->fbh) background_y1=r->fbh;
+  for(int yy=background_y0;yy<background_y1;yy++){
+    uint32_t *destination=r->fb+(size_t)yy*r->fbw+background_x0;
+    for(int xx=background_x0;xx<background_x1;xx++)
+      *destination++=0xFF000000u|text_background;
+  }
   int position=first;
   while(position<last){
     ClassicInfoRun *run=classic_info_run_at(line,position);
@@ -1975,7 +2024,7 @@ static double classic_info_draw_row(GmlRender *r,ClassicInfoLine *line,int first
       if(length>=(int)sizeof(text)) length=(int)sizeof(text)-1;
       memcpy(text,line->text+position,(size_t)length); text[length]='\0';
       r->font=resolved.font_id; r->halign=0;
-      double run_y=y+(maximum_height-resolved.line_height)-(run->bold?1:0);
+      double run_y=y+(maximum_height-resolved.line_height)-(run->bold?1:0)+resolved.y_offset;
       gml_draw_text_transformed(r,pen,run_y,text,resolved.scale,resolved.scale,0,run->color,1);
       if(run->underline){
         double width=classic_info_range_width(r,line,position,run_last);
@@ -1998,10 +2047,155 @@ static double classic_info_draw_row(GmlRender *r,ClassicInfoLine *line,int first
   return classic_info_row_step(maximum_half_points,step_bold,maximum_height);
 }
 
+#ifdef _WIN32
+typedef struct {
+  const uint8_t *data;
+  size_t size,position;
+} ClassicInfoNativeStream;
+
+static DWORD CALLBACK classic_info_native_stream(DWORD_PTR cookie,LPBYTE output,
+                                                  LONG requested,LONG *written){
+  ClassicInfoNativeStream *stream=(ClassicInfoNativeStream*)cookie;
+  size_t remaining=stream->size-stream->position;
+  size_t amount=(size_t)requested<remaining?(size_t)requested:remaining;
+  if(amount) memcpy(output,stream->data+stream->position,amount);
+  stream->position+=amount;
+  *written=(LONG)amount;
+  return 0;
+}
+
+/* Use the installed Windows RichEdit component as an optional native RTF rasterizer.
+ * This preserves system font substitution and ClearType behavior without bundling
+ * platform fonts or pre-rendered passages. */
+static int classic_info_native_render(uint32_t *pixels,int width,int height,
+                                      const uint8_t *record,size_t record_size){
+  if(!pixels||width<=0||height<=0||!record||record_size<12u) return 0;
+  uint32_t caption_size=u32(record,8);
+  size_t text_size_at=12u+(size_t)caption_size+8u*4u+8u;
+  if(text_size_at>record_size||record_size-text_size_at<4u) return 0;
+  uint32_t text_size=u32(record,(uint32_t)text_size_at);
+  if((size_t)text_size>record_size-text_size_at-4u) return 0;
+  const uint8_t *text=record+text_size_at+4u;
+
+  typedef HANDLE (WINAPI *SetThreadDpiAwarenessContextFn)(HANDLE);
+  HMODULE user32=GetModuleHandleA("user32.dll");
+  SetThreadDpiAwarenessContextFn set_thread_dpi=user32?
+    (SetThreadDpiAwarenessContextFn)(void*)GetProcAddress(user32,
+      "SetThreadDpiAwarenessContext"):NULL;
+  /* DPI_AWARENESS_CONTEXT_UNAWARE is the documented pseudo-handle -1. */
+  HANDLE previous_dpi=set_thread_dpi?set_thread_dpi((HANDLE)(intptr_t)-1):NULL;
+  HMODULE rich_edit=LoadLibraryA("riched20.dll");
+  if(!rich_edit){
+    if(set_thread_dpi&&previous_dpi) set_thread_dpi(previous_dpi);
+    return 0;
+  }
+
+  HINSTANCE instance=GetModuleHandleA(NULL);
+  /* A predefined system window class avoids registering a callback owned by
+   * this DLL, so unloading and reloading a libretro core cannot leave one. */
+  HWND window=CreateWindowExA(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,"STATIC","",
+    WS_POPUP,0,0,width,height,NULL,NULL,instance,NULL);
+  HWND edit=window?CreateWindowExA(WS_EX_CLIENTEDGE,RICHEDIT_CLASSA,"",
+    WS_CHILD|WS_VISIBLE|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
+    0,0,width,height,window,NULL,instance,NULL):NULL;
+  int ok=window&&edit;
+  if(ok){
+    SendMessageA(edit,EM_SETBKGNDCOLOR,0,(LPARAM)u32(record,0));
+    SendMessageA(edit,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELPARAM(1,1));
+    ClassicInfoNativeStream stream={text,text_size,0};
+    EDITSTREAM edit_stream={(DWORD_PTR)&stream,0,classic_info_native_stream};
+    SendMessageA(edit,EM_STREAMIN,SF_RTF,(LPARAM)&edit_stream);
+    if(edit_stream.dwError) ok=0;
+  }
+  if(ok){
+    /* Keeping the temporary window at the bottom of the Z order prevents a
+     * visible flash, while a real display surface retains ClearType output. */
+    SetWindowPos(window,HWND_BOTTOM,0,0,width,height,SWP_NOACTIVATE|SWP_SHOWWINDOW);
+    RedrawWindow(window,NULL,NULL,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);
+    HDC screen=GetDC(window);
+    HDC copy=screen?CreateCompatibleDC(screen):NULL;
+    HBITMAP bitmap=screen?CreateCompatibleBitmap(screen,width,height):NULL;
+    if(!screen||!copy||!bitmap) ok=0;
+    HGDIOBJ previous=NULL;
+    if(ok){
+      previous=SelectObject(copy,bitmap);
+      ok=PrintWindow(window,copy,PW_CLIENTONLY)!=0;
+      SelectObject(copy,previous);
+    }
+    if(ok){
+      BITMAPINFO information;
+      memset(&information,0,sizeof(information));
+      information.bmiHeader.biSize=sizeof(information.bmiHeader);
+      information.bmiHeader.biWidth=width;
+      information.bmiHeader.biHeight=-height;
+      information.bmiHeader.biPlanes=1;
+      information.bmiHeader.biBitCount=32;
+      information.bmiHeader.biCompression=BI_RGB;
+      ok=GetDIBits(copy,bitmap,0,(UINT)height,pixels,&information,
+                   DIB_RGB_COLORS)!=0;
+      if(ok){
+        size_t count=(size_t)width*(size_t)height;
+        for(size_t i=0;i<count;i++) pixels[i]|=0xFF000000u;
+      }
+    }
+    if(bitmap) DeleteObject(bitmap);
+    if(copy) DeleteDC(copy);
+    if(screen) ReleaseDC(window,screen);
+  }
+  if(window) DestroyWindow(window);
+  FreeLibrary(rich_edit);
+  if(set_thread_dpi&&previous_dpi) set_thread_dpi(previous_dpi);
+  return ok;
+}
+#else
+static int classic_info_native_render(uint32_t *pixels,int width,int height,
+                                      const uint8_t *record,size_t record_size){
+  (void)pixels; (void)width; (void)height; (void)record; (void)record_size;
+  return 0;
+}
+#endif
+
+static int classic_info_native_cached(GmlRender *r,uint32_t *framebuffer,
+                                      int width,int height,const uint8_t *record,
+                                      size_t record_size){
+  if(r->classic_info_native_record!=record||
+     r->classic_info_native_record_size!=record_size||
+     r->classic_info_native_w!=width||r->classic_info_native_h!=height){
+    free(r->classic_info_native_pixels);
+    r->classic_info_native_pixels=NULL;
+    r->classic_info_native_record=record;
+    r->classic_info_native_record_size=record_size;
+    r->classic_info_native_w=width; r->classic_info_native_h=height;
+    r->classic_info_native_attempted=0;
+  }
+  if(!r->classic_info_native_attempted){
+    r->classic_info_native_attempted=1;
+    size_t count=(size_t)width*(size_t)height;
+    if(width>0&&height>0&&count<=SIZE_MAX/sizeof(uint32_t)){
+      r->classic_info_native_pixels=(uint32_t*)malloc(count*sizeof(uint32_t));
+      if(r->classic_info_native_pixels&&
+         !classic_info_native_render(r->classic_info_native_pixels,width,height,
+                                     record,record_size)){
+        free(r->classic_info_native_pixels);
+        r->classic_info_native_pixels=NULL;
+      }
+    }
+  }
+  if(!r->classic_info_native_pixels) return 0;
+  memcpy(framebuffer,r->classic_info_native_pixels,
+         (size_t)width*(size_t)height*sizeof(uint32_t));
+  return 1;
+}
+
 void gml_draw_classic_game_information(GmlRender *r,uint32_t *framebuffer,
                                        int width,int height,
                                        const uint8_t *record,size_t record_size){
   if(!r||!framebuffer||width<=0||height<=0||record_size>8u*1024u*1024u) return;
+  if(classic_info_native_cached(r,framebuffer,width,height,record,record_size)){
+    gml_render_begin(r,framebuffer,width,height,0,0);
+    r->fb_opaque_known=1; r->fb_all_opaque=1; r->fb_all_transparent=0;
+    return;
+  }
   ClassicInfoLine lines[CLASSIC_INFO_MAX_LINES]; int line_count=0;
   if(!classic_info_parse(record,record_size,lines,&line_count)) return;
   uint32_t saved_color=r->color;
@@ -2016,9 +2210,29 @@ void gml_draw_classic_game_information(GmlRender *r,uint32_t *framebuffer,
                ((information_color>>16)&255u);
   size_t pixels=(size_t)width*(size_t)height;
   for(size_t i=0;i<pixels;i++) framebuffer[i]=background;
-  uint32_t border=0xAEAEAEu;
-  for(int x=0;x<width;x++){ framebuffer[x]=border; framebuffer[(size_t)(height-1)*width+x]=border; }
-  for(int y=0;y<height;y++){ framebuffer[(size_t)y*width]=border; framebuffer[(size_t)y*width+width-1]=border; }
+  uint32_t outer_border=0xABADB3u;
+  for(int x=0;x<width;x++){
+    framebuffer[x]=outer_border;
+    framebuffer[(size_t)(height-1)*width+x]=outer_border;
+  }
+  for(int y=0;y<height;y++){
+    framebuffer[(size_t)y*width]=outer_border;
+    framebuffer[(size_t)y*width+width-1]=outer_border;
+  }
+  if(width>2&&height>2){
+    for(int x=1;x<width-1;x++){
+      framebuffer[(size_t)width+x]=0xFFFFFFu;
+      framebuffer[(size_t)(height-2)*width+x]=0xFFFFFFu;
+    }
+    for(int y=1;y<height-1;y++){
+      framebuffer[(size_t)y*width+1]=0xFFFFFFu;
+      framebuffer[(size_t)y*width+width-2]=0xFFFFFFu;
+    }
+  }
+  uint32_t text_background=background;
+  unsigned background_green=(text_background>>8)&255u;
+  if(background_green>0&&background_green<128)
+    text_background=(text_background&~0xFF00u)|((background_green+1u)<<8);
   gml_render_begin(r,framebuffer,width,height,0,0);
   r->font=-1; r->color=0; r->alpha=1; r->valign=0; r->alphablend=1;
   r->software_overlay=1;
@@ -2043,7 +2257,11 @@ void gml_draw_classic_game_information(GmlRender *r,uint32_t *framebuffer,
         double advance=classic_info_advance(r,line,position);
         if(line->text[position]==' '){ last_space=position; space_width=row_width; }
         if(row_width+advance>maximum_width&&position>first){
-          if(last_space>=first){ last=last_space; row_width=space_width; next=last_space+1; }
+          if(last_space>=first){
+            last=last_space+1;
+            row_width=space_width+classic_info_advance(r,line,last_space);
+            next=last_space+1;
+          }
           else { last=position; next=position; }
           while(next<line->length&&line->text[next]==' ') next++;
           break;
@@ -2051,7 +2269,7 @@ void gml_draw_classic_game_information(GmlRender *r,uint32_t *framebuffer,
         row_width+=advance;
       }
       (void)row_width;
-      y+=classic_info_draw_row(r,line,first,last,y,width);
+      y+=classic_info_draw_row(r,line,first,last,y,width,text_background);
       first=next;
     }
   }

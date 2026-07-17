@@ -105,6 +105,14 @@ typedef struct {
   struct {
     int source_index, font_id;
   } classic_info_font_cache[32]; int classic_info_font_cache_count;
+  /* A platform-native renderer may cache the complete information passage.  It
+   * is an optional accelerator/fidelity path; the bundled portable renderer is
+   * still used whenever the host cannot provide the project's requested fonts. */
+  uint32_t *classic_info_native_pixels;
+  const uint8_t *classic_info_native_record;
+  size_t classic_info_native_record_size;
+  int classic_info_native_w, classic_info_native_h;
+  int classic_info_native_attempted;
   /* current target framebuffer (borrowed) + camera */
   uint32_t *fb; int fbw, fbh;
   uint32_t *base_fb; int base_fbw, base_fbh;

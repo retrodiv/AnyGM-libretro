@@ -1022,6 +1022,61 @@ static int read_legacy_included_file(ClassicReader *r, GmlcClassicIncludedFile *
   return ok;
 }
 
+/* GM6/7 store Game Information as fields in the project tail, while GM8 wraps the
+ * same logical record in a length-delimited (usually compressed) blob.  Preserve
+ * the legacy fields in the normalized GM8-shaped record consumed by the shared
+ * software renderer.  The legacy layout has no timestamp, so insert its neutral
+ * eight-byte value rather than dropping the whole information page. */
+static int read_legacy_game_information(ClassicReader *r,uint32_t version,
+                                        GmlcClassicBlob *out){
+  uint32_t leading[2]={0,0},window[8]={0};
+  const uint8_t *caption=NULL,*text=NULL;
+  uint32_t caption_size=0,text_size=0;
+  memset(out,0,sizeof(*out));
+  if(!reader_u32(r,&leading[0],"legacy game-information color") ||
+     !reader_u32(r,&leading[1],"legacy game-information mode")) return 0;
+  if(version>=600){
+    if(!reader_u32(r,&caption_size,"legacy game-information caption") ||
+       r->pos>r->size || caption_size>r->size-r->pos)
+      return reader_fail(r,"legacy game-information caption");
+    caption=r->data+r->pos;
+    if(!reader_skip(r,caption_size,"legacy game-information caption")) return 0;
+    for(size_t i=0;i<8;i++)
+      if(!reader_u32(r,&window[i],"legacy game-information window fields")) return 0;
+  }
+  if(!reader_u32(r,&text_size,"legacy game information") ||
+     r->pos>r->size || text_size>r->size-r->pos)
+    return reader_fail(r,"legacy game information");
+  text=r->data+r->pos;
+  if(!reader_skip(r,text_size,"legacy game information")) return 0;
+
+  size_t size=56u+(size_t)caption_size;
+  if(size<caption_size || (size_t)text_size>SIZE_MAX-size){
+    if(r->err && r->errcap)
+      snprintf(r->err,r->errcap,"classic project: legacy game information is too large");
+    return 0;
+  }
+  size+=(size_t)text_size;
+  uint8_t *record=(uint8_t*)calloc(size?size:1u,1u);
+  if(!record){
+    if(r->err && r->errcap)
+      snprintf(r->err,r->errcap,"classic project: out of memory reading legacy game information");
+    return 0;
+  }
+  size_t at=0;
+  write_u32le(record+at,leading[0]); at+=4;
+  write_u32le(record+at,leading[1]); at+=4;
+  write_u32le(record+at,caption_size); at+=4;
+  if(caption_size){ memcpy(record+at,caption,caption_size); at+=caption_size; }
+  for(size_t i=0;i<8;i++){ write_u32le(record+at,window[i]); at+=4; }
+  at+=8; /* normalized timestamp */
+  write_u32le(record+at,text_size); at+=4;
+  if(text_size){ memcpy(record+at,text,text_size); at+=text_size; }
+  out->data=record;
+  out->size=at;
+  return 1;
+}
+
 /* GM6/7 keep project metadata and the executable room order after the resource
  * arrays. The resource tree follows this data, but room sequencing is already
  * represented explicitly here and must not be inferred from sparse slot ids. */
@@ -1054,11 +1109,7 @@ static int parse_legacy_tail(ClassicReader *r, uint32_t container_version,
   }
 
   if(!reader_u32(r,&version,"legacy game-information version") || version<430 ||
-     !reader_words(r,2,"legacy game-information fields")) return 0;
-  if(version>=600 &&
-     (!reader_string(r,"legacy game-information caption") ||
-      !reader_words(r,8,"legacy game-information window fields"))) return 0;
-  if(!reader_string(r,"legacy game information")) return 0;
+     !read_legacy_game_information(r,version,&manifest->game_information)) return 0;
 
   if(!reader_u32(r,&version,"legacy library-code section version") || version<500 ||
      !reader_u32(r,&count,"legacy library-code count")) return 0;
