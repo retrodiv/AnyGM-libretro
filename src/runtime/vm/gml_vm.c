@@ -472,6 +472,10 @@ static GmlInstance *var_target(GmlVM *vm, int inst){
  * bytecode reference uses the current-instance scope. */
 static int is_global_builtin(const char *n){
   return !strcmp(n,"health")||!strcmp(n,"lives")||!strcmp(n,"score")||!strcmp(n,"async_load"); }
+static int is_classic_transition_builtin(GmlVM *vm,const char *n){
+  return vm && vm->win && vm->win->classic_version &&
+         (!strcmp(n,"transition_kind") || !strcmp(n,"transition_steps"));
+}
 static int vm_bbox(GmlVM *vm, GmlInstance *in, double *l, double *t, double *r, double *b);
 static int argument_index(const char *name){
   if(strncmp(name,"argument",8)) return -1;
@@ -569,6 +573,7 @@ static const char *const g_special_var_names[]={
   "gravity","gravity_direction","friction","path_index","path_position","path_speed",
   "path_orientation","path_scale","path_positionprevious","path_endaction",
   "timeline_index","timeline_position","timeline_speed","timeline_running","timeline_loop",
+  "transition_kind","transition_steps",
 };
 #define N_SPECIAL_VAR (int)(sizeof g_special_var_names/sizeof *g_special_var_names)
 static uint32_t g_special_var_hash[N_SPECIAL_VAR];
@@ -653,7 +658,7 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!strcmp(name,"instance_count")){   /* Count active, unmarked instances, matching instance_find enumeration. */
     int c=0; for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked) c++;
     return vreal(c); }
-  if(inst==IT_GLOBAL || is_global_builtin(name)){
+  if(is_classic_transition_builtin(vm,name) || inst==IT_GLOBAL || is_global_builtin(name)){
     GmlVal *p=gml_varmap_get_h(&vm->globals,name,nh); return p?*p:vreal(0); }
   if((inst==IT_OTHER && !vm->cur_other) || (inst==IT_SELF && !vm->cur_self)){
     if(!strcmp(name,"id") || !strcmp(name,"object_index")) return vreal(IT_NOONE);
@@ -729,7 +734,8 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
     *gml_varmap_put_h(&vm->globals,name,nh)=v;
     return;
   }
-  if(inst==IT_GLOBAL || is_global_builtin(name)){ *gml_varmap_put_h(&vm->globals,name,nh)=v; return; }
+  if(is_classic_transition_builtin(vm,name) || inst==IT_GLOBAL || is_global_builtin(name)){
+    *gml_varmap_put_h(&vm->globals,name,nh)=v; return; }
   if(inst==IT_ALL){
     for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
       if(o->active && !o->marked && !inst_builtin_set(o,name,v))
@@ -6075,6 +6081,12 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
   vm->rng_classic_state=0;
   vm->potential_max_rotation=30; vm->potential_rotate_step=10;
   vm->potential_check_distance=3; vm->potential_rotate_on_spot=1;
+  /* GM6-8 exposes these as writable built-in variables. Keeping the defaults in the ordinary
+   * global map lets compiled source read/write them without a presentation-specific lookup. */
+  if(win && win->classic_version){
+    gml_set_global_scalar(vm,"transition_kind",0);
+    gml_set_global_scalar(vm,"transition_steps",80);
+  }
   vm->room_state_count=gml_room_count(win);
   vm->room_stored=calloc((size_t)(vm->room_state_count>0?vm->room_state_count:1),1);
   /* Seed dynamic IDs above room-placed IDs across the project to avoid collisions

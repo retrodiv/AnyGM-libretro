@@ -128,6 +128,7 @@ int main(void){
   int implicit_script_fd=mkstemp(implicit_script); if(implicit_script_fd<0)return 1;
   FILE *implicit_script_file=fdopen(implicit_script_fd,"wb");
   const char implicit_script_source[]=
+    "transition_kind=12; transition_steps=40; "
     "if (argument0 >= 0) instance_exists(argument0); "
     "else if (argument0 == -2) return all.fixture_all_scope; "
     "else if (argument0 == -3) { all.fixture_all_scope=77; return 77; } "
@@ -281,6 +282,17 @@ int main(void){
   if(!included_ok){ fprintf(stderr,"included file was not exported\n"); return 1; }
   GmlWin win; if(gml_win_load(&win,path)){ unlink(path); return 1; }
   GmlVM vm; if(gml_vm_init(&vm,&win)){ gml_win_free(&win); unlink(path); return 1; }
+  {
+    GmlVal *transition_kind=gml_varmap_get(&vm.globals,"transition_kind");
+    GmlVal *transition_steps=gml_varmap_get(&vm.globals,"transition_steps");
+    if(!transition_kind || transition_kind->t!=V_REAL || transition_kind->d!=0 ||
+       !transition_steps || transition_steps->t!=V_REAL || transition_steps->d!=80){
+      fprintf(stderr,"classic transition defaults mismatch: kind=%.0f steps=%.0f\n",
+        transition_kind&&transition_kind->t==V_REAL?transition_kind->d:-1.0,
+        transition_steps&&transition_steps->t==V_REAL?transition_steps->d:-1.0);
+      return 1;
+    }
+  }
   GmlVal *startup_value=gml_varmap_get(&vm.globals,"startup_value");
   GmlVal *view_fixture_scalar=gml_varmap_get(&vm.globals,"view_fixture_scalar");
   GmlVal *background_fixture_scalar=gml_varmap_get(&vm.globals,"background_fixture_scalar");
@@ -365,6 +377,12 @@ int main(void){
     fprintf(stderr,"classic script implicit result mismatch: code=%d result=%.0f\n",
       implicit_code,implicit_result.t==V_REAL?implicit_result.d:-1.0); return 1;
   }
+  if(gml_global_num(&vm,"transition_kind")!=12 || gml_global_num(&vm,"transition_steps")!=40){
+    fprintf(stderr,"classic unqualified transition variables did not route globally: kind=%.0f steps=%.0f\n",
+      gml_global_num(&vm,"transition_kind"),gml_global_num(&vm,"transition_steps")); return 1;
+  }
+  gml_set_global_scalar(&vm,"transition_kind",0);
+  gml_set_global_scalar(&vm,"transition_steps",80);
   implicit_arg=vreal(-1);
   implicit_result=gml_vm_run_code(&vm,implicit_code,NULL,NULL,&implicit_arg,1);
   if(implicit_result.t!=V_REAL || implicit_result.d!=42){
