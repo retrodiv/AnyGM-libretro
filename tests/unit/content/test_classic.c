@@ -500,11 +500,14 @@ static int build_executable_fixture(Fixture *executable){
       fixture_u32(&room,0); fixture_u32(&room,0);
       fixture_u32(&room,1); fixture_u32(&room,10); fixture_u32(&room,20);
       fixture_u32(&room,0); fixture_u32(&room,100001); fixture_u32(&room,1);
-      fixture_u32(&room,0);
+      fixture_u32(&room,1);
+      fixture_u32(&room,30); fixture_u32(&room,40); fixture_u32(&room,0);
+      fixture_u32(&room,0); fixture_u32(&room,0); fixture_u32(&room,1);
+      fixture_u32(&room,1); fixture_u32(&room,100); fixture_u32(&room,1000001);
       fixture_compressed(&decoded,room.data,(int)room.size);
     } else fixture_u32(&decoded,0);
   }
-  fixture_u32(&decoded,100000); fixture_u32(&decoded,1000000);
+  fixture_u32(&decoded,100000); fixture_u32(&decoded,1000001);
   fixture_u32(&decoded,800); fixture_u32(&decoded,1); /* includes */
   { Fixture included={{0},0}; const unsigned char contents[]={10,11};
     fixture_u32(&included,800); fixture_string(&included,"executable.dat"); fixture_string(&included,"");
@@ -585,7 +588,8 @@ static int expect_executable_manifest_variant(const Fixture *executable){
       GmlcProject project;
       gmlc_project_init(&project);
       project.prefer_memory_files=1;
-      ok=gmlc_classic_import_fonts(&manifest,&project,"tmp",err,sizeof(err));
+      ok=gmlc_classic_import_fonts(&manifest,&project,"tmp",err,sizeof(err)) &&
+         gmlc_classic_import_rooms(&manifest,&project,"tmp",err,sizeof(err));
       if(ok) ok=project.n_fonts==1 && project.fonts[0].n_glyphs==2 &&
         project.fonts[0].em_size==1 && project.fonts[0].glyphs[0].ch==65 &&
         project.fonts[0].glyphs[0].x==0 && project.fonts[0].glyphs[0].w==1 &&
@@ -595,7 +599,10 @@ static int expect_executable_manifest_variant(const Fixture *executable){
         project.n_memory_files==1 && project.memory_files[0].kind==GMLC_MEMORY_RGBA &&
         project.memory_files[0].width==2 && project.memory_files[0].height==1 &&
         project.memory_files[0].size==8 && project.memory_files[0].data[3]==17 &&
-        project.memory_files[0].data[7]==231;
+        project.memory_files[0].data[7]==231 && project.n_rooms==1 &&
+        project.rooms[0].n_tiles==1 && project.rooms[0].tiles[0].x==30 &&
+        project.rooms[0].tiles[0].y==40 && project.rooms[0].tiles[0].depth==100 &&
+        project.rooms[0].tiles[0].tile_id==1000001;
       gmlc_project_free(&project);
     }
     gmlc_classic_manifest_free(&manifest);

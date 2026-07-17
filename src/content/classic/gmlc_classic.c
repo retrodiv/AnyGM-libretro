@@ -623,6 +623,51 @@ static int normalize_executable_room(char **raw_io, int *raw_size_io){
   }
   data_size+=growth;
   memset(normalized+data_size,0,64);
+
+  /* Compiled rooms omit the editor-only lock flag from every tile record.  Expand the compact
+   * nine-word records before handing the room to the shared project-layout validator/importer. */
+  ClassicReader tile_probe={(const uint8_t*)normalized,data_size,0,NULL,0};
+  uint32_t tiles=0;
+  if(!reader_u32(&tile_probe,&exists,"room exists") ||
+     !reader_string(&tile_probe,"room name") || !reader_u32(&tile_probe,&version,"room version") ||
+     !reader_string(&tile_probe,"room caption") || !reader_words(&tile_probe,9,"room fields") ||
+     !reader_string(&tile_probe,"room creation code") ||
+     !reader_u32(&tile_probe,&count,"room backgrounds") ||
+     !reader_words(&tile_probe,count>UINT32_MAX/10?UINT32_MAX:count*10,"room backgrounds") ||
+     !reader_words(&tile_probe,1,"room views enabled") ||
+     !reader_u32(&tile_probe,&count,"room views") ||
+     !reader_words(&tile_probe,count>UINT32_MAX/14?UINT32_MAX:count*14,"room views") ||
+     !reader_u32(&tile_probe,&instances,"room instances")){
+    free(normalized); return 0;
+  }
+  for(uint32_t instance=0;instance<instances;instance++)
+    if(!reader_words(&tile_probe,4,"room instance fields") ||
+       !reader_string(&tile_probe,"room instance creation code") ||
+       !reader_words(&tile_probe,1,"room instance locked flag")){
+      free(normalized); return 0;
+    }
+  if(!reader_u32(&tile_probe,&tiles,"room tiles") || tiles>UINT32_MAX/9){
+    free(normalized); return 0;
+  }
+  size_t tile_records_start=tile_probe.pos;
+  if(!reader_words(&tile_probe,tiles*9,"compact room tiles") || tile_probe.pos!=data_size){
+    free(normalized); return 0;
+  }
+  size_t tile_growth=(size_t)tiles*4u;
+  if(tile_growth>SIZE_MAX-data_size-64u){ free(normalized); return 0; }
+  working_size=data_size+tile_growth+64u;
+  expanded=(char*)realloc(normalized,working_size);
+  if(!expanded){ free(normalized); return 0; }
+  normalized=expanded;
+  for(uint32_t tile=tiles;tile-- > 0;){
+    uint8_t *source=(uint8_t*)normalized+tile_records_start+(size_t)tile*36u;
+    uint8_t *target=(uint8_t*)normalized+tile_records_start+(size_t)tile*40u;
+    memmove(target,source,36);
+    write_u32le(target+36,0);
+  }
+  data_size+=tile_growth;
+  memset(normalized+data_size,0,64);
+
   ClassicReader body={(const uint8_t*)normalized,working_size,0,NULL,0};
   if(!reader_u32(&body,&exists,"room exists") || !reader_string(&body,"room name") ||
      !reader_u32(&body,&version,"room version") || !validate_room_gameplay_payload(&body)){
