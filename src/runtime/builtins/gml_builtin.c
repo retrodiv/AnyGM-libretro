@@ -17,6 +17,25 @@
 #include <dirent.h>
 #if !defined(_WIN32)
 #include <unistd.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <sys/socket.h>
+#else
+/* Keep the massive Win32 header out of this translation unit: its legacy near/far macros collide
+ * with ordinary engine identifiers. These are the three kernel32 declarations needed for the
+ * optional, dynamically resolved connectivity query. */
+#if defined(_MSC_VER)
+#define GML_WINAPI __stdcall
+#define GML_DLLIMPORT __declspec(dllimport)
+#else
+#define GML_WINAPI __attribute__((stdcall))
+#define GML_DLLIMPORT __attribute__((dllimport))
+#endif
+typedef void *GmlWinModule;
+typedef void (*GmlWinProc)(void);
+GML_DLLIMPORT GmlWinModule GML_WINAPI LoadLibraryA(const char *name);
+GML_DLLIMPORT GmlWinProc GML_WINAPI GetProcAddress(GmlWinModule module,const char *name);
+GML_DLLIMPORT int GML_WINAPI FreeLibrary(GmlWinModule module);
 #endif
 #if defined(_WIN32)
 #include <direct.h>
@@ -50,13 +69,54 @@ static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o]|(uint32_t)d[o+1]<<8|(uint32_t)d[o+2]<<16|(uint32_t)d[o+3]<<24;
 }
 static double N(GmlVal *a, int n, int i){ return (i<n)? (a[i].t==V_REAL?a[i].d:(a[i].s?atof(a[i].s):0)) : 0; }
+static double audio_emitter_attenuation(GmlVM *vm, int e, double distance){
+  if(!vm || e<0 || e>=GML_MAX_EMITTERS || vm->audio_falloff_model==0) return 1.0;
+  double ref=vm->emitter_ref[e], maxd=vm->emitter_max[e], factor=vm->emitter_factor[e];
+  if(ref<=0.0) ref=1.0;
+  if(maxd<ref) maxd=ref;
+  if(factor<0.0) factor=0.0;
+  int model=vm->audio_falloff_model, clamped=(model==2 || model==4 || model==6);
+  double d=distance;
+  if(clamped){ if(d<ref) d=ref; if(d>maxd) d=maxd; }
+  double gain=1.0;
+  if(model==1 || model==2) gain=ref/(ref+factor*(d-ref));
+  else if(model==3 || model==4) gain=maxd>ref?1.0-factor*(d-ref)/(maxd-ref):1.0;
+  else if(model==5 || model==6) gain=pow(d>0.0?d/ref:1.0,-factor);
+  if(!isfinite(gain) || gain<0.0) gain=0.0;
+  return gain;
+}
+static void audio_refresh_emitter(GmlVM *vm, GmlAudio *au, int e){
+  if(!vm || !au || e<0 || e>=GML_MAX_EMITTERS || !vm->emitter_live[e]) return;
+  double dx=vm->emitter_x[e]-vm->listener_x, dy=vm->emitter_y[e]-vm->listener_y;
+  double dz=vm->emitter_z[e]-vm->listener_z, dist=sqrt(dx*dx+dy*dy+dz*dz);
+  double rx=vm->listener_forward_y*vm->listener_up_z-vm->listener_forward_z*vm->listener_up_y;
+  double ry=vm->listener_forward_z*vm->listener_up_x-vm->listener_forward_x*vm->listener_up_z;
+  double rz=vm->listener_forward_x*vm->listener_up_y-vm->listener_forward_y*vm->listener_up_x;
+  double rl=sqrt(rx*rx+ry*ry+rz*rz), pan=0.0;
+  if(dist>0.0 && rl>0.0) pan=(dx*rx+dy*ry+dz*rz)/(dist*rl);
+  if(pan<-1.0) pan=-1.0; else if(pan>1.0) pan=1.0;
+  gml_audio_emitter_mix(au,e,vm->emitter_gain[e]*audio_emitter_attenuation(vm,e,dist),pan);
+}
+static void audio_refresh_emitters(GmlVM *vm, GmlAudio *au){
+  if(!vm || !au) return;
+  for(int e=0;e<GML_MAX_EMITTERS;e++) if(vm->emitter_live[e]) audio_refresh_emitter(vm,au,e);
+}
 static void builtin_set_blendmode_ext(GmlRender *R, int src, int dst){
   if(!R) return;
-  /* The software renderer only models the simple normal/add/subtract states.
-   * A factor-based blend call still replaces that state in GameMaker, so clear
-   * any previous simple mode instead of letting bm_subtract/bm_add leak. */
-  if(getenv("GML_DBG_BM")) fprintf(stderr,"[bm] gpu_set_blendmode_ext(%d,%d) -> normal\n",src,dst);
-  R->blendmode=0;
+  /* Documented factor constants: zero=1, one=2, src_alpha=5, inv_src_alpha=6,
+   * dest_colour=9. Preserve the common preset-equivalent pairs and the fixed-function multiply
+   * pair used for light/shadow masks. Unknown pairs still replace the old state with normal. */
+  if(src==9 && dst==1) R->blendmode=3;             /* src * destination colour */
+  else if(src==5 && dst==2) R->blendmode=1;        /* additive src-alpha */
+  else R->blendmode=0;                             /* includes normal (5,6) */
+  if(getenv("GML_DBG_BM")) fprintf(stderr,"[bm] gpu_set_blendmode_ext(%d,%d) -> mode %d\n",src,dst,R->blendmode);
+}
+static void builtin_set_blendmode(GmlRender *R, int bm){
+  if(!R) return;
+  R->blendmode=(bm==1)?1:(bm==3)?2:0;
+  /* A preset blend mode also selects its equation; the software presets above
+   * encode add/subtract themselves, so the independent equation returns to add. */
+  R->blend_equation=R->blend_equation_alpha=1;
 }
 static double builtin_game_speed(GmlVM *vm){
   GmlVal *p=vm?gml_varmap_get(&vm->globals,"__game_speed_fps"):NULL;
@@ -119,6 +179,39 @@ static const char *gm_string_tmp(GmlVal v){
 }
 static const char *S(GmlVal *a, int n, int i){ return (i<n)? gm_string_tmp(a[i]) : ""; }
 
+/* The documented os_is_network_connected operation reports host connectivity independently of whether a
+ * platform service such as Steam is initialised. Libretro has no environment callback for this,
+ * so inspect the host without sending traffic. The explicit override is useful to frontends that
+ * deliberately sandbox networking and also makes the offline state reproducible in tests. */
+static int host_network_connected(void){
+  const char *override=getenv("GML_NETWORK_CONNECTED");
+  if(override && *override){
+    int first=tolower((unsigned char)override[0]);
+    return first!='0' && first!='f' && first!='n';
+  }
+#if defined(_WIN32)
+  /* Resolve WinINet dynamically so the core does not acquire a new link-time DLL dependency. */
+  typedef int (GML_WINAPI *InternetGetConnectedStateFn)(unsigned long *flags,unsigned long reserved);
+  GmlWinModule module=LoadLibraryA("wininet.dll");
+  if(!module) return 0;
+  InternetGetConnectedStateFn query=(InternetGetConnectedStateFn)(void*)GetProcAddress(module,"InternetGetConnectedState");
+  unsigned long flags=0; int connected=query && query(&flags,0);
+  FreeLibrary(module);
+  return connected;
+#else
+  struct ifaddrs *interfaces=NULL;
+  if(getifaddrs(&interfaces)!=0) return 0;
+  int connected=0;
+  for(struct ifaddrs *it=interfaces;it;it=it->ifa_next){
+    if(!it->ifa_addr || !(it->ifa_flags&IFF_UP) || (it->ifa_flags&IFF_LOOPBACK)) continue;
+    int family=it->ifa_addr->sa_family;
+    if(family==AF_INET || family==AF_INET6){ connected=1; break; }
+  }
+  freeifaddrs(interfaces);
+  return connected;
+#endif
+}
+
 /* A bounded classic execute_string compatibility path. Old projects commonly construct a
  * resource assignment such as "sprite_index=spr_name" at runtime. Resolve that controlled
  * assignment without introducing a second runtime compiler into the core. */
@@ -160,18 +253,28 @@ static int classic_execute_assignment(GmlVM *vm, const char *source){
   }
   return gml_inst_var_set_val(vm,vreal(target->id),field,vreal(value));
 }
-/* Shared shader uniform handling (LUT row + CRT-geom parameters). Handle = sh*16 + slot:
- *   slot 1 = LUT row, 3 = CRT sizes vec4, 4 = CRT distortion, 5 = CRT distort bool,
- *   6 = CRT border bool, 15 = accepted-and-ignored. See parse_shader_palettes / draw_surface_crt. */
+/* Shared shader uniform handling. Handle = sh*16 + slot: 1 = LUT row; 3..6 = CRT;
+ * 7 = palette-grid pixel size, 8 = palette-grid UV bounds, 9 = palette-grid id; 10..11 =
+ * the two coordinate factors of a dual-sample offset shader;
+ * 15 = accepted-and-ignored. See parse_shader_palettes / draw_surface_crt. */
 static double gml_shader_get_uniform(GmlRender *R, int sh, const char *un){
   if(R && sh>=0 && sh<R->n_shader_pal && R->shader_pal){
     struct GmlShaderPal *p=&R->shader_pal[sh];
     if(p->lut && !strcmp(un,p->lut_row_uniform)) return sh*16+1;
+    if(p->grid){
+      if(!strcmp(un,p->grid_pixel_uniform)) return sh*16+7;
+      if(!strcmp(un,p->grid_uvs_uniform))    return sh*16+8;
+      if(!strcmp(un,p->grid_id_uniform))     return sh*16+9;
+    }
     if(p->crt){
       if(p->crt_sizes_uniform[0]      && !strcmp(un,p->crt_sizes_uniform))      return sh*16+3;
       if(p->crt_distortion_uniform[0] && !strcmp(un,p->crt_distortion_uniform)) return sh*16+4;
       if(p->crt_distort_uniform[0]    && !strcmp(un,p->crt_distort_uniform))    return sh*16+5;
       if(p->crt_border_uniform[0]     && !strcmp(un,p->crt_border_uniform))     return sh*16+6;
+    }
+    if(p->dual_sample){
+      if(!strcmp(un,p->dual_uniform[0])) return sh*16+10;
+      if(!strcmp(un,p->dual_uniform[1])) return sh*16+11;
     }
   }
   return sh>=0? sh*16+15 : -1;
@@ -182,6 +285,15 @@ static void gml_shader_set_uniform_f(GmlRender *R, int h, GmlVal *a, int n){
   if(sh<0 || sh>=R->n_shader_pal || !R->shader_pal) return;
   struct GmlShaderPal *p=&R->shader_pal[sh];
   if(slot==1){ if(p->lut) p->lut_row=(float)N(a,n,1); return; }
+  if(p->grid){
+    if(slot==7){ p->grid_pixel[0]=(float)N(a,n,1); p->grid_pixel[1]=(float)N(a,n,2); return; }
+    if(slot==8){ for(int i=0;i<4;i++) p->grid_uvs[i]=(float)N(a,n,i+1); return; }
+    if(slot==9){ p->grid_id=(float)N(a,n,1); return; }
+  }
+  if(p->dual_sample){
+    if(slot==10){ p->dual_value[0]=(float)N(a,n,1); return; }
+    if(slot==11){ p->dual_value[1]=(float)N(a,n,1); return; }
+  }
   if(!p->crt) return;
   switch(slot){
     case 3: p->crt_sizes[0]=(float)N(a,n,1); p->crt_sizes[1]=(float)N(a,n,2);
@@ -856,6 +968,7 @@ static GmlDSList *ds_list_slot_repair(GmlVM *vm, int id){
     vm->ds_list[i].len=0;
     vm->ds_list[i].cap=0;
     vm->ds_list[i].item=NULL;
+    vm->ds_list[i].child_kind=NULL;
     return &vm->ds_list[i];
   }
   return NULL;
@@ -869,13 +982,25 @@ static int ds_list_create_id(GmlVM *vm){
   }
   return -1;
 }
-static void ds_list_push(GmlDSList *l, GmlVal v){
+static void ds_list_push_kind(GmlDSList *l, GmlVal v, int kind){
   if(!l) return;
-  if(l->len>=l->cap){ int nc=l->cap?l->cap*2:8; GmlVal *ni=realloc(l->item,(size_t)nc*sizeof(GmlVal)); if(!ni) return; l->item=ni; l->cap=nc; }
-  l->item[l->len++]=v;
+  if(l->len>=l->cap){
+    int old=l->cap, nc=l->cap?l->cap*2:8;
+    GmlVal *ni=realloc(l->item,(size_t)nc*sizeof(GmlVal)); if(!ni) return;
+    l->item=ni;
+    unsigned char *nk=realloc(l->child_kind,(size_t)nc); if(!nk) return;
+    l->child_kind=nk; memset(nk+old,0,(size_t)(nc-old)); l->cap=nc;
+  }
+  l->item[l->len]=v;
+  l->child_kind[l->len]=(unsigned char)((kind>=1 && kind<=2)?kind:0);
+  l->len++;
 }
+static void ds_list_push(GmlDSList *l, GmlVal v){ ds_list_push_kind(l,v,0); }
 static int ds_val_equal(GmlVal a, GmlVal b){
   if(a.t==V_UNDEF || b.t==V_UNDEF) return a.t==b.t;
+  /* Arrays compare by identity in GML.  Treating every array as numeric zero made
+   * array searches (and DS containers holding arrays) report unrelated arrays equal. */
+  if(a.t==V_ARR || b.t==V_ARR) return a.t==V_ARR && b.t==V_ARR && a.arr==b.arr;
   if(a.t==V_STR || b.t==V_STR) return !strcmp(gm_string_tmp(a),gm_string_tmp(b));
   return fabs((a.t==V_REAL?a.d:0.0)-(b.t==V_REAL?b.d:0.0))<1e-9;
 }
@@ -1026,7 +1151,10 @@ static int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite)
   const char *lookup=ds_key_temp(keyv,&kt);
   int i=ds_map_find_entry(m,lookup);
   if(i>=0){
-    if(overwrite) m->entry[i].val=ds_val_clone(val);   /* old val leaks: refs may have escaped via ds_ret */
+    if(overwrite){
+      m->entry[i].val=ds_val_clone(val);   /* old val leaks: refs may have escaped via ds_ret */
+      m->entry[i].child_kind=0;
+    }
     ds_key_temp_free(&kt);
     return 1;
   }
@@ -1038,9 +1166,18 @@ static int ds_map_put(GmlVM *vm, int id, GmlVal keyv, GmlVal val, int overwrite)
   m->entry[m->len].key=key;
   m->entry[m->len].key_val=ds_key_val_clone(keyv);
   m->entry[m->len].val=ds_val_clone(val);
+  m->entry[m->len].child_kind=0;
   m->len++;
   ds_map_index_add(m,m->len-1);
   return 1;
+}
+static void ds_map_mark_child(GmlVM *vm, int id, GmlVal keyv, int kind){
+  GmlDSMap *m=ds_map_slot(vm,id);
+  DsKeyTemp kt={0};
+  const char *key=ds_key_temp(keyv,&kt);
+  int i=ds_map_find_entry(m,key);
+  ds_key_temp_free(&kt);
+  if(i>=0) m->entry[i].child_kind=(unsigned char)((kind>=1 && kind<=2)?kind:0);
 }
 static GmlVal ds_map_lookup_s(GmlVM *vm, int id, const char *key, int *ok){
   if(ok) *ok=0;
@@ -1240,20 +1377,103 @@ static void ds_map_clear_entries(GmlDSMap *m){
   m->hdirty=1;
   m->last_lookup=-1;
 }
-static void ds_map_destroy_live(GmlDSMap *m){
+typedef struct {
+  unsigned char map[GML_DS_MAP_MAX];
+  unsigned char list[GML_DS_LIST_MAX];
+} DsDestroyCtx;
+static int ds_map_slot_index(GmlVM *vm, GmlDSMap *m){
+  return vm && m && m>=vm->ds_map && m<vm->ds_map+GML_DS_MAP_MAX ? (int)(m-vm->ds_map) : -1;
+}
+static int ds_list_slot_index(GmlVM *vm, GmlDSList *l){
+  return vm && l && l>=vm->ds_list && l<vm->ds_list+GML_DS_LIST_MAX ? (int)(l-vm->ds_list) : -1;
+}
+static int ds_owned_id(GmlVal v, int *id){
+  if(v.t!=V_REAL || !isfinite(v.d)) return 0;
+  int n=(int)v.d;
+  if(fabs(v.d-(double)n)>=1e-9) return 0;
+  if(id) *id=n;
+  return 1;
+}
+static void ds_map_destroy_ctx(GmlVM *vm, GmlDSMap *m, DsDestroyCtx *ctx);
+static void ds_list_destroy_ctx(GmlVM *vm, GmlDSList *l, DsDestroyCtx *ctx);
+static void ds_owned_destroy_ctx(GmlVM *vm, GmlVal v, int kind, DsDestroyCtx *ctx){
+  int id;
+  if(!ds_owned_id(v,&id)) return;
+  if(kind==1) ds_list_destroy_ctx(vm,ds_list_slot(vm,id),ctx);
+  else if(kind==2) ds_map_destroy_ctx(vm,ds_map_slot(vm,id),ctx);
+}
+static void ds_map_destroy_children(GmlVM *vm, GmlDSMap *m, DsDestroyCtx *ctx){
   if(!m) return;
+  for(int i=0;i<m->len;i++){
+    int kind=m->entry[i].child_kind;
+    m->entry[i].child_kind=0;
+    if(kind) ds_owned_destroy_ctx(vm,m->entry[i].val,kind,ctx);
+  }
+}
+static void ds_list_destroy_children(GmlVM *vm, GmlDSList *l, DsDestroyCtx *ctx){
+  if(!l) return;
+  for(int i=0;i<l->len;i++){
+    int kind=l->child_kind?l->child_kind[i]:0;
+    if(l->child_kind) l->child_kind[i]=0;
+    if(kind) ds_owned_destroy_ctx(vm,l->item[i],kind,ctx);
+  }
+}
+static void ds_map_destroy_ctx(GmlVM *vm, GmlDSMap *m, DsDestroyCtx *ctx){
+  int slot=ds_map_slot_index(vm,m);
+  if(slot<0 || !m->live || ctx->map[slot]) return;
+  ctx->map[slot]=1;
+  m->live=0;                         /* break self/cross cycles before walking children */
+  if(vm->ds_map_last_slot==slot) vm->ds_map_last_slot=-1;
+  ds_map_destroy_children(vm,m,ctx);
   ds_map_clear_entries(m);
   free(m->entry);
   ds_map_index_free(m);
   memset(m,0,sizeof(*m));
+  m->last_lookup=-1;
+}
+static void ds_list_destroy_ctx(GmlVM *vm, GmlDSList *l, DsDestroyCtx *ctx){
+  int slot=ds_list_slot_index(vm,l);
+  if(slot<0 || !l->live || ctx->list[slot]) return;
+  ctx->list[slot]=1;
+  l->live=0;
+  ds_list_destroy_children(vm,l,ctx);
+  free(l->item);
+  free(l->child_kind);
+  memset(l,0,sizeof(*l));
+}
+static void ds_map_destroy_id(GmlVM *vm, int id){
+  DsDestroyCtx ctx={0};
+  ds_map_destroy_ctx(vm,ds_map_slot(vm,id),&ctx);
+}
+static void ds_list_destroy_id(GmlVM *vm, int id){
+  DsDestroyCtx ctx={0};
+  ds_list_destroy_ctx(vm,ds_list_slot(vm,id),&ctx);
+}
+static void ds_map_clear_owned(GmlVM *vm, GmlDSMap *m){
+  DsDestroyCtx ctx={0}; int slot=ds_map_slot_index(vm,m);
+  if(slot>=0) ctx.map[slot]=1;
+  ds_map_destroy_children(vm,m,&ctx);
+  ds_map_clear_entries(m);
+}
+static void ds_list_clear_owned(GmlVM *vm, GmlDSList *l){
+  DsDestroyCtx ctx={0}; int slot=ds_list_slot_index(vm,l);
+  if(slot>=0) ctx.list[slot]=1;
+  ds_list_destroy_children(vm,l,&ctx);
+  if(l) l->len=0;
 }
 static int ds_map_replace_from_map(GmlVM *vm, int dst_id, int src_id){
   GmlDSMap *dst=ds_map_slot(vm,dst_id);
   GmlDSMap *src=ds_map_slot(vm,src_id);
   if(!dst||!src) return 0;
   if(dst==src) return 1;
-  ds_map_clear_entries(dst);
-  for(int i=0;i<src->len;i++) ds_map_put(vm,dst_id,src->entry[i].key_val,src->entry[i].val,1);
+  ds_map_clear_owned(vm,dst);
+  for(int i=0;i<src->len;i++){
+    ds_map_put(vm,dst_id,src->entry[i].key_val,src->entry[i].val,1);
+    ds_map_mark_child(vm,dst_id,src->entry[i].key_val,src->entry[i].child_kind);
+    /* This helper is used to consume a temporary decoded map. Transfer nested
+     * ownership to the destination before that temporary root is destroyed. */
+    src->entry[i].child_kind=0;
+  }
   return 1;
 }
 static void ds_log_val_simple(GmlVal v){
@@ -1402,9 +1622,22 @@ static int json_encode_map(GmlVM *vm, JsonBuf *b, int id, int depth){
     if(m->entry[i].key_val.t==V_STR) key=m->entry[i].key_val.s?m->entry[i].key_val.s:"";
     else { snprintf(keybuf,sizeof(keybuf),"%.17g",m->entry[i].key_val.t==V_REAL?m->entry[i].key_val.d:0.0); key=keybuf; }
     if(!jb_put_json_string(b,key) || !jb_putc(b,':')) return 0;
-    if(!json_encode_val(vm,b,m->entry[i].val,depth+1,0)) return 0;
+    int child=m->entry[i].child_kind;
+    if(!json_encode_val(vm,b,m->entry[i].val,depth+1,child==1?2:(child==2?3:0))) return 0;
   }
   return jb_putc(b,'}');
+}
+static int json_encode_list(GmlVM *vm, JsonBuf *b, int id, int depth){
+  if(depth>16) return jb_puts(b,"null");
+  GmlDSList *l=ds_list_slot(vm,id);
+  if(!l) return jb_puts(b,"null");
+  if(!jb_putc(b,'[')) return 0;
+  for(int i=0;i<l->len;i++){
+    if(i && !jb_putc(b,',')) return 0;
+    int child=l->child_kind?l->child_kind[i]:0;
+    if(!json_encode_val(vm,b,l->item[i],depth+1,child==1?2:(child==2?3:0))) return 0;
+  }
+  return jb_putc(b,']');
 }
 static int json_encode_arr(GmlVM *vm, JsonBuf *b, GmlArr *A, int depth){
   if(depth>16) return jb_puts(b,"null");
@@ -1423,7 +1656,10 @@ static int json_encode_val(GmlVM *vm, JsonBuf *b, GmlVal v, int depth, int allow
   if(v.t==V_REAL){
     int id=(int)v.d;
     if(GML_IS_STRUCT_ID(v.d)) return json_encode_struct(vm,b,gml_struct_find(vm,(unsigned)v.d),depth,allow_ds);
-    if(allow_ds && fabs(v.d-(double)id)<1e-9 && ds_map_slot(vm,id)) return json_encode_map(vm,b,id,depth);
+    if(fabs(v.d-(double)id)<1e-9){
+      if((allow_ds==1 || allow_ds==3) && ds_map_slot(vm,id)) return json_encode_map(vm,b,id,depth);
+      if((allow_ds==1 || allow_ds==2) && ds_list_slot(vm,id)) return json_encode_list(vm,b,id,depth);
+    }
     if(!isfinite(v.d)) return jb_puts(b,"null");
     char num[64]; snprintf(num,sizeof(num),"%.17g",v.d); return jb_puts(b,num);
   }
@@ -1506,16 +1742,33 @@ static void gml_array_sort(GmlVal arr, int ascending){
 static GmlVal json_parse_value(JsonIn *j, int depth);
 static GmlVal json_parse_array(JsonIn *j, int depth){
   if(!js_consume(j,'[')){ j->ok=0; return vreal(0); }
-  GmlArr *A=calloc(1,sizeof(*A)); if(!A){ j->ok=0; return vreal(0); }
-  A->escaped=1;
+  GmlArr *A=NULL; GmlDSList *l=NULL; int list_id=-1;
+  if(j->obj_as_struct){
+    A=calloc(1,sizeof(*A)); if(!A){ j->ok=0; return vreal(0); }
+    A->escaped=1;
+  } else {
+    list_id=ds_list_create_id(j->vm);
+    l=ds_list_slot(j->vm,list_id);
+    if(list_id<0 || !l){ j->ok=0; return vreal(0); }
+  }
   js_ws(j);
-  if(js_consume(j,']')){ GmlVal v=vreal(0); v.t=V_ARR; v.arr=A; return v; }
+  if(js_consume(j,']')){
+    if(!j->obj_as_struct) return vreal(list_id);
+    GmlVal v=vreal(0); v.t=V_ARR; v.arr=A; return v;
+  }
   for(;;){
+    js_ws(j); char lead=(j->p<j->n)?j->s[j->p]:0;
     GmlVal v=json_parse_value(j,depth+1);
-    if(!j->ok || !js_arr_push(A,v)){ j->ok=0; return vreal(0); }
+    if(!j->ok){ j->ok=0; return vreal(0); }
+    if(j->obj_as_struct){
+      if(!js_arr_push(A,v)){ j->ok=0; return vreal(0); }
+    } else {
+      ds_list_push_kind(l,v,lead=='['?1:(lead=='{'?2:0));
+    }
     if(js_consume(j,']')) break;
     if(!js_consume(j,',')){ j->ok=0; return vreal(0); }
   }
+  if(!j->obj_as_struct) return vreal(list_id);
   GmlVal out=vreal(0); out.t=V_ARR; out.arr=A; return out;
 }
 static GmlVal json_parse_object(JsonIn *j, int depth){
@@ -1544,9 +1797,11 @@ static GmlVal json_parse_object(JsonIn *j, int depth){
     char *key=js_string(j);
     if(!j->ok){ free(key); return vreal(0); }
     if(!js_consume(j,':')){ free(key); j->ok=0; return vreal(0); }
+    js_ws(j); char lead=(j->p<j->n)?j->s[j->p]:0;
     GmlVal val=json_parse_value(j,depth+1);
     if(!j->ok){ free(key); return vreal(0); }
     ds_map_put(j->vm,id,vstr(key),val,1);
+    ds_map_mark_child(j->vm,id,vstr(key),lead=='['?1:(lead=='{'?2:0));
     free(key);
     if(js_consume(j,'}')) break;
     if(!js_consume(j,',')){ j->ok=0; return vreal(0); }
@@ -1559,7 +1814,7 @@ static int js_match(JsonIn *j, const char *lit){
   return 0;
 }
 static GmlVal json_parse_value(JsonIn *j, int depth){
-  if(depth>32){ j->ok=0; return vreal(0); }
+  if(depth>128){ j->ok=0; return vreal(0); }
   js_ws(j); if(j->p>=j->n){ j->ok=0; return vreal(0); }
   char c=j->s[j->p];
   if(c=='{') return json_parse_object(j,depth);
@@ -1579,11 +1834,26 @@ static GmlVal json_decode_text_mode(GmlVM *vm, const char *s, int obj_as_struct)
   if(getenv("GML_DBG_JSON")){ static int c=0; if(c++<12)
     fprintf(stderr,"[json] len=%zu ok=%d consumed=%zu/%zu head='%.60s'\n",
       s?strlen(s):0, j.ok, j.p, j.n, s?s:""); }
-  if(!j.ok || j.p!=j.n) return vreal(0);
+  if(!j.ok || j.p!=j.n) return obj_as_struct?vundef():vreal(-1);
   return v;
 }
 static GmlVal json_decode_text(GmlVM *vm, const char *s){
-  return json_decode_text_mode(vm,s,0);
+  const char *p=s?s:"";
+  while(*p && isspace((unsigned char)*p)) p++;
+  int top_object=*p=='{';
+  GmlVal decoded=json_decode_text_mode(vm,s,0);
+  if(decoded.t==V_REAL && decoded.d==-1) return decoded;
+  /* Legacy json_decode always returns a DS map. Non-object roots live under
+   * the key "default"; arrays are marked as owned lists just like nested JSON. */
+  if(top_object) return decoded;
+  int root=ds_map_create_id(vm);
+  if(root<0){
+    if(*p=='[' && decoded.t==V_REAL) ds_list_destroy_id(vm,(int)decoded.d);
+    return vreal(-1);
+  }
+  ds_map_put(vm,root,vstr("default"),decoded,1);
+  if(*p=='[') ds_map_mark_child(vm,root,vstr("default"),1);
+  return vreal(root);
 }
 static GmlVal json_encode_root(GmlVM *vm, GmlVal v){
   JsonBuf b={0};
@@ -1644,10 +1914,35 @@ static int ds_map_read_text(GmlVM *vm, int dst_id, const char *text){
   GmlDSMap *src=ds_map_slot(vm,src_id);
   if(!src) return 0;
   int wi=ds_map_find_entry(src,"s:__gml_ds_map__");
+  if(wi>=0 && src->entry[wi].child_kind==1 && src->entry[wi].val.t==V_REAL){
+    GmlDSList *rows=ds_list_slot(vm,(int)src->entry[wi].val.d);
+    GmlDSMap *dst=ds_map_slot(vm,dst_id);
+    if(!dst || !rows){ ds_map_destroy_id(vm,src_id); return 0; }
+    ds_map_clear_owned(vm,dst);
+    for(int i=0;i<rows->len;i++){
+      if(!rows->child_kind || rows->child_kind[i]!=1 || rows->item[i].t!=V_REAL) continue;
+      GmlDSList *row=ds_list_slot(vm,(int)rows->item[i].d);
+      if(!row || row->len<3) continue;
+      const char *kind=(row->item[0].t==V_STR && row->item[0].s)?row->item[0].s:"";
+      GmlVal key=vundef();
+      if(kind[0]=='s'){
+        key = row->item[1].t==V_STR ? row->item[1] : vstr(gm_string_tmp(row->item[1]));
+      } else if(kind[0]=='r'){
+        key = row->item[1].t==V_REAL ? row->item[1] : vreal(atof(gm_string_tmp(row->item[1])));
+      } else if(kind[0]!='u') {
+        continue;
+      }
+      ds_map_put(vm,dst_id,key,row->item[2],1);
+    }
+    ds_map_destroy_id(vm,src_id);
+    return 1;
+  }
+  /* Accept states produced by the older in-core JSON implementation, where the
+   * private ds_map_write envelope decoded to VM arrays instead of DS lists. */
   if(wi>=0 && src->entry[wi].val.t==V_ARR && src->entry[wi].val.arr){
     GmlDSMap *dst=ds_map_slot(vm,dst_id);
-    if(!dst){ ds_map_destroy_live(src); return 0; }
-    ds_map_clear_entries(dst);
+    if(!dst){ ds_map_destroy_id(vm,src_id); return 0; }
+    ds_map_clear_owned(vm,dst);
     GmlArr *rows=(GmlArr*)src->entry[wi].val.arr;
     for(int i=0;i<rows->len;i++){
       if(rows->data[i].t!=V_ARR || !rows->data[i].arr) continue;
@@ -1655,20 +1950,16 @@ static int ds_map_read_text(GmlVM *vm, int dst_id, const char *text){
       if(row->len<3) continue;
       const char *kind=(row->data[0].t==V_STR && row->data[0].s)?row->data[0].s:"";
       GmlVal key=vundef();
-      if(kind[0]=='s'){
-        key = row->data[1].t==V_STR ? row->data[1] : vstr(gm_string_tmp(row->data[1]));
-      } else if(kind[0]=='r'){
-        key = row->data[1].t==V_REAL ? row->data[1] : vreal(atof(gm_string_tmp(row->data[1])));
-      } else if(kind[0]!='u') {
-        continue;
-      }
+      if(kind[0]=='s') key=row->data[1].t==V_STR?row->data[1]:vstr(gm_string_tmp(row->data[1]));
+      else if(kind[0]=='r') key=row->data[1].t==V_REAL?row->data[1]:vreal(atof(gm_string_tmp(row->data[1])));
+      else if(kind[0]!='u') continue;
       ds_map_put(vm,dst_id,key,row->data[2],1);
     }
-    ds_map_destroy_live(src);
+    ds_map_destroy_id(vm,src_id);
     return 1;
   }
   int ok=ds_map_replace_from_map(vm,dst_id,src_id);
-  ds_map_destroy_live(src);
+  ds_map_destroy_id(vm,src_id);
   return ok;
 }
 static void ini_reset(GmlVM *vm){
@@ -2155,6 +2446,29 @@ static void draw_px_alpha(GmlRender *R, int x, int y, uint32_t gmcol, double alp
   if(R->pending_underlay || R->pending_fill) gml_render_prepare_draw(R);
   R->fb_all_transparent=0;
   uint32_t src=gm_color_to_xrgb(gmcol), *dp=&R->fb[(size_t)y*R->fbw+x];
+  if(R->alphablend && (R->blend_equation!=1 || R->blend_equation_alpha!=1)){
+    int sc[4]={(src>>16)&255,(src>>8)&255,src&255,(int)lround(alpha*255.0)};
+    int dc[4]={(*dp>>16)&255,(*dp>>8)&255,*dp&255,R->target_sp>0?(int)(*dp>>24):255};
+    double sf=alpha, df=1.0-alpha;
+    if(R->blendmode==1 || R->blendmode==2) df=1.0;
+    int oc[4];
+    for(int k=0;k<4;k++){
+      int eq=k==3?R->blend_equation_alpha:R->blend_equation;
+      double v;
+      if(eq==2) v=sc[k]>dc[k]?sc[k]:dc[k];
+      else if(eq==5) v=sc[k]<dc[k]?sc[k]:dc[k];
+      else if(eq==3) v=dc[k]*df-sc[k]*sf;
+      else if(eq==4) v=sc[k]*sf-dc[k]*df;
+      else v=sc[k]*sf+dc[k]*df;
+      if(v<0) v=0; else if(v>255) v=255;
+      oc[k]=(int)lround(v);
+    }
+    uint32_t out=((uint32_t)oc[3]<<24)|((uint32_t)oc[0]<<16)|((uint32_t)oc[1]<<8)|(uint32_t)oc[2];
+    unsigned m=R->color_write_mask;
+    uint32_t bits=(m&1?0x00FF0000u:0)|(m&2?0x0000FF00u:0)|(m&4?0x000000FFu:0)|(m&8?0xFF000000u:0);
+    *dp=(*dp&~bits)|(out&bits);
+    return;
+  }
   if(R->alphablend && R->blendmode!=0){
     int sr=(src>>16)&0xff, sg=(src>>8)&0xff, sb=src&0xff;
     int dr=(*dp>>16)&0xff, dg=(*dp>>8)&0xff, db=*dp&0xff;
@@ -2205,6 +2519,140 @@ typedef struct {
   double nx,ny,nz;
   int has_normal;
 } GmlD3Vertex;
+
+/* Vertex formats and buffers are runtime resources independent of
+ * the legacy d3d_model API.  The software backend stores a canonical vertex
+ * rather than mirroring a host GPU layout; format stride is still tracked so
+ * the public size/query functions retain their documented byte semantics. */
+#define GML_VERTEX_FORMAT_MAX 128
+#define GML_VERTEX_BUFFER_MAX 256
+#define GML_VERTEX_ATTR_MAX 16
+#define GML_VERTEX_MAX 1048576
+enum {
+  GML_VERTEX_POSITION2=1,
+  GML_VERTEX_POSITION3,
+  GML_VERTEX_COLOR,
+  GML_VERTEX_NORMAL,
+  GML_VERTEX_TEXCOORD,
+  GML_VERTEX_CUSTOM
+};
+typedef struct {
+  unsigned char kind,type,usage,count;
+  unsigned short bytes;
+} GmlVertexAttr;
+typedef struct {
+  int used,n_attr,stride;
+  GmlVertexAttr attr[GML_VERTEX_ATTR_MAX];
+} GmlVertexFormat;
+typedef struct {
+  int used,frozen,format,attr_index,reserve_bytes;
+  GmlD3Vertex partial;
+  GmlD3Vertex *vertex;
+  int vertex_n,vertex_cap;
+} GmlVertexBuffer;
+static GmlVertexFormat g_vertex_format[GML_VERTEX_FORMAT_MAX];
+static GmlVertexFormat g_vertex_builder;
+static int g_vertex_builder_active;
+static GmlVertexBuffer g_vertex_buffer[GML_VERTEX_BUFFER_MAX];
+
+static void vertex_partial_init(GmlVertexBuffer *buffer){
+  memset(&buffer->partial,0,sizeof(buffer->partial));
+  buffer->partial.r=buffer->partial.g=buffer->partial.b=255;
+  buffer->partial.alpha=1;
+  buffer->attr_index=0;
+}
+static void vertex_resources_reset(void){
+  for(int i=0;i<GML_VERTEX_BUFFER_MAX;i++){
+    free(g_vertex_buffer[i].vertex);
+    memset(&g_vertex_buffer[i],0,sizeof(g_vertex_buffer[i]));
+    g_vertex_buffer[i].format=-1;
+  }
+  memset(g_vertex_format,0,sizeof(g_vertex_format));
+  memset(&g_vertex_builder,0,sizeof(g_vertex_builder));
+  g_vertex_builder_active=0;
+}
+static int vertex_format_add(int kind,int type,int usage,int count,int bytes){
+  if(!g_vertex_builder_active || g_vertex_builder.n_attr>=GML_VERTEX_ATTR_MAX || bytes<=0) return 0;
+  GmlVertexAttr *attr=&g_vertex_builder.attr[g_vertex_builder.n_attr++];
+  attr->kind=(unsigned char)kind; attr->type=(unsigned char)type;
+  attr->usage=(unsigned char)usage; attr->count=(unsigned char)count;
+  attr->bytes=(unsigned short)bytes;
+  if(g_vertex_builder.stride<=INT_MAX-bytes) g_vertex_builder.stride+=bytes;
+  return 1;
+}
+static int vertex_format_finish(void){
+  if(!g_vertex_builder_active || g_vertex_builder.n_attr<=0){ g_vertex_builder_active=0; return -1; }
+  for(int i=0;i<GML_VERTEX_FORMAT_MAX;i++) if(!g_vertex_format[i].used){
+    g_vertex_format[i]=g_vertex_builder; g_vertex_format[i].used=1;
+    g_vertex_builder_active=0;
+    return i;
+  }
+  g_vertex_builder_active=0;
+  return -1;
+}
+static int vertex_buffer_create(int reserve_bytes){
+  if(reserve_bytes<0) reserve_bytes=0;
+  for(int i=0;i<GML_VERTEX_BUFFER_MAX;i++) if(!g_vertex_buffer[i].used){
+    GmlVertexBuffer *buffer=&g_vertex_buffer[i];
+    memset(buffer,0,sizeof(*buffer)); buffer->used=1; buffer->format=-1;
+    buffer->reserve_bytes=reserve_bytes; vertex_partial_init(buffer);
+    return i;
+  }
+  return -1;
+}
+static int vertex_buffer_grow(GmlVertexBuffer *buffer,int needed){
+  if(!buffer || needed<0 || needed>GML_VERTEX_MAX) return 0;
+  if(needed<=buffer->vertex_cap) return 1;
+  int capacity=buffer->vertex_cap?buffer->vertex_cap:64;
+  while(capacity<needed){
+    if(capacity>GML_VERTEX_MAX/2){ capacity=GML_VERTEX_MAX; break; }
+    capacity*=2;
+  }
+  GmlD3Vertex *grown=realloc(buffer->vertex,(size_t)capacity*sizeof(*grown));
+  if(!grown) return 0;
+  buffer->vertex=grown; buffer->vertex_cap=capacity;
+  return 1;
+}
+static int vertex_buffer_begin(int id,int format){
+  if(id<0 || id>=GML_VERTEX_BUFFER_MAX || !g_vertex_buffer[id].used ||
+     format<0 || format>=GML_VERTEX_FORMAT_MAX || !g_vertex_format[format].used) return 0;
+  GmlVertexBuffer *buffer=&g_vertex_buffer[id];
+  if(buffer->frozen) return 0;
+  buffer->format=format; buffer->vertex_n=0; vertex_partial_init(buffer);
+  int stride=g_vertex_format[format].stride;
+  int wanted=stride>0?buffer->reserve_bytes/stride:0;
+  if(wanted>GML_VERTEX_MAX) wanted=GML_VERTEX_MAX;
+  return wanted<=0 || vertex_buffer_grow(buffer,wanted);
+}
+static int vertex_buffer_commit(GmlVertexBuffer *buffer){
+  if(!buffer || buffer->format<0 || buffer->format>=GML_VERTEX_FORMAT_MAX) return 0;
+  if(!vertex_buffer_grow(buffer,buffer->vertex_n+1)) return 0;
+  buffer->vertex[buffer->vertex_n++]=buffer->partial;
+  vertex_partial_init(buffer);
+  return 1;
+}
+static int vertex_buffer_attribute(int id,int supplied_kind,const double value[4],int count){
+  if(id<0 || id>=GML_VERTEX_BUFFER_MAX || !g_vertex_buffer[id].used) return 0;
+  GmlVertexBuffer *buffer=&g_vertex_buffer[id];
+  if(buffer->frozen || buffer->format<0 || buffer->format>=GML_VERTEX_FORMAT_MAX) return 0;
+  GmlVertexFormat *format=&g_vertex_format[buffer->format];
+  if(!format->used || buffer->attr_index<0 || buffer->attr_index>=format->n_attr) return 0;
+  GmlVertexAttr *attr=&format->attr[buffer->attr_index];
+  int kind=attr->kind==GML_VERTEX_CUSTOM?supplied_kind:attr->kind;
+  (void)count;
+  if(kind==GML_VERTEX_POSITION2){ buffer->partial.x=value[0]; buffer->partial.y=value[1]; }
+  else if(kind==GML_VERTEX_POSITION3){ buffer->partial.x=value[0]; buffer->partial.y=value[1]; buffer->partial.z=value[2]; }
+  else if(kind==GML_VERTEX_NORMAL){ buffer->partial.nx=value[0]; buffer->partial.ny=value[1]; buffer->partial.nz=value[2]; buffer->partial.has_normal=1; }
+  else if(kind==GML_VERTEX_TEXCOORD){ buffer->partial.u=value[0]; buffer->partial.v=value[1]; }
+  else if(kind==GML_VERTEX_COLOR){
+    uint32_t color=(uint32_t)value[0];
+    buffer->partial.r=color&255; buffer->partial.g=(color>>8)&255; buffer->partial.b=(color>>16)&255;
+    buffer->partial.alpha=value[1];
+  }
+  buffer->attr_index++;
+  if(buffer->attr_index==format->n_attr) return vertex_buffer_commit(buffer);
+  return 1;
+}
 typedef struct {
   int active, hidden, culling, ortho, classic;
   double eye[3], right[3], up[3], forward[3];
@@ -2223,6 +2671,7 @@ typedef struct {
   long depth_frame;
 } GmlD3State;
 static GmlD3State g_d3={.shade_r=1,.shade_g=1,.shade_b=1,.depth_frame=-1};
+static double g_matrix_view[16],g_matrix_projection[16];
 #define GML_D3_PRIM_MAX 4096
 static GmlD3Vertex g_d3_prim[GML_D3_PRIM_MAX];
 static int g_d3_prim_kind, g_d3_prim_texture=-1, g_d3_prim_n;
@@ -2267,8 +2716,11 @@ void gml_d3_reset(void){
   g_d3.fov=41.2; g_d3.near_clip=1; g_d3.far_clip=32000;
   g_d3.ambient_color=0;
   d3_matrix_identity(g_d3.transform);
+  d3_matrix_identity(g_matrix_view);
+  d3_matrix_identity(g_matrix_projection);
   g_d3_prim_n=0; g_d3_prim_kind=0; g_d3_prim_texture=-1;
   d3_models_clear_all();
+  vertex_resources_reset();
 }
 void gml_d3_state_get(int flags[GML_D3_STATE_FLAG_COUNT],
                       double values[GML_D3_STATE_VALUE_COUNT],
@@ -2294,6 +2746,8 @@ void gml_d3_state_get(int flags[GML_D3_STATE_FLAG_COUNT],
   values[54]=g_d3.fog_start; values[55]=g_d3.fog_end;
   memcpy(values+56,g_d3.transform,16*sizeof(*values));
   memcpy(values+72,g_d3.transform_stack,512*sizeof(*values));
+  memcpy(values+584,g_matrix_view,16*sizeof(*values));
+  memcpy(values+600,g_matrix_projection,16*sizeof(*values));
   colors[8]=g_d3.fog_color;
   colors[9]=g_d3.ambient_color;
 }
@@ -2325,6 +2779,16 @@ void gml_d3_state_set(const int flags[GML_D3_STATE_FLAG_COUNT],
   g_d3.fog_start=values[54]; g_d3.fog_end=values[55];
   memcpy(g_d3.transform,values+56,16*sizeof(*values));
   memcpy(g_d3.transform_stack,values+72,512*sizeof(*values));
+  memcpy(g_matrix_view,values+584,16*sizeof(*values));
+  memcpy(g_matrix_projection,values+600,16*sizeof(*values));
+  /* Older savestates predate the explicit view/projection arrays and provide zero-filled tails. */
+  int view_zero=1,projection_zero=1;
+  for(int i=0;i<16;i++){
+    if(g_matrix_view[i]!=0) view_zero=0;
+    if(g_matrix_projection[i]!=0) projection_zero=0;
+  }
+  if(view_zero) d3_matrix_identity(g_matrix_view);
+  if(projection_zero) d3_matrix_identity(g_matrix_projection);
   g_d3.fog_color=colors[8];
   g_d3.ambient_color=colors[9];
 }
@@ -2370,6 +2834,79 @@ static void d3_matrix_rotation_axis(double out[16],double x,double y,double z,do
   out[0]=t*x*x+c;   out[4]=t*x*y-s*z; out[8]=t*x*z+s*y;
   out[1]=t*x*y+s*z; out[5]=t*y*y+c;   out[9]=t*y*z-s*x;
   out[2]=t*x*z-s*y; out[6]=t*y*z+s*x; out[10]=t*z*z+c;
+}
+static int gm_matrix_read(GmlVal value,double out[16]){
+  if(value.t!=V_ARR || !value.arr || gml_val_array_length(value)<16) return 0;
+  for(int i=0;i<16;i++){
+    GmlVal element=gml_arr_get(value,i);
+    out[i]=N(&element,1,0);
+  }
+  return 1;
+}
+static GmlVal gm_matrix_write(const double matrix[16],GmlVal reuse){
+  GmlVal result=(reuse.t==V_ARR && reuse.arr)?reuse:gml_arr_new(16,vreal(0));
+  for(int i=0;i<16;i++) gml_arr_set(result,i,vreal(matrix[i]));
+  return result;
+}
+void gml_d3_sync_render_camera(GmlRender *R){
+  if(!R) return;
+  const double eps=1e-10;
+  int translation=fabs(g_d3.transform[0]-1)<eps && fabs(g_d3.transform[5]-1)<eps &&
+    fabs(g_d3.transform[10]-1)<eps && fabs(g_d3.transform[15]-1)<eps;
+  for(int i=0;i<12 && translation;i++)
+    if(i!=0 && i!=5 && i!=10 && fabs(g_d3.transform[i])>=eps) translation=0;
+  R->cam_x=R->projection_cam_x-(translation?g_d3.transform[12]:0);
+  R->cam_y=R->projection_cam_y-(translation?g_d3.transform[13]:0);
+}
+
+static GmlVal gm_matrix_builtin(GmlRender *R,const char *name,GmlVal *args,int count){
+  double result[16];
+  if(!strcmp(name,"matrix_build_identity")){
+    d3_matrix_identity(result);
+    return gm_matrix_write(result,count>0?args[0]:vundef());
+  }
+  if(!strcmp(name,"matrix_get")){
+    int type=(int)N(args,count,0);
+    const double *matrix=type==0?g_matrix_view:(type==1?g_matrix_projection:g_d3.transform);
+    return gm_matrix_write(matrix,vundef());
+  }
+  if(!strcmp(name,"matrix_set")){
+    int type=(int)N(args,count,0); double matrix[16];
+    if(count>1 && gm_matrix_read(args[1],matrix)){
+      if(getenv("GML_LOG_MATRIX")){ extern long g_vm_frame;
+        fprintf(stderr,"[matrix] f%ld set type=%d diag=(%.3g,%.3g,%.3g,%.3g) translate=(%.3g,%.3g,%.3g)\n",
+                g_vm_frame,type,matrix[0],matrix[5],matrix[10],matrix[15],
+                matrix[12],matrix[13],matrix[14]); }
+      if(type==0) memcpy(g_matrix_view,matrix,sizeof(matrix));
+      else if(type==1) memcpy(g_matrix_projection,matrix,sizeof(matrix));
+      else if(type==2){ memcpy(g_d3.transform,matrix,sizeof(matrix)); gml_d3_sync_render_camera(R); }
+    }
+    return vreal(0);
+  }
+  if(!strcmp(name,"matrix_multiply")){
+    double first[16],second[16];
+    if(count<2 || !gm_matrix_read(args[0],first) || !gm_matrix_read(args[1],second))
+      d3_matrix_identity(result);
+    else
+      /* The documented order is result = matrix2 * matrix1. */
+      d3_matrix_multiply(second,first,result);
+    return gm_matrix_write(result,count>2?args[2]:vundef());
+  }
+  if(!strcmp(name,"matrix_build")){
+    double translation[16],scale[16],rx[16],ry[16],rz[16],rotation_yx[16],rotation[16],scaled[16];
+    d3_matrix_translation(translation,N(args,count,0),N(args,count,1),N(args,count,2));
+    d3_matrix_scaling(scale,N(args,count,6),N(args,count,7),N(args,count,8));
+    d3_matrix_rotation_axis(rx,1,0,0,N(args,count,3));
+    d3_matrix_rotation_axis(ry,0,1,0,N(args,count,4));
+    d3_matrix_rotation_axis(rz,0,0,1,N(args,count,5));
+    /* Documented Y-X-Z rotation order, followed by scale and translation. */
+    d3_matrix_multiply(rx,ry,rotation_yx);
+    d3_matrix_multiply(rz,rotation_yx,rotation);
+    d3_matrix_multiply(scale,rotation,scaled);
+    d3_matrix_multiply(translation,scaled,result);
+    return gm_matrix_write(result,count>9?args[9]:vundef());
+  }
+  return vreal(0);
 }
 static void d3_transform_point(double *x,double *y,double *z){
   double inx=*x,iny=*y,inz=*z;
@@ -2445,6 +2982,39 @@ static int d3_texture(GmlRender *R, int handle, GmlD3Texture *out){
   if(out){ out->kind=1; out->w=t->sw; out->h=t->sh; out->stride=a->w;
     out->offset_x=t->sx; out->offset_y=t->sy; out->rgba=a->px; }
   return 1;
+}
+/* vertex_texcoord receives texture-page UVs (for example those returned by
+ * texture_get_uvs), whereas the legacy d3d helpers use sprite-local 0..1 UVs.
+ * Resolve tagged sprite/background handles to the full atlas for this API. */
+static int vertex_texture(GmlRender *R,int handle,GmlD3Texture *out){
+  if(out) memset(out,0,sizeof(*out));
+  if(handle==-1) return 1;
+  uint32_t encoded=(uint32_t)handle,kind=encoded&GML_TEX_KIND_MASK;
+  if(kind==GML_TEX_SPR_TAG){
+    int spr=(int)((encoded>>10)&0xFFFF),img=(int)(encoded&0x3FF);
+    GmlSprite *sprite=NULL; GmlTpag *page=NULL; GmlAtlas *atlas=NULL;
+    gml_render_warm_sprite(R,spr);
+    int sprite_kind=sprite_tpag_info(R,spr,img,&sprite,&page,&atlas);
+    if(sprite_kind==1 && atlas && atlas->px && atlas->w>0 && atlas->h>0){
+      if(out){ out->kind=1; out->w=atlas->w; out->h=atlas->h; out->stride=atlas->w; out->rgba=atlas->px; }
+      return 1;
+    }
+    return d3_texture(R,handle,out);
+  }
+  if(kind==GML_TEX_BG_TAG){
+    int bg=(int)(encoded&0x00FFFFFF);
+    if(!R || bg<0 || bg>=R->n_bg) return 0;
+    gml_render_warm_bg(R,bg);
+    int page_id=R->bg[bg].tpag;
+    if(page_id<0 || page_id>=R->n_tpag) return 0;
+    GmlTpag *page=&R->tpag[page_id];
+    if(page->atlas<0 || page->atlas>=R->n_atlas) return 0;
+    GmlAtlas *atlas=&R->atlas[page->atlas];
+    if(!atlas->px || atlas->w<=0 || atlas->h<=0) return 0;
+    if(out){ out->kind=1; out->w=atlas->w; out->h=atlas->h; out->stride=atlas->w; out->rgba=atlas->px; }
+    return 1;
+  }
+  return d3_texture(R,handle,out);
 }
 static void d3_texture_texel(const GmlD3Texture *texture,int x,int y,int channel[4]){
   if(texture->kind==1){
@@ -2568,7 +3138,10 @@ static void d3_raster_triangle(GmlRender *R, const GmlD3Vertex in[3], const GmlD
     double invz=b0*iz[0]+b1*iz[1]+b2*iz[2];
     double ztest=b0*depth_value[0]+b1*depth_value[1]+b2*depth_value[2];
     size_t di=(size_t)y*R->fbw+x;
-    if(g_d3.hidden && ztest<=g_d3.depth[di]) continue;
+    /* The fixed-function hidden-surface path accepts fragments at the current depth
+     * (the usual LESS_EQUAL comparison).  A strict comparison makes coplanar 2D batches eat
+     * one another: text glyphs and quads are emitted as multiple triangles at one layer depth. */
+    if(g_d3.hidden && ztest<g_d3.depth[di]) continue;
     double sampled[4]={255,255,255,255};
     if(texture&&texture->kind){
       double u=(b0*uz[0]+b1*uz[1]+b2*uz[2])/invz;
@@ -3092,7 +3665,7 @@ static void d3_raster_sample(GmlRender *R,int x,int y,double depth,double distan
                              const GmlD3Texture *texture){
   if(!R || x<0 || y<0 || x>=R->fbw || y>=R->fbh || alpha<=0) return;
   size_t index=(size_t)y*R->fbw+x;
-  if(g_d3.hidden && depth<=g_d3.depth[index]) return;
+  if(g_d3.hidden && depth<g_d3.depth[index]) return;
   double sampled[4]={255,255,255,255};
   if(texture&&texture->kind) d3_sample(R,texture,u,v,sampled);
   if(red<0) red=0; else if(red>255) red=255;
@@ -3198,6 +3771,64 @@ static void d3_primitive_flush(GmlRender *R){
       GmlD3Vertex triangle[3]={g_d3_prim[0],g_d3_prim[i],g_d3_prim[i+1]};
       d3_emit_triangle(R,triangle,&texture);
     }
+  }
+}
+static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_handle,
+                                 int first,int number){
+  if(!R || id<0 || id>=GML_VERTEX_BUFFER_MAX || !g_vertex_buffer[id].used) return;
+  GmlVertexBuffer *buffer=&g_vertex_buffer[id];
+  if(first<0) first=0;
+  if(first>buffer->vertex_n) first=buffer->vertex_n;
+  if(number<0 || number>buffer->vertex_n-first) number=buffer->vertex_n-first;
+  if(number<=0) return;
+  GmlD3Texture texture={0};
+  if(!vertex_texture(R,texture_handle,&texture)) memset(&texture,0,sizeof(texture));
+
+  /* The ordinary 2D API also exposes vertex buffers. Configure a
+   * temporary orthographic software pipeline when legacy d3d mode is not
+   * active, then restore all state while retaining a possibly grown depth
+   * allocation. */
+  int temporary=!g_d3.active;
+  GmlD3State saved;
+  if(temporary){
+    saved=g_d3;
+    g_d3.active=1; g_d3.ortho=1; g_d3.hidden=0; g_d3.zwrite=0;
+    g_d3.lighting=0; g_d3.fog=0; g_d3.culling=0; g_d3.smooth=1;
+    g_d3.ortho_x=R->cam_x; g_d3.ortho_y=R->cam_y;
+    g_d3.ortho_w=R->fbw>0?R->fbw:1; g_d3.ortho_h=R->fbh>0?R->fbh:1;
+    g_d3.ortho_angle=0; g_d3.draw_depth=0;
+    d3_matrix_identity(g_d3.transform);
+  }
+  g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
+  gml_render_maybe_prepare_draw(R);
+  const GmlD3Vertex *vertex=buffer->vertex+first;
+  if(primitive==1){
+    for(int i=0;i<number;i++) d3_emit_point(R,vertex[i],&texture);
+  } else if(primitive==2){
+    for(int i=0;i+1<number;i+=2) d3_emit_line(R,vertex[i],vertex[i+1],&texture);
+  } else if(primitive==3){
+    for(int i=0;i+1<number;i++) d3_emit_line(R,vertex[i],vertex[i+1],&texture);
+  } else if(primitive==4){
+    for(int i=0;i+2<number;i+=3) d3_emit_triangle(R,vertex+i,&texture);
+  } else if(primitive==5){
+    for(int i=2;i<number;i++){
+      GmlD3Vertex triangle[3];
+      if(i&1){ triangle[0]=vertex[i-1]; triangle[1]=vertex[i-2]; }
+      else { triangle[0]=vertex[i-2]; triangle[1]=vertex[i-1]; }
+      triangle[2]=vertex[i]; d3_emit_triangle(R,triangle,&texture);
+    }
+  } else if(primitive==6){
+    for(int i=1;i+1<number;i++){
+      GmlD3Vertex triangle[3]={vertex[0],vertex[i],vertex[i+1]};
+      d3_emit_triangle(R,triangle,&texture);
+    }
+  }
+  if(temporary){
+    float *depth=g_d3.depth; size_t depth_cap=g_d3.depth_cap;
+    int depth_w=g_d3.depth_w,depth_h=g_d3.depth_h; long depth_frame=g_d3.depth_frame;
+    g_d3=saved;
+    g_d3.depth=depth; g_d3.depth_cap=depth_cap;
+    g_d3.depth_w=depth_w; g_d3.depth_h=depth_h; g_d3.depth_frame=depth_frame;
   }
 }
 static int d3_model_grow_vertices(GmlD3Model *model,int needed){
@@ -3734,6 +4365,14 @@ static double gm_round(double x){
   double f=floor(x), diff=x-f;
   if(diff<0.5) return f; if(diff>0.5) return f+1;
   return (fmod(f,2.0)==0.0)? f : f+1;
+}
+static double builtin_math_sqrt(GmlVM *vm,double value){
+  double epsilon=vm?vm->math_epsilon:1e-5;
+  if(value<0.0 && value>=-epsilon) value=0.0;
+  return sqrt(value);
+}
+static void builtin_math_set_epsilon(GmlVM *vm,double epsilon){
+  if(vm && isfinite(epsilon) && epsilon>=0.0 && epsilon<1.0) vm->math_epsilon=epsilon;
 }
 static double gm_sign(double x){ return x>0?1:(x<0?-1:0); }
 static void motion_from_components(GmlInstance *in){
@@ -4331,6 +4970,14 @@ static GmlInstance *collision_instance_at(GmlVM *vm, double x, double y, int obj
         g_vm_frame,x,y,obj,solid_only,best,lin?(int)(lin-vm->inst):-1);
       res=lin; }   /* trust the reference path when verifying */
   }
+  if(res && getenv("GML_LOG_COL_HIT")){
+    const char *self_name=(self->obj>=0&&self->obj<vm->n_objects)?vm->objects[self->obj].name:"?";
+    const char *hit_name=(res->obj>=0&&res->obj<vm->n_objects)?vm->objects[res->obj].name:"?";
+    const char *target_name=(obj>=0&&obj<vm->n_objects)?vm->objects[obj].name:"?";
+    fprintf(stderr,"[col-hit] %s/%u probe=(%.1f,%.1f) target=%s/%d -> %s/%u @ (%.1f,%.1f)\n",
+      self_name?self_name:"?",self->id,x,y,target_name?target_name:"?",obj,
+      hit_name?hit_name:"?",res->id,res->x,res->y);
+  }
   return res;
 }
 static int collision_at(GmlVM *vm, double x, double y, int obj, int solid_only){
@@ -4677,9 +5324,9 @@ void gml_fire_gamepad_connected(GmlVM *vm){
   for(int i=0;i<n0;i++) if(vm->inst[i].active && !vm->inst[i].marked)
     gml_run_event(vm,&vm->inst[i],"Other_75");
   *gml_varmap_put(&vm->globals,"async_load")=vreal(-1);
-  GmlDSMap *m=ds_map_slot(vm,id);
-  if(m){ for(int j=0;j<m->len;j++) ds_entry_free(&m->entry[j]); free(m->entry); memset(m,0,sizeof(*m)); }
-  if(getenv("GML_LOG_INST")) fprintf(stderr,"[gamepad] fired Other_75 to %d instances\n", n0);
+  ds_map_destroy_id(vm,id);
+  if(getenv("GML_LOG_INST")) fprintf(stderr,"[gamepad] fired Other_75 to %d instances; joyid=%g gamepadOn=%g\n",
+    n0, gml_global_num(vm,"joyid"), gml_global_num(vm,"gamepadOn"));
 }
 
 /* Fire GM's Async Save/Load event (Other_72) for every buffer_*_async request queued this step.
@@ -4699,8 +5346,7 @@ void gml_fire_async_saveload(GmlVM *vm){
     for(int i=0;i<n0;i++) if(vm->inst[i].active && !vm->inst[i].marked)
       gml_run_event(vm,&vm->inst[i],"Other_72");
     *gml_varmap_put(&vm->globals,"async_load")=vreal(-1);
-    GmlDSMap *m=ds_map_slot(vm,id);
-    if(m){ for(int j=0;j<m->len;j++) ds_entry_free(&m->entry[j]); free(m->entry); memset(m,0,sizeof(*m)); }
+    ds_map_destroy_id(vm,id);
   }
 }
 
@@ -4723,8 +5369,7 @@ void gml_fire_async_http(GmlVM *vm){
     for(int i=0;i<n0;i++) if(vm->inst[i].active && !vm->inst[i].marked)
       gml_run_event(vm,&vm->inst[i],"Other_62");
     *gml_varmap_put(&vm->globals,"async_load")=vreal(-1);
-    GmlDSMap *m=ds_map_slot(vm,id);
-    if(m){ for(int j=0;j<m->len;j++) ds_entry_free(&m->entry[j]); free(m->entry); memset(m,0,sizeof(*m)); }
+    ds_map_destroy_id(vm,id);
   }
 }
 static GmlVal builtin_http_request_stub(GmlVM *vm){
@@ -4872,9 +5517,58 @@ static void d3_2d_ellipse(GmlRender *R,double cx,double cy,double rx,double ry,
     else { GmlD3Vertex triangle[3]={center,a,b}; d3_emit_triangle(R,triangle,&texture); }
   }
 }
+/* Fast form of the application-surface compositor: a four-vertex triangle strip,
+ * full 0..1 UV rectangle, uniform white modulation. It is still recognized solely from API state
+ * and geometry (never from a title or object name). Routing this affine identity case through the
+ * renderer's parallel surface scaler avoids a two-triangle, per-pixel barycentric pass at 1080p/4K.
+ * Skewed, cropped, coloured or otherwise general primitives continue through the full rasterizer. */
+static int prim_try_fast_surface_quad(GmlRender *R){
+  if(!R || g_d3.active || g_prim_kind!=5 || g_prim_n!=4) return 0;
+  uint32_t encoded=(uint32_t)g_prim_texture;
+  if((encoded&GML_TEX_KIND_MASK)!=GML_TEX_SURF_TAG) return 0;
+  const double eps=1e-7;
+  if(fabs(g_prim_x[0]-g_prim_x[2])>eps || fabs(g_prim_x[1]-g_prim_x[3])>eps ||
+     fabs(g_prim_y[0]-g_prim_y[1])>eps || fabs(g_prim_y[2]-g_prim_y[3])>eps ||
+     fabs(g_prim_u[0])>eps || fabs(g_prim_u[2])>eps ||
+     fabs(g_prim_u[1]-1)>eps || fabs(g_prim_u[3]-1)>eps ||
+     fabs(g_prim_v[0])>eps || fabs(g_prim_v[1])>eps ||
+     fabs(g_prim_v[2]-1)>eps || fabs(g_prim_v[3]-1)>eps) return 0;
+  uint32_t color=g_prim_c[0]&0xFFFFFFu;
+  double alpha=g_prim_a[0];
+  for(int i=1;i<4;i++)
+    if((g_prim_c[i]&0xFFFFFFu)!=color || fabs(g_prim_a[i]-alpha)>eps) return 0;
+  if(color!=0xFFFFFFu || alpha<=0) return 0;
+  double x0=g_prim_x[0],y0=g_prim_y[0],z0=g_d3.draw_depth;
+  double x1=g_prim_x[3],y1=g_prim_y[3],z1=g_d3.draw_depth;
+  d3_transform_point(&x0,&y0,&z0); d3_transform_point(&x1,&y1,&z1);
+  if(fabs(z0-z1)>eps || x1<=x0 || y1<=y0) return 0;
+  int surface=(int)(encoded&0xFFFFu);
+  if(surface!=0 && !gml_surface_exists(R,surface)) return 0;
+  if(getenv("GML_LOG_PRIMITIVE")){ extern long g_vm_frame;
+    fprintf(stderr,"[primitive] f%ld fast surface quad sid=%d dst=(%.2f,%.2f %.2fx%.2f)\n",
+            g_vm_frame,surface,x0,y0,x1-x0,y1-y0); }
+  gml_draw_surface_stretched(R,surface,x0,y0,x1-x0,y1-y0,0xFFFFFFu,alpha);
+  return 1;
+}
 static void d3_flush_2d_primitive(GmlRender *R){
   if(!R || g_prim_n<=0) return;
+  if(prim_try_fast_surface_quad(R)) return;
+  /* Immediate-mode primitives are part of the ordinary 2D API too. Reuse the textured,
+   * per-vertex software rasterizer under a temporary pixel-coordinate orthographic projection
+   * when no legacy d3d projection is active. The old non-d3 path discarded texture coordinates
+   * entirely, turning every textured compositor quad into a solid vertex-colour rectangle. */
+  int temporary=!g_d3.active;
+  GmlD3State saved;
+  if(temporary){
+    saved=g_d3;
+    g_d3.active=1; g_d3.ortho=1; g_d3.hidden=0; g_d3.zwrite=0;
+    g_d3.lighting=0; g_d3.fog=0; g_d3.culling=0; g_d3.smooth=1;
+    g_d3.ortho_x=R->cam_x; g_d3.ortho_y=R->cam_y;
+    g_d3.ortho_w=R->fbw>0?R->fbw:1; g_d3.ortho_h=R->fbh>0?R->fbh:1;
+    g_d3.ortho_angle=0; g_d3.draw_depth=0;
+  }
   GmlD3Texture texture={0}; if(g_prim_texture!=-1) d3_texture(R,g_prim_texture,&texture);
+  gml_render_maybe_prepare_draw(R);
   GmlD3Vertex vertex[GML_PRIM_MAX];
   for(int i=0;i<g_prim_n;i++){
     vertex[i]=d3_2d_vertex(g_prim_x[i],g_prim_y[i],g_prim_c[i],g_prim_a[i]);
@@ -4894,6 +5588,13 @@ static void d3_flush_2d_primitive(GmlRender *R){
     }
   } else if(g_prim_kind==6){
     for(int i=1;i+1<g_prim_n;i++){ GmlD3Vertex triangle[3]={vertex[0],vertex[i],vertex[i+1]}; d3_emit_triangle(R,triangle,&texture); }
+  }
+  if(temporary){
+    float *depth=g_d3.depth; size_t depth_cap=g_d3.depth_cap;
+    int depth_w=g_d3.depth_w,depth_h=g_d3.depth_h; long depth_frame=g_d3.depth_frame;
+    g_d3=saved;
+    g_d3.depth=depth; g_d3.depth_cap=depth_cap;
+    g_d3.depth_w=depth_w; g_d3.depth_h=depth_h; g_d3.depth_frame=depth_frame;
   }
 }
 static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int count){
@@ -5015,26 +5716,26 @@ static void legacy_move_rpg(GmlVM *vm,GmlVal *args,int count){
   int down=selector==0?40:'S';
   double pace=N(args,count,3),animation=N(args,count,4);
   int motion_changed=0;
-  if(gml_input_key(left,0) && self->vspeed==0){
+  if(gml_keyboard_check(vm,left,0) && self->vspeed==0){
     self->hspeed=-pace; self->sprite_index=N(args,count,1);
     self->image_xscale=-1; self->image_speed=animation; motion_changed=1;
   }
-  if(gml_input_key(right,0) && self->vspeed==0){
+  if(gml_keyboard_check(vm,right,0) && self->vspeed==0){
     self->hspeed=pace; self->sprite_index=N(args,count,1);
     self->image_xscale=1; self->image_speed=animation; motion_changed=1;
   }
-  if(gml_input_key(up,0) && self->hspeed==0){
+  if(gml_keyboard_check(vm,up,0) && self->hspeed==0){
     self->vspeed=-pace; self->sprite_index=N(args,count,0);
     self->image_speed=animation; motion_changed=1;
   }
-  if(gml_input_key(down,0) && self->hspeed==0){
+  if(gml_keyboard_check(vm,down,0) && self->hspeed==0){
     self->vspeed=pace; self->sprite_index=N(args,count,2);
     self->image_speed=animation; motion_changed=1;
   }
-  if(gml_input_key(left,2) || gml_input_key(right,2)){
+  if(gml_keyboard_check(vm,left,2) || gml_keyboard_check(vm,right,2)){
     self->image_speed=0; self->image_index=0; self->hspeed=0; motion_changed=1;
   }
-  if(gml_input_key(up,2) || gml_input_key(down,2)){
+  if(gml_keyboard_check(vm,up,2) || gml_keyboard_check(vm,down,2)){
     self->image_speed=0; self->image_index=0; self->vspeed=0; motion_changed=1;
   }
   if(motion_changed) motion_from_components(self);
@@ -5063,6 +5764,51 @@ static void legacy_direction_rpg(GmlVM *vm,GmlVal *args,int count){
 }
 
 static GmlVal builtin_call_impl(GmlVM *vm,const char *nm,GmlVal *args,int count);
+
+/* Camera handles are opaque resources, not view indices. Keeping their compact runtime
+ * records in reserved global arrays gives them the same rewind/save-state lifetime as the GML
+ * view_camera[] bindings without growing the VM state format.  Older single-view code that never
+ * creates a camera continues to use the legacy view_* arrays directly. */
+#define GML_CAMERA_MAX 64
+static const char *const gml_camera_field_name[] = {
+  "__gml_camera_x", "__gml_camera_y", "__gml_camera_w", "__gml_camera_h",
+  "__gml_camera_angle", "__gml_camera_target", "__gml_camera_xspeed",
+  "__gml_camera_yspeed", "__gml_camera_xborder", "__gml_camera_yborder"
+};
+enum {
+  GML_CAM_X, GML_CAM_Y, GML_CAM_W, GML_CAM_H, GML_CAM_ANGLE,
+  GML_CAM_TARGET, GML_CAM_XSPEED, GML_CAM_YSPEED, GML_CAM_XBORDER, GML_CAM_YBORDER
+};
+static int gml_camera_live(GmlVM *vm,int id){
+  return vm && id>=0 && id<GML_CAMERA_MAX &&
+         gml_global_arr(vm,"__gml_camera_live",id)>=0.5;
+}
+static double gml_camera_field(GmlVM *vm,int id,int field,double fallback){
+  if(!gml_camera_live(vm,id) || field<0 || field>GML_CAM_YBORDER) return fallback;
+  return gml_global_arr(vm,gml_camera_field_name[field],id);
+}
+static void gml_camera_field_set(GmlVM *vm,int id,int field,double value){
+  if(!vm || id<0 || id>=GML_CAMERA_MAX || field<0 || field>GML_CAM_YBORDER) return;
+  gml_set_global_arr(vm,gml_camera_field_name[field],id,value);
+}
+static int gml_camera_alloc(GmlVM *vm){
+  int hint=(int)gml_global_num(vm,"__gml_camera_next");
+  if(hint<0 || hint>=GML_CAMERA_MAX) hint=0;
+  for(int pass=0;pass<GML_CAMERA_MAX;pass++){
+    int id=(hint+pass)%GML_CAMERA_MAX;
+    if(!gml_camera_live(vm,id)){
+      gml_set_global_arr(vm,"__gml_camera_live",id,1);
+      gml_set_global_scalar(vm,"__gml_camera_next",(id+1)%GML_CAMERA_MAX);
+      return id;
+    }
+  }
+  return -1;
+}
+static int gml_view_camera_id(GmlVM *vm,int view){
+  if(!vm || view<0 || view>=8) return view;
+  int id=(int)gml_global_arr(vm,"view_camera",view);
+  return gml_camera_live(vm,id)?id:view;
+}
 static void legacy_friction_platform(GmlVM *vm,GmlVal *args,int count){
   (void)args;
   GmlInstance *self=vm?vm->cur_self:NULL;
@@ -5208,8 +5954,18 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"surface_get_height")){ *out=vreal(R?gml_surface_height(R,(int)N(a,n,0)):0); return 1; }
     if(!strcmp(nm,"surface_set_target")){ if(getenv("GML_LOG_SURF"))fprintf(stderr,"[surf] set_target %d\n",(int)N(a,n,0)); *out=vreal(R?gml_surface_set_target(R,(int)N(a,n,0)):0); return 1; }
     if(!strcmp(nm,"surface_reset_target")){ if(getenv("GML_LOG_SURF"))fprintf(stderr,"[surf] reset_target\n"); if(R) gml_surface_reset_target(R); *out=vreal(0); return 1; }
-    if(!strcmp(nm,"shader_set")){ if(R) R->active_shader=(int)N(a,n,0); *out=vreal(0); return 1; }
-    if(!strcmp(nm,"shader_reset")){ if(R) R->active_shader=-1; *out=vreal(0); return 1; }
+    if(!strcmp(nm,"shader_set")){
+      int sid=(int)N(a,n,0); if(R) R->active_shader=sid;
+      if(getenv("GML_LOG_SHADER")){ extern long g_vm_frame;
+        fprintf(stderr,"[shader] f%ld fast shader_set(%d)\n",g_vm_frame,sid); }
+      *out=vreal(0); return 1;
+    }
+    if(!strcmp(nm,"shader_reset")){
+      if(R) R->active_shader=-1;
+      if(getenv("GML_LOG_SHADER")){ extern long g_vm_frame;
+        fprintf(stderr,"[shader] f%ld fast shader_reset()\n",g_vm_frame); }
+      *out=vreal(0); return 1;
+    }
     if(!strcmp(nm,"shader_get_uniform")){
       *out=vreal(gml_shader_get_uniform(R,(int)N(a,n,0),S(a,n,1)));
       return 1;
@@ -5221,9 +5977,13 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"string_width")){ *out=vreal(R?gml_text_width(R,S(a,n,0)):(int)strlen(S(a,n,0))*8); return 1; }
     if(!strcmp(nm,"string_height")){ *out=vreal(R?gml_text_height(R,S(a,n,0)):8); return 1; }
     if(!strcmp(nm,"sign")){ *out=vreal(gm_sign(N(a,n,0))); return 1; }
-    if(!strcmp(nm,"sqrt")){ *out=vreal(sqrt(N(a,n,0))); return 1; }
+    if(!strcmp(nm,"sqrt")){ *out=vreal(builtin_math_sqrt(vm,N(a,n,0))); return 1; }
     if(!strcmp(nm,"sqr")){ double x=N(a,n,0); *out=vreal(x*x); return 1; }
     if(!strcmp(nm,"sin")){ *out=vreal(sin(N(a,n,0))); return 1; }
+  }
+  if(nm[0]=='m'){
+    if(!strcmp(nm,"math_get_epsilon")){ *out=vreal(vm?vm->math_epsilon:1e-5); return 1; }
+    if(!strcmp(nm,"math_set_epsilon")){ builtin_math_set_epsilon(vm,N(a,n,0)); *out=vreal(0); return 1; }
   }
   if(nm[0]=='t'){
     if(!strcmp(nm,"texture_get_texel_width")){ double tw; *out=vreal(texture_info(R,(int)N(a,n,0),NULL,NULL,&tw,NULL)?tw:0); return 1; }
@@ -5235,7 +5995,7 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
   }
   if(nm[0]=='g'){
     if(!strcmp(nm,"gpu_set_blendenable")){ if(R) R->alphablend=N(a,n,0)>=0.5; *out=vreal(0); return 1; }
-    if(!strcmp(nm,"gpu_set_blendmode")){ int bm=(int)N(a,n,0); if(R) R->blendmode=(bm==1)?1:(bm==3)?2:0; *out=vreal(0); return 1; }
+    if(!strcmp(nm,"gpu_set_blendmode")){ builtin_set_blendmode(R,(int)N(a,n,0)); *out=vreal(0); return 1; }
     if(!strcmp(nm,"gpu_set_blendmode_ext")){ builtin_set_blendmode_ext(R,(int)N(a,n,0),(int)N(a,n,1)); *out=vreal(0); return 1; }
     if(!strcmp(nm,"gpu_set_blendmode_ext_sepalpha")){ builtin_set_blendmode_ext(R,(int)N(a,n,0),(int)N(a,n,1)); *out=vreal(0); return 1; }
   }
@@ -5272,7 +6032,7 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_surface_stretched")){ if(R) gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),0xFFFFFF,R->alpha); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_surface_stretched_ext")){ if(R) gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),(uint32_t)N(a,n,5),N(a,n,6)); *out=vreal(0); return 1; }
-  if(!strcmp(nm,"draw_surface_ext")){ if(R){ int s=(int)N(a,n,0); gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),gml_surface_width(R,s)*N(a,n,3),gml_surface_height(R,s)*N(a,n,4),(uint32_t)N(a,n,6),N(a,n,7)); } *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_surface_ext")){ if(R) gml_draw_surface_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_surface_part_ext")){ if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),(uint32_t)N(a,n,9),N(a,n,10)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_rectangle")||!strcmp(nm,"draw_rectangle_colour")||!strcmp(nm,"draw_rectangle_color")){
     if(R){ int plain=!strcmp(nm,"draw_rectangle"); int outline=(int)N(a,n,plain?4:8);
@@ -5299,7 +6059,7 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
   if(!strcmp(nm,"draw_text_transformed_color")||!strcmp(nm,"draw_text_transformed_colour")){ if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,10)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_text_ext_transformed")){ if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,5),N(a,n,6),N(a,n,7),R->color,R->alpha); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_text_ext_transformed_color")||!strcmp(nm,"draw_text_ext_transformed_colour")){ if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,5),N(a,n,6),N(a,n,7),(uint32_t)N(a,n,8),N(a,n,12)); *out=vreal(0); return 1; }
-  if(!strcmp(nm,"draw_set_blend_mode")){ int bm=(int)N(a,n,0); if(R) R->blendmode=(bm==1)?1:(bm==3)?2:0; *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_set_blend_mode")){ builtin_set_blendmode(R,(int)N(a,n,0)); *out=vreal(0); return 1; }
   return 0;
 }
 
@@ -5652,12 +6412,12 @@ static int gp_debug_on(void){
 /* keyboard/gamepad dispatch shared by the generic chain and the cached fast path — the
  * bodies are the chain handlers verbatim (input polls run hundreds of times per frame in
  * GMS2 input wrappers, and each one otherwise walks most of the name chain). */
-static int builtin_input_kbgp(const char *nm, GmlVal *a, int n, GmlVal *out){
-  if(!strcmp(nm,"keyboard_check")){          *out=vreal(gml_input_key((int)N(a,n,0),0)); return 1; }
-  if(!strcmp(nm,"keyboard_check_pressed")){  *out=vreal(gml_input_key((int)N(a,n,0),1)); return 1; }
-  if(!strcmp(nm,"keyboard_check_released")){ *out=vreal(gml_input_key((int)N(a,n,0),2)); return 1; }
+static int builtin_input_kbgp(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out){
+  if(!strcmp(nm,"keyboard_check")){          *out=vreal(gml_keyboard_check(vm,(int)N(a,n,0),0)); return 1; }
+  if(!strcmp(nm,"keyboard_check_pressed")){  *out=vreal(gml_keyboard_check(vm,(int)N(a,n,0),1)); return 1; }
+  if(!strcmp(nm,"keyboard_check_released")){ *out=vreal(gml_keyboard_check(vm,(int)N(a,n,0),2)); return 1; }
   if(!strcmp(nm,"keyboard_check_direct")){   *out=vreal(gml_input_key((int)N(a,n,0),0)); return 1; }
-  if(!strcmp(nm,"keyboard_clear")){ gml_input_key_clear((int)N(a,n,0)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"keyboard_clear")){ gml_keyboard_clear(vm,(int)N(a,n,0)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"keyboard_key_press")){ gml_input_key_press((int)N(a,n,0)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"keyboard_key_release")){ gml_input_key_release((int)N(a,n,0)); *out=vreal(0); return 1; }
   /* gamepad button/axis reads expose the single RetroPad slot; connection/discovery is separate. */
@@ -5697,7 +6457,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
     case BID_FMOD_PREFIX:
       return builtin_fmod(vm,nm,a,n);
     case BID_INPUT_KBGP:{
-      GmlVal v; if(builtin_input_kbgp(nm,a,n,&v)) return v;
+      GmlVal v; if(builtin_input_kbgp(vm,nm,a,n,&v)) return v;
       return builtin_call_impl(vm,nm,a,n); }   /* unreachable for the ids we hand out; safety net */
     case BID_EVENT_INHERITED:
       gml_event_inherited(vm); return vreal(0);
@@ -5849,8 +6609,8 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       }
       return vreal(0);
     case BID_DRAW_SURFACE_EXT:
-      if(R){ int s=(int)N(a,n,0); gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),
-        gml_surface_width(R,s)*N(a,n,3),gml_surface_height(R,s)*N(a,n,4),(uint32_t)N(a,n,6),N(a,n,7)); }
+      if(R) gml_draw_surface_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),
+                                N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7));
       return vreal(0);
     case BID_DRAW_SURFACE_STRETCHED:
       if(R) gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),0xFFFFFF,R->alpha);
@@ -5905,16 +6665,20 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       if(R) R->alphablend=N(a,n,0)>=0.5;
       return vreal(0);
     case BID_GPU_SET_BLENDMODE:
-      if(R){ int bm=(int)N(a,n,0); R->blendmode=(bm==1)?1:(bm==3)?2:0; }
+      builtin_set_blendmode(R,(int)N(a,n,0));
       return vreal(0);
     case BID_GPU_SET_BLENDMODE_EXT:
       builtin_set_blendmode_ext(R,(int)N(a,n,0),(int)N(a,n,1));
       return vreal(0);
     case BID_SHADER_SET:
       if(R) R->active_shader=(int)N(a,n,0);
+      if(getenv("GML_LOG_SHADER")){ extern long g_vm_frame;
+        fprintf(stderr,"[shader] f%ld cached shader_set(%d)\n",g_vm_frame,(int)N(a,n,0)); }
       return vreal(0);
     case BID_SHADER_RESET:
       if(R) R->active_shader=-1;
+      if(getenv("GML_LOG_SHADER")){ extern long g_vm_frame;
+        fprintf(stderr,"[shader] f%ld cached shader_reset()\n",g_vm_frame); }
       return vreal(0);
     case BID_SHADER_GET_UNIFORM:{
       int sh=(int)N(a,n,0); const char *un=S(a,n,1);
@@ -5979,14 +6743,15 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       double dx=N(a,n,2)-N(a,n,0), dy=N(a,n,3)-N(a,n,1);
       double r=atan2(-dy,dx)*180.0/M_PI; if(r<0)r+=360; return vreal(r); }
     case BID_KEYBOARD_CHECK:
+      return vreal(gml_keyboard_check(vm,(int)N(a,n,0),0));
     case BID_KEYBOARD_CHECK_DIRECT:
       return vreal(gml_input_key((int)N(a,n,0),0));
     case BID_KEYBOARD_CHECK_PRESSED:
-      return vreal(gml_input_key((int)N(a,n,0),1));
+      return vreal(gml_keyboard_check(vm,(int)N(a,n,0),1));
     case BID_KEYBOARD_CHECK_RELEASED:
-      return vreal(gml_input_key((int)N(a,n,0),2));
+      return vreal(gml_keyboard_check(vm,(int)N(a,n,0),2));
     case BID_KEYBOARD_CLEAR:
-      gml_input_key_clear((int)N(a,n,0));
+      gml_keyboard_clear(vm,(int)N(a,n,0));
       return vreal(0);
     case BID_KEYBOARD_KEY_PRESS:
       gml_input_key_press((int)N(a,n,0));
@@ -6328,7 +7093,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"round")) return vreal(gm_round(N(a,n,0)));
   if(!strcmp(nm,"sign"))  return vreal(gm_sign(N(a,n,0)));
   if(!strcmp(nm,"abs"))   return vreal(fabs(N(a,n,0)));
-  if(!strcmp(nm,"sqrt"))  return vreal(sqrt(N(a,n,0)));
+  if(!strcmp(nm,"sqrt"))  return vreal(builtin_math_sqrt(vm,N(a,n,0)));
   if(!strcmp(nm,"sqr"))   { double x=N(a,n,0); return vreal(x*x); }
   if(!strcmp(nm,"sin"))   return vreal(sin(N(a,n,0)));
   if(!strcmp(nm,"cos"))   return vreal(cos(N(a,n,0)));
@@ -6342,6 +7107,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"darccos")) return vreal(acos(N(a,n,0))*180.0/M_PI);
   if(!strcmp(nm,"darctan")) return vreal(atan(N(a,n,0))*180.0/M_PI);
   if(!strcmp(nm,"darctan2")) return vreal(atan2(N(a,n,0),N(a,n,1))*180.0/M_PI);
+  if(!strcmp(nm,"math_get_epsilon")) return vreal(vm?vm->math_epsilon:1e-5);
+  if(!strcmp(nm,"math_set_epsilon")){ builtin_math_set_epsilon(vm,N(a,n,0)); return vreal(0); }
   if(!strcmp(nm,"random")) return vreal(gml_rng_value(vm) * N(a,n,0));  /* GM WELL512: (next/2^32)*x */
   if(!strcmp(nm,"randomize")){
     /* GML_RANDOMIZE_SEED optionally fixes the seed; otherwise derive it from the clock and VM address. */
@@ -6452,11 +7219,27 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"array_create")){ int sz=n>0?(int)N(a,n,0):0; GmlVal fill=n>1?a[1]:vreal(0); return gml_arr_new(sz,fill); }
   if(!strcmp(nm,"array_get")){ return n>1?gml_arr_get(a[0],(int)N(a,n,1)):vreal(0); }
   if(!strcmp(nm,"array_set")){ if(n>2) gml_arr_set(a[0],(int)N(a,n,1),a[2]); return vreal(0); }
+  if(!strcmp(nm,"array_get_2D")||!strcmp(nm,"array_get_2d")){
+    return n>2?gml_arr_get_2d(a[0],(int)N(a,n,1),(int)N(a,n,2)):vreal(0); }
+  if(!strcmp(nm,"array_set_2D")||!strcmp(nm,"array_set_2d")){
+    if(n>3) gml_arr_set_2d(a[0],(int)N(a,n,1),(int)N(a,n,2),a[3]); return vreal(0); }
   if(!strcmp(nm,"array_push")){ if(n>1){ for(int i=1;i<n;i++) gml_arr_push(a[0],a[i]); } return vreal(0); }
   if(!strcmp(nm,"array_pop")){ return n>0?gml_arr_pop(a[0]):vreal(0); }
   if(!strcmp(nm,"array_resize")){ if(n>1) gml_arr_resize(a[0],(int)N(a,n,1)); return vreal(0); }
   if(!strcmp(nm,"array_copy")){ if(n>4) gml_arr_copy(a[0],(int)N(a,n,1),a[2],(int)N(a,n,3),(int)N(a,n,4)); return vreal(0); }
   if(!strcmp(nm,"array_sort")){ if(n>0) gml_array_sort(a[0], n<2 || N(a,n,1)!=0); return vreal(0); }
+  if(!strcmp(nm,"array_contains")){
+    if(n<2 || a[0].t!=V_ARR || !a[0].arr) return vreal(0);
+    GmlArr *A=(GmlArr*)a[0].arr;
+    int off=n>2?(int)N(a,n,2):0;
+    if(off<0) off+=A->len;
+    if(off<0 || off>=A->len) return vreal(0);
+    int count=n>3?(int)N(a,n,3):(A->len-off);
+    int step=count<0?-1:1, left=count<0?-count:count;
+    for(int i=off; left>0 && i>=0 && i<A->len; i+=step,left--)
+      if(ds_val_equal(A->data[i],a[1])) return vreal(1);
+    return vreal(0);
+  }
   /* array_delete(arr,index,number): remove `number` elements at `index`, shifting the tail down
    * (GMS2.3). Negative number deletes that many BEFORE index. Was a silent no-op. */
   if(!strcmp(nm,"array_delete")){
@@ -6738,6 +7521,34 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       p=q+seplen;
     }
     return arr;
+  }
+  if(!strcmp(nm,"string_split_ext")){
+    const char *src=S(a,n,0);
+    GmlVal out=gml_arr_new(0,vreal(0));
+    int remove_empty=n>2 && N(a,n,2)!=0.0;
+    int splits_left=n>3?(int)N(a,n,3):-1;
+    if(splits_left<0) splits_left=INT_MAX;
+    const char *p=src;
+    for(;;){
+      const char *best=NULL;
+      size_t best_len=0;
+      if(splits_left>0 && n>1 && a[1].t==V_ARR && a[1].arr){
+        GmlArr *D=(GmlArr*)a[1].arr;
+        for(int i=0;i<D->len;i++) if(D->data[i].t==V_STR && D->data[i].s && D->data[i].s[0]){
+          const char *q=strstr(p,D->data[i].s);
+          if(q && (!best || q<best)){ best=q; best_len=strlen(D->data[i].s); }
+        }
+      } else if(splits_left>0 && n>1){
+        const char *sep=S(a,n,1);
+        if(sep[0]){ best=strstr(p,sep); best_len=strlen(sep); }
+      }
+      size_t len=best?(size_t)(best-p):strlen(p);
+      if(len || !remove_empty){ char *part=dup_n(p,(int)len); gml_arr_push(out,vstr(part)); free(part); }
+      if(!best) break;
+      p=best+best_len;
+      splits_left--;
+    }
+    return out;
   }
   if(!strcmp(nm,"string_copy")){ const char*s=S(a,n,0); int idx=(int)N(a,n,1), cnt=(int)N(a,n,2);
     int len=strlen(s); if(idx<1)idx=1; if(idx>len)return vstr("");
@@ -7051,7 +7862,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
    * object is the 4th arg (not the 3rd); without these, GMS2 games spawn nothing dynamically. */
   if(!strcmp(nm,"instance_create_depth")){ GmlInstance*in=gml_instance_create_depth(vm,N(a,n,0),N(a,n,1),(int)N(a,n,3),1,N(a,n,2));
     return vreal(in?(double)in->id:-4); }
-  if(!strcmp(nm,"instance_create_layer")){ GmlInstance*in=gml_instance_create(vm,N(a,n,0),N(a,n,1),(int)N(a,n,3));
+  if(!strcmp(nm,"instance_create_layer")){
+    GmlRtLayer *layer=(n>2 && a[2].t==V_STR && a[2].s)
+      ?gml_rt_layer_find_by_name(vm,a[2].s):gml_rt_layer_find(vm,(int)N(a,n,2));
+    if(getenv("GML_LOG_RTL")){ extern long g_vm_frame;
+      fprintf(stderr,"[rtl] f%ld instance_create_layer arg=%s/%g resolved=%s id=%d order=%d depth=%.0f\n",
+        g_vm_frame,(n>2&&a[2].t==V_STR&&a[2].s)?a[2].s:"#",N(a,n,2),
+        layer?layer->name:"(none)",layer?layer->id:-1,layer?layer->order:-1,layer?layer->depth:0); }
+    GmlInstance*in=gml_instance_create_layer(vm,N(a,n,0),N(a,n,1),(int)N(a,n,3),layer?layer->id:-1);
     return vreal(in?(double)in->id:-4); }
   /* ---- GMS2.3 internal function/struct machinery (partial stubs — enough for common init paths) ---- */
   if(!strcmp(nm,"@@This@@"))   return vreal(vm->cur_self ? (double)vm->cur_self->id : -1);
@@ -7461,6 +8279,18 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     static const char *colline_dbg=(const char*)-1;
     if(colline_dbg==(const char*)-1) colline_dbg=getenv("GML_DBG_COLLINE");
     GmlInstance *hit=collision_line_query(vm,x1,y1,x2,y2,obj,precise,notme);
+    if(colline_dbg && !hit){ extern long g_vm_frame;
+      fprintf(stderr,"[colline] f%ld (%.2f,%.2f)-(%.2f,%.2f) obj=%d prec=%d notme=%d MISS\n",
+        g_vm_frame,x1,y1,x2,y2,obj,precise,notme);
+      if(!strcmp(colline_dbg,"boxes")){
+        for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i]; double l,t,r,b;
+          if(!target_matches_instance(vm,vm->cur_self,o,obj) ||
+             !inst_bbox(vm,o,o->x,o->y,&l,&t,&r,&b)) continue;
+          fprintf(stderr,"[colline-box] %s id=%u at(%.2f,%.2f) bbox=(%.2f,%.2f)-(%.2f,%.2f)\n",
+            (o->obj>=0&&o->obj<vm->n_objects)?vm->objects[o->obj].name:"?",o->id,o->x,o->y,l,t,r,b);
+        }
+      }
+    }
     if(hit){ if(colline_dbg){ extern long g_vm_frame;
         fprintf(stderr,"[colline] f%ld (%.0f,%.0f)-(%.0f,%.0f) obj=%d HIT %s id=%u at(%.1f,%.1f)\n",
           g_vm_frame,x1,y1,x2,y2,obj,
@@ -7508,6 +8338,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     double value=N(a,n,0);
     if(vm->win && vm->win->classic_version) value=nearbyint(value);
     if(s && idx>=0 && idx<GML_ALARMS) s->alarm[idx]=value; return vreal(0); }
+  if(!strcmp(nm,"alarm_get")){ GmlInstance *s=vm->cur_self; int idx=(int)N(a,n,0);
+    return vreal(s && idx>=0 && idx<GML_ALARMS ? s->alarm[idx] : -1); }
   /* action_bounce(advanced,against): D&D Bounce. against 0=solid, 1=all. */
   if(!strcmp(nm,"action_bounce")){ GmlInstance *s=vm->cur_self; if(s){
       int advanced=N(a,n,0)!=0, all=(int)N(a,n,1)!=0;
@@ -7531,7 +8363,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(!strcmp(nm,"part_type_gravity")){ gml_part_type_gravity((int)N(a,n,0),N(a,n,1),N(a,n,2)); return vreal(0); }
       if(!strcmp(nm,"part_type_life")){ gml_part_type_life((int)N(a,n,0),N(a,n,1),N(a,n,2)); return vreal(0); }
       if(!strcmp(nm,"part_type_orientation")){ gml_part_type_orientation((int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),(int)N(a,n,5)); return vreal(0); }
-      if(!strcmp(nm,"part_type_death")) return vreal(0);
+      if(!strcmp(nm,"part_type_step")){ gml_part_type_step((int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2)); return vreal(0); }
+      if(!strcmp(nm,"part_type_death")){ gml_part_type_death((int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2)); return vreal(0); }
       if(!strcmp(nm,"part_type_color1")||!strcmp(nm,"part_type_colour1")){ gml_part_type_color((int)N(a,n,0),1,(uint32_t)N(a,n,1),0,0); return vreal(0); }
       if(!strcmp(nm,"part_type_color2")||!strcmp(nm,"part_type_colour2")){ gml_part_type_color((int)N(a,n,0),2,(uint32_t)N(a,n,1),(uint32_t)N(a,n,2),0); return vreal(0); }
       if(!strcmp(nm,"part_type_color3")||!strcmp(nm,"part_type_colour3")){ gml_part_type_color((int)N(a,n,0),3,(uint32_t)N(a,n,1),(uint32_t)N(a,n,2),(uint32_t)N(a,n,3)); return vreal(0); }
@@ -7572,6 +8405,94 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(!strncmp(nm,"part_system_drawit",18) || !strncmp(nm,"part_system_",12) || !strncmp(nm,"part_type_",10) || !strncmp(nm,"part_emitter_",13) || !strncmp(nm,"part_particles_",15))
         return vreal(0);   /* remaining part_* variants: safe no-op */
     }
+    /* Vertex format/buffer API. All paths feed the same bounded software
+     * vertex store and renderer; aliases cover API generations that exposed
+     * colour/color and the early textcoord spelling. */
+    if(!strcmp(nm,"vertex_format_begin")){
+      memset(&g_vertex_builder,0,sizeof(g_vertex_builder));
+      g_vertex_builder_active=1; return vreal(0); }
+    if(!strcmp(nm,"vertex_format_add_position")){
+      vertex_format_add(GML_VERTEX_POSITION2,2,1,2,8); return vreal(0); }
+    if(!strcmp(nm,"vertex_format_add_position_3d")){
+      vertex_format_add(GML_VERTEX_POSITION3,3,1,3,12); return vreal(0); }
+    if(!strcmp(nm,"vertex_format_add_colour")||!strcmp(nm,"vertex_format_add_color")){
+      vertex_format_add(GML_VERTEX_COLOR,5,2,4,4); return vreal(0); }
+    if(!strcmp(nm,"vertex_format_add_normal")){
+      vertex_format_add(GML_VERTEX_NORMAL,3,3,3,12); return vreal(0); }
+    if(!strcmp(nm,"vertex_format_add_texcoord")||!strcmp(nm,"vertex_format_add_textcoord")){
+      vertex_format_add(GML_VERTEX_TEXCOORD,2,4,2,8); return vreal(0); }
+    if(!strcmp(nm,"vertex_format_add_custom")){
+      int type=(int)N(a,n,0),usage=(int)N(a,n,1),components=type>=1&&type<=4?type:4;
+      int bytes=(type>=1&&type<=4)?type*4:4,kind=GML_VERTEX_CUSTOM;
+      if(usage==1) kind=components>=3?GML_VERTEX_POSITION3:GML_VERTEX_POSITION2;
+      else if(usage==2) kind=GML_VERTEX_COLOR;
+      else if(usage==3) kind=GML_VERTEX_NORMAL;
+      else if(usage==4) kind=GML_VERTEX_TEXCOORD;
+      vertex_format_add(kind,type,usage,components,bytes); return vreal(0); }
+    if(!strcmp(nm,"vertex_format_end")) return vreal(vertex_format_finish());
+    if(!strcmp(nm,"vertex_format_delete")){
+      int id=(int)N(a,n,0); if(id>=0&&id<GML_VERTEX_FORMAT_MAX) memset(&g_vertex_format[id],0,sizeof(g_vertex_format[id]));
+      return vreal(0); }
+    if(!strcmp(nm,"vertex_create_buffer")) return vreal(vertex_buffer_create(0));
+    if(!strcmp(nm,"vertex_create_buffer_ext")){
+      double requested=N(a,n,0); int bytes=requested>INT_MAX?INT_MAX:(requested>0?(int)requested:0);
+      return vreal(vertex_buffer_create(bytes)); }
+    if(!strcmp(nm,"vertex_delete_buffer")){
+      int id=(int)N(a,n,0); if(id>=0&&id<GML_VERTEX_BUFFER_MAX&&g_vertex_buffer[id].used){
+        free(g_vertex_buffer[id].vertex); memset(&g_vertex_buffer[id],0,sizeof(g_vertex_buffer[id]));
+        g_vertex_buffer[id].format=-1; }
+      return vreal(0); }
+    if(!strcmp(nm,"vertex_begin")) return vreal(vertex_buffer_begin((int)N(a,n,0),(int)N(a,n,1))?0:-1);
+    if(!strcmp(nm,"vertex_end")){
+      int id=(int)N(a,n,0); if(id>=0&&id<GML_VERTEX_BUFFER_MAX&&g_vertex_buffer[id].used)
+        vertex_partial_init(&g_vertex_buffer[id]);
+      return vreal(0); }
+    if(!strcmp(nm,"vertex_position")||!strcmp(nm,"vertex_position_3d")||
+       !strcmp(nm,"vertex_normal")||!strcmp(nm,"vertex_texcoord")||!strcmp(nm,"vertex_textcoord")){
+      double value[4]={N(a,n,1),N(a,n,2),N(a,n,3),0}; int kind=GML_VERTEX_POSITION2;
+      if(!strcmp(nm,"vertex_position_3d")) kind=GML_VERTEX_POSITION3;
+      else if(!strcmp(nm,"vertex_normal")) kind=GML_VERTEX_NORMAL;
+      else if(strstr(nm,"texcoord")||strstr(nm,"textcoord")) kind=GML_VERTEX_TEXCOORD;
+      vertex_buffer_attribute((int)N(a,n,0),kind,value,n-1); return vreal(0); }
+    if(!strcmp(nm,"vertex_colour")||!strcmp(nm,"vertex_color")){
+      double value[4]={N(a,n,1),N(a,n,2),0,0};
+      vertex_buffer_attribute((int)N(a,n,0),GML_VERTEX_COLOR,value,2); return vreal(0); }
+    if(!strcmp(nm,"vertex_argb")){
+      uint32_t red=(uint32_t)N(a,n,2)&255,green=(uint32_t)N(a,n,3)&255,blue=(uint32_t)N(a,n,4)&255;
+      double value[4]={(double)(red|(green<<8)|(blue<<16)),N(a,n,1)/255.0,0,0};
+      vertex_buffer_attribute((int)N(a,n,0),GML_VERTEX_COLOR,value,2); return vreal(0); }
+    if(!strcmp(nm,"vertex_float1")||!strcmp(nm,"vertex_float2")||
+       !strcmp(nm,"vertex_float3")||!strcmp(nm,"vertex_float4")){
+      int count=nm[strlen(nm)-1]-'0'; double value[4]={0,0,0,0};
+      for(int i=0;i<count;i++) value[i]=N(a,n,i+1);
+      vertex_buffer_attribute((int)N(a,n,0),GML_VERTEX_CUSTOM,value,count); return vreal(0); }
+    if(!strcmp(nm,"vertex_ubyte4")){
+      double value[4]={N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4)};
+      int id=(int)N(a,n,0),kind=GML_VERTEX_CUSTOM;
+      if(id>=0&&id<GML_VERTEX_BUFFER_MAX&&g_vertex_buffer[id].used){
+        GmlVertexBuffer *buffer=&g_vertex_buffer[id];
+        if(buffer->format>=0&&buffer->format<GML_VERTEX_FORMAT_MAX&&
+           buffer->attr_index<g_vertex_format[buffer->format].n_attr&&
+           g_vertex_format[buffer->format].attr[buffer->attr_index].kind==GML_VERTEX_COLOR){
+          uint32_t color=((uint32_t)value[0]&255)|(((uint32_t)value[1]&255)<<8)|(((uint32_t)value[2]&255)<<16);
+          value[0]=color; value[1]=value[3]/255.0; kind=GML_VERTEX_COLOR;
+        }
+      }
+      vertex_buffer_attribute(id,kind,value,4); return vreal(0); }
+    if(!strcmp(nm,"vertex_freeze")){
+      int id=(int)N(a,n,0); if(id<0||id>=GML_VERTEX_BUFFER_MAX||!g_vertex_buffer[id].used) return vreal(-1);
+      g_vertex_buffer[id].frozen=1; return vreal(0); }
+    if(!strcmp(nm,"vertex_get_number")){
+      int id=(int)N(a,n,0); return vreal(id>=0&&id<GML_VERTEX_BUFFER_MAX&&g_vertex_buffer[id].used?g_vertex_buffer[id].vertex_n:0); }
+    if(!strcmp(nm,"vertex_get_buffer_size")){
+      int id=(int)N(a,n,0); if(id<0||id>=GML_VERTEX_BUFFER_MAX||!g_vertex_buffer[id].used) return vreal(0);
+      GmlVertexBuffer *buffer=&g_vertex_buffer[id]; int stride=buffer->format>=0&&buffer->format<GML_VERTEX_FORMAT_MAX?g_vertex_format[buffer->format].stride:0;
+      return vreal((double)buffer->vertex_n*stride); }
+    if(!strcmp(nm,"vertex_submit")||!strcmp(nm,"vertex_submit_ext")){
+      int first=0,number=-1;
+      if(!strcmp(nm,"vertex_submit_ext")){ first=(int)N(a,n,3); number=(int)N(a,n,4); }
+      vertex_submit_buffer(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),first,number);
+      return vreal(0); }
     if(!strcmp(nm,"draw_sprite")){ if(R) gml_draw_sprite(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3)); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_ext")){ if(R) gml_draw_sprite_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
         N(a,n,4),N(a,n,5),N(a,n,6),(uint32_t)N(a,n,7),N(a,n,8)); return vreal(0); }
@@ -7616,7 +8537,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         gml_draw_surface_stretched(R,s,R->cam_x,R->cam_y,R->fbw,R->fbh,0xFFFFFF,R->alpha);
       else
         gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),gml_surface_width(R,s),gml_surface_height(R,s),0xFFFFFF,R->alpha); } return vreal(0); }
-    if(!strcmp(nm,"draw_surface_ext")){ if(R){ int s=(int)N(a,n,0); gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),gml_surface_width(R,s)*N(a,n,3),gml_surface_height(R,s)*N(a,n,4),(uint32_t)N(a,n,6),N(a,n,7)); } return vreal(0); }
+    if(!strcmp(nm,"draw_surface_ext")){ if(R) gml_draw_surface_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); return vreal(0); }
     if(!strcmp(nm,"draw_surface_part_ext")){ if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),(uint32_t)N(a,n,9),N(a,n,10)); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_stretched")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),0xFFFFFF,R->alpha); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_stretched_ext")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); return vreal(0); }
@@ -7644,6 +8565,21 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         uint32_t col=has_col?(uint32_t)N(a,n,has_w?5:4):R->color; int width=has_w?(int)N(a,n,4):1;
         draw_line_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)floor(N(a,n,2)-R->cam_x),(int)floor(N(a,n,3)-R->cam_y),col,width); }
       return vreal(0); }
+    if(!strcmp(nm,"draw_arrow")){
+      if(R){
+        double x1=N(a,n,0)-R->cam_x, y1=N(a,n,1)-R->cam_y;
+        double x2=N(a,n,2)-R->cam_x, y2=N(a,n,3)-R->cam_y;
+        double head=fabs(N(a,n,4)), dx=x2-x1, dy=y2-y1, len=hypot(dx,dy);
+        draw_line_prim(R,(int)floor(x1),(int)floor(y1),(int)floor(x2),(int)floor(y2),R->color,1);
+        if(len>0.0 && head>0.0){
+          double ux=dx/len, uy=dy/len, px=-uy, py=ux;
+          double bx=x2-ux*head, by=y2-uy*head, wing=head*0.5;
+          draw_line_prim(R,(int)floor(x2),(int)floor(y2),(int)floor(bx+px*wing),(int)floor(by+py*wing),R->color,1);
+          draw_line_prim(R,(int)floor(x2),(int)floor(y2),(int)floor(bx-px*wing),(int)floor(by-py*wing),R->color,1);
+        }
+      }
+      return vreal(0);
+    }
     if(!strcmp(nm,"draw_path")){
       if(R){ int pi=(int)N(a,n,0), absolute=(int)N(a,n,3);
         if(pi>=0 && pi<vm->n_paths && vm->paths[pi].n>1 && vm->paths[pi].pts){
@@ -7738,7 +8674,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         g_prim_n++; }
       return vreal(0); }
     if(!strcmp(nm,"draw_primitive_end")){
-      if(R){ if(g_d3.active) d3_flush_2d_primitive(R); else prim_flush(R); }
+      if(R) d3_flush_2d_primitive(R);
       g_prim_n=0; return vreal(0); }
     if(!strcmp(nm,"draw_set_circle_precision")){ if(R){ int p=(int)N(a,n,0); if(p<4) p=4; if(p>64) p=64; p=(p/4)*4; if(p<4) p=4; R->circle_precision=p; } return vreal(0); }
     if(!strcmp(nm,"application_surface")) return vreal(0);
@@ -7764,23 +8700,50 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"surface_save")||!strcmp(nm,"surface_save_part")) return vreal(0);
     if(!strcmp(nm,"application_surface_draw_enable")){ if(R) R->app_draw_enable=(int)N(a,n,0); return vreal(0); }
     if(!strcmp(nm,"application_surface_enable")){ if(R) R->app_draw_enable=(int)N(a,n,0); return vreal(0); }
-    /* Map camera IDs to view indices and camera properties to view globals. */
-    if(!strcmp(nm,"view_get_camera")||!strcmp(nm,"room_get_camera")) return vreal(N(a,n,0));
-    if(!strcmp(nm,"view_set_camera")) return vreal(0);
-    if(!strcmp(nm,"camera_create")) return vreal(0);
-    if(!strcmp(nm,"camera_create_view")){ int c=0;
-      gml_set_global_arr(vm,"view_xview",c,N(a,n,0)); gml_set_global_arr(vm,"view_yview",c,N(a,n,1));
-      gml_set_global_arr(vm,"view_wview",c,N(a,n,2)); gml_set_global_arr(vm,"view_hview",c,N(a,n,3));
-      if(n>5) gml_set_global_arr(vm,"view_object",c,N(a,n,5));
-      if(n>6) gml_set_global_arr(vm,"view_hspeed",c,N(a,n,6));
-      if(n>7) gml_set_global_arr(vm,"view_vspeed",c,N(a,n,7));
-      if(n>8) gml_set_global_arr(vm,"view_hborder",c,N(a,n,8));
-      if(n>9) gml_set_global_arr(vm,"view_vborder",c,N(a,n,9));
+    /* Map camera resources onto legacy view globals when no dedicated record exists. */
+    if(!strcmp(nm,"view_get_camera")) return vreal(gml_view_camera_id(vm,(int)N(a,n,0)));
+    if(!strcmp(nm,"room_get_camera")) return vreal((int)N(a,n,1));
+    if(!strcmp(nm,"view_set_camera")){ int view=(int)N(a,n,0), camera=(int)N(a,n,1);
+      if(view>=0 && view<8) gml_set_global_arr(vm,"view_camera",view,camera);
+      return vreal(0); }
+    if(!strcmp(nm,"camera_create")){ int c=gml_camera_alloc(vm);
+      if(c>=0){
+        gml_camera_field_set(vm,c,GML_CAM_TARGET,-1);
+        gml_camera_field_set(vm,c,GML_CAM_XSPEED,-1); gml_camera_field_set(vm,c,GML_CAM_YSPEED,-1);
+      }
       return vreal(c); }
-    if(!strcmp(nm,"camera_destroy")||!strcmp(nm,"room_set_camera")||!strcmp(nm,"camera_set_view_angle")||
-       !strcmp(nm,"camera_apply")||!strcmp(nm,"camera_set_default")) return vreal(0);
-    if(!strcmp(nm,"camera_set_view_pos")){ int c=(int)N(a,n,0); gml_set_global_arr(vm,"view_xview",c,N(a,n,1)); gml_set_global_arr(vm,"view_yview",c,N(a,n,2)); return vreal(0); }
-    if(!strcmp(nm,"camera_set_view_target")){ gml_set_global_arr(vm,"view_object",(int)N(a,n,0),N(a,n,1)); return vreal(0); }
+    if(!strcmp(nm,"camera_create_view")){ int c=gml_camera_alloc(vm);
+      if(c<0) return vreal(-1);
+      gml_camera_field_set(vm,c,GML_CAM_X,N(a,n,0)); gml_camera_field_set(vm,c,GML_CAM_Y,N(a,n,1));
+      gml_camera_field_set(vm,c,GML_CAM_W,N(a,n,2)); gml_camera_field_set(vm,c,GML_CAM_H,N(a,n,3));
+      gml_camera_field_set(vm,c,GML_CAM_ANGLE,N(a,n,4));
+      gml_camera_field_set(vm,c,GML_CAM_TARGET,n>5?N(a,n,5):-1);
+      gml_camera_field_set(vm,c,GML_CAM_XSPEED,n>6?N(a,n,6):-1);
+      gml_camera_field_set(vm,c,GML_CAM_YSPEED,n>7?N(a,n,7):-1);
+      gml_camera_field_set(vm,c,GML_CAM_XBORDER,n>8?N(a,n,8):0);
+      gml_camera_field_set(vm,c,GML_CAM_YBORDER,n>9?N(a,n,9):0);
+      if(getenv("GML_LOG_VIEW")) fprintf(stderr,"[camera] create id=%d world=(%.0f,%.0f %.0fx%.0f)\n",
+        c,N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3));
+      return vreal(c); }
+    if(!strcmp(nm,"camera_destroy")){ int c=(int)N(a,n,0);
+      if(c>=0 && c<GML_CAMERA_MAX) gml_set_global_arr(vm,"__gml_camera_live",c,0);
+      return vreal(0); }
+    if(!strcmp(nm,"room_set_camera")) return vreal(0);
+    if(!strcmp(nm,"camera_set_view_angle")){ int c=(int)N(a,n,0);
+      if(gml_camera_live(vm,c)) gml_camera_field_set(vm,c,GML_CAM_ANGLE,N(a,n,1));
+      return vreal(0); }
+    if(!strcmp(nm,"camera_apply")||!strcmp(nm,"camera_set_default")) return vreal(0);
+    if(!strcmp(nm,"camera_set_view_pos")){ int c=(int)N(a,n,0);
+      if(gml_camera_live(vm,c)){
+        gml_camera_field_set(vm,c,GML_CAM_X,N(a,n,1)); gml_camera_field_set(vm,c,GML_CAM_Y,N(a,n,2));
+      } else if(c>=0 && c<8){
+        gml_set_global_arr(vm,"view_xview",c,N(a,n,1)); gml_set_global_arr(vm,"view_yview",c,N(a,n,2));
+      }
+      return vreal(0); }
+    if(!strcmp(nm,"camera_set_view_target")){ int c=(int)N(a,n,0);
+      if(gml_camera_live(vm,c)) gml_camera_field_set(vm,c,GML_CAM_TARGET,N(a,n,1));
+      else if(c>=0 && c<8) gml_set_global_arr(vm,"view_object",c,N(a,n,1));
+      return vreal(0); }
     /* Store viewport assignments in the corresponding view globals. */
     if(!strcmp(nm,"view_set_wport")){ gml_set_global_arr(vm,"view_wport",(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"view_set_hport")){ gml_set_global_arr(vm,"view_hport",(int)N(a,n,0),N(a,n,1)); return vreal(0); }
@@ -7788,19 +8751,37 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"view_set_yport")){ gml_set_global_arr(vm,"view_yport",(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"view_set_visible")){ gml_set_global_arr(vm,"view_visible",(int)N(a,n,0),N(a,n,1)>=0.5?1:0); return vreal(0); }
     if(!strcmp(nm,"camera_set_view_size")){ int c=(int)N(a,n,0); double cw=N(a,n,1),chh=N(a,n,2);
-      if(cw>0) gml_set_global_arr(vm,"view_wview",c,cw); if(chh>0) gml_set_global_arr(vm,"view_hview",c,chh); return vreal(0); }
-    if(!strcmp(nm,"camera_set_view_border")){ int c=(int)N(a,n,0); gml_set_global_arr(vm,"view_hborder",c,N(a,n,1)); gml_set_global_arr(vm,"view_vborder",c,N(a,n,2)); return vreal(0); }
-    if(!strcmp(nm,"camera_set_view_speed")){ int c=(int)N(a,n,0); gml_set_global_arr(vm,"view_hspeed",c,N(a,n,1)); gml_set_global_arr(vm,"view_vspeed",c,N(a,n,2)); return vreal(0); }
-    if(!strcmp(nm,"camera_get_view_x")) return vreal(gml_global_arr(vm,"view_xview",(int)N(a,n,0)));
-    if(!strcmp(nm,"camera_get_view_y")) return vreal(gml_global_arr(vm,"view_yview",(int)N(a,n,0)));
-    if(!strcmp(nm,"camera_get_view_width")) return vreal(gml_global_arr(vm,"view_wview",(int)N(a,n,0)));
-    if(!strcmp(nm,"camera_get_view_height")) return vreal(gml_global_arr(vm,"view_hview",(int)N(a,n,0)));
-    if(!strcmp(nm,"camera_get_view_target")) return vreal(gml_global_arr(vm,"view_object",(int)N(a,n,0)));
-    if(!strcmp(nm,"camera_get_view_border_x")) return vreal(gml_global_arr(vm,"view_hborder",(int)N(a,n,0)));
-    if(!strcmp(nm,"camera_get_view_border_y")) return vreal(gml_global_arr(vm,"view_vborder",(int)N(a,n,0)));
-    if(!strcmp(nm,"camera_get_view_speed_x")) return vreal(gml_global_arr(vm,"view_hspeed",(int)N(a,n,0)));
-    if(!strcmp(nm,"camera_get_view_speed_y")) return vreal(gml_global_arr(vm,"view_vspeed",(int)N(a,n,0)));
-    if(!strcmp(nm,"camera_get_view_angle")||!strcmp(nm,"camera_get_default")||!strcmp(nm,"camera_get_active")) return vreal(0);
+      if(gml_camera_live(vm,c)){
+        if(cw>0) gml_camera_field_set(vm,c,GML_CAM_W,cw); if(chh>0) gml_camera_field_set(vm,c,GML_CAM_H,chh);
+      } else if(c>=0 && c<8){
+        if(cw>0) gml_set_global_arr(vm,"view_wview",c,cw); if(chh>0) gml_set_global_arr(vm,"view_hview",c,chh);
+      }
+      return vreal(0); }
+    if(!strcmp(nm,"camera_set_view_border")){ int c=(int)N(a,n,0);
+      if(gml_camera_live(vm,c)){
+        gml_camera_field_set(vm,c,GML_CAM_XBORDER,N(a,n,1)); gml_camera_field_set(vm,c,GML_CAM_YBORDER,N(a,n,2));
+      } else if(c>=0 && c<8){
+        gml_set_global_arr(vm,"view_hborder",c,N(a,n,1)); gml_set_global_arr(vm,"view_vborder",c,N(a,n,2));
+      }
+      return vreal(0); }
+    if(!strcmp(nm,"camera_set_view_speed")){ int c=(int)N(a,n,0);
+      if(gml_camera_live(vm,c)){
+        gml_camera_field_set(vm,c,GML_CAM_XSPEED,N(a,n,1)); gml_camera_field_set(vm,c,GML_CAM_YSPEED,N(a,n,2));
+      } else if(c>=0 && c<8){
+        gml_set_global_arr(vm,"view_hspeed",c,N(a,n,1)); gml_set_global_arr(vm,"view_vspeed",c,N(a,n,2));
+      }
+      return vreal(0); }
+    if(!strcmp(nm,"camera_get_view_x")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_X,c>=0&&c<8?gml_global_arr(vm,"view_xview",c):0)); }
+    if(!strcmp(nm,"camera_get_view_y")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_Y,c>=0&&c<8?gml_global_arr(vm,"view_yview",c):0)); }
+    if(!strcmp(nm,"camera_get_view_width")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_W,c>=0&&c<8?gml_global_arr(vm,"view_wview",c):0)); }
+    if(!strcmp(nm,"camera_get_view_height")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_H,c>=0&&c<8?gml_global_arr(vm,"view_hview",c):0)); }
+    if(!strcmp(nm,"camera_get_view_target")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_TARGET,c>=0&&c<8?gml_global_arr(vm,"view_object",c):-1)); }
+    if(!strcmp(nm,"camera_get_view_border_x")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_XBORDER,c>=0&&c<8?gml_global_arr(vm,"view_hborder",c):0)); }
+    if(!strcmp(nm,"camera_get_view_border_y")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_YBORDER,c>=0&&c<8?gml_global_arr(vm,"view_vborder",c):0)); }
+    if(!strcmp(nm,"camera_get_view_speed_x")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_XSPEED,c>=0&&c<8?gml_global_arr(vm,"view_hspeed",c):-1)); }
+    if(!strcmp(nm,"camera_get_view_speed_y")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_YSPEED,c>=0&&c<8?gml_global_arr(vm,"view_vspeed",c):-1)); }
+    if(!strcmp(nm,"camera_get_view_angle")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_ANGLE,0)); }
+    if(!strcmp(nm,"camera_get_default")||!strcmp(nm,"camera_get_active")) return vreal(0);
     /* Read view and viewport properties; fall back to view dimensions for an unset port. */
     if(!strcmp(nm,"view_get_xview")) return vreal(gml_global_arr(vm,"view_xview",(int)N(a,n,0)));
     if(!strcmp(nm,"view_get_yview")) return vreal(gml_global_arr(vm,"view_yview",(int)N(a,n,0)));
@@ -8020,7 +9001,17 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
 
   /* ---- input (wired later; held/pressed/released) ---- */
-  { GmlVal v; if(builtin_input_kbgp(nm,a,n,&v)) return v; }
+  if(!strcmp(nm,"keyboard_set_map")){
+    gml_keyboard_set_map(vm,(int)N(a,n,0),(int)N(a,n,1));
+    return vreal(0);
+  }
+  if(!strcmp(nm,"keyboard_get_map"))
+    return vreal(gml_keyboard_get_map(vm,(int)N(a,n,0)));
+  if(!strcmp(nm,"keyboard_unset_map")){
+    gml_keyboard_unset_map(vm);
+    return vreal(0);
+  }
+  { GmlVal v; if(builtin_input_kbgp(vm,nm,a,n,&v)) return v; }
   /* ---- mouse (RetroArch pointer/mouse device via gml_input_mouse) ---- */
   if(!strcmp(nm,"mouse_check_button"))          return vreal(mouse_btn_check((int)N(a,n,0),0));
   if(!strcmp(nm,"mouse_check_button_pressed"))  return vreal(mouse_btn_check((int)N(a,n,0),1));
@@ -8169,6 +9160,31 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(file) fclose(file); free(data); free(path); (void)ok;
     return vreal(0);
   }
+  if(!strcmp(nm,"game_save_buffer")){
+    int bi=vm_buffer_slot(vm,(int)N(a,n,0));
+    if(bi<0) return vreal(0);
+    size_t size=gml_vm_state_size(vm), written=0;
+    if(size>(size_t)INT_MAX) return vreal(0);
+    buffer_resize_slot(vm,bi,(int)size);
+    if(vm->buffer[bi].data && gml_vm_state_save(vm,vm->buffer[bi].data,size,&written)){
+      vm->buffer[bi].size=(int)written;
+      vm->buffer[bi].pos=0;
+      return vreal(1);
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"game_load_buffer")){
+    int bi=vm_buffer_slot(vm,(int)N(a,n,0));
+    if(bi<0 || !vm->buffer[bi].data || vm->buffer[bi].size<=0) return vreal(0);
+    size_t size=(size_t)vm->buffer[bi].size, used=0;
+    /* State loading clears transient runtime buffers, including the source handle. */
+    unsigned char *copy=malloc(size);
+    if(!copy) return vreal(0);
+    memcpy(copy,vm->buffer[bi].data,size);
+    int ok=gml_vm_state_load(vm,copy,size,&used) && used==size;
+    free(copy);
+    return vreal(ok);
+  }
   if(!strcmp(nm,"file_bin_open")||!strcmp(nm,"FS_file_bin_open")){ char *path=resolve_content_path(vm,S(a,n,0)); int mode=(int)N(a,n,1);
     const char *fm = mode==1 ? "wb+" : (mode==2 ? "ab+" : "rb");
     int id=vm_file_open(vm,path,fm); if(id<0 && mode==1) id=vm_file_open(vm,path,"wb+"); free(path); return vreal(id); }
@@ -8202,6 +9218,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"file_text_writeln")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i>=0) fputc('\n',(FILE*)vm->bin_file[i]); return vreal(0); }
 
   if(!strcmp(nm,"buffer_create")){ int id=buffer_alloc(vm,(int)N(a,n,0)); return vreal(id); }
+  if(!strcmp(nm,"buffer_exists")) return vreal(vm_buffer_slot(vm,(int)N(a,n,0))>=0);
   if(!strcmp(nm,"buffer_base64_decode")){
     int len=0; unsigned char *bytes=base64_decode_alloc(S(a,n,0),&len);
     if(!bytes) return vreal(-1);
@@ -8434,8 +9451,30 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(h); }
     if(!strcmp(nm,"audio_play_sound_at")){
       int h=gml_audio_play(AU,(int)N(a,n,0),(int)N(a,n,6));
+      if(h>0){
+        double dx=N(a,n,1)-vm->listener_x, dy=N(a,n,2)-vm->listener_y, dz=N(a,n,3)-vm->listener_z;
+        double dist=sqrt(dx*dx+dy*dy+dz*dz), ref=N(a,n,4), maxd=N(a,n,5), gain=1.0;
+        if(vm->audio_falloff_model && maxd>=ref && ref>0.0){
+          double old_ref=vm->emitter_ref[0], old_max=vm->emitter_max[0], old_factor=vm->emitter_factor[0];
+          vm->emitter_ref[0]=ref; vm->emitter_max[0]=maxd; vm->emitter_factor[0]=1.0;
+          gain=audio_emitter_attenuation(vm,0,dist);
+          vm->emitter_ref[0]=old_ref; vm->emitter_max[0]=old_max; vm->emitter_factor[0]=old_factor;
+        }
+        double pan=dist>0.0?dx/dist:0.0; gml_audio_voice_spatial(AU,h,gain,pan);
+      }
       if(getenv("GML_LOG_AUDIO")) fprintf(stderr,"[audio] play_sound_at id=%d loop=%d -> handle=%d\n",(int)N(a,n,0),(int)N(a,n,6),h);
       return vreal(h); }
+    if(!strcmp(nm,"audio_sound_loop_start")){ gml_audio_sound_loop_start(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
+    if(!strcmp(nm,"audio_listener_position")){
+      vm->listener_x=N(a,n,0); vm->listener_y=N(a,n,1); vm->listener_z=N(a,n,2);
+      audio_refresh_emitters(vm,AU); return vreal(0); }
+    if(!strcmp(nm,"audio_listener_orientation")){
+      vm->listener_forward_x=N(a,n,0); vm->listener_forward_y=N(a,n,1); vm->listener_forward_z=N(a,n,2);
+      vm->listener_up_x=N(a,n,3); vm->listener_up_y=N(a,n,4); vm->listener_up_z=N(a,n,5);
+      audio_refresh_emitters(vm,AU); return vreal(0); }
+    if(!strcmp(nm,"audio_falloff_set_model")){
+      int model=(int)N(a,n,0); vm->audio_falloff_model=(model>=0&&model<=6)?model:0;
+      audio_refresh_emitters(vm,AU); return vreal(0); }
     if(!strcmp(nm,"audio_get_listener_count")) return vreal(1);
     if(!strcmp(nm,"audio_get_listener_info")) return arr8(0,0,0,0,0,1,0,1);
     /* Report audio groups as loaded through this status interface. */
@@ -8484,19 +9523,28 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strncmp(nm,"caster_",7)) return vreal(0);   /* set_panning / get_length / etc.: graceful no-op */
     /* Model audio emitters as gain cells with create, gain, query and release operations. */
     if(!strcmp(nm,"audio_emitter_create")){
-      for(int i=0;i<GML_MAX_EMITTERS;i++) if(!vm->emitter_live[i]){ vm->emitter_live[i]=1; vm->emitter_gain[i]=1.0; return vreal(3000000+i); }
+      for(int i=0;i<GML_MAX_EMITTERS;i++) if(!vm->emitter_live[i]){ vm->emitter_live[i]=1; vm->emitter_gain[i]=1.0;
+        vm->emitter_x[i]=vm->emitter_y[i]=vm->emitter_z[i]=0.0;
+        vm->emitter_ref[i]=100.0; vm->emitter_max[i]=100000.0; vm->emitter_factor[i]=1.0;
+        return vreal(3000000+i); }
       return vreal(-1); }
     if(!strcmp(nm,"audio_emitter_gain")){ int e=(int)N(a,n,0)-3000000;
-      if(e>=0&&e<GML_MAX_EMITTERS&&vm->emitter_live[e]){ double g=N(a,n,1); vm->emitter_gain[e]=g<0?0:g; } return vreal(0); }
+      if(e>=0&&e<GML_MAX_EMITTERS&&vm->emitter_live[e]){ double g=N(a,n,1); vm->emitter_gain[e]=g<0?0:g; audio_refresh_emitter(vm,AU,e); } return vreal(0); }
     if(!strcmp(nm,"audio_emitter_get_gain")){ int e=(int)N(a,n,0)-3000000;
       return vreal((e>=0&&e<GML_MAX_EMITTERS&&vm->emitter_live[e])?vm->emitter_gain[e]:1.0); }
     if(!strcmp(nm,"audio_emitter_free")){ int e=(int)N(a,n,0)-3000000;
       if(e>=0&&e<GML_MAX_EMITTERS) vm->emitter_live[e]=0; return vreal(0); }
     if(!strcmp(nm,"audio_emitter_exists")){ int e=(int)N(a,n,0)-3000000;
       return vreal(e>=0&&e<GML_MAX_EMITTERS&&vm->emitter_live[e]); }
+    if(!strcmp(nm,"audio_emitter_position")){ int e=(int)N(a,n,0)-3000000;
+      if(e>=0&&e<GML_MAX_EMITTERS&&vm->emitter_live[e]){ vm->emitter_x[e]=N(a,n,1); vm->emitter_y[e]=N(a,n,2);
+        vm->emitter_z[e]=N(a,n,3); audio_refresh_emitter(vm,AU,e); } return vreal(0); }
+    if(!strcmp(nm,"audio_emitter_falloff")){ int e=(int)N(a,n,0)-3000000;
+      if(e>=0&&e<GML_MAX_EMITTERS&&vm->emitter_live[e]){ vm->emitter_ref[e]=N(a,n,1); vm->emitter_max[e]=N(a,n,2);
+        vm->emitter_factor[e]=N(a,n,3); audio_refresh_emitter(vm,AU,e); } return vreal(0); }
     if(!strcmp(nm,"audio_play_sound_on")){   /* (emitter, snd, loop, priority) -> play scaled by emitter gain */
-      int e=(int)N(a,n,0)-3000000; int h=gml_audio_play(AU,(int)N(a,n,1),(int)N(a,n,2));
-      if(h>0&&e>=0&&e<GML_MAX_EMITTERS&&vm->emitter_live[e]) gml_audio_sound_gain(AU,h,vm->emitter_gain[e]);
+      int e=(int)N(a,n,0)-3000000; int h=gml_audio_play_on(AU,(int)N(a,n,1),(int)N(a,n,2),e);
+      if(h>0&&e>=0&&e<GML_MAX_EMITTERS&&vm->emitter_live[e]) audio_refresh_emitter(vm,AU,e);
       return vreal(h); }
     if(!strcmp(nm,"audio_is_paused")){
       /* paused state of a sound/voice: true only if some matching voice exists and is paused */
@@ -8606,7 +9654,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"io_clear")||!strcmp(nm,"keyboard_wait")) return vreal(0);
   if(!strcmp(nm,"display_set_windows_alternate_sync")) return vreal(0);
   if(!strcmp(nm,"url_open")) return vreal(0);
-  if(!strcmp(nm,"os_is_network_connected")) return vreal(0);
+  if(!strcmp(nm,"os_is_network_connected")) return vreal(host_network_connected());
   if(!strcmp(nm,"network_resolve")) return vstr("");
   if(!strcmp(nm,"network_create_socket")||!strcmp(nm,"network_create_server")||
      !strcmp(nm,"network_connect")) return vreal(-1);
@@ -8712,39 +9760,67 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal((double)ds_map_create_id(vm));
   }
   if(!strcmp(nm,"ds_list_create")) return vreal((double)ds_list_create_id(vm));
-  if(!strcmp(nm,"ds_list_destroy")){ GmlDSList *l=ds_list_slot(vm,(int)N(a,n,0));
-    if(l){ free(l->item); memset(l,0,sizeof(*l)); } return vreal(0); }
-  if(!strcmp(nm,"ds_list_clear")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); if(l) l->len=0; return vreal(0); }
+  if(!strcmp(nm,"ds_list_destroy")){ ds_list_destroy_id(vm,(int)N(a,n,0)); return vreal(0); }
+  if(!strcmp(nm,"ds_list_clear")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); ds_list_clear_owned(vm,l); return vreal(0); }
   if(!strcmp(nm,"ds_list_add")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
     for(int i=1;i<n;i++) ds_list_push(l,ds_val_clone(a[i])); return vreal(0); }
   if(!strcmp(nm,"ds_list_size")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(l?l->len:0); }
   if(!strcmp(nm,"ds_list_empty")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(!l||l->len==0); }
   if(!strcmp(nm,"ds_list_find_value")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
     return (l && p>=0 && p<l->len)? ds_ret(l->item[p]) : vreal(0); }
+  if(!strcmp(nm,"ds_list_mark_as_list")||!strcmp(nm,"ds_list_mark_as_map")){
+    GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
+    int kind=!strcmp(nm,"ds_list_mark_as_list")?1:2, child=-1;
+    if(l && p>=0 && p<l->len && ds_owned_id(l->item[p],&child) &&
+       (kind==1?ds_list_slot(vm,child)!=NULL:ds_map_slot(vm,child)!=NULL)){
+      if(l->child_kind) l->child_kind[p]=(unsigned char)kind;
+      return vreal(child);
+    }
+    return vreal(-1);
+  }
+  if(!strcmp(nm,"ds_list_is_list")||!strcmp(nm,"ds_list_is_map")){
+    GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
+    int kind=!strcmp(nm,"ds_list_is_list")?1:2;
+    return vreal(l && l->child_kind && p>=0 && p<l->len && l->child_kind[p]==kind);
+  }
   if(!strcmp(nm,"ds_list_find_index")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
     if(l && n>=2) for(int i=0;i<l->len;i++){ GmlVal x=l->item[i];
       if(x.t==a[1].t && (x.t==V_STR? (x.s&&a[1].s&&!strcmp(x.s,a[1].s)) : x.d==a[1].d)) return vreal(i); }
     return vreal(-1); }
   if(!strcmp(nm,"ds_list_set")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
-    if(l && p>=0 && n>=3){ while(l->len<=p) ds_list_push(l,vreal(0)); l->item[p]=ds_val_clone(a[2]); } return vreal(0); }
+    if(l && p>=0 && n>=3){ while(l->len<=p) ds_list_push(l,vreal(0)); l->item[p]=ds_val_clone(a[2]); if(l->child_kind) l->child_kind[p]=0; } return vreal(0); }
   if(!strcmp(nm,"ds_list_replace")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
-    if(l && p>=0 && p<l->len && n>=3) l->item[p]=ds_val_clone(a[2]); return vreal(0); }
+    if(l && p>=0 && p<l->len && n>=3){ l->item[p]=ds_val_clone(a[2]); if(l->child_kind) l->child_kind[p]=0; } return vreal(0); }
   if(!strcmp(nm,"ds_list_sort")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
-    if(l && l->len>1){ sort_dir=(n<2||N(a,n,1)!=0)?1:-1; qsort(l->item,(size_t)l->len,sizeof(GmlVal),gml_val_sort_cmp); }
+    if(l && l->len>1){
+      sort_dir=(n<2||N(a,n,1)!=0)?1:-1;
+      if(l->child_kind){
+        for(int i=1;i<l->len;i++){
+          GmlVal v=l->item[i]; unsigned char k=l->child_kind[i]; int j=i;
+          while(j>0 && gml_val_sort_cmp(&l->item[j-1],&v)>0){
+            l->item[j]=l->item[j-1]; l->child_kind[j]=l->child_kind[j-1]; j--;
+          }
+          l->item[j]=v; l->child_kind[j]=k;
+        }
+      } else qsort(l->item,(size_t)l->len,sizeof(GmlVal),gml_val_sort_cmp);
+    }
     return vreal(0); }
   if(!strcmp(nm,"ds_list_shuffle")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
-    if(l) for(int i=l->len-1;i>0;i--){ int j=(int)floor(gml_rng_value(vm)*(i+1)); if(j<0) j=0; if(j>i) j=i; GmlVal t=l->item[i]; l->item[i]=l->item[j]; l->item[j]=t; }
+    if(l) for(int i=l->len-1;i>0;i--){ int j=(int)floor(gml_rng_value(vm)*(i+1)); if(j<0) j=0; if(j>i) j=i; GmlVal t=l->item[i]; l->item[i]=l->item[j]; l->item[j]=t;
+      if(l->child_kind){ unsigned char k=l->child_kind[i]; l->child_kind[i]=l->child_kind[j]; l->child_kind[j]=k; } }
     return vreal(0); }
   if(!strcmp(nm,"ds_list_delete")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
-    if(l && p>=0 && p<l->len){ memmove(&l->item[p],&l->item[p+1],(size_t)(l->len-p-1)*sizeof(GmlVal)); l->len--; } return vreal(0); }
+    if(l && p>=0 && p<l->len){ memmove(&l->item[p],&l->item[p+1],(size_t)(l->len-p-1)*sizeof(GmlVal));
+      if(l->child_kind) memmove(&l->child_kind[p],&l->child_kind[p+1],(size_t)(l->len-p-1)); l->len--; } return vreal(0); }
   if(!strcmp(nm,"ds_list_insert")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
     if(l && p>=0 && p<=l->len && n>=3){ ds_list_push(l,vreal(0));
-      memmove(&l->item[p+1],&l->item[p],(size_t)(l->len-1-p)*sizeof(GmlVal)); l->item[p]=ds_val_clone(a[2]); } return vreal(0); }
+      memmove(&l->item[p+1],&l->item[p],(size_t)(l->len-1-p)*sizeof(GmlVal));
+      if(l->child_kind) memmove(&l->child_kind[p+1],&l->child_kind[p],(size_t)(l->len-1-p));
+      l->item[p]=ds_val_clone(a[2]); if(l->child_kind) l->child_kind[p]=0; } return vreal(0); }
   /* Implement FIFO queues and LIFO stacks through GmlDSList storage and shared IDs. */
   if(!strcmp(nm,"ds_queue_create")||!strcmp(nm,"ds_stack_create")) return vreal((double)ds_list_create_id(vm));
-  if(!strcmp(nm,"ds_queue_destroy")||!strcmp(nm,"ds_stack_destroy")){ GmlDSList *l=ds_list_slot(vm,(int)N(a,n,0));
-    if(l){ free(l->item); memset(l,0,sizeof(*l)); } return vreal(0); }
-  if(!strcmp(nm,"ds_queue_clear")||!strcmp(nm,"ds_stack_clear")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); if(l) l->len=0; return vreal(0); }
+  if(!strcmp(nm,"ds_queue_destroy")||!strcmp(nm,"ds_stack_destroy")){ ds_list_destroy_id(vm,(int)N(a,n,0)); return vreal(0); }
+  if(!strcmp(nm,"ds_queue_clear")||!strcmp(nm,"ds_stack_clear")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); ds_list_clear_owned(vm,l); return vreal(0); }
   if(!strcmp(nm,"ds_queue_size")||!strcmp(nm,"ds_stack_size")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(l?l->len:0); }
   if(!strcmp(nm,"ds_queue_empty")||!strcmp(nm,"ds_stack_empty")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(!l||l->len==0); }
   if(!strcmp(nm,"ds_queue_enqueue")||!strcmp(nm,"ds_stack_push")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
@@ -8754,21 +9830,32 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_stack_top")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return (l&&l->len>0)?ds_ret(l->item[l->len-1]):vreal(0); }
   if(!strcmp(nm,"ds_queue_dequeue")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
     if(!l||l->len==0) return vreal(0); GmlVal v=l->item[0]; if(v.t==V_STR) v.d=0;
-    memmove(&l->item[0],&l->item[1],(size_t)(l->len-1)*sizeof(GmlVal)); l->len--; return v; }
+    memmove(&l->item[0],&l->item[1],(size_t)(l->len-1)*sizeof(GmlVal));
+    if(l->child_kind) memmove(&l->child_kind[0],&l->child_kind[1],(size_t)(l->len-1));
+    l->len--; return v; }
   if(!strcmp(nm,"ds_stack_pop")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
     if(!l||l->len==0) return vreal(0); GmlVal v=l->item[--l->len]; if(v.t==V_STR) v.d=0; return v; }
   if(!strcmp(nm,"ds_priority_create")) return vreal((double)ds_list_create_id(vm));
-  if(!strcmp(nm,"ds_priority_destroy")){ GmlDSList *l=ds_list_slot(vm,(int)N(a,n,0));
-    if(l){ free(l->item); memset(l,0,sizeof(*l)); }
-    return vreal(0); }
+  if(!strcmp(nm,"ds_priority_destroy")){ ds_list_destroy_id(vm,(int)N(a,n,0)); return vreal(0); }
   if(!strcmp(nm,"ds_priority_clear")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
-    if(l) l->len=0;
+    ds_list_clear_owned(vm,l);
     return vreal(0); }
   if(!strcmp(nm,"ds_priority_size")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(l?l->len:0); }
   if(!strcmp(nm,"ds_priority_empty")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(!l||l->len==0); }
   if(!strcmp(nm,"ds_priority_add")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
     if(l && n>=3) ds_list_push(l,ds_priority_entry(a[1],N(a,n,2)));
     return vreal(0); }
+  if(!strcmp(nm,"ds_priority_copy")){
+    GmlDSList *dst=ds_list_slot_repair(vm,(int)N(a,n,0));
+    GmlDSList *src=ds_list_slot_repair(vm,(int)N(a,n,1));
+    if(dst && src && dst!=src){
+      dst->len=0;
+      for(int i=0;i<src->len;i++)
+        ds_list_push(dst,ds_priority_entry(ds_priority_value(src->item[i]),
+                                           ds_priority_priority(src->item[i])));
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"ds_priority_find_min")||!strcmp(nm,"ds_priority_find_max")){
     GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
     int bi=ds_priority_best_index(l,!strcmp(nm,"ds_priority_find_max"));
@@ -8779,6 +9866,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(bi<0) return vreal(0);
     GmlVal v=ds_priority_value(l->item[bi]);
     memmove(&l->item[bi],&l->item[bi+1],(size_t)(l->len-bi-1)*sizeof(GmlVal));
+    if(l->child_kind) memmove(&l->child_kind[bi],&l->child_kind[bi+1],(size_t)(l->len-bi-1));
     l->len--;
     return v; }
   if(!strcmp(nm,"ds_exists")){ /* ds_exists(id, ds_type): type 0=map,1=list,4=grid — we track by id */
@@ -8855,6 +9943,13 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int i=ds_map_find_entry(m,key); ds_key_temp_free(&kt); return vreal(i>=0); }
   if(!strcmp(nm,"ds_map_size")){ GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0)); return vreal(m?m->len:0); }
   if(!strcmp(nm,"ds_map_empty")){ GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0)); return vreal(!m||m->len==0); }
+  if(!strcmp(nm,"ds_map_is_list")||!strcmp(nm,"ds_map_is_map")){
+    GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
+    DsKeyTemp kt={0}; const char *key=(n>=2)?ds_key_temp(a[1],&kt):NULL;
+    int i=ds_map_find_entry(m,key), kind=!strcmp(nm,"ds_map_is_list")?1:2;
+    ds_key_temp_free(&kt);
+    return vreal(i>=0 && m->entry[i].child_kind==kind);
+  }
   if(!strcmp(nm,"ds_map_set")||!strcmp(nm,"ds_map_set_post")||!strcmp(nm,"ds_map_replace")){
     if(n>=3) ds_map_put(vm,(int)N(a,n,0),a[1],a[2],1);
     return n>=3 ? a[2] : vreal(0);
@@ -8875,20 +9970,20 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0);
   }
   if(!strcmp(nm,"ds_map_destroy")){
-    GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
-    ds_map_destroy_live(m);
+    ds_map_destroy_id(vm,(int)N(a,n,0));
     return vreal(0);
   }
   if(!strcmp(nm,"ds_map_clear")){
     GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
-    ds_map_clear_entries(m);
+    ds_map_clear_owned(vm,m);
     return vreal(0);
   }
   if(!strcmp(nm,"ds_list_copy")){          /* ds_list_copy(dest, src): dest := copy of src */
     GmlDSList *dst=ds_list_slot_repair(vm,(int)N(a,n,0)), *src=ds_list_slot_repair(vm,(int)N(a,n,1));
     if(dst && src){
       dst->len=0;
-      for(int i=0;i<src->len;i++) ds_list_push(dst, ds_val_clone(src->item[i]));
+      for(int i=0;i<src->len;i++) ds_list_push_kind(dst, ds_val_clone(src->item[i]),
+                                                     src->child_kind?src->child_kind[i]:0);
     }
     return vreal(0);
   }
@@ -8915,7 +10010,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* ds_map_add_list/map mark the child for nested destroy/JSON in GM; storing the id keeps
    * lookups working (json_encode walks ids the same way). */
   if(!strcmp(nm,"ds_map_add_list")||!strcmp(nm,"ds_map_add_map")||!strcmp(nm,"ds_map_replace_list")||!strcmp(nm,"ds_map_replace_map")){
-    if(n>=3) ds_map_put(vm,(int)N(a,n,0),a[1],a[2],1);
+    if(n>=3){
+      ds_map_put(vm,(int)N(a,n,0),a[1],a[2],1);
+      ds_map_mark_child(vm,(int)N(a,n,0),a[1],strstr(nm,"_list")?1:2);
+    }
     return vreal(0);
   }
   if(!strcmp(nm,"ds_map_find_value")){
@@ -8930,6 +10028,32 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"is_string")) return vreal(n>0 && a[0].t==V_STR);
   if(!strcmp(nm,"is_real")||!strcmp(nm,"is_numeric")) return vreal(n>0 && a[0].t==V_REAL);
   if(!strcmp(nm,"is_array")) return vreal(n>0 && a[0].t==V_ARR);
+  /* typeof() exposes the language-visible value category, not the C storage used by this VM.
+   * Structs and bound methods deliberately share V_REAL with ordinary numbers because their
+   * public handles must survive bytecode arithmetic/copies; recover their logical type from the
+   * reserved struct-id range.  A raw compiler function value remains "number", matching the
+   * documented script-index behaviour, while method(scope, function) is a method. */
+  if(!strcmp(nm,"typeof")){
+    if(n<1 || a[0].t==V_UNDEF) return vstr("undefined");
+    if(a[0].t==V_STR) return vstr("string");
+    if(a[0].t==V_ARR) return vstr("array");
+    if(a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d)){
+      GmlInstance *st=gml_struct_find(vm,(unsigned)a[0].d);
+      if(st){
+        GmlVal *fn=gml_varmap_get(&st->vars,"__fn");
+        if(st->method_bound || (fn && fn->t==V_REAL && GML_IS_FUNCVAL((int)fn->d)))
+          return vstr("method");
+        return vstr("struct");
+      }
+    }
+    if(a[0].t==V_REAL && a[0].d>=100000.0){
+      unsigned id=(unsigned)a[0].d;
+      for(int i=0;i<vm->inst_count;i++)
+        if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].id==id)
+          return vstr("ref");
+    }
+    return vstr(a[0].t==V_REAL?"number":"unknown");
+  }
   if(!strcmp(nm,"is_struct")){
     return vreal(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d) &&
                  gml_struct_find(vm,(unsigned)a[0].d)!=NULL);
@@ -9034,7 +10158,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"d3d_set_zwriteenable")){ g_d3.zwrite=N(a,n,0)!=0; return vreal(0); }
   if(!strcmp(nm,"d3d_set_shading")){ g_d3.smooth=N(a,n,0)!=0; return vreal(0); }
-  if(!strcmp(nm,"d3d_set_fog")){
+  if(!strcmp(nm,"d3d_set_fog")||!strcmp(nm,"gpu_set_fog")){
     g_d3.fog=N(a,n,0)!=0; g_d3.fog_color=(uint32_t)N(a,n,1)&0xFFFFFFu;
     g_d3.fog_start=N(a,n,2); g_d3.fog_end=N(a,n,3);
     if(g_d3.fog_end<g_d3.fog_start){ double swap=g_d3.fog_start; g_d3.fog_start=g_d3.fog_end; g_d3.fog_end=swap; }
@@ -9108,10 +10232,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"d3d_set_depth")){ g_d3.draw_depth=N(a,n,0); return vreal(0); }
   if(!strncmp(nm,"d3d_transform_set_",18)||!strncmp(nm,"d3d_transform_add_",18)){
+    GmlRender *R=(GmlRender*)vm->render;
     int add=!strncmp(nm,"d3d_transform_add_",18);
     const char *op=nm+18;
     double matrix[16]; d3_matrix_identity(matrix);
-    if(!strcmp(op,"identity")){ d3_matrix_identity(g_d3.transform); return vreal(0); }
+    if(!strcmp(op,"identity")){ d3_matrix_identity(g_d3.transform); gml_d3_sync_render_camera(R); return vreal(0); }
     if(!strcmp(op,"translation")) d3_matrix_translation(matrix,N(a,n,0),N(a,n,1),N(a,n,2));
     else if(!strcmp(op,"scaling")) d3_matrix_scaling(matrix,N(a,n,0),N(a,n,1),N(a,n,2));
     else if(!strcmp(op,"rotation_x")) d3_matrix_rotation_axis(matrix,1,0,0,N(a,n,0));
@@ -9120,6 +10245,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     else if(!strcmp(op,"rotation_axis")) d3_matrix_rotation_axis(matrix,N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3));
     else return vreal(0);
     if(add) d3_matrix_prepend(matrix); else memcpy(g_d3.transform,matrix,sizeof(matrix));
+    gml_d3_sync_render_camera(R);
     return vreal(0);
   }
   if(!strcmp(nm,"d3d_transform_stack_clear")){ g_d3.transform_stack_n=0; return vreal(0); }
@@ -9132,11 +10258,13 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"d3d_transform_stack_pop")){
     if(g_d3.transform_stack_n<=0) return vreal(0);
     memcpy(g_d3.transform,g_d3.transform_stack[--g_d3.transform_stack_n],sizeof(g_d3.transform));
+    gml_d3_sync_render_camera((GmlRender*)vm->render);
     return vreal(1);
   }
   if(!strcmp(nm,"d3d_transform_stack_top")){
     if(g_d3.transform_stack_n<=0) return vreal(0);
     memcpy(g_d3.transform,g_d3.transform_stack[g_d3.transform_stack_n-1],sizeof(g_d3.transform));
+    gml_d3_sync_render_camera((GmlRender*)vm->render);
     return vreal(1);
   }
   if(!strcmp(nm,"d3d_transform_stack_discard")){
@@ -9404,7 +10532,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* report palette shaders (template or LUT) as compiled so games keep using them (unknown -> 0) */
   if(!strcmp(nm,"shader_is_compiled")){ GmlRender *R=(GmlRender*)vm->render; int sid=(int)N(a,n,0);
     int ok = R && sid>=0 && sid<R->n_shader_pal && R->shader_pal &&
-             (R->shader_pal[sid].has || R->shader_pal[sid].lut ||
+             (R->shader_pal[sid].has || R->shader_pal[sid].lut || R->shader_pal[sid].grid ||
+              R->shader_pal[sid].dual_sample ||
               (R->shader_pal[sid].crt && R->crt_shader_enable));
     if(getenv("GML_LOG_SHADER")){ static long c=0; if(c++<6){ extern long g_vm_frame;
       fprintf(stderr,"[shader] f%ld shader_is_compiled(%d)=%d\n",g_vm_frame,sid,ok); } }
@@ -9429,6 +10558,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"sprite_get_texture")){ int spr=(int)N(a,n,0), img=(int)N(a,n,1);
     if(spr<0) return vreal(-1);
     return vreal((double)(GML_TEX_SPR_TAG | ((spr&0xFFFF)<<10) | (img&0x3FF))); }
+  if(!strcmp(nm,"texture_debug_messages")) return vreal(0);
+  if(!strcmp(nm,"matrix_build_identity")||!strcmp(nm,"matrix_get")||!strcmp(nm,"matrix_set")||
+     !strcmp(nm,"matrix_multiply")||!strcmp(nm,"matrix_build"))
+    return gm_matrix_builtin((GmlRender*)vm->render,nm,a,n);
   /* animation curves: get_channel hands out a tagged handle; evaluate interpolates the knots. */
   if(!strcmp(nm,"animcurve_exists")) return vreal(acrv_curve_ptr(vm,(int)N(a,n,0))!=0);
   if(!strcmp(nm,"animcurve_get")) return vreal(N(a,n,0));   /* asset ref passes through */
@@ -9585,6 +10718,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
      !strcmp(nm,"gog_set_achievement")||!strcmp(nm,"gog_stats_ready")||
      !strcmp(nm,"gog_update")) return vreal(0);
   if(!strncmp(nm,"gog_",4)) return vreal(0);
+  if(!strcmp(nm,"GOG_GetError")||!strcmp(nm,"GOG_ProcessData")||!strcmp(nm,"GOG_Shutdown")||
+     !strcmp(nm,"GOG_Stats_GetAchievement")||!strcmp(nm,"GOG_Stats_RequestUserStatsAndAchievements")||
+     !strcmp(nm,"GOG_Stats_SetAchievement")||!strcmp(nm,"GOG_Stats_StoreStatsAndAchievements")||
+     !strcmp(nm,"GOG_User_SignInGalaxy")||!strcmp(nm,"GOG_User_SignedIn")) return vreal(0);
+  if(!strncmp(nm,"GOG_",4)) return vreal(0);
   if(!strcmp(nm,"show_debug_message")||!strcmp(nm,"show_debug_overlay")){
     if(getenv("GML_LOG_DEBUGMSG")) fprintf(stderr,"[gml debug] %s\n", S(a,n,0));
     return vreal(0); }
@@ -9606,6 +10744,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"window_handle")) return vreal(1);
   if(!strcmp(nm,"window_get_fullscreen")) return vreal(vm->window_fullscreen);
   if(!strcmp(nm,"window_set_fullscreen")){ vm->window_fullscreen=N(a,n,0)>=0.5; return vreal(0); }
+  if(!strcmp(nm,"window_enable_borderless_fullscreen")) return vreal(0);
   if(!strcmp(nm,"action_fullscreen")){
     int mode=(int)N(a,n,0);
     vm->window_fullscreen=mode==2?!vm->window_fullscreen:(mode!=0);
@@ -9634,7 +10773,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"texture_set_interpolation")){ GmlRender *R=(GmlRender*)vm->render;
     if(R) R->interp = (N(a,n,0)!=0.0); return vreal(0); }
   if(!strcmp(nm,"texture_set_repeat")) return vreal(0);
-  if(!strcmp(nm,"gpu_set_texfilter")||!strcmp(nm,"gpu_set_texfilter_ext")) return vreal(0);
+  if(!strcmp(nm,"gpu_set_texfilter")||!strcmp(nm,"gpu_set_texfilter_ext")||
+     !strcmp(nm,"gpu_set_tex_filter_ext")||!strcmp(nm,"gpu_set_tex_repeat_ext")) return vreal(0);
   if(!strcmp(nm,"gpu_set_blendenable")){ GmlRender *R=(GmlRender*)vm->render; if(R) R->alphablend=N(a,n,0)>=0.5; return vreal(0); }
   if(!strcmp(nm,"gpu_get_blendenable")){ GmlRender *R=(GmlRender*)vm->render; return vreal(R?R->alphablend:1); }
   if(!strcmp(nm,"window_get_fullscreen")) return vreal(vm->window_fullscreen);
@@ -9941,17 +11081,72 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"draw_set_blend_mode")||   /* Legacy API spelling. */
      !strcmp(nm,"gpu_set_blendmode")){ GmlRender *R2=(GmlRender*)vm->render; int bm=(int)N(a,n,0);
     if(getenv("GML_DBG_BM")) fprintf(stderr,"[bm] gpu_set_blendmode(%d)\n",bm);
-    if(R2) R2->blendmode = (bm==1)?1 : (bm==3)?2 : 0; return vreal(0); }
+    builtin_set_blendmode(R2,bm); return vreal(0); }
   if(!strcmp(nm,"gpu_get_blendmode")){ GmlRender *R2=(GmlRender*)vm->render; return vreal(R2?R2->blendmode:0); }
+  if(!strcmp(nm,"gpu_get_colorwriteenable")){
+    GmlRender *R2=(GmlRender*)vm->render;
+    unsigned mask=R2?R2->color_write_mask:0x0F;
+    GmlVal out=gml_arr_new(4,vreal(0));
+    for(int i=0;i<4;i++) gml_arr_set(out,i,vreal((mask>>i)&1u));
+    return out;
+  }
+  if(!strcmp(nm,"gpu_set_colorwriteenable")){
+    GmlRender *R2=(GmlRender*)vm->render;
+    if(R2 && n>0){
+      unsigned mask=0;
+      if(a[0].t==V_ARR){
+        for(int i=0;i<4;i++){
+          GmlVal channel=gml_arr_get(a[0],i);
+          if(N(&channel,1,0)!=0.0) mask|=1u<<i;
+        }
+      } else {
+        for(int i=0;i<4 && i<n;i++) if(N(a,n,i)!=0.0) mask|=1u<<i;
+      }
+      R2->color_write_mask=(uint8_t)mask;
+      if(getenv("GML_LOG_GPU")){ extern long g_vm_frame; static int logged=0;
+        if(logged++<24) fprintf(stderr,"[gpu] f%ld colorwrite=%X\n",g_vm_frame,mask); }
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"gpu_set_blendmode_ext")||!strcmp(nm,"gpu_set_blendmode_ext_sepalpha")||
      !strcmp(nm,"draw_set_blend_mode_ext")){
     builtin_set_blendmode_ext((GmlRender*)vm->render,(int)N(a,n,0),(int)N(a,n,1));
     return vreal(0);
   }
+  if(!strcmp(nm,"gpu_set_blendequation")||!strcmp(nm,"gpu_set_blendequation_sepalpha")){
+    GmlRender *R2=(GmlRender*)vm->render;
+    if(R2){
+      int rgb=(int)N(a,n,0), al=!strcmp(nm,"gpu_set_blendequation_sepalpha")?(int)N(a,n,1):rgb;
+      if(rgb<1 || rgb>5) rgb=1;
+      if(al<1 || al>5) al=1;
+      R2->blend_equation=rgb; R2->blend_equation_alpha=al;
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"gpu_push_state")){
+    GmlRender *R2=(GmlRender*)vm->render;
+    if(R2 && R2->gpu_state_sp<16){
+      struct GmlGpuState *s=&R2->gpu_state_stack[R2->gpu_state_sp++];
+      s->alphablend=R2->alphablend; s->blendmode=R2->blendmode;
+      s->blend_equation=R2->blend_equation; s->blend_equation_alpha=R2->blend_equation_alpha;
+      s->interp=R2->interp; s->color_write_mask=R2->color_write_mask;
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"gpu_pop_state")){
+    GmlRender *R2=(GmlRender*)vm->render;
+    if(R2 && R2->gpu_state_sp>0){
+      struct GmlGpuState *s=&R2->gpu_state_stack[--R2->gpu_state_sp];
+      R2->alphablend=s->alphablend; R2->blendmode=s->blendmode;
+      R2->blend_equation=s->blend_equation; R2->blend_equation_alpha=s->blend_equation_alpha;
+      R2->interp=s->interp; R2->color_write_mask=s->color_write_mask;
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"gpu_set_sprite_cull")||!strcmp(nm,"gpu_set_alphatestenable")||
-     !strcmp(nm,"gpu_set_tex_filter")||!strcmp(nm,"gpu_set_colorwriteenable")||
+     !strcmp(nm,"gpu_set_tex_filter")||
      !strcmp(nm,"display_reset")||!strcmp(nm,"display_set_gui_maximize")||
-     !strcmp(nm,"window_set_cursor")||!strcmp(nm,"keyboard_set_map")||!strcmp(nm,"keyboard_unset_map")||
+     !strcmp(nm,"window_set_cursor")||
      !strcmp(nm,"device_mouse_dbclick_enable")||
      !strcmp(nm,"achievement_login")||!strcmp(nm,"achievement_logout")||
      !strncmp(nm,"native_ga_",10)||!strncmp(nm,"configureBuild",14)||!strncmp(nm,"configureSdk",12)||

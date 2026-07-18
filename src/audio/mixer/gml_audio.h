@@ -18,6 +18,7 @@ void gml_audio_free(GmlAudio *a);
 
 /* play sound resource `snd` (SOND index); loop!=0 repeats. Returns a voice handle. */
 int  gml_audio_play(GmlAudio *a, int snd, int loop);
+int  gml_audio_play_on(GmlAudio *a, int snd, int loop, int emitter);
 int  gml_audio_warm_sound(GmlAudio *a, int snd);
 /* Decode an external OGG blob and register it as a new sound.
  * The returned sound index works with gml_audio_play/stop/gain/pitch.
@@ -42,6 +43,9 @@ double gml_audio_sound_get_pitch(GmlAudio *a, int target);
 double gml_audio_sound_length(GmlAudio *a, int sound);
 void gml_audio_sound_set_track_position(GmlAudio *a, int target, double seconds);
 double gml_audio_sound_get_track_position(GmlAudio *a, int target);
+void gml_audio_sound_loop_start(GmlAudio *a, int target, double seconds);
+void gml_audio_emitter_mix(GmlAudio *a, int emitter, double gain, double pan);
+void gml_audio_voice_spatial(GmlAudio *a, int target, double gain, double pan);
 
 /* mix `frames` stereo (interleaved L,R) int16 samples at 44100 Hz into out. */
 void gml_audio_mix(GmlAudio *a, int16_t *out, int frames);

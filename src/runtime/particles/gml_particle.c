@@ -41,7 +41,33 @@ typedef struct {
   double alpha[3]; int nalpha;
   double ori_min, ori_max, ori_incr, ori_wig; int ori_rel;
   int additive;
+  int step_number, step_type;
+  int death_number, death_type;
 } PType;
+
+/* PTR2--PTR4 stored the type record as a raw native structure.  Keep its
+ * previous layout explicit so adding child-particle rules does not invalidate
+ * existing save states. */
+typedef struct {
+  int used;
+  int sprite, spr_animate, spr_stretch, spr_random;
+  int shape;
+  double sz_min, sz_max, sz_incr, sz_wig;
+  double xscale, yscale;
+  double sp_min, sp_max, sp_incr, sp_wig;
+  double dir_min, dir_max, dir_incr, dir_wig;
+  double grav_amt, grav_dir;
+  double life_min, life_max;
+  uint32_t col[3]; int ncol;
+  int color_mode;
+  uint32_t mix_a, mix_b;
+  double cmin[3], cmax[3];
+  double alpha[3]; int nalpha;
+  double ori_min, ori_max, ori_incr, ori_wig; int ori_rel;
+  int additive;
+} PTypeV4;
+_Static_assert(offsetof(PType,step_number)==sizeof(PTypeV4),
+               "PTypeV4 must remain the serialized prefix of PType");
 
 typedef struct {
   int used;
@@ -114,6 +140,11 @@ static void ptype_from_v1(PType *t, const PTypeV1 *o){
   t->alpha[0]=o->alpha[0]; t->alpha[1]=o->alpha[1]; t->alpha[2]=o->alpha[2]; t->nalpha=o->nalpha;
   t->ori_min=o->ori_min; t->ori_max=o->ori_max; t->ori_incr=o->ori_incr; t->ori_wig=o->ori_wig; t->ori_rel=o->ori_rel;
   t->additive=o->additive;
+}
+static void ptype_from_v4(PType *t, const PTypeV4 *o){
+  memset(t,0,sizeof(*t));
+  /* PTypeV4 is the exact prefix of the current structure. */
+  memcpy(t,o,sizeof(*o));
 }
 static void pemit_from_v1(PEmit *e, const PEmitV1 *o){
   memset(e,0,sizeof(*e));
@@ -194,6 +225,8 @@ void gml_part_type_speed(int id,double mn,double mx,double incr,double wig){ PTy
 void gml_part_type_direction(int id,double mn,double mx,double incr,double wig){ PType *t=pt(id); if(t){ t->dir_min=mn; t->dir_max=mx; t->dir_incr=incr; t->dir_wig=wig; } }
 void gml_part_type_gravity(int id,double amt,double dir){ PType *t=pt(id); if(t){ t->grav_amt=amt; t->grav_dir=dir; } }
 void gml_part_type_life(int id,double mn,double mx){ PType *t=pt(id); if(t){ t->life_min=mn; t->life_max=mx; } }
+void gml_part_type_step(int id,int number,int type){ PType *t=pt(id); if(t){ t->step_number=number; t->step_type=type; } }
+void gml_part_type_death(int id,int number,int type){ PType *t=pt(id); if(t){ t->death_number=number; t->death_type=type; } }
 void gml_part_type_orientation(int id,double mn,double mx,double incr,double wig,int rel){ PType *t=pt(id); if(t){ t->ori_min=mn; t->ori_max=mx; t->ori_incr=incr; t->ori_wig=wig; t->ori_rel=rel; } }
 void gml_part_type_color(int id,int ncol,uint32_t c1,uint32_t c2,uint32_t c3){ PType *t=pt(id); if(t){ t->color_mode=0; t->ncol=ncol<1?1:(ncol>3?3:ncol); t->col[0]=c1; t->col[1]=c2; t->col[2]=c3; } }
 void gml_part_type_color_rgb(int id,double rmin,double rmax,double gmin,double gmax,double bmin,double bmax){
@@ -546,8 +579,23 @@ static double particle_wiggle(long long tick,int period,int quarter){
   return factor-1.0;
 }
 
+/* Positive child counts are exact. A negative count means
+ * one child with probability 1/abs(number) on each eligible update. */
+static void spawn_child_rule(PSys *s,double x,double y,int type,int number){
+  if(number>0) sys_spawn(s,x,y,type,number,-1);
+  else if(number<0){
+    int den=number==INT_MIN ? INT_MAX : -number;
+    if(den>0 && prnd()<1.0/(double)den) sys_spawn(s,x,y,type,1,-1);
+  }
+}
+
 static void update_sys(int sysid, PSys *s){
-  for(int i=0;i<s->n;){
+  /* Child particles are appended while their parent is being advanced so RNG
+   * consumption retains established order. Only the population present at entry
+   * is updated; newborn particles are drawn once at age zero and begin moving
+   * on the following step. */
+  int initial_n=s->n;
+  for(int i=0;i<initial_n;i++){
     Part *p=&s->parts[i]; PType *t=pt(p->type);
     if(t){
       p->speed += t->sp_incr; if(p->speed<0) p->speed=0;
@@ -570,9 +618,25 @@ static void update_sys(int sysid, PSys *s){
     if(t) p->size += p->size_incr;
     if(p->size<0) p->size=0;
     p->life -= 1;
-    if(p->life<=0){ s->parts[i]=s->parts[--s->n]; continue; }   /* swap-remove */
-    i++;
+    double child_x=p->x, child_y=p->y;
+    int step_number=t?t->step_number:0, step_type=t?t->step_type:0;
+    int death_number=t?t->death_number:0, death_type=t?t->death_type:0;
+    int dead=p->life<=0;
+    if(step_number) spawn_child_rule(s,child_x,child_y,step_type,step_number);
+    if(dead && death_number) spawn_child_rule(s,child_x,child_y,death_type,death_number);
+    if(dead) s->parts[i].type=0; /* reacquire after a possible realloc */
   }
+  /* Compact dead parents without pulling newborn particles into the range
+   * that was updated this frame. */
+  int write=0;
+  for(int i=0;i<initial_n;i++) if(s->parts[i].type!=0){
+    if(write!=i) s->parts[write]=s->parts[i];
+    write++;
+  }
+  int newborn=s->n-initial_n;
+  if(newborn>0 && write!=initial_n)
+    memmove(s->parts+write,s->parts+initial_n,(size_t)newborn*sizeof(Part));
+  s->n=write+newborn;
   /* Stream particles are born after the current population advances. They are therefore drawn at
    * their initial position/alpha once and only start ageing on the following particle update. */
   emit_streams(sysid,s);
@@ -1040,7 +1104,7 @@ static int pr_i32(PartR *r){ int32_t v=0; pr_raw(r,&v,sizeof(v)); return (int)v;
 static double pr_d(PartR *r){ double v=0; pr_raw(r,&v,sizeof(v)); return v; }
 
 static void part_state_write(PartW *w){
-  pw_u32(w,0x34545250u); /* PTR4: PTR3 plus built-in effect pool identities */
+  pw_u32(w,0x35545250u); /* PTR5: child-particle rules in PType */
   pw_u32(w,g_prng);
   int nt=0; for(int i=0;i<PT_MAX;i++) if(g_pt[i].used) nt++;
   pw_i32(w,nt);
@@ -1076,9 +1140,9 @@ int gml_part_state_save(void *data, size_t len, size_t *written){
 int gml_part_state_load(const void *data, size_t len, size_t *used){
   PartR r={(const uint8_t*)data,len,0,1};
   uint32_t magic=pr_u32(&r);
-  int v4=(magic==0x34545250u), v3=(magic==0x33545250u);
+  int v5=(magic==0x35545250u), v4=(magic==0x34545250u), v3=(magic==0x33545250u);
   int v2=(magic==0x32545250u), v1=(magic==0x31545250u);
-  if(!v1 && !v2 && !v3 && !v4){ if(used) *used=r.pos; return 0; }
+  if(!v1 && !v2 && !v3 && !v4 && !v5){ if(used) *used=r.pos; return 0; }
   gml_part_reset_all();
   g_prng=pr_u32(&r);
   int nt=pr_i32(&r);
@@ -1086,7 +1150,8 @@ int gml_part_state_load(const void *data, size_t len, size_t *used){
   for(int k=0;k<nt;k++){
     int id=pr_i32(&r);
     PType tmp; memset(&tmp,0,sizeof(tmp));
-    if(v2 || v3 || v4) pr_raw(&r,&tmp,sizeof(tmp));
+    if(v5) pr_raw(&r,&tmp,sizeof(tmp));
+    else if(v2 || v3 || v4){ PTypeV4 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old)); ptype_from_v4(&tmp,&old); }
     else { PTypeV1 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old)); ptype_from_v1(&tmp,&old); }
     if(id>=1 && id<=PT_MAX){ g_pt[id-1]=tmp; g_pt[id-1].used=1; }
   }
@@ -1098,14 +1163,14 @@ int gml_part_state_load(const void *data, size_t len, size_t *used){
     double depth=pr_d(&r), px=pr_d(&r), py=pr_d(&r);
     int n=pr_i32(&r);
     if(n<0 || n>200000){ r.ok=0; n=0; }
-    size_t bytes=(size_t)n*((v3||v4)?sizeof(Part):sizeof(PartV2));
+    size_t bytes=(size_t)n*((v3||v4||v5)?sizeof(Part):sizeof(PartV2));
     Part *parts=n?calloc((size_t)n,sizeof(Part)):NULL;
     if(n && !parts){
       r.ok=0;
       if(r.pos+bytes<=r.cap) r.pos+=bytes; else { r.pos+=bytes; r.ok=0; }
       n=0;
     } else if(n) {
-      if(v3 || v4) pr_raw(&r,parts,bytes);
+      if(v3 || v4 || v5) pr_raw(&r,parts,bytes);
       else for(int i=0;i<n;i++){
         PartV2 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old));
         part_from_v2(&parts[i],&old);
@@ -1124,11 +1189,11 @@ int gml_part_state_load(const void *data, size_t len, size_t *used){
   for(int k=0;k<ne;k++){
     int id=pr_i32(&r);
     PEmit tmp; memset(&tmp,0,sizeof(tmp));
-    if(v2 || v3 || v4) pr_raw(&r,&tmp,sizeof(tmp));
+    if(v2 || v3 || v4 || v5) pr_raw(&r,&tmp,sizeof(tmp));
     else { PEmitV1 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old)); pemit_from_v1(&tmp,&old); }
     if(id>=1 && id<=PE_MAX){ g_pe[id-1]=tmp; g_pe[id-1].used=1; }
   }
-  if(v4){
+  if(v4 || v5){
     for(int layer=0;layer<2;layer++){
       int id=pr_i32(&r);
       if(id<0 || id>PS_MAX || (id && !g_ps[id-1].used)){ r.ok=0; id=0; }

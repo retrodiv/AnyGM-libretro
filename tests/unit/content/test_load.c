@@ -3,6 +3,7 @@
 /* test_load - Report container structure and decode diagnostics for an input path. */
 #include "gml_win.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const char *DT[16]={"d","f","i32","i64","b","v","s","?","?","?","?","?","?","?","?","e"};
@@ -15,10 +16,11 @@ static const char *inst_name(int16_t it){
 
 int main(int argc,char**argv){
   const char *path = argc>1?argv[1]:"data.win";
+  const char *call_filter = argc>2?argv[2]:NULL;
   GmlWin w;
   if(gml_win_load(&w,path)){ fprintf(stderr,"load failed: %s\n",path); return 1; }
-  printf("# %s  bytecode=%u gameid=%u  chunks=%d strings=%d code=%d refs=%d\n",
-         path,w.bytecode,w.gameid,w.n_chunks,w.n_strs,w.n_code,w.n_refs);
+  printf("# %s  bytecode=%u gameid=%u speed=%.3f chunks=%d strings=%d code=%d refs=%d\n",
+         path,w.bytecode,w.gameid,w.game_speed,w.n_chunks,w.n_strs,w.n_code,w.n_refs);
   for(int i=0;i<w.n_chunks;i++)
     printf("  %-4s off=%-10u size=%u\n",w.chunks[i].name,w.chunks[i].off,w.chunks[i].size);
 
@@ -35,12 +37,43 @@ int main(int argc,char**argv){
   }
   printf("\n## GLOBAL: %ld instructions, %ld unknown opcodes\n", total, unknown);
 
-  /* Print instructions from the first non-empty code entry. */
+  /* Optionally index call sites matching a caller-supplied substring. */
+  if(call_filter && *call_filter){
+    printf("\n## CALL SITES containing '%s'\n",call_filter);
+    for(int i=0;i<w.n_code;i++){
+      uint32_t a=w.code[i].start,end=a+w.code[i].length;
+      for(;a<end;){
+        GmlInsn in; int sz=gml_decode_bc(w.data,a,w.bytecode,&in); if(sz<=0) break;
+        if(in.kind==OP_CALL){
+          const char *name=gml_ref_name(&w,in.refaddr);
+          if(name && strstr(name,call_filter))
+            printf("  [%d] %-64s +%-6u %s(%u)\n",i,w.code[i].name,a-w.code[i].start,name,in.argc);
+        }
+        a+=(uint32_t)sz;
+      }
+    }
+  }
+
+  /* Print a decoded instruction sample, or a selected full entry when argv[3] is supplied. The
+   * selector may be a numeric index or an exact or partial code name. */
+  int selected=-1;
+  if(argc>3){
+    char *end=NULL; long index=strtol(argv[3],&end,10);
+    if(end && *end==0) selected=(int)index;
+    else {
+      for(int i=0;i<w.n_code;i++)
+        if(w.code[i].name && (!strcmp(w.code[i].name,argv[3]) || strstr(w.code[i].name,argv[3]))){ selected=i; break; }
+      if(selected<0) fprintf(stderr,"code selector not found: %s\n",argv[3]);
+    }
+  }
+  int max_lines=argc>4?atoi(argv[4]):22;
+  if(max_lines<=0) max_lines=22;
   for(int i=0;i<w.n_code;i++){
+    if(selected>=0 && i!=selected) continue;
     if(w.code[i].length==0) continue;
     printf("\n=== [%d] %s (%u bytes) ===\n",i,w.code[i].name,w.code[i].length);
     uint32_t a=w.code[i].start, end=a+w.code[i].length; int line=0;
-    while(a<end && line<22){
+    while(a<end && line<max_lines){
       GmlInsn in; int sz=gml_decode_bc(w.data,a,w.bytecode,&in);
       printf("  %5u: %s", a-w.code[i].start, gml_op_mnemonic(in.kind));
       switch(in.kind){

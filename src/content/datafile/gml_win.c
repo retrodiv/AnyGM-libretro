@@ -7,6 +7,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o] | (uint32_t)d[o+1]<<8 | (uint32_t)d[o+2]<<16 | (uint32_t)d[o+3]<<24;
@@ -245,12 +254,62 @@ int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
 }
 
 int gml_win_load(GmlWin *w, const char *path){
-  FILE *f=fopen(path,"rb"); if(!f) return -1;
-  fseek(f,0,SEEK_END); long sz=ftell(f); fseek(f,0,SEEK_SET);
-  uint8_t *buf=malloc(sz); if(!buf){fclose(f);return -1;}
-  if(fread(buf,1,sz,f)!=(size_t)sz){fclose(f);free(buf);return -1;}
-  fclose(f);
-  int rc=gml_win_from_mem(w,buf,(size_t)sz,1);
+  uint8_t *buf=NULL;
+  size_t sz=0;
+  int storage=0;
+#ifdef _WIN32
+  HANDLE file=CreateFileA(path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,
+                          FILE_ATTRIBUTE_NORMAL|FILE_FLAG_RANDOM_ACCESS,NULL);
+  if(file==INVALID_HANDLE_VALUE) return -1;
+  LARGE_INTEGER length;
+  if(!GetFileSizeEx(file,&length) || length.QuadPart<=0 ||
+     (uint64_t)length.QuadPart>(uint64_t)SIZE_MAX){ CloseHandle(file); return -1; }
+  sz=(size_t)length.QuadPart;
+  HANDLE mapping=CreateFileMappingA(file,NULL,PAGE_READONLY,0,0,NULL);
+  if(mapping){
+    buf=(uint8_t*)MapViewOfFile(mapping,FILE_MAP_READ,0,0,0);
+    CloseHandle(mapping);
+  }
+  CloseHandle(file);
+  if(buf) storage=2;
+#else
+  int fd=open(path,O_RDONLY);
+  if(fd<0) return -1;
+  struct stat st;
+  if(fstat(fd,&st) || st.st_size<=0 || (uint64_t)st.st_size>(uint64_t)SIZE_MAX){
+    close(fd); return -1;
+  }
+  sz=(size_t)st.st_size;
+  void *view=mmap(NULL,sz,PROT_READ,MAP_PRIVATE,fd,0);
+  close(fd);
+  if(view!=MAP_FAILED){ buf=(uint8_t*)view; storage=2; }
+#endif
+  /* Mapping may be unavailable on an unusual frontend/filesystem. Preserve the old heap path
+   * as a bounded fallback, but avoid it for payloads too large for stdio's long offsets. */
+  if(!buf){
+    FILE *f=fopen(path,"rb"); if(!f) return -1;
+    if(fseek(f,0,SEEK_END)){ fclose(f); return -1; }
+    long end=ftell(f);
+    if(end<=0 || (uint64_t)end>(uint64_t)SIZE_MAX || fseek(f,0,SEEK_SET)){
+      fclose(f); return -1;
+    }
+    sz=(size_t)end;
+    buf=(uint8_t*)malloc(sz);
+    if(!buf){ fclose(f); return -1; }
+    if(fread(buf,1,sz,f)!=sz){ fclose(f); free(buf); return -1; }
+    fclose(f);
+    storage=1;
+  }
+  int rc=gml_win_from_mem(w,buf,sz,storage);
+  if(rc!=0){
+#ifdef _WIN32
+    if(storage==2) UnmapViewOfFile(buf); else free(buf);
+#else
+    if(storage==2) munmap(buf,sz); else free(buf);
+#endif
+    memset(w,0,sizeof(*w));
+    return rc;
+  }
   if(rc==0 && path){
     const char *slash=strrchr(path,'/');
     const char *bslash=strrchr(path,'\\');
@@ -289,6 +348,13 @@ void gml_win_free(GmlWin *w){
   free(w->code_hix);
   free(w->ref_hix);
   free(w->ref_addr); free(w->ref_name); free(w->room_order);
-  if(w->owns) free(w->data);
+  if(w->owns==1) free(w->data);
+  else if(w->owns==2 && w->data && w->size){
+#ifdef _WIN32
+    UnmapViewOfFile(w->data);
+#else
+    munmap(w->data,w->size);
+#endif
+  }
   memset(w,0,sizeof(*w));
 }

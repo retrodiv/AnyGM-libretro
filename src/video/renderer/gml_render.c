@@ -73,6 +73,39 @@ static int log_axis_cache_enabled(void){
   if(on<0) on=getenv("GML_LOG_AXIS_CACHE") ? 1 : 0;
   return on;
 }
+
+/* Cardinal rotations must stay exactly on the pixel lattice.  libm leaves tiny residuals for
+ * sin/cos(90*n) (for example cos(270) ~= -1.8e-16); inverse texture mapping then floors a sample
+ * on the wrong side of an integer boundary and shifts the quadrants with a negative axis by one
+ * pixel.  Hardware vertex transforms preserve these literal cardinal matrices. */
+static inline void render_rotation_sincos(double degrees,double *cosine,double *sine){
+  double quadrant=nearbyint(degrees/90.0);
+  if(fabs(degrees-quadrant*90.0)<1e-10){
+    switch(((int)quadrant%4+4)%4){
+      case 0: *cosine=1.0;  *sine=0.0;  return;
+      case 1: *cosine=0.0;  *sine=1.0;  return;
+      case 2: *cosine=-1.0; *sine=0.0;  return;
+      default:*cosine=0.0;  *sine=-1.0; return;
+    }
+  }
+  double radians=degrees*M_PI/180.0;
+  *cosine=cos(radians);
+  *sine=sin(radians);
+}
+
+/* Modern format semantics rasterize a cardinally rotated textured rectangle as a half-open cell. When a
+ * source basis points toward a negative destination axis, its outer integer edge belongs to the
+ * preceding pixel.  Applying that one-pixel anchor correction also makes the four 90-degree
+ * quadrants meet without doubled/separated seams.  Arbitrary-angle coverage keeps the ordinary
+ * pixel-centre inverse map below. */
+static inline void render_modern_cardinal_anchor(const GmlRender *r,double degrees,
+                                                  double xs,double ys,double cosine,double sine,
+                                                  double *x,double *y){
+  double quadrant=nearbyint(degrees/90.0);
+  if(!r || r->classic || fabs(degrees-quadrant*90.0)>=1e-10) return;
+  if(xs*cosine < -1e-12 || ys*sine < -1e-12) *x-=1.0;
+  if(-xs*sine < -1e-12 || ys*cosine < -1e-12) *y-=1.0;
+}
 static int sprof_enabled(void){
   static int on=-1;
   if(on<0) on=getenv("GML_PROFILE_SPRITE") ? 1 : 0;
@@ -719,17 +752,36 @@ void gml_render_prefetch_bg(GmlRender *r, int bg){
 }
 static void atlas_dump_maybe(GmlRender *r, int idx){
   GmlAtlas *a=&r->atlas[idx];
-  if(!a->px || !getenv("GML_DUMP_ATLAS")) return;
+  const char *only=getenv("GML_DUMP_ATLAS_ID");
+  if(!a->px || a->debug_dumped || (!getenv("GML_DUMP_ATLAS") && !only)) return;
+  if(only && *only && atoi(only)!=idx) return;
+  a->debug_dumped=1;
   char fn[64]; snprintf(fn,sizeof fn,"builds/_atlas%d.ppm",idx);
-  FILE*f=fopen(fn,"wb"); if(f){ fprintf(f,"P6\n%d %d\n255\n",a->w,a->h);
-    for(int q=0;q<a->w*a->h;q++) fwrite(a->px+q*4,1,3,f); fclose(f);
+  FILE*f=fopen(fn,"wb"); if(f){ uint8_t *row=malloc((size_t)a->w*3);
+    fprintf(f,"P6\n%d %d\n255\n",a->w,a->h);
+    if(row) for(int y=0;y<a->h;y++){
+      for(int x=0;x<a->w;x++) memcpy(row+x*3,a->px+((size_t)y*a->w+x)*4,3);
+      fwrite(row,3,(size_t)a->w,f);
+    }
+    free(row); fclose(f);
     fprintf(stderr,"[atlas] dumped %s (%dx%d)\n",fn,a->w,a->h); }
+  if(getenv("GML_DUMP_ATLAS_ALPHA")){
+    char afn[64]; snprintf(afn,sizeof afn,"builds/_atlas%d_alpha.pgm",idx);
+    FILE *af=fopen(afn,"wb"); if(af){ uint8_t *row=malloc((size_t)a->w);
+      fprintf(af,"P5\n%d %d\n255\n",a->w,a->h);
+      if(row) for(int y=0;y<a->h;y++){
+        for(int x=0;x<a->w;x++) row[x]=a->px[((size_t)y*a->w+x)*4+3];
+        fwrite(row,1,(size_t)a->w,af);
+      }
+      free(row); fclose(af);
+      fprintf(stderr,"[atlas] dumped %s (%dx%d alpha)\n",afn,a->w,a->h); }
+  }
 }
 static uint8_t *atlas_pixels(GmlRender *r, int idx){
   if(!r || idx<0 || idx>=r->n_atlas || !r->atlas) return NULL;
   GmlAtlas *a=&r->atlas[idx];
   uint8_t *p=__atomic_load_n(&a->px,__ATOMIC_ACQUIRE);
-  if(p) return p;
+  if(p){ atlas_dump_maybe(r,idx); return p; }
   GmlAtlasPool *pool=(GmlAtlasPool*)r->prefetch;
   if(!pool){
     if(a->decode_attempted || !a->blob || a->blob>=r->win->size) return NULL;
@@ -1364,17 +1416,36 @@ static void parse_bgnd(GmlRender *r){
 	    r->bg[i].tpag=tpag_index_for_ptr(r,tptr);
 	    if(r->win->bytecode>=17 && p+64<c->off+c->size){
 	      int ver=(int)u32(d,p+20), tw=(int)u32(d,p+24), th=(int)u32(d,p+28);
-	      int bx=(int)u32(d,p+32), by=(int)u32(d,p+36), cols=(int)u32(d,p+40);
-	      int items=(int)u32(d,p+44), count=(int)u32(d,p+48);
-	      uint64_t id_bytes=(uint64_t)items*(uint64_t)count*4u;
-	      if(ver>0 && tw>0 && th>0 && tw<=4096 && th<=4096 && bx>=0 && by>=0 &&
-	         cols>0 && cols<=4096 && items>0 && items<=1024 && count>0 &&
-	         id_bytes<=4000000u && p+64+id_bytes<=c->off+c->size){
-	        r->bg[i].tile_w=tw; r->bg[i].tile_h=th;
-	        r->bg[i].tile_border_x=bx; r->bg[i].tile_border_y=by;
-	        r->bg[i].tile_columns=cols; r->bg[i].tile_items_per_tile=items; r->bg[i].tile_count=count;
-	        r->bg[i].tile_ids=d+p+64;
-	      }
+          /* The later tileset record inserts separationX/Y before the output-border fields.
+           * Validate both layouts structurally. Interpreting an older record as the new layout
+           * makes its exported-sprite slot become ItemsPerTile (normally zero); a new record has
+           * a complete count*frames table at +72. */
+          int obx=(int)u32(d,p+32), oby=(int)u32(d,p+36), ocols=(int)u32(d,p+40);
+          int oitems=(int)u32(d,p+44), ocount=(int)u32(d,p+48);
+          uint64_t obytes=(uint64_t)(uint32_t)oitems*(uint64_t)(uint32_t)ocount*4u;
+          int old_ok=ver>0 && tw>0 && th>0 && tw<=4096 && th<=4096 && obx>=0 && oby>=0 &&
+                     ocols>0 && ocols<=4096 && oitems>0 && oitems<=1024 && ocount>0 &&
+                     obytes<=4000000u && (uint64_t)p+64u+obytes<=(uint64_t)c->off+c->size;
+          int nsep_x=(int)u32(d,p+32), nsep_y=(int)u32(d,p+36);
+          int nbx=(int)u32(d,p+40), nby=(int)u32(d,p+44), ncols=(int)u32(d,p+48);
+          int nitems=(int)u32(d,p+52), ncount=(int)u32(d,p+56);
+          uint64_t nbytes=(uint64_t)(uint32_t)nitems*(uint64_t)(uint32_t)ncount*4u;
+          int new_ok=ver>0 && tw>0 && th>0 && tw<=4096 && th<=4096 &&
+                     nsep_x>=0 && nsep_x<=4096 && nsep_y>=0 && nsep_y<=4096 &&
+                     nbx>=0 && nby>=0 && nbx<=4096 && nby<=4096 &&
+                     ncols>0 && ncols<=4096 && nitems>0 && nitems<=1024 && ncount>0 &&
+                     nbytes<=4000000u && (uint64_t)p+72u+nbytes<=(uint64_t)c->off+c->size;
+          int modern=new_ok && (!old_ok || (ncount>ocount && ncols>ocols));
+          if(old_ok || modern){
+            int bx=modern?nbx:obx, by=modern?nby:oby, cols=modern?ncols:ocols;
+            int items=modern?nitems:oitems, count=modern?ncount:ocount;
+            r->bg[i].tile_w=tw; r->bg[i].tile_h=th;
+            r->bg[i].tile_border_x=bx; r->bg[i].tile_border_y=by;
+            r->bg[i].tile_separation_x=modern?nsep_x:0;
+            r->bg[i].tile_separation_y=modern?nsep_y:0;
+            r->bg[i].tile_columns=cols; r->bg[i].tile_items_per_tile=items; r->bg[i].tile_count=count;
+            r->bg[i].tile_ids=d+p+(modern?72:64);
+          }
 	    }
 	  }
 	}
@@ -1440,6 +1511,13 @@ static void parse_font(GmlRender *r){
     if(getenv("GML_LOG_FONT"))
       fprintf(stderr,"[font] real id=%d name=%s em=%d atlas=%d glyphs=%d\n",
         i, gml_str_by_ptr(r->win,u32(d,p)), f->line_height, f->atlas, f->n_glyphs);
+    if(getenv("GML_LOG_FONT_GLYPHS"))
+      for(int ch=32;ch<127;ch++){
+        int gi=f->glyph_by_char[ch];
+        if(gi>=0){ GmlGlyph *gl=&f->glyphs[gi];
+          fprintf(stderr,"[fontglyph] font=%d ch=%d('%c') gi=%d rect=(%d,%d %dx%d) shift=%d off=%d\n",
+                  i,ch,ch,gi,gl->sx,gl->sy,gl->w,gl->h,gl->shift,gl->offset); }
+      }
   }
   if(r->n_fonts<nf) r->n_fonts=nf;                  /* sprite fonts number after real fonts */
 }
@@ -2286,7 +2364,7 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(xs==0||ys==0||alpha<=0) return;
   double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
-  double ang=rr*M_PI/180.0, ca=cos(ang), sa=sin(ang);
+  double ca,sa; render_rotation_sincos(rr,&ca,&sa);
   int use_rot = fabs(rr)>0.001 && fabs(rr-360.0)>0.001;
   if(getenv("GML_LOG_TEXT")) fprintf(stderr,"[text] x=%.0f y=%.0f font=%d halign=%d valign=%d scale=(%.2f,%.2f) rot=%.1f col=%06X a=%.2f \"%s\"\n",
     x,y,r->font,r->halign,r->valign,xs,ys,rr,(unsigned)(blend&0xffffff),alpha,str);

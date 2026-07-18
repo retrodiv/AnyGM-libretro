@@ -29,6 +29,8 @@ void gml_part_type_speed(int id,double mn,double mx,double incr,double wig);
 void gml_part_type_direction(int id,double mn,double mx,double incr,double wig);
 void gml_part_type_gravity(int id,double amt,double dir);
 void gml_part_type_life(int id,double mn,double mx);
+void gml_part_type_step(int id,int number,int type);
+void gml_part_type_death(int id,int number,int type);
 void gml_part_type_orientation(int id,double mn,double mx,double incr,double wig,int rel);
 void gml_part_type_color(int id,int ncol,uint32_t c1,uint32_t c2,uint32_t c3);
 void gml_part_type_color_rgb(int id,double rmin,double rmax,double gmin,double gmax,double bmin,double bmax);

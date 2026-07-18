@@ -22,16 +22,12 @@ static double classic_round_even(double x){
   if(diff>0.5) return f+1.0;
   return fmod(f,2.0)==0.0 ? f : f+1.0;
 }
-int gml_real_compare(double lhs, double rhs, int cmp, int classic){
+int gml_real_compare_epsilon(double lhs, double rhs, int cmp, double epsilon){
   int order;
-  if(classic){
-    double delta=lhs-rhs;
-    if(isnan(delta)) return 0;
-    order=fabs(delta)<1e-13 ? 0 : (delta<0.0 ? -1 : 1);
-  } else {
-    if(isnan(lhs) || isnan(rhs)) return cmp==CMP_NEQ;
-    order=lhs<rhs ? -1 : (lhs>rhs ? 1 : 0);
-  }
+  if(isnan(lhs) || isnan(rhs)) return cmp==CMP_NEQ;
+  if(epsilon<0.0) epsilon=0.0;
+  double delta=lhs-rhs;
+  order=fabs(delta)<=epsilon ? 0 : (delta<0.0 ? -1 : 1);
   switch(cmp){
     case CMP_LT: return order<0;
     case CMP_LTE: return order<=0;
@@ -41,6 +37,9 @@ int gml_real_compare(double lhs, double rhs, int cmp, int classic){
     case CMP_GT: return order>0;
     default: return 0;
   }
+}
+int gml_real_compare(double lhs, double rhs, int cmp, int classic){
+  return gml_real_compare_epsilon(lhs,rhs,cmp,classic?1e-13:1e-5);
 }
 static const char *g_cur_code_name;
 static GmlVM *g_cur_vm;
@@ -207,6 +206,47 @@ GmlVal gml_arr_get(GmlVal arr, int idx){
   GmlArr *A=arr.arr;
   if(idx<A->len){ GmlVal v=A->data[idx]; if(v.t==V_STR) v.d=0; return v; }   /* d=0: non-owning ref */
   return vreal(0);
+}
+void gml_arr_set_2d(GmlVal arr, int row, int column, GmlVal val){
+  if(arr.t!=V_ARR || !arr.arr || row<0 || column<0 || column>=GML_2D_STRIDE) return;
+  GmlArr *A=arr.arr;
+  /* Preserve an already-flat legacy array, but create new function-form 2D
+   * arrays as rows of arrays. This avoids allocating row*32000 holes for the
+   * Studio array_set_2D compatibility function. */
+  if(A->is_2d){
+    long flat=(long)row*GML_2D_STRIDE+column;
+    if(flat<0 || flat>=16000000) return;
+    int idx=(int)flat; arr_note_2d_set(A,idx); arr_ensure(A,idx);
+    if(idx<A->cap) A->data[idx]=arr_store_clone(val);
+    return;
+  }
+  arr_ensure(A,row); if(row>=A->cap) return;
+  if(A->data[row].t!=V_ARR || !A->data[row].arr)
+    A->data[row]=gml_arr_new(0,vreal(0));
+  A->nested_2d=1;
+  gml_arr_set(A->data[row],column,val);
+}
+GmlVal gml_arr_get_2d(GmlVal arr, int row, int column){
+  if(arr.t!=V_ARR || !arr.arr || row<0 || column<0 || column>=GML_2D_STRIDE) return vreal(0);
+  GmlArr *A=arr.arr;
+  /* Modern nested arrays and legacy flat 2D arrays can both reach these
+   * compatibility functions, so preserve either representation. */
+  if((A->nested_2d || !A->is_2d) && row<A->len && A->data[row].t==V_ARR)
+    return gml_arr_get(A->data[row],column);
+  long flat=(long)row*GML_2D_STRIDE+column;
+  if(flat<0 || flat>=A->len) return vreal(0);
+  GmlVal value=A->data[flat]; if(value.t==V_STR) value.d=0;
+  return value;
+}
+static int arr_nested_set_flat(GmlVal arr,int flat,GmlVal value){
+  if(arr.t!=V_ARR || !arr.arr || !((GmlArr*)arr.arr)->nested_2d) return 0;
+  if(flat>=0) gml_arr_set_2d(arr,flat/GML_2D_STRIDE,flat%GML_2D_STRIDE,value);
+  return 1;
+}
+static int arr_nested_get_flat(GmlVal arr,int flat,GmlVal *out){
+  if(arr.t!=V_ARR || !arr.arr || !((GmlArr*)arr.arr)->nested_2d) return 0;
+  *out=flat>=0?gml_arr_get_2d(arr,flat/GML_2D_STRIDE,flat%GML_2D_STRIDE):vreal(0);
+  return 1;
 }
 void gml_arr_push(GmlVal arr, GmlVal val){
   if(arr.t!=V_ARR || !arr.arr) return;
@@ -375,6 +415,15 @@ static void motion_from_speed_dir(GmlInstance *in){
 /* returns 1 if name is a builtin and handled */
 static int inst_builtin_get(GmlInstance *in, const char *n, GmlVal *out){
   if(!strcmp(n,"image_single")){ *out=vreal(in->image_speed==0? in->image_index : -1); return 1; }
+  if(!strcmp(n,"layer")){
+    if(g_cur_vm && in->draw_layer_order>=0){
+      for(int i=0;i<g_cur_vm->n_rtl;i++){
+        GmlRtLayer *layer=&g_cur_vm->rtl[i];
+        if(layer->used && layer->order==in->draw_layer_order){ *out=vreal(layer->id); return 1; }
+      }
+    }
+    *out=vreal(-1); return 1;
+  }
   #define B(name,field) if(!strcmp(n,name)){ *out=vreal(in->field); return 1; }
   B("x",x) B("y",y) B("xprevious",xprevious) B("yprevious",yprevious)
   B("phy_position_x",x) B("phy_position_y",y)
@@ -471,7 +520,8 @@ static GmlInstance *var_target(GmlVM *vm, int inst){
 /* GM built-in global variables: these names live in global scope even when a
  * bytecode reference uses the current-instance scope. */
 static int is_global_builtin(const char *n){
-  return !strcmp(n,"health")||!strcmp(n,"lives")||!strcmp(n,"score")||!strcmp(n,"async_load"); }
+  return !strcmp(n,"health")||!strcmp(n,"lives")||!strcmp(n,"score")||!strcmp(n,"async_load")||
+         !strcmp(n,"view_enabled"); }
 static int is_classic_transition_builtin(GmlVM *vm,const char *n){
   return vm && vm->win && vm->win->classic_version &&
          (!strcmp(n,"transition_kind") || !strcmp(n,"transition_steps"));
@@ -532,6 +582,24 @@ static double current_time_value(GmlVM *vm){
    * executing. Some GM scripts implement sleep by spinning on current_time inside one frame. */
   return (double)g_vm_frame * (1000.0 / gml_room_speed(vm)) + intra;
 }
+static int current_calendar_value(const char *name,GmlVal *out){
+  if(strncmp(name,"current_",8) || !strcmp(name,"current_time")) return 0;
+  time_t now=time(NULL); struct tm value;
+#ifdef _WIN32
+  if(localtime_s(&value,&now)!=0) memset(&value,0,sizeof value);
+#else
+  if(!localtime_r(&now,&value)) memset(&value,0,sizeof value);
+#endif
+  if(!strcmp(name,"current_second")) *out=vreal(value.tm_sec);
+  else if(!strcmp(name,"current_minute")) *out=vreal(value.tm_min);
+  else if(!strcmp(name,"current_hour")) *out=vreal(value.tm_hour);
+  else if(!strcmp(name,"current_day")) *out=vreal(value.tm_mday);
+  else if(!strcmp(name,"current_weekday")) *out=vreal(value.tm_wday); /* Sunday=0 */
+  else if(!strcmp(name,"current_month")) *out=vreal(value.tm_mon+1);
+  else if(!strcmp(name,"current_year")) *out=vreal(value.tm_year+1900);
+  else return 0;
+  return 1;
+}
 /* Return a frame-based microsecond timer with intra-frame CPU-time advance. */
 double gml_vm_get_timer_us(GmlVM *vm){
   extern long g_vm_frame;
@@ -561,14 +629,16 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
  * safe); miss => the name is provably not special, go straight to the varmap. */
 static const char *const g_special_var_names[]={
   "undefined","room","keyboard_lastkey","room_speed","working_directory","program_directory",
-  "fps","view_current","room_persistent","event_type","event_number","mouse_x","mouse_y",
-  "current_time","os_type","os_windows","os_uwp","os_xboxone","os_ps3","os_ps4","os_psvita",
+  "fps","view_current","view_enabled","room_persistent","event_type","event_number","mouse_x","mouse_y",
+  "current_time","current_second","current_minute","current_hour","current_day","current_weekday",
+  "current_month","current_year","os_type","os_windows","os_uwp","os_xboxone","os_ps3","os_ps4","os_psvita",
   "os_macosx","os_linux","os_ios","os_android","os_unknown","os_switch_operating_system","room_width",
   "room_height","instance_count","health","lives","score","async_load","id","object_index",
   "image_number","sprite_width","sprite_height","sprite_xoffset","sprite_yoffset","image_single",
   "x","y","xprevious","yprevious","xstart","ystart","sprite_index","mask_index","image_index",
   "image_speed","image_xscale","image_yscale","image_angle","image_alpha","image_blend",
   "depth","visible","solid","persistent","hspeed","vspeed","direction","speed",
+  "layer",
   "phy_position_x","phy_position_y",
   "gravity","gravity_direction","friction","path_index","path_position","path_speed",
   "path_orientation","path_scale","path_positionprevious","path_endaction",
@@ -646,6 +716,7 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!strcmp(name,"event_type")) return vreal(vm->event_type);
   if(!strcmp(name,"event_number")) return vreal(vm->event_number);
   if(!strcmp(name,"current_time")) return vreal(current_time_value(vm));
+  if(current_calendar_value(name,&out)) return out;
   if(argument_get(vm,name,&out)) return out;
   if(!strcmp(name,"room_width")||!strcmp(name,"room_height")){   /* GM built-in: current room size */
     GmlRoom r; if(gml_room_get(vm->win,vm->room_index,&r)==0)
@@ -676,6 +747,11 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
     /* bbox_left/right/top/bottom = the instance's collision bounding box (from the sprite mask margins) */
     if(!strncmp(name,"bbox_",5)){ double l,t,r,b;
       if(vm_bbox(vm,self,&l,&t,&r,&b)){
+        /* Studio exposes the far edges as exclusive coordinates; this is why its usual line and
+         * rectangle probes use bbox_right-1 while a grounded probe starts at bbox_bottom.  The
+         * collision engine itself keeps inclusive pixel bounds, and classic formats also expose
+         * inclusive right/bottom, so translate only the Studio-facing special variables here. */
+        if(!vm->win || !vm->win->classic_version){ r+=1.0; b+=1.0; }
         if(!strcmp(name,"bbox_left"))   return vreal(l);
         if(!strcmp(name,"bbox_right"))  return vreal(r);
         if(!strcmp(name,"bbox_top"))    return vreal(t);
@@ -791,7 +867,7 @@ static int is_room_global_array(const char *n){
            !strcmp(s,"wview") || !strcmp(s,"hview") || !strcmp(s,"xport") ||
            !strcmp(s,"yport") || !strcmp(s,"wport") || !strcmp(s,"hport") ||
            !strcmp(s,"hborder") || !strcmp(s,"vborder") || !strcmp(s,"hspeed") ||
-           !strcmp(s,"vspeed") || !strcmp(s,"object");
+           !strcmp(s,"vspeed") || !strcmp(s,"object") || !strcmp(s,"camera");
   }
   return 0;
 }
@@ -803,6 +879,11 @@ static double alarm_store_value(GmlVM *vm,GmlVal v){
   return vm && vm->win && vm->win->classic_version ? nearbyint(value) : value;
 }
 static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, uint32_t nh, int idx, GmlVal v){
+  if(getenv("GML_LOG_VIEW") && !strcmp(nm,"view_camera")){
+    extern long g_vm_frame;
+    fprintf(stderr,"[camera] bind f%ld view=%d value=%.0f scope=%d global=%d\n",
+            g_vm_frame,idx,asnum(v),inst_t,is_room_global_array(nm));
+  }
   if(!strcmp(nm,"argument")){
     if(idx>=0 && idx<16){
       vm->script_args[idx]=v;
@@ -854,6 +935,7 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
     for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
       if(!o->active || o->marked) continue;
       GmlVal *slot=gml_varmap_put_h(&o->vars,nm,nh); GmlArr *A=arr_of(slot);
+      if(arr_nested_set_flat(*slot,idx,v)) continue;
       gml_arr_mark_escaped(v); arr_note_2d_set(A,idx); arr_ensure(A,idx);
       if(idx>=0 && idx<A->cap) A->data[idx]=v; }
     return;
@@ -863,12 +945,14 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
     for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
       if(!o->active || o->marked || !gml_object_is(vm,o->obj,inst_t)) continue;
       GmlVal *slot=gml_varmap_put_h(&o->vars,nm,nh); GmlArr *A=arr_of(slot);
+      if(arr_nested_set_flat(*slot,idx,v)) continue;
       gml_arr_mark_escaped(v); arr_note_2d_set(A,idx); arr_ensure(A,idx);
       if(idx>=0 && idx<A->cap) A->data[idx]=v; }
     return;
   }
   GmlVarMap *m=is_room_global_array(nm)? &vm->globals : scope_map(vm,locals,inst_t); if(!m) return;
   GmlVal *slot=gml_varmap_put_h(m,nm,nh); GmlArr *A=arr_of(slot);
+  if(arr_nested_set_flat(*slot,idx,v)) return;
   if(m!=locals || A->escaped) gml_arr_mark_escaped(v);   /* element outlives scope if its owner already does */
   arr_note_2d_set(A,idx); arr_ensure(A,idx);
   if(idx>=0 && idx<A->cap) A->data[idx]=v;
@@ -879,7 +963,8 @@ static GmlVal array_get_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *
        `argument[idx]`, the Nth arg). Missing this, serialize's `with(actions[i])` over an array passed as
        argument0 read 0 for every element, so every input binding serialised to "" and lost its default key. */
     if(aidx>=0){ GmlVal av=(aidx<vm->script_argc)? vm->script_args[aidx] : vundef();
-      if(av.t==V_ARR && av.arr){ GmlArr *A=av.arr; if(idx>=0 && idx<A->len) return A->data[idx]; }
+      if(av.t==V_ARR && av.arr){ GmlVal nested; if(arr_nested_get_flat(av,idx,&nested)) return nested;
+        GmlArr *A=av.arr; if(idx>=0 && idx<A->len) return A->data[idx]; }
       return vreal(0); } }
   if(!strcmp(nm,"alarm")){ GmlInstance *s=resolve_inst(vm,inst_t);
     return vreal((s&&idx>=0&&idx<GML_ALARMS)? s->alarm[idx] : -1); }
@@ -894,6 +979,7 @@ static GmlVal array_get_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *
   GmlArr *A=slot->arr;
   /* defend against a corrupt/garbage GmlArr (e.g. a cross-version savestate) — never deref blindly */
   if(!A || !A->data || A->len<0 || A->cap<A->len || A->cap>16000000) return vreal(0);
+  { GmlVal nested; if(arr_nested_get_flat(*slot,idx,&nested)) return nested; }
   return (idx>=0 && idx<A->len)? A->data[idx] : vreal(0);
 }
 static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, uint32_t nh, int idx){
@@ -907,6 +993,7 @@ static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, 
   if(!slot || slot->t!=V_ARR || !slot->arr) return vreal(0);
   GmlArr *A=slot->arr;
   if(!A || !A->data || A->len<0 || A->cap<A->len || A->cap>16000000) return vreal(0);
+  { GmlVal nested; if(arr_nested_get_flat(*slot,idx,&nested)) return nested; }
   return (idx>=0 && idx<A->len)? A->data[idx] : vreal(0);
 }
 static void array_set_inst_field_h(GmlVM *vm,GmlInstance *s,const char *nm,uint32_t nh,int idx,GmlVal v){
@@ -919,6 +1006,7 @@ static void array_set_inst_field_h(GmlVM *vm,GmlInstance *s,const char *nm,uint3
   gml_arr_mark_escaped(v);
   GmlVal *slot=gml_varmap_put_h(&s->vars,nm,nh);
   GmlArr *A=arr_of(slot);
+  if(arr_nested_set_flat(*slot,idx,v)) return;
   arr_note_2d_set(A,idx);
   arr_ensure(A,idx);
   if(idx>=0 && idx<A->cap) A->data[idx]=v;
@@ -977,6 +1065,7 @@ static GmlVal inst_get_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t
   if(inst_sprite_metric_get(vm,t,nm,&o)) return o;
   if(!strncmp(nm,"bbox_",5)){ double l,tp,r,b;
     if(vm_bbox(vm,t,&l,&tp,&r,&b)){
+      if(!vm->win || !vm->win->classic_version){ r+=1.0; b+=1.0; }
       if(!strcmp(nm,"bbox_left"))   return vreal(l);
       if(!strcmp(nm,"bbox_right"))  return vreal(r);
       if(!strcmp(nm,"bbox_top"))    return vreal(tp);
@@ -1791,6 +1880,7 @@ extern int gml_builtin_fast_id(const char *name);
 extern GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, int n);
 extern int gml_input_key(int vk, int edge);
 extern int gml_input_gamepad(int button, int edge);
+extern void gml_input_key_clear(int vk);
 static int code_micro_maybe(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *out);
 static inline int builtin_hotprof_on(void){
   static int on=-1;
@@ -1807,8 +1897,8 @@ static void micro_set_bool_fields(GmlInstance *self,
   inst_set_any_h(self,held_in->refname,held_in->refhash?held_in->refhash:strhash(held_in->refname),vreal(held?1:0));
   inst_set_any_h(self,released_in->refname,released_in->refhash?released_in->refhash:strhash(released_in->refname),vreal(released?1:0));
 }
-static int micro_input_edge(int type, int key, int edge){
-  return type==0 ? gml_input_key(key,edge) : gml_input_gamepad(key,edge);
+static int micro_input_edge(GmlVM *vm, int type, int key, int edge){
+  return type==0 ? gml_keyboard_check(vm,key,edge) : gml_input_gamepad(key,edge);
 }
 static void micro_call_method_field1(GmlVM *vm, GmlVal targetv, const char *field, uint32_t hash, GmlVal arg0){
   if(!vm || !field) return;
@@ -1991,17 +2081,17 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
     if(value.t==V_ARR && value.arr){
       int a0=(int)asnum(gml_arr_get(value,0));
       int a1=(int)asnum(gml_arr_get(value,1));
-      int axis=micro_input_edge(type,a1,0)-micro_input_edge(type,a0,0);
-      int pressed=(micro_input_edge(type,a1,1)-micro_input_edge(type,a0,1))!=0;
+      int axis=micro_input_edge(vm,type,a1,0)-micro_input_edge(vm,type,a0,0);
+      int pressed=(micro_input_edge(vm,type,a1,1)-micro_input_edge(vm,type,a0,1))!=0;
       int held=axis!=0;
       int released=(axis==0) && astrue(inst_get_any_h(vm,self,in[24].refname,in[24].refhash?in[24].refhash:strhash(in[24].refname)));
       inst_set_any_h(self,in[35].refname,in[35].refhash?in[35].refhash:strhash(in[35].refname),vreal(axis));
       micro_set_bool_fields(self,&in[47],&in[24],&in[60],pressed,held,released);
     } else {
       int key=(int)asnum(value);
-      int pressed=micro_input_edge(type,key,1);
-      int held=micro_input_edge(type,key,0);
-      int released=micro_input_edge(type,key,2);
+      int pressed=micro_input_edge(vm,type,key,1);
+      int held=micro_input_edge(vm,type,key,0);
+      int released=micro_input_edge(vm,type,key,2);
       micro_set_bool_fields(self,&in[47],&in[24],&in[60],pressed,held,released);
     }
     *out=vreal(0);
@@ -2216,7 +2306,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             if(w->bytecode>=17 && sp>0 && itv.t==V_REAL && itv.d==-9.0){
               GmlVal iv=stk[--sp];
               GmlInstance *t=vm_inst_from_ref(vm,iv);
-              v=t?array_get_inst_field_h(vm,t,nm,nh,idx):vreal(0);
+              v=t?array_get_inst_field_h(vm,t,nm,nh,idx):
+                  array_get_h(vm,&locals,(int)asnum(iv),nm,nh,idx);
             } else {
               int it=(int)asnum(itv);
               v=array_get_h(vm,&locals,it,nm,nh,idx);
@@ -2224,9 +2315,22 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           } else if(in.reftype==0x10 || in.reftype==0x90){
             /* GMS2.3 array-following push (first dimension from a named variable). Stack top->down:
              * index, instance-type. ArrayPushAF(0x10)=read; ArrayPopAF(0x90)=write chain (must yield a
-             * live sub-array reference so a following popaf stores into it). */
-            int idx=(int)(sp>0?asnum(stk[--sp]):0); int it=(int)(sp>0?asnum(stk[--sp]):IT_SELF);
-            GmlVarMap *m=is_room_global_array(nm)? &vm->globals : scope_map(vm,&locals,it);
+             * live sub-array reference so a following popaf stores into it). An expression receiver
+             * (`global.a[i][j]`, `obj.a[i][j]`) is encoded below a StackTop -9 marker, just like a
+             * normal StackTop field access. Consume that marker and resolve the actual receiver;
+             * otherwise a global nested store is silently redirected into self.a. */
+            int idx=(int)(sp>0?asnum(stk[--sp]):0);
+            GmlVal iv=sp>0?stk[--sp]:vreal(IT_SELF);
+            if(w->bytecode>=17 && sp>0 && iv.t==V_REAL && iv.d==-9.0) iv=stk[--sp];
+            GmlVarMap *m=NULL;
+            int it=(int)asnum(iv);
+            if(is_room_global_array(nm)) m=&vm->globals;
+            else if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) && it<100000)
+              m=scope_map(vm,&locals,it);
+            else {
+              GmlInstance *t=vm_inst_from_ref(vm,iv);
+              if(t) m=&t->vars;
+            }
             v=vreal(0);
             if(m && idx>=0){
               if(in.reftype==0x90){ GmlVal *slot=gml_varmap_put_h(m,nm,nh); GmlArr *A=arr_of(slot); arr_ensure(A,idx);
@@ -2282,12 +2386,14 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         uint32_t nh=in.refhash?in.refhash:strhash(nm);
         if(in.reftype==0x00){ /* Direct array stores consume value/scope/index; numeric compound stores
            * consume scope/index/value. Select the order from Type1. */
-          int idx; GmlVal itv, val, iv=vreal(0); GmlInstance *t=NULL;
+          int idx; GmlVal itv, val, iv=vreal(0), scopev; GmlInstance *t=NULL;
           if(in.type1==DT_VAR){
             idx=(int)(sp>0?asnum(stk[--sp]):0);
             itv=sp>0?stk[--sp]:vreal(0);
+            scopev=itv;
             if(w->bytecode>=17 && sp>0 && itv.t==V_REAL && itv.d==-9.0){
               iv=stk[--sp];
+              scopev=iv;
               t=vm_inst_from_ref(vm,iv);
             }
             val=sp>0?stk[--sp]:vreal(0);
@@ -2295,15 +2401,17 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             val=sp>0?stk[--sp]:vreal(0);
             idx=(int)(sp>0?asnum(stk[--sp]):0);
             itv=sp>0?stk[--sp]:vreal(0);
+            scopev=itv;
             if(w->bytecode>=17 && sp>0 && itv.t==V_REAL && itv.d==-9.0){
               iv=stk[--sp];
+              scopev=iv;
               t=vm_inst_from_ref(vm,iv);
             }
           }
           GC_PERSIST(val);
           if(classic_implicit_return) ret=val;
           if(t) array_set_inst_field_h(vm,t,nm,nh,idx,val);
-          else array_set_h(vm,&locals,(int)asnum(itv),nm,nh,idx,val);
+          else array_set_h(vm,&locals,(int)asnum(scopev),nm,nh,idx,val);
         } else if(in.reftype==0x80){ /* StackTop instance.var. GMS quirk: the value/instance push
            * order depends on the value's Type1 — `pop.v.*` (Type1=Variable) pushes the value FIRST
            * then [instance, -9] (marker on top); every other `pop.<num>.v` (the compound `inst.var
@@ -2429,7 +2537,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           int c=strcmp(asstr_cmp(l,lb,sizeof lb),asstr_cmp(r,rb,sizeof rb));
           switch(in.cmp){case CMP_LT:res=c<0;break;case CMP_LTE:res=c<=0;break;case CMP_EQ:res=c==0;break;
             case CMP_NEQ:res=c!=0;break;case CMP_GTE:res=c>=0;break;case CMP_GT:res=c>0;break;} }
-        else res=gml_real_compare(asnum(l),asnum(r),in.cmp,w->classic_version!=0);
+        else res=gml_real_compare_epsilon(asnum(l),asnum(r),in.cmp,vm->math_epsilon);
         stk[sp++]=vreal(res); break;
       }
       case OP_B:
@@ -2722,9 +2830,55 @@ static void parse_paths(GmlVM *vm){
   }
 }
 
-/* The source compiler writes a deliberately tagged TMLN record. Untagged TMLN layouts
- * vary across format revisions, so only consume records bearing our TMLC signature; unrelated
- * packages keep their historical behaviour instead of being guessed at here. */
+static int native_timeline_code(GmlWin *w, const char *timeline_name, int moment, int step,
+                                const uint8_t *d, size_t end, uint32_t event_ptr){
+  /* Studio gives native timeline moments stable CODE names. Resolve that independent identity
+   * first: it avoids depending on the EventAction record layout, which changed between format
+   * generations. The action pointer remains a guarded fallback for packages which retained the
+   * native TMLN graph but stripped CODE names. */
+  if(timeline_name && strcmp(timeline_name,"<@?>")){
+    size_t need=strlen(timeline_name)+48;
+    char *name=malloc(need);
+    if(name){
+      snprintf(name,need,"Timeline_%s_%d",timeline_name,moment);
+      int code=gml_code_index_by_name(w,name);
+      if(code<0){
+        snprintf(name,need,"gml_Timeline_%s_%d",timeline_name,moment);
+        code=gml_code_index_by_name(w,name);
+      }
+      /* Some older authoring paths use the authored step in the generated CODE suffix. */
+      if(code<0 && step!=moment){
+        snprintf(name,need,"Timeline_%s_%d",timeline_name,step);
+        code=gml_code_index_by_name(w,name);
+      }
+      if(code<0 && step!=moment){
+        snprintf(name,need,"gml_Timeline_%s_%d",timeline_name,step);
+        code=gml_code_index_by_name(w,name);
+      }
+      free(name);
+      if(code>=0) return code;
+    }
+  }
+  /* Native Event list: count followed by absolute pointers to EventAction records. In the
+   * bc14-bc17 record shared by native object/timeline events, CodeId is the word at +32. Only
+   * accept an in-range CODE index; malformed/foreign layouts leave the moment inert. */
+  if((size_t)event_ptr+8<=end){
+    uint32_t actions=u32(d,event_ptr);
+    if(actions>0 && actions<=4096 && (size_t)event_ptr+4+(size_t)actions*4<=end){
+      for(uint32_t i=0;i<actions;i++){
+        uint32_t action_ptr=u32(d,event_ptr+4+i*4);
+        if((size_t)action_ptr+36>end) continue;
+        uint32_t code=u32(d,action_ptr+32);
+        if(code<(uint32_t)w->n_code) return (int)code;
+      }
+    }
+  }
+  return -1;
+}
+
+/* The source compiler writes a deliberately tagged TMLC record. Native Studio packages use
+ * [name,count,(step,event-list-pointer)*count]. Both are pointer- and bounds-validated here;
+ * native moment code is resolved by its independent CODE name with the event graph as fallback. */
 static void parse_timelines(GmlVM *vm){
   GmlWin *w=vm->win; const GmlChunk *c=gml_chunk(w,"TMLN");
   if(!c || c->size<4 || (size_t)c->off+4>w->size) return;
@@ -2736,19 +2890,26 @@ static void parse_timelines(GmlVM *vm){
   if(!timelines) return;
   for(uint32_t i=0;i<n;i++){
     uint32_t ep=u32(d,base+4+i*4);
-    if((size_t)ep+12>end || u32(d,ep+4)!=0x434C4D54u) continue;
-    uint32_t count=u32(d,ep+8);
-    if(count>100000 || (size_t)ep+12+(size_t)count*8>end) continue;
+    if((size_t)ep+8>end) continue;
+    int tagged=(size_t)ep+12<=end && u32(d,ep+4)==0x434C4D54u;
+    uint32_t count=u32(d,ep+(tagged?8:4));
+    size_t pairs=(size_t)ep+(tagged?12:8);
+    if(count>100000 || pairs+(size_t)count*8>end) continue;
     GmlTimeline *t=&timelines[i];
     t->name=gml_str_by_ptr(w,u32(d,ep));
     t->moments=calloc(count?count:1,sizeof(*t->moments));
     if(!t->moments) continue;
     t->n=(int)count; t->last_step=-1;
     for(uint32_t m=0;m<count;m++){
-      t->moments[m].step=(int)u32(d,ep+12+m*8);
-      t->moments[m].code=(int)u32(d,ep+16+m*8);
+      uint32_t pair=(uint32_t)(pairs+(size_t)m*8);
+      t->moments[m].step=(int32_t)u32(d,pair);
+      t->moments[m].code=tagged ? (int32_t)u32(d,pair+4) :
+        native_timeline_code(w,t->name,(int)m,t->moments[m].step,d,end,u32(d,pair+4));
       if(t->moments[m].step>t->last_step) t->last_step=t->moments[m].step;
     }
+    if(getenv("GML_LOG_TIMELINE")) fprintf(stderr,
+      "[timeline] %u %s format=%s moments=%d last=%d\n",i,t->name?t->name:"?",
+      tagged?"tmlc":"native",t->n,t->last_step);
   }
   vm->timelines=timelines; vm->n_timelines=(int)n; vm->cap_timelines=cap;
 }
@@ -2922,6 +3083,47 @@ static void run_paths(GmlVM *vm){
 }
 
 /* ---------------- object parsing ---------------- */
+static void parse_native_object_events(GmlVM *vm, GmlObject *object, uint32_t table,
+                                       size_t end){
+  const uint8_t *data=vm->win->data;
+  if((size_t)table+4>end) return;
+  uint32_t types=u32(data,table);
+  if(types>32 || (size_t)table+4+(size_t)types*4>end) return;
+  int total=0;
+  for(uint32_t type=0;type<types;type++){
+    uint32_t list=u32(data,table+4+type*4);
+    if((size_t)list+4>end) return;
+    uint32_t count=u32(data,list);
+    if(count>100000 || total>(int)(100000-count) || (size_t)list+4+(size_t)count*4>end) return;
+    total+=(int)count;
+  }
+  if(!total) return;
+  object->events=calloc((size_t)total,sizeof(*object->events));
+  if(!object->events) return;
+  for(uint32_t type=0;type<types;type++){
+    uint32_t list=u32(data,table+4+type*4), count=u32(data,list);
+    for(uint32_t event_index=0;event_index<count;event_index++){
+      uint32_t event=u32(data,list+4+event_index*4);
+      if((size_t)event+8>end) continue;
+      int subtype=(int32_t)u32(data,event);
+      uint32_t actions=u32(data,event+4);
+      if(actions>4096 || (size_t)event+8+(size_t)actions*4>end) continue;
+      int code=-1;
+      for(uint32_t action_index=0;action_index<actions;action_index++){
+        uint32_t action=u32(data,event+8+action_index*4);
+        if((size_t)action+36>end) continue;
+        uint32_t candidate=u32(data,action+32);
+        if(candidate<(uint32_t)vm->win->n_code){ code=(int)candidate; break; }
+      }
+      if(code<0) continue;
+      object->events[object->n_events].evtype=(int)type;
+      object->events[object->n_events].subtype=subtype;
+      object->events[object->n_events].code=code;
+      object->n_events++;
+    }
+  }
+}
+
 static void parse_objects(GmlVM *vm){
   GmlWin *w=vm->win; const GmlChunk *c=gml_chunk(w,"OBJT"); if(!c) return;
   const uint8_t *d=w->data; uint32_t n=u32(d,c->off);
@@ -2958,8 +3160,10 @@ static void parse_objects(GmlVM *vm){
      * vertex list entirely inside OBJT. Coordinates are fixture-local pixels. */
     uint32_t q=p+(uint32_t)poff+8u;
     uint64_t cend=(uint64_t)c->off+c->size;
+    uint32_t nvert=UINT32_MAX;
     if((uint64_t)q+48u<=cend && (uint64_t)q+48u<=w->size){
-      uint32_t enabled=u32(d,q), nvert=u32(d,q+32), kinematic=u32(d,q+44);
+      uint32_t enabled=u32(d,q), kinematic=u32(d,q+44);
+      nvert=u32(d,q+32);
       double density=f32(d,q+12);
       uint64_t vend=(uint64_t)q+48u+(uint64_t)nvert*8u;
       if(enabled<=1 && kinematic<=1 && isfinite(density) && density>=0.0 && density<=1000000.0 &&
@@ -2984,7 +3188,11 @@ static void parse_objects(GmlVM *vm){
         }
       }
     }
-    /* events parsed lazily via code-name matching for now */
+    if(nvert<=128){
+      uint64_t event_table=(uint64_t)q+48u+(uint64_t)nvert*8u;
+      if(event_table+4u<=cend && event_table+4u<=w->size)
+        parse_native_object_events(vm,o,(uint32_t)event_table,(size_t)cend);
+    }
   }
   if(getenv("GML_LOG_OBJ")) fprintf(stderr,"[obj] OBJT parent_off=+%d (%s layout)\n", poff,
     shift? "managed/GMS2.3+" : "classic");
@@ -3013,6 +3221,10 @@ static void parse_objects(GmlVM *vm){
 
 /* ---------------- instances / events / rooms ---------------- */
 double gml_global_num(GmlVM *vm, const char *name){
+  if(vm && name && var_name_maybe_special(name,strhash(name))){
+    GmlVal value=var_get_h(vm,IT_GLOBAL,name,strhash(name));
+    if(value.t==V_REAL) return value.d;
+  }
   for(int i=0;i<vm->globals.cap;i++){ GmlVarSlot *s=&vm->globals.slots[i];
     if(s->key && !strcmp(s->key,name)) return s->val.t==V_REAL? s->val.d : 0; }
   return 0;
@@ -3384,10 +3596,12 @@ static void apply_object_defaults(GmlVM *vm, GmlInstance *in, int obj){
   in->image_alpha=1;
   in->image_blend=16777215;
 }
-GmlInstance *gml_instance_create_depth(GmlVM *vm, double x, double y, int obj, int have_depth, double depth){
+static GmlInstance *instance_create_configured(GmlVM *vm, double x, double y, int obj,
+                                               int have_depth, double depth, int layer_order){
   GmlInstance *in=alloc_inst(vm); init_inst(vm,in,x,y,obj);
   /* Set the supplied depth before running Create so that assignments in the event take precedence. */
   if(have_depth) in->depth=depth;
+  if(layer_order>=0) in->draw_layer_order=layer_order;
   if(vm->render && (int)in->sprite_index>=0)   /* head start for the background decoder before first draw */
     gml_render_prefetch_sprite((GmlRender*)vm->render,(int)in->sprite_index);
   if(getenv("GML_LOG_CREATE")){ extern long g_vm_frame;
@@ -3401,8 +3615,16 @@ GmlInstance *gml_instance_create_depth(GmlVM *vm, double x, double y, int obj, i
   gml_run_event(vm,in,"Create_0");
   return in;
 }
+GmlInstance *gml_instance_create_depth(GmlVM *vm, double x, double y, int obj, int have_depth, double depth){
+  return instance_create_configured(vm,x,y,obj,have_depth,depth,-1);
+}
 GmlInstance *gml_instance_create(GmlVM *vm, double x, double y, int obj){
   return gml_instance_create_depth(vm,x,y,obj,0,0);
+}
+GmlInstance *gml_instance_create_layer(GmlVM *vm, double x, double y, int obj, int layer_id){
+  GmlRtLayer *layer=gml_rt_layer_find(vm,layer_id);
+  if(!layer) return instance_create_configured(vm,x,y,obj,0,0,-1);
+  return instance_create_configured(vm,x,y,obj,1,layer->depth,layer->order);
 }
 void gml_instance_change(GmlVM *vm, GmlInstance *in, int obj, int perform_events){
   gml_colgrid_touch(in);   /* object swap changes sprite/mask -> bbox */
@@ -3537,7 +3759,8 @@ static const char *const room_background_fields[]={
 };
 static const char *const room_view_fields[]={
   "view_visible","view_xview","view_yview","view_wview","view_hview","view_xport","view_yport",
-  "view_wport","view_hport","view_hborder","view_vborder","view_hspeed","view_vspeed","view_object"
+  "view_wport","view_hport","view_hborder","view_vborder","view_hspeed","view_vspeed","view_object",
+  "view_camera"
 };
 
 static void room_runtime_state_store(GmlVM *vm, int room){
@@ -3601,9 +3824,9 @@ static void room_runtime_state_restore(GmlVM *vm, int room){
 }
 
 /* GMS2-style ROOM layers are a data-layout feature, not a bytecode-version feature. Early
- * GMS2 exports can still use bytecode 15 while carrying the same layer pointer at ROOM+88 as
- * later bytecode-17 packages. Validate the pointer entirely inside the ROOM chunk so classic
- * GMS1 records, whose bytes at +88 are unrelated, cannot be mistaken for a layer list. */
+ * exports can still use bytecode 15, while newer room records inserted an editor scalar before
+ * the layer pointer and shifted it from +88 to +92. Detect the slot structurally inside ROOM so
+ * both layouts work and classic records cannot be mistaken for a layer list. */
 static uint32_t gml_room_layer_list(GmlVM *vm, int room_index, uint32_t *out_count){
   if(out_count) *out_count=0;
   if(!vm || !vm->win || room_index<0 || room_index>=gml_room_count(vm->win)) return 0;
@@ -3615,20 +3838,29 @@ static uint32_t gml_room_layer_list(GmlVM *vm, int room_index, uint32_t *out_cou
   if(slot+4u>rend) return 0;
   uint32_t rp=u32(d,(uint32_t)slot);
   if(rp<rc->off || (uint64_t)rp+92u>rend) return 0;
-  uint32_t lay=u32(d,rp+88);
-  if(lay<rc->off || (uint64_t)lay+4u>rend) return 0;
-  uint32_t lcnt=u32(d,lay);
-  if(lcnt>=512 || (uint64_t)lay+4u+(uint64_t)lcnt*4u>rend) return 0;
-  for(uint32_t i=0;i<lcnt;i++){
-    uint32_t lp=u32(d,lay+4+i*4);
-    if(lp<rc->off || (uint64_t)lp+36u>rend) return 0;
-    uint32_t type=u32(d,lp+8);
-    if(type<1 || type>8 || u32(d,lp+32)>1) return 0;
-    uint32_t name=u32(d,lp);
-    if(name && name>=vm->win->size) return 0;
+  static const uint8_t layer_slots[]={88,92,96,100,104,108,112,116,120};
+  for(size_t s=0;s<sizeof(layer_slots)/sizeof(layer_slots[0]);s++){
+    uint32_t lo=layer_slots[s];
+    if((uint64_t)rp+lo+4u>rend) break;
+    uint32_t lay=u32(d,rp+lo);
+    if(lay<rc->off || (uint64_t)lay+4u>rend) continue;
+    uint32_t lcnt=u32(d,lay);
+    if(lcnt==0 || lcnt>=512 || (uint64_t)lay+4u+(uint64_t)lcnt*4u>rend) continue;
+    int valid=1;
+    for(uint32_t i=0;i<lcnt;i++){
+      uint32_t lp=u32(d,lay+4+i*4);
+      if(lp<rc->off || (uint64_t)lp+36u>rend){ valid=0; break; }
+      uint32_t type=u32(d,lp+8);
+      if(type<1 || type>8 || u32(d,lp+32)>1){ valid=0; break; }
+      uint32_t name=u32(d,lp);
+      if(name && name>=vm->win->size){ valid=0; break; }
+    }
+    if(valid){
+      if(out_count) *out_count=lcnt;
+      return lay;
+    }
   }
-  if(out_count) *out_count=lcnt;
-  return lay;
+  return 0;
 }
 
 /* Select the base or effect-field layer layout by structural voting across background records.
@@ -3703,9 +3935,69 @@ static GmlTileMap *gml_tilemap_new(GmlVM *vm){
 static void gml_tilemaps_clear(GmlVM *vm){
   for(int i=0;i<vm->n_tilemaps;i++){
     free(vm->tilemaps[i].owned_tiles);
+    free(vm->tilemaps[i].decoded_tiles);
     vm->tilemaps[i].owned_tiles=NULL;
+    vm->tilemaps[i].decoded_tiles=NULL;
   }
   vm->n_tilemaps=0;
+}
+
+/* Read enough tileset metadata to distinguish the extended layout, which also uses compressed
+ * room grids, from the older BGND record. */
+static int gml_tileset_meta(GmlVM *vm,int tileset,int *tile_count,int *modern){
+  if(tile_count) *tile_count=0;
+  if(modern) *modern=0;
+  const GmlChunk *bc=gml_chunk(vm->win,"BGND");
+  if(!bc || tileset<0 || (uint32_t)tileset>=u32(vm->win->data,bc->off)) return 0;
+  const uint8_t *d=vm->win->data;
+  uint32_t bp=u32(d,bc->off+4+(uint32_t)tileset*4u);
+  if(!bp || (uint64_t)bp+72u>(uint64_t)bc->off+bc->size) return 0;
+  int oi=(int)u32(d,bp+44), oc=(int)u32(d,bp+48), ocols=(int)u32(d,bp+40);
+  uint64_t obytes=(uint64_t)(uint32_t)oi*(uint64_t)(uint32_t)oc*4u;
+  int old_ok=ocols>0&&ocols<=4096&&oi>0&&oi<=1024&&oc>0&&obytes<=4000000u&&
+             (uint64_t)bp+64u+obytes<=(uint64_t)bc->off+bc->size;
+  int ni=(int)u32(d,bp+52), nc=(int)u32(d,bp+56), ncols=(int)u32(d,bp+48);
+  uint64_t nbytes=(uint64_t)(uint32_t)ni*(uint64_t)(uint32_t)nc*4u;
+  int new_ok=u32(d,bp+32)<=4096&&u32(d,bp+36)<=4096&&u32(d,bp+40)<=4096&&u32(d,bp+44)<=4096&&
+             ncols>0&&ncols<=4096&&ni>0&&ni<=1024&&nc>0&&nbytes<=4000000u&&
+             (uint64_t)bp+72u+nbytes<=(uint64_t)bc->off+bc->size;
+  int is_new=new_ok&&(!old_ok||(nc>oc&&ncols>ocols));
+  if(tile_count) *tile_count=is_new?nc:(old_ok?oc:0);
+  if(modern) *modern=is_new;
+  return is_new||old_ok;
+}
+
+static void put_u32le(unsigned char *p,uint32_t v){
+  p[0]=(unsigned char)v; p[1]=(unsigned char)(v>>8); p[2]=(unsigned char)(v>>16); p[3]=(unsigned char)(v>>24);
+}
+
+/* Decode compressed room-grid byte runs. A high opcode repeats one u32 1..128 times; a low
+ * opcode copies that many literal u32 values. */
+static unsigned char *gml_tile_rle_decode(const uint8_t *src,size_t avail,size_t count,size_t *used){
+  if(used) *used=0;
+  if(!src || !count || count>16000000u || count>SIZE_MAX/4u) return NULL;
+  unsigned char *out=malloc(count*4u); if(!out) return NULL;
+  size_t ip=0,op=0;
+  while(op<count){
+    if(ip>=avail){ free(out); return NULL; }
+    unsigned code=src[ip++];
+    if(code>=128){
+      size_t run=(code&127u)+1u;
+      if(ip+4u>avail || run>count-op){ free(out); return NULL; }
+      uint32_t v=u32(src,(uint32_t)ip); ip+=4;
+      for(size_t k=0;k<run;k++) put_u32le(out+(op+k)*4u,v);
+      op+=run;
+    } else {
+      size_t run=code;
+      if(run==0 || run>count-op || run>(avail-ip)/4u){ free(out); return NULL; }
+      memcpy(out+op*4u,src+ip,run*4u); ip+=run*4u; op+=run;
+    }
+  }
+  /* Some GMAC builds append a run of two -1 padding cells when the final two real cells differ. */
+  if(count>1 && memcmp(out+(count-1)*4u,out+(count-2)*4u,4)!=0 && ip+5u<=avail &&
+     src[ip]==0x81u && u32(src,(uint32_t)ip+1u)==0xFFFFFFFFu) ip+=5u;
+  if(used) *used=ip;
+  return out;
 }
 GmlTileMap *gml_tilemap_find(GmlVM *vm, int id){
   for(int i=0;i<vm->n_tilemaps;i++) if(vm->tilemaps[i].used && vm->tilemaps[i].id==id) return &vm->tilemaps[i];
@@ -3893,7 +4185,8 @@ static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_r
     l->visible=u32(rd,lp+32)?1:0; l->touched=0;
   }
   if(lcnt<512){
-    for(int ii=0; ii<vm->inst_count; ii++) vm->inst[ii].draw_layer_order=-1;
+    if(rebuild_runtime_layers)
+      for(int ii=0; ii<vm->inst_count; ii++) vm->inst[ii].draw_layer_order=-1;
     for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(rd,lay+4+i*4);
       if(!lp || lp+40>vm->win->size) continue;
       uint32_t np=u32(rd,lp+0);
@@ -3937,18 +4230,29 @@ static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_r
     int cols=(int32_t)u32(rd,tb+4), rows=(int32_t)u32(rd,tb+8);
     if(cols<=0||rows<=0||cols>8192||rows>8192) continue;
     uint32_t tdata=tb+12;
-    if((uint64_t)tdata + (uint64_t)cols*rows*4 > vm->win->size) continue;
+    size_t cells=(size_t)cols*(size_t)rows;
+    int modern_tiles=0;
+    (void)gml_tileset_meta(vm,tileset,NULL,&modern_tiles);
+    unsigned char *decoded=NULL;
+    if(modern_tiles){
+      size_t used=0;
+      decoded=gml_tile_rle_decode(rd+tdata,vm->win->size-tdata,cells,&used);
+      if(!decoded) continue;
+    } else if((uint64_t)tdata + (uint64_t)cells*4u > vm->win->size) continue;
     int tw=16,th=16;
     if(bc && tileset>=0 && (uint32_t)tileset<bcnt){ uint32_t bp=u32(rd,bc->off+4+tileset*4);
       if(bp && bp+32<vm->win->size){ int w=(int32_t)u32(rd,bp+24),h=(int32_t)u32(rd,bp+28);
         if(w>0)tw=w; if(h>0)th=h; } }
-	    GmlTileMap *tm=gml_tilemap_new(vm); if(!tm) break;
+	    GmlTileMap *tm=gml_tilemap_new(vm); if(!tm){ free(decoded); break; }
 	    uint32_t np2=u32(rd,lp+0);
 	    snprintf(tm->name,sizeof tm->name,"%s",(np2&&np2<vm->win->size)?(const char*)(rd+np2):"");
 	    tm->tileset=tileset;
 	    tm->depth=(double)(int32_t)u32(rd,lp+12);
 	    tm->order=(int)i;
-	    tm->tw=tw; tm->th=th; tm->cols=cols; tm->rows=rows; tm->tiles=rd+tdata; tm->base_tiles=rd+tdata;
+	    tm->tw=tw; tm->th=th; tm->cols=cols; tm->rows=rows;
+        tm->decoded_tiles=decoded;
+        tm->tiles=decoded?decoded:rd+tdata;
+        tm->base_tiles=tm->tiles;
 	    tm->x=f32(rd,lp+16); tm->y=f32(rd,lp+20); tm->visible=u32(rd,lp+32)?1:0;
       GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,tm->name);
       if(rl){
@@ -3964,6 +4268,15 @@ static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_r
     for(int t=0;t<vm->n_tilemaps;t++){ GmlTileMap *tm=&vm->tilemaps[t];
       int solid=0; for(int c=0;c<tm->cols*tm->rows;c++){ uint32_t d=u32(tm->tiles,(uint32_t)c*4); if((d&0x7FFFF)!=0) solid++; }
       fprintf(stderr,"[tile]  tm[%d] name='%s' cols=%d rows=%d cell=%dx%d pos=%.0f,%.0f solid=%d\n",t,tm->name,tm->cols,tm->rows,tm->tw,tm->th,tm->x,tm->y,solid);
+      if(getenv("GML_DUMP_TILE_VALUES")){
+        int shown=0;
+        fprintf(stderr,"[tile-values t%d]",t);
+        for(int ry=0;ry<tm->rows && shown<24;ry++) for(int rx=0;rx<tm->cols && shown<24;rx++){
+          uint32_t datum=u32(tm->tiles,(uint32_t)(ry*tm->cols+rx)*4);
+          if((datum&0x7FFFFu)!=0){ fprintf(stderr," %d:%d=%08x",rx,ry,datum); shown++; }
+        }
+        fprintf(stderr,"\n");
+      }
       if(getenv("GML_DUMP_GRID")){ for(int ry=0;ry<tm->rows && ry<40;ry++){ char line[200]; int lp=0;
         for(int rx=0;rx<tm->cols && rx<128;rx++){ uint32_t d=u32(tm->tiles,(uint32_t)(ry*tm->cols+rx)*4); line[lp++]=((d&0x7FFFF)!=0)?'#':'.'; }
         line[lp]=0; fprintf(stderr,"[grid t%d r%02d] %s\n",t,ry,line); } } }
@@ -4680,8 +4993,7 @@ static int mouse_event_fires(int s,int hov,int was,int held,int pressed,int rele
 }
 void gml_vm_step(GmlVM *vm){
   if(vm && vm->classic_info_active){
-    extern int gml_input_key(int vk, int edge);
-    if(gml_input_key(1,1)) vm->classic_info_active=0;
+    if(gml_keyboard_check(vm,1,1)) vm->classic_info_active=0;
     return;
   }
   g_vm_frame++;
@@ -4786,9 +5098,8 @@ void gml_vm_step(GmlVM *vm){
   VMPROF_MARK(alarms);
   /* keyboard events (GM order: after alarms, before the normal step) */
   if(vm->n_key_events){
-    extern int gml_input_key(int vk, int edge);
     for(int e=0;e<vm->n_key_events;e++){
-      if(!gml_input_key(vm->key_events[e].vk, vm->key_events[e].kind)) continue;
+      if(!gml_keyboard_check(vm,vm->key_events[e].vk,vm->key_events[e].kind)) continue;
       if(vm->win && vm->win->classic_version)
         run_classic_object_event(vm,vm->key_events[e].suffix);
       else for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked)
@@ -4846,7 +5157,7 @@ void gml_vm_step(GmlVM *vm){
     }
   }
   VMPROF_MARK(input);
-  /* Classic Normal Step is grouped by ascending object resource, with insertion order
+  /* Normal Step in classic formats is grouped by ascending object resource, with insertion order
    * inside each exact object. Each object takes its extent when that group begins: an earlier
    * object can create an instance whose later object group still sees it, while a same-object
    * creation waits until the next Step. Studio retains its verified flat snapshot. */
@@ -5105,8 +5416,9 @@ static int cmp_draw_item(const void *pa, const void *pb){
   if(a->depth!=b->depth) return a->depth>b->depth? -1:1;     /* higher depth first (behind) */
   if(a->order>=0 && b->order>=0 && a->order!=b->order)
     return a->order>b->order? -1:1;                           /* GMS2 layer list: later/back layers first */
-  /* At equal depth, order room tiles above instances and later tiles above earlier ones.
-   * Draw newer instances before older ones; runtime layer items retain the sequence fallback. */
+  /* At equal depth, room tiles draw above instances and retain room-list order. Dynamic depth
+   * layers precede named instance layers, peers use reverse creation order, and runtime layer
+   * items retain the sequence fallback below instances. */
   int at1=a->type==1, bt1=b->type==1;
   if(at1!=bt1) return at1? 1 : -1;                           /* room tile sorts later (front) */
   if(at1 && bt1) return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);   /* tiles: list order, later on top */
@@ -5124,6 +5436,8 @@ static int cmp_draw_item(const void *pa, const void *pb){
     return a->obj>b->obj? -1:1;
   if(a->type==0 && b->type==0 && a->classic && b->classic)
     return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);
+  if(a->type==0 && b->type==0 && !a->classic && ((a->order<0)!=(b->order<0)))
+    return a->order<0? 1:-1;
   return a->seq>b->seq? -1 : (a->seq<b->seq?1:0);
 }
 static int rt_layer_has_background(GmlVM *vm, int layer_id){
@@ -5317,7 +5631,8 @@ void gml_vm_draw(GmlVM *vm){
     GmlBg *gb=&R->bg[tm->tileset];
     int tw=gb->tile_w>0?gb->tile_w:tm->tw, th=gb->tile_h>0?gb->tile_h:tm->th;
     int bx=gb->tile_border_x, by=gb->tile_border_y;
-    int pitch_x=tw+2*bx, pitch_y=th+2*by;
+    int pitch_x=tw+2*bx+gb->tile_separation_x;
+    int pitch_y=th+2*by+gb->tile_separation_y;
     int srcw=bt->bw?bt->bw:bt->sw, srch=bt->bh?bt->bh:bt->sh;
     int per_row=gb->tile_columns>0?gb->tile_columns:(pitch_x>0?srcw/pitch_x:0);
     if(srcw<=0 || srch<=0 || tw<=0 || th<=0 || pitch_x<=0 || pitch_y<=0 || per_row<=0) continue;
@@ -5421,9 +5736,9 @@ void gml_vm_draw(GmlVM *vm){
         fprintf(stderr,"   CBG def=%d depth=%.0f @(%.0f,%.0f) tiled=%d/%d stretch=%d colour=%06x alpha=%.3f\n",
           b->def,it[k].depth,b->x,b->y,b->th,b->tv,b->stretch,b->blend&0xFFFFFFu,b->alpha); }
       else { GmlInstance *in=&vm->inst[it[k].idx];
-        fprintf(stderr,"   %-26s id=%u spr=%-4d vis=%.0f depth=%.0f @(%.0f,%.0f) ang=%.0f xs=%.1f ys=%.1f a=%.2f ii=%.4f is=%.3f\n",
+        fprintf(stderr,"   %-26s id=%u spr=%-4d vis=%.0f depth=%.0f ord=%d @(%.0f,%.0f) ang=%.0f xs=%.1f ys=%.1f a=%.2f ii=%.4f is=%.3f\n",
           (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",in->id,
-          (int)in->sprite_index,in->visible,in->depth,in->x,in->y,in->image_angle,in->image_xscale,in->image_yscale,in->image_alpha,in->image_index,in->image_speed); } } }
+          (int)in->sprite_index,in->visible,in->depth,in->draw_layer_order,in->x,in->y,in->image_angle,in->image_xscale,in->image_yscale,in->image_alpha,in->image_index,in->image_speed); } } }
   skip_instdump:
   int active_layer_order=-1;
   GmlRtLayer *active_layer=NULL;
@@ -5497,6 +5812,13 @@ void gml_vm_draw_pass(GmlVM *vm, const char *suffix){
     if(vm->inst[ord[b]].depth>vm->inst[ord[a]].depth){ int t=ord[a]; ord[a]=ord[b]; ord[b]=t; }
   for(int k=0;k<m;k++){
     GmlInstance *in=&vm->inst[ord[k]];
+    if(getenv("GML_LOG_DRAW_PASS")){ extern long g_vm_frame;
+      const char *on=(in->obj>=0&&in->obj<vm->n_objects&&vm->objects[in->obj].name)?vm->objects[in->obj].name:"?";
+      int ci=-1; event_lookup_from(vm,suffix,in->obj,NULL,&ci);
+      const char *cn=(ci>=0&&vm->win&&ci<vm->win->n_code)?vm->win->code[ci].name:"?";
+      fprintf(stderr,"[drawpass] f%ld %s obj=%s id=%d depth=%.0f code=%d:%s\n",
+              g_vm_frame,suffix,on,in->id,in->depth,ci,cn);
+    }
     draw_event_hook(vm,in,suffix,1);
     gml_run_event(vm,in,suffix);
     draw_event_hook(vm,in,suffix,0);
@@ -5518,6 +5840,13 @@ void gml_vm_draw_gui(GmlVM *vm){
   *gml_varmap_put(&vm->globals,"view_current")=vreal(views_on?7:0);
   for(int k=0;k<m;k++){
     GmlInstance *in=&vm->inst[ord[k]];
+    if(getenv("GML_LOG_DRAW_PASS")){ extern long g_vm_frame;
+      const char *on=(in->obj>=0&&in->obj<vm->n_objects&&vm->objects[in->obj].name)?vm->objects[in->obj].name:"?";
+      int ci=-1; event_lookup_from(vm,"Draw_64",in->obj,NULL,&ci);
+      const char *cn=(ci>=0&&vm->win&&ci<vm->win->n_code)?vm->win->code[ci].name:"?";
+      fprintf(stderr,"[drawpass] f%ld Draw_64 obj=%s id=%d depth=%.0f code=%d:%s\n",
+              g_vm_frame,on,in->id,in->depth,ci,cn);
+    }
     draw_event_hook(vm,in,"Draw_64",1);
     gml_run_event(vm,in,"Draw_64");
     draw_event_hook(vm,in,"Draw_64",0);
@@ -5664,7 +5993,21 @@ static void parse_mouse_events(GmlVM *vm){
 static void parse_col_events(GmlVM *vm){
   GmlWin *w=vm->win; int cap=0;
   for(int i=0;i<w->n_code;i++) if(strstr(w->code[i].name,"_Collision_")) cap++;
+  for(int object=0;object<vm->n_objects;object++)
+    for(int event=0;event<vm->objects[object].n_events;event++)
+      if(vm->objects[object].events[event].evtype==4) cap++;
   vm->col_events=calloc(cap>0?cap:1,sizeof(GmlColEvent)); vm->n_col_events=0;
+  /* Native OBJT event records retain the numeric collision subtype even when Studio emits a
+   * GUID in the CODE name. This is the authoritative mapping for those packages. */
+  for(int object=0;object<vm->n_objects;object++){
+    GmlObject *source=&vm->objects[object];
+    for(int event=0;event<source->n_events;event++){
+      if(source->events[event].evtype!=4) continue;
+      int target=source->events[event].subtype, code=source->events[event].code;
+      if(target<0 || target>=vm->n_objects || code<0 || code>=w->n_code) continue;
+      vm->col_events[vm->n_col_events++]=(GmlColEvent){object,target,code};
+    }
+  }
   for(int i=0;i<w->n_code;i++){ const char *nm=w->code[i].name;
     const char *cp=strstr(nm,"_Collision_"); if(!cp || strncmp(nm,"gml_Object_",11)) continue;
     int olen=(int)(cp-(nm+11)); if(olen<=0||olen>=120) continue;
@@ -5675,6 +6018,11 @@ static void parse_col_events(GmlVM *vm){
     if(tgt[0]>='0' && tgt[0]<='9') target=atoi(tgt);
     else target=gml_object_index_by_name(vm,tgt);
     if(target<0) continue;
+    int duplicate=0;
+    for(int event=0;event<vm->n_col_events;event++)
+      if(vm->col_events[event].self_obj==selfobj &&
+         vm->col_events[event].target_obj==target){ duplicate=1; break; }
+    if(duplicate) continue;
     vm->col_events[vm->n_col_events++]=(GmlColEvent){selfobj, target, i};
   }
   /* Mark objects with Collision handlers, including inherited handlers, for the outer collision filter. */
@@ -6093,17 +6441,78 @@ static uint32_t gml_rng_next(GmlVM *vm){
 }
 double gml_rng_value(GmlVM *vm){ return (double)gml_rng_next(vm) / 4294967296.0; }  /* [0,1) */
 
+/* The input API stores keyboard remapping as physical/source VK -> logical/destination VK.
+ * The frontend exposes physical state by VK, so aggregate every source that currently maps
+ * to the requested logical key. Aggregating current/previous state before testing an edge is
+ * important when several physical keys map to the same logical key. */
+static void keyboard_source_state(int source, int *cur, int *prev){
+  int c=gml_input_key(source,0);
+  int pressed=gml_input_key(source,1);
+  int released=gml_input_key(source,2);
+  int p=released ? 1 : (pressed ? 0 : c);
+  if(cur) *cur=c;
+  if(prev) *prev=p;
+}
+void gml_keyboard_unset_map(GmlVM *vm){
+  if(!vm) return;
+  for(int i=0;i<256;i++) vm->key_map[i]=(int16_t)i;
+}
+void gml_keyboard_set_map(GmlVM *vm, int source, int destination){
+  if(!vm || source<0 || source>255 || destination < -1 || destination>255) return;
+  vm->key_map[source]=(int16_t)destination;
+  if(getenv("GML_LOG_KEYMAP")){
+    extern long g_vm_frame;
+    fprintf(stderr,"[keymap] f%ld source=%d destination=%d\n",g_vm_frame,source,destination);
+  }
+}
+int gml_keyboard_get_map(GmlVM *vm, int source){
+  if(!vm || source<0 || source>255) return source;
+  return vm->key_map[source];
+}
+int gml_keyboard_check(GmlVM *vm, int vk, int edge){
+  if(!vm) return gml_input_key(vk,edge);
+  if(edge<0 || edge>2) edge=0;
+  int any_cur=0, any_prev=0;
+  if(vk==0 || vk==1){
+    for(int source=2;source<256;source++){
+      if(vm->key_map[source]<2) continue; /* disabled and sentinel destinations are not keys */
+      int cur=0,prev=0;
+      keyboard_source_state(source,&cur,&prev);
+      any_cur|=cur; any_prev|=prev;
+    }
+    if(vk==0){ any_cur=!any_cur; any_prev=!any_prev; }
+  } else {
+    if(vk<0 || vk>255) return 0;
+    for(int source=2;source<256;source++) if(vm->key_map[source]==vk){
+      int cur=0,prev=0;
+      keyboard_source_state(source,&cur,&prev);
+      any_cur|=cur; any_prev|=prev;
+    }
+  }
+  return edge==1 ? (any_cur && !any_prev) : edge==2 ? (!any_cur && any_prev) : any_cur;
+}
+void gml_keyboard_clear(GmlVM *vm, int logical_vk){
+  if(!vm){ gml_input_key_clear(logical_vk); return; }
+  if(logical_vk==0) return;
+  for(int source=2;source<256;source++)
+    if((logical_vk==1 && vm->key_map[source]>=2) || vm->key_map[source]==logical_vk)
+      gml_input_key_clear(source);
+}
+
 int gml_vm_init(GmlVM *vm, GmlWin *win){
   classic_dispatch_cache_reset();
   memset(vm,0,sizeof(*vm));
+  gml_keyboard_unset_map(vm);
   { extern void gml_d3_reset(void); gml_d3_reset(); }
   vm->cg_built_frame=-1;   /* memset leaves 0, which would collide with g_vm_frame==0 at boot */
   { extern void gml_part_reset_all(void); gml_part_reset_all(); }   /* fresh particle pools per game */
   colcand_reset();          /* cache slots belong to the previous VM across a cold Restart */
   vm->win=win; vm->pending_room=-1; vm->room_index=-1; vm->next_id=100000; vm->rng_state=0;
   vm->rng_classic_state=0;
+  vm->math_epsilon=(win && win->classic_version)?1e-13:1e-5;
   vm->potential_max_rotation=30; vm->potential_rotate_step=10;
   vm->potential_check_distance=3; vm->potential_rotate_on_spot=1;
+  vm->listener_forward_z=-1; vm->listener_up_y=1;
   /* GM6-8 exposes these as writable built-in variables. Keeping the defaults in the ordinary
    * global map lets compiled source read/write them without a presentation-specific lookup. */
   if(win && win->classic_version){
@@ -6208,6 +6617,7 @@ static void ds_maps_free(GmlVM *vm){
   vm->ds_map_last_slot=-1;
   for(int i=0;i<GML_DS_LIST_MAX;i++){
     free(vm->ds_list[i].item);
+    free(vm->ds_list[i].child_kind);
     memset(&vm->ds_list[i],0,sizeof(vm->ds_list[i]));
   }
   for(int i=0;i<GML_DS_GRID_MAX;i++){ free(vm->ds_grid[i].cell); memset(&vm->ds_grid[i],0,sizeof(vm->ds_grid[i])); }
@@ -6254,7 +6664,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -6473,6 +6883,11 @@ static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
       for(uint32_t i=0;i<len;i++) A->data[i]=sr_val(vm,s,depth+1);
     }
     if(!s->array_meta) arr_rebuild_2d_meta(A);
+    if(!A->is_2d){
+      for(uint32_t i=0;i<len;i++) if(A->data[i].t==V_ARR && A->data[i].arr){
+        A->nested_2d=1; break;
+      }
+    }
     GmlVal v=vreal(0); v.t=V_ARR; v.arr=A; return v;
   }
   state_debug("bad value type",s->pos,t);
@@ -6563,6 +6978,7 @@ static void sw_instance(StateW *s, GmlInstance *in){
     sw_d(s,in->timeline_index); sw_d(s,in->timeline_position); sw_d(s,in->timeline_speed);
     sw_d(s,in->timeline_running); sw_d(s,in->timeline_loop);
   }
+  sw_i32(s,in->draw_layer_order);
   sw_varmap(s,&in->vars);
 }
 static void vm_state_profile_globals(GmlVM *vm){
@@ -6693,6 +7109,7 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
       in->timeline_index=-1; in->timeline_position=0; in->timeline_speed=1;
       in->timeline_running=0; in->timeline_loop=0;
     }
+    in->draw_layer_order=s->v30?sr_i32(s):-1;
     sr_varmap(vm,s,&in->vars);
     return;
   }
@@ -6713,6 +7130,7 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
   in->path_origin_x=sr_d(s); in->path_origin_y=sr_d(s);
   in->timeline_index=-1; in->timeline_position=0; in->timeline_speed=1;
   in->timeline_running=0; in->timeline_loop=0;
+  in->draw_layer_order=-1;
   sr_varmap(vm,s,&in->vars);
 }
 
@@ -6750,6 +7168,15 @@ static void runtime_clear(GmlVM *vm){
   vm->potential_max_rotation=30; vm->potential_rotate_step=10;
   vm->potential_check_distance=3; vm->potential_rotate_on_spot=1;
   vm->window_x=0; vm->window_y=0; vm->window_cursor=0;
+  memset(vm->emitter_live,0,sizeof(vm->emitter_live));
+  memset(vm->emitter_gain,0,sizeof(vm->emitter_gain));
+  memset(vm->emitter_x,0,sizeof(vm->emitter_x)); memset(vm->emitter_y,0,sizeof(vm->emitter_y));
+  memset(vm->emitter_z,0,sizeof(vm->emitter_z)); memset(vm->emitter_ref,0,sizeof(vm->emitter_ref));
+  memset(vm->emitter_max,0,sizeof(vm->emitter_max)); memset(vm->emitter_factor,0,sizeof(vm->emitter_factor));
+  vm->listener_x=vm->listener_y=vm->listener_z=0;
+  vm->listener_forward_x=vm->listener_forward_y=0; vm->listener_forward_z=-1;
+  vm->listener_up_x=vm->listener_up_z=0; vm->listener_up_y=1; vm->audio_falloff_model=0;
+  gml_keyboard_unset_map(vm);
   memset(vm->phys_fixture,0,sizeof(vm->phys_fixture));
   memset(vm->phys_joint,0,sizeof(vm->phys_joint));
   vm->phys_next_id=0; vm->phys_gravity_x=0; vm->phys_gravity_y=0;
@@ -6766,7 +7193,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x4A564D47u); /* GMV26: GMV25 plus room-authored instance draw identity */
+  sw_u32(s,0x50564D47u); /* GMV32: GMV31 plus the mutable math epsilon */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
@@ -6776,6 +7203,7 @@ static void sw_vm(StateW *s, GmlVM *vm){
     sw_i64(s,(int64_t)age);
   }
   sw_i32(s,vm->action_relative);
+  sw_d(s,vm->math_epsilon);
   sw_d(s,vm->potential_max_rotation); sw_d(s,vm->potential_rotate_step);
   sw_d(s,vm->potential_check_distance); sw_i32(s,vm->potential_rotate_on_spot);
   sw_i32(s,vm->classic_info_active);
@@ -6841,6 +7269,7 @@ static void sw_vm(StateW *s, GmlVM *vm){
       sw_str(s,m->entry[j].key);
       sw_val(s,m->entry[j].key_val,0);
       sw_val(s,m->entry[j].val,0);
+      sw_i32(s,m->entry[j].child_kind);
     }
   }
   int dl_live=0; for(int i=0;i<GML_DS_LIST_MAX;i++) if(vm->ds_list[i].live) dl_live++;
@@ -6848,7 +7277,10 @@ static void sw_vm(StateW *s, GmlVM *vm){
   for(int i=0;i<GML_DS_LIST_MAX;i++) if(vm->ds_list[i].live){
     GmlDSList *l=&vm->ds_list[i];
     sw_u32(s,l->id); sw_i32(s,l->len);
-    for(int j=0;j<l->len;j++) sw_val(s,l->item[j],0);
+    for(int j=0;j<l->len;j++){
+      sw_val(s,l->item[j],0);
+      sw_i32(s,l->child_kind?l->child_kind[j]:0);
+    }
   }
   int dg_live=0; for(int i=0;i<GML_DS_GRID_MAX;i++) if(vm->ds_grid[i].live) dg_live++;
   sw_i32(s,dg_live);
@@ -6911,6 +7343,16 @@ static void sw_vm(StateW *s, GmlVM *vm){
   }
   sw_i32(s,vm->window_cursor);
   sw_particle_state(s);
+  sw_raw(s,vm->key_map,sizeof(vm->key_map));
+  sw_raw(s,vm->emitter_live,sizeof(vm->emitter_live));
+  for(int i=0;i<GML_MAX_EMITTERS;i++){
+    sw_d(s,vm->emitter_gain[i]); sw_d(s,vm->emitter_x[i]); sw_d(s,vm->emitter_y[i]); sw_d(s,vm->emitter_z[i]);
+    sw_d(s,vm->emitter_ref[i]); sw_d(s,vm->emitter_max[i]); sw_d(s,vm->emitter_factor[i]);
+  }
+  sw_d(s,vm->listener_x); sw_d(s,vm->listener_y); sw_d(s,vm->listener_z);
+  sw_d(s,vm->listener_forward_x); sw_d(s,vm->listener_forward_y); sw_d(s,vm->listener_forward_z);
+  sw_d(s,vm->listener_up_x); sw_d(s,vm->listener_up_y); sw_d(s,vm->listener_up_z);
+  sw_i32(s,vm->audio_falloff_model);
   vm_state_profile_globals(vm);
 }
 size_t gml_vm_state_size(GmlVM *vm){
@@ -6941,7 +7383,9 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       && magic!=0x40564D47u && magic!=0x41564D47u && magic!=0x42564D47u
       && magic!=0x43564D47u && magic!=0x44564D47u && magic!=0x45564D47u
       && magic!=0x46564D47u && magic!=0x47564D47u && magic!=0x48564D47u
-      && magic!=0x49564D47u && magic!=0x4A564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x49564D47u && magic!=0x4A564D47u && magic!=0x4B564D47u
+      && magic!=0x4C564D47u && magic!=0x4D564D47u && magic!=0x4E564D47u
+      && magic!=0x4F564D47u && magic!=0x50564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -6965,6 +7409,12 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v24 = magic>=0x48564D47u;
   s.v25 = magic>=0x49564D47u;
   s.v26 = magic>=0x4A564D47u;
+  s.v27 = magic>=0x4B564D47u;
+  s.v28 = magic>=0x4C564D47u;
+  s.v29 = magic>=0x4D564D47u;
+  s.v30 = magic>=0x4E564D47u;
+  s.v31 = magic>=0x4F564D47u;
+  s.v32 = magic>=0x50564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -6983,6 +7433,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     vm->room_enter_frame = g_vm_frame - (long)room_age;
   }
   vm->action_relative=sr_i32(&s);
+  vm->math_epsilon=s.v32?sr_d(&s):((vm->win && vm->win->classic_version)?1e-13:1e-5);
   if(s.v24){
     vm->potential_max_rotation=sr_d(&s); vm->potential_rotate_step=sr_d(&s);
     vm->potential_check_distance=sr_d(&s); vm->potential_rotate_on_spot=sr_i32(&s);
@@ -7000,7 +7451,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     values[49]=41.2; values[51]=1; values[52]=32000;
     values[56]=values[61]=values[66]=values[71]=1;
     int flag_count=s.v21?GML_D3_STATE_FLAG_COUNT:(s.v20?21:19);
-    int value_count=s.v21?GML_D3_STATE_VALUE_COUNT:(s.v20?49:44);
+    int value_count=s.v31?GML_D3_STATE_VALUE_COUNT:(s.v21?584:(s.v20?49:44));
     int color_count=s.v23?GML_D3_STATE_COLOR_COUNT:(s.v21?9:8);
     for(int i=0;i<flag_count;i++) flags[i]=sr_i32(&s);
     for(int i=0;i<value_count;i++) values[i]=sr_d(&s);
@@ -7108,6 +7559,11 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       m->entry[j].key=sr_str_dup(&s);
       m->entry[j].key_val=sr_val(vm,&s,0);
       m->entry[j].val=sr_val(vm,&s,0);
+      if(s.v29){
+        int kind=sr_i32(&s);
+        if(kind<0 || kind>2){ state_debug("bad ds_map child kind",s.pos,(uint32_t)kind); s.ok=0; kind=0; }
+        m->entry[j].child_kind=(unsigned char)kind;
+      }
       gml_arr_mark_escaped(m->entry[j].key_val);
       gml_arr_mark_escaped(m->entry[j].val);
     }
@@ -7123,9 +7579,15 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       if(l->len<0 || l->len>100000){ state_debug("bad ds_list len",s.pos,(uint32_t)l->len); s.ok=0; l->len=0; }
       l->cap=l->len;
       l->item=l->cap?calloc((size_t)l->cap,sizeof(GmlVal)):NULL;
-      if(l->cap && !l->item){ s.ok=0; l->len=l->cap=0; break; }
+      l->child_kind=l->cap?calloc((size_t)l->cap,1):NULL;
+      if(l->cap && (!l->item || !l->child_kind)){ s.ok=0; free(l->item); free(l->child_kind); l->item=NULL; l->child_kind=NULL; l->len=l->cap=0; break; }
       for(int j=0;j<l->len;j++){
         l->item[j]=sr_val(vm,&s,0);
+        if(s.v29){
+          int kind=sr_i32(&s);
+          if(kind<0 || kind>2){ state_debug("bad ds_list child kind",s.pos,(uint32_t)kind); s.ok=0; kind=0; }
+          l->child_kind[j]=(unsigned char)kind;
+        }
         gml_arr_mark_escaped(l->item[j]);
       }
     }
@@ -7281,6 +7743,29 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     }
   } else {
     gml_part_reset_all();
+  }
+  if(s.v27 && s.ok){
+    sr_raw(&s,vm->key_map,sizeof(vm->key_map));
+    for(int i=0;i<256;i++) if(vm->key_map[i] < -1 || vm->key_map[i] > 255){
+      state_debug("bad keyboard map",s.pos,(uint32_t)(uint16_t)vm->key_map[i]);
+      s.ok=0;
+      break;
+    }
+  }
+  if(s.v28 && s.ok){
+    sr_raw(&s,vm->emitter_live,sizeof(vm->emitter_live));
+    for(int i=0;i<GML_MAX_EMITTERS;i++){
+      vm->emitter_gain[i]=sr_d(&s); vm->emitter_x[i]=sr_d(&s); vm->emitter_y[i]=sr_d(&s); vm->emitter_z[i]=sr_d(&s);
+      vm->emitter_ref[i]=sr_d(&s); vm->emitter_max[i]=sr_d(&s); vm->emitter_factor[i]=sr_d(&s);
+      if(!isfinite(vm->emitter_gain[i]) || vm->emitter_gain[i]<0 || !isfinite(vm->emitter_x[i]) ||
+         !isfinite(vm->emitter_y[i]) || !isfinite(vm->emitter_z[i]) || !isfinite(vm->emitter_ref[i]) ||
+         !isfinite(vm->emitter_max[i]) || !isfinite(vm->emitter_factor[i])) s.ok=0;
+    }
+    vm->listener_x=sr_d(&s); vm->listener_y=sr_d(&s); vm->listener_z=sr_d(&s);
+    vm->listener_forward_x=sr_d(&s); vm->listener_forward_y=sr_d(&s); vm->listener_forward_z=sr_d(&s);
+    vm->listener_up_x=sr_d(&s); vm->listener_up_y=sr_d(&s); vm->listener_up_z=sr_d(&s);
+    vm->audio_falloff_model=sr_i32(&s);
+    if(vm->audio_falloff_model<0 || vm->audio_falloff_model>6) s.ok=0;
   }
   vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;
   vm->render=render; vm->audio=audio;

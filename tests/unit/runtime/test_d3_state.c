@@ -12,7 +12,11 @@
 static int fixture_key=-1;
 static int fixture_key_edge=-1;
 static double fixture_mouse_x,fixture_mouse_y,fixture_mouse_set_x,fixture_mouse_set_y;
-int gml_input_key(int key, int edge){ return key==fixture_key && edge==fixture_key_edge; }
+int gml_input_key(int key, int edge){
+  if(key!=fixture_key) return 0;
+  /* A pressed edge also means the physical key is currently held. */
+  return edge==fixture_key_edge || (fixture_key_edge==1 && edge==0);
+}
 int gml_input_gamepad(int button, int edge){ (void)button; (void)edge; return 0; }
 void gml_input_mouse(double *rx,double *ry,double *gx,double *gy,double *wx,double *wy,
                      int *held,int *pressed,int *released,int *wheel){
@@ -30,6 +34,7 @@ void gml_input_mouse(double *rx,double *ry,double *gx,double *gy,double *wx,doub
 void gml_input_mouse_set(double x,double y){ fixture_mouse_set_x=x; fixture_mouse_set_y=y; }
 GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);
 int gml_builtin_fast_id(const char *name);
+GmlVal gml_builtin_call_fast_id(GmlVM *vm,int id,const char *name,GmlVal *args,int count);
 
 static void call_numbers(GmlVM *vm,const char *name,const double *numbers,int count){
   GmlVal args[16];
@@ -86,9 +91,185 @@ static int raster_fixtures(void){
   uint32_t pixels[WIDTH*HEIGHT];
   GmlRender render; GmlVM vm;
   memset(&render,0,sizeof(render)); memset(&vm,0,sizeof(vm));
+  gml_keyboard_unset_map(&vm);
   render.color=0xFFFFFFu; render.alpha=1; render.alphablend=1;
+  render.color_write_mask=0x0F;
+  render.blend_equation=render.blend_equation_alpha=1;
   render.next_surface_id=1;
   vm.render=&render;
+
+  {
+    GmlVal number=vreal(7), string=vstr("seven"), array=gml_arr_new(2,vreal(0));
+    GmlVal undefined=vundef();
+    GmlInstance *plain=gml_struct_new(&vm), *method=gml_struct_new(&vm);
+    if(!plain || !method){
+      fprintf(stderr,"typeof struct fixture allocation failed\n");
+      return 0;
+    }
+    method->method_bound=1;
+    *gml_varmap_put(&method->vars,"__fn")=vreal((double)(GML_FUNCVAL_TAG|3));
+    GmlVal values_to_test[]={number,string,array,undefined,vreal((double)plain->id),
+                             vreal((double)method->id)};
+    const char *expected[]={"number","string","array","undefined","struct","method"};
+    for(int i=0;i<6;i++){
+      GmlVal actual=call_values(&vm,"typeof",&values_to_test[i],1);
+      if(actual.t!=V_STR || strcmp(actual.s?actual.s:"",expected[i])){
+        fprintf(stderr,"typeof fixture %d mismatch: got %s expected %s\n",i,
+                actual.t==V_STR&&actual.s?actual.s:"<non-string>",expected[i]);
+        return 0;
+      }
+    }
+  }
+
+  {
+#ifdef _WIN32
+    _putenv_s("GML_NETWORK_CONNECTED","0");
+#else
+    setenv("GML_NETWORK_CONNECTED","0",1);
+#endif
+    GmlVal offline=call_values(&vm,"os_is_network_connected",NULL,0);
+#ifdef _WIN32
+    _putenv_s("GML_NETWORK_CONNECTED","1");
+#else
+    setenv("GML_NETWORK_CONNECTED","1",1);
+#endif
+    GmlVal online=call_values(&vm,"os_is_network_connected",NULL,0);
+#ifdef _WIN32
+    _putenv_s("GML_NETWORK_CONNECTED","");
+#else
+    unsetenv("GML_NETWORK_CONNECTED");
+#endif
+    if(offline.t!=V_REAL || offline.d!=0 || online.t!=V_REAL || online.d!=1){
+      fprintf(stderr,"network connectivity override mismatch: offline=%g online=%g\n",offline.d,online.d);
+      return 0;
+    }
+  }
+
+  {
+    fixture_key='A'; fixture_key_edge=0;
+    if(!gml_keyboard_check(&vm,'A',0)){
+      fprintf(stderr,"keyboard identity mapping mismatch\n");
+      return 0;
+    }
+    gml_keyboard_set_map(&vm,'A','Z');
+    if(gml_keyboard_get_map(&vm,'A')!='Z' ||
+       !gml_keyboard_check(&vm,'Z',0) || gml_keyboard_check(&vm,'A',0)){
+      fprintf(stderr,"keyboard remapping mismatch\n");
+      return 0;
+    }
+    gml_keyboard_unset_map(&vm);
+    if(gml_keyboard_get_map(&vm,'A')!='A' || !gml_keyboard_check(&vm,'A',0)){
+      fprintf(stderr,"keyboard mapping reset mismatch\n");
+      return 0;
+    }
+    fixture_key=fixture_key_edge=-1;
+  }
+
+  {
+    /* json_decode is the legacy API: objects become ds_maps and arrays become
+     * ds_lists (json_parse, by contrast, produces structs/arrays).  Save data
+     * commonly round-trips those lists through ds_map_add_list + json_encode. */
+    GmlVM jvm={0};
+    jvm.next_ds_id=1; jvm.ds_map_last_slot=-1;
+    GmlVal decode_arg=vstr("{\"items\":[1,2,{\"ok\":7}],\"version\":55}");
+    GmlVal root=call_values(&jvm,"json_decode",&decode_arg,1);
+    GmlVal find_items[2]={root,vstr("items")};
+    GmlVal items=call_values(&jvm,"ds_map_find_value",find_items,2);
+    GmlVal size_arg[1]={items};
+    GmlVal index_args[2]={items,vreal(2)};
+    GmlVal child=call_values(&jvm,"ds_list_find_value",index_args,2);
+    GmlVal find_ok[2]={child,vstr("ok")};
+    GmlVal okv=call_values(&jvm,"ds_map_find_value",find_ok,2);
+    GmlVal encoded=call_values(&jvm,"json_encode",&root,1);
+    GmlVal root_is_list[2]={root,vstr("items")};
+    GmlVal items_is_map[2]={items,vreal(2)};
+    if(root.t!=V_REAL || items.t!=V_REAL ||
+       call_values(&jvm,"ds_list_size",size_arg,1).d!=3 ||
+       okv.t!=V_REAL || okv.d!=7 || encoded.t!=V_STR ||
+       call_values(&jvm,"ds_map_is_list",root_is_list,2).d!=1 ||
+       call_values(&jvm,"ds_list_is_map",items_is_map,2).d!=1 ||
+       strcmp(encoded.s?encoded.s:"","{\"items\":[1,2,{\"ok\":7}],\"version\":55}")){
+      fprintf(stderr,"legacy JSON nested DS decode/encode mismatch: root=%g items=%g size=%g ok=%g json=%s\n",
+              root.d,items.d,call_values(&jvm,"ds_list_size",size_arg,1).d,okv.d,
+              encoded.t==V_STR&&encoded.s?encoded.s:"<non-string>");
+      return 0;
+    }
+
+    GmlVal top_arg=vstr("[8,{\"n\":9}]");
+    GmlVal top=call_values(&jvm,"json_decode",&top_arg,1);
+    GmlVal find_default[2]={top,vstr("default")};
+    GmlVal default_list=call_values(&jvm,"ds_map_find_value",find_default,2);
+    GmlVal default_size[1]={default_list};
+    if(top.t!=V_REAL || default_list.t!=V_REAL ||
+       call_values(&jvm,"ds_map_is_list",find_default,2).d!=1 ||
+       call_values(&jvm,"ds_list_size",default_size,1).d!=2){
+      fprintf(stderr,"legacy JSON top-level array wrapper mismatch\n");
+      return 0;
+    }
+
+    GmlVal list=call_values(&jvm,"ds_list_create",NULL,0);
+    GmlVal add_args[3]={list,vreal(4),vreal(5)};
+    call_values(&jvm,"ds_list_add",add_args,3);
+    GmlVal map=call_values(&jvm,"ds_map_create",NULL,0);
+    GmlVal add_list_args[3]={map,vstr("data"),list};
+    call_values(&jvm,"ds_map_add_list",add_list_args,3);
+    GmlVal encoded_marked=call_values(&jvm,"json_encode",&map,1);
+    if(encoded_marked.t!=V_STR || strcmp(encoded_marked.s?encoded_marked.s:"","{\"data\":[4,5]}")){
+      fprintf(stderr,"ds_map_add_list JSON marker mismatch: %s\n",
+              encoded_marked.t==V_STR&&encoded_marked.s?encoded_marked.s:"<non-string>");
+      return 0;
+    }
+
+    GmlVal serial_map=call_values(&jvm,"ds_map_create",NULL,0);
+    GmlVal serial_add[3]={serial_map,vstr("name"),vstr("ranger")};
+    call_values(&jvm,"ds_map_add",serial_add,3);
+    GmlVal serial_text=call_values(&jvm,"ds_map_write",&serial_map,1);
+    GmlVal serial_copy=call_values(&jvm,"ds_map_create",NULL,0);
+    GmlVal serial_read[2]={serial_copy,serial_text};
+    GmlVal serial_find[2]={serial_copy,vstr("name")};
+    GmlVal serial_value;
+    if(call_values(&jvm,"ds_map_read",serial_read,2).d!=1 ||
+       (serial_value=call_values(&jvm,"ds_map_find_value",serial_find,2)).t!=V_STR ||
+       strcmp(serial_value.s?serial_value.s:"","ranger")){
+      fprintf(stderr,"ds_map_write/read nested-list envelope mismatch\n");
+      return 0;
+    }
+
+    GmlVal destroy[1];
+    destroy[0]=root; call_values(&jvm,"ds_map_destroy",destroy,1);
+    GmlVal exists_arg[1];
+    exists_arg[0]=items;
+    if(call_values(&jvm,"ds_exists",exists_arg,1).d!=0){
+      fprintf(stderr,"destroying a decoded JSON root leaked a nested DS list\n");
+      return 0;
+    }
+    exists_arg[0]=child;
+    if(call_values(&jvm,"ds_exists",exists_arg,1).d!=0){
+      fprintf(stderr,"destroying a decoded JSON root leaked a nested DS map\n");
+      return 0;
+    }
+    destroy[0]=top; call_values(&jvm,"ds_map_destroy",destroy,1);
+    destroy[0]=map; call_values(&jvm,"ds_map_destroy",destroy,1);
+    exists_arg[0]=list;
+    if(call_values(&jvm,"ds_exists",exists_arg,1).d!=0){
+      fprintf(stderr,"destroying a marked parent map leaked its DS list\n");
+      return 0;
+    }
+    destroy[0]=serial_map; call_values(&jvm,"ds_map_destroy",destroy,1);
+    destroy[0]=serial_copy; call_values(&jvm,"ds_map_destroy",destroy,1);
+    for(int pass=0;pass<300;pass++){
+      GmlVal repeated=call_values(&jvm,"json_decode",&decode_arg,1);
+      if(repeated.t!=V_REAL || repeated.d<0){
+        fprintf(stderr,"repeated JSON decode exhausted nested DS slots at pass %d\n",pass);
+        return 0;
+      }
+      destroy[0]=repeated;
+      call_values(&jvm,"ds_map_destroy",destroy,1);
+    }
+    if(encoded.t==V_STR && encoded.d!=0) free((char*)encoded.s);
+    if(encoded_marked.t==V_STR && encoded_marked.d!=0) free((char*)encoded_marked.s);
+    if(serial_text.t==V_STR && serial_text.d!=0) free((char*)serial_text.s);
+  }
 
   {
     GmlWin settings={0};
@@ -155,6 +336,7 @@ static int raster_fixtures(void){
     gml_render_free(&initialized);
 
     GmlVM modal={0};
+    gml_keyboard_unset_map(&modal);
     win.classic_game_information=information;
     win.classic_game_information_size=information_size;
     modal.win=&win;
@@ -163,7 +345,7 @@ static int raster_fixtures(void){
       fprintf(stderr,"classic information modal did not activate\n");
       return 0;
     }
-    fixture_key=1; fixture_key_edge=1;
+    fixture_key='A'; fixture_key_edge=1;
     gml_vm_step(&modal);
     fixture_key=fixture_key_edge=-1;
     if(modal.classic_info_active){
@@ -821,6 +1003,64 @@ static int raster_fixtures(void){
   }
   gml_part_reset_all();
 
+  {
+    /* Studio matrices are column-major and matrix_multiply(a,b) returns b*a. This is the
+     * composition used by 2D surface/vertex pipelines to translate, scale, then translate back. */
+    gml_d3_reset();
+    GmlVal translation=call_values(&vm,"matrix_build_identity",NULL,0);
+    GmlVal scaling=call_values(&vm,"matrix_build_identity",NULL,0);
+    gml_arr_set(translation,12,vreal(3)); gml_arr_set(translation,13,vreal(4));
+    gml_arr_set(scaling,0,vreal(2)); gml_arr_set(scaling,5,vreal(3));
+    GmlVal multiply_args[2]={translation,scaling};
+    GmlVal composed=call_values(&vm,"matrix_multiply",multiply_args,2);
+    GmlVal set_args[2]={vreal(2),composed};
+    call_values(&vm,"matrix_set",set_args,2);
+    GmlVal get_arg=vreal(2);
+    GmlVal fetched=call_values(&vm,"matrix_get",&get_arg,1);
+    int matrix_flags[GML_D3_STATE_FLAG_COUNT];
+    double matrix_values[GML_D3_STATE_VALUE_COUNT];
+    uint32_t matrix_colors[GML_D3_STATE_COLOR_COUNT];
+    gml_d3_state_get(matrix_flags,matrix_values,matrix_colors);
+    if(composed.t!=V_ARR || fetched.t!=V_ARR ||
+       fabs(gml_arr_get(fetched,0).d-2)>1e-12 || fabs(gml_arr_get(fetched,5).d-3)>1e-12 ||
+       fabs(gml_arr_get(fetched,12).d-6)>1e-12 || fabs(gml_arr_get(fetched,13).d-12)>1e-12 ||
+       fabs(matrix_values[56]-2)>1e-12 || fabs(matrix_values[61]-3)>1e-12 ||
+       fabs(matrix_values[68]-6)>1e-12 || fabs(matrix_values[69]-12)>1e-12){
+      fprintf(stderr,"Studio matrix composition mismatch\n");
+      return 0;
+    }
+    /* A translation-only Studio world matrix affects ordinary portable 2D draws too, including
+     * HUDs rendered into surfaces while legacy d3d mode is inactive. Represent it as a camera
+     * delta for those software paths and restore the projection camera with the identity matrix. */
+    gml_d3_reset();
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,7,9);
+    GmlVal translation_set[2]={vreal(2),translation};
+    call_values(&vm,"matrix_set",translation_set,2);
+    if(fabs(render.cam_x-4)>1e-12 || fabs(render.cam_y-5)>1e-12){
+      fprintf(stderr,"Studio software world-translation camera mismatch\n");
+      return 0;
+    }
+    int translated_surface=gml_surface_create(&render,16,16);
+    if(translated_surface<0 || !gml_surface_set_target(&render,translated_surface) ||
+       fabs(render.cam_x+3)>1e-12 || fabs(render.cam_y+4)>1e-12){
+      fprintf(stderr,"Studio surface world-translation camera mismatch\n");
+      return 0;
+    }
+    GmlVal identity=call_values(&vm,"matrix_build_identity",NULL,0);
+    GmlVal identity_set[2]={vreal(2),identity};
+    call_values(&vm,"matrix_set",identity_set,2);
+    if(fabs(render.cam_x)>1e-12 || fabs(render.cam_y)>1e-12){
+      fprintf(stderr,"Studio surface identity-camera restore mismatch\n");
+      return 0;
+    }
+    gml_surface_reset_target(&render);
+    if(fabs(render.cam_x-7)>1e-12 || fabs(render.cam_y-9)>1e-12){
+      fprintf(stderr,"Studio projection-camera restore mismatch\n");
+      return 0;
+    }
+    gml_surface_free(&render,translated_surface);
+  }
+
   gml_d3_reset();
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
@@ -935,6 +1175,33 @@ static int raster_fixtures(void){
   GmlSurface *surface_data=&render.surface[surface-1];
   surface_data->px[0]=0xFFFF0000u; surface_data->px[1]=0xFF00FF00u;
   surface_data->px[2]=0xFF0000FFu; surface_data->px[3]=0xFFFFFFFFu;
+  {
+    /* A structurally recognized dual-sample post-process must apply the integer texture offset
+     * and independent channel gains even while portable D3 state exists. */
+    render.shader_pal=calloc(1,sizeof(*render.shader_pal)); render.n_shader_pal=1;
+    if(!render.shader_pal){ fprintf(stderr,"dual-sample shader fixture allocation failed\n"); return 0; }
+    struct GmlShaderPal *shader=&render.shader_pal[0];
+    shader->dual_sample=1; shader->dual_axis=0; shader->dual_sign=-1;
+    shader->dual_value[0]=0.5f; shader->dual_value[1]=1.0f; /* 2-wide texture -> one texel left */
+    shader->dual_base_gain[0]=0.5f; shader->dual_base_gain[1]=1.0f;
+    shader->dual_base_gain[2]=0.0f; shader->dual_base_gain[3]=1.0f;
+    shader->dual_shift_gain[0]=0.5f; shader->dual_shift_gain[1]=0.0f;
+    shader->dual_shift_gain[2]=1.0f; shader->dual_shift_gain[3]=1.0f;
+    surface_data->opaque_known=surface_data->all_opaque=1;
+    gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0); render.active_shader=0;
+    gml_draw_surface_stretched(&render,surface,20,20,2,2,0xFFFFFFu,1.0);
+    render.active_shader=-1;
+    if((pixels[20*WIDTH+20]&0xFFFFFFu)!=0xFF0000u ||
+       (pixels[20*WIDTH+21]&0xFFFFFFu)!=0x80FF00u ||
+       (pixels[21*WIDTH+20]&0xFFFFFFu)!=0x0000FFu ||
+       (pixels[21*WIDTH+21]&0xFFFFFFu)!=0x80FFFFu){
+      fprintf(stderr,"dual-sample shader raster mismatch: %06x %06x %06x %06x\n",
+        pixels[20*WIDTH+20]&0xFFFFFFu,pixels[20*WIDTH+21]&0xFFFFFFu,
+        pixels[21*WIDTH+20]&0xFFFFFFu,pixels[21*WIDTH+21]&0xFFFFFFu);
+      return 0;
+    }
+  }
   GmlVal surface_arg=vreal(surface);
   GmlVal surface_texture=call_values(&vm,"surface_get_texture",&surface_arg,1);
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));
@@ -1315,6 +1582,7 @@ static int raster_fixtures(void){
   }
   {
     GmlVM extension_vm={0};
+    gml_keyboard_unset_map(&extension_vm);
     GmlWin extension_win={0};
     GmlObject extension_object={0};
     GmlVal create_args[3]={vreal(12.5),vreal(34.5),vreal(0)};
@@ -1466,6 +1734,13 @@ static int raster_fixtures(void){
   gml_draw_sprite_ext(&render,depth_sprite,0,24,12,8,8,0,0x00FF00,1);
   if((pixels[18*WIDTH+30]&0x00FFFFFFu)!=0x00FF00u){
     fprintf(stderr,"software D3 2D sprite near-depth mismatch\n");
+    return 0;
+  }
+  call_numbers(&vm,"d3d_set_depth",far_depth,1);
+  gml_draw_sprite_ext(&render,depth_sprite,0,4,12,8,8,0,0x0000FF,1);
+  gml_draw_sprite_ext(&render,depth_sprite,0,4,12,8,8,0,0x00FF00,1);
+  if((pixels[18*WIDTH+10]&0x00FFFFFFu)!=0x00FF00u){
+    fprintf(stderr,"software D3 coplanar 2D overwrite mismatch\n");
     return 0;
   }
   render.atlas=calloc(1,sizeof(*render.atlas)); render.tpag=calloc(1,sizeof(*render.tpag));
@@ -1695,6 +1970,31 @@ static int raster_fixtures(void){
      (pixels[30*WIDTH+30]&0x00FFFFFFu)==0 || pixels[28*WIDTH+30]!=0){
     fprintf(stderr,"software modern negative sprite scale anchor mismatch\n");
     return 0;
+  }
+  /* Exact cardinal rotations remain on the integer texel lattice.  Approximate libm zeros at
+   * 90/180/270 degrees used to move every quadrant with a negative basis axis by one pixel. */
+  {
+    static const int angle[3]={90,180,270};
+    static const int want[3][4]={{20,17,21,18},{27,27,28,28},{37,40,38,41}};
+    for(int q=0;q<3;q++){
+      memset(pixels,0,sizeof(pixels));
+      gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+      int anchor=20+q*10;
+      gml_draw_sprite_ext(&render,flipped_sprite,0,anchor,anchor,1,1,angle[q],0xFFFFFF,1);
+      int count=0,minx=WIDTH,miny=HEIGHT,maxx=-1,maxy=-1;
+      for(int py=0;py<HEIGHT;py++) for(int px=0;px<WIDTH;px++)
+        if(pixels[py*WIDTH+px]&0x00FFFFFFu){
+          count++;
+          if(px<minx)minx=px; if(px>maxx)maxx=px;
+          if(py<miny)miny=py; if(py>maxy)maxy=py;
+        }
+      if(count!=4 || minx!=want[q][0] || miny!=want[q][1] ||
+         maxx!=want[q][2] || maxy!=want[q][3]){
+        fprintf(stderr,"software modern cardinal rotation %d mismatch: pixels=%d span=(%d,%d)-(%d,%d)\n",
+                angle[q],count,minx,miny,maxx,maxy);
+        return 0;
+      }
+    }
   }
   {
     uint32_t phase[3][WIDTH*HEIGHT];
@@ -2107,6 +2407,74 @@ static int raster_fixtures(void){
     render.classic=0; render.interp=0;
   }
 
+  {
+    int multiply_surface=gml_surface_create(&render,2,2);
+    if(multiply_surface<=0){
+      fprintf(stderr,"software rotated multiply surface create mismatch\n");
+      return 0;
+    }
+    GmlSurface *multiply_data=&render.surface[multiply_surface-1];
+    for(int i=0;i<4;i++) multiply_data->px[i]=0xFF808080u;
+    multiply_data->dirty=1; multiply_data->opaque_known=0;
+    multiply_data->all_opaque=0; multiply_data->all_transparent=0;
+    gml_d3_reset();
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFFC08040u;
+    render.blendmode=3;
+    GmlVal surface_ext_args[8]={vreal(multiply_surface),vreal(20),vreal(20),vreal(4),
+      vreal(4),vreal(90),vreal(0xFFFFFF),vreal(1)};
+    int surface_ext_id=gml_builtin_fast_id("draw_surface_ext");
+    (void)gml_builtin_call_fast_id(&vm,surface_ext_id,"draw_surface_ext",surface_ext_args,8);
+    if(pixels[18*WIDTH+22]!=0xFF604020u ||
+       pixels[22*WIDTH+22]!=0xFFC08040u || surface_ext_id<0){
+      fprintf(stderr,"software rotated multiply surface mismatch: %08x %08x\n",
+              pixels[18*WIDTH+22],pixels[22*WIDTH+22]);
+      return 0;
+    }
+    render.blendmode=0;
+  }
+
+  {
+    gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    call_numbers(&vm,"vertex_format_begin",NULL,0);
+    call_numbers(&vm,"vertex_format_add_position",NULL,0);
+    call_numbers(&vm,"vertex_format_add_colour",NULL,0);
+    GmlVal format=call_values(&vm,"vertex_format_end",NULL,0);
+    GmlVal buffer=call_values(&vm,"vertex_create_buffer",NULL,0);
+    if(format.t!=V_REAL || format.d!=0 || buffer.t!=V_REAL || buffer.d!=0){
+      fprintf(stderr,"software vertex resource allocation mismatch\n");
+      return 0;
+    }
+    const double begin[]={0,0};
+    const double position_a[]={0,8,8},position_b[]={0,56,8},position_c[]={0,32,40};
+    const double color_red[]={0,0x0000FF,1};
+    call_numbers(&vm,"vertex_begin",begin,2);
+    call_numbers(&vm,"vertex_position",position_a,3); call_numbers(&vm,"vertex_colour",color_red,3);
+    call_numbers(&vm,"vertex_position",position_b,3); call_numbers(&vm,"vertex_colour",color_red,3);
+    call_numbers(&vm,"vertex_position",position_c,3); call_numbers(&vm,"vertex_colour",color_red,3);
+    const double buffer_id[]={0};
+    call_numbers(&vm,"vertex_end",buffer_id,1);
+    GmlVal vertex_count=call_values(&vm,"vertex_get_number",(GmlVal[]){vreal(0)},1);
+    GmlVal vertex_bytes=call_values(&vm,"vertex_get_buffer_size",(GmlVal[]){vreal(0)},1);
+    const double submit[]={0,4,-1};
+    call_numbers(&vm,"vertex_submit",submit,3);
+    if(vertex_count.t!=V_REAL || vertex_count.d!=3 || vertex_bytes.t!=V_REAL || vertex_bytes.d!=36 ||
+       (pixels[20*WIDTH+32]&0x00FFFFFFu)!=0xFF0000u){
+      fprintf(stderr,"software vertex buffer triangle mismatch: count=%g bytes=%g pixel=%08x\n",
+              vertex_count.d,vertex_bytes.d,pixels[20*WIDTH+32]);
+      return 0;
+    }
+    GmlVal frozen=call_values(&vm,"vertex_freeze",(GmlVal[]){vreal(0)},1);
+    GmlVal rejected=call_values(&vm,"vertex_begin",(GmlVal[]){vreal(0),vreal(0)},2);
+    if(frozen.t!=V_REAL || frozen.d!=0 || rejected.t!=V_REAL || rejected.d!=-1){
+      fprintf(stderr,"software vertex buffer freeze mismatch\n");
+      return 0;
+    }
+    call_numbers(&vm,"vertex_delete_buffer",buffer_id,1);
+    call_numbers(&vm,"vertex_format_delete",buffer_id,1);
+  }
+
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
@@ -2157,6 +2525,16 @@ int main(void){
   GmlWin win; GmlVM vm;
   memset(&win,0,sizeof(win)); memset(&vm,0,sizeof(vm)); vm.win=&win;
   vm.classic_info_active=1;
+  vm.inst=calloc(1,sizeof(*vm.inst));
+  if(!vm.inst){ fprintf(stderr,"software D3 instance allocation failed\n"); return 1; }
+  vm.inst_cap=vm.inst_count=1;
+  vm.inst[0].active=1; vm.inst[0].id=100000; vm.inst[0].obj=-1; vm.inst[0].room_owner=-1;
+  vm.inst[0].mask_index=-1; vm.inst[0].image_speed=1;
+  vm.inst[0].image_xscale=vm.inst[0].image_yscale=vm.inst[0].image_alpha=1;
+  vm.inst[0].image_blend=16777215; vm.inst[0].visible=1; vm.inst[0].gravity_direction=270;
+  vm.inst[0].path_index=-1; vm.inst[0].path_scale=1;
+  vm.inst[0].timeline_index=-1; vm.inst[0].timeline_speed=1;
+  vm.inst[0].draw_layer_order=7;
   size_t size=gml_vm_state_size(&vm),written=0,used=0;
   void *state=malloc(size);
   if(!state || !gml_vm_state_save(&vm,state,size,&written) || written!=size){
@@ -2171,6 +2549,7 @@ int main(void){
   }
   if(!gml_vm_state_load(&vm,state,written,&used) || used!=written ||
      !vm.classic_info_active ||
+     vm.inst_count!=1 || vm.inst[0].draw_layer_order!=7 ||
      !state_matches(flags,values,colors)){
     fprintf(stderr,"software D3 savestate roundtrip mismatch\n");
     free(state); return 1;

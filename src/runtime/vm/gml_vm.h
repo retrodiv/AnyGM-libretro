@@ -11,6 +11,7 @@ typedef struct { GmlValType t; double d; const char *s; void *arr; } GmlVal;
 typedef struct {
   GmlVal *data; int len, cap;
   int is_2d, height2d, row_cap;
+  int nested_2d;
   int *row_len;
   int escaped;   /* referenced beyond its creating scope (stored to a global/instance var,
                     a ds structure, or returned) — locals cleanup must not free it */
@@ -67,7 +68,7 @@ typedef struct {
 typedef struct { double x, y, sp, clen; } GmlPathPt;   /* sp = point speed factor, clen = cumulative length */
 typedef struct { GmlPathPt *pts; int n; int kind, closed, precision; double len; } GmlPath;
 
-/* ---- controlled classic timeline records (parsed from compiler-authored TMLN) ---- */
+/* ---- timelines (parsed from native package and compiler-authored TMLN records) ---- */
 typedef struct { int step, code; } GmlTimelineMoment;
 typedef struct {
   const char *name;
@@ -94,13 +95,16 @@ typedef struct {
 typedef struct { int self_obj, target_obj, code; } GmlColEvent;  /* Collision_<target> handler */
 typedef struct { int valid, self_obj, other_obj, handler_obj, target_obj, code; } GmlColPairCache;
 typedef struct { int valid, start_obj, handler_obj, code; char suffix[32]; } GmlEventCache;
-typedef struct { char *key; GmlVal key_val, val; } GmlDSMapEntry;
+/* Legacy JSON/DS containers retain whether a real-valued handle denotes a
+ * nested list or map. Probing live ids is ambiguous because ordinary numeric
+ * values can legitimately equal a DS id. */
+typedef struct { char *key; GmlVal key_val, val; unsigned char child_kind; } GmlDSMapEntry;
 /* hidx: lazy open-addressing index over entry[] (built past ~48 entries, rebuilt when hdirty).
  * Runtime-only — never serialized; state load leaves it NULL and the first lookup rebuilds. */
 typedef struct { int live; uint32_t id; GmlDSMapEntry *entry; int len, cap;
                  int *hidx; int hcap; int hdirty;
                  int last_lookup; } GmlDSMap;
-typedef struct { int live; uint32_t id; GmlVal *item; int len, cap; } GmlDSList;
+typedef struct { int live; uint32_t id; GmlVal *item; unsigned char *child_kind; int len, cap; } GmlDSList;
 typedef struct { int live; uint32_t id; GmlVal *cell; int w, h; } GmlDSGrid;   /* row-major w*h cells */
 #define GML_DS_MAP_MAX 256
 #define GML_DS_LIST_MAX 256
@@ -112,7 +116,7 @@ typedef struct { int live; uint32_t id; GmlVal *cell; int w, h; } GmlDSGrid;   /
 typedef struct { int id, used, visible, touched, order, script_begin, script_end; double depth, x, y, hs, vs; char name[32]; } GmlRtLayer;
 /* GMS2 tile layer (room layer type 4): a grid of tileset cells. Games read it for tile-based collision
  * (tilemap_get + tilemap_get_cell_*_at_pixel). tiles points INTO the immutable room data (no copy). */
-typedef struct { int id, used, visible, order; double x, y, depth; int tileset, tw, th, cols, rows; const unsigned char *tiles, *base_tiles; unsigned char *owned_tiles; char name[32]; } GmlTileMap;
+typedef struct { int id, used, visible, order; double x, y, depth; int tileset, tw, th, cols, rows; const unsigned char *tiles, *base_tiles; unsigned char *owned_tiles, *decoded_tiles; char name[32]; } GmlTileMap;
 typedef struct { int id, used, layer, type;         /* type: 7=tile, 3=sprite, 1=background (layerelementtype_*) */
   int sprite; double x, y; int sx, sy, w, h;        /* sx/sy/w/h = source region (tiles) */
   double xs, ys, alpha; int visible; uint32_t blend;
@@ -172,10 +176,14 @@ typedef struct GmlVM {
   int     *cg_items; int cg_items_cap;
   int     *cg_overlay; int cg_overlay_n, cg_overlay_cap;
   double   last_key;          /* GM keyboard_lastkey: last vk pressed */
+  /* Physical virtual-key -> logical virtual-key remapping. Values are -1 (disabled)
+   * or a Windows VK code; the default mapping is the identity. */
+  int16_t  key_map[256];
   double   window_fullscreen;  /* GM window_get/set_fullscreen: menu state */
   double   window_x, window_y; /* logical window position for window_get/set_position */
   int      window_cursor;      /* GM window_get/set_cursor logical cursor id (-1 hidden) */
   int      action_relative;   /* D&D action_set_relative flag for following action_* calls */
+  double   math_epsilon;      /* real-comparison tolerance (math_set/get_epsilon) */
   double   potential_max_rotation, potential_rotate_step, potential_check_distance;
   int      potential_rotate_on_spot;
   int      god_mode;          /* frontend core option; requires GML_GOD_OBJ to name a target family */
@@ -243,6 +251,12 @@ typedef struct GmlVM {
 #define GML_MAX_EMITTERS 32
   unsigned char emitter_live[GML_MAX_EMITTERS];   /* audio emitters = gain cells (ids 3000000+i) */
   double emitter_gain[GML_MAX_EMITTERS];
+  double emitter_x[GML_MAX_EMITTERS], emitter_y[GML_MAX_EMITTERS], emitter_z[GML_MAX_EMITTERS];
+  double emitter_ref[GML_MAX_EMITTERS], emitter_max[GML_MAX_EMITTERS], emitter_factor[GML_MAX_EMITTERS];
+  double listener_x, listener_y, listener_z;
+  double listener_forward_x, listener_forward_y, listener_forward_z;
+  double listener_up_x, listener_up_y, listener_up_z;
+  int audio_falloff_model;
   /* instance Mouse_<n> events present in CODE (parse_mouse_events); dispatched per step */
   struct GmlMouseEvent { int sub; char suffix[20]; } mouse_events[32];
   int n_mouse_events;
@@ -285,9 +299,15 @@ GmlRtElem  *gml_rt_elem_new(GmlVM *vm);
 
 int     gml_vm_init(GmlVM *vm, GmlWin *win);
 void    gml_vm_free(GmlVM *vm);
+int     gml_keyboard_check(GmlVM *vm, int vk, int edge); /* remapped keyboard_check* semantics */
+int     gml_keyboard_get_map(GmlVM *vm, int source);
+void    gml_keyboard_set_map(GmlVM *vm, int source, int destination);
+void    gml_keyboard_unset_map(GmlVM *vm);
+void    gml_keyboard_clear(GmlVM *vm, int logical_vk);
 void    gml_rng_seed(GmlVM *vm, uint32_t seed);   /* WELL512 seeding (MSVC LCG expand) */
 double  gml_rng_value(GmlVM *vm);                 /* next()/2^32 -> [0,1) */
 int     gml_real_compare(double lhs, double rhs, int cmp, int classic);
+int     gml_real_compare_epsilon(double lhs, double rhs, int cmp, double epsilon);
 GmlVal  gml_vm_run_code(GmlVM *vm, int code_index, GmlInstance *self, GmlInstance *other,
                         GmlVal *args, int n_args);
 int     gml_code_index_by_name(GmlWin *win, const char *name);  /* exact */
@@ -296,6 +316,7 @@ int     gml_code_index_find(GmlWin *win, const char *substr);   /* first contain
 /* instances / events / rooms */
 GmlInstance *gml_instance_create(GmlVM *vm, double x, double y, int obj);  /* runs Create */
 GmlInstance *gml_instance_create_depth(GmlVM *vm, double x, double y, int obj, int have_depth, double depth);  /* sets depth BEFORE Create */
+GmlInstance *gml_instance_create_layer(GmlVM *vm, double x, double y, int obj, int layer_id);  /* applies layer depth/order BEFORE Create */
 GmlInstance *gml_struct_new(GmlVM *vm);              /* GMS2.3: allocate a struct (standalone instance) */
 GmlInstance *gml_struct_find(GmlVM *vm, unsigned id);
 void         gml_instance_change(GmlVM *vm, GmlInstance *in, int obj, int perform_events);
@@ -319,6 +340,8 @@ GmlVal       gml_arr_store_clone(GmlVal v); /* own strings / mark-escape arrays 
 GmlVal       gml_arr_new(int size, GmlVal fill);
 void         gml_arr_set(GmlVal arr, int idx, GmlVal val);
 GmlVal       gml_arr_get(GmlVal arr, int idx);
+void         gml_arr_set_2d(GmlVal arr, int row, int column, GmlVal val);
+GmlVal       gml_arr_get_2d(GmlVal arr, int row, int column);
 void         gml_arr_push(GmlVal arr, GmlVal val);
 GmlVal       gml_arr_pop(GmlVal arr);
 void         gml_arr_resize(GmlVal arr, int size);
@@ -398,7 +421,7 @@ int     gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used)
 /* Software D3 state is serialized with the VM so rewind/load cannot change the
  * active projection, culling, lighting, or light definitions mid-frame. */
 #define GML_D3_STATE_FLAG_COUNT 26
-#define GML_D3_STATE_VALUE_COUNT 584
+#define GML_D3_STATE_VALUE_COUNT 616
 #define GML_D3_STATE_COLOR_COUNT 10
 void    gml_d3_reset(void);
 void    gml_d3_state_get(int flags[GML_D3_STATE_FLAG_COUNT],

@@ -73,6 +73,7 @@ typedef struct {
 } GmlRoom;
 
 typedef struct {
+  /* data storage: owns=0 borrowed memory, owns=1 malloc, owns=2 read-only file mapping. */
   uint8_t *data; size_t size; int owns;
   GmlChunk chunks[40]; int n_chunks;
   /* strings, in STRG order */

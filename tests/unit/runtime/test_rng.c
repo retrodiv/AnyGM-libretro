@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 int gml_input_key(int key, int edge){ (void)key; (void)edge; return 0; }
 int gml_input_gamepad(int button, int edge){ (void)button; (void)edge; return 0; }
@@ -21,8 +22,8 @@ static int check_classic_comparisons(void){
      !gml_real_compare(accumulated,6.0,CMP_LTE,1) ||
      gml_real_compare(accumulated,6.0,CMP_GT,1) ||
      !gml_real_compare(accumulated,6.0,CMP_GTE,1) ||
-     gml_real_compare(accumulated,6.0,CMP_EQ,0) ||
-     !gml_real_compare(accumulated,6.0,CMP_LT,0)){
+     !gml_real_compare(accumulated,6.0,CMP_EQ,0) ||
+     gml_real_compare(accumulated,6.0,CMP_LT,0)){
     fprintf(stderr,"classic real comparison tolerance mismatch: %.17g\n",accumulated);
     return 0;
   }
@@ -31,6 +32,12 @@ static int check_classic_comparisons(void){
      gml_real_compare(6.0+1e-12,6.0,CMP_EQ,1) ||
      !gml_real_compare(6.0+1e-12,6.0,CMP_GT,1)){
     fprintf(stderr,"classic real comparison tolerance exceeded its boundary\n");
+    return 0;
+  }
+  if(!gml_real_compare(6.0-1e-6,6.0,CMP_EQ,0) ||
+     gml_real_compare(6.0-2e-5,6.0,CMP_EQ,0) ||
+     !gml_real_compare(6.0-2e-5,6.0,CMP_LT,0)){
+    fprintf(stderr,"studio real comparison epsilon mismatch\n");
     return 0;
   }
   return 1;
@@ -44,6 +51,23 @@ int main(void){
   if(!check_classic_comparisons()) return 1;
   classic.classic_version=810;
   vm.win=&classic;
+  {
+    time_t now=time(NULL); struct tm local_value;
+#ifdef _WIN32
+    if(localtime_s(&local_value,&now)!=0){ fprintf(stderr,"local calendar setup failed\n"); return 1; }
+#else
+    if(!localtime_r(&now,&local_value)){ fprintf(stderr,"local calendar setup failed\n"); return 1; }
+#endif
+    if(gml_global_num(&vm,"current_year")!=local_value.tm_year+1900 ||
+       gml_global_num(&vm,"current_month")!=local_value.tm_mon+1 ||
+       gml_global_num(&vm,"current_day")!=local_value.tm_mday ||
+       gml_global_num(&vm,"current_weekday")!=local_value.tm_wday ||
+       gml_global_num(&vm,"current_hour")!=local_value.tm_hour ||
+       gml_global_num(&vm,"current_minute")!=local_value.tm_min){
+      fprintf(stderr,"calendar built-in component mismatch\n");
+      return 1;
+    }
+  }
   gml_rng_seed(&vm,0);
   double first=gml_rng_value(&vm);
   double second=gml_rng_value(&vm);

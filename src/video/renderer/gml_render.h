@@ -57,6 +57,7 @@ typedef struct { const char *name; int originx, originy, w, h, n_frames; int *fr
 typedef struct {
   uint8_t *px; int w, h;                                          /* RGBA8, decoded lazily */
   uint32_t blob; size_t avail, chunk_end; int decode_attempted;    /* source blob in data.win */
+  int debug_dumped;                                                /* one-shot opt-in atlas diagnostic */
 } GmlAtlas;
 typedef struct {
   int atlas, sx, sy, sw, sh;
@@ -66,7 +67,8 @@ typedef struct {
 } GmlInterpSubrectCache;
 typedef struct {
   int tpag;
-  int tile_w, tile_h, tile_border_x, tile_border_y, tile_columns, tile_items_per_tile, tile_count;
+  int tile_w, tile_h, tile_border_x, tile_border_y, tile_separation_x, tile_separation_y;
+  int tile_columns, tile_items_per_tile, tile_count;
   const uint8_t *tile_ids;                                      /* GMS2 BGND tileset id table (little-endian u32s) */
 } GmlBg;                                                        /* background/tileset -> texture page */
 typedef struct { int32_t sx, sy, w, h; int16_t shift, offset; uint16_t ch; } GmlGlyph;
@@ -117,12 +119,16 @@ typedef struct {
   uint32_t *fb; int fbw, fbh;
   uint32_t *base_fb; int base_fbw, base_fbh;
   struct {
-    uint32_t *fb; int w, h; double cx, cy; int target_id, opaque_known, all_opaque, all_transparent;
+    uint32_t *fb; int w, h; double cx, cy, projection_cx, projection_cy;
+    int target_id, opaque_known, all_opaque, all_transparent;
     int pending_underlay, underlay_x, underlay_y, underlay_w, underlay_h;
     int pending_fill; uint32_t fill_color;
   } target_stack[GML_SURFACE_STACK]; int target_sp;
   int target_id;
   double    cam_x, cam_y;
+  /* Camera before the world matrix. A translation-only matrix is represented as an
+   * equivalent camera delta for portable software draws; the full matrix remains in the D3 path. */
+  double    projection_cam_x, projection_cam_y;
   /* the application_surface: the buffer the game is rendered into and later
    * readable by draw_surface_* calls. Set by the frontend; same w/h as fbw/fbh. */
   uint32_t *app_surface; int app_draw_enable;   /* GM application_surface_draw_enable, default 1 */
@@ -148,8 +154,15 @@ typedef struct {
   GmlSurface surface[GML_MAX_SURFACES]; int next_surface_id;
   /* draw state */
   uint32_t  color;  double alpha; int halign, valign, font, alphablend, circle_precision;
+  uint8_t   color_write_mask; /* gpu_set_colorwriteenable RGBA bits 0..3; defaults to all enabled */
   int       software_overlay; /* bypass world-space D3 projection for a final 2D modal pass */
-  int       blendmode;   /* gpu_set_blendmode: 0=normal, 1=add (others fall back to normal). Reset per frame. */
+  int       blendmode;   /* 0=normal, 1=add, 2=subtract, 3=source*destination (extended factors). */
+  int       blend_equation, blend_equation_alpha; /* 1 add, 2 max, 3 subtract, 4 reverse-subtract, 5 min */
+  struct GmlGpuState {
+    int alphablend, blendmode, blend_equation, blend_equation_alpha, interp;
+    uint8_t color_write_mask;
+  } gpu_state_stack[16];
+  int       gpu_state_sp;
   int       fast_alpha_cull;  /* optional fast path: drop alpha contributions <= this 8-bit step */
   int       fb_opaque_known, fb_all_opaque, fb_all_transparent;  /* current target coverage metadata */
   /* Palette and lookup-texture state declarations. */
@@ -158,6 +171,11 @@ typedef struct {
     char lut_row_uniform[32];   /* uniform float selecting the palette row */
     char lut_sampler[32];       /* sampler2D holding the palette texture */
     float lut_row;              /* current row (normalized v), set by shader_set_uniform_f */
+    /* Palette-grid shader: find the source color in palette column 0, then sample the selected
+     * column (with fractional interpolation). Uniform names/configuration are parsed from GLSL. */
+    int grid;
+    char grid_sampler[32], grid_uvs_uniform[32], grid_id_uniform[32], grid_pixel_uniform[32];
+    float grid_uvs[4], grid_id, grid_pixel[2];
     /* CRT-geom post-process template (scanline + aperture-mask + gamma + optional radial warp and
      * corner vignette). Detected structurally from the SHDR GLSL; tunable constants parsed from it
      * so it stays data-driven (any GameMaker game shipping this shader family gets it). The full-
@@ -176,6 +194,17 @@ typedef struct {
     float crt_distortion;       /* current distortion amount */
     int   crt_distort;          /* current bool: radial warp on */
     int   crt_border;           /* current bool: corner vignette on */
+    /* Two-sample channel-offset post-process. The fragment samples the base texture twice, shifts
+     * the second lookup along one texture axis by the product of two float uniforms, scales the
+     * samples per channel, then adds them. The parser derives identifiers and coefficients from
+     * GLSL, so this models the shader family rather than any asset or game. */
+    int   dual_sample;
+    int   dual_axis;            /* 0 = texture x, 1 = texture y */
+    int   dual_sign;            /* +1 for +=, -1 for -= */
+    float dual_base_gain[4];    /* RGBA multipliers for the unshifted lookup */
+    float dual_shift_gain[4];   /* RGBA multipliers for the shifted lookup */
+    char  dual_uniform[2][32];  /* the two float factors in the normalized-coordinate shift */
+    float dual_value[2];        /* values supplied through shader_set_uniform_f */
   } *shader_pal; int n_shader_pal;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
   int       active_shader;   /* shader_set asset id, -1 = none. Reset per frame. */
@@ -313,6 +342,8 @@ int  gml_surface_set_target(GmlRender *r, int id);
 void gml_surface_reset_target(GmlRender *r);
 int  gml_surface_get_target(GmlRender *r);
 void gml_draw_surface_stretched(GmlRender *r, int surf, double x, double y, double w, double h, uint32_t blend, double alpha);
+void gml_draw_surface_ext(GmlRender *r, int surf, double x, double y,
+                          double xs, double ys, double rot, uint32_t blend, double alpha);
 void gml_draw_surface_part_ext(GmlRender *r, int surf, double sx, double sy, double sw, double sh,
                                double x, double y, double xs, double ys, uint32_t blend, double alpha);
 int  gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w, int h,

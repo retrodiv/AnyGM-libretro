@@ -27,6 +27,71 @@ static GmlInstance *find_slot(GmlVM *vm,uint32_t id){
   return NULL;
 }
 
+static uint32_t fixture_u32(const uint8_t *data,size_t offset){
+  return (uint32_t)data[offset] | (uint32_t)data[offset+1]<<8 |
+    (uint32_t)data[offset+2]<<16 | (uint32_t)data[offset+3]<<24;
+}
+
+static void fixture_w32(uint8_t *data,size_t offset,uint32_t value){
+  data[offset]=(uint8_t)value; data[offset+1]=(uint8_t)(value>>8);
+  data[offset+2]=(uint8_t)(value>>16); data[offset+3]=(uint8_t)(value>>24);
+}
+
+/* Re-express the compiler fixture's tagged TMLC records in the independently parsed native
+ * [name,count,(step,event-pointer)*count] shape. CODE-name resolution is intentional here: native
+ * packages use event graphs while compiler fixtures use direct code indices, and the runtime must
+ * not require either representation when the stable timeline CODE identity is available. */
+static int expect_native_timeline_import(const char *path){
+  GmlWin source;
+  if(gml_win_load(&source,path)) return 0;
+  uint8_t *data=malloc(source.size?source.size:1);
+  if(!data){ gml_win_free(&source); return 0; }
+  memcpy(data,source.data,source.size);
+  const GmlChunk *chunk=gml_chunk(&source,"TMLN");
+  size_t end=chunk?(size_t)chunk->off+chunk->size:0;
+  uint32_t count=chunk&&chunk->size>=4?fixture_u32(data,chunk->off):0;
+  int valid=chunk && count>0 && (size_t)chunk->off+4+(size_t)count*4<=end;
+  for(uint32_t i=0;valid && i<count;i++){
+    uint32_t entry=fixture_u32(data,chunk->off+4+i*4);
+    if((size_t)entry+12>end || fixture_u32(data,entry+4)!=0x434C4D54u){ valid=0; break; }
+    uint32_t moments=fixture_u32(data,entry+8);
+    if(moments>100000 || (size_t)entry+12+(size_t)moments*8>end){ valid=0; break; }
+    fixture_w32(data,entry+4,moments);
+    for(uint32_t m=0;m<moments;m++){
+      fixture_w32(data,entry+8+m*8,fixture_u32(data,entry+12+m*8));
+      fixture_w32(data,entry+12+m*8,0); /* CODE name, not this synthetic pointer, owns identity. */
+    }
+  }
+  size_t size=source.size;
+  gml_win_free(&source);
+  if(!valid){ free(data); return 0; }
+  GmlWin win;
+  if(gml_win_from_mem(&win,data,size,1)) { free(data); return 0; }
+  GmlVM vm;
+  if(gml_vm_init(&vm,&win)){ gml_win_free(&win); return 0; }
+  int ok=vm.n_timelines==1 && vm.timelines[0].name &&
+    !strcmp(vm.timelines[0].name,"fixture_timeline") && vm.timelines[0].n==3 &&
+    vm.timelines[0].moments[0].step==0 && vm.timelines[0].moments[0].code>=0 &&
+    vm.timelines[0].moments[1].step==2 && vm.timelines[0].moments[1].code>=0 &&
+    vm.timelines[0].moments[2].step==4 && vm.timelines[0].moments[2].code>=0;
+  if(ok){
+    gml_room_enter(&vm,0);
+    GmlInstance *probe=find_slot(&vm,100000);
+    if(!probe) ok=0;
+    else {
+      *gml_varmap_put(&vm.globals,"timeline_order")=vreal(0);
+      probe->timeline_index=0; probe->timeline_position=0; probe->timeline_speed=1;
+      probe->timeline_running=1; probe->timeline_loop=0;
+      gml_vm_step(&vm); gml_vm_step(&vm); gml_vm_step(&vm);
+      GmlVal *order=gml_varmap_get(&vm.globals,"timeline_order");
+      ok=order && order->t==V_REAL && order->d==12;
+    }
+  }
+  if(!ok) fprintf(stderr,"native timeline import fixture failed\n");
+  gml_vm_free(&vm); gml_win_free(&win);
+  return ok;
+}
+
 
 static double global_array_value(GmlVM *vm,const char *name,int index){
   GmlVal *value=gml_varmap_get(&vm->globals,name);
@@ -291,6 +356,7 @@ int main(void){
   char path[]="/tmp/gml-persistent-room-XXXXXX"; int fd=mkstemp(path); if(fd<0)return 1; close(fd);
   char err[256]={0};
   if(!gmlc_package_write_structural(&project,path,err,sizeof(err))){ fprintf(stderr,"package: %s\n",err); unlink(path); unlink(startup); return 1; }
+  if(!expect_native_timeline_import(path)) return 1;
   char included_path[96]; snprintf(included_path,sizeof(included_path),"/tmp/%s",included_name);
   FILE *included_file=fopen(included_path,"rb"); unsigned char observed[sizeof(included_data)]={0};
   int included_ok=included_file && fread(observed,1,sizeof(observed),included_file)==sizeof(observed) &&
