@@ -132,6 +132,11 @@ typedef struct {
   /* the application_surface: the buffer the game is rendered into and later
    * readable by draw_surface_* calls. Set by the frontend; same w/h as fbw/fbh. */
   uint32_t *app_surface; int app_draw_enable;   /* GM application_surface_draw_enable, default 1 */
+  /* surface_resize(application_surface, ...) changes the application surface independently of
+   * the active camera/view. The frontend normally lends its world framebuffer through
+   * app_surface; once GML explicitly resizes surface 0 this owned buffer persists across room and
+   * view-size changes. */
+  uint32_t *app_surface_owned;
   /* Optional classic 2x vertical coverage plane.  The game pass replays texture draws at the
    * half-row samples as well as at logical pixel centres; the presentation pass then interleaves
    * them without a GPU.  This is a borrowed scratch buffer owned by the frontend. */

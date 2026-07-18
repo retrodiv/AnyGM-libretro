@@ -106,7 +106,7 @@ int main(void){
   GmlcTimeline timeline; GmlcTimelineMoment timeline_moments[3];
   GmlcRoomInstance placed_instance;
   int room_order[2]={0,1};
-  GmlcObjectEvent object_events[24];
+  GmlcObjectEvent object_events[25];
   GmlcProjectTrigger trigger;
   GmlcProjectIncludedFile included;
   unsigned char included_data[]={1,3,5,7};
@@ -147,7 +147,7 @@ int main(void){
   objects[1].name="obj_changed"; objects[1].sprite_id=-1; objects[1].mask_id=-1; objects[1].parent_id=-1; objects[1].visible=1;
   objects[1].events=&object_events[10]; objects[1].n_events=objects[1].cap_events=11;
   objects[2].name="obj_create_order"; objects[2].sprite_id=-1; objects[2].mask_id=-1; objects[2].parent_id=-1; objects[2].visible=0;
-  objects[2].events=&object_events[21]; objects[2].n_events=objects[2].cap_events=3;
+  objects[2].events=&object_events[21]; objects[2].n_events=objects[2].cap_events=4;
   object_events[0].event_type=11; object_events[0].event_number=0;
   object_events[1].event_type=3; object_events[1].event_number=0;
   object_events[2].event_type=2; object_events[2].event_number=0;
@@ -173,6 +173,7 @@ int main(void){
   object_events[22].event_type=6; object_events[22].event_number=23;
   object_events[23].event_type=4; object_events[23].event_number=1;
   object_events[23].collision_object_id=1;
+  object_events[24].event_type=1; object_events[24].event_number=0;
   trigger.name=(char*)"fixture_trigger"; trigger.moment=1; trigger.runtime_id=0;
   for(int i=0;i<2;i++){
     rooms[i].name=i?"room_b":"room_a"; rooms[i].width=320; rooms[i].height=240; rooms[i].speed=30;
@@ -257,6 +258,15 @@ int main(void){
      fwrite(solid_collision_source,1,sizeof(solid_collision_source)-1,solid_collision_file)!=sizeof(solid_collision_source)-1 ||
      fclose(solid_collision_file)!=0)return 1;
   object_events[23].source_path=solid_collision;
+  char destroy_reentry[]="/tmp/gml-destroy-reentry-XXXXXX";
+  int destroy_reentry_fd=mkstemp(destroy_reentry); if(destroy_reentry_fd<0)return 1;
+  FILE *destroy_reentry_file=fdopen(destroy_reentry_fd,"wb");
+  const char destroy_reentry_source[]=
+    "global.destroy_reentry_hits += 1; instance_destroy();\n";
+  if(!destroy_reentry_file ||
+     fwrite(destroy_reentry_source,1,sizeof(destroy_reentry_source)-1,destroy_reentry_file)!=sizeof(destroy_reentry_source)-1 ||
+     fclose(destroy_reentry_file)!=0)return 1;
+  object_events[24].source_path=destroy_reentry;
   char instance_order[]="/tmp/gml-instance-order-XXXXXX"; int instance_order_fd=mkstemp(instance_order); if(instance_order_fd<0)return 1;
   FILE *instance_order_file=fdopen(instance_order_fd,"wb");
   const char instance_order_source[]="global.create_order=global.create_order*10+1;\n";
@@ -431,6 +441,14 @@ int main(void){
       paused_start,paused_start+2,path_probe->x,path_probe->hspeed,path_probe->speed); return 1;
   }
   gml_instance_destroy(&vm,path_probe); gml_instance_destroy(&vm,path_control);
+  GmlVal *destroy_reentry_hits=gml_varmap_get(&vm.globals,"destroy_reentry_hits");
+  if(!path_probe->marked || !path_control->marked || !destroy_reentry_hits ||
+     destroy_reentry_hits->t!=V_REAL || destroy_reentry_hits->d!=2){
+    fprintf(stderr,"recursive Destroy event was not single-shot: marked=(%d,%d) hits=%.0f\n",
+      path_probe->marked,path_control->marked,
+      destroy_reentry_hits&&destroy_reentry_hits->t==V_REAL?destroy_reentry_hits->d:-1.0);
+    return 1;
+  }
   vm.next_id=path_next_id;
   *gml_varmap_put(&vm.globals,"timeline_order")=vreal(0);
   timeline_probe->timeline_index=0; timeline_probe->timeline_position=0;
@@ -1002,7 +1020,7 @@ int main(void){
       studio_actor?studio_actor->y:-1.0,
       studio_solid_hits&&studio_solid_hits->t==V_REAL?studio_solid_hits->d:-1.0); return 1;
   }
-  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(shadowed_alias_script); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(solid_collision); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
+  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(shadowed_alias_script); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(solid_collision); unlink(destroy_reentry); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
   for(int i=0;i<2;i++) unlink(key_files[i]);
   for(int i=0;i<2;i++) unlink(mouse_files[i]);

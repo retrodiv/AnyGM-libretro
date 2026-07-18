@@ -3640,11 +3640,16 @@ void gml_instance_change(GmlVM *vm, GmlInstance *in, int obj, int perform_events
   if(perform_events && in->active && !in->marked){ gml_run_event(vm,in,"PreCreate_0"); gml_run_event(vm,in,"Create_0"); }
 }
 void gml_instance_destroy(GmlVM *vm, GmlInstance *in){
-  if(!in||!in->active) return;
+  /* An instance stops being a live destruction target before its Destroy event runs.  Destroy
+   * handlers are allowed to call instance_destroy() (directly or through a cleanup script);
+   * leaving the pending flag until after the callback re-entered the same handler forever and
+   * eventually overflowed the frontend thread's stack.  Event dispatch itself deliberately does
+   * not reject marked instances, so the one required Destroy/CleanUp pair still executes. */
+  if(!in||!in->active||in->marked) return;
+  in->marked=1;
   gml_run_event(vm,in,"Destroy_0");
   /* Dispatch Clean Up after Destroy so disposal handlers can release instance resources. */
   gml_run_event(vm,in,"CleanUp_0");
-  in->marked=1;
 }
 static void reap(GmlVM *vm){
   /* Skip escaped arrays during instance reaping; shared arrays remain for deduplicated full teardown. */

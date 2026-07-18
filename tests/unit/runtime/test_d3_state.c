@@ -457,6 +457,32 @@ static int raster_fixtures(void){
   }
 
   {
+    uint32_t borrowed[6]={
+      0xFF010203u,0xFF040506u,0xFF070809u,
+      0xFF111213u,0xFF141516u,0xFF171819u
+    };
+    render.app_surface=borrowed; render.app_w=3; render.app_h=2;
+    { const double resize_args[3]={0,5,4}; call_numbers(&vm,"surface_resize",resize_args,3); }
+    if(!render.app_surface_owned || render.app_surface!=render.app_surface_owned ||
+       gml_surface_width(&render,0)!=5 || gml_surface_height(&render,0)!=4 ||
+       render.app_surface[0]!=borrowed[0] || render.app_surface[2]!=borrowed[2] ||
+       render.app_surface[5]!=borrowed[3] || render.app_surface[7]!=borrowed[5] ||
+       render.app_surface[4]!=0 || render.app_surface[19]!=0){
+      fprintf(stderr,"explicit application-surface resize mismatch\n");
+      return 0;
+    }
+    { const double resize_args[3]={0,2,1}; call_numbers(&vm,"surface_resize",resize_args,3); }
+    if(gml_surface_width(&render,0)!=2 || gml_surface_height(&render,0)!=1 ||
+       render.app_surface[0]!=borrowed[0] || render.app_surface[1]!=borrowed[1]){
+      fprintf(stderr,"application-surface resize preservation mismatch\n");
+      return 0;
+    }
+    free(render.app_surface_owned);
+    render.app_surface_owned=NULL;
+    render.app_surface=NULL; render.app_w=render.app_h=0;
+  }
+
+  {
     GmlWin win={0};
     uint32_t source[4]={0xFFFF0000u,0xFF0000FFu,0xFFFF0000u,0xFF0000FFu};
     uint32_t target[16]={0};
