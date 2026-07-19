@@ -69,6 +69,8 @@ typedef struct {
   uint32_t bgcolor;  /* 0xAARRGGBB-ish; GM stores 0xAABBGGRR, alpha forced 0xFF */
   int draw_bg;
   int creation_code;  /* CODE index for the room's creation code, -1 if none */
+  uint32_t flags;     /* serialized room flags; bit 0 enables the legacy view system */
+  int view_enabled;
   uint32_t bg_ptr, view_ptr, obj_ptr, tile_ptr;
 } GmlRoom;
 
@@ -98,6 +100,7 @@ typedef struct {
   uint32_t disp_w, disp_h;           /* default window / native render size */
   uint32_t *room_order; int n_room_order;
   char content_dir[512];             /* directory containing the loaded data.win */
+  char save_dir[512];                /* per-content writable sandbox supplied by the frontend */
 } GmlWin;
 
 int          gml_win_load(GmlWin *w, const char *path);

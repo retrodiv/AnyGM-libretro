@@ -22,6 +22,129 @@ void gml_input_mouse(double *rx,double *ry,double *gx,double *gy,double *wx,doub
 }
 GmlVal gml_builtin_call(GmlVM *vm,const char *name,GmlVal *args,int count);
 
+static int fixture_write_text(const char *path,const char *text){
+  FILE *f=fopen(path,"wb");
+  int ok=f && fwrite(text,1,strlen(text),f)==strlen(text);
+  if(f && fclose(f)) ok=0;
+  return ok;
+}
+
+static int fixture_write_large_ini(const char *path){
+  FILE *f=fopen(path,"wb");
+  if(!f) return 0;
+  int ok=fprintf(f,"[localization]\n")>0;
+  for(int i=0;ok && i<600;i++)
+    ok=fprintf(f,i==599?"key_%03d=\"value_%03d\"\n":"key_%03d=value_%03d\n",i,i)>0;
+  if(fclose(f)) ok=0;
+  return ok;
+}
+
+static int fixture_read_text(const char *path,char *out,size_t cap){
+  FILE *f=fopen(path,"rb");
+  if(!f || !cap){ if(f) fclose(f); return 0; }
+  size_t n=fread(out,1,cap-1,f); out[n]=0;
+  int ok=!ferror(f);
+  fclose(f);
+  return ok;
+}
+
+static int expect_file_sandbox(GmlVM *vm,const char *save_dir){
+  char overlay[80],written[80],ini[80],large_ini[80];
+  snprintf(overlay,sizeof overlay,"gml-overlay-%ld.txt",(long)getpid());
+  snprintf(written,sizeof written,"gml-written-%ld.txt",(long)getpid());
+  snprintf(ini,sizeof ini,"gml-default-%ld.ini",(long)getpid());
+  snprintf(large_ini,sizeof large_ini,"gml-large-%ld.ini",(long)getpid());
+  char content_overlay[640],save_overlay[640],content_written[640],save_written[640];
+  char content_ini[640],save_ini[640],content_large_ini[640],save_large_ini[640];
+  snprintf(content_overlay,sizeof content_overlay,"%s/%s",vm->win->content_dir,overlay);
+  snprintf(save_overlay,sizeof save_overlay,"%s/%s",save_dir,overlay);
+  snprintf(content_written,sizeof content_written,"%s/%s",vm->win->content_dir,written);
+  snprintf(save_written,sizeof save_written,"%s/%s",save_dir,written);
+  snprintf(content_ini,sizeof content_ini,"%s/%s",vm->win->content_dir,ini);
+  snprintf(save_ini,sizeof save_ini,"%s/%s",save_dir,ini);
+  snprintf(content_large_ini,sizeof content_large_ini,"%s/%s",vm->win->content_dir,large_ini);
+  snprintf(save_large_ini,sizeof save_large_ini,"%s/%s",save_dir,large_ini);
+  unlink(content_overlay); unlink(save_overlay); unlink(content_written); unlink(save_written);
+  unlink(content_ini); unlink(save_ini); unlink(content_large_ini); unlink(save_large_ini);
+  if(!fixture_write_text(content_overlay,"program") || !fixture_write_text(save_overlay,"save") ||
+     !fixture_write_text(content_ini,"[fixture]\nvalue=7\n") ||
+     !fixture_write_large_ini(content_large_ini)) return 0;
+
+  GmlVal name=vstr(overlay);
+  GmlVal handle=gml_builtin_call(vm,"file_text_open_read",&name,1);
+  GmlVal line=gml_builtin_call(vm,"file_text_readln",&handle,1);
+  (void)gml_builtin_call(vm,"file_text_close",&handle,1);
+  int ok=handle.t==V_REAL && handle.d>0 && line.t==V_STR && line.s && !strcmp(line.s,"save");
+  if(line.t==V_STR && line.d!=0) free((void*)line.s);
+  unlink(save_overlay);
+  handle=gml_builtin_call(vm,"file_text_open_read",&name,1);
+  line=gml_builtin_call(vm,"file_text_readln",&handle,1);
+  (void)gml_builtin_call(vm,"file_text_close",&handle,1);
+  ok=ok && line.t==V_STR && line.s && !strcmp(line.s,"program");
+  if(line.t==V_STR && line.d!=0) free((void*)line.s);
+
+  /* working_directory concatenation produces an absolute bundle path. It must retain the same
+   * save-over-bundle read overlay rather than bypassing the sandbox. */
+  if(!fixture_write_text(save_overlay,"absolute-save")) ok=0;
+  name=vstr(content_overlay);
+  handle=gml_builtin_call(vm,"file_text_open_read",&name,1);
+  line=gml_builtin_call(vm,"file_text_readln",&handle,1);
+  (void)gml_builtin_call(vm,"file_text_close",&handle,1);
+  ok=ok && line.t==V_STR && line.s && !strcmp(line.s,"absolute-save");
+  if(line.t==V_STR && line.d!=0) free((void*)line.s);
+  unlink(save_overlay);
+
+  name=vstr(written);
+  handle=gml_builtin_call(vm,"file_text_open_write",&name,1);
+  GmlVal write_args[2]={handle,vstr("sandbox")};
+  (void)gml_builtin_call(vm,"file_text_write_string",write_args,2);
+  (void)gml_builtin_call(vm,"file_text_close",&handle,1);
+  char observed[128]={0};
+  ok=ok && !fixture_read_text(content_written,observed,sizeof observed) &&
+     fixture_read_text(save_written,observed,sizeof observed) && !strcmp(observed,"sandbox");
+  unlink(save_written);
+  name=vstr(content_written);
+  handle=gml_builtin_call(vm,"file_text_open_write",&name,1);
+  GmlVal absolute_write_args[2]={handle,vstr("absolute-sandbox")};
+  (void)gml_builtin_call(vm,"file_text_write_string",absolute_write_args,2);
+  (void)gml_builtin_call(vm,"file_text_close",&handle,1);
+  observed[0]=0;
+  ok=ok && !fixture_read_text(content_written,observed,sizeof observed) &&
+     fixture_read_text(save_written,observed,sizeof observed) && !strcmp(observed,"absolute-sandbox");
+
+  name=vstr(ini);
+  (void)gml_builtin_call(vm,"ini_open",&name,1);
+  GmlVal read_args[3]={vstr("fixture"),vstr("value"),vreal(-1)};
+  GmlVal initial=gml_builtin_call(vm,"ini_read_real",read_args,3);
+  GmlVal ini_write_args[3]={vstr("fixture"),vstr("value"),vreal(11)};
+  (void)gml_builtin_call(vm,"ini_write_real",ini_write_args,3);
+  (void)gml_builtin_call(vm,"ini_close",NULL,0);
+  char installed[128]={0},saved[128]={0};
+  ok=ok && initial.t==V_REAL && initial.d==7 &&
+     fixture_read_text(content_ini,installed,sizeof installed) && strstr(installed,"value=7") &&
+     fixture_read_text(save_ini,saved,sizeof saved) && strstr(saved,"value=11");
+
+  /* Localization INIs routinely exceed the old 256-entry settings limit and quote
+   * string values.  A late value must be unquoted and survive the save overlay. */
+  name=vstr(large_ini);
+  (void)gml_builtin_call(vm,"ini_open",&name,1);
+  GmlVal late_args[3]={vstr("localization"),vstr("key_599"),vstr("missing")};
+  GmlVal late=gml_builtin_call(vm,"ini_read_string",late_args,3);
+  ok=ok && late.t==V_STR && late.s && !strcmp(late.s,"value_599") && vm->ini_n==600;
+  if(late.t==V_STR && late.d!=0) free((void*)late.s);
+  (void)gml_builtin_call(vm,"ini_close",NULL,0);
+  (void)gml_builtin_call(vm,"ini_open",&name,1);
+  late=gml_builtin_call(vm,"ini_read_string",late_args,3);
+  ok=ok && late.t==V_STR && late.s && !strcmp(late.s,"value_599");
+  if(late.t==V_STR && late.d!=0) free((void*)late.s);
+  (void)gml_builtin_call(vm,"ini_close",NULL,0);
+
+  unlink(content_overlay); unlink(save_overlay); unlink(content_written); unlink(save_written);
+  unlink(content_ini); unlink(save_ini); unlink(content_large_ini); unlink(save_large_ini);
+  if(!ok) fprintf(stderr,"read overlay / writable sandbox fixture failed\n");
+  return ok;
+}
+
 static GmlInstance *find_slot(GmlVM *vm,uint32_t id){
   for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].id==id) return &vm->inst[i];
   return NULL;
@@ -100,6 +223,20 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 }
 
 int main(void){
+  {
+    GmlSprite sprite={0}; GmlRender render={0};
+    render.spr=&sprite; render.n_spr=1;
+    sprite.playback_speed_valid=1; sprite.playback_speed=15.0f; sprite.playback_speed_type=0;
+    double per_second=gml_sprite_animation_delta(&render,0,1.0,60.0);
+    sprite.playback_speed=0.5f; sprite.playback_speed_type=1;
+    double per_frame=gml_sprite_animation_delta(&render,0,1.0,60.0);
+    sprite.playback_speed_valid=0;
+    double legacy=gml_sprite_animation_delta(&render,0,0.75,60.0);
+    if(fabs(per_second-0.25)>1e-12 || fabs(per_frame-0.5)>1e-12 || fabs(legacy-0.75)>1e-12){
+      fprintf(stderr,"sprite playback cadence mismatch: fps=%.6f frame=%.6f legacy=%.6f\n",
+        per_second,per_frame,legacy); return 1;
+    }
+  }
   GmlcProject project; GmlcObject objects[3]; GmlcRoom rooms[2];
   GmlcScript scripts[2]; char *script_order[2];
   GmlcPath fixture_path; GmlcPathPoint fixture_path_points[2];
@@ -185,6 +322,7 @@ int main(void){
       rooms[i].views[v].object_id=-1;
     }
   }
+  rooms[1].view_enabled=0;
   rooms[0].persistent=1;
   placed_instance.id=(char*)"placed_create_order";
   placed_instance.name=(char*)"placed_create_order";
@@ -195,6 +333,9 @@ int main(void){
   const char startup_source[]=
     "global.startup_value = fixture_constant; "
     "global.view_fixture_scalar = 7; global.background_fixture_scalar = 9; "
+    "view_enabled[0] = true; global.view_enabled_alias = view_enabled[1]; "
+    "global.delta_fixture = delta_time; "
+    "global.working_fixture = working_directory; global.program_fixture = program_directory; "
     "global.fixture_orange = c_orange; global.fixture_rain = ef_rain;\n";
   if(!startup_file || fwrite(startup_source,1,sizeof(startup_source)-1,startup_file)!=sizeof(startup_source)-1 ||
      fclose(startup_file)!=0){ unlink(startup); return 1; }
@@ -203,6 +344,7 @@ int main(void){
   int implicit_script_fd=mkstemp(implicit_script); if(implicit_script_fd<0)return 1;
   FILE *implicit_script_file=fdopen(implicit_script_fd,"wb");
   const char implicit_script_source[]=
+    "if (argument0 == -4) return (1 == 1.000001); "
     "transition_kind=12; transition_steps=40; "
     "if (argument0 >= 0) instance_exists(argument0); "
     "else if (argument0 == -2) return all.fixture_all_scope; "
@@ -277,8 +419,13 @@ int main(void){
   FILE *step_file=fdopen(step_fd,"wb");
   const char step_source[]=
     "global.step_order=global.step_order*10+1; "
+    "persistent_array[0]=7; "
+    "var persistent_alias=persistent_array; "
+    "global.persistent_alias_len=array_length_1d(persistent_alias); "
+    "global.persistent_alias_value=persistent_alias[0]; "
     "if (!global.spawned_once) { global.spawned_once=1; "
     "with(instance_create(50,50,obj_changed)){ hspeed=3; } } "
+    "if (global.churn_pool) { with(instance_create(70,70,obj_changed)){ instance_destroy(); } } "
     "if (hspeed > 0) hspeed -= 1; if (hspeed < 0) hspeed += 1; "
     "hspeed = round(hspeed); x += 5;\n";
   if(!step_file || fwrite(step_source,1,sizeof(step_source)-1,step_file)!=sizeof(step_source)-1 || fclose(step_file)!=0)return 1;
@@ -289,7 +436,8 @@ int main(void){
   object_events[10].source_path=end_step;
   char changed_step[]="/tmp/gml-changed-step-event-XXXXXX"; int changed_step_fd=mkstemp(changed_step); if(changed_step_fd<0)return 1;
   FILE *changed_step_file=fdopen(changed_step_fd,"wb");
-  const char changed_step_source[]="global.step_order=global.step_order*10+2;\n";
+  const char changed_step_source[]=
+    "global.step_order=global.step_order*10+2; global.changed_step_hits += 1;\n";
   if(!changed_step_file || fwrite(changed_step_source,1,sizeof(changed_step_source)-1,changed_step_file)!=sizeof(changed_step_source)-1 || fclose(changed_step_file)!=0)return 1;
   object_events[11].source_path=changed_step;
   char alarm_files[4][40];
@@ -374,6 +522,9 @@ int main(void){
   if(included_file) fclose(included_file);
   if(!included_ok){ fprintf(stderr,"included file was not exported\n"); return 1; }
   GmlWin win; if(gml_win_load(&win,path)){ unlink(path); return 1; }
+  char save_root[]="/tmp/gml-save-root-XXXXXX";
+  if(!mkdtemp(save_root)){ gml_win_free(&win); unlink(path); return 1; }
+  snprintf(win.save_dir,sizeof win.save_dir,"%s",save_root);
   GmlVM vm; if(gml_vm_init(&vm,&win)){ gml_win_free(&win); unlink(path); return 1; }
   {
     GmlVal *transition_kind=gml_varmap_get(&vm.globals,"transition_kind");
@@ -389,16 +540,42 @@ int main(void){
   GmlVal *startup_value=gml_varmap_get(&vm.globals,"startup_value");
   GmlVal *view_fixture_scalar=gml_varmap_get(&vm.globals,"view_fixture_scalar");
   GmlVal *background_fixture_scalar=gml_varmap_get(&vm.globals,"background_fixture_scalar");
+  GmlVal *view_enabled_alias=gml_varmap_get(&vm.globals,"view_enabled_alias");
+  GmlVal *delta_fixture=gml_varmap_get(&vm.globals,"delta_fixture");
+  GmlVal *working_fixture=gml_varmap_get(&vm.globals,"working_fixture");
+  GmlVal *program_fixture=gml_varmap_get(&vm.globals,"program_fixture");
   GmlVal *fixture_orange=gml_varmap_get(&vm.globals,"fixture_orange");
   GmlVal *fixture_rain=gml_varmap_get(&vm.globals,"fixture_rain");
+  char expected_working[640],expected_program[640];
+  /* This compiler fixture is a bytecode-15 Studio package: working_directory remains the
+   * installed content root, while writes are still redirected through the file sandbox. */
+  snprintf(expected_working,sizeof expected_working,"%s/",win.content_dir);
+  snprintf(expected_program,sizeof expected_program,"%s/",win.content_dir);
   if(!startup_value || startup_value->t!=V_REAL || startup_value->d!=42 ||
      !view_fixture_scalar || view_fixture_scalar->t!=V_REAL || view_fixture_scalar->d!=7 ||
      !background_fixture_scalar || background_fixture_scalar->t!=V_REAL || background_fixture_scalar->d!=9 ||
+     !view_enabled_alias || view_enabled_alias->t!=V_REAL || view_enabled_alias->d!=1 ||
+     !delta_fixture || delta_fixture->t!=V_REAL || fabs(delta_fixture->d-1000000.0/60.0)>1e-6 ||
+     !working_fixture || working_fixture->t!=V_STR || strcmp(working_fixture->s,expected_working) ||
+     !program_fixture || program_fixture->t!=V_STR || strcmp(program_fixture->s,expected_program) ||
      !fixture_orange || fixture_orange->t!=V_REAL || fixture_orange->d!=0x40A0FF ||
      !fixture_rain || fixture_rain->t!=V_REAL || fixture_rain->d!=10){
-    fprintf(stderr,"startup code or project constant did not run\n"); return 1;
+    fprintf(stderr,"startup code or project constant did not run: startup=%.9g view=%.9g background=%.9g delta=%.17g orange=%.9g rain=%.9g\n",
+      startup_value&&startup_value->t==V_REAL?startup_value->d:-1.0,
+      view_fixture_scalar&&view_fixture_scalar->t==V_REAL?view_fixture_scalar->d:-1.0,
+      background_fixture_scalar&&background_fixture_scalar->t==V_REAL?background_fixture_scalar->d:-1.0,
+      delta_fixture&&delta_fixture->t==V_REAL?delta_fixture->d:-1.0,
+      fixture_orange&&fixture_orange->t==V_REAL?fixture_orange->d:-1.0,
+      fixture_rain&&fixture_rain->t==V_REAL?fixture_rain->d:-1.0); return 1;
   }
+  if(!expect_file_sandbox(&vm,save_root)) return 1;
   gml_room_enter(&vm,0);
+  GmlVal *room_view_enabled=gml_varmap_get(&vm.globals,"view_enabled");
+  if(!room_view_enabled || room_view_enabled->t!=V_REAL || room_view_enabled->d!=1){
+    fprintf(stderr,"room flags did not enable the legacy view system: %.0f\n",
+      room_view_enabled&&room_view_enabled->t==V_REAL?room_view_enabled->d:-1.0);
+    return 1;
+  }
   GmlInstance *timeline_probe=find_slot(&vm,100000); if(!timeline_probe)return 1;
   GmlVal *image_single_indexed=gml_varmap_get(&vm.globals,"image_single_indexed");
   GmlVal *user_crear_hits=gml_varmap_get(&vm.globals,"user_crear_hits");
@@ -441,9 +618,42 @@ int main(void){
       paused_start,paused_start+2,path_probe->x,path_probe->hspeed,path_probe->speed); return 1;
   }
   gml_instance_destroy(&vm,path_probe); gml_instance_destroy(&vm,path_control);
+
+  /* Bytecode 15 keeps ordinary velocity observable while a path is active.  A paused path is
+   * still evaluated after automatic movement, restoring the instance to the current path point. */
+  win.classic_version=0; win.bytecode=15;
+  path_probe=gml_instance_create(&vm,100,100,2); if(!path_probe)return 1;
+  path_control=gml_instance_create(&vm,100,100,2); if(!path_control)return 1;
+  path_probe_id=path_probe->id; path_control_id=path_control->id;
+  gml_path_start(&vm,path_probe,0,10,0,0);
+  gml_path_start(&vm,path_control,0,10,0,0);
+  path_probe->hspeed=7; path_probe->vspeed=0; path_probe->speed=7; path_probe->direction=0;
+  gml_vm_step(&vm);
+  path_probe=find_slot(&vm,path_probe_id); path_control=find_slot(&vm,path_control_id);
+  if(!path_probe || !path_control || fabs(path_probe->x-path_control->x)>1e-6 ||
+     fabs(path_probe->y-path_control->y)>1e-6 || path_probe->hspeed!=7 || path_probe->speed!=7){
+    fprintf(stderr,"Studio 1.x path did not retain ordinary velocity: probe=(%.6f,%.6f) control=(%.6f,%.6f) velocity=(%.6f,%.6f) speed=%.6f\n",
+      path_probe?path_probe->x:-1.0,path_probe?path_probe->y:-1.0,
+      path_control?path_control->x:-1.0,path_control?path_control->y:-1.0,
+      path_probe?path_probe->hspeed:-1.0,path_probe?path_probe->vspeed:-1.0,
+      path_probe?path_probe->speed:-1.0); return 1;
+  }
+  paused_start=path_probe->x;
+  path_probe->path_speed=0; path_probe->hspeed=2; path_probe->speed=2; path_probe->direction=0;
+  gml_vm_step(&vm);
+  path_probe=find_slot(&vm,path_probe_id);
+  if(!path_probe || fabs(path_probe->x-paused_start)>1e-6 ||
+     path_probe->hspeed!=2 || path_probe->speed!=2){
+    fprintf(stderr,"Studio 1.x paused path did not override ordinary displacement: start=%.6f x=%.6f hspeed=%.6f speed=%.6f\n",
+      paused_start,path_probe?path_probe->x:-1.0,path_probe?path_probe->hspeed:-1.0,
+      path_probe?path_probe->speed:-1.0); return 1;
+  }
+  gml_instance_destroy(&vm,path_probe); gml_instance_destroy(&vm,path_control);
+  gml_set_global_scalar(&vm,"create_order",12);
+  win.classic_version=800; win.bytecode=15;
   GmlVal *destroy_reentry_hits=gml_varmap_get(&vm.globals,"destroy_reentry_hits");
   if(!path_probe->marked || !path_control->marked || !destroy_reentry_hits ||
-     destroy_reentry_hits->t!=V_REAL || destroy_reentry_hits->d!=2){
+     destroy_reentry_hits->t!=V_REAL || destroy_reentry_hits->d!=4){
     fprintf(stderr,"recursive Destroy event was not single-shot: marked=(%d,%d) hits=%.0f\n",
       path_probe->marked,path_control->marked,
       destroy_reentry_hits&&destroy_reentry_hits->t==V_REAL?destroy_reentry_hits->d:-1.0);
@@ -509,6 +719,23 @@ int main(void){
   if(implicit_code<0 || implicit_result.t!=V_REAL || implicit_result.d!=1){
     fprintf(stderr,"classic script implicit result mismatch: code=%d result=%.0f\n",
       implicit_code,implicit_result.t==V_REAL?implicit_result.d:-1.0); return 1;
+  }
+  {
+    int saved_classic=win.classic_version, saved_bytecode=win.bytecode;
+    double saved_epsilon=vm.math_epsilon;
+    implicit_arg=vreal(-4);
+    win.classic_version=0; win.bytecode=15; vm.math_epsilon=1e-5;
+    GmlVal studio1_compare=gml_vm_run_code(&vm,implicit_code,NULL,NULL,&implicit_arg,1);
+    win.bytecode=17;
+    GmlVal studio2_compare=gml_vm_run_code(&vm,implicit_code,NULL,NULL,&implicit_arg,1);
+    win.classic_version=saved_classic; win.bytecode=saved_bytecode;
+    vm.math_epsilon=saved_epsilon;
+    if(studio1_compare.t!=V_REAL || studio1_compare.d!=0 ||
+       studio2_compare.t!=V_REAL || studio2_compare.d!=1){
+      fprintf(stderr,"Studio comparison-family epsilon mismatch: bytecode15=%.0f bytecode17=%.0f\n",
+        studio1_compare.t==V_REAL?studio1_compare.d:-1.0,
+        studio2_compare.t==V_REAL?studio2_compare.d:-1.0); return 1;
+    }
   }
   if(gml_global_num(&vm,"transition_kind")!=12 || gml_global_num(&vm,"transition_steps")!=40){
     fprintf(stderr,"classic unqualified transition variables did not route globally: kind=%.0f steps=%.0f\n",
@@ -822,6 +1049,16 @@ int main(void){
   if(created->alarm[0]!=2){
     fprintf(stderr,"classic fractional alarm was not rounded: %.3f\n",created->alarm[0]); return 1;
   }
+  vm.cur_self=created;
+  GmlVal alarm_set_args[2]={vreal(1),vreal(6.4)};
+  (void)gml_builtin_call(&vm,"alarm_set",alarm_set_args,2);
+  GmlVal alarm_index=vreal(1);
+  GmlVal alarm_value=gml_builtin_call(&vm,"alarm_get",&alarm_index,1);
+  vm.cur_self=NULL;
+  if(created->alarm[1]!=6 || alarm_value.t!=V_REAL || alarm_value.d!=6){
+    fprintf(stderr,"alarm_set/get accessor mismatch: stored=%.3f read=%.3f\n",
+      created->alarm[1],alarm_value.t==V_REAL?alarm_value.d:-999.0); return 1;
+  }
   GmlVal message_args[4]={vstr("prompt"),vstr(""),vstr("accept"),vstr("cancel")};
   GmlVal message_result=gml_builtin_call(&vm,"show_message_ext",message_args,4);
   if(message_result.t!=V_REAL || message_result.d!=2){
@@ -878,6 +1115,15 @@ int main(void){
   if(!step_order || step_order->t!=V_REAL || step_order->d!=1122){
     fprintf(stderr,"classic object-group Step order mismatch: %.0f\n",
       step_order&&step_order->t==V_REAL?step_order->d:-1.0); return 1;
+  }
+  GmlVal *persistent_alias_len=gml_varmap_get(&vm.globals,"persistent_alias_len");
+  GmlVal *persistent_alias_value=gml_varmap_get(&vm.globals,"persistent_alias_value");
+  if(!persistent_alias_len || persistent_alias_len->t!=V_REAL || persistent_alias_len->d!=1 ||
+     !persistent_alias_value || persistent_alias_value->t!=V_REAL || persistent_alias_value->d!=7){
+    fprintf(stderr,"persistent array/local alias lifetime mismatch: len=%.0f value=%.0f\n",
+      persistent_alias_len&&persistent_alias_len->t==V_REAL?persistent_alias_len->d:-1.0,
+      persistent_alias_value&&persistent_alias_value->t==V_REAL?persistent_alias_value->d:-1.0);
+    return 1;
   }
   GmlVal *alarm_order=gml_varmap_get(&vm.globals,"alarm_order");
   if(!alarm_order || alarm_order->t!=V_REAL || alarm_order->d!=112334){
@@ -945,12 +1191,44 @@ int main(void){
     fprintf(stderr,"classic secondary-view snap/round mismatch: x=%.0f\n",
       global_array_value(&vm,"view_xview",1)); return 1;
   }
+  {
+    GmlVal camera_args[10]={vreal(0),vreal(0),vreal(100),vreal(100),vreal(0),
+      vreal(created->id),vreal(4),vreal(-1),vreal(10),vreal(50)};
+    GmlVal camera=gml_builtin_call(&vm,"camera_create_view",camera_args,10);
+    if(camera.t!=V_REAL || camera.d<0){
+      fprintf(stderr,"studio camera follow fixture allocation failed\n"); return 1;
+    }
+    int camera_id=(int)camera.d;
+    gml_vm_step(&vm);
+    if(fabs(global_array_value(&vm,"__gml_camera_x",camera_id)-4)>1e-9 ||
+       fabs(global_array_value(&vm,"__gml_camera_y",camera_id)-50.4)>1e-9){
+      fprintf(stderr,"studio camera limited follow mismatch: x=%.3f y=%.3f\n",
+        global_array_value(&vm,"__gml_camera_x",camera_id),
+        global_array_value(&vm,"__gml_camera_y",camera_id)); return 1;
+    }
+    GmlVal speed_args[3]={camera,vreal(-1),vreal(-1)};
+    (void)gml_builtin_call(&vm,"camera_set_view_speed",speed_args,3);
+    gml_vm_step(&vm);
+    if(fabs(global_array_value(&vm,"__gml_camera_x",camera_id)-130.6)>1e-9 ||
+       fabs(global_array_value(&vm,"__gml_camera_y",camera_id)-50.4)>1e-9){
+      fprintf(stderr,"studio camera snap/fraction mismatch: x=%.3f y=%.3f\n",
+        global_array_value(&vm,"__gml_camera_x",camera_id),
+        global_array_value(&vm,"__gml_camera_y",camera_id)); return 1;
+    }
+    (void)gml_builtin_call(&vm,"camera_destroy",&camera,1);
+  }
   gml_set_global_arr(&vm,"background_x",0,123);
   gml_set_global_arr(&vm,"view_xview",0,77);
   *gml_varmap_put(&vm.globals,"room_speed")=vreal(55);
   gml_tile_layer_shift(&vm,300,8,9);
   uint32_t id=created->id; *gml_varmap_put(&created->vars,"value")=vreal(42);
   gml_room_enter(&vm,1);
+  room_view_enabled=gml_varmap_get(&vm.globals,"view_enabled");
+  if(!room_view_enabled || room_view_enabled->t!=V_REAL || room_view_enabled->d!=0){
+    fprintf(stderr,"room flags did not disable the legacy view system: %.0f\n",
+      room_view_enabled&&room_view_enabled->t==V_REAL?room_view_enabled->d:-1.0);
+    return 1;
+  }
   GmlInstance *slot=find_slot(&vm,id);
   if(!slot||!slot->room_dormant||slot->active){ fprintf(stderr,"room was not stored\n"); return 1; }
   size_t size=gml_vm_state_size(&vm),written=0,used=0; void *state=malloc(size);
@@ -997,6 +1275,7 @@ int main(void){
     fprintf(stderr,"classic sprite-less drawing frame did not advance: index=%.2f\n",slot->image_index); return 1;
   }
   win.classic_version=0;
+  win.bytecode=15;
   GmlInstance *studio_contact=gml_instance_create(&vm,40,40,1); if(!studio_contact)return 1;
   uint32_t studio_contact_id=studio_contact->id;
   GmlInstance *studio_actor=gml_instance_create(&vm,40,40,2); if(!studio_actor)return 1;
@@ -1009,16 +1288,105 @@ int main(void){
   studio_actor->image_xscale=studio_actor->image_yscale=1;
   studio_contact->solid=1;
   studio_contact->speed=studio_contact->hspeed=studio_contact->vspeed=0;
-  studio_actor->speed=studio_actor->hspeed=studio_actor->vspeed=0;
+  studio_actor->speed=1; studio_actor->direction=270;
+  studio_actor->hspeed=0; studio_actor->vspeed=-1;
+  studio_contact->xprevious=studio_contact->x; studio_contact->yprevious=studio_contact->y;
+  studio_actor->y=41; studio_actor->xprevious=studio_actor->x; studio_actor->yprevious=40;
+  *gml_varmap_put(&vm.globals,"studio_solid_hits")=vreal(0);
   gml_colgrid_invalidate(&vm);
   gml_vm_step(&vm);
   studio_actor=find_slot(&vm,studio_actor_id);
   GmlVal *studio_solid_hits=gml_varmap_get(&vm.globals,"studio_solid_hits");
-  if(!studio_actor || studio_actor->y!=40 || !studio_solid_hits ||
+  if(!studio_actor || studio_actor->y!=39 || !studio_solid_hits ||
      studio_solid_hits->t!=V_REAL || studio_solid_hits->d!=1){
-    fprintf(stderr,"Studio solid collision transaction mismatch: y=%.0f hits=%.0f\n",
+    fprintf(stderr,"Studio 1.x solid collision current-position mismatch: y=%.0f hits=%.0f\n",
       studio_actor?studio_actor->y:-1.0,
       studio_solid_hits&&studio_solid_hits->t==V_REAL?studio_solid_hits->d:-1.0); return 1;
+  }
+  studio_contact->marked=1; studio_actor->marked=1;
+
+  /* GMS2 changed solid dispatch to expose pre-movement coordinates to the event. Keep the
+   * two families explicit so fixing one cannot silently alter the other. */
+  win.bytecode=17;
+  studio_contact=gml_instance_create(&vm,80,80,1); if(!studio_contact)return 1;
+  studio_contact_id=studio_contact->id;
+  studio_actor=gml_instance_create(&vm,80,80,2); if(!studio_actor)return 1;
+  studio_actor_id=studio_actor->id;
+  studio_contact=find_slot(&vm,studio_contact_id); studio_actor=find_slot(&vm,studio_actor_id);
+  if(!studio_contact || !studio_actor)return 1;
+  studio_contact->sprite_index=studio_contact->mask_index=0;
+  studio_actor->sprite_index=studio_actor->mask_index=0;
+  studio_contact->image_xscale=studio_contact->image_yscale=1;
+  studio_actor->image_xscale=studio_actor->image_yscale=1;
+  studio_contact->solid=1;
+  studio_contact->speed=studio_contact->hspeed=studio_contact->vspeed=0;
+  studio_actor->speed=1; studio_actor->direction=270;
+  studio_actor->hspeed=0; studio_actor->vspeed=-1;
+  studio_contact->xprevious=studio_contact->x; studio_contact->yprevious=studio_contact->y;
+  studio_actor->y=81; studio_actor->xprevious=studio_actor->x; studio_actor->yprevious=80;
+  /* A Studio alarm without a corresponding event is a normal user-visible counter.  It must not
+   * be consumed by the automatic alarm phase. */
+  studio_actor->alarm[5]=1;
+  *gml_varmap_put(&vm.globals,"studio_solid_hits")=vreal(0);
+  gml_colgrid_invalidate(&vm);
+  gml_vm_step(&vm);
+  studio_actor=find_slot(&vm,studio_actor_id);
+  studio_solid_hits=gml_varmap_get(&vm.globals,"studio_solid_hits");
+  if(!studio_actor || studio_actor->y!=80 || studio_actor->alarm[5]!=1 || !studio_solid_hits ||
+     studio_solid_hits->t!=V_REAL || studio_solid_hits->d!=1){
+    fprintf(stderr,"GMS2 solid/alarm semantics mismatch: y=%.0f alarm=%.0f hits=%.0f\n",
+      studio_actor?studio_actor->y:-1.0,
+      studio_actor?studio_actor->alarm[5]:-1.0,
+      studio_solid_hits&&studio_solid_hits->t==V_REAL?studio_solid_hits->d:-1.0); return 1;
+  }
+
+  /* Studio preserves an empty native Alarm declaration even though it has no CODE entry.  Its
+   * counter must run to completion; this differs from the truly undeclared slot checked above. */
+  GmlObject *studio_actor_object=&vm.objects[studio_actor->obj];
+  int empty_event_index=studio_actor_object->n_events;
+  void *grown_events=realloc(studio_actor_object->events,
+    (size_t)(empty_event_index+1)*sizeof(*studio_actor_object->events));
+  if(!grown_events) return 1;
+  studio_actor_object->events=grown_events;
+  studio_actor_object->events[empty_event_index].evtype=2;
+  studio_actor_object->events[empty_event_index].subtype=5;
+  studio_actor_object->events[empty_event_index].code=-1;
+  studio_actor_object->n_events++;
+  studio_actor->alarm[5]=1;
+  gml_vm_step(&vm);
+  studio_actor=find_slot(&vm,studio_actor_id);
+  if(!studio_actor || studio_actor->alarm[5]!=-1){
+    fprintf(stderr,"empty native alarm declaration did not count down: %.0f\n",
+      studio_actor?studio_actor->alarm[5]:-999.0); return 1;
+  }
+
+  /* Studio takes a fixed event snapshot at frame start, but dead slots from older frames are
+   * safe to recycle.  Exercise both halves together: a newly created instance placed in an old
+   * low slot must NOT receive Step in its birth frame, and create/destroy churn must stay bounded
+   * without moving any live instance pointer. */
+  int changed_before=gml_instance_number(&vm,1);
+  *gml_varmap_put(&vm.globals,"spawned_once")=vreal(0);
+  *gml_varmap_put(&vm.globals,"churn_pool")=vreal(0);
+  *gml_varmap_put(&vm.globals,"changed_step_hits")=vreal(0);
+  GmlInstance *stable=find_slot(&vm,id);
+  uint32_t stable_id=stable?stable->id:0;
+  gml_vm_step(&vm);
+  GmlVal *changed_hits=gml_varmap_get(&vm.globals,"changed_step_hits");
+  if(!stable || find_slot(&vm,stable_id)!=stable || !changed_hits ||
+     changed_hits->t!=V_REAL || changed_hits->d!=changed_before){
+    fprintf(stderr,"Studio recycled-slot snapshot mismatch: before=%d hits=%.0f stable=%d\n",
+      changed_before,changed_hits&&changed_hits->t==V_REAL?changed_hits->d:-1.0,
+      stable&&find_slot(&vm,stable_id)==stable); return 1;
+  }
+  *gml_varmap_put(&vm.globals,"spawned_once")=vreal(1);
+  *gml_varmap_put(&vm.globals,"churn_pool")=vreal(1);
+  int churn_base=vm.inst_count;
+  int churn_producers=gml_instance_number(&vm,0);
+  for(int frame=0;frame<96;frame++) gml_vm_step(&vm);
+  *gml_varmap_put(&vm.globals,"churn_pool")=vreal(0);
+  if(vm.inst_count>churn_base+churn_producers+2 || find_slot(&vm,stable_id)!=stable){
+    fprintf(stderr,"instance pool churn was unbounded/moved a live slot: base=%d final=%d producers=%d stable=%d\n",
+      churn_base,vm.inst_count,churn_producers,find_slot(&vm,stable_id)==stable); return 1;
   }
   free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(shadowed_alias_script); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(solid_collision); unlink(destroy_reentry); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
@@ -1027,6 +1395,7 @@ int main(void){
   for(int i=0;i<4;i++) unlink(boundary_files[i]);
   for(int i=0;i<4;i++) unlink(view_boundary_files[i]);
   for(int i=0;i<3;i++) unlink(timeline_files[i]);
+  rmdir(save_root);
   if(ok) puts("persistent room fixtures: ok");
   return ok?0:1;
 }

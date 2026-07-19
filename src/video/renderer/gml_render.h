@@ -39,6 +39,7 @@ typedef struct { const char *name; int originx, originy, w, h, n_frames; int *fr
                  int ml, mr, mt, mb;                /* collision bbox coordinates: left,right,top,bottom */
                  const uint8_t *mask; int mask_rowb, mask_count;  /* SPRT collision mask: 1bpp */
                  int collision_kind, collision_tolerance;
+                 float playback_speed; int playback_speed_type, playback_speed_valid;
                  uint8_t *runtime_rgba; int runtime_owned, runtime_extra, runtime_opaque; char *owned_name;
                  int *runtime_row_min, *runtime_row_max;
                  uint32_t *runtime_axis_cache_px; uint8_t *runtime_axis_cache_alpha;
@@ -129,6 +130,15 @@ typedef struct {
   /* Camera before the world matrix. A translation-only matrix is represented as an
    * equivalent camera delta for portable software draws; the full matrix remains in the D3 path. */
   double    projection_cam_x, projection_cam_y;
+  /* Draw-GUI can change its logical coordinate space in the middle of an event with
+   * display_set_gui_size().  The framebuffer does not change size at that point: subsequent
+   * draws are transformed to the same physical GUI target immediately.  Keep this transform in
+   * the renderer so sprites, surfaces, text and primitives all share the same semantics without
+   * allocating a temporary full-resolution framebuffer every frame. */
+  int       gui_pass_active;
+  int       gui_base_logical_w, gui_base_logical_h;
+  int       gui_logical_w, gui_logical_h;
+  double    gui_scale_x, gui_scale_y;
   /* the application_surface: the buffer the game is rendered into and later
    * readable by draw_surface_* calls. Set by the frontend; same w/h as fbw/fbh. */
   uint32_t *app_surface; int app_draw_enable;   /* GM application_surface_draw_enable, default 1 */
@@ -170,6 +180,13 @@ typedef struct {
   int       gpu_state_sp;
   int       fast_alpha_cull;  /* optional fast path: drop alpha contributions <= this 8-bit step */
   int       fb_opaque_known, fb_all_opaque, fb_all_transparent;  /* current target coverage metadata */
+  /* GMS2 effect-layer RGB-noise seed cache. The stock filter is static for a given sampler,
+   * surface size, animation parameter and colour, so evaluating its three sine hashes once avoids
+   * turning a portable software post-process into the dominant per-frame cost. */
+  uint32_t *layer_noise_rgb;
+  int       layer_noise_w, layer_noise_h;
+  uint32_t  layer_noise_tpag_ptr, layer_noise_colour;
+  float     layer_noise_animation;
   /* Palette and lookup-texture state declarations. */
   struct GmlShaderPal { int has; uint8_t L[3],M[3],D[3],S[3];
     int lut;                    /* palette-LUT shader: out = palette[(src.r, row)] */
@@ -258,6 +275,10 @@ typedef struct {
 
 int  gml_render_init(GmlRender *r, GmlWin *win);
 void gml_render_free(GmlRender *r);
+/* Convert an instance or layer image_speed multiplier into subimages per step. Modern sprites
+ * serialize their own rate as either frames per second or frames per step; runtime sprites
+ * retain the legacy one-subimage-per-step multiplier. */
+double gml_sprite_animation_delta(GmlRender *r, int sprite, double image_speed, double game_fps);
 /* queue background decodes (worker threads; safe no-ops when disabled or already decoded) */
 void gml_render_prefetch_atlas(GmlRender *r, int idx);
 void gml_render_prefetch_sprite(GmlRender *r, int sprite);
@@ -266,6 +287,38 @@ void gml_render_prefetch_bg(GmlRender *r, int bg);
 void gml_render_warm_sprite(GmlRender *r, int sprite);
 void gml_render_warm_bg(GmlRender *r, int bg);
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double camx, double camy);
+void gml_render_gui_begin(GmlRender *r, int logical_w, int logical_h);
+void gml_render_gui_set_size(GmlRender *r, int logical_w, int logical_h);
+void gml_render_gui_end(GmlRender *r);
+static inline int gml_render_gui_transform_active(const GmlRender *r){
+  return r && r->gui_pass_active && r->target_sp==0 && r->target_id<0;
+}
+static inline void gml_render_gui_map_point(const GmlRender *r, double *x, double *y){
+  if(!gml_render_gui_transform_active(r)) return;
+  if(x) *x *= r->gui_scale_x;
+  if(y) *y *= r->gui_scale_y;
+}
+static inline void gml_render_gui_map_scale(const GmlRender *r, double *xscale, double *yscale){
+  if(!gml_render_gui_transform_active(r)) return;
+  if(xscale) *xscale *= r->gui_scale_x;
+  if(yscale) *yscale *= r->gui_scale_y;
+}
+static inline double gml_render_gui_logical_width(const GmlRender *r){
+  return gml_render_gui_transform_active(r) && r->gui_scale_x>0.0
+       ? (double)r->fbw/r->gui_scale_x : (double)(r?r->fbw:0);
+}
+static inline double gml_render_gui_logical_height(const GmlRender *r){
+  return gml_render_gui_transform_active(r) && r->gui_scale_y>0.0
+       ? (double)r->fbh/r->gui_scale_y : (double)(r?r->fbh:0);
+}
+static inline double gml_render_gui_logical_x(const GmlRender *r, double physical_x){
+  return gml_render_gui_transform_active(r) && r->gui_scale_x>0.0
+       ? physical_x/r->gui_scale_x : physical_x;
+}
+static inline double gml_render_gui_logical_y(const GmlRender *r, double physical_y){
+  return gml_render_gui_transform_active(r) && r->gui_scale_y>0.0
+       ? physical_y/r->gui_scale_y : physical_y;
+}
 void gml_render_set_pending_underlay(GmlRender *r, int x, int y, int w, int h);
 void gml_render_flush_pending_underlay(GmlRender *r);
 void gml_render_set_pending_fill(GmlRender *r, uint32_t color);
@@ -317,10 +370,20 @@ int  gml_d3_is_active(void);
 int  gml_d3_draw_rectangle_2d(GmlRender *r,double x1,double y1,double x2,double y2,
                                uint32_t color,double alpha,int outline);
 int  gml_render_warm_atlas(GmlRender *r, int atlas);
+uint32_t gml_render_named_tpag_ptr(GmlRender *r, const char *name);
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y);
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                                double xs, double ys, uint32_t blend, double alpha);
+/* GMS background-layer sprites use the layer coordinate as the logical cell's top-left (sprite
+ * origins are instance metadata) and tile only on the axes selected by the layer. */
+void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, double x, double y,
+                                      double xs, double ys, uint32_t blend, double alpha,
+                                      int htiled, int vtiled);
 void gml_draw_layer_color_fill(GmlRender *r, uint32_t gmcol, double alpha); /* spriteless GMS2 bg layer */
+/* Stock GMS2 effect-layer filters, evaluated against the current software target in layer order. */
+void gml_render_layer_rgb_noise(GmlRender *r, uint32_t sampler_tpag_ptr,
+                                double intensity, double animation, uint32_t rgb);
+void gml_render_layer_tint(GmlRender *r, uint32_t rgba);
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha);

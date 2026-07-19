@@ -1016,7 +1016,13 @@ static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, 
   if(copy_255) *copy_255=t->fast8_draw_cache_copy_255;
   return cache;
 }
-static inline void blend_argb_src_over_exact(uint32_t *dp, const uint32_t *sp, int run, uint32_t aa,int round_nearest){
+enum { GML_BLEND_STUDIO1=0, GML_BLEND_STUDIO2=1, GML_BLEND_CLASSIC=2 };
+static inline int gml_blend_family(const GmlRender *r){
+  if(r && r->classic) return GML_BLEND_CLASSIC;
+  return r && r->win && r->win->bytecode>=17 ? GML_BLEND_STUDIO2 : GML_BLEND_STUDIO1;
+}
+static inline void blend_argb_src_over_exact(uint32_t *dp, const uint32_t *sp, int run,
+                                             uint32_t aa,int family){
   if(run<=0 || !aa) return;
   if(aa>=255u){ memcpy(dp,sp,(size_t)run*sizeof(uint32_t)); return; }
   uint32_t ia=255u-aa;
@@ -1024,7 +1030,7 @@ static inline void blend_argb_src_over_exact(uint32_t *dp, const uint32_t *sp, i
     uint32_t src=sp[k], dst=dp[k];
     uint32_t sr=(src>>16)&0xFFu, sg=(src>>8)&0xFFu, sb=src&0xFFu;
     uint32_t dr=(dst>>16)&0xFFu, dg=(dst>>8)&0xFFu, db=dst&0xFFu;
-    if(round_nearest){
+    if(family==GML_BLEND_CLASSIC){
       uint32_t rr=(sr*aa+127u)/255u+(dr*ia+127u)/255u;
       uint32_t rg=(sg*aa+127u)/255u+(dg*ia+127u)/255u;
       uint32_t rb=(sb*aa+127u)/255u+(db*ia+127u)/255u;
@@ -1032,6 +1038,12 @@ static inline void blend_argb_src_over_exact(uint32_t *dp, const uint32_t *sp, i
       if(rg>255u) rg=255u;
       if(rb>255u) rb=255u;
       dp[k]=0xFF000000u|(rr<<16)|(rg<<8)|rb;
+    } else if(family==GML_BLEND_STUDIO2) {
+      /* The Studio 2 format uses a UNORM target: the complete source-over sum is rounded to the
+       * nearest representable channel. Classic rounds the terms independently above, while
+       * Studio 1 truncates the combined result below. */
+      dp[k]=0xFF000000u|(((sr*aa+dr*ia+127u)/255u)<<16)|
+            (((sg*aa+dg*ia+127u)/255u)<<8)|((sb*aa+db*ia+127u)/255u);
     } else {
       dp[k]=0xFF000000u|(((sr*aa+dr*ia)/255u)<<16)|
             (((sg*aa+dg*ia)/255u)<<8)|((sb*aa+db*ia)/255u);
@@ -1075,9 +1087,9 @@ static inline void blend_argb_src_over_double_reverse(uint32_t *dp, const uint32
   }
 }
 static inline void blend_argb_src_over_draw_alpha(uint32_t *dp, const uint32_t *sp, int run,
-                                                  uint32_t aa, double alpha, int round_nearest){
+                                                  uint32_t aa, double alpha, int family){
   if(run<=0 || !aa || alpha<=0.0) return;
-  if(round_nearest){
+  if(family==GML_BLEND_CLASSIC){
     uint32_t effective=(uint32_t)(aa*alpha+0.5);
     if(effective>255u) effective=255u;
     uint32_t inverse=255u-effective;
@@ -1095,15 +1107,30 @@ static inline void blend_argb_src_over_draw_alpha(uint32_t *dp, const uint32_t *
     }
     return;
   }
-  double sa=(aa/255.0)*alpha, ia=1.0-sa;
+  if(family==GML_BLEND_STUDIO1){
+    double sa=(aa/255.0)*alpha, ia=1.0-sa;
+    for(int k=0; k<run; k++){
+      uint32_t src=sp[k], dst=dp[k];
+      int sr=(src>>16)&0xFF, sg=(src>>8)&0xFF, sb=src&0xFF;
+      int dr=(dst>>16)&0xFF, dg=(dst>>8)&0xFF, db=dst&0xFF;
+      int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
+      int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
+      int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
+      dp[k]=0xFF000000u|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
+    }
+    return;
+  }
+  uint32_t effective=(uint32_t)(aa*alpha+0.5);
+  if(effective>255u) effective=255u;
+  uint32_t inverse=255u-effective;
   for(int k=0; k<run; k++){
     uint32_t src=sp[k], dst=dp[k];
-    int sr=(src>>16)&0xFF, sg=(src>>8)&0xFF, sb=src&0xFF;
-    int dr=(dst>>16)&0xFF, dg=(dst>>8)&0xFF, db=dst&0xFF;
-    int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
-    int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
-    int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
-    dp[k]=0xFF000000u|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
+    uint32_t sr=(src>>16)&0xFFu, sg=(src>>8)&0xFFu, sb=src&0xFFu;
+    uint32_t dr=(dst>>16)&0xFFu, dg=(dst>>8)&0xFFu, db=dst&0xFFu;
+    uint32_t rr=(sr*effective+dr*inverse+127u)/255u;
+    uint32_t rg=(sg*effective+dg*inverse+127u)/255u;
+    uint32_t rb=(sb*effective+db*inverse+127u)/255u;
+    dp[k]=0xFF000000u|(rr<<16)|(rg<<8)|rb;
   }
 }
 static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
@@ -1131,7 +1158,7 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
       int n=sx1-sx0;
       if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
       else if(ar->alpha==255u) memcpy(dp,sp,(size_t)n*sizeof(uint32_t));
-      else blend_argb_src_over_exact(dp,sp,n,(uint32_t)ar->alpha,r->classic);
+      else blend_argb_src_over_exact(dp,sp,n,(uint32_t)ar->alpha,gml_blend_family(r));
     }
     return 1;
   }
@@ -1158,7 +1185,7 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
       uint32_t aa=sp[i]>>24;
       int run=1;
       while(i+run<n && (sp[i+run]>>24)==aa) run++;
-      blend_argb_src_over_exact(dp+i,sp+i,run,aa,r->classic);
+      blend_argb_src_over_exact(dp+i,sp+i,run,aa,gml_blend_family(r));
       i+=run;
     }
   }
@@ -1188,7 +1215,7 @@ static int blit_tpag_scale1_white_draw_alpha(GmlRender *r, GmlTpag *t, GmlAtlas 
     const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
     int n=sx1-sx0;
     if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
-    else blend_argb_src_over_draw_alpha(dp,sp,n,(uint32_t)ar->alpha,alpha,r->classic);
+    else blend_argb_src_over_draw_alpha(dp,sp,n,(uint32_t)ar->alpha,alpha,gml_blend_family(r));
   }
   return 1;
 }
@@ -1316,6 +1343,43 @@ static int tpag_index_for_ptr(GmlRender *r, uint32_t ptr){
   for(int i=0;i<r->n_tpag;i++) if(g_tpag_ptr[i]==ptr) return i;
   return -1;
 }
+uint32_t gml_render_named_tpag_ptr(GmlRender *r, const char *name){
+  if(!r || !name || !*name || !g_tpag_ptr) return 0;
+  for(int i=0;i<r->n_spr;i++){
+    GmlSprite *s=&r->spr[i];
+    if(!s->name || strcmp(s->name,name) || !s->frame || s->n_frames<=0) continue;
+    int ti=s->frame[0];
+    return ti>=0 && ti<r->n_tpag ? g_tpag_ptr[ti] : 0;
+  }
+  return 0;
+}
+
+static int effect_wrap_coord(int value, int size){
+  if(size<=0) return 0;
+  value%=size;
+  return value<0?value+size:value;
+}
+static uint8_t effect_unorm8(float value){
+  if(value<=0.0f) return 0;
+  if(value>=255.0f) return 255;
+  return (uint8_t)floorf(value+0.5f);
+}
+void gml_render_layer_tint(GmlRender *r, uint32_t rgba){
+  if(!r || !r->fb || r->fbw<=0 || r->fbh<=0 || rgba==0xFFFFFFFFu) return;
+  gml_render_prepare_draw(r);
+  uint32_t ta=(rgba>>24)&255, tr=(rgba>>16)&255, tg=(rgba>>8)&255, tb=rgba&255;
+  size_t count=(size_t)r->fbw*(size_t)r->fbh;
+  for(size_t i=0;i<count;i++){
+    uint32_t p=r->fb[i];
+    uint32_t a=((p>>24)&255)*ta/255u;
+    uint32_t rr=((p>>16)&255)*tr/255u;
+    uint32_t rg=((p>>8)&255)*tg/255u;
+    uint32_t rb=(p&255)*tb/255u;
+    r->fb[i]=(a<<24)|(rr<<16)|(rg<<8)|rb;
+  }
+  if(ta<255u){ r->fb_opaque_known=0; r->fb_all_opaque=0; }
+  r->fb_all_transparent=0;
+}
 
 /* ---- SPRT ---- */
 static void parse_sprt(GmlRender *r){
@@ -1327,6 +1391,7 @@ static void parse_sprt(GmlRender *r){
     uint32_t p=u32(d,c->off+4+i*4);
     GmlSprite *s=&r->spr[i];
     s->name=gml_str_by_ptr(r->win,u32(d,p));
+    s->playback_speed=1.0f; s->playback_speed_type=1; s->playback_speed_valid=0;
     s->w=(int)u32(d,p+4); s->h=(int)u32(d,p+8);
     s->ml=(int)u32(d,p+12); s->mr=(int)u32(d,p+16); s->mb=(int)u32(d,p+20); s->mt=(int)u32(d,p+24);
     s->collision_kind=0; s->collision_tolerance=63; /* preserve the old alpha>=64 fallback */
@@ -1339,6 +1404,13 @@ static void parse_sprt(GmlRender *r){
     if(u32(d,p+56)==0xFFFFFFFFu){
       uint32_t sver=u32(d,p+60), stype=u32(d,p+64);
       if(stype!=0){ s->n_frames=0; s->frame=calloc(1,sizeof(int)); continue; }  /* SWF/Spine: no simple list */
+      float playback; memcpy(&playback,d+p+68,sizeof playback);
+      uint32_t playback_type=u32(d,p+72);
+      if(isfinite(playback) && playback>=0.0f && playback_type<=1){
+        s->playback_speed=playback;
+        s->playback_speed_type=(int)playback_type;
+        s->playback_speed_valid=1;
+      }
       uint32_t fl=76;                         /* after PlaybackSpeed(+68)+PlaybackSpeedType(+72) */
       if(sver>=2) fl+=4;                       /* SequenceOffset */
       if(sver>=3){                             /* NineSliceOffset */
@@ -1373,6 +1445,17 @@ static void parse_sprt(GmlRender *r){
       s->mask_count=(int)mc; s->mask_rowb=(s->w+7)/8; s->mask=d+maskoff+4;
     }
   }
+}
+double gml_sprite_animation_delta(GmlRender *r, int sprite, double image_speed, double game_fps){
+  if(!r || sprite<0 || sprite>=r->n_spr) return image_speed;
+  GmlSprite *s=&r->spr[sprite];
+  if(!s->playback_speed_valid) return image_speed;
+  double delta=image_speed*(double)s->playback_speed;
+  if(s->playback_speed_type==0){
+    if(!(game_fps>0.0) || !isfinite(game_fps)) game_fps=60.0;
+    delta/=game_fps;
+  }
+  return delta;
 }
 /* whether sprite's COLLISION MASK is solid at sprite-local (lx,ly). Asset sprites without a
  * serialized 1bpp mask use their bounding box; runtime sprites can still use alpha precision
@@ -2359,6 +2442,8 @@ void gml_draw_classic_game_information(GmlRender *r,uint32_t *framebuffer,
 
 void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str,
                                double xs, double ys, double rot, uint32_t blend, double alpha){
+  gml_render_gui_map_point(r,&x,&y);
+  gml_render_gui_map_scale(r,&xs,&ys);
   GmlFont *f=active_font(r);
   if(!f||!str) return;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;

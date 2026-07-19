@@ -772,10 +772,12 @@ static int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlV
   if(!strcmp(nm,"layer_background_stretch")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->stretch=(int)N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_background_xscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->xs=N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_background_yscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->ys=N(a,n,1); *out=vreal(0); return 1; }
-  if(!strcmp(nm,"layer_background_index")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->sx=(int)N(a,n,1); *out=vreal(0); return 1; }
-  if(!strcmp(nm,"layer_background_speed")){ *out=vreal(0); return 1; }
-  if(!strcmp(nm,"layer_background_get_sprite")||!strcmp(nm,"layer_background_get_index")){
+  if(!strcmp(nm,"layer_background_index")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->image_index=N(a,n,1); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"layer_background_speed")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->image_speed=N(a,n,1); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"layer_background_get_sprite")){
     GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); *out=vreal(e?e->sprite:-1); return 1; }
+  if(!strcmp(nm,"layer_background_get_index")){
+    GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); *out=vreal(e?e->image_index:0); return 1; }
   if(!strcmp(nm,"layer_background_get_visible")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); *out=vreal(e?e->visible:0); return 1; }
   if(!strcmp(nm,"layer_background_get_alpha")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); *out=vreal(e?e->alpha:1); return 1; }
   if(!strcmp(nm,"layer_background_get_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); *out=vreal(e?(double)e->blend:0xFFFFFF); return 1; }
@@ -784,7 +786,7 @@ static int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlV
   if(!strcmp(nm,"layer_background_get_stretch")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); *out=vreal(e?e->stretch:0); return 1; }
   if(!strcmp(nm,"layer_background_get_xscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); *out=vreal(e?e->xs:1); return 1; }
   if(!strcmp(nm,"layer_background_get_yscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); *out=vreal(e?e->ys:1); return 1; }
-  if(!strcmp(nm,"layer_background_get_speed")){ *out=vreal(0); return 1; }
+  if(!strcmp(nm,"layer_background_get_speed")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); *out=vreal(e?e->image_speed:0); return 1; }
   return 0;
 }
 static int path_readable(const char *p){
@@ -793,17 +795,85 @@ static int path_readable(const char *p){
   fclose(f);
   return 1;
 }
-static char *resolve_content_path(GmlVM *vm, const char *p){
+static int path_absolute(const char *p){
+  return p && (p[0]=='/' || (p[0] && p[1]==':'));
+}
+static char *path_under(const char *dir,const char *p){
+  if(!dir || !dir[0]) return strdup(p?p:"");
+  size_t n=strlen(dir)+1+strlen(p?p:"")+1;
+  char *out=malloc(n);
+  if(!out) return strdup(p?p:"");
+  snprintf(out,n,"%s/%s",dir,p?p:"");
+  return out;
+}
+static int path_present(const char *p){
+  struct stat st;
+  return p && stat(p,&st)==0;
+}
+/* working_directory exposes the installed bundle while the file API overlays the writable save
+ * area. An absolute path formed from working_directory therefore retains the overlay on reads and
+ * redirects writes. Recover that logical relative path at the file-API boundary instead of
+ * exposing the physical save directory as working_directory, which would hide bundled defaults. */
+static const char *path_relative_to_root(const char *path,const char *root){
+  if(!path || !root || !*root) return NULL;
+  size_t n=strlen(root);
+  while(n>0 && (root[n-1]=='/' || root[n-1]=='\\')) n--;
+  if(!n || strncmp(path,root,n)) return NULL;
+  if(path[n] && path[n]!='/' && path[n]!='\\') return NULL;
+  const char *relative=path+n;
+  while(*relative=='/' || *relative=='\\') relative++;
+  return relative;
+}
+static char *resolve_read_path(GmlVM *vm, const char *p){
   if(!p || !*p) return strdup("");
-  /* Resolve relative paths beneath content_dir when available; otherwise use the current directory. */
-  if(p[0]=='/' || (p[0] && p[1]==':')) return strdup(p);
-  if(!(vm && vm->win && vm->win->content_dir[0]) && path_readable(p)) return strdup(p);
-  if(vm && vm->win && vm->win->content_dir[0]){
-    size_t n=strlen(vm->win->content_dir)+1+strlen(p)+1;
-    char *out=malloc(n);
-    if(!out) return strdup(p);
-    snprintf(out,n,"%s/%s",vm->win->content_dir,p);
-    return out;
+  if(path_absolute(p)){
+    if(vm && vm->win){
+      const char *relative=path_relative_to_root(p,vm->win->content_dir);
+      if(relative && vm->win->save_dir[0]){
+        char *save=path_under(vm->win->save_dir,relative);
+        if(path_present(save)) return save;
+        free(save);
+        return strdup(p);
+      }
+      relative=path_relative_to_root(p,vm->win->save_dir);
+      if(relative){
+        if(path_present(p)) return strdup(p);
+        if(vm->win->content_dir[0]){
+          char *content=path_under(vm->win->content_dir,relative);
+          if(path_present(content)) return content;
+          free(content);
+        }
+      }
+    }
+    return strdup(p);
+  }
+  /* Relative reads use an overlay: a writable copy wins, then the installed assets. Never consult
+   * the frontend CWD while either sandbox is known; stale configuration there can redirect
+   * startup. */
+  if(vm && vm->win){
+    if(vm->win->save_dir[0]){
+      char *save=path_under(vm->win->save_dir,p);
+      if(path_present(save)) return save;
+      free(save);
+    }
+    if(vm->win->content_dir[0]) return path_under(vm->win->content_dir,p);
+    if(vm->win->save_dir[0]) return path_under(vm->win->save_dir,p);
+  }
+  if(path_readable(p)) return strdup(p);
+  return strdup(p);
+}
+static char *resolve_write_path(GmlVM *vm, const char *p){
+  if(!p || !*p) return strdup("");
+  if(path_absolute(p)){
+    if(vm && vm->win && vm->win->save_dir[0]){
+      const char *relative=path_relative_to_root(p,vm->win->content_dir);
+      if(relative) return path_under(vm->win->save_dir,relative);
+    }
+    return strdup(p);
+  }
+  if(vm && vm->win){
+    if(vm->win->save_dir[0]) return path_under(vm->win->save_dir,p);
+    if(vm->win->content_dir[0]) return path_under(vm->win->content_dir,p);
   }
   return strdup(p);
 }
@@ -1979,8 +2049,17 @@ static char *trim_ws(char *s){
   while(e>s && isspace((unsigned char)e[-1])) *--e=0;
   return s;
 }
+static char *ini_unquote_value(char *s){
+  s=trim_ws(s);
+  size_t n=strlen(s);
+  if(n>=2 && s[0]=='"' && s[n-1]=='"'){
+    s[n-1]=0;
+    s++;
+  }
+  return s;
+}
 static void ini_add_kv(GmlVM *vm, const char *sec, const char *key, const char *val){
-  if(!sec || !key || !*key || vm->ini_n>=256) return;
+  if(!sec || !key || !*key || vm->ini_n>=GML_INI_MAX) return;
   vm->ini_kv[vm->ini_n]=(typeof(vm->ini_kv[0])){
     .section=strdup(sec),
     .key=strdup(key),
@@ -2014,7 +2093,7 @@ static void ini_parse_text(GmlVM *vm, const char *text){
     char *eq=strchr(line,'=');
     if(!eq || !sec) continue;
     *eq=0;
-    ini_add_kv(vm,sec,trim_ws(line),trim_ws(eq+1));
+    ini_add_kv(vm,sec,trim_ws(line),ini_unquote_value(eq+1));
   }
   free(sec);
   free(copy);
@@ -2022,8 +2101,10 @@ static void ini_parse_text(GmlVM *vm, const char *text){
 static GmlVal builtin_ini_open_file(GmlVM *vm, GmlVal *a, int n){
   ini_reset(vm);
   vm->ini_open=1;
-  char *fn=resolve_content_path(vm,S(a,n,0));
-  snprintf(vm->ini_path,sizeof vm->ini_path,"%s",fn);
+  char *fn=resolve_read_path(vm,S(a,n,0));
+  char *write_fn=resolve_write_path(vm,S(a,n,0));
+  snprintf(vm->ini_path,sizeof vm->ini_path,"%s",write_fn?write_fn:"");
+  free(write_fn);
   FILE *f=fopen(fn,"r");
   if(!f){ free(fn); return vreal(1); }
   char line[512], *sec=NULL;
@@ -2037,7 +2118,7 @@ static GmlVal builtin_ini_open_file(GmlVM *vm, GmlVal *a, int n){
     char *eq=strchr(t,'=');
     if(!eq) continue;
     *eq=0;
-    ini_add_kv(vm,sec,trim_ws(t),trim_ws(eq+1));
+    ini_add_kv(vm,sec,trim_ws(t),ini_unquote_value(eq+1));
   }
   free(sec);
   fclose(f);
@@ -2045,7 +2126,7 @@ static GmlVal builtin_ini_open_file(GmlVM *vm, GmlVal *a, int n){
   return vreal(1);
 }
 static GmlVal builtin_file_text_open_read(GmlVM *vm, GmlVal *a, int n){
-  char *path=resolve_content_path(vm,S(a,n,0));
+  char *path=resolve_read_path(vm,S(a,n,0));
   int id=vm_file_open(vm,path,"r");
   free(path);
   return vreal(id);
@@ -4524,6 +4605,17 @@ static int script_code_of(GmlVM *vm, int sid){
   uint32_t p=u32(d,c->off+4+sid*4);
   return (int)u32(d,p+4);  /* codeId */
 }
+static int script_index_by_name(GmlVM *vm, const char *name){
+  const GmlChunk *c=(vm&&vm->win)?gml_chunk(vm->win,"SCPT"):NULL;
+  if(!c || !name || !*name) return -1;
+  const uint8_t *d=vm->win->data; uint32_t n=u32(d,c->off);
+  for(uint32_t i=0;i<n;i++){
+    uint32_t p=u32(d,c->off+4+i*4);
+    const char *candidate=gml_str_by_ptr(vm->win,u32(d,p));
+    if(candidate && !strcmp(candidate,name)) return (int)i;
+  }
+  return -1;
+}
 static int script_ref_code_of(GmlVM *vm, GmlVal v){
   if(v.t!=V_REAL) return -1;
   int iv=(int)v.d;
@@ -5456,6 +5548,23 @@ static void hotprof_add(const char *name, double ms){
   g_hotprof_n=0;
 }
 
+static double draw_gui_x(GmlRender *render,double value){
+  gml_render_gui_map_point(render,&value,NULL);
+  return value;
+}
+static double draw_gui_y(GmlRender *render,double value){
+  gml_render_gui_map_point(render,NULL,&value);
+  return value;
+}
+static double draw_gui_w(GmlRender *render,double value){
+  gml_render_gui_map_scale(render,&value,NULL);
+  return value;
+}
+static double draw_gui_h(GmlRender *render,double value){
+  gml_render_gui_map_scale(render,NULL,&value);
+  return value;
+}
+
 static GmlD3Vertex d3_2d_vertex(double x,double y,uint32_t color,double alpha){
   GmlD3Vertex vertex={0}; vertex.x=x; vertex.y=y; vertex.z=g_d3.draw_depth;
   vertex.r=color&255; vertex.g=(color>>8)&255; vertex.b=(color>>16)&255; vertex.alpha=alpha;
@@ -5571,7 +5680,9 @@ static void d3_flush_2d_primitive(GmlRender *R){
   gml_render_maybe_prepare_draw(R);
   GmlD3Vertex vertex[GML_PRIM_MAX];
   for(int i=0;i<g_prim_n;i++){
-    vertex[i]=d3_2d_vertex(g_prim_x[i],g_prim_y[i],g_prim_c[i],g_prim_a[i]);
+    double x=g_prim_x[i],y=g_prim_y[i];
+    gml_render_gui_map_point(R,&x,&y);
+    vertex[i]=d3_2d_vertex(x,y,g_prim_c[i],g_prim_a[i]);
     vertex[i].u=g_prim_u[i]; vertex[i].v=g_prim_v[i];
   }
   if(g_prim_kind==1){ for(int i=0;i<g_prim_n;i++) d3_emit_point(R,vertex[i],&texture); }
@@ -5603,34 +5714,43 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
   double alpha=R->alpha; gml_render_maybe_prepare_draw(R);
   if(!strcmp(name,"draw_point")||!strcmp(name,"draw_point_color")||!strcmp(name,"draw_point_colour")){
     uint32_t color=!strcmp(name,"draw_point")?R->color:(uint32_t)N(args,count,2);
-    GmlD3Texture texture={0}; d3_emit_point(R,d3_2d_vertex(N(args,count,0),N(args,count,1),color,alpha),&texture); return 1;
+    GmlD3Texture texture={0}; d3_emit_point(R,d3_2d_vertex(draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),color,alpha),&texture); return 1;
   }
   if(!strcmp(name,"draw_line")||!strcmp(name,"draw_line_color")||!strcmp(name,"draw_line_colour")||
      !strcmp(name,"draw_line_width")||!strcmp(name,"draw_line_width_color")||!strcmp(name,"draw_line_width_colour")){
     int colored=strstr(name,"color")||strstr(name,"colour"),wide=strstr(name,"width")!=NULL;
     int color_index=wide?5:4; uint32_t c1=colored?(uint32_t)N(args,count,color_index):R->color;
     uint32_t c2=colored?(uint32_t)N(args,count,color_index+1):c1;
-    d3_2d_line(R,N(args,count,0),N(args,count,1),N(args,count,2),N(args,count,3),c1,c2,alpha,wide?N(args,count,4):1); return 1;
+    d3_2d_line(R,draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),
+      draw_gui_x(R,N(args,count,2)),draw_gui_y(R,N(args,count,3)),c1,c2,alpha,
+      wide?draw_gui_w(R,N(args,count,4)):1); return 1;
   }
   if(!strcmp(name,"draw_rectangle")||!strcmp(name,"draw_rectangle_color")||!strcmp(name,"draw_rectangle_colour")){
     int plain=!strcmp(name,"draw_rectangle"); uint32_t colors[4];
     for(int i=0;i<4;i++) colors[i]=plain?R->color:(uint32_t)N(args,count,4+i);
-    d3_2d_rectangle(R,N(args,count,0),N(args,count,1),N(args,count,2),N(args,count,3),colors,alpha,(int)N(args,count,plain?4:8)); return 1;
+    d3_2d_rectangle(R,draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),
+      draw_gui_x(R,N(args,count,2)),draw_gui_y(R,N(args,count,3)),colors,alpha,
+      (int)N(args,count,plain?4:8)); return 1;
   }
   if(!strcmp(name,"draw_triangle")||!strcmp(name,"draw_triangle_color")||!strcmp(name,"draw_triangle_colour")){
     int plain=!strcmp(name,"draw_triangle"); uint32_t c1=plain?R->color:(uint32_t)N(args,count,6);
     uint32_t c2=plain?c1:(uint32_t)N(args,count,7),c3=plain?c1:(uint32_t)N(args,count,8);
-    d3_2d_triangle(R,d3_2d_vertex(N(args,count,0),N(args,count,1),c1,alpha),
-      d3_2d_vertex(N(args,count,2),N(args,count,3),c2,alpha),d3_2d_vertex(N(args,count,4),N(args,count,5),c3,alpha),
+    d3_2d_triangle(R,d3_2d_vertex(draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),c1,alpha),
+      d3_2d_vertex(draw_gui_x(R,N(args,count,2)),draw_gui_y(R,N(args,count,3)),c2,alpha),
+      d3_2d_vertex(draw_gui_x(R,N(args,count,4)),draw_gui_y(R,N(args,count,5)),c3,alpha),
       (int)N(args,count,plain?6:9)); return 1;
   }
   if(!strcmp(name,"draw_circle")||!strcmp(name,"draw_circle_color")||!strcmp(name,"draw_circle_colour")){
     int plain=!strcmp(name,"draw_circle"); uint32_t inner=plain?R->color:(uint32_t)N(args,count,3);
     uint32_t outer=plain?inner:(uint32_t)N(args,count,4);
-    d3_2d_ellipse(R,N(args,count,0),N(args,count,1),fabs(N(args,count,2)),fabs(N(args,count,2)),inner,outer,alpha,(int)N(args,count,plain?3:5)); return 1;
+    d3_2d_ellipse(R,draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),
+      fabs(draw_gui_w(R,N(args,count,2))),fabs(draw_gui_h(R,N(args,count,2))),
+      inner,outer,alpha,(int)N(args,count,plain?3:5)); return 1;
   }
   if(!strcmp(name,"draw_ellipse")||!strcmp(name,"draw_ellipse_color")||!strcmp(name,"draw_ellipse_colour")){
-    int plain=!strcmp(name,"draw_ellipse"); double x1=N(args,count,0),y1=N(args,count,1),x2=N(args,count,2),y2=N(args,count,3);
+    int plain=!strcmp(name,"draw_ellipse");
+    double x1=draw_gui_x(R,N(args,count,0)),y1=draw_gui_y(R,N(args,count,1));
+    double x2=draw_gui_x(R,N(args,count,2)),y2=draw_gui_y(R,N(args,count,3));
     uint32_t inner=plain?R->color:(uint32_t)N(args,count,4),outer=plain?inner:(uint32_t)N(args,count,5);
     d3_2d_ellipse(R,(x1+x2)*.5,(y1+y2)*.5,fabs(x2-x1)*.5,fabs(y2-y1)*.5,inner,outer,alpha,(int)N(args,count,plain?4:6)); return 1;
   }
@@ -5639,11 +5759,13 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
     int plain=!strcmp(name,"draw_roundrect"),extended=strstr(name,"_ext")!=NULL;
     uint32_t c1=plain?R->color:(uint32_t)N(args,count,extended?6:4);
     uint32_t c2=plain?c1:(uint32_t)N(args,count,extended?7:5),colors[4]={c1,c1,c2,c2};
-    d3_2d_rectangle(R,N(args,count,0),N(args,count,1),N(args,count,2),N(args,count,3),colors,alpha,
+    d3_2d_rectangle(R,draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),
+                    draw_gui_x(R,N(args,count,2)),draw_gui_y(R,N(args,count,3)),colors,alpha,
                     (int)N(args,count,plain?4:(extended?8:6))); return 1;
   }
   if(!strcmp(name,"draw_healthbar")){
-    double x1=N(args,count,0),y1=N(args,count,1),x2=N(args,count,2),y2=N(args,count,3);
+    double x1=draw_gui_x(R,N(args,count,0)),y1=draw_gui_y(R,N(args,count,1));
+    double x2=draw_gui_x(R,N(args,count,2)),y2=draw_gui_y(R,N(args,count,3));
     double amount=N(args,count,4); if(amount<0) amount=0; if(amount>100) amount=100;
     uint32_t back=(uint32_t)N(args,count,5),fill=(uint32_t)N(args,count,7),solid[4];
     if((int)N(args,count,9)){ for(int i=0;i<4;i++) solid[i]=back; d3_2d_rectangle(R,x1,y1,x2,y2,solid,alpha,0); }
@@ -5660,8 +5782,14 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
     int path=(int)N(args,count,0),absolute=(int)N(args,count,3);
     if(path>=0&&path<vm->n_paths&&vm->paths[path].n>1&&vm->paths[path].pts){
       GmlPath *p=&vm->paths[path]; double ox=absolute?0:N(args,count,1),oy=absolute?0:N(args,count,2);
-      for(int i=1;i<p->n;i++) d3_2d_line(R,p->pts[i-1].x+ox,p->pts[i-1].y+oy,p->pts[i].x+ox,p->pts[i].y+oy,R->color,R->color,alpha,1);
-      if(p->closed) d3_2d_line(R,p->pts[p->n-1].x+ox,p->pts[p->n-1].y+oy,p->pts[0].x+ox,p->pts[0].y+oy,R->color,R->color,alpha,1);
+      for(int i=1;i<p->n;i++) d3_2d_line(R,
+        draw_gui_x(R,p->pts[i-1].x+ox),draw_gui_y(R,p->pts[i-1].y+oy),
+        draw_gui_x(R,p->pts[i].x+ox),draw_gui_y(R,p->pts[i].y+oy),
+        R->color,R->color,alpha,1);
+      if(p->closed) d3_2d_line(R,
+        draw_gui_x(R,p->pts[p->n-1].x+ox),draw_gui_y(R,p->pts[p->n-1].y+oy),
+        draw_gui_x(R,p->pts[0].x+ox),draw_gui_y(R,p->pts[0].y+oy),
+        R->color,R->color,alpha,1);
     }
     return 1;
   }
@@ -6026,7 +6154,9 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
   if(!strcmp(nm,"draw_sprite_stretched_ext")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_surface")){ if(R){ int s=(int)N(a,n,0);
       if(s>0 && s==(int)gml_global_arr(vm,"view_surface_id",0) && N(a,n,1)==0 && N(a,n,2)==0)
-        gml_draw_surface_stretched(R,s,R->cam_x,R->cam_y,R->fbw,R->fbh,0xFFFFFF,R->alpha);
+        gml_draw_surface_stretched(R,s,
+          gml_render_gui_logical_x(R,R->cam_x),gml_render_gui_logical_y(R,R->cam_y),
+          gml_render_gui_logical_width(R),gml_render_gui_logical_height(R),0xFFFFFF,R->alpha);
       else
         gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),gml_surface_width(R,s),gml_surface_height(R,s),0xFFFFFF,R->alpha); }
     *out=vreal(0); return 1; }
@@ -6036,8 +6166,8 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
   if(!strcmp(nm,"draw_surface_part_ext")){ if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),(uint32_t)N(a,n,9),N(a,n,10)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_rectangle")||!strcmp(nm,"draw_rectangle_colour")||!strcmp(nm,"draw_rectangle_color")){
     if(R){ int plain=!strcmp(nm,"draw_rectangle"); int outline=(int)N(a,n,plain?4:8);
-      int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y);
-      int x2=(int)ceil(N(a,n,2)-R->cam_x), y2=(int)ceil(N(a,n,3)-R->cam_y);
+      int x1=(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x), y1=(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y);
+      int x2=(int)ceil(draw_gui_x(R,N(a,n,2))-R->cam_x), y2=(int)ceil(draw_gui_y(R,N(a,n,3))-R->cam_y);
       if(plain) draw_rect_prim(R,x1,y1,x2,y2,R->color,outline);
       else draw_rect_colour_prim(R,x1,y1,x2,y2,(uint32_t)N(a,n,4),(uint32_t)N(a,n,5),(uint32_t)N(a,n,6),(uint32_t)N(a,n,7),outline); }
     *out=vreal(0); return 1; }
@@ -6603,7 +6733,9 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
     case BID_DRAW_SURFACE:
       if(R){ int s=(int)N(a,n,0);
         if(s>0 && s==(int)gml_global_arr(vm,"view_surface_id",0) && N(a,n,1)==0 && N(a,n,2)==0)
-          gml_draw_surface_stretched(R,s,R->cam_x,R->cam_y,R->fbw,R->fbh,0xFFFFFF,R->alpha);
+          gml_draw_surface_stretched(R,s,
+            gml_render_gui_logical_x(R,R->cam_x),gml_render_gui_logical_y(R,R->cam_y),
+            gml_render_gui_logical_width(R),gml_render_gui_logical_height(R),0xFFFFFF,R->alpha);
         else
           gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),gml_surface_width(R,s),gml_surface_height(R,s),0xFFFFFF,R->alpha);
       }
@@ -6624,15 +6756,15 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
     case BID_DRAW_RECTANGLE_COLOR:
     case BID_DRAW_RECTANGLE_COLOUR:
       if(R){ int outline=(int)N(a,n,8);
-        int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y);
-        int x2=(int)ceil(N(a,n,2)-R->cam_x), y2=(int)ceil(N(a,n,3)-R->cam_y);
+        int x1=(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x), y1=(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y);
+        int x2=(int)ceil(draw_gui_x(R,N(a,n,2))-R->cam_x), y2=(int)ceil(draw_gui_y(R,N(a,n,3))-R->cam_y);
         draw_rect_colour_prim(R,x1,y1,x2,y2,(uint32_t)N(a,n,4),(uint32_t)N(a,n,5),(uint32_t)N(a,n,6),(uint32_t)N(a,n,7),outline);
       }
       return vreal(0);
     case BID_DRAW_RECTANGLE:
       if(R){
-        int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y);
-        int x2=(int)ceil(N(a,n,2)-R->cam_x), y2=(int)ceil(N(a,n,3)-R->cam_y);
+        int x1=(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x), y1=(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y);
+        int x2=(int)ceil(draw_gui_x(R,N(a,n,2))-R->cam_x), y2=(int)ceil(draw_gui_y(R,N(a,n,3))-R->cam_y);
         draw_rect_prim(R,x1,y1,x2,y2,R->color,(int)N(a,n,4));
       }
       return vreal(0);
@@ -7688,7 +7820,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0);
   }
   if(!strcmp(nm,"ini_write_real")||!strcmp(nm,"FS_ini_write_real")){
-    if(!vm->ini_open||vm->ini_n>=256) return vreal(0);
+    if(!vm->ini_open||vm->ini_n>=GML_INI_MAX) return vreal(0);
     const char *sec=S(a,n,0), *key=S(a,n,1); double val=N(a,n,2);
     /* replace existing key under the same section, or append */
     for(int i=0;i<vm->ini_n;i++)
@@ -7698,7 +7830,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0);
   }
   if(!strcmp(nm,"ini_write_string")||!strcmp(nm,"FS_ini_write_string")){
-    if(!vm->ini_open||vm->ini_n>=256) return vreal(0);
+    if(!vm->ini_open||vm->ini_n>=GML_INI_MAX) return vreal(0);
     const char *sec=S(a,n,0), *key=S(a,n,1), *val=S(a,n,2);
     for(int i=0;i<vm->ini_n;i++)
       if(!strcmp(vm->ini_kv[i].section,sec) && !strcmp(vm->ini_kv[i].key,key)){
@@ -8338,6 +8470,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     double value=N(a,n,0);
     if(vm->win && vm->win->classic_version) value=nearbyint(value);
     if(s && idx>=0 && idx<GML_ALARMS) s->alarm[idx]=value; return vreal(0); }
+  /* Studio 2's accessor uses index,value order, unlike the legacy D&D action above. */
+  if(!strcmp(nm,"alarm_set")){ GmlInstance *s=vm->cur_self; int idx=(int)N(a,n,0);
+    double value=N(a,n,1);
+    if(vm->win && vm->win->classic_version) value=nearbyint(value);
+    if(s && idx>=0 && idx<GML_ALARMS) s->alarm[idx]=value; return vreal(0); }
   if(!strcmp(nm,"alarm_get")){ GmlInstance *s=vm->cur_self; int idx=(int)N(a,n,0);
     return vreal(s && idx>=0 && idx<GML_ALARMS ? s->alarm[idx] : -1); }
   /* action_bounce(advanced,against): D&D Bounce. against 0=solid, 1=all. */
@@ -8534,7 +8671,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
        * compat layer draws its port-sized view surface at (0,0) expecting it to cover the window.
        * Our GUI target is the native view canvas, so fit it to the target instead of clipping. */
       if(s>0 && s==(int)gml_global_arr(vm,"view_surface_id",0) && N(a,n,1)==0 && N(a,n,2)==0)
-        gml_draw_surface_stretched(R,s,R->cam_x,R->cam_y,R->fbw,R->fbh,0xFFFFFF,R->alpha);
+        gml_draw_surface_stretched(R,s,
+          gml_render_gui_logical_x(R,R->cam_x),gml_render_gui_logical_y(R,R->cam_y),
+          gml_render_gui_logical_width(R),gml_render_gui_logical_height(R),0xFFFFFF,R->alpha);
       else
         gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),gml_surface_width(R,s),gml_surface_height(R,s),0xFFFFFF,R->alpha); } return vreal(0); }
     if(!strcmp(nm,"draw_surface_ext")){ if(R) gml_draw_surface_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); return vreal(0); }
@@ -8553,23 +8692,28 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"draw_background_part_ext")){ if(R) gml_draw_background_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),(uint32_t)N(a,n,9),N(a,n,10)); return vreal(0); }
     if(!strcmp(nm,"draw_rectangle")||!strcmp(nm,"draw_rectangle_colour")||!strcmp(nm,"draw_rectangle_color")){
       if(R){ int plain=!strcmp(nm,"draw_rectangle"); int outline=(int)N(a,n,plain?4:8);
-        int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y);
-        int x2=(int)ceil(N(a,n,2)-R->cam_x), y2=(int)ceil(N(a,n,3)-R->cam_y);
+        int x1=(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x);
+        int y1=(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y);
+        int x2=(int)ceil(draw_gui_x(R,N(a,n,2))-R->cam_x);
+        int y2=(int)ceil(draw_gui_y(R,N(a,n,3))-R->cam_y);
         if(plain) draw_rect_prim(R,x1,y1,x2,y2,R->color,outline);
         else draw_rect_colour_prim(R,x1,y1,x2,y2,(uint32_t)N(a,n,4),(uint32_t)N(a,n,5),(uint32_t)N(a,n,6),(uint32_t)N(a,n,7),outline); }
       return vreal(0); }
-    if(!strcmp(nm,"draw_point")){ if(R){ gml_render_maybe_prepare_draw(R); draw_px(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),R->color); } return vreal(0); }
-    if(!strcmp(nm,"draw_point_color")||!strcmp(nm,"draw_point_colour")){ if(R){ gml_render_maybe_prepare_draw(R); draw_px(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(uint32_t)N(a,n,2)); } return vreal(0); }
+    if(!strcmp(nm,"draw_point")){ if(R){ gml_render_maybe_prepare_draw(R); draw_px(R,(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x),(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y),R->color); } return vreal(0); }
+    if(!strcmp(nm,"draw_point_color")||!strcmp(nm,"draw_point_colour")){ if(R){ gml_render_maybe_prepare_draw(R); draw_px(R,(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x),(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y),(uint32_t)N(a,n,2)); } return vreal(0); }
     if(!strcmp(nm,"draw_line")||!strcmp(nm,"draw_line_color")||!strcmp(nm,"draw_line_colour")||!strcmp(nm,"draw_line_width")||!strcmp(nm,"draw_line_width_color")||!strcmp(nm,"draw_line_width_colour")){
       if(R){ int has_col=strstr(nm,"color")||strstr(nm,"colour"); int has_w=strstr(nm,"width")!=NULL;
-        uint32_t col=has_col?(uint32_t)N(a,n,has_w?5:4):R->color; int width=has_w?(int)N(a,n,4):1;
-        draw_line_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)floor(N(a,n,2)-R->cam_x),(int)floor(N(a,n,3)-R->cam_y),col,width); }
+        uint32_t col=has_col?(uint32_t)N(a,n,has_w?5:4):R->color;
+        int width=has_w?(int)lround(draw_gui_w(R,N(a,n,4))):1; if(width<1) width=1;
+        draw_line_prim(R,(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x),(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y),
+                       (int)floor(draw_gui_x(R,N(a,n,2))-R->cam_x),(int)floor(draw_gui_y(R,N(a,n,3))-R->cam_y),col,width); }
       return vreal(0); }
     if(!strcmp(nm,"draw_arrow")){
       if(R){
-        double x1=N(a,n,0)-R->cam_x, y1=N(a,n,1)-R->cam_y;
-        double x2=N(a,n,2)-R->cam_x, y2=N(a,n,3)-R->cam_y;
-        double head=fabs(N(a,n,4)), dx=x2-x1, dy=y2-y1, len=hypot(dx,dy);
+        double x1=draw_gui_x(R,N(a,n,0))-R->cam_x, y1=draw_gui_y(R,N(a,n,1))-R->cam_y;
+        double x2=draw_gui_x(R,N(a,n,2))-R->cam_x, y2=draw_gui_y(R,N(a,n,3))-R->cam_y;
+        double head=(fabs(draw_gui_w(R,N(a,n,4)))+fabs(draw_gui_h(R,N(a,n,4))))*.5;
+        double dx=x2-x1, dy=y2-y1, len=hypot(dx,dy);
         draw_line_prim(R,(int)floor(x1),(int)floor(y1),(int)floor(x2),(int)floor(y2),R->color,1);
         if(len>0.0 && head>0.0){
           double ux=dx/len, uy=dy/len, px=-uy, py=ux;
@@ -8586,39 +8730,39 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
           GmlPath *p=&vm->paths[pi];
           double ox=absolute?0:N(a,n,1), oy=absolute?0:N(a,n,2);
           for(int k=1;k<p->n;k++)
-            draw_line_prim(R,(int)floor(p->pts[k-1].x+ox-R->cam_x),(int)floor(p->pts[k-1].y+oy-R->cam_y),
-                             (int)floor(p->pts[k].x+ox-R->cam_x),(int)floor(p->pts[k].y+oy-R->cam_y),R->color,1);
+            draw_line_prim(R,(int)floor(draw_gui_x(R,p->pts[k-1].x+ox)-R->cam_x),(int)floor(draw_gui_y(R,p->pts[k-1].y+oy)-R->cam_y),
+                             (int)floor(draw_gui_x(R,p->pts[k].x+ox)-R->cam_x),(int)floor(draw_gui_y(R,p->pts[k].y+oy)-R->cam_y),R->color,1);
           if(p->closed)
-            draw_line_prim(R,(int)floor(p->pts[p->n-1].x+ox-R->cam_x),(int)floor(p->pts[p->n-1].y+oy-R->cam_y),
-                             (int)floor(p->pts[0].x+ox-R->cam_x),(int)floor(p->pts[0].y+oy-R->cam_y),R->color,1);
+            draw_line_prim(R,(int)floor(draw_gui_x(R,p->pts[p->n-1].x+ox)-R->cam_x),(int)floor(draw_gui_y(R,p->pts[p->n-1].y+oy)-R->cam_y),
+                             (int)floor(draw_gui_x(R,p->pts[0].x+ox)-R->cam_x),(int)floor(draw_gui_y(R,p->pts[0].y+oy)-R->cam_y),R->color,1);
         }
       }
       return vreal(0); }
-    if(!strcmp(nm,"draw_circle")){ if(R){ gml_render_maybe_prepare_draw(R); draw_circle_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)N(a,n,2),(int)N(a,n,2),R->color,(int)N(a,n,3)); } return vreal(0); }
+    if(!strcmp(nm,"draw_circle")){ if(R){ gml_render_maybe_prepare_draw(R); draw_circle_prim(R,(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x),(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y),(int)fabs(draw_gui_w(R,N(a,n,2))),(int)fabs(draw_gui_h(R,N(a,n,2))),R->color,(int)N(a,n,3)); } return vreal(0); }
     if(!strcmp(nm,"draw_circle_color")||!strcmp(nm,"draw_circle_colour")){ if(R){
         gml_render_maybe_prepare_draw(R);
-        draw_circle_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)N(a,n,2),(int)N(a,n,2),(uint32_t)N(a,n,3),(int)N(a,n,5)); }
+        draw_circle_prim(R,(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x),(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y),(int)fabs(draw_gui_w(R,N(a,n,2))),(int)fabs(draw_gui_h(R,N(a,n,2))),(uint32_t)N(a,n,3),(int)N(a,n,5)); }
       return vreal(0); }
     if(!strcmp(nm,"draw_ellipse_color")||!strcmp(nm,"draw_ellipse_colour")){ if(R){
         gml_render_maybe_prepare_draw(R);
-        int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y), x2=(int)floor(N(a,n,2)-R->cam_x), y2=(int)floor(N(a,n,3)-R->cam_y);
+        int x1=(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x), y1=(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y), x2=(int)floor(draw_gui_x(R,N(a,n,2))-R->cam_x), y2=(int)floor(draw_gui_y(R,N(a,n,3))-R->cam_y);
         draw_circle_prim(R,(x1+x2)/2,(y1+y2)/2,abs(x2-x1)/2,abs(y2-y1)/2,(uint32_t)N(a,n,4),(int)N(a,n,6)); } return vreal(0); }
     if(!strcmp(nm,"draw_ellipse")){ if(R){
         gml_render_maybe_prepare_draw(R);
-        int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y), x2=(int)floor(N(a,n,2)-R->cam_x), y2=(int)floor(N(a,n,3)-R->cam_y);
+        int x1=(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x), y1=(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y), x2=(int)floor(draw_gui_x(R,N(a,n,2))-R->cam_x), y2=(int)floor(draw_gui_y(R,N(a,n,3))-R->cam_y);
         draw_circle_prim(R,(x1+x2)/2,(y1+y2)/2,abs(x2-x1)/2,abs(y2-y1)/2,R->color,(int)N(a,n,4)); } return vreal(0); }
-    if(!strcmp(nm,"draw_roundrect")){ if(R) draw_rect_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),(int)ceil(N(a,n,2)-R->cam_x),(int)ceil(N(a,n,3)-R->cam_y),R->color,(int)N(a,n,4)); return vreal(0); }
+    if(!strcmp(nm,"draw_roundrect")){ if(R) draw_rect_prim(R,(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x),(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y),(int)ceil(draw_gui_x(R,N(a,n,2))-R->cam_x),(int)ceil(draw_gui_y(R,N(a,n,3))-R->cam_y),R->color,(int)N(a,n,4)); return vreal(0); }
     if(!strcmp(nm,"draw_roundrect_color")||!strcmp(nm,"draw_roundrect_colour")||
        !strcmp(nm,"draw_roundrect_color_ext")||!strcmp(nm,"draw_roundrect_colour_ext")){
       if(R){ int ext=strstr(nm,"_ext")!=NULL; int outline=(int)N(a,n,ext?8:6);
-        draw_rect_prim(R,(int)floor(N(a,n,0)-R->cam_x),(int)floor(N(a,n,1)-R->cam_y),
-                       (int)ceil(N(a,n,2)-R->cam_x),(int)ceil(N(a,n,3)-R->cam_y),
+        draw_rect_prim(R,(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x),(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y),
+                       (int)ceil(draw_gui_x(R,N(a,n,2))-R->cam_x),(int)ceil(draw_gui_y(R,N(a,n,3))-R->cam_y),
                        (uint32_t)N(a,n,ext?6:4),outline); }
       return vreal(0); }
     if(!strcmp(nm,"draw_healthbar")){
       if(R){ double amt=N(a,n,4); if(amt<0) amt=0; if(amt>100) amt=100;
-        int x1=(int)floor(N(a,n,0)-R->cam_x), y1=(int)floor(N(a,n,1)-R->cam_y);
-        int x2=(int)ceil(N(a,n,2)-R->cam_x), y2=(int)ceil(N(a,n,3)-R->cam_y);
+        int x1=(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x), y1=(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y);
+        int x2=(int)ceil(draw_gui_x(R,N(a,n,2))-R->cam_x), y2=(int)ceil(draw_gui_y(R,N(a,n,3))-R->cam_y);
         if(x1>x2){ int t=x1; x1=x2; x2=t; } if(y1>y2){ int t=y1; y1=y2; y2=t; }
         if((int)N(a,n,9)) draw_rect_prim(R,x1,y1,x2,y2,(uint32_t)N(a,n,5),0);
         int dir=(int)N(a,n,8), fx1=x1,fy1=y1,fx2=x2,fy2=y2;
@@ -8631,9 +8775,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       }
       return vreal(0); }
     if(!strcmp(nm,"draw_triangle")||!strcmp(nm,"draw_triangle_color")||!strcmp(nm,"draw_triangle_colour")){
-      if(R){ double x1=floor(N(a,n,0)-R->cam_x), y1=floor(N(a,n,1)-R->cam_y);
-        double x2=floor(N(a,n,2)-R->cam_x), y2=floor(N(a,n,3)-R->cam_y);
-        double x3=floor(N(a,n,4)-R->cam_x), y3=floor(N(a,n,5)-R->cam_y);
+      if(R){ double x1=floor(draw_gui_x(R,N(a,n,0))-R->cam_x), y1=floor(draw_gui_y(R,N(a,n,1))-R->cam_y);
+        double x2=floor(draw_gui_x(R,N(a,n,2))-R->cam_x), y2=floor(draw_gui_y(R,N(a,n,3))-R->cam_y);
+        double x3=floor(draw_gui_x(R,N(a,n,4))-R->cam_x), y3=floor(draw_gui_y(R,N(a,n,5))-R->cam_y);
         uint32_t col=!strcmp(nm,"draw_triangle")?R->color:(uint32_t)N(a,n,6); int outline=(int)N(a,n,!strcmp(nm,"draw_triangle")?6:9);
         gml_render_maybe_prepare_draw(R);
         prim_tri_fill_ex(R,x1,y1,x2,y2,x3,y3,col,R->alpha,outline); }
@@ -8647,7 +8791,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       }
       gml_render_set_pending_fill(R,src);
     } return vreal(0); }
-    if(!strcmp(nm,"draw_getpixel")){ if(R){ gml_render_maybe_prepare_draw(R); int x=(int)N(a,n,0), y=(int)N(a,n,1); if(x>=0&&y>=0&&x<R->fbw&&y<R->fbh){ uint32_t p=R->fb[(size_t)y*R->fbw+x]; return vreal(((p>>16)&0xff) | (p&0xff00) | ((p&0xff)<<16)); } } return vreal(0); }
+    if(!strcmp(nm,"draw_getpixel")){ if(R){ gml_render_maybe_prepare_draw(R); int x=(int)draw_gui_x(R,N(a,n,0)), y=(int)draw_gui_y(R,N(a,n,1)); if(x>=0&&y>=0&&x<R->fbw&&y<R->fbh){ uint32_t p=R->fb[(size_t)y*R->fbw+x]; return vreal(((p>>16)&0xff) | (p&0xff00) | ((p&0xff)<<16)); } } return vreal(0); }
     if(!strcmp(nm,"draw_enable_alphablend")){ if(R) R->alphablend=N(a,n,0)>=0.5; return vreal(0); }
     if(!strcmp(nm,"draw_enable_drawevent")){ vm->draw_events_off = N(a,n,0)<0.5; return vreal(0); }
     if(!strcmp(nm,"draw_surface_part")){ if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),1,1,0xFFFFFF,R->alpha); return vreal(0); }
@@ -8855,7 +8999,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"sprite_add")){
       /* sprite_add(fname, imgnum, removeback, smooth, xorig, yorig): load a loose image
        * (localized charsets/signs in ports) as a runtime sprite; -1 when missing, like GM. */
-      char *p=resolve_content_path(vm,S(a,n,0));
+      char *p=resolve_read_path(vm,S(a,n,0));
       int id = p? gml_sprite_add_file(R,p,(int)N(a,n,1),(int)N(a,n,2)>=1,(int)N(a,n,4),(int)N(a,n,5)) : -1;
       if(getenv("GML_LOG_SPRADD")) fprintf(stderr,"[sprite_add] '%s' -> %d\n",p?p:"?",id);
       free(p);
@@ -8864,7 +9008,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"font_add")){
       /* font_add(file, size, bold, italic, first, last): rasterize a loose TTF from the game
        * dir (localized fonts in ports). -1 when missing/unreadable, like GM. */
-      char *p=resolve_content_path(vm,S(a,n,0));
+      char *p=resolve_read_path(vm,S(a,n,0));
       int id = p? gml_font_add_file(R,p,N(a,n,1)) : -1;
       free(p);
       return vreal(id);
@@ -8889,11 +9033,13 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"object_exists")){ int ob=(int)N(a,n,0); return vreal(ob>=0&&ob<vm->n_objects); }
   if(!strcmp(nm,"object_get_physics")) return vreal(0);
   if(!strcmp(nm,"asset_get_index")||!strcmp(nm,"sprite_get_index")||!strcmp(nm,"object_get_index")){
-      /* Resolve asset names by searching sprites before objects; return -1 if absent. */
+      /* Resolve an asset name to its resource index and return -1 when absent. Search sprites,
+       * scripts and objects so script_execute(asset_get_index(name)) avoids the fallback scan. */
       const char *an=(n>0 && a[0].t==V_STR && a[0].s)? a[0].s : "";
       if(!strcmp(nm,"object_get_index")){ int oi=gml_object_index_by_name(vm,an); return vreal(oi); }
       if(R) for(int i=0;i<R->n_spr;i++) if(R->spr[i].name && !strcmp(R->spr[i].name,an)) return vreal(i);
       if(!strcmp(nm,"sprite_get_index")) return vreal(-1);
+      { int si=script_index_by_name(vm,an); if(si>=0) return vreal(si); }
       { int oi=gml_object_index_by_name(vm,an); if(oi>=0) return vreal(oi); }
       return vreal(-1);
     }
@@ -8902,7 +9048,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         (int)N(a,n,3),(int)N(a,n,4),(int)N(a,n,5),(int)N(a,n,6),(int)N(a,n,7),(int)N(a,n,8)):-1);
     }
     if(!strcmp(nm,"sprite_replace")){
-      char *path=resolve_content_path(vm,S(a,n,1));
+      char *path=resolve_read_path(vm,S(a,n,1));
       int ok=R?gml_sprite_replace_from_file(R,(int)N(a,n,0),path,(int)N(a,n,2),(int)N(a,n,3),(int)N(a,n,4),(int)N(a,n,5),(int)N(a,n,6)):0;
       free(path);
       return vreal(ok);
@@ -9033,6 +9179,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlRender *render=(GmlRender*)vm->render;
     gml_input_mouse_set(classic_display_mouse_coord(vm,render,N(a,n,0),0,1),
                         classic_display_mouse_coord(vm,render,N(a,n,1),1,1)); return vreal(0); }
+  /* Legacy Studio exposes display_mouse_lock(x,y,w,h) and display_mouse_unlock() for the host
+   * cursor. A libretro core does not own that cursor: the frontend clips its absolute pointer to
+   * the presented content rectangle and supplies only the normalized position. Confinement is
+   * therefore already true at this boundary, while unlock must not capture a desktop cursor.
+   * Keep both calls explicit instead of sending them through the unknown-builtin path. */
+  if(!strcmp(nm,"display_mouse_lock")||!strcmp(nm,"display_mouse_unlock")) return vreal(0);
   if(!strcmp(nm,"window_mouse_set")) return vreal(0);
   if(!strcmp(nm,"joystick_exists")){
     int joy=(int)N(a,n,0), dev=joy>0?joy-1:joy;
@@ -9066,7 +9218,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"FS_unique_fname")){
     const char *raw=S(a,n,0);
     if(!raw[0]) return vstr("");
-    char *path=resolve_content_path(vm,raw);
+    char *path=resolve_read_path(vm,raw);
     struct stat st;
     if(!path || stat(path,&st)!=0){ free(path); return vstr_owned(strdup(raw)); }
     free(path);
@@ -9081,7 +9233,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       char *cand=malloc(need);
       if(!cand) return vstr_owned(strdup(raw));
       memcpy(cand,raw,base_len); strcpy(cand+base_len,mid); strcat(cand,ext);
-      char *full=resolve_content_path(vm,cand);
+      char *full=resolve_read_path(vm,cand);
       int exists=full && stat(full,&st)==0;
       free(full);
       if(!exists) return vstr_owned(cand);
@@ -9089,30 +9241,30 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vstr_owned(strdup(raw));
   }
-  if(!strcmp(nm,"file_exists")||!strcmp(nm,"FS_file_exists")){ char *path=resolve_content_path(vm,S(a,n,0));
+  if(!strcmp(nm,"file_exists")||!strcmp(nm,"FS_file_exists")){ char *path=resolve_read_path(vm,S(a,n,0));
     /* must be a REGULAR file: fopen() on Linux happily opens directories, so an empty/garbage
      * path (e.g. from an unset variable) reported "exists" and games loaded phantom configs */
     struct stat st; int ok = path && stat(path,&st)==0 && S_ISREG(st.st_mode);
     free(path); return vreal(ok); }
-  if(!strcmp(nm,"directory_exists")){ char *path=resolve_content_path(vm,S(a,n,0));
+  if(!strcmp(nm,"directory_exists")){ char *path=resolve_read_path(vm,S(a,n,0));
     struct stat st; int ok = path && stat(path,&st)==0 && S_ISDIR(st.st_mode);
     free(path); return vreal(ok); }
-  if(!strcmp(nm,"directory_create")){ char *path=resolve_content_path(vm,S(a,n,0)); int ok=0;
+  if(!strcmp(nm,"directory_create")){ char *path=resolve_write_path(vm,S(a,n,0)); int ok=0;
     if(path && path[0]){
       ok=(GML_MKDIR(path)==0);
       if(!ok){ struct stat st; ok=stat(path,&st)==0 && S_ISDIR(st.st_mode); }
     }
     free(path); return vreal(ok); }
-  if(!strcmp(nm,"directory_destroy")){ char *path=resolve_content_path(vm,S(a,n,0)); int ok=path&&GML_RMDIR(path)==0; free(path); return vreal(ok); }
-  if(!strcmp(nm,"file_delete")){ char *path=resolve_content_path(vm,S(a,n,0)); int ok=remove(path)==0; free(path); return vreal(ok); }
+  if(!strcmp(nm,"directory_destroy")){ char *path=resolve_write_path(vm,S(a,n,0)); int ok=path&&GML_RMDIR(path)==0; free(path); return vreal(ok); }
+  if(!strcmp(nm,"file_delete")){ char *path=resolve_write_path(vm,S(a,n,0)); int ok=remove(path)==0; free(path); return vreal(ok); }
   if(!strcmp(nm,"file_copy")||!strcmp(nm,"FS_file_copy")||!strcmp(nm,"FS_copy_fast")){
-    char *src=resolve_content_path(vm,S(a,n,0)); char *dst=resolve_content_path(vm,S(a,n,1));
+    char *src=resolve_read_path(vm,S(a,n,0)); char *dst=resolve_write_path(vm,S(a,n,1));
     int ok=copy_file_path(src,dst);
     free(src); free(dst); return vreal(ok); }
   /* Scan a directory with a glob mask, returning basenames or an empty string at the end. */
   if(!strcmp(nm,"file_find_first")){
     ff_reset();
-    char *mask=resolve_content_path(vm,S(a,n,0));
+    char *mask=resolve_read_path(vm,S(a,n,0));
     char *slash=strrchr(mask,'/');
     const char *pat = slash ? slash+1 : mask;
     char dirbuf[1024];
@@ -9137,10 +9289,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return (g_ff_idx<g_ff_n) ? vstr_owned(strdup(g_ff_name[g_ff_idx])) : vstr("");
   }
   if(!strcmp(nm,"file_find_close")){ ff_reset(); return vreal(0); }
-  if(!strcmp(nm,"file_rename")){ char *oldp=resolve_content_path(vm,S(a,n,0)); char *newp=resolve_content_path(vm,S(a,n,1));
+  if(!strcmp(nm,"file_rename")){ char *oldp=resolve_write_path(vm,S(a,n,0)); char *newp=resolve_write_path(vm,S(a,n,1));
     int ok=rename(oldp,newp)==0; free(oldp); free(newp); return vreal(ok); }
   if(!strcmp(nm,"game_save")){
-    char *path=resolve_content_path(vm,S(a,n,0));
+    char *path=resolve_write_path(vm,S(a,n,0));
     size_t size=gml_vm_state_size(vm), written=0; unsigned char *data=size?malloc(size):NULL;
     int ok=path && data && gml_vm_state_save(vm,data,size,&written) && written==size;
     FILE *file=ok?fopen(path,"wb"):NULL;
@@ -9149,7 +9301,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0);
   }
   if(!strcmp(nm,"game_load")){
-    char *path=resolve_content_path(vm,S(a,n,0)); FILE *file=path?fopen(path,"rb"):NULL;
+    char *path=resolve_read_path(vm,S(a,n,0)); FILE *file=path?fopen(path,"rb"):NULL;
     long length=-1; unsigned char *data=NULL; int ok=0;
     if(file && !fseek(file,0,SEEK_END) && (length=ftell(file))>0 && length<=268435456L &&
        !fseek(file,0,SEEK_SET)){
@@ -9185,7 +9337,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     free(copy);
     return vreal(ok);
   }
-  if(!strcmp(nm,"file_bin_open")||!strcmp(nm,"FS_file_bin_open")){ char *path=resolve_content_path(vm,S(a,n,0)); int mode=(int)N(a,n,1);
+  if(!strcmp(nm,"file_bin_open")||!strcmp(nm,"FS_file_bin_open")){ int mode=(int)N(a,n,1);
+    char *path=mode==0?resolve_read_path(vm,S(a,n,0)):resolve_write_path(vm,S(a,n,0));
     const char *fm = mode==1 ? "wb+" : (mode==2 ? "ab+" : "rb");
     int id=vm_file_open(vm,path,fm); if(id<0 && mode==1) id=vm_file_open(vm,path,"wb+"); free(path); return vreal(id); }
   if(!strcmp(nm,"file_bin_close")||!strcmp(nm,"FS_file_bin_close")){ int i=vm_file_slot(vm,(int)N(a,n,0));
@@ -9200,8 +9353,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"file_bin_write_byte")||!strcmp(nm,"FS_file_bin_write_byte")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i>=0) fputc(((int)N(a,n,1))&0xff,(FILE*)vm->bin_file[i]); return vreal(0); }
 
   if(!strcmp(nm,"file_text_open_read")) return builtin_file_text_open_read(vm,a,n);
-  if(!strcmp(nm,"file_text_open_write")){ char *path=resolve_content_path(vm,S(a,n,0)); int id=vm_file_open(vm,path,"w"); free(path); return vreal(id); }
-  if(!strcmp(nm,"file_text_open_append")){ char *path=resolve_content_path(vm,S(a,n,0)); int id=vm_file_open(vm,path,"a+"); free(path); return vreal(id); }
+  if(!strcmp(nm,"file_text_open_write")){ char *path=resolve_write_path(vm,S(a,n,0)); int id=vm_file_open(vm,path,"w"); free(path); return vreal(id); }
+  if(!strcmp(nm,"file_text_open_append")){ char *path=resolve_write_path(vm,S(a,n,0)); int id=vm_file_open(vm,path,"a+"); free(path); return vreal(id); }
   if(!strcmp(nm,"file_text_close")){ int i=vm_file_slot(vm,(int)N(a,n,0));
     if(i>=0){ fclose((FILE*)vm->bin_file[i]); vm->bin_file[i]=NULL; } return vreal(0); }
   if(!strcmp(nm,"file_text_eof")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(1);
@@ -9316,7 +9469,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
    * with its status for end-of-step dispatch. */
   if(!strcmp(nm,"buffer_save_async")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); const char *raw=S(a,n,1);
     int ok=0;
-    if(i>=0 && raw[0]){ char *path=resolve_content_path(vm,raw); int off=(int)N(a,n,2), sz=(int)N(a,n,3);
+    if(i>=0 && raw[0]){ char *path=resolve_write_path(vm,raw); int off=(int)N(a,n,2), sz=(int)N(a,n,3);
       if(off<0) off=0;
       if(sz<=0||off+sz>vm->buffer[i].size) sz=vm->buffer[i].size-off;
       FILE *f=fopen(path,"wb"); if(f){ fwrite(vm->buffer[i].data+off,1,(size_t)sz,f); fclose(f); ok=1; }
@@ -9324,7 +9477,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int req=async_saveload_request(vm, ok);
     return vreal(req); }
   if(!strcmp(nm,"buffer_load_async")){ int i=vm_buffer_slot(vm,(int)N(a,n,0));
-    char *path=resolve_content_path(vm,S(a,n,1)); int off=(int)N(a,n,2);
+    char *path=resolve_read_path(vm,S(a,n,1)); int off=(int)N(a,n,2);
     if(off<0) off=0;
     int ok=0;
     FILE *f=path?fopen(path,"rb"):NULL;
@@ -9354,21 +9507,21 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(req); }
   /* Synchronous buffer file I/O. */
   if(!strcmp(nm,"buffer_save")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); const char *raw=S(a,n,1);
-    if(i>=0 && raw[0]){ char *path=resolve_content_path(vm,raw);
+    if(i>=0 && raw[0]){ char *path=resolve_write_path(vm,raw);
       FILE *f=fopen(path,"wb"); if(f){ fwrite(vm->buffer[i].data,1,(size_t)vm->buffer[i].size,f); fclose(f); }
       free(path); }
     return vreal(0); }
   if(!strcmp(nm,"buffer_save_ext")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); const char *raw=S(a,n,1);
-    if(i>=0 && raw[0]){ char *path=resolve_content_path(vm,raw); int off=(int)N(a,n,2), sz=(int)N(a,n,3);
+    if(i>=0 && raw[0]){ char *path=resolve_write_path(vm,raw); int off=(int)N(a,n,2), sz=(int)N(a,n,3);
       if(off<0) off=0; if(sz<=0||off+sz>vm->buffer[i].size) sz=vm->buffer[i].size-off;
       FILE *f=fopen(path,"wb"); if(f && sz>0){ fwrite(vm->buffer[i].data+off,1,(size_t)sz,f); } if(f) fclose(f);
       free(path); }
     return vreal(0); }
-  if(!strcmp(nm,"buffer_load")){ char *path=resolve_content_path(vm,S(a,n,0)); FILE *f=path?fopen(path,"rb"):NULL; if(!f){ free(path); return vreal(-1); }
+  if(!strcmp(nm,"buffer_load")){ char *path=resolve_read_path(vm,S(a,n,0)); FILE *f=path?fopen(path,"rb"):NULL; if(!f){ free(path); return vreal(-1); }
     fseek(f,0,SEEK_END); long sz=ftell(f); fseek(f,0,SEEK_SET); int id=buffer_alloc(vm,sz>0?(int)sz:1); int i=vm_buffer_slot(vm,id);
     if(i>=0 && sz>0){ if(fread(vm->buffer[i].data,1,(size_t)sz,f)!=(size_t)sz){} vm->buffer[i].size=(int)sz; vm->buffer[i].pos=0; }
     fclose(f); free(path); return vreal(id); }
-  if(!strcmp(nm,"buffer_load_ext")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); char *path=resolve_content_path(vm,S(a,n,1)); int off=(int)N(a,n,2);
+  if(!strcmp(nm,"buffer_load_ext")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); char *path=resolve_read_path(vm,S(a,n,1)); int off=(int)N(a,n,2);
     FILE *f=path?fopen(path,"rb"):NULL; if(i<0||!f){ if(f)fclose(f); free(path); return vreal(0); }
     fseek(f,0,SEEK_END); long sz=ftell(f); fseek(f,0,SEEK_SET); if(off<0)off=0;
     if(sz>0 && off+(int)sz<=vm->buffer[i].size){ if(fread(vm->buffer[i].data+off,1,(size_t)sz,f)!=(size_t)sz){} }
@@ -9495,7 +9648,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"caster_load")){
       const char *arg=S(a,n,0); const char *base=strrchr(arg,'/'); base=base?base+1:arg;
       char mus[300]; snprintf(mus,sizeof mus,"mus_%s",base);
-      char *full=resolve_content_path(vm,mus); int handle=-1;
+      char *full=resolve_read_path(vm,mus); int handle=-1;
       FILE *f=full?fopen(full,"rb"):NULL;
       if(f){ fseek(f,0,SEEK_END); long sz=ftell(f); fseek(f,0,SEEK_SET);
         if(sz>0 && sz<64L*1024*1024){ uint8_t *buf=malloc((size_t)sz);
@@ -9897,7 +10050,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"load_csv")){
     /* Read a CSV file into a ds_grid (GM semantics: each cell a string; numbers stay strings). Rows are
      * lines, columns are comma-separated; the grid is width=max columns, height=row count. */
-    char *fn=resolve_content_path(vm,S(a,n,0)); FILE *f=fn?fopen(fn,"rb"):NULL; free(fn);
+    char *fn=resolve_read_path(vm,S(a,n,0)); FILE *f=fn?fopen(fn,"rb"):NULL; free(fn);
     if(!f) return vreal(ds_grid_make(vm,0,0));
     /* first pass: rows and max columns */
     int rows=0, maxcol=0, col=1, inq=0, c;
@@ -10387,11 +10540,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"d3d_model_save")){
     int id=(int)N(a,n,0); if(id<0 || id>=GML_D3_MODEL_MAX || !g_d3_model[id].used) return vreal(0);
-    char *path=resolve_content_path(vm,S(a,n,1)); int ok=d3_model_file_save(path,&g_d3_model[id]); free(path); return vreal(ok);
+    char *path=resolve_write_path(vm,S(a,n,1)); int ok=d3_model_file_save(path,&g_d3_model[id]); free(path); return vreal(ok);
   }
   if(!strcmp(nm,"d3d_model_load")){
     int id=(int)N(a,n,0); if(id<0 || id>=GML_D3_MODEL_MAX || !g_d3_model[id].used) return vreal(0);
-    char *path=resolve_content_path(vm,S(a,n,1)); int ok=d3_model_file_load(path,&g_d3_model[id]); free(path); return vreal(ok);
+    char *path=resolve_read_path(vm,S(a,n,1)); int ok=d3_model_file_load(path,&g_d3_model[id]); free(path); return vreal(ok);
   }
   if(!strcmp(nm,"d3d_primitive_begin")||!strcmp(nm,"d3d_primitive_begin_texture")){
     g_d3_prim_kind=(int)N(a,n,0); g_d3_prim_n=0;
@@ -10731,8 +10884,13 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
    * cannot expose an intermediate buffer here, and waiting would only stall emulation. */
   if(!strcmp(nm,"screen_redraw")||!strcmp(nm,"screen_refresh")||!strcmp(nm,"screen_wait_vsync")||
      !strcmp(nm,"screen_save")||!strcmp(nm,"screen_save_part")) return vreal(0);
-  if(!strcmp(nm,"os_get_language")) return vstr("en");
-  if(!strcmp(nm,"os_get_region")) return vstr("us");
+  if(!strcmp(nm,"os_get_language")) return vstr(vm->os_language[0]?vm->os_language:"en");
+  if(!strcmp(nm,"os_get_region")) return vstr(vm->os_region[0]?vm->os_region:"us");
+  /* Console language extensions expose the same user preference in a fuller tag.
+   * Treating this as platform metadata keeps extension-bearing desktop exports on
+   * their normal localization path without emulating a console service. */
+  if(!strcmp(nm,"switch_language_get_desired_language"))
+    return vstr(vm->language_tag[0]?vm->language_tag:"en-US");
   if(!strcmp(nm,"os_get_config")) return vstr("default");
   if(!strcmp(nm,"gml_release_mode")) return vreal(0);
   if(!strcmp(nm,"os_is_paused")) return vreal(0);
@@ -10768,7 +10926,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
 
   /* ---- explicit no-ops (correct for libretro / SW renderer) ---- */
   if(!strcmp(nm,"display_set_gui_size")){ int w=(int)N(a,n,0), hh=(int)N(a,n,1);
-    if(w>0 && hh>0 && w<=16384 && hh<=16384){ vm->gui_w=w; vm->gui_h=hh; }
+    if(w>0 && hh>0 && w<=16384 && hh<=16384){
+      vm->gui_w=w; vm->gui_h=hh;
+      /* Modern format semantics apply GUI-size changes immediately inside an active Draw GUI
+       * event. Classic and Studio 1 retain the legacy presentation path; transforming earlier
+       * draws would break the fixed-width transition and compositor semantics. */
+      if(vm->win && vm->win->bytecode>=17)
+        gml_render_gui_set_size((GmlRender*)vm->render,w,hh);
+    }
     return vreal(0); }
   if(!strcmp(nm,"texture_set_interpolation")){ GmlRender *R=(GmlRender*)vm->render;
     if(R) R->interp = (N(a,n,0)!=0.0); return vreal(0); }
@@ -11052,10 +11217,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(sub,"background_stretch")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->stretch=(int)N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"background_xscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->xs=N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"background_yscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->ys=N(a,n,1); return vreal(0); }
-    if(!strcmp(sub,"background_index")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->sx=(int)N(a,n,1); return vreal(0); }  /* image frame */
-    if(!strcmp(sub,"background_speed")) return vreal(0);
-    if(!strcmp(sub,"background_get_sprite")||!strcmp(sub,"background_get_index")){
+    if(!strcmp(sub,"background_index")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->image_index=N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"background_speed")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->image_speed=N(a,n,1); return vreal(0); }
+    if(!strcmp(sub,"background_get_sprite")){
       GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal(e?e->sprite:-1); }
+    if(!strcmp(sub,"background_get_index")){
+      GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal(e?e->image_index:0); }
     if(!strcmp(sub,"background_get_visible")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal(e?e->visible:0); }
     if(!strcmp(sub,"background_get_alpha")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal(e?e->alpha:1); }
     if(!strcmp(sub,"background_get_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal(e?(double)e->blend:0xFFFFFF); }
@@ -11064,7 +11231,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(sub,"background_get_stretch")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal(e?e->stretch:0); }
     if(!strcmp(sub,"background_get_xscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal(e?e->xs:1); }
     if(!strcmp(sub,"background_get_yscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal(e?e->ys:1); }
-    if(!strcmp(sub,"background_get_speed")) return vreal(0);
+    if(!strcmp(sub,"background_get_speed")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal(e?e->image_speed:0); }
     /* unhandled layer_* fall through to the audit log below */
   }
 

@@ -41,6 +41,7 @@ typedef struct {
   int     room_owner;
   unsigned char room_dormant, room_was_deactivated, room_placed;
   uint32_t id;         /* instance id */
+  uint64_t creation_seq; /* stable insertion order even when a dead pool slot is recycled */
   int     obj;         /* object index */
   /* builtin vars */
   double  x, y, xprevious, yprevious, xstart, ystart;
@@ -139,6 +140,10 @@ typedef struct {
   double a, b, x1, y1, x2, y2, params[24];
 } GmlPhysicsJoint;
 
+/* The INI API also supports large localization tables, so this limit is deliberately a
+ * file-sized safety bound rather than the old small-settings-table bound. */
+#define GML_INI_MAX 16384
+
 typedef struct GmlVM {
   GmlWin   *win;
   GmlVarMap globals;
@@ -155,8 +160,12 @@ typedef struct GmlVM {
   GmlEventCache *event_cache; int event_cache_cap;
   GmlInstance *inst; int inst_cap, inst_count;
   int *event_ord; int event_ord_cap; /* reusable classic per-object event-order scratch */
-  int      step_alloc_base;   /* while stepping, new instances must not reuse slots in the current frame snapshot */
+  int      step_alloc_base;   /* frame-start pool extent; zero outside a normal step/while entering a room */
+  int     *step_free; int step_free_n, step_free_pos, step_free_cap;
+  uint32_t step_first_id;     /* Studio fixed snapshot: ids at/above this were created during this step */
+  int      step_active;       /* lets alloc reuse only holes that were already free at frame start */
   uint32_t next_id;
+  uint64_t next_creation_seq;
   int      room_index;        /* current room (ROOM index) */
   int      pending_room;      /* -1 none, else target ROOM index (play-order resolved) */
   unsigned char *room_stored; int room_state_count;
@@ -182,6 +191,9 @@ typedef struct GmlVM {
   double   window_fullscreen;  /* GM window_get/set_fullscreen: menu state */
   double   window_x, window_y; /* logical window position for window_get/set_position */
   int      window_cursor;      /* GM window_get/set_cursor logical cursor id (-1 hidden) */
+  /* Frontend locale. os_get_language/region use the ISO components while platform
+   * extensions that expose a desired language use the BCP-47-style tag. */
+  char     os_language[8], os_region[8], language_tag[16];
   int      action_relative;   /* D&D action_set_relative flag for following action_* calls */
   double   math_epsilon;      /* real-comparison tolerance (math_set/get_epsilon) */
   double   potential_max_rotation, potential_rotate_step, potential_check_distance;
@@ -207,7 +219,7 @@ typedef struct GmlVM {
    * At draw time, tiles matching (depth, x, y) are dropped. */
   struct { int depth, x, y; } tile_del_at[64]; int n_tile_del_at;
   /* INI persistence: the currently-open .ini as a simple key-value map */
-  struct { char *section, *key, *sval; double val; int is_str; } ini_kv[256]; int ini_n, ini_open;
+  struct { char *section, *key, *sval; double val; int is_str; } ini_kv[GML_INI_MAX]; int ini_n, ini_open;
   char ini_path[256];
   /* Small runtime I/O tables for GMS file_bin_* and buffer_* handles. These are transient
    * runtime handles, not serialized into libretro save-states. */

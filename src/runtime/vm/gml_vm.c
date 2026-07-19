@@ -553,6 +553,12 @@ static int argument_set(GmlVM *vm, const char *name, GmlVal v){
   return 1;
 }
 double gml_room_speed(GmlVM *vm){
+  /* game_set_speed() is the authoritative Studio cadence once content selects one. The
+   * frontend uses the same slot when scheduling retro_run/audio, so VM clocks and delta_time must
+   * not continue advancing at the room resource's older speed. */
+  GmlVal *runtime=vm?gml_varmap_get(&vm->globals,"__game_speed_fps"):NULL;
+  double runtime_fps=runtime?asnum(*runtime):0.0;
+  if(runtime_fps>0) return runtime_fps;
   GmlVal *p=gml_varmap_get(&vm->globals,"room_speed");
   double v=p?asnum(*p):0.0;
   if(v>0) return v;
@@ -629,7 +635,7 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
  * safe); miss => the name is provably not special, go straight to the varmap. */
 static const char *const g_special_var_names[]={
   "undefined","room","keyboard_lastkey","room_speed","working_directory","program_directory",
-  "fps","view_current","view_enabled","room_persistent","event_type","event_number","mouse_x","mouse_y",
+  "fps","delta_time","view_current","view_enabled","room_persistent","event_type","event_number","mouse_x","mouse_y",
   "current_time","current_second","current_minute","current_hour","current_day","current_weekday",
   "current_month","current_year","os_type","os_windows","os_uwp","os_xboxone","os_ps3","os_ps4","os_psvita",
   "os_macosx","os_linux","os_ios","os_android","os_unknown","os_switch_operating_system","room_width",
@@ -692,13 +698,22 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!strcmp(name,"room")) return vreal(vm->room_index);   /* GM built-in: current room index */
   if(!strcmp(name,"keyboard_lastkey")) return vreal(vm->last_key); /* GM: last key pressed */
   if(!strcmp(name,"room_speed")) return vreal(gml_room_speed(vm));
-  if(!strcmp(name,"working_directory")||!strcmp(name,"program_directory")){
-    /* Return the content directory with a trailing slash as a string. */
-    static char wd[560]; snprintf(wd,sizeof wd,"%s/",vm->win->content_dir);
+  if(!strcmp(name,"working_directory")){
+    /* This is the installed file-bundle root. The file API overlays save_dir on reads and
+     * redirects writes there, including absolute paths formed by concatenating this value. */
+    static char wd[560];
+    snprintf(wd,sizeof wd,"%s/",vm->win->content_dir);
     return vstr(wd); }
+  if(!strcmp(name,"program_directory")){
+    static char pd[560]; snprintf(pd,sizeof pd,"%s/",vm->win->content_dir);
+    return vstr(pd); }
   if(!strcmp(name,"fps")) return vreal(gml_room_speed(vm));
-  /* Report os_windows by default; GML_OS_TYPE overrides the platform value for testing.
-   * Provide OS constants for runtime lookups as well as compiled literal values. */
+  /* Studio exposes the previous frame duration in microseconds. A libretro frame is scheduled at
+   * the declared cadence, so a fixed deterministic interval is the closest steady-run value and
+   * keeps time-based behavior reproducible across host load and fast-forward. */
+  if(!strcmp(name,"delta_time")) return vreal(1000000.0/gml_room_speed(vm));
+  /* Report os_windows by default; GML_OS_TYPE overrides the platform value for testing. Provide
+   * the os_* constants for runtime lookups as well as compiled literal values. */
   if(!strcmp(name,"os_type")){ const char *e=getenv("GML_OS_TYPE"); return vreal(e?atof(e):0 /*os_windows*/); }
   if(!strcmp(name,"os_windows")) return vreal(0);
   if(!strcmp(name,"os_macosx")) return vreal(1);
@@ -777,6 +792,7 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
      is_room_global_array(name)){
     GmlVal *slot=gml_varmap_put_h(&vm->globals,name,nh);
     GmlArr *a=arr_of(slot);
+    a->escaped=1;
     arr_ensure(a,0);
     if(a && a->cap>0) a->data[0]=v;
     return;
@@ -884,6 +900,13 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
     fprintf(stderr,"[camera] bind f%ld view=%d value=%.0f scope=%d global=%d\n",
             g_vm_frame,idx,asnum(v),inst_t,is_room_global_array(nm));
   }
+  if(!strcmp(nm,"view_enabled")){
+    /* Current bytecode represents this scalar built-in through its array-access opcode:
+     * writes carry accessor index 0 while reads carry index 1.  The index is metadata, not a pair
+     * of independent GML cells, so both forms address the same global scalar. */
+    *gml_varmap_put_h(&vm->globals,nm,nh)=v;
+    return;
+  }
   if(!strcmp(nm,"argument")){
     if(idx>=0 && idx<16){
       vm->script_args[idx]=v;
@@ -935,6 +958,7 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
     for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
       if(!o->active || o->marked) continue;
       GmlVal *slot=gml_varmap_put_h(&o->vars,nm,nh); GmlArr *A=arr_of(slot);
+      A->escaped=1;
       if(arr_nested_set_flat(*slot,idx,v)) continue;
       gml_arr_mark_escaped(v); arr_note_2d_set(A,idx); arr_ensure(A,idx);
       if(idx>=0 && idx<A->cap) A->data[idx]=v; }
@@ -945,6 +969,7 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
     for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
       if(!o->active || o->marked || !gml_object_is(vm,o->obj,inst_t)) continue;
       GmlVal *slot=gml_varmap_put_h(&o->vars,nm,nh); GmlArr *A=arr_of(slot);
+      A->escaped=1;
       if(arr_nested_set_flat(*slot,idx,v)) continue;
       gml_arr_mark_escaped(v); arr_note_2d_set(A,idx); arr_ensure(A,idx);
       if(idx>=0 && idx<A->cap) A->data[idx]=v; }
@@ -952,12 +977,20 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
   }
   GmlVarMap *m=is_room_global_array(nm)? &vm->globals : scope_map(vm,locals,inst_t); if(!m) return;
   GmlVal *slot=gml_varmap_put_h(m,nm,nh); GmlArr *A=arr_of(slot);
+  /* The array container itself lives in a global/instance map. A later `var alias = field`
+   * only borrows that same pointer in this VM; mark the owner before the local scope is cleaned,
+   * otherwise the alias frees the persistent array and the next event reads dangling memory. */
+  if(m!=locals) A->escaped=1;
   if(arr_nested_set_flat(*slot,idx,v)) return;
   if(m!=locals || A->escaped) gml_arr_mark_escaped(v);   /* element outlives scope if its owner already does */
   arr_note_2d_set(A,idx); arr_ensure(A,idx);
   if(idx>=0 && idx<A->cap) A->data[idx]=v;
 }
 static GmlVal array_get_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, uint32_t nh, int idx){
+  if(!strcmp(nm,"view_enabled")){
+    GmlVal *slot=gml_varmap_get_h(&vm->globals,nm,nh);
+    return slot?*slot:vreal(0);
+  }
   if(!strcmp(nm,"argument")) return (idx>=0 && idx<vm->script_argc && idx<16) ? vm->script_args[idx] : vundef();
   { int aidx=argument_index(nm);   /* `argumentN[idx]`: index INTO an array-valued argument (distinct from
        `argument[idx]`, the Nth arg). Missing this, serialize's `with(actions[i])` over an array passed as
@@ -1006,6 +1039,7 @@ static void array_set_inst_field_h(GmlVM *vm,GmlInstance *s,const char *nm,uint3
   gml_arr_mark_escaped(v);
   GmlVal *slot=gml_varmap_put_h(&s->vars,nm,nh);
   GmlArr *A=arr_of(slot);
+  A->escaped=1;
   if(arr_nested_set_flat(*slot,idx,v)) return;
   arr_note_2d_set(A,idx);
   arr_ensure(A,idx);
@@ -2333,8 +2367,11 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             }
             v=vreal(0);
             if(m && idx>=0){
-              if(in.reftype==0x90){ GmlVal *slot=gml_varmap_put_h(m,nm,nh); GmlArr *A=arr_of(slot); arr_ensure(A,idx);
-                if(idx<A->cap){ if(A->data[idx].t!=V_ARR){ A->data[idx].t=V_ARR; A->data[idx].arr=calloc(1,sizeof(GmlArr)); }
+              if(in.reftype==0x90){ GmlVal *slot=gml_varmap_put_h(m,nm,nh); GmlArr *A=arr_of(slot);
+                if(m!=&locals) A->escaped=1;
+                arr_ensure(A,idx);
+                if(idx<A->cap){ if(A->data[idx].t!=V_ARR){ A->data[idx].t=V_ARR; A->data[idx].arr=calloc(1,sizeof(GmlArr));
+                    if(A->escaped && A->data[idx].arr) ((GmlArr*)A->data[idx].arr)->escaped=1; }
                   v=A->data[idx]; } }
               else { GmlVal *slot=gml_varmap_get_h(m,nm,nh);
                 if(slot && slot->t==V_ARR){ GmlArr *A=slot->arr; if(idx<A->len) v=A->data[idx]; } }
@@ -2537,7 +2574,13 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           int c=strcmp(asstr_cmp(l,lb,sizeof lb),asstr_cmp(r,rb,sizeof rb));
           switch(in.cmp){case CMP_LT:res=c<0;break;case CMP_LTE:res=c<=0;break;case CMP_EQ:res=c==0;break;
             case CMP_NEQ:res=c!=0;break;case CMP_GTE:res=c>=0;break;case CMP_GT:res=c>0;break;} }
-        else res=gml_real_compare_epsilon(asnum(l),asnum(r),in.cmp,vm->math_epsilon);
+        else {
+          /* Studio 1 bytecode compares reals exactly. The configurable epsilon belongs to
+           * expression comparisons in the current format family; applying its 1e-5 default
+           * retroactively makes long-running bytecode-15 state machines cross thresholds early. */
+          double epsilon=(!w->classic_version && w->bytecode<17)?0.0:vm->math_epsilon;
+          res=gml_real_compare_epsilon(asnum(l),asnum(r),in.cmp,epsilon);
+        }
         stk[sp++]=vreal(res); break;
       }
       case OP_B:
@@ -3042,10 +3085,18 @@ static void path_apply_endaction(GmlVM *vm, GmlInstance *in, int pi, int ea, dou
 
 /* advance every path-following instance one step (called each frame in the movement phase). */
 static void run_paths(GmlVM *vm){
+  /* Path interaction with ordinary motion fields differs between format families. Classic and
+   * current Studio semantics suspend ordinary velocity while an active path owns movement;
+   * Studio 1.x keeps those fields intact and still re-evaluates a zero-speed path after ordinary
+   * movement.  Keeping the middle generation explicit is important: treating every non-classic
+   * package alike shifts path-driven objects in bytecode-15 content. */
+  int path_owns_velocity=vm->win &&
+    (vm->win->classic_version || vm->win->bytecode>=17);
   for(int i=0;i<vm->inst_count;i++){ GmlInstance *in=&vm->inst[i];
     if(!in->active||in->marked) continue;
     int pi=(int)in->path_index; if(pi<0||pi>=vm->n_paths) continue;
-    GmlPath *p=&vm->paths[pi]; if(p->len<=0 || in->path_speed==0){ continue; }
+    GmlPath *p=&vm->paths[pi];
+    if(p->len<=0 || (path_owns_velocity && in->path_speed==0)){ continue; }
     double before_x=in->x, before_y=in->y;
     in->path_positionprevious=in->path_position;
     double scl=in->path_scale!=0?fabs(in->path_scale):1;
@@ -3060,10 +3111,12 @@ static void run_paths(GmlVM *vm){
     /* Path movement owns speed/direction for this step. GameMaker derives direction from the
      * path displacement, then clears the ordinary speed components so a pre-path hspeed is not
      * observable as stale motion (or applied again on the following step). */
-    in->direction=atan2(before_y-new_y,new_x-before_x)*180.0/M_PI;
-    if(in->direction<0) in->direction+=360.0;
-    if(in->direction>=360.0) in->direction=fmod(in->direction,360.0);
-    in->speed=0; in->hspeed=0; in->vspeed=0;
+    if(path_owns_velocity){
+      in->direction=atan2(before_y-new_y,new_x-before_x)*180.0/M_PI;
+      if(in->direction<0) in->direction+=360.0;
+      if(in->direction>=360.0) in->direction=fmod(in->direction,360.0);
+      in->speed=0; in->hspeed=0; in->vspeed=0;
+    }
     in->x=new_x; in->y=new_y; gml_colgrid_touch(in);
     path_log_step(vm,in,pi);
     /* GM "End of Path" event (Other, subtype 8): fired when the path reaches its end. Many objects
@@ -3115,7 +3168,9 @@ static void parse_native_object_events(GmlVM *vm, GmlObject *object, uint32_t ta
         uint32_t candidate=u32(data,action+32);
         if(candidate<(uint32_t)vm->win->n_code){ code=(int)candidate; break; }
       }
-      if(code<0) continue;
+      /* Keep the declaration even when the event has no executable action.  Studio serialises
+       * empty Alarm events with a null CODE id; their presence still makes that alarm count down,
+       * while a genuinely undeclared alarm remains a user-controlled value. */
       object->events[object->n_events].evtype=(int)type;
       object->events[object->n_events].subtype=subtype;
       object->events[object->n_events].code=code;
@@ -3340,6 +3395,24 @@ static int event_lookup_from(GmlVM *vm, const char *suffix, int obj, int *handle
   }
   return 0;
 }
+
+/* Native OBJT records retain declarations that have no CODE entry.  Walk the same inheritance
+ * chain as event dispatch and stop at the first matching declaration: an empty child event is
+ * still a declaration (and therefore must not inherit a parent's handler implicitly). */
+static int native_event_declared_from(GmlVM *vm, int evtype, int subtype, int obj,
+                                      int *handler_obj, int *code){
+  if(!vm || obj<0 || obj>=vm->n_objects) return 0;
+  for(int p=obj; p>=0 && p<vm->n_objects; p=vm->objects[p].parent){
+    GmlObject *object=&vm->objects[p];
+    for(int e=0;e<object->n_events;e++){
+      if(object->events[e].evtype!=evtype || object->events[e].subtype!=subtype) continue;
+      if(handler_obj) *handler_obj=p;
+      if(code) *code=object->events[e].code;
+      return 1;
+    }
+  }
+  return 0;
+}
 static double vmprof_now(void);
 /* find+run `suffix` starting from object level `obj`, walking up the parent chain. Tracks the
  * current event (suffix + object level) so event_inherited can re-dispatch to the parent. */
@@ -3471,10 +3544,52 @@ int gml_event_inherited(GmlVM *vm){
 }
 static void obj_list_link(GmlVM *vm, GmlInstance *in);
 static void obj_list_unlink(GmlVM *vm, GmlInstance *in, int obj);
+static void sort_slots_by_creation(GmlVM *vm, int *slot, int count){
+  /* Portable in-place Shell sort: unlike qsort_r it builds on mingw too, and unlike a global
+   * comparator it remains safe if diagnostics ever host more than one VM. */
+  for(int gap=count/2;gap>0;gap/=2){
+    for(int i=gap;i<count;i++){
+      int value=slot[i], j=i;
+      uint64_t seq=vm->inst[value].creation_seq;
+      while(j>=gap && vm->inst[slot[j-gap]].creation_seq>seq){ slot[j]=slot[j-gap]; j-=gap; }
+      slot[j]=value;
+    }
+  }
+}
+static void prepare_step_free_slots(GmlVM *vm, int extent){
+  vm->step_free_n=vm->step_free_pos=0;
+  if(extent<=0) return;
+  if(extent>vm->step_free_cap){
+    int nc=vm->step_free_cap?vm->step_free_cap:64; while(nc<extent) nc*=2;
+    int *p=realloc(vm->step_free,(size_t)nc*sizeof(*p));
+    if(!p) return;
+    vm->step_free=p; vm->step_free_cap=nc;
+  }
+  for(int i=0;i<extent;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(!in->active && !in->deactivated && !in->room_dormant)
+      vm->step_free[vm->step_free_n++]=i;
+  }
+}
 static GmlInstance *alloc_inst(GmlVM *vm){
-  /* a deactivated instance keeps active=0 but must NOT have its slot reused (it still exists). */
-  int first = vm->step_alloc_base > 0 ? vm->step_alloc_base : 0;
-  for(int i=first;i<vm->inst_count;i++) if(!vm->inst[i].active && !vm->inst[i].deactivated && !vm->inst[i].room_dormant){ memset(&vm->inst[i],0,sizeof(GmlInstance)); return &vm->inst[i]; }
+  /* A deactivated/dormant instance keeps active=0 but still exists.  During a step, reuse only
+   * holes that were already free at frame start: a slot destroyed earlier in this same step can
+   * still be referenced by the fixed Studio event snapshot.  The old allocator reserved the
+   * ENTIRE prefix instead, so one short-lived effect per frame made the pool (and every scan)
+   * grow forever even though almost every slot was dead. */
+  if(vm->step_active && vm->step_alloc_base>0){
+    while(vm->step_free_pos<vm->step_free_n){
+      int i=vm->step_free[vm->step_free_pos++];
+      if(i>=0 && i<vm->inst_count && !vm->inst[i].active &&
+         !vm->inst[i].deactivated && !vm->inst[i].room_dormant){
+        memset(&vm->inst[i],0,sizeof(GmlInstance)); return &vm->inst[i];
+      }
+    }
+  } else {
+    for(int i=0;i<vm->inst_count;i++) if(!vm->inst[i].active &&
+        !vm->inst[i].deactivated && !vm->inst[i].room_dormant){
+      memset(&vm->inst[i],0,sizeof(GmlInstance)); return &vm->inst[i]; }
+  }
   if(vm->inst_count>=vm->inst_cap){
     /* pool full: do NOT realloc — moving the array would dangle every held instance pointer
      * (cur_self/cur_other, with-frames, the room-enter loop) and segfault. Reuse the last slot. */
@@ -3520,8 +3635,37 @@ void gml_obj_alive_recount(GmlVM *vm){
       gml_obj_alive_adjust(vm,in->obj,1); obj_list_link(vm,in); } }
   vm->obj_list_gen++;
 }
+static void trim_instance_pool_tail(GmlVM *vm){
+  /* Pointer-stable compaction: only discard unused slots at the end.  Active instances never
+   * move, which is a required property of the fixed pool and of the C API's instance pointers. */
+  while(vm->inst_count>0){
+    GmlInstance *in=&vm->inst[vm->inst_count-1];
+    if(in->active || in->deactivated || in->room_dormant) break;
+    vm->inst_count--;
+  }
+}
+static void rebase_instance_order_to_slots(GmlVM *vm){
+  /* Room entry is the one place the historical pool deliberately recycled arbitrary holes.
+   * Its flat slot order therefore became the format-visible iteration order. Preserve that
+   * boundary behavior, then let in-step recycling append logically via creation_seq. */
+  uint64_t next=1;
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(in->active||in->deactivated||in->room_dormant) in->creation_seq=next++;
+    else in->creation_seq=0;
+  }
+  vm->next_creation_seq=next;
+}
 static void init_inst(GmlVM *vm, GmlInstance *in, double x, double y, int obj){
   in->active=1; in->marked=0; in->obj=obj; in->id=vm->next_id++;
+  if(vm->step_active && vm->step_alloc_base>0){
+    if(vm->next_creation_seq==0) vm->next_creation_seq=1;
+    in->creation_seq=vm->next_creation_seq++;
+  } else {
+    uint64_t seq=(uint64_t)(in-vm->inst)+1;
+    in->creation_seq=seq;
+    if(vm->next_creation_seq<=seq) vm->next_creation_seq=seq+1;
+  }
   in->room_owner=vm->room_index;
   gml_obj_alive_adjust(vm,obj,1); obj_list_link(vm,in);
   in->x=in->xstart=x; in->y=in->ystart=y; in->xprevious=x; in->yprevious=y;
@@ -3660,6 +3804,7 @@ static void reap(GmlVM *vm){
 
 static void set_global_arr(GmlVM *vm, const char *nm, int idx, double val){
   GmlVal *slot=gml_varmap_put(&vm->globals,nm); GmlArr *A=arr_of(slot); arr_ensure(A,idx);
+  A->escaped=1;
   if(idx>=0 && idx<A->cap) A->data[idx]=vreal(val);
 }
 static double get_global_arr_d(GmlVM *vm, const char *nm, int idx){
@@ -3711,6 +3856,7 @@ int gml_inst_array_count(const GmlInstance *in, const char *var){
 static void inst_array_set(GmlInstance *in, const char *var, int idx, GmlVal v){
   GmlVal *slot=gml_varmap_put(&in->vars,var); if(!slot) return;
   GmlArr *A=arr_of(slot);
+  A->escaped=1;
   arr_note_2d_set(A,idx); arr_ensure(A,idx);
   if(idx>=0 && idx<A->cap){
     if(A->data[idx].t==V_STR && A->data[idx].d && A->data[idx].s) free((char*)A->data[idx].s);
@@ -3780,6 +3926,8 @@ static void room_runtime_state_store(GmlVM *vm, int room){
   room_state_store_number(vm,room,"room_speed",0,speed?asnum(*speed):gml_room_speed(vm));
   GmlVal *view_current=gml_varmap_get(&vm->globals,"view_current");
   room_state_store_number(vm,room,"view_current",0,view_current?asnum(*view_current):0);
+  GmlVal *view_enabled=gml_varmap_get(&vm->globals,"view_enabled");
+  room_state_store_number(vm,room,"view_enabled",0,view_enabled?asnum(*view_enabled):0);
   room_state_store_number(vm,room,"tile_mut_count",0,vm->n_tile_mut);
   for(int i=0;i<vm->n_tile_mut;i++){
     room_state_store_number(vm,room,"tile_mut_depth",i,vm->tile_mut[i].depth);
@@ -3807,6 +3955,7 @@ static void room_runtime_state_restore(GmlVM *vm, int room){
                                         room_state_restore_number(vm,room,room_view_fields[field],i));
   *gml_varmap_put(&vm->globals,"room_speed")=vreal(room_state_restore_number(vm,room,"room_speed",0));
   *gml_varmap_put(&vm->globals,"view_current")=vreal(room_state_restore_number(vm,room,"view_current",0));
+  *gml_varmap_put(&vm->globals,"view_enabled")=vreal(room_state_restore_number(vm,room,"view_enabled",0));
   vm->n_tile_mut=(int)room_state_restore_number(vm,room,"tile_mut_count",0);
   if(vm->n_tile_mut<0) vm->n_tile_mut=0;
   if(vm->n_tile_mut>64) vm->n_tile_mut=64;
@@ -3926,6 +4075,73 @@ uint32_t gml_room_layer_type_off(GmlVM *vm, uint32_t lp){
   uint32_t pc=(lp+48<=vm->win->size)?u32(vm->win->data,lp+44):0;
   if(pc>64) pc=0;
   return lp+48+12*pc;
+}
+
+enum { GML_LAYER_EFFECT_NONE=0, GML_LAYER_EFFECT_RGB_NOISE=1, GML_LAYER_EFFECT_TINT=2 };
+typedef struct {
+  int kind;
+  double intensity, animation;
+  uint32_t colour, sampler_tpag_ptr;
+} GmlLayerEffectDef;
+static const char *layer_effect_string(const GmlWin *w, uint32_t ptr){
+  if(!w || !ptr || ptr>=w->size) return "";
+  const char *s=(const char*)w->data+ptr;
+  return memchr(s,0,w->size-ptr)?s:"";
+}
+/* Modern EMBI records associate the sampler resource name used by an effect definition with a
+ * TPAG record. Resolve that indirection from the user-supplied package instead of embedding any
+ * seed image in the core. */
+static uint32_t layer_effect_sampler_tpag(const GmlWin *w, const char *name){
+  const GmlChunk *c=gml_chunk(w,"EMBI");
+  if(!c || !name || !*name || c->size<8) return 0;
+  const uint8_t *d=w->data;
+  uint32_t version=u32(d,c->off), count=u32(d,c->off+4);
+  if(version!=1 || count>4096 || 8u+(uint64_t)count*8u>c->size) return 0;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t p=c->off+8+i*8, np=u32(d,p), tp=u32(d,p+4);
+    if(!strcmp(layer_effect_string(w,np),name)) return tp;
+  }
+  return 0;
+}
+static uint32_t layer_effect_colour(const char *value, uint32_t fallback){
+  if(!value || value[0]!='#') return fallback;
+  char *end=NULL;
+  unsigned long colour=strtoul(value+1,&end,16);
+  return end && *end==0 && end>value+1 ? (uint32_t)colour : fallback;
+}
+/* Decode the standard effect-layer descriptor stored inline in later ROOM records. These are
+ * engine filter identifiers/properties, so every package using the stock filters follows the same
+ * path; unknown/custom filters remain a conservative no-op. */
+static int gml_room_layer_effect(GmlVM *vm, uint32_t lp, GmlLayerEffectDef *out){
+  memset(out,0,sizeof(*out));
+  out->colour=0xFFFFFFFFu;
+  if(!vm || !vm->win || gml_room_layer_data_off(vm)!=48 || lp+48>vm->win->size) return 0;
+  const uint8_t *d=vm->win->data;
+  if(!u32(d,lp+36)) return 0;
+  const char *type=layer_effect_string(vm->win,u32(d,lp+40));
+  if(!strcmp(type,"_filter_rgbnoise")) out->kind=GML_LAYER_EFFECT_RGB_NOISE;
+  else if(!strcmp(type,"_filter_tintfilter")) out->kind=GML_LAYER_EFFECT_TINT;
+  else return 0;
+  uint32_t count=u32(d,lp+44);
+  if(count>64 || lp+48+(uint64_t)count*12u>vm->win->size) return 0;
+  const char *sampler="";
+  for(uint32_t i=0;i<count;i++){
+    uint32_t p=lp+48+i*12;
+    const char *name=layer_effect_string(vm->win,u32(d,p+4));
+    const char *value=layer_effect_string(vm->win,u32(d,p+8));
+    if(strstr(name,"Intensity")) out->intensity=strtod(value,NULL);
+    else if(strstr(name,"Animation")) out->animation=strtod(value,NULL);
+    else if(strstr(name,"Colour") || strstr(name,"Color"))
+      out->colour=layer_effect_colour(value,out->colour);
+    else if((int32_t)u32(d,p)==2 || strstr(name,"Texture")) sampler=value;
+  }
+  if(out->kind==GML_LAYER_EFFECT_RGB_NOISE){
+    GmlRender *render=(GmlRender*)vm->render;
+    out->sampler_tpag_ptr=gml_render_named_tpag_ptr(render,sampler);
+    if(!out->sampler_tpag_ptr) out->sampler_tpag_ptr=layer_effect_sampler_tpag(vm->win,sampler);
+    if(!out->sampler_tpag_ptr || out->intensity<=0.0) return 0;
+  }
+  return 1;
 }
 
 /* ---- GMS2 tile layers (type-4 room layers) for tile-based collision ---- */
@@ -4552,6 +4768,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
   if(getenv("GML_LOG_ROOM")) fprintf(stderr,"[room] enter %d\n",room_index);
   GmlRoom r; if(gml_room_get(vm->win,room_index,&r)!=0) return;
   *gml_varmap_put(&vm->globals,"room_persistent")=vreal(r.persistent?1.0:0.0);
+  *gml_varmap_put(&vm->globals,"view_enabled")=vreal(r.view_enabled?1.0:0.0);
   if(vm->win->classic_version)
     *gml_varmap_put(&vm->globals,"room_speed")=vreal(r.speed>0?r.speed:30);
   if(room_index>=0 && room_index<vm->room_state_count && vm->room_stored && vm->room_stored[room_index]){
@@ -4569,7 +4786,8 @@ void gml_room_enter(GmlVM *vm, int room_index){
     for(int i=0;i<n0;i++) if(vm->inst[i].active && !vm->inst[i].marked)
       gml_run_event(vm,&vm->inst[i],"Other_4");
     gml_fire_gamepad_connected(vm);
-    reap(vm); gml_vm_warm_audio_for_room(vm,vm->room_index); vm_prefetch_room_assets(vm);
+    reap(vm); rebase_instance_order_to_slots(vm);
+    gml_vm_warm_audio_for_room(vm,vm->room_index); vm_prefetch_room_assets(vm);
     return;
   }
   const uint8_t *d=vm->win->data; uint32_t op=r.obj_ptr, cnt=u32(d,op);
@@ -4737,6 +4955,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
   /* Dispatch the gamepad-discovered asynchronous event. */
   gml_fire_gamepad_connected(vm);
   reap(vm);
+  rebase_instance_order_to_slots(vm);
   gml_vm_warm_audio_for_room(vm,vm->room_index);
   vm_prefetch_room_assets(vm);
 }
@@ -4776,6 +4995,7 @@ int gml_cheat_apply(GmlVM *vm, const char *code){
 
 static void run_collisions(GmlVM *vm);
 static void run_boundary_events(GmlVM *vm);
+static int studio_step_snapshot_member(GmlVM *vm, const GmlInstance *in);
 
 static int timeline_fire_range(GmlVM *vm, GmlInstance *in, GmlTimeline *timeline,
                                double from, double to, int forward,
@@ -4818,7 +5038,8 @@ static int timeline_fire_range(GmlVM *vm, GmlInstance *in, GmlTimeline *timeline
 static void run_timelines(GmlVM *vm, int count){
   for(int i=0;i<count;i++){
     GmlInstance *in=&vm->inst[i];
-    if(!in->active || in->marked || !in->timeline_running || in->timeline_speed==0) continue;
+    if(!in->active || in->marked || !studio_step_snapshot_member(vm,in) ||
+       !in->timeline_running || in->timeline_speed==0) continue;
     int ti=(int)in->timeline_index;
     if(ti<0 || ti>=vm->n_timelines){ in->timeline_running=0; continue; }
     GmlTimeline snapshot=vm->timelines[ti];
@@ -4920,6 +5141,10 @@ static void run_classic_triggers(GmlVM *vm, int moment){
 }
 
 long g_vm_frame=0;
+static int studio_step_snapshot_member(GmlVM *vm, const GmlInstance *in){
+  return !vm->step_active || !vm->win || vm->win->classic_version ||
+         in->id < vm->step_first_id;
+}
 /* GML_PROFILE_VM: per-phase wall time of gml_vm_step, printed every 300 frames (Linux dev aid) */
 static struct { double anim,step1,alarms,input,step0,move,coll,step2,rest; long frames; } g_vmprof;
 static double vmprof_now(void){
@@ -4935,8 +5160,12 @@ static int vmprof_on(void){ static int on=-1; if(on<0) on=getenv("GML_PROFILE_VM
 static void advance_instance_animations(GmlVM *vm){
   GmlRender *R=(GmlRender*)vm->render;
   const char *anim_dbg=getenv("GML_ANIM_OBJ");
-  for(int i=0;i<vm->inst_count;i++){
-    GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked) continue;
+  int snapshot=vm->win && !vm->win->classic_version && vm->win->bytecode>=17;
+  int extent=(snapshot && vm->step_active)?vm->step_alloc_base:vm->inst_count;
+  for(int i=0;i<extent;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(!in->active||in->marked||
+       (snapshot && !studio_step_snapshot_member(vm,in))) continue;
     int nf=R?gml_sprite_frames(R,(int)in->sprite_index):0;
     if(anim_dbg){ const char *on=(in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"";
       if(on && strstr(on,anim_dbg)){
@@ -4947,7 +5176,10 @@ static void advance_instance_animations(GmlVM *vm){
       }
     }
     if(in->image_speed!=0 && (nf>0 || (vm->win && vm->win->classic_version))){
-      double ni=in->image_index+in->image_speed;
+      double step=(vm->win && !vm->win->classic_version)
+        ? gml_sprite_animation_delta(R,(int)in->sprite_index,in->image_speed,gml_room_speed(vm))
+        : in->image_speed;
+      double ni=in->image_index+step;
       int wrapped=nf>0 && ((ni>=nf)||(ni<0));
       if(nf>0){ while(ni>=nf) ni-=nf; while(ni<0) ni+=nf; }
       in->image_index=ni;
@@ -5009,9 +5241,13 @@ void gml_vm_step(GmlVM *vm){
   { GmlRender *R=(GmlRender*)vm->render;
     for(int i=0;i<vm->n_rte;i++){
       GmlRtElem *e=&vm->rte[i];
-      if(!e->used || e->type!=3 || e->image_speed==0) continue;
+      if(!e->used || (e->type!=1 && e->type!=3) || e->image_speed==0) continue;
+      /* GMS2 background layers own an animated sprite subimage. Classic and Studio 1 room
+       * backgrounds have a different cadence path; compatibility records must not advance as
+       * modern layer elements. */
+      if(e->type==1 && (!vm->win || vm->win->bytecode<17)) continue;
       int nf=R?gml_sprite_frames(R,e->sprite):0;
-      e->image_index += e->image_speed;
+      e->image_index += gml_sprite_animation_delta(R,e->sprite,e->image_speed,gml_room_speed(vm));
       if(nf>0){
         while(e->image_index>=nf) e->image_index-=nf;
         while(e->image_index<0) e->image_index+=nf;
@@ -5026,6 +5262,9 @@ void gml_vm_step(GmlVM *vm){
   int pv=vmprof_on(); double pv_t=pv?vmprof_now():0;
   int n=vm->inst_count;
   int prev_alloc_base=vm->step_alloc_base;
+  vm->step_active=1;
+  vm->step_first_id=vm->next_id;
+  prepare_step_free_slots(vm,n);
   vm->step_alloc_base=n;
   /* xprevious/yprevious describe the position at the start of this step. This
    * must precede user Step code: classic games commonly move by assigning x/y
@@ -5060,7 +5299,9 @@ void gml_vm_step(GmlVM *vm){
   /* begin step */
   run_classic_triggers(vm,1);
   if(vm->win && vm->win->classic_version) run_classic_object_event(vm,"Step_1");
-  else for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_1");
+  else for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked &&
+      studio_step_snapshot_member(vm,&vm->inst[i]))
+    gml_run_event(vm,&vm->inst[i],"Step_1");
   VMPROF_MARK(step1);
   run_timelines(vm,n);
   /* Alarm thresholds depend on bytecode version: below 16, decrement values
@@ -5091,15 +5332,24 @@ void gml_vm_step(GmlVM *vm){
         }
       }
     }
-  } else for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked) continue;
+  } else for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i];
+    if(!in->active||in->marked||!studio_step_snapshot_member(vm,in)) continue;
     for(int a=0;a<GML_ALARMS;a++){
       if(alarm_at_zero){ if(!(in->alarm[a]>0)) continue; } else { if(!(in->alarm[a]>-1)) continue; }
+      char s[16]; snprintf(s,sizeof s,"Alarm_%d",a);
+      int declared_code=-1;
+      int native_declared=native_event_declared_from(vm,2,a,in->obj,NULL,&declared_code);
+      /* Alarms count down only when this object family declares the matching event. Native
+       * records matter here because an empty event has no CODE name but still owns the countdown.
+       * A genuinely unused alarm slot remains an ordinary writable value. */
+      if(!native_declared && !event_lookup_from(vm,s,in->obj,NULL,NULL)) continue;
       in->alarm[a]-=1;
       int fire = alarm_at_zero ? (in->alarm[a]<=0) : (in->alarm[a]<0);
-      if(fire){ in->alarm[a]=-1; char s[16]; snprintf(s,sizeof s,"Alarm_%d",a);
+      if(fire){ in->alarm[a]=-1;
         if(getenv("GML_LOG_ALARM")) fprintf(stderr,"[alarm] f%ld %s.%s\n",g_vm_frame,
           (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",s);
-        gml_run_event(vm,in,s); } } }
+        /* An explicitly empty declaration completes at -1 without inheriting or executing code. */
+        if(!native_declared || declared_code>=0) gml_run_event(vm,in,s); } } }
   VMPROF_MARK(alarms);
   /* keyboard events (GM order: after alarms, before the normal step) */
   if(vm->n_key_events){
@@ -5107,8 +5357,10 @@ void gml_vm_step(GmlVM *vm){
       if(!gml_keyboard_check(vm,vm->key_events[e].vk,vm->key_events[e].kind)) continue;
       if(vm->win && vm->win->classic_version)
         run_classic_object_event(vm,vm->key_events[e].suffix);
-      else for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked)
-          gml_run_event(vm,&vm->inst[i],vm->key_events[e].suffix);
+      else for(int i=0;i<n;i++){
+        if(vm->inst[i].active && !vm->inst[i].marked &&
+           studio_step_snapshot_member(vm,&vm->inst[i]))
+          gml_run_event(vm,&vm->inst[i],vm->key_events[e].suffix); }
     }
   }
   /* instance Mouse_<n> events (with the other input events). Hover = pointer (room coords)
@@ -5153,7 +5405,8 @@ void gml_vm_step(GmlVM *vm){
         in->mouse_over=(unsigned char)hov;
       }
     } else for(int i=0;i<n;i++){
-      GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked||in->deactivated) continue;
+      GmlInstance *in=&vm->inst[i];
+      if(!in->active||in->marked||in->deactivated||!studio_step_snapshot_member(vm,in)) continue;
       double l,t,r2,b; int hov=0;
       if(vm_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
       unsigned char was=in->mouse_over; in->mouse_over=(unsigned char)hov;
@@ -5169,7 +5422,8 @@ void gml_vm_step(GmlVM *vm){
   run_classic_triggers(vm,0);
   if(vm->win && vm->win->classic_version) run_classic_object_event(vm,"Step_0");
   else {
-    for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked)
+    for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked &&
+        studio_step_snapshot_member(vm,&vm->inst[i]))
       gml_run_event(vm,&vm->inst[i],"Step_0");
   }
   VMPROF_MARK(step0);
@@ -5178,7 +5432,8 @@ void gml_vm_step(GmlVM *vm){
    * phase, and GM6-8 also applies its freshly assigned speed/gravity before the
    * first draw. Studio keeps the frame-start snapshot verified by its fixtures. */
   int movement_count=(vm->win && vm->win->classic_version)?vm->inst_count:n;
-  for(int i=0;i<movement_count;i++){ GmlInstance *in=&vm->inst[i]; if(!in->active||in->marked) continue;
+  for(int i=0;i<movement_count;i++){ GmlInstance *in=&vm->inst[i];
+    if(!in->active||in->marked||!studio_step_snapshot_member(vm,in)) continue;
     if(in->gravity!=0){ in->hspeed+=in->gravity*cos(in->gravity_direction*M_PI/180.0);
       in->vspeed-=in->gravity*sin(in->gravity_direction*M_PI/180.0); motion_from_components(in); }
     if(in->friction!=0 && in->speed!=0){
@@ -5204,7 +5459,9 @@ void gml_vm_step(GmlVM *vm){
   /* end step */
   run_classic_triggers(vm,2);
   if(vm->win && vm->win->classic_version) run_classic_object_event(vm,"Step_2");
-  else for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) gml_run_event(vm,&vm->inst[i],"Step_2");
+  else for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked &&
+      studio_step_snapshot_member(vm,&vm->inst[i]))
+    gml_run_event(vm,&vm->inst[i],"Step_2");
   VMPROF_MARK(step2);
   reap(vm);
   { const char *iv=getenv("GML_LOG_INSTVAR");   /* obj_name[@id]:var1,var2 — dump instance vars per frame */
@@ -5325,6 +5582,59 @@ void gml_vm_step(GmlVM *vm){
       set_global_arr(vm,"view_xview",view,vx); set_global_arr(vm,"view_yview",view,vy);
     }
   }
+  /* Studio camera resources have their own target, border and speed state. Binding a camera
+   * through view_camera[] does not copy those fields into the legacy view_* arrays: live camera
+   * resources advance after Step and the renderer later resolves the bound handle. Consequently,
+   * camera_create_view(..., target, speed, border) follows its target without an explicit
+   * camera_set_view_pos call. */
+  for(int camera=0;camera<64;camera++){
+    if(get_global_arr_d(vm,"__gml_camera_live",camera)<0.5) continue;
+    int target=(int)get_global_arr_d(vm,"__gml_camera_target",camera);
+    GmlInstance *fo=target>=0?gml_find_instance(vm,target):NULL;
+    if(!fo) continue;
+    double vx=get_global_arr_d(vm,"__gml_camera_x",camera);
+    double vy=get_global_arr_d(vm,"__gml_camera_y",camera);
+    double wv=get_global_arr_d(vm,"__gml_camera_w",camera);
+    double hv=get_global_arr_d(vm,"__gml_camera_h",camera);
+    if(wv<=0 || hv<=0) continue;
+    double hb=get_global_arr_d(vm,"__gml_camera_xborder",camera);
+    double vb=get_global_arr_d(vm,"__gml_camera_yborder",camera);
+    double hs=get_global_arr_d(vm,"__gml_camera_xspeed",camera);
+    double vs=get_global_arr_d(vm,"__gml_camera_yspeed",camera);
+    double wanted_x=vx, wanted_y=vy;
+    if(hb<0) hb=0;
+    if(vb<0) vb=0;
+    if(2*hb>=wv) wanted_x=fo->x-wv/2;
+    else if(fo->x-hb<vx) wanted_x=fo->x-hb;
+    else if(fo->x+hb>vx+wv) wanted_x=fo->x+hb-wv;
+    if(2*vb>=hv) wanted_y=fo->y-hv/2;
+    else if(fo->y-vb<vy) wanted_y=fo->y-vb;
+    else if(fo->y+vb>vy+hv) wanted_y=fo->y+vb-hv;
+    if(hs<0) vx=wanted_x;
+    else if(hs>0){
+      double delta=wanted_x-vx;
+      if(delta>hs) delta=hs; else if(delta< -hs) delta= -hs;
+      vx+=delta;
+    }
+    if(vs<0) vy=wanted_y;
+    else if(vs>0){
+      double delta=wanted_y-vy;
+      if(delta>vs) delta=vs; else if(delta< -vs) delta= -vs;
+      vy+=delta;
+    }
+    GmlRoom rm;
+    if(gml_room_get(vm->win,vm->room_index,&rm)==0){
+      double mx=(double)rm.width-wv, my=(double)rm.height-hv;
+      if(vx<0) vx=0; if(mx>0 && vx>mx) vx=mx; if(mx<=0) vx=0;
+      if(vy<0) vy=0; if(my>0 && vy>my) vy=my; if(my<=0) vy=0;
+    }
+    set_global_arr(vm,"__gml_camera_x",camera,vx);
+    set_global_arr(vm,"__gml_camera_y",camera,vy);
+    if(camera==0 && getenv("GML_LOG_FOLLOW")){ static int cf=0; if(cf++%60==0)
+      fprintf(stderr,"[camera-follow] cam=%d target=%d(%s) at=(%.0f,%.0f) view=(%.0f,%.0f %.0fx%.0f) border=(%.0f,%.0f) speed=(%.0f,%.0f)\n",
+        camera,target,(fo->obj>=0&&fo->obj<vm->n_objects)?vm->objects[fo->obj].name:"?",
+        fo->x,fo->y,vx,vy,wv,hv,hb,vb,hs,vs); }
+  }
   /* room transition requested during the step */
   /* Classic room backgrounds start at their authored position for the first rendered frame;
    * their automatic speed is applied between frames. The step precedes drawing in this runtime,
@@ -5354,6 +5664,9 @@ void gml_vm_step(GmlVM *vm){
       gml_run_event(vm,&vm->inst[i],"Other_3");
   }
   vm->step_alloc_base=prev_alloc_base;
+  vm->step_active=0;
+  vm->step_free_n=vm->step_free_pos=0;
+  trim_instance_pool_tail(vm);
   if(pv){ VMPROF_MARK(rest);
     if(++g_vmprof.frames % 300 == 0){ double f=300.0;
       fprintf(stderr,"[vmprof] f=%ld avg_ms anim=%.3f step1=%.3f alarms=%.3f input=%.3f step0=%.3f move=%.3f coll=%.3f step2=%.3f rest=%.3f\n",
@@ -5415,7 +5728,7 @@ static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap
   t.order=order;
   (*tiles)[*nt]=t; (*depth)[*nt]=dep; (*nt)++;
 }
-typedef struct { double depth; int seq, type, idx, order, classic, obj, placed; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite, 6=classic bg */
+typedef struct { double depth; int seq, type, idx, order, classic, obj, placed; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite, 6=classic bg, 7=layer effect */
 static int cmp_draw_item(const void *pa, const void *pb){
   const GmlDrawItem *a=pa,*b=pb;
   if(a->depth!=b->depth) return a->depth>b->depth? -1:1;     /* higher depth first (behind) */
@@ -5457,6 +5770,14 @@ static GmlRtLayer *rt_layer_by_order(GmlVM *vm, int order){
   for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used && vm->rtl[i].order==order) return &vm->rtl[i];
   return NULL;
 }
+/* An instance remains active when its GMS2 instance layer is hidden: Step and collision events
+ * still run, but draw-stage events and the automatic sprite draw are suppressed by the layer.
+ * The instance's own `visible` field is independent and cannot represent this state. */
+static int instance_draw_layer_visible(GmlVM *vm, const GmlInstance *in){
+  if(!vm || !in || in->draw_layer_order<0) return 1;
+  GmlRtLayer *layer=rt_layer_by_order(vm,in->draw_layer_order);
+  return !layer || layer->visible;
+}
 static void gml_run_layer_script(GmlVM *vm, int ci){
   if(!vm || !vm->win || ci<0 || ci>=vm->win->n_code) return;
   static GmlInstance layer_scratch;
@@ -5487,9 +5808,10 @@ static int *vm_draw_order_scratch(GmlVM *vm, int need){
 }
 /* GMS2 runtime-layer draw records. File scope so the per-frame scratch buffers below can persist
  * across frames (reused, grown by doubling) instead of malloc/free + realloc(n+1) every frame. */
-struct LayBg { int sprite; int th,tv,stretch,order; double x,y; uint32_t blend; double alpha; double depth; };
+struct LayBg { int sprite,subimg; int th,tv,stretch,order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
 struct LayTile { int sprite; int sx,sy,w,h,order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
 struct LaySprite { int sprite, subimg,order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
+struct LayEffect { GmlLayerEffectDef effect; int order; double depth; };
 struct ClassicBg { int def,th,tv,stretch; double x,y; uint32_t blend; double alpha,depth; };
 static void draw_event_hook(GmlVM *vm, GmlInstance *in, const char *suffix, int begin){
   if(vm && vm->draw_event_hook) vm->draw_event_hook(vm,in,suffix,begin,vm->draw_event_hook_user);
@@ -5499,6 +5821,7 @@ static void draw_event_hook(GmlVM *vm, GmlInstance *in, const char *suffix, int 
 static struct LayBg    *g_dl_lbg;   static int g_dl_lbg_cap;
 static struct LayTile  *g_dl_ltl;   static int g_dl_ltl_cap;
 static struct LaySprite*g_dl_lsp;   static int g_dl_lsp_cap;
+static struct LayEffect*g_dl_lfx;   static int g_dl_lfx_cap;
 static GmlDrawItem     *g_dl_it;    static int g_dl_it_cap;
 static GmlDrawTile     *g_dl_tiles; static double *g_dl_tdepth; static int g_dl_tiles_cap;
 /* grow *pp (element size esz) to hold at least `need` elements, doubling capacity. Returns 1 on ok. */
@@ -5541,6 +5864,7 @@ void gml_vm_draw(GmlVM *vm){
   struct LayBg *lbg=g_dl_lbg; int nlb=0;
   struct LayTile *ltl=g_dl_ltl; int nlt=0;
   struct LaySprite *lsp=g_dl_lsp; int nls=0;
+  struct LayEffect *lfx=g_dl_lfx; int nlf=0;
   struct ClassicBg cbg[9]; int ncb=0;
   if(rm.draw_bg){
     cbg[ncb].def=-1; cbg[ncb].th=cbg[ncb].tv=cbg[ncb].stretch=0;
@@ -5583,6 +5907,14 @@ void gml_vm_draw(GmlVM *vm){
         double loy = ltouch ? rl->y : ly+lvs*fin;
         double ltx = ltouch ? rl->x : lx;           /* tile layer origin (room-def raw, unchanged) */
         double lty = ltouch ? rl->y : ly;
+        if(ltype==6 && getenv("GML_LOG_LAYER_EFFECT") &&
+           (g_vm_frame<4 || (g_vm_frame%60)==0)){
+          GmlLayerEffectDef probe;
+          int parsed=gml_room_layer_effect(vm,lp,&probe);
+          fprintf(stderr,"[layer-effect] f%ld order=%u depth=%.0f visible=%d parsed=%d kind=%d sampler=%08x\n",
+                  g_vm_frame,i,ldep,rl?rl->visible:(int)u32(d,lp+32),parsed,
+                  parsed?probe.kind:0,parsed?probe.sampler_tpag_ptr:0);
+        }
         if(rl ? !rl->visible : !u32(d,lp+32)) continue;
         if(ltype==1){
           if(rl && rt_layer_has_background(vm,rl->id)) continue;
@@ -5594,8 +5926,10 @@ void gml_vm_draw(GmlVM *vm){
           /* Use the layer color when no sprite is assigned; skip fully transparent color. */
           if(spr<0 && !(col>>24)) continue;
           if(!dl_grow((void**)&g_dl_lbg,&g_dl_lbg_cap,nlb+1,sizeof(*lbg))) continue; lbg=g_dl_lbg;
-          lbg[nlb].sprite=spr; lbg[nlb].th=(int)u32(d,b+12); lbg[nlb].tv=(int)u32(d,b+16);
+          lbg[nlb].sprite=spr; lbg[nlb].subimg=0;
+          lbg[nlb].th=(int)u32(d,b+12); lbg[nlb].tv=(int)u32(d,b+16);
           lbg[nlb].stretch=(int)u32(d,b+20);
+          lbg[nlb].xs=lbg[nlb].ys=1;
           lbg[nlb].blend=col&0xFFFFFF; lbg[nlb].alpha=((col>>24)&0xFF)/255.0;
           lbg[nlb].x=lox; lbg[nlb].y=loy; lbg[nlb].depth=ldep; lbg[nlb].order=lorder;
           nlb++;
@@ -5617,6 +5951,12 @@ void gml_vm_draw(GmlVM *vm){
             uint32_t col=u32(d,tp+44);
             ltl[nlt].blend=col&0xFFFFFF; ltl[nlt].alpha=((col>>24)&0xFF)/255.0;
             nlt++; }
+        } else if(ltype==6){
+          GmlLayerEffectDef effect;
+          if(!gml_room_layer_effect(vm,lp,&effect)) continue;
+          if(!dl_grow((void**)&g_dl_lfx,&g_dl_lfx_cap,nlf+1,sizeof(*lfx))) continue; lfx=g_dl_lfx;
+          lfx[nlf].effect=effect; lfx[nlf].depth=ldep; lfx[nlf].order=lorder;
+          nlf++;
         }
       }
     }
@@ -5690,7 +6030,9 @@ void gml_vm_draw(GmlVM *vm){
       nlt++;
     } else if(e->type==1){
       if(!dl_grow((void**)&g_dl_lbg,&g_dl_lbg_cap,nlb+1,sizeof(*lbg))) continue; lbg=g_dl_lbg;
-      lbg[nlb].sprite=e->sprite; lbg[nlb].th=e->htiled; lbg[nlb].tv=e->vtiled; lbg[nlb].stretch=e->stretch;
+      lbg[nlb].sprite=e->sprite; lbg[nlb].subimg=(int)floor(e->image_index);
+      lbg[nlb].th=e->htiled; lbg[nlb].tv=e->vtiled; lbg[nlb].stretch=e->stretch;
+      lbg[nlb].xs=e->xs; lbg[nlb].ys=e->ys;
       lbg[nlb].x=lx; lbg[nlb].y=ly; lbg[nlb].blend=e->blend; lbg[nlb].alpha=e->alpha; lbg[nlb].depth=l->depth; lbg[nlb].order=l->order;
       nlb++;
     } else if(e->type==3){
@@ -5703,16 +6045,22 @@ void gml_vm_draw(GmlVM *vm){
   }
   /* unified depth-sorted draw list of instances + tiles + GMS2 layers + auto-draw particle systems */
   int npart=0; while(gml_part_system_auto_draw_nth(npart,NULL,NULL)) npart++;
-  int cap=n+nt+nlb+nlt+nls+ncb+npart; if(!dl_grow((void**)&g_dl_it,&g_dl_it_cap,cap>0?cap:1,sizeof(GmlDrawItem))){ g_dl_tiles=tiles; g_dl_tdepth=tdepth; g_dl_tiles_cap=tcap; return; }
+  int cap=n+nt+nlb+nlt+nls+nlf+ncb+npart; if(!dl_grow((void**)&g_dl_it,&g_dl_it_cap,cap>0?cap:1,sizeof(GmlDrawItem))){ g_dl_tiles=tiles; g_dl_tdepth=tdepth; g_dl_tiles_cap=tcap; return; }
   GmlDrawItem *it=g_dl_it; int m=0;
-  for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked){
+  int *inst_ord=vm_draw_order_scratch(vm,n>0?n:1); int inst_n=0;
+  if(inst_ord){
+    for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked) inst_ord[inst_n++]=i;
+    if(inst_n>1) sort_slots_by_creation(vm,inst_ord,inst_n);
+  }
+  for(int k=0;k<inst_n;k++){ int i=inst_ord[k]; if(instance_draw_layer_visible(vm,&vm->inst[i])){
     it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; it[m].order=vm->inst[i].draw_layer_order;
     it[m].classic=vm->win&&vm->win->classic_version; it[m].obj=vm->inst[i].obj;
-    it[m].placed=it[m].classic && vm->inst[i].room_placed; m++; }
+    it[m].placed=it[m].classic && vm->inst[i].room_placed; m++; } }
   for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; it[m].order=tiles[i].order; it[m].classic=0; it[m].obj=-1; m++; }
   for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; it[m].order=ltl[i].order; it[m].classic=0; it[m].obj=-1; m++; }
   for(int i=0;i<nlb;i++){ it[m].depth=lbg[i].depth; it[m].type=3; it[m].idx=i; it[m].seq=m; it[m].order=lbg[i].order; it[m].classic=0; it[m].obj=-1; m++; }
   for(int i=0;i<nls;i++){ it[m].depth=lsp[i].depth; it[m].type=5; it[m].idx=i; it[m].seq=m; it[m].order=lsp[i].order; it[m].classic=0; it[m].obj=-1; m++; }
+  for(int i=0;i<nlf;i++){ it[m].depth=lfx[i].depth; it[m].type=7; it[m].idx=i; it[m].seq=m; it[m].order=lfx[i].order; it[m].classic=0; it[m].obj=-1; m++; }
   for(int i=0;i<ncb;i++){ it[m].depth=cbg[i].depth; it[m].type=6; it[m].idx=i; it[m].seq=m; it[m].order=-1; it[m].classic=0; it[m].obj=-1; m++; }
   for(int i=0;i<npart;i++){ int pid=0; double dep=0;
     if(gml_part_system_auto_draw_nth(i,&pid,&dep)){ it[m].depth=dep; it[m].type=4; it[m].idx=pid; it[m].seq=m; it[m].order=-1; it[m].classic=0; it[m].obj=-1; m++; } }
@@ -5721,7 +6069,8 @@ void gml_vm_draw(GmlVM *vm){
   { const char *li=getenv("GML_LOG_INST");
     if(li && atoi(li)>0 && !dumped && g_vm_frame<atoi(li)) goto skip_instdump; }
   if(getenv("GML_LOG_INST") && !dumped){ dumped=1;
-    fprintf(stderr,"[draw] room=%d, %d instances + %d tiles (back->front):\n",vm->room_index,n,nt);
+    fprintf(stderr,"[draw] room=%d, %d instances + %d tiles, draw_events_off=%d (back->front):\n",
+            vm->room_index,n,nt,vm->draw_events_off);
     for(int k=0;k<m && k<2000;k++){ if(it[k].type==1){ GmlDrawTile *t=&tiles[it[k].idx];
         fprintf(stderr,"   TILE def=%d depth=%.0f @(%.0f,%.0f) %dx%d src=(%d,%d)",t->def,it[k].depth,t->x,t->y,t->w,t->h,t->sx,t->sy);
         if(t->def>=0 && t->def<R->n_bg){ int ti=R->bg[t->def].tpag;
@@ -5731,7 +6080,8 @@ void gml_vm_draw(GmlVM *vm){
       else if(it[k].type==2){ struct LayTile *t=&ltl[it[k].idx];
         fprintf(stderr,"   LTILE spr=%d depth=%.0f @(%.0f,%.0f) %dx%d\n",t->sprite,it[k].depth,t->x,t->y,t->w,t->h); }
       else if(it[k].type==3){ struct LayBg *b=&lbg[it[k].idx];
-        fprintf(stderr,"   LBG spr=%d depth=%.0f @(%.0f,%.0f)\n",b->sprite,it[k].depth,b->x,b->y); }
+        fprintf(stderr,"   LBG spr=%d sub=%d depth=%.0f @(%.3f,%.3f) scale=%.3f/%.3f tiled=%d/%d stretch=%d colour=%06x alpha=%.3f\n",
+          b->sprite,b->subimg,it[k].depth,b->x,b->y,b->xs,b->ys,b->th,b->tv,b->stretch,b->blend&0xFFFFFFu,b->alpha); }
       else if(it[k].type==4){
         fprintf(stderr,"   PARTICLES sys=%d depth=%.0f\n",it[k].idx,it[k].depth); }
       else if(it[k].type==5){ struct LaySprite *s=&lsp[it[k].idx];
@@ -5740,6 +6090,9 @@ void gml_vm_draw(GmlVM *vm){
       else if(it[k].type==6){ struct ClassicBg *b=&cbg[it[k].idx];
         fprintf(stderr,"   CBG def=%d depth=%.0f @(%.0f,%.0f) tiled=%d/%d stretch=%d colour=%06x alpha=%.3f\n",
           b->def,it[k].depth,b->x,b->y,b->th,b->tv,b->stretch,b->blend&0xFFFFFFu,b->alpha); }
+      else if(it[k].type==7){ struct LayEffect *f=&lfx[it[k].idx];
+        fprintf(stderr,"   LEFFECT kind=%d depth=%.0f intensity=%.3f animation=%.3f colour=%08x\n",
+          f->effect.kind,it[k].depth,f->effect.intensity,f->effect.animation,f->effect.colour); }
       else { GmlInstance *in=&vm->inst[it[k].idx];
         fprintf(stderr,"   %-26s id=%u spr=%-4d vis=%.0f depth=%.0f ord=%d @(%.0f,%.0f) ang=%.0f xs=%.1f ys=%.1f a=%.2f ii=%.4f is=%.3f\n",
           (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",in->id,
@@ -5762,8 +6115,21 @@ void gml_vm_draw(GmlVM *vm){
       continue; }
     if(it[k].type==3){ struct LayBg *b=&lbg[it[k].idx];
       if(b->sprite<0) gml_draw_layer_color_fill(R,b->blend,b->alpha);
-      else if(b->th || b->tv) gml_draw_sprite_tiled_ext(R,b->sprite,0,b->x,b->y,1,1,b->blend,b->alpha);
-      else gml_draw_sprite_ext(R,b->sprite,0,b->x,b->y,1,1,0,b->blend,b->alpha);
+      else if(!vm->win || vm->win->bytecode<17){
+        /* Compatibility layer records from older formats keep the legacy sprite-instance
+         * origin and combined tiling behavior. The distinct-axis/top-left semantics below belong
+         * to native GMS2 background layers. */
+        if(b->th || b->tv) gml_draw_sprite_tiled_ext(R,b->sprite,0,b->x,b->y,1,1,b->blend,b->alpha);
+        else gml_draw_sprite_ext(R,b->sprite,0,b->x,b->y,1,1,0,b->blend,b->alpha);
+      }
+      else if(b->stretch && b->sprite<R->n_spr && R->spr[b->sprite].w>0 && R->spr[b->sprite].h>0){
+        double xs=(double)rm.width/R->spr[b->sprite].w;
+        double ys=(double)rm.height/R->spr[b->sprite].h;
+        gml_draw_sprite_ext(R,b->sprite,b->subimg,
+          b->x+R->spr[b->sprite].originx*xs,b->y+R->spr[b->sprite].originy*ys,
+          xs,ys,0,b->blend,b->alpha);
+      } else gml_draw_layer_background_sprite(R,b->sprite,b->subimg,b->x,b->y,
+                                                b->xs,b->ys,b->blend,b->alpha,b->th,b->tv);
       continue; }
     if(it[k].type==4){ gml_part_system_drawit(R,it[k].idx); continue; }
     if(it[k].type==5){ struct LaySprite *s=&lsp[it[k].idx];
@@ -5774,6 +6140,13 @@ void gml_vm_draw(GmlVM *vm){
       else if(b->stretch) gml_draw_background_stretched(R,b->def,b->x,b->y,rm.width,rm.height,b->blend,b->alpha);
       else if(b->th || b->tv) gml_draw_background_tiled_ext(R,b->def,b->x,b->y,1,1,b->blend,b->alpha,b->th,b->tv);
       else gml_draw_background_ext(R,b->def,b->x,b->y,1,1,b->blend,b->alpha);
+      continue; }
+    if(it[k].type==7){ struct LayEffect *f=&lfx[it[k].idx];
+      if(f->effect.kind==GML_LAYER_EFFECT_RGB_NOISE)
+        gml_render_layer_rgb_noise(R,f->effect.sampler_tpag_ptr,f->effect.intensity,
+                                   f->effect.animation,f->effect.colour&0xFFFFFFu);
+      else if(f->effect.kind==GML_LAYER_EFFECT_TINT)
+        gml_render_layer_tint(R,f->effect.colour);
       continue; }
     GmlInstance *in=&vm->inst[it[k].idx];
     if(vm->draw_events_off) continue;   /* draw_enable_drawevent(false): no instance drawing */
@@ -5810,9 +6183,10 @@ void gml_vm_draw_pass(GmlVM *vm, const char *suffix){
   int *ord=vm_draw_order_scratch(vm,n>0?n:1); if(!ord) return;
   int m=0;
   for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i];
-    if(!in->active||in->marked||in->visible<0.5) continue;
+    if(!in->active||in->marked||in->visible<0.5||!instance_draw_layer_visible(vm,in)) continue;
     if(event_lookup_from(vm,suffix,in->obj,NULL,NULL)) ord[m++]=i;
   }
+  if(m>1) sort_slots_by_creation(vm,ord,m);
   for(int a=0;a<m;a++) for(int b=a+1;b<m;b++)
     if(vm->inst[ord[b]].depth>vm->inst[ord[a]].depth){ int t=ord[a]; ord[a]=ord[b]; ord[b]=t; }
   for(int k=0;k<m;k++){
@@ -5835,9 +6209,10 @@ void gml_vm_draw_gui(GmlVM *vm){
   int *ord=vm_draw_order_scratch(vm,n>0?n:1); if(!ord) return;
   int m=0;
   for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i];
-    if(!in->active||in->marked||in->visible<0.5) continue;
+    if(!in->active||in->marked||in->visible<0.5||!instance_draw_layer_visible(vm,in)) continue;
     if(event_lookup_from(vm,"Draw_64",in->obj,NULL,NULL)) ord[m++]=i;
   }
+  if(m>1) sort_slots_by_creation(vm,ord,m);
   for(int a=0;a<m;a++) for(int b=a+1;b<m;b++)            /* depth descending (back -> front) */
     if(vm->inst[ord[b]].depth>vm->inst[ord[a]].depth){ int t=ord[a]; ord[a]=ord[b]; ord[b]=t; }
   int views_on=0;
@@ -6184,7 +6559,12 @@ static void run_collisions(GmlVM *vm){
       if(oi==si||!oi->active||oi->marked||oi->obj<0||oi->obj>=vm->n_objects) continue;
       int solid_pair=si->solid || oi->solid;
       int classic_pair=solid_pair && vm->win && vm->win->classic_version;
-      int legacy_solid_pair=solid_pair && (!vm->win || vm->win->bytecode<17);
+      /* GM8 and GMS2 present solid contacts from their pre-movement coordinates. Studio 1
+       * dispatches the event at the current coordinates instead; treating every
+       * bytecode<17 package as a classic transaction changes the late state of otherwise stable
+       * collision-heavy rooms.  Use the package family, not a content-specific exception. */
+      int rollback_pair=classic_pair ||
+        (solid_pair && vm->win && !vm->win->classic_version && vm->win->bytecode>=17);
       uint64_t pair_key=((uint64_t)(unsigned)(i<j?i:j)<<32)|(unsigned)(i<j?j:i);
       int pair_done=0;
       if(classic_pair)
@@ -6219,11 +6599,9 @@ static void run_collisions(GmlVM *vm){
          * Collision code gets the first opportunity to resolve the overlap. */
         int oi_moved=oi->x!=oi->xprevious || oi->y!=oi->yprevious;
         int oi_kinematic=oi->hspeed!=0.0 || oi->vspeed!=0.0;
-        /* Classic semantics present solid Collision events at the pre-movement
-         * positions of both participants. Event code may then resolve the contact
-         * explicitly; restoring only the colliding axis incorrectly preserves
-         * same-Step lateral motion on a vertical landing. */
-        if(solid_pair){
+        /* Transactional solid contacts present both participants at their pre-movement
+         * positions. Event code may then resolve the contact explicitly. */
+        if(rollback_pair){
           si->x=si->xprevious; si->y=si->yprevious;
           oi->x=oi->xprevious; oi->y=oi->yprevious;
           si->path_position=si->path_positionprevious;
@@ -6239,11 +6617,9 @@ static void run_collisions(GmlVM *vm){
               (si->obj>=0&&si->obj<vm->n_objects)?vm->objects[si->obj].name:"?",
               (oi->obj>=0&&oi->obj<vm->n_objects)?vm->objects[oi->obj].name:"?",dt);
           } else run_event_code_from(vm,si,oi,suffix,handler_obj,code); }
-        if(legacy_solid_pair){
-          /* Classic collision dispatch treats the two directed events as one
-           * transaction. Studio dispatches each registered direction in its
-           * normal instance order, while retaining the same solid rollback. */
-          if(classic_pair && si->active && !si->marked && oi->active && !oi->marked){
+        if(classic_pair){
+          /* Classic collision dispatch treats the two directed events as one transaction. */
+          if(si->active && !si->marked && oi->active && !oi->marked){
             int reverse_handler=-1, reverse_target=-1, reverse_code=-1;
             if(col_event_for_pair(vm,oi->obj,si->obj,&reverse_handler,&reverse_target,&reverse_code)){
               char reverse_suffix[32]; snprintf(reverse_suffix,sizeof reverse_suffix,"Collision_%d",reverse_target);
@@ -6264,19 +6640,19 @@ static void run_collisions(GmlVM *vm){
               gml_colgrid_touch(si); gml_colgrid_touch(oi);
             }
           }
-          if(classic_pair && classic_done_n>=classic_done_cap){
+          if(classic_done_n>=classic_done_cap){
             int nc=classic_done_cap?classic_done_cap*2:16;
             uint64_t *np=realloc(classic_done,(size_t)nc*sizeof(*np));
             if(np){ classic_done=np; classic_done_cap=nc; }
           }
-          if(classic_pair && classic_done_n<classic_done_cap) classic_done[classic_done_n++]=pair_key;
+          if(classic_done_n<classic_done_cap) classic_done[classic_done_n++]=pair_key;
         }
         /* If Collision code left the pair intersecting, apply the solid fallback
          * to the participant that entered the contact. Classic actions that stop
          * an incoming motion restore the pre-contact coordinate too; motion that
          * remains active stays under the event's explicit contact resolution. */
         int oi_stopped=oi->hspeed==0.0 && oi->vspeed==0.0;
-        if(!solid_pair && si->active && !si->marked && oi->active && !oi->marked &&
+        if(!rollback_pair && si->active && !si->marked && oi->active && !oi->marked &&
            si->solid && oi_moved && (!oi_kinematic ||
              (vm->win && vm->win->classic_version && oi_stopped))){
           double pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2;
@@ -6513,6 +6889,9 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
   { extern void gml_part_reset_all(void); gml_part_reset_all(); }   /* fresh particle pools per game */
   colcand_reset();          /* cache slots belong to the previous VM across a cold Restart */
   vm->win=win; vm->pending_room=-1; vm->room_index=-1; vm->next_id=100000; vm->rng_state=0;
+  snprintf(vm->os_language,sizeof vm->os_language,"en");
+  snprintf(vm->os_region,sizeof vm->os_region,"us");
+  snprintf(vm->language_tag,sizeof vm->language_tag,"en-US");
   vm->rng_classic_state=0;
   vm->math_epsilon=(win && win->classic_version)?1e-13:1e-5;
   vm->potential_max_rotation=30; vm->potential_rotate_step=10;
@@ -6637,6 +7016,8 @@ void gml_vm_free(GmlVM *vm){
   free(vm->obj_alive); vm->obj_alive=NULL;
   free(vm->obj_head); vm->obj_head=NULL; free(vm->inst_next); vm->inst_next=NULL; free(vm->inst_prev); vm->inst_prev=NULL;
   free(vm->event_ord); vm->event_ord=NULL; vm->event_ord_cap=0;
+  free(vm->step_free); vm->step_free=NULL;
+  vm->step_free_n=vm->step_free_pos=vm->step_free_cap=0;
   free(vm->cg_off); vm->cg_off=NULL; free(vm->cg_items); vm->cg_items=NULL; vm->cg_items_cap=0;
   free(vm->cg_overlay); vm->cg_overlay=NULL; vm->cg_overlay_cap=vm->cg_overlay_n=0;
   free(vm->draw_ord); vm->draw_ord=NULL; vm->draw_ord_cap=0;
@@ -6669,7 +7050,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -6957,6 +7338,7 @@ static void sw_instance(StateW *s, GmlInstance *in){
              (in->room_dormant?8:0)|(in->room_was_deactivated?16:0)|(in->room_placed?32:0);
   sw_raw(s,&fl,1);
   sw_u32(s,in->id); sw_i32(s,in->obj); sw_i32(s,in->room_owner);
+  sw_i64(s,(int64_t)in->creation_seq);
   uint32_t fm=0;
   #define FCHK(bit,field) if(in->field!=gmv6_def[bit]) fm|=1u<<(bit);
   GMV6_FIELDS(FCHK)
@@ -7088,6 +7470,8 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
     in->room_placed=s->v26?((fl>>5)&1):0;
     in->id=sr_u32(s); in->obj=sr_i32(s);
     in->room_owner=s->v19?sr_i32(s):vm->room_index;
+    if(s->v33) in->creation_seq=(uint64_t)sr_i64(s);
+    else if(in->active||in->deactivated||in->room_dormant) in->creation_seq=vm->next_creation_seq++;
     uint32_t fm=sr_u32(s);
     in->x=sr_d(s); in->y=sr_d(s); in->xprevious=sr_d(s); in->yprevious=sr_d(s);
     in->xstart=sr_d(s); in->ystart=sr_d(s);
@@ -7120,6 +7504,7 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
   }
   in->active=sr_i32(s); in->marked=sr_i32(s); in->deactivated=sr_i32(s);
   in->id=sr_u32(s); in->obj=sr_i32(s);
+  if(in->active||in->deactivated) in->creation_seq=vm->next_creation_seq++;
   in->x=sr_d(s); in->y=sr_d(s); in->xprevious=sr_d(s); in->yprevious=sr_d(s);
   in->xstart=sr_d(s); in->ystart=sr_d(s);
   in->sprite_index=sr_d(s); in->mask_index=sr_d(s); in->image_index=sr_d(s); in->image_speed=sr_d(s);
@@ -7168,6 +7553,7 @@ static void runtime_clear(GmlVM *vm){
   io_free(vm);
   ds_maps_free(vm);
   vm->inst_count=0; vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;
+  vm->next_creation_seq=1;
   vm->event_type=0; vm->event_number=0;
   vm->step_alloc_base=0; vm->action_relative=0;
   vm->potential_max_rotation=30; vm->potential_rotate_step=10;
@@ -7198,8 +7584,9 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x50564D47u); /* GMV32: GMV31 plus the mutable math epsilon */
+  sw_u32(s,0x51564D47u); /* GMV33: GMV32 plus stable instance creation order */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
+  sw_i64(s,(int64_t)vm->next_creation_seq);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
   sw_i32(s,vm->started); sw_d(s,vm->last_key); sw_d(s,vm->window_fullscreen);
   { extern long g_vm_frame;
@@ -7390,7 +7777,7 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       && magic!=0x46564D47u && magic!=0x47564D47u && magic!=0x48564D47u
       && magic!=0x49564D47u && magic!=0x4A564D47u && magic!=0x4B564D47u
       && magic!=0x4C564D47u && magic!=0x4D564D47u && magic!=0x4E564D47u
-      && magic!=0x4F564D47u && magic!=0x50564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x4F564D47u && magic!=0x50564D47u && magic!=0x51564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -7420,12 +7807,15 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v30 = magic>=0x4E564D47u;
   s.v31 = magic>=0x4F564D47u;
   s.v32 = magic>=0x50564D47u;
+  s.v33 = magic>=0x51564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
   int inst_count=sr_i32(&s); if(inst_count<0 || inst_count>vm->inst_cap) s.ok=0;
   if(!s.ok) state_debug("bad inst_count",s.pos,(uint32_t)inst_count);
-  vm->next_id=sr_u32(&s); vm->room_index=sr_i32(&s); vm->pending_room=sr_i32(&s);
+  vm->next_id=sr_u32(&s);
+  vm->next_creation_seq=s.v33?(uint64_t)sr_i64(&s):1;
+  vm->room_index=sr_i32(&s); vm->pending_room=sr_i32(&s);
   vm->game_end=sr_i32(&s); vm->started=sr_i32(&s);
   vm->last_key=sr_d(&s); vm->window_fullscreen=sr_d(&s);
   int64_t room_age=0;
@@ -7539,9 +7929,9 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   }
   vm->ini_n=sr_i32(&s); vm->ini_open=sr_i32(&s);
   char *path=sr_str_dup(&s); snprintf(vm->ini_path,sizeof(vm->ini_path),"%s",path?path:""); free(path);
-  if(vm->ini_n<0 || vm->ini_n>256){ state_debug("bad ini count",s.pos,(uint32_t)vm->ini_n); s.ok=0; }
+  if(vm->ini_n<0 || vm->ini_n>GML_INI_MAX){ state_debug("bad ini count",s.pos,(uint32_t)vm->ini_n); s.ok=0; }
   int ini_n=vm->ini_n; vm->ini_n=0;
-  for(int i=0;i<ini_n && i<256;i++){
+  for(int i=0;i<ini_n && i<GML_INI_MAX;i++){
     vm->ini_kv[i].section=sr_str_dup(&s);
     vm->ini_kv[i].key=sr_str_dup(&s);
     vm->ini_kv[i].is_str=sr_i32(&s);
@@ -7773,6 +8163,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     if(vm->audio_falloff_model<0 || vm->audio_falloff_model>6) s.ok=0;
   }
   vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;
+  vm->step_active=0; vm->step_alloc_base=0;
+  vm->step_free_n=vm->step_free_pos=0;
   vm->render=render; vm->audio=audio;
   gml_obj_alive_recount(vm);   /* family live counts rebuilt from the restored pool */
   /* Rebuild tile-collision maps, which point into win data and are not serialized. GMV5+

@@ -97,6 +97,7 @@ static int raster_fixtures(void){
   render.blend_equation=render.blend_equation_alpha=1;
   render.next_surface_id=1;
   vm.render=&render;
+  gml_d3_reset();
 
   {
     GmlVal number=vreal(7), string=vstr("seven"), array=gml_arr_new(2,vreal(0));
@@ -404,6 +405,12 @@ static int raster_fixtures(void){
       fprintf(stderr,"modern display mouse coordinates changed\n");
       return 0;
     }
+    /* Cursor confinement belongs to the libretro frontend. The legacy Studio calls remain
+     * successful platform operations even when invoked every step. */
+    { double rect[4]={0,0,640,480};
+      call_numbers(&vm,"display_mouse_lock",rect,4);
+      (void)call_values(&vm,"display_mouse_unlock",NULL,0);
+    }
     render.presentation_w=render.presentation_h=0;
     vm.win=NULL;
   }
@@ -457,11 +464,21 @@ static int raster_fixtures(void){
   }
 
   {
+    GmlWin surface_win={0};
     uint32_t borrowed[6]={
       0xFF010203u,0xFF040506u,0xFF070809u,
       0xFF111213u,0xFF141516u,0xFF171819u
     };
+    render.win=&surface_win;
     render.app_surface=borrowed; render.app_w=3; render.app_h=2;
+    surface_win.bytecode=15;
+    { const double resize_args[3]={0,5,4}; call_numbers(&vm,"surface_resize",resize_args,3); }
+    if(render.app_surface_owned || render.app_surface!=borrowed ||
+       gml_surface_width(&render,0)!=3 || gml_surface_height(&render,0)!=2){
+      fprintf(stderr,"Studio 1.x application-surface resize was not ignored\n");
+      return 0;
+    }
+    surface_win.bytecode=17;
     { const double resize_args[3]={0,5,4}; call_numbers(&vm,"surface_resize",resize_args,3); }
     if(!render.app_surface_owned || render.app_surface!=render.app_surface_owned ||
        gml_surface_width(&render,0)!=5 || gml_surface_height(&render,0)!=4 ||
@@ -480,6 +497,46 @@ static int raster_fixtures(void){
     free(render.app_surface_owned);
     render.app_surface_owned=NULL;
     render.app_surface=NULL; render.app_w=render.app_h=0;
+    render.win=NULL;
+  }
+
+  {
+    /* display_set_gui_size takes effect immediately inside Draw GUI. A temporary logical canvas
+     * twice the target size must place both sprite-style coordinates and software primitives in
+     * the same physical pixels, then restore the initial mapping later in the same event. */
+    GmlWin gui_win={0}; gui_win.bytecode=17;
+    vm.win=&gui_win; render.win=&gui_win;
+    uint32_t target[8]={0};
+    gml_render_begin(&render,target,4,2,0,0);
+    gml_render_gui_begin(&render,4,2);
+    const double gui_large[]={8,4};
+    call_numbers(&vm,"display_set_gui_size",gui_large,2);
+    if(vm.gui_w!=8 || vm.gui_h!=4 || render.gui_scale_x!=0.5 || render.gui_scale_y!=0.5){
+      fprintf(stderr,"mid-pass GUI logical-size activation mismatch: gui=%d,%d scale=%g,%g active=%d target=%d stack=%d\n",
+              vm.gui_w,vm.gui_h,render.gui_scale_x,render.gui_scale_y,
+              render.gui_pass_active,render.target_id,render.target_sp);
+      return 0;
+    }
+    render.color=0xFFFFFFu; render.alpha=1.0;
+    const double right_half[]={4,0,8,4,0};
+    call_numbers(&vm,"draw_rectangle",right_half,5);
+    const double gui_base[]={4,2};
+    call_numbers(&vm,"display_set_gui_size",gui_base,2);
+    gml_render_gui_end(&render);
+    for(int y=0;y<2;y++) for(int x=0;x<4;x++){
+      int colored=(target[y*4+x]&0x00FFFFFFu)!=0;
+      if(colored!=(x>=2)){
+        fprintf(stderr,"mid-pass GUI logical-size transform mismatch at %d,%d: %08x\n",
+                x,y,target[y*4+x]);
+        return 0;
+      }
+    }
+    if(render.gui_pass_active || render.gui_scale_x!=1.0 || render.gui_scale_y!=1.0 ||
+       vm.gui_w!=4 || vm.gui_h!=2){
+      fprintf(stderr,"mid-pass GUI logical-size restore mismatch\n");
+      return 0;
+    }
+    vm.win=NULL; render.win=NULL;
   }
 
   {
@@ -1315,6 +1372,22 @@ static int raster_fixtures(void){
   surface_data->px[0]=0xFFFF0000u; surface_data->px[1]=0xFF00FF00u;
   surface_data->px[2]=0xFF0000FFu; surface_data->px[3]=0xFFFFFFFFu;
   int runtime_sprite=gml_sprite_create_from_surface(&render,surface,0,0,2,2,0,0,0,0);
+  int runtime_sprite_2=gml_sprite_create_from_surface(&render,surface,0,0,2,2,0,0,0,0);
+  GmlVal runtime_name_arg_1=vreal(runtime_sprite), runtime_name_arg_2=vreal(runtime_sprite_2);
+  GmlVal runtime_name_1=call_values(&vm,"sprite_get_name",&runtime_name_arg_1,1);
+  GmlVal runtime_name_2=call_values(&vm,"sprite_get_name",&runtime_name_arg_2,1);
+  if(runtime_sprite<0 || runtime_sprite_2<0 || runtime_sprite==runtime_sprite_2 ||
+     runtime_name_1.t!=V_STR || runtime_name_2.t!=V_STR || !runtime_name_1.s || !runtime_name_2.s ||
+     !runtime_name_1.s[0] || !runtime_name_2.s[0] || !strcmp(runtime_name_1.s,runtime_name_2.s)){
+    fprintf(stderr,"software runtime sprite names are not unique\n");
+    return 0;
+  }
+  GmlVal runtime_lookup=call_values(&vm,"asset_get_index",&runtime_name_1,1);
+  if((int)runtime_lookup.d!=runtime_sprite){
+    fprintf(stderr,"software runtime sprite name lookup mismatch: %d != %d\n",
+      (int)runtime_lookup.d,runtime_sprite);
+    return 0;
+  }
   GmlVal sprite_args[2]={vreal(runtime_sprite),vreal(0)};
   GmlVal sprite_texture=call_values(&vm,"sprite_get_texture",sprite_args,2);
   double sprite_begin[2]={1,sprite_texture.d};
@@ -1541,11 +1614,31 @@ static int raster_fixtures(void){
     render.alpha=.25;
     gml_draw_sprite(&render,depth_sprite,0,4,4);
     unsigned modern_basic=(pixels[4*WIDTH+4]>>16)&255u;
+    /* GMS2 instance-layer visibility is a render gate independent of instance.visible. Hidden
+     * layers keep stepping and colliding without drawing their sprites. */
+    GmlRtLayer draw_layer={0};
+    draw_layer.used=1; draw_layer.visible=0; draw_layer.order=7;
+    draw_layer.script_begin=draw_layer.script_end=-1;
+    draw_vm.rtl=&draw_layer; draw_vm.n_rtl=1; draw_vm.cap_rtl=1;
+    draw_instance.draw_layer_order=7;
+    for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    gml_vm_draw(&draw_vm);
+    unsigned hidden_layer_pixel=pixels[4*WIDTH+4]&0x00FFFFFFu;
+    draw_layer.visible=1;
+    for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    gml_vm_draw(&draw_vm);
+    unsigned visible_layer_pixel=pixels[4*WIDTH+4]&0x00FFFFFFu;
+    draw_vm.rtl=NULL; draw_vm.n_rtl=draw_vm.cap_rtl=0;
+    draw_instance.draw_layer_order=-1;
     if(automatic<185 || automatic>195 || self_draw!=automatic || full_sprite!=255 ||
        gml_builtin_fast_id("draw_full_sprite")!=gml_builtin_fast_id("draw_self") || classic_basic!=255 ||
-       explicit_alpha<55 || explicit_alpha>70 || modern_basic<55 || modern_basic>70){
-      fprintf(stderr,"default/self/full/basic/explicit draw alpha isolation mismatch: automatic=%u self=%u full=%u classic=%u explicit=%u modern=%u\n",
-        automatic,self_draw,full_sprite,classic_basic,explicit_alpha,modern_basic);
+       explicit_alpha<55 || explicit_alpha>70 || modern_basic<55 || modern_basic>70 ||
+       hidden_layer_pixel!=0 || visible_layer_pixel==0){
+      fprintf(stderr,"default/self/full/basic/explicit/layer draw mismatch: automatic=%u self=%u full=%u classic=%u explicit=%u modern=%u hidden=%06x visible=%06x\n",
+        automatic,self_draw,full_sprite,classic_basic,explicit_alpha,modern_basic,
+        hidden_layer_pixel,visible_layer_pixel);
       return 0;
     }
     {
@@ -1927,6 +2020,34 @@ static int raster_fixtures(void){
       fprintf(stderr,"software classic draw-alpha quantization mismatch: %08x\n",pixels[5*WIDTH+5]);
       return 0;
     }
+    free(render.tpag[0].alpha_row_min); render.tpag[0].alpha_row_min=NULL;
+    free(render.tpag[0].alpha_row_max); render.tpag[0].alpha_row_max=NULL;
+    free(render.tpag[0].alpha_runs); render.tpag[0].alpha_runs=NULL;
+    free(render.tpag[0].argb_cache); render.tpag[0].argb_cache=NULL;
+    render.tpag[0].alpha_scanned=0;
+    render.tpag[0].alpha_runs_built=0;
+    render.tpag[0].alpha_run_count=0;
+    for(int i=0;i<4;i++){
+      render.atlas[0].px[i*4]=render.atlas[0].px[i*4+1]=render.atlas[0].px[i*4+2]=1;
+      render.atlas[0].px[i*4+3]=255;
+    }
+    GmlWin blend_win={0};
+    render.classic=0; render.win=&blend_win;
+    blend_win.bytecode=15;
+    pixels[5*WIDTH+5]=0xFF000000u;
+    gml_draw_background_ext(&render,0,5,5,1,1,0xFFFFFF,128.0/255.0);
+    if(pixels[5*WIDTH+5]!=0xFF000000u){
+      fprintf(stderr,"software Studio 1.x combined truncation mismatch: %08x\n",pixels[5*WIDTH+5]);
+      return 0;
+    }
+    blend_win.bytecode=17;
+    pixels[5*WIDTH+5]=0xFF000000u;
+    gml_draw_background_ext(&render,0,5,5,1,1,0xFFFFFF,128.0/255.0);
+    if(pixels[5*WIDTH+5]!=0xFF010101u){
+      fprintf(stderr,"software GMS2 combined UNORM blend mismatch: %08x\n",pixels[5*WIDTH+5]);
+      return 0;
+    }
+    render.classic=1; render.win=NULL;
     memcpy(render.atlas[0].px,atlas_backup,sizeof(atlas_backup));
     free(render.tpag[0].alpha_row_min); render.tpag[0].alpha_row_min=NULL;
     free(render.tpag[0].alpha_row_max); render.tpag[0].alpha_row_max=NULL;
@@ -1997,6 +2118,29 @@ static int raster_fixtures(void){
     fprintf(stderr,"software modern negative sprite scale anchor mismatch\n");
     return 0;
   }
+  /* A layer background is a logical cell, not a sprite instance: ignore the sprite origin and
+   * repeat only along the selected axis.  This also protects against an untiled vertical copy
+   * reappearing above/below the authored layer. */
+  flipped->originx=flipped->originy=1;
+  memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  gml_draw_layer_background_sprite(&render,flipped_sprite,0,0,10,1,1,0xFFFFFF,1,1,0);
+  if((pixels[10*WIDTH]&0x00FFFFFFu)==0 ||
+     (pixels[11*WIDTH]&0x00FFFFFFu)==0 ||
+     pixels[9*WIDTH]!=0 || pixels[12*WIDTH]!=0 ||
+     (pixels[10*WIDTH+WIDTH-1]&0x00FFFFFFu)==0){
+    fprintf(stderr,"software layer-background origin/axis tiling mismatch\n");
+    return 0;
+  }
+  memset(pixels,0,sizeof(pixels));
+  gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+  gml_draw_layer_background_sprite(&render,flipped_sprite,0,-.5,10,1,1,0xFFFFFF,1,0,0);
+  if((pixels[10*WIDTH]&0x00FFFFFFu)==0 ||
+     (pixels[10*WIDTH+1]&0x00FFFFFFu)==0 || pixels[10*WIDTH+2]!=0){
+    fprintf(stderr,"software layer-background negative fractional anchor mismatch\n");
+    return 0;
+  }
+  flipped->originx=flipped->originy=0;
   /* Exact cardinal rotations remain on the integer texel lattice.  Approximate libm zeros at
    * 90/180/270 degrees used to move every quadrant with a negative basis axis by one pixel. */
   {
