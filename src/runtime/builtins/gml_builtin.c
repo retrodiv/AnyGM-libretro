@@ -255,7 +255,8 @@ static int classic_execute_assignment(GmlVM *vm, const char *source){
 }
 /* Shared shader uniform handling. Handle = sh*16 + slot: 1 = LUT row; 3..6 = CRT;
  * 7 = palette-grid pixel size, 8 = palette-grid UV bounds, 9 = palette-grid id; 10..11 =
- * the two coordinate factors of a dual-sample offset shader;
+ * the two coordinate factors of a dual-sample offset shader; 12..13 = procedural-paint
+ * resolution/time;
  * 15 = accepted-and-ignored. See parse_shader_palettes / draw_surface_crt. */
 static double gml_shader_get_uniform(GmlRender *R, int sh, const char *un){
   if(R && sh>=0 && sh<R->n_shader_pal && R->shader_pal){
@@ -276,6 +277,12 @@ static double gml_shader_get_uniform(GmlRender *R, int sh, const char *un){
       if(!strcmp(un,p->dual_uniform[0])) return sh*16+10;
       if(!strcmp(un,p->dual_uniform[1])) return sh*16+11;
     }
+    if(p->paint){
+      if(!strcmp(un,p->paint_resolution_uniform)) return sh*16+12;
+      if(!strcmp(un,p->paint_time_uniform))       return sh*16+13;
+    }
+    if(p->grayscale && p->grayscale_has_alpha_uniform &&
+       !strcmp(un,p->grayscale_alpha_uniform)) return sh*16+14;
   }
   return sh>=0? sh*16+15 : -1;
 }
@@ -301,6 +308,13 @@ static void gml_shader_set_uniform_f(GmlRender *R, int h, GmlVal *a, int n){
   if(p->dual_sample){
     if(slot==10){ p->dual_value[0]=(float)gml_shader_uniform_component(a,n,0); return; }
     if(slot==11){ p->dual_value[1]=(float)gml_shader_uniform_component(a,n,0); return; }
+  }
+  if(p->paint){
+    if(slot==12){ for(int i=0;i<3;i++) p->paint_resolution[i]=(float)gml_shader_uniform_component(a,n,i); return; }
+    if(slot==13){ p->paint_time=(float)gml_shader_uniform_component(a,n,0); return; }
+  }
+  if(p->grayscale && slot==14){
+    p->grayscale_alpha=(float)gml_shader_uniform_component(a,n,0); return;
   }
   if(!p->crt) return;
   switch(slot){
@@ -1849,6 +1863,51 @@ static void gml_array_sort(GmlVal arr, int ascending){
   sort_dir=ascending?1:-1;
   qsort(A->data,(size_t)A->len,sizeof(GmlVal),gml_val_sort_cmp);
 }
+static GmlVal gml_array_shuffle_copy(GmlVM *vm,GmlVal source,GmlVal *args,int count){
+  if(source.t!=V_ARR || !source.arr) return gml_arr_new(0,vreal(0));
+  GmlArr *input=(GmlArr*)source.arr;
+  int total=input->len;
+  if(total<=0) return gml_arr_new(0,vreal(0));
+
+  double offset_value=count>1?N(args,count,1):0;
+  int offset;
+  if(!isfinite(offset_value)) offset=offset_value<0?0:total-1;
+  else {
+    double floored=floor(offset_value);
+    if(floored<-(double)total) offset=0;
+    else if(floored>(double)(total-1)) offset=total-1;
+    else { offset=(int)floored; if(offset<0) offset+=total; }
+  }
+
+  int direction=1, length=total-offset;
+  if(count>2){
+    double length_value=N(args,count,2);
+    direction=length_value<0?-1:1;
+    if(!isfinite(length_value)) length=direction>0?total-offset:offset+1;
+    else {
+      double magnitude=fabs(length_value);
+      length=magnitude>(double)total?total:(int)floor(magnitude);
+      int available=direction>0?total-offset:offset+1;
+      if(length>available) length=available;
+    }
+  }
+  if(length<0) length=0;
+  GmlVal output=gml_arr_new(length,vreal(0));
+  for(int i=0,index=offset;i<length;i++,index+=direction)
+    gml_arr_set(output,i,input->data[index]);
+  if(output.t==V_ARR && output.arr){
+    GmlArr *shuffled=(GmlArr*)output.arr;
+    for(int i=shuffled->len-1;i>0;i--){
+      int j=(int)floor(gml_rng_value(vm)*(i+1));
+      if(j<0) j=0;
+      if(j>i) j=i;
+      GmlVal temporary=shuffled->data[i];
+      shuffled->data[i]=shuffled->data[j];
+      shuffled->data[j]=temporary;
+    }
+  }
+  return output;
+}
 static GmlVal json_parse_value(JsonIn *j, int depth);
 static GmlVal json_parse_array(JsonIn *j, int depth){
   if(!js_consume(j,'[')){ j->ok=0; return vreal(0); }
@@ -2108,6 +2167,88 @@ static int ds_map_read_text(GmlVM *vm, int dst_id, const char *text){
   int ok=ds_map_replace_from_map(vm,dst_id,src_id);
   ds_map_destroy_id(vm,src_id);
   return ok;
+}
+static GmlVal ds_list_write_text(GmlVM *vm,int id){
+  GmlDSList *list=ds_list_slot(vm,id);
+  JsonBuf buffer={0};
+  if(!list || !jb_puts(&buffer,"{\"__gml_ds_list__\":[")){
+    free(buffer.s);
+    return vstr_owned(strdup("{}"));
+  }
+  for(int i=0;i<list->len;i++){
+    int kind=list->child_kind?list->child_kind[i]:0;
+    char prefix[8];
+    snprintf(prefix,sizeof prefix,i?",[%d,":"[%d,",kind);
+    int allow=kind==1?2:(kind==2?3:0);
+    if(!jb_puts(&buffer,prefix) ||
+       !json_encode_val(vm,&buffer,list->item[i],0,allow) ||
+       !jb_putc(&buffer,']')){
+      free(buffer.s);
+      return vstr_owned(strdup("{}"));
+    }
+  }
+  if(!jb_puts(&buffer,"]}")){
+    free(buffer.s);
+    return vstr_owned(strdup("{}"));
+  }
+  return vstr_owned(buffer.s?buffer.s:strdup("{}"));
+}
+static void ds_list_transfer_items(GmlVM *vm,GmlDSList *destination,GmlDSList *source){
+  if(!destination || !source || destination==source) return;
+  ds_list_clear_owned(vm,destination);
+  for(int i=0;i<source->len;i++){
+    int kind=source->child_kind?source->child_kind[i]:0;
+    ds_list_push_kind(destination,ds_val_clone(source->item[i]),kind);
+    /* Ownership of nested DS resources moves to the destination. The temporary JSON tree
+     * may still destroy its list shells, but must not recursively destroy a transferred child. */
+    if(source->child_kind) source->child_kind[i]=0;
+  }
+}
+static int ds_list_read_text(GmlVM *vm,int dst_id,const char *text){
+  GmlDSList *destination=ds_list_slot_repair(vm,dst_id);
+  if(!destination) return 0;
+  ds_list_clear_owned(vm,destination);
+  GmlVal parsed=json_decode_text(vm,text);
+  if(parsed.t!=V_REAL || !isfinite(parsed.d)) return 0;
+  int root_id=(int)parsed.d;
+  if(fabs(parsed.d-(double)root_id)>=1e-9) return 0;
+  GmlDSMap *root=ds_map_slot(vm,root_id);
+  if(!root) return 0;
+  int wrapper=ds_map_find_entry(root,"s:__gml_ds_list__");
+  if(wrapper>=0 && root->entry[wrapper].child_kind==1 && root->entry[wrapper].val.t==V_REAL){
+    GmlDSList *rows=ds_list_slot(vm,(int)root->entry[wrapper].val.d);
+    if(rows){
+      for(int i=0;i<rows->len;i++){
+        if(!rows->child_kind || rows->child_kind[i]!=1 || rows->item[i].t!=V_REAL) continue;
+        GmlDSList *row=ds_list_slot(vm,(int)rows->item[i].d);
+        if(!row || row->len<2 || row->item[0].t!=V_REAL) continue;
+        int kind=(int)row->item[0].d;
+        if(kind<0 || kind>2) kind=0;
+        int actual=row->child_kind?row->child_kind[1]:0;
+        if(kind==1 && (actual!=1 || row->item[1].t!=V_REAL ||
+                       !ds_list_slot(vm,(int)row->item[1].d))) kind=0;
+        if(kind==2 && (actual!=2 || row->item[1].t!=V_REAL ||
+                       !ds_map_slot(vm,(int)row->item[1].d))) kind=0;
+        ds_list_push_kind(destination,ds_val_clone(row->item[1]),kind);
+        if(kind && row->child_kind) row->child_kind[1]=0;
+      }
+      ds_map_destroy_id(vm,root_id);
+      return 1;
+    }
+  }
+  /* Also accept a plain JSON array stored by early builds. json_decode wraps a non-object root
+   * in the map key "default", preserving nested child-kind information on the decoded list. */
+  int fallback=ds_map_find_entry(root,"s:default");
+  if(fallback>=0 && root->entry[fallback].child_kind==1 && root->entry[fallback].val.t==V_REAL){
+    GmlDSList *source=ds_list_slot(vm,(int)root->entry[fallback].val.d);
+    int source_exists=source!=NULL;
+    ds_list_transfer_items(vm,destination,source);
+    root->entry[fallback].child_kind=0;
+    ds_map_destroy_id(vm,root_id);
+    return source_exists;
+  }
+  ds_map_destroy_id(vm,root_id);
+  return 0;
 }
 static void ini_reset(GmlVM *vm){
   for(int i=0;i<vm->ini_n;i++){
@@ -4375,6 +4516,9 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
   if(x1<0)x1=0; if(y1<0)y1=0; if(x2>=R->fbw)x2=R->fbw-1; if(y2>=R->fbh)y2=R->fbh-1;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(!outline && alpha<=0) return;
+  /* An untextured fragment shader receives the primitive coordinates and produces its own colour;
+   * draw_set_color/alpha need not affect it when the shader source does not consume vertex colour. */
+  if(!outline && gml_render_shader_fill_rect(R,x1,y1,x2+1,y2+1)) return;
   if(!outline && R->blendmode==0 && (alpha>=1 || !R->alphablend)){   /* opaque filled rect: fast per-row fill */
     gml_render_maybe_prepare_opaque_rect(R,x1,y1,x2+1,y2+1);
     uint32_t src=gm_color_to_xrgb(gmcol);
@@ -6247,6 +6391,7 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
       if(!strcmp(nm,"array_insert")){ if(n>2) gml_arr_insert(a[0],(int)N(a,n,1),a+2,n-2); *out=vreal(0); return 1; }
       if(!strcmp(nm,"array_equals")){ *out=vreal(n>1 && array_equals_recursive(vm,a[0],a[1])); return 1; }
       if(!strcmp(nm,"array_sort")){ if(n>0) gml_array_sort(a[0], n<2 || N(a,n,1)!=0); *out=vreal(0); return 1; }
+      if(!strcmp(nm,"array_shuffle")){ *out=n>0?gml_array_shuffle_copy(vm,a[0],a,n):gml_arr_new(0,vreal(0)); return 1; }
       if(!strcmp(nm,"array_height_2d")){ *out=vreal(n>0?gml_val_array_height_2d(a[0]):0); return 1; }
       if(!strcmp(nm,"array_length_2d")){ *out=vreal(n>0?gml_val_array_length_2d(a[0],(int)N(a,n,1)):0); return 1; }
       return 0;
@@ -7651,6 +7796,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"array_insert")){ if(n>2) gml_arr_insert(a[0],(int)N(a,n,1),a+2,n-2); return vreal(0); }
   if(!strcmp(nm,"array_equals")) return vreal(n>1 && array_equals_recursive(vm,a[0],a[1]));
   if(!strcmp(nm,"array_sort")){ if(n>0) gml_array_sort(a[0], n<2 || N(a,n,1)!=0); return vreal(0); }
+  if(!strcmp(nm,"array_shuffle")) return n>0?gml_array_shuffle_copy(vm,a[0],a,n):gml_arr_new(0,vreal(0));
   if(!strcmp(nm,"array_contains")){
     if(n<2 || a[0].t!=V_ARR || !a[0].arr) return vreal(0);
     GmlArr *A=(GmlArr*)a[0].arr;
@@ -10261,6 +10407,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_list_clear")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); ds_list_clear_owned(vm,l); return vreal(0); }
   if(!strcmp(nm,"ds_list_add")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
     for(int i=1;i<n;i++) ds_list_push(l,ds_val_clone(a[i])); return vreal(0); }
+  if(!strcmp(nm,"ds_list_write")) return ds_list_write_text(vm,(int)N(a,n,0));
+  if(!strcmp(nm,"ds_list_read")){
+    (void)ds_list_read_text(vm,(int)N(a,n,0),S(a,n,1));
+    return vreal(0);
+  }
   if(!strcmp(nm,"ds_list_size")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(l?l->len:0); }
   if(!strcmp(nm,"ds_list_empty")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(!l||l->len==0); }
   if(!strcmp(nm,"ds_list_find_value")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); int p=(int)N(a,n,1);
@@ -11068,7 +11219,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"shader_is_compiled")){ GmlRender *R=(GmlRender*)vm->render; int sid=(int)N(a,n,0);
     int ok = R && sid>=0 && sid<R->n_shader_pal && R->shader_pal &&
              (R->shader_pal[sid].has || R->shader_pal[sid].lut || R->shader_pal[sid].grid ||
-              R->shader_pal[sid].dual_sample ||
+              R->shader_pal[sid].dual_sample || R->shader_pal[sid].paint ||
+              R->shader_pal[sid].grayscale ||
               (R->shader_pal[sid].crt && R->crt_shader_enable));
     if(getenv("GML_LOG_SHADER")){ static long c=0; if(c++<6){ extern long g_vm_frame;
       fprintf(stderr,"[shader] f%ld shader_is_compiled(%d)=%d\n",g_vm_frame,sid,ok); } }

@@ -2111,10 +2111,10 @@ static int raster_fixtures(void){
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   gml_draw_sprite_ext(&render,flipped_sprite,0,20,20,-1,1,0,0xFFFFFF,1);
   gml_draw_sprite_ext(&render,flipped_sprite,0,30,30,1,-1,0,0xFFFFFF,1);
-  if((pixels[20*WIDTH+19]&0x00FFFFFFu)==0 ||
-     (pixels[20*WIDTH+20]&0x00FFFFFFu)==0 || pixels[20*WIDTH+18]!=0 ||
-     (pixels[29*WIDTH+30]&0x00FFFFFFu)==0 ||
-     (pixels[30*WIDTH+30]&0x00FFFFFFu)==0 || pixels[28*WIDTH+30]!=0){
+  if((pixels[20*WIDTH+18]&0x00FFFFFFu)==0 ||
+     (pixels[20*WIDTH+19]&0x00FFFFFFu)==0 || pixels[20*WIDTH+20]!=0 ||
+     (pixels[28*WIDTH+30]&0x00FFFFFFu)==0 ||
+     (pixels[29*WIDTH+30]&0x00FFFFFFu)==0 || pixels[30*WIDTH+30]!=0){
     fprintf(stderr,"software modern negative sprite scale anchor mismatch\n");
     return 0;
   }
@@ -2139,6 +2139,109 @@ static int raster_fixtures(void){
      (pixels[10*WIDTH+1]&0x00FFFFFFu)==0 || pixels[10*WIDTH+2]!=0){
     fprintf(stderr,"software layer-background negative fractional anchor mismatch\n");
     return 0;
+  }
+  {
+    /* draw_sprite_tiled anchors the full logical cell at x/y; the sprite origin affects an
+     * ordinary sprite draw but must not translate the tiling phase. */
+    uint8_t *tile_rgba=calloc(4,4);
+    if(!tile_rgba){
+      fprintf(stderr,"software tiled-sprite fixture allocation failed\n");
+      return 0;
+    }
+    for(int py=0;py<2;py++){
+      tile_rgba[(py*2)*4+0]=255;
+      tile_rgba[(py*2)*4+1]=255;
+      tile_rgba[(py*2)*4+2]=255;
+      tile_rgba[(py*2)*4+3]=255;
+    }
+    flipped->runtime_rgba=tile_rgba;
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    gml_draw_sprite_tiled_ext(&render,flipped_sprite,0,2,2,1,1,0xFFFFFF,1);
+    flipped->runtime_rgba=NULL;
+    free(tile_rgba);
+    if((pixels[0]&0x00FFFFFFu)==0 || pixels[1]!=0 ||
+       (pixels[2]&0x00FFFFFFu)==0 || pixels[3]!=0){
+      fprintf(stderr,"software tiled-sprite origin phase mismatch: %08x %08x %08x %08x\n",
+              pixels[0],pixels[1],pixels[2],pixels[3]);
+      return 0;
+    }
+  }
+  {
+    /* Texture-remap shaders apply to ordinary atlas sprites/backgrounds, not only to surfaces. */
+    uint8_t palette_rgba[16]={255,0,0,255, 0,255,0,255,
+                              255,0,0,255, 0,255,0,255};
+    if(!render.shader_pal || render.n_shader_pal<1){
+      fprintf(stderr,"software texture-remap shader fixture state missing\n");
+      return 0;
+    }
+    memset(render.shader_pal,0,sizeof(*render.shader_pal));
+    render.shader_pal[0].lut=1; render.shader_pal[0].lut_row=0;
+    flipped->runtime_rgba=palette_rgba;
+    render.lut_pal_sprite=flipped_sprite; render.lut_pal_frame=0;
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    render.active_shader=0;
+    gml_draw_background_ext(&render,0,5,5,1,1,0xFFFFFF,1);
+    render.active_shader=-1; render.lut_pal_sprite=-1; flipped->runtime_rgba=NULL;
+    if(pixels[5*WIDTH+5]!=0xFF00FF00u){
+      fprintf(stderr,"software atlas texture-remap shader mismatch: %08x\n",pixels[5*WIDTH+5]);
+      return 0;
+    }
+  }
+  {
+    uint8_t source_backup[4];
+    memcpy(source_backup,render.atlas[0].px,4);
+    render.atlas[0].px[0]=255; render.atlas[0].px[1]=0;
+    render.atlas[0].px[2]=0; render.atlas[0].px[3]=255;
+    memset(render.shader_pal,0,sizeof(*render.shader_pal));
+    render.shader_pal[0].grayscale=1; render.shader_pal[0].grayscale_alpha=1;
+    render.shader_pal[0].grayscale_weight[0]=.2125f;
+    render.shader_pal[0].grayscale_weight[1]=.7154f;
+    render.shader_pal[0].grayscale_weight[2]=.0721f;
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    render.active_shader=0;
+    gml_draw_background_ext(&render,0,5,5,1,1,0xFFFFFF,1);
+    render.active_shader=-1;
+    memcpy(render.atlas[0].px,source_backup,4);
+    if((pixels[5*WIDTH+5]&0x00FFFFFFu)!=0x363636u){
+      fprintf(stderr,"software atlas luminance-shader mismatch: %08x\n",pixels[5*WIDTH+5]);
+      return 0;
+    }
+  }
+  {
+    /* A recognized untextured procedural fragment must replace the primitive's flat colour and
+     * vary across quantized coordinates.  Constants are deliberately generic fixture values. */
+    if(!render.shader_pal || render.n_shader_pal<1){
+      fprintf(stderr,"software procedural-shader fixture state missing\n");
+      return 0;
+    }
+    memset(render.shader_pal,0,sizeof(*render.shader_pal));
+    struct GmlShaderPal *shader=&render.shader_pal[0];
+    shader->paint=1; shader->paint_opaque=1;
+    shader->paint_resolution[0]=64; shader->paint_resolution[1]=48;
+    shader->paint_pixel_factor=64; shader->paint_spin_ease=.5f;
+    shader->paint_spin_amount=.1f; shader->paint_contrast=1.5f;
+    shader->paint_time=2.25f;
+    for(int c=0;c<4;c++){
+      shader->paint_color[0][c]=c==3?1.0f:.1f;
+      shader->paint_color[1][c]=c==3?1.0f:.2f;
+      shader->paint_color[2][c]=c==3?1.0f:0.0f;
+    }
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    render.active_shader=0;
+    if(!gml_render_shader_fill_rect(&render,0,0,WIDTH,HEIGHT)){
+      fprintf(stderr,"software procedural-shader draw was not handled\n");
+      return 0;
+    }
+    uint32_t first=pixels[0]; int differs=0;
+    for(int i=1;i<WIDTH*HEIGHT;i++) if(pixels[i]!=first){ differs=1; break; }
+    if(!differs || (first>>24)!=255){
+      fprintf(stderr,"software procedural-shader raster mismatch: first=%08x varies=%d\n",first,differs);
+      return 0;
+    }
   }
   flipped->originx=flipped->originy=0;
   /* Exact cardinal rotations remain on the integer texel lattice.  Approximate libm zeros at

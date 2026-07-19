@@ -55,7 +55,60 @@ static int expect_array_function_gap_closure(void){
   GmlVal nan_equal=gml_builtin_call(&vm,"array_equals",nan_args,2);
   ok=ok && equal.t==V_REAL && equal.d==1 && different.t==V_REAL && different.d==0 &&
     nan_equal.t==V_REAL && nan_equal.d==0;
+  GmlVal ordered=gml_arr_new(5,vreal(0));
+  for(int i=0;i<5;i++) gml_arr_set(ordered,i,vreal(i+1));
+  gml_rng_seed(&vm,12345);
+  GmlVal shuffled=gml_builtin_call(&vm,"array_shuffle",&ordered,1);
+  int seen[6]={0};
+  if(shuffled.t==V_ARR && shuffled.arr && gml_val_array_length(shuffled)==5)
+    for(int i=0;i<5;i++){
+      int value=(int)gml_arr_get(shuffled,i).d;
+      if(value>=1 && value<=5) seen[value]++;
+    }
+  ok=ok && gml_arr_get(ordered,0).d==1 && gml_arr_get(ordered,4).d==5;
+  for(int i=1;i<=5;i++) ok=ok && seen[i]==1;
+  GmlVal range_args[3]={ordered,vreal(-2),vreal(-2)};
+  GmlVal range=gml_builtin_call(&vm,"array_shuffle",range_args,3);
+  double sum=0;
+  if(range.t==V_ARR && range.arr)
+    for(int i=0;i<gml_val_array_length(range);i++) sum+=gml_arr_get(range,i).d;
+  ok=ok && gml_val_array_length(range)==2 && sum==7; /* source indices 3 then 2: values 4+3 */
   if(!ok) fprintf(stderr,"array insert/equivalence fixture failed\n");
+  return ok;
+}
+
+static int expect_ds_list_text_roundtrip(void){
+  GmlVM vm={0}; vm.next_ds_id=1; vm.ds_map_last_slot=-1;
+  GmlVal parent=gml_builtin_call(&vm,"ds_list_create",NULL,0);
+  GmlVal child=gml_builtin_call(&vm,"ds_list_create",NULL,0);
+  GmlVal add_child[3]={child,vreal(7),vstr("nested")};
+  (void)gml_builtin_call(&vm,"ds_list_add",add_child,3);
+  GmlVal add_parent[4]={parent,vreal(3.5),vstr("text"),child};
+  (void)gml_builtin_call(&vm,"ds_list_add",add_parent,4);
+  GmlVal mark_args[2]={parent,vreal(2)};
+  (void)gml_builtin_call(&vm,"ds_list_mark_as_list",mark_args,2);
+  GmlVal encoded=gml_builtin_call(&vm,"ds_list_write",&parent,1);
+  GmlVal restored=gml_builtin_call(&vm,"ds_list_create",NULL,0);
+  GmlVal read_args[2]={restored,encoded};
+  (void)gml_builtin_call(&vm,"ds_list_read",read_args,2);
+  GmlVal size=gml_builtin_call(&vm,"ds_list_size",&restored,1);
+  GmlVal at0[2]={restored,vreal(0)},at1[2]={restored,vreal(1)},at2[2]={restored,vreal(2)};
+  GmlVal first=gml_builtin_call(&vm,"ds_list_find_value",at0,2);
+  GmlVal second=gml_builtin_call(&vm,"ds_list_find_value",at1,2);
+  GmlVal nested=gml_builtin_call(&vm,"ds_list_find_value",at2,2);
+  GmlVal nested_size=gml_builtin_call(&vm,"ds_list_size",&nested,1);
+  GmlVal nested_at[2]={nested,vreal(1)};
+  GmlVal nested_text=gml_builtin_call(&vm,"ds_list_find_value",nested_at,2);
+  GmlVal is_list=gml_builtin_call(&vm,"ds_list_is_list",at2,2);
+  int ok=encoded.t==V_STR && encoded.s && strstr(encoded.s,"__gml_ds_list__") &&
+    size.t==V_REAL && size.d==3 && first.t==V_REAL && first.d==3.5 &&
+    second.t==V_STR && second.s && !strcmp(second.s,"text") &&
+    nested_size.t==V_REAL && nested_size.d==2 && nested_text.t==V_STR && nested_text.s &&
+    !strcmp(nested_text.s,"nested") && is_list.t==V_REAL && is_list.d==1;
+  if(encoded.t==V_STR && encoded.d!=0) free((void*)encoded.s);
+  (void)gml_builtin_call(&vm,"ds_list_destroy",&parent,1);
+  (void)gml_builtin_call(&vm,"ds_list_destroy",&restored,1);
+  if(!ok) fprintf(stderr,"ds_list text round-trip fixture failed\n");
   return ok;
 }
 
@@ -301,6 +354,7 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 
 int main(void){
   if(!expect_array_function_gap_closure()) return 1;
+  if(!expect_ds_list_text_roundtrip()) return 1;
   if(!expect_audio_group_paths()) return 1;
   {
     GmlSprite sprite={0}; GmlRender render={0};

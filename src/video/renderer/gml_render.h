@@ -237,6 +237,19 @@ typedef struct {
     float dual_shift_gain[4];   /* RGBA multipliers for the shifted lookup */
     char  dual_uniform[2][32];  /* the two float factors in the normalized-coordinate shift */
     float dual_value[2];        /* values supplied through shader_set_uniform_f */
+    /* Quantized swirling-paint procedural fragment family.  This is recognized from the GLSL's
+     * operations and its constants/uniforms are read from SHDR; filled primitives can therefore
+     * execute it in the software renderer without baking an asset or shader name into the core. */
+    int   paint, paint_opaque;
+    char  paint_time_uniform[32], paint_resolution_uniform[32];
+    float paint_time, paint_resolution[3];
+    float paint_pixel_factor, paint_spin_ease, paint_spin_amount, paint_contrast;
+    float paint_color[3][4];
+    /* Luminance shader family: RGB becomes a parsed weighted dot product; an optional user float
+     * scales source alpha (used by cross-fading variants of the same fragment). */
+    int   grayscale, grayscale_has_alpha_uniform;
+    char  grayscale_alpha_uniform[32];
+    float grayscale_weight[3], grayscale_alpha;
   } *shader_pal; int n_shader_pal;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
   int       active_shader;   /* shader_set asset id, -1 = none. Reset per frame. */
@@ -337,6 +350,9 @@ void gml_render_cancel_pending_fill(GmlRender *r);
 void gml_render_cancel_pending_underlay(GmlRender *r);
 void gml_render_prepare_draw(GmlRender *r);
 void gml_render_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1);
+/* Apply a recognized untextured procedural fragment to a filled screen-space rectangle.  Returns
+ * nonzero only when the active shader handled the draw. */
+int gml_render_shader_fill_rect(GmlRender *r, int x0, int y0, int x1, int y1);
 static inline void gml_render_maybe_prepare_draw(GmlRender *r){
   if(r){
     if(r->pending_underlay || r->pending_fill) gml_render_prepare_draw(r);
