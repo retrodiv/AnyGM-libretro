@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
 #include "gml_vm.h"
 #include "gml_render.h"
+#include "gml_audio.h"
 #include "gmlc/gmlc_package.h"
 
 #include <math.h>
@@ -21,6 +22,82 @@ void gml_input_mouse(double *rx,double *ry,double *gx,double *gy,double *wx,doub
   if(held)*held=1; if(pressed)*pressed=0; if(released)*released=0; if(wheel)*wheel=0;
 }
 GmlVal gml_builtin_call(GmlVM *vm,const char *name,GmlVal *args,int count);
+
+static int expect_array_function_gap_closure(void){
+  GmlVM vm={0}; vm.math_epsilon=1e-5;
+  GmlVal array=gml_arr_new(2,vreal(0));
+  gml_arr_set(array,0,vreal(1)); gml_arr_set(array,1,vreal(4));
+  GmlVal insert[4]={array,vreal(1),vreal(2),vreal(3)};
+  (void)gml_builtin_call(&vm,"array_insert",insert,4);
+  int ok=gml_val_array_length(array)==4 && gml_arr_get(array,0).d==1 &&
+    gml_arr_get(array,1).d==2 && gml_arr_get(array,2).d==3 && gml_arr_get(array,3).d==4;
+  GmlVal gap[3]={array,vreal(6),vreal(9)};
+  (void)gml_builtin_call(&vm,"array_insert",gap,3);
+  ok=ok && gml_val_array_length(array)==7 && gml_arr_get(array,4).d==0 &&
+    gml_arr_get(array,5).d==0 && gml_arr_get(array,6).d==9;
+
+  GmlVal negative=gml_arr_new(3,vreal(0));
+  for(int i=0;i<3;i++) gml_arr_set(negative,i,vreal(i+1));
+  GmlVal before_last[3]={negative,vreal(-1),vreal(8)};
+  (void)gml_builtin_call(&vm,"array_insert",before_last,3);
+  ok=ok && gml_val_array_length(negative)==4 && gml_arr_get(negative,2).d==8 &&
+    gml_arr_get(negative,3).d==3;
+
+  GmlVal nested_a=gml_arr_new(2,vreal(0)), nested_b=gml_arr_new(2,vreal(0));
+  gml_arr_set(nested_a,0,vstr("value")); gml_arr_set(nested_b,0,vstr("value"));
+  gml_arr_set(nested_a,1,array); gml_arr_set(nested_b,1,array);
+  GmlVal equal_args[2]={nested_a,nested_b};
+  GmlVal equal=gml_builtin_call(&vm,"array_equals",equal_args,2);
+  gml_arr_set(nested_b,0,vstr("different"));
+  GmlVal different=gml_builtin_call(&vm,"array_equals",equal_args,2);
+  GmlVal nan_a=gml_arr_new(1,vreal(NAN)), nan_b=gml_arr_new(1,vreal(NAN));
+  GmlVal nan_args[2]={nan_a,nan_b};
+  GmlVal nan_equal=gml_builtin_call(&vm,"array_equals",nan_args,2);
+  ok=ok && equal.t==V_REAL && equal.d==1 && different.t==V_REAL && different.d==0 &&
+    nan_equal.t==V_REAL && nan_equal.d==0;
+  if(!ok) fprintf(stderr,"array insert/equivalence fixture failed\n");
+  return ok;
+}
+
+static void fixture_write_u32(unsigned char *data,size_t off,uint32_t value){
+  data[off]=(unsigned char)value;
+  data[off+1]=(unsigned char)(value>>8);
+  data[off+2]=(unsigned char)(value>>16);
+  data[off+3]=(unsigned char)(value>>24);
+}
+
+static int expect_audio_group_paths(void){
+  unsigned char data[80]={0};
+  char *strings[]={(char*)"default",(char*)"music",(char*)"effects",(char*)"groups\\music.dat"};
+  uint32_t string_offsets[]={48,52,56,60};
+  GmlWin win={0};
+  win.data=data; win.size=sizeof(data); win.n_chunks=1;
+  memcpy(win.chunks[0].name,"AGRP",4);
+  win.chunks[0].off=0; win.chunks[0].size=32;
+  win.strs=strings; win.str_charoff=string_offsets; win.n_strs=4;
+  snprintf(win.content_dir,sizeof win.content_dir,"/bundle");
+
+  /* Legacy records are one word wide. The word after group 1 is group 2's name,
+   * not a custom path field. */
+  fixture_write_u32(data,0,3);
+  fixture_write_u32(data,4,16); fixture_write_u32(data,8,20); fixture_write_u32(data,12,24);
+  fixture_write_u32(data,16,48); fixture_write_u32(data,20,52); fixture_write_u32(data,24,56);
+  char path[96];
+  int ok=gml_audio_group_file_path(&win,1,path,sizeof path) &&
+         !strcmp(path,"/bundle/audiogroup1.dat");
+
+  /* New records are two words wide and may carry a platform-neutral relative sidecar path. */
+  memset(data,0,sizeof(data));
+  win.chunks[0].size=32;
+  fixture_write_u32(data,0,2);
+  fixture_write_u32(data,4,12); fixture_write_u32(data,8,20);
+  fixture_write_u32(data,12,48); fixture_write_u32(data,16,0);
+  fixture_write_u32(data,20,52); fixture_write_u32(data,24,60);
+  ok=ok && gml_audio_group_file_path(&win,1,path,sizeof path) &&
+     !strcmp(path,"/bundle/groups/music.dat");
+  if(!ok) fprintf(stderr,"audio-group path layout mismatch: %s\n",path);
+  return ok;
+}
 
 static int fixture_write_text(const char *path,const char *text){
   FILE *f=fopen(path,"wb");
@@ -223,16 +300,26 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 }
 
 int main(void){
+  if(!expect_array_function_gap_closure()) return 1;
+  if(!expect_audio_group_paths()) return 1;
   {
     GmlSprite sprite={0}; GmlRender render={0};
     render.spr=&sprite; render.n_spr=1;
+    sprite.n_frames=1;
     sprite.playback_speed_valid=1; sprite.playback_speed=15.0f; sprite.playback_speed_type=0;
     double per_second=gml_sprite_animation_delta(&render,0,1.0,60.0);
     sprite.playback_speed=0.5f; sprite.playback_speed_type=1;
     double per_frame=gml_sprite_animation_delta(&render,0,1.0,60.0);
+    GmlVM sprite_vm={0}; sprite_vm.render=&render;
+    GmlVal sprite_id=vreal(0);
+    GmlVal speed_type=gml_builtin_call(&sprite_vm,"sprite_get_speed_type",&sprite_id,1);
+    GmlVal set_speed[3]={sprite_id,vreal(12),vreal(0)};
+    (void)gml_builtin_call(&sprite_vm,"sprite_set_speed",set_speed,3);
+    GmlVal speed=gml_builtin_call(&sprite_vm,"sprite_get_speed",&sprite_id,1);
     sprite.playback_speed_valid=0;
     double legacy=gml_sprite_animation_delta(&render,0,0.75,60.0);
-    if(fabs(per_second-0.25)>1e-12 || fabs(per_frame-0.5)>1e-12 || fabs(legacy-0.75)>1e-12){
+    if(fabs(per_second-0.25)>1e-12 || fabs(per_frame-0.5)>1e-12 || fabs(legacy-0.75)>1e-12 ||
+       speed_type.t!=V_REAL || speed_type.d!=1 || speed.t!=V_REAL || speed.d!=12){
       fprintf(stderr,"sprite playback cadence mismatch: fps=%.6f frame=%.6f legacy=%.6f\n",
         per_second,per_frame,legacy); return 1;
     }
@@ -278,6 +365,62 @@ int main(void){
     }
     if(min_y!=6 || max_y!=13){
       fprintf(stderr,"real-font centred extent mismatch: y=%d..%d\n",min_y,max_y); return 1;
+    }
+  }
+  {
+    /* Extended transformed text must apply its unscaled wrap width and custom line separation;
+     * these arguments are shared by the plain and colour variants. */
+    GmlRender render={0}; GmlGlyph glyphs[2]={{0}}; GmlAtlas atlas={0};
+    uint32_t framebuffer[12*12]={0}; uint8_t pixel[4]={255,255,255,255};
+    gml_render_begin(&render,framebuffer,12,12,0,0);
+    render.n_fonts=1; render.n_atlas=1; render.atlas=&atlas;
+    render.font=0; render.color=0xFFFFFF; render.alpha=1; render.alphablend=1;
+    render.software_overlay=1;
+    atlas.px=pixel; atlas.w=atlas.h=1; atlas.decode_attempted=1;
+    memset(render.fonts[0].glyph_by_char,0xFF,sizeof(render.fonts[0].glyph_by_char));
+    render.fonts[0].real=1; render.fonts[0].atlas=0; render.fonts[0].line_height=1;
+    render.fonts[0].align_height=1; render.fonts[0].glyphs=glyphs;
+    render.fonts[0].n_glyphs=2; render.fonts[0].glyphs_sorted=1;
+    render.fonts[0].glyph_by_char['A']=0; render.fonts[0].glyph_by_char[' ']=1;
+    glyphs[0].ch='A'; glyphs[1].ch=' '; glyphs[0].w=glyphs[1].w=1;
+    glyphs[0].h=glyphs[1].h=1; glyphs[0].shift=glyphs[1].shift=1;
+    gml_draw_text_ext_transformed(&render,1,1,"AA AA",4,2,1,1,0,0xFFFFFF,1);
+    if(!(framebuffer[1*12+1]&0xFFFFFFu) || !(framebuffer[5*12+1]&0xFFFFFFu) ||
+       (framebuffer[1*12+4]&0xFFFFFFu)){
+      fprintf(stderr,"extended transformed text did not wrap at the declared width: %08x %08x %08x\n",
+              framebuffer[1*12+1],framebuffer[5*12+1],framebuffer[1*12+4]); return 1;
+    }
+  }
+  {
+    /* Colour circles and ellipses are radial gradients, not flat fills using only the centre
+     * colour.  Exercise the public dispatch because cached and uncached bytecode calls share it. */
+    GmlVM draw_vm={0}; GmlRender render={0}; uint32_t framebuffer[17*17];
+    for(size_t i=0;i<sizeof framebuffer/sizeof *framebuffer;i++) framebuffer[i]=0xFF000000u;
+    gml_render_begin(&render,framebuffer,17,17,0,0);
+    render.alpha=1; render.alphablend=1; render.circle_precision=24;
+    draw_vm.render=&render;
+    GmlVal circle_args[6]={vreal(8),vreal(8),vreal(6),vreal(0x0000FF),
+                           vreal(0xFF0000),vreal(0)};
+    (void)gml_builtin_call(&draw_vm,"draw_circle_colour",circle_args,6);
+    uint32_t centre=framebuffer[8*17+8],edge=framebuffer[8*17+13],outside=framebuffer[8*17+15];
+    int centre_red=(centre>>16)&255,centre_blue=centre&255;
+    int edge_red=(edge>>16)&255,edge_blue=edge&255;
+    if(centre_red<=centre_blue || edge_blue<=edge_red || (outside&0xFFFFFFu)){
+      fprintf(stderr,"radial colour primitive mismatch: centre=%08x edge=%08x outside=%08x\n",
+              centre,edge,outside); return 1;
+    }
+  }
+  {
+    /* The basic bm_subtract preset uses (bm_zero,bm_inv_src_colour).  It scales each destination
+     * channel independently; it must not be confused with the separate subtract blend equation. */
+    GmlVM draw_vm={0}; GmlRender render={0}; uint32_t framebuffer=0xFF80C840u;
+    gml_render_begin(&render,&framebuffer,1,1,0,0);
+    render.alpha=1; render.alphablend=1; draw_vm.render=&render;
+    GmlVal mode=vreal(3),point[3]={vreal(0),vreal(0),vreal(0xC08040)};
+    (void)gml_builtin_call(&draw_vm,"gpu_set_blendmode",&mode,1);
+    (void)gml_builtin_call(&draw_vm,"draw_point_colour",point,3);
+    if(framebuffer!=0xFF606410u){
+      fprintf(stderr,"bm_subtract inverse-source blend mismatch: %08x\n",framebuffer); return 1;
     }
   }
   GmlcProject project; GmlcObject objects[3]; GmlcRoom rooms[2];
@@ -575,6 +718,115 @@ int main(void){
   if(!mkdtemp(save_root)){ gml_win_free(&win); unlink(path); return 1; }
   snprintf(win.save_dir,sizeof win.save_dir,"%s",save_root);
   GmlVM vm; if(gml_vm_init(&vm,&win)){ gml_win_free(&win); unlink(path); return 1; }
+  {
+    GmlVal build_args[9]={vreal(10),vreal(20),vreal(30),vreal(0),vreal(0),vreal(0),
+                          vreal(2),vreal(3),vreal(4)};
+    GmlVal matrix=gml_builtin_call(&vm,"matrix_build",build_args,9);
+    GmlVal transform_args[4]={matrix,vreal(1),vreal(2),vreal(3)};
+    GmlVal xyz=gml_builtin_call(&vm,"matrix_transform_vertex",transform_args,4);
+    GmlVal reuse=gml_arr_new(4,vreal(-1));
+    GmlVal reuse_args[5]={matrix,vreal(1),vreal(2),vreal(3),reuse};
+    GmlVal xyzw=gml_builtin_call(&vm,"matrix_transform_vertex",reuse_args,5);
+    GmlVal vector_args[5]={matrix,vreal(1),vreal(2),vreal(3),vreal(0)};
+    GmlVal vector=gml_builtin_call(&vm,"matrix_transform_vertex",vector_args,5);
+    int matrix_ok=xyz.t==V_ARR && gml_val_array_length(xyz)==3 &&
+      fabs(gml_arr_get(xyz,0).d-12)<1e-9 && fabs(gml_arr_get(xyz,1).d-26)<1e-9 &&
+      fabs(gml_arr_get(xyz,2).d-42)<1e-9 && xyzw.t==V_ARR && xyzw.arr==reuse.arr &&
+      gml_val_array_length(xyzw)==4 && fabs(gml_arr_get(xyzw,3).d-1)<1e-9 &&
+      vector.t==V_ARR && gml_val_array_length(vector)==4 &&
+      fabs(gml_arr_get(vector,0).d-2)<1e-9 && fabs(gml_arr_get(vector,1).d-6)<1e-9 &&
+      fabs(gml_arr_get(vector,2).d-12)<1e-9 && fabs(gml_arr_get(vector,3).d)<1e-9;
+    GmlVal look_args[9]={vreal(5),vreal(6),vreal(-7),vreal(5),vreal(6),vreal(-6),
+                         vreal(0),vreal(1),vreal(0)};
+    GmlVal look=gml_builtin_call(&vm,"matrix_build_lookat",look_args,9);
+    GmlVal eye_args[4]={look,vreal(5),vreal(6),vreal(-7)};
+    GmlVal target_args[4]={look,vreal(5),vreal(6),vreal(-6)};
+    GmlVal eye=gml_builtin_call(&vm,"matrix_transform_vertex",eye_args,4);
+    GmlVal target=gml_builtin_call(&vm,"matrix_transform_vertex",target_args,4);
+    matrix_ok=matrix_ok && eye.t==V_ARR && target.t==V_ARR &&
+      fabs(gml_arr_get(eye,0).d)<1e-9 && fabs(gml_arr_get(eye,1).d)<1e-9 &&
+      fabs(gml_arr_get(eye,2).d)<1e-9 && fabs(gml_arr_get(target,0).d)<1e-9 &&
+      fabs(gml_arr_get(target,1).d)<1e-9 && fabs(gml_arr_get(target,2).d-1)<1e-9;
+    if(!matrix_ok){ fprintf(stderr,"matrix construction/vertex transform fixture failed\n"); return 1; }
+  }
+  {
+    GmlVal path_index=gml_builtin_call(&vm,"path_add",NULL,0);
+    GmlVal first[4]={path_index,vreal(0),vreal(0),vreal(25)};
+    GmlVal second[4]={path_index,vreal(3),vreal(4),vreal(75)};
+    (void)gml_builtin_call(&vm,"path_add_point",first,4);
+    (void)gml_builtin_call(&vm,"path_add_point",second,4);
+    GmlVal closed=gml_builtin_call(&vm,"path_get_closed",&path_index,1);
+    GmlVal closed_length=gml_builtin_call(&vm,"path_get_length",&path_index,1);
+    GmlVal speed_args[2]={path_index,vreal(1)};
+    GmlVal speed=gml_builtin_call(&vm,"path_get_point_speed",speed_args,2);
+    GmlVal open_args[2]={path_index,vreal(0)};
+    (void)gml_builtin_call(&vm,"path_set_closed",open_args,2);
+    GmlVal open_length=gml_builtin_call(&vm,"path_get_length",&path_index,1);
+    if(closed.t!=V_REAL || closed.d!=1 || closed_length.t!=V_REAL ||
+       fabs(closed_length.d-10)>1e-9 || speed.t!=V_REAL || speed.d!=75 ||
+       open_length.t!=V_REAL || fabs(open_length.d-5)>1e-9){
+      fprintf(stderr,"runtime path closure/length fixture failed\n"); return 1;
+    }
+  }
+  {
+    GmlVal now=gml_builtin_call(&vm,"date_current_datetime",NULL,0);
+    GmlVal weekday=gml_builtin_call(&vm,"date_get_weekday",&now,1);
+    GmlVal datetime=gml_builtin_call(&vm,"date_datetime_string",&now,1);
+    setenv("GML_ENVIRONMENT_FIXTURE","visible",1);
+    GmlVal env_name=vstr("GML_ENVIRONMENT_FIXTURE");
+    GmlVal environment=gml_builtin_call(&vm,"environment_get_variable",&env_name,1);
+    unsetenv("GML_ENVIRONMENT_FIXTURE");
+    if(weekday.t!=V_REAL || weekday.d<0 || weekday.d>6 || datetime.t!=V_STR ||
+       !datetime.s || !datetime.s[0] || environment.t!=V_STR || strcmp(environment.s,"visible")){
+      fprintf(stderr,"date/environment query fixture failed\n"); return 1;
+    }
+  }
+  {
+    GmlInstance *st=gml_struct_new(&vm); if(!st) return 1;
+    GmlVal ref=vreal((double)st->id);
+    GmlVal set_alpha[3]={ref,vstr("alpha"),vreal(7)};
+    GmlVal set_label[3]={ref,vstr("label"),vstr("owned")};
+    (void)gml_builtin_call(&vm,"struct_set",set_alpha,3);
+    (void)gml_builtin_call(&vm,"variable_struct_set",set_label,3);
+    GmlVal key_args[2]={ref,vstr("alpha")};
+    GmlVal alpha=gml_builtin_call(&vm,"struct_get",key_args,2);
+    GmlVal names=gml_builtin_call(&vm,"variable_struct_get_names",&ref,1);
+    GmlVal count=gml_builtin_call(&vm,"struct_names_count",&ref,1);
+    GmlVal exists=gml_builtin_call(&vm,"struct_exists",key_args,2);
+    GmlVal method_args[2]={vreal(IT_GLOBAL),vreal((double)(GML_FUNCVAL_TAG|1))};
+    GmlVal method=gml_builtin_call(&vm,"method",method_args,2);
+    GmlVal is_method=gml_builtin_call(&vm,"is_method",&method,1);
+    GmlVal method_names=gml_builtin_call(&vm,"struct_get_names",&method,1);
+    int struct_ok=alpha.t==V_REAL && alpha.d==7 && names.t==V_ARR &&
+      gml_val_array_length(names)==2 && count.t==V_REAL && count.d==2 &&
+      exists.t==V_REAL && exists.d==1 && is_method.t==V_REAL && is_method.d==1 &&
+      method_names.t==V_ARR && gml_val_array_length(method_names)==0;
+    (void)gml_builtin_call(&vm,"struct_remove",key_args,2);
+    exists=gml_builtin_call(&vm,"variable_struct_exists",key_args,2);
+    if(!struct_ok || exists.t!=V_REAL || exists.d!=0){
+      fprintf(stderr,"struct reflection/method fixture failed\n"); return 1;
+    }
+
+    GmlVal src=gml_builtin_call(&vm,"ds_map_create",NULL,0);
+    GmlVal dst=gml_builtin_call(&vm,"ds_map_create",NULL,0);
+    GmlVal src_add[3]={src,vstr("score"),vreal(11)};
+    GmlVal dst_add[3]={dst,vstr("stale"),vreal(3)};
+    (void)gml_builtin_call(&vm,"ds_map_add",src_add,3);
+    (void)gml_builtin_call(&vm,"ds_map_add",dst_add,3);
+    GmlVal copy_args[2]={dst,src};
+    (void)gml_builtin_call(&vm,"ds_map_copy",copy_args,2);
+    src_add[2]=vreal(19);
+    (void)gml_builtin_call(&vm,"ds_map_replace",src_add,3);
+    GmlVal find_dst[2]={dst,vstr("score")};
+    GmlVal copied=gml_builtin_call(&vm,"ds_map_find_value",find_dst,2);
+    GmlVal stale_args[2]={dst,vstr("stale")};
+    GmlVal stale=gml_builtin_call(&vm,"ds_map_exists",stale_args,2);
+    if(copied.t!=V_REAL || copied.d!=11 || stale.t!=V_REAL || stale.d!=0){
+      fprintf(stderr,"ds_map_copy replacement fixture failed\n"); return 1;
+    }
+    (void)gml_builtin_call(&vm,"ds_map_destroy",&src,1);
+    (void)gml_builtin_call(&vm,"ds_map_destroy",&dst,1);
+  }
   {
     GmlVal *transition_kind=gml_varmap_get(&vm.globals,"transition_kind");
     GmlVal *transition_steps=gml_varmap_get(&vm.globals,"transition_steps");
@@ -978,6 +1230,20 @@ int main(void){
   created->x=created->y=created->xprevious=created->yprevious=0;
   contact->x=1; contact->y=0; contact->solid=1;
   vm.cur_self=created;
+  GmlVal collision_list=gml_builtin_call(&vm,"ds_list_create",NULL,0);
+  GmlVal rectangle_list_args[9]={vreal(1),vreal(0),vreal(1),vreal(0),
+    vreal((double)contact->id),vreal(0),vreal(0),collision_list,vreal(1)};
+  gml_colgrid_invalidate(&vm);
+  GmlVal rectangle_count=gml_builtin_call(&vm,"collision_rectangle_list",rectangle_list_args,9);
+  GmlVal list_at[2]={collision_list,vreal(0)};
+  GmlVal rectangle_hit=gml_builtin_call(&vm,"ds_list_find_value",list_at,2);
+  if(rectangle_count.t!=V_REAL || rectangle_count.d!=1 || rectangle_hit.t!=V_REAL ||
+     rectangle_hit.d!=(double)contact->id){
+    fprintf(stderr,"collision_rectangle_list fixture failed: count=%.0f id=%.0f\n",
+      rectangle_count.t==V_REAL?rectangle_count.d:-1.0,
+      rectangle_hit.t==V_REAL?rectangle_hit.d:-1.0); return 1;
+  }
+  (void)gml_builtin_call(&vm,"ds_list_destroy",&collision_list,1);
   GmlVal bounce_motion[2]={vreal(0),vreal(1)};
   (void)gml_builtin_call(&vm,"motion_set",bounce_motion,2);
   GmlVal advanced_bounce=vreal(1);

@@ -48,7 +48,8 @@ struct GmlAudio {
   double master_gain;
   GmlFmodBanks *fmod;  /* optional FMOD Studio bank set; see gml_fmod.c */
   /* external audio: audiogroup<N>.dat blobs (streamed music groups) + loose sound files */
-  uint8_t *grp_data[GML_MAX_AUDIOGROUPS]; uint32_t grp_audo_off[GML_MAX_AUDIOGROUPS], grp_n[GML_MAX_AUDIOGROUPS];
+  uint8_t *grp_data[GML_MAX_AUDIOGROUPS];
+  uint32_t grp_size[GML_MAX_AUDIOGROUPS], grp_audo_off[GML_MAX_AUDIOGROUPS], grp_n[GML_MAX_AUDIOGROUPS];
   uint8_t **extbuf; int n_ext;
 };
 
@@ -59,19 +60,43 @@ static int audio_voice_limit(GmlAudio *a){
 static void audio_warm_initial_ogg(GmlAudio *a);
 
 /* Load an indexed audio-group container on demand. */
-static int audio_group_path(GmlAudio *a, int g, char *out, size_t out_cap){
-  if(!a || !a->win || !out || out_cap<2 || g<0) return 0;
-  const GmlChunk *gc=gml_chunk(a->win,"AGRP");
-  const uint8_t *d=a->win->data;
+static const char *audio_group_exact_string(const GmlWin *win, uint32_t ptr){
+  if(!win || !win->str_charoff || !win->strs) return NULL;
+  int lo=0, hi=win->n_strs-1;
+  while(lo<=hi){
+    int mid=lo+(hi-lo)/2;
+    if(win->str_charoff[mid]==ptr) return win->strs[mid];
+    if(win->str_charoff[mid]<ptr) lo=mid+1; else hi=mid-1;
+  }
+  return NULL;
+}
+
+int gml_audio_group_file_path(const GmlWin *win, int g, char *out, size_t out_cap){
+  if(!win || !out || out_cap<2 || g<0) return 0;
+  const GmlChunk *gc=gml_chunk(win,"AGRP");
+  const uint8_t *d=win->data;
   const char *rel=NULL;
-  if(gc && gc->off+4<=a->win->size){
+  if(gc && gc->off<=win->size && gc->size<=win->size-gc->off && gc->size>=4){
+    size_t chunk_end=(size_t)gc->off+gc->size;
     uint32_t n=rd32(d,gc->off);
-    if((uint32_t)g<n && gc->off+8+(uint32_t)g*4<=a->win->size){
+    uint32_t max_entries=(gc->size-4)/4;
+    if(n<=max_entries && (uint32_t)g<n){
       uint32_t rec=rd32(d,gc->off+4+(uint32_t)g*4);
-      /* Later AGRP entries store {name string, custom path string}.
-       * Older records only have the name word, in which case the second pointer either lies
-       * outside STRG or does not resolve and we retain the historical audiogroupN.dat name. */
-      if(rec+8<=a->win->size) rel=gml_str_by_ptr(a->win,rd32(d,rec+4));
+      uint32_t record_size=0;
+      if((uint32_t)g+1<n){
+        uint32_t next=rd32(d,gc->off+8+(uint32_t)g*4);
+        if(next>rec && (size_t)next<=chunk_end) record_size=next-rec;
+      } else if(g>0){
+        uint32_t prev=rd32(d,gc->off+(uint32_t)g*4);
+        if(prev<rec && prev>=gc->off+4+n*4) record_size=rec-prev;
+      }
+      /* Legacy AGRP records contain one string pointer and are packed four bytes apart.
+       * Later records contain {name, custom path} and are eight bytes apart.
+       * A one-record table has no neighbour from which to infer its width, so only accept its
+       * second word when it is itself an exact STRG pointer. */
+      if(rec>=gc->off+4+n*4 && (size_t)rec<=chunk_end && chunk_end-(size_t)rec>=8 &&
+         (record_size>=8 || n==1))
+        rel=audio_group_exact_string(win,rd32(d,rec+4));
     }
   }
   char fallback[64];
@@ -82,10 +107,10 @@ static int audio_group_path(GmlAudio *a, int g, char *out, size_t out_cap){
   /* Audio-group paths are relative content paths. Refuse traversal/drive paths and normalize
    * the Windows separator so the same data.win works on libretro's Unix targets. */
   if(rel[0]=='/' || rel[0]=='\\' || strchr(rel,':') || strstr(rel,"..")) return 0;
-  size_t base=strlen(a->win->content_dir[0]?a->win->content_dir:".");
+  size_t base=strlen(win->content_dir[0]?win->content_dir:".");
   size_t nr=strlen(rel);
   if(base+1+nr+1>out_cap) return 0;
-  memcpy(out,a->win->content_dir[0]?a->win->content_dir:".",base);
+  memcpy(out,win->content_dir[0]?win->content_dir:".",base);
   out[base++]='/';
   for(size_t i=0;i<nr;i++) out[base+i]=(rel[i]=='\\')?'/':rel[i];
   out[base+nr]=0;
@@ -96,17 +121,23 @@ static int audio_group_load_dat(GmlAudio *a, int g){
   if(a->grp_data[g]) return a->grp_n[g]>0;
   a->grp_n[g]=0; a->grp_data[g]=(uint8_t*)1;   /* mark tried (failure keeps 1 so we don't retry) */
   char path[600];
-  if(!audio_group_path(a,g,path,sizeof path)) return 0;
-  FILE *f=fopen(path,"rb"); if(!f) return 0;
-  fseek(f,0,SEEK_END); long sz=ftell(f); fseek(f,0,SEEK_SET);
-  if(sz<16){ fclose(f); return 0; }
+  if(!gml_audio_group_file_path(a->win,g,path,sizeof path)) return 0;
+  FILE *f=fopen(path,"rb");
+  if(!f){ if(getenv("GML_LOG_AUDIO")) fprintf(stderr,"[audio] group=%d open failed: %s\n",g,path); return 0; }
+  if(fseek(f,0,SEEK_END)){ fclose(f); return 0; }
+  long sz=ftell(f);
+  if(sz<20 || (uint64_t)sz>UINT32_MAX || fseek(f,0,SEEK_SET)){ fclose(f); return 0; }
   uint8_t *buf=malloc((size_t)sz);
   if(!buf || fread(buf,1,(size_t)sz,f)!=(size_t)sz){ free(buf); fclose(f); return 0; }
   fclose(f);
   if(memcmp(buf,"FORM",4) || memcmp(buf+8,"AUDO",4)){ free(buf); return 0; }
+  uint32_t count=rd32(buf,16);
+  if(count>((uint32_t)sz-20u)/4u){ free(buf); return 0; }
   a->grp_data[g]=buf;
+  a->grp_size[g]=(uint32_t)sz;
   a->grp_audo_off[g]=16;                        /* FORM(8) + "AUDO"+size(8) -> count at +16 */
-  a->grp_n[g]=rd32(buf,16);
+  a->grp_n[g]=count;
+  if(getenv("GML_LOG_AUDIO")) fprintf(stderr,"[audio] group=%d loaded=%u path=%s\n",g,count,path);
   return a->grp_n[g]>0;
 }
 GmlAudio *gml_audio_create(GmlWin *win){
@@ -131,13 +162,17 @@ GmlAudio *gml_audio_create(GmlWin *win){
       const uint8_t *gd=a->grp_data[group];
       if((uint32_t)audoid<a->grp_n[group]){
         uint32_t gap=rd32(gd,a->grp_audo_off[group]+4+(uint32_t)audoid*4);
+        if(gap>a->grp_size[group]-4u) continue;
         uint32_t gblen=rd32(gd,gap), gbase=gap+4;
-        if(memcmp(gd+gbase,"RIFF",4)==0){
-          uint32_t end=gbase+8+rd32(gd,gbase+4);
+        if(gblen>a->grp_size[group]-gbase || gblen<4) continue;
+        if(gblen>=12 && memcmp(gd+gbase,"RIFF",4)==0){
+          uint64_t declared_end=(uint64_t)gbase+8u+rd32(gd,gbase+4);
+          uint32_t end=declared_end<(uint64_t)gbase+gblen ? (uint32_t)declared_end : gbase+gblen;
           uint32_t o=gbase+12; const uint8_t *pcm=NULL; uint32_t plen=0;
           while(o+8<=end){
             uint32_t csz=rd32(gd,o+4);
-            if(memcmp(gd+o,"fmt ",4)==0){
+            if(csz>end-o-8) break;
+            if(memcmp(gd+o,"fmt ",4)==0 && csz>=8){
               a->snd[i].channels=rd16(gd,o+10);
               a->snd[i].sample_rate=(int)rd32(gd,o+12);
             }
@@ -387,6 +422,18 @@ int  gml_audio_is_playing(GmlAudio *a, int snd){
   for(int i=0;i<GML_MAX_VOICES;i++)
     if(voice_matches(a,&a->voice[i],snd)) return 1;
   return 0;
+}
+int gml_audio_exists(GmlAudio *a, int target){
+  if(!a) return 0;
+  if(target>=1000000){
+    for(int i=0;i<GML_MAX_VOICES;i++)
+      if(a->voice[i].active && a->voice[i].id==target) return 1;
+    return 0;
+  }
+  if(target<0 || target>=a->n_snd) return 0;
+  if(target<a->n_base_snd) return 1;
+  GmlSound *sound=&a->snd[target];
+  return sound->pcm || sound->own || sound->ogg || sound->mp3 || sound->nval>0;
 }
 int  gml_audio_voice_paused(GmlAudio *a, int snd){
   if(!a) return 0;

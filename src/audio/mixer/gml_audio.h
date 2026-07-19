@@ -12,6 +12,10 @@
 
 typedef struct GmlAudio GmlAudio;
 
+/* Resolve an audio-group sidecar using either the legacy numeric filename or the
+ * custom relative path stored by newer package formats. */
+int gml_audio_group_file_path(const GmlWin *win, int group, char *out, size_t out_cap);
+
 GmlAudio *gml_audio_create(GmlWin *win);
 struct GmlFmodBanks *gml_audio_get_fmod(GmlAudio *a);   /* FMOD bank set, or NULL when unavailable */
 void gml_audio_free(GmlAudio *a);
@@ -31,6 +35,7 @@ void gml_audio_stop_all(GmlAudio *a);
 void gml_audio_pause_all(GmlAudio *a, int paused);  /* paused!=0 freezes all voices (keep position) */
 void gml_audio_pause_sound(GmlAudio *a, int target, int paused);
 int  gml_audio_is_playing(GmlAudio *a, int snd);
+int  gml_audio_exists(GmlAudio *a, int target);       /* sound asset or live voice handle */
 int  gml_audio_voice_paused(GmlAudio *a, int snd);   /* 1 if a matching voice exists and is paused */
 void gml_audio_set_master_gain(GmlAudio *a, double gain);
 double gml_audio_get_master_gain(GmlAudio *a);

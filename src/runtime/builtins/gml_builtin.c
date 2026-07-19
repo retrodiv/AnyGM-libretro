@@ -279,28 +279,35 @@ static double gml_shader_get_uniform(GmlRender *R, int sh, const char *un){
   }
   return sh>=0? sh*16+15 : -1;
 }
+static double gml_shader_uniform_component(GmlVal *args, int count, int component){
+  if(count==2 && args[1].t==V_ARR){
+    GmlVal value=gml_arr_get(args[1],component);
+    return N(&value,1,0);
+  }
+  return N(args,count,component+1);
+}
 static void gml_shader_set_uniform_f(GmlRender *R, int h, GmlVal *a, int n){
   if(!R || h<0) return;
   int sh=h/16, slot=h%16;
   if(sh<0 || sh>=R->n_shader_pal || !R->shader_pal) return;
   struct GmlShaderPal *p=&R->shader_pal[sh];
-  if(slot==1){ if(p->lut) p->lut_row=(float)N(a,n,1); return; }
+  if(slot==1){ if(p->lut) p->lut_row=(float)gml_shader_uniform_component(a,n,0); return; }
   if(p->grid){
-    if(slot==7){ p->grid_pixel[0]=(float)N(a,n,1); p->grid_pixel[1]=(float)N(a,n,2); return; }
-    if(slot==8){ for(int i=0;i<4;i++) p->grid_uvs[i]=(float)N(a,n,i+1); return; }
-    if(slot==9){ p->grid_id=(float)N(a,n,1); return; }
+    if(slot==7){ p->grid_pixel[0]=(float)gml_shader_uniform_component(a,n,0);
+                 p->grid_pixel[1]=(float)gml_shader_uniform_component(a,n,1); return; }
+    if(slot==8){ for(int i=0;i<4;i++) p->grid_uvs[i]=(float)gml_shader_uniform_component(a,n,i); return; }
+    if(slot==9){ p->grid_id=(float)gml_shader_uniform_component(a,n,0); return; }
   }
   if(p->dual_sample){
-    if(slot==10){ p->dual_value[0]=(float)N(a,n,1); return; }
-    if(slot==11){ p->dual_value[1]=(float)N(a,n,1); return; }
+    if(slot==10){ p->dual_value[0]=(float)gml_shader_uniform_component(a,n,0); return; }
+    if(slot==11){ p->dual_value[1]=(float)gml_shader_uniform_component(a,n,0); return; }
   }
   if(!p->crt) return;
   switch(slot){
-    case 3: p->crt_sizes[0]=(float)N(a,n,1); p->crt_sizes[1]=(float)N(a,n,2);
-            p->crt_sizes[2]=(float)N(a,n,3); p->crt_sizes[3]=(float)N(a,n,4); break;
-    case 4: p->crt_distortion=(float)N(a,n,1); break;
-    case 5: p->crt_distort=(N(a,n,1)!=0.0); break;
-    case 6: p->crt_border=(N(a,n,1)!=0.0); break;
+    case 3: for(int i=0;i<4;i++) p->crt_sizes[i]=(float)gml_shader_uniform_component(a,n,i); break;
+    case 4: p->crt_distortion=(float)gml_shader_uniform_component(a,n,0); break;
+    case 5: p->crt_distort=(gml_shader_uniform_component(a,n,0)!=0.0); break;
+    case 6: p->crt_border=(gml_shader_uniform_component(a,n,0)!=0.0); break;
     default: break;
   }
 }
@@ -1073,6 +1080,39 @@ static int ds_val_equal(GmlVal a, GmlVal b){
   if(a.t==V_ARR || b.t==V_ARR) return a.t==V_ARR && b.t==V_ARR && a.arr==b.arr;
   if(a.t==V_STR || b.t==V_STR) return !strcmp(gm_string_tmp(a),gm_string_tmp(b));
   return fabs((a.t==V_REAL?a.d:0.0)-(b.t==V_REAL?b.d:0.0))<1e-9;
+}
+typedef struct { const GmlArr *left, *right; } GmlArrayPair;
+typedef struct { GmlArrayPair *pair; int len, cap; } GmlArrayEqualCtx;
+static int array_value_equal(GmlVM *vm, GmlVal left, GmlVal right,
+                             GmlArrayEqualCtx *ctx, int depth){
+  if(left.t!=right.t) return 0;
+  if(left.t==V_UNDEF) return 1;
+  if(left.t==V_STR) return !strcmp(left.s?left.s:"",right.s?right.s:"");
+  if(left.t==V_REAL)
+    return gml_real_compare_epsilon(left.d,right.d,CMP_EQ,vm?vm->math_epsilon:1e-5);
+  if(left.t!=V_ARR || !left.arr || !right.arr) return left.arr==right.arr;
+  GmlArr *a=left.arr, *b=right.arr;
+  if(a==b) return 1;
+  if(a->len!=b->len || depth>4096) return 0;
+  for(int i=0;i<ctx->len;i++)
+    if(ctx->pair[i].left==a && ctx->pair[i].right==b) return 1;
+  if(ctx->len>=ctx->cap){
+    int next=ctx->cap?ctx->cap*2:16;
+    GmlArrayPair *grown=realloc(ctx->pair,(size_t)next*sizeof(*grown));
+    if(!grown) return 0;
+    ctx->pair=grown; ctx->cap=next;
+  }
+  ctx->pair[ctx->len++]=(GmlArrayPair){a,b};
+  for(int i=0;i<a->len;i++)
+    if(!array_value_equal(vm,a->data[i],b->data[i],ctx,depth+1)) return 0;
+  return 1;
+}
+static int array_equals_recursive(GmlVM *vm, GmlVal left, GmlVal right){
+  if(left.t!=V_ARR || right.t!=V_ARR) return 0;
+  GmlArrayEqualCtx ctx={0};
+  int equal=array_value_equal(vm,left,right,&ctx,0);
+  free(ctx.pair);
+  return equal;
 }
 static GmlVal ds_priority_entry(GmlVal val, double pri){
   GmlVal e=arr_newv(2);
@@ -1953,6 +1993,43 @@ static GmlVal var_store_clone(GmlVal v){
   if(v.t==V_UNDEF) return vundef();
   return vreal(v.t==V_REAL?v.d:0.0);
 }
+static GmlVarMap *struct_public_map(GmlVM *vm, GmlVal ref, GmlInstance **owner){
+  if(owner) *owner=NULL;
+  if(!vm || ref.t!=V_REAL) return NULL;
+  if((int)ref.d==IT_GLOBAL) return &vm->globals;
+  if(!GML_IS_STRUCT_ID(ref.d)) return NULL;
+  GmlInstance *st=gml_struct_find(vm,(unsigned)ref.d);
+  if(owner) *owner=st;
+  return st?&st->vars:NULL;
+}
+static int struct_internal_name(const char *name){
+  return name && (!strcmp(name,"__fn") || !strcmp(name,"__self"));
+}
+static int struct_public_name_count(GmlVarMap *map){
+  if(!map) return -1;
+  int count=0;
+  for(int i=0;i<map->cap;i++)
+    if(map->slots[i].key && !struct_internal_name(map->slots[i].key)) count++;
+  return count;
+}
+static GmlVal struct_public_names(GmlVarMap *map){
+  int count=struct_public_name_count(map);
+  GmlVal names=gml_arr_new(count>0?count:0,vreal(0));
+  if(count<=0) return names;
+  int out=0;
+  for(int i=0;i<map->cap;i++){
+    const char *name=map->slots[i].key;
+    if(name && !struct_internal_name(name)) gml_arr_set(names,out++,vstr(name));
+  }
+  return names;
+}
+static int gml_value_is_method(GmlVM *vm, GmlVal value){
+  if(!vm || value.t!=V_REAL || !GML_IS_STRUCT_ID(value.d)) return 0;
+  GmlInstance *st=gml_struct_find(vm,(unsigned)value.d);
+  if(!st) return 0;
+  GmlVal *fn=gml_varmap_get(&st->vars,"__fn");
+  return st->method_bound || (fn && fn->t==V_REAL && GML_IS_FUNCVAL((int)fn->d));
+}
 static GmlVal ds_map_write_text(GmlVM *vm, int id){
   GmlDSMap *m=ds_map_slot(vm,id);
   JsonBuf b={0};
@@ -2562,11 +2639,15 @@ static void draw_px_alpha(GmlRender *R, int x, int y, uint32_t gmcol, double alp
       if(ob>255) ob=255;
       if(R->target_sp>0){ uint32_t a=oc+(uint32_t)(255*alpha); oc=a>255?255:a; }
     } else {
-      or_=dr-(int)(sr*alpha); og=dg-(int)(sg*alpha); ob=db-(int)(sb*alpha);
-      if(or_<0) or_=0;
-      if(og<0) og=0;
-      if(ob<0) ob=0;
-      if(R->target_sp>0){ int a=(int)oc-(int)(255*alpha); oc=a<0?0:(uint32_t)a; }
+      /* bm_subtract is the preset (bm_zero, bm_inv_src_colour): RGB is
+       * destination*(1-source RGB), while coverage uses inverse source alpha. */
+      or_=(int)gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
+      og=(int)gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
+      ob=(int)gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
+      if(R->target_sp>0){
+        unsigned sa=(unsigned)lround(alpha*255.0);
+        oc=gml_blend_inv_source_u8(oc,sa);
+      }
     }
     *dp=(oc<<24)|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
     return;
@@ -2985,6 +3066,50 @@ static GmlVal gm_matrix_builtin(GmlRender *R,const char *name,GmlVal *args,int c
     d3_matrix_multiply(rz,rotation_yx,rotation);
     d3_matrix_multiply(scale,rotation,scaled);
     d3_matrix_multiply(translation,scaled,result);
+    return gm_matrix_write(result,count>9?args[9]:vundef());
+  }
+  if(!strcmp(name,"matrix_transform_vertex")){
+    double matrix[16];
+    if(count<4 || !gm_matrix_read(args[0],matrix)) d3_matrix_identity(matrix);
+    double x=N(args,count,1),y=N(args,count,2),z=N(args,count,3),w=1;
+    GmlVal reuse=vundef();
+    int four=0;
+    if(count>4){
+      if(args[4].t==V_ARR){ reuse=args[4]; four=1; }
+      else { w=N(args,count,4); four=1; if(count>5) reuse=args[5]; }
+    }
+    double transformed[4]={
+      matrix[0]*x+matrix[4]*y+matrix[8]*z+matrix[12]*w,
+      matrix[1]*x+matrix[5]*y+matrix[9]*z+matrix[13]*w,
+      matrix[2]*x+matrix[6]*y+matrix[10]*z+matrix[14]*w,
+      matrix[3]*x+matrix[7]*y+matrix[11]*z+matrix[15]*w
+    };
+    int length=four?4:3;
+    GmlVal output=(reuse.t==V_ARR && reuse.arr)?reuse:gml_arr_new(length,vreal(0));
+    for(int i=0;i<length;i++) gml_arr_set(output,i,vreal(transformed[i]));
+    return output;
+  }
+  if(!strcmp(name,"matrix_build_lookat")){
+    double eye[3]={N(args,count,0),N(args,count,1),N(args,count,2)};
+    double forward[3]={N(args,count,3)-eye[0],N(args,count,4)-eye[1],N(args,count,5)-eye[2]};
+    double supplied_up[3]={N(args,count,6),N(args,count,7),N(args,count,8)};
+    double right[3],up[3];
+    if(!d3_normalize(forward)){ forward[0]=0; forward[1]=0; forward[2]=1; }
+    d3_cross(supplied_up,forward,right);
+    if(!d3_normalize(right)){
+      double fallback[3]={fabs(forward[2])<.999?0:1,0,fabs(forward[2])<.999?1:0};
+      d3_cross(fallback,forward,right);
+      d3_normalize(right);
+    }
+    d3_cross(forward,right,up);
+    d3_normalize(up);
+    d3_matrix_identity(result);
+    result[0]=right[0]; result[4]=right[1]; result[8]=right[2];
+    result[1]=up[0]; result[5]=up[1]; result[9]=up[2];
+    result[2]=forward[0]; result[6]=forward[1]; result[10]=forward[2];
+    result[12]=-d3_dot(right,eye);
+    result[13]=-d3_dot(up,eye);
+    result[14]=-d3_dot(forward,eye);
     return gm_matrix_write(result,count>9?args[9]:vundef());
   }
   return vreal(0);
@@ -4376,7 +4501,11 @@ static void draw_circle_prim(GmlRender *R, int cx, int cy, int rx, int ry, uint3
   } else {
     /* The regular polygon is convex, so each scanline has at most one filled span. This is
      * pixel-identical to point_in_poly(x+0.5,y+0.5) but avoids testing every edge per pixel. */
-    for(int y=cy-ry;y<=cy+ry;y++){
+    long long raw_y0=(long long)cy-ry,raw_y1=(long long)cy+ry;
+    if(raw_y1<0 || raw_y0>=R->fbh) return;
+    int y0=raw_y0<0?0:(int)raw_y0;
+    int y1=raw_y1>=R->fbh?R->fbh-1:(int)raw_y1;
+    for(int y=y0;y<=y1;y++){
       double py=y+0.5, xl=1e30, xr=-1e30;
       for(int i=0,j=n-1;i<n;j=i++){
         if((vy[i]>py)==(vy[j]>py)) continue;
@@ -4385,10 +4514,120 @@ static void draw_circle_prim(GmlRender *R, int cx, int cy, int rx, int ry, uint3
         if(xi>xr) xr=xi;
       }
       if(xr<xl) continue;
-      int x0=(int)ceil(xl-0.5), x1=(int)ceil(xr-0.5)-1;
-      if(x0<cx-rx) x0=cx-rx;
-      if(x1>cx+rx) x1=cx+rx;
+      double first=ceil(xl-0.5),last=ceil(xr-0.5)-1.0;
+      if(last<0.0 || first>=(double)R->fbw) continue;
+      int x0=first<0.0?0:(int)first;
+      int x1=last>=(double)R->fbw?R->fbw-1:(int)last;
       for(int x=x0;x<=x1;x++) draw_px(R,x,y,gmcol);
+    }
+  }
+}
+
+/* Colour variants interpolate from the first colour at the centre to the second at the perimeter. */
+static uint32_t gm_color_lerp_fan(uint32_t inner,uint32_t outer,double amount){
+  if(amount<=0.0) return inner;
+  if(amount>=1.0) return outer;
+  int ir=inner&255,ig=(inner>>8)&255,ib=(inner>>16)&255;
+  int or_=outer&255,og=(outer>>8)&255,ob=(outer>>16)&255;
+  int r=(int)(ir+(or_-ir)*amount);
+  int g=(int)(ig+(og-ig)*amount);
+  int b=(int)(ib+(ob-ib)*amount);
+  return (uint32_t)r|((uint32_t)g<<8)|((uint32_t)b<<16);
+}
+static void draw_px_fan(GmlRender *R,int x,int y,uint32_t inner,uint32_t outer,double amount){
+  if(R && R->alphablend && R->blendmode==2 &&
+     R->blend_equation==1 && R->blend_equation_alpha==1 &&
+     x>=0 && y>=0 && x<R->fbw && y<R->fbh && R->alpha>0.0){
+    if(amount<0.0) amount=0.0; else if(amount>1.0) amount=1.0;
+    if(R->pending_underlay || R->pending_fill) gml_render_prepare_draw(R);
+    R->fb_all_transparent=0;
+    /* GPU vertex colours remain continuous until blending.  Quantising the fan colour to an
+     * intermediate byte first creates visible one-step rings and changes bm_inv_src_colour at
+     * polygon-sector boundaries. */
+    double sr=(inner&255)+((int)(outer&255)-(int)(inner&255))*amount;
+    double sg=((inner>>8)&255)+((int)((outer>>8)&255)-(int)((inner>>8)&255))*amount;
+    double sb=((inner>>16)&255)+((int)((outer>>16)&255)-(int)((inner>>16)&255))*amount;
+    uint32_t *dp=&R->fb[(size_t)y*R->fbw+x];
+    unsigned dr=(*dp>>16)&255,dg=(*dp>>8)&255,db=*dp&255;
+    unsigned rr=(unsigned)lround(dr*(1.0-sr/255.0));
+    unsigned gg=(unsigned)lround(dg*(1.0-sg/255.0));
+    unsigned bb=(unsigned)lround(db*(1.0-sb/255.0));
+    unsigned coverage=R->target_sp>0?*dp>>24:255;
+    if(R->target_sp>0){
+      double alpha=R->alpha>1.0?1.0:R->alpha;
+      coverage=gml_blend_inv_source_u8(coverage,(unsigned)lround(alpha*255.0));
+    }
+    *dp=(coverage<<24)|(rr<<16)|(gg<<8)|bb;
+    return;
+  }
+  draw_px(R,x,y,gm_color_lerp_fan(inner,outer,amount));
+}
+static void draw_circle_colour_prim(GmlRender *R,int cx,int cy,int rx,int ry,
+                                    uint32_t inner,uint32_t outer,int outline){
+  if(!R||rx<0||ry<0) return;
+  if(inner==outer){ draw_circle_prim(R,cx,cy,rx,ry,inner,outline); return; }
+  if(rx==0||ry==0){ draw_px(R,cx,cy,inner); return; }
+  int n=R->circle_precision;
+  if(n<4) n=4;
+  if(n>64) n=64;
+  n=(n/4)*4; if(n<4) n=4;
+  double vx[64],vy[64],edge_nx[64],edge_ny[64];
+  double step=2.0*M_PI/n,apothem=cos(M_PI/n);
+  for(int i=0;i<n;i++){
+    double a=i*step,mid=(i+.5)*step;
+    vx[i]=cx+cos(a)*rx;
+    vy[i]=cy-sin(a)*ry;
+    edge_nx[i]=cos(mid);
+    edge_ny[i]=-sin(mid);
+  }
+  if(outline){
+    for(int i=0;i<n;i++){
+      int j=(i+1)%n;
+      draw_line_prim(R,(int)lround(vx[i]),(int)lround(vy[i]),
+                     (int)lround(vx[j]),(int)lround(vy[j]),outer,1);
+    }
+    return;
+  }
+  long long raw_y0=(long long)cy-ry,raw_y1=(long long)cy+ry;
+  if(raw_y1<0 || raw_y0>=R->fbh) return;
+  int y0=raw_y0<0?0:(int)raw_y0;
+  int y1=raw_y1>=R->fbh?R->fbh-1:(int)raw_y1;
+  for(int y=y0;y<=y1;y++){
+    double py=y+0.5,xl=1e30,xr=-1e30;
+    for(int i=0,j=n-1;i<n;j=i++){
+      if((vy[i]>py)==(vy[j]>py)) continue;
+      double xi=(vx[j]-vx[i])*(py-vy[i])/(vy[j]-vy[i])+vx[i];
+      if(xi<xl) xl=xi;
+      if(xi>xr) xr=xi;
+    }
+    if(xr<xl) continue;
+    double first=ceil(xl-0.5),last=ceil(xr-0.5)-1.0;
+    if(last<0.0 || first>=(double)R->fbw) continue;
+    int x0=first<0.0?0:(int)first;
+    int x1=last>=(double)R->fbw?R->fbw-1:(int)last;
+    double ny=(py-cy)/ry;
+    double nx=(x0+0.5-cx)/rx;
+    int edge=0,direction=ny>=0.0?1:-1;
+    double edge_dot=nx*edge_nx[0]+ny*edge_ny[0];
+    for(int i=1;i<n;i++){
+      double dot=nx*edge_nx[i]+ny*edge_ny[i];
+      if(dot>edge_dot){ edge=i; edge_dot=dot; }
+    }
+    for(int x=x0;x<=x1;x++){
+      /* A regular fan is the intersection of its edge half-planes.  Its exact barycentric
+       * centre-to-rim amount is max(dot(point,edge_normal))/apothem.  As x increases on one
+       * scanline the winning normal advances monotonically, making this exact interpolation
+       * O(pixels+edges) rather than testing every triangle for every pixel. */
+      if(fabs(ny)<1e-15) edge_dot=fabs(nx)*apothem;
+      else for(int advanced=0;advanced<n;advanced++){
+        int next=(edge+direction+n)%n;
+        double next_dot=nx*edge_nx[next]+ny*edge_ny[next];
+        if(next_dot<=edge_dot+1e-15) break;
+        edge=next; edge_dot=next_dot;
+      }
+      draw_px_fan(R,x,y,inner,outer,edge_dot/apothem);
+      nx+=1.0/rx;
+      edge_dot=nx*edge_nx[edge]+ny*edge_ny[edge];
     }
   }
 }
@@ -5344,7 +5583,8 @@ static int collision_line_list_query(GmlVM *vm, double x1, double y1, double x2,
   free(hits);
   return nhit;
 }
-static int shape_hits_instance(GmlVM *vm, GmlInstance *o, int kind, double *p, int obj, GmlInstance *skip,
+static int shape_hits_instance(GmlVM *vm, GmlInstance *o, int kind, double *p, int obj,
+                               GmlInstance *skip, int precise,
                                double sl,double st,double sr,double sb){
   GmlRender *R=(GmlRender*)vm->render;
   if(o==skip || !target_matches_instance(vm,vm->cur_self,o,obj)) return 0;
@@ -5356,7 +5596,7 @@ static int shape_hits_instance(GmlVM *vm, GmlInstance *o, int kind, double *p, i
   if(y1==y0) y1++;
   for(int wy=y0; wy<y1; wy++) for(int wx=x0; wx<x1; wx++){
     if(kind==2){ double dx=wx-p[0], dy=wy-p[1]; if(dx*dx+dy*dy>p[2]*p[2]) continue; }
-    if(R){ int si=inst_mask_sprite_index(o);
+    if(precise && R){ int si=inst_mask_sprite_index(o);
       if(si>=0 && si<R->n_spr){ GmlSprite *s=&R->spr[si];
         if(!mask_hit_world(R,o,s,si,o->x,o->y,vm->win&&vm->win->classic_version,wx,wy)) continue; } }
     return 1;
@@ -5368,33 +5608,71 @@ static void shape_bounds(int kind, double *p, double *sl,double *st,double *sr,d
   else if(kind==1){ *sl=fmin(p[0],p[2]); *st=fmin(p[1],p[3]); *sr=fmax(p[0],p[2]); *sb=fmax(p[1],p[3]); }
   else { *sl=p[0]-p[2]; *st=p[1]-p[2]; *sr=p[0]+p[2]; *sb=p[1]+p[2]; }
 }
-static GmlInstance *collision_shape_linear(GmlVM *vm, int kind, double *p, int obj, int notme){
+static GmlInstance *collision_shape_linear(GmlVM *vm, int kind, double *p, int obj,
+                                            int precise, int notme){
   GmlInstance *skip=notme?vm->cur_self:NULL;
   double sl,st,sr,sb; shape_bounds(kind,p,&sl,&st,&sr,&sb);
   for(int i=0;i<vm->inst_count;i++)
-    if(shape_hits_instance(vm,&vm->inst[i],kind,p,obj,skip,sl,st,sr,sb)) return &vm->inst[i];
+    if(shape_hits_instance(vm,&vm->inst[i],kind,p,obj,skip,precise,sl,st,sr,sb)) return &vm->inst[i];
   return NULL;
 }
-static GmlInstance *collision_shape(GmlVM *vm, int kind, double *p, int obj, int notme){
+static GmlInstance *collision_shape(GmlVM *vm, int kind, double *p, int obj,
+                                    int precise, int notme){
   GmlInstance *skip=notme?vm->cur_self:NULL;
   double sl,st,sr,sb; shape_bounds(kind,p,&sl,&st,&sr,&sb);
   int mode=gml_colgrid_mode(); int *cand=NULL; int n;
   if(obj_family_absent(vm,obj)){
-    if(mode==2){ GmlInstance *lin=collision_shape_linear(vm,kind,p,obj,notme);
+    if(mode==2){ GmlInstance *lin=collision_shape_linear(vm,kind,p,obj,precise,notme);
       if(lin){ extern long g_vm_frame; fprintf(stderr,"[gridcheck] MISMATCH alive-count(shape) f%ld obj=%d id=%u\n",g_vm_frame,obj,lin->id); return lin; } }
     return NULL;
   }
   if(mode==0 || (n=gml_colgrid_collect(vm,sl,st,sr,sb,&cand))<0)
-    return collision_shape_linear(vm,kind,p,obj,notme);
+    return collision_shape_linear(vm,kind,p,obj,precise,notme);
   GmlInstance *res=NULL;
   for(int k=0;k<n;k++){ GmlInstance *o=&vm->inst[cand[k]];
-    if(shape_hits_instance(vm,o,kind,p,obj,skip,sl,st,sr,sb)){ res=o; break; } }
-  if(mode==2){ GmlInstance *lin=collision_shape_linear(vm,kind,p,obj,notme);
+    if(shape_hits_instance(vm,o,kind,p,obj,skip,precise,sl,st,sr,sb)){ res=o; break; } }
+  if(mode==2){ GmlInstance *lin=collision_shape_linear(vm,kind,p,obj,precise,notme);
     if(lin!=res){ extern long g_vm_frame;
       fprintf(stderr,"[gridcheck] MISMATCH shape f%ld kind=%d obj=%d grid=%d linear=%d\n",
         g_vm_frame,kind,obj,res?(int)(res-vm->inst):-1,lin?(int)(lin-vm->inst):-1);
       res=lin; } }
   return res;
+}
+static int collision_target_value_matches(GmlVM *vm, GmlInstance *instance,
+                                          GmlVal target, int depth){
+  if(target.t==V_ARR && target.arr && depth<32){
+    GmlArr *array=target.arr;
+    for(int i=0;i<array->len;i++)
+      if(collision_target_value_matches(vm,instance,array->data[i],depth+1)) return 1;
+    return 0;
+  }
+  if(target.t!=V_REAL) return 0;
+  return target_matches_instance(vm,vm->cur_self,instance,(int)target.d);
+}
+static int collision_shape_list_query(GmlVM *vm, int kind, double *p, GmlVal target,
+                                      int precise, int notme, GmlDSList *list, int ordered){
+  GmlInstance *skip=notme?vm->cur_self:NULL;
+  double sl,st,sr,sb; shape_bounds(kind,p,&sl,&st,&sr,&sb);
+  double centre_x=(sl+sr)*0.5, centre_y=(st+sb)*0.5;
+  int *cand=NULL, count=-1;
+  if(gml_colgrid_mode()!=0) count=gml_colgrid_collect(vm,sl,st,sr,sb,&cand);
+  GmlColListHit *hits=NULL; int found=0, cap=0;
+  int iterations=count>=0?count:vm->inst_count;
+  for(int k=0;k<iterations;k++){
+    int i=count>=0?cand[k]:k;
+    if(i<0 || i>=vm->inst_count) continue;
+    GmlInstance *instance=&vm->inst[i];
+    if(!collision_target_value_matches(vm,instance,target,0)) continue;
+    if(!shape_hits_instance(vm,instance,kind,p,IT_ALL,skip,precise,sl,st,sr,sb)) continue;
+    if(!col_list_add(vm,ordered?NULL:list,ordered,&hits,&found,&cap,i,centre_x,centre_y)) break;
+  }
+  if(ordered && hits){
+    qsort(hits,(size_t)found,sizeof(*hits),col_list_cmp);
+    if(list) for(int i=0;i<found;i++)
+      ds_list_push(list,vreal((double)vm->inst[hits[i].idx].id));
+  }
+  free(hits);
+  return found;
 }
 
 /* Fire GM's "gamepad discovered" async event (ev_async_system / Other_75) so games that only enable
@@ -5966,6 +6244,8 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
       if(!strcmp(nm,"array_pop")){ *out=n>0?gml_arr_pop(a[0]):vreal(0); return 1; }
       if(!strcmp(nm,"array_resize")){ if(n>1) gml_arr_resize(a[0],(int)N(a,n,1)); *out=vreal(0); return 1; }
       if(!strcmp(nm,"array_copy")){ if(n>4) gml_arr_copy(a[0],(int)N(a,n,1),a[2],(int)N(a,n,3),(int)N(a,n,4)); *out=vreal(0); return 1; }
+      if(!strcmp(nm,"array_insert")){ if(n>2) gml_arr_insert(a[0],(int)N(a,n,1),a+2,n-2); *out=vreal(0); return 1; }
+      if(!strcmp(nm,"array_equals")){ *out=vreal(n>1 && array_equals_recursive(vm,a[0],a[1])); return 1; }
       if(!strcmp(nm,"array_sort")){ if(n>0) gml_array_sort(a[0], n<2 || N(a,n,1)!=0); *out=vreal(0); return 1; }
       if(!strcmp(nm,"array_height_2d")){ *out=vreal(n>0?gml_val_array_height_2d(a[0]):0); return 1; }
       if(!strcmp(nm,"array_length_2d")){ *out=vreal(n>0?gml_val_array_length_2d(a[0],(int)N(a,n,1)):0); return 1; }
@@ -5986,9 +6266,13 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"ceil")){ *out=vreal(ceil(N(a,n,0))); return 1; }
     if(!strcmp(nm,"cos")){ *out=vreal(cos(N(a,n,0))); return 1; }
     if(!strcmp(nm,"clamp")){ double x=N(a,n,0), lo=N(a,n,1), hi=N(a,n,2); if(x<lo)x=lo; if(x>hi)x=hi; *out=vreal(x); return 1; }
-    if(!strcmp(nm,"collision_point")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; GmlInstance *o=collision_shape(vm,0,p,(int)N(a,n,2),(int)N(a,n,4)); *out=vreal(o?(double)o->id:-4); return 1; }
-    if(!strcmp(nm,"collision_rectangle")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)}; GmlInstance *o=collision_shape(vm,1,p,(int)N(a,n,4),(int)N(a,n,6)); *out=vreal(o?(double)o->id:-4); return 1; }
-    if(!strcmp(nm,"collision_circle")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)}; GmlInstance *o=collision_shape(vm,2,p,(int)N(a,n,3),(int)N(a,n,5)); *out=vreal(o?(double)o->id:-4); return 1; }
+    if(!strcmp(nm,"collision_point")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; GmlInstance *o=collision_shape(vm,0,p,(int)N(a,n,2),N(a,n,3)>=0.5,(int)N(a,n,4)); *out=vreal(o?(double)o->id:-4); return 1; }
+    if(!strcmp(nm,"collision_rectangle")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)}; GmlInstance *o=collision_shape(vm,1,p,(int)N(a,n,4),N(a,n,5)>=0.5,(int)N(a,n,6)); *out=vreal(o?(double)o->id:-4); return 1; }
+    if(!strcmp(nm,"collision_rectangle_list")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)};
+      GmlDSList *list=ds_list_slot_repair(vm,(int)N(a,n,7));
+      *out=vreal(collision_shape_list_query(vm,1,p,n>4?a[4]:vreal(IT_NOONE),
+        N(a,n,5)>=0.5,(int)N(a,n,6),list,N(a,n,8)>=0.5)); return 1; }
+    if(!strcmp(nm,"collision_circle")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)}; GmlInstance *o=collision_shape(vm,2,p,(int)N(a,n,3),N(a,n,4)>=0.5,(int)N(a,n,5)); *out=vreal(o?(double)o->id:-4); return 1; }
   }
   if(nm[0]=='d' && strncmp(nm,"draw_",5)){
     if(!strcmp(nm,"dsin")){ *out=vreal(sin(N(a,n,0)*M_PI/180.0)); return 1; }
@@ -6055,7 +6339,7 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
         if(log_col_match(cn)) fprintf(stderr,"[col] %s place_free(%.0f,%.0f)=%d\n",cn,N(a,n,0),N(a,n,1),r); }
       *out=vreal(r); return 1; }
     if(!strcmp(nm,"place_empty")){ *out=vreal(!collision_at(vm,N(a,n,0),N(a,n,1),IT_ALL,0)); return 1; }
-    if(!strcmp(nm,"position_meeting")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; *out=vreal(collision_shape(vm,0,p,(int)N(a,n,2),0)!=NULL); return 1; }
+    if(!strcmp(nm,"position_meeting")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; *out=vreal(collision_shape(vm,0,p,(int)N(a,n,2),1,0)!=NULL); return 1; }
     if(!strcmp(nm,"point_distance")){ *out=vreal(hypot(N(a,n,2)-N(a,n,0),N(a,n,3)-N(a,n,1))); return 1; }
     if(!strcmp(nm,"point_direction")){ double dx=N(a,n,2)-N(a,n,0), dy=N(a,n,3)-N(a,n,1);
       double r=atan2(-dy,dx)*180.0/M_PI; if(r<0)r+=360; *out=vreal(r); return 1; }
@@ -6098,7 +6382,8 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
       *out=vreal(gml_shader_get_uniform(R,(int)N(a,n,0),S(a,n,1)));
       return 1;
     }
-    if(!strcmp(nm,"shader_set_uniform_f")||!strcmp(nm,"shader_set_uniform_f_array")){
+    if(!strcmp(nm,"shader_set_uniform_f")||!strcmp(nm,"shader_set_uniform_f_array")||
+       !strcmp(nm,"shader_set_uniform_i")||!strcmp(nm,"shader_set_uniform_i_array")){
       gml_shader_set_uniform_f(R,(int)N(a,n,0),a,n);
       *out=vreal(0); return 1;
     }
@@ -6187,8 +6472,8 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_text_transformed")){ if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),R->color,R->alpha); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_text_transformed_color")||!strcmp(nm,"draw_text_transformed_colour")){ if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,10)); *out=vreal(0); return 1; }
-  if(!strcmp(nm,"draw_text_ext_transformed")){ if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,5),N(a,n,6),N(a,n,7),R->color,R->alpha); *out=vreal(0); return 1; }
-  if(!strcmp(nm,"draw_text_ext_transformed_color")||!strcmp(nm,"draw_text_ext_transformed_colour")){ if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,5),N(a,n,6),N(a,n,7),(uint32_t)N(a,n,8),N(a,n,12)); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_text_ext_transformed")){ if(R) gml_draw_text_ext_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),R->color,R->alpha); *out=vreal(0); return 1; }
+  if(!strcmp(nm,"draw_text_ext_transformed_color")||!strcmp(nm,"draw_text_ext_transformed_colour")){ if(R) gml_draw_text_ext_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),(uint32_t)N(a,n,8),N(a,n,12)); *out=vreal(0); return 1; }
   if(!strcmp(nm,"draw_set_blend_mode")){ builtin_set_blendmode(R,(int)N(a,n,0)); *out=vreal(0); return 1; }
   return 0;
 }
@@ -6779,7 +7064,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       return vreal(0);
     case BID_DRAW_TEXT_EXT_TRANSFORMED_COLOUR:
     case BID_DRAW_TEXT_EXT_TRANSFORMED_COLOR:
-      if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,5),N(a,n,6),N(a,n,7),(uint32_t)N(a,n,8),N(a,n,12));
+      if(R) gml_draw_text_ext_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),(uint32_t)N(a,n,8),N(a,n,12));
       return vreal(0);
     case BID_DRAW_SET_ALPHA:
       if(R){ R->alpha=N(a,n,0); if(R->alpha<0) R->alpha=0; if(R->alpha>1) R->alpha=1; }
@@ -7188,10 +7473,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(log_col_match(cn)) fprintf(stderr,"[col] %s place_free(%.0f,%.0f)=%d\n",cn,N(a,n,0),N(a,n,1),r); }
     return vreal(r); }
   if(!strcmp(nm,"place_empty"))   return vreal(!collision_at(vm,N(a,n,0),N(a,n,1),IT_ALL,0));
-  if(!strcmp(nm,"collision_point")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; GmlInstance *o=collision_shape(vm,0,p,(int)N(a,n,2),(int)N(a,n,4)); return vreal(o?(double)o->id:-4); }
+  if(!strcmp(nm,"collision_point")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; GmlInstance *o=collision_shape(vm,0,p,(int)N(a,n,2),N(a,n,3)>=0.5,(int)N(a,n,4)); return vreal(o?(double)o->id:-4); }
   /* position_meeting(x,y,obj): is the point (x,y) inside any instance of obj? (bool; checks all). */
-  if(!strcmp(nm,"position_meeting")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; return vreal(collision_shape(vm,0,p,(int)N(a,n,2),0)!=NULL); }
-  if(!strcmp(nm,"collision_rectangle")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)}; GmlInstance *o=collision_shape(vm,1,p,(int)N(a,n,4),(int)N(a,n,6)); return vreal(o?(double)o->id:-4); }
+  if(!strcmp(nm,"position_meeting")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; return vreal(collision_shape(vm,0,p,(int)N(a,n,2),1,0)!=NULL); }
+  if(!strcmp(nm,"collision_rectangle")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)}; GmlInstance *o=collision_shape(vm,1,p,(int)N(a,n,4),N(a,n,5)>=0.5,(int)N(a,n,6)); return vreal(o?(double)o->id:-4); }
+  if(!strcmp(nm,"collision_rectangle_list")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)};
+    GmlDSList *list=ds_list_slot_repair(vm,(int)N(a,n,7));
+    return vreal(collision_shape_list_query(vm,1,p,n>4?a[4]:vreal(IT_NOONE),
+      N(a,n,5)>=0.5,(int)N(a,n,6),list,N(a,n,8)>=0.5)); }
   if(!strcmp(nm,"rectangle_in_rectangle")){
     double ax1=N(a,n,0), ay1=N(a,n,1), ax2=N(a,n,2), ay2=N(a,n,3);
     double bx1=N(a,n,4), by1=N(a,n,5), bx2=N(a,n,6), by2=N(a,n,7);
@@ -7201,7 +7490,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(by1>by2){ double t=by1; by1=by2; by2=t; }
     return vreal(!(ax2<bx1 || bx2<ax1 || ay2<by1 || by2<ay1));
   }
-  if(!strcmp(nm,"collision_circle")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)}; GmlInstance *o=collision_shape(vm,2,p,(int)N(a,n,3),(int)N(a,n,5)); return vreal(o?(double)o->id:-4); }
+  if(!strcmp(nm,"collision_circle")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)}; GmlInstance *o=collision_shape(vm,2,p,(int)N(a,n,3),N(a,n,4)>=0.5,(int)N(a,n,5)); return vreal(o?(double)o->id:-4); }
   if(!strcmp(nm,"move_contact_solid")||!strcmp(nm,"move_contact")){ GmlInstance *s=vm->cur_self; if(!s) return vreal(0);
     int solid_only=!strcmp(nm,"move_contact_solid");
     int target=solid_only?0:IT_ALL;
@@ -7242,7 +7531,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"math_get_epsilon")) return vreal(vm?vm->math_epsilon:1e-5);
   if(!strcmp(nm,"math_set_epsilon")){ builtin_math_set_epsilon(vm,N(a,n,0)); return vreal(0); }
   if(!strcmp(nm,"random")) return vreal(gml_rng_value(vm) * N(a,n,0));  /* GM WELL512: (next/2^32)*x */
-  if(!strcmp(nm,"randomize")){
+  if(!strcmp(nm,"randomize")||!strcmp(nm,"randomise")){
     /* GML_RANDOMIZE_SEED optionally fixes the seed; otherwise derive it from the clock and VM address. */
     static int fixed_init=0; static long fixed=-1;
     if(!fixed_init){ const char *e=getenv("GML_RANDOMIZE_SEED"); fixed=e?atol(e):-1; fixed_init=1; }
@@ -7359,6 +7648,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"array_pop")){ return n>0?gml_arr_pop(a[0]):vreal(0); }
   if(!strcmp(nm,"array_resize")){ if(n>1) gml_arr_resize(a[0],(int)N(a,n,1)); return vreal(0); }
   if(!strcmp(nm,"array_copy")){ if(n>4) gml_arr_copy(a[0],(int)N(a,n,1),a[2],(int)N(a,n,3),(int)N(a,n,4)); return vreal(0); }
+  if(!strcmp(nm,"array_insert")){ if(n>2) gml_arr_insert(a[0],(int)N(a,n,1),a+2,n-2); return vreal(0); }
+  if(!strcmp(nm,"array_equals")) return vreal(n>1 && array_equals_recursive(vm,a[0],a[1]));
   if(!strcmp(nm,"array_sort")){ if(n>0) gml_array_sort(a[0], n<2 || N(a,n,1)!=0); return vreal(0); }
   if(!strcmp(nm,"array_contains")){
     if(n<2 || a[0].t!=V_ARR || !a[0].arr) return vreal(0);
@@ -7556,7 +7847,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlPath *p=&vm->paths[vm->n_paths];
     memset(p,0,sizeof *p);
     p->pts=calloc(1,sizeof(GmlPathPt));
-    p->precision=4;
+    p->precision=4; p->closed=1;
     return vreal(vm->n_paths++);
   }
   if(!strcmp(nm,"path_add_point")){
@@ -7569,7 +7860,22 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         double L=0; p->pts[0].clen=0;
         for(int k=1;k<p->n;k++){ double dx=p->pts[k].x-p->pts[k-1].x, dy=p->pts[k].y-p->pts[k-1].y;
           L+=sqrt(dx*dx+dy*dy); p->pts[k].clen=L; }
+        if(p->closed && p->n>1){ double dx=p->pts[0].x-p->pts[p->n-1].x, dy=p->pts[0].y-p->pts[p->n-1].y;
+          L+=sqrt(dx*dx+dy*dy); }
         p->len=L; }
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"path_set_closed")){
+    int pi=(int)N(a,n,0);
+    if(pi>=0 && pi<vm->n_paths){
+      GmlPath *p=&vm->paths[pi]; p->closed=N(a,n,1)!=0;
+      double L=0; if(p->n>0) p->pts[0].clen=0;
+      for(int k=1;k<p->n;k++){ double dx=p->pts[k].x-p->pts[k-1].x,dy=p->pts[k].y-p->pts[k-1].y;
+        L+=sqrt(dx*dx+dy*dy); p->pts[k].clen=L; }
+      if(p->closed && p->n>1){ double dx=p->pts[0].x-p->pts[p->n-1].x,dy=p->pts[0].y-p->pts[p->n-1].y;
+        L+=sqrt(dx*dx+dy*dy); }
+      p->len=L;
     }
     return vreal(0);
   }
@@ -7582,6 +7888,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].n:0); }
   if(!strcmp(nm,"path_get_closed")){ int pi=(int)N(a,n,0);
     return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].closed:0); }
+  if(!strcmp(nm,"path_get_kind")){ int pi=(int)N(a,n,0);
+    return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].kind:0); }
+  if(!strcmp(nm,"path_get_precision")){ int pi=(int)N(a,n,0);
+    return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].precision:0); }
   if(!strcmp(nm,"path_get_length")){ int pi=(int)N(a,n,0);
     return vreal((pi>=0&&pi<vm->n_paths)?vm->paths[pi].len:0); }
   if(!strcmp(nm,"path_get_x")||!strcmp(nm,"path_get_y")){
@@ -7593,6 +7903,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal((pi>=0&&pi<vm->n_paths&&k>=0&&k<vm->paths[pi].n)?vm->paths[pi].pts[k].x:0); }
   if(!strcmp(nm,"path_get_point_y")){ int pi=(int)N(a,n,0), k=(int)N(a,n,1);
     return vreal((pi>=0&&pi<vm->n_paths&&k>=0&&k<vm->paths[pi].n)?vm->paths[pi].pts[k].y:0); }
+  if(!strcmp(nm,"path_get_point_speed")){ int pi=(int)N(a,n,0), k=(int)N(a,n,1);
+    return vreal((pi>=0&&pi<vm->n_paths&&k>=0&&k<vm->paths[pi].n)?vm->paths[pi].pts[k].sp:0); }
   if(!strcmp(nm,"path_exists")){ int pi=(int)N(a,n,0); return vreal(pi>=0&&pi<vm->n_paths); }
   if(!strcmp(nm,"path_delete")){ int pi=(int)N(a,n,0);
     if(pi>=0&&pi<vm->n_paths){ vm->paths[pi].n=0; vm->paths[pi].len=0; } return vreal(0); }
@@ -8741,12 +9053,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"draw_circle")){ if(R){ gml_render_maybe_prepare_draw(R); draw_circle_prim(R,(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x),(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y),(int)fabs(draw_gui_w(R,N(a,n,2))),(int)fabs(draw_gui_h(R,N(a,n,2))),R->color,(int)N(a,n,3)); } return vreal(0); }
     if(!strcmp(nm,"draw_circle_color")||!strcmp(nm,"draw_circle_colour")){ if(R){
         gml_render_maybe_prepare_draw(R);
-        draw_circle_prim(R,(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x),(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y),(int)fabs(draw_gui_w(R,N(a,n,2))),(int)fabs(draw_gui_h(R,N(a,n,2))),(uint32_t)N(a,n,3),(int)N(a,n,5)); }
+        draw_circle_colour_prim(R,(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x),(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y),(int)fabs(draw_gui_w(R,N(a,n,2))),(int)fabs(draw_gui_h(R,N(a,n,2))),(uint32_t)N(a,n,3),(uint32_t)N(a,n,4),(int)N(a,n,5)); }
       return vreal(0); }
     if(!strcmp(nm,"draw_ellipse_color")||!strcmp(nm,"draw_ellipse_colour")){ if(R){
         gml_render_maybe_prepare_draw(R);
         int x1=(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x), y1=(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y), x2=(int)floor(draw_gui_x(R,N(a,n,2))-R->cam_x), y2=(int)floor(draw_gui_y(R,N(a,n,3))-R->cam_y);
-        draw_circle_prim(R,(x1+x2)/2,(y1+y2)/2,abs(x2-x1)/2,abs(y2-y1)/2,(uint32_t)N(a,n,4),(int)N(a,n,6)); } return vreal(0); }
+        draw_circle_colour_prim(R,(x1+x2)/2,(y1+y2)/2,abs(x2-x1)/2,abs(y2-y1)/2,(uint32_t)N(a,n,4),(uint32_t)N(a,n,5),(int)N(a,n,6)); } return vreal(0); }
     if(!strcmp(nm,"draw_ellipse")){ if(R){
         gml_render_maybe_prepare_draw(R);
         int x1=(int)floor(draw_gui_x(R,N(a,n,0))-R->cam_x), y1=(int)floor(draw_gui_y(R,N(a,n,1))-R->cam_y), x2=(int)floor(draw_gui_x(R,N(a,n,2))-R->cam_x), y2=(int)floor(draw_gui_y(R,N(a,n,3))-R->cam_y);
@@ -8982,6 +9294,17 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"sprite_get_width")){ int spr=(int)N(a,n,0); return vreal((R&&gml_sprite_exists(R,spr))?R->spr[spr].w:0); }
     if(!strcmp(nm,"sprite_get_height")){ int spr=(int)N(a,n,0); return vreal((R&&gml_sprite_exists(R,spr))?R->spr[spr].h:0); }
     if(!strcmp(nm,"sprite_get_number")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].n_frames:0); }
+    if(!strcmp(nm,"sprite_get_speed")){ int spr=(int)N(a,n,0);
+      return vreal((R&&gml_sprite_exists(R,spr)&&R->spr[spr].playback_speed_valid)?R->spr[spr].playback_speed:1); }
+    if(!strcmp(nm,"sprite_get_speed_type")){ int spr=(int)N(a,n,0);
+      return vreal((R&&gml_sprite_exists(R,spr))?R->spr[spr].playback_speed_type:1); }
+    if(!strcmp(nm,"sprite_set_speed")){ int spr=(int)N(a,n,0);
+      if(R&&gml_sprite_exists(R,spr)){
+        R->spr[spr].playback_speed=(float)N(a,n,1);
+        R->spr[spr].playback_speed_type=(int)N(a,n,2)==0?0:1;
+        R->spr[spr].playback_speed_valid=1;
+      }
+      return vreal(0); }
     if(!strcmp(nm,"sprite_get_xoffset")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].originx:0); }
     if(!strcmp(nm,"sprite_get_yoffset")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].originy:0); }
     if(!strcmp(nm,"sprite_get_bbox_left")){ int spr=(int)N(a,n,0); return vreal((R&&spr>=0&&spr<R->n_spr)?R->spr[spr].ml:0); }
@@ -9102,13 +9425,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,10));
       return vreal(0);
     }
-    /* Extended text variants shift transform/color arguments after sep and width, which this path ignores. */
     if(!strcmp(nm,"draw_text_ext_transformed")){
-      if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,5),N(a,n,6),N(a,n,7),R->color,R->alpha);
+      if(R) gml_draw_text_ext_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),R->color,R->alpha);
       return vreal(0);
     }
     if(!strcmp(nm,"draw_text_ext_transformed_color")||!strcmp(nm,"draw_text_ext_transformed_colour")){
-      if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,5),N(a,n,6),N(a,n,7),(uint32_t)N(a,n,8),N(a,n,12));
+      if(R) gml_draw_text_ext_transformed(R,N(a,n,0),N(a,n,1),S(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),(uint32_t)N(a,n,8),N(a,n,12));
       return vreal(0);
     }
     if(!strcmp(nm,"string_width")) return vreal(R?gml_text_width(R,S(a,n,0)):(int)strlen(S(a,n,0))*8);
@@ -9593,6 +9915,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"audio_sound_length")||!strcmp(nm,"sound_get_length"))
       return vreal(gml_audio_sound_length(AU,(int)N(a,n,0)));
     if(!strcmp(nm,"audio_sound_get_track_position")) return vreal(gml_audio_sound_get_track_position(AU,(int)N(a,n,0)));
+    if(!strcmp(nm,"audio_exists")) return vreal(gml_audio_exists(AU,(int)N(a,n,0)));
     if(!strcmp(nm,"audio_set_master_gain")){ gml_audio_set_master_gain(AU,n>=2?N(a,n,1):N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_sound_gain")){ gml_audio_sound_gain(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"sound_volume")){ gml_audio_sound_gain(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
@@ -9762,14 +10085,29 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"date_day_span")) return vreal(fabs(N(a,n,0)-N(a,n,1)));
   if(!strcmp(nm,"date_week_span")) return vreal(fabs(N(a,n,0)-N(a,n,1))/7.0);
   if(!strcmp(nm,"date_get_second")||!strcmp(nm,"date_get_minute")||!strcmp(nm,"date_get_hour")||
-     !strcmp(nm,"date_get_day")||!strcmp(nm,"date_get_month")||!strcmp(nm,"date_get_year")){
+     !strcmp(nm,"date_get_day")||!strcmp(nm,"date_get_month")||!strcmp(nm,"date_get_year")||
+     !strcmp(nm,"date_get_weekday")){
     struct tm tmv; gm_datetime_tm(N(a,n,0),&tmv);
     if(!strcmp(nm,"date_get_second")) return vreal(tmv.tm_sec);
     if(!strcmp(nm,"date_get_minute")) return vreal(tmv.tm_min);
     if(!strcmp(nm,"date_get_hour")) return vreal(tmv.tm_hour);
     if(!strcmp(nm,"date_get_day")) return vreal(tmv.tm_mday);
     if(!strcmp(nm,"date_get_month")) return vreal(tmv.tm_mon+1);
+    if(!strcmp(nm,"date_get_weekday")) return vreal(tmv.tm_wday);
     return vreal(tmv.tm_year+1900);
+  }
+  if(!strcmp(nm,"date_datetime_string")||!strcmp(nm,"date_date_string")||
+     !strcmp(nm,"date_time_string")){
+    struct tm tmv; char formatted[160]; gm_datetime_tm(N(a,n,0),&tmv);
+    const char *format=!strcmp(nm,"date_datetime_string")?"%x %X":
+                       (!strcmp(nm,"date_date_string")?"%x":"%X");
+    if(!strftime(formatted,sizeof formatted,format,&tmv)) formatted[0]=0;
+    char *owned=strdup(formatted);
+    return owned?vstr_owned(owned):vstr("");
+  }
+  if(!strcmp(nm,"environment_get_variable")){
+    const char *value=getenv(S(a,n,0));
+    return vstr(value?value:"");
   }
   if(!strcmp(nm,"extension_stubfunc_real")) return vreal(0);
   if(!strcmp(nm,"extension_stubfunc_string")) return vstr("");
@@ -10137,6 +10475,27 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     ds_map_clear_owned(vm,m);
     return vreal(0);
   }
+  if(!strcmp(nm,"ds_map_copy")){
+    int dst_id=(int)N(a,n,0), src_id=(int)N(a,n,1);
+    GmlDSMap *dst=ds_map_slot(vm,dst_id), *src=ds_map_slot(vm,src_id);
+    if(dst && src && dst!=src){
+      /* Snapshot before clearing so destination storage can be rebuilt independently while map
+       * values retain their normal reference semantics. */
+      int count=src->len;
+      GmlVal *keys=count?malloc((size_t)count*sizeof(*keys)):NULL;
+      GmlVal *values=count?malloc((size_t)count*sizeof(*values)):NULL;
+      if(!count || (keys && values)){
+        for(int i=0;i<count;i++){
+          keys[i]=ds_key_val_clone(src->entry[i].key_val);
+          values[i]=ds_val_clone(src->entry[i].val);
+        }
+        ds_map_clear_owned(vm,dst);
+        for(int i=0;i<count;i++) ds_map_put(vm,dst_id,keys[i],values[i],1);
+      }
+      free(keys); free(values);
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"ds_list_copy")){          /* ds_list_copy(dest, src): dest := copy of src */
     GmlDSList *dst=ds_list_slot_repair(vm,(int)N(a,n,0)), *src=ds_list_slot_repair(vm,(int)N(a,n,1));
     if(dst && src){
@@ -10199,9 +10558,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d)){
       GmlInstance *st=gml_struct_find(vm,(unsigned)a[0].d);
       if(st){
-        GmlVal *fn=gml_varmap_get(&st->vars,"__fn");
-        if(st->method_bound || (fn && fn->t==V_REAL && GML_IS_FUNCVAL((int)fn->d)))
-          return vstr("method");
+        if(gml_value_is_method(vm,a[0])) return vstr("method");
         return vstr("struct");
       }
     }
@@ -10216,6 +10573,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"is_struct")){
     return vreal(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d) &&
                  gml_struct_find(vm,(unsigned)a[0].d)!=NULL);
+  }
+  if(!strcmp(nm,"is_method")) return vreal(n>0 && gml_value_is_method(vm,a[0]));
+  if(!strcmp(nm,"is_callable")){
+    int raw=n>0 && a[0].t==V_REAL && GML_IS_FUNCVAL((int)a[0].d);
+    return vreal(raw || (n>0 && gml_value_is_method(vm,a[0])));
   }
   if(!strcmp(nm,"is_bool")) return vreal(n>0 && a[0].t==V_REAL && (a[0].d==0||a[0].d==1));
   /* In GM6/7/8 "local" means a field on the current instance, not a temporary VM stack
@@ -10260,32 +10622,46 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(n>2) gml_inst_var_set_val(vm,a[0],key,var_store_clone(a[2]));
     return vreal(0);
   }
-  if(!strcmp(nm,"variable_struct_exists")||!strcmp(nm,"variable_struct_get")||
-     !strcmp(nm,"variable_struct_set")||!strcmp(nm,"variable_struct_remove")){
-    GmlInstance *st=(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;
+  if(!strcmp(nm,"variable_struct_get_names")||!strcmp(nm,"struct_get_names")){
+    GmlVarMap *map=n>0?struct_public_map(vm,a[0],NULL):NULL;
+    return struct_public_names(map);
+  }
+  if(!strcmp(nm,"variable_struct_names_count")||!strcmp(nm,"struct_names_count")){
+    GmlVarMap *map=n>0?struct_public_map(vm,a[0],NULL):NULL;
+    return vreal(struct_public_name_count(map));
+  }
+  if(!strcmp(nm,"variable_struct_exists")||!strcmp(nm,"struct_exists")||
+     !strcmp(nm,"variable_struct_get")||!strcmp(nm,"struct_get")||
+     !strcmp(nm,"variable_struct_set")||!strcmp(nm,"struct_set")||
+     !strcmp(nm,"variable_struct_remove")||!strcmp(nm,"struct_remove")){
+    GmlInstance *st=NULL;
+    GmlVarMap *map=n>0?struct_public_map(vm,a[0],&st):NULL;
     const char *key=S(a,n,1);
-    if(!st) return !strcmp(nm,"variable_struct_get") ? vundef() : vreal(0);
-    if(!strcmp(nm,"variable_struct_exists")) return vreal(gml_varmap_get(&st->vars,key)!=NULL);
-    if(!strcmp(nm,"variable_struct_get")){
-      GmlVal *p=gml_varmap_get(&st->vars,key);
+    int get=!strcmp(nm,"variable_struct_get")||!strcmp(nm,"struct_get");
+    int exists=!strcmp(nm,"variable_struct_exists")||!strcmp(nm,"struct_exists");
+    int set=!strcmp(nm,"variable_struct_set")||!strcmp(nm,"struct_set");
+    if(!map) return get?vundef():vreal(0);
+    if(exists) return vreal(gml_varmap_get(map,key)!=NULL);
+    if(get){
+      GmlVal *p=gml_varmap_get(map,key);
       if(!p) return vundef();
       GmlVal out=*p; if(out.t==V_STR) out.d=0;
       return out;
     }
-    if(!strcmp(nm,"variable_struct_set")){
+    if(set){
       if(n>2){
-        if(key && (!strcmp(key,"__fn") || !strcmp(key,"__self"))) st->method_bound=0;
-        GmlVal *p=gml_varmap_get(&st->vars,key);
+        if(st && key && (!strcmp(key,"__fn") || !strcmp(key,"__self"))) st->method_bound=0;
+        GmlVal *p=gml_varmap_get(map,key);
         if(p) *p=var_store_clone(a[2]);
         else {
           char *owned=strdup(key?key:"");
-          if(owned) *gml_varmap_put(&st->vars,owned)=var_store_clone(a[2]);
+          if(owned) *gml_varmap_put(map,owned)=var_store_clone(a[2]);
         }
       }
       return vreal(0);
     }
-    if(key && (!strcmp(key,"__fn") || !strcmp(key,"__self"))) st->method_bound=0;
-    return vreal(varmap_delete_key(&st->vars,key));
+    if(st && key && (!strcmp(key,"__fn") || !strcmp(key,"__self"))) st->method_bound=0;
+    return vreal(varmap_delete_key(map,key));
   }
   if(!strcmp(nm,"struct_get_from_hash")){
     GmlInstance *st=(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;
@@ -10702,7 +11078,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"shader_get_uniform")){ GmlRender *R=(GmlRender*)vm->render;
     return vreal(gml_shader_get_uniform(R,(int)N(a,n,0),S(a,n,1))); }
   if(!strcmp(nm,"shader_get_sampler_index")){ int sh=(int)N(a,n,0); return vreal(sh>=0? sh*16+2 : -1); }
-  if(!strcmp(nm,"shader_set_uniform_f")||!strcmp(nm,"shader_set_uniform_f_array")){
+  if(!strcmp(nm,"shader_set_uniform_f")||!strcmp(nm,"shader_set_uniform_f_array")||
+     !strcmp(nm,"shader_set_uniform_i")||!strcmp(nm,"shader_set_uniform_i_array")){
     GmlRender *R=(GmlRender*)vm->render;
     gml_shader_set_uniform_f(R,(int)N(a,n,0),a,n);
     return vreal(0); }
@@ -10719,7 +11096,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal((double)(GML_TEX_SPR_TAG | ((spr&0xFFFF)<<10) | (img&0x3FF))); }
   if(!strcmp(nm,"texture_debug_messages")) return vreal(0);
   if(!strcmp(nm,"matrix_build_identity")||!strcmp(nm,"matrix_get")||!strcmp(nm,"matrix_set")||
-     !strcmp(nm,"matrix_multiply")||!strcmp(nm,"matrix_build"))
+     !strcmp(nm,"matrix_multiply")||!strcmp(nm,"matrix_build")||
+     !strcmp(nm,"matrix_transform_vertex")||!strcmp(nm,"matrix_build_lookat"))
     return gm_matrix_builtin((GmlRender*)vm->render,nm,a,n);
   /* animation curves: get_channel hands out a tagged handle; evaluate interpolates the knots. */
   if(!strcmp(nm,"animcurve_exists")) return vreal(acrv_curve_ptr(vm,(int)N(a,n,0))!=0);
@@ -10743,6 +11121,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(acrv_evaluate(vm,(h>>8)&0xFFF,h&0xFF,N(a,n,1))); }
   if(!strncmp(nm,"shader_",7)) return vreal(0);
   if(!strcmp(nm,"steam_current_game_language")) return vstr("english");
+  if(!strcmp(nm,"steam_initialised")||!strcmp(nm,"steam_initialized")) return vreal(0);
   if(!strncmp(nm,"steam_",6)) return vreal(0);
   if(!strncmp(nm,"psn_",4)) return vreal(0);
   if(!strcmp(nm,"physics_fixture_create")){
@@ -11250,7 +11629,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"mouse_wheel_up")){ int wh; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,&wh); return vreal(wh>0); }
   if(!strcmp(nm,"mouse_wheel_down")){ int wh; gml_input_mouse(NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,&wh); return vreal(wh<0); }
   if(!strcmp(nm,"device_get_tilt_x")||!strcmp(nm,"device_get_tilt_y")||!strcmp(nm,"device_get_tilt_z")) return vreal(0);
-  /* Select additive or subtractive blending for their enum values; use normal alpha otherwise. */
+  /* gpu_set_blendmode(bm): GM simple enum — bm_normal(0), bm_add(1), bm_max(2), bm_subtract(3).
+   * The software preset for subtract is the documented fixed-function pair
+   * (bm_zero,bm_inv_src_colour), distinct from the arithmetic subtract equation. */
   if(!strcmp(nm,"draw_set_blend_mode")||   /* Legacy API spelling. */
      !strcmp(nm,"gpu_set_blendmode")){ GmlRender *R2=(GmlRender*)vm->render; int bm=(int)N(a,n,0);
     if(getenv("GML_DBG_BM")) fprintf(stderr,"[bm] gpu_set_blendmode(%d)\n",bm);

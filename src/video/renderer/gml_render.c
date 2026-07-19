@@ -2536,11 +2536,9 @@ void gml_draw_text(GmlRender *r, double x, double y, const char *str){
   if(!r) return;
   gml_draw_text_transformed(r,x,y,str,1,1,0,r->color,r->alpha);
 }
-/* Wrap between words at pixel width w (-1 disables wrapping).
- * sep selects line separation; -1 selects the font default. */
-void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double sep, double w){
-  if(!r || !str || !active_font(r)){ return; }
-  char wrapped[2048]; size_t o=0;
+static const char *text_wrap_ext(GmlRender *r,const char *str,double w,char *wrapped,size_t cap){
+  if(!r || !str || !wrapped || cap<2 || w<=0) return str;
+  size_t o=0;
   if(w>0){
     char word[256]; size_t wl=0;
     char line[1024]; size_t ll=0; line[0]=0;
@@ -2556,26 +2554,36 @@ void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double
         else snprintf(probe,sizeof probe,"%s",word);
         if(ll && gml_text_width(r,probe)>(int)w){
           /* flush current line */
-          for(size_t k=0;k<ll && o<sizeof(wrapped)-2;k++) wrapped[o++]=line[k];
-          wrapped[o++]='#';
+          for(size_t k=0;k<ll && o<cap-2;k++) wrapped[o++]=line[k];
+          if(o<cap-1) wrapped[o++]='#';
           snprintf(line,sizeof line,"%s",word); ll=strlen(line);
         } else { snprintf(line,sizeof line,"%s",probe); ll=strlen(line); }
         wl=0;
       }
-      if(c=='#' || c=='\n'){ for(size_t k=0;k<ll && o<sizeof(wrapped)-2;k++) wrapped[o++]=line[k];
-        wrapped[o++]='#'; ll=0; line[0]=0; }
+      if(c=='#' || c=='\n'){ for(size_t k=0;k<ll && o<cap-2;k++) wrapped[o++]=line[k];
+        if(o<cap-1) wrapped[o++]='#'; ll=0; line[0]=0; }
       if(c==0) break;
       p += (c=='\\')?2:1;
     }
-    for(size_t k=0;k<ll && o<sizeof(wrapped)-1;k++) wrapped[o++]=line[k];
+    for(size_t k=0;k<ll && o<cap-1;k++) wrapped[o++]=line[k];
     wrapped[o]=0;
-    str=wrapped;
   }
-  if(sep<=0){ gml_draw_text_transformed(r,x,y,str,1,1,0,r->color,r->alpha); return; }
+  return wrapped;
+}
+
+void gml_draw_text_ext_transformed(GmlRender *r, double x, double y, const char *str,
+                                   double sep, double w, double xs, double ys, double rot,
+                                   uint32_t blend, double alpha){
+  if(!r || !str || !active_font(r)) return;
+  char wrapped[2048];
+  str=text_wrap_ext(r,str,w,wrapped,sizeof wrapped);
+  if(sep<=0){ gml_draw_text_transformed(r,x,y,str,xs,ys,rot,blend,alpha); return; }
   /* custom line separation: draw line by line at y + i*sep */
   int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;} if(text_is_linebreak(q)) nlines++; }
-  double y0=y;
-  if(r->valign==1) y0=y-(nlines*sep)/2.0; else if(r->valign==2) y0=y-nlines*sep;
+  double base=0;
+  if(r->valign==1) base=-(nlines*sep)/2.0; else if(r->valign==2) base=-nlines*sep;
+  double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
+  double ca,sa; render_rotation_sincos(rr,&ca,&sa);
   int sv=r->valign; r->valign=0;
   const char *p=str; int li=0;
   char lbuf[1024];
@@ -2583,9 +2591,17 @@ void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double
     size_t k=0;
     while(*p && !((*p=='#' && (p==str || p[-1]!='\\')) || *p=='\n') && k<sizeof(lbuf)-1) lbuf[k++]=*p++;
     lbuf[k]=0;
-    gml_draw_text_transformed(r,x,y0+li*sep,lbuf,1,1,0,r->color,r->alpha);
+    double line_y=base+li*sep;
+    gml_draw_text_transformed(r,x+line_y*ys*sa,y+line_y*ys*ca,lbuf,xs,ys,rr,blend,alpha);
     if(!text_is_linebreak(p)) break;
     p++; li++;
   }
   r->valign=sv;
+}
+
+/* draw_text_ext: word-wrap at pixel width `w` (-1 = none) with line separation `sep`
+ * (-1 = font default). GM wraps between words. */
+void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double sep, double w){
+  if(!r) return;
+  gml_draw_text_ext_transformed(r,x,y,str,sep,w,1,1,0,r->color,r->alpha);
 }

@@ -267,6 +267,23 @@ void gml_arr_copy(GmlVal dst, int di, GmlVal src, int si, int count){
   GmlArr *D=dst.arr, *S=src.arr;
   for(int k=0;k<count;k++){ if(si+k>=S->len) break; arr_ensure(D,di+k); if(di+k<D->cap){ D->data[di+k]=arr_store_clone(S->data[si+k]); if(di+k>=D->len) D->len=di+k+1; } }
 }
+void gml_arr_insert(GmlVal arr, int index, GmlVal *values, int count){
+  if(arr.t!=V_ARR || !arr.arr || !values || count<=0) return;
+  GmlArr *A=arr.arr;
+  int old_len=A->len;
+  if(index<0) index+=old_len;       /* -1 addresses the current last element. */
+  if(index<0) index=0;
+  if(index>16000000-count) return;
+  if(index>old_len){
+    gml_arr_resize(arr,index+count); /* arr_ensure zero-fills the gap. */
+  } else {
+    gml_arr_resize(arr,old_len+count);
+    if(A->len!=old_len+count) return;
+    memmove(&A->data[index+count],&A->data[index],
+            (size_t)(old_len-index)*sizeof(*A->data));
+  }
+  for(int i=0;i<count;i++) A->data[index+i]=arr_store_clone(values[i]);
+}
 /* teardown dedupe: during full teardown (state load / vm free) every alias of a shared
  * array reaches val_free — free each GmlArr exactly once via an open-addressing pointer set. */
 static void **g_freeset; static size_t g_freeset_cap, g_freeset_n; static int g_freeset_on, g_free_skip_escaped;
@@ -6820,10 +6837,10 @@ void gml_rng_seed(GmlVM *vm, uint32_t seed){
   vm->rng_classic_state=seed;
 }
 static uint32_t gml_rng_next(GmlVM *vm){
+  static int log_calls=-1;
+  if(log_calls<0) log_calls=getenv("GML_LOG_RNG_CALL")?1:0;
   if(vm->win && vm->win->classic_version){
     vm->rng_classic_state=vm->rng_classic_state*0x08088405u+1u;
-    static int log_calls=-1;
-    if(log_calls<0) log_calls=getenv("GML_LOG_RNG_CALL")?1:0;
     if(log_calls){
       const char *object=(vm->cur_self && vm->cur_self->obj>=0 && vm->cur_self->obj<vm->n_objects)
         ? vm->objects[vm->cur_self->obj].name : "?";
@@ -6846,6 +6863,12 @@ static uint32_t gml_rng_next(GmlVM *vm){
   a=st[idx];
   st[idx]=a=a ^ b ^ d ^ (a<<2) ^ (b<<18) ^ (c<<28);
   vm->rng_index=idx;
+  if(log_calls){
+    const char *object=(vm->cur_self && vm->cur_self->obj>=0 && vm->cur_self->obj<vm->n_objects)
+      ? vm->objects[vm->cur_self->obj].name : "?";
+    fprintf(stderr,"[rng-call] f%ld value=%u id=%u object=%s event=%s\n",g_vm_frame,a,
+      vm->cur_self?vm->cur_self->id:0,object?object:"?",vm->cur_event?vm->cur_event:"?");
+  }
   return a;
 }
 double gml_rng_value(GmlVM *vm){ return (double)gml_rng_next(vm) / 4294967296.0; }  /* [0,1) */

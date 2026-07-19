@@ -5,6 +5,14 @@
 #define GML_RENDER_H
 #include "gml_win.h"
 
+/* bm_subtract is the fixed-function pair (bm_zero, bm_inv_src_colour), not the
+ * arithmetic blend equation.  The destination component is therefore scaled
+ * by the inverse source component.  Keep the integer rule shared by every
+ * software drawing path so primitives, sprites and surfaces cannot drift. */
+static inline unsigned gml_blend_inv_source_u8(unsigned dst, unsigned src){
+  return (dst*(255u-src)+127u)/255u;
+}
+
 typedef struct { uint16_t y, x, len; uint8_t alpha; } GmlTpagAlphaRun;
 typedef struct {
   int sx,sy,sw,sh, tx,ty, bw,bh, atlas;  /* texture page item */
@@ -173,7 +181,7 @@ typedef struct {
   uint32_t  color;  double alpha; int halign, valign, font, alphablend, circle_precision;
   uint8_t   color_write_mask; /* gpu_set_colorwriteenable RGBA bits 0..3; defaults to all enabled */
   int       software_overlay; /* bypass world-space D3 projection for a final 2D modal pass */
-  int       blendmode;   /* 0=normal, 1=add, 2=subtract, 3=source*destination (extended factors). */
+  int       blendmode;   /* 0=normal, 1=add, 2=(zero, inverse-source-colour), 3=source*destination. */
   int       blend_equation, blend_equation_alpha; /* 1 add, 2 max, 3 subtract, 4 reverse-subtract, 5 min */
   struct GmlGpuState {
     int alphablend, blendmode, blend_equation, blend_equation_alpha, interp;
@@ -461,6 +469,9 @@ int  gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeb
 void gml_render_rebuild_font_maps(GmlRender *r);
 void gml_draw_text(GmlRender *r, double x, double y, const char *str);
 void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double sep, double w);
+void gml_draw_text_ext_transformed(GmlRender *r, double x, double y, const char *str,
+                                   double sep, double w, double xs, double ys, double rot,
+                                   uint32_t blend, double alpha);
 void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str,
                                double xs, double ys, double rot, uint32_t blend, double alpha);
 int  gml_text_width(GmlRender *r, const char *str);

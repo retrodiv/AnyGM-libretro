@@ -358,6 +358,7 @@ void         gml_arr_push(GmlVal arr, GmlVal val);
 GmlVal       gml_arr_pop(GmlVal arr);
 void         gml_arr_resize(GmlVal arr, int size);
 void         gml_arr_copy(GmlVal dst, int di, GmlVal src, int si, int count);
+void         gml_arr_insert(GmlVal arr, int index, GmlVal *values, int count);
 GmlVal       gml_ds_map_find_value_direct(GmlVM *vm, int id, GmlVal keyv, int has_key);
 GmlVal       gml_ds_map_find_first_direct(GmlVM *vm, int id);
 GmlVal       gml_ds_map_find_next_direct(GmlVM *vm, int id, GmlVal keyv, int has_key);
