@@ -2698,7 +2698,32 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         else if(T==IT_ALL){ for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active&&!vm->inst[i].marked) WADD(&vm->inst[i]); }
         else if(T>=0){ for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active&&!vm->inst[i].marked&&gml_object_is(vm,vm->inst[i].obj,T)) WADD(&vm->inst[i]); }
         #undef WADD
-        if(nn==0 || withsp>=32){ free(list); nextpc = pc + (uint32_t)(in.jump*4); if(use_cache) nextip=(uint32_t)cached_branch[ip]; }
+        if(nn==0){
+          /* PUSHENV branches to its matching POPENV when the target set is empty. Keep an
+           * empty frame on the environment stack so that POPENV consumes this scope instead
+           * of accidentally closing an enclosing with-block. */
+          int pushed_empty=withsp<32;
+          if(pushed_empty){
+            withstk[withsp].list=list; withstk[withsp].n=0; withstk[withsp].idx=0;
+            withstk[withsp].ss=vm->cur_self; withstk[withsp].so=vm->cur_other; withsp++;
+          } else free(list);
+          nextpc = pc + (uint32_t)(in.jump*4);
+          if(use_cache){
+            int target=cached_branch[ip];
+            nextip=(uint32_t)(pushed_empty?target:(target>=0?target+1:target));
+          } else if(!pushed_empty){
+            GmlInsn endenv;
+            int size=gml_decode_bc(d,nextpc,w->bytecode,&endenv);
+            if(size>0 && endenv.kind==OP_POPENV) nextpc+=(uint32_t)size;
+          }
+        }
+        else if(withsp>=32){
+          free(list);
+          nextpc = pc + (uint32_t)(in.jump*4);
+          if(use_cache){ int target=cached_branch[ip]; nextip=(uint32_t)(target>=0?target+1:target); }
+          else { GmlInsn endenv; int size=gml_decode_bc(d,nextpc,w->bytecode,&endenv);
+            if(size>0 && endenv.kind==OP_POPENV) nextpc+=(uint32_t)size; }
+        }
         else { withstk[withsp].list=list; withstk[withsp].n=nn; withstk[withsp].idx=0;
           withstk[withsp].ss=vm->cur_self; withstk[withsp].so=vm->cur_other; withsp++;
           vm->cur_other=vm->cur_self; vm->cur_self=list[0]; }
@@ -3426,13 +3451,20 @@ static int run_event_from(GmlVM *vm, GmlInstance *in, const char *suffix, int ob
       fprintf(stderr,"[event] f%ld %s.%s id=%u other=%u\n",
         g_vm_frame,vm->objects[in->obj].name,suffix,in->id,vm->cur_other?vm->cur_other->id:0); }
   if(!event_lookup_from(vm,suffix,obj,&handler_obj,&ci)) return 0;
-  /* GML_DBG_EVTIME accumulates wall-clock milliseconds per handler/event and reports every 300 frames. */
+  /* Preserve `other`: an event fired from inside another instance's scope
+   * (event_user / event_perform / action_inherited) must see the caller as
+   * `other`. For an engine-triggered event there is no separate caller; GM
+   * exposes the event instance itself as both `self` and `other`. This matters
+   * for ordinary Step/Create code that deliberately enters `with(other.id)`. */
+  GmlInstance *other=vm->cur_other?vm->cur_other:in;
+  /* GML_DBG_EVTIME accumulates wall-clock milliseconds per handler and event, reporting every
+   * 300 frames. */
   { static int evt_on=-1; if(evt_on<0) evt_on=getenv("GML_DBG_EVTIME")!=NULL;
     if(evt_on){
       static struct { int obj; char suf[24]; double ms; long runs; } tab[256]; static int ntab=0;
       static long lastf=0, frames=0;
       double t0=vmprof_now();
-      int r=run_event_code_from(vm,in,vm->cur_other,suffix,handler_obj,ci);
+      int r=run_event_code_from(vm,in,other,suffix,handler_obj,ci);
       double dt=vmprof_now()-t0;
       int k=0; for(;k<ntab;k++) if(tab[k].obj==handler_obj && !strcmp(tab[k].suf,suffix)) break;
       if(k==ntab && ntab<256){ tab[k].obj=handler_obj; snprintf(tab[k].suf,sizeof tab[k].suf,"%s",suffix); tab[k].ms=0; tab[k].runs=0; ntab++; }
@@ -3450,11 +3482,7 @@ static int run_event_from(GmlVM *vm, GmlInstance *in, const char *suffix, int ob
           ntab=0; } }
       return r;
     } }
-  /* Preserve `other`: an event fired from inside another instance's scope
-   * (event_user / event_perform / action_inherited) must see the caller as
-   * `other`. Engine-triggered events enter with cur_other == NULL, so this is
-   * a no-op for Step/Alarm dispatch. */
-  return run_event_code_from(vm,in,vm->cur_other,suffix,handler_obj,ci);
+  return run_event_code_from(vm,in,other,suffix,handler_obj,ci);
 }
 int gml_run_event(GmlVM *vm, GmlInstance *in, const char *suffix){
   if(!in||in->obj<0||in->obj>=vm->n_objects) return 0;

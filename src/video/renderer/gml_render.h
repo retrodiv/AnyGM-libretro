@@ -79,9 +79,11 @@ typedef struct {
   int map_fast[256];
   /* real FONT-chunk font: glyph sub-rects blitted from the data.win atlas at runtime
    * (no glyph data is bundled; parsed from the user-supplied data.win like sprites). */
-  int real, atlas, line_height;                                  /* real=1; atlas index; em/line height */
+  int real, atlas, line_height;                                  /* real=1; atlas index; line advance */
+  int align_height;                                              /* visible cell extent for valign */
+  int runtime_owned;                                             /* font + atlas created after load */
   int subpixel;                                                   /* per-channel GDI coverage for classic info */
-  GmlGlyph *glyphs; int n_glyphs;
+  GmlGlyph *glyphs; int n_glyphs, glyphs_sorted;
   int glyph_by_char[256];                                        /* fast ASCII lookup, -1 = none */
 } GmlFont;                                                        /* sprite font or real FONT-chunk font */
 typedef struct { uint32_t *px; int w, h, live;
@@ -452,7 +454,9 @@ int  gml_sprite_set_alpha_from_sprite(GmlRender *r, int sprite, int alpha_sprite
 int  gml_sprite_collision(GmlRender *r, int sprite, int frame, int lx, int ly);
 int  gml_font_add_sprite(GmlRender *r, int sprite, int first, int prop, int sep);
 int  gml_font_add_sprite_ext(GmlRender *r, int sprite, const char *map, int prop, int sep);
-int  gml_font_add_file(GmlRender *r, const char *path, double point_size);   /* runtime TTF (font_add) */
+int  gml_font_add_file(GmlRender *r, const char *path, double point_size,
+                       int first, int last);                     /* runtime TTF (font_add) */
+void gml_font_delete(GmlRender *r, int font);
 int  gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeback, int xorig, int yorig);
 void gml_render_rebuild_font_maps(GmlRender *r);
 void gml_draw_text(GmlRender *r, double x, double y, const char *str);

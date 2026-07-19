@@ -9009,7 +9009,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       /* font_add(file, size, bold, italic, first, last): rasterize a loose TTF from the game
        * dir (localized fonts in ports). -1 when missing/unreadable, like GM. */
       char *p=resolve_read_path(vm,S(a,n,0));
-      int id = p? gml_font_add_file(R,p,N(a,n,1)) : -1;
+      if(getenv("GML_LOG_FONT")) fprintf(stderr,
+        "[font_add] path=%s size=%.1f bold=%d italic=%d first=%d last=%d argc=%d\n",
+        p?p:"?",N(a,n,1),(int)N(a,n,2),(int)N(a,n,3),
+        n>4?(int)N(a,n,4):32,n>5?(int)N(a,n,5):255,n);
+      int first=n>4?(int)N(a,n,4):32, last=n>5?(int)N(a,n,5):255;
+      int id = p? gml_font_add_file(R,p,N(a,n,1),first,last) : -1;
       free(p);
       return vreal(id);
     }
@@ -9121,11 +9126,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     if(!strcmp(nm,"font_delete")){
       int fid=(int)N(a,n,0);
-      if(R && fid>=0 && fid<R->n_fonts && !R->fonts[fid].real){
-        free(R->fonts[fid].map);
-        free(R->fonts[fid].glyphs);
-        memset(&R->fonts[fid],0,sizeof(R->fonts[fid]));
-      }
+      if(R) gml_font_delete(R,fid);
       return vreal(0);
     }
     if(!strcmp(nm,"font_get_info")){
@@ -9755,6 +9756,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return array4(0,0,w,h);
   }
   if(!strcmp(nm,"date_current_datetime")) return vreal(25569.0 + (double)time(NULL)/86400.0);
+  if(!strcmp(nm,"date_second_span")) return vreal(fabs(N(a,n,0)-N(a,n,1))*86400.0);
+  if(!strcmp(nm,"date_minute_span")) return vreal(fabs(N(a,n,0)-N(a,n,1))*1440.0);
+  if(!strcmp(nm,"date_hour_span")) return vreal(fabs(N(a,n,0)-N(a,n,1))*24.0);
+  if(!strcmp(nm,"date_day_span")) return vreal(fabs(N(a,n,0)-N(a,n,1)));
+  if(!strcmp(nm,"date_week_span")) return vreal(fabs(N(a,n,0)-N(a,n,1))/7.0);
   if(!strcmp(nm,"date_get_second")||!strcmp(nm,"date_get_minute")||!strcmp(nm,"date_get_hour")||
      !strcmp(nm,"date_get_day")||!strcmp(nm,"date_get_month")||!strcmp(nm,"date_get_year")){
     struct tm tmv; gm_datetime_tm(N(a,n,0),&tmv);

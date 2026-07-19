@@ -1577,6 +1577,8 @@ static void parse_font(GmlRender *r){
     if(gc>100000) gc=0;                             /* guard */
     f->glyphs=calloc(gc?gc:1,sizeof(GmlGlyph));
     f->n_glyphs=(int)gc;
+    f->glyphs_sorted=1;
+    uint16_t previous_ch=0;
     for(uint32_t g=0;g<gc && f->glyphs;g++){
       uint32_t q=u32(d,p+goff+4+g*4);               /* pointer to glyph record */
       GmlGlyph *gl=&f->glyphs[g];
@@ -1585,12 +1587,15 @@ static void parse_font(GmlRender *r){
       gl->w=(int)u16(d,q+6); gl->h=(int)u16(d,q+8);
       gl->shift=(int16_t)u16(d,q+10);               /* advance */
       gl->offset=(int16_t)u16(d,q+12);              /* left bearing */
+      if(g && gl->ch<previous_ch) f->glyphs_sorted=0;
+      previous_ch=gl->ch;
       if(gl->ch<256) f->glyph_by_char[gl->ch]=(int)g;
     }
+    int mh=0;
+    for(int g2=0;g2<f->n_glyphs;g2++) if(f->glyphs[g2].h>mh) mh=f->glyphs[g2].h;
+    f->align_height=mh>f->line_height?mh:f->line_height;
     /* For floating-point EmSize, increase line height to the tallest glyph when needed. */
-    if(em_is_float){ int mh=0;
-      for(int g2=0;g2<f->n_glyphs;g2++) if(f->glyphs[g2].h>mh) mh=f->glyphs[g2].h;
-      if(mh>f->line_height) f->line_height=mh; }
+    if(em_is_float && mh>f->line_height) f->line_height=mh;
     if(getenv("GML_LOG_FONT"))
       fprintf(stderr,"[font] real id=%d name=%s em=%d atlas=%d glyphs=%d\n",
         i, gml_str_by_ptr(r->win,u32(d,p)), f->line_height, f->atlas, f->n_glyphs);
@@ -1627,7 +1632,8 @@ static int build_default_font(GmlRender *r){
   for(int i=0;i<256;i++) f->glyph_by_char[i]=-1;
   f->real=1; f->sprite=-1; f->atlas=atlas_id;
   f->line_height=GML_DEFAULT_FONT_LINE_HEIGHT;
-  f->glyphs=glyphs; f->n_glyphs=ng;
+  f->align_height=f->line_height;
+  f->glyphs=glyphs; f->n_glyphs=ng; f->glyphs_sorted=1;
   int ax=0, ay=0, row_height=0;
   for(int i=0;i<ng;i++){
     const GmlDefaultGlyph *src=&gml_default_glyphs[i];
@@ -1660,6 +1666,15 @@ static int build_default_font(GmlRender *r){
 /* ---- real FONT-chunk font helpers ---- */
 static GmlGlyph *real_glyph(GmlFont *f, unsigned cp){
   if(cp<256){ int gi=f->glyph_by_char[cp]; return gi>=0? &f->glyphs[gi] : NULL; }
+  if(f->glyphs_sorted){
+    int lo=0, hi=f->n_glyphs;
+    while(lo<hi){
+      int mid=lo+(hi-lo)/2;
+      unsigned ch=f->glyphs[mid].ch;
+      if(ch<cp) lo=mid+1; else hi=mid;
+    }
+    return lo<f->n_glyphs && f->glyphs[lo].ch==cp ? &f->glyphs[lo] : NULL;
+  }
   for(int i=0;i<f->n_glyphs;i++) if(f->glyphs[i].ch==cp) return &f->glyphs[i];
   return NULL;
 }
@@ -1740,9 +1755,11 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
                            double xs, double ys, double ca, double sa, int use_rot,
                            uint32_t blend, double alpha){
   int lh=f->line_height>0? f->line_height:12;
+  int ah=f->align_height>0?f->align_height:lh;
   int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;} if(text_is_linebreak(q)) nlines++; }
   double base_y=0;
-  if(r->valign==1) base_y=-(nlines*lh)/2.0; else if(r->valign==2) base_y=-nlines*lh;
+  double block_height=(nlines-1)*lh+ah;
+  if(r->valign==1) base_y=-block_height/2.0; else if(r->valign==2) base_y=-block_height;
   const char *p=str;
   for(int li=0; *p || li==0; li++){
     const char *end; int lw=real_line_width(f,p,&end);
@@ -2071,8 +2088,8 @@ static int classic_info_font_build(GmlRender *r,int source_index){
   memset(font,0,sizeof(*font));
   for(int i=0;i<256;i++) font->glyph_by_char[i]=-1;
   font->real=1; font->sprite=-1; font->atlas=atlas_id; font->subpixel=1;
-  font->line_height=source->line_height;
-  font->glyphs=glyphs; font->n_glyphs=glyph_count;
+  font->line_height=source->line_height; font->align_height=source->line_height;
+  font->glyphs=glyphs; font->n_glyphs=glyph_count; font->glyphs_sorted=1;
   for(int i=0;i<glyph_count;i++) font->glyph_by_char[first+i]=i;
   if(r->classic_info_font_cache_count<(int)(sizeof(r->classic_info_font_cache)/
                                              sizeof(r->classic_info_font_cache[0]))){

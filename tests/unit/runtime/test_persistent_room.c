@@ -237,6 +237,49 @@ int main(void){
         per_second,per_frame,legacy); return 1;
     }
   }
+  {
+    GmlRender render={0};
+    render.n_fonts=1; render.n_atlas=1;
+    render.atlas=calloc(1,sizeof(*render.atlas));
+    if(!render.atlas) return 1;
+    render.fonts[0].real=1; render.fonts[0].runtime_owned=1; render.fonts[0].atlas=0;
+    render.fonts[0].glyphs=calloc(1,sizeof(*render.fonts[0].glyphs));
+    render.atlas[0].px=calloc(4,4);
+    if(!render.fonts[0].glyphs || !render.atlas[0].px) return 1;
+    gml_font_delete(&render,0);
+    if(render.fonts[0].glyphs || render.fonts[0].sprite!=-1 || render.fonts[0].atlas!=-1 ||
+       render.atlas[0].px){
+      fprintf(stderr,"runtime font deletion retained owned storage\n"); return 1;
+    }
+    free(render.atlas);
+  }
+  {
+    /* Vertical centring uses the complete glyph-cell extent while line_height remains the
+     * authored line advance. A font can legitimately have descenders taller than its nominal
+     * em; centring only the advance moves every visible glyph down. */
+    GmlRender render={0}; GmlGlyph glyph={0}; GmlAtlas atlas={0};
+    uint32_t framebuffer[16*16]={0}; uint8_t pixels[8*4];
+    memset(pixels,255,sizeof(pixels));
+    render.fbw=render.fbh=16; render.fb=render.base_fb=framebuffer;
+    render.n_fonts=1; render.n_atlas=1; render.atlas=&atlas;
+    render.font=0; render.valign=1; render.color=0xFFFFFF; render.alpha=1;
+    render.alphablend=1; render.software_overlay=1;
+    atlas.px=pixels; atlas.w=1; atlas.h=8; atlas.decode_attempted=1;
+    memset(render.fonts[0].glyph_by_char,0xFF,sizeof(render.fonts[0].glyph_by_char));
+    render.fonts[0].real=1; render.fonts[0].atlas=0;
+    render.fonts[0].line_height=4; render.fonts[0].align_height=8;
+    render.fonts[0].glyphs=&glyph; render.fonts[0].n_glyphs=1;
+    render.fonts[0].glyphs_sorted=1; render.fonts[0].glyph_by_char['A']=0;
+    glyph.ch='A'; glyph.w=1; glyph.h=8; glyph.shift=1;
+    gml_draw_text(&render,8,10,"A");
+    int min_y=16,max_y=-1;
+    for(int y=0;y<16;y++) for(int x=0;x<16;x++) if(framebuffer[y*16+x]&0xFFFFFFu){
+      if(y<min_y) min_y=y; if(y>max_y) max_y=y;
+    }
+    if(min_y!=6 || max_y!=13){
+      fprintf(stderr,"real-font centred extent mismatch: y=%d..%d\n",min_y,max_y); return 1;
+    }
+  }
   GmlcProject project; GmlcObject objects[3]; GmlcRoom rooms[2];
   GmlcScript scripts[2]; char *script_order[2];
   GmlcPath fixture_path; GmlcPathPoint fixture_path_points[2];
@@ -332,6 +375,7 @@ int main(void){
   FILE *startup_file=fdopen(startup_fd,"wb");
   const char startup_source[]=
     "global.startup_value = fixture_constant; "
+    "global.date_minute_span_fixture = date_minute_span(100, 99.5); "
     "global.view_fixture_scalar = 7; global.background_fixture_scalar = 9; "
     "view_enabled[0] = true; global.view_enabled_alias = view_enabled[1]; "
     "global.delta_fixture = delta_time; "
@@ -437,7 +481,12 @@ int main(void){
   char changed_step[]="/tmp/gml-changed-step-event-XXXXXX"; int changed_step_fd=mkstemp(changed_step); if(changed_step_fd<0)return 1;
   FILE *changed_step_file=fdopen(changed_step_fd,"wb");
   const char changed_step_source[]=
-    "global.step_order=global.step_order*10+2; global.changed_step_hits += 1;\n";
+    "global.step_order=global.step_order*10+2; global.changed_step_hits += 1; "
+    "global.engine_event_other_is_self=(other.id==id); "
+    "global.nested_empty_with=0; "
+    "with(other.id){ global.nested_empty_with=1; "
+    "with(noone){ global.nested_empty_with=-1; } "
+    "global.nested_empty_with=12; }\n";
   if(!changed_step_file || fwrite(changed_step_source,1,sizeof(changed_step_source)-1,changed_step_file)!=sizeof(changed_step_source)-1 || fclose(changed_step_file)!=0)return 1;
   object_events[11].source_path=changed_step;
   char alarm_files[4][40];
@@ -546,6 +595,7 @@ int main(void){
   GmlVal *program_fixture=gml_varmap_get(&vm.globals,"program_fixture");
   GmlVal *fixture_orange=gml_varmap_get(&vm.globals,"fixture_orange");
   GmlVal *fixture_rain=gml_varmap_get(&vm.globals,"fixture_rain");
+  GmlVal *date_minute_span_fixture=gml_varmap_get(&vm.globals,"date_minute_span_fixture");
   char expected_working[640],expected_program[640];
   /* This compiler fixture is a bytecode-15 Studio package: working_directory remains the
    * installed content root, while writes are still redirected through the file sandbox. */
@@ -559,7 +609,9 @@ int main(void){
      !working_fixture || working_fixture->t!=V_STR || strcmp(working_fixture->s,expected_working) ||
      !program_fixture || program_fixture->t!=V_STR || strcmp(program_fixture->s,expected_program) ||
      !fixture_orange || fixture_orange->t!=V_REAL || fixture_orange->d!=0x40A0FF ||
-     !fixture_rain || fixture_rain->t!=V_REAL || fixture_rain->d!=10){
+     !fixture_rain || fixture_rain->t!=V_REAL || fixture_rain->d!=10 ||
+     !date_minute_span_fixture || date_minute_span_fixture->t!=V_REAL ||
+       date_minute_span_fixture->d!=720){
     fprintf(stderr,"startup code or project constant did not run: startup=%.9g view=%.9g background=%.9g delta=%.17g orange=%.9g rain=%.9g\n",
       startup_value&&startup_value->t==V_REAL?startup_value->d:-1.0,
       view_fixture_scalar&&view_fixture_scalar->t==V_REAL?view_fixture_scalar->d:-1.0,
@@ -590,6 +642,24 @@ int main(void){
   uint32_t path_next_id=vm.next_id;
   GmlInstance *path_probe=gml_instance_create(&vm,100,100,2); if(!path_probe)return 1;
   GmlInstance *path_control=gml_instance_create(&vm,100,100,2); if(!path_control)return 1;
+  GmlInstance *engine_other_probe=gml_instance_create(&vm,110,100,1); if(!engine_other_probe)return 1;
+  gml_run_event(&vm,engine_other_probe,"Step_0");
+  GmlVal *engine_event_other_is_self=gml_varmap_get(&vm.globals,"engine_event_other_is_self");
+  if(!engine_event_other_is_self || engine_event_other_is_self->t!=V_REAL ||
+     engine_event_other_is_self->d!=1){
+    fprintf(stderr,"engine event did not expose self as other: %.0f\n",
+      engine_event_other_is_self&&engine_event_other_is_self->t==V_REAL?
+      engine_event_other_is_self->d:-1.0);
+    return 1;
+  }
+  GmlVal *nested_empty_with=gml_varmap_get(&vm.globals,"nested_empty_with");
+  if(!nested_empty_with || nested_empty_with->t!=V_REAL || nested_empty_with->d!=12){
+    fprintf(stderr,"empty nested with closed its parent scope: %.0f\n",
+      nested_empty_with&&nested_empty_with->t==V_REAL?nested_empty_with->d:-1.0);
+    return 1;
+  }
+  gml_instance_destroy(&vm,engine_other_probe);
+  gml_set_global_scalar(&vm,"step_order",0);
   gml_set_global_scalar(&vm,"create_order",12);
   uint32_t path_probe_id=path_probe->id, path_control_id=path_control->id;
   path_probe=find_slot(&vm,path_probe_id); path_control=find_slot(&vm,path_control_id);
