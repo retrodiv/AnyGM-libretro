@@ -80,6 +80,27 @@ static int expect_hash_layer_gpu_gap_closure(void){
   int filter_ok=render.interp==1 && texfilter_get.t==V_REAL && texfilter_get.d==1;
   ok=ok && filter_ok;
 
+  GmlVal create_view[10]={vreal(12),vreal(34),vreal(320),vreal(180),vreal(7),
+                          vreal(100042),vreal(5),vreal(6),vreal(9),vreal(10)};
+  GmlVal source_camera=gml_builtin_call(&vm,"camera_create_view",create_view,10);
+  GmlVal target_camera=gml_builtin_call(&vm,"camera_create",NULL,0);
+  GmlVal copy_camera[2]={target_camera,source_camera};
+  (void)gml_builtin_call(&vm,"camera_copy_transforms",copy_camera,2);
+  GmlVal camera_x=gml_builtin_call(&vm,"camera_get_view_x",&target_camera,1);
+  GmlVal camera_y=gml_builtin_call(&vm,"camera_get_view_y",&target_camera,1);
+  GmlVal camera_w=gml_builtin_call(&vm,"camera_get_view_width",&target_camera,1);
+  GmlVal camera_h=gml_builtin_call(&vm,"camera_get_view_height",&target_camera,1);
+  GmlVal camera_angle=gml_builtin_call(&vm,"camera_get_view_angle",&target_camera,1);
+  GmlVal camera_target=gml_builtin_call(&vm,"camera_get_view_target",&target_camera,1);
+  GmlVal camera_bx=gml_builtin_call(&vm,"camera_get_view_border_x",&target_camera,1);
+  GmlVal camera_by=gml_builtin_call(&vm,"camera_get_view_border_y",&target_camera,1);
+  GmlVal window_min=vreal(240);
+  GmlVal min_result=gml_builtin_call(&vm,"window_set_min_width",&window_min,1);
+  int camera_ok=source_camera.d>=0 && target_camera.d>=0 && camera_x.d==12 && camera_y.d==34 &&
+    camera_w.d==320 && camera_h.d==180 && camera_angle.d==7 && camera_target.d==100042 &&
+    camera_bx.d==9 && camera_by.d==10 && min_result.t==V_REAL && min_result.d==0;
+  ok=ok && camera_ok;
+
   uint32_t source[2]={0x7FFF0000u,0xFFFF0000u};
   uint32_t target[2]={0xFF102030u,0xFF102030u};
   struct GmlShaderPal alpha_shader={0};
@@ -104,8 +125,8 @@ static int expect_hash_layer_gpu_gap_closure(void){
      object_visible.t==V_REAL && object_visible.d==0;
   vm.objects=NULL; vm.n_objects=0;
   free(vm.rtl); free(vm.inst);
-  if(!ok) fprintf(stderr,"hash/layer/GPU gap-closure fixture failed (filter=%d interp=%d get=%.0f surface=%d pixels=%08X,%08X)\n",
-    filter_ok,render.interp,texfilter_get.t==V_REAL?texfilter_get.d:-1.0,
+  if(!ok) fprintf(stderr,"hash/layer/GPU gap-closure fixture failed (filter=%d camera=%d interp=%d get=%.0f surface=%d pixels=%08X,%08X)\n",
+    filter_ok,camera_ok,render.interp,texfilter_get.t==V_REAL?texfilter_get.d:-1.0,
     surface_alpha_ok,target[0],target[1]);
   return ok;
 }

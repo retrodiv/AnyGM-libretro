@@ -1630,15 +1630,35 @@ static int raster_fixtures(void){
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
     gml_vm_draw(&draw_vm);
     unsigned visible_layer_pixel=pixels[4*WIDTH+4]&0x00FFFFFFu;
+    /* A ROOM record has a global creation list and a distinct per-layer element list. At an
+     * equal depth, the layer list is the authored back-to-front order; reversing creation order
+     * would incorrectly leave element zero on top. */
+    GmlInstance layer_order_instances[2]; memset(layer_order_instances,0,sizeof layer_order_instances);
+    for(int i=0;i<2;i++){
+      GmlInstance *in=&layer_order_instances[i];
+      in->active=1; in->obj=0; in->id=(uint32_t)(100000+i); in->creation_seq=(uint64_t)(i+1);
+      in->room_placed=1; in->visible=1; in->sprite_index=depth_sprite; in->mask_index=-1;
+      in->x=in->y=4; in->image_xscale=in->image_yscale=1; in->image_alpha=1;
+      in->image_blend=i?0x00FF00:0x0000FF;
+      in->draw_layer_order=7; in->draw_layer_element_order=i;
+    }
+    draw_vm.inst=layer_order_instances; draw_vm.inst_count=draw_vm.inst_cap=2;
+    draw_win.classic_version=0;
+    for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    gml_vm_draw(&draw_vm);
+    unsigned authored_layer_front=pixels[4*WIDTH+4]&0x00FFFFFFu;
+    draw_win.classic_version=800;
+    draw_vm.inst=&draw_instance; draw_vm.inst_count=draw_vm.inst_cap=1;
     draw_vm.rtl=NULL; draw_vm.n_rtl=draw_vm.cap_rtl=0;
     draw_instance.draw_layer_order=-1;
     if(automatic<185 || automatic>195 || self_draw!=automatic || full_sprite!=255 ||
        gml_builtin_fast_id("draw_full_sprite")!=gml_builtin_fast_id("draw_self") || classic_basic!=255 ||
        explicit_alpha<55 || explicit_alpha>70 || modern_basic<55 || modern_basic>70 ||
-       hidden_layer_pixel!=0 || visible_layer_pixel==0){
-      fprintf(stderr,"default/self/full/basic/explicit/layer draw mismatch: automatic=%u self=%u full=%u classic=%u explicit=%u modern=%u hidden=%06x visible=%06x\n",
+       hidden_layer_pixel!=0 || visible_layer_pixel==0 || authored_layer_front!=0x00FF00u){
+      fprintf(stderr,"default/self/full/basic/explicit/layer draw mismatch: automatic=%u self=%u full=%u classic=%u explicit=%u modern=%u hidden=%06x visible=%06x front=%06x\n",
         automatic,self_draw,full_sprite,classic_basic,explicit_alpha,modern_basic,
-        hidden_layer_pixel,visible_layer_pixel);
+        hidden_layer_pixel,visible_layer_pixel,authored_layer_front);
       return 0;
     }
     {
@@ -2094,6 +2114,63 @@ static int raster_fixtures(void){
     return 0;
   }
   flipped->frame[0]=0;
+  {
+    /* Sprite blending applies source-alpha factors to target alpha. A transparent render target
+     * must therefore retain partial coverage across the optimized unscaled, scaled, flipped,
+     * rotated and interpolated atlas paths. */
+    uint8_t atlas_backup[16];
+    memcpy(atlas_backup,render.atlas[0].px,sizeof(atlas_backup));
+    for(int i=0;i<4;i++){
+      render.atlas[0].px[i*4]=120;
+      render.atlas[0].px[i*4+1]=130;
+      render.atlas[0].px[i*4+2]=177;
+      render.atlas[0].px[i*4+3]=100;
+    }
+    free(render.tpag[0].alpha_row_min); render.tpag[0].alpha_row_min=NULL;
+    free(render.tpag[0].alpha_row_max); render.tpag[0].alpha_row_max=NULL;
+    free(render.tpag[0].alpha_runs); render.tpag[0].alpha_runs=NULL;
+    free(render.tpag[0].argb_cache); render.tpag[0].argb_cache=NULL;
+    render.tpag[0].alpha_scanned=0;
+    render.tpag[0].alpha_runs_built=0;
+    render.tpag[0].alpha_run_count=0;
+    int alpha_surface=gml_surface_create(&render,16,16);
+    GmlWin alpha_win={0}; alpha_win.bytecode=17;
+    GmlWin *saved_win=render.win;
+    int saved_classic=render.classic,saved_interp=render.interp;
+    render.win=&alpha_win; render.classic=0; render.interp=0;
+    if(alpha_surface<=0 || !gml_surface_set_target(&render,alpha_surface)){
+      fprintf(stderr,"software sprite target-alpha surface creation mismatch\n");
+      return 0;
+    }
+    gml_draw_sprite_ext(&render,flipped_sprite,0,1,1,1,1,0,0xFFFFFF,1);
+    gml_draw_sprite_ext(&render,flipped_sprite,0,5,1,2,2,0,0xFFFFFF,1);
+    gml_draw_sprite_ext(&render,flipped_sprite,0,13,1,-1,1,0,0xFFFFFF,1);
+    gml_draw_sprite_ext(&render,flipped_sprite,0,3,11,1,1,37,0xFFFFFF,1);
+    render.interp=1;
+    gml_draw_sprite_ext(&render,flipped_sprite,0,10,10,1,1,0,0xFFFFFF,1);
+    gml_surface_reset_target(&render);
+    GmlSurface *alpha_data=&render.surface[alpha_surface-1];
+    int covered=0,bad_alpha=0;
+    for(int i=0;i<alpha_data->w*alpha_data->h;i++){
+      unsigned coverage=alpha_data->px[i]>>24;
+      if(coverage){ covered++; if(coverage!=39u) bad_alpha++; }
+    }
+    if(covered<28 || bad_alpha){
+      fprintf(stderr,"software sprite target-alpha mismatch: covered=%d bad=%d\n",
+              covered,bad_alpha);
+      return 0;
+    }
+    gml_surface_free(&render,alpha_surface);
+    render.win=saved_win; render.classic=saved_classic; render.interp=saved_interp;
+    memcpy(render.atlas[0].px,atlas_backup,sizeof(atlas_backup));
+    free(render.tpag[0].alpha_row_min); render.tpag[0].alpha_row_min=NULL;
+    free(render.tpag[0].alpha_row_max); render.tpag[0].alpha_row_max=NULL;
+    free(render.tpag[0].alpha_runs); render.tpag[0].alpha_runs=NULL;
+    free(render.tpag[0].argb_cache); render.tpag[0].argb_cache=NULL;
+    render.tpag[0].alpha_scanned=0;
+    render.tpag[0].alpha_runs_built=0;
+    render.tpag[0].alpha_run_count=0;
+  }
   render.classic=1;
   gml_d3_reset(); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);

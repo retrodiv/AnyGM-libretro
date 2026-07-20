@@ -3720,6 +3720,7 @@ static void init_inst(GmlVM *vm, GmlInstance *in, double x, double y, int obj){
   in->image_blend=16777215; in->visible=1; in->depth=0;
   in->gravity_direction=270;   /* GM default: gravity pulls straight down */
   in->draw_layer_order=-1;
+  in->draw_layer_element_order=-1;
   in->room_placed=0;
   in->path_index=-1; in->path_scale=1; in->path_speed=0; in->path_position=0;
   in->timeline_index=-1; in->timeline_position=0; in->timeline_speed=1;
@@ -4122,12 +4123,6 @@ uint32_t gml_room_layer_type_off(GmlVM *vm, uint32_t lp){
   return lp+48+12*pc;
 }
 
-enum { GML_LAYER_EFFECT_NONE=0, GML_LAYER_EFFECT_RGB_NOISE=1, GML_LAYER_EFFECT_TINT=2 };
-typedef struct {
-  int kind;
-  double intensity, animation;
-  uint32_t colour, sampler_tpag_ptr;
-} GmlLayerEffectDef;
 static const char *layer_effect_string(const GmlWin *w, uint32_t ptr){
   if(!w || !ptr || ptr>=w->size) return "";
   const char *s=(const char*)w->data+ptr;
@@ -4152,40 +4147,129 @@ static uint32_t layer_effect_colour(const char *value, uint32_t fallback){
   if(!value || value[0]!='#') return fallback;
   char *end=NULL;
   unsigned long colour=strtoul(value+1,&end,16);
-  return end && *end==0 && end>value+1 ? (uint32_t)colour : fallback;
+  if(!(end && *end==0 && end==value+9)) return fallback;
+  /* Effect JSON/ROOM colours are serialized as AABBGGRR. The software renderer stores ARGB. */
+  uint32_t abgr=(uint32_t)colour;
+  return (abgr&0xFF00FF00u)|((abgr&0x00FF0000u)>>16)|((abgr&0x000000FFu)<<16);
 }
 /* Decode the standard effect-layer descriptor stored inline in later ROOM records. These are
  * engine filter identifiers/properties, so every package using the stock filters follows the same
  * path; unknown/custom filters remain a conservative no-op. */
-static int gml_room_layer_effect(GmlVM *vm, uint32_t lp, GmlLayerEffectDef *out){
+static int gml_room_layer_effect(GmlVM *vm, uint32_t lp, GmlLayerFilter *out){
   memset(out,0,sizeof(*out));
-  out->colour=0xFFFFFFFFu;
+  out->sampler_sprite=-1;
   if(!vm || !vm->win || gml_room_layer_data_off(vm)!=48 || lp+48>vm->win->size) return 0;
   const uint8_t *d=vm->win->data;
   if(!u32(d,lp+36)) return 0;
   const char *type=layer_effect_string(vm->win,u32(d,lp+40));
-  if(!strcmp(type,"_filter_rgbnoise")) out->kind=GML_LAYER_EFFECT_RGB_NOISE;
-  else if(!strcmp(type,"_filter_tintfilter")) out->kind=GML_LAYER_EFFECT_TINT;
+  if(!strcmp(type,"_filter_rgbnoise")){ out->kind=GML_LAYER_FILTER_RGB_NOISE; out->u.noise.colour=0xFFFFFFFFu; }
+  else if(!strcmp(type,"_filter_tintfilter")){ out->kind=GML_LAYER_FILTER_TINT; out->u.tint.colour=0xFFFFFFFFu; }
+  else if(!strcmp(type,"_filter_clouds")){
+    out->kind=GML_LAYER_FILTER_CLOUDS;
+    out->u.clouds.light_colour=out->u.clouds.shade_colour=0xFFFFFFFFu;
+  }
+  else if(!strcmp(type,"_effect_glow")){
+    /* Attached effects receive only the pixels authored on their own layer. Full-screen
+     * effects use an explicit layer element when they need deeper-layer coverage. */
+    out->kind=GML_LAYER_FILTER_GLOW; out->u.glow.alpha=1;
+  }
+  else if(!strcmp(type,"_filter_underwater")){
+    out->kind=GML_LAYER_FILTER_UNDERWATER;
+    out->u.underwater.glint_colour=out->u.underwater.tint_colour=0xFFFFFFFFu;
+    out->u.underwater.add_colour=0xFF000000u;
+  }
+  else if(!strcmp(type,"_filter_zoom_blur")) out->kind=GML_LAYER_FILTER_ZOOM_BLUR;
+  else if(!strcmp(type,"_filter_large_blur")) out->kind=GML_LAYER_FILTER_LARGE_BLUR;
+  else if(!strcmp(type,"_filter_boxes")) out->kind=GML_LAYER_FILTER_BOXES;
+  else if(!strcmp(type,"_filter_colourise")){
+    out->kind=GML_LAYER_FILTER_COLOURISE; out->u.colourise.tint_colour=0xFFFFFFFFu;
+  }
   else return 0;
   uint32_t count=u32(d,lp+44);
   if(count>64 || lp+48+(uint64_t)count*12u>vm->win->size) return 0;
   const char *sampler="";
+  int velocity=0,shape=0,shade_offset=0,distort1_scale=0,distort2_scale=0;
+  int zoom_centre=0,box_size=0,box_rotation=0;
   for(uint32_t i=0;i<count;i++){
     uint32_t p=lp+48+i*12;
     const char *name=layer_effect_string(vm->win,u32(d,p+4));
     const char *value=layer_effect_string(vm->win,u32(d,p+8));
-    if(strstr(name,"Intensity")) out->intensity=strtod(value,NULL);
-    else if(strstr(name,"Animation")) out->animation=strtod(value,NULL);
-    else if(strstr(name,"Colour") || strstr(name,"Color"))
-      out->colour=layer_effect_colour(value,out->colour);
-    else if((int32_t)u32(d,p)==2 || strstr(name,"Texture")) sampler=value;
+    double number=strtod(value,NULL);
+    if(out->kind==GML_LAYER_FILTER_RGB_NOISE){
+      if(strstr(name,"Intensity")) out->u.noise.intensity=number;
+      else if(strstr(name,"Animation")) out->u.noise.animation=number;
+      else if(strstr(name,"Colour")||strstr(name,"Color")) out->u.noise.colour=layer_effect_colour(value,out->u.noise.colour);
+      else if((int32_t)u32(d,p)==2 || strstr(name,"Texture")) sampler=value;
+    } else if(out->kind==GML_LAYER_FILTER_TINT){
+      if(strstr(name,"TintCol")) out->u.tint.colour=layer_effect_colour(value,out->u.tint.colour);
+    } else if(out->kind==GML_LAYER_FILTER_CLOUDS){
+      if(!strcmp(name,"g_CloudScale")) out->u.clouds.scale=number;
+      else if(!strcmp(name,"g_CloudVelocity") && velocity<2) out->u.clouds.velocity[velocity++]=number;
+      else if(!strcmp(name,"g_CloudTurbulence")) out->u.clouds.turbulence=number;
+      else if(!strcmp(name,"g_CloudLevel")) out->u.clouds.level=number;
+      else if(!strcmp(name,"g_CloudWaves")) out->u.clouds.waves=number;
+      else if(!strcmp(name,"g_CloudShape") && shape<2) out->u.clouds.shape[shape++]=number;
+      else if(!strcmp(name,"g_CloudDensity")) out->u.clouds.density=number;
+      else if(!strcmp(name,"g_CloudFade")) out->u.clouds.fade=number;
+      else if(!strcmp(name,"g_CloudColour1")) out->u.clouds.light_colour=layer_effect_colour(value,out->u.clouds.light_colour);
+      else if(!strcmp(name,"g_CloudColour2")) out->u.clouds.shade_colour=layer_effect_colour(value,out->u.clouds.shade_colour);
+      else if(!strcmp(name,"g_CloudShadeOffset") && shade_offset<2) out->u.clouds.shade_offset[shade_offset++]=number;
+      else if(!strcmp(name,"g_CloudShadeFade")) out->u.clouds.shade_fade=number;
+      else if(strstr(name,"Texture")) sampler=value;
+    } else if(out->kind==GML_LAYER_FILTER_GLOW){
+      if(!strcmp(name,"g_GlowRadius")) out->u.glow.radius=number;
+      else if(!strcmp(name,"g_GlowQuality")) out->u.glow.quality=number;
+      else if(!strcmp(name,"g_GlowIntensity")) out->u.glow.intensity=number;
+      else if(!strcmp(name,"g_GlowGamma")) out->u.glow.gamma=number;
+      else if(!strcmp(name,"g_GlowAlpha")) out->u.glow.alpha=number;
+    } else if(out->kind==GML_LAYER_FILTER_UNDERWATER){
+      if(!strcmp(name,"g_Distort1Speed")) out->u.underwater.speed[0]=number;
+      else if(!strcmp(name,"g_Distort2Speed")) out->u.underwater.speed[1]=number;
+      else if(!strcmp(name,"g_Distort1Scale") && distort1_scale<2) out->u.underwater.scale[0][distort1_scale++]=number;
+      else if(!strcmp(name,"g_Distort2Scale") && distort2_scale<2) out->u.underwater.scale[1][distort2_scale++]=number;
+      else if(!strcmp(name,"g_Distort1Amount")) out->u.underwater.amount[0]=number;
+      else if(!strcmp(name,"g_Distort2Amount")) out->u.underwater.amount[1]=number;
+      else if(!strcmp(name,"g_ChromaSpreadAmount")) out->u.underwater.chroma=number;
+      else if(!strcmp(name,"g_CamOffsetScale")) out->u.underwater.camera_scale=number;
+      else if(!strcmp(name,"g_GlintCol")) out->u.underwater.glint_colour=layer_effect_colour(value,out->u.underwater.glint_colour);
+      else if(!strcmp(name,"g_TintCol")) out->u.underwater.tint_colour=layer_effect_colour(value,out->u.underwater.tint_colour);
+      else if(!strcmp(name,"g_AddCol")) out->u.underwater.add_colour=layer_effect_colour(value,out->u.underwater.add_colour);
+      else if(strstr(name,"Texture")) sampler=value;
+    } else if(out->kind==GML_LAYER_FILTER_ZOOM_BLUR){
+      if(!strcmp(name,"g_ZoomBlurCenter") && zoom_centre<2) out->u.zoom_blur.centre[zoom_centre++]=number;
+      else if(!strcmp(name,"g_ZoomBlurIntensity")) out->u.zoom_blur.intensity=number;
+      else if(!strcmp(name,"g_ZoomBlurFocusRadius")) out->u.zoom_blur.focus_radius=number;
+      else if(strstr(name,"Texture")) sampler=value;
+    } else if(out->kind==GML_LAYER_FILTER_LARGE_BLUR){
+      if(!strcmp(name,"g_Radius")) out->u.large_blur.radius=number;
+      else if(strstr(name,"Texture")) sampler=value;
+    } else if(out->kind==GML_LAYER_FILTER_BOXES){
+      if(!strcmp(name,"g_BoxesScale")) out->u.boxes.scale=number;
+      else if(!strcmp(name,"g_BoxesSize") && box_size<2) out->u.boxes.size[box_size++]=number;
+      else if(!strcmp(name,"g_BoxesDisplacement")) out->u.boxes.displacement=number;
+      else if(!strcmp(name,"g_BoxesSpeed")) out->u.boxes.speed=number;
+      else if(!strcmp(name,"g_BoxesAngle")) out->u.boxes.angle=number;
+      else if(!strcmp(name,"g_BoxesRotation") && box_rotation<2) out->u.boxes.rotation[box_rotation++]=number;
+      else if(!strcmp(name,"g_BoxesRoundness")) out->u.boxes.roundness=number;
+      else if(!strcmp(name,"g_BoxesColourSpeed")) out->u.boxes.colour_speed=number;
+      else if(!strcmp(name,"g_BoxesColours")) out->u.boxes.colours=number;
+      else if(!strcmp(name,"g_BoxesSharpness")) out->u.boxes.sharpness=number;
+      else if(strstr(name,"Palette")||strstr(name,"Texture")) sampler=value;
+    } else if(out->kind==GML_LAYER_FILTER_COLOURISE){
+      if(!strcmp(name,"g_Intensity")) out->u.colourise.intensity=number;
+      else if(!strcmp(name,"g_TintCol")) out->u.colourise.tint_colour=layer_effect_colour(value,out->u.colourise.tint_colour);
+    }
   }
-  if(out->kind==GML_LAYER_EFFECT_RGB_NOISE){
-    GmlRender *render=(GmlRender*)vm->render;
-    out->sampler_tpag_ptr=gml_render_named_tpag_ptr(render,sampler);
-    if(!out->sampler_tpag_ptr) out->sampler_tpag_ptr=layer_effect_sampler_tpag(vm->win,sampler);
-    if(!out->sampler_tpag_ptr || out->intensity<=0.0) return 0;
+  GmlRender *render=(GmlRender*)vm->render;
+  out->sampler_sprite=gml_render_named_sprite(render,sampler);
+  if(out->kind==GML_LAYER_FILTER_RGB_NOISE){
+    out->u.noise.sampler_tpag_ptr=gml_render_named_tpag_ptr(render,sampler);
+    if(!out->u.noise.sampler_tpag_ptr) out->u.noise.sampler_tpag_ptr=layer_effect_sampler_tpag(vm->win,sampler);
+    if(!out->u.noise.sampler_tpag_ptr || out->u.noise.intensity<=0.0) return 0;
   }
+  if((out->kind==GML_LAYER_FILTER_CLOUDS || out->kind==GML_LAYER_FILTER_UNDERWATER ||
+      out->kind==GML_LAYER_FILTER_ZOOM_BLUR || out->kind==GML_LAYER_FILTER_LARGE_BLUR ||
+      out->kind==GML_LAYER_FILTER_BOXES) && out->sampler_sprite<0) return 0;
   return 1;
 }
 
@@ -4452,7 +4536,10 @@ static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_r
   }
   if(lcnt<512){
     if(rebuild_runtime_layers)
-      for(int ii=0; ii<vm->inst_count; ii++) vm->inst[ii].draw_layer_order=-1;
+      for(int ii=0; ii<vm->inst_count; ii++){
+        vm->inst[ii].draw_layer_order=-1;
+        vm->inst[ii].draw_layer_element_order=-1;
+      }
     for(uint32_t i=0;i<lcnt;i++){ uint32_t lp=u32(rd,lay+4+i*4);
       if(!lp || lp+40>vm->win->size) continue;
       uint32_t np=u32(rd,lp+0);
@@ -4482,6 +4569,7 @@ static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_r
       for(int ii=0; ii<vm->inst_count; ii++)
         if((vm->inst[ii].active || vm->inst[ii].deactivated) && vm->inst[ii].id==iid){
           vm->inst[ii].draw_layer_order=ord;
+          vm->inst[ii].draw_layer_element_order=(int)k;
           break;
         }
     }
@@ -4942,6 +5030,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
             if(idx>=0 && idx<vm->inst_count && vm->inst[idx].id==iid){
               vm->inst[idx].depth=ldep;
               vm->inst[idx].draw_layer_order=lorder;
+              vm->inst[idx].draw_layer_element_order=(int)k;
               break;
             } }
         }
@@ -5773,7 +5862,7 @@ static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap
   t.order=order;
   (*tiles)[*nt]=t; (*depth)[*nt]=dep; (*nt)++;
 }
-typedef struct { double depth; int seq, type, idx, order, classic, obj, placed; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite, 6=classic bg, 7=layer effect */
+typedef struct { double depth; int seq, type, idx, order, element_order, classic, obj, placed; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite, 6=classic bg, 7=layer effect */
 static int cmp_draw_item(const void *pa, const void *pb){
   const GmlDrawItem *a=pa,*b=pb;
   if(a->depth!=b->depth) return a->depth>b->depth? -1:1;     /* higher depth first (behind) */
@@ -5801,6 +5890,13 @@ static int cmp_draw_item(const void *pa, const void *pb){
     return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);
   if(a->type==0 && b->type==0 && !a->classic && ((a->order<0)!=(b->order<0)))
     return a->order<0? 1:-1;
+  /* ROOM uses a global instance list for creation/event order and a separate element list
+   * for every instance layer. Authored element order is the back-to-front tie-break inside that
+   * layer. Keeping the two orders separate matters when a full-layer overlay and decorative peers
+   * share one depth; using reverse creation order paints the overlay last. */
+  if(a->type==0 && b->type==0 && !a->classic && a->order>=0 && a->order==b->order &&
+     a->element_order>=0 && b->element_order>=0 && a->element_order!=b->element_order)
+    return a->element_order<b->element_order? -1:1;
   return a->seq>b->seq? -1 : (a->seq<b->seq?1:0);
 }
 static int rt_layer_has_background(GmlVM *vm, int layer_id){
@@ -5856,7 +5952,8 @@ static int *vm_draw_order_scratch(GmlVM *vm, int need){
 struct LayBg { int sprite,subimg; int th,tv,stretch,order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
 struct LayTile { int sprite; int sx,sy,w,h,order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
 struct LaySprite { int sprite, subimg,order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
-struct LayEffect { GmlLayerEffectDef effect; int order; double depth; };
+struct LayEffect { GmlLayerFilter effect; int order; double depth; };
+struct LayAttachedFilter { GmlLayerFilter effect; int order; };
 struct ClassicBg { int def,th,tv,stretch; double x,y; uint32_t blend; double alpha,depth; };
 static void draw_event_hook(GmlVM *vm, GmlInstance *in, const char *suffix, int begin){
   if(vm && vm->draw_event_hook) vm->draw_event_hook(vm,in,suffix,begin,vm->draw_event_hook_user);
@@ -5867,6 +5964,7 @@ static struct LayBg    *g_dl_lbg;   static int g_dl_lbg_cap;
 static struct LayTile  *g_dl_ltl;   static int g_dl_ltl_cap;
 static struct LaySprite*g_dl_lsp;   static int g_dl_lsp_cap;
 static struct LayEffect*g_dl_lfx;   static int g_dl_lfx_cap;
+static struct LayAttachedFilter *g_dl_laf; static int g_dl_laf_cap;
 static GmlDrawItem     *g_dl_it;    static int g_dl_it_cap;
 static GmlDrawTile     *g_dl_tiles; static double *g_dl_tdepth; static int g_dl_tiles_cap;
 /* grow *pp (element size esz) to hold at least `need` elements, doubling capacity. Returns 1 on ok. */
@@ -5910,6 +6008,7 @@ void gml_vm_draw(GmlVM *vm){
   struct LayTile *ltl=g_dl_ltl; int nlt=0;
   struct LaySprite *lsp=g_dl_lsp; int nls=0;
   struct LayEffect *lfx=g_dl_lfx; int nlf=0;
+  struct LayAttachedFilter *laf=g_dl_laf; int naf=0;
   struct ClassicBg cbg[9]; int ncb=0;
   if(rm.draw_bg){
     cbg[ncb].def=-1; cbg[ncb].th=cbg[ncb].tv=cbg[ncb].stretch=0;
@@ -5952,15 +6051,21 @@ void gml_vm_draw(GmlVM *vm){
         double loy = ltouch ? rl->y : ly+lvs*fin;
         double ltx = ltouch ? rl->x : lx;           /* tile layer origin (room-def raw, unchanged) */
         double lty = ltouch ? rl->y : ly;
-        if(ltype==6 && getenv("GML_LOG_LAYER_EFFECT") &&
-           (g_vm_frame<4 || (g_vm_frame%60)==0)){
-          GmlLayerEffectDef probe;
-          int parsed=gml_room_layer_effect(vm,lp,&probe);
-          fprintf(stderr,"[layer-effect] f%ld order=%u depth=%.0f visible=%d parsed=%d kind=%d sampler=%08x\n",
-                  g_vm_frame,i,ldep,rl?rl->visible:(int)u32(d,lp+32),parsed,
-                  parsed?probe.kind:0,parsed?probe.sampler_tpag_ptr:0);
-        }
         if(rl ? !rl->visible : !u32(d,lp+32)) continue;
+        GmlLayerFilter layer_filter;
+        int has_layer_filter=gml_room_layer_effect(vm,lp,&layer_filter);
+        if(has_layer_filter && getenv("GML_LOG_LAYER_EFFECT") &&
+           (g_vm_frame<4 || (g_vm_frame%60)==0))
+          fprintf(stderr,"[layer-effect] f%ld order=%d type=%u depth=%.0f kind=%d sampler-sprite=%d\n",
+                  g_vm_frame,lorder,ltype,ldep,layer_filter.kind,layer_filter.sampler_sprite);
+        /* An effect attached to an ordinary room layer transforms just that layer. The sorted draw
+         * loop below isolates the corresponding runtime order before applying the software filter.
+         * Type-6 records remain standalone effect draw items. */
+        if(has_layer_filter && ltype!=6){
+          if(dl_grow((void**)&g_dl_laf,&g_dl_laf_cap,naf+1,sizeof(*laf))){
+            laf=g_dl_laf; laf[naf].effect=layer_filter; laf[naf].order=lorder; naf++;
+          }
+        }
         if(ltype==1){
           if(rl && rt_layer_has_background(vm,rl->id)) continue;
           uint32_t b=gml_room_layer_type_off(vm,lp);
@@ -5997,10 +6102,9 @@ void gml_vm_draw(GmlVM *vm){
             ltl[nlt].blend=col&0xFFFFFF; ltl[nlt].alpha=((col>>24)&0xFF)/255.0;
             nlt++; }
         } else if(ltype==6){
-          GmlLayerEffectDef effect;
-          if(!gml_room_layer_effect(vm,lp,&effect)) continue;
+          if(!has_layer_filter) continue;
           if(!dl_grow((void**)&g_dl_lfx,&g_dl_lfx_cap,nlf+1,sizeof(*lfx))) continue; lfx=g_dl_lfx;
-          lfx[nlf].effect=effect; lfx[nlf].depth=ldep; lfx[nlf].order=lorder;
+          lfx[nlf].effect=layer_filter; lfx[nlf].depth=ldep; lfx[nlf].order=lorder;
           nlf++;
         }
       }
@@ -6099,6 +6203,7 @@ void gml_vm_draw(GmlVM *vm){
   }
   for(int k=0;k<inst_n;k++){ int i=inst_ord[k]; if(instance_draw_layer_visible(vm,&vm->inst[i])){
     it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; it[m].order=vm->inst[i].draw_layer_order;
+    it[m].element_order=vm->inst[i].draw_layer_element_order;
     it[m].classic=vm->win&&vm->win->classic_version; it[m].obj=vm->inst[i].obj;
     it[m].placed=it[m].classic && vm->inst[i].room_placed; m++; } }
   for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; it[m].order=tiles[i].order; it[m].classic=0; it[m].obj=-1; m++; }
@@ -6136,21 +6241,32 @@ void gml_vm_draw(GmlVM *vm){
         fprintf(stderr,"   CBG def=%d depth=%.0f @(%.0f,%.0f) tiled=%d/%d stretch=%d colour=%06x alpha=%.3f\n",
           b->def,it[k].depth,b->x,b->y,b->th,b->tv,b->stretch,b->blend&0xFFFFFFu,b->alpha); }
       else if(it[k].type==7){ struct LayEffect *f=&lfx[it[k].idx];
-        fprintf(stderr,"   LEFFECT kind=%d depth=%.0f intensity=%.3f animation=%.3f colour=%08x\n",
-          f->effect.kind,it[k].depth,f->effect.intensity,f->effect.animation,f->effect.colour); }
+        fprintf(stderr,"   LEFFECT kind=%d depth=%.0f sampler-sprite=%d\n",
+          f->effect.kind,it[k].depth,f->effect.sampler_sprite); }
       else { GmlInstance *in=&vm->inst[it[k].idx];
-        fprintf(stderr,"   %-26s id=%u spr=%-4d vis=%.0f depth=%.0f ord=%d @(%.0f,%.0f) ang=%.0f xs=%.1f ys=%.1f a=%.2f ii=%.4f is=%.3f\n",
+        fprintf(stderr,"   %-26s id=%u spr=%-4d vis=%.0f depth=%.0f ord=%d elem=%d @(%.0f,%.0f) ang=%.0f xs=%.1f ys=%.1f a=%.2f ii=%.4f is=%.3f\n",
           (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",in->id,
-          (int)in->sprite_index,in->visible,in->depth,in->draw_layer_order,in->x,in->y,in->image_angle,in->image_xscale,in->image_yscale,in->image_alpha,in->image_index,in->image_speed); } } }
+          (int)in->sprite_index,in->visible,in->depth,in->draw_layer_order,in->draw_layer_element_order,
+          in->x,in->y,in->image_angle,in->image_xscale,in->image_yscale,in->image_alpha,in->image_index,in->image_speed); } } }
   skip_instdump:
   int active_layer_order=-1;
   GmlRtLayer *active_layer=NULL;
+  GmlLayerFilter *active_filter=NULL;
+  int active_filter_started=0;
+  double effect_time=g_vm_frame/gml_room_speed(vm);
   for(int k=0;k<m;k++){
     gml_d3_set_draw_depth(it[k].depth);
     if(it[k].order!=active_layer_order){
       if(active_layer) gml_run_layer_script(vm,active_layer->script_end);
+      if(active_filter_started) gml_render_layer_filter_end(R,active_filter,effect_time);
       active_layer_order=it[k].order;
       active_layer=rt_layer_by_order(vm,active_layer_order);
+      active_filter=NULL; active_filter_started=0;
+      for(int fi=0;fi<naf;fi++) if(laf[fi].order==active_layer_order){
+        active_filter=&laf[fi].effect;
+        active_filter_started=gml_render_layer_filter_begin(R,active_filter);
+        break;
+      }
       if(active_layer) gml_run_layer_script(vm,active_layer->script_begin);
     }
     if(it[k].type==1){ GmlDrawTile *t=&tiles[it[k].idx];
@@ -6187,11 +6303,12 @@ void gml_vm_draw(GmlVM *vm){
       else gml_draw_background_ext(R,b->def,b->x,b->y,1,1,b->blend,b->alpha);
       continue; }
     if(it[k].type==7){ struct LayEffect *f=&lfx[it[k].idx];
-      if(f->effect.kind==GML_LAYER_EFFECT_RGB_NOISE)
-        gml_render_layer_rgb_noise(R,f->effect.sampler_tpag_ptr,f->effect.intensity,
-                                   f->effect.animation,f->effect.colour&0xFFFFFFu);
-      else if(f->effect.kind==GML_LAYER_EFFECT_TINT)
-        gml_render_layer_tint(R,f->effect.colour);
+      if(f->effect.kind==GML_LAYER_FILTER_RGB_NOISE)
+        gml_render_layer_rgb_noise(R,f->effect.u.noise.sampler_tpag_ptr,
+                                   f->effect.u.noise.intensity,f->effect.u.noise.animation,
+                                   f->effect.u.noise.colour&0xFFFFFFu);
+      else if(f->effect.kind==GML_LAYER_FILTER_TINT)
+        gml_render_layer_tint(R,f->effect.u.tint.colour);
       continue; }
     GmlInstance *in=&vm->inst[it[k].idx];
     if(vm->draw_events_off) continue;   /* draw_enable_drawevent(false): no instance drawing */
@@ -6213,6 +6330,7 @@ void gml_vm_draw(GmlVM *vm){
                           (uint32_t)in->image_blend,in->image_alpha);
   }
   if(active_layer) gml_run_layer_script(vm,active_layer->script_end);
+  if(active_filter_started) gml_render_layer_filter_end(R,active_filter,effect_time);
   /* All draw scratch (it/lbg/ltl/lsp/tiles/tdepth) is persistent (g_dl_*) — write the possibly-grown
    * tile buffers back and keep everything allocated for next frame; nothing is freed here. */
   g_dl_tiles=tiles; g_dl_tdepth=tdepth; g_dl_tiles_cap=tcap;
@@ -7550,6 +7668,7 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
       in->timeline_running=0; in->timeline_loop=0;
     }
     in->draw_layer_order=s->v30?sr_i32(s):-1;
+    in->draw_layer_element_order=-1; /* rebuilt from the current ROOM layer records after load */
     sr_varmap(vm,s,&in->vars);
     return;
   }
@@ -7572,6 +7691,7 @@ static void sr_instance(GmlVM *vm, StateR *s, GmlInstance *in){
   in->timeline_index=-1; in->timeline_position=0; in->timeline_speed=1;
   in->timeline_running=0; in->timeline_loop=0;
   in->draw_layer_order=-1;
+  in->draw_layer_element_order=-1;
   sr_varmap(vm,s,&in->vars);
 }
 

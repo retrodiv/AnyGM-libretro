@@ -101,6 +101,46 @@ typedef struct { uint32_t *px; int w, h, live;
                  uint8_t *rle; size_t rle_len, rle_cap;  /* cached savestate RLE (u32 nrun + pairs) */
 } GmlSurface;      /* XRGB8888 runtime surface */
 
+/* Stock room-layer filters are serialized as a type plus named properties. Decode the package
+ * parameters, render the affected layer into an isolated software target, then evaluate the
+ * corresponding operation family before compositing it. */
+enum {
+  GML_LAYER_FILTER_NONE=0,
+  GML_LAYER_FILTER_RGB_NOISE,
+  GML_LAYER_FILTER_TINT,
+  GML_LAYER_FILTER_CLOUDS,
+  GML_LAYER_FILTER_GLOW,
+  GML_LAYER_FILTER_UNDERWATER,
+  GML_LAYER_FILTER_ZOOM_BLUR,
+  GML_LAYER_FILTER_LARGE_BLUR,
+  GML_LAYER_FILTER_BOXES,
+  GML_LAYER_FILTER_COLOURISE
+};
+typedef struct {
+  int kind, sampler_sprite, affects_below;
+  union {
+    struct { double intensity, animation; uint32_t colour; uint32_t sampler_tpag_ptr; } noise;
+    struct { uint32_t colour; } tint;
+    struct {
+      double scale, velocity[2], turbulence, level, waves, shape[2], density, fade;
+      double shade_offset[2], shade_fade;
+      uint32_t light_colour, shade_colour;
+    } clouds;
+    struct { double radius, quality, intensity, gamma, alpha; } glow;
+    struct {
+      double speed[2], scale[2][2], amount[2], chroma, camera_scale;
+      uint32_t glint_colour, tint_colour, add_colour;
+    } underwater;
+    struct { double centre[2], intensity, focus_radius; } zoom_blur;
+    struct { double radius; } large_blur;
+    struct {
+      double scale, size[2], displacement, speed, angle, rotation[2];
+      double roundness, colour_speed, colours, sharpness;
+    } boxes;
+    struct { double intensity; uint32_t tint_colour; } colourise;
+  } u;
+} GmlLayerFilter;
+
 #define GML_MAX_FONTS 48
 #define GML_MAX_SURFACES 64   /* allow many concurrent surface allocations */
 #define GML_SURFACE_STACK 8
@@ -200,6 +240,15 @@ typedef struct {
   int       layer_noise_w, layer_noise_h;
   uint32_t  layer_noise_tpag_ptr, layer_noise_colour;
   float     layer_noise_animation;
+  /* One layer is filtered at a time. These reusable buffers avoid per-frame surface allocation;
+   * the source target keeps alpha through blur and glow compositing. */
+  uint32_t *layer_filter_src, *layer_filter_work, *layer_filter_aux;
+  size_t    layer_filter_capacity;
+  void     *layer_blur_taps;
+  size_t    layer_blur_tap_capacity;
+  int       layer_blur_sampler, layer_blur_noise_w, layer_blur_noise_h, layer_blur_interp;
+  double    layer_blur_radius;
+  int       layer_filter_active;
   /* Palette and lookup-texture state declarations. */
   struct GmlShaderPal { int has; uint8_t L[3],M[3],D[3],S[3];
     /* Literal alpha-discard pass-through fragment. The threshold and comparison are parsed from
@@ -404,6 +453,7 @@ int  gml_d3_draw_rectangle_2d(GmlRender *r,double x1,double y1,double x2,double 
                                uint32_t color,double alpha,int outline);
 int  gml_render_warm_atlas(GmlRender *r, int atlas);
 uint32_t gml_render_named_tpag_ptr(GmlRender *r, const char *name);
+int  gml_render_named_sprite(GmlRender *r, const char *name);
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y);
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                                double xs, double ys, uint32_t blend, double alpha);
@@ -417,6 +467,8 @@ void gml_draw_layer_color_fill(GmlRender *r, uint32_t gmcol, double alpha); /* s
 void gml_render_layer_rgb_noise(GmlRender *r, uint32_t sampler_tpag_ptr,
                                 double intensity, double animation, uint32_t rgb);
 void gml_render_layer_tint(GmlRender *r, uint32_t rgba);
+int  gml_render_layer_filter_begin(GmlRender *r, const GmlLayerFilter *filter);
+void gml_render_layer_filter_end(GmlRender *r, const GmlLayerFilter *filter, double time_seconds);
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha);

@@ -9483,6 +9483,21 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         gml_set_global_arr(vm,"view_hspeed",c,N(a,n,1)); gml_set_global_arr(vm,"view_vspeed",c,N(a,n,2));
       }
       return vreal(0); }
+    if(!strcmp(nm,"camera_copy_transforms")){
+      int dst=(int)N(a,n,0), src=(int)N(a,n,1);
+      if(gml_camera_live(vm,dst)){
+        static const char *const legacy[10]={
+          "view_xview","view_yview","view_wview","view_hview",NULL,
+          "view_object","view_hspeed","view_vspeed","view_hborder","view_vborder"
+        };
+        static const double defaults[10]={0,0,0,0,0,-1,-1,-1,0,0};
+        for(int field=GML_CAM_X;field<=GML_CAM_YBORDER;field++){
+          double fallback=defaults[field];
+          if(src>=0 && src<8 && legacy[field]) fallback=gml_global_arr(vm,legacy[field],src);
+          gml_camera_field_set(vm,dst,field,gml_camera_field(vm,src,field,fallback));
+        }
+      }
+      return vreal(0); }
     if(!strcmp(nm,"camera_get_view_x")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_X,c>=0&&c<8?gml_global_arr(vm,"view_xview",c):0)); }
     if(!strcmp(nm,"camera_get_view_y")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_Y,c>=0&&c<8?gml_global_arr(vm,"view_yview",c):0)); }
     if(!strcmp(nm,"camera_get_view_width")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_W,c>=0&&c<8?gml_global_arr(vm,"view_wview",c):0)); }
@@ -9530,6 +9545,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"display_get_height")) return vreal(display_size(vm,R,1));
     if(!strcmp(nm,"window_get_width")) return vreal(presentation_size(vm,R,0));
     if(!strcmp(nm,"window_get_height")) return vreal(presentation_size(vm,R,1));
+    /* The libretro frontend owns the native window. Recognize minimum-size hints explicitly, while
+     * leaving presentation dimensions under frontend control. */
+    if(!strcmp(nm,"window_set_min_width")||!strcmp(nm,"window_set_min_height")) return vreal(0);
     if(!strcmp(nm,"display_get_gui_width"))
       return vreal(vm->gui_w>0? vm->gui_w : ((R&&R->fbw>0)? R->fbw : (vm->win&&vm->win->disp_w? (int)vm->win->disp_w : 288)));
     if(!strcmp(nm,"display_get_gui_height"))

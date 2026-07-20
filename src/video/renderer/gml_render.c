@@ -1021,8 +1021,18 @@ static inline int gml_blend_family(const GmlRender *r){
   if(r && r->classic) return GML_BLEND_CLASSIC;
   return r && r->win && r->win->bytecode>=17 ? GML_BLEND_STUDIO2 : GML_BLEND_STUDIO1;
 }
-static inline void blend_argb_src_over_exact(uint32_t *dp, const uint32_t *sp, int run,
-                                             uint32_t aa,int family){
+static inline uint32_t gml_sprite_target_alpha(const GmlRender *r,uint32_t dst,
+                                               unsigned source_alpha){
+  if(!r || r->target_sp<=0) return 0xFF000000u;
+  if(source_alpha>255u) source_alpha=255u;
+  unsigned destination_alpha=dst>>24;
+  unsigned inverse=255u-source_alpha;
+  unsigned output=(source_alpha*source_alpha+destination_alpha*inverse+127u)/255u;
+  if(output>255u) output=255u;
+  return output<<24;
+}
+static inline void blend_argb_src_over_exact(GmlRender *r,uint32_t *dp,const uint32_t *sp,
+                                             int run,uint32_t aa,int family){
   if(run<=0 || !aa) return;
   if(aa>=255u){ memcpy(dp,sp,(size_t)run*sizeof(uint32_t)); return; }
   uint32_t ia=255u-aa;
@@ -1037,15 +1047,15 @@ static inline void blend_argb_src_over_exact(uint32_t *dp, const uint32_t *sp, i
       if(rr>255u) rr=255u;
       if(rg>255u) rg=255u;
       if(rb>255u) rb=255u;
-      dp[k]=0xFF000000u|(rr<<16)|(rg<<8)|rb;
+      dp[k]=gml_sprite_target_alpha(r,dst,aa)|(rr<<16)|(rg<<8)|rb;
     } else if(family==GML_BLEND_STUDIO2) {
-      /* The Studio 2 format uses a UNORM target: the complete source-over sum is rounded to the
-       * nearest representable channel. Classic rounds the terms independently above, while
+      /* The Studio 2 format uses a UNORM target: the complete source-over sum is rounded to
+       * the nearest representable channel. Classic rounds the terms independently above, while
        * Studio 1 truncates the combined result below. */
-      dp[k]=0xFF000000u|(((sr*aa+dr*ia+127u)/255u)<<16)|
+      dp[k]=gml_sprite_target_alpha(r,dst,aa)|(((sr*aa+dr*ia+127u)/255u)<<16)|
             (((sg*aa+dg*ia+127u)/255u)<<8)|((sb*aa+db*ia+127u)/255u);
     } else {
-      dp[k]=0xFF000000u|(((sr*aa+dr*ia)/255u)<<16)|
+      dp[k]=gml_sprite_target_alpha(r,dst,aa)|(((sr*aa+dr*ia)/255u)<<16)|
             (((sg*aa+dg*ia)/255u)<<8)|((sb*aa+db*ia)/255u);
     }
   }
@@ -1058,7 +1068,8 @@ static inline void copy_argb_force_opaque_reverse(uint32_t *dp, const uint32_t *
   if(run<=0) return;
   for(int k=0; k<run; k++) dp[-k]=0xFF000000u|(sp[k]&0x00FFFFFFu);
 }
-static inline void blend_argb_src_over_double(uint32_t *dp, const uint32_t *sp, int run, uint32_t aa){
+static inline void blend_argb_src_over_double(GmlRender *r,uint32_t *dp,const uint32_t *sp,
+                                              int run,uint32_t aa){
   if(run<=0 || !aa) return;
   if(aa>=255u){ memcpy(dp,sp,(size_t)run*sizeof(uint32_t)); return; }
   double sa=aa/255.0, ia=1.0-sa;
@@ -1069,10 +1080,12 @@ static inline void blend_argb_src_over_double(uint32_t *dp, const uint32_t *sp, 
     int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
     int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
     int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
-    dp[k]=0xFF000000u|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
+    dp[k]=gml_sprite_target_alpha(r,dst,aa)|((uint32_t)or_<<16)|
+          ((uint32_t)og<<8)|(uint32_t)ob;
   }
 }
-static inline void blend_argb_src_over_double_reverse(uint32_t *dp, const uint32_t *sp, int run, uint32_t aa){
+static inline void blend_argb_src_over_double_reverse(GmlRender *r,uint32_t *dp,
+                                                      const uint32_t *sp,int run,uint32_t aa){
   if(run<=0 || !aa) return;
   if(aa>=255u){ for(int k=0; k<run; k++) dp[-k]=sp[k]; return; }
   double sa=aa/255.0, ia=1.0-sa;
@@ -1083,11 +1096,12 @@ static inline void blend_argb_src_over_double_reverse(uint32_t *dp, const uint32
     int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
     int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
     int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
-    dp[-k]=0xFF000000u|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
+    dp[-k]=gml_sprite_target_alpha(r,dst,aa)|((uint32_t)or_<<16)|
+           ((uint32_t)og<<8)|(uint32_t)ob;
   }
 }
-static inline void blend_argb_src_over_draw_alpha(uint32_t *dp, const uint32_t *sp, int run,
-                                                  uint32_t aa, double alpha, int family){
+static inline void blend_argb_src_over_draw_alpha(GmlRender *r,uint32_t *dp,const uint32_t *sp,
+                                                  int run,uint32_t aa,double alpha,int family){
   if(run<=0 || !aa || alpha<=0.0) return;
   if(family==GML_BLEND_CLASSIC){
     uint32_t effective=(uint32_t)(aa*alpha+0.5);
@@ -1103,7 +1117,7 @@ static inline void blend_argb_src_over_draw_alpha(uint32_t *dp, const uint32_t *
       if(rr>255u) rr=255u;
       if(rg>255u) rg=255u;
       if(rb>255u) rb=255u;
-      dp[k]=0xFF000000u|(rr<<16)|(rg<<8)|rb;
+      dp[k]=gml_sprite_target_alpha(r,dst,effective)|(rr<<16)|(rg<<8)|rb;
     }
     return;
   }
@@ -1116,7 +1130,10 @@ static inline void blend_argb_src_over_draw_alpha(uint32_t *dp, const uint32_t *
       int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
       int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
       int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
-      dp[k]=0xFF000000u|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
+      uint32_t effective=(uint32_t)lround((double)aa*alpha);
+      if(effective>255u) effective=255u;
+      dp[k]=gml_sprite_target_alpha(r,dst,effective)|((uint32_t)or_<<16)|
+            ((uint32_t)og<<8)|(uint32_t)ob;
     }
     return;
   }
@@ -1130,7 +1147,7 @@ static inline void blend_argb_src_over_draw_alpha(uint32_t *dp, const uint32_t *
     uint32_t rr=(sr*effective+dr*inverse+127u)/255u;
     uint32_t rg=(sg*effective+dg*inverse+127u)/255u;
     uint32_t rb=(sb*effective+db*inverse+127u)/255u;
-    dp[k]=0xFF000000u|(rr<<16)|(rg<<8)|rb;
+    dp[k]=gml_sprite_target_alpha(r,dst,effective)|(rr<<16)|(rg<<8)|rb;
   }
 }
 static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
@@ -1158,7 +1175,7 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
       int n=sx1-sx0;
       if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
       else if(ar->alpha==255u) memcpy(dp,sp,(size_t)n*sizeof(uint32_t));
-      else blend_argb_src_over_exact(dp,sp,n,(uint32_t)ar->alpha,gml_blend_family(r));
+      else blend_argb_src_over_exact(r,dp,sp,n,(uint32_t)ar->alpha,gml_blend_family(r));
     }
     return 1;
   }
@@ -1185,7 +1202,7 @@ static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
       uint32_t aa=sp[i]>>24;
       int run=1;
       while(i+run<n && (sp[i+run]>>24)==aa) run++;
-      blend_argb_src_over_exact(dp+i,sp+i,run,aa,gml_blend_family(r));
+      blend_argb_src_over_exact(r,dp+i,sp+i,run,aa,gml_blend_family(r));
       i+=run;
     }
   }
@@ -1215,7 +1232,8 @@ static int blit_tpag_scale1_white_draw_alpha(GmlRender *r, GmlTpag *t, GmlAtlas 
     const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
     int n=sx1-sx0;
     if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
-    else blend_argb_src_over_draw_alpha(dp,sp,n,(uint32_t)ar->alpha,alpha,gml_blend_family(r));
+    else blend_argb_src_over_draw_alpha(r,dp,sp,n,(uint32_t)ar->alpha,alpha,
+                                        gml_blend_family(r));
   }
   return 1;
 }
@@ -1248,13 +1266,13 @@ static int blit_tpag_scale1_white_exact_flipped(GmlRender *r, GmlTpag *t, GmlAtl
       if(px<0 || px+n>r->fbw) continue;
       uint32_t *dp=r->fb+(size_t)py*r->fbw+px;
       if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
-      else blend_argb_src_over_double(dp,sp,n,(uint32_t)ar->alpha);
+      else blend_argb_src_over_double(r,dp,sp,n,(uint32_t)ar->alpha);
     } else {
       int px=x0-sx0;
       if(px-(n-1)<0 || px>=r->fbw) continue;
       uint32_t *dp=r->fb+(size_t)py*r->fbw+px;
       if(!r->alphablend) copy_argb_force_opaque_reverse(dp,sp,n);
-      else blend_argb_src_over_double_reverse(dp,sp,n,(uint32_t)ar->alpha);
+      else blend_argb_src_over_double_reverse(r,dp,sp,n,(uint32_t)ar->alpha);
     }
   }
   return 1;
@@ -1354,6 +1372,13 @@ uint32_t gml_render_named_tpag_ptr(GmlRender *r, const char *name){
   return 0;
 }
 
+int gml_render_named_sprite(GmlRender *r, const char *name){
+  if(!r || !name || !*name) return -1;
+  for(int i=0;i<r->n_spr;i++)
+    if(r->spr[i].name && !strcmp(r->spr[i].name,name)) return i;
+  return -1;
+}
+
 static int effect_wrap_coord(int value, int size){
   if(size<=0) return 0;
   value%=size;
@@ -1380,6 +1405,218 @@ void gml_render_layer_tint(GmlRender *r, uint32_t rgba){
   if(ta<255u){ r->fb_opaque_known=0; r->fb_all_opaque=0; }
   r->fb_all_transparent=0;
 }
+
+static inline float layer_clamp01(float v){ return v<0.0f?0.0f:(v>1.0f?1.0f:v); }
+static inline float layer_fract(float v){ return v-floorf(v); }
+static inline float layer_mix(float a,float b,float t){ return a+(b-a)*t; }
+static inline float layer_smoothstep(float a,float b,float x){
+  if(a==b) return x<a?0.0f:1.0f;
+  float t=layer_clamp01((x-a)/(b-a)); return t*t*(3.0f-2.0f*t);
+}
+static inline uint32_t layer_pack(const float c[4]){
+  uint32_t a=effect_unorm8(layer_clamp01(c[3])*255.0f);
+  uint32_t rr=effect_unorm8(layer_clamp01(c[0])*255.0f);
+  uint32_t gg=effect_unorm8(layer_clamp01(c[1])*255.0f);
+  uint32_t bb=effect_unorm8(layer_clamp01(c[2])*255.0f);
+  return (a<<24)|(rr<<16)|(gg<<8)|bb;
+}
+static inline void layer_unpack(uint32_t p,float c[4]){
+  c[0]=((p>>16)&255)*(1.0f/255.0f); c[1]=((p>>8)&255)*(1.0f/255.0f);
+  c[2]=(p&255)*(1.0f/255.0f); c[3]=(p>>24)*(1.0f/255.0f);
+}
+static inline void layer_unpack_colour(uint32_t p,float c[4]){ layer_unpack(p,c); }
+
+static int layer_filter_reserve(GmlRender *r,size_t count){
+  if(!r || count==0 || count>67108864u) return 0;
+  if(count<=r->layer_filter_capacity && r->layer_filter_src &&
+     r->layer_filter_work && r->layer_filter_aux) return 1;
+  uint32_t *src=malloc(count*sizeof(*src));
+  uint32_t *work=malloc(count*sizeof(*work));
+  uint32_t *aux=malloc(count*sizeof(*aux));
+  if(!src || !work || !aux){ free(src); free(work); free(aux); return 0; }
+  free(r->layer_filter_src); free(r->layer_filter_work); free(r->layer_filter_aux);
+  r->layer_filter_src=src; r->layer_filter_work=work; r->layer_filter_aux=aux;
+  r->layer_filter_capacity=count;
+  return 1;
+}
+
+static void layer_sprite_texel(GmlRender *r,int sprite,int x,int y,int repeat,float out[4]){
+  out[0]=out[1]=out[2]=out[3]=0.0f;
+  if(!r || sprite<0 || sprite>=r->n_spr) return;
+  GmlSprite *s=&r->spr[sprite]; int w=s->w,h=s->h;
+  if(w<=0 || h<=0 || s->n_frames<=0) return;
+  if(repeat){ x=effect_wrap_coord(x,w); y=effect_wrap_coord(y,h); }
+  else { if(x<0)x=0; else if(x>=w)x=w-1; if(y<0)y=0; else if(y>=h)y=h-1; }
+  const uint8_t *p=NULL;
+  if(s->runtime_rgba) p=s->runtime_rgba+((size_t)y*w+x)*4u;
+  else if(s->frame){
+    int ti=s->frame[0];
+    if(ti>=0 && ti<r->n_tpag){
+      GmlTpag *t=&r->tpag[ti];
+      int lx=x-t->tx,ly=y-t->ty;
+      if(lx>=0 && ly>=0 && lx<t->sw && ly<t->sh && t->atlas>=0 && t->atlas<r->n_atlas){
+        uint8_t *ap=atlas_pixels(r,t->atlas); GmlAtlas *a=&r->atlas[t->atlas];
+        int ax=t->sx+lx,ay=t->sy+ly;
+        if(ap && ax>=0 && ay>=0 && ax<a->w && ay<a->h) p=ap+((size_t)ay*a->w+ax)*4u;
+      }
+    }
+  }
+  if(p){ out[0]=p[0]*(1.0f/255.0f); out[1]=p[1]*(1.0f/255.0f);
+         out[2]=p[2]*(1.0f/255.0f); out[3]=p[3]*(1.0f/255.0f); }
+}
+static void layer_sprite_sample(GmlRender *r,int sprite,float u,float v,int repeat,int linear,float out[4]){
+  if(!r || sprite<0 || sprite>=r->n_spr || r->spr[sprite].w<=0 || r->spr[sprite].h<=0){
+    out[0]=out[1]=out[2]=out[3]=0.0f; return;
+  }
+  int w=r->spr[sprite].w,h=r->spr[sprite].h;
+  if(repeat){ u=layer_fract(u); v=layer_fract(v); }
+  else { u=layer_clamp01(u); v=layer_clamp01(v); }
+  if(!linear){ layer_sprite_texel(r,sprite,(int)floorf(u*w),(int)floorf(v*h),repeat,out); return; }
+  float fx=u*w-0.5f,fy=v*h-0.5f; int x0=(int)floorf(fx),y0=(int)floorf(fy);
+  float tx=fx-x0,ty=fy-y0,c[4][4];
+  layer_sprite_texel(r,sprite,x0,y0,repeat,c[0]);
+  layer_sprite_texel(r,sprite,x0+1,y0,repeat,c[1]);
+  layer_sprite_texel(r,sprite,x0,y0+1,repeat,c[2]);
+  layer_sprite_texel(r,sprite,x0+1,y0+1,repeat,c[3]);
+  for(int k=0;k<4;k++) out[k]=layer_mix(layer_mix(c[0][k],c[1][k],tx),
+                                        layer_mix(c[2][k],c[3][k],tx),ty);
+}
+static void layer_surface_sample(const uint32_t *src,int w,int h,float u,float v,int linear,float out[4]){
+  if(!src || w<=0 || h<=0){ out[0]=out[1]=out[2]=out[3]=0; return; }
+  u=layer_clamp01(u); v=layer_clamp01(v);
+  if(!linear){
+    int x=(int)floorf(u*w),y=(int)floorf(v*h);
+    if(x>=w)x=w-1; if(y>=h)y=h-1; layer_unpack(src[(size_t)y*w+x],out); return;
+  }
+  float fx=u*w-0.5f,fy=v*h-0.5f; int x0=(int)floorf(fx),y0=(int)floorf(fy);
+  float tx=fx-x0,ty=fy-y0; int x1=x0+1,y1=y0+1;
+  if(x0<0)x0=0; else if(x0>=w)x0=w-1; if(x1<0)x1=0; else if(x1>=w)x1=w-1;
+  if(y0<0)y0=0; else if(y0>=h)y0=h-1; if(y1<0)y1=0; else if(y1>=h)y1=h-1;
+  float c[4][4]; layer_unpack(src[(size_t)y0*w+x0],c[0]); layer_unpack(src[(size_t)y0*w+x1],c[1]);
+  layer_unpack(src[(size_t)y1*w+x0],c[2]); layer_unpack(src[(size_t)y1*w+x1],c[3]);
+  for(int k=0;k<4;k++) out[k]=layer_mix(layer_mix(c[0][k],c[1][k],tx),
+                                        layer_mix(c[2][k],c[3][k],tx),ty);
+}
+
+static void layer_composite_normal(GmlRender *r,const uint32_t *src,int w,int h,double alpha){
+  if(!r || !r->fb || !src || w!=r->fbw || h!=r->fbh || alpha<=0.0) return;
+  if(alpha>1.0) alpha=1.0;
+  size_t count=(size_t)w*h;
+  for(size_t i=0;i<count;i++){
+    uint32_t sv=src[i]; float sa=(float)((sv>>24)&255)*(1.0f/255.0f)*(float)alpha;
+    if(sa<=0.0f) continue;
+    uint32_t dv=r->fb[i]; float ia=1.0f-sa;
+    int sr=(sv>>16)&255,sg=(sv>>8)&255,sb=sv&255;
+    int dr=(dv>>16)&255,dg=(dv>>8)&255,db=dv&255;
+    int rr=(int)floorf(sr*sa+dr*ia+0.5f),gg=(int)floorf(sg*sa+dg*ia+0.5f);
+    int bb=(int)floorf(sb*sa+db*ia+0.5f),aa=255;
+    if(r->target_sp>0){ int da=(dv>>24)&255; aa=(int)floorf(sa*255.0f+da*ia+0.5f); if(aa>255)aa=255; }
+    r->fb[i]=((uint32_t)aa<<24)|((uint32_t)rr<<16)|((uint32_t)gg<<8)|(uint32_t)bb;
+  }
+  r->fb_opaque_known=0; r->fb_all_transparent=0;
+}
+/* Room-layer capture targets contain the result of source-over drawing onto transparent black, so
+ * their RGB channels are already alpha-weighted. Filter shaders preserve that representation.
+ * Composite those results with the premultiplied source-over equation to avoid applying alpha a
+ * second time around blurred/antialiased edges. */
+static void layer_composite_premultiplied(GmlRender *r,const uint32_t *src,int w,int h,double alpha){
+  if(!r || !r->fb || !src || w!=r->fbw || h!=r->fbh || alpha<=0.0) return;
+  if(alpha>1.0) alpha=1.0;
+  size_t count=(size_t)w*h;
+  for(size_t i=0;i<count;i++){
+    uint32_t sv=src[i],dv=r->fb[i]; float scale=(float)alpha;
+    float sa=((sv>>24)&255)*(1.0f/255.0f)*scale,ia=1.0f-sa;
+    if(sa<=0.0f) continue;
+    int sr=(int)floorf(((sv>>16)&255)*scale+0.5f),sg=(int)floorf(((sv>>8)&255)*scale+0.5f);
+    int sb=(int)floorf((sv&255)*scale+0.5f);
+    int rr=sr+(int)floorf(((dv>>16)&255)*ia+0.5f);
+    int gg=sg+(int)floorf(((dv>>8)&255)*ia+0.5f),bb=sb+(int)floorf((dv&255)*ia+0.5f);
+    if(rr>255)rr=255;if(gg>255)gg=255;if(bb>255)bb=255;
+    r->fb[i]=0xFF000000u|((uint32_t)rr<<16)|((uint32_t)gg<<8)|(uint32_t)bb;
+  }
+  r->fb_opaque_known=0; r->fb_all_transparent=0;
+}
+static void layer_composite_max(GmlRender *r,const uint32_t *src,int w,int h,double tint){
+  if(!r || !r->fb || !src || w!=r->fbw || h!=r->fbh) return;
+  float t=(float)tint; if(t<0)t=0; if(t>1)t=1;
+  size_t count=(size_t)w*h;
+  for(size_t i=0;i<count;i++){
+    uint32_t s=src[i],d=r->fb[i];
+    unsigned sr=(unsigned)floorf(((s>>16)&255)*t+0.5f),sg=(unsigned)floorf(((s>>8)&255)*t+0.5f);
+    unsigned sb=(unsigned)floorf((s&255)*t+0.5f),sa=s>>24;
+    unsigned dr=(d>>16)&255,dg=(d>>8)&255,db=d&255,da=d>>24;
+    if(sr<dr)sr=dr; if(sg<dg)sg=dg; if(sb<db)sb=db; if(sa<da)sa=da;
+    r->fb[i]=(sa<<24)|(sr<<16)|(sg<<8)|sb;
+  }
+  r->fb_opaque_known=0; r->fb_all_transparent=0;
+}
+
+int gml_render_layer_filter_begin(GmlRender *r,const GmlLayerFilter *filter){
+  if(!r || !filter || filter->kind==GML_LAYER_FILTER_NONE || !r->fb ||
+     r->fbw<=0 || r->fbh<=0 || r->layer_filter_active || r->target_sp>=GML_SURFACE_STACK) return 0;
+  size_t count=(size_t)r->fbw*(size_t)r->fbh;
+  if(!layer_filter_reserve(r,count)) return 0;
+  gml_render_prepare_draw(r);
+  int captured_known=r->fb_opaque_known,captured_opaque=r->fb_all_opaque;
+  int captured_transparent=r->fb_all_transparent;
+  if(filter->affects_below) memcpy(r->layer_filter_src,r->fb,count*sizeof(uint32_t));
+  else memset(r->layer_filter_src,0,count*sizeof(uint32_t));
+  r->target_stack[r->target_sp++]=(typeof(r->target_stack[0])){
+    r->fb,r->fbw,r->fbh,r->cam_x,r->cam_y,r->projection_cam_x,r->projection_cam_y,
+    r->target_id,r->fb_opaque_known,r->fb_all_opaque,r->fb_all_transparent,
+    r->pending_underlay,r->underlay_x,r->underlay_y,r->underlay_w,r->underlay_h,
+    r->pending_fill,r->pending_fill_color
+  };
+  r->fb=r->layer_filter_src; r->target_id=-2;
+  r->fb_opaque_known=filter->affects_below?captured_known:1;
+  r->fb_all_opaque=filter->affects_below?captured_opaque:0;
+  r->fb_all_transparent=filter->affects_below?captured_transparent:1;
+  r->pending_underlay=0; r->underlay_x=r->underlay_y=r->underlay_w=r->underlay_h=0;
+  r->pending_fill=0; r->pending_fill_color=0; r->layer_filter_active=1;
+  return 1;
+}
+static void layer_filter_restore_target(GmlRender *r){
+  gml_render_flush_pending_underlay(r); gml_render_flush_pending_fill(r);
+  if(r->target_sp>0){
+    typeof(r->target_stack[0]) t=r->target_stack[--r->target_sp];
+    r->fb=t.fb; r->fbw=t.w; r->fbh=t.h;
+    r->projection_cam_x=t.projection_cx; r->projection_cam_y=t.projection_cy;
+    r->cam_x=t.cx; r->cam_y=t.cy; r->target_id=t.target_id;
+    r->fb_opaque_known=t.opaque_known; r->fb_all_opaque=t.all_opaque;
+    r->fb_all_transparent=t.all_transparent; r->pending_underlay=t.pending_underlay;
+    r->underlay_x=t.underlay_x; r->underlay_y=t.underlay_y;
+    r->underlay_w=t.underlay_w; r->underlay_h=t.underlay_h;
+    r->pending_fill=t.pending_fill; r->pending_fill_color=t.fill_color;
+    { extern void gml_d3_sync_render_camera(GmlRender *); gml_d3_sync_render_camera(r); }
+  }
+}
+
+static void layer_filter_tint_pixels(const uint32_t *src,uint32_t *dst,size_t count,uint32_t colour){
+  float tint[4]; layer_unpack_colour(colour,tint);
+  for(size_t i=0;i<count;i++){
+    float c[4]; layer_unpack(src[i],c); for(int k=0;k<4;k++) c[k]*=tint[k]; dst[i]=layer_pack(c);
+  }
+}
+
+/* Forward declaration for the persistent compositor worker pool defined below. Filter shaders can
+ * be much heavier per row than a normal blit even at a small authored resolution. */
+typedef void (*GmlRowBandFn)(void *ctx, int py0, int py1, int slot);
+static void gml_run_row_bands_n(int H, int nt, GmlRowBandFn fn, void *ctx);
+
+typedef struct { GmlRender *r; const uint32_t *src; uint32_t *dst; int w,h;
+  const GmlLayerFilter *f; float time,camx,camy; } LayerCloudCtx;
+
+
+typedef struct { int16_t ix,iy; uint16_t w00,w10,w01,w11; } LayerBlurTap;
+typedef struct { GmlRender *r; const uint32_t *src; uint32_t *dst; int w,h,nw,nh;
+  const GmlLayerFilter *f; const LayerBlurTap *tap; } LayerLargeBlurCtx;
+
+typedef struct {
+  const uint32_t *src; uint32_t *dst; int w,h;
+  int ix[36],iy[36]; float weight00[36],weight10[36],weight01[36],weight11[36];
+  float inv_radius[36],exp_lut[1025];
+} LayerGlowCtx;
+
 
 /* ---- SPRT ---- */
 static void parse_sprt(GmlRender *r){
