@@ -816,6 +816,27 @@ static int raster_fixtures(void){
   }
 
   {
+    /* Screen-stage code may explicitly stretch application_surface to the complete window using
+     * window-pixel dimensions.  Do not apply the logical GUI scale a second time. */
+    uint32_t source[4]={0xFFFF0000u,0xFF00FF00u,0xFF0000FFu,0xFFFFFFFFu};
+    uint32_t target[64]={0};
+    gml_render_begin(&render,target,8,8,0,0);
+    render.app_surface=source; render.app_w=2; render.app_h=2;
+    render.app_surface_opaque=1;
+    gml_render_gui_begin(&render,8,8);
+    gml_render_gui_set_size(&render,2,2);
+    gml_draw_surface_stretched(&render,0,0,0,8,8,0xFFFFFFu,1.0);
+    gml_render_gui_end(&render);
+    if(target[0]!=0xFFFF0000u || target[7]!=0xFF00FF00u ||
+       target[7*8]!=0xFF0000FFu || target[63]!=0xFFFFFFFFu){
+      fprintf(stderr,"explicit screen-stage surface raster mismatch: %08x %08x %08x %08x\n",
+              target[0],target[7],target[7*8],target[63]);
+      return 0;
+    }
+    render.app_surface=NULL; render.app_w=render.app_h=0; render.app_surface_opaque=0;
+  }
+
+  {
     GmlWin win={0};
     uint32_t source[4]={0xFFFF0000u,0xFF0000FFu,0xFFFF0000u,0xFF0000FFu};
     uint32_t target[16]={0};
@@ -1566,7 +1587,9 @@ static int raster_fixtures(void){
     shader->sampled_crt=1;
     shader->sampled_crt_value[0][0]=2; shader->sampled_crt_value[0][1]=2;
     shader->sampled_crt_value[1][0]=2; shader->sampled_crt_value[1][1]=2;
+    shader->sampled_crt_value[2][0]=1;
     shader->sampled_crt_value[7][0]=1;
+    shader->sampled_crt_value[17][0]=1;
     shader->sampled_crt_value[18][0]=0.5f;
     for(int sampler=0;sampler<3;sampler++) shader->sampled_crt_sprite[sampler]=-1;
     render.crt_shader_enable=1; render.alphablend=0;

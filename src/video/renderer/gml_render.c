@@ -1813,9 +1813,18 @@ static void parse_font(GmlRender *r){
     /* Bytecode 17 added AscenderOffset immediately before the glyph array.  Older records put
      * the array at +40, while every later layout retains the offset at +40 and moves the array
      * farther right as more metrics are appended. */
+    int serialized_line_height=0;
     if(goff>40){
       int32_t ascender=(int32_t)u32(d,p+40);
       if(ascender>-32768 && ascender<32768) f->ascender_offset=(int)ascender;
+    }
+    /* Newer FONT records serialize their actual line advance after AscenderOffset,
+     * Ascender and SDFSpread.  The point/em size and the tallest packed glyph are not equivalent:
+     * using either for vertical alignment moves centred labels by a logical pixel and spaces
+     * multiline text incorrectly.  Layouts ending before +56 do not yet carry this field. */
+    if(goff>=56){
+      int32_t line_height=(int32_t)u32(d,p+52);
+      if(line_height>0 && line_height<=4096) serialized_line_height=(int)line_height;
     }
     uint32_t gc=u32(d,p+goff);
     if(gc>100000) gc=0;                             /* guard */
@@ -1837,13 +1846,19 @@ static void parse_font(GmlRender *r){
     }
     int mh=0;
     for(int g2=0;g2<f->n_glyphs;g2++) if(f->glyphs[g2].h>mh) mh=f->glyphs[g2].h;
-    f->align_height=mh>f->line_height?mh:f->line_height;
-    /* For floating-point EmSize, increase line height to the tallest glyph when needed. */
-    if(em_is_float && mh>f->line_height) f->line_height=mh;
+    if(serialized_line_height){
+      f->line_height=serialized_line_height;
+      f->align_height=serialized_line_height;
+    }else{
+      f->align_height=mh>f->line_height?mh:f->line_height;
+      /* Early float-em fonts do not serialize a line advance. Their point size can be smaller
+       * than the rendered glyphs, so retain the tallest-glyph fallback for those layouts. */
+      if(em_is_float && mh>f->line_height) f->line_height=mh;
+    }
     if(getenv("GML_LOG_FONT"))
-      fprintf(stderr,"[font] real id=%d name=%s em=%d ascender_offset=%d atlas=%d glyphs=%d\n",
-        i, gml_str_by_ptr(r->win,u32(d,p)), f->line_height, f->ascender_offset,
-        f->atlas, f->n_glyphs);
+      fprintf(stderr,"[font] real id=%d name=%s line=%d align=%d maxglyph=%d ascender_offset=%d atlas=%d glyphs=%d\n",
+        i, gml_str_by_ptr(r->win,u32(d,p)), f->line_height, f->align_height,mh,
+        f->ascender_offset,f->atlas,f->n_glyphs);
     if(getenv("GML_LOG_FONT_GLYPHS"))
       for(int ch=32;ch<127;ch++){
         int gi=f->glyph_by_char[ch];
