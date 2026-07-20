@@ -681,6 +681,17 @@ static int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlV
   if(!strcmp(nm,"layer_exists")){ *out=vreal(rt_layer_resolve(vm,a,n)!=NULL); return 1; }
   if(!strcmp(nm,"layer_set_visible")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); if(l) l->visible=(int)N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_get_visible")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); *out=vreal(l?l->visible:0); return 1; }
+  if(!strcmp(nm,"instance_activate_layer")||!strcmp(nm,"instance_deactivate_layer")){
+    GmlRtLayer *l=rt_layer_resolve(vm,a,n);
+    int activate=!strcmp(nm,"instance_activate_layer");
+    if(l) for(int i=0;i<vm->inst_count;i++){
+      GmlInstance *in=&vm->inst[i];
+      if(in->marked || in->draw_layer_order!=l->order) continue;
+      if(activate){ if(in->deactivated){ in->active=1; in->deactivated=0; } }
+      else if(in->active){ in->active=0; in->deactivated=1; }
+    }
+    *out=vreal(0); return 1;
+  }
   if(!strcmp(nm,"layer_x")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); if(l){ rt_layer_touch(vm,l); l->x=N(a,n,1); } *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_y")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); if(l){ rt_layer_touch(vm,l); l->y=N(a,n,1); } *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_hspeed")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); if(l){ rt_layer_touch(vm,l); l->hs=N(a,n,1); } *out=vreal(0); return 1; }
@@ -2571,6 +2582,99 @@ static GmlVal md5_hex_val(const uint8_t *p, size_t n){
   for(int i=0;i<16;i++){ s[i*2]=H[d[i]>>4]; s[i*2+1]=H[d[i]&15]; }
   s[32]=0;
   return vstr_owned(s);
+}
+typedef struct { uint32_t h[5]; uint64_t bits; uint8_t buf[64]; int used; } GmlSha1;
+static uint32_t sha1_rot(uint32_t x, unsigned n){ return (x<<n)|(x>>(32u-n)); }
+static void sha1_transform(GmlSha1 *s, const uint8_t b[64]){
+  uint32_t w[80];
+  for(int i=0;i<16;i++)
+    w[i]=((uint32_t)b[i*4]<<24)|((uint32_t)b[i*4+1]<<16)|
+         ((uint32_t)b[i*4+2]<<8)|(uint32_t)b[i*4+3];
+  for(int i=16;i<80;i++) w[i]=sha1_rot(w[i-3]^w[i-8]^w[i-14]^w[i-16],1);
+  uint32_t a=s->h[0],bb=s->h[1],c=s->h[2],d=s->h[3],e=s->h[4];
+  for(int i=0;i<80;i++){
+    uint32_t f,k;
+    if(i<20){ f=(bb&c)|((~bb)&d); k=0x5a827999u; }
+    else if(i<40){ f=bb^c^d; k=0x6ed9eba1u; }
+    else if(i<60){ f=(bb&c)|(bb&d)|(c&d); k=0x8f1bbcdcu; }
+    else { f=bb^c^d; k=0xca62c1d6u; }
+    uint32_t t=sha1_rot(a,5)+f+e+k+w[i];
+    e=d; d=c; c=sha1_rot(bb,30); bb=a; a=t;
+  }
+  s->h[0]+=a; s->h[1]+=bb; s->h[2]+=c; s->h[3]+=d; s->h[4]+=e;
+}
+static void sha1_init(GmlSha1 *s){
+  s->h[0]=0x67452301u; s->h[1]=0xefcdab89u; s->h[2]=0x98badcfeu;
+  s->h[3]=0x10325476u; s->h[4]=0xc3d2e1f0u; s->bits=0; s->used=0;
+}
+static void sha1_update(GmlSha1 *s, const uint8_t *p, size_t n){
+  s->bits+=(uint64_t)n*8u;
+  while(n>0){
+    size_t take=64u-(size_t)s->used;
+    if(take>n) take=n;
+    memcpy(s->buf+s->used,p,take);
+    s->used+=(int)take; p+=take; n-=take;
+    if(s->used==64){ sha1_transform(s,s->buf); s->used=0; }
+  }
+}
+static void sha1_final(GmlSha1 *s, uint8_t out[20]){
+  uint64_t bits=s->bits;
+  s->buf[s->used++]=0x80;
+  if(s->used>56){
+    while(s->used<64) s->buf[s->used++]=0;
+    sha1_transform(s,s->buf); s->used=0;
+  }
+  while(s->used<56) s->buf[s->used++]=0;
+  for(int i=0;i<8;i++) s->buf[56+i]=(uint8_t)(bits>>(56-8*i));
+  sha1_transform(s,s->buf);
+  for(int i=0;i<5;i++){
+    out[i*4]=(uint8_t)(s->h[i]>>24); out[i*4+1]=(uint8_t)(s->h[i]>>16);
+    out[i*4+2]=(uint8_t)(s->h[i]>>8); out[i*4+3]=(uint8_t)s->h[i];
+  }
+}
+static GmlVal sha1_hex_val(const uint8_t *p, size_t n){
+  static const char H[]="0123456789abcdef";
+  uint8_t d[20]; GmlSha1 s;
+  sha1_init(&s); if(p && n) sha1_update(&s,p,n); sha1_final(&s,d);
+  char *out=malloc(41);
+  if(!out) return vstr("");
+  for(int i=0;i<20;i++){ out[i*2]=H[d[i]>>4]; out[i*2+1]=H[d[i]&15]; }
+  out[40]=0;
+  return vstr_owned(out);
+}
+/* Unicode hash variants consume UTF-16 code units. Runtime strings are UTF-8 here,
+ * so encode valid scalar values as little-endian UTF-16 and replace malformed sequences. */
+static uint8_t *utf16le_alloc(const char *text, size_t *out_len){
+  const uint8_t *p=(const uint8_t*)(text?text:"");
+  size_t input=strlen((const char*)p), cap=input<=SIZE_MAX/2 ? input*2+2 : 0, used=0;
+  uint8_t *out=cap?malloc(cap):NULL;
+  if(!out){ if(out_len) *out_len=0; return NULL; }
+  while(*p){
+    uint32_t cp; size_t take=1;
+    if(p[0]<0x80) cp=p[0];
+    else if((p[0]&0xe0)==0xc0 && p[1] && (p[1]&0xc0)==0x80){
+      cp=((uint32_t)(p[0]&0x1f)<<6)|(p[1]&0x3f); take=2;
+      if(cp<0x80) cp=0xfffd, take=1;
+    } else if((p[0]&0xf0)==0xe0 && p[1] && p[2] &&
+              (p[1]&0xc0)==0x80 && (p[2]&0xc0)==0x80){
+      cp=((uint32_t)(p[0]&15)<<12)|((uint32_t)(p[1]&0x3f)<<6)|(p[2]&0x3f); take=3;
+      if(cp<0x800 || (cp>=0xd800 && cp<=0xdfff)) cp=0xfffd, take=1;
+    } else if((p[0]&0xf8)==0xf0 && p[1] && p[2] && p[3] &&
+              (p[1]&0xc0)==0x80 && (p[2]&0xc0)==0x80 && (p[3]&0xc0)==0x80){
+      cp=((uint32_t)(p[0]&7)<<18)|((uint32_t)(p[1]&0x3f)<<12)|
+         ((uint32_t)(p[2]&0x3f)<<6)|(p[3]&0x3f); take=4;
+      if(cp<0x10000 || cp>0x10ffff) cp=0xfffd, take=1;
+    } else cp=0xfffd;
+    p+=take;
+    if(cp<=0xffff){ out[used++]=(uint8_t)cp; out[used++]=(uint8_t)(cp>>8); }
+    else {
+      cp-=0x10000; uint16_t hi=(uint16_t)(0xd800+(cp>>10)),lo=(uint16_t)(0xdc00+(cp&1023));
+      out[used++]=(uint8_t)hi; out[used++]=(uint8_t)(hi>>8);
+      out[used++]=(uint8_t)lo; out[used++]=(uint8_t)(lo>>8);
+    }
+  }
+  if(out_len) *out_len=used;
+  return out;
 }
 static unsigned char *base64_decode_alloc(const char *s, int *out_len){
   static signed char D[256]; static int dinit=0;
@@ -7024,6 +7128,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
     case BID_DS_LIST_CLEAR:{
       GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); if(l) l->len=0; return vreal(0); }
     case BID_GPU_SET_TEXFILTER:
+      if(R) R->interp=(N(a,n,(!strcmp(nm,"gpu_set_texfilter_ext") && n>1)?1:0)!=0.0);
       return vreal(0);
     case BID_WINDOW_HAS_FOCUS:
       return vreal(1);
@@ -8094,6 +8199,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"string_length")) return vreal((double)strlen(S(a,n,0)));
   if(!strcmp(nm,"string_byte_length")) return vreal((double)strlen(S(a,n,0)));
   if(!strcmp(nm,"md5_string_utf8")){ const char *s=S(a,n,0); return md5_hex_val((const uint8_t*)s,strlen(s)); }
+  if(!strcmp(nm,"md5_string_unicode")){ const char *s=S(a,n,0); size_t len=0; uint8_t *u=utf16le_alloc(s,&len);
+    GmlVal out=md5_hex_val(u,len); free(u); return out; }
+  if(!strcmp(nm,"sha1_string_utf8")){ const char *s=S(a,n,0); return sha1_hex_val((const uint8_t*)s,strlen(s)); }
+  if(!strcmp(nm,"sha1_string_unicode")){ const char *s=S(a,n,0); size_t len=0; uint8_t *u=utf16le_alloc(s,&len);
+    GmlVal out=sha1_hex_val(u,len); free(u); return out; }
   if(!strcmp(nm,"string_count")) return vreal(gm_string_count(S(a,n,0),S(a,n,1)));
   if(!strcmp(nm,"string_split")){
     const char *src=S(a,n,0), *sep=S(a,n,1);
@@ -11215,10 +11325,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"shader_reset")){ GmlRender *R=(GmlRender*)vm->render;
     if(R) R->active_shader=-1; return vreal(0); }
   if(!strcmp(nm,"shader_current")){ GmlRender *R=(GmlRender*)vm->render; return vreal(R?R->active_shader:-1); }
+  /* The portable renderer exposes a shader pipeline. Individual assets are still queried through
+   * shader_is_compiled(), which rejects templates the software evaluator does not recognize. */
+  if(!strcmp(nm,"shaders_are_supported")) return vreal(vm->render!=NULL);
   /* report palette shaders (template or LUT) as compiled so games keep using them (unknown -> 0) */
   if(!strcmp(nm,"shader_is_compiled")){ GmlRender *R=(GmlRender*)vm->render; int sid=(int)N(a,n,0);
     int ok = R && sid>=0 && sid<R->n_shader_pal && R->shader_pal &&
              (R->shader_pal[sid].has || R->shader_pal[sid].lut || R->shader_pal[sid].grid ||
+              R->shader_pal[sid].alpha_discard ||
               R->shader_pal[sid].dual_sample || R->shader_pal[sid].paint ||
               R->shader_pal[sid].grayscale ||
               (R->shader_pal[sid].crt && R->crt_shader_enable));
@@ -11476,7 +11590,12 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(R) R->interp = (N(a,n,0)!=0.0); return vreal(0); }
   if(!strcmp(nm,"texture_set_repeat")) return vreal(0);
   if(!strcmp(nm,"gpu_set_texfilter")||!strcmp(nm,"gpu_set_texfilter_ext")||
-     !strcmp(nm,"gpu_set_tex_filter_ext")||!strcmp(nm,"gpu_set_tex_repeat_ext")) return vreal(0);
+     !strcmp(nm,"gpu_set_tex_filter")||!strcmp(nm,"gpu_set_tex_filter_ext")){
+    int enable=(!strcmp(nm,"gpu_set_texfilter_ext")||!strcmp(nm,"gpu_set_tex_filter_ext")) && n>1 ? 1 : 0;
+    GmlRender *R=(GmlRender*)vm->render; if(R) R->interp=(N(a,n,enable)!=0.0); return vreal(0); }
+  if(!strcmp(nm,"gpu_get_texfilter")||!strcmp(nm,"gpu_get_tex_filter")){
+    GmlRender *R=(GmlRender*)vm->render; return vreal(R?R->interp:0); }
+  if(!strcmp(nm,"gpu_set_tex_repeat_ext")) return vreal(0);
   if(!strcmp(nm,"gpu_set_blendenable")){ GmlRender *R=(GmlRender*)vm->render; if(R) R->alphablend=N(a,n,0)>=0.5; return vreal(0); }
   if(!strcmp(nm,"gpu_get_blendenable")){ GmlRender *R=(GmlRender*)vm->render; return vreal(R?R->alphablend:1); }
   if(!strcmp(nm,"window_get_fullscreen")) return vreal(vm->window_fullscreen);
@@ -11833,7 +11952,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlRender *R2=(GmlRender*)vm->render;
     if(R2 && R2->gpu_state_sp<16){
       struct GmlGpuState *s=&R2->gpu_state_stack[R2->gpu_state_sp++];
-      s->alphablend=R2->alphablend; s->blendmode=R2->blendmode;
+      s->alphablend=R2->alphablend; s->alpha_test_enable=R2->alpha_test_enable;
+      s->alpha_test_ref=R2->alpha_test_ref; s->blendmode=R2->blendmode;
       s->blend_equation=R2->blend_equation; s->blend_equation_alpha=R2->blend_equation_alpha;
       s->interp=R2->interp; s->color_write_mask=R2->color_write_mask;
     }
@@ -11843,13 +11963,22 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlRender *R2=(GmlRender*)vm->render;
     if(R2 && R2->gpu_state_sp>0){
       struct GmlGpuState *s=&R2->gpu_state_stack[--R2->gpu_state_sp];
-      R2->alphablend=s->alphablend; R2->blendmode=s->blendmode;
+      R2->alphablend=s->alphablend; R2->alpha_test_enable=s->alpha_test_enable;
+      R2->alpha_test_ref=s->alpha_test_ref; R2->blendmode=s->blendmode;
       R2->blend_equation=s->blend_equation; R2->blend_equation_alpha=s->blend_equation_alpha;
       R2->interp=s->interp; R2->color_write_mask=s->color_write_mask;
     }
     return vreal(0);
   }
-  if(!strcmp(nm,"gpu_set_sprite_cull")||!strcmp(nm,"gpu_set_alphatestenable")||
+  if(!strcmp(nm,"gpu_set_alphatestenable")){ GmlRender *R2=(GmlRender*)vm->render;
+    if(R2) R2->alpha_test_enable=N(a,n,0)>=0.5; return vreal(0); }
+  if(!strcmp(nm,"gpu_get_alphatestenable")){ GmlRender *R2=(GmlRender*)vm->render;
+    return vreal(R2?R2->alpha_test_enable:0); }
+  if(!strcmp(nm,"gpu_set_alphatestref")){ GmlRender *R2=(GmlRender*)vm->render; int ref=(int)N(a,n,0);
+    if(ref<0) ref=0; else if(ref>255) ref=255; if(R2) R2->alpha_test_ref=(uint8_t)ref; return vreal(0); }
+  if(!strcmp(nm,"gpu_get_alphatestref")){ GmlRender *R2=(GmlRender*)vm->render;
+    return vreal(R2?R2->alpha_test_ref:0); }
+  if(!strcmp(nm,"gpu_set_sprite_cull")||
      !strcmp(nm,"gpu_set_tex_filter")||
      !strcmp(nm,"display_reset")||!strcmp(nm,"display_set_gui_maximize")||
      !strcmp(nm,"window_set_cursor")||

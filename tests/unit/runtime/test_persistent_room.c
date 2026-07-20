@@ -23,6 +23,82 @@ void gml_input_mouse(double *rx,double *ry,double *gx,double *gy,double *wx,doub
 }
 GmlVal gml_builtin_call(GmlVM *vm,const char *name,GmlVal *args,int count);
 
+static int expect_hash_layer_gpu_gap_closure(void){
+  GmlVM vm={0}; GmlRender render={0};
+  vm.render=&render;
+  GmlVal ascii=vstr("abc"), euro=vstr("\342\202\254");
+  GmlVal md5u=gml_builtin_call(&vm,"md5_string_unicode",&ascii,1);
+  GmlVal sha8=gml_builtin_call(&vm,"sha1_string_utf8",&ascii,1);
+  GmlVal shau=gml_builtin_call(&vm,"sha1_string_unicode",&ascii,1);
+  GmlVal euro_u=gml_builtin_call(&vm,"sha1_string_unicode",&euro,1);
+  int ok=md5u.t==V_STR && md5u.s && !strcmp(md5u.s,"ce1473cf80c6b3fda8e3dfc006adc315") &&
+         sha8.t==V_STR && sha8.s && !strcmp(sha8.s,"a9993e364706816aba3e25717850c26c9cd0d89d") &&
+         shau.t==V_STR && shau.s && !strcmp(shau.s,"9f04f41a848514162050e3d68c1a7abb441dc2b5") &&
+         euro_u.t==V_STR && euro_u.s && !strcmp(euro_u.s,"cb73f8a8dc63786596be419db0c652c9b70c9421");
+  if(md5u.d!=0) free((void*)md5u.s);
+  if(sha8.d!=0) free((void*)sha8.s);
+  if(shau.d!=0) free((void*)shau.s);
+  if(euro_u.d!=0) free((void*)euro_u.s);
+
+  vm.rtl=calloc(1,sizeof(*vm.rtl)); vm.inst=calloc(3,sizeof(*vm.inst));
+  if(!vm.rtl || !vm.inst){ free(vm.rtl); free(vm.inst); return 0; }
+  vm.n_rtl=vm.cap_rtl=1; vm.inst_count=vm.inst_cap=3;
+  vm.rtl[0].used=1; vm.rtl[0].id=23; vm.rtl[0].order=7;
+  snprintf(vm.rtl[0].name,sizeof vm.rtl[0].name,"Actors");
+  vm.inst[0].active=1; vm.inst[0].draw_layer_order=7;
+  vm.inst[1].active=1; vm.inst[1].draw_layer_order=8;
+  vm.inst[2].deactivated=1; vm.inst[2].draw_layer_order=7;
+  GmlVal layer_name=vstr("Actors");
+  (void)gml_builtin_call(&vm,"instance_deactivate_layer",&layer_name,1);
+  ok=ok && !vm.inst[0].active && vm.inst[0].deactivated && vm.inst[1].active && vm.inst[2].deactivated;
+  GmlVal layer_id=vreal(23);
+  (void)gml_builtin_call(&vm,"instance_activate_layer",&layer_id,1);
+  ok=ok && vm.inst[0].active && !vm.inst[0].deactivated && vm.inst[1].active &&
+     vm.inst[2].active && !vm.inst[2].deactivated;
+
+  GmlVal alpha_ref=vreal(511),alpha_on=vreal(1);
+  (void)gml_builtin_call(&vm,"gpu_set_alphatestref",&alpha_ref,1);
+  (void)gml_builtin_call(&vm,"gpu_set_alphatestenable",&alpha_on,1);
+  (void)gml_builtin_call(&vm,"gpu_push_state",NULL,0);
+  alpha_ref=vreal(3); alpha_on=vreal(0);
+  (void)gml_builtin_call(&vm,"gpu_set_alphatestref",&alpha_ref,1);
+  (void)gml_builtin_call(&vm,"gpu_set_alphatestenable",&alpha_on,1);
+  (void)gml_builtin_call(&vm,"gpu_pop_state",NULL,0);
+  GmlVal ref=gml_builtin_call(&vm,"gpu_get_alphatestref",NULL,0);
+  GmlVal enabled=gml_builtin_call(&vm,"gpu_get_alphatestenable",NULL,0);
+  GmlVal shaders=gml_builtin_call(&vm,"shaders_are_supported",NULL,0);
+  ok=ok && ref.t==V_REAL && ref.d==255 && enabled.t==V_REAL && enabled.d==1 &&
+     shaders.t==V_REAL && shaders.d==1;
+
+  render.interp=1;
+  GmlVal texfilter_ext[2]={vreal(37),vreal(0)};
+  (void)gml_builtin_call(&vm,"gpu_set_texfilter_ext",texfilter_ext,2);
+  ok=ok && render.interp==0;
+  GmlVal texfilter=vreal(1);
+  (void)gml_builtin_call(&vm,"gpu_set_texfilter",&texfilter,1);
+  GmlVal texfilter_get=gml_builtin_call(&vm,"gpu_get_texfilter",NULL,0);
+  int filter_ok=render.interp==1 && texfilter_get.t==V_REAL && texfilter_get.d==1;
+  ok=ok && filter_ok;
+
+  uint32_t source[2]={0x7FFF0000u,0xFFFF0000u};
+  uint32_t target[2]={0xFF102030u,0xFF102030u};
+  struct GmlShaderPal alpha_shader={0};
+  alpha_shader.alpha_discard=1; alpha_shader.alpha_discard_cutoff=0.99f;
+  gml_render_begin(&render,target,2,1,0,0);
+  render.alphablend=1; render.alpha_test_enable=0;
+  render.app_surface=source; render.app_w=2; render.app_h=1;
+  render.shader_pal=&alpha_shader; render.n_shader_pal=1; render.active_shader=0;
+  gml_draw_surface_stretched(&render,0,0,0,2,1,0xFFFFFF,1);
+  int surface_alpha_ok=target[0]==0xFF102030u && target[1]==0xFFFF0000u;
+  ok=ok && surface_alpha_ok;
+  render.shader_pal=NULL; render.n_shader_pal=0; render.app_surface=NULL;
+  free(vm.rtl); free(vm.inst);
+  if(!ok) fprintf(stderr,"hash/layer/GPU gap-closure fixture failed (filter=%d interp=%d get=%.0f surface=%d pixels=%08X,%08X)\n",
+    filter_ok,render.interp,texfilter_get.t==V_REAL?texfilter_get.d:-1.0,
+    surface_alpha_ok,target[0],target[1]);
+  return ok;
+}
+
 static int expect_array_function_gap_closure(void){
   GmlVM vm={0}; vm.math_epsilon=1e-5;
   GmlVal array=gml_arr_new(2,vreal(0));
@@ -353,6 +429,7 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
 }
 
 int main(void){
+  if(!expect_hash_layer_gpu_gap_closure()) return 1;
   if(!expect_array_function_gap_closure()) return 1;
   if(!expect_ds_list_text_roundtrip()) return 1;
   if(!expect_audio_group_paths()) return 1;

@@ -179,13 +179,15 @@ typedef struct {
   GmlSurface surface[GML_MAX_SURFACES]; int next_surface_id;
   /* draw state */
   uint32_t  color;  double alpha; int halign, valign, font, alphablend, circle_precision;
+  int       alpha_test_enable;      /* fixed-function alpha-test state (disabled by default) */
+  uint8_t   alpha_test_ref;         /* inclusive 0..255 reference set by gpu_set_alphatestref */
   uint8_t   color_write_mask; /* gpu_set_colorwriteenable RGBA bits 0..3; defaults to all enabled */
   int       software_overlay; /* bypass world-space D3 projection for a final 2D modal pass */
   int       blendmode;   /* 0=normal, 1=add, 2=(zero, inverse-source-colour), 3=source*destination. */
   int       blend_equation, blend_equation_alpha; /* 1 add, 2 max, 3 subtract, 4 reverse-subtract, 5 min */
   struct GmlGpuState {
-    int alphablend, blendmode, blend_equation, blend_equation_alpha, interp;
-    uint8_t color_write_mask;
+    int alphablend, alpha_test_enable, blendmode, blend_equation, blend_equation_alpha, interp;
+    uint8_t alpha_test_ref, color_write_mask;
   } gpu_state_stack[16];
   int       gpu_state_sp;
   int       fast_alpha_cull;  /* optional fast path: drop alpha contributions <= this 8-bit step */
@@ -199,6 +201,10 @@ typedef struct {
   float     layer_noise_animation;
   /* Palette and lookup-texture state declarations. */
   struct GmlShaderPal { int has; uint8_t L[3],M[3],D[3],S[3];
+    /* Literal alpha-discard pass-through fragment. The threshold and comparison are parsed from
+     * the embedded GLSL, so texture draws can preserve hard sprite edges without a GPU. */
+    int alpha_discard, alpha_discard_inclusive;
+    float alpha_discard_cutoff;
     int lut;                    /* palette-LUT shader: out = palette[(src.r, row)] */
     char lut_row_uniform[32];   /* uniform float selecting the palette row */
     char lut_sampler[32];       /* sampler2D holding the palette texture */
