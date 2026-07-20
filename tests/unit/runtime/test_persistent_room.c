@@ -104,6 +104,33 @@ static int expect_hash_layer_gpu_gap_closure(void){
     camera_bx.d==9 && camera_by.d==10 && min_result.t==V_REAL && min_result.d==0;
   ok=ok && camera_ok;
 
+  GmlVal lookat_args[9]={vreal(132),vreal(91),vreal(-10),vreal(132),vreal(91),vreal(0),
+                          vreal(0),vreal(1),vreal(0)};
+  GmlVal ortho_args[4]={vreal(400),vreal(300),vreal(1),vreal(10000)};
+  GmlVal view_matrix=gml_builtin_call(&vm,"matrix_build_lookat",lookat_args,9);
+  GmlVal projection_matrix=gml_builtin_call(&vm,"matrix_build_projection_ortho",ortho_args,4);
+  GmlVal set_view_matrix[2]={target_camera,view_matrix};
+  GmlVal set_projection_matrix[2]={target_camera,projection_matrix};
+  (void)gml_builtin_call(&vm,"camera_set_view_mat",set_view_matrix,2);
+  (void)gml_builtin_call(&vm,"camera_set_proj_mat",set_projection_matrix,2);
+  camera_x=gml_builtin_call(&vm,"camera_get_view_x",&target_camera,1);
+  camera_y=gml_builtin_call(&vm,"camera_get_view_y",&target_camera,1);
+  camera_w=gml_builtin_call(&vm,"camera_get_view_width",&target_camera,1);
+  camera_h=gml_builtin_call(&vm,"camera_get_view_height",&target_camera,1);
+  int matrix_camera_ok=view_matrix.t==V_ARR && projection_matrix.t==V_ARR &&
+    fabs(gml_arr_get(projection_matrix,0).d-.005)<1e-12 &&
+    fabs(gml_arr_get(projection_matrix,5).d-(2.0/300.0))<1e-12 &&
+    fabs(camera_x.d-(-68))<1e-9 && fabs(camera_y.d-(-59))<1e-9 &&
+    fabs(camera_w.d-400)<1e-9 && fabs(camera_h.d-300)<1e-9;
+  ok=ok && matrix_camera_ok;
+
+  GmlVal layer_shader_args[2]={layer_name,vreal(2)};
+  (void)gml_builtin_call(&vm,"layer_shader",layer_shader_args,2);
+  GmlVal layer_shader=gml_builtin_call(&vm,"layer_get_shader",&layer_name,1);
+  int layer_shader_ok=layer_shader.t==V_REAL && layer_shader.d==2 &&
+    gml_global_arr(&vm,"__gml_layer_shader",0)==3;
+  ok=ok && layer_shader_ok;
+
   uint32_t source[2]={0x7FFF0000u,0xFFFF0000u};
   uint32_t target[2]={0xFF102030u,0xFF102030u};
   struct GmlShaderPal alpha_shader={0};
@@ -128,8 +155,8 @@ static int expect_hash_layer_gpu_gap_closure(void){
      object_visible.t==V_REAL && object_visible.d==0;
   vm.objects=NULL; vm.n_objects=0;
   free(vm.rtl); free(vm.inst);
-  if(!ok) fprintf(stderr,"hash/layer/GPU gap-closure fixture failed (filter=%d camera=%d interp=%d get=%.0f surface=%d pixels=%08X,%08X)\n",
-    filter_ok,camera_ok,render.interp,texfilter_get.t==V_REAL?texfilter_get.d:-1.0,
+  if(!ok) fprintf(stderr,"hash/layer/GPU gap-closure fixture failed (filter=%d camera=%d matrix=%d layer_shader=%d interp=%d get=%.0f surface=%d pixels=%08X,%08X)\n",
+    filter_ok,camera_ok,matrix_camera_ok,layer_shader_ok,render.interp,texfilter_get.t==V_REAL?texfilter_get.d:-1.0,
     surface_alpha_ok,target[0],target[1]);
   return ok;
 }
@@ -166,6 +193,22 @@ static int expect_array_function_gap_closure(void){
   GmlVal nan_equal=gml_builtin_call(&vm,"array_equals",nan_args,2);
   ok=ok && equal.t==V_REAL && equal.d==1 && different.t==V_REAL && different.d==0 &&
     nan_equal.t==V_REAL && nan_equal.d==0;
+
+  /* A chained store creates intermediate containers lazily. Keep this neutral three-dimensional
+   * matrix fixture separate from array_set_2D: pushac/popaf chaining represents each dimension
+   * as a nested array. */
+  GmlVal matrix=gml_arr_new(0,vreal(0));
+  GmlVal language=gml_arr_chain_ensure(matrix,7);
+  GmlVal section=gml_arr_chain_ensure(language,1);
+  gml_arr_set(section,2,vstr("label"));
+  GmlVal language_read=gml_arr_get(matrix,7);
+  GmlVal section_read=gml_arr_get(language_read,1);
+  GmlVal label=gml_arr_get(section_read,2);
+  gml_arr_set(matrix,3,vreal(9));
+  GmlVal scalar=gml_arr_chain_ensure(matrix,3);
+  ok=ok && language.t==V_ARR && section.t==V_ARR &&
+    label.t==V_STR && label.s && !strcmp(label.s,"label") &&
+    scalar.t==V_REAL && scalar.d==9;
   GmlVal ordered=gml_arr_new(5,vreal(0));
   for(int i=0;i<5;i++) gml_arr_set(ordered,i,vreal(i+1));
   gml_rng_seed(&vm,12345);

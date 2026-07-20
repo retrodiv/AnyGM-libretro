@@ -1025,7 +1025,11 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
       }
     }
     uint32_t collision[8]={0};
-    if(source->executable_layout && frames){
+    if(source->executable_layout && !frames){
+      if(!import_skip_words(&r,1,"empty-sprite collision flag")){
+        free_imported_sprites(project); return 0;
+      }
+    } else if(source->executable_layout && frames){
       if(source->version>=810 && !import_skip_words(&r,1,"sprite collision shape")){
         free_imported_sprites(project); return 0;
       }

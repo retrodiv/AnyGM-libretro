@@ -230,6 +230,23 @@ GmlVal gml_arr_get(GmlVal arr, int idx){
   if(idx<A->len){ GmlVal v=A->data[idx]; if(v.t==V_STR) v.d=0; return v; }   /* d=0: non-owning ref */
   return vreal(0);
 }
+/* A non-terminal pushac in a chained array assignment requires an array container rather
+ * than the numeric zero returned by a terminal read. Materialize that container lazily; existing
+ * scalar and string values remain observable so malformed chains do not replace user data. */
+GmlVal gml_arr_chain_ensure(GmlVal arr, int idx){
+  if(arr.t!=V_ARR || !arr.arr || idx<0) return vreal(0);
+  GmlArr *A=arr.arr;
+  GmlVal value=idx<A->len?A->data[idx]:vreal(0);
+  if(value.t==V_REAL && value.d==0.0){
+    arr_ensure(A,idx);
+    if(idx<A->cap){
+      A->data[idx]=gml_arr_new(0,vreal(0));
+      value=A->data[idx];
+    }
+  }
+  if(value.t==V_STR) value.d=0;
+  return value;
+}
 void gml_arr_set_2d(GmlVal arr, int row, int column, GmlVal val){
   if(arr.t!=V_ARR || !arr.arr || row<0 || column<0 || column>=GML_2D_STRIDE) return;
   GmlArr *A=arr.arr;
@@ -3014,10 +3031,14 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             if(sp<STK){ stk[sp]=ref; stkt[sp]=DT_VAR; sp++; }
             break; }
           case -2:   /* pushaf: A[idx] where the array value A is on the stack. Stack: idx, A(top->down). */
-          case -4:{  /* pushac reads an intermediate array value for a chained access. */
+          case -4:{  /* pushac: non-terminal component of a chained read/write. A chained store
+                      * contains ArrayPopAF for a[i], pushac for [j], then popaf for [k]. The
+                      * intermediate zero must become a live sub-array or the final store has no
+                      * receiver. A later terminal pushaf on the empty sub-array still yields zero. */
             int idx=(int)(sp>0?asnum(stk[--sp]):0); GmlVal av=sp>0?stk[--sp]:vreal(0);
             GmlVal out=vreal(0);
-            if(av.t==V_ARR && av.arr){ GmlArr *A=av.arr; if(idx>=0 && idx<A->len) out=A->data[idx]; }
+            if(in.sval==-4) out=gml_arr_chain_ensure(av,idx);
+            else if(av.t==V_ARR && av.arr){ GmlArr *A=av.arr; if(idx>=0 && idx<A->len) out=A->data[idx]; }
             if(sp<STK){ stk[sp]=out; stkt[sp]=DT_VAR; sp++; } break; }
           case -3:{ /* popaf: A[idx] = value. */
             if(aref_n>0){ /* compound-assign write: use the reference saved at savearef; the store
@@ -4805,7 +4826,12 @@ static void gml_room_bind_asset_sprites(GmlVM *vm, int room_index){
  * rebuilt on room enter; after modern savestate loads they are preserved and only type-4 tilemap
  * views are rebound to win data, since those grids are not serialized by pointer. */
 static void gml_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runtime_layers){
-  if(rebuild_runtime_layers){ vm->n_rtl=0; vm->n_rte=0; }
+  if(rebuild_runtime_layers){
+    /* Per-layer shader handles use serialized globals so rewind needs no state-format fork.  A
+     * genuine room rebuild owns a new layer set and must not inherit the previous room's slot. */
+    for(int i=0;i<vm->n_rtl;i++) gml_set_global_arr(vm,"__gml_layer_shader",i,0);
+    vm->n_rtl=0; vm->n_rte=0;
+  }
   const uint8_t *rd=vm->win->data;
   uint32_t lcnt=0;
   uint32_t lay=gml_room_layer_list(vm,room_index,&lcnt);
@@ -6544,6 +6570,7 @@ void gml_vm_draw(GmlVM *vm){
     if(it[k].order!=active_layer_order){
       if(active_layer) gml_run_layer_script(vm,active_layer->script_end);
       if(active_filter_started) gml_render_layer_filter_end(R,active_filter,effect_time);
+      R->active_shader=-1;
       active_layer_order=it[k].order;
       active_layer=rt_layer_by_order(vm,active_layer_order);
       active_filter=NULL; active_filter_started=0;
@@ -6552,7 +6579,12 @@ void gml_vm_draw(GmlVM *vm){
         active_filter_started=gml_render_layer_filter_begin(R,active_filter);
         break;
       }
-      if(active_layer) gml_run_layer_script(vm,active_layer->script_begin);
+      if(active_layer){
+        int slot=(int)(active_layer-vm->rtl);
+        double encoded=gml_global_arr(vm,"__gml_layer_shader",slot);
+        if(encoded!=0) R->active_shader=(int)encoded-1;
+        gml_run_layer_script(vm,active_layer->script_begin);
+      }
     }
     if(it[k].type==1){ GmlDrawTile *t=&tiles[it[k].idx];
       gml_draw_background_part_ext(R,t->def,t->sx,t->sy,t->w,t->h,t->x,t->y,t->xs,t->ys,0xFFFFFF,1); continue; }
@@ -6616,6 +6648,7 @@ void gml_vm_draw(GmlVM *vm){
   }
   if(active_layer) gml_run_layer_script(vm,active_layer->script_end);
   if(active_filter_started) gml_render_layer_filter_end(R,active_filter,effect_time);
+  R->active_shader=-1;
   /* All draw scratch (it/lbg/ltl/lsp/tiles/tdepth) is persistent (g_dl_*) — write the possibly-grown
    * tile buffers back and keep everything allocated for next frame; nothing is freed here. */
   g_dl_tiles=tiles; g_dl_tdepth=tdepth; g_dl_tiles_cap=tcap;

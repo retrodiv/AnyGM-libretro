@@ -261,6 +261,7 @@ static int classic_execute_assignment(GmlVM *vm, const char *source){
  * resolution/time; 15..19 = indexed-palette controls; 20..39 = sampled-CRT controls;
  * 40..42 = sampled-CRT texture stages;
  * 44..49 = radial-wave controls;
+ * 50 = single-sample UV-wave time;
  * 63 = accepted-and-ignored. See parse_shader_palettes and the surface post-processes. */
 #define GML_SHADER_HANDLE_STRIDE 64
 #define GML_SHADER_HANDLE(sh,slot) ((sh)*GML_SHADER_HANDLE_STRIDE+(slot))
@@ -297,6 +298,7 @@ static double gml_shader_get_uniform(GmlRender *R, int sh, const char *un){
     }
     if(p->radial_wave) for(int i=0;i<6;i++)
       if(!strcmp(un,p->radial_wave_uniform[i])) return GML_SHADER_HANDLE(sh,44+i);
+    if(p->uv_wave_mode && !strcmp(un,p->uv_wave_uniform)) return GML_SHADER_HANDLE(sh,50);
     if(p->paint){
       if(!strcmp(un,p->paint_resolution_uniform)) return GML_SHADER_HANDLE(sh,12);
       if(!strcmp(un,p->paint_time_uniform))       return GML_SHADER_HANDLE(sh,13);
@@ -356,6 +358,9 @@ static void gml_shader_set_uniform_f(GmlRender *R, int h, GmlVal *a, int n){
     if(index==1 || index==2)
       p->radial_wave_value[index][1]=(float)gml_shader_uniform_component(a,n,1);
     return;
+  }
+  if(p->uv_wave_mode && slot==50){
+    p->uv_wave_time=(float)gml_shader_uniform_component(a,n,0); return;
   }
   if(p->paint){
     if(slot==12){ for(int i=0;i<3;i++) p->paint_resolution[i]=(float)gml_shader_uniform_component(a,n,i); return; }
@@ -752,6 +757,23 @@ static int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlV
     extern long g_vm_frame; long fin=g_vm_frame-vm->room_enter_frame; if(fin<0)fin=0; *out=vreal(l->y+l->vs*fin); return 1; }
   if(!strcmp(nm,"layer_get_hspeed")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); *out=vreal(l?l->hs:0); return 1; }
   if(!strcmp(nm,"layer_get_vspeed")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); *out=vreal(l?l->vs:0); return 1; }
+  if(!strcmp(nm,"layer_shader")||!strcmp(nm,"layer_get_shader")){
+    GmlRtLayer *l=rt_layer_resolve(vm,a,n);
+    /* Compatibility scripts can pass an element handle; resolve it to the owning layer before
+     * applying the same layer-scoped state. */
+    if(!l && n>0 && a[0].t==V_REAL){
+      GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0));
+      if(e) l=gml_rt_layer_find(vm,e->layer);
+    }
+    int slot=(l && vm->rtl)?(int)(l-vm->rtl):-1;
+    if(!strcmp(nm,"layer_get_shader")){
+      double encoded=slot>=0?gml_global_arr(vm,"__gml_layer_shader",slot):0;
+      *out=vreal(encoded!=0?encoded-1:-1); return 1;
+    }
+    if(slot>=0){ int shader=(int)N(a,n,1);
+      gml_set_global_arr(vm,"__gml_layer_shader",slot,shader>=0?shader+1:0); }
+    *out=vreal(0); return 1;
+  }
   if(!strcmp(nm,"layer_force_draw_depth")||!strcmp(nm,"layer_reset_target_all")){
     *out=vreal(0); return 1;
   }
@@ -3534,6 +3556,19 @@ static GmlVal gm_matrix_builtin(GmlRender *R,const char *name,GmlVal *args,int c
     result[13]=-d3_dot(up,eye);
     result[14]=-d3_dot(forward,eye);
     return gm_matrix_write(result,count>9?args[9]:vundef());
+  }
+  if(!strcmp(name,"matrix_build_projection_ortho")){
+    double width=fabs(N(args,count,0)),height=fabs(N(args,count,1));
+    double near_clip=N(args,count,2),far_clip=N(args,count,3);
+    if(width<1e-12) width=1;
+    if(height<1e-12) height=1;
+    if(fabs(far_clip-near_clip)<1e-12) far_clip=near_clip+1;
+    d3_matrix_identity(result);
+    result[0]=2.0/width;
+    result[5]=2.0/height;
+    result[10]=1.0/(far_clip-near_clip);
+    result[14]=-near_clip/(far_clip-near_clip);
+    return gm_matrix_write(result,count>4?args[4]:vundef());
   }
   return vreal(0);
 }
@@ -7134,12 +7169,18 @@ static void gml_camera_field_set(GmlVM *vm,int id,int field,double value){
   gml_set_global_arr(vm,gml_camera_field_name[field],id,value);
 }
 static int gml_camera_alloc(GmlVM *vm){
+  static const double defaults[10]={0,0,0,0,0,-1,-1,-1,0,0};
   int hint=(int)gml_global_num(vm,"__gml_camera_next");
   if(hint<0 || hint>=GML_CAMERA_MAX) hint=0;
   for(int pass=0;pass<GML_CAMERA_MAX;pass++){
     int id=(hint+pass)%GML_CAMERA_MAX;
     if(!gml_camera_live(vm,id)){
       gml_set_global_arr(vm,"__gml_camera_live",id,1);
+      for(int field=GML_CAM_X;field<=GML_CAM_YBORDER;field++)
+        gml_camera_field_set(vm,id,field,defaults[field]);
+      gml_set_global_arr(vm,"__gml_camera_matrix_eye_x",id,0);
+      gml_set_global_arr(vm,"__gml_camera_matrix_eye_y",id,0);
+      gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",id,0);
       gml_set_global_scalar(vm,"__gml_camera_next",(id+1)%GML_CAMERA_MAX);
       return id;
     }
@@ -7150,6 +7191,50 @@ static int gml_view_camera_id(GmlVM *vm,int view){
   if(!vm || view<0 || view>=8) return view;
   int id=(int)gml_global_arr(vm,"view_camera",view);
   return gml_camera_live(vm,id)?id:view;
+}
+
+/* Matrix cameras describe an eye at the centre of an orthographic projection, while the
+ * presentation code consumes the top-left rectangle used by camera_create_view. Preserve the
+ * matrix-only centre in serialized globals and derive the common rectangle after either setter;
+ * either setter may arrive first. */
+static void gml_camera_apply_matrix_rect(GmlVM *vm,int camera){
+  if(!gml_camera_live(vm,camera) ||
+     gml_global_arr(vm,"__gml_camera_matrix_eye_valid",camera)<0.5) return;
+  double width=gml_camera_field(vm,camera,GML_CAM_W,0);
+  double height=gml_camera_field(vm,camera,GML_CAM_H,0);
+  double centre_x=gml_global_arr(vm,"__gml_camera_matrix_eye_x",camera);
+  double centre_y=gml_global_arr(vm,"__gml_camera_matrix_eye_y",camera);
+  gml_camera_field_set(vm,camera,GML_CAM_X,centre_x-(width>0?width*.5:0));
+  gml_camera_field_set(vm,camera,GML_CAM_Y,centre_y-(height>0?height*.5:0));
+}
+
+static int gml_camera_set_view_matrix(GmlVM *vm,int camera,GmlVal matrix_value){
+  double matrix[16];
+  if(!gml_camera_live(vm,camera) || !gm_matrix_read(matrix_value,matrix)) return 0;
+  /* matrix_build_lookat puts the camera axes in the first three rows.  For an orthonormal view,
+   * inverse(rotation) * -translation recovers the world-space eye. */
+  double eye_x=-(matrix[0]*matrix[12]+matrix[1]*matrix[13]+matrix[2]*matrix[14]);
+  double eye_y=-(matrix[4]*matrix[12]+matrix[5]*matrix[13]+matrix[6]*matrix[14]);
+  gml_set_global_arr(vm,"__gml_camera_matrix_eye_x",camera,eye_x);
+  gml_set_global_arr(vm,"__gml_camera_matrix_eye_y",camera,eye_y);
+  gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",camera,1);
+  gml_camera_field_set(vm,camera,GML_CAM_ANGLE,atan2(matrix[4],matrix[0])*180.0/M_PI);
+  gml_camera_apply_matrix_rect(vm,camera);
+  return 1;
+}
+
+static int gml_camera_set_projection_matrix(GmlVM *vm,int camera,GmlVal matrix_value){
+  double matrix[16];
+  if(!gml_camera_live(vm,camera) || !gm_matrix_read(matrix_value,matrix)) return 0;
+  /* Orthographic matrices retain W in 2/m00 and H in 2/m11.  Perspective matrices have m15=0
+   * and do not describe a finite 2-D view rectangle, so they leave the existing dimensions. */
+  if(fabs(matrix[15]-1.0)<1e-8 && fabs(matrix[0])>1e-12 && fabs(matrix[5])>1e-12){
+    gml_camera_field_set(vm,camera,GML_CAM_W,fabs(2.0/matrix[0]));
+    gml_camera_field_set(vm,camera,GML_CAM_H,fabs(2.0/matrix[5]));
+    gml_camera_apply_matrix_rect(vm,camera);
+    return 1;
+  }
+  return 0;
 }
 static void legacy_friction_platform(GmlVM *vm,GmlVal *args,int count){
   (void)args;
@@ -10190,16 +10275,26 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         c,N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3));
       return vreal(c); }
     if(!strcmp(nm,"camera_destroy")){ int c=(int)N(a,n,0);
-      if(c>=0 && c<GML_CAMERA_MAX) gml_set_global_arr(vm,"__gml_camera_live",c,0);
+      if(c>=0 && c<GML_CAMERA_MAX){
+        gml_set_global_arr(vm,"__gml_camera_live",c,0);
+        gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",c,0);
+      }
       return vreal(0); }
     if(!strcmp(nm,"room_set_camera")) return vreal(0);
     if(!strcmp(nm,"camera_set_view_angle")){ int c=(int)N(a,n,0);
       if(gml_camera_live(vm,c)) gml_camera_field_set(vm,c,GML_CAM_ANGLE,N(a,n,1));
       return vreal(0); }
+    if(!strcmp(nm,"camera_set_view_mat")){
+      if(n>1) gml_camera_set_view_matrix(vm,(int)N(a,n,0),a[1]);
+      return vreal(0); }
+    if(!strcmp(nm,"camera_set_proj_mat")){
+      if(n>1) gml_camera_set_projection_matrix(vm,(int)N(a,n,0),a[1]);
+      return vreal(0); }
     if(!strcmp(nm,"camera_apply")||!strcmp(nm,"camera_set_default")) return vreal(0);
     if(!strcmp(nm,"camera_set_view_pos")){ int c=(int)N(a,n,0);
       if(gml_camera_live(vm,c)){
         gml_camera_field_set(vm,c,GML_CAM_X,N(a,n,1)); gml_camera_field_set(vm,c,GML_CAM_Y,N(a,n,2));
+        gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",c,0);
       } else if(c>=0 && c<8){
         gml_set_global_arr(vm,"view_xview",c,N(a,n,1)); gml_set_global_arr(vm,"view_yview",c,N(a,n,2));
       }
@@ -10248,6 +10343,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
           if(src>=0 && src<8 && legacy[field]) fallback=gml_global_arr(vm,legacy[field],src);
           gml_camera_field_set(vm,dst,field,gml_camera_field(vm,src,field,fallback));
         }
+        gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",dst,0);
       }
       return vreal(0); }
     if(!strcmp(nm,"camera_get_view_x")){ int c=(int)N(a,n,0); return vreal(gml_camera_field(vm,c,GML_CAM_X,c>=0&&c<8?gml_global_arr(vm,"view_xview",c):0)); }
@@ -12207,7 +12303,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"texture_debug_messages")) return vreal(0);
   if(!strcmp(nm,"matrix_build_identity")||!strcmp(nm,"matrix_get")||!strcmp(nm,"matrix_set")||
      !strcmp(nm,"matrix_multiply")||!strcmp(nm,"matrix_build")||
-     !strcmp(nm,"matrix_transform_vertex")||!strcmp(nm,"matrix_build_lookat"))
+     !strcmp(nm,"matrix_transform_vertex")||!strcmp(nm,"matrix_build_lookat")||
+     !strcmp(nm,"matrix_build_projection_ortho"))
     return gm_matrix_builtin((GmlRender*)vm->render,nm,a,n);
   /* animation curves: get_channel hands out a tagged handle; evaluate interpolates the knots. */
   if(!strcmp(nm,"animcurve_exists")) return vreal(acrv_curve_ptr(vm,(int)N(a,n,0))!=0);

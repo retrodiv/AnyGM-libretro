@@ -316,6 +316,15 @@ typedef struct {
     int   radial_wave;
     char  radial_wave_uniform[6][32];
     float radial_wave_value[6][2];
+    /* Single-sample UV displacement fragments.  Mode 1 offsets texture x with a cosine of source
+     * v and time; mode 2 uses a sine of vertex y and time, tapered by source u/v.  Constants and
+     * the time handle are parsed from the fragment assignment, so layer shaders can run in the
+     * software atlas path without depending on shader or asset names. */
+    int   uv_wave_mode;
+    char  uv_wave_uniform[32];
+    float uv_wave_time;
+    float uv_wave_uv_factor, uv_wave_time_factor, uv_wave_divisor;
+    float uv_wave_size_x, uv_wave_spatial, uv_wave_amplitude, uv_wave_taper;
     /* Quantized swirling-paint procedural fragment family.  This is recognized from the GLSL's
      * operations and its constants/uniforms are read from SHDR; filled primitives can therefore
      * execute it in the software renderer without baking an asset or shader name into the core. */

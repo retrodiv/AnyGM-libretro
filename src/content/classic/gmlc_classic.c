@@ -131,6 +131,19 @@ static int game_information_record_valid(const uint8_t *data,size_t size){
   return (size_t)text<=size-fixed-4u;
 }
 
+/* The compact help-record layout omits the eight-byte timestamp. Return the insertion point
+ * when its remaining fields are valid so the importer keeps one normalized representation. */
+static int game_information_compact_valid(const uint8_t *data,size_t size,size_t *insert_at){
+  if(!data || size<12) return 0;
+  uint32_t caption=read_u32le(data+8);
+  size_t fixed=12u+(size_t)caption+8u*4u;
+  if(fixed>size || size-fixed<4u) return 0;
+  uint32_t text=read_u32le(data+fixed);
+  if((size_t)text>size-fixed-4u) return 0;
+  if(insert_at) *insert_at=fixed;
+  return 1;
+}
+
 int gmlc_classic_game_information_decode(const GmlcClassicBlob *source,
                                          GmlcClassicBlob *decoded,
                                          char *err,size_t errcap){
@@ -148,6 +161,7 @@ int gmlc_classic_game_information_decode(const GmlcClassicBlob *source,
   }
   const uint8_t *record=source->data;
   size_t record_size=source->size;
+  uint8_t *normalized=NULL;
   int inflated_size=0;
   char *inflated=stbi_zlib_decode_malloc((const char*)source->data,
                                           (int)source->size,&inflated_size);
@@ -161,19 +175,50 @@ int gmlc_classic_game_information_decode(const GmlcClassicBlob *source,
     record_size=(size_t)inflated_size;
   }
   if(!game_information_record_valid(record,record_size)){
-    STBI_FREE(inflated);
-    if(err && errcap) snprintf(err,errcap,"classic project: invalid game-information record");
+    size_t insert_at=0;
+    if(game_information_compact_valid(record,record_size,&insert_at) &&
+       record_size<=SIZE_MAX-8u){
+      normalized=(uint8_t*)malloc(record_size+8u);
+      if(!normalized){
+        STBI_FREE(inflated);
+        if(err && errcap) snprintf(err,errcap,
+                                   "classic project: out of memory normalizing game information");
+        return 0;
+      }
+      memcpy(normalized,record,insert_at);
+      memset(normalized+insert_at,0,8u);
+      memcpy(normalized+insert_at+8u,record+insert_at,record_size-insert_at);
+      record=normalized;
+      record_size+=8u;
+    }
+  }
+  if(!game_information_record_valid(record,record_size)){
+    if(err && errcap){
+      char preview[3*12+1]={0}; size_t shown=record_size<12?record_size:12;
+      uint32_t caption=record_size>=12?read_u32le(record+8):0;
+      size_t tail=12u+(size_t)caption+8u*4u;
+      uint32_t word0=tail+4<=record_size?read_u32le(record+tail):0;
+      uint32_t word4=tail+8<=record_size?read_u32le(record+tail+4):0;
+      uint32_t word8=tail+12<=record_size?read_u32le(record+tail+8):0;
+      for(size_t i=0;i<shown;i++) snprintf(preview+i*3,sizeof(preview)-i*3,"%02x%s",
+                                        record[i],i+1<shown?" ":"");
+      snprintf(err,errcap,
+               "classic project: invalid game-information record (%zu stored, %zu decoded bytes; "
+               "caption=%u tail words=%u/%u/%u; %s%s)",source->size,record_size,caption,
+               word0,word4,word8,preview,record_size>shown?" ...":"");
+    }
+    free(normalized); STBI_FREE(inflated);
     return 0;
   }
   decoded->data=(uint8_t*)malloc(record_size?record_size:1u);
   if(!decoded->data){
-    STBI_FREE(inflated);
+    free(normalized); STBI_FREE(inflated);
     if(err && errcap) snprintf(err,errcap,"classic project: out of memory decoding game information");
     return 0;
   }
   memcpy(decoded->data,record,record_size);
   decoded->size=record_size;
-  STBI_FREE(inflated);
+  free(normalized); STBI_FREE(inflated);
   return 1;
 }
 
@@ -366,9 +411,15 @@ static int reader_doubles(ClassicReader *r, uint32_t count, const char *what){
 
 static int require_payload_end(ClassicReader *r, const char *what){
   if(r->pos == r->size) return 1;
-  if(r->err && r->errcap)
-    snprintf(r->err, r->errcap, "classic project: %s has %zu unexplained trailing bytes",
-             what, r->size - r->pos);
+  if(r->err && r->errcap){
+    char preview[3*8+1]={0};
+    size_t remain=r->size-r->pos, shown=remain<8?remain:8;
+    for(size_t i=0;i<shown;i++) snprintf(preview+i*3,sizeof(preview)-i*3,"%02x%s",
+                                      r->data[r->pos+i],i+1<shown?" ":"");
+    snprintf(r->err, r->errcap,
+             "classic project: %s has %zu unexplained trailing bytes at offset %zu (%s%s)",
+             what,remain,r->pos,preview,remain>shown?" ...":"");
+  }
   return 0;
 }
 
@@ -397,7 +448,9 @@ static int validate_sprite_payload(ClassicReader *r,int executable_layout,uint32
     if(width && height && !reader_blob(r, "sprite BGRA pixels")) return 0;
   }
   if(!executable_layout) return reader_words(r, 8, "sprite collision fields");
-  if(!frames) return 1;
+  /* Executable-layout empty sprites retain the separate-mask flag. Consume it even though
+   * the following mask records are empty, preserving the next resource boundary. */
+  if(!frames) return reader_words(r,1,"empty-sprite collision flag");
   if(resource_version>=810 && !reader_words(r,1,"sprite collision shape")) return 0;
   uint32_t separate;
   if(!reader_u32(r,&separate,"sprite separate collision maps")) return 0;
@@ -1371,6 +1424,15 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
     else valid = require_payload_end(&r, "absent resource slot");
   }
   if(!valid){
+    /* Preserve enough structural context for an unfamiliar layout variant to be diagnosed from
+     * its loader error alone. Resource blocks are independent, so a bare "trailing bytes" error
+     * otherwise gives no indication which layout needs extending. */
+    if(err && errcap){
+      char cause[256];
+      snprintf(cause,sizeof(cause),"%s",err[0]?err:"invalid resource payload");
+      snprintf(err,errcap,"classic project: invalid %s resource '%s' (version %u): %s",
+               gmlc_classic_resource_name(type),slot->name?slot->name:"",slot->version,cause);
+    }
     free(slot->name); slot->name = NULL;
     free(slot->source); slot->source = NULL;
     STBI_FREE(raw);

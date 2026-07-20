@@ -418,6 +418,22 @@ static int expect_manifest(void){
   if(ok) ok=decoded.size==expected_information.size &&
             !memcmp(decoded.data,expected_information.data,expected_information.size);
   free(decoded.data);
+  /* The compact record omits the timestamp. The decoder inserts a neutral value so both
+   * on-disk layouts expose the same normalized structure. */
+  if(ok){
+    Fixture compact=expected_information;
+    size_t caption=12u+get_u32le(compact.data+8)+8u*4u;
+    memmove(compact.data+caption,compact.data+caption+8u,compact.size-caption-8u);
+    compact.size-=8u;
+    GmlcClassicBlob source={compact.data,compact.size};
+    memset(&decoded,0,sizeof(decoded));
+    ok=gmlc_classic_game_information_decode(&source,&decoded,err,sizeof(err)) &&
+       decoded.size==expected_information.size &&
+       !memcmp(decoded.data,expected_information.data,caption) &&
+       !memcmp(decoded.data+caption,"\0\0\0\0\0\0\0\0",8u) &&
+       !memcmp(decoded.data+caption+8u,compact.data+caption,compact.size-caption);
+    free(decoded.data);
+  }
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type)
     if(type != GMLC_CLASSIC_SCRIPT && manifest.existing[type]) ok = 0;
   if(!ok) fprintf(stderr,"manifest assertions failed: %s\n",err);
@@ -468,6 +484,14 @@ static int build_executable_fixture(Fixture *executable){
       fixture_u32(&script,800);
       fixture_string(&script,"exit;");
       fixture_compressed(&decoded,script.data,(int)script.size);
+    } else if(type==GMLC_CLASSIC_SPRITE){
+      Fixture sprite={{0},0};
+      fixture_u32(&decoded,1);
+      fixture_u32(&sprite,1); fixture_string(&sprite,"fixture_empty_sprite");
+      fixture_u32(&sprite,800); fixture_u32(&sprite,0); fixture_u32(&sprite,0);
+      fixture_u32(&sprite,0); /* frames */
+      fixture_u32(&sprite,0); /* compiled empty-sprite collision flag */
+      fixture_compressed(&decoded,sprite.data,(int)sprite.size);
     } else if(type==GMLC_CLASSIC_BACKGROUND){
       Fixture background={{0},0}; const unsigned char bgra[]={3,2,1,255};
       fixture_u32(&decoded,1);
@@ -571,6 +595,7 @@ static int expect_executable_manifest_variant(const Fixture *executable){
        manifest.room_order[0]==0 &&
        manifest.extension_count==1 && !strcmp(manifest.extension_names[0],"fixture_executable_extension") &&
        manifest.existing[GMLC_CLASSIC_SCRIPT]==1 &&
+       manifest.existing[GMLC_CLASSIC_SPRITE]==1 &&
        manifest.existing[GMLC_CLASSIC_BACKGROUND]==1 &&
        manifest.existing[GMLC_CLASSIC_FONT]==1 &&
        manifest.existing[GMLC_CLASSIC_ROOM]==1 &&
