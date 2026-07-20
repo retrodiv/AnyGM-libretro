@@ -39,6 +39,9 @@ int  gml_audio_exists(GmlAudio *a, int target);       /* sound asset or live voi
 int  gml_audio_voice_paused(GmlAudio *a, int snd);   /* 1 if a matching voice exists and is paused */
 void gml_audio_set_master_gain(GmlAudio *a, double gain);
 double gml_audio_get_master_gain(GmlAudio *a);
+void gml_audio_group_gain(GmlAudio *a, int group, double gain, int milliseconds);
+double gml_audio_group_get_gain(GmlAudio *a, int group);
+void gml_audio_group_stop_all(GmlAudio *a, int group);
 void gml_audio_channel_num(GmlAudio *a, int channels);
 int  gml_audio_get_channel_num(GmlAudio *a);
 void gml_audio_sound_gain(GmlAudio *a, int target, double gain);

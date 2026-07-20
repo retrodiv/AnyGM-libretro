@@ -125,6 +125,14 @@ static void parse_code(GmlWin *w){
     uint32_t p=u32(w->data,off+4+i*4);
     w->code[i].name=gml_str_by_ptr(w,u32(w->data,p));
     w->code[i].length=u32(w->data,p+4);
+    /* CODE-v2 child functions share their parent's bytecode span. Their serialized Length is the
+     * complete parent span while Offset selects the child's first instruction, so the callable
+     * suffix ends at Length-Offset rather than extending that full length again. */
+    if(w->bytecode>=15 && p<=w->size && w->size-p>=20){
+      uint32_t code_offset=u32(w->data,p+16);
+      if(code_offset<=w->code[i].length) w->code[i].length-=code_offset;
+      else w->code[i].length=0;
+    }
     if(!gml_bc_code_start(w,p,&w->code[i].start)) w->code[i].start=0;
   }
 }

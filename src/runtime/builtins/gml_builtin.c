@@ -10993,7 +10993,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"audio_group_is_loaded")) return vreal(1);
     if(!strcmp(nm,"audio_group_load_progress")) return vreal(1.0);
     if(!strcmp(nm,"audio_group_load")||!strcmp(nm,"audio_group_unload")) return vreal(1);
-    if(!strcmp(nm,"audio_group_stop_all")) return vreal(0);
+    if(!strcmp(nm,"audio_group_stop_all")){ gml_audio_group_stop_all(AU,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_stop_sound")||!strcmp(nm,"sound_stop")){ gml_audio_stop(AU,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_stop_all")||!strcmp(nm,"sound_stop_all")){ gml_audio_stop_all(AU); return vreal(0); }
     if(!strcmp(nm,"audio_pause_sound")){ gml_audio_pause_sound(AU,(int)N(a,n,0),1); return vreal(0); }
@@ -11064,7 +11064,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"audio_get_type")) return vreal(0);          /* 0 = in-memory sample (all ours are) */
     if(!strcmp(nm,"audio_get_name")) return vstr("");
     if(!strcmp(nm,"audio_master_gain")){ gml_audio_set_master_gain(AU,N(a,n,0)); return vreal(0); }
-    if(!strcmp(nm,"audio_group_set_gain")) return vreal(1);    /* groups not modeled; sounds embedded */
+    if(!strcmp(nm,"audio_group_get_gain")) return vreal(gml_audio_group_get_gain(AU,(int)N(a,n,0)));
+    if(!strcmp(nm,"audio_group_set_gain")){
+      gml_audio_group_gain(AU,(int)N(a,n,0),N(a,n,1),(int)N(a,n,2)); return vreal(0); }
   }
 
   /* ---- paths (path_start / path_end): instance follows a PATH each step ---- */
@@ -12441,7 +12443,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlRender *R=(GmlRender*)vm->render; if(R) R->interp=(N(a,n,enable)!=0.0); return vreal(0); }
   if(!strcmp(nm,"gpu_get_texfilter")||!strcmp(nm,"gpu_get_tex_filter")){
     GmlRender *R=(GmlRender*)vm->render; return vreal(R?R->interp:0); }
-  if(!strcmp(nm,"gpu_set_tex_repeat")||!strcmp(nm,"gpu_set_tex_repeat_ext")) return vreal(0);
+  if(!strcmp(nm,"gpu_set_tex_repeat")||!strcmp(nm,"gpu_set_tex_repeat_ext")||
+     !strcmp(nm,"gpu_set_texrepeat")||!strcmp(nm,"gpu_set_texrepeat_ext")) return vreal(0);
   if(!strcmp(nm,"gpu_set_blendenable")){ GmlRender *R=(GmlRender*)vm->render; if(R) R->alphablend=N(a,n,0)>=0.5; return vreal(0); }
   if(!strcmp(nm,"gpu_get_blendenable")){ GmlRender *R=(GmlRender*)vm->render; return vreal(R?R->alphablend:1); }
   if(!strcmp(nm,"window_get_fullscreen")) return vreal(vm->window_fullscreen);

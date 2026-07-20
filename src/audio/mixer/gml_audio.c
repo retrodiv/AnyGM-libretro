@@ -28,7 +28,7 @@ typedef struct {
   const int16_t *pcm; uint32_t nval; int channels, sample_rate; float vol; double gain, pitch; int16_t *own;
   const uint8_t *ogg; uint32_t ogg_len; int ogg_failed;
   const uint8_t *mp3; uint32_t mp3_len; int mp3_failed;
-  double length_seconds, loop_start_seconds; int length_known;
+  double length_seconds, loop_start_seconds; int length_known, group;
 } GmlSound; /* own!=NULL if a compressed blob was decoded to PCM */
 typedef struct {
   int snd, loop, active, paused, id, emitter;
@@ -46,6 +46,8 @@ struct GmlAudio {
   int next_voice_id;
   int channel_num;     /* requested GM audio_channel_num; playback uses min(requested, GML_MAX_VOICES) */
   double master_gain;
+  double group_gain[GML_MAX_AUDIOGROUPS], group_target[GML_MAX_AUDIOGROUPS];
+  int group_fade_frames[GML_MAX_AUDIOGROUPS];
   GmlFmodBanks *fmod;  /* optional FMOD Studio bank set; see gml_fmod.c */
   /* external audio: audiogroup<N>.dat blobs (streamed music groups) + loose sound files */
   uint8_t *grp_data[GML_MAX_AUDIOGROUPS];
@@ -142,6 +144,7 @@ static int audio_group_load_dat(GmlAudio *a, int g){
 }
 GmlAudio *gml_audio_create(GmlWin *win){
   GmlAudio *a=calloc(1,sizeof(GmlAudio)); a->win=win; a->next_voice_id=1000000; a->channel_num=128; a->master_gain=1.0;
+  for(int g=0;g<GML_MAX_AUDIOGROUPS;g++) a->group_gain[g]=a->group_target[g]=1.0;
   a->fmod=gml_fmod_banks_load(win->content_dir);   /* load an optional FMOD bank set */
   const uint8_t *d=win->data;
   const GmlChunk *sc=gml_chunk(win,"SOND"), *ac=gml_chunk(win,"AUDO");
@@ -155,6 +158,7 @@ GmlAudio *gml_audio_create(GmlWin *win){
     a->snd[i].sample_rate=44100;
     a->snd[i].vol=rdf32(d,p+20);                  /* SOND: vol(+20 f), pitch(+24 f), group(+28 i), audoid(+32 i) */
     int32_t group=(int32_t)rd32(d,p+28);
+    a->snd[i].group=(group>=0 && group<GML_MAX_AUDIOGROUPS)?group:0;
     int32_t audoid=(int32_t)rd32(d,p+32);
     a->snd[i].channels=2;  /* default stereo; adjusted below */
     if(audoid>=0 && group>0 && group<GML_MAX_AUDIOGROUPS && audio_group_load_dat(a,group)){
@@ -450,6 +454,28 @@ void gml_audio_set_master_gain(GmlAudio *a, double gain){
 double gml_audio_get_master_gain(GmlAudio *a){
   return a ? a->master_gain : 1.0;
 }
+void gml_audio_group_gain(GmlAudio *a, int group, double gain, int milliseconds){
+  if(!a || group<0 || group>=GML_MAX_AUDIOGROUPS) return;
+  if(!isfinite(gain) || gain<0.0) gain=0.0;
+  a->group_target[group]=gain;
+  if(milliseconds<=0){
+    a->group_gain[group]=gain;
+    a->group_fade_frames[group]=0;
+    return;
+  }
+  double frames=ceil((double)milliseconds*44.1);
+  a->group_fade_frames[group]=frames>(double)INT32_MAX?INT32_MAX:(int)frames;
+}
+double gml_audio_group_get_gain(GmlAudio *a, int group){
+  return a && group>=0 && group<GML_MAX_AUDIOGROUPS ? a->group_gain[group] : 1.0;
+}
+void gml_audio_group_stop_all(GmlAudio *a, int group){
+  if(!a || group<0 || group>=GML_MAX_AUDIOGROUPS) return;
+  for(int i=0;i<GML_MAX_VOICES;i++){
+    GmlVoice *v=&a->voice[i];
+    if(v->active && v->snd>=0 && v->snd<a->n_snd && a->snd[v->snd].group==group) v->active=0;
+  }
+}
 void gml_audio_channel_num(GmlAudio *a, int channels){
   if(!a) return;
   if(channels<0) channels=0;
@@ -601,6 +627,10 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
     if(!audio_voice_prepare(a,vo)) continue;
     GmlSound *s=&a->snd[vo->snd];
     double vol=s->vol*vo->gain*vo->spatial_gain*a->master_gain; int ch=s->channels;
+    int group=s->group>=0 && s->group<GML_MAX_AUDIOGROUPS?s->group:0;
+    double group_start=a->group_gain[group], group_target=a->group_target[group];
+    int group_remaining=a->group_fade_frames[group];
+    double group_step=group_remaining>0?(group_target-group_start)/(double)group_remaining:0.0;
     double pan=vo->pan, left_pan=pan>0.0?1.0-pan:1.0, right_pan=pan<0.0?1.0+pan:1.0;
     double rate_scale=(double)(s->sample_rate>0?s->sample_rate:44100)/44100.0;
     for(int f=0;f<frames;f++){
@@ -624,9 +654,17 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
         l=r=pcm_lerp(s->pcm,s->nval,i0,i0+1,frac);
         vo->pos+=vo->pitch*rate_scale;
       }
-      mix[f*2]   += (int32_t)lrint(l*vol*left_pan);
-      mix[f*2+1] += (int32_t)lrint(r*vol*right_pan);
+      double group_level=group_remaining>f?group_start+group_step*(double)f:group_target;
+      mix[f*2]   += (int32_t)lrint(l*vol*group_level*left_pan);
+      mix[f*2+1] += (int32_t)lrint(r*vol*group_level*right_pan);
     }
+  }
+  for(int g=0;g<GML_MAX_AUDIOGROUPS;g++) if(a->group_fade_frames[g]>0){
+    int advance=frames<a->group_fade_frames[g]?frames:a->group_fade_frames[g];
+    double step=(a->group_target[g]-a->group_gain[g])/(double)a->group_fade_frames[g];
+    a->group_gain[g]+=step*(double)advance;
+    a->group_fade_frames[g]-=advance;
+    if(!a->group_fade_frames[g]) a->group_gain[g]=a->group_target[g];
   }
   for(int i=0;i<nvals;i++)
     out[i]=audio_soft_clip((int32_t)lrint((double)mix[i]*GML_AUDIO_BUS_GAIN));
@@ -660,7 +698,7 @@ static uint32_t ar_u32(AudR *s){ uint32_t v=0; ar_raw(s,&v,sizeof(v)); return v;
 static double ar_d(AudR *s){ double v=0; ar_raw(s,&v,sizeof(v)); return v; }
 
 static void audio_state_write(AudW *s, GmlAudio *a){
-  aw_u32(s,0x36445541u); /* AUD6: loop points and emitter/spatial voice state */
+  aw_u32(s,0x37445541u); /* AUD7: audio-group gain/fade state */
   aw_i32(s,a?a->paused:0);
   aw_i32(s,a?a->next_voice_id:1000000);
   aw_d(s,a?a->master_gain:1.0);
@@ -675,6 +713,11 @@ static void audio_state_write(AudW *s, GmlAudio *a){
   if(a) for(int i=0;i<a->n_snd;i++){
     aw_d(s,a->snd[i].gain); aw_d(s,a->snd[i].pitch); aw_d(s,a->snd[i].loop_start_seconds);
   }
+  aw_i32(s,GML_MAX_AUDIOGROUPS);
+  for(int g=0;g<GML_MAX_AUDIOGROUPS;g++){
+    aw_d(s,a?a->group_gain[g]:1.0); aw_d(s,a?a->group_target[g]:1.0);
+    aw_i32(s,a?a->group_fade_frames[g]:0);
+  }
 }
 size_t gml_audio_state_size(GmlAudio *a){ AudW s={0}; s.ok=1; audio_state_write(&s,a); return s.pos; }
 int gml_audio_state_save(GmlAudio *a, void *data, size_t len, size_t *written){
@@ -682,9 +725,9 @@ int gml_audio_state_save(GmlAudio *a, void *data, size_t len, size_t *written){
 }
 int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used){
   AudR s={(const uint8_t*)data,len,0,1};
-  uint32_t magic=ar_u32(&s); if((magic!=0x31445541u && magic!=0x32445541u && magic!=0x33445541u && magic!=0x34445541u && magic!=0x35445541u && magic!=0x36445541u) || !s.ok) return 0;
+  uint32_t magic=ar_u32(&s); if((magic!=0x31445541u && magic!=0x32445541u && magic!=0x33445541u && magic!=0x34445541u && magic!=0x35445541u && magic!=0x36445541u && magic!=0x37445541u) || !s.ok) return 0;
   int v2=magic>=0x32445541u, v3=magic>=0x33445541u, v4=magic>=0x34445541u;
-  int v5=magic>=0x35445541u, v6=magic>=0x36445541u;
+  int v5=magic>=0x35445541u, v6=magic>=0x36445541u, v7=magic>=0x37445541u;
   int paused=ar_i32(&s);
   int next_voice_id=v2?ar_i32(&s):1000000;
   double master_gain=v3?ar_d(&s):1.0;
@@ -731,11 +774,31 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
       }
     }
   }
+  double group_gain[GML_MAX_AUDIOGROUPS], group_target[GML_MAX_AUDIOGROUPS];
+  int group_fade_frames[GML_MAX_AUDIOGROUPS];
+  for(int g=0;g<GML_MAX_AUDIOGROUPS;g++){
+    group_gain[g]=group_target[g]=1.0; group_fade_frames[g]=0;
+  }
+  if(v7){
+    int stored=ar_i32(&s);
+    if(stored<0 || stored>4096){ free(snd_gain); free(snd_pitch); free(snd_loop); return 0; }
+    for(int g=0;g<stored;g++){
+      double gain=ar_d(&s), target=ar_d(&s); int remaining=ar_i32(&s);
+      if(g<GML_MAX_AUDIOGROUPS){
+        group_gain[g]=isfinite(gain)&&gain>=0.0?gain:1.0;
+        group_target[g]=isfinite(target)&&target>=0.0?target:group_gain[g];
+        group_fade_frames[g]=remaining>0?remaining:0;
+      }
+    }
+  }
   if(!s.ok){ free(snd_gain); free(snd_pitch); free(snd_loop); return 0; }
   if(master_gain<0) master_gain=1.0;
   if(channel_num<0) channel_num=0;
   if(a){
     a->paused=paused!=0; a->next_voice_id=next_voice_id<1000000?1000000:next_voice_id; a->master_gain=master_gain; a->channel_num=channel_num; memcpy(a->voice,tmp,sizeof(tmp));
+    memcpy(a->group_gain,group_gain,sizeof group_gain);
+    memcpy(a->group_target,group_target,sizeof group_target);
+    memcpy(a->group_fade_frames,group_fade_frames,sizeof group_fade_frames);
     for(int i=0;i<a->n_snd;i++){ a->snd[i].gain=snd_gain?snd_gain[i]:1.0;
       a->snd[i].pitch=snd_pitch?snd_pitch[i]:1.0; a->snd[i].loop_start_seconds=snd_loop?snd_loop[i]:0.0; }
   }

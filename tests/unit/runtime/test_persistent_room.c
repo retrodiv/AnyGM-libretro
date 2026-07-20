@@ -79,6 +79,9 @@ static int expect_hash_layer_gpu_gap_closure(void){
   GmlVal texfilter_get=gml_builtin_call(&vm,"gpu_get_texfilter",NULL,0);
   int filter_ok=render.interp==1 && texfilter_get.t==V_REAL && texfilter_get.d==1;
   ok=ok && filter_ok;
+  GmlVal texrepeat[2]={vreal(17),vreal(1)};
+  GmlVal texrepeat_result=gml_builtin_call(&vm,"gpu_set_texrepeat",texrepeat,2);
+  ok=ok && texrepeat_result.t==V_REAL && texrepeat_result.d==0;
 
   GmlVal create_view[10]={vreal(12),vreal(34),vreal(320),vreal(180),vreal(7),
                           vreal(100042),vreal(5),vreal(6),vreal(9),vreal(10)};
@@ -285,6 +288,31 @@ static int expect_audio_group_paths(void){
   ok=ok && gml_audio_group_file_path(&win,1,path,sizeof path) &&
      !strcmp(path,"/bundle/groups/music.dat");
   if(!ok) fprintf(stderr,"audio-group path layout mismatch: %s\n",path);
+  return ok;
+}
+
+static int expect_audio_group_gain(void){
+  GmlWin win={0};
+  GmlAudio *audio=gml_audio_create(&win);
+  if(!audio) return 0;
+  gml_audio_group_gain(audio,1,0.25,0);
+  int ok=fabs(gml_audio_group_get_gain(audio,1)-0.25)<1e-12;
+  gml_audio_group_gain(audio,1,0.75,10);
+  int16_t mixed[882];
+  gml_audio_mix(audio,mixed,220);
+  double middle=gml_audio_group_get_gain(audio,1);
+  gml_audio_mix(audio,mixed,221);
+  ok=ok && middle>0.49 && middle<0.51 && fabs(gml_audio_group_get_gain(audio,1)-0.75)<1e-12;
+
+  size_t size=gml_audio_state_size(audio),written=0,used=0;
+  void *state=malloc(size?size:1);
+  ok=ok && state && gml_audio_state_save(audio,state,size,&written) && written==size;
+  gml_audio_group_gain(audio,1,1.0,0);
+  ok=ok && gml_audio_state_load(audio,state,size,&used) && used==size &&
+     fabs(gml_audio_group_get_gain(audio,1)-0.75)<1e-12;
+  free(state);
+  gml_audio_free(audio);
+  if(!ok) fprintf(stderr,"audio-group gain/fade/state fixture failed\n");
   return ok;
 }
 
@@ -550,6 +578,7 @@ int main(void){
   if(!expect_ds_list_text_roundtrip()) return 1;
   if(!expect_ds_priority_lookup_mutation()) return 1;
   if(!expect_audio_group_paths()) return 1;
+  if(!expect_audio_group_gain()) return 1;
   {
     GmlSprite sprite={0}; GmlRender render={0};
     render.spr=&sprite; render.n_spr=1;
