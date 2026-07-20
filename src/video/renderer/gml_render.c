@@ -1573,6 +1573,13 @@ static void parse_font(GmlRender *r){
       if(best>=0) goff=(uint32_t)best;
       else if(first_ok>=0) goff=(uint32_t)first_ok;
     }
+    /* Bytecode 17 added AscenderOffset immediately before the glyph array.  Older records put
+     * the array at +40, while every later layout retains the offset at +40 and moves the array
+     * farther right as more metrics are appended. */
+    if(goff>40){
+      int32_t ascender=(int32_t)u32(d,p+40);
+      if(ascender>-32768 && ascender<32768) f->ascender_offset=(int)ascender;
+    }
     uint32_t gc=u32(d,p+goff);
     if(gc>100000) gc=0;                             /* guard */
     f->glyphs=calloc(gc?gc:1,sizeof(GmlGlyph));
@@ -1597,8 +1604,9 @@ static void parse_font(GmlRender *r){
     /* For floating-point EmSize, increase line height to the tallest glyph when needed. */
     if(em_is_float && mh>f->line_height) f->line_height=mh;
     if(getenv("GML_LOG_FONT"))
-      fprintf(stderr,"[font] real id=%d name=%s em=%d atlas=%d glyphs=%d\n",
-        i, gml_str_by_ptr(r->win,u32(d,p)), f->line_height, f->atlas, f->n_glyphs);
+      fprintf(stderr,"[font] real id=%d name=%s em=%d ascender_offset=%d atlas=%d glyphs=%d\n",
+        i, gml_str_by_ptr(r->win,u32(d,p)), f->line_height, f->ascender_offset,
+        f->atlas, f->n_glyphs);
     if(getenv("GML_LOG_FONT_GLYPHS"))
       for(int ch=32;ch<127;ch++){
         int gi=f->glyph_by_char[ch];
@@ -1770,7 +1778,7 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
       GmlGlyph *g=real_glyph(f,cp);
       if(g && g->w>0 && g->h>0){
         GmlTpag gt={ .sx=g->sx,.sy=g->sy,.sw=g->w,.sh=g->h,.tx=0,.ty=0,.bw=g->w,.bh=g->h,.atlas=f->atlas };
-        double dx=(cx+g->offset)*xs, dy=base_y*ys;
+        double dx=(cx+g->offset)*xs, dy=(base_y-f->ascender_offset)*ys;
         double glyph_x=use_rot?x+dx*ca+dy*sa:x+dx;
         double glyph_y=use_rot?y-dx*sa+dy*ca:y+dy;
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;

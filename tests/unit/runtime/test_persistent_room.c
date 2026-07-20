@@ -92,6 +92,17 @@ static int expect_hash_layer_gpu_gap_closure(void){
   int surface_alpha_ok=target[0]==0xFF102030u && target[1]==0xFFFF0000u;
   ok=ok && surface_alpha_ok;
   render.shader_pal=NULL; render.n_shader_pal=0; render.app_surface=NULL;
+
+  /* Object setters mutate the asset default for future instances, not instances already alive. */
+  GmlObject object={0}; object.visible=1;
+  vm.objects=&object; vm.n_objects=1; vm.inst[0].visible=1;
+  GmlVal object_visible_args[2]={vreal(0),vreal(0)};
+  (void)gml_builtin_call(&vm,"object_set_visible",object_visible_args,2);
+  GmlVal object_id=vreal(0);
+  GmlVal object_visible=gml_builtin_call(&vm,"object_get_visible",&object_id,1);
+  ok=ok && object.visible==0 && vm.inst[0].visible==1 &&
+     object_visible.t==V_REAL && object_visible.d==0;
+  vm.objects=NULL; vm.n_objects=0;
   free(vm.rtl); free(vm.inst);
   if(!ok) fprintf(stderr,"hash/layer/GPU gap-closure fixture failed (filter=%d interp=%d get=%.0f surface=%d pixels=%08X,%08X)\n",
     filter_ok,render.interp,texfilter_get.t==V_REAL?texfilter_get.d:-1.0,
@@ -496,6 +507,27 @@ int main(void){
     }
     if(min_y!=6 || max_y!=13){
       fprintf(stderr,"real-font centred extent mismatch: y=%d..%d\n",min_y,max_y); return 1;
+    }
+  }
+  {
+    /* Modern FONT records place their glyph cell below the authored text origin by a stored
+     * ascender offset.  The offset is part of the font metric, including for top alignment. */
+    GmlRender render={0}; GmlGlyph glyph={0}; GmlAtlas atlas={0};
+    uint32_t framebuffer[8*8]={0}; uint8_t pixels[4]={255,255,255,255};
+    render.fbw=render.fbh=8; render.fb=render.base_fb=framebuffer;
+    render.n_fonts=1; render.n_atlas=1; render.atlas=&atlas;
+    render.font=0; render.color=0xFFFFFF; render.alpha=1;
+    render.alphablend=1; render.software_overlay=1;
+    atlas.px=pixels; atlas.w=atlas.h=1; atlas.decode_attempted=1;
+    memset(render.fonts[0].glyph_by_char,0xFF,sizeof(render.fonts[0].glyph_by_char));
+    render.fonts[0].real=1; render.fonts[0].atlas=0; render.fonts[0].line_height=1;
+    render.fonts[0].align_height=1; render.fonts[0].ascender_offset=2;
+    render.fonts[0].glyphs=&glyph; render.fonts[0].n_glyphs=1;
+    render.fonts[0].glyphs_sorted=1; render.fonts[0].glyph_by_char['A']=0;
+    glyph.ch='A'; glyph.w=glyph.h=glyph.shift=1;
+    gml_draw_text(&render,3,4,"A");
+    if(!(framebuffer[2*8+3]&0xFFFFFFu) || (framebuffer[4*8+3]&0xFFFFFFu)){
+      fprintf(stderr,"real-font ascender offset was not applied to the text origin\n"); return 1;
     }
   }
   {

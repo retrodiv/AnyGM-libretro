@@ -88,6 +88,7 @@ typedef struct {
   /* real FONT-chunk font: glyph sub-rects blitted from the data.win atlas at runtime
    * (no glyph data is bundled; parsed from the user-supplied data.win like sprites). */
   int real, atlas, line_height;                                  /* real=1; atlas index; line advance */
+  int ascender_offset;                                           /* FONT vertical origin above the glyph cell */
   int align_height;                                              /* visible cell extent for valign */
   int runtime_owned;                                             /* font + atlas created after load */
   int subpixel;                                                   /* per-channel GDI coverage for classic info */

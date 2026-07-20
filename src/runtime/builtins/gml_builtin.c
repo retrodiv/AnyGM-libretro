@@ -9611,6 +9611,11 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal((ob>=0&&ob<vm->n_objects)?vm->objects[ob].sprite_index:-1); }
   if(!strcmp(nm,"object_get_mask")){ int ob=(int)N(a,n,0);
     return vreal((ob>=0&&ob<vm->n_objects)?vm->objects[ob].mask_index:-1); }
+  if(!strcmp(nm,"object_get_visible")){ int ob=(int)N(a,n,0);
+    return vreal((ob>=0&&ob<vm->n_objects)?vm->objects[ob].visible:0); }
+  if(!strcmp(nm,"object_set_visible")){ int ob=(int)N(a,n,0);
+    if(ob>=0&&ob<vm->n_objects) vm->objects[ob].visible=N(a,n,1)!=0.0;
+    return vreal(0); }
   if(!strcmp(nm,"object_is_ancestor")){ int obj=(int)N(a,n,0), anc=(int)N(a,n,1);
     for(int p=obj; p>=0 && p<vm->n_objects; p=vm->objects[p].parent) if(p==anc) return vreal(1);
     return vreal(0); }
