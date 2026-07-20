@@ -11,6 +11,27 @@
 #include <time.h>
 #include <math.h>
 #include <limits.h>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
+static double vm_profile_now_ms(void){
+#ifdef _WIN32
+  static LARGE_INTEGER frequency;
+  static int ready;
+  LARGE_INTEGER now;
+  if(!ready){ QueryPerformanceFrequency(&frequency); ready=1; }
+  QueryPerformanceCounter(&now);
+  return frequency.QuadPart ? (double)now.QuadPart*1000.0/(double)frequency.QuadPart : 0.0;
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC,&ts);
+  return ts.tv_sec*1000.0+ts.tv_nsec/1e6;
+#endif
+}
 
 static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o]|(uint32_t)d[o+1]<<8|(uint32_t)d[o+2]<<16|(uint32_t)d[o+3]<<24;
@@ -45,6 +66,7 @@ static const char *g_cur_code_name;
 static GmlVM *g_cur_vm;
 static int inst_is_struct_ref(const GmlInstance *in);
 static void method_cache_invalidate(GmlInstance *in, const char *nm);
+static GmlVal *struct_field_get_h(GmlVM *vm, GmlInstance *in, const char *nm, uint32_t nh);
 
 /* ---------------- var map (key = interned name pointer) ---------------- */
 /* hash/compare keys by CONTENT (FNV-1a + strcmp), not pointer identity: VM names come from
@@ -53,7 +75,8 @@ static void method_cache_invalidate(GmlInstance *in, const char *nm);
 static unsigned strhash(const char *p){ unsigned h=2166136261u; if(!p) p=""; while(*p){ h^=(unsigned char)*p++; h*=16777619u; } return h; }
 enum {
   GML_HASH_METHOD_FN   = 0x35836763u,
-  GML_HASH_METHOD_SELF = 0x61c0232du
+  GML_HASH_METHOD_SELF = 0x61c0232du,
+  GML_HASH_CONSTRUCTOR = 0x44f7d3e1u
 };
 static void varmap_grow(GmlVarMap *m){
   int nc = m->cap? m->cap*2 : 16;
@@ -656,6 +679,9 @@ static const char *const g_special_var_names[]={
   "current_time","current_second","current_minute","current_hour","current_day","current_weekday",
   "current_month","current_year","os_type","os_windows","os_uwp","os_xboxone","os_ps3","os_ps4","os_psvita",
   "os_macosx","os_linux","os_ios","os_android","os_unknown","os_switch_operating_system","room_width",
+  "time_source_global","time_source_game","time_source_units_seconds","time_source_units_frames",
+  "time_source_expire_nearest","time_source_expire_after","time_source_state_initial",
+  "time_source_state_active","time_source_state_paused","time_source_state_stopped",
   "room_height","instance_count","health","lives","score","async_load","id","object_index",
   "image_number","sprite_width","sprite_height","sprite_xoffset","sprite_yoffset","image_single",
   "x","y","xprevious","yprevious","xstart","ystart","sprite_index","mask_index","image_index",
@@ -692,6 +718,14 @@ static int var_name_maybe_special(const char *name, uint32_t nh){
 static int is_room_global_array(const char *n);
 static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   GmlVal out;
+  if(inst==IT_STATIC){
+    int ci=vm?vm->cur_code_index:-1;
+    if(ci>=0 && ci<vm->code_static_count && vm->code_static){
+      GmlVal *p=gml_varmap_get_h(&vm->code_static[ci],name,nh);
+      return p?*p:vundef();
+    }
+    return vundef();
+  }
   /* GM6/7/8 variables retain their old scalar-at-index-zero behaviour even when the same
    * built-in also exposes indexed view/background slots. Classic source commonly reads
    * `view_wview` with no brackets; returning the array value coerces to zero and can pin every
@@ -708,7 +742,11 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!var_name_maybe_special(name,nh)){
     if(inst==IT_GLOBAL){ GmlVal *p=gml_varmap_get_h(&vm->globals,name,nh); return p?*p:vreal(0); }
     GmlInstance *self=var_target(vm,inst);
-    if(self){ GmlVal *p=gml_varmap_get_h(&self->vars,name,nh); if(p) return *p; }
+    if(self){
+      GmlVal *p=inst_is_struct_ref(self)?struct_field_get_h(vm,self,name,nh)
+                                             :gml_varmap_get_h(&self->vars,name,nh);
+      if(p) return *p;
+    }
     return vreal(0);
   }
   if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
@@ -743,6 +781,12 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!strcmp(name,"os_ps3")) return vreal(16);
   if(!strcmp(name,"os_uwp")) return vreal(18);
   if(!strcmp(name,"os_unknown")) return vreal(-1);
+  if(!strcmp(name,"time_source_global") || !strcmp(name,"time_source_units_seconds") ||
+     !strcmp(name,"time_source_expire_nearest") || !strcmp(name,"time_source_state_initial")) return vreal(0);
+  if(!strcmp(name,"time_source_game") || !strcmp(name,"time_source_units_frames") ||
+     !strcmp(name,"time_source_expire_after") || !strcmp(name,"time_source_state_active")) return vreal(1);
+  if(!strcmp(name,"time_source_state_paused")) return vreal(2);
+  if(!strcmp(name,"time_source_state_stopped")) return vreal(3);
   if(!strcmp(name,"view_current")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
   if(!strcmp(name,"room_persistent")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
   if(!strcmp(name,"event_type")) return vreal(vm->event_type);
@@ -769,7 +813,7 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   GmlInstance *self = var_target(vm,inst);
   if(self){
     if(inst_is_struct_ref(self)){
-      GmlVal *p=gml_varmap_get_h(&self->vars,name,nh);
+      GmlVal *p=struct_field_get_h(vm,self,name,nh);
       return p?*p:vreal(0);
     }
     /* image_number = frame count of the current sprite (needs the renderer) */
@@ -800,6 +844,12 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
 static int is_object_scope(GmlVM *vm, int inst_t){ return inst_t>=0 && inst_t<vm->n_objects; }
 static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal v){
   gml_arr_mark_escaped(v);   /* target is a global/instance slot: outlives the current scope */
+  if(inst==IT_STATIC){
+    int ci=vm?vm->cur_code_index:-1;
+    if(ci>=0 && ci<vm->code_static_count && vm->code_static)
+      *gml_varmap_put_h(&vm->code_static[ci],name,nh)=v;
+    return;
+  }
   { static const char *dv=NULL; static int dv_init=0;
     if(!dv_init){ dv=getenv("GML_DBG_VARSET"); dv_init=1; }
     if(dv && name && !strcmp(name,dv)){ extern long g_vm_frame;
@@ -882,6 +932,10 @@ static GmlInstance *resolve_inst(GmlVM *vm, int inst_t){
 static GmlVarMap *scope_map(GmlVM *vm, GmlVarMap *locals, int inst_t){
   if(inst_t==IT_GLOBAL) return &vm->globals;
   if(inst_t==IT_LOCAL)  return locals;
+  if(inst_t==IT_STATIC){
+    int ci=vm?vm->cur_code_index:-1;
+    return (ci>=0 && ci<vm->code_static_count && vm->code_static)?&vm->code_static[ci]:NULL;
+  }
   GmlInstance *s=resolve_inst(vm,inst_t);
   return s? &s->vars : NULL;
 }
@@ -1034,6 +1088,10 @@ static GmlVal array_get_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *
   }
   GmlVarMap *m=is_room_global_array(nm)? &vm->globals : scope_map(vm,locals,inst_t); if(!m) return vreal(0);
   GmlVal *slot=gml_varmap_get_h(m,nm,nh);
+  if(!slot && !is_room_global_array(nm) && inst_t!=IT_GLOBAL && inst_t!=IT_LOCAL && inst_t!=IT_STATIC){
+    GmlInstance *owner=resolve_inst(vm,inst_t);
+    if(inst_is_struct_ref(owner)) slot=struct_field_get_h(vm,owner,nm,nh);
+  }
   if(!slot||slot->t!=V_ARR) return vreal(0);
   GmlArr *A=slot->arr;
   /* defend against a corrupt/garbage GmlArr (e.g. a cross-version savestate) — never deref blindly */
@@ -1042,13 +1100,13 @@ static GmlVal array_get_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *
   return (idx>=0 && idx<A->len)? A->data[idx] : vreal(0);
 }
 static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, uint32_t nh, int idx){
-  (void)vm;
   if(!s) return vreal(0);
   if(s->obj>=0 && !strcmp(nm,"alarm"))
     return vreal((idx>=0 && idx<GML_ALARMS)? s->alarm[idx] : -1);
   GmlVal out;
   if(!inst_is_struct_ref(s) && inst_builtin_get(s,nm,&out)) return out;
-  GmlVal *slot=gml_varmap_get_h(&s->vars,nm,nh);
+  GmlVal *slot=inst_is_struct_ref(s)?struct_field_get_h(vm,s,nm,nh)
+                                         :gml_varmap_get_h(&s->vars,nm,nh);
   if(!slot || slot->t!=V_ARR || !slot->arr) return vreal(0);
   GmlArr *A=slot->arr;
   if(!A || !A->data || A->len<0 || A->cap<A->len || A->cap>16000000) return vreal(0);
@@ -1073,6 +1131,17 @@ static void array_set_inst_field_h(GmlVM *vm,GmlInstance *s,const char *nm,uint3
 }
 static int inst_is_struct_ref(const GmlInstance *in){
   return in && GML_IS_STRUCT_ID((double)in->id);
+}
+/* Constructor statics form the shared prototype of every struct produced by that constructor.
+ * Instance fields shadow them; a constructor-less data struct has no prototype fallback. */
+static GmlVal *struct_field_get_h(GmlVM *vm, GmlInstance *in, const char *nm, uint32_t nh){
+  if(!vm || !inst_is_struct_ref(in) || !nm) return NULL;
+  GmlVal *own=gml_varmap_get_h(&in->vars,nm,nh);
+  if(own) return own;
+  GmlVal *constructor=gml_varmap_get_h(&in->vars,"__ctor",GML_HASH_CONSTRUCTOR);
+  int ci=(constructor && constructor->t==V_REAL)?(int)constructor->d:-1;
+  if(ci<0 || ci>=vm->code_static_count || !vm->code_static) return NULL;
+  return gml_varmap_get_h(&vm->code_static[ci],nm,nh);
 }
 static int method_cache_key(const char *nm){
   return nm && (!strcmp(nm,"__fn") || !strcmp(nm,"__self"));
@@ -1113,7 +1182,7 @@ static int method_struct_info(GmlInstance *bm, int *fci, GmlVal *selfv, int *hav
 /* read/write any var on a specific instance (builtin or custom) */
 static GmlVal inst_get_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t nh){
   if(inst_is_struct_ref(t)){
-    GmlVal *p=gml_varmap_get_h(&t->vars,nm,nh);
+    GmlVal *p=struct_field_get_h(vm,t,nm,nh);
     return p?*p:vreal(0);
   }
   GmlVal o; if(inst_builtin_get(t,nm,&o)) return o;
@@ -1229,9 +1298,10 @@ void gml_struct_gc(GmlVM *vm){
   if(vm->n_structs<=0) return;
   for(int i=0;i<vm->n_structs;i++) if(vm->structs[i]) vm->structs[i]->marked=0;
   GmlInstance **wl=NULL; int wn=0, wcap=0;
-  /* roots: globals, every instance (active AND deactivated — the latter can be reactivated),
-   * the argument register, and all GmlVal-bearing ds containers (ds_map key+val, ds_list, ds_grid). */
+  /* roots: globals, function statics, every instance (active AND deactivated — the latter can be
+   * reactivated), the argument register, and all GmlVal-bearing ds containers. */
   gc_scan_vm(vm,&vm->globals,&wl,&wn,&wcap);
+  for(int i=0;i<vm->code_static_count;i++) gc_scan_vm(vm,&vm->code_static[i],&wl,&wn,&wcap);
   for(int i=0;i<vm->inst_count;i++) gc_scan_vm(vm,&vm->inst[i].vars,&wl,&wn,&wcap);
   for(int i=0;i<16;i++) gc_scan_val(vm,vm->script_args[i],&wl,&wn,&wcap);
   for(int i=0;i<GML_DS_MAP_MAX;i++) if(vm->ds_map[i].live){ GmlDSMap *m=&vm->ds_map[i];
@@ -1240,6 +1310,10 @@ void gml_struct_gc(GmlVM *vm){
     for(int j=0;j<l->len;j++) gc_scan_val(vm,l->item[j],&wl,&wn,&wcap); }
   for(int i=0;i<GML_DS_GRID_MAX;i++) if(vm->ds_grid[i].live){ GmlDSGrid *g=&vm->ds_grid[i];
     long cells=(long)g->w*g->h; for(long j=0;j<cells;j++) gc_scan_val(vm,g->cell[j],&wl,&wn,&wcap); }
+  for(int i=0;i<GML_TIME_SOURCE_MAX;i++) if(vm->time_source[i].live){
+    gc_scan_val(vm,vm->time_source[i].callback,&wl,&wn,&wcap);
+    gc_scan_val(vm,vm->time_source[i].args,&wl,&wn,&wcap);
+  }
   /* transitive: a live struct's own fields keep other structs/arrays alive */
   while(wn>0){ GmlInstance *s=wl[--wn]; gc_scan_vm(vm,&s->vars,&wl,&wn,&wcap); }
   /* sweep: free the unmarked, recycle their slots. varmap_free_ex(,1) skips escaped (aliased) arrays,
@@ -1264,7 +1338,7 @@ static GmlInstance *vm_inst_from_ref(GmlVM *vm, GmlVal iv){
 }
 static int inst_has_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t nh){
   if(!t || !nm) return 0;
-  if(inst_is_struct_ref(t)) return gml_varmap_get_h(&t->vars,nm,nh)!=NULL;
+  if(inst_is_struct_ref(t)) return struct_field_get_h(vm,t,nm,nh)!=NULL;
   GmlVal o;
   if(inst_builtin_get(t,nm,&o)) return 1;
   if(!strcmp(nm,"image_number")) return 1;
@@ -1905,11 +1979,7 @@ static int g_codeprof_n;
 static long g_codeprof_last_frame=-1;
 static int codeprof_on(void){ static int on=-1; if(on<0) on=getenv("GML_PROFILE_CODE")!=NULL; return on; }
 static double codeprof_now_ms(void){
-#ifndef _WIN32
-  struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts); return ts.tv_sec*1000.0+ts.tv_nsec/1e6;
-#else
-  return 0;
-#endif
+  return vm_profile_now_ms();
 }
 static void codeprof_add(GmlWin *w, int ci, double ms, uint64_t insn){
   if(!codeprof_on() || !w || ci<0 || ci>=w->n_code) return;
@@ -2206,6 +2276,14 @@ static int classic_extension_script_code(GmlVM *vm,const char *name){
 static int g_run_depth=0;   /* C-recursion guard: gml_vm_run_code re-enters via OP_CALL/OP_CALLV */
 static const char *g_recur_chain[300]; static int g_recur_n;   /* names along the active call chain (debug) */
 
+static int with_newest_first_cmp(const void *aa, const void *bb){
+  const GmlInstance *a=*(GmlInstance *const *)aa;
+  const GmlInstance *b=*(GmlInstance *const *)bb;
+  if(a->creation_seq<b->creation_seq) return 1;
+  if(a->creation_seq>b->creation_seq) return -1;
+  return a->id<b->id ? 1 : a->id>b->id ? -1 : 0;
+}
+
 GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
                        GmlVal *args, int n_args){
   if(ci<0||ci>=vm->win->n_code) return vreal(0);
@@ -2226,11 +2304,13 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   GmlWin *w=vm->win; const uint8_t *d=w->data;
   uint32_t start=w->code[ci].start, end=start+w->code[ci].length;
   GmlInstance *save_self=vm->cur_self, *save_other=vm->cur_other;
+  int save_code_index=vm->cur_code_index;
   const char *save_code_name=g_cur_code_name;
   GmlVM *save_cur_vm=g_cur_vm;
   GmlVal save_args[16]; int save_argc=vm->script_argc;
   for(int i=0;i<16;i++) save_args[i]=vm->script_args[i];
   vm->cur_self=self; vm->cur_other=other;
+  vm->cur_code_index=ci;
   g_cur_code_name=vm->win->code[ci].name;
   g_cur_vm=vm;
   GmlVarMap locals={0};
@@ -2547,12 +2627,18 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         break;
       case OP_DUP: {
         /* Use the low-word size parameter to duplicate the top extra+1 stack slots. */
-        /* GMS2.3 DUP-SWAP (method call `obj.method(args)`): non-zero HIGH byte in the operand (0x88xx),
-         * type Variable. It lifts the instance pushed before the args back to the top so
-         * `push.v stack.method` reads obj.method; the instance then sits under the method value for the
-         * call self. Swap the top two value slots. */
-        if((in.inst & 0xFF00) && in.type1==DT_VAR){
-          if(sp>=2){ GmlVal t=stk[sp-1]; stk[sp-1]=stk[sp-2]; stk[sp-2]=t; }
+        /* Extended DUP mode (0x88NN) rotates the value NN slots below the top to the top,
+         * without duplicating it. Method calls use this to lift their receiver over every argument;
+         * a following ordinary dup leaves one receiver for the field read and one for callv. */
+        uint16_t dup_operand=(uint16_t)in.inst;
+        if((dup_operand&0xFF00u)==0x8800u && in.type1==DT_VAR){
+          int distance=dup_operand&0xFFu;
+          if(distance>0 && sp>distance){
+            int source=sp-distance-1;
+            GmlVal lifted=stk[source];
+            memmove(stk+source,stk+source+1,(size_t)distance*sizeof(*stk));
+            stk[sp-1]=lifted;
+          }
           break; }
         int ncopy = in.inst>0 ? in.inst+1 : 1;
         if(ncopy>8) ncopy=1;
@@ -2563,7 +2649,14 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           GmlInsn ni; int have=0;
           if(use_cache && ip+1<cached_n){ ni=cached_ins[ip+1]; have=1; }
           else if(!use_cache && nextpc<end && gml_decode_bc(d,nextpc,w->bytecode,&ni)>0) have=1;
-          if(have && ni.kind==OP_PUSH && ni.type1==DT_VAR && ni.reftype==0x00) ncopy=2;
+          if(have && ni.kind==OP_PUSH && ni.type1==DT_VAR && ni.reftype==0x00){
+            ncopy=2;
+            /* An expression-scoped field carries [receiver,-9,index], not merely
+             * [scope,index]. Preserve the StackTop marker and its receiver as one
+             * reference so both the read and the subsequent store resolve the same
+             * instance. */
+            if(sp>=3 && stk[sp-2].t==V_REAL && stk[sp-2].d==-9.0) ncopy=3;
+          }
         }
         /* GMS2.3 reference dup for the compound `inst.var op= v` (`push inst; push.e -9; dup;
          * read; op; write`): the operand encodes in.inst=4 -> the formula's 5, which overshoots sp
@@ -2725,7 +2818,15 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           GmlVal selfv; int have_self=0;
           method_struct_info(bm_top,&fci,&selfv,&have_self);
           GmlInstance *bs = have_self? vm_inst_from_ref(vm,selfv) : NULL;
-          if(member_value_call && sp>0) sp--;   /* drop the accessor receiver (obj. in obj.method) */
+          if(member_value_call && sp>0){
+            GmlVal receiver=stk[--sp];   /* drop the accessor receiver (obj. in obj.method) */
+            /* A constructor-static method is shared, but dot invocation still executes against
+             * the struct through which it was accessed. The -16 binding marks that late receiver. */
+            if(have_self && selfv.t==V_REAL && selfv.d==-16.0){
+              GmlInstance *rs=vm_inst_from_ref(vm,receiver);
+              if(rs) bs=rs;
+            }
+          }
           else if(have_self && sp>0 && asnum(stk[sp-1])==asnum(selfv)) sp--;
           if(bs) call_self=bs;
           for(int i=0;i<na;i++) a[i]= sp>0? stk[--sp] : vreal(0);
@@ -2785,14 +2886,21 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
            pc>=start+4 && u32(d,pc-4)==0x840FFFF7u) tv=stk[--sp];
         int T=(int)asnum(tv);
         GmlInstance **list=NULL; int nn=0, capL=0;
+        int family_target=0;
         #define WADD(p) do{ if(nn>=capL){ capL=capL?capL*2:8; list=realloc(list,capL*sizeof(void*)); } list[nn++]=(p); }while(0)
         if(GML_IS_STRUCT_ID((double)T)){ GmlInstance *p=gml_struct_find(vm,(unsigned)T); if(p) WADD(p); }  /* with(struct): GMS2.3 runs the body with self=the struct (e.g. serialize's `with(action){..self.value..}`) */
         else if(T>=100000){ GmlInstance *p=inst_by_id(vm,T); if(p) WADD(p); }
         else if(T==IT_OTHER){ if(vm->cur_other) WADD(vm->cur_other); }
         else if(T==IT_SELF){ if(vm->cur_self) WADD(vm->cur_self); }
-        else if(T==IT_ALL){ for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active&&!vm->inst[i].marked) WADD(&vm->inst[i]); }
-        else if(T>=0){ for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active&&!vm->inst[i].marked&&gml_object_is(vm,vm->inst[i].obj,T)) WADD(&vm->inst[i]); }
+        else if(T==IT_ALL){ family_target=1; for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active&&!vm->inst[i].marked) WADD(&vm->inst[i]); }
+        else if(T>=0){ family_target=1; for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active&&!vm->inst[i].marked&&gml_object_is(vm,vm->inst[i].obj,T)) WADD(&vm->inst[i]); }
         #undef WADD
+        /* The modern instance-family chain is newest-first. This is observable when a parent target
+         * includes both room-placed descendants and instances created by room code: the dynamic
+         * instances must run before the older placed ones. Keep classic's established order, and
+         * use creation sequence rather than slot order so recycled slots do not perturb a with(). */
+        if(family_target && nn>1 && !w->classic_version)
+          qsort(list,(size_t)nn,sizeof(*list),with_newest_first_cmp);
         if(nn==0){
           /* PUSHENV branches to its matching POPENV when the target set is empty. Keep an
            * empty frame on the environment stack so that POPENV consumes this scope instead
@@ -2826,7 +2934,12 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
       case OP_POPENV:{ /* end of with body: next instance, or restore + fall through */
         if(withsp<=0) break;
         int wi=withsp-1;
-        if(++withstk[wi].idx < withstk[wi].n){ vm->cur_self=withstk[wi].list[withstk[wi].idx];
+        int next=withstk[wi].idx+1;
+        /* The target set is snapshotted, but an earlier body may destroy a later member. Skip
+         * that member before iteration reaches its retained diagnostic slot. */
+        while(next<withstk[wi].n &&
+              (!withstk[wi].list[next]->active || withstk[wi].list[next]->marked)) next++;
+        if(next < withstk[wi].n){ withstk[wi].idx=next; vm->cur_self=withstk[wi].list[next];
           nextpc = pc + (uint32_t)(in.jump*4); if(use_cache) nextip=(uint32_t)cached_branch[ip]; }
         else { vm->cur_self=withstk[wi].ss; vm->cur_other=withstk[wi].so; free(withstk[wi].list); withsp--; }
         break; }
@@ -2882,8 +2995,16 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
               aref[aref_n].arr=stk[sp-2].arr; aref[aref_n].idx=(int)asnum(stk[sp-1]);
               aref[aref_n].base=sp-2; aref_n++; }
             break; }
-          /* chkindex(-1), isstaticok(-6)->treated as false, setstatic(-7), restorearef(-9),
-           * chknullish(-10): no net effect on the value stack in our model. */
+          case -6:{ /* isstaticok: push whether this function's static initializer has run. */
+            int initialized=(ci>=0 && ci<vm->code_static_count && vm->code_static_init)
+              ? vm->code_static_init[ci]!=0 : 0;
+            if(sp<STK) stk[sp++]=vreal(initialized);
+            break; }
+          case -7:  /* setstatic: latch BEFORE assignments, preventing recursive re-entry. */
+            if(ci>=0 && ci<vm->code_static_count && vm->code_static_init)
+              vm->code_static_init[ci]=1;
+            break;
+          /* chkindex(-1), restorearef(-9), chknullish(-10): no net stack effect here. */
           default: break;
         }
         break;
@@ -2914,6 +3035,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   gml_arr_mark_escaped(ret);      /* a returned array escapes to the caller */
   varmap_free_ex(&locals,1);      /* keep escaped arrays alive — persistent slots alias them */
   vm->cur_self=save_self; vm->cur_other=save_other;
+  vm->cur_code_index=save_code_index;
   g_cur_code_name=save_code_name;
   g_cur_vm=save_cur_vm;
   vm->script_argc=save_argc;
@@ -2922,6 +3044,29 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   if(cp) codeprof_add(w,ci,codeprof_now_ms()-cp_t0,watchdog);
   g_run_depth--;
   return ret;
+}
+
+GmlVal gml_vm_call_callable(GmlVM *vm, GmlVal callable, GmlVal *args, int n_args){
+  if(!vm || !vm->win || callable.t!=V_REAL) return vundef();
+  int fci=-1;
+  GmlInstance *call_self=vm->cur_self;
+  double raw=callable.d;
+  if(GML_IS_STRUCT_ID(raw)){
+    GmlInstance *method=gml_struct_find(vm,(unsigned)raw);
+    if(method){
+      GmlVal selfv=vundef();
+      int have_self=0;
+      method_struct_info(method,&fci,&selfv,&have_self);
+      if(have_self){
+        GmlInstance *bound=vm_inst_from_ref(vm,selfv);
+        if(bound) call_self=bound;
+      }
+    }
+  } else if(GML_IS_FUNCVAL((int)raw)) {
+    fci=(int)raw & 0x00FFFFFF;
+  }
+  if(fci<0 || fci>=vm->win->n_code) return vundef();
+  return gml_vm_run_code(vm,fci,call_self,vm->cur_other,args,n_args);
 }
 
 /* ---------------- path parsing + evaluation (PATH chunk) ---------------- */
@@ -5377,11 +5522,7 @@ static int studio_step_snapshot_member(GmlVM *vm, const GmlInstance *in){
 /* GML_PROFILE_VM: per-phase wall time of gml_vm_step, printed every 300 frames (Linux dev aid) */
 static struct { double anim,step1,alarms,input,step0,move,coll,step2,rest; long frames; } g_vmprof;
 static double vmprof_now(void){
-#ifndef _WIN32
-  struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts); return ts.tv_sec*1000.0+ts.tv_nsec/1e6;
-#else
-  return 0;
-#endif
+  return vm_profile_now_ms();
 }
 static int vmprof_on(void){ static int on=-1; if(on<0) on=getenv("GML_PROFILE_VM")!=NULL; return on; }
 #define VMPROF_MARK(field) do{ if(pv){ double _t=vmprof_now(); g_vmprof.field += _t-pv_t; pv_t=_t; } }while(0)
@@ -5532,6 +5673,9 @@ void gml_vm_step(GmlVM *vm){
       studio_step_snapshot_member(vm,&vm->inst[i]))
     gml_run_event(vm,&vm->inst[i],"Step_1");
   VMPROF_MARK(step1);
+  /* Tick both built-in time-source trees after every Begin Step and before the remaining
+   * Step phases. Sources created by a callback join on the next tick via the scheduler snapshot. */
+  gml_time_sources_tick(vm);
   run_timelines(vm,n);
   /* Alarm thresholds depend on bytecode version: below 16, decrement values
    * greater than -1 and fire below zero; later versions decrement positive values
@@ -7153,6 +7297,15 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
   { extern void gml_part_reset_all(void); gml_part_reset_all(); }   /* fresh particle pools per game */
   colcand_reset();          /* cache slots belong to the previous VM across a cold Restart */
   vm->win=win; vm->pending_room=-1; vm->room_index=-1; vm->next_id=100000; vm->rng_state=0;
+  vm->cur_code_index=-1;
+  vm->code_static_count=(win && win->n_code>0)?win->n_code:0;
+  vm->code_static=vm->code_static_count?calloc((size_t)vm->code_static_count,sizeof(*vm->code_static)):NULL;
+  vm->code_static_init=vm->code_static_count?calloc((size_t)vm->code_static_count,1):NULL;
+  if(vm->code_static_count && (!vm->code_static || !vm->code_static_init)){
+    free(vm->code_static); free(vm->code_static_init);
+    vm->code_static=NULL; vm->code_static_init=NULL; vm->code_static_count=0;
+    return 1;
+  }
   snprintf(vm->os_language,sizeof vm->os_language,"en");
   snprintf(vm->os_region,sizeof vm->os_region,"us");
   snprintf(vm->language_tag,sizeof vm->language_tag,"en-US");
@@ -7187,6 +7340,8 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
   vm->next_buffer_id=1;
   vm->next_ds_id=1;
   vm->ds_list_compat_repair=0;
+  vm->next_time_source_id=GML_TIME_SOURCE_ID_BASE;
+  vm->time_source_game_state=1;
   { /* Optional initial seed for deterministic cross-run fidelity captures. Games that call
      * randomize() still use GML_RANDOMIZE_SEED at that call site; without this variable the
      * runtime uses the normal default seed. */
@@ -7287,9 +7442,16 @@ void gml_vm_free(GmlVM *vm){
   free(vm->draw_ord); vm->draw_ord=NULL; vm->draw_ord_cap=0;
   freeset_begin();
   varmap_free(&vm->globals);
+  for(int i=0;i<vm->code_static_count;i++) varmap_free(&vm->code_static[i]);
   for(int i=0;i<vm->inst_count;i++) varmap_free(&vm->inst[i].vars);
   for(int i=0;i<vm->n_structs;i++) if(vm->structs[i]) varmap_free(&vm->structs[i]->vars);
+  for(int i=0;i<GML_TIME_SOURCE_MAX;i++) if(vm->time_source[i].live){
+    val_free(vm->time_source[i].callback); val_free(vm->time_source[i].args);
+  }
   freeset_end();
+  memset(vm->time_source,0,sizeof(vm->time_source));
+  free(vm->code_static); free(vm->code_static_init);
+  vm->code_static=NULL; vm->code_static_init=NULL; vm->code_static_count=0;
   for(int i=0;i<vm->n_structs;i++) free(vm->structs[i]);
   free(vm->structs); free(vm->struct_gen); free(vm->struct_free);
   ini_free(vm);
@@ -7314,7 +7476,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -7808,9 +7970,18 @@ static int state_instance_is_room_placed(GmlVM *vm, const GmlInstance *in){
 static void runtime_clear(GmlVM *vm){
   freeset_begin();
   varmap_free(&vm->globals);
+  for(int i=0;i<vm->code_static_count;i++) varmap_free(&vm->code_static[i]);
   for(int i=0;i<vm->inst_count;i++) varmap_free(&vm->inst[i].vars);
   for(int i=0;i<vm->n_structs;i++) if(vm->structs[i]) varmap_free(&vm->structs[i]->vars);
+  for(int i=0;i<GML_TIME_SOURCE_MAX;i++) if(vm->time_source[i].live){
+    val_free(vm->time_source[i].callback); val_free(vm->time_source[i].args);
+  }
   freeset_end();
+  memset(vm->time_source,0,sizeof(vm->time_source));
+  vm->next_time_source_id=GML_TIME_SOURCE_ID_BASE;
+  vm->time_source_game_state=1;
+  if(vm->code_static_init && vm->code_static_count>0)
+    memset(vm->code_static_init,0,(size_t)vm->code_static_count);
   for(int i=0;i<vm->n_structs;i++){ free(vm->structs[i]); vm->structs[i]=NULL; }
   if(vm->struct_gen && vm->cap_structs>0) memset(vm->struct_gen,0,(size_t)vm->cap_structs);
   vm->n_structs=0; vm->n_struct_free=0; vm->structs_last_gc_frame=0;
@@ -7850,7 +8021,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x51564D47u); /* GMV33: GMV32 plus stable instance creation order */
+  sw_u32(s,0x53564D47u); /* GMV35: GMV34 plus time-source scheduler state */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i64(s,(int64_t)vm->next_creation_seq);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
@@ -8011,6 +8182,29 @@ static void sw_vm(StateW *s, GmlVM *vm){
   sw_d(s,vm->listener_forward_x); sw_d(s,vm->listener_forward_y); sw_d(s,vm->listener_forward_z);
   sw_d(s,vm->listener_up_x); sw_d(s,vm->listener_up_y); sw_d(s,vm->listener_up_z);
   sw_i32(s,vm->audio_falloff_model);
+  int static_live=0;
+  for(int i=0;i<vm->code_static_count;i++)
+    if((vm->code_static_init && vm->code_static_init[i]) || vm->code_static[i].len>0) static_live++;
+  sw_i32(s,static_live);
+  for(int i=0;i<vm->code_static_count;i++){
+    if((!vm->code_static_init || !vm->code_static_init[i]) && vm->code_static[i].len<=0) continue;
+    sw_i32(s,i); sw_i32(s,vm->code_static_init?vm->code_static_init[i]!=0:0);
+    sw_varmap(s,&vm->code_static[i]);
+  }
+  sw_u32(s,vm->next_time_source_id);
+  sw_i32(s,vm->time_source_game_state);
+  int time_source_live=0;
+  for(int i=0;i<GML_TIME_SOURCE_MAX;i++) if(vm->time_source[i].live) time_source_live++;
+  sw_i32(s,time_source_live);
+  for(int i=0;i<GML_TIME_SOURCE_MAX;i++) if(vm->time_source[i].live){
+    GmlTimeSource *source=&vm->time_source[i];
+    sw_u32(s,source->id); sw_i32(s,source->parent);
+    sw_d(s,source->period); sw_d(s,source->remaining);
+    sw_i32(s,source->units); sw_i32(s,source->state);
+    sw_i32(s,source->repetitions); sw_i32(s,source->reps_remaining);
+    sw_i32(s,source->reps_completed); sw_i32(s,source->expiry_type);
+    sw_val(s,source->callback,0); sw_val(s,source->args,0);
+  }
   vm_state_profile_globals(vm);
 }
 size_t gml_vm_state_size(GmlVM *vm){
@@ -8043,7 +8237,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       && magic!=0x46564D47u && magic!=0x47564D47u && magic!=0x48564D47u
       && magic!=0x49564D47u && magic!=0x4A564D47u && magic!=0x4B564D47u
       && magic!=0x4C564D47u && magic!=0x4D564D47u && magic!=0x4E564D47u
-      && magic!=0x4F564D47u && magic!=0x50564D47u && magic!=0x51564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x4F564D47u && magic!=0x50564D47u && magic!=0x51564D47u
+      && magic!=0x52564D47u && magic!=0x53564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -8074,6 +8269,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v31 = magic>=0x4F564D47u;
   s.v32 = magic>=0x50564D47u;
   s.v33 = magic>=0x51564D47u;
+  s.v34 = magic>=0x52564D47u;
+  s.v35 = magic>=0x53564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -8427,6 +8624,49 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     vm->listener_up_x=sr_d(&s); vm->listener_up_y=sr_d(&s); vm->listener_up_z=sr_d(&s);
     vm->audio_falloff_model=sr_i32(&s);
     if(vm->audio_falloff_model<0 || vm->audio_falloff_model>6) s.ok=0;
+  }
+  if(s.v34 && s.ok){
+    int live=sr_i32(&s);
+    if(live<0 || live>vm->code_static_count){ state_debug("bad static scope count",s.pos,(uint32_t)live); s.ok=0; live=0; }
+    for(int i=0;i<live && s.ok;i++){
+      int ci=sr_i32(&s), initialized=sr_i32(&s);
+      if(ci<0 || ci>=vm->code_static_count || (initialized!=0 && initialized!=1)){
+        state_debug("bad static scope",s.pos,(uint32_t)ci); s.ok=0; break;
+      }
+      vm->code_static_init[ci]=(unsigned char)initialized;
+      sr_varmap(vm,&s,&vm->code_static[ci]);
+    }
+  }
+  if(s.v35 && s.ok){
+    vm->next_time_source_id=sr_u32(&s);
+    vm->time_source_game_state=sr_i32(&s);
+    int live=sr_i32(&s);
+    if(vm->next_time_source_id<GML_TIME_SOURCE_ID_BASE || live<0 || live>GML_TIME_SOURCE_MAX ||
+       vm->time_source_game_state<1 || vm->time_source_game_state>3){
+      state_debug("bad time source header",s.pos,(uint32_t)live); s.ok=0; live=0;
+    }
+    for(int i=0;i<live && s.ok;i++){
+      GmlTimeSource *source=&vm->time_source[i];
+      source->live=1; source->id=sr_u32(&s); source->parent=sr_i32(&s);
+      source->period=sr_d(&s); source->remaining=sr_d(&s);
+      source->units=sr_i32(&s); source->state=sr_i32(&s);
+      source->repetitions=sr_i32(&s); source->reps_remaining=sr_i32(&s);
+      source->reps_completed=sr_i32(&s); source->expiry_type=sr_i32(&s);
+      source->callback=sr_val(vm,&s,0); source->args=sr_val(vm,&s,0);
+      gml_arr_mark_escaped(source->callback); gml_arr_mark_escaped(source->args);
+      if(source->id<GML_TIME_SOURCE_ID_BASE || !isfinite(source->period) || source->period<0.0 ||
+         !isfinite(source->remaining) || source->remaining<0.0 || source->units<0 || source->units>1 ||
+         source->state<0 || source->state>3 || source->repetitions<-1 || source->reps_remaining<-1 ||
+         source->reps_completed<0 || source->expiry_type<0 || source->expiry_type>1 ||
+         (source->args.t!=V_ARR && source->args.t!=V_UNDEF)){
+        state_debug("bad time source",s.pos,source->id); s.ok=0;
+      }
+    }
+    for(int i=0;i<live && s.ok;i++){
+      int parent=vm->time_source[i].parent, found=parent==0 || parent==1;
+      for(int j=0;j<live && !found;j++) found=(int)vm->time_source[j].id==parent;
+      if(!found){ state_debug("bad time source parent",s.pos,(uint32_t)parent); s.ok=0; }
+    }
   }
   vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;
   vm->step_active=0; vm->step_alloc_base=0;

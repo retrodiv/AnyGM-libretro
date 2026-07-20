@@ -13,6 +13,7 @@
 #include <math.h>
 #include <time.h>
 #include <limits.h>
+#include <float.h>
 #include <ctype.h>
 #include <dirent.h>
 #if !defined(_WIN32)
@@ -1153,6 +1154,96 @@ static int ds_val_equal(GmlVal a, GmlVal b){
   if(a.t==V_STR || b.t==V_STR) return !strcmp(gm_string_tmp(a),gm_string_tmp(b));
   return fabs((a.t==V_REAL?a.d:0.0)-(b.t==V_REAL?b.d:0.0))<1e-9;
 }
+static int gml_array_search_index(GmlVal *args, int count){
+  if(count<2 || args[0].t!=V_ARR || !args[0].arr) return -1;
+  GmlArr *array=(GmlArr*)args[0].arr;
+  if(array->len<=0) return -1;
+
+  /* Array range functions clamp their starting offset to the available indices. Negative
+   * offsets count from the end, while the sign of length selects the traversal direction. */
+  double raw_offset=count>2?N(args,count,2):0.0;
+  int offset=0;
+  if(isnan(raw_offset)) raw_offset=0.0;
+  if(isinf(raw_offset)) offset=raw_offset<0.0?0:array->len-1;
+  else {
+    double integral=trunc(raw_offset);
+    if(integral<0.0) integral+=(double)array->len;
+    if(integral<=0.0) offset=0;
+    else if(integral>=(double)(array->len-1)) offset=array->len-1;
+    else offset=(int)integral;
+  }
+
+  int direction=1;
+  int length=array->len-offset;
+  if(count>3){
+    double raw_length=N(args,count,3);
+    if(isnan(raw_length)) raw_length=0.0;
+    direction=raw_length<0.0?-1:1;
+    int available=direction>0?array->len-offset:offset+1;
+    if(isinf(raw_length)) length=available;
+    else {
+      double integral=trunc(fabs(raw_length));
+      length=integral>=(double)available?available:(int)integral;
+    }
+  }
+  for(int visited=0,index=offset;visited<length;visited++,index+=direction)
+    if(ds_val_equal(array->data[index],args[1])) return index;
+  return -1;
+}
+
+static GmlVal gml_string_concat_ext(GmlVal *args, int count){
+  if(count<1 || args[0].t!=V_ARR || !args[0].arr)
+    return vstr_owned(strdup(""));
+  GmlArr *array=(GmlArr*)args[0].arr;
+  if(array->len<=0) return vstr_owned(strdup(""));
+
+  double raw_offset=count>1?N(args,count,1):0.0;
+  int offset=0;
+  if(isnan(raw_offset)) raw_offset=0.0;
+  if(isinf(raw_offset)) offset=raw_offset<0.0?0:array->len-1;
+  else {
+    double integral=trunc(raw_offset);
+    if(integral<0.0) integral+=(double)array->len;
+    if(integral<=0.0) offset=0;
+    else if(integral>=(double)(array->len-1)) offset=array->len-1;
+    else offset=(int)integral;
+  }
+
+  int direction=1;
+  int length=array->len-offset;
+  if(count>2){
+    double raw_length=N(args,count,2);
+    if(isnan(raw_length)) raw_length=0.0;
+    direction=raw_length<0.0?-1:1;
+    int available=direction>0?array->len-offset:offset+1;
+    if(isinf(raw_length)) length=available;
+    else {
+      double integral=trunc(fabs(raw_length));
+      length=integral>=(double)available?available:(int)integral;
+    }
+  }
+
+  size_t used=0, capacity=32;
+  char *output=malloc(capacity);
+  if(!output) return vstr_owned(strdup(""));
+  for(int visited=0,index=offset;visited<length;visited++,index+=direction){
+    const char *value=gm_string_tmp(array->data[index]);
+    size_t value_length=strlen(value);
+    if(value_length>SIZE_MAX-used-1){ free(output); return vstr_owned(strdup("")); }
+    size_t required=used+value_length+1;
+    if(required>capacity){
+      size_t grown=capacity;
+      while(grown<required && grown<=SIZE_MAX/2) grown*=2;
+      if(grown<required) grown=required;
+      char *replacement=realloc(output,grown);
+      if(!replacement){ free(output); return vstr_owned(strdup("")); }
+      output=replacement; capacity=grown;
+    }
+    memcpy(output+used,value,value_length); used+=value_length;
+  }
+  output[used]=0;
+  return vstr_owned(output);
+}
 typedef struct { const GmlArr *left, *right; } GmlArrayPair;
 typedef struct { GmlArrayPair *pair; int len, cap; } GmlArrayEqualCtx;
 static int array_value_equal(GmlVM *vm, GmlVal left, GmlVal right,
@@ -1218,6 +1309,12 @@ static int ds_priority_best_index(GmlDSList *l, int want_max){
     if((want_max && p>bp) || (!want_max && p<bp)){ bp=p; bi=i; }
   }
   return bi;
+}
+static int ds_priority_value_index(GmlDSList *l, GmlVal value){
+  if(!l) return -1;
+  for(int i=0;i<l->len;i++)
+    if(ds_val_equal(ds_priority_value(l->item[i]),value)) return i;
+  return -1;
 }
 static void ds_grid_store(GmlDSGrid *g, int x, int y, GmlVal v){
   if(g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h)
@@ -2704,6 +2801,24 @@ static GmlVal sha1_hex_val(const uint8_t *p, size_t n){
   for(int i=0;i<20;i++){ out[i*2]=H[d[i]>>4]; out[i*2+1]=H[d[i]&15]; }
   out[40]=0;
   return vstr_owned(out);
+}
+static int utf8_character_bytes(const unsigned char *text){
+  if(!text || !text[0]) return 0;
+  if(text[0]<0x80) return 1;
+  if((text[0]&0xe0)==0xc0 && text[1] && (text[1]&0xc0)==0x80){
+    unsigned value=((unsigned)(text[0]&0x1f)<<6)|(text[1]&0x3f);
+    if(value>=0x80) return 2;
+  } else if((text[0]&0xf0)==0xe0 && text[1] && text[2] &&
+            (text[1]&0xc0)==0x80 && (text[2]&0xc0)==0x80){
+    unsigned value=((unsigned)(text[0]&15)<<12)|((unsigned)(text[1]&0x3f)<<6)|(text[2]&0x3f);
+    if(value>=0x800 && (value<0xd800 || value>0xdfff)) return 3;
+  } else if((text[0]&0xf8)==0xf0 && text[1] && text[2] && text[3] &&
+            (text[1]&0xc0)==0x80 && (text[2]&0xc0)==0x80 && (text[3]&0xc0)==0x80){
+    unsigned value=((unsigned)(text[0]&7)<<18)|((unsigned)(text[1]&0x3f)<<12)|
+                   ((unsigned)(text[2]&0x3f)<<6)|(text[3]&0x3f);
+    if(value>=0x10000 && value<=0x10ffff) return 4;
+  }
+  return 1;
 }
 /* Unicode hash variants consume UTF-16 code units. Runtime strings are UTF-8 here,
  * so encode valid scalar values as little-endian UTF-16 and replace malformed sequences. */
@@ -5257,6 +5372,440 @@ static int script_ref_code_of(GmlVM *vm, GmlVal v){
   return script_code_of(vm,iv);
 }
 
+static GmlVal gml_array_create_ext(GmlVM *vm, GmlVal *args, int count){
+  int size=count>0?(int)N(args,count,0):0;
+  GmlVal result=gml_arr_new(size,vreal(0));
+  if(count<2 || result.t!=V_ARR || !result.arr) return result;
+  int length=gml_val_array_length(result);
+  for(int index=0;index<length;index++){
+    GmlVal callback_arg=vreal(index);
+    GmlVal value=gml_vm_call_callable(vm,args[1],&callback_arg,1);
+    gml_arr_set(result,index,value);
+    if(value.t==V_STR && value.s && value.d!=0) free((void*)value.s);
+  }
+  return result;
+}
+
+/* Mutating array-map operation.  Offset is clamped to an existing
+ * element, negative offsets count from the end, and the sign of length selects the
+ * traversal direction.  The callback receives (element, zero-based index); its result
+ * replaces that element without resizing the array. */
+static GmlVal gml_array_map_ext(GmlVM *vm, GmlVal *args, int count){
+  if(count<2 || args[0].t!=V_ARR || !args[0].arr) return vreal(0);
+  GmlArr *array=(GmlArr*)args[0].arr;
+  int array_length=array->len;
+  if(array_length<=0) return vreal(0);
+
+  double raw_offset=count>2?N(args,count,2):0.0;
+  if(isnan(raw_offset)) raw_offset=0.0;
+  int offset;
+  if(isinf(raw_offset)) offset=raw_offset<0.0?0:array_length-1;
+  else {
+    double integral=trunc(raw_offset);
+    if(integral<0.0) integral+=(double)array_length;
+    if(integral<=0.0) offset=0;
+    else if(integral>=(double)(array_length-1)) offset=array_length-1;
+    else offset=(int)integral;
+  }
+
+  int direction=1;
+  int length=array_length-offset;
+  if(count>3){
+    double raw_length=N(args,count,3);
+    if(isnan(raw_length)) raw_length=0.0;
+    direction=raw_length<0.0?-1:1;
+    int available=direction>0?array_length-offset:offset+1;
+    if(isinf(raw_length)) length=available;
+    else {
+      double integral=trunc(fabs(raw_length));
+      length=integral>=(double)available?available:(int)integral;
+    }
+  }
+
+  for(int visited=0,index=offset;visited<length;visited++,index+=direction){
+    GmlVal element=(index>=0 && index<array->len)?array->data[index]:vundef();
+    if(element.t==V_STR) element.d=0;
+    GmlVal callback_args[2]={element,vreal(index)};
+    GmlVal mapped=gml_vm_call_callable(vm,args[1],callback_args,2);
+    gml_arr_set(args[0],index,mapped);
+    if(mapped.t==V_STR && mapped.s && mapped.d!=0) free((void*)mapped.s);
+  }
+  return vreal(length);
+}
+
+static GmlVal gml_array_foreach(GmlVM *vm, GmlVal *args, int count){
+  if(count<2 || args[0].t!=V_ARR || !args[0].arr) return vundef();
+  GmlArr *array=(GmlArr*)args[0].arr;
+  int array_length=array->len;
+  if(array_length<=0) return vundef();
+
+  double raw_offset=count>2?N(args,count,2):0.0;
+  if(isnan(raw_offset)) raw_offset=0.0;
+  int offset;
+  if(isinf(raw_offset)) offset=raw_offset<0.0?0:array_length-1;
+  else {
+    double integral=trunc(raw_offset);
+    if(integral<0.0) integral+=(double)array_length;
+    if(integral<=0.0) offset=0;
+    else if(integral>=(double)(array_length-1)) offset=array_length-1;
+    else offset=(int)integral;
+  }
+
+  int direction=1;
+  int length=array_length-offset;
+  if(count>3){
+    double raw_length=N(args,count,3);
+    if(isnan(raw_length)) raw_length=0.0;
+    direction=raw_length<0.0?-1:1;
+    int available=direction>0?array_length-offset:offset+1;
+    if(isinf(raw_length)) length=available;
+    else {
+      double integral=trunc(fabs(raw_length));
+      length=integral>=(double)available?available:(int)integral;
+    }
+  }
+
+  for(int visited=0,index=offset;visited<length;visited++,index+=direction){
+    GmlVal element=(index>=0 && index<array->len)?array->data[index]:vundef();
+    if(element.t==V_STR) element.d=0;
+    GmlVal callback_args[2]={element,vreal(index)};
+    GmlVal result=gml_vm_call_callable(vm,args[1],callback_args,2);
+    if(result.t==V_STR && result.s && result.d!=0) free((void*)result.s);
+  }
+  return vundef();
+}
+
+static GmlTimeSource *time_source_find(GmlVM *vm, int id){
+  if(!vm || id<(int)GML_TIME_SOURCE_ID_BASE) return NULL;
+  for(int i=0;i<GML_TIME_SOURCE_MAX;i++)
+    if(vm->time_source[i].live && (int)vm->time_source[i].id==id) return &vm->time_source[i];
+  return NULL;
+}
+
+static int time_source_parent_exists(GmlVM *vm, int parent){
+  return parent==0 || parent==1 || time_source_find(vm,parent)!=NULL;
+}
+
+static double time_source_period(double period, int units){
+  if(!isfinite(period)) return period>0.0?DBL_MAX:1.0;
+  if(units==1){
+    if(period<1.0) return 1.0;
+    return floor(period);
+  }
+  return period>0.0?period:0.0;
+}
+
+static int time_source_repetitions(double value){
+  if(value<0.0) return -1;
+  if(!isfinite(value)) return value>0.0?INT_MAX:1;
+  int repetitions=(int)floor(value);
+  return repetitions>0?repetitions:1;
+}
+
+static void time_source_configure(GmlTimeSource *source, double period, int units,
+                                  GmlVal callback, GmlVal args, int repetitions,
+                                  int expiry_type){
+  if(!source) return;
+  source->units=units==1?1:0;
+  source->period=time_source_period(period,source->units);
+  source->remaining=source->period;
+  source->callback=gml_arr_store_clone(callback);
+  source->args=args.t==V_ARR?gml_arr_store_clone(args):vundef();
+  source->repetitions=repetitions;
+  source->reps_remaining=repetitions;
+  source->reps_completed=0;
+  source->expiry_type=expiry_type==0?0:1;
+  source->state=0;
+}
+
+static GmlVal time_source_create_builtin(GmlVM *vm, GmlVal *args, int count){
+  if(!vm || count<4) return vundef();
+  int parent=(int)N(args,count,0);
+  if(!time_source_parent_exists(vm,parent)) return vundef();
+  int slot=-1;
+  for(int i=0;i<GML_TIME_SOURCE_MAX;i++) if(!vm->time_source[i].live){ slot=i; break; }
+  if(slot<0) return vundef();
+  if(vm->next_time_source_id<GML_TIME_SOURCE_ID_BASE)
+    vm->next_time_source_id=GML_TIME_SOURCE_ID_BASE;
+  GmlTimeSource *source=&vm->time_source[slot];
+  memset(source,0,sizeof(*source));
+  source->live=1;
+  source->id=vm->next_time_source_id++;
+  if(vm->next_time_source_id<GML_TIME_SOURCE_ID_BASE)
+    vm->next_time_source_id=GML_TIME_SOURCE_ID_BASE;
+  source->parent=parent;
+  int repetitions=count>5?time_source_repetitions(N(args,count,5)):1;
+  int expiry_type=count>6?(int)N(args,count,6):1;
+  time_source_configure(source,N(args,count,1),(int)N(args,count,2),args[3],
+                        count>4?args[4]:vundef(),repetitions,expiry_type);
+  return vreal((double)source->id);
+}
+
+static int time_source_has_child(GmlVM *vm, int parent){
+  for(int i=0;i<GML_TIME_SOURCE_MAX;i++)
+    if(vm->time_source[i].live && vm->time_source[i].parent==parent) return 1;
+  return 0;
+}
+
+static int time_source_ancestor_active(GmlVM *vm, GmlTimeSource *source,
+                                       int *root, int depth){
+  if(!source || depth>GML_TIME_SOURCE_MAX) return 0;
+  if(source->parent==0){ if(root) *root=0; return 1; }
+  if(source->parent==1){ if(root) *root=1; return vm->time_source_game_state==1; }
+  GmlTimeSource *parent=time_source_find(vm,source->parent);
+  return parent && parent->state==1 &&
+    time_source_ancestor_active(vm,parent,root,depth+1);
+}
+
+static int compare_time_source_id(const void *left, const void *right){
+  uint32_t a=*(const uint32_t*)left, b=*(const uint32_t*)right;
+  return (a>b)-(a<b);
+}
+
+void gml_time_sources_tick(GmlVM *vm){
+  if(!vm) return;
+  uint32_t ids[GML_TIME_SOURCE_MAX];
+  unsigned char roots[GML_TIME_SOURCE_MAX];
+  int count=0;
+  /* Snapshot eligibility before any callback can stop a parent or create a new child. */
+  for(int i=0;i<GML_TIME_SOURCE_MAX;i++){
+    GmlTimeSource *source=&vm->time_source[i];
+    int root=0;
+    if(source->live && source->state==1 && time_source_ancestor_active(vm,source,&root,0)){
+      ids[count]=source->id; roots[count]=(unsigned char)root; count++;
+    }
+  }
+  /* Process the global tree first, then the game tree. IDs preserve creation order
+   * even when a previously freed pool slot is reused. */
+  for(int root=0;root<=1;root++){
+    uint32_t ordered[GML_TIME_SOURCE_MAX]; int ordered_count=0;
+    for(int i=0;i<count;i++) if(roots[i]==root) ordered[ordered_count++]=ids[i];
+    qsort(ordered,(size_t)ordered_count,sizeof(*ordered),compare_time_source_id);
+    for(int i=0;i<ordered_count;i++){
+      GmlTimeSource *source=time_source_find(vm,(int)ordered[i]);
+      if(!source || source->state!=1) continue;
+      double step=source->units==1?1.0:1.0/gml_room_speed(vm);
+      source->remaining-=step;
+      int expired;
+      if(source->units==1) expired=source->remaining<=0.0;
+      else if(source->expiry_type==0) expired=source->remaining<=step*0.5;
+      else expired=source->remaining<0.0;
+      if(!expired) continue;
+
+      source->reps_completed++;
+      if(source->reps_remaining>0) source->reps_remaining--;
+      int repeats=source->reps_remaining<0 || source->reps_remaining>0;
+      if(repeats){
+        source->remaining+=source->period;
+        if(source->remaining<=0.0) source->remaining=source->period;
+      } else {
+        source->remaining=0.0;
+        source->state=3;
+      }
+
+      GmlVal callback=source->callback;
+      GmlVal callback_args[16]; int callback_count=0;
+      if(source->args.t==V_ARR && source->args.arr){
+        int available=gml_val_array_length(source->args);
+        callback_count=available<16?available:16;
+        for(int argument=0;argument<callback_count;argument++)
+          callback_args[argument]=gml_arr_get(source->args,argument);
+      }
+      GmlVal result=gml_vm_call_callable(vm,callback,callback_args,callback_count);
+      if(result.t==V_STR && result.s && result.d!=0) free((void*)result.s);
+    }
+  }
+}
+
+static GmlVal time_source_builtin(GmlVM *vm, const char *name, GmlVal *args, int count){
+  if(!strcmp(name,"time_source_create")) return time_source_create_builtin(vm,args,count);
+  int id=count>0?(int)N(args,count,0):-1;
+  GmlTimeSource *source=time_source_find(vm,id);
+  if(!strcmp(name,"time_source_exists")) return vreal(id==0 || id==1 || source!=NULL);
+  if(!strcmp(name,"time_source_start")){
+    if(source){ source->remaining=source->period; source->reps_remaining=source->repetitions;
+      source->reps_completed=0; source->state=1; }
+    else if(id==1) vm->time_source_game_state=1;
+    return vreal(0);
+  }
+  if(!strcmp(name,"time_source_stop")){
+    if(source && (source->state==1 || source->state==2)){
+      source->remaining=source->period; source->state=3;
+    } else if(id==1 && vm->time_source_game_state==1) vm->time_source_game_state=3;
+    return vreal(0);
+  }
+  if(!strcmp(name,"time_source_pause")){
+    if(source && source->state==1) source->state=2;
+    else if(id==1 && vm->time_source_game_state==1) vm->time_source_game_state=2;
+    return vreal(0);
+  }
+  if(!strcmp(name,"time_source_resume")){
+    if(source && source->state==2) source->state=1;
+    else if(id==1 && vm->time_source_game_state==2) vm->time_source_game_state=1;
+    return vreal(0);
+  }
+  if(!strcmp(name,"time_source_reset")){
+    if(source){ source->remaining=source->period; source->reps_remaining=source->repetitions;
+      source->reps_completed=0; source->state=0; }
+    return vreal(0);
+  }
+  if(!strcmp(name,"time_source_destroy")){
+    if(source && !time_source_has_child(vm,id)) memset(source,0,sizeof(*source));
+    return vreal(0);
+  }
+  if(!strcmp(name,"time_source_reconfigure")){
+    if(source && count>=4){
+      int repetitions=count>5?time_source_repetitions(N(args,count,5)):1;
+      int expiry_type=count>6?(int)N(args,count,6):1;
+      time_source_configure(source,N(args,count,1),(int)N(args,count,2),args[3],
+                            count>4?args[4]:vundef(),repetitions,expiry_type);
+    }
+    return vreal(0);
+  }
+  if(!strcmp(name,"time_source_get_children")){
+    if(id!=0 && id!=1 && !source) return vundef();
+    int children=0;
+    for(int i=0;i<GML_TIME_SOURCE_MAX;i++)
+      if(vm->time_source[i].live && vm->time_source[i].parent==id) children++;
+    GmlVal result=gml_arr_new(children,vreal(0)); int index=0;
+    for(int i=0;i<GML_TIME_SOURCE_MAX;i++)
+      if(vm->time_source[i].live && vm->time_source[i].parent==id)
+        gml_arr_set(result,index++,vreal((double)vm->time_source[i].id));
+    return result;
+  }
+  if(!source){
+    if(!strcmp(name,"time_source_get_state") && id==1) return vreal(vm->time_source_game_state);
+    return vundef();
+  }
+  if(!strcmp(name,"time_source_get_parent")) return vreal(source->parent);
+  if(!strcmp(name,"time_source_get_period")) return vreal(source->period);
+  if(!strcmp(name,"time_source_get_reps_completed")) return vreal(source->reps_completed);
+  if(!strcmp(name,"time_source_get_reps_remaining")) return vreal(source->reps_remaining);
+  if(!strcmp(name,"time_source_get_state")) return vreal(source->state);
+  if(!strcmp(name,"time_source_get_time_remaining")) return vreal(source->remaining);
+  if(!strcmp(name,"time_source_get_units")) return vreal(source->units);
+  return vundef();
+}
+
+typedef struct { GmlArr *source, *clone; } VariableCloneArray;
+typedef struct { unsigned source, clone; } VariableCloneStruct;
+typedef struct {
+  GmlVM *vm;
+  VariableCloneArray *array; int array_count, array_cap;
+  VariableCloneStruct *structure; int structure_count, structure_cap;
+} VariableCloneContext;
+
+static GmlVal variable_clone_value(VariableCloneContext *context, GmlVal value, int depth);
+
+static int variable_clone_note_array(VariableCloneContext *context, GmlArr *source, GmlArr *clone){
+  if(context->array_count>=context->array_cap){
+    int cap=context->array_cap?context->array_cap*2:16;
+    VariableCloneArray *next=realloc(context->array,(size_t)cap*sizeof(*next));
+    if(!next) return 0;
+    context->array=next; context->array_cap=cap;
+  }
+  context->array[context->array_count++]=(VariableCloneArray){source,clone};
+  return 1;
+}
+
+static int variable_clone_note_struct(VariableCloneContext *context, unsigned source, unsigned clone){
+  if(context->structure_count>=context->structure_cap){
+    int cap=context->structure_cap?context->structure_cap*2:16;
+    VariableCloneStruct *next=realloc(context->structure,(size_t)cap*sizeof(*next));
+    if(!next) return 0;
+    context->structure=next; context->structure_cap=cap;
+  }
+  context->structure[context->structure_count++]=(VariableCloneStruct){source,clone};
+  return 1;
+}
+
+static unsigned variable_clone_struct_lookup(VariableCloneContext *context, unsigned source){
+  for(int i=0;i<context->structure_count;i++)
+    if(context->structure[i].source==source) return context->structure[i].clone;
+  return 0;
+}
+
+static GmlVal variable_clone_array(VariableCloneContext *context, GmlArr *source, int depth){
+  if(!source) return vreal(0);
+  for(int i=0;i<context->array_count;i++) if(context->array[i].source==source){
+    GmlVal found=vreal(0); found.t=V_ARR; found.arr=context->array[i].clone; return found;
+  }
+  GmlArr *clone=calloc(1,sizeof(*clone));
+  if(!clone) return vreal(0);
+  if(!variable_clone_note_array(context,source,clone)){ free(clone); return vreal(0); }
+  clone->escaped=1;
+  clone->is_2d=source->is_2d; clone->height2d=source->height2d;
+  clone->nested_2d=source->nested_2d;
+  if(source->row_cap>0 && source->row_len){
+    clone->row_len=malloc((size_t)source->row_cap*sizeof(*clone->row_len));
+    if(clone->row_len){
+      memcpy(clone->row_len,source->row_len,(size_t)source->row_cap*sizeof(*clone->row_len));
+      clone->row_cap=source->row_cap;
+    }
+  }
+  if(source->len>0 && source->data){
+    clone->data=calloc((size_t)source->len,sizeof(*clone->data));
+    if(clone->data){
+      clone->len=clone->cap=source->len;
+      for(int i=0;i<source->len;i++)
+        clone->data[i]=depth>0
+          ?variable_clone_value(context,source->data[i],depth-1)
+          :gml_arr_store_clone(source->data[i]);
+    }
+  }
+  GmlVal result=vreal(0); result.t=V_ARR; result.arr=clone; return result;
+}
+
+static GmlVal variable_clone_struct(VariableCloneContext *context, GmlInstance *source, int depth){
+  unsigned existing=variable_clone_struct_lookup(context,source->id);
+  if(existing) return vreal((double)existing);
+  GmlInstance *clone=gml_struct_new(context->vm);
+  if(!clone || !variable_clone_note_struct(context,source->id,clone->id))
+    return vreal((double)source->id);
+  for(int i=0;i<source->vars.cap;i++){
+    GmlVarSlot *slot=&source->vars.slots[i];
+    if(!slot->key) continue;
+    GmlVal copy=depth>0
+      ?variable_clone_value(context,slot->val,depth-1)
+      :gml_arr_store_clone(slot->val);
+    *gml_varmap_put(&clone->vars,slot->key)=copy;
+  }
+  /* A cloned bound method whose receiver is part of this clone graph follows the receiver clone.
+   * External receivers remain bound to their original instance, matching variable_clone. */
+  GmlVal *source_self=gml_varmap_get(&source->vars,"__self");
+  GmlVal *clone_self=gml_varmap_get(&clone->vars,"__self");
+  if(source_self && clone_self && source_self->t==V_REAL && GML_IS_STRUCT_ID(source_self->d)){
+    unsigned rebound=variable_clone_struct_lookup(context,(unsigned)source_self->d);
+    if(rebound) *clone_self=vreal((double)rebound);
+  }
+  clone->method_bound=0;
+  return vreal((double)clone->id);
+}
+
+static GmlVal variable_clone_value(VariableCloneContext *context, GmlVal value, int depth){
+  if(value.t==V_STR){
+    char *copy=strdup(value.s?value.s:"");
+    return copy?vstr_owned(copy):vstr("");
+  }
+  if(value.t==V_ARR) return variable_clone_array(context,(GmlArr*)value.arr,depth);
+  if(value.t==V_REAL && GML_IS_STRUCT_ID(value.d)){
+    GmlInstance *source=gml_struct_find(context->vm,(unsigned)value.d);
+    if(source) return variable_clone_struct(context,source,depth);
+  }
+  return value.t==V_UNDEF?vundef():vreal(value.d);
+}
+
+static GmlVal gml_variable_clone(GmlVM *vm, GmlVal *args, int count){
+  if(count<1) return vundef();
+  int depth=count>1?(int)N(args,count,1):128;
+  if(depth<0) depth=0;
+  if(depth>128) depth=128;
+  VariableCloneContext context={.vm=vm};
+  GmlVal result=variable_clone_value(&context,args[0],depth);
+  free(context.array); free(context.structure);
+  return result;
+}
+
 /* ACRV curve records contain inline channels and points. Evaluate linearly between knots and clamp at the ends. */
 static float acrv_f32(const uint8_t *d, uint32_t o){ float f; memcpy(&f,d+o,4); return f; }
 static uint32_t acrv_curve_ptr(GmlVM *vm, int idx){
@@ -6626,6 +7175,9 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
       if(!strcmp(nm,"array_length")||!strcmp(nm,"array_length_1d")){ *out=vreal(n>0?gml_val_array_length(a[0]):0); return 1; }
       if(!strcmp(nm,"array_get")){ *out=n>1?gml_arr_get(a[0],(int)N(a,n,1)):vreal(0); return 1; }
       if(!strcmp(nm,"array_set")){ if(n>2) gml_arr_set(a[0],(int)N(a,n,1),a[2]); *out=vreal(0); return 1; }
+      if(!strcmp(nm,"array_create_ext")){ *out=gml_array_create_ext(vm,a,n); return 1; }
+      if(!strcmp(nm,"array_map_ext")){ *out=gml_array_map_ext(vm,a,n); return 1; }
+      if(!strcmp(nm,"array_foreach")){ *out=gml_array_foreach(vm,a,n); return 1; }
       if(!strcmp(nm,"array_create")){ int sz=n>0?(int)N(a,n,0):0; GmlVal fill=n>1?a[1]:vreal(0); *out=gml_arr_new(sz,fill); return 1; }
       if(!strcmp(nm,"array_push")){ for(int i=1;i<n;i++) gml_arr_push(a[0],a[i]); *out=vreal(0); return 1; }
       if(!strcmp(nm,"array_pop")){ *out=n>0?gml_arr_pop(a[0]):vreal(0); return 1; }
@@ -6633,6 +7185,7 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
       if(!strcmp(nm,"array_copy")){ if(n>4) gml_arr_copy(a[0],(int)N(a,n,1),a[2],(int)N(a,n,3),(int)N(a,n,4)); *out=vreal(0); return 1; }
       if(!strcmp(nm,"array_insert")){ if(n>2) gml_arr_insert(a[0],(int)N(a,n,1),a+2,n-2); *out=vreal(0); return 1; }
       if(!strcmp(nm,"array_equals")){ *out=vreal(n>1 && array_equals_recursive(vm,a[0],a[1])); return 1; }
+      if(!strcmp(nm,"array_get_index")){ *out=vreal(gml_array_search_index(a,n)); return 1; }
       if(!strcmp(nm,"array_sort")){ if(n>0) gml_array_sort(a[0], n<2 || N(a,n,1)!=0); *out=vreal(0); return 1; }
       if(!strcmp(nm,"array_shuffle")){ *out=n>0?gml_array_shuffle_copy(vm,a[0],a,n):gml_arr_new(0,vreal(0)); return 1; }
       if(!strcmp(nm,"array_height_2d")){ *out=vreal(n>0?gml_val_array_height_2d(a[0]):0); return 1; }
@@ -8026,6 +8579,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* GMS2.3 array-function forms. array_create(size,[val]); get/set(arr,i[,v]); push/pop(arr[,v]);
    * resize(arr,size); copy(dst,di,src,si,count). Operate on the array VALUE (a reference), so set/
    * push/resize mutate the caller's array in place — the same object arr[i] syntax touches. */
+  if(!strcmp(nm,"array_create_ext")) return gml_array_create_ext(vm,a,n);
+  if(!strcmp(nm,"array_map_ext")) return gml_array_map_ext(vm,a,n);
+  if(!strcmp(nm,"array_foreach")) return gml_array_foreach(vm,a,n);
   if(!strcmp(nm,"array_create")){ int sz=n>0?(int)N(a,n,0):0; GmlVal fill=n>1?a[1]:vreal(0); return gml_arr_new(sz,fill); }
   if(!strcmp(nm,"array_get")){ return n>1?gml_arr_get(a[0],(int)N(a,n,1)):vreal(0); }
   if(!strcmp(nm,"array_set")){ if(n>2) gml_arr_set(a[0],(int)N(a,n,1),a[2]); return vreal(0); }
@@ -8039,6 +8595,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"array_copy")){ if(n>4) gml_arr_copy(a[0],(int)N(a,n,1),a[2],(int)N(a,n,3),(int)N(a,n,4)); return vreal(0); }
   if(!strcmp(nm,"array_insert")){ if(n>2) gml_arr_insert(a[0],(int)N(a,n,1),a+2,n-2); return vreal(0); }
   if(!strcmp(nm,"array_equals")) return vreal(n>1 && array_equals_recursive(vm,a[0],a[1]));
+  if(!strcmp(nm,"array_get_index")) return vreal(gml_array_search_index(a,n));
   if(!strcmp(nm,"array_sort")){ if(n>0) gml_array_sort(a[0], n<2 || N(a,n,1)!=0); return vreal(0); }
   if(!strcmp(nm,"array_shuffle")) return n>0?gml_array_shuffle_copy(vm,a[0],a,n):gml_arr_new(0,vreal(0));
   if(!strcmp(nm,"array_contains")){
@@ -8337,6 +8894,52 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"string")) return vstr_owned(strdup(S(a,n,0)));
   if(!strcmp(nm,"string_length")) return vreal((double)strlen(S(a,n,0)));
   if(!strcmp(nm,"string_byte_length")) return vreal((double)strlen(S(a,n,0)));
+  if(!strcmp(nm,"string_concat_ext")) return gml_string_concat_ext(a,n);
+  if(!strcmp(nm,"string_foreach")){
+    if(n<2) return vreal(0);
+    const char *text=S(a,n,0); size_t bytes=strlen(text);
+    if(bytes==0 || bytes>INT_MAX) return vreal(0);
+    const char **start=malloc(bytes*sizeof(*start));
+    unsigned char *width=malloc(bytes);
+    if(!start || !width){ free(start); free(width); return vreal(0); }
+    int characters=0;
+    for(const unsigned char *cursor=(const unsigned char*)text;*cursor;){
+      int length=utf8_character_bytes(cursor);
+      start[characters]=(const char*)cursor; width[characters]=(unsigned char)length;
+      characters++; cursor+=length;
+    }
+    double raw_position=n>2?N(a,n,2):1.0;
+    if(isnan(raw_position)) raw_position=1.0;
+    int position;
+    if(isinf(raw_position)) position=raw_position<0.0?1:characters;
+    else {
+      double integral=trunc(raw_position);
+      if(integral<0.0) integral+=(double)characters+1.0;
+      if(integral<=1.0) position=1;
+      else if(integral>=(double)characters) position=characters;
+      else position=(int)integral;
+    }
+    int direction=1, length=characters-(position-1);
+    if(n>3){
+      double raw_length=N(a,n,3);
+      if(isnan(raw_length)) raw_length=0.0;
+      direction=raw_length<0.0?-1:1;
+      int available=direction>0?characters-(position-1):position;
+      if(isinf(raw_length)) length=available;
+      else {
+        double integral=trunc(fabs(raw_length));
+        length=integral>=(double)available?available:(int)integral;
+      }
+    }
+    for(int visited=0,index=position-1;visited<length;visited++,index+=direction){
+      char character[5]={0}; memcpy(character,start[index],width[index]);
+      GmlVal callback_args[2]={vstr(character),vreal(index+1)};
+      GmlVal result=gml_vm_call_callable(vm,a[1],callback_args,2);
+      if(result.t==V_STR && result.s && result.d!=0) free((void*)result.s);
+    }
+    free(start); free(width);
+    return vreal(0);
+  }
   if(!strcmp(nm,"md5_string_utf8")){ const char *s=S(a,n,0); return md5_hex_val((const uint8_t*)s,strlen(s)); }
   if(!strcmp(nm,"md5_string_unicode")){ const char *s=S(a,n,0); size_t len=0; uint8_t *u=utf16le_alloc(s,&len);
     GmlVal out=md5_hex_val(u,len); free(u); return out; }
@@ -8732,9 +9335,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
      * sentinel (-1 self / -2 other) would re-resolve it against whoever runs the method LATER — so a
      * binding built in a constructor would read the caller's fields at dispatch, not its own. */
     GmlVal selfv=a[0];
-    if(selfv.t==V_REAL && (selfv.d==-1.0 || selfv.d==-2.0 || selfv.d==-16.0)){
-      /* -1 self, -2 other, -16 static (a struct method binds to the struct being constructed = the
-       * current self at bind time). Resolve to a concrete id so dispatch reaches the right object. */
+    if(selfv.t==V_REAL && (selfv.d==-1.0 || selfv.d==-2.0)){
+      /* Ordinary self/other bindings capture a concrete receiver now. Constructor-static methods
+       * retain their -16 marker: one shared function is rebound to each struct on dot invocation. */
       GmlInstance *si = selfv.d==-2.0 ? vm->cur_other : vm->cur_self;
       if(si) selfv=vreal((double)si->id);
     }
@@ -10495,6 +11098,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"action_timeline_pause")){ if(vm->cur_self) vm->cur_self->timeline_running=0; return vreal(0); }
   if(!strcmp(nm,"action_timeline_stop")){ if(vm->cur_self){ vm->cur_self->timeline_running=0; vm->cur_self->timeline_position=0; } return vreal(0); }
 
+  if(!strncmp(nm,"time_source_",12)) return time_source_builtin(vm,nm,a,n);
+  if(!strcmp(nm,"time_seconds_to_bpm")){ double seconds=N(a,n,0); return vreal(seconds!=0.0?60.0/seconds:INFINITY); }
+  if(!strcmp(nm,"time_bpm_to_seconds")){ double bpm=N(a,n,0); return vreal(bpm!=0.0?60.0/bpm:INFINITY); }
+
   /* ---- tile-layer manipulation (mutations applied to the room's tiles at draw) ---- */
   if(!strcmp(nm,"tile_layer_delete")){ gml_tile_layer_delete(vm,(int)N(a,n,0)); return vreal(0); }
   if(!strcmp(nm,"tile_layer_depth")){ gml_tile_layer_depth(vm,(int)N(a,n,0),(int)N(a,n,1)); return vreal(0); }
@@ -10540,6 +11147,27 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"environment_get_variable")){
     const char *value=getenv(S(a,n,0));
     return vstr(value?value:"");
+  }
+  if(!strcmp(nm,"os_get_info")){
+    /* Expose the documented Windows-shaped metadata map without leaking host identity or
+     * pretending that software rendering has native D3D objects. Stable empty and zero values
+     * keep optional device paths offline. */
+    int id=ds_map_create_id(vm);
+    if(id<=0) return vreal(-1);
+    static const char *const text_keys[]={
+      "udid","video_adapter_vendorid","video_adapter_deviceid","video_adapter_subsysid",
+      "video_adapter_revision","video_adapter_description","video_adapter_dedicatedvideomemory",
+      "video_adapter_dedicatedsystemmemory","video_adapter_sharedsystemmemory"
+    };
+    static const char *const pointer_keys[]={
+      "video_d3d11_device","video_d3d11_context","video_d3d11_swapchain"
+    };
+    ds_map_put(vm,id,vstr("is64bit"),vreal(sizeof(void*)==8),1);
+    for(size_t i=0;i<sizeof(text_keys)/sizeof(text_keys[0]);i++)
+      ds_map_put(vm,id,vstr(text_keys[i]),vstr(""),1);
+    for(size_t i=0;i<sizeof(pointer_keys)/sizeof(pointer_keys[0]);i++)
+      ds_map_put(vm,id,vstr(pointer_keys[i]),vreal(0),1);
+    return vreal(id);
   }
   if(!strcmp(nm,"extension_stubfunc_real")) return vreal(0);
   if(!strcmp(nm,"extension_stubfunc_string")) return vstr("");
@@ -10794,6 +11422,27 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
     int bi=ds_priority_best_index(l,!strcmp(nm,"ds_priority_find_max"));
     return bi>=0?ds_priority_value(l->item[bi]):vreal(0); }
+  if(!strcmp(nm,"ds_priority_find_priority")){
+    GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
+    int bi=n>=2?ds_priority_value_index(l,a[1]):-1;
+    return bi>=0?vreal(ds_priority_priority(l->item[bi])):vundef(); }
+  if(!strcmp(nm,"ds_priority_change_priority")){
+    GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
+    int bi=n>=3?ds_priority_value_index(l,a[1]):-1;
+    if(bi>=0 && l->item[bi].t==V_ARR && l->item[bi].arr){
+      GmlArr *entry=(GmlArr*)l->item[bi].arr;
+      if(entry->len>1) entry->data[1]=vreal(N(a,n,2));
+    }
+    return vreal(0); }
+  if(!strcmp(nm,"ds_priority_delete_value")){
+    GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
+    int bi=n>=2?ds_priority_value_index(l,a[1]):-1;
+    if(bi>=0){
+      memmove(&l->item[bi],&l->item[bi+1],(size_t)(l->len-bi-1)*sizeof(GmlVal));
+      if(l->child_kind) memmove(&l->child_kind[bi],&l->child_kind[bi+1],(size_t)(l->len-bi-1));
+      l->len--;
+    }
+    return vreal(0); }
   if(!strcmp(nm,"ds_priority_delete_min")||!strcmp(nm,"ds_priority_delete_max")){
     GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
     int bi=ds_priority_best_index(l,!strcmp(nm,"ds_priority_delete_max"));
@@ -11031,6 +11680,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(n>1) gml_inst_var_set_val(vm,vreal(IT_SELF),S(a,n,0),var_store_clone(a[1]));
     return vreal(0);
   }
+  if(!strcmp(nm,"variable_clone")) return gml_variable_clone(vm,a,n);
   if(!strcmp(nm,"variable_global_exists")) return vreal(gml_varmap_get(&vm->globals,S(a,n,0))!=NULL);
   if(!strcmp(nm,"variable_global_get")){
     GmlVal *p=gml_varmap_get(&vm->globals,S(a,n,0));

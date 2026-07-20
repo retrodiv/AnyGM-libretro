@@ -112,6 +112,17 @@ typedef struct { int live; uint32_t id; GmlVal *cell; int w, h; } GmlDSGrid;   /
 #define GML_DS_LIST_MAX 256
 #define GML_DS_GRID_MAX 32
 
+/* Time sources use built-in parent ids 0/1. Custom handles occupy a disjoint range so they
+ * cannot alias instances, DS containers or tagged struct references. */
+#define GML_TIME_SOURCE_MAX 256
+#define GML_TIME_SOURCE_ID_BASE 0x48000000u
+typedef struct {
+  int live, parent, units, state, repetitions, reps_remaining, reps_completed, expiry_type;
+  uint32_t id;
+  double period, remaining;
+  GmlVal callback, args;
+} GmlTimeSource;
+
 /* runtime layers (GMS2 layer_create / layer_tile_create — the compat scripts GMS emits for
  * upgraded GM8 projects route tile_add/tile_delete through these, so terrain painted at
  * runtime lives here, not in the ROOM chunk). Cleared on room enter like GM tiles. */
@@ -148,6 +159,9 @@ typedef struct {
 typedef struct GmlVM {
   GmlWin   *win;
   GmlVarMap globals;
+  /* Function-static storage. Each CODE entry owns one persistent scope and the
+   * initialization latch driven by the isstaticok/setstatic bytecode pair. */
+  GmlVarMap *code_static; unsigned char *code_static_init; int code_static_count;
   GmlObject *objects; int n_objects;
   int **obj_desc; int *obj_desc_n;   /* lazy per-object descendant lists; reset after hierarchy changes */
   int *obj_alive;    /* live instances per object INCLUDING descendants (family counts; runtime-only) */
@@ -202,6 +216,7 @@ typedef struct GmlVM {
   int      god_mode;          /* frontend core option; requires GML_GOD_OBJ to name a target family */
   /* execution context */
   GmlInstance *cur_self, *cur_other;
+  int      cur_code_index;   /* current CODE entry, so IT_STATIC resolves across nested calls */
   int32_t call_script_ci;   /* side channel: generic dispatch reports "name resolved to script <ci>" for the caller's per-site cache */
   const char *cur_event; int cur_event_obj;   /* current event suffix + object level (for event_inherited) */
   int      event_type, event_number;          /* transient GM event_type/event_number builtins */
@@ -261,6 +276,9 @@ typedef struct GmlVM {
   int next_ds_id;
   int ds_map_last_slot;       /* transient slot-id cache for repeated DS-map ops */
   int ds_list_compat_repair;  /* old save-states did not serialize ds_list payloads */
+  GmlTimeSource time_source[GML_TIME_SOURCE_MAX];
+  uint32_t next_time_source_id;
+  int time_source_game_state;
 #define GML_MAX_EMITTERS 32
   unsigned char emitter_live[GML_MAX_EMITTERS];   /* audio emitters = gain cells (ids 3000000+i) */
   double emitter_gain[GML_MAX_EMITTERS];
@@ -323,6 +341,10 @@ int     gml_real_compare(double lhs, double rhs, int cmp, int classic);
 int     gml_real_compare_epsilon(double lhs, double rhs, int cmp, double epsilon);
 GmlVal  gml_vm_run_code(GmlVM *vm, int code_index, GmlInstance *self, GmlInstance *other,
                         GmlVal *args, int n_args);
+/* Invoke a function value or bound method using the same receiver rules as OP_CALLV.
+ * Builtins with callback arguments use this instead of discarding a method's bound self. */
+GmlVal  gml_vm_call_callable(GmlVM *vm, GmlVal callable, GmlVal *args, int n_args);
+void    gml_time_sources_tick(GmlVM *vm);          /* between Begin Step and normal Step */
 int     gml_code_index_by_name(GmlWin *win, const char *name);  /* exact */
 int     gml_code_index_find(GmlWin *win, const char *substr);   /* first containing */
 

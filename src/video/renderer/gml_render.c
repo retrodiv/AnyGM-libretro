@@ -113,7 +113,12 @@ static int sprof_enabled(void){
 }
 static double rprof_now(void){
 #ifdef _WIN32
-  return 0.0;
+  static LARGE_INTEGER frequency;
+  static int ready;
+  LARGE_INTEGER now;
+  if(!ready){ QueryPerformanceFrequency(&frequency); ready=1; }
+  QueryPerformanceCounter(&now);
+  return frequency.QuadPart ? (double)now.QuadPart/(double)frequency.QuadPart : 0.0;
 #else
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC,&ts);
@@ -751,9 +756,21 @@ void gml_render_prefetch_bg(GmlRender *r, int bg){
   prefetch_atlas_and_neighbors(r,r->tpag[ti].atlas);
 }
 static void atlas_dump_maybe(GmlRender *r, int idx){
+  /* This hook sits on the hot atlas-pixel accessor, including palette shaders that may sample
+   * their lookup sprite millions of times per frame.  Querying the process environment on every
+   * texel is disproportionately expensive on some C runtimes (notably the Windows CRT), even when
+   * dumping is disabled.  Debug switches are process-lifetime settings, so resolve them once. */
+  static int checked;
+  static const char *dump_atlas, *only, *dump_alpha;
+  if(!checked){
+    dump_atlas=getenv("GML_DUMP_ATLAS");
+    only=getenv("GML_DUMP_ATLAS_ID");
+    dump_alpha=getenv("GML_DUMP_ATLAS_ALPHA");
+    checked=1;
+  }
+  if(!dump_atlas && !only) return;
   GmlAtlas *a=&r->atlas[idx];
-  const char *only=getenv("GML_DUMP_ATLAS_ID");
-  if(!a->px || a->debug_dumped || (!getenv("GML_DUMP_ATLAS") && !only)) return;
+  if(!a->px || a->debug_dumped) return;
   if(only && *only && atoi(only)!=idx) return;
   a->debug_dumped=1;
   char fn[64]; snprintf(fn,sizeof fn,"builds/_atlas%d.ppm",idx);
@@ -765,7 +782,7 @@ static void atlas_dump_maybe(GmlRender *r, int idx){
     }
     free(row); fclose(f);
     fprintf(stderr,"[atlas] dumped %s (%dx%d)\n",fn,a->w,a->h); }
-  if(getenv("GML_DUMP_ATLAS_ALPHA")){
+  if(dump_alpha){
     char afn[64]; snprintf(afn,sizeof afn,"builds/_atlas%d_alpha.pgm",idx);
     FILE *af=fopen(afn,"wb"); if(af){ uint8_t *row=malloc((size_t)a->w);
       fprintf(af,"P5\n%d %d\n255\n",a->w,a->h);

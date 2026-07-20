@@ -220,6 +220,34 @@ static int expect_ds_list_text_roundtrip(void){
   return ok;
 }
 
+static int expect_ds_priority_lookup_mutation(void){
+  GmlVM vm={0}; vm.next_ds_id=1; vm.ds_map_last_slot=-1;
+  GmlVal queue=gml_builtin_call(&vm,"ds_priority_create",NULL,0);
+  GmlVal add_first[3]={queue,vstr("first"),vreal(5)};
+  GmlVal add_second[3]={queue,vstr("second"),vreal(2)};
+  (void)gml_builtin_call(&vm,"ds_priority_add",add_first,3);
+  (void)gml_builtin_call(&vm,"ds_priority_add",add_second,3);
+
+  GmlVal lookup_first[2]={queue,vstr("first")};
+  GmlVal lookup_missing[2]={queue,vstr("missing")};
+  GmlVal first_priority=gml_builtin_call(&vm,"ds_priority_find_priority",lookup_first,2);
+  GmlVal missing_priority=gml_builtin_call(&vm,"ds_priority_find_priority",lookup_missing,2);
+  GmlVal change_second[3]={queue,vstr("second"),vreal(8)};
+  (void)gml_builtin_call(&vm,"ds_priority_change_priority",change_second,3);
+  GmlVal maximum=gml_builtin_call(&vm,"ds_priority_find_max",&queue,1);
+  (void)gml_builtin_call(&vm,"ds_priority_delete_value",lookup_first,2);
+  GmlVal deleted_priority=gml_builtin_call(&vm,"ds_priority_find_priority",lookup_first,2);
+  GmlVal size=gml_builtin_call(&vm,"ds_priority_size",&queue,1);
+
+  int ok=first_priority.t==V_REAL && first_priority.d==5 &&
+    missing_priority.t==V_UNDEF && maximum.t==V_STR && maximum.s &&
+    !strcmp(maximum.s,"second") && deleted_priority.t==V_UNDEF &&
+    size.t==V_REAL && size.d==1;
+  (void)gml_builtin_call(&vm,"ds_priority_destroy",&queue,1);
+  if(!ok) fprintf(stderr,"ds_priority lookup/mutation fixture failed\n");
+  return ok;
+}
+
 static void fixture_write_u32(unsigned char *data,size_t off,uint32_t value){
   data[off]=(unsigned char)value;
   data[off+1]=(unsigned char)(value>>8);
@@ -464,6 +492,7 @@ int main(void){
   if(!expect_hash_layer_gpu_gap_closure()) return 1;
   if(!expect_array_function_gap_closure()) return 1;
   if(!expect_ds_list_text_roundtrip()) return 1;
+  if(!expect_ds_priority_lookup_mutation()) return 1;
   if(!expect_audio_group_paths()) return 1;
   {
     GmlSprite sprite={0}; GmlRender render={0};
@@ -608,7 +637,7 @@ int main(void){
     }
   }
   GmlcProject project; GmlcObject objects[3]; GmlcRoom rooms[2];
-  GmlcScript scripts[2]; char *script_order[2];
+  GmlcScript scripts[4]; char *script_order[4];
   GmlcPath fixture_path; GmlcPathPoint fixture_path_points[2];
   GmlcTimeline timeline; GmlcTimelineMoment timeline_moments[3];
   GmlcRoomInstance placed_instance;
@@ -629,10 +658,14 @@ int main(void){
   project.classic_version=800;
   scripts[0].id=scripts[0].name=(char*)"script_implicit_result";
   scripts[1].id=scripts[1].name=(char*)"crear";
+  scripts[2].id=scripts[2].name=(char*)"array_ext_callback";
+  scripts[3].id=scripts[3].name=(char*)"studio_with_order";
   script_order[0]=scripts[0].id;
   script_order[1]=scripts[1].id;
-  project.scripts=scripts; project.n_scripts=project.cap_scripts=2;
-  project.script_order_ids=script_order; project.n_script_order=2;
+  script_order[2]=scripts[2].id;
+  script_order[3]=scripts[3].id;
+  project.scripts=scripts; project.n_scripts=project.cap_scripts=4;
+  project.script_order_ids=script_order; project.n_script_order=4;
   fixture_path.id=fixture_path.name=(char*)"fixture_path";
   fixture_path.precision=4; fixture_path.points=fixture_path_points; fixture_path.n_points=2;
   fixture_path_points[0].speed=fixture_path_points[1].speed=100;
@@ -733,6 +766,28 @@ int main(void){
      fwrite(shadowed_alias_source,1,sizeof(shadowed_alias_source)-1,shadowed_alias_file)!=sizeof(shadowed_alias_source)-1 ||
      fclose(shadowed_alias_file)!=0)return 1;
   scripts[1].source_path=shadowed_alias_script;
+  char array_ext_callback[]="/tmp/gml-array-ext-callback-XXXXXX";
+  int array_ext_callback_fd=mkstemp(array_ext_callback); if(array_ext_callback_fd<0)return 1;
+  FILE *array_ext_callback_file=fdopen(array_ext_callback_fd,"wb");
+  const char array_ext_callback_source[]=
+    "if (argument_count > 1) global.time_source_fixture += argument1; "
+    "return argument0 * factor;\n";
+  if(!array_ext_callback_file ||
+     fwrite(array_ext_callback_source,1,sizeof(array_ext_callback_source)-1,array_ext_callback_file)!=sizeof(array_ext_callback_source)-1 ||
+     fclose(array_ext_callback_file)!=0)return 1;
+  scripts[2].source_path=array_ext_callback;
+  char studio_with_order[]="/tmp/gml-studio-with-order-XXXXXX";
+  int studio_with_order_fd=mkstemp(studio_with_order); if(studio_with_order_fd<0)return 1;
+  FILE *studio_with_order_file=fdopen(studio_with_order_fd,"wb");
+  const char studio_with_order_source[]=
+    "global.with_order=0; with(obj_changed){ "
+    "global.with_order=global.with_order*10+x; "
+    "if(x==3){ with(global.with_victim) instance_destroy(); } } "
+    "return global.with_order;\n";
+  if(!studio_with_order_file ||
+     fwrite(studio_with_order_source,1,sizeof(studio_with_order_source)-1,studio_with_order_file)!=sizeof(studio_with_order_source)-1 ||
+     fclose(studio_with_order_file)!=0)return 1;
+  scripts[3].source_path=studio_with_order;
   char condition[]="/tmp/gml-trigger-condition-XXXXXX"; int condition_fd=mkstemp(condition); if(condition_fd<0)return 1;
   FILE *condition_file=fdopen(condition_fd,"wb"); const char condition_source[]="return (global.startup_value == 42);\n";
   if(!condition_file || fwrite(condition_source,1,sizeof(condition_source)-1,condition_file)!=sizeof(condition_source)-1 || fclose(condition_file)!=0)return 1;
@@ -902,6 +957,145 @@ int main(void){
   if(!mkdtemp(save_root)){ gml_win_free(&win); unlink(path); return 1; }
   snprintf(win.save_dir,sizeof win.save_dir,"%s",save_root);
   GmlVM vm; if(gml_vm_init(&vm,&win)){ gml_win_free(&win); unlink(path); return 1; }
+  {
+    int callback_ci=gml_code_index_by_name(&win,"gml_Script_array_ext_callback");
+    GmlInstance *receiver=gml_struct_new(&vm);
+    if(callback_ci<0 || !receiver) return 1;
+    *gml_varmap_put(&receiver->vars,"factor")=vreal(5);
+    GmlVal bind_args[2]={vreal((double)receiver->id),
+                         vreal((double)(GML_FUNCVAL_TAG|callback_ci))};
+    GmlVal callback=gml_builtin_call(&vm,"method",bind_args,2);
+    *gml_varmap_put(&receiver->vars,"__ctor")=vreal(callback_ci);
+    *gml_varmap_put(&vm.code_static[callback_ci],"shared_fixture")=vreal(42);
+    int inherited_ok=0;
+    GmlVal inherited=gml_inst_var_get_val(&vm,vreal((double)receiver->id),
+                                           "shared_fixture",&inherited_ok);
+    GmlInstance *saved_self=vm.cur_self;
+    vm.cur_self=receiver;
+    GmlVal static_bind_args[2]={vreal(-16),vreal((double)(GML_FUNCVAL_TAG|callback_ci))};
+    GmlVal static_callback=gml_builtin_call(&vm,"method",static_bind_args,2);
+    GmlVal static_input=vreal(2);
+    GmlVal static_result=gml_vm_call_callable(&vm,static_callback,&static_input,1);
+    vm.cur_self=saved_self;
+    if(!inherited_ok || inherited.t!=V_REAL || inherited.d!=42 ||
+       static_result.t!=V_REAL || static_result.d!=10){
+      fprintf(stderr,"constructor static field/method fixture failed\n"); return 1;
+    }
+    GmlVal create_args[2]={vreal(4),callback};
+    GmlVal generated=gml_builtin_call(&vm,"array_create_ext",create_args,2);
+    if(generated.t!=V_ARR || gml_val_array_length(generated)!=4 ||
+       gml_arr_get(generated,0).d!=0 || gml_arr_get(generated,1).d!=5 ||
+       gml_arr_get(generated,2).d!=10 || gml_arr_get(generated,3).d!=15){
+      fprintf(stderr,"array_create_ext callback/receiver fixture failed\n"); return 1;
+    }
+    GmlVal mapped=gml_arr_new(5,vreal(0));
+    for(int i=0;i<5;i++) gml_arr_set(mapped,i,vreal(i+1));
+    GmlVal map_args[4]={mapped,callback,vreal(-2),vreal(-3)};
+    GmlVal map_count=gml_builtin_call(&vm,"array_map_ext",map_args,4);
+    if(map_count.t!=V_REAL || map_count.d!=3 || gml_val_array_length(mapped)!=5 ||
+       gml_arr_get(mapped,0).d!=1 || gml_arr_get(mapped,1).d!=10 ||
+       gml_arr_get(mapped,2).d!=15 || gml_arr_get(mapped,3).d!=20 ||
+       gml_arr_get(mapped,4).d!=5){
+      fprintf(stderr,"array_map_ext callback/range fixture failed\n"); return 1;
+    }
+    *gml_varmap_put(&vm.globals,"time_source_fixture")=vreal(0);
+    GmlVal array_foreach_args[4]={mapped,callback,vreal(-2),vreal(-3)};
+    GmlVal foreach_result=gml_builtin_call(&vm,"array_foreach",array_foreach_args,4);
+    GmlVal *foreach_total=gml_varmap_get(&vm.globals,"time_source_fixture");
+    if(foreach_result.t!=V_UNDEF || !foreach_total || foreach_total->d!=6 ||
+       gml_arr_get(mapped,0).d!=1 || gml_arr_get(mapped,1).d!=10 ||
+       gml_arr_get(mapped,2).d!=15 || gml_arr_get(mapped,3).d!=20 ||
+       gml_arr_get(mapped,4).d!=5){
+      fprintf(stderr,"array_foreach callback/range fixture failed\n"); return 1;
+    }
+    GmlVal words=gml_arr_new(9,vstr(""));
+    const char *word_values[9]={"a","b","c","d","e","d","c","b","a"};
+    for(int i=0;i<9;i++) gml_arr_set(words,i,vstr(word_values[i]));
+    GmlVal first_args[2]={words,vstr("d")};
+    GmlVal omitted_args[3]={words,vstr("d"),vreal(6)};
+    GmlVal reverse_args[4]={words,vstr("d"),vreal(-1),vreal(-INFINITY)};
+    GmlVal clamped_args[4]={words,vstr("a"),vreal(INFINITY),vreal(-INFINITY)};
+    GmlVal empty_args[4]={words,vstr("d"),vreal(3),vreal(0)};
+    GmlVal first=gml_builtin_call(&vm,"array_get_index",first_args,2);
+    GmlVal omitted=gml_builtin_call(&vm,"array_get_index",omitted_args,3);
+    GmlVal reverse=gml_builtin_call(&vm,"array_get_index",reverse_args,4);
+    GmlVal clamped=gml_builtin_call(&vm,"array_get_index",clamped_args,4);
+    GmlVal empty=gml_builtin_call(&vm,"array_get_index",empty_args,4);
+    if(first.t!=V_REAL || first.d!=3 || omitted.t!=V_REAL || omitted.d!=-1 ||
+       reverse.t!=V_REAL || reverse.d!=5 || clamped.t!=V_REAL || clamped.d!=8 ||
+       empty.t!=V_REAL || empty.d!=-1){
+      fprintf(stderr,"array_get_index range fixture failed\n"); return 1;
+    }
+    *gml_varmap_put(&vm.globals,"time_source_fixture")=vreal(0);
+    GmlVal timer_args=gml_arr_new(2,vreal(0));
+    gml_arr_set(timer_args,1,vreal(3));
+    GmlVal timer_create_args[7]={vreal(0),vreal(1),vreal(1),callback,timer_args,vreal(2),vreal(1)};
+    GmlVal timer=gml_builtin_call(&vm,"time_source_create",timer_create_args,7);
+    (void)gml_builtin_call(&vm,"time_source_start",&timer,1);
+    gml_vm_step(&vm);
+    GmlVal first_timer_state=gml_builtin_call(&vm,"time_source_get_state",&timer,1);
+    GmlVal first_timer_reps=gml_builtin_call(&vm,"time_source_get_reps_remaining",&timer,1);
+    GmlVal *timer_total=gml_varmap_get(&vm.globals,"time_source_fixture");
+    if(timer.t!=V_REAL || first_timer_state.t!=V_REAL || first_timer_state.d!=1 ||
+       first_timer_reps.t!=V_REAL || first_timer_reps.d!=1 || !timer_total || timer_total->d!=3){
+      fprintf(stderr,"time source first-frame callback fixture failed\n"); return 1;
+    }
+    gml_vm_step(&vm);
+    GmlVal final_timer_state=gml_builtin_call(&vm,"time_source_get_state",&timer,1);
+    GmlVal final_timer_reps=gml_builtin_call(&vm,"time_source_get_reps_completed",&timer,1);
+    timer_total=gml_varmap_get(&vm.globals,"time_source_fixture");
+    if(final_timer_state.t!=V_REAL || final_timer_state.d!=3 || final_timer_reps.t!=V_REAL ||
+       final_timer_reps.d!=2 || !timer_total || timer_total->d!=6){
+      fprintf(stderr,"time source repetition fixture failed\n"); return 1;
+    }
+    GmlVal foreach_args[2]={vstr("A\342\202\254"),callback};
+    (void)gml_builtin_call(&vm,"string_foreach",foreach_args,2);
+    timer_total=gml_varmap_get(&vm.globals,"time_source_fixture");
+    if(!timer_total || timer_total->t!=V_REAL || timer_total->d!=9){
+      fprintf(stderr,"string_foreach Unicode position fixture failed\n"); return 1;
+    }
+    GmlVal letters=gml_arr_new(10,vstr(""));
+    const char *letter_values[10]={"a","b","c","d","e","f","g","h","i","j"};
+    for(int i=0;i<10;i++) gml_arr_set(letters,i,vstr(letter_values[i]));
+    GmlVal concatenate_args[3]={letters,vreal(-5),vreal(-3)};
+    GmlVal concatenated=gml_builtin_call(&vm,"string_concat_ext",concatenate_args,3);
+    GmlVal suffix_args[2]={letters,vreal(8)};
+    GmlVal suffix=gml_builtin_call(&vm,"string_concat_ext",suffix_args,2);
+    if(concatenated.t!=V_STR || strcmp(concatenated.s?concatenated.s:"","fed") ||
+       suffix.t!=V_STR || strcmp(suffix.s?suffix.s:"","ij")){
+      fprintf(stderr,"string_concat_ext range fixture failed\n"); return 1;
+    }
+    if(concatenated.d!=0) free((void*)concatenated.s);
+    if(suffix.d!=0) free((void*)suffix.s);
+    *gml_varmap_put(&vm.globals,"fixture_time_source_handle")=timer;
+    *gml_varmap_put(&receiver->vars,"callback")=callback;
+    GmlVal inner=gml_arr_new(1,vreal(7));
+    GmlVal outer=gml_arr_new(1,inner);
+    GmlVal shallow_args[2]={outer,vreal(0)};
+    GmlVal deep_args[2]={outer,vreal(1)};
+    GmlVal shallow=gml_builtin_call(&vm,"variable_clone",shallow_args,2);
+    GmlVal deep=gml_builtin_call(&vm,"variable_clone",deep_args,2);
+    GmlVal shallow_inner=gml_arr_get(shallow,0), deep_inner=gml_arr_get(deep,0);
+    if(shallow.t!=V_ARR || shallow.arr==outer.arr || shallow_inner.arr!=inner.arr ||
+       deep.t!=V_ARR || deep.arr==outer.arr || deep_inner.t!=V_ARR || deep_inner.arr==inner.arr ||
+       gml_arr_get(deep_inner,0).d!=7){
+      fprintf(stderr,"variable_clone array depth fixture failed\n"); return 1;
+    }
+    GmlVal receiver_value=vreal((double)receiver->id);
+    GmlVal cloned_receiver_value=gml_builtin_call(&vm,"variable_clone",&receiver_value,1);
+    GmlInstance *cloned_receiver=gml_struct_find(&vm,(unsigned)cloned_receiver_value.d);
+    GmlVal *cloned_callback=cloned_receiver?gml_varmap_get(&cloned_receiver->vars,"callback"):NULL;
+    GmlVal callback_value=cloned_callback?*cloned_callback:vundef();
+    GmlVal callback_input=vreal(2);
+    GmlVal callback_result=gml_vm_call_callable(&vm,callback_value,&callback_input,1);
+    if(!cloned_receiver || cloned_receiver==receiver || callback_result.t!=V_REAL || callback_result.d!=10){
+      fprintf(stderr,"variable_clone bound receiver fixture failed\n"); return 1;
+    }
+    *gml_varmap_put(&receiver->vars,"outer")=outer;
+    *gml_varmap_put(&receiver->vars,"shallow")=shallow;
+    *gml_varmap_put(&receiver->vars,"deep")=deep;
+    *gml_varmap_put(&vm.globals,"fixture_clone_root")=receiver_value;
+  }
   {
     GmlVal build_args[9]={vreal(10),vreal(20),vreal(30),vreal(0),vreal(0),vreal(0),
                           vreal(2),vreal(3),vreal(4)};
@@ -1751,21 +1945,33 @@ int main(void){
   }
   GmlInstance *slot=find_slot(&vm,id);
   if(!slot||!slot->room_dormant||slot->active){ fprintf(stderr,"room was not stored\n"); return 1; }
+  int static_ci=gml_code_index_by_name(&win,"gml_Script_array_ext_callback");
+  if(static_ci<0 || static_ci>=vm.code_static_count) return 1;
+  vm.code_static_init[static_ci]=1;
+  *gml_varmap_put(&vm.code_static[static_ci],"fixture_static")=vreal(73);
   size_t size=gml_vm_state_size(&vm),written=0,used=0; void *state=malloc(size);
   if(!state||!gml_vm_state_save(&vm,state,size,&written)||written!=size)return 1;
   gml_room_enter(&vm,0); slot=find_slot(&vm,id);
   if(!slot||!slot->active||slot->room_dormant)return 1;
   *gml_varmap_put(&slot->vars,"value")=vreal(99);
+  vm.code_static_init[static_ci]=0;
+  *gml_varmap_put(&vm.code_static[static_ci],"fixture_static")=vreal(99);
   if(!gml_vm_state_load(&vm,state,written,&used)||used!=written)return 1;
   gml_room_enter(&vm,0); slot=find_slot(&vm,id);
   GmlVal *value=slot?gml_varmap_get(&slot->vars,"value"):NULL;
   GmlVal *room_speed=gml_varmap_get(&vm.globals,"room_speed");
+  GmlVal *static_value=gml_varmap_get(&vm.code_static[static_ci],"fixture_static");
+  GmlVal *timer_handle=gml_varmap_get(&vm.globals,"fixture_time_source_handle");
+  GmlVal restored_timer_state=timer_handle?
+    gml_builtin_call(&vm,"time_source_get_state",timer_handle,1):vundef();
   int ok=slot&&slot->active&&!slot->room_dormant&&value&&value->t==V_REAL&&value->d==42 &&
     global_array_value(&vm,"background_x",0)==123 && global_array_value(&vm,"view_xview",0)==77 &&
     room_speed&&room_speed->t==V_REAL&&room_speed->d==55 && vm.n_tile_mut==1 &&
     vm.tile_mut[0].depth==300&&vm.tile_mut[0].dx==8&&vm.tile_mut[0].dy==9 &&
     vm.potential_max_rotation==30 && vm.potential_rotate_step==10 &&
-    vm.potential_check_distance==1 && vm.potential_rotate_on_spot==1;
+    vm.potential_check_distance==1 && vm.potential_rotate_on_spot==1 &&
+    vm.code_static_init[static_ci]==1 && static_value && static_value->t==V_REAL && static_value->d==73 &&
+    timer_handle && timer_handle->t==V_REAL && restored_timer_state.t==V_REAL && restored_timer_state.d==3;
   if(!ok) fprintf(stderr,
     "persistent room state did not roundtrip: slot=%d value=%.0f bg=%.0f view=%.0f speed=%.0f tiles=%d depth=%d shift=(%.0f,%.0f)\n",
     slot&&slot->active&&!slot->room_dormant,value&&value->t==V_REAL?value->d:-1,
@@ -1908,7 +2114,26 @@ int main(void){
     fprintf(stderr,"instance pool churn was unbounded/moved a live slot: base=%d final=%d producers=%d stable=%d\n",
       churn_base,vm.inst_count,churn_producers,find_slot(&vm,stable_id)==stable); return 1;
   }
-  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(shadowed_alias_script); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(solid_collision); unlink(destroy_reentry); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
+  /* Modern family-scoped with() walks newest-first and skips a member destroyed by an earlier
+   * body. Use a dedicated clean family so unrelated event fixtures cannot mask either property. */
+  for(int i=0;i<vm.inst_count;i++)
+    if(vm.inst[i].active && !vm.inst[i].marked && vm.inst[i].obj==1) gml_instance_destroy(&vm,&vm.inst[i]);
+  gml_vm_step(&vm);
+  GmlInstance *with_old=gml_instance_create(&vm,1,0,1);
+  GmlInstance *with_mid=gml_instance_create(&vm,2,0,1);
+  GmlInstance *with_new=gml_instance_create(&vm,3,0,1);
+  int with_code=gml_code_index_by_name(&win,"gml_Script_studio_with_order");
+  if(!with_old || !with_mid || !with_new || with_code<0) return 1;
+  *gml_varmap_put(&vm.globals,"with_victim")=vreal((double)with_old->id);
+  int saved_classic=win.classic_version;
+  win.classic_version=0;
+  GmlVal with_result=gml_vm_run_code(&vm,with_code,with_new,with_new,NULL,0);
+  win.classic_version=saved_classic;
+  if(with_result.t!=V_REAL || with_result.d!=32){
+    fprintf(stderr,"Studio with order/dead-member mismatch: %.0f\n",
+      with_result.t==V_REAL?with_result.d:-1.0); return 1;
+  }
+  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(shadowed_alias_script); unlink(array_ext_callback); unlink(studio_with_order); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(solid_collision); unlink(destroy_reentry); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
   for(int i=0;i<2;i++) unlink(key_files[i]);
   for(int i=0;i<2;i++) unlink(mouse_files[i]);
