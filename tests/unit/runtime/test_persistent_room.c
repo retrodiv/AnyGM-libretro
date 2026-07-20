@@ -488,7 +488,63 @@ static double global_array_value(GmlVM *vm,const char *name,int index){
   return array&&index>=0&&index<array->len&&array->data[index].t==V_REAL?array->data[index].d:0;
 }
 
+static void fixture_word(unsigned char *data,int index,uint32_t word){
+  data[index*4+0]=(unsigned char)word;
+  data[index*4+1]=(unsigned char)(word>>8);
+  data[index*4+2]=(unsigned char)(word>>16);
+  data[index*4+3]=(unsigned char)(word>>24);
+}
+
+/* DUP measures data in encoded stack bytes, not logical values. Exercise both a normal
+ * mixed-width duplication and the adjacent-block swap form using only a synthetic fixture. */
+static int expect_typed_stack_dup(void){
+  unsigned char data[64]={0};
+  const uint32_t normal[]={
+    (OP_PUSH<<24)|(DT_INT16<<16)|10u,
+    (OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
+    (OP_PUSH<<24)|(DT_INT16<<16)|20u,
+    (OP_PUSH<<24)|(DT_INT16<<16)|30u,
+    (OP_DUP<<24)|(DT_INT32<<16)|5u,
+    (OP_POPZ<<24)|(DT_INT16<<16),
+    (OP_POPZ<<24)|(DT_INT16<<16),
+    (OP_POPZ<<24)|(DT_VAR<<16),
+    (OP_ADD<<24)|(((DT_INT16<<4)|DT_INT16)<<16),
+    (OP_ADD<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
+    (OP_RET<<24)|(DT_VAR<<16)
+  };
+  for(int i=0;i<(int)(sizeof normal/sizeof *normal);i++) fixture_word(data,i,normal[i]);
+  GmlCode code={0}; code.name=(char*)"gml_Script_typed_stack_fixture";
+  code.start=0; code.length=(uint32_t)sizeof normal;
+  GmlWin win={0}; win.data=data; win.size=sizeof data; win.bytecode=17;
+  win.code=&code; win.n_code=1;
+  GmlVM vm={0}; vm.win=&win; vm.cur_code_index=-1; vm.math_epsilon=1e-5;
+  GmlVal sum=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
+  free(code.insn); free(code.insn_pc); free(code.branch_index);
+
+  memset(data,0,sizeof data); memset(&code,0,sizeof code);
+  const uint32_t swapped[]={
+    (OP_PUSH<<24)|(DT_INT16<<16)|1u,
+    (OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
+    (OP_PUSH<<24)|(DT_INT16<<16)|2u,
+    (OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
+    (OP_DUP<<24)|(DT_VAR<<16)|0x8801u,
+    (OP_SUB<<24)|(((DT_VAR<<4)|DT_VAR)<<16),
+    (OP_RET<<24)|(DT_VAR<<16)
+  };
+  for(int i=0;i<(int)(sizeof swapped/sizeof *swapped);i++) fixture_word(data,i,swapped[i]);
+  code.name=(char*)"gml_Script_typed_stack_swap_fixture";
+  code.start=0; code.length=(uint32_t)sizeof swapped;
+  win.data=data; win.size=sizeof data; win.code=&code;
+  GmlVal difference=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
+  free(code.insn); free(code.insn_pc); free(code.branch_index);
+  int ok=sum.t==V_REAL && sum.d==60 && difference.t==V_REAL && difference.d==1;
+  if(!ok) fprintf(stderr,"typed stack DUP fixture failed: sum=%.0f swap=%.0f\n",
+                  sum.t==V_REAL?sum.d:-1.0,difference.t==V_REAL?difference.d:-1.0);
+  return ok;
+}
+
 int main(void){
+  if(!expect_typed_stack_dup()) return 1;
   if(!expect_hash_layer_gpu_gap_closure()) return 1;
   if(!expect_array_function_gap_closure()) return 1;
   if(!expect_ds_list_text_roundtrip()) return 1;

@@ -1115,6 +1115,14 @@ static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, 
 }
 static void array_set_inst_field_h(GmlVM *vm,GmlInstance *s,const char *nm,uint32_t nh,int idx,GmlVal v){
   if(!s) return;
+  { static const char *debug_name=(const char*)-1;
+    if(debug_name==(const char*)-1) debug_name=getenv("GML_DBG_ARRAYSET");
+    if(debug_name && nm && !strcmp(debug_name,nm)){
+      extern long g_vm_frame;
+      fprintf(stderr,"[arrayset] f%ld instance=%u object=%d %s[%d] type=%d value=%.17g\n",
+              g_vm_frame,s->id,s->obj,nm,idx,v.t,v.t==V_REAL?v.d:0.0);
+    }
+  }
   if(s->obj>=0 && !strcmp(nm,"alarm")){
     if(idx>=0 && idx<GML_ALARMS) s->alarm[idx]=alarm_store_value(vm,v);
     return;
@@ -2268,6 +2276,37 @@ static int classic_extension_script_code(GmlVM *vm,const char *name){
 
 /* ---------------- interpreter ---------------- */
 #define STK 512
+/* The encoded operand stack is byte-sized even though this interpreter stores every logical
+ * value in one GmlVal slot. DUP operands use units of their encoded data type, so retain that
+ * type beside each slot to duplicate mixed-width references correctly. */
+static int vm_stack_type_size(uint8_t type){
+  switch(type){
+    case DT_DOUBLE: case DT_INT64: return 8;
+    case DT_VAR: return 16;
+    case DT_FLOAT: case DT_INT32: case DT_BOOL: case DT_STRING: case DT_INT16: return 4;
+    default: return 4;
+  }
+}
+
+static int vm_stack_type_bias(uint8_t type){
+  if(type==DT_VAR) return 2;
+  if(type==DT_DOUBLE || type==DT_FLOAT || type==DT_INT64) return 1;
+  return 0;
+}
+
+static uint8_t vm_math_result_type(uint8_t left, uint8_t right){
+  int lb=vm_stack_type_bias(left), rb=vm_stack_type_bias(right);
+  if(lb!=rb) return lb>rb?left:right;
+  return left<right?left:right;
+}
+
+static void vm_stack_reverse(GmlVal *values, uint8_t *types, int first, int last){
+  for(last--; first<last; first++,last--){
+    GmlVal value=values[first]; values[first]=values[last]; values[last]=value;
+    uint8_t type=types[first]; types[first]=types[last]; types[last]=type;
+  }
+}
+
 /* Function-value encoding: a GMS2.3 script/method reference pushed on the value stack (via a
  * `push.i32 <FUNC-ref>` or method()) is represented as a plain real tagged with GML_FUNCVAL_TAG in
  * its high bits and the CODE-entry index in the low 24. OP_CALLV recovers the index and runs it.
@@ -2328,7 +2367,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
    * so local cleanup leaves shared arrays for deduplicated full teardown. */
   for(int i=0;i<argc;i++) if(vm->script_args[i].t==V_ARR) gml_arr_mark_escaped(vm->script_args[i]);
 
-  GmlVal stk[STK]; int sp=0;
+  GmlVal stk[STK]; uint8_t stkt[STK]; int sp=0;
   /* Preserve the array/index reference at savearef for a later popaf store,
    * restoring the stack position below the saved reference. */
   struct { GmlArr *arr; int idx; int base; } aref[16]; int aref_n=0;
@@ -2423,6 +2462,13 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           dbg_other_name?dbg_other_name:"?",dbg_other?dbg_other->id:0,
           dbg_other?dbg_other->hspeed:0.0,dbg_other?dbg_other->image_xscale:0.0);
         if(sp>0) log_val_simple(stk[sp-1]); else fprintf(stderr,"<empty>");
+        fprintf(stderr," stack[");
+        int stack_first=sp>8?sp-8:0;
+        for(int dbg_i=stack_first;dbg_i<sp;dbg_i++){
+          if(dbg_i>stack_first) fputc(',',stderr);
+          log_val_simple(stk[dbg_i]);
+        }
+        fprintf(stderr,"]");
         fprintf(stderr,"\n");
         count++;
       } }
@@ -2532,7 +2578,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             else { GmlVal *pp=gml_varmap_get_h(&locals,nm,nh); v=pp?*pp:vreal(0); }
           } else v=var_get_h(vm,in.inst,nm,nh);
         } else v=vreal(0);
-        if(sp<STK) stk[sp++]=v;
+        if(sp<STK){ stk[sp]=v; stkt[sp]=in.type1; sp++; }
         break;
       }
       case OP_POP:{
@@ -2626,59 +2672,59 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         }
         break;
       case OP_DUP: {
-        /* Use the low-word size parameter to duplicate the top extra+1 stack slots. */
-        /* Extended DUP mode (0x88NN) rotates the value NN slots below the top to the top,
-         * without duplicating it. Method calls use this to lift their receiver over every argument;
-         * a following ordinary dup leaves one receiver for the field read and one for callv. */
-        uint16_t dup_operand=(uint16_t)in.inst;
-        if((dup_operand&0xFF00u)==0x8800u && in.type1==DT_VAR){
-          int distance=dup_operand&0xFFu;
-          if(distance>0 && sp>distance){
-            int source=sp-distance-1;
-            GmlVal lifted=stk[source];
-            memmove(stk+source,stk+source+1,(size_t)distance*sizeof(*stk));
-            stk[sp-1]=lifted;
-          }
-          break; }
-        int ncopy = in.inst>0 ? in.inst+1 : 1;
-        if(ncopy>8) ncopy=1;
-        /* For the array-compound sequence [scope,index] dup(0); push array; op;
-         * pop array, duplicate the two-slot reference when the next instruction
-         * is an array-variable push. Preserve both scope and index. */
-        if(w->bytecode>=17 && in.inst==0 && sp>=2){
-          GmlInsn ni; int have=0;
-          if(use_cache && ip+1<cached_n){ ni=cached_ins[ip+1]; have=1; }
-          else if(!use_cache && nextpc<end && gml_decode_bc(d,nextpc,w->bytecode,&ni)>0) have=1;
-          if(have && ni.kind==OP_PUSH && ni.type1==DT_VAR && ni.reftype==0x00){
-            ncopy=2;
-            /* An expression-scoped field carries [receiver,-9,index], not merely
-             * [scope,index]. Preserve the StackTop marker and its receiver as one
-             * reference so both the read and the subsequent store resolve the same
-             * instance. */
-            if(sp>=3 && stk[sp-2].t==V_REAL && stk[sp-2].d==-9.0) ncopy=3;
+        /* The low byte is a count in units of Type1, not a count of logical values. The next byte
+         * optionally describes an adjacent lower block to swap with the top block. Values retain
+         * their own encoded widths in stkt[], so mixed-width references are handled without
+         * recognising any particular source expression. */
+        uint16_t raw=(uint16_t)in.inst;
+        int top_units=raw&0xFFu;
+        int bottom_units=((raw>>8)&0x7Fu)>>3;
+        int unit_size=vm_stack_type_size(in.type1);
+        if(in.type1==DT_INT16){
+          /* Newer bytecode reverses the two block counts and measures them in variable slots. */
+          int swap=top_units; top_units=bottom_units; bottom_units=swap;
+          unit_size=vm_stack_type_size(DT_VAR);
+        }
+        if(bottom_units>0){
+          if(in.type1==DT_VAR && top_units==0) break;
+          int top_bytes=top_units*unit_size, bottom_bytes=bottom_units*unit_size;
+          int mid=sp, first=sp, bytes=0;
+          while(mid>0 && bytes<top_bytes) bytes+=vm_stack_type_size(stkt[--mid]);
+          if(bytes!=top_bytes) break;
+          bytes=0; first=mid;
+          while(first>0 && bytes<bottom_bytes) bytes+=vm_stack_type_size(stkt[--first]);
+          if(bytes!=bottom_bytes) break;
+          vm_stack_reverse(stk,stkt,first,mid);
+          vm_stack_reverse(stk,stkt,mid,sp);
+          vm_stack_reverse(stk,stkt,first,sp);
+          break;
+        }
+        int wanted=(top_units+1)*unit_size;
+        int first=sp, bytes=0;
+        while(first>0 && bytes<wanted) bytes+=vm_stack_type_size(stkt[--first]);
+        if(bytes==wanted){
+          int count=sp-first;
+          if(sp+count<=STK){
+            memcpy(stk+sp,stk+first,(size_t)count*sizeof(*stk));
+            memcpy(stkt+sp,stkt+first,(size_t)count*sizeof(*stkt));
+            sp+=count;
           }
         }
-        /* GMS2.3 reference dup for the compound `inst.var op= v` (`push inst; push.e -9; dup;
-         * read; op; write`): the operand encodes in.inst=4 -> the formula's 5, which overshoots sp
-         * so the dup silently no-op'd and the ref was never duplicated -> the write landed on the
-         * bare -9 marker = instance NULL and the store was lost (`inst.x += 3` never moved). A
-         * StackTop reference is EXACTLY 2 slots [instance, -9]; detect it by the -9 marker on top
-         * (only for reference-dup encodings, in.inst>=2, so value dups and array `arr[i]+=v` — which
-         * carries a numeric index on top and is handled via savearef — are left untouched). */
-        if(w->bytecode>=17 && in.inst>=2 && sp>=2 && stk[sp-1].t==V_REAL && stk[sp-1].d==-9.0) ncopy=2;
-        if(sp>=ncopy && sp+ncopy<=STK){ for(int k=0;k<ncopy;k++) stk[sp+k]=stk[sp-ncopy+k]; sp+=ncopy; }
         break; }
-      case OP_CONV: /* values are dynamically typed; coerce lazily */ break;
-      case OP_NEG: if(sp>0) stk[sp-1]=(stk[sp-1].t==V_UNDEF)?vundef():vreal(-asnum(stk[sp-1])); break;
-      case OP_NOT: if(sp>0) stk[sp-1]=vreal(!astrue(stk[sp-1])); break;
+      case OP_CONV: /* values are dynamically typed; retain the encoded stack width. */
+        if(sp>0) stkt[sp-1]=in.type2;
+        break;
+      case OP_NEG: if(sp>0){ stk[sp-1]=(stk[sp-1].t==V_UNDEF)?vundef():vreal(-asnum(stk[sp-1])); stkt[sp-1]=in.type1; } break;
+      case OP_NOT: if(sp>0){ stk[sp-1]=vreal(!astrue(stk[sp-1])); stkt[sp-1]=in.type1==DT_BOOL?DT_BOOL:in.type1; } break;
       case OP_MUL: case OP_DIV: case OP_REM: case OP_MOD: case OP_ADD: case OP_SUB:
       case OP_AND: case OP_OR: case OP_XOR: case OP_SHL: case OP_SHR:{
         if(sp<2) break; GmlVal r=stk[--sp], l=stk[--sp];
+        uint8_t result_type=vm_math_result_type(in.type2,in.type1);
         if(in.kind==OP_ADD && l.t==V_STR && r.t==V_STR){
           int la=strlen(l.s), lb=strlen(r.s); char *c=malloc(la+lb+1);
-          memcpy(c,l.s,la); memcpy(c+la,r.s,lb+1); stk[sp++]=vstr_owned(c); GC_TRACK(c); break;
+          memcpy(c,l.s,la); memcpy(c+la,r.s,lb+1); stk[sp]=vstr_owned(c); stkt[sp++]=result_type; GC_TRACK(c); break;
         }
-        if(l.t==V_UNDEF || r.t==V_UNDEF){ stk[sp++]=vundef(); break; }
+        if(l.t==V_UNDEF || r.t==V_UNDEF){ stk[sp]=vundef(); stkt[sp++]=result_type; break; }
         double a=asnum(l), b=asnum(r), o=0;
         switch(in.kind){
           case OP_MUL:o=a*b;break; case OP_DIV:o=b!=0?a/b:0;break;
@@ -2689,7 +2735,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           case OP_XOR:o=(double)((long)a^(long)b);break;
           case OP_SHL:o=(double)((long)a<<(long)b);break; case OP_SHR:o=(double)((long)a>>(long)b);break;
         }
-        stk[sp++]=vreal(o); break;
+        stk[sp]=vreal(o); stkt[sp++]=result_type; break;
       }
       case OP_CMP:{
         if(sp<2) break; GmlVal r=stk[--sp], l=stk[--sp]; int res=0;
@@ -2711,7 +2757,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           double epsilon=(!w->classic_version && w->bytecode<17)?0.0:vm->math_epsilon;
           res=gml_real_compare_epsilon(asnum(l),asnum(r),in.cmp,epsilon);
         }
-        stk[sp++]=vreal(res); break;
+        stk[sp]=vreal(res); stkt[sp++]=DT_BOOL; break;
       }
       case OP_B:
         nextpc = pc + (uint32_t)(in.jump*4);
@@ -2767,7 +2813,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         /* track a freshly-malloc'd string result so it's freed (else string builtins leak). Skip
          * arg pass-through (the arg's owner frees it) to avoid double-tracking a var's string. */
         if(STR_IS_HEAP(rv)){ int isarg=0; for(int _k=0;_k<na;_k++) if(a[_k].t==V_STR && a[_k].s==rv.s){isarg=1;break;} if(!isarg) GC_TRACK(rv.s); }
-        if(sp<STK) stk[sp++]=rv;
+        if(sp<STK){ stk[sp]=rv; stkt[sp]=DT_VAR; sp++; }
         break;
       }
       case OP_CALLV:{
@@ -2871,7 +2917,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         /* track a heap-string result so it's freed at scope exit (mirror OP_CALL); args stay owned
          * by this frame's str_gc and are freed there, so don't touch them. */
         if(STR_IS_HEAP(rv)){ int isarg=0; for(int _k=0;_k<na;_k++) if(a[_k].t==V_STR && a[_k].s==rv.s){isarg=1;break;} if(!isarg) GC_TRACK(rv.s); }
-        if(sp<STK) stk[sp++]=rv;
+        if(sp<STK){ stk[sp]=rv; stkt[sp]=DT_VAR; sp++; }
         break;
       }
       case OP_RET: ret = sp>0? stk[--sp]:vreal(0); if(use_cache) ip=cached_n; else pc=end; continue;
@@ -2965,14 +3011,14 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             GmlVal ref = fci>=0
               ? vreal((double)(GML_FUNCVAL_TAG|fci))
               : vreal((double)(in.ival & 0x00FFFFFF));
-            if(sp<STK) stk[sp++]=ref;
+            if(sp<STK){ stk[sp]=ref; stkt[sp]=DT_VAR; sp++; }
             break; }
           case -2:   /* pushaf: A[idx] where the array value A is on the stack. Stack: idx, A(top->down). */
           case -4:{  /* pushac reads an intermediate array value for a chained access. */
             int idx=(int)(sp>0?asnum(stk[--sp]):0); GmlVal av=sp>0?stk[--sp]:vreal(0);
             GmlVal out=vreal(0);
             if(av.t==V_ARR && av.arr){ GmlArr *A=av.arr; if(idx>=0 && idx<A->len) out=A->data[idx]; }
-            if(sp<STK) stk[sp++]=out; break; }
+            if(sp<STK){ stk[sp]=out; stkt[sp]=DT_VAR; sp++; } break; }
           case -3:{ /* popaf: A[idx] = value. */
             if(aref_n>0){ /* compound-assign write: use the reference saved at savearef; the store
                * value is the stack top. Restore the stack to just below the reference. */
@@ -2998,7 +3044,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           case -6:{ /* isstaticok: push whether this function's static initializer has run. */
             int initialized=(ci>=0 && ci<vm->code_static_count && vm->code_static_init)
               ? vm->code_static_init[ci]!=0 : 0;
-            if(sp<STK) stk[sp++]=vreal(initialized);
+            if(sp<STK){ stk[sp]=vreal(initialized); stkt[sp]=DT_BOOL; sp++; }
             break; }
           case -7:  /* setstatic: latch BEFORE assignments, preventing recursive re-entry. */
             if(ci>=0 && ci<vm->code_static_count && vm->code_static_init)
