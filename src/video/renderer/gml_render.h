@@ -259,6 +259,13 @@ typedef struct {
     char lut_row_uniform[32];   /* uniform float selecting the palette row */
     char lut_sampler[32];       /* sampler2D holding the palette texture */
     float lut_row;              /* current row (normalized v), set by shader_set_uniform_f */
+    /* Indexed grayscale palette family. A source gray level selects a palette row while a
+     * normalized float selects its column. The parser derives every handle from the fragment
+     * operation graph; the renderer samples the staged sprite locally, independent of atlas UVs. */
+    int lut_indexed, lut_has_colorise, lut_has_bounds;
+    char lut_uvs_uniform[32], lut_offset_uniform[32], lut_colors_uniform[32];
+    char lut_colorise_uniform[32], lut_bounds_uniform[32];
+    float lut_uvs[4], lut_offset, lut_colors, lut_colorise[4], lut_bounds[4];
     /* Palette-grid shader: find the source color in palette column 0, then sample the selected
      * column (with fractional interpolation). Uniform names/configuration are parsed from GLSL. */
     int grid;
@@ -282,6 +289,16 @@ typedef struct {
     float crt_distortion;       /* current distortion amount */
     int   crt_distort;          /* current bool: radial warp on */
     int   crt_border;           /* current bool: corner vignette on */
+    /* All-in-one sampled CRT family: quintic source reconstruction, channel convergence,
+     * phosphor texture, periodic scanlines, glow, optional reflection/interlace/overlay. The
+     * operation graph and uniforms are discovered from GLSL; values and staged textures remain
+     * per-shader runtime state. Indices 0..19 have stable semantic meanings in gml_builtin.c and
+     * gml_render.c, while sampler slots 0..2 are mask/noise/backdrop. */
+    int   sampled_crt;
+    char  sampled_crt_uniform[20][32];
+    float sampled_crt_value[20][4];
+    char  sampled_crt_sampler[3][32];
+    int   sampled_crt_sprite[3], sampled_crt_frame[3];
     /* Two-sample channel-offset post-process. The fragment samples the base texture twice, shifts
      * the second lookup along one texture axis by the product of two float uniforms, scales the
      * samples per channel, then adds them. The parser derives identifiers and coefficients from
@@ -293,6 +310,12 @@ typedef struct {
     float dual_shift_gain[4];   /* RGBA multipliers for the shifted lookup */
     char  dual_uniform[2][32];  /* the two float factors in the normalized-coordinate shift */
     float dual_value[2];        /* values supplied through shader_set_uniform_f */
+    /* Radial sine displacement: samples the base texture at uv + direction*wave(distance,time).
+     * The six controls are discovered from the fragment declarations/operation graph and remain
+     * generic runtime state: time, centre vec2, resolution vec2, amount, divisor and speed. */
+    int   radial_wave;
+    char  radial_wave_uniform[6][32];
+    float radial_wave_value[6][2];
     /* Quantized swirling-paint procedural fragment family.  This is recognized from the GLSL's
      * operations and its constants/uniforms are read from SHDR; filled primitives can therefore
      * execute it in the software renderer without baking an asset or shader name into the core. */

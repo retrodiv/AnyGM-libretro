@@ -113,7 +113,15 @@ int gml_decode_bc15(const uint8_t *d, uint32_t ia, GmlInsn *o){
       o->sval=(int16_t)(fw&0xFFFF); o->type1=b2;
       /* The pushref variant (-11) carries an extra reference word.
        * Other break variants occupy one instruction word. */
-      if(o->sval==-11){ o->ival=(int32_t)u32(d,ia+4); o->size=8; return 8; }
+      if(o->sval==-11){
+        o->ival=(int32_t)u32(d,ia+4);
+        /* The extra word participates in the FUNC occurrence chain when pushref names a
+         * function. Expose its address just like push.i32/call do so the VM can distinguish a
+         * callable reference from an ordinary asset id without interpreting the raw id itself. */
+        o->refaddr=ia+4;
+        o->size=8;
+        return 8;
+      }
       o->size=4; return 4;
     default:
       o->size=0; return 0;

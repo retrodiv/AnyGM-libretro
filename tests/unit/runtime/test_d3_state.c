@@ -86,6 +86,204 @@ static size_t classic_information_record(uint8_t *dst,size_t capacity){
   return at;
 }
 
+static void add_named_asset_chunk(GmlWin *win,uint8_t *data,const char *tag,uint32_t base,
+                                  uint32_t name_offset,int versioned){
+  GmlChunk *chunk=&win->chunks[win->n_chunks++];
+  memcpy(chunk->name,tag,4); chunk->name[4]=0;
+  chunk->off=base; chunk->size=80;
+  if(versioned){
+    store_u32le(data+base,1);
+    store_u32le(data+base+4,1);
+    store_u32le(data+base+8,base+16);
+  }else{
+    store_u32le(data+base,1);
+    store_u32le(data+base+4,base+16);
+  }
+  store_u32le(data+base+16,name_offset);
+}
+
+static int asset_lookup_fixture(void){
+  uint8_t data[1024]={0};
+  char *names[]={
+    "neutral_object", "neutral_sprite", "neutral_sound", "neutral_room",
+    "neutral_path", "neutral_script", "neutral_font", "neutral_timeline",
+    "neutral_shader", "neutral_sequence", "neutral_curve", "neutral_particles",
+    "neutral_tileset"
+  };
+  uint32_t offsets[13];
+  for(int i=0;i<13;i++) offsets[i]=800u+(uint32_t)i*4u;
+  GmlWin win={0}; GmlVM vm={0}; GmlRender render={0};
+  GmlSprite sprite={0}; GmlObject object={0}; GmlTimeline timeline={0};
+  win.data=data; win.size=sizeof(data); win.strs=names; win.str_charoff=offsets; win.n_strs=13;
+  add_named_asset_chunk(&win,data,"SOND",  0,offsets[2],0);
+  add_named_asset_chunk(&win,data,"ROOM", 80,offsets[3],0);
+  add_named_asset_chunk(&win,data,"PATH",160,offsets[4],0);
+  add_named_asset_chunk(&win,data,"SCPT",240,offsets[5],0);
+  add_named_asset_chunk(&win,data,"FONT",320,offsets[6],0);
+  add_named_asset_chunk(&win,data,"SHDR",400,offsets[8],0);
+  add_named_asset_chunk(&win,data,"SEQN",480,offsets[9],1);
+  add_named_asset_chunk(&win,data,"ACRV",560,offsets[10],1);
+  add_named_asset_chunk(&win,data,"PSYS",640,offsets[11],1);
+  add_named_asset_chunk(&win,data,"BGND",720,offsets[12],0);
+  sprite.name=names[1]; render.spr=&sprite; render.n_spr=1;
+  object.name=names[0]; timeline.name=names[7];
+  vm.win=&win; vm.render=&render; vm.objects=&object; vm.n_objects=1;
+  vm.timelines=&timeline; vm.n_timelines=1;
+  static const int expected_type[]={0,1,2,3,4,5,6,7,8,9,10,11,13};
+  for(int i=0;i<13;i++){
+    GmlVal name=vstr(names[i]);
+    GmlVal index=call_values(&vm,"asset_get_index",&name,1);
+    GmlVal type=call_values(&vm,"asset_get_type",&name,1);
+    if(index.t!=V_REAL || index.d!=0 || type.t!=V_REAL || type.d!=expected_type[i]){
+      fprintf(stderr,"asset lookup fixture mismatch at %d: index=%g type=%g\n",i,index.d,type.d);
+      return 0;
+    }
+  }
+  GmlVal absent=vstr("neutral_absent");
+  if(call_values(&vm,"asset_get_index",&absent,1).d!=-1 ||
+     call_values(&vm,"asset_get_type",&absent,1).d!=-1){
+    fprintf(stderr,"asset lookup fixture missing-resource mismatch\n");
+    return 0;
+  }
+  return 1;
+}
+
+static int pushref_function_fixture(void){
+  /* caller: pushref(callback), callv(), ret; callback: push 73, ret. The deliberately plain raw
+   * reference proves that the FUNC occurrence, rather than its low bits, makes it callable. */
+  GmlWin win={0}; GmlVM vm={0};
+  win.bytecode=17;
+  win.size=24;
+  win.owns=1;
+  win.data=calloc(win.size,1);
+  win.n_code=2;
+  win.code=calloc((size_t)win.n_code,sizeof(*win.code));
+  win.n_refs=1;
+  win.ref_addr=calloc(1,sizeof(*win.ref_addr));
+  win.ref_name=calloc(1,sizeof(*win.ref_name));
+  if(!win.data || !win.code || !win.ref_addr || !win.ref_name){
+    gml_win_free(&win);
+    fprintf(stderr,"pushref function fixture allocation failed\n");
+    return 0;
+  }
+  store_u32le(win.data+0,0xFF02FFF5u);  /* break.i32 -11 */
+  store_u32le(win.data+4,32u);          /* raw reference payload */
+  store_u32le(win.data+8,0x99050000u);  /* callv.v 0 */
+  store_u32le(win.data+12,0x9C050000u); /* ret.v */
+  store_u32le(win.data+16,0x84000049u); /* push.e 73 */
+  store_u32le(win.data+20,0x9C050000u); /* ret.v */
+  win.code[0]=(GmlCode){.name="gml_Script_neutral_caller",.start=0,.length=16};
+  win.code[1]=(GmlCode){.name="gml_Script_neutral_callback",.start=16,.length=8};
+  win.ref_addr[0]=4;
+  win.ref_name[0]=win.code[1].name;
+  vm.win=&win;
+  GmlVal result=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
+  int ok=result.t==V_REAL && result.d==73;
+  if(!ok) fprintf(stderr,"pushref function dispatch mismatch: %.17g\n",result.d);
+  gml_win_free(&win);
+  return ok;
+}
+
+static int member_function_self_fixture(void){
+  /* A member field call keeps its receiver below the function value. The callback must observe
+   * that receiver as self even when the field contains a plain function value rather than an
+   * explicitly bound method struct. */
+  GmlWin win={0}; GmlVM vm={0};
+  win.bytecode=17;
+  win.size=44;
+  win.owns=1;
+  win.data=calloc(win.size,1);
+  win.n_code=2;
+  win.code=calloc((size_t)win.n_code,sizeof(*win.code));
+  win.n_refs=2;
+  win.ref_addr=calloc((size_t)win.n_refs,sizeof(*win.ref_addr));
+  win.ref_name=calloc((size_t)win.n_refs,sizeof(*win.ref_name));
+  if(!win.data || !win.code || !win.ref_addr || !win.ref_name){
+    gml_win_free(&win);
+    fprintf(stderr,"member function fixture allocation failed\n");
+    return 0;
+  }
+  win.code[0]=(GmlCode){.name="gml_Script_neutral_member_caller",.start=0,.length=32};
+  win.code[1]=(GmlCode){.name="gml_Script_neutral_member_callback",.start=32,.length=12};
+  win.ref_addr[0]=20; win.ref_name[0]="neutral_callback";
+  win.ref_addr[1]=36; win.ref_name[1]="neutral_marker";
+  vm.win=&win;
+  GmlInstance *receiver=gml_struct_new(&vm);
+  if(!receiver){
+    gml_vm_free(&vm); gml_win_free(&win);
+    fprintf(stderr,"member function fixture receiver allocation failed\n");
+    return 0;
+  }
+  *gml_varmap_put(&receiver->vars,"neutral_callback")=vreal((double)(GML_FUNCVAL_TAG|1));
+  *gml_varmap_put(&receiver->vars,"neutral_marker")=vreal(73);
+  store_u32le(win.data+0,0xC0020000u);  /* push.i32 receiver */
+  store_u32le(win.data+4,receiver->id);
+  store_u32le(win.data+8,0x86058800u);  /* dup-swap receiver (zero args) */
+  store_u32le(win.data+12,0x86050000u); /* retain receiver for StackTop field read */
+  store_u32le(win.data+16,0xC005FFF7u); /* push.v stack.neutral_callback */
+  store_u32le(win.data+20,0xA0000000u);
+  store_u32le(win.data+24,0x99050000u); /* callv.v 0 */
+  store_u32le(win.data+28,0x9C050000u); /* ret.v */
+  store_u32le(win.data+32,0xC005FFFFu); /* push.v self.neutral_marker */
+  store_u32le(win.data+36,0xA0000000u);
+  store_u32le(win.data+40,0x9C050000u); /* ret.v */
+  GmlVal result=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
+  int ok=result.t==V_REAL && result.d==73;
+  if(!ok) fprintf(stderr,"member function self dispatch mismatch: %.17g\n",result.d);
+  gml_vm_free(&vm);
+  gml_win_free(&win);
+  return ok;
+}
+
+static int member_function_argument_fixture(void){
+  /* The implicit-self member form keeps arguments below @@This@@ and the function value:
+   * [arg0, receiver, callback]. Verify that callv removes the receiver before collecting args. */
+  GmlWin win={0}; GmlVM vm={0};
+  win.bytecode=17;
+  win.size=40;
+  win.owns=1;
+  win.data=calloc(win.size,1);
+  win.n_code=2;
+  win.code=calloc((size_t)win.n_code,sizeof(*win.code));
+  win.n_refs=3;
+  win.ref_addr=calloc((size_t)win.n_refs,sizeof(*win.ref_addr));
+  win.ref_name=calloc((size_t)win.n_refs,sizeof(*win.ref_name));
+  if(!win.data || !win.code || !win.ref_addr || !win.ref_name){
+    gml_win_free(&win);
+    fprintf(stderr,"member function argument fixture allocation failed\n");
+    return 0;
+  }
+  win.code[0]=(GmlCode){.name="gml_Script_neutral_member_argument_caller",.start=0,.length=28};
+  win.code[1]=(GmlCode){.name="gml_Script_neutral_member_argument_callback",.start=28,.length=12};
+  win.ref_addr[0]=8;  win.ref_name[0]="@@This@@";
+  win.ref_addr[1]=16; win.ref_name[1]="neutral_callback";
+  win.ref_addr[2]=32; win.ref_name[2]="argument0";
+  vm.win=&win;
+  GmlInstance *receiver=gml_struct_new(&vm);
+  if(!receiver){
+    gml_vm_free(&vm); gml_win_free(&win);
+    fprintf(stderr,"member function argument fixture receiver allocation failed\n");
+    return 0;
+  }
+  *gml_varmap_put(&receiver->vars,"neutral_callback")=vreal((double)(GML_FUNCVAL_TAG|1));
+  store_u32le(win.data+0,0x84000005u);  /* push.e 5 (arg0) */
+  store_u32le(win.data+4,0xD9020000u);  /* call @@This@@(0) */
+  store_u32le(win.data+8,0u);
+  store_u32le(win.data+12,0xC005FFFAu); /* push.v builtin.neutral_callback */
+  store_u32le(win.data+16,0xA0000000u);
+  store_u32le(win.data+20,0x99050001u); /* callv.v 1 */
+  store_u32le(win.data+24,0x9C050000u); /* ret.v */
+  store_u32le(win.data+28,0xC305FFFAu); /* push.v builtin.argument0 */
+  store_u32le(win.data+32,0xA0000000u);
+  store_u32le(win.data+36,0x9C050000u); /* ret.v */
+  GmlVal result=gml_vm_run_code(&vm,0,receiver,receiver,NULL,0);
+  int ok=result.t==V_REAL && result.d==5;
+  if(!ok) fprintf(stderr,"member function argument dispatch mismatch: %.17g\n",result.d);
+  gml_vm_free(&vm);
+  gml_win_free(&win);
+  return ok;
+}
+
 static int raster_fixtures(void){
   enum { WIDTH=64, HEIGHT=48 };
   uint32_t pixels[WIDTH*HEIGHT];
@@ -98,6 +296,16 @@ static int raster_fixtures(void){
   render.next_surface_id=1;
   vm.render=&render;
   gml_d3_reset();
+
+  if(!pushref_function_fixture()) return 0;
+  if(!member_function_self_fixture()) return 0;
+  if(!member_function_argument_fixture()) return 0;
+
+  if(call_values(&vm,"gc_collect",NULL,0).t!=V_REAL ||
+     call_values(&vm,"gc_is_enabled",NULL,0).d!=1){
+    fprintf(stderr,"explicit garbage-collection API mismatch\n");
+    return 0;
+  }
 
   {
     GmlVal number=vreal(7), string=vstr("seven"), array=gml_arr_new(2,vreal(0));
@@ -288,6 +496,74 @@ static int raster_fixtures(void){
       return 0;
     }
     gml_render_free(&initialized);
+  }
+
+  {
+    /* A two-column indexed palette: grayscale source values choose rows, while the normalized
+     * column control chooses green/yellow. A coloured source texel bypasses lookup but is still
+     * affected by the optional fragment colourise stage. */
+    uint8_t source_rgba[]={0,0,0,255, 255,255,255,255, 20,40,80,255};
+    uint8_t palette_rgba[]={255,0,0,255, 0,255,0,255,
+                            0,0,255,255, 255,255,0,255};
+    uint32_t palette_pixels[3]={0,0,0};
+    GmlSprite sprites[2]; struct GmlShaderPal shader;
+    GmlRender palette_render;
+    memset(sprites,0,sizeof(sprites)); memset(&shader,0,sizeof(shader));
+    memset(&palette_render,0,sizeof(palette_render));
+    sprites[0].w=3; sprites[0].h=1; sprites[0].n_frames=1;
+    sprites[0].runtime_rgba=source_rgba; sprites[0].runtime_opaque=1;
+    sprites[1].w=2; sprites[1].h=2; sprites[1].n_frames=1;
+    sprites[1].runtime_rgba=palette_rgba; sprites[1].runtime_opaque=1;
+    shader.lut=shader.lut_indexed=1;
+    shader.lut_row=0.75f; shader.lut_offset=255.0f; shader.lut_colors=2.0f;
+    palette_render.spr=sprites; palette_render.n_spr=2;
+    palette_render.shader_pal=&shader; palette_render.n_shader_pal=1;
+    palette_render.lut_pal_sprite=1; palette_render.lut_pal_frame=0; palette_render.alpha=1.0;
+    palette_render.alphablend=1; palette_render.color_write_mask=0x0F;
+    palette_render.blend_equation=palette_render.blend_equation_alpha=1;
+    gml_render_begin(&palette_render,palette_pixels,3,1,0,0);
+    palette_render.active_shader=0; palette_render.lut_pal_sprite=1;
+    palette_render.lut_pal_frame=0;
+    gml_draw_sprite(&palette_render,0,0,0,0);
+    if(palette_pixels[0]!=0xFF00FF00u || palette_pixels[1]!=0xFFFFFF00u ||
+       palette_pixels[2]!=0xFF142850u){
+      fprintf(stderr,"indexed palette mapping mismatch: %08x,%08x,%08x\n",
+              palette_pixels[0],palette_pixels[1],palette_pixels[2]);
+      return 0;
+    }
+    shader.lut_has_colorise=1;
+    shader.lut_colorise[0]=1.0f; shader.lut_colorise[1]=0.0f;
+    shader.lut_colorise[2]=0.0f; shader.lut_colorise[3]=1.0f;
+    memset(palette_pixels,0,sizeof(palette_pixels));
+    gml_render_begin(&palette_render,palette_pixels,3,1,0,0);
+    palette_render.active_shader=0; palette_render.lut_pal_sprite=1;
+    palette_render.lut_pal_frame=0;
+    gml_draw_sprite(&palette_render,0,0,0,0);
+    if(palette_pixels[0]!=0xFFFF0000u || palette_pixels[1]!=0xFFFF0000u ||
+       palette_pixels[2]!=0xFFFF0000u){
+      fprintf(stderr,"indexed palette colourise mismatch: %08x,%08x,%08x\n",
+              palette_pixels[0],palette_pixels[1],palette_pixels[2]);
+      return 0;
+    }
+    /* A constant -1 radial phase pulls both edge texels to the centre texel. This exercises the
+     * texture-coordinate displacement on runtime sprites without relying on a packaged asset. */
+    source_rgba[0]=255; source_rgba[1]=0; source_rgba[2]=0;
+    source_rgba[4]=0; source_rgba[5]=255; source_rgba[6]=0;
+    source_rgba[8]=0; source_rgba[9]=0; source_rgba[10]=255;
+    memset(&shader,0,sizeof(shader)); shader.radial_wave=1;
+    shader.radial_wave_value[0][0]=(float)(M_PI*0.5);
+    shader.radial_wave_value[2][0]=3; shader.radial_wave_value[2][1]=1;
+    shader.radial_wave_value[4][0]=1; shader.radial_wave_value[5][0]=1;
+    memset(palette_pixels,0,sizeof(palette_pixels));
+    gml_render_begin(&palette_render,palette_pixels,3,1,0,0);
+    palette_render.active_shader=0;
+    gml_draw_sprite(&palette_render,0,0,0,0);
+    if(palette_pixels[0]!=0xFF00FF00u || palette_pixels[1]!=0xFF00FF00u ||
+       palette_pixels[2]!=0xFF00FF00u){
+      fprintf(stderr,"radial wave mapping mismatch: %08x,%08x,%08x\n",
+              palette_pixels[0],palette_pixels[1],palette_pixels[2]);
+      return 0;
+    }
   }
 
   {
@@ -1284,6 +1560,29 @@ static int raster_fixtures(void){
         pixels[21*WIDTH+20]&0xFFFFFFu,pixels[21*WIDTH+21]&0xFFFFFFu);
       return 0;
     }
+    /* The sampled post-process family must execute as a portable surface pass. Keep all optional
+     * branches disabled and use half brightness so this fixture has an exact, cheap oracle. */
+    memset(shader,0,sizeof(*shader));
+    shader->sampled_crt=1;
+    shader->sampled_crt_value[0][0]=2; shader->sampled_crt_value[0][1]=2;
+    shader->sampled_crt_value[1][0]=2; shader->sampled_crt_value[1][1]=2;
+    shader->sampled_crt_value[7][0]=1;
+    shader->sampled_crt_value[18][0]=0.5f;
+    for(int sampler=0;sampler<3;sampler++) shader->sampled_crt_sprite[sampler]=-1;
+    render.crt_shader_enable=1; render.alphablend=0;
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0); render.active_shader=0;
+    gml_draw_surface_stretched(&render,surface,20,20,2,2,0xFFFFFFu,1.0);
+    render.active_shader=-1; render.alphablend=1;
+    if((pixels[20*WIDTH+20]&0xFFFFFFu)!=0x800000u ||
+       (pixels[20*WIDTH+21]&0xFFFFFFu)!=0x008000u ||
+       (pixels[21*WIDTH+20]&0xFFFFFFu)!=0x000080u ||
+       (pixels[21*WIDTH+21]&0xFFFFFFu)!=0x808080u){
+      fprintf(stderr,"sampled post-process raster mismatch: %06x %06x %06x %06x\n",
+        pixels[20*WIDTH+20]&0xFFFFFFu,pixels[20*WIDTH+21]&0xFFFFFFu,
+        pixels[21*WIDTH+20]&0xFFFFFFu,pixels[21*WIDTH+21]&0xFFFFFFu);
+      return 0;
+    }
   }
   GmlVal surface_arg=vreal(surface);
   GmlVal surface_texture=call_values(&vm,"surface_get_texture",&surface_arg,1);
@@ -1560,8 +1859,11 @@ static int raster_fixtures(void){
     uint8_t room_data[128]={0};
     GmlWin draw_win={0}; GmlVM draw_vm={0};
     GmlObject draw_object={0}; GmlInstance draw_instance={0};
+    char *draw_room_strings[]={"neutral_room"};
+    uint32_t draw_room_charoffs[]={80};
     store_u32le(room_data,1);
     store_u32le(room_data+4,16);
+    store_u32le(room_data+16,80);
     store_u32le(room_data+16+8,WIDTH);
     store_u32le(room_data+16+12,HEIGHT);
     store_u32le(room_data+16+16,30);
@@ -1569,6 +1871,7 @@ static int raster_fixtures(void){
     draw_win.n_chunks=1; memcpy(draw_win.chunks[0].name,"ROOM",5);
     draw_win.chunks[0].off=0; draw_win.chunks[0].size=sizeof(room_data);
     draw_win.classic_version=800;
+    draw_win.strs=draw_room_strings; draw_win.str_charoff=draw_room_charoffs; draw_win.n_strs=1;
     draw_object.name="neutral_default_draw"; draw_object.parent=-1;
     draw_vm.win=&draw_win; draw_vm.render=&render; draw_vm.room_index=0;
     draw_vm.objects=&draw_object; draw_vm.n_objects=1;
@@ -1579,6 +1882,12 @@ static int raster_fixtures(void){
     draw_instance.image_xscale=draw_instance.image_yscale=1;
     draw_instance.image_alpha=.75; draw_instance.image_blend=0xFFFFFF;
     draw_instance.draw_layer_order=-1;
+    GmlVal room_name=vstr("neutral_room");
+    GmlVal room_lookup=call_values(&draw_vm,"asset_get_index",&room_name,1);
+    if(room_lookup.t!=V_REAL || (int)room_lookup.d!=0){
+      fprintf(stderr,"room asset name lookup mismatch: %g\n",room_lookup.d);
+      return 0;
+    }
     for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF000000u;
     render.classic=1;
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
@@ -2871,6 +3180,7 @@ int main(void){
     fprintf(stderr,"software D3 direct state mismatch\n");
     return 1;
   }
+  if(!asset_lookup_fixture()) return 1;
 
   GmlWin win; GmlVM vm;
   memset(&win,0,sizeof(win)); memset(&vm,0,sizeof(vm)); vm.win=&win;

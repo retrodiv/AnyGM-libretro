@@ -70,8 +70,13 @@ int main(int argc,char**argv){
   if(max_lines<=0) max_lines=22;
   for(int i=0;i<w.n_code;i++){
     if(selected>=0 && i!=selected) continue;
-    if(w.code[i].length==0) continue;
-    printf("\n=== [%d] %s (%u bytes) ===\n",i,w.code[i].name,w.code[i].length);
+    if(w.code[i].length==0){
+      if(selected>=0)
+        printf("\n=== [%d] %s (start=%u, 0 bytes) ===\n",i,w.code[i].name,w.code[i].start);
+      continue;
+    }
+    printf("\n=== [%d] %s (start=%u, %u bytes) ===\n",
+           i,w.code[i].name,w.code[i].start,w.code[i].length);
     uint32_t a=w.code[i].start, end=a+w.code[i].length; int line=0;
     while(a<end && line<max_lines){
       GmlInsn in; int sz=gml_decode_bc(w.data,a,w.bytecode,&in);
@@ -82,10 +87,21 @@ int main(int argc,char**argv){
           printf(" -> %u",(a-w.code[i].start)+in.jump*4); break;
         case OP_POP: printf(".%s.%s %s.%s",DT[in.type1],DT[in.type2],inst_name(in.inst),gml_ref_name(&w,in.refaddr)); break;
         case OP_CALL: printf(" %s(%u)",gml_ref_name(&w,in.refaddr),in.argc); break;
+        case OP_CALLV: printf(" argc=%u",in.argc); break;
+        case OP_DUP: printf(" inst=0x%x",(unsigned)(uint16_t)in.inst); break;
+        case OP_BREAK:
+          printf(" %d",in.sval);
+          if(in.sval==-11) printf(" ref=0x%08x %s",(uint32_t)in.ival,gml_ref_name(&w,in.refaddr));
+          break;
         case OP_PUSH:
           if(in.type1==DT_INT16) printf(".e %d",in.sval);
           else if(in.type1==DT_DOUBLE) printf(".d %g",in.dval);
-          else if(in.type1==DT_INT32) printf(".i32 %d",in.ival);
+          else if(in.type1==DT_INT32){
+            const char *ref=gml_ref_name(&w,a+4);
+            printf(".i32 %d",in.ival);
+            if(ref && ref[0]!='?') printf(" [%s]",ref);
+          }
+          else if(in.type1==DT_INT64) printf(".i64 %lld",(long long)in.lval);
           else if(in.type1==DT_STRING) printf(".s \"%s\"",gml_str_by_index(&w,in.strindex));
           else if(in.type1==DT_VAR) printf(".v %s.%s",inst_name(in.inst),gml_ref_name(&w,in.refaddr));
           else printf(".%s",DT[in.type1&0xF]);

@@ -253,38 +253,65 @@ static int classic_execute_assignment(GmlVM *vm, const char *source){
   }
   return gml_inst_var_set_val(vm,vreal(target->id),field,vreal(value));
 }
-/* Shared shader uniform handling. Handle = sh*16 + slot: 1 = LUT row; 3..6 = CRT;
+/* Shared shader uniform handling. Runtime handles use a private 64-slot stride: 1 = LUT row;
+ * 3..6 = reconstruction CRT;
  * 7 = palette-grid pixel size, 8 = palette-grid UV bounds, 9 = palette-grid id; 10..11 =
  * the two coordinate factors of a dual-sample offset shader; 12..13 = procedural-paint
- * resolution/time;
- * 15 = accepted-and-ignored. See parse_shader_palettes / draw_surface_crt. */
+ * resolution/time; 15..19 = indexed-palette controls; 20..39 = sampled-CRT controls;
+ * 40..42 = sampled-CRT texture stages;
+ * 44..49 = radial-wave controls;
+ * 63 = accepted-and-ignored. See parse_shader_palettes and the surface post-processes. */
+#define GML_SHADER_HANDLE_STRIDE 64
+#define GML_SHADER_HANDLE(sh,slot) ((sh)*GML_SHADER_HANDLE_STRIDE+(slot))
 static double gml_shader_get_uniform(GmlRender *R, int sh, const char *un){
   if(R && sh>=0 && sh<R->n_shader_pal && R->shader_pal){
     struct GmlShaderPal *p=&R->shader_pal[sh];
-    if(p->lut && !strcmp(un,p->lut_row_uniform)) return sh*16+1;
+    if(p->lut && !strcmp(un,p->lut_row_uniform)) return GML_SHADER_HANDLE(sh,1);
+    if(p->lut_indexed){
+      if(!strcmp(un,p->lut_uvs_uniform))      return GML_SHADER_HANDLE(sh,15);
+      if(!strcmp(un,p->lut_offset_uniform))   return GML_SHADER_HANDLE(sh,16);
+      if(!strcmp(un,p->lut_colors_uniform))   return GML_SHADER_HANDLE(sh,17);
+      if(p->lut_has_colorise && !strcmp(un,p->lut_colorise_uniform))
+        return GML_SHADER_HANDLE(sh,18);
+      if(p->lut_has_bounds && !strcmp(un,p->lut_bounds_uniform)) return GML_SHADER_HANDLE(sh,19);
+    }
     if(p->grid){
-      if(!strcmp(un,p->grid_pixel_uniform)) return sh*16+7;
-      if(!strcmp(un,p->grid_uvs_uniform))    return sh*16+8;
-      if(!strcmp(un,p->grid_id_uniform))     return sh*16+9;
+      if(!strcmp(un,p->grid_pixel_uniform)) return GML_SHADER_HANDLE(sh,7);
+      if(!strcmp(un,p->grid_uvs_uniform))    return GML_SHADER_HANDLE(sh,8);
+      if(!strcmp(un,p->grid_id_uniform))     return GML_SHADER_HANDLE(sh,9);
     }
     if(p->crt){
-      if(p->crt_sizes_uniform[0]      && !strcmp(un,p->crt_sizes_uniform))      return sh*16+3;
-      if(p->crt_distortion_uniform[0] && !strcmp(un,p->crt_distortion_uniform)) return sh*16+4;
-      if(p->crt_distort_uniform[0]    && !strcmp(un,p->crt_distort_uniform))    return sh*16+5;
-      if(p->crt_border_uniform[0]     && !strcmp(un,p->crt_border_uniform))     return sh*16+6;
+      if(p->crt_sizes_uniform[0]      && !strcmp(un,p->crt_sizes_uniform))      return GML_SHADER_HANDLE(sh,3);
+      if(p->crt_distortion_uniform[0] && !strcmp(un,p->crt_distortion_uniform)) return GML_SHADER_HANDLE(sh,4);
+      if(p->crt_distort_uniform[0]    && !strcmp(un,p->crt_distort_uniform))    return GML_SHADER_HANDLE(sh,5);
+      if(p->crt_border_uniform[0]     && !strcmp(un,p->crt_border_uniform))     return GML_SHADER_HANDLE(sh,6);
+    }
+    if(p->sampled_crt){
+      for(int i=0;i<20;i++)
+        if(!strcmp(un,p->sampled_crt_uniform[i])) return GML_SHADER_HANDLE(sh,20+i);
     }
     if(p->dual_sample){
-      if(!strcmp(un,p->dual_uniform[0])) return sh*16+10;
-      if(!strcmp(un,p->dual_uniform[1])) return sh*16+11;
+      if(!strcmp(un,p->dual_uniform[0])) return GML_SHADER_HANDLE(sh,10);
+      if(!strcmp(un,p->dual_uniform[1])) return GML_SHADER_HANDLE(sh,11);
     }
+    if(p->radial_wave) for(int i=0;i<6;i++)
+      if(!strcmp(un,p->radial_wave_uniform[i])) return GML_SHADER_HANDLE(sh,44+i);
     if(p->paint){
-      if(!strcmp(un,p->paint_resolution_uniform)) return sh*16+12;
-      if(!strcmp(un,p->paint_time_uniform))       return sh*16+13;
+      if(!strcmp(un,p->paint_resolution_uniform)) return GML_SHADER_HANDLE(sh,12);
+      if(!strcmp(un,p->paint_time_uniform))       return GML_SHADER_HANDLE(sh,13);
     }
     if(p->grayscale && p->grayscale_has_alpha_uniform &&
-       !strcmp(un,p->grayscale_alpha_uniform)) return sh*16+14;
+       !strcmp(un,p->grayscale_alpha_uniform)) return GML_SHADER_HANDLE(sh,14);
   }
-  return sh>=0? sh*16+15 : -1;
+  return sh>=0? GML_SHADER_HANDLE(sh,63) : -1;
+}
+static double gml_shader_get_sampler(GmlRender *R, int sh, const char *name){
+  if(R && sh>=0 && sh<R->n_shader_pal && R->shader_pal){
+    struct GmlShaderPal *p=&R->shader_pal[sh];
+    if(p->sampled_crt) for(int i=0;i<3;i++)
+      if(!strcmp(name,p->sampled_crt_sampler[i])) return GML_SHADER_HANDLE(sh,40+i);
+  }
+  return sh>=0?GML_SHADER_HANDLE(sh,2):-1;
 }
 static double gml_shader_uniform_component(GmlVal *args, int count, int component){
   if(count==2 && args[1].t==V_ARR){
@@ -295,10 +322,23 @@ static double gml_shader_uniform_component(GmlVal *args, int count, int componen
 }
 static void gml_shader_set_uniform_f(GmlRender *R, int h, GmlVal *a, int n){
   if(!R || h<0) return;
-  int sh=h/16, slot=h%16;
+  int sh=h/GML_SHADER_HANDLE_STRIDE, slot=h%GML_SHADER_HANDLE_STRIDE;
   if(sh<0 || sh>=R->n_shader_pal || !R->shader_pal) return;
   struct GmlShaderPal *p=&R->shader_pal[sh];
+  if(p->sampled_crt && slot>=20 && slot<40){
+    int index=slot-20;
+    for(int i=0;i<4;i++) p->sampled_crt_value[index][i]=(float)gml_shader_uniform_component(a,n,i);
+    return;
+  }
   if(slot==1){ if(p->lut) p->lut_row=(float)gml_shader_uniform_component(a,n,0); return; }
+  if(p->lut_indexed && slot>=15 && slot<=19){
+    if(slot==15) for(int i=0;i<4;i++) p->lut_uvs[i]=(float)gml_shader_uniform_component(a,n,i);
+    else if(slot==16) p->lut_offset=(float)gml_shader_uniform_component(a,n,0);
+    else if(slot==17) p->lut_colors=(float)gml_shader_uniform_component(a,n,0);
+    else if(slot==18) for(int i=0;i<4;i++) p->lut_colorise[i]=(float)gml_shader_uniform_component(a,n,i);
+    else if(slot==19) for(int i=0;i<4;i++) p->lut_bounds[i]=(float)gml_shader_uniform_component(a,n,i);
+    return;
+  }
   if(p->grid){
     if(slot==7){ p->grid_pixel[0]=(float)gml_shader_uniform_component(a,n,0);
                  p->grid_pixel[1]=(float)gml_shader_uniform_component(a,n,1); return; }
@@ -308,6 +348,13 @@ static void gml_shader_set_uniform_f(GmlRender *R, int h, GmlVal *a, int n){
   if(p->dual_sample){
     if(slot==10){ p->dual_value[0]=(float)gml_shader_uniform_component(a,n,0); return; }
     if(slot==11){ p->dual_value[1]=(float)gml_shader_uniform_component(a,n,0); return; }
+  }
+  if(p->radial_wave && slot>=44 && slot<50){
+    int index=slot-44;
+    p->radial_wave_value[index][0]=(float)gml_shader_uniform_component(a,n,0);
+    if(index==1 || index==2)
+      p->radial_wave_value[index][1]=(float)gml_shader_uniform_component(a,n,1);
+    return;
   }
   if(p->paint){
     if(slot==12){ for(int i=0;i<3;i++) p->paint_resolution[i]=(float)gml_shader_uniform_component(a,n,i); return; }
@@ -1191,6 +1238,22 @@ static int ds_grid_make(GmlVM *vm, int w, int h){
     return (int)vm->ds_grid[i].id;
   }
   return -1;
+}
+static int ds_grid_resize_cells(GmlDSGrid *g,int w,int h){
+  if(!g || w<0 || h<0 || (long)w*h>8000000) return 0;
+  if(w==g->w && h==g->h) return 1;
+  GmlVal *cell=NULL;
+  if(w>0 && h>0){
+    cell=calloc((size_t)w*h,sizeof(*cell));
+    if(!cell) return 0;
+    int copy_w=w<g->w?w:g->w, copy_h=h<g->h?h:g->h;
+    if(g->cell && copy_w>0)
+      for(int y=0;y<copy_h;y++)
+        memcpy(cell+(size_t)y*w,g->cell+(size_t)y*g->w,(size_t)copy_w*sizeof(*cell));
+  }
+  free(g->cell);
+  g->cell=cell; g->w=w; g->h=h;
+  return 1;
 }
 static int ds_grid_find_value(GmlDSGrid *g, int x1, int y1, int x2, int y2,
                               GmlVal value, int *found_x, int *found_y){
@@ -5092,16 +5155,92 @@ static int script_code_of(GmlVM *vm, int sid){
   uint32_t p=u32(d,c->off+4+sid*4);
   return (int)u32(d,p+4);  /* codeId */
 }
-static int script_index_by_name(GmlVM *vm, const char *name){
-  const GmlChunk *c=(vm&&vm->win)?gml_chunk(vm->win,"SCPT"):NULL;
-  if(!c || !name || !*name) return -1;
-  const uint8_t *d=vm->win->data; uint32_t n=u32(d,c->off);
-  for(uint32_t i=0;i<n;i++){
-    uint32_t p=u32(d,c->off+4+i*4);
-    const char *candidate=gml_str_by_ptr(vm->win,u32(d,p));
+
+/* Asset-type values are serialized into current bytecode formats as ordinary numbers.  Keep lookup
+ * name-based because resource indices overlap between asset classes. */
+enum {
+  GML_ASSET_UNKNOWN=-1,
+  GML_ASSET_OBJECT=0,
+  GML_ASSET_SPRITE=1,
+  GML_ASSET_SOUND=2,
+  GML_ASSET_ROOM=3,
+  GML_ASSET_PATH=4,
+  GML_ASSET_SCRIPT=5,
+  GML_ASSET_FONT=6,
+  GML_ASSET_TIMELINE=7,
+  GML_ASSET_SHADER=8,
+  GML_ASSET_SEQUENCE=9,
+  GML_ASSET_ANIMATION_CURVE=10,
+  GML_ASSET_PARTICLE_SYSTEM=11,
+  GML_ASSET_TILESET=13
+};
+
+/* Resource-list chunks store a count and absolute record pointers; modern list families add a
+ * version word before the count.  Every native record starts with its STRG name pointer. */
+static int chunk_asset_index_by_name(const GmlWin *w, const char *chunk, int versioned,
+                                     const char *name){
+  const GmlChunk *c=(w&&name&&*name)?gml_chunk(w,chunk):NULL;
+  if(!c || (size_t)c->off+c->size>w->size) return -1;
+  size_t count_at=(size_t)c->off+(versioned?4u:0u), end=(size_t)c->off+c->size;
+  if(count_at+4>end) return -1;
+  uint32_t count=u32(w->data,(uint32_t)count_at);
+  size_t table=count_at+4;
+  if(count>(end-table)/4u) return -1;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t record=u32(w->data,(uint32_t)(table+(size_t)i*4u));
+    if((size_t)record+4>w->size) continue;
+    const char *candidate=gml_str_by_ptr(w,u32(w->data,record));
     if(candidate && !strcmp(candidate,name)) return (int)i;
   }
   return -1;
+}
+
+static int asset_index_and_type_by_name(GmlVM *vm, const char *name, int *out_type){
+  int index=-1, type=GML_ASSET_UNKNOWN;
+  GmlRender *render=vm?vm->render:NULL;
+  if(!vm || !vm->win || !name || !*name) goto done;
+
+  if(render){
+    for(int i=0;i<render->n_spr;i++)
+      if(render->spr[i].name && !strcmp(render->spr[i].name,name)){
+        index=i; type=GML_ASSET_SPRITE; goto done;
+      }
+  }
+  index=chunk_asset_index_by_name(vm->win,"SPRT",0,name);
+  if(index>=0){ type=GML_ASSET_SPRITE; goto done; }
+  index=chunk_asset_index_by_name(vm->win,"SOND",0,name);
+  if(index>=0){ type=GML_ASSET_SOUND; goto done; }
+  index=chunk_asset_index_by_name(vm->win,"BGND",0,name);
+  if(index>=0){ type=GML_ASSET_TILESET; goto done; }
+  index=chunk_asset_index_by_name(vm->win,"PATH",0,name);
+  if(index>=0){ type=GML_ASSET_PATH; goto done; }
+  index=chunk_asset_index_by_name(vm->win,"SCPT",0,name);
+  if(index>=0){ type=GML_ASSET_SCRIPT; goto done; }
+  index=chunk_asset_index_by_name(vm->win,"FONT",0,name);
+  if(index>=0){ type=GML_ASSET_FONT; goto done; }
+  for(int i=0;i<vm->n_timelines;i++)
+    if(vm->timelines[i].name && !strcmp(vm->timelines[i].name,name)){
+      index=i; type=GML_ASSET_TIMELINE; goto done;
+    }
+  index=gml_object_index_by_name(vm,name);
+  if(index>=0){ type=GML_ASSET_OBJECT; goto done; }
+  index=gml_room_index_by_name(vm->win,name);
+  if(index>=0){ type=GML_ASSET_ROOM; goto done; }
+  index=chunk_asset_index_by_name(vm->win,"SHDR",0,name);
+  if(index>=0){ type=GML_ASSET_SHADER; goto done; }
+  index=chunk_asset_index_by_name(vm->win,"SEQN",1,name);
+  if(index>=0){ type=GML_ASSET_SEQUENCE; goto done; }
+  index=chunk_asset_index_by_name(vm->win,"ACRV",1,name);
+  if(index>=0){ type=GML_ASSET_ANIMATION_CURVE; goto done; }
+  index=chunk_asset_index_by_name(vm->win,"PSYS",1,name);
+  if(index>=0){ type=GML_ASSET_PARTICLE_SYSTEM; goto done; }
+done:
+  if(out_type) *out_type=type;
+  return index;
+}
+
+static int script_index_by_name(GmlVM *vm, const char *name){
+  return (vm&&vm->win)?chunk_asset_index_by_name(vm->win,"SCPT",0,name):-1;
 }
 static int script_ref_code_of(GmlVM *vm, GmlVal v){
   if(v.t!=V_REAL) return -1;
@@ -8606,13 +8745,19 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       bm->method_fci=fv & 0x00FFFFFF;
       bm->method_self=selfv;
     }
+    if(getenv("GML_DBG_STRUCT")){ extern long g_vm_frame;
+      fprintf(stderr,"[struct] f%ld bind id=%u scope=%.0f fn=%d ci=%d name=%s\n",
+        g_vm_frame,bm->id,N(a,n,0),fv,bm->method_bound?bm->method_fci:-1,
+        (bm->method_bound && vm->win && bm->method_fci>=0 && bm->method_fci<vm->win->n_code)
+          ? vm->win->code[bm->method_fci].name : "?"); }
     return vreal((double)bm->id);
   }
   /* GMS2.3 struct construction: @@NewGMLObject@@(constructor_func [, ctor_args...]). Allocate a struct
    * and run the constructor with self=the new struct so it populates its fields; return the struct. */
   if(!strcmp(nm,"@@NewGMLObject@@")){
     GmlInstance *st=gml_struct_new(vm); if(!st) return vreal(0);
-    if(n>=1){ double a0=N(a,n,0); int fci=-1;
+    int fci=-1;
+    if(n>=1){ double a0=N(a,n,0);
       /* The constructor arrives either as a raw funcval (a named `new Foo()`) OR as a bound
        * method struct (an INLINE constructor defined via method(self,ctor) — GMS2.3 emits this
        * for anonymous struct classes). Unwrap the bound method's __fn so its body actually runs;
@@ -8627,6 +8772,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
         *gml_varmap_put(&st->vars,"__name")=vstr_owned(strdup(cn));
         gml_vm_run_code(vm,fci,st,vm->cur_self,(n>1)?a+1:0,n-1);
       } }
+    if(getenv("GML_DBG_STRUCT")){ extern long g_vm_frame;
+      fprintf(stderr,"[struct] f%ld new id=%u argc=%d ctor=%d name=%s fields=%d\n",
+        g_vm_frame,st->id,n,fci,
+        (fci>=0 && vm->win && fci<vm->win->n_code)?vm->win->code[fci].name:"?",st->vars.len); }
     return vreal((double)st->id);
   }
   if(!strcmp(nm,"instanceof")){
@@ -9646,9 +9795,13 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(!strcmp(nm,"object_get_index")){ int oi=gml_object_index_by_name(vm,an); return vreal(oi); }
       if(R) for(int i=0;i<R->n_spr;i++) if(R->spr[i].name && !strcmp(R->spr[i].name,an)) return vreal(i);
       if(!strcmp(nm,"sprite_get_index")) return vreal(-1);
-      { int si=script_index_by_name(vm,an); if(si>=0) return vreal(si); }
-      { int oi=gml_object_index_by_name(vm,an); if(oi>=0) return vreal(oi); }
-      return vreal(-1);
+      return vreal(asset_index_and_type_by_name(vm,an,NULL));
+    }
+    if(!strcmp(nm,"asset_get_type")){
+      const char *an=(n>0 && a[0].t==V_STR && a[0].s)?a[0].s:"";
+      int type=GML_ASSET_UNKNOWN;
+      (void)asset_index_and_type_by_name(vm,an,&type);
+      return vreal(type);
     }
     if(!strcmp(nm,"sprite_create_from_surface")){
       return vreal(R?gml_sprite_create_from_surface(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),
@@ -10655,6 +10808,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_grid_create")) return vreal((double)ds_grid_make(vm,(int)N(a,n,0),(int)N(a,n,1)));
   if(!strcmp(nm,"ds_grid_destroy")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0));
     if(g){ free(g->cell); memset(g,0,sizeof(*g)); } return vreal(0); }
+  if(!strcmp(nm,"ds_grid_resize")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0));
+    return vreal(ds_grid_resize_cells(g,(int)N(a,n,1),(int)N(a,n,2))); }
   if(!strcmp(nm,"ds_grid_width")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); return vreal(g?g->w:0); }
   if(!strcmp(nm,"ds_grid_height")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); return vreal(g?g->h:0); }
   if(!strcmp(nm,"ds_grid_get")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
@@ -11357,27 +11512,41 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
              (R->shader_pal[sid].has || R->shader_pal[sid].lut || R->shader_pal[sid].grid ||
               R->shader_pal[sid].alpha_discard ||
               R->shader_pal[sid].dual_sample || R->shader_pal[sid].paint ||
-              R->shader_pal[sid].grayscale ||
+              R->shader_pal[sid].grayscale || R->shader_pal[sid].radial_wave ||
+              (R->shader_pal[sid].sampled_crt && R->crt_shader_enable) ||
               (R->shader_pal[sid].crt && R->crt_shader_enable));
     if(getenv("GML_LOG_SHADER")){ static long c=0; if(c++<6){ extern long g_vm_frame;
       fprintf(stderr,"[shader] f%ld shader_is_compiled(%d)=%d\n",g_vm_frame,sid,ok); } }
     return vreal(ok); }
-  /* uniform/sampler handles: sh*16+slot. Slot 1 = the LUT row uniform (the only one the software
-   * renderer models); anything else gets slot 15, whose sets are accepted and ignored. */
+  /* Uniform and sampler handles are opaque to GML; the software renderer maps recognized shader
+   * controls onto its private slots and accepts unknown controls without changing output. */
   if(!strcmp(nm,"shader_get_uniform")){ GmlRender *R=(GmlRender*)vm->render;
     return vreal(gml_shader_get_uniform(R,(int)N(a,n,0),S(a,n,1))); }
-  if(!strcmp(nm,"shader_get_sampler_index")){ int sh=(int)N(a,n,0); return vreal(sh>=0? sh*16+2 : -1); }
+  if(!strcmp(nm,"shader_get_sampler_index")){
+    return vreal(gml_shader_get_sampler((GmlRender*)vm->render,(int)N(a,n,0),S(a,n,1))); }
   if(!strcmp(nm,"shader_set_uniform_f")||!strcmp(nm,"shader_set_uniform_f_array")||
      !strcmp(nm,"shader_set_uniform_i")||!strcmp(nm,"shader_set_uniform_i_array")){
     GmlRender *R=(GmlRender*)vm->render;
     gml_shader_set_uniform_f(R,(int)N(a,n,0),a,n);
     return vreal(0); }
   if(!strcmp(nm,"texture_set_stage")){ GmlRender *R=(GmlRender*)vm->render;
+    int stage=(int)N(a,n,0);
     int tex=(int)N(a,n,1);
     if(R && (((uint32_t)tex&GML_TEX_KIND_MASK)==GML_TEX_SPR_TAG)){
-      R->lut_pal_sprite=(tex>>10)&0xFFFF; R->lut_pal_frame=tex&0x3FF;
-      if(getenv("GML_LOG_SHADER")) fprintf(stderr,"[shader] palette texture: sprite %d frame %d\n",
-        R->lut_pal_sprite,R->lut_pal_frame);
+      int sh=stage/GML_SHADER_HANDLE_STRIDE, slot=stage%GML_SHADER_HANDLE_STRIDE;
+      int sprite=(tex>>10)&0xFFFF, frame=tex&0x3FF;
+      if(sh>=0 && sh<R->n_shader_pal && R->shader_pal &&
+         R->shader_pal[sh].sampled_crt && slot>=40 && slot<43){
+        int sampler=slot-40;
+        R->shader_pal[sh].sampled_crt_sprite[sampler]=sprite;
+        R->shader_pal[sh].sampled_crt_frame[sampler]=frame;
+        if(getenv("GML_LOG_SHADER")){ static int count=0; if(count++<9) fprintf(stderr,
+          "[shader] sampled-crt texture[%d]: sprite %d frame %d\n",sampler,sprite,frame); }
+      } else {
+        R->lut_pal_sprite=sprite; R->lut_pal_frame=frame;
+        if(getenv("GML_LOG_SHADER")) fprintf(stderr,"[shader] palette texture: sprite %d frame %d\n",
+          R->lut_pal_sprite,R->lut_pal_frame);
+      }
     }
     return vreal(0); }
   if(!strcmp(nm,"sprite_get_texture")){ int spr=(int)N(a,n,0), img=(int)N(a,n,1);
@@ -11408,6 +11577,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int h=(int)N(a,n,0);
     if((h & 0x7F000000)!=GML_ACRV_TAG) return vreal(0);
     return vreal(acrv_evaluate(vm,(h>>8)&0xFFF,h&0xFF,N(a,n,1))); }
+  /* The VM performs mark/sweep at safe frame boundaries. An explicit request therefore needs no
+   * mid-bytecode mutation; acknowledging it preserves API behavior without risking live roots. */
+  if(!strcmp(nm,"gc_collect") || !strcmp(nm,"gc_enable")) return vreal(0);
+  if(!strcmp(nm,"gc_is_enabled")) return vreal(1);
   if(!strncmp(nm,"shader_",7)) return vreal(0);
   if(!strcmp(nm,"steam_current_game_language")) return vstr("english");
   if(!strcmp(nm,"steam_initialised")||!strcmp(nm,"steam_initialized")) return vreal(0);
@@ -11618,7 +11791,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     GmlRender *R=(GmlRender*)vm->render; if(R) R->interp=(N(a,n,enable)!=0.0); return vreal(0); }
   if(!strcmp(nm,"gpu_get_texfilter")||!strcmp(nm,"gpu_get_tex_filter")){
     GmlRender *R=(GmlRender*)vm->render; return vreal(R?R->interp:0); }
-  if(!strcmp(nm,"gpu_set_tex_repeat_ext")) return vreal(0);
+  if(!strcmp(nm,"gpu_set_tex_repeat")||!strcmp(nm,"gpu_set_tex_repeat_ext")) return vreal(0);
   if(!strcmp(nm,"gpu_set_blendenable")){ GmlRender *R=(GmlRender*)vm->render; if(R) R->alphablend=N(a,n,0)>=0.5; return vreal(0); }
   if(!strcmp(nm,"gpu_get_blendenable")){ GmlRender *R=(GmlRender*)vm->render; return vreal(R?R->alphablend:1); }
   if(!strcmp(nm,"window_get_fullscreen")) return vreal(vm->window_fullscreen);

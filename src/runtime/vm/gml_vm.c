@@ -400,7 +400,7 @@ static void log_val_simple(GmlVal v){
     fprintf(stderr,">");
   }
   else if(v.t==V_UNDEF) fprintf(stderr,"undefined");
-  else fprintf(stderr,"%g",v.t==V_REAL?v.d:0.0);
+  else fprintf(stderr,"%.17g",v.t==V_REAL?v.d:0.0);
 }
 static void motion_from_components(GmlInstance *in){
   in->speed=hypot(in->hspeed,in->vspeed);
@@ -803,7 +803,8 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
   { static const char *dv=NULL; static int dv_init=0;
     if(!dv_init){ dv=getenv("GML_DBG_VARSET"); dv_init=1; }
     if(dv && name && !strcmp(name,dv)){ extern long g_vm_frame;
-      fprintf(stderr,"[varset] f%ld inst=%d %s = %s%.2f\n",g_vm_frame,inst,name,
+      fprintf(stderr,"[varset] f%ld code=%s inst=%d %s type=%d value=%s%.2f\n",
+        g_vm_frame,g_cur_code_name?g_cur_code_name:"?",inst,name,v.t,
         v.t==V_STR?"str:":"",v.t==V_REAL?v.d:0.0); } }
   if(vm->win && vm->win->classic_version && strcmp(name,"view_current") &&
      is_room_global_array(name)){
@@ -912,6 +913,14 @@ static double alarm_store_value(GmlVM *vm,GmlVal v){
   return vm && vm->win && vm->win->classic_version ? nearbyint(value) : value;
 }
 static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, uint32_t nh, int idx, GmlVal v){
+  { static const char *debug_name=(const char*)-1;
+    if(debug_name==(const char*)-1) debug_name=getenv("GML_DBG_ARRAYSET");
+    if(debug_name && nm && !strcmp(debug_name,nm)){
+      extern long g_vm_frame;
+      fprintf(stderr,"[arrayset] f%ld scope=%d %s[%d] type=%d value=%.17g\n",
+              g_vm_frame,inst_t,nm,idx,v.t,v.t==V_REAL?v.d:0.0);
+    }
+  }
   if(getenv("GML_LOG_VIEW") && !strcmp(nm,"view_camera")){
     extern long g_vm_frame;
     fprintf(stderr,"[camera] bind f%ld view=%d value=%.0f scope=%d global=%d\n",
@@ -1841,7 +1850,8 @@ static int code_cache_ensure(GmlWin *w, int ci){
     }
     in.funcval_ci=-1;
     in.builtin_id=0;
-    if((in.kind==OP_CALL || in.kind==OP_PUSH || in.kind==OP_POP) && in.refaddr){
+    if((in.kind==OP_CALL || in.kind==OP_PUSH || in.kind==OP_POP ||
+        (in.kind==OP_BREAK && in.sval==-11)) && in.refaddr){
       in.refname=gml_ref_name(w,in.refaddr);
       if(in.refname) in.refhash=strhash(in.refname);
     }
@@ -1850,6 +1860,16 @@ static int code_cache_ensure(GmlWin *w, int ci){
        * interpreter redo the ref-chain walk + name lookup on every plain push.i32 execution. */
       in.funcval_ci=-2;
       const char *fn=gml_ref_name(w,pc+4);
+      if(fn && fn[0]!='?' && !strncmp(fn,"gml_",4)){
+        int fci=gml_code_index_by_name(w,fn);
+        if(fci>=0) in.funcval_ci=fci;
+      }
+    }
+    if(in.kind==OP_BREAK && in.sval==-11 && w->bytecode>=17){
+      /* pushref uses the same FUNC occurrence table as push.i32 function values, although its
+       * payload also serves as an untagged resource id. Resolve only an actual CODE name. */
+      in.funcval_ci=-2;
+      const char *fn=in.refname;
       if(fn && fn[0]!='?' && !strncmp(fn,"gml_",4)){
         int fci=gml_code_index_by_name(w,fn);
         if(fci>=0) in.funcval_ci=fci;
@@ -2614,6 +2634,15 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         break; }
       case OP_CALL:{
         const char *nm=in.refname?in.refname:gml_ref_name(w,in.refaddr); int na=in.argc;
+        {
+          const char *match=getenv("GML_TRACE_CALL");
+          if(match && (!*match || (nm && strstr(nm,match)))){
+            extern long g_vm_frame;
+            fprintf(stderr,"[call] f%ld code=%s pc=%u name=%s argc=%d\n",
+              g_vm_frame,w->code[ci].name?w->code[ci].name:"?",pc,
+              nm?nm:"?",na);
+          }
+        }
         GmlVal a[64]; if(na>64) na=64;
         /* GM pushes args in reverse, so arg0 is on top: pop forward -> a[0]=arg0 */
         for(int i=0;i<na;i++) a[i] = sp>0? stk[--sp] : vreal(0);
@@ -2654,6 +2683,36 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
          * A tagged function-value (from a push.i32 fref or method()) carries the code index. */
         int na=in.argc; GmlVal a[64]; if(na>64) na=64;
         int fci=-1; GmlInstance *call_self=vm->cur_self;
+        /* A field call `receiver.callback(args)` is emitted as a StackTop field push immediately
+         * before callv. Its final stack shape is [args..., receiver, callback], with callback on
+         * top. A plain function value stored in that field is still invoked with receiver as self;
+         * only recognising explicitly-bound method structs lost that receiver and ran callbacks
+         * against the surrounding event instance. */
+        int member_value_call=0;
+        if(use_cache && ip>0){
+          GmlInsn *prev=&cached_ins[ip-1];
+          member_value_call=prev->kind==OP_PUSH && prev->type1==DT_VAR &&
+                            (prev->inst==IT_STACK || prev->reftype==0x80);
+          if(!member_value_call && ip>1 && prev->kind==OP_PUSH && prev->type1==DT_VAR){
+            GmlInsn *scope=&cached_ins[ip-2];
+            const char *sn=scope->refname?scope->refname:gml_ref_name(w,scope->refaddr);
+            member_value_call=scope->kind==OP_CALL && sn &&
+                              (!strcmp(sn,"@@This@@") || !strcmp(sn,"@@Other@@"));
+          }
+        } else if(!use_cache && pc>=start+8){
+          GmlInsn prev;
+          int psz=gml_decode_bc(d,pc-8,w->bytecode,&prev);
+          member_value_call=psz==8 && prev.kind==OP_PUSH && prev.type1==DT_VAR &&
+                            (prev.inst==IT_STACK || prev.reftype==0x80);
+          if(!member_value_call && psz==8 && prev.kind==OP_PUSH && prev.type1==DT_VAR &&
+             pc>=start+16){
+            GmlInsn scope;
+            int ssz=gml_decode_bc(d,pc-16,w->bytecode,&scope);
+            const char *sn=ssz==8?(scope.refname?scope.refname:gml_ref_name(w,scope.refaddr)):NULL;
+            member_value_call=ssz==8 && scope.kind==OP_CALL && sn &&
+                              (!strcmp(sn,"@@This@@") || !strcmp(sn,"@@Other@@"));
+          }
+        }
         /* A METHOD call `obj.method(args)` leaves [args.., self, method] — bound method on TOP, accessor
          * instance right under it (via the dup-swap). A plain funcval call leaves the func at the BOTTOM
          * (arg0 on top). Peek: bound-method struct on top => method convention. */
@@ -2666,9 +2725,28 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           GmlVal selfv; int have_self=0;
           method_struct_info(bm_top,&fci,&selfv,&have_self);
           GmlInstance *bs = have_self? vm_inst_from_ref(vm,selfv) : NULL;
-          if(have_self && sp>0 && asnum(stk[sp-1])==asnum(selfv)) sp--;   /* drop the accessor self (obj. in obj.method) */
+          if(member_value_call && sp>0) sp--;   /* drop the accessor receiver (obj. in obj.method) */
+          else if(have_self && sp>0 && asnum(stk[sp-1])==asnum(selfv)) sp--;
           if(bs) call_self=bs;
           for(int i=0;i<na;i++) a[i]= sp>0? stk[--sp] : vreal(0);
+        } else if(member_value_call && sp>=2){
+          GmlVal fv=stk[--sp];
+          GmlVal receiver=stk[--sp];
+          double fvn=asnum(fv);
+          if(GML_IS_FUNCVAL((int)fvn)) fci=(int)fvn & 0x00FFFFFF;
+          else if(GML_IS_STRUCT_ID(fvn)){
+            GmlInstance *bm=gml_struct_find(vm,(unsigned)fvn);
+            if(bm){
+              GmlVal selfv; int have_self=0;
+              method_struct_info(bm,&fci,&selfv,&have_self);
+              if(have_self){ GmlInstance *bs=vm_inst_from_ref(vm,selfv); if(bs) call_self=bs; }
+            }
+          }
+          if(fci>=0){
+            GmlInstance *rs=vm_inst_from_ref(vm,receiver);
+            if(rs) call_self=rs;
+          }
+          for(int i=0;i<na;i++) a[i]=sp>0?stk[--sp]:vreal(0);
         } else {
           for(int i=0;i<na;i++) a[i]= sp>0? stk[--sp] : vreal(0);   /* a[0]=arg0 (top) */
           for(int i=na;i<in.argc;i++) if(sp>0) sp--;                /* drop overflow args */
@@ -2755,10 +2833,27 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
       case OP_BREAK:
         /* Dispatch extended break operations with their corresponding stack operands. */
         switch(in.sval){
-          case -11: /* pushref: push an asset/function reference encoded as (type<<24 | id). Engine
-                     * sprite/script/font indices match GM asset ids, so the low-24 id addresses the
-                     * right resource for draw_sprite_ext & OP_CALLV. */
-            if(sp<STK) stk[sp++]=vreal((double)(in.ival & 0x00FFFFFF)); break;
+          case -11:{ /* pushref: resource id OR function reference, selected by its FUNC occurrence.
+                      * Treating every payload as a low-24 resource id left nested callbacks as plain
+                      * integers, so a later callv silently had nothing callable to dispatch. */
+            int fci=use_cache ? in.funcval_ci : -1;
+            if(fci==-1){
+              const char *fn=gml_ref_name(w,in.refaddr?in.refaddr:pc+4);
+              if(fn && fn[0]!='?' && !strncmp(fn,"gml_",4)) fci=gml_code_index_by_name(w,fn);
+            }
+            { static int dbg_pushref=-1;
+              if(dbg_pushref<0) dbg_pushref=getenv("GML_DBG_FUNCVAL")!=NULL;
+              if(dbg_pushref){
+                const char *dbgfn=gml_ref_name(w,in.refaddr?in.refaddr:pc+4);
+                if((dbgfn && !strncmp(dbgfn,"gml_",4)) || fci>=0) fprintf(stderr,
+                  "[funcval] %s pc=%u pushref=%d name=%s -> ci=%d\n",
+                  w->code[ci].name,pc-start,in.ival,dbgfn?dbgfn:"?",fci);
+              } }
+            GmlVal ref = fci>=0
+              ? vreal((double)(GML_FUNCVAL_TAG|fci))
+              : vreal((double)(in.ival & 0x00FFFFFF));
+            if(sp<STK) stk[sp++]=ref;
+            break; }
           case -2:   /* pushaf: A[idx] where the array value A is on the stack. Stack: idx, A(top->down). */
           case -4:{  /* pushac reads an intermediate array value for a chained access. */
             int idx=(int)(sp>0?asnum(stk[--sp]):0); GmlVal av=sp>0?stk[--sp]:vreal(0);

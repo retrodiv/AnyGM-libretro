@@ -63,6 +63,30 @@ static int grid_value_fixtures(void){
   ok&=expect_real("value x shares search",call(&vm,"ds_grid_value_x",whole_grid,6),3);
   ok&=expect_real("value y shares search",call(&vm,"ds_grid_value_y",whole_grid,6),2);
 
+  GmlVal grow_args[]={grid,vreal(6),vreal(5)};
+  ok&=expect_real("grow succeeds",call(&vm,"ds_grid_resize",grow_args,3),1);
+  GmlVal width_arg[]={grid}, get_origin[]={grid,vreal(0),vreal(0)};
+  GmlVal get_middle[]={grid,vreal(2),vreal(1)}, get_new[]={grid,vreal(5),vreal(4)};
+  ok&=expect_real("grown width",call(&vm,"ds_grid_width",width_arg,1),6);
+  ok&=expect_real("grown height",call(&vm,"ds_grid_height",width_arg,1),5);
+  ok&=expect_real("grow preserves origin",call(&vm,"ds_grid_get",get_origin,3),11);
+  ok&=expect_real("grow preserves middle",call(&vm,"ds_grid_get",get_middle,3),23);
+  ok&=expect_real("grow initializes new cells",call(&vm,"ds_grid_get",get_new,3),0);
+
+  GmlVal shrink_args[]={grid,vreal(3),vreal(2)};
+  ok&=expect_real("shrink succeeds",call(&vm,"ds_grid_resize",shrink_args,3),1);
+  ok&=expect_real("shrunk width",call(&vm,"ds_grid_width",width_arg,1),3);
+  ok&=expect_real("shrunk height",call(&vm,"ds_grid_height",width_arg,1),2);
+  ok&=expect_real("shrink preserves overlap",call(&vm,"ds_grid_get",get_middle,3),23);
+
+  GmlVal zero_args[]={grid,vreal(0),vreal(0)};
+  ok&=expect_real("zero resize succeeds",call(&vm,"ds_grid_resize",zero_args,3),1);
+  ok&=expect_real("zero width",call(&vm,"ds_grid_width",width_arg,1),0);
+  ok&=expect_real("zero height",call(&vm,"ds_grid_height",width_arg,1),0);
+  GmlVal regrow_args[]={grid,vreal(1),vreal(1)};
+  ok&=expect_real("regrow succeeds",call(&vm,"ds_grid_resize",regrow_args,3),1);
+  ok&=expect_real("regrow initializes cell",call(&vm,"ds_grid_get",get_origin,3),0);
+
   GmlVal destroy_args[]={grid};
   call(&vm,"ds_grid_destroy",destroy_args,1);
   ok&=expect_real("destroyed grid",call(&vm,"ds_grid_value_exists",whole_grid,6),0);
@@ -71,6 +95,6 @@ static int grid_value_fixtures(void){
 
 int main(void){
   if(!grid_value_fixtures()) return 1;
-  puts("ds_grid value search fixtures: ok");
+  puts("ds_grid value-search and resize fixtures: ok");
   return 0;
 }
