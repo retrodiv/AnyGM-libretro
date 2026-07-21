@@ -136,6 +136,7 @@ void gmlc_project_free(GmlcProject *p){
     free(p->sprites[i].id); free(p->sprites[i].name);
     for(int f=0;f<p->sprites[i].n_frames;f++) free(p->sprites[i].frame_paths ? p->sprites[i].frame_paths[f] : NULL);
     free(p->sprites[i].frame_paths);
+    free(p->sprites[i].collision_mask_data);
   }
   free(p->sprites);
   for(int i=0;i<p->n_sounds;i++){ free(p->sounds[i].id); free(p->sounds[i].name); free(p->sounds[i].data_path); }

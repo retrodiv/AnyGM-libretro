@@ -583,6 +583,8 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
                                double xs, double ys, double rot, uint32_t blend, double alpha);
 int  gml_text_width(GmlRender *r, const char *str);
 int  gml_text_height(GmlRender *r, const char *str);
+double gml_text_width_ext(GmlRender *r, const char *str, double sep, double width);
+double gml_text_height_ext(GmlRender *r, const char *str, double sep, double width);
 void gml_draw_classic_game_information(GmlRender *r, uint32_t *framebuffer,
                                        int width, int height,
                                        const uint8_t *record, size_t record_size);

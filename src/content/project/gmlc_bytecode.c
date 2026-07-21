@@ -77,6 +77,69 @@ static char *dup_range(const char *s, size_t n){
   return out;
 }
 
+/* GM6-GM8 strings treat a backslash as an ordinary character.  The shared
+ * lexer also accepts newer escaped strings, so prepare classic source by
+ * quoting backslashes inside string literals.  Keeping this at the compiler
+ * boundary lets the project importer retain the source exactly as authored
+ * while all token and delimiter scanners see one consistent representation. */
+static char *compiler_source_text(const GmlcProject *project, const char *source){
+  if(!source) return NULL;
+  if(!project || project->classic_version<=0) return gmlc_strdup(source);
+  size_t length=strlen(source);
+  if(length>(SIZE_MAX-1)/2) return NULL;
+  char *out=(char*)malloc(length*2+1);
+  if(!out) return NULL;
+  enum { SOURCE_CODE, SOURCE_STRING, SOURCE_LINE_COMMENT, SOURCE_BLOCK_COMMENT } state=SOURCE_CODE;
+  char quote=0;
+  size_t write=0;
+  for(size_t read=0;read<length;read++){
+    char ch=source[read];
+    if(state==SOURCE_CODE){
+      if(ch=='/' && read+1<length && source[read+1]=='/'){
+        out[write++]=ch;
+        out[write++]=source[++read];
+        state=SOURCE_LINE_COMMENT;
+        continue;
+      }
+      if(ch=='/' && read+1<length && source[read+1]=='*'){
+        out[write++]=ch;
+        out[write++]=source[++read];
+        state=SOURCE_BLOCK_COMMENT;
+        continue;
+      }
+      if(ch=='"' || ch=='\''){
+        quote=ch;
+        state=SOURCE_STRING;
+      }
+      out[write++]=ch;
+      continue;
+    }
+    if(state==SOURCE_STRING){
+      if(ch=='\\') out[write++]='\\';
+      out[write++]=ch;
+      if(ch==quote) state=SOURCE_CODE;
+      continue;
+    }
+    out[write++]=ch;
+    if(state==SOURCE_LINE_COMMENT){
+      if(ch=='\n' || ch=='\r') state=SOURCE_CODE;
+    } else if(ch=='*' && read+1<length && source[read+1]=='/'){
+      out[write++]=source[++read];
+      state=SOURCE_CODE;
+    }
+  }
+  out[write]=0;
+  return out;
+}
+
+static char *compiler_read_source(const GmlcProject *project, const char *path){
+  char *source=gmlc_project_read_source(project,path);
+  if(!source) return NULL;
+  char *prepared=compiler_source_text(project,source);
+  free(source);
+  return prepared;
+}
+
 static int reserve(CodeBuf *b, size_t n){
   if(b->len+n<=b->cap) return 1;
   size_t nc=b->cap?b->cap*2:256;
@@ -613,7 +676,11 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   if(!strcmp(name,"c_orange")){ *out=0x40A0FF; return 1; }
   if(!strcmp(name,"c_white")){ *out=16777215; return 1; }
   if(!strcmp(name,"c_lime")){ *out=65280; return 1; }
-  if(!strcmp(name,"mb_left")){ *out=1; return 1; }
+  static const struct { const char *name; int value; } mouse_buttons[]={
+    {"mb_any",-1}, {"mb_none",0}, {"mb_left",1}, {"mb_right",2}, {"mb_middle",3}
+  };
+  for(int i=0;i<(int)(sizeof(mouse_buttons)/sizeof(*mouse_buttons));i++)
+    if(!strcmp(name,mouse_buttons[i].name)){ *out=mouse_buttons[i].value; return 1; }
   if(!strcmp(name,"bm_normal")){ *out=0; return 1; }
   if(!strcmp(name,"bm_subtract")){ *out=3; return 1; }
   static const char *effect_kinds[]={
@@ -1017,6 +1084,101 @@ static int find_top_comma(const char *src, Span s, size_t *comma_pos){
   return 0;
 }
 
+static size_t skip_bounded_space(const char *src, size_t pos, size_t end){
+  while(pos<end && isspace((unsigned char)src[pos])) pos++;
+  return pos;
+}
+
+static int classic_for_assignment_at(const char *src, size_t pos, size_t end){
+  pos=skip_bounded_space(src,pos,end);
+  if(pos>=end || !(isalpha((unsigned char)src[pos]) || src[pos]=='_')) return 0;
+  pos++;
+  while(pos<end && (isalnum((unsigned char)src[pos]) || src[pos]=='_')) pos++;
+  for(;;){
+    pos=skip_bounded_space(src,pos,end);
+    if(pos<end && src[pos]=='.'){
+      pos=skip_bounded_space(src,pos+1,end);
+      if(pos>=end || !(isalpha((unsigned char)src[pos]) || src[pos]=='_')) return 0;
+      pos++;
+      while(pos<end && (isalnum((unsigned char)src[pos]) || src[pos]=='_')) pos++;
+      continue;
+    }
+    if(pos<end && src[pos]=='['){
+      int depth=1;
+      pos++;
+      while(pos<end && depth){
+        if(src[pos]=='"' || src[pos]=='\''){
+          char quote=src[pos++];
+          while(pos<end){
+            if(src[pos]=='\\' && pos+1<end){ pos+=2; continue; }
+            if(src[pos++]==quote) break;
+          }
+          continue;
+        }
+        if(src[pos]=='[') depth++;
+        else if(src[pos]==']') depth--;
+        pos++;
+      }
+      if(depth) return 0;
+      continue;
+    }
+    break;
+  }
+  pos=skip_bounded_space(src,pos,end);
+  if(pos>=end) return 0;
+  if((src[pos]=='+' || src[pos]=='-') && pos+1<end && src[pos+1]==src[pos]) return 1;
+  if(strchr("+-*/%",src[pos]) && pos+1<end && src[pos+1]=='=') return 1;
+  return src[pos]=='=' && (pos+1>=end || src[pos+1]!='=');
+}
+
+/* Classic source may omit the second semicolon in a for header. Recover only when
+ * the trailing top-level term has the shape of an assignment or update, keeping modern source
+ * strict and avoiding guesses inside calls, array indices, strings or comments. */
+static int split_classic_for_condition_step(const char *src, Span combined,
+                                            Span *condition, Span *step){
+  int depth=0;
+  size_t split=(size_t)-1;
+  for(size_t pos=combined.start;pos<combined.end;pos++){
+    char ch=src[pos];
+    if(ch=='"' || ch=='\''){
+      char quote=ch;
+      pos++;
+      while(pos<combined.end){
+        if(src[pos]=='\\' && pos+1<combined.end){ pos+=2; continue; }
+        if(src[pos]==quote) break;
+        pos++;
+      }
+      continue;
+    }
+    if(ch=='/' && pos+1<combined.end && src[pos+1]=='/'){
+      pos+=2;
+      while(pos<combined.end && src[pos]!='\n') pos++;
+      continue;
+    }
+    if(ch=='/' && pos+1<combined.end && src[pos+1]=='*'){
+      pos+=2;
+      while(pos+1<combined.end && !(src[pos]=='*' && src[pos+1]=='/')) pos++;
+      if(pos+1<combined.end) pos++;
+      continue;
+    }
+    if(ch=='(' || ch=='[' || ch=='{'){ depth++; continue; }
+    if((ch==')' || ch==']' || ch=='}') && depth>0){ depth--; continue; }
+    if(depth==0 && isspace((unsigned char)ch)){
+      size_t candidate=skip_bounded_space(src,pos,combined.end);
+      if(candidate<combined.end && classic_for_assignment_at(src,candidate,combined.end))
+        split=candidate;
+    }
+  }
+  if(split==(size_t)-1) return 0;
+  condition->start=combined.start;
+  condition->end=split;
+  step->start=split;
+  step->end=combined.end;
+  trim_span(src,condition);
+  trim_span(src,step);
+  return condition->start<condition->end && step->start<step->end;
+}
+
 static int scan_for_header(Compiler *c, size_t start, Span out[3], size_t *out_close){
   const char *src=c->lex.src;
   int depth=0, part=0;
@@ -1051,7 +1213,14 @@ static int scan_for_header(Compiler *c, size_t start, Span out[3], size_t *out_c
         if(part>2) return 0;
         out[part].start=seg; out[part].end=pos; trim_span(src,&out[part]);
         *out_close=pos;
-        return part==2;
+        if(part==2) return 1;
+        if(part==1 && c->project && c->project->classic_version>0){
+          Span combined=out[1];
+          if(split_classic_for_condition_step(src,combined,&out[1],&out[2])) return 1;
+        }
+        c->unsupported=1;
+        snprintf(c->lex.err,sizeof(c->lex.err),"for header requires three clauses");
+        return 0;
       }
       depth--; pos++; continue;
     }
@@ -1291,7 +1460,11 @@ static int emit_lvalue_write(Compiler *c, LValue *lv, uint8_t type1);
 static int emit_popz(Compiler *c){ return emit_u32(&c->code,fw(OP_POPZ,DT_VAR,0)); }
 static int emit_popz_typed(Compiler *c, uint8_t type1){ return emit_u32(&c->code,fw(OP_POPZ,type1,0)); }
 static int emit_dup(Compiler *c, uint8_t type1){ return emit_u32(&c->code,fw(OP_DUP,type1,0)); }
-static int emit_swap_top(Compiler *c){ return emit_u32(&c->code,fw(OP_DUP,DT_VAR,(int16_t)0x8800)); }
+/* Swap the two one-value blocks at the top of the stack.  The low count is
+ * one here: zero is the no-argument receiver shuffle used by member calls and
+ * leaves [receiver,value] unchanged, so a following StackTop store consumes
+ * the value as though it were the receiver. */
+static int emit_swap_top(Compiler *c){ return emit_u32(&c->code,fw(OP_DUP,DT_VAR,(int16_t)0x8801)); }
 
 static int function_shape_at(const char *src, size_t pos){
   if(!word_match_at(src,pos,"function")) return 0;
@@ -1839,6 +2012,34 @@ static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv){
     c->lex.pos=close_pos+1;
     lx_next(&c->lex);
   }
+  /* An array/accessor element can itself be an instance or struct receiver:
+   * entries[i].field and table[? key].field are both ordinary GML lvalues.
+   * Resolve the element once, then continue the existing stack-receiver path
+   * so reads, direct assignments, and compound assignments share semantics. */
+  if(tok_is(c,".") && (lv->is_array || lv->accessor!=ACCESS_NONE)){
+    if(!emit_lvalue_read(c,lv) || !emit_conv(c,DT_VAR,DT_INT32)) return 0;
+    free(lv->index_src);
+    lv->index_src=NULL;
+    lv->is_array=0;
+    lv->is_array_2d=0;
+    lv->accessor=ACCESS_NONE;
+    lv->reftype=0x80;
+    lv->inst=IT_STACK;
+    lv->is_stacktop=1;
+    lv->receiver_on_stack=1;
+    while(eat(c,".")){
+      if(c->lex.tok.kind!=TOK_ID){
+        c->unsupported=1;
+        snprintf(c->lex.err,sizeof(c->lex.err),"expected field name");
+        return 0;
+      }
+      snprintf(lv->name,sizeof(lv->name),"%s",c->lex.tok.text);
+      lx_next(&c->lex);
+      if(tok_is(c,".")){
+        if(!emit_lvalue_read(c,lv) || !emit_conv(c,DT_VAR,DT_INT32)) return 0;
+      }
+    }
+  }
   return 1;
 }
 
@@ -2178,13 +2379,19 @@ static int parse_assignment_tail(Compiler *c, LValue *lv){
   uint8_t binop=tok_is(c,"+=")?OP_ADD:tok_is(c,"-=")?OP_SUB:tok_is(c,"*=")?OP_MUL:tok_is(c,"/=")?OP_DIV:OP_MOD;
   lx_next(&c->lex);
   if(is_assign){
+    /* The chained receiver was resolved as an int32 instance id.  DUP's block
+     * shuffle is measured in encoded stack widths, so normalize both operands
+     * to variable-width slots before swapping them; the expression remains
+     * dynamically typed. */
+    if(lv->receiver_on_stack && !emit_conv(c,DT_INT32,DT_VAR)) return 0;
     if(!parse_expr(c)) return 0;
     /* A chained receiver such as global.actor.position.x is resolved while the
      * lvalue is parsed, leaving the final instance below the assignment value.
      * StackTop stores require the opposite order. Preserve ordinary `actor.x`
      * evaluation (whose receiver is emitted after the value) and swap only a
      * receiver that is already resident on the stack. */
-    if(lv->receiver_on_stack && !emit_swap_top(c)) return 0;
+    if(lv->receiver_on_stack &&
+       (!emit_conv(c,DT_VAR,DT_VAR) || !emit_swap_top(c))) return 0;
     if((lv->is_array || lv->is_stacktop) && !emit_lvalue_address(c,lv)) return 0;
   } else {
     if(lv->is_stacktop && !lv->is_array && !lv->accessor){
@@ -2400,7 +2607,7 @@ static int parse_statement(Compiler *c){
 
 static int collect_macros(Compiler *c){
   for(int i=0;i<c->project->n_scripts;i++){
-    char *txt=gmlc_project_read_source(c->project,c->project->scripts[i].source_path);
+    char *txt=compiler_read_source(c->project,c->project->scripts[i].source_path);
     if(!txt) continue;
     const char *p=txt;
     while((p=strstr(p,"#macro"))){
@@ -2911,14 +3118,14 @@ int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_bas
   for(int i=0;i<project->n_rooms;i++){
     const char *path=project->rooms[i].creation_code_path;
     if(path && *path){
-      char *txt=gmlc_project_read_source(project,path);
+      char *txt=compiler_read_source(project,path);
       if(txt){ int ok=collect_functions_from_text(out,path,NULL,-1,appended_base,txt,err,errcap); free(txt); if(!ok) goto fail; }
     }
   }
   for(int i=0;i<project->n_scripts;i++){
     const char *path=project->scripts[i].source_path;
     if(path && *path){
-      char *txt=gmlc_project_read_source(project,path);
+      char *txt=compiler_read_source(project,path);
       if(txt){
         int ci=source_room_code_count(project)+i;
         int ok=registry_collect_macros_from_text(out,txt) &&
@@ -2933,7 +3140,7 @@ int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_bas
     for(int m=0;m<timeline->n_moments;m++){
       const char *path=timeline->moments[m].source_path;
       if(path && *path){
-        char *txt=gmlc_project_read_source(project,path);
+        char *txt=compiler_read_source(project,path);
         if(txt){ int ok=collect_functions_from_text(out,path,NULL,-1,appended_base,txt,err,errcap); free(txt); if(!ok) goto fail; }
       }
     }
@@ -2943,7 +3150,7 @@ int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_bas
     for(int ei=0;ei<obj->n_events;ei++){
       const char *path=obj->events[ei].source_path;
       if(path && *path){
-        char *txt=gmlc_project_read_source(project,path);
+        char *txt=compiler_read_source(project,path);
         if(txt){ int ok=collect_functions_from_text(out,path,NULL,-1,appended_base,txt,err,errcap); free(txt); if(!ok) goto fail; }
       }
     }
@@ -2953,7 +3160,7 @@ int gmlc_bytecode_collect_functions(const GmlcProject *project, int appended_bas
     for(int ii=0;ii<room->n_instances;ii++){
       const char *path=room->instances[ii].creation_code_path;
       if(path && *path){
-        char *txt=gmlc_project_read_source(project,path);
+        char *txt=compiler_read_source(project,path);
         if(txt){ int ok=collect_functions_from_text(out,path,NULL,-1,appended_base,txt,err,errcap); free(txt); if(!ok) goto fail; }
       }
     }
@@ -3081,7 +3288,7 @@ int gmlc_bytecode_emit_empty(GmlcCodeBlob *out){
 
 int gmlc_bytecode_compile_source_ex(const GmlcProject *project, const GmlcFunctionRegistry *funcs, int script_index, const char *path, GmlcCodeBlob *out, char *err, size_t errcap){
   memset(out,0,sizeof(*out));
-  char *txt=gmlc_project_read_source(project,path);
+  char *txt=compiler_read_source(project,path);
   if(!txt){
     snprintf(err,errcap,"%s: read failed",path);
     return 0;

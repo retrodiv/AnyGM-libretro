@@ -141,6 +141,11 @@ typedef struct {
   int width, height, xorig, yorig;
   int bbox_left, bbox_right, bbox_top, bbox_bottom;
   int bbox_mode, col_kind, col_tolerance, sep_masks;
+  /* Optional authored collision maps, packed MSB-first by row. Classic packages
+   * carry these independently of visible-frame alpha. */
+  uint8_t *collision_mask_data;
+  size_t collision_mask_stride;
+  int collision_mask_count;
   int n_frames;
   char **frame_paths;
 } GmlcSprite;

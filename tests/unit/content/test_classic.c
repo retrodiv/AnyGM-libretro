@@ -879,7 +879,7 @@ static int expect_sprite_import(int executable_layout){
     fixture_u32(&payload, 800); fixture_u32(&payload, 2); fixture_u32(&payload, 1);
     fixture_u32(&payload, 0); fixture_u32(&payload, 1);
     fixture_u32(&payload, 0); fixture_u32(&payload, 0);
-    fixture_u32(&payload, 1); fixture_u32(&payload, 1);
+    fixture_u32(&payload, 1); fixture_u32(&payload, 0);
   } else {
     fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
     fixture_u32(&payload, 0); fixture_u32(&payload, 1); fixture_u32(&payload, 0); fixture_u32(&payload, 0);
@@ -910,6 +910,10 @@ static int expect_sprite_import(int executable_layout){
          project.sprites[0].width == 2 && project.sprites[0].height == 1 &&
          project.sprites[0].xorig == 1 && project.sprites[0].yorig == 2 &&
          project.sprites[0].bbox_right == 1 &&
+         (!executable_layout || (project.sprites[0].collision_mask_count==1 &&
+           project.sprites[0].collision_mask_stride==1 &&
+           project.sprites[0].collision_mask_data &&
+           project.sprites[0].collision_mask_data[0]==0x80)) &&
          !stat(project.sprites[0].frame_paths[0], &st) && st.st_size > 0 &&
          rgba && width==2 && height==1 &&
          rgba[0]==1 && rgba[1]==2 && rgba[2]==3 && rgba[3]==255 &&
@@ -921,6 +925,7 @@ static int expect_sprite_import(int executable_layout){
     free(project.sprites[i].id); free(project.sprites[i].name);
     for(int frame = 0; frame < project.sprites[i].n_frames; ++frame) free(project.sprites[i].frame_paths[frame]);
     free(project.sprites[i].frame_paths);
+    free(project.sprites[i].collision_mask_data);
   }
   free(project.sprites);
   gmlc_classic_manifest_free(&manifest);

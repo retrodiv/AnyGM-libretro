@@ -48,6 +48,8 @@ int main(void){
   GmlVM vm;
   memset(&classic,0,sizeof(classic));
   memset(&vm,0,sizeof(vm));
+  vm.next_time_source_id=GML_TIME_SOURCE_ID_BASE;
+  vm.time_source_game_state=1;
   if(!check_classic_comparisons()) return 1;
   classic.classic_version=810;
   vm.win=&classic;
@@ -78,14 +80,23 @@ int main(void){
       first,second,vm.rng_classic_state);
     return 1;
   }
+  vm.window_w=1024; vm.window_h=600;
+  vm.gui_w=512; vm.gui_h=300;
   size_t size=gml_vm_state_size(&vm), written=0, used=0;
   void *state=malloc(size);
   if(!state || !gml_vm_state_save(&vm,state,size,&written) || written!=size) return 1;
   double expected_third=(double)(0x08088406u*0x08088405u+1u)/4294967296.0;
   (void)gml_rng_value(&vm);
-  if(!gml_vm_state_load(&vm,state,written,&used) || used!=written ||
-     gml_rng_value(&vm)!=expected_third){
-    fprintf(stderr,"classic RNG state roundtrip mismatch\n");
+  vm.window_w=640; vm.window_h=480;
+  vm.gui_w=vm.gui_h=0;
+  int loaded=gml_vm_state_load(&vm,state,written,&used);
+  double restored_third=gml_rng_value(&vm);
+  if(!loaded || used!=written || restored_third!=expected_third ||
+     vm.window_w!=1024 || vm.window_h!=600 || vm.gui_w!=512 || vm.gui_h!=300){
+    fprintf(stderr,"classic RNG state roundtrip mismatch: loaded=%d used=%zu/%zu "
+                   "random=%.17g/%.17g window=%dx%d gui=%dx%d\n",
+      loaded,used,written,restored_third,expected_third,
+      vm.window_w,vm.window_h,vm.gui_w,vm.gui_h);
     free(state);
     return 1;
   }

@@ -751,6 +751,7 @@ static void free_imported_sprites(GmlcProject *project){
     for(int frame = 0; frame < sprite->n_frames; ++frame)
       free(sprite->frame_paths ? sprite->frame_paths[frame] : NULL);
     free(sprite->frame_paths);
+    free(sprite->collision_mask_data);
   }
   free(project->sprites);
   project->sprites = NULL;
@@ -1038,6 +1039,22 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
         free_imported_sprites(project); return 0;
       }
       uint32_t maps=separate?frames:1;
+      size_t mask_rowbytes=((size_t)sprite->width+7u)/8u;
+      if(sprite->width<0 || sprite->height<0 ||
+         (sprite->height && mask_rowbytes>SIZE_MAX/(size_t)sprite->height) ||
+         (maps && mask_rowbytes*(size_t)sprite->height>SIZE_MAX/(size_t)maps)){
+        if(err && errcap) snprintf(err,errcap,"classic import: sprite collision dimensions overflow");
+        free_imported_sprites(project); return 0;
+      }
+      size_t mask_stride=mask_rowbytes*(size_t)sprite->height;
+      size_t mask_total=mask_stride*(size_t)maps;
+      sprite->collision_mask_data=(uint8_t*)calloc(mask_total?mask_total:1u,1u);
+      if(!sprite->collision_mask_data){
+        if(err && errcap) snprintf(err,errcap,"classic import: out of memory retaining sprite collision maps");
+        free_imported_sprites(project); return 0;
+      }
+      sprite->collision_mask_stride=mask_stride;
+      sprite->collision_mask_count=(int)maps;
       int32_t left=INT32_MAX,right=INT32_MIN,top=INT32_MAX,bottom=INT32_MIN;
       for(uint32_t map=0;map<maps;map++){
         uint32_t fields[7];
@@ -1046,8 +1063,17 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
             free_imported_sprites(project); return 0;
           }
         uint64_t pixels=(uint64_t)fields[1]*(uint64_t)fields[2];
+        const uint8_t *words=r.data+r.pos;
         if(!import_skip_words(&r,pixels,"sprite collision pixels")){
           free_imported_sprites(project); return 0;
+        }
+        for(uint64_t pixel=0;pixel<pixels;pixel++){
+          if(!import_u32_at(words+(size_t)pixel*4u)) continue;
+          uint32_t x=fields[1]?(uint32_t)(pixel%fields[1]):0;
+          uint32_t y=fields[1]?(uint32_t)(pixel/fields[1]):0;
+          if(x<(uint32_t)sprite->width && y<(uint32_t)sprite->height)
+            sprite->collision_mask_data[(size_t)map*mask_stride+(size_t)y*mask_rowbytes+x/8u] |=
+              (uint8_t)(1u<<(7u-(x&7u)));
         }
         if((int32_t)fields[3]<left) left=(int32_t)fields[3];
         if((int32_t)fields[4]>right) right=(int32_t)fields[4];
@@ -1087,6 +1113,7 @@ static void free_sprite_range(GmlcProject *project, int first){
     for(int frame = 0; frame < sprite->n_frames; ++frame)
       free(sprite->frame_paths ? sprite->frame_paths[frame] : NULL);
     free(sprite->frame_paths);
+    free(sprite->collision_mask_data);
   }
   project->n_sprites = first;
 }
@@ -2213,13 +2240,20 @@ static int emit_action_call(ImportText *text, const char *function_name,
   return text_append(text, ")");
 }
 
-static int action_code_has_open_block_comment(const char *code){
-  enum { ACTION_NORMAL, ACTION_QUOTE, ACTION_LINE_COMMENT, ACTION_BLOCK_COMMENT } state=ACTION_NORMAL;
+typedef enum {
+  ACTION_NORMAL,
+  ACTION_QUOTE,
+  ACTION_LINE_COMMENT,
+  ACTION_BLOCK_COMMENT
+} ActionCodeState;
+
+static ActionCodeState action_code_end_state(const char *code, char *open_quote){
+  ActionCodeState state=ACTION_NORMAL;
   char quote='\0';
   for(size_t i=0; code && code[i]; ++i){
     char ch=code[i], next=code[i+1];
     if(state==ACTION_QUOTE){
-      if(ch=='\\' && next){ ++i; continue; }
+      /* In GM6-GM8 a backslash is literal and does not hide the quote. */
       if(ch==quote) state=ACTION_NORMAL;
     } else if(state==ACTION_LINE_COMMENT){
       if(ch=='\n' || ch=='\r') state=ACTION_NORMAL;
@@ -2233,17 +2267,26 @@ static int action_code_has_open_block_comment(const char *code){
       state=ACTION_BLOCK_COMMENT; ++i;
     }
   }
-  return state==ACTION_BLOCK_COMMENT;
+  if(open_quote) *open_quote=state==ACTION_QUOTE?quote:'\0';
+  return state;
 }
 
 static int emit_action_code_call(ImportText *text, const char *code,
                                  char **arguments, uint32_t *argument_kinds,
                                  uint32_t used_arguments){
   if(!text_append(text,"(function(){\n") || !text_append(text,code)) return 0;
+  char open_quote='\0';
+  ActionCodeState end_state=action_code_end_state(code,&open_quote);
+  /* Close an unterminated string at the end of a Classic Execute Code action before
+   * adding the structural wrapper used by the importer. */
+  if(end_state==ACTION_QUOTE){
+    char closing[2]={open_quote,'\0'};
+    if(!text_append(text,closing)) return 0;
+  }
   /* Each classic Execute Code action is compiled as a separate unit. An open
    * block comment therefore ends with that action; close it before appending
    * the synthetic function boundary used by the structural importer. */
-  if(action_code_has_open_block_comment(code) && !text_append(text,"\n*/")) return 0;
+  if(end_state==ACTION_BLOCK_COMMENT && !text_append(text,"\n*/")) return 0;
   if(!text_append(text,"\n})(")) return 0;
   for(uint32_t i=0;i<used_arguments;i++){
     if(i && !text_append(text,",")) return 0;

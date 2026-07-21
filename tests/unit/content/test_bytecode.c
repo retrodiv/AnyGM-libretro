@@ -59,7 +59,7 @@ static int compile_fixture_has_swap(const GmlcProject *project, const char *text
   for(size_t i=0;ok && i+4<=blob.size;i+=4){
     uint32_t word=(uint32_t)blob.data[i] | ((uint32_t)blob.data[i+1]<<8) |
                   ((uint32_t)blob.data[i+2]<<16) | ((uint32_t)blob.data[i+3]<<24);
-    if((word>>24)==OP_DUP && ((word>>16)&0xFF)==DT_VAR && (word&0xFFFF)==0x8800){
+    if((word>>24)==OP_DUP && ((word>>16)&0xFF)==DT_VAR && (word&0xFFFF)==0x8801){
       found=1;
       break;
     }
@@ -186,6 +186,11 @@ int main(int argc, char **argv){
   ok &= compile_fixture_named_constant(&project,"vk_shift",16);
   ok &= compile_fixture_named_constant(&project,"vk_control",17);
   ok &= compile_fixture_named_constant(&project,"vk_alt",18);
+  ok &= compile_fixture_named_constant(&project,"mb_any",-1);
+  ok &= compile_fixture_named_constant(&project,"mb_none",0);
+  ok &= compile_fixture_named_constant(&project,"mb_left",1);
+  ok &= compile_fixture_named_constant(&project,"mb_right",2);
+  ok &= compile_fixture_named_constant(&project,"mb_middle",3);
   ok &= compile_fixture_named_constant(&project,"vk_numpad0",96);
   ok &= compile_fixture_named_constant(&project,"vk_numpad9",105);
   ok &= compile_fixture_named_constant(&project,"vk_f12",123);
@@ -216,6 +221,12 @@ int main(int argc, char **argv){
   ok &= compile_fixture_function_ref(&project,"FixtureRoute();\n","AlternateMotion","FixtureRoute");
   ok &= compile_fixture_function_ref(&project,"uncertain_alias();\n","uncertain_alias","AlternateMotion");
   ok &= compile_fixture_function_ref(&project,"fixturemotion();\n","FixtureMotion","AlternateMotion");
+  ok &= compile_fixture(&project,
+    "for (counter=0; counter<limit counter=counter+1) { total+=counter; }\n",1);
+  ok &= compile_fixture(&project,
+    "items[index].x=other_items[index].x; result=items[index].x;\n",1);
+  ok &= compile_fixture(&project,
+    "base=\"folder\\leaf\"; tail=\"folder\\\"+name;\n",1);
   project.classic_version=0;
   ok &= compile_fixture_function_ref(&project,"fixturemotion();\n","fixturemotion","FixtureMotion");
   ok &= compile_fixture_function_ref(&project,"fixture_alias();\n","fixture_alias","FixtureMotion");

@@ -906,6 +906,11 @@ static char *path_under(const char *dir,const char *p){
   char *out=malloc(n);
   if(!out) return strdup(p?p:"");
   snprintf(out,n,"%s/%s",dir,p?p:"");
+  /* Content paths may use Windows separators on any host. Normalize them at the sandbox
+   * boundary instead of creating filenames with literal backslashes on Unix. Forward slashes
+   * keep this representation portable across libretro targets. */
+  for(char *cursor=out+strlen(dir)+1;*cursor;cursor++)
+    if(*cursor=='\\') *cursor='/';
   return out;
 }
 static int path_present(const char *p){
@@ -5293,6 +5298,18 @@ static int mouse_btn_check(int mb, int edge){
   return r;
 }
 
+static struct GmlViewOvr *room_view_override(GmlVM *vm,int room,int view,int create){
+  int nrooms=vm&&vm->win?gml_room_count(vm->win):0;
+  if(!vm || room<0 || room>=nrooms || view<0 || view>=8) return NULL;
+  if(!vm->view_ovr && create){
+    vm->view_ovr=calloc((size_t)nrooms*8,sizeof(*vm->view_ovr));
+    if(!vm->view_ovr) return NULL;
+    vm->n_view_ovr=nrooms*8;
+  }
+  int slot=room*8+view;
+  return vm->view_ovr && slot<vm->n_view_ovr ? &vm->view_ovr[slot] : NULL;
+}
+
 /* current room's ROOM index -> play-order position */
 static int order_pos(GmlVM *vm, int room_idx){
   for(int i=0;i<vm->win->n_room_order;i++) if((int)vm->win->room_order[i]==room_idx) return i;
@@ -7353,6 +7370,11 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
     if(!strcmp(nm,"min")){ if(n<=0){ *out=vreal(0); return 1; } double v=N(a,n,0); for(int i=1;i<n;i++){ double x=N(a,n,i); if(x<v) v=x; } *out=vreal(v); return 1; }
     if(!strcmp(nm,"max")){ if(n<=0){ *out=vreal(0); return 1; } double v=N(a,n,0); for(int i=1;i<n;i++){ double x=N(a,n,i); if(x>v) v=x; } *out=vreal(v); return 1; }
     if(!strcmp(nm,"mean")){ double s=0; for(int i=0;i<n;i++) s+=N(a,n,i); *out=vreal(n? s/n : 0); return 1; }
+    if(!strcmp(nm,"make_color")||!strcmp(nm,"make_colour")||
+       !strcmp(nm,"make_color_rgb")||!strcmp(nm,"make_colour_rgb")){
+      *out=vreal((double)((int)N(a,n,0) + ((int)N(a,n,1)<<8) + ((int)N(a,n,2)<<16)));
+      return 1;
+    }
   }
   if(nm[0]=='p'){
     if(!strcmp(nm,"place_meeting")){ int r=collision_at(vm,N(a,n,0),N(a,n,1),(int)N(a,n,2),0);
@@ -8452,6 +8474,34 @@ static int action_health_component(double value){
 static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   { GmlVal v;
     if(fast_hot_builtin(vm,nm,a,n,&v)) return v; }
+  /* Classic dynamic room tiles are runtime objects rather than modern tilemaps. Keep them in
+   * the runtime-layer store for room-entry cleanup, state serialization and depth ordering. A
+   * Classic background id names a BGND resource rather than a sprite resource. */
+  if(vm->win && vm->win->classic_version && !strcmp(nm,"tile_add")){
+    double dep=N(a,n,7);
+    GmlRtLayer *l=NULL;
+    for(int i=0;i<vm->n_rtl;i++)
+      if(vm->rtl[i].used && vm->rtl[i].depth==dep){ l=&vm->rtl[i]; break; }
+    if(!l){
+      l=gml_rt_layer_new(vm);
+      if(!l) return vreal(-1);
+      l->depth=dep;
+      snprintf(l->name,sizeof l->name,"__classic_tile_depth_%d",(int)dep);
+      if(getenv("GML_LOG_RTL")){ extern long g_vm_frame;
+        fprintf(stderr,"[rtl] f%ld classic tile layer depth=%g id=%d\n",g_vm_frame,dep,l->id); }
+    }
+    GmlRtElem *e=gml_rt_elem_new(vm);
+    if(!e) return vreal(-1);
+    e->type=7; e->layer=l->id;
+    e->sprite=(int)N(a,n,0);
+    e->sx=(int)N(a,n,1); e->sy=(int)N(a,n,2);
+    e->w=(int)N(a,n,3); e->h=(int)N(a,n,4);
+    e->x=N(a,n,5); e->y=N(a,n,6);
+    if(getenv("GML_LOG_RTL")){ extern long g_vm_frame;
+      fprintf(stderr,"[rtl] f%ld tile_add bg=%d src=(%d,%d %dx%d) pos=(%g,%g) depth=%g id=%d\n",
+              g_vm_frame,e->sprite,e->sx,e->sy,e->w,e->h,e->x,e->y,dep,e->id); }
+    return vreal(e->id);
+  }
   /* Return zero for prefixed script names whose suffix is sleep; leave the unprefixed builtin untouched. */
   { const char *sb=NULL;
     if(!strncmp(nm,"gml_GlobalScript_",17)) sb=nm+17;
@@ -8599,9 +8649,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"arctan2")) return vreal(atan2(N(a,n,0),N(a,n,1)));
   if(!strcmp(nm,"radtodeg")) return vreal(N(a,n,0)*180.0/M_PI);
   if(!strcmp(nm,"degtorad")) return vreal(N(a,n,0)*M_PI/180.0);
-  if(!strcmp(nm,"make_color_rgb"))
-    return vreal((double)((int)N(a,n,0) + ((int)N(a,n,1)<<8) + ((int)N(a,n,2)<<16)));
-  if(!strcmp(nm,"make_colour_rgb"))
+  if(!strcmp(nm,"make_color")||!strcmp(nm,"make_colour")||
+     !strcmp(nm,"make_color_rgb")||!strcmp(nm,"make_colour_rgb"))
     return vreal((double)((int)N(a,n,0) + ((int)N(a,n,1)<<8) + ((int)N(a,n,2)<<16)));
   if(!strcmp(nm,"make_color_hsv")||!strcmp(nm,"make_colour_hsv")){
     double h=fmod(N(a,n,0),255.0); if(h<0) h+=255.0; double s=N(a,n,1)/255.0, v=N(a,n,2)/255.0;
@@ -9300,18 +9349,42 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"room_get_name")){ GmlRoom rr; int ri=(int)N(a,n,0);
     return vstr(gml_room_get(vm->win,ri,&rr)==0 && rr.name ? rr.name : ""); }
   if(!strcmp(nm,"room_exists")){ int ri=(int)N(a,n,0); return vreal(ri>=0 && ri<gml_room_count(vm->win)); }
+  if(!strcmp(nm,"room_set_view_enabled")){
+    int rm=(int)N(a,n,0);
+    struct GmlViewOvr *o=room_view_override(vm,rm,0,1);
+    if(!o) return vreal(-1);
+    o->room_enabled_set=1;
+    o->room_enabled=N(a,n,1)>=0.5;
+    if(getenv("GML_LOG_VIEW"))
+      fprintf(stderr,"[view] room_set_view_enabled rm=%d enabled=%d\n",rm,o->room_enabled);
+    return vreal(0);
+  }
+  if(!strcmp(nm,"room_set_view")){
+    /* Classic room_set_view edits the complete indexed view record for a future room entry:
+     * room, index, visible, view rect, port rect, borders, follow speed, followed object. */
+    int rm=(int)N(a,n,0), vind=(int)N(a,n,1);
+    struct GmlViewOvr *o=room_view_override(vm,rm,vind,1);
+    if(!o) return vreal(-1);
+    o->full=1; o->vis=N(a,n,2)>=0.5;
+    o->view_x=(int)N(a,n,3); o->view_y=(int)N(a,n,4);
+    o->view_w=(int)N(a,n,5); o->view_h=(int)N(a,n,6);
+    o->x=(int)N(a,n,7); o->y=(int)N(a,n,8);
+    o->w=(int)N(a,n,9); o->h=(int)N(a,n,10);
+    o->hborder=(int)N(a,n,11); o->vborder=(int)N(a,n,12);
+    o->hspeed=(int)N(a,n,13); o->vspeed=(int)N(a,n,14);
+    o->object=(int)N(a,n,15);
+    if(getenv("GML_LOG_VIEW"))
+      fprintf(stderr,"[view] room_set_view rm=%d v=%d vis=%d view=(%d,%d,%d,%d) port=(%d,%d,%d,%d) follow=%d\n",
+        rm,vind,o->vis,o->view_x,o->view_y,o->view_w,o->view_h,
+        o->x,o->y,o->w,o->h,o->object);
+    return vreal(0);
+  }
   if(!strcmp(nm,"room_set_viewport")){
     /* room_set_viewport(rm, vind, visible, xport, yport, wport, hport): like GMS, edits the
      * room's viewport config; applied when that room is entered (gml_room_enter). */
     int rm=(int)N(a,n,0), vind=(int)N(a,n,1);
-    int nrooms=gml_room_count(vm->win);
-    if(rm<0||rm>=nrooms||vind<0||vind>7) return vreal(-1);
-    if(!vm->view_ovr){
-      vm->view_ovr=calloc((size_t)nrooms*8,sizeof(*vm->view_ovr));
-      if(!vm->view_ovr) return vreal(-1);
-      vm->n_view_ovr=nrooms*8;
-    }
-    struct GmlViewOvr *o=&vm->view_ovr[rm*8+vind];
+    struct GmlViewOvr *o=room_view_override(vm,rm,vind,1);
+    if(!o) return vreal(-1);
     o->set=1; o->vis=N(a,n,2)>=0.5;
     o->x=(int)N(a,n,3); o->y=(int)N(a,n,4); o->w=(int)N(a,n,5); o->h=(int)N(a,n,6);
     if(getenv("GML_LOG_VIEW")) fprintf(stderr,"[view] room_set_viewport rm=%d v=%d vis=%d port=(%d,%d,%d,%d)\n",
@@ -9320,8 +9393,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"room_get_viewport")){
     int rm=(int)N(a,n,0), vind=(int)N(a,n,1);
-    if(vm->view_ovr && rm>=0 && vind>=0 && vind<8 && rm*8+vind<vm->n_view_ovr && vm->view_ovr[rm*8+vind].set){
-      struct GmlViewOvr *o=&vm->view_ovr[rm*8+vind];
+    struct GmlViewOvr *o=room_view_override(vm,rm,vind,0);
+    if(o && (o->set || o->full)){
       GmlVal v=arr_newv(5); if(v.t!=V_ARR) return v;
       GmlArr *A=(GmlArr*)v.arr;
       A->data[0]=vreal(o->vis); A->data[1]=vreal(o->x); A->data[2]=vreal(o->y);
@@ -10566,8 +10639,8 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     if(!strcmp(nm,"string_width")) return vreal(R?gml_text_width(R,S(a,n,0)):(int)strlen(S(a,n,0))*8);
     if(!strcmp(nm,"string_height")) return vreal(R?gml_text_height(R,S(a,n,0)):8);
-    if(!strcmp(nm,"string_width_ext")) return vreal(R?gml_text_width(R,S(a,n,0)):(int)strlen(S(a,n,0))*8);
-    if(!strcmp(nm,"string_height_ext")) return vreal(R?gml_text_height(R,S(a,n,0)):8);
+    if(!strcmp(nm,"string_width_ext")) return vreal(R?gml_text_width_ext(R,S(a,n,0),N(a,n,1),N(a,n,2)):(int)strlen(S(a,n,0))*8);
+    if(!strcmp(nm,"string_height_ext")) return vreal(R?gml_text_height_ext(R,S(a,n,0),N(a,n,1),N(a,n,2)):8);
     if(!strcmp(nm,"font_add_sprite")) return vreal(R? gml_font_add_sprite(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),(int)N(a,n,3)) : 0);
     if(!strcmp(nm,"font_add_sprite_ext"))
       return vreal(R? gml_font_add_sprite_ext(R,(int)N(a,n,0),S(a,n,1),(int)N(a,n,2),(int)N(a,n,3)) : 0);

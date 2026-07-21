@@ -2848,17 +2848,43 @@ static const char *text_wrap_ext(GmlRender *r,const char *str,double w,char *wra
   return wrapped;
 }
 
+double gml_text_width_ext(GmlRender *r,const char *str,double sep,double w){
+  (void)sep;
+  if(!r || !str) return 0;
+  char wrapped[2048];
+  const char *layout=text_wrap_ext(r,str,w,wrapped,sizeof wrapped);
+  return gml_text_width(r,layout);
+}
+
+double gml_text_height_ext(GmlRender *r,const char *str,double sep,double w){
+  if(!r || !str) return 0;
+  char wrapped[2048];
+  const char *layout=text_wrap_ext(r,str,w,wrapped,sizeof wrapped);
+  if(sep<0) return gml_text_height(r,layout);
+  int lines=1;
+  for(const char *p=layout;*p;p++){
+    if(*p=='\\' && p[1]=='#'){ p++; continue; }
+    if(text_is_linebreak(p)) lines++;
+  }
+  double line_height=gml_text_height(r,"");
+  return line_height+(lines-1)*sep;
+}
+
 void gml_draw_text_ext_transformed(GmlRender *r, double x, double y, const char *str,
                                    double sep, double w, double xs, double ys, double rot,
                                    uint32_t blend, double alpha){
   if(!r || !str || !active_font(r)) return;
   char wrapped[2048];
   str=text_wrap_ext(r,str,w,wrapped,sizeof wrapped);
-  if(sep<=0){ gml_draw_text_transformed(r,x,y,str,xs,ys,rot,blend,alpha); return; }
+  if(sep<0){ gml_draw_text_transformed(r,x,y,str,xs,ys,rot,blend,alpha); return; }
   /* custom line separation: draw line by line at y + i*sep */
   int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;} if(text_is_linebreak(q)) nlines++; }
+  /* Separation is the distance between successive line origins, not the full block height.
+   * The first line still occupies one font line-height; omitting it shifts even a single-line
+   * centred or bottom-aligned string away from the requested anchor. */
+  double block_height=gml_text_height(r,"")+(nlines-1)*sep;
   double base=0;
-  if(r->valign==1) base=-(nlines*sep)/2.0; else if(r->valign==2) base=-nlines*sep;
+  if(r->valign==1) base=-block_height/2.0; else if(r->valign==2) base=-block_height;
   double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
   double ca,sa; render_rotation_sincos(rr,&ca,&sa);
   int sv=r->valign; r->valign=0;

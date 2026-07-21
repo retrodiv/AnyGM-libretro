@@ -5256,7 +5256,10 @@ void gml_room_enter(GmlVM *vm, int room_index){
       int bh=(int32_t)u32(d,lp+28), bv=(int32_t)u32(d,lp+32);
       set_global_arr(vm,"background_visible",i,en?1:0);
       set_global_arr(vm,"background_foreground",i,fg?1:0);
-      set_global_arr(vm,"background_index",i,en?def:-1);
+      /* Visibility does not clear the assigned background resource. Classic projects commonly
+       * author parallax layers hidden and enable them from room-start code; retaining the index is
+       * what makes that later background_visible write meaningful. */
+      set_global_arr(vm,"background_index",i,def);
       set_global_arr(vm,"background_x",i,bx);  set_global_arr(vm,"background_y",i,by);
       set_global_arr(vm,"background_htiled",i,htl?1:0); set_global_arr(vm,"background_vtiled",i,vtl?1:0);
       set_global_arr(vm,"background_hspeed",i,bh); set_global_arr(vm,"background_vspeed",i,bv);
@@ -5278,14 +5281,25 @@ void gml_room_enter(GmlVM *vm, int room_index){
       set_global_arr(vm,"view_hspeed",i,(int32_t)u32(d,vp+44)); set_global_arr(vm,"view_vspeed",i,(int32_t)u32(d,vp+48));
       set_global_arr(vm,"view_object",i,(int32_t)u32(d,vp+52));
     } }
-  /* room_set_viewport overrides (applied on entry, like GMS: the call edits room config) */
+  /* Apply runtime room-view resource overrides on entry. */
   if(vm->view_ovr) for(int i=0;i<8;i++){
     int k=room_index*8+i;
-    if(k>=0 && k<vm->n_view_ovr && vm->view_ovr[k].set){
+    if(k>=0 && k<vm->n_view_ovr){
       struct GmlViewOvr *o=&vm->view_ovr[k];
-      set_global_arr(vm,"view_visible",i,o->vis);
-      set_global_arr(vm,"view_xport",i,o->x); set_global_arr(vm,"view_yport",i,o->y);
-      set_global_arr(vm,"view_wport",i,o->w); set_global_arr(vm,"view_hport",i,o->h);
+      if(i==0 && o->room_enabled_set)
+        *gml_varmap_put(&vm->globals,"view_enabled")=vreal(o->room_enabled?1.0:0.0);
+      if(o->set || o->full){
+        set_global_arr(vm,"view_visible",i,o->vis);
+        set_global_arr(vm,"view_xport",i,o->x); set_global_arr(vm,"view_yport",i,o->y);
+        set_global_arr(vm,"view_wport",i,o->w); set_global_arr(vm,"view_hport",i,o->h);
+      }
+      if(o->full){
+        set_global_arr(vm,"view_xview",i,o->view_x); set_global_arr(vm,"view_yview",i,o->view_y);
+        set_global_arr(vm,"view_wview",i,o->view_w); set_global_arr(vm,"view_hview",i,o->view_h);
+        set_global_arr(vm,"view_hborder",i,o->hborder); set_global_arr(vm,"view_vborder",i,o->vborder);
+        set_global_arr(vm,"view_hspeed",i,o->hspeed); set_global_arr(vm,"view_vspeed",i,o->vspeed);
+        set_global_arr(vm,"view_object",i,o->object);
+      }
     } }
   if(getenv("GML_LOG_VIEW")) fprintf(stderr,"[view] room=%d dim=%ux%u view0 en=%.0f wview=%.0f hview=%.0f wport=%.0f hport=%.0f\n",
     vm->room_index, r.width, r.height, get_global_arr_d(vm,"view_visible",0),
@@ -6143,7 +6157,10 @@ void gml_tile_layer_delete_at(GmlVM *vm, int depth, double x, double y){
   if(vm->n_tile_del_at<64){ int i=vm->n_tile_del_at++;
     vm->tile_del_at[i].depth=depth; vm->tile_del_at[i].x=(int)x; vm->tile_del_at[i].y=(int)y; } }
 void gml_tile_layer_hide(GmlVM *vm, int depth, int hidden){ int i=tile_mut_idx(vm,depth);
-  if(i>=0){ if(hidden) vm->tile_mut[i].flags|=TILE_MUT_HIDDEN; else vm->tile_mut[i].flags&=~TILE_MUT_HIDDEN; } }
+  if(i>=0){ if(hidden) vm->tile_mut[i].flags|=TILE_MUT_HIDDEN; else vm->tile_mut[i].flags&=~TILE_MUT_HIDDEN;
+    if(getenv("GML_LOG_RTL")){ extern long g_vm_frame;
+      fprintf(stderr,"[rtl] f%ld tile layer depth=%d hidden=%d flags=%d\n",
+              g_vm_frame,depth,hidden,vm->tile_mut[i].flags); } } }
 /* apply the mutation for a tile at original `depth`: returns 0 to drop the tile (deleted/hidden),
  * else 1 and writes the effective depth + position offset. */
 static int tile_apply_mut(GmlVM *vm, int depth, int *eff_depth, double *ox, double *oy){
@@ -6482,11 +6499,19 @@ void gml_vm_draw(GmlVM *vm){
     long fin2 = g_vm_frame - vm->room_enter_frame; if(fin2<0) fin2=0;
     double lx = l->touched ? l->x : l->x+l->hs*fin2;
     double ly = l->touched ? l->y : l->y+l->vs*fin2;
+    double ldepth=l->depth;
     if(e->type==7){
+      /* Legacy tile_layer_* operations address every tile at an authored depth, including
+       * tiles created at runtime.  Static ROOM tiles already pass through tile_apply_mut above;
+       * apply the same visibility/depth/shift transform to layer-backed dynamic tiles. */
+      if(vm->n_tile_mut){ int ed; double ox,oy;
+        if(!tile_apply_mut(vm,(int)l->depth,&ed,&ox,&oy)) continue;
+        ldepth=ed; lx+=ox; ly+=oy;
+      }
       if(!dl_grow((void**)&g_dl_ltl,&g_dl_ltl_cap,nlt+1,sizeof(*ltl))) continue; ltl=g_dl_ltl;
       ltl[nlt].sprite=e->sprite; ltl[nlt].sx=e->sx; ltl[nlt].sy=e->sy; ltl[nlt].w=e->w; ltl[nlt].h=e->h;
       ltl[nlt].x=lx+e->x; ltl[nlt].y=ly+e->y; ltl[nlt].xs=e->xs; ltl[nlt].ys=e->ys;
-      ltl[nlt].blend=e->blend; ltl[nlt].alpha=e->alpha; ltl[nlt].depth=l->depth; ltl[nlt].order=l->order;
+      ltl[nlt].blend=e->blend; ltl[nlt].alpha=e->alpha; ltl[nlt].depth=ldepth; ltl[nlt].order=l->order;
       nlt++;
     } else if(e->type==1){
       if(!dl_grow((void**)&g_dl_lbg,&g_dl_lbg_cap,nlb+1,sizeof(*lbg))) continue; lbg=g_dl_lbg;
@@ -6589,7 +6614,10 @@ void gml_vm_draw(GmlVM *vm){
     if(it[k].type==1){ GmlDrawTile *t=&tiles[it[k].idx];
       gml_draw_background_part_ext(R,t->def,t->sx,t->sy,t->w,t->h,t->x,t->y,t->xs,t->ys,0xFFFFFF,1); continue; }
     if(it[k].type==2){ struct LayTile *t=&ltl[it[k].idx];
-      gml_draw_sprite_part_ext(R,t->sprite,0,t->sx,t->sy,t->w,t->h,t->x,t->y,t->xs,t->ys,t->blend,t->alpha);
+      if(vm->win && vm->win->classic_version)
+        gml_draw_background_part_ext(R,t->sprite,t->sx,t->sy,t->w,t->h,t->x,t->y,t->xs,t->ys,t->blend,t->alpha);
+      else
+        gml_draw_sprite_part_ext(R,t->sprite,0,t->sx,t->sy,t->w,t->h,t->x,t->y,t->xs,t->ys,t->blend,t->alpha);
       continue; }
     if(it[k].type==3){ struct LayBg *b=&lbg[it[k].idx];
       if(b->sprite<0) gml_draw_layer_color_fill(R,b->blend,b->alpha);
@@ -7555,7 +7583,7 @@ void gml_vm_free(GmlVM *vm){
 
 /* ---------------- save-state runtime serialization ---------------- */
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
-typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35; } StateR;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37; } StateR;
 
 static int state_debug_enabled(void){ return getenv("GML_STATE_DEBUG")!=NULL; }
 static void state_debug(const char *msg, size_t pos, uint32_t v){
@@ -8100,7 +8128,7 @@ static int tilemap_diff_count(const GmlTileMap *tm){
 }
 static void sw_vm(StateW *s, GmlVM *vm){
   s->vm=vm; s->compact_strings=1; s->array_meta=1;
-  sw_u32(s,0x53564D47u); /* GMV35: GMV34 plus time-source scheduler state */
+  sw_u32(s,0x55564D47u); /* GMV37: GMV36 plus runtime room-view resource overrides */
   sw_i32(s,vm->inst_count); sw_u32(s,vm->next_id);
   sw_i64(s,(int64_t)vm->next_creation_seq);
   sw_i32(s,vm->room_index); sw_i32(s,vm->pending_room); sw_i32(s,vm->game_end);
@@ -8284,6 +8312,26 @@ static void sw_vm(StateW *s, GmlVM *vm){
     sw_i32(s,source->reps_completed); sw_i32(s,source->expiry_type);
     sw_val(s,source->callback,0); sw_val(s,source->args,0);
   }
+  /* window_set_size and display_set_gui_size are persistent presentation state. Retain them
+   * across restoration so simulation and input use the same window and GUI geometry. */
+  sw_i32(s,vm->window_w); sw_i32(s,vm->window_h);
+  sw_i32(s,vm->gui_w); sw_i32(s,vm->gui_h);
+  int view_override_live=0;
+  for(int i=0;i<vm->n_view_ovr;i++) if(vm->view_ovr &&
+      (vm->view_ovr[i].set || vm->view_ovr[i].full || vm->view_ovr[i].room_enabled_set))
+    view_override_live++;
+  sw_i32(s,view_override_live);
+  for(int i=0;i<vm->n_view_ovr;i++) if(vm->view_ovr &&
+      (vm->view_ovr[i].set || vm->view_ovr[i].full || vm->view_ovr[i].room_enabled_set)){
+    struct GmlViewOvr *o=&vm->view_ovr[i];
+    sw_i32(s,i);
+    sw_i32(s,o->set); sw_i32(s,o->full); sw_i32(s,o->vis);
+    sw_i32(s,o->room_enabled_set); sw_i32(s,o->room_enabled);
+    sw_i32(s,o->x); sw_i32(s,o->y); sw_i32(s,o->w); sw_i32(s,o->h);
+    sw_i32(s,o->view_x); sw_i32(s,o->view_y); sw_i32(s,o->view_w); sw_i32(s,o->view_h);
+    sw_i32(s,o->hborder); sw_i32(s,o->vborder); sw_i32(s,o->hspeed); sw_i32(s,o->vspeed);
+    sw_i32(s,o->object);
+  }
   vm_state_profile_globals(vm);
 }
 size_t gml_vm_state_size(GmlVM *vm){
@@ -8317,7 +8365,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       && magic!=0x49564D47u && magic!=0x4A564D47u && magic!=0x4B564D47u
       && magic!=0x4C564D47u && magic!=0x4D564D47u && magic!=0x4E564D47u
       && magic!=0x4F564D47u && magic!=0x50564D47u && magic!=0x51564D47u
-      && magic!=0x52564D47u && magic!=0x53564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
+      && magic!=0x52564D47u && magic!=0x53564D47u && magic!=0x54564D47u
+      && magic!=0x55564D47u) || !s.ok){ state_debug("bad vm magic",s.pos,magic); return 0; }
   s.compact_strings = magic>=0x32564D47u;
   s.array_meta = magic>=0x34564D47u;
   s.v6 = magic>=0x36564D47u;
@@ -8350,6 +8399,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   s.v33 = magic>=0x51564D47u;
   s.v34 = magic>=0x52564D47u;
   s.v35 = magic>=0x53564D47u;
+  s.v36 = magic>=0x54564D47u;
+  s.v37 = magic>=0x55564D47u;
   void *render=vm->render, *audio=vm->audio;
   runtime_clear(vm);
   vm->ds_list_compat_repair = !s.v8;
@@ -8745,6 +8796,46 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       int parent=vm->time_source[i].parent, found=parent==0 || parent==1;
       for(int j=0;j<live && !found;j++) found=(int)vm->time_source[j].id==parent;
       if(!found){ state_debug("bad time source parent",s.pos,(uint32_t)parent); s.ok=0; }
+    }
+  }
+  if(s.v36 && s.ok){
+    vm->window_w=sr_i32(&s); vm->window_h=sr_i32(&s);
+    vm->gui_w=sr_i32(&s); vm->gui_h=sr_i32(&s);
+    if(vm->window_w<0 || vm->window_h<0 || vm->gui_w<0 || vm->gui_h<0 ||
+       vm->window_w>32768 || vm->window_h>32768 || vm->gui_w>32768 || vm->gui_h>32768){
+      state_debug("bad presentation geometry",s.pos,(uint32_t)vm->window_w);
+      s.ok=0;
+    }
+  }
+  if(s.v37 && s.ok){
+    int slots=vm->win ? gml_room_count(vm->win)*8 : 0;
+    int live=sr_i32(&s);
+    if(slots<0 || live<0 || live>slots){
+      state_debug("bad view override count",s.pos,(uint32_t)live);
+      s.ok=0; live=0;
+    }
+    free(vm->view_ovr); vm->view_ovr=NULL; vm->n_view_ovr=0;
+    if(live>0){
+      vm->view_ovr=calloc((size_t)slots,sizeof(*vm->view_ovr));
+      if(!vm->view_ovr) s.ok=0;
+      else vm->n_view_ovr=slots;
+    }
+    for(int i=0;i<live && s.ok;i++){
+      int slot=sr_i32(&s);
+      if(slot<0 || slot>=slots){ state_debug("bad view override slot",s.pos,(uint32_t)slot); s.ok=0; break; }
+      struct GmlViewOvr *o=&vm->view_ovr[slot];
+      o->set=(unsigned char)sr_i32(&s); o->full=(unsigned char)sr_i32(&s);
+      o->vis=(unsigned char)sr_i32(&s); o->room_enabled_set=(unsigned char)sr_i32(&s);
+      o->room_enabled=(unsigned char)sr_i32(&s);
+      o->x=sr_i32(&s); o->y=sr_i32(&s); o->w=sr_i32(&s); o->h=sr_i32(&s);
+      o->view_x=sr_i32(&s); o->view_y=sr_i32(&s);
+      o->view_w=sr_i32(&s); o->view_h=sr_i32(&s);
+      o->hborder=sr_i32(&s); o->vborder=sr_i32(&s);
+      o->hspeed=sr_i32(&s); o->vspeed=sr_i32(&s); o->object=sr_i32(&s);
+      if(o->set>1 || o->full>1 || o->vis>1 || o->room_enabled_set>1 || o->room_enabled>1 ||
+         o->w<0 || o->h<0 || o->view_w<0 || o->view_h<0){
+        state_debug("bad view override",s.pos,(uint32_t)slot); s.ok=0;
+      }
     }
   }
   vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;

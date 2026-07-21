@@ -266,9 +266,14 @@ typedef struct GmlVM {
   GmlRtLayer *rtl; int n_rtl, cap_rtl;
   GmlRtElem  *rte; int n_rte, cap_rte;
   int rt_next_id;
-  /* room_set_viewport overrides: like GMS, they modify the room's viewport config and take
-   * effect on (re)entry. Lazily allocated [n_rooms*8]; .set marks an active override. */
-  struct GmlViewOvr { unsigned char set, vis; int x, y, w, h; } *view_ovr;
+  /* Runtime room-view edits take effect on re-entry. This covers viewport-only and full-record
+   * APIs. Lazily allocate n_rooms*8 entries; .set marks a port override and .full the full view. */
+  struct GmlViewOvr {
+    unsigned char set, full, vis, room_enabled_set, room_enabled;
+    int x, y, w, h;
+    int view_x, view_y, view_w, view_h;
+    int hborder, vborder, hspeed, vspeed, object;
+  } *view_ovr;
   int n_view_ovr;   /* allocated entries (rooms*8), 0 = table absent */
   GmlDSMap ds_map[GML_DS_MAP_MAX];
   GmlDSList ds_list[GML_DS_LIST_MAX];
