@@ -1772,6 +1772,17 @@ int main(void){
       rectangle_count.t==V_REAL?rectangle_count.d:-1.0,
       rectangle_hit.t==V_REAL?rectangle_hit.d:-1.0); return 1;
   }
+  (void)gml_builtin_call(&vm,"ds_list_clear",&collision_list,1);
+  GmlVal circle_list_args[8]={vreal(1),vreal(0),vreal(0),vreal((double)contact->id),
+    vreal(0),vreal(0),collision_list,vreal(1)};
+  GmlVal circle_count=gml_builtin_call(&vm,"collision_circle_list",circle_list_args,8);
+  GmlVal circle_hit=gml_builtin_call(&vm,"ds_list_find_value",list_at,2);
+  if(circle_count.t!=V_REAL || circle_count.d!=1 || circle_hit.t!=V_REAL ||
+     circle_hit.d!=(double)contact->id){
+    fprintf(stderr,"collision_circle_list fixture failed: count=%.0f id=%.0f\n",
+      circle_count.t==V_REAL?circle_count.d:-1.0,
+      circle_hit.t==V_REAL?circle_hit.d:-1.0); return 1;
+  }
   (void)gml_builtin_call(&vm,"ds_list_destroy",&collision_list,1);
   GmlVal bounce_motion[2]={vreal(0),vreal(1)};
   (void)gml_builtin_call(&vm,"motion_set",bounce_motion,2);

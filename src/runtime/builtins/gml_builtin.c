@@ -7314,6 +7314,10 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
       *out=vreal(collision_shape_list_query(vm,1,p,n>4?a[4]:vreal(IT_NOONE),
         N(a,n,5)>=0.5,(int)N(a,n,6),list,N(a,n,8)>=0.5)); return 1; }
     if(!strcmp(nm,"collision_circle")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)}; GmlInstance *o=collision_shape(vm,2,p,(int)N(a,n,3),N(a,n,4)>=0.5,(int)N(a,n,5)); *out=vreal(o?(double)o->id:-4); return 1; }
+    if(!strcmp(nm,"collision_circle_list")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)};
+      GmlDSList *list=ds_list_slot_repair(vm,(int)N(a,n,6));
+      *out=vreal(collision_shape_list_query(vm,2,p,n>3?a[3]:vreal(IT_NOONE),
+        N(a,n,4)>=0.5,(int)N(a,n,5),list,N(a,n,7)>=0.5)); return 1; }
   }
   if(nm[0]=='d' && strncmp(nm,"draw_",5)){
     if(!strcmp(nm,"dsin")){ *out=vreal(sin(N(a,n,0)*M_PI/180.0)); return 1; }
@@ -8566,6 +8570,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(!(ax2<bx1 || bx2<ax1 || ay2<by1 || by2<ay1));
   }
   if(!strcmp(nm,"collision_circle")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)}; GmlInstance *o=collision_shape(vm,2,p,(int)N(a,n,3),N(a,n,4)>=0.5,(int)N(a,n,5)); return vreal(o?(double)o->id:-4); }
+  if(!strcmp(nm,"collision_circle_list")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)};
+    GmlDSList *list=ds_list_slot_repair(vm,(int)N(a,n,6));
+    return vreal(collision_shape_list_query(vm,2,p,n>3?a[3]:vreal(IT_NOONE),
+      N(a,n,4)>=0.5,(int)N(a,n,5),list,N(a,n,7)>=0.5)); }
   if(!strcmp(nm,"move_contact_solid")||!strcmp(nm,"move_contact")){ GmlInstance *s=vm->cur_self; if(!s) return vreal(0);
     int solid_only=!strcmp(nm,"move_contact_solid");
     int target=solid_only?0:IT_ALL;
