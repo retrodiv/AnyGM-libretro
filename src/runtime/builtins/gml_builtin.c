@@ -9938,7 +9938,9 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vreal(0);
   }
-  if(!strcmp(nm,"move_snap")){ GmlInstance *s=vm->cur_self; if(s){
+  /* action_snap aliases the move_snap grid operation. Both forms use absolute grid spacing;
+   * the action-relative flag is irrelevant. */
+  if(!strcmp(nm,"move_snap")||!strcmp(nm,"action_snap")){ GmlInstance *s=vm->cur_self; if(s){
       double xs=N(a,n,0), ys=N(a,n,1); if(xs>0) s->x=round(s->x/xs)*xs; if(ys>0) s->y=round(s->y/ys)*ys; gml_colgrid_touch(s); }
     return vreal(0); }
   /* action_set_alarm(value,index): D&D Set Alarm → self.alarm[index] = value. */

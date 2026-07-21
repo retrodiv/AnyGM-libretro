@@ -1932,6 +1932,14 @@ int main(void){
     fprintf(stderr,"relative potential-step target mismatch: reached=%.0f pos=(%.1f,%.1f)\n",
       reached.d,created->x,created->y); return 1;
   }
+  created->x=14; created->y=25; vm.action_relative=1;
+  GmlVal snap_args[2]={vreal(8),vreal(6)};
+  (void)gml_builtin_call(&vm,"action_snap",snap_args,2);
+  vm.action_relative=0;
+  if(created->x!=16 || created->y!=24){
+    fprintf(stderr,"legacy snap action did not use absolute grid spacing: (%.1f,%.1f)\n",
+      created->x,created->y); return 1;
+  }
   *gml_varmap_put(&created->vars,"side")=vreal(180);
   GmlVal local_name=vstr("side");
   vm.cur_self=created;
