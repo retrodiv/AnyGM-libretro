@@ -578,7 +578,7 @@ static GmlInstance *var_target(GmlVM *vm, int inst){
  * bytecode reference uses the current-instance scope. */
 static int is_global_builtin(const char *n){
   return !strcmp(n,"health")||!strcmp(n,"lives")||!strcmp(n,"score")||!strcmp(n,"async_load")||
-         !strcmp(n,"view_enabled"); }
+         !strcmp(n,"view_enabled")||!strcmp(n,"cursor_sprite"); }
 static int is_classic_transition_builtin(GmlVM *vm,const char *n){
   return vm && vm->win && vm->win->classic_version &&
          (!strcmp(n,"transition_kind") || !strcmp(n,"transition_steps"));
@@ -700,6 +700,7 @@ static const char *const g_special_var_names[]={
   "time_source_expire_nearest","time_source_expire_after","time_source_state_initial",
   "time_source_state_active","time_source_state_paused","time_source_state_stopped",
   "room_height","instance_count","health","lives","score","async_load","id","object_index",
+  "cursor_sprite",
   "image_number","sprite_width","sprite_height","sprite_xoffset","sprite_yoffset","image_single",
   "x","y","xprevious","yprevious","xstart","ystart","sprite_index","mask_index","image_index",
   "image_speed","image_xscale","image_yscale","image_angle","image_alpha","image_blend",
@@ -7420,6 +7421,9 @@ int gml_vm_init(GmlVM *vm, GmlWin *win){
   vm->potential_max_rotation=30; vm->potential_rotate_step=10;
   vm->potential_check_distance=3; vm->potential_rotate_on_spot=1;
   vm->listener_forward_z=-1; vm->listener_up_y=1;
+  /* A negative cursor_sprite selects the platform cursor. Frontends may hide that cursor in
+   * fullscreen, but an authored non-negative sprite is rendered by the core at presentation time. */
+  gml_set_global_scalar(vm,"cursor_sprite",-1);
   /* GM6-8 exposes these as writable built-in variables. Keeping the defaults in the ordinary
    * global map lets compiled source read/write them without a presentation-specific lookup. */
   if(win && win->classic_version){

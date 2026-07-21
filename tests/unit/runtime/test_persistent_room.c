@@ -154,6 +154,7 @@ static int expect_hash_layer_gpu_gap_closure(void){
   render.app_surface=hsv_source; render.app_w=2; render.app_h=2;
   render.shader_pal=&hsv_shader; render.n_shader_pal=1; render.active_shader=0;
   render.crt_shader_enable=1; render.interp=0; render.alphablend=1;
+  render.color_write_mask=0x0F;
   gml_draw_surface_stretched(&render,0,0,0,2,2,0xFFFFFF,1);
   int hsv_surface_ok=(hsv_target[0]&0xFFFFFFu)==0x000000u &&
     (hsv_target[1]&0xFFFFFFu)==0x00FF00u &&
@@ -1014,6 +1015,7 @@ int main(void){
   const char step_source[]=
     "global.step_order=global.step_order*10+1; "
     "view_surface_id[0]=2468; "
+    "cursor_sprite=2469; "
     "persistent_array[0]=7; "
     "var persistent_alias=persistent_array; "
     "global.persistent_alias_len=array_length_1d(persistent_alias); "
@@ -2061,6 +2063,10 @@ int main(void){
   if(global_array_value(&vm,"view_surface_id",0)!=2468){
     fprintf(stderr,"direct view-surface array assignment was not global: %.0f\n",
       global_array_value(&vm,"view_surface_id",0)); return 1;
+  }
+  if(gml_global_num(&vm,"cursor_sprite")!=2469){
+    fprintf(stderr,"built-in cursor sprite assignment was not global: %.0f\n",
+      gml_global_num(&vm,"cursor_sprite")); return 1;
   }
   GmlVal *alarm_order=gml_varmap_get(&vm.globals,"alarm_order");
   if(!alarm_order || alarm_order->t!=V_REAL || alarm_order->d!=112334){
