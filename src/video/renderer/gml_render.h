@@ -310,6 +310,15 @@ typedef struct {
     float dual_shift_gain[4];   /* RGBA multipliers for the shifted lookup */
     char  dual_uniform[2][32];  /* the two float factors in the normalized-coordinate shift */
     float dual_value[2];        /* values supplied through shader_set_uniform_f */
+    /* Three-channel HSV scan post-process. Each RGB channel comes from an independently offset
+     * base-texture lookup; value is shaped by a separable vignette and a periodic row term, then
+     * saturation compensates for the value loss. The complete graph and every literal below are
+     * parsed structurally from GLSL, keeping the software implementation asset-independent. */
+    int   hsv_scan;
+    float hsv_scan_channel_offset;
+    float hsv_scan_vignette_base, hsv_scan_vignette_gain, hsv_scan_vignette_scale;
+    float hsv_scan_row_base, hsv_scan_row_value_gain, hsv_scan_row_sine_gain;
+    float hsv_scan_row_frequency, hsv_scan_saturation_gain;
     /* Radial sine displacement: samples the base texture at uv + direction*wave(distance,time).
      * The six controls are discovered from the fragment declarations/operation graph and remain
      * generic runtime state: time, centre vec2, resolution vec2, amount, divisor and speed. */

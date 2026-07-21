@@ -12342,6 +12342,7 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
               R->shader_pal[sid].alpha_discard ||
               R->shader_pal[sid].dual_sample || R->shader_pal[sid].paint ||
               R->shader_pal[sid].grayscale || R->shader_pal[sid].radial_wave ||
+              (R->shader_pal[sid].hsv_scan && R->crt_shader_enable) ||
               (R->shader_pal[sid].sampled_crt && R->crt_shader_enable) ||
               (R->shader_pal[sid].crt && R->crt_shader_enable));
     if(getenv("GML_LOG_SHADER")){ static long c=0; if(c++<6){ extern long g_vm_frame;
