@@ -243,6 +243,11 @@ int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
       }
     }
   }
+  const GmlChunk *opt=gml_chunk(w,"OPTN");
+  if(opt && opt->size>=16 && u32(data,opt->off)==0x80000000u){
+    w->option_flags=(uint64_t)u32(data,opt->off+8) |
+                    (uint64_t)u32(data,opt->off+12)<<32;
+  }
   const GmlChunk *classic=gml_chunk(w,"CLSC");
   if(classic && classic->size>=4){
     w->classic_version=(int)u32(data,classic->off);

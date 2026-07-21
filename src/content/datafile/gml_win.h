@@ -101,7 +101,17 @@ typedef struct {
   uint32_t *room_order; int n_room_order;
   char content_dir[512];             /* directory containing the loaded data.win */
   char save_dir[512];                /* per-content writable sandbox supplied by the frontend */
+  /* Keep newly parsed metadata after the historical save-path tail: external savestates and
+   * helper binaries built against an older header retain all pre-existing field offsets. */
+  uint64_t option_flags;             /* OPTN flags when the package uses the flagged layout */
 } GmlWin;
+
+/* Classic formats, bytecode 16 and packages with the fast-collision option round transformed
+ * mask bounds. Earlier bytecode uses coverage bounds instead. */
+static inline int gml_win_round_collision_bounds(const GmlWin *w){
+  return w && (w->classic_version || w->bytecode==16 ||
+               (w->option_flags & UINT64_C(0x08000000)));
+}
 
 int          gml_win_load(GmlWin *w, const char *path);
 int          gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int take_ownership);

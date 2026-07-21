@@ -840,10 +840,8 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
     /* bbox_left/right/top/bottom = the instance's collision bounding box (from the sprite mask margins) */
     if(!strncmp(name,"bbox_",5)){ double l,t,r,b;
       if(vm_bbox(vm,self,&l,&t,&r,&b)){
-        /* Studio exposes the far edges as exclusive coordinates; this is why its usual line and
-         * rectangle probes use bbox_right-1 while a grounded probe starts at bbox_bottom.  The
-         * collision engine itself keeps inclusive pixel bounds, and classic formats also expose
-         * inclusive right/bottom, so translate only the Studio-facing special variables here. */
+        /* Modern special variables expose far edges as exclusive coordinates while the collision
+         * engine keeps inclusive pixel bounds internally. Classic formats expose inclusive edges. */
         if(!vm->win || !vm->win->classic_version){ r+=1.0; b+=1.0; }
         if(!strcmp(name,"bbox_left"))   return vreal(l);
         if(!strcmp(name,"bbox_right"))  return vreal(r);
@@ -6757,7 +6755,7 @@ static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
   double ang=in->image_angle*M_PI/180.0, c=cos(ang), sn=sin(ang);
   double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
   double x0, x1, y0, y1;
-  if(vm->win && vm->win->classic_version){
+  if(gml_win_round_collision_bounds(vm->win)){
     x0=(s->ml-s->originx)*xs;
     y0=(s->mt-s->originy)*ys;
     x1=x0+(s->mr+1.0-s->ml)*xs-1.0;
@@ -6768,7 +6766,7 @@ static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
   double corners[4][2]={{x0,y0},{x1,y0},{x0,y1},{x1,y1}};
   for(int i=0;i<4;i++){
     double px, py;
-    if(vm->win && vm->win->classic_version){ px=corners[i][0]; py=corners[i][1]; }
+    if(gml_win_round_collision_bounds(vm->win)){ px=corners[i][0]; py=corners[i][1]; }
     else { px=(corners[i][0]-s->originx)*xs; py=(corners[i][1]-s->originy)*ys; }
     double wx=atx + px*c + py*sn;
     double wy=aty - px*sn + py*c;
@@ -6777,7 +6775,7 @@ static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
     if(wy<miny) miny=wy;
     if(wy>maxy) maxy=wy;
   }
-  if(vm->win && vm->win->classic_version){
+  if(gml_win_round_collision_bounds(vm->win)){
     *l=classic_round_even(minx); *t=classic_round_even(miny);
     *r=classic_round_even(maxx); *b=classic_round_even(maxy);
   } else {

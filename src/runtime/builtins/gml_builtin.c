@@ -5910,11 +5910,9 @@ static int inst_bbox(GmlVM *vm, GmlInstance *in, double atx, double aty,
   GmlSprite *s=&R->spr[si]; if(s->mr<s->ml || s->mb<s->mt) return 0;
   double xs=in->image_xscale, ys=in->image_yscale;
   if(fabs(xs)<1e-9 || fabs(ys)<1e-9) return 0;
-  if(vm->win && vm->win->classic_version){
-    /* GM8 builds the inclusive bottom/right corner as top-left + scaled size - 1, rotates
-     * those four pixel coordinates, then rounds each bbox edge to the nearest integer. This
-     * differs from floor/ceil whenever an instance rests on a half-pixel and is the source of
-     * visible one-pixel grounding errors. */
+  if(gml_win_round_collision_bounds(vm->win)){
+    /* Rounded-bound modes build the inclusive bottom/right corner as top-left plus scaled size
+     * minus one, rotate those pixel coordinates, then round each edge to the nearest integer. */
     double x0=(s->ml-s->originx)*xs, y0=(s->mt-s->originy)*ys;
     double x1=x0+(s->mr+1.0-s->ml)*xs-1.0;
     double y1=y0+(s->mb+1.0-s->mt)*ys-1.0;
@@ -5990,12 +5988,12 @@ static int bbox_overlap(double l1,double t1,double r1,double b1, double l2,doubl
   return l1<=r2 && l2<=r1 && t1<=b2 && t2<=b1;
 }
 static int mask_hit_world(GmlRender *R, GmlInstance *in, GmlSprite *s, int sprite,
-                          double atx, double aty, int classic, int wx, int wy){
+                          double atx, double aty, int round_origin, int wx, int wy){
   double xs=in->image_xscale, ys=in->image_yscale;
   if(fabs(xs)<1e-9 || fabs(ys)<1e-9) return 0;
-  /* GM6-8 samples precise masks relative to the integer instance origin even while
-   * retaining the fractional position for movement and bbox construction. */
-  if(classic){ atx=gm_round(atx); aty=gm_round(aty); }
+  /* Classic formats sample precise masks relative to the integer instance origin while retaining
+   * fractional movement. Other rounded-bound modes only round the bounding box. */
+  if(round_origin){ atx=gm_round(atx); aty=gm_round(aty); }
   if(in->image_angle==0){   /* unrotated fast path: the generic one pays cos+sin PER PIXEL */
     int lx=(int)floor(((double)wx-atx)/xs + s->originx);
     int ly=(int)floor(((double)wy-aty)/ys + s->originy);
@@ -6016,7 +6014,7 @@ static int masks_overlap(GmlVM *vm, GmlInstance *self, double sx, double sy, Gml
   GmlRender *R=(GmlRender*)vm->render; if(!R) return 1;
   int ss=inst_mask_sprite_index(self), os=inst_mask_sprite_index(o); if(ss<0||os<0) return 1;
   GmlSprite *sp=&R->spr[ss], *op=&R->spr[os];
-  int classic=vm->win && vm->win->classic_version;
+  int round_origin=vm->win && vm->win->classic_version;
   double sl,st,sr,sb,ol,ot,orr,ob;
   if(!inst_bbox(vm,self,sx,sy,&sl,&st,&sr,&sb)) return 0;
   if(!inst_bbox(vm,o,o->x,o->y,&ol,&ot,&orr,&ob)) return 0;
@@ -6028,8 +6026,8 @@ static int masks_overlap(GmlVM *vm, GmlInstance *self, double sx, double sy, Gml
   if(x1==x0) x1++;
   if(y1==y0) y1++;
   for(int wy=y0; wy<y1; wy++) for(int wx=x0; wx<x1; wx++){
-    if(!mask_hit_world(R,self,sp,ss,sx,sy,classic,wx,wy)) continue;
-    if( mask_hit_world(R,o,op,os,o->x,o->y,classic,wx,wy)) return 1;
+    if(!mask_hit_world(R,self,sp,ss,sx,sy,round_origin,wx,wy)) continue;
+    if( mask_hit_world(R,o,op,os,o->x,o->y,round_origin,wx,wy)) return 1;
   }
   return 0;
 }

@@ -1857,9 +1857,40 @@ int main(void){
   collision_sprites[0].collision_kind=1;
   collision_sprites[0].w=collision_sprites[0].h=2;
   collision_sprites[0].mr=collision_sprites[0].mb=1;
-  contact->x=5; contact->y=100;
   win.classic_version=0;
-  created->x=4; contact->solid=1;
+  win.bytecode=15;
+  win.option_flags=0;
+  if(gml_win_round_collision_bounds(&win)){
+    fprintf(stderr,"Studio bytecode-15 unexpectedly enabled rounded collision bounds\n"); return 1;
+  }
+  win.option_flags=UINT64_C(0x08000000);
+  if(!gml_win_round_collision_bounds(&win)){
+    fprintf(stderr,"Studio collision-compatibility option did not enable rounded bounds\n"); return 1;
+  }
+  win.option_flags=0;
+  win.bytecode=16;
+  if(!gml_win_round_collision_bounds(&win)){
+    fprintf(stderr,"Studio bytecode-16 did not enable rounded collision bounds\n"); return 1;
+  }
+  collision_sprites[0].w=collision_sprites[0].h=1;
+  collision_sprites[0].mr=collision_sprites[0].mb=0;
+  created->x=0; created->y=0; contact->x=0; contact->y=1;
+  gml_colgrid_invalidate(&vm);
+  rounded_mask_args[0]=vreal(0); rounded_mask_args[1]=vreal(0.4);
+  rounded_mask_hit=gml_builtin_call(&vm,"place_meeting",rounded_mask_args,3);
+  if(rounded_mask_hit.t!=V_REAL || rounded_mask_hit.d!=0){
+    fprintf(stderr,"Studio bytecode-16 collision did not round fractional mask bounds\n"); return 1;
+  }
+  rounded_mask_args[1]=vreal(0.6);
+  rounded_mask_hit=gml_builtin_call(&vm,"place_meeting",rounded_mask_args,3);
+  if(rounded_mask_hit.t!=V_REAL || rounded_mask_hit.d!=1){
+    fprintf(stderr,"Studio bytecode-16 collision rounded fractional mask bounds incorrectly\n"); return 1;
+  }
+  collision_sprites[0].w=collision_sprites[0].h=2;
+  collision_sprites[0].mr=collision_sprites[0].mb=1;
+  contact->x=5; contact->y=100;
+  created->x=4; created->y=100; contact->solid=1;
+  gml_colgrid_invalidate(&vm);
   (void)gml_builtin_call(&vm,"move_contact_solid",contact_solid_args,2);
   if(created->x!=3){
     fprintf(stderr,"Studio move_contact_solid did not recover an initial overlap: x=%.0f\n",created->x); return 1;
