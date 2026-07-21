@@ -235,6 +235,7 @@ int gmlc_classic_project_load(GmlcProject *project, const char *project_path,
   project->classic_scaling=manifest.inventory.settings.scaling;
   project->classic_interpolate=manifest.inventory.settings.interpolate;
   project->classic_swap_creation_events=manifest.inventory.settings.swap_creation_events;
+  project->classic_executable_layout=manifest.executable_layout;
   project->classic_outside_color=manifest.inventory.settings.outside_color;
   GmlcClassicBlob game_information={0};
   int game_information_ok=gmlc_classic_game_information_decode(

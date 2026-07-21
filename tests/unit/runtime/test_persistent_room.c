@@ -664,6 +664,24 @@ int main(void){
   if(!expect_audio_group_paths()) return 1;
   if(!expect_audio_group_gain()) return 1;
   {
+    /* Wide bytecode-17 room-instance records carry a distinct placement-variable override after
+     * the transform fields. Earlier record layouts must not interpret that byte position. */
+    uint8_t record[48]={0};
+    fixture_w32(record,44,7);
+    GmlWin record_win={0}; record_win.data=record; record_win.size=sizeof record;
+    record_win.bytecode=17;
+    GmlVM record_vm={0}; record_vm.win=&record_win; record_vm.room_rec_stride=48;
+    int modern=gml_room_instance_precreate_code(&record_vm,0);
+    record_win.bytecode=15;
+    int legacy=gml_room_instance_precreate_code(&record_vm,0);
+    record_win.bytecode=17; record_vm.room_rec_stride=40;
+    int narrow=gml_room_instance_precreate_code(&record_vm,0);
+    if(modern!=7 || legacy!=-1 || narrow!=-1){
+      fprintf(stderr,"room instance precreate field mismatch: modern=%d legacy=%d narrow=%d\n",
+        modern,legacy,narrow); return 1;
+    }
+  }
+  {
     GmlSprite sprite={0}; GmlRender render={0};
     render.spr=&sprite; render.n_spr=1;
     sprite.n_frames=1;
@@ -825,6 +843,7 @@ int main(void){
   memset(object_events,0,sizeof(object_events)); memset(&trigger,0,sizeof(trigger)); memset(&included,0,sizeof(included));
   project.name="persistent-room-fixture"; project.objects=objects; project.n_objects=3;
   project.classic_version=800;
+  project.classic_executable_layout=1;
   scripts[0].id=scripts[0].name=(char*)"script_implicit_result";
   scripts[1].id=scripts[1].name=(char*)"crear";
   scripts[2].id=scripts[2].name=(char*)"array_ext_callback";
@@ -1124,6 +1143,11 @@ int main(void){
   if(included_file) fclose(included_file);
   if(!included_ok){ fprintf(stderr,"included file was not exported\n"); return 1; }
   GmlWin win; if(gml_win_load(&win,path)){ unlink(path); return 1; }
+  if(!win.classic_executable_layout){
+    fprintf(stderr,"classic embedded-layout marker was not serialized\n"); return 1;
+  }
+  /* The remaining fixture intentionally exercises editor-project ordering. */
+  win.classic_executable_layout=0;
   char save_root[]="/tmp/gml-save-root-XXXXXX";
   if(!mkdtemp(save_root)){ gml_win_free(&win); unlink(path); return 1; }
   snprintf(win.save_dir,sizeof win.save_dir,"%s",save_root);
@@ -1467,6 +1491,13 @@ int main(void){
   if(!path_probe || !path_control)return 1;
   gml_path_start(&vm,path_probe,0,10,0,0);
   gml_path_start(&vm,path_control,0,10,0,0);
+  path_probe->path_orientation=180;
+  path_probe->path_scale=2;
+  gml_path_start(&vm,path_probe,0,10,0,0);
+  if(path_probe->path_orientation!=0 || path_probe->path_scale!=1){
+    fprintf(stderr,"path_start retained a previous traversal transform: orientation=%.1f scale=%.1f\n",
+      path_probe->path_orientation,path_probe->path_scale); return 1;
+  }
   path_probe->hspeed=7; path_probe->vspeed=0; path_probe->speed=7; path_probe->direction=0;
   gml_vm_step(&vm);
   path_probe=find_slot(&vm,path_probe_id); path_control=find_slot(&vm,path_control_id);
@@ -1487,6 +1518,14 @@ int main(void){
   if(fabs(path_probe->x-(paused_start+2))>1e-6 || path_probe->hspeed!=2 || path_probe->speed!=2){
     fprintf(stderr,"paused path suppressed ordinary velocity: start=%.6f expected=%.6f x=%.6f hspeed=%.6f speed=%.6f\n",
       paused_start,paused_start+2,path_probe->x,path_probe->hspeed,path_probe->speed); return 1;
+  }
+  double reverse_start=path_probe->x;
+  path_probe->path_orientation=180; path_probe->path_scale=2;
+  gml_path_start(&vm,path_probe,0,-10,0,0);
+  if(path_probe->path_position!=1 || path_probe->path_positionprevious!=1 ||
+     path_probe->x!=reverse_start || path_probe->path_orientation!=0 || path_probe->path_scale!=1){
+    fprintf(stderr,"reverse path did not start at its far endpoint: pos=%.1f previous=%.1f x=%.1f\n",
+      path_probe->path_position,path_probe->path_positionprevious,path_probe->x); return 1;
   }
   gml_instance_destroy(&vm,path_probe); gml_instance_destroy(&vm,path_control);
 
@@ -1779,6 +1818,17 @@ int main(void){
   created->x=created->y=created->xprevious=created->yprevious=0;
   contact->x=1; contact->y=0; contact->solid=1;
   vm.cur_self=created;
+  gml_colgrid_invalidate(&vm);
+  GmlVal place_empty_any_args[2]={vreal(1),vreal(0)};
+  GmlVal place_empty_target_args[3]={vreal(1),vreal(0),vreal(0)};
+  GmlVal place_empty_any=gml_builtin_call(&vm,"place_empty",place_empty_any_args,2);
+  GmlVal place_empty_target=gml_builtin_call(&vm,"place_empty",place_empty_target_args,3);
+  if(place_empty_any.t!=V_REAL || place_empty_any.d!=0 ||
+     place_empty_target.t!=V_REAL || place_empty_target.d!=1){
+    fprintf(stderr,"place_empty optional target mismatch: any=%.0f target=%.0f\n",
+      place_empty_any.t==V_REAL?place_empty_any.d:-1.0,
+      place_empty_target.t==V_REAL?place_empty_target.d:-1.0); return 1;
+  }
   GmlVal collision_list=gml_builtin_call(&vm,"ds_list_create",NULL,0);
   GmlVal rectangle_list_args[9]={vreal(1),vreal(0),vreal(1),vreal(0),
     vreal((double)contact->id),vreal(0),vreal(0),collision_list,vreal(1)};
@@ -2133,6 +2183,13 @@ int main(void){
   if(global_array_value(&vm,"view_xview",1)!=121){
     fprintf(stderr,"classic secondary-view snap/round mismatch: x=%.0f\n",
       global_array_value(&vm,"view_xview",1)); return 1;
+  }
+  /* Bytecode-15 legacy views use this limited-speed rule. Exercise it directly so the neutral
+   * assertion cannot advance or perturb the surrounding event-order fixture. */
+  if(gml_legacy_view_follow_axis(0,400,100,10,3)!=3 ||
+     gml_legacy_view_follow_axis(0,400,100,10,0)!=0 ||
+     gml_legacy_view_follow_axis(0,400,100,10,-1)!=310){
+    fprintf(stderr,"bytecode-15 legacy-view follow rule mismatch\n"); return 1;
   }
   {
     GmlVal camera_args[10]={vreal(0),vreal(0),vreal(100),vreal(100),vreal(0),

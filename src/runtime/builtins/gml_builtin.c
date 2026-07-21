@@ -7388,7 +7388,12 @@ static int fast_hot_builtin(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal 
       if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
         if(log_col_match(cn)) fprintf(stderr,"[col] %s place_free(%.0f,%.0f)=%d\n",cn,N(a,n,0),N(a,n,1),r); }
       *out=vreal(r); return 1; }
-    if(!strcmp(nm,"place_empty")){ *out=vreal(!collision_at(vm,N(a,n,0),N(a,n,1),IT_ALL,0)); return 1; }
+    if(!strcmp(nm,"place_empty")){
+      /* The modern form accepts an optional object selector. Omitting it retains the historical
+       * any-instance query; supplying it excludes unrelated instances from movement probes. */
+      int target=n>=3?(int)N(a,n,2):IT_ALL;
+      *out=vreal(!collision_at(vm,N(a,n,0),N(a,n,1),target,0)); return 1;
+    }
     if(!strcmp(nm,"position_meeting")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; *out=vreal(collision_shape(vm,0,p,(int)N(a,n,2),1,0)!=NULL); return 1; }
     if(!strcmp(nm,"point_distance")){ *out=vreal(hypot(N(a,n,2)-N(a,n,0),N(a,n,3)-N(a,n,1))); return 1; }
     if(!strcmp(nm,"point_direction")){ double dx=N(a,n,2)-N(a,n,0), dy=N(a,n,3)-N(a,n,1);
@@ -8551,7 +8556,10 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(log_col_on()){ GmlInstance*cs=vm->cur_self; const char*cn=(cs&&cs->obj>=0&&cs->obj<vm->n_objects)?vm->objects[cs->obj].name:"?";
       if(log_col_match(cn)) fprintf(stderr,"[col] %s place_free(%.0f,%.0f)=%d\n",cn,N(a,n,0),N(a,n,1),r); }
     return vreal(r); }
-  if(!strcmp(nm,"place_empty"))   return vreal(!collision_at(vm,N(a,n,0),N(a,n,1),IT_ALL,0));
+  if(!strcmp(nm,"place_empty")){
+    int target=n>=3?(int)N(a,n,2):IT_ALL;
+    return vreal(!collision_at(vm,N(a,n,0),N(a,n,1),target,0));
+  }
   if(!strcmp(nm,"collision_point")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; GmlInstance *o=collision_shape(vm,0,p,(int)N(a,n,2),N(a,n,3)>=0.5,(int)N(a,n,4)); return vreal(o?(double)o->id:-4); }
   /* position_meeting(x,y,obj): is the point (x,y) inside any instance of obj? (bool; checks all). */
   if(!strcmp(nm,"position_meeting")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; return vreal(collision_shape(vm,0,p,(int)N(a,n,2),1,0)!=NULL); }

@@ -1918,8 +1918,11 @@ int gmlc_classic_manifest(const void *data, size_t size,
     return 0;
   }
   memset(out, 0, sizeof(*out));
-  if(size>=2 && ((const uint8_t*)data)[0]=='M' && ((const uint8_t*)data)[1]=='Z')
-    return parse_executable_manifest((const uint8_t*)data,size,out,err,errcap);
+  if(size>=2 && ((const uint8_t*)data)[0]=='M' && ((const uint8_t*)data)[1]=='Z'){
+    int ok=parse_executable_manifest((const uint8_t*)data,size,out,err,errcap);
+    if(ok) out->executable_layout=1;
+    return ok;
+  }
   GmlcClassicHeader header;
   if(!gmlc_classic_probe(data, size, &header, err, errcap)) return 0;
   if(header.version == GMLC_CLASSIC_GM6 || header.version == GMLC_CLASSIC_GM7 ||

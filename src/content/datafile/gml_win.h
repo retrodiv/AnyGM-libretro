@@ -104,6 +104,7 @@ typedef struct {
   /* Keep newly parsed metadata after the historical save-path tail: external savestates and
    * helper binaries built against an older header retain all pre-existing field offsets. */
   uint64_t option_flags;             /* OPTN flags when the package uses the flagged layout */
+  int classic_executable_layout;     /* CLSC tail: embedded content retains serialized chain order */
 } GmlWin;
 
 /* Classic formats, bytecode 16 and packages with the fast-collision option round transformed

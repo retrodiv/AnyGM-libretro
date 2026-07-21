@@ -2129,6 +2129,9 @@ static int write_classic_marker(Pkg *pkg, const GmlcProject *project){
   if(project->classic_game_information_size &&
      !wbytes(&pkg->b,project->classic_game_information,
              project->classic_game_information_size)) return 0;
+  /* Appended after the variable-sized information body so older CLSC readers retain their exact
+   * field offsets and simply ignore this layout word. */
+  wu32(&pkg->b,(uint32_t)(project->classic_executable_layout?1:0));
   chunk_end(pkg,s);
   return 1;
 }

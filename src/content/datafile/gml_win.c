@@ -260,6 +260,9 @@ int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
       if(information_size<=classic->size-24u){
         w->classic_game_information=data+classic->off+24;
         w->classic_game_information_size=information_size;
+        uint64_t provenance=24u+(uint64_t)information_size;
+        if(provenance+4u<=classic->size)
+          w->classic_executable_layout=(int)u32(data,classic->off+(uint32_t)provenance)!=0;
       }
     }
   }

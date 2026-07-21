@@ -115,6 +115,10 @@ typedef struct {
 
 typedef struct {
   GmlcClassicInventory inventory;
+  /* True when the manifest uses embedded-content ordering rather than editor-project grouping.
+   * Embedded room records preserve their instance chain; editor containers require resource
+   * grouping by the Classic importer. */
+  int executable_layout;
   GmlcClassicResourceSlot *slots[GMLC_CLASSIC_RESOURCE_TYPES];
   uint32_t existing[GMLC_CLASSIC_RESOURCE_TYPES];
   GmlcClassicConstant *constant_defs;

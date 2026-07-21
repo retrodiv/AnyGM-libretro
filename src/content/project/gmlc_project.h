@@ -266,6 +266,7 @@ typedef struct {
   int classic_scaling;
   int classic_interpolate;
   int classic_swap_creation_events;
+  int classic_executable_layout;
   uint32_t classic_outside_color;
   uint8_t *classic_game_information;
   size_t classic_game_information_size;

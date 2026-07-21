@@ -43,6 +43,19 @@ static double classic_round_even(double x){
   if(diff>0.5) return f+1.0;
   return fmod(f,2.0)==0.0 ? f : f+1.0;
 }
+double gml_legacy_view_follow_axis(double current, double target, double extent,
+                                   double border, double speed){
+  if(2*border>=extent) return target-extent/2;
+  if(target-border<current){
+    double wanted=target-border;
+    return speed<0?wanted:current-fmin(current-wanted,fmax(speed,0));
+  }
+  if(target+border>current+extent){
+    double wanted=target+border-extent;
+    return speed<0?wanted:current+fmin(wanted-current,fmax(speed,0));
+  }
+  return current;
+}
 int gml_real_compare_epsilon(double lhs, double rhs, int cmp, double epsilon){
   int order;
   if(isnan(lhs) || isnan(rhs)) return cmp==CMP_NEQ;
@@ -3380,8 +3393,13 @@ static void path_world_xy(GmlInstance *in, double px, double py, double *ox, dou
 void gml_path_start(GmlVM *vm, GmlInstance *in, int path, double speed, double endaction, int absolute){
   if(path<0||path>=vm->n_paths) return;
   in->path_index=path; in->path_speed=speed; in->path_endaction=endaction;
-  in->path_position=0; in->path_positionprevious=0;
-  double px,py; path_eval(&vm->paths[path],0,&px,&py);
+  /* Each traversal starts from the authored transform. Content code may change scale or
+   * orientation afterwards, but completed-traversal values do not leak into path_start.
+   * A negative speed begins at the far endpoint and walks the path backwards. */
+  in->path_scale=1; in->path_orientation=0;
+  double start=speed<0?1.0:0.0;
+  in->path_position=start; in->path_positionprevious=start;
+  double px,py; path_eval(&vm->paths[path],start,&px,&py);
   if(absolute){
     in->path_xoff=0; in->path_yoff=0; in->path_origin_x=0; in->path_origin_y=0;
   } else {
@@ -4057,6 +4075,15 @@ static int room_inst_stride(GmlVM *vm){
   }
   vm->room_rec_stride=stride;
   return stride;
+}
+int gml_room_instance_precreate_code(GmlVM *vm, uint32_t ip){
+  /* Wide bytecode-17 instance records append a placement-variable override body after the
+   * transform fields. It is distinct from ordinary instance creation code at +16: object defaults
+   * run first, placement overrides run next, then Create observes the resulting values. Earlier
+   * record layouts end before this field. */
+  if(!vm || !vm->win || vm->win->classic_version || vm->win->bytecode<17 ||
+     room_inst_stride(vm)<48 || ip>vm->win->size || vm->win->size-ip<48) return -1;
+  return (int32_t)u32(vm->win->data,ip+44);
 }
 static void apply_room_instance_transform(GmlVM *vm, GmlInstance *in, uint32_t ip){
   if(!vm || !vm->win || !in || ip > vm->win->size || vm->win->size-ip < 48) return;
@@ -5363,13 +5390,15 @@ void gml_room_enter(GmlVM *vm, int room_index){
       }
     }
   }
-  /* Create + per-instance creation code, in room order, after every placed instance exists.
-   * Classic projects serialize which side of Create the room-authored instance code occupies. */
+  /* Create plus per-instance creation code runs in room order after every placed instance exists.
+   * Classic projects serialize which side of Create the authored instance code occupies. Wide
+   * bytecode-17 records also carry overrides between the object's PreCreate defaults and Create. */
   for(uint32_t i=0;i<cnt;i++){
     int idx=room_inst_idx[i]; if(idx<0 || idx>=vm->inst_count) continue;
     GmlInstance *in=&vm->inst[idx]; if(!in->active || in->marked) continue;
     uint32_t ip=u32(d,op+4+i*4);
     int cc=(int32_t)u32(d,ip+16);
+    int pre_cc=gml_room_instance_precreate_code(vm,ip);
     int code_before_create=vm->win->classic_version && !vm->win->classic_swap_creation_events;
     if(code_before_create && cc>=0 && cc<vm->win->n_code){
       GmlVal _r=gml_vm_run_code(vm,cc,in,NULL,NULL,0);
@@ -5377,7 +5406,11 @@ void gml_room_enter(GmlVM *vm, int room_index){
     }
     if(in->active && !in->marked){
       gml_run_event(vm,in,"PreCreate_0");   /* GMS2: variable-definitions, before Create */
-      gml_run_event(vm,in,"Create_0");
+      if(in->active && !in->marked && pre_cc>=0 && pre_cc<vm->win->n_code){
+        GmlVal _r=gml_vm_run_code(vm,pre_cc,in,NULL,NULL,0);
+        if(_r.t==V_STR && _r.d!=0) free((char*)_r.s);
+      }
+      if(in->active && !in->marked) gml_run_event(vm,in,"Create_0");
     }
     if(!code_before_create && in->active && !in->marked && cc>=0 && cc<vm->win->n_code){
       GmlVal _r=gml_vm_run_code(vm,cc,in,NULL,NULL,0);
@@ -5985,7 +6018,9 @@ void gml_vm_step(GmlVM *vm){
         else fprintf(stderr," %s=<t%d>",tok,p->t); }
       fprintf(stderr,"\n"); } }
   { extern void gml_part_update_all(void); gml_part_update_all(); }   /* advance auto-update particle systems */
-  /* Follow the selected instance within the view border bands, clamped to the room. */
+  /* Legacy automatic view-follow keeps its target inside the border band and honors per-axis
+   * speed in Classic and bytecode-15 modes. A negative speed snaps and zero holds that axis.
+   * Modern camera resources are advanced separately below. */
   if(getenv("GML_LOG_FOLLOW")){ static int ff=0; if(ff++%60==0){
     int vo=(int)get_global_arr_d(vm,"view_object",0);
     fprintf(stderr,"[follow] vis=%.2f vobj=%d wv=%.0f xv=%.0f yv=%.0f\n",
@@ -6007,32 +6042,10 @@ void gml_vm_step(GmlVM *vm){
       double tx=fo->x, ty=fo->y;
       int classic=vm->win && vm->win->classic_version;
       if(classic){ tx=classic_round_even(tx); ty=classic_round_even(ty); }
-      /* A border of at least half the view centers the target. Otherwise a classic positive
-       * speed caps the correction per step; zero holds the view and a negative value snaps. */
-      if(2*hb >= wv) vx=tx-wv/2;
-      else if(tx-hb < vx){
-        double wanted=tx-hb;
-        if(classic){ double speed=get_global_arr_d(vm,"view_hspeed",view);
-          vx=speed<0?wanted:vx-fmin(vx-wanted,fmax(speed,0)); }
-        else vx=wanted;
-      } else if(tx+hb > vx+wv){
-        double wanted=tx+hb-wv;
-        if(classic){ double speed=get_global_arr_d(vm,"view_hspeed",view);
-          vx=speed<0?wanted:vx+fmin(wanted-vx,fmax(speed,0)); }
-        else vx=wanted;
-      }
-      if(2*vb >= hv) vy=ty-hv/2;
-      else if(ty-vb < vy){
-        double wanted=ty-vb;
-        if(classic){ double speed=get_global_arr_d(vm,"view_vspeed",view);
-          vy=speed<0?wanted:vy-fmin(vy-wanted,fmax(speed,0)); }
-        else vy=wanted;
-      } else if(ty+vb > vy+hv){
-        double wanted=ty+vb-hv;
-        if(classic){ double speed=get_global_arr_d(vm,"view_vspeed",view);
-          vy=speed<0?wanted:vy+fmin(wanted-vy,fmax(speed,0)); }
-        else vy=wanted;
-      }
+      vx=gml_legacy_view_follow_axis(vx,tx,wv,hb,
+        get_global_arr_d(vm,"view_hspeed",view));
+      vy=gml_legacy_view_follow_axis(vy,ty,hv,vb,
+        get_global_arr_d(vm,"view_vspeed",view));
       GmlRoom rm; if(gml_room_get(vm->win,vm->room_index,&rm)==0){
         double mx=rm.width-wv, my=rm.height-hv;
         if(vx<0)vx=0; if(mx>0&&vx>mx)vx=mx; if(mx<=0)vx=0;
@@ -6212,7 +6225,11 @@ static int cmp_draw_item(const void *pa, const void *pb){
    * runtime-created peers retain insertion order and overlay room content. */
   if(a->type==0 && b->type==0 && a->classic && b->classic && a->placed!=b->placed)
     return a->placed? -1:1;
-  if(a->type==0 && b->type==0 && a->classic && b->classic && a->placed && a->obj!=b->obj)
+  /* Editor-project containers do not retain the complete serialized room chain and are grouped
+   * by object resource. Embedded-layout rooms retain that chain, so their placed peers preserve
+   * insertion order like runtime-created peers. */
+  if(a->type==0 && b->type==0 && a->classic==1 && b->classic==1 &&
+     a->placed && a->obj!=b->obj)
     return a->obj>b->obj? -1:1;
   if(a->type==0 && b->type==0 && a->classic && b->classic)
     return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);
@@ -6401,7 +6418,7 @@ void gml_vm_draw(GmlVM *vm){
           if(!u32(d,b)) continue;     /* background not visible */
           int spr=(int32_t)u32(d,b+8);
           uint32_t col=u32(d,b+24);
-          /* Use the layer color when no sprite is assigned; skip fully transparent color. */
+          /* A sprite-less background layer fills the screen with its nontransparent color. */
           if(spr<0 && !(col>>24)) continue;
           if(!dl_grow((void**)&g_dl_lbg,&g_dl_lbg_cap,nlb+1,sizeof(*lbg))) continue; lbg=g_dl_lbg;
           lbg[nlb].sprite=spr; lbg[nlb].subimg=0;
@@ -6540,7 +6557,8 @@ void gml_vm_draw(GmlVM *vm){
   for(int k=0;k<inst_n;k++){ int i=inst_ord[k]; if(instance_draw_layer_visible(vm,&vm->inst[i])){
     it[m].depth=vm->inst[i].depth; it[m].type=0; it[m].idx=i; it[m].seq=m; it[m].order=vm->inst[i].draw_layer_order;
     it[m].element_order=vm->inst[i].draw_layer_element_order;
-    it[m].classic=vm->win&&vm->win->classic_version; it[m].obj=vm->inst[i].obj;
+    it[m].classic=(vm->win&&vm->win->classic_version)?
+      (vm->win->classic_executable_layout?2:1):0; it[m].obj=vm->inst[i].obj;
     it[m].placed=it[m].classic && vm->inst[i].room_placed; m++; } }
   for(int i=0;i<nt;i++){ it[m].depth=tdepth[i]; it[m].type=1; it[m].idx=i; it[m].seq=m; it[m].order=tiles[i].order; it[m].classic=0; it[m].obj=-1; m++; }
   for(int i=0;i<nlt;i++){ it[m].depth=ltl[i].depth; it[m].type=2; it[m].idx=i; it[m].seq=m; it[m].order=ltl[i].order; it[m].classic=0; it[m].obj=-1; m++; }

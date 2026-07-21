@@ -327,6 +327,9 @@ void gml_struct_gc(GmlVM *vm);
 
 void gml_arr_mark_escaped(GmlVal v);   /* array stored beyond its scope: locals cleanup must not free it */
 void gml_path_eval_public(GmlVM *vm, int pi, double t, double *ox, double *oy);
+double gml_legacy_view_follow_axis(double current, double target, double extent,
+                                   double border, double speed);
+int gml_room_instance_precreate_code(GmlVM *vm, uint32_t instance_record);
 GmlRtLayer *gml_rt_layer_find(GmlVM *vm, int id);
 GmlRtLayer *gml_rt_layer_find_by_name(GmlVM *vm, const char *nm);
 GmlRtLayer *gml_rt_layer_new(GmlVM *vm);

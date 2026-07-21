@@ -392,7 +392,8 @@ static int expect_manifest(void){
     fprintf(stderr, "manifest failed: %s\n", err);
     return 0;
   }
-  int ok = manifest.existing[GMLC_CLASSIC_SCRIPT] == 1 &&
+  int ok = !manifest.executable_layout &&
+           manifest.existing[GMLC_CLASSIC_SCRIPT] == 1 &&
            manifest.slots[GMLC_CLASSIC_SCRIPT][0].exists &&
            manifest.slots[GMLC_CLASSIC_SCRIPT][0].version == 800 &&
            !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].name, "resource_script") &&
@@ -590,7 +591,8 @@ static int expect_executable_manifest_variant(const Fixture *executable){
   int ok=gmlc_classic_manifest(executable->data,executable->size,&manifest,err,sizeof(err));
   if(!ok) fprintf(stderr,"executable manifest failed: %s\n",err);
   if(ok){
-    ok=manifest.inventory.header.version==GMLC_CLASSIC_GM8 &&
+    ok=manifest.executable_layout &&
+       manifest.inventory.header.version==GMLC_CLASSIC_GM8 &&
        manifest.inventory.header.game_id==0x13572468 && manifest.room_order_count==1 &&
        manifest.room_order[0]==0 &&
        manifest.extension_count==1 && !strcmp(manifest.extension_names[0],"fixture_executable_extension") &&
@@ -659,7 +661,8 @@ static int expect_legacy_executable_manifest(void){
   int ok=gmlc_classic_manifest(executable.data,executable.size,&manifest,err,sizeof(err));
   if(!ok) fprintf(stderr,"legacy executable manifest failed: %s\n",err);
   if(ok){
-    ok=manifest.inventory.header.version==GMLC_CLASSIC_GM7 &&
+    ok=manifest.executable_layout &&
+       manifest.inventory.header.version==GMLC_CLASSIC_GM7 &&
        manifest.inventory.header.game_id==0x24681357 && manifest.inventory.settings_version==702 &&
        manifest.inventory.settings.interpolate==1 && manifest.inventory.settings.scaling==150 &&
        manifest.existing[GMLC_CLASSIC_SPRITE]==1 &&
