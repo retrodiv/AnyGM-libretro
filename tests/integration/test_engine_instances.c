@@ -156,9 +156,9 @@ int main(void){
   uint8_t *damaged=malloc(first_written);
   if(!damaged) return 1;
   memcpy(damaged,first_state,first_written);
-  damaged[4]^=1;
+  write_u32(damaged+4,ANYGM_STATE_SCHEMA-1u);
   if(!expect_rejected_unchanged(first,damaged,first_written,first_state,first_written,
-                                "unknown state schema")) return 1;
+                                "older state schema")) return 1;
   if(!expect_rejected_unchanged(first,first_state,first_written-1,first_state,first_written,
                                 "truncated state")) return 1;
   memcpy(damaged,first_state,first_written);

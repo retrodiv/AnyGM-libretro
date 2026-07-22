@@ -7778,7 +7778,7 @@ void gml_vm_free(GmlVM *vm){
 }
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=1 };
+enum { GML_VM_STATE_SCHEMA=2 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 typedef struct { uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateW;
 typedef struct { const uint8_t *data; size_t cap, pos; int ok; GmlVM *vm; int compact_strings, array_meta; } StateR;
@@ -8525,6 +8525,9 @@ static void sw_vm(StateW *s, GmlVM *vm){
    * same simulation could be presented and addressed through a different-sized window. */
   sw_i32(s,vm->window_w); sw_i32(s,vm->window_h);
   sw_i32(s,vm->gui_w); sw_i32(s,vm->gui_h);
+  sw_i32(s,vm->gui_maximise_active);
+  sw_d(s,vm->gui_maximise_xscale); sw_d(s,vm->gui_maximise_yscale);
+  sw_d(s,vm->gui_maximise_xoffset); sw_d(s,vm->gui_maximise_yoffset);
   int view_override_live=0;
   for(int i=0;i<vm->n_view_ovr;i++) if(vm->view_ovr &&
       (vm->view_ovr[i].set || vm->view_ovr[i].full || vm->view_ovr[i].room_enabled_set))
@@ -8920,9 +8923,21 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   if(s.ok){
     vm->window_w=sr_i32(&s); vm->window_h=sr_i32(&s);
     vm->gui_w=sr_i32(&s); vm->gui_h=sr_i32(&s);
+    vm->gui_maximise_active=sr_i32(&s);
+    vm->gui_maximise_xscale=sr_d(&s); vm->gui_maximise_yscale=sr_d(&s);
+    vm->gui_maximise_xoffset=sr_d(&s); vm->gui_maximise_yoffset=sr_d(&s);
     if(vm->window_w<0 || vm->window_h<0 || vm->gui_w<0 || vm->gui_h<0 ||
        vm->window_w>32768 || vm->window_h>32768 || vm->gui_w>32768 || vm->gui_h>32768){
       state_debug(vm,"bad presentation geometry",s.pos,(uint32_t)vm->window_w);
+      s.ok=0;
+    }
+    if(vm->gui_maximise_active<0 || vm->gui_maximise_active>1 ||
+       !isfinite(vm->gui_maximise_xscale) || !isfinite(vm->gui_maximise_yscale) ||
+       !isfinite(vm->gui_maximise_xoffset) || !isfinite(vm->gui_maximise_yoffset) ||
+       vm->gui_maximise_xscale<0.0 || vm->gui_maximise_yscale<0.0 ||
+       (vm->gui_maximise_active &&
+        ((vm->gui_maximise_xscale==0.0)!=(vm->gui_maximise_yscale==0.0)))){
+      state_debug(vm,"bad GUI maximise transform",s.pos,(uint32_t)vm->gui_maximise_active);
       s.ok=0;
     }
   }

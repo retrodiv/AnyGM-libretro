@@ -12975,20 +12975,56 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0); }
   if(!strcmp(nm,"window_set_cursor")){ vm->window_cursor=(int)N(a,n,0); return vreal(0); }
   if(!strcmp(nm,"window_set_caption")) return vreal(0);
-  if(!strcmp(nm,"display_set_gui_maximise")) return vreal(0);
+  if(!strcmp(nm,"display_set_gui_maximise") || !strcmp(nm,"display_set_gui_maximize")){
+    GmlRender *R=(GmlRender*)vm->render;
+    if(n<=0){
+      vm->gui_maximise_active=1;
+      vm->gui_maximise_xscale=vm->gui_maximise_yscale=0.0;
+      vm->gui_maximise_xoffset=vm->gui_maximise_yoffset=0.0;
+    } else {
+      double xs=N(a,n,0), ys=n>1?N(a,n,1):xs;
+      if(xs<0.0 || ys<0.0){
+        vm->gui_maximise_active=0;
+        vm->gui_maximise_xscale=vm->gui_maximise_yscale=0.0;
+        vm->gui_maximise_xoffset=vm->gui_maximise_yoffset=0.0;
+      } else if(isfinite(xs) && isfinite(ys) && xs>0.0 && ys>0.0){
+        double xo=n>2?N(a,n,2):0.0, yo=n>3?N(a,n,3):0.0;
+        vm->gui_maximise_active=1;
+        vm->gui_maximise_xscale=xs;
+        vm->gui_maximise_yscale=ys;
+        vm->gui_maximise_xoffset=isfinite(xo)?xo:0.0;
+        vm->gui_maximise_yoffset=isfinite(yo)?yo:0.0;
+      }
+    }
+    if(R && R->gui_pass_active)
+      gml_render_gui_set_maximise(R,vm->gui_maximise_active,
+        vm->gui_maximise_xscale,vm->gui_maximise_yscale,
+        vm->gui_maximise_xoffset,vm->gui_maximise_yoffset,
+        vm->window_w>0?vm->window_w:(vm->win?(int)vm->win->disp_w:0),
+        vm->window_h>0?vm->window_h:(vm->win?(int)vm->win->disp_h:0));
+    return vreal(0);
+  }
 
   GmlVal layer_out;
   if(builtin_layer_exact(vm,nm,a,n,&layer_out)) return layer_out;
 
   /* ---- explicit no-ops (correct for host / SW renderer) ---- */
   if(!strcmp(nm,"display_set_gui_size")){ int w=(int)N(a,n,0), hh=(int)N(a,n,1);
-    if(w>0 && hh>0 && w<=16384 && hh<=16384){
-      vm->gui_w=w; vm->gui_h=hh;
+    if((w>0 && hh>0 && w<=16384 && hh<=16384) || (w<0 && hh<0)){
+      GmlRender *R=(GmlRender*)vm->render;
+      vm->gui_w=w>0?w:0; vm->gui_h=hh>0?hh:0;
+      /* GUI size owns the transform when it is called after GUI maximise. */
+      vm->gui_maximise_active=0;
+      vm->gui_maximise_xscale=vm->gui_maximise_yscale=0.0;
+      vm->gui_maximise_xoffset=vm->gui_maximise_yoffset=0.0;
+      if(R && R->gui_pass_active)
+        gml_render_gui_set_maximise(R,0,0.0,0.0,0.0,0.0,0,0);
       /* Modern semantics apply GUI-size changes immediately inside an active Draw GUI event.
        * Classic and Studio 1 keep the legacy presentation path; retroactively transforming
        * their draws breaks the fixed-width transition/compositor semantics. */
       if(vm->win && anygm_policy_has_modern_function_values(vm->win))
-        gml_render_gui_set_size((GmlRender*)vm->render,w,hh);
+        gml_render_gui_set_size(R,w>0?w:(R?R->gui_base_logical_w:0),
+                                 hh>0?hh:(R?R->gui_base_logical_h:0));
     }
     return vreal(0); }
   if(!strcmp(nm,"texture_set_interpolation")){ GmlRender *R=(GmlRender*)vm->render;

@@ -785,8 +785,15 @@ static void engine_input_mouse(void *userdata,double *rx, double *ry, double *gx
       gxx = sx - (full ? 0 : g_gui_ox);
       gyy = sy - (full ? 0 : g_gui_oy);
     }
-    else { gxx = sx * (g_gui_sw > 0 ? g_gui_sw : (int)ow) / (double)ow;
-           gyy = sy * (g_gui_sh > 0 ? g_gui_sh : (int)oh) / (double)oh; }
+    else if(g_vm.gui_maximise_active){
+      int window_w=g_vm.window_w>0?g_vm.window_w:(int)(g_win.disp_w?g_win.disp_w:ow);
+      int window_h=g_vm.window_h>0?g_vm.window_h:(int)(g_win.disp_h?g_win.disp_h:oh);
+      double xscale=g_vm.gui_maximise_xscale>0.0?g_vm.gui_maximise_xscale:1.0;
+      double yscale=g_vm.gui_maximise_yscale>0.0?g_vm.gui_maximise_yscale:1.0;
+      gxx=(sx*window_w/(double)ow-g_vm.gui_maximise_xoffset)/xscale;
+      gyy=(sy*window_h/(double)oh-g_vm.gui_maximise_yoffset)/yscale;
+    } else { gxx = sx * (g_gui_sw > 0 ? g_gui_sw : (int)ow) / (double)ow;
+             gyy = sy * (g_gui_sh > 0 ? g_gui_sh : (int)oh) / (double)oh; }
     if(gx) *gx = gxx; if(gy) *gy = gyy;
   }
   if(rx || ry){
@@ -1307,7 +1314,7 @@ static void compute_present(AnygmEngine *engine) {
    * display scaling, so the host receives the native view. */
   int gui_window_mode = 0;
   g_canvas_mode = 0; g_out_w = g_w; g_out_h = g_h; g_gui_ox = g_gui_oy = 0;
-  if (g_vm.gui_w > 0 && g_vm.gui_h > 0) {
+  if (!g_vm.gui_maximise_active && g_vm.gui_w > 0 && g_vm.gui_h > 0) {
     int win_w = g_vm.window_w > 0 ? g_vm.window_w : (int)(g_win.disp_w ? g_win.disp_w : g_w);
     int win_h = g_vm.window_h > 0 ? g_vm.window_h : (int)(g_win.disp_h ? g_win.disp_h : g_h);
     double s = (double)win_w / gw, s2 = (double)win_h / gh;
@@ -1334,7 +1341,7 @@ static void compute_present(AnygmEngine *engine) {
    * matching the declared window. GML_PRESENT_VIEW=1 forces view-resolution presentation for
    * diagnostics. This affects presentation only, not simulation or serialized state. */
   { if (g_diag.force_present_view < 0) g_diag.force_present_view = anygm_host_development_setting(&g_host,"GML_PRESENT_VIEW") ? 1 : 0;
-    if (!g_diag.force_present_view && !g_canvas_mode && !gui_window_mode
+    if (!g_vm.gui_maximise_active && !g_diag.force_present_view && !g_canvas_mode && !gui_window_mode
         && g_gui_sw >= (int)g_out_w && g_gui_sh >= (int)g_out_h
         && (g_gui_sw > (int)g_out_w || g_gui_sh > (int)g_out_h)
         && g_gui_sw <= FB_MAX_W && g_gui_sh <= FB_MAX_H) {
@@ -1438,6 +1445,15 @@ static void compute_present(AnygmEngine *engine) {
       g_render.presentation_w = target_w;
       g_render.presentation_h = target_h;
     }
+  }
+  /* A maximised GUI is screen-relative and its explicit scale is already the logical-to-screen
+   * transform.  The GUI canvas must therefore neither select a larger host resolution nor be
+   * rendered off-screen and reduced a second time. */
+  if (g_vm.gui_maximise_active) {
+    g_canvas_mode=0;
+    g_gui_sw=(int)g_out_w;
+    g_gui_sh=(int)g_out_h;
+    g_gui_ox=g_gui_oy=0;
   }
 }
 typedef struct {
@@ -2508,6 +2524,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	    if(anygm_policy_has_modern_layer_semantics(&g_win) && g_vm.gui_w>0 && g_vm.gui_h>0)
 	      gml_render_gui_set_size(&g_render,g_vm.gui_w,g_vm.gui_h);
 	  }
+	  if(g_vm.gui_maximise_active)
+	    gml_render_gui_set_maximise(&g_render,1,
+	      g_vm.gui_maximise_xscale,g_vm.gui_maximise_yscale,
+	      g_vm.gui_maximise_xoffset,g_vm.gui_maximise_yoffset,
+	      g_vm.window_w>0?g_vm.window_w:(int)g_win.disp_w,
+	      g_vm.window_h>0?g_vm.window_h:(int)g_win.disp_h);
 	  /* GM screen-stage events: Pre-Draw -> [default app-surface blit] -> Post-Draw -> GUI.
 	   * Content that composites the application surface itself, for example through a presentation
 	   * object applying a palette shader in Post-Draw) disable the default blit and draw here.

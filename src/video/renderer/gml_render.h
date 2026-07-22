@@ -196,6 +196,9 @@ typedef struct {
   int       gui_base_logical_w, gui_base_logical_h;
   int       gui_logical_w, gui_logical_h;
   double    gui_scale_x, gui_scale_y;
+  int       gui_maximise_active;
+  double    gui_maximise_xscale, gui_maximise_yscale;
+  double    gui_maximise_xoffset, gui_maximise_yoffset;
   /* the application_surface: the buffer the game is rendered into and later
    * readable by draw_surface_* calls. Set by the host; same w/h as fbw/fbh. */
   uint32_t *app_surface; int app_draw_enable;   /* GM application_surface_draw_enable, default 1 */
@@ -432,14 +435,17 @@ void gml_render_warm_bg(GmlRender *r, int bg);
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double camx, double camy);
 void gml_render_gui_begin(GmlRender *r, int logical_w, int logical_h);
 void gml_render_gui_set_size(GmlRender *r, int logical_w, int logical_h);
+void gml_render_gui_set_maximise(GmlRender *r, int active, double xscale, double yscale,
+                                 double xoffset, double yoffset,
+                                 int window_w, int window_h);
 void gml_render_gui_end(GmlRender *r);
 static inline int gml_render_gui_transform_active(const GmlRender *r){
   return r && r->gui_pass_active && r->target_sp==0 && r->target_id<0;
 }
 static inline void gml_render_gui_map_point(const GmlRender *r, double *x, double *y){
   if(!gml_render_gui_transform_active(r)) return;
-  if(x) *x *= r->gui_scale_x;
-  if(y) *y *= r->gui_scale_y;
+  if(x) *x = *x*r->gui_scale_x+r->gui_maximise_xoffset;
+  if(y) *y = *y*r->gui_scale_y+r->gui_maximise_yoffset;
 }
 static inline void gml_render_gui_map_scale(const GmlRender *r, double *xscale, double *yscale){
   if(!gml_render_gui_transform_active(r)) return;
@@ -456,11 +462,11 @@ static inline double gml_render_gui_logical_height(const GmlRender *r){
 }
 static inline double gml_render_gui_logical_x(const GmlRender *r, double physical_x){
   return gml_render_gui_transform_active(r) && r->gui_scale_x>0.0
-       ? physical_x/r->gui_scale_x : physical_x;
+       ? (physical_x-r->gui_maximise_xoffset)/r->gui_scale_x : physical_x;
 }
 static inline double gml_render_gui_logical_y(const GmlRender *r, double physical_y){
   return gml_render_gui_transform_active(r) && r->gui_scale_y>0.0
-       ? physical_y/r->gui_scale_y : physical_y;
+       ? (physical_y-r->gui_maximise_yoffset)/r->gui_scale_y : physical_y;
 }
 void gml_render_set_pending_underlay(GmlRender *r, int x, int y, int w, int h);
 void gml_render_flush_pending_underlay(GmlRender *r);

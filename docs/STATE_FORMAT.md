@@ -9,12 +9,12 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `1`. It is the format transported by
+The current AnyGM save-state schema is `2`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
 
-Schema `1` starts a new compatibility line. No reader for an earlier internal
-layout exists. The canonical header records magic, schema, header size, binary
+Schema `2` starts a new compatibility line and includes the runtime GUI transform. No reader for
+an earlier internal layout exists. The canonical header records magic, schema, header size, binary
 encoding, total and section sizes, content identity, compatibility identity,
 stateful configuration identity, and a payload checksum.
 
@@ -24,7 +24,7 @@ reader rejects the input after decoding begins, the engine restores an exact
 snapshot of its prior state before returning an error.
 
 If a future release deliberately breaks state compatibility, increment the
-schema to `2`, then `3`, and so on. Supporting an older schema requires an
+schema to `3`, then `4`, and so on. Supporting an older schema requires an
 explicit compatibility reader. A refactor does not require a bump when the
 canonical bytes and semantics remain unchanged.
 

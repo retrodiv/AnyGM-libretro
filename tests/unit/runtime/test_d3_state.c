@@ -875,6 +875,56 @@ static int raster_fixtures(void){
   }
 
   {
+    /* A screen-relative GUI transform overrides the size-derived fit, including its draw offset,
+     * and resetting it restores the ordinary display_set_gui_size mapping immediately. */
+    GmlWin gui_win={0}; gui_win.bytecode=17;
+    vm.win=&gui_win; render.win=&gui_win;
+    uint32_t target[64]={0};
+    gml_render_begin(&render,target,8,8,0,0);
+    gml_render_gui_begin(&render,8,8);
+    const double gui_size[]={2,2};
+    vm.window_w=16; vm.window_h=24;
+    const double maximise[]={2,3,2,6};
+    call_numbers(&vm,"display_set_gui_size",gui_size,2);
+    call_numbers(&vm,"display_set_gui_maximise",maximise,4);
+    double x=2.0,y=2.0;
+    gml_render_gui_map_point(&render,&x,&y);
+    if(!vm.gui_maximise_active || vm.gui_maximise_xscale!=2.0 ||
+       vm.gui_maximise_yscale!=3.0 || vm.gui_maximise_xoffset!=2.0 ||
+       vm.gui_maximise_yoffset!=6.0 || render.gui_scale_x!=1.0 ||
+       render.gui_scale_y!=1.0 || x!=3.0 || y!=4.0){
+      fprintf(stderr,"GUI maximise transform mismatch: active=%d scale=%g,%g offset=%g,%g point=%g,%g\n",
+              vm.gui_maximise_active,render.gui_scale_x,render.gui_scale_y,
+              render.gui_maximise_xoffset,render.gui_maximise_yoffset,x,y);
+      return 0;
+    }
+    const double reset[]={-1,-1};
+    call_numbers(&vm,"display_set_gui_maximise",reset,2);
+    if(vm.gui_maximise_active || render.gui_maximise_active ||
+       render.gui_scale_x!=4.0 || render.gui_scale_y!=4.0 ||
+       render.gui_maximise_xoffset!=0.0 || render.gui_maximise_yoffset!=0.0){
+      fprintf(stderr,"GUI maximise reset mismatch\n");
+      return 0;
+    }
+    call_numbers(&vm,"display_set_gui_maximise",NULL,0);
+    if(!vm.gui_maximise_active || !render.gui_maximise_active ||
+       render.gui_scale_x!=0.5 || render.gui_scale_y!=1.0/3.0){
+      fprintf(stderr,"automatic GUI maximise mismatch\n");
+      return 0;
+    }
+    call_numbers(&vm,"display_set_gui_size",gui_size,2);
+    if(vm.gui_maximise_active || render.gui_maximise_active ||
+       render.gui_scale_x!=4.0 || render.gui_scale_y!=4.0){
+      fprintf(stderr,"GUI size did not override maximise\n");
+      return 0;
+    }
+    call_numbers(&vm,"display_set_gui_maximise",reset,2);
+    gml_render_gui_end(&render);
+    vm.window_w=vm.window_h=0;
+    vm.win=NULL; render.win=NULL;
+  }
+
+  {
     GmlWin win={0};
     uint32_t source[4]={0xFFFF0000u,0xFF0000FFu,0xFFFF0000u,0xFF0000FFu};
     uint32_t target[16]={0};

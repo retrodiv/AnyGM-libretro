@@ -95,6 +95,9 @@ int main(void){
   }
   vm.window_w=1024; vm.window_h=600;
   vm.gui_w=512; vm.gui_h=300;
+  vm.gui_maximise_active=1;
+  vm.gui_maximise_xscale=1.5; vm.gui_maximise_yscale=2.5;
+  vm.gui_maximise_xoffset=7.0; vm.gui_maximise_yoffset=-9.0;
   size_t size=gml_vm_state_size(&vm), written=0, used=0;
   void *state=malloc(size);
   if(!state || !gml_vm_state_save(&vm,state,size,&written) || written!=size) return 1;
@@ -102,10 +105,16 @@ int main(void){
   (void)gml_rng_value(&vm);
   vm.window_w=640; vm.window_h=480;
   vm.gui_w=vm.gui_h=0;
+  vm.gui_maximise_active=0;
+  vm.gui_maximise_xscale=vm.gui_maximise_yscale=0.0;
+  vm.gui_maximise_xoffset=vm.gui_maximise_yoffset=0.0;
   int loaded=gml_vm_state_load(&vm,state,written,&used);
   double restored_third=gml_rng_value(&vm);
   if(!loaded || used!=written || restored_third!=expected_third ||
-     vm.window_w!=1024 || vm.window_h!=600 || vm.gui_w!=512 || vm.gui_h!=300){
+     vm.window_w!=1024 || vm.window_h!=600 || vm.gui_w!=512 || vm.gui_h!=300 ||
+     !vm.gui_maximise_active || vm.gui_maximise_xscale!=1.5 ||
+     vm.gui_maximise_yscale!=2.5 || vm.gui_maximise_xoffset!=7.0 ||
+     vm.gui_maximise_yoffset!=-9.0){
     fprintf(stderr,"classic RNG state roundtrip mismatch: loaded=%d used=%zu/%zu "
                    "random=%.17g/%.17g window=%dx%d gui=%dx%d\n",
       loaded,used,written,restored_third,expected_third,

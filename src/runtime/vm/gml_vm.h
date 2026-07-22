@@ -351,9 +351,13 @@ typedef struct GmlVM {
    * take their offline/error path instead of waiting forever. */
   int async_http_q[16]; int n_async_http;
   int room_rec_stride;   /* room instance record size (36/40/48), detected lazily */
-  /* presentation: runtime window size (window_set_size) and GUI canvas (display_set_gui_size).
-   * 0 = unset -> window falls back to GEN8 disp, GUI falls back to the window. */
+  /* presentation: runtime window size (window_set_size), GUI canvas (display_set_gui_size), and
+   * the optional screen-relative GUI transform (display_set_gui_maximise).  A zero maximise
+   * scale means automatic fit; inactive restores the application-surface-relative default. */
   int window_w, window_h, gui_w, gui_h;
+  int gui_maximise_active;
+  double gui_maximise_xscale, gui_maximise_yscale;
+  double gui_maximise_xoffset, gui_maximise_yoffset;
   long room_enter_frame;      /* simulation frame at room entry (layer scroll phase) */
   int layer_data_off;         /* GMS2 layer type-data offset with optional effect fields; 0=undetected */
   int next_buffer_id;
