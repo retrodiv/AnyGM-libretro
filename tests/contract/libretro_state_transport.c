@@ -20,6 +20,7 @@ static size_t stub_state_bytes;
 static size_t last_load_bytes;
 static int variable_frontend;
 static int serialization_query_seen;
+static int development_setting_seen;
 
 static bool environment_callback(unsigned command,void *data){
   if(command==RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS){
@@ -36,6 +37,9 @@ static bool environment_callback(unsigned command,void *data){
 
 AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **engine){
   if(!services || !engine) return ANYGM_ERROR_INVALID_ARGUMENT;
+  const char *setting=services->development_setting?
+    services->development_setting(services->userdata,"ANYGM_TEST_SETTING"):NULL;
+  development_setting_seen=setting && !strcmp(setting,"visible");
   *engine=(AnygmEngine *)(uintptr_t)1u;
   return ANYGM_OK;
 }
@@ -85,12 +89,8 @@ size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capac
   return 0;
 }
 
-void libretro_host_services_init(AnygmHostServices *services){
-  memset(services,0,sizeof *services);
-  services->struct_size=sizeof *services;
-  services->abi_version=ANYGM_HOST_SERVICES_VERSION;
-}
 void libretro_vfs_request(void){}
+void libretro_vfs_services_init(AnygmHostServices *services){ (void)services; }
 void libretro_options_register(void){}
 void libretro_options_apply(bool all_fields){ (void)all_fields; }
 void libretro_input_register(void){}
@@ -104,33 +104,20 @@ static int begin_frontend(int variable_support){
   memset(&g_libretro,0,sizeof g_libretro);
   variable_frontend=variable_support;
   serialization_query_seen=0;
+  development_setting_seen=0;
   last_load_bytes=0;
+  if(setenv("ANYGM_TEST_SETTING","visible",1)!=0) return 0;
   retro_set_environment(environment_callback);
   retro_init();
-  if(!serialization_query_seen || !g_libretro.engine) return 0;
+  if(!serialization_query_seen || !development_setting_seen || !g_libretro.engine) return 0;
   g_libretro.loaded=true;
   return 1;
 }
 
-static int variable_transport(void){
+static int stable_transport(int negotiation_result,int variable_acknowledged){
   stub_state_bytes=113u;
-  if(!begin_frontend(1) || !g_libretro.variable_state_supported ||
-     retro_serialize_size()!=stub_state_bytes) return 0;
-  stub_state_bytes=197u;
-  if(retro_serialize_size()!=stub_state_bytes) return 0;
-  uint8_t state[197];
-  memset(state,0xA5,sizeof state);
-  if(!retro_serialize(state,sizeof state) || !retro_unserialize(state,sizeof state) ||
-     last_load_bytes!=sizeof state) return 0;
-  retro_unload_game();
-  if(retro_serialize_size()!=0 || retro_serialize(state,sizeof state)) return 0;
-  retro_deinit();
-  return 1;
-}
-
-static int fixed_transport(int negotiation_result){
-  stub_state_bytes=113u;
-  if(!begin_frontend(negotiation_result) || g_libretro.variable_state_supported) return 0;
+  if(!begin_frontend(negotiation_result) ||
+     g_libretro.variable_state_supported!=variable_acknowledged) return 0;
   const size_t expected_capacity=113u*2u+512u*1024u;
   if(retro_serialize_size()!=expected_capacity ||
      retro_serialize_size()!=expected_capacity) return 0;
@@ -155,7 +142,7 @@ int main(void){
   uint8_t byte=0;
   memset(&g_libretro,0,sizeof g_libretro);
   if(retro_serialize_size()!=0 || retro_serialize(&byte,1) || retro_unserialize(&byte,1) ||
-     !variable_transport() || !fixed_transport(0) || !fixed_transport(-1)){
+     !stable_transport(1,1) || !stable_transport(0,0) || !stable_transport(-1,0)){
     fprintf(stderr,"libretro state transport contract failed\n");
     return 1;
   }

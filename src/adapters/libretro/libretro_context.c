@@ -3,6 +3,7 @@
  */
 #include "libretro_internal.h"
 
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -170,6 +171,11 @@ static uint64_t host_random_seed(void *userdata){
   return value^(value>>31);
 }
 
+static const char *host_development_setting(void *userdata,const char *name){
+  (void)userdata;
+  return name&&name[0]?getenv(name):NULL;
+}
+
 static void host_rumble(void *userdata,uint32_t port,uint16_t strong,uint16_t weak){
   (void)userdata;
   if(!g_libretro.rumble_available || !g_libretro.rumble.set_rumble_state) return;
@@ -219,6 +225,7 @@ void libretro_host_services_init(AnygmHostServices *services){
   services->monotonic_time_ns=host_monotonic_time_ns;
   services->wall_time=host_wall_time;
   services->random_seed=host_random_seed;
+  services->development_setting=host_development_setting;
   libretro_vfs_services_init(services);
   services->locale=host_locale;
   services->date_time_format=host_date_time_format;

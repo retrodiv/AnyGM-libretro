@@ -297,10 +297,8 @@ void retro_run(void){
 
 size_t retro_serialize_size(void){
   if(!g_libretro.loaded) return 0;
-  if(!g_libretro.variable_state_supported && g_libretro.fixed_state_capacity)
-    return g_libretro.fixed_state_capacity;
+  if(g_libretro.fixed_state_capacity) return g_libretro.fixed_state_capacity;
   size_t actual=anygm_state_size(g_libretro.engine);
-  if(g_libretro.variable_state_supported) return actual;
   g_libretro.fixed_state_capacity=fixed_state_capacity(actual);
   return g_libretro.fixed_state_capacity;
 }

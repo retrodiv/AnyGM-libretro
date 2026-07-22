@@ -312,11 +312,9 @@ static void engine_errorf(AnygmEngine *engine,AnygmResult result,const char *fmt
   engine_logf(engine,ANYGM_LOG_ERROR,"%s",g_last_error);
 }
 
-/* Start-room values are generated from the current room table. They must not leak across content
- * loads because the same numeric value can identify unrelated rooms. The first boot follows the
- * normal entry point; selecting a
- * debug room and choosing Restart still boots that room. GML_START_ROOM remains an explicit
- * automation override. */
+/* Start-room values must not leak across content loads because the same numeric value can identify
+ * unrelated rooms. The first boot follows the normal entry point; selecting a debug room and
+ * choosing Restart still boots that room. */
 static int ensure_classic_phase(AnygmEngine *engine,size_t pixels){
   if(pixels==0 || pixels>SIZE_MAX/sizeof(uint32_t)) return 0;
   if(g_classic_phase_cap>=pixels && g_classic_phase_mem) return 1;
@@ -1877,6 +1875,7 @@ static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSou
               g_win.bytecode,gml_room_count(&g_win),g_win.n_code);
   g_full_game_on_initial_boot=0;
   boot_runtime(engine);
+  run_selftest(engine);
   engine_logf(engine,ANYGM_LOG_INFO,"Runtime booted: atlases=%d sprites=%d texture-pages=%d\n",
               g_render.n_atlas,g_render.n_spr,g_render.n_tpag);
   return ANYGM_OK;
@@ -1947,7 +1946,30 @@ static void boot_runtime(AnygmEngine *engine) {
   g_audio = gml_audio_create(&g_win);
   g_vm.audio = g_audio;
   /* Boot the normal entry point unless the host supplied a neutral start-room override. */
-  int start_order=0,selected_room=-1;
+  int start_order=0,selected_room=-1,spawn=0;
+  double spawn_x=64.0,spawn_y=100.0;
+  char spawn_object[128]={0};
+  const char *spawn_setting=anygm_host_development_setting(&g_host,"GML_SPAWN_OBJ");
+  if(spawn_setting && spawn_setting[0]){
+    spawn=1;
+    const char *colon=strchr(spawn_setting,':');
+    size_t length=colon?(size_t)(colon-spawn_setting):strlen(spawn_setting);
+    if(length>=sizeof spawn_object) length=sizeof spawn_object-1;
+    memcpy(spawn_object,spawn_setting,length);
+    if(colon){
+      const char *comma=strchr(colon+1,',');
+      if(comma){ spawn_x=atof(colon+1); spawn_y=atof(comma+1); }
+    }
+  }else{
+    const char *position=anygm_host_development_setting(&g_host,"GML_SPAWN_PLAYER");
+    const char *object=anygm_host_development_setting(&g_host,"GML_SPAWN_PLAYER_OBJ");
+    if(position && object && object[0]){
+      spawn=1;
+      snprintf(spawn_object,sizeof spawn_object,"%s",object);
+      const char *comma=strchr(position,',');
+      if(comma){ spawn_x=atof(position); spawn_y=atof(comma+1); }
+    }
+  }
   int initial_boot_guard = g_full_game_on_initial_boot;
   if(!initial_boot_guard) core_opt_start_room(engine,&selected_room);
   g_full_game_on_initial_boot = 0;
@@ -1958,6 +1980,35 @@ static void boot_runtime(AnygmEngine *engine) {
   else gml_vm_goto_room_order(&g_vm, start_order);
   sync_room_fps(engine,0);
   g_vm.god_mode = core_opt_god(engine);
+  if(spawn && spawn_object[0]){
+    g_player_obj=gml_object_index_by_name(&g_vm,spawn_object);
+    const char *suppress=anygm_host_development_setting(&g_host,"GML_SPAWN_SUPPRESS");
+    if(suppress && suppress[0]) for(int i=0;i<g_vm.inst_count;i++){
+      GmlInstance *instance=&g_vm.inst[i];
+      if(!instance->active || instance->obj<0) continue;
+      if(substr_list_match(suppress,g_vm.objects[instance->obj].name)) instance->active=0;
+    }
+    if(g_player_obj>=0){
+      GmlInstance *player=NULL;
+      for(int i=0;i<g_vm.inst_count;i++){
+        GmlInstance *instance=&g_vm.inst[i];
+        if(!instance->active || instance->marked || instance->obj<0 ||
+           !gml_object_is(&g_vm,instance->obj,g_player_obj)) continue;
+        if(!player) player=instance;
+        else instance->active=0;
+      }
+      if(!player) player=gml_instance_create(&g_vm,spawn_x,spawn_y,g_player_obj);
+      if(player){
+        player->x=player->xprevious=player->xstart=spawn_x;
+        player->y=player->yprevious=player->ystart=spawn_y;
+        player->hspeed=player->vspeed=player->speed=0.0;
+      }
+      g_follow_player=1;
+    }
+    engine_logf(engine,ANYGM_LOG_INFO,
+                "Development spawn configured object %d at %.3f,%.3f\n",
+                g_player_obj,spawn_x,spawn_y);
+  }
   g_bg = cur_room_bg(engine);
 }
 static void engine_unload(AnygmEngine *engine){

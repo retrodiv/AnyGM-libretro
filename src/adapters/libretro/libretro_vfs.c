@@ -33,6 +33,17 @@ typedef struct LibretroDirectory {
 #endif
 } LibretroDirectory;
 
+/* Libretro VFS paths always use forward slashes, including on Windows. Frontends
+ * may reject native separators, so normalize only at the adapter boundary and
+ * leave the portable runtime's path namespace unchanged. */
+static const char *frontend_path(const char *path,char *normalized,size_t capacity){
+  if(!path || !normalized || !capacity) return NULL;
+  size_t length=strlen(path);
+  if(length>=capacity) return NULL;
+  for(size_t i=0;i<=length;i++) normalized[i]=path[i]=='\\'?'/' : path[i];
+  return normalized;
+}
+
 void libretro_vfs_request(void){
   g_libretro.vfs=NULL;
   if(!g_libretro.environment) return;
@@ -66,8 +77,13 @@ static void *host_file_open(void *userdata,const char *path,AnygmFileMode mode){
   if(!path || !(mode&(ANYGM_FILE_READ|ANYGM_FILE_WRITE))) return NULL;
   LibretroFile *file=calloc(1,sizeof *file);
   if(!file) return NULL;
-  if(g_libretro.vfs && g_libretro.vfs->open)
-    file->vfs_handle=g_libretro.vfs->open(path,vfs_mode(mode),RETRO_VFS_FILE_ACCESS_HINT_NONE);
+  if(g_libretro.vfs && g_libretro.vfs->open){
+    char normalized[4096];
+    const char *vfs_path=frontend_path(path,normalized,sizeof normalized);
+    if(vfs_path)
+      file->vfs_handle=g_libretro.vfs->open(vfs_path,vfs_mode(mode),
+                                           RETRO_VFS_FILE_ACCESS_HINT_NONE);
+  }
   else {
     file->stdio_handle=fopen(path,stdio_mode(mode));
     if(!file->stdio_handle && (mode&ANYGM_FILE_CREATE) && (mode&ANYGM_FILE_WRITE) &&
@@ -100,12 +116,42 @@ static size_t host_file_write(void *userdata,void *handle,const void *data,size_
   return fwrite(data,1,size,file->stdio_handle);
 }
 
+static int64_t frontend_seek(struct retro_vfs_file_handle *file,int64_t offset,int origin){
+  int64_t result=g_libretro.vfs->seek(file,offset,origin);
+  if(result<0) return -1;
+  /* Some established frontends return a status code here despite the libretro
+   * contract specifying the new position. Prefer the separately negotiated
+   * tell operation so the host-facing AnyGM contract remains unambiguous. */
+  if(g_libretro.vfs->tell){
+    int64_t position=g_libretro.vfs->tell(file);
+    if(position>=0) return position;
+  }
+  return result;
+}
+
 static int64_t host_file_seek(void *userdata,void *handle,int64_t offset,AnygmSeekOrigin origin){
   (void)userdata;
   LibretroFile *file=handle;
   if(!file) return -1;
-  if(file->vfs_handle)
-    return g_libretro.vfs->seek(file->vfs_handle,offset,(int)origin);
+  if(file->vfs_handle){
+    int seek_position=origin==ANYGM_SEEK_START?RETRO_VFS_SEEK_POSITION_START:
+                      origin==ANYGM_SEEK_CURRENT?RETRO_VFS_SEEK_POSITION_CURRENT:
+                      origin==ANYGM_SEEK_END?RETRO_VFS_SEEK_POSITION_END:-1;
+    if(seek_position<0) return -1;
+    /* Libretro requires end-relative offsets to be negative. AnyGM follows the
+     * usual stdio contract where zero means the exact end, so translate through
+     * the VFS size operation and seek from the start. */
+    if(origin==ANYGM_SEEK_END){
+      if(!g_libretro.vfs->size) return -1;
+      int64_t size=g_libretro.vfs->size(file->vfs_handle);
+      if(size<0 || (offset>0 && size>INT64_MAX-offset) ||
+         (offset<0 && size<INT64_MIN-offset)) return -1;
+      int64_t result=frontend_seek(file->vfs_handle,size+offset,
+                                   RETRO_VFS_SEEK_POSITION_START);
+      return result;
+    }
+    return frontend_seek(file->vfs_handle,offset,seek_position);
+  }
 #ifdef _WIN32
   return _fseeki64(file->stdio_handle,offset,(int)origin)==0?_ftelli64(file->stdio_handle):-1;
 #else
@@ -136,15 +182,19 @@ static AnygmResult host_file_stat(void *userdata,const char *path,AnygmFileInfo 
   memset((char *)info+sizeof info->struct_size,0,sizeof *info-sizeof info->struct_size);
   info->struct_size=sizeof *info;
   if(g_libretro.vfs && g_libretro.vfs->stat){
+    char normalized[4096];
+    const char *vfs_path=frontend_path(path,normalized,sizeof normalized);
+    if(!vfs_path) return ANYGM_ERROR_IO;
     int32_t short_size=0;
-    int flags=g_libretro.vfs->stat(path,&short_size);
+    int flags=g_libretro.vfs->stat(vfs_path,&short_size);
     if(!(flags&RETRO_VFS_STAT_IS_VALID)) return ANYGM_ERROR_IO;
     info->flags=ANYGM_FILE_INFO_EXISTS;
     if(flags&RETRO_VFS_STAT_IS_DIRECTORY) info->flags|=ANYGM_FILE_INFO_DIRECTORY;
     else info->flags|=ANYGM_FILE_INFO_REGULAR;
     if(!(flags&RETRO_VFS_STAT_IS_DIRECTORY) && g_libretro.vfs->open && g_libretro.vfs->size){
       struct retro_vfs_file_handle *file=
-          g_libretro.vfs->open(path,RETRO_VFS_FILE_ACCESS_READ,RETRO_VFS_FILE_ACCESS_HINT_NONE);
+          g_libretro.vfs->open(vfs_path,RETRO_VFS_FILE_ACCESS_READ,
+                               RETRO_VFS_FILE_ACCESS_HINT_NONE);
       if(file){ int64_t size=g_libretro.vfs->size(file); g_libretro.vfs->close(file);
         if(size>=0) info->size=(uint64_t)size; }
     }
@@ -163,7 +213,11 @@ static AnygmResult host_directory_create(void *userdata,const char *path){
   (void)userdata;
   if(!path) return ANYGM_ERROR_INVALID_ARGUMENT;
   int result;
-  if(g_libretro.vfs && g_libretro.vfs->mkdir) result=g_libretro.vfs->mkdir(path);
+  if(g_libretro.vfs && g_libretro.vfs->mkdir){
+    char normalized[4096];
+    const char *vfs_path=frontend_path(path,normalized,sizeof normalized);
+    result=vfs_path?g_libretro.vfs->mkdir(vfs_path):-1;
+  }
 #ifdef _WIN32
   else result=_mkdir(path);
 #else
@@ -175,16 +229,25 @@ static AnygmResult host_directory_create(void *userdata,const char *path){
 static AnygmResult host_path_rename(void *userdata,const char *from,const char *to){
   (void)userdata;
   if(!from || !to) return ANYGM_ERROR_INVALID_ARGUMENT;
-  int result=g_libretro.vfs&&g_libretro.vfs->rename?
-      g_libretro.vfs->rename(from,to):rename(from,to);
+  int result;
+  if(g_libretro.vfs&&g_libretro.vfs->rename){
+    char normalized_from[4096],normalized_to[4096];
+    const char *vfs_from=frontend_path(from,normalized_from,sizeof normalized_from);
+    const char *vfs_to=frontend_path(to,normalized_to,sizeof normalized_to);
+    result=vfs_from&&vfs_to?g_libretro.vfs->rename(vfs_from,vfs_to):-1;
+  } else result=rename(from,to);
   return result==0?ANYGM_OK:ANYGM_ERROR_IO;
 }
 
 static AnygmResult host_path_remove(void *userdata,const char *path){
   (void)userdata;
   if(!path) return ANYGM_ERROR_INVALID_ARGUMENT;
-  int result=g_libretro.vfs&&g_libretro.vfs->remove?
-      g_libretro.vfs->remove(path):remove(path);
+  int result;
+  if(g_libretro.vfs&&g_libretro.vfs->remove){
+    char normalized[4096];
+    const char *vfs_path=frontend_path(path,normalized,sizeof normalized);
+    result=vfs_path?g_libretro.vfs->remove(vfs_path):-1;
+  } else result=remove(path);
   return result==0?ANYGM_OK:ANYGM_ERROR_IO;
 }
 
@@ -197,7 +260,11 @@ static void *host_directory_open(void *userdata,const char *path){
   directory->find_handle=-1;
 #endif
   if(g_libretro.vfs && g_libretro.vfs->opendir)
-    directory->vfs_handle=g_libretro.vfs->opendir(path,false);
+  {
+    char normalized[4096];
+    const char *vfs_path=frontend_path(path,normalized,sizeof normalized);
+    if(vfs_path) directory->vfs_handle=g_libretro.vfs->opendir(vfs_path,false);
+  }
 #ifdef _WIN32
   else {
     char pattern[1024];

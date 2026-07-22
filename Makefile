@@ -92,7 +92,8 @@ CONTENT_TESTS := test_bytecode test_classic
 COMPATIBILITY_TESTS := test_compatibility
 CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(CONTENT_TESTS) $(COMPATIBILITY_TESTS))
 INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances
-CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_libretro_state_transport
+CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_libretro_state_transport \
+	$(TEST_DIR)/test_libretro_vfs_transport
 SECURITY_TESTS := $(TEST_DIR)/test_content_security $(TEST_DIR)/test_state_security \
 	$(TEST_DIR)/test_vfs $(TEST_DIR)/test_datafile_security \
 	$(TEST_DIR)/test_bytecode_security
@@ -204,6 +205,7 @@ integration-check: $(INTEGRATION_TESTS)
 contract-check: $(CONTRACT_TESTS)
 	$(TEST_DIR)/dummy_host
 	$(TEST_DIR)/test_libretro_state_transport
+	$(TEST_DIR)/test_libretro_vfs_transport
 
 security-check: $(SECURITY_TESTS)
 	$(TEST_DIR)/test_content_security
@@ -268,7 +270,12 @@ $(TEST_DIR)/dummy_host: tests/contract/dummy_host.c tests/support/synthetic_cont
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
 
 $(TEST_DIR)/test_libretro_state_transport: tests/contract/libretro_state_transport.c \
-	src/adapters/libretro/libretro_entry.c
+	src/adapters/libretro/libretro_entry.c src/adapters/libretro/libretro_context.c
+	mkdir -p $(dir $@)
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+
+$(TEST_DIR)/test_libretro_vfs_transport: tests/contract/libretro_vfs_transport.c \
+	src/adapters/libretro/libretro_vfs.c
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
 
