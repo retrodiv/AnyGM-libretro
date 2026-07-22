@@ -54,9 +54,10 @@ The lifecycle in `src/api/anygm.h` is deliberately small:
    boundaries.
 
 Host callbacks cover diagnostics, monotonic and wall time, entropy, virtual
-files and directories, locale-aware date formatting, rumble, font resolution, development settings,
-optional native rich-text rendering, and platform capabilities. Optional callbacks have deterministic
-fallbacks or produce an explicit unsupported result.
+files and directories, optional immutable file mapping, locale-aware date
+formatting, rumble, font resolution, development settings, optional native
+rich-text rendering, and platform capabilities. Optional callbacks have
+deterministic fallbacks or produce an explicit unsupported result.
 
 ## Ownership
 
@@ -74,6 +75,12 @@ checks that neither instance changes the other.
 Frame output buffers remain engine-owned. Their views are valid only for the
 documented call interval; the host copies or presents them before calling into
 that engine again.
+
+A mapped content view remains host-owned and immutable. Its opaque mapping
+handle is retained by the owning content model and returned exactly once on
+failed parsing, unload, or destroy. Mapping is a coarse load-time optimization,
+not a different content path: hosts that omit it use the same parser through
+ordinary VFS reads.
 
 ## Content normalization
 
@@ -93,9 +100,9 @@ the VM, renderer, or frame loop. See `COMPATIBILITY.md` for placement rules.
 ## Performance boundary
 
 The host interface does not require a slower runtime. Function-pointer calls
-occur at coarse boundaries: opening or reading a file, obtaining a clock value,
-logging, resolving a font, or publishing a frame. The engine does not call the
-host for each opcode, collision candidate, pixel, or audio sample.
+occur at coarse boundaries: opening, reading, or mapping a file, obtaining a
+clock value, logging, resolving a font, or publishing a frame. The engine does
+not call the host for each opcode, collision candidate, pixel, or audio sample.
 
 Hot loops therefore remain normal C calls over engine-owned data. A future host
 can batch presentation or file operations without changing engine semantics.

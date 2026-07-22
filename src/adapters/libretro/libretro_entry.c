@@ -244,13 +244,15 @@ static void apply_live_options(void){
   bool fast_forward=false;
   if(g_libretro.environment)
     g_libretro.environment(RETRO_ENVIRONMENT_GET_FASTFORWARDING,&fast_forward);
+  uint32_t fast_forward_value=fast_forward?1u:0u;
+  if(g_libretro.config.fast_forward==fast_forward_value) return;
   AnygmConfigDelta delta;
   memset(&delta,0,sizeof delta);
   delta.struct_size=sizeof delta;
   delta.fields=ANYGM_CONFIG_FAST_FORWARD;
   delta.values=g_libretro.config;
   delta.values.struct_size=sizeof delta.values;
-  delta.values.fast_forward=fast_forward?1u:0u;
+  delta.values.fast_forward=fast_forward_value;
   g_libretro.config.fast_forward=delta.values.fast_forward;
   anygm_set_config(g_libretro.engine,&delta);
 }

@@ -92,8 +92,9 @@ typedef struct {
 } GmlRoom;
 
 typedef struct GmlWin {
-  /* data storage: owns=0 borrowed memory, owns=1 malloc, owns=2 read-only file mapping. */
+  /* data storage: owns=0 borrowed memory, owns=1 malloc, owns=2 host-owned read-only mapping. */
   uint8_t *data; size_t size; int owns;
+  void *mapping_handle;
   GmlChunk chunks[GML_WIN_MAX_CHUNKS]; int n_chunks;
   /* strings, in STRG order */
   char   **strs;  uint32_t *str_charoff; int n_strs;

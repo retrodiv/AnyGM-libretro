@@ -203,6 +203,12 @@ typedef size_t (*AnygmFileWriteFn)(void *userdata,void *file,const void *data,si
 typedef int64_t (*AnygmFileSeekFn)(void *userdata,void *file,int64_t offset,AnygmSeekOrigin origin);
 typedef AnygmResult (*AnygmFileFlushFn)(void *userdata,void *file);
 typedef void (*AnygmFileCloseFn)(void *userdata,void *file);
+/* Large immutable files may be borrowed directly from a host mapping. The returned handle is
+ * opaque and remains valid until file_unmap receives it with the original data and size. */
+typedef void *(*AnygmFileMapFn)(void *userdata,const char *path,
+                                const void **data,size_t *size);
+typedef void (*AnygmFileUnmapFn)(void *userdata,void *mapping,
+                                 const void *data,size_t size);
 typedef AnygmResult (*AnygmFileStatFn)(void *userdata,const char *path,AnygmFileInfo *info);
 typedef AnygmResult (*AnygmPathFn)(void *userdata,const char *path);
 typedef AnygmResult (*AnygmRenameFn)(void *userdata,const char *from,const char *to);
@@ -262,6 +268,8 @@ typedef struct AnygmHostServices {
   AnygmFileSeekFn file_seek;
   AnygmFileFlushFn file_flush;
   AnygmFileCloseFn file_close;
+  AnygmFileMapFn file_map;
+  AnygmFileUnmapFn file_unmap;
   AnygmFileStatFn file_stat;
   AnygmPathFn directory_create;
   AnygmRenameFn path_rename;

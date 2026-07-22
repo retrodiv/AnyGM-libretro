@@ -298,4 +298,4 @@ clean:
 		$(CORE_BASENAME).so $(CORE_BASENAME).dll \
 		$(CORE_BASENAME).dylib $(CORE_BASENAME).a
 
--include $(RUNTIME_OBJECTS:.o=.d) $(LIBRETRO_OBJECTS:.o=.d)
+-include $(RUNTIME_OBJECTS:.o=.d) $(LIBRETRO_OBJECTS:.o=.d) $(TEST_HOST_OBJECTS:.o=.d)

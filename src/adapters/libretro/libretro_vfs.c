@@ -10,10 +10,16 @@
 #include <sys/stat.h>
 
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <direct.h>
 #include <io.h>
+#include <windows.h>
 #else
 #include <dirent.h>
+#include <fcntl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -21,6 +27,14 @@ typedef struct LibretroFile {
   struct retro_vfs_file_handle *vfs_handle;
   FILE *stdio_handle;
 } LibretroFile;
+
+typedef struct LibretroMapping {
+  const void *data;
+  size_t size;
+#ifdef _WIN32
+  HANDLE handle;
+#endif
+} LibretroMapping;
 
 typedef struct LibretroDirectory {
   struct retro_vfs_dir_handle *vfs_handle;
@@ -42,6 +56,82 @@ static const char *frontend_path(const char *path,char *normalized,size_t capaci
   if(length>=capacity) return NULL;
   for(size_t i=0;i<=length;i++) normalized[i]=path[i]=='\\'?'/' : path[i];
   return normalized;
+}
+
+/* Mapping is an optional host optimization for large immutable files. Virtual or non-native
+ * frontend paths fail this callback and remain on the ordinary VFS-backed path. */
+static void host_file_unmap(void *userdata,void *handle,const void *data,size_t size){
+  (void)userdata;
+  (void)data;
+  (void)size;
+  LibretroMapping *mapping=handle;
+  if(!mapping) return;
+#ifdef _WIN32
+  if(mapping->data) UnmapViewOfFile(mapping->data);
+  if(mapping->handle) CloseHandle(mapping->handle);
+#else
+  if(mapping->data && mapping->size)
+    munmap((void *)(uintptr_t)mapping->data,mapping->size);
+#endif
+  free(mapping);
+}
+
+static void *host_file_map(void *userdata,const char *path,const void **data,size_t *size){
+  (void)userdata;
+  if(data) *data=NULL;
+  if(size) *size=0;
+  if(!path || !path[0] || !data || !size) return NULL;
+  const void *mapped=NULL;
+  size_t length=0;
+#ifdef _WIN32
+  HANDLE file=CreateFileA(path,GENERIC_READ,
+                          FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+                          NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+  if(file==INVALID_HANDLE_VALUE) return NULL;
+  LARGE_INTEGER file_size;
+  if(!GetFileSizeEx(file,&file_size) || file_size.QuadPart<=0 ||
+     (uint64_t)file_size.QuadPart>(uint64_t)SIZE_MAX){
+    CloseHandle(file);
+    return NULL;
+  }
+  HANDLE native_mapping=CreateFileMappingA(file,NULL,PAGE_READONLY,0,0,NULL);
+  CloseHandle(file);
+  if(!native_mapping) return NULL;
+  mapped=MapViewOfFile(native_mapping,FILE_MAP_READ,0,0,0);
+  if(!mapped){ CloseHandle(native_mapping); return NULL; }
+  length=(size_t)file_size.QuadPart;
+#else
+  int file=open(path,O_RDONLY);
+  if(file<0) return NULL;
+  struct stat status;
+  if(fstat(file,&status)!=0 || status.st_size<=0 ||
+     (uint64_t)status.st_size>(uint64_t)SIZE_MAX){
+    close(file);
+    return NULL;
+  }
+  length=(size_t)status.st_size;
+  mapped=mmap(NULL,length,PROT_READ,MAP_PRIVATE,file,0);
+  close(file);
+  if(mapped==MAP_FAILED) return NULL;
+#endif
+  LibretroMapping *mapping=calloc(1,sizeof *mapping);
+  if(!mapping){
+#ifdef _WIN32
+    UnmapViewOfFile(mapped);
+    CloseHandle(native_mapping);
+#else
+    munmap((void *)(uintptr_t)mapped,length);
+#endif
+    return NULL;
+  }
+  mapping->data=mapped;
+  mapping->size=length;
+#ifdef _WIN32
+  mapping->handle=native_mapping;
+#endif
+  *data=mapped;
+  *size=length;
+  return mapping;
 }
 
 void libretro_vfs_request(void){
@@ -336,6 +426,8 @@ void libretro_vfs_services_init(AnygmHostServices *services){
   services->file_seek=host_file_seek;
   services->file_flush=host_file_flush;
   services->file_close=host_file_close;
+  services->file_map=host_file_map;
+  services->file_unmap=host_file_unmap;
   services->file_stat=host_file_stat;
   services->directory_create=host_directory_create;
   services->path_rename=host_path_rename;

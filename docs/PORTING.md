@@ -70,6 +70,13 @@ source is borrowed until unload or destroy. File and directory handles remain
 owned by the host and must be closed through the same service table that
 created them.
 
+`file_map` and `file_unmap` are an optional paired optimization for large,
+immutable path-backed files. A successful map returns an opaque handle plus a
+borrowed byte view; both remain valid until the engine returns them to
+`file_unmap` during failed loading, unload, or destroy. A host must provide both
+callbacks or neither. Hosts without native mapping support leave both null and
+the runtime reads through the ordinary VFS callbacks with identical semantics.
+
 ## SDL-shaped loop
 
 The following is pseudocode; framework initialization is intentionally outside
@@ -104,6 +111,11 @@ do not call `fopen`, enumerate ambient operating-system directories, or inspect
 process environment variables. A host may map paths to native files, archives,
 memory, mobile storage, or another provider as long as callback semantics are
 stable.
+
+If a host implements the optional immutable mapping pair, it must interpret
+the path in the same namespace as its other file callbacks. Returning no map
+for a virtual or otherwise unmappable path selects the regular VFS path; it is
+not a load failure by itself.
 
 Directory iteration should be deterministic where the provider has no stable
 order. Save and cache roots are explicit fields of `AnygmContentSource`; a host

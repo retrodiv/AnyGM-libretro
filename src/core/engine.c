@@ -2053,7 +2053,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     g_frame_flags|=ANYGM_FRAME_SHUTDOWN_REQUESTED;
     return ANYGM_OK;
   }
-  poll_option_updates(engine);   /* live resolution/CRT option changes (no restart) */
+  /* Hosts apply live presentation changes through anygm_set_config. Keeping option resolution out
+   * of the frame loop makes the framework seam a cold control path rather than recurring work. */
   poll_fast_forward(engine);     /* optimization hint; never changes presentation state */
   int prof = profile_enabled(engine);
   double t_total = prof ? profile_now_ms(engine) : 0.0;
@@ -3870,6 +3871,8 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
   if(services && (services->abi_version!=ANYGM_HOST_SERVICES_VERSION ||
                   services->struct_size<sizeof(AnygmHostServices)))
     return ANYGM_ERROR_INCOMPATIBLE_ABI;
+  if(services && ((!services->file_map)!=(!services->file_unmap)))
+    return ANYGM_ERROR_INVALID_ARGUMENT;
   AnygmEngine *engine=calloc(1,sizeof *engine);
   if(!engine) return ANYGM_ERROR_OUT_OF_MEMORY;
   engine->guard=ANYGM_ENGINE_GUARD;

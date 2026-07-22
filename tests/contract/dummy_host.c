@@ -15,6 +15,8 @@ typedef struct DummyHost {
   unsigned monotonic_calls;
   unsigned wall_calls;
   unsigned seed_calls;
+  unsigned mapping_calls;
+  unsigned unmap_calls;
 } DummyHost;
 
 static AnygmResult unsupported_locale(void *userdata,char *language,size_t language_size,
@@ -64,6 +66,38 @@ static size_t unavailable_file_read(void *userdata,void *file,void *data,size_t 
 static void unavailable_file_close(void *userdata,void *file){
   (void)userdata;
   (void)file;
+}
+
+static void *dummy_file_map(void *userdata,const char *path,const void **data,size_t *size){
+  DummyHost *host=userdata;
+  if(data) *data=NULL;
+  if(size) *size=0;
+  if(!host || !path || !data || !size) return NULL;
+  FILE *file=fopen(path,"rb");
+  if(!file || fseek(file,0,SEEK_END)!=0){
+    if(file) fclose(file);
+    return NULL;
+  }
+  long end=ftell(file);
+  if(end<=0 || fseek(file,0,SEEK_SET)!=0){ fclose(file); return NULL; }
+  void *mapping=malloc((size_t)end);
+  if(!mapping){ fclose(file); return NULL; }
+  int ok=fread(mapping,1,(size_t)end,file)==(size_t)end;
+  if(fclose(file)!=0) ok=0;
+  if(!ok){ free(mapping); return NULL; }
+  host->mapping_calls++;
+  *data=mapping;
+  *size=(size_t)end;
+  return mapping;
+}
+
+static void dummy_file_unmap(void *userdata,void *mapping,const void *data,size_t size){
+  DummyHost *host=userdata;
+  (void)data;
+  (void)size;
+  if(!mapping) return;
+  host->unmap_calls++;
+  free(mapping);
 }
 
 static void dummy_log(void *userdata,AnygmLogLevel level,const char *message){
@@ -165,6 +199,37 @@ static int exercise_unavailable_path_service(void){
   return 0;
 }
 
+static int exercise_mapped_path_service(const char *path){
+  DummyHost dummy={0};
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  services.userdata=&dummy;
+  anygm_stdio_vfs_services_init(&services);
+  services.file_map=dummy_file_map;
+  services.file_unmap=dummy_file_unmap;
+
+  AnygmEngine *engine=NULL;
+  if(anygm_create(&services,&engine)!=ANYGM_OK || !engine)
+    return fail("mapped-path host creation failed");
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=path;
+  if(anygm_load(engine,&source,NULL)!=ANYGM_OK){
+    anygm_destroy(engine);
+    return fail("mapped path load failed");
+  }
+  if(dummy.mapping_calls!=1 || dummy.unmap_calls){
+    anygm_destroy(engine);
+    return fail("mapped content ownership changed before destroy");
+  }
+  anygm_destroy(engine);
+  if(dummy.mapping_calls!=1 || dummy.unmap_calls!=1)
+    return fail("mapped content was not released exactly once");
+  return 0;
+}
+
 int main(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_content_create(&fixture)) return fail("could not create synthetic content");
@@ -205,6 +270,11 @@ int main(void){
   rejected=(AnygmEngine *)(uintptr_t)1;
   if(anygm_create(&incompatible,&rejected)!=ANYGM_ERROR_INCOMPATIBLE_ABI || rejected)
     return fail("create accepted a short host structure");
+  incompatible=services;
+  incompatible.file_map=dummy_file_map;
+  rejected=(AnygmEngine *)(uintptr_t)1;
+  if(anygm_create(&incompatible,&rejected)!=ANYGM_ERROR_INVALID_ARGUMENT || rejected)
+    return fail("create accepted an incomplete mapping service pair");
 
   AnygmEngine *engine=NULL;
   if(anygm_create(&services,&engine)!=ANYGM_OK || !engine) return fail("create failed");
@@ -357,7 +427,8 @@ int main(void){
     return fail("reload after unload failed");
   anygm_destroy(engine);
 
-  if(exercise_optional_service_fallbacks(&source) || exercise_unavailable_path_service())
+  if(exercise_optional_service_fallbacks(&source) || exercise_unavailable_path_service() ||
+     exercise_mapped_path_service(fixture.path))
     return 1;
   free(content);
   anygm_synthetic_content_destroy(&fixture);

@@ -114,6 +114,27 @@ int main(void){
     fprintf(stderr,"libretro VFS boundary normalization failed\n");
     return 1;
   }
+  const char *mapped_path="build/libretro-content-map.bin";
+  FILE *mapped_file=fopen(mapped_path,"wb");
+  int mapped_ok=mapped_file && fwrite(content,1,sizeof content,mapped_file)==sizeof content;
+  if(mapped_file && fclose(mapped_file)!=0) mapped_ok=0;
+  if(!mapped_ok){
+    remove(mapped_path);
+    fprintf(stderr,"libretro content-map fixture setup failed\n");
+    return 1;
+  }
+  const void *mapped_data=NULL;
+  size_t mapped_size=0;
+  void *mapping=services.file_map(NULL,mapped_path,&mapped_data,&mapped_size);
+  if(!mapping ||
+     mapped_size!=sizeof content || memcmp(mapped_data,content,sizeof content)){
+    if(mapping) services.file_unmap(NULL,mapping,mapped_data,mapped_size);
+    remove(mapped_path);
+    fprintf(stderr,"libretro content-map transport failed\n");
+    return 1;
+  }
+  services.file_unmap(NULL,mapping,mapped_data,mapped_size);
+  remove(mapped_path);
   puts("libretro VFS transport: ok");
   return 0;
 }

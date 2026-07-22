@@ -86,6 +86,12 @@ cache, and save roots are passed explicitly in `AnygmContentSource`; the core
 does not infer sibling repositories, a home directory, or a process working
 directory.
 
+The optional file-mapping callbacks use that same namespace and borrow only
+immutable bytes. The runtime validates mapped size and content exactly as it
+does VFS-read bytes, retains the opaque host handle while the view is live, and
+returns it exactly once. A host that cannot map a path returns no handle and
+the runtime falls back to its explicit VFS callbacks.
+
 Archive extraction joins only validated relative member paths below the
 explicit cache root. Cache markers are written completely to a temporary path
 and published with an atomic same-filesystem rename. The host should expose

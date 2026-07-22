@@ -445,15 +445,34 @@ int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
 int gml_win_load_host(GmlWin *w,const struct AnygmHostServices *host,const char *path){
   uint8_t *buf=NULL;
   size_t sz=0;
-  if(!w || !host || !path ||
-     !anygm_vfs_read_all(host,path,&buf,&sz,GML_WIN_MAX_FILE_BYTES)) return -1;
-  int rc=gml_win_from_mem(w,buf,sz,1);
+  void *mapping=NULL;
+  int storage=0;
+  if(!w || !host || !path) return -1;
+  if(host->file_map && host->file_unmap){
+    const void *mapped_data=NULL;
+    mapping=host->file_map(host->userdata,path,&mapped_data,&sz);
+    if(mapping){
+      if(!mapped_data || !sz || sz>GML_WIN_MAX_FILE_BYTES){
+        host->file_unmap(host->userdata,mapping,mapped_data,sz);
+        return -1;
+      }
+      buf=(uint8_t *)(uintptr_t)mapped_data;
+      storage=2;
+    }
+  }
+  if(!buf){
+    if(!anygm_vfs_read_all(host,path,&buf,&sz,GML_WIN_MAX_FILE_BYTES)) return -1;
+    storage=1;
+  }
+  int rc=gml_win_from_mem(w,buf,sz,storage);
   if(rc!=0){
-    free(buf);
+    if(storage==2) host->file_unmap(host->userdata,mapping,buf,sz);
+    else free(buf);
     memset(w,0,sizeof(*w));
     return rc;
   }
   w->host=host;
+  w->mapping_handle=mapping;
   if(rc==0 && path){
     const char *slash=strrchr(path,'/');
     const char *bslash=strrchr(path,'\\');
@@ -484,6 +503,8 @@ void gml_win_free(GmlWin *w){
   free(w->code_hix);
   free(w->ref_hix);
   free(w->ref_addr); free(w->ref_name); free(w->room_order);
-  if(w->owns) free(w->data);
+  if(w->owns==1) free(w->data);
+  else if(w->owns==2 && w->mapping_handle && w->host && w->host->file_unmap)
+    w->host->file_unmap(w->host->userdata,w->mapping_handle,w->data,w->size);
   memset(w,0,sizeof(*w));
 }
