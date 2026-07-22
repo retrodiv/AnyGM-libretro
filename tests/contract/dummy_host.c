@@ -310,6 +310,33 @@ int main(void){
     return fail("short state destination was accepted");
   if(anygm_state_load(engine,&one_byte,sizeof one_byte)!=ANYGM_ERROR_STATE_MISMATCH)
     return fail("invalid state image was accepted");
+  AnygmConfigDelta presentation_delta={0};
+  presentation_delta.struct_size=sizeof presentation_delta;
+  presentation_delta.values.struct_size=sizeof presentation_delta.values;
+  presentation_delta.fields=ANYGM_CONFIG_PRESENT_WIDTH|ANYGM_CONFIG_PRESENT_HEIGHT|
+                            ANYGM_CONFIG_ASPECT_MODE;
+  presentation_delta.values.present_width=640;
+  presentation_delta.values.present_height=360;
+  presentation_delta.values.aspect_mode=2;
+  if(anygm_set_config(engine,&presentation_delta)!=ANYGM_OK ||
+     anygm_state_load(engine,baseline,baseline_size)!=ANYGM_OK)
+    return fail("presentation configuration prevented state loading");
+  presentation_delta.values.present_width=0;
+  presentation_delta.values.present_height=0;
+  presentation_delta.values.aspect_mode=0;
+  if(anygm_set_config(engine,&presentation_delta)!=ANYGM_OK)
+    return fail("presentation configuration could not be restored");
+  AnygmConfigDelta stateful_delta={0};
+  stateful_delta.struct_size=sizeof stateful_delta;
+  stateful_delta.values.struct_size=sizeof stateful_delta.values;
+  stateful_delta.fields=ANYGM_CONFIG_GOD_MODE;
+  stateful_delta.values.god_mode=1;
+  if(anygm_set_config(engine,&stateful_delta)!=ANYGM_OK ||
+     anygm_state_load(engine,baseline,baseline_size)!=ANYGM_ERROR_STATE_MISMATCH)
+    return fail("stateful configuration mismatch was accepted");
+  stateful_delta.values.god_mode=0;
+  if(anygm_set_config(engine,&stateful_delta)!=ANYGM_OK)
+    return fail("stateful configuration could not be restored");
   output.struct_size=sizeof output;
   if(anygm_run_frame(engine,&input,&output)!=ANYGM_OK ||
      anygm_state_load(engine,baseline,baseline_size)!=ANYGM_OK ||

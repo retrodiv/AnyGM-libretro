@@ -2750,11 +2750,10 @@ static uint64_t state_hash_bytes(const void *data,size_t size){
 }
 
 static uint64_t state_current_config_fingerprint(AnygmEngine *engine){
-  uint8_t encoded[32]={0};
+  uint8_t encoded[4]={0};
   CoreW writer={encoded,sizeof encoded,0,1};
-  cw_u32(&writer,g_config.present_width);
-  cw_u32(&writer,g_config.present_height);
-  cw_u32(&writer,g_config.aspect_mode);
+  /* Presentation configuration remains host-owned across a state load. Only configuration which
+   * changes simulation semantics belongs in the state identity. */
   cw_u32(&writer,g_config.god_mode);
   return writer.ok?state_hash_bytes(encoded,writer.pos):0;
 }
