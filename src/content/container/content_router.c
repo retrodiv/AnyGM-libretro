@@ -465,7 +465,7 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
     file_map_close(&map); return 0;
   }
   ZipSeenNames seen;
-  if(!zip_seen_names_init(&seen,n_ent?n_ent:1u)){ file_map_close(&map); return 0; }
+  memset(&seen,0,sizeof seen);
   int content_best=0,nested_best=0;
   size_t p=cdir;
   if(content_rel && crsz) content_rel[0]=0;
@@ -481,7 +481,7 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
     if(next<p || next>fsz || !nlen || nlen>ANYGM_CONTENT_MAX_MEMBER_PATH){ valid=0; break; }
     char name[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
     memcpy(name,zd+p+46,nlen);
-    if(!zip_name_normalize(name,nlen) || !zip_seen_names_add(&seen,name)){ valid=0; break; }
+    if(!zip_name_normalize(name,nlen)){ valid=0; break; }
     int cs=content_rel?zip_content_score(name):0;
     if(cs>content_best){ snprintf(content_rel,crsz,"%s",name); content_best=cs; }
     if(project_rel && !project_rel[0] && zip_endswith(name,".yyp")) snprintf(project_rel,prsz,"%s",name);
@@ -489,10 +489,14 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
     if(ns>nested_best){ snprintf(nested_rel,nrsz,"%s",name); nested_best=ns; }
     p=next;
   }
-  zip_seen_names_free(&seen);
   if(!valid || scanned!=n_ent || p!=(size_t)cdir+(size_t)cdir_size ||
      (content_rel && !content_rel[0] && (!nested_rel || !nested_rel[0])) ||
      (project_rel && !project_rel[0])){ file_map_close(&map); return 0; }
+  /* Validate case-folded collisions only among members that can be extracted. Android packages
+   * commonly contain case-distinct resource names outside the selected payload subtree. Rejecting
+   * those unrelated names made an otherwise safe payload unloadable, while checking the selected
+   * set here retains the cross-platform overwrite protection. */
+  if(!zip_seen_names_init(&seen,n_ent?n_ent:1u)){ file_map_close(&map); return 0; }
   int extracted=0;
   uint64_t total_out=0;
   p=cdir;
@@ -513,6 +517,7 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
     if(!wanted && content_rel && content_rel[0]) wanted=zip_under_root(name,content_rel);
     else if(!wanted && nested_rel && nested_rel[0]) wanted=!strcasecmp(name,nested_rel);
     if(!wanted) continue;
+    if(!zip_seen_names_add(&seen,name)){ valid=0; break; }
     if((flags&1u) || ((attrs>>16)&0170000u)==0120000u){ valid=0; break; }
     if((uint64_t)usz>ANYGM_CONTENT_MAX_MEMBER_BYTES ||
        ((uint64_t)usz>ANYGM_CONTENT_EXPANSION_ALLOWANCE &&
@@ -539,6 +544,7 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
     if(!ok){ valid=0; break; }
     extracted++;
   }
+  zip_seen_names_free(&seen);
   file_map_close(&map);
   return valid?extracted:0;
 }

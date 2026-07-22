@@ -262,6 +262,21 @@ int main(void){
      resolve_archive(&services,root,"safe.zip",&safe_archive,1);
 
   if(ok){
+    static const uint8_t payload_name[]="assets/game.droid";
+    static const uint8_t unused_upper[]="unused/Example.bin";
+    static const uint8_t unused_lower[]="unused/example.bin";
+    ZipEntry scoped_entries[3]={
+      {payload_name,sizeof payload_name-1,form,sizeof form-1,sizeof form-1,0,0,0,0},
+      {unused_upper,sizeof unused_upper-1,one,sizeof one,sizeof one,0,0,0,0},
+      {unused_lower,sizeof unused_lower-1,one,sizeof one,sizeof one,0,0,0,0},
+    };
+    Buffer scoped_archive={0};
+    ok=build_zip(scoped_entries,3,&scoped_archive)&&
+       resolve_archive(&services,root,"scoped-duplicates.apk",&scoped_archive,1);
+    free(scoped_archive.data);
+  }
+
+  if(ok){
     char outdir[1024],marker[1100],payload[1100],archive_path[512];
     snprintf(archive_path,sizeof archive_path,"%s/safe.zip",root);
     snprintf(outdir,sizeof outdir,"%s/safe-%016llx-anygm-archive",root,
