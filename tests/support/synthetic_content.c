@@ -10,7 +10,31 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#ifdef _WIN32
+#include <direct.h>
+#include <process.h>
+#define anygm_test_unlink _unlink
+#define anygm_test_rmdir _rmdir
+#else
 #include <unistd.h>
+#define anygm_test_unlink unlink
+#define anygm_test_rmdir rmdir
+#endif
+
+static int create_fixture_directory(char *path,size_t path_size){
+#ifdef _WIN32
+  for(unsigned attempt=0;attempt<256;attempt++){
+    snprintf(path,path_size,"build/synthetic-content-%ld-%u",(long)_getpid(),attempt);
+    if(_mkdir(path)==0) return 1;
+    if(errno!=EEXIST) return 0;
+  }
+  return 0;
+#else
+  snprintf(path,path_size,"build/synthetic-content-XXXXXX");
+  return mkdtemp(path)!=NULL;
+#endif
+}
 
 static int write_text(const char *path,const char *text){
   FILE *file=fopen(path,"wb");
@@ -23,9 +47,7 @@ static int write_text(const char *path,const char *text){
 int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
-  snprintf(fixture->directory,sizeof fixture->directory,
-           "build/synthetic-content-XXXXXX");
-  if(!mkdtemp(fixture->directory)) return 0;
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
 
   char startup[192],step[192];
   snprintf(startup,sizeof startup,"%s/startup.gml",fixture->directory);
@@ -99,12 +121,12 @@ void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture){
   if(!fixture || !fixture->directory[0]) return;
   char path[256];
   snprintf(path,sizeof path,"%s/startup.gml",fixture->directory);
-  unlink(path);
+  anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/step.gml",fixture->directory);
-  unlink(path);
+  anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/content.win",fixture->directory);
-  unlink(path);
-  rmdir(fixture->directory);
+  anygm_test_unlink(path);
+  anygm_test_rmdir(fixture->directory);
   memset(fixture,0,sizeof *fixture);
 }
 

@@ -172,6 +172,13 @@ int main(void){
   size_t content_size=0;
   if(!anygm_synthetic_content_read(&fixture,&content,&content_size))
     return fail("could not read synthetic content");
+  const char *content_output=getenv("ANYGM_TEST_CONTENT_OUTPUT");
+  if(content_output && *content_output){
+    FILE *file=fopen(content_output,"wb");
+    int ok=file && fwrite(content,1,content_size,file)==content_size;
+    if(file && fclose(file)!=0) ok=0;
+    if(!ok) return fail("could not export synthetic content");
+  }
 
   DummyHost dummy={0};
   AnygmHostServices services={0};

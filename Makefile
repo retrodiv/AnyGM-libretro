@@ -56,7 +56,7 @@ PIC_FLAGS := -fPIC -fvisibility=hidden
 ifneq (,$(findstring win,$(platform)))
 CORE_EXTENSION := dll
 CORE_PLATFORM_LDLIBS := -lm -lgdi32 -luser32
-CORE_PLATFORM_LDFLAGS := -Wl,--no-insert-timestamp
+CORE_PLATFORM_LDFLAGS := -Wl,--no-insert-timestamp -static-libgcc
 endif
 ifneq (,$(findstring osx,$(platform)))
 CORE_EXTENSION := dylib

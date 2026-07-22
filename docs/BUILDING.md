@@ -59,7 +59,8 @@ objects and known core artifacts.
 Release validation uses one compiler job, a fixed source order, a neutral
 locale, deterministic static archives, path-prefix remapping, and a disabled
 linker build identifier where supported. MinGW builds also disable the PE
-timestamp. Record the compiler identity and effective flags with the artifact.
+timestamp and link the compiler runtime statically so the core depends only on
+Windows system libraries. Record the compiler identity and effective flags with the artifact.
 Build twice from clean isolated checkouts with the same toolchain, strip and
 package identically, and compare hashes.
 
