@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gmlc_assets.h"
+#include "anygm_vfs.h"
 #include "gmlc_json.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -113,11 +115,10 @@ static char *join_source_path(const GmlcProject *p, const char *dir, const char 
   return gmlc_path_join(dir,path?path:"");
 }
 
-static int source_path_exists(const char *path){
-  FILE *f=path ? fopen(path,"rb") : NULL;
-  if(!f) return 0;
-  fclose(f);
-  return 1;
+static int source_path_exists(const GmlcProject *project,const char *path){
+  AnygmFileInfo info;
+  return project&&path&&anygm_vfs_stat(project->host,path,&info)&&
+         (info.flags&ANYGM_FILE_INFO_REGULAR);
 }
 
 #define DEFINE_APPLY_RESOURCE_ORDER(fn, Type, field, count_field, label) \
@@ -236,31 +237,27 @@ static void free_room_fields(GmlcRoom *r){
   free(r->layers);
 }
 
-static char *read_text_file(const char *path){
-  FILE *f=fopen(path,"rb");
-  if(!f) return NULL;
-  fseek(f,0,SEEK_END);
-  long sz=ftell(f);
-  rewind(f);
-  if(sz<0){ fclose(f); return NULL; }
-  char *buf=(char*)malloc((size_t)sz+1);
-  if(!buf){ fclose(f); return NULL; }
-  if(fread(buf,1,(size_t)sz,f)!=(size_t)sz){ fclose(f); free(buf); return NULL; }
-  fclose(f);
-  buf[sz]=0;
-  return buf;
+static char *read_text_file(const GmlcProject *project,const char *path){
+  uint8_t *bytes=NULL;
+  size_t size=0;
+  if(!project || !anygm_vfs_read_all(project->host,path,&bytes,&size,128u*1024u*1024u)) return NULL;
+  char *text=realloc(bytes,size+1);
+  if(!text){ free(bytes); return NULL; }
+  text[size]=0;
+  return text;
 }
 
 static uint32_t be32u(const unsigned char *p){
   return ((uint32_t)p[0]<<24) | ((uint32_t)p[1]<<16) | ((uint32_t)p[2]<<8) | (uint32_t)p[3];
 }
 
-static int png_file_dims(const char *path, int *w, int *h){
+static int png_file_dims(const GmlcProject *project,const char *path,int *w,int *h){
   unsigned char hdr[24];
-  FILE *f=fopen(path,"rb");
-  if(!f) return 0;
-  size_t n=fread(hdr,1,sizeof(hdr),f);
-  fclose(f);
+  if(!project || !anygm_vfs_can_read(project->host)) return 0;
+  void *file=project->host->file_open(project->host->userdata,path,ANYGM_FILE_READ);
+  if(!file) return 0;
+  size_t n=project->host->file_read(project->host->userdata,file,hdr,sizeof hdr);
+  project->host->file_close(project->host->userdata,file);
   if(n<24 || hdr[0]!=0x89 || hdr[1]!='P' || hdr[2]!='N' || hdr[3]!='G' || memcmp(hdr+12,"IHDR",4)) return 0;
   uint32_t pw=be32u(hdr+16), ph=be32u(hdr+20);
   if(pw==0 || ph==0 || pw>65535 || ph>65535) return 0;
@@ -347,7 +344,7 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
               free_room_layer_fields(&out);
               return 0;
             }
-            if(!source_path_exists(in.creation_code_path)){
+            if(!source_path_exists(p,in.creation_code_path)){
               free(in.creation_code_path);
               in.creation_code_path=NULL;
             }
@@ -436,8 +433,8 @@ static int parse_shader(GmlcProject *p, const GmlcResource *res, const GmlcJson 
   if(ffile) snprintf(ffile,n,"%s.fsh",s.name?s.name:"");
   char *vpath=gmlc_path_join(dir,vfile?vfile:"");
   char *fpath=gmlc_path_join(dir,ffile?ffile:"");
-  s.vertex_source=read_text_file(vpath);
-  s.fragment_source=read_text_file(fpath);
+  s.vertex_source=read_text_file(p,vpath);
+  s.fragment_source=read_text_file(p,fpath);
   if(!s.id || !s.name || !s.vertex_source || !s.fragment_source || !add_shader(p,&s)){
     snprintf(err,errcap,"failed to load shader source for %s",s.name?s.name:"shader resource");
     free(s.id); free(s.name); free(s.vertex_source); free(s.fragment_source);
@@ -459,7 +456,7 @@ static int parse_font(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
   if(file) snprintf(file,n,"%s.png",f.name?f.name:"");
   f.png_path=gmlc_path_join(dir,file?file:"");
   f.em_size=gmlc_json_int(gmlc_json_obj(yy,"size"),12);
-  if(!f.id || !f.name || !f.png_path || !png_file_dims(f.png_path,&f.width,&f.height)){
+  if(!f.id || !f.name || !f.png_path || !png_file_dims(p,f.png_path,&f.width,&f.height)){
     snprintf(err,errcap,"failed to load font texture for %s",f.name?f.name:"font resource");
     free(f.id); free(f.name); free(f.png_path); free(dir); free(file);
     return 0;
@@ -774,7 +771,7 @@ static int parse_room(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
       free_room_fields(&r);
       return 0;
     }
-    if(!source_path_exists(r.creation_code_path)){
+    if(!source_path_exists(p,r.creation_code_path)){
       free(r.creation_code_path);
       r.creation_code_path=NULL;
     }
@@ -807,7 +804,7 @@ static char *basename_no_ext(const char *path){
 
 static int load_one(GmlcProject *p, GmlcResource *r, char *err, size_t errcap){
   if(r->kind==GMLC_RES_OTHER) return 1;
-  GmlcJson *yy=gmlc_json_parse_file(r->abs_path,err,errcap);
+  GmlcJson *yy=gmlc_json_parse_file(p->host,r->abs_path,err,errcap);
   if(!yy) return 0;
   const char *nm=gmlc_json_str(gmlc_json_obj(yy,"name"),NULL);
   r->name=nm ? gmlc_strdup(nm) : basename_no_ext(r->path);

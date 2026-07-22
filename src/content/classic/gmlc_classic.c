@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gmlc_classic.h"
+#include "anygm_vfs.h"
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
@@ -20,6 +22,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <inttypes.h>
 
 static uint32_t read_u32le(const uint8_t *p){
   return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 |
@@ -47,7 +50,7 @@ typedef struct {
 
 static int reader_fail(ClassicReader *r, const char *what){
   if(r->err && r->errcap)
-    snprintf(r->err, r->errcap, "classic project: truncated %s at offset %zu", what, r->pos);
+    snprintf(r->err, r->errcap, "classic project: truncated %s at offset %" PRIu64, what, (uint64_t)r->pos);
   return 0;
 }
 
@@ -89,7 +92,7 @@ static int reader_string_copy(ClassicReader *r, char **out, const char *what){
 static int reader_blocks(ClassicReader *r, uint32_t count, const char *what){
   if(count > (r->size - r->pos) / 4){
     if(r->err && r->errcap)
-      snprintf(r->err, r->errcap, "classic project: impossible %s count %u at offset %zu", what, count, r->pos);
+      snprintf(r->err, r->errcap, "classic project: impossible %s count %u at offset %" PRIu64, what, count, (uint64_t)r->pos);
     return 0;
   }
   for(uint32_t i = 0; i < count; ++i){
@@ -203,8 +206,8 @@ int gmlc_classic_game_information_decode(const GmlcClassicBlob *source,
       for(size_t i=0;i<shown;i++) snprintf(preview+i*3,sizeof(preview)-i*3,"%02x%s",
                                         record[i],i+1<shown?" ":"");
       snprintf(err,errcap,
-               "classic project: invalid game-information record (%zu stored, %zu decoded bytes; "
-               "caption=%u tail words=%u/%u/%u; %s%s)",source->size,record_size,caption,
+               "classic project: invalid game-information record (%" PRIu64 " stored, %" PRIu64 " decoded bytes; "
+               "caption=%u tail words=%u/%u/%u; %s%s)",(uint64_t)source->size,(uint64_t)record_size,caption,
                word0,word4,word8,preview,record_size>shown?" ...":"");
     }
     free(normalized); STBI_FREE(inflated);
@@ -342,7 +345,7 @@ static int reader_trigger(ClassicReader *outer, GmlcClassicTrigger *out, const c
   }
   if(ok && r.pos!=r.size && !(r.pos+1==r.size && r.data[r.pos]==0)){
     if(outer->err && outer->errcap)
-      snprintf(outer->err,outer->errcap,"classic project: trigger has %zu trailing bytes",r.size-r.pos);
+      snprintf(outer->err,outer->errcap,"classic project: trigger has %" PRIu64 " trailing bytes",(uint64_t)(r.size-r.pos));
     ok=0;
   }
   if(!ok){
@@ -389,7 +392,7 @@ static int reader_included_file(ClassicReader *outer, GmlcClassicIncludedFile *o
             reader_u32(&r,&remove_at_end,"included-file remove flag");
   if(ok && r.pos!=r.size && !(r.pos+1==r.size && r.data[r.pos]==0)){
     if(outer->err && outer->errcap)
-      snprintf(outer->err,outer->errcap,"classic project: included file has %zu trailing bytes",r.size-r.pos);
+      snprintf(outer->err,outer->errcap,"classic project: included file has %" PRIu64 " trailing bytes",(uint64_t)(r.size-r.pos));
     ok=0;
   }
   out->data_exists=data_exists!=0; out->stored_in_project=stored!=0;
@@ -417,8 +420,8 @@ static int require_payload_end(ClassicReader *r, const char *what){
     for(size_t i=0;i<shown;i++) snprintf(preview+i*3,sizeof(preview)-i*3,"%02x%s",
                                       r->data[r->pos+i],i+1<shown?" ":"");
     snprintf(r->err, r->errcap,
-             "classic project: %s has %zu unexplained trailing bytes at offset %zu (%s%s)",
-             what,remain,r->pos,preview,remain>shown?" ...":"");
+             "classic project: %s has %" PRIu64 " unexplained trailing bytes at offset %" PRIu64 " (%s%s)",
+             what,(uint64_t)remain,(uint64_t)r->pos,preview,remain>shown?" ...":"");
   }
   return 0;
 }
@@ -739,38 +742,15 @@ static int normalize_executable_room(char **raw_io, int *raw_size_io){
   return 1;
 }
 
-static int read_file(const char *path, uint8_t **data, size_t *size,
+static int read_file(const AnygmHostServices *host,const char *path,
+                     uint8_t **data,size_t *size,
                      char *err, size_t errcap){
   *data = NULL;
   *size = 0;
-  FILE *f = fopen(path, "rb");
-  if(!f){
-    if(err && errcap) snprintf(err, errcap, "classic project: cannot open %s: %s", path, strerror(errno));
-    return 0;
-  }
-  if(fseek(f, 0, SEEK_END) || ftell(f) < 0){
-    if(err && errcap) snprintf(err, errcap, "classic project: cannot size %s", path);
-    fclose(f);
-    return 0;
-  }
-  long length = ftell(f);
-  if(fseek(f, 0, SEEK_SET) || (unsigned long)length > SIZE_MAX){
-    if(err && errcap) snprintf(err, errcap, "classic project: invalid size for %s", path);
-    fclose(f);
-    return 0;
-  }
-  uint8_t *bytes = (uint8_t*)malloc(length ? (size_t)length : 1);
-  if(!bytes){
-    if(err && errcap) snprintf(err, errcap, "classic project: out of memory reading %s", path);
-    fclose(f);
-    return 0;
-  }
-  size_t got = fread(bytes, 1, (size_t)length, f);
-  int ok = got == (size_t)length && !ferror(f);
-  fclose(f);
-  if(!ok){
+  uint8_t *bytes=NULL;
+  size_t got=0;
+  if(!anygm_vfs_read_all(host,path,&bytes,&got,512u*1024u*1024u)){
     if(err && errcap) snprintf(err, errcap, "classic project: cannot read %s", path);
-    free(bytes);
     return 0;
   }
   *data = bytes;
@@ -786,7 +766,7 @@ int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
     return 0;
   }
   if(size < 8){
-    if(err && errcap) snprintf(err, errcap, "classic project: truncated common header (%zu bytes)", size);
+    if(err && errcap) snprintf(err, errcap, "classic project: truncated common header (%" PRIu64 " bytes)", (uint64_t)size);
     return 0;
   }
   const uint8_t *p = (const uint8_t*)data;
@@ -805,7 +785,7 @@ int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
   
   if(version != GMLC_CLASSIC_GM7 && version != GMLC_CLASSIC_GM7_ALT){
     if(size < 28){
-      if(err && errcap) snprintf(err, errcap, "classic project: truncated common header (%zu bytes)", size);
+      if(err && errcap) snprintf(err, errcap, "classic project: truncated common header (%" PRIu64 " bytes)", (uint64_t)size);
       return 0;
     }
     out->game_id = read_u32le(p + 8);
@@ -816,23 +796,17 @@ int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
 
 
 
-int gmlc_classic_probe_file(const char *path, GmlcClassicHeader *out,
+int gmlc_classic_probe_file(const AnygmHostServices *host,const char *path,
+                            GmlcClassicHeader *out,
                             char *err, size_t errcap){
   if(err && errcap) err[0] = '\0';
   if(!path || !out){
     if(err && errcap) snprintf(err, errcap, "classic project: invalid file probe arguments");
     return 0;
   }
-  FILE *f = fopen(path, "rb");
-  if(!f){
-    if(err && errcap) snprintf(err, errcap, "classic project: cannot open %s: %s", path, strerror(errno));
-    return 0;
-  }
   uint8_t header[28];
-  size_t got = fread(header, 1, sizeof(header), f);
-  int io_error = ferror(f);
-  fclose(f);
-  if(io_error){
+  size_t got=0;
+  if(!anygm_vfs_read_prefix(host,path,header,sizeof header,&got)){
     if(err && errcap) snprintf(err, errcap, "classic project: cannot read %s", path);
     return 0;
   }
@@ -1977,21 +1951,23 @@ int gmlc_classic_manifest(const void *data, size_t size,
   return 1;
 }
 
-int gmlc_classic_manifest_file(const char *path, GmlcClassicManifest *out,
+int gmlc_classic_manifest_file(const AnygmHostServices *host,const char *path,
+                               GmlcClassicManifest *out,
                                char *err, size_t errcap){
   uint8_t *data;
   size_t size;
-  if(!read_file(path, &data, &size, err, errcap)) return 0;
+  if(!read_file(host,path, &data, &size, err, errcap)) return 0;
   int ok = gmlc_classic_manifest(data, size, out, err, errcap);
   free(data);
   return ok;
 }
 
-int gmlc_classic_inventory_file(const char *path, GmlcClassicInventory *out,
+int gmlc_classic_inventory_file(const AnygmHostServices *host,const char *path,
+                                GmlcClassicInventory *out,
                                 char *err, size_t errcap){
   uint8_t *data;
   size_t size;
-  if(!read_file(path, &data, &size, err, errcap)) return 0;
+  if(!read_file(host,path, &data, &size, err, errcap)) return 0;
   int ok = gmlc_classic_inventory(data, size, out, err, errcap);
   free(data);
   return ok;

@@ -1,17 +1,24 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* gml_particle.c - Particle types, systems and emitters.
- * Static pools hold types, systems and emitters; each system owns its particles.
- * Updates apply velocity, gravity and lifetime increments. Drawing uses the
- * sprite renderer or clipped squares. Color and alpha interpolate over age.
- * State serialization includes the pools and the private random generator.
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
+/* Particle system implementation (part_type / part_system / part_emitter).
+ *
+ * Each VM owns its pools. They update once per runtime step and draw via the existing sprite
+ * blitter (gml_draw_sprite_ext) or a small clipped square for shape/pixel types. Nothing here touches
+ * the core render blit paths, so content that never calls a part_* function is wholly unaffected.
+ *
+ * Particle pools are VM state and participate in save/load/rewind. They still reset on fresh VM start,
+ * which prevents a game that re-creates its systems every room from leaking pool slots. Motion
+ * follows GM: velocity from (speed,direction) + gravity, with per-frame *_incr on speed/dir/size/orient;
+ * colour and alpha interpolate over the particle's life (1/2/3-key). Randomness uses a private LCG —
+ * now serialized with the particle pools for deterministic rewind. */
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <stdio.h>
 #include <limits.h>
 #include "gml_render.h"
+#include "anygm_compatibility.h"
 #include "gml_particle.h"
 #include "gml_vm.h"
 
@@ -45,46 +52,6 @@ typedef struct {
   int death_number, death_type;
 } PType;
 
-/* PTR2--PTR4 stored the type record as a raw native structure.  Keep its
- * previous layout explicit so adding child-particle rules does not invalidate
- * existing save states. */
-typedef struct {
-  int used;
-  int sprite, spr_animate, spr_stretch, spr_random;
-  int shape;
-  double sz_min, sz_max, sz_incr, sz_wig;
-  double xscale, yscale;
-  double sp_min, sp_max, sp_incr, sp_wig;
-  double dir_min, dir_max, dir_incr, dir_wig;
-  double grav_amt, grav_dir;
-  double life_min, life_max;
-  uint32_t col[3]; int ncol;
-  int color_mode;
-  uint32_t mix_a, mix_b;
-  double cmin[3], cmax[3];
-  double alpha[3]; int nalpha;
-  double ori_min, ori_max, ori_incr, ori_wig; int ori_rel;
-  int additive;
-} PTypeV4;
-_Static_assert(offsetof(PType,step_number)==sizeof(PTypeV4),
-               "PTypeV4 must remain the serialized prefix of PType");
-
-typedef struct {
-  int used;
-  int sprite, spr_animate, spr_stretch, spr_random;
-  int shape;
-  double sz_min, sz_max, sz_incr, sz_wig;
-  double xscale, yscale;
-  double sp_min, sp_max, sp_incr, sp_wig;
-  double dir_min, dir_max, dir_incr, dir_wig;
-  double grav_amt, grav_dir;
-  double life_min, life_max;
-  uint32_t col[3]; int ncol;
-  double alpha[3]; int nalpha;
-  double ori_min, ori_max, ori_incr, ori_wig; int ori_rel;
-  int additive;
-} PTypeV1;
-
 typedef struct {
   double x, y, speed, dir, grav_amt, grav_dir;
   double life, life0, size, size_incr, ori, ori_incr;
@@ -92,22 +59,6 @@ typedef struct {
   int has_col; uint32_t col_over;   /* part_particles_create_color override (else use the type's colour) */
   int random_start;                 /* shared phase used by all four classic wiggle waves */
 } Part;
-
-typedef struct {
-  double x, y, speed, dir, grav_amt, grav_dir;
-  double life, life0, size, size_incr, ori, ori_incr;
-  int type;
-  int has_col; uint32_t col_over;
-} PartV2;
-
-static void part_from_v2(Part *p,const PartV2 *o){
-  memset(p,0,sizeof(*p));
-  p->x=o->x; p->y=o->y; p->speed=o->speed; p->dir=o->dir;
-  p->grav_amt=o->grav_amt; p->grav_dir=o->grav_dir;
-  p->life=o->life; p->life0=o->life0; p->size=o->size; p->size_incr=o->size_incr;
-  p->ori=o->ori; p->ori_incr=o->ori_incr; p->type=o->type;
-  p->has_col=o->has_col; p->col_over=o->col_over;
-}
 
 typedef struct {
   int used, auto_update, auto_draw;
@@ -123,52 +74,62 @@ typedef struct {
   int stream_type, stream_number;
 } PEmit;
 
-typedef struct { int used, sys; double xmin, xmax, ymin, ymax; int shape, dist; } PEmitV1;
+struct GmlParticleState {
+  PType type[PT_MAX];
+  PSys system[PS_MAX];
+  PEmit emitter[PE_MAX];
+  int effect_system[2];
+  int effect_type[2][12][3];
+  int effect_explosion_core[2][3];
+  GmlVM *vm;
+  uint32_t prng;
+  uint8_t explosion_shape_mask[64*64];
+  uint8_t glint_shape_mask[3][64*64];
+  uint8_t snow_shape_mask[64*64];
+  uint8_t ring_shape_mask[64*64];
+  unsigned glint_shape_mask_ready;
+  int explosion_shape_mask_ready;
+  int snow_shape_mask_ready;
+  int ring_shape_mask_ready;
+};
 
-static void ptype_from_v1(PType *t, const PTypeV1 *o){
-  memset(t,0,sizeof(*t));
-  t->used=o->used;
-  t->sprite=o->sprite; t->spr_animate=o->spr_animate; t->spr_stretch=o->spr_stretch; t->spr_random=o->spr_random;
-  t->shape=o->shape;
-  t->sz_min=o->sz_min; t->sz_max=o->sz_max; t->sz_incr=o->sz_incr; t->sz_wig=o->sz_wig;
-  t->xscale=o->xscale; t->yscale=o->yscale;
-  t->sp_min=o->sp_min; t->sp_max=o->sp_max; t->sp_incr=o->sp_incr; t->sp_wig=o->sp_wig;
-  t->dir_min=o->dir_min; t->dir_max=o->dir_max; t->dir_incr=o->dir_incr; t->dir_wig=o->dir_wig;
-  t->grav_amt=o->grav_amt; t->grav_dir=o->grav_dir;
-  t->life_min=o->life_min; t->life_max=o->life_max;
-  t->col[0]=o->col[0]; t->col[1]=o->col[1]; t->col[2]=o->col[2]; t->ncol=o->ncol;
-  t->alpha[0]=o->alpha[0]; t->alpha[1]=o->alpha[1]; t->alpha[2]=o->alpha[2]; t->nalpha=o->nalpha;
-  t->ori_min=o->ori_min; t->ori_max=o->ori_max; t->ori_incr=o->ori_incr; t->ori_wig=o->ori_wig; t->ori_rel=o->ori_rel;
-  t->additive=o->additive;
-}
-static void ptype_from_v4(PType *t, const PTypeV4 *o){
-  memset(t,0,sizeof(*t));
-  /* PTypeV4 is the exact prefix of the current structure. */
-  memcpy(t,o,sizeof(*o));
-}
-static void pemit_from_v1(PEmit *e, const PEmitV1 *o){
-  memset(e,0,sizeof(*e));
-  e->used=o->used; e->sys=o->sys; e->xmin=o->xmin; e->xmax=o->xmax; e->ymin=o->ymin; e->ymax=o->ymax; e->shape=o->shape; e->dist=o->dist;
-}
+#define g_pt (state->type)
+#define g_ps (state->system)
+#define g_pe (state->emitter)
+#define g_effect_sys (state->effect_system)
+#define g_effect_type (state->effect_type)
+#define g_effect_explosion_core (state->effect_explosion_core)
+#define g_particle_vm (state->vm)
+#define g_prng (state->prng)
+#define g_explosion_shape_mask (state->explosion_shape_mask)
+#define g_glint_shape_mask (state->glint_shape_mask)
+#define g_snow_shape_mask (state->snow_shape_mask)
+#define g_ring_shape_mask (state->ring_shape_mask)
+#define g_glint_shape_mask_ready (state->glint_shape_mask_ready)
+#define g_explosion_shape_mask_ready (state->explosion_shape_mask_ready)
+#define g_snow_shape_mask_ready (state->snow_shape_mask_ready)
+#define g_ring_shape_mask_ready (state->ring_shape_mask_ready)
 
-static PType g_pt[PT_MAX];
-static PSys  g_ps[PS_MAX];
-static PEmit g_pe[PE_MAX];
-static int g_effect_sys[2];
-static int g_effect_type[2][12][3];
-static int g_effect_explosion_core[2][3];
-
-static GmlVM *g_particle_vm;
-static uint32_t g_prng = 0x2545F491u;
-void gml_part_bind_vm(GmlVM *vm){ g_particle_vm=vm; }
-static double prnd(void){
-  if(g_particle_vm && g_particle_vm->win && g_particle_vm->win->classic_version)
+GmlParticleState *gml_particle_state_create(GmlVM *vm){
+  GmlParticleState *state=calloc(1,sizeof(*state));
+  if(!state) return NULL;
+  state->vm=vm;
+  state->prng=0x2545F491u;
+  return state;
+}
+void gml_particle_state_destroy(GmlParticleState *state){
+  if(!state) return;
+  gml_part_reset_all(state);
+  free(state);
+}
+static double prnd(GmlParticleState *state){
+  if(g_particle_vm && anygm_policy_uses_classic_runtime(g_particle_vm->win))
     return gml_rng_value(g_particle_vm);
   g_prng = g_prng*1664525u + 1013904223u;
   return ((g_prng>>8) & 0xFFFFFF)/(double)0x1000000;
 }
 /* A fixed particle property is assigned directly; only a real interval samples the RNG. */
-static double particle_range(double a,double b){ return b>a ? a+prnd()*(b-a) : a; }
+static double particle_range(GmlParticleState *state,double a,double b){ return b>a ? a+prnd(state)*(b-a) : a; }
 static int clamp255(double v){ if(v<0) return 0; if(v>255) return 255; return (int)(v+0.5); }
 static uint32_t rgb_col(int r,int g,int b){ return ((uint32_t)clamp255(b)<<16)|((uint32_t)clamp255(g)<<8)|(uint32_t)clamp255(r); }
 static uint32_t mix_col(uint32_t a, uint32_t b, double t){
@@ -191,11 +152,12 @@ static uint32_t hsv_col(double h,double s,double v){
   return rgb_col((int)((r+m)*255.0+0.5),(int)((g+m)*255.0+0.5),(int)((b+m)*255.0+0.5));
 }
 
-static PType *pt(int id){ int i=id-1; return (i>=0 && i<PT_MAX && g_pt[i].used) ? &g_pt[i] : NULL; }
-static PSys  *ps(int id){ int i=id-1; return (i>=0 && i<PS_MAX && g_ps[i].used) ? &g_ps[i] : NULL; }
-static PEmit *pe(int id){ int i=id-1; return (i>=0 && i<PE_MAX && g_pe[i].used) ? &g_pe[i] : NULL; }
+static PType *pt(GmlParticleState *state,int id){ int i=id-1; return (state && i>=0 && i<PT_MAX && g_pt[i].used) ? &g_pt[i] : NULL; }
+static PSys  *ps(GmlParticleState *state,int id){ int i=id-1; return (state && i>=0 && i<PS_MAX && g_ps[i].used) ? &g_ps[i] : NULL; }
+static PEmit *pe(GmlParticleState *state,int id){ int i=id-1; return (state && i>=0 && i<PE_MAX && g_pe[i].used) ? &g_pe[i] : NULL; }
 
-void gml_part_reset_all(void){
+void gml_part_reset_all(GmlParticleState *state){
+  if(!state) return;
   for(int i=0;i<PS_MAX;i++){ free(g_ps[i].parts); }
   memset(g_pt,0,sizeof g_pt); memset(g_ps,0,sizeof g_ps); memset(g_pe,0,sizeof g_pe);
   memset(g_effect_sys,0,sizeof g_effect_sys); memset(g_effect_type,0,sizeof g_effect_type);
@@ -203,7 +165,8 @@ void gml_part_reset_all(void){
   g_prng=0x2545F491u;
 }
 
-int gml_part_type_create(void){
+int gml_part_type_create(GmlParticleState *state){
+  if(!state) return 0;
   for(int i=0;i<PT_MAX;i++) if(!g_pt[i].used){
     PType *t=&g_pt[i]; memset(t,0,sizeof *t); t->used=1;
     t->sprite=-1; t->sz_min=t->sz_max=1; t->xscale=t->yscale=1;
@@ -212,50 +175,49 @@ int gml_part_type_create(void){
   }
   return 0;
 }
-int gml_part_type_exists(int id){ return pt(id)!=NULL; }
-void gml_part_type_destroy(int id){ PType *t=pt(id); if(t){ t->used=0; } }
-void gml_part_type_clear(int id){ PType *t=pt(id); if(t){ int u=t->used; memset(t,0,sizeof *t); t->used=u;
+int gml_part_type_exists(GmlParticleState *state,int id){ return pt(state,id)!=NULL; }
+void gml_part_type_destroy(GmlParticleState *state,int id){ PType *t=pt(state,id); if(t){ t->used=0; } }
+void gml_part_type_clear(GmlParticleState *state,int id){ PType *t=pt(state,id); if(t){ int u=t->used; memset(t,0,sizeof *t); t->used=u;
   t->sprite=-1; t->sz_min=t->sz_max=1; t->xscale=t->yscale=1; t->life_min=t->life_max=100; t->col[0]=0xFFFFFF; t->ncol=1; t->alpha[0]=1; t->nalpha=1; } }
 
-void gml_part_type_sprite(int id,int spr,int animate,int stretch,int random){ PType *t=pt(id); if(t){ t->sprite=spr; t->spr_animate=animate; t->spr_stretch=stretch; t->spr_random=random; } }
-void gml_part_type_shape(int id,int shape){ PType *t=pt(id); if(t) t->shape=shape; }
-void gml_part_type_size(int id,double mn,double mx,double incr,double wig){ PType *t=pt(id); if(t){ t->sz_min=mn; t->sz_max=mx; t->sz_incr=incr; t->sz_wig=wig; } }
-void gml_part_type_scale(int id,double xs,double ys){ PType *t=pt(id); if(t){ t->xscale=xs; t->yscale=ys; } }
-void gml_part_type_speed(int id,double mn,double mx,double incr,double wig){ PType *t=pt(id); if(t){ t->sp_min=mn; t->sp_max=mx; t->sp_incr=incr; t->sp_wig=wig; } }
-void gml_part_type_direction(int id,double mn,double mx,double incr,double wig){ PType *t=pt(id); if(t){ t->dir_min=mn; t->dir_max=mx; t->dir_incr=incr; t->dir_wig=wig; } }
-void gml_part_type_gravity(int id,double amt,double dir){ PType *t=pt(id); if(t){ t->grav_amt=amt; t->grav_dir=dir; } }
-void gml_part_type_life(int id,double mn,double mx){ PType *t=pt(id); if(t){ t->life_min=mn; t->life_max=mx; } }
-void gml_part_type_step(int id,int number,int type){ PType *t=pt(id); if(t){ t->step_number=number; t->step_type=type; } }
-void gml_part_type_death(int id,int number,int type){ PType *t=pt(id); if(t){ t->death_number=number; t->death_type=type; } }
-void gml_part_type_orientation(int id,double mn,double mx,double incr,double wig,int rel){ PType *t=pt(id); if(t){ t->ori_min=mn; t->ori_max=mx; t->ori_incr=incr; t->ori_wig=wig; t->ori_rel=rel; } }
-void gml_part_type_color(int id,int ncol,uint32_t c1,uint32_t c2,uint32_t c3){ PType *t=pt(id); if(t){ t->color_mode=0; t->ncol=ncol<1?1:(ncol>3?3:ncol); t->col[0]=c1; t->col[1]=c2; t->col[2]=c3; } }
-void gml_part_type_color_rgb(int id,double rmin,double rmax,double gmin,double gmax,double bmin,double bmax){
-  PType *t=pt(id); if(t){ t->color_mode=1; t->cmin[0]=rmin; t->cmax[0]=rmax; t->cmin[1]=gmin; t->cmax[1]=gmax; t->cmin[2]=bmin; t->cmax[2]=bmax; }
+void gml_part_type_sprite(GmlParticleState *state,int id,int spr,int animate,int stretch,int random){ PType *t=pt(state,id); if(t){ t->sprite=spr; t->spr_animate=animate; t->spr_stretch=stretch; t->spr_random=random; } }
+void gml_part_type_shape(GmlParticleState *state,int id,int shape){ PType *t=pt(state,id); if(t) t->shape=shape; }
+void gml_part_type_size(GmlParticleState *state,int id,double mn,double mx,double incr,double wig){ PType *t=pt(state,id); if(t){ t->sz_min=mn; t->sz_max=mx; t->sz_incr=incr; t->sz_wig=wig; } }
+void gml_part_type_scale(GmlParticleState *state,int id,double xs,double ys){ PType *t=pt(state,id); if(t){ t->xscale=xs; t->yscale=ys; } }
+void gml_part_type_speed(GmlParticleState *state,int id,double mn,double mx,double incr,double wig){ PType *t=pt(state,id); if(t){ t->sp_min=mn; t->sp_max=mx; t->sp_incr=incr; t->sp_wig=wig; } }
+void gml_part_type_direction(GmlParticleState *state,int id,double mn,double mx,double incr,double wig){ PType *t=pt(state,id); if(t){ t->dir_min=mn; t->dir_max=mx; t->dir_incr=incr; t->dir_wig=wig; } }
+void gml_part_type_gravity(GmlParticleState *state,int id,double amt,double dir){ PType *t=pt(state,id); if(t){ t->grav_amt=amt; t->grav_dir=dir; } }
+void gml_part_type_life(GmlParticleState *state,int id,double mn,double mx){ PType *t=pt(state,id); if(t){ t->life_min=mn; t->life_max=mx; } }
+void gml_part_type_step(GmlParticleState *state,int id,int number,int type){ PType *t=pt(state,id); if(t){ t->step_number=number; t->step_type=type; } }
+void gml_part_type_death(GmlParticleState *state,int id,int number,int type){ PType *t=pt(state,id); if(t){ t->death_number=number; t->death_type=type; } }
+void gml_part_type_orientation(GmlParticleState *state,int id,double mn,double mx,double incr,double wig,int rel){ PType *t=pt(state,id); if(t){ t->ori_min=mn; t->ori_max=mx; t->ori_incr=incr; t->ori_wig=wig; t->ori_rel=rel; } }
+void gml_part_type_color(GmlParticleState *state,int id,int ncol,uint32_t c1,uint32_t c2,uint32_t c3){ PType *t=pt(state,id); if(t){ t->color_mode=0; t->ncol=ncol<1?1:(ncol>3?3:ncol); t->col[0]=c1; t->col[1]=c2; t->col[2]=c3; } }
+void gml_part_type_color_rgb(GmlParticleState *state,int id,double rmin,double rmax,double gmin,double gmax,double bmin,double bmax){
+  PType *t=pt(state,id); if(t){ t->color_mode=1; t->cmin[0]=rmin; t->cmax[0]=rmax; t->cmin[1]=gmin; t->cmax[1]=gmax; t->cmin[2]=bmin; t->cmax[2]=bmax; }
 }
-void gml_part_type_color_mix(int id,uint32_t c1,uint32_t c2){ PType *t=pt(id); if(t){ t->color_mode=2; t->mix_a=c1; t->mix_b=c2; } }
-void gml_part_type_color_hsv(int id,double hmin,double hmax,double smin,double smax,double vmin,double vmax){
-  PType *t=pt(id); if(t){ t->color_mode=3; t->cmin[0]=hmin; t->cmax[0]=hmax; t->cmin[1]=smin; t->cmax[1]=smax; t->cmin[2]=vmin; t->cmax[2]=vmax; }
+void gml_part_type_color_mix(GmlParticleState *state,int id,uint32_t c1,uint32_t c2){ PType *t=pt(state,id); if(t){ t->color_mode=2; t->mix_a=c1; t->mix_b=c2; } }
+void gml_part_type_color_hsv(GmlParticleState *state,int id,double hmin,double hmax,double smin,double smax,double vmin,double vmax){
+  PType *t=pt(state,id); if(t){ t->color_mode=3; t->cmin[0]=hmin; t->cmax[0]=hmax; t->cmin[1]=smin; t->cmax[1]=smax; t->cmin[2]=vmin; t->cmax[2]=vmax; }
 }
-void gml_part_type_alpha(int id,int na,double a1,double a2,double a3){ PType *t=pt(id); if(t){ t->nalpha=na<1?1:(na>3?3:na); t->alpha[0]=a1; t->alpha[1]=a2; t->alpha[2]=a3; } }
-void gml_part_type_blend(int id,int additive){ PType *t=pt(id); if(t) t->additive=additive; }
+void gml_part_type_alpha(GmlParticleState *state,int id,int na,double a1,double a2,double a3){ PType *t=pt(state,id); if(t){ t->nalpha=na<1?1:(na>3?3:na); t->alpha[0]=a1; t->alpha[1]=a2; t->alpha[2]=a3; } }
+void gml_part_type_blend(GmlParticleState *state,int id,int additive){ PType *t=pt(state,id); if(t) t->additive=additive; }
 
-int gml_part_system_create(void){
+int gml_part_system_create(GmlParticleState *state){
+  if(!state) return 0;
   for(int i=0;i<PS_MAX;i++) if(!g_ps[i].used){ PSys *s=&g_ps[i]; memset(s,0,sizeof *s); s->used=1; s->auto_update=1; s->auto_draw=1;
-    if(getenv("GML_LOG_PART")) fprintf(stderr,"[part] system create %d\n",i+1);
     return i+1; }
   return 0;
 }
-int gml_part_system_exists(int id){ return ps(id)!=NULL; }
-void gml_part_system_destroy(int id){ PSys *s=ps(id); if(s){ free(s->parts); memset(s,0,sizeof *s); } }
-void gml_part_system_clear(int id){ PSys *s=ps(id); if(s) s->n=0; }
-void gml_part_system_position(int id,double x,double y){ PSys *s=ps(id); if(s){ s->px=x; s->py=y; } }
-void gml_part_system_automatic_update(int id,int on){ PSys *s=ps(id); if(s) s->auto_update=on?1:0; }
-void gml_part_system_automatic_draw(int id,int on){ PSys *s=ps(id); if(s) s->auto_draw=on?1:0; }
-void gml_part_system_depth(int id,double depth){ PSys *s=ps(id); if(s){ s->depth=depth;
-  if(getenv("GML_LOG_PART")) fprintf(stderr,"[part] system %d depth %.0f\n",id,depth); } }
-int  gml_part_system_count(int id){ PSys *s=ps(id); return s? s->n : 0; }
-int  gml_part_system_auto_draw_nth(int nth,int *id,double *depth){
-  if(nth<0) return 0;
+int gml_part_system_exists(GmlParticleState *state,int id){ return ps(state,id)!=NULL; }
+void gml_part_system_destroy(GmlParticleState *state,int id){ PSys *s=ps(state,id); if(s){ free(s->parts); memset(s,0,sizeof *s); } }
+void gml_part_system_clear(GmlParticleState *state,int id){ PSys *s=ps(state,id); if(s) s->n=0; }
+void gml_part_system_position(GmlParticleState *state,int id,double x,double y){ PSys *s=ps(state,id); if(s){ s->px=x; s->py=y; } }
+void gml_part_system_automatic_update(GmlParticleState *state,int id,int on){ PSys *s=ps(state,id); if(s) s->auto_update=on?1:0; }
+void gml_part_system_automatic_draw(GmlParticleState *state,int id,int on){ PSys *s=ps(state,id); if(s) s->auto_draw=on?1:0; }
+void gml_part_system_depth(GmlParticleState *state,int id,double depth){ PSys *s=ps(state,id); if(s) s->depth=depth; }
+int gml_part_system_count(GmlParticleState *state,int id){ PSys *s=ps(state,id); return s? s->n : 0; }
+int gml_part_system_auto_draw_nth(GmlParticleState *state,int nth,int *id,double *depth){
+  if(!state || nth<0) return 0;
   for(int i=0;i<PS_MAX;i++) if(g_ps[i].used && g_ps[i].auto_draw){
     if(nth--==0){
       if(id) *id=i+1;
@@ -266,31 +228,31 @@ int  gml_part_system_auto_draw_nth(int nth,int *id,double *depth){
   return 0;
 }
 
-static void sys_spawn(PSys *s, double x, double y, int type, int number, int col){
-  PType *t=pt(type); if(!t || number<=0) return;
+static void sys_spawn(GmlParticleState *state,PSys *s,double x,double y,int type,int number,int col){
+  PType *t=pt(state,type); if(!t || number<=0) return;
   if(number>4000) number=4000;
   for(int k=0;k<number;k++){
     if(s->n>=s->cap){ int nc=s->cap? s->cap*2:64; Part *np=realloc(s->parts,(size_t)nc*sizeof(Part)); if(!np) return; s->parts=np; s->cap=nc; }
     Part *p=&s->parts[s->n++]; memset(p,0,sizeof *p);
     p->x=x; p->y=y; p->type=type;
-    p->speed=particle_range(t->sp_min,t->sp_max);
-    p->dir=particle_range(t->dir_min,t->dir_max);
-    p->ori=particle_range(t->ori_min,t->ori_max); p->ori_incr=t->ori_incr;
-    p->life=p->life0=floor(particle_range(t->life_min,t->life_max)+0.5); if(p->life<1) p->life=p->life0=1;
-    if(t->color_mode==1){ p->has_col=1; p->col_over=rgb_col((int)floor(particle_range(t->cmin[0],t->cmax[0])+0.5),(int)floor(particle_range(t->cmin[1],t->cmax[1])+0.5),(int)floor(particle_range(t->cmin[2],t->cmax[2])+0.5)); }
-    else if(t->color_mode==2){ p->has_col=1; p->col_over=mix_col(t->mix_a,t->mix_b,prnd()); }
-    else if(t->color_mode==3){ p->has_col=1; p->col_over=hsv_col(particle_range(t->cmin[0],t->cmax[0]),particle_range(t->cmin[1],t->cmax[1]),particle_range(t->cmin[2],t->cmax[2])); }
+    p->speed=particle_range(state,t->sp_min,t->sp_max);
+    p->dir=particle_range(state,t->dir_min,t->dir_max);
+    p->ori=particle_range(state,t->ori_min,t->ori_max); p->ori_incr=t->ori_incr;
+    p->life=p->life0=floor(particle_range(state,t->life_min,t->life_max)+0.5); if(p->life<1) p->life=p->life0=1;
+    if(t->color_mode==1){ p->has_col=1; p->col_over=rgb_col((int)floor(particle_range(state,t->cmin[0],t->cmax[0])+0.5),(int)floor(particle_range(state,t->cmin[1],t->cmax[1])+0.5),(int)floor(particle_range(state,t->cmin[2],t->cmax[2])+0.5)); }
+    else if(t->color_mode==2){ p->has_col=1; p->col_over=mix_col(t->mix_a,t->mix_b,prnd(state)); }
+    else if(t->color_mode==3){ p->has_col=1; p->col_over=hsv_col(particle_range(state,t->cmin[0],t->cmax[0]),particle_range(state,t->cmin[1],t->cmax[1]),particle_range(state,t->cmin[2],t->cmax[2])); }
     if(col>=0){ p->has_col=1; p->col_over=(uint32_t)col; }
-    p->size=particle_range(t->sz_min,t->sz_max); p->size_incr=t->sz_incr;
-    if(t->sprite>=0 && t->spr_random) (void)prnd();
-    p->random_start=(int)floor(prnd()*100001.0); /* inclusive classic irandom(100000) */
+    p->size=particle_range(state,t->sz_min,t->sz_max); p->size_incr=t->sz_incr;
+    if(t->sprite>=0 && t->spr_random) (void)prnd(state);
+    p->random_start=(int)floor(prnd(state)*100001.0); /* inclusive classic irandom(100000) */
     p->grav_amt=t->grav_amt; p->grav_dir=t->grav_dir;
   }
 }
-void gml_part_particles_create(int sysid,double x,double y,int type,int number){ PSys *s=ps(sysid); if(s) sys_spawn(s,x+s->px,y+s->py,type,number,-1); }
-void gml_part_particles_create_color(int sysid,double x,double y,int type,uint32_t col,int number){ PSys *s=ps(sysid); if(s) sys_spawn(s,x+s->px,y+s->py,type,number,(int)(col&0xFFFFFF)); }
+void gml_part_particles_create(GmlParticleState *state,int sysid,double x,double y,int type,int number){ PSys *s=ps(state,sysid); if(s) sys_spawn(state,s,x+s->px,y+s->py,type,number,-1); }
+void gml_part_particles_create_color(GmlParticleState *state,int sysid,double x,double y,int type,uint32_t col,int number){ PSys *s=ps(state,sysid); if(s) sys_spawn(state,s,x+s->px,y+s->py,type,number,(int)(col&0xFFFFFF)); }
 
-static void effect_room_metrics(int *width,int *height,int *speed){
+static void effect_room_metrics(GmlParticleState *state,int *width,int *height,int *speed){
   *width=640; *height=480; *speed=30;
   if(!g_particle_vm) return;
   GmlRoom room;
@@ -305,33 +267,31 @@ static void effect_room_metrics(int *width,int *height,int *speed){
   }
 }
 
-void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t color){
+void gml_effect_create(GmlParticleState *state,int above,int kind,double x,double y,int size,uint32_t color){
+  if(!state) return;
   int layer=above?1:0; if(kind<0)kind=0; if(kind>11)kind=11; if(size<0)size=0; if(size>2)size=2;
-  if(getenv("GML_LOG_PART"))
-    fprintf(stderr,"[part] effect kind=%d pos=(%.1f,%.1f) size=%d color=%06x layer=%d\n",
-            kind,x,y,size,color&0xFFFFFF,layer);
   if(!g_effect_sys[layer]){
-    g_effect_sys[layer]=gml_part_system_create();
-    gml_part_system_depth(g_effect_sys[layer],above?-100000.0:100000.0);
+    g_effect_sys[layer]=gml_part_system_create(state);
+    gml_part_system_depth(state,g_effect_sys[layer],above?-100000.0:100000.0);
   }
   int type=g_effect_type[layer][kind][size];
   if(!type){
-    type=gml_part_type_create(); if(!type) return;
+    type=gml_part_type_create(state); if(!type) return;
     g_effect_type[layer][kind][size]=type;
     double scale=size==0?.8:(size==1?1.6:2.8);
-    gml_part_type_shape(type,0);
-    gml_part_type_size(type,scale,scale*1.8,kind==6||kind==7?-.03:.02,0);
-    gml_part_type_life(type,kind==4||kind==5?35:18,kind==4||kind==5?60:34);
-    gml_part_type_alpha(type,3,0.0,0.9,0.0);
-    gml_part_type_direction(type,0,360,0,0);
-    if(kind==4||kind==5){ gml_part_type_speed(type,.2*scale,1.0*scale,-.01,0); gml_part_type_gravity(type,.025,90); }
-    else if(kind==10){ gml_part_type_speed(type,4*scale,7*scale,0,0); gml_part_type_direction(type,250,290,0,0); }
-    else if(kind==11){ gml_part_type_speed(type,.3*scale,1.2*scale,0,0); gml_part_type_direction(type,240,300,0,0); }
-    else gml_part_type_speed(type,.5*scale,2.5*scale,-.03,0);
+    gml_part_type_shape(state,type,0);
+    gml_part_type_size(state,type,scale,scale*1.8,kind==6||kind==7?-.03:.02,0);
+    gml_part_type_life(state,type,kind==4||kind==5?35:18,kind==4||kind==5?60:34);
+    gml_part_type_alpha(state,type,3,0.0,0.9,0.0);
+    gml_part_type_direction(state,type,0,360,0,0);
+    if(kind==4||kind==5){ gml_part_type_speed(state,type,.2*scale,1.0*scale,-.01,0); gml_part_type_gravity(state,type,.025,90); }
+    else if(kind==10){ gml_part_type_speed(state,type,4*scale,7*scale,0,0); gml_part_type_direction(state,type,250,290,0,0); }
+    else if(kind==11){ gml_part_type_speed(state,type,.3*scale,1.2*scale,0,0); gml_part_type_direction(state,type,240,300,0,0); }
+    else gml_part_type_speed(state,type,.5*scale,2.5*scale,-.03,0);
   }
   if(kind==0){
-    PType *burst=pt(type); if(!burst) return;
-    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    PType *burst=pt(state,type); if(!burst) return;
+    int width,height,speed; effect_room_metrics(state,&width,&height,&speed);
     (void)width; (void)height;
     double cadence=fmax(30.0/speed,1.0);
     static const double initial_size[3]={.1,.3,.4};
@@ -352,8 +312,8 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     burst->additive=0;
 
     int core_id=g_effect_explosion_core[layer][size];
-    if(!core_id){ core_id=gml_part_type_create(); g_effect_explosion_core[layer][size]=core_id; }
-    PType *core=pt(core_id); if(!core) return;
+    if(!core_id){ core_id=gml_part_type_create(state); g_effect_explosion_core[layer][size]=core_id; }
+    PType *core=pt(state,core_id); if(!core) return;
     static const double core_growth[3]={.10,.20,.40};
     static const double core_life[3]={15,17,20};
     core->sprite=-1; core->shape=10;
@@ -366,13 +326,13 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     core->alpha[0]=.8; core->alpha[1]=.4; core->alpha[2]=0; core->nalpha=3;
     core->ori_min=0; core->ori_max=360; core->ori_incr=core->ori_wig=0; core->ori_rel=0;
     core->additive=0;
-    gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,20);
-    gml_part_particles_create_color(g_effect_sys[layer],x,y,core_id,0,1);
+    gml_part_particles_create_color(state,g_effect_sys[layer],x,y,type,color,20);
+    gml_part_particles_create_color(state,g_effect_sys[layer],x,y,core_id,0,1);
     return;
   }
   if(kind==1 || kind==2){
-    PType *wave=pt(type); if(!wave) return;
-    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    PType *wave=pt(state,type); if(!wave) return;
+    int width,height,speed; effect_room_metrics(state,&width,&height,&speed);
     (void)width; (void)height;
     double cadence=fmax(30.0/speed,1.0);
     static const double growth[2][3]={{.15,.25,.40},{.20,.35,.60}};
@@ -389,12 +349,12 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     wave->alpha[0]=1; wave->alpha[1]=.5; wave->alpha[2]=0; wave->nalpha=3;
     wave->ori_min=wave->ori_max=wave->ori_incr=wave->ori_wig=0; wave->ori_rel=0;
     wave->additive=0;
-    gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,1);
+    gml_part_particles_create_color(state,g_effect_sys[layer],x,y,type,color,1);
     return;
   }
   if(kind==3){
-    PType *firework=pt(type); if(!firework) return;
-    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    PType *firework=pt(state,type); if(!firework) return;
+    int width,height,speed; effect_room_metrics(state,&width,&height,&speed);
     (void)width; (void)height;
     double cadence=fmax(30.0/speed,1.0);
     static const double max_speed[3]={3,6,8};
@@ -414,12 +374,12 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     firework->alpha[0]=1; firework->alpha[1]=.7; firework->alpha[2]=.4; firework->nalpha=3;
     firework->ori_min=firework->ori_max=firework->ori_incr=firework->ori_wig=0;
     firework->ori_rel=0; firework->additive=0;
-    gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,count[size]);
+    gml_part_particles_create_color(state,g_effect_sys[layer],x,y,type,color,count[size]);
     return;
   }
   if(kind==4 || kind==5){
-    PType *smoke=pt(type); if(!smoke) return;
-    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    PType *smoke=pt(state,type); if(!smoke) return;
+    int width,height,speed; effect_room_metrics(state,&width,&height,&speed);
     (void)width; (void)height;
     double cadence=fmax(30.0/speed,1.0);
     static const double min_size[3]={.2,.4,.4};
@@ -447,18 +407,18 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     smoke->alpha[0]=.4; smoke->alpha[1]=.2; smoke->alpha[2]=0; smoke->nalpha=3;
     smoke->ori_min=smoke->ori_max=smoke->ori_incr=smoke->ori_wig=0; smoke->ori_rel=0;
     smoke->additive=0;
-    PSys *system=ps(g_effect_sys[layer]);
+    PSys *system=ps(state,g_effect_sys[layer]);
     int half=spread[size]/2;
     for(int i=0;system && i<count[size];i++){
-      double dx=floor(prnd()*spread[size])-half;
-      double dy=floor(prnd()*spread[size])-half;
-      sys_spawn(system,x+dx,y+dy,type,1,(int)(color&0xFFFFFF));
+      double dx=floor(prnd(state)*spread[size])-half;
+      double dy=floor(prnd(state)*spread[size])-half;
+      sys_spawn(state,system,x+dx,y+dy,type,1,(int)(color&0xFFFFFF));
     }
     return;
   }
   if(kind==6 || kind==7 || kind==8){
-    PType *flash=pt(type); if(!flash) return;
-    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    PType *flash=pt(state,type); if(!flash) return;
+    int width,height,speed; effect_room_metrics(state,&width,&height,&speed);
     (void)width; (void)height;
     double cadence=fmax(30.0/speed,1.0);
     static const double initial_size[3]={.4,.75,1.2};
@@ -474,12 +434,12 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     flash->alpha[0]=flash->alpha[1]=flash->alpha[2]=1; flash->nalpha=3;
     flash->ori_min=0; flash->ori_max=360; flash->ori_incr=flash->ori_wig=0; flash->ori_rel=0;
     flash->additive=0;
-    gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,1);
+    gml_part_particles_create_color(state,g_effect_sys[layer],x,y,type,color,1);
     return;
   }
   if(kind==9){
-    PType *cloud=pt(type); if(!cloud) return;
-    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    PType *cloud=pt(state,type); if(!cloud) return;
+    int width,height,speed; effect_room_metrics(state,&width,&height,&speed);
     (void)width; (void)height;
     double cadence=fmax(30.0/speed,1.0);
     static const double cloud_size[3]={2,4,8};
@@ -493,12 +453,12 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     cloud->alpha[0]=0; cloud->alpha[1]=.3; cloud->alpha[2]=0; cloud->nalpha=3;
     cloud->ori_min=cloud->ori_max=cloud->ori_incr=cloud->ori_wig=0; cloud->ori_rel=0;
     cloud->additive=0;
-    gml_part_particles_create_color(g_effect_sys[layer],x,y,type,color,1);
+    gml_part_particles_create_color(state,g_effect_sys[layer],x,y,type,color,1);
     return;
   }
   if(kind==10){
-    PType *rain=pt(type); if(!rain) return;
-    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    PType *rain=pt(state,type); if(!rain) return;
+    int width,height,speed; effect_room_metrics(state,&width,&height,&speed);
     double cadence=fmax(30.0/speed,1.0);
     rain->shape=3;
     rain->sz_min=.2; rain->sz_max=.3; rain->sz_incr=rain->sz_wig=0;
@@ -508,17 +468,17 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     rain->alpha[0]=rain->alpha[1]=rain->alpha[2]=.4; rain->nalpha=3;
     rain->life_min=rain->life_max=fmax(1.0,floor(.2*height/cadence+.5));
     int number=size==0?2:(size==1?5:9);
-    PSys *system=ps(g_effect_sys[layer]);
+    PSys *system=ps(state,g_effect_sys[layer]);
     for(int i=0;system && i<number;i++){
-      double spawn_x=prnd()*width*1.2;
-      double spawn_y=-30+floor(prnd()*20);
-      sys_spawn(system,spawn_x,spawn_y,type,1,(int)(color&0xFFFFFF));
+      double spawn_x=prnd(state)*width*1.2;
+      double spawn_y=-30+floor(prnd(state)*20);
+      sys_spawn(state,system,spawn_x,spawn_y,type,1,(int)(color&0xFFFFFF));
     }
     return;
   }
   if(kind==11){
-    PType *snow=pt(type); if(!snow) return;
-    int width,height,speed; effect_room_metrics(&width,&height,&speed);
+    PType *snow=pt(state,type); if(!snow) return;
+    int width,height,speed; effect_room_metrics(state,&width,&height,&speed);
     double cadence=fmax(30.0/speed,1.0);
     snow->sprite=-1; snow->shape=13;
     snow->sz_min=.1; snow->sz_max=.25; snow->sz_incr=snow->sz_wig=0;
@@ -532,43 +492,43 @@ void gml_effect_create(int above,int kind,double x,double y,int size,uint32_t co
     snow->ori_min=0; snow->ori_max=360; snow->ori_incr=snow->ori_wig=0;
     snow->ori_rel=0; snow->additive=0;
     int number=size==0?1:(size==1?3:7);
-    PSys *system=ps(g_effect_sys[layer]);
+    PSys *system=ps(state,g_effect_sys[layer]);
     for(int i=0;system && i<number;i++){
-      double spawn_x=prnd()*width*1.2-60;
-      double spawn_y=floor(prnd()*20)-30;
-      sys_spawn(system,spawn_x,spawn_y,type,1,(int)(color&0xFFFFFF));
+      double spawn_x=prnd(state)*width*1.2-60;
+      double spawn_y=floor(prnd(state)*20)-30;
+      sys_spawn(state,system,spawn_x,spawn_y,type,1,(int)(color&0xFFFFFF));
     }
     return;
   }
 }
 
-int  gml_part_emitter_create(int sysid){ (void)sysid; for(int i=0;i<PE_MAX;i++) if(!g_pe[i].used){ memset(&g_pe[i],0,sizeof g_pe[i]); g_pe[i].used=1; g_pe[i].sys=sysid; return i+1; } return 0; }
-int  gml_part_emitter_exists(int sysid,int em){ PEmit *e=pe(em); return e && (sysid<=0 || e->sys==sysid); }
-void gml_part_emitter_destroy(int em){ PEmit *e=pe(em); if(e) e->used=0; }
-void gml_part_emitter_destroy_all(int sysid){ for(int i=0;i<PE_MAX;i++) if(g_pe[i].used && (sysid<=0 || g_pe[i].sys==sysid)) g_pe[i].used=0; }
-void gml_part_emitter_clear(int sysid,int em){ PEmit *e=pe(em); if(e && (sysid<=0 || e->sys==sysid)){ int used=e->used, sys=e->sys; memset(e,0,sizeof(*e)); e->used=used; e->sys=sys; } }
-void gml_part_emitter_region(int sysid,int em,double xmin,double xmax,double ymin,double ymax,int shape,int dist){ (void)sysid; PEmit *e=pe(em); if(e){ e->xmin=xmin; e->xmax=xmax; e->ymin=ymin; e->ymax=ymax; e->shape=shape; e->dist=dist; } }
-static void emit_point(PEmit *e, double *ox, double *oy){
+int gml_part_emitter_create(GmlParticleState *state,int sysid){ (void)sysid; if(!state) return 0; for(int i=0;i<PE_MAX;i++) if(!g_pe[i].used){ memset(&g_pe[i],0,sizeof g_pe[i]); g_pe[i].used=1; g_pe[i].sys=sysid; return i+1; } return 0; }
+int gml_part_emitter_exists(GmlParticleState *state,int sysid,int em){ PEmit *e=pe(state,em); return e && (sysid<=0 || e->sys==sysid); }
+void gml_part_emitter_destroy(GmlParticleState *state,int em){ PEmit *e=pe(state,em); if(e) e->used=0; }
+void gml_part_emitter_destroy_all(GmlParticleState *state,int sysid){ if(!state) return; for(int i=0;i<PE_MAX;i++) if(g_pe[i].used && (sysid<=0 || g_pe[i].sys==sysid)) g_pe[i].used=0; }
+void gml_part_emitter_clear(GmlParticleState *state,int sysid,int em){ PEmit *e=pe(state,em); if(e && (sysid<=0 || e->sys==sysid)){ int used=e->used, sys=e->sys; memset(e,0,sizeof(*e)); e->used=used; e->sys=sys; } }
+void gml_part_emitter_region(GmlParticleState *state,int sysid,int em,double xmin,double xmax,double ymin,double ymax,int shape,int dist){ (void)sysid; PEmit *e=pe(state,em); if(e){ e->xmin=xmin; e->xmax=xmax; e->ymin=ymin; e->ymax=ymax; e->shape=shape; e->dist=dist; } }
+static void emit_point(GmlParticleState *state,PEmit *e,double *ox,double *oy){
   /* Sample normalized coordinates even for a zero-area region: the classic emitter advances both
    * axes before mapping them into the bounds. Diamond/ellipse still use the bounding rectangle. */
-  double nx=prnd(),ny=prnd();
+  double nx=prnd(state),ny=prnd(state);
   *ox=e->xmin+nx*(e->xmax-e->xmin);
   *oy=e->ymin+ny*(e->ymax-e->ymin);
 }
-static void emitter_burst(PSys *s,PEmit *e,int type,int number){
+static void emitter_burst(GmlParticleState *state,PSys *s,PEmit *e,int type,int number){
   if(!s||!e||number<=0) return;
   if(number>4000) number=4000;
-  for(int k=0;k<number;k++){ double x,y; emit_point(e,&x,&y); sys_spawn(s,x+s->px,y+s->py,type,1,-1); }
+  for(int k=0;k<number;k++){ double x,y; emit_point(state,e,&x,&y); sys_spawn(state,s,x+s->px,y+s->py,type,1,-1); }
 }
-void gml_part_emitter_burst(int sysid,int em,int type,int number){ PSys *s=ps(sysid); PEmit *e=pe(em); emitter_burst(s,e,type,number); }
-void gml_part_emitter_stream(int sysid,int em,int type,int number){ PEmit *e=pe(em); if(e && (sysid<=0 || e->sys==sysid)){ e->sys=sysid; e->stream_type=type; e->stream_number=number; } }
+void gml_part_emitter_burst(GmlParticleState *state,int sysid,int em,int type,int number){ PSys *s=ps(state,sysid); PEmit *e=pe(state,em); emitter_burst(state,s,e,type,number); }
+void gml_part_emitter_stream(GmlParticleState *state,int sysid,int em,int type,int number){ PEmit *e=pe(state,em); if(e && (sysid<=0 || e->sys==sysid)){ e->sys=sysid; e->stream_type=type; e->stream_number=number; } }
 
-static void emit_streams(int sysid, PSys *s){
+static void emit_streams(GmlParticleState *state,int sysid,PSys *s){
   for(int i=0;i<PE_MAX;i++){
     PEmit *e=&g_pe[i];
     if(!e->used || e->sys!=sysid || e->stream_number==0) continue;
-    if(e->stream_number>0) emitter_burst(s,e,e->stream_type,e->stream_number);
-    else { int den=-e->stream_number; if(den>0 && prnd() < 1.0/(double)den) emitter_burst(s,e,e->stream_type,1); }
+    if(e->stream_number>0) emitter_burst(state,s,e,e->stream_type,e->stream_number);
+    else { int den=-e->stream_number; if(den>0 && prnd(state) < 1.0/(double)den) emitter_burst(state,s,e,e->stream_type,1); }
   }
 }
 
@@ -581,22 +541,22 @@ static double particle_wiggle(long long tick,int period,int quarter){
 
 /* Positive child counts are exact. A negative count means
  * one child with probability 1/abs(number) on each eligible update. */
-static void spawn_child_rule(PSys *s,double x,double y,int type,int number){
-  if(number>0) sys_spawn(s,x,y,type,number,-1);
+static void spawn_child_rule(GmlParticleState *state,PSys *s,double x,double y,int type,int number){
+  if(number>0) sys_spawn(state,s,x,y,type,number,-1);
   else if(number<0){
     int den=number==INT_MIN ? INT_MAX : -number;
-    if(den>0 && prnd()<1.0/(double)den) sys_spawn(s,x,y,type,1,-1);
+    if(den>0 && prnd(state)<1.0/(double)den) sys_spawn(state,s,x,y,type,1,-1);
   }
 }
 
-static void update_sys(int sysid, PSys *s){
+static void update_sys(GmlParticleState *state,int sysid,PSys *s){
   /* Child particles are appended while their parent is being advanced so RNG
    * consumption retains established order. Only the population present at entry
    * is updated; newborn particles are drawn once at age zero and begin moving
    * on the following step. */
   int initial_n=s->n;
   for(int i=0;i<initial_n;i++){
-    Part *p=&s->parts[i]; PType *t=pt(p->type);
+    Part *p=&s->parts[i]; PType *t=pt(state,p->type);
     if(t){
       p->speed += t->sp_incr; if(p->speed<0) p->speed=0;
       p->dir += t->dir_incr; p->ori += p->ori_incr;
@@ -622,8 +582,8 @@ static void update_sys(int sysid, PSys *s){
     int step_number=t?t->step_number:0, step_type=t?t->step_type:0;
     int death_number=t?t->death_number:0, death_type=t?t->death_type:0;
     int dead=p->life<=0;
-    if(step_number) spawn_child_rule(s,child_x,child_y,step_type,step_number);
-    if(dead && death_number) spawn_child_rule(s,child_x,child_y,death_type,death_number);
+    if(step_number) spawn_child_rule(state,s,child_x,child_y,step_type,step_number);
+    if(dead && death_number) spawn_child_rule(state,s,child_x,child_y,death_type,death_number);
     if(dead) s->parts[i].type=0; /* reacquire after a possible realloc */
   }
   /* Compact dead parents without pulling newborn particles into the range
@@ -639,10 +599,10 @@ static void update_sys(int sysid, PSys *s){
   s->n=write+newborn;
   /* Stream particles are born after the current population advances. They are therefore drawn at
    * their initial position/alpha once and only start ageing on the following particle update. */
-  emit_streams(sysid,s);
+  emit_streams(state,sysid,s);
 }
-void gml_part_system_update(int id){ PSys *s=ps(id); if(s) update_sys(id,s); }
-void gml_part_update_all(void){ for(int i=0;i<PS_MAX;i++) if(g_ps[i].used && g_ps[i].auto_update) update_sys(i+1,&g_ps[i]); }
+void gml_part_system_update(GmlParticleState *state,int id){ PSys *s=ps(state,id); if(s) update_sys(state,id,s); }
+void gml_part_update_all(GmlParticleState *state){ if(!state) return; for(int i=0;i<PS_MAX;i++) if(g_ps[i].used && g_ps[i].auto_update) update_sys(state,i+1,&g_ps[i]); }
 
 /* interpolate a channel over the particle's age (0 at birth → 1 at death) across up to 3 keys. */
 static double keyf(double age, int nk, double k0, double k1, double k2){
@@ -698,10 +658,8 @@ static void plot_square(GmlRender *r, int cx, int cy, int half, uint32_t col, do
             (((bg*ia+dg*iia)/255)<<8)|((bb*ia+db*iia)/255); } }
 }
 
-static double sample_ring_shape(double x,double y){
-  static uint8_t mask[64*64];
-  static int ready;
-  if(!ready){
+static double sample_ring_shape(GmlParticleState *state,double x,double y){
+  if(!g_ring_shape_mask_ready){
     /* Classic particle shapes are filtered from a 64x64 cell.  Build the soft ring
      * procedurally, then sample that cell below so small particles retain the same
      * filtered edge and thickness instead of turning into scale-dependent vectors. */
@@ -711,20 +669,20 @@ static double sample_ring_shape(double x,double y){
       double coverage=(1.0-fabs(radial-0.795)/0.085)*0.90;
       if(coverage<0.0) coverage=0.0;
       if(coverage>1.0) coverage=1.0;
-      mask[py*64+px]=(uint8_t)(coverage*255.0+0.5);
+      g_ring_shape_mask[py*64+px]=(uint8_t)(coverage*255.0+0.5);
     }
-    ready=1;
+    g_ring_shape_mask_ready=1;
   }
   double sx=x+31.5,sy=y+31.5;
   int ix=(int)floor(sx),iy=(int)floor(sy);
   if(ix<0 || iy<0 || ix>=63 || iy>=63) return 0.0;
   double fx=sx-ix,fy=sy-iy;
-  double a=mask[iy*64+ix]*(1.0-fx)+mask[iy*64+ix+1]*fx;
-  double b=mask[(iy+1)*64+ix]*(1.0-fx)+mask[(iy+1)*64+ix+1]*fx;
+  double a=g_ring_shape_mask[iy*64+ix]*(1.0-fx)+g_ring_shape_mask[iy*64+ix+1]*fx;
+  double b=g_ring_shape_mask[(iy+1)*64+ix]*(1.0-fx)+g_ring_shape_mask[(iy+1)*64+ix+1]*fx;
   return (a*(1.0-fy)+b*fy)/255.0;
 }
 
-static void plot_circle_shape(GmlRender *r,double cx,double cy,double xs,double ys,
+static void plot_circle_shape(GmlParticleState *state,GmlRender *r,double cx,double cy,double xs,double ys,
                               uint32_t color,double alpha,int hollow){
   double rx=32.0*fabs(xs),ry=32.0*fabs(ys);
   if(!r || rx<0.25 || ry<0.25 || alpha<=0) return;
@@ -734,7 +692,7 @@ static void plot_circle_shape(GmlRender *r,double cx,double cy,double xs,double 
   for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
     double nx=(x+0.5-cx)/rx,ny=(y+0.5-cy)/ry,d=sqrt(nx*nx+ny*ny);
     double coverage;
-    if(hollow) coverage=sample_ring_shape(nx*32.0,ny*32.0);
+    if(hollow) coverage=sample_ring_shape(state,nx*32.0,ny*32.0);
     else coverage=(1.0-d)*fmin(rx,ry);
     if(coverage<=0) continue;
     if(coverage>1) coverage=1;
@@ -806,16 +764,11 @@ static void plot_line_shape(GmlRender *r,double cx,double cy,double xs,double ys
   }
 }
 
-/* The textured classic shapes occupy a 64x64 cell. Generate the soft,
- * irregular explosion field procedurally at startup. Keeping the field in a
- * small mask also avoids evaluating trigonometry for every live particle and
- * every frame. */
-static uint8_t explosion_shape_mask[64*64];
-static int explosion_shape_mask_ready;
-static uint8_t glint_shape_mask[3][64*64];
-static unsigned glint_shape_mask_ready;
-static uint8_t snow_shape_mask[64*64];
-static int snow_shape_mask_ready;
+/* The textured classic shapes occupy a 64x64 cell.  Generate the soft,
+ * irregular explosion field from an analytic function at startup rather than
+ * shipping a precomputed bitmap.  Keeping the field in a small mask also avoids
+ * evaluating trigonometry for every live particle and every frame. Each VM owns
+ * its generated masks so initialization and interleaving are instance-safe. */
 
 static double unit_clamp(double v){ return v<0?0:(v>1?1:v); }
 static double smooth_unit(double v){ v=unit_clamp(v); return v*v*(3.0-2.0*v); }
@@ -827,14 +780,14 @@ static double point_segment_distance(double px,double py,double ax,double ay,dou
   return hypot(px-(ax+t*dx),py-(ay+t*dy));
 }
 
-/* Generate the classic glint family procedurally inside transparent 64x64
- * particle cells: a faceted five-point star, a soft radial flare and a fine
- * multi-ray spark. */
-static void prepare_glint_shape_mask(int shape){
+/* Generate the classic glint family from geometry rather than bundling
+ * precomputed textures.  All masks keep the transparent 64x64 particle cell:
+ * a faceted five-point star, a soft radial flare and a fine multi-ray spark. */
+static void prepare_glint_shape_mask(GmlParticleState *state,int shape){
   int slot=shape==4?0:(shape==8?1:2);
   unsigned bit=1u<<slot;
-  if(glint_shape_mask_ready&bit) return;
-  uint8_t *mask=glint_shape_mask[slot];
+  if(g_glint_shape_mask_ready&bit) return;
+  uint8_t *mask=g_glint_shape_mask[slot];
   for(int y=0;y<64;y++) for(int x=0;x<64;x++){
     double px=x+.5-32.0,py=y+.5-32.0;
     double radius=hypot(px,py),angle=atan2(py,px);
@@ -878,11 +831,11 @@ static void prepare_glint_shape_mask(int shape){
     }
     mask[y*64+x]=(uint8_t)(255.0*unit_clamp(coverage)+.5);
   }
-  glint_shape_mask_ready|=bit;
+  g_glint_shape_mask_ready|=bit;
 }
 
-static void prepare_explosion_shape_mask(void){
-  if(explosion_shape_mask_ready) return;
+static void prepare_explosion_shape_mask(GmlParticleState *state){
+  if(g_explosion_shape_mask_ready) return;
   for(int y=0;y<64;y++) for(int x=0;x<64;x++){
     double nx=(x+.5-32.0)/32.0,ny=(y+.5-32.0)/32.0;
     double radius=hypot(nx,ny),angle=atan2(ny,nx);
@@ -893,44 +846,44 @@ static void prepare_explosion_shape_mask(void){
                        *sin(nx*5.0-ny*17.0-.3)
                        + .08*cos(nx*21.0+ny*11.0);
     double centre=.82+.18*smooth_unit(radius*3.0);
-    explosion_shape_mask[y*64+x]=(uint8_t)(255.0*unit_clamp(edge*grain*centre*.92)+.5);
+    g_explosion_shape_mask[y*64+x]=(uint8_t)(255.0*unit_clamp(edge*grain*centre*.92)+.5);
   }
-  explosion_shape_mask_ready=1;
+  g_explosion_shape_mask_ready=1;
 }
 
 /* The classic snow cell is a soft, filled six-lobed flake rather than a
  * branching line drawing.  A radial boundary keeps the generated mask
  * symmetric under rotation while the broad edge reproduces its soft halo. */
-static void prepare_snow_shape_mask(void){
-  if(snow_shape_mask_ready) return;
+static void prepare_snow_shape_mask(GmlParticleState *state){
+  if(g_snow_shape_mask_ready) return;
   for(int y=0;y<64;y++) for(int x=0;x<64;x++){
     double px=x+.5-32.0,py=y+.5-32.0;
     double radius=hypot(px,py),angle=atan2(py,px);
     double boundary=23.0-3.0*cos(angle*6.0);
     double coverage=smooth_unit((boundary-radius)*.07+.5);
-    snow_shape_mask[y*64+x]=(uint8_t)(255.0*coverage+.5);
+    g_snow_shape_mask[y*64+x]=(uint8_t)(255.0*coverage+.5);
   }
-  snow_shape_mask_ready=1;
+  g_snow_shape_mask_ready=1;
 }
 
-static double sample_explosion_shape(double x,double y){
-  prepare_explosion_shape_mask();
+static double sample_explosion_shape(GmlParticleState *state,double x,double y){
+  prepare_explosion_shape_mask(state);
   double tx=x+31.5,ty=y+31.5;
   if(tx<0 || ty<0 || tx>63 || ty>63) return 0;
   int x0=(int)floor(tx),y0=(int)floor(ty);
   int x1=x0<63?x0+1:x0,y1=y0<63?y0+1:y0;
   double fx=tx-x0,fy=ty-y0;
-  double a=explosion_shape_mask[y0*64+x0];
-  double b=explosion_shape_mask[y0*64+x1];
-  double c=explosion_shape_mask[y1*64+x0];
-  double d=explosion_shape_mask[y1*64+x1];
+  double a=g_explosion_shape_mask[y0*64+x0];
+  double b=g_explosion_shape_mask[y0*64+x1];
+  double c=g_explosion_shape_mask[y1*64+x0];
+  double d=g_explosion_shape_mask[y1*64+x1];
   return ((a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy)/255.0;
 }
 
-static double sample_glint_shape(int shape,double x,double y){
-  prepare_glint_shape_mask(shape);
+static double sample_glint_shape(GmlParticleState *state,int shape,double x,double y){
+  prepare_glint_shape_mask(state,shape);
   int slot=shape==4?0:(shape==8?1:2);
-  const uint8_t *mask=glint_shape_mask[slot];
+  const uint8_t *mask=g_glint_shape_mask[slot];
   double tx=x+31.5,ty=y+31.5;
   if(tx<0 || ty<0 || tx>63 || ty>63) return 0;
   int x0=(int)floor(tx),y0=(int)floor(ty);
@@ -941,19 +894,19 @@ static double sample_glint_shape(int shape,double x,double y){
   return ((a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy)/255.0;
 }
 
-static double sample_snow_shape(double x,double y){
-  prepare_snow_shape_mask();
+static double sample_snow_shape(GmlParticleState *state,double x,double y){
+  prepare_snow_shape_mask(state);
   double tx=x+31.5,ty=y+31.5;
   if(tx<0 || ty<0 || tx>63 || ty>63) return 0;
   int x0=(int)floor(tx),y0=(int)floor(ty);
   int x1=x0<63?x0+1:x0,y1=y0<63?y0+1:y0;
   double fx=tx-x0,fy=ty-y0;
-  double a=snow_shape_mask[y0*64+x0],b=snow_shape_mask[y0*64+x1];
-  double c=snow_shape_mask[y1*64+x0],d=snow_shape_mask[y1*64+x1];
+  double a=g_snow_shape_mask[y0*64+x0],b=g_snow_shape_mask[y0*64+x1];
+  double c=g_snow_shape_mask[y1*64+x0],d=g_snow_shape_mask[y1*64+x1];
   return ((a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy)/255.0;
 }
 
-static void plot_explosion_shape(GmlRender *r,double cx,double cy,double xs,double ys,
+static void plot_explosion_shape(GmlParticleState *state,GmlRender *r,double cx,double cy,double xs,double ys,
                                  double angle,uint32_t color,double alpha){
   if(!r || !r->fb || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
   double rad=DEG2RAD(angle),co=cos(rad),si=sin(rad);
@@ -968,12 +921,12 @@ static void plot_explosion_shape(GmlRender *r,double cx,double cy,double xs,doub
   for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
     double dx=x+.5-cx,dy=y+.5-cy;
     double lx=co*dx-si*dy,ly=si*dx+co*dy;
-    double coverage=sample_explosion_shape(lx/xs,ly/ys);
+    double coverage=sample_explosion_shape(state,lx/xs,ly/ys);
     if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
   }
 }
 
-static void plot_glint_shape(GmlRender *r,int shape,double cx,double cy,double xs,double ys,
+static void plot_glint_shape(GmlParticleState *state,GmlRender *r,int shape,double cx,double cy,double xs,double ys,
                              double angle,uint32_t color,double alpha){
   if(!r || !r->fb || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
   double rad=DEG2RAD(angle),co=cos(rad),si=sin(rad);
@@ -988,12 +941,12 @@ static void plot_glint_shape(GmlRender *r,int shape,double cx,double cy,double x
   for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
     double dx=x+.5-cx,dy=y+.5-cy;
     double lx=co*dx-si*dy,ly=si*dx+co*dy;
-    double coverage=sample_glint_shape(shape,lx/xs,ly/ys);
+    double coverage=sample_glint_shape(state,shape,lx/xs,ly/ys);
     if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
   }
 }
 
-static void plot_snow_shape(GmlRender *r,double cx,double cy,double xs,double ys,
+static void plot_snow_shape(GmlParticleState *state,GmlRender *r,double cx,double cy,double xs,double ys,
                             double angle,uint32_t color,double alpha){
   if(!r || !r->fb || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
   double rad=DEG2RAD(angle),co=cos(rad),si=sin(rad);
@@ -1008,14 +961,14 @@ static void plot_snow_shape(GmlRender *r,double cx,double cy,double xs,double ys
   for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
     double dx=x+.5-cx,dy=y+.5-cy;
     double lx=co*dx-si*dy,ly=si*dx+co*dy;
-    double coverage=sample_snow_shape(lx/xs,ly/ys);
+    double coverage=sample_snow_shape(state,lx/xs,ly/ys);
     if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
   }
 }
 
-void gml_part_system_drawit(GmlRender *r, int id){
-  PSys *s=ps(id); if(!s||!r) return;
-  for(int i=0;i<s->n;i++){ Part *p=&s->parts[i]; PType *t=pt(p->type); if(!t) continue;
+void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
+  PSys *s=ps(state,id); if(!s||!r) return;
+  for(int i=0;i<s->n;i++){ Part *p=&s->parts[i]; PType *t=pt(state,p->type); if(!t) continue;
     double age = p->life0>0 ? (p->life0-p->life)/p->life0 : 0; if(age<0)age=0; if(age>1)age=1;
     long long timer=(long long)floor(p->life0-p->life);
     double draw_size=p->size;
@@ -1056,7 +1009,7 @@ void gml_part_system_drawit(GmlRender *r, int id){
       uint32_t col = p->has_col ? p->col_over : keyc(age,t);
       gml_render_maybe_prepare_draw(r);
       if(t->shape==1 || t->shape==5 || t->shape==6 || t->shape==7){
-        plot_circle_shape(r,p->x-r->cam_x,p->y-r->cam_y,
+        plot_circle_shape(state,r,p->x-r->cam_x,p->y-r->cam_y,
                           draw_size*t->xscale,draw_size*t->yscale,col,alpha,t->shape==5||t->shape==6);
       } else if(t->shape==3){
         double angle=draw_ori+(t->ori_rel?p->dir:0);
@@ -1064,47 +1017,66 @@ void gml_part_system_drawit(GmlRender *r, int id){
                         draw_size*t->xscale,draw_size*t->yscale,angle,col,alpha);
       } else if(t->shape==4 || t->shape==8 || t->shape==9){
         double angle=draw_ori+(t->ori_rel?p->dir:0);
-        plot_glint_shape(r,t->shape,p->x-r->cam_x,p->y-r->cam_y,
+        plot_glint_shape(state,r,t->shape,p->x-r->cam_x,p->y-r->cam_y,
                          draw_size*t->xscale,draw_size*t->yscale,angle,col,alpha);
       } else if(t->shape==10){
         double angle=draw_ori+(t->ori_rel?p->dir:0);
-        plot_explosion_shape(r,p->x-r->cam_x,p->y-r->cam_y,
+        plot_explosion_shape(state,r,p->x-r->cam_x,p->y-r->cam_y,
                              draw_size*t->xscale,draw_size*t->yscale,angle,col,alpha);
       } else if(t->shape==13){
         double angle=draw_ori+(t->ori_rel?p->dir:0);
-        plot_snow_shape(r,p->x-r->cam_x,p->y-r->cam_y,
+        plot_snow_shape(state,r,p->x-r->cam_x,p->y-r->cam_y,
                         draw_size*t->xscale,draw_size*t->yscale,angle,col,alpha);
       } else if(!gml_d3_draw_rectangle_2d(r,p->x-half,p->y-half,p->x+half+1,p->y+half+1,col,alpha,0))
         plot_square(r,cx,cy,half,col,alpha);
     }
   }
 }
-void gml_part_system_draw_all(GmlRender *r){ for(int i=0;i<PS_MAX;i++) if(g_ps[i].used && g_ps[i].auto_draw) gml_part_system_drawit(r,i+1); }
+void gml_part_system_draw_all(GmlParticleState *state,GmlRender *r){ if(!state) return; for(int i=0;i<PS_MAX;i++) if(g_ps[i].used && g_ps[i].auto_draw) gml_part_system_drawit(state,r,i+1); }
 
+enum { GML_PARTICLE_STATE_SCHEMA=1 };
+#define GML_PARTICLE_STATE_MAGIC UINT32_C(0x53545041)
 typedef struct { uint8_t *data; size_t cap, pos; int ok; } PartW;
 typedef struct { const uint8_t *data; size_t cap, pos; int ok; } PartR;
 
 static void pw_raw(PartW *w, const void *p, size_t n){
+  if(n>SIZE_MAX-w->pos){ w->ok=0; w->pos=SIZE_MAX; return; }
   if(w->data){
-    if(w->pos+n<=w->cap) memcpy(w->data+w->pos,p,n);
+    if(w->pos<=w->cap && n<=w->cap-w->pos) memcpy(w->data+w->pos,p,n);
     else w->ok=0;
   }
   w->pos+=n;
 }
 static void pr_raw(PartR *r, void *p, size_t n){
-  if(r->pos+n<=r->cap) memcpy(p,r->data+r->pos,n);
+  if(n>SIZE_MAX-r->pos){ memset(p,0,n); r->ok=0; r->pos=SIZE_MAX; return; }
+  if(r->pos<=r->cap && n<=r->cap-r->pos) memcpy(p,r->data+r->pos,n);
   else { memset(p,0,n); r->ok=0; }
   r->pos+=n;
 }
-static void pw_u32(PartW *w, uint32_t v){ pw_raw(w,&v,sizeof(v)); }
-static void pw_i32(PartW *w, int v){ int32_t x=(int32_t)v; pw_raw(w,&x,sizeof(x)); }
-static void pw_d(PartW *w, double v){ pw_raw(w,&v,sizeof(v)); }
-static uint32_t pr_u32(PartR *r){ uint32_t v=0; pr_raw(r,&v,sizeof(v)); return v; }
-static int pr_i32(PartR *r){ int32_t v=0; pr_raw(r,&v,sizeof(v)); return (int)v; }
-static double pr_d(PartR *r){ double v=0; pr_raw(r,&v,sizeof(v)); return v; }
+static void pw_u32(PartW *w, uint32_t v){
+  uint8_t b[4]={(uint8_t)v,(uint8_t)(v>>8),(uint8_t)(v>>16),(uint8_t)(v>>24)};
+  pw_raw(w,b,sizeof b);
+}
+static void pw_i32(PartW *w, int v){ pw_u32(w,(uint32_t)(int32_t)v); }
+static void pw_d(PartW *w, double v){
+  uint64_t bits=0; uint8_t b[8]; memcpy(&bits,&v,sizeof bits);
+  for(unsigned i=0;i<8;i++) b[i]=(uint8_t)(bits>>(i*8));
+  pw_raw(w,b,sizeof b);
+}
+static uint32_t pr_u32(PartR *r){
+  uint8_t b[4]={0}; pr_raw(r,b,sizeof b);
+  return (uint32_t)b[0]|((uint32_t)b[1]<<8)|((uint32_t)b[2]<<16)|((uint32_t)b[3]<<24);
+}
+static int pr_i32(PartR *r){ return (int)(int32_t)pr_u32(r); }
+static double pr_d(PartR *r){
+  uint8_t b[8]={0}; uint64_t bits=0; pr_raw(r,b,sizeof b);
+  for(unsigned i=0;i<8;i++) bits|=(uint64_t)b[i]<<(i*8);
+  double v=0; memcpy(&v,&bits,sizeof v); return v;
+}
 
-static void part_state_write(PartW *w){
-  pw_u32(w,0x35545250u); /* PTR5: child-particle rules in PType */
+static void part_state_write(GmlParticleState *state,PartW *w){
+  pw_u32(w,GML_PARTICLE_STATE_MAGIC); /* APTS */
+  pw_u32(w,GML_PARTICLE_STATE_SCHEMA);
   pw_u32(w,g_prng);
   int nt=0; for(int i=0;i<PT_MAX;i++) if(g_pt[i].used) nt++;
   pw_i32(w,nt);
@@ -1128,31 +1100,33 @@ static void part_state_write(PartW *w){
     pw_i32(w,g_effect_explosion_core[layer][size]);
 }
 
-size_t gml_part_state_size(void){
-  PartW w={0}; w.ok=1; part_state_write(&w); return w.pos;
+size_t gml_part_state_size(GmlParticleState *state){
+  if(!state) return 0;
+  PartW w={0}; w.ok=1; part_state_write(state,&w); return w.pos;
 }
-int gml_part_state_save(void *data, size_t len, size_t *written){
+int gml_part_state_save(GmlParticleState *state,void *data,size_t len,size_t *written){
+  if(!state) return 0;
   PartW w={(uint8_t*)data,len,0,1};
-  part_state_write(&w);
+  part_state_write(state,&w);
   if(written) *written=w.pos;
   return w.ok && w.pos<=len;
 }
-int gml_part_state_load(const void *data, size_t len, size_t *used){
+int gml_part_state_load(GmlParticleState *state,const void *data,size_t len,size_t *used){
+  if(!state) return 0;
   PartR r={(const uint8_t*)data,len,0,1};
   uint32_t magic=pr_u32(&r);
-  int v5=(magic==0x35545250u), v4=(magic==0x34545250u), v3=(magic==0x33545250u);
-  int v2=(magic==0x32545250u), v1=(magic==0x31545250u);
-  if(!v1 && !v2 && !v3 && !v4 && !v5){ if(used) *used=r.pos; return 0; }
-  gml_part_reset_all();
+  uint32_t schema=pr_u32(&r);
+  if(magic!=GML_PARTICLE_STATE_MAGIC || schema!=GML_PARTICLE_STATE_SCHEMA){
+    if(used) *used=r.pos; return 0;
+  }
+  gml_part_reset_all(state);
   g_prng=pr_u32(&r);
   int nt=pr_i32(&r);
   if(nt<0 || nt>PT_MAX) r.ok=0;
   for(int k=0;k<nt;k++){
     int id=pr_i32(&r);
     PType tmp; memset(&tmp,0,sizeof(tmp));
-    if(v5) pr_raw(&r,&tmp,sizeof(tmp));
-    else if(v2 || v3 || v4){ PTypeV4 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old)); ptype_from_v4(&tmp,&old); }
-    else { PTypeV1 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old)); ptype_from_v1(&tmp,&old); }
+    pr_raw(&r,&tmp,sizeof(tmp));
     if(id>=1 && id<=PT_MAX){ g_pt[id-1]=tmp; g_pt[id-1].used=1; }
   }
   int ns=pr_i32(&r);
@@ -1163,19 +1137,13 @@ int gml_part_state_load(const void *data, size_t len, size_t *used){
     double depth=pr_d(&r), px=pr_d(&r), py=pr_d(&r);
     int n=pr_i32(&r);
     if(n<0 || n>200000){ r.ok=0; n=0; }
-    size_t bytes=(size_t)n*((v3||v4||v5)?sizeof(Part):sizeof(PartV2));
+    size_t bytes=(size_t)n*sizeof(Part);
     Part *parts=n?calloc((size_t)n,sizeof(Part)):NULL;
     if(n && !parts){
       r.ok=0;
       if(r.pos+bytes<=r.cap) r.pos+=bytes; else { r.pos+=bytes; r.ok=0; }
       n=0;
-    } else if(n) {
-      if(v3 || v4 || v5) pr_raw(&r,parts,bytes);
-      else for(int i=0;i<n;i++){
-        PartV2 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old));
-        part_from_v2(&parts[i],&old);
-      }
-    }
+    } else if(n) pr_raw(&r,parts,bytes);
     if(id>=1 && id<=PS_MAX){
       PSys *s=&g_ps[id-1]; memset(s,0,sizeof(*s));
       s->used=1; s->auto_update=au?1:0; s->auto_draw=ad?1:0;
@@ -1189,26 +1157,23 @@ int gml_part_state_load(const void *data, size_t len, size_t *used){
   for(int k=0;k<ne;k++){
     int id=pr_i32(&r);
     PEmit tmp; memset(&tmp,0,sizeof(tmp));
-    if(v2 || v3 || v4 || v5) pr_raw(&r,&tmp,sizeof(tmp));
-    else { PEmitV1 old; memset(&old,0,sizeof(old)); pr_raw(&r,&old,sizeof(old)); pemit_from_v1(&tmp,&old); }
+    pr_raw(&r,&tmp,sizeof(tmp));
     if(id>=1 && id<=PE_MAX){ g_pe[id-1]=tmp; g_pe[id-1].used=1; }
   }
-  if(v4 || v5){
-    for(int layer=0;layer<2;layer++){
-      int id=pr_i32(&r);
-      if(id<0 || id>PS_MAX || (id && !g_ps[id-1].used)){ r.ok=0; id=0; }
-      g_effect_sys[layer]=id;
-    }
-    for(int layer=0;layer<2;layer++) for(int kind=0;kind<12;kind++) for(int size=0;size<3;size++){
-      int id=pr_i32(&r);
-      if(id<0 || id>PT_MAX || (id && !g_pt[id-1].used)){ r.ok=0; id=0; }
-      g_effect_type[layer][kind][size]=id;
-    }
-    for(int layer=0;layer<2;layer++) for(int size=0;size<3;size++){
-      int id=pr_i32(&r);
-      if(id<0 || id>PT_MAX || (id && !g_pt[id-1].used)){ r.ok=0; id=0; }
-      g_effect_explosion_core[layer][size]=id;
-    }
+  for(int layer=0;layer<2;layer++){
+    int id=pr_i32(&r);
+    if(id<0 || id>PS_MAX || (id && !g_ps[id-1].used)){ r.ok=0; id=0; }
+    g_effect_sys[layer]=id;
+  }
+  for(int layer=0;layer<2;layer++) for(int kind=0;kind<12;kind++) for(int size=0;size<3;size++){
+    int id=pr_i32(&r);
+    if(id<0 || id>PT_MAX || (id && !g_pt[id-1].used)){ r.ok=0; id=0; }
+    g_effect_type[layer][kind][size]=id;
+  }
+  for(int layer=0;layer<2;layer++) for(int size=0;size<3;size++){
+    int id=pr_i32(&r);
+    if(id<0 || id>PT_MAX || (id && !g_pt[id-1].used)){ r.ok=0; id=0; }
+    g_effect_explosion_core[layer][size]=id;
   }
   if(used) *used=r.pos;
   return r.ok && r.pos<=len;

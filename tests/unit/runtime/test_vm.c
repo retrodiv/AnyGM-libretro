@@ -1,15 +1,14 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* test_vm - Run a supplied data file and report globals, rooms and instances.
- * Optional environment controls select code calls, spawning and diagnostic output.
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
+/* test_vm - drive the VM for a supplied data file and observe globals, rooms,
+ * instances and optional debug calls. */
 #include "gml_vm.h"
+#include "stdio_vfs.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-int gml_input_key(int vk, int edge){ (void)vk;(void)edge; return 0; }  /* no input in test */
-int gml_input_gamepad(int button, int edge){ (void)button;(void)edge; return 0; }
 
 static void dump_globals(GmlVM *vm, const char *tag){
   printf("  globals after %s:\n", tag);
@@ -119,8 +118,8 @@ static void maybe_dump_ds_maps(GmlVM *vm){
 
 int main(int argc,char**argv){
   const char *path=argc>1?argv[1]:"data.win";
-  GmlWin w; if(gml_win_load(&w,path)){ fprintf(stderr,"load failed\n"); return 1; }
-  GmlVM vm; gml_vm_init(&vm,&w);
+  GmlWin w; if(anygm_stdio_load_win(&w,path)){ fprintf(stderr,"load failed\n"); return 1; }
+  GmlVM vm; gml_vm_init(&vm,&w,NULL);
   printf("# objects=%d rooms=%d room_order=%d\n", vm.n_objects, gml_room_count(&w), w.n_room_order);
   const char *filter=getenv("GML_CODE_FILTER");
   if(filter && *filter){

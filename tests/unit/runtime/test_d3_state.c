@@ -1,8 +1,12 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gml_vm.h"
 #include "gml_render.h"
 #include "gml_particle.h"
+#include "gml_builtin.h"
+#include "anygm_vfs.h"
+#include "stdio_vfs.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -11,15 +15,25 @@
 
 static int fixture_key=-1;
 static int fixture_key_edge=-1;
+static uint32_t fixture_network_connected;
 static double fixture_mouse_x,fixture_mouse_y,fixture_mouse_set_x,fixture_mouse_set_y;
-int gml_input_key(int key, int edge){
+static uint32_t fixture_capability(void *userdata,uint32_t capability){
+  (void)userdata;
+  return capability==ANYGM_HOST_CAPABILITY_NETWORK_CONNECTED?fixture_network_connected:0;
+}
+static int fixture_input_key(void *userdata,int key, int edge){
+  (void)userdata;
   if(key!=fixture_key) return 0;
   /* A pressed edge also means the physical key is currently held. */
   return edge==fixture_key_edge || (fixture_key_edge==1 && edge==0);
 }
-int gml_input_gamepad(int button, int edge){ (void)button; (void)edge; return 0; }
-void gml_input_mouse(double *rx,double *ry,double *gx,double *gy,double *wx,double *wy,
-                     int *held,int *pressed,int *released,int *wheel){
+static int fixture_input_gamepad(void *userdata,int button, int edge){
+  (void)userdata; (void)button; (void)edge; return 0;
+}
+static void fixture_input_mouse(void *userdata,double *rx,double *ry,double *gx,double *gy,
+                                double *wx,double *wy,int *held,int *pressed,
+                                int *released,int *wheel){
+  (void)userdata;
   if(rx) *rx=fixture_mouse_x;
   if(ry) *ry=fixture_mouse_y;
   if(gx) *gx=fixture_mouse_x;
@@ -31,11 +45,15 @@ void gml_input_mouse(double *rx,double *ry,double *gx,double *gy,double *wx,doub
   if(released) *released=0;
   if(wheel) *wheel=0;
 }
-void gml_input_mouse_set(double x,double y){ fixture_mouse_set_x=x; fixture_mouse_set_y=y; }
-GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);
-int gml_builtin_fast_id(const char *name);
-GmlVal gml_builtin_call_fast_id(GmlVM *vm,int id,const char *name,GmlVal *args,int count);
-
+static void fixture_input_mouse_set(void *userdata,double x,double y){
+  (void)userdata; fixture_mouse_set_x=x; fixture_mouse_set_y=y;
+}
+static void fixture_attach_input(GmlVM *vm){
+  vm->input.key=fixture_input_key;
+  vm->input.gamepad=fixture_input_gamepad;
+  vm->input.mouse=fixture_input_mouse;
+  vm->input.mouse_set=fixture_input_mouse_set;
+}
 static void call_numbers(GmlVM *vm,const char *name,const double *numbers,int count){
   GmlVal args[16];
   for(int i=0;i<count;i++) args[i]=vreal(numbers[i]);
@@ -176,10 +194,15 @@ static int pushref_function_fixture(void){
   win.code[1]=(GmlCode){.name="gml_Script_neutral_callback",.start=16,.length=8};
   win.ref_addr[0]=4;
   win.ref_name[0]=win.code[1].name;
-  vm.win=&win;
+  if(gml_vm_init(&vm,&win,NULL)){
+    gml_win_free(&win);
+    fprintf(stderr,"pushref VM initialization failed\n");
+    return 0;
+  }
   GmlVal result=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
   int ok=result.t==V_REAL && result.d==73;
   if(!ok) fprintf(stderr,"pushref function dispatch mismatch: %.17g\n",result.d);
+  gml_vm_free(&vm);
   gml_win_free(&win);
   return ok;
 }
@@ -207,7 +230,11 @@ static int member_function_self_fixture(void){
   win.code[1]=(GmlCode){.name="gml_Script_neutral_member_callback",.start=32,.length=12};
   win.ref_addr[0]=20; win.ref_name[0]="neutral_callback";
   win.ref_addr[1]=36; win.ref_name[1]="neutral_marker";
-  vm.win=&win;
+  if(gml_vm_init(&vm,&win,NULL)){
+    gml_win_free(&win);
+    fprintf(stderr,"member function VM initialization failed\n");
+    return 0;
+  }
   GmlInstance *receiver=gml_struct_new(&vm);
   if(!receiver){
     gml_vm_free(&vm); gml_win_free(&win);
@@ -258,7 +285,11 @@ static int member_function_argument_fixture(void){
   win.ref_addr[0]=8;  win.ref_name[0]="@@This@@";
   win.ref_addr[1]=16; win.ref_name[1]="neutral_callback";
   win.ref_addr[2]=32; win.ref_name[2]="argument0";
-  vm.win=&win;
+  if(gml_vm_init(&vm,&win,NULL)){
+    gml_win_free(&win);
+    fprintf(stderr,"member argument VM initialization failed\n");
+    return 0;
+  }
   GmlInstance *receiver=gml_struct_new(&vm);
   if(!receiver){
     gml_vm_free(&vm); gml_win_free(&win);
@@ -289,13 +320,24 @@ static int raster_fixtures(void){
   uint32_t pixels[WIDTH*HEIGHT];
   GmlRender render; GmlVM vm;
   memset(&render,0,sizeof(render)); memset(&vm,0,sizeof(vm));
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  vm.host=&file_services;
+  fixture_attach_input(&vm);
   gml_keyboard_unset_map(&vm);
   render.color=0xFFFFFFu; render.alpha=1; render.alphablend=1;
   render.color_write_mask=0x0F;
   render.blend_equation=render.blend_equation_alpha=1;
   render.next_surface_id=1;
   vm.render=&render;
-  gml_d3_reset();
+  vm.particles=gml_particle_state_create(&vm);
+  if(!vm.particles){
+    fprintf(stderr,"particle fixture state allocation failed\n");
+    return 0;
+  }
+  gml_d3_reset(&vm);
 
   if(!pushref_function_fixture()) return 0;
   if(!member_function_self_fixture()) return 0;
@@ -331,23 +373,17 @@ static int raster_fixtures(void){
   }
 
   {
-#ifdef _WIN32
-    _putenv_s("GML_NETWORK_CONNECTED","0");
-#else
-    setenv("GML_NETWORK_CONNECTED","0",1);
-#endif
-    GmlVal offline=call_values(&vm,"os_is_network_connected",NULL,0);
-#ifdef _WIN32
-    _putenv_s("GML_NETWORK_CONNECTED","1");
-#else
-    setenv("GML_NETWORK_CONNECTED","1",1);
-#endif
-    GmlVal online=call_values(&vm,"os_is_network_connected",NULL,0);
-#ifdef _WIN32
-    _putenv_s("GML_NETWORK_CONNECTED","");
-#else
-    unsetenv("GML_NETWORK_CONNECTED");
-#endif
+    GmlVM network_vm={0};
+    AnygmHostServices services={0};
+    services.struct_size=sizeof services;
+    services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+    services.capability=fixture_capability;
+    network_vm.host=&services;
+    fixture_network_connected=0;
+    GmlVal offline=call_values(&network_vm,"os_is_network_connected",NULL,0);
+    fixture_network_connected=1;
+    GmlVal online=call_values(&network_vm,"os_is_network_connected",NULL,0);
+    gml_builtin_state_destroy(network_vm.builtins);
     if(offline.t!=V_REAL || offline.d!=0 || online.t!=V_REAL || online.d!=1){
       fprintf(stderr,"network connectivity override mismatch: offline=%g online=%g\n",offline.d,online.d);
       return 0;
@@ -613,6 +649,7 @@ static int raster_fixtures(void){
     gml_render_free(&initialized);
 
     GmlVM modal={0};
+    fixture_attach_input(&modal);
     gml_keyboard_unset_map(&modal);
     win.classic_game_information=information;
     win.classic_game_information_size=information_size;
@@ -724,7 +761,8 @@ static int raster_fixtures(void){
     gml_render_set_pending_underlay(&render,0,0,3,1);
     gml_render_flush_pending_underlay(&render);
     if(target[0]!=0xFFFF0000u || target[1]!=0xFFFF0000u || target[2]!=0xFF0000FFu){
-      fprintf(stderr,"modern leading-edge presentation changed\n");
+      fprintf(stderr,"modern leading-edge presentation changed: %08x %08x %08x\n",
+              target[0],target[1],target[2]);
       return 0;
     }
     memset(target,0,sizeof(target)); render.classic=1; win.classic_scaling=0;
@@ -999,10 +1037,10 @@ static int raster_fixtures(void){
 
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
-  gml_part_reset_all(); gml_part_bind_vm(&vm);
-  gml_effect_create(1,10,0,0,0,0xFFFF00);
-  for(int i=0;i<5;i++) gml_part_update_all();
-  gml_part_system_draw_all(&render);
+  gml_part_reset_all(vm.particles);
+  gml_effect_create(vm.particles,1,10,0,0,0,0xFFFF00);
+  for(int i=0;i<5;i++) gml_part_update_all(vm.particles);
+  gml_part_system_draw_all(vm.particles,&render);
   int rain_pixels=0,rain_far_pixels=0,rain_right_pixels=0,rain_alpha_pixels=0;
   for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++) if(pixels[y*WIDTH+x]&0x00FFFFFFu){
     rain_pixels++; if(x>8) rain_far_pixels++;
@@ -1013,18 +1051,18 @@ static int raster_fixtures(void){
     fprintf(stderr,"software rain effect distribution mismatch\n");
     return 0;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   {
-    int system=gml_part_system_create();
-    int type=gml_part_type_create();
-    gml_part_type_shape(type,5);
-    gml_part_type_size(type,.5,.5,0,0);
-    gml_part_type_alpha(type,1,1,1,1);
-    gml_part_particles_create_color(system,32,24,type,0x0000FF,1);
-    gml_part_system_draw_all(&render);
+    int system=gml_part_system_create(vm.particles);
+    int type=gml_part_type_create(vm.particles);
+    gml_part_type_shape(vm.particles,type,5);
+    gml_part_type_size(vm.particles,type,.5,.5,0,0);
+    gml_part_type_alpha(vm.particles,type,1,1,1,1);
+    gml_part_particles_create_color(vm.particles,system,32,24,type,0x0000FF,1);
+    gml_part_system_draw_all(vm.particles,&render);
     int ring_pixels=0,ring_mass=0,minx=WIDTH,maxx=-1,miny=HEIGHT,maxy=-1;
     for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++){
       int red=(pixels[y*WIDTH+x]>>16)&0xFF;
@@ -1041,19 +1079,19 @@ static int raster_fixtures(void){
       return 0;
     }
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   {
-    int system=gml_part_system_create();
-    int type=gml_part_type_create();
-    gml_part_type_shape(type,3);
-    gml_part_type_size(type,1,1,0,0);
-    gml_part_type_orientation(type,0,0,0,0,0);
-    gml_part_type_alpha(type,1,1,1,1);
-    gml_part_particles_create_color(system,32,24,type,0x0000FF,1);
-    gml_part_system_draw_all(&render);
+    int system=gml_part_system_create(vm.particles);
+    int type=gml_part_type_create(vm.particles);
+    gml_part_type_shape(vm.particles,type,3);
+    gml_part_type_size(vm.particles,type,1,1,0,0);
+    gml_part_type_orientation(vm.particles,type,0,0,0,0,0);
+    gml_part_type_alpha(vm.particles,type,1,1,1,1);
+    gml_part_particles_create_color(vm.particles,system,32,24,type,0x0000FF,1);
+    gml_part_system_draw_all(vm.particles,&render);
     int line_pixels=0,minx=WIDTH,maxx=-1,miny=HEIGHT,maxy=-1;
     for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++)
       if(pixels[y*WIDTH+x]&0x00FFFFFFu){
@@ -1070,19 +1108,19 @@ static int raster_fixtures(void){
       return 0;
     }
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   {
-    int system=gml_part_system_create();
-    int type=gml_part_type_create();
-    gml_part_type_shape(type,3);
-    gml_part_type_size(type,.2,.2,0,0);
-    gml_part_type_orientation(type,260,260,0,0,0);
-    gml_part_type_alpha(type,1,1,1,1);
-    gml_part_particles_create_color(system,32,24,type,0x0000FF,1);
-    gml_part_system_draw_all(&render);
+    int system=gml_part_system_create(vm.particles);
+    int type=gml_part_type_create(vm.particles);
+    gml_part_type_shape(vm.particles,type,3);
+    gml_part_type_size(vm.particles,type,.2,.2,0,0);
+    gml_part_type_orientation(vm.particles,type,260,260,0,0,0);
+    gml_part_type_alpha(vm.particles,type,1,1,1,1);
+    gml_part_particles_create_color(vm.particles,system,32,24,type,0x0000FF,1);
+    gml_part_system_draw_all(vm.particles,&render);
     int line_pixels=0,minx=WIDTH,maxx=-1,miny=HEIGHT,maxy=-1;
     for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++)
       if(pixels[y*WIDTH+x]&0x00FFFFFFu){
@@ -1095,7 +1133,7 @@ static int raster_fixtures(void){
       return 0;
     }
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
   {
     static const int shapes[3]={4,8,9};
@@ -1103,14 +1141,14 @@ static int raster_fixtures(void){
     for(int k=0;k<3;k++){
       for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF202020u;
       gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
-      int system=gml_part_system_create();
-      int type=gml_part_type_create();
-      gml_part_type_shape(type,shapes[k]);
-      gml_part_type_size(type,.5,.5,0,0);
-      gml_part_type_orientation(type,0,0,0,0,0);
-      gml_part_type_alpha(type,1,1,1,1);
-      gml_part_particles_create_color(system,32,24,type,0x40A0FF,1);
-      gml_part_system_draw_all(&render);
+      int system=gml_part_system_create(vm.particles);
+      int type=gml_part_type_create(vm.particles);
+      gml_part_type_shape(vm.particles,type,shapes[k]);
+      gml_part_type_size(vm.particles,type,.5,.5,0,0);
+      gml_part_type_orientation(vm.particles,type,0,0,0,0,0);
+      gml_part_type_alpha(vm.particles,type,1,1,1,1);
+      gml_part_particles_create_color(vm.particles,system,32,24,type,0x40A0FF,1);
+      gml_part_system_draw_all(vm.particles,&render);
       int changed=0,minx=WIDTH,maxx=-1,miny=HEIGHT,maxy=-1;
       for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++)
         if(pixels[y*WIDTH+x]!=0xFF202020u){
@@ -1125,7 +1163,7 @@ static int raster_fixtures(void){
                 shapes[k],changed,maxx-minx+1,maxy-miny+1);
         return 0;
       }
-      gml_part_reset_all();
+      gml_part_reset_all(vm.particles);
     }
   }
 
@@ -1136,14 +1174,14 @@ static int raster_fixtures(void){
     for(int k=0;k<3;k++){
       for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF202020u;
       gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
-      int system=gml_part_system_create();
-      int type=gml_part_type_create();
-      gml_part_type_shape(type,8);
-      gml_part_type_size(type,scales[k],scales[k],0,0);
-      gml_part_type_orientation(type,0,0,0,0,0);
-      gml_part_type_alpha(type,1,1,1,1);
-      gml_part_particles_create_color(system,32,24,type,0x40FFA0,1);
-      gml_part_system_draw_all(&render);
+      int system=gml_part_system_create(vm.particles);
+      int type=gml_part_type_create(vm.particles);
+      gml_part_type_shape(vm.particles,type,8);
+      gml_part_type_size(vm.particles,type,scales[k],scales[k],0,0);
+      gml_part_type_orientation(vm.particles,type,0,0,0,0,0);
+      gml_part_type_alpha(vm.particles,type,1,1,1,1);
+      gml_part_particles_create_color(vm.particles,system,32,24,type,0x40FFA0,1);
+      gml_part_system_draw_all(vm.particles,&render);
       int changed=0;
       for(int i=0;i<WIDTH*HEIGHT;i++) if(pixels[i]!=0xFF202020u) changed++;
       if(changed<min_pixels[k] || changed>max_pixels[k]){
@@ -1151,7 +1189,7 @@ static int raster_fixtures(void){
                 scales[k],changed,min_pixels[k],max_pixels[k]);
         return 0;
       }
-      gml_part_reset_all();
+      gml_part_reset_all(vm.particles);
     }
   }
 
@@ -1165,14 +1203,14 @@ static int raster_fixtures(void){
     for(int k=0;k<3;k++){
       for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFF504030u;
       gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
-      int system=gml_part_system_create();
-      int type=gml_part_type_create();
-      gml_part_type_shape(type,13);
-      gml_part_type_size(type,scales[k],scales[k],0,0);
-      gml_part_type_orientation(type,angles[k],angles[k],0,0,0);
-      gml_part_type_alpha(type,1,.6,.6,.6);
-      gml_part_particles_create_color(system,32,24,type,0xFFFFFF,1);
-      gml_part_system_draw_all(&render);
+      int system=gml_part_system_create(vm.particles);
+      int type=gml_part_type_create(vm.particles);
+      gml_part_type_shape(vm.particles,type,13);
+      gml_part_type_size(vm.particles,type,scales[k],scales[k],0,0);
+      gml_part_type_orientation(vm.particles,type,angles[k],angles[k],0,0,0);
+      gml_part_type_alpha(vm.particles,type,1,.6,.6,.6);
+      gml_part_particles_create_color(vm.particles,system,32,24,type,0xFFFFFF,1);
+      gml_part_system_draw_all(vm.particles,&render);
       int changed=0,minx=WIDTH,maxx=-1,miny=HEIGHT,maxy=-1;
       for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++)
         if(pixels[y*WIDTH+x]!=0xFF504030u){
@@ -1188,25 +1226,25 @@ static int raster_fixtures(void){
                 scales[k],angles[k],changed,maxx-minx+1,maxy-miny+1);
         return 0;
       }
-      gml_part_reset_all();
+      gml_part_reset_all(vm.particles);
     }
   }
 
-  gml_effect_create(1,3,32,24,0,0x40A0FF);
-  if(gml_part_system_count(1)!=75){
+  gml_effect_create(vm.particles,1,3,32,24,0,0x40A0FF);
+  if(gml_part_system_count(vm.particles,1)!=75){
     fprintf(stderr,"small firework particle count mismatch\n");
     return 0;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
-  gml_effect_create(1,0,32,24,0,0x40A0FF);
-  if(gml_part_system_count(1)!=21){
+  gml_effect_create(vm.particles,1,0,32,24,0,0x40A0FF);
+  if(gml_part_system_count(vm.particles,1)!=21){
     fprintf(stderr,"small explosion particle count mismatch\n");
     return 0;
   }
   for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFFB0B0B0u;
-  gml_part_update_all();
-  gml_part_system_draw_all(&render);
+  gml_part_update_all(vm.particles);
+  gml_part_system_draw_all(vm.particles,&render);
   int explosion_pixels=0,explosion_minx=WIDTH,explosion_maxx=-1;
   int explosion_miny=HEIGHT,explosion_maxy=-1;
   for(int y=0;y<HEIGHT;y++) for(int x=0;x<WIDTH;x++)
@@ -1222,79 +1260,79 @@ static int raster_fixtures(void){
             explosion_pixels,explosion_maxx-explosion_minx+1,explosion_maxy-explosion_miny+1);
     return 0;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
-  gml_effect_create(1,1,32,24,0,0x40A0FF);
-  gml_effect_create(1,2,32,24,0,0x40A0FF);
-  if(gml_part_system_count(1)!=2){
+  gml_effect_create(vm.particles,1,1,32,24,0,0x40A0FF);
+  gml_effect_create(vm.particles,1,2,32,24,0,0x40A0FF);
+  if(gml_part_system_count(vm.particles,1)!=2){
     fprintf(stderr,"expanding wave particle count mismatch\n");
     return 0;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
-  gml_effect_create(1,6,32,24,0,0x40A0FF);
-  if(gml_part_system_count(1)!=1){
+  gml_effect_create(vm.particles,1,6,32,24,0,0x40A0FF);
+  if(gml_part_system_count(vm.particles,1)!=1){
     fprintf(stderr,"shrinking star particle count mismatch\n");
     return 0;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
-  gml_effect_create(1,7,32,24,0,0x40A0FF);
-  gml_effect_create(1,8,32,24,0,0x40A0FF);
-  if(gml_part_system_count(1)!=2){
+  gml_effect_create(vm.particles,1,7,32,24,0,0x40A0FF);
+  gml_effect_create(vm.particles,1,8,32,24,0,0x40A0FF);
+  if(gml_part_system_count(vm.particles,1)!=2){
     fprintf(stderr,"shrinking glint particle count mismatch\n");
     return 0;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
-  gml_effect_create(1,4,32,24,0,0x808080);
-  if(gml_part_system_count(1)!=6){
+  gml_effect_create(vm.particles,1,4,32,24,0,0x808080);
+  if(gml_part_system_count(vm.particles,1)!=6){
     fprintf(stderr,"small smoke particle count mismatch\n");
     return 0;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
-  gml_effect_create(1,5,32,24,1,0x808080);
-  if(gml_part_system_count(1)!=11){
+  gml_effect_create(vm.particles,1,5,32,24,1,0x808080);
+  if(gml_part_system_count(vm.particles,1)!=11){
     fprintf(stderr,"medium rising smoke particle count mismatch\n");
     return 0;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
-  gml_effect_create(1,9,32,24,2,0xFFFFFF);
-  if(gml_part_system_count(1)!=1){
+  gml_effect_create(vm.particles,1,9,32,24,2,0xFFFFFF);
+  if(gml_part_system_count(vm.particles,1)!=1){
     fprintf(stderr,"large cloud particle count mismatch\n");
     return 0;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
-  gml_effect_create(1,11,32,24,2,0xFFFFFF);
-  if(gml_part_system_count(1)!=7){
+  gml_effect_create(vm.particles,1,11,32,24,2,0xFFFFFF);
+  if(gml_part_system_count(vm.particles,1)!=7){
     fprintf(stderr,"large snowfall particle count mismatch\n");
     return 0;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
   {
-    gml_d3_reset();
+    gml_d3_reset(&vm);
     memset(pixels,0,sizeof(pixels));
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
-    int system=gml_part_system_create();
-    int type=gml_part_type_create();
-    gml_part_type_size(type,1,1,0,0);
-    gml_part_type_speed(type,8,8,0,0);
-    gml_part_type_direction(type,0,0,0,90);
-    gml_part_particles_create(system,20,20,type,1);
-    size_t particle_state_size=gml_part_state_size(),particle_written=0,particle_used=0;
+    int system=gml_part_system_create(vm.particles);
+    int type=gml_part_type_create(vm.particles);
+    gml_part_type_size(vm.particles,type,1,1,0,0);
+    gml_part_type_speed(vm.particles,type,8,8,0,0);
+    gml_part_type_direction(vm.particles,type,0,0,0,90);
+    gml_part_particles_create(vm.particles,system,20,20,type,1);
+    size_t particle_state_size=gml_part_state_size(vm.particles),particle_written=0,particle_used=0;
     void *particle_state=malloc(particle_state_size);
-    if(!particle_state || !gml_part_state_save(particle_state,particle_state_size,&particle_written) ||
+    if(!particle_state || !gml_part_state_save(vm.particles,particle_state,particle_state_size,&particle_written) ||
        particle_written!=particle_state_size){
       fprintf(stderr,"particle wiggle phase state save failed\n");
       free(particle_state);
       return 0;
     }
-    gml_part_update_all();
-    gml_part_system_draw_all(&render);
+    gml_part_update_all(vm.particles);
+    gml_part_system_draw_all(vm.particles,&render);
     uint32_t expected_pixels[WIDTH*HEIGHT];
     memcpy(expected_pixels,pixels,sizeof(expected_pixels));
     if(colored_pixels(pixels,WIDTH*HEIGHT)<1 || pixels[20*WIDTH+28]!=0){
@@ -1306,7 +1344,7 @@ static int raster_fixtures(void){
       free(particle_state);
       return 0;
     }
-    if(!gml_part_state_load(particle_state,particle_written,&particle_used) ||
+    if(!gml_part_state_load(vm.particles,particle_state,particle_written,&particle_used) ||
        particle_used!=particle_written){
       fprintf(stderr,"particle wiggle phase state load failed\n");
       free(particle_state);
@@ -1315,35 +1353,35 @@ static int raster_fixtures(void){
     free(particle_state);
     memset(pixels,0,sizeof(pixels));
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
-    gml_part_update_all();
-    gml_part_system_draw_all(&render);
+    gml_part_update_all(vm.particles);
+    gml_part_system_draw_all(vm.particles,&render);
     if(memcmp(pixels,expected_pixels,sizeof(expected_pixels))){
       fprintf(stderr,"particle wiggle phase state roundtrip mismatch\n");
       return 0;
     }
-    gml_part_reset_all();
+    gml_part_reset_all(vm.particles);
   }
 
   {
     memset(pixels,0,sizeof(pixels));
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
-    gml_part_reset_all();
-    gml_effect_create(1,3,32,24,0,0x0080FF);
-    for(int i=0;i<10;i++) gml_part_update_all();
-    size_t particle_state_size=gml_part_state_size(),particle_written=0,particle_used=0;
+    gml_part_reset_all(vm.particles);
+    gml_effect_create(vm.particles,1,3,32,24,0,0x0080FF);
+    for(int i=0;i<10;i++) gml_part_update_all(vm.particles);
+    size_t particle_state_size=gml_part_state_size(vm.particles),particle_written=0,particle_used=0;
     void *particle_state=malloc(particle_state_size);
-    if(!particle_state || !gml_part_state_save(particle_state,particle_state_size,&particle_written) ||
+    if(!particle_state || !gml_part_state_save(vm.particles,particle_state,particle_state_size,&particle_written) ||
        particle_written!=particle_state_size){
       fprintf(stderr,"built-in effect identity state save failed\n");
       free(particle_state);
       return 0;
     }
-    gml_effect_create(1,3,32,24,0,0xFF8000);
-    for(int i=0;i<12;i++) gml_part_update_all();
-    gml_part_system_draw_all(&render);
+    gml_effect_create(vm.particles,1,3,32,24,0,0xFF8000);
+    for(int i=0;i<12;i++) gml_part_update_all(vm.particles);
+    gml_part_system_draw_all(vm.particles,&render);
     uint32_t expected_pixels[WIDTH*HEIGHT];
     memcpy(expected_pixels,pixels,sizeof(expected_pixels));
-    if(!gml_part_state_load(particle_state,particle_written,&particle_used) ||
+    if(!gml_part_state_load(vm.particles,particle_state,particle_written,&particle_used) ||
        particle_used!=particle_written){
       fprintf(stderr,"built-in effect identity state load failed\n");
       free(particle_state);
@@ -1352,27 +1390,27 @@ static int raster_fixtures(void){
     free(particle_state);
     memset(pixels,0,sizeof(pixels));
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
-    gml_effect_create(1,3,32,24,0,0xFF8000);
-    for(int i=0;i<12;i++) gml_part_update_all();
-    gml_part_system_draw_all(&render);
+    gml_effect_create(vm.particles,1,3,32,24,0,0xFF8000);
+    for(int i=0;i<12;i++) gml_part_update_all(vm.particles);
+    gml_part_system_draw_all(vm.particles,&render);
     if(memcmp(pixels,expected_pixels,sizeof(expected_pixels))){
       fprintf(stderr,"built-in effect identity state roundtrip mismatch\n");
       return 0;
     }
-    gml_part_reset_all();
+    gml_part_reset_all(vm.particles);
   }
 
-  gml_d3_reset();
+  gml_d3_reset(&vm);
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
-  int motion_system=gml_part_system_create();
-  int motion_type=gml_part_type_create();
-  gml_part_type_size(motion_type,0,0,0,0);
-  gml_part_type_speed(motion_type,1,1,2,0);
-  gml_part_type_direction(motion_type,0,0,0,0);
-  gml_part_particles_create(motion_system,10,10,motion_type,1);
-  gml_part_update_all();
-  gml_part_system_draw_all(&render);
+  int motion_system=gml_part_system_create(vm.particles);
+  int motion_type=gml_part_type_create(vm.particles);
+  gml_part_type_size(vm.particles,motion_type,0,0,0,0);
+  gml_part_type_speed(vm.particles,motion_type,1,1,2,0);
+  gml_part_type_direction(vm.particles,motion_type,0,0,0,0);
+  gml_part_particles_create(vm.particles,motion_system,10,10,motion_type,1);
+  gml_part_update_all(vm.particles);
+  gml_part_system_draw_all(vm.particles,&render);
   if((pixels[10*WIDTH+13]&0x00FFFFFFu)==0 || pixels[10*WIDTH+11]!=0){
     int first=-1;
     for(int i=0;i<WIDTH*HEIGHT;i++) if(pixels[i]){ first=i; break; }
@@ -1381,12 +1419,12 @@ static int raster_fixtures(void){
       first<0?-1:first/WIDTH,colored_pixels(pixels,WIDTH*HEIGHT));
     return 0;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
 
   {
     /* Studio matrices are column-major and matrix_multiply(a,b) returns b*a. This is the
      * composition used by 2D surface/vertex pipelines to translate, scale, then translate back. */
-    gml_d3_reset();
+    gml_d3_reset(&vm);
     GmlVal translation=call_values(&vm,"matrix_build_identity",NULL,0);
     GmlVal scaling=call_values(&vm,"matrix_build_identity",NULL,0);
     gml_arr_set(translation,12,vreal(3)); gml_arr_set(translation,13,vreal(4));
@@ -1400,7 +1438,7 @@ static int raster_fixtures(void){
     int matrix_flags[GML_D3_STATE_FLAG_COUNT];
     double matrix_values[GML_D3_STATE_VALUE_COUNT];
     uint32_t matrix_colors[GML_D3_STATE_COLOR_COUNT];
-    gml_d3_state_get(matrix_flags,matrix_values,matrix_colors);
+    gml_d3_state_get(&vm,matrix_flags,matrix_values,matrix_colors);
     if(composed.t!=V_ARR || fetched.t!=V_ARR ||
        fabs(gml_arr_get(fetched,0).d-2)>1e-12 || fabs(gml_arr_get(fetched,5).d-3)>1e-12 ||
        fabs(gml_arr_get(fetched,12).d-6)>1e-12 || fabs(gml_arr_get(fetched,13).d-12)>1e-12 ||
@@ -1412,7 +1450,7 @@ static int raster_fixtures(void){
     /* A translation-only Studio world matrix affects ordinary portable 2D draws too, including
      * HUDs rendered into surfaces while legacy d3d mode is inactive. Represent it as a camera
      * delta for those software paths and restore the projection camera with the identity matrix. */
-    gml_d3_reset();
+    gml_d3_reset(&vm);
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,7,9);
     GmlVal translation_set[2]={vreal(2),translation};
     call_values(&vm,"matrix_set",translation_set,2);
@@ -1441,14 +1479,14 @@ static int raster_fixtures(void){
     gml_surface_free(&render,translated_surface);
   }
 
-  gml_d3_reset();
+  gml_d3_reset(&vm);
   memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   GmlVal start_result=call_values(&vm,"d3d_start",NULL,0);
   int default_flags[GML_D3_STATE_FLAG_COUNT];
   double default_values[GML_D3_STATE_VALUE_COUNT];
   uint32_t default_colors[GML_D3_STATE_COLOR_COUNT];
-  gml_d3_state_get(default_flags,default_values,default_colors);
+  gml_d3_state_get(&vm,default_flags,default_values,default_colors);
   if(start_result.t!=V_REAL || start_result.d!=1 || !default_flags[0] ||
      !default_flags[1] || !default_flags[21] || !default_flags[24] ||
      default_flags[20] || default_values[0]!=WIDTH*.5 ||
@@ -1459,7 +1497,7 @@ static int raster_fixtures(void){
     return 0;
   }
   GmlVal end_result=call_values(&vm,"d3d_end",NULL,0);
-  gml_d3_state_get(default_flags,default_values,default_colors);
+  gml_d3_state_get(&vm,default_flags,default_values,default_colors);
   if(end_result.t!=V_REAL || end_result.d!=1 || default_flags[0]){
     fprintf(stderr,"software D3 historical end result mismatch\n");
     return 0;
@@ -1482,7 +1520,7 @@ static int raster_fixtures(void){
   /* A floor crossing the perspective near plane must remain a continuous projected polygon.
    * This is the common outdoor-camera shape; a bad clipped-fan depth interpolation used to leave
    * whole alternating scanline bands untouched. */
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   const double perspective[]={32,14,5,32,24,0,0,0,1};
@@ -1511,7 +1549,7 @@ static int raster_fixtures(void){
   int transform_flags[GML_D3_STATE_FLAG_COUNT];
   double transform_values[GML_D3_STATE_VALUE_COUNT];
   uint32_t transform_colors[GML_D3_STATE_COLOR_COUNT];
-  gml_d3_state_get(transform_flags,transform_values,transform_colors);
+  gml_d3_state_get(&vm,transform_flags,transform_values,transform_colors);
   if(transform_flags[25]!=1 || transform_values[68]!=16 || transform_values[69]!=8){
     fprintf(stderr,"software D3 transform stack push mismatch\n");
     return 0;
@@ -1523,13 +1561,13 @@ static int raster_fixtures(void){
     return 0;
   }
   call_numbers(&vm,"d3d_transform_stack_pop",NULL,0);
-  gml_d3_state_get(transform_flags,transform_values,transform_colors);
+  gml_d3_state_get(&vm,transform_flags,transform_values,transform_colors);
   if(transform_flags[25]!=0 || transform_values[68]!=0 || transform_values[69]!=0){
     fprintf(stderr,"software D3 transform stack pop mismatch\n");
     return 0;
   }
 
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
@@ -1568,7 +1606,7 @@ static int raster_fixtures(void){
     shader->dual_shift_gain[0]=0.5f; shader->dual_shift_gain[1]=0.0f;
     shader->dual_shift_gain[2]=1.0f; shader->dual_shift_gain[3]=1.0f;
     surface_data->opaque_known=surface_data->all_opaque=1;
-    gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+    gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0); render.active_shader=0;
     gml_draw_surface_stretched(&render,surface,20,20,2,2,0xFFFFFFu,1.0);
     render.active_shader=-1;
@@ -1609,7 +1647,7 @@ static int raster_fixtures(void){
   }
   GmlVal surface_arg=vreal(surface);
   GmlVal surface_texture=call_values(&vm,"surface_get_texture",&surface_arg,1);
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection",perspective,9);
@@ -1628,7 +1666,7 @@ static int raster_fixtures(void){
             empty_inside,first_row,last_row);
     return 0;
   }
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
@@ -1722,7 +1760,7 @@ static int raster_fixtures(void){
     fprintf(stderr,"software D3 runtime sprite texture mismatch\n");
     return 0;
   }
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   GmlVal positioned[11]={vreal(runtime_sprite),vreal(0),
     vreal(10),vreal(10),vreal(18),vreal(10),vreal(20),vreal(18),vreal(8),vreal(18),vreal(1)};
@@ -1747,7 +1785,7 @@ static int raster_fixtures(void){
     fprintf(stderr,"software runtime alpha fixture creation mismatch\n");
     return 0;
   }
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   render.classic=1;
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   pixels[10*WIDTH+10]=0xFF4984ACu;
@@ -1985,7 +2023,7 @@ static int raster_fixtures(void){
     draw_vm.rtl=NULL; draw_vm.n_rtl=draw_vm.cap_rtl=0;
     draw_instance.draw_layer_order=-1;
     if(automatic<185 || automatic>195 || self_draw!=automatic || full_sprite!=255 ||
-       gml_builtin_fast_id("draw_full_sprite")!=gml_builtin_fast_id("draw_self") || classic_basic!=255 ||
+       gml_builtin_fast_id(&draw_vm,"draw_full_sprite")!=gml_builtin_fast_id(&draw_vm,"draw_self") || classic_basic!=255 ||
        explicit_alpha<55 || explicit_alpha>70 || modern_basic<55 || modern_basic>70 ||
        hidden_layer_pixel!=0 || visible_layer_pixel==0 || authored_layer_front!=0x00FF00u){
       fprintf(stderr,"default/self/full/basic/explicit/layer draw mismatch: automatic=%u self=%u full=%u classic=%u explicit=%u modern=%u hidden=%06x visible=%06x front=%06x\n",
@@ -2033,8 +2071,8 @@ static int raster_fixtures(void){
       render.alpha=.25;
       call_numbers(&draw_vm,"draw_ellipse_color",extended_geometry,7);
       if(memcmp(shadow_pixels,pixels,sizeof(shadow_pixels)) ||
-         gml_builtin_fast_id("draw_shadow")<0 ||
-         gml_builtin_fast_id("draw_shadow")!=gml_builtin_fast_id("draw_shadow_ext")){
+         gml_builtin_fast_id(&draw_vm,"draw_shadow")<0 ||
+         gml_builtin_fast_id(&draw_vm,"draw_shadow")!=gml_builtin_fast_id(&draw_vm,"draw_shadow_ext")){
         fprintf(stderr,"legacy extended shadow geometry/dispatch mismatch\n");
         return 0;
       }
@@ -2053,6 +2091,7 @@ static int raster_fixtures(void){
   }
   {
     GmlVM extension_vm={0};
+    fixture_attach_input(&extension_vm);
     gml_keyboard_unset_map(&extension_vm);
     GmlWin extension_win={0};
     GmlObject extension_object={0};
@@ -2076,7 +2115,7 @@ static int raster_fixtures(void){
     if(create_result.d!=0 || extension_vm.inst_count!=1 ||
        extension_vm.inst[0].x!=12.5 || extension_vm.inst[0].y!=34.5 ||
        extension_vm.inst[0].obj!=0 ||
-       gml_builtin_fast_id("crear")<0){
+       gml_builtin_fast_id(&extension_vm,"crear")<0){
       fprintf(stderr,"legacy extension instance-create alias mismatch\n");
       free(extension_vm.inst);
       return 0;
@@ -2091,7 +2130,7 @@ static int raster_fixtures(void){
     extension_vm.cur_self->y=250;
     extension_vm.cur_self->depth=77;
     (void)call_values(&extension_vm,"depthy",NULL,0);
-    if(extension_vm.cur_self->depth!=-2.5 || gml_builtin_fast_id("depthy")<0){
+    if(extension_vm.cur_self->depth!=-2.5 || gml_builtin_fast_id(&extension_vm,"depthy")<0){
       fprintf(stderr,"legacy extension depth-by-y mismatch: %.6f\n",extension_vm.cur_self->depth);
       free(extension_vm.inst);
       return 0;
@@ -2111,7 +2150,7 @@ static int raster_fixtures(void){
       (void)call_values(&extension_vm,"move_rpg",movement_args,5);
       if(moving->hspeed!=-3 || moving->vspeed!=0 || moving->sprite_index!=20 ||
          moving->image_xscale!=-1 || moving->image_speed!=.5 || moving->speed!=3 ||
-         moving->direction!=180 || gml_builtin_fast_id("move_rpg")<0){
+         moving->direction!=180 || gml_builtin_fast_id(&extension_vm,"move_rpg")<0){
         fprintf(stderr,"legacy extension cursor movement mismatch\n");
         free(extension_vm.inst);
         return 0;
@@ -2143,7 +2182,7 @@ static int raster_fixtures(void){
       moving->direction=0; moving->image_xscale=-1;
       (void)call_values(&extension_vm,"direction_rpg",direction_args,4);
       if(moving->sprite_index!=20 || moving->image_xscale!=1 || moving->image_speed!=.25 ||
-         gml_builtin_fast_id("direction_rpg")<0){
+         gml_builtin_fast_id(&extension_vm,"direction_rpg")<0){
         fprintf(stderr,"legacy extension right-facing animation mismatch\n");
         free(extension_vm.inst);
         return 0;
@@ -2171,14 +2210,14 @@ static int raster_fixtures(void){
       }
       moving->direction=270; moving->y=0; moving->vspeed=9;
       (void)call_values(&extension_vm,"friction_platform",NULL,0);
-      if(moving->y!=12 || moving->vspeed!=0 || gml_builtin_fast_id("friction_platform")<0){
+      if(moving->y!=12 || moving->vspeed!=0 || gml_builtin_fast_id(&extension_vm,"friction_platform")<0){
         fprintf(stderr,"legacy extension platform-contact mismatch\n");
         free(extension_vm.inst);
         return 0;
       }
       (void)call_values(&extension_vm,"keyboard_wait",NULL,0);
       (void)call_values(&extension_vm,"destruir",NULL,0);
-      if(!moving->marked || gml_builtin_fast_id("destruir")<0){
+      if(!moving->marked || gml_builtin_fast_id(&extension_vm,"destruir")<0){
         fprintf(stderr,"legacy extension destroy-self mismatch\n");
         free(extension_vm.inst);
         return 0;
@@ -2186,7 +2225,7 @@ static int raster_fixtures(void){
     }
     free_extension_fixture(&extension_vm);
   }
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
@@ -2226,7 +2265,7 @@ static int raster_fixtures(void){
   }
   render.tpag[0].atlas=0; render.tpag[0].sw=render.tpag[0].sh=2;
   render.tpag[0].bw=render.tpag[0].bh=2; render.bg[0].tpag=0;
-  render.classic=1; gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  render.classic=1; gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   {
     enum { PROJECTED_W=62, PROJECTED_H=47 };
@@ -2504,7 +2543,7 @@ static int raster_fixtures(void){
     render.tpag[0].alpha_run_count=0;
   }
   render.classic=1;
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   gml_draw_sprite_ext(&render,flipped_sprite,0,20,20,-1,1,0,0xFFFFFF,1);
   gml_draw_sprite_ext(&render,flipped_sprite,0,30,30,1,-1,0,0xFFFFFF,1);
@@ -2724,7 +2763,7 @@ static int raster_fixtures(void){
   render.classic=0;
   render.tpag[0].tx=render.tpag[0].ty=0;
   render.tpag[0].bw=render.tpag[0].bh=2;
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
@@ -2793,7 +2832,7 @@ static int raster_fixtures(void){
     return 0;
   }
   render.color=0xFFFFFFu;
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
@@ -2845,7 +2884,7 @@ static int raster_fixtures(void){
     return 0;
   }
 
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
@@ -2894,7 +2933,7 @@ static int raster_fixtures(void){
     return 0;
   }
 
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection_ortho",ortho,5);
@@ -2920,7 +2959,7 @@ static int raster_fixtures(void){
     fprintf(stderr,"software D3 model draw mismatch\n");
     return 0;
   }
-  const char *model_path="/tmp/gml_d3_model_fixture.bin";
+  const char *model_path="/tmp/anygm_d3_model_fixture.bin";
   GmlVal file_args[2]={vreal(0),vstr(model_path)};
   if(call_values(&vm,"d3d_model_save",file_args,2).d!=1){
     fprintf(stderr,"software D3 model save mismatch\n");
@@ -2929,9 +2968,9 @@ static int raster_fixtures(void){
   call_numbers(&vm,"d3d_model_clear",model_id,1);
   if(call_values(&vm,"d3d_model_load",file_args,2).d!=1){
     fprintf(stderr,"software D3 model load mismatch\n");
-    remove(model_path); return 0;
+    anygm_vfs_remove(vm.host,model_path); return 0;
   }
-  remove(model_path);
+  anygm_vfs_remove(vm.host,model_path);
   size_t model_state_size=gml_vm_state_size(&vm),model_written=0,model_used=0;
   void *model_state=malloc(model_state_size);
   if(!model_state || !gml_vm_state_save(&vm,model_state,model_state_size,&model_written)){
@@ -2958,18 +2997,16 @@ static int raster_fixtures(void){
     fprintf(stderr,"software D3 generated model shape mismatch\n");
     return 0;
   }
-  FILE *legacy=fopen(model_path,"w");
-  int legacy_ok=legacy&&fprintf(legacy,"100\n1\n15 8 6 0 24 18 0 1 1\n")>=0;
-  if(legacy && fclose(legacy)!=0) legacy_ok=0;
-  if(!legacy_ok){
+  static const char legacy_model[]="100\n1\n15 8 6 0 24 18 0 1 1\n";
+  if(!anygm_vfs_write_all(vm.host,model_path,legacy_model,sizeof legacy_model-1)){
     fprintf(stderr,"software D3 legacy model fixture write mismatch\n");
     return 0;
   }
   if(call_values(&vm,"d3d_model_load",file_args,2).d!=1){
     fprintf(stderr,"software D3 legacy model load mismatch\n");
-    remove(model_path); return 0;
+    anygm_vfs_remove(vm.host,model_path); return 0;
   }
-  remove(model_path); memset(pixels,0,sizeof(pixels));
+  anygm_vfs_remove(vm.host,model_path); memset(pixels,0,sizeof(pixels));
   call_numbers(&vm,"d3d_model_draw",model_draw,5);
   if(colored_pixels(pixels,WIDTH*HEIGHT)<150){
     fprintf(stderr,"software D3 legacy model raster mismatch\n");
@@ -2979,7 +3016,7 @@ static int raster_fixtures(void){
   const double projection[]={0,-10,0, 0,0,0, 0,0,1};
   const double front_wall[]={-2,0,-2, 2,0,2, -1,1,1};
   const double back_wall[]={2,0,-2, -2,0,2, -1,1,1};
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection",projection,9);
@@ -3000,7 +3037,7 @@ static int raster_fixtures(void){
   }
 
   const double far_wall[]={-2,4,-2, 2,4,2, -1,1,1};
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection",projection,9);
@@ -3014,7 +3051,7 @@ static int raster_fixtures(void){
     fprintf(stderr,"software D3 disabled z-write mismatch\n");
     return 0;
   }
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection",projection,9);
@@ -3029,7 +3066,7 @@ static int raster_fixtures(void){
   }
 
   const double projection_ext[]={0,-10,0, 0,0,0, 0,0,1, 45, (double)WIDTH/HEIGHT, 1,12};
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection_ext",projection_ext,13);
@@ -3045,7 +3082,7 @@ static int raster_fixtures(void){
     return 0;
   }
 
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection",projection,9);
@@ -3071,7 +3108,7 @@ static int raster_fixtures(void){
     phase_surface_data->px[2]=0xFF20C0FFu; phase_surface_data->px[3]=0xFFFF0010u;
     phase_surface_data->dirty=1; phase_surface_data->opaque_known=0;
     phase_surface_data->all_opaque=0; phase_surface_data->all_transparent=0;
-    gml_d3_reset(); render.classic=1; render.interp=1;
+    gml_d3_reset(&vm); render.classic=1; render.interp=1;
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
     for(int q=0;q<3;q++) render.classic_interp_phase[q]=phase[q];
     gml_draw_surface_stretched(&render,phase_surface,8,8,2,2,0xFFFFFF,1);
@@ -3099,13 +3136,13 @@ static int raster_fixtures(void){
     for(int i=0;i<4;i++) multiply_data->px[i]=0xFF808080u;
     multiply_data->dirty=1; multiply_data->opaque_known=0;
     multiply_data->all_opaque=0; multiply_data->all_transparent=0;
-    gml_d3_reset();
+    gml_d3_reset(&vm);
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
     for(int i=0;i<WIDTH*HEIGHT;i++) pixels[i]=0xFFC08040u;
     render.blendmode=3;
     GmlVal surface_ext_args[8]={vreal(multiply_surface),vreal(20),vreal(20),vreal(4),
       vreal(4),vreal(90),vreal(0xFFFFFF),vreal(1)};
-    int surface_ext_id=gml_builtin_fast_id("draw_surface_ext");
+    int surface_ext_id=gml_builtin_fast_id(&vm,"draw_surface_ext");
     (void)gml_builtin_call_fast_id(&vm,surface_ext_id,"draw_surface_ext",surface_ext_args,8);
     if(pixels[18*WIDTH+22]!=0xFF604020u ||
        pixels[22*WIDTH+22]!=0xFFC08040u || surface_ext_id<0){
@@ -3117,7 +3154,7 @@ static int raster_fixtures(void){
   }
 
   {
-    gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+    gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
     gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
     call_numbers(&vm,"vertex_format_begin",NULL,0);
     call_numbers(&vm,"vertex_format_add_position",NULL,0);
@@ -3157,7 +3194,7 @@ static int raster_fixtures(void){
     call_numbers(&vm,"vertex_format_delete",buffer_id,1);
   }
 
-  gml_d3_reset(); memset(pixels,0,sizeof(pixels));
+  gml_d3_reset(&vm); memset(pixels,0,sizeof(pixels));
   gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
   call_numbers(&vm,"d3d_start",NULL,0);
   call_numbers(&vm,"d3d_set_projection",projection,9);
@@ -3168,25 +3205,27 @@ static int raster_fixtures(void){
     fprintf(stderr,"software D3 cone raster mismatch\n");
     return 0;
   }
-  gml_d3_reset();
+  gml_d3_reset(&vm);
   gml_render_free(&render);
   gml_vm_free(&vm);
   return 1;
 }
 
-static int state_matches(const int expected_flags[GML_D3_STATE_FLAG_COUNT],
+static int state_matches(GmlVM *vm,const int expected_flags[GML_D3_STATE_FLAG_COUNT],
                          const double expected_values[GML_D3_STATE_VALUE_COUNT],
                          const uint32_t expected_colors[GML_D3_STATE_COLOR_COUNT]){
   int flags[GML_D3_STATE_FLAG_COUNT];
   double values[GML_D3_STATE_VALUE_COUNT];
   uint32_t colors[GML_D3_STATE_COLOR_COUNT];
-  gml_d3_state_get(flags,values,colors);
+  gml_d3_state_get(vm,flags,values,colors);
   return !memcmp(flags,expected_flags,sizeof(flags)) &&
          !memcmp(values,expected_values,sizeof(values)) &&
          !memcmp(colors,expected_colors,sizeof(colors));
 }
 
 int main(void){
+  GmlWin win; GmlVM vm;
+  memset(&win,0,sizeof(win)); memset(&vm,0,sizeof(vm)); vm.win=&win;
   int flags[GML_D3_STATE_FLAG_COUNT]={0};
   double values[GML_D3_STATE_VALUE_COUNT]={0};
   uint32_t colors[GML_D3_STATE_COLOR_COUNT]={0};
@@ -3198,15 +3237,20 @@ int main(void){
   colors[8]=0x123456u;
   for(int i=0;i<GML_D3_STATE_VALUE_COUNT;i++) values[i]=(double)(i+1)*1.25;
   values[44]=-13.5; values[45]=27.25; values[46]=640; values[47]=360; values[48]=33;
-  gml_d3_state_set(flags,values,colors);
-  if(!state_matches(flags,values,colors)){
+  gml_d3_state_set(&vm,flags,values,colors);
+  if(!state_matches(&vm,flags,values,colors)){
     fprintf(stderr,"software D3 direct state mismatch\n");
     return 1;
   }
   if(!asset_lookup_fixture()) return 1;
 
-  GmlWin win; GmlVM vm;
-  memset(&win,0,sizeof(win)); memset(&vm,0,sizeof(vm)); vm.win=&win;
+  vm.particles=gml_particle_state_create(&vm);
+  if(!vm.particles){
+    fprintf(stderr,"software D3 particle state allocation failed\n");
+    return 1;
+  }
+  vm.next_time_source_id=GML_TIME_SOURCE_ID_BASE;
+  vm.time_source_game_state=1;
   vm.classic_info_active=1;
   vm.inst=calloc(1,sizeof(*vm.inst));
   if(!vm.inst){ fprintf(stderr,"software D3 instance allocation failed\n"); return 1; }
@@ -3225,15 +3269,15 @@ int main(void){
     free(state); return 1;
   }
   vm.classic_info_active=0;
-  gml_d3_reset();
-  if(state_matches(flags,values,colors)){
+  gml_d3_reset(&vm);
+  if(state_matches(&vm,flags,values,colors)){
     fprintf(stderr,"software D3 reset did not clear state\n");
     free(state); return 1;
   }
   if(!gml_vm_state_load(&vm,state,written,&used) || used!=written ||
      !vm.classic_info_active ||
      vm.inst_count!=1 || vm.inst[0].draw_layer_order!=7 ||
-     !state_matches(flags,values,colors)){
+     !state_matches(&vm,flags,values,colors)){
     fprintf(stderr,"software D3 savestate roundtrip mismatch\n");
     free(state); return 1;
   }

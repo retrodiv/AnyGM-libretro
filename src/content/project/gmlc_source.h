@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #ifndef GMLC_SOURCE_H
 #define GMLC_SOURCE_H
 
@@ -14,6 +15,6 @@ typedef struct {
 } GmlcSourceReport;
 
 int gmlc_source_scan_project(const GmlcProject *p, GmlcSourceReport *out, char *err, size_t errcap);
-void gmlc_source_print_report(const GmlcSourceReport *r);
+void gmlc_source_log_report(const AnygmHostServices *host,const GmlcSourceReport *r);
 
 #endif

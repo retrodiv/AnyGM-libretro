@@ -1,0 +1,138 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Copyright (c) 2026 retrodiv <retrodiv@proton.me> -->
+
+# Security model
+
+## Scope
+
+AnyGM parses and executes untrusted content inside the host process. It is not
+a sandbox. The goal of this model is memory-safe rejection, bounded resource
+use at parser boundaries, deterministic behavior, and confinement to the VFS
+namespaces and capabilities explicitly supplied by the host.
+
+The host remains responsible for process isolation, operating-system access
+control, scheduling limits, and deciding which files a VFS path can name.
+
+## Trust boundaries
+
+The following inputs are untrusted:
+
+- content images, chunks, bytecode, strings, records, and resource counts;
+- classic containers, source projects, JSON, generated packages, and archives;
+- state buffers and disposable cache files;
+- paths, locale data, clocks, entropy, and other values returned by host
+  services;
+- runtime override expressions and public configuration values.
+
+The compiled core, its immutable tables, and the `AnygmHostServices` function
+table after ABI validation are trusted code. Individual callback operations
+may still fail and every failure must propagate without switching to an
+ambient process service.
+
+## Content and archive limits
+
+ZIP-compatible routing enforces these compile-time limits:
+
+| Resource | Limit |
+| --- | ---: |
+| Container bytes read into memory | 1 GiB |
+| Central-directory entries | 32,768 |
+| Normalized member path | 511 bytes |
+| One extracted member | 1 GiB |
+| Total extracted bytes per level | 4 GiB |
+| Deflate expansion ratio after a small-output allowance | 1,000:1 |
+| Nested archive levels | 4 |
+
+Member paths are normalized before selection. Absolute paths, drive or stream
+syntax, empty and dot segments, parent traversal, embedded control bytes,
+ASCII case-folded duplicates, encrypted members, and Unix symbolic links are not
+extracted. Local-header bounds, method, compressed and uncompressed sizes, and
+CRC are validated before a member is accepted. Unsupported ZIP64 input is
+rejected.
+
+The normalized FORM reader enforces a separate set of compile-time limits:
+
+| Resource | Limit |
+| --- | ---: |
+| Normalized image bytes | 1 GiB |
+| Chunks | 40 |
+| Strings | 8,388,608 |
+| Bytes in one string | 16 MiB |
+| Code entries | 1,048,576 |
+| Reference occurrences | 16,777,216 |
+| Rooms | 1,048,576 |
+| Room-order entries | 1,048,576 |
+| Embedded classic information | 8 MiB |
+
+The reader validates the exact FORM extent, unique and complete chunks,
+record tables, string termination, code spans, room records, room order, and
+reference chains before returning a live object. Failed parsing releases all
+partial indexes and leaves ownership of the supplied memory with the caller.
+Runtime bytecode decoding uses a bounded entry point. It retains the direct
+decoder when the maximum operand window is available and uses a zero-padded
+local window only at an input boundary, so the normal cached decode path does
+not gain a per-instruction copy.
+
+Project, bytecode, image, audio, and state readers validate their own sizes and
+counts before allocation or pointer arithmetic. A new variable-length field
+must introduce a matching limit and a synthetic boundary test in its owning
+module.
+
+## VFS confinement
+
+All production file access crosses `AnygmHostServices`. A path is a name in the
+host's VFS namespace, not permission to open the process filesystem. Content,
+cache, and save roots are passed explicitly in `AnygmContentSource`; the core
+does not infer sibling repositories, a home directory, or a process working
+directory.
+
+Archive extraction joins only validated relative member paths below the
+explicit cache root. Cache markers are written completely to a temporary path
+and published with an atomic same-filesystem rename. The host should expose
+separate read and write capabilities where stronger confinement is required.
+Missing callbacks fail explicitly and never activate the test-only stdio VFS.
+
+## State and cache
+
+State and cache use different magic values and independent schema fields. A
+state load validates header encoding, exact section arithmetic, total size,
+checksum, content fingerprint, compatibility fingerprint, and stateful config
+fingerprint before section decoding. A failure during decoding restores an
+exact pre-load snapshot.
+
+Cache data is never authoritative. A schema, producer, source, output, size,
+or checksum mismatch discards the cache marker and regenerates from the source.
+No reader for an earlier unpublished state or cache layout is present.
+
+## Runtime overrides
+
+Runtime overrides are bounded by the public slot count and fixed parser storage.
+An enabled slot requires a nonempty expression. Parsing never invokes a shell,
+loads a module, accesses the network, or opens a file. Invalid or truncated
+expressions fail within the slot and cannot change the compatibility profile.
+
+## Deliberately unavailable operations
+
+Content paths do not invoke a shell or child process, execute extracted
+payloads, load dynamic plugins, or make network requests. Network-related
+language operations receive deterministic unavailable behavior through the
+runtime. Native rich-text rendering, fonts, rumble, clocks, and similar
+facilities are explicit optional host callbacks.
+
+## Failure guarantees
+
+- Failed `load` from an empty engine leaves it empty and destroyable.
+- Failed state load leaves the prior serialized state unchanged.
+- Failed cache validation leaves original content authoritative.
+- Failed extraction does not publish a valid cache marker.
+- Unsupported input returns a stable result and an engine-owned diagnostic.
+- Unload and destroy close or release every resource owned by the engine.
+
+## Verification
+
+`make architecture-check` enforces dependency and direct-system-call rules.
+`make contract-check` exercises lifecycle and host failures.
+`make integration-check` proves deterministic state and engine isolation.
+`make security-check` runs bounded state, VFS, archive, cache, and override
+corpora. `make sanitizer-check` rebuilds those paths with address and undefined
+behavior instrumentation.

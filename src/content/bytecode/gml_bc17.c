@@ -1,12 +1,16 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* gml_bc17.c - Studio bytecode 17 reference layout selection.
- * Instruction decoding and CODE-entry layout use the bytecode 15 implementation.
- * FUNC references may address the instruction or its following reference word.
- * The first chain with at least four occurrences is probed with both offsets,
- * up to twelve nodes. Select offset zero only when its probe reaches more nodes;
- * otherwise retain offset four. VARI retains the bytecode 15 layout.
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
+/* gml_bc17.c — GameMaker bytecode 17 (GMS2) version-specific layout.
+ *
+ * bc17 shares bc15's instruction decode and CODE-entry layout (dispatched in gml_bytecode.c); the
+ * only override is the FUNC occurrence-chain layout. And bc17 is NOT uniform: some builds keep the
+ * bc15/16 layout (the FUNC entry `addr` points at the instruction `ia`, with the chain link in the
+ * following word — ref/chain offset 4/4), while others point `addr` straight at the reference word
+ * `ia+4`, with the chain link in that word itself (offset 0/0). Other bytecode 17 exports retain
+ * the 4/4 layout. The parser therefore detects the layout per file by walking the first
+ * multi-occurrence FUNC chain both ways and keep whichever stays in bounds. VARI is always 4/4.
+ * The bounded probe selects the layout whose occurrence chain remains valid. */
 #include <string.h>
 #include "gml_bytecode.h"
 
@@ -20,10 +24,12 @@ static uint32_t bc17_u32(const GmlWin *w, uint32_t o){
 static int bc17_walk_steps(const GmlWin *w, uint32_t addr, uint32_t occ, uint32_t chain_off){
   uint32_t a=addr; int steps=0;
   for(uint32_t k=0; k<occ && k<12; k++){
-    if(a<4 || (size_t)a+8 > w->size) break;
+    if(a<4 || chain_off>UINT32_MAX-a ||
+       (size_t)a+chain_off>w->size || 4u>w->size-((size_t)a+chain_off)) break;
     steps++;
     uint32_t nxt = bc17_u32(w, a+chain_off) & 0x07FFFFFF;
     if(nxt==0) break;
+    if(nxt>UINT32_MAX-a) break;
     a += nxt;
   }
   return steps;

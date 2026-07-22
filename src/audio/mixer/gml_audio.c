@@ -1,19 +1,21 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* Software mixer for AUDO/SOND sounds and FMOD bank voices.
- * WAV PCM is referenced in place. Embedded and grouped OGG/MP3 data is decoded
- * mostly on first playback, with initial warming; external OGG registration decodes immediately.
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
+/* gml_audio.c — software mixer for AUDO/SOND. Handles uncompressed RIFF/WAV, OGG Vorbis,
+ * and MP3. WAV data is referenced in-place; compressed data is mostly decoded lazily on
+ * first playback so large soundtracks do not consume decoded-PCM memory at boot. */
 #define STB_VORBIS_NO_PUSHDATA_API
 #define STB_VORBIS_NO_STDIO
-#include "deps/stb_vorbis.c"
+#include "stb_vorbis.c"
 #undef STB_VORBIS_NO_STDIO
 #undef STB_VORBIS_NO_PUSHDATA_API
 #define MINIMP3_ONLY_MP3
 #define MINIMP3_NO_STDIO
-#include "deps/minimp3_ex.h"
+#include "minimp3_ex.h"
 #include "gml_audio.h"
 #include "gml_fmod.h"
+#include "anygm_host.h"
+#include "anygm_vfs.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -55,13 +57,19 @@ struct GmlAudio {
   uint8_t **extbuf; int n_ext;
 };
 
+static const char *audio_setting(const GmlAudio *audio,const char *name){
+  return anygm_host_development_setting(audio&&audio->win?audio->win->host:NULL,name);
+}
+
 static int audio_voice_limit(GmlAudio *a){
   if(!a || a->channel_num<=0) return 0;
   return a->channel_num<GML_MAX_VOICES ? a->channel_num : GML_MAX_VOICES;
 }
 static void audio_warm_initial_ogg(GmlAudio *a);
 
-/* Load an indexed audio-group container on demand. */
+/* Load "<content_dir>/audiogroup<N>.dat" on demand: a bare FORM container holding one AUDO
+ * chunk. Studio exports can place streamed music and ambience outside data.win. A grouped SOND
+ * whose blob is unresolved must not be decoded as audio payload. */
 static const char *audio_group_exact_string(const GmlWin *win, uint32_t ptr){
   if(!win || !win->str_charoff || !win->strs) return NULL;
   int lo=0, hi=win->n_strs-1;
@@ -93,7 +101,7 @@ int gml_audio_group_file_path(const GmlWin *win, int g, char *out, size_t out_ca
         if(prev<rec && prev>=gc->off+4+n*4) record_size=rec-prev;
       }
       /* Legacy AGRP records contain one string pointer and are packed four bytes apart.
-       * Later records contain {name, custom path} and are eight bytes apart.
+       * Extended records contain {name, custom path} and are eight bytes apart.
        * A one-record table has no neighbour from which to infer its width, so only accept its
        * second word when it is itself an exact STRG pointer. */
       if(rec>=gc->off+4+n*4 && (size_t)rec<=chunk_end && chunk_end-(size_t)rec>=8 &&
@@ -107,7 +115,7 @@ int gml_audio_group_file_path(const GmlWin *win, int g, char *out, size_t out_ca
     rel=fallback;
   }
   /* Audio-group paths are relative content paths. Refuse traversal/drive paths and normalize
-   * the Windows separator so the same data.win works on libretro's Unix targets. */
+   * the Windows separator so the same data.win works on host's Unix targets. */
   if(rel[0]=='/' || rel[0]=='\\' || strchr(rel,':') || strstr(rel,"..")) return 0;
   size_t base=strlen(win->content_dir[0]?win->content_dir:".");
   size_t nr=strlen(rel);
@@ -124,14 +132,15 @@ static int audio_group_load_dat(GmlAudio *a, int g){
   a->grp_n[g]=0; a->grp_data[g]=(uint8_t*)1;   /* mark tried (failure keeps 1 so we don't retry) */
   char path[600];
   if(!gml_audio_group_file_path(a->win,g,path,sizeof path)) return 0;
-  FILE *f=fopen(path,"rb");
-  if(!f){ if(getenv("GML_LOG_AUDIO")) fprintf(stderr,"[audio] group=%d open failed: %s\n",g,path); return 0; }
-  if(fseek(f,0,SEEK_END)){ fclose(f); return 0; }
-  long sz=ftell(f);
-  if(sz<20 || (uint64_t)sz>UINT32_MAX || fseek(f,0,SEEK_SET)){ fclose(f); return 0; }
-  uint8_t *buf=malloc((size_t)sz);
-  if(!buf || fread(buf,1,(size_t)sz,f)!=(size_t)sz){ free(buf); fclose(f); return 0; }
-  fclose(f);
+  uint8_t *buf=NULL;
+  size_t size=0;
+  if(!anygm_vfs_read_all(a->win?a->win->host:NULL,path,&buf,&size,UINT32_MAX)){
+    if(audio_setting(a,"GML_LOG_AUDIO"))
+      anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[audio] group=%d open failed: %s\n",g,path);
+    return 0;
+  }
+  if(size<20 || size>UINT32_MAX){ free(buf); return 0; }
+  uint32_t sz=(uint32_t)size;
   if(memcmp(buf,"FORM",4) || memcmp(buf+8,"AUDO",4)){ free(buf); return 0; }
   uint32_t count=rd32(buf,16);
   if(count>((uint32_t)sz-20u)/4u){ free(buf); return 0; }
@@ -139,13 +148,14 @@ static int audio_group_load_dat(GmlAudio *a, int g){
   a->grp_size[g]=(uint32_t)sz;
   a->grp_audo_off[g]=16;                        /* FORM(8) + "AUDO"+size(8) -> count at +16 */
   a->grp_n[g]=count;
-  if(getenv("GML_LOG_AUDIO")) fprintf(stderr,"[audio] group=%d loaded=%u path=%s\n",g,count,path);
+  if(audio_setting(a,"GML_LOG_AUDIO"))
+    anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[audio] group=%d loaded=%u path=%s\n",g,count,path);
   return a->grp_n[g]>0;
 }
 GmlAudio *gml_audio_create(GmlWin *win){
   GmlAudio *a=calloc(1,sizeof(GmlAudio)); a->win=win; a->next_voice_id=1000000; a->channel_num=128; a->master_gain=1.0;
   for(int g=0;g<GML_MAX_AUDIOGROUPS;g++) a->group_gain[g]=a->group_target[g]=1.0;
-  a->fmod=gml_fmod_banks_load(win->content_dir);   /* load an optional FMOD bank set */
+  a->fmod=gml_fmod_banks_load(win->host,win->content_dir);   /* optional FMOD bank set */
   const uint8_t *d=win->data;
   const GmlChunk *sc=gml_chunk(win,"SOND"), *ac=gml_chunk(win,"AUDO");
   if(!sc||!ac) return a;
@@ -193,25 +203,25 @@ GmlAudio *gml_audio_create(GmlWin *win){
       continue;
     }
     if(audoid<0){
-      /* Resolve the loose filename from SOND +12 beside the data file.
-       * Retain the compressed bytes for lazy OGG/MP3 decoding. */
+      /* Not embedded: SOND +12 names a loose sound file. Load it and decode lazily. */
       const char *fn=gml_str_by_ptr(win,rd32(d,p+12));
       size_t fl=fn?strlen(fn):0;
       if(fn && fl>4 && (!strcmp(fn+fl-4,".ogg") || !strcmp(fn+fl-4,".mp3"))){
         char path[600];
         snprintf(path,sizeof path,"%s/%s",win->content_dir[0]?win->content_dir:".",fn);
-        FILE *f=fopen(path,"rb");
-        if(f){ fseek(f,0,SEEK_END); long szf=ftell(f); fseek(f,0,SEEK_SET);
-          if(szf>4){ uint8_t *buf=malloc((size_t)szf);
-            if(buf && fread(buf,1,(size_t)szf,f)==(size_t)szf &&
-               (!memcmp(buf,"OggS",4) || is_mp3_blob(buf,(uint32_t)szf))){
+        uint8_t *buf=NULL;
+        size_t szf=0;
+        if(anygm_vfs_read_all(win->host,path,&buf,&szf,UINT32_MAX)){
+          if(szf>4 && szf<=UINT32_MAX &&
+             (!memcmp(buf,"OggS",4) || is_mp3_blob(buf,(uint32_t)szf))){
               uint8_t **ne=realloc(a->extbuf,(a->n_ext+1)*sizeof(*ne));
               if(ne){ a->extbuf=ne; a->extbuf[a->n_ext++]=buf;
                 if(!memcmp(buf,"OggS",4)){ a->snd[i].ogg=buf; a->snd[i].ogg_len=(uint32_t)szf; }
                 else { a->snd[i].mp3=buf; a->snd[i].mp3_len=(uint32_t)szf; }
-                buf=NULL; } }
-            free(buf); }
-          fclose(f); } }
+                buf=NULL; }
+          }
+          free(buf);
+        } }
       continue;
     }
     if((uint32_t)audoid>=na) continue;
@@ -278,8 +288,8 @@ int gml_audio_add_ogg(GmlAudio *a, const uint8_t *ogg, int len){
   a->snd[slot].channels=ch>0?ch:1;
   a->snd[slot].sample_rate=rate>0?rate:44100;
   a->snd[slot].vol=1.0f; a->snd[slot].gain=1.0; a->snd[slot].pitch=1.0;
-  if(getenv("GML_LOG_AUDIO")){ int live=0; for(int i=a->n_base_snd;i<a->n_snd;i++) if(a->snd[i].own) live++;
-    fprintf(stderr,"[add_ogg] slot=%d n_snd=%d live=%d nval=%u\n",slot,a->n_snd,live,a->snd[slot].nval); }
+  if(audio_setting(a,"GML_LOG_AUDIO")){ int live=0; for(int i=a->n_base_snd;i<a->n_snd;i++) if(a->snd[i].own) live++;
+    anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[add_ogg] slot=%d n_snd=%d live=%d nval=%u\n",slot,a->n_snd,live,a->snd[slot].nval); }
   return slot;
 }
 void gml_audio_caster_free(GmlAudio *a, int handle){
@@ -331,12 +341,12 @@ int gml_audio_warm_sound(GmlAudio *a, int snd){
   GmlSound *s=&a->snd[snd];
   int had_pcm=s->pcm!=NULL;
   if(!sound_ensure_pcm(s)) return 0;
-  if(!had_pcm && getenv("GML_LOG_AUDIO"))
-    fprintf(stderr,"[audio] warm_sound sound=%d ogg=%u pcm=%u\n",snd,s->ogg_len,s->nval);
+  if(!had_pcm && audio_setting(a,"GML_LOG_AUDIO"))
+    anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[audio] warm_sound sound=%d ogg=%u pcm=%u\n",snd,s->ogg_len,s->nval);
   return 1;
 }
-static uint32_t audio_initial_ogg_warm_budget(void){
-  const char *e=getenv("GML_AUDIO_WARM_OGG_BYTES");
+static uint32_t audio_initial_ogg_warm_budget(GmlAudio *a){
+  const char *e=audio_setting(a,"GML_AUDIO_WARM_OGG_BYTES");
   if(e && (!strcmp(e,"0") || !strcmp(e,"off") || !strcmp(e,"false"))) return 0;
   if(e && *e){
     long v=strtol(e,NULL,0);
@@ -346,7 +356,7 @@ static uint32_t audio_initial_ogg_warm_budget(void){
 }
 static void audio_warm_initial_ogg(GmlAudio *a){
   if(!a || !a->snd) return;
-  uint32_t budget=audio_initial_ogg_warm_budget();
+  uint32_t budget=audio_initial_ogg_warm_budget(a);
   if(!budget) return;
   int warmed=0;
   uint32_t used=0;
@@ -358,8 +368,8 @@ static void audio_warm_initial_ogg(GmlAudio *a){
     if(sound_ensure_pcm(s)){
       used += s->ogg_len;
       warmed++;
-      if(getenv("GML_LOG_AUDIO"))
-        fprintf(stderr,"[audio] warm_ogg sound=%d ogg=%u pcm=%u budget=%u\n",i,s->ogg_len,s->nval,budget);
+      if(audio_setting(a,"GML_LOG_AUDIO"))
+        anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[audio] warm_ogg sound=%d ogg=%u pcm=%u budget=%u\n",i,s->ogg_len,s->nval,budget);
     }
     if(used>=budget) break;
   }
@@ -545,8 +555,8 @@ double gml_audio_sound_length(GmlAudio *a, int sound){
   if(!isfinite(seconds) || seconds<0.0) seconds=0.0;
   s->length_seconds=seconds;
   s->length_known=1;
-  if(getenv("GML_LOG_AUDIO"))
-    fprintf(stderr,"[audio] sound_length id=%d seconds=%.6f\n",sound,seconds);
+  if(audio_setting(a,"GML_LOG_AUDIO"))
+    anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[audio] sound_length id=%d seconds=%.6f\n",sound,seconds);
   return seconds;
 }
 void gml_audio_sound_set_track_position(GmlAudio *a, int target, double seconds){
@@ -671,40 +681,59 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
   if(mix!=stack_mix) free(mix);
 }
 
-/* Mix AUDO/SOND first, then add FMOD voices. Pausing the AUDO bus
- * does not pause FMOD voices; their controls are separate. */
+/* Fill the output batch with AUDO/SOND first, then FMOD Studio voices. Pausing the AUDO bus does
+ * not pause FMOD instances, which have their own explicit controls. */
 void gml_audio_mix(GmlAudio *a, int16_t *out, int frames){
   memset(out,0,(size_t)frames*2*sizeof(int16_t));
   if(a && !a->paused) audio_mix_audo(a,out,frames);
   if(a && a->fmod) gml_fmod_mix(a->fmod,out,frames,44100);
 }
 
+enum { GML_AUDIO_STATE_SCHEMA=1 };
+#define GML_AUDIO_STATE_MAGIC UINT32_C(0x53554141)
 typedef struct { uint8_t *data; size_t cap, pos; int ok; } AudW;
 typedef struct { const uint8_t *data; size_t cap, pos; int ok; } AudR;
 static void aw_raw(AudW *s, const void *p, size_t n){
-  if(s->data){ if(s->pos+n<=s->cap) memcpy(s->data+s->pos,p,n); else s->ok=0; }
+  if(n>SIZE_MAX-s->pos){ s->ok=0; s->pos=SIZE_MAX; return; }
+  if(s->data){ if(s->pos<=s->cap && n<=s->cap-s->pos) memcpy(s->data+s->pos,p,n); else s->ok=0; }
   s->pos+=n;
 }
 static void ar_raw(AudR *s, void *p, size_t n){
-  if(s->pos+n<=s->cap) memcpy(p,s->data+s->pos,n);
+  if(n>SIZE_MAX-s->pos){ memset(p,0,n); s->ok=0; s->pos=SIZE_MAX; return; }
+  if(s->pos<=s->cap && n<=s->cap-s->pos) memcpy(p,s->data+s->pos,n);
   else { memset(p,0,n); s->ok=0; }
   s->pos+=n;
 }
-static void aw_i32(AudW *s, int v){ int32_t x=(int32_t)v; aw_raw(s,&x,sizeof(x)); }
-static void aw_u32(AudW *s, uint32_t v){ aw_raw(s,&v,sizeof(v)); }
-static void aw_d(AudW *s, double v){ aw_raw(s,&v,sizeof(v)); }
-static int ar_i32(AudR *s){ int32_t v=0; ar_raw(s,&v,sizeof(v)); return (int)v; }
-static uint32_t ar_u32(AudR *s){ uint32_t v=0; ar_raw(s,&v,sizeof(v)); return v; }
-static double ar_d(AudR *s){ double v=0; ar_raw(s,&v,sizeof(v)); return v; }
+static void aw_u32(AudW *s, uint32_t v){
+  uint8_t b[4]={(uint8_t)v,(uint8_t)(v>>8),(uint8_t)(v>>16),(uint8_t)(v>>24)};
+  aw_raw(s,b,sizeof b);
+}
+static void aw_i32(AudW *s, int v){ aw_u32(s,(uint32_t)(int32_t)v); }
+static void aw_d(AudW *s, double v){
+  uint64_t bits=0; uint8_t b[8]; memcpy(&bits,&v,sizeof bits);
+  for(unsigned i=0;i<8;i++) b[i]=(uint8_t)(bits>>(i*8));
+  aw_raw(s,b,sizeof b);
+}
+static uint32_t ar_u32(AudR *s){
+  uint8_t b[4]={0}; ar_raw(s,b,sizeof b);
+  return (uint32_t)b[0]|((uint32_t)b[1]<<8)|((uint32_t)b[2]<<16)|((uint32_t)b[3]<<24);
+}
+static int ar_i32(AudR *s){ return (int)(int32_t)ar_u32(s); }
+static double ar_d(AudR *s){
+  uint8_t b[8]={0}; uint64_t bits=0; ar_raw(s,b,sizeof b);
+  for(unsigned i=0;i<8;i++) bits|=(uint64_t)b[i]<<(i*8);
+  double v=0; memcpy(&v,&bits,sizeof v); return v;
+}
 
 static void audio_state_write(AudW *s, GmlAudio *a){
-  aw_u32(s,0x37445541u); /* AUD7: audio-group gain/fade state */
+  aw_u32(s,GML_AUDIO_STATE_MAGIC); /* AAUS */
+  aw_u32(s,GML_AUDIO_STATE_SCHEMA);
   aw_i32(s,a?a->paused:0);
   aw_i32(s,a?a->next_voice_id:1000000);
   aw_d(s,a?a->master_gain:1.0);
   aw_i32(s,a?a->channel_num:128);
   for(int i=0;i<GML_MAX_VOICES;i++){
-    GmlVoice v=a?a->voice[i]:(GmlVoice){0};
+    GmlVoice v=(a&&a->voice[i].active)?a->voice[i]:(GmlVoice){0};
     aw_i32(s,v.snd); aw_i32(s,v.loop); aw_i32(s,v.active); aw_i32(s,v.paused); aw_i32(s,v.id);
     aw_d(s,v.pos); aw_d(s,v.gain); aw_d(s,v.pitch);
     aw_d(s,v.loop_start); aw_d(s,v.spatial_gain); aw_d(s,v.pan); aw_i32(s,v.emitter);
@@ -725,13 +754,13 @@ int gml_audio_state_save(GmlAudio *a, void *data, size_t len, size_t *written){
 }
 int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used){
   AudR s={(const uint8_t*)data,len,0,1};
-  uint32_t magic=ar_u32(&s); if((magic!=0x31445541u && magic!=0x32445541u && magic!=0x33445541u && magic!=0x34445541u && magic!=0x35445541u && magic!=0x36445541u && magic!=0x37445541u) || !s.ok) return 0;
-  int v2=magic>=0x32445541u, v3=magic>=0x33445541u, v4=magic>=0x34445541u;
-  int v5=magic>=0x35445541u, v6=magic>=0x36445541u, v7=magic>=0x37445541u;
+  uint32_t magic=ar_u32(&s);
+  uint32_t schema=ar_u32(&s);
+  if(magic!=GML_AUDIO_STATE_MAGIC || schema!=GML_AUDIO_STATE_SCHEMA || !s.ok) return 0;
   int paused=ar_i32(&s);
-  int next_voice_id=v2?ar_i32(&s):1000000;
-  double master_gain=v3?ar_d(&s):1.0;
-  int channel_num=v4?ar_i32(&s):128;
+  int next_voice_id=ar_i32(&s);
+  double master_gain=ar_d(&s);
+  int channel_num=ar_i32(&s);
   GmlVoice tmp[GML_MAX_VOICES];
   int snd_count=a?a->n_snd:0;
   double *snd_gain=NULL, *snd_pitch=NULL, *snd_loop=NULL;
@@ -746,32 +775,30 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
     memset(&tmp[i],0,sizeof(tmp[i]));
     tmp[i].spatial_gain=1.0; tmp[i].emitter=-1;
     tmp[i].snd=ar_i32(&s); tmp[i].loop=ar_i32(&s); tmp[i].active=ar_i32(&s);
-    if(v2){
-      tmp[i].paused=ar_i32(&s); tmp[i].id=ar_i32(&s);
-      tmp[i].pos=ar_d(&s); tmp[i].gain=ar_d(&s); tmp[i].pitch=ar_d(&s);
-      if(v6){ tmp[i].loop_start=ar_d(&s); tmp[i].spatial_gain=ar_d(&s);
-        tmp[i].pan=ar_d(&s); tmp[i].emitter=ar_i32(&s); }
-      else { tmp[i].loop_start=0.0; tmp[i].spatial_gain=1.0; tmp[i].pan=0.0; tmp[i].emitter=-1; }
-    } else {
-      tmp[i].pos=ar_u32(&s); tmp[i].gain=1.0; tmp[i].pitch=1.0; tmp[i].id=next_voice_id++;
-    }
+    tmp[i].paused=ar_i32(&s); tmp[i].id=ar_i32(&s);
+    tmp[i].pos=ar_d(&s); tmp[i].gain=ar_d(&s); tmp[i].pitch=ar_d(&s);
+    tmp[i].loop_start=ar_d(&s); tmp[i].spatial_gain=ar_d(&s);
+    tmp[i].pan=ar_d(&s); tmp[i].emitter=ar_i32(&s);
     if(!a || tmp[i].snd<0 || tmp[i].snd>=a->n_snd) tmp[i].active=0;
-    if(tmp[i].id<1000000) tmp[i].id=next_voice_id++;
+    if(!tmp[i].active){ memset(&tmp[i],0,sizeof(tmp[i])); continue; }
+    if(tmp[i].id<1000000){
+      tmp[i].id=next_voice_id++;
+    }
     if(!isfinite(tmp[i].pos) || tmp[i].pos<0.0) tmp[i].pos=0.0;
     if(!isfinite(tmp[i].gain) || tmp[i].gain<0.0) tmp[i].gain=1.0;
     if(!isfinite(tmp[i].pitch) || tmp[i].pitch<=0.0) tmp[i].pitch=1.0;
     if(a && tmp[i].active) audio_voice_prepare(a,&tmp[i]);
   }
-  if(v5){
-    int stored=ar_i32(&s);
-    for(int i=0;i<stored;i++){
-      double g=ar_d(&s), p=ar_d(&s);
-      double l=v6?ar_d(&s):0.0;
-      if(i<snd_count){
-        snd_gain[i]=g>=0.0?g:1.0;
-        snd_pitch[i]=p>0.0?p:1.0;
-        snd_loop[i]=l>=0.0?l:0.0;
-      }
+  int stored_sounds=ar_i32(&s);
+  if(stored_sounds<0 || stored_sounds>1000000){
+    free(snd_gain); free(snd_pitch); free(snd_loop); return 0;
+  }
+  for(int i=0;i<stored_sounds;i++){
+    double g=ar_d(&s), p=ar_d(&s), l=ar_d(&s);
+    if(i<snd_count){
+      snd_gain[i]=g>=0.0?g:1.0;
+      snd_pitch[i]=p>0.0?p:1.0;
+      snd_loop[i]=l>=0.0?l:0.0;
     }
   }
   double group_gain[GML_MAX_AUDIOGROUPS], group_target[GML_MAX_AUDIOGROUPS];
@@ -779,16 +806,14 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
   for(int g=0;g<GML_MAX_AUDIOGROUPS;g++){
     group_gain[g]=group_target[g]=1.0; group_fade_frames[g]=0;
   }
-  if(v7){
-    int stored=ar_i32(&s);
-    if(stored<0 || stored>4096){ free(snd_gain); free(snd_pitch); free(snd_loop); return 0; }
-    for(int g=0;g<stored;g++){
-      double gain=ar_d(&s), target=ar_d(&s); int remaining=ar_i32(&s);
-      if(g<GML_MAX_AUDIOGROUPS){
-        group_gain[g]=isfinite(gain)&&gain>=0.0?gain:1.0;
-        group_target[g]=isfinite(target)&&target>=0.0?target:group_gain[g];
-        group_fade_frames[g]=remaining>0?remaining:0;
-      }
+  int stored_groups=ar_i32(&s);
+  if(stored_groups<0 || stored_groups>4096){ free(snd_gain); free(snd_pitch); free(snd_loop); return 0; }
+  for(int g=0;g<stored_groups;g++){
+    double gain=ar_d(&s), target=ar_d(&s); int remaining=ar_i32(&s);
+    if(g<GML_MAX_AUDIOGROUPS){
+      group_gain[g]=isfinite(gain)&&gain>=0.0?gain:1.0;
+      group_target[g]=isfinite(target)&&target>=0.0?target:group_gain[g];
+      group_fade_frames[g]=remaining>0?remaining:0;
     }
   }
   if(!s.ok){ free(snd_gain); free(snd_pitch); free(snd_loop); return 0; }

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* gml_bytecode.h - CODE/FUNC/VARI layouts and instruction decoding. */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+/* gml_bytecode.h - bytecode-version specific CODE/FUNC/VARI layouts and instruction decode. */
 #ifndef GML_BYTECODE_H
 #define GML_BYTECODE_H
 
@@ -17,6 +18,8 @@ typedef struct {
 
 int gml_bc_code_start(const GmlWin *w, uint32_t entry_ptr, uint32_t *start);
 int gml_bc_ref_layout(const GmlWin *w, const char *chunk, GmlRefLayout *out);
+int gml_decode_bc_bounded(const uint8_t *data, size_t size, uint32_t offset,
+                          uint8_t bytecode, GmlInsn *out);
 
 int gml_bc14_code_start(const GmlWin *w, uint32_t entry_ptr, uint32_t *start);
 int gml_bc14_ref_layout(const GmlWin *w, const char *chunk, GmlRefLayout *out);

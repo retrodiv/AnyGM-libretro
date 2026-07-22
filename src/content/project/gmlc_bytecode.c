@@ -1,13 +1,16 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gmlc_bytecode.h"
 #include "gml_win.h"
+#include "anygm_host.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <inttypes.h>
 
 typedef struct {
   uint8_t *data;
@@ -2469,7 +2472,7 @@ static int parse_simple_or_assign(Compiler *c){
         return 0;
       }
       char receiver[128];
-      snprintf(receiver,sizeof(receiver),"__postfix_receiver_%zu",c->code.len);
+      snprintf(receiver,sizeof(receiver),"__postfix_receiver_%" PRIu64,(uint64_t)c->code.len);
       if(!add_local(c,receiver) || !emit_pop_var(c,IT_LOCAL,receiver,0xA0,DT_VAR)) return 0;
       LValue lv;
       memset(&lv,0,sizeof(lv));
@@ -2562,10 +2565,11 @@ static int parse_simple_or_assign(Compiler *c){
 static int parse_statement(Compiler *c){
   if(c->lex.tok.kind==TOK_EOF) return 1;
   if(c->log_statements)
-    fprintf(stderr,"gmlc: statement: %s: %s @ %zu\n",
-            c->source_path?c->source_path:"<source>",
-            c->lex.tok.text,
-            c->lex.tok.start);
+    anygm_host_logf(c->project?c->project->host:NULL,ANYGM_LOG_DEBUG,
+                    "gmlc: statement: %s: %s @ %" PRIu64 "\n",
+                    c->source_path?c->source_path:"<source>",
+                    c->lex.tok.text,
+                    (uint64_t)c->lex.tok.start);
   if(eat(c,";")) return 1;
   if(is_id(c,"function") && function_shape_at(c->lex.src,c->lex.tok.start)) return parse_function_value(c,0);
   if(is_id(c,"var")) return parse_var_decl(c);
@@ -3224,7 +3228,8 @@ static int compile_text_internal(const GmlcProject *project, const GmlcFunctionR
   c.funcs=funcs;
   c.source_path=source_path;
   c.script_index=script_index;
-  c.log_statements=getenv("GMLC_LOG_STATEMENTS")!=NULL;
+  c.log_statements=anygm_host_development_setting(project?project->host:NULL,
+                                                   "GMLC_LOG_STATEMENTS")!=NULL;
   if(funcs){
     for(int i=0;i<funcs->n_macros;i++) if(!add_macro(&c,funcs->macro_names[i],funcs->macro_values[i])){
       c.unsupported=1;

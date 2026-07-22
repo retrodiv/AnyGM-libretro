@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* gml_bc14.c - Studio bytecode 14 instruction decoding. */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+/* gml_bc14.c - GameMaker: Studio bytecode 14 instruction decode. */
 #include "gml_bytecode.h"
 #include <string.h>
 
@@ -12,7 +13,7 @@ static int16_t i16(const uint8_t *d, uint32_t o){
 }
 
 int gml_bc14_code_start(const GmlWin *w, uint32_t entry_ptr, uint32_t *start){
-  if(!w || !start) return 0;
+  if(!w || !start || entry_ptr>UINT32_MAX-8u) return 0;
   *start=entry_ptr+8;
   return *start <= w->size;
 }

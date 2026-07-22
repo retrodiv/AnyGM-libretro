@@ -36,8 +36,7 @@ headers after reproduction succeeds. A report is written to the external work
 directory only after comparison or replacement succeeds. Generated identifiers
 use ordinal indices, not fingerprints.
 
-At this historical revision, the checked-in setup table contains only two
-packets and differs from the full generated table layout; the second generated
-header is not checked in. Default comparison therefore does not establish a
-matching tree. Generation and replacement do not establish runtime compatibility
-with this revision's consumers.
+At this historical revision, the checked-in setup table contains all 161
+packets in ordinal recipe order. The packed-codebook candidate is not checked in,
+so default comparison covers only generated artifacts present in this tree.
+Generation and replacement do not by themselves establish runtime compatibility.

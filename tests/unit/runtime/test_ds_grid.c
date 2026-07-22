@@ -1,12 +1,11 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gml_vm.h"
 
 #include <stdio.h>
 #include <string.h>
 
-int gml_input_key(int key, int edge){ (void)key; (void)edge; return 0; }
-int gml_input_gamepad(int button, int edge){ (void)button; (void)edge; return 0; }
 GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);
 
 static GmlVal call(GmlVM *vm, const char *name, GmlVal *args, int count){

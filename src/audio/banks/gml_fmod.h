@@ -1,14 +1,17 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 /* gml_fmod.h — FMOD FSB5 audio decode (generic FMOD container support; see gml_fmod.c). */
 #ifndef GML_FMOD_H
 #define GML_FMOD_H
 #include <stdint.h>
 #include <stddef.h>
 
+struct AnygmHostServices;
+
 typedef struct {
   int channels, rate, num_samples;
-  uint32_t setup_crc;          /* Vorbis setup packet CRC32 (looked up in gml_fmod_codebooks.h) */
+  uint32_t setup_crc;          /* Vorbis setup packet CRC32 used by the generic setup table */
   const uint8_t *data;         /* raw uint16-size-prefixed Vorbis packets */
   size_t data_len;
 } GmlFmodSample;
@@ -20,13 +23,16 @@ int gml_fmod_fsb5_sample(const uint8_t *fsb5, size_t fsb5_len, int index, GmlFmo
  * *out_pcm is malloc'd (caller frees). 0 on failure (unknown codebook / decode error). */
 int gml_fmod_decode(const uint8_t *fsb5, size_t fsb5_len, int index, int *channels, int *rate, int16_t **out_pcm);
 
-/* Bank sets resolve event paths through GUIDs to subsounds. Metadata and sample
- * headers remain in memory; compressed audio is read from disk on demand. */
+/* ---- FMOD Studio bank set: event path to GUID to sample resolution and on-demand decode ----
+ * A bank set is the folder of .bank files next to the content
+ * (Master.strings.bank supplies path↔GUID; the other banks supply the event graph + FSB5 audio). The
+ * huge streaming banks are NOT held in RAM: only metadata + the FSB5 header table are parsed, and a
+ * subsound's compressed data is pulled from disk on demand at decode time. */
 typedef struct GmlFmodBanks GmlFmodBanks;   /* opaque */
 
-/* Probe the supported bank directories for the string table, then attempt the
- * supported named banks. Returns NULL when no usable string table is available. */
-GmlFmodBanks *gml_fmod_banks_load(const char *dir);
+/* Load Master.strings.bank + every *.bank in `dir`. Returns NULL if no usable bank set is present
+ * (e.g. a non-FMOD game) — callers treat NULL as "no FMOD audio", never an error. */
+GmlFmodBanks *gml_fmod_banks_load(const struct AnygmHostServices *host,const char *dir);
 void gml_fmod_banks_free(GmlFmodBanks *b);
 
 /* Resolve an event path ("event:/<bank>/<event>") to a playable subsound.

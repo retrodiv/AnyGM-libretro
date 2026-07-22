@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gmlc_package.h"
+#include "anygm_host.h"
+#include "anygm_vfs.h"
 #include "gmlc_bytecode.h"
 #include "gml_win.h"
 #if defined(__GNUC__)
@@ -132,8 +135,8 @@ typedef struct {
   RefTextureLayout ref_tex;
 } Pkg;
 
-static int env_flag_enabled(const char *name){
-  const char *v=getenv(name);
+static int development_flag_enabled(const AnygmHostServices *host,const char *name){
+  const char *v=anygm_host_development_setting(host,name);
   if(!v || !*v) return 0;
   if(!strcmp(v,"0") || !strcmp(v,"false") || !strcmp(v,"FALSE") ||
      !strcmp(v,"no") || !strcmp(v,"NO")){
@@ -1000,18 +1003,7 @@ static int read_blob(const GmlcProject *project, const char *path,
     *out=copy; *out_len=memory->size;
     return 1;
   }
-  FILE *f=path?fopen(path,"rb"):NULL;
-  if(!f) return 0;
-  fseek(f,0,SEEK_END);
-  long sz=ftell(f);
-  rewind(f);
-  if(sz<=0){ fclose(f); return 0; }
-  uint8_t *buf=(uint8_t*)malloc((size_t)sz);
-  if(!buf){ fclose(f); return 0; }
-  if(fread(buf,1,(size_t)sz,f)!=(size_t)sz){ fclose(f); free(buf); return 0; }
-  fclose(f);
-  *out=buf; *out_len=(size_t)sz;
-  return 1;
+  return project&&path&&anygm_vfs_read_all(project->host,path,out,out_len,(size_t)UINT32_MAX);
 }
 
 typedef struct {
@@ -2802,13 +2794,13 @@ static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const GmlcFunctionR
   }
   if(path && *path){
     if(pkg->log_code_compile)
-      fprintf(stderr,"source_to_win: compiling code: %s\n",path);
+      anygm_host_logf(p ? p->host : NULL,ANYGM_LOG_DEBUG,"source_to_win: compiling code: %s\n",path);
     char berr[512]={0};
     if(gmlc_bytecode_compile_source_ex(p,funcs,script_index,path,blob,berr,sizeof(berr))){
       if(blob->is_placeholder){
         pkg->placeholder_code++;
         if(blob->diagnostic)
-          fprintf(stderr,"source_to_win: code placeholder: %s: %s\n",path,blob->diagnostic);
+          anygm_host_logf(p ? p->host : NULL,ANYGM_LOG_DEBUG,"source_to_win: code placeholder: %s: %s\n",path,blob->diagnostic);
       } else {
         pkg->compiled_code++;
       }
@@ -2824,7 +2816,7 @@ static int compile_code_blob(Pkg *pkg, const GmlcProject *p, const GmlcFunctionR
     else
       free(diagnostic);
     pkg->placeholder_code++;
-    fprintf(stderr,"source_to_win: code placeholder: %s: %s\n",path,blob->diagnostic?blob->diagnostic:"source read failed");
+    anygm_host_logf(p ? p->host : NULL,ANYGM_LOG_DEBUG,"source_to_win: code placeholder: %s: %s\n",path,blob->diagnostic?blob->diagnostic:"source read failed");
     return 1;
   }
   if(!gmlc_bytecode_emit_empty(blob)) return 0;
@@ -2873,7 +2865,7 @@ static int write_function_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcF
   }
   char berr[512]={0};
   if(pkg->log_code_compile)
-    fprintf(stderr,"source_to_win: compiling function: %d\n",def->code_index);
+    anygm_host_logf(p ? p->host : NULL,ANYGM_LOG_DEBUG,"source_to_win: compiling function: %d\n",def->code_index);
   if(!gmlc_bytecode_compile_function_body(p,funcs,def,&blob,berr,sizeof(berr))){
     char *diagnostic=blob.diagnostic ? gmlc_strdup(blob.diagnostic) : NULL;
     if(!keep_or_emit_placeholder_blob(&blob)){
@@ -2885,11 +2877,11 @@ static int write_function_code_entry(Pkg *pkg, const GmlcProject *p, const GmlcF
     else
       free(diagnostic);
     pkg->placeholder_code++;
-    fprintf(stderr,"source_to_win: code placeholder: function %d: %s\n",def->code_index,blob.diagnostic?blob.diagnostic:"function source read failed");
+    anygm_host_logf(p ? p->host : NULL,ANYGM_LOG_DEBUG,"source_to_win: code placeholder: function %d: %s\n",def->code_index,blob.diagnostic?blob.diagnostic:"function source read failed");
   } else if(blob.is_placeholder){
     pkg->placeholder_code++;
     if(blob.diagnostic)
-      fprintf(stderr,"source_to_win: code placeholder: function %d: %s\n",def->code_index,blob.diagnostic);
+      anygm_host_logf(p ? p->host : NULL,ANYGM_LOG_DEBUG,"source_to_win: code placeholder: function %d: %s\n",def->code_index,blob.diagnostic);
   } else {
     pkg->compiled_code++;
   }
@@ -3121,31 +3113,11 @@ static int write_func(Pkg *pkg){
   return 1;
 }
 
-static int write_file(const char *path, const uint8_t *data, size_t len, char *err, size_t errcap){
-  FILE *f=fopen(path,"wb");
-  if(!f){ snprintf(err,errcap,"%s: open for write failed",path); return 0; }
-  if(fwrite(data,1,len,f)!=len){ fclose(f); snprintf(err,errcap,"%s: write failed",path); return 0; }
-  fclose(f);
-  return 1;
-}
-
-static int package_mkdir(const char *path){
-#ifdef _WIN32
-  return _mkdir(path)==0 || errno==EEXIST;
-#else
-  return mkdir(path,0777)==0 || errno==EEXIST;
-#endif
-}
-
-static int package_mkdir_tree(char *path){
-  char *start=path+1;
-  if(isalpha((unsigned char)path[0]) && path[1]==':' && (path[2]=='/' || path[2]=='\\')) start=path+3;
-  for(char *cursor=start;*cursor;cursor++) if(*cursor=='/' || *cursor=='\\'){
-    char saved=*cursor; *cursor='\0';
-    if(*path && !package_mkdir(path)){ *cursor=saved; return 0; }
-    *cursor=saved;
-  }
-  return !*path || package_mkdir(path);
+static int write_file(const GmlcProject *project,const char *path,const uint8_t *data,
+                      size_t len,char *err,size_t errcap){
+  if(project&&anygm_vfs_write_all(project->host,path,data,len)) return 1;
+  snprintf(err,errcap,"%s: write failed",path);
+  return 0;
 }
 
 static int safe_relative_folder(const char *folder){
@@ -3184,7 +3156,7 @@ static int materialize_included_files(const GmlcProject *project, const char *ou
     }
     char *folder=included->export_mode>2 && included->custom_folder && *included->custom_folder
       ? gmlc_path_join(base,included->custom_folder) : gmlc_strdup(base);
-    if(!folder || !package_mkdir_tree(folder)){
+    if(!folder || !anygm_vfs_mkdirs(project->host,folder)){
       if(err && errcap) snprintf(err,errcap,"cannot create included-file export directory");
       free(folder); free(base); return 0;
     }
@@ -3192,10 +3164,10 @@ static int materialize_included_files(const GmlcProject *project, const char *ou
     free(folder);
     if(!path){ free(base); return 0; }
     if(!included->overwrite_file){
-      FILE *existing=fopen(path,"rb");
-      if(existing){ fclose(existing); free(path); continue; }
+      AnygmFileInfo existing;
+      if(anygm_vfs_stat(project->host,path,&existing)){ free(path); continue; }
     }
-    if(!write_file(path,included->data,included->data_size,err,errcap)){
+    if(!write_file(project,path,included->data,included->data_size,err,errcap)){
       free(path); free(base); return 0;
     }
     free(path);
@@ -3227,10 +3199,10 @@ static void free_pkg(Pkg *pkg){
 int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, char *err, size_t errcap){
   Pkg pkg;
   memset(&pkg,0,sizeof(pkg));
-  pkg.code_placeholders=env_flag_enabled("GMLC_CODE_PLACEHOLDERS");
-  pkg.fail_on_placeholder=env_flag_enabled("GMLC_FAIL_ON_PLACEHOLDER");
-  pkg.log_code_compile=env_flag_enabled("GMLC_LOG_CODE_COMPILE");
-  const char *ref_path=getenv("GMLC_REFERENCE_WIN");
+  pkg.code_placeholders=development_flag_enabled(p?p->host:NULL,"GMLC_CODE_PLACEHOLDERS");
+  pkg.fail_on_placeholder=development_flag_enabled(p?p->host:NULL,"GMLC_FAIL_ON_PLACEHOLDER");
+  pkg.log_code_compile=development_flag_enabled(p?p->host:NULL,"GMLC_LOG_CODE_COMPILE");
+  const char *ref_path=anygm_host_development_setting(p?p->host:NULL,"GMLC_REFERENCE_WIN");
   if(ref_path && *ref_path && !load_reference_texture_layout(&pkg,p,ref_path,err,errcap)){
     free_pkg(&pkg);
     return 0;
@@ -3282,7 +3254,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
   }
   patch32(&pkg.b,form_size_pos,(uint32_t)(pkg.b.len-8));
   int ok=materialize_included_files(p,out_path,err,errcap) &&
-         write_file(out_path,pkg.b.data,pkg.b.len,err,errcap);
+         write_file(p,out_path,pkg.b.data,pkg.b.len,err,errcap);
   free_pkg(&pkg);
   return ok;
 }

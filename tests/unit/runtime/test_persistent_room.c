@@ -1,9 +1,12 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gml_vm.h"
 #include "gml_render.h"
 #include "gml_audio.h"
-#include "gmlc/gmlc_package.h"
+#include "gmlc_package.h"
+#include "anygm_compatibility.h"
+#include "stdio_vfs.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -13,14 +16,29 @@
 #include <unistd.h>
 
 static int fixture_joystick_button3;
-int gml_input_key(int key,int edge){ return key==65 && edge==0; }
-int gml_input_gamepad(int button,int edge){
+static const char *fixture_development_setting(void *userdata,const char *name){
+  (void)userdata;
+  return name && !strcmp(name,"GML_ENVIRONMENT_FIXTURE")?"visible":NULL;
+}
+static int fixture_input_key(void *userdata,int key,int edge){
+  (void)userdata;
+  return key==65 && edge==0;
+}
+static int fixture_input_gamepad(void *userdata,int button,int edge){
+  (void)userdata;
   return fixture_joystick_button3 && button==32771 && edge==0;
 }
-void gml_input_mouse(double *rx,double *ry,double *gx,double *gy,double *wx,double *wy,
-                     int *held,int *pressed,int *released,int *wheel){
+static void fixture_input_mouse(void *userdata,double *rx,double *ry,double *gx,double *gy,
+                                double *wx,double *wy,int *held,int *pressed,
+                                int *released,int *wheel){
+  (void)userdata;
   if(rx)*rx=0; if(ry)*ry=0; if(gx)*gx=0; if(gy)*gy=0; if(wx)*wx=0; if(wy)*wy=0;
   if(held)*held=1; if(pressed)*pressed=0; if(released)*released=0; if(wheel)*wheel=0;
+}
+static void fixture_attach_input(GmlVM *vm){
+  vm->input.key=fixture_input_key;
+  vm->input.gamepad=fixture_input_gamepad;
+  vm->input.mouse=fixture_input_mouse;
 }
 GmlVal gml_builtin_call(GmlVM *vm,const char *name,GmlVal *args,int count);
 
@@ -544,7 +562,7 @@ static void fixture_w32(uint8_t *data,size_t offset,uint32_t value){
  * not require either representation when the stable timeline CODE identity is available. */
 static int expect_native_timeline_import(const char *path){
   GmlWin source;
-  if(gml_win_load(&source,path)) return 0;
+  if(anygm_stdio_load_win(&source,path)) return 0;
   uint8_t *data=malloc(source.size?source.size:1);
   if(!data){ gml_win_free(&source); return 0; }
   memcpy(data,source.data,source.size);
@@ -569,7 +587,7 @@ static int expect_native_timeline_import(const char *path){
   GmlWin win;
   if(gml_win_from_mem(&win,data,size,1)) { free(data); return 0; }
   GmlVM vm;
-  if(gml_vm_init(&vm,&win)){ gml_win_free(&win); return 0; }
+  if(gml_vm_init(&vm,&win,NULL)){ gml_win_free(&win); return 0; }
   int ok=vm.n_timelines==1 && vm.timelines[0].name &&
     !strcmp(vm.timelines[0].name,"fixture_timeline") && vm.timelines[0].n==3 &&
     vm.timelines[0].moments[0].step==0 && vm.timelines[0].moments[0].code>=0 &&
@@ -836,6 +854,12 @@ int main(void){
   char included_name[64];
   GmlcProjectConstant constant={(char*)"fixture_constant",(char*)"6*7"};
   memset(&project,0,sizeof(project)); memset(objects,0,sizeof(objects)); memset(rooms,0,sizeof(rooms));
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  file_services.development_setting=fixture_development_setting;
+  project.host=&file_services;
   memset(scripts,0,sizeof(scripts));
   memset(&fixture_path,0,sizeof(fixture_path)); memset(fixture_path_points,0,sizeof(fixture_path_points));
   memset(&timeline,0,sizeof(timeline)); memset(timeline_moments,0,sizeof(timeline_moments));
@@ -1142,7 +1166,7 @@ int main(void){
                   !memcmp(observed,included_data,sizeof(observed));
   if(included_file) fclose(included_file);
   if(!included_ok){ fprintf(stderr,"included file was not exported\n"); return 1; }
-  GmlWin win; if(gml_win_load(&win,path)){ unlink(path); return 1; }
+  GmlWin win; if(anygm_stdio_load_win(&win,path)){ unlink(path); return 1; }
   if(!win.classic_executable_layout){
     fprintf(stderr,"classic embedded-layout marker was not serialized\n"); return 1;
   }
@@ -1151,7 +1175,8 @@ int main(void){
   char save_root[]="/tmp/gml-save-root-XXXXXX";
   if(!mkdtemp(save_root)){ gml_win_free(&win); unlink(path); return 1; }
   snprintf(win.save_dir,sizeof win.save_dir,"%s",save_root);
-  GmlVM vm; if(gml_vm_init(&vm,&win)){ gml_win_free(&win); unlink(path); return 1; }
+  GmlVM vm; if(gml_vm_init(&vm,&win,&file_services)){ gml_win_free(&win); unlink(path); return 1; }
+  fixture_attach_input(&vm);
   {
     int callback_ci=gml_code_index_by_name(&win,"gml_Script_array_ext_callback");
     GmlInstance *receiver=gml_struct_new(&vm);
@@ -1345,10 +1370,8 @@ int main(void){
     GmlVal now=gml_builtin_call(&vm,"date_current_datetime",NULL,0);
     GmlVal weekday=gml_builtin_call(&vm,"date_get_weekday",&now,1);
     GmlVal datetime=gml_builtin_call(&vm,"date_datetime_string",&now,1);
-    setenv("GML_ENVIRONMENT_FIXTURE","visible",1);
     GmlVal env_name=vstr("GML_ENVIRONMENT_FIXTURE");
     GmlVal environment=gml_builtin_call(&vm,"environment_get_variable",&env_name,1);
-    unsetenv("GML_ENVIRONMENT_FIXTURE");
     if(weekday.t!=V_REAL || weekday.d<0 || weekday.d>6 || datetime.t!=V_STR ||
        !datetime.s || !datetime.s[0] || environment.t!=V_STR || strcmp(environment.s,"visible")){
       fprintf(stderr,"date/environment query fixture failed\n"); return 1;
@@ -1941,16 +1964,16 @@ int main(void){
   win.classic_version=0;
   win.bytecode=15;
   win.option_flags=0;
-  if(gml_win_round_collision_bounds(&win)){
+  if(anygm_policy_round_collision_bounds(&win)){
     fprintf(stderr,"Studio bytecode-15 unexpectedly enabled rounded collision bounds\n"); return 1;
   }
   win.option_flags=UINT64_C(0x08000000);
-  if(!gml_win_round_collision_bounds(&win)){
+  if(!anygm_policy_round_collision_bounds(&win)){
     fprintf(stderr,"Studio collision-compatibility option did not enable rounded bounds\n"); return 1;
   }
   win.option_flags=0;
   win.bytecode=16;
-  if(!gml_win_round_collision_bounds(&win)){
+  if(!anygm_policy_round_collision_bounds(&win)){
     fprintf(stderr,"Studio bytecode-16 did not enable rounded collision bounds\n"); return 1;
   }
   collision_sprites[0].w=collision_sprites[0].h=1;

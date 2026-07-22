@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gmlc_source.h"
+#include "anygm_host.h"
 #include <ctype.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -68,7 +69,10 @@ int gmlc_source_scan_project(const GmlcProject *p, GmlcSourceReport *out, char *
   return 1;
 }
 
-void gmlc_source_print_report(const GmlcSourceReport *r){
-  printf("source files=%d missing=%d nonempty=%d macros=%d if=%d loops=%d switch=%d with=%d return/exit=%d call-sites-ish=%d arrays=%d\n",
-    r->files,r->missing_files,r->nonempty_files,r->macros,r->ifs,r->loops,r->switches,r->withs,r->returns,r->calls,r->arrays);
+void gmlc_source_log_report(const AnygmHostServices *host,const GmlcSourceReport *r){
+  if(!r) return;
+  anygm_host_logf(host,ANYGM_LOG_DEBUG,
+                  "source files=%d missing=%d nonempty=%d macros=%d if=%d loops=%d switch=%d with=%d return/exit=%d call-sites-ish=%d arrays=%d\n",
+                  r->files,r->missing_files,r->nonempty_files,r->macros,r->ifs,
+                  r->loops,r->switches,r->withs,r->returns,r->calls,r->arrays);
 }

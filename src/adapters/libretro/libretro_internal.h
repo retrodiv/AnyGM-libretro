@@ -1,0 +1,56 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+#ifndef ANYGM_LIBRETRO_INTERNAL_H
+#define ANYGM_LIBRETRO_INTERNAL_H
+
+#include "anygm.h"
+#include "libretro.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+typedef struct LibretroAdapter {
+  retro_environment_t environment;
+  retro_video_refresh_t video;
+  retro_audio_sample_t audio_sample;
+  retro_audio_sample_batch_t audio_batch;
+  retro_input_poll_t input_poll;
+  retro_input_state_t input_state;
+  retro_log_printf_t log;
+  struct retro_rumble_interface rumble;
+  const struct retro_vfs_interface *vfs;
+  AnygmEngine *engine;
+  AnygmFrameOutput frame;
+  AnygmAvInfo av;
+  AnygmConfig config;
+  uint8_t keyboard_events[ANYGM_MAX_KEYS];
+  uint8_t override_used[ANYGM_MAX_RUNTIME_OVERRIDES];
+  uint32_t port_device[ANYGM_MAX_GAMEPADS];
+  unsigned pointer_seen;
+  bool loaded;
+  bool rumble_available;
+  bool variable_state_supported;
+  size_t fixed_state_capacity;
+  char save_directory[1024];
+  char cache_directory[1024];
+  char language[16];
+  char region[16];
+  char language_tag[32];
+  uint64_t seed_counter;
+} LibretroAdapter;
+
+extern LibretroAdapter g_libretro;
+
+void libretro_log(enum retro_log_level level,const char *format,...);
+void libretro_host_services_init(AnygmHostServices *services);
+void libretro_vfs_request(void);
+void libretro_vfs_services_init(AnygmHostServices *services);
+void libretro_options_register(void);
+void libretro_options_apply(bool all_fields);
+void libretro_input_register(void);
+void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t height);
+void libretro_update_av(void);
+
+#endif

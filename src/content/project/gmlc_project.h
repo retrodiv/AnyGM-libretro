@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #ifndef GMLC_PROJECT_H
 #define GMLC_PROJECT_H
 
 #include <stddef.h>
 #include <stdint.h>
+#include "anygm.h"
 
 typedef enum {
   GMLC_RES_SPRITE,
@@ -258,6 +260,7 @@ typedef struct {
 } GmlcMemoryFile;
 
 typedef struct {
+  const AnygmHostServices *host;
   char *root_dir;
   char *yyp_path;
   char *name;
@@ -315,7 +318,8 @@ typedef struct {
 
 void gmlc_project_init(GmlcProject *p);
 void gmlc_project_free(GmlcProject *p);
-int gmlc_project_load_yyp(GmlcProject *p, const char *path, char *err, size_t errcap);
+int gmlc_project_load_yyp(GmlcProject *p,const AnygmHostServices *host,
+                          const char *path,char *err,size_t errcap);
 int gmlc_project_find_object(const GmlcProject *p, const char *id);
 int gmlc_project_find_sprite(const GmlcProject *p, const char *id);
 int gmlc_project_sprite_runtime_id(const GmlcProject *p, int sprite_index);

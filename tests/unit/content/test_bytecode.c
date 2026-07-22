@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gmlc_bytecode.h"
 #include "gml_win.h"
 
@@ -7,6 +8,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+static void *fixture_file_open(void *userdata,const char *path,AnygmFileMode mode){
+  (void)userdata;
+  return mode==ANYGM_FILE_READ?fopen(path,"rb"):NULL;
+}
+
+static size_t fixture_file_read(void *userdata,void *file,void *data,size_t size){
+  (void)userdata;
+  return fread(data,1,size,(FILE *)file);
+}
+
+static void fixture_file_close(void *userdata,void *file){
+  (void)userdata;
+  fclose((FILE *)file);
+}
 
 static int compile_fixture(const GmlcProject *project, const char *text, int expect_ok){
   char path[]="/tmp/gmlc-bytecode-XXXXXX";
@@ -156,6 +172,13 @@ static int compile_fixture_named_constant(const GmlcProject *project, const char
 int main(int argc, char **argv){
   GmlcProject project;
   memset(&project,0,sizeof(project));
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  services.file_open=fixture_file_open;
+  services.file_read=fixture_file_read;
+  services.file_close=fixture_file_close;
+  project.host=&services;
   if(argc>1){
     int all_ok=1;
     for(int i=1;i<argc;i++){

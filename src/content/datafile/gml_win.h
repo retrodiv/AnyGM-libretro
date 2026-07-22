@@ -1,10 +1,27 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* gml_win.h - FORM container loader and normalized bytecode interface. */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+/* gml_win.h - loader + normalized bytecode interface for a GameMaker: Studio data.win.
+ * The loader validates supported versioned layouts and exposes one normalized interface. */
 #ifndef GML_WIN_H
 #define GML_WIN_H
 #include <stdint.h>
 #include <stddef.h>
+
+struct AnygmCompatibilityProfile;
+struct AnygmHostServices;
+
+/* Hard parser limits for one normalized content image. These are deliberately
+ * independent of frontend transport and compatibility generation. */
+#define GML_WIN_MAX_FILE_BYTES             ((size_t)1073741824u)
+#define GML_WIN_MAX_CHUNKS                 40u
+#define GML_WIN_MAX_STRINGS                8388608u
+#define GML_WIN_MAX_STRING_BYTES           16777216u
+#define GML_WIN_MAX_CODE_ENTRIES           1048576u
+#define GML_WIN_MAX_REFERENCES             16777216u
+#define GML_WIN_MAX_ROOMS                  1048576u
+#define GML_WIN_MAX_ROOM_ORDER             1048576u
+#define GML_WIN_MAX_CLASSIC_INFO_BYTES     8388608u
 
 /* ---- normalized opcodes (bc14 old opcodes and bc15+ split opcodes decode into these) ---- */
 enum {
@@ -74,10 +91,10 @@ typedef struct {
   uint32_t bg_ptr, view_ptr, obj_ptr, tile_ptr;
 } GmlRoom;
 
-typedef struct {
+typedef struct GmlWin {
   /* data storage: owns=0 borrowed memory, owns=1 malloc, owns=2 read-only file mapping. */
   uint8_t *data; size_t size; int owns;
-  GmlChunk chunks[40]; int n_chunks;
+  GmlChunk chunks[GML_WIN_MAX_CHUNKS]; int n_chunks;
   /* strings, in STRG order */
   char   **strs;  uint32_t *str_charoff; int n_strs;
   /* content-hash index over strs (lazy; for O(1) intern lookups) */
@@ -104,17 +121,12 @@ typedef struct {
   /* Keep newly parsed metadata after the historical save-path tail: external savestates and
    * helper binaries built against an older header retain all pre-existing field offsets. */
   uint64_t option_flags;             /* OPTN flags when the package uses the flagged layout */
-  int classic_executable_layout;     /* CLSC tail: embedded content retains serialized chain order */
+  int classic_executable_layout;     /* CLSC tail: embedded rooms retain encoded chain order */
+  const struct AnygmCompatibilityProfile *compatibility; /* immutable runtime policy, engine-owned */
+  const struct AnygmHostServices *host; /* borrowed immutable service table, engine-owned */
 } GmlWin;
 
-/* Classic formats, bytecode 16 and packages with the fast-collision option round transformed
- * mask bounds. Earlier bytecode uses coverage bounds instead. */
-static inline int gml_win_round_collision_bounds(const GmlWin *w){
-  return w && (w->classic_version || w->bytecode==16 ||
-               (w->option_flags & UINT64_C(0x08000000)));
-}
-
-int          gml_win_load(GmlWin *w, const char *path);
+int          gml_win_load_host(GmlWin *w,const struct AnygmHostServices *host,const char *path);
 int          gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int take_ownership);
 void         gml_win_free(GmlWin *w);
 const GmlChunk *gml_chunk(const GmlWin *w, const char *name);
@@ -125,8 +137,11 @@ const char  *gml_ref_name(const GmlWin *w, uint32_t addr);
 int          gml_room_count(const GmlWin *w);
 int          gml_room_get(const GmlWin *w, int room_index, GmlRoom *out);
 
-/* Decode one instruction at absolute file offset ia. Returns bytes consumed (0 = error). */
+/* The low-level decoder requires enough readable operand bytes for the encoded
+ * instruction. Content-derived callers use the bounded entry point. */
 int          gml_decode_bc(const uint8_t *d, uint32_t ia, uint8_t bytecode, GmlInsn *out);
+int          gml_decode_bc_bounded(const uint8_t *d, size_t size, uint32_t ia,
+                                   uint8_t bytecode, GmlInsn *out);
 int          gml_decode(const uint8_t *d, uint32_t ia, GmlInsn *out);
 const char  *gml_op_mnemonic(uint8_t newkind);
 

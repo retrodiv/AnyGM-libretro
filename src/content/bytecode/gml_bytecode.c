@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* gml_bytecode.c - Shared dispatch for version-specific bytecode readers. */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+/* gml_bytecode.c - shared bytecode dispatch glue. Version-specific decode lives in gml_bc*.c. */
 #include "gml_bytecode.h"
+#include <string.h>
 
 const char *gml_op_mnemonic(uint8_t k){
   switch(k){
@@ -18,6 +20,33 @@ const char *gml_op_mnemonic(uint8_t k){
 
 int gml_decode_bc(const uint8_t *d, uint32_t ia, uint8_t bytecode, GmlInsn *out){
   return bytecode>=15 ? gml_decode_bc15(d,ia,out) : gml_decode_bc14(d,ia,out);
+}
+
+int gml_decode_bc_bounded(const uint8_t *data,size_t size,uint32_t offset,
+                          uint8_t bytecode,GmlInsn *out){
+  if(!out) return 0;
+  memset(out,0,sizeof *out);
+  if(!data || offset>size || 4u>size-offset) return 0;
+  size_t available=size-offset;
+  /* Every current encoding consumes at most twelve bytes. The ordinary path
+   * therefore retains the original direct decoder with no copy in hot code. */
+  if(available>=12u){
+    int consumed=gml_decode_bc(data,offset,bytecode,out);
+    if(consumed<=0) memset(out,0,sizeof *out);
+    return consumed;
+  }
+  uint8_t scratch[12]={0};
+  size_t copied=available<sizeof scratch?available:sizeof scratch;
+  memcpy(scratch,data+offset,copied);
+  GmlInsn decoded;
+  int consumed=gml_decode_bc(scratch,0,bytecode,&decoded);
+  if(consumed<=0 || (size_t)consumed>copied) return 0;
+  if(decoded.refaddr){
+    if(offset>UINT32_MAX-decoded.refaddr) return 0;
+    decoded.refaddr+=offset;
+  }
+  *out=decoded;
+  return consumed;
 }
 
 int gml_decode(const uint8_t *d, uint32_t ia, GmlInsn *out){

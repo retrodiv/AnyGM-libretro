@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #ifndef GMLC_CLASSIC_IMPORT_H
 #define GMLC_CLASSIC_IMPORT_H
 
@@ -23,7 +24,8 @@ int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
                                           char *err, size_t errcap);
 /* Fold every sibling extension payload visible to the importer into an
  * existing cache hash. Enumeration is deterministic on every platform. */
-int gmlc_classic_extension_dependency_hash(const char *project_dir,
+int gmlc_classic_extension_dependency_hash(const AnygmHostServices *host,
+                                           const char *project_dir,
                                            uint64_t seed, uint64_t *hash_out);
 int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
                                 GmlcProject *project, const char *cache_dir,

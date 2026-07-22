@@ -1,9 +1,18 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* gm_qoi.h - Decode fioq texture streams into RGBA pixels.
- * Handles index, short/long run, channel-difference and explicit-color operations.
- * The running pixel index uses the XOR of the four channels.
- * For a 2zoq container, the caller decompresses its bzip2 data before decoding.
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+/* gm_qoi.h — decoder for GameMaker's texture image format.
+ *
+ * The supported texture blobs use a pre-1.0 QOI variant rather than the released QOI
+ * specification. They come in two shells, both handled here:
+ *   - "fioq" : a bare GameMaker-QOI stream (magic 'f','i','o','q').
+ *   - "2zoq" : a bzip2-compressed container wrapping a "fioq" stream (magic '2','z','o','q').
+ * (bc14-16 games instead store plain PNG in the texture blob; the caller detects that separately.)
+ *
+ * The op set is the pre-1.0 QOI one (2/3/4-bit tags: INDEX / RUN_8 / RUN_16 / DIFF_8 / DIFF_16 /
+ * DIFF_24 / COLOR) with an XOR running-pixel hash.
+ *
+ * The "2zoq" path needs a bzip2 decompressor; the caller passes already-decompressed "fioq" bytes.
  */
 #ifndef GM_QOI_H
 #define GM_QOI_H
@@ -11,9 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Allocate an RGBA buffer owned by the caller and optionally return its dimensions.
- * Reject unsupported headers, invalid dimensions or allocation failure with NULL.
- * Pad an incomplete pixel stream with transparent pixels. */
+/* Decode a GameMaker "fioq" QOI stream to a freshly allocated RGBA buffer (w*h*4 bytes).
+ * Returns the caller-owned buffer and sets both output dimensions, or NULL on malformed input. */
 static inline uint8_t *gm_qoi_decode(const uint8_t *d, size_t len, int *out_w, int *out_h) {
   if (len < 12 || d[0] != 'f' || d[1] != 'i' || d[2] != 'o' || d[3] != 'q') return NULL;
   int w = d[4] | (d[5] << 8);

@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gmlc_classic_import.h"
+#include "anygm_host.h"
+#include "anygm_vfs.h"
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
@@ -36,8 +39,6 @@
 #include "gml_default_font_data.h"
 
 #include <ctype.h>
-#include <dirent.h>
-#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -146,16 +147,10 @@ static char *cache_path(const char *dir, const char *leaf){
   return path;
 }
 
-static int write_source(const char *path, const char *source, char *err, size_t errcap){
-  FILE *file = fopen(path, "wb");
-  if(!file){
-    if(err && errcap) snprintf(err, errcap, "classic import: cannot create %s: %s", path, strerror(errno));
-    return 0;
-  }
+static int write_source(const AnygmHostServices *host,const char *path,const char *source,
+                        char *err,size_t errcap){
   size_t length = source ? strlen(source) : 0;
-  int wrote = !length || fwrite(source, 1, length, file) == length;
-  int closed = fclose(file) == 0;
-  int ok = wrote && closed;
+  int ok=anygm_vfs_write_all(host,path,source?source:"",length);
   if(!ok && err && errcap) snprintf(err, errcap, "classic import: cannot write %s", path);
   return ok;
 }
@@ -172,7 +167,7 @@ static char *import_source_path(GmlcProject *project, const char *cache_dir,
     return path;
   }
   char *path=cache_path(cache_dir,leaf);
-  if(!path || !write_source(path,source,err,errcap)){
+  if(!path || !write_source(project->host,path,source,err,errcap)){
     free(path);
     return NULL;
   }
@@ -612,47 +607,54 @@ static void classic_extension_names_free(char **names, size_t count){
   free(names);
 }
 
-static int classic_extension_names(const char *project_dir,
+static int classic_extension_names(const AnygmHostServices *host,const char *project_dir,
                                    char ***names_out, size_t *count_out){
   *names_out=NULL; *count_out=0;
-  DIR *directory=opendir(project_dir);
+  if(!host || !host->directory_open || !host->directory_read || !host->directory_close) return 1;
+  void *directory=host->directory_open(host->userdata,project_dir);
   if(!directory) return 1;
   char **names=NULL;
   size_t count=0,capacity=0;
-  struct dirent *entry;
-  while((entry=readdir(directory))){
-    if(!classic_extension_suffix(entry->d_name)) continue;
+  for(;;){
+    AnygmDirectoryEntry entry;
+    memset(&entry,0,sizeof entry);
+    entry.struct_size=sizeof entry;
+    AnygmResult result=host->directory_read(host->userdata,directory,&entry);
+    if(result==ANYGM_RESULT_END) break;
+    if(result!=ANYGM_OK){ classic_extension_names_free(names,count);
+      host->directory_close(host->userdata,directory); return 0; }
+    if(!classic_extension_suffix(entry.name)) continue;
     if(count==capacity){
       size_t next=capacity ? capacity*2u : 8u;
       char **grown=(char**)realloc(names,next*sizeof(*grown));
-      if(!grown){ classic_extension_names_free(names,count); closedir(directory); return 0; }
+      if(!grown){ classic_extension_names_free(names,count);
+        host->directory_close(host->userdata,directory); return 0; }
       names=grown; capacity=next;
     }
-    names[count]=gmlc_strdup(entry->d_name);
-    if(!names[count]){ classic_extension_names_free(names,count); closedir(directory); return 0; }
+    names[count]=gmlc_strdup(entry.name);
+    if(!names[count]){ classic_extension_names_free(names,count);
+      host->directory_close(host->userdata,directory); return 0; }
     count++;
   }
-  closedir(directory);
+  host->directory_close(host->userdata,directory);
   if(count>1) qsort(names,count,sizeof(*names),classic_extension_name_compare);
   *names_out=names; *count_out=count;
   return 1;
 }
 
-static int classic_extension_read_prefix(const char *path, uint8_t **data, size_t *size){
+static int classic_extension_read_prefix(const AnygmHostServices *host,const char *path,
+                                         uint8_t **data,size_t *size){
   *data=NULL; *size=0;
-  FILE *file=fopen(path,"rb");
-  if(!file) return 0;
-  if(fseek(file,0,SEEK_END)!=0){ fclose(file); return 0; }
-  long length=ftell(file);
-  if(length<12 || fseek(file,0,SEEK_SET)!=0){ fclose(file); return 0; }
-  size_t wanted=(size_t)length;
-  if(wanted>CLASSIC_EXTENSION_FILE_LIMIT) wanted=CLASSIC_EXTENSION_FILE_LIMIT;
+  size_t wanted=CLASSIC_EXTENSION_FILE_LIMIT;
+  AnygmFileInfo info;
+  if(anygm_vfs_stat(host,path,&info) && info.size<SIZE_MAX && info.size<wanted)
+    wanted=(size_t)info.size;
+  if(wanted<12) return 0;
   uint8_t *bytes=(uint8_t*)malloc(wanted);
-  if(!bytes){ fclose(file); return -1; }
-  int ok=fread(bytes,1,wanted,file)==wanted;
-  fclose(file);
-  if(!ok){ free(bytes); return 0; }
-  *data=bytes; *size=wanted;
+  if(!bytes) return -1;
+  size_t read=0;
+  if(!anygm_vfs_read_prefix(host,path,bytes,wanted,&read) || read<12){ free(bytes); return 0; }
+  *data=bytes; *size=read;
   return 1;
 }
 
@@ -670,11 +672,12 @@ static void classic_extension_hash_u64(uint64_t *hash, uint64_t value){
   classic_extension_hash_bytes(hash,bytes,sizeof(bytes));
 }
 
-int gmlc_classic_extension_dependency_hash(const char *project_dir,
+int gmlc_classic_extension_dependency_hash(const AnygmHostServices *host,
+                                           const char *project_dir,
                                            uint64_t seed, uint64_t *hash_out){
   if(!project_dir || !*project_dir || !hash_out) return 0;
   char **names=NULL; size_t count=0;
-  if(!classic_extension_names(project_dir,&names,&count)) return 0;
+  if(!classic_extension_names(host,project_dir,&names,&count)) return 0;
   uint64_t hash=seed;
   const uint8_t domain[4]={'G','E','X',0};
   classic_extension_hash_bytes(&hash,domain,sizeof(domain));
@@ -682,7 +685,7 @@ int gmlc_classic_extension_dependency_hash(const char *project_dir,
   for(size_t i=0;i<count;i++){
     char *path=gmlc_path_join(project_dir,names[i]);
     uint8_t *data=NULL; size_t size=0;
-    int read=path ? classic_extension_read_prefix(path,&data,&size) : -1;
+    int read=path ? classic_extension_read_prefix(host,path,&data,&size) : -1;
     free(path);
     if(read<0){ free(data); classic_extension_names_free(names,count); return 0; }
     if(read==0){ free(data); continue; }
@@ -710,19 +713,19 @@ int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
   int aliases_before=project->n_function_aliases;
   int scripts_before=project->n_scripts;
   char **names=NULL; size_t count=0;
-  int ok=classic_extension_names(project_dir,&names,&count);
+  int ok=classic_extension_names(project->host,project_dir,&names,&count);
   for(size_t i=0;ok && i<count;i++){
     char *path=gmlc_path_join(project_dir,names[i]);
     if(!path){ ok=0; break; }
     uint8_t *data=NULL; size_t size=0;
-    int read=classic_extension_read_prefix(path,&data,&size);
+    int read=classic_extension_read_prefix(project->host,path,&data,&size);
     free(path);
     if(read<0){ ok=0; break; }
     if(read>0){
       int parsed=classic_extension_parse(classic,project,data,size);
       free(data);
-      if(getenv("GMLC_LOG_CLASSIC_EXTENSIONS"))
-        fprintf(stderr,"classic extension package: %s (%s)\n",names[i],
+      if(anygm_host_development_setting(project->host,"GMLC_LOG_CLASSIC_EXTENSIONS"))
+        anygm_host_logf(project ? project->host : NULL,ANYGM_LOG_DEBUG,"classic extension package: %s (%s)\n",names[i],
                 parsed>0?"parsed":parsed<0?"out of memory":"ignored malformed metadata");
       if(parsed<0){ ok=0; break; }
     }
@@ -730,13 +733,13 @@ int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
   classic_extension_names_free(names,count);
   if(!ok && err && errcap)
     snprintf(err,errcap,"classic import: out of memory reading extension metadata");
-  if(ok && getenv("GMLC_LOG_CLASSIC_EXTENSIONS")){
-    fprintf(stderr,"classic extensions: imported %d script(s), retained %d alias(es) from %s\n",
+  if(ok && anygm_host_development_setting(project->host,"GMLC_LOG_CLASSIC_EXTENSIONS")){
+    anygm_host_logf(project ? project->host : NULL,ANYGM_LOG_DEBUG,"classic extensions: imported %d script(s), retained %d alias(es) from %s\n",
             project->n_scripts-scripts_before,
             project->n_function_aliases-aliases_before,project_dir);
     for(int i=aliases_before;i<project->n_function_aliases;i++){
       const GmlcFunctionAlias *alias=&project->function_aliases[i];
-      fprintf(stderr,"classic extension alias: %s -> %s%s\n",
+      anygm_host_logf(project ? project->host : NULL,ANYGM_LOG_DEBUG,"classic extension alias: %s -> %s%s\n",
               alias->public_name,alias->target_name,alias->ambiguous?" (ambiguous)":"");
     }
   }
@@ -1505,37 +1508,16 @@ static ClassicFontFiles classic_font_files_for_face(const char *face){
   return (ClassicFontFiles){NULL,NULL,NULL,NULL,CLASSIC_FONT_SANS,0};
 }
 
-static int classic_font_path_readable(const char *path){
-  FILE *file=path?fopen(path,"rb"):NULL;
-  if(!file) return 0;
-  fclose(file);
-  return 1;
-}
-
-static char *classic_font_find_leaf(const char *leaf){
-  if(!leaf || !*leaf) return NULL;
-  const char *env=getenv("GML_CLASSIC_FONT_DIR");
-  const char *windir=getenv("WINDIR");
-  const char *local=getenv("LOCALAPPDATA");
-  const char *home=getenv("HOME");
-  char windows_fonts[1024]={0}, local_fonts[1024]={0}, home_fonts[1024]={0};
-  if(windir && *windir) snprintf(windows_fonts,sizeof(windows_fonts),"%s/Fonts",windir);
-  if(local && *local) snprintf(local_fonts,sizeof(local_fonts),"%s/Microsoft/Windows/Fonts",local);
-  if(home && *home) snprintf(home_fonts,sizeof(home_fonts),"%s/.local/share/fonts",home);
-  const char *dirs[]={
-    env, windows_fonts[0]?windows_fonts:NULL, local_fonts[0]?local_fonts:NULL,
-    "/usr/share/fonts/truetype/msttcorefonts",
-    "/usr/share/fonts/truetype/liberation",
-    "/usr/share/fonts/truetype/liberation2", "/usr/share/fonts/truetype/dejavu",
-    "/usr/share/fonts/TTF", "/usr/local/share/fonts", home_fonts[0]?home_fonts:NULL
-  };
-  for(size_t i=0;i<sizeof(dirs)/sizeof(dirs[0]);i++){
-    if(!dirs[i] || !*dirs[i]) continue;
-    char *path=cache_path(dirs[i],leaf);
-    if(path && classic_font_path_readable(path)) return path;
-    free(path);
-  }
-  return NULL;
+static char *classic_font_find_leaf(const AnygmHostServices *host,const char *family,
+                                    const char *leaf,uint32_t style){
+  if(!host || !host->font_resolve || !family || !*family) return NULL;
+  char path[4096];
+  path[0]=0;
+  if(host->font_resolve(host->userdata,family,leaf,style,path,sizeof path)!=ANYGM_OK ||
+     !path[0]) return NULL;
+  AnygmFileInfo info;
+  if(!anygm_vfs_stat(host,path,&info) || !(info.flags&ANYGM_FILE_INFO_REGULAR)) return NULL;
+  return copy_string(path);
 }
 
 static const char *classic_font_style_leaf(const ClassicFontFiles *files,
@@ -1550,14 +1532,19 @@ static const char *classic_font_style_leaf(const ClassicFontFiles *files,
   return leaf;
 }
 
-static ClassicFontFile classic_font_resolve_file(const ClassicFontSpec *spec){
+static ClassicFontFile classic_font_resolve_file(const AnygmHostServices *host,
+                                                 const ClassicFontSpec *spec){
   ClassicFontFiles files=classic_font_files_for_face(spec->face);
   ClassicFontFile result={0};
   int file_bold=0,file_italic=0;
   const char *leaf=classic_font_style_leaf(&files,spec->bold,spec->italic,&file_bold,&file_italic);
-  result.path=classic_font_find_leaf(leaf);
+  uint32_t style=(spec->bold?ANYGM_FONT_STYLE_BOLD:0u)|
+                 (spec->italic?ANYGM_FONT_STYLE_ITALIC:0u)|
+                 (files.category==CLASSIC_FONT_MONO?ANYGM_FONT_STYLE_MONOSPACE:0u)|
+                 (files.category==CLASSIC_FONT_SERIF?ANYGM_FONT_STYLE_SERIF:0u);
+  result.path=classic_font_find_leaf(host,spec->face,leaf,style);
   if(!result.path && leaf!=files.regular){
-    result.path=classic_font_find_leaf(files.regular);
+    result.path=classic_font_find_leaf(host,spec->face,files.regular,style);
     file_bold=files.inherent_bold; file_italic=0;
   }
   if(!result.path && (files.regular || files.category!=CLASSIC_FONT_SANS)){
@@ -1572,7 +1559,9 @@ static ClassicFontFile classic_font_resolve_file(const ClassicFontSpec *spec){
       substitute=(ClassicFontFiles){"LiberationSans-Regular.ttf","LiberationSans-Bold.ttf",
         "LiberationSans-Italic.ttf","LiberationSans-BoldItalic.ttf",CLASSIC_FONT_SANS,0};
     leaf=classic_font_style_leaf(&substitute,spec->bold,spec->italic,&file_bold,&file_italic);
-    result.path=classic_font_find_leaf(leaf);
+    const char *family=files.category==CLASSIC_FONT_MONO?"monospace":
+                       files.category==CLASSIC_FONT_SERIF?"serif":"sans-serif";
+    result.path=classic_font_find_leaf(host,family,leaf,style);
   }
   result.bold=file_bold;
   result.italic=file_italic;
@@ -1600,28 +1589,22 @@ static int classic_font_codepoint(const ClassicFontSpec *spec, int ch){
   return ch;
 }
 
-static int classic_font_build_truetype(const ClassicFontSpec *spec,
+static int classic_font_build_truetype(const AnygmHostServices *host,const ClassicFontSpec *spec,
                                        const ClassicFontFile *file,
                                        ClassicFontRaster *raster,
                                        char *err, size_t errcap){
   memset(raster,0,sizeof(*raster));
-  FILE *fp=file->path?fopen(file->path,"rb"):NULL;
-  if(!fp) return 0;
-  if(fseek(fp,0,SEEK_END)!=0){ fclose(fp); return 0; }
-  long file_size=ftell(fp);
-  if(file_size<=0 || file_size>32*1024*1024 || fseek(fp,0,SEEK_SET)!=0){ fclose(fp); return 0; }
-  uint8_t *font_data=(uint8_t*)malloc((size_t)file_size);
-  if(!font_data || fread(font_data,1,(size_t)file_size,fp)!=(size_t)file_size){
-    free(font_data); fclose(fp); return 0;
-  }
-  fclose(fp);
-  if(!classic_font_sfnt_magic(font_data,(size_t)file_size)){ free(font_data); return 0; }
+  uint8_t *font_data=NULL;
+  size_t file_size=0;
+  if(!file->path || !anygm_vfs_read_all(host,file->path,&font_data,&file_size,32u*1024u*1024u))
+    return 0;
+  if(!classic_font_sfnt_magic(font_data,file_size)){ free(font_data); return 0; }
   const char *match=spec->face;
   while(*match=='@') match++;
   int font_offset=stbtt_FindMatchingFont(font_data,match,STBTT_MACSTYLE_DONTCARE);
   if(font_offset<0) font_offset=stbtt_GetFontOffsetForIndex(font_data,0);
   stbtt_fontinfo info;
-  if(font_offset<0 || font_offset>file_size-12 || !stbtt_InitFont(&info,font_data,font_offset)){
+  if(font_offset<0 || (size_t)font_offset>file_size-12 || !stbtt_InitFont(&info,font_data,font_offset)){
     free(font_data); return 0;
   }
   float em_pixels=(float)(spec->point_size*96.0/72.0);
@@ -1906,8 +1889,8 @@ int gmlc_classic_import_fonts(const GmlcClassicManifest *classic,
     if(compiled<0){ classic_font_spec_free(&spec); free_imported_fonts(project); return 0; }
     int rasterized=0;
     if(!compiled){
-      file=classic_font_resolve_file(&spec);
-      rasterized=file.path && classic_font_build_truetype(&spec,&file,&raster,err,errcap);
+      file=classic_font_resolve_file(project->host,&spec);
+      rasterized=file.path && classic_font_build_truetype(project->host,&spec,&file,&raster,err,errcap);
     }
     if(!compiled && !rasterized){
       if(err && errcap) err[0]='\0';
@@ -1915,8 +1898,8 @@ int gmlc_classic_import_fonts(const GmlcClassicManifest *classic,
         free(file.path); classic_font_spec_free(&spec); free_imported_fonts(project); return 0;
       }
     }
-    if(getenv("GML_LOG_FONT"))
-      fprintf(stderr,"[font] classic face=%s pt=%d bold=%d italic=%d source=%s line=%d glyphs=%d\n",
+    if(anygm_host_development_setting(project->host,"GML_LOG_FONT"))
+      anygm_host_logf(project ? project->host : NULL,ANYGM_LOG_DEBUG,"[font] classic face=%s pt=%d bold=%d italic=%d source=%s line=%d glyphs=%d\n",
               spec.face?spec.face:"",spec.point_size,spec.bold,spec.italic,
               compiled?"compiled atlas":rasterized?file.path:"embedded fallback",
               raster.line_height,raster.n_glyphs);
@@ -1934,17 +1917,12 @@ int gmlc_classic_import_fonts(const GmlcClassicManifest *classic,
   return 1;
 }
 
-static int write_binary(const char *path, const uint8_t *data, size_t size,
+static int write_binary(const AnygmHostServices *host,const char *path,
+                        const uint8_t *data,size_t size,
                         char *err, size_t errcap){
-  FILE *file = fopen(path, "wb");
-  if(!file){
-    if(err && errcap) snprintf(err, errcap, "classic import: cannot create %s: %s", path, strerror(errno));
-    return 0;
-  }
-  int wrote = !size || fwrite(data, 1, size, file) == size;
-  int closed = fclose(file) == 0;
-  if((!wrote || !closed) && err && errcap) snprintf(err, errcap, "classic import: cannot write %s", path);
-  return wrote && closed;
+  int ok=anygm_vfs_write_all(host,path,data,size);
+  if(!ok && err && errcap) snprintf(err,errcap,"classic import: cannot write %s",path);
+  return ok;
 }
 
 static char *import_binary_path(GmlcProject *project, const char *cache_dir,
@@ -1958,7 +1936,7 @@ static char *import_binary_path(GmlcProject *project, const char *cache_dir,
     return path;
   }
   char *path=cache_path(cache_dir,leaf);
-  if(!path || !write_binary(path,data,size,err,errcap)){
+  if(!path || !write_binary(project->host,path,data,size,err,errcap)){
     free(path);
     return NULL;
   }
@@ -2666,8 +2644,8 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
     room->persistent = fields[runtime_fields+1] != 0;
     room->background_color = fields[runtime_fields+2] | 0xFF000000u;
     room->draw_background_color = fields[runtime_fields+3] != 0;
-    if(getenv("GMLC_LOG_ROOM"))
-      fprintf(stderr,"[classic-room] index=%u size=%dx%d speed=%d persistent=%d colour=%08x clear=%d\n",
+    if(anygm_host_development_setting(project->host,"GMLC_LOG_ROOM"))
+      anygm_host_logf(project ? project->host : NULL,ANYGM_LOG_DEBUG,"[classic-room] index=%u size=%dx%d speed=%d persistent=%d colour=%08x clear=%d\n",
               i,room->width,room->height,room->speed,room->persistent,
               room->background_color,room->draw_background_color);
     char leaf[112];

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #ifndef GMLC_ASSETS_H
 #define GMLC_ASSETS_H
 

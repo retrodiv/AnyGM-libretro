@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gmlc_classic_project.h"
 #include "gmlc_classic.h"
 #include "gmlc_classic_import.h"
+#include "anygm_vfs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,20 +22,9 @@ static char *classic_stem(const char *path){
   return stem;
 }
 
-static int classic_read_file(const char *path, uint8_t **data, size_t *size){
-  *data=NULL; *size=0;
-  FILE *file=path?fopen(path,"rb"):NULL;
-  if(!file) return 0;
-  if(fseek(file,0,SEEK_END)!=0){ fclose(file); return 0; }
-  long length=ftell(file);
-  if(length<0 || fseek(file,0,SEEK_SET)!=0){ fclose(file); return 0; }
-  uint8_t *bytes=(uint8_t*)malloc((size_t)length? (size_t)length:1);
-  if(!bytes){ fclose(file); return 0; }
-  int ok=fread(bytes,1,(size_t)length,file)==(size_t)length;
-  if(fclose(file)!=0) ok=0;
-  if(!ok){ free(bytes); return 0; }
-  *data=bytes; *size=(size_t)length;
-  return 1;
+static int classic_read_file(const AnygmHostServices *host,const char *path,
+                             uint8_t **data,size_t *size){
+  return anygm_vfs_read_all(host,path,data,size,512u*1024u*1024u);
 }
 
 static char *classic_store_source(GmlcProject *project, const char *cache_dir,
@@ -42,10 +33,8 @@ static char *classic_store_source(GmlcProject *project, const char *cache_dir,
     return gmlc_project_add_memory_file(project,leaf,GMLC_MEMORY_TEXT,source,
                                         strlen(source),0,0);
   char *path=gmlc_path_join(cache_dir,leaf);
-  FILE *file=path?fopen(path,"wb"):NULL;
   size_t length=strlen(source);
-  int ok=file && (!length || fwrite(source,1,length,file)==length);
-  if(file && fclose(file)!=0) ok=0;
+  int ok=path&&anygm_vfs_write_all(project->host,path,source,length);
   if(!ok){ free(path); return NULL; }
   return path;
 }
@@ -151,7 +140,7 @@ static int classic_import_metadata(const GmlcClassicManifest *manifest,
         }
       } else if(source->data_exists && source->source_path && *source->source_path){
         char *path=gmlc_path_join(project->root_dir,source->source_path);
-        (void)classic_read_file(path,&included->data,&included->data_size);
+        (void)classic_read_file(project->host,path,&included->data,&included->data_size);
         free(path);
       }
       if(!included->file_name || !included->custom_folder ||
@@ -220,7 +209,8 @@ static int classic_add_empty_room(GmlcProject *project, const char *cache_dir,
   return 1;
 }
 
-int gmlc_classic_project_load(GmlcProject *project, const char *project_path,
+int gmlc_classic_project_load(GmlcProject *project,const AnygmHostServices *host,
+                              const char *project_path,
                               const char *cache_dir, char *err, size_t errcap){
   if(err && errcap) err[0] = '\0';
   if(!project || !project_path || !*project_path || !cache_dir || !*cache_dir){
@@ -228,9 +218,10 @@ int gmlc_classic_project_load(GmlcProject *project, const char *project_path,
     return 0;
   }
   gmlc_project_init(project);
+  project->host=host;
   project->prefer_memory_files=1;
   GmlcClassicManifest manifest;
-  if(!gmlc_classic_manifest_file(project_path, &manifest, err, errcap)) return 0;
+  if(!gmlc_classic_manifest_file(host,project_path, &manifest, err, errcap)) return 0;
   project->classic_version=(int)manifest.inventory.header.version;
   project->classic_scaling=manifest.inventory.settings.scaling;
   project->classic_interpolate=manifest.inventory.settings.interpolate;

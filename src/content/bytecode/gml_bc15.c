@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* gml_bc15.c - Studio bytecode 15 and later instruction decoding. */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+/* gml_bc15.c - GameMaker: Studio bytecode 15+ instruction decode.
+ * Covers the bc15/bc16 layouts currently exercised by the local compatibility tests.
+ */
 #include "gml_bytecode.h"
 #include <string.h>
 
@@ -51,7 +54,7 @@ int gml_bc15_ref_layout(const GmlWin *w, const char *chunk, GmlRefLayout *out){
     out->count=(end-out->start)/out->stride;
   }
   if(out->start>end) return 0;
-  if(out->count > (end-out->start)/out->stride) out->count=(end-out->start)/out->stride;
+  if(out->count > (end-out->start)/out->stride) return 0;
   return 1;
 }
 
@@ -74,8 +77,11 @@ int gml_decode_bc15(const uint8_t *d, uint32_t ia, GmlInsn *o){
     case OP_CMP:
       o->type1=b2&0xF; o->type2=b2>>4; o->cmp=(uint8_t)((fw>>8)&0xFF); o->size=4; return 4;
     case OP_B:case OP_BT:case OP_BF:case OP_PUSHENV:case OP_POPENV:{
-      /* Decode a signed 23-bit word offset. When bit 23 is set, retain
-       * the existing zero-jump handling for the environment-exit encoding. */
+      /* bc15+ branch offset is a SIGNED 23-BIT word offset in the low 24 bits (bit 23 set =
+       * the popenv-exit magic 0xF00000, i.e. `break` out of a with()). Reading only int16
+       * worked for short jumps but silently wrapped on sufficiently large scripts. A large
+       * dispatch table can branch beyond the signed 16-bit word range and land at an invalid
+       * instruction if the complete field is not decoded. */
       uint32_t v = fw & 0xFFFFFF;
       if(v & 0x800000) o->jump = 0;                    /* popenv-exit magic: keep legacy no-jump */
       else o->jump = (int32_t)(v << 9) >> 9;

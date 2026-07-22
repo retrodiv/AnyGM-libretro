@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gmlc_json.h"
+#include "anygm_vfs.h"
 #include <ctype.h>
 #include <errno.h>
 #include <stdint.h>
@@ -207,20 +209,18 @@ static GmlcJson *parse_value(JsonParser *p){
   return NULL;
 }
 
-static char *read_file(const char *path, size_t *out_len, char *err, size_t errcap){
-  FILE *f=fopen(path,"rb");
-  if(!f){ snprintf(err,errcap,"%s: open failed",path); return NULL; }
-  if(fseek(f,0,SEEK_END)!=0){ fclose(f); snprintf(err,errcap,"%s: seek failed",path); return NULL; }
-  long sz=ftell(f);
-  if(sz<0){ fclose(f); snprintf(err,errcap,"%s: size failed",path); return NULL; }
-  rewind(f);
-  char *buf=(char*)malloc((size_t)sz+1);
-  if(!buf){ fclose(f); snprintf(err,errcap,"%s: out of memory",path); return NULL; }
-  if(fread(buf,1,(size_t)sz,f)!=(size_t)sz){ fclose(f); free(buf); snprintf(err,errcap,"%s: read failed",path); return NULL; }
-  fclose(f);
-  buf[sz]=0;
-  if(out_len) *out_len=(size_t)sz;
-  return buf;
+static char *read_file(const AnygmHostServices *host,const char *path,size_t *out_len,
+                       char *err,size_t errcap){
+  uint8_t *bytes=NULL;
+  size_t size=0;
+  if(!anygm_vfs_read_all(host,path,&bytes,&size,128u*1024u*1024u)){
+    snprintf(err,errcap,"%s: read failed",path); return NULL;
+  }
+  char *text=realloc(bytes,size+1);
+  if(!text){ free(bytes); snprintf(err,errcap,"%s: out of memory",path); return NULL; }
+  text[size]=0;
+  if(out_len) *out_len=size;
+  return text;
 }
 
 GmlcJson *gmlc_json_parse_text(const char *text, const char *label, char *err, size_t errcap){
@@ -239,10 +239,11 @@ GmlcJson *gmlc_json_parse_text(const char *text, const char *label, char *err, s
   return v;
 }
 
-GmlcJson *gmlc_json_parse_file(const char *path, char *err, size_t errcap){
+GmlcJson *gmlc_json_parse_file(const AnygmHostServices *host,const char *path,
+                               char *err,size_t errcap){
   size_t len=0;
   if(err && errcap) err[0]=0;
-  char *txt=read_file(path,&len,err,errcap);
+  char *txt=read_file(host,path,&len,err,errcap);
   (void)len;
   if(!txt) return NULL;
   GmlcJson *v=gmlc_json_parse_text(txt,path,err,errcap);

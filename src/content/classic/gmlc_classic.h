@@ -1,10 +1,13 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #ifndef GMLC_CLASSIC_H
 #define GMLC_CLASSIC_H
 
 #include <stddef.h>
 #include <stdint.h>
+
+struct AnygmHostServices;
 
 #define GMLC_CLASSIC_MAGIC 1234321u
 
@@ -142,20 +145,23 @@ typedef struct {
  * not claim that the rest of the project is loadable. */
 int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
                        char *err, size_t errcap);
-int gmlc_classic_probe_file(const char *path, GmlcClassicHeader *out,
+int gmlc_classic_probe_file(const struct AnygmHostServices *host,const char *path,
+                            GmlcClassicHeader *out,
                             char *err, size_t errcap);
 
 /* Parse the length-delimited top-level inventory used by GM8/8.1 projects.
  * Individual resource payloads are not interpreted by this function. */
 int gmlc_classic_inventory(const void *data, size_t size,
                            GmlcClassicInventory *out, char *err, size_t errcap);
-int gmlc_classic_inventory_file(const char *path, GmlcClassicInventory *out,
+int gmlc_classic_inventory_file(const struct AnygmHostServices *host,const char *path,
+                                GmlcClassicInventory *out,
                                 char *err, size_t errcap);
 /* Inflate enough of each GM8/8.1 resource block to validate its envelope and
  * read its existence flag, name, and resource-format version. */
 int gmlc_classic_manifest(const void *data, size_t size,
                           GmlcClassicManifest *out, char *err, size_t errcap);
-int gmlc_classic_manifest_file(const char *path, GmlcClassicManifest *out,
+int gmlc_classic_manifest_file(const struct AnygmHostServices *host,const char *path,
+                               GmlcClassicManifest *out,
                                char *err, size_t errcap);
 /* Normalize the versioned game-information blob to its bounded, uncompressed
  * record.  Empty projects produce an empty output blob. */

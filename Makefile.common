@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+
+TARGET_NAME := anygm
+
+ANYGM_BZIP2_SOURCES := \
+	src/third_party/bzip2/blocksort.c \
+	src/third_party/bzip2/bzlib.c \
+	src/third_party/bzip2/compress.c \
+	src/third_party/bzip2/crctable.c \
+	src/third_party/bzip2/decompress.c \
+	src/third_party/bzip2/huffman.c \
+	src/third_party/bzip2/randtable.c
+
+ANYGM_PROJECT_SOURCES := \
+	src/content/project/gmlc_project.c \
+	src/content/project/gmlc_json.c \
+	src/content/project/gmlc_assets.c \
+	src/content/project/gmlc_source.c \
+	src/content/project/gmlc_bytecode.c \
+	src/content/project/gmlc_package.c
+
+ANYGM_CLASSIC_SOURCES := \
+	src/content/classic/gmlc_classic.c \
+	src/content/classic/gmlc_classic_import.c \
+	src/content/classic/gmlc_classic_project.c
+
+ANYGM_RUNTIME_SOURCES := \
+	src/host/anygm_host.c \
+	src/host/anygm_vfs.c \
+	src/core/engine.c \
+	src/compatibility/anygm_compatibility.c \
+	src/content/container/content_router.c \
+	src/content/datafile/gml_win.c \
+	src/content/bytecode/gml_bytecode.c \
+	src/content/bytecode/gml_bc14.c \
+	src/content/bytecode/gml_bc15.c \
+	src/content/bytecode/gml_bc17.c \
+	src/runtime/vm/gml_vm.c \
+	src/runtime/builtins/gml_builtin.c \
+	src/video/renderer/gml_render.c \
+	src/runtime/particles/gml_particle.c \
+	src/audio/mixer/gml_audio.c \
+	src/audio/codecs/gml_mp3.c \
+	src/audio/banks/gml_fmod.c \
+	$(ANYGM_BZIP2_SOURCES) \
+	$(ANYGM_PROJECT_SOURCES) \
+	$(ANYGM_CLASSIC_SOURCES)
+
+ANYGM_TEST_HOST_SOURCES := \
+	src/host/stdio_vfs.c
+
+ANYGM_LIBRETRO_SOURCES := \
+	src/adapters/libretro/libretro_entry.c \
+	src/adapters/libretro/libretro_context.c \
+	src/adapters/libretro/libretro_vfs.c \
+	src/adapters/libretro/libretro_options.c \
+	src/adapters/libretro/libretro_input.c
+
+ANYGM_RUNTIME_INCLUDE_DIRS := \
+	src/api \
+	src/core \
+	src/compatibility \
+	src/content/container \
+	src/content/datafile \
+	src/content/bytecode \
+	src/content/project \
+	src/content/classic \
+	src/runtime/vm \
+	src/runtime/builtins \
+	src/runtime/particles \
+	src/video/renderer \
+	src/video/assets \
+	src/audio/mixer \
+	src/audio/codecs \
+	src/audio/banks \
+	src/host \
+	src/generated \
+	src/third_party \
+	src/third_party/bzip2 \
+	src/third_party/minimp3 \
+	src/third_party/stb
+
+ANYGM_LIBRETRO_INCLUDE_DIRS := \
+	src/adapters/libretro \
+	src/third_party/libretro/include

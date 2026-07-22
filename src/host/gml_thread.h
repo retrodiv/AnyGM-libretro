@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 /* gml_thread.h — minimal portable thread/mutex/condvar wrapper.
  * POSIX: pthreads. Windows: KERNEL32 primitives only (CreateThread,
  * CRITICAL_SECTION, CONDITION_VARIABLE) so the self-contained DLL constraint

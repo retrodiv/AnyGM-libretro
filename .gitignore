@@ -7,8 +7,12 @@
 /anygm_libretro.a
 *.o
 *.d
+*.gcda
+*.gcno
+*.profraw
+*.profdata
 compile_commands.json
-/tmp/
+.DS_Store
 
 # Local fixtures and scratch data are excluded from version control.
 /.fixtures/

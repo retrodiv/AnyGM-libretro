@@ -6,17 +6,21 @@
  * retain that license. Modified for C buffer access and audio-runtime integration.
  * See NOTICE, LICENSES/fmodbankparser.txt and LICENSES/fmodbankparser-NOTICE.txt.
  */
-/* gml_fmod.c - FSB5 Vorbis decoding, bank metadata and runtime audio mixing. */
+/* FMOD FSB5 parsing, Vorbis stream reconstruction, bank lookup, and playback.
+ * The complete generic setup-packet table is generated from the reviewed source documented in
+ * THIRD_PARTY_NOTICES.md. Bank event mapping and the software mixer remain in this domain module. */
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
 #include "gml_fmod.h"
-#include "gml_fmod_codebooks.h"
+#include "anygm_host.h"
+#include "anygm_vfs.h"
+#include "audio_setup_data.h"
 
 #define STB_VORBIS_HEADER_ONLY
-#include "deps/stb_vorbis.c"
+#include "stb_vorbis.c"
 #undef STB_VORBIS_HEADER_ONLY
 
 static uint32_t rd_u32(const uint8_t *p){ return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24); }
@@ -24,15 +28,13 @@ static uint16_t rd_u16(const uint8_t *p){ return (uint16_t)p[0]|((uint16_t)p[1]<
 static float    rd_f32(const uint8_t *p){ uint32_t u=rd_u32(p); float f; memcpy(&f,&u,4); return f; }
 
 /* ---- Ogg framing (page writer with the Ogg CRC32: poly 0x04c11db7, no reflection) ---- */
-static uint32_t ogg_crc_tab[256];
-static void ogg_crc_init(void){
-  static int done=0; if(done) return; done=1;
-  for(int i=0;i<256;i++){ uint32_t r=(uint32_t)i<<24;
-    for(int j=0;j<8;j++) r = (r&0x80000000u) ? (r<<1)^0x04c11db7u : (r<<1);
-    ogg_crc_tab[i]=r; }
-}
 static uint32_t ogg_crc(const uint8_t *d, size_t n){
-  uint32_t c=0; for(size_t i=0;i<n;i++) c=(c<<8)^ogg_crc_tab[((c>>24)^d[i])&0xff]; return c;
+  uint32_t crc=0;
+  for(size_t i=0;i<n;i++){
+    crc^=(uint32_t)d[i]<<24;
+    for(int bit=0;bit<8;bit++) crc=(crc&0x80000000u)?(crc<<1)^0x04c11db7u:crc<<1;
+  }
+  return crc;
 }
 
 typedef struct { uint8_t *b; size_t len, cap; } Buf;
@@ -70,12 +72,13 @@ static void ogg_page(Buf *o, uint8_t htype, uint64_t granule, uint32_t serial, u
   ogg_page_pkts(o,htype,granule,serial,seq,&payload,&plen,1);
 }
 
+/* Derive reflected CRC-32 lookup keys from the licensed setup packet bytes. */
 /* Compare stored CRC-32 keys for the bundled setup packets. */
 static const uint8_t *find_codebook(uint32_t crc, int *len){
-  for(int i=0;i<GML_FMOD_NCODEBOOKS;i++)
-    if(gml_fmod_codebooks[i].crc==crc){
-      *len=gml_fmod_codebooks[i].len; return gml_fmod_codebooks[i].data;
-    }
+  for(int i=0;i<anygm_audio_setup_entry_count;i++){
+    const AnygmAudioSetupEntry *entry=&anygm_audio_setup_entries[i];
+    if(entry->id==crc){ *len=(int)entry->size; return entry->data; }
+  }
   return NULL;
 }
 /* Rebuild a standard Ogg/Vorbis buffer for one FSB5 Vorbis subsound. Returns malloc'd buffer (caller
@@ -84,7 +87,6 @@ static uint8_t *rebuild_ogg(int channels, int rate, uint32_t setup_crc,
                             const uint8_t *pkts, size_t pkts_len, size_t *out_len){
   int cb_len; const uint8_t *cb=find_codebook(setup_crc,&cb_len);
   if(!cb) return NULL;
-  ogg_crc_init();
   Buf o={0}; uint32_t serial=1, seq=0;
   /* Emit a 30-byte identification header with block sizes 256 and 2048. */
   uint8_t idh[30]={0}; idh[0]=1; memcpy(idh+1,"vorbis",6);
@@ -148,15 +150,11 @@ int gml_fmod_fsb5_sample(const uint8_t *fsb5, size_t fsb5_len, int index, GmlFmo
  * *out_pcm is malloc'd (caller frees). */
 int gml_fmod_decode(const uint8_t *fsb5, size_t fsb5_len, int index, int *channels, int *rate, int16_t **out_pcm){
   GmlFmodSample s;
-  if(!gml_fmod_fsb5_sample(fsb5,fsb5_len,index,&s)){ if(getenv("GML_DBG_FMOD"))fprintf(stderr,"[fmod] sample %d parse fail\n",index); return 0; }
-  int cbl; const uint8_t *cb=find_codebook(s.setup_crc,&cbl);
-  if(getenv("GML_DBG_FMOD")) fprintf(stderr,"[fmod] sample %d: ch=%d rate=%d samples=%d data_len=%zu codebook=%s\n",
-    index,s.channels,s.rate,s.num_samples,s.data_len,cb?"found":"MISSING");
+  if(!gml_fmod_fsb5_sample(fsb5,fsb5_len,index,&s)) return 0;
   size_t ogg_len; uint8_t *ogg=rebuild_ogg(s.channels,s.rate,s.setup_crc,s.data,s.data_len,&ogg_len);
-  if(!ogg){ if(getenv("GML_DBG_FMOD"))fprintf(stderr,"[fmod] rebuild_ogg fail (no codebook)\n"); return 0; }
+  if(!ogg) return 0;
   int ch=0, sr=0; short *pcm=NULL;
   int frames=stb_vorbis_decode_memory(ogg,(int)ogg_len,&ch,&sr,&pcm);
-  if(getenv("GML_DBG_FMOD")) fprintf(stderr,"[fmod] ogg_len=%zu stb_vorbis frames=%d ch=%d rate=%d\n",ogg_len,frames,ch,sr);
   free(ogg);
   if(frames<=0){ free(pcm); return 0; }
   *channels=ch; *rate=sr; *out_pcm=pcm; return frames;
@@ -271,7 +269,8 @@ typedef struct {
 
 typedef struct {
   char     path[600];
-  FILE    *fp;               /* kept open for on-demand subsound reads */
+  const AnygmHostServices *host;
+  void    *file;             /* kept open for on-demand subsound reads */
   size_t   data_file_off;    /* file offset of the FSB5 data region (subsound N at +doff) */
   FSub    *subs; int nsubs;
   char   **names;            /* subsound names (diagnostics/validation), may be NULL */
@@ -306,6 +305,7 @@ typedef struct {
 typedef struct { int bank, sub, frames, ch, rate; int16_t *pcm; } FCache;
 
 struct GmlFmodBanks {
+  const AnygmHostServices *host;
   char  **paths; FGuid *guids; int nstrings;   /* global path↔GUID (from strings.bank) */
   FBank  banks[FMOD_MAXBANKS]; int nbanks;
   uint32_t rng;                                /* for multi-instrument variant selection */
@@ -316,6 +316,29 @@ struct GmlFmodBanks {
   double lx, ly; int have_listener;            /* 3D listener position (screen/world units) */
   struct { char name[40]; double value; } param[FMOD_MAX_PARAMS]; int nparam;
 };
+
+static const char *fmod_setting(const GmlFmodBanks *banks,const char *name){
+  return anygm_host_development_setting(banks?banks->host:NULL,name);
+}
+
+static const char *fmod_bank_setting(const FBank *bank,const char *name){
+  return anygm_host_development_setting(bank?bank->host:NULL,name);
+}
+
+static int fmod_bank_read(FBank *bank,uint64_t offset,void *data,size_t size){
+  if(!bank || !bank->host || !bank->file || !bank->host->file_seek ||
+     !bank->host->file_read || offset>INT64_MAX) return 0;
+  if(bank->host->file_seek(bank->host->userdata,bank->file,(int64_t)offset,
+                           ANYGM_SEEK_START)<0) return 0;
+  size_t used=0;
+  while(used<size){
+    size_t count=bank->host->file_read(bank->host->userdata,bank->file,
+                                       (uint8_t *)data+used,size-used);
+    if(!count || count>size-used) return 0;
+    used+=count;
+  }
+  return 1;
+}
 
 static void fmod_voice_free_audio(FVoice *v);   /* frees a voice's stream/owned-PCM (defined below) */
 
@@ -628,8 +651,10 @@ static void fmod_bank_parse_events(FBank *bank, const uint8_t *list, size_t list
       bank->nev++;
     }
   }
-  if(getenv("GML_DBG_FMOD")){ int wp=0,wt=0; for(int e=0;e<bp.nev;e++){ if(bp.ev[e].params.n>0) wp++; if(bp.ev[e].triggered.n>0) wt++; }
-    fprintf(stderr,"[fmod]   events w/ parameters: %d, w/ triggered-instruments: %d (of %d); markers=%d transitions=%d\n",wp,wt,bp.nev,bp.nmk,bp.ntr); }
+  if(fmod_bank_setting(bank,"GML_DBG_FMOD")){ int wp=0,wt=0; for(int e=0;e<bp.nev;e++){ if(bp.ev[e].params.n>0) wp++; if(bp.ev[e].triggered.n>0) wt++; }
+    anygm_host_logf(bank ? bank->host : NULL,ANYGM_LOG_DEBUG,
+                    "[fmod]   events w/ parameters: %d, w/ triggered-instruments: %d (of %d); markers=%d transitions=%d\n",
+                    wp,wt,bp.nev,bp.nmk,bp.ntr); }
   /* free transient tables */
   for(int i=0;i<bp.nev;i++){ garr_free(&bp.ev[i].params); garr_free(&bp.ev[i].triggered); }
   for(int i=0;i<bp.ntm;i++){ garr_free(&bp.tm[i].boxes); garr_free(&bp.tm[i].mkg); }
@@ -639,37 +664,52 @@ static void fmod_bank_parse_events(FBank *bank, const uint8_t *list, size_t list
 }
 
 /* Open one main .bank file: locate its LIST (metadata → event graph) and SND (FSB5) chunks. */
-static int fmod_bank_open(FBank *bank, const char *path){
-  FILE *f=fopen(path,"rb"); if(!f) return 0;
+static int fmod_bank_open(FBank *bank,const AnygmHostServices *host,const char *path){
+  if(!bank || !host || !host->file_open || !host->file_read || !host->file_seek ||
+     !host->file_close) return 0;
+  bank->host=host;
+  bank->file=host->file_open(host->userdata,path,ANYGM_FILE_READ);
+  if(!bank->file) return 0;
   uint8_t head[12];
-  if(fread(head,1,12,f)!=12 || memcmp(head,"RIFF",4)!=0 || memcmp(head+8,"FEV ",4)!=0){ fclose(f); return 0; }
-  fseek(f,0,SEEK_END); long fsz=ftell(f);
-  long base=12; int have_snd=0, have_events=0, fmt_version=0;
+  int64_t end=host->file_seek(host->userdata,bank->file,0,ANYGM_SEEK_END);
+  if(end<12 || !fmod_bank_read(bank,0,head,sizeof head) ||
+     memcmp(head,"RIFF",4)!=0 || memcmp(head+8,"FEV ",4)!=0){
+    host->file_close(host->userdata,bank->file); bank->file=NULL; return 0;
+  }
+  uint64_t fsz=(uint64_t)end;
+  uint64_t base=12;
+  int have_snd=0,have_events=0,fmt_version=0;
   while(base+8<=fsz){
-    uint8_t chdr[8]; fseek(f,base,SEEK_SET); if(fread(chdr,1,8,f)!=8) break;
-    uint32_t csz=rd_u32(chdr+4); long payload=base+8;
+    uint8_t chdr[8];
+    if(!fmod_bank_read(bank,base,chdr,sizeof chdr)) break;
+    uint32_t csz=rd_u32(chdr+4); uint64_t payload=base+8;
+    if(csz>fsz-payload) break;
     if(memcmp(chdr,"FMT ",4)==0){
-      uint8_t fmt[8]; fseek(f,payload,SEEK_SET);
-      if(csz>=4 && fread(fmt,1,csz>=8?8:4,f)>=(csz>=8?8:4)) fmt_version=(int)rd_u32(fmt);
+      uint8_t fmt[8]; size_t amount=csz>=8?8:4;
+      if(csz>=4 && fmod_bank_read(bank,payload,fmt,amount)) fmt_version=(int)rd_u32(fmt);
     } else if(memcmp(chdr,"LIST",4)==0){
-      /* Allocate the declared LIST size and parse its event graph. */
-      uint8_t *lst=malloc(csz); if(lst){ fseek(f,payload,SEEK_SET);
-        if(fread(lst,1,csz,f)==csz){ fmod_bank_parse_events(bank,lst,csz,fmt_version); have_events=1; }
+      /* metadata: read into RAM (bounded; ≤~1 MB) and parse the event graph */
+      uint8_t *lst=csz<=64u*1024u*1024u?malloc(csz?csz:1):NULL;
+      if(lst){
+        if(fmod_bank_read(bank,payload,lst,csz)){ fmod_bank_parse_events(bank,lst,csz,fmt_version); have_events=1; }
         free(lst); }
     } else if(memcmp(chdr,"SND ",4)==0){
       /* the FSB5 begins at (or shortly after) the SND payload — scan a small window for the magic */
-      uint8_t probe[64]; fseek(f,payload,SEEK_SET); size_t pr=fread(probe,1,sizeof probe,f);
-      long fsb5_off=-1;
-      for(size_t i=0;i+4<=pr;i++) if(memcmp(probe+i,"FSB5",4)==0){ fsb5_off=payload+(long)i; break; }
-      if(fsb5_off>=0){
-        uint8_t h0[60]; fseek(f,fsb5_off,SEEK_SET);
-        if(fread(h0,1,60,f)==60 && memcmp(h0,"FSB5",4)==0){
+      uint8_t probe[64]; size_t pr=csz<sizeof probe?csz:sizeof probe;
+      if(!fmod_bank_read(bank,payload,probe,pr)) pr=0;
+      uint64_t fsb5_off=UINT64_MAX;
+      for(size_t i=0;i+4<=pr;i++) if(memcmp(probe+i,"FSB5",4)==0){ fsb5_off=payload+i; break; }
+      if(fsb5_off!=UINT64_MAX){
+        uint8_t h0[60];
+        if(fsb5_off<=fsz-sizeof h0 && fmod_bank_read(bank,fsb5_off,h0,sizeof h0) &&
+           memcmp(h0,"FSB5",4)==0){
           uint32_t shs=rd_u32(h0+12), nts=rd_u32(h0+16);
           size_t hdrlen=60+(size_t)shs+(size_t)nts;   /* include the name table */
-          uint8_t *hdr=malloc(hdrlen);
-          if(hdr){ fseek(f,fsb5_off,SEEK_SET);
-            if(fread(hdr,1,hdrlen,f)==hdrlen){
-              size_t data_region=(size_t)fsb5_off+60+shs+nts;
+          uint8_t *hdr=hdrlen<=64u*1024u*1024u?malloc(hdrlen):NULL;
+          if(hdr){
+            if(fsb5_off<=SIZE_MAX && hdrlen<=fsz-fsb5_off &&
+               fmod_bank_read(bank,fsb5_off,hdr,hdrlen)){
+              size_t data_region=(size_t)fsb5_off+60u+shs+nts;
               if(fmod_fsb5_parse_table(bank,hdr,hdrlen,data_region)) have_snd=1;
             }
             free(hdr); }
@@ -679,9 +719,10 @@ static int fmod_bank_open(FBank *bank, const char *path){
     base=payload+csz;
   }
   (void)have_events;
-  if(!have_snd){ bank->subs=NULL; bank->nsubs=0; }  /* no sample-data chunk was loaded */
-  /* Historical playback policy: enable looping for samples at least ten seconds
-   * long when no loop was declared. One-shot playback overrides this selection. */
+  if(!have_snd){ bank->subs=NULL; bank->nsubs=0; }  /* Master.bank has no SND — buses only */
+  /* A looping event's loop region lives in timeline markers that are not parsed. A long sound is
+   * treated as music or ambience and looped. This content-derived rule
+   * makes create_instance'd music loop; one-shots override it to play once anyway. */
   for(int e=0;e<bank->nev;e++){
     int ss=bank->ev[e].sub[0];
     if(ss<0 || ss>=bank->nsubs || !bank->subs || bank->subs[ss].rate<=0){ bank->ev[e].nlc=0; continue; }
@@ -698,27 +739,25 @@ static int fmod_bank_open(FBank *bank, const char *path){
     bank->ev[e].loop_start=best_start; bank->ev[e].loop_end=best_end;
   }
   snprintf(bank->path,sizeof bank->path,"%s",path);
-  bank->fp=f;   /* keep open for on-demand decode */
   return 1;
 }
 
-GmlFmodBanks *gml_fmod_banks_load(const char *dir){
-  if(!dir||!dir[0]) return NULL;
-  /* Probe the configured relative bank-directory candidates in order. */
+GmlFmodBanks *gml_fmod_banks_load(const AnygmHostServices *host,const char *dir){
+  if(!host || !dir || !dir[0]) return NULL;
+  /* FMOD-GameMaker games keep banks in content/sound/<platform>/. Try the usual layouts. */
   static const char *sub[]={ "/sound/Desktop", "/sound/desktop", "/sound", "" };
-  char bankdir[700]={0}; char sp[760]; FILE *sf=NULL;
+  char bankdir[700]={0}; char sp[760];
+  uint8_t *sbuf=NULL; size_t ssz=0;
   for(int i=0;i<4;i++){
     snprintf(bankdir,sizeof bankdir,"%s%s",dir,sub[i]);
     snprintf(sp,sizeof sp,"%s/Master.strings.bank",bankdir);
-    sf=fopen(sp,"rb"); if(sf) break;
+    if(anygm_vfs_read_all(host,sp,&sbuf,&ssz,64u*1024u*1024u)) break;
   }
-  if(!sf) return NULL;
-  fseek(sf,0,SEEK_END); long ssz=ftell(sf); fseek(sf,0,SEEK_SET);
-  uint8_t *sbuf=malloc(ssz); if(!sbuf||fread(sbuf,1,ssz,sf)!=(size_t)ssz){ free(sbuf); fclose(sf); return NULL; }
-  fclose(sf);
+  if(!sbuf || !ssz) return NULL;
   dir=bankdir;   /* open the main banks from the same folder */
   GmlFmodBanks *b=calloc(1,sizeof *b);
   if(!b){ free(sbuf); return NULL; }
+  b->host=host;
   b->nstrings=fmod_parse_strings(sbuf,ssz,&b->paths,&b->guids);
   free(sbuf);
   if(b->nstrings<=0){ free(b); return NULL; }
@@ -726,31 +765,32 @@ GmlFmodBanks *gml_fmod_banks_load(const char *dir){
   static const char *names[]={"Master.bank","music.bank","sfx.bank"};
   for(int i=0;i<3 && b->nbanks<FMOD_MAXBANKS;i++){
     char p[700]; snprintf(p,sizeof p,"%s/%s",dir,names[i]);
-    if(fmod_bank_open(&b->banks[b->nbanks],p)) b->nbanks++;
+    if(fmod_bank_open(&b->banks[b->nbanks],host,p)) b->nbanks++;
   }
-  if(getenv("GML_DBG_FMOD_3D")){
+  if(fmod_setting(b,"GML_DBG_FMOD_3D")){
     for(int bi=0;bi<b->nbanks;bi++){ FBank*bk=&b->banks[bi]; int shown=0, with3d=0;
       for(int e=0;e<bk->nev;e++){ if(bk->ev[e].maxdist>0){ with3d++;
-        if(shown<8){
-          fprintf(stderr,"[fmod3d] bank %d event %d min=%.1f max=%.1f\n",bi,e,bk->ev[e].mindist,bk->ev[e].maxdist); shown++; } } }
-      fprintf(stderr,"[fmod3d] bank %d: %d/%d events have 3D rolloff (maxdist>0)\n",bi,with3d,bk->nev); }
+        if(shown<8){ const char*nm=(bk->names&&bk->ev[e].sub[0]<bk->nsubs)?bk->names[bk->ev[e].sub[0]]:"?";
+          anygm_host_logf(b ? b->host : NULL,ANYGM_LOG_DEBUG,"[fmod3d] %s min=%.1f max=%.1f\n",nm?nm:"?",bk->ev[e].mindist,bk->ev[e].maxdist); shown++; } } }
+      anygm_host_logf(b ? b->host : NULL,ANYGM_LOG_DEBUG,"[fmod3d] bank %d: %d/%d events have 3D rolloff (maxdist>0)\n",bi,with3d,bk->nev); }
   }
-  if(getenv("GML_DBG_FMOD")){
-    fprintf(stderr,"[fmod] bank set: %d string paths, %d banks\n",b->nstrings,b->nbanks);
+  if(fmod_setting(b,"GML_DBG_FMOD")){
+    anygm_host_logf(b ? b->host : NULL,ANYGM_LOG_DEBUG,"[fmod] bank set: %d string paths, %d banks\n",b->nstrings,b->nbanks);
     int multi=0,tot=0; for(int i=0;i<b->nbanks;i++) for(int e=0;e<b->banks[i].nev;e++){ tot++; if(b->banks[i].ev[e].nsub>1) multi++; }
-    fprintf(stderr,"[fmod] events with >1 subsound (multi-instrument): %d / %d\n",multi,tot);
-    for(int i=0;i<b->nbanks;i++) fprintf(stderr,"[fmod]   bank %d: %d subsounds, %d events\n",
-      i,b->banks[i].nsubs,b->banks[i].nev);
+    anygm_host_logf(b ? b->host : NULL,ANYGM_LOG_DEBUG,"[fmod] events with >1 subsound (multi-instrument): %d / %d\n",multi,tot);
+    for(int i=0;i<b->nbanks;i++) anygm_host_logf(b ? b->host : NULL,ANYGM_LOG_DEBUG,"[fmod]   %s: %d subsounds, %d events\n",
+      b->banks[i].path,b->banks[i].nsubs,b->banks[i].nev);
   }
-  if(getenv("GML_DBG_FMOD_MAP")){
+  if(fmod_setting(b,"GML_DBG_FMOD_MAP")){
     int res=0,unres=0;
     for(int i=0;i<b->nstrings;i++){ if(!b->paths[i]||strncmp(b->paths[i],"event:",6)) continue;
       int bi,ss,lp;
       if(gml_fmod_banks_resolve(b,b->paths[i],&bi,&ss,&lp,NULL,NULL)){ res++;
-        fprintf(stderr,"MAP entry%d -> bank%d sub%d loop%d\n",i,bi,ss,lp);
-      } else { unres++; fprintf(stderr,"MAP entry%d -> UNRESOLVED\n",i); }
+        const char*nm=(b->banks[bi].names&&ss<b->banks[bi].nsubs)?b->banks[bi].names[ss]:NULL;
+        anygm_host_logf(b ? b->host : NULL,ANYGM_LOG_DEBUG,"MAP %-46s -> bank%d sub%-4d loop%d  %s\n",b->paths[i],bi,ss,lp,nm?nm:"(noname)");
+      } else { unres++; anygm_host_logf(b ? b->host : NULL,ANYGM_LOG_DEBUG,"MAP %-46s -> UNRESOLVED\n",b->paths[i]); }
     }
-    fprintf(stderr,"[fmod] resolved %d / %d event paths\n",res,res+unres);
+    anygm_host_logf(b ? b->host : NULL,ANYGM_LOG_DEBUG,"[fmod] resolved %d / %d event paths\n",res,res+unres);
   }
   return b;
 }
@@ -760,7 +800,8 @@ void gml_fmod_banks_free(GmlFmodBanks *b){
   for(int i=0;i<b->nstrings;i++) free(b->paths[i]);
   free(b->paths); free(b->guids);
   for(int i=0;i<b->nbanks;i++){ FBank *bk=&b->banks[i];
-    if(bk->fp) fclose(bk->fp);
+    if(bk->file && bk->host && bk->host->file_close)
+      bk->host->file_close(bk->host->userdata,bk->file);
     if(bk->names){ for(int s=0;s<bk->nsubs;s++) free(bk->names[s]); free(bk->names); }
     free(bk->subs); free(bk->ev); }
   for(int i=0;i<FMOD_MAXVOICES;i++) fmod_voice_free_audio(&b->voices[i]);
@@ -800,16 +841,22 @@ int gml_fmod_banks_resolve(GmlFmodBanks *b, const char *path, int *bank_index, i
 int gml_fmod_banks_decode(GmlFmodBanks *b, int bank_index, int subsound, int *channels, int *rate, int16_t **out_pcm){
   if(!b||bank_index<0||bank_index>=b->nbanks) return 0;
   FBank *bk=&b->banks[bank_index];
-  if(subsound<0||subsound>=bk->nsubs||!bk->fp) return 0;
+  if(subsound<0||subsound>=bk->nsubs||!bk->file) return 0;
   FSub *s=&bk->subs[subsound];
   if(s->dlen==0) return 0;
   uint8_t *cd=malloc(s->dlen);
   if(!cd) return 0;
-  fseek(bk->fp,(long)(bk->data_file_off+s->doff),SEEK_SET);
-  if(fread(cd,1,s->dlen,bk->fp)!=s->dlen){ free(cd); return 0; }
+  if(!fmod_bank_read(bk,(uint64_t)bk->data_file_off+s->doff,cd,s->dlen)){
+    free(cd); return 0;
+  }
   size_t ogg_len; uint8_t *ogg=rebuild_ogg(s->ch,s->rate,s->crc,cd,s->dlen,&ogg_len);
   free(cd);
-  if(!ogg){ if(getenv("GML_DBG_FMOD"))fprintf(stderr,"[fmod] decode: no codebook (bank %d sub %d)\n",bank_index,subsound); return 0; }
+  if(!ogg){
+    if(fmod_setting(b,"GML_DBG_FMOD"))
+      anygm_host_logf(b ? b->host : NULL,ANYGM_LOG_DEBUG,"[fmod] decode: no codebook crc=0x%08x (bank %d sub %d)\n",
+              s->crc,bank_index,subsound);
+    return 0;
+  }
   int ch=0,sr=0; short *pcm=NULL;
   int frames=stb_vorbis_decode_memory(ogg,(int)ogg_len,&ch,&sr,&pcm);
   free(ogg);
@@ -854,10 +901,11 @@ static void fmod_voice_set_handle(GmlFmodBanks *b, FVoice *v, int handle){
 /* Retain compressed Ogg data and decode PCM through a bounded window. */
 static void fmod_stream_open(GmlFmodBanks *b, FVoice *v){
   FBank *bk=&b->banks[v->bank]; FSub *s=&bk->subs[v->sub];
-  if(s->dlen==0||!bk->fp) return;
+  if(s->dlen==0||!bk->file) return;
   uint8_t *cd=malloc(s->dlen); if(!cd) return;
-  fseek(bk->fp,(long)(bk->data_file_off+s->doff),SEEK_SET);
-  if(fread(cd,1,s->dlen,bk->fp)!=s->dlen){ free(cd); return; }
+  if(!fmod_bank_read(bk,(uint64_t)bk->data_file_off+s->doff,cd,s->dlen)){
+    free(cd); return;
+  }
   size_t ogg_len; uint8_t *ogg=rebuild_ogg(s->ch,s->rate,s->crc,cd,s->dlen,&ogg_len); free(cd);
   if(!ogg) return;
   int err=0; stb_vorbis *vs=stb_vorbis_open_memory(ogg,(int)ogg_len,&err,NULL);
@@ -868,7 +916,7 @@ static void fmod_stream_open(GmlFmodBanks *b, FVoice *v){
 
 /* Ensure the decode window covers source frames [first, last]. Drops the consumed prefix and decodes
  * forward (looping via seek_start). Returns 0 if the stream ended (non-loop) before `last`. */
-static int fmod_stream_fill(FVoice *v, long first, long last){
+static int fmod_stream_fill(GmlFmodBanks *b,FVoice *v,long first,long last){
   int ch=v->ch;
   if(first>v->win_start){
     long drop=first-v->win_start;
@@ -892,7 +940,9 @@ static int fmod_stream_fill(FVoice *v, long first, long last){
     }
     v->win_len+=got; v->stream_pos+=got;
     if(v->loop && v->loop_end>0 && v->stream_pos>=v->loop_end){   /* reached loop end → jump to loop start */
-      if(getenv("GML_DBG_FMOD_LOOP")) fprintf(stderr,"[fmod] loop: %ld -> %ld (region end %ld)\n",v->stream_pos,v->loop_start,v->loop_end);
+      if(fmod_setting(b,"GML_DBG_FMOD_LOOP"))
+        anygm_host_logf(b ? b->host : NULL,ANYGM_LOG_DEBUG,"[fmod] loop: %ld -> %ld (region end %ld)\n",
+                v->stream_pos,v->loop_start,v->loop_end);
       stb_vorbis_seek(v->vs,(unsigned)v->loop_start); v->stream_pos=v->loop_start;
     }
   }
@@ -947,8 +997,8 @@ int gml_fmod_start(GmlFmodBanks *b, const char *path, int play_now, int one_shot
   fmod_voice_set_handle(b,v,b->next_handle);
   snprintf(v->path,sizeof v->path,"%s",path);   /* remember for per-play variant re-pick */
   v->bank=bank; v->sub=sub; v->loop=one_shot?0:loop; v->one_shot=one_shot?1:0; v->gain=1.0;
-  if(getenv("GML_DBG_FMOD")){
-    fprintf(stderr,"[fmod] %s -> h%d bank%d sub%d loop%d\n",one_shot?"one_shot":"instance",v->handle,bank,sub,v->loop); }
+  if(fmod_setting(b,"GML_DBG_FMOD")){ const char*nm=(b->banks[bank].names&&sub<b->banks[bank].nsubs)?b->banks[bank].names[sub]:NULL;
+    anygm_host_logf(b ? b->host : NULL,ANYGM_LOG_DEBUG,"[fmod] %s '%s' -> h%d bank%d sub%d loop%d %s\n",one_shot?"one_shot":"instance",path,v->handle,bank,sub,v->loop,nm?nm:""); }
   if(play_now){ fmod_voice_arm(b,v); v->active=(v->pcm!=NULL||v->vs!=NULL); if(!v->active && one_shot){ fmod_voice_set_handle(b,v,0); return 0; } }
   return v->handle;
 }
@@ -1047,7 +1097,8 @@ void gml_fmod_set_listener(GmlFmodBanks *b, double x, double y){
 }
 void gml_fmod_set_3d(GmlFmodBanks *b, int handle, double x, double y){
   FVoice *v=fmod_voice_by_handle(b,handle); if(!v) return; v->px=x; v->py=y; v->has_3d=1;
-  if(getenv("GML_DBG_FMOD_3D")) fprintf(stderr,"[fmod3d] voice h%d pos %.1f,%.1f\n",handle,x,y);
+  if(fmod_setting(b,"GML_DBG_FMOD_3D"))
+    anygm_host_logf(b ? b->host : NULL,ANYGM_LOG_DEBUG,"[fmod3d] voice h%d pos %.1f,%.1f\n",handle,x,y);
 }
 
 /* soft knee limiter (same curve as the AUDO mixer): music is mastered near 0 dBFS, so summing SFX on
@@ -1075,8 +1126,8 @@ void gml_fmod_mix(GmlFmodBanks *b, int16_t *out, int frames, int out_rate){
     any=1;
     double step=(double)v->rate/(double)out_rate;
     int ch=v->ch; double g=v->gain;
-    /* Pan using the emitter's horizontal direction from the listener. Keep both
-     * channel gains unchanged at the center; no distance attenuation is applied. */
+    /* Azimuth pan from the emitter's horizontal offset is energy preserving. Distance attenuation
+     * is not applied because the coordinate-to-FMOD-unit scale is not available here. */
     double gl=1.0, gr=1.0;
     if(v->has_3d && b->have_listener){
       double dx=v->px-b->lx, dy=v->py-b->ly, d=sqrt(dx*dx+dy*dy);
@@ -1087,7 +1138,7 @@ void gml_fmod_mix(GmlFmodBanks *b, int16_t *out, int frames, int out_rate){
     if(v->vs){
       /* streamed (music): decode just enough to cover this block, then resample from the window */
       long first=(long)v->pos, last=(long)(v->pos+step*frames)+2;
-      fmod_stream_fill(v,first,last);
+      fmod_stream_fill(b,v,first,last);
       for(int f=0;f<frames;f++){
         long i0=(long)v->pos, i1=i0+1;
         long w0=i0-v->win_start, w1=i1-v->win_start;
@@ -1122,26 +1173,3 @@ void gml_fmod_mix(GmlFmodBanks *b, int16_t *out, int frames, int out_rate){
   if(any) for(int i=0;i<nvals;i++) out[i]=fmod_softclip((int32_t)out[i]+mix[i]);
   if(mix!=stack) free(mix);
 }
-
-/* Optional string-table diagnostic entry point.
- * Enabled only when built with -DGML_FMOD_STRINGS_MAIN. */
-#ifdef GML_FMOD_STRINGS_MAIN
-int main(int argc, char **argv){
-  if(argc!=2){ fprintf(stderr,"usage: bank-diagnostic <input-file>\n"); return 1; }
-  const char *fn = argv[1];
-  FILE *f=fopen(fn,"rb"); if(!f){ fprintf(stderr,"cannot open input file\n"); return 1; }
-  fseek(f,0,SEEK_END); long sz=ftell(f); fseek(f,0,SEEK_SET);
-  uint8_t *d=malloc(sz); if(fread(d,1,sz,f)!=(size_t)sz){} fclose(f);
-  char **paths; FGuid *guids;
-  int n=fmod_parse_strings(d,sz,&paths,&guids);
-  printf("parsed %d entries\n",n);
-  int ev=0;
-  for(int i=0;i<n;i++){
-    if(paths[i] && strncmp(paths[i],"event:",6)==0) ev++;
-    printf("entry %d: present=%d event=%d\n",i,paths[i]!=NULL,
-      paths[i] && strncmp(paths[i],"event:",6)==0);
-  }
-  printf("event:/ paths: %d\n",ev);
-  return 0;
-}
-#endif

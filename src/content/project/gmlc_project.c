@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gmlc_project.h"
+#include "anygm_vfs.h"
 #include "gmlc_assets.h"
 #include "gmlc_json.h"
 #include <stdio.h>
@@ -69,16 +71,11 @@ char *gmlc_project_read_source(const GmlcProject *p, const char *path){
     if(memory->kind!=GMLC_MEMORY_TEXT) return NULL;
     return gmlc_strdup((const char*)memory->data);
   }
-  FILE *f=path?fopen(path,"rb"):NULL;
-  if(!f) return NULL;
-  if(fseek(f,0,SEEK_END)!=0){ fclose(f); return NULL; }
-  long size=ftell(f);
-  if(size<0 || fseek(f,0,SEEK_SET)!=0){ fclose(f); return NULL; }
-  char *text=(char*)malloc((size_t)size+1);
-  if(!text){ fclose(f); return NULL; }
-  int ok=fread(text,1,(size_t)size,f)==(size_t)size;
-  if(fclose(f)!=0) ok=0;
-  if(!ok){ free(text); return NULL; }
+  uint8_t *bytes=NULL;
+  size_t size=0;
+  if(!p || !path || !anygm_vfs_read_all(p->host,path,&bytes,&size,128u*1024u*1024u)) return NULL;
+  char *text=realloc(bytes,size+1);
+  if(!text){ free(bytes); return NULL; }
   text[size]=0;
   return text;
 }
@@ -365,7 +362,7 @@ static int load_resource_order(GmlcProject *p){
       cap=nc;
     }
     char local_err[256]={0};
-    GmlcJson *yy=gmlc_json_parse_file(r->abs_path,local_err,sizeof(local_err));
+    GmlcJson *yy=gmlc_json_parse_file(p->host,r->abs_path,local_err,sizeof(local_err));
     if(!yy) continue;
     const char *id=gmlc_json_str(gmlc_json_obj(yy,"id"),r->id?r->id:"");
     folders[n].id=gmlc_strdup(id);
@@ -423,12 +420,14 @@ static int load_resource_order(GmlcProject *p){
   return ok;
 }
 
-int gmlc_project_load_yyp(GmlcProject *p, const char *path, char *err, size_t errcap){
+int gmlc_project_load_yyp(GmlcProject *p,const AnygmHostServices *host,
+                          const char *path,char *err,size_t errcap){
   gmlc_project_init(p);
+  p->host=host;
   p->yyp_path=gmlc_strdup(path);
   p->root_dir=gmlc_path_dirname(path);
   if(!p->yyp_path || !p->root_dir){ snprintf(err,errcap,"out of memory"); return 0; }
-  GmlcJson *root=gmlc_json_parse_file(path,err,errcap);
+  GmlcJson *root=gmlc_json_parse_file(host,path,err,errcap);
   if(!root) return 0;
   const char *nm=gmlc_json_str(gmlc_json_obj(root,"name"),NULL);
   if(!nm || !*nm){

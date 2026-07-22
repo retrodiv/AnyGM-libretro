@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gmlc_classic.h"
 #include "gmlc_classic_import.h"
+#include "stdio_vfs.h"
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
@@ -28,6 +30,18 @@
 #else
 #include <unistd.h>
 #endif
+
+static AnygmHostServices fixture_host;
+
+static void fixture_project_init(GmlcProject *project){
+  gmlc_project_init(project);
+  project->host=&fixture_host;
+}
+
+static void fixture_project_clear(GmlcProject *project){
+  memset(project,0,sizeof *project);
+  project->host=&fixture_host;
+}
 
 static void put_u32le(unsigned char *p, unsigned value){
   p[0] = (unsigned char)value;
@@ -130,6 +144,10 @@ static int write_fixture_file(const char *path, const Fixture *fixture, size_t l
 }
 
 static int expect_extension_alias_import(void){
+  AnygmHostServices host={0};
+  host.struct_size=sizeof host;
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&host);
   const char *dir="tmp/classic_extension_fixture";
 #ifdef _WIN32
   _mkdir("tmp"); _mkdir(dir);
@@ -165,8 +183,8 @@ static int expect_extension_alias_import(void){
                                    i==4 ? fixtures[i].size-3u : SIZE_MAX);
   uint64_t dependency_before=0,dependency_repeat=0,dependency_after=0;
   int dependency_ok=files_ok &&
-    gmlc_classic_extension_dependency_hash(dir,123u,&dependency_before) &&
-    gmlc_classic_extension_dependency_hash(dir,123u,&dependency_repeat) &&
+    gmlc_classic_extension_dependency_hash(&host,dir,123u,&dependency_before) &&
+    gmlc_classic_extension_dependency_hash(&host,dir,123u,&dependency_repeat) &&
     dependency_before==dependency_repeat;
 
   char *extension_names[]={(char*)"Fixture Extension"};
@@ -176,6 +194,7 @@ static int expect_extension_alias_import(void){
   manifest.extension_count=1;
   GmlcProject project;
   gmlc_project_init(&project);
+  project.host=&host;
   project.prefer_memory_files=1;
   project.scripts=(GmlcScript*)calloc(2,sizeof(*project.scripts));
   project.n_scripts=project.cap_scripts=2;
@@ -226,7 +245,7 @@ static int expect_extension_alias_import(void){
   int changed_ok=changed && fputc(0x5a,changed)!=EOF;
   if(changed && fclose(changed)!=0) changed_ok=0;
   dependency_ok = dependency_ok && changed_ok &&
-    gmlc_classic_extension_dependency_hash(dir,123u,&dependency_after) &&
+    gmlc_classic_extension_dependency_hash(&host,dir,123u,&dependency_after) &&
     dependency_after!=dependency_before;
   int ok=imported && !err[0] && project.n_function_aliases==3 && project.n_scripts==3 &&
          found_action && found_ambiguous && !found_unrelated && !found_broken &&
@@ -618,7 +637,7 @@ static int expect_executable_manifest_variant(const Fixture *executable){
     }
     if(ok){
       GmlcProject project;
-      gmlc_project_init(&project);
+      fixture_project_init(&project);
       project.prefer_memory_files=1;
       ok=gmlc_classic_import_fonts(&manifest,&project,"tmp",err,sizeof(err)) &&
          gmlc_classic_import_rooms(&manifest,&project,"tmp",err,sizeof(err));
@@ -674,7 +693,7 @@ static int expect_legacy_executable_manifest(void){
     if(!ok) fprintf(stderr,"legacy executable manifest values were not preserved\n");
   }
   if(ok){
-    GmlcProject project; gmlc_project_init(&project); project.prefer_memory_files=1;
+    GmlcProject project; fixture_project_init(&project); project.prefer_memory_files=1;
     ok=gmlc_classic_import_sprites(&manifest,&project,"tmp",err,sizeof(err)) &&
        gmlc_classic_import_backgrounds(&manifest,&project,"tmp",err,sizeof(err)) &&
        gmlc_classic_import_rooms(&manifest,&project,"tmp",err,sizeof(err));
@@ -824,7 +843,7 @@ static int expect_script_import(void){
   Fixture fixture = manifest_fixture(800);
   GmlcClassicManifest manifest;
   GmlcProject project;
-  memset(&project, 0, sizeof(project));
+  fixture_project_clear(&project);
   char err[256], dir[128] = "tmp/classic_script_fixture";
 #ifdef _WIN32
   _mkdir(dir);
@@ -892,7 +911,7 @@ static int expect_sprite_import(int executable_layout){
   memcpy(slot->payload, payload.data, payload.size); slot->payload_size = payload.size;
 
   GmlcProject project;
-  memset(&project, 0, sizeof(project));
+  fixture_project_clear(&project);
   char err[256], dir[128];
   snprintf(dir,sizeof(dir),"tmp/classic_sprite_%s_fixture",executable_layout?"executable":"project");
 #ifdef _WIN32
@@ -958,7 +977,7 @@ static int expect_sound_import(void){
   memcpy(slot->payload, payload.data, payload.size); slot->payload_size = payload.size;
 
   GmlcProject project;
-  memset(&project, 0, sizeof(project));
+  fixture_project_clear(&project);
   char err[256], dir[128] = "tmp/classic_sound_fixture";
 #ifdef _WIN32
   _mkdir(dir);
@@ -1016,7 +1035,7 @@ static int expect_legacy_media_import(void){
     fixture_u32(&payload,0); fixture_string(&payload,".wav"); fixture_string(&payload,"fixture.wav");
     fixture_u32(&payload,1); const unsigned char raw[]={'R','I','F','F'}; fixture_compressed(&payload,raw,sizeof(raw));
     fixture_u32(&payload,0); fixture_double(&payload,0.75); fixture_double(&payload,0); fixture_u32(&payload,1);
-    GmlcClassicManifest manifest; GmlcProject project; memset(&project,0,sizeof(project));
+    GmlcClassicManifest manifest; GmlcProject project; fixture_project_clear(&project);
     ok=setup_legacy_slot(&manifest,GMLC_CLASSIC_SOUND,"legacy_sound",&payload) &&
        gmlc_classic_import_sounds(&manifest,&project,dir,err,sizeof(err));
     if(ok){ unsigned char got[4]={0}; FILE *file=fopen(project.sounds[0].data_path,"rb");
@@ -1032,7 +1051,7 @@ static int expect_legacy_media_import(void){
     const unsigned fields[13]={2,1,0,1,0,0,1,0,1,0,1,1,0};
     for(int i=0;i<13;i++) fixture_u32(&payload,fields[i]);
     fixture_u32(&payload,1); fixture_legacy_bmp_image(&payload);
-    GmlcClassicManifest manifest; GmlcProject project; memset(&project,0,sizeof(project));
+    GmlcClassicManifest manifest; GmlcProject project; fixture_project_clear(&project);
     int stage=setup_legacy_slot(&manifest,GMLC_CLASSIC_SPRITE,"legacy_sprite",&payload) &&
       gmlc_classic_import_sprites(&manifest,&project,dir,err,sizeof(err));
     if(stage){ struct stat st; stage=project.n_sprites==1 && project.sprites[0].width==2 &&
@@ -1049,7 +1068,7 @@ static int expect_legacy_media_import(void){
     const unsigned fields[12]={2,1,1,0,1,1,1,1,0,0,0,0};
     for(int i=0;i<12;i++) fixture_u32(&payload,fields[i]);
     fixture_u32(&payload,1); fixture_legacy_bmp_image(&payload);
-    GmlcClassicManifest manifest; GmlcProject project; memset(&project,0,sizeof(project));
+    GmlcClassicManifest manifest; GmlcProject project; fixture_project_clear(&project);
     int stage=setup_legacy_slot(&manifest,GMLC_CLASSIC_BACKGROUND,"legacy_background",&payload) &&
       gmlc_classic_import_backgrounds(&manifest,&project,dir,err,sizeof(err));
     if(stage){ struct stat st; stage=project.n_tilesets==1 && project.n_sprites==1 &&
@@ -1093,7 +1112,7 @@ static int expect_background_import(int executable_layout){
   memcpy(slot->payload, payload.data, payload.size); slot->payload_size = payload.size;
 
   GmlcProject project;
-  memset(&project, 0, sizeof(project));
+  fixture_project_clear(&project);
   char err[256], dir[128];
   snprintf(dir,sizeof(dir),"tmp/classic_background_%s_fixture",executable_layout?"executable":"project");
 #ifdef _WIN32
@@ -1162,7 +1181,7 @@ static int expect_sparse_font_import(void){
      !fixture_font_slot(&manifest.slots[GMLC_CLASSIC_FONT][4],"font_second",8,1,1,65,90)){
     gmlc_classic_manifest_free(&manifest); return 0;
   }
-  GmlcProject project; memset(&project,0,sizeof(project));
+  GmlcProject project; fixture_project_clear(&project);
   char err[256],dir[128]="tmp/classic_font_fixture";
 #ifdef _WIN32
   _mkdir(dir);
@@ -1191,7 +1210,7 @@ static int expect_empty_font_import(void){
   manifest.inventory.resource_slots[GMLC_CLASSIC_FONT]=1520;
   manifest.slots[GMLC_CLASSIC_FONT]=(GmlcClassicResourceSlot*)calloc(1520,sizeof(GmlcClassicResourceSlot));
   if(!manifest.slots[GMLC_CLASSIC_FONT]) return 0;
-  GmlcProject project; memset(&project,0,sizeof(project));
+  GmlcProject project; fixture_project_clear(&project);
   char err[256];
   int ok=gmlc_classic_import_fonts(&manifest,&project,"tmp/classic_empty_font_fixture",err,sizeof(err));
   if(!ok) fprintf(stderr,"empty font import failed: %s\n",err);
@@ -1215,7 +1234,7 @@ static int expect_gm81_font_metadata(void){
     return 0;
   }
   GmlcProject project;
-  memset(&project,0,sizeof(project));
+  fixture_project_clear(&project);
   project.prefer_memory_files=1;
   char err[256];
   int ok=gmlc_classic_import_fonts(&manifest,&project,"tmp/classic_font_metadata_fixture",
@@ -1256,7 +1275,7 @@ static int expect_path_import(void){
   if(!slot->name || !slot->payload){ gmlc_classic_manifest_free(&manifest); return 0; }
   memcpy(slot->payload, payload.data, payload.size); slot->payload_size = payload.size;
   GmlcProject project;
-  memset(&project, 0, sizeof(project));
+  fixture_project_clear(&project);
   char err[256];
   int ok = gmlc_classic_import_paths(&manifest, &project, err, sizeof(err));
   if(!ok) fprintf(stderr, "path import failed: %s\n", err);
@@ -1298,7 +1317,7 @@ static int expect_timeline_import(void){
   if(!slot->name || !slot->payload){ gmlc_classic_manifest_free(&manifest); return 0; }
   memcpy(slot->payload,payload.data,payload.size); slot->payload_size=payload.size;
 
-  GmlcProject project; memset(&project,0,sizeof(project));
+  GmlcProject project; fixture_project_clear(&project);
   char err[256],dir[128]="tmp/classic_timeline_fixture";
 #ifdef _WIN32
   _mkdir(dir);
@@ -1369,7 +1388,7 @@ static int expect_object_import(void){
   memcpy(slot->payload, payload.data, payload.size); slot->payload_size = payload.size;
 
   GmlcProject project;
-  memset(&project, 0, sizeof(project));
+  fixture_project_clear(&project);
   char err[256], dir[128] = "tmp/classic_object_fixture";
 #ifdef _WIN32
   _mkdir(dir);
@@ -1439,7 +1458,7 @@ static int expect_room_import(void){
   memcpy(slot->payload, payload.data, payload.size); slot->payload_size = payload.size;
 
   GmlcProject project;
-  memset(&project, 0, sizeof(project));
+  fixture_project_clear(&project);
   char err[256], dir[128] = "tmp/classic_room_fixture";
 #ifdef _WIN32
   _mkdir(dir);
@@ -1478,7 +1497,7 @@ static int expect_sparse_room_order(void){
   GmlcClassicManifest manifest;
   GmlcProject project;
   memset(&manifest,0,sizeof(manifest));
-  memset(&project,0,sizeof(project));
+  fixture_project_clear(&project);
   char err[256]={0};
   int ok=gmlc_classic_manifest(encoded,encoded_size,&manifest,err,sizeof(err));
   if(!ok) fprintf(stderr,"sparse room-order manifest failed: %s\n",err);
@@ -1564,6 +1583,9 @@ static void discard_imported_rooms(GmlcProject *project, int remove_sources){
 }
 
 int main(int argc, char **argv){
+  fixture_host.struct_size=sizeof fixture_host;
+  fixture_host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&fixture_host);
   if(argc==3 && !strcmp(argv[1],"--write-legacy-exe-fixture")){
     Fixture executable;
     if(!build_legacy_executable_fixture(&executable)) return 1;
@@ -1644,7 +1666,7 @@ int main(int argc, char **argv){
     GmlcClassicHeader h;
     GmlcClassicManifest manifest;
     char err[512];
-    if(!gmlc_classic_manifest_file(argv[i], &manifest, err, sizeof(err))){
+    if(!gmlc_classic_manifest_file(&fixture_host,argv[i], &manifest, err, sizeof(err))){
       fprintf(stderr, "%s: %s\n", argv[i], err);
       ++failed;
       continue;
@@ -1664,7 +1686,7 @@ int main(int argc, char **argv){
              manifest.existing[GMLC_CLASSIC_OBJECT], in.resource_slots[GMLC_CLASSIC_OBJECT],
              manifest.existing[GMLC_CLASSIC_ROOM], in.resource_slots[GMLC_CLASSIC_ROOM]);
       GmlcProject project;
-      memset(&project, 0, sizeof(project));
+      fixture_project_clear(&project);
       const char *object_dir = "tmp/classic_object_corpus";
 #ifdef _WIN32
       _mkdir(object_dir);

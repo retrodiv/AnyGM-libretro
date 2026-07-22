@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 /* gml_render.c — atlas/TPAG/sprite decode + software blitter. */
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -8,25 +9,20 @@
 #define STBTT_STATIC
 #include "stb_truetype.h"
 #include "gml_render.h"
+#include "anygm_compatibility.h"
 #include "gml_default_font_data.h"
 #include "gml_classic_info_font_data.h"
 #include "gm_qoi.h"
 #include "bzip2/bzlib.h"
 #include "gml_thread.h"
+#include "anygm_host.h"
+#include "anygm_vfs.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
-#include <time.h>
 #include <limits.h>
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#include <richedit.h>
-#endif
 #if defined(__SSE2__)
 #include <emmintrin.h>
 #endif
@@ -35,43 +31,11 @@ GML_THREAD_BRIDGE_IMPL
 #include <arm_neon.h>
 #endif
 
-typedef struct {
-  const char *label;
-  int tpag, atlas, sx, sy, sw, sh;
-  long calls;
-  unsigned long long pixels;
-  double ms;
-} RenderProfSlot;
-typedef struct {
-  int sprite;
-  const char *name;
-  long calls;
-  double ms;
-} SpriteProfSlot;
-
-#define RPROF_MAX 1024
-static RenderProfSlot g_rprof[RPROF_MAX];
-static int g_rprof_n;
-static long g_rprof_last_frame=-1;
-#define SPROF_MAX 512
-static SpriteProfSlot g_sprof[SPROF_MAX];
-static int g_sprof_n;
-static long g_sprof_last_frame=-1;
-
-static int rprof_enabled(void){
-  static int on=-1;
-  if(on<0) on=getenv("GML_PROFILE_RENDER") ? 1 : 0;
-  return on;
-}
-static int log_spr_enabled(void){
-  static int on=-1;
-  if(on<0) on=getenv("GML_LOG_SPR") ? 1 : 0;
-  return on;
-}
-static int log_axis_cache_enabled(void){
-  static int on=-1;
-  if(on<0) on=getenv("GML_LOG_AXIS_CACHE") ? 1 : 0;
-  return on;
+static int rprof_enabled(void){ return 0; }
+static int log_spr_enabled(void){ return 0; }
+static int log_axis_cache_enabled(void){ return 0; }
+static const char *render_setting(const GmlRender *r,const char *name){
+  return anygm_host_development_setting(r&&r->win?r->win->host:NULL,name);
 }
 
 /* Cardinal rotations must stay exactly on the pixel lattice.  libm leaves tiny residuals for
@@ -106,120 +70,23 @@ static inline void render_modern_cardinal_anchor(const GmlRender *r,double degre
   if(xs*cosine < -1e-12 || ys*sine < -1e-12) *x-=1.0;
   if(-xs*sine < -1e-12 || ys*cosine < -1e-12) *y-=1.0;
 }
-static int sprof_enabled(void){
-  static int on=-1;
-  if(on<0) on=getenv("GML_PROFILE_SPRITE") ? 1 : 0;
-  return on;
-}
+static int sprof_enabled(void){ return 0; }
 static double rprof_now(void){
-#ifdef _WIN32
-  static LARGE_INTEGER frequency;
-  static int ready;
-  LARGE_INTEGER now;
-  if(!ready){ QueryPerformanceFrequency(&frequency); ready=1; }
-  QueryPerformanceCounter(&now);
-  return frequency.QuadPart ? (double)now.QuadPart/(double)frequency.QuadPart : 0.0;
-#else
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC,&ts);
-  return ts.tv_sec + ts.tv_nsec/1000000000.0;
-#endif
+  return 0.0;
 }
 static int rprof_tpag_id(GmlRender *r, GmlTpag *t){
   if(!r || !t || !r->tpag || r->n_tpag<=0) return -1;
-  uintptr_t p=(uintptr_t)t, b=(uintptr_t)r->tpag;
-  uintptr_t e=b+(uintptr_t)r->n_tpag*sizeof(GmlTpag);
-  return (p>=b && p<e) ? (int)((p-b)/sizeof(GmlTpag)) : -1;
-}
-static void rprof_dump_maybe(void){
-  if(!rprof_enabled()) return;
-  extern long g_vm_frame;
-  long frame=g_vm_frame;
-  if(frame<=0 || frame==g_rprof_last_frame || frame%300) return;
-  g_rprof_last_frame=frame;
-  const char *labs[16]={0};
-  double lab_ms[16]={0};
-  long lab_calls[16]={0};
-  unsigned long long lab_px[16]={0};
-  int lab_n=0;
-  for(int i=0;i<g_rprof_n;i++){
-    int li=-1;
-    for(int j=0;j<lab_n;j++) if(labs[j]==g_rprof[i].label){ li=j; break; }
-    if(li<0 && lab_n<16){ li=lab_n++; labs[li]=g_rprof[i].label; }
-    if(li>=0){ lab_ms[li]+=g_rprof[i].ms; lab_calls[li]+=g_rprof[i].calls; lab_px[li]+=g_rprof[i].pixels; }
-  }
-  fprintf(stderr,"[rprof] f=%ld totals",frame);
-  for(int i=0;i<lab_n;i++) fprintf(stderr," %s=%.2fms/%ld/%llupx",labs[i],lab_ms[i],lab_calls[i],lab_px[i]);
-  fprintf(stderr,"\n");
-  int used[12]; for(int i=0;i<12;i++) used[i]=-1;
-  for(int rank=0;rank<12;rank++){
-    int best=-1;
-    for(int i=0;i<g_rprof_n;i++){
-      int seen=0; for(int j=0;j<rank;j++) if(used[j]==i){ seen=1; break; }
-      if(!seen && (best<0 || g_rprof[i].ms>g_rprof[best].ms)) best=i;
-    }
-    if(best<0 || g_rprof[best].ms<=0) break;
-    used[rank]=best;
-    RenderProfSlot *s=&g_rprof[best];
-    fprintf(stderr,"[rprof]   %7.2fms %6ld calls %10llupx %-8s tpag=%d atlas=%d src=%d,%d %dx%d\n",
-      s->ms,s->calls,s->pixels,s->label,s->tpag,s->atlas,s->sx,s->sy,s->sw,s->sh);
-  }
-  memset(g_rprof,0,sizeof g_rprof);
-  g_rprof_n=0;
+  uintptr_t pointer=(uintptr_t)t, begin=(uintptr_t)r->tpag;
+  uintptr_t end=begin+(uintptr_t)r->n_tpag*sizeof(GmlTpag);
+  return pointer>=begin && pointer<end ? (int)((pointer-begin)/sizeof(GmlTpag)) : -1;
 }
 static void rprof_add(const char *label, GmlRender *r, GmlTpag *t, double ms, unsigned long long pixels){
-  if(!rprof_enabled()) return;
-  int tpag=rprof_tpag_id(r,t);
-  int atlas=t?t->atlas:-1, sx=t?t->sx:0, sy=t?t->sy:0, sw=t?t->sw:0, sh=t?t->sh:0;
-  int slot=-1;
-  for(int i=0;i<g_rprof_n;i++){
-    RenderProfSlot *s=&g_rprof[i];
-    if(s->label==label && s->tpag==tpag && s->atlas==atlas && s->sx==sx && s->sy==sy && s->sw==sw && s->sh==sh){
-      slot=i; break;
-    }
-  }
-  if(slot<0){
-    if(g_rprof_n<RPROF_MAX) slot=g_rprof_n++;
-    else slot=RPROF_MAX-1;
-    g_rprof[slot]=(RenderProfSlot){label,tpag,atlas,sx,sy,sw,sh,0,0,0};
-  }
-  g_rprof[slot].calls++;
-  g_rprof[slot].pixels+=pixels;
-  g_rprof[slot].ms+=ms;
-  rprof_dump_maybe();
+  (void)label; (void)r; (void)t; (void)ms; (void)pixels;
 }
 static void sprof_add(int sprite, const char *name, double ms){
-  if(!sprof_enabled()) return;
-  int slot=-1;
-  for(int i=0;i<g_sprof_n;i++) if(g_sprof[i].sprite==sprite){ slot=i; break; }
-  if(slot<0){
-    if(g_sprof_n<SPROF_MAX) slot=g_sprof_n++;
-    else slot=SPROF_MAX-1;
-    g_sprof[slot]=(SpriteProfSlot){sprite,name,0,0};
-  }
-  g_sprof[slot].calls++;
-  g_sprof[slot].ms+=ms;
-  extern long g_vm_frame;
-  long frame=g_vm_frame;
-  if(frame<=0 || frame==g_sprof_last_frame || frame%300) return;
-  g_sprof_last_frame=frame;
-  fprintf(stderr,"[sprof] f=%ld top:\n",frame);
-  int used[16]; for(int i=0;i<16;i++) used[i]=-1;
-  for(int rank=0;rank<16;rank++){
-    int best=-1;
-    for(int i=0;i<g_sprof_n;i++){
-      int seen=0; for(int j=0;j<rank;j++) if(used[j]==i){ seen=1; break; }
-      if(!seen && (best<0 || g_sprof[i].ms>g_sprof[best].ms)) best=i;
-    }
-    if(best<0 || g_sprof[best].ms<=0) break;
-    used[rank]=best;
-    fprintf(stderr,"[sprof]   %7.2fms %6ld spr=%d %s\n",
-            g_sprof[best].ms,g_sprof[best].calls,g_sprof[best].sprite,
-            g_sprof[best].name?g_sprof[best].name:"?");
-  }
-  memset(g_sprof,0,sizeof g_sprof);
-  g_sprof_n=0;
+  (void)sprite; (void)name; (void)ms;
 }
+static void crt_tables_free(GmlRender *r);
 
 static uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o]|(uint32_t)d[o+1]<<8|(uint32_t)d[o+2]<<16|(uint32_t)d[o+3]<<24;
@@ -559,7 +426,8 @@ static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run
   }
 }
 /* ---- atlas (TXTR) ---- */
-/* Decode PNG, fioq, or a bzip2-compressed 2zoq container into RGBA pixels. */
+/* A texture blob is one of: PNG (bc14-16), a bare GameMaker-QOI "fioq" stream, or a bzip2-compressed
+ * "2zoq" container wrapping a "fioq" stream (bc17). Decode any of them to RGBA. */
 static uint8_t *decode_texture_blob(const uint8_t *blob, size_t avail, size_t chunk_end,
                                     int *ow, int *oh){
   if(avail<4) return NULL;
@@ -609,28 +477,9 @@ typedef struct {
   uint8_t *state;                     /* per-atlas: 0 idle, 1 queued, 2 decoding */
   GmlRender *r;
 } GmlAtlasPool;
-static int log_atlas_on(void){ static int on=-1; if(on<0) on=getenv("GML_LOG_ATLAS")!=NULL; return on; }
-static size_t atlas_spec_budget(void){
-  static size_t budget=(size_t)-1;
-  if(budget==(size_t)-1){
-    const char *e=getenv("GML_ATLAS_PREFETCH_MB");
-    if(e) budget=(size_t)atoi(e)*1024u*1024u;
-    else{
-      size_t phys=0;
-#ifdef _WIN32
-      MEMORYSTATUSEX ms; ms.dwLength=sizeof ms;
-      if(GlobalMemoryStatusEx(&ms)) phys=(size_t)(ms.ullTotalPhys>>20);
-#else
-      long pages=sysconf(_SC_PHYS_PAGES), psz=sysconf(_SC_PAGE_SIZE);
-      if(pages>0 && psz>0) phys=(size_t)pages*(size_t)psz>>20;
-#endif
-      size_t mb = phys? phys/4 : 512;
-      if(mb>1024) mb=1024;
-      if(mb<256) mb=256;
-      budget=mb*1024u*1024u;
-    }
-  }
-  return budget;
+static int log_atlas_on(void){ return 0; }
+static size_t atlas_spec_budget(GmlRender *r){
+  return r&&r->atlas_prefetch_budget?r->atlas_prefetch_budget:512u*1024u*1024u;
 }
 /* decode outside the lock, publish under it. Returns the published pixels (or NULL). */
 static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlasPool *pool){
@@ -645,7 +494,7 @@ static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlas
     r->atlas_decoded_bytes += (size_t)w*(size_t)h*4u;
     __atomic_store_n(&a->px,px,__ATOMIC_RELEASE);
     if(log_atlas_on())
-      fprintf(stderr,"[atlas] decoded %d %dx%d (%.1f MiB)\n",idx,w,h,(double)((uint64_t)w*(uint64_t)h*4ull)/(1024.0*1024.0));
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[atlas] decoded %d %dx%d (%.1f MiB)\n",idx,w,h,(double)((uint64_t)w*(uint64_t)h*4ull)/(1024.0*1024.0));
   }
   if(locked){
     pool->state[idx]=0;
@@ -673,7 +522,7 @@ static void *atlas_worker(void *arg){
 static GmlAtlasPool *atlas_pool_get(GmlRender *r){
   if(r->prefetch_checked) return (GmlAtlasPool*)r->prefetch;
   r->prefetch_checked=1;
-  const char *e=getenv("GML_ATLAS_THREADS");
+  const char *e=render_setting(r,"GML_ATLAS_THREADS");
   int nth = e? atoi(e) : 0;
   if(!e){
     int nc=gml_ncpu();
@@ -718,7 +567,7 @@ void gml_render_prefetch_atlas(GmlRender *r, int idx){
   if(!r || idx<0 || idx>=r->n_atlas || !r->atlas) return;
   GmlAtlas *a=&r->atlas[idx];
   if(a->px || a->decode_attempted || !a->blob || a->blob>=r->win->size) return;
-  if(r->atlas_decoded_bytes > 2*atlas_spec_budget()) return;   /* prefetch cap; draws still decode on demand */
+  if(r->atlas_decoded_bytes > 2*atlas_spec_budget(r)) return;   /* prefetch cap; draws still decode on demand */
   GmlAtlasPool *pool=atlas_pool_get(r);
   if(!pool) return;
   gml_mutex_lock(&pool->mu);
@@ -734,7 +583,7 @@ static void prefetch_atlas_and_neighbors(GmlRender *r, int idx){
   /* GM's texture packer clusters related pages: a page adjacent to a needed one is likely
    * needed moments later (spawned effects/enemies). Speculative, so budget-gated: past the
    * cap only directly-referenced pages keep prefetching (draws still decode on demand). */
-  if(r->atlas_decoded_bytes < atlas_spec_budget()){
+  if(r->atlas_decoded_bytes < atlas_spec_budget(r)){
     gml_render_prefetch_atlas(r,idx-1);
     gml_render_prefetch_atlas(r,idx+1);
   }
@@ -756,43 +605,8 @@ void gml_render_prefetch_bg(GmlRender *r, int bg){
   prefetch_atlas_and_neighbors(r,r->tpag[ti].atlas);
 }
 static void atlas_dump_maybe(GmlRender *r, int idx){
-  /* This hook sits on the hot atlas-pixel accessor, including palette shaders that may sample
-   * their lookup sprite millions of times per frame.  Querying the process environment on every
-   * texel is disproportionately expensive on some C runtimes (notably the Windows CRT), even when
-   * dumping is disabled.  Debug switches are process-lifetime settings, so resolve them once. */
-  static int checked;
-  static const char *dump_atlas, *only, *dump_alpha;
-  if(!checked){
-    dump_atlas=getenv("GML_DUMP_ATLAS");
-    only=getenv("GML_DUMP_ATLAS_ID");
-    dump_alpha=getenv("GML_DUMP_ATLAS_ALPHA");
-    checked=1;
-  }
-  if(!dump_atlas && !only) return;
-  GmlAtlas *a=&r->atlas[idx];
-  if(!a->px || a->debug_dumped) return;
-  if(only && *only && atoi(only)!=idx) return;
-  a->debug_dumped=1;
-  char fn[64]; snprintf(fn,sizeof fn,"builds/_atlas%d.ppm",idx);
-  FILE*f=fopen(fn,"wb"); if(f){ uint8_t *row=malloc((size_t)a->w*3);
-    fprintf(f,"P6\n%d %d\n255\n",a->w,a->h);
-    if(row) for(int y=0;y<a->h;y++){
-      for(int x=0;x<a->w;x++) memcpy(row+x*3,a->px+((size_t)y*a->w+x)*4,3);
-      fwrite(row,3,(size_t)a->w,f);
-    }
-    free(row); fclose(f);
-    fprintf(stderr,"[atlas] dumped %s (%dx%d)\n",fn,a->w,a->h); }
-  if(dump_alpha){
-    char afn[64]; snprintf(afn,sizeof afn,"builds/_atlas%d_alpha.pgm",idx);
-    FILE *af=fopen(afn,"wb"); if(af){ uint8_t *row=malloc((size_t)a->w);
-      fprintf(af,"P5\n%d %d\n255\n",a->w,a->h);
-      if(row) for(int y=0;y<a->h;y++){
-        for(int x=0;x<a->w;x++) row[x]=a->px[((size_t)y*a->w+x)*4+3];
-        fwrite(row,1,(size_t)a->w,af);
-      }
-      free(row); fclose(af);
-      fprintf(stderr,"[atlas] dumped %s (%dx%d alpha)\n",afn,a->w,a->h); }
-  }
+  (void)r;
+  (void)idx;
 }
 static uint8_t *atlas_pixels(GmlRender *r, int idx){
   if(!r || idx<0 || idx>=r->n_atlas || !r->atlas) return NULL;
@@ -854,7 +668,7 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
   if(!t->alpha_scanned){
     int minx=t->sw, miny=t->sh, maxx=-1, maxy=-1;
     int maxa=0;
-    int log_alpha=getenv("GML_LOG_TPAG_ALPHA")!=NULL;
+    int log_alpha=render_setting(r,"GML_LOG_TPAG_ALPHA")!=NULL;
     int real_tpag = rprof_tpag_id(r,t)>=0;
     if(real_tpag && !t->alpha_row_min && !t->alpha_row_max){
       t->alpha_row_min=malloc((size_t)t->sh*sizeof(int));
@@ -893,7 +707,7 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
     if(log_alpha){
       int id=rprof_tpag_id(r,t);
       unsigned long area=(unsigned long)(t->sw>0?t->sw:0)*(unsigned long)(t->sh>0?t->sh:0);
-      fprintf(stderr,"[tpag-alpha] id=%d atlas=%d src=%d,%d %dx%d nz=%lu/%lu amax=%d bbox=%d,%d-%d,%d\n",
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[tpag-alpha] id=%d atlas=%d src=%d,%d %dx%d nz=%lu/%lu amax=%d bbox=%d,%d-%d,%d\n",
               id,t->atlas,t->sx,t->sy,t->sw,t->sh,nz,area,t->alpha_max,t->ax0,t->ay0,t->ax1,t->ay1);
     }
   }
@@ -1035,8 +849,12 @@ static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, 
 }
 enum { GML_BLEND_STUDIO1=0, GML_BLEND_STUDIO2=1, GML_BLEND_CLASSIC=2 };
 static inline int gml_blend_family(const GmlRender *r){
-  if(r && r->classic) return GML_BLEND_CLASSIC;
-  return r && r->win && r->win->bytecode>=17 ? GML_BLEND_STUDIO2 : GML_BLEND_STUDIO1;
+  /* Loaded content owns compatibility policy. A renderer can also be exercised as an isolated
+   * component before content is attached; preserve its explicit mode in that narrow case. */
+  if(!r || !r->win) return r&&r->classic?GML_BLEND_CLASSIC:GML_BLEND_STUDIO1;
+  AnygmBlendPolicy policy=anygm_policy_blend(r?r->win:NULL);
+  if(policy==ANYGM_BLEND_CLASSIC) return GML_BLEND_CLASSIC;
+  return policy==ANYGM_BLEND_STUDIO_SECOND?GML_BLEND_STUDIO2:GML_BLEND_STUDIO1;
 }
 static inline uint32_t gml_sprite_target_alpha(const GmlRender *r,uint32_t dst,
                                                unsigned source_alpha){
@@ -1346,7 +1164,8 @@ static void parse_txtr(GmlRender *r){
     uint32_t entry=u32(d,c->off+4+i*4);
     /* Locate the texture data through a candidate pointer in its record. */
     uint32_t blob=0;
-    /* Scan record fields and select a pointer to recognized PNG, fioq or 2zoq data. */
+    /* The EmbeddedTexture record holds the blob pointer at a version-dependent offset. Scan the
+     * bounded record for the field that lands on a known PNG, fioq, or 2zoq magic. */
     for(uint32_t off=4; off<=32; off+=4){ uint32_t v=u32(d,entry+off);
       if((size_t)v+4<=r->win->size){ const uint8_t *m=d+v;
         if((m[0]==0x89&&m[1]=='P'&&m[2]=='N'&&m[3]=='G')||!memcmp(m,"fioq",4)||!memcmp(m,"2zoq",4)){ blob=v; break; } } }
@@ -1354,20 +1173,19 @@ static void parse_txtr(GmlRender *r){
     GmlAtlas *a=&r->atlas[i];
     a->blob=blob; a->avail=r->win->size-blob; a->chunk_end=chunk_end;
     texture_blob_dims(d+blob,a->avail,&a->w,&a->h);
-    if(getenv("GML_ATLAS_EAGER") || getenv("GML_DUMP_ATLAS")) atlas_pixels(r,(int)i);
+    if(render_setting(r,"GML_ATLAS_EAGER") || render_setting(r,"GML_DUMP_ATLAS")) atlas_pixels(r,(int)i);
   }
 }
 
 /* ---- TPAG ---- */
-static uint32_t *g_tpag_ptr; /* parallel: file offset of each tpag, for sprite frame mapping */
 static void runtime_axis_cache_free(GmlSprite *s);
 static void parse_tpag(GmlRender *r){
   const GmlChunk *c=gml_chunk(r->win,"TPAG"); if(!c) return;
   const uint8_t *d=r->win->data; uint32_t n=u32(d,c->off);
-  r->n_tpag=(int)n; r->tpag=calloc(n,sizeof(GmlTpag)); g_tpag_ptr=calloc(n,sizeof(uint32_t));
-  if(!r->tpag || !g_tpag_ptr){ free(r->tpag); free(g_tpag_ptr); r->tpag=NULL; g_tpag_ptr=NULL; r->n_tpag=0; return; }
+  r->n_tpag=(int)n; r->tpag=calloc(n,sizeof(GmlTpag)); r->tpag_ptr=calloc(n,sizeof(uint32_t));
+  if(!r->tpag || !r->tpag_ptr){ free(r->tpag); free(r->tpag_ptr); r->tpag=NULL; r->tpag_ptr=NULL; r->n_tpag=0; return; }
   for(uint32_t i=0;i<n;i++){
-    uint32_t p=u32(d,c->off+4+i*4); g_tpag_ptr[i]=p;
+    uint32_t p=u32(d,c->off+4+i*4); r->tpag_ptr[i]=p;
     GmlTpag *t=&r->tpag[i];
     t->sx=u16(d,p); t->sy=u16(d,p+2); t->sw=u16(d,p+4); t->sh=u16(d,p+6);
     t->tx=u16(d,p+8); t->ty=u16(d,p+10); t->bw=u16(d,p+16); t->bh=u16(d,p+18);
@@ -1375,16 +1193,16 @@ static void parse_tpag(GmlRender *r){
   }
 }
 static int tpag_index_for_ptr(GmlRender *r, uint32_t ptr){
-  for(int i=0;i<r->n_tpag;i++) if(g_tpag_ptr[i]==ptr) return i;
+  for(int i=0;i<r->n_tpag;i++) if(r->tpag_ptr[i]==ptr) return i;
   return -1;
 }
 uint32_t gml_render_named_tpag_ptr(GmlRender *r, const char *name){
-  if(!r || !name || !*name || !g_tpag_ptr) return 0;
+  if(!r || !name || !*name || !r->tpag_ptr) return 0;
   for(int i=0;i<r->n_spr;i++){
     GmlSprite *s=&r->spr[i];
     if(!s->name || strcmp(s->name,name) || !s->frame || s->n_frames<=0) continue;
     int ti=s->frame[0];
-    return ti>=0 && ti<r->n_tpag ? g_tpag_ptr[ti] : 0;
+    return ti>=0 && ti<r->n_tpag ? r->tpag_ptr[ti] : 0;
   }
   return 0;
 }
@@ -1618,7 +1436,7 @@ static void layer_filter_tint_pixels(const uint32_t *src,uint32_t *dst,size_t co
 /* Forward declaration for the persistent compositor worker pool defined below. Filter shaders can
  * be much heavier per row than a normal blit even at a small authored resolution. */
 typedef void (*GmlRowBandFn)(void *ctx, int py0, int py1, int slot);
-static void gml_run_row_bands_n(int H, int nt, GmlRowBandFn fn, void *ctx);
+static void gml_run_row_bands_n(GmlRender *r,int H,int nt,GmlRowBandFn fn,void *ctx);
 
 typedef struct { GmlRender *r; const uint32_t *src; uint32_t *dst; int w,h;
   const GmlLayerFilter *f; float time,camx,camy; } LayerCloudCtx;
@@ -1653,8 +1471,10 @@ static void parse_sprt(GmlRender *r){
     /* GMS1 sprite header: ...,BBoxMode(40),SepMasks(44),OriginX(48),OriginY(52),frameList(56) */
     s->originx=(int)u32(d,p+48); s->originy=(int)u32(d,p+52);
     uint32_t list=p+56;             /* GMS1: SimpleList<TextureEntry> here (count + pointers) */
-    /* A -1 marker at +56 selects the versioned sprite layout. For simple sprites,
-     * the texture list follows playback fields and optional sequence/nine-slice offsets. */
+    /* GMS2 sprite: a -1 marker at +56, then SVersion(+60), SpriteType(+64), and for a normal sprite
+     * PlaybackSpeed(+68 float)+PlaybackSpeedType(+72), plus SequenceOffset (SVersion>=2) and
+     * NineSliceOffset (SVersion>=3) — the texture list only starts after all that. Reading +56 as the
+     * frame count (=-1) would zero the frame list and blank every sprite. */
     if(u32(d,p+56)==0xFFFFFFFFu){
       uint32_t sver=u32(d,p+60), stype=u32(d,p+64);
       if(stype!=0){ s->n_frames=0; s->frame=calloc(1,sizeof(int)); continue; }  /* SWF/Spine: no simple list */
@@ -1751,9 +1571,9 @@ static void parse_bgnd(GmlRender *r){
 	    /* name, transparent, smooth, preload, texture(TPAG ptr) */
 	    uint32_t tptr=u32(d,p+16);
 	    r->bg[i].tpag=tpag_index_for_ptr(r,tptr);
-	    if(r->win->bytecode>=17 && p+64<c->off+c->size){
+	    if(anygm_policy_has_modern_layer_semantics(r->win) && p+64<c->off+c->size){
 	      int ver=(int)u32(d,p+20), tw=(int)u32(d,p+24), th=(int)u32(d,p+28);
-          /* The later tileset record inserts separationX/Y before the output-border fields.
+          /* The separated-border layout inserts separationX/Y before the output-border fields.
            * Validate both layouts structurally. Interpreting an older record as the new layout
            * makes its exported-sprite slot become ItemsPerTile (normally zero); a new record has
            * a complete count*frames table at +72. */
@@ -1801,7 +1621,8 @@ static void parse_font(GmlRender *r){
     for(int k=0;k<256;k++) f->glyph_by_char[k]=-1;
     f->real=1;
     f->sprite=-1;   /* real fonts have no sprite: keeps state records unambiguous vs sprite fonts */
-    /* Interpret EmSize as an integer or floating-point field using the checks below. */
+    /* EmSize is u32 in bc14-16 and float, negated for point-sized fonts, in newer exports.
+     * Reading the float bits as an integer shifts the glyph table and can produce zero glyphs. */
     int em_is_float=0;
     { uint32_t rawem=u32(d,p+8); float fem; memcpy(&fem,&rawem,4);
       if(fem<0){ f->line_height=(int)(0.5f-fem); em_is_float=1; }
@@ -1810,9 +1631,13 @@ static void parse_font(GmlRender *r){
     uint32_t texptr=u32(d,p+28);                    /* glyph-page TPAG record */
     int tsx=u16(d,texptr), tsy=u16(d,texptr+2), tatlas=(int16_t)u16(d,texptr+20);
     f->atlas=tatlas;
-    /* Probe glyph-table offsets 40, 44, 48, 52 and 56 per font record.
-     * Prefer the first candidate with a plausible count, pointer and character code;
-     * otherwise use the first structurally plausible candidate. */
+    /* glyph table position: +40 (bc14-16), +44 (GMS2 compatibility exports with one field after
+     * the scales), +48 (exports with AscenderOffset+Ascender after the scales), +52 (exports with
+     * SDFSpread too), +56 (headroom for the next added field).
+     * Detect per record: the count must be sane, followed by an in-file pointer list whose
+     * first glyph has a plausible char code. First sane candidate wins; with no sane char
+     * code anywhere, the first structurally plausible one does. Restricting detection to the
+     * earlier offsets can otherwise produce an empty glyph table for a valid record. */
     uint32_t goff=40;
     { int first_ok=-1, best=-1;
       static const uint32_t cand[5]={40,44,48,52,56};
@@ -1872,15 +1697,15 @@ static void parse_font(GmlRender *r){
        * than the rendered glyphs, so retain the tallest-glyph fallback for those layouts. */
       if(em_is_float && mh>f->line_height) f->line_height=mh;
     }
-    if(getenv("GML_LOG_FONT"))
-      fprintf(stderr,"[font] real id=%d name=%s line=%d align=%d maxglyph=%d ascender_offset=%d atlas=%d glyphs=%d\n",
+    if(render_setting(r,"GML_LOG_FONT"))
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[font] real id=%d name=%s line=%d align=%d maxglyph=%d ascender_offset=%d atlas=%d glyphs=%d\n",
         i, gml_str_by_ptr(r->win,u32(d,p)), f->line_height, f->align_height,mh,
         f->ascender_offset,f->atlas,f->n_glyphs);
-    if(getenv("GML_LOG_FONT_GLYPHS"))
+    if(render_setting(r,"GML_LOG_FONT_GLYPHS"))
       for(int ch=32;ch<127;ch++){
         int gi=f->glyph_by_char[ch];
         if(gi>=0){ GmlGlyph *gl=&f->glyphs[gi];
-          fprintf(stderr,"[fontglyph] font=%d ch=%d('%c') gi=%d rect=(%d,%d %dx%d) shift=%d off=%d\n",
+          anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[fontglyph] font=%d ch=%d('%c') gi=%d rect=(%d,%d %dx%d) shift=%d off=%d\n",
                   i,ch,ch,gi,gl->sx,gl->sy,gl->w,gl->h,gl->shift,gl->offset); }
       }
   }
@@ -1933,8 +1758,8 @@ static int build_default_font(GmlRender *r){
     }
     ax+=w;
   }
-  if(getenv("GML_LOG_FONT"))
-    fprintf(stderr,"[font] built-in atlas=%d glyphs=%d line=%d\n",atlas_id,ng,f->line_height);
+  if(render_setting(r,"GML_LOG_FONT"))
+    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[font] built-in atlas=%d glyphs=%d line=%d\n",atlas_id,ng,f->line_height);
   return 1;
 }
 
@@ -2086,15 +1911,14 @@ int gml_text_width(GmlRender *r, const char *str){
     if(!text_is_linebreak(end)) break;
     p=end+1;
   }
-  if(getenv("GML_LOG_WIDTH")){
-    static int nlog=0;
-    int max=200; const char *m=getenv("GML_LOG_WIDTH_MAX"); if(m) max=atoi(m);
-    if(nlog<max){
+  if(render_setting(r,"GML_LOG_WIDTH")){
+    int max=200; const char *m=render_setting(r,"GML_LOG_WIDTH_MAX"); if(m) max=atoi(m);
+    if(r->text_width_log_count<max){
       int sw=-1, nf=-1;
       if(!f->real && f->sprite>=0 && f->sprite<r->n_spr){ sw=r->spr[f->sprite].w; nf=r->spr[f->sprite].n_frames; }
-      fprintf(stderr,"[width] font=%d real=%d sprite=%d sw=%d frames=%d prop=%d sep=%d map=%d width=%d \"%.*s\"\n",
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[width] font=%d real=%d sprite=%d sw=%d frames=%d prop=%d sep=%d map=%d width=%d \"%.*s\"\n",
         r->font,f->real,f->sprite,sw,nf,f->prop,f->sep,f->map_len,best,80,str);
-      nlog++;
+      r->text_width_log_count++;
     }
   }
   return best;
@@ -2502,113 +2326,24 @@ static double classic_info_draw_row(GmlRender *r,ClassicInfoLine *line,int first
   return classic_info_row_step(maximum_half_points,step_bold,maximum_height);
 }
 
-#ifdef _WIN32
-typedef struct {
-  const uint8_t *data;
-  size_t size,position;
-} ClassicInfoNativeStream;
-
-static DWORD CALLBACK classic_info_native_stream(DWORD_PTR cookie,LPBYTE output,
-                                                  LONG requested,LONG *written){
-  ClassicInfoNativeStream *stream=(ClassicInfoNativeStream*)cookie;
-  size_t remaining=stream->size-stream->position;
-  size_t amount=(size_t)requested<remaining?(size_t)requested:remaining;
-  if(amount) memcpy(output,stream->data+stream->position,amount);
-  stream->position+=amount;
-  *written=(LONG)amount;
-  return 0;
-}
-
-/* Use the installed Windows RichEdit component as an optional native RTF rasterizer.
- * This preserves system font substitution and ClearType behavior without bundling
- * platform fonts or pre-rendered passages. */
-static int classic_info_native_render(uint32_t *pixels,int width,int height,
-                                      const uint8_t *record,size_t record_size){
-  if(!pixels||width<=0||height<=0||!record||record_size<12u) return 0;
+static int classic_info_host_render(GmlRender *r,uint32_t *pixels,int width,int height,
+                                    const uint8_t *record,size_t record_size){
+  const AnygmHostServices *host=r&&r->win?r->win->host:NULL;
+  if(!host||!host->rich_text_render||!pixels||width<=0||height<=0||
+     !record||record_size<12u) return 0;
   uint32_t caption_size=u32(record,8);
   size_t text_size_at=12u+(size_t)caption_size+8u*4u+8u;
   if(text_size_at>record_size||record_size-text_size_at<4u) return 0;
   uint32_t text_size=u32(record,(uint32_t)text_size_at);
   if((size_t)text_size>record_size-text_size_at-4u) return 0;
   const uint8_t *text=record+text_size_at+4u;
-
-  typedef HANDLE (WINAPI *SetThreadDpiAwarenessContextFn)(HANDLE);
-  HMODULE user32=GetModuleHandleA("user32.dll");
-  SetThreadDpiAwarenessContextFn set_thread_dpi=user32?
-    (SetThreadDpiAwarenessContextFn)(void*)GetProcAddress(user32,
-      "SetThreadDpiAwarenessContext"):NULL;
-  /* DPI_AWARENESS_CONTEXT_UNAWARE is the documented pseudo-handle -1. */
-  HANDLE previous_dpi=set_thread_dpi?set_thread_dpi((HANDLE)(intptr_t)-1):NULL;
-  HMODULE rich_edit=LoadLibraryA("riched20.dll");
-  if(!rich_edit){
-    if(set_thread_dpi&&previous_dpi) set_thread_dpi(previous_dpi);
-    return 0;
-  }
-
-  HINSTANCE instance=GetModuleHandleA(NULL);
-  /* A predefined system window class avoids registering a callback owned by
-   * this DLL, so unloading and reloading a libretro core cannot leave one. */
-  HWND window=CreateWindowExA(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,"STATIC","",
-    WS_POPUP,0,0,width,height,NULL,NULL,instance,NULL);
-  HWND edit=window?CreateWindowExA(WS_EX_CLIENTEDGE,RICHEDIT_CLASSA,"",
-    WS_CHILD|WS_VISIBLE|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
-    0,0,width,height,window,NULL,instance,NULL):NULL;
-  int ok=window&&edit;
-  if(ok){
-    SendMessageA(edit,EM_SETBKGNDCOLOR,0,(LPARAM)u32(record,0));
-    SendMessageA(edit,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELPARAM(1,1));
-    ClassicInfoNativeStream stream={text,text_size,0};
-    EDITSTREAM edit_stream={(DWORD_PTR)&stream,0,classic_info_native_stream};
-    SendMessageA(edit,EM_STREAMIN,SF_RTF,(LPARAM)&edit_stream);
-    if(edit_stream.dwError) ok=0;
-  }
-  if(ok){
-    /* Keeping the temporary window at the bottom of the Z order prevents a
-     * visible flash, while a real display surface retains ClearType output. */
-    SetWindowPos(window,HWND_BOTTOM,0,0,width,height,SWP_NOACTIVATE|SWP_SHOWWINDOW);
-    RedrawWindow(window,NULL,NULL,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);
-    HDC screen=GetDC(window);
-    HDC copy=screen?CreateCompatibleDC(screen):NULL;
-    HBITMAP bitmap=screen?CreateCompatibleBitmap(screen,width,height):NULL;
-    if(!screen||!copy||!bitmap) ok=0;
-    HGDIOBJ previous=NULL;
-    if(ok){
-      previous=SelectObject(copy,bitmap);
-      ok=PrintWindow(window,copy,PW_CLIENTONLY)!=0;
-      SelectObject(copy,previous);
-    }
-    if(ok){
-      BITMAPINFO information;
-      memset(&information,0,sizeof(information));
-      information.bmiHeader.biSize=sizeof(information.bmiHeader);
-      information.bmiHeader.biWidth=width;
-      information.bmiHeader.biHeight=-height;
-      information.bmiHeader.biPlanes=1;
-      information.bmiHeader.biBitCount=32;
-      information.bmiHeader.biCompression=BI_RGB;
-      ok=GetDIBits(copy,bitmap,0,(UINT)height,pixels,&information,
-                   DIB_RGB_COLORS)!=0;
-      if(ok){
-        size_t count=(size_t)width*(size_t)height;
-        for(size_t i=0;i<count;i++) pixels[i]|=0xFF000000u;
-      }
-    }
-    if(bitmap) DeleteObject(bitmap);
-    if(copy) DeleteDC(copy);
-    if(screen) ReleaseDC(window,screen);
-  }
-  if(window) DestroyWindow(window);
-  FreeLibrary(rich_edit);
-  if(set_thread_dpi&&previous_dpi) set_thread_dpi(previous_dpi);
-  return ok;
+  uint32_t raw_background=u32(record,0);
+  uint32_t background=((raw_background&255u)<<16)|(raw_background&0xFF00u)|
+                      ((raw_background>>16)&255u);
+  return host->rich_text_render(host->userdata,text,text_size,background,pixels,
+                                (uint32_t)width,(uint32_t)height,
+                                (size_t)width*sizeof(*pixels))==ANYGM_OK;
 }
-#else
-static int classic_info_native_render(uint32_t *pixels,int width,int height,
-                                      const uint8_t *record,size_t record_size){
-  (void)pixels; (void)width; (void)height; (void)record; (void)record_size;
-  return 0;
-}
-#endif
 
 static int classic_info_native_cached(GmlRender *r,uint32_t *framebuffer,
                                       int width,int height,const uint8_t *record,
@@ -2629,8 +2364,8 @@ static int classic_info_native_cached(GmlRender *r,uint32_t *framebuffer,
     if(width>0&&height>0&&count<=SIZE_MAX/sizeof(uint32_t)){
       r->classic_info_native_pixels=(uint32_t*)malloc(count*sizeof(uint32_t));
       if(r->classic_info_native_pixels&&
-         !classic_info_native_render(r->classic_info_native_pixels,width,height,
-                                     record,record_size)){
+         !classic_info_host_render(r,r->classic_info_native_pixels,width,height,
+                                   record,record_size)){
         free(r->classic_info_native_pixels);
         r->classic_info_native_pixels=NULL;
       }
@@ -2745,7 +2480,7 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
   double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
   double ca,sa; render_rotation_sincos(rr,&ca,&sa);
   int use_rot = fabs(rr)>0.001 && fabs(rr-360.0)>0.001;
-  if(getenv("GML_LOG_TEXT")) fprintf(stderr,"[text] x=%.0f y=%.0f font=%d halign=%d valign=%d scale=(%.2f,%.2f) rot=%.1f col=%06X a=%.2f \"%s\"\n",
+  if(render_setting(r,"GML_LOG_TEXT")) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[text] x=%.0f y=%.0f font=%d halign=%d valign=%d scale=(%.2f,%.2f) rot=%.1f col=%06X a=%.2f \"%s\"\n",
     x,y,r->font,r->halign,r->valign,xs,ys,rr,(unsigned)(blend&0xffffff),alpha,str);
   if(f->real){ draw_text_real(r,f,x,y,str,xs,ys,ca,sa,use_rot,blend,alpha); return; }
   if(f->sprite<0 || f->sprite>=r->n_spr) return;

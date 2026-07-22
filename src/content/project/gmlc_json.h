@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #ifndef GMLC_JSON_H
 #define GMLC_JSON_H
 
 #include <stddef.h>
+#include "anygm.h"
 
 typedef enum {
   GMLC_JSON_NULL,
@@ -24,7 +26,8 @@ typedef struct GmlcJson {
   struct GmlcJson *next;
 } GmlcJson;
 
-GmlcJson *gmlc_json_parse_file(const char *path, char *err, size_t errcap);
+GmlcJson *gmlc_json_parse_file(const AnygmHostServices *host,const char *path,
+                               char *err,size_t errcap);
 GmlcJson *gmlc_json_parse_text(const char *text, const char *label, char *err, size_t errcap);
 void gmlc_json_free(GmlcJson *v);
 

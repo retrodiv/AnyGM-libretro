@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 /* gml_render.h — software renderer: atlas/TPAG/sprite decode + blitter. */
 #ifndef GML_RENDER_H
 #define GML_RENDER_H
@@ -146,9 +147,14 @@ typedef struct {
 #define GML_SURFACE_STACK 8
 typedef struct {
   GmlWin   *win;
+  /* Opaque instance-owned graphics state used by runtime builtins. The
+   * renderer borrows it; the owning VM releases it. */
+  void *runtime_graphics;
+  long frame;                     /* simulation frame supplied by the owning VM */
   int classic;                    /* GM6/7/8 pixel rules that differ from Studio */
   GmlAtlas *atlas; int n_atlas;
   GmlTpag  *tpag; int n_tpag;
+  uint32_t *tpag_ptr;                 /* source offsets parallel to tpag, owned by this renderer */
   GmlInterpSubrectCache *interp_subrect_cache;
   int interp_subrect_count, interp_subrect_capacity;
   size_t interp_subrect_bytes;
@@ -191,16 +197,16 @@ typedef struct {
   int       gui_logical_w, gui_logical_h;
   double    gui_scale_x, gui_scale_y;
   /* the application_surface: the buffer the game is rendered into and later
-   * readable by draw_surface_* calls. Set by the frontend; same w/h as fbw/fbh. */
+   * readable by draw_surface_* calls. Set by the host; same w/h as fbw/fbh. */
   uint32_t *app_surface; int app_draw_enable;   /* GM application_surface_draw_enable, default 1 */
   /* surface_resize(application_surface, ...) changes the application surface independently of
-   * the active camera/view. The frontend normally lends its world framebuffer through
+   * the active camera/view. The host normally lends its world framebuffer through
    * app_surface; once GML explicitly resizes surface 0 this owned buffer persists across room and
    * view-size changes. */
   uint32_t *app_surface_owned;
   /* Optional classic 2x vertical coverage plane.  The game pass replays texture draws at the
    * half-row samples as well as at logical pixel centres; the presentation pass then interleaves
-   * them without a GPU.  This is a borrowed scratch buffer owned by the frontend. */
+   * them without a GPU.  This is a borrowed scratch buffer owned by the host. */
   uint32_t *classic_phase_y;
   uint32_t *app_phase_y;
   /* Optional exact-2x interpolation samples.  Each logical-size plane stores the result of
@@ -214,7 +220,7 @@ typedef struct {
                               * the GUI/post pass. Read
                               * next frame to supersample that pass so its bilinear bloom renders. */
   int app_w, app_h;                             /* app_surface dims (the view render size) */
-  int app_surface_opaque;                       /* frontend/render metadata: every app pixel has alpha 255 */
+  int app_surface_opaque;                       /* host/render metadata: every app pixel has alpha 255 */
   int pending_underlay, underlay_x, underlay_y, underlay_w, underlay_h;  /* deferred default app-surface blit */
   int pending_fill; uint32_t pending_fill_color; /* deferred full-target overwrite */
   GmlSurface surface[GML_MAX_SURFACES]; int next_surface_id;
@@ -249,7 +255,9 @@ typedef struct {
   int       layer_blur_sampler, layer_blur_noise_w, layer_blur_noise_h, layer_blur_interp;
   double    layer_blur_radius;
   int       layer_filter_active;
-  /* Palette and lookup-texture state declarations. */
+  /* GM palette-template shaders threshold a canonical render and remap it to palette colors.
+   * Parsed data-driven from the SHDR chunk's GLSL at init; shader_set activates one and the
+   * surface-composite blit applies the map per pixel. has==0 -> unknown shader, no-op. */
   struct GmlShaderPal { int has; uint8_t L[3],M[3],D[3],S[3];
     /* Literal alpha-discard pass-through fragment. The threshold and comparison are parsed from
      * the embedded GLSL, so texture draws can preserve hard sprite edges without a GPU. */
@@ -273,7 +281,7 @@ typedef struct {
     float grid_uvs[4], grid_id, grid_pixel[2];
     /* CRT-geom post-process template (scanline + aperture-mask + gamma + optional radial warp and
      * corner vignette). Detected structurally from the SHDR GLSL; tunable constants parsed from it
-     * so it stays data-driven (any GameMaker game shipping this shader family gets it). The full-
+     * so it stays data-driven. The full-
      * screen fragment runs per OUTPUT pixel in draw_surface_* when this shader is active. */
     int   crt;                  /* 1 = recognized CRT-geom fragment */
     float crt_input_gamma;      /* GLSL inputGamma  (e.g. 2.8) */
@@ -350,23 +358,23 @@ typedef struct {
   } *shader_pal; int n_shader_pal;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
   int       active_shader;   /* shader_set asset id, -1 = none. Reset per frame. */
-  int       resolution_w;    /* requested final presentation width, or 0 for the game's base size.
+  int       resolution_w;    /* requested final presentation width, or 0 for the content base size.
                               * Window/display getters expose the same value so window-sized render
-                              * surfaces and the frontend framebuffer stay in one coordinate space. */
-  int       resolution_h;    /* requested final presentation height, or 0 for the game's base size. */
+                              * surfaces and the host framebuffer stay in one coordinate space. */
+  int       resolution_h;    /* requested final presentation height, or 0 for the content base size. */
   int       presentation_w;  /* effective final width after presentation policies (for example an
                               * aspect override derived from the requested height). The requested
                               * core-option axes above stay unchanged. */
-  int       presentation_h;  /* effective final height; recomputed by the libretro wrapper. */
+  int       presentation_h;  /* effective final height; recomputed by the host wrapper. */
   int       crt_shader_enable; /* run recognized embedded CRT post-process shaders (default 1). 0 =
-                              * report them not-compiled and never execute them, so games fall back
+                              * report them not-compiled and never execute them, so content falls back
                               * to their no-shader video modes (pre-emulation behavior). Palette/LUT
-                              * shaders are NOT gated: they are integral to those games' rendering. */
+                              * shaders are not gated because they are integral to rendering. */
   int       crt_shader_present; /* set at init when the SHDR chunk contains a recognized CRT-geom
                               * fragment. */
   /* Individually toggleable components of the recognized CRT-geom fragment (the 5 features intrinsic
-   * to that shader family; generic, no game names). Each defaults to reproducing the shader as
-   * shipped. crt_curvature/crt_vignette are -1=auto (follow the game's distort/border uniforms),
+   * to that shader family). Each defaults to reproducing the shader as shipped.
+   * crt_curvature/crt_vignette are -1=auto (follow the content-provided distort/border uniforms),
    * 0=force off, 1=force on; the others are 0/1 with default 1. */
   int       crt_mask_enable;      /* aperture (dot) mask (the aperture mask). Off -> flat 0.9 average:
                                    * same brightness, no chroma, so non-1:1 scaling shows no bands. */
@@ -374,11 +382,11 @@ typedef struct {
   int       crt_gamma_enable;     /* input/output gamma curve. Off -> linear (no CRT gamma). */
   int       crt_curvature;        /* radial warp (distort uniform): -1 auto / 0 off / 1 on. */
   int       crt_vignette;         /* corner darkening (border uniform): -1 auto / 0 off / 1 on. */
-  int       crt_ff;               /* frontend is fast-forwarding. Presentation resolution and CRT
+  int       crt_ff;               /* host is fast-forwarding. Presentation resolution and CRT
                                    * state remain unchanged; this is only an optimization hint. */
-  int       aspect_fullwidth;     /* a forced-wide aspect is active AND this game's compositor should
+  int       aspect_fullwidth;     /* a forced-wide aspect is active and the compositor should
                                    * span the whole frame: window_get_width/height report the widened
-                                   * dimensions (below) so the game sizes its CRT surface to full width
+                                   * dimensions (below) so the CRT surface spans the full width
                                    * instead of a centered 4:3 sub-rect. 0 = normal. */
   int       aspect_wide_w, aspect_wide_h; /* the forced-wide base dimensions. */
   /* Reusable software-CRT workspaces. High-resolution compositing used to allocate tens of
@@ -387,16 +395,31 @@ typedef struct {
   void     *crt_gamma_scratch; size_t crt_gamma_scratch_cap;
   void     *crt_cols_scratch;  size_t crt_cols_scratch_cap;
   void     *crt_conv_scratch;  size_t crt_conv_scratch_cap;
+  void     *crt_tables;        /* per-renderer lookup tables for the software CRT path */
   /* async atlas prefetch pool (opaque; see gml_render.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;
+  void     *row_pool;                 /* persistent compositor workers, owned by this renderer */
   size_t   atlas_decoded_bytes;
+  size_t   atlas_prefetch_budget;
+  int      axis_cache_log_count;
+  int      sprite_position_log_count;
+  int      surface_draw_logging;
+  int      surface_draw_log_count;
+  int      text_width_log_count;
+  int      dual_shader_fast_log_count;
+  int      hsv_shader_log_count;
+  int      hsv_shader_fast_log_count;
+  int      sampled_crt_log_count;
+  int      lut_shader_log_count;
+  int      stretched_shader_log_count;
+  long     generated_sprite_log_count;
 } GmlRender;
 
 int  gml_render_init(GmlRender *r, GmlWin *win);
 void gml_render_free(GmlRender *r);
-/* Convert an instance or layer image_speed multiplier into subimages per step. Modern sprites
- * serialize their own rate as either frames per second or frames per step; runtime sprites
+/* Convert an instance/layer image_speed multiplier into subimages per runtime step. Modern sprites
+ * serialize their own rate as either frames/second or frames/game-frame; older/runtime sprites
  * retain the legacy one-subimage-per-step multiplier. */
 double gml_sprite_animation_delta(GmlRender *r, int sprite, double image_speed, double game_fps);
 /* queue background decodes (worker threads; safe no-ops when disabled or already decoded) */
@@ -488,8 +511,8 @@ int  gml_d3_draw_surface_part_2d(GmlRender *r, int surface,
                                  double sx, double sy, double sw, double sh,
                                  double x, double y, double xs, double ys,
                                  uint32_t blend, double alpha);
-void gml_d3_set_draw_depth(double depth);
-int  gml_d3_is_active(void);
+void gml_d3_set_draw_depth(GmlRender *render,double depth);
+int  gml_d3_is_active(GmlRender *render);
 int  gml_d3_draw_rectangle_2d(GmlRender *r,double x1,double y1,double x2,double y2,
                                uint32_t color,double alpha,int outline);
 int  gml_render_warm_atlas(GmlRender *r, int atlas);
@@ -523,7 +546,8 @@ void gml_draw_background_tiled_ext(GmlRender *r, int bg, double x, double y, dou
 void gml_draw_room_backgrounds(GmlRender *r, uint32_t bg_ptr, int want_fg);
 void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr);
 void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x, double y);
-/* Stretch the application surface and sprites in screen space, without camera offsets. */
+/* GML draw commands for stretching the application_surface and sprites in
+ * screen-space without a camera. The engine executes the runtime draw calls. */
 int  gml_surface_create(GmlRender *r, int w, int h);
 void gml_surface_free(GmlRender *r, int id);
 int  gml_surface_exists(GmlRender *r, int id);

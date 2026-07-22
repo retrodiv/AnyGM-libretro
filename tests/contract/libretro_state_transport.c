@@ -1,0 +1,164 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+#include "libretro_internal.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void retro_set_environment(retro_environment_t callback);
+void retro_init(void);
+void retro_deinit(void);
+void retro_unload_game(void);
+size_t retro_serialize_size(void);
+bool retro_serialize(void *data,size_t size);
+bool retro_unserialize(const void *data,size_t size);
+
+static size_t stub_state_bytes;
+static size_t last_load_bytes;
+static int variable_frontend;
+static int serialization_query_seen;
+
+static bool environment_callback(unsigned command,void *data){
+  if(command==RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS){
+    uint64_t *quirks=(uint64_t *)data;
+    serialization_query_seen=quirks &&
+      (*quirks&RETRO_SERIALIZATION_QUIRK_CORE_VARIABLE_SIZE)!=0;
+    if(variable_frontend>0 && quirks)
+      *quirks|=RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE;
+    return variable_frontend>=0;
+  }
+  if(command==RETRO_ENVIRONMENT_SET_PIXEL_FORMAT) return true;
+  return false;
+}
+
+AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **engine){
+  if(!services || !engine) return ANYGM_ERROR_INVALID_ARGUMENT;
+  *engine=(AnygmEngine *)(uintptr_t)1u;
+  return ANYGM_OK;
+}
+
+void anygm_destroy(AnygmEngine *engine){ (void)engine; }
+AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
+                       const AnygmLoadConfig *config){
+  (void)engine; (void)source; (void)config; return ANYGM_OK;
+}
+void anygm_unload(AnygmEngine *engine){ (void)engine; }
+AnygmResult anygm_reset(AnygmEngine *engine){ (void)engine; return ANYGM_OK; }
+AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
+  (void)engine; (void)info; return ANYGM_OK;
+}
+AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
+                            AnygmFrameOutput *output){
+  (void)engine; (void)input; (void)output; return ANYGM_OK;
+}
+AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
+  (void)engine; (void)delta; return ANYGM_OK;
+}
+AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_t enabled,
+                                       const char *expression){
+  (void)engine; (void)slot; (void)enabled; (void)expression; return ANYGM_OK;
+}
+size_t anygm_state_size(AnygmEngine *engine){ (void)engine; return stub_state_bytes; }
+AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
+  (void)engine;
+  if(written) *written=0;
+  if(!data || !written || capacity<stub_state_bytes) return ANYGM_ERROR_INVALID_ARGUMENT;
+  memset(data,0x4D,stub_state_bytes);
+  *written=stub_state_bytes;
+  return ANYGM_OK;
+}
+AnygmResult anygm_state_load(AnygmEngine *engine,const void *data,size_t size){
+  (void)engine;
+  if(!data || size<stub_state_bytes) return ANYGM_ERROR_INVALID_STATE;
+  const uint8_t *bytes=(const uint8_t *)data;
+  for(size_t i=0;i<stub_state_bytes;i++) if(bytes[i]!=0x4D) return ANYGM_ERROR_INVALID_STATE;
+  for(size_t i=stub_state_bytes;i<size;i++) if(bytes[i]!=0) return ANYGM_ERROR_INVALID_STATE;
+  last_load_bytes=size;
+  return ANYGM_OK;
+}
+size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capacity){
+  (void)engine;
+  if(message && capacity) message[0]=0;
+  return 0;
+}
+
+void libretro_host_services_init(AnygmHostServices *services){
+  memset(services,0,sizeof *services);
+  services->struct_size=sizeof *services;
+  services->abi_version=ANYGM_HOST_SERVICES_VERSION;
+}
+void libretro_vfs_request(void){}
+void libretro_options_register(void){}
+void libretro_options_apply(bool all_fields){ (void)all_fields; }
+void libretro_input_register(void){}
+void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t height){
+  (void)width; (void)height;
+  memset(input,0,sizeof *input);
+  input->struct_size=sizeof *input;
+}
+
+static int begin_frontend(int variable_support){
+  memset(&g_libretro,0,sizeof g_libretro);
+  variable_frontend=variable_support;
+  serialization_query_seen=0;
+  last_load_bytes=0;
+  retro_set_environment(environment_callback);
+  retro_init();
+  if(!serialization_query_seen || !g_libretro.engine) return 0;
+  g_libretro.loaded=true;
+  return 1;
+}
+
+static int variable_transport(void){
+  stub_state_bytes=113u;
+  if(!begin_frontend(1) || !g_libretro.variable_state_supported ||
+     retro_serialize_size()!=stub_state_bytes) return 0;
+  stub_state_bytes=197u;
+  if(retro_serialize_size()!=stub_state_bytes) return 0;
+  uint8_t state[197];
+  memset(state,0xA5,sizeof state);
+  if(!retro_serialize(state,sizeof state) || !retro_unserialize(state,sizeof state) ||
+     last_load_bytes!=sizeof state) return 0;
+  retro_unload_game();
+  if(retro_serialize_size()!=0 || retro_serialize(state,sizeof state)) return 0;
+  retro_deinit();
+  return 1;
+}
+
+static int fixed_transport(int negotiation_result){
+  stub_state_bytes=113u;
+  if(!begin_frontend(negotiation_result) || g_libretro.variable_state_supported) return 0;
+  const size_t expected_capacity=113u*2u+512u*1024u;
+  if(retro_serialize_size()!=expected_capacity ||
+     retro_serialize_size()!=expected_capacity) return 0;
+  stub_state_bytes=197u;
+  if(retro_serialize_size()!=expected_capacity) return 0;
+  uint8_t *state=(uint8_t *)malloc(expected_capacity);
+  if(!state) return 0;
+  memset(state,0xA5,expected_capacity);
+  int ok=retro_serialize(state,expected_capacity);
+  for(size_t i=0;ok && i<stub_state_bytes;i++) if(state[i]!=0x4D) ok=0;
+  for(size_t i=stub_state_bytes;ok && i<expected_capacity;i++) if(state[i]!=0) ok=0;
+  if(ok) ok=retro_unserialize(state,expected_capacity) &&
+            last_load_bytes==expected_capacity;
+  free(state);
+  retro_unload_game();
+  if(g_libretro.fixed_state_capacity!=0) ok=0;
+  retro_deinit();
+  return ok;
+}
+
+int main(void){
+  uint8_t byte=0;
+  memset(&g_libretro,0,sizeof g_libretro);
+  if(retro_serialize_size()!=0 || retro_serialize(&byte,1) || retro_unserialize(&byte,1) ||
+     !variable_transport() || !fixed_transport(0) || !fixed_transport(-1)){
+    fprintf(stderr,"libretro state transport contract failed\n");
+    return 1;
+  }
+  puts("libretro state transport: ok");
+  return 0;
+}

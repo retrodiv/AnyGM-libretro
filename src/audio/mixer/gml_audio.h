@@ -1,9 +1,8 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
-/* Software mixer for AUDO/SOND sounds and FMOD bank voices.
- * WAV PCM is referenced in place. Embedded and grouped OGG/MP3 data is decoded
- * on first playback; external OGG registration decodes immediately.
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
+/* gml_audio.h — software mixer for GameMaker AUDO/SOND sounds. WAV data is mixed in place;
+ * OGG Vorbis and MP3 assets are decoded lazily on first playback. */
 #ifndef GML_AUDIO_H
 #define GML_AUDIO_H
 #include <stdint.h>
@@ -17,16 +16,16 @@ typedef struct GmlAudio GmlAudio;
 int gml_audio_group_file_path(const GmlWin *win, int group, char *out, size_t out_cap);
 
 GmlAudio *gml_audio_create(GmlWin *win);
-struct GmlFmodBanks *gml_audio_get_fmod(GmlAudio *a);   /* FMOD bank set, or NULL when unavailable */
+struct GmlFmodBanks *gml_audio_get_fmod(GmlAudio *a);   /* FMOD bank set, or NULL when unused */
 void gml_audio_free(GmlAudio *a);
 
 /* play sound resource `snd` (SOND index); loop!=0 repeats. Returns a voice handle. */
 int  gml_audio_play(GmlAudio *a, int snd, int loop);
 int  gml_audio_play_on(GmlAudio *a, int snd, int loop, int emitter);
 int  gml_audio_warm_sound(GmlAudio *a, int snd);
-/* Decode an external OGG blob and register it as a new sound.
- * The returned sound index works with gml_audio_play/stop/gain/pitch.
- * Handles are recycled after caster_free. */
+/* caster_* external-OGG streaming used by content that loads music from loose .ogg files.
+ * Decode an OGG blob and register it as a new sound; the returned handle is a sound index usable
+ * with gml_audio_play/stop/gain/pitch. Handles are recycled after caster_free. */
 int  gml_audio_add_ogg(GmlAudio *a, const uint8_t *ogg, int len);
 void gml_audio_caster_free(GmlAudio *a, int handle);
 void gml_audio_caster_free_all(GmlAudio *a);

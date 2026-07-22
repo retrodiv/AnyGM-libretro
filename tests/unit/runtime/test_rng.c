@@ -1,16 +1,23 @@
 /* SPDX-License-Identifier: MIT
- * Copyright (c) 2026 retrodiv <retrodiv@proton.me> */
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
 #include "gml_vm.h"
 #include "gml_particle.h"
+#include "anygm_host.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-
-int gml_input_key(int key, int edge){ (void)key; (void)edge; return 0; }
-int gml_input_gamepad(int button, int edge){ (void)button; (void)edge; return 0; }
+static AnygmResult fixture_wall_time(void *userdata,AnygmWallTime *wall){
+  (void)userdata;
+  if(!wall || wall->struct_size<sizeof *wall) return ANYGM_ERROR_INVALID_ARGUMENT;
+  wall->flags=ANYGM_WALL_TIME_OFFSET_VALID;
+  wall->unix_seconds=0;
+  wall->utc_offset_minutes=60;
+  wall->reserved=0;
+  return ANYGM_OK;
+}
 
 static int check_classic_comparisons(void){
   double accumulated=0.0;
@@ -48,24 +55,30 @@ int main(void){
   GmlVM vm;
   memset(&classic,0,sizeof(classic));
   memset(&vm,0,sizeof(vm));
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  services.wall_time=fixture_wall_time;
+  vm.host=&services;
+  vm.particles=gml_particle_state_create(&vm);
+  if(!vm.particles) return 1;
   vm.next_time_source_id=GML_TIME_SOURCE_ID_BASE;
   vm.time_source_game_state=1;
   if(!check_classic_comparisons()) return 1;
   classic.classic_version=810;
   vm.win=&classic;
   {
-    time_t now=time(NULL); struct tm local_value;
-#ifdef _WIN32
-    if(localtime_s(&local_value,&now)!=0){ fprintf(stderr,"local calendar setup failed\n"); return 1; }
-#else
-    if(!localtime_r(&now,&local_value)){ fprintf(stderr,"local calendar setup failed\n"); return 1; }
-#endif
-    if(gml_global_num(&vm,"current_year")!=local_value.tm_year+1900 ||
-       gml_global_num(&vm,"current_month")!=local_value.tm_mon+1 ||
-       gml_global_num(&vm,"current_day")!=local_value.tm_mday ||
-       gml_global_num(&vm,"current_weekday")!=local_value.tm_wday ||
-       gml_global_num(&vm,"current_hour")!=local_value.tm_hour ||
-       gml_global_num(&vm,"current_minute")!=local_value.tm_min){
+    AnygmCalendarTime expected={0};
+    if(!anygm_calendar_from_unix_seconds(60*60,&expected)){
+      fprintf(stderr,"fixture calendar setup failed\n");
+      return 1;
+    }
+    if(gml_global_num(&vm,"current_year")!=expected.year ||
+       gml_global_num(&vm,"current_month")!=expected.month ||
+       gml_global_num(&vm,"current_day")!=expected.day ||
+       gml_global_num(&vm,"current_weekday")!=expected.weekday ||
+       gml_global_num(&vm,"current_hour")!=expected.hour ||
+       gml_global_num(&vm,"current_minute")!=expected.minute){
       fprintf(stderr,"calendar built-in component mismatch\n");
       return 1;
     }
@@ -102,30 +115,29 @@ int main(void){
   }
   free(state);
 
-  gml_part_reset_all();
-  gml_part_bind_vm(&vm);
+  gml_part_reset_all(vm.particles);
   gml_rng_seed(&vm,0);
-  int system=gml_part_system_create();
-  int type=gml_part_type_create();
-  gml_part_particles_create(system,0,0,type,1);
+  int system=gml_part_system_create(vm.particles);
+  int type=gml_part_type_create(vm.particles);
+  gml_part_particles_create(vm.particles,system,0,0,type,1);
   if(vm.rng_classic_state!=1u){
     fprintf(stderr,"constant particle ranges advanced the classic RNG\n");
     return 1;
   }
-  gml_part_type_size(type,1,2,0,0);
+  gml_part_type_size(vm.particles,type,1,2,0,0);
   gml_rng_seed(&vm,0);
-  gml_part_particles_create(system,0,0,type,1);
+  gml_part_particles_create(vm.particles,system,0,0,type,1);
   if(vm.rng_classic_state!=0x08088406u){
     fprintf(stderr,"variable particle range RNG sequence mismatch\n");
     return 1;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
   gml_rng_seed(&vm,0);
-  system=gml_part_system_create();
-  type=gml_part_type_create();
-  int emitter=gml_part_emitter_create(system);
-  gml_part_emitter_region(system,emitter,12,12,34,34,0,0);
-  gml_part_emitter_burst(system,emitter,type,1);
+  system=gml_part_system_create(vm.particles);
+  type=gml_part_type_create(vm.particles);
+  int emitter=gml_part_emitter_create(vm.particles,system);
+  gml_part_emitter_region(vm.particles,system,emitter,12,12,34,34,0,0);
+  gml_part_emitter_burst(vm.particles,system,emitter,type,1);
   GmlVM emitter_expected;
   memset(&emitter_expected,0,sizeof(emitter_expected));
   emitter_expected.win=&classic;
@@ -136,9 +148,9 @@ int main(void){
             vm.rng_classic_state,emitter_expected.rng_classic_state);
     return 1;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
   gml_rng_seed(&vm,0);
-  gml_effect_create(1,0,32,24,0,0x40A0FF);
+  gml_effect_create(vm.particles,1,0,32,24,0,0x40A0FF);
   GmlVM expected;
   memset(&expected,0,sizeof(expected));
   expected.win=&classic;
@@ -149,9 +161,9 @@ int main(void){
             vm.rng_classic_state,expected.rng_classic_state);
     return 1;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
   gml_rng_seed(&vm,0);
-  gml_effect_create(1,7,32,24,0,0x40A0FF);
+  gml_effect_create(vm.particles,1,7,32,24,0,0x40A0FF);
   memset(&expected,0,sizeof(expected));
   expected.win=&classic;
   gml_rng_seed(&expected,0);
@@ -161,9 +173,9 @@ int main(void){
             vm.rng_classic_state,expected.rng_classic_state);
     return 1;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
   gml_rng_seed(&vm,0);
-  gml_effect_create(1,4,32,24,0,0x808080);
+  gml_effect_create(vm.particles,1,4,32,24,0,0x808080);
   memset(&expected,0,sizeof(expected));
   expected.win=&classic;
   gml_rng_seed(&expected,0);
@@ -173,9 +185,9 @@ int main(void){
             vm.rng_classic_state,expected.rng_classic_state);
     return 1;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
   gml_rng_seed(&vm,0);
-  gml_effect_create(1,5,32,24,0,0x808080);
+  gml_effect_create(vm.particles,1,5,32,24,0,0x808080);
   memset(&expected,0,sizeof(expected));
   expected.win=&classic;
   gml_rng_seed(&expected,0);
@@ -185,9 +197,9 @@ int main(void){
             vm.rng_classic_state,expected.rng_classic_state);
     return 1;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
   gml_rng_seed(&vm,0);
-  gml_effect_create(1,9,32,24,2,0xFFFFFF);
+  gml_effect_create(vm.particles,1,9,32,24,2,0xFFFFFF);
   memset(&expected,0,sizeof(expected));
   expected.win=&classic;
   gml_rng_seed(&expected,0);
@@ -197,9 +209,9 @@ int main(void){
             vm.rng_classic_state,expected.rng_classic_state);
     return 1;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
   gml_rng_seed(&vm,0);
-  gml_effect_create(1,11,32,24,2,0xFFFFFF);
+  gml_effect_create(vm.particles,1,11,32,24,2,0xFFFFFF);
   memset(&expected,0,sizeof(expected));
   expected.win=&classic;
   gml_rng_seed(&expected,0);
@@ -209,7 +221,28 @@ int main(void){
             vm.rng_classic_state,expected.rng_classic_state);
     return 1;
   }
-  gml_part_reset_all();
+  gml_part_reset_all(vm.particles);
+  {
+    GmlVM other;
+    memset(&other,0,sizeof(other));
+    other.win=&classic;
+    other.particles=gml_particle_state_create(&other);
+    if(!other.particles) return 1;
+    int first_system=gml_part_system_create(vm.particles);
+    int first_type=gml_part_type_create(vm.particles);
+    int second_system=gml_part_system_create(other.particles);
+    int second_type=gml_part_type_create(other.particles);
+    gml_part_particles_create(vm.particles,first_system,0,0,first_type,1);
+    gml_part_particles_create(other.particles,second_system,0,0,second_type,3);
+    gml_part_reset_all(vm.particles);
+    if(gml_part_system_count(other.particles,second_system)!=3 ||
+       gml_part_system_exists(vm.particles,first_system)){
+      fprintf(stderr,"particle contexts contaminated each other\n");
+      return 1;
+    }
+    gml_particle_state_destroy(other.particles);
+  }
+  gml_particle_state_destroy(vm.particles);
   puts("classic RNG fixtures: ok");
   return 0;
 }
