@@ -11537,11 +11537,14 @@ static GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"audio_resume_all")){ gml_audio_pause_all(AU,0); return vreal(0); }
     if(!strcmp(nm,"audio_is_playing")||!strcmp(nm,"sound_isplaying")) return vreal(gml_audio_is_playing(AU,(int)N(a,n,0)));
 
-    /* ---- caster_* : external Ogg streaming. Paths use the normal content/save overlay and the
-     * resulting sound handle is reused by the regular voice API. */
+    /* ---- caster_* : external Ogg streaming. caster_load("music/X.ogg") resolves the exported
+     * "mus_X.ogg" sidecar in the content directory; the resulting sound handle is reused by the
+     * regular voice API. */
     if(!strcmp(nm,"caster_load")){
       const char *arg=S(vm,a,n,0);
-      char *full=resolve_read_path(vm,arg); int handle=-1;
+      const char *base=strrchr(arg,'/'); base=base?base+1:arg;
+      char mus[300]; snprintf(mus,sizeof mus,"mus_%s",base);
+      char *full=resolve_read_path(vm,mus); int handle=-1;
       uint8_t *data=NULL; size_t size=0;
       if(full && anygm_vfs_read_all(vm->host,full,&data,&size,64u*1024u*1024u) &&
          size>0 && size<=INT_MAX) handle=gml_audio_add_ogg(AU,data,(int)size);
