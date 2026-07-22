@@ -2690,6 +2690,23 @@ static int raster_fixtures(void){
       fprintf(stderr,"software procedural-shader raster mismatch: first=%08x varies=%d\n",first,differs);
       return 0;
     }
+    shader->paint_resolution_mediump=1;
+    shader->paint_resolution[0]=720;
+    shader->paint_resolution[1]=640;
+    memset(pixels,0,sizeof(pixels));
+    gml_render_begin(&render,pixels,WIDTH,HEIGHT,0,0);
+    render.active_shader=0;
+    if(!gml_render_shader_fill_rect(&render,0,0,WIDTH,HEIGHT)){
+      fprintf(stderr,"software mediump procedural-shader draw was not handled\n");
+      return 0;
+    }
+    first=pixels[0]; differs=0;
+    for(int i=1;i<WIDTH*HEIGHT;i++) if(pixels[i]!=first){ differs=1; break; }
+    if(differs || first!=0xFF949494u){
+      fprintf(stderr,"software mediump procedural-shader overflow mismatch: first=%08x varies=%d\n",
+              first,differs);
+      return 0;
+    }
   }
   flipped->originx=flipped->originy=0;
   /* Exact cardinal rotations remain on the integer texel lattice.  Approximate libm zeros at

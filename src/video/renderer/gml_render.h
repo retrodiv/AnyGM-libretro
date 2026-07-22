@@ -345,7 +345,7 @@ typedef struct {
     /* Quantized swirling-paint procedural fragment family.  This is recognized from the GLSL's
      * operations and its constants/uniforms are read from SHDR; filled primitives can therefore
      * execute it in the software renderer without baking an asset or shader name into the core. */
-    int   paint, paint_opaque;
+    int   paint, paint_opaque, paint_resolution_mediump;
     char  paint_time_uniform[32], paint_resolution_uniform[32];
     float paint_time, paint_resolution[3];
     float paint_pixel_factor, paint_spin_ease, paint_spin_amount, paint_contrast;
