@@ -36,7 +36,9 @@ builds aligned.
 ## Validation targets
 
 ```sh
+make warnings-check
 make architecture-check
+make builtin-registry-check
 make api-check
 make contract-check
 make integration-check
@@ -44,6 +46,16 @@ make check
 make sanitizer-check
 make export-check
 ```
+
+`warnings-check` builds the production core with `-Wall -Wextra -Werror`.
+Warnings owned by vendored libraries are isolated at their object boundary; warnings in AnyGM
+sources remain fatal. The full `check` target runs this gate before the synthetic suites and also
+treats warnings in the test code as errors.
+
+`builtin-registry-check` proves that every exact builtin implementation branch
+has one canonical registry row, stable ID, owner, dispatch stage, and cache
+policy, and that the checked-in immutable lookup index is byte-for-byte current.
+Run it after changing a language-visible builtin name or owner.
 
 `check` uses only synthetic fixtures. `sanitizer-check` builds the bounded
 security and contract suite with AddressSanitizer and UndefinedBehaviorSanitizer

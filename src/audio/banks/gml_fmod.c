@@ -72,7 +72,6 @@ static void ogg_page(Buf *o, uint8_t htype, uint64_t granule, uint32_t serial, u
   ogg_page_pkts(o,htype,granule,serial,seq,&payload,&plen,1);
 }
 
-/* Derive reflected CRC-32 lookup keys from the licensed setup packet bytes. */
 /* Compare stored CRC-32 keys for the bundled setup packets. */
 static const uint8_t *find_codebook(uint32_t crc, int *len){
   for(int i=0;i<anygm_audio_setup_entry_count;i++){
@@ -470,7 +469,8 @@ static void bp_push(BP*b,uint32_t id,const uint8_t*g){ if(b->psp<64){ b->pstk[b-
 static void parse_evtb(BP*bp,const uint8_t*b,size_t o,size_t end){
   EvN*n=bp_ev(bp); if(o+16>end)return; memcpy(n->g.g,b+o,16); o+=16;
   o+=16;                                   /* SnapshotGuid */
-  if(o+16<=end) memcpy(n->timeline.g,b+o,16); o+=16;   /* TimelineGuid */
+  if(o+16<=end) memcpy(n->timeline.g,b+o,16);
+  o+=16;   /* TimelineGuid */
   o+=16; o+=16;                            /* InputBus, MasterTrack */
   o+=4; o+=4; o+=1; o+=4;                  /* MaxPoly, Priority, PolyLimit(byte), Scheduling */
   { uint32_t c,st; size_t d=fx_list(b,end,&o,&c,&st); for(uint32_t i=0;i<c;i++) if(st>=16) garr_push(&n->params,b+d+(size_t)i*st); } /* ParameterLayouts */
@@ -728,9 +728,10 @@ static int fmod_bank_open(FBank *bank,const AnygmHostServices *host,const char *
     if(ss<0 || ss>=bank->nsubs || !bank->subs || bank->subs[ss].rate<=0){ bank->ev[e].nlc=0; continue; }
     uint32_t samples=bank->subs[ss].samples; int rate=bank->subs[ss].rate;
     if(!bank->ev[e].loop && (double)samples/rate>=10.0) bank->ev[e].loop=1;
-    /* Select the latest loop-back start within the final twenty percent of the
-     * sample, with an earlier destination and at least one second between them.
-     * These are selection thresholds, not guarantees about authored intent. */
+    /* Accept a loop-back only when it lands near the END of the track (the normal end-of-body loop):
+     * Start within [0.80·samples, samples], destination before it, ≥1s of body. This keeps the clear
+     * simple loops and rejects mid-track, short, or interactive candidates in favor of a full loop,
+     * so a wrong region can never make a track worse than the safe whole-track loop. */
     uint32_t lo_ok=(uint32_t)(0.80*(double)samples), best_end=0, best_start=0;
     for(int i=0;i<bank->ev[e].nlc;i++){
       uint32_t st=bank->ev[e].lc[i].start, ds=bank->ev[e].lc[i].dest;
@@ -738,7 +739,10 @@ static int fmod_bank_open(FBank *bank,const AnygmHostServices *host,const char *
     }
     bank->ev[e].loop_start=best_start; bank->ev[e].loop_end=best_end;
   }
-  snprintf(bank->path,sizeof bank->path,"%s",path);
+  size_t path_size=strlen(path);
+  if(path_size>=sizeof bank->path) path_size=sizeof bank->path-1;
+  memcpy(bank->path,path,path_size);
+  bank->path[path_size]='\0';
   return 1;
 }
 
@@ -764,7 +768,7 @@ GmlFmodBanks *gml_fmod_banks_load(const AnygmHostServices *host,const char *dir)
   /* Attempt the three named banks below in order. */
   static const char *names[]={"Master.bank","music.bank","sfx.bank"};
   for(int i=0;i<3 && b->nbanks<FMOD_MAXBANKS;i++){
-    char p[700]; snprintf(p,sizeof p,"%s/%s",dir,names[i]);
+    char p[760]; snprintf(p,sizeof p,"%s/%s",dir,names[i]);
     if(fmod_bank_open(&b->banks[b->nbanks],host,p)) b->nbanks++;
   }
   if(fmod_setting(b,"GML_DBG_FMOD_3D")){
@@ -811,7 +815,8 @@ void gml_fmod_banks_free(GmlFmodBanks *b){
 }
 
 int gml_fmod_banks_num_events(GmlFmodBanks *b){
-  if(!b) return 0; int n=0; for(int i=0;i<b->nbanks;i++) n+=b->banks[i].nev; return n;
+  if(!b) return 0;
+  int n=0; for(int i=0;i<b->nbanks;i++) n+=b->banks[i].nev; return n;
 }
 
 /* Resolve an event path → (bank, subsound, loop). Path→GUID via the string table, GUID→subsound via
@@ -1024,7 +1029,8 @@ void gml_fmod_set_paused(GmlFmodBanks *b, int handle, int paused){
   FVoice *v=fmod_voice_by_handle(b,handle); if(v) v->paused=paused?1:0;
 }
 void gml_fmod_set_paused_all(GmlFmodBanks *b, int paused){
-  if(!b) return; for(int i=0;i<FMOD_MAXVOICES;i++) if(b->voices[i].handle) b->voices[i].paused=paused?1:0;
+  if(!b) return;
+  for(int i=0;i<FMOD_MAXVOICES;i++) if(b->voices[i].handle) b->voices[i].paused=paused?1:0;
 }
 int gml_fmod_is_playing(GmlFmodBanks *b, int handle){
   FVoice *v=fmod_voice_by_handle(b,handle); return (v && v->active && !v->paused)?1:0;
@@ -1089,11 +1095,13 @@ void gml_fmod_set_timeline_pos(GmlFmodBanks *b, int handle, double ms){
   v->pos=(double)sample;
 }
 void gml_fmod_stop_all(GmlFmodBanks *b){
-  if(!b) return; for(int i=0;i<FMOD_MAXVOICES;i++){ FVoice *v=&b->voices[i]; if(!v->handle) continue;
+  if(!b) return;
+  for(int i=0;i<FMOD_MAXVOICES;i++){ FVoice *v=&b->voices[i]; if(!v->handle) continue;
     v->active=0; fmod_voice_free_audio(v); if(v->one_shot){ memset(v,0,sizeof *v); b->vh[(int)(v-b->voices)]=0; } }
 }
 void gml_fmod_set_listener(GmlFmodBanks *b, double x, double y){
-  if(!b) return; b->lx=x; b->ly=y; b->have_listener=1;
+  if(!b) return;
+  b->lx=x; b->ly=y; b->have_listener=1;
 }
 void gml_fmod_set_3d(GmlFmodBanks *b, int handle, double x, double y){
   FVoice *v=fmod_voice_by_handle(b,handle); if(!v) return; v->px=x; v->py=y; v->has_3d=1;
@@ -1107,7 +1115,8 @@ static int16_t fmod_softclip(int32_t v){
   double x=(double)v; const double knee=30000.0, span=2767.0;
   if(x>knee)       x= knee+span*(1.0-exp(-( x-knee)/span));
   else if(x<-knee) x=-(knee+span*(1.0-exp(-(-x-knee)/span)));
-  if(x>32767) x=32767; if(x<-32768) x=-32768;
+  if(x>32767) x=32767;
+  if(x<-32768) x=-32768;
   return (int16_t)lrint(x);
 }
 

@@ -3,19 +3,7 @@
  */
 #include "gmlc_classic.h"
 #include "anygm_vfs.h"
-
-#if defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#endif
-#define STB_IMAGE_STATIC
-#define STB_IMAGE_IMPLEMENTATION
-#define STBI_ONLY_PNG
-#define STBI_NO_GIF
-#include "stb_image.h"
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
+#include "gml_image_codec.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -23,6 +11,20 @@
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
+
+static char *classic_inflate_owned(const uint8_t *encoded,size_t encoded_size,
+                                   GmlDeflateFraming framing,int *decoded_size){
+  GmlMediaBuffer decoded={0};
+  if(decoded_size) *decoded_size=0;
+  if(!decoded_size ||
+     !gml_deflate_decode(encoded,encoded_size,framing,&decoded) ||
+     decoded.size>(size_t)INT_MAX){
+    gml_media_buffer_release(&decoded);
+    return NULL;
+  }
+  *decoded_size=(int)decoded.size;
+  return (char*)decoded.data;
+}
 
 static uint32_t read_u32le(const uint8_t *p){
   return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 |
@@ -166,11 +168,11 @@ int gmlc_classic_game_information_decode(const GmlcClassicBlob *source,
   size_t record_size=source->size;
   uint8_t *normalized=NULL;
   int inflated_size=0;
-  char *inflated=stbi_zlib_decode_malloc((const char*)source->data,
-                                          (int)source->size,&inflated_size);
+  char *inflated=classic_inflate_owned(source->data,source->size,
+                                       GML_DEFLATE_ZLIB,&inflated_size);
   if(inflated){
     if(inflated_size<0 || inflated_size>GAME_INFORMATION_LIMIT){
-      STBI_FREE(inflated);
+      free(inflated);
       if(err && errcap) snprintf(err,errcap,"classic project: game information expands beyond its limit");
       return 0;
     }
@@ -183,7 +185,7 @@ int gmlc_classic_game_information_decode(const GmlcClassicBlob *source,
        record_size<=SIZE_MAX-8u){
       normalized=(uint8_t*)malloc(record_size+8u);
       if(!normalized){
-        STBI_FREE(inflated);
+        free(inflated);
         if(err && errcap) snprintf(err,errcap,
                                    "classic project: out of memory normalizing game information");
         return 0;
@@ -210,18 +212,18 @@ int gmlc_classic_game_information_decode(const GmlcClassicBlob *source,
                "caption=%u tail words=%u/%u/%u; %s%s)",(uint64_t)source->size,(uint64_t)record_size,caption,
                word0,word4,word8,preview,record_size>shown?" ...":"");
     }
-    free(normalized); STBI_FREE(inflated);
+    free(normalized); free(inflated);
     return 0;
   }
   decoded->data=(uint8_t*)malloc(record_size?record_size:1u);
   if(!decoded->data){
-    free(normalized); STBI_FREE(inflated);
+    free(normalized); free(inflated);
     if(err && errcap) snprintf(err,errcap,"classic project: out of memory decoding game information");
     return 0;
   }
   memcpy(decoded->data,record,record_size);
   decoded->size=record_size;
-  free(normalized); STBI_FREE(inflated);
+  free(normalized); free(inflated);
   return 1;
 }
 
@@ -303,16 +305,17 @@ static int read_compressed_settings(const uint8_t *compressed, uint32_t compress
     return 0;
   }
   int raw_size=0;
-  char *raw=stbi_zlib_decode_malloc((const char*)compressed,(int)compressed_size,&raw_size);
+  char *raw=classic_inflate_owned(compressed,compressed_size,
+                                  GML_DEFLATE_ZLIB,&raw_size);
   if(!raw || raw_size<0){
     if(err&&errcap) snprintf(err,errcap,"classic project: invalid compressed settings");
-    STBI_FREE(raw);
+    free(raw);
     return 0;
   }
   ClassicReader settings={(const uint8_t*)raw,(size_t)raw_size,0,err,errcap};
   int ok=read_settings_prefix(&settings,out);
   if(ok) read_settings_tail(&settings,out);
-  STBI_FREE(raw);
+  free(raw);
   return ok;
 }
 
@@ -323,12 +326,13 @@ static int reader_trigger(ClassicReader *outer, GmlcClassicTrigger *out, const c
   if(outer->pos>outer->size || compressed_size>outer->size-outer->pos || compressed_size>INT_MAX)
     return reader_fail(outer,what);
   int raw_size=0;
-  char *raw=stbi_zlib_decode_malloc((const char*)outer->data+outer->pos,(int)compressed_size,&raw_size);
+  char *raw=classic_inflate_owned(outer->data+outer->pos,compressed_size,
+                                  GML_DEFLATE_ZLIB,&raw_size);
   if(!raw && compressed_size>=6)
-    raw=stbi_zlib_decode_noheader_malloc((const char*)outer->data+outer->pos+2,
-                                         (int)compressed_size-6,&raw_size);
+    raw=classic_inflate_owned(outer->data+outer->pos+2,compressed_size-6,
+                              GML_DEFLATE_RAW,&raw_size);
   if(!raw || raw_size<4){
-    STBI_FREE(raw);
+    free(raw);
     if(outer->err && outer->errcap) snprintf(outer->err,outer->errcap,"classic project: invalid %s",what);
     return 0;
   }
@@ -352,7 +356,7 @@ static int reader_trigger(ClassicReader *outer, GmlcClassicTrigger *out, const c
     free(out->name); free(out->condition); free(out->constant_name);
     memset(out,0,sizeof(*out));
   }
-  STBI_FREE(raw);
+  free(raw);
   if(ok) outer->pos+=compressed_size;
   return ok;
 }
@@ -365,12 +369,13 @@ static int reader_included_file(ClassicReader *outer, GmlcClassicIncludedFile *o
   if(outer->pos>outer->size || compressed_size>outer->size-outer->pos || compressed_size>INT_MAX)
     return reader_fail(outer,what);
   int raw_size=0;
-  char *raw=stbi_zlib_decode_malloc((const char*)outer->data+outer->pos,(int)compressed_size,&raw_size);
+  char *raw=classic_inflate_owned(outer->data+outer->pos,compressed_size,
+                                  GML_DEFLATE_ZLIB,&raw_size);
   if(!raw && compressed_size>=6)
-    raw=stbi_zlib_decode_noheader_malloc((const char*)outer->data+outer->pos+2,
-                                         (int)compressed_size-6,&raw_size);
+    raw=classic_inflate_owned(outer->data+outer->pos+2,compressed_size-6,
+                              GML_DEFLATE_RAW,&raw_size);
   if(!raw || raw_size<4){
-    STBI_FREE(raw);
+    free(raw);
     if(outer->err && outer->errcap) snprintf(outer->err,outer->errcap,"classic project: invalid %s",what);
     return 0;
   }
@@ -402,7 +407,7 @@ static int reader_included_file(ClassicReader *outer, GmlcClassicIncludedFile *o
     free(out->file_name); free(out->source_path); free(out->custom_folder); free(out->data);
     memset(out,0,sizeof(*out));
   }
-  STBI_FREE(raw);
+  free(raw);
   if(ok) outer->pos+=compressed_size;
   return ok;
 }
@@ -736,7 +741,7 @@ static int normalize_executable_room(char **raw_io, int *raw_size_io){
   if(!complete){ free(normalized); return 0; }
   normalized=complete;
   memset(normalized+body.pos,0,56);
-  STBI_FREE(*raw_io);
+  free(*raw_io);
   *raw_io=normalized;
   *raw_size_io=(int)normalized_size;
   return 1;
@@ -1319,16 +1324,16 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
   }
   int raw_size = 0;
   char *raw = raw_deflate && compressed_size>=6
-    ? stbi_zlib_decode_noheader_malloc((const char*)compressed+2,(int)compressed_size-6,&raw_size)
-    : stbi_zlib_decode_malloc((const char*)compressed, (int)compressed_size, &raw_size);
+    ? classic_inflate_owned(compressed+2,compressed_size-6,GML_DEFLATE_RAW,&raw_size)
+    : classic_inflate_owned(compressed,compressed_size,GML_DEFLATE_ZLIB,&raw_size);
   if(!raw || raw_size < 4){
     if(err && errcap) snprintf(err, errcap, "classic project: invalid compressed resource block");
-    STBI_FREE(raw);
+    free(raw);
     return 0;
   }
   if(raw_deflate){
     char *p=(char*)realloc(raw,(size_t)raw_size+1);
-    if(!p){ STBI_FREE(raw); return 0; }
+    if(!p){ free(raw); return 0; }
     raw=p; raw[raw_size++]=0; /* tolerate the compact form's elided final zero byte */
     if(type==GMLC_CLASSIC_OBJECT){
       ClassicReader probe={(const uint8_t*)raw,(size_t)raw_size,0,NULL,0};
@@ -1339,13 +1344,13 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
         (probe.pos==probe.size || (probe.pos+1==probe.size && probe.data[probe.pos]==0));
       (void)version;
       if(!complete){ raw_size--;
-        if(!repair_executable_object(&raw,&raw_size)){ STBI_FREE(raw); return 0; }
+        if(!repair_executable_object(&raw,&raw_size)){ free(raw); return 0; }
       }
     } else if(type==GMLC_CLASSIC_ROOM){
       raw_size--;
       if(!normalize_executable_room(&raw,&raw_size)){
         if(err && errcap) snprintf(err,errcap,"classic executable: invalid compact room block");
-        STBI_FREE(raw); return 0;
+        free(raw); return 0;
       }
     }
   }
@@ -1353,7 +1358,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
   slot->executable_layout=raw_deflate;
   uint32_t exists;
   if(!reader_u32(&r, &exists, "resource existence flag")){
-    STBI_FREE(raw);
+    free(raw);
     return 0;
   }
   slot->exists = exists != 0;
@@ -1364,7 +1369,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
       !reader_u32(&r, &slot->version, "resource format version"))){
     free(slot->name);
     slot->name = NULL;
-    STBI_FREE(raw);
+    free(raw);
     return 0;
   }
   if(slot->exists) payload_start = r.pos;
@@ -1372,7 +1377,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
      !reader_string_copy(&r, &slot->source, "script source")){
     free(slot->name);
     slot->name = NULL;
-    STBI_FREE(raw);
+    free(raw);
     return 0;
   }
   int valid = 1;
@@ -1409,7 +1414,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
     }
     free(slot->name); slot->name = NULL;
     free(slot->source); slot->source = NULL;
-    STBI_FREE(raw);
+    free(raw);
     return 0;
   }
   if(slot->exists && r.pos > payload_start){
@@ -1419,12 +1424,12 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
       if(err && errcap) snprintf(err, errcap, "classic project: out of memory retaining resource payload");
       free(slot->name); slot->name = NULL;
       free(slot->source); slot->source = NULL;
-      STBI_FREE(raw);
+      free(raw);
       return 0;
     }
     memcpy(slot->payload, (const uint8_t*)raw + payload_start, slot->payload_size);
   }
-  STBI_FREE(raw);
+  free(raw);
   return 1;
 }
 
@@ -1755,16 +1760,16 @@ static int parse_legacy_executable_manifest(const uint8_t *file,size_t size,size
     return 0;
   }
   int envelope_size=0;
-  char *envelope=stbi_zlib_decode_malloc((const char*)file+compressed_pos,
-                                         (int)compressed_size,&envelope_size);
+  char *envelope=classic_inflate_owned(file+compressed_pos,compressed_size,
+                                       GML_DEFLATE_ZLIB,&envelope_size);
   if(!envelope || envelope_size<13){
-    STBI_FREE(envelope);
+    free(envelope);
     if(err && errcap) snprintf(err,errcap,"classic executable: invalid compressed legacy data");
     return 0;
   }
   uint8_t *decoded=NULL; size_t decoded_size=0;
   int ok=0; /* This operation is unavailable. */
-  STBI_FREE(envelope);
+  free(envelope);
   if(ok) ok=parse_legacy_executable_data(decoded,decoded_size,settings_version,
                                          &settings,out,err,errcap);
   free(decoded);

@@ -12,23 +12,144 @@ ANYGM_BZIP2_SOURCES := \
 	src/third_party/bzip2/huffman.c \
 	src/third_party/bzip2/randtable.c
 
+ANYGM_MEDIA_SOURCES := \
+	src/media/gml_image_codec.c \
+	src/media/gml_font_raster.c
+
+ANYGM_PROJECT_COMPILER_SOURCES := \
+	src/content/project/gmlc_bytecode.c \
+	src/content/project/gmlc_lexer.c \
+	src/content/project/gmlc_parser.c \
+	src/content/project/gmlc_emitter.c \
+	src/content/project/gmlc_function_registry.c
+
+ANYGM_PROJECT_PACKAGE_SOURCES := \
+	src/content/project/gmlc_package.c \
+	src/content/project/gmlc_package_chunks.c \
+	src/content/project/gmlc_package_code.c \
+	src/content/project/gmlc_package_textures.c
+
 ANYGM_PROJECT_SOURCES := \
 	src/content/project/gmlc_project.c \
 	src/content/project/gmlc_json.c \
 	src/content/project/gmlc_assets.c \
 	src/content/project/gmlc_source.c \
-	src/content/project/gmlc_bytecode.c \
-	src/content/project/gmlc_package.c
+	$(ANYGM_PROJECT_COMPILER_SOURCES) \
+	$(ANYGM_PROJECT_PACKAGE_SOURCES)
+
+ANYGM_CLASSIC_IMPORT_SOURCES := \
+	src/content/classic/gmlc_classic_import.c \
+	src/content/classic/gmlc_classic_import_code.c \
+	src/content/classic/gmlc_classic_import_extensions.c \
+	src/content/classic/gmlc_classic_import_images.c \
+	src/content/classic/gmlc_classic_import_fonts.c \
+	src/content/classic/gmlc_classic_import_audio.c \
+	src/content/classic/gmlc_classic_import_paths.c \
+	src/content/classic/gmlc_classic_import_objects.c \
+	src/content/classic/gmlc_classic_import_timelines.c \
+	src/content/classic/gmlc_classic_import_rooms.c
 
 ANYGM_CLASSIC_SOURCES := \
 	src/content/classic/gmlc_classic.c \
-	src/content/classic/gmlc_classic_import.c \
+	$(ANYGM_CLASSIC_IMPORT_SOURCES) \
 	src/content/classic/gmlc_classic_project.c
+
+ANYGM_CLASSIC_TEST_SOURCES := \
+	tests/support/anygm_test_runner.c \
+	tests/unit/content/classic/classic_test_fixture.c \
+	tests/unit/content/classic/test_classic_format.c \
+	tests/unit/content/classic/test_classic_extensions.c \
+	tests/unit/content/classic/test_classic_code.c \
+	tests/unit/content/classic/test_classic_images.c \
+	tests/unit/content/classic/test_classic_fonts.c \
+	tests/unit/content/classic/test_classic_audio.c \
+	tests/unit/content/classic/test_classic_paths.c \
+	tests/unit/content/classic/test_classic_objects.c \
+	tests/unit/content/classic/test_classic_timelines.c \
+	tests/unit/content/classic/test_classic_rooms.c \
+	tests/unit/content/classic/test_classic_main.c
+
+ANYGM_SOFTWARE3D_TEST_SOURCES := \
+	tests/support/anygm_test_runner.c \
+	tests/unit/video/software3d/software3d_test_fixture.c \
+	tests/unit/video/software3d/test_software3d_assets.c \
+	tests/unit/video/software3d/test_software3d_assets_surfaces.c \
+	tests/unit/video/software3d/test_software3d_blend.c \
+	tests/unit/video/software3d/test_software3d_language.c \
+	tests/unit/video/software3d/test_software3d_raster.c \
+	tests/unit/video/software3d/test_software3d_state.c \
+	tests/unit/video/software3d/test_software3d_main.c
+
+ANYGM_PERSISTENT_TEST_SOURCES := \
+	tests/support/anygm_test_runner.c \
+	tests/unit/runtime/persistent/persistent_test_fixture.c \
+	tests/unit/runtime/persistent/test_persistent_audio.c \
+	tests/unit/runtime/persistent/test_persistent_ds.c \
+	tests/unit/runtime/persistent/test_persistent_io.c \
+	tests/unit/runtime/persistent/test_persistent_renderer.c \
+	tests/unit/runtime/persistent/test_persistent_state.c \
+	tests/unit/runtime/persistent/test_persistent_timeline.c \
+	tests/unit/runtime/persistent/test_persistent_vm.c \
+	tests/unit/runtime/persistent/test_persistent_main.c
+
+ANYGM_CORE_SOURCES := \
+	 src/core/engine.c \
+	 src/core/engine_input.c \
+	 src/core/engine_overrides.c \
+	 src/core/engine_presentation.c \
+	src/core/engine_state.c
+
+ANYGM_RENDERER_SOURCES := \
+	src/video/renderer/gml_render.c \
+	src/video/renderer/gml_render_surfaces.c \
+	src/video/renderer/gml_render_assets.c \
+	src/video/renderer/gml_render_atlas.c \
+	src/video/renderer/gml_render_blit.c \
+	src/video/renderer/gml_render_effects.c \
+	src/video/renderer/gml_render_primitives.c \
+	src/video/renderer/gml_render_text.c \
+	src/video/renderer/gml_render_state.c
+
+ANYGM_SOFTWARE3D_SOURCES := \
+	src/video/software3d/gml_software3d.c \
+	src/video/software3d/gml_software3d_models.c \
+	src/video/software3d/gml_software3d_raster.c \
+	src/video/software3d/gml_software3d_state.c
+
+ANYGM_VM_SOURCES := \
+	src/runtime/vm/gml_value.c \
+	src/runtime/vm/gml_vm_exec.c \
+	src/runtime/vm/gml_vm_frame.c \
+	src/runtime/vm/gml_vm_instances.c \
+	src/runtime/vm/gml_vm.c \
+	src/runtime/vm/gml_vm_rooms.c \
+	src/runtime/vm/gml_vm_rng.c \
+	src/runtime/vm/gml_vm_state.c
+
+ANYGM_BUILTIN_SOURCES := \
+	src/runtime/builtins/gml_builtin.c \
+	src/runtime/builtins/gml_builtin_draw.c \
+	src/runtime/builtins/gml_builtin_registry.c \
+	src/runtime/builtins/gml_builtin_io.c \
+	src/runtime/builtins/gml_builtin_ds.c \
+	src/runtime/builtins/gml_builtin_json.c \
+	src/runtime/builtins/gml_builtin_values.c \
+	src/runtime/builtins/gml_builtin_animation.c \
+	src/runtime/builtins/gml_builtin_physics.c \
+	src/runtime/builtins/gml_builtin_actions.c \
+	src/runtime/builtins/gml_builtin_input.c \
+	src/runtime/builtins/gml_builtin_audio.c \
+	src/runtime/builtins/gml_builtin_instances.c \
+	src/runtime/builtins/gml_builtin_layers.c \
+	src/runtime/builtins/gml_builtin_platform.c \
+	src/runtime/builtins/gml_builtin_collision.c \
+	src/runtime/builtins/gml_builtin_particles.c \
+	src/runtime/builtins/gml_builtin_state.c
 
 ANYGM_RUNTIME_SOURCES := \
 	src/host/anygm_host.c \
 	src/host/anygm_vfs.c \
-	src/core/engine.c \
+	$(ANYGM_CORE_SOURCES) \
 	src/compatibility/anygm_compatibility.c \
 	src/content/container/content_router.c \
 	src/content/datafile/gml_win.c \
@@ -36,9 +157,11 @@ ANYGM_RUNTIME_SOURCES := \
 	src/content/bytecode/gml_bc14.c \
 	src/content/bytecode/gml_bc15.c \
 	src/content/bytecode/gml_bc17.c \
-	src/runtime/vm/gml_vm.c \
-	src/runtime/builtins/gml_builtin.c \
-	src/video/renderer/gml_render.c \
+	$(ANYGM_MEDIA_SOURCES) \
+	$(ANYGM_VM_SOURCES) \
+	$(ANYGM_BUILTIN_SOURCES) \
+	$(ANYGM_RENDERER_SOURCES) \
+	$(ANYGM_SOFTWARE3D_SOURCES) \
 	src/runtime/particles/gml_particle.c \
 	src/audio/mixer/gml_audio.c \
 	src/audio/codecs/gml_mp3.c \
@@ -66,10 +189,12 @@ ANYGM_RUNTIME_INCLUDE_DIRS := \
 	src/content/bytecode \
 	src/content/project \
 	src/content/classic \
+	src/media \
 	src/runtime/vm \
 	src/runtime/builtins \
 	src/runtime/particles \
 	src/video/renderer \
+	src/video/software3d \
 	src/video/assets \
 	src/audio/mixer \
 	src/audio/codecs \

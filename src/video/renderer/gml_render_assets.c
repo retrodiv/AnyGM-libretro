@@ -1,0 +1,654 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+/* Renderer-owned asset lookup and record operations. */
+#include "gml_render_backend.h"
+#include "gml_render_internal.h"
+#include "gml_image_codec.h"
+#include "anygm_host.h"
+#include "anygm_vfs.h"
+
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static void backend_texture_view_reset(GmlRenderBackendTextureView *view){
+  if(view) memset(view,0,sizeof(*view));
+}
+
+int gml_render_sprite_metrics(const GmlRender *R,int sprite,
+                              GmlRenderSpriteMetrics *metrics){
+  if(metrics) memset(metrics,0,sizeof(*metrics));
+  if(!R || sprite<0 || sprite>=R->n_spr) return 0;
+  const GmlSprite *source=&R->spr[sprite];
+  if(metrics){
+    metrics->width=source->w; metrics->height=source->h;
+    metrics->origin_x=source->originx; metrics->origin_y=source->originy;
+    metrics->frame_count=source->n_frames;
+    metrics->collision_left=source->ml; metrics->collision_top=source->mt;
+    metrics->collision_right=source->mr; metrics->collision_bottom=source->mb;
+    metrics->playback_speed=source->playback_speed;
+    metrics->playback_speed_type=source->playback_speed_type;
+    metrics->playback_speed_valid=source->playback_speed_valid;
+    metrics->name=source->name;
+  }
+  return 1;
+}
+
+int gml_render_sprite_set_playback(GmlRender *R,int sprite,
+                                   double speed,int speed_type){
+  if(!R || sprite<0 || sprite>=R->n_spr) return 0;
+  R->spr[sprite].playback_speed=(float)speed;
+  R->spr[sprite].playback_speed_type=speed_type==0?0:1;
+  R->spr[sprite].playback_speed_valid=1;
+  return 1;
+}
+
+int gml_render_sprite_texture_handle(int sprite,int image){
+  if(sprite<0) return -1;
+  return (int)(GML_TEX_SPR_TAG|((sprite&0xFFFF)<<10)|(image&0x3FF));
+}
+
+int gml_render_surface_texture_handle(int surface){
+  if(surface<0) return -1;
+  return (int)(GML_TEX_SURF_TAG|((unsigned)surface&0xFFFFu));
+}
+
+int gml_render_background_metrics(const GmlRender *R,int background,
+                                  GmlRenderBackgroundMetrics *metrics){
+  if(metrics){ memset(metrics,0,sizeof(*metrics)); metrics->texture_page=-1; metrics->atlas=-1; }
+  if(!R || background<0 || background>=R->n_bg) return 0;
+  const GmlBg *source=&R->bg[background];
+  if(metrics){
+    metrics->tile_width=source->tile_w; metrics->tile_height=source->tile_h;
+    metrics->tile_border_x=source->tile_border_x;
+    metrics->tile_border_y=source->tile_border_y;
+    metrics->tile_separation_x=source->tile_separation_x;
+    metrics->tile_separation_y=source->tile_separation_y;
+    metrics->tile_columns=source->tile_columns;
+    if(source->tpag>=0 && source->tpag<R->n_tpag){
+      const GmlTpag *page=&R->tpag[source->tpag];
+      metrics->texture_page=source->tpag; metrics->atlas=page->atlas;
+      metrics->packed_x=page->sx; metrics->packed_y=page->sy;
+      metrics->packed_width=page->sw; metrics->packed_height=page->sh;
+      metrics->trim_x=page->tx; metrics->trim_y=page->ty;
+      metrics->declared_width=page->bw; metrics->declared_height=page->bh;
+      metrics->logical_width=page->bw?page->bw:page->sw;
+      metrics->logical_height=page->bh?page->bh:page->sh;
+    }
+  }
+  return 1;
+}
+
+int gml_render_background_texture_handle(const GmlRender *R,int background){
+  return R && background>=0 && background<R->n_bg
+    ? (int)(GML_TEX_BG_TAG|((unsigned)background&0x00FFFFFFu)) : -1;
+}
+
+int gml_render_background_tile_source_index(const GmlRender *R,int background,
+                                             int tile_index){
+  if(!R || background<0 || background>=R->n_bg || tile_index<0) return -1;
+  const GmlBg *source=&R->bg[background];
+  if(source->tile_ids && source->tile_items_per_tile>0 && tile_index<source->tile_count){
+    const uint8_t *id=source->tile_ids+
+      (size_t)tile_index*(size_t)source->tile_items_per_tile*4u;
+    return (int)((uint32_t)id[0]|((uint32_t)id[1]<<8)|
+                 ((uint32_t)id[2]<<16)|((uint32_t)id[3]<<24));
+  }
+  return source->tile_ids?tile_index:tile_index-1;
+}
+
+int gml_render_font_metrics(const GmlRender *R,int font,
+                            GmlRenderFontMetrics *metrics){
+  if(metrics) memset(metrics,0,sizeof(*metrics));
+  if(!R) return 0;
+  const GmlFont *source;
+  if(font<0) source=&R->default_font;
+  else {
+    if(font>=R->n_fonts) return 0;
+    source=&R->fonts[font];
+  }
+  if(metrics){
+    metrics->line_height=source->line_height;
+    metrics->sprite=source->sprite;
+    metrics->first=source->first;
+    metrics->proportional=source->prop;
+    metrics->separation=source->sep;
+    metrics->sprite_backed=!source->real;
+  }
+  return 1;
+}
+
+static void backend_texture_view_page(GmlRenderBackendTextureView *view,
+                                      const GmlTpag *page,const GmlAtlas *atlas,
+                                      int full_atlas){
+  if(!view) return;
+  view->pixel_kind=GML_RENDER_BACKEND_PIXELS_RGBA;
+  view->trim_x=page->tx; view->trim_y=page->ty;
+  view->width=full_atlas?atlas->w:page->sw;
+  view->height=full_atlas?atlas->h:page->sh;
+  view->stride=atlas->w;
+  view->source_x=full_atlas?0:page->sx;
+  view->source_y=full_atlas?0:page->sy;
+  view->full_width=atlas->w; view->full_height=atlas->h;
+  view->atlas_index=page->atlas;
+  view->rgba=atlas->px;
+}
+
+int gml_render_backend_texture_view(GmlRender *R,int handle,int full_atlas,
+                                    GmlRenderBackendTextureView *view){
+  backend_texture_view_reset(view);
+  if(!R) return 0;
+  uint32_t encoded=(uint32_t)handle,kind=encoded&GML_TEX_KIND_MASK;
+  if(kind==GML_TEX_SPR_TAG){
+    int spr=(int)((encoded>>10)&0xFFFF),img=(int)(encoded&0x3FF);
+    gml_render_warm_sprite(R,spr);
+    if(spr<0 || spr>=R->n_spr) return 0;
+    GmlSprite *sprite=&R->spr[spr];
+    if(view){
+      view->resource_index=spr;
+      view->logical_width=sprite->w; view->logical_height=sprite->h;
+      view->origin_x=sprite->originx; view->origin_y=sprite->originy;
+    }
+    if(sprite->runtime_rgba){
+      int frames=sprite->n_frames>0?sprite->n_frames:1;
+      int sub=((img%frames)+frames)%frames;
+      if(view){
+        view->pixel_kind=GML_RENDER_BACKEND_PIXELS_RGBA;
+        view->runtime=1;
+        view->width=view->full_width=sprite->w;
+        view->height=view->full_height=sprite->h;
+        view->stride=sprite->w;
+        if(sprite->w>0 && sprite->h>0)
+          view->rgba=sprite->runtime_rgba+(size_t)sub*sprite->w*sprite->h*4;
+      }
+      return 1;
+    }
+    if(sprite->n_frames<=0 || !sprite->frame) return 0;
+    int sub=((img%sprite->n_frames)+sprite->n_frames)%sprite->n_frames;
+    int page_index=sprite->frame[sub];
+    if(page_index<0 || page_index>=R->n_tpag) return 0;
+    GmlTpag *page=&R->tpag[page_index];
+    if(page->atlas<0 || page->atlas>=R->n_atlas) return 0;
+    GmlAtlas *atlas=&R->atlas[page->atlas];
+    if(!atlas->px || atlas->w<=0 || atlas->h<=0) return 0;
+    if(view){
+      view->page_index=page_index;
+      backend_texture_view_page(view,page,atlas,full_atlas);
+    }
+    return 1;
+  }
+  if(kind==GML_TEX_SURF_TAG){
+    int surface=(int)(encoded&0xFFFF),width=0,height=0;
+    const uint32_t *pixels=gml_surface_pixels_read(R,surface,&width,&height);
+    if(!pixels || width<=0 || height<=0) return 0;
+    if(view){
+      view->pixel_kind=GML_RENDER_BACKEND_PIXELS_XRGB;
+      view->logical_width=view->width=view->full_width=width;
+      view->logical_height=view->height=view->full_height=height;
+      view->stride=width; view->resource_index=surface; view->xrgb=pixels;
+    }
+    return 1;
+  }
+  if(kind!=GML_TEX_BG_TAG){
+    if(anygm_host_development_setting(R->win?R->win->host:NULL,"GML_LOG_D3D"))
+      anygm_host_logf(R->win?R->win->host:NULL,ANYGM_LOG_DEBUG,
+                      "[d3d] invalid texture handle %d\n",handle);
+    return 0;
+  }
+  int background=(int)(encoded&0x00FFFFFF);
+  gml_render_warm_bg(R,background);
+  if(background<0 || background>=R->n_bg) return 0;
+  int page_index=R->bg[background].tpag;
+  if(page_index<0 || page_index>=R->n_tpag) return 0;
+  GmlTpag *page=&R->tpag[page_index];
+  if(page->atlas<0 || page->atlas>=R->n_atlas) return 0;
+  GmlAtlas *atlas=&R->atlas[page->atlas];
+  if(!atlas->px || page->sw<=0 || page->sh<=0) return 0;
+  if(view){
+    view->resource_index=background; view->page_index=page_index;
+    view->logical_width=page->bw?page->bw:page->sw;
+    view->logical_height=page->bh?page->bh:page->sh;
+    backend_texture_view_page(view,page,atlas,full_atlas);
+  }
+  return 1;
+}
+
+int gml_render_texture_metrics(GmlRender *R,int handle,
+                               GmlRenderTextureMetrics *metrics){
+  if(metrics) memset(metrics,0,sizeof(*metrics));
+  GmlRenderBackendTextureView view;
+  if(!metrics || !gml_render_backend_texture_view(R,handle,0,&view)) return 0;
+  uint32_t kind=(uint32_t)handle&GML_TEX_KIND_MASK;
+  if(kind==GML_TEX_SPR_TAG) metrics->kind=GML_RENDER_TEXTURE_SPRITE;
+  else if(kind==GML_TEX_SURF_TAG) metrics->kind=GML_RENDER_TEXTURE_SURFACE;
+  else if(kind==GML_TEX_BG_TAG) metrics->kind=GML_RENDER_TEXTURE_BACKGROUND;
+  else return 0;
+  metrics->runtime=view.runtime;
+  metrics->atlas_backed=view.pixel_kind==GML_RENDER_BACKEND_PIXELS_RGBA &&
+    !view.runtime;
+  metrics->logical_width=view.logical_width;
+  metrics->logical_height=view.logical_height;
+  metrics->trim_x=view.trim_x;
+  metrics->trim_y=view.trim_y;
+  metrics->width=view.width;
+  metrics->height=view.height;
+  metrics->source_x=view.source_x;
+  metrics->source_y=view.source_y;
+  metrics->full_width=view.full_width;
+  metrics->full_height=view.full_height;
+  return 1;
+}
+
+int gml_render_backend_atlas_view(GmlRender *R,int atlas_index,
+                                  GmlRenderBackendTextureView *view){
+  backend_texture_view_reset(view);
+  if(!R || atlas_index<0 || atlas_index>=R->n_atlas ||
+     !gml_render_warm_atlas(R,atlas_index)) return 0;
+  GmlAtlas *atlas=&R->atlas[atlas_index];
+  if(!atlas->px || atlas->w<=0 || atlas->h<=0) return 0;
+  if(view){
+    view->pixel_kind=GML_RENDER_BACKEND_PIXELS_RGBA;
+    view->logical_width=view->width=view->full_width=atlas->w;
+    view->logical_height=view->height=view->full_height=atlas->h;
+    view->stride=atlas->w; view->atlas_index=atlas_index; view->rgba=atlas->px;
+  }
+  return 1;
+}
+
+int gml_sprite_exists(GmlRender *r, int sprite){
+  return r && sprite>=0 && sprite<r->n_spr && r->spr[sprite].n_frames>0;
+}
+int gml_sprite_frames(GmlRender *r, int sprite){
+  return gml_sprite_exists(r,sprite)? r->spr[sprite].n_frames : 0;
+}
+static void sprite_backup(GmlSprite *s){
+  if(s->base_valid) return;
+  s->base_valid=1;
+  s->base_originx=s->originx; s->base_originy=s->originy;
+  s->base_w=s->w; s->base_h=s->h; s->base_n_frames=s->n_frames;
+  s->base_ml=s->ml; s->base_mr=s->mr; s->base_mt=s->mt; s->base_mb=s->mb;
+  s->base_mask=s->mask; s->base_mask_rowb=s->mask_rowb; s->base_mask_count=s->mask_count;
+  s->base_collision_kind=s->collision_kind; s->base_collision_tolerance=s->collision_tolerance;
+}
+static void sprite_restore_base(GmlSprite *s){
+  if(!s->base_valid) return;
+  s->originx=s->base_originx; s->originy=s->base_originy;
+  s->w=s->base_w; s->h=s->base_h; s->n_frames=s->base_n_frames;
+  s->ml=s->base_ml; s->mr=s->base_mr; s->mt=s->base_mt; s->mb=s->base_mb;
+  s->mask=s->base_mask; s->mask_rowb=s->base_mask_rowb; s->mask_count=s->base_mask_count;
+  s->collision_kind=s->base_collision_kind; s->collision_tolerance=s->base_collision_tolerance;
+  s->base_valid=0;
+}
+static void sprite_set_runtime_rgba(GmlSprite *s, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig, int extra){
+  if(frames<1) frames=1;
+  if(!extra) sprite_backup(s);
+  gml_render_sprite_cache_free(s);
+  free(s->runtime_rgba);
+  free(s->runtime_row_min);
+  free(s->runtime_row_max);
+  free(s->runtime_source_path);
+  s->runtime_rgba=rgba;
+  s->runtime_row_min=NULL;
+  s->runtime_row_max=NULL;
+  s->runtime_source_path=NULL;
+  s->runtime_source_imgnum=0;
+  s->runtime_source_removeback=0;
+  s->runtime_owned=1;
+  s->runtime_extra=extra;
+  s->runtime_opaque=1;
+  s->w=w; s->h=h; s->originx=xorig; s->originy=yorig;
+  s->n_frames=frames;
+  s->ml=0; s->mt=0; s->mr=w>0?w-1:0; s->mb=h>0?h-1:0;
+  s->mask=NULL; s->mask_rowb=0; s->mask_count=0;
+  s->collision_kind=0; s->collision_tolerance=63;
+  size_t rows=(size_t)frames*(size_t)h;
+  s->runtime_row_min=malloc(rows*sizeof(int));
+  s->runtime_row_max=malloc(rows*sizeof(int));
+  if(s->runtime_row_min && s->runtime_row_max){
+    for(int f=0; f<frames; f++) for(int yy=0; yy<h; yy++){
+      int mn=w, mx=-1;
+      const uint8_t *sp=rgba+((size_t)f*(size_t)w*(size_t)h+(size_t)yy*(size_t)w)*4;
+      for(int xx=0; xx<w; xx++, sp+=4){
+        if(sp[3]!=255) s->runtime_opaque=0;
+        if(sp[3]){
+          if(xx<mn) mn=xx;
+          if(xx>mx) mx=xx;
+        }
+      }
+      s->runtime_row_min[(size_t)f*(size_t)h+(size_t)yy]=mn;
+      s->runtime_row_max[(size_t)f*(size_t)h+(size_t)yy]=mx;
+    }
+  } else {
+    free(s->runtime_row_min); free(s->runtime_row_max);
+    s->runtime_row_min=NULL; s->runtime_row_max=NULL;
+  }
+}
+static void sprite_set_runtime_source(GmlSprite *s, const char *path, int imgnum, int removeback){
+  if(!s) return;
+  free(s->runtime_source_path);
+  s->runtime_source_path=path?strdup(path):NULL;
+  s->runtime_source_imgnum=imgnum;
+  s->runtime_source_removeback=removeback?1:0;
+}
+
+static void rgba_apply_removeback(uint8_t *rgba, int w, int h, int removeback){
+  if(!removeback || !rgba || w<=0 || h<=0) return;
+  uint8_t rr=rgba[0], gg=rgba[1], bb=rgba[2];
+  for(int i=0;i<w*h;i++){
+    uint8_t *p=rgba+i*4;
+    if(p[0]==rr && p[1]==gg && p[2]==bb) p[3]=0;
+  }
+}
+
+int gml_sprite_append_from_rgba_frames(GmlRender *r, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig, const char *name){
+  if(!rgba || w<=0 || h<=0 || frames<=0) return -1;
+  if(render_setting(r,"GML_LOG_SPRGEN") && ++r->generated_sprite_log_count%2000==0)
+    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[sprgen] %ld sprites appended (n_spr=%d)\n",r->generated_sprite_log_count,r->n_spr);
+  int id=-1;
+  /* Reuse a freed runtime slot only if one exists (spr_has_free); scanning all sprites on every
+   * append is O(n) and turns bulk generation into
+   * O(n²). Grow the array by doubling (spr_cap) instead of +1 for the same reason. */
+  if(r->spr_has_free){
+    int base=r->base_n_spr>0?r->base_n_spr:0;
+    for(int i=base;i<r->n_spr;i++){
+      if(r->spr[i].runtime_extra && !r->spr[i].runtime_rgba && r->spr[i].n_frames<=0){ id=i; break; }
+    }
+    if(id<0) r->spr_has_free=0;   /* none left; don't rescan until another is freed */
+  }
+  if(id<0){
+    if(r->n_spr>=r->spr_cap){
+      int nc=r->spr_cap>0?r->spr_cap*2:64;
+      GmlSprite *ns=realloc(r->spr,(size_t)nc*sizeof(GmlSprite));
+      if(!ns){ free(rgba); return -1; }
+      r->spr=ns; r->spr_cap=nc;
+    }
+    id=r->n_spr++;
+  }
+  GmlSprite *s=&r->spr[id];
+  memset(s,0,sizeof(*s));
+  /* GameMaker gives every runtime-created sprite an addressable asset name.  Reusing a shared
+   * placeholder makes sprite_get_name() return the same string for every surface sprite, so a
+   * later asset_get_index(sprite_get_name(id)) aliases all of them to the first generated cell.
+   * This pattern is used by runtime atlas splitters, among other things. */
+  if(name) s->owned_name=strdup(name);
+  else {
+    char generated[64];
+    snprintf(generated,sizeof generated,"__gml_runtime_sprite_%d",id);
+    s->owned_name=strdup(generated);
+  }
+  s->name=s->owned_name?s->owned_name:"<runtime-sprite>";
+  sprite_set_runtime_rgba(s,rgba,w,h,frames,xorig,yorig,1);
+  return id;
+}
+int gml_sprite_append_from_rgba(GmlRender *r, uint8_t *rgba, int w, int h, int xorig, int yorig, const char *name){
+  return gml_sprite_append_from_rgba_frames(r,rgba,w,h,1,xorig,yorig,name);
+}
+int gml_sprite_duplicate(GmlRender *r, int sprite){
+  if(!r || sprite<0 || sprite>=r->n_spr) return -1;
+  GmlSprite *s=&r->spr[sprite];
+  if(s->w<=0 || s->h<=0 || s->n_frames<=0) return -1;
+  int w=s->w, h=s->h, frames=s->n_frames;
+  size_t pixels=(size_t)w*(size_t)h*(size_t)frames;
+  if(pixels==0 || pixels>SIZE_MAX/4) return -1;
+  uint8_t *rgba=calloc(pixels,4);
+  if(!rgba) return -1;
+
+  for(int f=0; f<frames; f++){
+    uint8_t *dst=rgba+(size_t)f*(size_t)w*(size_t)h*4;
+    if(s->runtime_rgba){
+      const uint8_t *fr=runtime_frame_rgba(s,f);
+      if(fr) memcpy(dst,fr,(size_t)w*(size_t)h*4);
+      continue;
+    }
+    int ti=s->frame ? s->frame[f] : -1;
+    if(ti<0 || ti>=r->n_tpag) continue;
+    GmlTpag *t=&r->tpag[ti];
+    if(t->atlas<0 || t->atlas>=r->n_atlas) continue;
+    GmlAtlas *a=&r->atlas[t->atlas];
+    if(!atlas_pixels(r,t->atlas) || !a->px) continue;
+    for(int yy=0; yy<h; yy++) for(int xx=0; xx<w; xx++){
+      int ix=xx-t->tx, iy=yy-t->ty;
+      if(ix<0 || iy<0 || ix>=t->sw || iy>=t->sh) continue;
+      int ax=t->sx+ix, ay=t->sy+iy;
+      if(ax<0 || ay<0 || ax>=a->w || ay>=a->h) continue;
+      const uint8_t *sp=a->px+((size_t)ay*(size_t)a->w+(size_t)ax)*4;
+      uint8_t *dp=dst+((size_t)yy*(size_t)w+(size_t)xx)*4;
+      dp[0]=sp[0]; dp[1]=sp[1]; dp[2]=sp[2]; dp[3]=sp[3];
+    }
+  }
+
+  int id=gml_sprite_append_from_rgba_frames(r,rgba,w,h,frames,s->originx,s->originy,
+                                            s->name?s->name:"<sprite-copy>");
+  if(id>=0 && id<r->n_spr){
+    GmlSprite *src=&r->spr[sprite];
+    GmlSprite *dst=&r->spr[id];
+    dst->ml=src->ml; dst->mt=src->mt; dst->mr=src->mr; dst->mb=src->mb;
+    dst->collision_kind=src->collision_kind;
+    dst->collision_tolerance=src->collision_tolerance;
+    dst->ns_enabled=src->ns_enabled;
+    dst->ns_l=src->ns_l; dst->ns_t=src->ns_t; dst->ns_r=src->ns_r; dst->ns_b=src->ns_b;
+    for(int i=0;i<5;i++) dst->ns_tile[i]=src->ns_tile[i];
+  }
+  return id;
+}
+
+static int sprite_read_rgba(GmlRender *r, GmlSprite *s, int frame, int x, int y, uint8_t out[4]){
+  memset(out,0,4);
+  if(!r||!s||x<0||y<0||x>=s->w||y>=s->h||s->n_frames<=0) return 0;
+  int f=((frame%s->n_frames)+s->n_frames)%s->n_frames;
+  if(s->runtime_rgba){ const uint8_t *rgba=runtime_frame_rgba(s,f); if(!rgba)return 0;
+    memcpy(out,rgba+((size_t)y*s->w+x)*4,4); return 1; }
+  int ti=s->frame?s->frame[f]:-1; if(ti<0||ti>=r->n_tpag)return 0;
+  GmlTpag *t=&r->tpag[ti]; int ix=x-t->tx,iy=y-t->ty;
+  if(ix<0||iy<0||ix>=t->sw||iy>=t->sh||t->atlas<0||t->atlas>=r->n_atlas)return 0;
+  GmlAtlas *atlas=&r->atlas[t->atlas]; if(!atlas_pixels(r,t->atlas)||!atlas->px)return 0;
+  int ax=t->sx+ix,ay=t->sy+iy; if(ax<0||ay<0||ax>=atlas->w||ay>=atlas->h)return 0;
+  memcpy(out,atlas->px+((size_t)ay*atlas->w+ax)*4,4); return 1;
+}
+
+int gml_sprite_set_alpha_from_sprite(GmlRender *r, int sprite, int alpha_sprite){
+  if(!r||sprite<0||sprite>=r->n_spr||alpha_sprite<0||alpha_sprite>=r->n_spr)return 0;
+  GmlSprite *dst=&r->spr[sprite],*src=&r->spr[alpha_sprite];
+  if(dst->w<=0||dst->h<=0||dst->n_frames<=0||src->n_frames<=0)return 0;
+  size_t pixels=(size_t)dst->w*dst->h*dst->n_frames; if(!pixels||pixels>SIZE_MAX/4)return 0;
+  uint8_t *rgba=malloc(pixels*4); if(!rgba)return 0;
+  for(int f=0;f<dst->n_frames;f++) for(int y=0;y<dst->h;y++) for(int x=0;x<dst->w;x++){
+    uint8_t dc[4],sc[4]; sprite_read_rgba(r,dst,f,x,y,dc); sprite_read_rgba(r,src,f,x,y,sc);
+    uint8_t *p=rgba+(((size_t)f*dst->h+y)*dst->w+x)*4;
+    p[0]=dc[0];p[1]=dc[1];p[2]=dc[2];p[3]=(uint8_t)(((int)sc[0]+sc[1]+sc[2])/3);
+  }
+  int w=dst->w,h=dst->h,frames=dst->n_frames,xorig=dst->originx,yorig=dst->originy,extra=dst->runtime_extra;
+  sprite_set_runtime_rgba(dst,rgba,w,h,frames,xorig,yorig,extra);
+  return 1;
+}
+void gml_sprite_set_offset(GmlRender *r, int sprite, int xorig, int yorig){
+  if(!r || sprite<0 || sprite>=r->n_spr) return;
+  r->spr[sprite].originx=xorig;
+  r->spr[sprite].originy=yorig;
+}
+/* sprite_add(file, imgnum, removeback, smooth, xorig, yorig): load a loose image as a runtime
+ * sprite. GM treats the image as a horizontal strip of imgnum equal frames. removeback keys
+ * out the bottom-left pixel's color, GM8-style. Returns -1 when the file can't be decoded. */
+static uint8_t *runtime_image_load(GmlRender *r,const char *path,
+                                   int *width,int *height,int *components){
+  if(!r || !r->win || !path) return NULL;
+  uint8_t *encoded=NULL;
+  size_t encoded_size=0;
+  if(!anygm_vfs_read_all(r->win->host,path,&encoded,&encoded_size,(size_t)INT_MAX))
+    return NULL;
+  GmlMediaBuffer image={0};
+  int decoded=gml_image_decode_rgba(encoded,encoded_size,&image,
+                                    width,height,components);
+  free(encoded);
+  return decoded?image.data:NULL;
+}
+
+int gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeback, int xorig, int yorig){
+  if(!r || !path) return -1;
+  int W,H,comp;
+  unsigned char *img=runtime_image_load(r,path,&W,&H,&comp);
+  if(!img) return -1;
+  int frames=imgnum>0?imgnum:1;
+  if(W%frames) frames=1;                     /* not an even strip: treat as a single frame */
+  int fw=W/frames;
+  if(removeback && W>0 && H>0){
+    unsigned char *key=img+((size_t)(H-1)*W)*4;   /* bottom-left pixel */
+    unsigned char kr=key[0],kg=key[1],kb=key[2];
+    for(size_t i=0;i<(size_t)W*H;i++){
+      unsigned char *q=img+i*4;
+      if(q[0]==kr&&q[1]==kg&&q[2]==kb) q[3]=0;
+    }
+  }
+  uint8_t *rgba=malloc((size_t)frames*fw*H*4);
+  if(!rgba){ free(img); return -1; }
+  for(int f=0;f<frames;f++)
+    for(int y=0;y<H;y++)
+      memcpy(rgba+((size_t)f*fw*H+(size_t)y*fw)*4, img+((size_t)y*W+(size_t)f*fw)*4, (size_t)fw*4);
+  free(img);
+  int id=gml_sprite_append_from_rgba_frames(r,rgba,fw,H,frames,xorig,yorig,path);
+  if(id>=0 && id<r->n_spr) sprite_set_runtime_source(&r->spr[id],path,imgnum,removeback);
+  return id;
+}
+int gml_sprite_replace_from_rgba_frames(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig){
+  if(sprite<0 || sprite>=r->n_spr || !rgba || w<=0 || h<=0 || frames<=0) return 0;
+  sprite_set_runtime_rgba(&r->spr[sprite],rgba,w,h,frames,xorig,yorig,0);
+  return 1;
+}
+int gml_sprite_replace_from_rgba(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int xorig, int yorig){
+  return gml_sprite_replace_from_rgba_frames(r,sprite,rgba,w,h,1,xorig,yorig);
+}
+void gml_sprite_delete(GmlRender *r, int sprite){
+  if(!r || sprite<0 || sprite>=r->n_spr) return;
+  int base=r->base_n_spr>0?r->base_n_spr:r->n_spr;
+  if(sprite<base) return;
+  GmlSprite *s=&r->spr[sprite];
+  if(!s->runtime_extra) return;
+  gml_render_sprite_cache_free(s);
+  free(s->runtime_rgba);
+  free(s->runtime_row_min);
+  free(s->runtime_row_max);
+  free(s->owned_name);
+  free(s->runtime_source_path);
+  free(s->frame);
+  memset(s,0,sizeof(*s));
+  s->runtime_extra=1;
+  r->spr_has_free=1;   /* a reusable freed slot now exists */
+  while(r->n_spr>base){
+    GmlSprite *last=&r->spr[r->n_spr-1];
+    if(!(last->runtime_extra && !last->runtime_rgba && last->n_frames<=0)) break;
+    r->n_spr--;
+  }
+}
+static void sprite_auto_bbox(GmlRender *r, int sprite, int tolerance, int *ml, int *mt, int *mr, int *mb){
+  GmlSprite *s=&r->spr[sprite];
+  int l=s->w, t=s->h, rr=-1, bb=-1;
+  int frames=s->n_frames>0?s->n_frames:1;
+  for(int f=0; f<frames; f++) for(int y=0; y<s->h; y++) for(int x=0; x<s->w; x++){
+    if(gml_sprite_alpha(r,sprite,f,x,y)<=tolerance) continue;
+    if(x<l) l=x;
+    if(x>rr) rr=x;
+    if(y<t) t=y;
+    if(y>bb) bb=y;
+  }
+  if(rr<l || bb<t){ *ml=0; *mt=0; *mr=-1; *mb=-1; return; }
+  *ml=l; *mt=t; *mr=rr; *mb=bb;
+}
+static int clamp_i(int v, int lo, int hi){
+  return v<lo?lo:(v>hi?hi:v);
+}
+int gml_sprite_collision_mask(GmlRender *r, int sprite, int sepmasks, int bboxmode,
+                              int bbleft, int bbtop, int bbright, int bbbottom,
+                              int kind, int tolerance){
+  (void)sepmasks;
+  if(!r || sprite<0 || sprite>=r->n_spr) return 0;
+  GmlSprite *s=&r->spr[sprite];
+  if(!s->runtime_rgba || s->w<=0 || s->h<=0 || s->n_frames<=0) return 0;
+  if(tolerance<0) tolerance=0;
+  if(tolerance>255) tolerance=255;
+  if(kind<0 || kind>3) kind=0;
+  if(bboxmode==0){
+    sprite_auto_bbox(r,sprite,tolerance,&s->ml,&s->mt,&s->mr,&s->mb);
+  } else if(bboxmode==2){
+    s->ml=clamp_i(bbleft,0,s->w-1);
+    s->mt=clamp_i(bbtop,0,s->h-1);
+    s->mr=clamp_i(bbright,0,s->w-1);
+    s->mb=clamp_i(bbbottom,0,s->h-1);
+  } else {
+    s->ml=0; s->mt=0; s->mr=s->w-1; s->mb=s->h-1;
+  }
+  s->mask=NULL; s->mask_rowb=0; s->mask_count=0;
+  s->collision_kind=kind;
+  s->collision_tolerance=tolerance;
+  return 1;
+}
+void gml_render_clear_runtime_sprites(GmlRender *r){
+  int base=r->base_n_spr>0?r->base_n_spr:r->n_spr;
+  if(base>r->n_spr) base=r->n_spr;
+  for(int i=0;i<base;i++){
+    GmlSprite *s=&r->spr[i];
+    gml_render_sprite_cache_free(s);
+    free(s->runtime_rgba); free(s->runtime_row_min); free(s->runtime_row_max); free(s->runtime_source_path);
+    s->runtime_rgba=NULL; s->runtime_row_min=NULL; s->runtime_row_max=NULL; s->runtime_source_path=NULL; s->runtime_owned=0; s->runtime_extra=0;
+    s->runtime_opaque=0;
+    s->runtime_source_imgnum=0; s->runtime_source_removeback=0;
+    sprite_restore_base(s);
+  }
+  for(int i=base;i<r->n_spr;i++){
+    free(r->spr[i].runtime_rgba);
+    free(r->spr[i].runtime_row_min);
+    free(r->spr[i].runtime_row_max);
+    free(r->spr[i].owned_name);
+    free(r->spr[i].runtime_source_path);
+    free(r->spr[i].frame);
+  }
+  r->n_spr=base;
+}
+int gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w, int h,
+                                   int removeback, int smooth, int xorig, int yorig){
+  (void)smooth;
+  int sw=0, sh=0; uint32_t *src=surface_pixels(r,surf,&sw,&sh);
+  if(!src || w<=0 || h<=0) return -1;
+  if(src==r->fb) gml_render_maybe_prepare_draw(r);
+  uint8_t *rgba=calloc((size_t)w*h*4,1);
+  if(!rgba) return -1;
+  for(int yy=0; yy<h; yy++) for(int xx=0; xx<w; xx++){
+    int sx=x+xx, sy=y+yy;
+    uint8_t *dp=rgba+((size_t)yy*w+xx)*4;
+    if(sx>=0 && sy>=0 && sx<sw && sy<sh){
+      uint32_t p=src[(size_t)sy*sw+sx];
+      dp[0]=(uint8_t)((p>>16)&0xff);
+      dp[1]=(uint8_t)((p>>8)&0xff);
+      dp[2]=(uint8_t)(p&0xff);
+      dp[3]=255;
+    }
+  }
+  rgba_apply_removeback(rgba,w,h,removeback);
+  return gml_sprite_append_from_rgba_frames(r,rgba,w,h,1,xorig,yorig,NULL);
+}
+int gml_sprite_replace_from_file(GmlRender *r, int sprite, const char *path, int imgnumb,
+                                 int removeback, int smooth, int xorig, int yorig){
+  (void)smooth;
+  if(sprite<0 || sprite>=r->n_spr || !path || !*path) return 0;
+  int w=0,h=0,ch=0;
+  uint8_t *rgba=runtime_image_load(r,path,&w,&h,&ch);
+  if(!rgba) return 0;
+  int frames=1;
+  if(imgnumb>1 && w>=imgnumb && w%imgnumb==0){
+    int fw=w/imgnumb;
+    uint8_t *split=malloc((size_t)fw*h*imgnumb*4);
+    if(split){
+      for(int f=0; f<imgnumb; f++)
+        for(int y=0;y<h;y++)
+          memcpy(split+((size_t)f*h+y)*fw*4,rgba+((size_t)y*w+f*fw)*4,(size_t)fw*4);
+      free(rgba);
+      rgba=split; w=fw; frames=imgnumb;
+    }
+  }
+  rgba_apply_removeback(rgba,w,h*frames,removeback);
+  int ok=gml_sprite_replace_from_rgba_frames(r,sprite,rgba,w,h,frames,xorig,yorig);
+  if(ok) sprite_set_runtime_source(&r->spr[sprite],path,imgnumb,removeback);
+  if(!ok) free(rgba);
+  return ok;
+}

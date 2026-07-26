@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "anygm.h"
+#include "content_router.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
 
@@ -75,6 +76,23 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
 }
 
 int main(void){
+  char label[128];
+  anygm_content_save_label("/library/fixture_bundle/data.win",label,sizeof label);
+  if(strcmp(label,"fixture_bundle")){
+    fprintf(stderr,"generic payload save label mismatch: %s\n",label);
+    return 1;
+  }
+  anygm_content_save_label("C:\\library\\fixture_bundle\\data.alternate.win",label,sizeof label);
+  if(strcmp(label,"fixture_bundle")){
+    fprintf(stderr,"Windows-style generic payload save label mismatch: %s\n",label);
+    return 1;
+  }
+  anygm_content_save_label("/library/fixture_bundle.zip",label,sizeof label);
+  if(strcmp(label,"fixture_bundle")){
+    fprintf(stderr,"container save label mismatch: %s\n",label);
+    return 1;
+  }
+
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_content_create(&fixture)) return 1;
 
@@ -99,6 +117,18 @@ int main(void){
     char error[512]={0};
     anygm_get_last_error(first,error,sizeof error);
     fprintf(stderr,"engine load failed: %s\n",error);
+    return 1;
+  }
+  const char *fixture_name=strrchr(fixture.directory,'/');
+  fixture_name=fixture_name?fixture_name+1:fixture.directory;
+  char save_path[384];
+  snprintf(save_path,sizeof save_path,"%s/anygm/%s-%08x",fixture.directory,fixture_name,
+           anygm_content_path_hash(fixture.path));
+  AnygmFileInfo save_info={0};
+  save_info.struct_size=sizeof save_info;
+  if(services.file_stat(services.userdata,save_path,&save_info)!=ANYGM_OK ||
+     !(save_info.flags&ANYGM_FILE_INFO_DIRECTORY)){
+    fprintf(stderr,"content save namespace was not created: %s\n",save_path);
     return 1;
   }
 
@@ -149,6 +179,13 @@ int main(void){
   if(!save_state(first,&deterministic,&deterministic_size) ||
      deterministic_size!=first_written || memcmp(deterministic,first_state,first_written)){
     fprintf(stderr,"repeated serialization was not deterministic\n");
+    return 1;
+  }
+  uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
+  if(deterministic_size!=19490 ||
+     deterministic_hash!=UINT64_C(0xe78de2424cc30a7b)){
+    fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
+            deterministic_size,(unsigned long long)deterministic_hash);
     return 1;
   }
   free(deterministic);

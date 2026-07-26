@@ -12,6 +12,7 @@
 #include "gmlc_classic_import.h"
 #include "gmlc_project.h"
 #include "gml_win.h"
+#include "gml_image_codec.h"
 #include "anygm_vfs.h"
 #include <ctype.h>
 #include <limits.h>
@@ -51,6 +52,19 @@ static int sibling_alternate_path(const char *path, char *out, size_t outsz) {
   return 1;
 }
 
+static int path_join_bounded(char *out,size_t outsz,const char *parent,const char *relative){
+  if(!out || !outsz || !parent || !relative) return 0;
+  size_t parent_size=strlen(parent),relative_size=strlen(relative);
+  if(parent_size>=outsz || relative_size>=outsz-parent_size-1u){
+    out[0]='\0';
+    return 0;
+  }
+  memcpy(out,parent,parent_size);
+  out[parent_size]='/';
+  memcpy(out+parent_size+1u,relative,relative_size+1u);
+  return 1;
+}
+
 static int file_exists(const AnygmContentRouter *router,const char *path) {
   AnygmFileInfo info;
   return router&&anygm_vfs_stat(router->host,path,&info) &&
@@ -64,10 +78,8 @@ static int path_ext_is(const char *path, const char *ext) {
 
 static const char *path_basename(const char *path) {
   const char *slash = path ? strrchr(path, '/') : NULL;
-#ifdef _WIN32
   const char *bs = path ? strrchr(path, '\\') : NULL;
   if (bs && (!slash || bs > slash)) slash = bs;
-#endif
   return slash ? slash + 1 : (path ? path : "");
 }
 
@@ -90,6 +102,37 @@ void anygm_content_path_parent(const char *path, char *out, size_t outsz) {
     else *slash = '\0';
   } else snprintf(parent, sizeof(parent), ".");
   snprintf(out,outsz,"%s",parent);
+}
+
+static int path_name_is_generic_payload(const char *name){
+  return name && (!strcasecmp(name,"data.win") ||
+                  !strcasecmp(name,"data.alternate.win") ||
+                  !strcasecmp(name,"game.droid"));
+}
+
+void anygm_content_save_label(const char *path,char *out,size_t outsz){
+  if(!out || !outsz) return;
+  char candidate[1024]={0};
+  const char *name=path_basename(path);
+  if(path_name_is_generic_payload(name)){
+    char parent[1024];
+    anygm_content_path_parent(path,parent,sizeof parent);
+    const char *parent_name=path_basename(parent);
+    if(parent_name[0] && strcmp(parent_name,".") && strcmp(parent_name,".."))
+      snprintf(candidate,sizeof candidate,"%s",parent_name);
+  }
+  if(!candidate[0]) anygm_content_path_stem(path,candidate,sizeof candidate);
+
+  size_t written=0;
+  for(const unsigned char *source=(const unsigned char *)candidate;
+      *source && written+1<outsz;source++){
+    unsigned char c=*source;
+    int safe=(c>='a'&&c<='z') || (c>='A'&&c<='Z') || (c>='0'&&c<='9') ||
+             c=='-' || c=='_' || c=='.';
+    out[written++]=safe?(char)c:'_';
+  }
+  out[written]='\0';
+  if(!out[0]) snprintf(out,outsz,"content");
 }
 
 static uint64_t cache_hash_bytes(const void *data,size_t size){
@@ -248,12 +291,11 @@ int anygm_content_load_win(const AnygmContentRouter *router,GmlWin *win,const ch
 
 /* ---- ZIP-compatible content containers (.zip/.port/.apk and ZIP-shaped game.droid) ----
  * The archive image and each selected deflated member are held in bounded memory. The inflater
- * is stb_image's public-domain raw-DEFLATE implementation already linked for PNG decoding.
+ * uses the same bounded raw-DEFLATE leaf that backs PNG decoding.
  *
  * Content resolution is data driven: data.win, game.droid, an arbitrary *.win fallback, then a
  * nested .port/.apk/.zip. Only the selected payload's subtree is extracted. Android runtime
  * libraries alongside assets/game.droid are therefore neither loaded nor copied. */
-extern int stbi_zlib_decode_noheader_buffer(char *obuffer, int olen, const char *ibuffer, int ilen);
 static uint32_t zu32(const uint8_t *p){ return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24); }
 static uint16_t zu16(const uint8_t *p){ return (uint16_t)(p[0]|(p[1]<<8)); }
 static int mkdirs_for(const AnygmContentRouter *router,char *path,int full){
@@ -431,8 +473,9 @@ static int zip_write_deflated(const AnygmContentRouter *router,const char *path,
   if(!usz) return zip_write_stored(router,path,src,0,expected_crc);
   uint8_t *dst=malloc(usz);
   if(!dst) return 0;
-  int got=stbi_zlib_decode_noheader_buffer((char*)dst,(int)usz,(const char*)src,(int)csz);
-  int ok=got==(int)usz&&zip_crc32(dst,usz)==expected_crc&&
+  size_t got=0;
+  int ok=gml_deflate_decode_to_buffer(src,csz,GML_DEFLATE_RAW,dst,usz,&got)&&
+         got==(size_t)usz&&zip_crc32(dst,usz)==expected_crc&&
          anygm_vfs_write_all(router->host,path,dst,usz);
   free(dst);
   if(!ok) anygm_vfs_remove(router->host,path);
@@ -575,9 +618,8 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
   char zbuf[1024]; snprintf(zbuf,sizeof zbuf,"%s",zpath);
   const char *slash=strrchr(zbuf,'/'),*bs=strrchr(zbuf,'\\');
   if(bs && (!slash || bs>slash)) slash=bs;
-  const char *zname=slash?slash+1:zbuf;
-  char stem[192]; snprintf(stem,sizeof stem,"%s",zname);
-  { char *dot=strrchr(stem,'.'); if(dot) *dot=0; }
+  char stem[192];
+  anygm_content_path_stem(zpath,stem,sizeof stem);
   char zdir[1024];
   if(slash){ size_t dl=(size_t)(slash-zbuf); if(dl>=sizeof zdir) dl=sizeof zdir-1;
     memcpy(zdir,zbuf,dl); zdir[dl]=0; } else snprintf(zdir,sizeof zdir,".");
@@ -595,13 +637,17 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
                                  marker_data,sizeof marker_data);
   if(cache_ok && marker_data[1]=='\n' && marker_data[2]){
     kind=marker_data[0];
-    snprintf(rel,sizeof rel,"%s",marker_data+2);
+    size_t relative_size=strlen(marker_data+2);
+    if(relative_size>=sizeof rel) cache_ok=0;
+    else memcpy(rel,marker_data+2,relative_size+1);
+  } else cache_ok=0;
+  if(cache_ok){
     snprintf(existing,sizeof existing,"%s/%s",outdir,rel);
     uint64_t existing_size=0,existing_hash=0;
     cache_ok=(kind=='C' || kind=='N') && file_size64(router,existing,&existing_size) &&
              existing_size==marker_payload_size && file_hash64(router,existing,&existing_hash) &&
              existing_hash==marker_payload_hash;
-  } else cache_ok=0;
+  }
   if(!cache_ok){
     char nested[512]=""; rel[0]=0; kind=0;
     if(!mkdirs_for(router,outdir,1)) return 0;
@@ -624,7 +670,11 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
       content_log(router,ANYGM_CONTENT_LOG_WARN,"archive: could not publish cache marker");
     content_log(router,ANYGM_CONTENT_LOG_INFO,"archive: extracted %d files to %s (%c: %s)",n,outdir,kind,rel);
   } else content_log(router,ANYGM_CONTENT_LOG_INFO,"archive: reusing extracted copy at %s",outdir);
-  char resolved[1536]; snprintf(resolved,sizeof resolved,"%s/%s",outdir,rel);
+  char resolved[1536];
+  if(!path_join_bounded(resolved,sizeof resolved,outdir,rel)){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,"archive: resolved payload path is too long");
+    return 0;
+  }
   int magic=file_magic_kind(router,resolved);
   if(kind=='N' || magic==2) return load_archive_content_depth(router,resolved,content_path,cpsz,depth+1);
   if(kind!='C' || magic!=1) return 0;
@@ -727,7 +777,10 @@ static int load_source_project_content(const AnygmContentRouter *router,const ch
       content_log(router,ANYGM_CONTENT_LOG_ERROR,"source: no project manifest found inside %s",srcpath);
       return 0;
     }
-    snprintf(project_path,sizeof project_path,"%s/%s",outdir,rel);
+    if(!path_join_bounded(project_path,sizeof project_path,outdir,rel)){
+      content_log(router,ANYGM_CONTENT_LOG_ERROR,"source: extracted project path is too long");
+      return 0;
+    }
     content_log(router,ANYGM_CONTENT_LOG_INFO,"source: extracted %d files to %s (project: %s)",n,outdir,rel);
   }
 

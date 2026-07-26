@@ -1,0 +1,366 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+/* Canonical renderer payload encoding for root savestates. */
+#include "gml_render_state.h"
+#include "gml_render_internal.h"
+#include "anygm_host.h"
+
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct { uint8_t *data; size_t cap, pos; int ok; } CoreW;
+typedef struct { const uint8_t *data; size_t cap, pos; int ok; } CoreR;
+static void cw_raw(CoreW *s, const void *p, size_t n){
+  if(n>SIZE_MAX-s->pos){ s->ok=0; s->pos=SIZE_MAX; return; }
+  if(s->data){ if(s->pos<=s->cap && n<=s->cap-s->pos) memcpy(s->data+s->pos,p,n); else s->ok=0; }
+  s->pos+=n;
+}
+static void cr_raw(CoreR *s, void *p, size_t n){
+  if(n>SIZE_MAX-s->pos){ memset(p,0,n); s->ok=0; s->pos=SIZE_MAX; return; }
+  if(s->pos<=s->cap && n<=s->cap-s->pos) memcpy(p,s->data+s->pos,n);
+  else { memset(p,0,n); s->ok=0; }
+  s->pos+=n;
+}
+static void cw_u32(CoreW *s, uint32_t v){
+  uint8_t bytes[4]={(uint8_t)v,(uint8_t)(v>>8),(uint8_t)(v>>16),(uint8_t)(v>>24)};
+  cw_raw(s,bytes,sizeof bytes);
+}
+static void cw_i32(CoreW *s, int v){ cw_u32(s,(uint32_t)(int32_t)v); }
+static void cw_u64(CoreW *s, uint64_t v){
+  uint8_t bytes[8];
+  for(unsigned i=0;i<8;i++) bytes[i]=(uint8_t)(v>>(i*8));
+  cw_raw(s,bytes,sizeof bytes);
+}
+static void cw_d(CoreW *s, double v){ uint64_t bits=0; memcpy(&bits,&v,sizeof bits); cw_u64(s,bits); }
+static uint32_t cr_u32(CoreR *s){
+  uint8_t bytes[4]={0}; cr_raw(s,bytes,sizeof bytes);
+  return (uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
+}
+static int cr_i32(CoreR *s){ return (int)(int32_t)cr_u32(s); }
+static uint64_t cr_u64(CoreR *s){
+  uint8_t bytes[8]={0}; cr_raw(s,bytes,sizeof bytes); uint64_t value=0;
+  for(unsigned i=0;i<8;i++) value|=(uint64_t)bytes[i]<<(i*8);
+  return value;
+}
+static double cr_d(CoreR *s){ uint64_t bits=cr_u64(s); double value=0; memcpy(&value,&bits,sizeof value); return value; }
+
+static void state_store_u32(uint8_t *destination,uint32_t value){
+  destination[0]=(uint8_t)value;
+  destination[1]=(uint8_t)(value>>8);
+  destination[2]=(uint8_t)(value>>16);
+  destination[3]=(uint8_t)(value>>24);
+}
+
+
+
+static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
+  cw_i32(s,render->n_fonts);
+  for(int i=0;i<GML_MAX_FONTS;i++){
+    GmlFont *f=&render->fonts[i];
+    cw_i32(s,f->sprite); cw_i32(s,f->first);
+    cw_i32(s,f->prop); cw_i32(s,f->sep);
+    int map_len=(f->map && f->map_len>0) ? f->map_len : 0;
+    cw_i32(s,map_len);
+    for(int j=0;j<map_len;j++) cw_u32(s,f->map[j]);
+  }
+  cw_i32(s,render->app_draw_enable); cw_u32(s,render->color); cw_d(s,render->alpha);
+  cw_i32(s,render->halign); cw_i32(s,render->valign); cw_i32(s,render->font);
+  cw_i32(s,render->alphablend);
+  cw_i32(s,render->circle_precision);
+  cw_i32(s,render->next_surface_id);
+  /* The surface assigned to view 0 (view_surface_id) is derived data:
+   * anygm_run_frame mirrors the freshly rendered frame into it every frame, after the room pass and
+   * before any Draw GUI reads it. Serializing this derived surface needlessly increases every
+   * state and rewind delta. Skip its pixels: on load it starts transparent and is repopulated
+   * mid-pipeline in the first anygm_run_frame, before the compositor can sample it. */
+  for(int i=0;i<GML_MAX_SURFACES;i++){
+    GmlSurface *sf=&render->surface[i];
+    cw_i32(s,sf->live); cw_i32(s,sf->w); cw_i32(s,sf->h);
+    if(sf->live && sf->px && sf->w>0 && sf->h>0){
+      size_t n=(size_t)sf->w*sf->h;
+      if(view_surface>0 && i==view_surface-1){
+        cw_u32(s,1); cw_u32(s,(uint32_t)n); cw_u32(s,0);   /* one transparent run */
+        continue;
+      }
+      /* RLE stores (run,value) pairs because mostly uniform surfaces otherwise dominate state
+       * size and rewind deltas. Encoded bytes are cached per surface and rebuilt only after a draw
+       * marks the surface dirty, avoiding a scan of every unchanged pixel on each snapshot. */
+      if(sf->dirty || !sf->rle){
+        size_t need=8;   /* worst grows below */
+        size_t nr=0, pos=4;
+        if(sf->rle_cap<16){ uint8_t *np=realloc(sf->rle,4096); if(!np){ s->ok=0; continue; } sf->rle=np; sf->rle_cap=4096; }
+        for(size_t k=0;k<n;){
+          uint32_t v=sf->px[k]; size_t j=k+1;
+          while(j<n && sf->px[j]==v && j-k<0xFFFFFFFFu) j++;
+          if(pos+8>sf->rle_cap){ size_t nc=sf->rle_cap*2; uint8_t *np=realloc(sf->rle,nc);
+            if(!np){ s->ok=0; break; } sf->rle=np; sf->rle_cap=nc; }
+          uint32_t run=(uint32_t)(j-k);
+          state_store_u32(sf->rle+pos,run);
+          state_store_u32(sf->rle+pos+4,v);
+          pos+=8; nr++; k=j;
+        }
+        (void)need;
+        state_store_u32(sf->rle,(uint32_t)nr);
+        sf->rle_len=pos; sf->dirty=0;
+      }
+      cw_raw(s,sf->rle,sf->rle_len);
+    }
+  }
+  int runtime_sprites=0;
+  for(int i=0;i<render->n_spr;i++) if(render->spr[i].runtime_rgba) runtime_sprites++;
+  cw_i32(s,runtime_sprites);
+  for(int i=0;i<render->n_spr;i++) if(render->spr[i].runtime_rgba){
+    GmlSprite *sp=&render->spr[i];
+    cw_i32(s,i); cw_i32(s,sp->runtime_extra);
+    int frames=sp->n_frames>0?sp->n_frames:1;
+    cw_i32(s,sp->w); cw_i32(s,sp->h); cw_i32(s,frames); cw_i32(s,sp->originx); cw_i32(s,sp->originy);
+    cw_i32(s,sp->ml); cw_i32(s,sp->mt); cw_i32(s,sp->mr); cw_i32(s,sp->mb);
+    cw_i32(s,sp->collision_kind); cw_i32(s,sp->collision_tolerance);
+    if(sp->runtime_source_path && sp->runtime_source_path[0]){
+      size_t plen=strlen(sp->runtime_source_path);
+      if(plen>4095) plen=4095;
+      cw_i32(s,1);
+      cw_i32(s,(int)plen);
+      cw_raw(s,sp->runtime_source_path,plen);
+      cw_i32(s,sp->runtime_source_imgnum);
+      cw_i32(s,sp->runtime_source_removeback);
+    } else {
+      cw_i32(s,0);
+      cw_raw(s,sp->runtime_rgba,(size_t)sp->w*sp->h*frames*4);
+    }
+  }
+}
+
+
+/* Read font-pool records [from,to) into render->fonts. Returns 0 on parse error. */
+static int render_state_read_font_records(GmlRender *render,CoreR *s, int from, int to){
+  for(int i=from;i<to;i++){
+    render->fonts[i].sprite=cr_i32(s); render->fonts[i].first=cr_i32(s);
+    render->fonts[i].prop=cr_i32(s); render->fonts[i].sep=cr_i32(s);
+    int raw_len=cr_i32(s);
+    if(raw_len<0 || raw_len>4096){ s->ok=0; return 0; }
+    if(raw_len>0){
+      render->fonts[i].map=malloc((size_t)raw_len*sizeof(uint32_t));
+      if(!render->fonts[i].map){ s->ok=0; return 0; }
+    }
+    for(int j=0;j<raw_len;j++) render->fonts[i].map[j]=cr_u32(s);
+    render->fonts[i].map_len=raw_len;
+  }
+  return s->ok;
+}
+
+
+static int render_state_read(GmlRender *render,CoreR *s){
+  const AnygmHostServices *host=render&&render->win?render->win->host:NULL;
+  int nf=cr_i32(s);
+  if(nf<0 || nf>GML_MAX_FONTS) s->ok=0;
+  for(int i=0;i<GML_MAX_FONTS;i++){
+    free(render->fonts[i].map);
+    render->fonts[i].map=NULL;
+    render->fonts[i].map_len=0;
+    render->fonts[i].sprite=-1; render->fonts[i].first=0;
+    render->fonts[i].prop=0; render->fonts[i].sep=0;
+  }
+  if(!render_state_read_font_records(render,s,0,GML_MAX_FONTS)) return 0;
+  render->n_fonts=nf;
+  gml_render_rebuild_font_maps(render);
+  if(anygm_host_development_setting(host,"GML_LOG_STATE"))
+    anygm_host_logf(host,ANYGM_LOG_DEBUG,
+                    "[state] render: fonts ok (nf=%d pos=%" PRIu64 " ok=%d)\n",
+                    nf,(uint64_t)s->pos,s->ok);
+  render->app_draw_enable=cr_i32(s); render->color=cr_u32(s); render->alpha=cr_d(s);
+  render->halign=cr_i32(s); render->valign=cr_i32(s); render->font=cr_i32(s);
+  render->alphablend=cr_i32(s)?1:0;
+  render->circle_precision=cr_i32(s);
+  if(render->circle_precision<4) render->circle_precision=4;
+  if(render->circle_precision>64) render->circle_precision=64;
+  render->circle_precision=(render->circle_precision/4)*4;
+  if(render->circle_precision<4) render->circle_precision=4;
+  render->next_surface_id=cr_i32(s);
+  if(render->next_surface_id<1 || render->next_surface_id>GML_MAX_SURFACES) render->next_surface_id=1;
+  for(int i=0;i<GML_MAX_SURFACES;i++){
+    free(render->surface[i].px); free(render->surface[i].rle);
+    memset(&render->surface[i],0,sizeof(render->surface[i]));
+  }
+  for(int i=0;i<GML_MAX_SURFACES;i++){
+    int live=cr_i32(s), w=cr_i32(s), h=cr_i32(s);
+    if(live){
+      if(w<=0 || h<=0 || w>4096 || h>4096){ s->ok=0; return 0; }
+      size_t n=(size_t)w*h;
+      render->surface[i].px=malloc(n*sizeof(uint32_t));
+      if(!render->surface[i].px){ s->ok=0; return 0; }
+      render->surface[i].live=1; render->surface[i].w=w; render->surface[i].h=h;
+      int all_opaque = 1, all_transparent = 1;
+      uint32_t nrun=cr_u32(s); size_t k=0;
+      for(uint32_t r2=0; r2<nrun && s->ok; r2++){
+        uint32_t run=cr_u32(s), v=cr_u32(s);
+        if(run>n-k){ s->ok=0; break; }
+        if((v>>24)!=255u) all_opaque = 0;
+        if((v>>24)!=0u) all_transparent = 0;
+        for(uint32_t q=0;q<run;q++) render->surface[i].px[k++]=v;
+        render->surface[i].dirty=1;
+      }
+      if(k!=n) { all_opaque = 0; memset(render->surface[i].px+k,0,(n-k)*sizeof(uint32_t)); if(s->ok && k>0) s->ok=1; }
+      render->surface[i].opaque_known=1;
+      render->surface[i].all_opaque=all_opaque;
+      render->surface[i].all_transparent=all_transparent;
+    }
+  }
+  if(anygm_host_development_setting(host,"GML_LOG_STATE"))
+    anygm_host_logf(host,ANYGM_LOG_DEBUG,
+                    "[state] render: surfaces ok (nsurf=%d pos=%" PRIu64 " ok=%d)\n",
+                    GML_MAX_SURFACES,(uint64_t)s->pos,s->ok);
+  uint8_t *seen_runtime = NULL;
+  int seen_cap = 0;
+  int runtime_sprites=cr_i32(s);
+  if(anygm_host_development_setting(host,"GML_LOG_STATE"))
+    anygm_host_logf(host,ANYGM_LOG_DEBUG,
+                    "[state] render: runtime_sprites=%d (pos=%" PRIu64 ")\n",
+                    runtime_sprites,(uint64_t)s->pos);
+  if(runtime_sprites<0 || runtime_sprites>4096){ s->ok=0; return 0; }
+  seen_cap = render->spr_cap + runtime_sprites + 16;
+  if(seen_cap < render->n_spr + runtime_sprites + 16) seen_cap = render->n_spr + runtime_sprites + 16;
+  seen_runtime = calloc((size_t)(seen_cap>0?seen_cap:1),1);
+  if(!seen_runtime){ s->ok=0; return 0; }
+  for(int n=0;n<runtime_sprites;n++){
+    int id=cr_i32(s), extra=cr_i32(s);
+    int w=cr_i32(s), h=cr_i32(s), frames=cr_i32(s), ox=cr_i32(s), oy=cr_i32(s);
+    int ml=cr_i32(s), mt=cr_i32(s), mr=cr_i32(s), mb=cr_i32(s);
+    int kind=cr_i32(s), tolerance=cr_i32(s);
+    if(id<0 || w<=0 || h<=0 || frames<=0 || frames>4096 || w>4096 || h>4096){ s->ok=0; return 0; }
+    if(id>=seen_cap){
+      int nc=id+256;
+      uint8_t *ns=realloc(seen_runtime,(size_t)nc);
+      if(!ns){ free(seen_runtime); s->ok=0; return 0; }
+      memset(ns+seen_cap,0,(size_t)(nc-seen_cap));
+      seen_runtime=ns; seen_cap=nc;
+    }
+    seen_runtime[id]=1;
+    int mode = cr_i32(s);
+    if(mode==1){
+      int plen=cr_i32(s);
+      if(plen<0 || plen>4095){ free(seen_runtime); s->ok=0; return 0; }
+      char *path=malloc((size_t)plen+1);
+      if(!path){ free(seen_runtime); s->ok=0; return 0; }
+      cr_raw(s,path,(size_t)plen); path[plen]=0;
+      int imgnum=cr_i32(s), removeback=cr_i32(s);
+      int got=-1;
+      if(id>=0 && id<render->n_spr){
+        GmlSprite *cur=&render->spr[id];
+        if(cur->runtime_rgba && cur->runtime_source_path && !strcmp(cur->runtime_source_path,path) &&
+           cur->w==w && cur->h==h && cur->n_frames==frames && cur->originx==ox && cur->originy==oy){
+          got=id;
+        }
+      }
+      if(got<0){
+        if(extra || id>=render->base_n_spr){
+          if(id>=0 && id<render->n_spr && render->spr[id].runtime_extra) gml_sprite_delete(render,id);
+          got=gml_sprite_add_file(render,path,imgnum,removeback,ox,oy);
+        } else {
+          got=gml_sprite_replace_from_file(render,id,path,imgnum,removeback,0,ox,oy) ? id : -1;
+        }
+      }
+      free(path);
+      if(got!=id || got<0 || got>=render->n_spr){ free(seen_runtime); s->ok=0; return 0; }
+      GmlSprite *chk=&render->spr[got];
+      if(chk->w!=w || chk->h!=h || chk->n_frames!=frames){ free(seen_runtime); s->ok=0; return 0; }
+    } else if(mode==0){
+      uint64_t pixn=(uint64_t)w*(uint64_t)h*(uint64_t)frames;
+      size_t rem=s->pos<=s->cap ? s->cap-s->pos : 0;
+      if(pixn > SIZE_MAX/4 || (size_t)pixn*4 > rem){ free(seen_runtime); s->ok=0; return 0; }
+      size_t bytes=(size_t)pixn*4;
+      uint8_t *rgba=malloc(bytes);
+      if(!rgba){ free(seen_runtime); s->ok=0; return 0; }
+      cr_raw(s,rgba,bytes);
+      if(extra || id>=render->base_n_spr){
+        if(id>=0 && id<render->n_spr && render->spr[id].runtime_extra) gml_sprite_delete(render,id);
+        int got=gml_sprite_append_from_rgba_frames(render,rgba,w,h,frames,ox,oy,"<state-sprite>");
+        if(got!=id){ free(seen_runtime); s->ok=0; return 0; }
+      } else if(!gml_sprite_replace_from_rgba_frames(render,id,rgba,w,h,frames,ox,oy)){
+        free(rgba); free(seen_runtime); s->ok=0; return 0;
+      }
+    } else {
+      free(seen_runtime); s->ok=0; return 0;
+    }
+    if(id>=0 && id<render->n_spr){
+      GmlSprite *sp=&render->spr[id];
+      if(kind<0 || kind>3) kind=0;
+      if(tolerance<0) tolerance=0;
+      if(tolerance>255) tolerance=255;
+      if(ml<0) ml=0;
+      if(mt<0) mt=0;
+      if(mr>=w) mr=w-1;
+      if(mb>=h) mb=h-1;
+      sp->ml=ml; sp->mt=mt; sp->mr=mr; sp->mb=mb;
+      sp->collision_kind=kind; sp->collision_tolerance=tolerance;
+    }
+  }
+  int base=render->base_n_spr>0?render->base_n_spr:render->n_spr;
+  if(base>render->n_spr) base=render->n_spr;
+  for(int i=render->n_spr-1;i>=base;i--)
+    if(render->spr[i].runtime_extra && (i>=seen_cap || !seen_runtime[i]))
+      gml_sprite_delete(render,i);
+  for(int i=0;i<base;i++) if(render->spr[i].runtime_rgba && (i>=seen_cap || !seen_runtime[i])){
+    GmlSprite *sp=&render->spr[i];
+    free(sp->runtime_rgba); free(sp->runtime_row_min); free(sp->runtime_row_max); free(sp->runtime_source_path);
+    sp->runtime_rgba=NULL; sp->runtime_row_min=NULL; sp->runtime_row_max=NULL; sp->runtime_source_path=NULL; sp->runtime_owned=0; sp->runtime_extra=0;
+    sp->runtime_source_imgnum=0; sp->runtime_source_removeback=0;
+  }
+  free(seen_runtime);
+  return s->ok;
+}
+
+size_t gml_render_state_size(GmlRender *render,int derived_view_surface){
+  if(!render) return 0;
+  CoreW state={0};
+  state.ok=1;
+  render_state_write(render,derived_view_surface,&state);
+  return state.ok?state.pos:0;
+}
+
+int gml_render_state_save(GmlRender *render,int derived_view_surface,
+                          void *data,size_t length,size_t *written){
+  if(!render || !data) return 0;
+  CoreW state={(uint8_t*)data,length,0,1};
+  render_state_write(render,derived_view_surface,&state);
+  if(written) *written=state.pos;
+  return state.ok && state.pos<=length;
+}
+
+int gml_render_state_load(GmlRender *render,const void *data,size_t length,size_t *used){
+  if(!render || !data) return 0;
+  CoreR state={(const uint8_t*)data,length,0,1};
+  int result=render_state_read(render,&state);
+  if(used) *used=state.pos;
+  return result && state.ok && state.pos<=length;
+}
+
+int gml_render_state_profile_metrics(const GmlRender *render,
+                                     GmlRenderStateProfileMetrics *metrics){
+  if(!render || !metrics) return 0;
+  memset(metrics,0,sizeof *metrics);
+  for(int i=0;i<GML_MAX_SURFACES;i++){
+    const GmlSurface *surface=&render->surface[i];
+    if(surface->live && surface->px && surface->w>0 && surface->h>0){
+      metrics->surface_count++;
+      metrics->surface_bytes+=(size_t)surface->w*(size_t)surface->h*sizeof(uint32_t);
+    }
+  }
+  for(int i=0;i<render->n_spr;i++){
+    const GmlSprite *sprite=&render->spr[i];
+    if(sprite->runtime_rgba && sprite->w>0 && sprite->h>0 && sprite->n_frames>0){
+      size_t bytes=(size_t)sprite->w*(size_t)sprite->h*(size_t)sprite->n_frames*4;
+      metrics->runtime_sprite_count++;
+      if(sprite->runtime_source_path && sprite->runtime_source_path[0]){
+        metrics->file_runtime_sprite_count++;
+        metrics->file_runtime_sprite_bytes+=bytes;
+      } else {
+        metrics->inline_runtime_sprite_bytes+=bytes;
+      }
+    }
+  }
+  return 1;
+}

@@ -4,9 +4,16 @@
 /* gml_audio.c — software mixer for AUDO/SOND. Handles uncompressed RIFF/WAV, OGG Vorbis,
  * and MP3. WAV data is referenced in-place; compressed data is mostly decoded lazily on
  * first playback so large soundtracks do not consume decoded-PCM memory at boot. */
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
 #define STB_VORBIS_NO_PUSHDATA_API
 #define STB_VORBIS_NO_STDIO
 #include "stb_vorbis.c"
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #undef STB_VORBIS_NO_STDIO
 #undef STB_VORBIS_NO_PUSHDATA_API
 #define MINIMP3_ONLY_MP3

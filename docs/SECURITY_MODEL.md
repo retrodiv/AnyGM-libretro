@@ -86,6 +86,11 @@ cache, and save roots are passed explicitly in `AnygmContentSource`; the core
 does not infer sibling repositories, a home directory, or a process working
 directory.
 
+Writable content files are confined below the explicit save root in
+`anygm/<sanitized-label>-<path-hash>/`. The human-readable label contains only
+ASCII letters, digits, dots, hyphens, and underscores. It is descriptive only;
+the path hash keeps separate source identities from colliding by label alone.
+
 The optional file-mapping callbacks use that same namespace and borrow only
 immutable bytes. The runtime validates mapped size and content exactly as it
 does VFS-read bytes, retains the opaque host handle while the view is live, and
@@ -105,6 +110,14 @@ state load validates header encoding, exact section arithmetic, total size,
 checksum, content fingerprint, compatibility fingerprint, and stateful config
 fingerprint before section decoding. A failure during decoding restores an
 exact pre-load snapshot.
+
+The VM state reader exposes an opaque bounded cursor to the builtin resource
+owner at four established field positions. That owner validates INI,
+map/list/grid, physics, emitter, and time-source counts and dimensions before
+allocation or indexed access. It cannot change the root framing, advance
+outside the VM section, or publish an independently restored object. Decoding
+occurs in the engine's scratch transaction, so any resource-stage failure
+discards the candidate and preserves the prior live engine exactly.
 
 Cache data is never authoritative. A schema, producer, source, output, size,
 or checksum mismatch discards the cache marker and regenerates from the source.
@@ -138,6 +151,9 @@ facilities are explicit optional host callbacks.
 
 `make architecture-check` enforces dependency and direct-system-call rules.
 `make contract-check` exercises lifecycle and host failures.
+`make check TEST=builtin_state` exercises resource reset, transient exclusion,
+and canonical resource restoration, while `make check TEST=state_security`
+exercises bounded corrupt-state rejection.
 `make integration-check` proves deterministic state and engine isolation.
 `make security-check` runs bounded state, VFS, archive, cache, and override
 corpora. `make sanitizer-check` rebuilds those paths with address and undefined

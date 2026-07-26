@@ -1,0 +1,259 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+/* Animation-curve lookup and ordered animation/platform fallback dispatch. */
+#include "gml_builtin_internal.h"
+#include "gml_render.h"
+#include "anygm_host.h"
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* ACRV curve records contain inline channels and points. Evaluate linearly between knots and clamp at the ends. */
+static float acrv_f32(const uint8_t *d, uint32_t o){ float f; memcpy(&f,d+o,4); return f; }
+static uint32_t acrv_curve_ptr(GmlVM *vm, int idx){
+  const GmlChunk *c=gml_chunk(vm->win,"ACRV"); if(!c) return 0;
+  const uint8_t *d=vm->win->data; uint32_t n=u32(d,c->off+4);
+  if(idx<0||(uint32_t)idx>=n) return 0;
+  return u32(d,c->off+8+idx*4);
+}
+static uint32_t acrv_channel_ptr(GmlVM *vm, int curve, int ch){
+  uint32_t cp=acrv_curve_ptr(vm,curve); if(!cp) return 0;
+  const uint8_t *d=vm->win->data; uint32_t nch=u32(d,cp+8);
+  if(ch<0||(uint32_t)ch>=nch) return 0;
+  uint32_t p=cp+12;
+  for(int i=0;i<ch;i++){ uint32_t npts=u32(d,p+12); p+=16+npts*24; }
+  return p;
+}
+#define GML_ACRV_TAG 0x52000000
+static double acrv_evaluate(GmlVM *vm, int curve, int ch, double x){
+  uint32_t p=acrv_channel_ptr(vm,curve,ch); if(!p) return 0;
+  const uint8_t *d=vm->win->data; uint32_t npts=u32(d,p+12);
+  if(!npts) return 0;
+  uint32_t pt=p+16;
+  double x0=acrv_f32(d,pt), y0=acrv_f32(d,pt+4);
+  if(npts==1 || x<=x0) return y0;
+  for(uint32_t i=1;i<npts;i++){
+    double x1=acrv_f32(d,pt+i*24), y1=acrv_f32(d,pt+i*24+4);
+    if(x<=x1){ double t=(x1>x0)?(x-x0)/(x1-x0):0; return y0+(y1-y0)*t; }
+    x0=x1; y0=y1;
+  }
+  return acrv_f32(d,pt+(npts-1)*24+4);   /* past the last knot */
+}
+static void inst_store_val(GmlInstance *in, const char *key, GmlVal v){
+  if(!in || !key) return;
+  GmlVal *p=gml_varmap_get(&in->vars,key);
+  if(p){ *p=v; return; }
+  char *owned=strdup(key);
+  if(!owned) return;
+  *gml_varmap_put(&in->vars,owned)=v;
+}
+static void inst_store_real(GmlInstance *in, const char *key, double v){
+  inst_store_val(in,key,vreal(v));
+}
+static void inst_store_string(GmlInstance *in, const char *key, const char *s){
+  char *copy=strdup(s?s:"");
+  if(!copy) return;
+  inst_store_val(in,key,vstr(copy));
+}
+static GmlVal inst_lookup(GmlInstance *in, const char *key){
+  GmlVal *p=(in&&key)?gml_varmap_get(&in->vars,key):NULL;
+  return p?*p:vundef();
+}
+static int skel_key(char *out, size_t cap, const char *kind, const char *name, const char *field){
+  int n=snprintf(out,cap,"__skel_%s:%s:%s",kind?kind:"",name?name:"",field?field:"");
+  return n>=0 && (size_t)n<cap;
+}
+static double skel_bone_num(GmlInstance *in, const char *kind, const char *bone, const char *field, double def){
+  char key[384];
+  if(!skel_key(key,sizeof(key),kind,bone,field)) return def;
+  GmlVal v=inst_lookup(in,key);
+  if(v.t==V_UNDEF) return def;
+  return N(&v,1,0);
+}
+static const char *skel_bone_str(GmlInstance *in, const char *kind, const char *bone, const char *field, const char *def){
+  char key[384];
+  if(!skel_key(key,sizeof(key),kind,bone,field)) return def;
+  GmlVal v=inst_lookup(in,key);
+  return v.t==V_STR ? (v.s?v.s:"") : def;
+}
+static int skel_bone_has(GmlInstance *in, const char *kind, const char *bone, const char *field){
+  char key[384];
+  return skel_key(key,sizeof(key),kind,bone,field) && inst_lookup(in,key).t!=V_UNDEF;
+}
+static void skel_store_map_num(GmlVM *vm, GmlInstance *in, int mapid,
+                               const char *kind, const char *bone, const char *field, double def){
+  int ok=0;
+  GmlVal mv=ds_map_lookup_s(vm,mapid,field,&ok);
+  double v=ok?N(&mv,1,0):skel_bone_num(in,kind,bone,field,def);
+  char key[384];
+  if(skel_key(key,sizeof(key),kind,bone,field)) inst_store_real(in,key,v);
+}
+static void skel_store_map_str(GmlVM *vm, GmlInstance *in, int mapid,
+                               const char *kind, const char *bone, const char *field, const char *def){
+  int ok=0;
+  GmlVal mv=ds_map_lookup_s(vm,mapid,field,&ok);
+  const char *v=(ok && mv.t==V_STR) ? (mv.s?mv.s:"") : skel_bone_str(in,kind,bone,field,def);
+  char key[384];
+  if(skel_key(key,sizeof(key),kind,bone,field)) inst_store_string(in,key,v);
+}
+static void skel_bone_map_put_base(GmlVM *vm, GmlInstance *in, int mapid, const char *kind, const char *bone){
+  ds_map_put(vm,mapid,vstr("x"),vreal(skel_bone_num(in,kind,bone,"x",0)),1);
+  ds_map_put(vm,mapid,vstr("y"),vreal(skel_bone_num(in,kind,bone,"y",0)),1);
+  ds_map_put(vm,mapid,vstr("angle"),vreal(skel_bone_num(in,kind,bone,"angle",0)),1);
+  ds_map_put(vm,mapid,vstr("xscale"),vreal(skel_bone_num(in,kind,bone,"xscale",1)),1);
+  ds_map_put(vm,mapid,vstr("yscale"),vreal(skel_bone_num(in,kind,bone,"yscale",1)),1);
+  ds_map_put(vm,mapid,vstr("parent"),vstr(skel_bone_str(in,kind,bone,"parent","")),1);
+}
+GmlVal builtin_skeleton(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  GmlInstance *in=vm?vm->cur_self:NULL;
+  GmlBuiltinState *state=builtin_state_ensure(vm);
+  if(builtin_setting(vm,"GML_LOG_SKEL")){
+    if(!state || state->skeleton_log_count<256){
+      
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[skel] f%ld self=%u %s",vm->frame,in?in->id:0,nm);
+      for(int i=0;i<n && i<3;i++){
+        if(a[i].t==V_STR) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"%s\"%s\"",i?" ":" ",a[i].s?a[i].s:"");
+        else anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"%s%g",i?" ":" ",N(a,n,i));
+      }
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"\n");
+    }
+    if(state) state->skeleton_log_count++;
+  }
+  if(!strcmp(nm,"skeleton_animation_set")){
+    if(in) inst_store_string(in,"__skel_animation",S(vm,a,n,0));
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_animation_get")){
+    GmlVal v=inst_lookup(in,"__skel_animation");
+    return v.t==V_STR ? vstr(v.s?v.s:"") : vstr("");
+  }
+  if(!strcmp(nm,"skeleton_animation_mix")){
+    if(in){
+      char key[384];
+      int k=snprintf(key,sizeof(key),"__skel_mix:%s:%s",S(vm,a,n,0),S(vm,a,n,1));
+      if(k>=0 && (size_t)k<sizeof(key)) inst_store_real(in,key,N(a,n,2));
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_skin_set")){
+    if(in) inst_store_string(in,"__skel_skin",S(vm,a,n,0));
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_skin_get")){
+    GmlVal v=inst_lookup(in,"__skel_skin");
+    return v.t==V_STR ? vstr(v.s?v.s:"") : vstr("");
+  }
+  if(!strcmp(nm,"skeleton_attachment_set")){
+    if(in){
+      char key[384];
+      int k=snprintf(key,sizeof(key),"__skel_attachment:%s",S(vm,a,n,0));
+      if(k>=0 && (size_t)k<sizeof(key)) inst_store_string(in,key,S(vm,a,n,1));
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_attachment_get")){
+    char key[384];
+    int k=snprintf(key,sizeof(key),"__skel_attachment:%s",S(vm,a,n,0));
+    GmlVal v=(k>=0 && (size_t)k<sizeof(key))?inst_lookup(in,key):vundef();
+    return v.t==V_STR ? vstr(v.s?v.s:"") : vstr("");
+  }
+  if(!strcmp(nm,"skeleton_bone_data_get")){
+    if(in && n>=2) skel_bone_map_put_base(vm,in,(int)N(a,n,1),"bone_data",S(vm,a,n,0));
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_bone_data_set")){
+    if(in && n>=2){
+      int mapid=(int)N(a,n,1);
+      const char *bone=S(vm,a,n,0);
+      skel_store_map_num(vm,in,mapid,"bone_data",bone,"x",0);
+      skel_store_map_num(vm,in,mapid,"bone_data",bone,"y",0);
+      skel_store_map_num(vm,in,mapid,"bone_data",bone,"angle",0);
+      skel_store_map_num(vm,in,mapid,"bone_data",bone,"xscale",1);
+      skel_store_map_num(vm,in,mapid,"bone_data",bone,"yscale",1);
+      skel_store_map_str(vm,in,mapid,"bone_data",bone,"parent","");
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_bone_state_get")){
+    if(in && n>=2){
+      int mapid=(int)N(a,n,1);
+      const char *bone=S(vm,a,n,0);
+      if(!skel_bone_has(in,"bone_state",bone,"angle") &&
+         !skel_bone_has(in,"bone_state",bone,"x") &&
+         !skel_bone_has(in,"bone_state",bone,"y"))
+        return vreal(0);
+      double x=skel_bone_num(in,"bone_state",bone,"x",skel_bone_num(in,"bone_data",bone,"x",0));
+      double y=skel_bone_num(in,"bone_state",bone,"y",skel_bone_num(in,"bone_data",bone,"y",0));
+      double angle=skel_bone_num(in,"bone_state",bone,"angle",skel_bone_num(in,"bone_data",bone,"angle",0));
+      double xs=skel_bone_num(in,"bone_state",bone,"xscale",skel_bone_num(in,"bone_data",bone,"xscale",1));
+      double ys=skel_bone_num(in,"bone_state",bone,"yscale",skel_bone_num(in,"bone_data",bone,"yscale",1));
+      ds_map_put(vm,mapid,vstr("x"),vreal(x),1);
+      ds_map_put(vm,mapid,vstr("y"),vreal(y),1);
+      ds_map_put(vm,mapid,vstr("angle"),vreal(angle),1);
+      ds_map_put(vm,mapid,vstr("xscale"),vreal(xs),1);
+      ds_map_put(vm,mapid,vstr("yscale"),vreal(ys),1);
+      ds_map_put(vm,mapid,vstr("worldX"),vreal(x),1);
+      ds_map_put(vm,mapid,vstr("worldY"),vreal(y),1);
+      ds_map_put(vm,mapid,vstr("worldAngleX"),vreal(angle),1);
+      ds_map_put(vm,mapid,vstr("worldAngleY"),vreal(angle),1);
+      ds_map_put(vm,mapid,vstr("worldScaleX"),vreal(fabs(xs)),1);
+      ds_map_put(vm,mapid,vstr("worldScaleY"),vreal(fabs(ys)),1);
+      ds_map_put(vm,mapid,vstr("appliedAngle"),vreal(angle),1);
+      ds_map_put(vm,mapid,vstr("parent"),vstr(skel_bone_str(in,"bone_state",bone,"parent",
+        skel_bone_str(in,"bone_data",bone,"parent",""))),1);
+    }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"skeleton_bone_state_set")){
+    if(in && n>=2){
+      int mapid=(int)N(a,n,1);
+      const char *bone=S(vm,a,n,0);
+      skel_store_map_num(vm,in,mapid,"bone_state",bone,"x",skel_bone_num(in,"bone_data",bone,"x",0));
+      skel_store_map_num(vm,in,mapid,"bone_state",bone,"y",skel_bone_num(in,"bone_data",bone,"y",0));
+      skel_store_map_num(vm,in,mapid,"bone_state",bone,"angle",skel_bone_num(in,"bone_data",bone,"angle",0));
+      skel_store_map_num(vm,in,mapid,"bone_state",bone,"xscale",skel_bone_num(in,"bone_data",bone,"xscale",1));
+      skel_store_map_num(vm,in,mapid,"bone_state",bone,"yscale",skel_bone_num(in,"bone_data",bone,"yscale",1));
+      skel_store_map_str(vm,in,mapid,"bone_state",bone,"parent",skel_bone_str(in,"bone_data",bone,"parent",""));
+    }
+    return vreal(0);
+  }
+  return vreal(0);
+}
+
+GmlVal gml_builtin_try_animation(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  GmlRender *R=(GmlRender*)vm->render;
+  (void)R;
+  /* animation curves: get_channel hands out a tagged handle; evaluate interpolates the knots. */
+  if(!strcmp(nm,"animcurve_exists")) return vreal(acrv_curve_ptr(vm,(int)N(a,n,0))!=0);
+  if(!strcmp(nm,"animcurve_get")) return vreal(N(a,n,0));   /* asset ref passes through */
+  if(!strcmp(nm,"animcurve_get_channel")){
+    int curve=(int)N(a,n,0), ch=0;
+    if(n>=2 && a[1].t==V_STR){                    /* select channel by name */
+      uint32_t cp=acrv_curve_ptr(vm,curve); ch=-1;
+      if(cp){ const uint8_t *d=vm->win->data; uint32_t nch=u32(d,cp+8), p=cp+12;
+        for(uint32_t i=0;i<nch;i++){ uint32_t nmp=u32(d,p), npts=u32(d,p+12);
+          uint32_t ln=u32(d,nmp-4);
+          if(ln==strlen(a[1].s) && !memcmp(vm->win->data+nmp,a[1].s,ln)){ ch=(int)i; break; }
+          p+=16+npts*24; } }
+      if(ch<0) ch=0;
+    } else ch=(int)N(a,n,1);
+    if(!acrv_channel_ptr(vm,curve,ch)) return vreal(-1);
+    return vreal((double)(GML_ACRV_TAG | ((curve&0xFFF)<<8) | (ch&0xFF))); }
+  if(!strcmp(nm,"animcurve_channel_evaluate")){
+    int h=(int)N(a,n,0);
+    if((h & 0x7F000000)!=GML_ACRV_TAG) return vreal(0);
+    return vreal(acrv_evaluate(vm,(h>>8)&0xFFF,h&0xFF,N(a,n,1))); }
+  /* The VM performs mark/sweep at safe frame boundaries. An explicit request therefore needs no
+   * mid-bytecode mutation; acknowledging it preserves API behavior without risking live roots. */
+  if(!strcmp(nm,"gc_collect") || !strcmp(nm,"gc_enable")) return vreal(0);
+  if(!strcmp(nm,"gc_is_enabled")) return vreal(1);
+  if(!strncmp(nm,"shader_",7)) return vreal(0);
+  if(!strcmp(nm,"steam_current_game_language")) return vstr("english");
+  if(!strcmp(nm,"steam_initialised")||!strcmp(nm,"steam_initialized")) return vreal(0);
+  if(!strncmp(nm,"steam_",6)) return vreal(0);
+  if(!strncmp(nm,"psn_",4)) return vreal(0);
+  return gml_builtin_try_physics(vm,nm,a,n);
+}

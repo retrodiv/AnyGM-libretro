@@ -5,36 +5,11 @@
 #ifndef GML_VM_H
 #define GML_VM_H
 #include "anygm.h"
+#include "gml_value.h"
 #include "gml_win.h"
+#include "gml_software3d.h"
 
 struct GmlClassicDispatchCache;
-
-/* ---- value ---- */
-typedef enum { V_REAL=0, V_STR=1, V_ARR=2, V_UNDEF=3 } GmlValType;
-typedef struct { GmlValType t; double d; const char *s; void *arr; } GmlVal;
-typedef struct {
-  GmlVal *data; int len, cap;
-  int is_2d, height2d, row_cap;
-  int nested_2d;
-  int *row_len;
-  int escaped;   /* referenced beyond its creating scope (stored to a global/instance var,
-                    a ds structure, or returned) — locals cleanup must not free it */
-} GmlArr;
-static inline GmlVal vreal(double d){ GmlVal v; v.t=V_REAL; v.d=d; v.s=0; v.arr=0; return v; }
-static inline GmlVal vstr(const char *s){ GmlVal v; v.t=V_STR; v.d=0; v.s=s; v.arr=0; return v; }
-/* owned = the string is a fresh malloc'd temporary (v.d!=0 marks ownership); the VM frees it when
- * consumed. Literals/references (data.win STRG, rodata, var pointers) use vstr() and are never freed. */
-static inline GmlVal vstr_owned(char *s){ GmlVal v; v.t=V_STR; v.d=1; v.s=s; v.arr=0; return v; }
-static inline GmlVal vundef(void){ GmlVal v; v.t=V_UNDEF; v.d=0; v.s=0; v.arr=0; return v; }
-
-/* ---- variable map: open-addressing, key = interned name pointer ---- */
-typedef struct {
-  const char *key;
-  uint32_t hash;
-  GmlVal val;
-  unsigned char key_owned; /* heap key released with the map; STRG/literal keys stay borrowed */
-} GmlVarSlot;
-typedef struct { GmlVarSlot *slots; int cap, len; } GmlVarMap;
 
 /* ---- instance ---- */
 #define GML_ALARMS 12
@@ -107,32 +82,6 @@ typedef struct {
   int *slots;
   int count, capacity;
 } GmlCollisionCandidateCache;
-/* Legacy JSON/DS containers retain whether a real-valued handle denotes a
- * nested list or map. Probing live ids is ambiguous because ordinary numeric
- * values can legitimately equal a DS id. */
-typedef struct { char *key; GmlVal key_val, val; unsigned char child_kind; } GmlDSMapEntry;
-/* hidx: lazy open-addressing index over entry[] (built past ~48 entries, rebuilt when hdirty).
- * Runtime-only — never serialized; state load leaves it NULL and the first lookup rebuilds. */
-typedef struct { int live; uint32_t id; GmlDSMapEntry *entry; int len, cap;
-                 int *hidx; int hcap; int hdirty;
-                 int last_lookup; } GmlDSMap;
-typedef struct { int live; uint32_t id; GmlVal *item; unsigned char *child_kind; int len, cap; } GmlDSList;
-typedef struct { int live; uint32_t id; GmlVal *cell; int w, h; } GmlDSGrid;   /* row-major w*h cells */
-#define GML_DS_MAP_MAX 256
-#define GML_DS_LIST_MAX 256
-#define GML_DS_GRID_MAX 32
-
-/* Time sources use built-in parent ids 0/1. Custom handles occupy a disjoint range so they
- * cannot alias instances, DS containers or tagged struct references. */
-#define GML_TIME_SOURCE_MAX 256
-#define GML_TIME_SOURCE_ID_BASE 0x48000000u
-typedef struct {
-  int live, parent, units, state, repetitions, reps_remaining, reps_completed, expiry_type;
-  uint32_t id;
-  double period, remaining;
-  GmlVal callback, args;
-} GmlTimeSource;
-
 /* runtime layers (GMS2 layer_create / layer_tile_create — the compat scripts GMS emits for
  * upgraded GM8 projects route tile_add/tile_delete through these, so terrain painted at
  * runtime lives here, not in the ROOM chunk). Cleared on room enter like GM tiles. */
@@ -146,22 +95,6 @@ typedef struct { int id, used, layer, type;         /* type: 7=tile, 3=sprite, 1
   int htiled, vtiled, stretch;                      /* background-element extras */
   char name[64];                                    /* room-authored sprite asset name */
   double image_index, image_speed, image_angle; } GmlRtElem;
-#define GML_PHYS_FIXTURE_MAX 128
-#define GML_PHYS_JOINT_MAX 256
-#define GML_PHYS_FIXTURE_POINTS 16
-typedef struct {
-  int live, shape, bound_inst, points;
-  uint32_t id;
-  double density, friction, restitution, lin_damp, ang_damp, awake;
-  double radius, w, h, x1, y1, x2, y2;
-  double px[GML_PHYS_FIXTURE_POINTS], py[GML_PHYS_FIXTURE_POINTS];
-} GmlPhysicsFixture;
-typedef struct {
-  int live, type, value_count;
-  uint32_t id;
-  double a, b, x1, y1, x2, y2, params[24];
-} GmlPhysicsJoint;
-
 /* Per-instance input bridge. Runtime code receives a complete VM context and
  * never reaches process-global host callbacks. Hosts may leave callbacks
  * unset; the neutral defaults report no input and no connected devices. */
@@ -180,11 +113,6 @@ typedef struct {
                 double *window_x,double *window_y,int *held,int *pressed,int *released,int *wheel);
   void (*mouse_set)(void *userdata,double x,double y);
 } GmlInputServices;
-
-/* GameMaker's INI API is also commonly used as a localization database.  Real
- * projects can contain several thousand keys, so this limit is deliberately a
- * file-sized safety bound rather than the old small-settings-table bound. */
-#define GML_INI_MAX 16384
 
 typedef struct {
   int object;
@@ -241,6 +169,7 @@ typedef struct GmlVM {
   GmlInputServices input;
   struct GmlParticleState *particles;
   struct GmlBuiltinState *builtins;
+  GmlSoftware3D *software3d;
   GmlVmDiagnostics diagnostics;
   GmlVarMap globals;
   /* Function-static storage. Each CODE entry owns one persistent scope and the
@@ -285,8 +214,9 @@ typedef struct GmlVM {
   int      started;           /* Game Start fired */
   int      gs_roots_run;      /* GMS2.3 GlobalScript root entries executed (once per session) */
   /* collision-candidate grid (built lazily once per frame over all instances; queries take grid
-   * candidates + the touched-since-build overlay; see gml_colgrid_* in gml_builtin.c). Runtime
-   * only — never serialized; invalidated on room enter / state load. */
+   * candidates + the touched-since-build overlay; see gml_colgrid_* in
+   * gml_builtin_collision.c). Runtime only — never serialized; invalidated on room enter / state
+   * load. */
   long     cg_built_frame;    /* frame of the current build, -1 = invalid */
   int      cg_gen;            /* build generation (touch stamps) */
   int      cg_vgen;           /* per-query visit generation (dedupe stamps) */
@@ -333,23 +263,6 @@ typedef struct GmlVM {
   /* tile_layer_delete_at: per-tile deletion by position.
    * At draw time, tiles matching (depth, x, y) are dropped. */
   struct { int depth, x, y; } tile_del_at[64]; int n_tile_del_at;
-  /* INI persistence: the currently-open .ini as a simple key-value map */
-  struct { char *section, *key, *sval; double val; int is_str; } ini_kv[GML_INI_MAX]; int ini_n, ini_open;
-  char ini_path[256];
-  /* Small runtime I/O tables for GMS file_bin_* and buffer_* handles. These are transient
-   * runtime handles, not serialized into host save-states. */
-  void *bin_file[16];
-  struct { unsigned char *data; int size, cap, pos, live; } buffer[16];
-  /* deferred GM async Save/Load events (Other_72): request ids queued by buffer_*_async this
-   * step, fired at end-of-step so the caller's `loadid = buffer_load_async(...)` assignment has
-   * landed before the handler compares async_load[?"id"] against it. Drained every step. */
-  int async_sl_q[16]; int async_sl_status[16]; int n_async_sl; int async_seq;
-  int async_group_active, async_group_id, async_group_status, async_group_count;
-  /* deferred GM Async HTTP events (Other_62): the host core has no network, so every
-   * http_get/http_post/http_request returns a fresh id and fires a failed response next step
-   * ({id, status:-1, http_status:0, result:""}). Games with online features (leaderboards)
-   * take their offline/error path instead of waiting forever. */
-  int async_http_q[16]; int n_async_http;
   int room_rec_stride;   /* room instance record size (36/40/48), detected lazily */
   /* presentation: runtime window size (window_set_size), GUI canvas (display_set_gui_size), and
    * the optional screen-relative GUI transform (display_set_gui_maximise).  A zero maximise
@@ -360,7 +273,6 @@ typedef struct GmlVM {
   double gui_maximise_xoffset, gui_maximise_yoffset;
   long room_enter_frame;      /* simulation frame at room entry (layer scroll phase) */
   int layer_data_off;         /* GMS2 layer type-data offset with optional effect fields; 0=undetected */
-  int next_buffer_id;
   /* keyboard events (Keyboard_N held / KeyPress_N / KeyRelease_N): unique suffixes present in
    * the game's CODE names, fired each step against the key state (event-driven input games). */
   struct { char suffix[24]; int vk, kind; } key_events[64];
@@ -378,24 +290,6 @@ typedef struct GmlVM {
     int hborder, vborder, hspeed, vspeed, object;
   } *view_ovr;
   int n_view_ovr;   /* allocated entries (rooms*8), 0 = table absent */
-  GmlDSMap ds_map[GML_DS_MAP_MAX];
-  GmlDSList ds_list[GML_DS_LIST_MAX];
-  GmlDSGrid ds_grid[GML_DS_GRID_MAX];
-  int next_ds_id;
-  int ds_map_last_slot;       /* transient slot-id cache for repeated DS-map ops */
-  int ds_list_compat_repair;  /* old save-states did not serialize ds_list payloads */
-  GmlTimeSource time_source[GML_TIME_SOURCE_MAX];
-  uint32_t next_time_source_id;
-  int time_source_game_state;
-#define GML_MAX_EMITTERS 32
-  unsigned char emitter_live[GML_MAX_EMITTERS];   /* audio emitters = gain cells (ids 3000000+i) */
-  double emitter_gain[GML_MAX_EMITTERS];
-  double emitter_x[GML_MAX_EMITTERS], emitter_y[GML_MAX_EMITTERS], emitter_z[GML_MAX_EMITTERS];
-  double emitter_ref[GML_MAX_EMITTERS], emitter_max[GML_MAX_EMITTERS], emitter_factor[GML_MAX_EMITTERS];
-  double listener_x, listener_y, listener_z;
-  double listener_forward_x, listener_forward_y, listener_forward_z;
-  double listener_up_x, listener_up_y, listener_up_z;
-  int audio_falloff_model;
   /* instance Mouse_<n> events present in CODE (parse_mouse_events); dispatched per step */
   struct GmlMouseEvent { int sub; char suffix[20]; } mouse_events[32];
   int n_mouse_events;
@@ -415,11 +309,6 @@ typedef struct GmlVM {
   int *struct_free, n_struct_free, cap_struct_free;  /* GC free-list: reclaimed struct slots for reuse (bounded pool) */
   long structs_last_gc_frame;
   GmlTileMap *tilemaps; int n_tilemaps, cap_tilemaps, next_tilemap_id;  /* per-room GMS2 tile layers (collision) */
-  GmlPhysicsFixture phys_fixture[GML_PHYS_FIXTURE_MAX];
-  GmlPhysicsJoint phys_joint[GML_PHYS_JOINT_MAX];
-  uint32_t phys_next_id;
-  double phys_gravity_x, phys_gravity_y, phys_update_speed;
-  int phys_update_iterations, phys_paused, phys_debug_draw;
 } GmlVM;
 GmlTileMap *gml_tilemap_find(GmlVM *vm, int id);
 int gml_tilemap_set_cell(GmlTileMap *tm, int cx, int cy, uint32_t datum);
@@ -428,8 +317,6 @@ void gml_tilemap_effective(GmlVM *vm, const GmlTileMap *tm,
 int gml_room_layer_data_off(GmlVM *vm);
 uint32_t gml_room_layer_type_off(GmlVM *vm, uint32_t lp);  /* per-layer type-data offset with effect fields */
 void gml_struct_gc(GmlVM *vm);
-
-void gml_arr_mark_escaped(GmlVal v);   /* array stored beyond its scope: locals cleanup must not free it */
 void gml_path_eval_public(GmlVM *vm, int pi, double t, double *ox, double *oy);
 double gml_legacy_view_follow_axis(double current, double target, double extent,
                                    double border, double speed);
@@ -459,6 +346,7 @@ void    gml_input_gamepad_set_vibration(GmlVM *vm,int device,double low,double h
 uint64_t gml_host_monotonic_time_ns(GmlVM *vm);
 AnygmResult gml_host_wall_time(GmlVM *vm,AnygmWallTime *time);
 uint64_t gml_host_random_seed(GmlVM *vm);
+double  gml_vm_get_timer_us(GmlVM *vm);
 void    gml_input_mouse(GmlVM *vm,double *room_x,double *room_y,double *gui_x,double *gui_y,
                         double *window_x,double *window_y,int *held,int *pressed,int *released,int *wheel);
 void    gml_input_mouse_set(GmlVM *vm,double x,double y);
@@ -489,27 +377,12 @@ void         gml_tile_layer_depth(GmlVM *vm, int depth, int newdepth);
 void         gml_tile_layer_shift(GmlVM *vm, int depth, double dx, double dy);
 void         gml_tile_layer_delete_at(GmlVM *vm, int depth, double x, double y);
 void         gml_tile_layer_hide(GmlVM *vm, int depth, int hidden);
+GmlTileMap  *gml_tilemap_by_layer(GmlVM *vm, GmlVal layer);
 int          gml_event_inherited(GmlVM *vm);   /* run the current event on the parent object */
 double       gml_inst_var_get(GmlVM *vm, GmlInstance *in, const char *name); /* read a builtin or custom var */
 int          gml_inst_var_exists(GmlVM *vm, GmlVal ref, const char *name);
 GmlVal       gml_inst_var_get_val(GmlVM *vm, GmlVal ref, const char *name, int *ok);
 int          gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v);
-int          gml_val_array_length(GmlVal v);   /* array_length_1d: logical length of a V_ARR value, else 0 */
-int          gml_val_array_height_2d(GmlVal v);
-int          gml_val_array_length_2d(GmlVal v, int row);
-/* GMS2.3 array-function forms (array_create/get/set/push/pop/resize/copy) — operate on V_ARR values */
-GmlVal       gml_arr_store_clone(GmlVal v); /* own strings / mark-escape arrays before storing in an array */
-GmlVal       gml_arr_new(int size, GmlVal fill);
-void         gml_arr_set(GmlVal arr, int idx, GmlVal val);
-GmlVal       gml_arr_get(GmlVal arr, int idx);
-GmlVal       gml_arr_chain_ensure(GmlVal arr, int idx);
-void         gml_arr_set_2d(GmlVal arr, int row, int column, GmlVal val);
-GmlVal       gml_arr_get_2d(GmlVal arr, int row, int column);
-void         gml_arr_push(GmlVal arr, GmlVal val);
-GmlVal       gml_arr_pop(GmlVal arr);
-void         gml_arr_resize(GmlVal arr, int size);
-void         gml_arr_copy(GmlVal dst, int di, GmlVal src, int si, int count);
-void         gml_arr_insert(GmlVal arr, int index, GmlVal *values, int count);
 GmlVal       gml_ds_map_find_value_direct(GmlVM *vm, int id, GmlVal keyv, int has_key);
 GmlVal       gml_ds_map_find_first_direct(GmlVM *vm, int id);
 GmlVal       gml_ds_map_find_next_direct(GmlVM *vm, int id, GmlVal keyv, int has_key);
@@ -524,8 +397,9 @@ GmlInstance *gml_find_instance(GmlVM *vm, int obj);          /* first active ins
 int          gml_run_event(GmlVM *vm, GmlInstance *in, const char *suffix); /* e.g. "Create_0" */
 int          gml_timeline_add(GmlVM *vm);                    /* append an empty runtime timeline */
 void         gml_timeline_clear(GmlVM *vm, int timeline);    /* remove every moment, retaining the asset */
-/* collision-candidate grid hooks (gml_builtin.c): touch = a bbox input (x/y/scale/angle/
- * sprite/mask) of `in` was written after the current build; invalidate = drop the build. */
+/* Collision-candidate grid hooks (gml_builtin_collision.c): touch = a bbox input
+ * (x/y/scale/angle/sprite/mask) of `in` was written after the current build;
+ * invalidate = drop the build. The cached mode policy remains in gml_builtin.c. */
 void         gml_colgrid_touch(GmlVM *vm, GmlInstance *in);
 void         gml_colgrid_invalidate(GmlVM *vm);
 int          gml_colgrid_mode(GmlVM *vm);   /* 0 linear, 1 grid, 2 grid plus verification */
@@ -558,9 +432,6 @@ void         gml_vm_draw_gui(GmlVM *vm);                     /* Draw GUI (Draw_6
 #define GML_STRUCT_ID_BASE 0x50000000u
 #define GML_IS_STRUCT_ID(v) ((v) >= (double)GML_STRUCT_ID_BASE && (v) < (double)(GML_STRUCT_ID_BASE+0x08000000u))
 
-GmlVal *gml_varmap_get(GmlVarMap *m, const char *key);   /* NULL if absent */
-GmlVal *gml_varmap_put(GmlVarMap *m, const char *key);   /* get-or-create slot */
-
 /* read a global scalar / global array element by name (0 if absent). Names are matched by
  * content (not interned ptr) so the host can query e.g. "view_xview". */
 double  gml_global_num(GmlVM *vm, const char *name);
@@ -582,20 +453,15 @@ void    gml_vm_draw_pass(GmlVM *vm, const char *suffix);   /* Draw_72/73/74/75/6
 int     gml_vm_state_save(GmlVM *vm, void *data, size_t len, size_t *written);
 int     gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used);
 
-/* Software D3 state is serialized with the VM so rewind/load cannot change the
- * active projection, culling, lighting, or light definitions mid-frame. */
-#define GML_D3_STATE_FLAG_COUNT 26
-#define GML_D3_STATE_VALUE_COUNT 616
-#define GML_D3_STATE_COLOR_COUNT 10
-void    gml_d3_reset(GmlVM *vm);
-void    gml_d3_state_get(GmlVM *vm,int flags[GML_D3_STATE_FLAG_COUNT],
-                         double values[GML_D3_STATE_VALUE_COUNT],
-                         uint32_t colors[GML_D3_STATE_COLOR_COUNT]);
-void    gml_d3_state_set(GmlVM *vm,const int flags[GML_D3_STATE_FLAG_COUNT],
-                         const double values[GML_D3_STATE_VALUE_COUNT],
-                         const uint32_t colors[GML_D3_STATE_COLOR_COUNT]);
-size_t  gml_d3_models_state_size(GmlVM *vm);
-int     gml_d3_models_state_save(GmlVM *vm,void *data, size_t capacity);
-int     gml_d3_models_state_load(GmlVM *vm,const void *data, size_t size);
+/* Software-3D state is serialized with the VM so rewind/load cannot change
+ * the active projection, culling, lighting, or light definitions mid-frame. */
+GmlSoftware3D *gml_vm_software3d_ensure(GmlVM *vm);
+void    gml_vm_software3d_reset(GmlVM *vm);
+void    gml_vm_software3d_state_get(GmlVM *vm,int flags[GML_SOFTWARE3D_STATE_FLAG_COUNT],
+                         double values[GML_SOFTWARE3D_STATE_VALUE_COUNT],
+                         uint32_t colors[GML_SOFTWARE3D_STATE_COLOR_COUNT]);
+void    gml_vm_software3d_state_set(GmlVM *vm,const int flags[GML_SOFTWARE3D_STATE_FLAG_COUNT],
+                         const double values[GML_SOFTWARE3D_STATE_VALUE_COUNT],
+                         const uint32_t colors[GML_SOFTWARE3D_STATE_COLOR_COUNT]);
 
 #endif

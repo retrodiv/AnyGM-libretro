@@ -124,6 +124,14 @@ for cache publication must be an atomic same-filesystem rename. Missing file
 capabilities produce a defined failure and never trigger an ambient filesystem
 fallback.
 
+When `save_directory` is present, the runtime places writable content files in
+`save_directory/anygm/<sanitized-label>-<path-hash>/`. The label normally comes
+from the selected file stem. For generic payload filenames, it comes from the
+containing directory instead. The hash is derived from the source identity path,
+so equally named content at different paths does not share persistent files. A
+host should pass a stable identity path if it expects persistence to survive
+restarts or content relocation under its own VFS namespace.
+
 ## Timing and optional services
 
 The monotonic callback returns nanoseconds from an arbitrary stable epoch.

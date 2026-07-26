@@ -8,11 +8,41 @@
 #include "gml_vm.h"
 
 typedef struct GmlBuiltinState GmlBuiltinState;
+typedef struct GmlVmStateWriter GmlVmStateWriter;
+typedef struct GmlVmStateReader GmlVmStateReader;
+typedef void (*GmlBuiltinValueVisitor)(void *userdata, GmlVal value);
 
 GmlBuiltinState *gml_builtin_state_create(GmlVM *vm);
+GmlBuiltinState *gml_builtin_state_ensure(GmlVM *vm);
 void gml_builtin_state_reset(GmlBuiltinState *state);
 void gml_builtin_state_destroy(GmlBuiltinState *state);
-void gml_builtin_files_close(GmlVM *vm);
+void gml_builtin_state_visit_values(const GmlBuiltinState *state,
+                                    GmlBuiltinValueVisitor visitor,
+                                    void *userdata);
+void gml_builtin_state_take_owned_values(GmlBuiltinState *state,
+                                         GmlBuiltinValueVisitor visitor,
+                                         void *userdata);
+void gml_builtin_state_profile_ds(const GmlBuiltinState *state,
+                                  size_t byte_totals[3], int live_counts[3]);
+int gml_builtin_ini_entry_count(const GmlVM *vm);
+void gml_builtin_physics_room_reset(GmlVM *vm);
+
+void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
+                                    GmlVmStateWriter *writer);
+int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
+                                  GmlVmStateReader *reader);
+void gml_builtin_state_write_physics(const GmlBuiltinState *state,
+                                     GmlVmStateWriter *writer);
+int gml_builtin_state_read_physics(GmlBuiltinState *state,
+                                   GmlVmStateReader *reader);
+void gml_builtin_state_write_audio(const GmlBuiltinState *state,
+                                   GmlVmStateWriter *writer);
+int gml_builtin_state_read_audio(GmlBuiltinState *state,
+                                 GmlVmStateReader *reader);
+void gml_builtin_state_write_time_sources(const GmlBuiltinState *state,
+                                          GmlVmStateWriter *writer);
+int gml_builtin_state_read_time_sources(GmlBuiltinState *state,
+                                        GmlVmStateReader *reader);
 
 int gml_builtin_fast_id(GmlVM *vm,const char *name);
 GmlVal gml_builtin_call(GmlVM *vm, const char *name, GmlVal *args, int count);

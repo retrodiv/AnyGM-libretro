@@ -1,0 +1,3751 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+ */
+/* Cohesive software blit and pixel kernels. */
+#include "gml_render_backend.h"
+#include "gml_render_blit_internal.h"
+#include "gml_render_internal.h"
+#include "gml_render_pixel_internal.h"
+#include "gml_render_sampling_internal.h"
+#include "anygm_compatibility.h"
+#include "anygm_host.h"
+#include "gml_thread.h"
+
+#include <ctype.h>
+#include <limits.h>
+#include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+#endif
+
+#define RFP_SHIFT 20
+#define RFP_ONE ((int64_t)1 << RFP_SHIFT)
+#if defined(__GNUC__) && !defined(__clang__)
+#define GML_HOT_RENDER __attribute__((hot,optimize("O3")))
+#else
+#define GML_HOT_RENDER
+#endif
+
+static int log_spr_enabled(void){ return 0; }
+static int log_axis_cache_enabled(void){ return 0; }
+static int sprof_enabled(void){ return 0; }
+static void sprof_add(int sprite,const char *name,double milliseconds){
+  (void)sprite;
+  (void)name;
+  (void)milliseconds;
+}
+
+uint32_t gml_render_backend_color_to_xrgb(uint32_t c){
+  /* alpha byte 0xFF = drawn/opaque: surfaces track per-pixel coverage in the high byte so
+   * draw_clear_alpha(c,0) ("clear to transparent") is representable — see gml_render.h. */
+  return 0xFF000000u | ((c&0xff)<<16) | (c&0xff00) | ((c>>16)&0xff);
+}
+uint32_t gml_render_backend_lerp_xrgb(uint32_t a, uint32_t b, int num, int den){
+  if(den<=0 || num<=0) return a;
+  if(num>=den) return b;
+  int ar=(a>>16)&0xff, ag=(a>>8)&0xff, ab=a&0xff;
+  int br=(b>>16)&0xff, bg=(b>>8)&0xff, bb=b&0xff;
+  int r=ar + (br-ar)*num/den;
+  int g=ag + (bg-ag)*num/den;
+  int bl=ab + (bb-ab)*num/den;
+  return 0xFF000000u|((uint32_t)r<<16)|((uint32_t)g<<8)|(uint32_t)bl;
+}
+#if defined(__GNUC__) || defined(__clang__)
+typedef uint64_t GmlRenderU64Alias __attribute__((__may_alias__));
+#endif
+void gml_render_backend_fill_xrgb(uint32_t *dp, int n, uint32_t src){
+  if(n<=0) return;
+#if defined(__SSE2__)
+  if(n>=4){
+    __m128i v=_mm_set1_epi32((int)src);
+    while(n>=4){
+      _mm_storeu_si128((__m128i*)dp,v);
+      dp+=4;
+      n-=4;
+    }
+  }
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if(n>=4){
+    uint32x4_t v=vdupq_n_u32(src);
+    while(n>=4){
+      vst1q_u32(dp,v);
+      dp+=4;
+      n-=4;
+    }
+  }
+#endif
+#if defined(__GNUC__) || defined(__clang__)
+  if(n>=4){
+    if(((uintptr_t)dp & 7u) != 0){ *dp++=src; n--; }
+    GmlRenderU64Alias *p=(GmlRenderU64Alias*)dp;
+    int pairs=n/2;
+    uint64_t v=(uint64_t)src | ((uint64_t)src<<32);
+    for(int i=0;i<pairs;i++) p[i]=v;
+    dp += pairs*2;
+    n -= pairs*2;
+  }
+#endif
+  for(int i=0;i<n;i++) dp[i]=src;
+}
+void gml_render_backend_flat_blend_init(GmlRenderBackendFlatBlend *blend,uint32_t src,double alpha){
+  double ia=1.0-alpha;
+  int sr=(src>>16)&0xff,sg=(src>>8)&0xff,sb=src&0xff;
+  for(int d=0;d<256;d++){
+    blend->red[d]=(uint8_t)(sr*alpha+d*ia+0.5);
+    blend->green[d]=(uint8_t)(sg*alpha+d*ia+0.5);
+    blend->blue[d]=(uint8_t)(sb*alpha+d*ia+0.5);
+  }
+  blend->surface_alpha=(uint32_t)lround(alpha*255.0);
+}
+void gml_render_backend_flat_blend_run(GmlRender *R,uint32_t *dp,int n,const GmlRenderBackendFlatBlend *blend){
+  for(int i=0;i<n;i++){
+    uint32_t dv=dp[i],oa=0xFF;
+    if(R->target_sp>0){
+      uint32_t sa=blend->surface_alpha,da=dv>>24;
+      oa=(sa*sa+da*(255u-sa)+127u)/255u;
+    }
+    dp[i]=(oa<<24)|((uint32_t)blend->red[(dv>>16)&0xff]<<16)|
+          ((uint32_t)blend->green[(dv>>8)&0xff]<<8)|blend->blue[dv&0xff];
+  }
+}
+int gml_render_backend_flat_blend_uses_float_alpha(double alpha){
+  /* Exact N/256 alpha values use the classic tie behavior and retain the truncating
+   * 8-bit fast path. Other values (notably 0.4 and 0.8) retain their requested
+   * fractional weight and round the final channels. */
+  double scaled=alpha*256.0;
+  return fabs(scaled-floor(scaled+0.5))>1e-12;
+}
+void gml_render_backend_draw_xrgb_alpha(GmlRender *R, uint32_t *dp, int n, uint32_t src, double alpha){
+  if(n<=0) return;
+  if(!R->alphablend || alpha>=1.0){
+    uint32_t out=src;
+    if(R->target_sp>0 && !R->alphablend){
+      uint32_t sa=(uint32_t)lround(alpha*255.0);
+      out=(src&0x00FFFFFFu)|(sa<<24);
+    }
+    gml_render_backend_fill_xrgb(dp,n,out);
+    return;
+  }
+  uint32_t af=(uint32_t)(alpha*256.0);
+  if(af>=256u){ gml_render_backend_fill_xrgb(dp,n,src); return; }
+  if(!af) return;
+  if(R->classic && gml_render_backend_flat_blend_uses_float_alpha(alpha)){
+    /* Classic compatibility keeps the requested draw alpha as a float and rounds the
+     * resulting colour channels to the nearest 8-bit value. Quantizing alpha to 1/256 first
+     * produces different channel values for translucent primitives such as alpha 0.4. The
+     * source colour is constant across this run, so small channel lookup tables preserve that
+     * arithmetic without putting floating-point work in the per-pixel loop. */
+    GmlRenderBackendFlatBlend blend;
+    gml_render_backend_flat_blend_init(&blend,src,alpha);
+    gml_render_backend_flat_blend_run(R,dp,n,&blend);
+    return;
+  }
+  uint32_t ia=256u-af;
+  uint32_t srb=(src&0x00FF00FFu)*af;
+  uint32_t sg=(src&0x0000FF00u)*af;
+  uint32_t sa=(uint32_t)lround(alpha*255.0);
+  for(int i=0;i<n;i++){
+    uint32_t dv=dp[i];
+    uint32_t rb=((srb+(dv&0x00FF00FFu)*ia)>>8)&0x00FF00FFu;
+    uint32_t g=((sg+(dv&0x0000FF00u)*ia)>>8)&0x0000FF00u;
+    uint32_t oa=0xFF;
+    if(R->target_sp>0){
+      uint32_t da=dv>>24;
+      oa=(sa*sa+da*(255u-sa)+127u)/255u;
+    }
+    dp[i]=(oa<<24)|rb|g;
+  }
+}
+void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gmcol, double alpha){
+  if(!R||x<0||y<0||x>=R->fbw||y>=R->fbh) return;
+  if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
+  if(alpha<=0) return;
+  /* Pixel-at-a-time primitives (outlines, lines, circles and primitive batches) can be the
+   * first draw after the frame's deferred clear.  They must materialize that underlay before
+   * touching a pixel; otherwise the end-of-frame flush paints over the completed primitive.
+   * Keep the check here so every such path has the same ordering semantics. */
+  if(R->pending_underlay || R->pending_fill) gml_render_prepare_draw(R);
+  R->fb_all_transparent=0;
+  uint32_t src=gml_render_backend_color_to_xrgb(gmcol), *dp=&R->fb[(size_t)y*R->fbw+x];
+  if(R->alphablend && (R->blend_equation!=1 || R->blend_equation_alpha!=1)){
+    int sc[4]={(src>>16)&255,(src>>8)&255,src&255,(int)lround(alpha*255.0)};
+    int dc[4]={(*dp>>16)&255,(*dp>>8)&255,*dp&255,R->target_sp>0?(int)(*dp>>24):255};
+    double sf=alpha, df=1.0-alpha;
+    if(R->blendmode==1 || R->blendmode==2) df=1.0;
+    int oc[4];
+    for(int k=0;k<4;k++){
+      int eq=k==3?R->blend_equation_alpha:R->blend_equation;
+      double v;
+      if(eq==2) v=sc[k]>dc[k]?sc[k]:dc[k];
+      else if(eq==5) v=sc[k]<dc[k]?sc[k]:dc[k];
+      else if(eq==3) v=dc[k]*df-sc[k]*sf;
+      else if(eq==4) v=sc[k]*sf-dc[k]*df;
+      else v=sc[k]*sf+dc[k]*df;
+      if(v<0) v=0; else if(v>255) v=255;
+      oc[k]=(int)lround(v);
+    }
+    uint32_t out=((uint32_t)oc[3]<<24)|((uint32_t)oc[0]<<16)|((uint32_t)oc[1]<<8)|(uint32_t)oc[2];
+    unsigned m=R->color_write_mask;
+    uint32_t bits=(m&1?0x00FF0000u:0)|(m&2?0x0000FF00u:0)|(m&4?0x000000FFu:0)|(m&8?0xFF000000u:0);
+    *dp=(*dp&~bits)|(out&bits);
+    return;
+  }
+  if(R->alphablend && R->blendmode!=0){
+    int sr=(src>>16)&0xff, sg=(src>>8)&0xff, sb=src&0xff;
+    int dr=(*dp>>16)&0xff, dg=(*dp>>8)&0xff, db=*dp&0xff;
+    int or_,og,ob;
+    uint32_t oc=R->target_sp>0 ? *dp>>24 : 0xff;
+    if(R->blendmode==1){
+      or_=dr+(int)(sr*alpha); og=dg+(int)(sg*alpha); ob=db+(int)(sb*alpha);
+      if(or_>255) or_=255;
+      if(og>255) og=255;
+      if(ob>255) ob=255;
+      if(R->target_sp>0){ uint32_t a=oc+(uint32_t)(255*alpha); oc=a>255?255:a; }
+    } else {
+      /* bm_subtract is the preset (bm_zero, bm_inv_src_colour): RGB is
+       * destination*(1-source RGB), while coverage uses inverse source alpha. */
+      or_=(int)gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
+      og=(int)gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
+      ob=(int)gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
+      if(R->target_sp>0){
+        unsigned sa=(unsigned)lround(alpha*255.0);
+        oc=gml_blend_inv_source_u8(oc,sa);
+      }
+    }
+    *dp=(oc<<24)|((uint32_t)or_<<16)|((uint32_t)og<<8)|(uint32_t)ob;
+    return;
+  }
+  if(!R->alphablend || alpha>=1){
+    if(R->target_sp>0 && !R->alphablend){
+      uint32_t sa=(uint32_t)lround(alpha*255.0);
+      src=(src&0x00FFFFFFu)|(sa<<24);
+    }
+    *dp=src; return;
+  }
+  int sr=(src>>16)&0xff, sg=(src>>8)&0xff, sb=src&0xff;
+  int dr=(*dp>>16)&0xff, dg=(*dp>>8)&0xff, db=*dp&0xff;
+  int or_=(int)(sr*alpha+dr*(1-alpha)); if(or_>255) or_=255; else if(or_<0) or_=0;
+  int og=(int)(sg*alpha+dg*(1-alpha)); if(og>255) og=255; else if(og<0) og=0;
+  int ob=(int)(sb*alpha+db*(1-alpha)); if(ob>255) ob=255; else if(ob<0) ob=0;
+  uint32_t oa=0xFF;
+  if(R->target_sp>0){
+    uint32_t sa=(uint32_t)lround(alpha*255.0), da=*dp>>24;
+    oa=(sa*sa+da*(255u-sa)+127u)/255u;
+  }
+  *dp=(oa<<24)|(or_<<16)|(og<<8)|ob;
+}
+void gml_render_backend_draw_pixel(GmlRender *R, int x, int y, uint32_t gmcol){
+  gml_render_backend_draw_pixel_alpha(R,x,y,gmcol,R?R->alpha:1);
+}
+
+static inline int floor_fixed20(int64_t v){
+#if defined(__GNUC__) || defined(__clang__)
+  return (int)(v>>RFP_SHIFT);
+#else
+  return v>=0 ? (int)(v>>RFP_SHIFT) : -(int)((-v + RFP_ONE - 1) >> RFP_SHIFT);
+#endif
+}
+static inline int ceil_div_pos_i64(int64_t num, int64_t den){
+  if(num<=0) return 0;
+  if(den<=0) return 1;
+  if(num<=0x7fffffffll && den<=0xffffffffll && num<=0x100000000ll-den)
+    return (int)(((uint32_t)num + (uint32_t)den - 1u) / (uint32_t)den);
+  return (int)(((num - 1) / den) + 1);
+}
+static inline int fixed20_run_to_change(int64_t fp, int64_t step, int cell, int maxrun){
+  if(maxrun<=1 || step==0) return maxrun;
+  int64_t n;
+  if(step>0){
+    int64_t edge=((int64_t)cell+1) * RFP_ONE;
+    if(fp>=edge) return 1;
+    n=ceil_div_pos_i64(edge - fp, step);
+  } else {
+    int64_t neg=-step;
+    int64_t edge=(int64_t)cell * RFP_ONE;
+    if(fp<edge) return 1;
+    n=ceil_div_pos_i64(fp - edge + 1, neg);
+  }
+  if(n<1) return 1;
+  if(n>maxrun) return maxrun;
+  return (int)n;
+}
+static inline int fixed20_run_until_at_least(int64_t fp, int64_t step, int target, int maxrun){
+  if(maxrun<=1 || step<=0) return maxrun;
+  int64_t edge=(int64_t)target * RFP_ONE;
+  if(fp>=edge) return 1;
+  int64_t n=ceil_div_pos_i64(edge - fp, step);
+  if(n<1) return 1;
+  if(n>maxrun) return maxrun;
+  return (int)n;
+}
+static inline int fixed20_run_until_at_most(int64_t fp, int64_t step, int target, int maxrun){
+  if(maxrun<=1 || step>=0) return maxrun;
+  int64_t neg=-step;
+  int64_t edge=(int64_t)(target + 1) * RFP_ONE;
+  if(fp<edge) return 1;
+  int64_t num=fp - edge;
+  int64_t n=(num<=0x7ffffffell && neg<=0x7fffffffll)
+    ? (int64_t)((uint32_t)num / (uint32_t)neg + 1u)
+    : (num / neg + 1);
+  if(n<1) return 1;
+  if(n>maxrun) return maxrun;
+  return (int)n;
+}
+static inline int rotated_quad_row_span(const double qx[4], const double qy[4], double y,
+                                        int clip0, int clip1, int *out0, int *out1){
+  double xs[4];
+  int n=0;
+  for(int i=0;i<4;i++){
+    int j=(i+1)&3;
+    double y0=qy[i], y1=qy[j];
+    if((y0<=y && y1>y) || (y1<=y && y0>y)){
+      double den=y1-y0;
+      if(den!=0.0 && n<4){
+        double t=(y-y0)/den;
+        xs[n++]=qx[i] + t*(qx[j]-qx[i]);
+      }
+    }
+  }
+  if(n<2) return 0;
+  double mn=xs[0], mx=xs[0];
+  for(int i=1;i<n;i++){
+    if(xs[i]<mn) mn=xs[i];
+    if(xs[i]>mx) mx=xs[i];
+  }
+  int x0=(int)floor(mn)-1;
+  int x1=(int)ceil(mx)+1;
+  if(x0<clip0) x0=clip0;
+  if(x1>clip1) x1=clip1;
+  if(x1<=x0) return 0;
+  *out0=x0;
+  *out1=x1;
+  return 1;
+}
+static inline int alpha_span_skip_run(const GmlTpag *t, int ix, int iy, int64_t lx_fp,
+                                      int64_t ly_fp, int64_t dlx_fp, int64_t dly_fp,
+                                      int maxrun){
+  if(!t || !t->alpha_row_min || iy<0 || iy>=t->sh || maxrun<=0) return 0;
+  int mn=t->alpha_row_min[iy], mx=t->alpha_row_max[iy];
+  if(mx<mn){
+    int run=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+    return run<1 ? 1 : run;
+  }
+  if(ix<mn){
+    int run=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+    if(dlx_fp>0){
+      int xr=fixed20_run_until_at_least(lx_fp,dlx_fp,mn,maxrun);
+      if(xr<run) run=xr;
+    }
+    return run<1 ? 1 : run;
+  }
+  if(ix>mx){
+    int run=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+    if(dlx_fp<0){
+      int xr=fixed20_run_until_at_most(lx_fp,dlx_fp,mx,maxrun);
+      if(xr<run) run=xr;
+    }
+    return run<1 ? 1 : run;
+  }
+  return 0;
+}
+static inline int alpha_qspan_skip_run(const GmlTpag *t, const uint16_t *row_min, const uint16_t *row_max,
+                                       int ix, int iy, int64_t lx_fp, int64_t ly_fp,
+                                       int64_t dlx_fp, int64_t dly_fp, int maxrun){
+  if(!t || !row_min || !row_max || iy<0 || iy>=t->sh || maxrun<=0) return 0;
+  uint16_t qmn=row_min[iy];
+  if(qmn==UINT16_MAX){
+    int run=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+    return run<1 ? 1 : run;
+  }
+  int mn=(int)qmn, mx=(int)row_max[iy];
+  if(ix<mn){
+    int run=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+    if(dlx_fp>0){
+      int xr=fixed20_run_until_at_least(lx_fp,dlx_fp,mn,maxrun);
+      if(xr<run) run=xr;
+    }
+    return run<1 ? 1 : run;
+  }
+  if(ix>mx){
+    int run=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+    if(dlx_fp<0){
+      int xr=fixed20_run_until_at_most(lx_fp,dlx_fp,mx,maxrun);
+      if(xr<run) run=xr;
+    }
+    return run<1 ? 1 : run;
+  }
+  return 0;
+}
+static inline void fill_u32_run(uint32_t *dp, int run, uint32_t src){
+  if(run<=0) return;
+#if defined(__SSE2__)
+  if(run>=4){
+    __m128i v=_mm_set1_epi32((int)src);
+    while(run>=4){
+      _mm_storeu_si128((__m128i*)dp,v);
+      dp+=4;
+      run-=4;
+    }
+  }
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if(run>=4){
+    uint32x4_t v=vdupq_n_u32(src);
+    while(run>=4){
+      vst1q_u32(dp,v);
+      dp+=4;
+      run-=4;
+    }
+  }
+#endif
+  for(int k=0;k<run;k++) dp[k]=src;
+}
+#if defined(__GNUC__) || defined(__clang__)
+typedef uint64_t GmlU64Alias __attribute__((__may_alias__));
+#endif
+static inline void blend_fast8_run(uint32_t *dp, int run, uint32_t src, uint32_t af){
+  if(run<=0) return;
+  if(af>=256u){ fill_u32_run(dp,run,src); return; }
+  if(!af) return;
+  uint32_t ia=256u-af;
+#if defined(__SSE2__)
+  if(run>=4){
+    __m128i zero=_mm_setzero_si128();
+    __m128i vsrc=_mm_set1_epi32((int)src);
+    __m128i valpha=_mm_set1_epi32((int)0xFF000000u);
+    __m128i vaf=_mm_set1_epi16((short)af);
+    __m128i via=_mm_set1_epi16((short)ia);
+    __m128i src_lo=_mm_unpacklo_epi8(vsrc,zero);
+    __m128i src_hi=_mm_unpackhi_epi8(vsrc,zero);
+    src_lo=_mm_mullo_epi16(src_lo,vaf);
+    src_hi=_mm_mullo_epi16(src_hi,vaf);
+    while(run>=4){
+      __m128i dst=_mm_loadu_si128((const __m128i*)dp);
+      __m128i lo=_mm_unpacklo_epi8(dst,zero);
+      __m128i hi=_mm_unpackhi_epi8(dst,zero);
+      lo=_mm_add_epi16(src_lo,_mm_mullo_epi16(lo,via));
+      hi=_mm_add_epi16(src_hi,_mm_mullo_epi16(hi,via));
+      lo=_mm_srli_epi16(lo,8);
+      hi=_mm_srli_epi16(hi,8);
+      _mm_storeu_si128((__m128i*)dp,_mm_or_si128(_mm_packus_epi16(lo,hi),valpha));
+      dp+=4;
+      run-=4;
+    }
+  }
+#elif defined(__ARM_NEON) || defined(__ARM_NEON__)
+  if(run>=4){
+    uint8x16_t vsrc8=vreinterpretq_u8_u32(vdupq_n_u32(src));
+    uint8x16_t valpha8=vreinterpretq_u8_u32(vdupq_n_u32(0xFF000000u));
+    uint16x8_t vaf=vdupq_n_u16((uint16_t)af);
+    uint16x8_t via=vdupq_n_u16((uint16_t)ia);
+    uint16x8_t src_lo=vmulq_u16(vmovl_u8(vget_low_u8(vsrc8)),vaf);
+    uint16x8_t src_hi=vmulq_u16(vmovl_u8(vget_high_u8(vsrc8)),vaf);
+    while(run>=4){
+      uint8x16_t dst=vld1q_u8((const uint8_t*)dp);
+      uint16x8_t lo=vaddq_u16(src_lo,vmulq_u16(vmovl_u8(vget_low_u8(dst)),via));
+      uint16x8_t hi=vaddq_u16(src_hi,vmulq_u16(vmovl_u8(vget_high_u8(dst)),via));
+      lo=vshrq_n_u16(lo,8);
+      hi=vshrq_n_u16(hi,8);
+      vst1q_u8((uint8_t*)dp,vorrq_u8(vcombine_u8(vmovn_u16(lo),vmovn_u16(hi)),valpha8));
+      dp+=4;
+      run-=4;
+    }
+  }
+#endif
+  uint32_t srb=(src & 0x00FF00FFu)*af;
+  uint32_t sg=(src & 0x0000FF00u)*af;
+#if defined(__GNUC__) || defined(__clang__)
+  if(run>=4){
+    if(((uintptr_t)dp & 7u) != 0){
+      *dp=blend_fast8_cached(*dp,srb,sg,ia);
+      dp++;
+      run--;
+    }
+    GmlU64Alias *p=(GmlU64Alias*)dp;
+    int pairs=run/2;
+    uint64_t srb64=(uint64_t)srb | ((uint64_t)srb<<32);
+    uint64_t sg64=(uint64_t)sg | ((uint64_t)sg<<32);
+    for(int i=0;i<pairs;i++){
+      uint64_t dv=p[i];
+      uint64_t rb=((srb64+(dv&0x00FF00FF00FF00FFull)*ia)>>8)&0x00FF00FF00FF00FFull;
+      uint64_t g=((sg64+(dv&0x0000FF000000FF00ull)*ia)>>8)&0x0000FF000000FF00ull;
+      p[i]=0xFF000000FF000000ull|rb|g;
+    }
+    dp += pairs*2;
+    run -= pairs*2;
+  }
+#endif
+  for(int k=0;k<run;k++) dp[k]=blend_fast8_cached(dp[k],srb,sg,ia);
+}
+static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
+                             int *x0, int *y0, int *x1, int *y1){
+  (void)r;
+  if(!t || !a || !a->px || t->sw<=0 || t->sh<=0) return 0;
+  if(!t->alpha_scanned){
+    int minx=t->sw, miny=t->sh, maxx=-1, maxy=-1;
+    int maxa=0;
+    int log_alpha=render_setting(r,"GML_LOG_TPAG_ALPHA")!=NULL;
+    int real_tpag = rprof_tpag_id(r,t)>=0;
+    if(real_tpag && !t->alpha_row_min && !t->alpha_row_max){
+      t->alpha_row_min=malloc((size_t)t->sh*sizeof(int));
+      t->alpha_row_max=malloc((size_t)t->sh*sizeof(int));
+      if(t->alpha_row_min && t->alpha_row_max){
+        for(int yy=0; yy<t->sh; yy++){ t->alpha_row_min[yy]=t->sw; t->alpha_row_max[yy]=-1; }
+      } else {
+        free(t->alpha_row_min); free(t->alpha_row_max);
+        t->alpha_row_min=NULL; t->alpha_row_max=NULL;
+      }
+    }
+    unsigned long nz=0;
+    for(int yy=0; yy<t->sh; yy++){
+      int sy=t->sy+yy;
+      if(sy<0 || sy>=a->h) continue;
+      const uint8_t *row=a->px+(size_t)sy*a->w*4;
+      for(int xx=0; xx<t->sw; xx++){
+        int sx=t->sx+xx;
+        if(sx<0 || sx>=a->w) continue;
+        const uint8_t *sp=row+(size_t)sx*4;
+        if(!sp[3]) continue;
+        if(sp[3]>maxa) maxa=sp[3];
+        if(log_alpha) nz++;
+        if(xx<minx) minx=xx;
+        if(xx>maxx) maxx=xx;
+        if(yy<miny) miny=yy;
+        if(yy>maxy) maxy=yy;
+        if(t->alpha_row_min){
+          if(xx<t->alpha_row_min[yy]) t->alpha_row_min[yy]=xx;
+          if(xx>t->alpha_row_max[yy]) t->alpha_row_max[yy]=xx;
+        }
+      }
+    }
+    t->ax0=minx; t->ay0=miny; t->ax1=maxx; t->ay1=maxy; t->alpha_max=maxa;
+    t->alpha_scanned=1;
+    if(log_alpha){
+      int id=rprof_tpag_id(r,t);
+      unsigned long area=(unsigned long)(t->sw>0?t->sw:0)*(unsigned long)(t->sh>0?t->sh:0);
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[tpag-alpha] id=%d atlas=%d src=%d,%d %dx%d nz=%lu/%lu amax=%d bbox=%d,%d-%d,%d\n",
+              id,t->atlas,t->sx,t->sy,t->sw,t->sh,nz,area,t->alpha_max,t->ax0,t->ay0,t->ax1,t->ay1);
+    }
+  }
+  if(t->ax1<t->ax0 || t->ay1<t->ay0) return 0;
+  if(x0) *x0=t->ax0;
+  if(y0) *y0=t->ay0;
+  if(x1) *x1=t->ax1;
+  if(y1) *y1=t->ay1;
+  return 1;
+}
+static uint32_t *tpag_argb_cache(GmlRender *r, GmlTpag *t, GmlAtlas *a){
+  if(!t || !a || !a->px || t->sw<=0 || t->sh<=0) return NULL;
+  if(t->argb_cache) return t->argb_cache;
+  if(!r || !r->tpag || r->n_tpag<=0) return NULL;
+  uintptr_t p=(uintptr_t)t, b=(uintptr_t)r->tpag, e=b+(uintptr_t)r->n_tpag*sizeof(GmlTpag);
+  if(p<b || p>=e) return NULL;
+  size_t n=(size_t)t->sw*(size_t)t->sh;
+  if(n==0 || n>16777216u) return NULL;
+  uint32_t *cache=malloc(n*sizeof(uint32_t));
+  if(!cache) return NULL;
+  for(int yy=0; yy<t->sh; yy++){
+    int sy=t->sy+yy;
+    uint32_t *cp=cache+(size_t)yy*t->sw;
+    if(sy<0 || sy>=a->h){ memset(cp,0,(size_t)t->sw*sizeof(uint32_t)); continue; }
+    for(int xx=0; xx<t->sw; xx++){
+      int sx=t->sx+xx;
+      if(sx<0 || sx>=a->w){ cp[xx]=0; continue; }
+      const uint8_t *sp=a->px+((size_t)sy*a->w+sx)*4;
+      cp[xx]=((uint32_t)sp[3]<<24)|((uint32_t)sp[0]<<16)|((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
+    }
+  }
+  t->argb_cache=cache;
+  return cache;
+}
+static int tpag_alpha_runs(GmlRender *r, GmlTpag *t, GmlAtlas *a,
+                           const GmlTpagAlphaRun **runs, int *count){
+  if(runs) *runs=NULL;
+  if(count) *count=0;
+  if(!r || !t || !a || !a->px || t->sw<=0 || t->sh<=0 || t->sw>UINT16_MAX || t->sh>UINT16_MAX) return 0;
+  if(t->alpha_runs_built){
+    if(!t->alpha_runs || t->alpha_run_count<=0) return 0;
+    if(runs) *runs=t->alpha_runs;
+    if(count) *count=t->alpha_run_count;
+    return 1;
+  }
+  t->alpha_runs_built=1;
+  int bx0=0, by0=0, bx1=t->sw-1, by1=t->sh-1;
+  if(!tpag_alpha_bounds(r,t,a,&bx0,&by0,&bx1,&by1) || !t->alpha_row_min || !t->alpha_row_max) return 0;
+  uint32_t *cache=tpag_argb_cache(r,t,a);
+  if(!cache) return 0;
+  int cap=0, n=0;
+  GmlTpagAlphaRun *out=NULL;
+  for(int yy=0; yy<t->sh; yy++){
+    int mn=t->alpha_row_min[yy], mx=t->alpha_row_max[yy];
+    if(mx<mn) continue;
+    const uint32_t *row=cache+(size_t)yy*t->sw;
+    for(int xx=mn; xx<=mx; ){
+      uint32_t aa=row[xx]>>24;
+      int run=1;
+      while(xx+run<=mx && (row[xx+run]>>24)==aa && run<UINT16_MAX) run++;
+      if(aa){
+        if(n>=cap){
+          if(cap>=262144){ free(out); return 0; }
+          int nc=cap?cap*2:1024;
+          if(nc>262144) nc=262144;
+          GmlTpagAlphaRun *nr=realloc(out,(size_t)nc*sizeof(*out));
+          if(!nr){ free(out); return 0; }
+          out=nr; cap=nc;
+        }
+        out[n++]=(GmlTpagAlphaRun){(uint16_t)yy,(uint16_t)xx,(uint16_t)run,(uint8_t)aa};
+      }
+      xx+=run;
+    }
+  }
+  if(!n){ free(out); return 0; }
+  t->alpha_runs=out;
+  t->alpha_run_count=n;
+  if(runs) *runs=t->alpha_runs;
+  if(count) *count=t->alpha_run_count;
+  return 1;
+}
+static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, double alpha,
+                                       int alpha_floor, int *copy_255){
+  if(copy_255) *copy_255=0;
+  if(!t || !a || !a->px || t->sw<=0 || t->sh<=0) return NULL;
+  size_t n=(size_t)t->sw*(size_t)t->sh;
+  if(n==0 || n>262144u) return NULL;
+  blend &= 0xFFFFFFu;
+  if(alpha_floor<0) alpha_floor=0;
+  if(alpha_floor>255) alpha_floor=255;
+  if(t->fast8_draw_cache_valid && t->fast8_draw_cache &&
+     t->fast8_draw_blend_key==blend && t->fast8_draw_alpha_key==alpha &&
+     t->fast8_draw_alpha_floor_key==alpha_floor){
+    if(copy_255) *copy_255=t->fast8_draw_cache_copy_255;
+    return t->fast8_draw_cache;
+  }
+  if(t->fast8_draw_pending_blend_key==blend && t->fast8_draw_pending_alpha_key==alpha &&
+     t->fast8_draw_pending_alpha_floor_key==alpha_floor){
+    t->fast8_draw_pending_count++;
+  } else {
+    t->fast8_draw_pending_blend_key=blend;
+    t->fast8_draw_pending_alpha_key=alpha;
+    t->fast8_draw_pending_alpha_floor_key=alpha_floor;
+    t->fast8_draw_pending_count=1;
+  }
+  if(t->fast8_draw_pending_count<8) return NULL;
+  uint32_t *cache=t->fast8_draw_cache;
+  if(!cache){
+    cache=malloc(n*sizeof(uint32_t));
+    if(!cache) return NULL;
+    t->fast8_draw_cache=cache;
+  }
+  int white=(blend==0xFFFFFFu);
+  int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
+  for(int yy=0; yy<t->sh; yy++){
+    int sy=t->sy+yy;
+    uint32_t *cp=cache+(size_t)yy*t->sw;
+    if(sy<0 || sy>=a->h){ memset(cp,0,(size_t)t->sw*sizeof(uint32_t)); continue; }
+    for(int xx=0; xx<t->sw; xx++){
+      int sx=t->sx+xx;
+      if(sx<0 || sx>=a->w){ cp[xx]=0; continue; }
+      const uint8_t *sp=a->px+((size_t)sy*a->w+sx)*4;
+      double sa=(sp[3]/255.0)*alpha;
+      uint32_t af=sa>=1.0 ? 256u : (uint32_t)(sa*256.0);
+      if(af<=(uint32_t)alpha_floor){ cp[xx]=0; continue; }
+      int sr=white?sp[0]:sp[0]*bR/255;
+      int sg=white?sp[1]:sp[1]*bG/255;
+      int sb=white?sp[2]:sp[2]*bB/255;
+      cp[xx]=((af>=256u?255u:af)<<24)|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+    }
+  }
+  t->fast8_draw_blend_key=blend;
+  t->fast8_draw_alpha_key=alpha;
+  t->fast8_draw_alpha_floor_key=alpha_floor;
+  t->fast8_draw_cache_valid=1;
+  t->fast8_draw_cache_copy_255=alpha>=1.0;
+  if(copy_255) *copy_255=t->fast8_draw_cache_copy_255;
+  return cache;
+}
+enum { GML_BLEND_STUDIO1=0, GML_BLEND_STUDIO2=1, GML_BLEND_CLASSIC=2 };
+static inline int gml_blend_family(const GmlRender *r){
+  /* Loaded content owns compatibility policy. A renderer can also be exercised as an isolated
+   * component before content is attached; preserve its explicit mode in that narrow case. */
+  if(!r || !r->win) return r&&r->classic?GML_BLEND_CLASSIC:GML_BLEND_STUDIO1;
+  AnygmBlendPolicy policy=anygm_policy_blend(r?r->win:NULL);
+  if(policy==ANYGM_BLEND_CLASSIC) return GML_BLEND_CLASSIC;
+  return policy==ANYGM_BLEND_STUDIO_SECOND?GML_BLEND_STUDIO2:GML_BLEND_STUDIO1;
+}
+static inline uint32_t gml_sprite_target_alpha(const GmlRender *r,uint32_t dst,
+                                               unsigned source_alpha){
+  if(!r || r->target_sp<=0) return 0xFF000000u;
+  if(source_alpha>255u) source_alpha=255u;
+  unsigned destination_alpha=dst>>24;
+  unsigned inverse=255u-source_alpha;
+  unsigned output=(source_alpha*source_alpha+destination_alpha*inverse+127u)/255u;
+  if(output>255u) output=255u;
+  return output<<24;
+}
+static inline void blend_argb_src_over_exact(GmlRender *r,uint32_t *dp,const uint32_t *sp,
+                                             int run,uint32_t aa,int family){
+  if(run<=0 || !aa) return;
+  if(aa>=255u){ memcpy(dp,sp,(size_t)run*sizeof(uint32_t)); return; }
+  uint32_t ia=255u-aa;
+  for(int k=0; k<run; k++){
+    uint32_t src=sp[k], dst=dp[k];
+    uint32_t sr=(src>>16)&0xFFu, sg=(src>>8)&0xFFu, sb=src&0xFFu;
+    uint32_t dr=(dst>>16)&0xFFu, dg=(dst>>8)&0xFFu, db=dst&0xFFu;
+    if(family==GML_BLEND_CLASSIC){
+      uint32_t rr=(sr*aa+127u)/255u+(dr*ia+127u)/255u;
+      uint32_t rg=(sg*aa+127u)/255u+(dg*ia+127u)/255u;
+      uint32_t rb=(sb*aa+127u)/255u+(db*ia+127u)/255u;
+      if(rr>255u) rr=255u;
+      if(rg>255u) rg=255u;
+      if(rb>255u) rb=255u;
+      dp[k]=gml_sprite_target_alpha(r,dst,aa)|(rr<<16)|(rg<<8)|rb;
+    } else if(family==GML_BLEND_STUDIO2) {
+      /* The Studio 2 format uses a UNORM target: the complete source-over sum is rounded to the
+       * nearest representable channel. Classic rounds the terms independently above, while
+       * Studio 1 truncates the combined result below. */
+      dp[k]=gml_sprite_target_alpha(r,dst,aa)|(((sr*aa+dr*ia+127u)/255u)<<16)|
+            (((sg*aa+dg*ia+127u)/255u)<<8)|((sb*aa+db*ia+127u)/255u);
+    } else {
+      dp[k]=gml_sprite_target_alpha(r,dst,aa)|(((sr*aa+dr*ia)/255u)<<16)|
+            (((sg*aa+dg*ia)/255u)<<8)|((sb*aa+db*ia)/255u);
+    }
+  }
+}
+static inline void copy_argb_force_opaque(uint32_t *dp, const uint32_t *sp, int run){
+  if(run<=0) return;
+  for(int k=0; k<run; k++) dp[k]=0xFF000000u|(sp[k]&0x00FFFFFFu);
+}
+static inline void copy_argb_force_opaque_reverse(uint32_t *dp, const uint32_t *sp, int run){
+  if(run<=0) return;
+  for(int k=0; k<run; k++) dp[-k]=0xFF000000u|(sp[k]&0x00FFFFFFu);
+}
+static inline void blend_argb_src_over_double(GmlRender *r,uint32_t *dp,const uint32_t *sp,
+                                              int run,uint32_t aa){
+  if(run<=0 || !aa) return;
+  if(aa>=255u){ memcpy(dp,sp,(size_t)run*sizeof(uint32_t)); return; }
+  double sa=aa/255.0, ia=1.0-sa;
+  for(int k=0; k<run; k++){
+    uint32_t src=sp[k], dst=dp[k];
+    int sr=(src>>16)&0xFF, sg=(src>>8)&0xFF, sb=src&0xFF;
+    int dr=(dst>>16)&0xFF, dg=(dst>>8)&0xFF, db=dst&0xFF;
+    int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
+    int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
+    int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
+    dp[k]=gml_sprite_target_alpha(r,dst,aa)|((uint32_t)or_<<16)|
+          ((uint32_t)og<<8)|(uint32_t)ob;
+  }
+}
+static inline void blend_argb_src_over_double_reverse(GmlRender *r,uint32_t *dp,
+                                                      const uint32_t *sp,int run,uint32_t aa){
+  if(run<=0 || !aa) return;
+  if(aa>=255u){ for(int k=0; k<run; k++) dp[-k]=sp[k]; return; }
+  double sa=aa/255.0, ia=1.0-sa;
+  for(int k=0; k<run; k++){
+    uint32_t src=sp[k], dst=dp[-k];
+    int sr=(src>>16)&0xFF, sg=(src>>8)&0xFF, sb=src&0xFF;
+    int dr=(dst>>16)&0xFF, dg=(dst>>8)&0xFF, db=dst&0xFF;
+    int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
+    int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
+    int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
+    dp[-k]=gml_sprite_target_alpha(r,dst,aa)|((uint32_t)or_<<16)|
+           ((uint32_t)og<<8)|(uint32_t)ob;
+  }
+}
+static inline void blend_argb_src_over_draw_alpha(GmlRender *r,uint32_t *dp,const uint32_t *sp,
+                                                  int run,uint32_t aa,double alpha,int family){
+  if(run<=0 || !aa || alpha<=0.0) return;
+  if(family==GML_BLEND_CLASSIC){
+    uint32_t effective=(uint32_t)(aa*alpha+0.5);
+    if(effective>255u) effective=255u;
+    uint32_t inverse=255u-effective;
+    for(int k=0; k<run; k++){
+      uint32_t src=sp[k], dst=dp[k];
+      uint32_t sr=(src>>16)&0xFFu, sg=(src>>8)&0xFFu, sb=src&0xFFu;
+      uint32_t dr=(dst>>16)&0xFFu, dg=(dst>>8)&0xFFu, db=dst&0xFFu;
+      uint32_t rr=(sr*effective+127u)/255u+(dr*inverse+127u)/255u;
+      uint32_t rg=(sg*effective+127u)/255u+(dg*inverse+127u)/255u;
+      uint32_t rb=(sb*effective+127u)/255u+(db*inverse+127u)/255u;
+      if(rr>255u) rr=255u;
+      if(rg>255u) rg=255u;
+      if(rb>255u) rb=255u;
+      dp[k]=gml_sprite_target_alpha(r,dst,effective)|(rr<<16)|(rg<<8)|rb;
+    }
+    return;
+  }
+  if(family==GML_BLEND_STUDIO1){
+    double sa=(aa/255.0)*alpha, ia=1.0-sa;
+    for(int k=0; k<run; k++){
+      uint32_t src=sp[k], dst=dp[k];
+      int sr=(src>>16)&0xFF, sg=(src>>8)&0xFF, sb=src&0xFF;
+      int dr=(dst>>16)&0xFF, dg=(dst>>8)&0xFF, db=dst&0xFF;
+      int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
+      int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
+      int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
+      uint32_t effective=(uint32_t)lround((double)aa*alpha);
+      if(effective>255u) effective=255u;
+      dp[k]=gml_sprite_target_alpha(r,dst,effective)|((uint32_t)or_<<16)|
+            ((uint32_t)og<<8)|(uint32_t)ob;
+    }
+    return;
+  }
+  uint32_t effective=(uint32_t)(aa*alpha+0.5);
+  if(effective>255u) effective=255u;
+  uint32_t inverse=255u-effective;
+  for(int k=0; k<run; k++){
+    uint32_t src=sp[k], dst=dp[k];
+    uint32_t sr=(src>>16)&0xFFu, sg=(src>>8)&0xFFu, sb=src&0xFFu;
+    uint32_t dr=(dst>>16)&0xFFu, dg=(dst>>8)&0xFFu, db=dst&0xFFu;
+    uint32_t rr=(sr*effective+dr*inverse+127u)/255u;
+    uint32_t rg=(sg*effective+dg*inverse+127u)/255u;
+    uint32_t rb=(sb*effective+db*inverse+127u)/255u;
+    dp[k]=gml_sprite_target_alpha(r,dst,effective)|(rr<<16)|(rg<<8)|rb;
+  }
+}
+static int blit_tpag_scale1_white_exact(GmlRender *r, GmlTpag *t, GmlAtlas *a,
+                                        int x0, int y0, int xx0, int xx1, int yy0, int yy1){
+  if(!r || !t || !a || !a->px || !r->fb || xx1<=xx0 || yy1<=yy0) return 0;
+  int abx0=0, aby0=0, abx1=t->sw-1, aby1=t->sh-1;
+  if(!tpag_alpha_bounds(r,t,a,&abx0,&aby0,&abx1,&aby1)) return 1;
+  if(!t->alpha_row_min || !t->alpha_row_max) return 0;
+  uint32_t *cache=tpag_argb_cache(r,t,a);
+  if(!cache) return 0;
+  const GmlTpagAlphaRun *runs=NULL;
+  int run_count=0;
+  if(tpag_alpha_runs(r,t,a,&runs,&run_count)){
+    for(int ri=0; ri<run_count; ri++){
+      const GmlTpagAlphaRun *ar=&runs[ri];
+      int yy=(int)ar->y;
+      if(yy<yy0 || yy>=yy1) continue;
+      int sx0=(int)ar->x;
+      int sx1=sx0+(int)ar->len;
+      if(sx0<xx0) sx0=xx0;
+      if(sx1>xx1) sx1=xx1;
+      if(sx1<=sx0) continue;
+      uint32_t *dp=r->fb+(size_t)(y0+yy)*r->fbw+x0+sx0;
+      const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
+      int n=sx1-sx0;
+      if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
+      else if(ar->alpha==255u) memcpy(dp,sp,(size_t)n*sizeof(uint32_t));
+      else blend_argb_src_over_exact(r,dp,sp,n,(uint32_t)ar->alpha,gml_blend_family(r));
+    }
+    return 1;
+  }
+  for(int yy=yy0; yy<yy1; yy++){
+    int mn=t->alpha_row_min[yy], mx=t->alpha_row_max[yy];
+    if(mx<mn) continue;
+    int sx0=xx0>mn?xx0:mn;
+    int sx1=(xx1-1)<mx?(xx1-1):mx;
+    if(sx1<sx0) continue;
+    uint32_t *dp=r->fb+(size_t)(y0+yy)*r->fbw+x0+sx0;
+    const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
+    int n=sx1-sx0+1;
+    if(!r->alphablend){
+      for(int i=0; i<n; ){
+        while(i<n && !(sp[i]>>24)) i++;
+        int j=i;
+        while(j<n && (sp[j]>>24)) j++;
+        if(j>i) copy_argb_force_opaque(dp+i,sp+i,j-i);
+        i=j;
+      }
+      continue;
+    }
+    for(int i=0; i<n; ){
+      uint32_t aa=sp[i]>>24;
+      int run=1;
+      while(i+run<n && (sp[i+run]>>24)==aa) run++;
+      blend_argb_src_over_exact(r,dp+i,sp+i,run,aa,gml_blend_family(r));
+      i+=run;
+    }
+  }
+  return 1;
+}
+static int blit_tpag_scale1_white_draw_alpha(GmlRender *r, GmlTpag *t, GmlAtlas *a,
+                                             int x0, int y0, int xx0, int xx1, int yy0, int yy1,
+                                             double alpha){
+  if(!r || !t || !a || !a->px || !r->fb || xx1<=xx0 || yy1<=yy0 || alpha<=0.0 || alpha>=1.0) return 0;
+  int abx0=0, aby0=0, abx1=t->sw-1, aby1=t->sh-1;
+  if(!tpag_alpha_bounds(r,t,a,&abx0,&aby0,&abx1,&aby1)) return 1;
+  uint32_t *cache=tpag_argb_cache(r,t,a);
+  if(!cache) return 0;
+  const GmlTpagAlphaRun *runs=NULL;
+  int run_count=0;
+  if(!tpag_alpha_runs(r,t,a,&runs,&run_count)) return 0;
+  for(int ri=0; ri<run_count; ri++){
+    const GmlTpagAlphaRun *ar=&runs[ri];
+    int yy=(int)ar->y;
+    if(yy<yy0 || yy>=yy1) continue;
+    int sx0=(int)ar->x;
+    int sx1=sx0+(int)ar->len;
+    if(sx0<xx0) sx0=xx0;
+    if(sx1>xx1) sx1=xx1;
+    if(sx1<=sx0) continue;
+    uint32_t *dp=r->fb+(size_t)(y0+yy)*r->fbw+x0+sx0;
+    const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
+    int n=sx1-sx0;
+    if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
+    else blend_argb_src_over_draw_alpha(r,dp,sp,n,(uint32_t)ar->alpha,alpha,
+                                        gml_blend_family(r));
+  }
+  return 1;
+}
+static int blit_tpag_scale1_white_exact_flipped(GmlRender *r, GmlTpag *t, GmlAtlas *a,
+                                                int x0, int y0, int xx0, int xx1, int yy0, int yy1,
+                                                int flipx, int flipy){
+  if(!r || !t || !a || !a->px || !r->fb || xx1<=xx0 || yy1<=yy0 || (!flipx && !flipy)) return 0;
+  int abx0=0, aby0=0, abx1=t->sw-1, aby1=t->sh-1;
+  if(!tpag_alpha_bounds(r,t,a,&abx0,&aby0,&abx1,&aby1)) return 1;
+  uint32_t *cache=tpag_argb_cache(r,t,a);
+  if(!cache) return 0;
+  const GmlTpagAlphaRun *runs=NULL;
+  int run_count=0;
+  if(!tpag_alpha_runs(r,t,a,&runs,&run_count)) return 0;
+  for(int ri=0; ri<run_count; ri++){
+    const GmlTpagAlphaRun *ar=&runs[ri];
+    int yy=(int)ar->y;
+    if(yy<yy0 || yy>=yy1) continue;
+    int sx0=(int)ar->x;
+    int sx1=sx0+(int)ar->len;
+    if(sx0<xx0) sx0=xx0;
+    if(sx1>xx1) sx1=xx1;
+    if(sx1<=sx0) continue;
+    int py=flipy ? (y0-yy) : (y0+yy);
+    if(py<0 || py>=r->fbh) continue;
+    const uint32_t *sp=cache+(size_t)yy*t->sw+sx0;
+    int n=sx1-sx0;
+    if(!flipx){
+      int px=x0+sx0;
+      if(px<0 || px+n>r->fbw) continue;
+      uint32_t *dp=r->fb+(size_t)py*r->fbw+px;
+      if(!r->alphablend) copy_argb_force_opaque(dp,sp,n);
+      else blend_argb_src_over_double(r,dp,sp,n,(uint32_t)ar->alpha);
+    } else {
+      int px=x0-sx0;
+      if(px-(n-1)<0 || px>=r->fbw) continue;
+      uint32_t *dp=r->fb+(size_t)py*r->fbw+px;
+      if(!r->alphablend) copy_argb_force_opaque_reverse(dp,sp,n);
+      else blend_argb_src_over_double_reverse(r,dp,sp,n,(uint32_t)ar->alpha);
+    }
+  }
+  return 1;
+}
+static int tpag_alpha_qrows(GmlRender *r, GmlTpag *t, GmlAtlas *a, int min_alpha,
+                            const uint16_t **row_min, const uint16_t **row_max){
+  if(row_min) *row_min=NULL;
+  if(row_max) *row_max=NULL;
+  if(!r || !t || !a || !a->px || min_alpha<=1 || min_alpha>255 || t->sw<=0 || t->sh<=0) return 0;
+  if(rprof_tpag_id(r,t)<0 || t->sw>UINT16_MAX-1) return 0;
+  if(!t->alpha_qrow_min || !t->alpha_qrow_max || !t->alpha_qrow_built){
+    size_t n=(size_t)256*(size_t)t->sh;
+    uint16_t *mn=malloc(n*sizeof(uint16_t));
+    uint16_t *mx=malloc(n*sizeof(uint16_t));
+    uint8_t *built=calloc(256,1);
+    if(!mn || !mx || !built){ free(mn); free(mx); free(built); return 0; }
+    t->alpha_qrow_min=mn;
+    t->alpha_qrow_max=mx;
+    t->alpha_qrow_built=built;
+  }
+  if(!t->alpha_qrow_built[min_alpha]){
+    uint16_t *mn=t->alpha_qrow_min+(size_t)min_alpha*(size_t)t->sh;
+    uint16_t *mx=t->alpha_qrow_max+(size_t)min_alpha*(size_t)t->sh;
+    for(int yy=0; yy<t->sh; yy++){ mn[yy]=UINT16_MAX; mx[yy]=0; }
+    for(int yy=0; yy<t->sh; yy++){
+      int sy=t->sy+yy;
+      if(sy<0 || sy>=a->h) continue;
+      const uint8_t *sp=a->px+((size_t)sy*a->w)*4;
+      for(int xx=0; xx<t->sw; xx++){
+        int sx=t->sx+xx;
+        if(sx<0 || sx>=a->w) continue;
+        int aa=sp[(size_t)sx*4+3];
+        if(aa>=min_alpha){
+          if(xx<(int)mn[yy]) mn[yy]=(uint16_t)xx;
+          if(xx>(int)mx[yy]) mx[yy]=(uint16_t)xx;
+        }
+      }
+    }
+    t->alpha_qrow_built[min_alpha]=1;
+  }
+  if(!t->alpha_qrow_min || !t->alpha_qrow_max) return 0;
+  if(row_min) *row_min=t->alpha_qrow_min+(size_t)min_alpha*(size_t)t->sh;
+  if(row_max) *row_max=t->alpha_qrow_max+(size_t)min_alpha*(size_t)t->sh;
+  return 1;
+}
+
+typedef struct { GmlRender *r; const uint8_t *ap; const ptrdiff_t *colA,*colB,*rowA,*rowB;
+  const float *cfx,*cfy; int W,x0,y0; float fa,fbRr,fbGg,fbBb; int noblend; } SprBiCtx;
+static void spr_bi_band(void *p, int py0, int py1, int slot){
+  (void)slot;
+  SprBiCtx *c=(SprBiCtx*)p; GmlRender *r=c->r; const int W=c->W; const uint8_t *ap=c->ap;
+  for(int py=py0; py<py1; py++){ int ty_=c->y0+py; if(ty_<0||ty_>=r->fbh) continue;
+    ptrdiff_t ra=c->rowA[py], rb=c->rowB[py]; float fy=c->cfy[py], wy0=1.0f-fy;
+    uint32_t *dprow=r->fb+(size_t)ty_*r->fbw;
+    for(int px=0; px<W; px++){ int tx_=c->x0+px; if(tx_<0||tx_>=r->fbw) continue;
+      ptrdiff_t ca=c->colA[px], cb=c->colB[px]; float fx=c->cfx[px], wx0=1.0f-fx;
+      float w00=wx0*wy0,w01=fx*wy0,w10=wx0*fy,w11=fx*fy;
+      const uint8_t *p00=(ra>=0&&ca>=0)?ap+ra+ca:NULL, *p01=(ra>=0&&cb>=0)?ap+ra+cb:NULL;
+      const uint8_t *p10=(rb>=0&&ca>=0)?ap+rb+ca:NULL, *p11=(rb>=0&&cb>=0)?ap+rb+cb:NULL;
+      float A0=p00?p00[3]:0,A1=p01?p01[3]:0,A2=p10?p10[3]:0,A3=p11?p11[3]:0;
+      float Av=A0*w00+A1*w01+A2*w10+A3*w11;
+      float oa=(Av*(1.0f/255.0f))*c->fa; if(oa<=0.0f) continue;
+      float R0=p00?p00[0]:0,R1=p01?p01[0]:0,R2=p10?p10[0]:0,R3=p11?p11[0]:0;
+      float G0=p00?p00[1]:0,G1=p01?p01[1]:0,G2=p10?p10[1]:0,G3=p11?p11[1]:0;
+      float B0=p00?p00[2]:0,B1=p01?p01[2]:0,B2=p10?p10[2]:0,B3=p11?p11[2]:0;
+      float sR=(R0*w00+R1*w01+R2*w10+R3*w11)*c->fbRr, sG=(G0*w00+G1*w01+G2*w10+G3*w11)*c->fbGg, sB=(B0*w00+B1*w01+B2*w10+B3*w11)*c->fbBb;
+      uint32_t *dp=&dprow[tx_];
+      if(c->noblend || oa>=1.0f){ *dp=0xFF000000u|((int)(sR+0.5f)<<16)|((int)(sG+0.5f)<<8)|(int)(sB+0.5f); }
+      else { float ia2=1.0f-oa; int dr=(*dp>>16)&0xFF,dg=(*dp>>8)&0xFF,db=*dp&0xFF;
+        *dp=0xFF000000u|((int)(sR*oa+dr*ia2+0.5f)<<16)|((int)(sG*oa+dg*ia2+0.5f)<<8)|(int)(sB*oa+db*ia2+0.5f); }
+    }
+  }
+}
+void gml_render_sprite_cache_free(GmlSprite *s){
+  if(!s) return;
+  free(s->runtime_axis_cache_px);
+  free(s->runtime_axis_cache_alpha);
+  free(s->runtime_axis_cache_row_min);
+  free(s->runtime_axis_cache_row_max);
+  free(s->runtime_axis_cache_runs);
+  s->runtime_axis_cache_px=NULL;
+  s->runtime_axis_cache_alpha=NULL;
+  s->runtime_axis_cache_row_min=NULL;
+  s->runtime_axis_cache_row_max=NULL;
+  s->runtime_axis_cache_runs=NULL;
+  s->runtime_axis_cache_run_count=0;
+  s->runtime_axis_cache_valid=0;
+  s->runtime_axis_cache_copy_255=0;
+  s->runtime_axis_cache_uniform_alpha=0;
+  s->runtime_axis_cache_full_rect=0;
+  s->runtime_axis_pending_count=0;
+}
+static int runtime_frame_index(GmlSprite *s, int frame){
+  if(!s || s->n_frames<=0) return 0;
+  return ((frame%s->n_frames)+s->n_frames)%s->n_frames;
+}
+const uint8_t *runtime_frame_rgba(GmlSprite *s, int frame){
+  if(!s->runtime_rgba || s->w<=0 || s->h<=0 || s->n_frames<=0) return NULL;
+  int sub=runtime_frame_index(s,frame);
+  return s->runtime_rgba + (size_t)sub*s->w*s->h*4;
+}
+
+static int runtime_axis_key_eq(const GmlRuntimeAxisKey *a, const GmlRuntimeAxisKey *b){
+  return a->src==b->src && a->sw==b->sw && a->sh==b->sh &&
+         a->fbw==b->fbw && a->fbh==b->fbh && a->x0==b->x0 && a->y0==b->y0 &&
+         a->w==b->w && a->h==b->h && a->originx==b->originx && a->originy==b->originy &&
+         a->blend==b->blend && a->ax==b->ax && a->ay==b->ay && a->xs==b->xs &&
+         a->ys==b->ys && a->alpha==b->alpha;
+}
+static void GML_HOT_RENDER runtime_axis_cache_copy(GmlRender *r, GmlSprite *s){
+  GmlRuntimeAxisKey *k=&s->runtime_axis_cache_key;
+  if(s->runtime_axis_cache_full_rect && !s->runtime_axis_cache_alpha &&
+     k->x0==0 && k->w==r->fbw && k->y0>=0 && k->y0+k->h<=r->fbh){
+    uint32_t *dp=r->fb+(size_t)k->y0*r->fbw;
+    uint32_t *sp=s->runtime_axis_cache_px;
+    int n=k->w*k->h;
+    if(s->runtime_axis_cache_uniform_alpha && !s->runtime_axis_cache_copy_255)
+      blend_fast8_src_run(dp,sp,n,(uint32_t)s->runtime_axis_cache_uniform_alpha);
+    else if(!s->runtime_axis_cache_alpha)
+      memcpy(dp,sp,(size_t)n*sizeof(uint32_t));
+    return;
+  }
+  if(s->runtime_axis_cache_runs && s->runtime_axis_cache_run_count>0){
+    for(int i=0; i<s->runtime_axis_cache_run_count; i++){
+      const GmlRuntimeAxisRun *run=&s->runtime_axis_cache_runs[i];
+      uint32_t *dp=r->fb+(size_t)(k->y0+run->y)*r->fbw+k->x0+run->x;
+      uint32_t *sp=s->runtime_axis_cache_px+(size_t)run->y*k->w+run->x;
+      uint32_t af=run->alpha;
+      if(s->runtime_axis_cache_copy_255 && af==255u) memcpy(dp,sp,(size_t)run->len*sizeof(uint32_t));
+      else blend_fast8_src_run(dp,sp,run->len,af);
+    }
+    return;
+  }
+  for(int yy=0; yy<k->h; yy++){
+    int mn=s->runtime_axis_cache_row_min[yy], mx=s->runtime_axis_cache_row_max[yy];
+    if(mx<mn) continue;
+    uint32_t *dp=r->fb+(size_t)(k->y0+yy)*r->fbw+k->x0+mn;
+    uint32_t *sp=s->runtime_axis_cache_px+(size_t)yy*k->w+mn;
+    uint8_t *ap=s->runtime_axis_cache_alpha ? s->runtime_axis_cache_alpha+(size_t)yy*k->w+mn : NULL;
+    if(!ap){
+      int run=mx-mn+1;
+      if(s->runtime_axis_cache_uniform_alpha && !s->runtime_axis_cache_copy_255)
+        blend_fast8_src_run(dp,sp,run,(uint32_t)s->runtime_axis_cache_uniform_alpha);
+      else
+        memcpy(dp,sp,(size_t)run*sizeof(uint32_t));
+      continue;
+    }
+    for(int xx=mn; xx<=mx; ){
+      uint32_t af=*ap;
+      int run=1;
+      while(xx+run<=mx && ap[run]==af) run++;
+      if(!af){ dp+=run; sp+=run; ap+=run; xx+=run; continue; }
+      if(s->runtime_axis_cache_copy_255 && af==255u){
+        memcpy(dp,sp,(size_t)run*sizeof(uint32_t));
+      } else {
+        blend_fast8_src_run(dp,sp,run,af);
+      }
+      dp+=run;
+      sp+=run;
+      ap+=run;
+      xx+=run;
+    }
+  }
+}
+static int runtime_axis_cache_add_run(GmlRuntimeAxisRun **runs, int *count, int *cap,
+                                      int y, int x, int len, uint32_t alpha){
+  if(!runs || !count || !cap || len<=0 || !alpha || alpha>255u) return 1;
+  if(*count>0){
+    GmlRuntimeAxisRun *last=&(*runs)[*count-1];
+    if(last->y==y && last->x+last->len==x && last->alpha==(uint8_t)alpha){
+      last->len+=len;
+      return 1;
+    }
+  }
+  if(*count>=*cap){
+    if(*cap>=131072) return 0;
+    int ncap=*cap ? *cap*2 : 1024;
+    if(ncap>131072) ncap=131072;
+    GmlRuntimeAxisRun *nr=realloc(*runs,(size_t)ncap*sizeof(**runs));
+    if(!nr) return 0;
+    *runs=nr;
+    *cap=ncap;
+  }
+  (*runs)[*count]=(GmlRuntimeAxisRun){y,x,len,(uint8_t)alpha};
+  (*count)++;
+  return 1;
+}
+static int runtime_axis_cache_build(GmlRender *r, GmlSprite *s, const GmlRuntimeAxisKey *k){
+  if(!s || !k || !k->src || k->w<=0 || k->h<=0) return 0;
+  size_t n=(size_t)k->w*(size_t)k->h;
+  if(n==0 || n>1048576u) return 0;
+  int full_copy=s->runtime_opaque && k->alpha>=1.0;
+  int uniform_alpha=0;
+  if(s->runtime_opaque && !full_copy){
+    double sa=k->alpha;
+    uint32_t af=sa>=1.0 ? 256u : (uint32_t)(sa*256.0);
+    if(!af) return 0;
+    uniform_alpha=(int)(af>=256u ? 255u : af);
+  }
+  uint32_t *px=malloc(n*sizeof(uint32_t));
+  uint8_t *am=(full_copy || uniform_alpha) ? NULL : malloc(n);
+  int *row_min=malloc((size_t)k->h*sizeof(int));
+  int *row_max=malloc((size_t)k->h*sizeof(int));
+  GmlRuntimeAxisRun *runs=NULL;
+  int run_count=0, run_cap=0, runs_ok=(!full_copy && !uniform_alpha);
+  if(!px || ((!full_copy && !uniform_alpha) && !am) || !row_min || !row_max){
+    free(px); free(am); free(row_min); free(row_max); return 0;
+  }
+  int white=((k->blend & 0xFFFFFF)==0xFFFFFF);
+  int bR=k->blend&0xFF, bG=(k->blend>>8)&0xFF, bB=(k->blend>>16)&0xFF;
+  double invxs=1.0/k->xs, invys=1.0/k->ys;
+  int64_t dlx_fp=(int64_t)llround(invxs*(double)RFP_ONE);
+  for(int yy=0; yy<k->h; yy++){
+    row_min[yy]=k->w;
+    row_max[yy]=-1;
+    uint32_t *out=px+(size_t)yy*k->w;
+    int py=k->y0+yy;
+    int64_t ly_fp=(int64_t)floor(((py+0.5-k->ay)*invys + k->originy)*(double)RFP_ONE);
+    int ly=floor_fixed20(ly_fp);
+    uint8_t *aout=am ? am+(size_t)yy*k->w : NULL;
+    if(ly<0 || ly>=k->sh){
+      memset(out,0,(size_t)k->w*sizeof(uint32_t));
+      if(aout) memset(aout,0,(size_t)k->w);
+      continue;
+    }
+    const uint8_t *srow=k->src+(size_t)ly*k->sw*4;
+    int64_t lx_fp=(int64_t)floor(((k->x0+0.5-k->ax)*invxs + k->originx)*(double)RFP_ONE);
+    for(int xx=0; xx<k->w; xx++, lx_fp+=dlx_fp){
+      int lx=floor_fixed20(lx_fp);
+      if(lx<0 || lx>=k->sw){ out[xx]=0; if(aout) aout[xx]=0; continue; }
+      const uint8_t *sp=srow+(size_t)lx*4;
+      double sa=(sp[3]/255.0)*k->alpha;
+      uint32_t af=sa>=1.0 ? 256u : (uint32_t)(sa*256.0);
+      if(!af){ out[xx]=0; if(aout) aout[xx]=0; continue; }
+      int sr=white?sp[0]:sp[0]*bR/255;
+      int sg=white?sp[1]:sp[1]*bG/255;
+      int sb=white?sp[2]:sp[2]*bB/255;
+      out[xx]=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+      uint32_t a8=af>=256u ? 255u : af;
+      if(aout) aout[xx]=(uint8_t)a8;
+      if(runs_ok && !runtime_axis_cache_add_run(&runs,&run_count,&run_cap,yy,xx,1,a8)){
+        free(runs);
+        runs=NULL;
+        run_count=0;
+        run_cap=0;
+        runs_ok=0;
+      }
+      if(xx<row_min[yy]) row_min[yy]=xx;
+      if(xx>row_max[yy]) row_max[yy]=xx;
+    }
+  }
+  if(!runs_ok){
+    free(runs);
+    runs=NULL;
+    run_count=0;
+  }
+  int full_rect=1;
+  for(int yy=0; yy<k->h; yy++){
+    if(row_min[yy]!=0 || row_max[yy]!=k->w-1){
+      full_rect=0;
+      break;
+    }
+  }
+  gml_render_sprite_cache_free(s);
+  s->runtime_axis_cache_px=px;
+  s->runtime_axis_cache_alpha=am;
+  s->runtime_axis_cache_row_min=row_min;
+  s->runtime_axis_cache_row_max=row_max;
+  s->runtime_axis_cache_runs=runs;
+  s->runtime_axis_cache_run_count=run_count;
+  s->runtime_axis_cache_key=*k;
+  s->runtime_axis_cache_valid=1;
+  s->runtime_axis_cache_copy_255=full_copy || k->alpha>=1.0;
+  s->runtime_axis_cache_uniform_alpha=uniform_alpha;
+  s->runtime_axis_cache_full_rect=full_rect;
+  if(log_axis_cache_enabled()){
+    if(r->axis_cache_log_count<80){
+      int drawn=0;
+      for(int yy=0; yy<k->h; yy++){
+        int mn=row_min[yy], mx=row_max[yy];
+        if(mx>=mn) drawn+=mx-mn+1;
+      }
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[axis-cache] sprite=%s out=%dx%d drawn_span=%d full=%d uniform=%d rect=%d runs=%d fallback=%d alpha=%.3f blend=%06x\n",
+              s->name?s->name:"?",k->w,k->h,drawn,full_copy,uniform_alpha,full_rect,run_count,
+              (!full_copy && !uniform_alpha && !runs),k->alpha,(unsigned)(k->blend&0xFFFFFF));
+      r->axis_cache_log_count++;
+    }
+  }
+  return 1;
+}
+static int runtime_axis_cache_try(GmlRender *r, GmlSprite *s, const GmlRuntimeAxisKey *k){
+  if(!r || !s || !k) return 0;
+  if(s->runtime_axis_cache_valid && runtime_axis_key_eq(&s->runtime_axis_cache_key,k)){
+    runtime_axis_cache_copy(r,s);
+    return 1;
+  }
+  if(runtime_axis_key_eq(&s->runtime_axis_pending_key,k)){
+    s->runtime_axis_pending_count++;
+  } else {
+    s->runtime_axis_pending_key=*k;
+    s->runtime_axis_pending_count=1;
+  }
+  if(s->runtime_axis_pending_count<2) return 0;
+  if(!runtime_axis_cache_build(r,s,k)) return 0;
+  runtime_axis_cache_copy(r,s);
+  return 1;
+}
+void blit(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
+                 uint32_t blend, double alpha);
+static void blit_background_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
+                                  double xs, double ys, uint32_t blend, double alpha);
+static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw, int sh, double x, double y,
+                                                double xs, double ys, int originx, int originy,
+                                                uint32_t blend, double alpha, int world_space,
+                                                const int *row_min, const int *row_max, int opaque){
+  if(!src || sw<=0 || sh<=0 || !r->fb || xs<=0 || ys<=0 || r->blendmode!=0) return 0;
+  if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
+  if(alpha<=0) return 1;
+  double ax=x-(world_space?r->cam_x:0), ay=y-(world_space?r->cam_y:0);
+  double minx=ax-originx*xs, maxx=ax+(sw-originx)*xs;
+  double miny=ay-originy*ys, maxy=ay+(sh-originy)*ys;
+  int x0=(int)floor(minx)-1, x1=(int)ceil(maxx)+1;
+  int y0=(int)floor(miny)-1, y1=(int)ceil(maxy)+1;
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>r->fbw) x1=r->fbw;
+  if(y1>r->fbh) y1=r->fbh;
+  if(x1<=x0 || y1<=y0) return 1;
+  int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
+  int white=((blend & 0xFFFFFF)==0xFFFFFF);
+  unsigned long long vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
+  if(opaque && alpha>=1.0 && r->blendmode==0) gml_render_maybe_prepare_opaque_rect(r,x0,y0,x1,y1);
+  else gml_render_maybe_prepare_draw(r);
+  if(owner && r->target_sp==0 && r->alphablend && alpha>0 &&
+     xs<1.5 && ys<1.5 && vispix>=262144ull){
+    GmlRuntimeAxisKey key={
+      src,sw,sh,r->fbw,r->fbh,x0,y0,x1-x0,y1-y0,originx,originy,
+      ax,ay,xs,ys,alpha,blend
+    };
+    if(runtime_axis_cache_try(r,owner,&key)) return 1;
+  }
+  uint32_t a16_lut[256];
+  uint32_t a8_lut[256];
+  /* Large runtime RGBA sprites are used for full-screen/background layers.
+   * Blend them at framebuffer precision; small sprites keep the exact 16-bit path. */
+  int fast8_blend = (r->target_sp==0 && r->alphablend &&
+                     r->blendmode==0 && vispix>=262144ull);
+  if(fast8_blend && alpha < (1.0/256.0)) return 1;
+  for(int i=0;i<256;i++){
+    double sa=(i/255.0)*alpha;
+    a16_lut[i]=sa>=1.0 ? 65536u : (uint32_t)(sa*65536.0);
+    a8_lut[i]=sa>=1.0 ? 256u : (uint32_t)(sa*256.0);
+  }
+  uint32_t round_bias=r->classic?32768u:0u;
+  if(fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001){
+    for(int py=y0; py<y1; py++){
+      int ly=(int)floor(py+0.5-ay+originy);
+      if(ly<0 || ly>=sh) continue;
+      int rmin=row_min?row_min[ly]:0, rmax=row_max?row_max[ly]:sw-1;
+      if(rmax<rmin) continue;
+      int lx=(int)floor(x0+0.5-ax+originx);
+      int px0=x0, px1=x1;
+      if(lx<0){ px0+=-lx; lx=0; }
+      if(lx<rmin){ px0+=rmin-lx; lx=rmin; }
+      if(lx+(px1-px0)>sw) px1=px0+(sw-lx);
+      if(lx+(px1-px0)-1>rmax) px1=px0+(rmax-lx+1);
+      if(px1<=px0) continue;
+      const uint8_t *sp=src+((size_t)ly*sw+lx)*4;
+      uint32_t *dp=r->fb+(size_t)py*r->fbw+px0;
+      if(opaque && alpha>=1.0 && (!r->alphablend || fast8_blend)){
+        if(white){
+          for(int px=px0; px<px1; px++, sp+=4, dp++)
+            *dp=0xFF000000u|((uint32_t)sp[0]<<16)|((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
+        } else {
+          for(int px=px0; px<px1; px++, sp+=4, dp++){
+            int sr=sp[0]*bR/255, sg=sp[1]*bG/255, sb=sp[2]*bB/255;
+            *dp=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+          }
+        }
+        continue;
+      }
+      for(int px=px0; px<px1; px++, sp+=4, dp++){
+        int aa=sp[3];
+        if(!aa) continue;
+        int sr=white?sp[0]:sp[0]*bR/255, sg=white?sp[1]:sp[1]*bG/255, sb=white?sp[2]:sp[2]*bB/255;
+        uint32_t srcpx=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+        if(!r->alphablend){ *dp=srcpx; continue; }
+        if(fast8_blend){
+          uint32_t af=a8_lut[aa];
+          if(af>=256u){ *dp=srcpx; continue; }
+          if(!af) continue;
+          uint32_t ia=256u-af;
+          uint32_t srb=(srcpx & 0x00FF00FFu)*af;
+          uint32_t sgc=(srcpx & 0x0000FF00u)*af;
+          *dp=blend_fast8_cached(*dp,srb,sgc,ia);
+        } else {
+          uint32_t af=a16_lut[aa];
+          if(af>=65536u){ *dp=srcpx; continue; }
+          if(!af) continue;
+          uint32_t ia=65536u-af;
+          uint32_t srp=(uint32_t)sr*af, sgp=(uint32_t)sg*af, sbp=(uint32_t)sb*af;
+          uint32_t dv=*dp;
+          int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
+          unsigned source_alpha=(unsigned)lround((double)aa*alpha);
+          *dp=gml_sprite_target_alpha(r,dv,source_alpha)|
+              (((srp+dr*ia+round_bias)>>16)<<16)|
+              (((sgp+dg*ia+round_bias)>>16)<<8)|((sbp+db*ia+round_bias)>>16);
+        }
+      }
+    }
+    return 1;
+  }
+  double invxs=1.0/xs, invys=1.0/ys;
+  int64_t dlx_fp=(int64_t)llround(invxs*(double)RFP_ONE);
+  if(xs<1.5 && ys<1.5){
+    for(int py=y0; py<y1; py++){
+      int64_t ly_fp=(int64_t)floor(((py+0.5-ay)*invys + originy)*(double)RFP_ONE);
+      int ly=floor_fixed20(ly_fp);
+      if(ly<0 || ly>=sh) continue;
+      int rmin=row_min?row_min[ly]:0, rmax=row_max?row_max[ly]:sw-1;
+      if(rmax<rmin) continue;
+      int px0=x0, px1=x1;
+      int span0=(int)ceil(ax + (rmin-originx)*xs - 0.5);
+      int span1=(int)ceil(ax + (rmax+1-originx)*xs - 0.5);
+      if(px0<span0) px0=span0;
+      if(px1>span1) px1=span1;
+      if(px0<0) px0=0;
+      if(px1>r->fbw) px1=r->fbw;
+      if(px1<=px0) continue;
+      const uint8_t *srow=src+(size_t)ly*sw*4;
+      uint32_t *row=&r->fb[(size_t)py*r->fbw];
+      int64_t lx_fp=(int64_t)floor(((px0+0.5-ax)*invxs + originx)*(double)RFP_ONE);
+      if(opaque && alpha>=1.0 && (!r->alphablend || fast8_blend)){
+        if(white){
+          for(int px=px0; px<px1; px++, lx_fp+=dlx_fp){
+            int lx=floor_fixed20(lx_fp);
+            if(lx<0 || lx>=sw) continue;
+            const uint8_t *sp=srow+(size_t)lx*4;
+            row[px]=0xFF000000u|((uint32_t)sp[0]<<16)|((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
+          }
+        } else {
+          for(int px=px0; px<px1; px++, lx_fp+=dlx_fp){
+            int lx=floor_fixed20(lx_fp);
+            if(lx<0 || lx>=sw) continue;
+            const uint8_t *sp=srow+(size_t)lx*4;
+            int sr=sp[0]*bR/255, sg=sp[1]*bG/255, sb=sp[2]*bB/255;
+            row[px]=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+          }
+        }
+        continue;
+      }
+      for(int px=px0; px<px1; px++, lx_fp+=dlx_fp){
+        int lx=floor_fixed20(lx_fp);
+        if(lx<0 || lx>=sw) continue;
+        const uint8_t *sp=srow+(size_t)lx*4;
+        int aa=sp[3];
+        if(!aa) continue;
+        int sr=white?sp[0]:sp[0]*bR/255, sg=white?sp[1]:sp[1]*bG/255, sb=white?sp[2]:sp[2]*bB/255;
+        uint32_t srcpx=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+        uint32_t *dp=&row[px];
+        if(!r->alphablend){ *dp=srcpx; continue; }
+        if(fast8_blend){
+          uint32_t af=a8_lut[aa];
+          if(af>=256u){ *dp=srcpx; continue; }
+          if(!af) continue;
+          uint32_t ia=256u-af;
+          uint32_t srb=(srcpx & 0x00FF00FFu)*af;
+          uint32_t sgc=(srcpx & 0x0000FF00u)*af;
+          *dp=blend_fast8_cached(*dp,srb,sgc,ia);
+        } else {
+          uint32_t af=a16_lut[aa];
+          if(af>=65536u){ *dp=srcpx; continue; }
+          if(!af) continue;
+          uint32_t ia=65536u-af;
+          uint32_t srp=(uint32_t)sr*af, sgp=(uint32_t)sg*af, sbp=(uint32_t)sb*af;
+          uint32_t dv=*dp;
+          int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
+          unsigned source_alpha=(unsigned)lround((double)aa*alpha);
+          *dp=gml_sprite_target_alpha(r,dv,source_alpha)|
+              (((srp+dr*ia+round_bias)>>16)<<16)|
+              (((sgp+dg*ia+round_bias)>>16)<<8)|((sbp+db*ia+round_bias)>>16);
+        }
+      }
+    }
+    return 1;
+  }
+  for(int py=y0; py<y1; py++){
+    int ly=(int)floor((py+0.5-ay)*invys + originy);
+    if(ly<0 || ly>=sh) continue;
+    int rmin=row_min?row_min[ly]:0, rmax=row_max?row_max[ly]:sw-1;
+    if(rmax<rmin) continue;
+    int px0=x0, px1=x1;
+    int span0=(int)ceil(ax + (rmin-originx)*xs - 0.5);
+    int span1=(int)ceil(ax + (rmax+1-originx)*xs - 0.5);
+    if(px0<span0) px0=span0;
+    if(px1>span1) px1=span1;
+    if(px0<0) px0=0;
+    if(px1>r->fbw) px1=r->fbw;
+    if(px1<=px0) continue;
+    const uint8_t *srow=src+(size_t)ly*sw*4;
+    uint32_t *row=&r->fb[(size_t)py*r->fbw];
+    double lx0=(px0+0.5-ax)*invxs + originx;
+    int64_t lx_fp=(int64_t)floor(lx0*(double)RFP_ONE);
+    for(int px=px0; px<px1; ){
+      int lx=floor_fixed20(lx_fp);
+      int maxrun=px1-px;
+      int run=fixed20_run_to_change(lx_fp,dlx_fp,lx,maxrun);
+      if(run<1) run=1;
+      if(lx>=0 && lx<sw){
+        const uint8_t *sp=srow+(size_t)lx*4;
+        int aa=sp[3];
+        if(aa){
+          int sr=white?sp[0]:sp[0]*bR/255, sg=white?sp[1]:sp[1]*bG/255, sb=white?sp[2]:sp[2]*bB/255;
+          uint32_t srcpx=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+          uint32_t *dp=&row[px];
+          if(!r->alphablend){
+            fill_u32_run(dp,run,srcpx);
+          } else {
+            if(fast8_blend){
+              uint32_t af=a8_lut[aa];
+              blend_fast8_run(dp,run,srcpx,af);
+            } else {
+              uint32_t af=a16_lut[aa];
+              if(af>=65536u){
+                fill_u32_run(dp,run,srcpx);
+              } else if(af){
+                uint32_t ia=65536u-af;
+                uint32_t srp=(uint32_t)sr*af, sgp=(uint32_t)sg*af, sbp=(uint32_t)sb*af;
+                for(int k=0;k<run;k++){
+                  uint32_t dv=dp[k];
+                  int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
+                  unsigned source_alpha=(unsigned)lround((double)aa*alpha);
+                  dp[k]=gml_sprite_target_alpha(r,dv,source_alpha)|
+                      (((srp+dr*ia+round_bias)>>16)<<16)|
+                      (((sgp+dg*ia+round_bias)>>16)<<8)|((sbp+db*ia+round_bias)>>16);
+                }
+              }
+            }
+          }
+        }
+      }
+      lx_fp += dlx_fp * (int64_t)run;
+      px += run;
+    }
+  }
+  return 1;
+}
+void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw, int sh, double x, double y,
+                             double xs, double ys, double rot, int originx, int originy,
+                             uint32_t blend, double alpha, int world_space,
+                             const int *row_min, const int *row_max, int opaque){
+  if(!src || sw<=0 || sh<=0 || !r->fb) return;
+  if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
+  if(xs==0||ys==0) return;
+  int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
+  double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
+  const struct GmlShaderPal *wave=radial_wave_active(r);
+  const struct GmlShaderPal *uvwave=uv_wave_active(r);
+  int mapped_shader=mapped_texture_active(r) || shader_alpha_test_active(r) ||
+                    wave!=NULL || uvwave!=NULL;
+  if(!mapped_shader && fabs(rr)<0.001 &&
+     blit_rgba_sprite_axis(r,owner,src,sw,sh,x,y,xs,ys,originx,originy,blend,alpha,
+                           world_space,row_min,row_max,opaque)) return;
+  double c,sn; render_rotation_sincos(rr,&c,&sn);
+  double ax=x-(world_space?r->cam_x:0), ay=y-(world_space?r->cam_y:0);
+  render_modern_cardinal_anchor(r,rr,xs,ys,c,sn,&ax,&ay);
+  double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
+  double corners[4][2]={{0,0},{sw,0},{0,sh},{sw,sh}};
+  for(int i=0;i<4;i++){
+    double px=(corners[i][0]-originx)*xs, py=(corners[i][1]-originy)*ys;
+    double dx=ax + px*c + py*sn, dy=ay - px*sn + py*c;
+    if(dx<minx) minx=dx;
+    if(dx>maxx) maxx=dx;
+    if(dy<miny) miny=dy;
+    if(dy>maxy) maxy=dy;
+  }
+  int x0=(int)floor(minx)-1, x1=(int)ceil(maxx)+1;
+  int y0=(int)floor(miny)-1, y1=(int)ceil(maxy)+1;
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>r->fbw) x1=r->fbw;
+  if(y1>r->fbh) y1=r->fbh;
+  if(x1<=x0 || y1<=y0) return;
+  gml_render_maybe_prepare_draw(r);
+  for(int py=y0; py<y1; py++) for(int px=x0; px<x1; px++){
+    double rx=px+0.5-ax, ry=py+0.5-ay;
+    double sxr=rx*c - ry*sn, syr=rx*sn + ry*c;
+    int lx=(int)floor(sxr/xs + originx), ly=(int)floor(syr/ys + originy);
+    if(lx<0||ly<0||lx>=sw||ly>=sh) continue;
+    int source_index=wave ? radial_wave_sample_index(wave,sw,sh,lx,ly) :
+      (uvwave ? uv_wave_sample_index(uvwave,sw,sh,lx,ly,
+         world_space ? (double)py+0.5+r->cam_y : (double)py+0.5) : ly*sw+lx);
+    const uint8_t *sp=src+(size_t)source_index*4u;
+      if(shader_discards_alpha(r,sp[3])) continue;
+      uint32_t sampled=((uint32_t)sp[3]<<24)|((uint32_t)sp[0]<<16)|
+                       ((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
+      if(mapped_texture_active(r)) sampled=mapped_texture_pixel(r,sampled);
+      int sample_a=(int)(sampled>>24);
+      double sa=(sample_a/255.0)*alpha; if(sa<=0) continue;
+      uint32_t *dp=&r->fb[(size_t)py*r->fbw+px];
+      int sr=((sampled>>16)&255)*bR/255;
+      int sg=((sampled>>8)&255)*bG/255;
+      int sb=(sampled&255)*bB/255;
+      if(!r->alphablend){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
+      uint32_t destination=*dp;
+      int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
+      if(r->blendmode==1){ int ar=dr+(int)(sr*sa); if(ar>255)ar=255; int ag=dg+(int)(sg*sa); if(ag>255)ag=255; int ab=db+(int)(sb*sa); if(ab>255)ab=255; *dp=0xFF000000u|(ar<<16)|(ag<<8)|ab; continue; }
+      if(r->blendmode==2){
+        unsigned ar=gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
+        unsigned ag=gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
+        unsigned ab=gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
+        *dp=0xFF000000u|(ar<<16)|(ag<<8)|ab; continue;
+      }
+      int or_=(int)(sr*sa+dr*(1-sa)); if(or_>255) or_=255; else if(or_<0) or_=0;
+      int og=(int)(sg*sa+dg*(1-sa)); if(og>255) og=255; else if(og<0) og=0;
+      int ob=(int)(sb*sa+db*(1-sa)); if(ob>255) ob=255; else if(ob<0) ob=0;
+    unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
+    *dp=gml_sprite_target_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
+  }
+}
+static void blit_rgba_region(GmlRender *r, const uint8_t *src, int iw, int ih,
+                             double sx0d, double sy0d, double swd, double shd,
+                             double dx, double dy, double dw, double dh,
+                             uint32_t blend, double alpha){
+  if(!src || iw<=0 || ih<=0 || !r->fb) return;
+  if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
+  int x0=(int)floor(dx), y0=(int)floor(dy), W=(int)lround(dw), H=(int)lround(dh);
+  if(swd<=0||shd<=0||W==0||H==0) return;
+  int flipx=W<0, flipy=H<0; if(W<0) W=-W; if(H<0) H=-H;
+  if(alpha<=0) return;
+  int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
+  if(!flipx && !flipy && W==iw && H==ih &&
+     fabs(sx0d) < 0.001 && fabs(sy0d) < 0.001 &&
+     fabs(swd - iw) < 0.001 && fabs(shd - ih) < 0.001){
+    int cx0=x0<0?0:x0, cy0=y0<0?0:y0;
+    int cx1=x0+W; if(cx1>r->fbw) cx1=r->fbw;
+    int cy1=y0+H; if(cy1>r->fbh) cy1=r->fbh;
+    int cw=cx1-cx0, ch=cy1-cy0;
+    if(cw<=0 || ch<=0) return;
+    int sx_start=cx0-x0, sy_start=cy0-y0;
+    gml_render_maybe_prepare_draw(r);
+    for(int yy=0; yy<ch; yy++){
+      const uint8_t *sp=src+((size_t)(sy_start+yy)*iw+sx_start)*4;
+      uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
+      for(int xx=0; xx<cw; xx++, sp+=4){
+        double sa=(sp[3]/255.0)*alpha;
+        if(sa<=0) continue;
+        int sr=sp[0]*bR/255, sg=sp[1]*bG/255, sb=sp[2]*bB/255;
+        if(!r->alphablend || sa>=1.0) dp[xx]=0xFF000000u|(sr<<16)|(sg<<8)|sb;
+        else {
+          uint32_t dv=dp[xx];
+          double ia=1.0-sa;
+          int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
+          unsigned source_alpha=(unsigned)lround((double)sp[3]*alpha);
+          dp[xx]=gml_sprite_target_alpha(r,dv,source_alpha)|
+                 ((int)(sr*sa+dr*ia)<<16)|((int)(sg*sa+dg*ia)<<8)|
+                 (int)(sb*sa+db*ia);
+        }
+      }
+    }
+    return;
+  }
+  gml_render_maybe_prepare_draw(r);
+  for(int py=0; py<H; py++){ int ty_=y0+py; if(ty_<0||ty_>=r->fbh) continue;
+    int dpy=flipy?(H-1-py):py;
+    int sy0=(int)floor(sy0d + (dpy*shd)/H), sy1=(int)floor(sy0d + ((dpy+1)*shd)/H);
+    if(sy1<=sy0) sy1=sy0+1;
+    if(sy0<0) sy0=0;
+    if(sy1>ih) sy1=ih;
+    for(int px=0; px<W; px++){ int tx_=x0+px; if(tx_<0||tx_>=r->fbw) continue;
+      int dpx=flipx?(W-1-px):px;
+      int sx0=(int)floor(sx0d + (dpx*swd)/W), sx1=(int)floor(sx0d + ((dpx+1)*swd)/W);
+      if(sx1<=sx0) sx1=sx0+1;
+      if(sx0<0) sx0=0;
+      if(sx1>iw) sx1=iw;
+      int R=0,G=0,B=0,A=0,n=0;
+      for(int sy=sy0;sy<sy1;sy++) for(int sx=sx0;sx<sx1;sx++){
+        const uint8_t *sp=src+((size_t)sy*iw+sx)*4;
+        R+=sp[0]; G+=sp[1]; B+=sp[2]; A+=sp[3]; n++;
+      }
+      if(!n) continue;
+      double oa=((A/(double)n)/255.0)*alpha; if(oa<=0) continue;
+      uint32_t *dp=&r->fb[(size_t)ty_*r->fbw+tx_];
+      int sr=(R/n)*bR/255, sg=(G/n)*bG/255, sb=(B/n)*bB/255;
+      if(!r->alphablend){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
+      uint32_t destination=*dp;
+      int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
+      unsigned source_alpha=(unsigned)lround((A/(double)n)*alpha);
+      *dp=gml_sprite_target_alpha(r,destination,source_alpha)|
+          ((int)(sr*oa+dr*(1-oa))<<16)|((int)(sg*oa+dg*(1-oa))<<8)|
+          (int)(sb*oa+db*(1-oa));
+    }
+  }
+}
+static void blit_tpag_part_with_phase(GmlRender *r, GmlTpag *t,
+                                      double sx, double sy, double sw, double sh,
+                                      double dx, double dy, double xs, double ys,
+                                      uint32_t blend, double alpha, int advance_y){
+  if(!t || sw<=0 || sh<=0 || xs==0 || ys==0) return;
+  double ix0d=fmax(sx,(double)t->tx), iy0d=fmax(sy,(double)t->ty);
+  double ix1d=fmin(sx+sw,(double)(t->tx+t->sw)), iy1d=fmin(sy+sh,(double)(t->ty+t->sh));
+  int ix0=(int)floor(ix0d), iy0=(int)floor(iy0d);
+  int ix1=(int)ceil(ix1d), iy1=(int)ceil(iy1d);
+  if(ix1<=ix0 || iy1<=iy0) return;
+  GmlTpag tt=*t;
+  tt.sx=t->sx + (ix0 - t->tx);
+  tt.sy=t->sy + (iy0 - t->ty);
+  tt.sw=ix1-ix0;
+  tt.sh=iy1-iy0;
+  tt.tx=0; tt.ty=0;
+  /* the copy dies on return, so any alpha scan on it is thrown-away work redone EVERY call
+   * (a big tiled background part re-scanned its full sub-rect per draw); and the pointer
+   * caches copied from the parent describe the PARENT's geometry, not this sub-rect.
+   * Mark it pre-scanned with conservative full-rect bounds and detach the caches. */
+  tt.alpha_scanned=1;
+  tt.ax0=0; tt.ay0=0; tt.ax1=tt.sw-1; tt.ay1=tt.sh-1;
+  tt.alpha_max=t->alpha_scanned ? t->alpha_max : 255;
+  tt.alpha_row_min=tt.alpha_row_max=NULL;
+  tt.alpha_qrow_min=tt.alpha_qrow_max=NULL; tt.alpha_qrow_built=NULL;
+  tt.alpha_runs=NULL; tt.alpha_run_count=0; tt.alpha_runs_built=0;
+  tt.argb_cache=NULL;
+  tt.interp_phase_cache[0]=tt.interp_phase_cache[1]=tt.interp_phase_cache[2]=NULL;
+  tt.fast8_draw_cache=NULL; tt.fast8_draw_cache_valid=0; tt.fast8_draw_pending_count=0;
+  if(advance_y) blit_background_phase(r,&tt,dx+(ix0-sx)*xs,dy+(iy0-sy)*ys,xs,ys,blend,alpha);
+  else blit(r,&tt,dx+(ix0-sx)*xs,dy+(iy0-sy)*ys,xs,ys,blend,alpha);
+}
+static void blit_tpag_part(GmlRender *r, GmlTpag *t, double sx, double sy, double sw, double sh,
+                           double dx, double dy, double xs, double ys, uint32_t blend, double alpha){
+  blit_tpag_part_with_phase(r,t,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,0);
+}
+static void blit_tpag_part_background(GmlRender *r, GmlTpag *t,
+                                      double sx, double sy, double sw, double sh,
+                                      double dx, double dy, double xs, double ys,
+                                      uint32_t blend, double alpha){
+  blit_tpag_part_with_phase(r,t,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,1);
+}
+/* alpha (0-255) of a sprite frame at SPRITE-LOCAL pixel (lx,ly) in [0,w)x[0,h); 0 outside the
+ * trimmed image. Used for per-pixel (precise) collision masks. */
+int gml_sprite_alpha(GmlRender *r, int sprite, int frame, int lx, int ly){
+  if(sprite<0||sprite>=r->n_spr) return 0;
+  GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return 0;
+  if(s->runtime_rgba){
+    const uint8_t *fr=runtime_frame_rgba(s,frame); if(!fr) return 0;
+    if(lx<0||ly<0||lx>=s->w||ly>=s->h) return 0;
+    return fr[((size_t)ly*s->w+lx)*4+3];
+  }
+  int sub=((frame%s->n_frames)+s->n_frames)%s->n_frames;
+  int ti=s->frame[sub]; if(ti<0||ti>=r->n_tpag) return 0;
+  GmlTpag *t=&r->tpag[ti];
+  int ix=lx - t->tx, iy=ly - t->ty;                 /* into the trimmed sub-image */
+  if(ix<0||iy<0||ix>=t->sw||iy>=t->sh) return 0;
+  if(t->atlas<0||t->atlas>=r->n_atlas) return 0;
+  GmlAtlas *a=&r->atlas[t->atlas]; if(!atlas_pixels(r,t->atlas)) return 0;
+  int ax=t->sx+ix, ay=t->sy+iy;
+  if(ax<0||ay<0||ax>=a->w||ay>=a->h) return 0;
+  return a->px[((size_t)ay*a->w+ax)*4+3];
+}
+static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas,
+                               const GmlTpag *t, int ua, int ub, int va, int vb,
+                               double fx, double fy, int logical_margin,
+                               int transparent_tap, int bR, int bG, int bB,
+                               uint32_t blend, double alpha);
+
+/* blit one TPAG sub-rect; nearest-neighbour scale; per-pixel alpha; blend multiply.
+ * Handles negative xscale/yscale (horizontal/vertical mirror): the caller's (dx,dy) is the anchor
+ * edge for the scale sign, and we walk the destination outward (right/down for +, left/up for −)
+ * while sampling the source left-to-right/top-to-bottom. rotation not yet handled (rot ignored). */
+static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
+                     uint32_t blend, double alpha){
+  if(!r || !t || !r->fb || r->fbw<=0 || r->fbh<=0) return;
+  if(alpha>1) alpha=1; else if(alpha<0) alpha=0;   /* GM clamps draw alpha to [0,1] */
+  if(alpha<=0) return;
+  double axs=fabs(xs), ays=fabs(ys); if(axs<=0||ays<=0) return;
+  int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;  /* GM blend = BBGGRR */
+  /* Round-half-up (not floor): sprite quads use nearest-pixel snapping, so
+   * fractional positions round half up. Integer positions such as background
+   * tiles are unaffected. */
+  int x0=(int)floor(dx+0.5), y0=(int)floor(dy+0.5);
+  int w=(int)lround(t->sw*axs), h=(int)lround(t->sh*ays);
+  if(w<=0 || h<=0) return;
+  int flipx=(xs<0), flipy=(ys<0);
+  /* A negatively-scaled GPU quad is half-open at its anchor edge: with a
+   * two-pixel sprite anchored at x=20 it covers destination pixels 18 and
+   * 19, not 19 and 20.  This is shared by classic and Studio semantics;
+   * keeping the adjustment classic-only displaced every mirrored Studio
+   * sprite by one logical pixel (most visibly vertically mirrored arenas). */
+  if(flipx) x0--;
+  if(flipy) y0--;
+  int xx0=0, xx1=w, yy0=0, yy1=h;
+  if(!flipx){
+    if(x0<0) xx0=-x0;
+    if(x0+w>r->fbw) xx1=r->fbw-x0;
+  } else {
+    int s=x0-(r->fbw-1), e=x0+1;
+    if(s>xx0) xx0=s;
+    if(e<xx1) xx1=e;
+  }
+  if(!flipy){
+    if(y0<0) yy0=-y0;
+    if(y0+h>r->fbh) yy1=r->fbh-y0;
+  } else {
+    int s=y0-(r->fbh-1), e=y0+1;
+    if(s>yy0) yy0=s;
+    if(e<yy1) yy1=e;
+  }
+  if(xx1<=xx0 || yy1<=yy0) return;
+  if(t->atlas<0 || t->atlas>=r->n_atlas) return;
+  GmlAtlas *a=&r->atlas[t->atlas]; if(!atlas_pixels(r,t->atlas)) return;
+  const struct GmlShaderPal *wave=radial_wave_active(r);
+  const struct GmlShaderPal *uvwave=uv_wave_active(r);
+  int mapped_shader=mapped_texture_active(r) || shader_alpha_test_active(r) ||
+                    wave!=NULL || uvwave!=NULL;
+  gml_render_maybe_prepare_draw(r);
+  int prof=rprof_enabled();
+  double t0=prof?rprof_now():0.0;
+  unsigned long long vispix=(unsigned long long)(xx1-xx0)*(unsigned long long)(yy1-yy0);
+  /* Hardware filtering samples the four neighbouring texels at the destination pixel centre.
+   * Preserve the quad's fractional origin in the inverse map: snapping before sampling shifts a
+   * heavily minified texture by several source texels and is visible in presentation overlays. */
+  if(r->interp && r->win && anygm_policy_has_modern_layer_semantics(r->win) && !wave && !uvwave){
+    int logical_margin=t->tx>0 || t->ty>0 || t->tx+t->sw<t->bw || t->ty+t->sh<t->bh;
+    for(int yy=yy0;yy<yy1;yy++){
+      int py=flipy ? (y0-yy) : (y0+yy);
+      double source_y=(flipy ? (dy-((double)py+0.5)) : (((double)py+0.5)-dy))/ays-0.5;
+      int va=(int)floor(source_y), vb=va+1; double fy=source_y-va;
+      uint32_t *drow=r->fb+(size_t)py*r->fbw;
+      for(int xx=xx0;xx<xx1;xx++){
+        int px=flipx ? (x0-xx) : (x0+xx);
+        double source_x=(flipx ? (dx-((double)px+0.5)) : (((double)px+0.5)-dx))/axs-0.5;
+        int ua=(int)floor(source_x), ub=ua+1; double fx=source_x-ua;
+        blit_interp_sample(r,&drow[px],a,t,ua,ub,va,vb,fx,fy,logical_margin,0,
+                           bR,bG,bB,blend,alpha);
+      }
+    }
+    if(prof) rprof_add("blit",r,t,(rprof_now()-t0)*1000.0,vispix);
+    return;
+  }
+  if(!flipx && !flipy && fabs(axs-1.0)<0.001 && fabs(ays-1.0)<0.001 &&
+     alpha>=1.0 && (blend & 0xFFFFFF)==0xFFFFFF && r->blendmode==0 && !mapped_shader){   /* fast opaque copy — never in add mode */
+    int cx0=x0<0?0:x0, cy0=y0<0?0:y0;
+    int cx1=x0+t->sw; if(cx1>r->fbw) cx1=r->fbw;
+    int cy1=y0+t->sh; if(cy1>r->fbh) cy1=r->fbh;
+    int cw=cx1-cx0, ch=cy1-cy0;
+    if(cw<=0 || ch<=0){ if(prof) rprof_add("blit",r,t,(rprof_now()-t0)*1000.0,0); return; }
+    if(!blit_tpag_scale1_white_exact(r,t,a,x0,y0,cx0-x0,cx1-x0,cy0-y0,cy1-y0)){
+      int sx0=t->sx + (cx0-x0), sy0=t->sy + (cy0-y0);
+      for(int yy=0; yy<ch; yy++){
+        const uint8_t *sp=a->px+((size_t)(sy0+yy)*a->w+sx0)*4;
+        uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
+        for(int xx=0; xx<cw; xx++, sp+=4){
+          int aa=sp[3];
+          if(aa<=0) continue;
+          int sr=sp[0], sg=sp[1], sb=sp[2];
+          if(!r->alphablend || aa>=255) dp[xx]=0xFF000000u|(sr<<16)|(sg<<8)|sb;
+          else {
+            uint32_t dv=dp[xx];
+            int ia=255-aa;
+            int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
+            if(r->classic){
+              /* Fixed-function GM8 blending rounds the source and destination
+               * products independently before adding them.  Rounding only the
+               * combined numerator loses a channel at nearly-opaque texels. */
+              int rr=(sr*aa+127)/255 + (dr*ia+127)/255;
+              int rg=(sg*aa+127)/255 + (dg*ia+127)/255;
+              int rb=(sb*aa+127)/255 + (db*ia+127)/255;
+              if(rr>255) rr=255;
+              if(rg>255) rg=255;
+              if(rb>255) rb=255;
+              dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
+                     ((uint32_t)rr<<16)|((uint32_t)rg<<8)|(uint32_t)rb;
+            } else {
+              dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
+                     (((sr*aa+dr*ia)/255)<<16)|
+                     (((sg*aa+dg*ia)/255)<<8)|((sb*aa+db*ia)/255);
+            }
+          }
+        }
+      }
+    }
+    if(prof) rprof_add("blit",r,t,(rprof_now()-t0)*1000.0,vispix);
+    return;
+  }
+  if(!flipx && !flipy && fabs(axs-1.0)<0.001 && fabs(ays-1.0)<0.001 &&
+     alpha<1.0 && (blend & 0xFFFFFF)==0xFFFFFF && r->blendmode==0 && !mapped_shader){
+    int cx0=x0<0?0:x0, cy0=y0<0?0:y0;
+    int cx1=x0+t->sw; if(cx1>r->fbw) cx1=r->fbw;
+    int cy1=y0+t->sh; if(cy1>r->fbh) cy1=r->fbh;
+    int cw=cx1-cx0, ch=cy1-cy0;
+    if(cw<=0 || ch<=0){ if(prof) rprof_add("blit",r,t,(rprof_now()-t0)*1000.0,0); return; }
+    if(blit_tpag_scale1_white_draw_alpha(r,t,a,x0,y0,cx0-x0,cx1-x0,cy0-y0,cy1-y0,alpha)){
+      if(prof) rprof_add("blit",r,t,(rprof_now()-t0)*1000.0,vispix);
+      return;
+    }
+  }
+  if((flipx || flipy) && fabs(axs-1.0)<0.001 && fabs(ays-1.0)<0.001 &&
+     alpha>=1.0 && (blend & 0xFFFFFF)==0xFFFFFF && r->blendmode==0 && !mapped_shader){
+    if(blit_tpag_scale1_white_exact_flipped(r,t,a,x0,y0,xx0,xx1,yy0,yy1,flipx,flipy)){
+      if(prof) rprof_add("blit",r,t,(rprof_now()-t0)*1000.0,vispix);
+      return;
+    }
+  }
+  /* per-column source-x table: hoists the per-pixel division out of the row loop
+   * (same expression, so the sampled columns are bit-identical) */
+  int lxbuf[2048];
+  int span=xx1-xx0;
+  int *lxtab=(span<=(int)(sizeof lxbuf/sizeof *lxbuf))? lxbuf : malloc((size_t)span*sizeof(int));
+  /* The classic half-pixel compensation leaves the quad's fractional origin
+   * in the texture interpolation.  Keep that phase after snapping its raster
+   * bounds; assuming every snapped quad began at an integer picks an adjacent
+   * texel in scaled nearest-neighbour draws. */
+  double inv_x=1.0/axs, inv_y=1.0/ays;
+  int reciprocal_x=fabs(inv_x-nearbyint(inv_x))<1e-9;
+  int reciprocal_y=fabs(inv_y-nearbyint(inv_y))<1e-9;
+  double sample_x=r->classic&&!flipx&&!reciprocal_x ? x0+0.5-dx : 0.5;
+  double sample_y=r->classic&&!flipy&&!reciprocal_y ? y0+0.5-dy : 0.5;
+  if(lxtab) for(int xx=xx0;xx<xx1;xx++) lxtab[xx-xx0]=(int)((xx+sample_x)/axs);
+  /* The displacement is evaluated in texture coordinates, not output coordinates. Scaled pixel
+   * art repeats each source texel many times, so precompute one warped atlas index per logical
+   * source pixel instead of performing hypot/sin for every enlarged destination pixel. */
+  int *wave_map=NULL;
+  if((wave || uvwave) && t->sw>0 && t->sh>0 &&
+     (size_t)t->sw<=SIZE_MAX/(size_t)t->sh/sizeof(int)){
+    size_t count=(size_t)t->sw*(size_t)t->sh;
+    wave_map=malloc(count*sizeof(*wave_map));
+    if(wave_map) for(int local_y=0;local_y<t->sh;local_y++){
+      double position_y=dy+r->cam_y+(flipy?-(local_y+0.5)*ays:(local_y+0.5)*ays);
+      for(int local_x=0;local_x<t->sw;local_x++)
+        wave_map[(size_t)local_y*t->sw+local_x]=wave
+          ? radial_wave_sample_index(wave,a->w,a->h,t->sx+local_x,t->sy+local_y)
+          : uv_wave_sample_index(uvwave,a->w,a->h,t->sx+local_x,t->sy+local_y,position_y);
+    }
+  }
+  /* dominant case (plain scaled sprite/background: white blend, full alpha, normal mode):
+   * opaque pixels are a straight store and transparent ones a skip — identical output to the
+   * generic math below ((int)(s*1.0+d*0.0)==s), only edge pixels take the double blend. */
+  int fastcase = lxtab && !mapped_shader && (blend&0xFFFFFF)==0xFFFFFF && alpha>=1.0 && r->blendmode==0 && r->alphablend;
+  for(int yy=yy0; yy<yy1; yy++){
+    int py = flipy ? (y0-yy) : (y0+yy);
+    int ly=(int)((yy+sample_y)/ays); if(ly<0||ly>=t->sh) continue;
+    int sy=t->sy+ly;
+    if(fastcase){
+      const uint8_t *srow=a->px + ((size_t)sy*a->w + t->sx)*4;
+      uint32_t *drow=&r->fb[(size_t)py*r->fbw];
+      for(int xx=xx0; xx<xx1; xx++){
+        int lx=lxtab[xx-xx0]; if(lx<0||lx>=t->sw) continue;
+        const uint8_t *sp=srow + (size_t)lx*4;
+        int aa=sp[3]; if(!aa) continue;
+        int px = flipx ? (x0-xx) : (x0+xx);
+        uint32_t *dp=&drow[px];
+        if(aa==255){ *dp=0xFF000000u|((uint32_t)sp[0]<<16)|((uint32_t)sp[1]<<8)|sp[2]; continue; }
+        double sa=(aa/255.0)*alpha;
+        uint32_t destination=*dp;
+        int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
+        double bias=r->classic?0.5:0.0;
+        int or_=(int)(sp[0]*sa+dr*(1-sa)+bias); if(or_>255) or_=255; else if(or_<0) or_=0;
+        int og=(int)(sp[1]*sa+dg*(1-sa)+bias); if(og>255) og=255; else if(og<0) og=0;
+        int ob=(int)(sp[2]*sa+db*(1-sa)+bias); if(ob>255) ob=255; else if(ob<0) ob=0;
+        unsigned source_alpha=(unsigned)lround((double)aa*alpha);
+        *dp=gml_sprite_target_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
+      }
+      continue;
+    }
+    for(int xx=xx0; xx<xx1; xx++){
+      int px = flipx ? (x0-xx) : (x0+xx);
+      int lx=lxtab? lxtab[xx-xx0] : (int)((xx+sample_x)/axs); if(lx<0||lx>=t->sw) continue;
+      int sx=t->sx+lx;
+      const uint8_t *sp=wave_map
+        ? a->px+(size_t)wave_map[(size_t)ly*t->sw+lx]*4u
+        : a->px+((size_t)sy*a->w+sx)*4u;
+      if(shader_discards_alpha(r,sp[3])) continue;
+      uint32_t sampled=((uint32_t)sp[3]<<24)|((uint32_t)sp[0]<<16)|
+                       ((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
+      if(mapped_shader) sampled=mapped_texture_pixel(r,sampled);
+      int sample_a=(int)(sampled>>24);
+      double sa=(sample_a/255.0)*alpha; if(sa<=0) continue;
+      uint32_t *dp=&r->fb[(size_t)py*r->fbw+px];
+      int tint_bias=(r->win && anygm_policy_has_modern_layer_semantics(r->win))?127:0;
+      int sr=(((sampled>>16)&255)*bR+tint_bias)/255;
+      int sg=(((sampled>>8)&255)*bG+tint_bias)/255;
+      int sb=((sampled&255)*bB+tint_bias)/255;
+      if(!r->alphablend){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
+      uint32_t destination=*dp;
+      int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
+      if(r->blendmode==1){   /* bm_add: dst += src*srcAlpha (glow) */
+        int ar=dr+(int)(sr*sa); if(ar>255)ar=255; int ag=dg+(int)(sg*sa); if(ag>255)ag=255;
+        int ab=db+(int)(sb*sa); if(ab>255)ab=255; *dp=0xFF000000u|(ar<<16)|(ag<<8)|ab; continue; }
+      if(r->blendmode==2){   /* (bm_zero,bm_inv_src_colour), including inverse source alpha. */
+        unsigned ar=gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
+        unsigned ag=gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
+        unsigned ab=gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
+        uint32_t oc=0xFF;
+        if(r->target_sp>0){
+          unsigned source_alpha=(unsigned)lround(sample_a*alpha);
+          if(source_alpha>255u) source_alpha=255u;
+          oc=gml_blend_inv_source_u8(*dp>>24,source_alpha);
+        }
+        *dp=(oc<<24)|(ar<<16)|(ag<<8)|ab; continue; }
+      /* clamp each channel to [0,255]: a blend>255 or a (legitimately clamped) alpha can still push
+       * sr*sa over 255, and packing an out-of-range byte would corrupt the neighbouring channel. */
+      int or_,og,ob;
+      if(r->classic){
+        if(!reciprocal_x || !reciprocal_y){
+          or_=(int)(sr*sa+0.5)+(int)(dr*(1-sa)+0.5);
+          og=(int)(sg*sa+0.5)+(int)(dg*(1-sa)+0.5);
+          ob=(int)(sb*sa+0.5)+(int)(db*(1-sa)+0.5);
+        } else {
+          or_=(int)(sr*sa+dr*(1-sa)+0.5);
+          og=(int)(sg*sa+dg*(1-sa)+0.5);
+          ob=(int)(sb*sa+db*(1-sa)+0.5);
+        }
+      } else {
+        or_=(int)(sr*sa+dr*(1-sa));
+        og=(int)(sg*sa+dg*(1-sa));
+        ob=(int)(sb*sa+db*(1-sa));
+      }
+      if(or_>255) or_=255; else if(or_<0) or_=0;
+      if(og>255) og=255; else if(og<0) og=0;
+      if(ob>255) ob=255; else if(ob<0) ob=0;
+      unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
+      *dp=gml_sprite_target_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
+    }
+  }
+  free(wave_map);
+  if(lxtab && lxtab!=lxbuf) free(lxtab);
+  if(prof) rprof_add("blit",r,t,(rprof_now()-t0)*1000.0,vispix);
+}
+static void blit_phase_plane(GmlRender *r, uint32_t *plane, GmlTpag *t,
+                             double dx, double dy, double xs, double ys,
+                             uint32_t blend, double alpha){
+  uint32_t *saved_fb=r->fb;
+  int saved_known=r->fb_opaque_known;
+  int saved_opaque=r->fb_all_opaque;
+  int saved_transparent=r->fb_all_transparent;
+  r->fb=plane;
+  r->fb_opaque_known=0;
+  r->fb_all_opaque=0;
+  r->fb_all_transparent=0;
+  blit_one(r,t,dx,dy,xs,ys,blend,alpha);
+  r->fb=saved_fb;
+  r->fb_opaque_known=saved_known;
+  r->fb_all_opaque=saved_opaque;
+  r->fb_all_transparent=saved_transparent;
+}
+static uint32_t *interp_phase_pixels(GmlRender *r, GmlTpag *t, GmlAtlas *atlas,
+                                     int phase_x, int phase_y,
+                                     int projected_x, int projected_y,
+                                     int dest_x0, int dest_y0,
+                                     double edge_x0, double edge_x1,
+                                     double edge_y0, double edge_y1){
+  enum { INTERP_SUBRECT_MAX_ENTRIES=2048, INTERP_SUBRECT_MAX_BYTES=16*1024*1024 };
+  if(!r || !t) return NULL;
+  int slot=phase_x?(phase_y?2:0):1;
+  int active_projected_x=phase_x && projected_x;
+  int active_projected_y=phase_y && projected_y;
+  int active_projected=active_projected_x || active_projected_y;
+  size_t count=(size_t)t->sw*(size_t)t->sh;
+  if(count==0 || count>SIZE_MAX/sizeof(uint32_t)) return NULL;
+  size_t bytes=count*sizeof(uint32_t);
+  uint32_t **cache_slot=NULL;
+  int canonical=rprof_tpag_id(r,t)>=0;
+  int direct_cache=canonical && !projected_x && !projected_y;
+  if(direct_cache){
+    cache_slot=&t->interp_phase_cache[slot];
+  } else {
+    if(bytes>INTERP_SUBRECT_MAX_BYTES) return NULL;
+    GmlInterpSubrectCache *entry=NULL;
+    for(int i=0;i<r->interp_subrect_count;i++){
+      GmlInterpSubrectCache *candidate=&r->interp_subrect_cache[i];
+      if(candidate->atlas==t->atlas && candidate->sx==t->sx && candidate->sy==t->sy &&
+         candidate->sw==t->sw && candidate->sh==t->sh &&
+         candidate->projected_x==projected_x && candidate->projected_y==projected_y &&
+         candidate->dest_x0==dest_x0 && candidate->dest_y0==dest_y0 &&
+         candidate->edge_x0==edge_x0 && candidate->edge_x1==edge_x1 &&
+         candidate->edge_y0==edge_y0 && candidate->edge_y1==edge_y1){
+        entry=candidate; break;
+      }
+    }
+    if(!entry){
+      if(r->interp_subrect_bytes>INTERP_SUBRECT_MAX_BYTES-bytes) return NULL;
+      if(r->interp_subrect_count>=INTERP_SUBRECT_MAX_ENTRIES) return NULL;
+      if(r->interp_subrect_count>=r->interp_subrect_capacity){
+        int capacity=r->interp_subrect_capacity?r->interp_subrect_capacity*2:32;
+        if(capacity>INTERP_SUBRECT_MAX_ENTRIES) capacity=INTERP_SUBRECT_MAX_ENTRIES;
+        GmlInterpSubrectCache *grown=realloc(r->interp_subrect_cache,
+                                             (size_t)capacity*sizeof(*grown));
+        if(!grown) return NULL;
+        r->interp_subrect_cache=grown;
+        r->interp_subrect_capacity=capacity;
+      }
+      entry=&r->interp_subrect_cache[r->interp_subrect_count++];
+      memset(entry,0,sizeof(*entry));
+      entry->atlas=t->atlas; entry->sx=t->sx; entry->sy=t->sy;
+      entry->sw=t->sw; entry->sh=t->sh;
+      entry->projected_x=projected_x; entry->projected_y=projected_y;
+      entry->dest_x0=dest_x0; entry->dest_y0=dest_y0;
+      entry->edge_x0=edge_x0; entry->edge_x1=edge_x1;
+      entry->edge_y0=edge_y0; entry->edge_y1=edge_y1;
+    }
+    cache_slot=&entry->phase[slot];
+  }
+  if(*cache_slot) return *cache_slot;
+  if(!direct_cache &&
+     r->interp_subrect_bytes>INTERP_SUBRECT_MAX_BYTES-bytes) return NULL;
+  uint32_t *cache=malloc(count*sizeof(uint32_t));
+  if(!cache) return NULL;
+  int taps=(phase_x?2:1)*(phase_y?2:1);
+  for(int y=0;y<t->sh;y++){
+    int ya=y,yb=y; double fy=0.0;
+    if(phase_y){
+      if(active_projected_y && fabs(edge_y1-edge_y0)>1e-12){
+        double sample=2.0*(double)(dest_y0+y)-0.5;
+        double v=(sample-edge_y0)*(double)t->sh/(edge_y1-edge_y0)-0.5;
+        ya=(int)floor(v); yb=ya+1; fy=v-(double)ya;
+      } else { ya=y-1; yb=y; fy=0.5; }
+      if(ya<0) ya=0; else if(ya>=t->sh) ya=t->sh-1;
+      if(yb<0) yb=0; else if(yb>=t->sh) yb=t->sh-1;
+    }
+    for(int x=0;x<t->sw;x++){
+      int xa=x,xb=x; double fx=0.0;
+      if(phase_x){
+        if(active_projected_x && fabs(edge_x1-edge_x0)>1e-12){
+          double sample=2.0*(double)(dest_x0+x)-0.5;
+          double u=(sample-edge_x0)*(double)t->sw/(edge_x1-edge_x0)-0.5;
+          xa=(int)floor(u); xb=xa+1; fx=u-(double)xa;
+        } else { xa=x-1; xb=x; fx=0.5; }
+        if(xa<0) xa=0; else if(xa>=t->sw) xa=t->sw-1;
+        if(xb<0) xb=0; else if(xb>=t->sw) xb=t->sw-1;
+      }
+      const uint8_t *p00=atlas->px+((size_t)(t->sy+ya)*atlas->w+t->sx+xa)*4;
+      const uint8_t *p01=atlas->px+((size_t)(t->sy+ya)*atlas->w+t->sx+xb)*4;
+      const uint8_t *p10=atlas->px+((size_t)(t->sy+yb)*atlas->w+t->sx+xa)*4;
+      const uint8_t *p11=atlas->px+((size_t)(t->sy+yb)*atlas->w+t->sx+xb)*4;
+      int sr,sg,sb,aa;
+      if(!active_projected){
+        sr=p00[0];sg=p00[1];sb=p00[2];aa=p00[3];
+        if(phase_x){ sr+=p01[0]; sg+=p01[1]; sb+=p01[2]; aa+=p01[3]; }
+        if(phase_y){
+          sr+=p10[0]; sg+=p10[1]; sb+=p10[2]; aa+=p10[3];
+          if(phase_x){ sr+=p11[0]; sg+=p11[1]; sb+=p11[2]; aa+=p11[3]; }
+        }
+        sr=(sr+taps/2)/taps; sg=(sg+taps/2)/taps;
+        sb=(sb+taps/2)/taps; aa=(aa+taps/2)/taps;
+      } else {
+        double ix=1.0-fx,iy=1.0-fy;
+        sr=(int)(p00[0]*ix*iy+p01[0]*fx*iy+p10[0]*ix*fy+p11[0]*fx*fy+0.5);
+        sg=(int)(p00[1]*ix*iy+p01[1]*fx*iy+p10[1]*ix*fy+p11[1]*fx*fy+0.5);
+        sb=(int)(p00[2]*ix*iy+p01[2]*fx*iy+p10[2]*ix*fy+p11[2]*fx*fy+0.5);
+        aa=(int)(p00[3]*ix*iy+p01[3]*fx*iy+p10[3]*ix*fy+p11[3]*fx*fy+0.5);
+      }
+      cache[(size_t)y*t->sw+x]=((uint32_t)aa<<24)|((uint32_t)sr<<16)|
+                                      ((uint32_t)sg<<8)|(uint32_t)sb;
+    }
+  }
+  *cache_slot=cache;
+  if(!direct_cache) r->interp_subrect_bytes+=bytes;
+  return cache;
+}
+static double classic_interp_projected_edge(double relative, double camera, int logical_size){
+  float logical=(float)logical_size;
+  float world=(float)(relative+camera+(double)logical_size*0.5);
+  float vertex=world-0.5f;
+  float precision_view=(float)camera+logical*0.5f;
+  float centre=-(precision_view+logical*0.5f);
+  float projection=-2.0f/logical;
+  float combined_translation=centre*projection;
+  float matrix_scale=-projection;
+  float matrix_translation=-combined_translation+
+                           (float)(1.0/(2.0*(double)logical_size));
+  float corrected=matrix_scale*vertex+matrix_translation;
+  return ((double)corrected+1.0)*(double)logical_size;
+}
+static int classic_interp_projected_axis(double camera, int logical_size){
+  if(logical_size<=0) return 0;
+  double edge0=classic_interp_projected_edge(0.0,camera,logical_size);
+  double edge1=classic_interp_projected_edge((double)logical_size,camera,logical_size);
+  return edge0 < -0.5 || edge1-edge0 < 2.0*(double)logical_size;
+}
+static const uint8_t *interp_tpag_sample(const GmlAtlas *atlas, const GmlTpag *t,
+                                         int x, int y, int logical_margin){
+  static const uint8_t transparent[4]={0,0,0,0};
+  if(logical_margin){
+    int right=t->bw-t->tx-t->sw;
+    int bottom=t->bh-t->ty-t->sh;
+    if((x<0 && t->tx>0) || (x>=t->sw && right>0) ||
+       (y<0 && t->ty>0) || (y>=t->sh && bottom>0)){
+      int ax=t->sx+x, ay=t->sy+y;
+      if(ax>=0 && ax<atlas->w && ay>=0 && ay<atlas->h)
+        return atlas->px+((size_t)ay*atlas->w+ax)*4;
+      return transparent;
+    }
+  }
+  if(x<0) x=0; else if(x>=t->sw) x=t->sw-1;
+  if(y<0) y=0; else if(y>=t->sh) y=t->sh-1;
+  return atlas->px+((size_t)(t->sy+y)*atlas->w+t->sx+x)*4;
+}
+static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas,
+                               const GmlTpag *t, int ua, int ub, int va, int vb,
+                               double fx, double fy, int logical_margin,
+                               int transparent_tap, int bR, int bG, int bB,
+                               uint32_t blend, double alpha){
+  const uint8_t *p00=interp_tpag_sample(atlas,t,ua,va,logical_margin);
+  const uint8_t *p01=interp_tpag_sample(atlas,t,ub,va,logical_margin);
+  const uint8_t *p10=interp_tpag_sample(atlas,t,ua,vb,logical_margin);
+  const uint8_t *p11=interp_tpag_sample(atlas,t,ub,vb,logical_margin);
+  double wx0=1.0-fx, wy0=1.0-fy;
+  double w00=wx0*wy0, w01=fx*wy0, w10=wx0*fy, w11=fx*fy;
+  double fsr=p00[0]*w00+p01[0]*w01+p10[0]*w10+p11[0]*w11;
+  double fsg=p00[1]*w00+p01[1]*w01+p10[1]*w10+p11[1]*w11;
+  double fsb=p00[2]*w00+p01[2]*w01+p10[2]*w10+p11[2]*w11;
+  double faa=p00[3]*w00+p01[3]*w01+p10[3]*w10+p11[3]*w11;
+  if(shader_discards_alpha_value(r,faa)) return;
+  /* A Studio 2 shader receives the filtered sample as floating-point colour. Keep that precision
+   * through vertex-colour modulation and ordinary source-alpha blending; quantizing the sample
+   * first produces systematic one-channel errors on minified artwork. */
+  if(r->win && anygm_policy_has_modern_layer_semantics(r->win) && !mapped_texture_active(r) && r->blendmode==0){
+    double tr=fsr*(double)bR/255.0, tg=fsg*(double)bG/255.0, tb=fsb*(double)bB/255.0;
+    double sa=faa*alpha/255.0;
+    if(sa<=0.0) return;
+    int rr,rg,rb;
+    if(!r->alphablend || sa>=1.0){
+      rr=(int)floor(tr+0.5); rg=(int)floor(tg+0.5); rb=(int)floor(tb+0.5);
+    } else {
+      int dr=(*dp>>16)&0xFF, dg=(*dp>>8)&0xFF, db=*dp&0xFF;
+      rr=(int)floor(tr*sa+dr*(1.0-sa)+0.5);
+      rg=(int)floor(tg*sa+dg*(1.0-sa)+0.5);
+      rb=(int)floor(tb*sa+db*(1.0-sa)+0.5);
+    }
+    if(rr<0) rr=0; else if(rr>255) rr=255;
+    if(rg<0) rg=0; else if(rg>255) rg=255;
+    if(rb<0) rb=0; else if(rb>255) rb=255;
+    unsigned source_alpha=(unsigned)lround(faa*alpha);
+    *dp=gml_sprite_target_alpha(r,*dp,source_alpha)|((uint32_t)rr<<16)|
+        ((uint32_t)rg<<8)|(uint32_t)rb;
+    return;
+  }
+  int sr=(int)(fsr+0.5), sg=(int)(fsg+0.5), sb=(int)(fsb+0.5);
+  int aa=(int)(faa+0.5);
+  if(aa<=0) return;
+  if(mapped_texture_active(r)){
+    uint32_t sampled=mapped_texture_pixel(r,((uint32_t)aa<<24)|((uint32_t)sr<<16)|
+                                             ((uint32_t)sg<<8)|(uint32_t)sb);
+    aa=(int)(sampled>>24); sr=(sampled>>16)&255; sg=(sampled>>8)&255; sb=sampled&255;
+    if(aa<=0) return;
+  }
+  int tint_bias=(r->win && anygm_policy_has_modern_layer_semantics(r->win))?127:0;
+  sr=(sr*bR+tint_bias)/255; sg=(sg*bG+tint_bias)/255; sb=(sb*bB+tint_bias)/255;
+  int precise_margin=transparent_tap && alpha>=1.0 &&
+    (blend&0xFFFFFFu)==0xFFFFFFu && r->blendmode==0 && r->alphablend;
+  double sa=((precise_margin?faa:(double)aa)/255.0)*alpha;
+  if(!r->alphablend){
+    *dp=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+    return;
+  }
+  int dr=(*dp>>16)&0xFF, dg=(*dp>>8)&0xFF, db=*dp&0xFF;
+  int rr,rg,rb;
+  if(r->blendmode==1){
+    rr=dr+(int)(sr*sa); rg=dg+(int)(sg*sa); rb=db+(int)(sb*sa);
+  } else if(r->blendmode==2){
+    rr=(int)gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
+    rg=(int)gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
+    rb=(int)gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
+  } else if(sa>=1.0){
+    rr=sr; rg=sg; rb=sb;
+  } else if(precise_margin){
+    rr=(int)(fsr*sa+0.5)+(int)(dr*(1.0-sa)+0.5);
+    rg=(int)(fsg*sa+0.5)+(int)(dg*(1.0-sa)+0.5);
+    rb=(int)(fsb*sa+0.5)+(int)(db*(1.0-sa)+0.5);
+  } else {
+    rr=(int)(sr*sa+0.5)+(int)(dr*(1.0-sa)+0.5);
+    rg=(int)(sg*sa+0.5)+(int)(dg*(1.0-sa)+0.5);
+    rb=(int)(sb*sa+0.5)+(int)(db*(1.0-sa)+0.5);
+  }
+  if(rr<0) rr=0; else if(rr>255) rr=255;
+  if(rg<0) rg=0; else if(rg>255) rg=255;
+  if(rb<0) rb=0; else if(rb>255) rb=255;
+  unsigned source_alpha=(unsigned)lround((precise_margin?faa:(double)aa)*alpha);
+  *dp=gml_sprite_target_alpha(r,*dp,source_alpha)|((uint32_t)rr<<16)|
+      ((uint32_t)rg<<8)|(uint32_t)rb;
+}
+static void blit_interp_phase_plane(GmlRender *r, uint32_t *plane, GmlTpag *t,
+                                    double dx, double dy, double xs, double ys,
+                                    uint32_t blend, double alpha, int phase_x, int phase_y){
+  if(!r || !plane || !t || !r->base_fb || t->sw<=0 || t->sh<=0 || alpha<=0.0) return;
+  if(xs==0.0 || ys==0.0) return;
+  if(t->atlas<0 || t->atlas>=r->n_atlas) return;
+  GmlAtlas *atlas=&r->atlas[t->atlas];
+  if(!atlas_pixels(r,t->atlas)) return;
+  double axs=fabs(xs), ays=fabs(ys);
+  int flipx=xs<0.0, flipy=ys<0.0;
+  int x0=(int)floor(dx+0.5), y0=(int)floor(dy+0.5);
+  if(r->classic && flipx) x0--;
+  if(r->classic && flipy) y0--;
+  int w=(int)lround(t->sw*axs), h=(int)lround(t->sh*ays);
+  if(w<=0 || h<=0) return;
+  int canonical=rprof_tpag_id(r,t)>=0;
+  int right_pad=t->bw-t->tx-t->sw, bottom_pad=t->bh-t->ty-t->sh;
+  int logical_margin=canonical && !flipx && !flipy &&
+    (t->tx>0 || t->ty>0 || right_pad>0 || bottom_pad>0);
+  int px0=flipx?x0-w+1:x0-(phase_x?1:0);
+  int py0=flipy?y0-h+1:y0-(phase_y?1:0);
+  int px1=flipx?x0+1:px0+w;
+  int py1=flipy?y0+1:py0+h;
+  /* A packed TPAG omits transparent rows and columns from the sprite's logical cell.  The
+   * classic GPU still filters against those omitted transparent texels at the crop boundary.
+   * Keep one trailing half-sample so the phase plane can represent that coverage instead of
+   * exposing the already-opaque layer underneath for a whole output pixel. */
+  if(logical_margin && phase_x && right_pad>0) px1++;
+  if(logical_margin && phase_y && bottom_pad>0) py1++;
+  if(px0<0) px0=0;
+  if(py0<0) py0=0;
+  if(px1>r->base_fbw) px1=r->base_fbw;
+  if(py1>r->base_fbh) py1=r->base_fbh;
+  if(px0>=px1 || py0>=py1) return;
+  if(alpha>1.0) alpha=1.0;
+  int project_view_x=classic_interp_projected_axis(r->cam_x,r->base_fbw);
+  int project_view_y=classic_interp_projected_axis(r->cam_y,r->base_fbh);
+  int projected_x=phase_x && project_view_x;
+  int projected_y=phase_y && project_view_y;
+  int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
+  double edge_x0=0.0,edge_x1=0.0,edge_y0=0.0,edge_y1=0.0;
+  if(project_view_x){
+    edge_x0=classic_interp_projected_edge(dx,r->cam_x,r->base_fbw);
+    edge_x1=classic_interp_projected_edge(dx+t->sw*axs,r->cam_x,r->base_fbw);
+  }
+  if(project_view_y){
+    edge_y0=classic_interp_projected_edge(dy,r->cam_y,r->base_fbh);
+    edge_y1=classic_interp_projected_edge(dy+t->sh*ays,r->cam_y,r->base_fbh);
+  }
+  if((!logical_margin || (!projected_x && !projected_y)) &&
+     (!projected_x || !flipx) && (!projected_y || !flipy) &&
+     fabs(axs-1.0)<0.001 && fabs(ays-1.0)<0.001 &&
+     alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu &&
+     r->blendmode==0 && r->alphablend){
+    uint32_t *cache=interp_phase_pixels(r,t,atlas,phase_x,phase_y,
+                                        project_view_x,project_view_y,x0,y0,
+                                        edge_x0,edge_x1,edge_y0,edge_y1);
+    if(cache){
+      int origin_x=x0-(phase_x?1:0), origin_y=y0-(phase_y?1:0);
+      for(int py=py0;py<py1;py++){
+        int sy=flipy?y0-py:py-origin_y;
+        uint32_t *drow=plane+(size_t)py*r->base_fbw;
+        for(int px=px0;px<px1;px++){
+          int sx=flipx?x0-px:px-origin_x;
+          int margin_edge=logical_margin &&
+            ((phase_x && ((sx==0 && t->tx>0) || (sx==t->sw && right_pad>0))) ||
+             (!phase_x && sx==t->sw-1 && right_pad>0) ||
+             (phase_y && ((sy==0 && t->ty>0) || (sy==t->sh && bottom_pad>0))) ||
+             (!phase_y && sy==t->sh-1 && bottom_pad>0));
+          if(margin_edge){
+            double u=phase_x?(double)sx-0.5:(double)sx;
+            double v=phase_y?(double)sy-0.5:(double)sy;
+            int ua=(int)floor(u), ub=ua+1, va=(int)floor(v), vb=va+1;
+            int transparent_tap=
+              (((ua<0 || ub<0) && t->tx>0) ||
+               ((ua>=t->sw || ub>=t->sw) && right_pad>0) ||
+               ((va<0 || vb<0) && t->ty>0) ||
+               ((va>=t->sh || vb>=t->sh) && bottom_pad>0));
+            blit_interp_sample(r,&drow[px],atlas,t,ua,ub,va,vb,
+                               u-(double)ua,v-(double)va,1,transparent_tap,
+                               bR,bG,bB,blend,alpha);
+            continue;
+          }
+          uint32_t packed=cache[(size_t)sy*t->sw+sx];
+          int aa=(int)(packed>>24);
+          if(!aa) continue;
+          uint32_t *dp=&drow[px];
+          if(aa==255){ *dp=packed|0xFF000000u; continue; }
+          int sr=(packed>>16)&0xFF,sg=(packed>>8)&0xFF,sb=packed&0xFF;
+          int ia=255-aa,dr=(*dp>>16)&0xFF,dg=(*dp>>8)&0xFF,db=*dp&0xFF;
+          int rr=(sr*aa+127)/255+(dr*ia+127)/255;
+          int rg=(sg*aa+127)/255+(dg*ia+127)/255;
+          int rb=(sb*aa+127)/255+(db*ia+127)/255;
+          if(rr>255) rr=255;
+          if(rg>255) rg=255;
+          if(rb>255) rb=255;
+          *dp=0xFF000000u|((uint32_t)rr<<16)|((uint32_t)rg<<8)|(uint32_t)rb;
+        }
+      }
+      return;
+    }
+  }
+  for(int py=py0;py<py1;py++){
+    double sample_y=(double)py+(phase_y?0.5:0.0);
+    double v=(flipy?(double)y0-sample_y:sample_y-(double)y0)/ays;
+    if(projected_y && !flipy && fabs(edge_y1-edge_y0)>1e-12){
+      double physical_sample=2.0*(double)(py+1)-0.5;
+      v=(physical_sample-edge_y0)*(double)t->sh/(edge_y1-edge_y0)-0.5;
+    }
+    int va=(int)floor(v), vb=va+1;
+    double fy=v-(double)va;
+    if(!logical_margin){
+      if(va<0) va=0; else if(va>=t->sh) va=t->sh-1;
+      if(vb<0) vb=0; else if(vb>=t->sh) vb=t->sh-1;
+    }
+    uint32_t *drow=plane+(size_t)py*r->base_fbw;
+    for(int px=px0;px<px1;px++){
+      double sample_x=(double)px+(phase_x?0.5:0.0);
+      double u=(flipx?(double)x0-sample_x:sample_x-(double)x0)/axs;
+      if(projected_x && !flipx && fabs(edge_x1-edge_x0)>1e-12){
+        double physical_sample=2.0*(double)(px+1)-0.5;
+        u=(physical_sample-edge_x0)*(double)t->sw/(edge_x1-edge_x0)-0.5;
+      }
+      int ua=(int)floor(u), ub=ua+1;
+      double fx=u-(double)ua;
+      int transparent_tap=logical_margin &&
+        (((ua<0 || ub<0) && t->tx>0) ||
+         ((ua>=t->sw || ub>=t->sw) && right_pad>0) ||
+         ((va<0 || vb<0) && t->ty>0) ||
+         ((va>=t->sh || vb>=t->sh) && bottom_pad>0));
+      blit_interp_sample(r,&drow[px],atlas,t,ua,ub,va,vb,fx,fy,
+                         logical_margin,transparent_tap,bR,bG,bB,blend,alpha);
+    }
+  }
+}
+static GmlTpag phase_tpag_rows(const GmlTpag *src, int row, int count){
+  GmlTpag t=*src;
+  t.sy+=row;
+  t.sh=count;
+  t.ty+=row;
+  /* This short-lived view must not inherit geometry-dependent caches from the full item. */
+  t.alpha_scanned=1;
+  t.ax0=0; t.ay0=0; t.ax1=t.sw-1; t.ay1=count-1;
+  t.alpha_row_min=t.alpha_row_max=NULL;
+  t.alpha_qrow_min=t.alpha_qrow_max=NULL; t.alpha_qrow_built=NULL;
+  t.alpha_runs=NULL; t.alpha_run_count=0; t.alpha_runs_built=0;
+  t.argb_cache=NULL;
+  t.interp_phase_cache[0]=t.interp_phase_cache[1]=t.interp_phase_cache[2]=NULL;
+  t.fast8_draw_cache=NULL; t.fast8_draw_cache_valid=0; t.fast8_draw_pending_count=0;
+  return t;
+}
+static void blit_phase_plane_previous(GmlRender *r, uint32_t *plane, GmlTpag *t,
+                                      double dx, double dy, double xs, double ys,
+                                      uint32_t blend, double alpha);
+static double classic_phase_edge_y(const GmlRender *r, double world_y){
+  /* Recreate the precision of the classic fixed-function-style vertex path.  Vertex positions,
+   * camera translation, projection and the half-pixel correction are each rounded to float before
+   * the 2x viewport maps normalized coordinates back to pixels. */
+  float logical_h=(float)r->fbh;
+  float vertex=(float)(world_y-0.5);
+  float precision_view=(float)r->cam_y+logical_h*0.5f;
+  float centre=-(precision_view+logical_h*0.5f);
+  float projection=-2.0f/logical_h;
+  /* The renderer multiplies view * projection * correction on the CPU, then the shader applies
+   * that already-rounded matrix to each vertex.  Keeping these temporaries separate prevents a
+   * mathematically equivalent, but observably different, reassociation. */
+  float combined_translation=centre*projection;
+  float matrix_scale=-projection;
+  float matrix_translation=-combined_translation+
+                           (float)(1.0/(2.0*(double)r->fbh));
+  float corrected=matrix_scale*vertex+matrix_translation;
+  return ((double)corrected+1.0)*(double)r->fbh;
+}
+static double classic_phase_edge_y_sequential(const GmlRender *r, double world_y){
+  /* Keep the vertex-shader stages separate.  This is the other observable rounding path of the
+   * classic transform: vertex and view translation are combined before the projection scale. */
+  float logical_h=(float)r->fbh;
+  float vertex=(float)(world_y-0.5);
+  float centre=-((float)r->cam_y+logical_h*0.5f);
+  float viewed=vertex+centre;
+  float projected=viewed*(-2.0f/logical_h);
+  float corrected=-projected+(float)(1.0/(2.0*(double)r->fbh));
+  return ((double)corrected+1.0)*(double)r->fbh;
+}
+static int classic_phase_ordinary_mode(const GmlRender *r){
+  /* Classify the active float transform, not the project.  A neutral origin that rounds before
+   * the half pixel needs the sequential/reversed path.  If both neutral edges acquire the same
+   * error, the projected span is closed and coverage belongs to the preceding texel.  Otherwise
+   * the ordinary next-texel tie is correct unless camera translation crosses the neutral tie. */
+  float logical_h=(float)r->fbh;
+  float vertex0=logical_h*0.5f-0.5f;
+  float vertex1=vertex0+logical_h;
+  float centre=-logical_h;
+  float projection=-2.0f/logical_h;
+  float combined_translation=centre*projection;
+  float matrix_translation=-combined_translation+
+                           (float)(1.0/(2.0*(double)r->fbh));
+  float corrected0=(-projection)*vertex0+matrix_translation;
+  float corrected1=(-projection)*vertex1+matrix_translation;
+  double edge0=((double)corrected0+1.0)*(double)r->fbh;
+  double edge1=((double)corrected1+1.0)*(double)r->fbh;
+  if(edge0<-0.5) return 3;
+  if(fabs((edge1-edge0)-2.0*(double)r->fbh)<1e-7) return 0;
+
+  float camera=(float)r->cam_y;
+  float actual_vertex=(float)(r->cam_y-0.5);
+  float actual_centre=-(camera+logical_h*0.5f);
+  float actual_translation=-(actual_centre*projection)+
+                           (float)(1.0/(2.0*(double)r->fbh));
+  float actual_corrected=(-projection)*actual_vertex+actual_translation;
+  double actual_edge=((double)actual_corrected+1.0)*(double)r->fbh;
+  float neutral_centre=-logical_h*0.5f;
+  float neutral_translation=-(neutral_centre*projection)+
+                            (float)(1.0/(2.0*(double)r->fbh));
+  float neutral_corrected=(-projection)*-0.5f+neutral_translation;
+  double neutral_edge=((double)neutral_corrected+1.0)*(double)r->fbh;
+  return (actual_edge<-0.5)!=(neutral_edge<-0.5)?3:1;
+}
+static void blit_phase_plane_classic_y(GmlRender *r, uint32_t *plane, GmlTpag *t,
+                                       double dx, double dy, double xs, double ys,
+                                       uint32_t blend, double alpha,
+                                       int sequential, int reverse_tie){
+  int full_h=t&&t->bh>0?t->bh:(t?t->sh:0);
+  int trim_y=t?t->ty:0;
+  double full_top=dy-(double)trim_y;
+  int top=(int)floor(full_top+0.5);
+  if(!t || t->sh<=0 || full_h<=0 || trim_y<0 || trim_y+t->sh>full_h ||
+     fabs(ys-1.0)>0.001 || fabs(full_top-(double)top)>0.001){
+    blit_phase_plane_previous(r,plane,t,dx,dy,xs,ys,blend,alpha);
+    return;
+  }
+  double world_top=full_top+r->cam_y+(sequential?0.0:(double)r->fbh*0.5);
+  double edge0=sequential?classic_phase_edge_y_sequential(r,world_top):
+                          classic_phase_edge_y(r,world_top);
+  double edge1=sequential?classic_phase_edge_y_sequential(r,world_top+(double)full_h):
+                          classic_phase_edge_y(r,world_top+(double)full_h);
+  double span=edge1-edge0;
+  if(fabs(span)<0.001){
+    blit_phase_plane_previous(r,plane,t,dx,dy,xs,ys,blend,alpha);
+    return;
+  }
+  int run_q=-1, run_dest=0, run_count=0, previous_q=-2, previous_dest=0;
+  for(int k=0;k<full_h;k++){
+    int q;
+    if(k==0){
+      q=0;
+    } else {
+      double sample=(double)(2*(top+k))-0.5;
+      double coord=(sample-edge0)*(double)full_h/span;
+      q=reverse_tie?(coord>=(double)k?k-1:k):(coord<(double)k?k-1:k);
+    }
+    int dest=top+k-1;
+    int visible=q>=trim_y && q<trim_y+t->sh;
+    if(!visible || (run_count>0 && (q!=previous_q+1 || dest!=previous_dest+1))){
+      if(run_count>0){
+        GmlTpag rows=phase_tpag_rows(t,run_q-trim_y,run_count);
+        blit_phase_plane(r,plane,&rows,dx,(double)run_dest,xs,ys,blend,alpha);
+        run_count=0;
+      }
+    }
+    if(visible){
+      if(run_count==0){ run_q=q; run_dest=dest; }
+      run_count++;
+      previous_q=q; previous_dest=dest;
+    }
+  }
+  if(run_count>0){
+    GmlTpag rows=phase_tpag_rows(t,run_q-trim_y,run_count);
+    blit_phase_plane(r,plane,&rows,dx,(double)run_dest,xs,ys,blend,alpha);
+  }
+}
+static void blit_phase_plane_previous(GmlRender *r, uint32_t *plane, GmlTpag *t,
+                                      double dx, double dy, double xs, double ys,
+                                      uint32_t blend, double alpha){
+  if(!t || t->sh<=0) return;
+  if(fabs(ys-1.0)>0.001){
+    blit_phase_plane(r,plane,t,dx,dy,xs,ys,blend,alpha);
+    return;
+  }
+  /* A half-step sample on the top edge belongs to the quad, while its bottom edge does not.
+   * When a nearest-neighbour tie resolves toward the preceding texel, repeat the first row at
+   * that top sample and leave the last boundary for whatever is underneath (or the next quad). */
+  if(t->ty==0){
+    GmlTpag top=phase_tpag_rows(t,0,1);
+    blit_phase_plane(r,plane,&top,dx,dy-1.0,xs,ys,blend,alpha);
+  }
+  int rows=t->sh;
+  if(t->bh>0 && t->ty+t->sh>=t->bh) rows--;
+  if(rows>0){
+    GmlTpag body=phase_tpag_rows(t,0,rows);
+    blit_phase_plane(r,plane,&body,dx,dy,xs,ys,blend,alpha);
+  }
+}
+static void blit_with_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
+                            double xs, double ys, uint32_t blend, double alpha,
+                            int phase_mode){
+  int phase=r && r->target_sp==0 && r->fb==r->base_fb && r->classic_phase_y;
+  int interp_phase=r && r->target_sp==0 && r->fb==r->base_fb &&
+                   r->classic_interp_phase[0] && r->classic_interp_phase[1] &&
+                   r->classic_interp_phase[2];
+  blit_one(r,t,dx,dy,xs,ys,blend,alpha);
+  if(interp_phase){
+    blit_interp_phase_plane(r,r->classic_interp_phase[0],t,dx,dy,xs,ys,blend,alpha,1,0);
+    blit_interp_phase_plane(r,r->classic_interp_phase[1],t,dx,dy,xs,ys,blend,alpha,0,1);
+    blit_interp_phase_plane(r,r->classic_interp_phase[2],t,dx,dy,xs,ys,blend,alpha,1,1);
+  }
+  if(!phase) return;
+  if(phase_mode==4) phase_mode=classic_phase_ordinary_mode(r);
+  /* At exact 2x, odd output samples lie half a logical pixel beyond a centre.  Replaying the
+   * textured draw one logical cell earlier gives those tie samples their own alpha composition,
+   * rather than shifting the already-composited application surface. */
+  if(phase_mode==1)
+    blit_phase_plane(r,r->classic_phase_y,t,dx,dy-1.0,xs,ys,blend,alpha);
+  else if(phase_mode==2 || phase_mode==3)
+    blit_phase_plane_classic_y(r,r->classic_phase_y,t,dx,dy,xs,ys,blend,alpha,
+                               phase_mode==3,phase_mode==3);
+  else
+    blit_phase_plane_previous(r,r->classic_phase_y,t,dx,dy,xs,ys,blend,alpha);
+}
+void blit(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
+                 uint32_t blend, double alpha){
+  blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4);
+}
+static void blit_background_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
+                                  double xs, double ys, uint32_t blend, double alpha){
+  blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,1);
+}
+void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, double x, double y,
+                         double xs, double ys, double rot, uint32_t blend, double alpha){
+  if(t->atlas<0 || t->atlas>=r->n_atlas) return;
+  GmlAtlas *a=&r->atlas[t->atlas]; if(!atlas_pixels(r,t->atlas)) return;
+  if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
+  if(alpha<=0) return;
+  if(xs==0||ys==0) return;
+  int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
+  double c,sn; render_rotation_sincos(rot,&c,&sn);
+  double invxs=1.0/xs, invys=1.0/ys;
+  double ax=x-r->cam_x, ay=y-r->cam_y;
+  render_modern_cardinal_anchor(r,rot,xs,ys,c,sn,&ax,&ay);
+  int abx0=0, aby0=0, abx1=t->sw-1, aby1=t->sh-1;
+  if(!tpag_alpha_bounds(r,t,a,&abx0,&aby0,&abx1,&aby1)) return;
+  double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
+  double qx[4], qy[4];
+  double sx0=t->tx+abx0, sy0=t->ty+aby0, sx1=t->tx+abx1+1, sy1=t->ty+aby1+1;
+  double corners[4][2]={{sx0,sy0},{sx1,sy0},{sx1,sy1},{sx0,sy1}};
+  for(int i=0;i<4;i++){
+    double px=(corners[i][0]-spr->originx)*xs, py=(corners[i][1]-spr->originy)*ys;
+    double dx=ax + px*c + py*sn, dy=ay - px*sn + py*c;
+    qx[i]=dx;
+    qy[i]=dy;
+    if(dx<minx) minx=dx;
+    if(dx>maxx) maxx=dx;
+    if(dy<miny) miny=dy;
+    if(dy>maxy) maxy=dy;
+  }
+  int x0=(int)floor(minx)-1, x1=(int)ceil(maxx)+1;
+  int y0=(int)floor(miny)-1, y1=(int)ceil(maxy)+1;
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>r->fbw) x1=r->fbw;
+  if(y1>r->fbh) y1=r->fbh;
+  if(x1<=x0 || y1<=y0) return;
+  /* Axis-aligned blits materialize a deferred clear before touching the framebuffer. Rotated
+   * sprites must do the same: otherwise they are rendered first and then erased when the next
+   * axis-aligned draw flushes that pending clear. */
+  gml_render_maybe_prepare_draw(r);
+  int prof=rprof_enabled();
+  double t0=prof?rprof_now():0.0;
+  unsigned long long vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
+  double qarea=fabs(qx[0]*qy[1]-qx[1]*qy[0] + qx[1]*qy[2]-qx[2]*qy[1] +
+                    qx[2]*qy[3]-qx[3]*qy[2] + qx[3]*qy[0]-qx[0]*qy[3]) * 0.5;
+  int use_quad_span=(qarea>0.0 && qarea < (double)vispix * 0.85);
+  double sa_lut[256], ia_lut[256];
+  uint32_t a16_lut[256];
+  uint32_t a8_lut[256];
+  /* Large rotated alpha quads dominate software render cost. For those, blend at
+   * framebuffer precision in packed 8-bit lanes; smaller draws keep the 16-bit path. */
+  int fast8_blend = (r->target_sp==0 && r->alphablend &&
+                     r->blendmode==0 && vispix>=262144ull);
+  int fast8_alpha_floor=fast8_blend ? r->fast_alpha_cull : 0;
+  if(fast8_blend && (uint32_t)((t->alpha_max/255.0)*alpha*256.0) <= (uint32_t)fast8_alpha_floor) return;
+  if(fast8_blend){
+    for(int i=0;i<256;i++){
+      double sa=(i/255.0)*alpha;
+      uint32_t af=sa>=1.0 ? 256u : (uint32_t)(sa*256.0);
+      a8_lut[i]=af<=(uint32_t)fast8_alpha_floor ? 0 : af;
+    }
+  } else {
+    for(int i=0;i<256;i++){
+      double sa=(i/255.0)*alpha;
+      sa_lut[i]=sa; ia_lut[i]=1.0-sa;
+      a16_lut[i]=sa>=1.0 ? 65536u : (uint32_t)(sa*65536.0);
+      a8_lut[i]=sa>=1.0 ? 256u : (uint32_t)(sa*256.0);
+    }
+  }
+  int min_fast8_alpha=0;
+  const uint16_t *qrow_min=NULL, *qrow_max=NULL;
+  if(fast8_blend){
+    for(int i=1;i<256;i++) if(a8_lut[i]){ min_fast8_alpha=i; break; }
+    if(!min_fast8_alpha) return;
+    if(min_fast8_alpha>1) tpag_alpha_qrows(r,t,a,min_fast8_alpha,&qrow_min,&qrow_max);
+    if(qrow_min && qrow_max){
+      int qx0=t->sw, qy0=t->sh, qx1=-1, qy1=-1;
+      for(int yy=0; yy<t->sh; yy++){
+        int mn=(int)qrow_min[yy], mx=(int)qrow_max[yy];
+        if(mn==UINT16_MAX || mx<mn) continue;
+        if(mn<qx0) qx0=mn;
+        if(mx>qx1) qx1=mx;
+        if(yy<qy0) qy0=yy;
+        if(yy>qy1) qy1=yy;
+      }
+      if(qx1<qx0 || qy1<qy0) return;
+      if(qx0!=abx0 || qy0!=aby0 || qx1!=abx1 || qy1!=aby1){
+        abx0=qx0; aby0=qy0; abx1=qx1; aby1=qy1;
+        minx=1e30; miny=1e30; maxx=-1e30; maxy=-1e30;
+        sx0=t->tx+abx0; sy0=t->ty+aby0; sx1=t->tx+abx1+1; sy1=t->ty+aby1+1;
+        double qc[4][2]={{sx0,sy0},{sx1,sy0},{sx1,sy1},{sx0,sy1}};
+        for(int i=0;i<4;i++){
+          double px=(qc[i][0]-spr->originx)*xs, py=(qc[i][1]-spr->originy)*ys;
+          double dx=ax + px*c + py*sn, dy=ay - px*sn + py*c;
+          qx[i]=dx;
+          qy[i]=dy;
+          if(dx<minx) minx=dx;
+          if(dx>maxx) maxx=dx;
+          if(dy<miny) miny=dy;
+          if(dy>maxy) maxy=dy;
+        }
+        x0=(int)floor(minx)-1; x1=(int)ceil(maxx)+1;
+        y0=(int)floor(miny)-1; y1=(int)ceil(maxy)+1;
+        if(x0<0) x0=0;
+        if(y0<0) y0=0;
+        if(x1>r->fbw) x1=r->fbw;
+        if(y1>r->fbh) y1=r->fbh;
+        if(x1<=x0 || y1<=y0) return;
+        vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
+        qarea=fabs(qx[0]*qy[1]-qx[1]*qy[0] + qx[1]*qy[2]-qx[2]*qy[1] +
+                   qx[2]*qy[3]-qx[3]*qy[2] + qx[3]*qy[0]-qx[0]*qy[3]) * 0.5;
+        use_quad_span=(qarea>0.0 && qarea < (double)vispix * 0.85);
+      }
+    }
+  }
+  double dlx=c*invxs, dly=sn*invys;
+  int64_t dlx_fp=(int64_t)llround(dlx*(double)RFP_ONE);
+  int64_t dly_fp=(int64_t)llround(dly*(double)RFP_ONE);
+  int white=((blend & 0xFFFFFF)==0xFFFFFF);
+  const uint8_t *tpag_base=NULL;
+  if(t->sx>=0 && t->sy>=0 && t->sx+t->sw<=a->w && t->sy+t->sh<=a->h)
+    tpag_base=a->px+((size_t)t->sy*a->w+t->sx)*4;
+  int fast8_cache_copy_255=0;
+  size_t srcpix=(size_t)(t->sw>0?t->sw:0)*(size_t)(t->sh>0?t->sh:0);
+  int use_draw_cache=fast8_blend && rprof_tpag_id(r,t)>=0 && srcpix>0 && srcpix*4u<=vispix;
+  uint32_t *draw_cache=use_draw_cache ? tpag_fast8_draw_cache(t,a,blend,alpha,fast8_alpha_floor,&fast8_cache_copy_255) : NULL;
+  uint32_t *argb_cache=(fast8_blend && !draw_cache) ? tpag_argb_cache(r,t,a) : NULL;
+  if(fast8_blend && (draw_cache || argb_cache)){
+    for(int py=y0; py<y1; py++){
+      int rx0=x0, rx1=x1;
+      if(use_quad_span && !rotated_quad_row_span(qx,qy,py+0.5,x0,x1,&rx0,&rx1)) continue;
+      uint32_t *row=&r->fb[(size_t)py*r->fbw];
+      double ry=py+0.5-ay, rx=rx0+0.5-ax;
+      double lx0=(rx*c - ry*sn)*invxs + spr->originx - t->tx;
+      double ly0=(rx*sn + ry*c)*invys + spr->originy - t->ty;
+      int64_t lx_fp=(int64_t)floor(lx0*(double)RFP_ONE);
+      int64_t ly_fp=(int64_t)floor(ly0*(double)RFP_ONE);
+      int ix=floor_fixed20(lx_fp), iy=floor_fixed20(ly_fp);
+      int rem=rx1-rx0;
+      int runx=fixed20_run_to_change(lx_fp,dlx_fp,ix,rem);
+      int runy=fixed20_run_to_change(ly_fp,dly_fp,iy,rem);
+      for(int px=rx0; px<rx1; ){
+        int maxrun=rx1-px;
+        int skip=qrow_min ? alpha_qspan_skip_run(t,qrow_min,qrow_max,ix,iy,lx_fp,ly_fp,dlx_fp,dly_fp,maxrun)
+                          : alpha_span_skip_run(t,ix,iy,lx_fp,ly_fp,dlx_fp,dly_fp,maxrun);
+        if(skip>0){
+          lx_fp += dlx_fp * (int64_t)skip;
+          ly_fp += dly_fp * (int64_t)skip;
+          px += skip;
+          if(px>=rx1) break;
+          ix=floor_fixed20(lx_fp);
+          iy=floor_fixed20(ly_fp);
+          rem=rx1-px;
+          runx=fixed20_run_to_change(lx_fp,dlx_fp,ix,rem);
+          runy=fixed20_run_to_change(ly_fp,dly_fp,iy,rem);
+          continue;
+        }
+        int run=runx<runy?runx:runy;
+        if(run>maxrun) run=maxrun;
+        if(run<1) run=1;
+        if(ix>=0&&iy>=0&&ix<t->sw&&iy<t->sh){
+          size_t si=(size_t)iy*t->sw+ix;
+          uint32_t *dp=&row[px];
+          if(draw_cache){
+            uint32_t packed=draw_cache[si];
+            uint32_t af=packed>>24;
+            if(af){
+              uint32_t src=0xFF000000u|(packed&0x00FFFFFFu);
+              if(fast8_cache_copy_255 && af==255u) fill_u32_run(dp,run,src);
+              else blend_fast8_run(dp,run,src,af);
+            }
+          } else {
+            uint32_t packed=argb_cache[si];
+            int aa=(int)(packed>>24);
+            if(aa){
+            uint32_t af=a8_lut[aa];
+            if(af){
+              uint32_t src;
+              if(white){
+                src=0xFF000000u|(packed&0x00FFFFFFu);
+              } else {
+                int sr=((packed>>16)&0xFF)*bR/255;
+                int sg=((packed>>8)&0xFF)*bG/255;
+                int sb=(packed&0xFF)*bB/255;
+                src=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+              }
+              blend_fast8_run(dp,run,src,af);
+            }
+          }
+          }
+        }
+        int hitx=(run>=runx);
+        int hity=(run>=runy);
+        lx_fp += dlx_fp * (int64_t)run;
+        ly_fp += dly_fp * (int64_t)run;
+        px += run;
+        if(px>=rx1) break;
+        rem=rx1-px;
+        if(hitx){
+          ix=floor_fixed20(lx_fp);
+          runx=fixed20_run_to_change(lx_fp,dlx_fp,ix,rem);
+        } else {
+          runx-=run;
+        }
+        if(hity){
+          iy=floor_fixed20(ly_fp);
+          runy=fixed20_run_to_change(ly_fp,dly_fp,iy,rem);
+        } else {
+          runy-=run;
+        }
+      }
+    }
+    if(prof) rprof_add("rot",r,t,(rprof_now()-t0)*1000.0,vispix);
+    return;
+  }
+  if(fast8_blend && tpag_base){
+    for(int py=y0; py<y1; py++){
+      int rx0=x0, rx1=x1;
+      if(use_quad_span && !rotated_quad_row_span(qx,qy,py+0.5,x0,x1,&rx0,&rx1)) continue;
+      uint32_t *row=&r->fb[(size_t)py*r->fbw];
+      double ry=py+0.5-ay, rx=rx0+0.5-ax;
+      double lx0=(rx*c - ry*sn)*invxs + spr->originx - t->tx;
+      double ly0=(rx*sn + ry*c)*invys + spr->originy - t->ty;
+      int64_t lx_fp=(int64_t)floor(lx0*(double)RFP_ONE);
+      int64_t ly_fp=(int64_t)floor(ly0*(double)RFP_ONE);
+      for(int px=rx0; px<rx1; ){
+        int ix=floor_fixed20(lx_fp), iy=floor_fixed20(ly_fp);
+        int maxrun=rx1-px;
+        int skip=qrow_min ? alpha_qspan_skip_run(t,qrow_min,qrow_max,ix,iy,lx_fp,ly_fp,dlx_fp,dly_fp,maxrun)
+                          : alpha_span_skip_run(t,ix,iy,lx_fp,ly_fp,dlx_fp,dly_fp,maxrun);
+        if(skip>0){
+          lx_fp += dlx_fp * (int64_t)skip;
+          ly_fp += dly_fp * (int64_t)skip;
+          px += skip;
+          continue;
+        }
+        int runx=fixed20_run_to_change(lx_fp,dlx_fp,ix,maxrun);
+        int runy=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+        int run=runx<runy?runx:runy;
+        if(run<1) run=1;
+        if(ix>=0&&iy>=0&&ix<t->sw&&iy<t->sh){
+          const uint8_t *sp=tpag_base+((size_t)iy*a->w+ix)*4;
+          int aa=sp[3];
+          if(aa){
+            uint32_t af=a8_lut[aa];
+            if(af){
+              int sr=white?sp[0]:sp[0]*bR/255;
+              int sg=white?sp[1]:sp[1]*bG/255;
+              int sb=white?sp[2]:sp[2]*bB/255;
+              uint32_t src=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+              uint32_t *dp=&row[px];
+              blend_fast8_run(dp,run,src,af);
+            }
+          }
+        }
+        lx_fp += dlx_fp * (int64_t)run;
+        ly_fp += dly_fp * (int64_t)run;
+        px += run;
+      }
+    }
+    if(prof) rprof_add("rot",r,t,(rprof_now()-t0)*1000.0,vispix);
+    return;
+  }
+  if(r->blendmode==0){
+    for(int py=y0; py<y1; py++){
+      int rx0=x0, rx1=x1;
+      if(use_quad_span && !rotated_quad_row_span(qx,qy,py+0.5,x0,x1,&rx0,&rx1)) continue;
+      uint32_t *row=&r->fb[(size_t)py*r->fbw];
+      double ry=py+0.5-ay, rx=rx0+0.5-ax;
+      double lx0=(rx*c - ry*sn)*invxs + spr->originx - t->tx;
+      double ly0=(rx*sn + ry*c)*invys + spr->originy - t->ty;
+      int64_t lx_fp=(int64_t)floor(lx0*(double)RFP_ONE);
+      int64_t ly_fp=(int64_t)floor(ly0*(double)RFP_ONE);
+      for(int px=rx0; px<rx1; ){
+        int ix=floor_fixed20(lx_fp), iy=floor_fixed20(ly_fp);
+        int maxrun=rx1-px;
+        int skip=qrow_min ? alpha_qspan_skip_run(t,qrow_min,qrow_max,ix,iy,lx_fp,ly_fp,dlx_fp,dly_fp,maxrun)
+                          : alpha_span_skip_run(t,ix,iy,lx_fp,ly_fp,dlx_fp,dly_fp,maxrun);
+        if(skip>0){
+          lx_fp += dlx_fp * (int64_t)skip;
+          ly_fp += dly_fp * (int64_t)skip;
+          px += skip;
+          continue;
+        }
+        int runx=fixed20_run_to_change(lx_fp,dlx_fp,ix,maxrun);
+        int runy=fixed20_run_to_change(ly_fp,dly_fp,iy,maxrun);
+        int run=runx<runy?runx:runy;
+        if(run<1) run=1;
+        if(ix>=0&&iy>=0&&ix<t->sw&&iy<t->sh){
+          const uint8_t *sp=tpag_base ? tpag_base+((size_t)iy*a->w+ix)*4 : NULL;
+          if(!sp){
+            int sx=t->sx+ix, sy=t->sy+iy;
+            if(sx>=0&&sy>=0&&sx<a->w&&sy<a->h) sp=a->px + ((size_t)sy*a->w+sx)*4;
+          }
+          if(sp){
+            int aa=sp[3];
+            if(aa){
+              int sr=white?sp[0]:sp[0]*bR/255;
+              int sg=white?sp[1]:sp[1]*bG/255;
+              int sb=white?sp[2]:sp[2]*bB/255;
+              uint32_t src=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+              uint32_t *dp=&row[px];
+              if(!r->alphablend){
+                fill_u32_run(dp,run,src);
+              } else {
+                if(fast8_blend){
+                  uint32_t af=a8_lut[aa];
+                  if(af) blend_fast8_run(dp,run,src,af);
+                } else {
+                  uint32_t af=a16_lut[aa];
+                  if(af>=65536u){
+                    fill_u32_run(dp,run,src);
+                  } else if(af){
+                    uint32_t ia=65536u-af;
+                    uint32_t srp=(uint32_t)sr*af, sgp=(uint32_t)sg*af, sbp=(uint32_t)sb*af;
+                    for(int k=0;k<run;k++){
+                      uint32_t dv=dp[k];
+                      int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
+                      unsigned source_alpha=(unsigned)lround((double)aa*alpha);
+                      dp[k]=gml_sprite_target_alpha(r,dv,source_alpha)|
+                            (((srp+dr*ia)>>16)<<16)|(((sgp+dg*ia)>>16)<<8)|
+                            ((sbp+db*ia)>>16);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        lx_fp += dlx_fp * (int64_t)run;
+        ly_fp += dly_fp * (int64_t)run;
+        px += run;
+      }
+    }
+    if(prof) rprof_add("rot",r,t,(rprof_now()-t0)*1000.0,vispix);
+    return;
+  }
+  for(int py=y0; py<y1; py++){
+    int rx0=x0, rx1=x1;
+    if(use_quad_span && !rotated_quad_row_span(qx,qy,py+0.5,x0,x1,&rx0,&rx1)) continue;
+    uint32_t *row=&r->fb[(size_t)py*r->fbw];
+    double ry=py+0.5-ay, rx=rx0+0.5-ax;
+    double lx0=(rx*c - ry*sn)*invxs + spr->originx - t->tx;
+    double ly0=(rx*sn + ry*c)*invys + spr->originy - t->ty;
+    int64_t lx_fp=(int64_t)floor(lx0*(double)RFP_ONE);
+    int64_t ly_fp=(int64_t)floor(ly0*(double)RFP_ONE);
+    for(int px=rx0; px<rx1; px++, lx_fp+=dlx_fp, ly_fp+=dly_fp){
+      int ix=floor_fixed20(lx_fp), iy=floor_fixed20(ly_fp);
+      if(ix<0||iy<0||ix>=t->sw||iy>=t->sh) continue;
+      int sx=t->sx+ix, sy=t->sy+iy;
+      if(sx<0||sy<0||sx>=a->w||sy>=a->h) continue;
+      uint8_t *sp=a->px + ((size_t)sy*a->w+sx)*4;
+      int aa=sp[3]; if(!aa) continue;
+      uint32_t *dp=&row[px];
+      if(!r->alphablend){
+        int sr=white?sp[0]:sp[0]*bR/255, sg=white?sp[1]:sp[1]*bG/255, sb=white?sp[2]:sp[2]*bB/255;
+        *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue;
+      }
+      uint32_t destination=*dp;
+      int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
+      if(r->blendmode==0 && white){
+        uint32_t af=a16_lut[aa]; if(!af) continue;
+        if(af>=65536u){ *dp=0xFF000000u|(sp[0]<<16)|(sp[1]<<8)|sp[2]; continue; }
+        uint32_t ia=65536u-af;
+        unsigned source_alpha=(unsigned)lround((double)aa*alpha);
+        *dp=gml_sprite_target_alpha(r,destination,source_alpha)|
+            (((sp[0]*af+dr*ia)>>16)<<16)|(((sp[1]*af+dg*ia)>>16)<<8)|
+            ((sp[2]*af+db*ia)>>16);
+        continue;
+      }
+      int sr=sp[0]*bR/255, sg=sp[1]*bG/255, sb=sp[2]*bB/255;
+      if(r->blendmode==0){
+        uint32_t af=a16_lut[aa]; if(!af) continue;
+        if(af>=65536u){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
+        uint32_t ia=65536u-af;
+        unsigned source_alpha=(unsigned)lround((double)aa*alpha);
+        *dp=gml_sprite_target_alpha(r,destination,source_alpha)|
+            (((sr*af+dr*ia)>>16)<<16)|(((sg*af+dg*ia)>>16)<<8)|
+            ((sb*af+db*ia)>>16);
+        continue;
+      }
+      double sa=sa_lut[aa]; if(sa<=0) continue;
+      if(r->blendmode==1){   /* bm_add: dst += src*srcAlpha */
+        int ar=dr+(int)(sr*sa); if(ar>255)ar=255; int ag=dg+(int)(sg*sa); if(ag>255)ag=255;
+        int ab=db+(int)(sb*sa); if(ab>255)ab=255; *dp=0xFF000000u|(ar<<16)|(ag<<8)|ab; continue; }
+      if(r->blendmode==2){   /* (bm_zero,bm_inv_src_colour), including inverse source alpha. */
+        unsigned ar=gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
+        unsigned ag=gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
+        unsigned ab=gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
+        uint32_t oc=0xFF;
+        if(r->target_sp>0){
+          unsigned source_alpha=(unsigned)lround(aa*alpha);
+          if(source_alpha>255u) source_alpha=255u;
+          oc=gml_blend_inv_source_u8(*dp>>24,source_alpha);
+        }
+        *dp=(oc<<24)|(ar<<16)|(ag<<8)|ab; continue; }
+      double ia=ia_lut[aa];
+      int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
+      int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
+      int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
+      unsigned source_alpha=(unsigned)lround((double)aa*alpha);
+      *dp=gml_sprite_target_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
+    }
+  }
+  if(prof) rprof_add("rot",r,t,(rprof_now()-t0)*1000.0,vispix);
+}
+
+static void blit_rotated_plane(GmlRender *r, uint32_t *plane, GmlSprite *spr, GmlTpag *t,
+                               double x, double y, double xs, double ys, double rot,
+                               uint32_t blend, double alpha){
+  uint32_t *saved_fb=r->fb;
+  int saved_known=r->fb_opaque_known;
+  int saved_opaque=r->fb_all_opaque;
+  int saved_transparent=r->fb_all_transparent;
+  r->fb=plane;
+  r->fb_opaque_known=0;
+  r->fb_all_opaque=0;
+  r->fb_all_transparent=0;
+  blit_rotated(r,spr,t,x,y,xs,ys,rot,blend,alpha);
+  r->fb=saved_fb;
+  r->fb_opaque_known=saved_known;
+  r->fb_all_opaque=saved_opaque;
+  r->fb_all_transparent=saved_transparent;
+}
+
+static void blit_rotated_with_phase(GmlRender *r, GmlSprite *spr, GmlTpag *t,
+                                    double x, double y, double xs, double ys, double rot,
+                                    uint32_t blend, double alpha){
+  int phase=r && r->target_sp==0 && r->fb==r->base_fb && r->classic_phase_y;
+  int interp_phase=r && r->target_sp==0 && r->fb==r->base_fb &&
+                   r->classic_interp_phase[0] && r->classic_interp_phase[1] &&
+                   r->classic_interp_phase[2];
+  blit_rotated(r,spr,t,x,y,xs,ys,rot,blend,alpha);
+  /* Exact 2x classic presentation selects auxiliary samples after the application surface has
+   * been composed.  Keep rotated draws in those planes too, so an otherwise valid base-plane
+   * raster cannot disappear from the selected output rows or interpolation quadrants. */
+  if(interp_phase)
+    for(int q=0;q<3;q++)
+      blit_rotated_plane(r,r->classic_interp_phase[q],spr,t,x,y,xs,ys,rot,blend,alpha);
+  if(phase)
+    blit_rotated_plane(r,r->classic_phase_y,spr,t,x,y,xs,ys,rot,blend,alpha);
+}
+
+/* one nine-slice band: tile (repeat/mirror) or stretch the source region (full-frame logical
+ * coords) into the destination span. Tiling anchors at the band's top-left and crops the last
+ * tile, according to the nine-slice contract. Mirror and blank-repeat modes
+ * fall back to plain repeat. */
+static void ns_band(GmlRender *r, GmlTpag *t, int mode,
+                    int sx, int sy, int sw, int sh,
+                    double dx, double dy, int tw, int th,
+                    uint32_t blend, double alpha){
+  if(sw<=0 || sh<=0 || tw<=0 || th<=0) return;
+  if(mode==4) return;                                   /* hide */
+  if(mode==0){                                          /* stretch */
+    blit_tpag_part(r,t,sx,sy,sw,sh,dx,dy,(double)tw/sw,(double)th/sh,blend,alpha);
+    return;
+  }
+  for(int oy=0; oy<th; oy+=sh){                          /* repeat (also mirror/blankrepeat) */
+    int ch=sh<th-oy? sh : th-oy;
+    for(int ox=0; ox<tw; ox+=sw){
+      int cw=sw<tw-ox? sw : tw-ox;
+      blit_tpag_part(r,t,sx,sy,cw,ch,dx+ox,dy+oy,1,1,blend,alpha);
+    }
+  }
+}
+/* draw a nine-slice sprite frame into the W x H target box at (dx0,dy0) (camera applied).
+ * Corners stay native-size; edges and center follow their tile modes. */
+static void draw_sprite_nineslice(GmlRender *r, GmlSprite *s, GmlTpag *t,
+                                  double dx0, double dy0, int W, int H,
+                                  uint32_t blend, double alpha){
+  int sw=s->w, sh=s->h;
+  int l=s->ns_l, rt=s->ns_r, tp=s->ns_t, bt=s->ns_b;
+  int cw=sw-l-rt, chh=sh-tp-bt;      /* source center band sizes */
+  int tw=W-l-rt, th=H-tp-bt;         /* target center band sizes */
+  /* corners (never scaled) */
+  blit_tpag_part(r,t,0,0,l,tp,          dx0,        dy0,        1,1,blend,alpha);
+  blit_tpag_part(r,t,sw-rt,0,rt,tp,     dx0+W-rt,   dy0,        1,1,blend,alpha);
+  blit_tpag_part(r,t,0,sh-bt,l,bt,      dx0,        dy0+H-bt,   1,1,blend,alpha);
+  blit_tpag_part(r,t,sw-rt,sh-bt,rt,bt, dx0+W-rt,   dy0+H-bt,   1,1,blend,alpha);
+  /* edges: top(1), bottom(3), left(0), right(2) — tile mode indices per the SPRT record */
+  ns_band(r,t,s->ns_tile[1], l,0,cw,tp,      dx0+l,      dy0,        tw,tp, blend,alpha);
+  ns_band(r,t,s->ns_tile[3], l,sh-bt,cw,bt,  dx0+l,      dy0+H-bt,   tw,bt, blend,alpha);
+  ns_band(r,t,s->ns_tile[0], 0,tp,l,chh,     dx0,        dy0+tp,     l,th,  blend,alpha);
+  ns_band(r,t,s->ns_tile[2], sw-rt,tp,rt,chh,dx0+W-rt,   dy0+tp,     rt,th, blend,alpha);
+  /* center */
+  ns_band(r,t,s->ns_tile[4], l,tp,cw,chh,    dx0+l,      dy0+tp,     tw,th, blend,alpha);
+}
+
+static int sprite_pos_triangle(double px,double py,
+                               const double x[3],const double y[3],
+                               const double u[3],const double v[3],
+                               double *out_u,double *out_v){
+  double den=(y[1]-y[2])*(x[0]-x[2])+(x[2]-x[1])*(y[0]-y[2]);
+  if(!isfinite(den)||fabs(den)<1e-12) return 0;
+  double a=((y[1]-y[2])*(px-x[2])+(x[2]-x[1])*(py-y[2]))/den;
+  double b=((y[2]-y[0])*(px-x[2])+(x[0]-x[2])*(py-y[2]))/den;
+  double c=1.0-a-b;
+  if(a < -1e-9 || b < -1e-9 || c < -1e-9) return 0;
+  *out_u=a*u[0]+b*u[1]+c*u[2];
+  *out_v=a*v[0]+b*v[1]+c*v[2];
+  return 1;
+}
+
+static void sprite_pos_sample(const uint8_t *rgba,int stride,int ox,int oy,int sw,int sh,
+                              double u,double v,int interpolate,double out[4]){
+  if(u<0) u=0; else if(u>1) u=1;
+  if(v<0) v=0; else if(v>1) v=1;
+  if(!interpolate){
+    int sx=(int)floor(u*sw),sy=(int)floor(v*sh);
+    if(sx>=sw) sx=sw-1;
+    if(sy>=sh) sy=sh-1;
+    const uint8_t *p=rgba+((size_t)(oy+sy)*stride+ox+sx)*4;
+    for(int channel=0;channel<4;channel++) out[channel]=p[channel];
+    return;
+  }
+  double fx=u*sw-.5,fy=v*sh-.5;
+  int x0=(int)floor(fx),y0=(int)floor(fy);
+  double ax=fx-x0,ay=fy-y0;
+  int x1=x0+1,y1=y0+1;
+  if(x0<0) x0=0; else if(x0>=sw) x0=sw-1;
+  if(x1<0) x1=0; else if(x1>=sw) x1=sw-1;
+  if(y0<0) y0=0; else if(y0>=sh) y0=sh-1;
+  if(y1<0) y1=0; else if(y1>=sh) y1=sh-1;
+  const uint8_t *p00=rgba+((size_t)(oy+y0)*stride+ox+x0)*4;
+  const uint8_t *p10=rgba+((size_t)(oy+y0)*stride+ox+x1)*4;
+  const uint8_t *p01=rgba+((size_t)(oy+y1)*stride+ox+x0)*4;
+  const uint8_t *p11=rgba+((size_t)(oy+y1)*stride+ox+x1)*4;
+  for(int channel=0;channel<4;channel++)
+    out[channel]=p00[channel]*(1-ax)*(1-ay)+p10[channel]*ax*(1-ay)+
+                 p01[channel]*(1-ax)*ay+p11[channel]*ax*ay;
+}
+
+static void sprite_pos_pixel(GmlRender *r,int x,int y,const double sample[4],double alpha){
+  double sa=sample[3]*alpha/255.0;
+  if(sa<=0) return;
+  int sr=(int)lround(sample[0]),sg=(int)lround(sample[1]),sb=(int)lround(sample[2]);
+  uint32_t *dst=&r->fb[(size_t)y*r->fbw+x];
+  if(!r->alphablend){ *dst=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb; return; }
+  int dr=(*dst>>16)&255,dg=(*dst>>8)&255,db=*dst&255;
+  if(r->blendmode==1){
+    int rr=dr+(int)(sr*sa),gg=dg+(int)(sg*sa),bb=db+(int)(sb*sa);
+    if(rr>255) rr=255;
+    if(gg>255) gg=255;
+    if(bb>255) bb=255;
+    *dst=0xFF000000u|((uint32_t)rr<<16)|((uint32_t)gg<<8)|(uint32_t)bb;
+    return;
+  }
+  if(r->blendmode==2){
+    unsigned rr=gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
+    unsigned gg=gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
+    unsigned bb=gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
+    uint32_t coverage=255;
+    if(r->target_sp>0){
+      unsigned source_alpha=(unsigned)lround(sample[3]*alpha);
+      if(source_alpha>255u) source_alpha=255u;
+      coverage=gml_blend_inv_source_u8(*dst>>24,source_alpha);
+    }
+    *dst=(coverage<<24)|(rr<<16)|(gg<<8)|bb;
+    return;
+  }
+  if(sa>1) sa=1;
+  double inv=1-sa;
+  int rr=(int)(sr*sa+dr*inv),gg=(int)(sg*sa+dg*inv),bb=(int)(sb*sa+db*inv);
+  unsigned source_alpha=(unsigned)lround(sample[3]*alpha);
+  *dst=gml_sprite_target_alpha(r,*dst,source_alpha)|((uint32_t)rr<<16)|
+       ((uint32_t)gg<<8)|(uint32_t)bb;
+}
+
+void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
+                         const double x[4],const double y[4],double alpha){
+  double mapped_x[4],mapped_y[4];
+  for(int i=0;i<4;i++){
+    mapped_x[i]=x[i]; mapped_y[i]=y[i];
+    gml_render_gui_map_point(r,&mapped_x[i],&mapped_y[i]);
+  }
+  x=mapped_x; y=mapped_y;
+  if(gml_d3_draw_sprite_pos_2d(r,sprite,subimg,x,y,alpha)) return;
+  if(render_setting(r,"GML_LOG_SPRITE_POS")){
+    if(r && r->sprite_position_log_count++<16) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[sprite-pos] sprite=%d sub=%d alpha=%.3f p=(%.2f,%.2f)(%.2f,%.2f)(%.2f,%.2f)(%.2f,%.2f)\n",
+      sprite,subimg,alpha,x[0],y[0],x[1],y[1],x[2],y[2],x[3],y[3]);
+  }
+  if(!r||!r->fb||sprite<0||sprite>=r->n_spr||alpha<=0) return;
+  if(alpha>1) alpha=1;
+  for(int i=0;i<4;i++) if(!isfinite(x[i])||!isfinite(y[i])) return;
+  GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
+  const uint8_t *rgba=NULL; int stride=0,ox=0,oy=0,sw=0,sh=0;
+  GmlTpag *page=NULL;
+  if(s->runtime_rgba){
+    rgba=runtime_frame_rgba(s,subimg); stride=sw=s->w; sh=s->h;
+  } else {
+    int frame=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
+    int page_id=s->frame[frame]; if(page_id<0||page_id>=r->n_tpag) return;
+    page=&r->tpag[page_id];
+    if(page->atlas<0||page->atlas>=r->n_atlas||!atlas_pixels(r,page->atlas)) return;
+    GmlAtlas *atlas=&r->atlas[page->atlas];
+    rgba=atlas->px; stride=atlas->w; ox=page->sx; oy=page->sy; sw=page->sw; sh=page->sh;
+  }
+  if(!rgba||stride<=0||sw<=0||sh<=0) return;
+
+  double qx[4],qy[4],shift=r->classic?-.5:0;
+  for(int i=0;i<4;i++){ qx[i]=x[i]-r->cam_x+shift; qy[i]=y[i]-r->cam_y+shift; }
+  /* Most calls are ordinary rectangles. Preserve the established axis blitters for this common
+   * case and reserve barycentric work for genuinely distorted quads. */
+  if(!r->classic && qx[1]>qx[0] && qy[3]>qy[0] &&
+     fabs(qy[0]-qy[1])<1e-9 && fabs(qx[1]-qx[2])<1e-9 &&
+     fabs(qy[2]-qy[3])<1e-9 && fabs(qx[3]-qx[0])<1e-9){
+    if(page) blit(r,page,qx[0],qy[0],(qx[1]-qx[0])/sw,(qy[3]-qy[0])/sh,0xFFFFFF,alpha);
+    else blit_rgba_region(r,rgba,sw,sh,0,0,sw,sh,qx[0],qy[0],qx[1]-qx[0],qy[3]-qy[0],0xFFFFFF,alpha);
+    return;
+  }
+
+  double minx=qx[0],maxx=qx[0],miny=qy[0],maxy=qy[0];
+  for(int i=1;i<4;i++){
+    if(qx[i]<minx) minx=qx[i];
+    if(qx[i]>maxx) maxx=qx[i];
+    if(qy[i]<miny) miny=qy[i];
+    if(qy[i]>maxy) maxy=qy[i];
+  }
+  int x0=(int)floor(minx),x1=(int)ceil(maxx)-1,y0=(int)floor(miny),y1=(int)ceil(maxy)-1;
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>=r->fbw) x1=r->fbw-1;
+  if(y1>=r->fbh) y1=r->fbh-1;
+  if(x1<x0||y1<y0) return;
+  static const double uvx[4]={0,1,1,0},uvy[4]={0,0,1,1};
+  const int tri[2][3]={{0,1,2},{0,2,3}};
+  double tx[2][3],ty[2][3],tu[2][3],tv[2][3];
+  for(int part=0;part<2;part++) for(int k=0;k<3;k++){
+    int index=tri[part][k];
+    tx[part][k]=qx[index]; ty[part][k]=qy[index];
+    tu[part][k]=uvx[index]; tv[part][k]=uvy[index];
+  }
+  gml_render_maybe_prepare_draw(r);
+  for(int py=y0;py<=y1;py++) for(int px=x0;px<=x1;px++){
+    double u=0,v=0; int hit=0;
+    for(int part=0;part<2&&!hit;part++)
+      hit=sprite_pos_triangle(px+.5,py+.5,tx[part],ty[part],tu[part],tv[part],&u,&v);
+    if(hit){ double sample[4]; sprite_pos_sample(rgba,stride,ox,oy,sw,sh,u,v,r->interp,sample); sprite_pos_pixel(r,px,py,sample,alpha); }
+  }
+}
+
+void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
+                         double xs, double ys, double rot, uint32_t blend, double alpha){
+  gml_render_gui_map_point(r,&x,&y);
+  gml_render_gui_map_scale(r,&xs,&ys);
+  if(gml_d3_draw_sprite_2d(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha)) return;
+  if(sprite<0||sprite>=r->n_spr) return;
+  if(alpha<=0) return;
+  GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
+  int sprof=sprof_enabled();
+  double sprof_t0=sprof?rprof_now():0.0;
+  if(s->runtime_rgba){
+    int sub=runtime_frame_index(s,subimg);
+    if(log_spr_enabled())
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[spr] %s subimg=%d sub=%d runtime=1 w,h=%d,%d x=%.0f y=%.0f xs=%.3f ys=%.3f rot=%.3f blend=%06X a=%.3f\n",
+        s->name?s->name:"?",subimg,sub,s->w,s->h,x,y,xs,ys,rot,(unsigned)(blend&0xffffff),alpha);
+    const uint8_t *fr=runtime_frame_rgba(s,subimg); if(!fr) return;
+    const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)sub*s->h:NULL;
+    const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)sub*s->h:NULL;
+    blit_rgba_sprite(r,s,fr,s->w,s->h,x,y,xs,ys,rot,s->originx,s->originy,blend,alpha,1,rmin,rmax,s->runtime_opaque);
+    if(sprof) sprof_add(sprite,s->name,(rprof_now()-sprof_t0)*1000.0);
+    return;
+  }
+  int sub = s->n_frames? ((subimg%s->n_frames)+s->n_frames)%s->n_frames : 0;
+  int ti=s->frame[sub]; if(ti<0||ti>=r->n_tpag){ if(sprof) sprof_add(sprite,s->name,(rprof_now()-sprof_t0)*1000.0); return; }
+  GmlTpag *t=&r->tpag[ti];
+  if(log_spr_enabled())
+    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[spr] %s subimg=%d sub=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d origin=%d,%d atlas=%d x=%.0f y=%.0f xs=%.3f ys=%.3f rot=%.3f blend=%06X a=%.3f\n",
+      s->name?s->name:"?",subimg,sub,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,
+      s->originx,s->originy,t->atlas,x,y,xs,ys,rot,(unsigned)(blend&0xffffff),alpha);
+  /* draw at (x - origin)*scale + target offset, minus camera */
+  double dx = x - s->originx*xs + t->tx*xs - r->cam_x;
+  double dy = y - s->originy*ys + t->ty*ys - r->cam_y;
+  double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
+  int unrot = fabs(rr)<0.001 || fabs(rr-360.0)<0.001;
+  /* Newer nine-slice draws keep border bands at native size while stretching the center.
+   * Negative or rotated draws keep the plain path because GM composes those separately. */
+  if(s->ns_enabled && unrot && xs>0 && ys>0 && (fabs(xs-1.0)>1e-9 || fabs(ys-1.0)>1e-9)){
+    int W=(int)lround(s->w*xs), H=(int)lround(s->h*ys);
+    if(W>s->ns_l+s->ns_r && H>s->ns_t+s->ns_b){
+      draw_sprite_nineslice(r,s,t, x - s->originx*xs - r->cam_x, y - s->originy*ys - r->cam_y,
+                            W,H,blend,alpha);
+      if(sprof) sprof_add(sprite,s->name,(rprof_now()-sprof_t0)*1000.0);
+      return;
+    }
+  }
+  if(unrot){
+    /* A viewport-spanning sprite behaves as a composited screen layer: both of its vertical
+     * boundaries lie outside the sampled area, so half-step coverage belongs to the preceding
+     * texel just as it does for an already-open quad.  Classify from projected geometry only;
+     * ordinary actors and effects continue through the transform-derived path. */
+    double projected_w=fabs((double)s->w*xs);
+    double projected_h=fabs((double)s->h*ys);
+    int spans_viewport=projected_w>(double)r->fbw+0.001 &&
+                       projected_h>(double)r->fbh+0.001;
+    blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,spans_viewport?0:4);
+  }
+  else blit_rotated_with_phase(r,s,t,x,y,xs,ys,rr,blend,alpha);
+  if(sprof) sprof_add(sprite,s->name,(rprof_now()-sprof_t0)*1000.0);
+}
+void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
+  gml_draw_sprite_ext(r,sprite,subimg,x,y,1,1,0,0xFFFFFF,
+                      r && !r->classic ? r->alpha : 1.0);
+}
+/* draw_sprite_tiled_ext: repeat a sprite frame to fill the screen (both axes),
+ * anchored at (x,y). Used by GML effects and tiled background scripts. */
+void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
+                               double xs, double ys, uint32_t blend, double alpha){
+  gml_render_gui_map_point(r,&x,&y);
+  gml_render_gui_map_scale(r,&xs,&ys);
+  if(sprite<0||sprite>=r->n_spr) return;
+  GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
+  if(s->runtime_rgba){
+    int sub=runtime_frame_index(s,subimg);
+    const uint8_t *fr=runtime_frame_rgba(s,subimg); if(!fr) return;
+    const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)sub*s->h:NULL;
+    const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)sub*s->h:NULL;
+    double bw=s->w*fabs(xs), bh=s->h*fabs(ys); if(bw<=0||bh<=0) return;
+    /* Tiled sprite coordinates anchor the logical cell itself.  Unlike draw_sprite(), the
+     * sprite origin must not shift the repeat phase: an x equal to one full cell width starts
+     * the next cell at the view origin.  The target offsets below still place trimmed pixels
+     * inside each full sprite-sized cell. */
+    double ax=floor(x-r->cam_x);
+    double ay=floor(y-r->cam_y);
+    double x0=fmod(ax,bw); if(x0>0) x0-=bw;
+    double y0=fmod(ay,bh); if(y0>0) y0-=bh;
+    if(gml_d3_is_active(r)){
+      for(double yy=y0; yy<r->fbh; yy+=bh) for(double xx=x0; xx<r->fbw; xx+=bw)
+        gml_d3_draw_sprite_2d(r,sprite,subimg,xx+r->cam_x+s->originx*xs,
+          yy+r->cam_y+s->originy*ys,xs,ys,0,blend,alpha);
+      return;
+    }
+    for(double yy=y0; yy<r->fbh; yy+=bh)
+      for(double xx=x0; xx<r->fbw; xx+=bw)
+        blit_rgba_sprite(r,s,fr,s->w,s->h,xx,yy,xs,ys,0,0,0,blend,alpha,0,rmin,rmax,s->runtime_opaque);
+    return;
+  }
+  int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
+  int ti=s->frame[sub]; if(ti<0||ti>=r->n_tpag) return;
+  GmlTpag *t=&r->tpag[ti];
+  /* The tiling PERIOD is the sprite's FULL cell (s->w/s->h), not the trimmed TPAG source, and
+   * the trimmed content sits at the TPAG target offset within each cell. Tiling the trimmed crop
+   * instead of the logical cell repeats transparent padding incorrectly and can flood the target. */
+  double bw=s->w*fabs(xs), bh=s->h*fabs(ys); if(bw<=0||bh<=0) return;
+  double ax=floor(x-r->cam_x);
+  double ay=floor(y-r->cam_y);
+  double x0=fmod(ax,bw); if(x0>0) x0-=bw;
+  double y0=fmod(ay,bh); if(y0>0) y0-=bh;
+  if(gml_d3_is_active(r)){
+    for(double yy=y0; yy<r->fbh; yy+=bh) for(double xx=x0; xx<r->fbw; xx+=bw)
+      gml_d3_draw_sprite_2d(r,sprite,subimg,xx+r->cam_x+s->originx*xs,
+        yy+r->cam_y+s->originy*ys,xs,ys,0,blend,alpha);
+    return;
+  }
+  if(log_spr_enabled())
+    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[spr-tiled] spr=%d sub=%d cell=%.0fx%.0f anchor=(%.0f,%.0f) start=(%.0f,%.0f) t=(%d,%d %dx%d) a=%.2f\n",
+      sprite,sub,bw,bh,ax,ay,x0,y0,t->tx,t->ty,t->sw,t->sh,alpha);
+  for(double yy=y0; yy<r->fbh; yy+=bh)
+    for(double xx=x0; xx<r->fbw; xx+=bw)
+	      blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0);
+}
+/* Background layers are not sprite instances.  Their x/y is the top-left of the logical sprite
+ * cell, irrespective of the sprite's authored origin, and horizontal/vertical tiling are separate
+ * switches.  Routing them through draw_sprite_tiled_ext used the instance origin and repeated on
+ * both axes, which displaced parallax art and introduced phantom copies on the untiled axis. */
+void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, double x, double y,
+                                      double xs, double ys, uint32_t blend, double alpha,
+                                      int htiled, int vtiled){
+  gml_render_gui_map_point(r,&x,&y);
+  gml_render_gui_map_scale(r,&xs,&ys);
+  if(!r || sprite<0 || sprite>=r->n_spr || alpha<=0) return;
+  GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
+  double bw=s->w*fabs(xs), bh=s->h*fabs(ys); if(bw<=0 || bh<=0) return;
+  /* Camera-relative layer vertex positions convert toward zero. */
+  double ax=trunc(x-r->cam_x), ay=trunc(y-r->cam_y);
+  double x0=ax, y0=ay;
+  if(htiled){ x0=fmod(ax,bw); if(x0>0) x0-=bw; }
+  if(vtiled){ y0=fmod(ay,bh); if(y0>0) y0-=bh; }
+  double xend=htiled ? r->fbw : x0+bw;
+  double yend=vtiled ? r->fbh : y0+bh;
+  if(s->runtime_rgba){
+    int sub=runtime_frame_index(s,subimg);
+    const uint8_t *fr=runtime_frame_rgba(s,subimg); if(!fr) return;
+    const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)sub*s->h:NULL;
+    const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)sub*s->h:NULL;
+    if(gml_d3_is_active(r)){
+      for(double yy=y0;yy<yend;yy+=bh) for(double xx=x0;xx<xend;xx+=bw)
+        gml_d3_draw_sprite_2d(r,sprite,subimg,xx+r->cam_x+s->originx*xs,
+          yy+r->cam_y+s->originy*ys,xs,ys,0,blend,alpha);
+      return;
+    }
+    for(double yy=y0;yy<yend;yy+=bh) for(double xx=x0;xx<xend;xx+=bw)
+      blit_rgba_sprite(r,s,fr,s->w,s->h,xx,yy,xs,ys,0,0,0,blend,alpha,0,
+                       rmin,rmax,s->runtime_opaque);
+    return;
+  }
+  int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
+  int ti=s->frame[sub]; if(ti<0 || ti>=r->n_tpag) return;
+  GmlTpag *t=&r->tpag[ti];
+  if(log_spr_enabled())
+    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[layer-bg-spr] %s subimg=%d sub=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d atlas=%d pos=%.3f,%.3f scale=%.3f/%.3f tiled=%d/%d alpha=%.3f\n",
+      s->name?s->name:"?",subimg,sub,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,
+      t->atlas,x,y,xs,ys,htiled,vtiled,alpha);
+  if(gml_d3_is_active(r)){
+    for(double yy=y0;yy<yend;yy+=bh) for(double xx=x0;xx<xend;xx+=bw)
+      gml_d3_draw_sprite_2d(r,sprite,subimg,xx+r->cam_x+s->originx*xs,
+        yy+r->cam_y+s->originy*ys,xs,ys,0,blend,alpha);
+    return;
+  }
+  for(double yy=y0;yy<yend;yy+=bh) for(double xx=x0;xx<xend;xx+=bw)
+    blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0);
+}
+void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
+                              double sw, double sh, double x, double y,
+                              double xs, double ys, uint32_t blend, double alpha){
+  gml_render_gui_map_point(r,&x,&y);
+  gml_render_gui_map_scale(r,&xs,&ys);
+  if(sprite<0||sprite>=r->n_spr) return;
+  if(gml_d3_draw_sprite_part_2d(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,blend,alpha)) return;
+  GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
+  if(s->runtime_rgba){
+    const uint8_t *fr=runtime_frame_rgba(s,subimg); if(!fr) return;
+    blit_rgba_region(r,fr,s->w,s->h,sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,sw*xs,sh*ys,blend,alpha);
+    return;
+  }
+  int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
+  int ti=s->frame[sub]; if(ti<0||ti>=r->n_tpag) return;
+  blit_tpag_part(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,blend,alpha);
+}
+
+void gml_draw_background(GmlRender *r, int bg, double x, double y){
+  gml_render_gui_map_point(r,&x,&y);
+  if(bg<0||bg>=r->n_bg) return;
+  int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
+  if(gml_d3_draw_background_2d(r,bg,x,y,1,1,0xFFFFFF,r->alpha)) return;
+  GmlTpag *t=&r->tpag[ti];
+  blit_background_phase(r,t, x - r->cam_x + t->tx, y - r->cam_y + t->ty, 1,1, 0xFFFFFF, r->alpha);
+}
+void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, double sw, double sh,
+                                  double x, double y, double xs, double ys, uint32_t color, double alpha){
+  gml_render_gui_map_point(r,&x,&y);
+  gml_render_gui_map_scale(r,&xs,&ys);
+  if(bg<0||bg>=r->n_bg) return;
+  int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
+  if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
+  blit_tpag_part_background(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
+}
+void gml_draw_background_stretched(GmlRender *r, int bg, double x, double y, double w, double h, uint32_t color, double alpha){
+  if(bg<0||bg>=r->n_bg) return;
+  int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
+  GmlTpag *t=&r->tpag[ti];
+  int bw=t->bw?t->bw:t->sw, bh=t->bh?t->bh:t->sh;
+  if(bw<=0 || bh<=0) return;
+  gml_draw_background_part_ext(r,bg,0,0,bw,bh,x,y,w/bw,h/bh,color,alpha);
+}
+/* draw_background_tiled: repeat the background image along the layer's tiled axes, anchored at (x,y).
+ * htiled/vtiled come from the room layer (background_htiled[]/vtiled[]): a layer that only tiles
+ * horizontally (e.g. a ground strip) must draw a single row, not fill the screen vertically. */
+static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs, double ys,
+                            uint32_t color, double alpha, int htiled, int vtiled){
+  gml_render_gui_map_point(r,&x,&y);
+  gml_render_gui_map_scale(r,&xs,&ys);
+  if(bg<0||bg>=r->n_bg) return;
+  { const char*sb=render_setting(r,"GML_SKIP_BG"); if(sb&&atoi(sb)==bg) return; }
+  int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
+  GmlTpag *t=&r->tpag[ti]; double bw=t->sw*xs, bh=t->sh*ys; if(bw<=0||bh<=0) return;
+  if(render_setting(r,"GML_LOG_BG"))
+    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[bg-tiled] def=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d atlas=%d pos=(%.3f,%.3f) scale=(%.3f,%.3f) tiled=(%d,%d) alpha=%.3f\n",
+      bg,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,t->atlas,
+      x,y,xs,ys,htiled,vtiled,alpha);
+  if(r->classic){
+    double logical_w=(t->bw?t->bw:t->sw)*xs, logical_h=(t->bh?t->bh:t->sh)*ys;
+    if(logical_w<=0 || logical_h<=0) return;
+    double anchor_x=floor(x-r->cam_x), anchor_y=floor(y-r->cam_y);
+    double x0,xend,y0,yend;
+    if(htiled){ x0=fmod(anchor_x,logical_w); if(x0>0) x0-=logical_w; xend=r->fbw; }
+    else { x0=anchor_x; xend=anchor_x+1; }
+    if(vtiled){ y0=fmod(anchor_y,logical_h); if(y0>0) y0-=logical_h; yend=r->fbh; }
+    else { y0=anchor_y; yend=anchor_y+1; }
+    if(gml_d3_is_active(r)){
+      for(double yy=y0; yy<yend; yy+=logical_h) for(double xx=x0; xx<xend; xx+=logical_w)
+        gml_d3_draw_background_2d(r,bg,xx+r->cam_x,yy+r->cam_y,xs,ys,color,alpha);
+      return;
+    }
+    for(double yy=y0; yy<yend; yy+=logical_h)
+      for(double xx=x0; xx<xend; xx+=logical_w){
+        if(vtiled && logical_h<r->fbh)
+          blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha,2);
+        else
+          blit_background_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha);
+      }
+    return;
+  }
+  /* apply the texture-page target offset (tx,ty): GM places a background's cropped content at this
+   * offset inside its logical bounding image. gml_draw_background already does
+   * this; the tiled path must too. */
+  double sx=floor(x + t->tx*xs - r->cam_x), sy=floor(y + t->ty*ys - r->cam_y);
+  double x0,xend,y0,yend;
+  if(htiled){ x0=fmod(sx,bw); if(x0>0) x0-=bw; xend=r->fbw; } else { x0=sx; xend=sx+1; }
+  if(vtiled){ y0=fmod(sy,bh); if(y0>0) y0-=bh; yend=r->fbh; } else { y0=sy; yend=sy+1; }
+  if(gml_d3_is_active(r)){
+    for(double yy=y0; yy<yend; yy+=bh) for(double xx=x0; xx<xend; xx+=bw)
+      gml_d3_draw_background_2d(r,bg,xx+r->cam_x-t->tx*xs,
+        yy+r->cam_y-t->ty*ys,xs,ys,color,alpha);
+    return;
+  }
+  for(double yy=y0; yy<yend; yy+=bh)
+      for(double xx=x0; xx<xend; xx+=bw)
+        blit_background_phase(r,t, xx, yy, xs,ys, color, alpha);
+}
+/* Paint a background layer immediately in the order requested by GML. */
+static void bg_emit(GmlRender *r, int bgdef, double x, double y, double xs, double ys,
+                    uint32_t color, double alpha, int htiled, int vtiled){
+  do_bg_tiled_ext(r,bgdef,x,y,xs,ys,color,alpha,htiled,vtiled);
+}
+void gml_draw_background_tiled(GmlRender *r, int bg, double x, double y, int htiled, int vtiled){
+  bg_emit(r,bg,x,y,1,1,0xFFFFFF,r?r->alpha:1,htiled,vtiled);
+}
+/* draw_background[_tiled]_ext: as above + xscale/yscale + blend colour + alpha. */
+void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs, double ys,
+                            uint32_t color, double alpha){
+  gml_render_gui_map_point(r,&x,&y);
+  gml_render_gui_map_scale(r,&xs,&ys);
+  if(bg<0||bg>=r->n_bg) return;
+  int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
+  if(gml_d3_draw_background_2d(r,bg,x,y,xs,ys,color,alpha)) return;
+  GmlTpag *t=&r->tpag[ti];
+  blit_background_phase(r,t, x - r->cam_x + t->tx*xs, y - r->cam_y + t->ty*ys, xs,ys, color, alpha);
+}
+void gml_draw_background_tiled_ext(GmlRender *r, int bg, double x, double y, double xs, double ys,
+                                  uint32_t color, double alpha, int htiled, int vtiled){
+  bg_emit(r,bg,x,y,xs,ys,color,alpha,htiled,vtiled);
+}
+
+/* draw a room's background layers (from the room Background pointer-list).
+ * want_fg: 0 = backgrounds (behind instances), 1 = foregrounds (in front). */
+void gml_draw_room_backgrounds(GmlRender *r, uint32_t bg_ptr, int want_fg){
+  if(!bg_ptr) return;
+  const uint8_t *d=r->win->data; uint32_t cnt=u32(d,bg_ptr);
+  for(uint32_t i=0;i<cnt;i++){
+    uint32_t p=u32(d,bg_ptr+4+i*4);
+    int enabled=(int)u32(d,p), fg=(int)u32(d,p+4), bgdef=(int)u32(d,p+8);
+    int x=(int)u32(d,p+12), y=(int)u32(d,p+16), tilex=(int)u32(d,p+20), tiley=(int)u32(d,p+24);
+    if(!enabled || fg!=want_fg) continue;
+    if(bgdef<0||bgdef>=r->n_bg) continue;
+    int ti=r->bg[bgdef].tpag; if(ti<0||ti>=r->n_tpag) continue;
+    GmlTpag *t=&r->tpag[ti]; int bw=t->sw, bh=t->sh; if(bw<=0||bh<=0) continue;
+    if(render_setting(r,"GML_LOG_BG"))
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[bg-room] layer=%u def=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d atlas=%d pos=(%d,%d) tiled=(%d,%d) fg=%d\n",
+        i,bgdef,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,t->atlas,
+        x,y,tilex,tiley,fg);
+    int x0=x, y0=y;
+    if(tilex){ x0 = x % bw; if(x0>0) x0-=bw; }
+    if(tiley){ y0 = y % bh; if(y0>0) y0-=bh; }
+    for(int yy=y0; yy < (tiley? r->fbh : y0+1); yy+=bh){
+      for(int xx=x0; xx < (tilex? r->fbw : x0+1); xx+=bw){
+        blit_background_phase(r,t, xx, yy, 1,1, 0xFFFFFF, 1);
+      }
+      if(!tilex) {}
+    }
+  }
+}
+
+/* a room's tile layer: each tile blits a sub-rect (src_x,src_y,w,h) of a background/tileset
+ * image to a room position, drawn back-to-front by tile depth. The room tile list is a
+ * pointer-list (count + pointers), each record: x,y,bgdef,srcx,srcy,w,h,depth,id,sx,sy,color. */
+typedef struct { int x,y,def,sx,sy,w,h,depth; } GmlTileRec;
+static int cmp_tile_depth(const void *a, const void *b){
+  const GmlTileRec *ta=a,*tb=b;
+  return ta->depth>tb->depth? -1 : (ta->depth<tb->depth? 1 : 0);   /* high depth first (behind) */
+}
+/* blit a single tile: a sub-rect (sx,sy,w,h) of background/tileset `def` at room (x,y). */
+void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x, double y){
+  gml_render_gui_map_point(r,&x,&y);
+  double draw_xscale=1.0,draw_yscale=1.0;
+  gml_render_gui_map_scale(r,&draw_xscale,&draw_yscale);
+  if(def<0||def>=r->n_bg) return;
+  int ti=r->bg[def].tpag; if(ti<0||ti>=r->n_tpag) return;
+  if(gml_d3_draw_background_part_2d(r,def,sx,sy,w,h,x,y,draw_xscale,draw_yscale,0xFFFFFF,1)) return;
+  GmlTpag *bt=&r->tpag[ti]; GmlTpag tt=*bt;
+  tt.sx=bt->sx+sx; tt.sy=bt->sy+sy; tt.sw=w; tt.sh=h;
+  tt.interp_phase_cache[0]=tt.interp_phase_cache[1]=tt.interp_phase_cache[2]=NULL;
+  blit_background_phase(r,&tt, x - r->cam_x, y - r->cam_y,
+                        draw_xscale,draw_yscale,0xFFFFFF,1);
+}
+void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr){
+  if(!tile_ptr) return;
+  const uint8_t *d=r->win->data; uint32_t cnt=u32(d,tile_ptr);
+  if(cnt==0 || cnt>100000) return;
+  if(render_setting(r,"GML_LOG_BG")) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[tile-room] count=%u\n",cnt);
+  GmlTileRec *tiles=malloc((size_t)cnt*sizeof(GmlTileRec)); if(!tiles) return; int m=0;
+  for(uint32_t i=0;i<cnt;i++){
+    uint32_t p=u32(d,tile_ptr+4+i*4);
+    GmlTileRec t;
+    t.x=(int)u32(d,p);    t.y=(int)u32(d,p+4);  t.def=(int)u32(d,p+8);
+    t.sx=(int)u32(d,p+12);t.sy=(int)u32(d,p+16);t.w=(int)u32(d,p+20);
+    t.h=(int)u32(d,p+24); t.depth=(int)u32(d,p+28);
+    tiles[m++]=t;
+    if(render_setting(r,"GML_LOG_BG"))
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[tile] index=%u def=%d source=(%d,%d %dx%d) position=(%d,%d) depth=%d\n",
+        i,t.def,t.sx,t.sy,t.w,t.h,t.x,t.y,t.depth);
+  }
+  qsort(tiles,m,sizeof(GmlTileRec),cmp_tile_depth);
+  for(int i=0;i<m;i++){
+    GmlTileRec *t=&tiles[i];
+    if(t->def<0 || t->def>=r->n_bg) continue;
+    int ti=r->bg[t->def].tpag; if(ti<0 || ti>=r->n_tpag) continue;
+    GmlTpag *bt=&r->tpag[ti];
+    GmlTpag tt=*bt;                                  /* sub-rect of the tileset image */
+    tt.sx=bt->sx + t->sx; tt.sy=bt->sy + t->sy; tt.sw=t->w; tt.sh=t->h;
+    tt.interp_phase_cache[0]=tt.interp_phase_cache[1]=tt.interp_phase_cache[2]=NULL;
+    blit_background_phase(r,&tt, t->x - r->cam_x, t->y - r->cam_y, 1,1, 0xFFFFFF, 1);
+  }
+  free(tiles);
+}
+
+/* Coarse-mip (flat area-average) texel of a straight-RGBA atlas sub-region, built by successive
+ * 2x2 box reduction to 1x1 — i.e. the top mip level of the texture page.
+ *
+ * Why: GameMaker enables mipmapping on interpolated ("texture_set_interpolation(true)") sprite
+ * pages. When such a sprite is heavily minified to fill the screen,
+ * the GPU's LOD lands on the coarsest mip, so every output pixel samples the same flat average
+ * texel — the overlay becomes a uniform veil, NOT a per-pixel down-filtered copy of the texture.
+ * A per-pixel box-average (the generic filtered-downscale path below) instead reproduces the fine
+ * scanline structure, which is both visibly and numerically wrong (systematically darker where the
+ * sprite's bright, low-alpha rows should dominate). Reproduce the flat veil by compositing this
+ * single coarse texel across the whole rect. Reduction is done in float (no per-level 8-bit
+ * rounding) to stay as close as possible to the GPU's mip value. */
+static void sprite_region_coarse_texel(GmlAtlas *a, int sx, int sy, int sw, int sh, double out[4]){
+  out[0]=out[1]=out[2]=out[3]=0;
+  if(!a || !a->px || sw<=0 || sh<=0) return;
+  int w=sw, h=sh;
+  float *buf=(float*)malloc((size_t)w*(size_t)h*4u*sizeof(float));
+  if(!buf) return;
+  for(int y=0;y<h;y++){
+    const uint8_t *sp=a->px + ((size_t)(sy+y)*a->w + sx)*4;
+    float *d=buf+(size_t)y*w*4;
+    for(int x=0;x<w;x++,sp+=4,d+=4){ d[0]=sp[0]; d[1]=sp[1]; d[2]=sp[2]; d[3]=sp[3]; }
+  }
+  while(w>1 || h>1){                                   /* one mip step: halve each axis (floor) */
+    int nw = w>1 ? w/2 : 1, nh = h>1 ? h/2 : 1;
+    for(int y=0;y<nh;y++){
+      int y0=(h>1)?2*y:0, y1=(h>1)?2*y+1:0;
+      for(int x=0;x<nw;x++){
+        int x0=(w>1)?2*x:0, x1=(w>1)?2*x+1:0;
+        const float *p00=buf+((size_t)y0*w+x0)*4, *p01=buf+((size_t)y0*w+x1)*4;
+        const float *p10=buf+((size_t)y1*w+x0)*4, *p11=buf+((size_t)y1*w+x1)*4;
+        float *d=buf+((size_t)y*nw+x)*4;              /* write compacts behind the read cursor */
+        for(int c=0;c<4;c++) d[c]=(p00[c]+p01[c]+p10[c]+p11[c])*0.25f;
+      }
+    }
+    w=nw; h=nh;
+  }
+  out[0]=buf[0]; out[1]=buf[1]; out[2]=buf[2]; out[3]=buf[3];
+  free(buf);
+}
+
+/* draw_sprite_stretched: blit a sprite frame stretched into the screen rect (dx,dy,dw,dh), box-
+ * averaging the source per dest pixel (matches the GPU's filtered down-stretch). Screen-space. */
+void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, double dy, double dw, double dh, uint32_t blend, double alpha){
+  gml_render_gui_map_point(r,&dx,&dy);
+  gml_render_gui_map_scale(r,&dw,&dh);
+  if(sprite<0||sprite>=r->n_spr) return;
+  GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
+  if(s->w>0 && s->h>0){
+    double xs=dw/s->w,ys=dh/s->h;
+    if(gml_d3_draw_sprite_2d(r,sprite,frame,dx+s->originx*xs,dy+s->originy*ys,xs,ys,0,blend,alpha)) return;
+  }
+  dx-=r->cam_x; dy-=r->cam_y;
+  if(s->runtime_rgba){
+    const uint8_t *fr=runtime_frame_rgba(s,frame); if(!fr) return;
+    blit_rgba_region(r,fr,s->w,s->h,0,0,s->w,s->h,dx,dy,dw,dh,blend,alpha);
+    return;
+  }
+  int sub=((frame%s->n_frames)+s->n_frames)%s->n_frames;
+  int ti=s->frame[sub]; if(ti<0||ti>=r->n_tpag) return;
+  GmlTpag *t=&r->tpag[ti]; if(t->atlas<0||t->atlas>=r->n_atlas) return;
+  GmlAtlas *a=&r->atlas[t->atlas]; if(!atlas_pixels(r,t->atlas)) return;
+  int sw = s->w>0? s->w : t->sw, sh = s->h>0? s->h : t->sh;
+  int x0=(int)floor(dx), y0=(int)floor(dy), W=(int)lround(dw), H=(int)lround(dh);
+  if(sw<=0||sh<=0||W<=0||H<=0) return;
+  /* nine-slice applies to stretched draws too (same fixed-border layout) */
+  if(s->ns_enabled && (W!=sw || H!=sh) && W>s->ns_l+s->ns_r && H>s->ns_t+s->ns_b){
+    draw_sprite_nineslice(r,s,t,dx,dy,W,H,blend,alpha);
+    return;
+  }
+  int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
+  if(W==sw && H==sh){
+    int cx0=x0<0?0:x0, cy0=y0<0?0:y0;
+    int cx1=x0+W; if(cx1>r->fbw) cx1=r->fbw;
+    int cy1=y0+H; if(cy1>r->fbh) cy1=r->fbh;
+    int cw=cx1-cx0, ch=cy1-cy0;
+    if(cw<=0 || ch<=0) return;
+    int lx0=cx0-x0, ly0=cy0-y0;
+    gml_render_maybe_prepare_draw(r);
+    for(int yy=0; yy<ch; yy++){
+      int iy=ly0+yy-t->ty;
+      if(iy<0||iy>=t->sh) continue;
+      uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
+      for(int xx=0; xx<cw; xx++){
+        int ix=lx0+xx-t->tx;
+        if(ix<0||ix>=t->sw) continue;
+        uint8_t *sp=a->px + ((size_t)(t->sy+iy)*a->w + (t->sx+ix))*4;
+        double oa=(sp[3]/255.0)*alpha;
+        if(oa<=0) continue;
+        int sr=sp[0]*bR/255, sg=sp[1]*bG/255, sb=sp[2]*bB/255;
+        if(!r->alphablend){ dp[xx]=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
+        uint32_t dv=dp[xx];
+        int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
+        dp[xx]=0xFF000000u|((int)(sr*oa+dr*(1-oa)+0.5)<<16)|((int)(sg*oa+dg*(1-oa)+0.5)<<8)|(int)(sb*oa+db*(1-oa)+0.5);
+      }
+    }
+    return;
+  }
+  /* Full-screen MINIFIED overlay → flat coarse-mip veil (see sprite_region_coarse_texel).
+   * Gate tightly on the "post-process overlay" pattern (the sprite is downscaled AND covers the
+   * whole render target from the origin) so ordinary in-world minified sprites keep the per-pixel
+   * filtered path. This is the case GameMaker's mipmapped full-screen sprites hit on the GPU. */
+  if((sw>W || sh>H) && x0<=0 && y0<=0 && x0+W>=r->fbw && y0+H>=r->fbh){
+    double ct[4]; sprite_region_coarse_texel(a,t->sx,t->sy,t->sw,t->sh,ct);
+    double sa=(ct[3]/255.0)*alpha;
+    if(sa>0){
+      double srcR=ct[0]*bR/255.0, srcG=ct[1]*bG/255.0, srcB=ct[2]*bB/255.0;
+      int cx0=x0<0?0:x0, cy0=y0<0?0:y0;
+      int cx1=x0+W; if(cx1>r->fbw) cx1=r->fbw;
+      int cy1=y0+H; if(cy1>r->fbh) cy1=r->fbh;
+      if(cx1>cx0 && cy1>cy0){
+        gml_render_maybe_prepare_draw(r);
+        int oR=(int)(srcR+0.5), oG=(int)(srcG+0.5), oB=(int)(srcB+0.5);
+        uint32_t opaque=0xFF000000u|(oR<<16)|(oG<<8)|oB;
+        double ia=1.0-sa;
+        for(int yy=cy0; yy<cy1; yy++){
+          uint32_t *dp=r->fb+(size_t)yy*r->fbw+cx0;
+          for(int xx=cx0; xx<cx1; xx++,dp++){
+            if(!r->alphablend || sa>=1.0){ *dp=opaque; continue; }
+            uint32_t dv=*dp; int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
+            *dp=0xFF000000u | ((int)(srcR*sa+dr*ia+0.5)<<16) | ((int)(srcG*sa+dg*ia+0.5)<<8) | (int)(srcB*sa+db*ia+0.5);
+          }
+        }
+      }
+    }
+    return;
+  }
+  gml_render_maybe_prepare_draw(r);
+  /* Bilinear magnification when interpolation is on (matches the GPU; e.g. a full-screen overlay
+   * sprite stretched up for the "old TV" veil). Sample 4 sprite texels at the output pixel centre. */
+  if(r->interp && W>sw && H>sh){
+    /* per-column/row atlas offsets precomputed (with the tpag crop resolved to a byte offset or -1
+     * for transparent), so the inner loop is 4 reads + float taps — no per-pixel div/floor/branches. */
+    ptrdiff_t *colA=malloc((size_t)W*sizeof(ptrdiff_t)), *colB=malloc((size_t)W*sizeof(ptrdiff_t));
+    float *cfx=malloc((size_t)W*sizeof(float));
+    ptrdiff_t *rowA=malloc((size_t)H*sizeof(ptrdiff_t)), *rowB=malloc((size_t)H*sizeof(ptrdiff_t));
+    float *cfy=malloc((size_t)H*sizeof(float));
+    if(colA&&colB&&cfx&&rowA&&rowB&&cfy){
+      for(int px=0; px<W; px++){
+        double fsx=(px+0.5)*sw/(double)W-0.5; int xa=(int)floor(fsx); cfx[px]=(float)(fsx-xa); int xb=xa+1;
+        if(xa<0)xa=0;else if(xa>sw-1)xa=sw-1; if(xb<0)xb=0;else if(xb>sw-1)xb=sw-1;
+        int ia=xa-t->tx, ib=xb-t->tx;
+        colA[px]=(ia>=0&&ia<t->sw)?(ptrdiff_t)(t->sx+ia)*4:-1;
+        colB[px]=(ib>=0&&ib<t->sw)?(ptrdiff_t)(t->sx+ib)*4:-1;
+      }
+      for(int py=0; py<H; py++){
+        double fsy=(py+0.5)*sh/(double)H-0.5; int ya=(int)floor(fsy); cfy[py]=(float)(fsy-ya); int yb=ya+1;
+        if(ya<0)ya=0;else if(ya>sh-1)ya=sh-1; if(yb<0)yb=0;else if(yb>sh-1)yb=sh-1;
+        int ja=ya-t->ty, jb=yb-t->ty;
+        rowA[py]=(ja>=0&&ja<t->sh)?(ptrdiff_t)(t->sy+ja)*a->w*4:-1;
+        rowB[py]=(jb>=0&&jb<t->sh)?(ptrdiff_t)(t->sy+jb)*a->w*4:-1;
+      }
+      SprBiCtx ctx={ r, a->px, colA, colB, rowA, rowB, cfx, cfy, W, x0, y0,
+        (float)alpha, bR/255.0f,bG/255.0f,bB/255.0f, !r->alphablend };
+      gml_run_row_bands(r,H,spr_bi_band,&ctx);
+    }
+    free(colA); free(colB); free(cfx); free(rowA); free(rowB); free(cfy);
+    return;
+  }
+  for(int py=0; py<H; py++){ int ty_=y0+py; if(ty_<0||ty_>=r->fbh) continue;
+    int sy0=(py*sh)/H, sy1=((py+1)*sh)/H; if(sy1<=sy0) sy1=sy0+1;
+    for(int px=0; px<W; px++){ int tx_=x0+px; if(tx_<0||tx_>=r->fbw) continue;
+      int sx0=(px*sw)/W, sx1=((px+1)*sw)/W; if(sx1<=sx0) sx1=sx0+1;
+      int R=0,G=0,B=0,A=0,n=0;
+      for(int sy=sy0;sy<sy1;sy++){ int iy=sy - t->ty; if(iy<0||iy>=t->sh) continue;
+        for(int sx=sx0;sx<sx1;sx++){ int ix=sx - t->tx; if(ix<0||ix>=t->sw) continue;
+          uint8_t *sp=a->px + ((size_t)(t->sy+iy)*a->w + (t->sx+ix))*4;
+          R+=sp[0]; G+=sp[1]; B+=sp[2]; A+=sp[3]; n++; } }
+      if(!n) continue;
+      /* Filtered (interpolation=true) downscale matches the GPU: average the covered texels in
+       * FLOAT and convert float->8bit round-to-nearest. For an integer NxM box each covered texel
+       * carries equal weight, which is exactly GL's bilinear result when the destination straddles
+       * texel centres (e.g. an exact 2x downscale samples at frac=0.5 → 0.25 per texel = 2x2 mean).
+       * The old code truncated the channel average (int cast) and truncated the blend, which
+       * systematically DARKENED a bright overlay; keep full float precision and round at the end. */
+      double fA=A/(double)n;
+      double oa=(fA/255.0)*alpha; if(oa<=0) continue;
+      double srcR=(R/(double)n)*bR/255.0, srcG=(G/(double)n)*bG/255.0, srcB=(B/(double)n)*bB/255.0;
+      uint32_t *dp=&r->fb[(size_t)ty_*r->fbw+tx_];
+      if(!r->alphablend || oa>=1.0){
+        int sr=(int)(srcR+0.5), sg=(int)(srcG+0.5), sb=(int)(srcB+0.5);
+        *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue;
+      }
+      double ia=1.0-oa;
+      int dr=(*dp>>16)&0xFF, dg=(*dp>>8)&0xFF, db=*dp&0xFF;
+      *dp = 0xFF000000u | ((int)(srcR*oa+dr*ia+0.5)<<16) | ((int)(srcG*oa+dg*ia+0.5)<<8) | (int)(srcB*oa+db*ia+0.5);
+    }
+  }
+}
+
+typedef struct {
+  GmlRender *r; const struct GmlShaderPal *sp;
+  int x0, y0, width, opaque;
+  float pixel_size;
+  uint32_t *scratch;
+} PaintBand;

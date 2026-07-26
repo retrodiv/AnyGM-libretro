@@ -17,7 +17,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <limits.h>
-#include "gml_render.h"
+#include "gml_render_backend.h"
 #include "anygm_compatibility.h"
 #include "gml_particle.h"
 #include "gml_vm.h"
@@ -133,7 +133,8 @@ static double particle_range(GmlParticleState *state,double a,double b){ return 
 static int clamp255(double v){ if(v<0) return 0; if(v>255) return 255; return (int)(v+0.5); }
 static uint32_t rgb_col(int r,int g,int b){ return ((uint32_t)clamp255(b)<<16)|((uint32_t)clamp255(g)<<8)|(uint32_t)clamp255(r); }
 static uint32_t mix_col(uint32_t a, uint32_t b, double t){
-  if(t<0)t=0; if(t>1)t=1;
+  if(t<0) t=0;
+  if(t>1) t=1;
   double ar=a&0xFF, ag=(a>>8)&0xFF, ab=(a>>16)&0xFF;
   double br=b&0xFF, bg=(b>>8)&0xFF, bb=(b>>16)&0xFF;
   return rgb_col((int)(ar+(br-ar)*t+0.5),(int)(ag+(bg-ag)*t+0.5),(int)(ab+(bb-ab)*t+0.5));
@@ -262,8 +263,11 @@ static void effect_room_metrics(GmlParticleState *state,int *width,int *height,i
     if(room.speed>0) *speed=room.speed;
   } else if(g_particle_vm->render){
     GmlRender *render=(GmlRender*)g_particle_vm->render;
-    if(render->fbw>0) *width=render->fbw;
-    if(render->fbh>0) *height=render->fbh;
+    GmlRenderBackendDrawView draw;
+    if(gml_render_backend_draw_view(render,&draw)){
+      if(draw.width>0) *width=draw.width;
+      if(draw.height>0) *height=draw.height;
+    }
   }
 }
 
@@ -621,17 +625,22 @@ static uint32_t keyc(double age, PType *t){
 }
 
 /* plot a filled clipped square for shape/pixel particles (no custom sprite) */
-static void plot_square(GmlRender *r, int cx, int cy, int half, uint32_t col, double a){
-  if(!r||!r->fb||a<=0) return; if(a>1) a=1;
+static void plot_square(const GmlRenderBackendDrawView *draw,uint32_t *target_pixels,
+                        int cx,int cy,int half,uint32_t col,double a){
+  if(!draw||!target_pixels||a<=0) return;
+  if(a>1) a=1;
   int br=col&0xFF, bg=(col>>8)&0xFF, bb=(col>>16)&0xFF;   /* GM BBGGRR → r,g,b */
   int x0=cx-half, x1=cx+half+1, y0=cy-half, y1=cy+half+1;
-  if(x0<0)x0=0; if(y0<0)y0=0; if(x1>r->fbw)x1=r->fbw; if(y1>r->fbh)y1=r->fbh;
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>draw->width) x1=draw->width;
+  if(y1>draw->height) y1=draw->height;
   if(x1<=x0 || y1<=y0) return;
   int ia=(int)(a*255+0.5), iia=255-ia;
   uint32_t src=0xFF000000u|((uint32_t)br<<16)|((uint32_t)bg<<8)|(uint32_t)bb;
-  if(ia>=255 || !r->alphablend){
+  if(ia>=255 || !draw->alpha_blend){
     int n=x1-x0;
-    for(int y=y0;y<y1;y++){ uint32_t *dp=r->fb+(size_t)y*r->fbw+x0;
+    for(int y=y0;y<y1;y++){ uint32_t *dp=target_pixels+(size_t)y*draw->width+x0;
       for(int x=0;x<n;x++) dp[x]=src; }
     return;
   }
@@ -644,13 +653,13 @@ static void plot_square(GmlRender *r, int cx, int cy, int half, uint32_t col, do
       lb[d]=(uint8_t)((bb*ia+d*iia)/255);
       la[d]=(uint8_t)(ia+(d*iia)/255);
     }
-    for(int y=y0;y<y1;y++){ uint32_t *dp=r->fb+(size_t)y*r->fbw;
+    for(int y=y0;y<y1;y++){ uint32_t *dp=target_pixels+(size_t)y*draw->width;
       for(int x=x0;x<x1;x++){ uint32_t dv=dp[x];
         dp[x]=((uint32_t)la[(dv>>24)&0xFF]<<24)|((uint32_t)lr[(dv>>16)&0xFF]<<16)|
               ((uint32_t)lg[(dv>>8)&0xFF]<<8)|(uint32_t)lb[dv&0xFF]; } }
     return;
   }
-  for(int y=y0;y<y1;y++){ uint32_t *dp=r->fb+(size_t)y*r->fbw;
+  for(int y=y0;y<y1;y++){ uint32_t *dp=target_pixels+(size_t)y*draw->width;
     for(int x=x0;x<x1;x++){ uint32_t dv=dp[x];
       int dr=(dv>>16)&0xFF,dg=(dv>>8)&0xFF,db=dv&0xFF;
       int da=(dv>>24)&0xFF,oa=ia+(da*iia)/255;
@@ -682,13 +691,17 @@ static double sample_ring_shape(GmlParticleState *state,double x,double y){
   return (a*(1.0-fy)+b*fy)/255.0;
 }
 
-static void plot_circle_shape(GmlParticleState *state,GmlRender *r,double cx,double cy,double xs,double ys,
+static void plot_circle_shape(GmlParticleState *state,const GmlRenderBackendDrawView *draw,
+                              double cx,double cy,double xs,double ys,
                               uint32_t color,double alpha,int hollow){
   double rx=32.0*fabs(xs),ry=32.0*fabs(ys);
-  if(!r || rx<0.25 || ry<0.25 || alpha<=0) return;
+  if(!draw || !draw->pixels || rx<0.25 || ry<0.25 || alpha<=0) return;
   int x0=(int)floor(cx-rx),x1=(int)ceil(cx+rx);
   int y0=(int)floor(cy-ry),y1=(int)ceil(cy+ry);
-  if(x0<0)x0=0; if(y0<0)y0=0; if(x1>=r->fbw)x1=r->fbw-1; if(y1>=r->fbh)y1=r->fbh-1;
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>=draw->width) x1=draw->width-1;
+  if(y1>=draw->height) y1=draw->height-1;
   for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
     double nx=(x+0.5-cx)/rx,ny=(y+0.5-cy)/ry,d=sqrt(nx*nx+ny*ny);
     double coverage;
@@ -696,7 +709,7 @@ static void plot_circle_shape(GmlParticleState *state,GmlRender *r,double cx,dou
     else coverage=(1.0-d)*fmin(rx,ry);
     if(coverage<=0) continue;
     if(coverage>1) coverage=1;
-    plot_square(r,x,y,0,color,alpha*coverage);
+    plot_square(draw,draw->pixels,x,y,0,color,alpha*coverage);
   }
 }
 
@@ -722,18 +735,18 @@ static double sample_line_shape_texture(double x,double y,int interpolate){
   return (a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy;
 }
 
-static void plot_line_shape_plane(GmlRender *r,uint32_t *plane,
+static void plot_line_shape_plane(const GmlRenderBackendDrawView *draw,uint32_t *plane,
                                   double cx,double cy,double xs,double ys,
                                   double co,double si,double ex,double ey,
                                   double sample_x,double sample_y,
                                   uint32_t color,double alpha){
-  if(!r || !plane || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
+  if(!draw || !plane || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
   int x0=(int)floor(cx-ex-sample_x),x1=(int)ceil(cx+ex-sample_x);
   int y0=(int)floor(cy-ey-sample_y),y1=(int)ceil(cy+ey-sample_y);
-  if(x0<0)x0=0; if(y0<0)y0=0;
-  if(x1>=r->fbw)x1=r->fbw-1; if(y1>=r->fbh)y1=r->fbh-1;
-  uint32_t *saved_fb=r->fb;
-  r->fb=plane;
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>=draw->width) x1=draw->width-1;
+  if(y1>=draw->height) y1=draw->height-1;
   for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
     double dx=x+sample_x-cx,dy=y+sample_y-cy;
     double lx=co*dx-si*dy,ly=si*dx+co*dy;
@@ -741,26 +754,24 @@ static void plot_line_shape_plane(GmlRender *r,uint32_t *plane,
      * scale and rotation.  Convert the screen sample back to a virtual source
      * texel, then use the active nearest/linear texture filter. */
     double source_x=(lx+.5)/xs-.5,source_y=(ly+.5)/ys-.5;
-    double coverage=sample_line_shape_texture(source_x,source_y,r->interp);
-    if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
+    double coverage=sample_line_shape_texture(source_x,source_y,draw->interpolate);
+    if(coverage>0) plot_square(draw,plane,x,y,0,color,alpha*coverage);
   }
-  r->fb=saved_fb;
 }
 
-static void plot_line_shape(GmlRender *r,double cx,double cy,double xs,double ys,double angle,
+static void plot_line_shape(const GmlRenderBackendDrawView *draw,
+                            double cx,double cy,double xs,double ys,double angle,
                             uint32_t color,double alpha){
-  if(!r || !r->fb || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
+  if(!draw || !draw->pixels || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
   double rad=DEG2RAD(angle),co=cos(rad),si=sin(rad);
   double ex=fabs(co)*29.0*fabs(xs)+fabs(si)*6.0*fabs(ys)+1.0;
   double ey=fabs(si)*29.0*fabs(xs)+fabs(co)*6.0*fabs(ys)+1.0;
-  uint32_t *base=r->fb;
-  plot_line_shape_plane(r,base,cx,cy,xs,ys,co,si,ex,ey,0,0,color,alpha);
-  if(r->target_sp==0 && base==r->base_fb &&
-     r->classic_interp_phase[0] && r->classic_interp_phase[1] &&
-     r->classic_interp_phase[2]){
-    plot_line_shape_plane(r,r->classic_interp_phase[0],cx,cy,xs,ys,co,si,ex,ey,.5,0,color,alpha);
-    plot_line_shape_plane(r,r->classic_interp_phase[1],cx,cy,xs,ys,co,si,ex,ey,0,.5,color,alpha);
-    plot_line_shape_plane(r,r->classic_interp_phase[2],cx,cy,xs,ys,co,si,ex,ey,.5,.5,color,alpha);
+  plot_line_shape_plane(draw,draw->pixels,cx,cy,xs,ys,co,si,ex,ey,0,0,color,alpha);
+  if(draw->interpolation_pixels[0] && draw->interpolation_pixels[1] &&
+     draw->interpolation_pixels[2]){
+    plot_line_shape_plane(draw,draw->interpolation_pixels[0],cx,cy,xs,ys,co,si,ex,ey,.5,0,color,alpha);
+    plot_line_shape_plane(draw,draw->interpolation_pixels[1],cx,cy,xs,ys,co,si,ex,ey,0,.5,color,alpha);
+    plot_line_shape_plane(draw,draw->interpolation_pixels[2],cx,cy,xs,ys,co,si,ex,ey,.5,.5,color,alpha);
   }
 }
 
@@ -906,9 +917,10 @@ static double sample_snow_shape(GmlParticleState *state,double x,double y){
   return ((a+(b-a)*fx)*(1.0-fy)+(c+(d-c)*fx)*fy)/255.0;
 }
 
-static void plot_explosion_shape(GmlParticleState *state,GmlRender *r,double cx,double cy,double xs,double ys,
+static void plot_explosion_shape(GmlParticleState *state,const GmlRenderBackendDrawView *draw,
+                                 double cx,double cy,double xs,double ys,
                                  double angle,uint32_t color,double alpha){
-  if(!r || !r->fb || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
+  if(!draw || !draw->pixels || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
   double rad=DEG2RAD(angle),co=cos(rad),si=sin(rad);
   double sx=32.0*fabs(xs),sy=32.0*fabs(ys);
   double ex=fabs(co)*sx+fabs(si)*sy,ey=fabs(si)*sx+fabs(co)*sy;
@@ -916,19 +928,20 @@ static void plot_explosion_shape(GmlParticleState *state,GmlRender *r,double cx,
   int y0=(int)floor(cy-ey),y1=(int)ceil(cy+ey);
   if(x0<0) x0=0;
   if(y0<0) y0=0;
-  if(x1>=r->fbw) x1=r->fbw-1;
-  if(y1>=r->fbh) y1=r->fbh-1;
+  if(x1>=draw->width) x1=draw->width-1;
+  if(y1>=draw->height) y1=draw->height-1;
   for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
     double dx=x+.5-cx,dy=y+.5-cy;
     double lx=co*dx-si*dy,ly=si*dx+co*dy;
     double coverage=sample_explosion_shape(state,lx/xs,ly/ys);
-    if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
+    if(coverage>0) plot_square(draw,draw->pixels,x,y,0,color,alpha*coverage);
   }
 }
 
-static void plot_glint_shape(GmlParticleState *state,GmlRender *r,int shape,double cx,double cy,double xs,double ys,
+static void plot_glint_shape(GmlParticleState *state,const GmlRenderBackendDrawView *draw,
+                             int shape,double cx,double cy,double xs,double ys,
                              double angle,uint32_t color,double alpha){
-  if(!r || !r->fb || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
+  if(!draw || !draw->pixels || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
   double rad=DEG2RAD(angle),co=cos(rad),si=sin(rad);
   double sx=32.0*fabs(xs),sy=32.0*fabs(ys);
   double ex=fabs(co)*sx+fabs(si)*sy,ey=fabs(si)*sx+fabs(co)*sy;
@@ -936,19 +949,20 @@ static void plot_glint_shape(GmlParticleState *state,GmlRender *r,int shape,doub
   int y0=(int)floor(cy-ey),y1=(int)ceil(cy+ey);
   if(x0<0)x0=0;
   if(y0<0)y0=0;
-  if(x1>=r->fbw)x1=r->fbw-1;
-  if(y1>=r->fbh)y1=r->fbh-1;
+  if(x1>=draw->width)x1=draw->width-1;
+  if(y1>=draw->height)y1=draw->height-1;
   for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
     double dx=x+.5-cx,dy=y+.5-cy;
     double lx=co*dx-si*dy,ly=si*dx+co*dy;
     double coverage=sample_glint_shape(state,shape,lx/xs,ly/ys);
-    if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
+    if(coverage>0) plot_square(draw,draw->pixels,x,y,0,color,alpha*coverage);
   }
 }
 
-static void plot_snow_shape(GmlParticleState *state,GmlRender *r,double cx,double cy,double xs,double ys,
+static void plot_snow_shape(GmlParticleState *state,const GmlRenderBackendDrawView *draw,
+                            double cx,double cy,double xs,double ys,
                             double angle,uint32_t color,double alpha){
-  if(!r || !r->fb || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
+  if(!draw || !draw->pixels || fabs(xs)<1.0/128.0 || fabs(ys)<1.0/128.0 || alpha<=0) return;
   double rad=DEG2RAD(angle),co=cos(rad),si=sin(rad);
   double sx=32.0*fabs(xs),sy=32.0*fabs(ys);
   double ex=fabs(co)*sx+fabs(si)*sy,ey=fabs(si)*sx+fabs(co)*sy;
@@ -956,18 +970,22 @@ static void plot_snow_shape(GmlParticleState *state,GmlRender *r,double cx,doubl
   int y0=(int)floor(cy-ey),y1=(int)ceil(cy+ey);
   if(x0<0)x0=0;
   if(y0<0)y0=0;
-  if(x1>=r->fbw)x1=r->fbw-1;
-  if(y1>=r->fbh)y1=r->fbh-1;
+  if(x1>=draw->width)x1=draw->width-1;
+  if(y1>=draw->height)y1=draw->height-1;
   for(int y=y0;y<=y1;y++) for(int x=x0;x<=x1;x++){
     double dx=x+.5-cx,dy=y+.5-cy;
     double lx=co*dx-si*dy,ly=si*dx+co*dy;
     double coverage=sample_snow_shape(state,lx/xs,ly/ys);
-    if(coverage>0) plot_square(r,x,y,0,color,alpha*coverage);
+    if(coverage>0) plot_square(draw,draw->pixels,x,y,0,color,alpha*coverage);
   }
 }
 
 void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
   PSys *s=ps(state,id); if(!s||!r) return;
+  GmlRenderBackendDrawView target;
+  if(!gml_render_backend_draw_view(r,&target)) return;
+  const double camera_x=target.camera_x,camera_y=target.camera_y;
+  const int target_width=target.width,target_height=target.height;
   for(int i=0;i<s->n;i++){ Part *p=&s->parts[i]; PType *t=pt(state,p->type); if(!t) continue;
     double age = p->life0>0 ? (p->life0-p->life)/p->life0 : 0; if(age<0)age=0; if(age>1)age=1;
     long long timer=(long long)floor(p->life0-p->life);
@@ -976,16 +994,18 @@ void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
     if(t->sz_wig!=0) draw_size += t->sz_wig*particle_wiggle(timer+p->random_start,16,4);
     if(t->ori_wig!=0) draw_ori += t->ori_wig*particle_wiggle(timer+(long long)p->random_start*2,16,4);
     if(t->sprite>=0){
-      int frames=gml_sprite_frames(r,t->sprite); int sub = (t->spr_animate&&frames>0)? (int)(age*frames)%frames : 0;
+      GmlRenderSpriteMetrics sprite;
+      int have_sprite=gml_render_sprite_metrics(r,t->sprite,&sprite) && sprite.frame_count>0;
+      int frames=have_sprite?sprite.frame_count:0;
+      int sub = (t->spr_animate&&frames>0)? (int)(age*frames)%frames : 0;
       double xs=draw_size*t->xscale, ys=draw_size*t->yscale;
-      if(t->sprite<r->n_spr && frames>0){
-        GmlSprite *spr=&r->spr[t->sprite];
+      if(have_sprite){
         double ax=fabs(xs), ay=fabs(ys);
-        double rx=fmax((double)spr->originx,(double)(spr->w-spr->originx))*ax;
-        double ry=fmax((double)spr->originy,(double)(spr->h-spr->originy))*ay;
+        double rx=fmax((double)sprite.origin_x,(double)(sprite.width-sprite.origin_x))*ax;
+        double ry=fmax((double)sprite.origin_y,(double)(sprite.height-sprite.origin_y))*ay;
         double rad=hypot(rx,ry) + 2.0;
-        double sx=p->x-r->cam_x, sy=p->y-r->cam_y;
-        if(sx+rad<0 || sy+rad<0 || sx-rad>=r->fbw || sy-rad>=r->fbh) continue;
+        double sx=p->x-camera_x, sy=p->y-camera_y;
+        if(sx+rad<0 || sy+rad<0 || sx-rad>=target_width || sy-rad>=target_height) continue;
       }
       double alpha=keyf(age,t->nalpha,t->alpha[0],t->alpha[1],t->alpha[2]);
       if(alpha<=0) continue;
@@ -995,7 +1015,7 @@ void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
                           xs, ys, draw_ori+(t->ori_rel?p->dir:0), col, alpha);
     } else {
       int half=(int)(draw_size)+0; if(half<0)half=0; if(half>64)half=64;
-      int cx=(int)(p->x - r->cam_x), cy=(int)(p->y - r->cam_y);
+      int cx=(int)(p->x-camera_x),cy=(int)(p->y-camera_y);
       double shape_rx=(t->shape==1||t->shape==5||t->shape==6||t->shape==7)?
         32.0*fabs(draw_size*t->xscale):half;
       double shape_ry=(t->shape==1||t->shape==5||t->shape==6||t->shape==7)?
@@ -1003,32 +1023,34 @@ void gml_part_system_drawit(GmlParticleState *state,GmlRender *r,int id){
       if(t->shape==3 || t->shape==4 || t->shape==8 || t->shape==9 || t->shape==10 || t->shape==13){
         shape_rx=shape_ry=32.0*hypot(draw_size*t->xscale,draw_size*t->yscale);
       }
-      if(cx+shape_rx<0 || cy+shape_ry<0 || cx-shape_rx>=r->fbw || cy-shape_ry>=r->fbh) continue;
+      if(cx+shape_rx<0 || cy+shape_ry<0 || cx-shape_rx>=target_width || cy-shape_ry>=target_height) continue;
       double alpha=keyf(age,t->nalpha,t->alpha[0],t->alpha[1],t->alpha[2]);
       if(alpha<=0) continue;
       uint32_t col = p->has_col ? p->col_over : keyc(age,t);
-      gml_render_maybe_prepare_draw(r);
+      GmlRenderBackendDrawView draw;
+      if(!gml_render_backend_prepare_draw_view(r,&draw) || !draw.pixels) continue;
       if(t->shape==1 || t->shape==5 || t->shape==6 || t->shape==7){
-        plot_circle_shape(state,r,p->x-r->cam_x,p->y-r->cam_y,
+        plot_circle_shape(state,&draw,p->x-camera_x,p->y-camera_y,
                           draw_size*t->xscale,draw_size*t->yscale,col,alpha,t->shape==5||t->shape==6);
       } else if(t->shape==3){
         double angle=draw_ori+(t->ori_rel?p->dir:0);
-        plot_line_shape(r,p->x-r->cam_x,p->y-r->cam_y,
+        plot_line_shape(&draw,p->x-camera_x,p->y-camera_y,
                         draw_size*t->xscale,draw_size*t->yscale,angle,col,alpha);
       } else if(t->shape==4 || t->shape==8 || t->shape==9){
         double angle=draw_ori+(t->ori_rel?p->dir:0);
-        plot_glint_shape(state,r,t->shape,p->x-r->cam_x,p->y-r->cam_y,
+        plot_glint_shape(state,&draw,t->shape,p->x-camera_x,p->y-camera_y,
                          draw_size*t->xscale,draw_size*t->yscale,angle,col,alpha);
       } else if(t->shape==10){
         double angle=draw_ori+(t->ori_rel?p->dir:0);
-        plot_explosion_shape(state,r,p->x-r->cam_x,p->y-r->cam_y,
+        plot_explosion_shape(state,&draw,p->x-camera_x,p->y-camera_y,
                              draw_size*t->xscale,draw_size*t->yscale,angle,col,alpha);
       } else if(t->shape==13){
         double angle=draw_ori+(t->ori_rel?p->dir:0);
-        plot_snow_shape(state,r,p->x-r->cam_x,p->y-r->cam_y,
+        plot_snow_shape(state,&draw,p->x-camera_x,p->y-camera_y,
                         draw_size*t->xscale,draw_size*t->yscale,angle,col,alpha);
-      } else if(!gml_d3_draw_rectangle_2d(r,p->x-half,p->y-half,p->x+half+1,p->y+half+1,col,alpha,0))
-        plot_square(r,cx,cy,half,col,alpha);
+      } else if(!gml_d3_draw_rectangle_2d(r,p->x-half,p->y-half,p->x+half+1,p->y+half+1,col,alpha,0) &&
+                gml_render_backend_prepare_draw_view(r,&draw))
+        plot_square(&draw,draw.pixels,cx,cy,half,col,alpha);
     }
   }
 }
@@ -1117,7 +1139,8 @@ int gml_part_state_load(GmlParticleState *state,const void *data,size_t len,size
   uint32_t magic=pr_u32(&r);
   uint32_t schema=pr_u32(&r);
   if(magic!=GML_PARTICLE_STATE_MAGIC || schema!=GML_PARTICLE_STATE_SCHEMA){
-    if(used) *used=r.pos; return 0;
+    if(used) *used=r.pos;
+    return 0;
   }
   gml_part_reset_all(state);
   g_prng=pr_u32(&r);

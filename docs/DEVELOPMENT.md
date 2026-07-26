@@ -19,7 +19,10 @@ test, and widen validation at architectural milestones.
 
 | Layer | Command | Purpose |
 | --- | --- | --- |
+| Compiler warnings | `make warnings-check` | Build owned sources with `-Wall -Wextra -Werror` |
 | Architecture | `make architecture-check` | Enforce adapter and compatibility seams |
+| Builtin registry | `make builtin-registry-check` | Prove exact-name/ID/owner/cache coverage and generated-index parity |
+| Builtin resource state | `make check TEST=builtin_state` | Prove single-owner lifetime, transient exclusion, and canonical save/load/save bytes |
 | Public headers | `make api-check` | Compile the public API from C and C++ |
 | Portable build | `make runtime` | Build the engine without libretro |
 | Host contract | `make contract-check` | Exercise the public API and synthetic source |
@@ -34,6 +37,17 @@ candidate, run a clean sequential build, all non-diagnostic tests, export
 inspection, policy scans, license/provenance scans, and a source-language scan.
 Diagnostic tests are opt-in because they are investigation tools rather than
 release gates.
+
+The large runtime characterization binaries expose ownership-level filters:
+
+```sh
+make -j1 check TEST=d3_state D3_TEST_ARGS='--case raster.blend_and_shader'
+make -j1 check TEST=persistent_room PERSISTENT_TEST_ARGS='--case io.save_overlay_sandbox'
+```
+
+Each filtered case starts from a clean synthetic fixture. The software-3D test runner
+may replay explicitly bounded prerequisite stages; persistent cases do
+not inherit mutable state from another registered case.
 
 ## Resource limits
 
@@ -62,6 +76,8 @@ selection rather than by adding platform branches to portable runtime code.
 - Does portable code use host services rather than operating-system calls?
 - Are adapter types absent outside `src/adapters/libretro/`?
 - Is state written canonically and loaded transactionally?
+- Does `GmlVM` treat builtin resource storage as opaque, with lifecycle and
+  staged codecs owned only by `gml_builtin_state.c`?
 - Do new variable-size inputs have explicit limits and corrupt-input tests?
 - Is every generated or third-party byte traceable to a notice or generator?
 - Are source, comments, diagnostics, tests, and documentation in English?

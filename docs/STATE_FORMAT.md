@@ -45,6 +45,32 @@ canonical bytes and semantics remain unchanged.
 Repeated serialization without an intervening mutation produces identical
 bytes.
 
+## VM payload ownership
+
+`src/core/engine_state.c` owns the root framing and section transaction.
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `2`,
+field order, value-graph encoding, sizing, and restore scratch.
+
+Builtin resources have a separate storage and lifetime owner, not a separate
+format. `src/runtime/builtins/gml_builtin_state.c` owns INI and data-structure
+storage, physics fixtures and joints, spatial-audio emitters/listener/falloff,
+and language-visible time sources. It reads and writes those resources at the
+four positions already established by the VM schema. The VM state owner passes
+only opaque cursors declared by `gml_vm_state_codec.h`; only those two
+translation units may consume that boundary.
+
+There is no nested builtin header, checksum, schema number, or independent load
+transaction. Moving the four existing resource stages to their storage owner
+therefore preserves schema-2 byte order and does not require a schema bump.
+Transient host file handles, binary buffers, asynchronous request queues,
+search cursors, and derived caches are reset rather than serialized. INI
+values, maps/lists/grids, physics resources, spatial-audio state, and time
+sources remain serialized.
+
+`make check TEST=builtin_state` constructs every resource family, proves reset
+and transient exclusion, restores from a fresh VM, and requires the second
+serialization to match the first byte for byte.
+
 ## Variable state size
 
 The state can grow as language-level containers grow. The portable API reports

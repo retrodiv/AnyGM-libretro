@@ -8,6 +8,25 @@ redistributable, and traceable without a proprietary content payload. Concrete
 artifact digests are intentionally kept in external verification records rather
 than in this public repository.
 
+## Exact builtin lookup index
+
+`src/generated/gml_builtin_registry_index.h` is a first-party, data-only
+open-addressed index derived exclusively from the canonical rows in
+`src/runtime/builtins/gml_builtin_registry.h`. It contains no external content
+and has no license dependency beyond the repository's MIT-licensed source.
+
+Regenerate it deterministically with:
+
+```sh
+python3 tests/architecture/check_builtin_registry.py generate
+```
+
+`make builtin-registry-check` independently reconstructs the index, compares
+it byte-for-byte, and also proves that the canonical exact-name set matches the
+implementation branches. A production build consumes the immutable header and
+does not run the generator. Concrete verification values belong in external
+release evidence rather than this repository.
+
 ## Audio setup packets
 
 `src/generated/audio_setup_data.h` contains 161 Vorbis setup packets generated

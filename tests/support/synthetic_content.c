@@ -44,6 +44,15 @@ static int write_text(const char *path,const char *text){
   return ok;
 }
 
+static unsigned synthetic_path_hash(const char *path){
+  uint32_t hash=2166136261u;
+  for(;path&&*path;path++){
+    hash^=(uint8_t)*path;
+    hash*=16777619u;
+  }
+  return hash;
+}
+
 int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
@@ -52,7 +61,7 @@ int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
   char startup[192],step[192];
   snprintf(startup,sizeof startup,"%s/startup.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/step.gml",fixture->directory);
-  snprintf(fixture->path,sizeof fixture->path,"%s/content.win",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
   if(!write_text(startup,
                  "global.fixture_counter = 0;\n"
                  "randomize();\n"
@@ -124,8 +133,16 @@ void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture){
   anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/step.gml",fixture->directory);
   anygm_test_unlink(path);
-  snprintf(path,sizeof path,"%s/content.win",fixture->directory);
+  snprintf(path,sizeof path,"%s/data.win",fixture->directory);
   anygm_test_unlink(path);
+  const char *label=strrchr(fixture->directory,'/');
+  label=label?label+1:fixture->directory;
+  char save_path[256],save_root[256];
+  snprintf(save_path,sizeof save_path,"%s/anygm/%s-%08x",fixture->directory,label,
+           synthetic_path_hash(fixture->path));
+  anygm_test_rmdir(save_path);
+  snprintf(save_root,sizeof save_root,"%s/anygm",fixture->directory);
+  anygm_test_rmdir(save_root);
   anygm_test_rmdir(fixture->directory);
   memset(fixture,0,sizeof *fixture);
 }

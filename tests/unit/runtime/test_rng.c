@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_vm.h"
+#include "gml_builtin.h"
 #include "gml_particle.h"
 #include "anygm_host.h"
 
@@ -62,8 +63,6 @@ int main(void){
   vm.host=&services;
   vm.particles=gml_particle_state_create(&vm);
   if(!vm.particles) return 1;
-  vm.next_time_source_id=GML_TIME_SOURCE_ID_BASE;
-  vm.time_source_game_state=1;
   if(!check_classic_comparisons()) return 1;
   classic.classic_version=810;
   vm.win=&classic;
@@ -101,6 +100,17 @@ int main(void){
   size_t size=gml_vm_state_size(&vm), written=0, used=0;
   void *state=malloc(size);
   if(!state || !gml_vm_state_save(&vm,state,size,&written) || written!=size) return 1;
+  void *repeated_state=malloc(size);
+  size_t repeated_written=0;
+  if(!repeated_state ||
+     !gml_vm_state_save(&vm,repeated_state,size,&repeated_written) ||
+     repeated_written!=written || memcmp(repeated_state,state,written)){
+    fprintf(stderr,"repeated VM serialization was not canonical\n");
+    free(repeated_state);
+    free(state);
+    return 1;
+  }
+  free(repeated_state);
   double expected_third=(double)(0x08088406u*0x08088405u+1u)/4294967296.0;
   (void)gml_rng_value(&vm);
   vm.window_w=640; vm.window_h=480;
@@ -251,6 +261,8 @@ int main(void){
     }
     gml_particle_state_destroy(other.particles);
   }
+  gml_builtin_state_destroy(vm.builtins);
+  vm.builtins=NULL;
   gml_particle_state_destroy(vm.particles);
   puts("classic RNG fixtures: ok");
   return 0;

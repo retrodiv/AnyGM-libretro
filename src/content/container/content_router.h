@@ -38,6 +38,7 @@ int anygm_content_load_win(const AnygmContentRouter *router,GmlWin *win,const ch
                            size_t loaded_path_size);
 void anygm_content_path_stem(const char *path,char *output,size_t output_size);
 void anygm_content_path_parent(const char *path,char *output,size_t output_size);
+void anygm_content_save_label(const char *path,char *output,size_t output_size);
 unsigned anygm_content_path_hash(const char *path);
 int anygm_content_directory_create(const struct AnygmHostServices *host,const char *path);
 

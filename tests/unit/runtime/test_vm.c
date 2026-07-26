@@ -4,6 +4,7 @@
 /* test_vm - drive the VM for a supplied data file and observe globals, rooms,
  * instances and optional debug calls. */
 #include "gml_vm.h"
+#include "gml_builtin.h"
 #include "stdio_vfs.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -104,15 +105,26 @@ static void maybe_call_env_code(GmlVM *vm, GmlWin *w){
 
 static void maybe_dump_ds_maps(GmlVM *vm){
   if(!getenv("GML_DUMP_DS")) return;
-  for(int i=0;i<64;i++) if(vm->ds_map[i].live){
-    GmlDSMap *m=&vm->ds_map[i];
-    printf("[ds_map] id=%u len=%d\n", m->id, m->len);
-    for(int j=0;j<m->len && j<8;j++){
+  for(int id=1;id<=64;id++){
+    GmlVal map=vreal(id);
+    GmlVal size=gml_builtin_call(vm,"ds_map_size",&map,1);
+    if(size.t!=V_REAL || size.d<=0) continue;
+    printf("[ds_map] id=%d len=%d\n",id,(int)size.d);
+    GmlVal key=gml_builtin_call(vm,"ds_map_find_first",&map,1);
+    for(int j=0;j<(int)size.d && j<8 && key.t!=V_UNDEF;j++){
+      GmlVal find_args[2]={map,key};
+      GmlVal value=gml_builtin_call(vm,"ds_map_find_value",find_args,2);
       printf("  key=");
-      print_val("", m->entry[j].key_val);
+      print_val("",key);
       printf("    val=");
-      print_val("", m->entry[j].val);
+      print_val("",value);
+      GmlVal next_args[2]={map,key};
+      GmlVal next=gml_builtin_call(vm,"ds_map_find_next",next_args,2);
+      if(key.t==V_STR && key.d!=0) free((void *)key.s);
+      if(value.t==V_STR && value.d!=0) free((void *)value.s);
+      key=next;
     }
+    if(key.t==V_STR && key.d!=0) free((void *)key.s);
   }
 }
 
