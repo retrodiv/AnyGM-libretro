@@ -270,7 +270,9 @@ static int expect_legacy_executable_manifest(void){
        manifest.inventory.settings.interpolate==1 && manifest.inventory.settings.scaling==150 &&
        manifest.existing[GMLC_CLASSIC_SPRITE]==1 &&
        manifest.existing[GMLC_CLASSIC_BACKGROUND]==1 &&
-       manifest.existing[GMLC_CLASSIC_SCRIPT]==1 && manifest.existing[GMLC_CLASSIC_ROOM]==1 &&
+       manifest.existing[GMLC_CLASSIC_SCRIPT]==1 &&
+       manifest.existing[GMLC_CLASSIC_FONT]==1 &&
+       manifest.existing[GMLC_CLASSIC_ROOM]==1 &&
        !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source,"return 42;") &&
        manifest.room_order_count==1 && manifest.room_order[0]==0 &&
        manifest.library_creation_code_count==1;
@@ -280,6 +282,7 @@ static int expect_legacy_executable_manifest(void){
     GmlcProject project; fixture_project_init(&project); project.prefer_memory_files=1;
     ok=gmlc_classic_import_sprites(&manifest,&project,"tmp",err,sizeof(err)) &&
        gmlc_classic_import_backgrounds(&manifest,&project,"tmp",err,sizeof(err)) &&
+       gmlc_classic_import_fonts(&manifest,&project,"tmp",err,sizeof(err)) &&
        gmlc_classic_import_rooms(&manifest,&project,"tmp",err,sizeof(err));
     if(!ok) fprintf(stderr,"legacy executable import failed: %s\n",err);
     if(ok) ok=project.n_sprites==2 && project.n_memory_files>=2 &&
@@ -287,6 +290,16 @@ static int expect_legacy_executable_manifest(void){
       project.memory_files[0].data[0]==1 && project.memory_files[0].data[1]==2 &&
       project.memory_files[0].data[2]==3 && project.memory_files[0].data[7]==0 &&
       project.memory_files[1].data[0]==11 && project.memory_files[1].data[2]==13 &&
+      project.n_fonts==1 && project.fonts[0].n_glyphs==2 &&
+      project.fonts[0].glyphs[0].ch==65 && project.fonts[0].glyphs[0].x==0 &&
+      project.fonts[0].glyphs[0].w==1 && project.fonts[0].glyphs[0].shift==3 &&
+      project.fonts[0].glyphs[1].ch==66 && project.fonts[0].glyphs[1].x==1 &&
+      project.fonts[0].glyphs[1].w==1 && project.fonts[0].glyphs[1].shift==4 &&
+      project.fonts[0].glyphs[1].offset==-1 &&
+      project.n_memory_files>=3 && project.memory_files[2].kind==GMLC_MEMORY_RGBA &&
+      project.memory_files[2].width==2 && project.memory_files[2].height==1 &&
+      project.memory_files[2].size==8 && project.memory_files[2].data[3]==23 &&
+      project.memory_files[2].data[7]==211 &&
       project.n_rooms==1 && project.rooms[0].width==320 && project.rooms[0].height==240 &&
       project.rooms[0].speed==60 && project.rooms[0].background_color==0xff112233u &&
       project.rooms[0].n_instances==1 && project.rooms[0].instances[0].instance_id==100001 &&
@@ -305,6 +318,50 @@ static int expect_legacy_executable_manifest(void){
                            project.n_rooms&&project.rooms[0].n_tiles?project.rooms[0].tiles[0].tile_id:0);
     gmlc_project_free(&project);
   }
+  gmlc_classic_manifest_free(&manifest);
+  return ok;
+}
+
+static int expect_legacy_executable_font_corruption(void){
+  Fixture executable;
+  if(!build_legacy_executable_fixture(&executable)) return 0;
+  GmlcClassicManifest manifest={0}; char err[256]={0};
+  if(!gmlc_classic_manifest(executable.data,executable.size,&manifest,err,sizeof(err))){
+    fprintf(stderr,"legacy executable corruption fixture failed to parse: %s\n",err);
+    return 0;
+  }
+  int ok=manifest.inventory.resource_slots[GMLC_CLASSIC_FONT]==1 &&
+         manifest.slots[GMLC_CLASSIC_FONT] &&
+         manifest.slots[GMLC_CLASSIC_FONT][0].exists;
+  GmlcClassicResourceSlot *slot=ok?&manifest.slots[GMLC_CLASSIC_FONT][0]:NULL;
+  size_t atlas_size_offset=0,atlas_data_offset=0;
+  uint32_t encoded_size=0;
+  if(ok){
+    if(slot->payload_size<4) ok=0;
+    else {
+      uint32_t face_size=get_u32le(slot->payload);
+      atlas_size_offset=4u+(size_t)face_size+5u*4u+256u*6u*4u+2u*4u;
+      if(atlas_size_offset>slot->payload_size ||
+         slot->payload_size-atlas_size_offset<4u) ok=0;
+      else {
+        encoded_size=get_u32le(slot->payload+atlas_size_offset);
+        atlas_data_offset=atlas_size_offset+4u;
+        if(!encoded_size || atlas_data_offset>slot->payload_size ||
+           encoded_size>slot->payload_size-atlas_data_offset) ok=0;
+      }
+    }
+  }
+  GmlcProject project;
+  fixture_project_init(&project);
+  project.prefer_memory_files=1;
+  if(ok){
+    slot->payload[atlas_data_offset]^=0xffu;
+    err[0]='\0';
+    ok=!gmlc_classic_import_fonts(&manifest,&project,"tmp",err,sizeof(err)) &&
+       err[0] && !project.fonts && project.n_fonts==0;
+  }
+  if(!ok) fprintf(stderr,"corrupt compressed font atlas was not rejected transactionally: %s\n",err);
+  gmlc_project_free(&project);
   gmlc_classic_manifest_free(&manifest);
   return ok;
 }
@@ -450,6 +507,7 @@ AnygmTestGroup classic_test_format_group(void){
     {"manifest-810",expect_manifest_810},
     {"executable-manifest",expect_executable_manifest},
     {"legacy-executable-manifest",expect_legacy_executable_manifest},
+    {"legacy-executable-font-corruption",expect_legacy_executable_font_corruption},
     {"gm7-decode",expect_gm7_decode},
     {"legacy-manifest-600",test_legacy_manifest_600},
     {"legacy-manifest-701",test_legacy_manifest_701},
@@ -469,4 +527,3 @@ AnygmTestGroup classic_test_legacy_media_group(void){
   };
   return group;
 }
-

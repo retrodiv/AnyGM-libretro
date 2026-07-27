@@ -93,7 +93,7 @@ static int classic_font_parse(const GmlcClassicManifest *classic,
   return 1;
 }
 
-/* A compiled GM8 resource carries the compiler's complete alpha atlas after the ordinary project
+/* A compiled classic resource carries the compiler's complete alpha atlas after the ordinary project
  * metadata. Importing it verbatim preserves the original glyph hints, metrics and host-font
  * choice. Return zero for a metadata-only resource, one for an imported atlas and -1 on error. */
 static int classic_font_build_compiled(const GmlcClassicResourceSlot *slot,
@@ -111,28 +111,49 @@ static int classic_font_build_compiled(const GmlcClassicResourceSlot *slot,
   uint32_t map[256u*6u];
   for(size_t i=0;i<sizeof(map)/sizeof(map[0]);i++)
     if(!import_u32(&r,&map[i],"compiled font glyph map")) return -1;
-  uint32_t width=0,height=0,alpha_size=0;
-  const uint8_t *alpha=NULL;
+  uint32_t width=0,height=0,stored_alpha_size=0;
+  const uint8_t *stored_alpha=NULL,*alpha=NULL;
   if(!import_u32(&r,&width,"compiled font atlas width") ||
      !import_u32(&r,&height,"compiled font atlas height") ||
-     !import_blob(&r,&alpha,&alpha_size,"compiled font atlas") || r.pos!=r.size ||
-     !width || !height || width>4096 || height>4096 ||
-     (uint64_t)width*(uint64_t)height!=alpha_size){
+     !import_blob(&r,&stored_alpha,&stored_alpha_size,"compiled font atlas") || r.pos!=r.size ||
+     !width || !height || width>4096 || height>4096){
     if(err && errcap && !err[0]) snprintf(err,errcap,"classic import: invalid compiled font atlas");
     return -1;
+  }
+  size_t alpha_size=(size_t)width*(size_t)height;
+  uint8_t *owned_alpha=NULL;
+  if(slot->legacy_layout){
+    owned_alpha=(uint8_t*)malloc(alpha_size);
+    size_t decoded_size=0;
+    if(!owned_alpha ||
+       !gml_deflate_decode_to_buffer(stored_alpha,stored_alpha_size,GML_DEFLATE_ZLIB,
+                                     owned_alpha,alpha_size,&decoded_size) ||
+       decoded_size!=alpha_size){
+      free(owned_alpha);
+      if(err && errcap) snprintf(err,errcap,"classic import: invalid compressed font atlas");
+      return -1;
+    }
+    alpha=owned_alpha;
+  } else {
+    if(alpha_size!=stored_alpha_size){
+      if(err && errcap) snprintf(err,errcap,"classic import: invalid compiled font atlas");
+      return -1;
+    }
+    alpha=stored_alpha;
   }
   uint8_t *rgba=(uint8_t*)malloc((size_t)alpha_size*4u);
   int count=spec->last-spec->first+1;
   GmlcFontGlyph *glyphs=(GmlcFontGlyph*)calloc((size_t)count,sizeof(*glyphs));
   if(!rgba || !glyphs){
-    free(rgba); free(glyphs);
+    free(owned_alpha); free(rgba); free(glyphs);
     if(err && errcap) snprintf(err,errcap,"classic import: out of memory loading compiled font");
     return -1;
   }
-  for(uint32_t pixel=0;pixel<alpha_size;pixel++){
+  for(size_t pixel=0;pixel<alpha_size;pixel++){
     rgba[pixel*4u]=rgba[pixel*4u+1u]=rgba[pixel*4u+2u]=255;
     rgba[pixel*4u+3u]=alpha[pixel];
   }
+  free(owned_alpha);
   int line_height=0;
   for(int i=0;i<count;i++){
     int ch=spec->first+i;

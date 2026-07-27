@@ -394,4 +394,3 @@ int build_project_fixture(unsigned version, Fixture *out){
   if(version==800 || version==810){ *out=manifest_fixture(version); return 1; }
   return 0;
 }
-

@@ -493,7 +493,7 @@ static int validate_path_payload(ClassicReader *r){
   return reader_doubles(r, points > UINT32_MAX / 3 ? UINT32_MAX : points * 3, "path points");
 }
 
-static int validate_font_payload(ClassicReader *r,int executable_layout){
+static int validate_font_payload(ClassicReader *r,int executable_layout,int compressed_atlas){
   if(!reader_string(r,"font face") || !reader_words(r,5,"font fields")) return 0;
   /* Project files stop at the typeface metadata. Compiled executable
    * containers append a fixed 256-entry glyph map and compiler-produced
@@ -505,8 +505,15 @@ static int validate_font_payload(ClassicReader *r,int executable_layout){
   if(!reader_u32(r,&width,"compiled font atlas width") ||
      !reader_u32(r,&height,"compiled font atlas height") ||
      !reader_u32(r,&bytes,"compiled font atlas size")) return 0;
-  if(width>4096 || height>4096 || (uint64_t)width*(uint64_t)height!=bytes)
-    return reader_fail(r,"compiled font atlas dimensions");
+  uint64_t pixels=(uint64_t)width*(uint64_t)height;
+  if(width>4096 || height>4096 || !pixels || !bytes ||
+     (!compressed_atlas && pixels!=bytes)){
+    if(r->err && r->errcap)
+      snprintf(r->err,r->errcap,
+               "classic project: invalid compiled font atlas %ux%u with %u stored bytes",
+               width,height,bytes);
+    return 0;
+  }
   return reader_skip(r,bytes,"compiled font atlas pixels");
 }
 
@@ -959,7 +966,7 @@ static int parse_legacy_slot(ClassicReader *r, GmlcClassicResourceType type,
     case GMLC_CLASSIC_PATH: valid = validate_path_payload(r); break;
     case GMLC_CLASSIC_SCRIPT:
       valid = reader_string_copy(r, &slot->source, "legacy script source"); break;
-    case GMLC_CLASSIC_FONT: valid = validate_font_payload(r,0); break;
+    case GMLC_CLASSIC_FONT: valid = validate_font_payload(r,0,0); break;
     case GMLC_CLASSIC_TIMELINE: valid = validate_timeline_payload(r); break;
     case GMLC_CLASSIC_OBJECT: valid = validate_object_payload(r); break;
     case GMLC_CLASSIC_ROOM: valid = validate_room_payload(r); break;
@@ -1002,7 +1009,7 @@ static int parse_legacy_executable_slot(ClassicReader *r,GmlcClassicResourceType
     case GMLC_CLASSIC_PATH: valid=validate_path_payload(r); break;
     case GMLC_CLASSIC_SCRIPT:
       valid=reader_legacy_executable_script(r,&slot->source); break;
-    case GMLC_CLASSIC_FONT: valid=validate_font_payload(r,0); break;
+    case GMLC_CLASSIC_FONT: valid=validate_font_payload(r,1,1); break;
     case GMLC_CLASSIC_TIMELINE: valid=validate_timeline_payload(r); break;
     case GMLC_CLASSIC_OBJECT: valid=validate_object_payload(r); break;
     case GMLC_CLASSIC_ROOM: valid=validate_legacy_executable_room_payload(r); break;
@@ -1388,7 +1395,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
       case GMLC_CLASSIC_BACKGROUND: valid = validate_background_payload(&r,raw_deflate); break;
       case GMLC_CLASSIC_PATH: valid = validate_path_payload(&r); break;
       case GMLC_CLASSIC_SCRIPT: break;
-      case GMLC_CLASSIC_FONT: valid = validate_font_payload(&r,raw_deflate); break;
+      case GMLC_CLASSIC_FONT: valid = validate_font_payload(&r,raw_deflate,0); break;
       case GMLC_CLASSIC_TIMELINE: valid = validate_timeline_payload(&r); break;
       case GMLC_CLASSIC_OBJECT: valid = validate_object_payload(&r); break;
       case GMLC_CLASSIC_ROOM: valid = validate_room_payload(&r); break;
@@ -1659,14 +1666,26 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
   if(settings) out->inventory.settings=*settings;
   (void)runner_id;
 
+  size_t section_offset=r.pos;
   if(!reader_u32(&r,&version,"legacy executable extension version") || version<700 ||
      !reader_u32(&r,&count,"legacy executable extension count") ||
-     !parse_executable_extensions(&r,out,count)) return 0;
+     !parse_executable_extensions(&r,out,count)){
+    if(err && errcap && !err[0])
+      snprintf(err,errcap,"classic executable: invalid extension section at offset %zu",
+               section_offset);
+    return 0;
+  }
 
   for(int type=0;type<GMLC_CLASSIC_RESOURCE_TYPES;type++){
+    section_offset=r.pos;
     if(!reader_u32(&r,&version,"legacy executable resource version") || version<400 ||
        !reader_u32(&r,&count,"legacy executable resource count") ||
-       count>(r.size-r.pos)/4u) return 0;
+       count>(r.size-r.pos)/4u){
+      if(err && errcap && !err[0])
+        snprintf(err,errcap,"classic executable: invalid %s section at offset %zu",
+                 gmlc_classic_resource_name((GmlcClassicResourceType)type),section_offset);
+      return 0;
+    }
     out->inventory.resource_section_offsets[type]=r.pos-8u;
     out->inventory.resource_slots[type]=count;
     if(count){
@@ -1674,8 +1693,13 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
       if(!out->slots[type]) return reader_fail(&r,"legacy executable resource allocation");
     }
     for(uint32_t slot=0;slot<count;slot++){
-      if(!parse_legacy_executable_slot(&r,(GmlcClassicResourceType)type,&out->slots[type][slot]))
+      size_t slot_offset=r.pos;
+      if(!parse_legacy_executable_slot(&r,(GmlcClassicResourceType)type,&out->slots[type][slot])){
+        if(err && errcap && !err[0])
+          snprintf(err,errcap,"classic executable: invalid %s slot %u at offset %zu",
+                   gmlc_classic_resource_name((GmlcClassicResourceType)type),slot,slot_offset);
         return 0;
+      }
       if(out->slots[type][slot].exists) out->existing[type]++;
     }
   }
@@ -1683,9 +1707,15 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
      !reader_u32(&r,&out->inventory.last_tile_id,"legacy executable last tile id")) return 0;
   out->inventory.payload_end=r.pos;
 
+  section_offset=r.pos;
   if(!reader_u32(&r,&version,"legacy executable include version") || version<620 ||
      !reader_u32(&r,&count,"legacy executable include count") ||
-     count>(r.size-r.pos)/36u) return 0;
+     count>(r.size-r.pos)/36u){
+    if(err && errcap && !err[0])
+      snprintf(err,errcap,"classic executable: invalid included-file section at offset %zu",
+               section_offset);
+    return 0;
+  }
   if(count){
     out->included_files=(GmlcClassicIncludedFile*)calloc(count,sizeof(*out->included_files));
     if(!out->included_files) return reader_fail(&r,"legacy executable include allocation");
@@ -1694,15 +1724,27 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
   for(uint32_t include=0;include<count;include++)
     if(!read_legacy_included_file(&r,&out->included_files[include])) return 0;
 
+  section_offset=r.pos;
   if(!reader_u32(&r,&version,"legacy executable game-information version") || version<430 ||
-     !reader_words(&r,2,"legacy executable game-information fields")) return 0;
+     !reader_words(&r,2,"legacy executable game-information fields")){
+    if(err && errcap && !err[0])
+      snprintf(err,errcap,"classic executable: invalid game-information section at offset %zu",
+               section_offset);
+    return 0;
+  }
   if(version>=600 &&
      (!reader_string(&r,"legacy executable game-information caption") ||
       !reader_words(&r,8,"legacy executable game-information window fields"))) return 0;
+  section_offset=r.pos;
   if(!reader_blob(&r,"legacy executable game information") ||
      !reader_u32(&r,&version,"legacy executable library-code version") || version<500 ||
      !reader_u32(&r,&count,"legacy executable library-code count") ||
-     count>(r.size-r.pos)/4u) return 0;
+     count>(r.size-r.pos)/4u){
+    if(err && errcap && !err[0])
+      snprintf(err,errcap,"classic executable: invalid information or library-code section at offset %zu",
+               section_offset);
+    return 0;
+  }
   for(uint32_t code=0;code<count;code++){
     char *source=NULL;
     if(!reader_string_copy(&r,&source,"legacy executable library creation code") ||
@@ -1711,11 +1753,17 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
     }
   }
 
+  section_offset=r.pos;
   if(!reader_u32(&r,&version,"legacy executable room-order version") || version<500 ||
      !reader_u32(&r,&count,"legacy executable room-order count") ||
      count!=out->existing[GMLC_CLASSIC_ROOM] ||
      count>out->inventory.resource_slots[GMLC_CLASSIC_ROOM] ||
-     count>(r.size-r.pos)/4u) return 0;
+     count>(r.size-r.pos)/4u){
+    if(err && errcap && !err[0])
+      snprintf(err,errcap,"classic executable: invalid room-order section at offset %zu",
+               section_offset);
+    return 0;
+  }
   out->room_order=(uint32_t*)calloc(count?count:1u,sizeof(*out->room_order));
   unsigned char *seen=(unsigned char*)calloc(
     out->inventory.resource_slots[GMLC_CLASSIC_ROOM]?
