@@ -1785,7 +1785,20 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   /* Hardware filtering samples the four neighbouring texels at the destination pixel centre.
    * Preserve the quad's fractional origin in the inverse map: snapping before sampling shifts a
    * heavily minified texture by several source texels and is visible in presentation overlays. */
-  if(r->interp && r->win && anygm_policy_has_modern_layer_semantics(r->win) && !wave && !uvwave){
+  /* At unit scale, an integer-aligned modern white quad maps every destination pixel centre
+   * exactly onto one source texel centre. With full draw alpha and ordinary source-over blending,
+   * the cached exact-copy kernel also preserves the filtered path's UNORM result. Keep tinted,
+   * draw-alpha and special-blend cases on the general filtered path because their quantization
+   * can differ even when the selected source texel is the same. */
+  int exact_modern_white_copy=
+    r->win && anygm_policy_has_modern_layer_semantics(r->win) &&
+    !flipx && !flipy &&
+    fabs(axs-1.0)<0.001 && fabs(ays-1.0)<0.001 &&
+    fabs(dx-nearbyint(dx))<1e-9 && fabs(dy-nearbyint(dy))<1e-9 &&
+    alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu &&
+    r->blendmode==0 && !mapped_shader;
+  if(r->interp && r->win && anygm_policy_has_modern_layer_semantics(r->win) &&
+     !wave && !uvwave && !exact_modern_white_copy){
     int logical_margin=t->tx>0 || t->ty>0 || t->tx+t->sw<t->bw || t->ty+t->sh<t->bh;
     for(int yy=yy0;yy<yy1;yy++){
       int py=flipy ? (y0-yy) : (y0+yy);

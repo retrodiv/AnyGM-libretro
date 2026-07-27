@@ -316,6 +316,53 @@ int software3d_case_blend_shader(Software3dRasterFixture *fixture){
     fixture->render.tpag[0].alpha_runs_built=0;
     fixture->render.tpag[0].alpha_run_count=0;
   }
+  {
+    /* Integer-aligned unit-scale modern sprites sample exact texel centres. Enabling hardware
+     * interpolation must therefore preserve the raster byte-for-byte. */
+    uint32_t nearest[SOFTWARE3D_WIDTH*SOFTWARE3D_HEIGHT];
+    uint32_t filtered[SOFTWARE3D_WIDTH*SOFTWARE3D_HEIGHT];
+    uint8_t atlas_backup[16];
+    memcpy(atlas_backup,fixture->render.atlas[0].px,sizeof(atlas_backup));
+    fixture->render.atlas[0].px[3]=128;
+    free(fixture->render.tpag[0].alpha_row_min); fixture->render.tpag[0].alpha_row_min=NULL;
+    free(fixture->render.tpag[0].alpha_row_max); fixture->render.tpag[0].alpha_row_max=NULL;
+    free(fixture->render.tpag[0].alpha_runs); fixture->render.tpag[0].alpha_runs=NULL;
+    free(fixture->render.tpag[0].argb_cache); fixture->render.tpag[0].argb_cache=NULL;
+    fixture->render.tpag[0].alpha_scanned=0;
+    fixture->render.tpag[0].alpha_runs_built=0;
+    fixture->render.tpag[0].alpha_run_count=0;
+    for(int i=0;i<SOFTWARE3D_WIDTH*SOFTWARE3D_HEIGHT;i++)
+      nearest[i]=filtered[i]=0xFF102030u+(uint32_t)(i&15);
+    GmlWin modern_win={0};
+    modern_win.bytecode=17;
+    GmlWin *saved_win=fixture->render.win;
+    int saved_classic=fixture->render.classic;
+    int saved_interp=fixture->render.interp;
+    fixture->render.win=&modern_win;
+    fixture->render.classic=0;
+    fixture->render.interp=0;
+    gml_render_begin(&fixture->render,nearest,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0);
+    gml_draw_sprite_ext(&fixture->render,fixture->flipped_sprite,0,10,10,1,1,0,0xFFFFFF,1);
+    fixture->render.interp=1;
+    gml_render_begin(&fixture->render,filtered,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0);
+    gml_draw_sprite_ext(&fixture->render,fixture->flipped_sprite,0,10,10,1,1,0,0xFFFFFF,1);
+    fixture->render.win=saved_win;
+    fixture->render.classic=saved_classic;
+    fixture->render.interp=saved_interp;
+    memcpy(fixture->render.atlas[0].px,atlas_backup,sizeof(atlas_backup));
+    free(fixture->render.tpag[0].alpha_row_min); fixture->render.tpag[0].alpha_row_min=NULL;
+    free(fixture->render.tpag[0].alpha_row_max); fixture->render.tpag[0].alpha_row_max=NULL;
+    free(fixture->render.tpag[0].alpha_runs); fixture->render.tpag[0].alpha_runs=NULL;
+    free(fixture->render.tpag[0].argb_cache); fixture->render.tpag[0].argb_cache=NULL;
+    fixture->render.tpag[0].alpha_scanned=0;
+    fixture->render.tpag[0].alpha_runs_built=0;
+    fixture->render.tpag[0].alpha_run_count=0;
+    gml_render_begin(&fixture->render,fixture->pixels,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0);
+    if(memcmp(nearest,filtered,sizeof(nearest))){
+      fprintf(stderr,"software modern exact-centre interpolation mismatch\n");
+      return 0;
+    }
+  }
   fixture->render.classic=1;
   gml_vm_software3d_reset(&fixture->vm); memset(fixture->pixels,0,sizeof(fixture->pixels));
   gml_render_begin(&fixture->render,fixture->pixels,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0);
@@ -485,4 +532,3 @@ int software3d_case_blend_shader(Software3dRasterFixture *fixture){
   flipped->originx=flipped->originy=0;
   return 1;
 }
-
