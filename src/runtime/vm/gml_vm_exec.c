@@ -1739,30 +1739,8 @@ static void micro_call_method_field1(GmlVM *vm, GmlVal targetv, const char *fiel
   GmlInstance *target=vm_inst_from_ref(vm,targetv);
   if(!target) return;
   GmlVal mv=inst_get_any_h(vm,target,field,hash);
-  int fci=-1;
-  GmlInstance *call_self=vm->cur_self;
-  double fn=asnum(mv);
-  if(GML_IS_STRUCT_ID(fn)){
-    GmlInstance *bm=gml_struct_find(vm,(unsigned)fn);
-    if(bm){
-      GmlVal selfv; int have_self=0;
-      method_struct_info(bm,&fci,&selfv,&have_self);
-      if(have_self){
-        GmlInstance *bs=vm_inst_from_ref(vm,selfv);
-        if(bs) call_self=bs;
-      }
-    }
-  } else if(GML_IS_FUNCVAL((int)fn)){
-    fci=(int)fn & 0x00FFFFFF;
-  }
-  if(fci<0 || !vm->win || fci>=vm->win->n_code) return;
   GmlVal a[1]={arg0};
-  GmlVal rv;
-  GmlInstance *old_self=vm->cur_self;
-  vm->cur_self=call_self;
-  int micro_ok=code_micro_maybe(vm,fci,a,1,&rv);
-  vm->cur_self=old_self;
-  if(!micro_ok) rv=gml_vm_run_code(vm,fci,call_self,vm->cur_other,a,1);
+  GmlVal rv=gml_vm_call_member_callable(vm,targetv,mv,a,1);
   if(vm_heap_string(rv) && !(arg0.t==V_STR && arg0.s==rv.s)) free((char*)rv.s);
 }
 static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *out){
@@ -2819,4 +2797,39 @@ GmlVal gml_vm_call_callable(GmlVM *vm, GmlVal callable, GmlVal *args, int n_args
   }
   if(fci<0 || fci>=vm->win->n_code) return vundef();
   return gml_vm_run_code(vm,fci,call_self,vm->cur_other,args,n_args);
+}
+
+GmlVal gml_vm_call_member_callable(GmlVM *vm, GmlVal receiver,
+                                   GmlVal callable, GmlVal *args,
+                                   int n_args){
+  if(!vm || !vm->win || callable.t!=V_REAL) return vundef();
+  GmlInstance *call_self=vm_inst_from_ref(vm,receiver);
+  if(!call_self) return vundef();
+  int fci=-1;
+  double raw=callable.d;
+  if(GML_IS_STRUCT_ID(raw)){
+    GmlInstance *method=gml_struct_find(vm,(unsigned)raw);
+    if(method){
+      GmlVal selfv=vundef();
+      int have_self=0;
+      method_struct_info(method,&fci,&selfv,&have_self);
+      /* Constructor-static methods carry a late-bound receiver marker. Other
+       * method values retain the scope captured by method(). */
+      if(have_self && !(selfv.t==V_REAL && selfv.d==-16.0)){
+        GmlInstance *bound=vm_inst_from_ref(vm,selfv);
+        if(bound) call_self=bound;
+      }
+    }
+  } else if(GML_IS_FUNCVAL((int)raw)){
+    fci=(int)raw & 0x00FFFFFF;
+  }
+  if(fci<0 || fci>=vm->win->n_code) return vundef();
+  GmlVal result=vreal(0);
+  GmlInstance *old_self=vm->cur_self;
+  vm->cur_self=call_self;
+  int micro_ok=code_micro_maybe(vm,fci,args,n_args,&result);
+  vm->cur_self=old_self;
+  if(!micro_ok)
+    result=gml_vm_run_code(vm,fci,call_self,vm->cur_other,args,n_args);
+  return result;
 }

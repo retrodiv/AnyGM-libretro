@@ -359,6 +359,9 @@ GmlVal  gml_vm_run_code(GmlVM *vm, int code_index, GmlInstance *self, GmlInstanc
 /* Invoke a function value or bound method using the same receiver rules as OP_CALLV.
  * Builtins with callback arguments use this instead of discarding a method's bound self. */
 GmlVal  gml_vm_call_callable(GmlVM *vm, GmlVal callable, GmlVal *args, int n_args);
+GmlVal  gml_vm_call_member_callable(GmlVM *vm, GmlVal receiver,
+                                    GmlVal callable, GmlVal *args,
+                                    int n_args);
 void    gml_time_sources_tick(GmlVM *vm);          /* between Begin Step and normal Step */
 int     gml_code_index_by_name(GmlWin *win, const char *name);  /* exact */
 int     gml_code_index_find(GmlWin *win, const char *substr);   /* first containing */

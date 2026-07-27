@@ -26,6 +26,7 @@ void fixture_word(unsigned char *data,int index,uint32_t word);
 int expect_hash_layer_gpu_gap_closure(void);
 int expect_array_function_gap_closure(void);
 int expect_typed_stack_dup(void);
+int expect_member_callable_receiver(void);
 int expect_persistent_lifecycle(void);
 int expect_ds_list_text_roundtrip(void);
 int expect_ds_priority_lookup_mutation(void);

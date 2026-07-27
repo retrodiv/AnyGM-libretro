@@ -363,6 +363,68 @@ int expect_typed_stack_dup(void){
   return ok;
 }
 
+int expect_member_callable_receiver(void){
+  unsigned char data[24]={0};
+  fixture_word(data,0,(OP_PUSH<<24)|(DT_VAR<<16)|(uint16_t)IT_ARG);
+  fixture_word(data,1,0xA0000000u);
+  fixture_word(data,2,(OP_PUSH<<24)|(DT_VAR<<16)|(uint16_t)IT_SELF);
+  fixture_word(data,3,0xA0000000u);
+  fixture_word(data,4,(OP_MUL<<24)|((DT_VAR<<4)|DT_VAR)<<16);
+  fixture_word(data,5,(OP_RET<<24)|(DT_VAR<<16));
+  uint32_t reference_addresses[2]={4,12};
+  const char *reference_names[2]={"argument0","factor"};
+  GmlCode code={0};
+  code.name=(char*)"gml_Script_member_receiver_fixture";
+  code.start=0;
+  code.length=sizeof data;
+  GmlWin win={0};
+  win.data=data;
+  win.size=sizeof data;
+  win.bytecode=17;
+  win.code=&code;
+  win.n_code=1;
+  win.ref_addr=reference_addresses;
+  win.ref_name=reference_names;
+  win.n_refs=2;
+  GmlVM vm={0};
+  vm.win=&win;
+  vm.cur_code_index=-1;
+  vm.math_epsilon=1e-5;
+  GmlInstance *receiver=gml_struct_new(&vm);
+  GmlInstance *caller=gml_struct_new(&vm);
+  if(!receiver || !caller) return 0;
+  *gml_varmap_put(&receiver->vars,"factor")=vreal(5);
+  *gml_varmap_put(&caller->vars,"factor")=vreal(99);
+  vm.cur_self=caller;
+  GmlVal callable=vreal((double)(GML_FUNCVAL_TAG|0));
+  GmlVal argument=vreal(2);
+  GmlVal direct=gml_vm_call_member_callable(
+    &vm,vreal((double)receiver->id),callable,&argument,1);
+  GmlVal static_arguments[2]={vreal(-16),callable};
+  GmlVal static_method=gml_builtin_call(&vm,"method",static_arguments,2);
+  GmlVal late_bound=gml_vm_call_member_callable(
+    &vm,vreal((double)receiver->id),static_method,&argument,1);
+  GmlVal bound_arguments[2]={vreal((double)caller->id),callable};
+  GmlVal bound_method=gml_builtin_call(&vm,"method",bound_arguments,2);
+  GmlVal explicitly_bound=gml_vm_call_member_callable(
+    &vm,vreal((double)receiver->id),bound_method,&argument,1);
+  int ok=direct.t==V_REAL && direct.d==10 &&
+    late_bound.t==V_REAL && late_bound.d==10 &&
+    explicitly_bound.t==V_REAL && explicitly_bound.d==198;
+  if(!ok)
+    fprintf(stderr,
+      "member callable receiver fixture failed: direct=%.0f static=%.0f bound=%.0f\n",
+      direct.t==V_REAL?direct.d:-1.0,
+      late_bound.t==V_REAL?late_bound.d:-1.0,
+      explicitly_bound.t==V_REAL?explicitly_bound.d:-1.0);
+  gml_vm_free(&vm);
+  free(code.insn);
+  free(code.insn_pc);
+  free(code.branch_index);
+  free(win.ref_hix);
+  return ok;
+}
+
 
 static int expect_persistent_lifecycle_exit_code(void){
   GmlcProject project; GmlcObject objects[3]; GmlcRoom rooms[2];
