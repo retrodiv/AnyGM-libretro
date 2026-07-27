@@ -77,13 +77,16 @@ The state can grow as language-level containers grow. The portable API reports
 the exact current size and writes into a caller-owned buffer.
 
 The libretro adapter advertises the variable-size serialization quirk and records whether the
-frontend acknowledges it. Its transport size is nevertheless a conservative session-stable
-capacity: rewind implementations allocate fixed ring slots from an early size query, so allowing
-that value to grow would silently stop later snapshots. This capacity policy does not change the
-exact logical size stored in the canonical header or the portable state format.
+frontend acknowledges it. Its transport size is a conservative capacity that remains stable until
+the logical state exceeds it. An acknowledging frontend can then query a larger monotonic capacity
+and retry. For a frontend that does not acknowledge variable states, the initial fallback capacity
+remains session-stable so fixed-slot rewind storage cannot silently change size. This capacity
+policy does not change the exact logical size stored in the canonical header or the portable state
+format.
 
-`make contract-check` exercises acknowledged and unacknowledged frontends, changing state sizes,
-unload reset, exact roundtrips, and the full stable-capacity blocks used by rewind-capable frontends.
+`make contract-check` exercises acknowledged and unacknowledged frontends, capacity growth and
+fixed-capacity rejection, unload reset, exact roundtrips, and the full transport blocks used by
+rewind-capable frontends.
 
 ## Cache schema
 

@@ -138,11 +138,42 @@ static int stable_transport(int negotiation_result,int variable_acknowledged){
   return ok;
 }
 
+static int growing_transport(void){
+  stub_state_bytes=113u;
+  if(!begin_frontend(1) || !g_libretro.variable_state_supported) return 0;
+  const size_t initial_capacity=retro_serialize_size();
+  stub_state_bytes=initial_capacity+1u;
+  const size_t grown_capacity=retro_serialize_size();
+  if(grown_capacity<=initial_capacity || retro_serialize_size()!=grown_capacity) return 0;
+  uint8_t *state=(uint8_t *)malloc(grown_capacity);
+  if(!state) return 0;
+  int ok=retro_serialize(state,grown_capacity);
+  free(state);
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
+static int fixed_transport_rejects_growth(void){
+  stub_state_bytes=113u;
+  if(!begin_frontend(0) || g_libretro.variable_state_supported) return 0;
+  const size_t capacity=retro_serialize_size();
+  stub_state_bytes=capacity+1u;
+  uint8_t *state=(uint8_t *)malloc(capacity);
+  if(!state) return 0;
+  int ok=retro_serialize_size()==capacity && !retro_serialize(state,capacity);
+  free(state);
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
 int main(void){
   uint8_t byte=0;
   memset(&g_libretro,0,sizeof g_libretro);
   if(retro_serialize_size()!=0 || retro_serialize(&byte,1) || retro_unserialize(&byte,1) ||
-     !stable_transport(1,1) || !stable_transport(0,0) || !stable_transport(-1,0)){
+     !stable_transport(1,1) || !stable_transport(0,0) || !stable_transport(-1,0) ||
+     !growing_transport() || !fixed_transport_rejects_growth()){
     fprintf(stderr,"libretro state transport contract failed\n");
     return 1;
   }
