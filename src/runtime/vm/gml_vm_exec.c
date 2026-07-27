@@ -2721,11 +2721,19 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             if(sp<STK){ stk[sp]=out; stkt[sp]=DT_VAR; sp++; } break; }
           case -3:{ /* popaf: A[idx] = value. */
             if(aref_n>0){ /* compound-assign write: use the reference saved at savearef; the store
-               * value is the stack top. Restore the stack to just below the reference. */
-              int a=--aref_n; GmlVal val=sp>0?stk[sp-1]:vreal(0);
+               * may either retain a correctly reordered [value,array,index] triple or only the
+               * computed value when the reference DUP cannot be represented. */
+              int a=--aref_n;
               GmlArr *A=aref[a].arr; int idx=aref[a].idx;
+              GmlVal val=sp>0?stk[sp-1]:vreal(0);
+              int base=aref[a].base;
+              if(sp>=3 && stk[sp-2].t==V_ARR && stk[sp-2].arr==A &&
+                 (int)asnum(stk[sp-1])==idx){
+                val=stk[sp-3];
+                base=sp-3;
+              }
               if(A && idx>=0){ gml_arr_index_ensure(A,idx); if(idx<A->cap){ A->data[idx]=val; if(val.t==V_STR) GC_UNTRACK(val.s); } }
-              if(aref[a].base>=0 && aref[a].base<=sp) sp=aref[a].base;
+              if(base>=0 && base<=sp) sp=base;
               break; }
             /* plain store. Stack: idx, A, value (top->down). */
             int idx=(int)(sp>0?asnum(stk[--sp]):0); GmlVal av=sp>0?stk[--sp]:vreal(0);

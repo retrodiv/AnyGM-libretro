@@ -247,8 +247,72 @@ int expect_array_function_gap_closure(void){
 }
 
 
-/* DUP measures data in encoded stack bytes, not logical values. Exercise both a normal
- * mixed-width duplication and the adjacent-block swap form using only a synthetic fixture. */
+static int expect_array_compound_shape(int retained_reference){
+  unsigned char data[128]={0};
+  uint32_t reference_addresses[2]={0};
+  const char *reference_names[2]={"argument0","argument0"};
+  int word=0,reference_count=0;
+#define EMIT_WORD(value) fixture_word(data,word++,(uint32_t)(value))
+#define EMIT_ARGUMENT() do { \
+  EMIT_WORD(0xC1000000u); \
+  reference_addresses[reference_count++]=(uint32_t)word*4u; \
+  EMIT_WORD(0xA0000000u); \
+} while(0)
+  EMIT_ARGUMENT();
+  EMIT_WORD((OP_PUSH<<24)|(DT_INT16<<16));
+  EMIT_WORD((OP_CONV<<24)|(((DT_INT32<<4)|DT_VAR)<<16));
+  if(retained_reference) EMIT_WORD((OP_DUP<<24)|(DT_INT32<<16)|4u);
+  EMIT_WORD((OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-8);
+  EMIT_WORD((OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-2);
+  EMIT_WORD((OP_PUSH<<24)|(DT_INT16<<16)|7u);
+  EMIT_WORD((OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16));
+  EMIT_WORD((OP_SUB<<24)|(((DT_VAR<<4)|DT_VAR)<<16));
+  EMIT_WORD((OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-9);
+  if(retained_reference) EMIT_WORD((OP_DUP<<24)|(DT_INT32<<16)|0xA804u);
+  EMIT_WORD((OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-3);
+  EMIT_ARGUMENT();
+  EMIT_WORD((OP_PUSH<<24)|(DT_INT16<<16));
+  EMIT_WORD((OP_BREAK<<24)|(DT_INT16<<16)|(uint16_t)-2);
+  EMIT_WORD((OP_RET<<24)|(DT_VAR<<16));
+#undef EMIT_ARGUMENT
+#undef EMIT_WORD
+
+  GmlCode code={0};
+  code.name=(char*)(retained_reference
+    ?"gml_Script_compound_retained_fixture"
+    :"gml_Script_compound_saved_fixture");
+  code.start=0;
+  code.length=(uint32_t)word*4u;
+  GmlWin win={0};
+  win.data=data;
+  win.size=sizeof data;
+  win.bytecode=17;
+  win.code=&code;
+  win.n_code=1;
+  win.ref_addr=reference_addresses;
+  win.ref_name=reference_names;
+  win.n_refs=reference_count;
+  GmlVM vm={0};
+  vm.win=&win;
+  vm.cur_code_index=-1;
+  vm.math_epsilon=1e-5;
+  GmlVal array=gml_arr_new(1,vreal(100));
+  GmlVal result=gml_vm_run_code(&vm,0,NULL,NULL,&array,1);
+  int ok=result.t==V_REAL && result.d==93 &&
+    gml_arr_get(array,0).t==V_REAL && gml_arr_get(array,0).d==93;
+  if(!ok) fprintf(stderr,"compound array fixture failed: retained=%d result=%.0f stored=%.0f\n",
+    retained_reference,result.t==V_REAL?result.d:-1.0,gml_arr_get(array,0).d);
+  gml_values_release(&array,1);
+  free(code.insn);
+  free(code.insn_pc);
+  free(code.branch_index);
+  free(win.ref_hix);
+  return ok;
+}
+
+
+/* DUP measures data in encoded stack bytes, not logical values. Exercise normal mixed-width
+ * duplication, adjacent-block swaps, and both compound-array reference shapes. */
 int expect_typed_stack_dup(void){
   unsigned char data[64]={0};
   const uint32_t normal[]={
@@ -289,9 +353,13 @@ int expect_typed_stack_dup(void){
   win.data=data; win.size=sizeof data; win.code=&code;
   GmlVal difference=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
   free(code.insn); free(code.insn_pc); free(code.branch_index);
-  int ok=sum.t==V_REAL && sum.d==60 && difference.t==V_REAL && difference.d==1;
-  if(!ok) fprintf(stderr,"typed stack DUP fixture failed: sum=%.0f swap=%.0f\n",
-                  sum.t==V_REAL?sum.d:-1.0,difference.t==V_REAL?difference.d:-1.0);
+  int retained_ok=expect_array_compound_shape(1);
+  int saved_ok=expect_array_compound_shape(0);
+  int ok=sum.t==V_REAL && sum.d==60 && difference.t==V_REAL && difference.d==1 &&
+    retained_ok && saved_ok;
+  if(!ok) fprintf(stderr,"typed stack DUP fixture failed: sum=%.0f swap=%.0f retained=%d saved=%d\n",
+                  sum.t==V_REAL?sum.d:-1.0,difference.t==V_REAL?difference.d:-1.0,
+                  retained_ok,saved_ok);
   return ok;
 }
 

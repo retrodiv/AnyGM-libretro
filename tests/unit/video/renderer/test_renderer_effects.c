@@ -324,6 +324,87 @@ static void check_shader_recognition(void) {
   gml_render_free(&render);
 }
 
+static void check_palette_alpha_threshold(void) {
+  static uint8_t rgba[] = {
+    0, 128, 0, 0,
+    255, 0, 0, 127,
+    255, 0, 0, 128
+  };
+  int frame_index = 0;
+  uint32_t pixels[] = {0xff102030u, 0xff102030u, 0xff102030u};
+  GmlSprite sprite;
+  GmlSprite stretched_sprite;
+  GmlTpag tpag;
+  GmlTpag stretched_tpag;
+  GmlAtlas atlas;
+  struct GmlShaderPal palette;
+  GmlRender render;
+
+  memset(&sprite, 0, sizeof(sprite));
+  memset(&stretched_sprite, 0, sizeof(stretched_sprite));
+  memset(&tpag, 0, sizeof(tpag));
+  memset(&stretched_tpag, 0, sizeof(stretched_tpag));
+  memset(&atlas, 0, sizeof(atlas));
+  memset(&palette, 0, sizeof(palette));
+  memset(&render, 0, sizeof(render));
+  sprite.w = 3;
+  sprite.h = 1;
+  sprite.n_frames = 1;
+  sprite.frame = &frame_index;
+  tpag.sw = tpag.bw = 3;
+  tpag.sh = tpag.bh = 1;
+  tpag.atlas = 0;
+  stretched_sprite.w = 1;
+  stretched_sprite.h = 1;
+  stretched_sprite.n_frames = 1;
+  stretched_sprite.frame = &frame_index;
+  stretched_tpag.sx = 2;
+  stretched_tpag.sw = stretched_tpag.bw = 1;
+  stretched_tpag.sh = stretched_tpag.bh = 1;
+  stretched_tpag.atlas = 0;
+  atlas.w = 3;
+  atlas.h = 1;
+  atlas.px = rgba;
+  palette.has = 1;
+  palette.L[0] = palette.L[1] = palette.L[2] = 240;
+  palette.M[0] = 224;
+  palette.M[1] = 32;
+  palette.M[2] = 16;
+  palette.D[0] = palette.D[1] = palette.D[2] = 8;
+  palette.S[0] = 16;
+  palette.S[1] = 64;
+  palette.S[2] = 224;
+  render.fb = render.base_fb = pixels;
+  render.fbw = render.base_fbw = 3;
+  render.fbh = render.base_fbh = 1;
+  render.spr = &sprite;
+  render.n_spr = 1;
+  render.tpag = &tpag;
+  render.n_tpag = 1;
+  render.atlas = &atlas;
+  render.n_atlas = 1;
+  render.shader_pal = &palette;
+  render.n_shader_pal = 1;
+  render.active_shader = 0;
+  render.alpha = 1.0;
+  render.alphablend = 1;
+  render.color_write_mask = 0x0f;
+  render.target_id = -1;
+
+  gml_draw_sprite(&render, 0, 0, 0, 0);
+  expect(pixels[0] == 0xff102030u && pixels[1] == 0xff102030u &&
+         pixels[2] == 0xffe02010u,
+         "palette alpha threshold exposed residual RGB");
+
+  pixels[0] = pixels[1] = pixels[2] = 0xff102030u;
+  render.spr = &stretched_sprite;
+  render.tpag = &stretched_tpag;
+  gml_draw_sprite_stretched(&render, 0, 0, 0, 0, 3, 1, 0xffffffu, 1.0);
+  expect(pixels[0] == 0xffe02010u && pixels[1] == 0xffe02010u &&
+         pixels[2] == 0xffe02010u,
+         "stretched sprite bypassed the active palette");
+}
+
 int main(void) {
   static const struct {
     const char *name;
@@ -342,6 +423,7 @@ int main(void) {
   uint64_t noise = run_noise();
   uint64_t tint = run_tint();
   check_shader_recognition();
+  check_palette_alpha_threshold();
   expect(noise == UINT64_C(0xe9d7942b9ca5361e), "rgb-noise");
   expect(tint == UINT64_C(0x9ded760f28a3f2a0), "direct-tint");
   printf("rgb-noise %016llx\n", (unsigned long long)noise);

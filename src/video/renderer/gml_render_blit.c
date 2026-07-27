@@ -993,11 +993,24 @@ static void spr_bi_band(void *p, int py0, int py1, int slot){
       const uint8_t *p10=(rb>=0&&ca>=0)?ap+rb+ca:NULL, *p11=(rb>=0&&cb>=0)?ap+rb+cb:NULL;
       float A0=p00?p00[3]:0,A1=p01?p01[3]:0,A2=p10?p10[3]:0,A3=p11?p11[3]:0;
       float Av=A0*w00+A1*w01+A2*w10+A3*w11;
-      float oa=(Av*(1.0f/255.0f))*c->fa; if(oa<=0.0f) continue;
+      if(shader_discards_alpha_value(r,Av)) continue;
       float R0=p00?p00[0]:0,R1=p01?p01[0]:0,R2=p10?p10[0]:0,R3=p11?p11[0]:0;
       float G0=p00?p00[1]:0,G1=p01?p01[1]:0,G2=p10?p10[1]:0,G3=p11?p11[1]:0;
       float B0=p00?p00[2]:0,B1=p01?p01[2]:0,B2=p10?p10[2]:0,B3=p11?p11[2]:0;
-      float sR=(R0*w00+R1*w01+R2*w10+R3*w11)*c->fbRr, sG=(G0*w00+G1*w01+G2*w10+G3*w11)*c->fbGg, sB=(B0*w00+B1*w01+B2*w10+B3*w11)*c->fbBb;
+      float sample_r=R0*w00+R1*w01+R2*w10+R3*w11;
+      float sample_g=G0*w00+G1*w01+G2*w10+G3*w11;
+      float sample_b=B0*w00+B1*w01+B2*w10+B3*w11;
+      if(mapped_texture_active(r)){
+        uint32_t sampled=mapped_texture_pixel(r,
+          ((uint32_t)(Av+0.5f)<<24)|((uint32_t)(sample_r+0.5f)<<16)|
+          ((uint32_t)(sample_g+0.5f)<<8)|(uint32_t)(sample_b+0.5f));
+        Av=(float)(sampled>>24);
+        sample_r=(float)((sampled>>16)&255);
+        sample_g=(float)((sampled>>8)&255);
+        sample_b=(float)(sampled&255);
+      }
+      float oa=(Av*(1.0f/255.0f))*c->fa; if(oa<=0.0f) continue;
+      float sR=sample_r*c->fbRr, sG=sample_g*c->fbGg, sB=sample_b*c->fbBb;
       uint32_t *dp=&dprow[tx_];
       if(c->noblend || oa>=1.0f){ *dp=0xFF000000u|((int)(sR+0.5f)<<16)|((int)(sG+0.5f)<<8)|(int)(sB+0.5f); }
       else { float ia2=1.0f-oa; int dr=(*dp>>16)&0xFF,dg=(*dp>>8)&0xFF,db=*dp&0xFF;
@@ -1577,15 +1590,22 @@ static void blit_rgba_region(GmlRender *r, const uint8_t *src, int iw, int ih,
       const uint8_t *sp=src+((size_t)(sy_start+yy)*iw+sx_start)*4;
       uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
       for(int xx=0; xx<cw; xx++, sp+=4){
-        double sa=(sp[3]/255.0)*alpha;
+        if(shader_discards_alpha(r,sp[3])) continue;
+        uint32_t sampled=((uint32_t)sp[3]<<24)|((uint32_t)sp[0]<<16)|
+                         ((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
+        if(mapped_texture_active(r)) sampled=mapped_texture_pixel(r,sampled);
+        int sample_a=(int)(sampled>>24);
+        double sa=(sample_a/255.0)*alpha;
         if(sa<=0) continue;
-        int sr=sp[0]*bR/255, sg=sp[1]*bG/255, sb=sp[2]*bB/255;
+        int sr=((sampled>>16)&255)*bR/255;
+        int sg=((sampled>>8)&255)*bG/255;
+        int sb=(sampled&255)*bB/255;
         if(!r->alphablend || sa>=1.0) dp[xx]=0xFF000000u|(sr<<16)|(sg<<8)|sb;
         else {
           uint32_t dv=dp[xx];
           double ia=1.0-sa;
           int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
-          unsigned source_alpha=(unsigned)lround((double)sp[3]*alpha);
+          unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
           dp[xx]=gml_sprite_target_alpha(r,dv,source_alpha)|
                  ((int)(sr*sa+dr*ia)<<16)|((int)(sg*sa+dg*ia)<<8)|
                  (int)(sb*sa+db*ia);
@@ -1613,13 +1633,27 @@ static void blit_rgba_region(GmlRender *r, const uint8_t *src, int iw, int ih,
         R+=sp[0]; G+=sp[1]; B+=sp[2]; A+=sp[3]; n++;
       }
       if(!n) continue;
-      double oa=((A/(double)n)/255.0)*alpha; if(oa<=0) continue;
+      double sample_alpha=A/(double)n;
+      if(shader_discards_alpha_value(r,sample_alpha)) continue;
+      int sample_a=(int)floor(sample_alpha+0.5);
+      int sample_r=(int)floor(R/(double)n+0.5);
+      int sample_g=(int)floor(G/(double)n+0.5);
+      int sample_b=(int)floor(B/(double)n+0.5);
+      if(mapped_texture_active(r)){
+        uint32_t sampled=mapped_texture_pixel(r,((uint32_t)sample_a<<24)|
+          ((uint32_t)sample_r<<16)|((uint32_t)sample_g<<8)|(uint32_t)sample_b);
+        sample_a=(int)(sampled>>24);
+        sample_r=(sampled>>16)&255;
+        sample_g=(sampled>>8)&255;
+        sample_b=sampled&255;
+      }
+      double oa=(sample_a/255.0)*alpha; if(oa<=0) continue;
       uint32_t *dp=&r->fb[(size_t)ty_*r->fbw+tx_];
-      int sr=(R/n)*bR/255, sg=(G/n)*bG/255, sb=(B/n)*bB/255;
+      int sr=sample_r*bR/255, sg=sample_g*bG/255, sb=sample_b*bB/255;
       if(!r->alphablend){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
       uint32_t destination=*dp;
       int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
-      unsigned source_alpha=(unsigned)lround((A/(double)n)*alpha);
+      unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
       *dp=gml_sprite_target_alpha(r,destination,source_alpha)|
           ((int)(sr*oa+dr*(1-oa))<<16)|((int)(sg*oa+dg*(1-oa))<<8)|
           (int)(sb*oa+db*(1-oa));
@@ -3640,9 +3674,16 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
         int ix=lx0+xx-t->tx;
         if(ix<0||ix>=t->sw) continue;
         uint8_t *sp=a->px + ((size_t)(t->sy+iy)*a->w + (t->sx+ix))*4;
-        double oa=(sp[3]/255.0)*alpha;
+        if(shader_discards_alpha(r,sp[3])) continue;
+        uint32_t sampled=((uint32_t)sp[3]<<24)|((uint32_t)sp[0]<<16)|
+                         ((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
+        if(mapped_texture_active(r)) sampled=mapped_texture_pixel(r,sampled);
+        int sample_a=(int)(sampled>>24);
+        double oa=(sample_a/255.0)*alpha;
         if(oa<=0) continue;
-        int sr=sp[0]*bR/255, sg=sp[1]*bG/255, sb=sp[2]*bB/255;
+        int sr=((sampled>>16)&255)*bR/255;
+        int sg=((sampled>>8)&255)*bG/255;
+        int sb=(sampled&255)*bB/255;
         if(!r->alphablend){ dp[xx]=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
         uint32_t dv=dp[xx];
         int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
@@ -3657,9 +3698,24 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
    * filtered path. This is the case GameMaker's mipmapped full-screen sprites hit on the GPU. */
   if((sw>W || sh>H) && x0<=0 && y0<=0 && x0+W>=r->fbw && y0+H>=r->fbh){
     double ct[4]; sprite_region_coarse_texel(a,t->sx,t->sy,t->sw,t->sh,ct);
-    double sa=(ct[3]/255.0)*alpha;
+    if(shader_discards_alpha_value(r,ct[3])) return;
+    int sample_a=(int)floor(ct[3]+0.5);
+    int sample_r=(int)floor(ct[0]+0.5);
+    int sample_g=(int)floor(ct[1]+0.5);
+    int sample_b=(int)floor(ct[2]+0.5);
+    if(mapped_texture_active(r)){
+      uint32_t sampled=mapped_texture_pixel(r,((uint32_t)sample_a<<24)|
+        ((uint32_t)sample_r<<16)|((uint32_t)sample_g<<8)|(uint32_t)sample_b);
+      sample_a=(int)(sampled>>24);
+      sample_r=(sampled>>16)&255;
+      sample_g=(sampled>>8)&255;
+      sample_b=sampled&255;
+    }
+    double sa=(sample_a/255.0)*alpha;
     if(sa>0){
-      double srcR=ct[0]*bR/255.0, srcG=ct[1]*bG/255.0, srcB=ct[2]*bB/255.0;
+      double srcR=sample_r*bR/255.0;
+      double srcG=sample_g*bG/255.0;
+      double srcB=sample_b*bB/255.0;
       int cx0=x0<0?0:x0, cy0=y0<0?0:y0;
       int cx1=x0+W; if(cx1>r->fbw) cx1=r->fbw;
       int cy1=y0+H; if(cy1>r->fbh) cy1=r->fbh;
@@ -3729,8 +3785,23 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
        * The old code truncated the channel average (int cast) and truncated the blend, which
        * systematically DARKENED a bright overlay; keep full float precision and round at the end. */
       double fA=A/(double)n;
-      double oa=(fA/255.0)*alpha; if(oa<=0) continue;
-      double srcR=(R/(double)n)*bR/255.0, srcG=(G/(double)n)*bG/255.0, srcB=(B/(double)n)*bB/255.0;
+      if(shader_discards_alpha_value(r,fA)) continue;
+      int sample_a=(int)floor(fA+0.5);
+      int sample_r=(int)floor(R/(double)n+0.5);
+      int sample_g=(int)floor(G/(double)n+0.5);
+      int sample_b=(int)floor(B/(double)n+0.5);
+      if(mapped_texture_active(r)){
+        uint32_t sampled=mapped_texture_pixel(r,((uint32_t)sample_a<<24)|
+          ((uint32_t)sample_r<<16)|((uint32_t)sample_g<<8)|(uint32_t)sample_b);
+        sample_a=(int)(sampled>>24);
+        sample_r=(sampled>>16)&255;
+        sample_g=(sampled>>8)&255;
+        sample_b=sampled&255;
+      }
+      double oa=(sample_a/255.0)*alpha; if(oa<=0) continue;
+      double srcR=sample_r*bR/255.0;
+      double srcG=sample_g*bG/255.0;
+      double srcB=sample_b*bB/255.0;
       uint32_t *dp=&r->fb[(size_t)ty_*r->fbw+tx_];
       if(!r->alphablend || oa>=1.0){
         int sr=(int)(srcR+0.5), sg=(int)(srcG+0.5), sb=(int)(srcB+0.5);
