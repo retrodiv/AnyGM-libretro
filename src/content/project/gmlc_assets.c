@@ -251,6 +251,16 @@ static uint32_t be32u(const unsigned char *p){
   return ((uint32_t)p[0]<<24) | ((uint32_t)p[1]<<16) | ((uint32_t)p[2]<<8) | (uint32_t)p[3];
 }
 
+static const char *resource_reference_name(const GmlcJson *value){
+  if(!value) return NULL;
+  if(value->type==GMLC_JSON_STRING) return gmlc_json_str(value,NULL);
+  if(value->type!=GMLC_JSON_OBJECT) return NULL;
+  const char *name=gmlc_json_str(gmlc_json_obj(value,"name"),NULL);
+  if(!name || !*name) name=gmlc_json_str(gmlc_json_obj(value,"%Name"),NULL);
+  if(!name || !*name) name=gmlc_json_str(gmlc_json_obj(value,"id"),NULL);
+  return name;
+}
+
 static int png_file_dims(const GmlcProject *project,const char *path,int *w,int *h){
   unsigned char hdr[24];
   if(!project || !anygm_vfs_can_read(project->host)) return 0;
@@ -266,12 +276,16 @@ static int png_file_dims(const GmlcProject *project,const char *path,int *w,int 
 }
 
 static int parse_u32_color(const GmlcJson *v, uint32_t fallback){
+  if(v && v->type==GMLC_JSON_NUMBER)
+    return (uint32_t)gmlc_json_num(v,(double)fallback);
   const GmlcJson *vv=gmlc_json_obj(v,"Value");
   if(vv) return (uint32_t)gmlc_json_num(vv,(double)fallback);
   return fallback;
 }
 
-static int layer_type_from_model(const char *model){
+static int layer_type_from_json(const GmlcJson *layer){
+  const char *model=gmlc_json_str(gmlc_json_obj(layer,"modelName"),NULL);
+  if(!model || !*model) model=gmlc_json_str(gmlc_json_obj(layer,"resourceType"),NULL);
   if(!model) return 0;
   if(!strcmp(model,"GMRBackgroundLayer")) return 1;
   if(!strcmp(model,"GMRInstanceLayer")) return 2;
@@ -285,12 +299,14 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
   for(const GmlcJson *ly=layers->child;ly;ly=ly->next){
     const GmlcJson *sub=gmlc_json_obj(ly,"layers");
     if(sub && sub->type==GMLC_JSON_ARRAY && !scan_room_layers(p,r,sub,room_dir,err,errcap)) return 0;
-    int type=layer_type_from_model(gmlc_json_str(gmlc_json_obj(ly,"modelName"),NULL));
+    int type=layer_type_from_json(ly);
     if(type<=0) continue;
     GmlcRoomLayer out;
     memset(&out,0,sizeof(out));
-    out.id=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ly,"id"),""));
-    out.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ly,"name"),""));
+    const char *layer_name=gmlc_json_str(gmlc_json_obj(ly,"name"),
+                           gmlc_json_str(gmlc_json_obj(ly,"%Name"),""));
+    out.id=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ly,"id"),layer_name));
+    out.name=gmlc_strdup(layer_name);
     if(!out.id || !out.name){
       snprintf(err,errcap,"out of memory while loading room layer");
       free_room_layer_fields(&out);
@@ -308,7 +324,7 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
     out.tile_tileset_id=-1;
     out.bg_color=0xFFFFFFFFu;
     if(type==1){
-      out.bg_sprite_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(ly,"spriteId"),NULL));
+      out.bg_sprite_id=gmlc_project_find_sprite(p,resource_reference_name(gmlc_json_obj(ly,"spriteId")));
       out.bg_htiled=gmlc_json_bool(gmlc_json_obj(ly,"htiled"),0);
       out.bg_vtiled=gmlc_json_bool(gmlc_json_obj(ly,"vtiled"),0);
       out.bg_stretch=gmlc_json_bool(gmlc_json_obj(ly,"stretch"),0);
@@ -319,13 +335,18 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
       const GmlcJson *arr=gmlc_json_obj(ly,"instances");
       if(arr && arr->type==GMLC_JSON_ARRAY){
         for(const GmlcJson *ji=arr->child;ji;ji=ji->next){
-          const char *oid=gmlc_json_str(gmlc_json_obj(ji,"objId"),NULL);
+          if(gmlc_json_bool(gmlc_json_obj(ji,"ignore"),0)) continue;
+          const GmlcJson *object_reference=gmlc_json_obj(ji,"objId");
+          if(!object_reference) object_reference=gmlc_json_obj(ji,"objectId");
+          const char *oid=resource_reference_name(object_reference);
           int obj=gmlc_project_find_object(p,oid);
           if(obj<0) continue;
           GmlcRoomInstance in;
           memset(&in,0,sizeof(in));
-          in.id=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ji,"id"),""));
-          in.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ji,"name"),""));
+          const char *instance_name=gmlc_json_str(gmlc_json_obj(ji,"name"),
+                                    gmlc_json_str(gmlc_json_obj(ji,"%Name"),""));
+          in.id=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ji,"id"),instance_name));
+          in.name=gmlc_strdup(instance_name);
           in.x=gmlc_json_int(gmlc_json_obj(ji,"x"),0);
           in.y=gmlc_json_int(gmlc_json_obj(ji,"y"),0);
           in.object_id=obj;
@@ -365,7 +386,7 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
           GmlcRoomAsset a;
           memset(&a,0,sizeof(a));
           a.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(ja,"name"),""));
-          a.sprite_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(ja,"spriteId"),NULL));
+          a.sprite_id=gmlc_project_find_sprite(p,resource_reference_name(gmlc_json_obj(ja,"spriteId")));
           a.x=gmlc_json_int(gmlc_json_obj(ja,"x"),0);
           a.y=gmlc_json_int(gmlc_json_obj(ja,"y"),0);
           a.sx=(float)gmlc_json_num(gmlc_json_obj(ja,"scaleX"),1.0);
@@ -383,7 +404,7 @@ static int scan_room_layers(GmlcProject *p, GmlcRoom *r, const GmlcJson *layers,
         }
       }
     } else if(type==4){
-      out.tile_tileset_id=gmlc_project_find_tileset(p,gmlc_json_str(gmlc_json_obj(ly,"tilesetId"),NULL));
+      out.tile_tileset_id=gmlc_project_find_tileset(p,resource_reference_name(gmlc_json_obj(ly,"tilesetId")));
       const GmlcJson *tiles=gmlc_json_obj(ly,"tiles");
       int cols=gmlc_json_int(gmlc_json_obj(tiles,"SerialiseWidth"),gmlc_json_int(gmlc_json_obj(tiles,"serialiseWidth"),0));
       int rows=gmlc_json_int(gmlc_json_obj(tiles,"SerialiseHeight"),gmlc_json_int(gmlc_json_obj(tiles,"serialiseHeight"),0));
@@ -462,12 +483,16 @@ static int parse_font(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
     return 0;
   }
   const GmlcJson *glyphs=gmlc_json_obj(yy,"glyphs");
-  if(glyphs && glyphs->type==GMLC_JSON_ARRAY){
+  if(glyphs && (glyphs->type==GMLC_JSON_ARRAY || glyphs->type==GMLC_JSON_OBJECT)){
     for(const GmlcJson *jg=glyphs->child;jg;jg=jg->next){
       const GmlcJson *gv=gmlc_json_obj(jg,"Value");
+      if(!gv) gv=jg;
+      int key_character=gmlc_json_int(gmlc_json_obj(jg,"Key"),0);
+      if(key_character==0 && jg->name && *jg->name)
+        key_character=(int)strtol(jg->name,NULL,10);
       GmlcFontGlyph g;
       memset(&g,0,sizeof(g));
-      g.ch=gmlc_json_int(gmlc_json_obj(gv,"character"),gmlc_json_int(gmlc_json_obj(jg,"Key"),0));
+      g.ch=gmlc_json_int(gmlc_json_obj(gv,"character"),key_character);
       g.x=gmlc_json_int(gmlc_json_obj(gv,"x"),0);
       g.y=gmlc_json_int(gmlc_json_obj(gv,"y"),0);
       g.w=gmlc_json_int(gmlc_json_obj(gv,"w"),0);
@@ -496,7 +521,7 @@ static int parse_tileset(GmlcProject *p, const GmlcResource *res, const GmlcJson
   memset(&t,0,sizeof(t));
   t.id=gmlc_strdup(res->id);
   t.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(yy,"name"),res->name?res->name:""));
-  t.sprite_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(yy,"spriteId"),NULL));
+  t.sprite_id=gmlc_project_find_sprite(p,resource_reference_name(gmlc_json_obj(yy,"spriteId")));
   t.sprite_no_export=gmlc_json_bool(gmlc_json_obj(yy,"sprite_no_export"),
                                     gmlc_json_bool(gmlc_json_obj(yy,"spriteNoExport"),0));
   t.tile_width=gmlc_json_int(gmlc_json_obj(yy,"tilewidth"),gmlc_json_int(gmlc_json_obj(yy,"tileWidth"),16));
@@ -616,9 +641,11 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
   memset(&o,0,sizeof(o));
   o.id=gmlc_strdup(res->id);
   o.name=gmlc_strdup(gmlc_json_str(gmlc_json_obj(yy,"name"),res->name?res->name:""));
-  o.sprite_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(yy,"spriteId"),NULL));
-  o.mask_id=gmlc_project_find_sprite(p,gmlc_json_str(gmlc_json_obj(yy,"maskSpriteId"),gmlc_json_str(gmlc_json_obj(yy,"spriteMaskId"),NULL)));
-  o.parent_id=gmlc_project_find_object(p,gmlc_json_str(gmlc_json_obj(yy,"parentObjectId"),NULL));
+  o.sprite_id=gmlc_project_find_sprite(p,resource_reference_name(gmlc_json_obj(yy,"spriteId")));
+  const GmlcJson *mask_reference=gmlc_json_obj(yy,"maskSpriteId");
+  if(!mask_reference) mask_reference=gmlc_json_obj(yy,"spriteMaskId");
+  o.mask_id=gmlc_project_find_sprite(p,resource_reference_name(mask_reference));
+  o.parent_id=gmlc_project_find_object(p,resource_reference_name(gmlc_json_obj(yy,"parentObjectId")));
   o.visible=gmlc_json_bool(gmlc_json_obj(yy,"visible"),1);
   o.solid=gmlc_json_bool(gmlc_json_obj(yy,"solid"),0);
   o.persistent=gmlc_json_bool(gmlc_json_obj(yy,"persistent"),0);
@@ -664,7 +691,7 @@ static int parse_object(GmlcProject *p, const GmlcResource *res, const GmlcJson 
       ev.event_number=gmlc_json_int(gmlc_json_obj(je,"enumb"),gmlc_json_int(gmlc_json_obj(je,"eventNum"),0));
       const char *event_uuid=gmlc_json_str(gmlc_json_obj(je,"id"),NULL);
       ev.id=gmlc_strdup(event_uuid?event_uuid:"");
-      const char *col_uuid=gmlc_json_str(gmlc_json_obj(je,"collisionObjectId"),NULL);
+      const char *col_uuid=resource_reference_name(gmlc_json_obj(je,"collisionObjectId"));
       int col_missing=(!col_uuid || !*col_uuid);
       int col_zero=(col_uuid && !strcmp(col_uuid,"00000000-0000-0000-0000-000000000000"));
       ev.collision_object_id=(ev.event_type==4 && col_missing) ? p->n_objects :
@@ -754,7 +781,9 @@ static int parse_room(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
     view->vborder=gmlc_json_int(gmlc_json_obj(jv,"vborder"),32);
     view->hspeed=gmlc_json_int(gmlc_json_obj(jv,"hspeed"),-1);
     view->vspeed=gmlc_json_int(gmlc_json_obj(jv,"vspeed"),-1);
-    view->object_id=gmlc_project_find_object(p,gmlc_json_str(gmlc_json_obj(jv,"objId"),NULL));
+    const GmlcJson *object_reference=gmlc_json_obj(jv,"objId");
+    if(!object_reference) object_reference=gmlc_json_obj(jv,"objectId");
+    view->object_id=gmlc_project_find_object(p,resource_reference_name(object_reference));
   }
   const GmlcJson *v0=gmlc_json_index(source_views,0);
   r.view_w=gmlc_json_int(gmlc_json_obj(v0,"wview"),r.width);

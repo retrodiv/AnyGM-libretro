@@ -335,6 +335,26 @@ static int append_resource_order(GmlcProject *p, const char *id){
   return 1;
 }
 
+static const char *project_reference_name(const GmlcJson *value){
+  if(!value) return NULL;
+  if(value->type==GMLC_JSON_STRING) return gmlc_json_str(value,NULL);
+  if(value->type!=GMLC_JSON_OBJECT) return NULL;
+  const char *name=gmlc_json_str(gmlc_json_obj(value,"name"),NULL);
+  if(!name || !*name) name=gmlc_json_str(gmlc_json_obj(value,"%Name"),NULL);
+  if(!name || !*name) name=gmlc_json_str(gmlc_json_obj(value,"id"),NULL);
+  return name;
+}
+
+static int append_room_order_nodes(GmlcProject *p, const GmlcJson *root){
+  const GmlcJson *nodes=gmlc_json_obj(root,"RoomOrderNodes");
+  if(!nodes || nodes->type!=GMLC_JSON_ARRAY) return 1;
+  for(const GmlcJson *node=nodes->child;node;node=node->next){
+    const char *name=project_reference_name(gmlc_json_obj(node,"roomId"));
+    if(name && *name && !append_resource_order(p,name)) return 0;
+  }
+  return 1;
+}
+
 static int traverse_folder_order(GmlcProject *p, GmlcFolderOrder *folders, int n, int idx){
   if(idx<0 || idx>=n) return 1;
   for(int i=0;i<folders[idx].n_children;i++){
@@ -456,7 +476,7 @@ int gmlc_project_load_yyp(GmlcProject *p,const AnygmHostServices *host,
       return 0;
     }
   }
-  if(!load_resource_order(p)){
+  if(!append_room_order_nodes(p,root) || !load_resource_order(p)){
     gmlc_json_free(root);
     snprintf(err,errcap,"out of memory while loading resource order");
     return 0;
