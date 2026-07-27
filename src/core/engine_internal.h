@@ -214,6 +214,9 @@ void classic_transition_reset(AnygmEngine *engine);
 void aspect_draw_event_hook(GmlVM *vm,GmlInstance *instance,const char *suffix,
                             int begin,void *user);
 void sync_room_fps(AnygmEngine *engine,int publish_changes);
+int screen_stage_uses_requested_raster(
+  const GmlWin *content,const GmlRenderPresentationMetrics *presentation,
+  int logical_width,int logical_height,int target_width,int target_height);
 void aspect_forced_camera(AnygmEngine *engine,double raw_x,double raw_y,
                           double *out_x,double *out_y);
 int aspect_compositor_fullwidth_gen(AnygmEngine *engine);

@@ -126,6 +126,44 @@ static int composition_cases(void){
   return 0;
 }
 
+static int screen_raster_part_case(void){
+  enum { SOURCE_WIDTH=4,SOURCE_HEIGHT=3,TARGET_WIDTH=8,TARGET_HEIGHT=6 };
+  uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
+  uint32_t target[TARGET_WIDTH*TARGET_HEIGHT];
+  GmlRender render;
+  memset(&render,0,sizeof render);
+  for(int y=0;y<SOURCE_HEIGHT;y++) for(int x=0;x<SOURCE_WIDTH;x++)
+    source[(size_t)y*SOURCE_WIDTH+x]=
+      0xFF000000u|((uint32_t)(31+x*41+y*17)<<16)|
+      ((uint32_t)(23+x*13+y*47)<<8)|(uint32_t)(11+x*29+y*19);
+  memset(target,0x5A,sizeof target);
+  render.app_surface=source;
+  render.app_w=SOURCE_WIDTH;
+  render.app_h=SOURCE_HEIGHT;
+  render.alphablend=1;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+  gml_render_begin(&render,target,TARGET_WIDTH,TARGET_HEIGHT,0.0,0.0);
+  gml_render_gui_begin(&render,TARGET_WIDTH,TARGET_HEIGHT);
+  gml_render_gui_set_size(&render,SOURCE_WIDTH,SOURCE_HEIGHT);
+  gml_draw_surface_part_ext(&render,0,0.0,0.0,SOURCE_WIDTH,SOURCE_HEIGHT,
+                            0.0,0.0,2.0,2.0,0xFFFFFFu,1.0);
+  gml_render_gui_end(&render);
+  for(int y=0;y<TARGET_HEIGHT;y++) for(int x=0;x<TARGET_WIDTH;x++){
+    uint32_t expected=source[(size_t)(y/2)*SOURCE_WIDTH+x/2];
+    if(target[(size_t)y*TARGET_WIDTH+x]!=expected){
+      fprintf(stderr,"renderer screen raster part mismatch at %d,%d: %08x != %08x\n",
+              x,y,target[(size_t)y*TARGET_WIDTH+x],expected);
+      return 1;
+    }
+  }
+  return 0;
+}
+
 int main(void){
   GmlRender render;
   uint32_t base[8*6];
@@ -185,6 +223,7 @@ int main(void){
   REQUIRE(!gml_surface_exists(&render,source) &&
           !gml_surface_exists(&render,destination),"freed surfaces");
   REQUIRE(composition_cases()==0,"composition cases");
+  REQUIRE(screen_raster_part_case()==0,"screen raster part case");
   puts("renderer surfaces: ok");
   return 0;
 }

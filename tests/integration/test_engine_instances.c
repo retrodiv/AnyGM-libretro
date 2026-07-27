@@ -3,6 +3,7 @@
  */
 #include "anygm.h"
 #include "content_router.h"
+#include "engine_internal.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
 
@@ -42,6 +43,42 @@ static uint64_t state_checksum(const uint8_t *data,size_t size){
   return hash;
 }
 
+static int screen_stage_raster_policy(void){
+  GmlWin content={0};
+  GmlRenderPresentationMetrics presentation={0};
+  content.bytecode=15;
+  presentation.requested_width=576;
+  presentation.requested_height=432;
+  if(!screen_stage_uses_requested_raster(&content,&presentation,288,216,576,432)){
+    fputs("first-generation requested screen raster was not recognized\n",stderr);
+    return 0;
+  }
+  presentation.application_draw_enabled=1;
+  if(screen_stage_uses_requested_raster(&content,&presentation,288,216,576,432)){
+    fputs("automatic application drawing selected a screen raster\n",stderr);
+    return 0;
+  }
+  presentation.application_draw_enabled=0;
+  content.classic_version=800;
+  if(screen_stage_uses_requested_raster(&content,&presentation,288,216,576,432)){
+    fputs("classic content selected a Studio screen raster\n",stderr);
+    return 0;
+  }
+  content.classic_version=0;
+  content.bytecode=17;
+  if(screen_stage_uses_requested_raster(&content,&presentation,288,216,576,432)){
+    fputs("current layer semantics selected a first-generation screen raster\n",stderr);
+    return 0;
+  }
+  content.bytecode=15;
+  if(screen_stage_uses_requested_raster(&content,&presentation,288,216,600,432) ||
+     screen_stage_uses_requested_raster(&content,&presentation,288,216,288,216)){
+    fputs("non-uniform or native presentation selected a scaled screen raster\n",stderr);
+    return 0;
+  }
+  return 1;
+}
+
 static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidate,size_t size,
                                      const uint8_t *baseline,size_t baseline_size,
                                      const char *label){
@@ -76,6 +113,7 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
 }
 
 int main(void){
+  if(!screen_stage_raster_policy()) return 1;
   char label[128];
   anygm_content_save_label("/library/fixture_bundle/data.win",label,sizeof label);
   if(strcmp(label,"fixture_bundle")){

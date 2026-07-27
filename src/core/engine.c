@@ -825,9 +825,20 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	                            render_presentation.application_height==engine->vm.window_h &&
 	                            render_presentation.application_width==gtw &&
 	                            render_presentation.application_height==gth;
+	    /* Studio 1.x self-compositors can deliberately keep the application surface at the
+	     * logical view size while deriving every screen-stage coordinate from the explicit window
+	     * resolution. At an integer same-aspect host scale, that authored coordinate system is
+	     * already the final raster. Applying the view-to-window transform again doubles positions
+	     * and sizes. Modern formats expose this intent through independently owned surfaces;
+	     * classic runtimes do not have the Studio screen-stage contract. */
+	    int legacy_window_raster=screen_stage_uses_requested_raster(
+	      &engine->win,&render_presentation,
+	      (int)engine->width,(int)engine->height,gtw,gth);
 	    gml_render_gui_set_size(&engine->render,
-	      owned_window_raster?render_presentation.application_width:(int)engine->width,
-	      owned_window_raster?render_presentation.application_height:(int)engine->height);
+	      owned_window_raster?render_presentation.application_width:
+	      legacy_window_raster?gtw:(int)engine->width,
+	      owned_window_raster?render_presentation.application_height:
+	      legacy_window_raster?gth:(int)engine->height);
 	  } else {
 	  gml_render_gui_begin(&engine->render,gsw,gsh);
 	    /* display_set_gui_size() is normally called from Create/room setup, before the GUI pass

@@ -841,20 +841,23 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   }
   free(copy);
 }
+/* A screen-stage compositor can choose either logical application-surface coordinates or explicit
+ * window-pixel coordinates. The latter is observable when surface 0 covers exactly the current
+ * target extent. Those dimensions are already physical: applying the logical-to-window GUI
+ * transform again magnifies the image by the presentation scale and clips the trailing region. */
+static int surface_draw_targets_screen_raster(const GmlRender *r,int surf,
+                                              double width,double height){
+  return r && surf==0 && gml_render_gui_transform_active(r) &&
+         r->target_sp==0 && r->fbw>0 && r->fbh>0 &&
+         fabs(fabs(width)-(double)r->fbw)<0.001 &&
+         fabs(fabs(height)-(double)r->fbh)<0.001;
+}
+
 /* draw_surface_stretched[_ext]: blit a runtime surface into the current target, box-averaged. */
 static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double dy,
                                         double dw,double dh,uint32_t blend,double alpha,
                                         int allow_software3d){
-  /* A screen-stage compositor can choose either logical application-surface coordinates or
-   * explicit window-pixel coordinates.  The latter is observable when it stretches surface 0 to
-   * exactly the current target extent (usually using window_get_width/height).  Those dimensions
-   * are already physical: applying the logical-to-window GUI transform again magnifies the image
-   * by the presentation scale and clips all but its upper-left corner.  Smaller/logical surface
-   * draws retain the ordinary transform. */
-  int explicit_target_raster=r && surf==0 && gml_render_gui_transform_active(r) &&
-                             r->target_sp==0 && r->fbw>0 && r->fbh>0 &&
-                             fabs(fabs(dw)-(double)r->fbw)<0.001 &&
-                             fabs(fabs(dh)-(double)r->fbh)<0.001;
+  int explicit_target_raster=surface_draw_targets_screen_raster(r,surf,dw,dh);
   if(!explicit_target_raster){
     gml_render_gui_map_point(r,&dx,&dy);
     gml_render_gui_map_scale(r,&dw,&dh);
@@ -1035,8 +1038,11 @@ void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
 }
 void gml_draw_surface_part_ext(GmlRender *r, int surf, double sx, double sy, double sw, double sh,
                                double dx, double dy, double xs, double ys, uint32_t blend, double alpha){
-  gml_render_gui_map_point(r,&dx,&dy);
-  gml_render_gui_map_scale(r,&xs,&ys);
+  int explicit_target_raster=surface_draw_targets_screen_raster(r,surf,sw*xs,sh*ys);
+  if(!explicit_target_raster){
+    gml_render_gui_map_point(r,&dx,&dy);
+    gml_render_gui_map_scale(r,&xs,&ys);
+  }
   const struct GmlShaderPal *sdual=dual_active(r);
   const struct GmlShaderPal *shsv=hsv_scan_active(r);
   if(!sdual && !shsv && gml_d3_draw_surface_part_2d(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;

@@ -574,6 +574,22 @@ void aspect_hud_rect(AnygmEngine *engine,int *out_x, int *out_y, int *out_w, int
   if (out_w) *out_w = hw;
   if (out_h) *out_h = hh;
 }
+int screen_stage_uses_requested_raster(
+  const GmlWin *content,const GmlRenderPresentationMetrics *presentation,
+  int logical_width,int logical_height,int target_width,int target_height){
+  if(!content || !presentation || logical_width<=0 || logical_height<=0 ||
+     target_width<=0 || target_height<=0 ||
+     anygm_policy_uses_classic_runtime(content) ||
+     anygm_policy_has_modern_layer_semantics(content) ||
+     presentation->application_draw_enabled ||
+     presentation->requested_width!=target_width ||
+     presentation->requested_height!=target_height ||
+     target_width%logical_width || target_height%logical_height)
+    return 0;
+  int scale_x=target_width/logical_width;
+  int scale_y=target_height/logical_height;
+  return scale_x>1 && scale_x==scale_y;
+}
 void compute_present(AnygmEngine *engine) {
   GmlRenderPresentationMetrics renderer;
   gml_render_presentation_metrics(&engine->render,&renderer);
