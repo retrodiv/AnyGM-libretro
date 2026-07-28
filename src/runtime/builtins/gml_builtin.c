@@ -643,7 +643,7 @@ int mouse_btn_check(GmlVM *vm,int mb, int edge){
   gml_input_mouse(vm,NULL,NULL,NULL,NULL,NULL,NULL,&held,&pressed,&released,NULL);
   int m = mb_mask(mb);
   int v = edge==1 ? pressed : edge==2 ? released : held;
-  int r = (mb==0) ? (edge==0 ? !(held&7) : 0) : ((v & m) != 0);
+  int r = (mb==0) ? !(v&7) : ((v & m) != 0);
   return r;
 }
 

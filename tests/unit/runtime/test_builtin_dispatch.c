@@ -14,6 +14,28 @@ typedef struct {
   int value;
 } ScriptFixture;
 
+typedef struct {
+  int held;
+  int pressed;
+  int released;
+} MouseFixture;
+
+static void mouse_fixture_read(
+    void *userdata,double *room_x,double *room_y,double *gui_x,double *gui_y,
+    double *window_x,double *window_y,int *held,int *pressed,int *released,int *wheel){
+  MouseFixture *fixture=(MouseFixture *)userdata;
+  if(room_x) *room_x=0;
+  if(room_y) *room_y=0;
+  if(gui_x) *gui_x=0;
+  if(gui_y) *gui_y=0;
+  if(window_x) *window_x=0;
+  if(window_y) *window_y=0;
+  if(held) *held=fixture->held;
+  if(pressed) *pressed=fixture->pressed;
+  if(released) *released=fixture->released;
+  if(wheel) *wheel=0;
+}
+
 static void store_u32le(uint8_t *destination,uint32_t value){
   destination[0]=(uint8_t)value;
   destination[1]=(uint8_t)(value>>8);
@@ -111,6 +133,45 @@ static int function_value_and_alias_resolution(GmlVM *vm){
   return expect_real("tagged function value dispatch",function_result,77) &&
          expect_real("canonical exact alias",color,expected) &&
          expect_real("alternate exact alias",colour,expected);
+}
+
+static int mouse_none_semantics(GmlVM *vm){
+  MouseFixture fixture={0};
+  GmlVal none=vreal(0);
+  GmlVal any=vreal(-1);
+  vm->input.userdata=&fixture;
+  vm->input.mouse=mouse_fixture_read;
+  int ok=
+    expect_real("mouse none held without input",
+                gml_builtin_call(vm,"mouse_check_button",&none,1),1) &&
+    expect_real("mouse none pressed without input",
+                gml_builtin_call(vm,"mouse_check_button_pressed",&none,1),1) &&
+    expect_real("mouse none released without input",
+                gml_builtin_call(vm,"mouse_check_button_released",&none,1),1);
+  fixture.held=1;
+  fixture.pressed=1;
+  ok=ok &&
+    expect_real("mouse none held with left input",
+                gml_builtin_call(vm,"mouse_check_button",&none,1),0) &&
+    expect_real("mouse none pressed with left edge",
+                gml_builtin_call(vm,"mouse_check_button_pressed",&none,1),0) &&
+    expect_real("mouse any pressed with left edge",
+                gml_builtin_call(vm,"mouse_check_button_pressed",&any,1),1) &&
+    expect_real("mouse none released without release edge",
+                gml_builtin_call(vm,"mouse_check_button_released",&none,1),1);
+  fixture.held=0;
+  fixture.pressed=0;
+  fixture.released=1;
+  ok=ok &&
+    expect_real("mouse none held after release",
+                gml_builtin_call(vm,"mouse_check_button",&none,1),1) &&
+    expect_real("mouse none pressed after release",
+                gml_builtin_call(vm,"mouse_check_button_pressed",&none,1),1) &&
+    expect_real("mouse none released with left edge",
+                gml_builtin_call(vm,"mouse_check_button_released",&none,1),0);
+  vm->input.mouse=NULL;
+  vm->input.userdata=NULL;
+  return ok;
 }
 
 static int ds_fast_interface(GmlVM *vm){
@@ -217,6 +278,7 @@ int main(void){
          exact_builtin_precedes_same_named_script(&vm) &&
          script_resolution_order(&vm) &&
          function_value_and_alias_resolution(&vm) &&
+         mouse_none_semantics(&vm) &&
          ds_fast_interface(&vm);
   gml_vm_free(&vm);
   gml_win_free(&win);
