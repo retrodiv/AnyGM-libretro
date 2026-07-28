@@ -1161,7 +1161,7 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
   engine->config.crt_gamma=1;
   engine->config.crt_curvature=-1;
   engine->config.crt_vignette=-1;
-  engine->config.fast_alpha_cull=24;
+  engine->config.fast_alpha_cull=0;
   engine->config.start_room=-1;
   snprintf(engine->language,sizeof engine->language,"en");
   snprintf(engine->region,sizeof engine->region,"us");

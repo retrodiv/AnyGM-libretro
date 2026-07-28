@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "anygm.h"
+#include "engine_internal.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
 
@@ -278,6 +279,8 @@ int main(void){
 
   AnygmEngine *engine=NULL;
   if(anygm_create(&services,&engine)!=ANYGM_OK || !engine) return fail("create failed");
+  if(engine->config.fast_alpha_cull!=0)
+    return fail("default renderer configuration is not exact");
 
   anygm_unload(engine);
   if(anygm_reset(engine)!=ANYGM_ERROR_INVALID_STATE || anygm_state_size(engine)!=0 ||
