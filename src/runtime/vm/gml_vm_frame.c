@@ -1422,8 +1422,17 @@ void gml_vm_draw(GmlVM *vm){
  * and the GUI event observes that leftover. Converted content can depend on this desktop-runtime
  * behavior. With views disabled the
  * loop never runs and view_current stays 0. */
-/* run one draw-stage event pass (Draw_72/73 begin-end, Draw_74/75 pre-post, Draw_65/66 GUI
- * begin-end) over all instances in depth order. Cheap no-op when no object has the event. */
+/* Run one draw-stage event pass (Draw_72/73 begin/end, Draw_74/75 and Draw_65/66 GUI stages,
+ * Draw_76/77 pre/post) over all instances in depth order. Cheap no-op when no object has it. */
+int gml_vm_draw_pass_active(GmlVM *vm, const char *suffix){
+  if(!vm || !suffix || !vm->render) return 0;
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(!in->active||in->marked||in->visible<0.5||!instance_draw_layer_visible(vm,in)) continue;
+    if(gml_vm_instances_event_lookup(vm,suffix,in->obj,NULL,NULL)) return 1;
+  }
+  return 0;
+}
 void gml_vm_draw_pass(GmlVM *vm, const char *suffix){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return;
   gml_render_set_frame(R,vm->frame);

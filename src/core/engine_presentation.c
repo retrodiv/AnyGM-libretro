@@ -1024,12 +1024,14 @@ void compose_view_rect(const uint32_t *src, int sw, int sh,
 }
 
 /* Render every visible GMS view once, in view-index order, then composite each camera into its
- * declared port on the application surface.  The single-view path stays untouched for the common
- * case; this branch pays the extra pass only for games that actually expose multiple viewports. */
+ * declared port on the application surface. Pre-Draw and Post-Draw are screen-stage events owned
+ * by the frame coordinator and remain outside this per-view sequence. */
 int render_multiview_application(AnygmEngine *engine) {
   GmlPresentView views[8]; int canvas_w = 0, canvas_h = 0;
   int count = present_view_count(engine,views, &canvas_w, &canvas_h);
   if (count <= 1 || canvas_w != (int)engine->width || canvas_h != (int)engine->height) return 0;
+  if(!ensure_scratch_buffer(engine,&engine->app_crop)) return 0;
+  uint32_t *view_buffer=engine->app_crop;
   memset(engine->fb, 0, (size_t)engine->width * engine->height * sizeof(uint32_t));
   for (unsigned i = 0; i < engine->width * engine->height; i++) engine->fb[i] = 0xFF000000u;
 
@@ -1047,19 +1049,18 @@ int render_multiview_application(AnygmEngine *engine) {
     GmlRenderSamplePlanes planes={0};
     gml_render_sample_planes_update(&engine->render,&planes,
                                     GML_RENDER_SAMPLE_PLANES_APPLICATION);
-    gml_render_begin(&engine->render, engine->screen, vw, vh, v->x, v->y);
+    gml_render_begin(&engine->render, view_buffer, vw, vh, v->x, v->y);
     gml_render_set_pending_fill(&engine->render, engine->background);
-    gml_vm_draw_pass(&engine->vm, "Draw_76");
     if (have_room && !gml_draws_bg) draw_runtime_backgrounds(engine,0);
     gml_vm_draw_pass(&engine->vm, "Draw_72");
     gml_vm_draw(&engine->vm);
     gml_vm_draw_pass(&engine->vm, "Draw_73");
     if (have_room && !gml_draws_bg) draw_runtime_backgrounds(engine,1);
     gml_render_flush_pending_fill(&engine->render);
-    compose_view_rect(engine->screen, vw, vh, engine->fb, (int)engine->width, (int)engine->height,
+    compose_view_rect(view_buffer, vw, vh, engine->fb, (int)engine->width, (int)engine->height,
                       v->px, v->py, v->pw, v->ph);
   }
-  *gml_varmap_put(&engine->vm.globals, "view_current") = vreal(7);
+  *gml_varmap_put(&engine->vm.globals, "view_current") = vreal(0);
   GmlRenderTargetCoverage coverage={
     .opaque_known=1,
     .all_opaque=1,

@@ -491,6 +491,21 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   AspectViewOverlay draw_ov;
   if (!engine->follow_player) aspect_view_overlay_begin(engine,&draw_ov, 1, ASPECT_VIEW_FORCED);
   else memset(&draw_ov, 0, sizeof(draw_ov));
+  /* Pre-Draw is a screen-stage event which runs once before the visible frame is snapshotted
+   * viewports. It may deliberately change view visibility or camera state for the regular draw
+   * phases, so it cannot live inside the per-view loop. */
+  if(gml_vm_draw_pass_active(&engine->vm,"Draw_76")){
+    if(!engine->output_width || !engine->output_height) compute_present(engine);
+    gml_render_begin(&engine->render,engine->screen,
+                     (int)engine->output_width,(int)engine->output_height,0.0,0.0);
+    gml_render_set_pending_fill(&engine->render,0);
+    gml_vm_draw_pass(&engine->vm,"Draw_76");
+    gml_render_flush_pending_fill(&engine->render);
+    sync_room_fps(engine,1);
+  }
+  GmlPresentView frame_views[8];
+  int frame_view_count=present_view_count(engine,frame_views,NULL,NULL);
+  int frame_view_index=frame_view_count>0?frame_views[0].index:0;
   engine->background = cur_room_bg(engine);
   double cam_x, cam_y;
   if (engine->follow_player) {
@@ -510,10 +525,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
        * room defaults forever.  The multiview compositor already resolves this indirection; the
        * common single-view path must use the same resolved rectangle or every world instance is
        * rendered relative to (0,0) even though camera_get_view_x/y report the moving camera. */
-      GmlPresentView primary;
-      if (present_view_get(engine,0, &primary)) {
-        cam_x = primary.x;
-        cam_y = primary.y;
+      if (frame_view_count > 0) {
+        cam_x = frame_views[0].x;
+        cam_y = frame_views[0].y;
       } else {
         cam_x = gml_global_arr(&engine->vm, "view_xview", 0);
         cam_y = gml_global_arr(&engine->vm, "view_yview", 0);
@@ -562,9 +576,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                              !engine->canvas_mode && !engine->aspect_force_active &&
                              classic_pixels<=SIZE_MAX/3 &&
                              ensure_classic_phase(engine,classic_pixels*3);
-  int view_surface = (int)gml_global_arr(&engine->vm, "view_surface_id", 0);
+  int view_surface = (int)gml_global_arr(&engine->vm, "view_surface_id", frame_view_index);
   int multiview_rendered = !engine->aspect_force_active && render_multiview_application(engine);
   if (!multiview_rendered) {
+  *gml_varmap_put(&engine->vm.globals,"view_current")=vreal(frame_view_index);
   gml_render_begin(&engine->render, engine->fb, engine->width, engine->height, cam_x, cam_y);
   if(classic_phase) sample_planes.classic_vertical=engine->classic_phase_mem;
   if(classic_interp_phase){
@@ -582,12 +597,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   const char *bg_renderer = anygm_host_development_setting(&engine->host,"GML_BG_RENDERER_OBJ");
   int pobj = (bg_renderer && *bg_renderer) ? gml_object_index_by_name(&engine->vm, bg_renderer) : -1;
   int gml_draws_bg = (pobj >= 0 && gml_find_instance(&engine->vm, pobj) != NULL);
-  gml_vm_draw_pass(&engine->vm, "Draw_76");   /* Pre-Draw (GMS2 ev 76): before the room render */
   if (have_room && !gml_draws_bg) draw_runtime_backgrounds(engine,0);
   gml_vm_draw_pass(&engine->vm, "Draw_72");   /* Draw Begin */
   gml_vm_draw(&engine->vm);   /* instances + room tiles, interleaved by depth */
   gml_vm_draw_pass(&engine->vm, "Draw_73");   /* Draw End */
   if (have_room && !gml_draws_bg) draw_runtime_backgrounds(engine,1);
+  *gml_varmap_put(&engine->vm.globals,"view_current")=vreal(0);
   engine->aspect_draw_full_context = 0;
   engine->aspect_event_view_stack_pointer = 0;
   engine->aspect_event_view_overflow = 0;
@@ -630,7 +645,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     int aw=app_view.width, ah=app_view.height;
     if(!(view_surface>0 && gml_surface_exists(&engine->render,view_surface))){
       GmlPresentView v;
-      if(present_view_get(engine,0,&v)){
+      if(frame_view_count>0){
+        v=frame_views[0];
         int dx=v.px, dy=v.py, dw=v.pw, dh=v.ph;
         /* A sole view which covered the logical application surface before an explicit resize
          * continues to cover the resized surface.  Its room/view coordinates stay logical while
@@ -638,7 +654,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
          * old pixel-sized port here instead placed the whole scene in one corner of the larger
          * surface before presentation.  Multi-view and deliberately inset ports retain their
          * authored rectangles. */
-        int one_view = present_view_count(engine,NULL,NULL,NULL)==1;
+        int one_view = frame_view_count==1;
         int port_is_logical = abs(dw-(int)engine->width)<=1 && abs(dh-(int)engine->height)<=1;
         /* A room can retain a full-window port authored for a larger display after game code has
          * selected a smaller window/application surface (for example 1920x1080 -> 960x540). The

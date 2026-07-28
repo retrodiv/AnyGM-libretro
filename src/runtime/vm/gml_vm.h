@@ -452,7 +452,8 @@ int     gml_room_index_by_name(GmlWin *win, const char *name);
 
 /* save-state payload for the VM runtime only. Static data parsed from data.win is not included. */
 size_t  gml_vm_state_size(GmlVM *vm);
-void    gml_vm_draw_pass(GmlVM *vm, const char *suffix);   /* Draw_72/73/74/75/65/66 stage events */
+int     gml_vm_draw_pass_active(GmlVM *vm, const char *suffix);
+void    gml_vm_draw_pass(GmlVM *vm, const char *suffix); /* Draw_72-77 and Draw_65/66 stage events */
 int     gml_vm_state_save(GmlVM *vm, void *data, size_t len, size_t *written);
 int     gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used);
 

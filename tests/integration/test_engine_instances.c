@@ -79,6 +79,48 @@ static int screen_stage_raster_policy(void){
   return 1;
 }
 
+static int draw_schedule_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_draw_content_create(&fixture)){
+    fputs("draw schedule fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  output.struct_size=sizeof output;
+  for(int frame=0;ok && frame<2;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  double pre=ok?gml_global_num(&engine->vm,"fixture_pre_draw"):0;
+  double draw=ok?gml_global_num(&engine->vm,"fixture_draw"):0;
+  double post=ok?gml_global_num(&engine->vm,"fixture_post_draw"):0;
+  double view_sum=ok?gml_global_num(&engine->vm,"fixture_view_sum"):0;
+  ok=ok && pre==2 && draw==2 && post==2 && view_sum==4;
+  if(!ok)
+    fprintf(stderr,
+      "draw schedule mismatch: pre=%.0f draw=%.0f post=%.0f view-sum=%.0f\n",
+      pre,draw,post,view_sum);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidate,size_t size,
                                      const uint8_t *baseline,size_t baseline_size,
                                      const char *label){
@@ -114,6 +156,7 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
 
 int main(void){
   if(!screen_stage_raster_policy()) return 1;
+  if(!draw_schedule_policy()) return 1;
   char label[128];
   anygm_content_save_label("/library/fixture_bundle/data.win",label,sizeof label);
   if(strcmp(label,"fixture_bundle")){

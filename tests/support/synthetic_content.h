@@ -13,6 +13,7 @@ typedef struct AnygmSyntheticContent {
 } AnygmSyntheticContent;
 
 int anygm_synthetic_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_draw_content_create(AnygmSyntheticContent *fixture);
 void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture);
 int anygm_synthetic_content_read(const AnygmSyntheticContent *fixture,uint8_t **data,size_t *size);
 
