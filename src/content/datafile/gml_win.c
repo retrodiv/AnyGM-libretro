@@ -178,6 +178,8 @@ static int parse_strg(GmlWin *w){
 static int parse_code(GmlWin *w){
   const GmlChunk *c=gml_chunk(w,"CODE");
   if(!c) return 1;
+  /* A present but empty table is valid structural metadata; it contains no VM entries. */
+  if(c->size==0) return 1;
   uint32_t count=0;
   size_t table_bytes=0,allocation_bytes=0;
   if(!chunk_read_u32(w,c,0,&count) || count>GML_WIN_MAX_CODE_ENTRIES ||
@@ -236,7 +238,8 @@ static int parse_refs(GmlWin *w){
   const char *chunks[2]={"VARI","FUNC"};
   for(int ci=0;ci<2;ci++){
     GmlRefLayout l;
-    if(!gml_chunk(w,chunks[ci])) continue;
+    const GmlChunk *chunk=gml_chunk(w,chunks[ci]);
+    if(!chunk || chunk->size==0) continue;
     if(!gml_bc_ref_layout(w,chunks[ci],&l) || !ref_layout_valid(w,&l)) return 0;
     for(uint32_t i=0;i<l.count;i++){
       uint32_t o=l.start+i*l.stride;
@@ -256,7 +259,8 @@ static int parse_refs(GmlWin *w){
   uint32_t n=0;
   for(int ci=0;ci<2;ci++){
     GmlRefLayout l;
-    if(!gml_chunk(w,chunks[ci])) continue;
+    const GmlChunk *chunk=gml_chunk(w,chunks[ci]);
+    if(!chunk || chunk->size==0) continue;
     if(!gml_bc_ref_layout(w,chunks[ci],&l) || !ref_layout_valid(w,&l)) return 0;
     for(uint32_t i=0;i<l.count;i++){
       uint32_t o=l.start+i*l.stride;

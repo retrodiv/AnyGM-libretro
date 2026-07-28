@@ -166,17 +166,18 @@ static int file_hash64(const AnygmContentRouter *router,const char *path,uint64_
 
 enum {
   ANYGM_CACHE_SCHEMA=1,
-  ANYGM_CACHE_PRODUCER_REVISION=1,
+  ANYGM_CACHE_PRODUCER_REVISION=2,
   ANYGM_CACHE_ARCHIVE=1,
   ANYGM_CACHE_SOURCE_PROJECT=2,
   ANYGM_CACHE_CLASSIC_PROJECT=3,
+  ANYGM_CACHE_STUDIO_EXECUTABLE=4,
   ANYGM_CACHE_HEADER_SIZE=72
 };
 /* This fingerprint names the exact deterministic producer recipe, independently of the cache
  * container schema. Change the recipe text whenever generated payload semantics change. */
 static uint64_t cache_producer_fingerprint(void){
   static const char recipe[]=
-    "AnyGM cache producer: structural package; classic import; bounded archive extraction";
+    "AnyGM cache producer: structural package; classic import; bounded archive and executable extraction";
   return cache_hash_bytes(recipe,sizeof recipe-1);
 }
 static void cache_put_u32(uint8_t *p,uint32_t v){
@@ -325,6 +326,116 @@ static void file_map_close(GmlFileMap *m){
   free(m->data);
   memset(m,0,sizeof(*m));
 }
+
+/* Select a single bounded FORM data image carried by an executable. Validation uses the ordinary
+ * content reader; ambiguous or malformed candidates are never selected. */
+static int embedded_studio_form(const uint8_t *data,size_t size,size_t *offset_out,
+                                size_t *size_out){
+  if(offset_out) *offset_out=0;
+  if(size_out) *size_out=0;
+  if(!data || size<10 || data[0]!='M' || data[1]!='Z') return 0;
+  size_t cursor=2,found_offset=0,found_size=0;
+  while(cursor+8u<=size){
+    const uint8_t *candidate=memchr(data+cursor,'F',size-cursor-7u);
+    if(!candidate) break;
+    size_t offset=(size_t)(candidate-data);
+    cursor=offset+1u;
+    if(memcmp(candidate,"FORM",4)) continue;
+    uint32_t body_size=zu32(candidate+4);
+    if(body_size>GML_WIN_MAX_FILE_BYTES-8u) continue;
+    size_t extent=(size_t)body_size+8u;
+    if(extent>GML_WIN_MAX_FILE_BYTES || extent>size-offset) continue;
+    GmlWin probe;
+    if(gml_win_from_mem(&probe,(uint8_t *)(uintptr_t)candidate,extent,0)!=0) continue;
+    gml_win_free(&probe);
+    if(found_size) return -1;
+    found_offset=offset;
+    found_size=extent;
+  }
+  if(!found_size) return 0;
+  if(offset_out) *offset_out=found_offset;
+  if(size_out) *size_out=found_size;
+  return 1;
+}
+
+static int load_studio_executable_content(const AnygmContentRouter *router,const char *srcpath,
+                                          char *content_path,size_t content_path_size){
+  uint64_t source_size=0,source_hash=0;
+  if(!router || !file_size64(router,srcpath,&source_size) ||
+     source_size>ANYGM_CONTENT_MAX_EXECUTABLE_BYTES){
+    if(source_size>ANYGM_CONTENT_MAX_EXECUTABLE_BYTES)
+      content_log(router,ANYGM_CONTENT_LOG_ERROR,
+                  "executable: input exceeds the bounded executable size");
+    return source_size>ANYGM_CONTENT_MAX_EXECUTABLE_BYTES?-1:0;
+  }
+  if(!file_hash64(router,srcpath,&source_hash)) return 0;
+
+  const char *base=router->cache_directory?router->cache_directory:"tmp";
+  char stem[256],outdir[768],outwin[900],marker[900];
+  anygm_content_path_stem(srcpath,stem,sizeof stem);
+  snprintf(outdir,sizeof outdir,"%s/%s-%016llx-anygm-studio-executable",base,stem,
+           (unsigned long long)source_hash);
+  snprintf(outwin,sizeof outwin,"%s/data.win",outdir);
+  snprintf(marker,sizeof marker,"%s/.anygm_cache",outdir);
+
+  char marker_data[1];
+  uint64_t stored_hash=0,stored_size=0,actual_hash=0,actual_size=0;
+  if(cache_marker_read(router,marker,ANYGM_CACHE_STUDIO_EXECUTABLE,source_hash,source_size,
+                       &stored_hash,&stored_size,marker_data,sizeof marker_data) &&
+     file_size64(router,outwin,&actual_size) && actual_size==stored_size &&
+     file_hash64(router,outwin,&actual_hash) && actual_hash==stored_hash){
+    snprintf(content_path,content_path_size,"%s",outwin);
+    content_log(router,ANYGM_CONTENT_LOG_INFO,
+                "executable: reusing extracted Studio payload at %s",outwin);
+    return 1;
+  }
+
+  GmlFileMap executable={0};
+  if(!anygm_vfs_read_all(router->host,srcpath,&executable.data,&executable.size,
+                         (size_t)ANYGM_CONTENT_MAX_EXECUTABLE_BYTES)) return 0;
+  if(executable.size!=(size_t)source_size ||
+     cache_hash_bytes(executable.data,executable.size)!=source_hash){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,
+                "executable: input changed while it was being inspected");
+    file_map_close(&executable);
+    return -1;
+  }
+  size_t form_offset=0,form_size=0;
+  int found=embedded_studio_form(executable.data,executable.size,&form_offset,&form_size);
+  if(found<0){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,
+                "executable: multiple normalized Studio payloads are ambiguous");
+    file_map_close(&executable);
+    return -1;
+  }
+  if(!found){
+    file_map_close(&executable);
+    return 0;
+  }
+  if(!mkdirs_for(router,outdir,1) ||
+     !anygm_vfs_write_all(router->host,outwin,executable.data+form_offset,form_size)){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,
+                "executable: could not materialize the normalized Studio payload");
+    file_map_close(&executable);
+    return -1;
+  }
+  file_map_close(&executable);
+  if(!file_size64(router,outwin,&actual_size) || actual_size!=form_size ||
+     !file_hash64(router,outwin,&actual_hash)){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,
+                "executable: extracted Studio payload failed verification");
+    return -1;
+  }
+  if(!cache_marker_write(router,marker,ANYGM_CACHE_STUDIO_EXECUTABLE,source_hash,source_size,
+                         actual_hash,actual_size,NULL))
+    content_log(router,ANYGM_CONTENT_LOG_WARN,
+                "executable: could not publish cache marker");
+  snprintf(content_path,content_path_size,"%s",outwin);
+  content_log(router,ANYGM_CONTENT_LOG_INFO,
+              "executable: extracted Studio payload to %s",outwin);
+  return 1;
+}
+
 static int file_magic_kind(const AnygmContentRouter *router,const char *path){
   uint8_t b[4];
   if(!router || !anygm_vfs_can_read(router->host)) return 0;
@@ -811,6 +922,12 @@ int anygm_content_resolve_path(const AnygmContentRouter *router,const char *inpu
                                char *resolved_path,size_t resolved_path_size){
   if(!input_path || !input_path[0] || !resolved_path || resolved_path_size==0) return 0;
   resolved_path[0]=0;
+  if(path_ext_is(input_path,".exe")){
+    int embedded=load_studio_executable_content(router,input_path,resolved_path,
+                                                resolved_path_size);
+    if(embedded) return embedded>0;
+    return load_classic_project_content(router,input_path,resolved_path,resolved_path_size);
+  }
   if(path_ext_is(input_path,".gmk") || path_ext_is(input_path,".gm81") ||
      path_ext_is(input_path,".gm6") || path_ext_is(input_path,".exe")){
     return load_classic_project_content(router,input_path,resolved_path,resolved_path_size);

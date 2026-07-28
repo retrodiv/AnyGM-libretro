@@ -71,6 +71,13 @@ static int buffer_u32(Buffer *buffer,uint32_t value){
   return buffer_bytes(buffer,encoded,sizeof encoded);
 }
 
+static void store_u32(uint8_t *data,size_t offset,uint32_t value){
+  data[offset]=(uint8_t)value;
+  data[offset+1]=(uint8_t)(value>>8);
+  data[offset+2]=(uint8_t)(value>>16);
+  data[offset+3]=(uint8_t)(value>>24);
+}
+
 static uint32_t crc32_bytes(const uint8_t *data,size_t size){
   uint32_t crc=UINT32_MAX;
   for(size_t i=0;i<size;i++){
@@ -156,6 +163,24 @@ static int read_prefix(const char *path,void *data,size_t size){
   return ok;
 }
 
+static int read_file(const char *path,uint8_t **data,size_t *size){
+  if(data) *data=NULL;
+  if(size) *size=0;
+  FILE *file=fopen(path,"rb");
+  if(!file) return 0;
+  int ok=fseek(file,0,SEEK_END)==0;
+  long length=ok?ftell(file):-1;
+  if(length<0 || fseek(file,0,SEEK_SET)!=0) ok=0;
+  uint8_t *bytes=ok?malloc((size_t)length?((size_t)length):1u):NULL;
+  if(ok && !bytes) ok=0;
+  if(ok && fread(bytes,1,(size_t)length,file)!=(size_t)length) ok=0;
+  if(fclose(file)!=0) ok=0;
+  if(!ok){ free(bytes); return 0; }
+  if(data) *data=bytes; else free(bytes);
+  if(size) *size=(size_t)length;
+  return 1;
+}
+
 static int remove_tree(const char *path){
   DIR *directory=opendir(path);
   if(!directory) return errno==ENOENT;
@@ -210,6 +235,62 @@ static int invalid_case(const AnygmHostServices *services,const char *root,const
   return ok;
 }
 
+static void build_no_code_form(uint8_t form[200]){
+  memset(form,0,200);
+  memcpy(form,"FORM",4);
+  store_u32(form,4,192);
+  memcpy(form+8,"GEN8",4);
+  store_u32(form,12,136);
+  form[17]=15;
+  store_u32(form,76,320);
+  store_u32(form,80,240);
+  memcpy(form+152,"ROOM",4);
+  store_u32(form,156,4);
+  memcpy(form+164,"CODE",4);
+  memcpy(form+172,"VARI",4);
+  memcpy(form+180,"FUNC",4);
+  memcpy(form+188,"STRG",4);
+  store_u32(form,192,4);
+}
+
+static int embedded_executable_cases(const AnygmHostServices *services,const char *root){
+  uint8_t form[200],executable[224]={0};
+  build_no_code_form(form);
+  executable[0]='M';
+  executable[1]='Z';
+  memcpy(executable+4,"FORM",4);
+  store_u32(executable,8,UINT32_MAX);
+  memcpy(executable+24,form,sizeof form);
+
+  char path[512],resolved[1024],resolved_again[1024];
+  if(snprintf(path,sizeof path,"%s/embedded.exe",root)>=(int)sizeof path ||
+     !write_file(path,executable,sizeof executable)) return 0;
+  AnygmContentRouter router={0};
+  router.host=services;
+  router.cache_directory=root;
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved) ||
+     !anygm_content_resolve_path(&router,path,resolved_again,sizeof resolved_again) ||
+     strcmp(resolved,resolved_again) || !strcmp(resolved,path))
+    return fail("embedded executable was not resolved through its stable cache");
+  uint8_t *extracted=NULL;
+  size_t extracted_size=0;
+  int ok=read_file(resolved,&extracted,&extracted_size) &&
+         extracted_size==sizeof form && !memcmp(extracted,form,sizeof form);
+  free(extracted);
+  if(!ok) return fail("embedded executable payload changed");
+
+  uint8_t ambiguous[424]={0};
+  ambiguous[0]='M';
+  ambiguous[1]='Z';
+  memcpy(ambiguous+16,form,sizeof form);
+  memcpy(ambiguous+224,form,sizeof form);
+  if(snprintf(path,sizeof path,"%s/ambiguous.exe",root)>=(int)sizeof path ||
+     !write_file(path,ambiguous,sizeof ambiguous) ||
+     anygm_content_resolve_path(&router,path,resolved,sizeof resolved))
+    return fail("ambiguous embedded executable was accepted");
+  return 1;
+}
+
 int main(void){
   char root[]="build/content-security-XXXXXX";
   if(!mkdtemp(root)) return fail("could not create temporary root")?0:1;
@@ -244,7 +325,7 @@ int main(void){
   ZipEntry bad_crc=safe;
   bad_crc.corrupt_crc=1;
 
-  int ok=1;
+  int ok=embedded_executable_cases(&services,root);
   ZipEntry pair[2]={traversal,safe};
   ok=ok&&invalid_case(&services,root,"traversal.zip",pair,2);
   pair[0]=absolute;

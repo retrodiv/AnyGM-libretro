@@ -131,6 +131,29 @@ static int fixed_container_cases(void){
   memcpy(short_gen8+8,"GEN8",4);
   write_u32(short_gen8,12,4);
   if(!rejected("short GEN8 record",short_gen8,sizeof short_gen8,0)) return 0;
+
+  uint8_t no_code[200]={0};
+  memcpy(no_code,"FORM",4);
+  write_u32(no_code,4,(uint32_t)(sizeof no_code-8u));
+  memcpy(no_code+8,"GEN8",4);
+  write_u32(no_code,12,136);
+  no_code[17]=15;
+  write_u32(no_code,76,320);
+  write_u32(no_code,80,240);
+  memcpy(no_code+152,"ROOM",4);
+  write_u32(no_code,156,4);
+  memcpy(no_code+164,"CODE",4);
+  memcpy(no_code+172,"VARI",4);
+  memcpy(no_code+180,"FUNC",4);
+  memcpy(no_code+188,"STRG",4);
+  write_u32(no_code,192,4);
+  GmlWin win;
+  if(gml_win_from_mem(&win,no_code,sizeof no_code,0)!=0 ||
+     win.bytecode!=15 || win.n_code!=0){
+    fprintf(stderr,"rejected structurally valid empty executable-code chunks\n");
+    return 0;
+  }
+  gml_win_free(&win);
   return 1;
 }
 

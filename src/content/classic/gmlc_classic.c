@@ -1671,8 +1671,8 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
      !reader_u32(&r,&count,"legacy executable extension count") ||
      !parse_executable_extensions(&r,out,count)){
     if(err && errcap && !err[0])
-      snprintf(err,errcap,"classic executable: invalid extension section at offset %zu",
-               section_offset);
+      snprintf(err,errcap,"classic executable: invalid extension section at offset %" PRIu64,
+               (uint64_t)section_offset);
     return 0;
   }
 
@@ -1682,8 +1682,9 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
        !reader_u32(&r,&count,"legacy executable resource count") ||
        count>(r.size-r.pos)/4u){
       if(err && errcap && !err[0])
-        snprintf(err,errcap,"classic executable: invalid %s section at offset %zu",
-                 gmlc_classic_resource_name((GmlcClassicResourceType)type),section_offset);
+        snprintf(err,errcap,"classic executable: invalid %s section at offset %" PRIu64,
+                 gmlc_classic_resource_name((GmlcClassicResourceType)type),
+                 (uint64_t)section_offset);
       return 0;
     }
     out->inventory.resource_section_offsets[type]=r.pos-8u;
@@ -1696,8 +1697,9 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
       size_t slot_offset=r.pos;
       if(!parse_legacy_executable_slot(&r,(GmlcClassicResourceType)type,&out->slots[type][slot])){
         if(err && errcap && !err[0])
-          snprintf(err,errcap,"classic executable: invalid %s slot %u at offset %zu",
-                   gmlc_classic_resource_name((GmlcClassicResourceType)type),slot,slot_offset);
+          snprintf(err,errcap,"classic executable: invalid %s slot %u at offset %" PRIu64,
+                   gmlc_classic_resource_name((GmlcClassicResourceType)type),slot,
+                   (uint64_t)slot_offset);
         return 0;
       }
       if(out->slots[type][slot].exists) out->existing[type]++;
@@ -1712,8 +1714,9 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
      !reader_u32(&r,&count,"legacy executable include count") ||
      count>(r.size-r.pos)/36u){
     if(err && errcap && !err[0])
-      snprintf(err,errcap,"classic executable: invalid included-file section at offset %zu",
-               section_offset);
+      snprintf(err,errcap,
+               "classic executable: invalid included-file section at offset %" PRIu64,
+               (uint64_t)section_offset);
     return 0;
   }
   if(count){
@@ -1728,8 +1731,9 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
   if(!reader_u32(&r,&version,"legacy executable game-information version") || version<430 ||
      !reader_words(&r,2,"legacy executable game-information fields")){
     if(err && errcap && !err[0])
-      snprintf(err,errcap,"classic executable: invalid game-information section at offset %zu",
-               section_offset);
+      snprintf(err,errcap,
+               "classic executable: invalid game-information section at offset %" PRIu64,
+               (uint64_t)section_offset);
     return 0;
   }
   if(version>=600 &&
@@ -1741,8 +1745,9 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
      !reader_u32(&r,&count,"legacy executable library-code count") ||
      count>(r.size-r.pos)/4u){
     if(err && errcap && !err[0])
-      snprintf(err,errcap,"classic executable: invalid information or library-code section at offset %zu",
-               section_offset);
+      snprintf(err,errcap,
+               "classic executable: invalid information or library-code section at offset %" PRIu64,
+               (uint64_t)section_offset);
     return 0;
   }
   for(uint32_t code=0;code<count;code++){
@@ -1760,8 +1765,8 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
      count>out->inventory.resource_slots[GMLC_CLASSIC_ROOM] ||
      count>(r.size-r.pos)/4u){
     if(err && errcap && !err[0])
-      snprintf(err,errcap,"classic executable: invalid room-order section at offset %zu",
-               section_offset);
+      snprintf(err,errcap,"classic executable: invalid room-order section at offset %" PRIu64,
+               (uint64_t)section_offset);
     return 0;
   }
   out->room_order=(uint32_t*)calloc(count?count:1u,sizeof(*out->room_order));
