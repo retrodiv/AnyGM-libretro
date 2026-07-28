@@ -4,6 +4,7 @@
 #include "persistent_test_fixture.h"
 
 #include "gml_builtin.h"
+#include "gml_vm_internal.h"
 #include "gml_render.h"
 #include "gml_render_internal.h"
 #include "gml_audio.h"
@@ -17,6 +18,65 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+int expect_early_native_layer_animation(void){
+  uint8_t data[512]={0};
+  fixture_w32(data,0,1);
+  fixture_w32(data,4,16);
+  fixture_w32(data,16+88,180);
+  fixture_w32(data,180,1);
+  fixture_w32(data,184,200);
+  fixture_w32(data,200,400);
+  fixture_w32(data,208,1);
+  fixture_w32(data,232,1);
+  fixture_w32(data,236,1);
+  fixture_w32(data,268,8);
+  memcpy(data+400,"fixture_layer",14);
+
+  GmlWin win={0};
+  win.data=data;
+  win.size=sizeof data;
+  win.bytecode=15;
+  win.game_speed=60;
+  win.n_chunks=1;
+  memcpy(win.chunks[0].name,"ROOM",5);
+  win.chunks[0].off=0;
+  win.chunks[0].size=sizeof data;
+
+  GmlRtLayer layer={0};
+  layer.id=1001;
+  layer.used=1;
+  memcpy(layer.name,"fixture_layer",14);
+  GmlRtElem element={0};
+  element.used=1;
+  element.type=1;
+  element.layer=layer.id;
+  element.image_speed=8;
+
+  GmlVM vm={0};
+  vm.win=&win;
+  vm.room_index=0;
+  vm.rtl=&layer;
+  vm.n_rtl=1;
+  vm.rte=&element;
+  vm.n_rte=1;
+  gml_vm_frame_advance_layers(&vm);
+  if(fabs(element.image_index-(8.0/60.0))>1e-12){
+    fprintf(stderr,"early native layer background did not animate: %.2f\n",
+            element.image_index);
+    return 0;
+  }
+
+  fixture_w32(data,208,2);
+  element.image_index=0;
+  gml_vm_frame_advance_layers(&vm);
+  if(element.image_index!=0){
+    fprintf(stderr,"early compatibility background used native layer cadence: %.2f\n",
+            element.image_index);
+    return 0;
+  }
+  return 1;
+}
 
 
 int expect_hash_layer_gpu_gap_closure(void){

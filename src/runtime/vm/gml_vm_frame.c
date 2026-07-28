@@ -186,13 +186,50 @@ static int mouse_event_fires(GmlVM *vm,int s,int hov,int was,int held,int presse
     case 61:return wheel<0;             default:return classic_joystick_event_fires(vm,s);
   }
 }
-void gml_vm_step(GmlVM *vm){
-  if(vm && vm->classic_info_active){
-    if(gml_keyboard_check(vm,1,1)) vm->classic_info_active=0;
-    return;
+static int room_element_animation_speed_type(GmlVM *vm, const GmlRtElem *element,
+                                             int *speed_type){
+  if(!vm || !vm->win || !element || vm->room_index<0) return 0;
+  GmlRtLayer *runtime_layer=gml_rt_layer_find(vm,element->layer);
+  if(!runtime_layer || !runtime_layer->name[0]) return 0;
+  const uint8_t *data=vm->win->data;
+  uint32_t count=0;
+  uint32_t layers=gml_vm_rooms_layer_list(vm,vm->room_index,&count);
+  if(!layers || count>=512) return 0;
+  for(uint32_t index=0;index<count;index++){
+    uint32_t layer=gml_vm_read_u32_le(data,layers+4+index*4);
+    if(!layer || layer+12>vm->win->size) continue;
+    uint32_t name=gml_vm_read_u32_le(data,layer);
+    if(!name || name>=vm->win->size ||
+       strcmp((const char*)(data+name),runtime_layer->name)) continue;
+    uint32_t type=gml_vm_read_u32_le(data,layer+8);
+    uint32_t type_data=gml_room_layer_type_off(vm,layer);
+    if(element->type==1 && type==1 && type_data+40<=vm->win->size){
+      if(speed_type) *speed_type=(int)gml_vm_read_u32_le(data,type_data+36);
+      return 1;
+    }
+    if(element->type==3 && type==3 && type_data+8<=vm->win->size){
+      uint32_t sprites=gml_vm_read_u32_le(data,type_data+4);
+      uint32_t sprite_count=(sprites && sprites+4<=vm->win->size)
+        ? gml_vm_read_u32_le(data,sprites):0;
+      if(sprite_count>100000 ||
+         (uint64_t)sprites+4+(uint64_t)sprite_count*4>vm->win->size) return 0;
+      for(uint32_t sprite_index=0;sprite_index<sprite_count;sprite_index++){
+        uint32_t record=gml_vm_read_u32_le(data,sprites+4+sprite_index*4);
+        if(!record || record+44>vm->win->size) continue;
+        uint32_t element_name=gml_vm_read_u32_le(data,record);
+        if(element_name && element_name<vm->win->size &&
+           !strcmp((const char*)(data+element_name),element->name)){
+          if(speed_type) *speed_type=(int)gml_vm_read_u32_le(data,record+32);
+          return 1;
+        }
+      }
+    }
   }
-  vm->frame++;
-  if(vm->render) gml_render_set_frame((GmlRender*)vm->render,vm->frame);
+  return 0;
+}
+
+void gml_vm_frame_advance_layers(GmlVM *vm){
+  if(!vm) return;
   /* GMS2 layers scroll by their hspeed/vspeed each step. Runtime-scripted layers accumulate here;
    * untouched ones are derived on the fly from the room definition (see the draw path). */
   for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used && vm->rtl[i].touched){
@@ -201,18 +238,38 @@ void gml_vm_step(GmlVM *vm){
     for(int i=0;i<vm->n_rte;i++){
       GmlRtElem *e=&vm->rte[i];
       if(!e->used || (e->type!=1 && e->type!=3) || e->image_speed==0) continue;
-      /* GMS2 background layers own an animated sprite subimage. Classic and Studio 1 room
-       * backgrounds have a different cadence path; compatibility records must not advance as
-       * modern layer elements. */
-      if(e->type==1 && (!vm->win || !anygm_policy_has_modern_function_values(vm->win))) continue;
+      int speed_type=0;
+      int native_element=room_element_animation_speed_type(vm,e,&speed_type);
+      /* Native room layers are a structural GMS2 feature and can occur with early bytecode.
+       * Classic backgrounds and non-layer compatibility records keep their separate cadence. */
+      if(e->type==1 &&
+         (!vm->win || anygm_policy_uses_classic_runtime(vm->win) ||
+          (!anygm_policy_has_modern_function_values(vm->win) &&
+           !native_element))) continue;
       int nf=R?gml_sprite_frames(R,e->sprite):0;
-      e->image_index += gml_sprite_animation_delta(R,e->sprite,e->image_speed,gml_room_speed(vm));
+      double delta;
+      if(native_element){
+        delta=e->image_speed;
+        if(speed_type==0) delta/=fmax(gml_room_speed(vm),1);
+      } else
+        delta=gml_sprite_animation_delta(R,e->sprite,e->image_speed,gml_room_speed(vm));
+      e->image_index += delta;
       if(nf>0){
         while(e->image_index>=nf) e->image_index-=nf;
         while(e->image_index<0) e->image_index+=nf;
       }
     }
   }
+}
+
+void gml_vm_step(GmlVM *vm){
+  if(vm && vm->classic_info_active){
+    if(gml_keyboard_check(vm,1,1)) vm->classic_info_active=0;
+    return;
+  }
+  vm->frame++;
+  if(vm->render) gml_render_set_frame((GmlRender*)vm->render,vm->frame);
+  gml_vm_frame_advance_layers(vm);
   /* Collect transient structures between frames while stacks and locals are empty. Without this,
    * unreferenced per-step structures accumulate indefinitely. */
   if(vm->n_structs>0 && vm->frame - vm->structs_last_gc_frame >= 120){
@@ -739,7 +796,7 @@ static int *vm_draw_order_scratch(GmlVM *vm, int need){
 }
 /* GMS2 runtime-layer draw records. File scope so the per-frame scratch buffers below can persist
  * across frames (reused, grown by doubling) instead of malloc/free + realloc(n+1) every frame. */
-struct LayBg { int sprite,subimg; int th,tv,stretch,order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
+struct LayBg { int sprite,subimg; int th,tv,stretch,order,native; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
 struct LayTile { int sprite; int sx,sy,w,h,order; double x,y,xs,ys; uint32_t blend; double alpha; double depth; };
 struct LaySprite { int sprite, subimg,order; double x,y,xs,ys,angle; uint32_t blend; double alpha; double depth; };
 struct LayEffect { GmlLayerFilter effect; int order; double depth; };
@@ -1058,7 +1115,7 @@ void gml_vm_draw(GmlVM *vm){
           if(!dl_grow((void**)&scratch->layer_background,
                       &scratch->layer_background_capacity,nlb+1,sizeof(*lbg))) continue;
           lbg=scratch->layer_background;
-          lbg[nlb].sprite=spr; lbg[nlb].subimg=0;
+          lbg[nlb].sprite=spr; lbg[nlb].subimg=0; lbg[nlb].native=1;
           lbg[nlb].th=(int)gml_vm_read_u32_le(d,b+12); lbg[nlb].tv=(int)gml_vm_read_u32_le(d,b+16);
           lbg[nlb].stretch=(int)gml_vm_read_u32_le(d,b+20);
           lbg[nlb].xs=lbg[nlb].ys=1;
@@ -1177,6 +1234,8 @@ void gml_vm_draw(GmlVM *vm){
                   &scratch->layer_background_capacity,nlb+1,sizeof(*lbg))) continue;
       lbg=scratch->layer_background;
       lbg[nlb].sprite=e->sprite; lbg[nlb].subimg=(int)floor(e->image_index);
+      lbg[nlb].native=anygm_policy_has_modern_function_values(vm->win) ||
+                      room_element_animation_speed_type(vm,e,NULL);
       lbg[nlb].th=e->htiled; lbg[nlb].tv=e->vtiled; lbg[nlb].stretch=e->stretch;
       lbg[nlb].xs=e->xs; lbg[nlb].ys=e->ys;
       lbg[nlb].x=lx; lbg[nlb].y=ly; lbg[nlb].blend=e->blend; lbg[nlb].alpha=e->alpha; lbg[nlb].depth=l->depth; lbg[nlb].order=l->order;
@@ -1293,8 +1352,8 @@ void gml_vm_draw(GmlVM *vm){
       continue; }
     if(it[k].type==3){ struct LayBg *b=&lbg[it[k].idx];
       if(b->sprite<0) gml_draw_layer_color_fill(R,b->blend,b->alpha);
-      else if(!vm->win || !anygm_policy_has_modern_function_values(vm->win)){
-        /* Compatibility layer records from older formats keep the legacy sprite-instance
+      else if(!b->native){
+        /* Compatibility layer records produced by older formats keep the legacy sprite-instance
          * origin and combined tiling behavior. The distinct-axis/top-left semantics below belong
          * to native GMS2 background layers. */
         if(b->th || b->tv) gml_draw_sprite_tiled_ext(R,b->sprite,0,b->x,b->y,1,1,b->blend,b->alpha);
