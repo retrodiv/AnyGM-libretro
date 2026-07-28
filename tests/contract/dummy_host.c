@@ -145,6 +145,29 @@ static int fail(const char *message){
   return 1;
 }
 
+static int exercise_declared_global_cadence(AnygmEngine *engine){
+  double saved_content_fps=engine->win.game_speed;
+  unsigned saved_modern_layers=engine->compatibility.has_modern_layer_semantics;
+  double saved_fps=engine->fps;
+  int saved_fps_room=engine->fps_room;
+
+  engine->win.game_speed=30.0;
+  engine->compatibility.has_modern_layer_semantics=1;
+  engine->fps_room=-1;
+  sync_room_fps(engine,0);
+
+  AnygmAvInfo av={0};
+  av.struct_size=sizeof av;
+  int ok=anygm_get_av_info(engine,&av)==ANYGM_OK && av.frames_per_second==30.0;
+
+  engine->win.game_speed=saved_content_fps;
+  engine->compatibility.has_modern_layer_semantics=saved_modern_layers;
+  engine->fps=saved_fps;
+  engine->fps_room=saved_fps_room;
+  if(!ok) return fail("declared global cadence was not reported to the host");
+  return 0;
+}
+
 static int exercise_optional_service_fallbacks(const AnygmContentSource *source){
   DummyHost dummy={0};
   AnygmHostServices services={0};
@@ -354,6 +377,7 @@ int main(void){
   av.struct_size=sizeof av;
   if(anygm_get_av_info(engine,&av)!=ANYGM_OK || !av.base_width || !av.base_height)
     return fail("A/V description failed");
+  if(exercise_declared_global_cadence(engine)) return 1;
   AnygmAvInfo short_av={0};
   short_av.struct_size=sizeof short_av-1;
   if(anygm_get_av_info(engine,&short_av)!=ANYGM_ERROR_INCOMPATIBLE_ABI)

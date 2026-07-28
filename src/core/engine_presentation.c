@@ -309,15 +309,17 @@ static double explicit_game_speed_fps(AnygmEngine *engine) {
   return fps > 0.0 ? fps : 0.0;
 }
 static double cur_room_fps(AnygmEngine *engine) {
-  /* Keep the reported frame rate stable. GMS2 games change room_speed mid-play for effects
-   * (death slow-mo, hitstop, a time-scale effect). Reflecting those changes through SET_SYSTEM_AV_INFO
-   * makes the host reconfigure and stutter, so GMS2 defaults to 60 unless game_set_speed()
-   * explicitly asks for a different global cadence. Older data.win versions keep using room.speed. */
+  /* Keep the reported frame rate stable. Studio projects can change room_speed mid-play for
+   * effects, so modern content uses its GEN8 global cadence instead of repeatedly reconfiguring
+   * the host. game_set_speed() remains authoritative when code explicitly changes that cadence.
+   * Older content keeps its room resource speed, with GEN8 as a stable fallback when present. */
   double fps = explicit_game_speed_fps(engine);
   if(fps > 0.0) return fps;
-  if(anygm_policy_has_modern_layer_semantics(&engine->win)) return 60.0;
+  if(anygm_policy_has_modern_layer_semantics(&engine->win))
+    return engine->win.game_speed > 0.0 ? engine->win.game_speed : 60.0;
   GmlRoom r;
   if (gml_room_get(&engine->win, engine->vm.room_index, &r) == 0 && r.speed > 0) return (double)r.speed;
+  if(engine->win.game_speed > 0.0) return engine->win.game_speed;
   return 60.0;
 }
 /* Resolve a view through its opaque GMS camera handle.  Camera resources are maintained by the VM
