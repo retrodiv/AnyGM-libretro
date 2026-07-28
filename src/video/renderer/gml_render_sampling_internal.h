@@ -90,6 +90,16 @@ static inline const struct GmlShaderPal *grayscale_active(GmlRender *r){
   const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
   return sp->grayscale ? sp : NULL;
 }
+static inline const struct GmlShaderPal *solid_alpha_mask_active(GmlRender *r){
+  if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
+  const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
+  return sp->solid_alpha_mask ? sp : NULL;
+}
+static inline const struct GmlShaderPal *solid_blur_alpha_active(GmlRender *r){
+  if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
+  const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
+  return sp->solid_blur_alpha ? sp : NULL;
+}
 static inline const struct GmlShaderPal *shader_active(GmlRender *r){
   if(!r || r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
   return &r->shader_pal[r->active_shader];
@@ -214,10 +224,18 @@ static inline uint32_t grid_map_px_cached(GmlRender *r, const struct GmlShaderPa
   return mapped;
 }
 static inline int mapped_texture_active(GmlRender *r){
-  return pal_active(r)!=NULL || lut_active(r)!=NULL || grid_active(r)!=NULL || grayscale_active(r)!=NULL;
+  return pal_active(r)!=NULL || lut_active(r)!=NULL || grid_active(r)!=NULL ||
+         grayscale_active(r)!=NULL || solid_alpha_mask_active(r)!=NULL;
 }
 static inline uint32_t mapped_texture_pixel(GmlRender *r, uint32_t value){
   const struct GmlShaderPal *shader;
+  if((shader=solid_alpha_mask_active(r))){
+    int alpha=(value>>24)&255;
+    if(shader->solid_alpha_mask_inclusive
+         ? alpha<=shader->solid_alpha_mask_cutoff_step
+         : alpha< shader->solid_alpha_mask_cutoff_step) alpha=0;
+    return ((uint32_t)alpha<<24)|shader->solid_alpha_mask_rgb;
+  }
   if((shader=lut_active(r))) return lut_map_px(r,shader,value);
   if((shader=grid_active(r))) return grid_map_px(r,shader,value);
   if((shader=grayscale_active(r))){

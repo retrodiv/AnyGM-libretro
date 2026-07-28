@@ -120,13 +120,28 @@ static void parse_sprt(GmlRender *r){
      * frame count (=-1) would zero the frame list and blank every sprite. */
     if(u32(d,p+56)==0xFFFFFFFFu){
       uint32_t sver=u32(d,p+60), stype=u32(d,p+64);
-      if(stype!=0){ s->n_frames=0; s->frame=calloc(1,sizeof(int)); continue; }  /* SWF/Spine: no simple list */
       float playback; memcpy(&playback,d+p+68,sizeof playback);
       uint32_t playback_type=u32(d,p+72);
       if(isfinite(playback) && playback>=0.0f && playback_type<=1){
         s->playback_speed=playback;
         s->playback_speed_type=(int)playback_type;
         s->playback_speed_valid=1;
+      }
+      if(stype!=0){
+        s->n_frames=0;
+        s->frame=calloc(1,sizeof(int));
+        if(stype==2){
+          uint32_t header=p+76+(sver>=2?4:0)+(sver>=3?4:0);
+          /* Some packages place a texture-page list before the skeletal record. */
+          if(header+12<=r->win->size){
+            uint32_t count=u32(d,header),candidate=header+4+count*4u;
+            if(count>0 && count<=16 && candidate+20<=r->win->size &&
+               u32(d,candidate)>=1 && u32(d,candidate)<=3)
+              header=candidate;
+          }
+          (void)gml_render_parse_spine(r,s,p,header);
+        }
+        continue;
       }
       uint32_t fl=76;                         /* after PlaybackSpeed(+68)+PlaybackSpeedType(+72) */
       if(sver>=2) fl+=4;                       /* SequenceOffset */
@@ -677,6 +692,8 @@ int gml_render_shader_is_compiled(const GmlRender *r,int shader){
   return recognized->has || recognized->lut || recognized->grid ||
          recognized->alpha_discard || recognized->dual_sample ||
          recognized->paint || recognized->grayscale ||
+         recognized->solid_alpha_mask ||
+         recognized->solid_blur_alpha ||
          recognized->radial_wave ||
          (recognized->hsv_scan && r->crt_shader_enable) ||
          (recognized->sampled_crt && r->crt_shader_enable) ||
@@ -751,6 +768,12 @@ int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *n
        recognized->grayscale_has_alpha_uniform &&
        !strcmp(name,recognized->grayscale_alpha_uniform))
       return GML_RENDER_SHADER_HANDLE(shader,14);
+    if(recognized->solid_alpha_mask &&
+       !strcmp(name,recognized->solid_alpha_mask_uniform))
+      return GML_RENDER_SHADER_HANDLE(shader,51);
+    if(recognized->solid_blur_alpha &&
+       !strcmp(name,recognized->solid_blur_alpha_uniform))
+      return GML_RENDER_SHADER_HANDLE(shader,52);
   }
   return shader>=0?GML_RENDER_SHADER_HANDLE(shader,63):-1;
 }
@@ -836,6 +859,30 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
     recognized->grayscale_alpha=(float)values[0];
     return;
   }
+  if(recognized->solid_alpha_mask && slot==51){
+    uint32_t packed=0;
+    for(int component=0;component<3;component++){
+      recognized->solid_alpha_mask_colour[component]=(float)values[component];
+      int channel=(int)floor(values[component]*255.0+0.5);
+      if(channel<0) channel=0;
+      else if(channel>255) channel=255;
+      packed|=(uint32_t)channel<<(16-component*8);
+    }
+    recognized->solid_alpha_mask_rgb=packed;
+    return;
+  }
+  if(recognized->solid_blur_alpha && slot==52){
+    uint32_t packed=0;
+    for(int component=0;component<3;component++){
+      recognized->solid_blur_alpha_colour[component]=(float)values[component];
+      int channel=(int)floor(values[component]*255.0+0.5);
+      if(channel<0) channel=0;
+      else if(channel>255) channel=255;
+      packed|=(uint32_t)channel<<(16-component*8);
+    }
+    recognized->solid_blur_alpha_rgb=packed;
+    return;
+  }
   if(!recognized->crt) return;
   switch(slot){
     case 3:
@@ -885,6 +932,7 @@ int gml_render_shader_texture_stage_set(
 int gml_render_backend_draw_view(GmlRender *r,GmlRenderBackendDrawView *view){
   if(view) memset(view,0,sizeof(*view));
   if(!r || !view) return 0;
+  gml_render_flush_rotated_batch(r);
   view->host=r->win?r->win->host:NULL;
   view->pixels=r->fb;
   if(r->target_sp==0 && r->fb==r->base_fb){
@@ -917,6 +965,7 @@ void gml_render_backend_gui_map_point(const GmlRender *r,double *x,double *y){
   gml_render_gui_map_point(r,x,y);
 }
 void gml_render_free(GmlRender *r){
+  gml_render_flush_rotated_batch(r);
   atlas_pool_free(r);   /* before atlas teardown: workers read r->atlas/win */
   gml_row_pool_free(r);  /* compositor workers must stop before their renderer workspaces vanish */
   for(int i=0;i<GML_MAX_SURFACES;i++) free(r->surface[i].px);
@@ -924,6 +973,7 @@ void gml_render_free(GmlRender *r){
   free(r->default_font.map); free(r->default_font.glyphs);
   for(int i=0;i<r->n_spr;i++){
     gml_render_sprite_cache_free(&r->spr[i]);
+    gml_render_free_spine(r->spr[i].spine);
     free(r->spr[i].runtime_rgba);
     free(r->spr[i].runtime_row_min);
     free(r->spr[i].runtime_row_max);
@@ -937,7 +987,9 @@ void gml_render_free(GmlRender *r){
     free(r->tpag[i].alpha_qrow_max);
     free(r->tpag[i].alpha_qrow_built);
     free(r->tpag[i].alpha_runs);
+    free(r->tpag[i].alpha8_cache);
     free(r->tpag[i].argb_cache);
+    free(r->tpag[i].solid_blur_alpha_cache);
     for(int q=0;q<3;q++) free(r->tpag[i].interp_phase_cache[q]);
     free(r->tpag[i].fast8_draw_cache);
   }
@@ -956,10 +1008,13 @@ void gml_render_free(GmlRender *r){
   r->layer_blur_taps=NULL; r->layer_blur_tap_capacity=0;
   r->layer_filter_capacity=0; r->layer_filter_active=0;
   free(r->app_surface_owned); r->app_surface_owned=NULL;
+  free(r->rotated_batch); r->rotated_batch=NULL;
+  r->rotated_batch_count=r->rotated_batch_capacity=0;
   free(r->atlas); free(r->spr); free(r->tpag); free(r->bg); free(r->shader_pal);
   free(r->tpag_ptr); r->tpag_ptr=NULL;
 }
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, double cy){
+  gml_render_flush_rotated_batch(r);
   r->fb=fb; r->fbw=w; r->fbh=h; r->base_fb=fb; r->base_fbw=w; r->base_fbh=h;
   r->gui_pass_active=0;
   r->gui_base_logical_w=r->gui_base_logical_h=0;
@@ -1099,6 +1154,7 @@ double gml_render_gui_logical_y(const GmlRender *r, double physical_y){
 #define gml_render_gui_logical_x render_gui_logical_x_local
 #define gml_render_gui_logical_y render_gui_logical_y_local
 void gml_render_set_pending_underlay(GmlRender *r, int x, int y, int w, int h){
+  gml_render_flush_rotated_batch(r);
   if(!r || !r->app_surface || w<=0 || h<=0){
     if(r) r->pending_underlay=0;
     return;
@@ -1121,6 +1177,7 @@ void gml_render_cancel_pending_fill(GmlRender *r){
 }
 void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0) return;
+  gml_render_flush_rotated_batch(r);
   gml_render_cancel_pending_underlay(r);
   r->pending_fill=1;
   r->pending_fill_color=color;
@@ -1147,6 +1204,7 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
   }
 }
 void gml_render_flush_pending_fill(GmlRender *r){
+  gml_render_flush_rotated_batch(r);
   if(!r || !r->pending_fill || !r->fb || r->fbw<=0 || r->fbh<=0) return;
   uint32_t color=r->pending_fill_color;
   r->pending_fill=0;
@@ -1163,6 +1221,7 @@ void gml_render_flush_pending_fill(GmlRender *r){
   }
 }
 void gml_render_flush_pending_underlay(GmlRender *r){
+  gml_render_flush_rotated_batch(r);
   if(!r || !r->pending_underlay) return;
   int x=r->underlay_x, y=r->underlay_y, w=r->underlay_w, h=r->underlay_h;
   r->pending_underlay=0;
@@ -1215,6 +1274,7 @@ void gml_render_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1
 }
 static inline void render_maybe_prepare_draw_local(GmlRender *r){
   if(r){
+    if(!r->rotated_batch_building) gml_render_flush_rotated_batch(r);
     if(r->pending_underlay || r->pending_fill) gml_render_prepare_draw(r);
     r->fb_all_transparent=0;
   }

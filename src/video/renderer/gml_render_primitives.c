@@ -4,10 +4,108 @@
 /* Renderer-owned fixed-function primitive kernels and typed operations. */
 #include <math.h>
 #include <stdlib.h>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 #include "gml_render.h"
 #include "gml_render_backend.h"
 #include "gml_render_internal.h"
+
+static void draw_additive_span(GmlRender *render,uint32_t *pixels,int count,
+                               uint32_t color,double alpha){
+  uint32_t source=gml_render_backend_color_to_xrgb(color);
+  int add_red=(int)(((source>>16)&255u)*alpha);
+  int add_green=(int)(((source>>8)&255u)*alpha);
+  int add_blue=(int)((source&255u)*alpha);
+  int add_alpha=(int)(255.0*alpha);
+#if defined(__SSE2__)
+  uint32_t packed=(render->target_sp>0?(uint32_t)add_alpha<<24:0)|
+                  ((uint32_t)add_red<<16)|((uint32_t)add_green<<8)|
+                  (uint32_t)add_blue;
+  __m128i increment=_mm_set1_epi32((int)packed);
+  __m128i framebuffer_alpha=_mm_set1_epi32((int)UINT32_C(0xFF000000));
+  while(count>=4){
+    __m128i destination=_mm_loadu_si128((const __m128i*)pixels);
+    __m128i result=_mm_adds_epu8(destination,increment);
+    if(render->target_sp<=0) result=_mm_or_si128(result,framebuffer_alpha);
+    _mm_storeu_si128((__m128i*)pixels,result);
+    pixels+=4;
+    count-=4;
+  }
+#endif
+  for(int index=0;index<count;index++){
+    uint32_t destination=pixels[index];
+    int red=(int)((destination>>16)&255u)+add_red;
+    int green=(int)((destination>>8)&255u)+add_green;
+    int blue=(int)(destination&255u)+add_blue;
+    int coverage=render->target_sp>0
+      ? (int)(destination>>24)+add_alpha : 255;
+    if(red>255) red=255;
+    if(green>255) green=255;
+    if(blue>255) blue=255;
+    if(coverage>255) coverage=255;
+    pixels[index]=((uint32_t)coverage<<24)|((uint32_t)red<<16)|
+                  ((uint32_t)green<<8)|(uint32_t)blue;
+  }
+}
+
+static void draw_opaque_gradient_row(uint32_t *pixels,int count,
+                                     uint32_t left,uint32_t right){
+  int denominator=count-1;
+  if(denominator<=0){
+    if(count>0) pixels[0]=left;
+    return;
+  }
+  int red=(int)((left>>16)&255u);
+  int green=(int)((left>>8)&255u);
+  int blue=(int)(left&255u);
+  int red_delta=(int)((right>>16)&255u)-red;
+  int green_delta=(int)((right>>8)&255u)-green;
+  int blue_delta=(int)(right&255u)-blue;
+  int red_sign=red_delta<0?-1:1;
+  int green_sign=green_delta<0?-1:1;
+  int blue_sign=blue_delta<0?-1:1;
+  int red_amount=abs(red_delta),green_amount=abs(green_delta),blue_amount=abs(blue_delta);
+  int red_error=0,green_error=0,blue_error=0;
+  for(int index=0;index<count;index++){
+    pixels[index]=UINT32_C(0xFF000000)|((uint32_t)red<<16)|
+                  ((uint32_t)green<<8)|(uint32_t)blue;
+    red_error+=red_amount;
+    green_error+=green_amount;
+    blue_error+=blue_amount;
+    if(red_error>=denominator){
+      int increment=red_amount<=denominator?1:red_error/denominator;
+      red_error-=increment*denominator;
+      red+=red_sign*increment;
+    }
+    if(green_error>=denominator){
+      int increment=green_amount<=denominator?1:green_error/denominator;
+      green_error-=increment*denominator;
+      green+=green_sign*increment;
+    }
+    if(blue_error>=denominator){
+      int increment=blue_amount<=denominator?1:blue_error/denominator;
+      blue_error-=increment*denominator;
+      blue+=blue_sign*increment;
+    }
+  }
+}
+
+typedef struct {
+  GmlRender *render;
+  int x,y,width;
+  uint32_t color;
+  double alpha;
+} GmlAdditiveRows;
+static void draw_additive_rows(void *context,int row_start,int row_end,int slot){
+  (void)slot;
+  GmlAdditiveRows *rows=(GmlAdditiveRows*)context;
+  for(int row=row_start;row<row_end;row++)
+    draw_additive_span(rows->render,
+      rows->render->fb+(size_t)(rows->y+row)*rows->render->fbw+rows->x,
+      rows->width,rows->color,rows->alpha);
+}
 
 static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, uint32_t gmcol, int outline, double alpha){
   if(!R) return;
@@ -36,6 +134,16 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
   if(!outline){
     gml_render_maybe_prepare_draw(R);
     if(R->blendmode!=0){
+      if(R->alphablend && R->blendmode==1 &&
+         R->blend_equation==1 && R->blend_equation_alpha==1){
+        R->fb_all_transparent=0;
+        GmlAdditiveRows rows={R,x1,y1,x2-x1+1,gmcol,alpha};
+        if((size_t)rows.width*(size_t)(y2-y1+1)>=262144u)
+          gml_run_row_bands(R,y2-y1+1,draw_additive_rows,&rows);
+        else
+          draw_additive_rows(&rows,0,y2-y1+1,0);
+        return;
+      }
       for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++) gml_render_backend_draw_pixel_alpha(R,x,y,gmcol,alpha);
       return;
     }
@@ -73,6 +181,27 @@ void gml_draw_layer_color_fill(GmlRender *R, uint32_t gmcol, double alpha){
   if(!R) return;
   draw_rect_prim_alpha(R,0,0,R->fbw-1,R->fbh-1,gmcol,0,alpha);
 }
+
+typedef struct {
+  GmlRender *render;
+  int x,y,width,height_denominator;
+  uint32_t top_left,top_right,bottom_right,bottom_left;
+} GmlGradientRows;
+static void draw_gradient_rows(void *context,int row_start,int row_end,int slot){
+  (void)slot;
+  GmlGradientRows *rows=(GmlGradientRows*)context;
+  for(int row=row_start;row<row_end;row++){
+    uint32_t left=gml_render_backend_lerp_xrgb(
+      rows->top_left,rows->bottom_left,row,rows->height_denominator);
+    uint32_t right=gml_render_backend_lerp_xrgb(
+      rows->top_right,rows->bottom_right,row,rows->height_denominator);
+    uint32_t *pixels=rows->render->fb+
+      (size_t)(rows->y+row)*rows->render->fbw+rows->x;
+    if(left==right) gml_render_backend_fill_xrgb(pixels,rows->width,left);
+    else draw_opaque_gradient_row(pixels,rows->width,left,right);
+  }
+}
+
 static void draw_rect_colour_prim(GmlRender *R, int x1, int y1, int x2, int y2,
                                   uint32_t c1, uint32_t c2, uint32_t c3, uint32_t c4,
                                   int outline){
@@ -98,6 +227,14 @@ static void draw_rect_colour_prim(GmlRender *R, int x1, int y1, int x2, int y2,
   else gml_render_maybe_prepare_draw(R);
   uint32_t tl=gml_render_backend_color_to_xrgb(c1), tr=gml_render_backend_color_to_xrgb(c2), br=gml_render_backend_color_to_xrgb(c3), bl=gml_render_backend_color_to_xrgb(c4);
   int wden=x2-x1, hden=y2-y1, n=x2-x1+1;
+  if(alpha>=1.0){
+    GmlGradientRows rows={R,x1,y1,n,hden,tl,tr,br,bl};
+    if((size_t)n*(size_t)(y2-y1+1)>=262144u)
+      gml_run_row_bands(R,y2-y1+1,draw_gradient_rows,&rows);
+    else
+      draw_gradient_rows(&rows,0,y2-y1+1,0);
+    return;
+  }
   if(tl==tr && bl==br){
     for(int y=y1;y<=y2;y++){
       uint32_t rowc=gml_render_backend_lerp_xrgb(tl,bl,y-y1,hden);
@@ -284,6 +421,58 @@ static void draw_circle_colour_prim(GmlRender *R,int cx,int cy,int rx,int ry,
   }
 }
 
+typedef struct {
+  GmlRender *render;
+  int min_x,min_y,max_x;
+  double denominator,a_step,b_step,a_row,b_row,a_row_step,b_row_step;
+  uint32_t source;
+} GmlOpaqueTriangleRows;
+static void draw_opaque_triangle_rows(void *context,int row_start,int row_end,int slot){
+  (void)slot;
+  GmlOpaqueTriangleRows *rows=(GmlOpaqueTriangleRows*)context;
+  double sign=rows->denominator>0.0?1.0:-1.0;
+  int width=rows->max_x-rows->min_x+1;
+  for(int row=row_start;row<row_end;row++){
+    double a_row=rows->a_row+rows->a_row_step*row;
+    double b_row=rows->b_row+rows->b_row_step*row;
+    double value[3]={
+      sign*a_row,
+      sign*b_row,
+      sign*(rows->denominator-a_row-b_row)
+    };
+    double step[3]={
+      sign*rows->a_step,
+      sign*rows->b_step,
+      sign*(-rows->a_step-rows->b_step)
+    };
+    int first=0,last=width-1;
+    for(int edge=0;edge<3 && first<=last;edge++){
+      if(step[edge]>0.0){
+        int bound=(int)ceil(-value[edge]/step[edge]);
+        if(bound>first) first=bound;
+      } else if(step[edge]<0.0){
+        int bound=(int)floor(value[edge]/-step[edge]);
+        if(bound<last) last=bound;
+      } else if(value[edge]<0.0) first=last+1;
+    }
+    if(first<0) first=0;
+    if(last>=width) last=width-1;
+    while(first<=last &&
+          (value[0]+step[0]*first<0.0 ||
+           value[1]+step[1]*first<0.0 ||
+           value[2]+step[2]*first<0.0)) first++;
+    while(first<=last &&
+          (value[0]+step[0]*last<0.0 ||
+           value[1]+step[1]*last<0.0 ||
+           value[2]+step[2]*last<0.0)) last--;
+    if(first<=last)
+      gml_render_backend_fill_xrgb(
+        rows->render->fb+(size_t)(rows->min_y+row)*rows->render->fbw+
+          rows->min_x+first,
+        last-first+1,rows->source);
+  }
+}
+
 /* Instance-owned immediate-mode primitive buffer used between begin/end. */
 static void prim_tri_fill_ex(GmlRender *R, double X1,double Y1,double X2,double Y2,double X3,double Y3,
                              uint32_t col, double alpha, int outline){
@@ -299,6 +488,29 @@ static void prim_tri_fill_ex(GmlRender *R, double X1,double Y1,double X2,double 
   if(maxxd<0.0||maxyd<0.0||minxd>(double)(R->fbw-1)||minyd>(double)(R->fbh-1)) return;
   int minx=minxd<0.0?0:(int)minxd, maxx=maxxd>=(double)R->fbw?R->fbw-1:(int)maxxd;
   int miny=minyd<0.0?0:(int)minyd, maxy=maxyd>=(double)R->fbh?R->fbh-1:(int)maxyd;
+  int opaque_span=!outline && alpha>=1.0 && R->blendmode==0 &&
+    R->blend_equation==1 && R->blend_equation_alpha==1 &&
+    R->color_write_mask==15 &&
+    fabs(X1-nearbyint(X1))<1e-9 && fabs(Y1-nearbyint(Y1))<1e-9 &&
+    fabs(X2-nearbyint(X2))<1e-9 && fabs(Y2-nearbyint(Y2))<1e-9 &&
+    fabs(X3-nearbyint(X3))<1e-9 && fabs(Y3-nearbyint(Y3))<1e-9;
+  if(opaque_span){
+    GmlOpaqueTriangleRows rows={
+      R,minx,miny,maxx,den,
+      Y2-Y3,Y3-Y1,
+      (Y2-Y3)*(minx-X3)+(X3-X2)*(miny-Y3),
+      (Y3-Y1)*(minx-X3)+(X1-X3)*(miny-Y3),
+      X3-X2,X1-X3,
+      gml_render_backend_color_to_xrgb(col)
+    };
+    gml_render_maybe_prepare_draw(R);
+    R->fb_all_transparent=0;
+    if((size_t)(maxx-minx+1)*(size_t)(maxy-miny+1)>=262144u)
+      gml_run_row_bands(R,maxy-miny+1,draw_opaque_triangle_rows,&rows);
+    else
+      draw_opaque_triangle_rows(&rows,0,maxy-miny+1,0);
+    return;
+  }
   for(int yy=miny;yy<=maxy;yy++) for(int xx=minx;xx<=maxx;xx++){
     double a0=((Y2-Y3)*(xx-X3)+(X3-X2)*(yy-Y3))/den;
     double b0=((Y3-Y1)*(xx-X3)+(X1-X3)*(yy-Y3))/den;

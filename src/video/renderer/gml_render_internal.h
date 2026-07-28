@@ -16,7 +16,10 @@ typedef struct {
   uint16_t *alpha_qrow_min, *alpha_qrow_max; /* per-alpha-threshold row spans, built lazily */
   uint8_t *alpha_qrow_built;
   GmlTpagAlphaRun *alpha_runs; int alpha_run_count, alpha_runs_built;
+  uint8_t *alpha8_cache;                  /* compact alpha source for constant-colour masks */
   uint32_t *argb_cache;                  /* compact ARGB source pixels for hot rotated draws */
+  uint32_t *solid_blur_alpha_cache;      /* recognized constant-colour convolution alpha */
+  int solid_blur_alpha_shader, solid_blur_alpha_interp;
   uint32_t *interp_phase_cache[3];       /* lazy x/y/xy half-sample ARGB for exact-2x ports */
   uint32_t *fast8_draw_cache;            /* RGB plus draw-alpha for repeated large fast8 draws */
   double fast8_draw_alpha_key;
@@ -37,6 +40,32 @@ typedef struct {
   int y, x, len;
   uint8_t alpha;
 } GmlRuntimeAxisRun;
+typedef struct {
+  char *name;
+  int x, y, width, height;
+  int offset_x, offset_y, original_width, original_height;
+  int rotate;
+} GmlSpineRegion;
+typedef struct {
+  void *json;
+  char *json_text, *atlas_text;
+  GmlSpineRegion *region;
+  int region_count;
+  int texture_page;
+  const char *default_animation;
+} GmlSpine;
+typedef struct {
+  int texture_page;
+  double x[4], y[4], u[4], v[4];
+  uint32_t colour;
+  double alpha;
+} GmlSpineDrawItem;
+typedef struct {
+  const char *name;
+  int parent;
+  double x, y, rotation, scale_x, scale_y;
+  double world_x, world_y, a, b, c, d;
+} GmlSpinePoseBone;
 typedef struct { const char *name; int originx, originy, w, h, n_frames; int *frame;
                  int ml, mr, mt, mb;                /* collision bbox coordinates: left,right,top,bottom */
                  const uint8_t *mask; int mask_rowb, mask_count;  /* SPRT collision mask: 1bpp */
@@ -54,6 +83,7 @@ typedef struct { const char *name; int originx, originy, w, h, n_frames; int *fr
                  int base_ml, base_mr, base_mt, base_mb, base_mask_rowb, base_mask_count;
                  int base_collision_kind, base_collision_tolerance;
                  const uint8_t *base_mask;
+                 GmlSpine *spine;
                  /* GMS2.3+ nine-slice: draw scaled with fixed-size borders (corners never scale;
                   * edges/center follow their tile mode: 0=stretch 1=repeat 2=mirror 3=blankrepeat 4=hide) */
                  int ns_enabled, ns_l, ns_t, ns_r, ns_b, ns_tile[5]; } GmlSprite;
@@ -112,6 +142,8 @@ typedef struct GmlRender {
   int interp_subrect_count, interp_subrect_capacity;
   size_t interp_subrect_bytes;
   GmlSprite *spr; int n_spr, base_n_spr, spr_cap, spr_has_free;
+  GmlRenderSkeletonState skeleton_state;
+  int skeleton_state_active;
   GmlBg    *bg; int n_bg;
   GmlFont   fonts[GML_MAX_FONTS]; int n_fonts;
   GmlFont   default_font;                                          /* built-in font selected by id -1 */
@@ -219,6 +251,25 @@ typedef struct GmlRender {
      * the embedded GLSL, so texture draws can preserve hard sprite edges without a GPU. */
     int alpha_discard, alpha_discard_inclusive;
     float alpha_discard_cutoff;
+    /* Constant-colour alpha-mask family. The fragment samples the base texture once, clears alpha
+     * below a parsed literal threshold, and emits a uniform RGB with the remaining source alpha.
+     * The parser derives the uniform and comparison from the complete fragment operation graph. */
+    int solid_alpha_mask, solid_alpha_mask_inclusive;
+    char solid_alpha_mask_uniform[32];
+    float solid_alpha_mask_cutoff, solid_alpha_mask_colour[3];
+    int solid_alpha_mask_cutoff_step;
+    uint32_t solid_alpha_mask_rgb;
+    /* Constant-colour alpha convolution. The horizontal pass is a weighted sample sum; the
+     * vertical pass multiplies that accumulator by parsed weighted source-alpha terms. Both tap
+     * graphs and normalized texture steps are retained from the complete fragment. */
+    int solid_blur_alpha;
+    char solid_blur_alpha_uniform[32];
+    float solid_blur_alpha_colour[3];
+    uint32_t solid_blur_alpha_rgb;
+    float solid_blur_alpha_step_x, solid_blur_alpha_step_y;
+    int solid_blur_alpha_x_count, solid_blur_alpha_y_count;
+    float solid_blur_alpha_x_offset[16], solid_blur_alpha_x_weight[16];
+    float solid_blur_alpha_y_offset[16], solid_blur_alpha_y_weight[16];
     int lut;                    /* palette-LUT shader: out = palette[(src.r, row)] */
     char lut_row_uniform[32];   /* uniform float selecting the palette row */
     char lut_sampler[32];       /* sampler2D holding the palette texture */
@@ -356,6 +407,12 @@ typedef struct GmlRender {
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;
   void     *row_pool;                 /* persistent compositor workers, owned by this renderer */
+  /* Consecutive large rotated source-over draws can share one row-pool dispatch while retaining
+   * their order independently inside every framebuffer row. The opaque command storage is owned
+   * by the blitter; all other renderer operations flush it before observing the target. */
+  void     *rotated_batch;
+  int       rotated_batch_count, rotated_batch_capacity;
+  int       rotated_batch_building;
   size_t   atlas_decoded_bytes;
   size_t   atlas_prefetch_budget;
   int      axis_cache_log_count;
@@ -394,9 +451,16 @@ void atlas_pool_free(GmlRender *r);
 uint8_t *atlas_pixels(GmlRender *r,int index);
 void parse_txtr(GmlRender *r);
 void parse_shader_palettes(GmlRender *r);
+int gml_render_parse_spine(GmlRender *r,GmlSprite *sprite,uint32_t record,
+                           uint32_t header);
+void gml_render_free_spine(GmlSpine *spine);
+int gml_render_spine_build_items(
+  GmlRender *r,const GmlSprite *sprite,double x,double y,double xscale,
+  double yscale,double rotation,GmlSpineDrawItem *items,int capacity);
 void gml_run_row_bands_n(GmlRender *r,int height,int thread_count,
                          GmlRowBandFn function,void *context);
 void gml_run_row_bands(GmlRender *r,int height,GmlRowBandFn function,void *context);
+void gml_render_flush_rotated_batch(GmlRender *r);
 uint32_t *surface_pixels(GmlRender *r,int surface,int *width,int *height);
 int surface_known_opaque(GmlRender *r,int surface);
 int surface_known_transparent(GmlRender *r,int surface);

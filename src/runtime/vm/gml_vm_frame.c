@@ -36,6 +36,67 @@ void gml_vm_instances_run_boundary_events(GmlVM *vm);
 int gml_vm_instances_step_snapshot_member(GmlVM *vm, const GmlInstance *in);
 #define VMPROF_MARK(field) do{ (void)sizeof(#field); }while(0)
 
+static const char *instance_skeleton_attachment(void *context,const char *slot){
+  GmlInstance *instance=(GmlInstance*)context;
+  char key[384];
+  int length=snprintf(key,sizeof(key),"__skel_attachment:%s",slot?slot:"");
+  if(length<0 || (size_t)length>=sizeof(key)) return NULL;
+  GmlVal *value=gml_varmap_get(&instance->vars,key);
+  return value && value->t==V_STR ? (value->s?value->s:"") : NULL;
+}
+
+static int instance_skeleton_bone(void *context,const char *kind,
+                                  const char *bone,const char *field,
+                                  double *value){
+  GmlInstance *instance=(GmlInstance*)context;
+  char key[384];
+  int length=snprintf(key,sizeof(key),"__skel_%s:%s:%s",
+                      kind?kind:"",bone?bone:"",field?field:"");
+  if(length<0 || (size_t)length>=sizeof(key)) return 0;
+  GmlVal *stored=gml_varmap_get(&instance->vars,key);
+  if(!stored || stored->t==V_UNDEF || stored->t==V_STR) return 0;
+  *value=stored->d;
+  return 1;
+}
+
+static GmlVal *instance_skeleton_value(GmlInstance *instance,const char *name){
+  return instance?gml_varmap_get(&instance->vars,name):NULL;
+}
+
+static double instance_skeleton_time(GmlInstance *instance){
+  GmlVal *value=instance_skeleton_value(instance,"__skel_time");
+  return value && value->t==V_REAL ? value->d : 0;
+}
+
+static void instance_skeleton_time_set(GmlInstance *instance,double time){
+  GmlVal *value=instance_skeleton_value(instance,"__skel_time");
+  if(!value) value=gml_varmap_put(&instance->vars,"__skel_time");
+  if(value) *value=vreal(time);
+}
+
+void gml_vm_draw_instance_sprite(GmlVM *vm,GmlInstance *instance,double alpha){
+  GmlRender *render=vm?(GmlRender*)vm->render:NULL;
+  if(!render || !instance || instance->sprite_index<0) return;
+  if(gml_render_sprite_is_skeleton(render,(int)instance->sprite_index)){
+    GmlVal *animation=instance_skeleton_value(instance,"__skel_animation");
+    GmlVal *skin=instance_skeleton_value(instance,"__skel_skin");
+    GmlRenderSkeletonState state;
+    memset(&state,0,sizeof(state));
+    state.context=instance;
+    state.animation=(animation&&animation->t==V_STR)?animation->s:NULL;
+    state.skin=(skin&&skin->t==V_STR)?skin->s:NULL;
+    state.time=instance_skeleton_time(instance);
+    state.attachment=instance_skeleton_attachment;
+    state.bone=instance_skeleton_bone;
+    gml_render_skeleton_state_set(render,&state);
+  }
+  gml_draw_sprite_ext(render,(int)instance->sprite_index,(int)instance->image_index,
+                      instance->x,instance->y,
+                      instance->image_xscale,instance->image_yscale,
+                      instance->image_angle,(uint32_t)instance->image_blend,alpha);
+  gml_render_skeleton_state_set(render,NULL);
+}
+
 static void advance_instance_animations(GmlVM *vm){
   GmlRender *R=(GmlRender*)vm->render;
   const char *anim_dbg=anygm_host_development_setting(vm->host,"GML_ANIM_OBJ");
@@ -54,6 +115,24 @@ static void advance_instance_animations(GmlVM *vm){
         anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[anim] %s x=%.1f y=%.1f vs=%.1f spr=%d(%s) idx=%.2f nf=%d\n",
           on,in->x,in->y,in->vspeed,si,sn,in->image_index,nf);
       }
+    }
+    if(R && gml_render_sprite_is_skeleton(R,(int)in->sprite_index)){
+      if(in->image_speed!=0){
+        GmlVal *animation=instance_skeleton_value(in,"__skel_animation");
+        const char *name=(animation&&animation->t==V_STR)?animation->s:NULL;
+        double duration=gml_render_skeleton_animation_duration(
+          R,(int)in->sprite_index,name);
+        double time=instance_skeleton_time(in)+
+          in->image_speed/fmax(gml_room_speed(vm),1);
+        int wrapped=duration>0 && (time>=duration || time<0);
+        if(duration>0){
+          while(time>=duration) time-=duration;
+          while(time<0) time+=duration;
+        }
+        instance_skeleton_time_set(in,time);
+        if(wrapped) gml_run_event(vm,in,"Other_7");
+      }
+      continue;
     }
     if(in->image_speed!=0 && (nf>0 || (vm->win && anygm_policy_uses_classic_runtime(vm->win)))){
       double step=(vm->win && !anygm_policy_uses_classic_runtime(vm->win))
@@ -1267,9 +1346,7 @@ void gml_vm_draw(GmlVM *vm){
       if(drew) continue;
     }
     if(in->sprite_index>=0)
-      gml_draw_sprite_ext(R,(int)in->sprite_index,(int)in->image_index,in->x,in->y,
-                          in->image_xscale,in->image_yscale,in->image_angle,
-                          (uint32_t)in->image_blend,in->image_alpha);
+      gml_vm_draw_instance_sprite(vm,in,in->image_alpha);
   }
   if(active_layer) gml_run_layer_script(vm,active_layer->script_end);
   if(active_filter_started) gml_render_layer_filter_end(R,active_filter,effect_time);

@@ -597,6 +597,7 @@ int software3d_case_primitive_model(Software3dRasterFixture *fixture){
       gml_render_begin(&fixture->render,fixture->pixels,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0);
       int anchor=20+q*10;
       gml_draw_sprite_ext(&fixture->render,fixture->flipped_sprite,0,anchor,anchor,1,1,angle[q],0xFFFFFF,1);
+      gml_render_flush_rotated_batch(&fixture->render);
       int count=0,minx=SOFTWARE3D_WIDTH,miny=SOFTWARE3D_HEIGHT,maxx=-1,maxy=-1;
       for(int py=0;py<SOFTWARE3D_HEIGHT;py++) for(int px=0;px<SOFTWARE3D_WIDTH;px++)
         if(fixture->pixels[py*SOFTWARE3D_WIDTH+px]&0x00FFFFFFu){
@@ -1104,4 +1105,3 @@ int software3d_case_primitive_model(Software3dRasterFixture *fixture){
   }
   return 1;
 }
-

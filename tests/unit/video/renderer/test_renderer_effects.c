@@ -2,7 +2,9 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_render_internal.h"
+#include "gml_render_backend.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -253,6 +255,13 @@ static void check_shader_recognition(void) {
     "const vec3 weights = vec3(0.2,0.7,0.1); void main(){ "
     "float luminance=dot(vec3(1.0),weights); "
     "gl_FragColor=vec4(luminance,luminance,luminance,1.0); }",
+    "uniform vec3 u_tint; void main(){ vec4 sampled = "
+    "texture2D(gm_BaseTexture, v_vTexcoord); if(sampled.a < 0.25){ "
+    "sampled.a = 0.0; } gl_FragColor = vec4(u_tint.rgb, sampled.a); }",
+    "uniform vec3 u_partial; void main(){ vec4 sampled = "
+    "texture2D(gm_BaseTexture, v_vTexcoord); if(sampled.a < 0.25){ "
+    "sampled.a = 0.0; } sampled.r *= 0.5; "
+    "gl_FragColor = vec4(u_partial.rgb, sampled.a); }",
     "const vec3 toneA = vec3(256.0/256.0,256.0/256.0,256.0/256.0);"
     "const vec3 toneB = vec3(256.0/256.0,0.0/256.0,0.0/256.0);"
     "const vec3 toneC = vec3(0.0/256.0,0.0/256.0,0.0/256.0);"
@@ -261,9 +270,27 @@ static void check_shader_recognition(void) {
     "const vec3 toneA = vec3(256.0/256.0,256.0/256.0,256.0/256.0);"
     "const vec3 toneB = vec3(256.0/256.0,0.0/256.0,0.0/256.0);"
     "const vec3 toneC = vec3(0.0/256.0,0.0/256.0,0.0/256.0);"
-    "void main(){ float classifierUniform=1.0; gl_FragColor=vec4(classifierUniform); }"
+    "void main(){ float classifierUniform=1.0; gl_FragColor=vec4(classifierUniform); }",
+    "uniform vec3 u_blur_colour; void main(){ mediump vec4 sum=vec4(0.0,0.0,0.0,0.0);"
+    "vec2 delta=vec2(0.01,0.0);"
+    "sum+=texture2D(gm_BaseTexture,uv-1.0*delta)*0.25;"
+    "sum+=texture2D(gm_BaseTexture,uv)*0.5;"
+    "sum+=texture2D(gm_BaseTexture,uv+1.0*delta)*0.25;"
+    "delta=vec2(0.0,0.02);"
+    "sum+=texture2D(gm_BaseTexture,uv-1.0*delta)*0.1*sum;"
+    "sum+=texture2D(gm_BaseTexture,uv+1.0*delta)*0.1*sum;"
+    "gl_FragColor=vec4(u_blur_colour.rgb,sum.a);}",
+    "uniform vec3 u_near_blur; void main(){ vec4 sum=vec4(0.0,0.0,0.0,0.0);"
+    "vec2 delta=vec2(0.01,0.0);"
+    "sum+=texture2D(gm_BaseTexture,uv-1.0*delta)*0.25;"
+    "sum+=texture2D(gm_BaseTexture,uv)*0.5;"
+    "sum+=texture2D(gm_BaseTexture,uv+1.0*delta)*0.25;"
+    "delta=vec2(0.0,0.02);"
+    "sum+=texture2D(gm_BaseTexture,uv-1.0*delta)*0.1*sum;"
+    "sum+=texture2D(gm_BaseTexture,uv+1.0*delta)*0.1*sum;"
+    "sum.rgb*=0.5;gl_FragColor=vec4(u_near_blur.rgb,sum.a);}"
   };
-  enum { SHADER_COUNT = 5, DATA_SIZE = 4096 };
+  enum { SHADER_COUNT = 9, DATA_SIZE = 8192 };
   uint8_t data[DATA_SIZE];
   GmlWin content;
   GmlRender render;
@@ -282,7 +309,7 @@ static void check_shader_recognition(void) {
     memcpy(data + fragment_offset, fragments[i], length + 1);
     fragment_offset += length + 1;
   }
-  write_u32(data, 4 + 4 * 4, DATA_SIZE - 8);
+  write_u32(data, 4 + 8 * 4, DATA_SIZE - 8);
 
   content.data = data;
   content.size = sizeof(data);
@@ -299,9 +326,13 @@ static void check_shader_recognition(void) {
   if (render.shader_pal && render.n_shader_pal == SHADER_COUNT) {
     const struct GmlShaderPal *alpha = &render.shader_pal[0];
     const struct GmlShaderPal *gray = &render.shader_pal[1];
-    const struct GmlShaderPal *palette = &render.shader_pal[2];
-    const struct GmlShaderPal *near_match = &render.shader_pal[3];
-    const struct GmlShaderPal *bounded = &render.shader_pal[4];
+    struct GmlShaderPal *mask = &render.shader_pal[2];
+    const struct GmlShaderPal *mask_near_match = &render.shader_pal[3];
+    const struct GmlShaderPal *palette = &render.shader_pal[4];
+    const struct GmlShaderPal *near_match = &render.shader_pal[5];
+    struct GmlShaderPal *blur = &render.shader_pal[6];
+    const struct GmlShaderPal *blur_near_match = &render.shader_pal[7];
+    const struct GmlShaderPal *bounded = &render.shader_pal[8];
     expect(alpha->alpha_discard && alpha->alpha_discard_inclusive &&
            alpha->alpha_discard_cutoff == 0.25f,
            "alpha-discard structure was not recognized exactly");
@@ -310,6 +341,35 @@ static void check_shader_recognition(void) {
            gray->grayscale_weight[1] == 0.7f &&
            gray->grayscale_weight[2] == 0.1f,
            "grayscale structure or constants were not preserved");
+    expect(mask->solid_alpha_mask && !mask->solid_alpha_mask_inclusive &&
+           mask->solid_alpha_mask_cutoff == 0.25f &&
+           !strcmp(mask->solid_alpha_mask_uniform, "u_tint") &&
+           gml_render_shader_is_compiled(&render, 2),
+           "constant-colour alpha-mask graph was not recognized exactly");
+    int mask_uniform =
+      gml_render_shader_uniform_handle(&render, 2, "u_tint");
+    const double mask_values[4] = {0.25, 0.5, 0.75, 1.0};
+    gml_render_shader_uniform_set(&render, mask_uniform, mask_values);
+    expect(mask_uniform == 2 * 64 + 51 &&
+           mask->solid_alpha_mask_colour[0] == 0.25f &&
+           mask->solid_alpha_mask_colour[1] == 0.5f &&
+           mask->solid_alpha_mask_colour[2] == 0.75f,
+           "constant-colour alpha-mask uniform did not retain its values");
+    expect(blur->solid_blur_alpha &&
+           blur->solid_blur_alpha_x_count == 3 &&
+           blur->solid_blur_alpha_y_count == 2 &&
+           blur->solid_blur_alpha_step_x == 0.01f &&
+           blur->solid_blur_alpha_step_y == 0.02f &&
+           !strcmp(blur->solid_blur_alpha_uniform, "u_blur_colour") &&
+           gml_render_shader_is_compiled(&render, 6),
+           "constant-colour alpha-convolution graph was not recognized exactly");
+    int blur_uniform =
+      gml_render_shader_uniform_handle(&render, 6, "u_blur_colour");
+    const double blur_values[4] = {0.125, 0.375, 0.625, 1.0};
+    gml_render_shader_uniform_set(&render, blur_uniform, blur_values);
+    expect(blur_uniform == 6 * 64 + 52 &&
+           blur->solid_blur_alpha_rgb == 0x0020609fu,
+           "constant-colour alpha-convolution uniform did not retain its values");
     expect(palette->has && palette->L[0] == 255 && palette->L[1] == 255 &&
            palette->L[2] == 255 && palette->M[0] == 255 &&
            palette->M[1] == 0 && palette->M[2] == 0 &&
@@ -317,7 +377,9 @@ static void check_shader_recognition(void) {
            palette->D[2] == 0 && palette->S[0] == 0 &&
            palette->S[1] == 0 && palette->S[2] == 255,
            "palette structure or constants were not preserved");
-    expect(!near_match->has && !bounded->has &&
+    expect(!mask_near_match->solid_alpha_mask &&
+           !blur_near_match->solid_blur_alpha &&
+           !near_match->has && !bounded->has &&
            !near_match->alpha_discard && !bounded->alpha_discard,
            "partial or out-of-bounds shader record was accepted");
   }
@@ -405,6 +467,411 @@ static void check_palette_alpha_threshold(void) {
          "stretched sprite bypassed the active palette");
 }
 
+static void check_solid_alpha_mask_pixels(void) {
+  static uint8_t rgba[] = {
+    240, 16, 32, 63,
+    8, 224, 48, 255
+  };
+  int frame_index = 0;
+  uint32_t pixels[] = {0xff102030u, 0xff102030u};
+  GmlSprite sprite;
+  GmlTpag tpag;
+  GmlAtlas atlas;
+  struct GmlShaderPal mask;
+  GmlRender render;
+
+  memset(&sprite, 0, sizeof(sprite));
+  memset(&tpag, 0, sizeof(tpag));
+  memset(&atlas, 0, sizeof(atlas));
+  memset(&mask, 0, sizeof(mask));
+  memset(&render, 0, sizeof(render));
+  sprite.w = 2;
+  sprite.h = 1;
+  sprite.n_frames = 1;
+  sprite.frame = &frame_index;
+  tpag.sw = tpag.bw = 2;
+  tpag.sh = tpag.bh = 1;
+  tpag.atlas = 0;
+  atlas.w = 2;
+  atlas.h = 1;
+  atlas.px = rgba;
+  mask.solid_alpha_mask = 1;
+  mask.solid_alpha_mask_cutoff = 0.25f;
+  mask.solid_alpha_mask_cutoff_step = 64;
+  mask.solid_alpha_mask_colour[0] = 0.25f;
+  mask.solid_alpha_mask_colour[1] = 0.5f;
+  mask.solid_alpha_mask_colour[2] = 0.75f;
+  mask.solid_alpha_mask_rgb = 0x004080bfu;
+  render.fb = render.base_fb = pixels;
+  render.fbw = render.base_fbw = 2;
+  render.fbh = render.base_fbh = 1;
+  render.spr = &sprite;
+  render.n_spr = 1;
+  render.tpag = &tpag;
+  render.n_tpag = 1;
+  render.atlas = &atlas;
+  render.n_atlas = 1;
+  render.shader_pal = &mask;
+  render.n_shader_pal = 1;
+  render.active_shader = 0;
+  render.alpha = 1.0;
+  render.alphablend = 1;
+  render.color_write_mask = 0x0f;
+  render.target_id = -1;
+
+  gml_draw_sprite(&render, 0, 0, 0, 0);
+  expect(pixels[0] == 0xff102030u && pixels[1] == 0xff4080bfu,
+         "constant-colour alpha-mask pixel kernel diverged from its parsed graph");
+}
+
+static void check_solid_blur_alpha_pixels(void) {
+  uint8_t rgba[3 * 3 * 4];
+  int frame_index = 0;
+  uint32_t pixels[3 * 3];
+  GmlSprite sprite;
+  GmlTpag tpag;
+  GmlAtlas atlas;
+  struct GmlShaderPal blur;
+  GmlRender render;
+
+  memset(rgba, 0, sizeof(rgba));
+  rgba[(1 * 3 + 1) * 4 + 3] = 255;
+  for (int index = 0; index < 9; index++) pixels[index] = 0xff000000u;
+  memset(&sprite, 0, sizeof(sprite));
+  memset(&tpag, 0, sizeof(tpag));
+  memset(&atlas, 0, sizeof(atlas));
+  memset(&blur, 0, sizeof(blur));
+  memset(&render, 0, sizeof(render));
+  sprite.w = sprite.h = 3;
+  sprite.n_frames = 1;
+  sprite.frame = &frame_index;
+  tpag.sw = tpag.sh = tpag.bw = tpag.bh = 3;
+  tpag.atlas = 0;
+  tpag.solid_blur_alpha_shader = -1;
+  atlas.w = atlas.h = 3;
+  atlas.px = rgba;
+  blur.solid_blur_alpha = 1;
+  blur.solid_blur_alpha_rgb = 0x00643219u;
+  blur.solid_blur_alpha_step_x = 1.0f / 3.0f;
+  blur.solid_blur_alpha_step_y = 1.0f / 3.0f;
+  blur.solid_blur_alpha_x_count = 3;
+  blur.solid_blur_alpha_x_offset[0] = -1;
+  blur.solid_blur_alpha_x_offset[1] = 0;
+  blur.solid_blur_alpha_x_offset[2] = 1;
+  blur.solid_blur_alpha_x_weight[0] = 0.25f;
+  blur.solid_blur_alpha_x_weight[1] = 0.5f;
+  blur.solid_blur_alpha_x_weight[2] = 0.25f;
+  blur.solid_blur_alpha_y_count = 2;
+  blur.solid_blur_alpha_y_offset[0] = -1;
+  blur.solid_blur_alpha_y_offset[1] = 1;
+  blur.solid_blur_alpha_y_weight[0] = 0.1f;
+  blur.solid_blur_alpha_y_weight[1] = 0.1f;
+  render.fb = render.base_fb = pixels;
+  render.fbw = render.base_fbw = 3;
+  render.fbh = render.base_fbh = 3;
+  render.spr = &sprite;
+  render.n_spr = 1;
+  render.tpag = &tpag;
+  render.n_tpag = 1;
+  render.atlas = &atlas;
+  render.n_atlas = 1;
+  render.shader_pal = &blur;
+  render.n_shader_pal = 1;
+  render.active_shader = 0;
+  render.alpha = 1.0;
+  render.alphablend = 1;
+  render.color_write_mask = 0x0f;
+  render.target_id = -1;
+
+  gml_draw_sprite(&render, 0, 0, 0, 0);
+  expect(tpag.solid_blur_alpha_cache &&
+           tpag.solid_blur_alpha_cache[1] == 0 &&
+           tpag.solid_blur_alpha_cache[3] == 0x40000000u &&
+           tpag.solid_blur_alpha_cache[4] == 0x80000000u &&
+           tpag.solid_blur_alpha_cache[5] == 0x40000000u &&
+           tpag.solid_blur_alpha_cache[7] == 0,
+         "constant-colour alpha-convolution cache diverged from its parsed graph");
+  expect((pixels[4] & 0x00ffffffu) != 0,
+         "constant-colour alpha-convolution pixels were not composited");
+  free(tpag.solid_blur_alpha_cache);
+}
+
+/* Fully synthetic skeletal record: identifiers, pixels and animation are authored for this test. */
+static void encode_skeleton_text(uint8_t *destination,const char *text){
+  uint32_t key=42;
+  for(size_t index=0;text[index];index++){
+    destination[index]=(uint8_t)((uint8_t)text[index]+(uint8_t)key);
+    key*=key+1;
+  }
+}
+
+static void check_skeleton_asset_and_pose(void) {
+  static const char json[] =
+    "{\"bones\":[{\"name\":\"root\"},{\"name\":\"joint\",\"parent\":\"root\","
+    "\"x\":2,\"y\":3}],\"slots\":[{\"name\":\"panel\",\"bone\":\"joint\","
+    "\"attachment\":\"tile\"}],\"skins\":{\"default\":{\"panel\":{"
+    "\"tile\":{\"width\":2,\"height\":2},"
+    "\"tile2\":{\"width\":2,\"height\":2}}}},\"animations\":{\"idle\":{"
+    "\"bones\":{\"joint\":{\"rotate\":[{\"angle\":0},{\"time\":1,"
+    "\"angle\":90}]}},\"slots\":{\"panel\":{\"attachment\":[{\"time\":0.75,"
+    "\"name\":\"tile2\"}]}}}}}";
+  static const char atlas_text[] =
+    "neutral.png\n"
+    "size: 4, 2\n"
+    "format: RGBA8888\n"
+    "filter: Linear,Linear\n"
+    "repeat: none\n"
+    "tile\n"
+    "  bounds: 0, 0, 2, 2\n"
+    "  offsets: 0, 0, 2, 2\n"
+    "tile2\n"
+    "  bounds: 2, 0, 2, 2\n"
+    "  offsets: 0, 0, 2, 2\n";
+  enum { RECORD = 0, LIST = 84, HEADER = 92, TEXT = 112 };
+  uint8_t data[2048];
+  uint32_t texture_pointer=0x10203040u;
+  GmlWin content;
+  GmlRender render;
+  GmlSprite sprite;
+  GmlTpag tpag;
+  GmlAtlas atlas;
+  GmlSpineDrawItem items[4];
+
+  memset(data,0,sizeof(data));
+  memset(&content,0,sizeof(content));
+  memset(&render,0,sizeof(render));
+  memset(&sprite,0,sizeof(sprite));
+  memset(&tpag,0,sizeof(tpag));
+  memset(&atlas,0,sizeof(atlas));
+  write_u32(data,LIST,1);
+  write_u32(data,LIST+4,texture_pointer);
+  write_u32(data,HEADER,3);
+  write_u32(data,HEADER+4,1);
+  write_u32(data,HEADER+8,(uint32_t)strlen(json));
+  write_u32(data,HEADER+12,(uint32_t)strlen(atlas_text));
+  write_u32(data,HEADER+16,1);
+  encode_skeleton_text(data+TEXT,json);
+  encode_skeleton_text(data+TEXT+strlen(json),atlas_text);
+  content.data=data;
+  content.size=TEXT+strlen(json)+strlen(atlas_text);
+  render.win=&content;
+  render.tpag=&tpag;
+  render.tpag_ptr=&texture_pointer;
+  render.n_tpag=1;
+  render.atlas=&atlas;
+  render.n_atlas=1;
+  tpag.atlas=0;
+  atlas.w=4;
+  atlas.h=2;
+
+  expect(gml_render_parse_spine(&render,&sprite,RECORD,HEADER),
+         "bounded skeletal asset was not decoded");
+  expect(sprite.spine && sprite.spine->region_count==2 &&
+           gml_render_sprite_is_skeleton(&render,0)==0,
+         "skeletal asset metadata was not retained");
+  render.spr=&sprite;
+  render.n_spr=1;
+  expect(gml_render_sprite_is_skeleton(&render,0),
+         "skeletal sprite existence was not exposed");
+
+  GmlRenderSkeletonState state;
+  memset(&state,0,sizeof(state));
+  state.animation="idle";
+  state.time=0.5;
+  gml_render_skeleton_state_set(&render,&state);
+  int count=gml_render_spine_build_items(
+    &render,&sprite,10,10,1,1,0,items,4);
+  expect(count==1 &&
+           fabs(items[0].x[0]-12.0)<0.001 &&
+           fabs(items[0].y[0]-8.414213562)<0.001 &&
+           fabs(items[0].x[1]-13.414213562)<0.001 &&
+           fabs(items[0].y[1]-7.0)<0.001,
+         "skeletal bone rotation did not transform the attachment quad");
+  expect(items[0].u[0]==0.0 && items[0].u[1]==0.5,
+         "skeletal setup attachment selected the wrong atlas region");
+
+  state.time=0.8;
+  gml_render_skeleton_state_set(&render,&state);
+  count=gml_render_spine_build_items(
+    &render,&sprite,10,10,1,1,0,items,4);
+  expect(count==1 && items[0].u[0]==0.5 && items[0].u[1]==1.0,
+         "skeletal attachment timeline did not select its keyed region");
+  gml_render_skeleton_state_set(&render,NULL);
+  gml_render_free_spine(sprite.spine);
+}
+
+static void initialize_primitive_render(
+    GmlRender *render,uint32_t *pixels,int width,int height){
+  memset(render,0,sizeof(*render));
+  render->fb=render->base_fb=pixels;
+  render->fbw=render->base_fbw=width;
+  render->fbh=render->base_fbh=height;
+  render->alpha=1.0;
+  render->alphablend=1;
+  render->blend_equation=1;
+  render->blend_equation_alpha=1;
+  render->color_write_mask=15;
+  render->target_id=-1;
+}
+
+static void check_optimized_primitives(void) {
+  enum { PRIMITIVE_WIDTH=8, PRIMITIVE_HEIGHT=8 };
+  uint32_t pixels[PRIMITIVE_WIDTH*PRIMITIVE_HEIGHT];
+  GmlRender render;
+
+  for(size_t index=0;index<sizeof(pixels)/sizeof(pixels[0]);index++)
+    pixels[index]=UINT32_C(0xFF102030);
+  initialize_primitive_render(
+    &render,pixels,PRIMITIVE_WIDTH,PRIMITIVE_HEIGHT);
+  render.blendmode=1;
+  gml_render_primitive_rectangle(
+    &render,0,0,7,0,UINT32_C(0x00102040),0);
+  for(int x=0;x<PRIMITIVE_WIDTH;x++)
+    expect(pixels[x]==UINT32_C(0xFF504040),
+           "additive rectangle span did not preserve saturating channels");
+
+  for(size_t index=0;index<sizeof(pixels)/sizeof(pixels[0]);index++)
+    pixels[index]=UINT32_C(0xFF010203);
+  initialize_primitive_render(
+    &render,pixels,PRIMITIVE_WIDTH,PRIMITIVE_HEIGHT);
+  const uint32_t corners[4]={
+    UINT32_C(0x000000ff),UINT32_C(0x00ff0000),
+    UINT32_C(0x0000ff00),UINT32_C(0x00ffffff)
+  };
+  gml_render_primitive_rectangle_color(
+    &render,1,1,5,4,corners[0],corners[1],corners[2],corners[3],0);
+  uint32_t converted[4];
+  for(int corner=0;corner<4;corner++)
+    converted[corner]=gml_render_backend_color_to_xrgb(corners[corner]);
+  for(int y=1;y<=4;y++){
+    uint32_t left=gml_render_backend_lerp_xrgb(
+      converted[0],converted[3],y-1,3);
+    uint32_t right=gml_render_backend_lerp_xrgb(
+      converted[1],converted[2],y-1,3);
+    for(int x=1;x<=5;x++)
+      expect(pixels[y*PRIMITIVE_WIDTH+x]==
+               gml_render_backend_lerp_xrgb(left,right,x-1,4),
+             "opaque rectangle gradient diverged from fixed-point interpolation");
+  }
+
+  for(size_t index=0;index<sizeof(pixels)/sizeof(pixels[0]);index++)
+    pixels[index]=UINT32_C(0xFF010203);
+  initialize_primitive_render(
+    &render,pixels,PRIMITIVE_WIDTH,PRIMITIVE_HEIGHT);
+  gml_render_primitive_triangle_alpha(
+    &render,1,1,6,2,2,6,UINT32_C(0x004080c0),1.0,0);
+  uint32_t triangle_color=
+    gml_render_backend_color_to_xrgb(UINT32_C(0x004080c0));
+  double denominator=(2.0-6.0)*(1.0-2.0)+(2.0-6.0)*(1.0-6.0);
+  for(int y=0;y<PRIMITIVE_HEIGHT;y++){
+    for(int x=0;x<PRIMITIVE_WIDTH;x++){
+      double first=((2.0-6.0)*(x-2.0)+(2.0-6.0)*(y-6.0))/
+                   denominator;
+      double second=((6.0-1.0)*(x-2.0)+(1.0-2.0)*(y-6.0))/
+                    denominator;
+      double third=1.0-first-second;
+      uint32_t expected=
+        first>=0.0&&second>=0.0&&third>=0.0
+          ? triangle_color : UINT32_C(0xFF010203);
+      expect(pixels[y*PRIMITIVE_WIDTH+x]==expected,
+             "opaque triangle span diverged from barycentric coverage");
+    }
+  }
+}
+
+static uint32_t fast8_solid_step(uint32_t destination,uint32_t source,uint32_t alpha){
+  uint32_t inverse=256u-alpha;
+  uint32_t red=(((source>>16)&255u)*alpha+
+                ((destination>>16)&255u)*inverse)>>8;
+  uint32_t green=(((source>>8)&255u)*alpha+
+                  ((destination>>8)&255u)*inverse)>>8;
+  uint32_t blue=((source&255u)*alpha+
+                 (destination&255u)*inverse)>>8;
+  return UINT32_C(0xff000000)|(red<<16)|(green<<8)|blue;
+}
+
+static void check_batched_solid_mask_order(void) {
+  enum { SOURCE_SIDE=128, TARGET_SIDE=640 };
+  uint32_t *pixels=malloc((size_t)TARGET_SIDE*TARGET_SIDE*sizeof(*pixels));
+  GmlRender render;
+  memset(&render,0,sizeof(render));
+  render.spr=calloc(1,sizeof(*render.spr));
+  render.tpag=calloc(1,sizeof(*render.tpag));
+  render.atlas=calloc(1,sizeof(*render.atlas));
+  render.shader_pal=calloc(1,sizeof(*render.shader_pal));
+  expect(pixels && render.spr && render.tpag && render.atlas && render.shader_pal,
+         "batched-mask fixture allocation failed");
+  if(!pixels || !render.spr || !render.tpag || !render.atlas || !render.shader_pal){
+    free(pixels);
+    free(render.spr);
+    free(render.tpag);
+    free(render.atlas);
+    free(render.shader_pal);
+    return;
+  }
+  render.atlas[0].px=calloc(
+    (size_t)SOURCE_SIDE*SOURCE_SIDE,4);
+  render.spr[0].frame=malloc(sizeof(*render.spr[0].frame));
+  expect(render.atlas[0].px && render.spr[0].frame,
+         "batched-mask source allocation failed");
+  if(!render.atlas[0].px || !render.spr[0].frame){
+    gml_render_free(&render);
+    free(pixels);
+    return;
+  }
+
+  for(size_t index=0;index<(size_t)TARGET_SIDE*TARGET_SIDE;index++)
+    pixels[index]=UINT32_C(0xff102030);
+  for(int y=0;y<SOURCE_SIDE;y++){
+    for(int x=0;x<SOURCE_SIDE;x++){
+      uint8_t *sample=render.atlas[0].px+
+        ((size_t)y*SOURCE_SIDE+x)*4u;
+      sample[3]=(uint8_t)(x==0?0:x==1?64:x==2?128:255);
+    }
+  }
+  render.fb=render.base_fb=pixels;
+  render.fbw=render.base_fbw=TARGET_SIDE;
+  render.fbh=render.base_fbh=TARGET_SIDE;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=15;
+  render.target_id=-1;
+  render.n_spr=render.n_tpag=render.n_atlas=render.n_shader_pal=1;
+  render.active_shader=0;
+  render.spr[0].w=render.spr[0].h=SOURCE_SIDE;
+  render.spr[0].n_frames=1;
+  render.spr[0].frame[0]=0;
+  render.tpag[0].sw=render.tpag[0].bw=SOURCE_SIDE;
+  render.tpag[0].sh=render.tpag[0].bh=SOURCE_SIDE;
+  render.tpag[0].atlas=0;
+  render.atlas[0].w=render.atlas[0].h=SOURCE_SIDE;
+  render.shader_pal[0].solid_alpha_mask=1;
+
+  static const uint32_t colours[]={
+    UINT32_C(0x00ff0000),UINT32_C(0x0000ff00),UINT32_C(0x000000ff)
+  };
+  for(size_t index=0;index<sizeof(colours)/sizeof(colours[0]);index++){
+    render.shader_pal[0].solid_alpha_mask_rgb=colours[index];
+    gml_draw_sprite_ext(&render,0,0,0,0,5,5,0,UINT32_C(0x00ffffff),1.0);
+  }
+  expect(render.rotated_batch_count==3,
+         "large axis-aligned masks were not retained in draw order");
+  gml_render_flush_rotated_batch(&render);
+
+  uint32_t expected=UINT32_C(0xff102030);
+  for(size_t index=0;index<sizeof(colours)/sizeof(colours[0]);index++)
+    expected=fast8_solid_step(expected,colours[index],64);
+  expect(pixels[2*TARGET_SIDE+4]==UINT32_C(0xff102030),
+         "zero-alpha SIMD lane overwrote its destination");
+  expect(pixels[2*TARGET_SIDE+5]==expected,
+         "batched partial-alpha masks changed composition order");
+  expect(pixels[2*TARGET_SIDE+20]==UINT32_C(0xff0000ff),
+         "batched opaque mask did not retain the final source colour");
+
+  gml_render_free(&render);
+  free(pixels);
+}
+
 int main(void) {
   static const struct {
     const char *name;
@@ -424,6 +891,11 @@ int main(void) {
   uint64_t tint = run_tint();
   check_shader_recognition();
   check_palette_alpha_threshold();
+  check_solid_alpha_mask_pixels();
+  check_solid_blur_alpha_pixels();
+  check_skeleton_asset_and_pose();
+  check_optimized_primitives();
+  check_batched_solid_mask_order();
   expect(noise == UINT64_C(0xe9d7942b9ca5361e), "rgb-noise");
   expect(tint == UINT64_C(0x9ded760f28a3f2a0), "direct-tint");
   printf("rgb-noise %016llx\n", (unsigned long long)noise);

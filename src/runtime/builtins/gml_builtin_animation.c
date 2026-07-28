@@ -99,12 +99,23 @@ static void skel_store_map_str(GmlVM *vm, GmlInstance *in, int mapid,
   char key[384];
   if(skel_key(key,sizeof(key),kind,bone,field)) inst_store_string(in,key,v);
 }
-static void skel_bone_map_put_base(GmlVM *vm, GmlInstance *in, int mapid, const char *kind, const char *bone){
-  ds_map_put(vm,mapid,vstr("x"),vreal(skel_bone_num(in,kind,bone,"x",0)),1);
-  ds_map_put(vm,mapid,vstr("y"),vreal(skel_bone_num(in,kind,bone,"y",0)),1);
-  ds_map_put(vm,mapid,vstr("angle"),vreal(skel_bone_num(in,kind,bone,"angle",0)),1);
-  ds_map_put(vm,mapid,vstr("xscale"),vreal(skel_bone_num(in,kind,bone,"xscale",1)),1);
-  ds_map_put(vm,mapid,vstr("yscale"),vreal(skel_bone_num(in,kind,bone,"yscale",1)),1);
+static double skel_bone_setup(GmlVM *vm,GmlInstance *in,const char *kind,
+                              const char *bone,const char *field,double fallback){
+  if(skel_bone_has(in,kind,bone,field))
+    return skel_bone_num(in,kind,bone,field,fallback);
+  GmlRender *render=vm?(GmlRender*)vm->render:NULL;
+  double value=fallback;
+  if(render && gml_render_skeleton_bone_setup(
+       render,(int)in->sprite_index,bone,field,&value)) return value;
+  return fallback;
+}
+static void skel_bone_map_put_base(GmlVM *vm, GmlInstance *in, int mapid,
+                                   const char *kind, const char *bone){
+  ds_map_put(vm,mapid,vstr("x"),vreal(skel_bone_setup(vm,in,kind,bone,"x",0)),1);
+  ds_map_put(vm,mapid,vstr("y"),vreal(skel_bone_setup(vm,in,kind,bone,"y",0)),1);
+  ds_map_put(vm,mapid,vstr("angle"),vreal(skel_bone_setup(vm,in,kind,bone,"angle",0)),1);
+  ds_map_put(vm,mapid,vstr("xscale"),vreal(skel_bone_setup(vm,in,kind,bone,"xscale",1)),1);
+  ds_map_put(vm,mapid,vstr("yscale"),vreal(skel_bone_setup(vm,in,kind,bone,"yscale",1)),1);
   ds_map_put(vm,mapid,vstr("parent"),vstr(skel_bone_str(in,kind,bone,"parent","")),1);
 }
 GmlVal builtin_skeleton(GmlVM *vm, const char *nm, GmlVal *a, int n){
@@ -123,7 +134,13 @@ GmlVal builtin_skeleton(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(state) state->skeleton_log_count++;
   }
   if(!strcmp(nm,"skeleton_animation_set")){
-    if(in) inst_store_string(in,"__skel_animation",S(vm,a,n,0));
+    if(in){
+      const char *next=S(vm,a,n,0);
+      GmlVal current=inst_lookup(in,"__skel_animation");
+      if(current.t!=V_STR || strcmp(current.s?current.s:"",next))
+        inst_store_real(in,"__skel_time",0);
+      inst_store_string(in,"__skel_animation",next);
+    }
     return vreal(0);
   }
   if(!strcmp(nm,"skeleton_animation_get")){

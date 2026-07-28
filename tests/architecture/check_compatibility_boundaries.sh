@@ -783,7 +783,7 @@ fi
 
 renderer_sampling_definition_files=$(find src/video/renderer -type f \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
-  '^[[:space:]]*static[[:space:]]+inline[[:space:]]+([^[:space:]]+[[:space:]]+|const[[:space:]]+struct[[:space:]]+GmlShaderPal[[:space:]]*\*[[:space:]]*)(pal_map_px|pal_active|lut_active|grid_active|crt_active|sampled_crt_active|dual_active|hsv_scan_active|radial_wave_active|radial_wave_sample_index|uv_wave_active|uv_wave_sample_index|paint_active|grayscale_active|shader_active|shader_discards_alpha_value|shader_discards_alpha|shader_alpha_test_active|sprite_pixel_argb|sprite_pixel_rgb|lut_map_px|grid_map_px|grid_map_px_cached|mapped_texture_active|mapped_texture_pixel)[[:space:]]*\(' \
+  '^[[:space:]]*static[[:space:]]+inline[[:space:]]+([^[:space:]]+[[:space:]]+|const[[:space:]]+struct[[:space:]]+GmlShaderPal[[:space:]]*\*[[:space:]]*)(pal_map_px|pal_active|lut_active|grid_active|crt_active|sampled_crt_active|dual_active|hsv_scan_active|radial_wave_active|radial_wave_sample_index|uv_wave_active|uv_wave_sample_index|paint_active|grayscale_active|solid_alpha_mask_active|solid_blur_alpha_active|shader_active|shader_discards_alpha_value|shader_discards_alpha|shader_alpha_test_active|sprite_pixel_argb|sprite_pixel_rgb|lut_map_px|grid_map_px|grid_map_px_cached|mapped_texture_active|mapped_texture_pixel)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
 if [ "$renderer_sampling_definition_files" != "src/video/renderer/gml_render_sampling_internal.h" ]; then
   printf '%s\n' "Shared recognized-shader sampling definitions belong only to gml_render_sampling_internal.h:" >&2

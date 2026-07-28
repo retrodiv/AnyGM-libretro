@@ -67,6 +67,22 @@ typedef struct {
   const char *name;
 } GmlRenderSpriteMetrics;
 
+/* Instance-owned skeletal state reaches the renderer through narrow callbacks.
+ * The renderer does not borrow VM storage or language values. */
+typedef const char *(*GmlRenderSkeletonAttachmentFn)(
+  void *context, const char *slot);
+typedef int (*GmlRenderSkeletonBoneFn)(
+  void *context, const char *kind, const char *bone,
+  const char *field, double *value);
+typedef struct {
+  void *context;
+  const char *animation;
+  const char *skin;
+  double time;
+  GmlRenderSkeletonAttachmentFn attachment;
+  GmlRenderSkeletonBoneFn bone;
+} GmlRenderSkeletonState;
+
 typedef struct {
   int line_height;
   int sprite, first, proportional, separation;
@@ -327,6 +343,14 @@ void gml_render_maybe_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, 
 
 void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha);
+void gml_render_skeleton_state_set(GmlRender *r,
+                                   const GmlRenderSkeletonState *state);
+int  gml_render_sprite_is_skeleton(const GmlRender *r, int sprite);
+double gml_render_skeleton_animation_duration(const GmlRender *r, int sprite,
+                                              const char *animation);
+int  gml_render_skeleton_bone_setup(const GmlRender *r, int sprite,
+                                    const char *bone, const char *field,
+                                    double *value);
 void gml_draw_sprite_pos(GmlRender *r, int sprite, int subimg,
                          const double x[4], const double y[4], double alpha);
 int  gml_d3_draw_sprite_2d(GmlRender *r, int sprite, int subimg, double x, double y,

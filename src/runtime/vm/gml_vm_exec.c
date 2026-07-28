@@ -736,7 +736,9 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
   gml_arr_note_legacy_2d_set(A,idx); gml_arr_index_ensure(A,idx);
   if(idx>=0 && idx<A->cap) A->data[idx]=v;
 }
-static GmlVal array_get_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, uint32_t nh, int idx){
+static GmlVal array_get_h(
+    GmlVM *vm,GmlVarMap *locals,int inst_t,
+    const char *nm,uint32_t nh,int idx){
   if(!strcmp(nm,"view_enabled")){
     GmlVal *slot=gml_varmap_get_hashed(&vm->globals,nm,nh);
     return slot?*slot:vreal(0);
@@ -751,14 +753,15 @@ static GmlVal array_get_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *
       return vreal(0); } }
   if(!strcmp(nm,"alarm")){ GmlInstance *s=resolve_inst(vm,inst_t);
     return vreal((s&&idx>=0&&idx<GML_ALARMS)? s->alarm[idx] : -1); }
-  if(var_name_maybe_special(vm,nm,nh) && !is_room_global_array(nm) &&
+  int room_global=is_room_global_array(nm);
+  if(var_name_maybe_special(vm,nm,nh) && !room_global &&
      inst_t!=IT_GLOBAL && inst_t!=IT_LOCAL){
     GmlInstance *s=resolve_inst(vm,inst_t); GmlVal out;
     if(s && !inst_is_struct_ref(s) && inst_builtin_get(vm,s,nm,&out)) return out;
   }
-  GmlVarMap *m=is_room_global_array(nm)? &vm->globals : scope_map(vm,locals,inst_t); if(!m) return vreal(0);
+  GmlVarMap *m=room_global? &vm->globals : scope_map(vm,locals,inst_t); if(!m) return vreal(0);
   GmlVal *slot=gml_varmap_get_hashed(m,nm,nh);
-  if(!slot && !is_room_global_array(nm) && inst_t!=IT_GLOBAL && inst_t!=IT_LOCAL && inst_t!=IT_STATIC){
+  if(!slot && !room_global && inst_t!=IT_GLOBAL && inst_t!=IT_LOCAL && inst_t!=IT_STATIC){
     GmlInstance *owner=resolve_inst(vm,inst_t);
     if(inst_is_struct_ref(owner)) slot=struct_field_get_h(vm,owner,nm,nh);
   }
@@ -887,8 +890,16 @@ static void inst_set_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t n
 }
 static GmlInstance *inst_by_id(GmlVM *vm, double idv){
   int id=(int)idv;
+  /* Resource indices and live instance ids occupy disjoint ranges. Resolve an object index
+   * directly instead of first scanning every room instance for an impossible low instance id;
+   * array-heavy draw loops can perform thousands of these object-scoped reads per frame. */
+  if(id>=0 && id<vm->n_objects){
+    for(int i=0;i<vm->inst_count;i++)
+      if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==id)
+        return &vm->inst[i];
+    return NULL;
+  }
   for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked && (int)vm->inst[i].id==id) return &vm->inst[i];
-  for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==id) return &vm->inst[i];
   return NULL;
 }
 GmlInstance *gml_vm_instance_by_id(GmlVM *vm, double id){
@@ -1937,6 +1948,223 @@ static int classic_extension_script_code(GmlVM *vm,const char *name){
   return gml_code_index_by_name(vm->win,code_name);
 }
 
+typedef enum {
+  GML_DRAW_LOOP_CONSTANT,
+  GML_DRAW_LOOP_SCALAR,
+  GML_DRAW_LOOP_COUNTER,
+  GML_DRAW_LOOP_ARRAY
+} GmlDrawLoopArgumentKind;
+
+typedef struct {
+  GmlDrawLoopArgumentKind kind;
+  GmlVal value;
+  GmlArr *array;
+} GmlDrawLoopArgument;
+
+static int draw_loop_numeric_push(const GmlInsn *instruction,double *value){
+  if(!instruction || !value || instruction->kind!=OP_PUSH) return 0;
+  switch(instruction->type1){
+    case DT_INT16: *value=(double)instruction->sval; return 1;
+    case DT_INT32: *value=(double)instruction->ival; return 1;
+    case DT_INT64: *value=(double)instruction->lval; return 1;
+    case DT_DOUBLE: *value=instruction->dval; return 1;
+    default: return 0;
+  }
+}
+
+static int draw_loop_normal_variable_push(const GmlInsn *instruction){
+  return instruction && instruction->kind==OP_PUSH &&
+         instruction->type1==DT_VAR && instruction->reftype==0xA0 &&
+         instruction->inst!=IT_STACK && instruction->refname;
+}
+
+static int draw_loop_variable_value(
+    GmlVM *vm,GmlVarMap *locals,const GmlInsn *instruction,GmlVal *value){
+  if(!draw_loop_normal_variable_push(instruction) || !value) return 0;
+  const char *name=instruction->refname;
+  uint32_t hash=instruction->refhash
+    ? instruction->refhash : gml_value_name_hash(name);
+  if(instruction->inst==IT_LOCAL){
+    if(argument_get(vm,name,value)) return 1;
+    GmlVal *slot=gml_varmap_get_hashed(locals,name,hash);
+    if(!slot) return 0;
+    *value=*slot;
+    return 1;
+  }
+  *value=var_get_h(vm,instruction->inst,name,hash);
+  return 1;
+}
+
+static int draw_loop_parse_argument(
+    GmlVM *vm,GmlVarMap *locals,GmlInsn *instructions,
+    uint32_t *cursor,uint32_t end,const GmlInsn *counter,
+    GmlDrawLoopArgument *argument){
+  if(!vm || !locals || !instructions || !cursor || !counter || !argument ||
+     *cursor>=end) return 0;
+  uint32_t current=*cursor;
+  GmlInsn *first=&instructions[current];
+  double number=0.0;
+  memset(argument,0,sizeof *argument);
+
+  if(first->kind==OP_BREAK && first->sval==-11 && first->funcval_ci<0){
+    argument->kind=GML_DRAW_LOOP_CONSTANT;
+    argument->value=vreal((double)(first->ival&0x00FFFFFF));
+    *cursor=current+1;
+    return 1;
+  }
+
+  if(draw_loop_numeric_push(first,&number)){
+    uint32_t index=current+1;
+    if(index<end && insn_push_same_ref(&instructions[index],counter)){
+      index++;
+      if(index<end && instructions[index].kind==OP_CONV) index++;
+      if(index>=end) return 0;
+      GmlInsn *array_push=&instructions[index];
+      if(array_push->kind!=OP_PUSH || array_push->type1!=DT_VAR ||
+         array_push->reftype!=0x00 || !array_push->refname ||
+         number!=(double)(int)number || number<INT_MIN || number>INT_MAX)
+        return 0;
+      const char *name=array_push->refname;
+      uint32_t hash=array_push->refhash
+        ? array_push->refhash : gml_value_name_hash(name);
+      if(var_name_maybe_special(vm,name,hash)) return 0;
+      GmlVarMap *owner=is_room_global_array(name)
+        ? &vm->globals : scope_map(vm,locals,(int)number);
+      GmlVal *slot=owner?gml_varmap_get_hashed(owner,name,hash):NULL;
+      if(!slot || slot->t!=V_ARR || !slot->arr) return 0;
+      GmlArr *array=slot->arr;
+      if(array->nested_2d || !array->data || array->len<0 ||
+         array->cap<array->len || array->cap>16000000) return 0;
+      argument->kind=GML_DRAW_LOOP_ARRAY;
+      argument->array=array;
+      *cursor=index+1;
+      return 1;
+    }
+    argument->kind=GML_DRAW_LOOP_CONSTANT;
+    argument->value=vreal(number);
+    current++;
+    if(current<end && instructions[current].kind==OP_CONV) current++;
+    *cursor=current;
+    return 1;
+  }
+
+  if(draw_loop_normal_variable_push(first)){
+    if(insn_same_ref(first,counter)){
+      argument->kind=GML_DRAW_LOOP_COUNTER;
+    } else {
+      argument->kind=GML_DRAW_LOOP_SCALAR;
+      if(!draw_loop_variable_value(vm,locals,first,&argument->value)) return 0;
+    }
+    current++;
+    if(current<end && instructions[current].kind==OP_CONV) current++;
+    *cursor=current;
+    return 1;
+  }
+  return 0;
+}
+
+/* A common generated draw loop consists only of a local counter, immutable scalar/array reads,
+ * and draw_sprite_ext. Recognize the complete control-flow shape before doing any work, then
+ * execute the same builtin calls without rebuilding the VM operand stack for every element.
+ * Every unsupported expression falls back to the ordinary interpreter. */
+static int vm_try_array_draw_loop(
+    GmlVM *vm,GmlVarMap *locals,GmlInsn *instructions,int32_t *branches,
+    uint32_t count,uint32_t header,uint64_t watchdog,uint64_t watchdog_max,
+    uint32_t *exit_out,uint64_t *instruction_count_out){
+  if(!vm || !locals || !instructions || !branches || !exit_out ||
+     !instruction_count_out || header+4>count) return 0;
+  GmlInsn *counter=&instructions[header];
+  GmlInsn *limit=&instructions[header+1];
+  GmlInsn *compare=&instructions[header+2];
+  GmlInsn *branch_false=&instructions[header+3];
+  if(!draw_loop_normal_variable_push(counter) || counter->inst!=IT_LOCAL ||
+     compare->kind!=OP_CMP || compare->cmp!=CMP_LT ||
+     branch_false->kind!=OP_BF) return 0;
+  int exit=branches[header+3];
+  if(exit<0 || (uint32_t)exit>count || (uint32_t)exit<header+11) return 0;
+  uint32_t footer=(uint32_t)exit-7;
+  GmlInsn *call=&instructions[footer];
+  if(!insn_call_name(call,"draw_sprite_ext",9) ||
+     instructions[footer+1].kind!=OP_POPZ ||
+     !insn_push_same_ref(&instructions[footer+2],counter) ||
+     !insn_push_num(&instructions[footer+3],1.0) ||
+     instructions[footer+4].kind!=OP_ADD ||
+     !insn_pop_same_ref(&instructions[footer+5],counter) ||
+     instructions[footer+6].kind!=OP_B ||
+     branches[footer+6]!=(int32_t)header)
+    return 0;
+
+  uint32_t counter_hash=counter->refhash
+    ? counter->refhash : gml_value_name_hash(counter->refname);
+  GmlVal *counter_slot=gml_varmap_get_hashed(locals,counter->refname,counter_hash);
+  GmlVal limit_value;
+  if(!counter_slot || counter_slot->t!=V_REAL ||
+     !draw_loop_variable_value(vm,locals,limit,&limit_value) ||
+     limit_value.t!=V_REAL || !isfinite(counter_slot->d) ||
+     !isfinite(limit_value.d)) return 0;
+
+  GmlDrawLoopArgument arguments[9];
+  uint32_t cursor=header+4;
+  int argument_count=0;
+  while(cursor<footer && argument_count<9){
+    if(!draw_loop_parse_argument(
+         vm,locals,instructions,&cursor,footer,counter,
+         &arguments[argument_count])) return 0;
+    argument_count++;
+  }
+  if(cursor!=footer || argument_count!=9) return 0;
+
+  int builtin_id=call->builtin_id;
+  if(builtin_id==0){
+    builtin_id=gml_builtin_fast_id(vm,call->refname);
+    call->builtin_id=(int16_t)builtin_id;
+  }
+  if(builtin_id<=0 || classic_extension_script_code(vm,call->refname)>=0) return 0;
+
+  double epsilon=anygm_policy_exact_comparisons(vm->win)?0.0:vm->math_epsilon;
+  double probe=counter_slot->d;
+  uint64_t iterations=0;
+  uint64_t loop_instructions=(uint64_t)exit-header;
+  while(gml_real_compare_epsilon(probe,limit_value.d,CMP_LT,epsilon)){
+    if(iterations>=watchdog_max/loop_instructions) return 0;
+    iterations++;
+    probe+=1.0;
+    if(!isfinite(probe)) return 0;
+  }
+  uint64_t consumed=iterations*loop_instructions+4;
+  if(consumed==0 || watchdog>watchdog_max ||
+     consumed-1>watchdog_max-watchdog) return 0;
+
+  double counter_value=counter_slot->d;
+  for(uint64_t iteration=0;iteration<iterations;iteration++){
+    int index=(int)counter_value;
+    GmlVal call_arguments[9];
+    for(int pushed=0;pushed<9;pushed++){
+      GmlDrawLoopArgument *argument=&arguments[pushed];
+      GmlVal value=vreal(0);
+      if(argument->kind==GML_DRAW_LOOP_ARRAY){
+        GmlArr *array=argument->array;
+        if(index>=0 && index<array->len) value=array->data[index];
+      } else if(argument->kind==GML_DRAW_LOOP_COUNTER){
+        value=vreal(counter_value);
+      } else {
+        value=argument->value;
+      }
+      call_arguments[8-pushed]=value;
+    }
+    (void)gml_builtin_call_fast_id(
+      vm,builtin_id,call->refname,call_arguments,9);
+    counter_value+=1.0;
+    counter_slot->t=V_REAL;
+    counter_slot->d=counter_value;
+    counter_slot->s=NULL;
+    counter_slot->arr=NULL;
+  }
+  *exit_out=(uint32_t)exit;
+  *instruction_count_out=consumed;
+  return 1;
+}
+
 /* ---------------- interpreter ---------------- */
 #define STK 512
 /* The encoded operand stack is byte-sized even though this interpreter stores every logical
@@ -2124,6 +2352,18 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"\n");
         vm->diagnostics.pc_log_count++;
       } }
+    if(use_cache && !hp_builtin && sp==0 && !vm->diagnostics.pc_name[0] &&
+       !anygm_host_development_setting(vm->host,"GML_TRACE_CALL")){
+      uint32_t loop_exit=0;
+      uint64_t loop_instructions=0;
+      if(vm_try_array_draw_loop(
+           vm,&locals,cached_ins,cached_branch,cached_n,ip,
+           watchdog,WATCHDOG_MAX,&loop_exit,&loop_instructions)){
+        watchdog+=loop_instructions-1;
+        ip=loop_exit;
+        continue;
+      }
+    }
     switch(in.kind){
       case OP_PUSH:{
         GmlVal v;
@@ -2228,7 +2468,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             }
           } else if(in.inst==IT_LOCAL){
             if(argument_get(vm,nm,&v)){}
-            else { GmlVal *pp=gml_varmap_get_hashed(&locals,nm,nh); v=pp?*pp:vreal(0); }
+            else { GmlVal *pp=gml_varmap_get_hashed(&locals,nm,nh);
+              v=pp?*pp:vreal(0); }
           } else v=var_get_h(vm,in.inst,nm,nh);
         } else v=vreal(0);
         if(sp<STK){ stk[sp]=v; stkt[sp]=in.type1; sp++; }
