@@ -161,7 +161,7 @@ fail_matches "Code outside builtin owners must use coarse GmlBuiltinState operat
 vm_state_codec_consumers=$(find src -type f \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '^[[:space:]]*#include[[:space:]]+"gml_vm_state_codec[.]h"' {} + \
-  2>/dev/null || true)
+  2>/dev/null | LC_ALL=C sort || true)
 if [ "$vm_state_codec_consumers" != "src/runtime/builtins/gml_builtin_state.c
 src/runtime/vm/gml_vm_state.c" ]; then
   printf '%s\n' "Only canonical VM state and builtin resource state may consume the opaque state codec:" >&2
