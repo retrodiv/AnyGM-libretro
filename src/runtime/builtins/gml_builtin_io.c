@@ -69,20 +69,25 @@ char *resolve_read_path(GmlVM *vm, const char *p){
   if(path_absolute(p)){
     if(vm && vm->win){
       const char *relative=path_relative_to_root(p,vm->win->content_dir);
-      if(relative && vm->win->save_dir[0]){
-        char *save=path_under(vm->win->save_dir,relative);
-        if(path_present(vm,save)) return save;
-        free(save);
-        return strdup(p);
+      if(relative){
+        if(vm->win->save_dir[0]){
+          char *save=path_under(vm->win->save_dir,relative);
+          if(path_present(vm,save)) return save;
+          free(save);
+        }
+        return path_under(vm->win->content_dir,relative);
       }
       relative=path_relative_to_root(p,vm->win->save_dir);
       if(relative){
-        if(path_present(vm,p)) return strdup(p);
+        char *save=path_under(vm->win->save_dir,relative);
+        if(path_present(vm,save)) return save;
+        free(save);
         if(vm->win->content_dir[0]){
           char *content=path_under(vm->win->content_dir,relative);
           if(path_present(vm,content)) return content;
           free(content);
         }
+        return path_under(vm->win->save_dir,relative);
       }
     }
     return strdup(p);

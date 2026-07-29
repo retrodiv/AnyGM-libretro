@@ -87,6 +87,8 @@ GmlVal gml_builtin_try_values_math(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"min")){ if(n<=0) return vreal(0); double v=N(a,n,0); for(int i=1;i<n;i++){ double x=N(a,n,i); if(x<v) v=x; } return vreal(v); }
   if(!strcmp(nm,"max")){ if(n<=0) return vreal(0); double v=N(a,n,0); for(int i=1;i<n;i++){ double x=N(a,n,i); if(x>v) v=x; } return vreal(v); }
   if(!strcmp(nm,"power")) return vreal(pow(N(a,n,0),N(a,n,1)));
+  if(!strcmp(nm,"db_to_lin")) return vreal(pow(10.0,N(a,n,0)/20.0));
+  if(!strcmp(nm,"lin_to_db")) return vreal(20.0*log10(N(a,n,0)));
   if(!strcmp(nm,"real")) return vreal(N(a,n,0));
   if(!strcmp(nm,"bool")){  /* GMS2.3: numeric -> 0/1; the strings "true"/"1" -> 1 */
     if(n>=1 && a[0].t==V_STR && a[0].s) return vreal(!strcmp(a[0].s,"true")||!strcmp(a[0].s,"1"));

@@ -118,6 +118,20 @@ int software3d_case_language(Software3dRasterFixture *fixture){
       return 0;
     }
 
+    GmlVal trailing_arg=vstr("{\"items\":[1,2,],\"value\":7,}");
+    GmlVal trailing=call_values(&jvm,"json_parse",&trailing_arg,1);
+    GmlVal trailing_text=call_values(&jvm,"json_stringify",&trailing,1);
+    const char *trailing_output=
+      trailing_text.t==V_STR&&trailing_text.s?trailing_text.s:"";
+    if(trailing.t!=V_REAL || !GML_IS_STRUCT_ID(trailing.d) ||
+       trailing_text.t!=V_STR ||
+       (strcmp(trailing_output,"{\"items\":[1,2],\"value\":7}") &&
+        strcmp(trailing_output,"{\"value\":7,\"items\":[1,2]}"))){
+      fprintf(stderr,"Studio JSON trailing-comma compatibility mismatch: %s\n",
+              trailing_output[0]?trailing_output:"<non-string>");
+      return 0;
+    }
+
     GmlVal list=call_values(&jvm,"ds_list_create",NULL,0);
     GmlVal add_args[3]={list,vreal(4),vreal(5)};
     call_values(&jvm,"ds_list_add",add_args,3);
@@ -180,6 +194,7 @@ int software3d_case_language(Software3dRasterFixture *fixture){
     if(encoded.t==V_STR && encoded.d!=0) free((char*)encoded.s);
     if(encoded_marked.t==V_STR && encoded_marked.d!=0) free((char*)encoded_marked.s);
     if(serial_text.t==V_STR && serial_text.d!=0) free((char*)serial_text.s);
+    if(trailing_text.t==V_STR && trailing_text.d!=0) free((char*)trailing_text.s);
   }
 
   {
@@ -753,4 +768,3 @@ int software3d_case_language(Software3dRasterFixture *fixture){
 
   return 1;
 }
-

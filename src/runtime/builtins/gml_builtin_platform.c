@@ -311,6 +311,8 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"texturegroup_get_textures")) return arr_newv(0);
   if(!strcmp(nm,"texturegroup_get_status")) return vreal(3);   /* loaded */
+  if(!strcmp(nm,"texturegroup_load")||!strcmp(nm,"texturegroup_unload")||
+     !strcmp(nm,"texturegroup_set_mode")) return vreal(0);
   if(!strcmp(nm,"texture_is_ready")) return vreal(1);
   if(!strcmp(nm,"texture_prefetch")||!strcmp(nm,"texture_flush")||!strcmp(nm,"draw_texture_flush")||
      !strcmp(nm,"sprite_prefetch")||!strcmp(nm,"sprite_flush")||!strcmp(nm,"sprite_flush_multi")||

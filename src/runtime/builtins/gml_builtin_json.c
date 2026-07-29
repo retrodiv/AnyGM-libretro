@@ -229,6 +229,8 @@ static GmlVal json_parse_array(JsonIn *j, int depth){
     }
     if(js_consume(j,']')) break;
     if(!js_consume(j,',')){ j->ok=0; return vreal(0); }
+    /* Studio JSON compatibility accepts a final comma in arrays emitted by Studio tooling. */
+    if(js_consume(j,']')) break;
   }
   if(!j->obj_as_struct) return vreal(list_id);
   GmlVal out=vreal(0); out.t=V_ARR; out.arr=A; return out;
@@ -249,6 +251,8 @@ static GmlVal json_parse_object(JsonIn *j, int depth){
       *gml_varmap_put(&st->vars,key)=var_store_clone(val);
       if(js_consume(j,'}')) break;
       if(!js_consume(j,',')){ j->ok=0; return vreal(0); }
+      /* Studio JSON compatibility accepts a final comma in objects emitted by Studio tooling. */
+      if(js_consume(j,'}')) break;
     }
     return vreal((double)st->id);
   }
@@ -267,6 +271,7 @@ static GmlVal json_parse_object(JsonIn *j, int depth){
     free(key);
     if(js_consume(j,'}')) break;
     if(!js_consume(j,',')){ j->ok=0; return vreal(0); }
+    if(js_consume(j,'}')) break;
   }
   return vreal(id);
 }

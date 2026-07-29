@@ -5,6 +5,7 @@
 #include "gml_builtin_registry.h"
 #include "gml_vm.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -133,6 +134,21 @@ static int function_value_and_alias_resolution(GmlVM *vm){
   return expect_real("tagged function value dispatch",function_result,77) &&
          expect_real("canonical exact alias",color,expected) &&
          expect_real("alternate exact alias",colour,expected);
+}
+
+static int gain_conversion(GmlVM *vm){
+  int ok=1;
+  GmlVal decibels=vreal(-6.0);
+  GmlVal linear=call_fast(vm,"db_to_lin",&decibels,1,&ok);
+  GmlVal roundtrip=call_fast(vm,"lin_to_db",&linear,1,&ok);
+  double expected=pow(10.0,-6.0/20.0);
+  if(linear.t!=V_REAL || fabs(linear.d-expected)>1e-12 ||
+     roundtrip.t!=V_REAL || fabs(roundtrip.d+6.0)>1e-12){
+    fprintf(stderr,"gain conversion mismatch: linear=%.17g roundtrip=%.17g\n",
+            linear.d,roundtrip.d);
+    return 0;
+  }
+  return ok;
 }
 
 static int mouse_none_semantics(GmlVM *vm){
@@ -278,6 +294,7 @@ int main(void){
          exact_builtin_precedes_same_named_script(&vm) &&
          script_resolution_order(&vm) &&
          function_value_and_alias_resolution(&vm) &&
+         gain_conversion(&vm) &&
          mouse_none_semantics(&vm) &&
          ds_fast_interface(&vm);
   gml_vm_free(&vm);

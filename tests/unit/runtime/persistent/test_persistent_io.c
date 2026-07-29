@@ -23,7 +23,10 @@ int expect_file_sandbox(GmlVM *vm,const char *save_dir){
   snprintf(winsep_name,sizeof winsep_name,"%s\\payload.txt",winsep_dir);
   char content_overlay[640],save_overlay[640],content_written[640],save_written[640];
   char content_ini[640],save_ini[640],content_large_ini[640],save_large_ini[640];
-  char save_winsep_dir[640],save_winsep_file[768],save_literal_backslash[640];
+  char content_winsep_dir[640],content_winsep_file[768],content_literal_backslash[768];
+  char absolute_winsep_name[768],save_winsep_dir[640],save_winsep_file[768];
+  char save_literal_backslash[640];
+  char observed[128]={0};
   snprintf(content_overlay,sizeof content_overlay,"%s/%s",vm->win->content_dir,overlay);
   snprintf(save_overlay,sizeof save_overlay,"%s/%s",save_dir,overlay);
   snprintf(content_written,sizeof content_written,"%s/%s",vm->win->content_dir,written);
@@ -32,15 +35,24 @@ int expect_file_sandbox(GmlVM *vm,const char *save_dir){
   snprintf(save_ini,sizeof save_ini,"%s/%s",save_dir,ini);
   snprintf(content_large_ini,sizeof content_large_ini,"%s/%s",vm->win->content_dir,large_ini);
   snprintf(save_large_ini,sizeof save_large_ini,"%s/%s",save_dir,large_ini);
+  snprintf(content_winsep_dir,sizeof content_winsep_dir,"%s/%s",vm->win->content_dir,winsep_dir);
+  snprintf(content_winsep_file,sizeof content_winsep_file,"%s/payload.txt",content_winsep_dir);
+  snprintf(content_literal_backslash,sizeof content_literal_backslash,"%s/%s",
+           vm->win->content_dir,winsep_name);
+  snprintf(absolute_winsep_name,sizeof absolute_winsep_name,"%s/%s",
+           vm->win->content_dir,winsep_name);
   snprintf(save_winsep_dir,sizeof save_winsep_dir,"%s/%s",save_dir,winsep_dir);
   snprintf(save_winsep_file,sizeof save_winsep_file,"%s/payload.txt",save_winsep_dir);
   snprintf(save_literal_backslash,sizeof save_literal_backslash,"%s/%s",save_dir,winsep_name);
   unlink(content_overlay); unlink(save_overlay); unlink(content_written); unlink(save_written);
   unlink(content_ini); unlink(save_ini); unlink(content_large_ini); unlink(save_large_ini);
+  unlink(content_winsep_file); unlink(content_literal_backslash); rmdir(content_winsep_dir);
   unlink(save_winsep_file); unlink(save_literal_backslash); rmdir(save_winsep_dir);
   if(!fixture_write_text(content_overlay,"program") || !fixture_write_text(save_overlay,"save") ||
      !fixture_write_text(content_ini,"[fixture]\nvalue=7\n") ||
      !fixture_write_large_ini(content_large_ini)) return 0;
+  if(mkdir(content_winsep_dir,0700)!=0 ||
+     !fixture_write_text(content_winsep_file,"installed-portable")) return 0;
 
   GmlVal name=vstr(overlay);
   GmlVal handle=gml_builtin_call(vm,"file_text_open_read",&name,1);
@@ -66,12 +78,22 @@ int expect_file_sandbox(GmlVM *vm,const char *save_dir){
   if(line.t==V_STR && line.d!=0) free((void*)line.s);
   unlink(save_overlay);
 
+  /* Studio content also concatenates Windows-separated asset paths onto an absolute
+   * working_directory. The suffix must still resolve inside the installed bundle. */
+  name=vstr(absolute_winsep_name);
+  handle=gml_builtin_call(vm,"file_text_open_read",&name,1);
+  line=gml_builtin_call(vm,"file_text_readln",&handle,1);
+  (void)gml_builtin_call(vm,"file_text_close",&handle,1);
+  ok=ok && line.t==V_STR && line.s && !strcmp(line.s,"installed-portable") &&
+     !fixture_read_text(content_literal_backslash,observed,sizeof observed);
+  if(line.t==V_STR && line.d!=0) free((void*)line.s);
+
   name=vstr(written);
   handle=gml_builtin_call(vm,"file_text_open_write",&name,1);
   GmlVal write_args[2]={handle,vstr("sandbox")};
   (void)gml_builtin_call(vm,"file_text_write_string",write_args,2);
   (void)gml_builtin_call(vm,"file_text_close",&handle,1);
-  char observed[128]={0};
+  observed[0]=0;
   ok=ok && !fixture_read_text(content_written,observed,sizeof observed) &&
      fixture_read_text(save_written,observed,sizeof observed) && !strcmp(observed,"sandbox");
   unlink(save_written);
@@ -128,6 +150,7 @@ int expect_file_sandbox(GmlVM *vm,const char *save_dir){
 
   unlink(content_overlay); unlink(save_overlay); unlink(content_written); unlink(save_written);
   unlink(content_ini); unlink(save_ini); unlink(content_large_ini); unlink(save_large_ini);
+  unlink(content_winsep_file); unlink(content_literal_backslash); rmdir(content_winsep_dir);
   unlink(save_winsep_file); unlink(save_literal_backslash); rmdir(save_winsep_dir);
   if(!ok) fprintf(stderr,"read overlay / writable sandbox fixture failed\n");
   return ok;
