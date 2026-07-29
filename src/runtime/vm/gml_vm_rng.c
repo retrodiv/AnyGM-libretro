@@ -6,6 +6,8 @@
 #include "anygm_compatibility.h"
 #include "anygm_host.h"
 
+#include <math.h>
+
 /* WELL512 follows the Lomont recurrence credited in LICENSES/WELL512.txt.
  * Expand seeds using MSVC-LCG arithmetic; random(x) scales the next value by x/2^32. */
 void gml_rng_seed(GmlVM *vm, uint32_t seed){
@@ -50,3 +52,21 @@ static uint32_t gml_rng_next(GmlVM *vm){
   return a;
 }
 double gml_rng_value(GmlVM *vm){ return (double)gml_rng_next(vm) / 4294967296.0; }  /* [0,1) */
+/* Studio selection uses one raw word; Classic scales its compatibility stream. */
+uint64_t gml_rng_select(GmlVM *vm, uint64_t count){
+  if(!count) return 0;
+  if(vm->win && anygm_policy_uses_classic_runtime(vm->win))
+    return (uint64_t)floor(gml_rng_value(vm)*(double)count);
+  return (uint64_t)gml_rng_next(vm)%count;
+}
+/* Studio integer draws compose two words into a non-negative 63-bit sample. */
+uint64_t gml_rng_integer(GmlVM *vm, uint64_t inclusive_max){
+  if(vm->win && anygm_policy_uses_classic_runtime(vm->win)){
+    if(!inclusive_max) return 0;
+    return (uint64_t)floor(gml_rng_value(vm)*(double)(inclusive_max+1u));
+  }
+  uint64_t low=gml_rng_next(vm);
+  uint64_t high=(uint64_t)(gml_rng_next(vm)&0x7fffffffu);
+  uint64_t sample=low|(high<<32);
+  return inclusive_max==UINT64_MAX?sample:sample%(inclusive_max+1u);
+}

@@ -70,10 +70,17 @@ GmlVal gml_builtin_try_values_math(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strncmp(nm,"http_",5)&&(!strcmp(nm,"http_get")||!strcmp(nm,"http_get_file")||!strcmp(nm,"http_post_string")||!strcmp(nm,"http_request")))
     return builtin_http_request_stub(vm);
   if(!strcmp(nm,"random_range")){ double a0=N(a,n,0), a1=N(a,n,1); return vreal(a0 + gml_rng_value(vm)*(a1-a0)); }
-  if(!strcmp(nm,"irandom")){ int mx=(int)floor(N(a,n,0)); return vreal(mx<=0?0:(int)floor(gml_rng_value(vm)*(mx+1))); }
+  if(!strcmp(nm,"irandom")){
+    double upper=floor(N(a,n,0));
+    uint64_t mx=upper>=(double)INT64_MAX?(uint64_t)INT64_MAX:
+                upper>0.0?(uint64_t)upper:0u;
+    return vreal((double)gml_rng_integer(vm,mx)); }
   if(!strcmp(nm,"irandom_range")){ int lo=(int)floor(N(a,n,0)), hi=(int)floor(N(a,n,1));
-    if(hi<lo){ int t=lo; lo=hi; hi=t; } return vreal(lo + (int)floor(gml_rng_value(vm)*(hi-lo+1))); }
-  if(!strcmp(nm,"choose")){ if(n<=0) return vreal(0); int i=(int)floor(gml_rng_value(vm)*n); if(i<0)i=0; if(i>=n)i=n-1; return a[i]; }
+    if(hi<lo){ int t=lo; lo=hi; hi=t; }
+    return vreal(lo+(double)gml_rng_integer(vm,(uint64_t)((int64_t)hi-(int64_t)lo))); }
+  if(!strcmp(nm,"choose")){
+    if(n<=0) return vreal(0);
+    return a[(int)gml_rng_select(vm,(uint64_t)n)]; }
   if(!strcmp(nm,"clamp")){ double x=N(a,n,0), lo=N(a,n,1), hi=N(a,n,2); if(x<lo)x=lo; if(x>hi)x=hi; return vreal(x); }
   if(!strcmp(nm,"lerp")){ double a0=N(a,n,0), a1=N(a,n,1), t=N(a,n,2); return vreal(a0 + (a1-a0)*t); }
   if(!strcmp(nm,"mean")){ double s=0; for(int i=0;i<n;i++) s+=N(a,n,i); return vreal(n? s/n : 0); }

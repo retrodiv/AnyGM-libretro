@@ -6,6 +6,7 @@
 #include "gml_particle.h"
 #include "anygm_host.h"
 
+#include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,6 +65,48 @@ int main(void){
   vm.particles=gml_particle_state_create(&vm);
   if(!vm.particles) return 1;
   if(!check_classic_comparisons()) return 1;
+  {
+    static const uint64_t expected[]={
+      16,5,13,17,13,0,10,15,15,9,18,14,10,19,16,12
+    };
+    static const uint64_t expected_selection[]={
+      0,0,0,3,3,1,1,1,0,0,0,0,0,0,0,3
+    };
+    GmlWin studio;
+    memset(&studio,0,sizeof studio);
+    studio.bytecode=17;
+    vm.win=&studio;
+    gml_rng_seed(&vm,12345);
+    for(size_t i=0;i<sizeof expected/sizeof expected[0];i++){
+      uint64_t actual=gml_rng_integer(&vm,20);
+      if(actual!=expected[i]){
+        fprintf(stderr,"studio integer RNG mismatch at %zu: got=%" PRIu64
+                       " expected=%" PRIu64 "\n",i,actual,expected[i]);
+        return 1;
+      }
+    }
+    gml_rng_seed(&vm,12345);
+    if(gml_rng_integer(&vm,16777215u)!=0x2e1bc8u ||
+       gml_rng_integer(&vm,16777215u)!=0x10b680u){
+      fprintf(stderr,"studio wide integer RNG composition mismatch\n");
+      return 1;
+    }
+    gml_rng_seed(&vm,12345);
+    if(gml_rng_integer(&vm,0)!=0 ||
+       gml_rng_value(&vm)!=(double)0x3610b680u/4294967296.0){
+      fprintf(stderr,"studio zero-bound integer RNG consumption mismatch\n");
+      return 1;
+    }
+    gml_rng_seed(&vm,12345);
+    for(size_t i=0;i<sizeof expected_selection/sizeof expected_selection[0];i++){
+      uint64_t actual=gml_rng_select(&vm,4);
+      if(actual!=expected_selection[i]){
+        fprintf(stderr,"studio RNG selection mismatch at %zu: got=%" PRIu64
+                       " expected=%" PRIu64 "\n",i,actual,expected_selection[i]);
+        return 1;
+      }
+    }
+  }
   classic.classic_version=810;
   vm.win=&classic;
   {
@@ -264,6 +307,6 @@ int main(void){
   gml_builtin_state_destroy(vm.builtins);
   vm.builtins=NULL;
   gml_particle_state_destroy(vm.particles);
-  puts("classic RNG fixtures: ok");
+  puts("RNG fixtures: ok");
   return 0;
 }

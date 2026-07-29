@@ -352,6 +352,8 @@ void    gml_input_mouse(GmlVM *vm,double *room_x,double *room_y,double *gui_x,do
 void    gml_input_mouse_set(GmlVM *vm,double x,double y);
 void    gml_rng_seed(GmlVM *vm, uint32_t seed);   /* WELL512 seeding (MSVC LCG expand) */
 double  gml_rng_value(GmlVM *vm);                 /* next()/2^32 -> [0,1) */
+uint64_t gml_rng_select(GmlVM *vm, uint64_t count);
+uint64_t gml_rng_integer(GmlVM *vm, uint64_t inclusive_max);
 int     gml_real_compare(double lhs, double rhs, int cmp, int classic);
 int     gml_real_compare_epsilon(double lhs, double rhs, int cmp, double epsilon);
 GmlVal  gml_vm_run_code(GmlVM *vm, int code_index, GmlInstance *self, GmlInstance *other,
