@@ -3,6 +3,7 @@
  */
 #include "classic_test_fixture.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,6 +81,16 @@ static void discard_imported_rooms(GmlcProject *project, int remove_sources){
   memset(project, 0, sizeof(*project));
 }
 
+static int prepare_test_directory(void){
+#ifdef _WIN32
+  if(_mkdir("tmp")==0 || errno==EEXIST) return 1;
+#else
+  if(mkdir("tmp",0777)==0 || errno==EEXIST) return 1;
+#endif
+  fprintf(stderr,"cannot create classic test directory\n");
+  return 0;
+}
+
 int main(int argc, char **argv){
   classic_fixture_host_init();
   if(argc==3 && !strcmp(argv[1],"--write-legacy-exe-fixture")){
@@ -116,6 +127,7 @@ int main(int argc, char **argv){
     printf("wrote project fixture %u: %s (%zu bytes)\n",version,argv[3],project.size);
     return 0;
   }
+  if(!prepare_test_directory()) return EXIT_FAILURE;
   const char *case_filter=NULL;
   for(int i=1;i<argc;++i){
     if(strcmp(argv[i],"--case")) continue;
