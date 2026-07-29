@@ -1615,7 +1615,8 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1529, LIN_TO_DB, "lin_to_db", VALUES, VALUES_MATH, ALWAYS) \
   ENTRY(1530, TEXTUREGROUP_LOAD, "texturegroup_load", PLATFORM, PLATFORM, ALWAYS) \
   ENTRY(1531, TEXTUREGROUP_UNLOAD, "texturegroup_unload", PLATFORM, PLATFORM, ALWAYS) \
-  ENTRY(1532, TEXTUREGROUP_SET_MODE, "texturegroup_set_mode", PLATFORM, PLATFORM, ALWAYS)
+  ENTRY(1532, TEXTUREGROUP_SET_MODE, "texturegroup_set_mode", PLATFORM, PLATFORM, ALWAYS) \
+  ENTRY(1533, FONT_EXISTS, "font_exists", DRAW, DRAW, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1630,7 +1631,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1533
+  GML_BUILTIN_ID_LIMIT = 1534
 } GmlBuiltinId;
 
 #endif

@@ -22,6 +22,156 @@ void store_u32le(uint8_t *dst,uint32_t value){
   dst[3]=(uint8_t)(value>>24);
 }
 
+typedef struct {
+  const uint8_t *bytes;
+  size_t size,position;
+  int path_matched;
+  unsigned opens,closes;
+} ExternalTextureHost;
+
+
+static void *external_texture_open(void *userdata,const char *path,AnygmFileMode mode){
+  ExternalTextureHost *host=userdata;
+  if(mode!=ANYGM_FILE_READ ||
+     strcmp(path,"root/pack/neutral_group_0.yytex")) return NULL;
+  host->position=0;
+  host->path_matched=1;
+  host->opens++;
+  return host;
+}
+
+
+static size_t external_texture_read(void *userdata,void *file,void *data,size_t size){
+  ExternalTextureHost *host=userdata;
+  (void)file;
+  size_t available=host->size-host->position;
+  if(size>available) size=available;
+  if(size) memcpy(data,host->bytes+host->position,size);
+  host->position+=size;
+  return size;
+}
+
+
+static int64_t external_texture_seek(void *userdata,void *file,int64_t offset,
+                                     AnygmSeekOrigin origin){
+  ExternalTextureHost *host=userdata;
+  (void)file;
+  int64_t base=origin==ANYGM_SEEK_START?0:
+               origin==ANYGM_SEEK_CURRENT?(int64_t)host->position:
+               origin==ANYGM_SEEK_END?(int64_t)host->size:-1;
+  if(base<0 || offset < -base || (uint64_t)(base+offset)>host->size) return -1;
+  host->position=(size_t)(base+offset);
+  return base+offset;
+}
+
+
+static void external_texture_close(void *userdata,void *file){
+  ExternalTextureHost *host=userdata;
+  (void)file;
+  host->closes++;
+}
+
+
+int external_texture_group_fixture(void){
+  static const uint8_t encoded[]={
+    'f','i','o','q',1,0,1,0,0,0,0,0,0xfe,17,34,51
+  };
+  uint8_t data[512]={0};
+  char *strings[]={"neutral_group","pack",".yytex"};
+  uint32_t string_offsets[]={400,404,408};
+  GmlWin win={0};
+  GmlRender render={0};
+  ExternalTextureHost memory={
+    .bytes=encoded,
+    .size=sizeof encoded
+  };
+  AnygmHostServices host={
+    .struct_size=sizeof host,
+    .abi_version=ANYGM_HOST_SERVICES_VERSION,
+    .userdata=&memory,
+    .file_open=external_texture_open,
+    .file_read=external_texture_read,
+    .file_seek=external_texture_seek,
+    .file_close=external_texture_close
+  };
+
+  win.data=data;
+  win.size=sizeof data;
+  win.strs=strings;
+  win.str_charoff=string_offsets;
+  win.n_strs=3;
+  win.host=&host;
+  snprintf(win.content_dir,sizeof win.content_dir,"root");
+  memcpy(win.chunks[0].name,"TXTR",4);
+  win.chunks[0].off=0;
+  win.chunks[0].size=48;
+  memcpy(win.chunks[1].name,"TGIN",4);
+  win.chunks[1].off=64;
+  win.chunks[1].size=80;
+  win.n_chunks=2;
+
+  store_u32le(data+0,1);             /* TXTR count */
+  store_u32le(data+4,16);            /* texture record */
+  store_u32le(data+16+8,sizeof encoded);
+  store_u32le(data+16+12,1);         /* width */
+  store_u32le(data+16+16,1);         /* height */
+  store_u32le(data+16+20,0);         /* index in group */
+  store_u32le(data+16+24,0);         /* external blob */
+
+  store_u32le(data+64,1);            /* TGIN format */
+  store_u32le(data+68,1);            /* group count */
+  store_u32le(data+72,80);           /* group record */
+  store_u32le(data+80,400);          /* group name */
+  store_u32le(data+84,404);          /* directory */
+  store_u32le(data+88,408);          /* extension */
+  store_u32le(data+92,2);            /* separate textures */
+  store_u32le(data+96,112);          /* texture-page list */
+  store_u32le(data+112,1);
+  store_u32le(data+116,0);
+
+  render.win=&win;
+  parse_txtr(&render);
+  uint8_t *pixels=gml_render_warm_atlas(&render,0)?atlas_pixels(&render,0):NULL;
+  int ok=render.n_atlas==1 && render.atlas && render.atlas[0].external_blob &&
+         render.atlas[0].external_size==sizeof encoded &&
+         render.atlas[0].w==1 && render.atlas[0].h==1 &&
+         pixels && pixels[0]==17 && pixels[1]==34 && pixels[2]==51 && pixels[3]==255 &&
+         memory.path_matched && memory.opens==1 && memory.closes==1;
+  gml_render_free(&render);
+  if(!ok){
+    fprintf(stderr,"external texture group fixture load mismatch\n");
+    return 0;
+  }
+
+  strings[1]="../pack";
+  GmlRender traversal={0};
+  traversal.win=&win;
+  parse_txtr(&traversal);
+  int traversal_rejected=traversal.n_atlas==1 &&
+                         !gml_render_warm_atlas(&traversal,0) &&
+                         memory.opens==1 && memory.closes==1;
+  gml_render_free(&traversal);
+  if(!traversal_rejected){
+    fprintf(stderr,"external texture group fixture accepted traversal\n");
+    return 0;
+  }
+
+  strings[1]="pack";
+  store_u32le(data+16+8,64u*1024u*1024u+1u);
+  GmlRender oversized={0};
+  oversized.win=&win;
+  parse_txtr(&oversized);
+  int oversized_rejected=oversized.n_atlas==1 &&
+                         !gml_render_warm_atlas(&oversized,0) &&
+                         memory.opens==1 && memory.closes==1;
+  gml_render_free(&oversized);
+  if(!oversized_rejected){
+    fprintf(stderr,"external texture group fixture accepted oversized sidecar\n");
+    return 0;
+  }
+  return 1;
+}
+
 
 size_t classic_information_record(uint8_t *dst,size_t capacity){
   const char caption[]="Information";
@@ -99,6 +249,23 @@ int asset_lookup_fixture(void){
   if(call_values(&vm,"asset_get_index",&absent,1).d!=-1 ||
      call_values(&vm,"asset_get_type",&absent,1).d!=-1){
     fprintf(stderr,"asset lookup fixture missing-resource mismatch\n");
+    return 0;
+  }
+  render.n_fonts=2;
+  render.fonts[0].real=1;
+  render.fonts[1].sprite=0;
+  GmlVal embedded_font=vreal(0),runtime_font=vreal(1);
+  GmlVal default_font=vreal(-1),absent_font=vreal(2);
+  if(call_values(&vm,"font_exists",&embedded_font,1).d!=1 ||
+     call_values(&vm,"font_exists",&runtime_font,1).d!=1 ||
+     call_values(&vm,"font_exists",&default_font,1).d!=0 ||
+     call_values(&vm,"font_exists",&absent_font,1).d!=0){
+    fprintf(stderr,"font existence fixture mismatch\n");
+    return 0;
+  }
+  gml_font_delete(&render,1);
+  if(call_values(&vm,"font_exists",&runtime_font,1).d!=0){
+    fprintf(stderr,"deleted font remained live\n");
     return 0;
   }
   return 1;
@@ -255,4 +422,3 @@ int member_function_argument_fixture(void){
   gml_win_free(&win);
   return ok;
 }
-

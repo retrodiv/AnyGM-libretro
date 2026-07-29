@@ -418,6 +418,37 @@ static const char *const room_view_fields[]={
   "view_camera"
 };
 
+/* Modern room-editor cameras occupy stable handles below the dynamic camera pool. Reserving
+ * those handles prevents an early camera_create() from aliasing view_camera[0] before the first
+ * room is entered. */
+static void room_camera_resources_init(GmlVM *vm,int reset_bindings){
+  if(!vm || !vm->win || !anygm_policy_has_modern_layer_semantics(vm->win)) return;
+  static const char *const camera_fields[]={
+    "__gml_camera_x","__gml_camera_y","__gml_camera_w","__gml_camera_h",
+    "__gml_camera_angle","__gml_camera_target","__gml_camera_xspeed",
+    "__gml_camera_yspeed","__gml_camera_xborder","__gml_camera_yborder"
+  };
+  static const char *const view_fields[]={
+    "view_xview","view_yview","view_wview","view_hview",NULL,"view_object",
+    "view_hspeed","view_vspeed","view_hborder","view_vborder"
+  };
+  for(int camera=0;camera<GML_ROOM_CAMERA_COUNT;camera++){
+    double width=gml_vm_global_array_number(vm,"view_wview",camera);
+    double height=gml_vm_global_array_number(vm,"view_hview",camera);
+    if(reset_bindings) gml_vm_global_array_set(vm,"view_camera",camera,camera);
+    gml_vm_global_array_set(vm,"__gml_camera_live",camera,width>0 && height>0);
+    for(size_t field=0;field<sizeof(camera_fields)/sizeof(camera_fields[0]);field++){
+      double value=0;
+      if(view_fields[field])
+        value=gml_vm_global_array_number(vm,view_fields[field],camera);
+      gml_vm_global_array_set(vm,camera_fields[field],camera,value);
+    }
+    gml_vm_global_array_set(vm,"__gml_camera_matrix_eye_x",camera,0);
+    gml_vm_global_array_set(vm,"__gml_camera_matrix_eye_y",camera,0);
+    gml_vm_global_array_set(vm,"__gml_camera_matrix_eye_valid",camera,0);
+  }
+}
+
 static void room_runtime_state_store(GmlVM *vm, int room){
   room_state_store_number(vm,room,"present",0,1);
   for(size_t field=0;field<sizeof(room_background_fields)/sizeof(room_background_fields[0]);field++)
@@ -1231,6 +1262,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
     vm->room_stored[room_index]=0;
     *gml_varmap_put(&vm->globals,"room_persistent")=vreal(1);
     room_runtime_state_restore(vm,room_index);
+    room_camera_resources_init(vm,0);
     for(int i=0;i<vm->inst_count;i++){
       GmlInstance *in=&vm->inst[i];
       if(!in->room_dormant || in->room_owner!=room_index) continue;
@@ -1257,6 +1289,13 @@ void gml_room_enter(GmlVM *vm, int room_index){
     for(size_t field=0;field<sizeof(room_view_fields)/sizeof(room_view_fields[0]);field++)
       gml_vm_global_array_set(vm,room_view_fields[field],i,0);
     gml_vm_global_array_set(vm,"view_object",i,-1);
+  }
+  if(anygm_policy_has_modern_layer_semantics(vm->win)){
+    for(int i=0;i<GML_ROOM_CAMERA_COUNT;i++){
+      for(size_t field=0;field<sizeof(room_view_fields)/sizeof(room_view_fields[0]);field++)
+        gml_vm_global_array_set(vm,room_view_fields[field],i,0);
+      gml_vm_global_array_set(vm,"view_object",i,-1);
+    }
   }
   /* Initialise the built-in background_* arrays from the room's background
    * layers. GML draw code can read this state during room startup. */
@@ -1312,6 +1351,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
         gml_vm_global_array_set(vm,"view_object",i,o->object);
       }
     } }
+  room_camera_resources_init(vm,1);
   if(anygm_host_development_setting(vm->host,"GML_LOG_VIEW")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[view] room=%d dim=%ux%u view0 en=%.0f wview=%.0f hview=%.0f wport=%.0f hport=%.0f\n",
     vm->room_index, r.width, r.height, gml_vm_global_array_number(vm,"view_visible",0),
     gml_vm_global_array_number(vm,"view_wview",0), gml_vm_global_array_number(vm,"view_hview",0),

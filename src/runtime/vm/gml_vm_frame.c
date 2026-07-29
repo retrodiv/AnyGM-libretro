@@ -598,7 +598,7 @@ void gml_vm_step(GmlVM *vm){
    * resources advance after Step and the renderer later resolves the bound handle. Consequently,
    * camera_create_view(..., target, speed, border) follows its target without an explicit
    * camera_set_view_pos call. */
-  for(int camera=0;camera<64;camera++){
+  for(int camera=0;camera<GML_CAMERA_LIMIT;camera++){
     if(gml_vm_global_array_number(vm,"__gml_camera_live",camera)<0.5) continue;
     int target=(int)gml_vm_global_array_number(vm,"__gml_camera_target",camera);
     GmlInstance *fo=target>=0?gml_find_instance(vm,target):NULL;

@@ -7,10 +7,16 @@
 #include "bzip2/bzlib.h"
 #include "gml_thread.h"
 #include "anygm_host.h"
+#include "anygm_vfs.h"
 #include "gml_image_codec.h"
 
+#include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#define GML_EXTERNAL_TEXTURE_MAX_BYTES (64u*1024u*1024u)
+#define GML_EXTERNAL_TEXTURE_TOTAL_BYTES (256u*1024u*1024u)
 
 /* ---- atlas (TXTR) ---- */
 /* A texture blob is one of: PNG (bc14-16), a bare GameMaker-QOI "fioq" stream, or a bzip2-compressed
@@ -74,12 +80,20 @@ static int log_atlas_on(void){ return 0; }
 static size_t atlas_spec_budget(GmlRender *r){
   return r&&r->atlas_prefetch_budget?r->atlas_prefetch_budget:512u*1024u*1024u;
 }
+static int atlas_has_source(const GmlRender *r,const GmlAtlas *a){
+  return a && ((a->external_blob && a->external_size) ||
+               (r && r->win && a->blob && a->blob<r->win->size));
+}
 /* decode outside the lock, publish under it. Returns the published pixels (or NULL). */
 static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlasPool *pool){
   GmlAtlas *a=&r->atlas[idx];
   int w=0,h=0;
-  uint8_t *px=(a->blob && a->blob<r->win->size)?
-    decode_texture_blob(r->win->data+a->blob, a->avail, a->chunk_end, &w,&h) : NULL;
+  uint8_t *px=NULL;
+  if(a->external_blob && a->external_size)
+    px=decode_texture_blob(a->external_blob,a->external_size,
+                           (size_t)(a->external_blob+a->external_size),&w,&h);
+  else if(a->blob && a->blob<r->win->size)
+    px=decode_texture_blob(r->win->data+a->blob,a->avail,a->chunk_end,&w,&h);
   if(locked) gml_mutex_lock(&pool->mu);
   a->decode_attempted=1;
   if(px){
@@ -159,7 +173,7 @@ void atlas_pool_free(GmlRender *r){
 void gml_render_prefetch_atlas(GmlRender *r, int idx){
   if(!r || idx<0 || idx>=r->n_atlas || !r->atlas) return;
   GmlAtlas *a=&r->atlas[idx];
-  if(a->px || a->decode_attempted || !a->blob || a->blob>=r->win->size) return;
+  if(a->px || a->decode_attempted || !atlas_has_source(r,a)) return;
   if(r->atlas_decoded_bytes > 2*atlas_spec_budget(r)) return;   /* prefetch cap; draws still decode on demand */
   GmlAtlasPool *pool=atlas_pool_get(r);
   if(!pool) return;
@@ -208,7 +222,7 @@ uint8_t *atlas_pixels(GmlRender *r, int idx){
   if(p){ atlas_dump_maybe(r,idx); return p; }
   GmlAtlasPool *pool=(GmlAtlasPool*)r->prefetch;
   if(!pool){
-    if(a->decode_attempted || !a->blob || a->blob>=r->win->size) return NULL;
+    if(a->decode_attempted || !atlas_has_source(r,a)) return NULL;
     p=atlas_decode_publish(r,idx,0,NULL);
     if(p) atlas_dump_maybe(r,idx);
     return p;
@@ -232,7 +246,7 @@ uint8_t *atlas_pixels(GmlRender *r, int idx){
 static void warm_atlas_direct(GmlRender *r, int idx){
   if(!r || idx<0 || idx>=r->n_atlas || !r->atlas) return;
   GmlAtlas *a=&r->atlas[idx];
-  if(a->px || a->decode_attempted || !a->blob || a->blob>=r->win->size) return;
+  if(a->px || a->decode_attempted || !atlas_has_source(r,a)) return;
   (void)atlas_pixels(r,idx);
 }
 int gml_render_warm_atlas(GmlRender *r,int atlas){
@@ -254,26 +268,196 @@ void gml_render_warm_bg(GmlRender *r, int bg){
   if(ti<0 || ti>=r->n_tpag) return;
   warm_atlas_direct(r,r->tpag[ti].atlas);
 }
+
+static int chunk_has_absolute(const GmlWin *win,const GmlChunk *chunk,
+                              size_t offset,size_t length){
+  size_t chunk_start=chunk?chunk->off:0;
+  size_t chunk_size=chunk?chunk->size:0;
+  return win && chunk && offset>=chunk_start && offset<=win->size &&
+         length<=win->size-offset && offset-chunk_start<=chunk_size &&
+         length<=chunk_size-(offset-chunk_start);
+}
+
+static int chunk_read_u32_absolute(const GmlWin *win,const GmlChunk *chunk,
+                                   size_t offset,uint32_t *value){
+  if(!value || !chunk_has_absolute(win,chunk,offset,4)) return 0;
+  *value=u32(win->data,(uint32_t)offset);
+  return 1;
+}
+
+static const char *texture_group_string(const GmlWin *win,uint32_t pointer){
+  if(!win || !win->strs || !win->str_charoff || win->n_strs<=0) return NULL;
+  int low=0,high=win->n_strs-1;
+  while(low<=high){
+    int middle=low+(high-low)/2;
+    uint32_t current=win->str_charoff[middle];
+    if(current==pointer) return win->strs[middle];
+    if(current<pointer) low=middle+1;
+    else high=middle-1;
+  }
+  return NULL;
+}
+
+static int texture_group_leaf_safe(const char *text){
+  if(!text || !text[0] || !strcmp(text,".") || !strcmp(text,"..")) return 0;
+  for(const unsigned char *p=(const unsigned char *)text;*p;p++)
+    if(*p<' ' || *p=='/' || *p=='\\' || *p==':') return 0;
+  return 1;
+}
+
+static int texture_group_directory_safe(const char *text){
+  if(!text || text[0]=='/' || text[0]=='\\') return 0;
+  const char *segment=text;
+  for(const char *p=text;;p++){
+    unsigned char ch=(unsigned char)*p;
+    if(ch && ch<' ') return 0;
+    if(ch==':') return 0;
+    if(!ch || ch=='/' || ch=='\\'){
+      size_t length=(size_t)(p-segment);
+      if(length==2 && segment[0]=='.' && segment[1]=='.') return 0;
+      if(!ch) break;
+      segment=p+1;
+    }
+  }
+  return 1;
+}
+
+static char *external_texture_path(const GmlWin *win,const char *directory,
+                                   const char *group,int index,const char *extension){
+  const char *base=win&&win->content_dir[0]?win->content_dir:".";
+  if(!texture_group_directory_safe(directory) || !texture_group_leaf_safe(group) ||
+     !texture_group_leaf_safe(extension) || index<0) return NULL;
+  size_t base_length=strlen(base),directory_length=strlen(directory);
+  size_t group_length=strlen(group),extension_length=strlen(extension);
+  char index_text[32];
+  int index_length=snprintf(index_text,sizeof index_text,"%d",index);
+  if(index_length<=0 || (size_t)index_length>=sizeof index_text ||
+     base_length>1024 || directory_length>1024 || group_length>1024 ||
+     extension_length>128) return NULL;
+  size_t total=base_length+directory_length+group_length+extension_length+
+               (size_t)index_length+4u;
+  if(total<base_length || total>4096) return NULL;
+  char *path=malloc(total);
+  if(!path) return NULL;
+  size_t at=0;
+  memcpy(path+at,base,base_length); at+=base_length;
+  if(at && path[at-1]!='/' && path[at-1]!='\\') path[at++]='/';
+  for(size_t i=0;i<directory_length;i++)
+    path[at++]=directory[i]=='\\'?'/':directory[i];
+  if(directory_length && path[at-1]!='/') path[at++]='/';
+  memcpy(path+at,group,group_length); at+=group_length;
+  path[at++]='_';
+  memcpy(path+at,index_text,(size_t)index_length); at+=(size_t)index_length;
+  memcpy(path+at,extension,extension_length); at+=extension_length;
+  path[at]=0;
+  return path;
+}
+
+static void load_external_texture(GmlRender *r,const GmlChunk *txtr,uint32_t atlas_index,
+                                  const char *directory,const char *group,
+                                  const char *extension,size_t *total_bytes){
+  if(!r || !r->win || !txtr || atlas_index>=(uint32_t)r->n_atlas ||
+     !total_bytes || r->atlas[atlas_index].blob ||
+     r->atlas[atlas_index].external_blob) return;
+  size_t table_entry=(size_t)txtr->off+4u+(size_t)atlas_index*4u;
+  uint32_t record=0,encoded_size=0,width=0,height=0,index_raw=0,blob=0;
+  if(!chunk_read_u32_absolute(r->win,txtr,table_entry,&record) ||
+     !chunk_read_u32_absolute(r->win,txtr,(size_t)record+8u,&encoded_size) ||
+     !chunk_read_u32_absolute(r->win,txtr,(size_t)record+12u,&width) ||
+     !chunk_read_u32_absolute(r->win,txtr,(size_t)record+16u,&height) ||
+     !chunk_read_u32_absolute(r->win,txtr,(size_t)record+20u,&index_raw) ||
+     !chunk_read_u32_absolute(r->win,txtr,(size_t)record+24u,&blob) ||
+     blob || !encoded_size || encoded_size>GML_EXTERNAL_TEXTURE_MAX_BYTES ||
+     !width || !height || width>INT_MAX || height>INT_MAX ||
+     (uint64_t)width*(uint64_t)height>64ull*1024ull*1024ull ||
+     index_raw>INT_MAX || *total_bytes>GML_EXTERNAL_TEXTURE_TOTAL_BYTES-encoded_size) return;
+  char *path=external_texture_path(r->win,directory,group,(int)index_raw,extension);
+  if(!path) return;
+  uint8_t *encoded=NULL;
+  size_t actual_size=0;
+  int loaded=anygm_vfs_read_all(r->win->host,path,&encoded,&actual_size,encoded_size);
+  free(path);
+  int actual_width=0,actual_height=0;
+  if(!loaded || actual_size!=encoded_size ||
+     !texture_blob_dims(encoded,actual_size,&actual_width,&actual_height) ||
+     actual_width!=(int)width || actual_height!=(int)height){
+    free(encoded);
+    return;
+  }
+  GmlAtlas *atlas=&r->atlas[atlas_index];
+  atlas->external_blob=encoded;
+  atlas->external_size=actual_size;
+  atlas->w=(int)width;
+  atlas->h=(int)height;
+  *total_bytes+=actual_size;
+}
+
+static void load_external_texture_groups(GmlRender *r,const GmlChunk *txtr){
+  const GmlChunk *tgin=gml_chunk(r->win,"TGIN");
+  uint32_t version=0,count=0;
+  if(!tgin ||
+     !chunk_read_u32_absolute(r->win,tgin,tgin->off,&version) || version!=1 ||
+     !chunk_read_u32_absolute(r->win,tgin,(size_t)tgin->off+4u,&count) ||
+     count>GML_WIN_MAX_REFERENCES ||
+     !chunk_has_absolute(r->win,tgin,(size_t)tgin->off+8u,(size_t)count*4u)) return;
+  size_t total_bytes=0;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t record=0,name_pointer=0,directory_pointer=0,extension_pointer=0;
+    uint32_t load_type=0,pages_pointer=0,page_count=0;
+    if(!chunk_read_u32_absolute(r->win,tgin,(size_t)tgin->off+8u+(size_t)i*4u,&record) ||
+       !chunk_read_u32_absolute(r->win,tgin,record,&name_pointer) ||
+       !chunk_read_u32_absolute(r->win,tgin,(size_t)record+4u,&directory_pointer) ||
+       !chunk_read_u32_absolute(r->win,tgin,(size_t)record+8u,&extension_pointer) ||
+       !chunk_read_u32_absolute(r->win,tgin,(size_t)record+12u,&load_type) ||
+       !chunk_read_u32_absolute(r->win,tgin,(size_t)record+16u,&pages_pointer) ||
+       !load_type || load_type>2 ||
+       !chunk_read_u32_absolute(r->win,tgin,pages_pointer,&page_count) ||
+       page_count>GML_WIN_MAX_REFERENCES ||
+       !chunk_has_absolute(r->win,tgin,(size_t)pages_pointer+4u,(size_t)page_count*4u))
+      continue;
+    const char *name=texture_group_string(r->win,name_pointer);
+    const char *directory=texture_group_string(r->win,directory_pointer);
+    const char *extension=texture_group_string(r->win,extension_pointer);
+    if(!name || !directory || !extension) continue;
+    for(uint32_t page=0;page<page_count;page++){
+      uint32_t atlas_index=0;
+      if(chunk_read_u32_absolute(r->win,tgin,(size_t)pages_pointer+4u+(size_t)page*4u,
+                                 &atlas_index))
+        load_external_texture(r,txtr,atlas_index,directory,name,extension,&total_bytes);
+    }
+  }
+}
+
 void parse_txtr(GmlRender *r){
-  const GmlChunk *c=gml_chunk(r->win,"TXTR"); if(!c) return;
-  const uint8_t *d=r->win->data; uint32_t n=u32(d,c->off);
+  const GmlChunk *c=gml_chunk(r->win,"TXTR");
+  uint32_t n=0;
+  if(!c || !chunk_read_u32_absolute(r->win,c,c->off,&n) ||
+     n>GML_WIN_MAX_REFERENCES ||
+     !chunk_has_absolute(r->win,c,(size_t)c->off+4u,(size_t)n*4u)) return;
+  const uint8_t *d=r->win->data;
   size_t chunk_end=(size_t)(d + c->off + c->size);
   r->atlas=calloc(n?n:1,sizeof(GmlAtlas));
   if(!r->atlas) return;
   r->n_atlas=(int)n;
   for(uint32_t i=0;i<n;i++){
-    uint32_t entry=u32(d,c->off+4+i*4);
+    uint32_t entry=0;
+    if(!chunk_read_u32_absolute(r->win,c,(size_t)c->off+4u+(size_t)i*4u,&entry))
+      continue;
     /* Locate the texture data through a candidate pointer in its record. */
     uint32_t blob=0;
     /* The EmbeddedTexture record holds the blob pointer at a version-dependent offset. Scan the
      * bounded record for the field that lands on a known PNG, fioq, or 2zoq magic. */
-    for(uint32_t off=4; off<=32; off+=4){ uint32_t v=u32(d,entry+off);
+    for(uint32_t off=4;off<=32;off+=4){
+      uint32_t v=0;
+      if(!chunk_read_u32_absolute(r->win,c,(size_t)entry+off,&v)) break;
       if((size_t)v+4<=r->win->size){ const uint8_t *m=d+v;
         if((m[0]==0x89&&m[1]=='P'&&m[2]=='N'&&m[3]=='G')||!memcmp(m,"fioq",4)||!memcmp(m,"2zoq",4)){ blob=v; break; } } }
     if(!blob || (size_t)blob>=r->win->size) continue;
     GmlAtlas *a=&r->atlas[i];
     a->blob=blob; a->avail=r->win->size-blob; a->chunk_end=chunk_end;
     texture_blob_dims(d+blob,a->avail,&a->w,&a->h);
-    if(render_setting(r,"GML_ATLAS_EAGER") || render_setting(r,"GML_DUMP_ATLAS")) atlas_pixels(r,(int)i);
   }
+  load_external_texture_groups(r,c);
+  if(render_setting(r,"GML_ATLAS_EAGER") || render_setting(r,"GML_DUMP_ATLAS"))
+    for(uint32_t i=0;i<n;i++) atlas_pixels(r,(int)i);
 }

@@ -13,6 +13,8 @@ struct GmlClassicDispatchCache;
 
 /* ---- instance ---- */
 #define GML_ALARMS 12
+#define GML_ROOM_CAMERA_COUNT 8
+#define GML_CAMERA_LIMIT 64
 typedef struct {
   int     active;      /* slot in use */
   int     marked;      /* pending destroy */

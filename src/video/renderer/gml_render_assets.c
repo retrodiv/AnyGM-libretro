@@ -624,6 +624,12 @@ int gml_render_font_metrics(const GmlRender *R,int font,
   return 1;
 }
 
+int gml_render_font_exists(const GmlRender *R,int font){
+  if(!R || font<0 || font>=R->n_fonts) return 0;
+  const GmlFont *source=&R->fonts[font];
+  return source->real || source->sprite>=0;
+}
+
 static void backend_texture_view_page(GmlRenderBackendTextureView *view,
                                       const GmlTpag *page,const GmlAtlas *atlas,
                                       int full_atlas){

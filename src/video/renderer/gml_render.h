@@ -468,6 +468,7 @@ int  gml_render_background_tile_source_index(const GmlRender *r, int background,
                                               int tile_index);
 int  gml_render_font_metrics(const GmlRender *r, int font,
                              GmlRenderFontMetrics *metrics);
+int  gml_render_font_exists(const GmlRender *r, int font);
 int  gml_sprite_duplicate(GmlRender *r, int sprite);
 void gml_sprite_set_offset(GmlRender *r, int sprite, int xorig, int yorig);
 void gml_sprite_delete(GmlRender *r, int sprite);

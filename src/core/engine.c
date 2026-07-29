@@ -538,7 +538,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   }
   if (anygm_host_development_setting(&engine->host,"GML_LOG_CAM")) {   /* aligns with the host dump frame index */
     int bound = (int)lround(gml_global_arr(&engine->vm, "view_camera", 0));
-    int bound_live = bound >= 0 && bound < 64 &&
+    int bound_live = anygm_policy_has_modern_layer_semantics(&engine->win) &&
+                     bound >= 0 && bound < GML_CAMERA_LIMIT &&
                      gml_global_arr(&engine->vm, "__gml_camera_live", bound) >= 0.5;
     engine_logf(engine,ANYGM_LOG_DEBUG, "[cam] %d %d %d %d base=%ux%u forced=%ux%u delta=%.1f,%.1f view0=%.0f "
                     "bound=%d live=%d resource=(%.0f,%.0f %.0fx%.0f) port=(%.0f,%.0f)\n",

@@ -78,6 +78,76 @@ int expect_early_native_layer_animation(void){
   return 1;
 }
 
+int expect_room_camera_reservation(void){
+  uint8_t data[512]={0};
+  char *strings[]={(char*)"neutral_camera_room"};
+  uint32_t string_offsets[]={400};
+  fixture_w32(data,0,1);
+  fixture_w32(data,4,16);
+  fixture_w32(data,16,400);
+  fixture_w32(data,24,2048);
+  fixture_w32(data,28,1728);
+  fixture_w32(data,32,60);
+  fixture_w32(data,52,1);
+  fixture_w32(data,56,284);
+  fixture_w32(data,60,128);
+  fixture_w32(data,64,288);
+  fixture_w32(data,68,292);
+  fixture_w32(data,128,1);
+  fixture_w32(data,132,160);
+  fixture_w32(data,160,1);
+  fixture_w32(data,164,32);
+  fixture_w32(data,168,48);
+  fixture_w32(data,172,384);
+  fixture_w32(data,176,216);
+  fixture_w32(data,188,384);
+  fixture_w32(data,192,216);
+  fixture_w32(data,204,(uint32_t)-1);
+  fixture_w32(data,208,(uint32_t)-1);
+  fixture_w32(data,212,(uint32_t)-1);
+
+  GmlWin win={0};
+  win.data=data;
+  win.size=sizeof data;
+  win.bytecode=17;
+  win.game_speed=60;
+  win.n_chunks=1;
+  memcpy(win.chunks[0].name,"ROOM",5);
+  win.chunks[0].off=0;
+  win.chunks[0].size=sizeof data;
+  win.strs=strings;
+  win.str_charoff=string_offsets;
+  win.n_strs=1;
+
+  GmlVM vm;
+  if(gml_vm_init(&vm,&win,NULL)) return 0;
+  GmlVal dynamic_camera=gml_builtin_call(&vm,"camera_create",NULL,0);
+  GmlVal dynamic_position[3]={dynamic_camera,vreal(960),vreal(560)};
+  (void)gml_builtin_call(&vm,"camera_set_view_pos",dynamic_position,3);
+  gml_room_enter(&vm,0);
+  GmlVal view=vreal(0);
+  GmlVal room_camera=gml_builtin_call(&vm,"view_get_camera",&view,1);
+  GmlVal room_x=gml_builtin_call(&vm,"camera_get_view_x",&room_camera,1);
+  GmlVal room_y=gml_builtin_call(&vm,"camera_get_view_y",&room_camera,1);
+  GmlVal room_w=gml_builtin_call(&vm,"camera_get_view_width",&room_camera,1);
+  GmlVal room_h=gml_builtin_call(&vm,"camera_get_view_height",&room_camera,1);
+  int dynamic_id=dynamic_camera.t==V_REAL?(int)dynamic_camera.d:-1;
+  int ok=dynamic_id>=GML_ROOM_CAMERA_COUNT &&
+    room_camera.t==V_REAL && room_camera.d==0 && room_camera.d!=dynamic_camera.d &&
+    room_x.t==V_REAL && room_x.d==32 && room_y.t==V_REAL && room_y.d==48 &&
+    room_w.t==V_REAL && room_w.d==384 && room_h.t==V_REAL && room_h.d==216 &&
+    gml_global_arr(&vm,"__gml_camera_x",dynamic_id)==960 &&
+    gml_global_arr(&vm,"__gml_camera_y",dynamic_id)==560;
+  if(!ok)
+    fprintf(stderr,
+      "room/dynamic camera reservation failed: dynamic=%d room=%.0f rect=(%.0f,%.0f %.0fx%.0f)\n",
+      dynamic_id,room_camera.t==V_REAL?room_camera.d:-1.0,
+      room_x.t==V_REAL?room_x.d:-1.0,room_y.t==V_REAL?room_y.d:-1.0,
+      room_w.t==V_REAL?room_w.d:-1.0,room_h.t==V_REAL?room_h.d:-1.0);
+  gml_vm_free(&vm);
+  return ok;
+}
+
 
 int expect_hash_layer_gpu_gap_closure(void){
   GmlVM vm={0}; GmlRender render={0};

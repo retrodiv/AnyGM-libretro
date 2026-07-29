@@ -403,7 +403,6 @@ done:
  * records in reserved global arrays gives them the same rewind/save-state lifetime as the GML
  * view_camera[] bindings without growing the VM state format.  Older single-view code that never
  * creates a camera continues to use the legacy view_* arrays directly. */
-#define GML_CAMERA_MAX 64
 static const char *const gml_camera_field_name[] = {
   "__gml_camera_x", "__gml_camera_y", "__gml_camera_w", "__gml_camera_h",
   "__gml_camera_angle", "__gml_camera_target", "__gml_camera_xspeed",
@@ -414,7 +413,7 @@ enum {
   GML_CAM_TARGET, GML_CAM_XSPEED, GML_CAM_YSPEED, GML_CAM_XBORDER, GML_CAM_YBORDER
 };
 static int gml_camera_live(GmlVM *vm,int id){
-  return vm && id>=0 && id<GML_CAMERA_MAX &&
+  return vm && id>=0 && id<GML_CAMERA_LIMIT &&
          gml_global_arr(vm,"__gml_camera_live",id)>=0.5;
 }
 static double gml_camera_field(GmlVM *vm,int id,int field,double fallback){
@@ -422,15 +421,18 @@ static double gml_camera_field(GmlVM *vm,int id,int field,double fallback){
   return gml_global_arr(vm,gml_camera_field_name[field],id);
 }
 static void gml_camera_field_set(GmlVM *vm,int id,int field,double value){
-  if(!vm || id<0 || id>=GML_CAMERA_MAX || field<0 || field>GML_CAM_YBORDER) return;
+  if(!vm || id<0 || id>=GML_CAMERA_LIMIT || field<0 || field>GML_CAM_YBORDER) return;
   gml_set_global_arr(vm,gml_camera_field_name[field],id,value);
 }
 static int gml_camera_alloc(GmlVM *vm){
   static const double defaults[10]={0,0,0,0,0,-1,-1,-1,0,0};
+  int first=vm && vm->win && anygm_policy_has_modern_layer_semantics(vm->win)
+    ?GML_ROOM_CAMERA_COUNT:0;
+  int available=GML_CAMERA_LIMIT-first;
   int hint=(int)gml_global_num(vm,"__gml_camera_next");
-  if(hint<0 || hint>=GML_CAMERA_MAX) hint=0;
-  for(int pass=0;pass<GML_CAMERA_MAX;pass++){
-    int id=(hint+pass)%GML_CAMERA_MAX;
+  if(hint<first || hint>=GML_CAMERA_LIMIT) hint=first;
+  for(int pass=0;pass<available;pass++){
+    int id=first+(hint-first+pass)%available;
     if(!gml_camera_live(vm,id)){
       gml_set_global_arr(vm,"__gml_camera_live",id,1);
       for(int field=GML_CAM_X;field<=GML_CAM_YBORDER;field++)
@@ -438,7 +440,8 @@ static int gml_camera_alloc(GmlVM *vm){
       gml_set_global_arr(vm,"__gml_camera_matrix_eye_x",id,0);
       gml_set_global_arr(vm,"__gml_camera_matrix_eye_y",id,0);
       gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",id,0);
-      gml_set_global_scalar(vm,"__gml_camera_next",(id+1)%GML_CAMERA_MAX);
+      gml_set_global_scalar(vm,"__gml_camera_next",
+        first+(id-first+1)%available);
       return id;
     }
   }
@@ -862,7 +865,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         c,N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3));
       return vreal(c); }
     if(!strcmp(nm,"camera_destroy")){ int c=(int)N(a,n,0);
-      if(c>=0 && c<GML_CAMERA_MAX){
+      if(c>=0 && c<GML_CAMERA_LIMIT){
         gml_set_global_arr(vm,"__gml_camera_live",c,0);
         gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",c,0);
       }
@@ -1169,6 +1172,8 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"font_add_sprite_ext"))
       return vreal(R? gml_font_add_sprite_ext(R,(int)N(a,n,0),S(vm,a,n,1),(int)N(a,n,2),(int)N(a,n,3)) : 0);
     if(!strcmp(nm,"font_add_enable_aa")) return vreal(0);
+    if(!strcmp(nm,"font_exists"))
+      return vreal(gml_render_font_exists(R,(int)N(a,n,0)));
     if(!strcmp(nm,"font_get_size")){
       GmlRenderFontMetrics font;
       return vreal(gml_render_font_metrics(R,(int)N(a,n,0),&font)&&font.line_height>0?font.line_height:0);

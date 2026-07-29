@@ -996,7 +996,10 @@ void gml_render_free(GmlRender *r){
   for(int i=0;i<r->interp_subrect_count;i++)
     for(int q=0;q<3;q++) free(r->interp_subrect_cache[i].phase[q]);
   free(r->interp_subrect_cache);
-  for(int i=0;i<r->n_atlas;i++) free(r->atlas[i].px);
+  for(int i=0;i<r->n_atlas;i++){
+    free(r->atlas[i].px);
+    free(r->atlas[i].external_blob);
+  }
   for(int i=0;i<r->n_spr;i++) free(r->spr[i].frame);
   free(r->classic_info_native_pixels);
   free(r->crt_gamma_scratch); free(r->crt_cols_scratch); free(r->crt_conv_scratch);
