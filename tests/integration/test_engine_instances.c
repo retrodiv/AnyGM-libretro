@@ -121,6 +121,57 @@ static int draw_schedule_policy(void){
   return ok;
 }
 
+static int framebuffer_retention_case(
+    int (*create_fixture)(AnygmSyntheticContent *),const char *label){
+  AnygmSyntheticContent fixture;
+  if(!create_fixture(&fixture)){
+    fprintf(stderr,"%s framebuffer-retention fixture creation failed\n",label);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     output.pixels && output.width==64 && output.height==48;
+  size_t pixels=(size_t)output.width*output.height;
+  uint32_t *painted=ok?malloc(pixels*sizeof(*painted)):NULL;
+  ok=ok && painted!=NULL;
+  if(ok) memcpy(painted,output.pixels,pixels*sizeof(*painted));
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     engine->vm.room_index==1 && output.pixels &&
+     !memcmp(painted,output.pixels,pixels*sizeof(*painted));
+  if(!ok)
+    fprintf(stderr,
+      "%s room with background drawing disabled did not retain the completed framebuffer\n",
+      label);
+  free(painted);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
+static int framebuffer_retention_policy(void){
+  return framebuffer_retention_case(anygm_synthetic_framebuffer_content_create,"single-view") &&
+         framebuffer_retention_case(
+           anygm_synthetic_multiview_framebuffer_content_create,"multi-view");
+}
+
 static int state_input_history_roundtrip(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_content_create(&fixture)){
@@ -212,6 +263,7 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
 int main(void){
   if(!screen_stage_raster_policy()) return 1;
   if(!draw_schedule_policy()) return 1;
+  if(!framebuffer_retention_policy()) return 1;
   if(!state_input_history_roundtrip()) return 1;
   char label[128];
   anygm_content_save_label("/library/fixture_bundle/data.win",label,sizeof label);

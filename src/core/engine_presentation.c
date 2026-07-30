@@ -1024,6 +1024,28 @@ void compose_view_rect(const uint32_t *src, int sw, int sh,
   }
 }
 
+static void seed_view_rect(const uint32_t *src,int sw,int sh,
+                           uint32_t *dst,int dw,int dh,
+                           int sx,int sy,int rw,int rh){
+  if(!src || !dst || sw<=0 || sh<=0 || dw<=0 || dh<=0 || rw<=0 || rh<=0) return;
+  int x0=sx<0?0:sx, y0=sy<0?0:sy;
+  int x1=sx+rw, y1=sy+rh;
+  if(x1>sw) x1=sw;
+  if(y1>sh) y1=sh;
+  if(x0>=x1 || y0>=y1) return;
+  for(int y=y0;y<y1;y++){
+    int dy=(int)(((int64_t)(2*(y-sy)+1)*dh)/((int64_t)2*rh));
+    if(dy<0) dy=0;
+    if(dy>=dh) dy=dh-1;
+    for(int x=x0;x<x1;x++){
+      int dx=(int)(((int64_t)(2*(x-sx)+1)*dw)/((int64_t)2*rw));
+      if(dx<0) dx=0;
+      if(dx>=dw) dx=dw-1;
+      dst[(size_t)dy*dw+dx]=src[(size_t)y*sw+x];
+    }
+  }
+}
+
 /* Render every visible GMS view once, in view-index order, then composite each camera into its
  * declared port on the application surface. Pre-Draw and Post-Draw are screen-stage events owned
  * by the frame coordinator and remain outside this per-view sequence. */
@@ -1033,11 +1055,12 @@ int render_multiview_application(AnygmEngine *engine) {
   if (count <= 1 || canvas_w != (int)engine->width || canvas_h != (int)engine->height) return 0;
   if(!ensure_scratch_buffer(engine,&engine->app_crop)) return 0;
   uint32_t *view_buffer=engine->app_crop;
-  memset(engine->fb, 0, (size_t)engine->width * engine->height * sizeof(uint32_t));
-  for (unsigned i = 0; i < engine->width * engine->height; i++) engine->fb[i] = 0xFF000000u;
 
   GmlRoom rm;
   int have_room = gml_room_get(&engine->win, engine->vm.room_index, &rm) == 0;
+  int clear_background = !have_room || rm.draw_bg;
+  if(clear_background)
+    for(unsigned i=0;i<engine->width*engine->height;i++) engine->fb[i]=0xFF000000u;
   const char *bg_renderer = anygm_host_development_setting(&engine->host,"GML_BG_RENDERER_OBJ");
   int pobj = (bg_renderer && *bg_renderer) ? gml_object_index_by_name(&engine->vm, bg_renderer) : -1;
   int gml_draws_bg = pobj >= 0 && gml_find_instance(&engine->vm, pobj) != NULL;
@@ -1050,8 +1073,12 @@ int render_multiview_application(AnygmEngine *engine) {
     GmlRenderSamplePlanes planes={0};
     gml_render_sample_planes_update(&engine->render,&planes,
                                     GML_RENDER_SAMPLE_PLANES_APPLICATION);
+    if(!clear_background)
+      seed_view_rect(engine->fb,(int)engine->width,(int)engine->height,
+                     view_buffer,vw,vh,v->px,v->py,v->pw,v->ph);
     gml_render_begin(&engine->render, view_buffer, vw, vh, v->x, v->y);
-    gml_render_set_pending_fill(&engine->render, engine->background);
+    if(clear_background)
+      gml_render_set_pending_fill(&engine->render, engine->background);
     if (have_room && !gml_draws_bg) draw_runtime_backgrounds(engine,0);
     gml_vm_draw_pass(&engine->vm, "Draw_72");
     gml_vm_draw(&engine->vm);

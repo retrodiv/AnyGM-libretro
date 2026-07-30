@@ -215,6 +215,107 @@ int anygm_synthetic_draw_content_create(AnygmSyntheticContent *fixture){
   return 1;
 }
 
+static int synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture,int multiview){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+
+  char create[192],step[192];
+  snprintf(create,sizeof create,"%s/retain-create.gml",fixture->directory);
+  snprintf(step,sizeof step,"%s/retain-step.gml",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  if(!write_text(create,"global.fixture_frame = 0;\n") ||
+     !write_text(step,
+                 "if (global.fixture_frame >= 1) room_goto(1);\n"
+                 "global.fixture_frame += 1;\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+
+  GmlcProject project={0};
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  project.host=&file_services;
+  GmlcObject object={0};
+  GmlcObjectEvent events[2]={0};
+  GmlcRoom rooms[2]={0};
+  GmlcRoomInstance instance={0};
+  int room_order[2]={0,1};
+  project.name=(char *)"neutral-framebuffer-fixture";
+  project.objects=&object;
+  project.n_objects=project.cap_objects=1;
+  project.rooms=rooms;
+  project.n_rooms=project.cap_rooms=2;
+  project.room_order=room_order;
+  project.n_room_order=2;
+
+  object.id=object.name=(char *)"obj_fixture";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.visible=0;
+  object.events=events;
+  object.n_events=object.cap_events=2;
+  events[0].event_type=0;
+  events[0].event_number=0;
+  events[0].source_path=create;
+  events[1].event_type=3;
+  events[1].event_number=0;
+  events[1].source_path=step;
+
+  rooms[0].id=rooms[0].name=(char *)"room_painted";
+  rooms[0].width=64;
+  rooms[0].height=48;
+  rooms[0].speed=60;
+  rooms[0].background_color=0xFF336699u;
+  rooms[0].draw_background_color=1;
+  rooms[0].instances=&instance;
+  rooms[0].n_instances=rooms[0].cap_instances=1;
+  instance.id=instance.name=(char *)"instance_fixture";
+  instance.object_id=0;
+  instance.instance_id=100000;
+  instance.sx=instance.sy=1.0f;
+  instance.color=0xFFFFFFFFu;
+
+  rooms[1].id=rooms[1].name=(char *)"room_retained";
+  rooms[1].width=64;
+  rooms[1].height=48;
+  rooms[1].speed=60;
+  rooms[1].background_color=0xFF000000u;
+  rooms[1].draw_background_color=0;
+  if(multiview){
+    for(int room=0;room<2;room++){
+      rooms[room].view_enabled=1;
+      rooms[room].n_views=2;
+      for(int view=0;view<2;view++){
+        rooms[room].views[view].visible=1;
+        rooms[room].views[view].xview=view*32;
+        rooms[room].views[view].wview=rooms[room].views[view].wport=32;
+        rooms[room].views[view].hview=rooms[room].views[view].hport=48;
+        rooms[room].views[view].xport=view*32;
+        rooms[room].views[view].hspeed=rooms[room].views[view].vspeed=-1;
+        rooms[room].views[view].object_id=-1;
+      }
+    }
+  }
+
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"synthetic framebuffer package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  return 1;
+}
+
+int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0);
+}
+
+int anygm_synthetic_multiview_framebuffer_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,1);
+}
+
 void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture){
   if(!fixture || !fixture->directory[0]) return;
   char path[256];
@@ -227,6 +328,10 @@ void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture){
   snprintf(path,sizeof path,"%s/draw-normal.gml",fixture->directory);
   anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/draw-post.gml",fixture->directory);
+  anygm_test_unlink(path);
+  snprintf(path,sizeof path,"%s/retain-create.gml",fixture->directory);
+  anygm_test_unlink(path);
+  snprintf(path,sizeof path,"%s/retain-step.gml",fixture->directory);
   anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/data.win",fixture->directory);
   anygm_test_unlink(path);

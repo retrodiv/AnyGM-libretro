@@ -590,9 +590,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   }
   gml_render_sample_planes_update(
     &engine->render,&sample_planes,GML_RENDER_SAMPLE_PLANES_CLASSIC);
-  gml_render_set_pending_fill(&engine->render, engine->background);
   GmlRoom rm;
   int have_room = (gml_room_get(&engine->win, engine->vm.room_index, &rm) == 0);
+  /* A room whose background-color flag is disabled draws over the completed application
+   * framebuffer without replacing the omitted clear with the room color. */
+  if (!have_room || rm.draw_bg)
+    gml_render_set_pending_fill(&engine->render, engine->background);
   /* Some games draw room backgrounds themselves from GML. When a launcher supplies that renderer
    * object's name, defer to it and avoid double-drawing the engine's static fallback. */
   const char *bg_renderer = anygm_host_development_setting(&engine->host,"GML_BG_RENDERER_OBJ");
