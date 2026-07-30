@@ -121,6 +121,61 @@ static int draw_schedule_policy(void){
   return ok;
 }
 
+static int state_input_history_roundtrip(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_content_create(&fixture)){
+    fputs("input-history fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  input.connected_gamepads=1;
+  input.gamepad_buttons[0][ANYGM_PAD_RIGHT]=1;
+  AnygmFrameOutput output={0};
+  output.struct_size=sizeof output;
+  for(int frame=0;ok && frame<2;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  uint8_t *state=NULL;
+  size_t state_size=0;
+  ok=ok && engine->pad_current[ANYGM_PAD_RIGHT] &&
+     engine->pad_previous[ANYGM_PAD_RIGHT] &&
+     save_state(engine,&state,&state_size);
+  input.gamepad_buttons[0][ANYGM_PAD_RIGHT]=0;
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     !engine->pad_current[ANYGM_PAD_RIGHT] &&
+     engine->pad_previous[ANYGM_PAD_RIGHT] &&
+     anygm_state_load(engine,state,state_size)==ANYGM_OK &&
+     engine->pad_current[ANYGM_PAD_RIGHT] &&
+     engine->pad_previous[ANYGM_PAD_RIGHT];
+  input.gamepad_buttons[0][ANYGM_PAD_RIGHT]=1;
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     engine->pad_current[ANYGM_PAD_RIGHT] &&
+     engine->pad_previous[ANYGM_PAD_RIGHT];
+  free(state);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  if(!ok) fputs("state roundtrip did not preserve the input edge baseline\n",stderr);
+  return ok;
+}
+
 static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidate,size_t size,
                                      const uint8_t *baseline,size_t baseline_size,
                                      const char *label){
@@ -157,6 +212,7 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
 int main(void){
   if(!screen_stage_raster_policy()) return 1;
   if(!draw_schedule_policy()) return 1;
+  if(!state_input_history_roundtrip()) return 1;
   char label[128];
   anygm_content_save_label("/library/fixture_bundle/data.win",label,sizeof label);
   if(strcmp(label,"fixture_bundle")){

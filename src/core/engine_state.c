@@ -283,10 +283,9 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   cr_raw(&core,engine->pad_current,sizeof(engine->pad_current)); cr_raw(&core,engine->pad_previous,sizeof(engine->pad_previous));
   cr_raw(&core,engine->key_current,sizeof(engine->key_current)); cr_raw(&core,engine->key_previous,sizeof(engine->key_previous));
   if(!core.ok || core.pos!=core.cap) return false;
-  memset(engine->pad_current,0,sizeof(engine->pad_current));
-  memset(engine->pad_previous,0,sizeof(engine->pad_previous));
-  memset(engine->key_current,0,sizeof(engine->key_current));
-  memset(engine->key_previous,0,sizeof(engine->key_previous));
+  /* The serialized current state is the edge-detection baseline for the first advancing frame.
+   * The presentation-only load frame clears input temporarily and reapplies this state afterward,
+   * so retaining it cannot deliver stale input to Draw events. */
   memset(engine->hardware_key_current,0,sizeof(engine->hardware_key_current));
   memset(engine->hardware_key_previous,0,sizeof(engine->hardware_key_previous));
   memset(engine->event_vk_current,0,sizeof(engine->event_vk_current));
