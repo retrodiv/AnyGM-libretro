@@ -1219,6 +1219,59 @@ static int blit_tpag_scale1_white_exact_flipped(GmlRender *r, GmlTpag *t, GmlAtl
   }
   return 1;
 }
+static int blit_tpag_scale1_white_exact_rotated_tile(
+    GmlRender *r,GmlTpag *t,GmlAtlas *a,
+    int source_x,int source_y,int source_width,int source_height,
+    double destination_x,double destination_y,int mirror,int flip){
+  if(!r || !t || !a || !a->px || !r->fb ||
+     source_width<=0 || source_height<=0) return 0;
+  int local_x=source_x-t->tx;
+  int local_y=source_y-t->ty;
+  if(local_x<0 || local_y<0 ||
+     local_x+source_width>t->sw || local_y+source_height>t->sh) return 0;
+  uint32_t *cache=tpag_argb_cache(r,t,a);
+  if(!cache) return 0;
+  int output_width=source_height;
+  int output_height=source_width;
+  int x0=(int)ceil(destination_x-0.5);
+  int y0=(int)ceil(destination_y-0.5);
+  int x1=(int)ceil(destination_x+output_width-0.5);
+  int y1=(int)ceil(destination_y+output_height-0.5);
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>r->fbw) x1=r->fbw;
+  if(y1>r->fbh) y1=r->fbh;
+  if(x1<=x0 || y1<=y0) return 1;
+  gml_render_maybe_prepare_draw(r);
+  int family=gml_blend_family(r);
+  for(int destination_row=y0;destination_row<y1;destination_row++){
+    int output_y=(int)floor(destination_row+0.5-destination_y);
+    if(output_y<0 || output_y>=source_width) continue;
+    int tile_x=mirror?source_width-1-output_y:output_y;
+    uint32_t *destination=
+      r->fb+(size_t)destination_row*r->fbw+x0;
+    for(int destination_column=x0;destination_column<x1;
+        destination_column++,destination++){
+      int output_x=(int)floor(destination_column+0.5-destination_x);
+      if(output_x<0 || output_x>=source_height) continue;
+      int pre_flip_y=source_height-1-output_x;
+      int tile_y=flip?source_height-1-pre_flip_y:pre_flip_y;
+      uint32_t source=
+        cache[(size_t)(local_y+tile_y)*t->sw+local_x+tile_x];
+      uint32_t source_alpha=source>>24;
+      if(!source_alpha) continue;
+      if(!r->alphablend){
+        *destination=0xFF000000u|(source&0x00FFFFFFu);
+      } else if(source_alpha>=255u){
+        *destination=source;
+      } else {
+        blend_argb_src_over_exact(
+          r,destination,&source,1,source_alpha,family);
+      }
+    }
+  }
+  return 1;
+}
 static int tpag_alpha_qrows(GmlRender *r, GmlTpag *t, GmlAtlas *a, int min_alpha,
                             const uint16_t **row_min, const uint16_t **row_max){
   if(row_min) *row_min=NULL;
@@ -4858,11 +4911,27 @@ void gml_draw_background_tile(GmlRender *r,int bg,
   gml_render_gui_map_scale(r,&xs,&ys);
   if(!r || bg<0 || bg>=r->n_bg || sw<=0 || sh<=0 || xs==0 || ys==0) return;
   int ti=r->bg[bg].tpag; if(ti<0 || ti>=r->n_tpag) return;
+  GmlTpag *page=&r->tpag[ti];
+  int source_x=(int)lround(sx),source_y=(int)lround(sy);
+  int source_width=(int)lround(sw),source_height=(int)lround(sh);
+  double screen_x=x-r->cam_x,screen_y=y-r->cam_y;
+  if(fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 &&
+     fabs(sx-source_x)<1e-9 && fabs(sy-source_y)<1e-9 &&
+     fabs(sw-source_width)<1e-9 && fabs(sh-source_height)<1e-9 &&
+     alpha>=1.0 && (color&0xFFFFFFu)==0xFFFFFFu &&
+     r->blendmode==0 && r->active_shader<0 && !gml_d3_is_active(r) &&
+     page->atlas>=0 && page->atlas<r->n_atlas &&
+     atlas_pixels(r,page->atlas) &&
+     blit_tpag_scale1_white_exact_rotated_tile(
+       r,page,&r->atlas[page->atlas],
+       source_x,source_y,source_width,source_height,
+       screen_x,screen_y,mirror,flip)) return;
   GmlTpag view;
-  int source_x=0,source_y=0;
-  if(!tpag_part_view(&r->tpag[ti],sx,sy,sw,sh,&view,&source_x,&source_y)) return;
-  view.tx=(int)lround(source_x-sx);
-  view.ty=(int)lround(source_y-sy);
+  int clipped_source_x=0,clipped_source_y=0;
+  if(!tpag_part_view(page,sx,sy,sw,sh,
+                     &view,&clipped_source_x,&clipped_source_y)) return;
+  view.tx=(int)lround(clipped_source_x-sx);
+  view.ty=(int)lround(clipped_source_y-sy);
   view.bw=(int)ceil(sw);
   view.bh=(int)ceil(sh);
 

@@ -257,6 +257,7 @@ typedef struct {
   const uint32_t *src; uint32_t *dst; int w,h;
   int ix[36],iy[36]; float weight00[36],weight10[36],weight01[36],weight11[36];
   float inv_radius[36],exp_lut[1025];
+  float nearest_numerator[36][256],nearest_denominator[36][256];
 } LayerGlowCtx;
 
 

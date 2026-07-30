@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int failures;
@@ -121,12 +122,80 @@ static void check_transform(int mirror,int flip,int rotate,
   render.alpha=1.0;
   render.alphablend=1;
   render.color_write_mask=0x0f;
+  render.active_shader=-1;
   render.target_id=-1;
   gml_draw_background_tile(&render,0,0,0,2,2,0,0,1,1,
                            mirror,flip,rotate,0xffffff,1.0);
   gml_render_flush_rotated_batch(&render);
   expect(!memcmp(framebuffer,expected,sizeof framebuffer),
          "tile mirror/flip/rotate combination produced shifted or reordered pixels");
+  free(page.argb_cache);
+}
+
+static void check_fractional_transform_equivalence(int mirror,int flip){
+  static const uint8_t rgba[16]={
+    255,0,0,128, 0,255,0,255,
+    0,0,255,64, 255,255,255,192
+  };
+  uint32_t fast_framebuffer[25];
+  uint32_t general_framebuffer[25];
+  GmlRender fast;
+  GmlRender general;
+  GmlAtlas atlas;
+  GmlTpag fast_page;
+  GmlTpag general_page;
+  GmlBg background;
+
+  for(int i=0;i<25;i++)
+    fast_framebuffer[i]=general_framebuffer[i]=
+      0xff102030u+(uint32_t)(i*0x00010101u);
+  memset(&fast,0,sizeof fast);
+  memset(&general,0,sizeof general);
+  memset(&atlas,0,sizeof atlas);
+  memset(&fast_page,0,sizeof fast_page);
+  memset(&background,0,sizeof background);
+  atlas.px=(uint8_t*)rgba;
+  atlas.w=atlas.h=2;
+  fast_page.atlas=0;
+  fast_page.sw=fast_page.sh=fast_page.bw=fast_page.bh=2;
+  fast_page.alpha_scanned=1;
+  fast_page.alpha_max=255;
+  fast_page.ax1=fast_page.ay1=1;
+  general_page=fast_page;
+  background.tpag=0;
+  fast.fb=fast.base_fb=fast_framebuffer;
+  fast.fbw=fast.base_fbw=5;
+  fast.fbh=fast.base_fbh=5;
+  fast.atlas=&atlas;
+  fast.n_atlas=1;
+  fast.tpag=&fast_page;
+  fast.n_tpag=1;
+  fast.bg=&background;
+  fast.n_bg=1;
+  fast.cam_x=0.2;
+  fast.cam_y=0.8;
+  fast.alpha=1.0;
+  fast.alphablend=1;
+  fast.color_write_mask=0x0f;
+  fast.active_shader=-1;
+  fast.target_id=-1;
+  general=fast;
+  general.fb=general.base_fb=general_framebuffer;
+  general.tpag=&general_page;
+  general.active_shader=0;
+
+  gml_draw_background_tile(&fast,0,0,0,2,2,1,1,1,1,
+                           mirror,flip,1,0xffffff,1.0);
+  gml_draw_background_tile(&general,0,0,0,2,2,1,1,1,1,
+                           mirror,flip,1,0xffffff,1.0);
+  gml_render_flush_rotated_batch(&fast);
+  gml_render_flush_rotated_batch(&general);
+  expect(!memcmp(fast_framebuffer,general_framebuffer,sizeof fast_framebuffer),
+         "fractional cardinal tile path diverged from the general rotation kernel");
+  free(fast_page.argb_cache);
+  free(general_page.argb_cache);
+  free(fast.rotated_batch);
+  free(general.rotated_batch);
 }
 
 int main(void){
@@ -144,6 +213,8 @@ int main(void){
   check_tileset_layout(1);
   for(int bits=0;bits<8;bits++)
     check_transform(bits&1,(bits>>1)&1,(bits>>2)&1,transformed[bits]);
+  for(int bits=0;bits<4;bits++)
+    check_fractional_transform_equivalence(bits&1,(bits>>1)&1);
   if(failures){
     fprintf(stderr,"renderer tiles: %d failure(s)\n",failures);
     return 1;
