@@ -688,7 +688,10 @@ void gml_vm_step(GmlVM *vm){
 /* Draw phase: GM draws instances and room tiles interleaved by depth (high
  * depth = behind). Merging them preserves layer ordering between tile layers,
  * scripted background instances, and gameplay instances. */
-typedef struct { double x,y,xs,ys; int def,sx,sy,w,h,order; } GmlDrawTile;
+typedef struct {
+  double x,y,xs,ys;
+  int def,sx,sy,w,h,mirror,flip,rotate,order;
+} GmlDrawTile;
 static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap, GmlDrawTile t, double dep, int order){
   if(*nt>=*cap){
     int nc=*cap?*cap*2:256;
@@ -1031,6 +1034,7 @@ void gml_vm_draw(GmlVM *vm){
 	dt.x=tx; dt.y=ty; dt.xs=1; dt.ys=1; dt.def=(int)gml_vm_read_u32_le(d,p+8);
 	dt.sx=(int)gml_vm_read_u32_le(d,p+12); dt.sy=(int)gml_vm_read_u32_le(d,p+16);
 	dt.w=(int)gml_vm_read_u32_le(d,p+20); dt.h=(int)gml_vm_read_u32_le(d,p+24);
+	dt.mirror=dt.flip=dt.rotate=0;
 	draw_tile_add(&tiles,&tdepth,&nt,&tcap,dt,tdep,-1); } }
   }
   /* ---- GMS2 room layers (ROOM record +88): Background (type 1) and Asset-tile (type 3)
@@ -1174,6 +1178,10 @@ void gml_vm_draw(GmlVM *vm){
     int srcw=background.logical_width,srch=background.logical_height;
     int per_row=background.tile_columns>0?background.tile_columns:(pitch_x>0?srcw/pitch_x:0);
     if(srcw<=0 || srch<=0 || tw<=0 || th<=0 || pitch_x<=0 || pitch_y<=0 || per_row<=0) continue;
+    double speed=gml_room_speed(vm);
+    double elapsed_seconds=speed>0.0?vm->frame/speed:0.0;
+    int animation_frame=
+      gml_render_background_tile_animation_frame(R,tm->tileset,elapsed_seconds);
     int cx0=(int)floor((target.camera_x-tmx)/tm->tw)-1;
     int cy0=(int)floor((target.camera_y-tmy)/tm->th)-1;
     int cx1=(int)ceil((target.camera_x+target.width-tmx)/tm->tw)+1;
@@ -1186,7 +1194,8 @@ void gml_vm_draw(GmlVM *vm){
       uint32_t datum=gml_vm_read_u32_le(tm->tiles,(uint32_t)((size_t)cy*tm->cols+cx)*4);
       int idx=(int)(datum & 0x7FFFFu);
       if(idx<=0) continue;                  /* GM encodes 0 as empty */
-      int src_idx=gml_render_background_tile_source_index(R,tm->tileset,idx);
+      int src_idx=
+        gml_render_background_tile_source_index(R,tm->tileset,idx,animation_frame);
       if(src_idx<0) continue;
       int sx=(src_idx%per_row)*pitch_x + bx, sy=(src_idx/per_row)*pitch_y + by;
       if(sx>=srcw || sy>=srch) continue;
@@ -1196,8 +1205,9 @@ void gml_vm_draw(GmlVM *vm){
       if(w<=0 || h<=0) continue;
       GmlDrawTile dt;
       dt.x=tmx + cx*tm->tw; dt.y=tmy + cy*tm->th; dt.xs=1; dt.ys=1;
-      if((datum>>28)&1){ dt.x += tm->tw; dt.xs=-1; }
-      if((datum>>29)&1){ dt.y += tm->th; dt.ys=-1; }
+      dt.mirror=(int)((datum>>28)&1);
+      dt.flip=(int)((datum>>29)&1);
+      dt.rotate=(int)((datum>>30)&1);
       dt.def=tm->tileset; dt.sx=sx; dt.sy=sy; dt.w=w; dt.h=h;
       draw_tile_add(&tiles,&tdepth,&nt,&tcap,dt,tmdepth,tm->order);
     }
@@ -1343,7 +1353,10 @@ void gml_vm_draw(GmlVM *vm){
       }
     }
     if(it[k].type==1){ GmlDrawTile *t=&tiles[it[k].idx];
-      gml_draw_background_part_ext(R,t->def,t->sx,t->sy,t->w,t->h,t->x,t->y,t->xs,t->ys,0xFFFFFF,1); continue; }
+      gml_draw_background_tile(R,t->def,t->sx,t->sy,t->w,t->h,
+                               t->x,t->y,t->xs,t->ys,
+                               t->mirror,t->flip,t->rotate,0xFFFFFF,1);
+      continue; }
     if(it[k].type==2){ struct LayTile *t=&ltl[it[k].idx];
       if(vm->win && anygm_policy_uses_classic_runtime(vm->win))
         gml_draw_background_part_ext(R,t->sprite,t->sx,t->sy,t->w,t->h,t->x,t->y,t->xs,t->ys,t->blend,t->alpha);

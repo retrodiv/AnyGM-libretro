@@ -1943,37 +1943,48 @@ static void blit_rgba_region(GmlRender *r, const uint8_t *src, int iw, int ih,
     }
   }
 }
+static int tpag_part_view(const GmlTpag *t,
+                          double sx,double sy,double sw,double sh,
+                          GmlTpag *view,int *source_x,int *source_y){
+  if(!t || !view || sw<=0 || sh<=0) return 0;
+  double ix0d=fmax(sx,(double)t->tx), iy0d=fmax(sy,(double)t->ty);
+  double ix1d=fmin(sx+sw,(double)(t->tx+t->sw)), iy1d=fmin(sy+sh,(double)(t->ty+t->sh));
+  int ix0=(int)floor(ix0d), iy0=(int)floor(iy0d);
+  int ix1=(int)ceil(ix1d), iy1=(int)ceil(iy1d);
+  if(ix1<=ix0 || iy1<=iy0) return 0;
+  *view=*t;
+  view->sx=t->sx + (ix0 - t->tx);
+  view->sy=t->sy + (iy0 - t->ty);
+  view->sw=ix1-ix0;
+  view->sh=iy1-iy0;
+  view->tx=0; view->ty=0;
+  /* the copy dies on return, so any alpha scan on it is thrown-away work redone EVERY call
+   * (a big tiled background part re-scanned its full sub-rect per draw); and the pointer
+   * caches copied from the parent describe the PARENT's geometry, not this sub-rect.
+   * Mark it pre-scanned with conservative full-rect bounds and detach the caches. */
+  view->alpha_scanned=1;
+  view->ax0=0; view->ay0=0; view->ax1=view->sw-1; view->ay1=view->sh-1;
+  view->alpha_max=t->alpha_scanned ? t->alpha_max : 255;
+  view->alpha_row_min=view->alpha_row_max=NULL;
+  view->alpha_qrow_min=view->alpha_qrow_max=NULL; view->alpha_qrow_built=NULL;
+  view->alpha_runs=NULL; view->alpha_run_count=0; view->alpha_runs_built=0;
+  view->alpha8_cache=NULL;
+  view->argb_cache=NULL;
+  view->solid_blur_alpha_cache=NULL; view->solid_blur_alpha_shader=-1;
+  view->interp_phase_cache[0]=view->interp_phase_cache[1]=view->interp_phase_cache[2]=NULL;
+  view->fast8_draw_cache=NULL; view->fast8_draw_cache_valid=0; view->fast8_draw_pending_count=0;
+  if(source_x) *source_x=ix0;
+  if(source_y) *source_y=iy0;
+  return 1;
+}
 static void blit_tpag_part_with_phase(GmlRender *r, GmlTpag *t,
                                       double sx, double sy, double sw, double sh,
                                       double dx, double dy, double xs, double ys,
                                       uint32_t blend, double alpha, int advance_y){
   if(!t || sw<=0 || sh<=0 || xs==0 || ys==0) return;
-  double ix0d=fmax(sx,(double)t->tx), iy0d=fmax(sy,(double)t->ty);
-  double ix1d=fmin(sx+sw,(double)(t->tx+t->sw)), iy1d=fmin(sy+sh,(double)(t->ty+t->sh));
-  int ix0=(int)floor(ix0d), iy0=(int)floor(iy0d);
-  int ix1=(int)ceil(ix1d), iy1=(int)ceil(iy1d);
-  if(ix1<=ix0 || iy1<=iy0) return;
-  GmlTpag tt=*t;
-  tt.sx=t->sx + (ix0 - t->tx);
-  tt.sy=t->sy + (iy0 - t->ty);
-  tt.sw=ix1-ix0;
-  tt.sh=iy1-iy0;
-  tt.tx=0; tt.ty=0;
-  /* the copy dies on return, so any alpha scan on it is thrown-away work redone EVERY call
-   * (a big tiled background part re-scanned its full sub-rect per draw); and the pointer
-   * caches copied from the parent describe the PARENT's geometry, not this sub-rect.
-   * Mark it pre-scanned with conservative full-rect bounds and detach the caches. */
-  tt.alpha_scanned=1;
-  tt.ax0=0; tt.ay0=0; tt.ax1=tt.sw-1; tt.ay1=tt.sh-1;
-  tt.alpha_max=t->alpha_scanned ? t->alpha_max : 255;
-  tt.alpha_row_min=tt.alpha_row_max=NULL;
-  tt.alpha_qrow_min=tt.alpha_qrow_max=NULL; tt.alpha_qrow_built=NULL;
-  tt.alpha_runs=NULL; tt.alpha_run_count=0; tt.alpha_runs_built=0;
-  tt.alpha8_cache=NULL;
-  tt.argb_cache=NULL;
-  tt.solid_blur_alpha_cache=NULL; tt.solid_blur_alpha_shader=-1;
-  tt.interp_phase_cache[0]=tt.interp_phase_cache[1]=tt.interp_phase_cache[2]=NULL;
-  tt.fast8_draw_cache=NULL; tt.fast8_draw_cache_valid=0; tt.fast8_draw_pending_count=0;
+  GmlTpag tt;
+  int ix0=0,iy0=0;
+  if(!tpag_part_view(t,sx,sy,sw,sh,&tt,&ix0,&iy0)) return;
   if(advance_y) blit_background_phase(r,&tt,dx+(ix0-sx)*xs,dy+(iy0-sy)*ys,xs,ys,blend,alpha);
   else blit(r,&tt,dx+(ix0-sx)*xs,dy+(iy0-sy)*ys,xs,ys,blend,alpha);
 }
@@ -4831,6 +4842,58 @@ void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, do
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
   if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
   blit_tpag_part_background(r,&r->tpag[ti],sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
+}
+void gml_draw_background_tile(GmlRender *r,int bg,
+                              double sx,double sy,double sw,double sh,
+                              double x,double y,double xs,double ys,
+                              int mirror,int flip,int rotate,
+                              uint32_t color,double alpha){
+  if(!rotate){
+    if(mirror){ x+=sw*xs; xs=-xs; }
+    if(flip){ y+=sh*ys; ys=-ys; }
+    gml_draw_background_part_ext(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha);
+    return;
+  }
+  gml_render_gui_map_point(r,&x,&y);
+  gml_render_gui_map_scale(r,&xs,&ys);
+  if(!r || bg<0 || bg>=r->n_bg || sw<=0 || sh<=0 || xs==0 || ys==0) return;
+  int ti=r->bg[bg].tpag; if(ti<0 || ti>=r->n_tpag) return;
+  GmlTpag view;
+  int source_x=0,source_y=0;
+  if(!tpag_part_view(&r->tpag[ti],sx,sy,sw,sh,&view,&source_x,&source_y)) return;
+  view.tx=(int)lround(source_x-sx);
+  view.ty=(int)lround(source_y-sy);
+  view.bw=(int)ceil(sw);
+  view.bh=(int)ceil(sh);
+
+  double tile_xscale=mirror?-xs:xs;
+  double tile_yscale=flip?-ys:ys;
+  double cosine=0.0,sine=0.0;
+  const double degrees=-90.0;
+  render_rotation_sincos(degrees,&cosine,&sine);
+  double min_x=1e30,min_y=1e30;
+  const double corner_x[4]={0.0,sw,sw,0.0};
+  const double corner_y[4]={0.0,0.0,sh,sh};
+  for(int i=0;i<4;i++){
+    double local_x=corner_x[i]*tile_xscale;
+    double local_y=corner_y[i]*tile_yscale;
+    double transformed_x=local_x*cosine+local_y*sine;
+    double transformed_y=-local_x*sine+local_y*cosine;
+    if(transformed_x<min_x) min_x=transformed_x;
+    if(transformed_y<min_y) min_y=transformed_y;
+  }
+  double draw_x=x-min_x,draw_y=y-min_y;
+  /* blit_rotated applies the shared half-open cardinal anchor. The tile's public position is the
+   * transformed bounding-box corner, so compensate before entering that origin-based kernel. */
+  if(tile_xscale*cosine < -1e-12 || tile_yscale*sine < -1e-12) draw_x+=1.0;
+  if(-tile_xscale*sine < -1e-12 || tile_yscale*cosine < -1e-12) draw_y+=1.0;
+  GmlSprite sprite;
+  memset(&sprite,0,sizeof sprite);
+  sprite.w=view.bw; sprite.h=view.bh;
+  int queued_before=r->rotated_batch_count;
+  blit_rotated(r,&sprite,&view,draw_x,draw_y,
+               tile_xscale,tile_yscale,degrees,color,alpha);
+  if(r->rotated_batch_count>queued_before) gml_render_flush_rotated_batch(r);
 }
 void gml_draw_background_stretched(GmlRender *r, int bg, double x, double y, double w, double h, uint32_t color, double alpha){
   if(bg<0||bg>=r->n_bg) return;

@@ -402,6 +402,11 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
 void gml_draw_background(GmlRender *r, int bg, double x, double y);
 void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, double sw, double sh,
                                   double x, double y, double xs, double ys, uint32_t color, double alpha);
+void gml_draw_background_tile(GmlRender *r, int bg,
+                              double sx, double sy, double sw, double sh,
+                              double x, double y, double xs, double ys,
+                              int mirror, int flip, int rotate,
+                              uint32_t color, double alpha);
 void gml_draw_background_stretched(GmlRender *r, int bg, double x, double y, double w, double h, uint32_t color, double alpha);
 void gml_draw_background_tiled(GmlRender *r, int bg, double x, double y, int htiled, int vtiled);
 void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs, double ys, uint32_t color, double alpha);
@@ -464,8 +469,10 @@ int  gml_render_texture_metrics(GmlRender *r,int texture,
 int  gml_render_background_metrics(const GmlRender *r, int background,
                                    GmlRenderBackgroundMetrics *metrics);
 int  gml_render_background_texture_handle(const GmlRender *r, int background);
+int  gml_render_background_tile_animation_frame(const GmlRender *r, int background,
+                                                 double elapsed_seconds);
 int  gml_render_background_tile_source_index(const GmlRender *r, int background,
-                                              int tile_index);
+                                              int tile_index, int animation_frame);
 int  gml_render_font_metrics(const GmlRender *r, int font,
                              GmlRenderFontMetrics *metrics);
 int  gml_render_font_exists(const GmlRender *r, int font);

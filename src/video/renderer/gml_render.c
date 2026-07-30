@@ -259,6 +259,11 @@ static void parse_bgnd(GmlRender *r){
             r->bg[i].tile_separation_x=modern?nsep_x:0;
             r->bg[i].tile_separation_y=modern?nsep_y:0;
             r->bg[i].tile_columns=cols; r->bg[i].tile_items_per_tile=items; r->bg[i].tile_count=count;
+            {
+              uint32_t frame_off=p+(modern?64:56);
+              r->bg[i].tile_frame_length_us=
+                (uint64_t)u32(d,frame_off)|((uint64_t)u32(d,frame_off+4)<<32);
+            }
             r->bg[i].tile_ids=d+p+(modern?72:64);
           }
 	    }

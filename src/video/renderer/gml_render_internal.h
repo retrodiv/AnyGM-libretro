@@ -103,6 +103,7 @@ typedef struct {
   int tpag;
   int tile_w, tile_h, tile_border_x, tile_border_y, tile_separation_x, tile_separation_y;
   int tile_columns, tile_items_per_tile, tile_count;
+  uint64_t tile_frame_length_us;
   const uint8_t *tile_ids;                                      /* GMS2 BGND tileset id table (little-endian u32s) */
 } GmlBg;                                                        /* background/tileset -> texture page */
 typedef struct { int32_t sx, sy, w, h; int16_t shift, offset; uint16_t ch; } GmlGlyph;

@@ -590,13 +590,31 @@ int gml_render_background_texture_handle(const GmlRender *R,int background){
     ? (int)(GML_TEX_BG_TAG|((unsigned)background&0x00FFFFFFu)) : -1;
 }
 
+int gml_render_background_tile_animation_frame(const GmlRender *R,int background,
+                                                double elapsed_seconds){
+  if(!R || background<0 || background>=R->n_bg || !isfinite(elapsed_seconds) ||
+     elapsed_seconds<=0.0) return 0;
+  const GmlBg *source=&R->bg[background];
+  if(source->tile_items_per_tile<=1 || !source->tile_frame_length_us) return 0;
+  double frame_seconds=(double)source->tile_frame_length_us/1000000.0;
+  double period=frame_seconds*source->tile_items_per_tile;
+  if(!isfinite(frame_seconds) || frame_seconds<=0.0 ||
+     !isfinite(period) || period<=0.0) return 0;
+  double within=fmod(elapsed_seconds,period);
+  if(within<0.0) within+=period;
+  int frame=(int)floor(within/frame_seconds);
+  return frame>=source->tile_items_per_tile?source->tile_items_per_tile-1:frame;
+}
+
 int gml_render_background_tile_source_index(const GmlRender *R,int background,
-                                             int tile_index){
+                                             int tile_index,int animation_frame){
   if(!R || background<0 || background>=R->n_bg || tile_index<0) return -1;
   const GmlBg *source=&R->bg[background];
   if(source->tile_ids && source->tile_items_per_tile>0 && tile_index<source->tile_count){
+    int frame=animation_frame%source->tile_items_per_tile;
+    if(frame<0) frame+=source->tile_items_per_tile;
     const uint8_t *id=source->tile_ids+
-      (size_t)tile_index*(size_t)source->tile_items_per_tile*4u;
+      ((size_t)tile_index*(size_t)source->tile_items_per_tile+(size_t)frame)*4u;
     return (int)((uint32_t)id[0]|((uint32_t)id[1]<<8)|
                  ((uint32_t)id[2]<<16)|((uint32_t)id[3]<<24));
   }

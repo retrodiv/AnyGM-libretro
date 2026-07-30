@@ -298,7 +298,13 @@ GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"tilemap_get_tile_height")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->th:0); }
   if(!strcmp(nm,"tilemap_get_x")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); double tx=0.0; gml_tilemap_effective(vm,tm,&tx,NULL,NULL,NULL); return vreal(tm?tx:0); }
   if(!strcmp(nm,"tilemap_get_y")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); double ty=0.0; gml_tilemap_effective(vm,tm,NULL,&ty,NULL,NULL); return vreal(tm?ty:0); }
-  if(!strcmp(nm,"tilemap_get_frame")) return vreal(0);
+  if(!strcmp(nm,"tilemap_get_frame")){
+    GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
+    double speed=gml_room_speed(vm);
+    double elapsed_seconds=speed>0.0?vm->frame/speed:0.0;
+    return vreal(tm?gml_render_background_tile_animation_frame(
+                      R,tm->tileset,elapsed_seconds):0);
+  }
   /* tile datum decode (GMS2 bit layout: index low 19 bits, then mirror/flip/rotate) */
   if(!strcmp(nm,"tile_get_index")){ uint32_t t=(uint32_t)N(a,n,0); return vreal(t & 0x7FFFF); }
   if(!strcmp(nm,"tile_get_empty")){ uint32_t t=(uint32_t)N(a,n,0); return vreal((t & 0x7FFFF)==0); }

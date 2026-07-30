@@ -49,6 +49,7 @@ make integration-check
 make check TEST=renderer_effects
 make check TEST=renderer_postprocess
 make check TEST=renderer_surfaces
+make check TEST=renderer_tiles
 make check TEST=d3_state D3_TEST_ARGS='--case raster.projection'
 make check TEST=persistent_room PERSISTENT_TEST_ARGS='--case state.canonical_roundtrip'
 make check
@@ -63,6 +64,8 @@ the geometric CRT fast and curved paths plus the dual-sample, HSV-scan, and
 sampled-CRT display post-processors against synthetic exact-output hashes.
 `check TEST=renderer_surfaces` verifies deterministic surface allocation,
 copy, resize, coverage metadata, and target-stack restoration.
+`check TEST=renderer_tiles` verifies modern tileset layout parsing, animation
+cadence, source-frame selection, and every mirror/flip/rotate combination.
 The D3 and persistent-room binaries are composed from ownership-mirrored
 translation units and expose named filters. A filtered software-3D case
 replays its bounded prerequisite stages from a clean fixture; persistent
