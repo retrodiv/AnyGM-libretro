@@ -331,8 +331,7 @@ int present_view_get(AnygmEngine *engine,int index, GmlPresentView *out) {
   out->index = index;
   out->visible = gml_global_arr(&engine->vm, "view_visible", index) >= 0.5;
   out->camera = (int)lround(gml_global_arr(&engine->vm, "view_camera", index));
-  int live = anygm_policy_has_modern_layer_semantics(&engine->win) &&
-             out->camera >= 0 && out->camera < GML_CAMERA_LIMIT &&
+  int live = out->camera >= 0 && out->camera < GML_CAMERA_LIMIT &&
              gml_global_arr(&engine->vm, "__gml_camera_live", out->camera) >= 0.5;
   if (live) {
     out->x = gml_global_arr(&engine->vm, "__gml_camera_x", out->camera);

@@ -4,6 +4,7 @@
 #include "anygm.h"
 #include "content_router.h"
 #include "engine_internal.h"
+#include "gml_vm_internal.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
 
@@ -77,6 +78,35 @@ static int screen_stage_raster_policy(void){
     return 0;
   }
   return 1;
+}
+
+static int first_generation_dynamic_camera_policy(void){
+  AnygmEngine engine={0};
+  engine.win.bytecode=16;
+  engine.vm.win=&engine.win;
+  gml_vm_global_array_set(&engine.vm,"view_visible",0,1);
+  gml_vm_global_array_set(&engine.vm,"view_camera",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_xview",0,3);
+  gml_vm_global_array_set(&engine.vm,"view_yview",0,5);
+  gml_vm_global_array_set(&engine.vm,"view_wview",0,320);
+  gml_vm_global_array_set(&engine.vm,"view_hview",0,180);
+  gml_vm_global_array_set(&engine.vm,"view_wport",0,640);
+  gml_vm_global_array_set(&engine.vm,"view_hport",0,360);
+  gml_vm_global_array_set(&engine.vm,"__gml_camera_live",0,1);
+  gml_vm_global_array_set(&engine.vm,"__gml_camera_x",0,37);
+  gml_vm_global_array_set(&engine.vm,"__gml_camera_y",0,59);
+  gml_vm_global_array_set(&engine.vm,"__gml_camera_w",0,400);
+  gml_vm_global_array_set(&engine.vm,"__gml_camera_h",0,300);
+  GmlPresentView view={0};
+  int ok=present_view_get(&engine,0,&view) && view.camera==0 &&
+    view.x==37 && view.y==59 && view.w==400 && view.h==300 &&
+    view.pw==640 && view.ph==360;
+  if(!ok)
+    fprintf(stderr,
+      "first-generation dynamic camera was not selected: camera=%d rect=(%.0f,%.0f %.0fx%.0f)\n",
+      view.camera,view.x,view.y,view.w,view.h);
+  gml_vm_free(&engine.vm);
+  return ok;
 }
 
 static int draw_schedule_policy(void){
@@ -260,8 +290,19 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
   return unchanged;
 }
 
-int main(void){
+int main(int argc,char **argv){
+  if(argc==3 && !strcmp(argv[1],"--case")){
+    if(!strcmp(argv[2],"first_generation_dynamic_camera"))
+      return first_generation_dynamic_camera_policy()?0:1;
+    fprintf(stderr,"unknown integration case: %s\n",argv[2]);
+    return 1;
+  }
+  if(argc!=1){
+    fputs("usage: test_engine_instances [--case first_generation_dynamic_camera]\n",stderr);
+    return 1;
+  }
   if(!screen_stage_raster_policy()) return 1;
+  if(!first_generation_dynamic_camera_policy()) return 1;
   if(!draw_schedule_policy()) return 1;
   if(!framebuffer_retention_policy()) return 1;
   if(!state_input_history_roundtrip()) return 1;
