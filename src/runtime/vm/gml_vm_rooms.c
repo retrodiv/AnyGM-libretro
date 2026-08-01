@@ -407,6 +407,23 @@ static double room_state_restore_number(GmlVM *vm, int room, const char *field, 
   return value?gml_vm_value_as_number(*value):0.0;
 }
 
+int gml_vm_room_get(GmlVM *vm, int room_index, GmlRoom *out){
+  if(!vm || gml_room_get(vm->win,room_index,out)!=0) return -1;
+  double width=room_state_restore_number(vm,room_index,"width",0);
+  double height=room_state_restore_number(vm,room_index,"height",0);
+  if(isfinite(width) && width>=1.0 && width<=(double)UINT32_MAX) out->width=(uint32_t)width;
+  if(isfinite(height) && height>=1.0 && height<=(double)UINT32_MAX) out->height=(uint32_t)height;
+  return 0;
+}
+
+int gml_vm_room_set_dimension(GmlVM *vm, int room_index, int height, double value){
+  if(!vm || room_index<0 || room_index>=gml_room_count(vm->win) ||
+     !isfinite(value) || value<1.0 || value>(double)UINT32_MAX) return 0;
+  room_state_store_number(vm,room_index,height?"height":"width",0,
+                          (double)(uint32_t)value);
+  return 1;
+}
+
 static const char *const room_background_fields[]={
   "background_visible","background_foreground","background_index","background_x","background_y",
   "background_htiled","background_vtiled","background_hspeed","background_vspeed","background_stretch",
@@ -1123,7 +1140,7 @@ static void vm_warm_audio_object_alarm_codes(GmlVM *vm, int obj, int room_index)
 static void vm_warm_audio_room_placed_alarm_codes(GmlVM *vm, int room_index){
   if(!vm || !vm->win || room_index<0) return;
   GmlRoom r;
-  if(gml_room_get(vm->win,room_index,&r)!=0 || !r.obj_ptr) return;
+  if(gml_vm_room_get(vm,room_index,&r)!=0 || !r.obj_ptr) return;
   const uint8_t *d=vm->win->data;
   if(r.obj_ptr+4>vm->win->size) return;
   uint32_t cnt=gml_vm_read_u32_le(d,r.obj_ptr);
@@ -1219,7 +1236,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
   if(prev_room>=0){
     GmlVal *persistent=gml_varmap_get(&vm->globals,"room_persistent");
     if(persistent) store_previous=gml_vm_value_as_number(*persistent)!=0.0;
-    else { GmlRoom previous; if(gml_room_get(vm->win,prev_room,&previous)==0) store_previous=previous.persistent; }
+    else { GmlRoom previous; if(gml_vm_room_get(vm,prev_room,&previous)==0) store_previous=previous.persistent; }
     if(prev_room<vm->room_state_count && vm->room_stored) vm->room_stored[prev_room]=store_previous?1:0;
   }
   if(store_previous) room_runtime_state_store(vm,prev_room);
@@ -1253,7 +1270,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
   /* Register this room's GMS2 runtime layers (addressable by name) + type-4 tile-collision maps. */
   gml_room_reload_layers(vm, room_index);
   if(anygm_host_development_setting(vm->host,"GML_LOG_ROOM")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[room] enter %d\n",room_index);
-  GmlRoom r; if(gml_room_get(vm->win,room_index,&r)!=0) return;
+  GmlRoom r; if(gml_vm_room_get(vm,room_index,&r)!=0) return;
   *gml_varmap_put(&vm->globals,"room_persistent")=vreal(r.persistent?1.0:0.0);
   *gml_varmap_put(&vm->globals,"view_enabled")=vreal(r.view_enabled?1.0:0.0);
   if(anygm_policy_uses_classic_runtime(vm->win))

@@ -213,7 +213,7 @@ static void cg_cell_range(GmlVM *vm, double l, double t, double r, double b,
 static int cg_build(GmlVM *vm){
   
   GmlRoom rm; double rw=2048,rh=2048;
-  if(gml_room_get(vm->win,vm->room_index,&rm)==0){ rw=rm.width; rh=rm.height; }
+  if(gml_vm_room_get(vm,vm->room_index,&rm)==0){ rw=rm.width; rh=rm.height; }
   vm->cg_ox=-512; vm->cg_oy=-512;
   double span=fmax(rw,rh)+1024;
   vm->cg_cell=64; while(span/vm->cg_cell>128) vm->cg_cell*=2;

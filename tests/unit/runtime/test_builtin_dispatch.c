@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 typedef struct {
   const char *name;
@@ -74,7 +75,7 @@ static int setup_fixture(GmlWin *win,GmlVM *vm){
   };
   const int count=(int)(sizeof(scripts)/sizeof(scripts[0]));
   win->bytecode=17;
-  win->size=(size_t)count*8;
+  win->size=256;
   win->owns=1;
   win->data=calloc(win->size,1);
   win->n_code=count;
@@ -90,7 +91,66 @@ static int setup_fixture(GmlWin *win,GmlVM *vm){
       .length=8,
     };
   }
+  win->n_chunks=1;
+  memcpy(win->chunks[0].name,"ROOM",5);
+  win->chunks[0].off=64;
+  win->chunks[0].size=192;
+  store_u32le(win->data+64,1);
+  store_u32le(win->data+68,72);
+  store_u32le(win->data+72,160);
+  store_u32le(win->data+80,320);
+  store_u32le(win->data+84,240);
+  store_u32le(win->data+88,60);
+  memcpy(win->data+160,"neutral_room",13);
+  win->strs=calloc(1,sizeof(*win->strs));
+  win->str_charoff=calloc(1,sizeof(*win->str_charoff));
+  if(!win->strs || !win->str_charoff) return 0;
+  win->strs[0]=(char *)win->data+160;
+  win->str_charoff[0]=160;
+  win->n_strs=1;
   return gml_vm_init(vm,win,NULL)==0;
+}
+
+static int room_dimension_mutation(GmlVM *vm){
+  GmlRoom room={0};
+  if(gml_vm_room_get(vm,0,&room)!=0 || room.width!=320 || room.height!=240){
+    fprintf(stderr,"room dimension fixture baseline failed\n");
+    return 0;
+  }
+  GmlVal width_args[]={vreal(0),vreal(640.75)};
+  GmlVal height_args[]={vreal(0),vreal(360)};
+  int ok=expect_real("room_set_width return",
+                     gml_builtin_call(vm,"room_set_width",width_args,2),0) &&
+         expect_real("room_set_height return",
+                     gml_builtin_call(vm,"room_set_height",height_args,2),0) &&
+         gml_vm_room_get(vm,0,&room)==0 && room.width==640 && room.height==360;
+  if(!ok){
+    fprintf(stderr,"room dimensions were not mutated: %ux%u\n",room.width,room.height);
+    return 0;
+  }
+
+  size_t state_size=gml_vm_state_size(vm), written=0, used=0;
+  void *state=malloc(state_size);
+  if(!state || !gml_vm_state_save(vm,state,state_size,&written) || written!=state_size){
+    fprintf(stderr,"room dimension state save failed\n");
+    free(state);
+    return 0;
+  }
+  width_args[1]=vreal(111);
+  (void)gml_builtin_call(vm,"room_set_width",width_args,2);
+  if(!gml_vm_state_load(vm,state,state_size,&used) || used!=state_size ||
+     gml_vm_room_get(vm,0,&room)!=0 || room.width!=640 || room.height!=360){
+    fprintf(stderr,"room dimensions did not survive state roundtrip\n");
+    free(state);
+    return 0;
+  }
+  free(state);
+
+  GmlVal invalid_room[]={vreal(1),vreal(700)};
+  GmlVal invalid_size[]={vreal(0),vreal(-1)};
+  (void)gml_builtin_call(vm,"room_set_width",invalid_room,2);
+  (void)gml_builtin_call(vm,"room_set_height",invalid_size,2);
+  return gml_vm_room_get(vm,0,&room)==0 && room.width==640 && room.height==360;
 }
 
 static int exact_builtin_precedes_same_named_script(GmlVM *vm){
@@ -295,6 +355,7 @@ int main(void){
          script_resolution_order(&vm) &&
          function_value_and_alias_resolution(&vm) &&
          gain_conversion(&vm) &&
+         room_dimension_mutation(&vm) &&
          mouse_none_semantics(&vm) &&
          ds_fast_interface(&vm);
   gml_vm_free(&vm);

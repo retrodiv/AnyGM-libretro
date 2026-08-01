@@ -581,7 +581,7 @@ void gml_vm_step(GmlVM *vm){
         gml_vm_global_array_number(vm,"view_hspeed",view));
       vy=gml_legacy_view_follow_axis(vy,ty,hv,vb,
         gml_vm_global_array_number(vm,"view_vspeed",view));
-      GmlRoom rm; if(gml_room_get(vm->win,vm->room_index,&rm)==0){
+      GmlRoom rm; if(gml_vm_room_get(vm,vm->room_index,&rm)==0){
         double mx=rm.width-wv, my=rm.height-hv;
         if(vx<0) vx=0;
         if(mx>0&&vx>mx) vx=mx;
@@ -634,7 +634,7 @@ void gml_vm_step(GmlVM *vm){
       vy+=delta;
     }
     GmlRoom rm;
-    if(gml_room_get(vm->win,vm->room_index,&rm)==0){
+    if(gml_vm_room_get(vm,vm->room_index,&rm)==0){
       double mx=(double)rm.width-wv, my=(double)rm.height-hv;
       if(vx<0) vx=0;
       if(mx>0 && vx>mx) vx=mx;
@@ -1018,7 +1018,7 @@ void gml_vm_draw(GmlVM *vm){
   GmlDrawTile *tiles=scratch->tile; int nt=0, tcap=scratch->tile_capacity;
   double *tdepth=scratch->tile_depth;
   GmlRoom rm;
-  if(gml_room_get(vm->win,vm->room_index,&rm)==0 && rm.tile_ptr){
+  if(gml_vm_room_get(vm,vm->room_index,&rm)==0 && rm.tile_ptr){
     const uint8_t *d=vm->win->data; uint32_t tc=gml_vm_read_u32_le(d,rm.tile_ptr);
     if(tc>0 && tc<100000){
       for(uint32_t i=0;i<tc;i++){ uint32_t p=gml_vm_read_u32_le(d,rm.tile_ptr+4+i*4);

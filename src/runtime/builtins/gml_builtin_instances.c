@@ -170,6 +170,14 @@ GmlVal gml_builtin_try_instances_rooms(GmlVM *vm, const char *nm, GmlVal *a, int
   if(!strcmp(nm,"room_get_name")){ GmlRoom rr; int ri=(int)N(a,n,0);
     return vstr(gml_room_get(vm->win,ri,&rr)==0 && rr.name ? rr.name : ""); }
   if(!strcmp(nm,"room_exists")){ int ri=(int)N(a,n,0); return vreal(ri>=0 && ri<gml_room_count(vm->win)); }
+  if(!strcmp(nm,"room_set_width")){
+    if(n>=2) (void)gml_vm_room_set_dimension(vm,(int)N(a,n,0),0,N(a,n,1));
+    return vreal(0);
+  }
+  if(!strcmp(nm,"room_set_height")){
+    if(n>=2) (void)gml_vm_room_set_dimension(vm,(int)N(a,n,0),1,N(a,n,1));
+    return vreal(0);
+  }
   if(!strcmp(nm,"room_set_view_enabled")){
     int rm=(int)N(a,n,0);
     struct GmlViewOvr *o=room_view_override(vm,rm,0,1);
@@ -498,7 +506,7 @@ GmlVal gml_builtin_try_instances_queries(GmlVM *vm, const char *nm, GmlVal *a, i
       classic_move_bounce(vm,s,all,N(a,n,0)!=0.0); }
     return vreal(0); }
   if(!strcmp(nm,"move_wrap")){ GmlInstance *s=vm->cur_self; GmlRoom room;
-    if(s && gml_room_get(vm->win,vm->room_index,&room)==0){
+    if(s && gml_vm_room_get(vm,vm->room_index,&room)==0){
       int horizontal=N(a,n,0)!=0, vertical=N(a,n,1)!=0; double margin=fabs(N(a,n,2));
       if(horizontal){ if(s->x < -margin) s->x=room.width+margin; else if(s->x>room.width+margin) s->x=-margin; }
       if(vertical){ if(s->y < -margin) s->y=room.height+margin; else if(s->y>room.height+margin) s->y=-margin; }

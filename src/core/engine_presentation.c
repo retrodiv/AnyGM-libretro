@@ -233,7 +233,7 @@ static int core_opt_aspect_force(AnygmEngine *engine) {
 void clamp_camera_to_current_room(AnygmEngine *engine,double *x, double *y, int center_when_smaller) {
   if (!x || !y) return;
   GmlRoom rm;
-  if (gml_room_get(&engine->win, engine->vm.room_index, &rm) != 0) return;
+  if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) != 0) return;
   if (rm.width > 0) {
     double maxx = (double)rm.width - (double)engine->width;
     if (maxx <= 0.0) {
@@ -270,7 +270,7 @@ void aspect_forced_camera(AnygmEngine *engine,double raw_x, double raw_y, double
      * then add half of the extra forced-aspect extent on each side. Clamping after adding the
      * negative margin pins a left-edge camera back to zero and shifts the whole scene right. */
     GmlRoom rm;
-    if (gml_room_get(&engine->win, engine->vm.room_index, &rm) == 0) {
+    if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) == 0) {
       if (!centered_x && rm.width > 0 && engine->base_width > 0) {
         double maxx = (double)rm.width - (double)engine->base_width;
         if (maxx <= 0.0) x = maxx * 0.5;
@@ -318,7 +318,7 @@ static double cur_room_fps(AnygmEngine *engine) {
   if(anygm_policy_has_modern_layer_semantics(&engine->win))
     return engine->win.game_speed > 0.0 ? engine->win.game_speed : 60.0;
   GmlRoom r;
-  if (gml_room_get(&engine->win, engine->vm.room_index, &r) == 0 && r.speed > 0) return (double)r.speed;
+  if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &r) == 0 && r.speed > 0) return (double)r.speed;
   if(engine->win.game_speed > 0.0) return engine->win.game_speed;
   return 60.0;
 }
@@ -403,7 +403,7 @@ static void cur_room_base_res(AnygmEngine *engine,unsigned *ow, unsigned *oh) {
   }
   else {
     GmlRoom r;
-    if (gml_room_get(&engine->win, engine->vm.room_index, &r) == 0 && r.width > 0 && r.height > 0) { w = r.width; h = r.height; }
+    if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &r) == 0 && r.width > 0 && r.height > 0) { w = r.width; h = r.height; }
     else { w = engine->win.disp_w ? engine->win.disp_w : 288; h = engine->win.disp_h ? engine->win.disp_h : 216; }
   }
   if (w > FB_MAX_W) w = FB_MAX_W;
@@ -519,7 +519,7 @@ static void cur_classic_room_window_res(AnygmEngine *engine,unsigned *ow, unsign
   int room_h=(int)(engine->win.disp_h?engine->win.disp_h:216);
   int visible[8], xport[8], yport[8], wport[8], hport[8];
   int window_w, window_h;
-  if(gml_room_get(&engine->win,engine->vm.room_index,&room)==0){
+  if(gml_vm_room_get(&engine->vm,engine->vm.room_index,&room)==0){
     if(room.width>0) room_w=(int)room.width;
     if(room.height>0) room_h=(int)room.height;
   }
@@ -559,7 +559,7 @@ void aspect_hud_rect(AnygmEngine *engine,int *out_x, int *out_y, int *out_w, int
   int hw = (engine->base_width > 0 && engine->base_width < engine->width) ? (int)engine->base_width : (int)engine->width;
   int hh = (engine->base_height > 0 && engine->base_height < engine->height) ? (int)engine->base_height : (int)engine->height;
   GmlRoom rm;
-  if (gml_room_get(&engine->win, engine->vm.room_index, &rm) == 0) {
+  if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) == 0) {
     if (rm.width > 0 && rm.width < (uint32_t)hw) hw = (int)rm.width;
     if (rm.height > 0 && rm.height < (uint32_t)hh) hh = (int)rm.height;
   }
@@ -917,7 +917,7 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes) {
 uint32_t cur_room_bg(AnygmEngine *engine) {
   GmlRoom r;
   if (anygm_policy_uses_classic_runtime(&engine->win)) return gm_to_xrgb(engine->win.classic_outside_color);
-  if (gml_room_get(&engine->win, engine->vm.room_index, &r) == 0) return gm_to_xrgb(r.bgcolor);
+  if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &r) == 0) return gm_to_xrgb(r.bgcolor);
   return 0;
 }
 void draw_runtime_backgrounds(AnygmEngine *engine,int want_fg) {
@@ -940,7 +940,7 @@ static int aspect_visible_room_rect(AnygmEngine *engine,double cam_x, double cam
                                     int *out_x, int *out_y, int *out_w, int *out_h) {
   if (!engine->aspect_force_active || !engine->width || !engine->height) return 0;
   GmlRoom rm;
-  if (gml_room_get(&engine->win, engine->vm.room_index, &rm) != 0) return 0;
+  if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) != 0) return 0;
   if (rm.width == 0 || rm.height == 0) return 0;
   if (rm.width >= engine->width && rm.height >= engine->height) return 0;
 
@@ -1061,7 +1061,7 @@ int render_multiview_application(AnygmEngine *engine) {
   uint32_t *view_buffer=engine->app_crop;
 
   GmlRoom rm;
-  int have_room = gml_room_get(&engine->win, engine->vm.room_index, &rm) == 0;
+  int have_room = gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) == 0;
   int clear_background = !have_room || rm.draw_bg;
   if(clear_background)
     for(unsigned i=0;i<engine->width*engine->height;i++) engine->fb[i]=0xFF000000u;

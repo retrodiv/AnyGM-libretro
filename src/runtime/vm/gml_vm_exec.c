@@ -245,7 +245,7 @@ double gml_room_speed(GmlVM *vm){
   double v=p?asnum(*p):0.0;
   if(v>0) return v;
   GmlRoom room;
-  if(vm && vm->win && vm->room_index>=0 && gml_room_get(vm->win,vm->room_index,&room)==0 && room.speed>0)
+  if(vm && vm->win && vm->room_index>=0 && gml_vm_room_get(vm,vm->room_index,&room)==0 && room.speed>0)
     return room.speed;
   if(vm && vm->win && vm->win->game_speed>0) return vm->win->game_speed;
   return 30.0;
@@ -473,7 +473,7 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(current_calendar_value(vm,name,&out)) return out;
   if(argument_get(vm,name,&out)) return out;
   if(!strcmp(name,"room_width")||!strcmp(name,"room_height")){   /* GM built-in: current room size */
-    GmlRoom r; if(gml_room_get(vm->win,vm->room_index,&r)==0)
+    GmlRoom r; if(gml_vm_room_get(vm,vm->room_index,&r)==0)
       return vreal(name[5]=='w'? (double)r.width : (double)r.height);
     return vreal(0); }
   if(!strcmp(name,"mouse_x")||!strcmp(name,"mouse_y")){   /* GM built-in: mouse in room coords */

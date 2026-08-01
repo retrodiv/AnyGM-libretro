@@ -315,7 +315,7 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
     return vreal(0);
   }
   if(!strcmp(nm,"action_wrap")){ GmlInstance *s=vm->cur_self; GmlRoom room; int dir=(int)N(a,n,0);
-    if(s && gml_room_get(vm->win,vm->room_index,&room)==0){
+    if(s && gml_vm_room_get(vm,vm->room_index,&room)==0){
       if((dir==0||dir==2) && room.width>0){ while(s->x<0)s->x+=room.width; while(s->x>=room.width)s->x-=room.width; }
       if((dir==1||dir==2) && room.height>0){ while(s->y<0)s->y+=room.height; while(s->y>=room.height)s->y-=room.height; }
       gml_colgrid_touch(vm,s);

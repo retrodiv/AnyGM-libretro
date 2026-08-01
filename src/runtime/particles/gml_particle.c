@@ -257,7 +257,7 @@ static void effect_room_metrics(GmlParticleState *state,int *width,int *height,i
   *width=640; *height=480; *speed=30;
   if(!g_particle_vm) return;
   GmlRoom room;
-  if(g_particle_vm->win && gml_room_get(g_particle_vm->win,g_particle_vm->room_index,&room)==0){
+  if(g_particle_vm->win && gml_vm_room_get(g_particle_vm,g_particle_vm->room_index,&room)==0){
     if(room.width>0) *width=room.width;
     if(room.height>0) *height=room.height;
     if(room.speed>0) *speed=room.speed;

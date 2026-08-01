@@ -510,7 +510,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   double cam_x, cam_y;
   if (engine->follow_player) {
     GmlInstance *pl = gml_find_instance(&engine->vm, engine->player_object);
-    GmlRoom rmc; int hr = (gml_room_get(&engine->win, engine->vm.room_index, &rmc) == 0);
+    GmlRoom rmc; int hr = (gml_vm_room_get(&engine->vm, engine->vm.room_index, &rmc) == 0);
     if (pl && hr) {
       cam_x = pl->x - engine->width / 2.0; cam_y = pl->y - engine->height / 2.0;
       clamp_camera_to_current_room(engine,&cam_x, &cam_y, engine->aspect_force_active);
@@ -590,7 +590,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   gml_render_sample_planes_update(
     &engine->render,&sample_planes,GML_RENDER_SAMPLE_PLANES_CLASSIC);
   GmlRoom rm;
-  int have_room = (gml_room_get(&engine->win, engine->vm.room_index, &rm) == 0);
+  int have_room = (gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) == 0);
   /* A room whose background-color flag is disabled draws over the completed application
    * framebuffer without replacing the omitted clear with the room color. */
   if (!have_room || rm.draw_bg)

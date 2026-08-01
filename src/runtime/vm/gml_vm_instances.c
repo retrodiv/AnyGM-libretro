@@ -1413,7 +1413,7 @@ static void classic_boundary_box(GmlVM *vm, GmlInstance *in,
 }
 void gml_vm_instances_run_boundary_events(GmlVM *vm){
   if(!vm->render) return;
-  GmlRoom rm; int hr=(gml_room_get(vm->win,vm->room_index,&rm)==0);
+  GmlRoom rm; int hr=(gml_vm_room_get(vm,vm->room_index,&rm)==0);
   double vx=gml_vm_global_array_number(vm,"view_xview",0), vy=gml_vm_global_array_number(vm,"view_yview",0);
   double vw=gml_vm_global_array_number(vm,"view_wview",0), vh=gml_vm_global_array_number(vm,"view_hview",0);
   int has_view=(vw>0 && vh>0);
