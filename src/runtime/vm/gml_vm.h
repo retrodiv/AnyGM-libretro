@@ -446,6 +446,7 @@ void         gml_vm_draw_gui(GmlVM *vm);                     /* Draw GUI (Draw_6
 double  gml_global_num(GmlVM *vm, const char *name);
 double  gml_global_arr(GmlVM *vm, const char *name, int idx);
 double  gml_room_speed(GmlVM *vm);
+uint32_t gml_vm_room_background_argb(GmlVM *vm);
 void    gml_set_global_arr(GmlVM *vm, const char *name, int idx, double val);
 void    gml_set_global_scalar(GmlVM *vm, const char *name, double val);           /* write V_REAL, not array */
 int     gml_set_inst_var_all(GmlVM *vm, const char *objname, const char *var, double val); /* freeze inst var; returns count */

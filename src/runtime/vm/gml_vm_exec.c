@@ -250,6 +250,14 @@ double gml_room_speed(GmlVM *vm){
   if(vm && vm->win && vm->win->game_speed>0) return vm->win->game_speed;
   return 30.0;
 }
+uint32_t gml_vm_room_background_argb(GmlVM *vm){
+  GmlVal *runtime=vm?gml_varmap_get(&vm->globals,"background_color"):NULL;
+  if(runtime) return 0xFF000000u|((uint32_t)asnum(*runtime)&0xFFFFFFu);
+  GmlRoom room;
+  if(vm && vm->win && vm->room_index>=0 && gml_vm_room_get(vm,vm->room_index,&room)==0)
+    return room.bgcolor;
+  return 0xFF000000u;
+}
 uint64_t gml_host_monotonic_time_ns(GmlVM *vm){
   if(vm && vm->host && vm->host->monotonic_time_ns)
     return vm->host->monotonic_time_ns(vm->host->userdata);
@@ -350,7 +358,8 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
  * safe); miss => the name is provably not special, go straight to the varmap. */
 static const char *const g_special_var_names[]={
   "undefined","room","keyboard_lastkey","room_speed","working_directory","program_directory",
-  "fps","delta_time","view_current","view_enabled","room_persistent","event_type","event_number","mouse_x","mouse_y",
+  "fps","delta_time","view_current","view_enabled","room_persistent","background_color","background_colour",
+  "event_type","event_number","mouse_x","mouse_y",
   "current_time","current_second","current_minute","current_hour","current_day","current_weekday",
   "current_month","current_year","os_type","os_windows","os_uwp","os_xboxone","os_ps3","os_ps4","os_psvita",
   "os_macosx","os_linux","os_ios","os_android","os_unknown","os_switch_operating_system","room_width",
@@ -467,6 +476,9 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!strcmp(name,"time_source_state_stopped")) return vreal(3);
   if(!strcmp(name,"view_current")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
   if(!strcmp(name,"room_persistent")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
+  if(!strcmp(name,"background_color")||!strcmp(name,"background_colour")){
+    return vreal((double)(gml_vm_room_background_argb(vm)&0xFFFFFFu));
+  }
   if(!strcmp(name,"event_type")) return vreal(vm->event_type);
   if(!strcmp(name,"event_number")) return vreal(vm->event_number);
   if(!strcmp(name,"current_time")) return vreal(current_time_value(vm));
@@ -565,6 +577,10 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
   if(argument_set(vm,name,v)) return;
   if(!strcmp(name,"room_speed")||!strcmp(name,"view_current")||!strcmp(name,"room_persistent")){
     *gml_varmap_put_hashed(&vm->globals,name,nh)=v;
+    return;
+  }
+  if(!strcmp(name,"background_color")||!strcmp(name,"background_colour")){
+    *gml_varmap_put(&vm->globals,"background_color")=v;
     return;
   }
   if(is_classic_transition_builtin(vm,name) || inst==IT_GLOBAL || is_global_builtin(name)){

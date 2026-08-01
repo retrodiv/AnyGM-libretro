@@ -215,6 +215,72 @@ int anygm_synthetic_draw_content_create(AnygmSyntheticContent *fixture){
   return 1;
 }
 
+int anygm_synthetic_background_color_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+
+  char create[192];
+  snprintf(create,sizeof create,"%s/background-create.gml",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  if(!write_text(create,
+                 "background_color = make_color_rgb(17, 34, 51);\n"
+                 "global.fixture_background_alias = background_colour;\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+
+  GmlcProject project={0};
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  project.host=&file_services;
+  GmlcObject object={0};
+  GmlcObjectEvent event={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance instance={0};
+  int room_order=0;
+  project.name=(char *)"neutral-background-color-fixture";
+  project.objects=&object;
+  project.n_objects=project.cap_objects=1;
+  project.rooms=&room;
+  project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order;
+  project.n_room_order=1;
+
+  object.id=object.name=(char *)"obj_fixture";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.visible=0;
+  object.events=&event;
+  object.n_events=object.cap_events=1;
+  event.event_type=0;
+  event.event_number=0;
+  event.source_path=create;
+
+  room.id=room.name=(char *)"room_fixture";
+  room.width=64;
+  room.height=48;
+  room.speed=60;
+  room.background_color=0xFF000000u;
+  room.draw_background_color=1;
+  room.instances=&instance;
+  room.n_instances=room.cap_instances=1;
+  instance.id=instance.name=(char *)"instance_fixture";
+  instance.object_id=0;
+  instance.instance_id=100000;
+  instance.sx=instance.sy=1.0f;
+  instance.color=0xFFFFFFFFu;
+
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"synthetic background-color package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  return 1;
+}
+
 static int synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture,int multiview){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
@@ -328,6 +394,8 @@ void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture){
   snprintf(path,sizeof path,"%s/draw-normal.gml",fixture->directory);
   anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/draw-post.gml",fixture->directory);
+  anygm_test_unlink(path);
+  snprintf(path,sizeof path,"%s/background-create.gml",fixture->directory);
   anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/retain-create.gml",fixture->directory);
   anygm_test_unlink(path);

@@ -175,9 +175,11 @@ static int framebuffer_retention_case(
   input.struct_size=sizeof input;
   input.pointer_x=input.pointer_y=-1;
   AnygmFrameOutput output={0};
-  output.struct_size=sizeof output;
-  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
-     output.pixels && output.width==64 && output.height==48;
+  for(int frame=0;ok && frame<2;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  ok=ok && output.pixels && output.width==64 && output.height==48;
   size_t pixels=(size_t)output.width*output.height;
   uint32_t *painted=ok?malloc(pixels*sizeof(*painted)):NULL;
   ok=ok && painted!=NULL;
@@ -213,6 +215,60 @@ static int framebuffer_retention_policy(void){
   return framebuffer_retention_case(anygm_synthetic_framebuffer_content_create,"single-view") &&
          framebuffer_retention_case(
            anygm_synthetic_multiview_framebuffer_content_create,"multi-view");
+}
+
+static int background_color_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_background_color_content_create(&fixture)){
+    fputs("background-color fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     output.pixels && output.width==64 && output.height==48;
+  double canonical=ok?gml_global_num(&engine->vm,"background_color"):0;
+  double alias=ok?gml_global_num(&engine->vm,"fixture_background_alias"):0;
+  size_t unexpected=0;
+  const uint32_t *pixels=output.pixels;
+  GmlRoom room={0};
+  int have_room=engine && gml_vm_room_get(&engine->vm,engine->vm.room_index,&room)==0;
+  if(ok) for(size_t i=0;i<(size_t)output.width*output.height;i++)
+    if(pixels[i]!=0xFF112233u) unexpected++;
+  ok=ok && canonical==0x00332211u && alias==canonical && unexpected==0;
+  uint8_t *state=NULL;
+  size_t state_size=0;
+  ok=ok && save_state(engine,&state,&state_size);
+  if(ok) *gml_varmap_put(&engine->vm.globals,"background_color")=vreal(0);
+  ok=ok && anygm_state_load(engine,state,state_size)==ANYGM_OK &&
+     gml_global_num(&engine->vm,"background_color")==canonical &&
+     cur_room_bg(engine)==0xFF112233u;
+  if(!ok)
+    fprintf(stderr,
+      "background-color routing mismatch: canonical=0x%08x alias=0x%08x engine=0x%08x application=0x%08x first=0x%08x draw=%d unexpected=%zu\n",
+      (unsigned)canonical,(unsigned)alias,engine?engine->background:0,
+      engine&&engine->fb?(unsigned)engine->fb[0]:0,pixels?(unsigned)pixels[0]:0,
+      have_room?room.draw_bg:-1,unexpected);
+  free(state);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
 }
 
 static int state_input_history_roundtrip(void){
@@ -307,6 +363,8 @@ int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
     if(!strcmp(argv[2],"first_generation_dynamic_camera"))
       return first_generation_dynamic_camera_policy()?0:1;
+    if(!strcmp(argv[2],"background_color"))
+      return background_color_policy()?0:1;
     if(!strcmp(argv[2],"multi_view_application_canvas"))
       return framebuffer_retention_case(
         anygm_synthetic_multiview_framebuffer_content_create,"multi-view")?0:1;
@@ -315,12 +373,13 @@ int main(int argc,char **argv){
   }
   if(argc!=1){
     fputs("usage: test_engine_instances [--case first_generation_dynamic_camera|"
-          "multi_view_application_canvas]\n",stderr);
+          "background_color|multi_view_application_canvas]\n",stderr);
     return 1;
   }
   if(!screen_stage_raster_policy()) return 1;
   if(!first_generation_dynamic_camera_policy()) return 1;
   if(!draw_schedule_policy()) return 1;
+  if(!background_color_policy()) return 1;
   if(!framebuffer_retention_policy()) return 1;
   if(!state_input_history_roundtrip()) return 1;
   char label[128];

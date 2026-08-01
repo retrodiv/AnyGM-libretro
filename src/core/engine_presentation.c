@@ -915,10 +915,8 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes) {
 }
 
 uint32_t cur_room_bg(AnygmEngine *engine) {
-  GmlRoom r;
   if (anygm_policy_uses_classic_runtime(&engine->win)) return gm_to_xrgb(engine->win.classic_outside_color);
-  if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &r) == 0) return gm_to_xrgb(r.bgcolor);
-  return 0;
+  return gm_to_xrgb(gml_vm_room_background_argb(&engine->vm));
 }
 void draw_runtime_backgrounds(AnygmEngine *engine,int want_fg) {
   for (int i = 0; i < 8; i++) {

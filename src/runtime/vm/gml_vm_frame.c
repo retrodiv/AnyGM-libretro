@@ -1050,9 +1050,10 @@ void gml_vm_draw(GmlVM *vm){
   struct LayAttachedFilter *laf=scratch->layer_attached_filter; int naf=0;
   struct ClassicBg cbg[9]; int ncb=0;
   if(rm.draw_bg){
+    uint32_t room_color=gml_vm_room_background_argb(vm);
     cbg[ncb].def=-1; cbg[ncb].th=cbg[ncb].tv=cbg[ncb].stretch=0;
-    cbg[ncb].x=cbg[ncb].y=0; cbg[ncb].blend=rm.bgcolor&0xFFFFFFu;
-    cbg[ncb].alpha=((rm.bgcolor>>24)&0xFF)/255.0; cbg[ncb].depth=1.1e300; ncb++;
+    cbg[ncb].x=cbg[ncb].y=0; cbg[ncb].blend=room_color&0xFFFFFFu;
+    cbg[ncb].alpha=((room_color>>24)&0xFF)/255.0; cbg[ncb].depth=1.1e300; ncb++;
   }
   for(int i=0;i<8;i++){
     if(gml_vm_global_array_number(vm,"background_visible",i)<0.5) continue;
