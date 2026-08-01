@@ -182,14 +182,27 @@ static int framebuffer_retention_case(
   uint32_t *painted=ok?malloc(pixels*sizeof(*painted)):NULL;
   ok=ok && painted!=NULL;
   if(ok) memcpy(painted,output.pixels,pixels*sizeof(*painted));
+  size_t unexpected=0;
+  if(ok) for(size_t i=0;i<pixels;i++)
+    if((painted[i]&0xFFFFFFu)!=0x996633u) unexpected++;
+  size_t framebuffer_unexpected=0;
+  if(ok) for(size_t i=0;i<(size_t)engine->width*engine->height;i++)
+    if((engine->fb[i]&0xFFFFFFu)!=0x996633u) framebuffer_unexpected++;
+  ok=ok && unexpected==0;
   output.struct_size=sizeof output;
   ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
      engine->vm.room_index==1 && output.pixels &&
      !memcmp(painted,output.pixels,pixels*sizeof(*painted));
-  if(!ok)
+  if(!ok){
+    int canvas_width=0,canvas_height=0;
+    int view_count=engine?present_view_count(engine,NULL,&canvas_width,&canvas_height):0;
     fprintf(stderr,
-      "%s room with background drawing disabled did not retain the completed framebuffer\n",
-      label);
+      "%s room did not present and retain the complete application framebuffer"
+      " (%zu unexpected output pixels, %zu unexpected application pixels,"
+      " render=%ux%u, output=%ux%u, views=%d, canvas=%dx%d)\n",
+      label,unexpected,framebuffer_unexpected,engine?engine->width:0,engine?engine->height:0,
+      output.width,output.height,view_count,canvas_width,canvas_height);
+  }
   free(painted);
   anygm_destroy(engine);
   anygm_synthetic_content_destroy(&fixture);
@@ -294,11 +307,15 @@ int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
     if(!strcmp(argv[2],"first_generation_dynamic_camera"))
       return first_generation_dynamic_camera_policy()?0:1;
+    if(!strcmp(argv[2],"multi_view_application_canvas"))
+      return framebuffer_retention_case(
+        anygm_synthetic_multiview_framebuffer_content_create,"multi-view")?0:1;
     fprintf(stderr,"unknown integration case: %s\n",argv[2]);
     return 1;
   }
   if(argc!=1){
-    fputs("usage: test_engine_instances [--case first_generation_dynamic_camera]\n",stderr);
+    fputs("usage: test_engine_instances [--case first_generation_dynamic_camera|"
+          "multi_view_application_canvas]\n",stderr);
     return 1;
   }
   if(!screen_stage_raster_policy()) return 1;

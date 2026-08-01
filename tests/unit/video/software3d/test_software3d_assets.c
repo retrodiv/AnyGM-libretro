@@ -172,6 +172,35 @@ int external_texture_group_fixture(void){
   return 1;
 }
 
+int sprite_instance_metric_scale_fixture(void){
+  GmlVM vm={0};
+  GmlRender render={0};
+  GmlInstance instance={0};
+  uint8_t *rgba=calloc(5u*3u,4u);
+  if(!rgba) return 0;
+  int sprite=gml_sprite_append_from_rgba(
+      &render,rgba,5,3,2,1,"neutral_metric_sprite");
+  if(sprite<0){
+    gml_render_free(&render);
+    return 0;
+  }
+  vm.render=&render;
+  instance.sprite_index=sprite;
+  instance.image_xscale=-2.5;
+  instance.image_yscale=4.0;
+  double width=gml_inst_var_get(&vm,&instance,"sprite_width");
+  double height=gml_inst_var_get(&vm,&instance,"sprite_height");
+  double xoffset=gml_inst_var_get(&vm,&instance,"sprite_xoffset");
+  double yoffset=gml_inst_var_get(&vm,&instance,"sprite_yoffset");
+  int ok=width==12.5 && height==12.0 && xoffset==2.0 && yoffset==1.0;
+  if(!ok)
+    fprintf(stderr,
+            "scaled sprite instance metrics mismatch: size=(%g,%g) origin=(%g,%g)\n",
+            width,height,xoffset,yoffset);
+  gml_render_free(&render);
+  return ok;
+}
+
 
 size_t classic_information_record(uint8_t *dst,size_t capacity){
   const char caption[]="Information";

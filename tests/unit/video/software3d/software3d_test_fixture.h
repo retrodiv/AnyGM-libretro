@@ -61,6 +61,7 @@ int software3d_operation_boundary_fixture(void);
 int renderer_state_boundary_fixture(void);
 int asset_lookup_fixture(void);
 int external_texture_group_fixture(void);
+int sprite_instance_metric_scale_fixture(void);
 int software3d_state_roundtrip_case(void);
 int software3d_case_language(Software3dRasterFixture *fixture);
 int software3d_case_particles(Software3dRasterFixture *fixture);

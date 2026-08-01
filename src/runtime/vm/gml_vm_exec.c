@@ -332,8 +332,14 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
   int si=(int)in->sprite_index;
   GmlRenderSpriteMetrics sprite;
   if(!gml_render_sprite_metrics(R,si,&sprite)) return 0;
-  if(!strcmp(name,"sprite_width")){ *out=vreal(sprite.width); return 1; }
-  if(!strcmp(name,"sprite_height")){ *out=vreal(sprite.height); return 1; }
+  if(!strcmp(name,"sprite_width")){
+    *out=vreal(sprite.width*fabs(in->image_xscale));
+    return 1;
+  }
+  if(!strcmp(name,"sprite_height")){
+    *out=vreal(sprite.height*fabs(in->image_yscale));
+    return 1;
+  }
   if(!strcmp(name,"sprite_xoffset")){ *out=vreal(sprite.origin_x); return 1; }
   if(!strcmp(name,"sprite_yoffset")){ *out=vreal(sprite.origin_y); return 1; }
   return 0;

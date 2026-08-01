@@ -604,6 +604,11 @@ void compute_present(AnygmEngine *engine) {
   if (vvis >= 0.5) { pw = gml_global_arr(&engine->vm, "view_wport", 0); ph = gml_global_arr(&engine->vm, "view_hport", 0); }
   int gw = engine->vm.gui_w > 0 ? engine->vm.gui_w : (pw > 0 ? (int)pw : (int)engine->width);
   int gh = engine->vm.gui_h > 0 ? engine->vm.gui_h : (ph > 0 ? (int)ph : (int)engine->height);
+  if (engine->vm.gui_w <= 0 && engine->vm.gui_h <= 0 &&
+      present_view_count(engine,NULL,NULL,NULL) > 1) {
+    gw = (int)engine->width;
+    gh = (int)engine->height;
+  }
   if (gw < 16) gw = engine->width;
   if (gh < 16) gh = engine->height;
   if (gw > FB_MAX_W) gw = FB_MAX_W;

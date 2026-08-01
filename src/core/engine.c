@@ -758,6 +758,14 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	    pw_ = gml_global_arr(&engine->vm, "view_wport", 0);
 	    ph_ = gml_global_arr(&engine->vm, "view_hport", 0);
 	  }
+	  /* Multiple visible views define one application-surface canvas. Present that complete
+	   * canvas, not the first camera's port; otherwise a side HUD plus world view is uniformly
+	   * fitted through the narrower world port and gains false bars. */
+	  if (frame_view_count > 1) {
+	    port_x_ = port_y_ = 0;
+	    pw_ = engine->width;
+	    ph_ = engine->height;
+	  }
 	  gml_render_presentation_metrics(&engine->render,&render_presentation);
 	  if (render_presentation.application_owned &&
 	      stale_full_view_port(engine,present_view_count(engine,NULL,NULL,NULL),port_x_,port_y_,
