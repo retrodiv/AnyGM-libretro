@@ -5,7 +5,7 @@
 #ifndef GML_BUILTIN_REGISTRY_INDEX_H
 #define GML_BUILTIN_REGISTRY_INDEX_H
 
-#define GML_BUILTIN_REGISTRY_ENTRY_COUNT 1542u
+#define GML_BUILTIN_REGISTRY_ENTRY_COUNT 1543u
 #define GML_BUILTIN_REGISTRY_SLOT_COUNT 4096u
 
 static const unsigned short gml_builtin_registry_slots[
@@ -72,7 +72,7 @@ static const unsigned short gml_builtin_registry_slots[
   0,0,0,0,0,0,0,870,0,0,0,386,0,0,77,326,
   0,0,10,619,707,3,1324,406,889,996,0,1532,244,0,0,0,
   176,0,1428,562,0,0,1056,0,0,1073,0,1475,0,0,0,0,
-  0,0,0,0,0,776,1530,0,0,0,0,0,1027,0,72,535,
+  1543,0,0,0,0,776,1530,0,0,0,0,0,1027,0,72,535,
   0,0,0,0,601,0,0,0,0,0,0,702,0,0,0,0,
   734,0,0,0,0,0,0,0,0,0,1045,1312,1338,0,763,39,
   0,0,0,0,0,1033,1184,0,0,0,0,0,442,0,0,0,

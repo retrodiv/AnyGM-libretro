@@ -294,6 +294,43 @@ static int ds_fast_interface(GmlVM *vm){
   return ok;
 }
 
+static int layer_instance_move(GmlVM *vm){
+  GmlVal rear_args[]={vreal(320),vstr("neutral_rear")};
+  GmlVal front_args[]={vreal(-40),vstr("neutral_front")};
+  GmlVal rear_id=gml_builtin_call(vm,"layer_create",rear_args,2);
+  GmlVal front_id=gml_builtin_call(vm,"layer_create",front_args,2);
+  if(rear_id.t!=V_REAL || front_id.t!=V_REAL) return 0;
+
+  GmlInstance *instances=realloc(vm->inst,sizeof(*instances));
+  if(!instances) return 0;
+  vm->inst=instances;
+  vm->inst_count=vm->inst_cap=1;
+  memset(&vm->inst[0],0,sizeof(vm->inst[0]));
+  vm->inst[0].active=1;
+  vm->inst[0].id=100001;
+  vm->inst[0].depth=12;
+  vm->inst[0].draw_layer_order=-1;
+  vm->inst[0].draw_layer_element_order=4;
+
+  GmlRtLayer *rear=gml_rt_layer_find(vm,(int)rear_id.d);
+  GmlRtLayer *front=gml_rt_layer_find(vm,(int)front_id.d);
+  GmlVal numeric_move[]={rear_id,vreal(vm->inst[0].id)};
+  GmlVal named_move[]={vstr("neutral_front"),vreal(vm->inst[0].id)};
+  int ok=rear && front &&
+         gml_builtin_fast_id(vm,"layer_add_instance")>=0 &&
+         expect_real("numeric layer move",
+                     gml_builtin_call(vm,"layer_add_instance",numeric_move,2),0) &&
+         vm->inst[0].depth==rear->depth &&
+         vm->inst[0].draw_layer_order==rear->order &&
+         vm->inst[0].draw_layer_element_order==-1 &&
+         expect_real("named layer move",
+                     gml_builtin_call(vm,"layer_add_instance",named_move,2),0) &&
+         vm->inst[0].depth==front->depth &&
+         vm->inst[0].draw_layer_order==front->order;
+  if(!ok) fprintf(stderr,"instance did not move to the requested runtime layer\n");
+  return ok;
+}
+
 static int canonical_registry_resolution(GmlVM *vm){
   int ok=1;
   int checked=0;
@@ -357,7 +394,8 @@ int main(void){
          gain_conversion(&vm) &&
          room_dimension_mutation(&vm) &&
          mouse_none_semantics(&vm) &&
-         ds_fast_interface(&vm);
+         ds_fast_interface(&vm) &&
+         layer_instance_move(&vm);
   gml_vm_free(&vm);
   gml_win_free(&win);
   if(!ok) return 1;

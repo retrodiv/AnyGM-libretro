@@ -74,6 +74,22 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
   if(!strcmp(nm,"layer_exists")){ *out=vreal(rt_layer_resolve(vm,a,n)!=NULL); return 1; }
   if(!strcmp(nm,"layer_set_visible")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); if(l) l->visible=(int)N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_get_visible")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); *out=vreal(l?l->visible:0); return 1; }
+  if(!strcmp(nm,"layer_add_instance")){
+    GmlRtLayer *l=rt_layer_resolve(vm,a,n);
+    GmlInstance *in=NULL;
+    int instance_id=(int)N(a,n,1);
+    for(int i=0;n>1 && i<vm->inst_count;i++){
+      GmlInstance *candidate=&vm->inst[i];
+      if((candidate->active || candidate->deactivated) && !candidate->marked &&
+         (int)candidate->id==instance_id){ in=candidate; break; }
+    }
+    if(l && in){
+      in->depth=l->depth;
+      in->draw_layer_order=l->order;
+      in->draw_layer_element_order=-1;
+    }
+    *out=vreal(0); return 1;
+  }
   if(!strcmp(nm,"instance_activate_layer")||!strcmp(nm,"instance_deactivate_layer")){
     GmlRtLayer *l=rt_layer_resolve(vm,a,n);
     int activate=!strcmp(nm,"instance_activate_layer");
