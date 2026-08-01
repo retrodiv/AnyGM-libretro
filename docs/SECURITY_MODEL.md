@@ -54,7 +54,7 @@ The normalized FORM reader enforces a separate set of compile-time limits:
 
 | Resource | Limit |
 | --- | ---: |
-| Normalized image bytes | 1 GiB |
+| Normalized image bytes | 2 GiB |
 | Chunks | 40 |
 | Strings | 8,388,608 |
 | Bytes in one string | 16 MiB |

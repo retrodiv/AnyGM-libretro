@@ -93,6 +93,14 @@ static int reject_byte(const uint8_t *source,size_t size,size_t offset,uint8_t v
 }
 
 static int fixed_container_cases(void){
+  if(GML_WIN_MAX_FILE_BYTES!=(size_t)2147483648ull){
+    fprintf(stderr,"normalized image byte limit changed unexpectedly\n");
+    return 0;
+  }
+  uint8_t oversized_image[8]={'F','O','R','M',0,0,0,0};
+  if(!rejected("normalized image byte limit",oversized_image,
+               GML_WIN_MAX_FILE_BYTES+1u,0)) return 0;
+
   uint8_t short_header[12]={0};
   memcpy(short_header,"FORM",4);
   write_u32(short_header,4,4);

@@ -13,7 +13,7 @@ struct AnygmHostServices;
 
 /* Hard parser limits for one normalized content image. These are deliberately
  * independent of frontend transport and compatibility generation. */
-#define GML_WIN_MAX_FILE_BYTES             ((size_t)1073741824u)
+#define GML_WIN_MAX_FILE_BYTES             ((size_t)2147483648ull)
 #define GML_WIN_MAX_CHUNKS                 40u
 #define GML_WIN_MAX_STRINGS                8388608u
 #define GML_WIN_MAX_STRING_BYTES           16777216u
