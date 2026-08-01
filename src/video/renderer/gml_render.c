@@ -690,6 +690,7 @@ int gml_render_shader_current(const GmlRender *r){
 #define GML_RENDER_SHADER_HANDLE_STRIDE 64
 #define GML_RENDER_SHADER_HANDLE(shader,slot) \
   ((shader)*GML_RENDER_SHADER_HANDLE_STRIDE+(slot))
+#define GML_RENDER_NOISE_JUMBLE_HANDLE_BASE 20
 
 int gml_render_shader_is_compiled(const GmlRender *r,int shader){
   if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
@@ -700,6 +701,7 @@ int gml_render_shader_is_compiled(const GmlRender *r,int shader){
          recognized->solid_alpha_mask ||
          recognized->solid_blur_alpha ||
          recognized->radial_wave ||
+         recognized->noise_jumble ||
          (recognized->hsv_scan && r->crt_shader_enable) ||
          (recognized->sampled_crt && r->crt_shader_enable) ||
          (recognized->crt && r->crt_shader_enable);
@@ -708,6 +710,11 @@ int gml_render_shader_is_compiled(const GmlRender *r,int shader){
 int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *name){
   if(r && name && shader>=0 && shader<r->n_shader_pal && r->shader_pal){
     const struct GmlShaderPal *recognized=&r->shader_pal[shader];
+    if(recognized->noise_jumble)
+      for(int index=0;index<GML_NOISE_JUMBLE_UNIFORM_COUNT;index++)
+        if(!strcmp(name,recognized->noise_jumble_uniform[index]))
+          return GML_RENDER_SHADER_HANDLE(
+            shader,GML_RENDER_NOISE_JUMBLE_HANDLE_BASE+index);
     if(recognized->lut && !strcmp(name,recognized->lut_row_uniform))
       return GML_RENDER_SHADER_HANDLE(shader,1);
     if(recognized->lut_indexed){
@@ -800,6 +807,15 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
   int slot=handle%GML_RENDER_SHADER_HANDLE_STRIDE;
   if(shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return;
   struct GmlShaderPal *recognized=&r->shader_pal[shader];
+  if(recognized->noise_jumble &&
+     slot>=GML_RENDER_NOISE_JUMBLE_HANDLE_BASE &&
+     slot<GML_RENDER_NOISE_JUMBLE_HANDLE_BASE+GML_NOISE_JUMBLE_UNIFORM_COUNT){
+    int index=slot-GML_RENDER_NOISE_JUMBLE_HANDLE_BASE;
+    recognized->noise_jumble_value[index][0]=(float)values[0];
+    if(index==GML_NOISE_JUMBLE_RESOLUTION)
+      recognized->noise_jumble_value[index][1]=(float)values[1];
+    return;
+  }
   if(recognized->sampled_crt && slot>=20 && slot<40){
     int index=slot-20;
     for(int component=0;component<4;component++)
@@ -934,6 +950,7 @@ int gml_render_shader_texture_stage_set(
 
 #undef GML_RENDER_SHADER_HANDLE
 #undef GML_RENDER_SHADER_HANDLE_STRIDE
+#undef GML_RENDER_NOISE_JUMBLE_HANDLE_BASE
 int gml_render_backend_draw_view(GmlRender *r,GmlRenderBackendDrawView *view){
   if(view) memset(view,0,sizeof(*view));
   if(!r || !view) return 0;

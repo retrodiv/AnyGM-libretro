@@ -289,8 +289,12 @@ static void check_shader_recognition(void) {
     "sum+=texture2D(gm_BaseTexture,uv-1.0*delta)*0.1*sum;"
     "sum+=texture2D(gm_BaseTexture,uv+1.0*delta)*0.1*sum;"
     "sum.rgb*=0.5;gl_FragColor=vec4(u_near_blur.rgb,sum.a);}",
+    "float quantize(float v,float r){return floor(v*r)/r;}"
+    "float wrap_value(float v,float d){return mod(mod(v,d)+d,d);}"
+    "float near_quantize(float v,float r){return floor(v*r)/r;}"
+    "float near_wrap(float v,float d){return mod(mod(v,d)+d,d);}"
   };
-  enum { SHADER_COUNT = 11, DATA_SIZE = 12288 };
+  enum { SHADER_COUNT = 13, DATA_SIZE = 16384 };
   uint8_t data[DATA_SIZE];
   GmlWin content;
   GmlRender render;
@@ -309,7 +313,7 @@ static void check_shader_recognition(void) {
     memcpy(data + fragment_offset, fragments[i], length + 1);
     fragment_offset += length + 1;
   }
-  write_u32(data, 4 + 10 * 4, DATA_SIZE - 8);
+  write_u32(data, 4 + 12 * 4, DATA_SIZE - 8);
 
   content.data = data;
   content.size = sizeof(data);
@@ -334,7 +338,9 @@ static void check_shader_recognition(void) {
     const struct GmlShaderPal *blur_near_match = &render.shader_pal[7];
     const struct GmlShaderPal *binary_hsv = &render.shader_pal[8];
     const struct GmlShaderPal *binary_hsv_near_match = &render.shader_pal[9];
-    const struct GmlShaderPal *bounded = &render.shader_pal[10];
+    struct GmlShaderPal *noise_jumble = &render.shader_pal[10];
+    const struct GmlShaderPal *noise_jumble_near_match = &render.shader_pal[11];
+    const struct GmlShaderPal *bounded = &render.shader_pal[12];
     expect(alpha->alpha_discard && alpha->alpha_discard_inclusive &&
            alpha->alpha_discard_cutoff == 0.25f,
            "alpha-discard structure was not recognized exactly");
@@ -390,9 +396,31 @@ static void check_shader_recognition(void) {
     expect(!mask_near_match->solid_alpha_mask &&
            !blur_near_match->solid_blur_alpha &&
            !binary_hsv_near_match->hsv_scan &&
+           !noise_jumble_near_match->noise_jumble &&
            !near_match->has && !bounded->has &&
            !near_match->alpha_discard && !bounded->alpha_discard,
            "partial or out-of-bounds shader record was accepted");
+    expect(noise_jumble->noise_jumble &&
+           !strcmp(noise_jumble->noise_jumble_uniform[GML_NOISE_JUMBLE_INTENSITY],
+                   "u_strength") &&
+           !strcmp(noise_jumble->noise_jumble_uniform[GML_NOISE_JUMBLE_RESOLUTION],
+                   "u_extent") &&
+           !strcmp(noise_jumble->noise_jumble_uniform[GML_NOISE_JUMBLE_SHAKINESS],
+                   "u_wobble") &&
+           gml_render_shader_is_compiled(&render,10),
+           "noise/jumble operation graph or semantic controls were not preserved");
+    int extent_uniform=gml_render_shader_uniform_handle(&render,10,"u_extent");
+    int noise_uniform=gml_render_shader_uniform_handle(&render,10,"u_noise");
+    const double extent_values[4]={320.0,180.0,0.0,0.0};
+    const double noise_values[4]={0.625,0.0,0.0,0.0};
+    gml_render_shader_uniform_set(&render,extent_uniform,extent_values);
+    gml_render_shader_uniform_set(&render,noise_uniform,noise_values);
+    expect(extent_uniform==10*64+20+GML_NOISE_JUMBLE_RESOLUTION &&
+           noise_uniform==10*64+20+GML_NOISE_JUMBLE_NOISE_LEVEL &&
+           noise_jumble->noise_jumble_value[GML_NOISE_JUMBLE_RESOLUTION][0]==320.0f &&
+           noise_jumble->noise_jumble_value[GML_NOISE_JUMBLE_RESOLUTION][1]==180.0f &&
+           noise_jumble->noise_jumble_value[GML_NOISE_JUMBLE_NOISE_LEVEL][0]==0.625f,
+           "noise/jumble uniform handles did not retain scalar and vector values");
   }
   gml_render_free(&render);
 }

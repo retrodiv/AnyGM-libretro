@@ -125,7 +125,7 @@ typedef struct { uint32_t *px; int w, h, live;
                  int dirty;                       /* px changed since the RLE cache was built */
                  int opaque_known, all_opaque, all_transparent;  /* conservative coverage metadata */
                  uint8_t *rle; size_t rle_len, rle_cap;  /* cached savestate RLE (u32 nrun + pairs) */
-} GmlSurface;      /* XRGB8888 runtime surface */
+} GmlSurface;
 
 /* Renderer implementation and the engine composition root may include this
  * header to obtain storage size. Subsystem callers remain on gml_render.h and
@@ -343,6 +343,13 @@ typedef struct GmlRender {
     float hsv_scan_uv_scale, hsv_scan_binary_threshold;
     float hsv_scan_binary_high[3], hsv_scan_binary_low[3];
     float hsv_scan_mix_center, hsv_scan_mix_min, hsv_scan_mix_max;
+    /* Multi-stage noise/jumble post-process. The fragment combines line displacement, block
+     * displacement, channel-separated samples, and seeded multiplicative noise. Recognition
+     * retains the complete custom-uniform interface in semantic declaration order; runtime
+     * values stay per shader and the software display pass evaluates the parsed graph. */
+    int   noise_jumble;
+    char  noise_jumble_uniform[GML_NOISE_JUMBLE_UNIFORM_COUNT][32];
+    float noise_jumble_value[GML_NOISE_JUMBLE_UNIFORM_COUNT][2];
     /* Radial sine displacement: samples the base texture at uv + direction*wave(distance,time).
      * The six controls are discovered from the fragment declarations/operation graph and remain
      * generic runtime state: time, centre vec2, resolution vec2, amount, divisor and speed. */
@@ -431,6 +438,7 @@ typedef struct GmlRender {
   int      surface_draw_log_count;
   int      text_width_log_count;
   int      dual_shader_fast_log_count;
+  int      noise_jumble_log_count;
   int      hsv_shader_log_count;
   int      hsv_shader_fast_log_count;
   int      sampled_crt_log_count;
@@ -487,6 +495,7 @@ void draw_surface_dual_sample(GmlRender *r,const struct GmlShaderPal *shader,int
                               double source_height,double destination_x,double destination_y,
                               double destination_width,double destination_height,
                               uint32_t blend,double alpha);
+
 
 
 

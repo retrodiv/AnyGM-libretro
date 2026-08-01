@@ -887,13 +887,14 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
   }
   const struct GmlShaderPal *sdual=dual_active(r);
   const struct GmlShaderPal *shsv=hsv_scan_active(r);
+  const struct GmlShaderPal *snoise=noise_jumble_active(r);
   if(render_setting(r,"GML_LOG_SHADER") && r && r->active_shader>=0 && r->stretched_shader_log_count++<8){
     
     anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[shader] f%ld stretched active=%d embedded=%d hsv=%d surface=%d\n",
       r->frame,r->active_shader,r->crt_shader_enable,shsv!=NULL,surf);
   }
   int d3w=gml_surface_width(r,surf),d3h=gml_surface_height(r,surf);
-  if(allow_software3d && !sdual && !shsv && d3w>0&&d3h>0&&
+  if(allow_software3d && !sdual && !shsv && !snoise && d3w>0&&d3h>0&&
      gml_d3_draw_surface_part_2d(r,surf,0,0,d3w,d3h,dx,dy,dw/d3w,dh/d3h,blend,alpha)) return;
   int sw=0, sh=0; uint32_t *spx=surface_pixels(r,surf,&sw,&sh); if(!spx) return;
   /* A full-width presentation compositor may retain an integer-scaled native-aspect destination
@@ -921,6 +922,7 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
   /* Interpolated surface draws with default application-surface blitting disabled
    * signal self-composition. Sticky; the host reads this next frame to supersample that pass. */
   if(r && !r->app_draw_enable && r->interp) r->composites_app=1;
+  if(snoise){ draw_surface_noise_jumble(r,snoise,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
   if(sdual){ draw_surface_dual_sample(r,sdual,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
   if(shsv){ draw_surface_hsv_scan(r,shsv,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
   { const struct GmlShaderPal *sampled=sampled_crt_active(r);
@@ -1068,8 +1070,11 @@ void gml_draw_surface_part_ext(GmlRender *r, int surf, double sx, double sy, dou
   }
   const struct GmlShaderPal *sdual=dual_active(r);
   const struct GmlShaderPal *shsv=hsv_scan_active(r);
-  if(!sdual && !shsv && gml_d3_draw_surface_part_2d(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;
+  const struct GmlShaderPal *snoise=noise_jumble_active(r);
+  if(!sdual && !shsv && !snoise &&
+     gml_d3_draw_surface_part_2d(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;
   if(r && !r->app_draw_enable && r->interp) r->composites_app=1;
+  if(snoise){ draw_surface_noise_jumble(r,snoise,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha); return; }
   if(sdual){ draw_surface_dual_sample(r,sdual,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha); return; }
   if(shsv){ draw_surface_hsv_scan(r,shsv,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha); return; }
   { const struct GmlShaderPal *sampled=sampled_crt_active(r);

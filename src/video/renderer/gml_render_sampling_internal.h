@@ -31,6 +31,7 @@ static inline const struct GmlShaderPal *dual_active(GmlRender *r){
   return sp->dual_sample ? sp : NULL;
 }
 
+
 static inline const struct GmlShaderPal *radial_wave_active(GmlRender *r){
   if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
   const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
