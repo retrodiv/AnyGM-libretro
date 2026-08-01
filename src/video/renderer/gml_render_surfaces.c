@@ -264,7 +264,8 @@ int gml_surface_get_target(GmlRender *r){
   return r ? r->target_id : -1;
 }
 static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, int sw, int sh,
-                                           int x0, int y0, int W, int H){
+                                           int x0, int y0, int W, int H,
+                                           int source_all_opaque){
   if(!r || !src || !r->fb || sw<=0 || sh<=0 || W<=0 || H<=0) return 0;
   int px0 = x0 < 0 ? -x0 : 0;
   int py0 = y0 < 0 ? -y0 : 0;
@@ -358,6 +359,28 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
       }
     }
     if(xmap!=xbuf) free(xmap);
+    return 1;
+  }
+
+  /* Integer-magnified opaque presentation is a pure nearest-neighbour copy. Build each expanded
+   * source row once, then duplicate it vertically. The general mapper below must retain its
+   * coverage checks for transparent surfaces and fractional/downscaled presentation, but doing
+   * those checks for every pixel of a certified opaque full-target blit is unnecessary work. */
+  if(source_all_opaque && x0==0 && y0==0 && W==r->fbw && H==r->fbh &&
+     W%sw==0 && H%sh==0){
+    int xscale=W/sw,yscale=H/sh;
+    for(int sy=0;sy<sh;sy++){
+      uint32_t *first=r->fb+(size_t)(sy*yscale)*W;
+      const uint32_t *source_row=src+(size_t)sy*sw;
+      for(int sx=0;sx<sw;sx++)
+        gml_render_backend_fill_xrgb(first+(size_t)sx*xscale,xscale,
+                                     source_row[sx]|0xFF000000u);
+      for(int repeat=1;repeat<yscale;repeat++)
+        memcpy(first+(size_t)repeat*W,first,(size_t)W*sizeof(*first));
+    }
+    r->fb_opaque_known=1;
+    r->fb_all_opaque=1;
+    r->fb_all_transparent=0;
     return 1;
   }
 
@@ -783,7 +806,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
      r->blendmode==0 && alpha>=1.0 &&
      ((blend & 0xFFFFFF) == 0xFFFFFF) && !spal && !slut && !sgrid && !alpha_test){
     gml_render_maybe_prepare_draw(r);
-    if(draw_scaled_full_surface_normal(r,src,sw,sh,x0,y0,W,H)){
+    if(draw_scaled_full_surface_normal(r,src,sw,sh,x0,y0,W,H,src_all_opaque)){
       free(copy);
       return;
     }

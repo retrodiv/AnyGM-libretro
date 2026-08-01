@@ -164,6 +164,51 @@ static int screen_raster_part_case(void){
   return 0;
 }
 
+static int opaque_integer_scale_case(void){
+  enum { SOURCE_WIDTH=5,SOURCE_HEIGHT=3,TARGET_WIDTH=20,TARGET_HEIGHT=12 };
+  uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
+  uint32_t opaque_target[TARGET_WIDTH*TARGET_HEIGHT];
+  uint32_t unknown_target[TARGET_WIDTH*TARGET_HEIGHT];
+  for(int y=0;y<SOURCE_HEIGHT;y++) for(int x=0;x<SOURCE_WIDTH;x++)
+    source[(size_t)y*SOURCE_WIDTH+x]=
+      0xFF000000u|((uint32_t)(17+x*31+y*7)<<16)|
+      ((uint32_t)(29+x*11+y*37)<<8)|(uint32_t)(41+x*23+y*13);
+
+  for(int pass=0;pass<2;pass++){
+    GmlRender render;
+    uint32_t *target=pass?unknown_target:opaque_target;
+    memset(&render,0,sizeof render);
+    for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++)
+      target[index]=0xFF102030u+(uint32_t)index;
+    render.app_surface=source;
+    render.app_w=SOURCE_WIDTH;
+    render.app_h=SOURCE_HEIGHT;
+    render.app_surface_opaque=pass?0:1;
+    render.alphablend=1;
+    render.color_write_mask=0x0F;
+    render.blend_equation=1;
+    render.blend_equation_alpha=1;
+    render.app_draw_enable=1;
+    render.active_shader=-1;
+    render.lut_pal_sprite=-1;
+    gml_render_begin(&render,target,TARGET_WIDTH,TARGET_HEIGHT,0.0,0.0);
+    gml_render_set_pending_underlay(&render,0,0,TARGET_WIDTH,TARGET_HEIGHT);
+    gml_render_flush_pending_underlay(&render);
+    for(int y=0;y<TARGET_HEIGHT;y++) for(int x=0;x<TARGET_WIDTH;x++){
+      uint32_t expected=source[(size_t)(y/(TARGET_HEIGHT/SOURCE_HEIGHT))*SOURCE_WIDTH+
+                               x/(TARGET_WIDTH/SOURCE_WIDTH)];
+      if(target[(size_t)y*TARGET_WIDTH+x]!=expected){
+        fprintf(stderr,"renderer opaque integer scale mismatch at %d,%d: %08x != %08x\n",
+                x,y,target[(size_t)y*TARGET_WIDTH+x],expected);
+        return 1;
+      }
+    }
+  }
+  REQUIRE(!memcmp(opaque_target,unknown_target,sizeof opaque_target),
+          "opaque integer scale equivalence");
+  return 0;
+}
+
 int main(void){
   GmlRender render;
   uint32_t base[8*6];
@@ -224,6 +269,7 @@ int main(void){
           !gml_surface_exists(&render,destination),"freed surfaces");
   REQUIRE(composition_cases()==0,"composition cases");
   REQUIRE(screen_raster_part_case()==0,"screen raster part case");
+  REQUIRE(opaque_integer_scale_case()==0,"opaque integer scale case");
   puts("renderer surfaces: ok");
   return 0;
 }
