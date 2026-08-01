@@ -164,6 +164,32 @@ static int expect_renderer_semantics_exit_code(void){
     }
   }
   {
+    /* The basic maximum preset uses source alpha and inverse source colour factors.  It is not
+     * normal alpha blending and must remain distinct from the independent maximum equation. */
+    GmlVM draw_vm={0}; GmlRender render={0}; uint32_t framebuffer=0xFF204080u;
+    gml_render_begin(&render,&framebuffer,1,1,0,0);
+    render.alpha=0.5; render.alphablend=1; render.color_write_mask=0x0F;
+    draw_vm.render=&render;
+    GmlVal mode=vreal(2),point[3]={vreal(0),vreal(0),vreal(0xC08040)};
+    (void)gml_builtin_call(&draw_vm,"gpu_set_blendmode",&mode,1);
+    (void)gml_builtin_call(&draw_vm,"draw_point_colour",point,3);
+    GmlVal active=gml_builtin_call(&draw_vm,"gpu_get_blendmode",NULL,0);
+    if(framebuffer!=0xFF386080u || active.t!=V_REAL || active.d!=2.0){
+      fprintf(stderr,"bm_max preset mismatch: pixel=%08x mode=%.0f\n",framebuffer,active.d);
+      return 1;
+    }
+    framebuffer=0xFF204080u;
+    GmlVal factors[2]={vreal(5),vreal(4)};
+    (void)gml_builtin_call(&draw_vm,"gpu_set_blendmode_ext",factors,2);
+    (void)gml_builtin_call(&draw_vm,"draw_point_colour",point,3);
+    active=gml_builtin_call(&draw_vm,"gpu_get_blendmode",NULL,0);
+    if(framebuffer!=0xFF386080u || active.t!=V_REAL || active.d!=2.0){
+      fprintf(stderr,"bm_max extended factors mismatch: pixel=%08x mode=%.0f\n",
+              framebuffer,active.d);
+      return 1;
+    }
+  }
+  {
     /* The basic bm_subtract preset uses (bm_zero,bm_inv_src_colour).  It scales each destination
      * channel independently; it must not be confused with the separate subtract blend equation. */
     GmlVM draw_vm={0}; GmlRender render={0}; uint32_t framebuffer=0xFF80C840u;
@@ -172,8 +198,10 @@ static int expect_renderer_semantics_exit_code(void){
     GmlVal mode=vreal(3),point[3]={vreal(0),vreal(0),vreal(0xC08040)};
     (void)gml_builtin_call(&draw_vm,"gpu_set_blendmode",&mode,1);
     (void)gml_builtin_call(&draw_vm,"draw_point_colour",point,3);
-    if(framebuffer!=0xFF606410u){
-      fprintf(stderr,"bm_subtract inverse-source blend mismatch: %08x\n",framebuffer); return 1;
+    GmlVal active=gml_builtin_call(&draw_vm,"gpu_get_blendmode",NULL,0);
+    if(framebuffer!=0xFF606410u || active.t!=V_REAL || active.d!=3.0){
+      fprintf(stderr,"bm_subtract inverse-source blend mismatch: pixel=%08x mode=%.0f\n",
+              framebuffer,active.d); return 1;
     }
   }
   return 0;

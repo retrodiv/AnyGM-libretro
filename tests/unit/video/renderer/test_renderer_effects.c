@@ -912,6 +912,45 @@ static void check_batched_solid_mask_order(void) {
   free(pixels);
 }
 
+static void check_maximum_preset_sprite(void) {
+  uint8_t rgba[4]={64,128,192,128};
+  uint32_t target=UINT32_C(0xff204080);
+  int frame_index=0;
+  GmlSprite sprite;
+  GmlTpag tpag;
+  GmlAtlas atlas;
+  GmlRender render;
+  memset(&sprite,0,sizeof sprite);
+  memset(&tpag,0,sizeof tpag);
+  memset(&atlas,0,sizeof atlas);
+  memset(&render,0,sizeof render);
+  sprite.w=sprite.h=1;
+  sprite.n_frames=1;
+  sprite.frame=&frame_index;
+  tpag.sw=tpag.sh=tpag.bw=tpag.bh=1;
+  tpag.atlas=0;
+  atlas.w=atlas.h=1;
+  atlas.px=rgba;
+  atlas.decode_attempted=1;
+  render.spr=&sprite;
+  render.tpag=&tpag;
+  render.atlas=&atlas;
+  render.n_spr=render.n_tpag=render.n_atlas=1;
+  render.fb=render.base_fb=&target;
+  render.fbw=render.fbh=render.base_fbw=render.base_fbh=1;
+  render.target_id=-1;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.blendmode=4;
+  render.blend_equation=render.blend_equation_alpha=1;
+  render.color_write_mask=0x0F;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+  gml_draw_sprite_ext(&render,0,0,0.0,0.0,1.0,1.0,0.0,0xFFFFFFu,0.5);
+  expect(target==UINT32_C(0xff284050),
+         "maximum preset sprite factors changed");
+}
+
 int main(void) {
   static const struct {
     const char *name;
@@ -937,6 +976,7 @@ int main(void) {
   check_skeleton_asset_and_pose();
   check_optimized_primitives();
   check_batched_solid_mask_order();
+  check_maximum_preset_sprite();
   expect(noise == UINT64_C(0xe9d7942b9ca5361e), "rgb-noise");
   expect(tint == UINT64_C(0x9ded760f28a3f2a0), "direct-tint");
   printf("rgb-noise %016llx\n", (unsigned long long)noise);

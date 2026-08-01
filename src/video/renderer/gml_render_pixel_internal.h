@@ -28,5 +28,24 @@ static inline uint32_t blend_multiply_pixel(const GmlRender *r,uint32_t dst,int 
   return alpha|((uint32_t)rr<<16)|((uint32_t)gg<<8)|(uint32_t)bb;
 }
 
+/* Basic maximum preset: (source alpha, inverse source colour) with the add equation.  The name
+ * describes the preset's visual purpose; unlike the independent maximum equation, both blend
+ * factors remain active.  Source RGB has already been texture/tint modulated by the caller. */
+static inline uint32_t blend_max_preset_pixel(const GmlRender *r,uint32_t dst,
+                                               int sr,int sg,int sb,unsigned source_alpha){
+  if(source_alpha>255u) source_alpha=255u;
+  unsigned dr=(dst>>16)&255u,dg=(dst>>8)&255u,db=dst&255u;
+  unsigned rr=((unsigned)sr*source_alpha+dr*(255u-(unsigned)sr)+127u)/255u;
+  unsigned gg=((unsigned)sg*source_alpha+dg*(255u-(unsigned)sg)+127u)/255u;
+  unsigned bb=((unsigned)sb*source_alpha+db*(255u-(unsigned)sb)+127u)/255u;
+  unsigned coverage=255u;
+  if(r && r->target_sp>0){
+    unsigned destination_alpha=dst>>24;
+    coverage=(source_alpha*source_alpha+
+              destination_alpha*(255u-source_alpha)+127u)/255u;
+  }
+  return (coverage<<24)|(rr<<16)|(gg<<8)|bb;
+}
+
 
 #endif

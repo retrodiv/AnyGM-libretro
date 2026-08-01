@@ -220,7 +220,7 @@ typedef struct GmlRender {
   uint8_t   alpha_test_ref;         /* inclusive 0..255 reference set by gpu_set_alphatestref */
   uint8_t   color_write_mask; /* gpu_set_colorwriteenable RGBA bits 0..3; defaults to all enabled */
   int       software_overlay; /* bypass world-space D3 projection for a final 2D modal pass */
-  int       blendmode;   /* 0=normal, 1=add, 2=(zero, inverse-source-colour), 3=source*destination. */
+  int       blendmode;   /* 0=normal, 1=add, 2=(zero, inverse-source-colour), 3=multiply, 4=max preset. */
   int       blend_equation, blend_equation_alpha; /* 1 add, 2 max, 3 subtract, 4 reverse-subtract, 5 min */
   struct GmlGpuState {
     int alphablend, alpha_test_enable, blendmode, blend_equation, blend_equation_alpha, interp;

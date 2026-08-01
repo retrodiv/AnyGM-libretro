@@ -209,6 +209,41 @@ static int opaque_integer_scale_case(void){
   return 0;
 }
 
+static int max_preset_surface_case(void){
+  GmlRender render;
+  uint32_t target=0xFF204080u;
+  memset(&render,0,sizeof render);
+  render.fb=render.base_fb=&target;
+  render.fbw=render.base_fbw=1;
+  render.fbh=render.base_fbh=1;
+  render.target_id=-1;
+  render.next_surface_id=1;
+  render.alphablend=1;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+  int source=gml_surface_create(&render,1,1);
+  REQUIRE(source==1,"maximum preset surface id");
+  uint32_t *source_pixel=surface_pixels(&render,source,NULL,NULL);
+  REQUIRE(source_pixel!=NULL,"maximum preset surface pixel");
+  *source_pixel=0x804080C0u;
+  render.surface[0].opaque_known=1;
+  render.surface[0].all_opaque=0;
+  render.surface[0].all_transparent=0;
+  render.blendmode=4;
+  gml_draw_surface_stretched(&render,source,0.0,0.0,1.0,1.0,0xFFFFFFu,0.5);
+  if(target!=0xFF284050u){
+    fprintf(stderr,"renderer maximum preset surface mismatch: %08x\n",target);
+    gml_surface_free(&render,source);
+    return 1;
+  }
+  gml_surface_free(&render,source);
+  return 0;
+}
+
 int main(void){
   GmlRender render;
   uint32_t base[8*6];
@@ -270,6 +305,7 @@ int main(void){
   REQUIRE(composition_cases()==0,"composition cases");
   REQUIRE(screen_raster_part_case()==0,"screen raster part case");
   REQUIRE(opaque_integer_scale_case()==0,"opaque integer scale case");
+  REQUIRE(max_preset_surface_case()==0,"maximum preset surface case");
   puts("renderer surfaces: ok");
   return 0;
 }

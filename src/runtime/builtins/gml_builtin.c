@@ -93,6 +93,8 @@ void builtin_set_blendmode_ext(GmlVM *vm,GmlRender *R,int src,int dst){
   GmlRenderDrawState state={0};
   if(src==9 && dst==1) state.blend_mode=3;             /* src * destination colour */
   else if(src==5 && dst==2) state.blend_mode=1;        /* additive src-alpha */
+  else if(src==1 && dst==4) state.blend_mode=2;        /* zero, inverse source colour */
+  else if(src==5 && dst==4) state.blend_mode=4;        /* source alpha, inverse source colour */
   else state.blend_mode=0;                             /* includes normal (5,6) */
   gml_render_draw_state_update(R,&state,GML_RENDER_DRAW_STATE_BLEND_MODE);
   if(builtin_setting(vm,"GML_DBG_BM"))
@@ -103,7 +105,7 @@ void builtin_set_blendmode_ext(GmlVM *vm,GmlRender *R,int src,int dst){
 void builtin_set_blendmode(GmlRender *R, int bm){
   if(!R) return;
   GmlRenderDrawState state={0};
-  state.blend_mode=(bm==1)?1:(bm==3)?2:0;
+  state.blend_mode=(bm==1)?1:(bm==2)?4:(bm==3)?2:0;
   /* A preset blend mode also selects its equation; the software presets above
    * encode add/subtract themselves, so the independent equation returns to add. */
   state.blend_equation=state.blend_equation_alpha=1;
@@ -1462,7 +1464,12 @@ GmlVal gml_builtin_try_platform_tail(GmlVM *vm, const char *nm, GmlVal *a, int n
      !strcmp(nm,"gpu_set_blendmode")){ GmlRender *R2=(GmlRender*)vm->render; int bm=(int)N(a,n,0);
     if(builtin_setting(vm,"GML_DBG_BM")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[bm] gpu_set_blendmode(%d)\n",bm);
     builtin_set_blendmode(R2,bm); return vreal(0); }
-  if(!strcmp(nm,"gpu_get_blendmode")){ GmlRender *R2=(GmlRender*)vm->render; return vreal(builtin_draw_state(R2).blend_mode); }
+  if(!strcmp(nm,"gpu_get_blendmode")){
+    GmlRender *R2=(GmlRender*)vm->render;
+    int internal=builtin_draw_state(R2).blend_mode;
+    int preset=internal==0?0:internal==1?1:internal==4?2:internal==2?3:-1;
+    return vreal(preset);
+  }
   if(!strcmp(nm,"gpu_get_colorwriteenable")){
     GmlRender *R2=(GmlRender*)vm->render;
     unsigned mask=builtin_draw_state(R2).color_write_mask;

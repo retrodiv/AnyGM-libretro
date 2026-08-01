@@ -423,6 +423,9 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       builtin_set_alpha_blend(R,N(a,n,0)>=0.5);
       return vreal(0);
     case BID_GPU_SET_BLENDMODE:
+      if(builtin_setting(vm,"GML_DBG_BM"))
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+          "[bm] f%ld gpu_set_blendmode(%d)\n",vm->frame,(int)N(a,n,0));
       builtin_set_blendmode(R,(int)N(a,n,0));
       return vreal(0);
     case BID_GPU_SET_BLENDMODE_EXT:
