@@ -15,7 +15,7 @@ static struct retro_variable g_variables[]={
   {"anygm_aspect_ratio_force","Aspect ratio force; None|4:3|16:9|21:9"},
   {"anygm_width_resolution","Width resolution; Game Base|64|128|144|160|176|192|200|224|240|256|288|300|320|352|360|384|400|416|448|480|512|560|576|600|640|704|720|768|800|832|854|896|960|1024|1080|1152|1200|1280|1360|1366|1400|1440|1536|1600|1680|1728|1792|1920|2048|2160|2304|2400|2560|2880|3200|3440|3840"},
   {"anygm_height_resolution","Height resolution; Game Base|64|128|144|160|176|180|192|200|216|224|240|256|270|288|300|320|350|360|384|400|432|448|450|480|512|540|576|600|640|720|768|800|864|900|960|1024|1050|1080|1152|1200|1280|1350|1440|1536|1600|1800|1920|2160"},
-  {"anygm_fast_alpha_cull","Renderer low-alpha cull; Exact|Performance|Light|Medium|Aggressive"},
+  {"anygm_fast_alpha_cull","Renderer low-alpha cull; Performance|Exact|Light|Medium|Aggressive"},
   {"anygm_embedded_shaders","Embedded CRT shader; On|Off"},
   {"anygm_crt_scanlines","CRT scanlines; On|Off"},
   {"anygm_crt_mask","CRT aperture mask; On|Off"},
@@ -82,7 +82,7 @@ void libretro_options_apply(bool all_fields){
   value=option_value("anygm_gamepad");
   config->gamepad_connected=value&&!strcmp(value,"Gamepad")?1u:0u;
   value=option_value("anygm_fast_alpha_cull");
-  config->fast_alpha_cull=value&&!strcmp(value,"Performance")?24u:
+  config->fast_alpha_cull=!value||!strcmp(value,"Performance")?24u:
                           value&&!strcmp(value,"Light")?1u:
                           value&&!strcmp(value,"Medium")?4u:
                           value&&!strcmp(value,"Aggressive")?32u:0u;
