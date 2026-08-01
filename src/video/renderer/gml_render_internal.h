@@ -336,6 +336,13 @@ typedef struct GmlRender {
     float hsv_scan_vignette_base, hsv_scan_vignette_gain, hsv_scan_vignette_scale;
     float hsv_scan_row_base, hsv_scan_row_value_gain, hsv_scan_row_sine_gain;
     float hsv_scan_row_frequency, hsv_scan_saturation_gain;
+    /* Binary-palette HSV variant. It samples an inset UV, maps the sampled red channel through a
+     * literal threshold into two parsed colours, applies the HSV value/saturation graph above,
+     * then mixes toward an unwarped sample at the horizontal edges. */
+    int   hsv_scan_binary_palette;
+    float hsv_scan_uv_scale, hsv_scan_binary_threshold;
+    float hsv_scan_binary_high[3], hsv_scan_binary_low[3];
+    float hsv_scan_mix_center, hsv_scan_mix_min, hsv_scan_mix_max;
     /* Radial sine displacement: samples the base texture at uv + direction*wave(distance,time).
      * The six controls are discovered from the fragment declarations/operation graph and remain
      * generic runtime state: time, centre vec2, resolution vec2, amount, divisor and speed. */
@@ -405,6 +412,7 @@ typedef struct GmlRender {
   void     *crt_cols_scratch;  size_t crt_cols_scratch_cap;
   void     *crt_conv_scratch;  size_t crt_conv_scratch_cap;
   void     *crt_tables;        /* per-renderer lookup tables for the software CRT path */
+  void     *hsv_binary_lut_cache;       /* derived binary-palette post-process colours */
   /* async atlas prefetch pool (opaque; see gml_render_atlas.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;
@@ -472,6 +480,7 @@ void draw_surface_region(GmlRender *r,int surface,double source_x,double source_
                          double destination_y,double destination_width,
                          double destination_height,uint32_t blend,double alpha);
 void crt_tables_free(GmlRender *r);
+void hsv_binary_lut_cache_free(GmlRender *r);
 
 void draw_surface_dual_sample(GmlRender *r,const struct GmlShaderPal *shader,int surface,
                               double source_x,double source_y,double source_width,

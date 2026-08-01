@@ -1009,6 +1009,7 @@ void gml_render_free(GmlRender *r){
   free(r->classic_info_native_pixels);
   free(r->crt_gamma_scratch); free(r->crt_cols_scratch); free(r->crt_conv_scratch);
   crt_tables_free(r);
+  hsv_binary_lut_cache_free(r);
   free(r->layer_noise_rgb); r->layer_noise_rgb=NULL;
   free(r->layer_filter_src); free(r->layer_filter_work); free(r->layer_filter_aux);
   free(r->layer_blur_taps);
