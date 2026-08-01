@@ -262,6 +262,20 @@ void gml_vm_frame_advance_layers(GmlVM *vm){
   }
 }
 
+static void gml_vm_apply_pending_room(GmlVM *vm){
+  int target=vm->pending_room;
+  vm->pending_room=-1;
+  vm->step_alloc_base=0;
+  gml_room_enter(vm,target);
+}
+
+static void gml_vm_finish_step(GmlVM *vm,int previous_alloc_base){
+  vm->step_alloc_base=previous_alloc_base;
+  vm->step_active=0;
+  vm->step_free_n=vm->step_free_pos=0;
+  gml_vm_instances_trim_pool_tail(vm);
+}
+
 void gml_vm_step(GmlVM *vm){
   if(vm && vm->classic_info_active){
     if(gml_keyboard_check(vm,1,1)) vm->classic_info_active=0;
@@ -448,8 +462,17 @@ void gml_vm_step(GmlVM *vm){
   if(vm->win && anygm_policy_uses_classic_runtime(vm->win)) gml_vm_instances_run_classic_event(vm,"Step_0");
   else {
     for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked &&
-        gml_vm_instances_step_snapshot_member(vm,&vm->inst[i]))
+        gml_vm_instances_step_snapshot_member(vm,&vm->inst[i])){
       gml_run_event(vm,&vm->inst[i],"Step_0");
+      /* Commit a room request after the requesting event completes. Do not let later members
+       * of the old room's Step snapshot run before the room lifecycle boundary. */
+      if(vm->pending_room>=0){
+        gml_vm_apply_pending_room(vm);
+        gml_vm_finish_step(vm,prev_alloc_base);
+        VMPROF_MARK(rest);
+        return;
+      }
+    }
   }
   VMPROF_MARK(step0);
   /* Classic object iteration remains live through automatic movement. An instance
@@ -667,21 +690,13 @@ void gml_vm_step(GmlVM *vm){
   /* deferred async HTTP failure events (Other_62) queued by http_* this step (offline core) */
   gml_fire_async_http(vm);
   /* room transition requested during the step */
-  if(vm->pending_room>=0){
-    int t=vm->pending_room;
-    vm->pending_room=-1;
-    vm->step_alloc_base=0;
-    gml_room_enter(vm,t);
-  }
+  if(vm->pending_room>=0) gml_vm_apply_pending_room(vm);
   /* Game End (Other_3): fire on all active instances when game_end was set. */
   if(vm->game_end){
     for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked)
       gml_run_event(vm,&vm->inst[i],"Other_3");
   }
-  vm->step_alloc_base=prev_alloc_base;
-  vm->step_active=0;
-  vm->step_free_n=vm->step_free_pos=0;
-  gml_vm_instances_trim_pool_tail(vm);
+  gml_vm_finish_step(vm,prev_alloc_base);
   VMPROF_MARK(rest);
 }
 
