@@ -72,6 +72,58 @@ static int expect_renderer_semantics_exit_code(void){
     free(render.atlas);
   }
   {
+    /* Repeated equivalent sprite-font creation must retain a usable resource at the bounded
+     * pool limit. A distinct request still fails instead of aliasing unrelated glyph metrics. */
+    GmlSprite sprite={0}; GmlRender render={0};
+    sprite.n_frames=1; render.spr=&sprite; render.n_spr=1;
+    int id=-1;
+    for(int i=0;i<GML_MAX_FONTS;i++) id=gml_font_add_sprite(&render,0,33,1,4);
+    int repeated=gml_font_add_sprite(&render,0,33,1,4);
+    int distinct=gml_font_add_sprite(&render,0,34,1,4);
+    if(id!=GML_MAX_FONTS-1 || repeated!=id || distinct!=-1 ||
+       render.n_fonts!=GML_MAX_FONTS){
+      fprintf(stderr,"sprite-font saturation mismatch: id=%d repeated=%d distinct=%d count=%d\n",
+              id,repeated,distinct,render.n_fonts); return 1;
+    }
+  }
+  {
+    GmlSprite sprite={0}; GmlRender render={0}; uint32_t mapping[2]={'A','B'};
+    sprite.n_frames=1; render.spr=&sprite; render.n_spr=1;
+    render.n_fonts=GML_MAX_FONTS;
+    render.fonts[GML_MAX_FONTS-1]=(GmlFont){
+      .sprite=0,.prop=1,.sep=2,.map=mapping,.map_len=2
+    };
+    int repeated=gml_font_add_sprite_ext(&render,0,"AB",1,2);
+    int distinct=gml_font_add_sprite_ext(&render,0,"AC",1,2);
+    if(repeated!=GML_MAX_FONTS-1 || distinct!=-1){
+      fprintf(stderr,"mapped sprite-font saturation mismatch: repeated=%d distinct=%d\n",
+              repeated,distinct); return 1;
+    }
+  }
+  {
+    /* Sprite fonts retain the source sprite origin and each trimmed texture-page offset. A
+     * character outside the mapped range remains a blank full cell even for proportional text. */
+    GmlRender render={0}; GmlSprite sprite={0}; GmlTpag page={0}; GmlAtlas atlas={0};
+    uint32_t framebuffer[16*8]={0}; uint8_t pixel[4]={255,255,255,255}; int frame=0;
+    gml_render_begin(&render,framebuffer,16,8,0,0);
+    render.spr=&sprite; render.n_spr=1; render.tpag=&page; render.n_tpag=1;
+    render.atlas=&atlas; render.n_atlas=1; render.font=0; render.n_fonts=1;
+    render.color=0xFFFFFF; render.alpha=1; render.alphablend=1; render.software_overlay=1;
+    sprite.w=sprite.h=8; sprite.originx=3; sprite.originy=2;
+    sprite.n_frames=1; sprite.frame=&frame;
+    page.sw=page.sh=1; page.tx=page.ty=1; page.bw=page.bh=8; page.atlas=0;
+    atlas.px=pixel; atlas.w=atlas.h=1; atlas.decode_attempted=1;
+    render.fonts[0]=(GmlFont){.sprite=0,.first='A',.prop=1};
+    gml_draw_text(&render,4,4,"A A");
+    int width=gml_text_width(&render,"A A");
+    if(width!=10 || !(framebuffer[3*16+2]&0xFFFFFFu) ||
+       !(framebuffer[3*16+11]&0xFFFFFFu) || (framebuffer[4*16+4]&0xFFFFFFu)){
+      fprintf(stderr,"sprite-font origin or blank-cell mismatch: width=%d pixels=%08x,%08x,%08x\n",
+              width,framebuffer[3*16+2],framebuffer[3*16+11],framebuffer[4*16+4]);
+      return 1;
+    }
+  }
+  {
     /* Vertical centring uses the complete glyph-cell extent while line_height remains the
      * authored line advance. A font can legitimately have descenders taller than its nominal
      * em; centring only the advance moves every visible glyph down. */

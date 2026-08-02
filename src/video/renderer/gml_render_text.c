@@ -181,9 +181,43 @@ static unsigned glyph_code_from_cp(unsigned cp);
 static int glyph_frame(GmlFont *f, unsigned cp);
 static void font_build_fast(GmlFont *f);
 
+static int font_find_matching_sprite(GmlRender *r, int sprite, int first, int prop, int sep){
+  if(!r) return -1;
+  for(int i=r->n_fonts-1;i>=0;i--){
+    GmlFont *font=&r->fonts[i];
+    if(!font->real && font->sprite==sprite && font->first==first && font->prop==prop &&
+       font->sep==sep && !font->map && font->map_len==0) return i;
+  }
+  return -1;
+}
+
+static int font_sprite_map_matches(GmlFont *font, const char *map){
+  if(!font || !map || !font->map || font->map_len<=0) return 0;
+  const char *cursor=map;
+  for(int i=0;i<font->map_len;i++){
+    if(!*cursor || font->map[i]!=utf8_next(&cursor)) return 0;
+  }
+  return !*cursor;
+}
+
+static int font_find_matching_sprite_ext(GmlRender *r, int sprite, const char *map,
+                                         int prop, int sep){
+  if(!r) return -1;
+  for(int i=r->n_fonts-1;i>=0;i--){
+    GmlFont *font=&r->fonts[i];
+    if(!font->real && font->sprite==sprite && font->prop==prop && font->sep==sep &&
+       font_sprite_map_matches(font,map)) return i;
+  }
+  return -1;
+}
+
 int gml_font_add_sprite(GmlRender *r, int sprite, int first, int prop, int sep){
   if(!r || sprite<0 || sprite>=r->n_spr || r->spr[sprite].n_frames<=0) return -1;
-  if(r->n_fonts>=GML_MAX_FONTS) return -1;
+  /* Preserve fresh resource ids while capacity remains. At the bounded pool limit, an exact
+   * sprite-font request can safely retain its rendering semantics by reusing the newest equal
+   * record instead of changing draw_set_font to the built-in fallback. */
+  if(r->n_fonts>=GML_MAX_FONTS)
+    return font_find_matching_sprite(r,sprite,first,prop,sep);
   int id=r->n_fonts++;
   r->fonts[id]=(GmlFont){.sprite=sprite,.first=first,.prop=prop,.sep=sep};
   if(render_setting(r,"GML_LOG_TEXT")){ GmlSprite *s=&r->spr[sprite];
@@ -199,7 +233,8 @@ int gml_font_add_sprite(GmlRender *r, int sprite, int first, int prop, int sep){
 int gml_font_add_sprite_ext(GmlRender *r, int sprite, const char *map, int prop, int sep){
   if(!r || sprite<0 || sprite>=r->n_spr || r->spr[sprite].n_frames<=0) return -1;
   if(!map || !*map) return gml_font_add_sprite(r,sprite,0,prop,sep);
-  if(r->n_fonts>=GML_MAX_FONTS) return -1;
+  if(r->n_fonts>=GML_MAX_FONTS)
+    return font_find_matching_sprite_ext(r,sprite,map,prop,sep);
   int cap=64, len=0;
   uint32_t *cp=malloc((size_t)cap*sizeof(uint32_t));
   if(!cp) return -1;
@@ -396,15 +431,7 @@ void gml_font_delete(GmlRender *r, int font){
 static int glyph_w(GmlRender *r, GmlFont *f, int frame, unsigned cp){
   GmlSprite *s=&r->spr[f->sprite];
   if(frame<0||frame>=s->n_frames){
-    if(f->prop && cp==' '){
-      static const unsigned probes[]={'n','a','A','0'};
-      for(size_t i=0;i<sizeof(probes)/sizeof(probes[0]);i++){
-        int pf=glyph_frame(f,probes[i]);
-        if(pf>=0 && pf<s->n_frames) return glyph_w(r,f,pf,probes[i]);
-      }
-      int w=s->w/3;
-      return w>0?w:1;
-    }
+    (void)cp;
     return s->w;        /* out-of-range: blank cell */
   }
   if(s->runtime_rgba) return s->w;
@@ -1228,7 +1255,7 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
       unsigned cp=text_next_cp(&p);
       int fr=glyph_frame(f,cp);
       if(fr>=0 && fr<s->n_frames){
-        double glyph_ox=(cx+s->originx)*xs,glyph_oy=(base_y+s->originy)*ys;
+        double glyph_ox=cx*xs,glyph_oy=base_y*ys;
         double glyph_x=use_rot?x+glyph_ox*ca+glyph_oy*sa:x+glyph_ox;
         double glyph_y=use_rot?y-glyph_ox*sa+glyph_oy*ca:y+glyph_oy;
         if(gml_d3_draw_sprite_2d(r,f->sprite,fr,glyph_x,glyph_y,xs,ys,rr,blend,alpha)){
@@ -1241,26 +1268,29 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
               double gy=y - cx*xs*sa + base_y*ys*ca;
               const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)fr*s->h:NULL;
               const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)fr*s->h:NULL;
-              blit_rgba_sprite(r,s,fr_rgba,s->w,s->h,gx,gy,xs,ys,rr,0,0,blend,alpha,1,rmin,rmax,s->runtime_opaque);
+              blit_rgba_sprite(r,s,fr_rgba,s->w,s->h,gx,gy,xs,ys,rr,
+                               s->originx,s->originy,blend,alpha,1,rmin,rmax,
+                               s->runtime_opaque);
             } else {
               const int *rmin=s->runtime_row_min?s->runtime_row_min+(size_t)fr*s->h:NULL;
               const int *rmax=s->runtime_row_max?s->runtime_row_max+(size_t)fr*s->h:NULL;
-              blit_rgba_sprite(r,s,fr_rgba,s->w,s->h,x+cx*xs,y+base_y*ys,xs,ys,0,0,0,blend,alpha,1,rmin,rmax,s->runtime_opaque);
+              blit_rgba_sprite(r,s,fr_rgba,s->w,s->h,x+cx*xs,y+base_y*ys,xs,ys,0,
+                               s->originx,s->originy,blend,alpha,1,rmin,rmax,
+                               s->runtime_opaque);
             }
           }
         } else if(s->frame){ int ti=s->frame[fr];
           if(ti>=0 && ti<r->n_tpag){ GmlTpag *t=&r->tpag[ti];
           GmlTpag gt=*t;
-          if(f->prop) gt.tx=0;   /* proportional sprite-font glyphs advance by the trimmed rect */
           if(use_rot){
-            double ox=(cx+s->originx)*xs;
-            double oy=(base_y+s->originy)*ys;
+            double ox=cx*xs;
+            double oy=base_y*ys;
             double gx=x + ox*ca + oy*sa;
             double gy=y - ox*sa + oy*ca;
             blit_rotated(r,s,&gt,gx,gy,xs,ys,rr,blend,alpha);
           } else {
-            blit(r,&gt, x + cx*xs - r->cam_x + gt.tx*xs,
-              y + base_y*ys - r->cam_y + gt.ty*ys, xs,ys, blend, alpha);
+            blit(r,&gt, x + (cx-s->originx+gt.tx)*xs - r->cam_x,
+              y + (base_y-s->originy+gt.ty)*ys - r->cam_y, xs,ys, blend, alpha);
           } } }
         }
       cx += glyph_w(r,f,fr,cp)+f->sep;
