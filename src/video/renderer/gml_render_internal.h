@@ -419,6 +419,7 @@ typedef struct GmlRender {
   void     *crt_cols_scratch;  size_t crt_cols_scratch_cap;
   void     *crt_conv_scratch;  size_t crt_conv_scratch_cap;
   void     *crt_tables;        /* per-renderer lookup tables for the software CRT path */
+  void     *crt_warp_geometry_cache; /* invariant curved-CRT sampling geometry */
   void     *hsv_binary_lut_cache;       /* derived binary-palette post-process colours */
   /* async atlas prefetch pool (opaque; see gml_render_atlas.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
@@ -488,6 +489,7 @@ void draw_surface_region(GmlRender *r,int surface,double source_x,double source_
                          double destination_y,double destination_width,
                          double destination_height,uint32_t blend,double alpha);
 void crt_tables_free(GmlRender *r);
+void crt_warp_geometry_cache_free(GmlRender *r);
 void hsv_binary_lut_cache_free(GmlRender *r);
 
 void draw_surface_dual_sample(GmlRender *r,const struct GmlShaderPal *shader,int surface,
