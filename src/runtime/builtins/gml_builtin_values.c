@@ -191,6 +191,24 @@ GmlVal gml_builtin_try_values_math(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"array_insert")){ if(n>2) gml_arr_insert(a[0],(int)N(a,n,1),a+2,n-2); return vreal(0); }
   if(!strcmp(nm,"array_equals")) return vreal(n>1 && array_equals_recursive(vm,a[0],a[1]));
   if(!strcmp(nm,"array_get_index")) return vreal(gml_array_search_index(a,n));
+  if(!strcmp(nm,"array_union")){
+    GmlVal result=gml_arr_new(0,vreal(0));
+    GmlArr *destination=result.arr;
+    for(int source_index=0;source_index<n;source_index++){
+      if(a[source_index].t!=V_ARR || !a[source_index].arr) continue;
+      GmlArr *source=a[source_index].arr;
+      for(int value_index=0;value_index<source->len;value_index++){
+        int duplicate=0;
+        for(int result_index=0;result_index<destination->len;result_index++)
+          if(ds_val_equal(destination->data[result_index],source->data[value_index])){
+            duplicate=1;
+            break;
+          }
+        if(!duplicate) gml_arr_push(result,source->data[value_index]);
+      }
+    }
+    return result;
+  }
   if(!strcmp(nm,"array_sort")){ if(n>0) gml_array_sort(a[0], n<2 || N(a,n,1)!=0); return vreal(0); }
   if(!strcmp(nm,"array_shuffle")) return n>0?gml_array_shuffle_copy(vm,a[0],a,n):gml_arr_new(0,vreal(0));
   if(!strcmp(nm,"array_contains")){

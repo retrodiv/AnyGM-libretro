@@ -461,6 +461,29 @@ int expect_array_function_gap_closure(void){
   ok=ok && equal.t==V_REAL && equal.d==1 && different.t==V_REAL && different.d==0 &&
     nan_equal.t==V_REAL && nan_equal.d==0;
 
+  GmlVal union_left=gml_arr_new(4,vreal(0));
+  gml_arr_set(union_left,0,vreal(4));
+  gml_arr_set(union_left,1,vstr("label"));
+  gml_arr_set(union_left,2,vreal(4));
+  gml_arr_set(union_left,3,vreal(7));
+  GmlVal union_right=gml_arr_new(3,vreal(0));
+  gml_arr_set(union_right,0,vstr("label"));
+  gml_arr_set(union_right,1,vreal(9));
+  gml_arr_set(union_right,2,vreal(7));
+  GmlVal union_args[2]={union_left,union_right};
+  GmlVal union_result=gml_builtin_call(&vm,"array_union",union_args,2);
+  GmlVal contains_args[2]={union_result,vreal(4)};
+  GmlVal contains_four=gml_builtin_call(&vm,"array_contains",contains_args,2);
+  contains_args[1]=vstr("label");
+  GmlVal contains_label=gml_builtin_call(&vm,"array_contains",contains_args,2);
+  contains_args[1]=vreal(9);
+  GmlVal contains_nine=gml_builtin_call(&vm,"array_contains",contains_args,2);
+  ok=ok && union_result.t==V_ARR && gml_val_array_length(union_result)==4 &&
+    contains_four.t==V_REAL && contains_four.d==1 &&
+    contains_label.t==V_REAL && contains_label.d==1 &&
+    contains_nine.t==V_REAL && contains_nine.d==1 &&
+    gml_val_array_length(union_left)==4 && gml_val_array_length(union_right)==3;
+
   /* A chained store creates intermediate containers lazily. Keep this neutral three-dimensional
    * matrix fixture separate from array_set_2D: pushac/popaf chaining represents each dimension
    * as a nested array. */
