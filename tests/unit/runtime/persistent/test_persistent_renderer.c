@@ -124,6 +124,34 @@ static int expect_renderer_semantics_exit_code(void){
     }
   }
   {
+    /* Compact FONT records do not serialize a separate line advance. When their integer em size
+     * is smaller than the packed glyph cell, multiline layout advances by the complete cell. */
+    uint8_t data[160]={0}; GmlWin win={0}; GmlRender render={0};
+    const uint32_t font_record=32,texture_record=96,glyph_record=128;
+    fixture_w32(data,0,1);
+    fixture_w32(data,4,font_record);
+    fixture_w32(data,font_record+8,6);
+    fixture_w32(data,font_record+28,texture_record);
+    fixture_w32(data,font_record+40,1);
+    fixture_w32(data,font_record+44,glyph_record);
+    fixture_w32(data,glyph_record+0,'A');
+    fixture_w32(data,glyph_record+4,1u<<16);
+    fixture_w32(data,glyph_record+8,8u|(1u<<16));
+    win.data=data; win.size=sizeof data; win.bytecode=16; win.n_chunks=1;
+    memcpy(win.chunks[0].name,"FONT",4);
+    win.chunks[0].off=0; win.chunks[0].size=sizeof data;
+    render.win=&win;
+    parse_font(&render);
+    if(render.n_fonts!=1 || render.fonts[0].n_glyphs!=1 ||
+       render.fonts[0].line_height!=8 || render.fonts[0].align_height!=8){
+      fprintf(stderr,"compact font line advance mismatch: fonts=%d glyphs=%d line=%d align=%d\n",
+              render.n_fonts,render.fonts[0].n_glyphs,render.fonts[0].line_height,
+              render.fonts[0].align_height);
+      gml_render_free(&render); return 1;
+    }
+    gml_render_free(&render);
+  }
+  {
     /* Vertical centring uses the complete glyph-cell extent while line_height remains the
      * authored line advance. A font can legitimately have descenders taller than its nominal
      * em; centring only the advance moves every visible glyph down. */

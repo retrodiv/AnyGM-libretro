@@ -104,9 +104,11 @@ void parse_font(GmlRender *r){
       f->align_height=serialized_line_height;
     }else{
       f->align_height=mh>f->line_height?mh:f->line_height;
-      /* Early float-em fonts do not serialize a line advance. Their point size can be smaller
-       * than the rendered glyphs, so retain the tallest-glyph fallback for those layouts. */
-      if(em_is_float && mh>f->line_height) f->line_height=mh;
+      /* Compact FONT records and early float-em records do not serialize a distinct line
+       * advance. Their em size can be smaller than the packed glyph cell, so use the complete
+       * cell height. Later records may carry an explicitly smaller authored advance and must
+       * retain it. */
+      if((goff==40 || em_is_float) && mh>f->line_height) f->line_height=mh;
     }
     if(render_setting(r,"GML_LOG_FONT"))
       anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[font] real id=%d name=%s line=%d align=%d maxglyph=%d ascender_offset=%d atlas=%d glyphs=%d\n",
