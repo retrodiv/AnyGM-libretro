@@ -28,6 +28,7 @@ int expect_array_function_gap_closure(void);
 int expect_typed_stack_dup(void);
 int expect_member_callable_receiver(void);
 int expect_early_native_layer_animation(void);
+int expect_deactivated_instance_reference(void);
 int expect_room_camera_reservation(void);
 int expect_event_boundary_room_transition(void);
 int expect_persistent_lifecycle(void);

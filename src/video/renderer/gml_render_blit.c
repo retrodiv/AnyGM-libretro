@@ -176,6 +176,14 @@ void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gm
    * Keep the check here so every such path has the same ordering semantics. */
   if(R->pending_underlay || R->pending_fill) gml_render_prepare_draw(R);
   R->fb_all_transparent=0;
+  /* The subtract preset also applies inverse source alpha to offscreen coverage. A surface
+   * previously filled edge to edge therefore stops being provably opaque as soon as one of
+   * these fragments lands on it. Keep the coverage certificate conservative so a later
+   * surface composite does not take the opaque-copy fast path through punched-out pixels. */
+  if(R->target_sp>0 && R->alphablend && R->blendmode==2){
+    R->fb_opaque_known=0;
+    R->fb_all_opaque=0;
+  }
   uint32_t src=gml_render_backend_color_to_xrgb(gmcol), *dp=&R->fb[(size_t)y*R->fbw+x];
   if(R->alphablend && (R->blend_equation!=1 || R->blend_equation_alpha!=1)){
     int sc[4]={(src>>16)&255,(src>>8)&255,src&255,(int)lround(alpha*255.0)};

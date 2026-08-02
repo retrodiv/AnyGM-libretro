@@ -78,6 +78,26 @@ int expect_early_native_layer_animation(void){
   return 1;
 }
 
+int expect_deactivated_instance_reference(void){
+  GmlInstance instance={0};
+  instance.deactivated=1;
+  instance.id=100001;
+  instance.x=73;
+  GmlVM vm={0};
+  vm.inst=&instance;
+  vm.inst_count=1;
+  vm.inst_cap=1;
+  int found=0;
+  GmlVal x=gml_inst_var_get_val(&vm,vreal(instance.id),"x",&found);
+  GmlInstance *resolved=gml_vm_instance_by_id(&vm,instance.id);
+  if(!found || x.t!=V_REAL || x.d!=73 || resolved!=&instance){
+    fprintf(stderr,"deactivated explicit-id lookup mismatch: found=%d x=%.0f resolved=%d\n",
+            found,x.t==V_REAL?x.d:-1.0,resolved==&instance);
+    return 0;
+  }
+  return 1;
+}
+
 int expect_room_camera_reservation(void){
   uint8_t data[512]={0};
   char *strings[]={(char*)"neutral_camera_room"};

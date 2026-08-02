@@ -630,9 +630,11 @@ int gml_room_instance_precreate_code(GmlVM *vm, uint32_t ip){
 }
 void gml_vm_instances_apply_room_transform(
     GmlVM *vm, GmlInstance *in, uint32_t ip){
-  if(!vm || !vm->win || !in || ip > vm->win->size || vm->win->size-ip < 48) return;
-  const uint8_t *d=vm->win->data;
+  if(!vm || !vm->win || !in) return;
   int wide = room_inst_stride(vm)>=48;   /* ImageSpeed/ImageIndex present; color/rot shifted +8 */
+  size_t needed=wide?44u:36u;
+  if(ip > vm->win->size || vm->win->size-ip < needed) return;
+  const uint8_t *d=vm->win->data;
   float sx=gml_vm_read_f32_le(d,ip+20), sy=gml_vm_read_f32_le(d,ip+24), rot=gml_vm_read_f32_le(d,ip+(wide?40:32));
   if(!isfinite(sx) || !isfinite(sy) || !isfinite(rot)) return;
   if(fabs((double)sx)<1e-9 || fabs((double)sy)<1e-9) return;

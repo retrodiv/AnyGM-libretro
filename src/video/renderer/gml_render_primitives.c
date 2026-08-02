@@ -330,6 +330,10 @@ static void draw_px_fan(GmlRender *R,int x,int y,uint32_t inner,uint32_t outer,d
     if(amount<0.0) amount=0.0; else if(amount>1.0) amount=1.0;
     if(R->pending_underlay || R->pending_fill) gml_render_prepare_draw(R);
     R->fb_all_transparent=0;
+    if(R->target_sp>0){
+      R->fb_opaque_known=0;
+      R->fb_all_opaque=0;
+    }
     /* GPU vertex colours remain continuous until blending.  Quantising the fan colour to an
      * intermediate byte first creates visible one-step rings and changes bm_inv_src_colour at
      * polygon-sector boundaries. */

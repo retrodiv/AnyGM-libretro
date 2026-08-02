@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_render_internal.h"
+#include "gml_render_primitives.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -244,6 +245,62 @@ static int max_preset_surface_case(void){
   return 0;
 }
 
+static int subtract_surface_coverage_case(void){
+  enum { WIDTH=5,HEIGHT=5 };
+  GmlRender render;
+  uint32_t frame[WIDTH*HEIGHT],background[WIDTH*HEIGHT];
+  memset(&render,0,sizeof render);
+  for(size_t index=0;index<WIDTH*HEIGHT;index++)
+    frame[index]=background[index]=0xFF204060u+(uint32_t)index;
+  render.fb=render.base_fb=frame;
+  render.fbw=render.base_fbw=WIDTH;
+  render.fbh=render.base_fbh=HEIGHT;
+  render.target_id=-1;
+  render.next_surface_id=1;
+  render.alphablend=1;
+  render.alpha=1.0;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+
+  int mask=gml_surface_create(&render,WIDTH,HEIGHT);
+  REQUIRE(mask==1,"subtract mask surface id");
+  REQUIRE(gml_surface_set_target(&render,mask),"subtract mask set target");
+  gml_render_primitive_rectangle(&render,0,0,WIDTH-1,HEIGHT-1,0x40A020u,0);
+  render.blendmode=2;
+  gml_render_primitive_circle(&render,WIDTH/2,HEIGHT/2,2,2,0xFFFFFFu,0);
+  render.blendmode=0;
+  gml_surface_reset_target(&render);
+
+  int mask_width=0,mask_height=0;
+  const uint32_t *mask_pixels=
+    gml_surface_pixels_read(&render,mask,&mask_width,&mask_height);
+  REQUIRE(mask_pixels && mask_width==WIDTH && mask_height==HEIGHT,
+          "subtract mask pixels");
+  int holes=0,covered=0;
+  for(size_t index=0;index<WIDTH*HEIGHT;index++){
+    if(!(mask_pixels[index]>>24)) holes++;
+    else if((mask_pixels[index]>>24)==255) covered++;
+  }
+  REQUIRE(holes>0 && covered>0,"subtract mask mixed coverage");
+  REQUIRE(!surface_known_opaque(&render,mask),"subtract mask not opaque");
+
+  gml_draw_surface_stretched(&render,mask,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  for(size_t index=0;index<WIDTH*HEIGHT;index++){
+    if(!(mask_pixels[index]>>24) && frame[index]!=background[index]){
+      fprintf(stderr,"renderer subtract mask hole mismatch at %zu: %08x != %08x\n",
+              index,frame[index],background[index]);
+      gml_surface_free(&render,mask);
+      return 1;
+    }
+  }
+  gml_surface_free(&render,mask);
+  return 0;
+}
+
 int main(void){
   GmlRender render;
   uint32_t base[8*6];
@@ -306,6 +363,7 @@ int main(void){
   REQUIRE(screen_raster_part_case()==0,"screen raster part case");
   REQUIRE(opaque_integer_scale_case()==0,"opaque integer scale case");
   REQUIRE(max_preset_surface_case()==0,"maximum preset surface case");
+  REQUIRE(subtract_surface_coverage_case()==0,"subtract surface coverage case");
   puts("renderer surfaces: ok");
   return 0;
 }

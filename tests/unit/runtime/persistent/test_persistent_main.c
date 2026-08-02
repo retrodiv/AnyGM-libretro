@@ -22,6 +22,7 @@ int main(int argc,char **argv){
     {"typed_stack",expect_typed_stack_dup},
     {"member_callable_receiver",expect_member_callable_receiver},
     {"early_native_layer_animation",expect_early_native_layer_animation},
+    {"deactivated_instance_reference",expect_deactivated_instance_reference},
     {"room_camera_reservation",expect_room_camera_reservation},
     {"event_boundary_room_transition",expect_event_boundary_room_transition},
     {"hash_layer_gpu",expect_hash_layer_gpu_gap_closure},

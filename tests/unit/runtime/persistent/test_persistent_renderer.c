@@ -4,6 +4,7 @@
 #include "persistent_test_fixture.h"
 
 #include "gml_builtin.h"
+#include "gml_vm_internal.h"
 #include "gml_render.h"
 #include "gml_render_internal.h"
 
@@ -15,6 +16,29 @@
 
 
 static int expect_renderer_semantics_exit_code(void){
+  {
+    /* Narrow room-instance records end immediately after rotation. Their transform fields must
+     * not be skipped merely because newer records append image playback and override fields. */
+    uint8_t record[36]={0};
+    fixture_w32(record,20,0x3fc00000u);  /* 1.5f */
+    fixture_w32(record,24,0x40200000u);  /* 2.5f */
+    fixture_w32(record,28,0xff123456u);
+    fixture_w32(record,32,0x42100000u);  /* 36.0f */
+    GmlWin record_win={0}; record_win.data=record; record_win.size=sizeof record;
+    GmlVM record_vm={0}; record_vm.win=&record_win; record_vm.room_rec_stride=36;
+    GmlInstance instance={0};
+    instance.image_xscale=instance.image_yscale=1.0;
+    instance.image_blend=16777215.0;
+    gml_vm_instances_apply_room_transform(&record_vm,&instance,0);
+    if(fabs(instance.image_xscale-1.5)>1e-12 ||
+       fabs(instance.image_yscale-2.5)>1e-12 ||
+       fabs(instance.image_blend-0x123456)>1e-12 ||
+       fabs(instance.image_angle-36.0)>1e-12){
+      fprintf(stderr,"narrow room instance transform mismatch: scale=(%.2f,%.2f) blend=%.0f angle=%.2f\n",
+        instance.image_xscale,instance.image_yscale,instance.image_blend,instance.image_angle);
+      return 1;
+    }
+  }
   {
     /* Wide bytecode-17 room-instance records carry a distinct placement-variable override after
      * the transform fields. Earlier record layouts must not interpret that byte position. */
