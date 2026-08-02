@@ -263,6 +263,23 @@ GmlVal gml_builtin_try_instances_rooms(GmlVM *vm, const char *nm, GmlVal *a, int
     vm->game_end=1; return vreal(0); }
   if(!strcmp(nm,"game_restart") || !strcmp(nm,"action_restart_game")){
     vm->game_end=2; return vreal(0); }
+  if(!strcmp(nm,"game_change")){
+    const char *directory=S(vm,a,n,0);
+    const char *parameters=S(vm,a,n,1);
+    int directory_size=snprintf(vm->game_change_directory,
+      sizeof vm->game_change_directory,"%s",directory);
+    int parameters_size=snprintf(vm->game_change_parameters,
+      sizeof vm->game_change_parameters,"%s",parameters);
+    if(directory_size<0 || (size_t)directory_size>=sizeof vm->game_change_directory ||
+       parameters_size<0 || (size_t)parameters_size>=sizeof vm->game_change_parameters){
+      vm->game_change_directory[0]='\0';
+      vm->game_change_parameters[0]='\0';
+    }
+    vm->game_change_pending=(directory_size<0 ||
+      (size_t)directory_size>=sizeof vm->game_change_directory || parameters_size<0 ||
+      (size_t)parameters_size>=sizeof vm->game_change_parameters)?-1:1;
+    return vreal(0);
+  }
 
   return gml_builtin_try_actions(vm,nm,a,n);
 }

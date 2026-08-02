@@ -15,6 +15,9 @@ struct GmlClassicDispatchCache;
 #define GML_ALARMS 12
 #define GML_ROOM_CAMERA_COUNT 8
 #define GML_CAMERA_LIMIT 64
+#define GML_GAME_CHANGE_TEXT_MAX 1024
+#define GML_PARAMETER_COUNT_MAX 64
+#define GML_PARAMETER_TEXT_MAX 256
 typedef struct {
   int     active;      /* slot in use */
   int     marked;      /* pending destroy */
@@ -212,6 +215,9 @@ typedef struct GmlVM {
   int      pending_room;      /* -1 none, else target ROOM index (play-order resolved) */
   unsigned char *room_stored; int room_state_count;
   int      game_end;
+  int      game_change_pending;
+  char     game_change_directory[GML_GAME_CHANGE_TEXT_MAX];
+  char     game_change_parameters[GML_GAME_CHANGE_TEXT_MAX];
   int      classic_info_active; /* modal classic game-information page */
   int      started;           /* Game Start fired */
   int      gs_roots_run;      /* GMS2.3 GlobalScript root entries executed (once per session) */
@@ -240,6 +246,9 @@ typedef struct GmlVM {
    * extensions that expose a desired language use the BCP-47-style tag. */
   char     os_language[8], os_region[8], language_tag[16];
   char     working_directory[560], program_directory[560];
+  char     parameter_executable[GML_GAME_CHANGE_TEXT_MAX];
+  char     parameter_value[GML_PARAMETER_COUNT_MAX][GML_PARAMETER_TEXT_MAX];
+  int      parameter_count;
   int      action_relative;   /* D&D action_set_relative flag for following action_* calls */
   double   math_epsilon;      /* real-comparison tolerance (math_set/get_epsilon) */
   double   potential_max_rotation, potential_rotate_step, potential_check_distance;
@@ -330,7 +339,12 @@ GmlRtElem  *gml_rt_elem_find(GmlVM *vm, int id);
 GmlRtElem  *gml_rt_elem_new(GmlVM *vm);
 
 int     gml_vm_init(GmlVM *vm, GmlWin *win,const AnygmHostServices *host);
+int     gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
+                           const char *program_directory,const char *executable,
+                           const char *parameters);
 void    gml_vm_free(GmlVM *vm);
+void    gml_vm_fire_game_end(GmlVM *vm);
+void    gml_vm_set_launch_parameters(GmlVM *vm,const char *executable,const char *parameters);
 int     gml_keyboard_check(GmlVM *vm, int vk, int edge); /* remapped keyboard_check* semantics */
 int     gml_keyboard_get_map(GmlVM *vm, int source);
 void    gml_keyboard_set_map(GmlVM *vm, int source, int destination);

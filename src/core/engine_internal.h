@@ -148,6 +148,11 @@ struct AnygmEngine {
   uint32_t frame_flags;
   char last_error[512];
   char language[16],region[16],language_tag[32];
+  char content_cache_directory[1024];
+  char current_content_path[1024];
+  char content_program_directory[512];
+  char launch_parameters[GML_GAME_CHANGE_TEXT_MAX];
+  int game_change_depth;
   int16_t audio_output[4096*2];
   size_t audio_frames;
   GmlWin win;

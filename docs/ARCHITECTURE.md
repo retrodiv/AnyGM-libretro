@@ -76,6 +76,15 @@ Frame output buffers remain engine-owned. Their views are valid only for the
 documented call interval; the host copies or presents them before calling into
 that engine again.
 
+Language-triggered content replacement is a core lifecycle transaction over the same
+`AnygmEngine`. The target is prepared and compatibility-resolved before the live VM, renderer,
+audio context, or content model is released. A successful replacement fires Game End, preserves
+the original writable save namespace and program directory, installs the child content, exposes
+its working directory and launch parameters to the new VM, then cold-boots through the ordinary
+runtime path. Failed preparation leaves the live runtime intact. Target paths are bounded below
+the current content directory, reject parent traversal and drive-qualified segments, and retain a
+finite replacement-chain depth. This is not a second engine or a compatibility-selected runtime.
+
 Language values form a narrow runtime boundary. `gml_value.h` is the sole
 definition owner for `GmlVal`, `GmlArr`, and `GmlVarMap`, their inline
 constructors, and the public array and variable-map operations. `gml_vm.h`

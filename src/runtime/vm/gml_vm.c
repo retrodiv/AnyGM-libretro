@@ -16,6 +16,7 @@
 #include <string.h>
 #include <math.h>
 #include <limits.h>
+#include <ctype.h>
 
 int gml_real_compare_epsilon(double lhs, double rhs, int cmp, double epsilon){
   int order;
@@ -151,7 +152,40 @@ void gml_vm_software3d_state_set(
   gml_software3d_state_set(gml_vm_software3d_ensure(vm),flags,values,colors);
 }
 
-int gml_vm_init(GmlVM *vm, GmlWin *win,const AnygmHostServices *host){
+void gml_vm_set_launch_parameters(GmlVM *vm,const char *executable,const char *parameters){
+  if(!vm) return;
+  snprintf(vm->parameter_executable,sizeof vm->parameter_executable,"%s",
+           executable?executable:"");
+  memset(vm->parameter_value,0,sizeof vm->parameter_value);
+  vm->parameter_count=0;
+  const char *cursor=parameters?parameters:"";
+  while(*cursor && vm->parameter_count<GML_PARAMETER_COUNT_MAX){
+    while(isspace((unsigned char)*cursor)) cursor++;
+    if(!*cursor) break;
+    char *output=vm->parameter_value[vm->parameter_count];
+    size_t written=0;
+    int quote=0;
+    while(*cursor){
+      unsigned char c=(unsigned char)*cursor;
+      if(!quote && isspace(c)) break;
+      cursor++;
+      if((c=='\'' || c=='"')){
+        if(!quote){ quote=c; continue; }
+        if(quote==c){ quote=0; continue; }
+      }
+      if(c=='\\' && *cursor && ((quote && *cursor==quote) || *cursor=='\\'))
+        c=(unsigned char)*cursor++;
+      if(written+1<GML_PARAMETER_TEXT_MAX) output[written++]=(char)c;
+    }
+    output[written]='\0';
+    vm->parameter_count++;
+    while(isspace((unsigned char)*cursor)) cursor++;
+  }
+}
+
+int gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
+                       const char *program_directory,const char *executable,
+                       const char *parameters){
   memset(vm,0,sizeof(*vm));
   /* Attach services before startup bytecode runs. Startup is part of VM initialization and may
    * legitimately query clocks, entropy, or other host capabilities. */
@@ -190,7 +224,9 @@ int gml_vm_init(GmlVM *vm, GmlWin *win,const AnygmHostServices *host){
   vm->win=win; vm->pending_room=-1; vm->room_index=-1; vm->next_id=100000; vm->rng_state=0;
   vm->time_sample_frame=-1;
   snprintf(vm->working_directory,sizeof vm->working_directory,"%s/",win?win->content_dir:"");
-  snprintf(vm->program_directory,sizeof vm->program_directory,"%s/",win?win->content_dir:"");
+  snprintf(vm->program_directory,sizeof vm->program_directory,"%s/",
+           program_directory&&program_directory[0]?program_directory:(win?win->content_dir:""));
+  gml_vm_set_launch_parameters(vm,executable,parameters);
   vm->cur_code_index=-1;
   vm->code_static_count=(win && win->n_code>0)?win->n_code:0;
   vm->code_static=vm->code_static_count?calloc((size_t)vm->code_static_count,sizeof(*vm->code_static)):NULL;
@@ -283,6 +319,10 @@ int gml_vm_init(GmlVM *vm, GmlWin *win,const AnygmHostServices *host){
   }
   return 0;
 }
+int gml_vm_init(GmlVM *vm,GmlWin *win,const AnygmHostServices *host){
+  return gml_vm_init_launch(vm,win,host,NULL,NULL,NULL);
+}
+
 static void gml_vm_release_builtin_value(void *userdata,GmlVal value){
   gml_val_free((GmlValueFreeContext *)userdata,value);
 }

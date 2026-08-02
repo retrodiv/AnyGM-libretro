@@ -652,6 +652,26 @@ void compute_present(AnygmEngine *engine) {
         && engine->gui_space_width <= FB_MAX_W && engine->gui_space_height <= FB_MAX_H) {
       engine->output_width = (unsigned)engine->gui_space_width; engine->output_height = (unsigned)engine->gui_space_height; engine->gui_offset_x = engine->gui_offset_y = 0;
     } }
+  /* A non-uniform declared or runtime window size can coexist with one view port that remains
+   * the screen-stage raster. Exposing only the port would discard the final presentation
+   * transform, so retain the port as GUI space and let the indirect presentation path scale it. */
+  int screen_stage_window_w = engine->vm.window_w > 0
+                            ? engine->vm.window_w : (int)engine->win.disp_w;
+  int screen_stage_window_h = engine->vm.window_h > 0
+                            ? engine->vm.window_h : (int)engine->win.disp_h;
+  if (!anygm_policy_uses_classic_runtime(&engine->win) &&
+      !engine->vm.gui_maximise_active && !engine->canvas_mode && !gui_window_mode &&
+      engine->vm.gui_w <= 0 && engine->vm.gui_h <= 0 &&
+      present_view_count(engine,NULL,NULL,NULL) == 1 &&
+      screen_stage_window_w > 0 && screen_stage_window_h > 0 &&
+      screen_stage_window_w <= FB_MAX_W && screen_stage_window_h <= FB_MAX_H &&
+      engine->gui_space_width == (int)engine->output_width &&
+      engine->gui_space_height == (int)engine->output_height &&
+      (screen_stage_window_w != (int)engine->output_width ||
+       screen_stage_window_h != (int)engine->output_height)) {
+    engine->output_width = (unsigned)screen_stage_window_w;
+    engine->output_height = (unsigned)screen_stage_window_h;
+  }
   if (engine->aspect_force_active) {
     int logical_gw = engine->vm.gui_w > 0 ? engine->vm.gui_w : (int)engine->base_width;
     int logical_gh = engine->vm.gui_h > 0 ? engine->vm.gui_h : (int)engine->base_height;

@@ -206,8 +206,12 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
       vm->classic_info_active=1;
     return vreal(0);
   }
-  if(!strcmp(nm,"parameter_count")) return vreal(0);
-  if(!strcmp(nm,"parameter_string")) return vstr("");
+  if(!strcmp(nm,"parameter_count")) return vreal(vm?vm->parameter_count:0);
+  if(!strcmp(nm,"parameter_string")){
+    int index=(int)N(a,n,0);
+    if(!vm || index<0 || index>vm->parameter_count) return vstr("");
+    return vstr(index?vm->parameter_value[index-1]:vm->parameter_executable);
+  }
   if(!strcmp(nm,"exception_unhandled_handler")) return vreal(0);
   if(!strcmp(nm,"io_clear")||!strcmp(nm,"keyboard_wait")) return vreal(0);
   if(!strcmp(nm,"display_set_windows_alternate_sync")) return vreal(0);

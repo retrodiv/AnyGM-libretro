@@ -692,12 +692,15 @@ void gml_vm_step(GmlVM *vm){
   /* room transition requested during the step */
   if(vm->pending_room>=0) gml_vm_apply_pending_room(vm);
   /* Game End (Other_3): fire on all active instances when game_end was set. */
-  if(vm->game_end){
-    for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked)
-      gml_run_event(vm,&vm->inst[i],"Other_3");
-  }
+  if(vm->game_end) gml_vm_fire_game_end(vm);
   gml_vm_finish_step(vm,prev_alloc_base);
   VMPROF_MARK(rest);
+}
+
+void gml_vm_fire_game_end(GmlVM *vm){
+  if(!vm) return;
+  for(int i=0;i<vm->inst_count;i++) if(vm->inst[i].active && !vm->inst[i].marked)
+    gml_run_event(vm,&vm->inst[i],"Other_3");
 }
 
 /* Draw phase: GM draws instances and room tiles interleaved by depth (high

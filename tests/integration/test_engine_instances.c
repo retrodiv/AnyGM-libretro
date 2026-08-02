@@ -4,6 +4,7 @@
 #include "anygm.h"
 #include "content_router.h"
 #include "engine_internal.h"
+#include "gml_builtin.h"
 #include "gml_vm_internal.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
@@ -105,6 +106,37 @@ static int first_generation_dynamic_camera_policy(void){
     fprintf(stderr,
       "first-generation dynamic camera was not selected: camera=%d rect=(%.0f,%.0f %.0fx%.0f)\n",
       view.camera,view.x,view.y,view.w,view.h);
+  gml_vm_free(&engine.vm);
+  return ok;
+}
+
+static int explicit_window_screen_stage_policy(void){
+  AnygmEngine engine={0};
+  engine.win.bytecode=17;
+  engine.win.disp_w=640;
+  engine.win.disp_h=480;
+  engine.width=320;
+  engine.height=240;
+  engine.vm.win=&engine.win;
+  gml_vm_global_array_set(&engine.vm,"view_visible",0,1);
+  gml_vm_global_array_set(&engine.vm,"view_xview",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_yview",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_wview",0,320);
+  gml_vm_global_array_set(&engine.vm,"view_hview",0,240);
+  gml_vm_global_array_set(&engine.vm,"view_xport",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_yport",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_wport",0,640);
+  gml_vm_global_array_set(&engine.vm,"view_hport",0,320);
+  gml_render_application_surface_set_draw_enabled(&engine.render,1);
+  compute_present(&engine);
+  int ok=engine.gui_space_width==640 && engine.gui_space_height==320 &&
+         engine.output_width==640 && engine.output_height==480;
+  if(!ok)
+    fprintf(stderr,
+      "explicit window did not retain the port raster for final scaling:"
+      " gui=%dx%d output=%ux%u\n",
+      engine.gui_space_width,engine.gui_space_height,
+      engine.output_width,engine.output_height);
   gml_vm_free(&engine.vm);
   return ok;
 }
@@ -271,6 +303,98 @@ static int background_color_policy(void){
   return ok;
 }
 
+static int game_change_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_game_change_content_create(&fixture)){
+    fputs("game-change fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  char original_save_directory[512]={0};
+  char original_program_directory[1024]={0};
+  if(ok){
+    snprintf(original_save_directory,sizeof original_save_directory,"%s",engine->win.save_dir);
+    snprintf(original_program_directory,sizeof original_program_directory,"%s/",
+             engine->win.content_dir);
+  }
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  GmlVal *parameter_three=ok?gml_varmap_get(&engine->vm.globals,
+                                             "fixture_parameter_three"):NULL;
+  GmlVal *parameter_four=ok?gml_varmap_get(&engine->vm.globals,
+                                            "fixture_parameter_four"):NULL;
+  GmlVal *working_directory=ok?gml_varmap_get(&engine->vm.globals,
+                                               "fixture_working_directory"):NULL;
+  GmlVal *program_directory=ok?gml_varmap_get(&engine->vm.globals,
+                                               "fixture_program_directory"):NULL;
+  AnygmAvInfo av_info={0};
+  av_info.struct_size=sizeof av_info;
+  ok=ok && anygm_get_av_info(engine,&av_info)==ANYGM_OK &&
+     output.pixels && output.width==80 && output.height==50 &&
+     av_info.base_width==80 && av_info.base_height==50 &&
+     gml_global_num(&engine->vm,"fixture_child_marker")==1 &&
+     gml_global_num(&engine->vm,"fixture_end_observed")==1 &&
+     gml_global_num(&engine->vm,"fixture_parameter_count")==4 &&
+     parameter_three && parameter_three->t==V_STR && parameter_three->s &&
+     !strcmp(parameter_three->s,"child_marker") &&
+     parameter_four && parameter_four->t==V_STR && parameter_four->s &&
+     !strcmp(parameter_four->s,"quoted value") &&
+     working_directory && working_directory->t==V_STR && working_directory->s &&
+     strstr(working_directory->s,"secondary/") &&
+     program_directory && program_directory->t==V_STR && program_directory->s &&
+     !strcmp(program_directory->s,original_program_directory) &&
+     !strcmp(engine->win.save_dir,original_save_directory) &&
+     strstr(engine->current_content_path,"secondary/data.win");
+  uint8_t *state=NULL;
+  size_t state_size=0;
+  ok=ok && save_state(engine,&state,&state_size) &&
+     anygm_state_load(engine,state,state_size)==ANYGM_OK;
+  if(ok){
+    char child_path[sizeof engine->current_content_path];
+    snprintf(child_path,sizeof child_path,"%s",engine->current_content_path);
+    GmlVal escape_args[]={vstr(".."),vstr("-game data.win")};
+    (void)gml_builtin_call(&engine->vm,"game_change",escape_args,2);
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_ERROR_INVALID_CONTENT &&
+       !strcmp(engine->current_content_path,child_path) &&
+       gml_global_num(&engine->vm,"fixture_child_marker")==1;
+    output.struct_size=sizeof output;
+    ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+       !strcmp(engine->current_content_path,child_path);
+  }
+  if(!ok){
+    char error[512]={0};
+    if(engine) anygm_get_last_error(engine,error,sizeof error);
+    fprintf(stderr,
+      "game-change lifecycle mismatch: error=%s output=%ux%u room=%d marker=%.0f end=%.0f params=%.0f save=%s\n",
+      error,output.width,output.height,engine?engine->vm.room_index:-1,
+      engine?gml_global_num(&engine->vm,"fixture_child_marker"):0,
+      engine?gml_global_num(&engine->vm,"fixture_end_observed"):0,
+      engine?gml_global_num(&engine->vm,"fixture_parameter_count"):0,
+      engine?engine->win.save_dir:"");
+  }
+  free(state);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int state_input_history_roundtrip(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_content_create(&fixture)){
@@ -363,24 +487,31 @@ int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
     if(!strcmp(argv[2],"first_generation_dynamic_camera"))
       return first_generation_dynamic_camera_policy()?0:1;
+    if(!strcmp(argv[2],"explicit_window_screen_stage"))
+      return explicit_window_screen_stage_policy()?0:1;
     if(!strcmp(argv[2],"background_color"))
       return background_color_policy()?0:1;
     if(!strcmp(argv[2],"multi_view_application_canvas"))
       return framebuffer_retention_case(
         anygm_synthetic_multiview_framebuffer_content_create,"multi-view")?0:1;
+    if(!strcmp(argv[2],"game_change"))
+      return game_change_policy()?0:1;
     fprintf(stderr,"unknown integration case: %s\n",argv[2]);
     return 1;
   }
   if(argc!=1){
     fputs("usage: test_engine_instances [--case first_generation_dynamic_camera|"
-          "background_color|multi_view_application_canvas]\n",stderr);
+          "explicit_window_screen_stage|"
+          "background_color|multi_view_application_canvas|game_change]\n",stderr);
     return 1;
   }
   if(!screen_stage_raster_policy()) return 1;
   if(!first_generation_dynamic_camera_policy()) return 1;
+  if(!explicit_window_screen_stage_policy()) return 1;
   if(!draw_schedule_policy()) return 1;
   if(!background_color_policy()) return 1;
   if(!framebuffer_retention_policy()) return 1;
+  if(!game_change_policy()) return 1;
   if(!state_input_history_roundtrip()) return 1;
   char label[128];
   anygm_content_save_label("/library/fixture_bundle/data.win",label,sizeof label);

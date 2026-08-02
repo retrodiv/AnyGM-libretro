@@ -91,10 +91,20 @@ static void setup_platform_locale(AnygmEngine *engine,GmlVM *vm){
 }
 
 static void boot_runtime(AnygmEngine *engine);
+static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed);
 
-static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSource *source,
-                                       const AnygmLoadConfig *config) {
-  engine->state_just_loaded = 0;
+typedef struct {
+  GmlWin win;
+  AnygmContentFacts facts;
+  AnygmCompatibilityProfile compatibility;
+  char loaded_path[1024];
+} EnginePreparedContent;
+
+static AnygmResult engine_prepare_content(AnygmEngine *engine,
+                                          const AnygmContentSource *source,
+                                          EnginePreparedContent *prepared){
+  if(!prepared) return ANYGM_ERROR_INVALID_ARGUMENT;
+  memset(prepared,0,sizeof *prepared);
   int path_source=source && source->kind==ANYGM_CONTENT_PATH;
   int memory_source=source && source->kind==ANYGM_CONTENT_MEMORY;
   if((path_source && (!source->path || !source->path[0])) ||
@@ -103,10 +113,6 @@ static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSou
     engine_errorf(engine,ANYGM_ERROR_INVALID_ARGUMENT,"A readable path or memory image is required");
     return ANYGM_ERROR_INVALID_ARGUMENT;
   }
-  snprintf(engine->language,sizeof engine->language,"%s",config&&config->language&&config->language[0]?config->language:"en");
-  snprintf(engine->region,sizeof engine->region,"%s",config&&config->region&&config->region[0]?config->region:"us");
-  snprintf(engine->language_tag,sizeof engine->language_tag,"%s",config&&config->language_tag&&config->language_tag[0]?config->language_tag:"en-US");
-  char loaded_path[1024]={0};
   int load_rc=0;
   int classic_input=0;
   if(path_source){
@@ -126,7 +132,8 @@ static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSou
       engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Failed to resolve content path: %s",source->path);
       return ANYGM_ERROR_INVALID_CONTENT;
     }
-    load_rc=anygm_content_load_win(&router,&engine->win,content,loaded_path,sizeof loaded_path);
+    load_rc=anygm_content_load_win(&router,&prepared->win,content,
+                                   prepared->loaded_path,sizeof prepared->loaded_path);
     if(!load_rc){
       engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Failed to load content: %s",content);
       return ANYGM_ERROR_INVALID_CONTENT;
@@ -134,20 +141,23 @@ static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSou
     if(load_rc==2)
       engine_logf(engine,ANYGM_LOG_WARN,
                   "The selected payload has no executable code; using sibling payload: %s\n",
-                  loaded_path);
+                  prepared->loaded_path);
     if(classic_input)
-      anygm_content_path_parent(source->path,engine->win.content_dir,sizeof engine->win.content_dir);
+      anygm_content_path_parent(source->path,prepared->win.content_dir,
+                                sizeof prepared->win.content_dir);
   } else {
-    if(gml_win_from_mem(&engine->win,(uint8_t *)(uintptr_t)source->data,source->size,0)!=0){
+    if(gml_win_from_mem(&prepared->win,(uint8_t *)(uintptr_t)source->data,
+                        source->size,0)!=0){
       engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,
                     "The memory source is not a supported normalized content image");
       return ANYGM_ERROR_INVALID_CONTENT;
     }
-    engine->win.host=&engine->host;
-    snprintf(loaded_path,sizeof loaded_path,"%s",
+    prepared->win.host=&engine->host;
+    snprintf(prepared->loaded_path,sizeof prepared->loaded_path,"%s",
              source->path&&source->path[0]?source->path:"memory image");
     if(source->path&&source->path[0])
-      anygm_content_path_parent(source->path,engine->win.content_dir,sizeof engine->win.content_dir);
+      anygm_content_path_parent(source->path,prepared->win.content_dir,
+                                sizeof prepared->win.content_dir);
   }
   /* Give each content identity a stable writable namespace under the host-provided root. */
   {
@@ -159,29 +169,53 @@ static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSou
       else snprintf(label,sizeof label,"memory");
       uint32_t namespace_hash=identity?anygm_content_path_hash(identity):
         (uint32_t)state_hash_bytes(source->data,source->size);
-      snprintf(engine->win.save_dir,sizeof engine->win.save_dir,"%s/anygm/%s-%08x",
+      snprintf(prepared->win.save_dir,sizeof prepared->win.save_dir,"%s/anygm/%s-%08x",
                base,label,namespace_hash);
-      anygm_content_directory_create(&engine->host,engine->win.save_dir);
+      anygm_content_directory_create(&engine->host,prepared->win.save_dir);
     } else {
-      snprintf(engine->win.save_dir,sizeof engine->win.save_dir,"%s",engine->win.content_dir);
+      snprintf(prepared->win.save_dir,sizeof prepared->win.save_dir,"%s",
+               prepared->win.content_dir);
     }
   }
-  if (engine->win.n_code <= 0) {
-    engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"The payload has no executable code: %s",loaded_path);
-    gml_win_free(&engine->win);
+  if(prepared->win.n_code<=0){
+    engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"The payload has no executable code: %s",
+                  prepared->loaded_path);
+    gml_win_free(&prepared->win);
     return ANYGM_ERROR_INVALID_CONTENT;
   }
   char compatibility_error[256]={0};
-  if(!anygm_content_facts_detect(&engine->win,&engine->content_facts,compatibility_error,
+  if(!anygm_content_facts_detect(&prepared->win,&prepared->facts,compatibility_error,
                                  sizeof compatibility_error) ||
-     !anygm_compatibility_resolve(&engine->content_facts,&engine->compatibility,compatibility_error,
-                                  sizeof compatibility_error)){
+     !anygm_compatibility_resolve(&prepared->facts,&prepared->compatibility,
+                                  compatibility_error,sizeof compatibility_error)){
     engine_errorf(engine,ANYGM_ERROR_UNSUPPORTED,"Unsupported content semantics: %s",
                   compatibility_error[0]?compatibility_error:"unknown compatibility facts");
-    gml_win_free(&engine->win);
+    gml_win_free(&prepared->win);
     return ANYGM_ERROR_UNSUPPORTED;
   }
+  return ANYGM_OK;
+}
+
+static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSource *source,
+                                       const AnygmLoadConfig *config) {
+  engine->state_just_loaded = 0;
+  snprintf(engine->language,sizeof engine->language,"%s",config&&config->language&&config->language[0]?config->language:"en");
+  snprintf(engine->region,sizeof engine->region,"%s",config&&config->region&&config->region[0]?config->region:"us");
+  snprintf(engine->language_tag,sizeof engine->language_tag,"%s",config&&config->language_tag&&config->language_tag[0]?config->language_tag:"en-US");
+  EnginePreparedContent prepared;
+  AnygmResult result=engine_prepare_content(engine,source,&prepared);
+  if(result!=ANYGM_OK) return result;
+  engine->win=prepared.win;
+  engine->content_facts=prepared.facts;
+  engine->compatibility=prepared.compatibility;
   engine->win.compatibility=&engine->compatibility;
+  snprintf(engine->content_cache_directory,sizeof engine->content_cache_directory,"%s",
+           source->cache_directory?source->cache_directory:"");
+  snprintf(engine->current_content_path,sizeof engine->current_content_path,"%s",
+           prepared.loaded_path);
+  snprintf(engine->content_program_directory,sizeof engine->content_program_directory,"%s",
+           engine->win.content_dir);
+  engine->launch_parameters[0]='\0';
   state_identity_refresh(engine);
   engine->loaded = 1;
   engine_logf(engine,ANYGM_LOG_INFO,"Loaded content: bytecode=%u rooms=%d code=%d\n",
@@ -227,7 +261,9 @@ static void boot_runtime(AnygmEngine *engine) {
   classic_transition_reset(engine);
   engine->have_presented_frame = 0;
   setup_display(engine);
-  gml_vm_init(&engine->vm, &engine->win,&engine->host);
+  gml_vm_init_launch(&engine->vm,&engine->win,&engine->host,
+                     engine->content_program_directory,engine->current_content_path,
+                     engine->launch_parameters);
   engine_input_bind(engine);
   setup_platform_locale(engine,&engine->vm);
   gml_render_init(&engine->render, &engine->win);
@@ -319,6 +355,170 @@ static void boot_runtime(AnygmEngine *engine) {
   }
   engine->background = cur_room_bg(engine);
 }
+
+static int game_change_next_argument(const char **cursor,char *output,size_t capacity){
+  if(!cursor || !*cursor || !output || !capacity) return 0;
+  const char *source=*cursor;
+  while(isspace((unsigned char)*source)) source++;
+  if(!*source){ output[0]='\0'; *cursor=source; return 0; }
+  size_t written=0;
+  int quote=0;
+  while(*source){
+    unsigned char c=(unsigned char)*source;
+    if(!quote && isspace(c)) break;
+    source++;
+    if(c=='\'' || c=='"'){
+      if(!quote){ quote=c; continue; }
+      if(quote==c){ quote=0; continue; }
+    }
+    if(c=='\\' && *source && ((quote && *source==quote) || *source=='\\'))
+      c=(unsigned char)*source++;
+    if(written+1>=capacity){ output[0]='\0'; return -1; }
+    output[written++]=(char)c;
+  }
+  if(quote){ output[0]='\0'; return -1; }
+  output[written]='\0';
+  while(isspace((unsigned char)*source)) source++;
+  *cursor=source;
+  return 1;
+}
+
+static int game_change_payload_name(const char *parameters,char *output,size_t capacity){
+  const char *cursor=parameters?parameters:"";
+  char token[GML_GAME_CHANGE_TEXT_MAX];
+  int found=0;
+  while(*cursor){
+    int parsed=game_change_next_argument(&cursor,token,sizeof token);
+    if(parsed<0) return 0;
+    if(!parsed) break;
+    if(!strcasecmp(token,"-game")){
+      parsed=game_change_next_argument(&cursor,output,capacity);
+      if(parsed<=0 || !output[0]) return 0;
+      found=1;
+      break;
+    }
+  }
+  if(!found) snprintf(output,capacity,"data.win");
+  return output[0]!='\0';
+}
+
+static int game_change_target_path(const char *content_directory,const char *directory,
+                                   const char *payload,char *output,size_t capacity){
+  if(!content_directory || !content_directory[0] || !payload || !payload[0] ||
+     !output || !capacity) return 0;
+  while(*directory=='/' || *directory=='\\') directory++;
+  while(*payload=='/' || *payload=='\\') payload++;
+  if(!payload[0]) return 0;
+  for(const char *path=directory;path&&*path;){
+    while(*path=='/' || *path=='\\') path++;
+    const char *segment=path;
+    while(*path && *path!='/' && *path!='\\'){
+      if((unsigned char)*path<0x20 || *path==':') return 0;
+      path++;
+    }
+    size_t size=(size_t)(path-segment);
+    if((size==1 && segment[0]=='.') ||
+       (size==2 && segment[0]=='.' && segment[1]=='.')) return 0;
+  }
+  for(const char *path=payload;*path;){
+    while(*path=='/' || *path=='\\') path++;
+    const char *segment=path;
+    while(*path && *path!='/' && *path!='\\'){
+      if((unsigned char)*path<0x20 || *path==':') return 0;
+      path++;
+    }
+    size_t size=(size_t)(path-segment);
+    if((size==1 && segment[0]=='.') ||
+       (size==2 && segment[0]=='.' && segment[1]=='.')) return 0;
+  }
+  int length=directory[0]
+    ?snprintf(output,capacity,"%s/%s/%s",content_directory,directory,payload)
+    :snprintf(output,capacity,"%s/%s",content_directory,payload);
+  return length>=0 && (size_t)length<capacity;
+}
+
+static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed){
+  if(changed) *changed=0;
+  if(!engine || !engine->vm.game_change_pending) return ANYGM_OK;
+  int valid=engine->vm.game_change_pending>0;
+  char directory[GML_GAME_CHANGE_TEXT_MAX];
+  char parameters[GML_GAME_CHANGE_TEXT_MAX];
+  snprintf(directory,sizeof directory,"%s",engine->vm.game_change_directory);
+  snprintf(parameters,sizeof parameters,"%s",engine->vm.game_change_parameters);
+  engine->vm.game_change_pending=0;
+  engine->vm.game_change_directory[0]='\0';
+  engine->vm.game_change_parameters[0]='\0';
+  if(!valid){
+    engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,
+                  "The requested game change path or parameter list is too long");
+    return ANYGM_ERROR_INVALID_CONTENT;
+  }
+  char payload[GML_GAME_CHANGE_TEXT_MAX];
+  char target[2048];
+  if(!game_change_payload_name(parameters,payload,sizeof payload) ||
+     !game_change_target_path(engine->win.content_dir,directory,payload,target,sizeof target)){
+    engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,
+                  "The requested game change path could not be resolved");
+    return ANYGM_ERROR_INVALID_CONTENT;
+  }
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=target;
+  source.cache_directory=engine->content_cache_directory[0]
+    ?engine->content_cache_directory:NULL;
+  EnginePreparedContent prepared;
+  AnygmResult result=engine_prepare_content(engine,&source,&prepared);
+  if(result!=ANYGM_OK) return result;
+
+  char save_directory[sizeof engine->win.save_dir];
+  snprintf(save_directory,sizeof save_directory,"%s",engine->win.save_dir);
+  profile_report(engine,1);
+  gml_vm_fire_game_end(&engine->vm);
+  gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
+  gml_vm_free(&engine->vm);
+  gml_render_free(&engine->render);
+  gml_win_free(&engine->win);
+
+  engine->win=prepared.win;
+  engine->content_facts=prepared.facts;
+  engine->compatibility=prepared.compatibility;
+  engine->win.compatibility=&engine->compatibility;
+  snprintf(engine->win.save_dir,sizeof engine->win.save_dir,"%s",save_directory);
+  snprintf(engine->current_content_path,sizeof engine->current_content_path,"%s",
+           prepared.loaded_path);
+  snprintf(engine->launch_parameters,sizeof engine->launch_parameters,"%s",parameters);
+  state_identity_refresh(engine);
+  engine_logf(engine,ANYGM_LOG_INFO,"Changed content: bytecode=%u rooms=%d code=%d\n",
+              engine->win.bytecode,gml_room_count(&engine->win),engine->win.n_code);
+  engine->full_game_on_initial_boot=1;
+  boot_runtime(engine);
+  run_selftest(engine);
+  GmlRenderResourceMetrics render_resources;
+  gml_render_resource_metrics(&engine->render,&render_resources);
+  engine_logf(engine,ANYGM_LOG_INFO,
+              "Runtime booted: atlases=%d sprites=%d texture-pages=%d\n",
+              render_resources.atlas_count,render_resources.sprite_count,
+              render_resources.texture_page_count);
+  if(changed) *changed=1;
+  return ANYGM_OK;
+}
+
+static AnygmResult engine_apply_game_change_and_run_frame(AnygmEngine *engine){
+  if(engine->game_change_depth>=8){
+    engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,
+                  "The game change chain exceeded the supported nesting limit");
+    return ANYGM_ERROR_INVALID_CONTENT;
+  }
+  int changed=0;
+  AnygmResult result=engine_apply_game_change(engine,&changed);
+  if(result!=ANYGM_OK || !changed) return result;
+  engine->game_change_depth++;
+  result=engine_run_frame(engine);
+  engine->game_change_depth--;
+  return result;
+}
+
 static void engine_unload(AnygmEngine *engine){
   if(!engine->loaded) return;
   profile_report(engine,1);
@@ -353,6 +553,8 @@ static void poll_fast_forward(AnygmEngine *engine) {
   gml_render_control_update(&engine->render,&control,GML_RENDER_CONTROL_FAST_FORWARD);
 }
 static AnygmResult engine_run_frame(AnygmEngine *engine) {
+  if(engine->vm.game_change_pending)
+    return engine_apply_game_change_and_run_frame(engine);
   engine->audio_frames=0;
   /* Keep supplying the last completed picture and silence after the shutdown request without
    * advancing Step, Draw, particles, or animation. */
@@ -439,6 +641,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     room_skip_hook(engine);        /* generic room-skip button (Select/Start, any room) */
     introskip_hook(engine);        /* A/B skip, only in a user-supplied intro-room list (GML_INTROSKIP) */
   }
+  if(engine->vm.game_change_pending)
+    return engine_apply_game_change_and_run_frame(engine);
   /* The VM has already fired the final event; translate its lifecycle request to engine output. */
   if(engine->vm.game_end){
     if(engine->vm.game_end == 2){
@@ -1067,6 +1271,13 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      * visible rewind/load frame even though the simulation was put back at its pre-Draw state. */
     engine->state_just_loaded=0;
     engine->have_presented_frame=1;
+  }
+  if(state_restore_frame){
+    engine->vm.game_change_pending=0;
+    engine->vm.game_change_directory[0]='\0';
+    engine->vm.game_change_parameters[0]='\0';
+  } else if(engine->vm.game_change_pending){
+    return engine_apply_game_change_and_run_frame(engine);
   }
   return ANYGM_OK;
 }
