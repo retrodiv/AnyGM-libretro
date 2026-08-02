@@ -150,6 +150,24 @@ int software3d_case_assets(Software3dRasterFixture *fixture){
     }
   }
   call_numbers(&fixture->vm,"texture_set_interpolation",software3d_disable,1);
+  {
+    surface_data->px[0]=0x00112233u;
+    surface_data->px[1]=0x80445566u;
+    surface_data->px[2]=0xFF778899u;
+    surface_data->px[3]=0x20AABBCCu;
+    int alpha_sprite=gml_sprite_create_from_surface(
+      &fixture->render,fixture->surface,0,0,2,2,0,0,0,0);
+    const uint8_t *rgba=alpha_sprite>=0 && alpha_sprite<fixture->render.n_spr
+      ? fixture->render.spr[alpha_sprite].runtime_rgba : NULL;
+    if(!rgba || rgba[0]!=0x11 || rgba[1]!=0x22 || rgba[2]!=0x33 || rgba[3]!=0x00 ||
+       rgba[4]!=0x44 || rgba[5]!=0x55 || rgba[6]!=0x66 || rgba[7]!=0x80 ||
+       rgba[8]!=0x77 || rgba[9]!=0x88 || rgba[10]!=0x99 || rgba[11]!=0xFF ||
+       rgba[12]!=0xAA || rgba[13]!=0xBB || rgba[14]!=0xCC || rgba[15]!=0x20){
+      fprintf(stderr,"software surface sprite alpha transfer mismatch\n");
+      return 0;
+    }
+    gml_sprite_delete(&fixture->render,alpha_sprite);
+  }
   surface_data->px[0]=0xFFFF0000u; surface_data->px[1]=0xFF00FF00u;
   surface_data->px[2]=0xFF0000FFu; surface_data->px[3]=0xFFFFFFFFu;
   fixture->runtime_sprite=gml_sprite_create_from_surface(&fixture->render,fixture->surface,0,0,2,2,0,0,0,0);
@@ -659,4 +677,3 @@ int software3d_case_vm_draw(Software3dRasterFixture *fixture){
   call_numbers(&fixture->vm,"d3d_set_hidden",software3d_enable,1);
   return 1;
 }
-

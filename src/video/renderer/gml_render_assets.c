@@ -1150,7 +1150,7 @@ int gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w, 
       dp[0]=(uint8_t)((p>>16)&0xff);
       dp[1]=(uint8_t)((p>>8)&0xff);
       dp[2]=(uint8_t)(p&0xff);
-      dp[3]=255;
+      dp[3]=(uint8_t)(p>>24);
     }
   }
   rgba_apply_removeback(rgba,w,h,removeback);
