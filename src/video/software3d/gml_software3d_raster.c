@@ -1245,7 +1245,7 @@ static void d3_flush_2d_primitive(GmlRender *R){
   GmlD3Vertex vertex[GML_PRIM_MAX];
   for(int i=0;i<g_prim_n;i++){
     double x=g_prim_x[i],y=g_prim_y[i];
-    gml_render_backend_gui_map_point(R,&x,&y);
+    gml_render_backend_draw_map_point(R,&x,&y);
     vertex[i]=d3_2d_vertex(R,x,y,g_prim_c[i],g_prim_a[i]);
     vertex[i].u=g_prim_u[i]; vertex[i].v=g_prim_v[i];
   }

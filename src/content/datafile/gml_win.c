@@ -321,7 +321,8 @@ int gml_room_get(const GmlWin *w, int idx, GmlRoom *o){
   o->persistent=(int)u32(d,p+20);
   o->bgcolor=u32(d,p+24); o->draw_bg=(int)u32(d,p+28);
   o->creation_code=(int)u32(d,p+32);
-  o->flags=u32(d,p+36); o->view_enabled=(o->flags & 1u)!=0;
+  o->flags=u32(d,p+36);
+  o->view_enabled=(o->flags&GML_ROOM_FLAG_ENABLE_VIEWS)!=0;
   o->bg_ptr=u32(d,p+40); o->view_ptr=u32(d,p+44);
   o->obj_ptr=u32(d,p+48); o->tile_ptr=u32(d,p+52);
   return 0;

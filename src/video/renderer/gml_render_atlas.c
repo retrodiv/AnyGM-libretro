@@ -76,7 +76,9 @@ typedef struct {
   uint8_t *state;                     /* per-atlas: 0 idle, 1 queued, 2 decoding */
   GmlRender *r;
 } GmlAtlasPool;
-static int log_atlas_on(void){ return 0; }
+static int log_atlas_on(const GmlRender *render){
+  return render_setting(render,"GML_LOG_ATLAS")!=NULL;
+}
 static size_t atlas_spec_budget(GmlRender *r){
   return r&&r->atlas_prefetch_budget?r->atlas_prefetch_budget:512u*1024u*1024u;
 }
@@ -100,7 +102,7 @@ static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlas
     a->w=w; a->h=h;
     r->atlas_decoded_bytes += (size_t)w*(size_t)h*4u;
     __atomic_store_n(&a->px,px,__ATOMIC_RELEASE);
-    if(log_atlas_on())
+    if(log_atlas_on(r))
       anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[atlas] decoded %d %dx%d (%.1f MiB)\n",idx,w,h,(double)((uint64_t)w*(uint64_t)h*4ull)/(1024.0*1024.0));
   }
   if(locked){

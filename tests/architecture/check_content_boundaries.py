@@ -372,6 +372,7 @@ CLASSIC_IMAGE_OPERATIONS = (
     "write_rgba_png",
     "import_rgba_path",
     "import_bgra_to_rgba",
+    "apply_legacy_executable_image_alpha",
     "decode_legacy_image",
     "gmlc_classic_import_sprites",
     "free_sprite_range",

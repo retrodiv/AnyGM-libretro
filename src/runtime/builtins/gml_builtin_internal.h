@@ -214,6 +214,9 @@ GmlVal gml_builtin_try_instances_scripts(GmlVM *vm, const char *name,
                                          GmlVal *args, int count);
 GmlVal gml_builtin_try_audio(GmlVM *vm, const char *name,
                              GmlVal *args, int count);
+int builtin_external_audio_define(const char *library,const char *symbol);
+GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
+                                   GmlVal *args,int count,int *handled);
 GmlVal gml_builtin_try_instances_paths(GmlVM *vm, const char *name,
                                        GmlVal *args, int count);
 GmlVal gml_builtin_try_layers_early(GmlVM *vm, const char *name,

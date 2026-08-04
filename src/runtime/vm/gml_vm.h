@@ -166,8 +166,8 @@ typedef struct {
   int state_variable_load_debug;
   size_t state_profile_last_total;
   int state_time_log_count;
-  /* Development settings resolved once per VM: these sit on the per-opcode, per-call and
-   * per-array-write paths, where re-reading them made the host lookup itself measurable. */
+  /* Development settings resolved once per VM: these three sit on the per-array-write and
+   * per-code-entry paths, where re-reading them made the host lookup itself measurable. */
   int arrayset_filter_initialized;
   const char *arrayset_filter;
   int view_log_initialized;
@@ -181,6 +181,9 @@ typedef struct {
 typedef struct GmlVM {
   GmlWin   *win;
   const AnygmHostServices *host;
+#if defined(ANYGM_DIAGNOSTICS) && ANYGM_DIAGNOSTICS
+  struct GmlVmFineTrace *fine_trace;
+#endif
   GmlInputServices input;
   struct GmlParticleState *particles;
   struct GmlBuiltinState *builtins;
@@ -271,8 +274,8 @@ typedef struct GmlVM {
   const char *cur_event; int cur_event_obj;   /* current event suffix + object level (for event_inherited) */
   int      event_type, event_number;          /* transient GM event_type/event_number builtins */
   GmlVal script_args[16]; int script_argc;     /* current script argumentN/argument_count */
-  /* RNG: WELL512 (Lomont compact form), MSVC-LCG seed expansion,
-   * default seed 0. random(x) = (next()/2^32)*x. See LICENSES/WELL512.txt. */
+  /* WELL512 uses the Lomont recurrence and signed MSVC-LCG high-word seed expansion.
+   * random(x) scales the next value by x/2^32. */
   uint32_t rng_well[16]; int rng_index;
   uint32_t rng_state;   /* last seed set (randomize/random_set_seed); random_get_seed reads it */
   uint32_t rng_classic_state; /* GM6-8 live linear-generator state */
@@ -376,7 +379,7 @@ double  gml_vm_get_timer_us(GmlVM *vm);
 void    gml_input_mouse(GmlVM *vm,double *room_x,double *room_y,double *gui_x,double *gui_y,
                         double *window_x,double *window_y,int *held,int *pressed,int *released,int *wheel);
 void    gml_input_mouse_set(GmlVM *vm,double x,double y);
-void    gml_rng_seed(GmlVM *vm, uint32_t seed);   /* WELL512 seeding (MSVC LCG expand) */
+void    gml_rng_seed(GmlVM *vm, uint32_t seed);   /* WELL512 signed-high-word seeding */
 double  gml_rng_value(GmlVM *vm);                 /* next()/2^32 -> [0,1) */
 uint64_t gml_rng_select(GmlVM *vm, uint64_t count);
 uint64_t gml_rng_integer(GmlVM *vm, uint64_t inclusive_max);
@@ -390,6 +393,9 @@ GmlVal  gml_vm_call_callable(GmlVM *vm, GmlVal callable, GmlVal *args, int n_arg
 GmlVal  gml_vm_call_member_callable(GmlVM *vm, GmlVal receiver,
                                     GmlVal callable, GmlVal *args,
                                     int n_args);
+/* Resolve one identifier in the current classic execution scope. This is the bounded
+ * execute_string seam and follows the same self/globalvar rules as an interpreted load. */
+GmlVal  gml_vm_identifier_get(GmlVM *vm,const char *name);
 void    gml_time_sources_tick(GmlVM *vm);          /* between Begin Step and normal Step */
 int     gml_code_index_by_name(GmlWin *win, const char *name);  /* exact */
 int     gml_code_index_find(GmlWin *win, const char *substr);   /* first containing */
@@ -450,6 +456,8 @@ void         gml_vm_warm_audio_for_room(GmlVM *vm, int room_index);
 int          gml_cheat_apply(GmlVM *vm, const char *code);
 void         gml_vm_step(GmlVM *vm);                         /* one frame of the game loop */
 void         gml_vm_draw(GmlVM *vm);                         /* draw phase (needs vm->render) */
+void         gml_vm_draw_instance_sprite(GmlVM *vm, GmlInstance *instance,
+                                         double alpha);
 void         gml_vm_post_draw(GmlVM *vm);                    /* classic animation phase */
 void         gml_vm_draw_gui(GmlVM *vm);                     /* Draw GUI (Draw_64) pass */
 
@@ -473,6 +481,9 @@ double  gml_room_speed(GmlVM *vm);
 uint32_t gml_vm_room_background_argb(GmlVM *vm);
 void    gml_set_global_arr(GmlVM *vm, const char *name, int idx, double val);
 void    gml_set_global_scalar(GmlVM *vm, const char *name, double val);           /* write V_REAL, not array */
+/* Classic execute_string may declare an identifier as global after its containing source was
+ * compiled. Record that declaration so later unqualified references resolve through globals. */
+int     gml_vm_declare_globalvar(GmlVM *vm, const char *name);
 int     gml_set_inst_var_all(GmlVM *vm, const char *objname, const char *var, double val); /* freeze inst var; returns count */
 /* generic pause-menu injection helpers (host menu editor) */
 int     gml_inst_get_num(const GmlInstance *in, const char *var);

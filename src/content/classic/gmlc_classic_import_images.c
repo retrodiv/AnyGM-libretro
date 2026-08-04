@@ -123,6 +123,16 @@ static uint8_t *import_bgra_to_rgba(const uint8_t *bgra, uint32_t bytes,
   return rgba;
 }
 
+static void apply_legacy_executable_image_alpha(uint8_t *rgba, uint32_t width,
+                                                uint32_t height, int transparent){
+  if(!rgba || !width || !height) return;
+  size_t pixels=(size_t)width*(size_t)height;
+  /* Compiled GM6/7 images retain a binary per-pixel coverage byte.  Preserve
+   * that mask for transparent resources; opaque resources ignore it. */
+  for(size_t pixel=0;pixel<pixels;pixel++)
+    rgba[pixel*4u+3u]=transparent && !rgba[pixel*4u+3u] ? 0 : 255;
+}
+
 static int decode_legacy_image(ImportReader *r, int expected_width, int expected_height,
                                int transparent, int executable_layout,
                                uint8_t **rgba_out, uint32_t *bytes_out,
@@ -151,6 +161,7 @@ static int decode_legacy_image(ImportReader *r, int expected_width, int expected
                                       r->err,r->errcap);
     free(raw);
     if(!rgba) return 0;
+    apply_legacy_executable_image_alpha(rgba,width,height,transparent);
     *rgba_out=rgba; *bytes_out=expected_bytes;
     return 1;
   }
@@ -228,7 +239,9 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
       sprite->width=(int)fields[0]; sprite->height=(int)fields[1];
       sprite->bbox_left=(int32_t)fields[2]; sprite->bbox_right=(int32_t)fields[3];
       sprite->bbox_bottom=(int32_t)fields[4]; sprite->bbox_top=(int32_t)fields[5];
-      sprite->bbox_mode=(int32_t)fields[9]; sprite->col_kind=(int32_t)fields[10];
+      sprite->bbox_mode=(int32_t)fields[9];
+      /* Legacy GM6/7 stores a precise-collision boolean, not the later shape enum. */
+      sprite->col_kind=fields[10]?0:1;
       sprite->xorig=(int32_t)fields[11]; sprite->yorig=(int32_t)fields[12];
       sprite->n_frames=(int)frames;
       sprite->frame_paths=(char**)calloc(frames?frames:1,sizeof(*sprite->frame_paths));

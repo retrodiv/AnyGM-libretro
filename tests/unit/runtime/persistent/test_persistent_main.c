@@ -24,7 +24,11 @@ int main(int argc,char **argv){
     {"early_native_layer_animation",expect_early_native_layer_animation},
     {"deactivated_instance_reference",expect_deactivated_instance_reference},
     {"room_camera_reservation",expect_room_camera_reservation},
+    {"room_order_boundaries",expect_room_order_boundaries},
+    {"alarm_dispatch_order",expect_alarm_dispatch_order},
+    {"automatic_motion_order",expect_automatic_motion_order},
     {"event_boundary_room_transition",expect_event_boundary_room_transition},
+    {"room_transition_animation_phase",expect_room_transition_animation_phase},
     {"hash_layer_gpu",expect_hash_layer_gpu_gap_closure},
     {"array_functions",expect_array_function_gap_closure},
     {"room_lifecycle",expect_persistent_lifecycle},
@@ -36,8 +40,10 @@ int main(int argc,char **argv){
   static const AnygmTestCase audio_cases[]={
     {"group_paths",expect_audio_group_paths},
     {"group_gain",expect_audio_group_gain},
+    {"dynamic_extension_state",expect_dynamic_audio_extension_state},
   };
   static const AnygmTestCase render_cases[]={
+    {"background_slot_dimensions",expect_background_slot_dimensions},
     {"font_primitive_blend",expect_renderer_semantics},
   };
   static const AnygmTestCase io_cases[]={

@@ -9,10 +9,17 @@
 #include <math.h>
 
 /* WELL512 follows the Lomont recurrence credited in LICENSES/WELL512.txt.
- * Expand seeds using MSVC-LCG arithmetic; random(x) scales the next value by x/2^32. */
+ * Expand the state from the signed high word of the MSVC LCG; explicit sign filling keeps
+ * that arithmetic portable. random(x) scales the next value by x/2^32. */
 void gml_rng_seed(GmlVM *vm, uint32_t seed){
   uint32_t s=seed;
-  for(int i=0;i<16;i++){ s=((s*214013u+2531011u)>>16)&0x7fffffffu; vm->rng_well[i]=s; }
+  for(int i=0;i<16;i++){
+    uint32_t mixed=s*214013u+2531011u;
+    s=mixed>>16;
+    if(mixed&0x80000000u) s|=0xffff0000u;
+    s&=0x7fffffffu;
+    vm->rng_well[i]=s;
+  }
   vm->rng_index=0;
   vm->rng_classic_state=seed;
 }

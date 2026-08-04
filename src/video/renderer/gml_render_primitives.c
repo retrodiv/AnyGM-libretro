@@ -111,6 +111,7 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
   if(!R) return;
   if(x1>x2){ int t=x1; x1=x2; x2=t; }
   if(y1>y2){ int t=y1; y1=y2; y2=t; }
+  int geometric_x1=x1,geometric_y1=y1,geometric_x2=x2,geometric_y2=y2;
   if(x2<0||y2<0||x1>=R->fbw||y1>=R->fbh) return;
   if(x1<0) x1=0;
   if(y1<0) y1=0;
@@ -160,7 +161,9 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
     return;
   }
   for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++){
-    if(outline && y>y1 && y<y2 && x>x1 && x<x2) continue;
+    /* Clip the geometric edges instead of turning each clipped boundary into a new edge. */
+    if(y!=geometric_y1 && y!=geometric_y2 &&
+       x!=geometric_x1 && x!=geometric_x2) continue;
     gml_render_backend_draw_pixel_alpha(R,x,y,gmcol,alpha);
   }
 }
@@ -253,18 +256,125 @@ static void draw_rect_colour_prim(GmlRender *R, int x1, int y1, int x2, int y2,
     }
   }
 }
-static void draw_line_prim(GmlRender *R, int x0, int y0, int x1, int y1, uint32_t gmcol, int width){
+static uint32_t gm_color_lerp_steps(uint32_t first,uint32_t second,
+                                    int numerator,int denominator){
+  if(denominator<=0 || numerator<=0) return first;
+  if(numerator>=denominator) return second;
+  int first_red=first&255,first_green=(first>>8)&255,first_blue=(first>>16)&255;
+  int second_red=second&255,second_green=(second>>8)&255,second_blue=(second>>16)&255;
+  int red=first_red+(second_red-first_red)*numerator/denominator;
+  int green=first_green+(second_green-first_green)*numerator/denominator;
+  int blue=first_blue+(second_blue-first_blue)*numerator/denominator;
+  return (uint32_t)red|((uint32_t)green<<8)|((uint32_t)blue<<16);
+}
+
+static uint32_t gm_color_lerp_amount(uint32_t first,uint32_t second,double amount){
+  if(amount<=0.0) return first;
+  if(amount>=1.0) return second;
+  int first_red=first&255,first_green=(first>>8)&255,first_blue=(first>>16)&255;
+  int second_red=second&255,second_green=(second>>8)&255,second_blue=(second>>16)&255;
+  int red=(int)(first_red+(second_red-first_red)*amount);
+  int green=(int)(first_green+(second_green-first_green)*amount);
+  int blue=(int)(first_blue+(second_blue-first_blue)*amount);
+  return (uint32_t)red|((uint32_t)green<<8)|((uint32_t)blue<<16);
+}
+
+static void draw_line_colour_prim(GmlRender *R, int x0, int y0, int x1, int y1,
+                                  uint32_t first,uint32_t second,int width){
   if(width<1) width=1;
   int dx=abs(x1-x0), sx=x0<x1?1:-1;
   int dy=-abs(y1-y0), sy=y0<y1?1:-1;
+  int denominator=dx>-dy?dx:-dy,step=0;
   int err=dx+dy;
   for(;;){
     int r=width/2;
-    draw_rect_prim(R,x0-r,y0-r,x0-r+width-1,y0-r+width-1,gmcol,0);
+    uint32_t color=gm_color_lerp_steps(first,second,step,denominator);
+    draw_rect_prim(R,x0-r,y0-r,x0-r+width-1,y0-r+width-1,color,0);
     if(x0==x1 && y0==y1) break;
     int e2=2*err;
     if(e2>=dy){ err+=dy; x0+=sx; }
     if(e2<=dx){ err+=dx; y0+=sy; }
+    step++;
+  }
+}
+static void draw_line_prim(GmlRender *R,int x0,int y0,int x1,int y1,
+                           uint32_t color,int width){
+  draw_line_colour_prim(R,x0,y0,x1,y1,color,color,width);
+}
+
+static int line_open_interval_axis(double start,double delta,
+                                   double lower,double upper,
+                                   double *interval_start,double *interval_end){
+  if(delta==0.0) return start>lower && start<upper;
+  double first=(lower-start)/delta,second=(upper-start)/delta;
+  if(first>second){ double temporary=first; first=second; second=temporary; }
+  if(first>*interval_start) *interval_start=first;
+  if(second<*interval_end) *interval_end=second;
+  return *interval_start<*interval_end;
+}
+
+static int line_crosses_pixel_diamond(double x0,double y0,double x1,double y1,
+                                      int pixel_x,int pixel_y){
+  double center_u=pixel_x+pixel_y+1.0;
+  double center_v=pixel_x-pixel_y;
+  double start_u=x0+y0,start_v=x0-y0;
+  double delta_u=(x1+y1)-start_u,delta_v=(x1-y1)-start_v;
+  double interval_start=0.0,interval_end=1.0;
+  if(!line_open_interval_axis(start_u,delta_u,center_u-0.5,center_u+0.5,
+                              &interval_start,&interval_end) ||
+     !line_open_interval_axis(start_v,delta_v,center_v-0.5,center_v+0.5,
+                              &interval_start,&interval_end))
+    return 0;
+  /* Diamond-exit line rules omit the fragment containing the final endpoint. */
+  return fabs(x1-(pixel_x+0.5))+fabs(y1-(pixel_y+0.5))>=0.5;
+}
+
+static void draw_line_colour_subpixel_prim(GmlRender *R,
+                                           double x0,double y0,double x1,double y1,
+                                           uint32_t first,uint32_t second,int width){
+  if(!R || !isfinite(x0) || !isfinite(y0) || !isfinite(x1) || !isfinite(y1)) return;
+  if(width<1) width=1;
+  double color_dx=x1-x0,color_dy=y1-y0;
+  double color_denominator=color_dx*color_dx+color_dy*color_dy;
+  if(color_denominator<=0.0) return;
+
+  /* Resolve exact diamond-boundary ties deterministically. The y perturbation is reflected for
+   * the renderer's top-down framebuffer coordinates. */
+  const double perturbation=1e-7;
+  double raster_x0=x0-perturbation,raster_y0=y0+perturbation*perturbation;
+  double raster_x1=x1-perturbation,raster_y1=y1+perturbation*perturbation;
+  double raster_dx=raster_x1-raster_x0,raster_dy=raster_y1-raster_y0;
+  int x_major=fabs(raster_dx)>=fabs(raster_dy);
+  double minimum=x_major?fmin(raster_x0,raster_x1):fmin(raster_y0,raster_y1);
+  double maximum=x_major?fmax(raster_x0,raster_x1):fmax(raster_y0,raster_y1);
+  int major_start=(int)floor(minimum)-1;
+  int major_end=(int)floor(maximum)+1;
+  for(int major=major_start;major<=major_end;major++){
+    double parameter;
+    if(x_major){
+      parameter=(major+0.5-raster_x0)/raster_dx;
+    } else {
+      parameter=(major+0.5-raster_y0)/raster_dy;
+    }
+    if(parameter<0.0) parameter=0.0;
+    else if(parameter>1.0) parameter=1.0;
+    double minor=x_major?raster_y0+parameter*raster_dy
+                        :raster_x0+parameter*raster_dx;
+    int minor_center=(int)floor(minor);
+    for(int candidate=minor_center-2;candidate<=minor_center+2;candidate++){
+      int pixel_x=x_major?major:candidate;
+      int pixel_y=x_major?candidate:major;
+      if(!line_crosses_pixel_diamond(raster_x0,raster_y0,raster_x1,raster_y1,
+                                     pixel_x,pixel_y))
+        continue;
+      double fragment_x=pixel_x+0.5,fragment_y=pixel_y+0.5;
+      double color_parameter=((fragment_x-x0)*color_dx+(fragment_y-y0)*color_dy)/
+                             color_denominator;
+      uint32_t color=gm_color_lerp_amount(first,second,color_parameter);
+      int radius=width/2;
+      draw_rect_prim(R,pixel_x-radius,pixel_y-radius,
+                     pixel_x-radius+width-1,pixel_y-radius+width-1,color,0);
+    }
   }
 }
 
@@ -314,14 +424,7 @@ static void draw_circle_prim(GmlRender *R, int cx, int cy, int rx, int ry, uint3
 
 /* Colour variants interpolate from the first colour at the centre to the second at the perimeter. */
 static uint32_t gm_color_lerp_fan(uint32_t inner,uint32_t outer,double amount){
-  if(amount<=0.0) return inner;
-  if(amount>=1.0) return outer;
-  int ir=inner&255,ig=(inner>>8)&255,ib=(inner>>16)&255;
-  int or_=outer&255,og=(outer>>8)&255,ob=(outer>>16)&255;
-  int r=(int)(ir+(or_-ir)*amount);
-  int g=(int)(ig+(og-ig)*amount);
-  int b=(int)(ib+(ob-ib)*amount);
-  return (uint32_t)r|((uint32_t)g<<8)|((uint32_t)b<<16);
+  return gm_color_lerp_amount(inner,outer,amount);
 }
 static void draw_px_fan(GmlRender *R,int x,int y,uint32_t inner,uint32_t outer,double amount){
   if(R && R->alphablend && R->blendmode==2 &&
@@ -549,7 +652,22 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
 void gml_render_primitive_line(GmlRender *render,
                                int x1,int y1,int x2,int y2,
                                uint32_t color,int width){
-  draw_line_prim(render,x1,y1,x2,y2,color,width);
+  draw_line_colour_prim(render,x1,y1,x2,y2,color,color,width);
+}
+
+void gml_render_primitive_line_color(GmlRender *render,
+                                     int x1,int y1,int x2,int y2,
+                                     uint32_t color1,uint32_t color2,
+                                     int width){
+  draw_line_colour_prim(render,x1,y1,x2,y2,color1,color2,width);
+}
+
+void gml_render_primitive_line_color_subpixel(GmlRender *render,
+                                              double x1,double y1,
+                                              double x2,double y2,
+                                              uint32_t color1,uint32_t color2,
+                                              int width){
+  draw_line_colour_subpixel_prim(render,x1,y1,x2,y2,color1,color2,width);
 }
 
 void gml_render_primitive_circle(GmlRender *render,

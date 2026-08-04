@@ -57,6 +57,16 @@ timing, path velocity ownership, transformed collision bounds, creation-event
 ordering, classic presentation and interpolation, view slots, and related
 format behavior.
 
+Alarm dispatch is an independently resolved policy: classic inputs and Studio
+bytecode 16 run each alarm subtype by ascending exact object resource and then
+by instance insertion order within that resource. Earlier first-generation
+Studio inputs and second-generation Studio inputs retain flat instance order.
+
+Automatic motion applies friction before displacement. Live-iteration
+generations also include instances created earlier in the frame in that motion
+phase before their first draw, while frame-snapshot generations defer those new
+instances until the following frame.
+
 ## Where a difference belongs
 
 Use this decision order:

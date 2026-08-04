@@ -329,6 +329,7 @@ static int run_event_from(GmlVM *vm, GmlInstance *in, const char *suffix, int ob
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[event] f%ld %s.%s id=%u other=%u\n",
         vm->frame,vm->objects[in->obj].name,suffix,in->id,vm->cur_other?vm->cur_other->id:0); }
   if(!gml_vm_instances_event_lookup(vm,suffix,obj,&handler_obj,&ci)) return 0;
+  GML_VM_DIAGNOSTIC_EVENT(vm,in,suffix,ci);
   /* Preserve `other`: an event fired from inside another instance's scope
    * (event_user / event_perform / action_inherited) must see the caller as
    * `other`. For an engine-triggered event there is no separate caller; GM
@@ -387,9 +388,10 @@ int gml_vm_instances_collect_object_slots(GmlVM *vm, int object){
   return count;
 }
 /* Sparse classic projects retain authored resource ids, so the object array can contain very
- * large gaps. Cache the ascending object ids that resolve each event suffix (including inherited
- * handlers): this preserves object-major event order without rescanning every empty slot on
- * every frame. Runtime hierarchy mutation resets this cache before the next dispatch. */
+ * large gaps. Cache the ascending object ids that declare each event suffix, including inherited
+ * handlers and native empty alarms. This preserves resource-major order without rescanning every
+ * empty slot on every frame. Runtime hierarchy mutation resets this cache before the next
+ * dispatch. */
 typedef struct GmlClassicDispatchCache {
   char suffix[32];
   int *objects, n, cap, used;
@@ -420,8 +422,11 @@ const int *gml_vm_instances_event_objects(GmlVM *vm, const char *suffix, int *co
   ClassicDispatchCache *cache=&vm->classic_dispatch[slot];
   cache->used=1;
   snprintf(cache->suffix,sizeof(cache->suffix),"%s",suffix);
+  int alarm_subtype=!strncmp(suffix,"Alarm_",6)?atoi(suffix+6):-1;
   for(int object=0;object<vm->n_objects;object++){
-    if(!gml_vm_instances_event_lookup(vm,suffix,object,NULL,NULL)) continue;
+    int native_declared=alarm_subtype>=0 &&
+      gml_vm_instances_native_event_declared(vm,2,alarm_subtype,object,NULL,NULL);
+    if(!native_declared && !gml_vm_instances_event_lookup(vm,suffix,object,NULL,NULL)) continue;
     if(cache->n>=cache->cap){
       int nc=cache->cap?cache->cap*2:16;
       int *objects=realloc(cache->objects,(size_t)nc*sizeof(*objects));
@@ -436,6 +441,7 @@ const int *gml_vm_instances_event_objects(GmlVM *vm, const char *suffix, int *co
   return cache->n ? cache->objects : &vm->classic_dispatch_empty;
 }
 void gml_vm_instances_run_classic_event(GmlVM *vm, const char *suffix){
+  if(vm->pending_room>=0) return;
   int object_count=0;
   const int *objects=gml_vm_instances_event_objects(vm,suffix,&object_count);
   int extent=objects?object_count:vm->n_objects;
@@ -445,12 +451,19 @@ void gml_vm_instances_run_classic_event(GmlVM *vm, const char *suffix){
     int count=gml_vm_instances_collect_object_slots(vm,object);
     if(count>=0){
       for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
-        if(i<vm->inst_count && vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==object)
-          gml_run_event(vm,&vm->inst[i],suffix); }
+        if(i<vm->inst_count && vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==object){
+          gml_run_event(vm,&vm->inst[i],suffix);
+          /* A classic room request is committed after the requesting event completes.  Code
+           * following room_goto inside that handler has already run, but no later instance from
+           * the old room may receive the same engine-dispatched event. */
+          if(vm->pending_room>=0) return;
+        } }
     } else {
       int extent=vm->inst_count;
-      for(int i=0;i<extent;i++) if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==object)
+      for(int i=0;i<extent;i++) if(vm->inst[i].active && !vm->inst[i].marked && vm->inst[i].obj==object){
         gml_run_event(vm,&vm->inst[i],suffix);
+        if(vm->pending_room>=0) return;
+      }
     }
   }
 }
@@ -867,7 +880,7 @@ void gml_vm_instances_run_classic_triggers(GmlVM *vm, int moment){
 }
 
 int gml_vm_instances_step_snapshot_member(GmlVM *vm, const GmlInstance *in){
-  return !vm->step_active || !vm->win || anygm_policy_uses_classic_runtime(vm->win) ||
+  return !vm->step_active || !vm->win || !anygm_policy_snapshot_instance_iteration(vm->win) ||
          in->id < vm->step_first_id;
 }
 static double gml_vm_instances_profile_now(GmlVM *vm){
@@ -1257,6 +1270,7 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
       double l2,t2,r2,b2; if(!gml_vm_instances_bbox(vm,oi,&l2,&t2,&r2,&b2)) continue;
       int bbox_hit=vm_overlap(l1,t1,r1,b1,l2,t2,r2,b2);
       int mask_hit=bbox_hit ? vm_masks_overlap(vm,si,oi,l1,t1,r1,b1,l2,t2,r2,b2) : 0;
+      GML_VM_DIAGNOSTIC_COLLISION(vm,si,oi,code,bbox_hit&&mask_hit);
       if(clog){
         const char *sn=(si->obj>=0&&si->obj<vm->n_objects)?vm->objects[si->obj].name:"?";
         const char *on=(oi->obj>=0&&oi->obj<vm->n_objects)?vm->objects[oi->obj].name:"?";

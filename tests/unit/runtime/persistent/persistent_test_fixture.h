@@ -30,17 +30,23 @@ int expect_member_callable_receiver(void);
 int expect_early_native_layer_animation(void);
 int expect_deactivated_instance_reference(void);
 int expect_room_camera_reservation(void);
+int expect_room_order_boundaries(void);
+int expect_alarm_dispatch_order(void);
+int expect_automatic_motion_order(void);
 int expect_event_boundary_room_transition(void);
+int expect_room_transition_animation_phase(void);
 int expect_persistent_lifecycle(void);
 int expect_ds_list_text_roundtrip(void);
 int expect_ds_priority_lookup_mutation(void);
 int expect_audio_group_paths(void);
 int expect_audio_group_gain(void);
+int expect_dynamic_audio_extension_state(void);
 int expect_file_sandbox(GmlVM *vm,const char *save_dir);
 int expect_file_sandbox_case(void);
 int expect_native_timeline_import(const char *path);
 int expect_timeline_case(void);
 int expect_vm_state_case(void);
+int expect_background_slot_dimensions(void);
 int expect_renderer_semantics(void);
 
 #endif

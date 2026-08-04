@@ -36,7 +36,9 @@
 #define GML_HOT_RENDER
 #endif
 
-static int log_spr_enabled(void){ return 0; }
+static int log_spr_enabled(const GmlRender *render){
+  return render_setting(render,"GML_LOG_SPRITE")!=NULL;
+}
 static int log_axis_cache_enabled(void){ return 0; }
 static int sprof_enabled(void){ return 0; }
 static void sprof_add(int sprite,const char *name,double milliseconds){
@@ -1853,7 +1855,7 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
   double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
   const struct GmlShaderPal *wave=radial_wave_active(r);
   const struct GmlShaderPal *uvwave=uv_wave_active(r);
-  int mapped_shader=mapped_texture_active(r) || shader_alpha_test_active(r) ||
+  int mapped_shader=mapped_texture_active(r) || shader_alpha_test_requires_filter(r) ||
                     wave!=NULL || uvwave!=NULL;
   if(!mapped_shader && fabs(rr)<0.001 &&
      blit_rgba_sprite_axis(r,owner,src,sw,sh,x,y,xs,ys,originx,originy,blend,alpha,
@@ -2216,7 +2218,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   uint32_t *solid_blur_alpha=solid_blur
     ? tpag_solid_blur_alpha_cache(r,t,a,solid_blur) : NULL;
   int mapped_shader=mapped_texture_active(r) || solid_blur_alpha ||
-                    shader_alpha_test_active(r) || wave!=NULL || uvwave!=NULL;
+                    shader_alpha_test_requires_filter(r) || wave!=NULL || uvwave!=NULL;
   gml_render_maybe_prepare_draw(r);
   unsigned long long vispix=(unsigned long long)(xx1-xx0)*(unsigned long long)(yy1-yy0);
   /* Hardware filtering samples the four neighbouring texels at the destination pixel centre.
@@ -3951,7 +3953,7 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
     tpag_base=a->px+((size_t)t->sy*a->w+t->sx)*4;
   int fast8_cache_copy_255=0;
   size_t srcpix=(size_t)(t->sw>0?t->sw:0)*(size_t)(t->sh>0?t->sh:0);
-  int use_draw_cache=fast8_blend && !mapped_shader && !shader_alpha_test_active(r) &&
+  int use_draw_cache=fast8_blend && !mapped_shader && !shader_alpha_test_requires_filter(r) &&
                      rprof_tpag_id(r,t)>=0 && srcpix>0 && srcpix*4u<=vispix;
   uint32_t *draw_cache=use_draw_cache ? tpag_fast8_draw_cache(t,a,blend,alpha,fast8_alpha_floor,&fast8_cache_copy_255) : NULL;
   const struct GmlShaderPal *solid_mask=batchable_solid_mask;
@@ -4582,7 +4584,7 @@ void gml_draw_sprite_pos(GmlRender *r,int sprite,int subimg,
   double mapped_x[4],mapped_y[4];
   for(int i=0;i<4;i++){
     mapped_x[i]=x[i]; mapped_y[i]=y[i];
-    gml_render_gui_map_point(r,&mapped_x[i],&mapped_y[i]);
+    gml_render_draw_map_point(r,&mapped_x[i],&mapped_y[i]);
   }
   x=mapped_x; y=mapped_y;
   if(gml_d3_draw_sprite_pos_2d(r,sprite,subimg,x,y,alpha)) return;
@@ -4722,8 +4724,8 @@ static int draw_spine_sprite(GmlRender *r,GmlSprite *sprite,double x,double y,
 
 void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha){
-  gml_render_gui_map_point(r,&x,&y);
-  gml_render_gui_map_scale(r,&xs,&ys);
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
   if(r && sprite>=0 && sprite<r->n_spr &&
      draw_spine_sprite(r,&r->spr[sprite],x,y,xs,ys,rot,blend,alpha)) return;
   if(gml_d3_draw_sprite_2d(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha)) return;
@@ -4734,7 +4736,7 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
   double sprof_t0=sprof?rprof_now():0.0;
   if(s->runtime_rgba){
     int sub=runtime_frame_index(s,subimg);
-    if(log_spr_enabled())
+    if(log_spr_enabled(r))
       anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[spr] %s subimg=%d sub=%d runtime=1 w,h=%d,%d x=%.0f y=%.0f xs=%.3f ys=%.3f rot=%.3f blend=%06X a=%.3f\n",
         s->name?s->name:"?",subimg,sub,s->w,s->h,x,y,xs,ys,rot,(unsigned)(blend&0xffffff),alpha);
     const uint8_t *fr=runtime_frame_rgba(s,subimg); if(!fr) return;
@@ -4747,10 +4749,16 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
   int sub = s->n_frames? ((subimg%s->n_frames)+s->n_frames)%s->n_frames : 0;
   int ti=s->frame[sub]; if(ti<0||ti>=r->n_tpag){ if(sprof) sprof_add(sprite,s->name,(rprof_now()-sprof_t0)*1000.0); return; }
   GmlTpag *t=&r->tpag[ti];
-  if(log_spr_enabled())
-    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[spr] %s subimg=%d sub=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d origin=%d,%d atlas=%d x=%.0f y=%.0f xs=%.3f ys=%.3f rot=%.3f blend=%06X a=%.3f\n",
+  if(log_spr_enabled(r)){
+    GmlAtlas *atlas=t->atlas>=0&&t->atlas<r->n_atlas?&r->atlas[t->atlas]:NULL;
+    int bx0=0,by0=0,bx1=-1,by1=-1;
+    int has_pixels=atlas&&atlas_pixels(r,t->atlas)!=NULL;
+    int has_alpha=has_pixels&&tpag_alpha_bounds(r,t,atlas,&bx0,&by0,&bx1,&by1);
+    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[spr] %s subimg=%d sub=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d origin=%d,%d atlas=%d pixels=%d alpha=%d bbox=%d,%d-%d,%d x=%.0f y=%.0f xs=%.3f ys=%.3f rot=%.3f blend=%06X a=%.3f\n",
       s->name?s->name:"?",subimg,sub,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,
-      s->originx,s->originy,t->atlas,x,y,xs,ys,rot,(unsigned)(blend&0xffffff),alpha);
+      s->originx,s->originy,t->atlas,has_pixels,has_alpha,bx0,by0,bx1,by1,
+      x,y,xs,ys,rot,(unsigned)(blend&0xffffff),alpha);
+  }
   /* draw at (x - origin)*scale + target offset, minus camera */
   double dx = x - s->originx*xs + t->tx*xs - r->cam_x;
   double dy = y - s->originy*ys + t->ty*ys - r->cam_y;
@@ -4800,8 +4808,8 @@ void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
  * anchored at (x,y). Used by GML effects and tiled background scripts. */
 void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
                                double xs, double ys, uint32_t blend, double alpha){
-  gml_render_gui_map_point(r,&x,&y);
-  gml_render_gui_map_scale(r,&xs,&ys);
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
   if(sprite<0||sprite>=r->n_spr) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   if(s->runtime_rgba){
@@ -4846,7 +4854,7 @@ void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, d
         yy+r->cam_y+s->originy*ys,xs,ys,0,blend,alpha);
     return;
   }
-  if(log_spr_enabled())
+  if(log_spr_enabled(r))
     anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[spr-tiled] spr=%d sub=%d cell=%.0fx%.0f anchor=(%.0f,%.0f) start=(%.0f,%.0f) t=(%d,%d %dx%d) a=%.2f\n",
       sprite,sub,bw,bh,ax,ay,x0,y0,t->tx,t->ty,t->sw,t->sh,alpha);
   for(double yy=y0; yy<r->fbh; yy+=bh)
@@ -4860,8 +4868,8 @@ void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, d
 void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, double x, double y,
                                       double xs, double ys, uint32_t blend, double alpha,
                                       int htiled, int vtiled){
-  gml_render_gui_map_point(r,&x,&y);
-  gml_render_gui_map_scale(r,&xs,&ys);
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
   if(!r || sprite<0 || sprite>=r->n_spr || alpha<=0) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   double bw=s->w*fabs(xs), bh=s->h*fabs(ys); if(bw<=0 || bh<=0) return;
@@ -4891,7 +4899,7 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
   int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
   int ti=s->frame[sub]; if(ti<0 || ti>=r->n_tpag) return;
   GmlTpag *t=&r->tpag[ti];
-  if(log_spr_enabled())
+  if(log_spr_enabled(r))
     anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[layer-bg-spr] %s subimg=%d sub=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d atlas=%d pos=%.3f,%.3f scale=%.3f/%.3f tiled=%d/%d alpha=%.3f\n",
       s->name?s->name:"?",subimg,sub,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,
       t->atlas,x,y,xs,ys,htiled,vtiled,alpha);
@@ -4907,8 +4915,8 @@ void gml_draw_layer_background_sprite(GmlRender *r, int sprite, int subimg, doub
 void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, double sy,
                               double sw, double sh, double x, double y,
                               double xs, double ys, uint32_t blend, double alpha){
-  gml_render_gui_map_point(r,&x,&y);
-  gml_render_gui_map_scale(r,&xs,&ys);
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
   if(sprite<0||sprite>=r->n_spr) return;
   if(gml_d3_draw_sprite_part_2d(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,blend,alpha)) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
@@ -4923,7 +4931,7 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
 }
 
 void gml_draw_background(GmlRender *r, int bg, double x, double y){
-  gml_render_gui_map_point(r,&x,&y);
+  gml_render_draw_map_point(r,&x,&y);
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,1,1,0xFFFFFF,r->alpha)) return;
@@ -4932,8 +4940,8 @@ void gml_draw_background(GmlRender *r, int bg, double x, double y){
 }
 void gml_draw_background_part_ext(GmlRender *r, int bg, double sx, double sy, double sw, double sh,
                                   double x, double y, double xs, double ys, uint32_t color, double alpha){
-  gml_render_gui_map_point(r,&x,&y);
-  gml_render_gui_map_scale(r,&xs,&ys);
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
   if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
@@ -4950,8 +4958,8 @@ void gml_draw_background_tile(GmlRender *r,int bg,
     gml_draw_background_part_ext(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha);
     return;
   }
-  gml_render_gui_map_point(r,&x,&y);
-  gml_render_gui_map_scale(r,&xs,&ys);
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
   if(!r || bg<0 || bg>=r->n_bg || sw<=0 || sh<=0 || xs==0 || ys==0) return;
   int ti=r->bg[bg].tpag; if(ti<0 || ti>=r->n_tpag) return;
   GmlTpag *page=&r->tpag[ti];
@@ -5020,19 +5028,20 @@ void gml_draw_background_stretched(GmlRender *r, int bg, double x, double y, dou
  * horizontally (e.g. a ground strip) must draw a single row, not fill the screen vertically. */
 static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs, double ys,
                             uint32_t color, double alpha, int htiled, int vtiled){
-  gml_render_gui_map_point(r,&x,&y);
-  gml_render_gui_map_scale(r,&xs,&ys);
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
   if(bg<0||bg>=r->n_bg) return;
   { const char*sb=render_setting(r,"GML_SKIP_BG"); if(sb&&atoi(sb)==bg) return; }
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
-  GmlTpag *t=&r->tpag[ti]; double bw=t->sw*xs, bh=t->sh*ys; if(bw<=0||bh<=0) return;
+  GmlTpag *t=&r->tpag[ti];
+  double logical_w=(t->bw?t->bw:t->sw)*xs;
+  double logical_h=(t->bh?t->bh:t->sh)*ys;
+  if(logical_w<=0 || logical_h<=0) return;
   if(render_setting(r,"GML_LOG_BG"))
     anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[bg-tiled] def=%d tpag=%d src=%d,%d %dx%d dst=%d,%d base=%dx%d atlas=%d pos=(%.3f,%.3f) scale=(%.3f,%.3f) tiled=(%d,%d) alpha=%.3f\n",
       bg,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,t->atlas,
       x,y,xs,ys,htiled,vtiled,alpha);
   if(r->classic){
-    double logical_w=(t->bw?t->bw:t->sw)*xs, logical_h=(t->bh?t->bh:t->sh)*ys;
-    if(logical_w<=0 || logical_h<=0) return;
     double anchor_x=floor(x-r->cam_x), anchor_y=floor(y-r->cam_y);
     double x0,xend,y0,yend;
     if(htiled){ x0=fmod(anchor_x,logical_w); if(x0>0) x0-=logical_w; xend=r->fbw; }
@@ -5050,25 +5059,26 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
           blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha,2);
         else
           blit_background_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha);
-      }
+    }
     return;
   }
-  /* apply the texture-page target offset (tx,ty): GM places a background's cropped content at this
-   * offset inside its logical bounding image. gml_draw_background already does
-   * this; the tiled path must too. */
-  double sx=floor(x + t->tx*xs - r->cam_x), sy=floor(y + t->ty*ys - r->cam_y);
+  /* Repeat the complete logical background cell. Texture pages omit transparent margins, but
+   * those margins remain part of both the tiling period and its authored anchor. */
+  double anchor_x=floor(x-r->cam_x),anchor_y=floor(y-r->cam_y);
   double x0,xend,y0,yend;
-  if(htiled){ x0=fmod(sx,bw); if(x0>0) x0-=bw; xend=r->fbw; } else { x0=sx; xend=sx+1; }
-  if(vtiled){ y0=fmod(sy,bh); if(y0>0) y0-=bh; yend=r->fbh; } else { y0=sy; yend=sy+1; }
+  if(htiled){ x0=fmod(anchor_x,logical_w); if(x0>0) x0-=logical_w; xend=r->fbw; }
+  else { x0=anchor_x; xend=anchor_x+1; }
+  if(vtiled){ y0=fmod(anchor_y,logical_h); if(y0>0) y0-=logical_h; yend=r->fbh; }
+  else { y0=anchor_y; yend=anchor_y+1; }
   if(gml_d3_is_active(r)){
-    for(double yy=y0; yy<yend; yy+=bh) for(double xx=x0; xx<xend; xx+=bw)
-      gml_d3_draw_background_2d(r,bg,xx+r->cam_x-t->tx*xs,
-        yy+r->cam_y-t->ty*ys,xs,ys,color,alpha);
+    for(double yy=y0; yy<yend; yy+=logical_h)
+      for(double xx=x0; xx<xend; xx+=logical_w)
+        gml_d3_draw_background_2d(r,bg,xx+r->cam_x,yy+r->cam_y,xs,ys,color,alpha);
     return;
   }
-  for(double yy=y0; yy<yend; yy+=bh)
-      for(double xx=x0; xx<xend; xx+=bw)
-        blit_background_phase(r,t, xx, yy, xs,ys, color, alpha);
+  for(double yy=y0; yy<yend; yy+=logical_h)
+    for(double xx=x0; xx<xend; xx+=logical_w)
+      blit_background_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,color,alpha);
 }
 /* Paint a background layer immediately in the order requested by GML. */
 static void bg_emit(GmlRender *r, int bgdef, double x, double y, double xs, double ys,
@@ -5081,8 +5091,8 @@ void gml_draw_background_tiled(GmlRender *r, int bg, double x, double y, int hti
 /* draw_background[_tiled]_ext: as above + xscale/yscale + blend colour + alpha. */
 void gml_draw_background_ext(GmlRender *r, int bg, double x, double y, double xs, double ys,
                             uint32_t color, double alpha){
-  gml_render_gui_map_point(r,&x,&y);
-  gml_render_gui_map_scale(r,&xs,&ys);
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
   if(bg<0||bg>=r->n_bg) return;
   int ti=r->bg[bg].tpag; if(ti<0||ti>=r->n_tpag) return;
   if(gml_d3_draw_background_2d(r,bg,x,y,xs,ys,color,alpha)) return;
@@ -5133,9 +5143,9 @@ static int cmp_tile_depth(const void *a, const void *b){
 }
 /* blit a single tile: a sub-rect (sx,sy,w,h) of background/tileset `def` at room (x,y). */
 void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x, double y){
-  gml_render_gui_map_point(r,&x,&y);
+  gml_render_draw_map_point(r,&x,&y);
   double draw_xscale=1.0,draw_yscale=1.0;
-  gml_render_gui_map_scale(r,&draw_xscale,&draw_yscale);
+  gml_render_draw_map_scale(r,&draw_xscale,&draw_yscale);
   if(def<0||def>=r->n_bg) return;
   int ti=r->bg[def].tpag; if(ti<0||ti>=r->n_tpag) return;
   if(gml_d3_draw_background_part_2d(r,def,sx,sy,w,h,x,y,draw_xscale,draw_yscale,0xFFFFFF,1)) return;
@@ -5220,8 +5230,8 @@ static void sprite_region_coarse_texel(GmlAtlas *a, int sx, int sy, int sw, int 
 /* draw_sprite_stretched: blit a sprite frame stretched into the screen rect (dx,dy,dw,dh), box-
  * averaging the source per dest pixel (matches the GPU's filtered down-stretch). Screen-space. */
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, double dy, double dw, double dh, uint32_t blend, double alpha){
-  gml_render_gui_map_point(r,&dx,&dy);
-  gml_render_gui_map_scale(r,&dw,&dh);
+  gml_render_draw_map_point(r,&dx,&dy);
+  gml_render_draw_map_scale(r,&dw,&dh);
   if(sprite<0||sprite>=r->n_spr) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
   if(s->w>0 && s->h>0){

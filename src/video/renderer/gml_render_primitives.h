@@ -23,6 +23,15 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
 void gml_render_primitive_line(GmlRender *render,
                                int x1,int y1,int x2,int y2,
                                uint32_t color,int width);
+void gml_render_primitive_line_color(GmlRender *render,
+                                     int x1,int y1,int x2,int y2,
+                                     uint32_t color1,uint32_t color2,
+                                     int width);
+void gml_render_primitive_line_color_subpixel(GmlRender *render,
+                                              double x1,double y1,
+                                              double x2,double y2,
+                                              uint32_t color1,uint32_t color2,
+                                              int width);
 void gml_render_primitive_circle(GmlRender *render,
                                  int center_x,int center_y,int radius_x,int radius_y,
                                  uint32_t color,int outline);

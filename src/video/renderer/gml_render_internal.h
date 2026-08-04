@@ -30,6 +30,10 @@ typedef struct {
   int fast8_draw_pending_alpha_floor_key;
   int fast8_draw_cache_valid, fast8_draw_cache_copy_255, fast8_draw_pending_count;
 } GmlTpag;
+void gml_render_texture_page_cache_clear(GmlTpag *page);
+void gml_render_interpolated_subrect_cache_clear(GmlRender *render);
+void gml_render_apply_removeback_rgba(uint8_t *rgba, int width, int height,
+                                      int removeback);
 typedef struct {
   const uint8_t *src;
   int sw, sh, fbw, fbh, x0, y0, w, h, originx, originy;
@@ -174,6 +178,12 @@ typedef struct GmlRender {
   /* Camera before the world matrix. A translation-only matrix is represented as an
    * equivalent camera delta for portable software draws; the full matrix remains in the D3 path. */
   double    projection_cam_x, projection_cam_y;
+  /* An independently resized application surface changes the physical world raster without
+   * changing room, camera, or instance coordinates. This frame-local transform keeps the
+   * software raster at that physical resolution; it is reset by gml_render_begin and is not
+   * part of canonical renderer state. */
+  int       world_transform_active;
+  double    world_scale_x, world_scale_y;
   /* Draw-GUI can change its logical coordinate space in the middle of an event with
    * display_set_gui_size().  The framebuffer does not change size at that point: subsequent
    * draws are transformed to the same physical GUI target immediately.  Keep this transform in

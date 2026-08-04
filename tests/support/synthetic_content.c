@@ -284,7 +284,8 @@ int anygm_synthetic_background_color_content_create(AnygmSyntheticContent *fixtu
   return 1;
 }
 
-static int synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture,int multiview){
+static int synthetic_framebuffer_content_create(
+    AnygmSyntheticContent *fixture,int multiview,int clear_view_background){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
@@ -352,6 +353,7 @@ static int synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture,i
   rooms[1].speed=60;
   rooms[1].background_color=0xFF000000u;
   rooms[1].draw_background_color=0;
+  rooms[1].clear_view_background=clear_view_background;
   if(multiview){
     for(int room=0;room<2;room++){
       rooms[room].view_enabled=1;
@@ -378,11 +380,19 @@ static int synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture,i
 }
 
 int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_framebuffer_content_create(fixture,0);
+  return synthetic_framebuffer_content_create(fixture,0,0);
 }
 
 int anygm_synthetic_multiview_framebuffer_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_framebuffer_content_create(fixture,1);
+  return synthetic_framebuffer_content_create(fixture,1,0);
+}
+
+int anygm_synthetic_clear_view_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,1);
+}
+
+int anygm_synthetic_multiview_clear_view_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,1,1);
 }
 
 int anygm_synthetic_game_change_content_create(AnygmSyntheticContent *fixture){
@@ -481,6 +491,72 @@ int anygm_synthetic_game_change_content_create(AnygmSyntheticContent *fixture){
   return 1;
 }
 
+int anygm_synthetic_game_restart_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+
+  char startup[192],step[192];
+  snprintf(startup,sizeof startup,"%s/restart-startup.gml",fixture->directory);
+  snprintf(step,sizeof step,"%s/restart-step.gml",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  if(!write_text(startup,"global.fixture_restart_boot = 1;\n") ||
+     !write_text(step,"game_restart();\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+
+  GmlcProject project={0};
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  project.host=&file_services;
+  GmlcObject object={0};
+  GmlcObjectEvent event={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance instance={0};
+  int room_order=0;
+  project.name=(char *)"neutral-game-restart-fixture";
+  project.startup_code_path=startup;
+  project.objects=&object;
+  project.n_objects=project.cap_objects=1;
+  project.rooms=&room;
+  project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order;
+  project.n_room_order=1;
+
+  object.id=object.name=(char *)"obj_restart_fixture";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.visible=0;
+  object.events=&event;
+  object.n_events=object.cap_events=1;
+  event.event_type=3;
+  event.event_number=0;
+  event.source_path=step;
+
+  room.id=room.name=(char *)"room_restart_fixture";
+  room.width=64;
+  room.height=48;
+  room.speed=60;
+  room.draw_background_color=1;
+  room.instances=&instance;
+  room.n_instances=room.cap_instances=1;
+  instance.id=instance.name=(char *)"instance_restart_fixture";
+  instance.object_id=0;
+  instance.instance_id=100000;
+  instance.sx=instance.sy=1.0f;
+  instance.color=0xFFFFFFFFu;
+
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"synthetic game-restart package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  return 1;
+}
+
 void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture){
   if(!fixture || !fixture->directory[0]) return;
   char path[256];
@@ -503,6 +579,10 @@ void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture){
   snprintf(path,sizeof path,"%s/change-step.gml",fixture->directory);
   anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/change-end.gml",fixture->directory);
+  anygm_test_unlink(path);
+  snprintf(path,sizeof path,"%s/restart-startup.gml",fixture->directory);
+  anygm_test_unlink(path);
+  snprintf(path,sizeof path,"%s/restart-step.gml",fixture->directory);
   anygm_test_unlink(path);
   snprintf(path,sizeof path,"%s/secondary/startup.gml",fixture->directory);
   anygm_test_unlink(path);

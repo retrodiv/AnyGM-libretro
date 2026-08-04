@@ -9,12 +9,14 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `2`. It is the format transported by
+The current AnyGM save-state schema is `4`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
 
-Schema `2` starts a new compatibility line and includes the runtime GUI transform. No reader for
-an earlier internal layout exists. The canonical header records magic, schema, header size, binary
+Schema `4` preserves the semantic distinction between ordinary nested arrays and indexed
+two-dimensional arrays in the canonical VM payload. No reader for an earlier internal layout
+exists. The canonical header records
+magic, schema, header size, binary
 encoding, total and section sizes, content identity, compatibility identity,
 stateful configuration identity, and a payload checksum.
 
@@ -24,7 +26,7 @@ reader rejects the input after decoding begins, the engine restores an exact
 snapshot of its prior state before returning an error.
 
 If a future release deliberately breaks state compatibility, increment the
-schema to `3`, then `4`, and so on. Supporting an older schema requires an
+schema to `5`, then `6`, and so on. Supporting an older schema requires an
 explicit compatibility reader. A refactor does not require a bump when the
 canonical bytes and semantics remain unchanged.
 
@@ -48,20 +50,20 @@ bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `2`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `3`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate
 format. `src/runtime/builtins/gml_builtin_state.c` owns INI and data-structure
 storage, physics fixtures and joints, spatial-audio emitters/listener/falloff,
 and language-visible time sources. It reads and writes those resources at the
-four positions already established by the VM schema. The VM state owner passes
+four positions established by the VM schema. The VM state owner passes
 only opaque cursors declared by `gml_vm_state_codec.h`; only those two
 translation units may consume that boundary.
 
 There is no nested builtin header, checksum, schema number, or independent load
 transaction. Moving the four existing resource stages to their storage owner
-therefore preserves schema-2 byte order and does not require a schema bump.
+therefore adds no independent state framing or schema.
 Transient host file handles, binary buffers, asynchronous request queues,
 search cursors, and derived caches are reset rather than serialized. INI
 values, maps/lists/grids, physics resources, spatial-audio state, and time

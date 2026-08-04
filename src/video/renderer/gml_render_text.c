@@ -1225,8 +1225,8 @@ void gml_draw_classic_game_information(GmlRender *r,uint32_t *framebuffer,
 
 void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str,
                                double xs, double ys, double rot, uint32_t blend, double alpha){
-  gml_render_gui_map_point(r,&x,&y);
-  gml_render_gui_map_scale(r,&xs,&ys);
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
   GmlFont *f=active_font(r);
   if(!f||!str) return;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;

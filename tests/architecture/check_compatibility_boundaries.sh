@@ -1123,7 +1123,7 @@ fail_matches "Normalized input service definitions belong only to src/core/engin
   "$input_owner_definitions"
 
 presentation_owner_definitions=$(find src/core -type f -name '*.c' -exec grep -n -H -E \
-  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(ensure_classic_phase|ensure_primary_buffers|ensure_scratch_buffer|log_present_pass|classic_transition_(reset|release|start|apply)|draw_game_cursor|core_opt_(resolution|embedded_shaders|crt_mask|onoff|crt_tristate|fast_alpha_cull)|clamp_camera_to_current_room|aspect_forced_camera|present_view_(get|count)|stale_full_view_port|aspect_hud_rect|compute_present|aspect_view_overlay_(begin|end)|aspect_draw_event_hook|sync_room_fps|cur_room_bg|draw_runtime_backgrounds|aspect_mask_outside_room|setup_display|compose_view_rect|render_multiview_application|content_router_log)[[:space:]]*\(' \
+  '^[[:space:]]*(static[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(ensure_classic_phase|ensure_primary_buffers|ensure_scratch_buffer|log_present_pass|classic_transition_(reset|release|start|apply)|draw_game_cursor|core_opt_(resolution|embedded_shaders|crt_mask|onoff|crt_tristate|fast_alpha_cull)|clamp_camera_to_current_room|aspect_forced_camera|present_view_(get|count)|stale_full_view_port|application_surface_scales_full_view_port|aspect_hud_rect|compute_present|aspect_view_overlay_(begin|end)|aspect_draw_event_hook|sync_room_fps|cur_room_bg|draw_runtime_backgrounds|aspect_mask_outside_room|setup_display|compose_view_rect|render_multiview_application|content_router_log)[[:space:]]*\(' \
   {} + 2>/dev/null | grep -v '^src/core/engine_presentation\.c:' || true)
 fail_matches "Presentation service definitions belong only to src/core/engine_presentation.c:" \
   "$presentation_owner_definitions"

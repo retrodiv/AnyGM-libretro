@@ -85,6 +85,101 @@ static int compile_fixture_has_swap(const GmlcProject *project, const char *text
   return ok && found;
 }
 
+static int compile_fixture_has_string(const GmlcProject *project,
+                                      const char *text,
+                                      const char *expected){
+  char path[]="/tmp/gmlc-bytecode-string-XXXXXX";
+  int descriptor=mkstemp(path);
+  if(descriptor<0) return 0;
+  FILE *file=fdopen(descriptor,"wb");
+  if(!file) return 0;
+  size_t length=strlen(text);
+  int wrote=fwrite(text,1,length,file)==length;
+  fclose(file);
+  if(!wrote){ remove(path); return 0; }
+  GmlcCodeBlob blob;
+  char err[256]={0};
+  memset(&blob,0,sizeof(blob));
+  int ok=gmlc_bytecode_compile_source(project,path,&blob,err,sizeof(err));
+  remove(path);
+  int found=0;
+  for(int index=0;ok && index<blob.n_strings;index++)
+    if(blob.strings[index].value &&
+       !strcmp(blob.strings[index].value,expected)){
+      found=1;
+      break;
+    }
+  if(!found)
+    fprintf(stderr,"long string literal was not preserved: %s\n",err);
+  gmlc_bytecode_free(&blob);
+  return ok && found;
+}
+
+static int compile_fixture_logical_value(const GmlcProject *project,
+                                         const char *expression,
+                                         int expected){
+  char path[]="/tmp/gmlc-bytecode-logical-XXXXXX";
+  int descriptor=mkstemp(path);
+  if(descriptor<0) return 0;
+  FILE *file=fdopen(descriptor,"wb");
+  if(!file) return 0;
+  char source[256];
+  int source_size=snprintf(source,sizeof source,
+                           "show_debug_message(%s);\n",expression);
+  int wrote=source_size>0 && (size_t)source_size<sizeof source &&
+            fwrite(source,1,(size_t)source_size,file)==(size_t)source_size;
+  fclose(file);
+  if(!wrote){ remove(path); return 0; }
+  GmlcCodeBlob blob;
+  char err[256]={0};
+  memset(&blob,0,sizeof blob);
+  int ok=gmlc_bytecode_compile_source(project,path,&blob,err,sizeof err);
+  remove(path);
+
+  int stack[32], stack_size=0, observed=-1;
+  size_t pc=0, steps=0;
+  while(ok && pc+4<=blob.size && steps++<128){
+    uint32_t word=(uint32_t)blob.data[pc] |
+                  ((uint32_t)blob.data[pc+1]<<8) |
+                  ((uint32_t)blob.data[pc+2]<<16) |
+                  ((uint32_t)blob.data[pc+3]<<24);
+    uint8_t op=(uint8_t)(word>>24);
+    if(op==0x84 || (op==OP_PUSH && ((word>>16)&0xFF)==DT_INT16)){
+      if(stack_size>=(int)(sizeof stack/sizeof stack[0])){ ok=0; break; }
+      stack[stack_size++]=(int16_t)(word&0xFFFF);
+      pc+=4;
+    } else if(op==OP_CONV){
+      if(stack_size<1){ ok=0; break; }
+      stack[stack_size-1]=stack[stack_size-1]!=0;
+      pc+=4;
+    } else if(op==OP_B || op==OP_BT || op==OP_BF){
+      int32_t jump=(int32_t)((word&0x7FFFFF)<<9)>>9;
+      int take=op==OP_B;
+      if(op!=OP_B){
+        if(stack_size<1){ ok=0; break; }
+        int condition=stack[--stack_size]!=0;
+        take=op==OP_BT?condition:!condition;
+      }
+      pc=take ? (size_t)((int64_t)pc+(int64_t)jump*4) : pc+4;
+    } else if(op==OP_CALL){
+      if(stack_size<1){ ok=0; break; }
+      observed=stack[stack_size-1]!=0;
+      break;
+    } else {
+      fprintf(stderr,"logical precedence fixture reached opcode 0x%02x at byte %zu\n",
+              op,pc);
+      ok=0;
+      break;
+    }
+  }
+  if(!ok || observed!=expected)
+    fprintf(stderr,
+            "logical precedence fixture '%s' produced %d instead of %d: %s\n",
+            expression,observed,expected,err);
+  gmlc_bytecode_free(&blob);
+  return ok && observed==expected;
+}
+
 static int compile_fixture_lacks_ref(const GmlcProject *project, const char *text,
                                      const char *forbidden){
   char path[]="/tmp/gmlc-bytecode-ref-XXXXXX";
@@ -206,9 +301,21 @@ int main(int argc, char **argv){
     "result=\"x\"+global.name+\"!\";\n",1);
   ok &= compile_fixture(&project,
     "show_message(\"first\")\nshow_message(\"second \"+global.name+\"!\");\n",1);
+  static const char long_literal[]=
+    "neutral_000,neutral_001,neutral_002,neutral_003,neutral_004,"
+    "neutral_005,neutral_006,neutral_007,neutral_008,neutral_009,"
+    "neutral_010,neutral_011,neutral_012,neutral_013,neutral_014,"
+    "neutral_015,neutral_016,neutral_017,neutral_018,neutral_019";
+  char long_source[sizeof(long_literal)+40];
+  snprintf(long_source,sizeof(long_source),
+           "show_debug_message(\"%s\");\n",long_literal);
+  ok &= compile_fixture_has_string(&project,long_source,long_literal);
   ok &= compile_fixture_named_constant(&project,"vk_shift",16);
   ok &= compile_fixture_named_constant(&project,"vk_control",17);
   ok &= compile_fixture_named_constant(&project,"vk_alt",18);
+  ok &= compile_fixture_named_constant(&project,"vk_return",13);
+  ok &= compile_fixture_named_constant(&project,"vk_lshift",160);
+  ok &= compile_fixture_named_constant(&project,"vk_ralt",165);
   ok &= compile_fixture_named_constant(&project,"mb_any",-1);
   ok &= compile_fixture_named_constant(&project,"mb_none",0);
   ok &= compile_fixture_named_constant(&project,"mb_left",1);
@@ -217,6 +324,15 @@ int main(int argc, char **argv){
   ok &= compile_fixture_named_constant(&project,"vk_numpad0",96);
   ok &= compile_fixture_named_constant(&project,"vk_numpad9",105);
   ok &= compile_fixture_named_constant(&project,"vk_f12",123);
+  ok &= compile_fixture_named_constant(&project,"ev_create",0);
+  ok &= compile_fixture_named_constant(&project,"ev_step",3);
+  ok &= compile_fixture_named_constant(&project,"ev_draw",8);
+  ok &= compile_fixture_named_constant(&project,"ev_cleanup",12);
+  ok &= compile_fixture_named_constant(&project,"ev_step_end",2);
+  ok &= compile_fixture_named_constant(&project,"ev_draw_normal",0);
+  ok &= compile_fixture_named_constant(&project,"ev_user0",10);
+  ok &= compile_fixture_named_constant(&project,"ev_user7",17);
+  ok &= compile_fixture_named_constant(&project,"ev_user15",25);
   ok &= compile_fixture_lacks_ref(&project,
     "if (score=0) then { result=1; } else result=2;\n","then");
   ok &= compile_fixture_lacks_ref(&project,
@@ -231,6 +347,8 @@ int main(int argc, char **argv){
   case_scripts[1].name=(char*)"AlternateMotion";
   project.scripts=case_scripts; project.n_scripts=project.cap_scripts=2;
   project.classic_version=800;
+  ok &= compile_fixture_logical_value(&project,"1 or 0 and 0",0);
+  ok &= compile_fixture_logical_value(&project,"1 || 0 && 0",0);
   ok &= compile_fixture_function_ref(&project,"fixturemotion();\n","FixtureMotion","fixturemotion");
   GmlcFunctionAlias aliases[]={
     {(char*)"fixture_alias",(char*)"FixtureMotion",0},
@@ -247,10 +365,18 @@ int main(int argc, char **argv){
   ok &= compile_fixture(&project,
     "for (counter=0; counter<limit counter=counter+1) { total+=counter; }\n",1);
   ok &= compile_fixture(&project,
+    "switch status begin\n"
+    "case \"ready\": result=1; break;\n"
+    "case \"waiting\": result=2; break;\n"
+    "default: result=0;\n"
+    "end;\n",1);
+  ok &= compile_fixture(&project,
     "items[index].x=other_items[index].x; result=items[index].x;\n",1);
   ok &= compile_fixture(&project,
     "base=\"folder\\leaf\"; tail=\"folder\\\"+name;\n",1);
   project.classic_version=0;
+  ok &= compile_fixture_logical_value(&project,"1 or 0 and 0",1);
+  ok &= compile_fixture_logical_value(&project,"1 || 0 && 0",1);
   ok &= compile_fixture_function_ref(&project,"fixturemotion();\n","fixturemotion","FixtureMotion");
   ok &= compile_fixture_function_ref(&project,"fixture_alias();\n","fixture_alias","FixtureMotion");
   project.scripts=NULL; project.n_scripts=project.cap_scripts=0;

@@ -8,6 +8,7 @@
 #include "anygm_host.h"
 #include "anygm_vfs.h"
 
+#include <ctype.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -44,6 +45,233 @@ static void audio_refresh_emitter(GmlVM *vm, GmlAudio *au, int e){
 static void audio_refresh_emitters(GmlVM *vm, GmlAudio *au){
   if(!vm || !au) return;
   for(int e=0;e<GML_MAX_EMITTERS;e++) if(vm->builtins->emitter_live[e]) audio_refresh_emitter(vm,au,e);
+}
+static uint32_t external_audio_type(double value){
+  if(!isfinite(value)) return 0;
+  double wrapped=fmod(trunc(value),4294967296.0);
+  if(wrapped<0.0) wrapped+=4294967296.0;
+  return (uint32_t)wrapped;
+}
+
+enum {
+  GML_EXTERNAL_AUDIO_HANDLE_BASE=0x4A100000,
+  GML_EXTERNAL_AUDIO_INIT=1,
+  GML_EXTERNAL_AUDIO_FREE,
+  GML_EXTERNAL_AUDIO_SET_LISTENER_POSITION,
+  GML_EXTERNAL_AUDIO_SET_LISTENER_DIRECTION,
+  GML_EXTERNAL_AUDIO_SET_GROUP_VOLUME,
+  GML_EXTERNAL_AUDIO_GET_GROUP_VOLUME,
+  GML_EXTERNAL_AUDIO_CREATE_EMITTER,
+  GML_EXTERNAL_AUDIO_DESTROY_EMITTER,
+  GML_EXTERNAL_AUDIO_PLAY,
+  GML_EXTERNAL_AUDIO_PAUSE,
+  GML_EXTERNAL_AUDIO_STOP,
+  GML_EXTERNAL_AUDIO_REWIND,
+  GML_EXTERNAL_AUDIO_IS_PLAYING,
+  GML_EXTERNAL_AUDIO_SET_VOLUME,
+  GML_EXTERNAL_AUDIO_GET_VOLUME,
+  GML_EXTERNAL_AUDIO_FADE_VOLUME,
+  GML_EXTERNAL_AUDIO_SET_TYPE,
+  GML_EXTERNAL_AUDIO_GET_TYPE,
+  GML_EXTERNAL_AUDIO_SET_LOOPING,
+  GML_EXTERNAL_AUDIO_SET_3D_MODE,
+  GML_EXTERNAL_AUDIO_SET_DISTANCE_FACTOR,
+  GML_EXTERNAL_AUDIO_SET_POSITION,
+  GML_EXTERNAL_AUDIO_TRACK_PLAY,
+  GML_EXTERNAL_AUDIO_OPERATION_LIMIT
+};
+typedef struct {
+  const char *symbol;
+  int operation;
+} GmlExternalAudioSymbol;
+static const GmlExternalAudioSymbol external_audio_symbols[]={
+  {"sga_Init",GML_EXTERNAL_AUDIO_INIT},
+  {"sga_Free",GML_EXTERNAL_AUDIO_FREE},
+  {"sga_SetListenerPosition",GML_EXTERNAL_AUDIO_SET_LISTENER_POSITION},
+  {"sga_SetListenerDirection",GML_EXTERNAL_AUDIO_SET_LISTENER_DIRECTION},
+  {"sga_SetGroupVolume",GML_EXTERNAL_AUDIO_SET_GROUP_VOLUME},
+  {"sga_GetGroupVolume",GML_EXTERNAL_AUDIO_GET_GROUP_VOLUME},
+  {"sga_CreateEmitter",GML_EXTERNAL_AUDIO_CREATE_EMITTER},
+  {"sga_DestroyEmitter",GML_EXTERNAL_AUDIO_DESTROY_EMITTER},
+  {"sga_Play",GML_EXTERNAL_AUDIO_PLAY},
+  {"sga_Pause",GML_EXTERNAL_AUDIO_PAUSE},
+  {"sga_Stop",GML_EXTERNAL_AUDIO_STOP},
+  {"sga_Rewind",GML_EXTERNAL_AUDIO_REWIND},
+  {"sga_IsPlaying",GML_EXTERNAL_AUDIO_IS_PLAYING},
+  {"sga_SetVolume",GML_EXTERNAL_AUDIO_SET_VOLUME},
+  {"sga_GetVolume",GML_EXTERNAL_AUDIO_GET_VOLUME},
+  {"sga_FadeVolume",GML_EXTERNAL_AUDIO_FADE_VOLUME},
+  {"sga_SetType",GML_EXTERNAL_AUDIO_SET_TYPE},
+  {"sga_GetType",GML_EXTERNAL_AUDIO_GET_TYPE},
+  {"sga_SetLooping",GML_EXTERNAL_AUDIO_SET_LOOPING},
+  {"sga_Set3DMode",GML_EXTERNAL_AUDIO_SET_3D_MODE},
+  {"sga_SetDistFactor",GML_EXTERNAL_AUDIO_SET_DISTANCE_FACTOR},
+  {"sga_SetPosition",GML_EXTERNAL_AUDIO_SET_POSITION},
+  {"sga_TrackPlay",GML_EXTERNAL_AUDIO_TRACK_PLAY},
+};
+static int external_ascii_equal(const char *left,const char *right){
+  if(!left || !right) return 0;
+  while(*left && *right){
+    if(tolower((unsigned char)*left)!=tolower((unsigned char)*right)) return 0;
+    left++;
+    right++;
+  }
+  return *left==0 && *right==0;
+}
+int builtin_external_audio_define(const char *library,const char *symbol){
+  if(!library || !symbol) return 0;
+  const char *base=library;
+  for(const char *cursor=library;*cursor;cursor++)
+    if(*cursor=='/' || *cursor=='\\') base=cursor+1;
+  if(!external_ascii_equal(base,"SGAudio.dll")) return 0;
+  for(size_t index=0;
+      index<sizeof(external_audio_symbols)/sizeof(external_audio_symbols[0]);
+      index++)
+    if(!strcmp(symbol,external_audio_symbols[index].symbol))
+      return GML_EXTERNAL_AUDIO_HANDLE_BASE+external_audio_symbols[index].operation;
+  return 0;
+}
+static int external_audio_load(GmlVM *vm,const char *relative){
+  if(!vm || !relative || !*relative) return -1;
+  char *path=resolve_read_path(vm,relative);
+  uint8_t *encoded=NULL;
+  size_t size=0;
+  int handle=-1;
+  if(path && anygm_vfs_read_all(vm->host,path,&encoded,&size,64u*1024u*1024u) &&
+     size>0 && size<=INT_MAX)
+    handle=gml_audio_add_encoded((GmlAudio*)vm->audio,encoded,(int)size);
+  if(builtin_setting(vm,"GML_LOG_AUDIO"))
+    anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+                    "[external-audio] load %s handle=%d\n",
+                    path?path:"",handle);
+  free(encoded);
+  free(path);
+  return handle;
+}
+GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
+                                   GmlVal *args,int count,int *handled){
+  if(handled) *handled=0;
+  int operation=handle-GML_EXTERNAL_AUDIO_HANDLE_BASE;
+  if(operation<=0 || operation>=GML_EXTERNAL_AUDIO_OPERATION_LIMIT)
+    return vreal(0);
+  if(handled) *handled=1;
+  GmlAudio *audio=vm?(GmlAudio*)vm->audio:NULL;
+  if(operation==GML_EXTERNAL_AUDIO_INIT) return vreal(1);
+  if(operation==GML_EXTERNAL_AUDIO_FREE){
+    gml_audio_caster_free_all(audio);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SET_LISTENER_POSITION){
+    if(vm && vm->builtins){
+      vm->builtins->listener_x=N(args,count,0);
+      vm->builtins->listener_y=N(args,count,1);
+      vm->builtins->listener_z=N(args,count,2);
+      audio_refresh_emitters(vm,audio);
+    }
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SET_LISTENER_DIRECTION){
+    if(vm && vm->builtins){
+      vm->builtins->listener_forward_x=N(args,count,0);
+      vm->builtins->listener_forward_y=N(args,count,1);
+      vm->builtins->listener_forward_z=N(args,count,2);
+      vm->builtins->listener_up_x=N(args,count,3);
+      vm->builtins->listener_up_y=N(args,count,4);
+      vm->builtins->listener_up_z=N(args,count,5);
+      audio_refresh_emitters(vm,audio);
+    }
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SET_GROUP_VOLUME){
+    gml_audio_group_gain(audio,(int)N(args,count,0),N(args,count,1),0);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_GET_GROUP_VOLUME)
+    return vreal(gml_audio_group_get_gain(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_CREATE_EMITTER)
+    return vreal(external_audio_load(vm,S(vm,args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_DESTROY_EMITTER){
+    gml_audio_caster_free(audio,(int)N(args,count,0));
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_PLAY){
+    int sound=(int)N(args,count,0);
+    int loop=gml_audio_sound_get_default_loop(audio,sound);
+    int voice=gml_audio_play(audio,sound,loop);
+    if(vm && builtin_setting(vm,"GML_LOG_AUDIO"))
+      anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+                      "[external-audio] play sound=%d loop=%d voice=%d\n",
+                      sound,loop,voice);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_PAUSE){
+    gml_audio_pause_sound(audio,(int)N(args,count,0),1);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_STOP){
+    gml_audio_stop(audio,(int)N(args,count,0));
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_REWIND){
+    gml_audio_sound_set_track_position(audio,(int)N(args,count,0),0.0);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_IS_PLAYING)
+    return vreal(gml_audio_is_playing(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_SET_VOLUME){
+    int sound=(int)N(args,count,0);
+    double gain=N(args,count,1);
+    gml_audio_sound_gain(audio,sound,gain);
+    if(vm && builtin_setting(vm,"GML_LOG_AUDIO"))
+      anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+                      "[external-audio] gain sound=%d value=%.6f\n",
+                      sound,gain);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_GET_VOLUME)
+    return vreal(gml_audio_sound_get_gain(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_FADE_VOLUME){
+    int sound=(int)N(args,count,0);
+    double gain=N(args,count,1);
+    double seconds=N(args,count,2);
+    double milliseconds=seconds>0.0?seconds*1000.0:0.0;
+    int duration=milliseconds>(double)INT_MAX?INT_MAX:(int)milliseconds;
+    gml_audio_sound_gain_fade(audio,sound,gain,duration);
+    if(vm && builtin_setting(vm,"GML_LOG_AUDIO"))
+      anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+                      "[external-audio] fade sound=%d target=%.6f ms=%d\n",
+                      sound,gain,duration);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SET_TYPE){
+    gml_audio_sound_set_external_type(
+        audio,(int)N(args,count,0),external_audio_type(N(args,count,1)));
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_GET_TYPE)
+    return vreal((double)gml_audio_sound_get_external_type(
+        audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_SET_LOOPING){
+    gml_audio_sound_set_default_loop(
+        audio,(int)N(args,count,0),N(args,count,1)!=0.0);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_TRACK_PLAY){
+    int prior=(int)N(args,count,0);
+    if(prior>=0) gml_audio_caster_free(audio,prior);
+    int sound=external_audio_load(vm,S(vm,args,count,1));
+    if(sound>=0){
+      gml_audio_sound_set_default_loop(audio,sound,N(args,count,2)!=0.0);
+      gml_audio_sound_set_external_type(
+          audio,sound,external_audio_type(N(args,count,3)));
+      gml_audio_play(audio,sound,gml_audio_sound_get_default_loop(audio,sound));
+    }
+    return vreal(sound);
+  }
+  /* The software mixer is non-spatial for this legacy extension. Its 2D/3D mode, distance
+   * factor, and position controls remain deterministic no-ops until the shared emitter model
+   * gains a sound-index binding. */
+  return vreal(0);
 }
 
 GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){

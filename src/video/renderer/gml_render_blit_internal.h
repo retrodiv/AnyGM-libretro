@@ -67,6 +67,36 @@ static inline int row_all_opaque32(const uint32_t *sp, int run){
   return 1;
 }
 
+static inline int row_all_transparent32(const uint32_t *sp, int run){
+  if(run<=0) return 1;
+#if defined(__SSE2__)
+  __m128i mask=_mm_set1_epi32((int)0xFF000000u);
+  __m128i zero=_mm_setzero_si128();
+  while(run>=4){
+    __m128i v=_mm_loadu_si128((const __m128i*)sp);
+    __m128i a=_mm_and_si128(v,mask);
+    __m128i c=_mm_cmpeq_epi32(a,zero);
+    if(_mm_movemask_epi8(c)!=0xFFFF) return 0;
+    sp+=4;
+    run-=4;
+  }
+#elif defined(__aarch64__) && (defined(__ARM_NEON) || defined(__ARM_NEON__))
+  uint32x4_t mask=vdupq_n_u32(0xFF000000u);
+  uint32x4_t zero=vdupq_n_u32(0u);
+  while(run>=4){
+    uint32x4_t v=vld1q_u32(sp);
+    uint32x4_t c=vceqq_u32(vandq_u32(v,mask),zero);
+    uint64x2_t q=vreinterpretq_u64_u32(c);
+    if(vgetq_lane_u64(q,0)!=(uint64_t)~0ull ||
+       vgetq_lane_u64(q,1)!=(uint64_t)~0ull) return 0;
+    sp+=4;
+    run-=4;
+  }
+#endif
+  for(int k=0;k<run;k++) if(sp[k]>>24) return 0;
+  return 1;
+}
+
 static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run, uint32_t af){
   if(run<=0) return;
   if(af>=256u){ memcpy(dp,sp,(size_t)run*sizeof(uint32_t)); return; }

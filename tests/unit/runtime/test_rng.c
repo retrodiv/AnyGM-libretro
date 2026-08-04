@@ -67,15 +67,29 @@ int main(void){
   if(!check_classic_comparisons()) return 1;
   {
     static const uint64_t expected[]={
-      16,5,13,17,13,0,10,15,15,9,18,14,10,19,16,12
+      6,18,14,8,13,19,8,20,2,0,1,20,2,11,14,13
     };
     static const uint64_t expected_selection[]={
-      0,0,0,3,3,1,1,1,0,0,0,0,0,0,0,3
+      2,0,1,3,2,3,0,0,1,2,2,0,2,3,2,0
+    };
+    static const uint32_t expected_seeded_words[]={
+      0x7a119ff8u,0x48656fcau,0x0014be77u,0xca6095d1u,
+      0x2c6060eeu,0x106c01eau,0xafa84b98u,0x5d7c6e4au
     };
     GmlWin studio;
     memset(&studio,0,sizeof studio);
     studio.bytecode=17;
     vm.win=&studio;
+    gml_rng_seed(&vm,777);
+    for(size_t i=0;i<sizeof expected_seeded_words/sizeof expected_seeded_words[0];i++){
+      double actual=gml_rng_value(&vm);
+      double expected_value=(double)expected_seeded_words[i]/4294967296.0;
+      if(actual!=expected_value){
+        fprintf(stderr,"studio seeded RNG mismatch at %zu: got=%.17g expected=%.17g\n",
+                i,actual,expected_value);
+        return 1;
+      }
+    }
     gml_rng_seed(&vm,12345);
     for(size_t i=0;i<sizeof expected/sizeof expected[0];i++){
       uint64_t actual=gml_rng_integer(&vm,20);
@@ -86,14 +100,14 @@ int main(void){
       }
     }
     gml_rng_seed(&vm,12345);
-    if(gml_rng_integer(&vm,16777215u)!=0x2e1bc8u ||
-       gml_rng_integer(&vm,16777215u)!=0x10b680u){
+    if(gml_rng_integer(&vm,16777215u)!=0x45f496u ||
+       gml_rng_integer(&vm,16777215u)!=0x082b01u){
       fprintf(stderr,"studio wide integer RNG composition mismatch\n");
       return 1;
     }
     gml_rng_seed(&vm,12345);
     if(gml_rng_integer(&vm,0)!=0 ||
-       gml_rng_value(&vm)!=(double)0x3610b680u/4294967296.0){
+       gml_rng_value(&vm)!=(double)0x82082b01u/4294967296.0){
       fprintf(stderr,"studio zero-bound integer RNG consumption mismatch\n");
       return 1;
     }

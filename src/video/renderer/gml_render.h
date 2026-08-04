@@ -280,8 +280,11 @@ void gml_render_target_coverage_update(GmlRender *r,
                                        unsigned fields);
 void gml_render_application_surface_bind(GmlRender *r,uint32_t *pixels,
                                          int width,int height,int opaque);
+int gml_render_application_surface_ensure_owned(GmlRender *r,int width,int height);
 int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view);
+int gml_render_application_surface_owned_view(
+  GmlRender *r,GmlRenderApplicationWriteView *view);
 int gml_render_application_surface_select_owned(GmlRender *r,int opaque);
 int gml_render_surface_mirror_pixels(GmlRender *r,int destination,
                                      uint32_t *pixels,int width,int height,
@@ -313,12 +316,15 @@ void gml_render_prefetch_bg(GmlRender *r, int bg);
 void gml_render_warm_sprite(GmlRender *r, int sprite);
 void gml_render_warm_bg(GmlRender *r, int bg);
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double camx, double camy);
+void gml_render_world_set_logical_extent(GmlRender *r,int width,int height);
 void gml_render_gui_begin(GmlRender *r, int logical_w, int logical_h);
 void gml_render_gui_set_size(GmlRender *r, int logical_w, int logical_h);
 void gml_render_gui_set_maximise(GmlRender *r, int active, double xscale, double yscale,
                                  double xoffset, double yoffset,
                                  int window_w, int window_h);
 void gml_render_gui_end(GmlRender *r);
+void gml_render_draw_map_point(const GmlRender *r,double *x,double *y);
+void gml_render_draw_map_scale(const GmlRender *r,double *xscale,double *yscale);
 int gml_render_gui_transform_active(const GmlRender *r);
 void gml_render_gui_map_point(const GmlRender *r, double *x, double *y);
 void gml_render_gui_map_scale(const GmlRender *r, double *xscale, double *yscale);
@@ -436,6 +442,10 @@ int  gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w,
                                     int removeback, int smooth, int xorig, int yorig);
 int  gml_sprite_replace_from_file(GmlRender *r, int sprite, const char *path, int imgnumb,
                                   int removeback, int smooth, int xorig, int yorig);
+int  gml_background_replace_from_file(GmlRender *r, int background, const char *path,
+                                      int removeback, int smooth);
+int  gml_background_replace_from_rgba(GmlRender *r, int background,
+                                      uint8_t *rgba, int width, int height);
 int  gml_sprite_replace_from_rgba(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int xorig, int yorig);
 int  gml_sprite_append_from_rgba(GmlRender *r, uint8_t *rgba, int w, int h, int xorig, int yorig, const char *name);
 int  gml_sprite_replace_from_rgba_frames(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig);

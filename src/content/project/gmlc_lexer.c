@@ -14,11 +14,12 @@ char *dup_range(const char *s, size_t n){
   return out;
 }
 
-/* GM6-GM8 strings treat a backslash as an ordinary character.  The shared
- * lexer also accepts newer escaped strings, so prepare classic source by
- * quoting backslashes inside string literals.  Keeping this at the compiler
- * boundary lets the project importer retain the source exactly as authored
- * while all token and delimiter scanners see one consistent representation. */
+/* GM6-GM8 strings treat a backslash as an ordinary character and accept
+ * `begin`/`end` as block delimiters.  The shared compiler uses escaped strings
+ * and brace-delimited blocks, so prepare those classic forms at its boundary.
+ * Keeping this transformation here lets the project importer retain the source
+ * exactly as authored while every token and delimiter scanner sees one
+ * consistent representation. */
 static char *compiler_source_text(const GmlcProject *project, const char *source){
   if(!source) return NULL;
   if(!project || project->classic_version<=0) return gmlc_strdup(source);
@@ -32,6 +33,21 @@ static char *compiler_source_text(const GmlcProject *project, const char *source
   for(size_t read=0;read<length;read++){
     char ch=source[read];
     if(state==SOURCE_CODE){
+      const char *block_word=NULL;
+      size_t block_length=0;
+      if(word_match_at(source,read,"begin")){
+        block_word="begin";
+        block_length=5;
+      } else if(word_match_at(source,read,"end")){
+        block_word="end";
+        block_length=3;
+      }
+      if(block_word){
+        out[write++]=block_word[0]=='b'?'{':'}';
+        for(size_t index=1;index<block_length;index++) out[write++]=' ';
+        read+=block_length-1;
+        continue;
+      }
       if(ch=='/' && read+1<length && source[read+1]=='/'){
         out[write++]=ch;
         out[write++]=source[++read];
@@ -156,6 +172,31 @@ void lx_next(Lexer *l){
   }
   l->tok.kind=TOK_SYM; l->tok.text[0]=*s; l->tok.text[1]=0; l->pos++;
   l->tok.end=l->pos;
+}
+
+char *lx_string_value(const Lexer *l){
+  if(!l || !l->src || l->tok.kind!=TOK_STR || l->tok.end<l->tok.start) return NULL;
+  size_t position=l->tok.start;
+  int verbatim=l->src[position]=='@' && l->src[position+1]=='"';
+  char quote=verbatim?'"':l->src[position];
+  position+=verbatim?2:1;
+  size_t capacity=l->tok.end-position+1;
+  char *value=(char*)malloc(capacity);
+  if(!value) return NULL;
+  size_t length=0;
+  while(position<l->tok.end && l->src[position] &&
+        l->src[position]!=quote){
+    char ch=l->src[position++];
+    if(!verbatim && ch=='\\' && position<l->tok.end && l->src[position]){
+      char escaped=l->src[position++];
+      if(escaped=='n') ch='\n';
+      else if(escaped=='t') ch='\t';
+      else ch=escaped;
+    }
+    value[length++]=ch;
+  }
+  value[length]=0;
+  return value;
 }
 
 int word_match_at(const char *src, size_t pos, const char *w){

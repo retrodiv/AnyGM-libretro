@@ -210,6 +210,172 @@ static int opaque_integer_scale_case(void){
   return 0;
 }
 
+static int point_downscale_case(void){
+  enum { SOURCE_WIDTH=4,SOURCE_HEIGHT=4,TARGET_WIDTH=2,TARGET_HEIGHT=2 };
+  GmlRender render;
+  uint32_t target[TARGET_WIDTH*TARGET_HEIGHT];
+  memset(&render,0,sizeof render);
+  render.next_surface_id=1;
+  render.alphablend=1;
+  render.alpha=1.0;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+  int source=gml_surface_create(&render,SOURCE_WIDTH,SOURCE_HEIGHT);
+  REQUIRE(source==1,"point downscale surface id");
+  uint32_t *source_pixels=surface_pixels(&render,source,NULL,NULL);
+  REQUIRE(source_pixels!=NULL,"point downscale source pixels");
+  for(int y=0;y<SOURCE_HEIGHT;y++) for(int x=0;x<SOURCE_WIDTH;x++){
+    uint32_t value=(uint32_t)(16+y*40+x*8);
+    source_pixels[(size_t)y*SOURCE_WIDTH+x]=
+      0xFF000000u|(value<<16)|(value<<8)|value;
+  }
+  render.surface[0].opaque_known=1;
+  render.surface[0].all_opaque=1;
+  render.surface[0].all_transparent=0;
+
+  memset(target,0,sizeof target);
+  gml_render_begin(&render,target,TARGET_WIDTH,TARGET_HEIGHT,0.0,0.0);
+  gml_draw_surface_stretched(&render,source,0.0,0.0,
+                             TARGET_WIDTH,TARGET_HEIGHT,0xFFFFFFu,1.0);
+  static const int point_source[4][2]={{0,0},{2,0},{0,2},{2,2}};
+  for(int index=0;index<4;index++){
+    int x=point_source[index][0],y=point_source[index][1];
+    uint32_t expected=source_pixels[(size_t)y*SOURCE_WIDTH+x];
+    if(target[index]!=expected){
+      fprintf(stderr,"renderer point downscale mismatch at %d: %08x != %08x\n",
+              index,target[index],expected);
+      gml_surface_free(&render,source);
+      return 1;
+    }
+  }
+
+  memset(target,0,sizeof target);
+  render.interp=1;
+  gml_render_begin(&render,target,TARGET_WIDTH,TARGET_HEIGHT,0.0,0.0);
+  gml_draw_surface_stretched(&render,source,0.0,0.0,
+                             TARGET_WIDTH,TARGET_HEIGHT,0xFFFFFFu,1.0);
+  static const uint32_t filtered[4]={
+    0xFF282828u,0xFF383838u,0xFF787878u,0xFF888888u
+  };
+  REQUIRE(!memcmp(target,filtered,sizeof filtered),"filtered downscale average");
+  gml_surface_free(&render,source);
+  return 0;
+}
+
+static int opaque_near_identity_reduction_case(void){
+  enum { SOURCE_WIDTH=5,SOURCE_HEIGHT=4,TARGET_WIDTH=4,TARGET_HEIGHT=3 };
+  GmlRender render;
+  uint32_t target[TARGET_WIDTH*TARGET_HEIGHT];
+  memset(&render,0,sizeof render);
+  render.next_surface_id=1;
+  render.alphablend=1;
+  render.alpha=1.0;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+  int source=gml_surface_create(&render,SOURCE_WIDTH,SOURCE_HEIGHT);
+  REQUIRE(source==1,"near-identity reduction surface id");
+  uint32_t *source_pixels=surface_pixels(&render,source,NULL,NULL);
+  REQUIRE(source_pixels!=NULL,"near-identity reduction source pixels");
+  for(int y=0;y<SOURCE_HEIGHT;y++) for(int x=0;x<SOURCE_WIDTH;x++){
+    uint32_t value=(uint32_t)(13+y*47+x*9);
+    source_pixels[(size_t)y*SOURCE_WIDTH+x]=
+      0xFF000000u|(value<<16)|(value<<8)|value;
+  }
+  render.surface[0].opaque_known=1;
+  render.surface[0].all_opaque=1;
+  render.surface[0].all_transparent=0;
+
+  for(int pass=0;pass<3;pass++){
+    int known=pass!=0;
+    render.surface[0].opaque_known=known;
+    render.surface[0].all_opaque=known;
+    memset(target,0x4C,sizeof target);
+    gml_render_begin(&render,target,TARGET_WIDTH,TARGET_HEIGHT,0.0,0.0);
+    render.alpha_test_enable=pass==2;
+    render.alpha_test_ref=254;
+    gml_draw_surface_stretched(&render,source,0.0,0.0,
+                               TARGET_WIDTH,TARGET_HEIGHT,0xFFFFFFu,1.0);
+    for(int y=0;y<TARGET_HEIGHT;y++) for(int x=0;x<TARGET_WIDTH;x++){
+      int source_x=(int)(((int64_t)x*SOURCE_WIDTH)/TARGET_WIDTH);
+      int source_y=(int)(((int64_t)y*SOURCE_HEIGHT)/TARGET_HEIGHT);
+      uint32_t expected=source_pixels[(size_t)source_y*SOURCE_WIDTH+source_x];
+      if(target[(size_t)y*TARGET_WIDTH+x]!=expected){
+        fprintf(stderr,"renderer near-identity reduction mismatch at %d,%d: %08x != %08x\n",
+                x,y,target[(size_t)y*TARGET_WIDTH+x],expected);
+        gml_surface_free(&render,source);
+        return 1;
+      }
+    }
+    REQUIRE(render.fb_opaque_known && render.fb_all_opaque,
+            "near-identity reduction opaque coverage");
+  }
+  gml_surface_free(&render,source);
+  return 0;
+}
+
+static int zero_reference_alpha_test_case(void){
+  enum { WIDTH=4,HEIGHT=3 };
+  GmlRender render;
+  uint32_t baseline[WIDTH*HEIGHT],zero_test[WIDTH*HEIGHT],threshold_test[WIDTH*HEIGHT];
+  memset(&render,0,sizeof render);
+  render.next_surface_id=1;
+  render.alphablend=1;
+  render.alpha=1.0;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+  int source=gml_surface_create(&render,WIDTH,HEIGHT);
+  REQUIRE(source==1,"zero-reference alpha-test surface id");
+  uint32_t *source_pixels=surface_pixels(&render,source,NULL,NULL);
+  REQUIRE(source_pixels!=NULL,"zero-reference alpha-test source pixels");
+  for(int x=0;x<WIDTH;x++){
+    source_pixels[x]=0x00102030u+(uint32_t)x;
+    source_pixels[WIDTH+x]=0x80406080u+(uint32_t)x;
+    source_pixels[WIDTH*2+x]=0xFFA0C0E0u+(uint32_t)x;
+  }
+  render.surface[0].opaque_known=0;
+  render.surface[0].all_opaque=0;
+  render.surface[0].all_transparent=0;
+
+  for(size_t index=0;index<WIDTH*HEIGHT;index++)
+    baseline[index]=zero_test[index]=threshold_test[index]=0xFF182838u;
+  gml_render_begin(&render,baseline,WIDTH,HEIGHT,0.0,0.0);
+  render.alpha_test_enable=0;
+  gml_draw_surface_stretched(&render,source,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  gml_render_begin(&render,zero_test,WIDTH,HEIGHT,0.0,0.0);
+  render.alpha_test_enable=1;
+  render.alpha_test_ref=0;
+  gml_draw_surface_stretched(&render,source,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  REQUIRE(!memcmp(baseline,zero_test,sizeof baseline),
+          "zero-reference alpha-test equivalence");
+
+  gml_render_begin(&render,threshold_test,WIDTH,HEIGHT,0.0,0.0);
+  render.alpha_test_enable=1;
+  render.alpha_test_ref=128;
+  gml_draw_surface_stretched(&render,source,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  for(int x=0;x<WIDTH;x++){
+    REQUIRE(threshold_test[x]==0xFF182838u,
+            "transparent row remains below alpha threshold");
+    REQUIRE(threshold_test[WIDTH+x]==0xFF182838u,
+            "threshold row is discarded");
+    REQUIRE(threshold_test[WIDTH*2+x]==source_pixels[WIDTH*2+x],
+            "opaque row survives alpha threshold");
+  }
+  gml_surface_free(&render,source);
+  return 0;
+}
+
 static int max_preset_surface_case(void){
   GmlRender render;
   uint32_t target=0xFF204080u;
@@ -301,6 +467,81 @@ static int subtract_surface_coverage_case(void){
   return 0;
 }
 
+static int world_raster_scale_case(void){
+  enum { TARGET_WIDTH=12,TARGET_HEIGHT=8 };
+  GmlRender render;
+  uint32_t target[TARGET_WIDTH*TARGET_HEIGHT];
+  memset(&render,0,sizeof render);
+  memset(target,0,sizeof target);
+  render.next_surface_id=1;
+  render.alphablend=1;
+  render.alpha=1.0;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+
+  int source=gml_surface_create(&render,1,1);
+  int offscreen=gml_surface_create(&render,6,4);
+  REQUIRE(source==1 && offscreen==2,"world raster surface ids");
+  uint32_t *source_pixel=surface_pixels(&render,source,NULL,NULL);
+  REQUIRE(source_pixel!=NULL,"world raster source pixel");
+  *source_pixel=0xFF30A070u;
+  render.surface[0].opaque_known=1;
+  render.surface[0].all_opaque=1;
+  render.surface[0].all_transparent=0;
+
+  gml_render_begin(&render,target,TARGET_WIDTH,TARGET_HEIGHT,1.5,0.5);
+  gml_render_world_set_logical_extent(&render,6,4);
+  GmlRenderTargetMetrics metrics={0};
+  REQUIRE(gml_render_target_metrics(&render,&metrics) &&
+          metrics.width==TARGET_WIDTH && metrics.height==TARGET_HEIGHT &&
+          metrics.camera_x==3.0 && metrics.camera_y==1.0,
+          "world raster physical target metrics");
+  double point_x=2.0,point_y=1.0,scale_x=1.5,scale_y=0.5;
+  gml_render_draw_map_point(&render,&point_x,&point_y);
+  gml_render_draw_map_scale(&render,&scale_x,&scale_y);
+  REQUIRE(point_x==4.0 && point_y==2.0 && scale_x==3.0 && scale_y==1.0,
+          "world raster coordinate transform");
+
+  gml_draw_surface_stretched(&render,source,2.0,1.0,2.0,1.0,0xFFFFFFu,1.0);
+  for(int y=0;y<TARGET_HEIGHT;y++) for(int x=0;x<TARGET_WIDTH;x++){
+    int covered=x>=1 && x<5 && y>=1 && y<3;
+    uint32_t expected=covered?0xFF30A070u:0;
+    if(target[(size_t)y*TARGET_WIDTH+x]!=expected){
+      fprintf(stderr,"renderer world raster mismatch at %d,%d: %08x != %08x\n",
+              x,y,target[(size_t)y*TARGET_WIDTH+x],expected);
+      gml_surface_free(&render,source);
+      gml_surface_free(&render,offscreen);
+      return 1;
+    }
+  }
+
+  REQUIRE(gml_surface_set_target(&render,offscreen),"world raster offscreen target");
+  gml_draw_surface_stretched(&render,source,1.0,1.0,2.0,1.0,0xFFFFFFu,1.0);
+  gml_surface_reset_target(&render);
+  int offscreen_width=0,offscreen_height=0;
+  const uint32_t *offscreen_pixels=
+    gml_surface_pixels_read(&render,offscreen,&offscreen_width,&offscreen_height);
+  REQUIRE(offscreen_pixels && offscreen_width==6 && offscreen_height==4,
+          "world raster offscreen pixels");
+  for(int y=0;y<offscreen_height;y++) for(int x=0;x<offscreen_width;x++){
+    int covered=x>=1 && x<3 && y==1;
+    uint32_t expected=covered?0xFF30A070u:0;
+    if(offscreen_pixels[(size_t)y*offscreen_width+x]!=expected){
+      fprintf(stderr,"renderer world raster offscreen mismatch at %d,%d\n",x,y);
+      gml_surface_free(&render,source);
+      gml_surface_free(&render,offscreen);
+      return 1;
+    }
+  }
+  gml_surface_free(&render,source);
+  gml_surface_free(&render,offscreen);
+  return 0;
+}
+
 int main(void){
   GmlRender render;
   uint32_t base[8*6];
@@ -362,8 +603,14 @@ int main(void){
   REQUIRE(composition_cases()==0,"composition cases");
   REQUIRE(screen_raster_part_case()==0,"screen raster part case");
   REQUIRE(opaque_integer_scale_case()==0,"opaque integer scale case");
+  REQUIRE(point_downscale_case()==0,"point downscale case");
+  REQUIRE(opaque_near_identity_reduction_case()==0,
+          "opaque near-identity reduction case");
+  REQUIRE(zero_reference_alpha_test_case()==0,
+          "zero-reference alpha-test case");
   REQUIRE(max_preset_surface_case()==0,"maximum preset surface case");
   REQUIRE(subtract_surface_coverage_case()==0,"subtract surface coverage case");
+  REQUIRE(world_raster_scale_case()==0,"world raster scale case");
   puts("renderer surfaces: ok");
   return 0;
 }

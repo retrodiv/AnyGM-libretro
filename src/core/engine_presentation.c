@@ -387,6 +387,37 @@ int stale_full_view_port(AnygmEngine *engine,int view_count, int px, int py, int
   return pw >= app_w && ph >= app_h && (pw > app_w || ph > app_h);
 }
 
+/* A view port is declared in presentation coordinates. When an explicit GUI canvas covers that
+ * complete port but application_surface uses a same-aspect render raster, scale the port with the
+ * application surface. Keeping it unscaled would draw the view into only one corner before the
+ * complete application surface is presented to the window. */
+int application_surface_scales_full_view_port(
+  AnygmEngine *engine,int view_count,int px,int py,int pw,int ph,
+  int app_w,int app_h) {
+  if(!engine || !anygm_policy_has_modern_layer_semantics(&engine->win) ||
+     view_count!=1 || px!=0 || py!=0 || pw<=0 || ph<=0 || app_w<=0 || app_h<=0 ||
+     engine->vm.gui_w<=0 || engine->vm.gui_h<=0 ||
+     abs(pw-engine->vm.gui_w)>1 || abs(ph-engine->vm.gui_h)>1 ||
+     (pw==app_w && ph==app_h))
+    return 0;
+  return fabs((double)app_w/(double)app_h-
+              (double)engine->vm.gui_w/(double)engine->vm.gui_h)<0.0005;
+}
+
+/* First-generation presentation initializes application_surface at the exported display raster,
+ * while a sole view can retain a smaller logical camera and scale into that complete surface. */
+int application_surface_matches_first_generation_view_port(
+  AnygmEngine *engine,int view_count,int px,int py,int pw,int ph,
+  int app_w,int app_h) {
+  if(!engine || !anygm_policy_uses_first_generation_studio(&engine->win) ||
+     view_count!=1 || px!=0 || py!=0 || pw<=0 || ph<=0 ||
+     app_w<=0 || app_h<=0 || pw!=app_w || ph!=app_h)
+    return 0;
+  if(engine->win.disp_w && abs(app_w-(int)engine->win.disp_w)>1) return 0;
+  if(engine->win.disp_h && abs(app_h-(int)engine->win.disp_h)>1) return 0;
+  return 1;
+}
+
 /* native render size = the current room's view region (view_wview). Games render the world 1:1 into
  * that and scale it to the window through the declared view port.
  * Multiple simultaneous views instead form one application-surface canvas from their port union;
@@ -938,6 +969,10 @@ uint32_t cur_room_bg(AnygmEngine *engine) {
   if (anygm_policy_uses_classic_runtime(&engine->win)) return gm_to_xrgb(engine->win.classic_outside_color);
   return gm_to_xrgb(gml_vm_room_background_argb(&engine->vm));
 }
+int room_clears_application_surface(const GmlRoom *room) {
+  return room &&
+    (room->draw_bg || (room->flags&GML_ROOM_FLAG_CLEAR_VIEW_BACKGROUND));
+}
 void draw_runtime_backgrounds(AnygmEngine *engine,int want_fg) {
   for (int i = 0; i < 8; i++) {
     int visible = gml_global_arr(&engine->vm, "background_visible", i) >= 0.5;
@@ -1080,7 +1115,7 @@ int render_multiview_application(AnygmEngine *engine) {
 
   GmlRoom rm;
   int have_room = gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) == 0;
-  int clear_background = !have_room || rm.draw_bg;
+  int clear_background = !have_room || room_clears_application_surface(&rm);
   if(clear_background)
     for(unsigned i=0;i<engine->width*engine->height;i++) engine->fb[i]=0xFF000000u;
   const char *bg_renderer = anygm_host_development_setting(&engine->host,"GML_BG_RENDERER_OBJ");

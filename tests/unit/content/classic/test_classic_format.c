@@ -233,10 +233,15 @@ static int expect_executable_manifest_variant(const Fixture *executable){
         project.fonts[0].glyphs[0].shift==3 && project.fonts[0].glyphs[0].offset==0 &&
         project.fonts[0].glyphs[1].ch==66 && project.fonts[0].glyphs[1].x==1 &&
         project.fonts[0].glyphs[1].shift==4 && project.fonts[0].glyphs[1].offset==-1 &&
-        project.n_memory_files==1 && project.memory_files[0].kind==GMLC_MEMORY_RGBA &&
+        project.n_memory_files==2 && project.memory_files[0].kind==GMLC_MEMORY_RGBA &&
         project.memory_files[0].width==2 && project.memory_files[0].height==1 &&
         project.memory_files[0].size==8 && project.memory_files[0].data[3]==17 &&
+        project.memory_files[1].kind==GMLC_MEMORY_TEXT &&
+        project.memory_files[1].size==strlen("x += 1;") &&
+        !memcmp(project.memory_files[1].data,"x += 1;",strlen("x += 1;")) &&
         project.memory_files[0].data[7]==231 && project.n_rooms==1 &&
+        project.rooms[0].n_instances==1 &&
+        project.rooms[0].instances[0].creation_code_path!=NULL &&
         project.rooms[0].n_tiles==1 && project.rooms[0].tiles[0].x==30 &&
         project.rooms[0].tiles[0].y==40 && project.rooms[0].tiles[0].depth==100 &&
         project.rooms[0].tiles[0].tile_id==1000001;
@@ -270,6 +275,7 @@ static int expect_legacy_executable_manifest(void){
        manifest.inventory.settings.interpolate==1 && manifest.inventory.settings.scaling==150 &&
        manifest.existing[GMLC_CLASSIC_SPRITE]==1 &&
        manifest.existing[GMLC_CLASSIC_BACKGROUND]==1 &&
+       manifest.existing[GMLC_CLASSIC_PATH]==1 &&
        manifest.existing[GMLC_CLASSIC_SCRIPT]==1 &&
        manifest.existing[GMLC_CLASSIC_FONT]==1 &&
        manifest.existing[GMLC_CLASSIC_ROOM]==1 &&
@@ -282,14 +288,22 @@ static int expect_legacy_executable_manifest(void){
     GmlcProject project; fixture_project_init(&project); project.prefer_memory_files=1;
     ok=gmlc_classic_import_sprites(&manifest,&project,"tmp",err,sizeof(err)) &&
        gmlc_classic_import_backgrounds(&manifest,&project,"tmp",err,sizeof(err)) &&
+       gmlc_classic_import_paths(&manifest,&project,err,sizeof(err)) &&
        gmlc_classic_import_fonts(&manifest,&project,"tmp",err,sizeof(err)) &&
        gmlc_classic_import_rooms(&manifest,&project,"tmp",err,sizeof(err));
     if(!ok) fprintf(stderr,"legacy executable import failed: %s\n",err);
     if(ok) ok=project.n_sprites==2 && project.n_memory_files>=2 &&
       project.memory_files[0].kind==GMLC_MEMORY_RGBA && project.memory_files[0].size==8 &&
-      project.memory_files[0].data[0]==1 && project.memory_files[0].data[1]==2 &&
-      project.memory_files[0].data[2]==3 && project.memory_files[0].data[7]==0 &&
+      project.memory_files[0].width==2 && project.memory_files[0].height==1 &&
+      project.memory_files[0].data[0]==0 && project.memory_files[0].data[1]==192 &&
+      project.memory_files[0].data[2]==0 && project.memory_files[0].data[3]==0 &&
+      project.memory_files[0].data[4]==0 && project.memory_files[0].data[5]==192 &&
+      project.memory_files[0].data[6]==0 && project.memory_files[0].data[7]==255 &&
+      project.sprites[0].col_kind==0 &&
       project.memory_files[1].data[0]==11 && project.memory_files[1].data[2]==13 &&
+      project.n_paths==1 && project.paths[0].kind==1 && project.paths[0].closed &&
+      project.paths[0].precision==4 && project.paths[0].n_points==2 &&
+      project.paths[0].points[1].x>9.49f && project.paths[0].points[1].speed==50.0f &&
       project.n_fonts==1 && project.fonts[0].n_glyphs==2 &&
       project.fonts[0].glyphs[0].ch==65 && project.fonts[0].glyphs[0].x==0 &&
       project.fonts[0].glyphs[0].w==1 && project.fonts[0].glyphs[0].shift==3 &&

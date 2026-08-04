@@ -5,6 +5,7 @@
 
 #include "gml_builtin.h"
 #include "gml_vm_internal.h"
+#include "gml_value_internal.h"
 #include "gml_render.h"
 #include "gml_render_internal.h"
 
@@ -12,6 +13,73 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+
+static GmlVal read_background_slot_dimension(GmlVM *vm,const char *name,int index){
+  unsigned char data[20]={0};
+  fixture_word(data,0,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)IT_SELF);
+  fixture_word(data,1,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)index);
+  fixture_word(data,2,(OP_PUSH<<24)|(DT_VAR<<16));
+  fixture_word(data,3,0);
+  fixture_word(data,4,(OP_RET<<24)|(DT_VAR<<16));
+  uint32_t reference_address=12;
+  const char *reference_name=name;
+  GmlCode code={0};
+  code.name=(char*)"gml_Script_background_dimension_fixture";
+  code.length=sizeof data;
+  GmlWin win={0};
+  win.data=data;
+  win.size=sizeof data;
+  win.bytecode=15;
+  win.code=&code;
+  win.n_code=1;
+  win.ref_addr=&reference_address;
+  win.ref_name=&reference_name;
+  win.n_refs=1;
+  GmlWin *saved_win=vm->win;
+  vm->win=&win;
+  GmlVal result=gml_vm_run_code(vm,0,NULL,NULL,NULL,0);
+  vm->win=saved_win;
+  free(code.insn);
+  free(code.insn_pc);
+  free(code.branch_index);
+  free(win.ref_hix);
+  return result;
+}
+
+
+int expect_background_slot_dimensions(void){
+  GmlBg background={0};
+  GmlTpag texture_page={0};
+  GmlRender render={0};
+  background.tpag=0;
+  texture_page.sw=11;
+  texture_page.sh=13;
+  texture_page.bw=37;
+  texture_page.bh=41;
+  render.bg=&background;
+  render.n_bg=1;
+  render.tpag=&texture_page;
+  render.n_tpag=1;
+  GmlVM vm={0};
+  vm.render=&render;
+  vm.cur_code_index=-1;
+  gml_set_global_arr(&vm,"background_index",2,0);
+  gml_set_global_arr(&vm,"background_index",3,-1);
+  GmlVal width=read_background_slot_dimension(&vm,"background_width",2);
+  GmlVal height=read_background_slot_dimension(&vm,"background_height",2);
+  GmlVal missing=read_background_slot_dimension(&vm,"background_width",3);
+  int ok=width.t==V_REAL && width.d==37 &&
+         height.t==V_REAL && height.d==41 &&
+         missing.t==V_REAL && missing.d==0;
+  if(!ok)
+    fprintf(stderr,"background slot dimensions mismatch: width=%.0f height=%.0f missing=%.0f\n",
+            width.t==V_REAL?width.d:-1.0,
+            height.t==V_REAL?height.d:-1.0,
+            missing.t==V_REAL?missing.d:-1.0);
+  gml_varmap_free(&vm.globals);
+  return ok;
+}
 
 
 
@@ -265,6 +333,85 @@ static int expect_renderer_semantics_exit_code(void){
     if(centre_red<=centre_blue || edge_blue<=edge_red || (outside&0xFFFFFFu)){
       fprintf(stderr,"radial colour primitive mismatch: centre=%08x edge=%08x outside=%08x\n",
               centre,edge,outside); return 1;
+    }
+  }
+  {
+    /* First-generation point and line primitives use pixel-centre quantisation after the logical
+     * view has been scaled. Later generations retain the ordinary floor mapping. */
+    GmlVM draw_vm={0}; GmlRender render={0}; GmlWin win={0};
+    uint32_t framebuffer[20*20];
+    for(size_t i=0;i<sizeof framebuffer/sizeof *framebuffer;i++)
+      framebuffer[i]=UINT32_C(0xFF000000);
+    gml_render_begin(&render,framebuffer,20,20,0,0);
+    gml_render_world_set_logical_extent(&render,10,10);
+    render.color=0xFFFFFF; render.alpha=1; render.alphablend=1;
+    draw_vm.render=&render; draw_vm.win=&win; win.bytecode=16;
+    GmlVal point[3]={vreal(3),vreal(4),vreal(0x0000FF)};
+    (void)gml_builtin_call(&draw_vm,"draw_point_colour",point,3);
+    if(framebuffer[9*20+7]!=UINT32_C(0xFFFF0000) ||
+       framebuffer[8*20+6]!=UINT32_C(0xFF000000)){
+      fprintf(stderr,"first-generation primitive quantisation mismatch: new=%08x old=%08x\n",
+              framebuffer[9*20+7],framebuffer[8*20+6]); return 1;
+    }
+    for(size_t i=0;i<sizeof framebuffer/sizeof *framebuffer;i++)
+      framebuffer[i]=UINT32_C(0xFF000000);
+    win.bytecode=17;
+    (void)gml_builtin_call(&draw_vm,"draw_point_colour",point,3);
+    if(framebuffer[8*20+6]!=UINT32_C(0xFFFF0000) ||
+       framebuffer[9*20+7]!=UINT32_C(0xFF000000)){
+      fprintf(stderr,"later Studio primitive quantisation changed: floor=%08x shifted=%08x\n",
+              framebuffer[8*20+6],framebuffer[9*20+7]); return 1;
+    }
+    for(size_t i=0;i<sizeof framebuffer/sizeof *framebuffer;i++)
+      framebuffer[i]=UINT32_C(0xFF000000);
+    win.bytecode=16;
+    GmlVal subpixel_line[6]={vreal(1.25),vreal(2.25),vreal(3.25),vreal(2.25),
+                             vreal(0x0000FF),vreal(0xFF0000)};
+    (void)gml_builtin_call(&draw_vm,"draw_line_colour",subpixel_line,6);
+    if(framebuffer[6*20+4]!=UINT32_C(0xFFFF0000) ||
+       framebuffer[6*20+7]==UINT32_C(0xFF000000) ||
+       framebuffer[6*20+8]!=UINT32_C(0xFF000000) ||
+       framebuffer[5*20+4]!=UINT32_C(0xFF000000)){
+      fprintf(stderr,
+              "first-generation subpixel line mismatch: first=%08x body=%08x exit=%08x adjacent=%08x\n",
+              framebuffer[6*20+4],framebuffer[6*20+7],
+              framebuffer[6*20+8],framebuffer[5*20+4]); return 1;
+    }
+    for(size_t i=0;i<sizeof framebuffer/sizeof *framebuffer;i++)
+      framebuffer[i]=UINT32_C(0xFF000000);
+    GmlVal clipped_rectangle[5]={vreal(2),vreal(3),vreal(7),vreal(12),vreal(1)};
+    (void)gml_builtin_call(&draw_vm,"draw_rectangle",clipped_rectangle,5);
+    if(framebuffer[7*20+5]!=UINT32_C(0xFFFFFFFF) ||
+       framebuffer[7*20+15]!=UINT32_C(0xFFFFFFFF) ||
+       framebuffer[19*20+5]!=UINT32_C(0xFFFFFFFF) ||
+       framebuffer[19*20+15]!=UINT32_C(0xFFFFFFFF) ||
+       framebuffer[19*20+10]!=UINT32_C(0xFF000000) ||
+       framebuffer[6*20+5]!=UINT32_C(0xFF000000)){
+      fprintf(stderr,
+              "first-generation clipped rectangle mismatch: top=%08x,%08x sides=%08x,%08x clipped=%08x prior=%08x\n",
+              framebuffer[7*20+5],framebuffer[7*20+15],
+              framebuffer[19*20+5],framebuffer[19*20+15],
+              framebuffer[19*20+10],framebuffer[6*20+5]); return 1;
+    }
+  }
+  {
+    /* Line colour builtins interpolate both endpoint colours; the second colour must survive
+     * language dispatch instead of collapsing the primitive to a flat first-colour line. */
+    GmlVM draw_vm={0}; GmlRender render={0}; GmlWin win={0};
+    uint32_t framebuffer[8*8];
+    for(size_t i=0;i<sizeof framebuffer/sizeof *framebuffer;i++)
+      framebuffer[i]=UINT32_C(0xFF000000);
+    gml_render_begin(&render,framebuffer,8,8,0,0);
+    render.alpha=1; render.alphablend=1;
+    draw_vm.render=&render; draw_vm.win=&win; win.bytecode=17;
+    GmlVal line[6]={vreal(1),vreal(3),vreal(5),vreal(3),
+                    vreal(0x0000FF),vreal(0xFF0000)};
+    (void)gml_builtin_call(&draw_vm,"draw_line_colour",line,6);
+    uint32_t first=framebuffer[3*8+1],middle=framebuffer[3*8+3],last=framebuffer[3*8+5];
+    if(first!=UINT32_C(0xFFFF0000) || last!=UINT32_C(0xFF0000FF) ||
+       middle==first || middle==last){
+      fprintf(stderr,"line endpoint gradient mismatch: first=%08x middle=%08x last=%08x\n",
+              first,middle,last); return 1;
     }
   }
   {

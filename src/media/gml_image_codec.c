@@ -5,6 +5,7 @@
 
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
@@ -12,8 +13,8 @@
 #endif
 #define STBI_NO_STDIO
 #define STBI_ONLY_BMP
+#define STBI_ONLY_GIF
 #define STBI_ONLY_PNG
-#define STBI_NO_GIF
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -70,6 +71,47 @@ int gml_image_decode_rgba(const uint8_t *encoded, size_t encoded_size,
   out->size=(size_t)decoded_width*(size_t)decoded_height*4u;
   if(width) *width=decoded_width;
   if(height) *height=decoded_height;
+  if(source_components) *source_components=components;
+  return 1;
+}
+
+int gml_image_decode_rgba_frames(const uint8_t *encoded, size_t encoded_size,
+                                 GmlMediaBuffer *out, int *width, int *height,
+                                 int *frames, int *source_components){
+  if(!out) return 0;
+  gml_media_buffer_reset(out);
+  if(width) *width=0;
+  if(height) *height=0;
+  if(frames) *frames=0;
+  if(source_components) *source_components=0;
+  if(!encoded || encoded_size==0 || encoded_size>(size_t)INT_MAX) return 0;
+
+  int decoded_width=0,decoded_height=0,decoded_frames=1,components=0;
+  uint8_t *pixels=NULL;
+  int *delays=NULL;
+  int gif=encoded_size>=6 &&
+    (!memcmp(encoded,"GIF87a",6) || !memcmp(encoded,"GIF89a",6));
+  if(gif)
+    pixels=stbi_load_gif_from_memory(encoded,(int)encoded_size,&delays,
+                                     &decoded_width,&decoded_height,
+                                     &decoded_frames,&components,4);
+  else
+    pixels=stbi_load_from_memory(encoded,(int)encoded_size,
+                                 &decoded_width,&decoded_height,&components,4);
+  free(delays);
+  if(!pixels || decoded_width<=0 || decoded_height<=0 || decoded_frames<=0 ||
+     (size_t)decoded_width>SIZE_MAX/(size_t)decoded_height/4u ||
+     (size_t)decoded_width*(size_t)decoded_height*4u>
+       SIZE_MAX/(size_t)decoded_frames){
+    stbi_image_free(pixels);
+    return 0;
+  }
+  out->data=pixels;
+  out->size=(size_t)decoded_width*(size_t)decoded_height*
+            (size_t)decoded_frames*4u;
+  if(width) *width=decoded_width;
+  if(height) *height=decoded_height;
+  if(frames) *frames=decoded_frames;
   if(source_components) *source_components=components;
   return 1;
 }

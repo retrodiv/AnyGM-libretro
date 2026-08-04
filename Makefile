@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 retrodiv <retrodiv@proton.me>
 
+DIAGNOSTICS ?= 0
+
 include Makefile.common
 
 platform ?=
@@ -8,6 +10,10 @@ CROSS_COMPILE ?=
 DEBUG ?= 0
 STATIC_LINKING ?= 0
 TEST ?=
+
+ifeq ($(DIAGNOSTICS),1)
+CPPFLAGS += -DANYGM_DIAGNOSTICS=1
+endif
 
 ifeq ($(platform),)
 platform := unix
@@ -108,6 +114,7 @@ API_TEST_OBJECTS := $(TEST_DIR)/public_header_c.o $(TEST_DIR)/public_header_cpp.
 
 .PHONY: all core runtime check warnings-check api-check contract-check integration-check security-check \
 	sanitizer-check architecture-check isolation-check export-check diagnostic-tests \
+	diagnostics-check diagnostics-check-internal \
 	clean
 
 all: core
@@ -379,6 +386,21 @@ $(TEST_DIR)/test_libretro_vfs_transport: tests/contract/libretro_vfs_transport.c
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
 
 diagnostic-tests: $(TEST_DIR)/test_load $(TEST_DIR)/test_vm
+
+diagnostics-check:
+	$(MAKE) -j1 DIAGNOSTICS=1 BUILD_DIR=$(BUILD_DIR)/diagnostics \
+		CORE_BASENAME=$(abspath $(BUILD_DIR)/diagnostics/anygm-diagnostics) \
+		diagnostics-check-internal
+
+diagnostics-check-internal: CFLAGS += -Werror
+diagnostics-check-internal: core $(TEST_DIR)/test_vm_diagnostics
+	$(TEST_DIR)/test_vm_diagnostics
+
+$(TEST_DIR)/test_vm_diagnostics: tests/unit/runtime/test_vm_diagnostics.c \
+	tests/support/anygm_test_runner.c src/host/anygm_host.c \
+	src/runtime/vm/gml_vm_diagnostics.c
+	mkdir -p $(dir $@)
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
 
 $(TEST_DIR)/test_load: tests/unit/content/test_load.c \
 	src/host/anygm_vfs.c src/host/stdio_vfs.c \

@@ -52,6 +52,7 @@ make check TEST=renderer_surfaces
 make check TEST=renderer_tiles
 make check TEST=d3_state D3_TEST_ARGS='--case raster.projection'
 make check TEST=persistent_room PERSISTENT_TEST_ARGS='--case state.canonical_roundtrip'
+make diagnostics-check
 make check
 ```
 
@@ -71,6 +72,10 @@ translation units and expose named filters. A filtered software-3D case
 replays its bounded prerequisite stages from a clean fixture; persistent
 VM, DS, I/O, audio, timeline, state, and renderer cases are independently
 selectable.
+`diagnostics-check` builds and tests the separately compiled fine-tracing
+instrumentation. A normal build does not contain that instrumentation; see
+[`docs/DIAGNOSTICS.md`](docs/DIAGNOSTICS.md) for the diagnostic build and its
+strict runtime filters.
 `check` is the broader local suite and should be run after a coherent batch of
 changes rather than after each mechanical edit.
 
@@ -125,8 +130,8 @@ time-source, spatial-audio, and physics resources live in one opaque
 `GmlBuiltinState`; `src/runtime/builtins/gml_builtin_state.c` alone creates,
 resets, destroys, visits, and serializes that resource owner. Its four staged
 codecs consume the opaque cursor in `gml_vm_state_codec.h` at their established
-schema-2 positions, so ownership changes do not introduce a second state header
-or alter canonical bytes. The compatibility-aware deterministic random
+VM-state positions, so ownership changes do not introduce a second state header.
+The compatibility-aware deterministic random
 stream has one implementation owner in `src/runtime/vm/gml_vm_rng.c`; room
 lookup and entry, persistent-room state, runtime layers and tilemaps, room asset
 warming, path and timeline resources and stepping, and tile-layer mutations
@@ -184,6 +189,7 @@ runtime. See [Architecture](docs/ARCHITECTURE.md) for ownership rules and
 - [Supported formats](docs/SUPPORTED_FORMATS.md)
 - [Security model](docs/SECURITY_MODEL.md)
 - [Development and validation](docs/DEVELOPMENT.md)
+- [Opt-in VM diagnostics](docs/DIAGNOSTICS.md)
 - [Code map](docs/CODE-MAP.md)
 - [Generated-data provenance](docs/PROVENANCE.md)
 - [Security policy](SECURITY.md)

@@ -97,8 +97,54 @@ void gml_vm_draw_instance_sprite(GmlVM *vm,GmlInstance *instance,double alpha){
   gml_render_skeleton_state_set(render,NULL);
 }
 
+static void advance_instance_animation(GmlVM *vm,GmlInstance *in,
+                                       GmlRender *render,const char *anim_dbg){
+  int nf=render?gml_sprite_frames(render,(int)in->sprite_index):0;
+  if(anim_dbg){ const char *on=(in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"";
+    if(on && strstr(on,anim_dbg)){
+      int si=(int)in->sprite_index;
+      GmlRenderSpriteMetrics sprite;
+      const char *sn=(render&&gml_render_sprite_metrics(render,si,&sprite)&&sprite.name)?sprite.name:"?";
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[anim] %s x=%.1f y=%.1f vs=%.1f spr=%d(%s) idx=%.2f nf=%d\n",
+        on,in->x,in->y,in->vspeed,si,sn,in->image_index,nf);
+    }
+  }
+  if(render && gml_render_sprite_is_skeleton(render,(int)in->sprite_index)){
+    if(in->image_speed!=0){
+      GmlVal *animation=instance_skeleton_value(in,"__skel_animation");
+      const char *name=(animation&&animation->t==V_STR)?animation->s:NULL;
+      double duration=gml_render_skeleton_animation_duration(
+        render,(int)in->sprite_index,name);
+      double time=instance_skeleton_time(in)+
+        in->image_speed/fmax(gml_room_speed(vm),1);
+      int wrapped=duration>0 && (time>=duration || time<0);
+      if(duration>0){
+        while(time>=duration) time-=duration;
+        while(time<0) time+=duration;
+      }
+      instance_skeleton_time_set(in,time);
+      if(wrapped) gml_run_event(vm,in,"Other_7");
+    }
+    return;
+  }
+  if(in->image_speed!=0 && (nf>0 || (vm->win && anygm_policy_uses_classic_runtime(vm->win)))){
+    double step=(vm->win && !anygm_policy_uses_classic_runtime(vm->win))
+      ? gml_sprite_animation_delta(render,(int)in->sprite_index,in->image_speed,gml_room_speed(vm))
+      : in->image_speed;
+    double ni=in->image_index+step;
+    int wrapped=nf>0 && ((ni>=nf)||(ni<0));
+    if(nf>0){ while(ni>=nf) ni-=nf; while(ni<0) ni+=nf; }
+    in->image_index=ni;
+    if(wrapped || (nf<=0 && ni>=0)){
+      if(anygm_host_development_setting(vm->host,"GML_LOG_ANIM")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[anim-end] %s (nf=%d)\n",
+        (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",nf);
+      gml_run_event(vm,in,"Other_7");
+    }
+  }
+}
+
 static void advance_instance_animations(GmlVM *vm){
-  GmlRender *R=(GmlRender*)vm->render;
+  GmlRender *render=(GmlRender*)vm->render;
   const char *anim_dbg=anygm_host_development_setting(vm->host,"GML_ANIM_OBJ");
   int snapshot=anygm_policy_snapshot_instance_iteration(vm->win);
   int extent=(snapshot && vm->step_active)?vm->step_alloc_base:vm->inst_count;
@@ -106,48 +152,7 @@ static void advance_instance_animations(GmlVM *vm){
     GmlInstance *in=&vm->inst[i];
     if(!in->active||in->marked||
        (snapshot && !gml_vm_instances_step_snapshot_member(vm,in))) continue;
-    int nf=R?gml_sprite_frames(R,(int)in->sprite_index):0;
-    if(anim_dbg){ const char *on=(in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"";
-      if(on && strstr(on,anim_dbg)){
-        int si=(int)in->sprite_index;
-        GmlRenderSpriteMetrics sprite;
-        const char *sn=(R&&gml_render_sprite_metrics(R,si,&sprite)&&sprite.name)?sprite.name:"?";
-        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[anim] %s x=%.1f y=%.1f vs=%.1f spr=%d(%s) idx=%.2f nf=%d\n",
-          on,in->x,in->y,in->vspeed,si,sn,in->image_index,nf);
-      }
-    }
-    if(R && gml_render_sprite_is_skeleton(R,(int)in->sprite_index)){
-      if(in->image_speed!=0){
-        GmlVal *animation=instance_skeleton_value(in,"__skel_animation");
-        const char *name=(animation&&animation->t==V_STR)?animation->s:NULL;
-        double duration=gml_render_skeleton_animation_duration(
-          R,(int)in->sprite_index,name);
-        double time=instance_skeleton_time(in)+
-          in->image_speed/fmax(gml_room_speed(vm),1);
-        int wrapped=duration>0 && (time>=duration || time<0);
-        if(duration>0){
-          while(time>=duration) time-=duration;
-          while(time<0) time+=duration;
-        }
-        instance_skeleton_time_set(in,time);
-        if(wrapped) gml_run_event(vm,in,"Other_7");
-      }
-      continue;
-    }
-    if(in->image_speed!=0 && (nf>0 || (vm->win && anygm_policy_uses_classic_runtime(vm->win)))){
-      double step=(vm->win && !anygm_policy_uses_classic_runtime(vm->win))
-        ? gml_sprite_animation_delta(R,(int)in->sprite_index,in->image_speed,gml_room_speed(vm))
-        : in->image_speed;
-      double ni=in->image_index+step;
-      int wrapped=nf>0 && ((ni>=nf)||(ni<0));
-      if(nf>0){ while(ni>=nf) ni-=nf; while(ni<0) ni+=nf; }
-      in->image_index=ni;
-      if(wrapped || (nf<=0 && ni>=0)){
-        if(anygm_host_development_setting(vm->host,"GML_LOG_ANIM")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[anim-end] %s (nf=%d)\n",
-          (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",nf);
-        gml_run_event(vm,in,"Other_7");
-      }
-    }
+    advance_instance_animation(vm,in,render,anim_dbg);
   }
 }
 
@@ -264,9 +269,37 @@ void gml_vm_frame_advance_layers(GmlVM *vm){
 
 static void gml_vm_apply_pending_room(GmlVM *vm){
   int target=vm->pending_room;
+  int previous_count=vm->inst_count;
+  int advance_entered=vm->step_active && vm->win &&
+    !anygm_policy_animation_before_step(vm->win);
+  uint32_t *previous_active_ids=NULL;
+  if(advance_entered && previous_count>0){
+    previous_active_ids=calloc((size_t)previous_count,sizeof(*previous_active_ids));
+    if(previous_active_ids){
+      for(int i=0;i<previous_count;i++)
+        if(vm->inst[i].active && !vm->inst[i].marked)
+          previous_active_ids[i]=vm->inst[i].id;
+    } else anygm_host_logf(vm->host,ANYGM_LOG_WARN,
+      "[gml] room transition animation snapshot unavailable\n");
+  }
   vm->pending_room=-1;
   vm->step_alloc_base=0;
   gml_room_enter(vm,target);
+  if(advance_entered){
+    GmlRender *render=(GmlRender*)vm->render;
+    const char *anim_dbg=anygm_host_development_setting(vm->host,"GML_ANIM_OBJ");
+    for(int i=0;i<vm->inst_count;i++){
+      GmlInstance *in=&vm->inst[i];
+      if(!in->active || in->marked) continue;
+      if(previous_active_ids && i<previous_count && previous_active_ids[i]==in->id) continue;
+      /* Only persistent instances can survive a room change. If the optional identity snapshot
+       * could not be allocated, avoid advancing those survivors twice; ordinary entered and
+       * reactivated room instances still retain the first-draw phase. */
+      if(!previous_active_ids && previous_count>0 && in->persistent) continue;
+      advance_instance_animation(vm,in,render,anim_dbg);
+    }
+  }
+  free(previous_active_ids);
 }
 
 static void gml_vm_finish_step(GmlVM *vm,int previous_alloc_base){
@@ -274,6 +307,13 @@ static void gml_vm_finish_step(GmlVM *vm,int previous_alloc_base){
   vm->step_active=0;
   vm->step_free_n=vm->step_free_pos=0;
   gml_vm_instances_trim_pool_tail(vm);
+}
+
+static int gml_vm_finish_classic_room_request(GmlVM *vm,int previous_alloc_base){
+  if(vm->pending_room<0 || !vm->win || !anygm_policy_uses_classic_runtime(vm->win)) return 0;
+  gml_vm_apply_pending_room(vm);
+  gml_vm_finish_step(vm,previous_alloc_base);
+  return 1;
 }
 
 void gml_vm_step(GmlVM *vm){
@@ -331,24 +371,40 @@ void gml_vm_step(GmlVM *vm){
   gml_vm_instances_run_classic_triggers(vm,1);
   if(vm->win && anygm_policy_uses_classic_runtime(vm->win)) gml_vm_instances_run_classic_event(vm,"Step_1");
   else for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked &&
-      gml_vm_instances_step_snapshot_member(vm,&vm->inst[i]))
+      gml_vm_instances_step_snapshot_member(vm,&vm->inst[i])){
     gml_run_event(vm,&vm->inst[i],"Step_1");
+    if(vm->pending_room>=0){
+      /* Commit a Begin Step room request after the requesting event. The target room skips Begin
+       * Step but participates in every remaining phase of this same frame. */
+      gml_vm_apply_pending_room(vm);
+      n=vm->inst_count;
+      gml_vm_instances_prepare_step(vm,n);
+      vm->step_alloc_base=n;
+      vm->step_first_id=vm->next_id;
+      break;
+    }
+  }
   VMPROF_MARK(step1);
-  /* Tick both built-in time-source trees after every Begin Step and before the remaining
+  if(gml_vm_finish_classic_room_request(vm,prev_alloc_base)){
+    VMPROF_MARK(rest);
+    return;
+  }
+  /* GMS2 ticks both built-in time-source trees after every Begin Step and before the remaining
    * Step phases. Sources created by a callback join on the next tick via the scheduler snapshot. */
   gml_time_sources_tick(vm);
   gml_vm_rooms_step_timelines(vm,n);
-  /* Alarm firing thresholds are generation-specific:
-   *  bc14/15: decrement any alarm > -1, fire when the result crosses BELOW 0. An integer
+  /* Alarm firing thresholds and dispatch order depend on the compatibility generation:
+   *  Bytecode 14/15: decrement any alarm > -1, fire when the result crosses BELOW 0. An integer
    *    alarm[i]=N fires N+1 steps later.
-   *  bc16+ (GMS2): decrement only alarms > 0, fire when the result reaches <= 0. An integer
+   *  Bytecode 16 and later: decrement only alarms > 0, fire when the result reaches <= 0. An integer
    *    alarm[i]=N fires N steps later.
    *  Fractional alarms (e.g. a length-scaled cost) fire on the SAME tick under both rules (first
    *  decrement that lands <= 0), so cutscene typewriters are unaffected. Set -1 before running
-   *  the event so the handler can re-arm. */
-  int classic_alarm_order=anygm_policy_classic_alarm_dispatch(vm->win);
+   *  the event so the handler can re-arm. Classic and bytecode-16 policies dispatch each
+   *  alarm subtype by ascending exact object resource, then insertion order within that object. */
+  int resource_major_alarm_order=anygm_policy_resource_major_alarm_dispatch(vm->win);
   int alarm_at_zero = anygm_policy_alarm_at_zero(vm->win);
-  if(classic_alarm_order){
+  if(resource_major_alarm_order){
     for(int a=0;a<GML_ALARMS;a++){
       char s[16]; snprintf(s,sizeof s,"Alarm_%d",a);
       int object_count=0;
@@ -356,7 +412,10 @@ void gml_vm_step(GmlVM *vm){
       int extent=objects?object_count:vm->n_objects;
       for(int oi=0;oi<extent;oi++){
         int object=objects?objects[oi]:oi;
-        if(!objects && !gml_vm_instances_event_lookup(vm,s,object,NULL,NULL)) continue;
+        int declared_code=-1;
+        int native_declared=gml_vm_instances_native_event_declared(
+          vm,2,a,object,NULL,&declared_code);
+        if(!native_declared && !gml_vm_instances_event_lookup(vm,s,object,NULL,NULL)) continue;
         int count=gml_vm_instances_collect_object_slots(vm,object);
         if(count<0) continue;
         for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
@@ -367,7 +426,7 @@ void gml_vm_step(GmlVM *vm){
           if(in->alarm[a]<=0){ in->alarm[a]=-1;
             if(anygm_host_development_setting(vm->host,"GML_LOG_ALARM")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[alarm] f%ld %s.%s\n",vm->frame,
               vm->objects[in->obj].name,s);
-            gml_run_event(vm,in,s); }
+            if(!native_declared || declared_code>=0) gml_run_event(vm,in,s); }
         }
       }
     }
@@ -391,6 +450,15 @@ void gml_vm_step(GmlVM *vm){
         /* An explicitly empty declaration completes at -1 without inheriting or executing code. */
         if(!native_declared || declared_code>=0) gml_run_event(vm,in,s); } } }
   VMPROF_MARK(alarms);
+  /* Classic compatibility commits a room change requested by an Alarm before normal Step. The
+   * requesting event still completes, so assignments after room_goto remain visible, but a
+   * newly created persistent instance must not run Step against the old room dimensions. */
+  if(vm->pending_room>=0 && vm->win && anygm_policy_uses_classic_runtime(vm->win)){
+    gml_vm_apply_pending_room(vm);
+    gml_vm_finish_step(vm,prev_alloc_base);
+    VMPROF_MARK(rest);
+    return;
+  }
   /* keyboard events (GM order: after alarms, before the normal step) */
   if(vm->n_key_events){
     for(int e=0;e<vm->n_key_events;e++){
@@ -401,6 +469,10 @@ void gml_vm_step(GmlVM *vm){
         if(vm->inst[i].active && !vm->inst[i].marked &&
            gml_vm_instances_step_snapshot_member(vm,&vm->inst[i]))
           gml_run_event(vm,&vm->inst[i],vm->key_events[e].suffix); }
+      if(gml_vm_finish_classic_room_request(vm,prev_alloc_base)){
+        VMPROF_MARK(rest);
+        return;
+      }
     }
   }
   /* instance Mouse_<n> events (with the other input events). Hover = pointer (room coords)
@@ -457,11 +529,14 @@ void gml_vm_step(GmlVM *vm){
   /* Normal Step in classic formats is grouped by ascending object resource, with insertion order
    * inside each exact object. Each object takes its extent when that group begins: an earlier
    * object can create an instance whose later object group still sees it, while a same-object
-   * creation waits until the next Step. Studio retains its verified flat snapshot. */
+   * creation waits until the next Step. First-generation policy refreshes its flat phase extent
+   * after Alarm and input, so instances created earlier in the frame join normal Step. The later
+   * policy retains the frame-start snapshot. */
   gml_vm_instances_run_classic_triggers(vm,0);
   if(vm->win && anygm_policy_uses_classic_runtime(vm->win)) gml_vm_instances_run_classic_event(vm,"Step_0");
   else {
-    for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked &&
+    int step_count=anygm_policy_snapshot_instance_iteration(vm->win)?n:vm->inst_count;
+    for(int i=0;i<step_count;i++) if(vm->inst[i].active && !vm->inst[i].marked &&
         gml_vm_instances_step_snapshot_member(vm,&vm->inst[i])){
       gml_run_event(vm,&vm->inst[i],"Step_0");
       /* Commit a room request after the requesting event completes. Do not let later members
@@ -475,11 +550,13 @@ void gml_vm_step(GmlVM *vm){
     }
   }
   VMPROF_MARK(step0);
-  /* Classic object iteration remains live through automatic movement. An instance
-   * created by an earlier normal-Step handler already participates in that Step
-   * phase, and GM6-8 also applies its freshly assigned speed/gravity before the
-   * first draw. Studio keeps the frame-start snapshot verified by its fixtures. */
-  int movement_count=(vm->win && anygm_policy_uses_classic_runtime(vm->win))?vm->inst_count:n;
+  if(gml_vm_finish_classic_room_request(vm,prev_alloc_base)){
+    VMPROF_MARK(rest);
+    return;
+  }
+  /* Live-iteration generations include an instance created earlier in the frame in automatic
+   * movement before its first draw. Snapshot iteration retains the frame-start extent. */
+  int movement_count=anygm_policy_snapshot_instance_iteration(vm->win)?n:vm->inst_count;
   for(int i=0;i<movement_count;i++){ GmlInstance *in=&vm->inst[i];
     if(!in->active||in->marked||!gml_vm_instances_step_snapshot_member(vm,in)) continue;
     if(in->gravity!=0){ in->hspeed+=in->gravity*cos(in->gravity_direction*M_PI/180.0);
@@ -513,6 +590,10 @@ void gml_vm_step(GmlVM *vm){
       gml_vm_instances_step_snapshot_member(vm,&vm->inst[i]))
     gml_run_event(vm,&vm->inst[i],"Step_2");
   VMPROF_MARK(step2);
+  if(gml_vm_finish_classic_room_request(vm,prev_alloc_base)){
+    VMPROF_MARK(rest);
+    return;
+  }
   gml_vm_instances_reap(vm);
   { const char *iv=anygm_host_development_setting(vm->host,"GML_LOG_INSTVAR");   /* obj_name[@id]:var1,var2 — dump instance vars per frame */
     if(iv && *iv){ char buf[256]; snprintf(buf,sizeof buf,"%s",iv);

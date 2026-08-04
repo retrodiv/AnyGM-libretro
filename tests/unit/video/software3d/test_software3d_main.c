@@ -54,6 +54,7 @@ int main(int argc,char **argv){
     {"renderer_state",renderer_state_boundary_fixture},
     {"asset_lookup",asset_lookup_fixture},
     {"external_texture_group",external_texture_group_fixture},
+    {"classic_sprite_replace",classic_sprite_replace_fixture},
     {"sprite_instance_metric_scale",sprite_instance_metric_scale_fixture},
   };
   static const AnygmTestCase raster_cases[]={

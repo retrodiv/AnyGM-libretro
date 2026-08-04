@@ -169,7 +169,394 @@ int expect_room_camera_reservation(void){
 }
 
 
-int expect_event_boundary_room_transition(void){
+int expect_room_order_boundaries(void){
+  GmlcProject project={0};
+  GmlcObject object={0};
+  GmlcObjectEvent event={0};
+  GmlcRoom rooms[3]={{0}};
+  GmlcRoomInstance placed={0};
+  int room_order[3]={2,0,1};
+  char *room_names[3]={(char*)"neutral_middle",(char*)"neutral_last",(char*)"neutral_first"};
+  AnygmHostServices services={0};
+  char source_path[]="/tmp/gml-room-order-boundaries-source-XXXXXX";
+  char package_path[]="/tmp/gml-room-order-boundaries-package-XXXXXX";
+  int source_fd=-1,package_fd=-1;
+  int ok=0;
+
+  source_fd=mkstemp(source_path);
+  package_fd=mkstemp(package_path);
+  if(source_fd<0 || package_fd<0) goto cleanup;
+  close(source_fd); source_fd=-1;
+  close(package_fd); package_fd=-1;
+  if(!fixture_write_text(source_path,
+       "global.first_id=room_first; global.last_id=room_last; "
+       "global.next_id=room_next(room_first); global.previous_id=room_previous(room_last); "
+       "global.before_first=room_previous(room_first); global.after_last=room_next(room_last); "
+       "global.current_id=room;\n"))
+    goto cleanup;
+
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="room-order-boundary-fixture";
+  project.host=&services;
+  project.objects=&object;
+  project.n_objects=project.cap_objects=1;
+  project.rooms=rooms;
+  project.n_rooms=project.cap_rooms=3;
+  project.room_order=room_order;
+  project.n_room_order=3;
+
+  object.id=object.name=(char*)"obj_boundary_probe";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.visible=1;
+  object.events=&event;
+  object.n_events=object.cap_events=1;
+  event.event_type=0;
+  event.event_number=0;
+  event.source_path=source_path;
+
+  for(int index=0;index<3;index++){
+    rooms[index].id=rooms[index].name=room_names[index];
+    rooms[index].width=320;
+    rooms[index].height=240;
+    rooms[index].speed=60;
+  }
+  placed.id=placed.name=(char*)"placed_boundary_probe";
+  placed.object_id=0;
+  placed.instance_id=100000;
+  rooms[2].instances=&placed;
+  rooms[2].n_instances=rooms[2].cap_instances=1;
+
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+      fprintf(stderr,"room-order boundary package failed: %s\n",error);
+      goto cleanup;
+    }
+  }
+  {
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,package_path)) goto cleanup;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,&services)){
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    gml_room_enter(&vm,2);
+    GmlVal *first=gml_varmap_get(&vm.globals,"first_id");
+    GmlVal *last=gml_varmap_get(&vm.globals,"last_id");
+    GmlVal *next=gml_varmap_get(&vm.globals,"next_id");
+    GmlVal *previous=gml_varmap_get(&vm.globals,"previous_id");
+    GmlVal *before_first=gml_varmap_get(&vm.globals,"before_first");
+    GmlVal *after_last=gml_varmap_get(&vm.globals,"after_last");
+    GmlVal *current=gml_varmap_get(&vm.globals,"current_id");
+    ok=first&&first->t==V_REAL&&first->d==2 &&
+       last&&last->t==V_REAL&&last->d==1 &&
+       next&&next->t==V_REAL&&next->d==0 &&
+       previous&&previous->t==V_REAL&&previous->d==0 &&
+       before_first&&before_first->t==V_REAL&&before_first->d==-1 &&
+       after_last&&after_last->t==V_REAL&&after_last->d==-1 &&
+       current&&current->t==V_REAL&&current->d==2;
+    if(!ok)
+      fprintf(stderr,
+        "room-order boundary mismatch: first=%.0f last=%.0f next=%.0f previous=%.0f before=%.0f after=%.0f current=%.0f\n",
+        first&&first->t==V_REAL?first->d:-99.0,last&&last->t==V_REAL?last->d:-99.0,
+        next&&next->t==V_REAL?next->d:-99.0,previous&&previous->t==V_REAL?previous->d:-99.0,
+        before_first&&before_first->t==V_REAL?before_first->d:-99.0,
+        after_last&&after_last->t==V_REAL?after_last->d:-99.0,
+        current&&current->t==V_REAL?current->d:-99.0);
+    gml_vm_free(&vm);
+    gml_win_free(&win);
+  }
+
+cleanup:
+  if(source_fd>=0) close(source_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(source_path);
+  unlink(package_path);
+  return ok;
+}
+
+
+static int expect_alarm_dispatch_order_for_revision(const char *package_path,
+                                                    uint32_t bytecode,
+                                                    double expected_order,
+                                                    const char *family){
+  GmlWin win;
+  if(anygm_stdio_load_win(&win,package_path)) return 0;
+  win.bytecode=(uint8_t)bytecode;
+  AnygmContentFacts facts={0};
+  AnygmCompatibilityProfile profile={0};
+  char error[256]={0};
+  if(!anygm_content_facts_detect(&win,&facts,error,sizeof error) ||
+     !anygm_compatibility_resolve(&facts,&profile,error,sizeof error)){
+    fprintf(stderr,"%s alarm dispatch profile failed: %s\n",family,error);
+    gml_win_free(&win);
+    return 0;
+  }
+  win.compatibility=&profile;
+  GmlVM vm;
+  if(gml_vm_init(&vm,&win,NULL)){
+    gml_win_free(&win);
+    return 0;
+  }
+  gml_room_enter(&vm,0);
+  *gml_varmap_put(&vm.globals,"alarm_order")=vreal(0);
+  gml_vm_step(&vm);
+  GmlVal *order=gml_varmap_get(&vm.globals,"alarm_order");
+  int ok=order && order->t==V_REAL && order->d==expected_order;
+  if(!ok)
+    fprintf(stderr,"%s alarm dispatch order mismatch: got=%.0f expected=%.0f\n",
+      family,order&&order->t==V_REAL?order->d:-1.0,expected_order);
+  gml_vm_free(&vm);
+  win.compatibility=NULL;
+  gml_win_free(&win);
+  return ok;
+}
+
+
+int expect_alarm_dispatch_order(void){
+  GmlcProject project={0};
+  GmlcObject objects[5]={{0}};
+  GmlcObjectEvent base_events[2]={{0}};
+  GmlcRoom room={0};
+  GmlcRoomInstance placed[5]={{0}};
+  int room_order[1]={0};
+  const char *object_names[5]={
+    "obj_alarm_base","obj_alarm_alpha","obj_alarm_beta",
+    "obj_alarm_gamma","obj_alarm_delta"
+  };
+  const int placed_objects[5]={3,1,4,1,2};
+  const int placed_tokens[5]={31,11,41,12,21};
+  AnygmHostServices services={0};
+  char create_path[]="/tmp/gml-alarm-dispatch-create-XXXXXX";
+  char alarm_path[]="/tmp/gml-alarm-dispatch-alarm-XXXXXX";
+  char package_path[]="/tmp/gml-alarm-dispatch-package-XXXXXX";
+  int create_fd=-1,alarm_fd=-1,package_fd=-1;
+  int ok=0;
+
+  create_fd=mkstemp(create_path);
+  alarm_fd=mkstemp(alarm_path);
+  package_fd=mkstemp(package_path);
+  if(create_fd<0 || alarm_fd<0 || package_fd<0) goto cleanup;
+  close(create_fd); create_fd=-1;
+  close(alarm_fd); alarm_fd=-1;
+  close(package_fd); package_fd=-1;
+  if(!fixture_write_text(create_path,"alarm[1]=1;\n") ||
+     !fixture_write_text(alarm_path,
+       "global.alarm_order=global.alarm_order*100+x;\n"))
+    goto cleanup;
+
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="alarm-dispatch-order-fixture";
+  project.host=&services;
+  project.objects=objects;
+  project.n_objects=project.cap_objects=5;
+  project.rooms=&room;
+  project.n_rooms=project.cap_rooms=1;
+  project.room_order=room_order;
+  project.n_room_order=1;
+  for(int index=0;index<5;index++){
+    objects[index].id=objects[index].name=(char*)object_names[index];
+    objects[index].sprite_id=objects[index].mask_id=-1;
+    objects[index].parent_id=index?0:-1;
+    objects[index].visible=1;
+  }
+  objects[0].events=base_events;
+  objects[0].n_events=objects[0].cap_events=2;
+  base_events[0].event_type=0;
+  base_events[0].event_number=0;
+  base_events[0].source_path=create_path;
+  base_events[1].event_type=2;
+  base_events[1].event_number=1;
+  base_events[1].source_path=alarm_path;
+
+  room.id=room.name=(char*)"room_alarm_dispatch";
+  room.width=320;
+  room.height=240;
+  room.speed=30;
+  room.instances=placed;
+  room.n_instances=room.cap_instances=5;
+  for(int index=0;index<5;index++){
+    placed[index].id=placed[index].name=(char*)"placed_alarm_probe";
+    placed[index].object_id=placed_objects[index];
+    placed[index].instance_id=100000+index;
+    placed[index].x=placed_tokens[index];
+  }
+
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+      fprintf(stderr,"alarm dispatch package failed: %s\n",error);
+      goto cleanup;
+    }
+  }
+  ok=expect_alarm_dispatch_order_for_revision(
+       package_path,16,1112213141.0,"first-generation Studio") &&
+     expect_alarm_dispatch_order_for_revision(
+       package_path,17,3111411221.0,"second-generation Studio");
+
+cleanup:
+  if(create_fd>=0) close(create_fd);
+  if(alarm_fd>=0) close(alarm_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(create_path);
+  unlink(alarm_path);
+  unlink(package_path);
+  return ok;
+}
+
+
+int expect_automatic_motion_order(void){
+  GmlcProject project={0};
+  GmlcObject objects[2]={{0}};
+  GmlcObjectEvent controller_events[2]={{0}};
+  GmlcObjectEvent probe_events[2]={{0}};
+  GmlcRoom room={0};
+  GmlcRoomInstance placed={0};
+  int room_order[1]={0};
+  AnygmHostServices services={0};
+  char controller_create_path[]="/tmp/gml-automatic-motion-controller-create-XXXXXX";
+  char controller_alarm_path[]="/tmp/gml-automatic-motion-controller-alarm-XXXXXX";
+  char probe_create_path[]="/tmp/gml-automatic-motion-probe-create-XXXXXX";
+  char probe_step_path[]="/tmp/gml-automatic-motion-probe-step-XXXXXX";
+  char package_path[]="/tmp/gml-automatic-motion-package-XXXXXX";
+  int controller_create_fd=-1,controller_alarm_fd=-1,probe_create_fd=-1,probe_step_fd=-1;
+  int package_fd=-1;
+  int ok=0;
+
+  controller_create_fd=mkstemp(controller_create_path);
+  controller_alarm_fd=mkstemp(controller_alarm_path);
+  probe_create_fd=mkstemp(probe_create_path);
+  probe_step_fd=mkstemp(probe_step_path);
+  package_fd=mkstemp(package_path);
+  if(controller_create_fd<0 || controller_alarm_fd<0 || probe_create_fd<0 ||
+     probe_step_fd<0 || package_fd<0)
+    goto cleanup;
+  close(controller_create_fd); controller_create_fd=-1;
+  close(controller_alarm_fd); controller_alarm_fd=-1;
+  close(probe_create_fd); probe_create_fd=-1;
+  close(probe_step_fd); probe_step_fd=-1;
+  close(package_fd); package_fd=-1;
+  if(!fixture_write_text(controller_create_path,
+       "alarm[0]=1; global.motion_probe_steps=0;\n") ||
+     !fixture_write_text(controller_alarm_path,
+       "global.motion_probe=instance_create(10,20,obj_motion_probe);\n") ||
+     !fixture_write_text(probe_create_path,
+       "direction=0; speed=3; friction=0.1;\n") ||
+     !fixture_write_text(probe_step_path,"global.motion_probe_steps+=1;\n"))
+    goto cleanup;
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="automatic-motion-order-fixture";
+  project.host=&services;
+  project.objects=objects;
+  project.n_objects=project.cap_objects=2;
+  project.rooms=&room;
+  project.n_rooms=project.cap_rooms=1;
+  project.room_order=room_order;
+  project.n_room_order=1;
+  objects[0].id=objects[0].name=(char*)"obj_motion_controller";
+  objects[0].sprite_id=objects[0].mask_id=objects[0].parent_id=-1;
+  objects[0].visible=1;
+  objects[0].events=controller_events;
+  objects[0].n_events=objects[0].cap_events=2;
+  controller_events[0].event_type=0;
+  controller_events[0].event_number=0;
+  controller_events[0].source_path=controller_create_path;
+  controller_events[1].event_type=2;
+  controller_events[1].event_number=0;
+  controller_events[1].source_path=controller_alarm_path;
+  objects[1].id=objects[1].name=(char*)"obj_motion_probe";
+  objects[1].sprite_id=objects[1].mask_id=objects[1].parent_id=-1;
+  objects[1].visible=1;
+  objects[1].events=probe_events;
+  objects[1].n_events=objects[1].cap_events=2;
+  probe_events[0].event_type=0;
+  probe_events[0].event_number=0;
+  probe_events[0].source_path=probe_create_path;
+  probe_events[1].event_type=3;
+  probe_events[1].event_number=0;
+  probe_events[1].source_path=probe_step_path;
+  room.id=room.name=(char*)"room_motion_probe";
+  room.width=320;
+  room.height=240;
+  room.speed=30;
+  room.instances=&placed;
+  room.n_instances=room.cap_instances=1;
+  placed.id=placed.name=(char*)"placed_motion_controller";
+  placed.object_id=0;
+  placed.instance_id=100000;
+
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+      fprintf(stderr,"automatic motion package failed: %s\n",error);
+      goto cleanup;
+    }
+  }
+  {
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,package_path)) goto cleanup;
+    win.bytecode=16;
+    AnygmContentFacts facts={0};
+    AnygmCompatibilityProfile profile={0};
+    char error[256]={0};
+    if(!anygm_content_facts_detect(&win,&facts,error,sizeof error) ||
+       !anygm_compatibility_resolve(&facts,&profile,error,sizeof error)){
+      fprintf(stderr,"automatic motion profile failed: %s\n",error);
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    win.compatibility=&profile;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,NULL)){
+      win.compatibility=NULL;
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    gml_room_enter(&vm,0);
+    gml_vm_step(&vm);
+    GmlVal *probe_id=gml_varmap_get(&vm.globals,"motion_probe");
+    GmlVal *probe_steps=gml_varmap_get(&vm.globals,"motion_probe_steps");
+    GmlInstance *probe=probe_id&&probe_id->t==V_REAL?
+      find_slot(&vm,(uint32_t)probe_id->d):NULL;
+    if(probe){
+      ok=fabs(probe->x-12.9)<1e-9 && fabs(probe->speed-2.9)<1e-9 &&
+        fabs(probe->hspeed-2.9)<1e-9 && probe_steps && probe_steps->t==V_REAL &&
+        fabs(probe_steps->d-1.0)<1e-9;
+      if(!ok)
+        fprintf(stderr,
+          "first-generation Studio automatic motion mismatch: x=%.3f speed=%.3f "
+          "hspeed=%.3f steps=%.3f\n",
+          probe->x,probe->speed,probe->hspeed,
+          probe_steps&&probe_steps->t==V_REAL?probe_steps->d:-1.0);
+    }
+    gml_vm_free(&vm);
+    win.compatibility=NULL;
+    gml_win_free(&win);
+  }
+
+cleanup:
+  if(controller_create_fd>=0) close(controller_create_fd);
+  if(controller_alarm_fd>=0) close(controller_alarm_fd);
+  if(probe_create_fd>=0) close(probe_create_fd);
+  if(probe_step_fd>=0) close(probe_step_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(controller_create_path);
+  unlink(controller_alarm_path);
+  unlink(probe_create_path);
+  unlink(probe_step_path);
+  unlink(package_path);
+  return ok;
+}
+
+
+static int expect_event_boundary_room_transition_mode(int classic,int step_number){
   GmlcProject project={0};
   GmlcObject objects[2]={{0}};
   GmlcObjectEvent events[2]={{0}};
@@ -201,6 +588,8 @@ int expect_event_boundary_room_transition(void){
   anygm_stdio_vfs_services_init(&services);
   project.name="event-boundary-room-fixture";
   project.host=&services;
+  project.classic_version=classic?800:0;
+  project.classic_executable_layout=classic?1:0;
   project.objects=objects;
   project.n_objects=project.cap_objects=2;
   project.rooms=rooms;
@@ -221,7 +610,7 @@ int expect_event_boundary_room_transition(void){
   objects[1].n_events=objects[1].cap_events=1;
   for(int index=0;index<2;index++){
     events[index].event_type=3;
-    events[index].event_number=0;
+    events[index].event_number=step_number;
   }
   events[0].source_path=first_source;
   events[1].source_path=late_source;
@@ -271,8 +660,8 @@ int expect_event_boundary_room_transition(void){
        transition_state && transition_state->t==V_REAL && transition_state->d==4;
     if(!ok)
       fprintf(stderr,
-        "event-boundary room transition mismatch: room=%d survivor=%d first=%.0f late=%.0f state=%.0f\n",
-        vm.room_index,survivor&&survivor->active,
+        "%s Step_%d event-boundary room transition mismatch: room=%d survivor=%d first=%.0f late=%.0f state=%.0f\n",
+        classic?"classic":"Studio",step_number,vm.room_index,survivor&&survivor->active,
         first_hits&&first_hits->t==V_REAL?first_hits->d:-1.0,
         late_hits&&late_hits->t==V_REAL?late_hits->d:-1.0,
         transition_state&&transition_state->t==V_REAL?transition_state->d:-1.0);
@@ -286,6 +675,305 @@ cleanup:
   if(package_fd>=0) close(package_fd);
   unlink(first_source);
   unlink(late_source);
+  unlink(package_path);
+  return ok;
+}
+
+
+static int expect_studio_begin_step_transition_continuation(void){
+  GmlcProject project={0};
+  GmlcObject objects[3]={{0}};
+  GmlcObjectEvent events[5]={{0}};
+  GmlcRoom rooms[2]={{0}};
+  GmlcRoomInstance placed[3]={{0}};
+  int room_order[2]={0,1};
+  AnygmHostServices services={0};
+  char transition_path[]="/tmp/gml-begin-room-transition-XXXXXX";
+  char old_late_path[]="/tmp/gml-begin-room-old-late-XXXXXX";
+  char entered_create_path[]="/tmp/gml-begin-room-entered-create-XXXXXX";
+  char entered_alarm_path[]="/tmp/gml-begin-room-entered-alarm-XXXXXX";
+  char entered_step_path[]="/tmp/gml-begin-room-entered-step-XXXXXX";
+  char package_path[]="/tmp/gml-begin-room-package-XXXXXX";
+  int transition_fd=-1,old_late_fd=-1,entered_create_fd=-1;
+  int entered_alarm_fd=-1,entered_step_fd=-1,package_fd=-1;
+  int ok=0;
+
+  transition_fd=mkstemp(transition_path);
+  old_late_fd=mkstemp(old_late_path);
+  entered_create_fd=mkstemp(entered_create_path);
+  entered_alarm_fd=mkstemp(entered_alarm_path);
+  entered_step_fd=mkstemp(entered_step_path);
+  package_fd=mkstemp(package_path);
+  if(transition_fd<0 || old_late_fd<0 || entered_create_fd<0 ||
+     entered_alarm_fd<0 || entered_step_fd<0 || package_fd<0)
+    goto cleanup;
+  close(transition_fd); transition_fd=-1;
+  close(old_late_fd); old_late_fd=-1;
+  close(entered_create_fd); entered_create_fd=-1;
+  close(entered_alarm_fd); entered_alarm_fd=-1;
+  close(entered_step_fd); entered_step_fd=-1;
+  close(package_fd); package_fd=-1;
+  if(!fixture_write_text(transition_path,"room_goto_next();\n") ||
+     !fixture_write_text(old_late_path,"global.old_begin_hits += 1;\n") ||
+     !fixture_write_text(entered_create_path,"alarm[0]=1;\n") ||
+     !fixture_write_text(entered_alarm_path,"global.target_alarm_hits += 1;\n") ||
+     !fixture_write_text(entered_step_path,"global.target_step_hits += 1;\n"))
+    goto cleanup;
+
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="begin-step-room-continuation-fixture";
+  project.host=&services;
+  project.objects=objects;
+  project.n_objects=project.cap_objects=3;
+  project.rooms=rooms;
+  project.n_rooms=project.cap_rooms=2;
+  project.room_order=room_order;
+  project.n_room_order=2;
+
+  objects[0].id=objects[0].name=(char*)"obj_transition";
+  objects[0].sprite_id=objects[0].mask_id=objects[0].parent_id=-1;
+  objects[0].visible=objects[0].persistent=1;
+  objects[0].events=&events[0];
+  objects[0].n_events=objects[0].cap_events=1;
+  events[0].event_type=3;
+  events[0].event_number=1;
+  events[0].source_path=transition_path;
+
+  objects[1].id=objects[1].name=(char*)"obj_old_late";
+  objects[1].sprite_id=objects[1].mask_id=objects[1].parent_id=-1;
+  objects[1].visible=1;
+  objects[1].events=&events[1];
+  objects[1].n_events=objects[1].cap_events=1;
+  events[1].event_type=3;
+  events[1].event_number=1;
+  events[1].source_path=old_late_path;
+
+  objects[2].id=objects[2].name=(char*)"obj_entered";
+  objects[2].sprite_id=objects[2].mask_id=objects[2].parent_id=-1;
+  objects[2].visible=1;
+  objects[2].events=&events[2];
+  objects[2].n_events=objects[2].cap_events=3;
+  events[2].event_type=0;
+  events[2].event_number=0;
+  events[2].source_path=entered_create_path;
+  events[3].event_type=2;
+  events[3].event_number=0;
+  events[3].source_path=entered_alarm_path;
+  events[4].event_type=3;
+  events[4].event_number=0;
+  events[4].source_path=entered_step_path;
+
+  for(int index=0;index<2;index++){
+    rooms[index].id=rooms[index].name=index?(char*)"room_target":(char*)"room_source";
+    rooms[index].width=320;
+    rooms[index].height=240;
+    rooms[index].speed=30;
+  }
+  placed[0].id=placed[0].name=(char*)"placed_transition";
+  placed[0].object_id=0;
+  placed[0].instance_id=100000;
+  placed[1].id=placed[1].name=(char*)"placed_old_late";
+  placed[1].object_id=1;
+  placed[1].instance_id=100001;
+  rooms[0].instances=&placed[0];
+  rooms[0].n_instances=rooms[0].cap_instances=2;
+  placed[2].id=placed[2].name=(char*)"placed_entered";
+  placed[2].object_id=2;
+  placed[2].instance_id=100002;
+  rooms[1].instances=&placed[2];
+  rooms[1].n_instances=rooms[1].cap_instances=1;
+
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+      fprintf(stderr,"Begin Step room continuation package failed: %s\n",error);
+      goto cleanup;
+    }
+  }
+  {
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,package_path)) goto cleanup;
+    win.bytecode=16;
+    AnygmContentFacts facts={0};
+    AnygmCompatibilityProfile profile={0};
+    char error[256]={0};
+    if(!anygm_content_facts_detect(&win,&facts,error,sizeof error) ||
+       !anygm_compatibility_resolve(&facts,&profile,error,sizeof error)){
+      fprintf(stderr,"Begin Step room continuation profile failed: %s\n",error);
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    win.compatibility=&profile;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,&services)){
+      win.compatibility=NULL;
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    gml_room_enter(&vm,0);
+    *gml_varmap_put(&vm.globals,"old_begin_hits")=vreal(0);
+    *gml_varmap_put(&vm.globals,"target_alarm_hits")=vreal(0);
+    *gml_varmap_put(&vm.globals,"target_step_hits")=vreal(0);
+    gml_vm_step(&vm);
+    GmlVal *old_hits=gml_varmap_get(&vm.globals,"old_begin_hits");
+    GmlVal *alarm_hits=gml_varmap_get(&vm.globals,"target_alarm_hits");
+    GmlVal *step_hits=gml_varmap_get(&vm.globals,"target_step_hits");
+    ok=vm.room_index==1 && old_hits && old_hits->t==V_REAL && old_hits->d==0 &&
+      alarm_hits && alarm_hits->t==V_REAL && alarm_hits->d==1 &&
+      step_hits && step_hits->t==V_REAL && step_hits->d==1;
+    if(!ok)
+      fprintf(stderr,
+        "Studio Begin Step room continuation mismatch: room=%d old=%.0f alarm=%.0f step=%.0f\n",
+        vm.room_index,old_hits&&old_hits->t==V_REAL?old_hits->d:-1.0,
+        alarm_hits&&alarm_hits->t==V_REAL?alarm_hits->d:-1.0,
+        step_hits&&step_hits->t==V_REAL?step_hits->d:-1.0);
+    gml_vm_free(&vm);
+    win.compatibility=NULL;
+    gml_win_free(&win);
+  }
+
+cleanup:
+  if(transition_fd>=0) close(transition_fd);
+  if(old_late_fd>=0) close(old_late_fd);
+  if(entered_create_fd>=0) close(entered_create_fd);
+  if(entered_alarm_fd>=0) close(entered_alarm_fd);
+  if(entered_step_fd>=0) close(entered_step_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(transition_path);
+  unlink(old_late_path);
+  unlink(entered_create_path);
+  unlink(entered_alarm_path);
+  unlink(entered_step_path);
+  unlink(package_path);
+  return ok;
+}
+
+
+int expect_event_boundary_room_transition(void){
+  return expect_event_boundary_room_transition_mode(0,0) &&
+         expect_event_boundary_room_transition_mode(1,0) &&
+         expect_event_boundary_room_transition_mode(1,1) &&
+         expect_event_boundary_room_transition_mode(1,2) &&
+         expect_studio_begin_step_transition_continuation();
+}
+
+
+int expect_room_transition_animation_phase(void){
+  GmlcProject project={0};
+  GmlcSprite project_sprite={0};
+  GmlcObject objects[2]={{0}};
+  GmlcObjectEvent event={0};
+  GmlcRoom rooms[2]={{0}};
+  GmlcRoomInstance placed[2]={{0}};
+  int room_order[2]={0,1};
+  AnygmHostServices services={0};
+  char source_path[]="/tmp/gml-room-animation-phase-source-XXXXXX";
+  char package_path[]="/tmp/gml-room-animation-phase-package-XXXXXX";
+  int source_fd=-1,package_fd=-1;
+  int ok=0;
+
+  source_fd=mkstemp(source_path);
+  package_fd=mkstemp(package_path);
+  if(source_fd<0 || package_fd<0) goto cleanup;
+  close(source_fd); source_fd=-1;
+  close(package_fd); package_fd=-1;
+  if(!fixture_write_text(source_path,"room_goto_next();\n")) goto cleanup;
+
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="room-animation-phase-fixture";
+  project.host=&services;
+  project.sprites=&project_sprite;
+  project.n_sprites=project.cap_sprites=1;
+  project.objects=objects;
+  project.n_objects=project.cap_objects=2;
+  project.rooms=rooms;
+  project.n_rooms=project.cap_rooms=2;
+  project.room_order=room_order;
+  project.n_room_order=2;
+
+  project_sprite.id=project_sprite.name=(char*)"spr_phase";
+  project_sprite.runtime_id=0;
+  project_sprite.width=project_sprite.height=1;
+  project_sprite.bbox_right=project_sprite.bbox_bottom=0;
+
+  objects[0].id=objects[0].name=(char*)"obj_carried";
+  objects[0].sprite_id=0;
+  objects[0].mask_id=objects[0].parent_id=-1;
+  objects[0].visible=1;
+  objects[0].persistent=1;
+  objects[0].events=&event;
+  objects[0].n_events=objects[0].cap_events=1;
+  event.event_type=3;
+  event.event_number=0;
+  event.source_path=source_path;
+
+  objects[1].id=objects[1].name=(char*)"obj_entered";
+  objects[1].sprite_id=0;
+  objects[1].mask_id=objects[1].parent_id=-1;
+  objects[1].visible=1;
+
+  for(int index=0;index<2;index++){
+    rooms[index].id=rooms[index].name=index?(char*)"room_target":(char*)"room_source";
+    rooms[index].width=320;
+    rooms[index].height=240;
+    rooms[index].speed=60;
+  }
+  placed[0].id=placed[0].name=(char*)"placed_carried";
+  placed[0].object_id=0;
+  placed[0].instance_id=100000;
+  placed[1].id=placed[1].name=(char*)"placed_entered";
+  placed[1].object_id=1;
+  placed[1].instance_id=100001;
+  rooms[0].instances=&placed[0];
+  rooms[0].n_instances=rooms[0].cap_instances=1;
+  rooms[1].instances=&placed[1];
+  rooms[1].n_instances=rooms[1].cap_instances=1;
+
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+      fprintf(stderr,"room animation phase package failed: %s\n",error);
+      goto cleanup;
+    }
+  }
+  {
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,package_path)) goto cleanup;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,&services)){
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    GmlSprite sprite={0};
+    GmlRender render={0};
+    sprite.n_frames=5;
+    render.win=&win;
+    render.spr=&sprite;
+    render.n_spr=1;
+    vm.render=&render;
+    gml_room_enter(&vm,0);
+    gml_vm_step(&vm);
+    GmlInstance *carried=find_slot(&vm,100000);
+    GmlInstance *entered=find_slot(&vm,100001);
+    ok=vm.room_index==1 && carried && carried->active && entered && entered->active &&
+       carried->image_index==1 && entered->image_index==1;
+    if(!ok)
+      fprintf(stderr,
+        "Studio room animation phase mismatch: room=%d carried=%.2f entered=%.2f\n",
+        vm.room_index,carried?carried->image_index:-1.0,entered?entered->image_index:-1.0);
+    vm.render=NULL;
+    gml_vm_free(&vm);
+    gml_win_free(&win);
+  }
+
+cleanup:
+  if(source_fd>=0) close(source_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(source_path);
   unlink(package_path);
   return ok;
 }
@@ -958,6 +1646,9 @@ static int expect_persistent_lifecycle_exit_code(void){
   char changed_step[]="/tmp/gml-changed-step-event-XXXXXX"; int changed_step_fd=mkstemp(changed_step); if(changed_step_fd<0)return 1;
   FILE *changed_step_file=fdopen(changed_step_fd,"wb");
   const char changed_step_source[]=
+    "if (id == global.transition_actor) { "
+    "global.transition_step_hits += 1; "
+    "if (x > room_width - 16) x = room_width - 16; } "
     "global.step_order=global.step_order*10+2; global.changed_step_hits += 1; "
     "global.engine_event_other_is_self=(other.id==id); "
     "global.nested_empty_with=0; "
@@ -968,7 +1659,10 @@ static int expect_persistent_lifecycle_exit_code(void){
   object_events[11].source_path=changed_step;
   char alarm_files[4][40];
   const char *alarm_sources[4]={
-    "global.alarm_order=global.alarm_order*10+1;\n",
+    "if (global.transition_alarm_fixture) { "
+    "var actor=instance_create(0,0,obj_changed); actor.persistent=true; "
+    "room_goto(1); actor.x=1120; global.transition_actor=actor.id; "
+    "} else global.alarm_order=global.alarm_order*10+1;\n",
     "global.alarm_order=global.alarm_order*10+3;\n",
     "global.alarm_order=global.alarm_order*10+2;\n",
     "global.alarm_order=global.alarm_order*10+4;\n"
@@ -1544,7 +2238,7 @@ static int expect_persistent_lifecycle_exit_code(void){
     GmlVal studio2_compare=gml_vm_run_code(&vm,implicit_code,NULL,NULL,&implicit_arg,1);
     win.classic_version=saved_classic; win.bytecode=saved_bytecode;
     vm.math_epsilon=saved_epsilon;
-    if(studio1_compare.t!=V_REAL || studio1_compare.d!=0 ||
+    if(studio1_compare.t!=V_REAL || studio1_compare.d!=1 ||
        studio2_compare.t!=V_REAL || studio2_compare.d!=1){
       fprintf(stderr,"Studio comparison-family epsilon mismatch: bytecode15=%.0f bytecode17=%.0f\n",
         studio1_compare.t==V_REAL?studio1_compare.d:-1.0,
@@ -2139,6 +2833,23 @@ static int expect_persistent_lifecycle_exit_code(void){
   if(static_ci<0 || static_ci>=vm.code_static_count) return 1;
   vm.code_static_init[static_ci]=1;
   *gml_varmap_put(&vm.code_static[static_ci],"fixture_static")=vreal(73);
+  GmlVal *timer_before_save=gml_varmap_get(&vm.globals,"fixture_time_source_handle");
+  GmlVal *receiver_before_save=gml_varmap_get(&vm.globals,"fixture_clone_root");
+  GmlInstance *callback_receiver=receiver_before_save && receiver_before_save->t==V_REAL
+    ? gml_struct_find(&vm,(unsigned)receiver_before_save->d) : NULL;
+  GmlVal *timer_callback=callback_receiver
+    ? gml_varmap_get(&callback_receiver->vars,"callback") : NULL;
+  if(!timer_before_save || timer_before_save->t!=V_REAL ||
+     !timer_callback || timer_callback->t!=V_REAL) return 1;
+  GmlVal restored_timer_args=gml_arr_new(2,vreal(0));
+  gml_arr_set(restored_timer_args,1,vreal(4));
+  GmlVal timer_reconfigure_args[7]={
+    *timer_before_save,vreal(1),vreal(1),*timer_callback,
+    restored_timer_args,vreal(2),vreal(1)
+  };
+  (void)gml_builtin_call(&vm,"time_source_reconfigure",timer_reconfigure_args,7);
+  (void)gml_builtin_call(&vm,"time_source_start",timer_before_save,1);
+  *gml_varmap_put(&vm.globals,"time_source_fixture")=vreal(0);
   size_t size=gml_vm_state_size(&vm),written=0,used=0; void *state=malloc(size);
   if(!state||!gml_vm_state_save(&vm,state,size,&written)||written!=size)return 1;
   gml_room_enter(&vm,0); slot=find_slot(&vm,id);
@@ -2154,6 +2865,10 @@ static int expect_persistent_lifecycle_exit_code(void){
   GmlVal *timer_handle=gml_varmap_get(&vm.globals,"fixture_time_source_handle");
   GmlVal restored_timer_state=timer_handle?
     gml_builtin_call(&vm,"time_source_get_state",timer_handle,1):vundef();
+  gml_time_sources_tick(&vm);
+  GmlVal restored_timer_reps=timer_handle?
+    gml_builtin_call(&vm,"time_source_get_reps_remaining",timer_handle,1):vundef();
+  GmlVal *restored_timer_total=gml_varmap_get(&vm.globals,"time_source_fixture");
   int ok=slot&&slot->active&&!slot->room_dormant&&value&&value->t==V_REAL&&value->d==42 &&
     global_array_value(&vm,"background_x",0)==123 && global_array_value(&vm,"view_xview",0)==77 &&
     room_speed&&room_speed->t==V_REAL&&room_speed->d==55 && vm.n_tile_mut==1 &&
@@ -2161,7 +2876,10 @@ static int expect_persistent_lifecycle_exit_code(void){
     vm.potential_max_rotation==30 && vm.potential_rotate_step==10 &&
     vm.potential_check_distance==1 && vm.potential_rotate_on_spot==1 &&
     vm.code_static_init[static_ci]==1 && static_value && static_value->t==V_REAL && static_value->d==73 &&
-    timer_handle && timer_handle->t==V_REAL && restored_timer_state.t==V_REAL && restored_timer_state.d==3;
+    timer_handle && timer_handle->t==V_REAL &&
+    restored_timer_state.t==V_REAL && restored_timer_state.d==1 &&
+    restored_timer_reps.t==V_REAL && restored_timer_reps.d==1 &&
+    restored_timer_total && restored_timer_total->t==V_REAL && restored_timer_total->d==4;
   if(!ok) fprintf(stderr,
     "persistent room state did not roundtrip: slot=%d value=%.0f bg=%.0f view=%.0f speed=%.0f tiles=%d depth=%d shift=(%.0f,%.0f)\n",
     slot&&slot->active&&!slot->room_dormant,value&&value->t==V_REAL?value->d:-1,
@@ -2323,7 +3041,37 @@ static int expect_persistent_lifecycle_exit_code(void){
     fprintf(stderr,"Studio with order/dead-member mismatch: %.0f\n",
       with_result.t==V_REAL?with_result.d:-1.0); return 1;
   }
-  free(state); gml_vm_free(&vm); gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(shadowed_alias_script); unlink(array_ext_callback); unlink(studio_with_order); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(solid_collision); unlink(destroy_reentry); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
+  free(state); gml_vm_free(&vm);
+  {
+    int transition_ok=0;
+    GmlVM transition_vm;
+    if(!gml_vm_init(&transition_vm,&win,&file_services)){
+      gml_room_enter(&transition_vm,0);
+      *gml_varmap_put(&transition_vm.globals,"transition_alarm_fixture")=vreal(1);
+      *gml_varmap_put(&transition_vm.globals,"transition_actor")=vreal(-1);
+      *gml_varmap_put(&transition_vm.globals,"transition_step_hits")=vreal(0);
+      GmlInstance *controller=gml_instance_create(&transition_vm,24,24,0);
+      if(controller){
+        controller->alarm[0]=1;
+        gml_vm_step(&transition_vm);
+        GmlVal *actor_id=gml_varmap_get(&transition_vm.globals,"transition_actor");
+        GmlVal *step_hits=gml_varmap_get(&transition_vm.globals,"transition_step_hits");
+        GmlInstance *actor=actor_id&&actor_id->t==V_REAL?
+          find_slot(&transition_vm,(uint32_t)actor_id->d):NULL;
+        transition_ok=transition_vm.room_index==1 && actor && actor->active &&
+          actor->persistent && actor->x==1120 && step_hits &&
+          step_hits->t==V_REAL && step_hits->d==0;
+        if(!transition_ok)
+          fprintf(stderr,
+            "classic Alarm room transition phase mismatch: room=%d actor=%d x=%.0f steps=%.0f\n",
+            transition_vm.room_index,actor&&actor->active,
+            actor?actor->x:-1.0,step_hits&&step_hits->t==V_REAL?step_hits->d:-1.0);
+      }
+      gml_vm_free(&transition_vm);
+    }
+    ok=ok&&transition_ok;
+  }
+  gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(shadowed_alias_script); unlink(array_ext_callback); unlink(studio_with_order); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(solid_collision); unlink(destroy_reentry); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
   for(int i=0;i<2;i++) unlink(key_files[i]);
   for(int i=0;i<2;i++) unlink(mouse_files[i]);

@@ -862,9 +862,10 @@ static void sprite_set_runtime_source(GmlSprite *s, const char *path, int imgnum
   s->runtime_source_removeback=removeback?1:0;
 }
 
-static void rgba_apply_removeback(uint8_t *rgba, int w, int h, int removeback){
+void gml_render_apply_removeback_rgba(uint8_t *rgba, int w, int h, int removeback){
   if(!removeback || !rgba || w<=0 || h<=0) return;
-  uint8_t rr=rgba[0], gg=rgba[1], bb=rgba[2];
+  const uint8_t *key=rgba+(size_t)(h-1)*(size_t)w*4u;
+  uint8_t rr=key[0], gg=key[1], bb=key[2];
   for(int i=0;i<w*h;i++){
     uint8_t *p=rgba+i*4;
     if(p[0]==rr && p[1]==gg && p[2]==bb) p[3]=0;
@@ -1013,29 +1014,157 @@ static uint8_t *runtime_image_load(GmlRender *r,const char *path,
   free(encoded);
   return decoded?image.data:NULL;
 }
+static uint8_t *runtime_image_load_frames(
+    GmlRender *r,const char *path,int *width,int *height,
+    int *frames,int *components){
+  if(!r || !r->win || !path) return NULL;
+  uint8_t *encoded=NULL;
+  size_t encoded_size=0;
+  if(!anygm_vfs_read_all(r->win->host,path,&encoded,&encoded_size,(size_t)INT_MAX))
+    return NULL;
+  GmlMediaBuffer image={0};
+  int decoded=gml_image_decode_rgba_frames(
+      encoded,encoded_size,&image,width,height,frames,components);
+  free(encoded);
+  return decoded?image.data:NULL;
+}
+static uint8_t *runtime_sprite_image_load(
+    GmlRender *r,const char *path,int requested_frames,int removeback,
+    int *frame_width,int *height,int *frame_count){
+  int width=0,decoded_height=0,decoded_frames=0,components=0;
+  uint8_t *decoded=runtime_image_load_frames(
+      r,path,&width,&decoded_height,&decoded_frames,&components);
+  (void)components;
+  if(!decoded || width<=0 || decoded_height<=0 || decoded_frames<=0){
+    free(decoded);
+    return NULL;
+  }
+  int frames=1;
+  int width_per_frame=width;
+  uint8_t *rgba=decoded;
+  if(decoded_frames>1){
+    if(requested_frames<0) frames=decoded_frames;
+    else if(requested_frames>0)
+      frames=requested_frames<decoded_frames?requested_frames:decoded_frames;
+  } else {
+    frames=requested_frames>0?requested_frames:1;
+    if(frames>width || width%frames) frames=1;
+    width_per_frame=width/frames;
+    if(frames>1){
+      if((size_t)frames*(size_t)width_per_frame>
+         SIZE_MAX/(size_t)decoded_height/4u){
+        free(decoded);
+        return NULL;
+      }
+      rgba=malloc((size_t)frames*(size_t)width_per_frame*
+                  (size_t)decoded_height*4u);
+      if(!rgba){
+        free(decoded);
+        return NULL;
+      }
+      for(int frame=0;frame<frames;frame++)
+        for(int y=0;y<decoded_height;y++)
+          memcpy(rgba+((size_t)frame*decoded_height+y)*width_per_frame*4u,
+                 decoded+((size_t)y*width+frame*width_per_frame)*4u,
+                 (size_t)width_per_frame*4u);
+      free(decoded);
+    }
+  }
+  if(removeback){
+    uint8_t *key=rgba+((size_t)(decoded_height-1)*width_per_frame)*4u;
+    uint8_t red=key[0],green=key[1],blue=key[2];
+    size_t pixels=(size_t)frames*(size_t)width_per_frame*
+                  (size_t)decoded_height;
+    for(size_t index=0;index<pixels;index++){
+      uint8_t *pixel=rgba+index*4u;
+      if(pixel[0]==red && pixel[1]==green && pixel[2]==blue)
+        pixel[3]=0;
+    }
+  }
+  if(frame_width) *frame_width=width_per_frame;
+  if(height) *height=decoded_height;
+  if(frame_count) *frame_count=frames;
+  return rgba;
+}
+
+int gml_background_replace_from_rgba(GmlRender *r,int background,
+                                     uint8_t *rgba,int width,int height){
+  if(!r || background<0 || background>=r->n_bg || !rgba ||
+     width<=0 || height<=0 || width>4096 || height>4096) return 0;
+  int page_index=r->bg[background].tpag;
+  int add_page=page_index<0 || page_index>=r->n_tpag;
+  GmlAtlas *atlases=malloc((size_t)(r->n_atlas+1)*sizeof(*atlases));
+  GmlTpag *pages=NULL;
+  uint32_t *page_pointers=NULL;
+  if(!atlases) return 0;
+  if(r->n_atlas>0 && r->atlas)
+    memcpy(atlases,r->atlas,(size_t)r->n_atlas*sizeof(*atlases));
+  if(add_page){
+    pages=malloc((size_t)(r->n_tpag+1)*sizeof(*pages));
+    page_pointers=calloc((size_t)r->n_tpag+1,sizeof(*page_pointers));
+    if(!pages || !page_pointers){
+      free(atlases);
+      free(pages);
+      free(page_pointers);
+      return 0;
+    }
+    if(r->n_tpag>0 && r->tpag)
+      memcpy(pages,r->tpag,(size_t)r->n_tpag*sizeof(*pages));
+    if(r->n_tpag>0 && r->tpag_ptr)
+      memcpy(page_pointers,r->tpag_ptr,(size_t)r->n_tpag*sizeof(*page_pointers));
+  }
+
+  int atlas_index=r->n_atlas;
+  memset(&atlases[atlas_index],0,sizeof(atlases[atlas_index]));
+  atlases[atlas_index].px=rgba;
+  atlases[atlas_index].w=width;
+  atlases[atlas_index].h=height;
+  atlases[atlas_index].decode_attempted=1;
+  free(r->atlas);
+  r->atlas=atlases;
+  r->n_atlas++;
+
+  if(add_page){
+    page_index=r->n_tpag;
+    memset(&pages[page_index],0,sizeof(pages[page_index]));
+    free(r->tpag);
+    free(r->tpag_ptr);
+    r->tpag=pages;
+    r->tpag_ptr=page_pointers;
+    r->n_tpag++;
+    r->bg[background].tpag=page_index;
+  } else {
+    gml_render_texture_page_cache_clear(&r->tpag[page_index]);
+  }
+  GmlTpag *page=&r->tpag[page_index];
+  page->sx=page->sy=page->tx=page->ty=0;
+  page->sw=page->bw=width;
+  page->sh=page->bh=height;
+  page->atlas=atlas_index;
+  gml_render_interpolated_subrect_cache_clear(r);
+  return 1;
+}
+
+int gml_background_replace_from_file(GmlRender *r,int background,const char *path,
+                                     int removeback,int smooth){
+  (void)smooth;
+  if(!r || !path || !*path) return 0;
+  int width=0,height=0,components=0;
+  uint8_t *rgba=runtime_image_load(r,path,&width,&height,&components);
+  (void)components;
+  if(!rgba) return 0;
+  gml_render_apply_removeback_rgba(rgba,width,height,removeback);
+  if(gml_background_replace_from_rgba(r,background,rgba,width,height)) return 1;
+  free(rgba);
+  return 0;
+}
 
 int gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeback, int xorig, int yorig){
   if(!r || !path) return -1;
-  int W,H,comp;
-  unsigned char *img=runtime_image_load(r,path,&W,&H,&comp);
-  if(!img) return -1;
-  int frames=imgnum>0?imgnum:1;
-  if(W%frames) frames=1;                     /* not an even strip: treat as a single frame */
-  int fw=W/frames;
-  if(removeback && W>0 && H>0){
-    unsigned char *key=img+((size_t)(H-1)*W)*4;   /* bottom-left pixel */
-    unsigned char kr=key[0],kg=key[1],kb=key[2];
-    for(size_t i=0;i<(size_t)W*H;i++){
-      unsigned char *q=img+i*4;
-      if(q[0]==kr&&q[1]==kg&&q[2]==kb) q[3]=0;
-    }
-  }
-  uint8_t *rgba=malloc((size_t)frames*fw*H*4);
-  if(!rgba){ free(img); return -1; }
-  for(int f=0;f<frames;f++)
-    for(int y=0;y<H;y++)
-      memcpy(rgba+((size_t)f*fw*H+(size_t)y*fw)*4, img+((size_t)y*W+(size_t)f*fw)*4, (size_t)fw*4);
-  free(img);
+  int fw=0,H=0,frames=0;
+  uint8_t *rgba=runtime_sprite_image_load(
+      r,path,imgnum,removeback,&fw,&H,&frames);
+  if(!rgba) return -1;
   int id=gml_sprite_append_from_rgba_frames(r,rgba,fw,H,frames,xorig,yorig,path);
   if(id>=0 && id<r->n_spr) sprite_set_runtime_source(&r->spr[id],path,imgnum,removeback);
   return id;
@@ -1153,29 +1282,17 @@ int gml_sprite_create_from_surface(GmlRender *r, int surf, int x, int y, int w, 
       dp[3]=(uint8_t)(p>>24);
     }
   }
-  rgba_apply_removeback(rgba,w,h,removeback);
+  gml_render_apply_removeback_rgba(rgba,w,h,removeback);
   return gml_sprite_append_from_rgba_frames(r,rgba,w,h,1,xorig,yorig,NULL);
 }
 int gml_sprite_replace_from_file(GmlRender *r, int sprite, const char *path, int imgnumb,
                                  int removeback, int smooth, int xorig, int yorig){
   (void)smooth;
   if(sprite<0 || sprite>=r->n_spr || !path || !*path) return 0;
-  int w=0,h=0,ch=0;
-  uint8_t *rgba=runtime_image_load(r,path,&w,&h,&ch);
+  int w=0,h=0,frames=0;
+  uint8_t *rgba=runtime_sprite_image_load(
+      r,path,imgnumb,removeback,&w,&h,&frames);
   if(!rgba) return 0;
-  int frames=1;
-  if(imgnumb>1 && w>=imgnumb && w%imgnumb==0){
-    int fw=w/imgnumb;
-    uint8_t *split=malloc((size_t)fw*h*imgnumb*4);
-    if(split){
-      for(int f=0; f<imgnumb; f++)
-        for(int y=0;y<h;y++)
-          memcpy(split+((size_t)f*h+y)*fw*4,rgba+((size_t)y*w+f*fw)*4,(size_t)fw*4);
-      free(rgba);
-      rgba=split; w=fw; frames=imgnumb;
-    }
-  }
-  rgba_apply_removeback(rgba,w,h*frames,removeback);
   int ok=gml_sprite_replace_from_rgba_frames(r,sprite,rgba,w,h,frames,xorig,yorig);
   if(ok) sprite_set_runtime_source(&r->spr[sprite],path,imgnumb,removeback);
   if(!ok) free(rgba);

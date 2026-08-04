@@ -67,6 +67,153 @@ static int classic_execute_assignment(GmlVM *vm, const char *source){
   }
   return gml_inst_var_set_val(vm,vreal(target->id),field,vreal(value));
 }
+static const char *classic_globalvar_keyword(const char *source){
+  if(!source) return NULL;
+  while(isspace((unsigned char)*source)) source++;
+  if(strncmp(source,"globalvar",9) ||
+     (source[9] && !isspace((unsigned char)source[9]))) return NULL;
+  return source+9;
+}
+static int classic_execute_globalvar_pass(
+    GmlVM *vm,const char *source,int declare_identifiers){
+  const char *cursor=classic_globalvar_keyword(source);
+  if(!cursor) return 0;
+  int count=0;
+  for(;;){
+    while(isspace((unsigned char)*cursor)) cursor++;
+    const char *start=cursor;
+    if(!(*cursor=='_' || isalpha((unsigned char)*cursor))) return 0;
+    cursor++;
+    while(*cursor=='_' || isalnum((unsigned char)*cursor)) cursor++;
+    size_t length=(size_t)(cursor-start);
+    if(length>127 || ++count>256) return 0;
+    if(declare_identifiers){
+      char name[128];
+      memcpy(name,start,length);
+      name[length]=0;
+      if(!gml_vm_declare_globalvar(vm,name)) return 0;
+    }
+    while(isspace((unsigned char)*cursor)) cursor++;
+    if(*cursor==','){
+      cursor++;
+      continue;
+    }
+    if(*cursor==';'){
+      cursor++;
+      while(isspace((unsigned char)*cursor)) cursor++;
+    }
+    return *cursor==0;
+  }
+}
+static int classic_execute_globalvar(GmlVM *vm,const char *source){
+  if(!vm || !vm->win || !anygm_policy_uses_classic_runtime(vm->win)) return 0;
+  if(!classic_execute_globalvar_pass(vm,source,0)) return 0;
+  return classic_execute_globalvar_pass(vm,source,1);
+}
+static int classic_execute_identifier(const char **cursor,char *name,size_t size){
+  const char *source=*cursor;
+  while(isspace((unsigned char)*source)) source++;
+  if(!(*source=='_' || isalpha((unsigned char)*source))) return 0;
+  const char *start=source++;
+  while(*source=='_' || isalnum((unsigned char)*source)) source++;
+  size_t length=(size_t)(source-start);
+  if(!length || length>=size) return 0;
+  memcpy(name,start,length);
+  name[length]=0;
+  *cursor=source;
+  return 1;
+}
+static int classic_execute_call_value(GmlVM *vm,const char **cursor,GmlVal *value){
+  const char *source=*cursor;
+  while(isspace((unsigned char)*source)) source++;
+  char *end=NULL;
+  double number=strtod(source,&end);
+  if(end && end>source){
+    *value=vreal(number);
+    *cursor=end;
+    return 1;
+  }
+  char first[128];
+  if(!classic_execute_identifier(&source,first,sizeof first)) return 0;
+  while(isspace((unsigned char)*source)) source++;
+  if(*source=='.'){
+    source++;
+    char field[128];
+    if(!classic_execute_identifier(&source,field,sizeof field)) return 0;
+    if(!strcmp(first,"global")){
+      GmlVal *slot=gml_varmap_get(&vm->globals,field);
+      *value=slot?*slot:vreal(0);
+    } else {
+      GmlVal scope;
+      if(!strcmp(first,"self")) scope=vreal(IT_SELF);
+      else if(!strcmp(first,"other")) scope=vreal(IT_OTHER);
+      else return 0;
+      int ok=0;
+      *value=gml_inst_var_get_val(vm,scope,field,&ok);
+      if(!ok) *value=vreal(0);
+    }
+  } else if(!strcmp(first,"true")){
+    *value=vreal(1);
+  } else if(!strcmp(first,"false")){
+    *value=vreal(0);
+  } else {
+    *value=gml_vm_identifier_get(vm,first);
+  }
+  *cursor=source;
+  return 1;
+}
+/* Old projects frequently construct a call whose function and real-valued arguments are known
+ * resource/variable names. Execute that bounded shape through the existing script runtime rather
+ * than embedding a second source compiler. Expressions, statements, nesting, and string literals
+ * remain outside this deliberately narrow path. */
+static int classic_execute_call(GmlVM *vm,const char *source){
+  if(!vm || !vm->win || !source ||
+     !anygm_policy_uses_classic_runtime(vm->win)) return 0;
+  char name[128];
+  if(!classic_execute_identifier(&source,name,sizeof name)) return 0;
+  while(isspace((unsigned char)*source)) source++;
+  if(*source!='(') return 0;
+  source++;
+  GmlVal arguments[16];
+  int count=0;
+  while(isspace((unsigned char)*source)) source++;
+  if(*source!=')'){
+    for(;;){
+      if(count>=(int)(sizeof(arguments)/sizeof(arguments[0])) ||
+         !classic_execute_call_value(vm,&source,&arguments[count])) return 0;
+      count++;
+      while(isspace((unsigned char)*source)) source++;
+      if(*source==','){
+        source++;
+        continue;
+      }
+      if(*source!=')') return 0;
+      break;
+    }
+  }
+  source++;
+  while(isspace((unsigned char)*source)) source++;
+  if(*source==';'){
+    source++;
+    while(isspace((unsigned char)*source)) source++;
+  }
+  if(*source) return 0;
+  char code_name[160];
+  snprintf(code_name,sizeof code_name,"gml_Script_%s",name);
+  int code_index=gml_code_index_by_name(vm->win,code_name);
+  if(code_index<0){
+    snprintf(code_name,sizeof code_name,"gml_GlobalScript_%s",name);
+    code_index=gml_code_index_by_name(vm->win,code_name);
+  }
+  if(code_index<0) return 0;
+  if(builtin_setting(vm,"GML_LOG_AUDIO"))
+    anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+                    "[execute_string] call %s argc=%d\n",name,count);
+  GmlVal result=gml_vm_run_code(
+      vm,code_index,vm->cur_self,vm->cur_other,arguments,count);
+  gml_values_release(&result,1);
+  return 1;
+}
 static int gm_datetime_calendar(double serial,AnygmCalendarTime *out){
   if(!out||!isfinite(serial)||serial<-100000000.0||serial>100000000.0) return 0;
   double seconds=(serial-25569.0)*86400.0;
@@ -186,8 +333,19 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(S(vm,a,n,button)[0]) return vreal(button);
     return vreal(0);
   }
+  if(!strcmp(nm,"show_error")){
+    int abort_game=N(a,n,1)!=0.0;
+    anygm_host_logf(vm ? vm->host : NULL,
+                    abort_game?ANYGM_LOG_ERROR:ANYGM_LOG_WARN,
+                    "[gml error] %s\n",S(vm,a,n,0));
+    if(abort_game && vm) vm->game_end=1;
+    return vreal(0);
+  }
   if(!strcmp(nm,"execute_string")){
-    int handled=classic_execute_assignment(vm,S(vm,a,n,0));
+    const char *source=S(vm,a,n,0);
+    int handled=classic_execute_globalvar(vm,source) ||
+                classic_execute_assignment(vm,source) ||
+                classic_execute_call(vm,source);
     if(!handled && builtin_setting(vm,"GML_LOG_UNKNOWN")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gml] unsupported execute_string: %s\n",S(vm,a,n,0));
     return vreal(0); }
   if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")||!strcmp(nm,"show_question")||!strcmp(nm,"action_message")||
@@ -221,7 +379,16 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"network_create_socket")||!strcmp(nm,"network_create_server")||
      !strcmp(nm,"network_connect")) return vreal(-1);
   if(!strcmp(nm,"network_send_packet")||!strcmp(nm,"network_destroy")) return vreal(0);
-  if(!strcmp(nm,"external_define")||!strcmp(nm,"external_call")) return vreal(0);
+  if(!strcmp(nm,"external_define"))
+    return vreal(builtin_external_audio_define(
+        S(vm,a,n,0),S(vm,a,n,1)));
+  if(!strcmp(nm,"external_call")){
+    int handled=0;
+    GmlVal result=builtin_external_audio_call(
+        vm,(int)N(a,n,0),n>1?a+1:NULL,n>1?n-1:0,&handled);
+    return handled?result:vreal(0);
+  }
+  if(!strcmp(nm,"external_free")) return vreal(0);
   if(!strcmp(nm,"keyboard_virtual_show")||!strcmp(nm,"keyboard_virtual_hide")) return vreal(0);
   if(!strcmp(nm,"virtual_key_add")) return vreal(0);
   if(!strcmp(nm,"virtual_key_delete")) return vreal(0);

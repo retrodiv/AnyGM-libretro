@@ -112,7 +112,7 @@ GmlVal gml_builtin_try_values_math(GmlVM *vm, const char *nm, GmlVal *a, int n){
      !strcmp(nm,"make_color_rgb")||!strcmp(nm,"make_colour_rgb"))
     return vreal((double)((int)N(a,n,0) + ((int)N(a,n,1)<<8) + ((int)N(a,n,2)<<16)));
   if(!strcmp(nm,"make_color_hsv")||!strcmp(nm,"make_colour_hsv")){
-    double h=fmod(N(a,n,0),255.0); if(h<0) h+=255.0; double s=N(a,n,1)/255.0, v=N(a,n,2)/255.0;
+    double h=fmod(N(a,n,0),256.0); if(h<0) h+=256.0; double s=N(a,n,1)/255.0, v=N(a,n,2)/255.0;
     double c=v*s, hp=h/42.5, x=c*(1-fabs(fmod(hp,2)-1)), m=v-c, r=0,g=0,b=0;
     if(hp<1){ r=c; g=x; } else if(hp<2){ r=x; g=c; } else if(hp<3){ g=c; b=x; }
     else if(hp<4){ g=x; b=c; } else if(hp<5){ r=x; b=c; } else { r=c; b=x; }

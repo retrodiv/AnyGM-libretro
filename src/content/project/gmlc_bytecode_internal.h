@@ -79,6 +79,7 @@ typedef struct {
 char *dup_range(const char *s, size_t n);
 char *compiler_read_source(const GmlcProject *project, const char *path);
 void lx_next(Lexer *l);
+char *lx_string_value(const Lexer *l);
 int word_match_at(const char *src, size_t pos, const char *w);
 void trim_span(const char *src, Span *s);
 int span_empty(const char *src, Span s);

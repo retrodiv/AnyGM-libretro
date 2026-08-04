@@ -22,6 +22,22 @@ typedef struct {
   int released;
 } MouseFixture;
 
+typedef struct {
+  char message[256];
+  int count;
+  AnygmLogLevel level;
+} LogFixture;
+
+static void log_fixture_write(void *userdata,AnygmLogLevel level,
+                              const char *message){
+  LogFixture *fixture=(LogFixture *)userdata;
+  if(!fixture || (level!=ANYGM_LOG_DEBUG && level!=ANYGM_LOG_WARN &&
+                  level!=ANYGM_LOG_ERROR)) return;
+  snprintf(fixture->message,sizeof fixture->message,"%s",message?message:"");
+  fixture->count++;
+  fixture->level=level;
+}
+
 static void mouse_fixture_read(
     void *userdata,double *room_x,double *room_y,double *gui_x,double *gui_y,
     double *window_x,double *window_y,int *held,int *pressed,int *released,int *wheel){
@@ -63,7 +79,8 @@ static GmlVal call_fast(GmlVM *vm,const char *name,
   return gml_builtin_call_fast_id(vm,id,name,arguments,count);
 }
 
-static int setup_fixture(GmlWin *win,GmlVM *vm){
+static int setup_fixture(GmlWin *win,GmlVM *vm,AnygmHostServices *host,
+                         LogFixture *log_fixture){
   static const ScriptFixture scripts[]={
     {"gml_Script_abs",73},
     {"gml_Script_neutral_dispatch",74},
@@ -75,7 +92,7 @@ static int setup_fixture(GmlWin *win,GmlVM *vm){
   };
   const int count=(int)(sizeof(scripts)/sizeof(scripts[0]));
   win->bytecode=17;
-  win->size=256;
+  win->size=384;
   win->owns=1;
   win->data=calloc(win->size,1);
   win->n_code=count;
@@ -91,7 +108,7 @@ static int setup_fixture(GmlWin *win,GmlVM *vm){
       .length=8,
     };
   }
-  win->n_chunks=1;
+  win->n_chunks=2;
   memcpy(win->chunks[0].name,"ROOM",5);
   win->chunks[0].off=64;
   win->chunks[0].size=192;
@@ -102,13 +119,33 @@ static int setup_fixture(GmlWin *win,GmlVM *vm){
   store_u32le(win->data+84,240);
   store_u32le(win->data+88,60);
   memcpy(win->data+160,"neutral_room",13);
-  win->strs=calloc(1,sizeof(*win->strs));
-  win->str_charoff=calloc(1,sizeof(*win->str_charoff));
+  memcpy(win->chunks[1].name,"SCPT",5);
+  win->chunks[1].off=256;
+  win->chunks[1].size=96;
+  store_u32le(win->data+256,2);
+  store_u32le(win->data+260,268);
+  store_u32le(win->data+264,276);
+  store_u32le(win->data+268,300);
+  store_u32le(win->data+272,1);
+  store_u32le(win->data+276,324);
+  store_u32le(win->data+280,UINT32_MAX);
+  memcpy(win->data+300,"neutral_asset_alias",20);
+  memcpy(win->data+324,"neutral_declared_no_body",25);
+  win->strs=calloc(3,sizeof(*win->strs));
+  win->str_charoff=calloc(3,sizeof(*win->str_charoff));
   if(!win->strs || !win->str_charoff) return 0;
   win->strs[0]=(char *)win->data+160;
   win->str_charoff[0]=160;
-  win->n_strs=1;
-  return gml_vm_init(vm,win,NULL)==0;
+  win->strs[1]=(char *)win->data+300;
+  win->str_charoff[1]=300;
+  win->strs[2]=(char *)win->data+324;
+  win->str_charoff[2]=324;
+  win->n_strs=3;
+  memset(host,0,sizeof *host);
+  host->struct_size=sizeof *host;
+  host->userdata=log_fixture;
+  host->log=log_fixture_write;
+  return gml_vm_init(vm,win,host)==0;
 }
 
 static int room_dimension_mutation(GmlVM *vm){
@@ -167,7 +204,7 @@ static int exact_builtin_precedes_same_named_script(GmlVM *vm){
                                       &blend_argument,1),0);
 }
 
-static int script_resolution_order(GmlVM *vm){
+static int script_resolution_order(GmlVM *vm,LogFixture *log_fixture){
   int ok=1;
   ok&=expect_real("bare script fallback",
                   gml_builtin_call(vm,"neutral_dispatch",NULL,0),74);
@@ -179,8 +216,24 @@ static int script_resolution_order(GmlVM *vm){
                   gml_builtin_call(vm,"draw_neutral_dispatch",NULL,0),76);
   ok&=expect_real("script before registered late exact fallback",
                   gml_builtin_call(vm,"mouse_wheel_up",NULL,0),78);
+  ok&=expect_real("script asset mapped to differently named code",
+                  gml_builtin_call(vm,"neutral_asset_alias",NULL,0),74);
+  int logs_before=log_fixture->count;
+  ok&=expect_real("declared script without code body",
+                  gml_builtin_call(vm,"neutral_declared_no_body",NULL,0),0);
+  if(log_fixture->count!=logs_before){
+    fprintf(stderr,"declared bodyless script was logged as unknown: %s\n",
+            log_fixture->message);
+    ok=0;
+  }
   ok&=expect_real("deliberate unknown fallback",
                   gml_builtin_call(vm,"neutral_unknown_dispatch",NULL,0),0);
+  if(log_fixture->count!=logs_before+1 ||
+     !strstr(log_fixture->message,"unknown builtin: neutral_unknown_dispatch")){
+    fprintf(stderr,"true unknown builtin diagnostic mismatch: %s\n",
+            log_fixture->message);
+    ok=0;
+  }
   return ok;
 }
 
@@ -196,6 +249,51 @@ static int function_value_and_alias_resolution(GmlVM *vm){
          expect_real("alternate exact alias",colour,expected);
 }
 
+static int hsv_color_byte_wrapping(GmlVM *vm){
+  static const struct {
+    double hue;
+    double expected;
+  } cases[]={
+    {540,2855624},
+    {1080,2869398},
+    {2520,12266440},
+    {3594,2838728},
+    {-40,12266440},
+  };
+  int ok=1;
+  for(size_t index=0;index<sizeof(cases)/sizeof(cases[0]);index++){
+    GmlVal arguments[]={vreal(cases[index].hue),vreal(200),vreal(200)};
+    char case_name[96];
+    snprintf(case_name,sizeof case_name,"HSV byte wrapping at %.0f",cases[index].hue);
+    ok&=expect_real(case_name,
+                    gml_builtin_call(vm,"make_color_hsv",arguments,3),
+                    cases[index].expected);
+  }
+  GmlVal alias_arguments[]={vreal(2520),vreal(200),vreal(200)};
+  return ok && expect_real("HSV byte wrapping alternate alias",
+                           gml_builtin_call(vm,"make_colour_hsv",alias_arguments,3),
+                           12266440);
+}
+
+static int show_error_contract(GmlVM *vm,LogFixture *log_fixture){
+  int logs_before=log_fixture->count;
+  GmlVal warning_args[]={vstr("neutral warning"),vreal(0)};
+  GmlVal fatal_args[]={vstr("neutral fatal"),vreal(1)};
+  int ok=expect_real("nonfatal show_error",
+                     gml_builtin_call(vm,"show_error",warning_args,2),0) &&
+         vm->game_end==0 && log_fixture->count==logs_before+1 &&
+         log_fixture->level==ANYGM_LOG_WARN &&
+         strstr(log_fixture->message,"[gml error] neutral warning");
+  ok&=expect_real("fatal show_error",
+                  gml_builtin_call(vm,"show_error",fatal_args,2),0) &&
+      vm->game_end==1 && log_fixture->count==logs_before+2 &&
+      log_fixture->level==ANYGM_LOG_ERROR &&
+      strstr(log_fixture->message,"[gml error] neutral fatal");
+  vm->game_end=0;
+  if(!ok) fprintf(stderr,"show_error contract failed: %s\n",log_fixture->message);
+  return ok;
+}
+
 static int gain_conversion(GmlVM *vm){
   int ok=1;
   GmlVal decibels=vreal(-6.0);
@@ -207,6 +305,38 @@ static int gain_conversion(GmlVM *vm){
     fprintf(stderr,"gain conversion mismatch: linear=%.17g roundtrip=%.17g\n",
             linear.d,roundtrip.d);
     return 0;
+  }
+  return ok;
+}
+
+static int action_variable_comparisons(GmlVM *vm){
+  struct {
+    double variable;
+    double comparison;
+    int operation;
+    double expected;
+    const char *name;
+  } cases[]={
+    {2,2,0,1,"equal"},
+    {2,3,0,0,"equal mismatch"},
+    {2,3,1,1,"below"},
+    {3,2,2,1,"above"},
+    {2,2,3,1,"at most inclusive"},
+    {1.04,1,4,1,"at least inclusive"},
+    {2,3,5,1,"unequal"},
+    {2,2,5,0,"unequal mismatch"},
+    {2,2,99,0,"unknown selector"},
+  };
+  int ok=1;
+  for(size_t index=0;index<sizeof(cases)/sizeof(cases[0]);index++){
+    GmlVal arguments[]={
+      vreal(cases[index].variable),
+      vreal(cases[index].comparison),
+      vreal(cases[index].operation),
+    };
+    ok&=expect_real(cases[index].name,
+                    gml_builtin_call(vm,"action_if_variable",arguments,3),
+                    cases[index].expected);
   }
   return ok;
 }
@@ -292,6 +422,55 @@ static int ds_fast_interface(GmlVM *vm){
   (void)gml_builtin_call(vm,"ds_map_destroy",&map,1);
   (void)gml_builtin_call(vm,"ds_list_destroy",&list,1);
   return ok;
+}
+
+static int classic_dynamic_global_declaration(GmlVM *vm){
+  int prior_classic_version=vm->win->classic_version;
+  const struct AnygmCompatibilityProfile *prior_profile=vm->win->compatibility;
+  vm->win->classic_version=800;
+  vm->win->compatibility=NULL;
+  GmlVal declaration=vstr(" globalvar neutral_first, neutral_second; ");
+  GmlVal malformed=vstr("globalvar neutral_bad, ;");
+  (void)gml_builtin_call(vm,"execute_string",&declaration,1);
+  (void)gml_builtin_call(vm,"execute_string",&malformed,1);
+  GmlVal first_name=vstr("neutral_first");
+  GmlVal second_name=vstr("neutral_second");
+  GmlVal bad_name=vstr("neutral_bad");
+  GmlVal first_exists=gml_builtin_call(
+      vm,"variable_global_exists",&first_name,1);
+  GmlVal second_exists=gml_builtin_call(
+      vm,"variable_global_exists",&second_name,1);
+  GmlVal bad_exists=gml_builtin_call(
+      vm,"variable_global_exists",&bad_name,1);
+  GmlVal assignment[]={second_name,vreal(42)};
+  (void)gml_builtin_call(vm,"variable_global_set",assignment,2);
+  GmlVal second=gml_builtin_call(vm,"variable_global_get",&second_name,1);
+  vm->win->compatibility=prior_profile;
+  vm->win->classic_version=prior_classic_version;
+  return expect_real("dynamic first global declaration",first_exists,1) &&
+         expect_real("dynamic second global declaration",second_exists,1) &&
+         expect_real("transactional malformed global declaration",bad_exists,0) &&
+         expect_real("dynamic global storage",second,42);
+}
+
+static int external_audio_definition_dispatch(GmlVM *vm){
+  GmlVal definition[]={
+    vstr("SGAudio.dll"),vstr("sga_Init"),vreal(0),vreal(0),vreal(0)
+  };
+  GmlVal unknown_definition[]={
+    vstr("neutral.dll"),vstr("sga_Init"),vreal(0),vreal(0),vreal(0)
+  };
+  GmlVal handle=gml_builtin_call(vm,"external_define",definition,5);
+  GmlVal unknown=gml_builtin_call(
+      vm,"external_define",unknown_definition,5);
+  GmlVal call_args[]={handle};
+  GmlVal initialized=gml_builtin_call(vm,"external_call",call_args,1);
+  GmlVal library=vstr("SGAudio.dll");
+  GmlVal freed=gml_builtin_call(vm,"external_free",&library,1);
+  return handle.t==V_REAL && handle.d>0.0 &&
+         expect_real("unknown external library",unknown,0) &&
+         expect_real("portable external audio init",initialized,1) &&
+         expect_real("external library release",freed,0);
 }
 
 static int layer_instance_move(GmlVM *vm){
@@ -381,7 +560,9 @@ static int canonical_registry_resolution(GmlVM *vm){
 int main(void){
   GmlWin win={0};
   GmlVM vm={0};
-  if(!setup_fixture(&win,&vm)){
+  AnygmHostServices host={0};
+  LogFixture log_fixture={0};
+  if(!setup_fixture(&win,&vm,&host,&log_fixture)){
     fprintf(stderr,"builtin dispatch fixture setup failed\n");
     gml_vm_free(&vm);
     gml_win_free(&win);
@@ -389,12 +570,17 @@ int main(void){
   }
   int ok=canonical_registry_resolution(&vm) &&
          exact_builtin_precedes_same_named_script(&vm) &&
-         script_resolution_order(&vm) &&
+         script_resolution_order(&vm,&log_fixture) &&
+         show_error_contract(&vm,&log_fixture) &&
          function_value_and_alias_resolution(&vm) &&
+         hsv_color_byte_wrapping(&vm) &&
          gain_conversion(&vm) &&
+         action_variable_comparisons(&vm) &&
          room_dimension_mutation(&vm) &&
          mouse_none_semantics(&vm) &&
          ds_fast_interface(&vm) &&
+         classic_dynamic_global_declaration(&vm) &&
+         external_audio_definition_dispatch(&vm) &&
          layer_instance_move(&vm);
   gml_vm_free(&vm);
   gml_win_free(&win);

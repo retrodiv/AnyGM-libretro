@@ -145,7 +145,7 @@ with this owner rather than becoming a second VM context. At the four existing
 builtin-resource positions it passes an opaque reader or writer cursor to
 `gml_builtin_state.c`; only those two owners may include
 `gml_vm_state_codec.h`. This delegation adds no independent header or schema and
-does not change canonical schema-2 bytes.
+does not introduce independent state framing.
 `gml_vm_rng.c` is the sole implementation owner for the one VM random stream.
 It keeps compatibility-policy selection, seed expansion, random advancement,
 and optional diagnostics together while the canonical state owner continues

@@ -31,6 +31,7 @@ static int path_readable(GmlVM *vm,const char *p){
 static int path_absolute(const char *p){
   return p && (p[0]=='/' || (p[0] && p[1]==':'));
 }
+static int path_present(GmlVM *vm,const char *p);
 static char *path_under(const char *dir,const char *p){
   if(!dir || !dir[0]) return strdup(p?p:"");
   size_t n=strlen(dir)+1+strlen(p?p:"")+1;
@@ -45,6 +46,87 @@ static char *path_under(const char *dir,const char *p){
   for(char *cursor=out+strlen(dir)+1;*cursor;cursor++)
     if(*cursor=='\\') *cursor='/';
   return out;
+}
+static int path_component_equal_folded(const char *left,size_t left_size,
+                                       const char *right){
+  if(!left || !right || strlen(right)!=left_size) return 0;
+  for(size_t index=0;index<left_size;index++)
+    if(tolower((unsigned char)left[index])!=
+       tolower((unsigned char)right[index])) return 0;
+  return 1;
+}
+static int path_component_casefold(GmlVM *vm,const char *directory,
+                                   const char *component,size_t component_size,
+                                   char *resolved,size_t resolved_size){
+  if(!vm || !vm->host || !vm->host->directory_open ||
+     !vm->host->directory_read || !vm->host->directory_close ||
+     !directory || !component || !component_size || !resolved ||
+     resolved_size<=component_size) return 0;
+  void *handle=vm->host->directory_open(vm->host->userdata,directory);
+  if(!handle) return 0;
+  int found=0;
+  AnygmDirectoryEntry entry={0};
+  entry.struct_size=sizeof entry;
+  while(vm->host->directory_read(vm->host->userdata,handle,&entry)==ANYGM_OK){
+    if(path_component_equal_folded(component,component_size,entry.name) &&
+       (!found || strcmp(entry.name,resolved)<0)){
+      snprintf(resolved,resolved_size,"%s",entry.name);
+      found=1;
+    }
+    memset(&entry,0,sizeof entry);
+    entry.struct_size=sizeof entry;
+  }
+  vm->host->directory_close(vm->host->userdata,handle);
+  return found;
+}
+/* Installed Windows paths use case-insensitive component lookup. Keep exact-path reads fast, then
+ * recover each component through the host VFS when a portable host stores the same bundle on a
+ * case-sensitive filesystem. */
+static char *path_under_read(GmlVM *vm,const char *directory,const char *relative){
+  char *exact=path_under(directory,relative);
+  if(path_present(vm,exact) || !vm || !vm->host ||
+     !vm->host->directory_open || !vm->host->directory_read ||
+     !vm->host->directory_close) return exact;
+  size_t capacity=strlen(exact)+1;
+  char *resolved=malloc(capacity);
+  if(!resolved) return exact;
+  size_t used=0;
+  if(directory && directory[0]){
+    used=strlen(directory);
+    while(used>0 && (directory[used-1]=='/' || directory[used-1]=='\\')) used--;
+    memcpy(resolved,directory,used);
+  }
+  resolved[used]=0;
+  const char *cursor=relative?relative:"";
+  while(*cursor){
+    while(*cursor=='/' || *cursor=='\\') cursor++;
+    if(!*cursor) break;
+    const char *end=cursor;
+    while(*end && *end!='/' && *end!='\\') end++;
+    size_t component_size=(size_t)(end-cursor);
+    size_t directory_size=used;
+    if(used && used+1<capacity){
+      resolved[used++]='/';
+      resolved[used]=0;
+    }
+    char candidate[sizeof(((AnygmDirectoryEntry *)0)->name)]={0};
+    if(component_size>=sizeof candidate ||
+       !path_component_casefold(vm,directory_size?resolved:"",cursor,component_size,
+                                candidate,sizeof candidate)){
+      if(used+component_size>=capacity){
+        free(resolved);
+        return exact;
+      }
+      memcpy(resolved+used,cursor,component_size);
+    } else {
+      memcpy(resolved+used,candidate,component_size);
+    }
+    used+=component_size;
+    resolved[used]=0;
+    cursor=end;
+  }
+  free(exact);
+  return resolved;
 }
 static int path_present(GmlVM *vm,const char *p){
   AnygmFileInfo info;
@@ -71,19 +153,19 @@ char *resolve_read_path(GmlVM *vm, const char *p){
       const char *relative=path_relative_to_root(p,vm->win->content_dir);
       if(relative){
         if(vm->win->save_dir[0]){
-          char *save=path_under(vm->win->save_dir,relative);
+          char *save=path_under_read(vm,vm->win->save_dir,relative);
           if(path_present(vm,save)) return save;
           free(save);
         }
-        return path_under(vm->win->content_dir,relative);
+        return path_under_read(vm,vm->win->content_dir,relative);
       }
       relative=path_relative_to_root(p,vm->win->save_dir);
       if(relative){
-        char *save=path_under(vm->win->save_dir,relative);
+        char *save=path_under_read(vm,vm->win->save_dir,relative);
         if(path_present(vm,save)) return save;
         free(save);
         if(vm->win->content_dir[0]){
-          char *content=path_under(vm->win->content_dir,relative);
+          char *content=path_under_read(vm,vm->win->content_dir,relative);
           if(path_present(vm,content)) return content;
           free(content);
         }
@@ -96,11 +178,11 @@ char *resolve_read_path(GmlVM *vm, const char *p){
    * Never consult the host working directory while either sandbox is known. */
   if(vm && vm->win){
     if(vm->win->save_dir[0]){
-      char *save=path_under(vm->win->save_dir,p);
+      char *save=path_under_read(vm,vm->win->save_dir,p);
       if(path_present(vm,save)) return save;
       free(save);
     }
-    if(vm->win->content_dir[0]) return path_under(vm->win->content_dir,p);
+    if(vm->win->content_dir[0]) return path_under_read(vm,vm->win->content_dir,p);
     if(vm->win->save_dir[0]) return path_under(vm->win->save_dir,p);
   }
   if(path_readable(vm,p)) return strdup(p);
@@ -282,13 +364,35 @@ static char *ini_unquote_value(char *s){
   }
   return s;
 }
+static double ini_parse_real(const char *text){
+  const char *source=text?text:"";
+  char *end=NULL;
+  double value=strtod(source,&end);
+  while(end && isspace((unsigned char)*end)) end++;
+  if(end && end!=source && !*end) return value;
+
+  /* Settings files may contain localized decimal separators. Keep parsing locale-independent while
+   * accepting a single decimal comma when no decimal point is present. Other punctuation remains
+   * invalid instead of being silently truncated. */
+  const char *comma=strchr(source,',');
+  if(!comma || strchr(source,'.') || strchr(comma+1,',')) return value;
+  size_t length=strlen(source);
+  if(length>=128) return value;
+  char normalized[128];
+  memcpy(normalized,source,length+1);
+  normalized[comma-source]='.';
+  end=NULL;
+  double localized=strtod(normalized,&end);
+  while(end && isspace((unsigned char)*end)) end++;
+  return end && end!=normalized && !*end ? localized : value;
+}
 static void ini_add_kv(GmlVM *vm, const char *sec, const char *key, const char *val){
   if(!sec || !key || !*key || vm->builtins->ini_n>=GML_INI_MAX) return;
   vm->builtins->ini_kv[vm->builtins->ini_n]=(typeof(vm->builtins->ini_kv[0])){
     .section=strdup(sec),
     .key=strdup(key),
     .sval=strdup(val?val:""),
-    .val=atof(val?val:""),
+    .val=ini_parse_real(val),
     .is_str=1
   };
   vm->builtins->ini_n++;
@@ -342,6 +446,10 @@ GmlVal builtin_ini_open_file(GmlVM *vm, GmlVal *a, int n){
 GmlVal builtin_file_text_open_read(GmlVM *vm, GmlVal *a, int n){
   char *path=resolve_read_path(vm,S(vm,a,n,0));
   int id=vm_file_open(vm,path,"r");
+  if(builtin_setting(vm,"GML_LOG_IO"))
+    anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,
+                    "[io] file_text_open_read path=%s handle=%d\n",
+                    path?path:"",id);
   free(path);
   return vreal(id);
 }
@@ -364,6 +472,10 @@ GmlVal builtin_file_text_read_string(GmlVM *vm, GmlVal *a, int n){
     b[k++]=(char)c;
   }
   b[k]=0;
+  if(builtin_setting(vm,"GML_LOG_IO"))
+    anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,
+                    "[io] file_text_read_string handle=%d value=%s\n",
+                    i+1,b);
   return vstr_owned(b);
 }
 GmlVal builtin_file_text_readln(GmlVM *vm, GmlVal *a, int n){
@@ -722,13 +834,17 @@ GmlVal gml_builtin_try_io_ini(GmlVM *vm, const char *nm, GmlVal *a, int n){
     const char *sec=S(vm,a,n,0), *key=S(vm,a,n,1), *val=S(vm,a,n,2);
     for(int i=0;i<vm->builtins->ini_n;i++)
       if(!strcmp(vm->builtins->ini_kv[i].section,sec) && !strcmp(vm->builtins->ini_kv[i].key,key)){
-        free(vm->builtins->ini_kv[i].sval); vm->builtins->ini_kv[i].sval=strdup(val); vm->builtins->ini_kv[i].val=atof(val); vm->builtins->ini_kv[i].is_str=1; return vreal(0); }
-    vm->builtins->ini_kv[vm->builtins->ini_n++]=(typeof(vm->builtins->ini_kv[0])){.section=strdup(sec),.key=strdup(key),.sval=strdup(val),.val=atof(val),.is_str=1};
+        free(vm->builtins->ini_kv[i].sval); vm->builtins->ini_kv[i].sval=strdup(val); vm->builtins->ini_kv[i].val=ini_parse_real(val); vm->builtins->ini_kv[i].is_str=1; return vreal(0); }
+    vm->builtins->ini_kv[vm->builtins->ini_n++]=(typeof(vm->builtins->ini_kv[0])){.section=strdup(sec),.key=strdup(key),.sval=strdup(val),.val=ini_parse_real(val),.is_str=1};
     return vreal(0);
   }
   if(!strcmp(nm,"ini_read_real")||!strcmp(nm,"FS_ini_read_real")){
-    if(!vm->builtins->ini_open) return vreal(N(a,n,2));  /* default */
-    const char *sec=S(vm,a,n,0), *key=S(vm,a,n,1); double def=N(a,n,2);
+    double def=N(a,n,2);
+    if(n>2 && a[2].t==V_STR){
+      def=ini_parse_real(S(vm,a,n,2));
+    }
+    if(!vm->builtins->ini_open) return vreal(def);  /* default */
+    const char *sec=S(vm,a,n,0), *key=S(vm,a,n,1);
     /* search the key-value table backwards so later writes override */
     for(int i=vm->builtins->ini_n-1;i>=0;i--)
       if(!strcmp(vm->builtins->ini_kv[i].section,sec) && !strcmp(vm->builtins->ini_kv[i].key,key))
@@ -828,6 +944,10 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"file_exists")||!strcmp(nm,"FS_file_exists")){ char *path=resolve_read_path(vm,S(vm,a,n,0));
     AnygmFileInfo info; int ok=path && anygm_vfs_stat(vm->host,path,&info) &&
       (info.flags&ANYGM_FILE_INFO_REGULAR)!=0;
+    if(builtin_setting(vm,"GML_LOG_IO"))
+      anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,
+                      "[io] file_exists raw=%s resolved=%s result=%d\n",
+                      S(vm,a,n,0),path?path:"",ok);
     free(path); return vreal(ok); }
   if(!strcmp(nm,"directory_exists")){ char *path=resolve_read_path(vm,S(vm,a,n,0));
     AnygmFileInfo info; int ok=path && anygm_vfs_stat(vm->host,path,&info) &&

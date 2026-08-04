@@ -271,7 +271,7 @@ static int resolve_const(Compiler *c, const char *name, double *out){
    * variable and silently reads as zero, which is especially hard to spot in modifier checks. */
   static const struct { const char *name; int value; } virtual_keys[]={
     {"vk_nokey",0}, {"vk_anykey",1},
-    {"vk_backspace",8}, {"vk_tab",9}, {"vk_enter",13},
+    {"vk_backspace",8}, {"vk_tab",9}, {"vk_enter",13}, {"vk_return",13},
     {"vk_shift",16}, {"vk_control",17}, {"vk_alt",18}, {"vk_pause",19},
     {"vk_escape",27}, {"vk_space",32}, {"vk_pageup",33}, {"vk_pagedown",34},
     {"vk_end",35}, {"vk_home",36}, {"vk_left",37}, {"vk_up",38},
@@ -284,10 +284,27 @@ static int resolve_const(Compiler *c, const char *name, double *out){
     {"vk_subtract",109}, {"vk_decimal",110}, {"vk_divide",111},
     {"vk_f1",112}, {"vk_f2",113}, {"vk_f3",114}, {"vk_f4",115},
     {"vk_f5",116}, {"vk_f6",117}, {"vk_f7",118}, {"vk_f8",119},
-    {"vk_f9",120}, {"vk_f10",121}, {"vk_f11",122}, {"vk_f12",123}
+    {"vk_f9",120}, {"vk_f10",121}, {"vk_f11",122}, {"vk_f12",123},
+    {"vk_lshift",160}, {"vk_rshift",161},
+    {"vk_lcontrol",162}, {"vk_rcontrol",163},
+    {"vk_lalt",164}, {"vk_ralt",165}
   };
   for(int i=0;i<(int)(sizeof(virtual_keys)/sizeof(*virtual_keys));i++)
     if(!strcmp(name,virtual_keys[i].name)){ *out=virtual_keys[i].value; return 1; }
+  static const struct { const char *name; int value; } event_constants[]={
+    {"ev_create",0}, {"ev_destroy",1}, {"ev_alarm",2}, {"ev_step",3},
+    {"ev_collision",4}, {"ev_keyboard",5}, {"ev_mouse",6}, {"ev_other",7},
+    {"ev_draw",8}, {"ev_keypress",9}, {"ev_keyrelease",10}, {"ev_trigger",11},
+    {"ev_cleanup",12},
+    {"ev_step_normal",0}, {"ev_step_begin",1}, {"ev_step_end",2},
+    {"ev_draw_normal",0},
+    {"ev_user0",10}, {"ev_user1",11}, {"ev_user2",12}, {"ev_user3",13},
+    {"ev_user4",14}, {"ev_user5",15}, {"ev_user6",16}, {"ev_user7",17},
+    {"ev_user8",18}, {"ev_user9",19}, {"ev_user10",20}, {"ev_user11",21},
+    {"ev_user12",22}, {"ev_user13",23}, {"ev_user14",24}, {"ev_user15",25}
+  };
+  for(int i=0;i<(int)(sizeof(event_constants)/sizeof(*event_constants));i++)
+    if(!strcmp(name,event_constants[i].name)){ *out=event_constants[i].value; return 1; }
   if(!strcmp(name,"gp_face1")){ *out=32769; return 1; }
   if(!strcmp(name,"gp_face2")){ *out=32770; return 1; }
   if(!strcmp(name,"gp_face3")){ *out=32771; return 1; }
@@ -1060,12 +1077,14 @@ static int emit_project_constant(Compiler *c, const char *name){
 static int parse_primary(Compiler *c){
   if(c->lex.tok.kind==TOK_NUM){ double d=c->lex.tok.num; lx_next(&c->lex); return emit_const_number(c,d); }
   if(c->lex.tok.kind==TOK_STR){
-    char value[128];
-    snprintf(value,sizeof(value),"%s",c->lex.tok.text);
+    char *value=lx_string_value(&c->lex);
+    if(!value) return 0;
     lx_next(&c->lex);
     expr_not_const(c);
     c->expr_boolish=0;
-    return emit_push_string_literal(c,value);
+    int emitted=emit_push_string_literal(c,value);
+    free(value);
+    return emitted;
   }
   if(is_id(c,"function") && function_shape_at(c->lex.src,c->lex.tok.start)){
     if(!parse_function_value(c,1)) return 0;
@@ -1347,11 +1366,34 @@ static int parse_and(Compiler *c){
   return 1;
 }
 
+static int parse_classic_logical(Compiler *c){
+  if(!parse_bit_or(c)) return 0;
+  while(tok_is(c,"&&") || is_id(c,"and") ||
+        tok_is(c,"||") || is_id(c,"or")){
+    int is_and=tok_is(c,"&&") || is_id(c,"and");
+    lx_next(&c->lex);
+    if(!emit_condition_bool(c)) return 0;
+    size_t shortcut=emit_branch(c,is_and?OP_BF:OP_BT);
+    if(!parse_bit_or(c) || !emit_condition_bool(c)) return 0;
+    size_t done=emit_branch(c,OP_B);
+    size_t shortcut_pos=c->code.len;
+    if(!emit_push_i16_full(c,is_and?0:1)) return 0;
+    patch_branch(c,shortcut,shortcut_pos);
+    patch_branch(c,done,c->code.len);
+    expr_not_const(c);
+    c->expr_boolish=1;
+  }
+  return 1;
+}
+
 static int parse_expr(Compiler *c){
-  if(!parse_and(c)) return 0;
+  int classic=c->project && c->project->classic_version>0;
+  if(classic){
+    if(!parse_classic_logical(c)) return 0;
+  } else if(!parse_and(c)) return 0;
   size_t true_sites[128];
   int n_true=0;
-  while(tok_is(c,"||") || is_id(c,"or")){
+  while(!classic && (tok_is(c,"||") || is_id(c,"or"))){
     lx_next(&c->lex);
     if(n_true>=(int)(sizeof(true_sites)/sizeof(true_sites[0]))){
       c->unsupported=1;

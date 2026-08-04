@@ -86,10 +86,16 @@ typedef struct {
   uint32_t bgcolor;  /* 0xAARRGGBB-ish; GM stores 0xAABBGGRR, alpha forced 0xFF */
   int draw_bg;
   int creation_code;  /* CODE index for the room's creation code, -1 if none */
-  uint32_t flags;     /* serialized room flags; bit 0 enables the legacy view system */
+  uint32_t flags;     /* serialized room flags; low bits control views and framebuffer clearing */
   int view_enabled;
   uint32_t bg_ptr, view_ptr, obj_ptr, tile_ptr;
 } GmlRoom;
+
+enum {
+  GML_ROOM_FLAG_ENABLE_VIEWS = 1u,
+  GML_ROOM_FLAG_CLEAR_VIEW_BACKGROUND = 2u,
+  GML_ROOM_FLAG_DO_NOT_CLEAR_DISPLAY_BUFFER = 4u
+};
 
 typedef struct GmlWin {
   /* data storage: owns=0 borrowed memory, owns=1 malloc, owns=2 host-owned read-only mapping. */

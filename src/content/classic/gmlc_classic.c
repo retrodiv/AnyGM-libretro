@@ -493,6 +493,14 @@ static int validate_path_payload(ClassicReader *r){
   return reader_doubles(r, points > UINT32_MAX / 3 ? UINT32_MAX : points * 3, "path points");
 }
 
+static int validate_legacy_executable_path_payload(ClassicReader *r){
+  uint32_t points;
+  if(!reader_words(r,3,"compiled legacy path fields") ||
+     !reader_u32(r,&points,"compiled legacy path point count")) return 0;
+  return reader_doubles(r,points>UINT32_MAX/3?UINT32_MAX:points*3,
+                        "compiled legacy path points");
+}
+
 static int validate_font_payload(ClassicReader *r,int executable_layout,int compressed_atlas){
   if(!reader_string(r,"font face") || !reader_words(r,5,"font fields")) return 0;
   /* Project files stop at the typeface metadata. Compiled executable
@@ -671,24 +679,30 @@ static int normalize_executable_room(char **raw_io, int *raw_size_io){
     free(normalized); return 0;
   }
   size_t records_start=compact.pos;
-  if(!reader_words(&compact,instances*5,"compact room instances")){
-    free(normalized); return 0;
-  }
+  for(uint32_t instance=0;instance<instances;instance++)
+    if(!reader_words(&compact,4,"compact room instance fields") ||
+       !reader_string(&compact,"compact room instance creation code")){
+      free(normalized); return 0;
+    }
   size_t tail_start=compact.pos,growth=(size_t)instances*4u;
   if(growth>SIZE_MAX-data_size-64u){ free(normalized); return 0; }
   working_size=data_size+growth+64u;
-  char *expanded=(char*)realloc(normalized,working_size);
+  char *expanded=(char*)malloc(working_size);
   if(!expanded){ free(normalized); return 0; }
-  normalized=expanded;
-  memmove(normalized+tail_start+growth,normalized+tail_start,data_size-tail_start);
-  for(uint32_t instance=instances;instance-- > 0;){
-    uint8_t *source=(uint8_t*)normalized+records_start+(size_t)instance*20u;
-    uint8_t *target=(uint8_t*)normalized+records_start+(size_t)instance*24u;
-    uint32_t locked=read_u32le(source+16);
-    memmove(target,source,16);
-    write_u32le(target+16,0); /* executable rooms omit the editor source string */
-    write_u32le(target+20,locked);
+  memcpy(expanded,normalized,records_start);
+  size_t source_at=records_start,target_at=records_start;
+  for(uint32_t instance=0;instance<instances;instance++){
+    uint32_t source_size=read_u32le((const uint8_t*)normalized+source_at+16u);
+    size_t record_size=20u+(size_t)source_size;
+    memcpy(expanded+target_at,normalized+source_at,record_size);
+    target_at+=record_size;
+    write_u32le((uint8_t*)expanded+target_at,0); /* compiled rooms omit the editor lock flag */
+    target_at+=4u;
+    source_at+=record_size;
   }
+  memcpy(expanded+target_at,normalized+tail_start,data_size-tail_start);
+  free(normalized);
+  normalized=expanded;
   data_size+=growth;
   memset(normalized+data_size,0,64);
 
@@ -1006,7 +1020,7 @@ static int parse_legacy_executable_slot(ClassicReader *r,GmlcClassicResourceType
     case GMLC_CLASSIC_SOUND: valid=validate_sound_payload(r); break;
     case GMLC_CLASSIC_SPRITE: valid=validate_legacy_executable_sprite_payload(r); break;
     case GMLC_CLASSIC_BACKGROUND: valid=validate_legacy_executable_background_payload(r); break;
-    case GMLC_CLASSIC_PATH: valid=validate_path_payload(r); break;
+    case GMLC_CLASSIC_PATH: valid=validate_legacy_executable_path_payload(r); break;
     case GMLC_CLASSIC_SCRIPT:
       valid=reader_legacy_executable_script(r,&slot->source); break;
     case GMLC_CLASSIC_FONT: valid=validate_font_payload(r,1,1); break;

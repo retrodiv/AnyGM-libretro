@@ -74,7 +74,16 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
   if(!strcmp(nm,"action_if_variable")){
     int op=(int)N(a,n,2);
     double vv=N(a,n,0), cv=N(a,n,1); int r=0;
-    switch(op){ case 0: r=(vv==cv); break; case 1: r=(vv<cv); break; case 2: r=(vv>cv); break; }
+    /* Legacy D&D comparison selector: equal, below, above, at-most, at-least, unequal.
+     * Retained action calls can use the inclusive selectors directly. */
+    switch(op){
+      case 0: r=(vv==cv); break;
+      case 1: r=(vv<cv); break;
+      case 2: r=(vv>cv); break;
+      case 3: r=(vv<=cv); break;
+      case 4: r=(vv>=cv); break;
+      case 5: r=(vv!=cv); break;
+    }
     return vreal(r); }
   if(!strcmp(nm,"action_if_dice")){
     int sides=(int)floor(fabs(N(a,n,0)));
@@ -270,13 +279,16 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
     } else fill=action_health_palette(bar-2);
     if(r){
       GmlRenderTargetMetrics target=builtin_target_metrics(r);
-      int ix1=(int)floor(x1-target.camera_x),iy1=(int)floor(y1-target.camera_y);
-      int ix2=(int)ceil(x2-target.camera_x),iy2=(int)ceil(y2-target.camera_y);
+      int ix1=(int)floor(draw_gui_x(r,x1)-target.camera_x);
+      int iy1=(int)floor(draw_gui_y(r,y1)-target.camera_y);
+      int ix2=(int)ceil(draw_gui_x(r,x2)-target.camera_x);
+      int iy2=(int)ceil(draw_gui_y(r,y2)-target.camera_y);
       if(back){
         gml_render_primitive_rectangle(r,ix1,iy1,ix2,iy2,action_health_palette(back-1),0);
         gml_render_primitive_rectangle(r,ix1,iy1,ix2,iy2,0,1);
       }
-      int fill_x2=(int)ceil(x1+(x2-x1)*ratio-target.camera_x);
+      int fill_x2=(int)ceil(
+        draw_gui_x(r,x1+(x2-x1)*ratio)-target.camera_x);
       gml_render_primitive_rectangle(r,ix1,iy1,fill_x2,iy2,fill,0);
       gml_render_primitive_rectangle(r,ix1,iy1,fill_x2,iy2,0,1);
     }

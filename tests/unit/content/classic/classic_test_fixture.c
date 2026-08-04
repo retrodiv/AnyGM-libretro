@@ -247,7 +247,8 @@ int build_executable_fixture(Fixture *executable){
       fixture_string(&room,""); fixture_u32(&room,0);
       fixture_u32(&room,0); fixture_u32(&room,0);
       fixture_u32(&room,1); fixture_u32(&room,10); fixture_u32(&room,20);
-      fixture_u32(&room,0); fixture_u32(&room,100001); fixture_u32(&room,1);
+      fixture_u32(&room,0); fixture_u32(&room,100001);
+      fixture_string(&room,"x += 1;");
       fixture_u32(&room,1);
       fixture_u32(&room,30); fixture_u32(&room,40); fixture_u32(&room,0);
       fixture_u32(&room,0); fixture_u32(&room,0); fixture_u32(&room,1);

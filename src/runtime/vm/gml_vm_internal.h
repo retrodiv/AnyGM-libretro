@@ -96,6 +96,31 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index,
                                     int rebuild_runtime_layers);
 void gml_vm_prefetch_room_assets(GmlVM *vm);
 void gml_vm_warm_audio_for_room_window(GmlVM *vm);
+#if defined(ANYGM_DIAGNOSTICS) && ANYGM_DIAGNOSTICS
+#include "gml_vm_diagnostics.h"
+#define GML_VM_DIAGNOSTIC_OPCODE(...) \
+  gml_vm_diagnostics_opcode(__VA_ARGS__)
+#define GML_VM_DIAGNOSTIC_OPCODE_ENABLED(...) \
+  gml_vm_diagnostics_opcode_enabled(__VA_ARGS__)
+#define GML_VM_DIAGNOSTIC_EVENT(...) \
+  gml_vm_diagnostics_event(__VA_ARGS__)
+#define GML_VM_DIAGNOSTIC_COLLISION(...) \
+  gml_vm_diagnostics_collision(__VA_ARGS__)
+#define GML_VM_DIAGNOSTIC_VARIABLE_SCOPE(...) \
+  gml_vm_diagnostics_variable_scope(__VA_ARGS__)
+#define GML_VM_DIAGNOSTIC_VARIABLE_INSTANCE(...) \
+  gml_vm_diagnostics_variable_instance(__VA_ARGS__)
+#define GML_VM_DIAGNOSTIC_DESTROY(...) \
+  gml_vm_diagnostics_destroy(__VA_ARGS__)
+#else
+#define GML_VM_DIAGNOSTIC_OPCODE(...) ((void)0)
+#define GML_VM_DIAGNOSTIC_OPCODE_ENABLED(...) 0
+#define GML_VM_DIAGNOSTIC_EVENT(...) ((void)0)
+#define GML_VM_DIAGNOSTIC_COLLISION(...) ((void)0)
+#define GML_VM_DIAGNOSTIC_VARIABLE_SCOPE(...) ((void)0)
+#define GML_VM_DIAGNOSTIC_VARIABLE_INSTANCE(...) ((void)0)
+#define GML_VM_DIAGNOSTIC_DESTROY(...) ((void)0)
+#endif
 #define GML_VM_TILE_MUT_DELETED 1
 #define GML_VM_TILE_MUT_HIDDEN  2
 #define GML_STRUCT_SLOT_BITS 20

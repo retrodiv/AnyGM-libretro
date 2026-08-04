@@ -507,6 +507,87 @@ static void check_palette_alpha_threshold(void) {
          "stretched sprite bypassed the active palette");
 }
 
+static void check_zero_reference_alpha_test_pixels(void) {
+  static uint8_t rgba[] = {
+    240, 16, 32, 0,
+    8, 224, 48, 64,
+    24, 72, 240, 128,
+    192, 96, 32, 255,
+    16, 48, 80, 255,
+    208, 160, 112, 128,
+    64, 192, 224, 64,
+    255, 255, 255, 0
+  };
+  int frame_index = 0;
+  uint32_t baseline[8], zero_reference[8], threshold[8];
+  GmlSprite sprite;
+  GmlTpag tpag;
+  GmlAtlas atlas;
+  GmlRender render;
+
+  memset(&sprite, 0, sizeof(sprite));
+  memset(&tpag, 0, sizeof(tpag));
+  memset(&atlas, 0, sizeof(atlas));
+  memset(&render, 0, sizeof(render));
+  sprite.w = 4;
+  sprite.h = 2;
+  sprite.n_frames = 1;
+  sprite.frame = &frame_index;
+  tpag.sw = tpag.bw = 4;
+  tpag.sh = tpag.bh = 2;
+  tpag.atlas = 0;
+  atlas.w = 4;
+  atlas.h = 2;
+  atlas.px = rgba;
+  render.spr = &sprite;
+  render.n_spr = 1;
+  render.tpag = &tpag;
+  render.n_tpag = 1;
+  render.atlas = &atlas;
+  render.n_atlas = 1;
+  render.fbw = render.base_fbw = 4;
+  render.fbh = render.base_fbh = 2;
+  render.alpha = 1.0;
+  render.alphablend = 1;
+  render.blendmode = 0;
+  render.blend_equation = render.blend_equation_alpha = 1;
+  render.color_write_mask = 0x0f;
+  render.target_id = -1;
+  render.active_shader = -1;
+  render.lut_pal_sprite = -1;
+
+  for (size_t index = 0; index < 8; index++)
+    baseline[index] = zero_reference[index] = threshold[index] = 0xff183858u;
+  render.fb = render.base_fb = baseline;
+  gml_draw_sprite(&render, 0, 0, 0, 0);
+  render.fb = render.base_fb = zero_reference;
+  render.alpha_test_enable = 1;
+  render.alpha_test_ref = 0;
+  gml_draw_sprite(&render, 0, 0, 0, 0);
+  expect(!memcmp(baseline, zero_reference, sizeof(baseline)),
+         "zero-reference alpha test changed atlas sprite pixels");
+
+  render.fb = render.base_fb = threshold;
+  render.alpha_test_ref = 128;
+  gml_draw_sprite(&render, 0, 0, 0, 0);
+  expect(threshold[0] == 0xff183858u && threshold[1] == 0xff183858u &&
+         threshold[2] == 0xff183858u && threshold[3] == 0xffc06020u,
+         "nonzero alpha-test threshold bypassed the mapped sprite path");
+
+  for (size_t index = 0; index < 8; index++)
+    baseline[index] = zero_reference[index] = 0xff183858u;
+  sprite.runtime_rgba = rgba;
+  render.fb = render.base_fb = baseline;
+  render.alpha_test_enable = 0;
+  render.alpha_test_ref = 0;
+  gml_draw_sprite(&render, 0, 0, 0, 0);
+  render.fb = render.base_fb = zero_reference;
+  render.alpha_test_enable = 1;
+  gml_draw_sprite(&render, 0, 0, 0, 0);
+  expect(!memcmp(baseline, zero_reference, sizeof(baseline)),
+         "zero-reference alpha test changed runtime sprite pixels");
+}
+
 static void check_solid_alpha_mask_pixels(void) {
   static uint8_t rgba[] = {
     240, 16, 32, 63,
@@ -971,6 +1052,7 @@ int main(void) {
   check_shader_recognition();
   check_binary_hsv_pixels();
   check_palette_alpha_threshold();
+  check_zero_reference_alpha_test_pixels();
   check_solid_alpha_mask_pixels();
   check_solid_blur_alpha_pixels();
   check_skeleton_asset_and_pose();

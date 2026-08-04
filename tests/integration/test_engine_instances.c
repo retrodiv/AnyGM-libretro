@@ -81,6 +81,69 @@ static int screen_stage_raster_policy(void){
   return 1;
 }
 
+static int application_surface_port_scale_policy(void){
+  AnygmEngine engine={0};
+  engine.win.bytecode=17;
+  engine.vm.win=&engine.win;
+  engine.vm.gui_w=320;
+  engine.vm.gui_h=240;
+  if(!application_surface_scales_full_view_port(&engine,1,0,0,320,240,640,480)){
+    fputs("full GUI view port did not scale with the owned application surface\n",stderr);
+    return 0;
+  }
+  if(application_surface_scales_full_view_port(&engine,2,0,0,320,240,640,480) ||
+     application_surface_scales_full_view_port(&engine,1,8,0,320,240,640,480) ||
+     application_surface_scales_full_view_port(&engine,1,0,0,300,240,640,480) ||
+     application_surface_scales_full_view_port(&engine,1,0,0,320,240,640,360) ||
+     application_surface_scales_full_view_port(&engine,1,0,0,320,240,320,240)){
+    fputs("partial, inset, mismatched, or native view port selected application scaling\n",stderr);
+    return 0;
+  }
+  engine.win.bytecode=15;
+  if(application_surface_scales_full_view_port(&engine,1,0,0,320,240,640,480)){
+    fputs("first-generation presentation selected current application scaling\n",stderr);
+    return 0;
+  }
+  return 1;
+}
+
+static int first_generation_application_surface_policy(void){
+  AnygmEngine engine={0};
+  engine.win.bytecode=16;
+  engine.win.disp_w=640;
+  engine.win.disp_h=480;
+  engine.vm.win=&engine.win;
+  uint32_t *borrowed=calloc((size_t)320*240,sizeof(*borrowed));
+  if(!borrowed) return 0;
+  borrowed[0]=0xFF336699u;
+  gml_render_application_surface_bind(&engine.render,borrowed,320,240,1);
+  int ok=gml_render_application_surface_ensure_owned(&engine.render,640,480);
+  GmlRenderApplicationWriteView view={0};
+  ok=ok && gml_render_application_surface_owned_view(&engine.render,&view) &&
+    view.width==640 && view.height==480 && view.pixels &&
+    view.pixels[0]==0xFF336699u &&
+    application_surface_matches_first_generation_view_port(
+      &engine,1,0,0,640,480,view.width,view.height) &&
+    !application_surface_matches_first_generation_view_port(
+      &engine,2,0,0,640,480,view.width,view.height) &&
+    !application_surface_matches_first_generation_view_port(
+      &engine,1,8,0,640,480,view.width,view.height) &&
+    !application_surface_matches_first_generation_view_port(
+      &engine,1,0,0,320,240,view.width,view.height);
+  engine.win.bytecode=17;
+  ok=ok && !application_surface_matches_first_generation_view_port(
+    &engine,1,0,0,640,480,view.width,view.height);
+  if(!ok)
+    fprintf(stderr,
+      "first-generation application surface policy mismatch: owned=%d size=%dx%d pixel=%08x\n",
+      view.pixels!=NULL,view.width,view.height,view.pixels?view.pixels[0]:0);
+  free(engine.render.app_surface_owned);
+  engine.render.app_surface_owned=NULL;
+  free(borrowed);
+  gml_vm_free(&engine.vm);
+  return ok;
+}
+
 static int first_generation_dynamic_camera_policy(void){
   AnygmEngine engine={0};
   engine.win.bytecode=16;
@@ -207,11 +270,9 @@ static int framebuffer_retention_case(
   input.struct_size=sizeof input;
   input.pointer_x=input.pointer_y=-1;
   AnygmFrameOutput output={0};
-  for(int frame=0;ok && frame<2;frame++){
-    output.struct_size=sizeof output;
-    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
-  }
-  ok=ok && output.pixels && output.width==64 && output.height==48;
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     output.pixels && output.width==64 && output.height==48;
   size_t pixels=(size_t)output.width*output.height;
   uint32_t *painted=ok?malloc(pixels*sizeof(*painted)):NULL;
   ok=ok && painted!=NULL;
@@ -272,9 +333,11 @@ static int background_color_policy(void){
   input.struct_size=sizeof input;
   input.pointer_x=input.pointer_y=-1;
   AnygmFrameOutput output={0};
-  output.struct_size=sizeof output;
-  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
-     output.pixels && output.width==64 && output.height==48;
+  for(int frame=0;ok && frame<2;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  ok=ok && output.pixels && output.width==64 && output.height==48;
   double canonical=ok?gml_global_num(&engine->vm,"background_color"):0;
   double alias=ok?gml_global_num(&engine->vm,"fixture_background_alias"):0;
   size_t unexpected=0;
@@ -301,6 +364,54 @@ static int background_color_policy(void){
   anygm_destroy(engine);
   anygm_synthetic_content_destroy(&fixture);
   return ok;
+}
+
+static int clear_view_background_case(
+    int (*create_fixture)(AnygmSyntheticContent *),const char *label){
+  AnygmSyntheticContent fixture;
+  if(!create_fixture(&fixture)){
+    fprintf(stderr,"%s clear-view fixture creation failed\n",label);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     engine->vm.room_index==1 && output.pixels &&
+     output.width==64 && output.height==48;
+  const uint32_t *pixels=(const uint32_t *)output.pixels;
+  for(size_t i=0;ok && i<(size_t)output.width*output.height;i++)
+    ok=(pixels[i]&0xFFFFFFu)==0;
+  if(!ok)
+    fprintf(stderr,
+      "%s room clear-view flag did not clear the retained application surface\n",
+      label);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
+static int clear_view_background_policy(void){
+  return clear_view_background_case(anygm_synthetic_clear_view_content_create,"single-view") &&
+         clear_view_background_case(
+           anygm_synthetic_multiview_clear_view_content_create,"multi-view");
 }
 
 static int game_change_policy(void){
@@ -390,6 +501,41 @@ static int game_change_policy(void){
       engine?engine->win.save_dir:"");
   }
   free(state);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
+static int game_restart_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_game_restart_content_create(&fixture)){
+    fputs("game-restart fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  for(int frame=0;ok && frame<16;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+       engine->vm.game_end==0 && engine->vm.room_index==0 &&
+       gml_global_num(&engine->vm,"fixture_restart_boot")==1;
+  }
+  if(!ok) fputs("game restart did not produce a clean replacement runtime\n",stderr);
   anygm_destroy(engine);
   anygm_synthetic_content_destroy(&fixture);
   return ok;
@@ -485,6 +631,12 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
 
 int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
+    if(!strcmp(argv[2],"application_surface_port_scale"))
+      return application_surface_port_scale_policy()?0:1;
+    if(!strcmp(argv[2],"first_generation_application_surface"))
+      return first_generation_application_surface_policy()?0:1;
+    if(!strcmp(argv[2],"game_restart"))
+      return game_restart_policy()?0:1;
     if(!strcmp(argv[2],"first_generation_dynamic_camera"))
       return first_generation_dynamic_camera_policy()?0:1;
     if(!strcmp(argv[2],"explicit_window_screen_stage"))
@@ -500,17 +652,24 @@ int main(int argc,char **argv){
     return 1;
   }
   if(argc!=1){
-    fputs("usage: test_engine_instances [--case first_generation_dynamic_camera|"
+    fputs("usage: test_engine_instances [--case application_surface_port_scale|"
+          "first_generation_application_surface|"
+          "game_restart|"
+          "first_generation_dynamic_camera|"
           "explicit_window_screen_stage|"
           "background_color|multi_view_application_canvas|game_change]\n",stderr);
     return 1;
   }
   if(!screen_stage_raster_policy()) return 1;
+  if(!application_surface_port_scale_policy()) return 1;
+  if(!first_generation_application_surface_policy()) return 1;
   if(!first_generation_dynamic_camera_policy()) return 1;
   if(!explicit_window_screen_stage_policy()) return 1;
   if(!draw_schedule_policy()) return 1;
   if(!background_color_policy()) return 1;
   if(!framebuffer_retention_policy()) return 1;
+  if(!clear_view_background_policy()) return 1;
+  if(!game_restart_policy()) return 1;
   if(!game_change_policy()) return 1;
   if(!state_input_history_roundtrip()) return 1;
   char label[128];
@@ -619,8 +778,8 @@ int main(int argc,char **argv){
     return 1;
   }
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
-  if(deterministic_size!=19490 ||
-     deterministic_hash!=UINT64_C(0xe78de2424cc30a7b)){
+  if(deterministic_size!=19598 ||
+     deterministic_hash!=UINT64_C(0xe7f59e2cae2e240b)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;

@@ -259,6 +259,12 @@ int present_view_get(AnygmEngine *engine,int index,GmlPresentView *out);
 int present_view_count(AnygmEngine *engine,GmlPresentView views[8],int *canvas_width,int *canvas_height);
 int stale_full_view_port(AnygmEngine *engine,int view_count,int x,int y,int width,int height,
                          int logical_width,int logical_height,int app_width,int app_height);
+int application_surface_scales_full_view_port(
+  AnygmEngine *engine,int view_count,int x,int y,int width,int height,
+  int app_width,int app_height);
+int application_surface_matches_first_generation_view_port(
+  AnygmEngine *engine,int view_count,int x,int y,int width,int height,
+  int app_width,int app_height);
 void aspect_hud_rect(AnygmEngine *engine,int *x,int *y,int *width,int *height);
 void compute_present(AnygmEngine *engine);
 void aspect_view_overlay_begin(AnygmEngine *engine,AspectViewOverlay *overlay,
@@ -266,6 +272,7 @@ void aspect_view_overlay_begin(AnygmEngine *engine,AspectViewOverlay *overlay,
 void aspect_view_overlay_end(AnygmEngine *engine,AspectViewOverlay *overlay,
                              int preserve_camera_writes);
 uint32_t cur_room_bg(AnygmEngine *engine);
+int room_clears_application_surface(const GmlRoom *room);
 void draw_runtime_backgrounds(AnygmEngine *engine,int foreground);
 void aspect_mask_outside_room(AnygmEngine *engine,double camera_x,double camera_y);
 void setup_display(AnygmEngine *engine);

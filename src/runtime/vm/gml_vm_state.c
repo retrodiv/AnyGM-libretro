@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=2 };
+enum { GML_VM_STATE_SCHEMA=3 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 struct GmlVmStateWriter {
   uint8_t *data;
@@ -96,6 +96,12 @@ static void sw_particle_state(StateW *s){
 }
 static int state_str_index_by_ptr(GmlVM *vm, const char *p){
   if(!vm || !vm->win || !p) return -1;
+  /* Canonicalize by string content, not by the allocation that currently owns the bytes.
+   * Runtime text loaded from a sidecar may equal a STRG entry while living outside the content
+   * mapping. A state load interns that text, so pointer-only compaction made save-load-save choose
+   * two different encodings for the same value. */
+  p=gml_win_intern_lookup(vm->win,p);
+  if(!p) return -1;
   const uint8_t *base=vm->win->data;
   const uint8_t *q=(const uint8_t*)p;
   if(q < base || q >= base + vm->win->size) return -1;
@@ -195,6 +201,7 @@ static void sw_val(StateW *s, GmlVal v, int depth){
           uint32_t w=(A->row_len && i<(uint32_t)A->row_cap && A->row_len[i]>0) ? (uint32_t)A->row_len[i] : 0;
           sw_u32(s,w);
         }
+        sw_u32(s,A->nested_2d?1u:0u);
       }
       size_t count_pos=s->pos;
       sw_u32(s,0);
@@ -212,6 +219,7 @@ static void sw_val(StateW *s, GmlVal v, int depth){
         uint32_t w=(A->row_len && i<(uint32_t)A->row_cap && A->row_len[i]>0) ? (uint32_t)A->row_len[i] : 0;
         sw_u32(s,w);
       }
+      sw_u32(s,A->nested_2d?1u:0u);
     }
     for(int i=0;i<A->len;i++) sw_val(s,A->data[i],depth+1);
     return;
@@ -258,6 +266,13 @@ static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
           if(A->row_len && i<(uint32_t)A->row_cap) A->row_len[i]=(int)w;
         }
       }
+      uint32_t nested=sr_u32(s);
+      if(nested>1){
+        state_debug(s->vm,"bad nested array flag",s->pos,nested);
+        s->ok=0;
+      } else {
+        A->nested_2d=(int)nested;
+      }
     }
     if(sparse){
       uint32_t count=sr_u32(s);
@@ -273,11 +288,6 @@ static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
       for(uint32_t i=0;i<len;i++) A->data[i]=sr_val(vm,s,depth+1);
     }
     if(!s->array_meta) gml_arr_rebuild_legacy_2d_meta(A);
-    if(!A->is_2d){
-      for(uint32_t i=0;i<len;i++) if(A->data[i].t==V_ARR && A->data[i].arr){
-        A->nested_2d=1; break;
-      }
-    }
     GmlVal v=vreal(0); v.t=V_ARR; v.arr=A; return v;
   }
   state_debug(s->vm,"bad value type",s->pos,t);
@@ -919,7 +929,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
   /* Runtime layers and elements. */
   vm->n_rtl=0; vm->n_rte=0;
   if(s.ok){
-    vm->rt_next_id=sr_i32(&s);
+    int restored_rt_next_id=sr_i32(&s);
+    vm->rt_next_id=restored_rt_next_id;
     int nl=sr_i32(&s);
     if(nl<0 || nl>4096){ state_debug(vm,"bad rt layer count",s.pos,(uint32_t)nl); s.ok=0; nl=0; }
     for(int i=0;i<nl && s.ok;i++){
@@ -954,6 +965,10 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
       e->image_index=sr_d(&s); e->image_speed=sr_d(&s); e->image_angle=sr_d(&s);
       e->id=id;
     }
+    /* The generic allocators assign temporary IDs while reconstructing each record. The records
+     * immediately receive their serialized IDs, so those allocation-side increments must not
+     * advance the language-visible next-ID counter. */
+    vm->rt_next_id=restored_rt_next_id;
   }
   if(s.ok) (void)gml_builtin_state_read_physics(builtin_state,&s);
   if(s.ok) vm->window_cursor=sr_i32(&s);

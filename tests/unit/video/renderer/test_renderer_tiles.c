@@ -198,6 +198,117 @@ static void check_fractional_transform_equivalence(int mirror,int flip){
   free(general.rotated_batch);
 }
 
+static void check_runtime_background_replacement(void){
+  static const uint8_t replacement[16]={
+    255,0,0,255, 0,255,0,255,
+    0,0,255,255, 255,255,255,255
+  };
+  static const uint32_t expected[4]={
+    0xffff0000,0xff00ff00,0xff0000ff,0xffffffff
+  };
+  GmlRender render;
+  uint32_t framebuffer[4]={0};
+  uint8_t *rgba=malloc(sizeof(replacement));
+
+  memset(&render,0,sizeof render);
+  render.atlas=calloc(1,sizeof(*render.atlas));
+  render.tpag=calloc(1,sizeof(*render.tpag));
+  render.tpag_ptr=calloc(1,sizeof(*render.tpag_ptr));
+  render.bg=calloc(1,sizeof(*render.bg));
+  if(render.atlas) render.atlas[0].px=calloc(4,1);
+  if(!rgba || !render.atlas || !render.tpag || !render.tpag_ptr ||
+     !render.bg || !render.atlas[0].px){
+    free(rgba);
+    gml_render_free(&render);
+    expect(0,"runtime background fixture allocation failed");
+    return;
+  }
+  memcpy(rgba,replacement,sizeof(replacement));
+  render.n_atlas=render.n_tpag=render.n_bg=1;
+  render.atlas[0].w=render.atlas[0].h=1;
+  render.tpag[0].atlas=0;
+  render.tpag[0].sw=render.tpag[0].sh=1;
+  render.tpag[0].bw=render.tpag[0].bh=1;
+  render.bg[0].tpag=0;
+  render.fb=render.base_fb=framebuffer;
+  render.fbw=render.base_fbw=2;
+  render.fbh=render.base_fbh=2;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+  render.target_id=-1;
+
+  expect(gml_background_replace_from_rgba(&render,0,rgba,2,2),
+         "runtime background replacement rejected valid RGBA pixels");
+  expect(render.n_atlas==2 && render.bg[0].tpag==0 &&
+         render.tpag[0].atlas==1 && render.tpag[0].sw==2 &&
+         render.tpag[0].sh==2 && render.tpag[0].bw==2 &&
+         render.tpag[0].bh==2,
+         "runtime background replacement did not publish its new texture page");
+  gml_draw_background(&render,0,0,0);
+  expect(!memcmp(framebuffer,expected,sizeof expected),
+         "runtime background replacement did not affect background drawing");
+  gml_render_free(&render);
+}
+
+static void check_trimmed_background_tiling_period(void){
+  static const uint8_t rgba[4]={255,0,0,255};
+  uint32_t framebuffer[8*6]={0};
+  GmlRender render;
+  GmlAtlas atlas;
+  GmlTpag page;
+  GmlBg background;
+
+  memset(&render,0,sizeof render);
+  memset(&atlas,0,sizeof atlas);
+  memset(&page,0,sizeof page);
+  memset(&background,0,sizeof background);
+  atlas.px=(uint8_t*)rgba;
+  atlas.w=atlas.h=1;
+  page.atlas=0;
+  page.sw=page.sh=1;
+  page.bw=3;
+  page.bh=4;
+  page.tx=1;
+  page.ty=2;
+  page.alpha_scanned=1;
+  page.alpha_max=255;
+  background.tpag=0;
+  render.fb=render.base_fb=framebuffer;
+  render.fbw=render.base_fbw=8;
+  render.fbh=render.base_fbh=6;
+  render.atlas=&atlas;
+  render.n_atlas=1;
+  render.tpag=&page;
+  render.n_tpag=1;
+  render.bg=&background;
+  render.n_bg=1;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+  render.target_id=-1;
+
+  gml_draw_background_tiled(&render,0,0,0,1,1);
+  for(int y=0;y<6;y++) for(int x=0;x<8;x++){
+    int expected=y==2 && (x==1 || x==4 || x==7);
+    expect((framebuffer[y*8+x]!=0)==expected,
+           "trimmed background repeated its crop instead of its logical cell");
+  }
+  free(page.argb_cache);
+}
+
+static void check_removeback_uses_bottom_left(void){
+  uint8_t rgba[16]={
+    255,0,0,255, 0,0,255,255,
+    0,0,255,17, 255,0,0,255
+  };
+  gml_render_apply_removeback_rgba(rgba,2,2,1);
+  expect(rgba[3]==255 && rgba[7]==0 && rgba[11]==0 && rgba[15]==255,
+         "removeback did not key RGB from the bottom-left pixel");
+}
+
 int main(void){
   static const uint32_t transformed[8][4]={
     {0xffff0000,0xff00ff00,0xff0000ff,0xffffffff},
@@ -215,6 +326,9 @@ int main(void){
     check_transform(bits&1,(bits>>1)&1,(bits>>2)&1,transformed[bits]);
   for(int bits=0;bits<4;bits++)
     check_fractional_transform_equivalence(bits&1,(bits>>1)&1);
+  check_runtime_background_replacement();
+  check_trimmed_background_tiling_period();
+  check_removeback_uses_bottom_left();
   if(failures){
     fprintf(stderr,"renderer tiles: %d failure(s)\n",failures);
     return 1;

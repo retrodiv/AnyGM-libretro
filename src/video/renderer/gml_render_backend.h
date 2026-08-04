@@ -39,6 +39,7 @@ typedef struct {
   uint32_t *interpolation_pixels[3];
   long frame;
   double camera_x, camera_y, alpha;
+  double coordinate_scale_x, coordinate_scale_y;
   int width, height;
   int interpolate, alpha_blend, blend_mode, circle_precision;
 } GmlRenderBackendDrawView;
@@ -68,7 +69,7 @@ int gml_render_backend_prepare_draw_view(GmlRender *render,
                                          GmlRenderBackendDrawView *view);
 void gml_render_backend_sync_camera(GmlRender *render,double translation_x,
                                     double translation_y);
-void gml_render_backend_gui_map_point(const GmlRender *render,double *x,double *y);
+void gml_render_backend_draw_map_point(const GmlRender *render,double *x,double *y);
 int gml_render_backend_surface_stretched(GmlRender *render,int surface,
                                          double x,double y,double width,double height,
                                          uint32_t blend,double alpha);

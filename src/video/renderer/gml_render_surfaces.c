@@ -146,6 +146,35 @@ void gml_surface_free(GmlRender *r, int id){
   int i=surface_slot(id); if(i<0) return;
   free(r->surface[i].px); free(r->surface[i].rle); memset(&r->surface[i],0,sizeof(r->surface[i]));
 }
+static int application_surface_resize(GmlRender *r,int w,int h){
+  if(!r || w<=0 || h<=0 || w>4096 || h>4096 ||
+     (size_t)w>SIZE_MAX/(size_t)h || (size_t)w*(size_t)h>SIZE_MAX/sizeof(uint32_t))
+    return 0;
+  if(r->app_surface_owned && r->app_w==w && r->app_h==h) return 1;
+  uint32_t *old=r->app_surface;
+  int oldw=r->app_w, oldh=r->app_h;
+  uint32_t *px=calloc((size_t)w*(size_t)h,sizeof(uint32_t));
+  if(!px) return 0;
+  int cw=oldw<w?oldw:w, ch=oldh<h?oldh:h;
+  if(old && cw>0 && ch>0)
+    for(int y=0;y<ch;y++) memcpy(px+(size_t)y*w,old+(size_t)y*oldw,(size_t)cw*sizeof(uint32_t));
+  uint32_t *owned=r->app_surface_owned;
+  /* A game can resize surface 0 while it is the current/nested target. Keep every borrowed
+   * target reference coherent before releasing the previous owned allocation. */
+  if(r->fb==old){ r->fb=px; r->fbw=w; r->fbh=h; }
+  if(r->base_fb==old){ r->base_fb=px; r->base_fbw=w; r->base_fbh=h; }
+  for(int i=0;i<r->target_sp;i++) if(r->target_stack[i].fb==old){
+    r->target_stack[i].fb=px; r->target_stack[i].w=w; r->target_stack[i].h=h;
+  }
+  r->app_surface_owned=px;
+  r->app_surface=px; r->app_w=w; r->app_h=h;
+  r->app_surface_opaque=0;
+  free(owned);
+  return 1;
+}
+int gml_render_application_surface_ensure_owned(GmlRender *r,int w,int h){
+  return application_surface_resize(r,w,h);
+}
 void gml_surface_resize(GmlRender *r, int id, int w, int h){
   if(!r || w<=0 || h<=0 || w>4096 || h>4096) return;
   if(id==0){
@@ -155,26 +184,7 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h){
      * The independently resizable application surface is a modern-format behavior. */
     if(!r->win || !anygm_policy_has_modern_layer_semantics(r->win)) return;
     if(render_setting(r,"GML_LOG_SURF")) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[surf] resize application_surface %dx%d (was %dx%d)\n",w,h,r->app_w,r->app_h);
-    if((size_t)w > SIZE_MAX/(size_t)h || (size_t)w*(size_t)h > SIZE_MAX/sizeof(uint32_t)) return;
-    uint32_t *old=r->app_surface;
-    int oldw=r->app_w, oldh=r->app_h;
-    uint32_t *px=calloc((size_t)w*(size_t)h,sizeof(uint32_t));
-    if(!px) return;
-    int cw=oldw<w?oldw:w, ch=oldh<h?oldh:h;
-    if(old && cw>0 && ch>0)
-      for(int y=0;y<ch;y++) memcpy(px+(size_t)y*w,old+(size_t)y*oldw,(size_t)cw*sizeof(uint32_t));
-    uint32_t *owned=r->app_surface_owned;
-    /* A game can resize surface 0 while it is the current/nested target. Keep every borrowed
-     * target reference coherent before releasing the previous owned allocation. */
-    if(r->fb==old){ r->fb=px; r->fbw=w; r->fbh=h; }
-    if(r->base_fb==old){ r->base_fb=px; r->base_fbw=w; r->base_fbh=h; }
-    for(int i=0;i<r->target_sp;i++) if(r->target_stack[i].fb==old){
-      r->target_stack[i].fb=px; r->target_stack[i].w=w; r->target_stack[i].h=h;
-    }
-    r->app_surface_owned=px;
-    r->app_surface=px; r->app_w=w; r->app_h=h;
-    r->app_surface_opaque=0;
-    free(owned);
+    (void)application_surface_resize(r,w,h);
     return;
   }
   int i=surface_slot(id); if(i<0 || !r->surface[i].live || w<=0 || h<=0 || w>4096 || h>4096) return;
@@ -384,12 +394,56 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
     return 1;
   }
 
+  /* A near-identity point reduction often selects one contiguous source span per output row
+   * (for example, a 1920-wide surface presented into 1919 pixels).  The generic mapper below
+   * performs the same leading-edge lookup and alpha checks per pixel.  Copy a certified opaque
+   * span directly; when coverage metadata is conservative, a vectorized alpha scan can certify
+   * the sampled spans much more cheaply while preserving the exact sampled texels. */
+  if(!r->interp && W<=sw){
+    int sx_first=(int)(((int64_t)px0*sw)/W);
+    int sx_last=(int)(((int64_t)(px1-1)*sw)/W);
+    int copy_width=px1-px0;
+    if(sx_last-sx_first==copy_width-1){
+      int sampled_all_opaque=source_all_opaque;
+      if(!sampled_all_opaque){
+        sampled_all_opaque=1;
+        for(int py=py0;py<py1;py++){
+          int sy=(int)(((int64_t)py*sh)/H);
+          if(!row_all_opaque32(src+(size_t)sy*sw+sx_first,copy_width)){
+            sampled_all_opaque=0;
+            break;
+          }
+        }
+      }
+      if(sampled_all_opaque){
+        for(int py=py0;py<py1;py++){
+          int sy=(int)(((int64_t)py*sh)/H);
+          memcpy(r->fb+(size_t)(y0+py)*r->fbw+(x0+px0),
+                 src+(size_t)sy*sw+sx_first,
+                 (size_t)copy_width*sizeof(*src));
+        }
+        if(rect_covers_target(r,x0+px0,y0+py0,x0+px1,y0+py1)){
+          r->fb_opaque_known=1;
+          r->fb_all_opaque=1;
+          r->fb_all_transparent=0;
+        }
+        return 1;
+      }
+    }
+  }
+
   int *xspan = (int*)malloc((size_t)W * 2u * sizeof(int));
   if(!xspan) return 0;
   int *xs0 = xspan, *xs1 = xspan + W;
   for(int px=0; px<W; px++){
     int sx0, sx1;
-    if(W>=sw){
+    if(!r->interp){
+      /* Disabled texture interpolation is point sampling for both magnification and reduction.
+       * Preserve leading-edge phase instead of averaging every source texel covered by a reduced
+       * output pixel. */
+      sx0=(int)(((int64_t)px*sw)/W);
+      sx1=sx0+1;
+    } else if(W>=sw){
       /* Studio and classic full/fixed presentation anchor point magnification at the leading
        * output edge. The fractional classic aspect path above is the centre-sampled exception. */
       sx0=(int)(((int64_t)px*sw)/W);
@@ -407,7 +461,10 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
 
   for(int py=py0; py<py1; py++){
     int sy0, sy1;
-    if(H>=sh){
+    if(!r->interp){
+      sy0=(int)(((int64_t)py*sh)/H);
+      sy1=sy0+1;
+    } else if(H>=sh){
       sy0=(int)(((int64_t)py*sh)/H);
       sy1=sy0+1;
     } else {
@@ -571,7 +628,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
      W==sw*2 && H==sh*2 && fabs(sx0d)<0.001 && fabs(sy0d)<0.001 &&
      fabs(swd-sw)<0.001 && fabs(shd-sh)<0.001 &&
      alpha>=1.0 && (blend&0xFFFFFF)==0xFFFFFF && r->blendmode==0 &&
-     !shader_alpha_test_active(r)){
+     !shader_alpha_test_requires_filter(r)){
     gml_render_maybe_prepare_draw(r);
     for(int oy=0;oy<H;oy++){
       int ty=y0+oy; if(ty<0||ty>=r->fbh) continue;
@@ -618,7 +675,9 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   const struct GmlShaderPal *slut=lut_active(r);
   const struct GmlShaderPal *sgrid=grid_active(r);
   GmlGridPixelCache grid_cache={0};
-  int alpha_test=shader_alpha_test_active(r);
+  int alpha_test=shader_alpha_test_requires_filter(r);
+  int opaque_alpha_test_passthrough=
+    src_all_opaque && !shader_discards_alpha(r,255u);
   if(render_setting(r,"GML_LOG_SHADER") && slut && ++r->lut_shader_log_count<=3){
     anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[shader] surface draw WITH lut: row=%f pal=%d surf=%d\n",slut->lut_row,r->lut_pal_sprite,surf);
     if(r->lut_shader_log_count==1) for(int ry=0;ry<16;ry++)
@@ -627,7 +686,8 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
         sprite_pixel_rgb(r,r->lut_pal_sprite,r->lut_pal_frame,1,ry,0xBAD)); }
   if(!flipx && !flipy && W==sw && H==sh &&
      fabs(sx0d) < 0.001 && fabs(sy0d) < 0.001 &&
-     fabs(swd - sw) < 0.001 && fabs(shd - sh) < 0.001 && !alpha_test){
+     fabs(swd - sw) < 0.001 && fabs(shd - sh) < 0.001 &&
+     (!alpha_test || opaque_alpha_test_passthrough)){
     int cx0=x0<0?0:x0, cy0=y0<0?0:y0;
     int cx1=x0+W; if(cx1>r->fbw) cx1=r->fbw;
     int cy1=y0+H; if(cy1>r->fbh) cy1=r->fbh;
@@ -776,6 +836,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             memcpy(dp,sp,(size_t)cw*sizeof(uint32_t));
             continue;
           }
+          if(row_all_transparent32(sp,cw)) continue;
           if(row_all_opaque32(sp,cw)){
             memcpy(dp,sp,(size_t)cw*sizeof(uint32_t));
             continue;
@@ -829,7 +890,8 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
      fabs(sx0d) < 0.001 && fabs(sy0d) < 0.001 &&
      fabs(swd - sw) < 0.001 && fabs(shd - sh) < 0.001 &&
      r->blendmode==0 && alpha>=1.0 &&
-     ((blend & 0xFFFFFF) == 0xFFFFFF) && !spal && !slut && !sgrid && !alpha_test){
+     ((blend & 0xFFFFFF) == 0xFFFFFF) && !spal && !slut && !sgrid &&
+     (!alpha_test || opaque_alpha_test_passthrough)){
     gml_render_maybe_prepare_draw(r);
     if(draw_scaled_full_surface_normal(r,src,sw,sh,x0,y0,W,H,src_all_opaque)){
       free(copy);
@@ -838,9 +900,9 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   }
   gml_render_maybe_prepare_draw(r);
   /* Bilinear magnification when the game asked for interpolation (texture_set_interpolation(true)):
-   * GM/GL sample 4 texels at the output pixel centre. Only the upscale case takes this — downscale
-   * keeps the box average, and non-interpolated pixel-art draws keep exact nearest. This is what makes
-   * a full-screen compositor's soft "old TV" bloom (a 0.7-alpha stretched surface pass) render. */
+   * GM/GL sample 4 texels at the output pixel centre. Only the upscale case takes this; filtered
+   * downscale keeps the box average, while non-interpolated draws use exact point sampling below.
+   * This is what makes a full-screen compositor's soft "old TV" bloom render. */
   if(r->interp && !flipx && !flipy && W>sw && H>sh && r->blendmode==0 && !spal && !slut){
     /* per-column tap indices + weight are constant across rows: precompute once (hoists the div/floor
      * out of the inner loop) and run the taps in float. */
@@ -859,13 +921,15 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   }
   for(int py=0; py<H; py++){ int ty_=y0+py; if(ty_<0||ty_>=r->fbh) continue;
     int dpy=flipy?(H-1-py):py;
-    int sy0=(int)floor(sy0d + (dpy*shd)/H), sy1=(int)floor(sy0d + ((dpy+1)*shd)/H);
+    int sy0=(int)floor(sy0d + (dpy*shd)/H);
+    int sy1=!r->interp ? sy0+1 : (int)floor(sy0d + ((dpy+1)*shd)/H);
     if(sy1<=sy0) sy1=sy0+1;
     if(sy0<0) sy0=0;
     if(sy1>sh) sy1=sh;
     for(int px=0; px<W; px++){ int tx_=x0+px; if(tx_<0||tx_>=r->fbw) continue;
       int dpx=flipx?(W-1-px):px;
-      int sx0=(int)floor(sx0d + (dpx*swd)/W), sx1=(int)floor(sx0d + ((dpx+1)*swd)/W);
+      int sx0=(int)floor(sx0d + (dpx*swd)/W);
+      int sx1=!r->interp ? sx0+1 : (int)floor(sx0d + ((dpx+1)*swd)/W);
       if(sx1<=sx0) sx1=sx0+1;
       if(sx0<0) sx0=0;
       if(sx1>sw) sx1=sw;
@@ -913,8 +977,8 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
                                         int allow_software3d){
   int explicit_target_raster=surface_draw_targets_screen_raster(r,surf,dw,dh);
   if(!explicit_target_raster){
-    gml_render_gui_map_point(r,&dx,&dy);
-    gml_render_gui_map_scale(r,&dw,&dh);
+    gml_render_draw_map_point(r,&dx,&dy);
+    gml_render_draw_map_scale(r,&dw,&dh);
   }
   const struct GmlShaderPal *sdual=dual_active(r);
   const struct GmlShaderPal *shsv=hsv_scan_active(r);
@@ -1008,8 +1072,8 @@ void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
     if(sw>0&&sh>0) gml_draw_surface_stretched(r,surf,x,y,sw*xs,sh*ys,blend,alpha);
     return;
   }
-  gml_render_gui_map_point(r,&x,&y);
-  gml_render_gui_map_scale(r,&xs,&ys);
+  gml_render_draw_map_point(r,&x,&y);
+  gml_render_draw_map_scale(r,&xs,&ys);
   int sw=0,sh=0; uint32_t *src=surface_pixels(r,surf,&sw,&sh);
   if(!r||!r->fb||!src||sw<=0||sh<=0||xs==0.0||ys==0.0||alpha<=0.0) return;
   if(alpha>1.0) alpha=1.0;
@@ -1100,8 +1164,8 @@ void gml_draw_surface_part_ext(GmlRender *r, int surf, double sx, double sy, dou
                                double dx, double dy, double xs, double ys, uint32_t blend, double alpha){
   int explicit_target_raster=surface_draw_targets_screen_raster(r,surf,sw*xs,sh*ys);
   if(!explicit_target_raster){
-    gml_render_gui_map_point(r,&dx,&dy);
-    gml_render_gui_map_scale(r,&xs,&ys);
+    gml_render_draw_map_point(r,&dx,&dy);
+    gml_render_draw_map_scale(r,&xs,&ys);
   }
   const struct GmlShaderPal *sdual=dual_active(r);
   const struct GmlShaderPal *shsv=hsv_scan_active(r);

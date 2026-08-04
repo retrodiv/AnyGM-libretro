@@ -272,6 +272,14 @@ static void boot_runtime(AnygmEngine *engine) {
    * happens. */
   gml_render_application_surface_bind(
     &engine->render,engine->fb,(int)engine->width,(int)engine->height,0);
+  /* First-generation presentation keeps the default application surface at the exported
+   * display raster even when a room uses a smaller logical view. Own that stable raster so
+   * later room-size changes do not collapse surface 0 to the camera dimensions. */
+  if(anygm_policy_uses_first_generation_studio(&engine->win) &&
+     !gml_render_application_surface_ensure_owned(
+       &engine->render,(int)engine->width,(int)engine->height))
+    engine_logf(engine,ANYGM_LOG_WARN,
+      "[anygm] could not allocate the first-generation application surface\n");
   GmlRenderControl render_control={
     .requested_width=core_opt_resolution(engine,0),
     .requested_height=core_opt_resolution(engine,1),
@@ -647,6 +655,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(engine->vm.game_end){
     if(engine->vm.game_end == 2){
       engine->vm.game_end = 0;
+      gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
+      gml_vm_free(&engine->vm);
+      gml_render_free(&engine->render);
       boot_runtime(engine);
     } else {
       engine->runtime_ended = 1;
@@ -782,9 +793,32 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                              ensure_classic_phase(engine,classic_pixels*3);
   int view_surface = (int)gml_global_arr(&engine->vm, "view_surface_id", frame_view_index);
   int multiview_rendered = !engine->aspect_force_active && render_multiview_application(engine);
+  GmlRenderApplicationWriteView direct_world_view={0};
+  int direct_owned_world=0;
+  uint32_t *world_pixels=engine->fb;
+  int world_width=(int)engine->width;
+  int world_height=(int)engine->height;
   if (!multiview_rendered) {
   *gml_varmap_put(&engine->vm.globals,"view_current")=vreal(frame_view_index);
-  gml_render_begin(&engine->render, engine->fb, engine->width, engine->height, cam_x, cam_y);
+  if(!engine->aspect_force_active && frame_view_count==1 &&
+     render_presentation.application_owned &&
+     !(view_surface>0 && gml_surface_exists(&engine->render,view_surface))){
+    GmlPresentView *view=&frame_views[0];
+    direct_owned_world=(application_surface_scales_full_view_port(
+      engine,frame_view_count,view->px,view->py,view->pw,view->ph,
+      render_presentation.application_width,render_presentation.application_height) ||
+      application_surface_matches_first_generation_view_port(
+        engine,frame_view_count,view->px,view->py,view->pw,view->ph,
+        render_presentation.application_width,render_presentation.application_height)) &&
+      gml_render_application_surface_owned_view(&engine->render,&direct_world_view);
+  }
+  world_pixels=direct_owned_world?direct_world_view.pixels:engine->fb;
+  world_width=direct_owned_world?direct_world_view.width:(int)engine->width;
+  world_height=direct_owned_world?direct_world_view.height:(int)engine->height;
+  gml_render_begin(&engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
+  if(direct_owned_world)
+    gml_render_world_set_logical_extent(
+      &engine->render,(int)engine->width,(int)engine->height);
   if(classic_phase) sample_planes.classic_vertical=engine->classic_phase_mem;
   if(classic_interp_phase){
     sample_planes.classic_interpolated[0]=engine->classic_phase_mem;
@@ -795,9 +829,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     &engine->render,&sample_planes,GML_RENDER_SAMPLE_PLANES_CLASSIC);
   GmlRoom rm;
   int have_room = (gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) == 0);
-  /* A room whose background-color flag is disabled draws over the completed application
-   * framebuffer without replacing the omitted clear with the room color. */
-  if (!have_room || rm.draw_bg)
+  /* The legacy background-color field and the distinct room flag can each request an
+   * application-surface clear. If both are disabled, drawing retains the completed framebuffer. */
+  if (!have_room || room_clears_application_surface(&rm))
     gml_render_set_pending_fill(&engine->render, engine->background);
   /* Some games draw room backgrounds themselves from GML. When a launcher supplies that renderer
    * object's name, defer to it and avoid double-drawing the engine's static fallback. */
@@ -814,17 +848,23 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   engine->aspect_event_view_stack_pointer = 0;
   engine->aspect_event_view_overflow = 0;
   gml_render_flush_pending_fill(&engine->render);
+  if(direct_owned_world &&
+     gml_render_application_surface_owned_view(&engine->render,&direct_world_view)){
+    world_pixels=direct_world_view.pixels;
+    world_width=direct_world_view.width;
+    world_height=direct_world_view.height;
+  }
   aspect_mask_outside_room(engine,cam_x, cam_y);
   if(prof){ t1 = profile_now_ms(engine); engine->profile.draw_ms += t1 - t0; t0 = t1; }
   gml_render_presentation_metrics(&engine->render,&render_presentation);
-  if(anygm_host_development_setting(&engine->host,"GML_LOG_DRAW")){ int nz=0; for(unsigned i=0;i<engine->width*engine->height;i++) if(engine->fb[i]&0xFFFFFF) nz++;
+  if(anygm_host_development_setting(&engine->host,"GML_LOG_DRAW")){ int nz=0; for(size_t i=0;i<(size_t)world_width*world_height;i++) if(world_pixels[i]&0xFFFFFF) nz++;
     if(engine->diagnostics.draw_frame<3||engine->diagnostics.draw_frame%200==0){ int live=0,deactivated=0,dormant=0,highest=-1;
       for(int i=0;i<engine->vm.inst_count;i++){ GmlInstance *in=&engine->vm.inst[i];
         if(in->active&&!in->marked){ live++; highest=i; }
         else if(in->deactivated){ deactivated++; highest=i; }
         else if(in->room_dormant){ dormant++; highest=i; } }
       engine_logf(engine,ANYGM_LOG_DEBUG,"[draw] f=%d room=%d inst=%d live=%d deact=%d dormant=%d high=%d res=%ux%u fb_nonblack=%d app_draw_en=%d\n",
-              engine->diagnostics.draw_frame,engine->vm.room_index,engine->vm.inst_count,live,deactivated,dormant,highest,engine->width,engine->height,nz,
+              engine->diagnostics.draw_frame,engine->vm.room_index,engine->vm.inst_count,live,deactivated,dormant,highest,world_width,world_height,nz,
               render_presentation.application_draw_enabled); }
     engine->diagnostics.draw_frame++; }
   /* Studio view-to-surface: when view 0 targets a surface, mirror the rendered frame into it so
@@ -834,7 +874,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     GmlRenderTargetCoverage render_coverage={0};
     gml_render_target_coverage(&engine->render,&render_coverage);
     if (vs > 0 && gml_render_surface_mirror_pixels(
-          &engine->render,vs,engine->fb,(int)engine->width,(int)engine->height,
+          &engine->render,vs,world_pixels,world_width,world_height,
           render_coverage.opaque_known && render_coverage.all_opaque)) {
       if(anygm_host_development_setting(&engine->host,"GML_LOG_SHADER")){
         int sw=0,sh=0; const uint32_t *pixels=gml_surface_pixels_read(&engine->render,vs,&sw,&sh);
@@ -848,9 +888,17 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
    * presentation object can composite the frame and overlays. If nothing draws the surface,
    * auto-blit it. */
   GmlRenderApplicationWriteView app_view={0};
-  if(gml_render_application_surface_owned_clear(&engine->render,engine->background,&app_view)){
+  if(direct_owned_world){
+    GmlRenderTargetCoverage render_coverage={0};
+    gml_render_target_coverage(&engine->render,&render_coverage);
+    gml_render_application_surface_select_owned(
+      &engine->render,render_coverage.opaque_known && render_coverage.all_opaque);
+  } else if(gml_render_application_surface_owned_clear(&engine->render,engine->background,&app_view)){
     int aw=app_view.width, ah=app_view.height;
-    if(!(view_surface>0 && gml_surface_exists(&engine->render,view_surface))){
+    if(multiview_rendered)
+      compose_view_rect(engine->fb,(int)engine->width,(int)engine->height,
+                        app_view.pixels,aw,ah,0,0,aw,ah);
+    else if(!(view_surface>0 && gml_surface_exists(&engine->render,view_surface))){
       GmlPresentView v;
       if(frame_view_count>0){
         v=frame_views[0];
@@ -874,8 +922,11 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                                   fabs((double)dw/(double)dh-(double)aw/(double)ah)<0.0005;
         int resized_full_port = stale_full_view_port(engine,one_view,dx,dy,dw,dh,
                                                      (int)engine->width,(int)engine->height,aw,ah);
+        int scaled_full_port = application_surface_scales_full_view_port(
+          engine,frame_view_count,dx,dy,dw,dh,aw,ah);
         int full_logical_view = one_view && dx==0 && dy==0 &&
-                                (port_is_logical || oversized_full_port || resized_full_port);
+                                (port_is_logical || oversized_full_port || resized_full_port ||
+                                 scaled_full_port);
         if(full_logical_view){ dx=dy=0; dw=aw; dh=ah; }
         compose_view_rect(engine->fb,(int)engine->width,(int)engine->height,app_view.pixels,aw,ah,
                           dx,dy,dw,dh);
@@ -1158,8 +1209,11 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     int screen_empty = 1;
     for (int i = 0; i < gtw * gth; i++) if (gtarget[i] & 0xFFFFFF) { screen_empty = 0; break; }
     if (screen_empty) {
-      int fb_has = 0;
-      for (unsigned i = 0; i < engine->width * engine->height; i++) if (engine->fb[i] & 0xFFFFFF) { fb_has = 1; break; }
+      int fb_has = 0,app_width=0,app_height=0;
+      const uint32_t *app_pixels=
+        gml_surface_pixels_read(&engine->render,0,&app_width,&app_height);
+      for(size_t i=0;app_pixels && i<(size_t)app_width*app_height;i++)
+        if(app_pixels[i]&0xFFFFFF){ fb_has=1; break; }
 	      if (fb_has) {
           if (engine->aspect_force_active) {
             GmlRenderTargetMetrics fallback_target={0};

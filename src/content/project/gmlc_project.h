@@ -90,6 +90,7 @@ typedef struct {
   int width, height, speed, persistent;
   uint32_t background_color;
   int draw_background_color;
+  int clear_view_background;
   int physics_world;
   float physics_gravity_x, physics_gravity_y, physics_scale;
   int view_enabled;

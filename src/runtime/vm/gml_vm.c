@@ -319,15 +319,16 @@ int gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
   }
   return 0;
 }
+
 int gml_vm_init(GmlVM *vm,GmlWin *win,const AnygmHostServices *host){
   return gml_vm_init_launch(vm,win,host,NULL,NULL,NULL);
 }
-
 static void gml_vm_release_builtin_value(void *userdata,GmlVal value){
   gml_val_free((GmlValueFreeContext *)userdata,value);
 }
 
 void gml_vm_free(GmlVM *vm){
+  GML_VM_DIAGNOSTIC_DESTROY(vm);
   gml_colgrid_invalidate(vm);
   gml_vm_instances_reset_caches(vm);
   if(vm->obj_desc){ for(int i=0;i<vm->n_objects;i++) free(vm->obj_desc[i]); }

@@ -121,6 +121,13 @@ static inline int shader_alpha_test_active(GmlRender *r){
   const struct GmlShaderPal *sp=shader_active(r);
   return (sp && sp->alpha_discard) || (r && r->alpha_test_enable);
 }
+static inline int shader_alpha_test_requires_filter(GmlRender *r){
+  const struct GmlShaderPal *sp=shader_active(r);
+  if(sp && sp->alpha_discard) return 1;
+  /* Ordinary textured kernels already skip zero-coverage texels. Fixed-function alpha testing at
+   * reference zero therefore changes no output and must not disable sparse and opaque caches. */
+  return r && r->alpha_test_enable && r->alpha_test_ref>0;
+}
 static inline uint32_t sprite_pixel_argb(GmlRender *r, int sprite, int frame, int lx, int ly, uint32_t fallback){
   if(sprite<0||sprite>=r->n_spr) return fallback;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return fallback;

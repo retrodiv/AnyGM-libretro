@@ -23,10 +23,11 @@ void gml_audio_free(GmlAudio *a);
 int  gml_audio_play(GmlAudio *a, int snd, int loop);
 int  gml_audio_play_on(GmlAudio *a, int snd, int loop, int emitter);
 int  gml_audio_warm_sound(GmlAudio *a, int snd);
-/* caster_* external-OGG streaming used by content that loads music from loose .ogg files.
- * Decode an OGG blob and register it as a new sound; the returned handle is a sound index usable
- * with gml_audio_play/stop/gain/pitch. Handles are recycled after caster_free. */
+/* Register a bounded loose audio blob as a dynamic sound. The generic path accepts PCM WAV,
+ * OGG Vorbis, and MP3; the OGG-only entry point retains eager caster validation. Returned handles
+ * are sound indices usable with the regular playback controls and are recycled after free. */
 int  gml_audio_add_ogg(GmlAudio *a, const uint8_t *ogg, int len);
+int  gml_audio_add_encoded(GmlAudio *a, const uint8_t *encoded, int len);
 void gml_audio_caster_free(GmlAudio *a, int handle);
 void gml_audio_caster_free_all(GmlAudio *a);
 void gml_audio_stop(GmlAudio *a, int snd);   /* stop every voice of this sound */
@@ -44,9 +45,14 @@ void gml_audio_group_stop_all(GmlAudio *a, int group);
 void gml_audio_channel_num(GmlAudio *a, int channels);
 int  gml_audio_get_channel_num(GmlAudio *a);
 void gml_audio_sound_gain(GmlAudio *a, int target, double gain);
+void gml_audio_sound_gain_fade(GmlAudio *a, int target, double gain, int milliseconds);
 double gml_audio_sound_get_gain(GmlAudio *a, int target);
 void gml_audio_sound_pitch(GmlAudio *a, int target, double pitch);
 double gml_audio_sound_get_pitch(GmlAudio *a, int target);
+void gml_audio_sound_set_default_loop(GmlAudio *a, int sound, int loop);
+int  gml_audio_sound_get_default_loop(GmlAudio *a, int sound);
+void gml_audio_sound_set_external_type(GmlAudio *a, int sound, uint32_t type);
+uint32_t gml_audio_sound_get_external_type(GmlAudio *a, int sound);
 double gml_audio_sound_length(GmlAudio *a, int sound);
 void gml_audio_sound_set_track_position(GmlAudio *a, int target, double seconds);
 double gml_audio_sound_get_track_position(GmlAudio *a, int target);

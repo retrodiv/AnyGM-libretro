@@ -38,6 +38,15 @@ int main(void){
     0x4c,0x56,0x48,0xce,0x4f,0x49,0x4d,0x56,0x28,0x28,0xca,0x4f,
     0x4a,0xe5,0x02,0x00
   };
+  static const uint8_t animated_gif[]={
+    'G','I','F','8','9','a',1,0,1,0,0x80,0,0,
+    255,0,0, 0,255,0,
+    0x21,0xf9,0x04,0x00,0x0a,0x00,0x00,0x00,
+    0x2c,0,0,0,0,1,0,1,0,0, 0x02,0x02,0x44,0x01,0x00,
+    0x21,0xf9,0x04,0x00,0x0a,0x00,0x00,0x00,
+    0x2c,0,0,0,0,1,0,1,0,0, 0x02,0x02,0x4c,0x01,0x00,
+    0x3b
+  };
   int ok=1;
 
   GmlMediaBuffer png={0};
@@ -58,6 +67,19 @@ int main(void){
   gml_media_buffer_release(&png);
   ok&=expect(!decoded.data && decoded.size==0 && !png.data && png.size==0,
              "release clears ownership records");
+
+  int frames=0;
+  ok&=expect(gml_image_decode_rgba_frames(
+      animated_gif,sizeof(animated_gif),&decoded,
+      &width,&height,&frames,&components),"decode animated GIF");
+  static const uint8_t gif_rgba[]={
+    255,0,0,255, 0,255,0,255
+  };
+  ok&=expect(width==1 && height==1 && frames==2 &&
+             decoded.size==sizeof(gif_rgba) &&
+             !memcmp(decoded.data,gif_rgba,sizeof(gif_rgba)),
+             "exact animated GIF frame planes");
+  gml_media_buffer_release(&decoded);
 
   GmlMediaBuffer inflated={0};
   ok&=expect(gml_deflate_decode(zlib_stream,sizeof(zlib_stream),

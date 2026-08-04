@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "software3d_test_fixture.h"
+#include "gml_image_codec.h"
 
 
 void free_extension_fixture(GmlVM *vm){
@@ -171,6 +172,166 @@ int external_texture_group_fixture(void){
   }
   return 1;
 }
+
+typedef struct {
+  const uint8_t *bytes;
+  size_t size,position;
+  unsigned opens,closes;
+} RuntimeSpriteHost;
+
+
+static void *runtime_sprite_open(void *userdata,const char *path,AnygmFileMode mode){
+  RuntimeSpriteHost *host=userdata;
+  if(mode!=ANYGM_FILE_READ || strcmp(path,"root/neutral_mask.png")) return NULL;
+  host->position=0;
+  host->opens++;
+  return host;
+}
+
+
+static size_t runtime_sprite_read(void *userdata,void *file,void *data,size_t size){
+  RuntimeSpriteHost *host=userdata;
+  (void)file;
+  size_t available=host->size-host->position;
+  if(size>available) size=available;
+  if(size) memcpy(data,host->bytes+host->position,size);
+  host->position+=size;
+  return size;
+}
+
+
+static int64_t runtime_sprite_seek(void *userdata,void *file,int64_t offset,
+                                   AnygmSeekOrigin origin){
+  RuntimeSpriteHost *host=userdata;
+  (void)file;
+  int64_t base=origin==ANYGM_SEEK_START?0:
+               origin==ANYGM_SEEK_CURRENT?(int64_t)host->position:
+               origin==ANYGM_SEEK_END?(int64_t)host->size:-1;
+  if(base<0 || offset < -base || (uint64_t)(base+offset)>host->size) return -1;
+  host->position=(size_t)(base+offset);
+  return base+offset;
+}
+
+
+static void runtime_sprite_close(void *userdata,void *file){
+  RuntimeSpriteHost *host=userdata;
+  (void)file;
+  host->closes++;
+}
+
+
+int classic_sprite_replace_fixture(void){
+  static const uint8_t source_rgba[]={
+    255,0,255,255, 255,0,255,255, 255,0,255,255,
+    255,0,255,255,  17,34,51,255, 255,0,255,255,
+    255,0,255,255, 255,0,255,255, 255,0,255,255
+  };
+  GmlMediaBuffer png={0};
+  if(!gml_image_encode_png(source_rgba,3,3,4,12,&png)){
+    fprintf(stderr,"classic sprite replacement PNG creation failed\n");
+    return 0;
+  }
+  RuntimeSpriteHost memory={.bytes=png.data,.size=png.size};
+  AnygmHostServices host={
+    .struct_size=sizeof host,
+    .abi_version=ANYGM_HOST_SERVICES_VERSION,
+    .userdata=&memory,
+    .file_open=runtime_sprite_open,
+    .file_read=runtime_sprite_read,
+    .file_seek=runtime_sprite_seek,
+    .file_close=runtime_sprite_close
+  };
+  GmlWin win={0};
+  GmlVM vm={0};
+  GmlRender render={0};
+  win.classic_version=800;
+  win.host=&host;
+  snprintf(win.content_dir,sizeof win.content_dir,"root");
+  vm.win=&win;
+  vm.host=&host;
+  vm.render=&render;
+  render.win=&win;
+  uint8_t *base_rgba=malloc(4);
+  if(!base_rgba){
+    gml_media_buffer_release(&png);
+    return 0;
+  }
+  memset(base_rgba,255,4);
+  int sprite=gml_sprite_append_from_rgba(
+      &render,base_rgba,1,1,0,0,"neutral_replace_target");
+  GmlVal classic_args[]={
+    vreal(sprite),vstr("neutral_mask.png"),vreal(1),
+    vreal(1),vreal(1),vreal(0),vreal(1),vreal(6),vreal(7)
+  };
+  GmlVal classic_result=call_values(
+      &vm,"sprite_replace",classic_args,
+      (int)(sizeof classic_args/sizeof classic_args[0]));
+  GmlRenderSpriteMetrics metrics={0};
+  int ok=sprite>=0 && classic_result.t==V_REAL && classic_result.d==1 &&
+         gml_render_sprite_metrics(&render,sprite,&metrics) &&
+         metrics.width==3 && metrics.height==3 &&
+         metrics.origin_x==6 && metrics.origin_y==7 &&
+         metrics.collision_left==1 && metrics.collision_top==1 &&
+         metrics.collision_right==1 && metrics.collision_bottom==1;
+  if(!ok)
+    fprintf(stderr,
+            "classic sprite replacement signature mismatch: result=%g size=%dx%d "
+            "origin=(%d,%d) bbox=(%d,%d,%d,%d)\n",
+            classic_result.d,metrics.width,metrics.height,
+            metrics.origin_x,metrics.origin_y,
+            metrics.collision_left,metrics.collision_top,
+            metrics.collision_right,metrics.collision_bottom);
+
+  GmlVal compatible_classic_args[]={
+    vreal(sprite),vstr("neutral_mask.png"),vreal(1),
+    vreal(1),vreal(0),vreal(8),vreal(9)
+  };
+  GmlVal compatible_classic_result=call_values(
+      &vm,"sprite_replace",compatible_classic_args,
+      (int)(sizeof compatible_classic_args/sizeof compatible_classic_args[0]));
+  memset(&metrics,0,sizeof metrics);
+  int compatible_classic_ok=
+      compatible_classic_result.t==V_REAL && compatible_classic_result.d==1 &&
+      gml_render_sprite_metrics(&render,sprite,&metrics) &&
+      metrics.origin_x==8 && metrics.origin_y==9 &&
+      !gml_sprite_collision(&render,sprite,0,0,0) &&
+      gml_sprite_collision(&render,sprite,0,1,1);
+  ok=ok && compatible_classic_ok;
+  if(!compatible_classic_ok)
+    fprintf(stderr,
+            "compatible classic sprite replacement signature mismatch: result=%g "
+            "origin=(%d,%d) corner=%d centre=%d\n",
+            compatible_classic_result.d,metrics.origin_x,metrics.origin_y,
+            gml_sprite_collision(&render,sprite,0,0,0),
+            gml_sprite_collision(&render,sprite,0,1,1));
+
+  win.classic_version=0;
+  GmlVal modern_args[]={
+    vreal(sprite),vstr("neutral_mask.png"),vreal(1),
+    vreal(1),vreal(0),vreal(4),vreal(5)
+  };
+  GmlVal modern_result=call_values(
+      &vm,"sprite_replace",modern_args,
+      (int)(sizeof modern_args/sizeof modern_args[0]));
+  memset(&metrics,0,sizeof metrics);
+  ok=ok && modern_result.t==V_REAL && modern_result.d==1 &&
+     gml_render_sprite_metrics(&render,sprite,&metrics) &&
+     metrics.origin_x==4 && metrics.origin_y==5 &&
+     memory.opens==3 && memory.closes==3;
+  if(modern_result.t!=V_REAL || modern_result.d!=1 ||
+     metrics.origin_x!=4 || metrics.origin_y!=5 ||
+     memory.opens!=3 || memory.closes!=3)
+    fprintf(stderr,
+            "modern sprite replacement signature changed: result=%g "
+            "origin=(%d,%d) opens=%u closes=%u\n",
+            modern_result.d,metrics.origin_x,metrics.origin_y,
+            memory.opens,memory.closes);
+  gml_vm_free(&vm);
+  gml_render_free(&render);
+  gml_media_buffer_release(&png);
+  return ok;
+}
+
 
 int sprite_instance_metric_scale_fixture(void){
   GmlVM vm={0};

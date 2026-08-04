@@ -29,20 +29,22 @@ int main(void){
   }
   if(!classic_early.uses_classic_runtime || classic_early.classic_modern_presentation ||
      !classic_late.classic_modern_presentation ||
-     classic_early.alarm_dispatch!=ANYGM_ALARM_DISPATCH_CLASSIC ||
+     classic_early.alarm_dispatch!=ANYGM_ALARM_DISPATCH_RESOURCE_MAJOR ||
      classic_early.blend!=ANYGM_BLEND_CLASSIC){
     fputs("classic policy resolution mismatch\n",stderr);
     return 1;
   }
   if(first_early.diagnostic_family!=ANYGM_FAMILY_STUDIO_FIRST ||
-     first_early.comparison!=ANYGM_COMPARISON_EXACT ||
+     first_early.comparison!=ANYGM_COMPARISON_STUDIO_EPSILON ||
+     first_early.alarm_dispatch!=ANYGM_ALARM_DISPATCH_STANDARD ||
      first_early.alarm_threshold!=ANYGM_ALARM_TRIGGER_BELOW_ZERO ||
      first_early.instance_iteration!=ANYGM_INSTANCE_ITERATION_LIVE ||
      first_early.solid_collision_transaction!=ANYGM_COLLISION_CURRENT_COORDINATES){
     fputs("first-generation early policy resolution mismatch\n",stderr);
     return 1;
   }
-  if(first_late.alarm_threshold!=ANYGM_ALARM_TRIGGER_AT_ZERO ||
+  if(first_late.alarm_dispatch!=ANYGM_ALARM_DISPATCH_RESOURCE_MAJOR ||
+     first_late.alarm_threshold!=ANYGM_ALARM_TRIGGER_AT_ZERO ||
      !first_late.round_transformed_collision_bounds ||
      first_late.has_modern_function_values){
     fputs("first-generation late policy resolution mismatch\n",stderr);
@@ -51,6 +53,7 @@ int main(void){
   if(second.diagnostic_family!=ANYGM_FAMILY_STUDIO_SECOND ||
      !second.has_modern_function_values || !second.has_modern_struct_semantics ||
      second.instance_iteration!=ANYGM_INSTANCE_ITERATION_FRAME_SNAPSHOT ||
+     second.alarm_dispatch!=ANYGM_ALARM_DISPATCH_STANDARD ||
      second.solid_collision_transaction!=ANYGM_COLLISION_PREVIOUS_COORDINATES ||
      second.blend!=ANYGM_BLEND_STUDIO_SECOND){
     fputs("second-generation policy resolution mismatch\n",stderr);

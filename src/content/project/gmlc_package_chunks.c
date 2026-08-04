@@ -1160,10 +1160,10 @@ static int write_room(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, int roo
   wu32(&pkg->b,r->background_color);
   wu32(&pkg->b,(uint32_t)(r->draw_background_color?1:0));
   wi32(&pkg->b,room_creation_code_index(p,room_index));
-  /* Low bits encode ROOM flags for legacy views and background-colour clearing.
+  /* Low bits encode legacy views and application-surface clearing.
    * The high word identifies the layout generation used by this bytecode-15 package. */
   wu32(&pkg->b,0x00020000u | (r->view_enabled?1u:0u) |
-                   (r->draw_background_color?2u:0u));
+                   ((r->draw_background_color||r->clear_view_background)?2u:0u));
   size_t bg_pos=pkg->b.len; wu32(&pkg->b,0);
   size_t view_pos=pkg->b.len; wu32(&pkg->b,0);
   size_t obj_pos=pkg->b.len; wu32(&pkg->b,0);

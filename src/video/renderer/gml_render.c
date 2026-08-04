@@ -561,6 +561,17 @@ int gml_render_application_surface_owned_clear(
   }
   return 1;
 }
+int gml_render_application_surface_owned_view(
+  GmlRender *r,GmlRenderApplicationWriteView *view){
+  if(view) memset(view,0,sizeof(*view));
+  if(!r || !r->app_surface_owned || r->app_w<=0 || r->app_h<=0) return 0;
+  if(view){
+    view->pixels=r->app_surface_owned;
+    view->width=r->app_w;
+    view->height=r->app_h;
+  }
+  return 1;
+}
 int gml_render_application_surface_select_owned(GmlRender *r,int opaque){
   if(!r || !r->app_surface_owned) return 0;
   r->app_surface=r->app_surface_owned;
@@ -964,6 +975,10 @@ int gml_render_backend_draw_view(GmlRender *r,GmlRenderBackendDrawView *view){
   }
   view->frame=r->frame;
   view->camera_x=r->cam_x; view->camera_y=r->cam_y;
+  int world_coordinates=r->world_transform_active && !r->gui_pass_active &&
+    (r->target_sp==0 || r->target_id==-2) && r->target_id<0;
+  view->coordinate_scale_x=world_coordinates?r->world_scale_x:1.0;
+  view->coordinate_scale_y=world_coordinates?r->world_scale_y:1.0;
   view->alpha=r->alpha;
   view->width=r->fbw; view->height=r->fbh;
   view->interpolate=r->interp;
@@ -980,11 +995,45 @@ int gml_render_backend_prepare_draw_view(GmlRender *r,GmlRenderBackendDrawView *
 }
 void gml_render_backend_sync_camera(GmlRender *r,double translation_x,double translation_y){
   if(!r) return;
+  if(r->world_transform_active && !r->gui_pass_active &&
+     (r->target_sp==0 || r->target_id==-2) && r->target_id<0){
+    translation_x*=r->world_scale_x;
+    translation_y*=r->world_scale_y;
+  }
   r->cam_x=r->projection_cam_x-translation_x;
   r->cam_y=r->projection_cam_y-translation_y;
 }
-void gml_render_backend_gui_map_point(const GmlRender *r,double *x,double *y){
-  gml_render_gui_map_point(r,x,y);
+void gml_render_texture_page_cache_clear(GmlTpag *page){
+  if(!page) return;
+  int sx=page->sx,sy=page->sy,sw=page->sw,sh=page->sh;
+  int tx=page->tx,ty=page->ty,bw=page->bw,bh=page->bh,atlas=page->atlas;
+  free(page->alpha_row_min);
+  free(page->alpha_row_max);
+  free(page->alpha_qrow_min);
+  free(page->alpha_qrow_max);
+  free(page->alpha_qrow_built);
+  free(page->alpha_runs);
+  free(page->alpha8_cache);
+  free(page->argb_cache);
+  free(page->solid_blur_alpha_cache);
+  for(int phase=0;phase<3;phase++) free(page->interp_phase_cache[phase]);
+  free(page->fast8_draw_cache);
+  memset(page,0,sizeof(*page));
+  page->sx=sx; page->sy=sy; page->sw=sw; page->sh=sh;
+  page->tx=tx; page->ty=ty; page->bw=bw; page->bh=bh; page->atlas=atlas;
+}
+void gml_render_interpolated_subrect_cache_clear(GmlRender *render){
+  if(!render) return;
+  for(int index=0;index<render->interp_subrect_count;index++)
+    for(int phase=0;phase<3;phase++)
+      free(render->interp_subrect_cache[index].phase[phase]);
+  free(render->interp_subrect_cache);
+  render->interp_subrect_cache=NULL;
+  render->interp_subrect_count=0;
+  render->interp_subrect_capacity=0;
+}
+void gml_render_backend_draw_map_point(const GmlRender *r,double *x,double *y){
+  gml_render_draw_map_point(r,x,y);
 }
 void gml_render_free(GmlRender *r){
   gml_render_flush_rotated_batch(r);
@@ -1003,21 +1052,9 @@ void gml_render_free(GmlRender *r){
     free(r->spr[i].runtime_source_path);
   }
   for(int i=0;i<r->n_tpag;i++){
-    free(r->tpag[i].alpha_row_min);
-    free(r->tpag[i].alpha_row_max);
-    free(r->tpag[i].alpha_qrow_min);
-    free(r->tpag[i].alpha_qrow_max);
-    free(r->tpag[i].alpha_qrow_built);
-    free(r->tpag[i].alpha_runs);
-    free(r->tpag[i].alpha8_cache);
-    free(r->tpag[i].argb_cache);
-    free(r->tpag[i].solid_blur_alpha_cache);
-    for(int q=0;q<3;q++) free(r->tpag[i].interp_phase_cache[q]);
-    free(r->tpag[i].fast8_draw_cache);
+    gml_render_texture_page_cache_clear(&r->tpag[i]);
   }
-  for(int i=0;i<r->interp_subrect_count;i++)
-    for(int q=0;q<3;q++) free(r->interp_subrect_cache[i].phase[q]);
-  free(r->interp_subrect_cache);
+  gml_render_interpolated_subrect_cache_clear(r);
   for(int i=0;i<r->n_atlas;i++){
     free(r->atlas[i].px);
     free(r->atlas[i].external_blob);
@@ -1055,6 +1092,8 @@ void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, doubl
   r->classic_interp_phase[1]=NULL;
   r->classic_interp_phase[2]=NULL;
   r->target_sp=0; r->target_id=-1;
+  r->world_transform_active=0;
+  r->world_scale_x=r->world_scale_y=1.0;
   r->projection_cam_x=cx; r->projection_cam_y=cy; r->cam_x=cx; r->cam_y=cy;
   gml_d3_sync_render_camera(r);
   r->blendmode=0;
@@ -1062,6 +1101,21 @@ void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, doubl
   r->fb_opaque_known=0; r->fb_all_opaque=0; r->fb_all_transparent=0;
   r->pending_underlay=0; r->underlay_x=r->underlay_y=r->underlay_w=r->underlay_h=0;
   r->pending_fill=0; r->pending_fill_color=0;
+}
+void gml_render_world_set_logical_extent(GmlRender *r,int width,int height){
+  if(!r || width<=0 || height<=0 || r->fbw<=0 || r->fbh<=0 ||
+     r->target_sp!=0 || r->target_id>=0) return;
+  double scale_x=(double)r->fbw/(double)width;
+  double scale_y=(double)r->fbh/(double)height;
+  if(!isfinite(scale_x) || !isfinite(scale_y) || scale_x<=0.0 || scale_y<=0.0) return;
+  r->world_transform_active=1;
+  r->world_scale_x=scale_x;
+  r->world_scale_y=scale_y;
+  r->projection_cam_x*=scale_x;
+  r->projection_cam_y*=scale_y;
+  r->cam_x*=scale_x;
+  r->cam_y*=scale_y;
+  gml_d3_sync_render_camera(r);
 }
 void gml_render_gui_begin(GmlRender *r, int logical_w, int logical_h){
   if(!r) return;
@@ -1126,6 +1180,10 @@ void gml_render_gui_end(GmlRender *r){
 static inline int render_gui_transform_active_local(const GmlRender *r){
   return r && r->gui_pass_active && r->target_sp==0 && r->target_id<0;
 }
+static inline int render_world_transform_active_local(const GmlRender *r){
+  return r && r->world_transform_active && !r->gui_pass_active &&
+         (r->target_sp==0 || r->target_id==-2) && r->target_id<0;
+}
 static inline void render_gui_map_point_local(const GmlRender *r, double *x, double *y){
   if(!render_gui_transform_active_local(r)) return;
   if(x) *x = *x*r->gui_scale_x+r->gui_maximise_xoffset;
@@ -1135,6 +1193,25 @@ static inline void render_gui_map_scale_local(const GmlRender *r, double *xscale
   if(!render_gui_transform_active_local(r)) return;
   if(xscale) *xscale *= r->gui_scale_x;
   if(yscale) *yscale *= r->gui_scale_y;
+}
+static inline void render_draw_map_point_local(const GmlRender *r,double *x,double *y){
+  if(render_gui_transform_active_local(r)){
+    render_gui_map_point_local(r,x,y);
+    return;
+  }
+  if(!render_world_transform_active_local(r)) return;
+  if(x) *x*=r->world_scale_x;
+  if(y) *y*=r->world_scale_y;
+}
+static inline void render_draw_map_scale_local(
+    const GmlRender *r,double *xscale,double *yscale){
+  if(render_gui_transform_active_local(r)){
+    render_gui_map_scale_local(r,xscale,yscale);
+    return;
+  }
+  if(!render_world_transform_active_local(r)) return;
+  if(xscale) *xscale*=r->world_scale_x;
+  if(yscale) *yscale*=r->world_scale_y;
 }
 static inline double render_gui_logical_width_local(const GmlRender *r){
   return render_gui_transform_active_local(r) && r->gui_scale_x>0.0
@@ -1154,6 +1231,12 @@ static inline double render_gui_logical_y_local(const GmlRender *r, double physi
 }
 int gml_render_gui_transform_active(const GmlRender *r){
   return render_gui_transform_active_local(r);
+}
+void gml_render_draw_map_point(const GmlRender *r,double *x,double *y){
+  render_draw_map_point_local(r,x,y);
+}
+void gml_render_draw_map_scale(const GmlRender *r,double *xscale,double *yscale){
+  render_draw_map_scale_local(r,xscale,yscale);
 }
 void gml_render_gui_map_point(const GmlRender *r, double *x, double *y){
   render_gui_map_point_local(r,x,y);
@@ -1180,6 +1263,8 @@ double gml_render_gui_logical_y(const GmlRender *r, double physical_y){
 #define gml_render_gui_logical_height render_gui_logical_height_local
 #define gml_render_gui_logical_x render_gui_logical_x_local
 #define gml_render_gui_logical_y render_gui_logical_y_local
+#define gml_render_draw_map_point render_draw_map_point_local
+#define gml_render_draw_map_scale render_draw_map_scale_local
 void gml_render_set_pending_underlay(GmlRender *r, int x, int y, int w, int h){
   gml_render_flush_rotated_batch(r);
   if(!r || !r->app_surface || w<=0 || h<=0){

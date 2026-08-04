@@ -27,7 +27,7 @@ typedef enum AnygmComparisonPolicy {
 
 typedef enum AnygmAlarmDispatchPolicy {
   ANYGM_ALARM_DISPATCH_STANDARD=1,
-  ANYGM_ALARM_DISPATCH_CLASSIC=2
+  ANYGM_ALARM_DISPATCH_RESOURCE_MAJOR=2
 } AnygmAlarmDispatchPolicy;
 
 typedef enum AnygmAlarmThresholdPolicy {
@@ -117,6 +117,11 @@ static inline int anygm_policy_has_modern_layer_semantics(const GmlWin *content)
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->has_modern_layer_semantics:(content&&content->bytecode>=17);
 }
+static inline int anygm_policy_uses_first_generation_studio(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?p->diagnostic_family==ANYGM_FAMILY_STUDIO_FIRST:
+    (content&&!content->classic_version&&content->bytecode>=14&&content->bytecode<17);
+}
 static inline int anygm_policy_classic_modern_presentation(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->classic_modern_presentation:(content&&content->classic_version>=800);
@@ -137,10 +142,10 @@ static inline int anygm_policy_alarm_at_zero(const GmlWin *content){
   return p?p->alarm_threshold==ANYGM_ALARM_TRIGGER_AT_ZERO:
     (content&&(content->classic_version||content->bytecode>=16));
 }
-static inline int anygm_policy_classic_alarm_dispatch(const GmlWin *content){
+static inline int anygm_policy_resource_major_alarm_dispatch(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
-  return p?p->alarm_dispatch==ANYGM_ALARM_DISPATCH_CLASSIC:
-    (content&&content->classic_version);
+  return p?p->alarm_dispatch==ANYGM_ALARM_DISPATCH_RESOURCE_MAJOR:
+    (content&&(content->classic_version||content->bytecode==16));
 }
 static inline double anygm_policy_default_comparison_epsilon(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
@@ -149,8 +154,7 @@ static inline double anygm_policy_default_comparison_epsilon(const GmlWin *conte
 }
 static inline int anygm_policy_exact_comparisons(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
-  return p?p->comparison==ANYGM_COMPARISON_EXACT:
-    (content&&!content->classic_version&&content->bytecode<17);
+  return p?p->comparison==ANYGM_COMPARISON_EXACT:0;
 }
 static inline int anygm_policy_previous_solid_coordinates(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);

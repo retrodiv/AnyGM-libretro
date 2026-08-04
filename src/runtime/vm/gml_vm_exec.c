@@ -209,6 +209,52 @@ static int is_classic_transition_builtin(GmlVM *vm,const char *n){
   return vm && vm->win && anygm_policy_uses_classic_runtime(vm->win) &&
          (!strcmp(n,"transition_kind") || !strcmp(n,"transition_steps"));
 }
+#define GML_DYNAMIC_GLOBAL_PREFIX "\001globalvar:"
+static int dynamic_global_marker_name(const char *name,char *marker,size_t marker_size){
+  if(!name || !*name || !marker || marker_size<=sizeof(GML_DYNAMIC_GLOBAL_PREFIX)) return 0;
+  size_t prefix_size=sizeof(GML_DYNAMIC_GLOBAL_PREFIX)-1;
+  size_t name_size=strlen(name);
+  if(name_size>127 || prefix_size+name_size+1>marker_size) return 0;
+  memcpy(marker,GML_DYNAMIC_GLOBAL_PREFIX,prefix_size);
+  memcpy(marker+prefix_size,name,name_size+1);
+  return 1;
+}
+int gml_vm_declare_globalvar(GmlVM *vm,const char *name){
+  if(!vm || !vm->win || !anygm_policy_uses_classic_runtime(vm->win) || !name) return 0;
+  size_t name_size=strlen(name);
+  if(!name_size || name_size>127 ||
+     !(name[0]=='_' || (name[0]>='A'&&name[0]<='Z') ||
+       (name[0]>='a'&&name[0]<='z'))) return 0;
+  for(size_t index=1;index<name_size;index++)
+    if(!(name[index]=='_' || (name[index]>='A'&&name[index]<='Z') ||
+         (name[index]>='a'&&name[index]<='z') ||
+         (name[index]>='0'&&name[index]<='9'))) return 0;
+  char marker[160];
+  if(!dynamic_global_marker_name(name,marker,sizeof marker)) return 0;
+  char *owned_name=strdup(name);
+  char *owned_marker=strdup(marker);
+  if(!owned_name || !owned_marker){
+    free(owned_name);
+    free(owned_marker);
+    return 0;
+  }
+  uint32_t name_hash=gml_value_name_hash(owned_name);
+  uint32_t marker_hash=gml_value_name_hash(owned_marker);
+  (void)gml_varmap_put_owned_hashed(&vm->globals,owned_name,name_hash);
+  *gml_varmap_put_owned_hashed(&vm->globals,owned_marker,marker_hash)=vreal(1);
+  return 1;
+}
+static int is_dynamic_globalvar(GmlVM *vm,int inst,const char *name,uint32_t name_hash){
+  if(!strcmp(name,"background_color") || !strcmp(name,"background_colour")) return 0;
+  if(inst!=IT_SELF || !vm || !vm->win ||
+     !anygm_policy_uses_classic_runtime(vm->win) ||
+     !gml_varmap_get_hashed(&vm->globals,name,name_hash)) return 0;
+  char marker[160];
+  if(!dynamic_global_marker_name(name,marker,sizeof marker)) return 0;
+  GmlVal *declared=gml_varmap_get_hashed(
+      &vm->globals,marker,gml_value_name_hash(marker));
+  return declared && (declared->t!=V_REAL || declared->d!=0.0);
+}
 static int argument_index(const char *name){
   if(strncmp(name,"argument",8)) return -1;
   const char *p=name+8;
@@ -357,7 +403,7 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
  * read and write. Hash-hit => run the original chain (its strcmps confirm; collisions are
  * safe); miss => the name is provably not special, go straight to the varmap. */
 static const char *const g_special_var_names[]={
-  "undefined","room","keyboard_lastkey","room_speed","working_directory","program_directory",
+  "undefined","room","room_first","room_last","keyboard_lastkey","room_speed","working_directory","program_directory",
   "fps","delta_time","view_current","view_enabled","room_persistent","background_color","background_colour",
   "event_type","event_number","mouse_x","mouse_y",
   "current_time","current_second","current_minute","current_hour","current_day","current_weekday",
@@ -380,11 +426,11 @@ static const char *const g_special_var_names[]={
   "transition_kind","transition_steps",
 };
 #define N_SPECIAL_VAR (int)(sizeof g_special_var_names/sizeof *g_special_var_names)
-/* Open-addressed set of the special-name hashes.  A 64-bit bloom cannot gate this many names — it
- * saturates, so nearly every access paid the full linear scan the gate exists to avoid.  Probing a
- * power-of-two table keeps the miss path at one or two loads.  Empty slots are 0, so a name hashing
- * to 0 is stored as 1; that can only produce a false positive, and the chains behind this gate
- * confirm with their own comparisons. */
+/* Open-addressed set of the special-name hashes.  A 64-bit bloom cannot gate 109 names — it
+ * saturates, so nearly every access paid the full linear scan the gate exists to avoid.  Probing
+ * a power-of-two table keeps the miss path at one or two loads.  Empty slots are 0, so a name
+ * hashing to 0 is stored as 1; that can only produce a false positive, and the chains behind
+ * this gate confirm with their own comparisons. */
 #define SPECIAL_VAR_SLOTS 256u
 #define SPECIAL_VAR_MASK (SPECIAL_VAR_SLOTS-1u)
 static int var_name_maybe_special(GmlVM *vm,const char *name,uint32_t nh){
@@ -417,6 +463,7 @@ int gml_vm_variable_name_maybe_special(GmlVM *vm, const char *name,
   return var_name_maybe_special(vm,name,name_hash);
 }
 static int is_room_global_array(const char *n);
+static int background_dimension_get(GmlVM *vm,const char *name,int index,GmlVal *out);
 static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   GmlVal out;
   if(inst==IT_STATIC){
@@ -427,6 +474,12 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
     }
     return vundef();
   }
+  if(is_dynamic_globalvar(vm,inst,name,nh)){
+    GmlVal *slot=gml_varmap_get_hashed(&vm->globals,name,nh);
+    return slot?*slot:vreal(0);
+  }
+  if(vm->win && anygm_policy_uses_classic_runtime(vm->win) &&
+     background_dimension_get(vm,name,0,&out)) return out;
   /* GM6/7/8 variables retain their old scalar-at-index-zero behaviour even when the same
    * built-in also exposes indexed view/background slots. Classic source commonly reads
    * `view_wview` with no brackets; returning the array value coerces to zero and can pin every
@@ -452,6 +505,11 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   }
   if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
   if(!strcmp(name,"room")) return vreal(vm->room_index);   /* GM built-in: current room index */
+  if(!strcmp(name,"room_first") || !strcmp(name,"room_last")){
+    if(!vm->win || !vm->win->room_order || vm->win->n_room_order<=0) return vreal(-1);
+    int order_index=!strcmp(name,"room_first")?0:vm->win->n_room_order-1;
+    return vreal((double)vm->win->room_order[order_index]);
+  }
   if(!strcmp(name,"keyboard_lastkey")) return vreal(vm->last_key); /* GM: last key pressed */
   if(!strcmp(name,"room_speed")) return vreal(gml_room_speed(vm));
   if(!strcmp(name,"working_directory")){
@@ -542,16 +600,25 @@ GmlVal gml_vm_variable_get_h(GmlVM *vm, int instance,
                              const char *name, uint32_t name_hash){
   return var_get_h(vm,instance,name,name_hash);
 }
+GmlVal gml_vm_identifier_get(GmlVM *vm,const char *name){
+  if(!vm || !name || !*name) return vundef();
+  return var_get_h(vm,IT_SELF,name,gml_value_name_hash(name));
+}
 /* GM: writing OBJECT.variable = value assigns to EVERY instance of that object (reading
  * returns only the first). inst_t in [0,n_objects) is an object index; a real instance id
  * is >=100000, so it never collides. Fans a write out to all instances of the object. */
 static int is_object_scope(GmlVM *vm, int inst_t){ return inst_t>=0 && inst_t<vm->n_objects; }
 static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal v){
+  GML_VM_DIAGNOSTIC_VARIABLE_SCOPE(vm,inst,name,-1,v);
   gml_arr_mark_escaped(v);   /* target is a global/instance slot: outlives the current scope */
   if(inst==IT_STATIC){
     int ci=vm?vm->cur_code_index:-1;
     if(ci>=0 && ci<vm->code_static_count && vm->code_static)
       *gml_varmap_put_hashed(&vm->code_static[ci],name,nh)=v;
+    return;
+  }
+  if(is_dynamic_globalvar(vm,inst,name,nh)){
+    *gml_varmap_put_hashed(&vm->globals,name,nh)=v;
     return;
   }
   if(vm->win && anygm_policy_uses_classic_runtime(vm->win) && strcmp(name,"view_current") &&
@@ -662,6 +729,19 @@ static int is_room_global_array(const char *n){
   }
   return 0;
 }
+static int background_dimension_get(GmlVM *vm,const char *name,int index,GmlVal *out){
+  int width=!strcmp(name,"background_width");
+  if(!width && strcmp(name,"background_height")) return 0;
+  double value=0;
+  if(vm && index>=0){
+    int background=(int)gml_vm_global_array_number(vm,"background_index",index);
+    GmlRenderBackgroundMetrics metrics;
+    if(gml_render_background_metrics((GmlRender*)vm->render,background,&metrics))
+      value=width?metrics.logical_width:metrics.logical_height;
+  }
+  if(out) *out=vreal(value);
+  return 1;
+}
 static double alarm_store_value(GmlVM *vm,GmlVal v){
   double value=v.t==V_REAL?v.d:(v.s?atof(v.s):0);
   /* GM6/7/8 stores alarms as integers. Delphi's Math.Round uses ties-to-even; nearbyint
@@ -669,8 +749,8 @@ static double alarm_store_value(GmlVM *vm,GmlVal v){
    * retain fractional alarms, which several typewriter effects deliberately use. */
   return vm && vm->win && anygm_policy_uses_classic_runtime(vm->win) ? nearbyint(value) : value;
 }
-/* The host environment cannot change while content runs, so resolve each of these once and keep
- * the per-opcode, per-call and per-write paths free of host lookups. */
+/* The environment cannot change while content runs, so resolve each of these once and keep the
+ * per-write path free of host lookups. */
 static const char *vm_arrayset_filter(GmlVM *vm){
   if(!vm->diagnostics.arrayset_filter_initialized){
     vm->diagnostics.arrayset_filter=anygm_host_development_setting(vm->host,"GML_DBG_ARRAYSET");
@@ -692,8 +772,8 @@ static const char *vm_trace_filter(GmlVM *vm){
   }
   return vm->diagnostics.trace_filter;
 }
-/* Consulted once per opcode dispatch and again on every call opcode, so this one dominated every
- * other host lookup in the runtime combined. */
+/* Consulted once per opcode dispatch and again on every call opcode, so this one dominated
+ * every other host lookup in the runtime combined. */
 static const char *vm_trace_call_filter(GmlVM *vm){
   if(!vm->diagnostics.trace_call_initialized){
     vm->diagnostics.trace_call=anygm_host_development_setting(vm->host,"GML_TRACE_CALL");
@@ -702,6 +782,7 @@ static const char *vm_trace_call_filter(GmlVM *vm){
   return vm->diagnostics.trace_call;
 }
 static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, uint32_t nh, int idx, GmlVal v){
+  GML_VM_DIAGNOSTIC_VARIABLE_SCOPE(vm,inst_t,nm,idx,v);
   { const char *debug_name=vm_arrayset_filter(vm);
     if(debug_name && nm && !strcmp(debug_name,nm)){
       
@@ -726,6 +807,17 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
       vm->script_args[idx]=v;
       if(idx>=vm->script_argc) vm->script_argc=idx+1;
     }
+    return;
+  }
+  if(is_dynamic_globalvar(vm,inst_t,nm,nh)){
+    GmlVal *slot=gml_varmap_put_hashed(&vm->globals,nm,nh);
+    GmlArr *array=gml_arr_slot_ensure(slot);
+    array->escaped=1;
+    if(gml_arr_nested_set_flat(*slot,idx,v)) return;
+    gml_arr_mark_escaped(v);
+    gml_arr_note_legacy_2d_set(array,idx);
+    gml_arr_index_ensure(array,idx);
+    if(idx>=0 && idx<array->cap) array->data[idx]=v;
     return;
   }
   if(!strcmp(nm,"alarm")){
@@ -806,6 +898,8 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
 static GmlVal array_get_h(
     GmlVM *vm,GmlVarMap *locals,int inst_t,
     const char *nm,uint32_t nh,int idx){
+  GmlVal dimension;
+  if(background_dimension_get(vm,nm,idx,&dimension)) return dimension;
   if(!strcmp(nm,"view_enabled")){
     GmlVal *slot=gml_varmap_get_hashed(&vm->globals,nm,nh);
     return slot?*slot:vreal(0);
@@ -818,6 +912,16 @@ static GmlVal array_get_h(
       if(av.t==V_ARR && av.arr){ GmlVal nested; if(gml_arr_nested_get_flat(av,idx,&nested)) return nested;
         GmlArr *A=av.arr; if(idx>=0 && idx<A->len) return A->data[idx]; }
       return vreal(0); } }
+  if(is_dynamic_globalvar(vm,inst_t,nm,nh)){
+    GmlVal *slot=gml_varmap_get_hashed(&vm->globals,nm,nh);
+    if(!slot || slot->t!=V_ARR || !slot->arr) return vreal(0);
+    GmlArr *array=slot->arr;
+    if(!array->data || array->len<0 || array->cap<array->len ||
+       array->cap>16000000) return vreal(0);
+    GmlVal nested;
+    if(gml_arr_nested_get_flat(*slot,idx,&nested)) return nested;
+    return (idx>=0 && idx<array->len)?array->data[idx]:vreal(0);
+  }
   if(!strcmp(nm,"alarm")){ GmlInstance *s=resolve_inst(vm,inst_t);
     return vreal((s&&idx>=0&&idx<GML_ALARMS)? s->alarm[idx] : -1); }
   int room_global=is_room_global_array(nm);
@@ -855,6 +959,7 @@ static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, 
 }
 static void array_set_inst_field_h(GmlVM *vm,GmlInstance *s,const char *nm,uint32_t nh,int idx,GmlVal v){
   if(!s) return;
+  GML_VM_DIAGNOSTIC_VARIABLE_INSTANCE(vm,s,nm,idx,v);
   { const char *debug_name=vm_arrayset_filter(vm);
     if(debug_name && nm && !strcmp(debug_name,nm)){
       
@@ -950,6 +1055,7 @@ static GmlVal inst_get_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t
   GmlVal *p=gml_varmap_get_hashed(&t->vars,nm,nh); return p?*p:vreal(0);
 }
 static void inst_set_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t nh, GmlVal v){
+  GML_VM_DIAGNOSTIC_VARIABLE_INSTANCE(vm,t,nm,-1,v);
   gml_arr_mark_escaped(v);   /* instance vars outlive the current scope */
   if(inst_is_struct_ref(t)){ method_cache_invalidate(t,nm); *gml_varmap_put_hashed(&t->vars,nm,nh)=v; return; }
   if(inst_builtin_set(vm,t,nm,v)) return;
@@ -1012,6 +1118,11 @@ GmlInstance *gml_struct_new(GmlVM *vm){
   st->id = GML_STRUCT_ID_BASE + ((unsigned)vm->struct_gen[slot] << GML_STRUCT_SLOT_BITS) + (unsigned)slot;
   st->obj = -1; st->active = 1;
   vm->structs[slot] = st;
+  /* A periodic collection can run at the beginning of a frame before that frame creates temporary
+   * method/struct values. Mark that collection stale so a later canonical state query in the same
+   * frame sees the post-step graph and does not serialize newly unreachable temporaries. */
+  if(vm->structs_last_gc_frame==vm->frame)
+    vm->structs_last_gc_frame=vm->frame-1;
   return st;
 }
 GmlInstance *gml_struct_find(GmlVM *vm, unsigned id){
@@ -1831,6 +1942,7 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
   GmlCode *c=&vm->win->code[ci];
   const char *trace=vm_trace_filter(vm);
   if(trace && *trace && c->name && strstr(c->name,trace)) return 0;
+  if(GML_VM_DIAGNOSTIC_OPCODE_ENABLED(vm,c->name)) return 0;
   if(!code_cache_ensure(vm->win,ci)) return 0;
   if(c->micro_kind==GML_MICRO_NONE) return 0;
   if(builtin_hotprof_on(vm)) return 0;
@@ -2384,6 +2496,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
       if(gml_decode_bc_bounded(d,w->size,pc-4,w->bytecode,&prev)==4)
         prev_conv_v_i32 = prev.kind==OP_CONV && prev.type1==DT_VAR && prev.type2==DT_INT32;
     }
+    GML_VM_DIAGNOSTIC_OPCODE(vm,w->code[ci].name,pc-start,
+                             gml_op_mnemonic(in.kind),sp);
     if(trace){
       const char *rn = (in.kind==OP_CALL || in.kind==OP_PUSH || in.kind==OP_POP) ? (in.refname?in.refname:gml_ref_name(w,in.refaddr)) : "";
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"  %4u: %-7s t1=%x rt=%02x inst=%d  sp=%d %s\n",pc-start,gml_op_mnemonic(in.kind),in.type1,in.reftype,in.inst,sp,rn); }
@@ -2426,6 +2540,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         vm->diagnostics.pc_log_count++;
       } }
     if(use_cache && !hp_builtin && sp==0 && !vm->diagnostics.pc_name[0] &&
+       !GML_VM_DIAGNOSTIC_OPCODE_ENABLED(vm,w->code[ci].name) &&
        !vm_trace_call_filter(vm)){
       uint32_t loop_exit=0;
       uint64_t loop_instructions=0;
@@ -2734,9 +2849,9 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           switch(in.cmp){case CMP_LT:res=c<0;break;case CMP_LTE:res=c<=0;break;case CMP_EQ:res=c==0;break;
             case CMP_NEQ:res=c!=0;break;case CMP_GTE:res=c>=0;break;case CMP_GT:res=c>0;break;} }
         else {
-          /* Studio 1 bytecode compares reals exactly. The configurable epsilon belongs to
-           * expression comparisons in the current format family; applying its 1e-5 default
-           * retroactively makes long-running bytecode-15 state machines cross thresholds early. */
+          /* Apply the selected compatibility comparison policy to real expressions. This matters
+           * for ordered comparisons too: repeated decimal steps can otherwise cross zero through a
+           * tiny floating-point residue instead of settling at the epsilon bound. */
           double epsilon=anygm_policy_exact_comparisons(w)?0.0:vm->math_epsilon;
           res=gml_real_compare_epsilon(asnum(l),asnum(r),in.cmp,epsilon);
         }

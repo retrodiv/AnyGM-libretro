@@ -662,6 +662,35 @@ int script_code_of(GmlVM *vm, int sid){
   return (int)u32(d,p+4);  /* codeId */
 }
 
+static int script_asset_code_of(GmlVM *vm,const char *name,int *declared){
+  if(declared) *declared=0;
+  if(!vm || !vm->win || !vm->win->data || !name || !*name) return -1;
+  const GmlWin *w=vm->win;
+  const GmlChunk *chunk=gml_chunk(w,"SCPT");
+  if(!chunk || chunk->size<4 || chunk->off>w->size ||
+     chunk->size>w->size-chunk->off) return -1;
+  if(!strncmp(name,"gml_Script_",11)) name+=11;
+  const uint8_t *data=w->data;
+  uint32_t count=u32(data,chunk->off);
+  if(count>(chunk->size-4)/4) return -1;
+  size_t chunk_end=(size_t)chunk->off+chunk->size;
+  for(uint32_t index=0;index<count;index++){
+    uint32_t record=u32(data,chunk->off+4+index*4);
+    if(record<chunk->off || record>chunk_end || chunk_end-record<8) return -1;
+    const char *asset_name=gml_str_by_ptr(w,u32(data,record));
+    if(strcmp(asset_name,name)) continue;
+    uint32_t code=u32(data,record+4);
+    if(code==UINT32_MAX){
+      if(declared) *declared=1;
+      return -1;
+    }
+    if(code>=(uint32_t)w->n_code) return -1;
+    if(declared) *declared=1;
+    return (int)code;
+  }
+  return -1;
+}
+
 int script_ref_code_of(GmlVM *vm, GmlVal v){
   if(v.t!=V_REAL) return -1;
   int iv=(int)v.d;
@@ -950,19 +979,19 @@ static void hotprof_add(const char *name, double ms){
 }
 
 double draw_gui_x(GmlRender *render,double value){
-  gml_render_gui_map_point(render,&value,NULL);
+  gml_render_draw_map_point(render,&value,NULL);
   return value;
 }
 double draw_gui_y(GmlRender *render,double value){
-  gml_render_gui_map_point(render,NULL,&value);
+  gml_render_draw_map_point(render,NULL,&value);
   return value;
 }
 double draw_gui_w(GmlRender *render,double value){
-  gml_render_gui_map_scale(render,&value,NULL);
+  gml_render_draw_map_scale(render,&value,NULL);
   return value;
 }
 double draw_gui_h(GmlRender *render,double value){
-  gml_render_gui_map_scale(render,NULL,&value);
+  gml_render_draw_map_scale(render,NULL,&value);
   return value;
 }
 static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int count){
@@ -1107,8 +1136,10 @@ void draw_legacy_sprite_shadow(GmlVM *vm,double vertical_extra,double alpha){
         fabs(y2-y1)*.5,0x404040u,0x404040u,alpha,0);
     } else {
       GmlRenderTargetMetrics target=builtin_target_metrics(R);
-      int left=(int)floor(x1-target.camera_x),top=(int)floor(y1-target.camera_y);
-      int right=(int)floor(x2-target.camera_x),bottom=(int)floor(y2-target.camera_y);
+      int left=(int)floor(draw_gui_x(R,x1)-target.camera_x);
+      int top=(int)floor(draw_gui_y(R,y1)-target.camera_y);
+      int right=(int)floor(draw_gui_x(R,x2)-target.camera_x);
+      int bottom=(int)floor(draw_gui_y(R,y2)-target.camera_y);
       gml_render_primitive_circle(R,(left+right)/2,(top+bottom)/2,
                        abs(right-left)/2,abs(bottom-top)/2,0x404040u,0);
     }
@@ -1419,7 +1450,7 @@ GmlVal gml_builtin_try_scripts_fallback(GmlVM *vm, const char *nm, GmlVal *a, in
   /* ---- fallback: a user script called by name. bc14-16 reference scripts by BARE name (scr_foo,
    * whose CODE entry is gml_Script_scr_foo); bc17/GMS2 references them ALREADY prefixed
    * (gml_Script_foo). Handle both so scripts dispatch instead of falling through to a no-op. ---- */
-  int ci;
+  int ci,declared=0;
   if(!strncmp(nm,"gml_Script_",11)) ci=gml_code_index_by_name(vm->win,nm);
   else {
     char sn[160];
@@ -1430,6 +1461,7 @@ GmlVal gml_builtin_try_scripts_fallback(GmlVM *vm, const char *nm, GmlVal *a, in
       ci=gml_code_index_by_name(vm->win,sn);
     }
   }
+  if(ci<0) ci=script_asset_code_of(vm,nm,&declared);
   if(ci>=0){
     GmlVal rv=gml_vm_run_code(vm,ci,vm->cur_self,vm->cur_other,a,n);
     /* report the resolution for the caller's per-site cache — but never for names the chain
@@ -1441,6 +1473,9 @@ GmlVal gml_builtin_try_scripts_fallback(GmlVM *vm, const char *nm, GmlVal *a, in
       vm->call_script_ci=ci;
     return rv;
   }
+  /* A retained SCPT asset can deliberately have no CODE body. Treat a direct call to that
+   * declaration as a no-op rather than as an unknown language builtin. */
+  if(declared) return vreal(0);
 
   return gml_builtin_try_layers(vm,nm,a,n);
 }

@@ -754,6 +754,10 @@ static int parse_room(GmlcProject *p, const GmlcResource *res, const GmlcJson *y
   r.physics_scale=(float)gmlc_json_num(gmlc_json_obj(physics_settings,"PhysicsWorldPixToMeters"),0.1);
   if(r.physics_scale<=0.0f) r.physics_scale=0.1f;
   const GmlcJson *view_settings=gmlc_json_obj(yy,"viewSettings");
+  r.draw_background_color=
+    gmlc_json_bool(gmlc_json_obj(view_settings,"clearDisplayBuffer"),1);
+  r.clear_view_background=
+    gmlc_json_bool(gmlc_json_obj(view_settings,"clearViewBackground"),0);
   r.view_enabled=gmlc_json_bool(gmlc_json_obj(view_settings,"enableViews"),0);
   const GmlcJson *source_views=gmlc_json_obj(yy,"views");
   int source_view_count=gmlc_json_len(source_views);

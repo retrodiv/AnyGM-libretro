@@ -116,6 +116,13 @@ ANYGM_SOFTWARE3D_SOURCES := \
 	src/video/software3d/gml_software3d_raster.c \
 	src/video/software3d/gml_software3d_state.c
 
+ifeq ($(DIAGNOSTICS),1)
+ANYGM_DIAGNOSTIC_SOURCES := \
+	src/runtime/vm/gml_vm_diagnostics.c
+else
+ANYGM_DIAGNOSTIC_SOURCES :=
+endif
+
 ANYGM_VM_SOURCES := \
 	src/runtime/vm/gml_value.c \
 	src/runtime/vm/gml_vm_exec.c \
@@ -124,7 +131,8 @@ ANYGM_VM_SOURCES := \
 	src/runtime/vm/gml_vm.c \
 	src/runtime/vm/gml_vm_rooms.c \
 	src/runtime/vm/gml_vm_rng.c \
-	src/runtime/vm/gml_vm_state.c
+	src/runtime/vm/gml_vm_state.c \
+	$(ANYGM_DIAGNOSTIC_SOURCES)
 
 ANYGM_BUILTIN_SOURCES := \
 	src/runtime/builtins/gml_builtin.c \

@@ -23,6 +23,11 @@ typedef enum {
 int gml_image_decode_rgba(const uint8_t *encoded, size_t encoded_size,
                           GmlMediaBuffer *out, int *width, int *height,
                           int *source_components);
+/* Animated inputs are returned as contiguous frame-major RGBA planes. Ordinary images produce
+ * exactly one frame. */
+int gml_image_decode_rgba_frames(const uint8_t *encoded, size_t encoded_size,
+                                 GmlMediaBuffer *out, int *width, int *height,
+                                 int *frames, int *source_components);
 int gml_image_encode_png(const uint8_t *pixels, int width, int height,
                          int components, int stride_bytes,
                          GmlMediaBuffer *out);
