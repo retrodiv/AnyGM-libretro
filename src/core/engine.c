@@ -171,6 +171,14 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
         (uint32_t)state_hash_bytes(source->data,source->size);
       snprintf(prepared->win.save_dir,sizeof prepared->win.save_dir,"%s/anygm/%s-%08x",
                base,label,namespace_hash);
+      /* Opt-in fresh start: drop everything this content generated before it can read any of it,
+       * so the run that follows behaves like the first one this machine ever performed. */
+      if(engine->config.clear_local_data){
+        int cleared=anygm_content_directory_remove(&engine->host,prepared->win.save_dir);
+        engine_logf(engine,cleared?ANYGM_LOG_INFO:ANYGM_LOG_WARN,
+                    cleared?"local data cleared: %s\n":"could not clear local data: %s\n",
+                    prepared->win.save_dir);
+      }
       anygm_content_directory_create(&engine->host,prepared->win.save_dir);
     } else {
       snprintf(prepared->win.save_dir,sizeof prepared->win.save_dir,"%s",
@@ -1543,6 +1551,11 @@ AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
   info->max_width=FB_MAX_W;
   info->max_height=FB_MAX_H;
   info->aspect_ratio=info->base_height?(double)info->base_width/info->base_height:4.0/3.0;
+  /* Rasterizing at the logical extent must not change the shape the player sees: the window the
+   * content asked for still decides the final aspect, the host just performs the scale. */
+  if(engine->config.present_logical_raster &&
+     engine->vm.window_w>0 && engine->vm.window_h>0)
+    info->aspect_ratio=(double)engine->vm.window_w/(double)engine->vm.window_h;
   info->frames_per_second=engine->fps;
   info->audio_rate=44100;
   return ANYGM_OK;
@@ -1592,6 +1605,16 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   if(f&ANYGM_CONFIG_FAST_ALPHA_CULL) engine->config.fast_alpha_cull=delta->values.fast_alpha_cull;
   if(f&ANYGM_CONFIG_FAST_FORWARD) engine->config.fast_forward=delta->values.fast_forward;
   if(f&ANYGM_CONFIG_START_ROOM) engine->config.start_room=delta->values.start_room;
+  if(f&ANYGM_CONFIG_PRESENT_LOGICAL_RASTER){
+    uint32_t want=delta->values.present_logical_raster?1u:0u;
+    if(want!=engine->config.present_logical_raster){
+      engine->config.present_logical_raster=want;
+      /* The presented extent is derived state; force the next frame to republish it. */
+      engine->fps_room=-1;
+    }
+  }
+  if(f&ANYGM_CONFIG_CLEAR_LOCAL_DATA)
+    engine->config.clear_local_data=delta->values.clear_local_data?1u:0u;
   if(engine->lifecycle==ENGINE_LOADED){
     poll_option_updates(engine);
     engine->vm.god_mode=core_opt_god(engine);

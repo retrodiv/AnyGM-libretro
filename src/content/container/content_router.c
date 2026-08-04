@@ -315,6 +315,41 @@ int anygm_content_directory_create(const struct AnygmHostServices *host,const ch
   return anygm_vfs_mkdirs(host,path);
 }
 
+/* Remove one generated namespace and everything under it.  Bounded by ANYGM_CONTENT_CLEAR_MAX_DEPTH
+ * so a host that reports a cyclic tree cannot drive unbounded recursion, and confined to the caller's
+ * path: this only ever runs on a directory the runtime itself generated. */
+#define ANYGM_CONTENT_CLEAR_MAX_DEPTH 8
+static int content_directory_remove_depth(const struct AnygmHostServices *host,const char *path,
+                                          int depth){
+  if(!host || !path || !path[0]) return 0;
+  if(depth>ANYGM_CONTENT_CLEAR_MAX_DEPTH) return 0;
+  if(host->directory_open && host->directory_read && host->directory_close){
+    void *directory=host->directory_open(host->userdata,path);
+    if(directory){
+      for(;;){
+        AnygmDirectoryEntry entry;
+        memset(&entry,0,sizeof entry);
+        entry.struct_size=sizeof entry;
+        if(host->directory_read(host->userdata,directory,&entry)!=ANYGM_OK) break;
+        if(!entry.name[0] || !strcmp(entry.name,".") || !strcmp(entry.name,"..")) continue;
+        char child[1024];
+        if((size_t)snprintf(child,sizeof child,"%s/%s",path,entry.name)>=sizeof child) continue;
+        if(entry.flags&ANYGM_FILE_INFO_DIRECTORY)
+          content_directory_remove_depth(host,child,depth+1);
+        else
+          anygm_vfs_remove(host,child);
+      }
+      host->directory_close(host->userdata,directory);
+    }
+  }
+  anygm_vfs_remove(host,path);
+  AnygmFileInfo info;
+  return anygm_vfs_stat(host,path,&info) && (info.flags&ANYGM_FILE_INFO_EXISTS) ? 0 : 1;
+}
+int anygm_content_directory_remove(const struct AnygmHostServices *host,const char *path){
+  return content_directory_remove_depth(host,path,0);
+}
+
 typedef struct { uint8_t *data; size_t size; } GmlFileMap;
 static int file_map_readonly(const AnygmContentRouter *router,const char *path,GmlFileMap *m){
   memset(m,0,sizeof(*m));

@@ -690,7 +690,12 @@ void compute_present(AnygmEngine *engine) {
                             ? engine->vm.window_w : (int)engine->win.disp_w;
   int screen_stage_window_h = engine->vm.window_h > 0
                             ? engine->vm.window_h : (int)engine->win.disp_h;
-  if (!anygm_policy_uses_classic_runtime(&engine->win) &&
+  /* The window extent is a request from content, not a host measurement: no host reports its
+   * presentation window to the engine. When the window is only larger than the view, matching it
+   * here costs a full software upscale carrying no detail the host would not produce itself while
+   * scaling to the display. Content that owns its window raster keeps the dedicated path. */
+  if (!engine->config.present_logical_raster &&
+      !anygm_policy_uses_classic_runtime(&engine->win) &&
       !engine->vm.gui_maximise_active && !engine->canvas_mode && !gui_window_mode &&
       engine->vm.gui_w <= 0 && engine->vm.gui_h <= 0 &&
       present_view_count(engine,NULL,NULL,NULL) == 1 &&

@@ -333,6 +333,12 @@ typedef struct AnygmConfig {
   uint32_t fast_alpha_cull;
   uint32_t fast_forward;
   int32_t start_room;
+  /* Rasterize at the logical view extent and let the host scale, instead of rasterizing at the
+   * window extent the content requested. A window larger than the view carries no extra detail
+   * for a software renderer: the pixels are a nearest upscale the host performs anyway. */
+  uint32_t present_logical_raster;
+  /* Delete this content's generated local data (saves, extracted archive cache) and reload. */
+  uint32_t clear_local_data;
 } AnygmConfig;
 
 typedef struct AnygmConfigDelta {
@@ -357,7 +363,9 @@ enum {
   ANYGM_CONFIG_GAMEPAD_CONNECTED=1ull<<12,
   ANYGM_CONFIG_FAST_ALPHA_CULL=1ull<<13,
   ANYGM_CONFIG_FAST_FORWARD=1ull<<14,
-  ANYGM_CONFIG_START_ROOM=1ull<<15
+  ANYGM_CONFIG_START_ROOM=1ull<<15,
+  ANYGM_CONFIG_PRESENT_LOGICAL_RASTER=1ull<<16,
+  ANYGM_CONFIG_CLEAR_LOCAL_DATA=1ull<<17
 };
 
 typedef struct AnygmInputFrame {

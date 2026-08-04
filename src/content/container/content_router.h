@@ -41,5 +41,7 @@ void anygm_content_path_parent(const char *path,char *output,size_t output_size)
 void anygm_content_save_label(const char *path,char *output,size_t output_size);
 unsigned anygm_content_path_hash(const char *path);
 int anygm_content_directory_create(const struct AnygmHostServices *host,const char *path);
+/* Delete a generated namespace and its contents. Returns non-zero when the path is gone. */
+int anygm_content_directory_remove(const struct AnygmHostServices *host,const char *path);
 
 #endif
