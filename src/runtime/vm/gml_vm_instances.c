@@ -174,14 +174,18 @@ double gml_global_num(GmlVM *vm, const char *name){
     GmlVal value=gml_vm_variable_get_h(vm,IT_GLOBAL,name,gml_value_name_hash(name));
     if(value.t==V_REAL) return value.d;
   }
-  for(int i=0;i<vm->globals.cap;i++){ GmlVarSlot *s=&vm->globals.slots[i];
-    if(s->key && !strcmp(s->key,name)) return s->val.t==V_REAL? s->val.d : 0; }
+  { GmlVal *slot=gml_varmap_get_hashed(&vm->globals,name,gml_value_name_hash(name));
+    if(slot) return slot->t==V_REAL? slot->d : 0; }
   return 0;
 }
+/* Globals are a hashed varmap with unique keys, so resolve through the hash rather than
+ * comparing every occupied slot: the view/camera reads below run several times per frame and
+ * the linear form made whole-table strcmp sweeps one of the hottest paths in the runtime. */
 double gml_global_arr(GmlVM *vm, const char *name, int idx){
-  for(int i=0;i<vm->globals.cap;i++){ GmlVarSlot *s=&vm->globals.slots[i];
-    if(s->key && !strcmp(s->key,name) && s->val.t==V_ARR){ GmlArr *A=s->val.arr;
-      if(A && idx>=0 && idx<A->len) return A->data[idx].t==V_REAL? A->data[idx].d : 0; } }
+  if(!vm || !name) return 0;
+  GmlVal *slot=gml_varmap_get_hashed(&vm->globals,name,gml_value_name_hash(name));
+  if(slot && slot->t==V_ARR){ GmlArr *A=slot->arr;
+    if(A && idx>=0 && idx<A->len) return A->data[idx].t==V_REAL? A->data[idx].d : 0; }
   return 0;
 }
 

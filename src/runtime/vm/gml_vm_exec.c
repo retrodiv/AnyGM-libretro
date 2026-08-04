@@ -380,19 +380,32 @@ static const char *const g_special_var_names[]={
   "transition_kind","transition_steps",
 };
 #define N_SPECIAL_VAR (int)(sizeof g_special_var_names/sizeof *g_special_var_names)
+/* Open-addressed set of the special-name hashes.  A 64-bit bloom cannot gate this many names — it
+ * saturates, so nearly every access paid the full linear scan the gate exists to avoid.  Probing a
+ * power-of-two table keeps the miss path at one or two loads.  Empty slots are 0, so a name hashing
+ * to 0 is stored as 1; that can only produce a false positive, and the chains behind this gate
+ * confirm with their own comparisons. */
+#define SPECIAL_VAR_SLOTS 256u
+#define SPECIAL_VAR_MASK (SPECIAL_VAR_SLOTS-1u)
 static int var_name_maybe_special(GmlVM *vm,const char *name,uint32_t nh){
   if(vm && !vm->special_var_hash){
-    vm->special_var_hash=calloc(N_SPECIAL_VAR,sizeof(*vm->special_var_hash));
+    vm->special_var_hash=calloc(SPECIAL_VAR_SLOTS,sizeof(*vm->special_var_hash));
     if(!vm->special_var_hash) return 1;
     for(int i=0;i<N_SPECIAL_VAR;i++){
       uint32_t h=gml_value_name_hash(g_special_var_names[i]);
-      vm->special_var_hash[i]=h;
+      uint32_t stored=h?h:1u;
+      uint32_t slot=h&SPECIAL_VAR_MASK;
+      while(vm->special_var_hash[slot] && vm->special_var_hash[slot]!=stored)
+        slot=(slot+1u)&SPECIAL_VAR_MASK;
+      vm->special_var_hash[slot]=stored;
       vm->special_var_bloom |= 1ull<<(h&63);
     }
   }
   if(!vm) return 1;
   if(vm->special_var_bloom & (1ull<<(nh&63))){
-    for(int i=0;i<N_SPECIAL_VAR;i++) if(vm->special_var_hash[i]==nh) return 1;
+    uint32_t want=nh?nh:1u;
+    for(uint32_t slot=nh&SPECIAL_VAR_MASK;vm->special_var_hash[slot];slot=(slot+1u)&SPECIAL_VAR_MASK)
+      if(vm->special_var_hash[slot]==want) return 1;
   }
   /* prefix-matched specials (argumentN / argument_count / bbox_*) */
   if(name[0]=='a' && !strncmp(name,"argument",8)) return 1;
@@ -656,15 +669,47 @@ static double alarm_store_value(GmlVM *vm,GmlVal v){
    * retain fractional alarms, which several typewriter effects deliberately use. */
   return vm && vm->win && anygm_policy_uses_classic_runtime(vm->win) ? nearbyint(value) : value;
 }
+/* The host environment cannot change while content runs, so resolve each of these once and keep
+ * the per-opcode, per-call and per-write paths free of host lookups. */
+static const char *vm_arrayset_filter(GmlVM *vm){
+  if(!vm->diagnostics.arrayset_filter_initialized){
+    vm->diagnostics.arrayset_filter=anygm_host_development_setting(vm->host,"GML_DBG_ARRAYSET");
+    vm->diagnostics.arrayset_filter_initialized=1;
+  }
+  return vm->diagnostics.arrayset_filter;
+}
+static const char *vm_view_log(GmlVM *vm){
+  if(!vm->diagnostics.view_log_initialized){
+    vm->diagnostics.view_log=anygm_host_development_setting(vm->host,"GML_LOG_VIEW");
+    vm->diagnostics.view_log_initialized=1;
+  }
+  return vm->diagnostics.view_log;
+}
+static const char *vm_trace_filter(GmlVM *vm){
+  if(!vm->diagnostics.trace_filter_initialized){
+    vm->diagnostics.trace_filter=anygm_host_development_setting(vm->host,"GML_TRACE");
+    vm->diagnostics.trace_filter_initialized=1;
+  }
+  return vm->diagnostics.trace_filter;
+}
+/* Consulted once per opcode dispatch and again on every call opcode, so this one dominated every
+ * other host lookup in the runtime combined. */
+static const char *vm_trace_call_filter(GmlVM *vm){
+  if(!vm->diagnostics.trace_call_initialized){
+    vm->diagnostics.trace_call=anygm_host_development_setting(vm->host,"GML_TRACE_CALL");
+    vm->diagnostics.trace_call_initialized=1;
+  }
+  return vm->diagnostics.trace_call;
+}
 static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm, uint32_t nh, int idx, GmlVal v){
-  { const char *debug_name=anygm_host_development_setting(vm->host,"GML_DBG_ARRAYSET");
+  { const char *debug_name=vm_arrayset_filter(vm);
     if(debug_name && nm && !strcmp(debug_name,nm)){
       
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[arrayset] f%ld scope=%d %s[%d] type=%d value=%.17g\n",
               vm->frame,inst_t,nm,idx,v.t,v.t==V_REAL?v.d:0.0);
     }
   }
-  if(anygm_host_development_setting(vm->host,"GML_LOG_VIEW") && !strcmp(nm,"view_camera")){
+  if(vm_view_log(vm) && !strcmp(nm,"view_camera")){
     
     anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[camera] bind f%ld view=%d value=%.0f scope=%d global=%d\n",
             vm->frame,idx,asnum(v),inst_t,is_room_global_array(nm));
@@ -810,7 +855,7 @@ static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, 
 }
 static void array_set_inst_field_h(GmlVM *vm,GmlInstance *s,const char *nm,uint32_t nh,int idx,GmlVal v){
   if(!s) return;
-  { const char *debug_name=anygm_host_development_setting(vm->host,"GML_DBG_ARRAYSET");
+  { const char *debug_name=vm_arrayset_filter(vm);
     if(debug_name && nm && !strcmp(debug_name,nm)){
       
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[arrayset] f%ld instance=%u object=%d %s[%d] type=%d value=%.17g\n",
@@ -1784,7 +1829,7 @@ static void micro_call_method_field1(GmlVM *vm, GmlVal targetv, const char *fiel
 static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *out){
   if(!vm || !vm->win || ci<0 || ci>=vm->win->n_code || !out) return 0;
   GmlCode *c=&vm->win->code[ci];
-  const char *trace=anygm_host_development_setting(vm->host,"GML_TRACE");
+  const char *trace=vm_trace_filter(vm);
   if(trace && *trace && c->name && strstr(c->name,trace)) return 0;
   if(!code_cache_ensure(vm->win,ci)) return 0;
   if(c->micro_kind==GML_MICRO_NONE) return 0;
@@ -2294,7 +2339,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   #define GC_PERSIST(vv) do{ if((vv).t==V_STR && (vv).s && (vv).d!=0){ int _f=0; const void *_p=(const void*)(vv).s; \
       for(int _i=0;_i<str_gc_n;_i++) if(str_gc[_i]==_p){ str_gc[_i]=NULL; _f=1; } \
       if(!_f){ char *_c=strdup((vv).s); if(_c) (vv)=vstr_owned(_c); } } }while(0)
-  int trace = anygm_host_development_setting(vm->host,"GML_TRACE") && strstr(w->code[ci].name, anygm_host_development_setting(vm->host,"GML_TRACE"));
+  const char *trace_filter = vm_trace_filter(vm);
+  int trace = trace_filter && strstr(w->code[ci].name, trace_filter);
   int use_cache = !trace && code_cache_ensure(w,ci);
   GmlInsn *cached_ins = use_cache ? w->code[ci].insn : NULL;
   uint32_t *cached_pc = use_cache ? w->code[ci].insn_pc : NULL;
@@ -2380,7 +2426,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         vm->diagnostics.pc_log_count++;
       } }
     if(use_cache && !hp_builtin && sp==0 && !vm->diagnostics.pc_name[0] &&
-       !anygm_host_development_setting(vm->host,"GML_TRACE_CALL")){
+       !vm_trace_call_filter(vm)){
       uint32_t loop_exit=0;
       uint64_t loop_instructions=0;
       if(vm_try_array_draw_loop(
@@ -2711,7 +2757,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
       case OP_CALL:{
         const char *nm=in.refname?in.refname:gml_ref_name(w,in.refaddr); int na=in.argc;
         {
-          const char *match=anygm_host_development_setting(vm->host,"GML_TRACE_CALL");
+          const char *match=vm_trace_call_filter(vm);
           if(match && (!*match || (nm && strstr(nm,match)))){
             
             anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[call] f%ld code=%s pc=%u name=%s argc=%d\n",

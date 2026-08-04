@@ -166,6 +166,16 @@ typedef struct {
   int state_variable_load_debug;
   size_t state_profile_last_total;
   int state_time_log_count;
+  /* Development settings resolved once per VM: these sit on the per-opcode, per-call and
+   * per-array-write paths, where re-reading them made the host lookup itself measurable. */
+  int arrayset_filter_initialized;
+  const char *arrayset_filter;
+  int view_log_initialized;
+  const char *view_log;
+  int trace_filter_initialized;
+  const char *trace_filter;
+  int trace_call_initialized;
+  const char *trace_call;
 } GmlVmDiagnostics;
 
 typedef struct GmlVM {

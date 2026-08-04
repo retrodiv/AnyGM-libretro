@@ -90,7 +90,7 @@ endif
 
 TEST_DIR := $(BUILD_DIR)/tests
 RUNTIME_TESTS := test_rng test_persistent_room test_d3_state test_ds_grid \
-	test_builtin_dispatch test_builtin_state
+	test_builtin_dispatch test_builtin_state test_vm_hotpath
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_surfaces \
 	test_renderer_tiles
 CONTENT_TESTS := test_bytecode test_package test_classic
@@ -98,7 +98,7 @@ MEDIA_TESTS := test_image_codec test_font_raster
 COMPATIBILITY_TESTS := test_compatibility
 CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TESTS) \
 	$(CONTENT_TESTS) $(MEDIA_TESTS) $(COMPATIBILITY_TESTS))
-INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances
+INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_host_setting_budget
 CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_libretro_state_transport \
 	$(TEST_DIR)/test_libretro_vfs_transport
 SECURITY_TESTS := $(TEST_DIR)/test_content_security $(TEST_DIR)/test_state_security \
@@ -151,6 +151,10 @@ $(TEST_DIR)/test_persistent_room: $(ANYGM_PERSISTENT_TEST_SOURCES) \
 $(TEST_DIR)/test_d3_state: $(ANYGM_SOFTWARE3D_TEST_SOURCES) $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+
+$(TEST_DIR)/test_vm_hotpath: tests/unit/runtime/test_vm_hotpath.c $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
 
 $(TEST_DIR)/test_ds_grid: tests/unit/runtime/test_ds_grid.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
@@ -250,6 +254,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_ds_grid
 	$(TEST_DIR)/test_builtin_dispatch
 	$(TEST_DIR)/test_builtin_state
+	$(TEST_DIR)/test_vm_hotpath
 else
 FOCUSED_TEST_TARGET := $(TEST_DIR)/test_$(TEST)
 check: CFLAGS += -Werror
@@ -289,6 +294,7 @@ $(TEST_DIR)/public_header_cpp.o: tests/contract/public_header_cpp.cpp src/api/an
 
 integration-check: $(INTEGRATION_TESTS)
 	$(TEST_DIR)/test_engine_instances
+	$(TEST_DIR)/test_host_setting_budget
 
 contract-check: $(CONTRACT_TESTS)
 	$(TEST_DIR)/dummy_host
@@ -348,6 +354,11 @@ export-check: core
 	fi
 
 $(TEST_DIR)/test_engine_instances: tests/integration/test_engine_instances.c \
+	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+
+$(TEST_DIR)/test_host_setting_budget: tests/integration/test_host_setting_budget.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
