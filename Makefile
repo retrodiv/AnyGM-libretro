@@ -303,6 +303,7 @@ architecture-check: builtin-registry-check
 
 builtin-registry-check:
 	python3 tests/architecture/check_builtin_registry.py check
+	python3 tests/architecture/check_producer_fingerprint.py check
 
 isolation-check:
 	tests/architecture/check_runtime_isolation.sh

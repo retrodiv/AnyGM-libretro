@@ -314,40 +314,46 @@ static int archive_source_container_cases(const AnygmHostServices *services,cons
   };
 
   Buffer archive={0};
-  char path[512],resolved[1024],asset_root[1024],staged[1600];
-  int ok=build_zip(entries,2,&archive) &&
-         snprintf(path,sizeof path,"%s/source-container.zip",root)<(int)sizeof path &&
+  char path[512],resolved[1024],marker[1200];
+  int ok=build_zip(&entry,1,&archive) &&
+         snprintf(path,sizeof path,"%s/producer.zip",root)<(int)sizeof path &&
          write_file(path,archive.data,archive.size);
   free(archive.data);
-  if(!ok) return fail("could not write the source-container archive");
+  if(!ok) return fail("producer archive fixture");
+
   AnygmContentRouter router={0};
   router.host=services;
   router.cache_directory=root;
-  asset_root[0]=0;
-  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,
-                                 asset_root,sizeof asset_root) || !asset_root[0])
-    return fail("archive source container was not imported");
-  uint8_t magic[4];
-  if(!read_prefix(resolved,magic,sizeof magic) || memcmp(magic,"FORM",4))
-    return fail("archive source container did not produce a payload");
-  if(snprintf(staged,sizeof staged,"%s/assets/level.txt",asset_root)>=(int)sizeof staged)
-    return fail("reported asset root is too long");
-  uint8_t staged_prefix[7];
-  if(!read_prefix(staged,staged_prefix,sizeof staged_prefix) ||
-     memcmp(staged_prefix,"fixture",sizeof staged_prefix))
-    return fail("reported asset root does not hold the extracted sidecar");
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0))
+    return fail("producer archive was not resolved");
+  char *slash=strrchr(resolved,'/');
+  if(!slash) return fail("resolved producer payload has no directory");
+  *slash=0;
+  int written=snprintf(marker,sizeof marker,"%s/.anygm_cache",resolved);
+  if(written<0 || written>=(int)sizeof marker) return fail("producer marker path");
 
-  memset(&archive,0,sizeof archive);
-  ok=build_zip(entries,3,&archive) &&
-     snprintf(path,sizeof path,"%s/payload-and-source.zip",root)<(int)sizeof path &&
-     write_file(path,archive.data,archive.size);
-  free(archive.data);
-  if(!ok) return fail("could not write the payload-and-source archive");
-  asset_root[0]=0;
-  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,
-                                 asset_root,sizeof asset_root) || asset_root[0])
-    return fail("a compiled payload lost priority to a source container");
-  return 1;
+  FILE *stream=fopen(marker,"r+b");
+  uint8_t original[8],changed[8];
+  if(!stream) return fail("producer marker was not published");
+  ok=fseek(stream,0,SEEK_END)==0 && ftell(stream)>=72 &&
+     fseek(stream,64,SEEK_SET)==0 && fread(original,1,sizeof original,stream)==sizeof original;
+  if(ok){
+    for(size_t i=0;i<sizeof changed;i++) changed[i]=original[i]^0xA5u;
+    ok=fseek(stream,64,SEEK_SET)==0 &&
+       fwrite(changed,1,sizeof changed,stream)==sizeof changed;
+  }
+  if(fclose(stream)!=0) ok=0;
+  if(!ok) return fail("could not change producer marker");
+
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0))
+    return fail("another producer marker was not regenerated");
+  stream=fopen(marker,"rb");
+  if(!stream) return fail("regenerated producer marker is missing");
+  ok=fseek(stream,64,SEEK_SET)==0 &&
+     fread(changed,1,sizeof changed,stream)==sizeof changed &&
+     memcmp(changed,original,sizeof original)==0;
+  if(fclose(stream)!=0) ok=0;
+  return ok?1:fail("regenerated marker did not restore this producer");
 }
 
 int main(void){
@@ -384,7 +390,8 @@ int main(void){
   ZipEntry bad_crc=safe;
   bad_crc.corrupt_crc=1;
 
-  int ok=embedded_executable_cases(&services,root);
+  int ok=embedded_executable_cases(&services,root) &&
+         cache_producer_change_case(&services,root);
   ZipEntry pair[2]={traversal,safe};
   ok=ok&&invalid_case(&services,root,"traversal.zip",pair,2);
   pair[0]=absolute;

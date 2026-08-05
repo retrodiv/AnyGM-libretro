@@ -13,6 +13,7 @@
 #include "gmlc_project.h"
 #include "gml_win.h"
 #include "gml_image_codec.h"
+#include "anygm_producer_fingerprint.h"
 #include "anygm_vfs.h"
 #include <ctype.h>
 #include <limits.h>
@@ -173,12 +174,12 @@ enum {
   ANYGM_CACHE_STUDIO_EXECUTABLE=4,
   ANYGM_CACHE_HEADER_SIZE=72
 };
-/* This fingerprint names the exact deterministic producer recipe, independently of the cache
- * container schema. Change the recipe text whenever generated payload semantics change. */
+/* The cache producer combines the structural recipe with a fingerprint of the
+ * first-party sources. A changed producer invalidates prior cached payloads. */
 static uint64_t cache_producer_fingerprint(void){
   static const char recipe[]=
     "AnyGM cache producer: structural package; classic import; bounded archive and executable extraction";
-  return cache_hash_bytes(recipe,sizeof recipe-1);
+  return cache_hash_bytes(recipe,sizeof recipe-1)^ANYGM_PRODUCER_FINGERPRINT;
 }
 static void cache_put_u32(uint8_t *p,uint32_t v){
   p[0]=(uint8_t)v; p[1]=(uint8_t)(v>>8); p[2]=(uint8_t)(v>>16); p[3]=(uint8_t)(v>>24);
