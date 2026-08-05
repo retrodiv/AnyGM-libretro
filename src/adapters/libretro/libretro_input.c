@@ -52,8 +52,13 @@ void libretro_input_register(void){
   if(!g_libretro.environment) return;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO,(void *)g_controller_info);
   g_libretro.environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS,(void *)g_input_descriptors);
+  /* A frontend that accepts this callback becomes the authority on which keys belong to the
+   * content: it withholds whatever it has bound to a command of its own, whatever key that is, and
+   * hands the whole keyboard over once the player gives the content focus. Remember the answer,
+   * because it decides where the keyboard is read from below. */
   struct retro_keyboard_callback callback={keyboard_event};
-  g_libretro.environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,&callback);
+  g_libretro.keyboard_events_accepted=
+      g_libretro.environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,&callback);
 }
 
 static int16_t input_state(unsigned port,unsigned device,unsigned index,unsigned id){
@@ -88,7 +93,16 @@ void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t heig
   input->gamepad_axes[0][3]=normalized_axis(input_state(
       0,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_Y));
 
+  /* Reading the keyboard device directly returns every key the hardware reports, including the one
+   * the frontend just used to open its menu, rewind, or write a state. Content that binds the same
+   * key to a soft reset or a display toggle then answers a command that was never meant for it, and
+   * a soft reset armed that way is carried into every state written afterwards.
+   *
+   * So the device is read only when the frontend refused the callback and nothing else can supply a
+   * keyboard. Naming the reserved keys here instead would be guesswork: they are the frontend's to
+   * choose, and it already answers the question by what it delivers. */
   memcpy(input->keys,g_libretro.keyboard_events,sizeof input->keys);
+  if(g_libretro.keyboard_events_accepted) goto pointer_state;
   static const unsigned special_keys[]={
     RETROK_BACKSPACE,RETROK_TAB,RETROK_RETURN,RETROK_PAUSE,RETROK_ESCAPE,RETROK_SPACE,
     RETROK_DELETE,RETROK_UP,RETROK_DOWN,RETROK_RIGHT,RETROK_LEFT,RETROK_INSERT,
@@ -102,6 +116,8 @@ void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t heig
   for(unsigned key=RETROK_F1;key<=RETROK_F12;key++) poll_key(input,key);
   for(unsigned key=RETROK_KP0;key<=RETROK_KP_EQUALS;key++) poll_key(input,key);
 
+pointer_state:
+  ;
   int pointer_x=input_state(0,RETRO_DEVICE_POINTER,0,RETRO_DEVICE_ID_POINTER_X);
   int pointer_y=input_state(0,RETRO_DEVICE_POINTER,0,RETRO_DEVICE_ID_POINTER_Y);
   int pointer_pressed=input_state(0,RETRO_DEVICE_POINTER,0,RETRO_DEVICE_ID_POINTER_PRESSED);

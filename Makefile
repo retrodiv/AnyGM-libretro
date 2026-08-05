@@ -106,7 +106,8 @@ CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TEST
 	$(CONTENT_TESTS) $(MEDIA_TESTS) $(COMPATIBILITY_TESTS))
 INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_host_setting_budget
 CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_libretro_state_transport \
-	$(TEST_DIR)/test_libretro_vfs_transport $(TEST_DIR)/test_libretro_option_defaults
+	$(TEST_DIR)/test_libretro_vfs_transport $(TEST_DIR)/test_libretro_option_defaults \
+	$(TEST_DIR)/test_libretro_keyboard_source
 SECURITY_TESTS := $(TEST_DIR)/test_content_security $(TEST_DIR)/test_state_security \
 	$(TEST_DIR)/test_vfs $(TEST_DIR)/test_datafile_security \
 	$(TEST_DIR)/test_bytecode_security
@@ -327,6 +328,7 @@ contract-check: $(CONTRACT_TESTS)
 	$(TEST_DIR)/test_libretro_state_transport
 	$(TEST_DIR)/test_libretro_vfs_transport
 	$(TEST_DIR)/test_libretro_option_defaults
+	$(TEST_DIR)/test_libretro_keyboard_source
 
 security-check: $(SECURITY_TESTS)
 	$(TEST_DIR)/test_content_security
@@ -402,6 +404,11 @@ $(TEST_DIR)/test_libretro_state_transport: tests/contract/libretro_state_transpo
 
 $(TEST_DIR)/test_libretro_option_defaults: tests/contract/libretro_option_defaults.c \
 	src/adapters/libretro/libretro_options.c
+	mkdir -p $(dir $@)
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+
+$(TEST_DIR)/test_libretro_keyboard_source: tests/contract/libretro_keyboard_source.c \
+	src/adapters/libretro/libretro_input.c
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
 

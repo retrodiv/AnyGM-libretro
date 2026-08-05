@@ -26,6 +26,7 @@ typedef struct LibretroAdapter {
   AnygmAvInfo av;
   AnygmConfig config;
   uint8_t keyboard_events[ANYGM_MAX_KEYS];
+  bool keyboard_events_accepted;
   uint8_t override_used[ANYGM_MAX_RUNTIME_OVERRIDES];
   uint32_t port_device[ANYGM_MAX_GAMEPADS];
   unsigned pointer_seen;
