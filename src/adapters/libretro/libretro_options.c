@@ -7,26 +7,232 @@
 #include <stdlib.h>
 #include <string.h>
 
-static struct retro_variable g_variables[]={
-  {"anygm_start_room","Start room; Full game"},
-  {"anygm_gamepad","Gamepad connected; On|Off"},
-  {"anygm_god","God mode; Off|On"},
-  {"anygm_room_skip","Room-skip button; Off|Select|Start"},
-  {"anygm_mouse","Mouse input; Auto|Absolute (pointer)|Relative (delta)"},
-  {"anygm_aspect_ratio_force","Aspect ratio force; None|4:3|16:9|21:9"},
-  {"anygm_width_resolution","Width resolution; Game Base|64|128|144|160|176|192|200|224|240|256|288|300|320|352|360|384|400|416|448|480|512|560|576|600|640|704|720|768|800|832|854|896|960|1024|1080|1152|1200|1280|1360|1366|1400|1440|1536|1600|1680|1728|1792|1920|2048|2160|2304|2400|2560|2880|3200|3440|3840"},
-  {"anygm_height_resolution","Height resolution; Game Base|64|128|144|160|176|180|192|200|216|224|240|256|270|288|300|320|350|360|384|400|432|448|450|480|512|540|576|600|640|720|768|800|864|900|960|1024|1050|1080|1152|1200|1280|1350|1440|1536|1600|1800|1920|2160"},
-  {"anygm_fast_alpha_cull","Renderer low-alpha cull; Performance|Exact|Light|Medium|Aggressive"},
-  {"anygm_render_game_resolution","Render at game resolution; On|Off"},
-  {"anygm_clear_local_data","Clear local data on load; Off|On"},
-  {"anygm_embedded_shaders","Embedded CRT shader; On|Off"},
-  {"anygm_crt_scanlines","CRT scanlines; On|Off"},
-  {"anygm_crt_mask","CRT aperture mask; On|Off"},
-  {"anygm_crt_gamma","CRT gamma; On|Off"},
-  {"anygm_crt_curvature","CRT curvature; Auto|On|Off"},
-  {"anygm_crt_vignette","CRT corner vignette; Auto|On|Off"},
-  {NULL,NULL}
+/* Options are declared once, in the categorized form, and the flat declaration older hosts
+ * understand is derived from that same table. Two hand-maintained lists drift, and the one that
+ * drifts is always the one the host in front of the player happens to read. */
+static const struct retro_core_option_v2_category g_categories[]={
+  {"video","Video","Resolution, shape and rasterization of the delivered frame."},
+  {"input","Input","Controllers and pointer."},
+  {"shaders","Shaders","The built-in CRT shader and the parts it draws."},
+  {"development","Development","Tools for exercising content."},
+  {NULL,NULL,NULL}
 };
+
+/* The array holds a fixed number of entries, of which one closes the list and one offers the
+ * whole game. What is left is how many rooms a single stretch can name. */
+#define ROOM_CHOICE_LIMIT (RETRO_NUM_CORE_OPTION_VALUES_MAX-2)
+
+static struct retro_core_option_v2_definition g_definitions[]={
+  {"anygm_alpha_cull","Transparency culling",NULL,
+   "Skips pixels too faint to see. None draws every one; the rest trade faint detail for speed.",
+   NULL,"video",
+   {{"None",NULL},{"Light",NULL},{"Medium",NULL},{"High",NULL},{"Maximum",NULL},{NULL,NULL}},
+   "High"},
+  {"anygm_render_game_resolution","Render at game resolution",NULL,
+   "Delivers the game's own raster and lets this program scale it. Off matches the window size "
+   "the game asks for, which costs a software upscale and reshapes content whose window and view "
+   "disagree.",
+   NULL,"video",
+   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "On"},
+  {"anygm_width_resolution","Width resolution",NULL,
+   "Forces the width of the delivered frame. Game Base keeps the game's own.",
+   NULL,"video",
+   {{"Game Base",NULL},{"64",NULL},{"128",NULL},{"144",NULL},{"160",NULL},{"176",NULL},
+    {"192",NULL},{"200",NULL},{"224",NULL},{"240",NULL},{"256",NULL},{"288",NULL},{"300",NULL},
+    {"320",NULL},{"352",NULL},{"360",NULL},{"384",NULL},{"400",NULL},{"416",NULL},{"448",NULL},
+    {"480",NULL},{"512",NULL},{"560",NULL},{"576",NULL},{"600",NULL},{"640",NULL},{"704",NULL},
+    {"720",NULL},{"768",NULL},{"800",NULL},{"832",NULL},{"854",NULL},{"896",NULL},{"960",NULL},
+    {"1024",NULL},{"1080",NULL},{"1152",NULL},{"1200",NULL},{"1280",NULL},{"1360",NULL},
+    {"1366",NULL},{"1400",NULL},{"1440",NULL},{"1536",NULL},{"1600",NULL},{"1680",NULL},
+    {"1728",NULL},{"1792",NULL},{"1920",NULL},{"2048",NULL},{"2160",NULL},{"2304",NULL},
+    {"2400",NULL},{"2560",NULL},{"2880",NULL},{"3200",NULL},{"3440",NULL},{"3840",NULL},
+    {NULL,NULL}},
+   "Game Base"},
+  {"anygm_height_resolution","Height resolution",NULL,
+   "Forces the height of the delivered frame. Game Base keeps the game's own.",
+   NULL,"video",
+   {{"Game Base",NULL},{"64",NULL},{"128",NULL},{"144",NULL},{"160",NULL},{"176",NULL},
+    {"180",NULL},{"192",NULL},{"200",NULL},{"216",NULL},{"224",NULL},{"240",NULL},{"256",NULL},
+    {"270",NULL},{"288",NULL},{"300",NULL},{"320",NULL},{"350",NULL},{"360",NULL},{"384",NULL},
+    {"400",NULL},{"432",NULL},{"448",NULL},{"450",NULL},{"480",NULL},{"512",NULL},{"540",NULL},
+    {"576",NULL},{"600",NULL},{"640",NULL},{"720",NULL},{"768",NULL},{"800",NULL},{"864",NULL},
+    {"900",NULL},{"960",NULL},{"1024",NULL},{"1050",NULL},{"1080",NULL},{"1152",NULL},
+    {"1200",NULL},{"1280",NULL},{"1350",NULL},{"1440",NULL},{"1536",NULL},{"1600",NULL},
+    {"1800",NULL},{"1920",NULL},{"2160",NULL},{NULL,NULL}},
+   "Game Base"},
+  {"anygm_aspect_ratio_force","Aspect ratio force",NULL,
+   "Overrides the shape this program scales the frame to. None keeps the shape the game draws.",
+   NULL,"video",
+   {{"None",NULL},{"4:3",NULL},{"16:9",NULL},{"21:9",NULL},{NULL,NULL}},
+   "None"},
+  {"anygm_gamepad","Gamepad connected",NULL,
+   "Reports a connected pad to the game. Content that offers a pad-only path checks this before "
+   "the player can reach any menu.",
+   NULL,"input",
+   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "On"},
+  {"anygm_mouse","Mouse input",NULL,
+   "How pointer movement reaches the game. Auto follows what the content expects.",
+   NULL,"input",
+   {{"Auto",NULL},{"Absolute (pointer)",NULL},{"Relative (delta)",NULL},{NULL,NULL}},
+   "Auto"},
+  {"anygm_embedded_shaders","Embedded CRT shader",NULL,
+   "Draws the built-in CRT effect over the frame. The settings below apply only while it is on; "
+   "shaders the game itself asks for are unaffected.",
+   NULL,"shaders",
+   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "On"},
+  {"anygm_crt_scanlines","CRT scanlines",NULL,
+   "Darkens alternating lines the way a tube did.",
+   NULL,"shaders",
+   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "On"},
+  {"anygm_crt_mask","CRT aperture mask",NULL,
+   "Adds the phosphor stripe pattern of a shadow mask.",
+   NULL,"shaders",
+   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "On"},
+  {"anygm_crt_gamma","CRT gamma",NULL,
+   "Applies the tube's brightness curve instead of a flat one.",
+   NULL,"shaders",
+   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "On"},
+  {"anygm_crt_curvature","CRT curvature",NULL,
+   "Bends the image as a curved screen would. Auto follows the shader preset.",
+   NULL,"shaders",
+   {{"Auto",NULL},{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "Auto"},
+  {"anygm_crt_vignette","CRT corner vignette",NULL,
+   "Darkens the corners the way a tube fell off at its edges. Auto follows the shader preset.",
+   NULL,"shaders",
+   {{"Auto",NULL},{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "Auto"},
+  /* Both start-room entries are filled in once content is loaded and its rooms are known. */
+  {"anygm_start_room_page","Start room range",NULL,
+   "Which stretch of rooms the chooser below offers. Only games with more rooms than one list "
+   "can hold need this.",
+   NULL,"development",
+   {{"0",NULL},{NULL,NULL}},
+   "0"},
+  {"anygm_start_room","Start room",NULL,
+   "Boots straight into the chosen room instead of starting the game. Takes effect on restart.",
+   NULL,"development",
+   {{"Full game",NULL},{NULL,NULL}},
+   "Full game"},
+  {"anygm_clear_local_data","Clear local data on load",NULL,
+   "Deletes everything this game has written before it loads, so the next run behaves like the "
+   "first on this machine.",
+   NULL,"development",
+   {{"Off",NULL},{"On",NULL},{NULL,NULL}},
+   "Off"},
+  {NULL,NULL,NULL,NULL,NULL,NULL,{{NULL,NULL}},NULL}
+};
+
+static const struct retro_core_options_v2 g_options_v2={
+  (struct retro_core_option_v2_category *)g_categories,
+  g_definitions
+};
+
+/* Every room the loaded content declares, whatever the declaration can hold. */
+static char **g_room_choice_text;
+static size_t g_room_choice_count;
+
+/* Categories arrived with the second revision of the option interface. Older hosts are given the
+ * flat declaration instead, which carries no grouping and no help text but every value. */
+static unsigned g_options_version;
+static struct retro_variable *g_flat_variables;
+static char **g_flat_storage;
+static size_t g_flat_count;
+
+static void free_flat_variables(void){
+  if(g_flat_storage){
+    for(size_t i=0;i<g_flat_count;i++) free(g_flat_storage[i]);
+    free(g_flat_storage);
+    g_flat_storage=NULL;
+  }
+  free(g_flat_variables);
+  g_flat_variables=NULL;
+  g_flat_count=0;
+}
+
+/* The flat form takes the default from whichever value is listed first, so the default leads and
+ * the remaining values follow in their declared order. */
+static char *flat_value_text(const struct retro_core_option_v2_definition *definition){
+  /* The room chooser is the one list a fixed-size declaration cannot hold, and this form has no
+   * such ceiling, so it names every room rather than the stretch the other form was given. */
+  int every_room=!strcmp(definition->key,"anygm_start_room") && g_room_choice_count>0;
+  size_t capacity=strlen(definition->desc)+16;
+  if(every_room){
+    capacity+=strlen("Full game")+1;
+    for(size_t i=0;i<g_room_choice_count;i++) capacity+=strlen(g_room_choice_text[i])+1;
+  }
+  else for(size_t i=0;definition->values[i].value;i++)
+    capacity+=strlen(definition->values[i].value)+1;
+  char *text=malloc(capacity);
+  if(!text) return NULL;
+  int written=snprintf(text,capacity,"%s; %s",definition->desc,
+                       definition->default_value?definition->default_value:
+                       definition->values[0].value);
+  if(written<0){ free(text); return NULL; }
+  size_t used=(size_t)written;
+  if(every_room){
+    for(size_t i=0;i<g_room_choice_count;i++){
+      int added=snprintf(text+used,capacity-used,"|%s",g_room_choice_text[i]);
+      if(added<0) break;
+      used+=(size_t)added;
+    }
+    return text;
+  }
+  for(size_t i=0;definition->values[i].value;i++){
+    const char *value=definition->values[i].value;
+    if(definition->default_value && !strcmp(value,definition->default_value)) continue;
+    int added=snprintf(text+used,capacity-used,"|%s",value);
+    if(added<0) break;
+    used+=(size_t)added;
+  }
+  return text;
+}
+
+static void publish_flat_variables(void){
+  free_flat_variables();
+  size_t count=0;
+  while(g_definitions[count].key) count++;
+  g_flat_variables=calloc(count+1,sizeof *g_flat_variables);
+  g_flat_storage=calloc(count?count:1,sizeof *g_flat_storage);
+  if(!g_flat_variables || !g_flat_storage){ free_flat_variables(); return; }
+  size_t published=0;
+  for(size_t i=0;i<count;i++){
+    /* The flat form has no ceiling on values, so every room is named in one list and the stretch
+     * selector that exists to work around that ceiling has nothing to select. */
+    if(!strcmp(g_definitions[i].key,"anygm_start_room_page")) continue;
+    g_flat_storage[published]=flat_value_text(&g_definitions[i]);
+    g_flat_variables[published].key=g_definitions[i].key;
+    g_flat_variables[published].value=g_flat_storage[published];
+    published++;
+  }
+  g_flat_count=published;
+  if(g_libretro.environment)
+    g_libretro.environment(RETRO_ENVIRONMENT_SET_VARIABLES,g_flat_variables);
+}
+
+static void publish_options(void){
+  if(!g_libretro.environment) return;
+  if(g_options_version>=2){
+    g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2,
+                           (void *)&g_options_v2);
+    return;
+  }
+  publish_flat_variables();
+}
+
+void libretro_options_register(void){
+  if(!g_libretro.environment) return;
+  g_options_version=0;
+  if(!g_libretro.environment(RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,&g_options_version))
+    g_options_version=0;
+  publish_options();
+}
 
 static const char *option_value(const char *key){
   struct retro_variable variable={key,NULL};
@@ -54,59 +260,158 @@ static uint32_t option_resolution(const char *key){
   return parsed>0?(uint32_t)parsed:0;
 }
 
-void libretro_options_register(void){
-  if(g_libretro.environment)
-    g_libretro.environment(RETRO_ENVIRONMENT_SET_VARIABLES,g_variables);
+/* ---- the room chooser -------------------------------------------------------------------
+ * The choices only exist once content is loaded, so what the entry point declares can only be
+ * the whole game; a host asking which room to enter has nothing to show until they are published
+ * again. Each choice carries its index first, which is what the reader converts back, and the
+ * content's own name after it, because an index alone names nothing.
+ *
+ * A categorized declaration holds a fixed number of values, which no game is obliged to fit
+ * inside. Those are offered a stretch at a time, with a second option selecting the stretch;
+ * the flat declaration has no such ceiling and receives every room at once. */
+static void update_option_visibility(void);
+
+static struct retro_core_option_v2_definition *definition_for(const char *key){
+  for(size_t i=0;g_definitions[i].key;i++)
+    if(!strcmp(g_definitions[i].key,key)) return &g_definitions[i];
+  return NULL;
 }
 
-/* The start room is the one option whose choices only exist once content is loaded. Declaring it
- * with the entry point alone leaves a host offering a single value, so the chooser a player sees
- * is empty of rooms; the list is published again with the content's own names behind it.
- *
- * Each choice carries its index first because that is what the option reader converts back, and
- * the name after it because an index alone names nothing. */
-static char *g_start_room_values;
+static char **g_page_choice_text;
+static size_t g_page_choice_count;
+static uint32_t g_room_count;
+static uint32_t g_room_page;
+static char g_room_page_text[32];
 
-static void append_room_choice(char *out,size_t capacity,size_t *written,
-                               uint32_t index,const char *name){
-  char choice[160];
-  int length=snprintf(choice,sizeof choice,"|%u: %s",(unsigned)index,name);
-  if(length<=0) return;
-  /* A separator inside a value would split it into two choices the reader cannot convert. */
-  for(char *cursor=choice;*cursor;cursor++) if(*cursor=='|' && cursor!=choice) *cursor='/';
-  if(*written+(size_t)length+1>capacity) return;
-  memcpy(out+*written,choice,(size_t)length+1);
-  *written+=(size_t)length;
+static void free_text_block(char ***block,size_t *count){
+  if(*block) for(size_t i=0;i<*count;i++) free((*block)[i]);
+  free(*block);
+  *block=NULL;
+  *count=0;
+}
+
+static size_t room_page_span(void){
+  return g_options_version>=2?(size_t)ROOM_CHOICE_LIMIT:(size_t)g_room_count;
+}
+
+static size_t room_page_total(void){
+  size_t span=room_page_span();
+  if(!span || !g_room_count) return 1;
+  return ((size_t)g_room_count+span-1)/span;
+}
+
+static void fill_values(struct retro_core_option_v2_definition *definition,
+                       char **text,size_t count,const char *first){
+  size_t slot=0;
+  if(first && slot+1<RETRO_NUM_CORE_OPTION_VALUES_MAX){
+    definition->values[slot].value=first;
+    definition->values[slot].label=NULL;
+    slot++;
+  }
+  for(size_t i=0;i<count && slot+1<RETRO_NUM_CORE_OPTION_VALUES_MAX;i++,slot++){
+    definition->values[slot].value=text[i];
+    definition->values[slot].label=NULL;
+  }
+  definition->values[slot].value=NULL;
+  definition->values[slot].label=NULL;
 }
 
 void libretro_options_publish_rooms(void){
   if(!g_libretro.environment || !g_libretro.engine) return;
-  uint32_t count=0;
-  if(anygm_get_room_count(g_libretro.engine,&count)!=ANYGM_OK || !count) return;
-  size_t capacity=64+(size_t)count*160;
-  char *values=malloc(capacity);
-  if(!values) return;
-  size_t written=(size_t)snprintf(values,capacity,"Start room; Full game");
-  uint32_t published=0;
-  for(uint32_t index=0;index<count;index++){
-    char name[128];
-    if(anygm_get_room_name(g_libretro.engine,index,name,sizeof name)!=ANYGM_OK) continue;
-    size_t before=written;
-    append_room_choice(values,capacity,&written,index,name[0]?name:"room");
-    if(written!=before) published++;
+  struct retro_core_option_v2_definition *rooms=definition_for("anygm_start_room");
+  struct retro_core_option_v2_definition *pages=definition_for("anygm_start_room_page");
+  if(!rooms || !pages) return;
+  g_room_count=0;
+  if(anygm_get_room_count(g_libretro.engine,&g_room_count)!=ANYGM_OK) g_room_count=0;
+
+  size_t span=room_page_span();
+  size_t total=room_page_total();
+  /* The stretch is read here rather than left to the settings pass: content is loaded after that
+   * pass has already run, so on the first publication there is nothing for it to have read. */
+  const char *selected=option_value("anygm_start_room_page");
+  if(selected){
+    snprintf(g_room_page_text,sizeof g_room_page_text,"%s",selected);
+    unsigned long low=strtoul(selected,NULL,10);
+    g_room_page=span?(uint32_t)(low/span):0u;
   }
-  if(published<count)
-    libretro_log(RETRO_LOG_WARN,"Start room lists %u of %u rooms; the rest did not fit\n",
-                 (unsigned)published,(unsigned)count);
-  for(size_t i=0;g_variables[i].key;i++){
-    if(strcmp(g_variables[i].key,"anygm_start_room")) continue;
-    g_variables[i].value=values;
-    free(g_start_room_values);
-    g_start_room_values=values;
-    libretro_options_register();
-    return;
+  if(g_room_page>=total) g_room_page=0;
+  size_t first=(size_t)g_room_page*span;
+  size_t last=first+span;
+  if(last>g_room_count) last=g_room_count;
+
+  free_text_block(&g_room_choice_text,&g_room_choice_count);
+  if(last>first){
+    g_room_choice_text=calloc(last-first,sizeof *g_room_choice_text);
+    if(g_room_choice_text){
+      for(size_t index=first;index<last;index++){
+        char name[128];
+        if(anygm_get_room_name(g_libretro.engine,(uint32_t)index,name,sizeof name)!=ANYGM_OK)
+          snprintf(name,sizeof name,"room");
+        /* A separator inside a value would split it into two choices the reader cannot convert. */
+        for(char *cursor=name;*cursor;cursor++) if(*cursor=='|') *cursor='/';
+        char choice[160];
+        snprintf(choice,sizeof choice,"%u: %s",(unsigned)index,name[0]?name:"room");
+        char *stored=malloc(strlen(choice)+1);
+        if(!stored) break;
+        memcpy(stored,choice,strlen(choice)+1);
+        g_room_choice_text[g_room_choice_count++]=stored;
+      }
+    }
   }
-  free(values);
+  fill_values(rooms,g_room_choice_text,g_room_choice_count,"Full game");
+
+  free_text_block(&g_page_choice_text,&g_page_choice_count);
+  if(total>1){
+    g_page_choice_text=calloc(total,sizeof *g_page_choice_text);
+    if(g_page_choice_text){
+      for(size_t page=0;page<total;page++){
+        size_t low=page*span, high=low+span-1;
+        if(high>=g_room_count) high=g_room_count?g_room_count-1:0;
+        char choice[64];
+        snprintf(choice,sizeof choice,"%zu-%zu",low,high);
+        char *stored=malloc(strlen(choice)+1);
+        if(!stored) break;
+        memcpy(stored,choice,strlen(choice)+1);
+        g_page_choice_text[g_page_choice_count++]=stored;
+      }
+    }
+  }
+  fill_values(pages,g_page_choice_text,g_page_choice_count,NULL);
+  if(!g_page_choice_count){
+    /* A single stretch needs no selector, but the declaration still needs one legal value. */
+    pages->values[0].value="0";
+    pages->values[0].label=NULL;
+    pages->values[1].value=NULL;
+    pages->values[1].label=NULL;
+  }
+  pages->default_value=pages->values[0].value;
+
+  /* Rooms beyond the published list are reachable through the range selector. Without one, they
+   * are not, and a short list must not read as a short game. */
+  if(g_room_choice_count<(size_t)g_room_count && g_page_choice_count<=1)
+    libretro_log(RETRO_LOG_WARN,"Start room lists %zu of %u rooms and offers no range to reach "
+                 "the rest\n",g_room_choice_count,(unsigned)g_room_count);
+  publish_options();
+  update_option_visibility();
+}
+
+/* Options that cannot act are hidden rather than left to be tried: the CRT parts while the shader
+ * that draws them is off, and the range selector when every room already fits in one list. */
+static void update_option_visibility(void){
+  if(!g_libretro.environment) return;
+  static const char *const crt_parts[]={
+    "anygm_crt_scanlines","anygm_crt_mask","anygm_crt_gamma",
+    "anygm_crt_curvature","anygm_crt_vignette",NULL
+  };
+  struct retro_core_option_display display;
+  display.visible=g_libretro.config.embedded_shaders?true:false;
+  for(size_t i=0;crt_parts[i];i++){
+    display.key=crt_parts[i];
+    g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+  }
+  display.key="anygm_start_room_page";
+  display.visible=g_page_choice_count>1;
+  g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
 }
 
 void libretro_options_apply(bool all_fields){
@@ -122,10 +427,12 @@ void libretro_options_apply(bool all_fields){
   value=option_value("anygm_mouse");
   config->mouse_mode=value&&strstr(value,"Absolute")?1u:
                      value&&strstr(value,"Relative")?2u:0u;
-  value=option_value("anygm_room_skip");
-  config->room_skip_button=value&&!strcmp(value,"Select")?1u:
-                           value&&!strcmp(value,"Start")?2u:0u;
-  config->god_mode=option_on("anygm_god",0);
+  /* Neither of these is offered to a player any more. God mode needs an object named through a
+   * development setting before it does anything, and that is where it now lives; the room-skip
+   * button belonged with it. Both are pinned off so a value stored under the old keys cannot
+   * survive as a setting nothing in the menu explains. */
+  config->god_mode=0u;
+  config->room_skip_button=0u;
   config->crt_mask=option_on("anygm_crt_mask",1);
   config->crt_scanlines=option_on("anygm_crt_scanlines",1);
   config->crt_gamma=option_on("anygm_crt_gamma",1);
@@ -135,11 +442,15 @@ void libretro_options_apply(bool all_fields){
   /* Content that offers a gamepad-only path checks this before the player can reach any menu, so
    * a host that never sets the option must still report a pad. */
   config->gamepad_connected=option_on("anygm_gamepad",1);
-  value=option_value("anygm_fast_alpha_cull");
-  config->fast_alpha_cull=!value||!strcmp(value,"Performance")?24u:
-                          value&&!strcmp(value,"Light")?1u:
-                          value&&!strcmp(value,"Medium")?4u:
-                          value&&!strcmp(value,"Aggressive")?32u:0u;
+  /* The names describe how much is dropped, and the thresholds rise with them. An unrecognised
+   * name resolves to the shipped amount rather than to none, so a value left behind by a host
+   * cannot quietly land on the slowest setting. */
+  value=option_value("anygm_alpha_cull");
+  config->fast_alpha_cull=!value?24u:
+                          !strcmp(value,"None")?0u:
+                          !strcmp(value,"Light")?1u:
+                          !strcmp(value,"Medium")?4u:
+                          !strcmp(value,"Maximum")?32u:24u;
   value=option_value("anygm_start_room");
   config->start_room=value&&strcmp(value,"Full game")?(int32_t)strtol(value,NULL,10):-1;
   /* Matching a requested window larger than the view costs a full software upscale carrying no
@@ -148,6 +459,13 @@ void libretro_options_apply(bool all_fields){
      available for content that depends on it. */
   config->present_logical_raster=option_on("anygm_render_game_resolution",1);
   config->clear_local_data=option_on("anygm_clear_local_data",0);
+
+  /* Choosing another stretch of rooms changes which rooms the chooser holds, not any setting the
+   * runtime reads, so the list is rebuilt before the player opens it again. */
+  value=option_value("anygm_start_room_page");
+  if(value && g_page_choice_count>1 && strcmp(value,g_room_page_text))
+    libretro_options_publish_rooms();
+  update_option_visibility();
 
   AnygmConfigDelta delta;
   memset(&delta,0,sizeof delta);
