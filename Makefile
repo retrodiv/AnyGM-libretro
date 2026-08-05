@@ -98,7 +98,7 @@ TEST_DIR := $(BUILD_DIR)/tests
 RUNTIME_TESTS := test_rng test_persistent_room test_d3_state test_ds_grid \
 	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_surfaces \
-	test_renderer_tiles test_renderer_primitives
+	test_renderer_tiles test_renderer_primitives test_renderer_assets
 CONTENT_TESTS := test_bytecode test_package test_classic
 MEDIA_TESTS := test_image_codec test_font_raster
 COMPATIBILITY_TESTS := test_compatibility
@@ -196,6 +196,11 @@ $(TEST_DIR)/test_renderer_surfaces: tests/unit/video/renderer/test_renderer_surf
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
 
+$(TEST_DIR)/test_renderer_assets: tests/unit/video/renderer/test_renderer_assets.c \
+	$(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+
 $(TEST_DIR)/test_renderer_tiles: tests/unit/video/renderer/test_renderer_tiles.c \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
@@ -263,6 +268,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_renderer_effects
 	$(TEST_DIR)/test_renderer_crt
 	$(TEST_DIR)/test_renderer_surfaces
+	$(TEST_DIR)/test_renderer_assets
 	$(TEST_DIR)/test_renderer_tiles
 	$(TEST_DIR)/test_renderer_primitives
 	$(TEST_DIR)/test_rng

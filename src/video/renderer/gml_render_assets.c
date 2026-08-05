@@ -1043,9 +1043,10 @@ static uint8_t *runtime_sprite_image_load(
   int width_per_frame=width;
   uint8_t *rgba=decoded;
   if(decoded_frames>1){
-    if(requested_frames<0) frames=decoded_frames;
-    else if(requested_frames>0)
-      frames=requested_frames<decoded_frames?requested_frames:decoded_frames;
+    /* An animated image states its own subimage count. The requested count describes how to cut a
+     * single-image strip; applying it to an animated file would collapse the animation to its first
+     * frame whenever the caller requests one image. */
+    frames=decoded_frames;
   } else {
     frames=requested_frames>0?requested_frames:1;
     if(frames>width || width%frames) frames=1;
