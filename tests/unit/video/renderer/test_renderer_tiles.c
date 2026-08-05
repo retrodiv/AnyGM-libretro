@@ -309,6 +309,68 @@ static void check_removeback_uses_bottom_left(void){
          "removeback did not key RGB from the bottom-left pixel");
 }
 
+/* A sprite part may select a fractional number of source rows. Snapping that extent up to a whole
+ * texel before scaling makes the part cover the destination height of a full row, which at a
+ * magnifying scale is a visible band of extra pixels. The destination extent must follow the
+ * continuous source intersection, so the covered rows are those whose centres fall inside it. */
+static void check_fractional_sprite_part_extent(double source_height,int expected_rows){
+  enum { WIDTH=4,HEIGHT=8 };
+  static const uint8_t rgba[4]={255,255,255,255};
+  uint32_t framebuffer[WIDTH*HEIGHT];
+  GmlRender render;
+  GmlAtlas atlas;
+  GmlTpag page;
+  GmlSprite sprite;
+  int frame=0;
+  int rows=0;
+
+  memset(framebuffer,0,sizeof framebuffer);
+  memset(&render,0,sizeof render);
+  memset(&atlas,0,sizeof atlas);
+  memset(&page,0,sizeof page);
+  memset(&sprite,0,sizeof sprite);
+  atlas.px=(uint8_t*)rgba;
+  atlas.w=atlas.h=1;
+  page.atlas=0;
+  page.sw=page.sh=page.bw=page.bh=1;
+  page.alpha_scanned=1;
+  page.alpha_max=255;
+  page.ax1=page.ay1=0;
+  sprite.n_frames=1;
+  sprite.frame=&frame;
+  sprite.w=sprite.h=1;
+  render.fb=render.base_fb=framebuffer;
+  render.fbw=render.base_fbw=WIDTH;
+  render.fbh=render.base_fbh=HEIGHT;
+  render.atlas=&atlas;
+  render.n_atlas=1;
+  render.tpag=&page;
+  render.n_tpag=1;
+  render.spr=&sprite;
+  render.n_spr=1;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+  render.target_id=-1;
+
+  gml_draw_sprite_part_ext(&render,0,0,0.0,0.0,1.0,source_height,
+                           0.0,0.0,2.0,2.0,0xFFFFFF,1.0);
+
+  for(int y=0;y<HEIGHT;y++){
+    int filled=0;
+    for(int x=0;x<WIDTH;x++)
+      if(framebuffer[y*WIDTH+x]&0x00FFFFFFu) filled=1;
+    rows+=filled;
+  }
+  if(rows!=expected_rows)
+    fprintf(stderr,"renderer tiles: sprite part of source height %.2f at yscale 2 covered %d "
+                   "destination rows instead of %d\n",source_height,rows,expected_rows);
+  expect(rows==expected_rows,
+         "fractional sprite part covered the wrong destination height");
+  free(page.argb_cache);
+}
+
 int main(void){
   static const uint32_t transformed[8][4]={
     {0xffff0000,0xff00ff00,0xff0000ff,0xffffffff},
@@ -329,6 +391,10 @@ int main(void){
   check_runtime_background_replacement();
   check_trimmed_background_tiling_period();
   check_removeback_uses_bottom_left();
+  /* Destination extent is source_height*2; the covered rows are those whose centres fall in it. */
+  check_fractional_sprite_part_extent(0.6,1);
+  check_fractional_sprite_part_extent(0.8,2);
+  check_fractional_sprite_part_extent(0.2,0);
   if(failures){
     fprintf(stderr,"renderer tiles: %d failure(s)\n",failures);
     return 1;

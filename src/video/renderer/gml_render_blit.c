@@ -2020,13 +2020,20 @@ static void blit_rgba_region(GmlRender *r, const uint8_t *src, int iw, int ih,
 }
 static int tpag_part_view(const GmlTpag *t,
                           double sx,double sy,double sw,double sh,
-                          GmlTpag *view,int *source_x,int *source_y){
+                          GmlTpag *view,int *source_x,int *source_y,
+                          double *overlap_x0,double *overlap_y0,
+                          double *overlap_x1,double *overlap_y1){
   if(!t || !view || sw<=0 || sh<=0) return 0;
   double ix0d=fmax(sx,(double)t->tx), iy0d=fmax(sy,(double)t->ty);
   double ix1d=fmin(sx+sw,(double)(t->tx+t->sw)), iy1d=fmin(sy+sh,(double)(t->ty+t->sh));
   int ix0=(int)floor(ix0d), iy0=(int)floor(iy0d);
   int ix1=(int)ceil(ix1d), iy1=(int)ceil(iy1d);
   if(ix1<=ix0 || iy1<=iy0) return 0;
+  /* The continuous overlap, before the outward snap, so callers can keep the selected extent. */
+  if(overlap_x0) *overlap_x0=ix0d;
+  if(overlap_y0) *overlap_y0=iy0d;
+  if(overlap_x1) *overlap_x1=ix1d;
+  if(overlap_y1) *overlap_y1=iy1d;
   *view=*t;
   view->sx=t->sx + (ix0 - t->tx);
   view->sy=t->sy + (iy0 - t->ty);
@@ -2052,6 +2059,14 @@ static int tpag_part_view(const GmlTpag *t,
   if(source_y) *source_y=iy0;
   return 1;
 }
+/* The selected source rectangle is snapped outwards to whole texels, because a texel is the
+ * smallest thing the sampler can address. Along an axis where the continuous selection lies inside
+ * a single texel that snapping also inflates the DESTINATION extent, from `selected*scale` up to a
+ * full `1*scale`. At a magnifying scale that surplus is a visible band. Keep the one selected texel,
+ * but scale its one-cell view by the exact continuous overlap and anchor it at the continuous
+ * clipped edge, so the destination extent stays `selected*scale` and the covered pixels remain
+ * those whose centres fall inside it. Multi-texel selections address whole texels already and are
+ * left exactly as they were. */
 static void blit_tpag_part_with_phase(GmlRender *r, GmlTpag *t,
                                       double sx, double sy, double sw, double sh,
                                       double dx, double dy, double xs, double ys,
@@ -2059,9 +2074,19 @@ static void blit_tpag_part_with_phase(GmlRender *r, GmlTpag *t,
   if(!t || sw<=0 || sh<=0 || xs==0 || ys==0) return;
   GmlTpag tt;
   int ix0=0,iy0=0;
-  if(!tpag_part_view(t,sx,sy,sw,sh,&tt,&ix0,&iy0)) return;
-  if(advance_y) blit_background_phase(r,&tt,dx+(ix0-sx)*xs,dy+(iy0-sy)*ys,xs,ys,blend,alpha);
-  else blit(r,&tt,dx+(ix0-sx)*xs,dy+(iy0-sy)*ys,xs,ys,blend,alpha);
+  double overlap_x0=0.0,overlap_y0=0.0,overlap_x1=0.0,overlap_y1=0.0;
+  if(!tpag_part_view(t,sx,sy,sw,sh,&tt,&ix0,&iy0,
+                     &overlap_x0,&overlap_y0,&overlap_x1,&overlap_y1)) return;
+  double anchor_x=ix0,anchor_y=iy0;
+  double cell_xs=xs,cell_ys=ys;
+  if(tt.sw==1){ anchor_x=overlap_x0; cell_xs=(overlap_x1-overlap_x0)*xs; }
+  if(tt.sh==1){ anchor_y=overlap_y0; cell_ys=(overlap_y1-overlap_y0)*ys; }
+  if(cell_xs==0.0 || cell_ys==0.0) return;
+  if(advance_y)
+    blit_background_phase(r,&tt,dx+(anchor_x-sx)*xs,dy+(anchor_y-sy)*ys,
+                          cell_xs,cell_ys,blend,alpha);
+  else
+    blit(r,&tt,dx+(anchor_x-sx)*xs,dy+(anchor_y-sy)*ys,cell_xs,cell_ys,blend,alpha);
 }
 static void blit_tpag_part(GmlRender *r, GmlTpag *t, double sx, double sy, double sw, double sh,
                            double dx, double dy, double xs, double ys, uint32_t blend, double alpha){
@@ -4980,7 +5005,8 @@ void gml_draw_background_tile(GmlRender *r,int bg,
   GmlTpag view;
   int clipped_source_x=0,clipped_source_y=0;
   if(!tpag_part_view(page,sx,sy,sw,sh,
-                     &view,&clipped_source_x,&clipped_source_y)) return;
+                     &view,&clipped_source_x,&clipped_source_y,
+                     NULL,NULL,NULL,NULL)) return;
   view.tx=(int)lround(clipped_source_x-sx);
   view.ty=(int)lround(clipped_source_y-sy);
   view.bw=(int)ceil(sw);
