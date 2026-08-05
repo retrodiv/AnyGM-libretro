@@ -2127,8 +2127,9 @@ static int expect_persistent_lifecycle_exit_code(void){
   }
   gml_instance_destroy(&vm,path_probe); gml_instance_destroy(&vm,path_control);
 
-  /* Bytecode 15 keeps ordinary velocity observable while a path is active.  A paused path is
-   * still evaluated after automatic movement, restoring the instance to the current path point. */
+  /* A bytecode-15 path step that advances the instance clears ordinary velocity. The position
+   * rule remains generation-specific: a paused path is evaluated after automatic movement,
+   * restoring the current path point while leaving that movement's velocity readable. */
   win.classic_version=0; win.bytecode=15;
   path_probe=gml_instance_create(&vm,100,100,2); if(!path_probe)return 1;
   path_control=gml_instance_create(&vm,100,100,2); if(!path_control)return 1;
@@ -2139,8 +2140,9 @@ static int expect_persistent_lifecycle_exit_code(void){
   gml_vm_step(&vm);
   path_probe=find_slot(&vm,path_probe_id); path_control=find_slot(&vm,path_control_id);
   if(!path_probe || !path_control || fabs(path_probe->x-path_control->x)>1e-6 ||
-     fabs(path_probe->y-path_control->y)>1e-6 || path_probe->hspeed!=7 || path_probe->speed!=7){
-    fprintf(stderr,"Studio 1.x path did not retain ordinary velocity: probe=(%.6f,%.6f) control=(%.6f,%.6f) velocity=(%.6f,%.6f) speed=%.6f\n",
+     fabs(path_probe->y-path_control->y)>1e-6 || path_probe->hspeed!=0 || path_probe->vspeed!=0 ||
+     path_probe->speed!=0){
+    fprintf(stderr,"bytecode-15 path left a pre-path velocity readable: probe=(%.6f,%.6f) control=(%.6f,%.6f) velocity=(%.6f,%.6f) speed=%.6f\n",
       path_probe?path_probe->x:-1.0,path_probe?path_probe->y:-1.0,
       path_control?path_control->x:-1.0,path_control?path_control->y:-1.0,
       path_probe?path_probe->hspeed:-1.0,path_probe?path_probe->vspeed:-1.0,

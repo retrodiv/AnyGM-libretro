@@ -344,10 +344,11 @@ static void run_paths(GmlVM *vm){
     else in->path_position=next_pos;
     double px,py,new_x,new_y; path_eval(p,in->path_position,&px,&py);
     path_world_xy(in,px,py,&new_x,&new_y);
-    /* Path movement owns speed/direction for this step. GameMaker derives direction from the
-     * path displacement, then clears the ordinary speed components so a pre-path hspeed is not
-     * observable as stale motion (or applied again on the following step). */
-    if(path_owns_velocity){
+    /* A step that advances along the path and changes position owns its motion: derive direction
+     * from that displacement and clear ordinary speed components. A stationary path correction
+     * retains the existing velocity, so path progress and displacement distinguish the cases. */
+    if(in->path_position!=in->path_positionprevious &&
+       (before_x!=new_x || before_y!=new_y)){
       in->direction=atan2(before_y-new_y,new_x-before_x)*180.0/M_PI;
       if(in->direction<0) in->direction+=360.0;
       if(in->direction>=360.0) in->direction=fmod(in->direction,360.0);
