@@ -54,13 +54,19 @@ typedef struct {
   int n, cap;
 } PackPage;
 
+/* Ordering has to be total, not merely descending by size. The sort is not stable, so leaving
+ * same-sized images comparing equal let each C library place them in its own order; the atlases
+ * were then packed differently and the generated payload differed between platforms built from
+ * one source. A payload that is not byte-identical everywhere cannot be cached, compared, or
+ * carried by a save state across builds, so the request's own index settles every tie. */
 static int texture_request_cmp(const void *a, const void *b){
   const TextureRequest *ra=(const TextureRequest*)a;
   const TextureRequest *rb=(const TextureRequest*)b;
   int aa=ra->w*ra->h, ab=rb->w*rb->h;
   if(aa!=ab) return ab-aa;
   if(ra->h!=rb->h) return rb->h-ra->h;
-  return rb->w-ra->w;
+  if(ra->w!=rb->w) return rb->w-ra->w;
+  return ra->idx<rb->idx?-1:ra->idx>rb->idx;
 }
 
 static unsigned char *load_project_rgba(const GmlcProject *project, const char *path,
