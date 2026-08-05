@@ -1550,12 +1550,11 @@ AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
   info->base_height=engine->output_height?engine->output_height:engine->height;
   info->max_width=FB_MAX_W;
   info->max_height=FB_MAX_H;
+  /* The ratio describes the frame actually handed over, so a host scaling to it preserves the
+   * shape. Taking it from the window extent instead reshapes the picture: content routinely asks
+   * for a window whose proportions differ from its view, and a 4:3 raster announced as the 16:9
+   * window it requested arrives at the player stretched. */
   info->aspect_ratio=info->base_height?(double)info->base_width/info->base_height:4.0/3.0;
-  /* Rasterizing at the logical extent must not change the shape the player sees: the window the
-   * content asked for still decides the final aspect, the host just performs the scale. */
-  if(engine->config.present_logical_raster &&
-     engine->vm.window_w>0 && engine->vm.window_h>0)
-    info->aspect_ratio=(double)engine->vm.window_w/(double)engine->vm.window_h;
   info->frames_per_second=engine->fps;
   info->audio_rate=44100;
   return ANYGM_OK;

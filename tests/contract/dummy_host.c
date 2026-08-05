@@ -6,6 +6,7 @@
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -377,6 +378,11 @@ int main(void){
   av.struct_size=sizeof av;
   if(anygm_get_av_info(engine,&av)!=ANYGM_OK || !av.base_width || !av.base_height)
     return fail("A/V description failed");
+  /* The ratio is what a host scales the delivered frame to, so it has to describe that frame. Any
+   * other source reshapes the picture: content asks for a window whose proportions need not match
+   * its view, and a square-pixel raster announced with the window's ratio arrives stretched. */
+  if(fabs(av.aspect_ratio-(double)av.base_width/(double)av.base_height)>1e-9)
+    return fail("A/V ratio does not describe the delivered frame");
   if(exercise_declared_global_cadence(engine)) return 1;
   AnygmAvInfo short_av={0};
   short_av.struct_size=sizeof short_av-1;
