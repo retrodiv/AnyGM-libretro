@@ -35,9 +35,26 @@ void gml_render_primitive_line_color_subpixel(GmlRender *render,
 void gml_render_primitive_circle(GmlRender *render,
                                  int center_x,int center_y,int radius_x,int radius_y,
                                  uint32_t color,int outline);
+void gml_render_primitive_circle_subpixel(GmlRender *render,
+                                          double center_x,double center_y,
+                                          double radius_x,double radius_y,
+                                          uint32_t color,int outline);
+
+/* Filled circles apply a one-unit logical centre bias before view mapping and retain continuous
+ * radii until the covered pixel set is quantized. */
+#define GML_RENDER_CIRCLE_CENTER_BIAS 1.0
+
+void gml_render_circle_geometry(const GmlRender *render,
+                                double x,double y,double radius,
+                                double *center_x,double *center_y,
+                                double *radius_x,double *radius_y);
 void gml_render_primitive_circle_color(GmlRender *render,
                                        int center_x,int center_y,int radius_x,int radius_y,
                                        uint32_t inner,uint32_t outer,int outline);
+void gml_render_primitive_circle_color_subpixel(GmlRender *render,
+                                                double center_x,double center_y,
+                                                double radius_x,double radius_y,
+                                                uint32_t inner,uint32_t outer,int outline);
 void gml_render_primitive_triangle_alpha(GmlRender *render,
                                          double x1,double y1,double x2,double y2,
                                          double x3,double y3,uint32_t color,

@@ -98,7 +98,7 @@ TEST_DIR := $(BUILD_DIR)/tests
 RUNTIME_TESTS := test_rng test_persistent_room test_d3_state test_ds_grid \
 	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_surfaces \
-	test_renderer_tiles
+	test_renderer_tiles test_renderer_primitives
 CONTENT_TESTS := test_bytecode test_package test_classic
 MEDIA_TESTS := test_image_codec test_font_raster
 COMPATIBILITY_TESTS := test_compatibility
@@ -201,6 +201,11 @@ $(TEST_DIR)/test_renderer_tiles: tests/unit/video/renderer/test_renderer_tiles.c
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
 
+$(TEST_DIR)/test_renderer_primitives: tests/unit/video/renderer/test_renderer_primitives.c \
+	$(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+
 $(TEST_DIR)/test_bytecode: tests/unit/content/test_bytecode.c \
 	src/host/anygm_host.c src/host/anygm_vfs.c \
 	$(ANYGM_PROJECT_COMPILER_SOURCES) src/content/project/gmlc_project.c \
@@ -259,6 +264,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_renderer_crt
 	$(TEST_DIR)/test_renderer_surfaces
 	$(TEST_DIR)/test_renderer_tiles
+	$(TEST_DIR)/test_renderer_primitives
 	$(TEST_DIR)/test_rng
 	$(TEST_DIR)/test_persistent_room
 	$(TEST_DIR)/test_d3_state

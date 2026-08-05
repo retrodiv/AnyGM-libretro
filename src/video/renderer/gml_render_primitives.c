@@ -379,9 +379,17 @@ static void draw_line_colour_subpixel_prim(GmlRender *R,
 }
 
 
-static void draw_circle_prim(GmlRender *R, int cx, int cy, int rx, int ry, uint32_t gmcol, int outline){
-  if(!R||rx<0||ry<0) return;
-  if(rx==0||ry==0){ gml_render_backend_draw_pixel(R,cx,cy,gmcol); return; }
+/* The continuous form. The mapped centre and radii of a circle are generally fractional, and
+ * truncating them before rasterization loses up to a whole destination pixel of extent, so the
+ * geometry is carried as-is and only the covered pixel set is quantized. The integer entry point
+ * below forwards to this one, so both share a single rasterization kernel. */
+static void draw_circle_prim_ex(GmlRender *R, double cx, double cy, double rx, double ry,
+                                uint32_t gmcol, int outline){
+  if(!R||rx<0.0||ry<0.0) return;
+  if(!(rx>0.0)||!(ry>0.0)){
+    gml_render_backend_draw_pixel(R,(int)floor(cx),(int)floor(cy),gmcol);
+    return;
+  }
   int n=R->circle_precision;
   if(n<4) n=4;
   if(n>64) n=64;
@@ -400,10 +408,10 @@ static void draw_circle_prim(GmlRender *R, int cx, int cy, int rx, int ry, uint3
   } else {
     /* The regular polygon is convex, so each scanline has at most one filled span. This is
      * pixel-identical to point_in_poly(x+0.5,y+0.5) but avoids testing every edge per pixel. */
-    long long raw_y0=(long long)cy-ry,raw_y1=(long long)cy+ry;
-    if(raw_y1<0 || raw_y0>=R->fbh) return;
-    int y0=raw_y0<0?0:(int)raw_y0;
-    int y1=raw_y1>=R->fbh?R->fbh-1:(int)raw_y1;
+    double span_y0=floor(cy-ry),span_y1=ceil(cy+ry);
+    if(span_y1<0.0 || span_y0>=(double)R->fbh) return;
+    int y0=span_y0<0.0?0:(int)span_y0;
+    int y1=span_y1>=(double)R->fbh?R->fbh-1:(int)span_y1;
     for(int y=y0;y<=y1;y++){
       double py=y+0.5, xl=1e30, xr=-1e30;
       for(int i=0,j=n-1;i<n;j=i++){
@@ -420,6 +428,11 @@ static void draw_circle_prim(GmlRender *R, int cx, int cy, int rx, int ry, uint3
       for(int x=x0;x<=x1;x++) gml_render_backend_draw_pixel(R,x,y,gmcol);
     }
   }
+}
+
+static void draw_circle_prim(GmlRender *R, int cx, int cy, int rx, int ry, uint32_t gmcol, int outline){
+  if(!R||rx<0||ry<0) return;
+  draw_circle_prim_ex(R,(double)cx,(double)cy,(double)rx,(double)ry,gmcol,outline);
 }
 
 /* Colour variants interpolate from the first colour at the centre to the second at the perimeter. */
@@ -458,11 +471,14 @@ static void draw_px_fan(GmlRender *R,int x,int y,uint32_t inner,uint32_t outer,d
   }
   gml_render_backend_draw_pixel(R,x,y,gm_color_lerp_fan(inner,outer,amount));
 }
-static void draw_circle_colour_prim(GmlRender *R,int cx,int cy,int rx,int ry,
-                                    uint32_t inner,uint32_t outer,int outline){
-  if(!R||rx<0||ry<0) return;
-  if(inner==outer){ draw_circle_prim(R,cx,cy,rx,ry,inner,outline); return; }
-  if(rx==0||ry==0){ gml_render_backend_draw_pixel(R,cx,cy,inner); return; }
+static void draw_circle_colour_prim_ex(GmlRender *R,double cx,double cy,double rx,double ry,
+                                       uint32_t inner,uint32_t outer,int outline){
+  if(!R||rx<0.0||ry<0.0) return;
+  if(inner==outer){ draw_circle_prim_ex(R,cx,cy,rx,ry,inner,outline); return; }
+  if(!(rx>0.0)||!(ry>0.0)){
+    gml_render_backend_draw_pixel(R,(int)floor(cx),(int)floor(cy),inner);
+    return;
+  }
   int n=R->circle_precision;
   if(n<4) n=4;
   if(n>64) n=64;
@@ -484,10 +500,10 @@ static void draw_circle_colour_prim(GmlRender *R,int cx,int cy,int rx,int ry,
     }
     return;
   }
-  long long raw_y0=(long long)cy-ry,raw_y1=(long long)cy+ry;
-  if(raw_y1<0 || raw_y0>=R->fbh) return;
-  int y0=raw_y0<0?0:(int)raw_y0;
-  int y1=raw_y1>=R->fbh?R->fbh-1:(int)raw_y1;
+  double span_y0=floor(cy-ry),span_y1=ceil(cy+ry);
+  if(span_y1<0.0 || span_y0>=(double)R->fbh) return;
+  int y0=span_y0<0.0?0:(int)span_y0;
+  int y1=span_y1>=(double)R->fbh?R->fbh-1:(int)span_y1;
   for(int y=y0;y<=y1;y++){
     double py=y+0.5,xl=1e30,xr=-1e30;
     for(int i=0,j=n-1;i<n;j=i++){
@@ -526,6 +542,12 @@ static void draw_circle_colour_prim(GmlRender *R,int cx,int cy,int rx,int ry,
       edge_dot=nx*edge_nx[edge]+ny*edge_ny[edge];
     }
   }
+}
+
+static void draw_circle_colour_prim(GmlRender *R,int cx,int cy,int rx,int ry,
+                                    uint32_t inner,uint32_t outer,int outline){
+  if(!R||rx<0||ry<0) return;
+  draw_circle_colour_prim_ex(R,(double)cx,(double)cy,(double)rx,(double)ry,inner,outer,outline);
 }
 
 typedef struct {
@@ -676,10 +698,41 @@ void gml_render_primitive_circle(GmlRender *render,
   draw_circle_prim(render,center_x,center_y,radius_x,radius_y,color,outline);
 }
 
+void gml_render_primitive_circle_subpixel(GmlRender *render,
+                                          double center_x,double center_y,
+                                          double radius_x,double radius_y,
+                                          uint32_t color,int outline){
+  draw_circle_prim_ex(render,center_x,center_y,radius_x,radius_y,color,outline);
+}
+
+void gml_render_circle_geometry(const GmlRender *render,
+                                double x,double y,double radius,
+                                double *center_x,double *center_y,
+                                double *radius_x,double *radius_y){
+  double mapped_x=x+GML_RENDER_CIRCLE_CENTER_BIAS;
+  double mapped_y=y+GML_RENDER_CIRCLE_CENTER_BIAS;
+  double mapped_rx=radius,mapped_ry=radius;
+  GmlRenderTargetMetrics metrics={0};
+  gml_render_draw_map_point(render,&mapped_x,&mapped_y);
+  gml_render_draw_map_scale(render,&mapped_rx,&mapped_ry);
+  (void)gml_render_target_metrics(render,&metrics);
+  if(center_x) *center_x=mapped_x-metrics.camera_x;
+  if(center_y) *center_y=mapped_y-metrics.camera_y;
+  if(radius_x) *radius_x=fabs(mapped_rx);
+  if(radius_y) *radius_y=fabs(mapped_ry);
+}
+
 void gml_render_primitive_circle_color(GmlRender *render,
                                        int center_x,int center_y,int radius_x,int radius_y,
                                        uint32_t inner,uint32_t outer,int outline){
   draw_circle_colour_prim(render,center_x,center_y,radius_x,radius_y,inner,outer,outline);
+}
+
+void gml_render_primitive_circle_color_subpixel(GmlRender *render,
+                                                double center_x,double center_y,
+                                                double radius_x,double radius_y,
+                                                uint32_t inner,uint32_t outer,int outline){
+  draw_circle_colour_prim_ex(render,center_x,center_y,radius_x,radius_y,inner,outer,outline);
 }
 
 void gml_render_primitive_triangle_alpha(GmlRender *render,

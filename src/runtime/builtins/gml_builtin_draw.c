@@ -754,12 +754,15 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         }
       }
       return vreal(0); }
-    if(!strcmp(nm,"draw_circle")){ if(R){ GmlRenderTargetMetrics target=builtin_target_metrics(R); GmlRenderDrawState draw=builtin_draw_state(R);
-        gml_render_maybe_prepare_draw(R); gml_render_primitive_circle(R,(int)floor(draw_gui_x(R,N(a,n,0))-target.camera_x),(int)floor(draw_gui_y(R,N(a,n,1))-target.camera_y),(int)fabs(draw_gui_w(R,N(a,n,2))),(int)fabs(draw_gui_h(R,N(a,n,2))),draw.color,(int)N(a,n,3)); } return vreal(0); }
+    if(!strcmp(nm,"draw_circle")){ if(R){ GmlRenderDrawState draw=builtin_draw_state(R);
+        double cx,cy,rx,ry;
+        gml_render_circle_geometry(R,N(a,n,0),N(a,n,1),N(a,n,2),&cx,&cy,&rx,&ry);
+        gml_render_maybe_prepare_draw(R); gml_render_primitive_circle_subpixel(R,cx,cy,rx,ry,draw.color,(int)N(a,n,3)); } return vreal(0); }
     if(!strcmp(nm,"draw_circle_color")||!strcmp(nm,"draw_circle_colour")){ if(R){
-        GmlRenderTargetMetrics target=builtin_target_metrics(R);
+        double cx,cy,rx,ry;
+        gml_render_circle_geometry(R,N(a,n,0),N(a,n,1),N(a,n,2),&cx,&cy,&rx,&ry);
         gml_render_maybe_prepare_draw(R);
-        gml_render_primitive_circle_color(R,(int)floor(draw_gui_x(R,N(a,n,0))-target.camera_x),(int)floor(draw_gui_y(R,N(a,n,1))-target.camera_y),(int)fabs(draw_gui_w(R,N(a,n,2))),(int)fabs(draw_gui_h(R,N(a,n,2))),NU32(a,n,3),NU32(a,n,4),(int)N(a,n,5)); }
+        gml_render_primitive_circle_color_subpixel(R,cx,cy,rx,ry,NU32(a,n,3),NU32(a,n,4),(int)N(a,n,5)); }
       return vreal(0); }
     if(!strcmp(nm,"draw_ellipse_color")||!strcmp(nm,"draw_ellipse_colour")){ if(R){
         GmlRenderTargetMetrics target=builtin_target_metrics(R);
