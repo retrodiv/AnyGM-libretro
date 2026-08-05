@@ -26,14 +26,16 @@ static int vk_to_pad(AnygmEngine *engine,int vk){
       case 39: return ANYGM_PAD_RIGHT;
       case 38: return ANYGM_PAD_UP;
       case 40: return ANYGM_PAD_DOWN;
-      case 90: return ANYGM_PAD_FACE_BOTTOM;       /* Z */
-      case 88: return ANYGM_PAD_FACE_RIGHT;       /* X */
-      case 67: return ANYGM_PAD_FACE_LEFT;       /* C */
-      case 86: return ANYGM_PAD_FACE_TOP;       /* V */
+      /* Classic keyboard content commonly uses either ZXCV or ASDF as its action row. Map both
+       * rows to the same face buttons; corresponding keys from both rows represent one action. */
+      case 90: case 65: return ANYGM_PAD_FACE_BOTTOM;  /* Z or A */
+      case 88: case 83: return ANYGM_PAD_FACE_RIGHT;   /* X or S */
+      case 67: case 68: return ANYGM_PAD_FACE_LEFT;    /* C or D */
+      case 86: case 70: return ANYGM_PAD_FACE_TOP;     /* V or F */
       case 13: case 77: return ANYGM_PAD_START; /* Enter / M */
       case 32: return ANYGM_PAD_SELECT;  /* Space */
-      case 65: return ANYGM_PAD_LEFT_SHOULDER;       /* A */
-      case 83: return ANYGM_PAD_RIGHT_SHOULDER;       /* S */
+      case 16: return ANYGM_PAD_LEFT_SHOULDER;   /* Shift */
+      case 17: return ANYGM_PAD_RIGHT_SHOULDER;  /* Control */
       default: return -1;
     }
   }
