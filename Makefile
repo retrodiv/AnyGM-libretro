@@ -96,7 +96,7 @@ endif
 
 TEST_DIR := $(BUILD_DIR)/tests
 RUNTIME_TESTS := test_rng test_persistent_room test_d3_state test_ds_grid \
-	test_builtin_dispatch test_builtin_state test_vm_hotpath
+	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_surfaces \
 	test_renderer_tiles
 CONTENT_TESTS := test_bytecode test_package test_classic
@@ -156,6 +156,10 @@ $(TEST_DIR)/test_persistent_room: $(ANYGM_PERSISTENT_TEST_SOURCES) \
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
 
 $(TEST_DIR)/test_d3_state: $(ANYGM_SOFTWARE3D_TEST_SOURCES) $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+
+$(TEST_DIR)/test_builtin_args: tests/unit/runtime/test_builtin_args.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
 
@@ -262,6 +266,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_builtin_dispatch
 	$(TEST_DIR)/test_builtin_state
 	$(TEST_DIR)/test_vm_hotpath
+	$(TEST_DIR)/test_builtin_args
 else
 FOCUSED_TEST_TARGET := $(TEST_DIR)/test_$(TEST)
 check: CFLAGS += -Werror
@@ -282,6 +287,7 @@ architecture-check: builtin-registry-check
 	tests/architecture/check_compatibility_boundaries.sh
 	tests/architecture/check_code_map.sh
 	python3 tests/architecture/check_content_boundaries.py
+	tests/architecture/check_numeric_conversions.sh
 
 builtin-registry-check:
 	python3 tests/architecture/check_builtin_registry.py check

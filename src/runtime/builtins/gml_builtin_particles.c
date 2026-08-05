@@ -28,11 +28,11 @@ GmlVal gml_builtin_try_particles(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(!strcmp(nm,"part_type_orientation")){ gml_part_type_orientation(vm->particles,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),(int)N(a,n,5)); return vreal(0); }
       if(!strcmp(nm,"part_type_step")){ gml_part_type_step(vm->particles,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2)); return vreal(0); }
       if(!strcmp(nm,"part_type_death")){ gml_part_type_death(vm->particles,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2)); return vreal(0); }
-      if(!strcmp(nm,"part_type_color1")||!strcmp(nm,"part_type_colour1")){ gml_part_type_color(vm->particles,(int)N(a,n,0),1,(uint32_t)N(a,n,1),0,0); return vreal(0); }
-      if(!strcmp(nm,"part_type_color2")||!strcmp(nm,"part_type_colour2")){ gml_part_type_color(vm->particles,(int)N(a,n,0),2,(uint32_t)N(a,n,1),(uint32_t)N(a,n,2),0); return vreal(0); }
-      if(!strcmp(nm,"part_type_color3")||!strcmp(nm,"part_type_colour3")){ gml_part_type_color(vm->particles,(int)N(a,n,0),3,(uint32_t)N(a,n,1),(uint32_t)N(a,n,2),(uint32_t)N(a,n,3)); return vreal(0); }
+      if(!strcmp(nm,"part_type_color1")||!strcmp(nm,"part_type_colour1")){ gml_part_type_color(vm->particles,(int)N(a,n,0),1,NU32(a,n,1),0,0); return vreal(0); }
+      if(!strcmp(nm,"part_type_color2")||!strcmp(nm,"part_type_colour2")){ gml_part_type_color(vm->particles,(int)N(a,n,0),2,NU32(a,n,1),NU32(a,n,2),0); return vreal(0); }
+      if(!strcmp(nm,"part_type_color3")||!strcmp(nm,"part_type_colour3")){ gml_part_type_color(vm->particles,(int)N(a,n,0),3,NU32(a,n,1),NU32(a,n,2),NU32(a,n,3)); return vreal(0); }
       if(!strcmp(nm,"part_type_color_rgb")||!strcmp(nm,"part_type_colour_rgb")){ gml_part_type_color_rgb(vm->particles,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6)); return vreal(0); }
-      if(!strcmp(nm,"part_type_color_mix")||!strcmp(nm,"part_type_colour_mix")){ gml_part_type_color_mix(vm->particles,(int)N(a,n,0),(uint32_t)N(a,n,1),(uint32_t)N(a,n,2)); return vreal(0); }
+      if(!strcmp(nm,"part_type_color_mix")||!strcmp(nm,"part_type_colour_mix")){ gml_part_type_color_mix(vm->particles,(int)N(a,n,0),NU32(a,n,1),NU32(a,n,2)); return vreal(0); }
       if(!strcmp(nm,"part_type_color_hsv")||!strcmp(nm,"part_type_colour_hsv")){ gml_part_type_color_hsv(vm->particles,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6)); return vreal(0); }
       if(!strcmp(nm,"part_type_alpha1")){ gml_part_type_alpha(vm->particles,(int)N(a,n,0),1,N(a,n,1),0,0); return vreal(0); }
       if(!strcmp(nm,"part_type_alpha2")){ gml_part_type_alpha(vm->particles,(int)N(a,n,0),2,N(a,n,1),N(a,n,2),0); return vreal(0); }
@@ -55,7 +55,7 @@ GmlVal gml_builtin_try_particles(GmlVM *vm, const char *nm, GmlVal *a, int n){
       }
       if(!strcmp(nm,"part_particles_count")) return vreal(gml_part_system_count(vm->particles,(int)N(a,n,0)));
       if(!strcmp(nm,"part_particles_create")){ gml_part_particles_create(vm->particles,(int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3),(int)N(a,n,4)); return vreal(0); }
-      if(!strcmp(nm,"part_particles_create_color")||!strcmp(nm,"part_particles_create_colour")){ gml_part_particles_create_color(vm->particles,(int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3),(uint32_t)N(a,n,4),(int)N(a,n,5)); return vreal(0); }
+      if(!strcmp(nm,"part_particles_create_color")||!strcmp(nm,"part_particles_create_colour")){ gml_part_particles_create_color(vm->particles,(int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3),NU32(a,n,4),(int)N(a,n,5)); return vreal(0); }
       if(!strcmp(nm,"part_particles_clear")){ gml_part_system_clear(vm->particles,(int)N(a,n,0)); return vreal(0); }
       if(!strcmp(nm,"part_emitter_create")){ return vreal(gml_part_emitter_create(vm->particles,(int)N(a,n,0))); }
       if(!strcmp(nm,"part_emitter_exists")){ return vreal(gml_part_emitter_exists(vm->particles,(int)N(a,n,0),(int)N(a,n,1))); }

@@ -1003,7 +1003,7 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
   GmlRenderDrawState draw=builtin_draw_state(R);
   double alpha=draw.alpha; gml_render_maybe_prepare_draw(R);
   if(!strcmp(name,"draw_point")||!strcmp(name,"draw_point_color")||!strcmp(name,"draw_point_colour")){
-    uint32_t color=!strcmp(name,"draw_point")?draw.color:(uint32_t)N(args,count,2);
+    uint32_t color=!strcmp(name,"draw_point")?draw.color:NU32(args,count,2);
     gml_software3d_draw_point_2d(
       R,draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),
       color,alpha);
@@ -1012,8 +1012,8 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
   if(!strcmp(name,"draw_line")||!strcmp(name,"draw_line_color")||!strcmp(name,"draw_line_colour")||
      !strcmp(name,"draw_line_width")||!strcmp(name,"draw_line_width_color")||!strcmp(name,"draw_line_width_colour")){
     int colored=strstr(name,"color")||strstr(name,"colour"),wide=strstr(name,"width")!=NULL;
-    int color_index=wide?5:4; uint32_t c1=colored?(uint32_t)N(args,count,color_index):draw.color;
-    uint32_t c2=colored?(uint32_t)N(args,count,color_index+1):c1;
+    int color_index=wide?5:4; uint32_t c1=colored?NU32(args,count,color_index):draw.color;
+    uint32_t c2=colored?NU32(args,count,color_index+1):c1;
     gml_software3d_draw_line_2d(
       R,draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),
       draw_gui_x(R,N(args,count,2)),draw_gui_y(R,N(args,count,3)),c1,c2,alpha,
@@ -1021,15 +1021,15 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
   }
   if(!strcmp(name,"draw_rectangle")||!strcmp(name,"draw_rectangle_color")||!strcmp(name,"draw_rectangle_colour")){
     int plain=!strcmp(name,"draw_rectangle"); uint32_t colors[4];
-    for(int i=0;i<4;i++) colors[i]=plain?draw.color:(uint32_t)N(args,count,4+i);
+    for(int i=0;i<4;i++) colors[i]=plain?draw.color:NU32(args,count,4+i);
     gml_software3d_draw_rectangle_2d(
       R,draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),
       draw_gui_x(R,N(args,count,2)),draw_gui_y(R,N(args,count,3)),colors,alpha,
       (int)N(args,count,plain?4:8)); return 1;
   }
   if(!strcmp(name,"draw_triangle")||!strcmp(name,"draw_triangle_color")||!strcmp(name,"draw_triangle_colour")){
-    int plain=!strcmp(name,"draw_triangle"); uint32_t c1=plain?draw.color:(uint32_t)N(args,count,6);
-    uint32_t c2=plain?c1:(uint32_t)N(args,count,7),c3=plain?c1:(uint32_t)N(args,count,8);
+    int plain=!strcmp(name,"draw_triangle"); uint32_t c1=plain?draw.color:NU32(args,count,6);
+    uint32_t c2=plain?c1:NU32(args,count,7),c3=plain?c1:NU32(args,count,8);
     double points[3][2]={
       {draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1))},
       {draw_gui_x(R,N(args,count,2)),draw_gui_y(R,N(args,count,3))},
@@ -1041,8 +1041,8 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
     return 1;
   }
   if(!strcmp(name,"draw_circle")||!strcmp(name,"draw_circle_color")||!strcmp(name,"draw_circle_colour")){
-    int plain=!strcmp(name,"draw_circle"); uint32_t inner=plain?draw.color:(uint32_t)N(args,count,3);
-    uint32_t outer=plain?inner:(uint32_t)N(args,count,4);
+    int plain=!strcmp(name,"draw_circle"); uint32_t inner=plain?draw.color:NU32(args,count,3);
+    uint32_t outer=plain?inner:NU32(args,count,4);
     gml_software3d_draw_ellipse_2d(
       R,draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),
       fabs(draw_gui_w(R,N(args,count,2))),fabs(draw_gui_h(R,N(args,count,2))),
@@ -1052,7 +1052,7 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
     int plain=!strcmp(name,"draw_ellipse");
     double x1=draw_gui_x(R,N(args,count,0)),y1=draw_gui_y(R,N(args,count,1));
     double x2=draw_gui_x(R,N(args,count,2)),y2=draw_gui_y(R,N(args,count,3));
-    uint32_t inner=plain?draw.color:(uint32_t)N(args,count,4),outer=plain?inner:(uint32_t)N(args,count,5);
+    uint32_t inner=plain?draw.color:NU32(args,count,4),outer=plain?inner:NU32(args,count,5);
     gml_software3d_draw_ellipse_2d(
       R,(x1+x2)*.5,(y1+y2)*.5,fabs(x2-x1)*.5,fabs(y2-y1)*.5,
       inner,outer,alpha,(int)N(args,count,plain?4:6));
@@ -1061,8 +1061,8 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
   if(!strcmp(name,"draw_roundrect")||!strcmp(name,"draw_roundrect_color")||!strcmp(name,"draw_roundrect_colour")||
      !strcmp(name,"draw_roundrect_color_ext")||!strcmp(name,"draw_roundrect_colour_ext")){
     int plain=!strcmp(name,"draw_roundrect"),extended=strstr(name,"_ext")!=NULL;
-    uint32_t c1=plain?draw.color:(uint32_t)N(args,count,extended?6:4);
-    uint32_t c2=plain?c1:(uint32_t)N(args,count,extended?7:5),colors[4]={c1,c1,c2,c2};
+    uint32_t c1=plain?draw.color:NU32(args,count,extended?6:4);
+    uint32_t c2=plain?c1:NU32(args,count,extended?7:5),colors[4]={c1,c1,c2,c2};
     gml_software3d_draw_rectangle_2d(
       R,draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),
                     draw_gui_x(R,N(args,count,2)),draw_gui_y(R,N(args,count,3)),colors,alpha,
@@ -1072,7 +1072,7 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
     double x1=draw_gui_x(R,N(args,count,0)),y1=draw_gui_y(R,N(args,count,1));
     double x2=draw_gui_x(R,N(args,count,2)),y2=draw_gui_y(R,N(args,count,3));
     double amount=N(args,count,4); if(amount<0) amount=0; if(amount>100) amount=100;
-    uint32_t back=(uint32_t)N(args,count,5),fill=(uint32_t)N(args,count,7),solid[4];
+    uint32_t back=NU32(args,count,5),fill=NU32(args,count,7),solid[4];
     if((int)N(args,count,9)){
       for(int i=0;i<4;i++) solid[i]=back;
       gml_software3d_draw_rectangle_2d(R,x1,y1,x2,y2,solid,alpha,0);

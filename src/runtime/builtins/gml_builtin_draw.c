@@ -573,7 +573,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         GML_GRAPHICS,(int)N(a,n,0),GML_SOFTWARE3D_VERTEX_COLOR,value,2);
       return vreal(0); }
     if(!strcmp(nm,"vertex_argb")){
-      uint32_t red=(uint32_t)N(a,n,2)&255,green=(uint32_t)N(a,n,3)&255,blue=(uint32_t)N(a,n,4)&255;
+      uint32_t red=NU32(a,n,2)&255,green=NU32(a,n,3)&255,blue=NU32(a,n,4)&255;
       double value[4]={(double)(red|(green<<8)|(blue<<16)),N(a,n,1)/255.0,0,0};
       gml_software3d_vertex_buffer_attribute(
         GML_GRAPHICS,(int)N(a,n,0),GML_SOFTWARE3D_VERTEX_COLOR,value,2);
@@ -607,7 +607,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(0); }
     if(!strcmp(nm,"draw_sprite")){ if(R) gml_draw_sprite(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3)); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_ext")){ if(R) gml_draw_sprite_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
-        N(a,n,4),N(a,n,5),N(a,n,6),(uint32_t)N(a,n,7),N(a,n,8)); return vreal(0); }
+        N(a,n,4),N(a,n,5),N(a,n,6),NU32(a,n,7),N(a,n,8)); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_pos")){
       if(R){ double x[4]={N(a,n,2),N(a,n,4),N(a,n,6),N(a,n,8)};
         double y[4]={N(a,n,3),N(a,n,5),N(a,n,7),N(a,n,9)};
@@ -616,13 +616,13 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     /* draw_sprite_tiled(sprite,subimg,x,y) / _ext(...,xs,ys,color,alpha): tile a sprite to fill the screen */
     if(!strcmp(nm,"draw_sprite_tiled")){ GmlRenderDrawState draw=builtin_draw_state(R); if(R) gml_draw_sprite_tiled_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),1,1,0xFFFFFF,draw.alpha); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_tiled_ext")){ if(R) gml_draw_sprite_tiled_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
-        N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); return vreal(0); }
+        N(a,n,4),N(a,n,5),NU32(a,n,6),N(a,n,7)); return vreal(0); }
     if(!strcmp(nm,"draw_self") || (!strcmp(nm,"draw_full_sprite") && n==0)){
       GmlInstance *s=vm->cur_self;
       if(R&&s) gml_vm_draw_instance_sprite(
         vm,s,!strcmp(nm,"draw_full_sprite")?1:s->image_alpha);
       return vreal(0); }
-    if(!strcmp(nm,"draw_set_color")||!strcmp(nm,"draw_set_colour")){ builtin_set_draw_color(R,(uint32_t)N(a,n,0)); return vreal(0); }
+    if(!strcmp(nm,"draw_set_color")||!strcmp(nm,"draw_set_colour")){ builtin_set_draw_color(R,NU32(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"draw_set_alpha")){ builtin_set_draw_alpha(R,N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"draw_set_font")){ builtin_set_draw_font(vm,R,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"draw_set_halign")){ builtin_set_draw_halign(R,(int)N(a,n,0)); return vreal(0); }
@@ -635,17 +635,17 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     /* _ext = +xscale,yscale,colour,alpha (background_ext also has a rotation arg before colour). */
     if(!strcmp(nm,"draw_background_tiled_ext")){ int bd=(int)N(a,n,0),ht=1,vt=1; bg_layer_tiling(vm,bd,&ht,&vt);
       if(builtin_setting(vm,"GML_LOG_BGA")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[bga] bg=%d x=%g y=%g alpha=%g\n",bd,N(a,n,1),N(a,n,2),N(a,n,6));
-      if(R) gml_draw_background_tiled_ext(R,bd,N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),(uint32_t)N(a,n,5),N(a,n,6),ht,vt);
+      if(R) gml_draw_background_tiled_ext(R,bd,N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),NU32(a,n,5),N(a,n,6),ht,vt);
       return vreal(0); }
     if(!strcmp(nm,"draw_background_ext")){
       if(builtin_setting(vm,"GML_LOG_BG")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[bg] draw_background_ext(%d,%g,%g,%g,%g,%g)\n",
         (int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,7));
-      if(R) gml_draw_background_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),(uint32_t)N(a,n,6),N(a,n,7));
+      if(R) gml_draw_background_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),NU32(a,n,6),N(a,n,7));
       return vreal(0); }
     /* Surface / GUI draws. draw_surface_stretched(surf,x,y,w,h); _ext adds
      * (col,alpha); draw_sprite_stretched(spr,sub,x,y,w,h). */
     if(!strcmp(nm,"draw_surface_stretched")){ GmlRenderDrawState draw=builtin_draw_state(R); if(R) gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),0xFFFFFF,draw.alpha); return vreal(0); }
-    if(!strcmp(nm,"draw_surface_stretched_ext")){ if(R) gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),(uint32_t)N(a,n,5),N(a,n,6)); return vreal(0); }
+    if(!strcmp(nm,"draw_surface_stretched_ext")){ if(R) gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),NU32(a,n,5),N(a,n,6)); return vreal(0); }
     if(!strcmp(nm,"draw_surface")){ if(R){ int s=(int)N(a,n,0);
       GmlRenderDrawState draw=builtin_draw_state(R);
       GmlRenderTargetMetrics target=builtin_target_metrics(R);
@@ -658,21 +658,21 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
           gml_render_gui_logical_width(R),gml_render_gui_logical_height(R),0xFFFFFF,draw.alpha);
       else
         gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),gml_surface_width(R,s),gml_surface_height(R,s),0xFFFFFF,draw.alpha); } return vreal(0); }
-    if(!strcmp(nm,"draw_surface_ext")){ if(R) gml_draw_surface_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); return vreal(0); }
-    if(!strcmp(nm,"draw_surface_part_ext")){ if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),(uint32_t)N(a,n,9),N(a,n,10)); return vreal(0); }
+    if(!strcmp(nm,"draw_surface_ext")){ if(R) gml_draw_surface_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),NU32(a,n,6),N(a,n,7)); return vreal(0); }
+    if(!strcmp(nm,"draw_surface_part_ext")){ if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),NU32(a,n,9),N(a,n,10)); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_stretched")){ GmlRenderDrawState draw=builtin_draw_state(R); if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),0xFFFFFF,draw.alpha); return vreal(0); }
-    if(!strcmp(nm,"draw_sprite_stretched_ext")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7)); return vreal(0); }
+    if(!strcmp(nm,"draw_sprite_stretched_ext")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),NU32(a,n,6),N(a,n,7)); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_part")){ GmlRenderDrawState draw=builtin_draw_state(R); if(R) gml_draw_sprite_part_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),1,1,0xFFFFFF,draw.alpha); return vreal(0); }
-    if(!strcmp(nm,"draw_sprite_part_ext")){ if(R) gml_draw_sprite_part_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),N(a,n,9),(uint32_t)N(a,n,10),N(a,n,11)); return vreal(0); }
+    if(!strcmp(nm,"draw_sprite_part_ext")){ if(R) gml_draw_sprite_part_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),N(a,n,9),NU32(a,n,10),N(a,n,11)); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_general")){
       /* (sprite,subimg,left,top,width,height,x,y,xscale,yscale,rot,c1,c2,c3,c4,alpha).
        * Per-corner colors are approximated by c1; the part-blit path does not rotate. */
       if(R) gml_draw_sprite_part_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),
-                                     N(a,n,6),N(a,n,7),N(a,n,8),N(a,n,9),(uint32_t)N(a,n,11),N(a,n,15));
+                                     N(a,n,6),N(a,n,7),N(a,n,8),N(a,n,9),NU32(a,n,11),N(a,n,15));
       return vreal(0); }
     if(!strcmp(nm,"draw_background_stretched")){ GmlRenderDrawState draw=builtin_draw_state(R); if(R) gml_draw_background_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),0xFFFFFF,draw.alpha); return vreal(0); }
-    if(!strcmp(nm,"draw_background_stretched_ext")){ if(R) gml_draw_background_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),(uint32_t)N(a,n,5),N(a,n,6)); return vreal(0); }
-    if(!strcmp(nm,"draw_background_part_ext")){ if(R) gml_draw_background_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),(uint32_t)N(a,n,9),N(a,n,10)); return vreal(0); }
+    if(!strcmp(nm,"draw_background_stretched_ext")){ if(R) gml_draw_background_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),NU32(a,n,5),N(a,n,6)); return vreal(0); }
+    if(!strcmp(nm,"draw_background_part_ext")){ if(R) gml_draw_background_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),NU32(a,n,9),N(a,n,10)); return vreal(0); }
     if(!strcmp(nm,"draw_rectangle")||!strcmp(nm,"draw_rectangle_colour")||!strcmp(nm,"draw_rectangle_color")){
       if(R){ int plain=!strcmp(nm,"draw_rectangle"); int outline=(int)N(a,n,plain?4:8);
         GmlRenderTargetMetrics target=builtin_target_metrics(R);
@@ -692,18 +692,18 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         int y2=first_generation_outline?primitive_raster_coordinate(vm,raster_y2)
                                        :(int)ceil(raster_y2);
         if(plain) gml_render_primitive_rectangle(R,x1,y1,x2,y2,draw.color,outline);
-        else gml_render_primitive_rectangle_color(R,x1,y1,x2,y2,(uint32_t)N(a,n,4),(uint32_t)N(a,n,5),(uint32_t)N(a,n,6),(uint32_t)N(a,n,7),outline); }
+        else gml_render_primitive_rectangle_color(R,x1,y1,x2,y2,NU32(a,n,4),NU32(a,n,5),NU32(a,n,6),NU32(a,n,7),outline); }
       return vreal(0); }
     if(!strcmp(nm,"draw_point")){ if(R){ GmlRenderTargetMetrics target=builtin_target_metrics(R); GmlRenderDrawState draw=builtin_draw_state(R);
         gml_render_primitive_point(R,primitive_raster_coordinate(vm,draw_gui_x(R,N(a,n,0))-target.camera_x),primitive_raster_coordinate(vm,draw_gui_y(R,N(a,n,1))-target.camera_y),draw.color); } return vreal(0); }
     if(!strcmp(nm,"draw_point_color")||!strcmp(nm,"draw_point_colour")){ if(R){ GmlRenderTargetMetrics target=builtin_target_metrics(R);
-        gml_render_primitive_point(R,primitive_raster_coordinate(vm,draw_gui_x(R,N(a,n,0))-target.camera_x),primitive_raster_coordinate(vm,draw_gui_y(R,N(a,n,1))-target.camera_y),(uint32_t)N(a,n,2)); } return vreal(0); }
+        gml_render_primitive_point(R,primitive_raster_coordinate(vm,draw_gui_x(R,N(a,n,0))-target.camera_x),primitive_raster_coordinate(vm,draw_gui_y(R,N(a,n,1))-target.camera_y),NU32(a,n,2)); } return vreal(0); }
     if(!strcmp(nm,"draw_line")||!strcmp(nm,"draw_line_color")||!strcmp(nm,"draw_line_colour")||!strcmp(nm,"draw_line_width")||!strcmp(nm,"draw_line_width_color")||!strcmp(nm,"draw_line_width_colour")){
       if(R){ int has_col=strstr(nm,"color")||strstr(nm,"colour"); int has_w=strstr(nm,"width")!=NULL;
         GmlRenderTargetMetrics target=builtin_target_metrics(R);
         GmlRenderDrawState draw=builtin_draw_state(R);
-        uint32_t first=has_col?(uint32_t)N(a,n,has_w?5:4):draw.color;
-        uint32_t second=has_col?(uint32_t)N(a,n,has_w?6:5):first;
+        uint32_t first=has_col?NU32(a,n,has_w?5:4):draw.color;
+        uint32_t second=has_col?NU32(a,n,has_w?6:5):first;
         int width=has_w?(int)lround(draw_gui_w(R,N(a,n,4))):1; if(width<1) width=1;
         double x1=draw_gui_x(R,N(a,n,0))-target.camera_x;
         double y1=draw_gui_y(R,N(a,n,1))-target.camera_y;
@@ -759,13 +759,13 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"draw_circle_color")||!strcmp(nm,"draw_circle_colour")){ if(R){
         GmlRenderTargetMetrics target=builtin_target_metrics(R);
         gml_render_maybe_prepare_draw(R);
-        gml_render_primitive_circle_color(R,(int)floor(draw_gui_x(R,N(a,n,0))-target.camera_x),(int)floor(draw_gui_y(R,N(a,n,1))-target.camera_y),(int)fabs(draw_gui_w(R,N(a,n,2))),(int)fabs(draw_gui_h(R,N(a,n,2))),(uint32_t)N(a,n,3),(uint32_t)N(a,n,4),(int)N(a,n,5)); }
+        gml_render_primitive_circle_color(R,(int)floor(draw_gui_x(R,N(a,n,0))-target.camera_x),(int)floor(draw_gui_y(R,N(a,n,1))-target.camera_y),(int)fabs(draw_gui_w(R,N(a,n,2))),(int)fabs(draw_gui_h(R,N(a,n,2))),NU32(a,n,3),NU32(a,n,4),(int)N(a,n,5)); }
       return vreal(0); }
     if(!strcmp(nm,"draw_ellipse_color")||!strcmp(nm,"draw_ellipse_colour")){ if(R){
         GmlRenderTargetMetrics target=builtin_target_metrics(R);
         gml_render_maybe_prepare_draw(R);
         int x1=(int)floor(draw_gui_x(R,N(a,n,0))-target.camera_x), y1=(int)floor(draw_gui_y(R,N(a,n,1))-target.camera_y), x2=(int)floor(draw_gui_x(R,N(a,n,2))-target.camera_x), y2=(int)floor(draw_gui_y(R,N(a,n,3))-target.camera_y);
-        gml_render_primitive_circle_color(R,(x1+x2)/2,(y1+y2)/2,abs(x2-x1)/2,abs(y2-y1)/2,(uint32_t)N(a,n,4),(uint32_t)N(a,n,5),(int)N(a,n,6)); } return vreal(0); }
+        gml_render_primitive_circle_color(R,(x1+x2)/2,(y1+y2)/2,abs(x2-x1)/2,abs(y2-y1)/2,NU32(a,n,4),NU32(a,n,5),(int)N(a,n,6)); } return vreal(0); }
     if(!strcmp(nm,"draw_ellipse")){ if(R){
         GmlRenderTargetMetrics target=builtin_target_metrics(R); GmlRenderDrawState draw=builtin_draw_state(R);
         gml_render_maybe_prepare_draw(R);
@@ -779,7 +779,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         GmlRenderTargetMetrics target=builtin_target_metrics(R);
         gml_render_primitive_rectangle(R,(int)floor(draw_gui_x(R,N(a,n,0))-target.camera_x),(int)floor(draw_gui_y(R,N(a,n,1))-target.camera_y),
                        (int)ceil(draw_gui_x(R,N(a,n,2))-target.camera_x),(int)ceil(draw_gui_y(R,N(a,n,3))-target.camera_y),
-                       (uint32_t)N(a,n,ext?6:4),outline); }
+                       NU32(a,n,ext?6:4),outline); }
       return vreal(0); }
     if(!strcmp(nm,"draw_healthbar")){
       if(R){ double amt=N(a,n,4); if(amt<0) amt=0; if(amt>100) amt=100;
@@ -787,13 +787,13 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         int x1=(int)floor(draw_gui_x(R,N(a,n,0))-target.camera_x), y1=(int)floor(draw_gui_y(R,N(a,n,1))-target.camera_y);
         int x2=(int)ceil(draw_gui_x(R,N(a,n,2))-target.camera_x), y2=(int)ceil(draw_gui_y(R,N(a,n,3))-target.camera_y);
         if(x1>x2){ int t=x1; x1=x2; x2=t; } if(y1>y2){ int t=y1; y1=y2; y2=t; }
-        if((int)N(a,n,9)) gml_render_primitive_rectangle(R,x1,y1,x2,y2,(uint32_t)N(a,n,5),0);
+        if((int)N(a,n,9)) gml_render_primitive_rectangle(R,x1,y1,x2,y2,NU32(a,n,5),0);
         int dir=(int)N(a,n,8), fx1=x1,fy1=y1,fx2=x2,fy2=y2;
         if(dir==1) fx1=x2-(int)floor((x2-x1)*amt/100.0);
         else if(dir==2) fy2=y1+(int)floor((y2-y1)*amt/100.0);
         else if(dir==3) fy1=y2-(int)floor((y2-y1)*amt/100.0);
         else fx2=x1+(int)floor((x2-x1)*amt/100.0);
-        gml_render_primitive_rectangle(R,fx1,fy1,fx2,fy2,(uint32_t)N(a,n,7),0);
+        gml_render_primitive_rectangle(R,fx1,fy1,fx2,fy2,NU32(a,n,7),0);
         if((int)N(a,n,10)) gml_render_primitive_rectangle(R,x1,y1,x2,y2,0,1);
       }
       return vreal(0); }
@@ -802,7 +802,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         double x1=floor(draw_gui_x(R,N(a,n,0))-target.camera_x), y1=floor(draw_gui_y(R,N(a,n,1))-target.camera_y);
         double x2=floor(draw_gui_x(R,N(a,n,2))-target.camera_x), y2=floor(draw_gui_y(R,N(a,n,3))-target.camera_y);
         double x3=floor(draw_gui_x(R,N(a,n,4))-target.camera_x), y3=floor(draw_gui_y(R,N(a,n,5))-target.camera_y);
-        uint32_t col=!strcmp(nm,"draw_triangle")?draw.color:(uint32_t)N(a,n,6); int outline=(int)N(a,n,!strcmp(nm,"draw_triangle")?6:9);
+        uint32_t col=!strcmp(nm,"draw_triangle")?draw.color:NU32(a,n,6); int outline=(int)N(a,n,!strcmp(nm,"draw_triangle")?6:9);
         gml_render_maybe_prepare_draw(R);
         gml_render_primitive_triangle_alpha(R,x1,y1,x2,y2,x3,y3,col,draw.alpha,outline); }
       return vreal(0); }
@@ -810,7 +810,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       /* Pass the requested alpha through when clearing the target surface. */
       double clear_alpha=!strcmp(nm,"draw_clear_alpha")&&n>=2?
         N(a,n,1):1.0;
-      gml_render_clear(R,(uint32_t)N(a,n,0),clear_alpha);
+      gml_render_clear(R,NU32(a,n,0),clear_alpha);
     } return vreal(0); }
     if(!strcmp(nm,"draw_getpixel")){ if(R){ uint32_t p=0; int x=(int)draw_gui_x(R,N(a,n,0)), y=(int)draw_gui_y(R,N(a,n,1)); if(gml_render_target_pixel(R,x,y,&p)) return vreal(((p>>16)&0xff) | (p&0xff00) | ((p&0xff)<<16)); } return vreal(0); }
     if(!strcmp(nm,"draw_enable_alphablend")){ builtin_set_alpha_blend(R,N(a,n,0)>=0.5); return vreal(0); }
@@ -839,7 +839,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       (void)gml_software3d_primitive_2d_append(
         GML_GRAPHICS,N(a,n,0),N(a,n,1),
         tex?N(a,n,2):0,tex?N(a,n,3):0,
-        (n>coli)?(uint32_t)N(a,n,coli):draw.color,
+        (n>coli)?NU32(a,n,coli):draw.color,
         (n>coli+1)?N(a,n,coli+1):draw.alpha);
       return vreal(0); }
     if(!strcmp(nm,"draw_primitive_end")){
@@ -1192,7 +1192,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
      * flat top-left color. */
     if(!strcmp(nm,"draw_text_color")||!strcmp(nm,"draw_text_colour")){
       if(R){ GmlRenderDrawState saved=builtin_draw_state(R),temporary=saved;
-        temporary.color=(uint32_t)N(a,n,3); temporary.alpha=N(a,n,7);
+        temporary.color=NU32(a,n,3); temporary.alpha=N(a,n,7);
         gml_render_draw_state_update(R,&temporary,GML_RENDER_DRAW_STATE_COLOR|GML_RENDER_DRAW_STATE_ALPHA);
         gml_draw_text(R,N(a,n,0),N(a,n,1),S(vm,a,n,2));
         gml_render_draw_state_update(R,&saved,GML_RENDER_DRAW_STATE_COLOR|GML_RENDER_DRAW_STATE_ALPHA); }
@@ -1200,7 +1200,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"draw_text_ext")){ if(R) gml_draw_text_ext(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4)); return vreal(0); }
     if(!strcmp(nm,"draw_text_ext_colour")||!strcmp(nm,"draw_text_ext_color")){
       if(R){ GmlRenderDrawState saved=builtin_draw_state(R),temporary=saved;
-        temporary.color=(uint32_t)N(a,n,5); temporary.alpha=N(a,n,9);
+        temporary.color=NU32(a,n,5); temporary.alpha=N(a,n,9);
         gml_render_draw_state_update(R,&temporary,GML_RENDER_DRAW_STATE_COLOR|GML_RENDER_DRAW_STATE_ALPHA);
         gml_draw_text_ext(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4));
         gml_render_draw_state_update(R,&saved,GML_RENDER_DRAW_STATE_COLOR|GML_RENDER_DRAW_STATE_ALPHA); }
@@ -1210,7 +1210,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(0);
     }
     if(!strcmp(nm,"draw_text_transformed_color")||!strcmp(nm,"draw_text_transformed_colour")){
-      if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),(uint32_t)N(a,n,6),N(a,n,10));
+      if(R) gml_draw_text_transformed(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),NU32(a,n,6),N(a,n,10));
       return vreal(0);
     }
     if(!strcmp(nm,"draw_text_ext_transformed")){
@@ -1218,7 +1218,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(0);
     }
     if(!strcmp(nm,"draw_text_ext_transformed_color")||!strcmp(nm,"draw_text_ext_transformed_colour")){
-      if(R) gml_draw_text_ext_transformed(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),(uint32_t)N(a,n,8),N(a,n,12));
+      if(R) gml_draw_text_ext_transformed(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),NU32(a,n,8),N(a,n,12));
       return vreal(0);
     }
     if(!strcmp(nm,"string_width")) return vreal(R?gml_text_width(R,S(vm,a,n,0)):(int)strlen(S(vm,a,n,0))*8);
@@ -1303,7 +1303,7 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"d3d_set_fog")||!strcmp(nm,"gpu_set_fog")){
     control.fog=N(a,n,0)!=0;
-    control.fog_color=(uint32_t)N(a,n,1)&0xFFFFFFu;
+    control.fog_color=NU32(a,n,1)&0xFFFFFFu;
     control.fog_start=N(a,n,2);
     control.fog_end=N(a,n,3);
     gml_software3d_control_update(
@@ -1325,15 +1325,15 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"d3d_light_define_point")){
     return vreal(gml_software3d_light_define_point(
       graphics,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),
-      N(a,n,4),(uint32_t)N(a,n,5)));
+      N(a,n,4),NU32(a,n,5)));
   }
   if(!strcmp(nm,"d3d_light_define_direction")){
     return vreal(gml_software3d_light_define_direction(
       graphics,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),
-      (uint32_t)N(a,n,4)));
+      NU32(a,n,4)));
   }
   if(!strcmp(nm,"d3d_light_define_ambient")){
-    control.ambient_color=(uint32_t)N(a,n,0)&0xFFFFFFu;
+    control.ambient_color=NU32(a,n,0)&0xFFFFFFu;
     gml_software3d_control_update(
       graphics,&control,GML_SOFTWARE3D_CONTROL_AMBIENT);
     return vreal(1);
@@ -1479,7 +1479,7 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int index=4;
     if(normal){ vertex.nx=N(a,n,index++); vertex.ny=N(a,n,index++); vertex.nz=N(a,n,index++); vertex.has_normal=1; }
     if(texture){ vertex.u=N(a,n,index++); vertex.v=N(a,n,index++); }
-    if(colored){ color=(uint32_t)N(a,n,index++)&0xFFFFFFu; vertex.alpha=N(a,n,index); }
+    if(colored){ color=NU32(a,n,index++)&0xFFFFFFu; vertex.alpha=N(a,n,index); }
     vertex.r=color&255; vertex.g=(color>>8)&255; vertex.b=(color>>16)&255;
     return vreal(gml_software3d_model_append_vertex(
       graphics,(int)N(a,n,0),vertex));
@@ -1541,7 +1541,7 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int index=3;
     if(normal){ vertex.nx=N(a,n,index++); vertex.ny=N(a,n,index++); vertex.nz=N(a,n,index++); vertex.has_normal=1; }
     if(texture){ vertex.u=N(a,n,index++); vertex.v=N(a,n,index++); }
-    if(colored){ color=(uint32_t)N(a,n,index++)&0xFFFFFFu; vertex.alpha=N(a,n,index); }
+    if(colored){ color=NU32(a,n,index++)&0xFFFFFFu; vertex.alpha=N(a,n,index); }
     color=d3_vertex_color(vm,color,colored);
     vertex.r=color&255; vertex.g=(color>>8)&255; vertex.b=(color>>16)&255;
     (void)gml_software3d_primitive_3d_append(graphics,vertex);

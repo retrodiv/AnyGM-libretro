@@ -119,7 +119,7 @@ GmlVal gml_builtin_try_values_math(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal((int)((r+m)*255) + ((int)((g+m)*255)<<8) + ((int)((b+m)*255)<<16));
   }
   if(!strcmp(nm,"merge_color")||!strcmp(nm,"merge_colour")){
-    uint32_t c1=(uint32_t)N(a,n,0), c2=(uint32_t)N(a,n,1); double t=N(a,n,2); if(t<0)t=0; if(t>1)t=1;
+    uint32_t c1=NU32(a,n,0), c2=NU32(a,n,1); double t=N(a,n,2); if(t<0)t=0; if(t>1)t=1;
     int r=(int)((c1&255)*(1-t)+(c2&255)*t), g=(int)(((c1>>8)&255)*(1-t)+((c2>>8)&255)*t), b=(int)(((c1>>16)&255)*(1-t)+((c2>>16)&255)*t);
     return vreal(r+(g<<8)+(b<<16));
   }

@@ -227,7 +227,7 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
   if(!strcmp(nm,"action_sprite_color") || !strcmp(nm,"action_sprite_colour")){ GmlInstance *s=vm->cur_self; if(s){
       s->image_blend=N(a,n,0); s->image_alpha=N(a,n,1); } return vreal(0); }
   if(!strcmp(nm,"action_color") || !strcmp(nm,"action_colour")){ GmlRender *r=(GmlRender*)vm->render;
-    builtin_set_draw_color(r,(uint32_t)N(a,n,0));
+    builtin_set_draw_color(r,NU32(a,n,0));
     return vreal(0); }
   if(!strcmp(nm,"action_font")){ GmlRender *r=(GmlRender*)vm->render; if(r){
       GmlRenderDrawState state={0};
@@ -317,13 +317,13 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
   }
   if(!strcmp(nm,"action_set_cursor")){ vm->window_cursor=(int)N(a,n,0); return vreal(0); }
   if(!strcmp(nm,"effect_create_above")||!strcmp(nm,"effect_create_below")){
-    gml_effect_create(vm->particles,!strcmp(nm,"effect_create_above"),(int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3),(uint32_t)N(a,n,4));
+    gml_effect_create(vm->particles,!strcmp(nm,"effect_create_above"),(int)N(a,n,0),N(a,n,1),N(a,n,2),(int)N(a,n,3),NU32(a,n,4));
     return vreal(0);
   }
   if(!strcmp(nm,"action_effect")){
     double x=N(a,n,1),y=N(a,n,2); GmlInstance *s=vm->cur_self;
     if(N(a,n,5)!=0 && s){ x+=s->x; y+=s->y; }
-    gml_effect_create(vm->particles,1,(int)N(a,n,0),x,y,(int)N(a,n,3),(uint32_t)N(a,n,4));
+    gml_effect_create(vm->particles,1,(int)N(a,n,0),x,y,(int)N(a,n,3),NU32(a,n,4));
     return vreal(0);
   }
   if(!strcmp(nm,"action_wrap")){ GmlInstance *s=vm->cur_self; GmlRoom room; int dir=(int)N(a,n,0);

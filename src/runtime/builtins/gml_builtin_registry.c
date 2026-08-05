@@ -316,7 +316,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       return vreal(0);
     case BID_DRAW_SPRITE_EXT:
       if(R) gml_draw_sprite_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),
-        N(a,n,4),N(a,n,5),N(a,n,6),(uint32_t)N(a,n,7),N(a,n,8));
+        N(a,n,4),N(a,n,5),N(a,n,6),NU32(a,n,7),N(a,n,8));
       return vreal(0);
     case BID_DRAW_SELF:{
       if(!strcmp(nm,"draw_full_sprite") && n!=0) return vreal(0);
@@ -364,17 +364,17 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       return vreal(0);
     case BID_DRAW_SURFACE_EXT:
       if(R) gml_draw_surface_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),
-                                N(a,n,5),(uint32_t)N(a,n,6),N(a,n,7));
+                                N(a,n,5),NU32(a,n,6),N(a,n,7));
       return vreal(0);
     case BID_DRAW_SURFACE_STRETCHED:
       if(R){ GmlRenderDrawState draw=builtin_draw_state(R);
         gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),0xFFFFFF,draw.alpha); }
       return vreal(0);
     case BID_DRAW_SURFACE_STRETCHED_EXT:
-      if(R) gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),(uint32_t)N(a,n,5),N(a,n,6));
+      if(R) gml_draw_surface_stretched(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),NU32(a,n,5),N(a,n,6));
       return vreal(0);
     case BID_DRAW_SURFACE_PART_EXT:
-      if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),(uint32_t)N(a,n,9),N(a,n,10));
+      if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),NU32(a,n,9),N(a,n,10));
       return vreal(0);
     case BID_DRAW_RECTANGLE_COLOR:
     case BID_DRAW_RECTANGLE_COLOUR:
@@ -382,7 +382,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
         GmlRenderTargetMetrics target=builtin_target_metrics(R);
         int x1=(int)floor(draw_gui_x(R,N(a,n,0))-target.camera_x), y1=(int)floor(draw_gui_y(R,N(a,n,1))-target.camera_y);
         int x2=(int)ceil(draw_gui_x(R,N(a,n,2))-target.camera_x), y2=(int)ceil(draw_gui_y(R,N(a,n,3))-target.camera_y);
-        gml_render_primitive_rectangle_color(R,x1,y1,x2,y2,(uint32_t)N(a,n,4),(uint32_t)N(a,n,5),(uint32_t)N(a,n,6),(uint32_t)N(a,n,7),outline);
+        gml_render_primitive_rectangle_color(R,x1,y1,x2,y2,NU32(a,n,4),NU32(a,n,5),NU32(a,n,6),NU32(a,n,7),outline);
       }
       return vreal(0);
     case BID_DRAW_RECTANGLE:
@@ -395,7 +395,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       }
       return vreal(0);
     case BID_DRAW_SET_COLOR:
-      builtin_set_draw_color(R,(uint32_t)N(a,n,0));
+      builtin_set_draw_color(R,NU32(a,n,0));
       return vreal(0);
     case BID_DRAW_TEXT:
       if(R) gml_draw_text(R,N(a,n,0),N(a,n,1),S(vm,a,n,2));
@@ -405,7 +405,7 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       return vreal(0);
     case BID_DRAW_TEXT_EXT_TRANSFORMED_COLOUR:
     case BID_DRAW_TEXT_EXT_TRANSFORMED_COLOR:
-      if(R) gml_draw_text_ext_transformed(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),(uint32_t)N(a,n,8),N(a,n,12));
+      if(R) gml_draw_text_ext_transformed(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),NU32(a,n,8),N(a,n,12));
       return vreal(0);
     case BID_DRAW_SET_ALPHA:
       builtin_set_draw_alpha(R,N(a,n,0));

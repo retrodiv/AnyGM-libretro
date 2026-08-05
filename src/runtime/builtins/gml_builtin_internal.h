@@ -7,6 +7,7 @@
 #include "gml_builtin.h"
 #include "gml_render.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 /* file_find_first/next state (GM exposes one active find). Wildcard match is hand-rolled:
@@ -462,6 +463,20 @@ static inline uint32_t u32(const uint8_t *d, uint32_t o){
   return (uint32_t)d[o]|(uint32_t)d[o+1]<<8|(uint32_t)d[o+2]<<16|(uint32_t)d[o+3]<<24;
 }
 static inline double N(GmlVal *a, int n, int i){ return (i<n)? (a[i].t==V_REAL?a[i].d:(a[i].s?atof(a[i].s):0)) : 0; }
+
+/* Runtime values reach 32-bit arguments as doubles, and content routinely passes negative ones —
+ * -1 is the ordinary "no tint" colour. Converting a negative double straight to an unsigned type is
+ * undefined, and the two architectures this runtime targets disagree in the worst possible way: one
+ * wraps to all-ones while the other saturates to zero, turning an untinted draw black. Wrap
+ * explicitly so every host obtains the required modular result. */
+static inline uint32_t U32(double value){
+  if(!isfinite(value)) return 0;
+  double truncated=trunc(value);
+  double wrapped=fmod(truncated,4294967296.0);
+  if(wrapped<0.0) wrapped+=4294967296.0;
+  return (uint32_t)wrapped;
+}
+static inline uint32_t NU32(GmlVal *a, int n, int i){ return U32(N(a,n,i)); }
 
 
 #endif

@@ -158,7 +158,7 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
   if(!strcmp(nm,"layer_sprite_xscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->xs=N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_sprite_yscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->ys=N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_sprite_angle")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->image_angle=N(a,n,1); *out=vreal(0); return 1; }
-  if(!strcmp(nm,"layer_sprite_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->blend=(uint32_t)N(a,n,1)&0xFFFFFFu; *out=vreal(0); return 1; }
+  if(!strcmp(nm,"layer_sprite_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->blend=NU32(a,n,1)&0xFFFFFFu; *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_sprite_visible")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->visible=(int)N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_sprite_get_x")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); *out=vreal((e && e->type==3)?e->x:0); return 1; }
   if(!strcmp(nm,"layer_sprite_get_y")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); *out=vreal((e && e->type==3)?e->y:0); return 1; }
@@ -188,7 +188,7 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
   if(!strcmp(nm,"layer_tile_y")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->y=N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_tile_xscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->xs=N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_tile_yscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->ys=N(a,n,1); *out=vreal(0); return 1; }
-  if(!strcmp(nm,"layer_tile_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->blend=(uint32_t)N(a,n,1)&0xFFFFFF; *out=vreal(0); return 1; }
+  if(!strcmp(nm,"layer_tile_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->blend=NU32(a,n,1)&0xFFFFFF; *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_tile_alpha")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->alpha=N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_tile_visible")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->visible=(int)N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_tile_region")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0));
@@ -224,7 +224,7 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
     GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->sprite=(int)N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_background_visible")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->visible=(int)N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_background_alpha")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->alpha=N(a,n,1); *out=vreal(0); return 1; }
-  if(!strcmp(nm,"layer_background_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->blend=(uint32_t)N(a,n,1)&0xFFFFFF; *out=vreal(0); return 1; }
+  if(!strcmp(nm,"layer_background_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->blend=NU32(a,n,1)&0xFFFFFF; *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_background_htiled")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->htiled=(int)N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_background_vtiled")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->vtiled=(int)N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_background_stretch")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->stretch=(int)N(a,n,1); *out=vreal(0); return 1; }
@@ -299,12 +299,12 @@ GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
     const unsigned char *p=tm->tiles+((size_t)cy*tm->cols+cx)*4;
     return vreal((double)((uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24))); }
   if(!strcmp(nm,"tilemap_set")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
-    gml_tilemap_set_cell(tm,(int)N(a,n,2),(int)N(a,n,3),(uint32_t)N(a,n,1)); return vreal(0); }
+    gml_tilemap_set_cell(tm,(int)N(a,n,2),(int)N(a,n,3),NU32(a,n,1)); return vreal(0); }
   if(!strcmp(nm,"tilemap_set_at_pixel")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
     if(tm&&tm->tw&&tm->th){
       double tx,ty; gml_tilemap_effective(vm,tm,&tx,&ty,NULL,NULL);
       int cx=(int)floor((N(a,n,2)-tx)/tm->tw), cy=(int)floor((N(a,n,3)-ty)/tm->th);
-      gml_tilemap_set_cell(tm,cx,cy,(uint32_t)N(a,n,1));
+      gml_tilemap_set_cell(tm,cx,cy,NU32(a,n,1));
     }
     return vreal(0); }
   if(!strcmp(nm,"tilemap_get_width")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->cols:0); }
@@ -322,19 +322,19 @@ GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
                       R,tm->tileset,elapsed_seconds):0);
   }
   /* tile datum decode (GMS2 bit layout: index low 19 bits, then mirror/flip/rotate) */
-  if(!strcmp(nm,"tile_get_index")){ uint32_t t=(uint32_t)N(a,n,0); return vreal(t & 0x7FFFF); }
-  if(!strcmp(nm,"tile_get_empty")){ uint32_t t=(uint32_t)N(a,n,0); return vreal((t & 0x7FFFF)==0); }
-  if(!strcmp(nm,"tile_get_mirror")){ uint32_t t=(uint32_t)N(a,n,0); return vreal((t>>28)&1); }
-  if(!strcmp(nm,"tile_get_flip")){ uint32_t t=(uint32_t)N(a,n,0); return vreal((t>>29)&1); }
-  if(!strcmp(nm,"tile_get_rotate")){ uint32_t t=(uint32_t)N(a,n,0); return vreal((t>>30)&1); }
-  if(!strcmp(nm,"tile_set_empty")){ uint32_t t=(uint32_t)N(a,n,0); return vreal((double)(t & ~0x7FFFFu)); }
-  if(!strcmp(nm,"tile_set_index")){ uint32_t t=(uint32_t)N(a,n,0), idx=(uint32_t)N(a,n,1);
+  if(!strcmp(nm,"tile_get_index")){ uint32_t t=NU32(a,n,0); return vreal(t & 0x7FFFF); }
+  if(!strcmp(nm,"tile_get_empty")){ uint32_t t=NU32(a,n,0); return vreal((t & 0x7FFFF)==0); }
+  if(!strcmp(nm,"tile_get_mirror")){ uint32_t t=NU32(a,n,0); return vreal((t>>28)&1); }
+  if(!strcmp(nm,"tile_get_flip")){ uint32_t t=NU32(a,n,0); return vreal((t>>29)&1); }
+  if(!strcmp(nm,"tile_get_rotate")){ uint32_t t=NU32(a,n,0); return vreal((t>>30)&1); }
+  if(!strcmp(nm,"tile_set_empty")){ uint32_t t=NU32(a,n,0); return vreal((double)(t & ~0x7FFFFu)); }
+  if(!strcmp(nm,"tile_set_index")){ uint32_t t=NU32(a,n,0), idx=NU32(a,n,1);
     return vreal((double)((t & ~0x7FFFFu) | (idx & 0x7FFFFu))); }
-  if(!strcmp(nm,"tile_set_mirror")){ uint32_t t=(uint32_t)N(a,n,0);
+  if(!strcmp(nm,"tile_set_mirror")){ uint32_t t=NU32(a,n,0);
     if(N(a,n,1)>=0.5) t|=(1u<<28); else t&=~(1u<<28); return vreal((double)t); }
-  if(!strcmp(nm,"tile_set_flip")){ uint32_t t=(uint32_t)N(a,n,0);
+  if(!strcmp(nm,"tile_set_flip")){ uint32_t t=NU32(a,n,0);
     if(N(a,n,1)>=0.5) t|=(1u<<29); else t&=~(1u<<29); return vreal((double)t); }
-  if(!strcmp(nm,"tile_set_rotate")){ uint32_t t=(uint32_t)N(a,n,0);
+  if(!strcmp(nm,"tile_set_rotate")){ uint32_t t=NU32(a,n,0);
     if(N(a,n,1)>=0.5) t|=(1u<<30); else t&=~(1u<<30); return vreal((double)t); }
   if(!strcmp(nm,"layer_script_begin")||!strcmp(nm,"layer_script_end")){
     GmlRtLayer *l=rt_layer_resolve(vm,a,n);
@@ -406,7 +406,7 @@ GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(sub,"sprite_xscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->xs=N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"sprite_yscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->ys=N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"sprite_angle")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->image_angle=N(a,n,1); return vreal(0); }
-    if(!strcmp(sub,"sprite_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->blend=(uint32_t)N(a,n,1)&0xFFFFFFu; return vreal(0); }
+    if(!strcmp(sub,"sprite_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->blend=NU32(a,n,1)&0xFFFFFFu; return vreal(0); }
     if(!strcmp(sub,"sprite_visible")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==3) e->visible=(int)N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"sprite_get_x")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal((e && e->type==3)?e->x:0); }
     if(!strcmp(sub,"sprite_get_y")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); return vreal((e && e->type==3)?e->y:0); }
@@ -486,7 +486,7 @@ GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(sub,"tile_y")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->y=N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"tile_xscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->xs=N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"tile_yscale")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->ys=N(a,n,1); return vreal(0); }
-    if(!strcmp(sub,"tile_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->blend=(uint32_t)N(a,n,1)&0xFFFFFF; return vreal(0); }
+    if(!strcmp(sub,"tile_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->blend=NU32(a,n,1)&0xFFFFFF; return vreal(0); }
     if(!strcmp(sub,"tile_alpha")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->alpha=N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"tile_visible")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->visible=(int)N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"tile_region")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0));
@@ -516,7 +516,7 @@ GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
       GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->sprite=(int)N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"background_visible")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->visible=(int)N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"background_alpha")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->alpha=N(a,n,1); return vreal(0); }
-    if(!strcmp(sub,"background_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->blend=(uint32_t)N(a,n,1)&0xFFFFFF; return vreal(0); }
+    if(!strcmp(sub,"background_blend")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->blend=NU32(a,n,1)&0xFFFFFF; return vreal(0); }
     if(!strcmp(sub,"background_htiled")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->htiled=(int)N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"background_vtiled")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->vtiled=(int)N(a,n,1); return vreal(0); }
     if(!strcmp(sub,"background_stretch")){ GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e) e->stretch=(int)N(a,n,1); return vreal(0); }
