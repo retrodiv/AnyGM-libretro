@@ -171,7 +171,14 @@ void retro_set_controller_port_device(unsigned port,unsigned device){
 }
 
 void retro_reset(void){
-  if(g_libretro.loaded) anygm_reset(g_libretro.engine);
+  /* Options are otherwise picked up from inside the frame loop, and a player choosing one reaches
+   * the restart without the core having run a frame in between: hosts hold the core still while
+   * their menu is open. The choice that prompted the restart would then apply to the boot after
+   * the next one. Settings read at boot, the start room among them, are read here first. */
+  if(g_libretro.loaded){
+    libretro_options_apply(true);
+    anygm_reset(g_libretro.engine);
+  }
   libretro_update_av();
 }
 

@@ -92,7 +92,8 @@ size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capac
 void libretro_vfs_request(void){}
 void libretro_vfs_services_init(AnygmHostServices *services){ (void)services; }
 void libretro_options_register(void){}
-void libretro_options_apply(bool all_fields){ (void)all_fields; }
+static unsigned options_applied;
+void libretro_options_apply(bool all_fields){ (void)all_fields; options_applied++; }
 void libretro_options_publish_rooms(void){}
 void libretro_input_register(void){}
 void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t height){
@@ -169,12 +170,29 @@ static int fixed_transport_rejects_growth(void){
   return ok;
 }
 
+void retro_reset(void);
+
+/* A player changes a setting in the host's menu and restarts from that same menu, so the core
+ * never runs a frame in between; anything read only from inside the frame loop would apply to the
+ * boot after the one the player asked for. Settings read at boot are read on restart. */
+static int restart_rereads_settings(void){
+  if(!begin_frontend(1)) return 0;
+  unsigned before=options_applied;
+  retro_reset();
+  int ok=options_applied>before;
+  if(!ok) fprintf(stderr,"restart booted without re-reading the settings\n");
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
 int main(void){
   uint8_t byte=0;
   memset(&g_libretro,0,sizeof g_libretro);
   if(retro_serialize_size()!=0 || retro_serialize(&byte,1) || retro_unserialize(&byte,1) ||
      !stable_transport(1,1) || !stable_transport(0,0) || !stable_transport(-1,0) ||
-     !growing_transport() || !fixed_transport_rejects_growth()){
+     !growing_transport() || !fixed_transport_rejects_growth() ||
+     !restart_rereads_settings()){
     fprintf(stderr,"libretro state transport contract failed\n");
     return 1;
   }
