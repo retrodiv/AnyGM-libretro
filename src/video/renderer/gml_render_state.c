@@ -9,6 +9,7 @@
 #include <inttypes.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 typedef struct { uint8_t *data; size_t cap, pos; int ok; } CoreW;
@@ -55,6 +56,48 @@ static void state_store_u32(uint8_t *destination,uint32_t value){
 }
 
 
+
+/* A runtime sprite records the file it came from so a state can rebuild it without carrying its
+ * pixels. The file used to be named by the absolute path the session happened to open, which ties
+ * the state to one directory: a container extracted under a different name, a frontend configured
+ * with another save directory, or simply another machine leaves every one of those sprites
+ * unreadable and the whole state unloadable.
+ *
+ * Names are stored relative to the root they belong to instead, and rebuilt against the roots the
+ * loading session has. */
+enum { GML_RUNTIME_PATH_ABSOLUTE=0, GML_RUNTIME_PATH_CONTENT=1, GML_RUNTIME_PATH_SAVE=2 };
+
+static const char *runtime_path_under(const char *path,const char *root){
+  if(!path || !root || !root[0]) return NULL;
+  size_t n=strlen(root);
+  while(n>0 && (root[n-1]=='/' || root[n-1]=='\\')) n--;
+  if(!n || strncmp(path,root,n)) return NULL;
+  if(path[n]!='/' && path[n]!='\\') return NULL;
+  const char *relative=path+n;
+  while(*relative=='/' || *relative=='\\') relative++;
+  return *relative?relative:NULL;
+}
+
+static int runtime_path_store(const GmlRender *render,const char *path,const char **stored){
+  const GmlWin *win=render?render->win:NULL;
+  const char *relative=win?runtime_path_under(path,win->content_dir):NULL;
+  if(relative){ *stored=relative; return GML_RUNTIME_PATH_CONTENT; }
+  relative=win?runtime_path_under(path,win->save_dir):NULL;
+  if(relative){ *stored=relative; return GML_RUNTIME_PATH_SAVE; }
+  *stored=path;
+  return GML_RUNTIME_PATH_ABSOLUTE;
+}
+
+static int runtime_path_rebuild(const GmlRender *render,int root,const char *stored,
+                                char *out,size_t capacity){
+  const GmlWin *win=render?render->win:NULL;
+  const char *base=NULL;
+  if(root==GML_RUNTIME_PATH_CONTENT) base=win?win->content_dir:NULL;
+  else if(root==GML_RUNTIME_PATH_SAVE) base=win?win->save_dir:NULL;
+  else if(root!=GML_RUNTIME_PATH_ABSOLUTE) return 0;
+  if(!base || !base[0]) return snprintf(out,capacity,"%s",stored)<(int)capacity;
+  return snprintf(out,capacity,"%s/%s",base,stored)<(int)capacity;
+}
 
 static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
   cw_i32(s,render->n_fonts);
@@ -120,11 +163,14 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
     cw_i32(s,sp->ml); cw_i32(s,sp->mt); cw_i32(s,sp->mr); cw_i32(s,sp->mb);
     cw_i32(s,sp->collision_kind); cw_i32(s,sp->collision_tolerance);
     if(sp->runtime_source_path && sp->runtime_source_path[0]){
-      size_t plen=strlen(sp->runtime_source_path);
+      const char *stored=NULL;
+      int root=runtime_path_store(render,sp->runtime_source_path,&stored);
+      size_t plen=strlen(stored);
       if(plen>4095) plen=4095;
       cw_i32(s,1);
+      cw_i32(s,root);
       cw_i32(s,(int)plen);
-      cw_raw(s,sp->runtime_source_path,plen);
+      cw_raw(s,stored,plen);
       cw_i32(s,sp->runtime_source_imgnum);
       cw_i32(s,sp->runtime_source_removeback);
     } else {
@@ -241,11 +287,19 @@ static int render_state_read(GmlRender *render,CoreR *s){
     seen_runtime[id]=1;
     int mode = cr_i32(s);
     if(mode==1){
+      int root=cr_i32(s);
       int plen=cr_i32(s);
-      if(plen<0 || plen>4095){ free(seen_runtime); s->ok=0; return 0; }
-      char *path=malloc((size_t)plen+1);
-      if(!path){ free(seen_runtime); s->ok=0; return 0; }
-      cr_raw(s,path,(size_t)plen); path[plen]=0;
+      if(plen<0 || plen>4095 || root<GML_RUNTIME_PATH_ABSOLUTE || root>GML_RUNTIME_PATH_SAVE){
+        free(seen_runtime); s->ok=0; return 0;
+      }
+      char *stored=malloc((size_t)plen+1);
+      if(!stored){ free(seen_runtime); s->ok=0; return 0; }
+      cr_raw(s,stored,(size_t)plen); stored[plen]=0;
+      char *path=malloc(4608);
+      if(!path || !runtime_path_rebuild(render,root,stored,path,4608)){
+        free(stored); free(path); free(seen_runtime); s->ok=0; return 0;
+      }
+      free(stored);
       int imgnum=cr_i32(s), removeback=cr_i32(s);
       int got=-1;
       if(id>=0 && id<render->n_spr){
