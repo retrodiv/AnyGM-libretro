@@ -90,6 +90,66 @@ int expect_audio_group_gain(void){
 }
 
 
+/* A state must fully describe the sound table it was taken from. Sounds created after a state was
+ * saved are not in it, so restoring that state has to release them again; otherwise the table only
+ * ever grows, a save->load->save pair stops being stable, and the per-sound records -- which are
+ * stored positionally -- start landing on the wrong sounds. A frontend that saves and restores
+ * every frame, as run-ahead and rewind do, hits this on the first sound a session loads at run
+ * time. */
+int expect_state_load_releases_later_dynamic_sounds(void){
+  unsigned char wav[48]={0};
+  memcpy(wav,"RIFF",4);
+  fixture_write_u32(wav,4,sizeof(wav)-8);
+  memcpy(wav+8,"WAVEfmt ",8);
+  fixture_write_u32(wav,16,16);
+  fixture_write_u16(wav,20,1);
+  fixture_write_u16(wav,22,1);
+  fixture_write_u32(wav,24,44100);
+  fixture_write_u32(wav,28,44100);
+  fixture_write_u16(wav,32,1);
+  fixture_write_u16(wav,34,8);
+  memcpy(wav+36,"data",4);
+  fixture_write_u32(wav,40,4);
+  wav[44]=255; wav[45]=0; wav[46]=192; wav[47]=64;
+
+  GmlWin win={0};
+  GmlAudio *audio=gml_audio_create(&win);
+  if(!audio) return 0;
+
+  int first=gml_audio_add_encoded(audio,wav,sizeof wav);
+  int ok=first>=0 && gml_audio_exists(audio,first);
+  gml_audio_sound_gain(audio,first,0.5);
+
+  /* The state a frontend would keep from before the next sound is loaded. */
+  size_t size=gml_audio_state_size(audio),written=0,used=0;
+  void *state=malloc(size?size:1);
+  ok=ok && state && gml_audio_state_save(audio,state,size,&written) && written==size;
+
+  /* Crossing into content that loads its own audio appends a sound the state predates. */
+  int second=gml_audio_add_encoded(audio,wav,sizeof wav);
+  ok=ok && second>=0 && second!=first && gml_audio_exists(audio,second);
+  size_t grown=gml_audio_state_size(audio);
+  ok=ok && grown>size;
+
+  ok=ok && gml_audio_state_load(audio,state,size,&used) && used==size;
+  /* The sound the state predates must be gone, and the one it describes must survive intact. */
+  ok=ok && !gml_audio_exists(audio,second);
+  ok=ok && gml_audio_exists(audio,first);
+  ok=ok && fabs(gml_audio_sound_get_gain(audio,first)-0.5)<1e-12;
+  /* Restoring must return the table to the size the state describes, so a further save matches it
+   * and repeated restores stay stable rather than drifting. */
+  ok=ok && gml_audio_state_size(audio)==size;
+  size_t rewritten=0;
+  void *again=malloc(size?size:1);
+  ok=ok && again && gml_audio_state_save(audio,again,size,&rewritten) &&
+     rewritten==size && !memcmp(again,state,size);
+  free(again);
+  free(state);
+  gml_audio_free(audio);
+  if(!ok) fprintf(stderr,"state load did not release sounds created after the state\n");
+  return ok;
+}
+
 int expect_dynamic_audio_extension_state(void){
   unsigned char wav[48]={0};
   memcpy(wav,"RIFF",4);

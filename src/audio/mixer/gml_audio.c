@@ -990,6 +990,20 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
   if(stored_sounds<0 || stored_sounds>1000000){
     free(sound_state); return 0;
   }
+  /* Sounds past n_base_snd are created at run time, so a state saved before one existed must not
+   * leave it behind. Releasing them here makes a load restore the table the state describes rather
+   * than whatever the session has accumulated, which is what keeps a save->load->save pair stable
+   * for a frontend that stores and restores every frame. Sounds recorded in a state but missing
+   * from this session cannot be recreated -- the format carries their mixer parameters, not their
+   * identity -- so a larger stored count still applies index-wise onto what exists. */
+  if(a && stored_sounds>=a->n_base_snd && stored_sounds<a->n_snd){
+    for(int i=stored_sounds;i<a->n_snd;i++) gml_audio_caster_free(a,i);
+    a->n_snd=stored_sounds;
+    if(snd_count>a->n_snd) snd_count=a->n_snd;
+    for(int i=0;i<GML_MAX_VOICES;i++)
+      if(tmp[i].active && (tmp[i].snd<0 || tmp[i].snd>=a->n_snd))
+        memset(&tmp[i],0,sizeof(tmp[i]));
+  }
   for(int i=0;i<stored_sounds;i++){
     double g=ar_d(&s), p=ar_d(&s), l=ar_d(&s);
     double target=ar_d(&s);
