@@ -8,7 +8,7 @@
 
 static struct retro_variable g_variables[]={
   {"anygm_start_room","Start room; Full game"},
-  {"anygm_gamepad","Gamepad connection; Keyboard|Gamepad"},
+  {"anygm_gamepad","Gamepad connected; On|Off"},
   {"anygm_god","God mode; Off|On"},
   {"anygm_room_skip","Room-skip button; Off|Select|Start"},
   {"anygm_mouse","Mouse input; Auto|Absolute (pointer)|Relative (delta)"},
@@ -81,8 +81,9 @@ void libretro_options_apply(bool all_fields){
   config->crt_curvature=option_tristate("anygm_crt_curvature");
   config->crt_vignette=option_tristate("anygm_crt_vignette");
   config->embedded_shaders=option_on("anygm_embedded_shaders",1);
-  value=option_value("anygm_gamepad");
-  config->gamepad_connected=value&&!strcmp(value,"Gamepad")?1u:0u;
+  /* Content that offers a gamepad-only path checks this before the player can reach any menu, so
+   * a host that never sets the option must still report a pad. */
+  config->gamepad_connected=option_on("anygm_gamepad",1);
   value=option_value("anygm_fast_alpha_cull");
   config->fast_alpha_cull=!value||!strcmp(value,"Performance")?24u:
                           value&&!strcmp(value,"Light")?1u:
