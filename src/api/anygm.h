@@ -426,6 +426,14 @@ AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
 void anygm_unload(AnygmEngine *engine);
 AnygmResult anygm_reset(AnygmEngine *engine);
 AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info);
+/* Rooms of the loaded content, in the order the content declares them. A host presenting a
+ * room chooser has no other way to name what it is offering, and the index it collects is the
+ * one ANYGM_CONFIG_START_ROOM takes. Both calls require loaded content.
+ *
+ * anygm_get_room_name writes a NUL-terminated name, truncating to capacity. */
+AnygmResult anygm_get_room_count(const AnygmEngine *engine,uint32_t *count);
+AnygmResult anygm_get_room_name(const AnygmEngine *engine,uint32_t index,
+                                char *name,size_t capacity);
 AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
                             AnygmFrameOutput *output);
 AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta);

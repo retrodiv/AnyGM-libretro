@@ -215,6 +215,8 @@ bool retro_load_game(const struct retro_game_info *info){
   }
   g_libretro.loaded=true;
   g_libretro.fixed_state_capacity=0;
+  /* The room names only exist now, and the chooser is worth nothing without them. */
+  libretro_options_publish_rooms();
   libretro_update_av();
   return true;
 }

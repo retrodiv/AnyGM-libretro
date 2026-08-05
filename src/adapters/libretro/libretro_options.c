@@ -3,6 +3,7 @@
  */
 #include "libretro_internal.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -56,6 +57,56 @@ static uint32_t option_resolution(const char *key){
 void libretro_options_register(void){
   if(g_libretro.environment)
     g_libretro.environment(RETRO_ENVIRONMENT_SET_VARIABLES,g_variables);
+}
+
+/* The start room is the one option whose choices only exist once content is loaded. Declaring it
+ * with the entry point alone leaves a host offering a single value, so the chooser a player sees
+ * is empty of rooms; the list is published again with the content's own names behind it.
+ *
+ * Each choice carries its index first because that is what the option reader converts back, and
+ * the name after it because an index alone names nothing. */
+static char *g_start_room_values;
+
+static void append_room_choice(char *out,size_t capacity,size_t *written,
+                               uint32_t index,const char *name){
+  char choice[160];
+  int length=snprintf(choice,sizeof choice,"|%u: %s",(unsigned)index,name);
+  if(length<=0) return;
+  /* A separator inside a value would split it into two choices the reader cannot convert. */
+  for(char *cursor=choice;*cursor;cursor++) if(*cursor=='|' && cursor!=choice) *cursor='/';
+  if(*written+(size_t)length+1>capacity) return;
+  memcpy(out+*written,choice,(size_t)length+1);
+  *written+=(size_t)length;
+}
+
+void libretro_options_publish_rooms(void){
+  if(!g_libretro.environment || !g_libretro.engine) return;
+  uint32_t count=0;
+  if(anygm_get_room_count(g_libretro.engine,&count)!=ANYGM_OK || !count) return;
+  size_t capacity=64+(size_t)count*160;
+  char *values=malloc(capacity);
+  if(!values) return;
+  size_t written=(size_t)snprintf(values,capacity,"Start room; Full game");
+  uint32_t published=0;
+  for(uint32_t index=0;index<count;index++){
+    char name[128];
+    if(anygm_get_room_name(g_libretro.engine,index,name,sizeof name)!=ANYGM_OK) continue;
+    size_t before=written;
+    append_room_choice(values,capacity,&written,index,name[0]?name:"room");
+    if(written!=before) published++;
+  }
+  if(published<count)
+    libretro_log(RETRO_LOG_WARN,"Start room lists %u of %u rooms; the rest did not fit\n",
+                 (unsigned)published,(unsigned)count);
+  for(size_t i=0;g_variables[i].key;i++){
+    if(strcmp(g_variables[i].key,"anygm_start_room")) continue;
+    g_variables[i].value=values;
+    free(g_start_room_values);
+    g_start_room_values=values;
+    libretro_options_register();
+    return;
+  }
+  free(values);
 }
 
 void libretro_options_apply(bool all_fields){

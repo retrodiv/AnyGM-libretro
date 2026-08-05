@@ -93,6 +93,7 @@ void libretro_vfs_request(void){}
 void libretro_vfs_services_init(AnygmHostServices *services){ (void)services; }
 void libretro_options_register(void){}
 void libretro_options_apply(bool all_fields){ (void)all_fields; }
+void libretro_options_publish_rooms(void){}
 void libretro_input_register(void){}
 void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t height){
   (void)width; (void)height;

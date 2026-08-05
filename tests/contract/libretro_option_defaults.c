@@ -32,13 +32,37 @@ static bool environment_callback(unsigned command,void *data){
   return false;
 }
 
-/* The adapter's global context and the engine entry point it drives both live outside this
+/* The adapter's global context and the engine entry points it drives both live outside this
  * translation unit's dependency set; the option parsing under test needs only their presence. */
 LibretroAdapter g_libretro;
 AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   (void)engine;
   (void)delta;
   return ANYGM_OK;
+}
+
+static const char *const stub_rooms[]={"room_a","room_b","room_c"};
+#define STUB_ROOM_COUNT (sizeof stub_rooms/sizeof stub_rooms[0])
+
+AnygmResult anygm_get_room_count(const AnygmEngine *engine,uint32_t *count){
+  (void)engine;
+  if(!count) return ANYGM_ERROR_INVALID_STATE;
+  *count=(uint32_t)STUB_ROOM_COUNT;
+  return ANYGM_OK;
+}
+
+AnygmResult anygm_get_room_name(const AnygmEngine *engine,uint32_t index,
+                                char *name,size_t capacity){
+  (void)engine;
+  if(!name || !capacity) return ANYGM_ERROR_INVALID_STATE;
+  if(index>=STUB_ROOM_COUNT) return ANYGM_ERROR_INVALID_ARGUMENT;
+  snprintf(name,capacity,"%s",stub_rooms[index]);
+  return ANYGM_OK;
+}
+
+void libretro_log(enum retro_log_level level,const char *format,...){
+  (void)level;
+  (void)format;
 }
 
 static int failures;
@@ -89,11 +113,50 @@ static void declared_order_opens_connected(void){
   failures++;
 }
 
+/* The choices for this option only exist once content is loaded, so the entry-point declaration
+ * can only offer the whole game. A host asking the player which room to enter has nothing to show
+ * until the list is published again, and the index it collects has to survive the round trip
+ * through the value text back to the reader. */
+static const char *declared_start_room(void){
+  for(const struct retro_variable *variable=declared_variables;variable&&variable->key;variable++)
+    if(!strcmp(variable->key,"anygm_start_room")) return variable->value;
+  return NULL;
+}
+
+static void loaded_content_names_its_rooms(void){
+  const char *before=declared_start_room();
+  if(!before || strstr(before,"a room")){
+    fprintf(stderr,"libretro option defaults: rooms were offered before content was loaded\n");
+    failures++;
+    return;
+  }
+  libretro_options_publish_rooms();
+  const char *after=declared_start_room();
+  if(!after || !strstr(after,"Full game") || !strstr(after,"|2: a room")){
+    fprintf(stderr,"libretro option defaults: the room chooser is empty, got \"%s\"\n",
+            after?after:"(nothing)");
+    failures++;
+    return;
+  }
+  /* What the player picks is text; what the engine takes is the index in front of it. */
+  answered_value="2: a room";
+  g_libretro.config.start_room=-1;
+  libretro_options_apply(true);
+  expect("chosen room index",(unsigned)g_libretro.config.start_room,2u);
+  answered_value="Full game";
+  libretro_options_apply(true);
+  if(g_libretro.config.start_room!=-1){
+    fprintf(stderr,"libretro option defaults: the whole game did not stay the neutral choice\n");
+    failures++;
+  }
+}
+
 int main(void){
   g_libretro.environment=environment_callback;
   g_libretro.engine=engine_placeholder;
   libretro_options_register();
   declared_order_opens_connected();
+  loaded_content_names_its_rooms();
   unset_option_reports_a_pad();
   host_value_still_decides();
   if(failures) return 1;

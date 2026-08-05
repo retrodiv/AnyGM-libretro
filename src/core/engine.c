@@ -1560,6 +1560,28 @@ AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
   return ANYGM_OK;
 }
 
+AnygmResult anygm_get_room_count(const AnygmEngine *engine,uint32_t *count){
+  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED || !count)
+    return ANYGM_ERROR_INVALID_STATE;
+  int rooms=gml_room_count(&engine->win);
+  *count=rooms>0?(uint32_t)rooms:0u;
+  return ANYGM_OK;
+}
+
+AnygmResult anygm_get_room_name(const AnygmEngine *engine,uint32_t index,
+                                char *name,size_t capacity){
+  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED ||
+     !name || !capacity)
+    return ANYGM_ERROR_INVALID_STATE;
+  name[0]='\0';
+  int rooms=gml_room_count(&engine->win);
+  if(rooms<=0 || index>=(uint32_t)rooms) return ANYGM_ERROR_INVALID_ARGUMENT;
+  GmlRoom room;
+  if(gml_room_get(&engine->win,(int)index,&room)!=0) return ANYGM_ERROR_INVALID_CONTENT;
+  snprintf(name,capacity,"%s",room.name?room.name:"");
+  return ANYGM_OK;
+}
+
 AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
                             AnygmFrameOutput *output){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED || !output)
