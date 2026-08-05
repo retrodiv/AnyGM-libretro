@@ -54,8 +54,14 @@ The current profile centralizes comparison epsilon, alarm dispatch and trigger
 threshold, live versus frame-snapshot instance iteration, solid-collision
 coordinates, blend behavior, function/struct/layer semantics, animation
 timing, path velocity ownership, transformed collision bounds, creation-event
-ordering, classic presentation and interpolation, view slots, and related
-format behavior.
+ordering, frame retention without a background clear, classic presentation and
+interpolation, view slots, and related format behavior.
+
+Frame retention is also independently resolved. Studio generations retain the
+completed previous frame when a room requests neither the background color nor
+the view clear. Classic generations clear the drawing target every frame and use
+the room fields only to decide what is painted over that clear, so
+half-transparent drawing cannot accumulate towards opacity across frames.
 
 Alarm dispatch is an independently resolved policy: classic inputs and Studio
 bytecode 16 run each alarm subtype by ascending exact object resource and then

@@ -285,7 +285,7 @@ int anygm_synthetic_background_color_content_create(AnygmSyntheticContent *fixtu
 }
 
 static int synthetic_framebuffer_content_create(
-    AnygmSyntheticContent *fixture,int multiview,int clear_view_background){
+    AnygmSyntheticContent *fixture,int multiview,int clear_view_background,int classic){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
@@ -320,6 +320,12 @@ static int synthetic_framebuffer_content_create(
   project.n_rooms=project.cap_rooms=2;
   project.room_order=room_order;
   project.n_room_order=2;
+  if(classic){
+    project.classic_version=800;
+    /* Distinct from both room colors so a cleared classic frame cannot be mistaken for a
+     * retained one or for the room the fixture painted first. */
+    project.classic_outside_color=0x00204060u;
+  }
 
   object.id=object.name=(char *)"obj_fixture";
   object.sprite_id=object.mask_id=object.parent_id=-1;
@@ -380,19 +386,28 @@ static int synthetic_framebuffer_content_create(
 }
 
 int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_framebuffer_content_create(fixture,0,0);
+  return synthetic_framebuffer_content_create(fixture,0,0,0);
 }
 
 int anygm_synthetic_multiview_framebuffer_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_framebuffer_content_create(fixture,1,0);
+  return synthetic_framebuffer_content_create(fixture,1,0,0);
 }
 
 int anygm_synthetic_clear_view_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_framebuffer_content_create(fixture,0,1);
+  return synthetic_framebuffer_content_create(fixture,0,1,0);
 }
 
 int anygm_synthetic_multiview_clear_view_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_framebuffer_content_create(fixture,1,1);
+  return synthetic_framebuffer_content_create(fixture,1,1,0);
+}
+
+int anygm_synthetic_classic_framebuffer_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,0,0,1);
+}
+
+int anygm_synthetic_classic_multiview_framebuffer_content_create(
+    AnygmSyntheticContent *fixture){
+  return synthetic_framebuffer_content_create(fixture,1,0,1);
 }
 
 int anygm_synthetic_game_change_content_create(AnygmSyntheticContent *fixture){

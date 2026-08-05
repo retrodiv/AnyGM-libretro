@@ -974,7 +974,10 @@ uint32_t cur_room_bg(AnygmEngine *engine) {
   if (anygm_policy_uses_classic_runtime(&engine->win)) return gm_to_xrgb(engine->win.classic_outside_color);
   return gm_to_xrgb(gml_vm_room_background_argb(&engine->vm));
 }
-int room_clears_application_surface(const GmlRoom *room) {
+int room_clears_application_surface(const GmlWin *content, const GmlRoom *room) {
+  /* Generations that keep the completed frame let the room decide; the rest clear every frame and
+   * treat the room fields as the choice of paint over that clear, not as the choice to clear. */
+  if (!anygm_policy_preserves_frame_without_background_clear(content)) return 1;
   return room &&
     (room->draw_bg || (room->flags&GML_ROOM_FLAG_CLEAR_VIEW_BACKGROUND));
 }
@@ -1120,7 +1123,7 @@ int render_multiview_application(AnygmEngine *engine) {
 
   GmlRoom rm;
   int have_room = gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) == 0;
-  int clear_background = !have_room || room_clears_application_surface(&rm);
+  int clear_background = !have_room || room_clears_application_surface(&engine->win, &rm);
   if(clear_background)
     for(unsigned i=0;i<engine->width*engine->height;i++) engine->fb[i]=0xFF000000u;
   const char *bg_renderer = anygm_host_development_setting(&engine->host,"GML_BG_RENDERER_OBJ");

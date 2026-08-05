@@ -30,6 +30,8 @@ int main(void){
   if(!classic_early.uses_classic_runtime || classic_early.classic_modern_presentation ||
      !classic_late.classic_modern_presentation ||
      classic_early.alarm_dispatch!=ANYGM_ALARM_DISPATCH_RESOURCE_MAJOR ||
+     classic_early.preserves_frame_without_background_clear ||
+     classic_late.preserves_frame_without_background_clear ||
      classic_early.blend!=ANYGM_BLEND_CLASSIC){
     fputs("classic policy resolution mismatch\n",stderr);
     return 1;
@@ -39,6 +41,7 @@ int main(void){
      first_early.alarm_dispatch!=ANYGM_ALARM_DISPATCH_STANDARD ||
      first_early.alarm_threshold!=ANYGM_ALARM_TRIGGER_BELOW_ZERO ||
      first_early.instance_iteration!=ANYGM_INSTANCE_ITERATION_LIVE ||
+     !first_early.preserves_frame_without_background_clear ||
      first_early.solid_collision_transaction!=ANYGM_COLLISION_CURRENT_COORDINATES){
     fputs("first-generation early policy resolution mismatch\n",stderr);
     return 1;
@@ -55,6 +58,7 @@ int main(void){
      second.instance_iteration!=ANYGM_INSTANCE_ITERATION_FRAME_SNAPSHOT ||
      second.alarm_dispatch!=ANYGM_ALARM_DISPATCH_STANDARD ||
      second.solid_collision_transaction!=ANYGM_COLLISION_PREVIOUS_COORDINATES ||
+     !second.preserves_frame_without_background_clear ||
      second.blend!=ANYGM_BLEND_STUDIO_SECOND){
     fputs("second-generation policy resolution mismatch\n",stderr);
     return 1;

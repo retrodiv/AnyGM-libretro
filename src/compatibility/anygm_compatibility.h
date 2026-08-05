@@ -76,6 +76,7 @@ typedef struct AnygmCompatibilityProfile {
   uint32_t has_modern_struct_semantics;
   uint32_t has_modern_layer_semantics;
   uint32_t advances_animation_before_step;
+  uint32_t preserves_frame_without_background_clear;
   uint32_t path_motion_owns_velocity;
   uint32_t round_transformed_collision_bounds;
   uint32_t creation_code_before_create;
@@ -174,6 +175,15 @@ static inline int anygm_policy_creation_code_before_create(const GmlWin *content
 static inline int anygm_policy_animation_before_step(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->advances_animation_before_step:(content&&content->classic_version);
+}
+/* A room that requests no background clear leaves the completed frame in place on generations
+ * with frame retention. Classic generations clear the drawing target every frame; the room flag
+ * only decides whether the room color is painted over that cleared target, so half-transparent
+ * drawing must not accumulate across frames. */
+static inline int anygm_policy_preserves_frame_without_background_clear(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?(int)p->preserves_frame_without_background_clear:
+    (content&&!content->classic_version);
 }
 static inline unsigned anygm_policy_legacy_view_slots(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);

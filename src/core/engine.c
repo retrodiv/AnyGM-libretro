@@ -838,8 +838,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   GmlRoom rm;
   int have_room = (gml_vm_room_get(&engine->vm, engine->vm.room_index, &rm) == 0);
   /* The legacy background-color field and the distinct room flag can each request an
-   * application-surface clear. If both are disabled, drawing retains the completed framebuffer. */
-  if (!have_room || room_clears_application_surface(&rm))
+   * application-surface clear. Where the generation allows it and both are disabled, drawing
+   * retains the completed framebuffer. */
+  if (!have_room || room_clears_application_surface(&engine->win, &rm))
     gml_render_set_pending_fill(&engine->render, engine->background);
   /* Some games draw room backgrounds themselves from GML. When a launcher supplies that renderer
    * object's name, defer to it and avoid double-drawing the engine's static fallback. */

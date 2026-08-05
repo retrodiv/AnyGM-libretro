@@ -53,6 +53,7 @@ static uint64_t compatibility_fingerprint(const AnygmCompatibilityProfile *profi
   ENCODE_FIELD(has_modern_struct_semantics);
   ENCODE_FIELD(has_modern_layer_semantics);
   ENCODE_FIELD(advances_animation_before_step);
+  ENCODE_FIELD(preserves_frame_without_background_clear);
   ENCODE_FIELD(path_motion_owns_velocity);
   ENCODE_FIELD(round_transformed_collision_bounds);
   ENCODE_FIELD(creation_code_before_create);
@@ -130,6 +131,7 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   profile->blend=classic?ANYGM_BLEND_CLASSIC:
     (modern?ANYGM_BLEND_STUDIO_SECOND:ANYGM_BLEND_STUDIO_FIRST);
   profile->advances_animation_before_step=classic;
+  profile->preserves_frame_without_background_clear=!classic;
   profile->path_motion_owns_velocity=classic||modern;
   profile->round_transformed_collision_bounds=classic || facts->bytecode_revision==16 ||
     (facts->option_flags&UINT64_C(0x08000000));

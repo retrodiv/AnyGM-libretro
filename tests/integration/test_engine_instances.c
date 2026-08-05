@@ -304,10 +304,71 @@ static int framebuffer_retention_case(
   return ok;
 }
 
+/* Classic generations clear the drawing target every frame, so disabling background drawing must
+ * show the outside color rather than the frame the previous room completed. Without that clear,
+ * half-transparent drawing accumulates towards opacity over consecutive frames. */
+static int framebuffer_clear_case(
+    int (*create_fixture)(AnygmSyntheticContent *),const char *label){
+  AnygmSyntheticContent fixture;
+  if(!create_fixture(&fixture)){
+    fprintf(stderr,"%s framebuffer-clear fixture creation failed\n",label);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     output.pixels && output.width==64 && output.height==48;
+  size_t pixels=(size_t)output.width*output.height;
+  const uint32_t *presented=ok?(const uint32_t *)output.pixels:NULL;
+  size_t painted_unexpected=0;
+  if(presented) for(size_t i=0;i<pixels;i++)
+    if((presented[i]&0xFFFFFFu)!=0x996633u) painted_unexpected++;
+  ok=ok && painted_unexpected==0;
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     engine->vm.room_index==1 && output.pixels;
+  /* 0x00204060 is authored as a classic BGR colour, so its presented value is 0x604020. */
+  presented=ok?(const uint32_t *)output.pixels:NULL;
+  size_t cleared_unexpected=0;
+  if(presented) for(size_t i=0;i<pixels;i++)
+    if((presented[i]&0xFFFFFFu)!=0x604020u) cleared_unexpected++;
+  ok=ok && cleared_unexpected==0;
+  if(!ok)
+    fprintf(stderr,
+      "%s classic room with background drawing disabled did not clear the framebuffer"
+      " (%zu unexpected painted pixels, %zu unexpected cleared pixels, room=%d,"
+      " output=%ux%u)\n",
+      label,painted_unexpected,cleared_unexpected,engine?engine->vm.room_index:-1,
+      output.width,output.height);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int framebuffer_retention_policy(void){
   return framebuffer_retention_case(anygm_synthetic_framebuffer_content_create,"single-view") &&
          framebuffer_retention_case(
-           anygm_synthetic_multiview_framebuffer_content_create,"multi-view");
+           anygm_synthetic_multiview_framebuffer_content_create,"multi-view") &&
+         framebuffer_clear_case(
+           anygm_synthetic_classic_framebuffer_content_create,"classic single-view") &&
+         framebuffer_clear_case(
+           anygm_synthetic_classic_multiview_framebuffer_content_create,"classic multi-view");
 }
 
 static int background_color_policy(void){
@@ -777,9 +838,11 @@ int main(int argc,char **argv){
     fprintf(stderr,"repeated serialization was not deterministic\n");
     return 1;
   }
+  /* The state carries the resolved compatibility fingerprint, so this hash moves whenever a
+   * reviewed policy is added or changed while the serialized layout itself stays the same. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
   if(deterministic_size!=19598 ||
-     deterministic_hash!=UINT64_C(0xe7f59e2cae2e240b)){
+     deterministic_hash!=UINT64_C(0xa5258b7dc207e73b)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;
