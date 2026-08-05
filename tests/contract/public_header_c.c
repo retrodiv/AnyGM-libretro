@@ -4,7 +4,7 @@
 #include "anygm.h"
 
 _Static_assert(ANYGM_API_VERSION==1u,"unexpected API version");
-_Static_assert(ANYGM_STATE_SCHEMA==4u,"unexpected state schema");
+_Static_assert(ANYGM_STATE_SCHEMA==5u,"unexpected state schema");
 
 int anygm_public_header_c_probe(void){
   AnygmHostServices services={0};
