@@ -99,7 +99,7 @@ RUNTIME_TESTS := test_rng test_persistent_room test_d3_state test_ds_grid \
 	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets
-CONTENT_TESTS := test_bytecode test_package test_classic
+CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks
 MEDIA_TESTS := test_image_codec test_font_raster
 COMPATIBILITY_TESTS := test_compatibility
 CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TESTS) \
@@ -229,6 +229,11 @@ $(TEST_DIR)/test_package: tests/unit/content/test_package.c \
 	mkdir -p $(dir $@)
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
 
+$(TEST_DIR)/test_sprite_masks: tests/unit/content/test_sprite_masks.c \
+	$(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+
 $(TEST_DIR)/test_classic: $(ANYGM_CLASSIC_TEST_SOURCES) \
 	src/host/anygm_host.c src/host/anygm_vfs.c src/host/stdio_vfs.c \
 	src/media/gml_image_codec.c src/media/gml_font_raster.c \
@@ -263,6 +268,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_bytecode
 	$(TEST_DIR)/test_package
 	$(TEST_DIR)/test_classic
+	$(TEST_DIR)/test_sprite_masks
 	$(TEST_DIR)/test_image_codec
 	$(TEST_DIR)/test_font_raster
 	$(TEST_DIR)/test_compatibility

@@ -380,9 +380,9 @@ static int write_sprite_masks(Pkg *pkg, const GmlcProject *project,
       snprintf(err,errcap,"out of memory while writing sprite mask");
       return 0;
     }
-    /* When separate collision masks are disabled, build one shared mask from the union
-     * of every subimage so animated extrema remain part of collision checks. */
-    int first_frame=sp->sep_masks ? f : 0;
+    /* When separate collision masks are disabled, the shared mask carries the final
+     * subimage's silhouette. */
+    int first_frame=sp->sep_masks ? f : sp->n_frames-1;
     int end_frame=sp->sep_masks ? f+1 : sp->n_frames;
     for(int source_frame=first_frame;source_frame<end_frame;source_frame++){
       int w=0,h=0,comp=0;
