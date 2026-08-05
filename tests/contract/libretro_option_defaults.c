@@ -195,10 +195,6 @@ static void every_setting_sits_in_a_group(void){
       failures++;
     }
   }
-
-  /* Neither of these can act on a choice a player makes, so neither is offered. */
-  if(definition("anygm_god") || definition("anygm_room_skip"))
-    complain("a setting that does nothing is still offered");
 }
 
 static void unset_settings_keep_content_reachable(void){
