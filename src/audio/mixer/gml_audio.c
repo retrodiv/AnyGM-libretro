@@ -1004,13 +1004,22 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
       if(tmp[i].active && (tmp[i].snd<0 || tmp[i].snd>=a->n_snd))
         memset(&tmp[i],0,sizeof(tmp[i]));
   }
+  /* Records are positional and run-time sounds carry no identity, so an index only names the same
+   * sound when both tables have the same shape. Resource-backed sounds always do. Run-time ones do
+   * only when the counts agree, which the release above arranges whenever the state describes the
+   * smaller table; when the state describes a larger one its surplus sounds cannot be recreated, and
+   * applying their gains and fades to whatever occupies those slots would corrupt unrelated sounds. */
+  int dynamic_layout_matches=a && stored_sounds==a->n_snd;
+  int applied_limit=snd_count;
+  if(a && !dynamic_layout_matches && a->n_base_snd<applied_limit)
+    applied_limit=a->n_base_snd;
   for(int i=0;i<stored_sounds;i++){
     double g=ar_d(&s), p=ar_d(&s), l=ar_d(&s);
     double target=ar_d(&s);
     int remaining=ar_i32(&s);
     int default_loop=ar_i32(&s);
     uint32_t external_type=ar_u32(&s);
-    if(i<snd_count){
+    if(i<applied_limit){
       sound_state[i].gain=isfinite(g)&&g>=0.0?g:1.0;
       sound_state[i].pitch=isfinite(p)&&p>0.0?p:1.0;
       sound_state[i].loop_start=isfinite(l)&&l>=0.0?l:0.0;
@@ -1044,7 +1053,10 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
     memcpy(a->group_gain,group_gain,sizeof group_gain);
     memcpy(a->group_target,group_target,sizeof group_target);
     memcpy(a->group_fade_frames,group_fade_frames,sizeof group_fade_frames);
-    for(int i=0;i<a->n_snd;i++){
+    /* Only the sounds the state can actually name are rewritten. A sound the state says nothing
+     * trustworthy about keeps what it has, rather than being reset to defaults it never carried. */
+    int restore_limit=a->n_snd<applied_limit?a->n_snd:applied_limit;
+    for(int i=0;i<restore_limit;i++){
       a->snd[i].gain=sound_state?sound_state[i].gain:1.0;
       a->snd[i].pitch=sound_state?sound_state[i].pitch:1.0;
       a->snd[i].loop_start_seconds=sound_state?sound_state[i].loop_start:0.0;

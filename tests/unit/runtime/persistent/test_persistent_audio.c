@@ -150,6 +150,59 @@ int expect_state_load_releases_later_dynamic_sounds(void){
   return ok;
 }
 
+/* The mirror case. A state may name more run-time sounds than the session holds, and it carries
+ * their mixer parameters but not their identity, so they cannot be recreated. Their records must
+ * then not be applied to whatever occupies those slots, and the sounds the state says nothing
+ * trustworthy about must keep what they have rather than being reset. */
+int expect_state_load_ignores_unmatched_dynamic_records(void){
+  unsigned char wav[48]={0};
+  memcpy(wav,"RIFF",4);
+  fixture_write_u32(wav,4,sizeof(wav)-8);
+  memcpy(wav+8,"WAVEfmt ",8);
+  fixture_write_u32(wav,16,16);
+  fixture_write_u16(wav,20,1);
+  fixture_write_u16(wav,22,1);
+  fixture_write_u32(wav,24,44100);
+  fixture_write_u32(wav,28,44100);
+  fixture_write_u16(wav,32,1);
+  fixture_write_u16(wav,34,8);
+  memcpy(wav+36,"data",4);
+  fixture_write_u32(wav,40,4);
+  wav[44]=255; wav[45]=0; wav[46]=192; wav[47]=64;
+
+  GmlWin win={0};
+  GmlAudio *audio=gml_audio_create(&win);
+  if(!audio) return 0;
+
+  /* A session that had two run-time sounds when the state was taken. */
+  int first=gml_audio_add_encoded(audio,wav,sizeof wav);
+  int second=gml_audio_add_encoded(audio,wav,sizeof wav);
+  int ok=first>=0 && second>=0 && second!=first;
+  gml_audio_sound_gain(audio,first,0.25);
+  gml_audio_sound_gain(audio,second,0.75);
+  size_t size=gml_audio_state_size(audio),written=0,used=0;
+  void *state=malloc(size?size:1);
+  ok=ok && state && gml_audio_state_save(audio,state,size,&written) && written==size;
+  gml_audio_free(audio);
+
+  /* A fresh session that has loaded only one run-time sound, and a different one. */
+  audio=gml_audio_create(&win);
+  if(!audio){ free(state); return 0; }
+  int only=gml_audio_add_encoded(audio,wav,sizeof wav);
+  ok=ok && only>=0 && only==first;
+  gml_audio_sound_gain(audio,only,0.5);
+
+  ok=ok && gml_audio_state_load(audio,state,size,&used) && used==size;
+  /* The state names two run-time sounds and this session holds one, so neither record can be
+   * trusted to name it. Its gain must survive untouched instead of taking 0.25 or a default. */
+  ok=ok && gml_audio_exists(audio,only);
+  ok=ok && fabs(gml_audio_sound_get_gain(audio,only)-0.5)<1e-12;
+  free(state);
+  gml_audio_free(audio);
+  if(!ok) fprintf(stderr,"state load applied run-time records onto an unmatched table\n");
+  return ok;
+}
+
 int expect_dynamic_audio_extension_state(void){
   unsigned char wav[48]={0};
   memcpy(wav,"RIFF",4);
