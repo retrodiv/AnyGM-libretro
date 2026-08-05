@@ -32,8 +32,13 @@ enum {
   ANYGM_CONTENT_LOG_ERROR=3
 };
 
+/* resolved_path receives the payload to load. asset_root, when supplied, receives the directory
+ * holding the runtime assets the content opens by path, and is emptied whenever that is the
+ * payload's own directory. An archive carrying a source project rather than a compiled payload
+ * separates the two: the payload is generated into the cache while the assets stay extracted. */
 int anygm_content_resolve_path(const AnygmContentRouter *router,const char *input_path,
-                               char *resolved_path,size_t resolved_path_size);
+                               char *resolved_path,size_t resolved_path_size,
+                               char *asset_root,size_t asset_root_size);
 int anygm_content_load_win(const AnygmContentRouter *router,GmlWin *win,const char *path,char *loaded_path,
                            size_t loaded_path_size);
 void anygm_content_path_stem(const char *path,char *output,size_t output_size);

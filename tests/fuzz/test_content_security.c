@@ -216,7 +216,7 @@ static int resolve_archive(const AnygmHostServices *services,const char *root,
   AnygmContentRouter router={0};
   router.host=services;
   router.cache_directory=root;
-  int result=anygm_content_resolve_path(&router,path,resolved,sizeof resolved);
+  int result=anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0);
   if((result!=0)!=expected) return fail(name);
   if(expected){
     uint8_t magic[4];
@@ -268,8 +268,8 @@ static int embedded_executable_cases(const AnygmHostServices *services,const cha
   AnygmContentRouter router={0};
   router.host=services;
   router.cache_directory=root;
-  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved) ||
-     !anygm_content_resolve_path(&router,path,resolved_again,sizeof resolved_again) ||
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0) ||
+     !anygm_content_resolve_path(&router,path,resolved_again,sizeof resolved_again,NULL,0) ||
      strcmp(resolved,resolved_again) || !strcmp(resolved,path))
     return fail("embedded executable was not resolved through its stable cache");
   uint8_t *extracted=NULL;
@@ -286,8 +286,67 @@ static int embedded_executable_cases(const AnygmHostServices *services,const cha
   memcpy(ambiguous+224,form,sizeof form);
   if(snprintf(path,sizeof path,"%s/ambiguous.exe",root)>=(int)sizeof path ||
      !write_file(path,ambiguous,sizeof ambiguous) ||
-     anygm_content_resolve_path(&router,path,resolved,sizeof resolved))
+     anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0))
     return fail("ambiguous embedded executable was accepted");
+  return 1;
+}
+
+/* An archive carrying a source container rather than a compiled payload must import it and still
+ * report where the sidecar files it opens by path were extracted. A compiled payload beside a
+ * source container keeps priority, so an executable shipped next to one is never selected. */
+static int archive_source_container_cases(const AnygmHostServices *services,const char *root){
+  uint8_t form[200],executable[224]={0};
+  build_no_code_form(form);
+  executable[0]='M';
+  executable[1]='Z';
+  memcpy(executable+4,"FORM",4);
+  store_u32(executable,8,UINT32_MAX);
+  memcpy(executable+24,form,sizeof form);
+
+  static const uint8_t executable_name[]="bundle.exe";
+  static const uint8_t asset_name[]="assets/level.txt";
+  static const uint8_t payload_name[]="data.win";
+  static const uint8_t asset[]="fixture asset";
+  ZipEntry entries[3]={
+    {executable_name,sizeof executable_name-1,executable,sizeof executable,sizeof executable,0,0,0,0},
+    {asset_name,sizeof asset_name-1,asset,sizeof asset-1,sizeof asset-1,0,0,0,0},
+    {payload_name,sizeof payload_name-1,form,sizeof form,sizeof form,0,0,0,0}
+  };
+
+  Buffer archive={0};
+  char path[512],resolved[1024],asset_root[1024],staged[1600];
+  int ok=build_zip(entries,2,&archive) &&
+         snprintf(path,sizeof path,"%s/source-container.zip",root)<(int)sizeof path &&
+         write_file(path,archive.data,archive.size);
+  free(archive.data);
+  if(!ok) return fail("could not write the source-container archive");
+  AnygmContentRouter router={0};
+  router.host=services;
+  router.cache_directory=root;
+  asset_root[0]=0;
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,
+                                 asset_root,sizeof asset_root) || !asset_root[0])
+    return fail("archive source container was not imported");
+  uint8_t magic[4];
+  if(!read_prefix(resolved,magic,sizeof magic) || memcmp(magic,"FORM",4))
+    return fail("archive source container did not produce a payload");
+  if(snprintf(staged,sizeof staged,"%s/assets/level.txt",asset_root)>=(int)sizeof staged)
+    return fail("reported asset root is too long");
+  uint8_t staged_prefix[7];
+  if(!read_prefix(staged,staged_prefix,sizeof staged_prefix) ||
+     memcmp(staged_prefix,"fixture",sizeof staged_prefix))
+    return fail("reported asset root does not hold the extracted sidecar");
+
+  memset(&archive,0,sizeof archive);
+  ok=build_zip(entries,3,&archive) &&
+     snprintf(path,sizeof path,"%s/payload-and-source.zip",root)<(int)sizeof path &&
+     write_file(path,archive.data,archive.size);
+  free(archive.data);
+  if(!ok) return fail("could not write the payload-and-source archive");
+  asset_root[0]=0;
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,
+                                 asset_root,sizeof asset_root) || asset_root[0])
+    return fail("a compiled payload lost priority to a source container");
   return 1;
 }
 

@@ -128,7 +128,9 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
     router.cache_directory=source->cache_directory;
     router.log=content_router_log;
     router.log_userdata=engine;
-    if(!anygm_content_resolve_path(&router,source->path,content,sizeof content)){
+    char asset_root[1024];
+    if(!anygm_content_resolve_path(&router,source->path,content,sizeof content,
+                                   asset_root,sizeof asset_root)){
       engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Failed to resolve content path: %s",source->path);
       return ANYGM_ERROR_INVALID_CONTENT;
     }
@@ -142,9 +144,19 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
       engine_logf(engine,ANYGM_LOG_WARN,
                   "The selected payload has no executable code; using sibling payload: %s\n",
                   prepared->loaded_path);
+    /* A generated payload does not sit beside the files the content opens by path. The classic
+     * input keeps its own directory; a container reports where it left the extracted assets. */
     if(classic_input)
       anygm_content_path_parent(source->path,prepared->win.content_dir,
                                 sizeof prepared->win.content_dir);
+    else if(asset_root[0]){
+      if(snprintf(prepared->win.content_dir,sizeof prepared->win.content_dir,"%s",asset_root)>=
+         (int)sizeof prepared->win.content_dir){
+        engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,
+                      "The extracted asset directory path is too long: %s",asset_root);
+        return ANYGM_ERROR_INVALID_CONTENT;
+      }
+    }
   } else {
     if(gml_win_from_mem(&prepared->win,(uint8_t *)(uintptr_t)source->data,
                         source->size,0)!=0){

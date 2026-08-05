@@ -590,6 +590,17 @@ static int zip_nested_score(const char *name){
   if(score){ for(const char *p=name;*p;p++) if(*p=='/') score--; }
   return score;
 }
+/* A classic source is the last payload an archive can offer. It is only consulted when the archive
+ * carries neither a compiled payload nor a nested archive, because an executable sitting beside a
+ * real payload is a launcher or a tool rather than the game. Declared project revisions outrank an
+ * executable, which is the least explicit of the classic containers. */
+static int zip_classic_score(const char *name){
+  const char *base=zip_basename(name);
+  int score=zip_endswith(base,".gmk")?400:zip_endswith(base,".gm81")?300:
+            zip_endswith(base,".gm6")?200:zip_endswith(base,".exe")?100:0;
+  if(score){ for(const char *p=name;*p;p++) if(*p=='/') score--; }
+  return score;
+}
 static int zip_under_root(const char *name,const char *selected){
   const char *slash=strrchr(selected,'/');
   if(!slash) return 1;
@@ -628,11 +639,16 @@ static int zip_write_deflated(const AnygmContentRouter *router,const char *path,
   return ok;
 }
 
+static int load_classic_project_content(const AnygmContentRouter *router,const char *srcpath,
+                                        char *content_path,size_t cpsz);
+
 /* Extract a source project (project_rel != NULL) in full, or only the selected game payload
- * subtree. nested_rel receives a fallback archive when this level has no direct payload. */
+ * subtree. nested_rel receives a fallback archive when this level has no direct payload.
+ * content_is_classic reports that the selected payload is a source container to import rather
+ * than a compiled payload to load. */
 static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,const char *outdir,
                            char *content_rel,size_t crsz,char *project_rel,size_t prsz,
-                           char *nested_rel,size_t nrsz){
+                           char *nested_rel,size_t nrsz,int *content_is_classic){
   GmlFileMap map;
   if(!file_map_readonly(router,zpath,&map) || map.size<22){ file_map_close(&map); return 0; }
   const uint8_t *zd=map.data; size_t fsz=map.size;
@@ -655,11 +671,13 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
   }
   ZipSeenNames seen;
   memset(&seen,0,sizeof seen);
-  int content_best=0,nested_best=0;
+  int content_best=0,nested_best=0,classic_best=0;
+  char classic_rel[ANYGM_CONTENT_MAX_MEMBER_PATH+1u]="";
   size_t p=cdir;
   if(content_rel && crsz) content_rel[0]=0;
   if(project_rel && prsz) project_rel[0]=0;
   if(nested_rel && nrsz) nested_rel[0]=0;
+  if(content_is_classic) *content_is_classic=0;
   /* Pass 1: choose deterministic payloads without allocating an entry table. */
   unsigned scanned=0;
   int valid=1;
@@ -676,7 +694,14 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
     if(project_rel && !project_rel[0] && zip_endswith(name,".yyp")) snprintf(project_rel,prsz,"%s",name);
     int ns=nested_rel?zip_nested_score(name):0;
     if(ns>nested_best){ snprintf(nested_rel,nrsz,"%s",name); nested_best=ns; }
+    int ks=(content_rel && content_is_classic)?zip_classic_score(name):0;
+    if(ks>classic_best){ snprintf(classic_rel,sizeof classic_rel,"%s",name); classic_best=ks; }
     p=next;
+  }
+  if(valid && content_rel && !content_rel[0] && (!nested_rel || !nested_rel[0]) &&
+     classic_rel[0]){
+    snprintf(content_rel,crsz,"%s",classic_rel);
+    if(content_is_classic) *content_is_classic=1;
   }
   if(!valid || scanned!=n_ent || p!=(size_t)cdir+(size_t)cdir_size ||
      (content_rel && !content_rel[0] && (!nested_rel || !nested_rel[0])) ||
@@ -755,7 +780,8 @@ static int sibling_payload(const AnygmContentRouter *router,const char *archive,
   return 0;
 }
 static int load_archive_content_depth(const AnygmContentRouter *router,const char *zpath,
-                                      char *content_path,size_t cpsz,int depth){
+                                      char *content_path,size_t cpsz,
+                                      char *asset_root,size_t arsz,int depth){
   if(depth>=(int)ANYGM_CONTENT_MAX_NESTING_LEVELS){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"archive: nesting limit reached at %s",zpath);
     return 0;
@@ -790,14 +816,16 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
   if(cache_ok){
     snprintf(existing,sizeof existing,"%s/%s",outdir,rel);
     uint64_t existing_size=0,existing_hash=0;
-    cache_ok=(kind=='C' || kind=='N') && file_size64(router,existing,&existing_size) &&
+    cache_ok=(kind=='C' || kind=='N' || kind=='S') && file_size64(router,existing,&existing_size) &&
              existing_size==marker_payload_size && file_hash64(router,existing,&existing_hash) &&
              existing_hash==marker_payload_hash;
   }
   if(!cache_ok){
     char nested[512]=""; rel[0]=0; kind=0;
+    int classic_payload=0;
     if(!mkdirs_for(router,outdir,1)) return 0;
-    int n=zip_extract_all(router,zpath,outdir,rel,sizeof rel,NULL,0,nested,sizeof nested);
+    int n=zip_extract_all(router,zpath,outdir,rel,sizeof rel,NULL,0,nested,sizeof nested,
+                          &classic_payload);
     if(n<=0 || (!rel[0] && !nested[0])){
       if(sibling_payload(router,zpath,content_path,cpsz)){
         content_log(router,ANYGM_CONTENT_LOG_INFO,"archive: using sibling payload %s",content_path); return 1;
@@ -805,7 +833,7 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
       content_log(router,ANYGM_CONTENT_LOG_ERROR,"archive: no supported payload or nested archive in %s",zpath);
       return 0;
     }
-    if(rel[0]) kind='C'; else { kind='N'; snprintf(rel,sizeof rel,"%s",nested); }
+    if(rel[0]) kind=classic_payload?'S':'C'; else { kind='N'; snprintf(rel,sizeof rel,"%s",nested); }
     snprintf(marker_data,sizeof marker_data,"%c\n%s",kind,rel);
     char selected[2048];
     uint64_t selected_size=0,selected_hash=0;
@@ -822,14 +850,28 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
     return 0;
   }
   int magic=file_magic_kind(router,resolved);
-  if(kind=='N' || magic==2) return load_archive_content_depth(router,resolved,content_path,cpsz,depth+1);
+  if(kind=='N' || (kind!='S' && magic==2))
+    return load_archive_content_depth(router,resolved,content_path,cpsz,asset_root,arsz,depth+1);
+  if(kind=='S'){
+    /* The generated payload lands in the cache, so the extracted tree stays the asset root the
+     * content opens by path. Mirror the direct executable order: an embedded Studio payload wins
+     * over a classic import for the same file. */
+    int resolved_ok=0;
+    if(path_ext_is(resolved,".exe")){
+      int embedded=load_studio_executable_content(router,resolved,content_path,cpsz);
+      if(embedded) resolved_ok=embedded>0;
+      else resolved_ok=load_classic_project_content(router,resolved,content_path,cpsz);
+    } else resolved_ok=load_classic_project_content(router,resolved,content_path,cpsz);
+    if(resolved_ok && asset_root && arsz) snprintf(asset_root,arsz,"%s",outdir);
+    return resolved_ok;
+  }
   if(kind!='C' || magic!=1) return 0;
   snprintf(content_path,cpsz,"%s",resolved);
   return 1;
 }
 static int load_archive_content(const AnygmContentRouter *router,const char *zpath,
-                                char *content_path,size_t cpsz){
-  return load_archive_content_depth(router,zpath,content_path,cpsz,0);
+                                char *content_path,size_t cpsz,char *asset_root,size_t arsz){
+  return load_archive_content_depth(router,zpath,content_path,cpsz,asset_root,arsz,0);
 }
 
 static int load_classic_project_content(const AnygmContentRouter *router,const char *srcpath,
@@ -918,7 +960,7 @@ static int load_source_project_content(const AnygmContentRouter *router,const ch
   snprintf(project_path,sizeof project_path,"%s",srcpath);
   if(archive_input){
     char rel[512]="";
-    int n=zip_extract_all(router,srcpath,outdir,NULL,0,rel,sizeof rel,NULL,0);
+    int n=zip_extract_all(router,srcpath,outdir,NULL,0,rel,sizeof rel,NULL,0,NULL);
     if(n<=0 || !rel[0]){
       content_log(router,ANYGM_CONTENT_LOG_ERROR,"source: no project manifest found inside %s",srcpath);
       return 0;
@@ -954,9 +996,11 @@ static int load_source_project_content(const AnygmContentRouter *router,const ch
 }
 
 int anygm_content_resolve_path(const AnygmContentRouter *router,const char *input_path,
-                               char *resolved_path,size_t resolved_path_size){
+                               char *resolved_path,size_t resolved_path_size,
+                               char *asset_root,size_t asset_root_size){
   if(!input_path || !input_path[0] || !resolved_path || resolved_path_size==0) return 0;
   resolved_path[0]=0;
+  if(asset_root && asset_root_size) asset_root[0]=0;
   if(path_ext_is(input_path,".exe")){
     int embedded=load_studio_executable_content(router,input_path,resolved_path,
                                                 resolved_path_size);
@@ -972,7 +1016,8 @@ int anygm_content_resolve_path(const AnygmContentRouter *router,const char *inpu
   }
   if(path_ext_is(input_path,".zip") || path_ext_is(input_path,".port") ||
      path_ext_is(input_path,".apk") || file_magic_kind(router,input_path)==2){
-    return load_archive_content(router,input_path,resolved_path,resolved_path_size);
+    return load_archive_content(router,input_path,resolved_path,resolved_path_size,
+                                asset_root,asset_root_size);
   }
   if(snprintf(resolved_path,resolved_path_size,"%s",input_path)>=(int)resolved_path_size){
     resolved_path[0]=0;
