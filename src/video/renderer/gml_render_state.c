@@ -5,6 +5,7 @@
 #include "gml_render_state.h"
 #include "gml_render_internal.h"
 #include "anygm_host.h"
+#include "anygm_vfs.h"
 
 #include <inttypes.h>
 #include <stdint.h>
@@ -95,8 +96,19 @@ static int runtime_path_rebuild(const GmlRender *render,int root,const char *sto
   if(root==GML_RUNTIME_PATH_CONTENT) base=win?win->content_dir:NULL;
   else if(root==GML_RUNTIME_PATH_SAVE) base=win?win->save_dir:NULL;
   else if(root!=GML_RUNTIME_PATH_ABSOLUTE) return 0;
-  if(!base || !base[0]) return snprintf(out,capacity,"%s",stored)<(int)capacity;
-  return snprintf(out,capacity,"%s/%s",base,stored)<(int)capacity;
+  int built=(!base || !base[0]) ? snprintf(out,capacity,"%s",stored)<(int)capacity
+                                : snprintf(out,capacity,"%s/%s",base,stored)<(int)capacity;
+  if(!built) return 0;
+  /* The name is whatever the content asked for, and content authored on a case-insensitive
+   * filesystem asks with the case it likes. Reading the same bundle on a case-sensitive one has
+   * to recover the on-disk spelling, exactly as the content's own file reads do, or a state
+   * written on one platform is unreadable on another over nothing but a capital letter. */
+  char resolved[4608];
+  const AnygmHostServices *host=win?win->host:NULL;
+  if(host && anygm_vfs_resolve_casefold(host,out,resolved,sizeof resolved) &&
+     strlen(resolved)<capacity)
+    memcpy(out,resolved,strlen(resolved)+1);
+  return 1;
 }
 
 static void render_state_write(GmlRender *render,int view_surface,CoreW *s){

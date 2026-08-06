@@ -299,6 +299,61 @@ static void check_trimmed_background_tiling_period(void){
   free(page.argb_cache);
 }
 
+/* A parallax layer is positioned from the view, and a view that drifts by a fraction of a pixel
+ * puts that position on an integer boundary. Whatever the layer does there, it must do what every
+ * other draw does: round to the nearest pixel. Snapping the anchor down first answers a different
+ * rule, and the layer then jumps a whole pixel back and forth every frame while the world it
+ * belongs to holds still. Two anchors a fraction apart around the same boundary must draw the same
+ * pixels. */
+static void check_background_anchor_holds_across_subpixel_drift(void){
+  static const uint8_t rgba[4]={255,0,0,255};
+  uint32_t first[8*6]={0},second[8*6]={0};
+  GmlRender render;
+  GmlAtlas atlas;
+  GmlTpag page;
+  GmlBg background;
+
+  memset(&render,0,sizeof render);
+  memset(&atlas,0,sizeof atlas);
+  memset(&page,0,sizeof page);
+  memset(&background,0,sizeof background);
+  atlas.px=(uint8_t*)rgba;
+  atlas.w=atlas.h=1;
+  page.atlas=0;
+  page.sw=page.sh=1;
+  page.bw=page.bh=4;
+  page.alpha_scanned=1;
+  page.alpha_max=255;
+  background.tpag=0;
+  render.classic=1;
+  render.fbw=render.base_fbw=8;
+  render.fbh=render.base_fbh=6;
+  render.atlas=&atlas;
+  render.n_atlas=1;
+  render.tpag=&page;
+  render.n_tpag=1;
+  render.bg=&background;
+  render.n_bg=1;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+  render.target_id=-1;
+
+  /* The same layer at the same place, seen by a view that moved an eighth of a pixel: half the
+   * drift lands either side of an integer because the layer scrolls at half the view's rate. */
+  render.fb=render.base_fb=first;
+  render.cam_x=1133.875;
+  gml_draw_background_tiled(&render,0,566.9375,0,1,1);
+  render.fb=render.base_fb=second;
+  render.cam_x=1134.125;
+  gml_draw_background_tiled(&render,0,567.0625,0,1,1);
+
+  expect(!memcmp(first,second,sizeof first),
+         "a background layer moved a whole pixel for a sub-pixel view drift");
+  free(page.argb_cache);
+}
+
 static void check_removeback_uses_bottom_left(void){
   uint8_t rgba[16]={
     255,0,0,255, 0,0,255,255,
@@ -390,6 +445,7 @@ int main(void){
     check_fractional_transform_equivalence(bits&1,(bits>>1)&1);
   check_runtime_background_replacement();
   check_trimmed_background_tiling_period();
+  check_background_anchor_holds_across_subpixel_drift();
   check_removeback_uses_bottom_left();
   /* Destination extent is source_height*2; the covered rows are those whose centres fall in it. */
   check_fractional_sprite_part_extent(0.6,1);

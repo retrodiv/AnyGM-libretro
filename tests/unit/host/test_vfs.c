@@ -116,6 +116,89 @@ static AnygmResult memory_remove(void *userdata,const char *path){
   return ANYGM_OK;
 }
 
+
+/* A bundle authored where filenames ignore case names its files with whatever spelling it likes.
+ * Read on a filesystem that does not ignore case, the exact name resolves to nothing, and a state
+ * that recorded one of those names would be unreadable over a capital letter. The resolver has to
+ * recover the spelling the filesystem actually holds, one component at a time. */
+typedef struct DirectoryHost {
+  const char *const *names;
+  size_t count;
+  const char *listing_path;
+  size_t listing_position;
+} DirectoryHost;
+
+static const char *const DIRECTORY_ENTRIES[]={"root","Data","Player.PNG"};
+
+static AnygmResult directory_stat(void *userdata,const char *path,AnygmFileInfo *info){
+  (void)userdata;
+  if(!path || !info) return ANYGM_ERROR_INVALID_ARGUMENT;
+  if(strcmp(path,"root") && strcmp(path,"root/Data") && strcmp(path,"root/Data/Player.PNG"))
+    return ANYGM_ERROR_IO;
+  info->flags|=ANYGM_FILE_INFO_EXISTS;
+  return ANYGM_OK;
+}
+
+static void *directory_open(void *userdata,const char *path){
+  DirectoryHost *state=userdata;
+  if(!state || !path) return NULL;
+  if(strcmp(path,".") && strcmp(path,"root") && strcmp(path,"root/Data")) return NULL;
+  state->listing_path=!strcmp(path,".")?"":path;
+  state->listing_position=0;
+  return state;
+}
+
+static AnygmResult directory_read(void *userdata,void *directory,AnygmDirectoryEntry *entry){
+  DirectoryHost *state=userdata;
+  (void)directory;
+  if(!state || !entry) return ANYGM_ERROR_INVALID_ARGUMENT;
+  /* Each directory in the fixture holds exactly the next name of the path. */
+  size_t index=!state->listing_path[0]?0:(!strcmp(state->listing_path,"root")?1:2);
+  if(state->listing_position) return ANYGM_ERROR_IO;
+  state->listing_position=1;
+  snprintf(entry->name,sizeof entry->name,"%s",DIRECTORY_ENTRIES[index]);
+  return ANYGM_OK;
+}
+
+static void directory_close(void *userdata,void *directory){
+  (void)userdata;
+  (void)directory;
+}
+
+static int check_casefold_resolution(void){
+  DirectoryHost state={0};
+  AnygmHostServices host={0};
+  char resolved[256];
+  host.struct_size=sizeof host;
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  host.userdata=&state;
+  host.file_stat=directory_stat;
+  host.directory_open=directory_open;
+  host.directory_read=directory_read;
+  host.directory_close=directory_close;
+
+  if(!anygm_vfs_resolve_casefold(&host,"root/data/player.png",resolved,sizeof resolved) ||
+     strcmp(resolved,"root/Data/Player.PNG"))
+    return fail("a path spelled for a case-insensitive filesystem was not recovered");
+  if(!anygm_vfs_resolve_casefold(&host,"root/Data/Player.PNG",resolved,sizeof resolved) ||
+     strcmp(resolved,"root/Data/Player.PNG"))
+    return fail("a path that already resolves was rewritten");
+  if(!anygm_vfs_resolve_casefold(&host,"root/data/missing.png",resolved,sizeof resolved) ||
+     strcmp(resolved,"root/Data/missing.png"))
+    return fail("an unresolvable component did not keep the name the content asked for");
+
+  AnygmHostServices without_directories={0};
+  without_directories.struct_size=sizeof without_directories;
+  without_directories.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  if(!anygm_vfs_resolve_casefold(&without_directories,"root/data/player.png",
+                                 resolved,sizeof resolved) ||
+     strcmp(resolved,"root/data/player.png"))
+    return fail("a host without directory services lost the requested path");
+  if(anygm_vfs_resolve_casefold(&host,"root/data/player.png",resolved,8))
+    return fail("a path longer than the buffer was reported as resolved");
+  return 0;
+}
+
 int main(void){
   static const uint8_t input[]={0,1,2,3,4,5,6,7,8,9};
   MemoryHost memory={0};
@@ -180,6 +263,7 @@ int main(void){
     return fail("missing capabilities activated a fallback");
 
   if(memory.opens!=memory.closes) return fail("file handles were not balanced");
+  if(check_casefold_resolution()) return 1;
   puts("VFS capability contract: ok");
   return 0;
 }

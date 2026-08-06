@@ -5068,12 +5068,21 @@ static void do_bg_tiled_ext(GmlRender *r, int bg, double x, double y, double xs,
       bg,ti,t->sx,t->sy,t->sw,t->sh,t->tx,t->ty,t->bw,t->bh,t->atlas,
       x,y,xs,ys,htiled,vtiled,alpha);
   if(r->classic){
-    double anchor_x=floor(x-r->cam_x), anchor_y=floor(y-r->cam_y);
+    /* Keep the anchor where the content put it and let the blit apply its nearest-pixel snapping.
+     * Truncating here would make the layer follow a different rule from other draws: a parallax
+     * position derived from a view that oscillates by a fraction of a pixel can sit on an integer
+     * boundary and flip a whole pixel while the world remains still. The tiling period is
+     * unchanged, so every repeat keeps one phase. */
+    double anchor_x=x-r->cam_x, anchor_y=y-r->cam_y;
     double x0,xend,y0,yend;
     if(htiled){ x0=fmod(anchor_x,logical_w); if(x0>0) x0-=logical_w; xend=r->fbw; }
     else { x0=anchor_x; xend=anchor_x+1; }
     if(vtiled){ y0=fmod(anchor_y,logical_h); if(y0>0) y0-=logical_h; yend=r->fbh; }
     else { y0=anchor_y; yend=anchor_y+1; }
+    if(render_setting(r,"GML_LOG_BG"))
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
+        "[bg-anchor] def=%d cam=(%.3f,%.3f) anchor=(%.3f,%.3f) start=(%.3f,%.3f)\n",
+        bg,r->cam_x,r->cam_y,anchor_x,anchor_y,x0,y0);
     if(gml_d3_is_active(r)){
       for(double yy=y0; yy<yend; yy+=logical_h) for(double xx=x0; xx<xend; xx+=logical_w)
         gml_d3_draw_background_2d(r,bg,xx+r->cam_x,yy+r->cam_y,xs,ys,color,alpha);

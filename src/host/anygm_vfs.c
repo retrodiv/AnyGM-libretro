@@ -3,6 +3,8 @@
  */
 #include "anygm_vfs.h"
 
+#include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -173,4 +175,87 @@ int anygm_vfs_publish(const AnygmHostServices *host,const char *temporary,const 
 
 void anygm_vfs_remove(const AnygmHostServices *host,const char *path){
   if(host&&host->path_remove&&path) host->path_remove(host->userdata,path);
+}
+
+static int casefold_component_equal(const char *left,size_t left_size,const char *right){
+  if(!left || !right || strlen(right)!=left_size) return 0;
+  for(size_t index=0;index<left_size;index++)
+    if(tolower((unsigned char)left[index])!=tolower((unsigned char)right[index])) return 0;
+  return 1;
+}
+
+/* Ask the host for the one entry of `directory` whose name folds to `component`. Ties are broken
+ * by the lowest name so two spellings of the same file cannot make the answer depend on the order
+ * a filesystem happens to enumerate. */
+static int casefold_component(const AnygmHostServices *host,const char *directory,
+                              const char *component,size_t component_size,
+                              char *resolved,size_t resolved_size){
+  if(!host || !host->directory_open || !host->directory_read || !host->directory_close ||
+     !directory || !component || !component_size || !resolved ||
+     resolved_size<=component_size) return 0;
+  void *handle=host->directory_open(host->userdata,directory);
+  if(!handle) return 0;
+  int found=0;
+  AnygmDirectoryEntry entry={0};
+  entry.struct_size=sizeof entry;
+  while(host->directory_read(host->userdata,handle,&entry)==ANYGM_OK){
+    if(casefold_component_equal(component,component_size,entry.name) &&
+       (!found || strcmp(entry.name,resolved)<0)){
+      snprintf(resolved,resolved_size,"%s",entry.name);
+      found=1;
+    }
+    memset(&entry,0,sizeof entry);
+    entry.struct_size=sizeof entry;
+  }
+  host->directory_close(host->userdata,handle);
+  return found;
+}
+
+int anygm_vfs_resolve_casefold(const AnygmHostServices *host,const char *path,
+                               char *out,size_t capacity){
+  if(!path || !out || !capacity) return 0;
+  size_t length=strlen(path);
+  if(length>=capacity) return 0;
+  memcpy(out,path,length+1);
+  AnygmFileInfo info;
+  if(anygm_vfs_stat(host,path,&info)) return 1;
+  if(!host || !host->directory_open || !host->directory_read || !host->directory_close) return 1;
+  /* Keep whatever names the root: a leading separator, or a drive letter that carries one. */
+  size_t used=0;
+  const char *cursor=path;
+  if(path[0]=='/' || path[0]=='\\'){ out[used++]='/'; cursor=path+1; }
+  else if(path[0] && path[1]==':'){
+    out[used++]=path[0]; out[used++]=':';
+    cursor=path+2;
+    if(*cursor=='/' || *cursor=='\\'){ out[used++]='/'; cursor++; }
+  }
+  out[used]=0;
+  while(*cursor){
+    while(*cursor=='/' || *cursor=='\\') cursor++;
+    if(!*cursor) break;
+    const char *end=cursor;
+    while(*end && *end!='/' && *end!='\\') end++;
+    size_t component_size=(size_t)(end-cursor);
+    size_t parent=used;
+    if(used && out[used-1]!='/'){
+      if(used+1>=capacity){ memcpy(out,path,length+1); return 1; }
+      out[used++]='/';
+      out[used]=0;
+    }
+    char candidate[sizeof(((AnygmDirectoryEntry *)0)->name)]={0};
+    char saved=out[parent];
+    out[parent]=0;
+    int recovered=component_size<sizeof candidate &&
+                  casefold_component(host,parent?out:".",cursor,component_size,
+                                     candidate,sizeof candidate);
+    out[parent]=saved;
+    const char *append=recovered?candidate:cursor;
+    size_t append_size=recovered?strlen(candidate):component_size;
+    if(used+append_size>=capacity){ memcpy(out,path,length+1); return 1; }
+    memcpy(out+used,append,append_size);
+    used+=append_size;
+    out[used]=0;
+    cursor=end;
+  }
+  return 1;
 }
