@@ -20,12 +20,43 @@
 /* ---------------- save-state runtime serialization ---------------- */
 enum { GML_VM_STATE_SCHEMA=3 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
+/* Writing a state walks every instance's variables, and the names repeat across them: every
+ * instance carries the same handful of built-in names, each time as the very same pointer into
+ * the content mapping. Resolving one costs a hash of the whole text, a comparison against the
+ * candidate it lands on, and a search for its position, so the same answer was being recomputed
+ * thousands of times per state.
+ *
+ * Remembering the last answer for each pointer turns those repeats into a single comparison. It
+ * is a memo, not a change of rule: a miss resolves exactly as before, and the bytes written are
+ * the same either way. */
+#define STATE_STR_MEMO_SLOTS 65536u
+struct GmlVmStateStringMemo {
+  const char *key[STATE_STR_MEMO_SLOTS];
+  int32_t index[STATE_STR_MEMO_SLOTS];
+};
+
+/* The memo outlives one state, because the same names recur in the next one. A host recording a
+ * rewind buffer writes a state every frame, so rebuilding the answers each time would throw away
+ * the work a frame earlier had already done. It hangs off the content mapping the answers point
+ * into, and dies with it. */
+static struct GmlVmStateStringMemo *state_str_memo(GmlVM *vm){
+  if(!vm) return NULL;
+  if(!vm->state_str_memo){
+    vm->state_str_memo=calloc(1,sizeof(struct GmlVmStateStringMemo));
+    if(vm->state_str_memo)
+      for(unsigned i=0;i<STATE_STR_MEMO_SLOTS;i++)
+        ((struct GmlVmStateStringMemo*)vm->state_str_memo)->index[i]=-1;
+  }
+  return (struct GmlVmStateStringMemo*)vm->state_str_memo;
+}
+
 struct GmlVmStateWriter {
   uint8_t *data;
   size_t cap, pos;
   int ok;
   GmlVM *vm;
   int compact_strings, array_meta;
+  struct GmlVmStateStringMemo *memo;
 };
 struct GmlVmStateReader {
   const uint8_t *data;
@@ -94,6 +125,12 @@ static void sw_particle_state(StateW *s){
   }
   s->pos+=pn;
 }
+static unsigned state_str_memo_slot(const char *p){
+  uintptr_t v=(uintptr_t)p;
+  v^=v>>33; v*=UINT64_C(0xff51afd7ed558ccd); v^=v>>29;
+  return (unsigned)(v&(STATE_STR_MEMO_SLOTS-1u));
+}
+
 static int state_str_index_by_ptr(GmlVM *vm, const char *p){
   if(!vm || !vm->win || !p) return -1;
   /* Canonicalize by string content, not by the allocation that currently owns the bytes.
@@ -117,7 +154,13 @@ static int state_str_index_by_ptr(GmlVM *vm, const char *p){
 static void sw_str(StateW *s, const char *p){
   if(!p) p="";
   if(s->compact_strings){
-    int idx=state_str_index_by_ptr(s->vm,p);
+    unsigned slot=state_str_memo_slot(p);
+    int idx;
+    if(s->memo && s->memo->key[slot]==p) idx=s->memo->index[slot];
+    else {
+      idx=state_str_index_by_ptr(s->vm,p);
+      if(s->memo){ s->memo->key[slot]=p; s->memo->index[slot]=idx; }
+    }
     if(idx>=0){ sw_u32(s,0x80000000u | (uint32_t)idx); return; }
   }
   size_t n=strlen(p); if(n>UINT32_MAX) n=UINT32_MAX;
@@ -773,7 +816,8 @@ size_t gml_vm_state_size(GmlVM *vm){
     vm->structs_last_gc_frame=vm->frame;
     gml_struct_gc(vm);
   }
-  StateW s={0}; s.ok=1; s.vm=vm; s.compact_strings=1; sw_vm(&s,vm); return s.pos;
+  StateW s={0}; s.ok=1; s.vm=vm; s.compact_strings=1; s.memo=state_str_memo(vm);
+  sw_vm(&s,vm); return s.pos;
 }
 int gml_vm_state_save(GmlVM *vm, void *data, size_t len, size_t *written){
   
@@ -781,7 +825,8 @@ int gml_vm_state_save(GmlVM *vm, void *data, size_t len, size_t *written){
     vm->structs_last_gc_frame=vm->frame;
     gml_struct_gc(vm);
   }
-  StateW s={.data=(uint8_t*)data,.cap=len,.pos=0,.ok=1,.vm=vm,.compact_strings=1};
+  StateW s={.data=(uint8_t*)data,.cap=len,.pos=0,.ok=1,.vm=vm,.compact_strings=1,
+            .memo=state_str_memo(vm)};
   sw_vm(&s,vm); if(written) *written=s.pos; return s.ok && s.pos<=len;
 }
 int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){

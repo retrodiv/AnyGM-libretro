@@ -179,6 +179,9 @@ typedef struct {
 } GmlVmDiagnostics;
 
 typedef struct GmlVM {
+  /* Answers reused while writing a state; owned here so they outlive one state and die with the
+   * content they describe. Opaque: only the state writer knows its shape. */
+  void   *state_str_memo;
   GmlWin   *win;
   const AnygmHostServices *host;
 #if defined(ANYGM_DIAGNOSTICS) && ANYGM_DIAGNOSTICS

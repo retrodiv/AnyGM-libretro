@@ -2854,6 +2854,20 @@ static int expect_persistent_lifecycle_exit_code(void){
   *gml_varmap_put(&vm.globals,"time_source_fixture")=vreal(0);
   size_t size=gml_vm_state_size(&vm),written=0,used=0; void *state=malloc(size);
   if(!state||!gml_vm_state_save(&vm,state,size,&written)||written!=size)return 1;
+  /* Writing the same state twice has to produce the same bytes. The second write answers from
+   * what the first one remembered, and a remembered answer that differs from the one it stands in
+   * for would encode a different string for the same text: states written a frame apart would
+   * stop matching, which is invisible until one is loaded. A host recording a rewind buffer
+   * writes a state every frame, so this is the ordinary case, not an unusual one. */
+  { size_t again_written=0; void *again=malloc(size);
+    if(!again){ free(state); return 1; }
+    int same=gml_vm_state_save(&vm,again,size,&again_written) && again_written==written &&
+             memcmp(again,state,written)==0;
+    free(again);
+    if(!same){
+      fprintf(stderr,"state written twice differs the second time\n");
+      free(state); return 1;
+    } }
   gml_room_enter(&vm,0); slot=find_slot(&vm,id);
   if(!slot||!slot->active||slot->room_dormant)return 1;
   *gml_varmap_put(&slot->vars,"value")=vreal(99);
