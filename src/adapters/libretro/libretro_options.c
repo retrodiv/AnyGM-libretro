@@ -109,10 +109,12 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"Auto",NULL},{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "Auto"},
   /* These are the exact locale strings exposed by the runtime: lowercase language and uppercase
-   * region. Auto follows the frontend language and its paired region. */
+   * region. Auto follows the frontend language and its paired region. Locale environment variables
+   * expose the same values for content without the locale builtins. */
   {"anygm_language","Language",NULL,
-   "The language os_get_language() reports to the game. Auto follows the frontend's language "
-   "setting. Takes effect on restart.",
+   "The language the game is told it is running in, through os_get_language() and the locale "
+   "environment variables. Auto follows the frontend's language setting. Takes effect on "
+   "restart.",
    NULL,"development",
    {{"Auto",NULL},{"en",NULL},{"es",NULL},{"fr",NULL},{"de",NULL},{"it",NULL},{"pt",NULL},
     {"nl",NULL},{"pl",NULL},{"ru",NULL},{"uk",NULL},{"cs",NULL},{"sv",NULL},{"fi",NULL},
@@ -120,8 +122,8 @@ static struct retro_core_option_v2_definition g_definitions[]={
     {"ko",NULL},{"zh",NULL},{"vi",NULL},{"th",NULL},{NULL,NULL}},
    "Auto"},
   {"anygm_region","Region",NULL,
-   "The region os_get_region() reports to the game. Auto pairs it with the language. Takes "
-   "effect on restart.",
+   "The region the game is told it is running in, through os_get_region() and the locale "
+   "environment variables. Auto pairs it with the language. Takes effect on restart.",
    NULL,"development",
    {{"Auto",NULL},{"US",NULL},{"GB",NULL},{"ES",NULL},{"FR",NULL},{"DE",NULL},{"IT",NULL},
     {"BR",NULL},{"PT",NULL},{"NL",NULL},{"PL",NULL},{"RU",NULL},{"UA",NULL},{"CZ",NULL},

@@ -181,6 +181,20 @@ static uint64_t host_random_seed(void *userdata){
 static const char *host_development_setting(void *userdata,const char *name){
   (void)userdata;
   if(!name || !name[0]) return NULL;
+  /* Legacy content without locale builtins uses the locale environment variables. A selected
+   * language overrides the host environment; Auto returns the host value when present and falls
+   * back to the resolved locale otherwise. Handle these names before the cache so changes remain
+   * visible during the session. */
+  if(!strcmp(name,"LANG")||!strcmp(name,"LC_ALL")||!strcmp(name,"LANGUAGE")){
+    const char *chosen=libretro_options_value("anygm_language");
+    const char *host=getenv(name);
+    if((!chosen || !chosen[0] || !strcmp(chosen,"Auto")) && host && host[0]) return host;
+    if(!g_libretro.language[0]) return host;
+    if(!strcmp(name,"LANGUAGE")) return g_libretro.language;
+    snprintf(g_libretro.locale_variable,sizeof g_libretro.locale_variable,"%s_%s",
+             g_libretro.language,g_libretro.region[0]?g_libretro.region:"US");
+    return g_libretro.locale_variable;
+  }
   uint32_t hash=2166136261u;
   size_t len=0;
   for(;name[len];len++) hash=(hash^(unsigned char)name[len])*16777619u;

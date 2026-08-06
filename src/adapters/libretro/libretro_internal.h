@@ -39,6 +39,9 @@ typedef struct LibretroAdapter {
   char language[16];
   char region[16];
   char language_tag[32];
+  /* the locale spelled the way a POSIX environment variable spells it; see
+   * host_development_setting */
+  char locale_variable[40];
   uint64_t seed_counter;
   /* memoised development settings; see host_development_setting */
   struct { uint32_t hash; const char *value; char name[52]; } setting_cache[128];
