@@ -85,6 +85,16 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
       case 5: r=(vv!=cv); break;
     }
     return vreal(r); }
+  /* action_if_number(object, count, comparison) uses the legacy three-way selector — equal,
+   * smaller, larger — rather than the six-way selector used by variable comparisons. */
+  if(!strcmp(nm,"action_if_number")){
+    double have=gml_instance_number(vm,(int)N(a,n,0)), want=N(a,n,1);
+    switch((int)N(a,n,2)){
+      case 1: return vreal(have<want);
+      case 2: return vreal(have>want);
+      default: return vreal(have==want);
+    }
+  }
   if(!strcmp(nm,"action_if_dice")){
     int sides=(int)floor(fabs(N(a,n,0)));
     return vreal(sides<=1 || (int)floor(gml_rng_value(vm)*sides)==0);
@@ -99,7 +109,9 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
     GmlInstance *s=vm->cur_self;
     double x=N(a,n,1), y=N(a,n,2);
     if(n>=4 && N(a,n,3)!=0 && s){ x+=s->x; y+=s->y; }
-    return vreal(instance_at_point(vm,x,y,(int)N(a,n,0))!=NULL);
+    /* Test whether this instance would meet a target at the requested position, using the same
+     * mask comparison as place_meeting. A point query answers a different question. */
+    return vreal(collision_at(vm,x,y,(int)N(a,n,0),0));
   }
   if(!strcmp(nm,"action_if_empty") || !strcmp(nm,"action_if_collision")){
     GmlInstance *s=vm->cur_self; double x=N(a,n,0),y=N(a,n,1);
