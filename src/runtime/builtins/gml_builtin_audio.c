@@ -302,19 +302,25 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(builtin_setting(vm,"GML_LOG_AUDIO")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[audio] play_sound id=%d loop=%d -> handle=%d\n",(int)N(a,n,0),loop,h);
       return vreal(h); }
     if(!strcmp(nm,"audio_play_sound_at")){
-      int h=gml_audio_play(AU,(int)N(a,n,0),(int)N(a,n,6));
+      /* (soundid, x, y, z, falloff_ref, falloff_max, falloff_factor, loop, priority[, listener])
+       * The three distance parameters sit between the position and the loop flag, so the flag is
+       * the eighth argument. Reading the factor in its place makes a one-shot repeat for as long
+       * as the room lasts, because a falloff factor is normally one. */
+      double falloff_factor=N(a,n,6);
+      int h=gml_audio_play(AU,(int)N(a,n,0),(int)N(a,n,7));
       if(h>0){
         double dx=N(a,n,1)-vm->builtins->listener_x, dy=N(a,n,2)-vm->builtins->listener_y, dz=N(a,n,3)-vm->builtins->listener_z;
         double dist=sqrt(dx*dx+dy*dy+dz*dz), ref=N(a,n,4), maxd=N(a,n,5), gain=1.0;
         if(vm->builtins->audio_falloff_model && maxd>=ref && ref>0.0){
           double old_ref=vm->builtins->emitter_ref[0], old_max=vm->builtins->emitter_max[0], old_factor=vm->builtins->emitter_factor[0];
-          vm->builtins->emitter_ref[0]=ref; vm->builtins->emitter_max[0]=maxd; vm->builtins->emitter_factor[0]=1.0;
+          vm->builtins->emitter_ref[0]=ref; vm->builtins->emitter_max[0]=maxd;
+          vm->builtins->emitter_factor[0]=falloff_factor>0.0?falloff_factor:1.0;
           gain=audio_emitter_attenuation(vm,0,dist);
           vm->builtins->emitter_ref[0]=old_ref; vm->builtins->emitter_max[0]=old_max; vm->builtins->emitter_factor[0]=old_factor;
         }
         double pan=dist>0.0?dx/dist:0.0; gml_audio_voice_spatial(AU,h,gain,pan);
       }
-      if(builtin_setting(vm,"GML_LOG_AUDIO")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[audio] play_sound_at id=%d loop=%d -> handle=%d\n",(int)N(a,n,0),(int)N(a,n,6),h);
+      if(builtin_setting(vm,"GML_LOG_AUDIO")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[audio] play_sound_at id=%d loop=%d -> handle=%d\n",(int)N(a,n,0),(int)N(a,n,7),h);
       return vreal(h); }
     if(!strcmp(nm,"audio_sound_loop_start")){ gml_audio_sound_loop_start(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"audio_listener_position")){

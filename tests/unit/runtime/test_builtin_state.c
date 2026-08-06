@@ -3,6 +3,7 @@
  */
 /* Synthetic ownership, reset, and canonical-state coverage for builtin resources. */
 #include "gml_builtin.h"
+#include "gml_audio.h"
 #include "gml_particle.h"
 
 #include <stdio.h>
@@ -123,8 +124,50 @@ static int verify_restored_resources(GmlVM *vm,GmlVal map,GmlVal list,
   return ok;
 }
 
+/* A positional play takes its distance parameters between the position and the loop flag, so the
+ * flag is the eighth argument. Reading the seventh — the falloff factor, normally one — turns every
+ * one-shot into an endless voice, which no amount of playback ever ends. Pin both readings by
+ * observing whether a finished sound is still playing. */
+static int expect_positional_loop_flag(GmlWin *win){
+  static const unsigned char wave[]={
+    'R','I','F','F', 0x2c,0,0,0, 'W','A','V','E',
+    'f','m','t',' ', 16,0,0,0, 1,0, 1,0,
+    0x44,0xac,0,0, 0x88,0x58,1,0, 2,0, 16,0,
+    'd','a','t','a', 8,0,0,0,
+    0x00,0x10, 0x00,0x20, 0x00,0x10, 0x00,0xf0
+  };
+  GmlVM vm={0};
+  vm.win=win; vm.room_index=-1; vm.pending_room=-1; vm.next_creation_seq=1;
+  vm.audio=gml_audio_create(win);
+  if(!vm.audio){ fprintf(stderr,"positional loop fixture: no mixer\n"); return 0; }
+  int sound=gml_audio_add_encoded((GmlAudio*)vm.audio,wave,(int)sizeof wave);
+  int ok=sound>=0;
+  int16_t mixed[2048];
+  for(int repeat=0;ok && repeat<2;repeat++){
+    GmlVal args[9]={vreal(sound),vreal(0),vreal(0),vreal(0),
+                    vreal(100),vreal(1000),vreal(1),vreal(repeat),vreal(1)};
+    if(gml_builtin_call(&vm,"audio_play_sound_at",args,9).d<=0){
+      fprintf(stderr,"positional loop fixture: play %d refused\n",repeat);
+      ok=0; break;
+    }
+    for(int block=0;block<16;block++) gml_audio_mix((GmlAudio*)vm.audio,mixed,1024);
+    int playing=gml_audio_is_playing((GmlAudio*)vm.audio,sound);
+    if(playing!=repeat){
+      fprintf(stderr,"positional play with loop=%d is %splaying after the sound ended\n",
+              repeat,playing?"":"not ");
+      ok=0;
+    }
+    gml_audio_stop_all((GmlAudio*)vm.audio);
+  }
+  gml_audio_free((GmlAudio*)vm.audio);
+  vm.audio=NULL;
+  gml_vm_free(&vm);
+  return ok;
+}
+
 int main(void){
   GmlWin win={0};
+  if(!expect_positional_loop_flag(&win)) return 1;
   GmlVM vm={0};
   vm.win=&win;
   vm.room_index=-1;
