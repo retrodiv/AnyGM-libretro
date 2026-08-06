@@ -3,6 +3,7 @@
  */
 /* Instance, room, event, path, timeline, and time-source builtin adapters. */
 #include "gml_builtin_internal.h"
+#include "gml_vm_internal.h"
 #include "anygm_compatibility.h"
 #include "gml_render.h"
 #include "anygm_host.h"
@@ -344,7 +345,24 @@ static GmlVal gml_builtin_try_instances_events(GmlVM *vm, const char *nm, GmlVal
     if(vm->cur_self){ int ty=(int)N(a,n,0), nb=(int)N(a,n,1); const char *pre=0;
       switch(ty){ case 0:pre="Create";nb=0;break; case 1:pre="Destroy";nb=0;break; case 2:pre="Alarm";break;
         case 3:pre="Step";break; case 4:pre="Collision";break; case 7:pre="Other";break; case 8:pre="Draw";break; }
-      if(pre){ char s[24]; snprintf(s,sizeof s,"%s_%d",pre,nb); gml_run_event(vm,vm->cur_self,s); } }
+      if(pre){
+        char s[24];
+        snprintf(s,sizeof s,"%s_%d",pre,nb);
+        /* A collision handler registered for a parent serves its descendants. When the requested
+         * subtype names a child, walk its ancestry until this instance's event table has a match. */
+        if(ty==4 && nb>=0 && nb<vm->n_objects && vm->cur_self->obj>=0){
+          for(int object=nb; object>=0 && object<vm->n_objects;
+              object=vm->objects[object].parent){
+            char candidate[24];
+            snprintf(candidate,sizeof candidate,"Collision_%d",object);
+            if(gml_vm_instances_event_lookup(vm,candidate,vm->cur_self->obj,NULL,NULL)){
+              snprintf(s,sizeof s,"%s",candidate);
+              break;
+            }
+          }
+        }
+        gml_run_event(vm,vm->cur_self,s);
+      } }
     return vreal(0); }
   if(!strcmp(nm,"event_perform_object")) return vreal(0);
 
