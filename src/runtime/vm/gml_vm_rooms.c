@@ -713,6 +713,23 @@ static unsigned char *gml_tile_rle_decode(const uint8_t *src,size_t avail,size_t
   if(used) *used=ip;
   return out;
 }
+
+/* Count the cells of a candidate grid that could have been authored: a cell names a tile inside its
+ * tileset and leaves the bits between the index and the mirror/flip/rotate flags clear.
+ *
+ * The two encodings are not distinguishable from the tileset record. A file pairs either one with
+ * either background layout, so the record's shape answers a different question than the one asked
+ * here, and reading a run-length stream as one word per cell yields a grid of plausible-looking
+ * indices that address the wrong tiles. Scoring both readings separates them: an encoding that
+ * matches explains every cell, and one that does not leaves most of them unaddressable. */
+static size_t tile_grid_addressable(const unsigned char *grid,size_t cells,int tile_count){
+  size_t addressable=0;
+  for(size_t cell=0;cell<cells;cell++){
+    uint32_t datum=gml_vm_read_u32_le(grid,(uint32_t)(cell*4u));
+    if((datum&0x7FFFFu)<=(uint32_t)tile_count && !(datum&0x0FF80000u)) addressable++;
+  }
+  return addressable;
+}
 GmlTileMap *gml_tilemap_find(GmlVM *vm, int id){
   for(int i=0;i<vm->n_tilemaps;i++) if(vm->tilemaps[i].used && vm->tilemaps[i].id==id) return &vm->tilemaps[i];
   return NULL;
@@ -954,14 +971,24 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runti
     if(cols<=0||rows<=0||cols>8192||rows>8192) continue;
     uint32_t tdata=tb+12;
     size_t cells=(size_t)cols*(size_t)rows;
-    int modern_tiles=0;
-    (void)gml_tileset_meta(vm,tileset,NULL,&modern_tiles);
+    int modern_tiles=0,tileset_tiles=0;
+    (void)gml_tileset_meta(vm,tileset,&tileset_tiles,&modern_tiles);
+    int plain_fits=(uint64_t)tdata + (uint64_t)cells*4u <= vm->win->size;
     unsigned char *decoded=NULL;
-    if(modern_tiles){
+    {
       size_t used=0;
-      decoded=gml_tile_rle_decode(rd+tdata,vm->win->size-tdata,cells,&used);
-      if(!decoded) continue;
-    } else if((uint64_t)tdata + (uint64_t)cells*4u > vm->win->size) continue;
+      unsigned char *run=gml_tile_rle_decode(rd+tdata,vm->win->size-tdata,cells,&used);
+      if(run){
+        int keep;
+        if(tileset_tiles>0 && plain_fits)
+          keep=tile_grid_addressable(run,cells,tileset_tiles)>
+               tile_grid_addressable(rd+tdata,cells,tileset_tiles);
+        else if(tileset_tiles>0) keep=1;      /* only the run-length reading stays in bounds */
+        else keep=modern_tiles;               /* nothing to score against: keep the record's hint */
+        if(keep) decoded=run; else free(run);
+      }
+    }
+    if(!decoded && !plain_fits) continue;
     int tw=16,th=16;
     if(bc && tileset>=0 && (uint32_t)tileset<bcnt){ uint32_t bp=gml_vm_read_u32_le(rd,bc->off+4+tileset*4);
       if(bp && bp+32<vm->win->size){ int w=(int32_t)gml_vm_read_u32_le(rd,bp+24),h=(int32_t)gml_vm_read_u32_le(rd,bp+28);
