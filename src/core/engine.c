@@ -18,6 +18,24 @@
 #include "anygm_host.h"
 #include "engine_internal.h"
 
+/* Does a comma-separated list of frame indices name this one? An empty list names none, and the
+ * single word "all" names every frame, which is what a caller wants when hunting for the frame a
+ * divergence begins on rather than checking one already known. */
+static int frame_list_selects(const char *list, long frame){
+  if(!list || !*list) return 0;
+  if(!strcmp(list,"all")) return 1;
+  for(const char *at = list; *at; ){
+    while(*at==' '||*at==',') at++;
+    if(!*at) break;
+    char *end = NULL;
+    long value = strtol(at,&end,10);
+    if(end==at) break;
+    if(value==frame) return 1;
+    at = end;
+  }
+  return 0;
+}
+
 void engine_logf(AnygmEngine *engine,AnygmLogLevel level,const char *fmt,...){
   char message[2048];
   va_list ap;
@@ -702,6 +720,58 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       engine_logf(engine,ANYGM_LOG_DEBUG, "[rng] seed=%u\n", anygm_policy_uses_classic_runtime(engine->vm.win)
         ? engine->vm.rng_classic_state : engine->vm.rng_state);
     engine->diagnostics.rng_frame++;
+  }
+  {
+    /* A digest of what the runtime holds, for the frames a caller names. Pixels do not see
+     * everything: a change to event ordering or to how much of the random sequence is consumed can
+     * leave every compared frame identical and still put the run somewhere else entirely a few
+     * hundred frames later. This is the one measurement that catches that.
+     *
+     * Object identity is numeric here on purpose. The index is what the runtime has; interpreting
+     * it belongs to the caller-supplied content and stays outside this generic diagnostic. */
+    const char *frames = anygm_host_development_setting(&engine->host,"GML_STATE_DIGEST");
+    long digest_frame = engine->diagnostics.state_digest_frame++;
+    if (frames && *frames && frame_list_selects(frames, digest_frame)) {
+      int instances = 0, alarms = 0;
+      for (int i = 0; i < engine->vm.inst_count; i++) {
+        GmlInstance *o = &engine->vm.inst[i];
+        if (!o->active || o->marked) continue;
+        instances++;
+        for (int a = 0; a < GML_ALARMS; a++)
+          if (o->alarm[a] >= 0) { alarms++; break; }
+      }
+      GmlPresentView views[8];
+      int canvas_width = 0, canvas_height = 0;
+      int view_count = present_view_count(engine, views, &canvas_width, &canvas_height);
+      GmlPresentView view;
+      memset(&view,0,sizeof view);
+      if (view_count > 0) view = views[0];
+      engine_logf(engine,ANYGM_LOG_DEBUG,
+        "[state] frame %ld  room=%d  instances=%d  rng_calls=%llu  view=%d,%d,%d,%d  alarms=%d\n",
+        digest_frame, engine->vm.room_index, instances,
+        (unsigned long long)engine->vm.diagnostics.rng_calls,
+        (int)view.x, (int)view.y, (int)view.w, (int)view.h, alarms);
+      /* Counts per object index, ascending, so two digests compare as text without being sorted
+       * again by whoever reads them. */
+      if (engine->vm.n_objects > 0) {
+        int *counts = (int*)calloc((size_t)engine->vm.n_objects, sizeof(int));
+        if (counts) {
+          for (int i = 0; i < engine->vm.inst_count; i++) {
+            GmlInstance *o = &engine->vm.inst[i];
+            if (!o->active || o->marked || o->obj < 0 || o->obj >= engine->vm.n_objects) continue;
+            counts[o->obj]++;
+          }
+          char line[1024];
+          size_t at = 0;
+          at += (size_t)snprintf(line + at, sizeof(line) - at, "[state]   counts");
+          for (int i = 0; i < engine->vm.n_objects && at + 24 < sizeof(line); i++)
+            if (counts[i])
+              at += (size_t)snprintf(line + at, sizeof(line) - at, " %d:%d", i, counts[i]);
+          engine_logf(engine,ANYGM_LOG_DEBUG,"%s\n",line);
+          free(counts);
+        }
+      }
+    }
   }
   {
     const char *needle = anygm_host_development_setting(&engine->host,"GML_LOG_OBJ");

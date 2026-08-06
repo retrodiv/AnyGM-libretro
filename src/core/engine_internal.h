@@ -79,6 +79,7 @@ typedef struct {
   int player_frame;
   int rng_frame;
   int object_frame;
+  long state_digest_frame;
   int camera_frame;
   int draw_frame;
   int shader_count;

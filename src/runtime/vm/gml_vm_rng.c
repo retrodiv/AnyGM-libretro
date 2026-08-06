@@ -24,6 +24,7 @@ void gml_rng_seed(GmlVM *vm, uint32_t seed){
   vm->rng_classic_state=seed;
 }
 static uint32_t gml_rng_next(GmlVM *vm){
+  vm->diagnostics.rng_calls++;
   if(vm->diagnostics.rng_call_logging<0)
     vm->diagnostics.rng_call_logging=anygm_host_development_setting(vm->host,"GML_LOG_RNG_CALL")?1:0;
   if(vm->win && anygm_policy_uses_classic_runtime(vm->win)){

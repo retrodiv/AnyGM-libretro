@@ -161,6 +161,10 @@ typedef struct {
   char collision_line_setting[16];
   int collision_event_time_enabled;
   int rng_call_logging;
+  /* How many values the sequence has produced. A change in consumption moves the whole scene
+   * downstream without necessarily moving any single frame, so it is the one number that catches a
+   * divergence a checkpoint comparison cannot see. */
+  uint64_t rng_calls;
   int big_array_log_count;
   int state_variable_debug;
   int state_variable_load_debug;
