@@ -4,6 +4,7 @@
 #include "anygm.h"
 #include "engine_internal.h"
 #include "stdio_vfs.h"
+#include "anygm_vfs.h"
 #include "synthetic_content.h"
 
 #include <math.h>
@@ -248,6 +249,51 @@ static int exercise_unavailable_path_service(void){
   return 0;
 }
 
+/* A host is free to hand over fewer bytes than were asked for, and does: a pipe, a network share
+ * or a compressed layer all return short. Copying reads in large pieces to keep the crossings
+ * few, so a short read must be carried by whatever came back rather than by the size requested,
+ * or a copied file gains bytes that were never in it. */
+static AnygmFileReadFn underlying_read;
+static size_t short_read(void *userdata,void *file,void *data,size_t size){
+  /* Deliberately awkward: never the size asked for, and never the same twice running. */
+  static size_t step;
+  size_t allowed=1u+(step++%7u);
+  return underlying_read(userdata,file,data,size<allowed?size:allowed);
+}
+
+static int exercise_copy_under_short_reads(void){
+  DummyHost dummy={0};
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  services.userdata=&dummy;
+  anygm_stdio_vfs_services_init(&services);
+  underlying_read=services.file_read;
+  services.file_read=short_read;
+
+  const char *source="anygm-copy-source.tmp";
+  const char *destination="anygm-copy-destination.tmp";
+  unsigned char written[4099];
+  for(size_t i=0;i<sizeof written;i++) written[i]=(unsigned char)(i*31u+7u);
+  FILE *out=fopen(source,"wb");
+  if(!out) return fail("could not stage a file to copy");
+  int staged=fwrite(written,1,sizeof written,out)==sizeof written;
+  if(fclose(out)!=0) staged=0;
+  if(!staged){ remove(source); return fail("could not stage a file to copy"); }
+
+  int copied=anygm_vfs_copy(&services,source,destination);
+  unsigned char read_back[sizeof written+16];
+  size_t got=0;
+  FILE *in=fopen(destination,"rb");
+  if(in){ got=fread(read_back,1,sizeof read_back,in); fclose(in); }
+  remove(source);
+  remove(destination);
+  if(!copied) return fail("a copy over a host returning short reads failed");
+  if(got!=sizeof written || memcmp(read_back,written,sizeof written)!=0)
+    return fail("a copy over a host returning short reads did not reproduce the file");
+  return 0;
+}
+
 static int exercise_mapped_path_service(const char *path){
   DummyHost dummy={0};
   AnygmHostServices services={0};
@@ -409,6 +455,7 @@ int main(void){
     return fail("A/V ratio does not describe the delivered frame");
   if(exercise_declared_global_cadence(engine)) return 1;
   if(exercise_forced_aspect_shapes()) return 1;
+  if(exercise_copy_under_short_reads()) return 1;
   AnygmAvInfo short_av={0};
   short_av.struct_size=sizeof short_av-1;
   if(anygm_get_av_info(engine,&short_av)!=ANYGM_ERROR_INCOMPATIBLE_ABI)

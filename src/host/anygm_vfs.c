@@ -120,11 +120,19 @@ int anygm_vfs_copy(const AnygmHostServices *host,const char *source,const char *
   void *output=host->file_open(host->userdata,destination,
                               ANYGM_FILE_WRITE|ANYGM_FILE_CREATE|ANYGM_FILE_TRUNCATE);
   if(!output){ host->file_close(host->userdata,input); return 0; }
-  uint8_t buffer[16384];
+  /* Content files are copied whole, and the cost of moving them is dominated by how often the
+   * host is entered rather than by the bytes themselves. A quarter of a megabyte per crossing
+   * keeps a large archive from being handed over in tens of thousands of pieces; a host that
+   * cannot spare it still gets copied, one small piece at a time. */
+  uint8_t fallback[16384];
+  size_t capacity=256u*1024u;
+  uint8_t *buffer=malloc(capacity);
+  if(!buffer){ buffer=fallback; capacity=sizeof fallback; }
   int ok=1;
   for(;;){
-    size_t count=host->file_read(host->userdata,input,buffer,sizeof buffer);
+    size_t count=host->file_read(host->userdata,input,buffer,capacity);
     if(!count) break;
+    if(count>capacity){ ok=0; break; }
     size_t written=0;
     while(written<count){
       size_t step=host->file_write(host->userdata,output,buffer+written,count-written);
@@ -133,6 +141,7 @@ int anygm_vfs_copy(const AnygmHostServices *host,const char *source,const char *
     }
     if(!ok) break;
   }
+  if(buffer!=fallback) free(buffer);
   if(ok && host->file_flush) ok=host->file_flush(host->userdata,output)==ANYGM_OK;
   host->file_close(host->userdata,input);
   host->file_close(host->userdata,output);

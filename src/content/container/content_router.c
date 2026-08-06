@@ -146,20 +146,38 @@ static uint64_t cache_hash_bytes(const void *data,size_t size){
   return hash;
 }
 
+/* Every cached payload is identified by hashing the bytes it came from, so this reads whole
+ * content files: a large archive is hundreds of megabytes and is read on every load.
+ *
+ * The arithmetic is not what costs; the reads are. Asking a host for sixteen kilobytes at a time
+ * spends most of the wall clock crossing into it, and hosts that reach a Windows filesystem or a
+ * network share pay that crossing dearly. Asking for a quarter of a megabyte instead moves the
+ * same bytes in a fraction of the time and yields the same hash, since the result cannot depend
+ * on how the stream was divided. */
+#define FILE_STREAM_BUFFER_BYTES (256u*1024u)
+
 static int file_hash64(const AnygmContentRouter *router,const char *path,uint64_t *hash_out) {
   if(!router || !anygm_vfs_can_read(router->host)) return 0;
   void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
   if(!file) return 0;
   uint64_t h = UINT64_C(1469598103934665603);
-  uint8_t buf[16384];
+  uint8_t fallback[16384];
+  size_t capacity=FILE_STREAM_BUFFER_BYTES;
+  uint8_t *buf=malloc(capacity);
+  if(!buf){ buf=fallback; capacity=sizeof fallback; }
   size_t n;
-  while ((n=router->host->file_read(router->host->userdata,file,buf,sizeof buf))>0) {
-    if(n>sizeof buf){ router->host->file_close(router->host->userdata,file); return 0; }
+  while ((n=router->host->file_read(router->host->userdata,file,buf,capacity))>0) {
+    if(n>capacity){
+      if(buf!=fallback) free(buf);
+      router->host->file_close(router->host->userdata,file);
+      return 0;
+    }
     for (size_t i = 0; i < n; i++) {
       h ^= (uint64_t)buf[i];
       h *= 1099511628211ull;
     }
   }
+  if(buf!=fallback) free(buf);
   router->host->file_close(router->host->userdata,file);
   if (hash_out) *hash_out = h;
   return 1;
