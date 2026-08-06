@@ -20,6 +20,11 @@ reader and normalized into the same content model. Classic origin and bytecode
 encoding are represented as separate structural facts; one is not inferred
 from the other.
 
+A compiled classic executable stores its resources in a shorter form than the
+project it was built from, omitting fields only an editor uses. That difference
+belongs to the compiled layout and is not a revision fact: every compiled
+revision writes the short form.
+
 ## Source projects and packages
 
 The content layer can normalize supported project manifests, project archives,
