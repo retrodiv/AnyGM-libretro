@@ -99,6 +99,113 @@ static char *read_source_file(const char *path){
   return text;
 }
 
+#define FIXTURE_MAX_OBJECTS 16
+#define FIXTURE_MAX_EVENTS 48
+#define FIXTURE_MAX_INSTANCES 32
+
+typedef struct {
+  FixtureProgram program;
+  FixtureObject objects[FIXTURE_MAX_OBJECTS];
+  FixtureEvent events[FIXTURE_MAX_EVENTS];
+  FixtureInstance instances[FIXTURE_MAX_INSTANCES];
+  int event_starts[FIXTURE_MAX_OBJECTS];
+  char *owned[FIXTURE_MAX_EVENTS + FIXTURE_MAX_OBJECTS + 1];
+  int owned_count;
+} ProgramFile;
+
+static void program_free(ProgramFile *p){
+  for(int i=0;i<p->owned_count;i++) free(p->owned[i]);
+  p->owned_count=0;
+}
+
+static char *program_keep(ProgramFile *p, char *text){
+  if(!text) return NULL;
+  if(p->owned_count>=(int)(sizeof(p->owned)/sizeof(p->owned[0]))){ free(text); return NULL; }
+  p->owned[p->owned_count++]=text;
+  return text;
+}
+
+/* A program file describes the smallest project that can exercise a rule needing instances. It
+ * carries no identity of its own: names, sources and placements all come from the caller, so this
+ * writer stays a container exercise and the tests that use it live elsewhere.
+ *
+ *   room <width> <height>
+ *   sprite <edge>
+ *   startup <source.gml>
+ *   object <name> <sprite-slot|-1>
+ *   event <type> <number> <source.gml>     applies to the most recent object
+ *   instance <object-slot> <x> <y>
+ */
+static int program_read(const char *path, ProgramFile *p){
+  memset(p,0,sizeof(*p));
+  p->program.room_width=320; p->program.room_height=240;
+  p->program.objects=p->objects; p->program.instances=p->instances;
+  FILE *file=fopen(path,"rb");
+  if(!file){ fprintf(stderr,"cannot open program: %s\n",path); return 0; }
+  char line[512];
+  int current=-1, events=0;
+  int ok=1;
+  char directory[512];
+  snprintf(directory,sizeof(directory),"%s",path);
+  char *slash=strrchr(directory,'/');
+  if(slash) slash[1]='\0'; else directory[0]='\0';
+  while(ok && fgets(line,sizeof(line),file)){
+    char keyword[32], a[256], b[64], c[64];
+    if(line[0]=='#' || line[0]=='\n' || line[0]=='\r') continue;
+    if(sscanf(line,"%31s",keyword)!=1) continue;
+    if(!strcmp(keyword,"room")){
+      if(sscanf(line,"%31s %d %d",keyword,&p->program.room_width,&p->program.room_height)!=3) ok=0;
+    } else if(!strcmp(keyword,"sprite")){
+      if(sscanf(line,"%31s %d",keyword,&p->program.sprite_size)!=2) ok=0;
+    } else if(!strcmp(keyword,"startup")){
+      if(sscanf(line,"%31s %255s",keyword,a)!=2){ ok=0; }
+      else {
+        char full[800]; snprintf(full,sizeof(full),"%s%s",directory,a);
+        p->program.startup=program_keep(p,read_source_file(full));
+        ok=p->program.startup!=NULL;
+      }
+    } else if(!strcmp(keyword,"object")){
+      if(p->program.object_count>=FIXTURE_MAX_OBJECTS){ fprintf(stderr,"too many objects\n"); ok=0; }
+      else if(sscanf(line,"%31s %255s %63s",keyword,a,b)!=3){ ok=0; }
+      else {
+        current=p->program.object_count++;
+        p->objects[current].name=program_keep(p,strdup(a));
+        p->objects[current].sprite=atoi(b);
+        p->objects[current].events=&p->events[events];
+        p->objects[current].event_count=0;
+        p->event_starts[current]=events;
+        ok=p->objects[current].name!=NULL;
+      }
+    } else if(!strcmp(keyword,"event")){
+      if(current<0){ fprintf(stderr,"event before any object\n"); ok=0; }
+      else if(events>=FIXTURE_MAX_EVENTS){ fprintf(stderr,"too many events\n"); ok=0; }
+      else if(sscanf(line,"%31s %63s %63s %255s",keyword,b,c,a)!=4){ ok=0; }
+      else {
+        char full[800]; snprintf(full,sizeof(full),"%s%s",directory,a);
+        p->events[events].event_type=atoi(b);
+        p->events[events].event_number=atoi(c);
+        p->events[events].source=program_keep(p,read_source_file(full));
+        ok=p->events[events].source!=NULL;
+        if(ok){ events++; p->objects[current].event_count=events-p->event_starts[current]; }
+      }
+    } else if(!strcmp(keyword,"instance")){
+      if(p->program.instance_count>=FIXTURE_MAX_INSTANCES){ fprintf(stderr,"too many instances\n"); ok=0; }
+      else if(sscanf(line,"%31s %63s %63s %255s",keyword,b,c,a)!=4){ ok=0; }
+      else {
+        FixtureInstance *in=&p->instances[p->program.instance_count++];
+        in->object=atoi(b); in->x=atoi(c); in->y=atoi(a);
+      }
+    } else {
+      fprintf(stderr,"unknown program directive: %s\n",keyword);
+      ok=0;
+    }
+    if(!ok) fprintf(stderr,"cannot read program line: %s",line);
+  }
+  fclose(file);
+  if(!ok) program_free(p);
+  return ok;
+}
+
 static int prepare_test_directory(void){
 #ifdef _WIN32
   if(_mkdir("tmp")==0 || errno==EEXIST) return 1;
@@ -129,6 +236,24 @@ int main(int argc, char **argv){
     if(file && fclose(file)!=0) ok=0;
     if(!ok){ fprintf(stderr,"cannot write executable fixture: %s\n",argv[2]); return 1; }
     printf("wrote executable fixture: %s (%zu bytes)\n",argv[2],executable.size);
+    return 0;
+  }
+  if(argc==5 && !strcmp(argv[1],"--write-program-fixture")){
+    unsigned version=(unsigned)strtoul(argv[2],NULL,10);
+    ProgramFile program;
+    if(!program_read(argv[4],&program)) return 1;
+    Fixture project;
+    int built=build_project_fixture_program(version,&program.program,&project);
+    program_free(&program);
+    if(!built){
+      fprintf(stderr,"unsupported program fixture version: %s\n",argv[2]);
+      return 1;
+    }
+    FILE *file=fopen(argv[3],"wb");
+    int ok=file && fwrite(project.data,1,project.size,file)==project.size;
+    if(file && fclose(file)!=0) ok=0;
+    if(!ok){ fprintf(stderr,"cannot write program fixture: %s\n",argv[3]); return 1; }
+    printf("wrote program fixture %u: %s (%zu bytes)\n",version,argv[3],project.size);
     return 0;
   }
   if((argc==4 || argc==5) && !strcmp(argv[1],"--write-project-fixture")){

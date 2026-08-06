@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+
+name: level 0
+
+# Language and runtime rules, checked against first-party fixture projects. The tier needs no
+# external reference or display, so it runs on every change rather than on a milestone.
+#
+# The fixtures are not kept here. This repository stays standalone and carries no name or path of
+# any other, so the fixture repository is named by a configured variable and nothing else: set
+# ANYGM_FIXTURES_REPOSITORY and ANYGM_FIXTURES_REF to enable this job. Without them the job reports
+# that it is unconfigured instead of quietly passing, because a suite that skips itself in silence
+# reports coverage nobody has.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  semantics:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v4
+
+      - name: Require the fixture source to be configured
+        run: |
+          if [ -z "${{ vars.ANYGM_FIXTURES_REPOSITORY }}" ] || [ -z "${{ vars.ANYGM_FIXTURES_REF }}" ]; then
+            echo "ANYGM_FIXTURES_REPOSITORY and ANYGM_FIXTURES_REF must be configured" >&2
+            exit 2
+          fi
+
+      - name: Check out the fixtures at their pinned revision
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.ANYGM_FIXTURES_REPOSITORY }}
+          ref: ${{ vars.ANYGM_FIXTURES_REF }}
+          path: .fixtures
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the minimal tier
+        run: python -m pip install --upgrade numpy pillow
+
+      - name: Build the core and the container writer
+        run: |
+          make -j1 core
+          make -j1 build/unix/tests/test_classic
+
+      - name: Run level 0
+        working-directory: .fixtures
+        run: |
+          make -j1 host
+          make level0 LEVEL0_ARGS="\
+            --core $GITHUB_WORKSPACE/anygm_libretro.so \
+            --host $PWD/.work/bin/libretro-host \
+            --classic-probe $GITHUB_WORKSPACE/build/unix/tests/test_classic \
+            --work $PWD/.work"
+
+      - name: Upload the evidence of a failing case
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: level0-evidence
+          path: .fixtures/.work/fidelity/semantics
+          retention-days: 14

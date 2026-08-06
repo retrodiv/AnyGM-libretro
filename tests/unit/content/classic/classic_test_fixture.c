@@ -404,6 +404,180 @@ Fixture legacy_fixture(unsigned container_version){
   return legacy_fixture_variant(container_version,0);
 }
 
+/* One Execute Code action. The source is stored in the first argument when the action's own code
+ * field is empty, so nothing is compiled here either. */
+static void fixture_code_action_list(Fixture *f, const char *source){
+  fixture_u32(f,400); /* action-list version */
+  fixture_u32(f,1);   /* one action */
+  fixture_u32(f,440); /* action version */
+  fixture_u32(f,1);   /* library */
+  fixture_u32(f,603); /* action id */
+  fixture_u32(f,7);   /* kind: execute code */
+  fixture_u32(f,0);   /* may be relative */
+  fixture_u32(f,0);   /* is a question */
+  fixture_u32(f,0);   /* applies to a target */
+  fixture_u32(f,2);   /* type: code */
+  fixture_string(f,""); /* function name */
+  fixture_string(f,""); /* code: empty, so the source is the argument below */
+  fixture_u32(f,1);   /* used arguments */
+  fixture_u32(f,1);   /* argument kinds */
+  fixture_u32(f,1);
+  fixture_u32(f,(unsigned)-1); /* target */
+  fixture_u32(f,0);   /* relative */
+  fixture_u32(f,1);   /* arguments */
+  fixture_string(f,source?source:"");
+  fixture_u32(f,0);   /* negated */
+}
+
+static void fixture_object_payload(Fixture *f, const FixtureObject *object){
+  int last_event_type=0;
+  for(int i=0;i<object->event_count;i++)
+    if(object->events[i].event_type>last_event_type) last_event_type=object->events[i].event_type;
+  fixture_u32(f,(unsigned)object->sprite);
+  fixture_u32(f,0); /* solid */
+  fixture_u32(f,1); /* visible */
+  fixture_u32(f,0); /* depth */
+  fixture_u32(f,0); /* persistent */
+  fixture_u32(f,(unsigned)-100); /* parent: none */
+  fixture_u32(f,(unsigned)-1);   /* mask: the sprite's own */
+  fixture_u32(f,(unsigned)last_event_type);
+  /* Every event type up to the highest used is written, each terminated by the sentinel, because
+   * the reader walks the types in order rather than seeking. */
+  for(int type=0;type<=last_event_type;type++){
+    for(int i=0;i<object->event_count;i++){
+      if(object->events[i].event_type!=type) continue;
+      fixture_u32(f,(unsigned)object->events[i].event_number);
+      fixture_code_action_list(f,object->events[i].source);
+    }
+    fixture_u32(f,(unsigned)-1); /* end of this event type */
+  }
+}
+
+/* One opaque square. Collision needs a mask and a mask comes from a sprite, so the smallest sprite
+ * that lets a collision event fire is a filled rectangle with a manual bounding box. */
+static void fixture_sprite_payload(Fixture *f, int size){
+  fixture_u32(f,0); fixture_u32(f,0); /* origin */
+  fixture_u32(f,1);                   /* one frame */
+  fixture_u32(f,800);                 /* frame version */
+  fixture_u32(f,(unsigned)size); fixture_u32(f,(unsigned)size);
+  unsigned bytes=(unsigned)size*(unsigned)size*4u;
+  if(f->size+4+bytes>sizeof(f->data)) abort();
+  fixture_u32(f,bytes);
+  for(unsigned i=0;i<bytes;i++) f->data[f->size++]=255; /* opaque white, BGRA */
+  fixture_u32(f,1);                   /* collision kind: bounding box */
+  fixture_u32(f,0);                   /* tolerance */
+  fixture_u32(f,0);                   /* one mask for every frame */
+  fixture_u32(f,2);                   /* bounding box: manual */
+  fixture_u32(f,0);                          /* left */
+  fixture_u32(f,(unsigned)(size-1));         /* right */
+  fixture_u32(f,(unsigned)(size-1));         /* bottom */
+  fixture_u32(f,0);                          /* top */
+}
+
+static void fixture_room_payload(Fixture *f, const FixtureProgram *program){
+  fixture_string(f,""); /* caption */
+  fixture_u32(f,(unsigned)program->room_width);
+  fixture_u32(f,(unsigned)program->room_height);
+  fixture_u32(f,16); fixture_u32(f,16); /* snap */
+  fixture_u32(f,0);  /* isometric */
+  fixture_u32(f,30); /* speed */
+  fixture_u32(f,0);  /* persistent */
+  fixture_u32(f,0);  /* background colour */
+  fixture_u32(f,1);  /* draw the background colour */
+  fixture_string(f,""); /* creation code */
+  fixture_u32(f,0); /* backgrounds */
+  fixture_u32(f,0); /* views enabled */
+  fixture_u32(f,0); /* views */
+  fixture_u32(f,(unsigned)program->instance_count);
+  for(int i=0;i<program->instance_count;i++){
+    fixture_u32(f,(unsigned)program->instances[i].x);
+    fixture_u32(f,(unsigned)program->instances[i].y);
+    fixture_u32(f,(unsigned)program->instances[i].object);
+    fixture_u32(f,(unsigned)(100+i)); /* instance id, below the container's declared last id */
+    fixture_string(f,"");             /* creation code */
+    fixture_u32(f,0);                 /* locked */
+  }
+  fixture_u32(f,0); /* tiles */
+  for(unsigned i=0;i<14;i++) fixture_u32(f,0); /* editor state */
+}
+
+/* A manifest resource is one zlib block holding its own existence flag, name, timestamp and
+ * version before the payload. */
+static void fixture_manifest_resource(Fixture *f, const char *name, unsigned version,
+                                      const Fixture *payload){
+  Fixture slot={{0},0};
+  fixture_u32(&slot,1);
+  fixture_string(&slot,name);
+  fixture_zero(&slot,8); /* timestamp */
+  fixture_u32(&slot,version);
+  if(slot.size+payload->size>sizeof(slot.data)) abort();
+  memcpy(slot.data+slot.size,payload->data,payload->size);
+  slot.size+=payload->size;
+  fixture_compressed(f,slot.data,(int)slot.size);
+}
+
+static void fixture_manifest_absent(Fixture *f){
+  const unsigned char absent[4]={0,0,0,0};
+  fixture_compressed(f,absent,sizeof(absent));
+}
+
+static Fixture manifest_fixture_program(unsigned container_version, const FixtureProgram *program){
+  Fixture f = {{0}, 0};
+  fixture_u32(&f, GMLC_CLASSIC_MAGIC); fixture_u32(&f, container_version);
+  fixture_u32(&f, 9); fixture_zero(&f, 16);
+  fixture_u32(&f, 800); fixture_u32(&f, 0); /* settings */
+  fixture_u32(&f, 800); fixture_u32(&f, 0); /* triggers */
+  fixture_zero(&f, 8);
+  fixture_u32(&f, 800); fixture_u32(&f, 0); /* constants */
+  fixture_zero(&f, 8);
+  int sprites = program->sprite_size>0 ? 1 : 0;
+  for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
+    fixture_u32(&f, 800);
+    if(type == GMLC_CLASSIC_SPRITE && sprites){
+      fixture_u32(&f, 1);
+      Fixture payload={{0},0};
+      fixture_sprite_payload(&payload,program->sprite_size);
+      fixture_manifest_resource(&f,"fixture_square",800,&payload);
+    } else if(type == GMLC_CLASSIC_OBJECT && program->object_count){
+      fixture_u32(&f,(unsigned)program->object_count);
+      for(int i=0;i<program->object_count;i++){
+        Fixture payload={{0},0};
+        fixture_object_payload(&payload,&program->objects[i]);
+        fixture_manifest_resource(&f,program->objects[i].name,800,&payload);
+      }
+    } else if(type == GMLC_CLASSIC_ROOM){
+      fixture_u32(&f,1);
+      Fixture payload={{0},0};
+      fixture_room_payload(&payload,program);
+      fixture_manifest_resource(&f,"fixture_room",541,&payload);
+    } else {
+      fixture_u32(&f, 1);
+      fixture_manifest_absent(&f);
+    }
+  }
+  fixture_u32(&f, 100001); fixture_u32(&f, 1000001); /* last instance and tile ids */
+  fixture_u32(&f, 800); fixture_u32(&f, 0); /* included files */
+  fixture_u32(&f, 700); fixture_u32(&f, 0); /* extensions */
+  fixture_u32(&f, 800);
+  { Fixture information=game_information_fixture();
+    fixture_compressed(&f,information.data,(int)information.size); }
+  fixture_u32(&f, 500); fixture_u32(&f, program->startup ? 1 : 0);
+  if(program->startup) fixture_string(&f,program->startup);
+  fixture_u32(&f, 700); fixture_u32(&f, 1); /* room order */
+  fixture_u32(&f, 0);
+  return f;
+}
+
+int build_project_fixture_program(unsigned version, const FixtureProgram *program, Fixture *out){
+  /* Only the manifest families are written this way. The legacy families frame a resource
+   * differently — inline rather than compressed, and with their own sprite record — so a program
+   * asks for the generations it can actually be built for rather than being silently narrowed. */
+  if(version!=800 && version!=810) return 0;
+  if(!program || program->room_width<=0 || program->room_height<=0) return 0;
+  *out=manifest_fixture_program(version,program);
+  return 1;
+}
+
 int build_project_fixture(unsigned version, Fixture *out){
   return build_project_fixture_source(version,NULL,out);
 }

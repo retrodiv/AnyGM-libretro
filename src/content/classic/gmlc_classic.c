@@ -487,9 +487,13 @@ static int validate_background_payload(ClassicReader *r,int executable_layout){
   return 1;
 }
 
-static int validate_path_payload(ClassicReader *r){
+/* Project records include three editor-only fields: target room and both snap steps. Compiled
+ * executable records omit them. The kind, closed flag, precision, and point list are common to
+ * both. This is a layout difference rather than a revision difference. */
+static int validate_path_payload(ClassicReader *r, int executable_layout){
   uint32_t points;
-  if(!reader_words(r, 6, "path fields") || !reader_u32(r, &points, "path point count")) return 0;
+  if(!reader_words(r, executable_layout ? 3 : 6, "path fields") ||
+     !reader_u32(r, &points, "path point count")) return 0;
   return reader_doubles(r, points > UINT32_MAX / 3 ? UINT32_MAX : points * 3, "path points");
 }
 
@@ -977,7 +981,7 @@ static int parse_legacy_slot(ClassicReader *r, GmlcClassicResourceType type,
     case GMLC_CLASSIC_SOUND: valid = validate_sound_payload(r); break;
     case GMLC_CLASSIC_SPRITE: valid = validate_legacy_sprite_payload(r); break;
     case GMLC_CLASSIC_BACKGROUND: valid = validate_legacy_background_payload(r); break;
-    case GMLC_CLASSIC_PATH: valid = validate_path_payload(r); break;
+    case GMLC_CLASSIC_PATH: valid = validate_path_payload(r, 0); break;
     case GMLC_CLASSIC_SCRIPT:
       valid = reader_string_copy(r, &slot->source, "legacy script source"); break;
     case GMLC_CLASSIC_FONT: valid = validate_font_payload(r,0,0); break;
@@ -1407,7 +1411,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
       case GMLC_CLASSIC_SOUND: valid = validate_sound_payload(&r); break;
       case GMLC_CLASSIC_SPRITE: valid = validate_sprite_payload(&r,raw_deflate,slot->version); break;
       case GMLC_CLASSIC_BACKGROUND: valid = validate_background_payload(&r,raw_deflate); break;
-      case GMLC_CLASSIC_PATH: valid = validate_path_payload(&r); break;
+      case GMLC_CLASSIC_PATH: valid = validate_path_payload(&r,raw_deflate); break;
       case GMLC_CLASSIC_SCRIPT: break;
       case GMLC_CLASSIC_FONT: valid = validate_font_payload(&r,raw_deflate,0); break;
       case GMLC_CLASSIC_TIMELINE: valid = validate_timeline_payload(&r); break;

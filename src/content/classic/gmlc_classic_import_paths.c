@@ -54,10 +54,12 @@ int gmlc_classic_import_paths(const GmlcClassicManifest *classic,
     if(!source->exists) continue;
     ImportReader r = {source->payload, source->payload_size, 0, err, errcap};
     uint32_t kind, closed, precision, ignored, points;
-    int compact_legacy=source->legacy_layout && source->executable_layout;
+    /* Every compiled revision omits the three editor-only fields a project carries, so the short
+     * form follows the executable layout rather than any one revision. */
+    int compact=source->executable_layout;
     if(!import_u32(&r, &kind, "path kind") || !import_u32(&r, &closed, "path closed flag") ||
        !import_u32(&r, &precision, "path precision") ||
-       (!compact_legacy &&
+       (!compact &&
         (!import_u32(&r, &ignored, "path editor room") ||
          !import_u32(&r, &ignored, "path snap x") ||
          !import_u32(&r, &ignored, "path snap y"))) ||

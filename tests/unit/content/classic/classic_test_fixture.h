@@ -45,6 +45,42 @@ Fixture manifest_fixture_source(unsigned container_version, const char *gml);
 Fixture legacy_fixture_source(unsigned container_version, const char *gml);
 int build_project_fixture_source(unsigned version, const char *gml, Fixture *out);
 
+/* A container carrying objects placed in a room.
+ *
+ * Startup code reaches every rule that does not need an instance. Event ordering and destruction
+ * order do need one, because an object nobody placed never runs. A program describes the smallest
+ * project that can exercise those: one square sprite so that collision has a mask to test, objects
+ * whose events carry authored source, and a room holding instances of them. */
+typedef struct {
+  int event_type;    /* 0 create, 3 step, 4 collision, 8 draw */
+  int event_number;  /* collision: the other object's slot; otherwise the event's own number */
+  const char *source;
+} FixtureEvent;
+
+typedef struct {
+  const char *name;
+  int sprite;        /* sprite slot, or -1 for an object with no sprite and so no collision */
+  const FixtureEvent *events;
+  int event_count;
+} FixtureObject;
+
+typedef struct {
+  int object;        /* object slot */
+  int x, y;
+} FixtureInstance;
+
+typedef struct {
+  const char *startup;             /* library creation code, run once before the room; may be NULL */
+  int sprite_size;                 /* edge of the one opaque sprite in slot 0; 0 writes no sprite */
+  const FixtureObject *objects;
+  int object_count;
+  const FixtureInstance *instances;
+  int instance_count;
+  int room_width, room_height;
+} FixtureProgram;
+
+int build_project_fixture_program(unsigned version, const FixtureProgram *program, Fixture *out);
+
 /* GMLC_CLASSIC_TEST_FIXTURE_OPERATIONS */
 
 void classic_fixture_host_init(void);
