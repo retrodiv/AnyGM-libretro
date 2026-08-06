@@ -804,8 +804,9 @@ static void draw_tile_add(GmlDrawTile **tiles, double **depth, int *nt, int *cap
   t.order=order;
   (*tiles)[*nt]=t; (*depth)[*nt]=dep; (*nt)++;
 }
-typedef struct { double depth; int seq, type, idx, order, element_order, classic, obj, placed; } GmlDrawItem;  /* type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle system, 5=layer sprite, 6=classic bg, 7=layer effect */
-static int cmp_draw_item(const void *pa, const void *pb){
+/* GmlDrawItem lives in gml_vm_internal.h so the sort guard in the unit suite
+ * can drive the comparator and sort below over synthetic lists. */
+int gml_vm_draw_item_cmp(const void *pa, const void *pb){
   const GmlDrawItem *a=pa,*b=pb;
   if(a->depth!=b->depth) return a->depth>b->depth? -1:1;     /* higher depth first (behind) */
   if(a->order>=0 && b->order>=0 && a->order!=b->order)
@@ -847,6 +848,57 @@ static int cmp_draw_item(const void *pa, const void *pb){
      a->element_order>=0 && b->element_order>=0 && a->element_order!=b->element_order)
     return a->element_order<b->element_order? -1:1;
   return a->seq>b->seq? -1 : (a->seq<b->seq?1:0);
+}
+/* Natural-run bottom-up merge sort for the draw list.
+ *
+ * The assembler above emits the list in a few stretches that are already
+ * internally ordered — instances in slot order, tiles and layer records in
+ * list order — and depth sorts descending, so most stretches arrive either
+ * sorted or exactly reversed. Detecting maximal runs, reversing descending
+ * ones, and merging pairwise sorts a real scene in a fraction of the
+ * comparisons a general qsort spends, calls the comparator directly instead
+ * of through a function pointer, and gives every platform the same ordering:
+ * the C runtimes' qsort implementations call the comparator in different
+ * sequences, which msvcrt paid for in both time and, where the comparator is
+ * not transitive (see header note), in a different picture.
+ *
+ * Reversing a descending run cannot reorder equal elements because distinct
+ * items never compare equal: every comparator path above ends in a seq
+ * tie-break and seq is unique per list. `aux` needs room for n items and
+ * `run_starts` for n+1 ints; both are caller-owned scratch. */
+void gml_vm_draw_items_sort(GmlDrawItem *items, GmlDrawItem *aux, int *run_starts, int n){
+  if(n<2) return;
+  int nr=0, i=0;
+  while(i<n){
+    int start=i;
+    if(i==n-1){ run_starts[nr++]=start; i++; break; }
+    if(gml_vm_draw_item_cmp(&items[i],&items[i+1])>0){
+      while(i<n-1 && gml_vm_draw_item_cmp(&items[i],&items[i+1])>0) i++;
+      for(int lo=start,hi=i;lo<hi;lo++,hi--){ GmlDrawItem t=items[lo]; items[lo]=items[hi]; items[hi]=t; }
+    }else{
+      while(i<n-1 && gml_vm_draw_item_cmp(&items[i],&items[i+1])<=0) i++;
+    }
+    run_starts[nr++]=start;
+    i++;
+  }
+  run_starts[nr]=n;
+  while(nr>1){
+    int w=0;
+    for(int r=0;r+1<nr;r+=2){
+      int lo=run_starts[r], mid=run_starts[r+1], hi=run_starts[r+2];
+      if(gml_vm_draw_item_cmp(&items[mid-1],&items[mid])>0){
+        memcpy(aux+lo,items+lo,(size_t)(mid-lo)*sizeof *items);
+        int a=lo,b=mid,k=lo;
+        while(a<mid && b<hi)
+          items[k++]= gml_vm_draw_item_cmp(&aux[a],&items[b])<=0 ? aux[a++] : items[b++];
+        while(a<mid) items[k++]=aux[a++];
+      }
+      run_starts[w++]=lo;
+    }
+    if(nr%2) run_starts[w++]=run_starts[nr-1];
+    run_starts[w]=n;
+    nr=w;
+  }
 }
 static int rt_layer_has_background(GmlVM *vm, int layer_id){
   for(int i=0;i<vm->n_rte;i++){
@@ -916,6 +968,8 @@ typedef struct GmlDrawScratch {
   struct LayEffect *layer_effect; int layer_effect_capacity;
   struct LayAttachedFilter *layer_attached_filter; int layer_attached_filter_capacity;
   GmlDrawItem *item; int item_capacity;
+  GmlDrawItem *sort_aux; int sort_aux_capacity;
+  int *sort_runs; int sort_runs_capacity;
   GmlDrawTile *tile; double *tile_depth; int tile_capacity;
 } GmlDrawScratch;
 static GmlDrawScratch *draw_scratch_get(GmlVM *vm){
@@ -927,6 +981,7 @@ static void draw_scratch_destroy(GmlDrawScratch *scratch){
   if(!scratch) return;
   free(scratch->layer_background); free(scratch->layer_tile); free(scratch->layer_sprite);
   free(scratch->layer_effect); free(scratch->layer_attached_filter); free(scratch->item);
+  free(scratch->sort_aux); free(scratch->sort_runs);
   free(scratch->tile); free(scratch->tile_depth); free(scratch);
 }
 void gml_vm_frame_cleanup(GmlVM *vm){
@@ -1387,7 +1442,11 @@ void gml_vm_draw(GmlVM *vm){
   for(int i=0;i<ncb;i++){ it[m].depth=cbg[i].depth; it[m].type=6; it[m].idx=i; it[m].seq=m; it[m].order=-1; it[m].classic=0; it[m].obj=-1; m++; }
   for(int i=0;i<npart;i++){ int pid=0; double dep=0;
     if(gml_part_system_auto_draw_nth(vm->particles,i,&pid,&dep)){ it[m].depth=dep; it[m].type=4; it[m].idx=pid; it[m].seq=m; it[m].order=-1; it[m].classic=0; it[m].obj=-1; m++; } }
-  qsort(it,m,sizeof(GmlDrawItem),cmp_draw_item);
+  if(dl_grow((void**)&scratch->sort_aux,&scratch->sort_aux_capacity,m,sizeof(GmlDrawItem)) &&
+     dl_grow((void**)&scratch->sort_runs,&scratch->sort_runs_capacity,m+1,sizeof(int)))
+    gml_vm_draw_items_sort(it,scratch->sort_aux,scratch->sort_runs,m);
+  else
+    qsort(it,m,sizeof(GmlDrawItem),gml_vm_draw_item_cmp);
   { const char *li=anygm_host_development_setting(vm->host,"GML_LOG_INST");
     if(li && atoi(li)>0 && !vm->diagnostics.instance_draw_dumped && vm->frame<atoi(li)) goto skip_instdump; }
   if(anygm_host_development_setting(vm->host,"GML_LOG_INST") && !vm->diagnostics.instance_draw_dumped){ vm->diagnostics.instance_draw_dumped=1;

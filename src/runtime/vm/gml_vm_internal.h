@@ -54,6 +54,18 @@ const int *gml_vm_instances_event_objects(GmlVM *vm, const char *suffix,
                                           int *count);
 void gml_vm_instances_run_classic_event(GmlVM *vm, const char *suffix);
 void gml_vm_instances_sort_slots(GmlVM *vm, int *slots, int count);
+/* One entry of the unified depth-sorted draw list gml_vm_draw assembles each
+ * frame. type: 0=instance, 1=tile, 2=layer tile, 3=layer bg, 4=particle
+ * system, 5=layer sprite, 6=classic bg, 7=layer effect. seq is unique per
+ * list (its position at assembly), which makes the comparator a total order
+ * for every mix the assembler produces except two corners where it is not
+ * transitive: room tiles carrying a layer order against layered peers, and
+ * classic background slots sharing their synthetic depth with non-classic
+ * records. In those corners the result is deterministic but arbitrary, as it
+ * already was under qsort; see gml_vm_draw_item_cmp. */
+typedef struct { double depth; int seq, type, idx, order, element_order, classic, obj, placed; } GmlDrawItem;
+int gml_vm_draw_item_cmp(const void *pa, const void *pb);
+void gml_vm_draw_items_sort(GmlDrawItem *items, GmlDrawItem *aux, int *run_starts, int n);
 void gml_vm_instances_prepare_step(GmlVM *vm, int extent);
 GmlInstance *gml_vm_instances_alloc(GmlVM *vm);
 void gml_vm_instances_initialize(GmlVM *vm, GmlInstance *instance,

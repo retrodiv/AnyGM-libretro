@@ -157,10 +157,149 @@ static int global_lookup_semantics(void){
   return ok;
 }
 
+/* The draw-list sort was accelerated the same way: gml_vm_draw_items_sort
+ * changes *how* the list is ordered — natural-run merge instead of qsort —
+ * never *what* order results.
+ *
+ * The comparator is a total order only on part of its reachable domain: at
+ * equal depth, records that fall through to the final descending-seq rule can
+ * form comparison cycles against families ordered by an earlier rule (layer
+ * orders, ascending-seq tile and background rules). Where a cycle is
+ * possible, qsort's order was never portable to begin with — each C runtime
+ * called the comparator in a different sequence. So the guard pins two
+ * different things:
+ *
+ *   - on provably transitive domains (unique depths; each tie-break family
+ *     among its own kind), the sorted order must equal qsort's exactly;
+ *   - on the full tie-heavy mixed domain, the output must be a permutation
+ *     of the input whose every adjacent pair satisfies the comparator — the
+ *     merge establishes that invariant even where the comparator is cyclic,
+ *     which is more than qsort ever promised there.
+ *
+ * Generated lists stay within the assembler's reachable domain: seq is the
+ * array index, tiles/particles/classic backgrounds carry no layer order, and
+ * classic is uniform per list because a frame shares one runtime policy. */
+static unsigned sort_rng_state;
+static unsigned sort_rng(void){
+  sort_rng_state=sort_rng_state*1664525u+1013904223u;
+  return sort_rng_state>>8;
+}
+static void fill_draw_item(GmlDrawItem *d, int seq, int classic){
+  static const double depths[]={-100.0,0.0,0.0,0.0,32.0,32.0,1e6};
+  static const int types[]={0,1,2,3,4,5,7};
+  int type=types[sort_rng()%(sizeof types/sizeof *types)];
+  d->depth=depths[sort_rng()%(sizeof depths/sizeof *depths)];
+  d->seq=seq;
+  d->type=type;
+  d->idx=(int)(sort_rng()%64);
+  d->order= (type==0||type==2||type==3||type==5||type==7) ? (int)(sort_rng()%5)-1 : -1;
+  d->element_order= type==0 ? (int)(sort_rng()%5)-1 : -1;
+  d->classic= type==0 ? classic : 0;
+  d->obj=(int)(sort_rng()%4);
+  d->placed= (type==0 && classic) ? (int)(sort_rng()%2) : 0;
+}
+static int sort_with_scratch(GmlDrawItem *items, int n){
+  GmlDrawItem *aux=malloc(n?(size_t)n*sizeof *aux:1);
+  int *runs=malloc(((size_t)n+1)*sizeof *runs);
+  if(!aux||!runs){ free(aux); free(runs); fail("sort guard allocation"); return 0; }
+  gml_vm_draw_items_sort(items,aux,runs,n);
+  free(aux); free(runs);
+  return 1;
+}
+static int check_equals_qsort(GmlDrawItem *items, int n, const char *label){
+  size_t un=n>0?(size_t)n:0;
+  GmlDrawItem *expect=malloc(un>0?un*sizeof *expect:1);
+  if(!expect){ fail("sort guard allocation"); return 0; }
+  if(un>0) memcpy(expect,items,un*sizeof *expect);
+  qsort(expect,un,sizeof *expect,gml_vm_draw_item_cmp);
+  int ok=sort_with_scratch(items,n);
+  if(ok && un>0 && memcmp(items,expect,un*sizeof *items)){
+    fprintf(stderr,"vm hot path: draw sort diverged from qsort (%s, n=%d)\n",label,n);
+    failures++;
+    ok=0;
+  }
+  free(expect);
+  return ok;
+}
+static int check_sorted_permutation(GmlDrawItem *items, int n, const char *label){
+  size_t un=n>0?(size_t)n:0;
+  GmlDrawItem *input=malloc(un>0?un*sizeof *input:1);
+  if(!input){ fail("sort guard allocation"); return 0; }
+  if(un>0) memcpy(input,items,un*sizeof *input);       /* input[i].seq==i */
+  int ok=sort_with_scratch(items,n);
+  for(int i=0;ok && i<n;i++){
+    int seq=items[i].seq;
+    if(seq<0 || seq>=n || memcmp(&items[i],&input[seq],sizeof *items)){
+      fprintf(stderr,"vm hot path: draw sort lost an item (%s, n=%d)\n",label,n);
+      failures++; ok=0;
+    }
+    input[seq].seq=-1;                                  /* each item exactly once */
+  }
+  for(int i=1;ok && i<n;i++){
+    if(gml_vm_draw_item_cmp(&items[i-1],&items[i])>0){
+      fprintf(stderr,"vm hot path: draw sort left an unsorted pair (%s, n=%d, at %d)\n",label,n,i);
+      failures++; ok=0;
+    }
+  }
+  free(input);
+  return ok;
+}
+static int draw_item_sort_order(void){
+  static const int sizes[]={0,1,2,3,5,16,63,257,1000,4999};
+  enum { GUARD_MAX=4999 };
+  GmlDrawItem *items=malloc(GUARD_MAX*sizeof *items);
+  if(!items){ fail("sort guard allocation"); return 0; }
+  int ok=1;
+  sort_rng_state=0x013527c6u;
+
+  /* full tie-heavy mixed domain: permutation + adjacent order */
+  for(size_t s=0;s<sizeof sizes/sizeof *sizes;s++){
+    int n=sizes[s];
+    for(int classic=0;classic<=2;classic++){
+      for(int i=0;i<n;i++) fill_draw_item(&items[i],i,classic);
+      ok &= check_sorted_permutation(items,n,"mixed ties");
+    }
+  }
+
+  /* unique depths: the first comparator rule decides every pair */
+  for(size_t s=0;s<sizeof sizes/sizeof *sizes;s++){
+    int n=sizes[s];
+    for(int i=0;i<n;i++){
+      fill_draw_item(&items[i],i,(int)(sort_rng()%3));
+      items[i].classic= items[i].type==0 ? items[i].classic : 0;
+      items[i].depth=(double)((unsigned)i*2654435761u);   /* odd multiplier: injective */
+    }
+    ok &= check_equals_qsort(items,n,"unique depths");
+  }
+
+  /* each tie-break family among its own kind, all at one depth */
+  int n=1000;
+  for(int i=0;i<n;i++){ fill_draw_item(&items[i],i,0); items[i].type=0; items[i].classic=0; items[i].depth=7.0;
+    items[i].element_order=(int)(sort_rng()%5); }        /* all listed: eo rule stays transitive */
+  ok &= check_equals_qsort(items,n,"studio layer instances");
+  for(int i=0;i<n;i++){ fill_draw_item(&items[i],i,0); items[i].type=0; items[i].classic=0; items[i].depth=7.0;
+    items[i].element_order=-1; }
+  ok &= check_equals_qsort(items,n,"studio dynamic instances");
+  for(int i=0;i<n;i++){ fill_draw_item(&items[i],i,1); items[i].type=0; items[i].classic=1; items[i].order=-1; items[i].depth=7.0; }
+  ok &= check_equals_qsort(items,n,"classic executable instances");
+  for(int i=0;i<n;i++){ fill_draw_item(&items[i],i,2); items[i].type=0; items[i].classic=2; items[i].order=-1; items[i].depth=7.0; }
+  ok &= check_equals_qsort(items,n,"classic project instances");
+  for(int i=0;i<n;i++){ fill_draw_item(&items[i],i,0); items[i].type=1; items[i].order=-1; items[i].depth=3.0; }
+  ok &= check_equals_qsort(items,n,"room tiles");
+  for(int i=0;i<n;i++){ fill_draw_item(&items[i],i,0); items[i].type=6; items[i].order=-1; items[i].depth=1e9; }
+  ok &= check_equals_qsort(items,n,"classic background slots");
+
+  free(items);
+  if(ok) return 1;
+  failures++;
+  return 0;
+}
+
 int main(void){
   special_name_gate();
   global_lookup_semantics();
+  draw_item_sort_order();
   if(failures) return 1;
-  puts("vm hot-path name resolution: ok");
+  puts("vm hot paths: ok");
   return 0;
 }
