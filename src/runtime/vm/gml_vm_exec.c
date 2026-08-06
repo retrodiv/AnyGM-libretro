@@ -331,20 +331,25 @@ uint64_t gml_host_random_seed(GmlVM *vm){
   return UINT64_C(0x9e3779b97f4a7c15)^(frame<<32)^previous;
 }
 
-static double cpu_clock_ms(GmlVM *vm){
-  return (double)gml_host_monotonic_time_ns(vm)/1000000.0;
-}
-static double current_time_value(GmlVM *vm){
-  double now=cpu_clock_ms(vm);
+/* A read inside one frame still has to move, because content implements waiting by spinning on this
+ * value until it advances. What it must not do is move by how long this machine took: a clock that
+ * depends on host load makes the same run answer differently every time, and a run that cannot
+ * repeat itself cannot be restored either — a state saved mid-stage resumes into a different
+ * continuation, which is what a savestate and a rewind both are. So the intra-frame part counts
+ * reads rather than milliseconds, bounded below one frame so it can never overtake the next. */
+static double intra_frame_ms(GmlVM *vm){
+  double step=1000.0 / gml_room_speed(vm);
   if(vm->time_sample_frame!=vm->frame){
     vm->time_sample_frame=vm->frame;
-    vm->time_sample_cpu_ms=now;
+    vm->time_sample_cpu_ms=0.0;
   }
-  double intra=now-vm->time_sample_cpu_ms;
-  if(intra<0.0) intra=0.0;
-  /* Keep the old frame-clock base for gameplay timers, but let the value advance while GML is
-   * executing. Some GM scripts implement sleep by spinning on current_time inside one frame. */
-  return (double)vm->frame * (1000.0 / gml_room_speed(vm)) + intra;
+  double intra=vm->time_sample_cpu_ms;
+  double limit=step*0.999;
+  if(intra<limit) vm->time_sample_cpu_ms=intra+1.0;
+  return intra<limit?intra:limit;
+}
+static double current_time_value(GmlVM *vm){
+  return (double)vm->frame * (1000.0 / gml_room_speed(vm)) + intra_frame_ms(vm);
 }
 static int current_calendar_value(GmlVM *vm,const char *name,GmlVal *out){
   if(strncmp(name,"current_",8) || !strcmp(name,"current_time")) return 0;
@@ -367,18 +372,10 @@ static int current_calendar_value(GmlVM *vm,const char *name,GmlVal *out){
   return 1;
 }
 /* get_timer (µs): frame-locked base plus intra-frame CPU advance, matching current_time.
- * A clock-only value depends on host load and makes frame captures non-reproducible. The base advances
- * exactly 1/fps per frame, and the intra-frame part
- * still moves so busy-wait sleep loops (`while(get_timer()<end){}`) exit in real time. */
+ * The base advances exactly 1/fps per frame and shares the bounded intra-frame advance, so
+ * busy-wait loops still exit and the answer stays repeatable. */
 double gml_vm_get_timer_us(GmlVM *vm){
-  double now=cpu_clock_ms(vm);
-  if(vm->time_sample_frame!=vm->frame){
-    vm->time_sample_frame=vm->frame;
-    vm->time_sample_cpu_ms=now;
-  }
-  double intra_ms=now-vm->time_sample_cpu_ms;
-  if(intra_ms<0.0) intra_ms=0.0;
-  return (double)vm->frame * (1000000.0 / gml_room_speed(vm)) + intra_ms*1000.0;
+  return (double)vm->frame * (1000000.0 / gml_room_speed(vm)) + intra_frame_ms(vm)*1000.0;
 }
 static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, GmlVal *out){
   if(!in || !vm || !vm->render) return 0;
