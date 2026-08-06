@@ -106,6 +106,11 @@ void retro_set_input_poll(retro_input_poll_t callback){ g_libretro.input_poll=ca
 void retro_set_input_state(retro_input_state_t callback){ g_libretro.input_state=callback; }
 
 void retro_init(void){
+  /* The settings are declared when the host hands over its callback, and released when the core is
+   * torn down. A host that starts the core again without handing the callback over a second time
+   * would otherwise be left with nothing declared, so the declaration is made again here; saying
+   * it twice costs nothing. */
+  libretro_options_register();
   if(g_libretro.environment){
     struct retro_log_callback log_callback;
     if(g_libretro.environment(RETRO_ENVIRONMENT_GET_LOG_INTERFACE,&log_callback))

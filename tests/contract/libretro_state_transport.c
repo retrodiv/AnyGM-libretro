@@ -91,7 +91,8 @@ size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capac
 
 void libretro_vfs_request(void){}
 void libretro_vfs_services_init(AnygmHostServices *services){ (void)services; }
-void libretro_options_register(void){}
+static unsigned options_registered;
+void libretro_options_register(void){ options_registered++; }
 static unsigned options_applied;
 void libretro_options_apply(bool all_fields){ (void)all_fields; options_applied++; }
 void libretro_options_publish_rooms(void){}
@@ -176,6 +177,20 @@ void retro_reset(void);
 /* A player changes a setting in the host's menu and restarts from that same menu, so the core
  * never runs a frame in between; anything read only from inside the frame loop would apply to the
  * boot after the one the player asked for. Settings read at boot are read on restart. */
+/* Starting the core declares its settings, whether or not the host hands its callback over again:
+ * tearing down releases what the declaration holds, and a start that skipped it would leave the
+ * host with nothing to show. */
+static int starting_declares_the_settings(void){
+  if(!begin_frontend(1)) return 0;
+  unsigned before=options_registered;
+  retro_init();
+  int ok=options_registered>before;
+  if(!ok) fprintf(stderr,"a started core declared no settings\n");
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
 static int restart_rereads_settings(void){
   if(!begin_frontend(1)) return 0;
   unsigned before=options_applied;
@@ -193,7 +208,7 @@ int main(void){
   if(retro_serialize_size()!=0 || retro_serialize(&byte,1) || retro_unserialize(&byte,1) ||
      !stable_transport(1,1) || !stable_transport(0,0) || !stable_transport(-1,0) ||
      !growing_transport() || !fixed_transport_rejects_growth() ||
-     !restart_rereads_settings()){
+     !restart_rereads_settings() || !starting_declares_the_settings()){
     fprintf(stderr,"libretro state transport contract failed\n");
     return 1;
   }

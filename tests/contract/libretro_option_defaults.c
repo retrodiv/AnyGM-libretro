@@ -341,6 +341,22 @@ static void older_hosts_get_every_room_at_once(void){
     complain("the flat declaration does not lead with the shipped amount");
 }
 
+/* Tearing the core down releases what the declaration holds. Starting it again has to leave the
+ * host with the settings declared, whether or not it hands its callback over a second time. */
+static void a_restarted_core_declares_its_settings_again(void){
+  begin(2,300);
+  libretro_options_publish_rooms();
+  libretro_options_release();
+  declared_definitions=NULL;
+  declared_variables=NULL;
+  libretro_options_register();
+  if(!definition("anygm_start_room"))
+    complain("a core started again offers no settings at all");
+  libretro_options_publish_rooms();
+  const struct retro_core_option_v2_definition *chooser=definition("anygm_start_room");
+  if(value_count(chooser)<2) complain("a core started again names no rooms");
+}
+
 int main(void){
   every_setting_sits_in_a_group();
   unset_settings_keep_content_reachable();
@@ -349,6 +365,7 @@ int main(void){
   loaded_content_names_its_rooms();
   rooms_past_one_list_stay_reachable();
   older_hosts_get_every_room_at_once();
+  a_restarted_core_declares_its_settings_again();
   /* Everything the declarations hold is released here, so a leak checker running this case sees
    * whatever the teardown forgot. */
   libretro_options_release();
