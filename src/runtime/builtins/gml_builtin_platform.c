@@ -508,7 +508,19 @@ GmlVal gml_builtin_try_platform_extensions(GmlVM *vm, const char *nm, GmlVal *a,
      !strcmp(nm,"GOG_User_SignInGalaxy")||!strcmp(nm,"GOG_User_SignedIn")) return vreal(0);
   if(!strncmp(nm,"GOG_",4)) return vreal(0);
   if(!strcmp(nm,"show_debug_message")||!strcmp(nm,"show_debug_overlay")){
-    if(builtin_setting(vm,"GML_LOG_DEBUGMSG")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gml debug] %s\n", S(vm,a,n,0));
+    const char *message=S(vm,a,n,0);
+    /* A suite that asserts on what the content printed needs a stream carrying nothing else. The
+     * host log is shared with every other diagnostic, so this development setting puts the message
+     * on standard output behind a stable prefix instead, and flushes each line so the order
+     * survives a run that ends badly. Only the message call writes there: the overlay call takes a
+     * flag, not text. */
+    if(!strcmp(nm,"show_debug_message") && builtin_setting(vm,"GML_TEST_PRINT")){
+      fputs("[gml-test] ",stdout);
+      fputs(message,stdout);
+      fputc('\n',stdout);
+      fflush(stdout);
+    }
+    if(builtin_setting(vm,"GML_LOG_DEBUGMSG")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gml debug] %s\n", message);
     return vreal(0); }
   if(!strncmp(nm,"xboxone_",8)) return vreal(0);
   /* The host receives one completed video frame per anygm_run_frame. Desktop refresh/vsync calls

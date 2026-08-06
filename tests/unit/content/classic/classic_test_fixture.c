@@ -82,6 +82,10 @@ void fixture_zero(Fixture *f, size_t count){
 
 void fixture_string(Fixture *f, const char *text){
   size_t length = text ? strlen(text) : 0;
+  /* Every other field here is a fixed handful of bytes, but an embedded source is as long as its
+   * author made it. Refuse loudly rather than write past the buffer and report a container defect
+   * somewhere else entirely. */
+  if(f->size + 4 + length > sizeof(f->data)) abort();
   fixture_u32(f, (unsigned)length);
   if(length){
     memcpy(f->data + f->size, text, length);
@@ -118,6 +122,10 @@ Fixture game_information_fixture(void){
 }
 
 Fixture manifest_fixture(unsigned container_version){
+  return manifest_fixture_source(container_version,NULL);
+}
+
+Fixture manifest_fixture_source(unsigned container_version, const char *gml){
   Fixture f = {{0}, 0};
   fixture_u32(&f, GMLC_CLASSIC_MAGIC); fixture_u32(&f, container_version);
   fixture_u32(&f, 9); fixture_zero(&f, 16);
@@ -168,8 +176,9 @@ Fixture manifest_fixture(unsigned container_version){
   fixture_u32(&f, 800); /* game information */
   { Fixture information=game_information_fixture();
     fixture_compressed(&f,information.data,(int)information.size); }
-  fixture_u32(&f, 500); fixture_u32(&f, 1); /* library code */
+  fixture_u32(&f, 500); fixture_u32(&f, gml ? 2 : 1); /* library code */
   fixture_string(&f,"global.fixture_started = 1;");
+  if(gml) fixture_string(&f,gml);
   fixture_u32(&f, 700); fixture_u32(&f, 0); /* executable rooms */
   return f;
 }
@@ -319,7 +328,7 @@ void fixture_legacy_room(Fixture *f, const char *name){
   for(unsigned i=0;i<14;i++) fixture_u32(f,0);
 }
 
-Fixture legacy_fixture_variant(unsigned container_version, int sparse_rooms){
+static Fixture legacy_fixture_build(unsigned container_version, int sparse_rooms, const char *gml){
   Fixture f = {{0}, 0};
   int gm7 = container_version == 701 || container_version == 702;
   fixture_u32(&f, GMLC_CLASSIC_MAGIC); fixture_u32(&f, container_version);
@@ -357,7 +366,10 @@ Fixture legacy_fixture_variant(unsigned container_version, int sparse_rooms){
     } else fixture_u32(&f, 0);
   }
   fixture_u32(&f, 100000); fixture_u32(&f, 1000000);
-  if(sparse_rooms){
+  /* The tail is optional and the plain fixture ends here. Either a sparse room order or an
+   * embedded source needs it, and both need all of it: the sections are positional, so library
+   * code cannot be reached without writing the game information that precedes it. */
+  if(sparse_rooms || gml){
     if(gm7){
       fixture_u32(&f,620); fixture_u32(&f,0); /* included files */
       fixture_u32(&f,700); fixture_u32(&f,0); /* extensions */
@@ -368,11 +380,24 @@ Fixture legacy_fixture_variant(unsigned container_version, int sparse_rooms){
     fixture_u32(&f,600); fixture_u32(&f,400);
     fixture_u32(&f,1); fixture_u32(&f,1); fixture_u32(&f,0); fixture_u32(&f,1);
     fixture_string(&f,"");
-    fixture_u32(&f,500); fixture_u32(&f,0); /* library code */
-    fixture_u32(&f,700); fixture_u32(&f,2); /* explicit room order */
-    fixture_u32(&f,6); fixture_u32(&f,2);
+    fixture_u32(&f,500); fixture_u32(&f, gml ? 1 : 0); /* library code */
+    if(gml) fixture_string(&f,gml);
+    if(sparse_rooms){
+      fixture_u32(&f,700); fixture_u32(&f,2); /* explicit room order */
+      fixture_u32(&f,6); fixture_u32(&f,2);
+    } else {
+      fixture_u32(&f,700); fixture_u32(&f,0); /* no rooms to order */
+    }
   }
   return f;
+}
+
+Fixture legacy_fixture_variant(unsigned container_version, int sparse_rooms){
+  return legacy_fixture_build(container_version,sparse_rooms,NULL);
+}
+
+Fixture legacy_fixture_source(unsigned container_version, const char *gml){
+  return legacy_fixture_build(container_version,0,gml);
 }
 
 Fixture legacy_fixture(unsigned container_version){
@@ -380,9 +405,13 @@ Fixture legacy_fixture(unsigned container_version){
 }
 
 int build_project_fixture(unsigned version, Fixture *out){
-  if(version==600){ *out=legacy_fixture(version); return 1; }
+  return build_project_fixture_source(version,NULL,out);
+}
+
+int build_project_fixture_source(unsigned version, const char *gml, Fixture *out){
+  if(version==600){ *out=legacy_fixture_source(version,gml); return 1; }
   if(version==701 || version==702){
-    Fixture plain=legacy_fixture(version);
+    Fixture plain=legacy_fixture_source(version,gml);
     size_t encoded_size=0;
     unsigned char *encoded=encode_gm7(plain.data,plain.size,&encoded_size);
     if(!encoded || encoded_size>sizeof(out->data)){ free(encoded); return 0; }
@@ -392,6 +421,6 @@ int build_project_fixture(unsigned version, Fixture *out){
     free(encoded);
     return 1;
   }
-  if(version==800 || version==810){ *out=manifest_fixture(version); return 1; }
+  if(version==800 || version==810){ *out=manifest_fixture_source(version,gml); return 1; }
   return 0;
 }

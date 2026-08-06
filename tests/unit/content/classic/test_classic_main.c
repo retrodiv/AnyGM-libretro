@@ -81,6 +81,24 @@ static void discard_imported_rooms(GmlcProject *project, int remove_sources){
   memset(project, 0, sizeof(*project));
 }
 
+/* Read a whole source file so the caller can embed it in a container. The classic families keep
+ * code as text and compile it at load, so there is nothing to build here — only to carry. */
+static char *read_source_file(const char *path){
+  FILE *file=fopen(path,"rb");
+  if(!file){ fprintf(stderr,"cannot open source: %s\n",path); return NULL; }
+  if(fseek(file,0,SEEK_END)!=0){ fclose(file); fprintf(stderr,"cannot size source: %s\n",path); return NULL; }
+  long size=ftell(file);
+  if(size<0 || fseek(file,0,SEEK_SET)!=0){ fclose(file); fprintf(stderr,"cannot size source: %s\n",path); return NULL; }
+  char *text=(char*)malloc((size_t)size+1);
+  if(!text){ fclose(file); fprintf(stderr,"out of memory reading source: %s\n",path); return NULL; }
+  if(size && fread(text,1,(size_t)size,file)!=(size_t)size){
+    free(text); fclose(file); fprintf(stderr,"cannot read source: %s\n",path); return NULL;
+  }
+  text[size]='\0';
+  fclose(file);
+  return text;
+}
+
 static int prepare_test_directory(void){
 #ifdef _WIN32
   if(_mkdir("tmp")==0 || errno==EEXIST) return 1;
@@ -113,10 +131,14 @@ int main(int argc, char **argv){
     printf("wrote executable fixture: %s (%zu bytes)\n",argv[2],executable.size);
     return 0;
   }
-  if(argc==4 && !strcmp(argv[1],"--write-project-fixture")){
+  if((argc==4 || argc==5) && !strcmp(argv[1],"--write-project-fixture")){
     unsigned version=(unsigned)strtoul(argv[2],NULL,10);
     Fixture project;
-    if(!build_project_fixture(version,&project)){
+    char *source=NULL;
+    if(argc==5 && !(source=read_source_file(argv[4]))) return 1;
+    int built=build_project_fixture_source(version,source,&project);
+    free(source);
+    if(!built){
       fprintf(stderr,"unsupported project fixture version: %s\n",argv[2]);
       return 1;
     }
