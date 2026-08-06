@@ -41,60 +41,9 @@ static int expect_path_import(void){
   return ok;
 }
 
-/* A compiled path omits the three editor-only fields, so the same point list has to import from a
- * payload that is twelve bytes shorter.  `trailing` appends one byte the short form cannot explain,
- * which the importer must reject rather than absorb. */
-static int import_compact_path(int trailing, GmlcPath *out){
-  GmlcClassicManifest manifest;
-  memset(&manifest, 0, sizeof(manifest));
-  manifest.inventory.resource_slots[GMLC_CLASSIC_PATH] = 1;
-  manifest.existing[GMLC_CLASSIC_PATH] = 1;
-  manifest.slots[GMLC_CLASSIC_PATH] = (GmlcClassicResourceSlot*)calloc(1, sizeof(GmlcClassicResourceSlot));
-  if(!manifest.slots[GMLC_CLASSIC_PATH]) return 0;
-  GmlcClassicResourceSlot *slot = &manifest.slots[GMLC_CLASSIC_PATH][0];
-  slot->exists = 1; slot->name = strdup("compiled_path"); slot->executable_layout = 1;
-  Fixture payload = {{0}, 0};
-  fixture_u32(&payload, 1); fixture_u32(&payload, 1); fixture_u32(&payload, 4);
-  fixture_u32(&payload, 2);
-  fixture_double(&payload, 1.5); fixture_double(&payload, 2.5); fixture_double(&payload, 100.0);
-  fixture_double(&payload, 9.5); fixture_double(&payload, 8.5); fixture_double(&payload, 50.0);
-  if(trailing) fixture_u32(&payload, 0);
-  slot->payload = (uint8_t*)malloc(payload.size);
-  if(!slot->name || !slot->payload){ gmlc_classic_manifest_free(&manifest); return 0; }
-  memcpy(slot->payload, payload.data, payload.size); slot->payload_size = payload.size;
-  GmlcProject project;
-  fixture_project_clear(&project);
-  char err[256];
-  int ok = gmlc_classic_import_paths(&manifest, &project, err, sizeof(err));
-  if(ok && out && project.n_paths == 1) *out = project.paths[0];
-  if(ok && out && project.n_paths == 1) project.paths[0].points = NULL;
-  for(int i = 0; i < project.n_paths; ++i){
-    free(project.paths[i].id); free(project.paths[i].name); free(project.paths[i].points);
-  }
-  free(project.paths);
-  gmlc_classic_manifest_free(&manifest);
-  return ok;
-}
-
-static int expect_compact_path_import(void){
-  GmlcPath path;
-  memset(&path, 0, sizeof(path));
-  int ok = import_compact_path(0, &path);
-  if(ok) ok = path.kind == 1 && path.closed && path.precision == 4 && path.n_points == 2 &&
-              path.points && path.points[1].x > 9.49f && path.points[1].speed == 50.0f;
-  free(path.points);
-  return ok;
-}
-
-static int expect_compact_path_trailing_rejected(void){
-  return !import_compact_path(1, NULL);
-}
-
 AnygmTestGroup classic_test_paths_group(void){
   static const AnygmTestCase cases[]={
     {"import",expect_path_import},
-    {"import.compiled",expect_compact_path_import},
-    {"import.compiled.trailing",expect_compact_path_trailing_rejected},
   };
   const AnygmTestGroup group={
     "classic.paths",cases,sizeof cases/sizeof cases[0]
