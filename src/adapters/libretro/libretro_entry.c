@@ -203,6 +203,8 @@ static void update_directories(void){
 bool retro_load_game(const struct retro_game_info *info){
   if(!info || !info->path || !create_engine()) return false;
   if(g_libretro.loaded) retro_unload_game();
+  memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
+  g_libretro.setting_cache_count=0;
   update_directories();
   update_locale();
   libretro_options_apply(true);
@@ -228,6 +230,10 @@ bool retro_load_game(const struct retro_game_info *info){
   }
   g_libretro.loaded=true;
   g_libretro.fixed_state_capacity=0;
+  /* Loading consults dozens of one-shot setting names; clear them out so the
+   * per-frame names always find a free slot. */
+  memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
+  g_libretro.setting_cache_count=0;
   /* The room names only exist now, and the chooser is worth nothing without them. */
   libretro_options_publish_rooms();
   libretro_update_av();

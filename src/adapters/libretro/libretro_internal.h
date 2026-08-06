@@ -40,6 +40,9 @@ typedef struct LibretroAdapter {
   char region[16];
   char language_tag[32];
   uint64_t seed_counter;
+  /* memoised development settings; see host_development_setting */
+  struct { uint32_t hash; const char *value; char name[52]; } setting_cache[128];
+  int setting_cache_count;
 } LibretroAdapter;
 
 extern LibretroAdapter g_libretro;
