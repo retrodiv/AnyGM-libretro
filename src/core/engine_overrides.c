@@ -90,6 +90,7 @@ static void cheat_parse(const char *code, CheatAct *a){
       if     (!strncmp(s,"4:3",3)) { a->scope_mode=GMC_ASPECT_FORCE_4_3;  s+=3; }
       else if(!strncmp(s,"16:9",4)){ a->scope_mode=GMC_ASPECT_FORCE_16_9; s+=4; }
       else if(!strncmp(s,"21:9",4)){ a->scope_mode=GMC_ASPECT_FORCE_21_9; s+=4; }
+      else if(!strncmp(s,"16:10",5)){ a->scope_mode=GMC_ASPECT_FORCE_16_10; s+=5; }
     }
     while(*s==' '||*s=='\t') s++;
   }

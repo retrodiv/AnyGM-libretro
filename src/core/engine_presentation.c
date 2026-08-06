@@ -228,7 +228,7 @@ int core_opt_crt_tristate(AnygmEngine *engine,const char *key, const char *env) 
   return -1;
 }
 static int core_opt_aspect_force(AnygmEngine *engine) {
-  return engine->config.aspect_mode<=GMC_ASPECT_FORCE_21_9?(int)engine->config.aspect_mode:GMC_ASPECT_FORCE_NONE;
+  return engine->config.aspect_mode<=GMC_ASPECT_FORCE_16_10?(int)engine->config.aspect_mode:GMC_ASPECT_FORCE_NONE;
 }
 void clamp_camera_to_current_room(AnygmEngine *engine,double *x, double *y, int center_when_smaller) {
   if (!x || !y) return;
@@ -501,8 +501,7 @@ static void apply_aspect_force_to_res(AnygmEngine *engine,unsigned base_w, unsig
   engine->aspect_cam_dx = engine->aspect_cam_dy = 0.0;
   engine->aspect_gui_ox = engine->aspect_gui_oy = 0;
   if (mode != GMC_ASPECT_FORCE_NONE && base_w > 0 && base_h > 0) {
-    const double target = mode == GMC_ASPECT_FORCE_21_9 ? (21.0 / 9.0) :
-                          mode == GMC_ASPECT_FORCE_16_9 ? (16.0 / 9.0) : (4.0 / 3.0);
+    const double target = gmc_aspect_force_ratio(mode);
     double ratio = (double)base_w / (double)base_h;
     unsigned present_w = 0, present_h = 0;
     int already_target = fabs(ratio - target) <= 0.2;
@@ -794,8 +793,7 @@ void compute_present(AnygmEngine *engine) {
      * The vertical axis is authoritative and the effective width is derived from it; the raw
      * width option deliberately remains untouched so the host still shows what was selected. */
     if (engine->aspect_force_mode != GMC_ASPECT_FORCE_NONE && target_h > 0) {
-      double ratio = engine->aspect_force_mode == GMC_ASPECT_FORCE_21_9 ? (21.0 / 9.0) :
-                     engine->aspect_force_mode == GMC_ASPECT_FORCE_16_9 ? (16.0 / 9.0) : (4.0 / 3.0);
+      double ratio = gmc_aspect_force_ratio(engine->aspect_force_mode);
       target_w = (int)round_to_multiple_of_8((double)target_h * ratio);
       if (target_w > FB_MAX_W) target_w = FB_MAX_W & ~7;
     }

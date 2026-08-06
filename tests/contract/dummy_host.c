@@ -146,6 +146,30 @@ static int fail(const char *message){
   return 1;
 }
 
+/* Each forced shape has to resolve to its own ratio. The width of a forced frame is derived from
+ * that ratio in one place and the frame is measured against it in another, so a shape added to the
+ * list without a ratio of its own silently comes out as four thirds. */
+static int exercise_forced_aspect_shapes(void){
+  static const struct { int mode; double ratio; const char *name; } shapes[]={
+    {GMC_ASPECT_FORCE_4_3,4.0/3.0,"4:3"},
+    {GMC_ASPECT_FORCE_16_9,16.0/9.0,"16:9"},
+    {GMC_ASPECT_FORCE_16_10,16.0/10.0,"16:10"},
+    {GMC_ASPECT_FORCE_21_9,21.0/9.0,"21:9"}
+  };
+  for(size_t i=0;i<sizeof shapes/sizeof shapes[0];i++){
+    double actual=gmc_aspect_force_ratio(shapes[i].mode);
+    if(fabs(actual-shapes[i].ratio)>1e-9){
+      fprintf(stderr,"dummy host: forced %s resolved to %.6f, expected %.6f\n",
+              shapes[i].name,actual,shapes[i].ratio);
+      return fail("a forced shape does not resolve to its own ratio");
+    }
+    for(size_t j=0;j<i;j++)
+      if(fabs(actual-gmc_aspect_force_ratio(shapes[j].mode))<1e-9)
+        return fail("two forced shapes resolve to the same ratio");
+  }
+  return 0;
+}
+
 static int exercise_declared_global_cadence(AnygmEngine *engine){
   double saved_content_fps=engine->win.game_speed;
   unsigned saved_modern_layers=engine->compatibility.has_modern_layer_semantics;
@@ -384,6 +408,7 @@ int main(void){
   if(fabs(av.aspect_ratio-(double)av.base_width/(double)av.base_height)>1e-9)
     return fail("A/V ratio does not describe the delivered frame");
   if(exercise_declared_global_cadence(engine)) return 1;
+  if(exercise_forced_aspect_shapes()) return 1;
   AnygmAvInfo short_av={0};
   short_av.struct_size=sizeof short_av-1;
   if(anygm_get_av_info(engine,&short_av)!=ANYGM_ERROR_INCOMPATIBLE_ABI)

@@ -61,10 +61,10 @@ static struct retro_core_option_v2_definition g_definitions[]={
     {"1200",NULL},{"1280",NULL},{"1350",NULL},{"1440",NULL},{"1536",NULL},{"1600",NULL},
     {"1800",NULL},{"1920",NULL},{"2160",NULL},{NULL,NULL}},
    "Game Base"},
-  {"anygm_aspect_ratio_force","Aspect ratio force",NULL,
+  {"anygm_aspect_ratio_force","Aspect Ratio force (Experimental)",NULL,
    "Overrides the shape this program scales the frame to. None keeps the shape the game draws.",
    NULL,"video",
-   {{"None",NULL},{"4:3",NULL},{"16:9",NULL},{"21:9",NULL},{NULL,NULL}},
+   {{"None",NULL},{"4:3",NULL},{"16:9",NULL},{"16:10",NULL},{"21:9",NULL},{NULL,NULL}},
    "None"},
   {"anygm_gamepad","Gamepad connected",NULL,
    "Reports a connected pad to the game. Content that offers a pad-only path checks this before "
@@ -226,12 +226,16 @@ static void publish_options(void){
   publish_flat_variables();
 }
 
+static bool options_update_display(void);
+
 void libretro_options_register(void){
   if(!g_libretro.environment) return;
   g_options_version=0;
   if(!g_libretro.environment(RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION,&g_options_version))
     g_options_version=0;
   publish_options();
+  struct retro_core_options_update_display_callback update={options_update_display};
+  g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK,&update);
 }
 
 static const char *option_value(const char *key){
@@ -269,7 +273,7 @@ static uint32_t option_resolution(const char *key){
  * A categorized declaration holds a fixed number of values, which no game is obliged to fit
  * inside. Those are offered a stretch at a time, with a second option selecting the stretch;
  * the flat declaration has no such ceiling and receives every room at once. */
-static void update_option_visibility(void);
+static int update_option_visibility(void);
 
 static struct retro_core_option_v2_definition *definition_for(const char *key){
   for(size_t i=0;g_definitions[i].key;i++)
@@ -396,22 +400,39 @@ void libretro_options_publish_rooms(void){
 }
 
 /* Options that cannot act are hidden rather than left to be tried: the CRT parts while the shader
- * that draws them is off, and the range selector when every room already fits in one list. */
-static void update_option_visibility(void){
-  if(!g_libretro.environment) return;
+ * that draws them is off, and the range selector when every room already fits in one list.
+ *
+ * The shader's own setting is read here rather than taken from the applied configuration. A player
+ * turns the shader off from inside the host's menu, which is exactly when no frame is running to
+ * apply anything, and the five parts have to leave the menu the player is still looking at. */
+static int update_option_visibility(void){
+  if(!g_libretro.environment) return 0;
   static const char *const crt_parts[]={
     "anygm_crt_scanlines","anygm_crt_mask","anygm_crt_gamma",
     "anygm_crt_curvature","anygm_crt_vignette",NULL
   };
+  static int published_parts=-1, published_ranges=-1;
+  int parts=option_on("anygm_embedded_shaders",1)?1:0;
+  int ranges=g_page_choice_count>1?1:0;
+  if(parts==published_parts && ranges==published_ranges) return 0;
   struct retro_core_option_display display;
-  display.visible=g_libretro.config.embedded_shaders?true:false;
+  display.visible=parts?true:false;
   for(size_t i=0;crt_parts[i];i++){
     display.key=crt_parts[i];
     g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
   }
   display.key="anygm_start_room_page";
-  display.visible=g_page_choice_count>1;
+  display.visible=ranges?true:false;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+  published_parts=parts;
+  published_ranges=ranges;
+  return 1;
+}
+
+/* Hosts ask through this while their menu is open, which is the only moment the answer can reach
+ * the player who just changed the setting it depends on. */
+static bool options_update_display(void){
+  return update_option_visibility()?true:false;
 }
 
 void libretro_options_apply(bool all_fields){
@@ -423,7 +444,8 @@ void libretro_options_apply(bool all_fields){
   const char *value=option_value("anygm_aspect_ratio_force");
   config->aspect_mode=value&&!strcmp(value,"4:3")?1u:
                       value&&!strcmp(value,"16:9")?2u:
-                      value&&!strcmp(value,"21:9")?3u:0u;
+                      value&&!strcmp(value,"21:9")?3u:
+                      value&&!strcmp(value,"16:10")?4u:0u;
   value=option_value("anygm_mouse");
   config->mouse_mode=value&&strstr(value,"Absolute")?1u:
                      value&&strstr(value,"Relative")?2u:0u;

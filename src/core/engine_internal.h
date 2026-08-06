@@ -16,8 +16,18 @@ enum {
   GMC_ASPECT_FORCE_NONE = 0,
   GMC_ASPECT_FORCE_4_3  = 1,
   GMC_ASPECT_FORCE_16_9 = 2,
-  GMC_ASPECT_FORCE_21_9 = 3
+  GMC_ASPECT_FORCE_21_9 = 3,
+  GMC_ASPECT_FORCE_16_10 = 4
 };
+
+/* One shape per mode, resolved in one place: the ratio is needed both when the forced frame is
+ * measured and when its width is derived, and a mode added to only one of those reads as the
+ * shape it is not. */
+static inline double gmc_aspect_force_ratio(int mode){
+  return mode==GMC_ASPECT_FORCE_21_9 ? (21.0/9.0) :
+         mode==GMC_ASPECT_FORCE_16_9 ? (16.0/9.0) :
+         mode==GMC_ASPECT_FORCE_16_10 ? (16.0/10.0) : (4.0/3.0);
+}
 enum {
   GMC_ASPECT_DRAW_DEFAULT            = 0,
   GMC_ASPECT_DRAW_FULL_VIEW          = 1,

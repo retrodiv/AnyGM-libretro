@@ -17,6 +17,7 @@
 #include <string.h>
 
 static const char *answered_value;
+static bool (*menu_time_visibility)(void);
 static const struct retro_core_option_v2_category *declared_categories;
 static const struct retro_core_option_v2_definition *declared_definitions;
 static const struct retro_variable *declared_variables;
@@ -56,6 +57,10 @@ static bool environment_callback(unsigned command,void *data){
     case RETRO_ENVIRONMENT_SET_VARIABLES:
       declared_variables=(const struct retro_variable*)data;
       return true;
+    case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK:{
+      const struct retro_core_options_update_display_callback *c=data;
+      menu_time_visibility=c?c->callback:NULL;
+      return true; }
     case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY:
       record_visibility((const struct retro_core_option_display*)data);
       return true;
@@ -145,6 +150,7 @@ static void begin(unsigned version,uint32_t rooms){
   declared_variables=NULL;
   visibility_count=0;
   answered_value=NULL;
+  menu_time_visibility=NULL;
   memset(&g_libretro.config,0,sizeof g_libretro.config);
   g_libretro.environment=environment_callback;
   g_libretro.engine=engine_placeholder;
@@ -228,17 +234,29 @@ static void culling_names_rise_with_their_thresholds(void){
   expect("a name this revision does not know",g_libretro.config.fast_alpha_cull,24u);
 }
 
-/* The parts of an effect cannot act while the effect that draws them is off. */
+/* The parts of an effect cannot act while the effect that draws them is off. A player turns that
+ * effect off from inside the host's menu, which is precisely when no frame is running to notice,
+ * so the answer has to be reachable without one: the five parts must leave the menu still open in
+ * front of the player, not the next one they open. */
 static void hidden_settings_are_the_ones_that_cannot_act(void){
   begin(2,3);
-  answered_value="Off";
-  libretro_options_apply(true);
-  if(shown("anygm_crt_scanlines")!=0 || shown("anygm_crt_vignette")!=0)
-    complain("the CRT parts stay offered while the shader that draws them is off");
+  if(!menu_time_visibility){
+    complain("no way was offered to answer while the host's menu is open");
+    return;
+  }
   answered_value="On";
-  libretro_options_apply(true);
+  menu_time_visibility();
   if(shown("anygm_crt_scanlines")!=1 || shown("anygm_crt_vignette")!=1)
     complain("the CRT parts stay hidden while the shader that draws them is on");
+
+  /* Nothing is applied here on purpose: this is the state a paused core is in. */
+  answered_value="Off";
+  if(!menu_time_visibility())
+    complain("a changed visibility was reported as no change");
+  if(shown("anygm_crt_scanlines")!=0 || shown("anygm_crt_vignette")!=0)
+    complain("the CRT parts stay offered while the shader that draws them is off");
+  if(menu_time_visibility())
+    complain("an unchanged visibility was reported as a change");
 }
 
 /* The choices only exist once content is loaded, and the index a player picks has to survive the
