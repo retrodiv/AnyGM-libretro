@@ -349,6 +349,9 @@ int main(void){
   loaded_content_names_its_rooms();
   rooms_past_one_list_stay_reachable();
   older_hosts_get_every_room_at_once();
+  /* Everything the declarations hold is released here, so a leak checker running this case sees
+   * whatever the teardown forgot. */
+  libretro_options_release();
   if(failures) return 1;
   puts("libretro option defaults: ok");
   return 0;

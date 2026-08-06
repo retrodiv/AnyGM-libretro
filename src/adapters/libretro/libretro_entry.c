@@ -129,6 +129,7 @@ void retro_deinit(void){
     anygm_destroy(g_libretro.engine);
     g_libretro.engine=NULL;
   }
+  libretro_options_release();
   memset(g_libretro.keyboard_events,0,sizeof g_libretro.keyboard_events);
   memset(g_libretro.override_used,0,sizeof g_libretro.override_used);
   g_libretro.loaded=false;

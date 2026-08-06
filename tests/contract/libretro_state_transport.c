@@ -95,6 +95,7 @@ void libretro_options_register(void){}
 static unsigned options_applied;
 void libretro_options_apply(bool all_fields){ (void)all_fields; options_applied++; }
 void libretro_options_publish_rooms(void){}
+void libretro_options_release(void){}
 void libretro_input_register(void){}
 void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t height){
   (void)width; (void)height;

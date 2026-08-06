@@ -435,6 +435,19 @@ static bool options_update_display(void){
   return update_option_visibility()?true:false;
 }
 
+/* The room names and the flat declaration are held for as long as a host may read them, which is
+ * until the core is torn down. Content loaded again replaces them; a core shut down releases
+ * them, so a host that opens one game after another does not accumulate the names of all of them.
+ */
+void libretro_options_release(void){
+  free_text_block(&g_room_choice_text,&g_room_choice_count);
+  free_text_block(&g_page_choice_text,&g_page_choice_count);
+  free_flat_variables();
+  g_room_count=0;
+  g_room_page=0;
+  g_room_page_text[0]='\0';
+}
+
 void libretro_options_apply(bool all_fields){
   if(!g_libretro.engine) return;
   AnygmConfig *config=&g_libretro.config;

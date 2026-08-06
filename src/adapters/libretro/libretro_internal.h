@@ -51,6 +51,7 @@ void libretro_vfs_services_init(AnygmHostServices *services);
 void libretro_options_register(void);
 void libretro_options_apply(bool all_fields);
 void libretro_options_publish_rooms(void);
+void libretro_options_release(void);
 void libretro_input_register(void);
 void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t height);
 void libretro_update_av(void);
