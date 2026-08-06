@@ -307,6 +307,10 @@ typedef struct AnygmContentSource {
  * cache_directory and save_directory are roots in the host VFS. When a save root is present,
  * writable content files live below save_directory/anygm/<sanitized-label>-<path-hash>. */
 
+/* Locale strings are what os_get_language and its relatives expose: lowercase language ("en"),
+ * uppercase region ("US"), and a fuller tag ("en-US"). Content loaded without a configuration
+ * takes the locale service's answer and asks again on every anygm_reset; an explicit configuration
+ * pins the values for the lifetime of the load. */
 typedef struct AnygmLoadConfig {
   uint32_t struct_size;
   uint32_t flags;

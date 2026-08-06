@@ -95,6 +95,8 @@ static unsigned options_registered;
 void libretro_options_register(void){ options_registered++; }
 static unsigned options_applied;
 void libretro_options_apply(bool all_fields){ (void)all_fields; options_applied++; }
+/* Unset before any frontend choice: locale remains on Auto. */
+const char *libretro_options_value(const char *key){ (void)key; return NULL; }
 void libretro_options_publish_rooms(void){}
 void libretro_options_release(void){}
 void libretro_input_register(void){}

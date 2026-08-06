@@ -108,6 +108,26 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"shaders",
    {{"Auto",NULL},{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "Auto"},
+  /* These are the exact locale strings exposed by the runtime: lowercase language and uppercase
+   * region. Auto follows the frontend language and its paired region. */
+  {"anygm_language","Language",NULL,
+   "The language os_get_language() reports to the game. Auto follows the frontend's language "
+   "setting. Takes effect on restart.",
+   NULL,"development",
+   {{"Auto",NULL},{"en",NULL},{"es",NULL},{"fr",NULL},{"de",NULL},{"it",NULL},{"pt",NULL},
+    {"nl",NULL},{"pl",NULL},{"ru",NULL},{"uk",NULL},{"cs",NULL},{"sv",NULL},{"fi",NULL},
+    {"no",NULL},{"hu",NULL},{"el",NULL},{"tr",NULL},{"ca",NULL},{"ar",NULL},{"ja",NULL},
+    {"ko",NULL},{"zh",NULL},{"vi",NULL},{"th",NULL},{NULL,NULL}},
+   "Auto"},
+  {"anygm_region","Region",NULL,
+   "The region os_get_region() reports to the game. Auto pairs it with the language. Takes "
+   "effect on restart.",
+   NULL,"development",
+   {{"Auto",NULL},{"US",NULL},{"GB",NULL},{"ES",NULL},{"FR",NULL},{"DE",NULL},{"IT",NULL},
+    {"BR",NULL},{"PT",NULL},{"NL",NULL},{"PL",NULL},{"RU",NULL},{"UA",NULL},{"CZ",NULL},
+    {"SE",NULL},{"FI",NULL},{"NO",NULL},{"HU",NULL},{"GR",NULL},{"TR",NULL},{"SA",NULL},
+    {"JP",NULL},{"KR",NULL},{"CN",NULL},{"TW",NULL},{"VN",NULL},{"TH",NULL},{NULL,NULL}},
+   "Auto"},
   /* Both start-room entries are filled in once content is loaded and its rooms are known. */
   {"anygm_start_room_page","Start room range",NULL,
    "Which stretch of rooms the chooser below offers. Only games with more rooms than one list "
@@ -244,6 +264,10 @@ static const char *option_value(const char *key){
      !g_libretro.environment(RETRO_ENVIRONMENT_GET_VARIABLE,&variable)) return NULL;
   return variable.value;
 }
+
+/* Locale resolution happens beside the frontend language query. The returned string belongs to
+ * the frontend and only until the next query, so callers copy values they retain. */
+const char *libretro_options_value(const char *key){ return option_value(key); }
 
 static uint32_t option_on(const char *key,uint32_t fallback){
   const char *value=option_value(key);

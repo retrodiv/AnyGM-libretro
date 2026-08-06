@@ -238,7 +238,7 @@ static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSou
                                        const AnygmLoadConfig *config) {
   engine->state_just_loaded = 0;
   snprintf(engine->language,sizeof engine->language,"%s",config&&config->language&&config->language[0]?config->language:"en");
-  snprintf(engine->region,sizeof engine->region,"%s",config&&config->region&&config->region[0]?config->region:"us");
+  snprintf(engine->region,sizeof engine->region,"%s",config&&config->region&&config->region[0]?config->region:"US");
   snprintf(engine->language_tag,sizeof engine->language_tag,"%s",config&&config->language_tag&&config->language_tag[0]?config->language_tag:"en-US");
   EnginePreparedContent prepared;
   AnygmResult result=engine_prepare_content(engine,source,&prepared);
@@ -1551,7 +1551,7 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
   engine->config.fast_alpha_cull=0;
   engine->config.start_room=-1;
   snprintf(engine->language,sizeof engine->language,"en");
-  snprintf(engine->region,sizeof engine->region,"us");
+  snprintf(engine->region,sizeof engine->region,"US");
   snprintf(engine->language_tag,sizeof engine->language_tag,"en-US");
   engine->width=288; engine->height=216; engine->base_width=288; engine->base_height=216;
   engine->fps=60.0; engine->fps_room=-1;
@@ -1602,13 +1602,16 @@ AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
     if(engine->host.locale(engine->host.userdata,host_language,sizeof host_language,
                      host_region,sizeof host_region,host_tag,sizeof host_tag)==ANYGM_OK){
       resolved_config.language=host_language[0]?host_language:"en";
-      resolved_config.region=host_region[0]?host_region:"us";
+      resolved_config.region=host_region[0]?host_region:"US";
       resolved_config.language_tag=host_tag[0]?host_tag:"en-US";
       load_config=&resolved_config;
     }
   }
   AnygmResult result=engine_load_content(engine,source,load_config);
-  if(result==ANYGM_OK) engine->lifecycle=ENGINE_LOADED;
+  if(result==ANYGM_OK){
+    engine->lifecycle=ENGINE_LOADED;
+    engine->locale_from_host=(load_config==&resolved_config);
+  }
   return result;
 }
 
@@ -1622,6 +1625,17 @@ void anygm_unload(AnygmEngine *engine){
 AnygmResult anygm_reset(AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED)
     return ANYGM_ERROR_INVALID_STATE;
+  /* Loads that took their locale from the host keep following it on reset. An explicit load
+   * configuration remains pinned for the lifetime of the load. */
+  if(engine->locale_from_host && engine->host.locale){
+    char language[16]={0},region[16]={0},tag[32]={0};
+    if(engine->host.locale(engine->host.userdata,language,sizeof language,
+                           region,sizeof region,tag,sizeof tag)==ANYGM_OK){
+      snprintf(engine->language,sizeof engine->language,"%s",language[0]?language:"en");
+      snprintf(engine->region,sizeof engine->region,"%s",region[0]?region:"US");
+      snprintf(engine->language_tag,sizeof engine->language_tag,"%s",tag[0]?tag:"en-US");
+    }
+  }
   gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
   gml_vm_free(&engine->vm);
   gml_render_free(&engine->render);

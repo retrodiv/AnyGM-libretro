@@ -528,7 +528,8 @@ GmlVal gml_builtin_try_platform_extensions(GmlVM *vm, const char *nm, GmlVal *a,
   if(!strcmp(nm,"screen_redraw")||!strcmp(nm,"screen_refresh")||!strcmp(nm,"screen_wait_vsync")||
      !strcmp(nm,"screen_save")||!strcmp(nm,"screen_save_part")) return vreal(0);
   if(!strcmp(nm,"os_get_language")) return vstr(vm->os_language[0]?vm->os_language:"en");
-  if(!strcmp(nm,"os_get_region")) return vstr(vm->os_region[0]?vm->os_region:"us");
+  /* The locale contract exposes language lowercase and region uppercase. */
+  if(!strcmp(nm,"os_get_region")) return vstr(vm->os_region[0]?vm->os_region:"US");
   /* Console language extensions expose the same user preference in a fuller tag.
    * Treating this as platform metadata keeps extension-bearing desktop exports on
    * their normal localization path without emulating a console service. */

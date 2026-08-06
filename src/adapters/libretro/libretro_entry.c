@@ -19,44 +19,76 @@ void libretro_log(enum retro_log_level level,const char *format,...){
   if(g_libretro.log) g_libretro.log(level,"%s",message);
 }
 
+/* Pair each language with a matching region so a language chosen on its own remains internally
+ * consistent. The locale contract uses lowercase language and uppercase region strings. */
+static const struct { const char *iso,*region; } k_language_regions[]={
+  {"en","US"},{"ja","JP"},{"fr","FR"},{"es","ES"},{"de","DE"},{"it","IT"},{"nl","NL"},
+  {"pt","PT"},{"ru","RU"},{"ko","KR"},{"zh","CN"},{"pl","PL"},{"vi","VN"},{"ar","SA"},
+  {"el","GR"},{"tr","TR"},{"fi","FI"},{"sv","SE"},{"uk","UA"},{"cs","CZ"},{"ca","ES"},
+  {"hu","HU"},{"no","NO"},{"th","TH"},{NULL,NULL}
+};
+
 static void update_locale(void){
   unsigned language=RETRO_LANGUAGE_ENGLISH;
   if(g_libretro.environment)
     g_libretro.environment(RETRO_ENVIRONMENT_GET_LANGUAGE,&language);
-  const char *iso="en",*region="us",*tag="en-US";
+  const char *iso="en",*region="US";
   switch(language){
-    case RETRO_LANGUAGE_JAPANESE: iso="ja"; region="jp"; tag="ja"; break;
-    case RETRO_LANGUAGE_FRENCH: iso="fr"; region="fr"; tag="fr"; break;
-    case RETRO_LANGUAGE_SPANISH: iso="es"; region="es"; tag="es"; break;
-    case RETRO_LANGUAGE_GERMAN: iso="de"; region="de"; tag="de"; break;
-    case RETRO_LANGUAGE_ITALIAN: iso="it"; region="it"; tag="it"; break;
-    case RETRO_LANGUAGE_DUTCH: iso="nl"; region="nl"; tag="nl"; break;
-    case RETRO_LANGUAGE_PORTUGUESE_BRAZIL: iso="pt"; region="br"; tag="pt-BR"; break;
-    case RETRO_LANGUAGE_PORTUGUESE_PORTUGAL: iso="pt"; region="pt"; tag="pt"; break;
-    case RETRO_LANGUAGE_RUSSIAN: iso="ru"; region="ru"; tag="ru"; break;
-    case RETRO_LANGUAGE_KOREAN: iso="ko"; region="kr"; tag="ko"; break;
-    case RETRO_LANGUAGE_CHINESE_TRADITIONAL: iso="zh"; region="tw"; tag="zh-Hant"; break;
-    case RETRO_LANGUAGE_CHINESE_SIMPLIFIED: iso="zh"; region="cn"; tag="zh-Hans"; break;
-    case RETRO_LANGUAGE_POLISH: iso="pl"; region="pl"; tag="pl"; break;
-    case RETRO_LANGUAGE_VIETNAMESE: iso="vi"; region="vn"; tag="vi"; break;
-    case RETRO_LANGUAGE_ARABIC: iso="ar"; region="sa"; tag="ar"; break;
-    case RETRO_LANGUAGE_GREEK: iso="el"; region="gr"; tag="el"; break;
-    case RETRO_LANGUAGE_TURKISH: iso="tr"; region="tr"; tag="tr"; break;
-    case RETRO_LANGUAGE_FINNISH: iso="fi"; region="fi"; tag="fi"; break;
-    case RETRO_LANGUAGE_SWEDISH: iso="sv"; region="se"; tag="sv"; break;
-    case RETRO_LANGUAGE_UKRAINIAN: iso="uk"; region="ua"; tag="uk"; break;
-    case RETRO_LANGUAGE_CZECH: iso="cs"; region="cz"; tag="cs"; break;
+    case RETRO_LANGUAGE_JAPANESE: iso="ja"; region="JP"; break;
+    case RETRO_LANGUAGE_FRENCH: iso="fr"; region="FR"; break;
+    case RETRO_LANGUAGE_SPANISH: iso="es"; region="ES"; break;
+    case RETRO_LANGUAGE_GERMAN: iso="de"; region="DE"; break;
+    case RETRO_LANGUAGE_ITALIAN: iso="it"; region="IT"; break;
+    case RETRO_LANGUAGE_DUTCH: iso="nl"; region="NL"; break;
+    case RETRO_LANGUAGE_PORTUGUESE_BRAZIL: iso="pt"; region="BR"; break;
+    case RETRO_LANGUAGE_PORTUGUESE_PORTUGAL: iso="pt"; region="PT"; break;
+    case RETRO_LANGUAGE_RUSSIAN: iso="ru"; region="RU"; break;
+    case RETRO_LANGUAGE_KOREAN: iso="ko"; region="KR"; break;
+    case RETRO_LANGUAGE_CHINESE_TRADITIONAL: iso="zh"; region="TW"; break;
+    case RETRO_LANGUAGE_CHINESE_SIMPLIFIED: iso="zh"; region="CN"; break;
+    case RETRO_LANGUAGE_POLISH: iso="pl"; region="PL"; break;
+    case RETRO_LANGUAGE_VIETNAMESE: iso="vi"; region="VN"; break;
+    case RETRO_LANGUAGE_ARABIC: iso="ar"; region="SA"; break;
+    case RETRO_LANGUAGE_GREEK: iso="el"; region="GR"; break;
+    case RETRO_LANGUAGE_TURKISH: iso="tr"; region="TR"; break;
+    case RETRO_LANGUAGE_FINNISH: iso="fi"; region="FI"; break;
+    case RETRO_LANGUAGE_SWEDISH: iso="sv"; region="SE"; break;
+    case RETRO_LANGUAGE_UKRAINIAN: iso="uk"; region="UA"; break;
+    case RETRO_LANGUAGE_CZECH: iso="cs"; region="CZ"; break;
     case RETRO_LANGUAGE_CATALAN_VALENCIA:
-    case RETRO_LANGUAGE_CATALAN: iso="ca"; region="es"; tag="ca"; break;
-    case RETRO_LANGUAGE_BRITISH_ENGLISH: iso="en"; region="gb"; tag="en-GB"; break;
-    case RETRO_LANGUAGE_HUNGARIAN: iso="hu"; region="hu"; tag="hu"; break;
-    case RETRO_LANGUAGE_NORWEGIAN: iso="no"; region="no"; tag="no"; break;
-    case RETRO_LANGUAGE_THAI: iso="th"; region="th"; tag="th"; break;
+    case RETRO_LANGUAGE_CATALAN: iso="ca"; region="ES"; break;
+    case RETRO_LANGUAGE_BRITISH_ENGLISH: iso="en"; region="GB"; break;
+    case RETRO_LANGUAGE_HUNGARIAN: iso="hu"; region="HU"; break;
+    case RETRO_LANGUAGE_NORWEGIAN: iso="no"; region="NO"; break;
+    case RETRO_LANGUAGE_THAI: iso="th"; region="TH"; break;
     default: break;
+  }
+  /* A chosen language brings its paired region rather than retaining the frontend's region; an
+   * explicit region may then narrow that choice. Copy values before the next frontend query. */
+  char chosen_language[8],chosen_region[8];
+  const char *value=libretro_options_value("anygm_language");
+  if(value && value[0] && strcmp(value,"Auto")){
+    snprintf(chosen_language,sizeof chosen_language,"%s",value);
+    iso=chosen_language;
+    for(size_t i=0;k_language_regions[i].iso;i++)
+      if(!strcmp(k_language_regions[i].iso,iso)){ region=k_language_regions[i].region; break; }
+  }
+  value=libretro_options_value("anygm_region");
+  if(value && value[0] && strcmp(value,"Auto")){
+    snprintf(chosen_region,sizeof chosen_region,"%s",value);
+    region=chosen_region;
   }
   snprintf(g_libretro.language,sizeof g_libretro.language,"%s",iso);
   snprintf(g_libretro.region,sizeof g_libretro.region,"%s",region);
-  snprintf(g_libretro.language_tag,sizeof g_libretro.language_tag,"%s",tag);
+  /* The fuller tag only differs where one language writes differently by region. */
+  if(!strcmp(iso,"zh"))
+    snprintf(g_libretro.language_tag,sizeof g_libretro.language_tag,"zh-%s",
+             !strcmp(region,"TW")?"Hant":"Hans");
+  else if((!strcmp(iso,"en") && (!strcmp(region,"US")||!strcmp(region,"GB"))) ||
+          (!strcmp(iso,"pt") && !strcmp(region,"BR")))
+    snprintf(g_libretro.language_tag,sizeof g_libretro.language_tag,"%s-%s",iso,region);
+  else
+    snprintf(g_libretro.language_tag,sizeof g_libretro.language_tag,"%s",iso);
 }
 
 static bool create_engine(void){
@@ -182,6 +214,9 @@ void retro_reset(void){
    * their menu is open. The choice that prompted the restart would then apply to the boot after
    * the next one. Settings read at boot, the start room among them, are read here first. */
   if(g_libretro.loaded){
+    /* Refresh the service fields first so a locale option selected before restart is applied to
+     * the next reset. */
+    update_locale();
     libretro_options_apply(true);
     anygm_reset(g_libretro.engine);
   }
@@ -215,13 +250,9 @@ bool retro_load_game(const struct retro_game_info *info){
   source.path=info->path;
   source.cache_directory=g_libretro.cache_directory[0]?g_libretro.cache_directory:NULL;
   source.save_directory=g_libretro.save_directory[0]?g_libretro.save_directory:NULL;
-  AnygmLoadConfig config;
-  memset(&config,0,sizeof config);
-  config.struct_size=sizeof config;
-  config.language=g_libretro.language;
-  config.region=g_libretro.region;
-  config.language_tag=g_libretro.language_tag;
-  AnygmResult result=anygm_load(g_libretro.engine,&source,&config);
+  /* With no explicit locale, the engine queries the host service and refreshes it on reset.
+   * Passing these current fields instead would pin the first answer for the lifetime of the load. */
+  AnygmResult result=anygm_load(g_libretro.engine,&source,NULL);
   if(result!=ANYGM_OK){
     char error[512];
     anygm_get_last_error(g_libretro.engine,error,sizeof error);

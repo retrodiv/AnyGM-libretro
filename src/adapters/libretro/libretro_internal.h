@@ -53,6 +53,7 @@ void libretro_vfs_request(void);
 void libretro_vfs_services_init(AnygmHostServices *services);
 void libretro_options_register(void);
 void libretro_options_apply(bool all_fields);
+const char *libretro_options_value(const char *key);
 void libretro_options_publish_rooms(void);
 void libretro_options_release(void);
 void libretro_input_register(void);

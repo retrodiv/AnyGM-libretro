@@ -521,6 +521,9 @@ int main(void){
 
   if(anygm_reset(engine)!=ANYGM_OK || anygm_run_frame(engine,NULL,&output)!=ANYGM_OK)
     return fail("reset did not produce a runnable loaded engine");
+  /* Content using the host locale asks the host again on reset. */
+  if(dummy.locale_calls!=2)
+    return fail("reset did not re-read the host locale");
 
   free(restored);
   free(baseline);

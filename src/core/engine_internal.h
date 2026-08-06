@@ -159,6 +159,8 @@ struct AnygmEngine {
   uint32_t frame_flags;
   char last_error[512];
   char language[16],region[16],language_tag[32];
+  /* Set when the load took these from the host's locale service; a reset then asks it again. */
+  int locale_from_host;
   char content_cache_directory[1024];
   char current_content_path[1024];
   char content_program_directory[512];

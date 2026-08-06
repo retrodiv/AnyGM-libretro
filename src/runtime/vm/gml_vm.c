@@ -240,7 +240,7 @@ int gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
     return 1;
   }
   snprintf(vm->os_language,sizeof vm->os_language,"en");
-  snprintf(vm->os_region,sizeof vm->os_region,"us");
+  snprintf(vm->os_region,sizeof vm->os_region,"US");
   snprintf(vm->language_tag,sizeof vm->language_tag,"en-US");
   vm->rng_classic_state=0;
   vm->math_epsilon=anygm_policy_default_comparison_epsilon(win);
