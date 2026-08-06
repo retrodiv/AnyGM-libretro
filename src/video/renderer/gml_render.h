@@ -258,6 +258,9 @@ int gml_render_resource_metrics(const GmlRender *r,
                                 GmlRenderResourceMetrics *metrics);
 int gml_render_diagnostic_metrics(const GmlRender *r,
                                   GmlRenderDiagnosticMetrics *metrics);
+/* Visible world rectangle in authored coordinates; see the definition for why the target
+ * metrics cannot be used for world-space selection. */
+int gml_render_world_view(const GmlRender *r,double *x,double *y,double *width,double *height);
 int gml_render_target_metrics(const GmlRender *r,GmlRenderTargetMetrics *metrics);
 void gml_render_target_metrics_update(GmlRender *r,
                                       const GmlRenderTargetMetrics *metrics,

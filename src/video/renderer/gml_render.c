@@ -454,6 +454,24 @@ int gml_render_diagnostic_metrics(const GmlRender *r,
   }
   return 1;
 }
+/* The world rectangle the target currently shows.
+ *
+ * Target metrics are in target pixels, and a view that does not match the target introduces a
+ * scale between those and the coordinates content is authored in. Anything that selects world-space
+ * content by what is visible — the tile grid above all — needs the rectangle in authored units, and
+ * only the renderer knows the transform relating the two. Reading the target metrics directly and
+ * dividing by a cell size in authored units mixes the two spaces and selects the wrong region. */
+int gml_render_world_view(const GmlRender *r,double *x,double *y,
+                          double *width,double *height){
+  if(!r) return 0;
+  double scale_x=r->world_transform_active && r->world_scale_x>0.0 ? r->world_scale_x : 1.0;
+  double scale_y=r->world_transform_active && r->world_scale_y>0.0 ? r->world_scale_y : 1.0;
+  if(x) *x=r->cam_x/scale_x;
+  if(y) *y=r->cam_y/scale_y;
+  if(width) *width=(double)r->fbw/scale_x;
+  if(height) *height=(double)r->fbh/scale_y;
+  return 1;
+}
 int gml_render_target_metrics(const GmlRender *r,GmlRenderTargetMetrics *metrics){
   if(metrics) memset(metrics,0,sizeof(*metrics));
   if(!r) return 0;

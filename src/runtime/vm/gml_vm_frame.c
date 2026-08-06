@@ -1315,8 +1315,14 @@ void gml_vm_draw(GmlVM *vm){
   /* GMS2 tilemap layers (type 4): the same grid used by tilemap_get_* for collision is also a
    * visual layer. Without drawing these, games still collide with floors but the floors are
    * invisible. Expand only the camera-visible cells into the existing background-tile draw path. */
-  GmlRenderTargetMetrics target;
-  if(!gml_render_target_metrics(R,&target)) memset(&target,0,sizeof(target));
+  /* The grid is authored in world coordinates, so the visible rectangle has to be asked for in
+   * the same units. Target metrics are target pixels; dividing those by a cell size selects a
+   * region scaled by whatever the view-to-target transform is, which is off-screen entirely once
+   * the two differ. */
+  double view_x=0,view_y=0,view_w=0,view_h=0;
+  if(!gml_render_world_view(R,&view_x,&view_y,&view_w,&view_h)){
+    view_x=view_y=0; view_w=view_h=0;
+  }
   for(int mi=0; mi<vm->n_tilemaps; mi++){
     GmlTileMap *tm=&vm->tilemaps[mi];
     double tmx,tmy,tmdepth; int tmvis;
@@ -1337,10 +1343,10 @@ void gml_vm_draw(GmlVM *vm){
     double elapsed_seconds=speed>0.0?vm->frame/speed:0.0;
     int animation_frame=
       gml_render_background_tile_animation_frame(R,tm->tileset,elapsed_seconds);
-    int cx0=(int)floor((target.camera_x-tmx)/tm->tw)-1;
-    int cy0=(int)floor((target.camera_y-tmy)/tm->th)-1;
-    int cx1=(int)ceil((target.camera_x+target.width-tmx)/tm->tw)+1;
-    int cy1=(int)ceil((target.camera_y+target.height-tmy)/tm->th)+1;
+    int cx0=(int)floor((view_x-tmx)/tm->tw)-1;
+    int cy0=(int)floor((view_y-tmy)/tm->th)-1;
+    int cx1=(int)ceil((view_x+view_w-tmx)/tm->tw)+1;
+    int cy1=(int)ceil((view_y+view_h-tmy)/tm->th)+1;
     if(cx0<0) cx0=0;
     if(cy0<0) cy0=0;
     if(cx1>tm->cols) cx1=tm->cols;
