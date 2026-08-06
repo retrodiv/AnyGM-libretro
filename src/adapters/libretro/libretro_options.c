@@ -372,7 +372,7 @@ void libretro_options_publish_rooms(void){
         size_t low=page*span, high=low+span-1;
         if(high>=g_room_count) high=g_room_count?g_room_count-1:0;
         char choice[64];
-        snprintf(choice,sizeof choice,"%zu-%zu",low,high);
+        snprintf(choice,sizeof choice,"%lu-%lu",(unsigned long)low,(unsigned long)high);
         char *stored=malloc(strlen(choice)+1);
         if(!stored) break;
         memcpy(stored,choice,strlen(choice)+1);
@@ -393,8 +393,8 @@ void libretro_options_publish_rooms(void){
   /* Rooms beyond the published list are reachable through the range selector. Without one, they
    * are not, and a short list must not read as a short game. */
   if(g_room_choice_count<(size_t)g_room_count && g_page_choice_count<=1)
-    libretro_log(RETRO_LOG_WARN,"Start room lists %zu of %u rooms and offers no range to reach "
-                 "the rest\n",g_room_choice_count,(unsigned)g_room_count);
+    libretro_log(RETRO_LOG_WARN,"Start room lists %lu of %u rooms and offers no range to reach "
+                 "the rest\n",(unsigned long)g_room_choice_count,(unsigned)g_room_count);
   publish_options();
   update_option_visibility();
 }
