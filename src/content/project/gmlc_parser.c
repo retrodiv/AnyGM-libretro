@@ -621,6 +621,65 @@ static int classic_for_assignment_at(const char *src, size_t pos, size_t end){
 /* Classic source may omit the second semicolon in a for header. Recover only when
  * the trailing top-level term has the shape of an assignment or update, keeping modern source
  * strict and avoiding guesses inside calls, array indices, strings or comments. */
+/* GML lets a for header separate its clauses with nothing but whitespace, and classic content is
+ * commonly written that way. Two clauses meet where a complete term is followed by the start of
+ * another with no operator between them. A word operator spelled as a name — and, or, div — joins
+ * terms rather than separating clauses, so neither side of the gap may be one. */
+static int classic_for_word_operator(const char *src, size_t start, size_t end){
+  static const char *const words[]={"and","or","xor","not","div","mod"};
+  for(size_t i=0;i<sizeof words/sizeof words[0];i++){
+    size_t length=strlen(words[i]);
+    if(start+length<=end && !strncmp(src+start,words[i],length) &&
+       (start+length==end ||
+        !(isalnum((unsigned char)src[start+length]) || src[start+length]=='_')))
+      return 1;
+  }
+  return 0;
+}
+static int classic_for_clause_boundary(const char *src, size_t gap, Span combined){
+  size_t before=gap;
+  while(before>combined.start && isspace((unsigned char)src[before-1])) before--;
+  if(before==combined.start) return 0;
+  char last=src[before-1];
+  if(!(isalnum((unsigned char)last) || last=='_' || last==')' || last==']' ||
+       last=='"' || last=='\'')) return 0;
+  size_t word=before;
+  while(word>combined.start && (isalnum((unsigned char)src[word-1]) || src[word-1]=='_')) word--;
+  if(word<before && classic_for_word_operator(src,word,before)) return 0;
+  size_t after=skip_bounded_space(src,gap,combined.end);
+  if(after>=combined.end) return 0;
+  char next=src[after];
+  if(!(isalpha((unsigned char)next) || next=='_' || isdigit((unsigned char)next) || next=='('))
+    return 0;
+  return !classic_for_word_operator(src,after,combined.end);
+}
+static int split_classic_for_clauses(const char *src, Span combined, Span *out){
+  size_t split[2]; int found=0;
+  int depth=0;
+  for(size_t pos=combined.start;pos<combined.end && found<2;pos++){
+    char ch=src[pos];
+    if(ch=='"' || ch=='\''){
+      char quote=ch;
+      pos++;
+      while(pos<combined.end){
+        if(src[pos]=='\\' && pos+1<combined.end){ pos+=2; continue; }
+        if(src[pos]==quote) break;
+        pos++;
+      }
+      continue;
+    }
+    if(ch=='(' || ch=='[' || ch=='{'){ depth++; continue; }
+    if((ch==')' || ch==']' || ch=='}') && depth>0){ depth--; continue; }
+    if(depth || !isspace((unsigned char)ch)) continue;
+    if(classic_for_clause_boundary(src,pos,combined)) split[found++]=pos;
+  }
+  if(found!=2) return 0;
+  out[0].start=combined.start; out[0].end=split[0];
+  out[1].start=split[0];       out[1].end=split[1];
+  out[2].start=split[1];       out[2].end=combined.end;
+  for(int i=0;i<3;i++) trim_span(src,&out[i]);
+  return out[0].start<out[0].end && out[1].start<out[1].end && out[2].start<out[2].end;
+}
 static int split_classic_for_condition_step(const char *src, Span combined,
                                             Span *condition, Span *step){
   int depth=0;
@@ -704,6 +763,10 @@ static int scan_for_header(Compiler *c, size_t start, Span out[3], size_t *out_c
         if(part==1 && c->project && c->project->classic_version>0){
           Span combined=out[1];
           if(split_classic_for_condition_step(src,combined,&out[1],&out[2])) return 1;
+        }
+        if(part==0 && c->project && c->project->classic_version>0){
+          Span combined=out[0];
+          if(split_classic_for_clauses(src,combined,out)) return 1;
         }
         c->unsupported=1;
         snprintf(c->lex.err,sizeof(c->lex.err),"for header requires three clauses");

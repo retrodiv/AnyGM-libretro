@@ -124,6 +124,58 @@ static int text_append_quoted(ImportText *text, const char *value){
   return text_append(text, "\"");
 }
 
+/* An argument field holds one expression. A trailing statement separator or a following term
+ * without an operator lies outside that expression and must not be spliced into the call. */
+static int action_word_operator(const char *value, size_t start, size_t end){
+  static const char *const words[]={"and","or","xor","not","div","mod","then"};
+  for(size_t i=0;i<sizeof words/sizeof words[0];i++){
+    size_t length=strlen(words[i]);
+    if(start+length<=end && !strncmp(value+start,words[i],length) &&
+       (start+length==end ||
+        !(isalnum((unsigned char)value[start+length]) || value[start+length]=='_')))
+      return 1;
+  }
+  return 0;
+}
+static size_t action_expression_length(const char *value){
+  size_t length = value ? strlen(value) : 0;
+  while(length && (isspace((unsigned char)value[length-1]) || value[length-1]==';')) length--;
+  /* The field is read as one expression and nothing more. Where a complete term is followed by the
+   * start of another with no operator between them the expression has ended, and the rest is text
+   * the reader never reaches — a missing operator in an authored condition is exactly that. Keeping
+   * it would splice unparsable text into the call and cost the whole event its code. */
+  int depth=0;
+  for(size_t at=0; at<length; at++){
+    char ch=value[at];
+    if(ch=='"' || ch=='\''){
+      char quote=ch;
+      for(at++; at<length && value[at]!=quote; at++)
+        if(value[at]=='\\' && at+1<length) at++;
+      continue;
+    }
+    if(ch=='(' || ch=='[' || ch=='{'){ depth++; continue; }
+    if((ch==')' || ch==']' || ch=='}') && depth>0){ depth--; continue; }
+    if(depth || !isspace((unsigned char)ch)) continue;
+    size_t before=at;
+    while(before && isspace((unsigned char)value[before-1])) before--;
+    if(!before) continue;
+    char last=value[before-1];
+    if(!(isalnum((unsigned char)last) || last=='_' || last==')' || last==']' ||
+         last=='"' || last=='\'')) continue;
+    size_t word=before;
+    while(word && (isalnum((unsigned char)value[word-1]) || value[word-1]=='_')) word--;
+    if(word<before && action_word_operator(value,word,before)) continue;
+    size_t after=at;
+    while(after<length && isspace((unsigned char)value[after])) after++;
+    if(after>=length) break;
+    char next=value[after];
+    if(!(isalpha((unsigned char)next) || next=='_' || isdigit((unsigned char)next))) continue;
+    if(action_word_operator(value,after,length)) continue;
+    return before;
+  }
+  return length;
+}
+
 static int emit_action_call(ImportText *text, const char *function_name,
                             char **arguments, uint32_t *argument_kinds,
                             uint32_t used_arguments, int append_relative, int relative){
@@ -145,7 +197,11 @@ static int emit_action_call(ImportText *text, const char *function_name,
     }
     if(quote){
       if(!text_append_quoted(text, arguments[i])) return 0;
-    } else if(!text_append(text, arguments[i] && *arguments[i] ? arguments[i] : "0")) return 0;
+    } else {
+      size_t length = action_expression_length(arguments[i]);
+      if(!length){ if(!text_append(text, "0")) return 0; }
+      else if(!text_append_n(text, arguments[i], length)) return 0;
+    }
   }
   if(append_relative){
     if(used_arguments && !text_append(text,",")) return 0;
@@ -211,7 +267,10 @@ static int emit_action_code_call(ImportText *text, const char *code,
   return text_append(text,")");
 }
 
+/* The action list is structural rather than compiled source. Emit only block ends matched by an
+ * open start, then close any starts still open when the list ends. */
 int import_actions(ImportReader *r, ImportText *text){
+  int block_depth = 0;
   uint32_t list_version, count;
   if(!import_u32(r, &list_version, "action-list version") || !import_u32(r, &count, "action count")) return 0;
   (void)list_version;
@@ -244,8 +303,10 @@ int import_actions(ImportReader *r, ImportText *text){
       if(!import_copy_string(r, &arguments[i], "action argument")){ ok = 0; goto action_done; }
     if(!import_u32(r, &negate, "action negation flag")){ ok = 0; goto action_done; }
     (void)action_version; (void)library_id; (void)action_id; (void)may_relative;
-    if(kind == 1) ok = text_append(text, "{\n");
-    else if(kind == 2) ok = text_append(text, "}\n");
+    if(kind == 1){ ok = text_append(text, "{\n"); if(ok) block_depth++; }
+    else if(kind == 2){
+      if(block_depth > 0){ ok = text_append(text, "}\n"); if(ok) block_depth--; }
+    }
     else if(kind == 3) ok = text_append(text, "else\n");
     else if(kind == 4) ok = text_append(text, "exit;\n");
     else if(kind == 5){
@@ -293,6 +354,10 @@ action_done:
       if(r->err && r->errcap && !r->err[0]) snprintf(r->err, r->errcap, "classic import: invalid action %u", action_index);
       return 0;
     }
+  }
+  while(block_depth > 0){
+    if(!text_append(text, "}\n")) return 0;
+    block_depth--;
   }
   return 1;
 }
