@@ -1046,9 +1046,14 @@ GmlVal gml_builtin_try_values_language(GmlVM *vm, const char *nm, GmlVal *a, int
         gml_vm_run_code(vm,fci,st,vm->cur_self,(n>1)?a+1:0,n-1);
       } }
     if(builtin_setting(vm,"GML_DBG_STRUCT")){ 
-      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[struct] f%ld new id=%u argc=%d ctor=%d name=%s fields=%d\n",
+      /* Report the stored constructor name alongside the raw code entry so diagnostics reflect
+       * the value returned by `instanceof`. */
+      GmlVal *stored=gml_varmap_get(&st->vars,"__name");
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+        "[struct] f%ld new id=%u argc=%d ctor=%d entry=%s __name=%s fields=%d\n",
         vm->frame,st->id,n,fci,
-        (fci>=0 && vm->win && fci<vm->win->n_code)?vm->win->code[fci].name:"?",st->vars.len); }
+        (fci>=0 && vm->win && fci<vm->win->n_code)?vm->win->code[fci].name:"?",
+        (stored && stored->t==V_STR && stored->s)?stored->s:"(none)",st->vars.len); }
     return vreal((double)st->id);
   }
   /* `instanceof` exposes direct constructor identity. Inheritance-aware queries require a
