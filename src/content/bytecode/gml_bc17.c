@@ -35,18 +35,29 @@ static int bc17_walk_steps(const GmlWin *w, uint32_t addr, uint32_t occ, uint32_
   return steps;
 }
 
+/* How many chains to walk before deciding which encoding a payload uses. Enough that one unusual
+ * chain cannot carry the decision, small enough that the cost stays negligible on a chunk with
+ * thousands of entries. */
+#define BC17_ENCODING_SAMPLES 32u
+
 int gml_bc17_ref_layout(const GmlWin *w, const char *chunk, GmlRefLayout *out){
   if(!gml_bc15_ref_layout(w,chunk,out)) return 0;   /* defaults ref_off=chain_off=4 (bc15 layout) */
   if(chunk && !strcmp(chunk,"FUNC")){
-    for(uint32_t i=0;i<out->count;i++){
+    /* Walk a bounded sample of usable chains and select the encoding with the greater aggregate
+     * progress. This avoids allowing one short or atypical chain to select the layout for the
+     * entire chunk. */
+    uint32_t total4=0,total0=0,sampled=0;
+    for(uint32_t i=0;i<out->count && sampled<BC17_ENCODING_SAMPLES;i++){
       uint32_t e=out->start + i*out->stride;
       uint32_t occ=bc17_u32(w,e+out->occ_off), addr=bc17_u32(w,e+out->addr_off);
       if(occ<4 || addr==0) continue;
       int s4=bc17_walk_steps(w,addr,occ,4);   /* bc15/16-style: chain in the word after the entry addr */
       int s0=bc17_walk_steps(w,addr,occ,0);   /* newer bc17: entry addr IS the reference word */
-      if(s0>s4){ out->ref_off=0; out->chain_off=0; }   /* else keep the bc15 default (4/4) */
-      break;   /* stop after the first eligible chain */
+      if(s4>0) total4+=(uint32_t)s4;
+      if(s0>0) total0+=(uint32_t)s0;
+      sampled++;
     }
+    if(total0>total4){ out->ref_off=0; out->chain_off=0; }   /* else keep the bc15 default (4/4) */
   }
   return 1;
 }

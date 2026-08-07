@@ -668,7 +668,10 @@ static GmlVarMap *struct_public_map(GmlVM *vm, GmlVal ref, GmlInstance **owner){
   return st?&st->vars:NULL;
 }
 static int struct_internal_name(const char *name){
-  return name && (!strcmp(name,"__fn") || !strcmp(name,"__self"));
+  /* Runtime-private struct fields include __ctor and __name just as bound methods use __fn and
+   * __self. Public field enumeration must hide all four, matching the JSON encoder. */
+  return name && (!strcmp(name,"__fn") || !strcmp(name,"__self") ||
+                  !strcmp(name,"__ctor") || !strcmp(name,"__name"));
 }
 static int struct_public_name_count(GmlVarMap *map){
   if(!map) return -1;

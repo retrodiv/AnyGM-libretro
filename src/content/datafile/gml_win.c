@@ -221,8 +221,10 @@ static int parse_code(GmlWin *w){
      * suffix ends at Length-Offset rather than extending that full length again. */
     if(w->bytecode>=15){
       uint32_t code_offset=u32(w->data,p+16);
-      if(code_offset>serialized_length) return 0;
-      w->code[i].length-=code_offset;
+      /* An offset past the parent's span leaves no callable suffix. Clamp it to an empty entry so
+       * the subtraction cannot wrap and the VM receives a record with nothing to execute. */
+      w->code[i].length = code_offset>serialized_length ? 0u
+                                                        : serialized_length-code_offset;
     }
     if(!gml_bc_code_start(w,p,&w->code[i].start) ||
        w->code[i].start<(size_t)c->off+4u+table_bytes ||
@@ -364,8 +366,11 @@ static int room_table_valid(const GmlWin *w){
 static int room_order_candidate(const GmlWin *w,const GmlChunk *gen8,size_t relative,
                                 uint32_t room_count,uint32_t *count){
   size_t table_bytes=0;
+  /* The order is a sequence, not a permutation, so it may repeat rooms and may be longer than the
+   * room table. Require only that the table fits, is nonempty when rooms exist, and every entry
+   * names a valid room. */
   if(!chunk_read_u32(w,gen8,relative,count) || *count>GML_WIN_MAX_ROOM_ORDER ||
-     *count>room_count || (*count==0 && room_count>0) ||
+     (*count==0 && room_count>0) ||
      !size_mul((size_t)*count,4,&table_bytes) ||
      !chunk_has(w,gen8,relative+4u,table_bytes)) return 0;
   for(uint32_t i=0;i<*count;i++)
