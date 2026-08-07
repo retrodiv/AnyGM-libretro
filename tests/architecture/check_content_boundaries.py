@@ -328,6 +328,11 @@ CLASSIC_CODE_OPERATIONS = (
     "emit_action_call",
     "action_code_end_state",
     "emit_action_code_call",
+    # Reading an action's argument as one expression needs to know where that expression ends, and
+    # both helpers exist only for that: they are used by import_actions in this file and nowhere
+    # else, so this is where they are owned.
+    "action_word_operator",
+    "action_expression_length",
     "import_actions",
 )
 CLASSIC_EXTENSION_OPERATIONS = (
