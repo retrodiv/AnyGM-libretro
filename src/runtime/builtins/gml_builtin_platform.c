@@ -317,6 +317,9 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
       ds_map_put(vm,id,vstr(pointer_keys[i]),vreal(0),1);
     return vreal(id);
   }
+  /* No native extension is present. Return false so callers can select portable paths; an
+   * unknown builtin returns undefined instead of boolean false. */
+  if(!strcmp(nm,"extension_exists")) return vreal(0);
   if(!strcmp(nm,"extension_stubfunc_real")) return vreal(0);
   if(!strcmp(nm,"extension_stubfunc_string")) return vstr("");
   if(!strcmp(nm,"extension_get_option_value")) return vstr("");
@@ -507,6 +510,9 @@ GmlVal gml_builtin_try_platform_extensions(GmlVM *vm, const char *nm, GmlVal *a,
      !strcmp(nm,"GOG_Stats_SetAchievement")||!strcmp(nm,"GOG_Stats_StoreStatsAndAchievements")||
      !strcmp(nm,"GOG_User_SignInGalaxy")||!strcmp(nm,"GOG_User_SignedIn")) return vreal(0);
   if(!strncmp(nm,"GOG_",4)) return vreal(0);
+  /* No debug overlay is present, so report it closed. This preserves a boolean result for callers
+   * deciding whether to draw diagnostics. */
+  if(!strcmp(nm,"is_debug_overlay_open")) return vreal(0);
   if(!strcmp(nm,"show_debug_message")||!strcmp(nm,"show_debug_overlay")){
     const char *message=S(vm,a,n,0);
     /* A suite that asserts on what the content printed needs a stream carrying nothing else, so

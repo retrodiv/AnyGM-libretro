@@ -588,6 +588,26 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
   if(!strcmp(nm,"string_lower")){ const char*s=S(vm,a,n,0); int len=(int)strlen(s); char *o=dup_n(s,len);
     for(int i=0;i<len;i++) o[i]=(char)tolower((unsigned char)o[i]);
     return vstr_owned(o); }
+  /* string_trim removes leading and trailing whitespace, or the characters of an optional second
+   * argument. The start and end variants restrict the operation to one side. */
+  if(!strcmp(nm,"string_trim")||!strcmp(nm,"string_trim_start")||!strcmp(nm,"string_trim_end")){
+    const char *s=S(vm,a,n,0);
+    const char *set=(n>1)?S(vm,a,n,1):NULL;
+    size_t len=strlen(s), start=0, stop=len;
+    int both=!strcmp(nm,"string_trim");
+    int lead=both||!strcmp(nm,"string_trim_start");
+    int trail=both||!strcmp(nm,"string_trim_end");
+    /* An empty character set trims nothing, which is not the same as no set at all: passing "" is
+     * a deliberate request to leave the string alone. */
+    int trims(char ch){
+      return (set&&*set) ? strchr(set,ch)!=NULL
+           : (set)       ? 0
+                         : isspace((unsigned char)ch)!=0;
+    }
+    if(lead)  while(start<stop && trims(s[start])) start++;
+    if(trail) while(stop>start && trims(s[stop-1])) stop--;
+    return vstr_owned(dup_n(s+start,(int)(stop-start)));
+  }
   if(!strcmp(nm,"string_letters")) return string_filter_ascii(S(vm,a,n,0),0);
   if(!strcmp(nm,"string_lettersdigits")) return string_filter_ascii(S(vm,a,n,0),1);
   if(!strcmp(nm,"string_digits")){
@@ -1028,7 +1048,9 @@ GmlVal gml_builtin_try_values_language(GmlVM *vm, const char *nm, GmlVal *a, int
         (fci>=0 && vm->win && fci<vm->win->n_code)?vm->win->code[fci].name:"?",st->vars.len); }
     return vreal((double)st->id);
   }
-  if(!strcmp(nm,"instanceof")){
+  /* `is_instanceof(value, constructor)` is the boolean form of the two-argument `instanceof`,
+   * so both names share the same implementation. */
+  if(!strcmp(nm,"instanceof")||!strcmp(nm,"is_instanceof")){
     GmlInstance *st=(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;
     GmlVal *pc=st?gml_varmap_get(&st->vars,"__ctor"):NULL;
     int have=(pc && pc->t==V_REAL);
