@@ -91,7 +91,7 @@ int anygm_content_facts_detect(const GmlWin *content,AnygmContentFacts *facts,
                         facts->classic_revision);
     return 0;
   }
-  if(facts->bytecode_revision<14 || facts->bytecode_revision>17){
+  if(facts->bytecode_revision<13 || facts->bytecode_revision>17){
     compatibility_error(error,error_size,"unsupported bytecode revision %u",
                         facts->bytecode_revision);
     return 0;
