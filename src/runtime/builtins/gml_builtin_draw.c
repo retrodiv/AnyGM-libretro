@@ -346,6 +346,22 @@ enum {
 
 /* Resource-list chunks store a count and absolute record pointers; modern list families add a
  * version word before the count.  Every native record starts with its STRG name pointer. */
+/* Reverse chunk_asset_index_by_name by returning the stored name at a given index. Return NULL
+ * for an absent index so callers can distinguish lookup failure from an empty stored name. */
+static const char *chunk_asset_name_by_index(const GmlWin *w, const char *chunk, int versioned,
+                                             int index){
+  const GmlChunk *c=(w&&index>=0)?gml_chunk(w,chunk):NULL;
+  if(!c || (size_t)c->off+c->size>w->size) return NULL;
+  size_t count_at=(size_t)c->off+(versioned?4u:0u), end=(size_t)c->off+c->size;
+  if(count_at+4>end) return NULL;
+  uint32_t count=u32(w->data,(uint32_t)count_at);
+  size_t table=count_at+4;
+  if(count>(end-table)/4u || (uint32_t)index>=count) return NULL;
+  uint32_t record=u32(w->data,(uint32_t)(table+(size_t)index*4u));
+  if((size_t)record+4>w->size) return NULL;
+  return gml_str_by_ptr(w,u32(w->data,record));
+}
+
 static int chunk_asset_index_by_name(const GmlWin *w, const char *chunk, int versioned,
                                      const char *name){
   const GmlChunk *c=(w&&name&&*name)?gml_chunk(w,chunk):NULL;
@@ -1069,6 +1085,11 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"texture_get_texel_height")){ double th; return vreal(texture_info(R,(int)N(a,n,0),NULL,NULL,NULL,&th)?th:0); }
     if(!strcmp(nm,"texture_get_uvs")) return texture_uvs(R,(int)N(a,n,0));
     if(!strcmp(nm,"sprite_exists")){ int spr=(int)N(a,n,0); return vreal(R&&gml_sprite_exists(R,spr)); }
+    /* Tilesets use the BGND resource list in this format. */
+    if(!strcmp(nm,"tileset_get_name")){
+      const char *tn=chunk_asset_name_by_index(vm?vm->win:NULL,"BGND",0,(int)N(a,n,0));
+      return vstr(tn?tn:"");
+    }
     if(!strcmp(nm,"sprite_get_name")){ GmlRenderSpriteMetrics sprite; return vstr(gml_render_sprite_metrics(R,(int)N(a,n,0),&sprite)&&sprite.name?sprite.name:""); }
     if(!strcmp(nm,"sprite_add")){
       /* sprite_add(fname, imgnum, removeback, smooth, xorig, yorig): load a loose image
