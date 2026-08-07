@@ -135,6 +135,9 @@ typedef struct GmlWin {
 
 int          gml_win_load_host(GmlWin *w,const struct AnygmHostServices *host,const char *path);
 int          gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int take_ownership);
+/* Why the most recent gml_win_load_host / gml_win_from_mem returned non-zero. Valid until the next
+ * load. Never NULL. */
+const char  *gml_win_last_load_error(void);
 void         gml_win_free(GmlWin *w);
 const GmlChunk *gml_chunk(const GmlWin *w, const char *name);
 const char  *gml_str_by_index(const GmlWin *w, uint32_t idx);

@@ -106,8 +106,11 @@ void anygm_content_path_parent(const char *path, char *out, size_t outsz) {
 }
 
 static int path_name_is_generic_payload(const char *name){
+  /* Exporters use platform-specific payload names. They contain the same data and share
+   * one loader, so recognize the Linux name alongside the Windows and Android names. */
   return name && (!strcasecmp(name,"data.win") ||
                   !strcasecmp(name,"data.alternate.win") ||
+                  !strcasecmp(name,"game.unx") ||
                   !strcasecmp(name,"game.droid"));
 }
 
@@ -290,7 +293,14 @@ static int file_size64(const AnygmContentRouter *router,const char *path,uint64_
 
 int anygm_content_load_win(const AnygmContentRouter *router,GmlWin *win,const char *path,
                            char *loaded_path,size_t loaded_path_sz) {
-  if(!router || !win || !path || gml_win_load_host(win,router->host,path)!=0) return 0;
+  if(!router || !win || !path) return 0;
+  if(gml_win_load_host(win,router->host,path)!=0){
+    /* Preserve the loader's specific validation reason instead of flattening every failure
+     * to the same content-load diagnostic. */
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,"payload rejected: %s (%s)",
+                gml_win_last_load_error(),path);
+    return 0;
+  }
   if (loaded_path && loaded_path_sz) snprintf(loaded_path, loaded_path_sz, "%s", path);
   if(win->n_code>0) return 1;
 
@@ -599,6 +609,9 @@ static int zip_content_score(const char *name){
   int score=0;
   if(!strcasecmp(base,"data.win")) score=400;
   else if(!strcasecmp(base,"game.droid")) score=300;
+  /* The Linux export name, ranked with its Android sibling: both are the platform's spelling of
+   * data.win, and neither is more authoritative than the other when an archive carries only one. */
+  else if(!strcasecmp(base,"game.unx")) score=300;
   else if(!strcasecmp(base,"data.alternate.win")) score=200;
   else if(zip_endswith(base,".win")) score=100;
   if(score){ for(const char *p=name;*p;p++) if(*p=='/') score--; }
@@ -790,8 +803,9 @@ static int sibling_payload(const AnygmContentRouter *router,const char *archive,
   char *slash=strrchr(parent,'/'),*bs=strrchr(parent,'\\');
   if(bs && (!slash || bs>slash)) slash=bs;
   if(slash) *slash=0; else snprintf(parent,sizeof parent,".");
-  static const char *rel[]={"data.win","game.droid","assets/data.win","assets/game.droid",
-                            "gamedata/data.win","gamedata/game.droid"};
+  static const char *rel[]={"data.win","game.droid","game.unx",
+                            "assets/data.win","assets/game.droid","assets/game.unx",
+                            "gamedata/data.win","gamedata/game.droid","gamedata/game.unx"};
   for(size_t i=0;i<sizeof rel/sizeof rel[0];i++){
     char candidate[1280]; snprintf(candidate,sizeof candidate,"%s/%s",parent,rel[i]);
     if(file_magic_kind(router,candidate)==1){ snprintf(out,outsz,"%s",candidate); return 1; }

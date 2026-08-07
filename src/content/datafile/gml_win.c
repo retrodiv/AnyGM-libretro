@@ -55,9 +55,25 @@ static int string_by_pointer(const GmlWin *w,uint32_t offset,const char **value)
 
 /* A failed memory parse leaves ownership with the caller, even when ownership
  * would have transferred after a successful parse. */
-static int discard_partial_win(GmlWin *w){
+/* Why the last load failed, for the caller to report.
+ *
+ * Preserve the precise validation boundary so callers can distinguish malformed headers,
+ * truncated chunks and unsupported structural revisions. Loading is serialized, so file-static
+ * storage avoids threading an out-parameter through two public signatures. */
+static const char *gml_win_load_failure = NULL;
+
+const char *gml_win_last_load_error(void){
+  return gml_win_load_failure ? gml_win_load_failure : "no failure recorded";
+}
+
+static int discard_partial_win_because(GmlWin *w, const char *why){
+  gml_win_load_failure = why;
   if(w){ w->owns=0; gml_win_free(w); }
   return -1;
+}
+
+static int discard_partial_win(GmlWin *w){
+  return discard_partial_win_because(w, "the payload is not a complete GameMaker archive");
 }
 
 /* ---------------- loader ---------------- */
@@ -400,26 +416,39 @@ static int parse_gen8(GmlWin *w){
 int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
   if(!w) return -1;
   memset(w,0,sizeof(*w));
-  if(!data || size<8 || size>GML_WIN_MAX_FILE_BYTES || memcmp(data,"FORM",4)) return -1;
+  gml_win_load_failure = NULL;
+  if(!data || size<8 || size>GML_WIN_MAX_FILE_BYTES || memcmp(data,"FORM",4)){
+    gml_win_load_failure = !data ? "no payload bytes were read"
+      : size<8 ? "the payload is shorter than a header"
+      : size>GML_WIN_MAX_FILE_BYTES ? "the payload is larger than the loader accepts"
+      : "the payload does not begin with a FORM header";
+    return -1;
+  }
   w->data=data; w->size=size; w->owns=owns;
   uint32_t total=u32(data,4);
-  if((size_t)total!=size-8u) return discard_partial_win(w);
+  if((size_t)total!=size-8u) return discard_partial_win_because(w,"the FORM header states a length that does not match the file");
   size_t offset=8,end=size;
   while(offset<end){
     if(!span_has(end,offset,8) || w->n_chunks>=(int)GML_WIN_MAX_CHUNKS)
       return discard_partial_win(w);
     uint32_t chunk_size=u32(data,(uint32_t)offset+4u);
     size_t body=offset+8u;
-    if(!span_has(end,body,chunk_size)) return discard_partial_win(w);
+    if(!span_has(end,body,chunk_size)) return discard_partial_win_because(w,"a chunk states a size that runs past the end of the payload");
     for(int i=0;i<w->n_chunks;i++)
-      if(!memcmp(w->chunks[i].name,data+offset,4)) return discard_partial_win(w);
+      if(!memcmp(w->chunks[i].name,data+offset,4)) return discard_partial_win_because(w,"the payload declares the same chunk twice");
     GmlChunk *c=&w->chunks[w->n_chunks++];
     memcpy(c->name,data+offset,4); c->name[4]=0;
     c->size=chunk_size; c->off=(uint32_t)body;
     offset=body+chunk_size;
   }
-  if(offset!=end || !parse_strg(w) || !room_table_valid(w) || !parse_gen8(w))
-    return discard_partial_win(w);
+  if(offset!=end)
+    return discard_partial_win_because(w,"the chunk table does not end where the payload does");
+  if(!parse_strg(w))
+    return discard_partial_win_because(w,"the string table (STRG) could not be read");
+  if(!room_table_valid(w))
+    return discard_partial_win_because(w,"the room table (ROOM) is not valid");
+  if(!parse_gen8(w))
+    return discard_partial_win_because(w,"the general header (GEN8) could not be read");
   const GmlChunk *opt=gml_chunk(w,"OPTN");
   if(opt && opt->size>=16 && u32(data,opt->off)==0x80000000u){
     w->option_flags=(uint64_t)u32(data,opt->off+8) |
@@ -443,7 +472,10 @@ int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
         w->classic_executable_layout=(int)u32(data,(uint32_t)((size_t)classic->off+provenance))!=0;
     }
   }
-  if(!parse_code(w) || !parse_refs(w)) return discard_partial_win(w);
+  if(!parse_code(w))
+    return discard_partial_win_because(w,"the code section (CODE) could not be read");
+  if(!parse_refs(w))
+    return discard_partial_win_because(w,"the variable and function references (VARI/FUNC) could not be read");
   return 0;
 }
 
