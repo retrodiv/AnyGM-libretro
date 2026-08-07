@@ -1038,7 +1038,10 @@ GmlVal gml_builtin_try_values_language(GmlVM *vm, const char *nm, GmlVal *a, int
       if(fci>=0){
         *gml_varmap_put(&st->vars,"__ctor")=vreal((double)fci);
         const char *cn=(vm->win&&fci<vm->win->n_code&&vm->win->code[fci].name)?vm->win->code[fci].name:"";
-        if(!strncmp(cn,"gml_Script_",11)) cn+=11;
+        /* Global-scope constructors use the gml_GlobalScript_ prefix. Strip either compiler
+         * prefix before exposing the constructor name. */
+        if(!strncmp(cn,"gml_GlobalScript_",17)) cn+=17;
+        else if(!strncmp(cn,"gml_Script_",11)) cn+=11;
         *gml_varmap_put(&st->vars,"__name")=vstr_owned(strdup(cn));
         gml_vm_run_code(vm,fci,st,vm->cur_self,(n>1)?a+1:0,n-1);
       } }
@@ -1048,9 +1051,9 @@ GmlVal gml_builtin_try_values_language(GmlVM *vm, const char *nm, GmlVal *a, int
         (fci>=0 && vm->win && fci<vm->win->n_code)?vm->win->code[fci].name:"?",st->vars.len); }
     return vreal((double)st->id);
   }
-  /* `is_instanceof(value, constructor)` is the boolean form of the two-argument `instanceof`,
-   * so both names share the same implementation. */
-  if(!strcmp(nm,"instanceof")||!strcmp(nm,"is_instanceof")){
+  /* `instanceof` exposes direct constructor identity. Inheritance-aware queries require a
+   * distinct runtime contract. */
+  if(!strcmp(nm,"instanceof")){
     GmlInstance *st=(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d))?gml_struct_find(vm,(unsigned)a[0].d):NULL;
     GmlVal *pc=st?gml_varmap_get(&st->vars,"__ctor"):NULL;
     int have=(pc && pc->t==V_REAL);
