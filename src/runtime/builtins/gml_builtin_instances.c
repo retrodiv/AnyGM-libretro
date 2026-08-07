@@ -3,7 +3,6 @@
  */
 /* Instance, room, event, path, timeline, and time-source builtin adapters. */
 #include "gml_builtin_internal.h"
-#include "gml_vm_internal.h"
 #include "anygm_compatibility.h"
 #include "gml_render.h"
 #include "anygm_host.h"

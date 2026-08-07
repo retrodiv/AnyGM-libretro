@@ -688,6 +688,11 @@ static void sw_vm(StateW *s, GmlVM *vm){
     sw_i64(s,(int64_t)age);
   }
   sw_i32(s,vm->action_relative);
+  /* The deterministic intra-frame clock feeds current_time/get_timer, so a frame that reads one
+   * draws from it. Restoring a state has to restore the clock with it, or the redraw that follows
+   * the load reads a different value than the frame being restored did and shows something else. */
+  sw_i64(s,(int64_t)vm->time_sample_frame); sw_d(s,vm->time_sample_cpu_ms);
+  sw_i32(s,vm->animation_due);
   sw_d(s,vm->math_epsilon);
   sw_d(s,vm->potential_max_rotation); sw_d(s,vm->potential_rotate_step);
   sw_d(s,vm->potential_check_distance); sw_i32(s,vm->potential_rotate_on_spot);
@@ -857,6 +862,8 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     vm->room_enter_frame = vm->frame - (long)room_age;
   }
   vm->action_relative=sr_i32(&s);
+  vm->time_sample_frame=(long)sr_i64(&s); vm->time_sample_cpu_ms=sr_d(&s);
+  vm->animation_due=sr_i32(&s);
   vm->math_epsilon=sr_d(&s);
   vm->potential_max_rotation=sr_d(&s); vm->potential_rotate_step=sr_d(&s);
   vm->potential_check_distance=sr_d(&s); vm->potential_rotate_on_spot=sr_i32(&s);
@@ -1128,9 +1135,10 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     free(ts->datum);
   }
   free(tm_state);
-  /* Sampling helpers derive their next deterministic base from the restored
-   * frame.  Their cached host timestamp is deliberately not serialized. */
-  vm->time_sample_frame=-1;
+  /* The sampling clock is restored above rather than invalidated here: it stopped being a cached
+   * host timestamp and became part of what a frame draws from, so discarding it would make the
+   * redraw after a load read a different value than the frame being restored. */
+  vm->time_sample_draw_ms=vm->time_sample_cpu_ms;
   if(used) *used=s.pos;
   if(s.ok && s.pos<=len){
     gml_vm_warm_audio_for_room_window(vm);

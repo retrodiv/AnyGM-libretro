@@ -841,8 +841,8 @@ int main(int argc,char **argv){
   /* The state carries the resolved compatibility fingerprint, so this hash moves whenever a
    * reviewed policy is added or changed, and again whenever the serialized layout itself changes. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
-  if(deterministic_size!=19598 ||
-     deterministic_hash!=UINT64_C(0x83e5df04c207e73b)){
+  if(deterministic_size!=19618 ||
+     deterministic_hash!=UINT64_C(0xa4d07a61e1ddde01)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;

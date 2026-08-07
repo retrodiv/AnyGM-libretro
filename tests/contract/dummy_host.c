@@ -541,10 +541,15 @@ int main(void){
   free(content);
   anygm_synthetic_content_destroy(&fixture);
   if(!dummy.log_calls) return fail("host logger was never used");
-  if(!dummy.monotonic_calls || dummy.wall_calls!=3 || dummy.seed_calls!=3){
+  /* The monotonic clock is how long this machine took, which is not something a run may depend on:
+   * a frame that answered from it would answer differently on the next machine and the same state
+   * would resume into a different continuation. Running frames must therefore leave it untouched —
+   * profiling reads it, and profiling is off here. Wall time and the seed are consulted a fixed
+   * number of times, so a change in either count is a change in what the run depends on. */
+  if(dummy.monotonic_calls || dummy.wall_calls!=3 || dummy.seed_calls!=3){
     char message[160];
     snprintf(message,sizeof message,
-             "host service counts differ: monotonic=%u wall=%u seed=%u",
+             "host service counts differ: monotonic=%u (must be 0) wall=%u seed=%u",
              dummy.monotonic_calls,dummy.wall_calls,dummy.seed_calls);
     return fail(message);
   }

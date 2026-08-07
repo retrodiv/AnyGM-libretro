@@ -157,7 +157,11 @@ static void advance_instance_animations(GmlVM *vm){
 }
 
 void gml_vm_post_draw(GmlVM *vm){
-  if(vm && anygm_policy_animation_before_step(vm->win)) advance_instance_animations(vm);
+  /* The advance is owed here but taken at the start of the next step, which is the same point in a
+   * continuous run and the other side of the frame boundary. States are serialized on that
+   * boundary: taking it here would leave every state holding an animation one step past the frame
+   * it was saved from, so restoring it and redrawing would not reproduce that frame. */
+  if(vm && anygm_policy_animation_before_step(vm->win)) vm->animation_due=1;
 }
 
 static int classic_joystick_event_fires(GmlVM *vm,int s){
@@ -321,6 +325,8 @@ void gml_vm_step(GmlVM *vm){
     if(gml_keyboard_check(vm,1,1)) vm->classic_info_active=0;
     return;
   }
+  /* The classic animation advance owed by the previous frame's draw (see gml_vm_post_draw). */
+  if(vm->animation_due){ vm->animation_due=0; advance_instance_animations(vm); }
   vm->frame++;
   if(vm->render) gml_render_set_frame((GmlRender*)vm->render,vm->frame);
   gml_vm_frame_advance_layers(vm);
@@ -1453,9 +1459,15 @@ void gml_vm_draw(GmlVM *vm){
     gml_vm_draw_items_sort(it,scratch->sort_aux,scratch->sort_runs,m);
   else
     qsort(it,m,sizeof(GmlDrawItem),gml_vm_draw_item_cmp);
+  /* A frame number dumps every draw of that frame rather than the first one past it: a rewind
+   * redraws a frame the forward run already drew, and the two dumps are only comparable when both
+   * are emitted. */
+  int inst_dump=0;
   { const char *li=anygm_host_development_setting(vm->host,"GML_LOG_INST");
-    if(li && atoi(li)>0 && !vm->diagnostics.instance_draw_dumped && vm->frame<atoi(li)) goto skip_instdump; }
-  if(anygm_host_development_setting(vm->host,"GML_LOG_INST") && !vm->diagnostics.instance_draw_dumped){ vm->diagnostics.instance_draw_dumped=1;
+    if(li && atoi(li)>0) inst_dump=(vm->frame==atoi(li));
+    else if(li && !vm->diagnostics.instance_draw_dumped) inst_dump=1;
+    if(!inst_dump) goto skip_instdump; }
+  { vm->diagnostics.instance_draw_dumped=1;
     anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[draw] room=%d, %d instances + %d tiles, draw_events_off=%d (back->front):\n",
             vm->room_index,n,nt,vm->draw_events_off);
     for(int k=0;k<m && k<2000;k++){ if(it[k].type==1){ GmlDrawTile *t=&tiles[it[k].idx];

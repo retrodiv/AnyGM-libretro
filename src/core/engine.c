@@ -599,6 +599,7 @@ static void poll_fast_forward(AnygmEngine *engine) {
   gml_render_control_update(&engine->render,&control,GML_RENDER_CONTROL_FAST_FORWARD);
 }
 static AnygmResult engine_run_frame(AnygmEngine *engine) {
+  engine->vm.draw_phase=0;
   if(engine->vm.game_change_pending)
     return engine_apply_game_change_and_run_frame(engine);
   engine->audio_frames=0;
@@ -691,6 +692,11 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     room_skip_hook(engine);        /* generic room-skip button (Select/Start, any room) */
     introskip_hook(engine);        /* A/B skip, only in a user-supplied intro-room list (GML_INTROSKIP) */
   }
+  /* Everything past the step draws. The deterministic clock keeps running through it so a Draw
+   * event can still time out of a loop, but from here its advance is scratch: the frame a state
+   * draws must not depend on whether the step ran, because after a load it did not. */
+  engine->vm.time_sample_draw_ms=engine->vm.time_sample_cpu_ms;
+  engine->vm.draw_phase=1;
   if(engine->vm.game_change_pending)
     return engine_apply_game_change_and_run_frame(engine);
   /* The VM has already fired the final event; translate its lifecycle request to engine output. */

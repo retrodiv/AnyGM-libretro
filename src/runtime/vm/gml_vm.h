@@ -230,6 +230,9 @@ typedef struct GmlVM {
   long     frame;             /* simulation frame owned by this VM */
   long     time_sample_frame; /* frame used as the deterministic base for timer builtins */
   double   time_sample_cpu_ms;
+  double   time_sample_draw_ms; /* the clock's advance while drawing, which does not carry out */
+  int      draw_phase;          /* set for the presentation part of a frame */
+  int      animation_due;       /* classic animation advance owed by the last draw */
   uint64_t fallback_monotonic_ns;
   int      room_index;        /* current room (ROOM index) */
   int      pending_room;      /* -1 none, else target ROOM index (play-order resolved) */
@@ -439,6 +442,11 @@ int          gml_object_set_parent(GmlVM *vm, int obj, int parent); /* cycle-saf
 int          gml_object_index_by_name(GmlVM *vm, const char *name);  /* -1 if not found */
 GmlInstance *gml_find_instance(GmlVM *vm, int obj);          /* first active instance of obj (or child) */
 int          gml_run_event(GmlVM *vm, GmlInstance *in, const char *suffix); /* e.g. "Create_0" */
+/* Whether an object, or an ancestor of it, registers a handler for an event suffix. Performing an
+ * event needs the answer to resolve which handler a name reaches, so it belongs to the VM's
+ * public surface rather than to its internals. */
+int          gml_vm_instances_event_lookup(GmlVM *vm, const char *suffix, int object,
+                                           int *handler_object, int *code);
 int          gml_timeline_add(GmlVM *vm);                    /* append an empty runtime timeline */
 void         gml_timeline_clear(GmlVM *vm, int timeline);    /* remove every moment, retaining the asset */
 /* Collision-candidate grid hooks (gml_builtin_collision.c): touch = a bbox input

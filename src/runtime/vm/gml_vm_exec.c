@@ -342,10 +342,17 @@ static double intra_frame_ms(GmlVM *vm){
   if(vm->time_sample_frame!=vm->frame){
     vm->time_sample_frame=vm->frame;
     vm->time_sample_cpu_ms=0.0;
+    vm->time_sample_draw_ms=0.0;
   }
-  double intra=vm->time_sample_cpu_ms;
+  /* Drawing may read the clock, and a wait loop written in a Draw event needs it to advance or it
+   * never ends. But what a frame draws has to be a function of the state alone: a state restored
+   * and redrawn must reproduce the frame it was saved from, and the redraw runs without the step
+   * that preceded it. So the advance made while drawing lands in a shadow that starts from the
+   * step's value and is dropped at the end of the phase. */
+  double *slot=vm->draw_phase?&vm->time_sample_draw_ms:&vm->time_sample_cpu_ms;
+  double intra=*slot;
   double limit=step*0.999;
-  if(intra<limit) vm->time_sample_cpu_ms=intra+1.0;
+  if(intra<limit) *slot=intra+1.0;
   return intra<limit?intra:limit;
 }
 static double current_time_value(GmlVM *vm){
