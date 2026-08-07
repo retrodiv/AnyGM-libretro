@@ -2913,14 +2913,27 @@ static int expect_persistent_lifecycle_exit_code(void){
   if(slot->image_index!=0){
     fprintf(stderr,"classic animation advanced before the draw phase: index=%.2f\n",slot->image_index); return 1;
   }
+  /* The advance is owed by the draw and taken at the start of the next step, so a state serialized
+   * on the frame boundary holds the animation of the frame it was saved from rather than the one
+   * after it. Asserting it immediately after post_draw would be asserting the superseded contract:
+   * what has to be true is that the draw does not advance it and the next step does. */
   gml_vm_post_draw(&vm);
+  if(slot->image_index!=0){
+    fprintf(stderr,"classic animation advanced inside the draw phase: index=%.2f\n",slot->image_index); return 1;
+  }
+  gml_vm_step(&vm);
+  slot=find_slot(&vm,animation_id);
+  if(!slot){ fprintf(stderr,"classic animation fixture instance disappeared\n"); return 1; }
   if(slot->image_index!=0.5){
-    fprintf(stderr,"classic animation did not advance after the draw phase: index=%.2f\n",slot->image_index); return 1;
+    fprintf(stderr,"classic animation did not advance on the step owed by the draw: index=%.2f\n",slot->image_index); return 1;
   }
   slot->sprite_index=slot->mask_index=-1;
   slot->image_index=0;
   slot->image_speed=0.5;
   gml_vm_post_draw(&vm);
+  gml_vm_step(&vm);
+  slot=find_slot(&vm,animation_id);
+  if(!slot){ fprintf(stderr,"classic animation fixture instance disappeared\n"); return 1; }
   if(slot->image_index!=0.5){
     fprintf(stderr,"classic sprite-less drawing frame did not advance: index=%.2f\n",slot->image_index); return 1;
   }
