@@ -50,6 +50,7 @@ static void dump_instance_vars(GmlVM *vm, int frame){
     const char *nm = (in->obj>=0 && in->obj<vm->n_objects && vm->objects[in->obj].name)
                      ? vm->objects[in->obj].name : "?";
     if(strcmp(nm,want)) continue;
+    int seen_named=0;
     printf("[vars %d] %s:", frame, nm);
     { const char *g=getenv("GML_DUMP_GLOBALS_ONLY");
       if(g&&*g){
@@ -71,11 +72,14 @@ static void dump_instance_vars(GmlVM *vm, int frame){
         char list[512];
         snprintf(list,sizeof list,",%s,",only);
         if(!strstr(list,pattern)) continue;
+        seen_named++;
       }
       if(slot->val.t==V_REAL)      printf(" %s=%g",slot->key,slot->val.d);
       else if(slot->val.t==V_STR)  printf(" %s=\"%s\"",slot->key,slot->val.s?slot->val.s:"");
       else                         printf(" %s=<t%d>",slot->key,(int)slot->val.t);
     }
+    /* Mark a filtered request when no selected instance variable is present. */
+    if(only && !seen_named) printf(" (none of the named instance variables exist)");
     printf("\n");
   }
 }
