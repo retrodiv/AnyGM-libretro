@@ -254,8 +254,16 @@ int gml_font_add_sprite_ext(GmlRender *r, int sprite, const char *map, int prop,
   r->fonts[id]=(GmlFont){.sprite=sprite,.first=0,.prop=prop,.sep=sep,.map=cp,.map_len=len};
   font_build_fast(&r->fonts[id]);
   if(render_setting(r,"GML_LOG_TEXT")){ GmlSprite *s=&r->spr[sprite];
-    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[font] id=%d spr=%d(%s) map_len=%d prop=%d sep=%d nframes=%d cell=%dx%d\n",
-      id,sprite,s->name?s->name:"?",len,prop,sep,s->n_frames,s->w,s->h); }
+    /* Include a bounded map preview as well as its length. */
+    char preview[97]; int at=0;
+    for(int i=0;i<len && at<(int)sizeof(preview)-5;i++){
+      unsigned c=cp?cp[i]:0;
+      if(c>=32 && c<127) preview[at++]=(char)c;
+      else at+=snprintf(preview+at,sizeof(preview)-(size_t)at,"<%u>",c);
+    }
+    preview[at<(int)sizeof(preview)?at:(int)sizeof(preview)-1]=0;
+    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[font] id=%d spr=%d(%s) map_len=%d prop=%d sep=%d nframes=%d cell=%dx%d map=\"%s\"\n",
+      id,sprite,s->name?s->name:"?",len,prop,sep,s->n_frames,s->w,s->h,preview); }
   return id;
 }
 

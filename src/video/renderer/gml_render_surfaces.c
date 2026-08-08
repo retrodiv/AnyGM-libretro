@@ -1043,6 +1043,21 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
       anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[surfdraw] target=%d surf=%d src=%dx%d nz=%d dst=(%.0f,%.0f %.0fx%.0f) blend=%06X alpha=%.2f bm=%d alphablend=%d\n",
               r?r->target_id:-999,surf,sw,sh,nz,dx,dy,dw,dh,blend&0xFFFFFF,alpha,r?r->blendmode:-1,r?r->alphablend:-1);
       if(nz>0) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[surfdraw]   first=(%d,%d) argb=%08X bbox=(%d,%d)-(%d,%d)\n",sx0,sy0,sv0,minx,miny,maxx,maxy);
+      /* The figures above count alpha. Count nonzero colour separately so an
+       * opaque black surface does not appear to hold coloured pixels. */
+      {
+        int lit=0, lx0=sw, ly0=sh, lx1=-1, ly1=-1;
+        for(int i=0;i<sw*sh;i++) if(spx[i]&0x00FFFFFFu){
+          int px=i%sw, py=i/sw;
+          if(px<lx0) lx0=px;
+          if(py<ly0) ly0=py;
+          if(px>lx1) lx1=px;
+          if(py>ly1) ly1=py;
+          lit++;
+        }
+        anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
+          "[surfdraw]   lit=%d of %d colour-bbox=(%d,%d)-(%d,%d)\n",lit,sw*sh,lx0,ly0,lx1,ly1);
+      }
     }
   }
   int prof=rprof_enabled();
