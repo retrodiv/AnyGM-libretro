@@ -120,6 +120,15 @@ static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlas
     __atomic_store_n(&a->px,px,__ATOMIC_RELEASE);
     if(log_atlas_on(r))
       anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[atlas] decoded %d %dx%d (%.1f MiB)\n",idx,w,h,(double)((uint64_t)w*(uint64_t)h*4ull)/(1024.0*1024.0));
+    /* Optional decoded-pixel digest for comparing atlas output across runs;
+     * logging does not affect the pixels used by the renderer. */
+    if(render_setting(r,"GML_LOG_ATLAS_HASH")){
+      uint64_t hash=1469598103934665603ull;                     /* FNV-1a over the decoded RGBA */
+      size_t bytes=(size_t)w*(size_t)h*4u;
+      for(size_t i=0;i<bytes;i++){ hash^=px[i]; hash*=1099511628211ull; }
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
+                      "[atlas-hash] %d %dx%d %016llx\n",idx,w,h,(unsigned long long)hash);
+    }
   }
   if(locked){
     pool->state[idx]=0;

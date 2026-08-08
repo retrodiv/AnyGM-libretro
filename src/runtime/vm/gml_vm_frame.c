@@ -127,15 +127,19 @@ static void advance_instance_animation(GmlVM *vm,GmlInstance *in,
     }
     return;
   }
-  if(in->image_speed!=0 && (nf>0 || (vm->win && anygm_policy_uses_classic_runtime(vm->win)))){
-    double step=(vm->win && !anygm_policy_uses_classic_runtime(vm->win))
+  /* An instance without sprite frames still advances image_index. Frames are
+   * required for wrapping, and Animation End remains tied to that boundary
+   * except for the existing classic-runtime policy. */
+  int classic_runtime=vm->win && anygm_policy_uses_classic_runtime(vm->win);
+  if(in->image_speed!=0){
+    double step=(vm->win && !classic_runtime && nf>0)
       ? gml_sprite_animation_delta(render,(int)in->sprite_index,in->image_speed,gml_room_speed(vm))
       : in->image_speed;
     double ni=in->image_index+step;
     int wrapped=nf>0 && ((ni>=nf)||(ni<0));
     if(nf>0){ while(ni>=nf) ni-=nf; while(ni<0) ni+=nf; }
     in->image_index=ni;
-    if(wrapped || (nf<=0 && ni>=0)){
+    if(wrapped || (nf<=0 && ni>=0 && classic_runtime)){
       if(anygm_host_development_setting(vm->host,"GML_LOG_ANIM")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[anim-end] %s (nf=%d)\n",
         (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",nf);
       gml_run_event(vm,in,"Other_7");
