@@ -833,6 +833,9 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         gml_render_primitive_triangle_alpha(R,x1,y1,x2,y2,x3,y3,col,draw.alpha,outline); }
       return vreal(0); }
     if(!strcmp(nm,"draw_clear")||!strcmp(nm,"draw_clear_alpha")){ if(R){
+      if(builtin_setting(vm,"GML_LOG_SURF"))
+        anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,"[surf] clear colour=%06x\n",
+                        (unsigned)((uint32_t)N(a,n,0)&0xFFFFFFu));
       /* Pass the requested alpha through when clearing the target surface. */
       double clear_alpha=!strcmp(nm,"draw_clear_alpha")&&n>=2?
         N(a,n,1):1.0;
@@ -886,8 +889,18 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
      * GameMaker+FMOD title uses this same API. ---- */
     if(!strncmp(nm,"fmod_",5)) return builtin_fmod(vm,nm,a,n);
     if(!strcmp(nm,"surface_exists")) return vreal(R?gml_surface_exists(R,(int)N(a,n,0)):0);
-    if(!strcmp(nm,"surface_create")) return vreal(R?gml_surface_create(R,(int)N(a,n,0),(int)N(a,n,1)):-1);
-    if(!strcmp(nm,"surface_free")){ if(R) gml_surface_free(R,(int)N(a,n,0)); return vreal(0); }
+    /* Opt-in lifecycle trace complements renderer coverage diagnostics. */
+    if(!strcmp(nm,"surface_create")){
+      int made=R?gml_surface_create(R,(int)N(a,n,0),(int)N(a,n,1)):-1;
+      if(R && builtin_setting(vm,"GML_LOG_SURF"))
+        anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,"[surf] create id=%d %dx%d\n",
+                        made,(int)N(a,n,0),(int)N(a,n,1));
+      return vreal(made);
+    }
+    if(!strcmp(nm,"surface_free")){
+      if(R && builtin_setting(vm,"GML_LOG_SURF"))
+        anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,"[surf] free id=%d\n",(int)N(a,n,0));
+      if(R) gml_surface_free(R,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"surface_get_target")) return vreal(R?gml_surface_get_target(R):-1);
     if(!strcmp(nm,"surface_get_texture")){
       int sid=(int)N(a,n,0);
