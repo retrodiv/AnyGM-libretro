@@ -92,8 +92,52 @@ static int grid_value_fixtures(void){
   return ok;
 }
 
+/* Region aggregates return numeric results and disk variants visit a circle
+ * rather than its bounding rectangle. Assert cells where those shapes differ. */
+static int grid_region_aggregates(void){
+  GmlVM vm; memset(&vm,0,sizeof vm);
+  int ok=1;
+  GmlVal make[]={vreal(3),vreal(3)};
+  GmlVal grid=call(&vm,"ds_grid_create",make,2);
+  double cells[3][3]={{1,2,3},{4,5,6},{7,8,9}};
+  for(int y=0;y<3;y++) for(int x=0;x<3;x++){
+    GmlVal set[]={grid,vreal(x),vreal(y),vreal(cells[y][x])};
+    call(&vm,"ds_grid_set",set,4);
+  }
+  GmlVal whole[]={grid,vreal(0),vreal(0),vreal(2),vreal(2)};
+  ok&=expect_real("max over the whole grid",call(&vm,"ds_grid_get_max",whole,5),9);
+  ok&=expect_real("min over the whole grid",call(&vm,"ds_grid_get_min",whole,5),1);
+  ok&=expect_real("sum over the whole grid",call(&vm,"ds_grid_get_sum",whole,5),45);
+  ok&=expect_real("mean over the whole grid",call(&vm,"ds_grid_get_mean",whole,5),5);
+
+  GmlVal corner[]={grid,vreal(0),vreal(0),vreal(1),vreal(1)};
+  ok&=expect_real("max over a sub-rectangle",call(&vm,"ds_grid_get_max",corner,5),5);
+  ok&=expect_real("sum over a sub-rectangle",call(&vm,"ds_grid_get_sum",corner,5),12);
+
+  /* Reversed bounds name the same rectangle. */
+  GmlVal reversed[]={grid,vreal(1),vreal(1),vreal(0),vreal(0)};
+  ok&=expect_real("reversed bounds are the same rectangle",
+                  call(&vm,"ds_grid_get_sum",reversed,5),12);
+
+  /* Out of range is clamped rather than faulting. */
+  GmlVal huge[]={grid,vreal(-5),vreal(-5),vreal(50),vreal(50)};
+  ok&=expect_real("bounds outside the grid clamp to it",call(&vm,"ds_grid_get_sum",huge,5),45);
+
+  /* Radius one around the centre visits a plus shape and excludes the corners. */
+  GmlVal disk[]={grid,vreal(1),vreal(1),vreal(1)};
+  ok&=expect_real("disk sum excludes the corners",call(&vm,"ds_grid_get_disk_sum",disk,4),25);
+  ok&=expect_real("disk max",call(&vm,"ds_grid_get_disk_max",disk,4),8);
+  ok&=expect_real("disk min",call(&vm,"ds_grid_get_disk_min",disk,4),2);
+  ok&=expect_real("disk mean over five cells",call(&vm,"ds_grid_get_disk_mean",disk,4),5);
+
+  GmlVal destroy[]={grid};
+  call(&vm,"ds_grid_destroy",destroy,1);
+  return ok;
+}
+
 int main(void){
   if(!grid_value_fixtures()) return 1;
-  puts("ds_grid value-search and resize fixtures: ok");
+  if(!grid_region_aggregates()) return 1;
+  puts("ds_grid value-search, resize and region-aggregate fixtures: ok");
   return 0;
 }

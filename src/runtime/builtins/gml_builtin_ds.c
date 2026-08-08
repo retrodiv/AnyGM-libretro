@@ -1004,6 +1004,50 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int found=ds_grid_find_value(g,x1,y1,x2,y2,n>=6?a[5]:vreal(0),&found_x,&found_y);
     if(!strcmp(nm,"ds_grid_value_exists")) return vreal(found);
     return vreal(found?(!strcmp(nm,"ds_grid_value_x")?found_x:found_y):-1); }
+  /* Region aggregates share one walk. Rectangles clamp to the grid and accept
+   * reversed bounds; disks visit only cells within the requested radius.
+   * Empty regions return zero and mean uses the number of visited cells. */
+  /* Keep all eight names literal so the registry inventory can discover them. */
+  if(!strcmp(nm,"ds_grid_get_max")||!strcmp(nm,"ds_grid_get_min")||
+     !strcmp(nm,"ds_grid_get_sum")||!strcmp(nm,"ds_grid_get_mean")||
+     !strcmp(nm,"ds_grid_get_disk_max")||!strcmp(nm,"ds_grid_get_disk_min")||
+     !strcmp(nm,"ds_grid_get_disk_sum")||!strcmp(nm,"ds_grid_get_disk_mean")){
+    GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0));
+    int disk=strstr(nm,"disk")!=NULL;
+    int x1,y1,x2,y2;
+    double cx=0,cy=0,radius=0;
+    if(disk){
+      cx=N(a,n,1); cy=N(a,n,2); radius=N(a,n,3);
+      x1=(int)(cx-radius); y1=(int)(cy-radius);
+      x2=(int)(cx+radius); y2=(int)(cy+radius);
+    }else{
+      x1=(int)N(a,n,1); y1=(int)N(a,n,2); x2=(int)N(a,n,3); y2=(int)N(a,n,4);
+    }
+    if(x1>x2){ int t=x1; x1=x2; x2=t; }
+    if(y1>y2){ int t=y1; y1=y2; y2=t; }
+    if(!g||!g->cell) return vreal(0);
+    if(x1<0) x1=0;
+    if(y1<0) y1=0;
+    if(x2>=g->w) x2=g->w-1;
+    if(y2>=g->h) y2=g->h-1;
+    double total=0, best=0;
+    int seen=0;
+    for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++){
+      if(disk){
+        double dx=(double)x-cx, dy=(double)y-cy;
+        if(dx*dx+dy*dy > radius*radius) continue;
+      }
+      GmlVal cell=g->cell[(size_t)y*(size_t)g->w+(size_t)x];
+      double value=N(&cell,1,0);
+      total+=value;
+      if(!seen || (strstr(nm,"max") ? value>best : value<best)) best=value;
+      seen++;
+    }
+    if(!seen) return vreal(0);
+    if(strstr(nm,"sum")) return vreal(total);
+    if(strstr(nm,"mean")) return vreal(total/(double)seen);
+    return vreal(best);
+  }
   if(!strcmp(nm,"ds_grid_clear")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); GmlVal v=n>=2?a[1]:vreal(0);
     if(g && g->cell) for(size_t i=0;i<(size_t)g->w*g->h;i++) g->cell[i]=v;
     return vreal(0); }

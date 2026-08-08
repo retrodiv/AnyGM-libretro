@@ -1638,7 +1638,15 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1552, TAG_GET_ASSET_IDS, "tag_get_asset_ids", DRAW, DRAW, ALWAYS) \
   ENTRY(1553, WEAK_REF_CREATE, "weak_ref_create", VALUES, VALUES_VARIABLES, ALWAYS) \
   ENTRY(1554, WEAK_REF_ALIVE, "weak_ref_alive", VALUES, VALUES_VARIABLES, ALWAYS) \
-  ENTRY(1555, WEAK_REF_ANY_ALIVE, "weak_ref_any_alive", VALUES, VALUES_VARIABLES, ALWAYS)
+  ENTRY(1555, WEAK_REF_ANY_ALIVE, "weak_ref_any_alive", VALUES, VALUES_VARIABLES, ALWAYS) \
+  ENTRY(1556, DS_GRID_GET_MAX, "ds_grid_get_max", DS, DS, ALWAYS) \
+  ENTRY(1557, DS_GRID_GET_MIN, "ds_grid_get_min", DS, DS, ALWAYS) \
+  ENTRY(1558, DS_GRID_GET_SUM, "ds_grid_get_sum", DS, DS, ALWAYS) \
+  ENTRY(1559, DS_GRID_GET_MEAN, "ds_grid_get_mean", DS, DS, ALWAYS) \
+  ENTRY(1560, DS_GRID_GET_DISK_MAX, "ds_grid_get_disk_max", DS, DS, ALWAYS) \
+  ENTRY(1561, DS_GRID_GET_DISK_MIN, "ds_grid_get_disk_min", DS, DS, ALWAYS) \
+  ENTRY(1562, DS_GRID_GET_DISK_SUM, "ds_grid_get_disk_sum", DS, DS, ALWAYS) \
+  ENTRY(1563, DS_GRID_GET_DISK_MEAN, "ds_grid_get_disk_mean", DS, DS, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1653,7 +1661,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1556
+  GML_BUILTIN_ID_LIMIT = 1564
 } GmlBuiltinId;
 
 #endif
