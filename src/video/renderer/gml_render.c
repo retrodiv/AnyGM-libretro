@@ -721,19 +721,11 @@ int gml_render_shader_current(const GmlRender *r){
   ((shader)*GML_RENDER_SHADER_HANDLE_STRIDE+(slot))
 #define GML_RENDER_NOISE_JUMBLE_HANDLE_BASE 20
 
+/* Report a declared shader as compiled even when the software evaluator does not
+ * recognize its effect. An invalid shader index is not a compiled shader. */
 int gml_render_shader_is_compiled(const GmlRender *r,int shader){
   if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
-  const struct GmlShaderPal *recognized=&r->shader_pal[shader];
-  return recognized->has || recognized->lut || recognized->grid ||
-         recognized->alpha_discard || recognized->dual_sample ||
-         recognized->paint || recognized->grayscale ||
-         recognized->solid_alpha_mask ||
-         recognized->solid_blur_alpha ||
-         recognized->radial_wave ||
-         recognized->noise_jumble ||
-         (recognized->hsv_scan && r->crt_shader_enable) ||
-         (recognized->sampled_crt && r->crt_shader_enable) ||
-         (recognized->crt && r->crt_shader_enable);
+  return 1;
 }
 
 int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *name){
