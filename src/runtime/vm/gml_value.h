@@ -18,6 +18,7 @@ typedef struct {
   int *row_len;
   int escaped;   /* referenced beyond its creating scope (stored to a global/instance var,
                     a ds structure, or returned) — locals cleanup must not free it */
+  unsigned gc_epoch; /* the collection pass that last scanned this array; see gml_struct_gc */
 } GmlArr;
 static inline GmlVal vreal(double d){ GmlVal v; v.t=V_REAL; v.d=d; v.s=0; v.arr=0; return v; }
 static inline GmlVal vstr(const char *s){ GmlVal v; v.t=V_STR; v.d=0; v.s=s; v.arr=0; return v; }

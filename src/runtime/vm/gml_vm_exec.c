@@ -1148,6 +1148,9 @@ void gml_vm_struct_free_slot_push(GmlVM *vm, int slot){
   if(vm->n_struct_free<vm->cap_struct_free) vm->struct_free[vm->n_struct_free++]=slot;
 }
 /* ---- struct garbage collection (mark-sweep from every GmlVal root, run between frames) ---- */
+/* Array deduplication bounds repeated visits; retain an independent recursion limit to protect
+ * the C stack on deeply nested arrays. */
+#define GML_GC_MAX_ARRAY_DEPTH 4096
 static void gc_mark_struct(GmlVM *vm, unsigned id, GmlInstance ***wl, int *wn, int *wcap){
   GmlInstance *s = gml_struct_find(vm,id);
   if(s && !s->marked){ s->marked=1;
@@ -1155,8 +1158,12 @@ static void gc_mark_struct(GmlVM *vm, unsigned id, GmlInstance ***wl, int *wn, i
     if(*wl) (*wl)[(*wn)++] = s;
   }
 }
+/* Stamp arrays per collection so shared children are visited once rather than once per path.
+ * A recursion limit alone bounds stack use, not the number of walks, and can leave reachable
+ * objects unmarked. The epoch also terminates cycles without revisiting their nodes. */
 static void gc_scan_arr(GmlVM *vm, GmlArr *A, GmlInstance ***wl, int *wn, int *wcap, int depth){
-  if(!A || depth>64) return;
+  if(!A || A->gc_epoch==vm->gc_epoch || depth>GML_GC_MAX_ARRAY_DEPTH) return;
+  A->gc_epoch=vm->gc_epoch;
   for(int i=0;i<A->len;i++){ GmlVal v=A->data[i];
     if(v.t==V_REAL && GML_IS_STRUCT_ID(v.d)) gc_mark_struct(vm,(unsigned)v.d,wl,wn,wcap);
     else if(v.t==V_ARR && v.arr) gc_scan_arr(vm,(GmlArr*)v.arr,wl,wn,wcap,depth+1); }
@@ -1181,6 +1188,9 @@ static void gc_scan_vm(GmlVM *vm, GmlVarMap *m, GmlInstance ***wl, int *wn, int 
 }
 void gml_struct_gc(GmlVM *vm){
   if(vm->n_structs<=0) return;
+  /* A fresh array carries epoch 0, so a pass never claims one it has not reached. Skipping 0 on
+   * wrap keeps that true for as long as the process runs. */
+  if(++vm->gc_epoch==0) vm->gc_epoch=1;
   for(int i=0;i<vm->n_structs;i++) if(vm->structs[i]) vm->structs[i]->marked=0;
   GmlInstance **wl=NULL; int wn=0, wcap=0;
   /* roots: globals, function statics, every instance (active AND deactivated — the latter can be
