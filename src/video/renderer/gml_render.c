@@ -362,9 +362,13 @@ void gml_run_row_bands_n(GmlRender *r,int H,int nt,GmlRowBandFn fn,void *ctx){
   while(p->remaining>0) gml_cond_wait(&p->done_cond,&p->mutex);
   gml_mutex_unlock(&p->mutex);
 }
+/* An explicit band count can make compositor scheduling reproducible across hosts.
+ * GML_ROW_THREADS=1 composites on the calling thread alone. */
 void gml_run_row_bands(GmlRender *r,int H,GmlRowBandFn fn,void *ctx){
   int nt=1;
   if(H>=128){ nt=gml_ncpu(); if(nt>GML_ROW_THREADS_AUTO)nt=GML_ROW_THREADS_AUTO; if(nt<1)nt=1; }
+  const char *pinned=render_setting(r,"GML_ROW_THREADS");
+  if(pinned){ nt=atoi(pinned); if(nt<1) nt=1; if(nt>GML_ROW_THREADS_MAX) nt=GML_ROW_THREADS_MAX; }
   gml_run_row_bands_n(r,H,nt,fn,ctx);
 }
 static int env_fast_alpha_cull(const GmlRender *r){

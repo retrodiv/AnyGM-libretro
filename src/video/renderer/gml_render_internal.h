@@ -93,7 +93,7 @@ typedef struct { const char *name; int originx, originy, w, h, n_frames; int *fr
                  int ns_enabled, ns_l, ns_t, ns_r, ns_b, ns_tile[5]; } GmlSprite;
 typedef struct {
   uint8_t *px; int w, h;                                          /* RGBA8, decoded lazily */
-  uint32_t blob; size_t avail, chunk_end; int decode_attempted;    /* source blob in data.win */
+  uint32_t blob; size_t avail, chunk_end; int decode_attempted;    /* offsets into data.win, never addresses */
   uint8_t *external_blob; size_t external_size;                    /* encoded VFS sidecar, if any */
   int debug_dumped;                                                /* one-shot opt-in atlas diagnostic */
 } GmlAtlas;

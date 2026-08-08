@@ -110,7 +110,8 @@ static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlas
     px=decode_texture_blob(a->external_blob,a->external_size,
                            (size_t)(a->external_blob+a->external_size),&w,&h);
   else if(a->blob && a->blob<r->win->size)
-    px=decode_texture_blob(r->win->data+a->blob,a->avail,a->chunk_end,&w,&h);
+    px=decode_texture_blob(r->win->data+a->blob,a->avail,
+                           (size_t)r->win->data+a->chunk_end,&w,&h);
   if(locked) gml_mutex_lock(&pool->mu);
   a->decode_attempted=1;
   if(px){
@@ -452,7 +453,9 @@ void parse_txtr(GmlRender *r){
      n>GML_WIN_MAX_REFERENCES ||
      !chunk_has_absolute(r->win,c,(size_t)c->off+4u,(size_t)n*4u)) return;
   const uint8_t *d=r->win->data;
-  size_t chunk_end=(size_t)(d + c->off + c->size);
+  /* Store the chunk boundary as an offset, then rebuild its address from the
+   * current payload buffer when decoding an atlas. */
+  size_t chunk_end=(size_t)c->off + (size_t)c->size;
   r->atlas=calloc(n?n:1,sizeof(GmlAtlas));
   if(!r->atlas) return;
   r->n_atlas=(int)n;
