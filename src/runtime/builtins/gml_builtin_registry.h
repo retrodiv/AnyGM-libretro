@@ -1646,7 +1646,16 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1560, DS_GRID_GET_DISK_MAX, "ds_grid_get_disk_max", DS, DS, ALWAYS) \
   ENTRY(1561, DS_GRID_GET_DISK_MIN, "ds_grid_get_disk_min", DS, DS, ALWAYS) \
   ENTRY(1562, DS_GRID_GET_DISK_SUM, "ds_grid_get_disk_sum", DS, DS, ALWAYS) \
-  ENTRY(1563, DS_GRID_GET_DISK_MEAN, "ds_grid_get_disk_mean", DS, DS, ALWAYS)
+  ENTRY(1563, DS_GRID_GET_DISK_MEAN, "ds_grid_get_disk_mean", DS, DS, ALWAYS) \
+  ENTRY(1564, DS_GRID_SET_REGION, "ds_grid_set_region", DS, DS, ALWAYS) \
+  ENTRY(1565, DS_GRID_ADD_REGION, "ds_grid_add_region", DS, DS, ALWAYS) \
+  ENTRY(1566, DS_GRID_MULTIPLY_REGION, "ds_grid_multiply_region", DS, DS, ALWAYS) \
+  ENTRY(1567, DS_GRID_SET_DISK, "ds_grid_set_disk", DS, DS, ALWAYS) \
+  ENTRY(1568, DS_GRID_ADD_DISK, "ds_grid_add_disk", DS, DS, ALWAYS) \
+  ENTRY(1569, DS_GRID_MULTIPLY_DISK, "ds_grid_multiply_disk", DS, DS, ALWAYS) \
+  ENTRY(1570, DS_GRID_SET_GRID_REGION, "ds_grid_set_grid_region", DS, DS, ALWAYS) \
+  ENTRY(1571, DS_GRID_ADD_GRID_REGION, "ds_grid_add_grid_region", DS, DS, ALWAYS) \
+  ENTRY(1572, DS_GRID_MULTIPLY_GRID_REGION, "ds_grid_multiply_grid_region", DS, DS, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1661,7 +1670,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1564
+  GML_BUILTIN_ID_LIMIT = 1573
 } GmlBuiltinId;
 
 #endif

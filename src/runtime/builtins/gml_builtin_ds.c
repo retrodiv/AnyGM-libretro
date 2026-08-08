@@ -1048,6 +1048,64 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(strstr(nm,"mean")) return vreal(total/(double)seen);
     return vreal(best);
   }
+  /* Region and disk mutators share a rectangle-or-circle walk. Each visited
+   * cell is replaced, added to or multiplied; grid-region forms read a second
+   * grid's corresponding cell rather than using a constant. */
+  if(!strcmp(nm,"ds_grid_set_region")||!strcmp(nm,"ds_grid_add_region")||
+     !strcmp(nm,"ds_grid_multiply_region")||!strcmp(nm,"ds_grid_set_disk")||
+     !strcmp(nm,"ds_grid_add_disk")||!strcmp(nm,"ds_grid_multiply_disk")||
+     !strcmp(nm,"ds_grid_set_grid_region")||!strcmp(nm,"ds_grid_add_grid_region")||
+     !strcmp(nm,"ds_grid_multiply_grid_region")){
+    GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0));
+    int disk=strstr(nm,"disk")!=NULL, from_grid=strstr(nm,"grid_region")!=NULL;
+    int add=strstr(nm,"_add_")!=NULL, mul=strstr(nm,"_multiply_")!=NULL;
+    if(!g||!g->cell) return vreal(0);
+    int x1,y1,x2,y2, sx=0, sy=0;
+    double cx=0,cy=0,radius=0;
+    GmlDSGrid *src=NULL;
+    GmlVal value=vreal(0);
+    if(disk){
+      cx=N(a,n,1); cy=N(a,n,2); radius=N(a,n,3);
+      x1=(int)(cx-radius); y1=(int)(cy-radius); x2=(int)(cx+radius); y2=(int)(cy+radius);
+      value=n>4?a[4]:vreal(0);
+    }else if(from_grid){
+      /* The source bounds select cells; the destination corner sets their placement. */
+      src=ds_grid_slot(vm,(int)N(a,n,1));
+      sx=(int)N(a,n,2); sy=(int)N(a,n,3);
+      int sx2=(int)N(a,n,4), sy2=(int)N(a,n,5);
+      if(sx>sx2){ int t=sx; sx=sx2; sx2=t; }
+      if(sy>sy2){ int t=sy; sy=sy2; sy2=t; }
+      x1=(int)N(a,n,6); y1=(int)N(a,n,7);
+      x2=x1+(sx2-sx); y2=y1+(sy2-sy);
+      if(!src||!src->cell) return vreal(0);
+    }else{
+      x1=(int)N(a,n,1); y1=(int)N(a,n,2); x2=(int)N(a,n,3); y2=(int)N(a,n,4);
+      value=n>5?a[5]:vreal(0);
+    }
+    if(x1>x2){ int t=x1; x1=x2; x2=t; }
+    if(y1>y2){ int t=y1; y1=y2; y2=t; }
+    for(int y=y1;y<=y2;y++) for(int x=x1;x<=x2;x++){
+      if(x<0||y<0||x>=g->w||y>=g->h) continue;
+      if(disk){
+        double dx=(double)x-cx, dy=(double)y-cy;
+        if(dx*dx+dy*dy > radius*radius) continue;
+      }
+      GmlVal incoming=value;
+      if(from_grid){
+        int ux=sx+(x-x1), uy=sy+(y-y1);
+        if(ux<0||uy<0||ux>=src->w||uy>=src->h) continue;
+        incoming=src->cell[(size_t)uy*(size_t)src->w+(size_t)ux];
+      }
+      GmlVal *cell=&g->cell[(size_t)y*(size_t)g->w+(size_t)x];
+      if(add||mul){
+        double had=N(cell,1,0), got=N(&incoming,1,0);
+        *cell=ds_val_clone(vreal(add?had+got:had*got));
+      }else{
+        *cell=ds_val_clone(incoming);
+      }
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"ds_grid_clear")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); GmlVal v=n>=2?a[1]:vreal(0);
     if(g && g->cell) for(size_t i=0;i<(size_t)g->w*g->h;i++) g->cell[i]=v;
     return vreal(0); }

@@ -135,9 +135,60 @@ static int grid_region_aggregates(void){
   return ok;
 }
 
+/* Check mutated cells, including cells outside a region or disk. */
+static int grid_region_mutators(void){
+  GmlVM vm; memset(&vm,0,sizeof vm);
+  int ok=1;
+  GmlVal make[]={vreal(3),vreal(3)};
+  GmlVal grid=call(&vm,"ds_grid_create",make,2);
+  GmlVal clear[]={grid,vreal(1)};
+  call(&vm,"ds_grid_clear",clear,2);
+
+  GmlVal set_region[]={grid,vreal(0),vreal(0),vreal(1),vreal(1),vreal(5)};
+  call(&vm,"ds_grid_set_region",set_region,6);
+  GmlVal at00[]={grid,vreal(0),vreal(0)}, at22[]={grid,vreal(2),vreal(2)};
+  ok&=expect_real("set_region writes inside",call(&vm,"ds_grid_get",at00,3),5);
+  ok&=expect_real("set_region leaves outside alone",call(&vm,"ds_grid_get",at22,3),1);
+
+  GmlVal add_region[]={grid,vreal(0),vreal(0),vreal(1),vreal(1),vreal(2)};
+  call(&vm,"ds_grid_add_region",add_region,6);
+  ok&=expect_real("add_region adds to what was there",call(&vm,"ds_grid_get",at00,3),7);
+
+  GmlVal mul_region[]={grid,vreal(0),vreal(0),vreal(1),vreal(1),vreal(3)};
+  call(&vm,"ds_grid_multiply_region",mul_region,6);
+  ok&=expect_real("multiply_region multiplies",call(&vm,"ds_grid_get",at00,3),21);
+
+  /* A radius-one disk reaches an edge cell but skips the corner. */
+  GmlVal grid2=call(&vm,"ds_grid_create",make,2);
+  GmlVal clear2[]={grid2,vreal(0)};
+  call(&vm,"ds_grid_clear",clear2,2);
+  GmlVal set_disk[]={grid2,vreal(1),vreal(1),vreal(1),vreal(9)};
+  call(&vm,"ds_grid_set_disk",set_disk,5);
+  GmlVal g2_10[]={grid2,vreal(1),vreal(0)}, g2_00[]={grid2,vreal(0),vreal(0)};
+  ok&=expect_real("set_disk reaches the edge cell",call(&vm,"ds_grid_get",g2_10,3),9);
+  ok&=expect_real("set_disk skips the corner",call(&vm,"ds_grid_get",g2_00,3),0);
+
+  /* A grid region reads the source and lands at the destination corner. */
+  GmlVal grid3=call(&vm,"ds_grid_create",make,2);
+  GmlVal clear3[]={grid3,vreal(0)};
+  call(&vm,"ds_grid_clear",clear3,2);
+  GmlVal seed[]={grid3,vreal(0),vreal(0),vreal(4)};
+  call(&vm,"ds_grid_set",seed,4);
+  GmlVal copy_region[]={grid2,grid3,vreal(0),vreal(0),vreal(0),vreal(0),vreal(2),vreal(2)};
+  call(&vm,"ds_grid_set_grid_region",copy_region,8);
+  GmlVal g2_22[]={grid2,vreal(2),vreal(2)};
+  ok&=expect_real("set_grid_region lands at the destination corner",
+                  call(&vm,"ds_grid_get",g2_22,3),4);
+
+  GmlVal d1[]={grid}, d2[]={grid2}, d3[]={grid3};
+  call(&vm,"ds_grid_destroy",d1,1); call(&vm,"ds_grid_destroy",d2,1); call(&vm,"ds_grid_destroy",d3,1);
+  return ok;
+}
+
 int main(void){
   if(!grid_value_fixtures()) return 1;
   if(!grid_region_aggregates()) return 1;
-  puts("ds_grid value-search, resize and region-aggregate fixtures: ok");
+  if(!grid_region_mutators()) return 1;
+  puts("ds_grid value-search, resize, region-aggregate and region-mutator fixtures: ok");
   return 0;
 }
