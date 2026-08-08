@@ -410,6 +410,27 @@ GmlSoftware3D *gml_render_software3d(GmlRender *r){
 }
 void gml_render_set_frame(GmlRender *r,long frame){
   if(r) r->frame=frame;
+  /* Emit the renderer's settled state once per frame when explicitly enabled.
+   * The record precedes drawing and includes presentation metrics. */
+  if(r && render_setting(r,"GML_LOG_RENDER_STATE")){
+    GmlRenderDrawState draw={0};
+    GmlRenderPresentationMetrics metrics={0};
+    gml_render_draw_state_get(r,&draw);
+    gml_render_presentation_metrics(r,&metrics);
+    anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
+      "[renderstate] f%ld color=%06x alpha=%.6f font=%d halign=%d valign=%d blend=%d/%d/%d "
+      "alphatest=%d/%d mask=%u interp=%d circle=%d | app=%dx%d owned=%d draw=%d gui=%d/%dx%d "
+      "eff=%dx%d wide=%d/%dx%d phase=%d surfaces=%d atlas_bytes=%zu\n",
+      frame,(unsigned)draw.color,draw.alpha,draw.font,draw.horizontal_alignment,
+      draw.vertical_alignment,draw.alpha_blend,draw.blend_mode,draw.blend_equation,
+      draw.alpha_test_enable,draw.alpha_test_reference,draw.color_write_mask,
+      draw.interpolation,draw.circle_precision,
+      metrics.application_width,metrics.application_height,metrics.application_owned,
+      metrics.application_draw_enabled,metrics.gui_pass_active,metrics.gui_base_width,
+      metrics.gui_base_height,metrics.effective_width,metrics.effective_height,
+      metrics.wide_aspect_active,metrics.wide_width,metrics.wide_height,
+      metrics.application_phase_active,r->next_surface_id,r->atlas_decoded_bytes);
+  }
 }
 void gml_render_control_update(GmlRender *r,const GmlRenderControl *control,
                                unsigned fields){
