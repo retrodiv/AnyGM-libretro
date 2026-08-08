@@ -48,6 +48,17 @@ static void dump_instance_vars(GmlVM *vm, int frame){
                      ? vm->objects[in->obj].name : "?";
     if(strcmp(nm,want)) continue;
     printf("[vars %d] %s:", frame, nm);
+    { const char *g=getenv("GML_DUMP_GLOBALS_ONLY");
+      if(g&&*g){
+        char buf[512],*save=NULL;
+        strncpy(buf,g,sizeof buf-1); buf[sizeof buf-1]=0;
+        for(char *k=strtok_r(buf,",",&save); k; k=strtok_r(NULL,",",&save)){
+          GmlVal *v=gml_varmap_get(&vm->globals,k);
+          if(!v) printf(" global.%s=<absent>",k);
+          else if(v->t==V_REAL) printf(" global.%s=%g",k,v->d);
+          else printf(" global.%s=<t%d>",k,(int)v->t);
+        }
+      } }
     for(int s=0;s<in->vars.cap;s++){
       GmlVarSlot *slot=&in->vars.slots[s];
       if(!slot->key) continue;
