@@ -1,8 +1,11 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
-/* test_vm - drive the VM for a supplied data file and observe globals, rooms,
- * instances and optional debug calls. */
+/* test_vm drives the VM for a supplied data file and observes globals, rooms,
+ * instances and optional debug calls. It does not initialize a renderer: vm->render is NULL.
+ * Renderer-dependent builtins therefore report no-renderer results, including false shader
+ * status and absent surfaces. A route that branches on those values may behave differently
+ * in a host with a renderer; this driver is a VM-only probe. */
 #include "gml_vm.h"
 #include "gml_builtin.h"
 #include "stdio_vfs.h"
