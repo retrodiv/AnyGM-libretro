@@ -181,7 +181,9 @@ static int parse_strg(GmlWin *w){
        length>GML_WIN_MAX_STRING_BYTES ||
        !chunk_has(w,c,character_offset-c->off,(size_t)length+1u) ||
        w->data[character_offset+length]!=0 ||
-       (length && memchr(w->data+character_offset,0,length)) ||
+       /* A single NUL byte consumes the entire string and reads as empty. Reject embedded
+        * NUL bytes in longer strings so the char* representation cannot hide a suffix. */
+       (length>1 && memchr(w->data+character_offset,0,length)) ||
        character_offset>UINT32_MAX ||
        (i && character_offset<w->str_charoff[i-1])) return 0;
     w->str_charoff[i]=(uint32_t)character_offset;
