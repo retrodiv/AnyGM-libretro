@@ -974,6 +974,33 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
     GmlVarMap *map=n>0?struct_public_map(vm,a[0],NULL):NULL;
     return vreal(struct_public_name_count(map));
   }
+  /* The wrapper retains a strong ref for now; liveness checks still resolve
+   * the referenced struct rather than reporting it alive unconditionally. */
+  if(!strcmp(nm,"weak_ref_create")){
+    GmlInstance *w=gml_struct_new(vm);
+    if(!w) return n>0?a[0]:vundef();
+    *gml_varmap_put(&w->vars,"ref")=gml_arr_store_clone(n>0?a[0]:vundef());
+    return vreal((double)w->id);
+  }
+  if(!strcmp(nm,"weak_ref_alive")){
+    GmlVarMap *wm=n>0?struct_public_map(vm,a[0],NULL):NULL;
+    GmlVal *p=wm?gml_varmap_get(wm,"ref"):NULL;
+    if(!p || p->t==V_UNDEF) return vreal(0);
+    return vreal(struct_public_map(vm,*p,NULL)!=NULL);
+  }
+  if(!strcmp(nm,"weak_ref_any_alive")){
+    if(n<1 || a[0].t!=V_ARR || !a[0].arr) return vreal(0);
+    GmlArr *A=(GmlArr*)a[0].arr;
+    int from=(n>1)?(int)N(a,n,1):0, count=(n>2)?(int)N(a,n,2):A->len-from;
+    if(from<0) from=0;
+    if(count>A->len-from) count=A->len-from;
+    for(int i=0;i<count;i++){
+      GmlVarMap *wm=struct_public_map(vm,A->data[from+i],NULL);
+      GmlVal *p=wm?gml_varmap_get(wm,"ref"):NULL;
+      if(p && p->t!=V_UNDEF && struct_public_map(vm,*p,NULL)) return vreal(1);
+    }
+    return vreal(0);
+  }
   if(!strcmp(nm,"variable_struct_exists")||!strcmp(nm,"struct_exists")||
      !strcmp(nm,"variable_struct_get")||!strcmp(nm,"struct_get")||
      !strcmp(nm,"variable_struct_set")||!strcmp(nm,"struct_set")||

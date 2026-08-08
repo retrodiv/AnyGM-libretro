@@ -1630,7 +1630,15 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1544, STRING_TRIM_END, "string_trim_end", VALUES, VALUES_STRINGS, ALWAYS) \
   ENTRY(1545, IS_DEBUG_OVERLAY_OPEN, "is_debug_overlay_open", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS) \
   ENTRY(1546, EXTENSION_EXISTS, "extension_exists", PLATFORM, PLATFORM, ALWAYS) \
-  ENTRY(1547, TILESET_GET_NAME, "tileset_get_name", DRAW, DRAW, ALWAYS)
+  ENTRY(1547, TILESET_GET_NAME, "tileset_get_name", DRAW, DRAW, ALWAYS) \
+  ENTRY(1548, DS_MAP_KEYS_TO_ARRAY, "ds_map_keys_to_array", DS, DS, ALWAYS) \
+  ENTRY(1549, DS_MAP_VALUES_TO_ARRAY, "ds_map_values_to_array", DS, DS, ALWAYS) \
+  ENTRY(1550, ASSET_GET_TAGS, "asset_get_tags", DRAW, DRAW, ALWAYS) \
+  ENTRY(1551, TAG_GET_ASSETS, "tag_get_assets", DRAW, DRAW, ALWAYS) \
+  ENTRY(1552, TAG_GET_ASSET_IDS, "tag_get_asset_ids", DRAW, DRAW, ALWAYS) \
+  ENTRY(1553, WEAK_REF_CREATE, "weak_ref_create", VALUES, VALUES_VARIABLES, ALWAYS) \
+  ENTRY(1554, WEAK_REF_ALIVE, "weak_ref_alive", VALUES, VALUES_VARIABLES, ALWAYS) \
+  ENTRY(1555, WEAK_REF_ANY_ALIVE, "weak_ref_any_alive", VALUES, VALUES_VARIABLES, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1645,7 +1653,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1548
+  GML_BUILTIN_ID_LIMIT = 1556
 } GmlBuiltinId;
 
 #endif

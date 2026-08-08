@@ -1155,6 +1155,12 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(!strcmp(nm,"sprite_get_index")) return vreal(-1);
       return vreal(asset_index_and_type_by_name(vm,an,NULL));
     }
+    /* TAGS data is not parsed here yet. Return the array-shaped result that
+     * callers expect rather than the numeric fallback for an unknown builtin. */
+    if(!strcmp(nm,"asset_get_tags")||!strcmp(nm,"tag_get_assets")||!strcmp(nm,"tag_get_asset_ids")){
+      (void)0;
+      return arr_newv(0);
+    }
     if(!strcmp(nm,"asset_get_type")){
       const char *an=(n>0 && a[0].t==V_STR && a[0].s)?a[0].s:"";
       int type=GML_ASSET_UNKNOWN;

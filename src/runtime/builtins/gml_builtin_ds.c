@@ -1142,6 +1142,17 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(m && j>=0 && j<m->len) return ds_ret(m->entry[j].key_val);
     return vundef();
   }
+  /* Return keys or values in the same insertion order used by map cursors. */
+  if(!strcmp(nm,"ds_map_keys_to_array")||!strcmp(nm,"ds_map_values_to_array")){
+    GmlDSMap *m=ds_map_slot(vm,(int)N(a,n,0));
+    int len=m?m->len:0;
+    GmlVal out=arr_newv(len);
+    if(out.t!=V_ARR) return out;
+    GmlArr *A=(GmlArr*)out.arr;
+    int keys=!strcmp(nm,"ds_map_keys_to_array");
+    for(int i=0;i<len;i++) A->data[i]=ds_ret(keys?m->entry[i].key_val:m->entry[i].val);
+    return out;
+  }
   /* ds_map_add_list/map mark the child for nested destroy/JSON in GM; storing the id keeps
    * lookups working (json_encode walks ids the same way). */
   if(!strcmp(nm,"ds_map_add_list")||!strcmp(nm,"ds_map_add_map")||!strcmp(nm,"ds_map_replace_list")||!strcmp(nm,"ds_map_replace_map")){
