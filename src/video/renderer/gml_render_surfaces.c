@@ -227,10 +227,22 @@ int gml_surface_set_target(GmlRender *r, int id){
   return 1;
 }
 void gml_surface_reset_target(GmlRender *r){
+  /* Count colour coverage on both sides of the pending-draw flush while the
+   * active surface is still the render target. */
+  int dbg_=r && render_setting(r,"GML_LOG_SURF")!=NULL && r->fb && r->fbw>0 && r->fbh>0;
+  int before_=0;
+  if(dbg_) for(size_t i_=0;i_<(size_t)r->fbw*(size_t)r->fbh;i_++) if(r->fb[i_]&0x00FFFFFFu) before_++;
   if(r && surface_slot(r->target_id)>=0){
     gml_render_flush_pending_underlay(r);
     gml_render_flush_pending_fill(r);
     surface_store_target_coverage(r);
+  }
+  if(dbg_){
+    int after_=0;
+    for(size_t i_=0;i_<(size_t)r->fbw*(size_t)r->fbh;i_++) if(r->fb[i_]&0x00FFFFFFu) after_++;
+    anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
+      "[surf] reset_target id=%d lit_before=%d lit_after=%d of %d\n",
+      r->target_id,before_,after_,r->fbw*r->fbh);
   }
   if(r->target_sp>0){
     typeof(r->target_stack[0]) t=r->target_stack[--r->target_sp];

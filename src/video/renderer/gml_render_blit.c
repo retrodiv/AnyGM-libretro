@@ -2506,6 +2506,16 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
    * opaque pixels are a straight store and transparent ones a skip — identical output to the
    * generic math below ((int)(s*1.0+d*0.0)==s), only edge pixels take the double blend. */
   int fastcase = lxtab && !mapped_shader && (blend&0xFFFFFF)==0xFFFFFF && alpha>=1.0 && r->blendmode==0 && r->alphablend;
+  /* Record which raster branch is selected when rectangle diagnostics overlap. */
+  {
+    const char *want_=render_setting(r,"GML_LOG_DRAW_RECT");
+    int rx0_=0,ry0_=0,rx1_=0,ry1_=0;
+    if(want_ && sscanf(want_,"%d,%d,%d,%d",&rx0_,&ry0_,&rx1_,&ry1_)==4 &&
+       x0<=rx1_ && x0+w>=rx0_ && y0<=ry1_ && y0+h>=ry0_)
+      anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
+        "[drawrect]   branch fastcase=%d lxtab=%d mapped_shader=%d blend_white=%d alpha=%.3f bm=%d ab=%d target_sp=%d\n",
+        fastcase,lxtab?1:0,mapped_shader?1:0,((blend&0xFFFFFF)==0xFFFFFF)?1:0,alpha,r->blendmode,r->alphablend,r->target_sp);
+  }
   for(int yy=yy0; yy<yy1; yy++){
     int py = flipy ? (y0-yy) : (y0+yy);
     int ly=(int)((yy+sample_y)/ays); if(ly<0||ly>=t->sh) continue;
@@ -2604,6 +2614,23 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   }
   free(wave_map);
   if(lxtab && lxtab!=lxbuf) free(lxtab);
+  /* Pair the earlier destination count with one taken after this blit. */
+  {
+    const char *want_=render_setting(r,"GML_LOG_DRAW_RECT");
+    int rx0_=0,ry0_=0,rx1_=0,ry1_=0;
+    if(want_ && sscanf(want_,"%d,%d,%d,%d",&rx0_,&ry0_,&rx1_,&ry1_)==4 &&
+       x0<=rx1_ && x0+w>=rx0_ && y0<=ry1_ && y0+h>=ry0_ && r->fb){
+      int after_=0, seen_=0;
+      for(int yy_=0; yy_<h; yy_++) for(int xx_=0; xx_<w; xx_++){
+        int dx_=x0+xx_, dy_=y0+yy_;
+        if(dx_<0||dy_<0||dx_>=r->fbw||dy_>=r->fbh) continue;
+        seen_++;
+        if(r->fb[(size_t)dy_*(size_t)r->fbw+(size_t)dx_]&0x00FFFFFFu) after_++;
+      }
+      anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
+        "[drawrect]   dst_lit_after=%d/%d\n",after_,seen_);
+    }
+  }
 }
 static void blit_phase_plane(GmlRender *r, uint32_t *plane, GmlTpag *t,
                              double dx, double dy, double xs, double ys,
