@@ -51,6 +51,17 @@ int main(void){
   ok &= expect("only a brace pair holding digits is a placeholder",
                gml_builtin_call(&vm,"string",notindex,2),"{}{a}{ 0}");
 
+
+  /* Extra arguments leave a string without numbered placeholders unchanged and do not
+   * alter ordinary conversion of a non-template value. */
+  GmlVal legacy[]={vstr("no placeholders here"),vreal(1),vreal(2)};
+  ok &= expect("a template without placeholders is untouched by extra arguments",
+               gml_builtin_call(&vm,"string",legacy,3),"no placeholders here");
+
+  GmlVal legacy_single[]={vreal(7),vreal(9)};
+  ok &= expect("a number with an additional argument still converts",
+               gml_builtin_call(&vm,"string",legacy_single,2),"7");
+
   if(ok) printf("string format: placeholders are substituted by index\n");
   return ok?0:1;
 }
