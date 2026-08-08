@@ -35,14 +35,29 @@ static uint8_t *decode_texture_blob(const uint8_t *blob, size_t avail, size_t ch
   }
   if(!memcmp(blob,"fioq",4)) return gm_qoi_decode(blob,avail,ow,oh);
   if(!memcmp(blob,"2zoq",4)){
-    /* "2zoq": magic(4) + w(u16) + h(u16) + decompressed_len(u32) + bzip2 stream */
+    /* "2zoq" carries width, height, and a bzip2 stream, optionally preceded by a stored
+     * decompressed length. The bzip2 magic distinguishes the two layouts. Treating "BZh9" as a
+     * length would exceed the sanity bound and leave the atlas without decoded pixels. */
     if(avail<12) return NULL;
-    uint32_t dlen=u32(blob,8);
+    size_t stream=0;
+    uint32_t dlen=0;
+    if(!memcmp(blob+8,"BZh",3)){
+      stream=8;
+      /* No length was stored, so bound it by what the image can be: a QOI stream never exceeds its
+       * own raw size, and the dimensions are right there in the header. */
+      uint32_t w=u16(blob,4), h=u16(blob,6);
+      uint64_t bound=(uint64_t)w*(uint64_t)h*4ull+64ull;
+      if(!w || !h || bound>64ull*1024*1024) return NULL;
+      dlen=(uint32_t)bound;
+    } else if(avail>=15 && !memcmp(blob+12,"BZh",3)){
+      stream=12;
+      dlen=u32(blob,8);
+    } else return NULL;
     if(dlen<12 || dlen>64u*1024*1024) return NULL;
     char *dec=malloc(dlen); if(!dec) return NULL;
     unsigned int declen=dlen;
-    unsigned int srclen=(unsigned int)(chunk_end>(size_t)(blob+12)? chunk_end-(size_t)(blob+12) : 0);
-    int rc=BZ2_bzBuffToBuffDecompress(dec,&declen,(char*)(blob+12),srclen,0,0);
+    unsigned int srclen=(unsigned int)(chunk_end>(size_t)(blob+stream)? chunk_end-(size_t)(blob+stream) : 0);
+    int rc=BZ2_bzBuffToBuffDecompress(dec,&declen,(char*)(blob+stream),srclen,0,0);
     uint8_t *px=NULL;
     if((rc==BZ_OK||rc==BZ_OUTBUFF_FULL) && declen>=12) px=gm_qoi_decode((uint8_t*)dec,declen,ow,oh);
     free(dec); return px;
