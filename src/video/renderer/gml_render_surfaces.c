@@ -210,6 +210,13 @@ int gml_surface_set_target(GmlRender *r, int id){
     r->pending_underlay,r->underlay_x,r->underlay_y,r->underlay_w,r->underlay_h,
     r->pending_fill,r->pending_fill_color
   };
+  if(render_setting(r,"GML_LOG_SURF")){
+    /* Count existing RGB before this surface becomes the active target. */
+    int lit_=0;
+    for(size_t i_=0;i_<(size_t)w*(size_t)h;i_++) if(px[i_]&0x00FFFFFFu) lit_++;
+    anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
+      "[surf] set_target %d lit_on_entry=%d of %d\n",id,lit_,w*h);
+  }
   r->fb=px; r->fbw=w; r->fbh=h;
   r->target_id=id;
   r->fb_opaque_known=(si>=0)?r->surface[si].opaque_known:0;
