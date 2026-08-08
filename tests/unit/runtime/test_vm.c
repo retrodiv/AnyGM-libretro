@@ -35,6 +35,36 @@ static void dump_backgrounds(GmlVM *vm, const char *tag){
   }
 }
 
+/* Dump selected instance variables after each step. GML_DUMP_VARS selects an object
+ * by name; GML_DUMP_VARS_ONLY optionally filters its variable names. */
+static void dump_instance_vars(GmlVM *vm, int frame){
+  const char *want=getenv("GML_DUMP_VARS");
+  if(!want||!*want) return;
+  const char *only=getenv("GML_DUMP_VARS_ONLY");
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(!in->active||in->marked) continue;
+    const char *nm = (in->obj>=0 && in->obj<vm->n_objects && vm->objects[in->obj].name)
+                     ? vm->objects[in->obj].name : "?";
+    if(strcmp(nm,want)) continue;
+    printf("[vars %d] %s:", frame, nm);
+    for(int s=0;s<in->vars.cap;s++){
+      GmlVarSlot *slot=&in->vars.slots[s];
+      if(!slot->key) continue;
+      if(only){
+        char pattern[256];
+        snprintf(pattern,sizeof pattern,",%s,",slot->key);
+        char list[512];
+        snprintf(list,sizeof list,",%s,",only);
+        if(!strstr(list,pattern)) continue;
+      }
+      if(slot->val.t==V_REAL)      printf(" %s=%g",slot->key,slot->val.d);
+      else if(slot->val.t==V_STR)  printf(" %s=\"%s\"",slot->key,slot->val.s?slot->val.s:"");
+      else                         printf(" %s=<t%d>",slot->key,(int)slot->val.t);
+    }
+    printf("\n");
+  }
+}
 static void apply_spawn_set(GmlInstance *in, const char *spec){
   if(!in||!spec||!*spec) return;
   char buf[1024], *save=NULL;
@@ -171,6 +201,7 @@ int main(int argc,char**argv){
     if(f<8 || f==nf-1)
       printf("[step %d] room='%s' idx=%d alive=%d pending=%d game_end=%d\n",
              f, room_name(&vm), vm.room_index, alive, vm.pending_room, vm.game_end);
+    dump_instance_vars(&vm,f);
   }
   dump_backgrounds(&vm,"steps");
   printf("\n## view: xview=%g yview=%g | room '%s':\n",
