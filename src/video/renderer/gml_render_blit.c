@@ -2220,6 +2220,30 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
           "[drawrect] f%ld tpag=%d atlas=%d src=%d,%d,%dx%d dst=%d,%d,%dx%d blend=%06x alpha=%.4f\n",
           r->frame,rprof_tpag_id(r,t),t->atlas,t->sx,t->sy,t->sw,t->sh,
           x0,y0,w,h,(unsigned)blend,alpha);
+      /* Count coloured source pixels and destination pixels before this blit.
+       * A single corner sample need not represent either rectangle. */
+      {
+        const GmlAtlas *a_=(t->atlas>=0 && t->atlas<r->n_atlas)?&r->atlas[t->atlas]:NULL;
+        const uint8_t *ap_=a_?a_->px:NULL;
+        int src_lit_=0, src_seen_=0;
+        if(ap_) for(int yy_=0; yy_<t->sh; yy_++) for(int xx_=0; xx_<t->sw; xx_++){
+          int sx_=t->sx+xx_, sy_=t->sy+yy_;
+          if(sx_<0||sy_<0||sx_>=a_->w||sy_>=a_->h) continue;
+          const uint8_t *q_=ap_+(((size_t)sy_*(size_t)a_->w)+(size_t)sx_)*4u;
+          src_seen_++;
+          if(q_[3] && (q_[0]|q_[1]|q_[2])) src_lit_++;
+        }
+        int dst_lit_=0, dst_seen_=0;
+        if(r->fb) for(int yy_=0; yy_<h; yy_++) for(int xx_=0; xx_<w; xx_++){
+          int dx_=x0+xx_, dy_=y0+yy_;
+          if(dx_<0||dy_<0||dx_>=r->fbw||dy_>=r->fbh) continue;
+          dst_seen_++;
+          if(r->fb[(size_t)dy_*(size_t)r->fbw+(size_t)dx_]&0x00FFFFFFu) dst_lit_++;
+        }
+        anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
+          "[drawrect]   src_lit=%d/%d dst_lit_before=%d/%d target=%d fb=%dx%d atlas=%s\n",
+          src_lit_,src_seen_,dst_lit_,dst_seen_,r->target_id,r->fbw,r->fbh,ap_?"yes":"no");
+      }
     }
   }
   int flipx=(xs<0), flipy=(ys<0);
