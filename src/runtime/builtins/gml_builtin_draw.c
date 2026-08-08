@@ -396,6 +396,13 @@ static int asset_index_and_type_by_name(GmlVM *vm, const char *name, int *out_ty
   index=chunk_asset_index_by_name(vm->win,"PATH",0,name);
   if(index>=0){ type=GML_ASSET_PATH; goto done; }
   index=chunk_asset_index_by_name(vm->win,"SCPT",0,name);
+  if(index<0){
+    /* Script records may use the gml_Script_ prefix associated with their CODE entries.
+     * Try that spelling only after the exact SCPT name fails, preserving exact-match priority. */
+    char prefixed[256];
+    if(snprintf(prefixed,sizeof prefixed,"gml_Script_%s",name)<(int)sizeof prefixed)
+      index=chunk_asset_index_by_name(vm->win,"SCPT",0,prefixed);
+  }
   if(index>=0){ type=GML_ASSET_SCRIPT; goto done; }
   index=chunk_asset_index_by_name(vm->win,"FONT",0,name);
   if(index>=0){ type=GML_ASSET_FONT; goto done; }
