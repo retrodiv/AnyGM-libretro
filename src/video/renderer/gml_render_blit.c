@@ -5201,6 +5201,17 @@ void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x
   GmlTpag *bt=&r->tpag[ti]; GmlTpag tt=*bt;
   tt.sx=bt->sx+sx; tt.sy=bt->sy+sy; tt.sw=w; tt.sh=h;
   tt.interp_phase_cache[0]=tt.interp_phase_cache[1]=tt.interp_phase_cache[2]=NULL;
+  /* A sub-rectangle borrows atlas pixels but not the page's geometry-dependent
+   * caches. Detach the row spans and pixel caches before drawing this view. */
+  tt.alpha_scanned=0; tt.ax0=tt.ay0=0; tt.ax1=tt.ay1=-1; tt.alpha_max=0;
+  tt.alpha_row_min=tt.alpha_row_max=NULL;
+  tt.alpha_qrow_min=tt.alpha_qrow_max=NULL; tt.alpha_qrow_built=NULL;
+  tt.alpha_runs=NULL; tt.alpha_run_count=0; tt.alpha_runs_built=0;
+  tt.alpha8_cache=NULL;
+  tt.argb_cache=NULL;
+  tt.solid_blur_alpha_cache=NULL; tt.solid_blur_alpha_shader=-1;
+  tt.fast8_draw_cache=NULL; tt.fast8_draw_cache_valid=0; tt.fast8_draw_pending_count=0;
+
   blit_background_phase(r,&tt, x - r->cam_x, y - r->cam_y,
                         draw_xscale,draw_yscale,0xFFFFFF,1);
 }
@@ -5230,6 +5241,17 @@ void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr){
     GmlTpag tt=*bt;                                  /* sub-rect of the tileset image */
     tt.sx=bt->sx + t->sx; tt.sy=bt->sy + t->sy; tt.sw=t->w; tt.sh=t->h;
     tt.interp_phase_cache[0]=tt.interp_phase_cache[1]=tt.interp_phase_cache[2]=NULL;
+    /* A sub-rectangle borrows atlas pixels but not the page's geometry-dependent
+     * caches. Detach the row spans and pixel caches before drawing this view. */
+    tt.alpha_scanned=0; tt.ax0=tt.ay0=0; tt.ax1=tt.ay1=-1; tt.alpha_max=0;
+    tt.alpha_row_min=tt.alpha_row_max=NULL;
+    tt.alpha_qrow_min=tt.alpha_qrow_max=NULL; tt.alpha_qrow_built=NULL;
+    tt.alpha_runs=NULL; tt.alpha_run_count=0; tt.alpha_runs_built=0;
+    tt.alpha8_cache=NULL;
+    tt.argb_cache=NULL;
+    tt.solid_blur_alpha_cache=NULL; tt.solid_blur_alpha_shader=-1;
+    tt.fast8_draw_cache=NULL; tt.fast8_draw_cache_valid=0; tt.fast8_draw_pending_count=0;
+
     blit_background_phase(r,&tt, t->x - r->cam_x, t->y - r->cam_y, 1,1, 0xFFFFFF, 1);
   }
   free(tiles);
