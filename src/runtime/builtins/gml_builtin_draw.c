@@ -844,7 +844,13 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"draw_surface_part")){ if(R){ GmlRenderDrawState draw=builtin_draw_state(R); gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),1,1,0xFFFFFF,draw.alpha); } return vreal(0); }
     if(!strcmp(nm,"draw_get_font")) return vreal(builtin_draw_state(R).font);
     if(!strcmp(nm,"draw_get_color")||!strcmp(nm,"draw_get_colour")){ if(!R) return vreal(0);
-      uint32_t c=builtin_draw_state(R).color; return vreal((double)(((c>>16)&0xff)|(c&0xff00)|((c&0xff)<<16))); }
+      uint32_t c=builtin_draw_state(R).color;
+      double out=(double)(((c>>16)&0xff)|(c&0xff00)|((c&0xff)<<16));
+      /* Optional direct logging of the current draw-colour query result. */
+      if(builtin_setting(vm,"GML_LOG_DRAW_COLOR"))
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[drawcolor] f%ld get=%.0f raw=%08x\n",
+                        vm?vm->frame:0,out,c);
+      return vreal(out); }
     if(!strcmp(nm,"draw_get_alpha")) return vreal(builtin_draw_state(R).alpha);
     if(!strcmp(nm,"draw_get_halign")) return vreal(builtin_draw_state(R).horizontal_alignment);
     if(!strcmp(nm,"draw_get_valign")) return vreal(builtin_draw_state(R).vertical_alignment);
