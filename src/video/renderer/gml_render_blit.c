@@ -2208,6 +2208,20 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   int x0=(int)floor(dx+0.5), y0=(int)floor(dy+0.5);
   int w=(int)lround(t->sw*axs), h=(int)lround(t->sh*ays);
   if(w<=0 || h<=0) return;
+  /* Report blits whose destination rectangle overlaps an explicitly selected
+   * area. This is diagnostic only and does not alter rasterization. */
+  {
+    const char *want=render_setting(r,"GML_LOG_DRAW_RECT");
+    if(want){
+      int rx0=0,ry0=0,rx1=0,ry1=0;
+      if(sscanf(want,"%d,%d,%d,%d",&rx0,&ry0,&rx1,&ry1)==4 &&
+         x0<=rx1 && x0+w>=rx0 && y0<=ry1 && y0+h>=ry0)
+        anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
+          "[drawrect] f%ld tpag=%d atlas=%d src=%d,%d,%dx%d dst=%d,%d,%dx%d blend=%06x alpha=%.4f\n",
+          r->frame,rprof_tpag_id(r,t),t->atlas,t->sx,t->sy,t->sw,t->sh,
+          x0,y0,w,h,(unsigned)blend,alpha);
+    }
+  }
   int flipx=(xs<0), flipy=(ys<0);
   /* A negatively-scaled GPU quad is half-open at its anchor edge: with a
    * two-pixel sprite anchored at x=20 it covers destination pixels 18 and
