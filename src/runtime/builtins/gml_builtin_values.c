@@ -411,11 +411,55 @@ static uint8_t *utf16le_alloc(const char *text, size_t *out_len){
   return out;
 }
 
+/* string(template, ...) substitutes numbered placeholders from subsequent arguments.
+ * Repeated or reordered indices refer to the same argument positions. A placeholder without
+ * an available argument remains unchanged rather than inventing a value. */
+static GmlVal gml_string_format(GmlVM *vm, GmlVal *a, int n){
+  const char *fmt=S(vm,a,n,0);
+  if(!fmt) return vstr_owned(strdup(""));
+  size_t cap=strlen(fmt)+64, used=0;
+  char *out=malloc(cap);
+  if(!out) return vstr_owned(strdup(fmt));
+  for(const char *p=fmt; *p; ){
+    const char *open=p;
+    int index=-1;
+    if(*p=='{'){
+      const char *q=p+1;
+      int value=0, digits=0;
+      while(*q>='0' && *q<='9' && digits<9){ value=value*10+(*q-'0'); q++; digits++; }
+      if(digits>0 && *q=='}'){ index=value; p=q+1; }
+    }
+    const char *piece=NULL;
+    char one[2];
+    size_t len;
+    if(index>=0 && index+1<n){
+      piece=S(vm,a,n,index+1);
+      if(!piece) piece="";
+      len=strlen(piece);
+    } else if(index>=0){
+      /* No argument for this index: keep the placeholder exactly as written. */
+      piece=open; len=(size_t)(p-open);
+    } else {
+      one[0]=*p; one[1]=0; piece=one; len=1; p++;
+    }
+    if(used+len+1>cap){
+      size_t want=(used+len+1)*2;
+      char *grown=realloc(out,want);
+      if(!grown){ free(out); return vstr_owned(strdup(fmt)); }
+      out=grown; cap=want;
+    }
+    memcpy(out+used,piece,len); used+=len;
+  }
+  out[used]=0;
+  return vstr_owned(out);
+}
+
 GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
   /* ---- strings ---- */
-  if(!strcmp(nm,"string")) return vstr_owned(strdup(S(vm,a,n,0)));
+  if(!strcmp(nm,"string"))
+    return n>1 ? gml_string_format(vm,a,n) : vstr_owned(strdup(S(vm,a,n,0)));
   if(!strcmp(nm,"string_length")) return vreal((double)strlen(S(vm,a,n,0)));
   if(!strcmp(nm,"string_byte_length")) return vreal((double)strlen(S(vm,a,n,0)));
   if(!strcmp(nm,"string_concat_ext")) return gml_string_concat_ext(a,n);

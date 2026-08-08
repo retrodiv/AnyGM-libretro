@@ -96,7 +96,7 @@ endif
 
 TEST_DIR := $(BUILD_DIR)/tests
 RUNTIME_TESTS := test_rng test_persistent_room test_d3_state test_ds_grid \
-	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc
+	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets \
 	test_renderer_texture_shells
@@ -170,6 +170,10 @@ $(TEST_DIR)/test_vm_hotpath: tests/unit/runtime/test_vm_hotpath.c $(UNIT_RUNTIME
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
 
 $(TEST_DIR)/test_ds_grid: tests/unit/runtime/test_ds_grid.c $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+
+$(TEST_DIR)/test_builtin_string_format: tests/unit/runtime/test_builtin_string_format.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
 
@@ -298,6 +302,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_vm_hotpath
 	$(TEST_DIR)/test_builtin_args
 	$(TEST_DIR)/test_vm_gc
+	$(TEST_DIR)/test_builtin_string_format
 else
 FOCUSED_TEST_TARGET := $(TEST_DIR)/test_$(TEST)
 check: CFLAGS += -Werror
