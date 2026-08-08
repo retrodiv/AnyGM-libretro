@@ -114,6 +114,12 @@ static uint8_t *atlas_decode_publish(GmlRender *r, int idx, int locked, GmlAtlas
                            (size_t)r->win->data+a->chunk_end,&w,&h);
   if(locked) gml_mutex_lock(&pool->mu);
   a->decode_attempted=1;
+  /* Log an attempted decode that did not produce pixels; successful decodes
+   * retain their separate record below. */
+  if(!px && log_atlas_on(r))
+    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
+      "[atlas] REFUSED %d (blob=%u avail=%zu external=%s)\n",idx,a->blob,a->avail,
+      a->external_blob?"yes":"no");
   if(px){
     a->w=w; a->h=h;
     r->atlas_decoded_bytes += (size_t)w*(size_t)h*4u;
