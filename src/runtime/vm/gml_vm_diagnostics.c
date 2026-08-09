@@ -405,6 +405,22 @@ void gml_vm_diagnostics_callv_stack(GmlVM *vm,int argc,int sp_in,int sp_out){
     trace_code_name(vm,vm->cur_code_index));
 }
 
+void gml_vm_diagnostics_opcode_after(GmlVM *vm,const char *code_name,
+                                     uint32_t offset,int stack_depth){
+  GmlVmFineTrace *trace=trace_get(vm);
+  if(!trace_frame_matches(vm,trace) ||
+     !(trace->enabled&GML_VM_TRACE_OPCODE) ||
+     !trace_code_matches(trace,code_name) ||
+     !trace_reserve(vm,trace)) return;
+  char code_json[384],ignored[384];
+  trace_escape_names(code_name,"",code_json,ignored);
+  anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,
+    "{\"schema\":\"anygm.vm.trace\",\"version\":1,\"sequence\":%lu,"
+    "\"kind\":\"opcode_after\",\"frame\":%ld,\"code\":\"%s\","
+    "\"offset\":%u,\"stack_depth\":%d}\n",
+    trace_sequence(trace),vm->frame,code_json,offset,stack_depth);
+}
+
 int gml_vm_diagnostics_opcode_enabled(GmlVM *vm,const char *code_name){
   GmlVmFineTrace *trace=trace_get(vm);
   return trace_frame_matches(vm,trace) &&

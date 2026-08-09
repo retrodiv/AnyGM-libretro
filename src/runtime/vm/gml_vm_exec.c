@@ -3197,6 +3197,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         break;
       default: break;
     }
+    /* Record post-instruction stack depth in the optional opcode trace. */
+    GML_VM_DIAGNOSTIC_OPCODE_AFTER(vm,w->code[ci].name,pc-start,sp);
     if(use_cache) ip=nextip;
     else pc=nextpc;
   }

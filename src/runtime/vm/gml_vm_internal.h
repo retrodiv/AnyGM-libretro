@@ -126,6 +126,8 @@ void gml_vm_warm_audio_for_room_window(GmlVM *vm);
   gml_vm_diagnostics_array_growth_init(__VA_ARGS__)
 #define GML_VM_DIAGNOSTIC_CALLV_STACK(...) \
   gml_vm_diagnostics_callv_stack(__VA_ARGS__)
+#define GML_VM_DIAGNOSTIC_OPCODE_AFTER(...) \
+  gml_vm_diagnostics_opcode_after(__VA_ARGS__)
 #else
 #define GML_VM_DIAGNOSTIC_OPCODE(...) ((void)0)
 #define GML_VM_DIAGNOSTIC_OPCODE_ENABLED(...) 0
@@ -136,6 +138,7 @@ void gml_vm_warm_audio_for_room_window(GmlVM *vm);
 #define GML_VM_DIAGNOSTIC_DESTROY(...) ((void)0)
 #define GML_VM_DIAGNOSTIC_ARRAY_GROWTH_INIT(...) ((void)0)
 #define GML_VM_DIAGNOSTIC_CALLV_STACK(...) ((void)0)
+#define GML_VM_DIAGNOSTIC_OPCODE_AFTER(...) ((void)0)
 #endif
 #define GML_VM_TILE_MUT_DELETED 1
 #define GML_VM_TILE_MUT_HIDDEN  2
