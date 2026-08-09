@@ -2426,11 +2426,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   vm->cur_self=self; vm->cur_other=other;
   vm->cur_code_index=ci;
   vm->caller_code_index=save_code_index;
-  {
-    /* Distinguish separate code invocations in an optional diagnostic. */
-    static unsigned seq=0;
-    vm->call_seq=++seq;
-  }
+  /* VM-owned sequence distinguishes separate code invocations. */
+  vm->call_seq=++vm->call_seq_next;
   GmlVarMap locals={0};
   int argc=n_args<0?0:(n_args<16?n_args:16);
   vm->script_argc=argc;
