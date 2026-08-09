@@ -2420,11 +2420,17 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   GmlInstance *save_self=vm->cur_self, *save_other=vm->cur_other;
   int save_code_index=vm->cur_code_index;
   int save_caller_index=vm->caller_code_index;
+  unsigned save_call_seq=vm->call_seq;
   GmlVal save_args[16]; int save_argc=vm->script_argc;
   for(int i=0;i<16;i++) save_args[i]=vm->script_args[i];
   vm->cur_self=self; vm->cur_other=other;
   vm->cur_code_index=ci;
   vm->caller_code_index=save_code_index;
+  {
+    /* Distinguish separate code invocations in an optional diagnostic. */
+    static unsigned seq=0;
+    vm->call_seq=++seq;
+  }
   GmlVarMap locals={0};
   int argc=n_args<0?0:(n_args<16?n_args:16);
   vm->script_argc=argc;
@@ -3215,6 +3221,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   vm->cur_self=save_self; vm->cur_other=save_other;
   vm->cur_code_index=save_code_index;
   vm->caller_code_index=save_caller_index;
+  vm->call_seq=save_call_seq;
   vm->script_argc=save_argc;
   for(int i=0;i<16;i++) vm->script_args[i]=save_args[i];
   if(cp) codeprof_add(w,ci,codeprof_now_ms()-cp_t0,watchdog);

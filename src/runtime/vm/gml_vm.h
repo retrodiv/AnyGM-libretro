@@ -281,6 +281,7 @@ typedef struct GmlVM {
   GmlInstance *cur_self, *cur_other;
   int      cur_code_index;   /* current CODE entry, so IT_STATIC resolves across nested calls */
   int      caller_code_index; /* entry that called the current one, for diagnostics */
+  unsigned call_seq;         /* diagnostics only: current invocation identifier */
   int32_t call_script_ci;   /* side channel: generic dispatch reports "name resolved to script <ci>" for the caller's per-site cache */
   const char *cur_event; int cur_event_obj;   /* current event suffix + object level (for event_inherited) */
   int      event_type, event_number;          /* transient GM event_type/event_number builtins */
