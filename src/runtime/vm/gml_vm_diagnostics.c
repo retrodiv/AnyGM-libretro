@@ -358,6 +358,28 @@ void gml_vm_diagnostics_opcode(GmlVM *vm,const char *code_name,
     stack_depth,self_id);
 }
 
+/* Optional host-backed array growth reporting at doubling thresholds. */
+static GmlVM *growth_vm=NULL;
+static int growth_threshold=0;
+static int growth_next=0;
+static void growth_report(int index,int length){
+  if(!growth_vm || index<growth_threshold || index<growth_next) return;
+  growth_next = index ? index*2 : 1;
+  anygm_host_logf(growth_vm->host,ANYGM_LOG_DEBUG,
+    "[arrgrow] index %d (len was %d) in %s\n",
+    index,length,trace_code_name(growth_vm,growth_vm->cur_code_index));
+}
+void gml_vm_diagnostics_array_growth_init(GmlVM *vm){
+  if(!vm) return;
+  const char *v=anygm_host_development_setting(vm->host,"GML_LOG_ARR_GROWTH");
+  if(!v || !*v){ gml_arr_growth_hook=NULL; growth_vm=NULL; return; }
+  int want=atoi(v);
+  growth_threshold = want>0 ? want : 1024;
+  growth_next = growth_threshold;
+  growth_vm = vm;
+  gml_arr_growth_hook = growth_report;
+}
+
 int gml_vm_diagnostics_opcode_enabled(GmlVM *vm,const char *code_name){
   GmlVmFineTrace *trace=trace_get(vm);
   return trace_frame_matches(vm,trace) &&

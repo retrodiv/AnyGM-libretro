@@ -132,8 +132,11 @@ GmlArr *gml_arr_slot_ensure(GmlVal *slot){
 /* Reject oversized indices before capacity doubling can overflow and zero-fill an
  * unbounded allocation. Out-of-range requests leave the array unchanged. */
 #define GML_ARR_MAX_INDEX 64000000
+/* Optional callback configured by the VM diagnostics owner; normally NULL. */
+void (*gml_arr_growth_hook)(int index,int length)=NULL;
 void gml_arr_index_ensure(GmlArr *A, int idx){
   if(idx<0 || idx>=GML_ARR_MAX_INDEX) return;
+  if(gml_arr_growth_hook && A && idx>=A->len) gml_arr_growth_hook(idx,A->len);
   if(idx>=A->cap){ int nc=A->cap?A->cap:8; while(nc<=idx) nc*=2;
     A->data=realloc(A->data,nc*sizeof(GmlVal)); for(int i=A->cap;i<nc;i++) A->data[i]=vreal(0); A->cap=nc; }
   if(idx>=A->len) A->len=idx+1;

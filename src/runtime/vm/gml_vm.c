@@ -228,6 +228,7 @@ int gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
            program_directory&&program_directory[0]?program_directory:(win?win->content_dir:""));
   gml_vm_set_launch_parameters(vm,executable,parameters);
   vm->cur_code_index=-1;
+  GML_VM_DIAGNOSTIC_ARRAY_GROWTH_INIT(vm);
   vm->code_static_count=(win && win->n_code>0)?win->n_code:0;
   vm->code_static=vm->code_static_count?calloc((size_t)vm->code_static_count,sizeof(*vm->code_static)):NULL;
   vm->code_static_init=vm->code_static_count?calloc((size_t)vm->code_static_count,1):NULL;

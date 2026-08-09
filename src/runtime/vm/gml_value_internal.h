@@ -22,6 +22,7 @@ GmlVal *gml_varmap_put_hashed(GmlVarMap *map, const char *key, uint32_t hash);
 GmlVal *gml_varmap_put_owned_hashed(GmlVarMap *map, char *key, uint32_t hash);
 
 GmlArr *gml_arr_slot_ensure(GmlVal *slot);
+extern void (*gml_arr_growth_hook)(int index,int length);
 void gml_arr_index_ensure(GmlArr *array, int index);
 void gml_arr_note_legacy_2d_set(GmlArr *array, int index);
 void gml_arr_rebuild_legacy_2d_meta(GmlArr *array);
