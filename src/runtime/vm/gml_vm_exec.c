@@ -2936,7 +2936,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         break;
       }
       case OP_CALLV:{
-        int callv_sp_in=sp;   /* optional stack-balance diagnostic input */
+        int callv_sp_in=sp; (void)callv_sp_in;   /* optional diagnostic input; unused when disabled */
         /* GMS2.3 call-a-value: a function VALUE sits under the args. GM stack order is
          * func, argN..arg1, arg0 (arg0 on top). Pop args (arg0 first) then the function value.
          * A tagged function-value (from a push.i32 fref or method()) carries the code index. */
