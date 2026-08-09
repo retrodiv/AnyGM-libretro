@@ -341,7 +341,7 @@ static void trace_escape_names(const char *first,const char *second,
 
 void gml_vm_diagnostics_opcode(GmlVM *vm,const char *code_name,
                                uint32_t offset,const char *opcode,
-                               int stack_depth){
+                               int stack_depth,double stack_top){
   GmlVmFineTrace *trace=trace_get(vm);
   if(!trace_frame_matches(vm,trace) ||
      !(trace->enabled&GML_VM_TRACE_OPCODE) ||
@@ -354,9 +354,9 @@ void gml_vm_diagnostics_opcode(GmlVM *vm,const char *code_name,
     "{\"schema\":\"anygm.vm.trace\",\"version\":1,\"sequence\":%lu,"
     "\"kind\":\"opcode\",\"frame\":%ld,\"code\":\"%s\","
     "\"offset\":%u,\"opcode\":\"%s\",\"stack_depth\":%d,"
-    "\"self\":%u}\n",
+    "\"stack_top\":%.17g,\"self\":%u}\n",
     trace_sequence(trace),vm->frame,code_json,offset,opcode_json,
-    stack_depth,self_id);
+    stack_depth,stack_top,self_id);
 }
 
 /* Optional host-backed array growth reporting at doubling thresholds. */

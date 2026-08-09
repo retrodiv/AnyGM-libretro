@@ -2517,8 +2517,10 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
       if(gml_decode_bc_bounded(d,w->size,pc-4,w->bytecode,&prev)==4)
         prev_conv_v_i32 = prev.kind==OP_CONV && prev.type1==DT_VAR && prev.type2==DT_INT32;
     }
+    /* Include the numeric top-of-stack value in the optional opcode trace. */
     GML_VM_DIAGNOSTIC_OPCODE(vm,w->code[ci].name,pc-start,
-                             gml_op_mnemonic(in.kind),sp);
+                             gml_op_mnemonic(in.kind),sp,
+                             sp>0?asnum(stk[sp-1]):0.0);
     if(trace){
       const char *rn = (in.kind==OP_CALL || in.kind==OP_PUSH || in.kind==OP_POP) ? (in.refname?in.refname:gml_ref_name(w,in.refaddr)) : "";
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"  %4u: %-7s t1=%x rt=%02x inst=%d  sp=%d %s\n",pc-start,gml_op_mnemonic(in.kind),in.type1,in.reftype,in.inst,sp,rn); }
