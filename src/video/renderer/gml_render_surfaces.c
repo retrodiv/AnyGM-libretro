@@ -215,7 +215,7 @@ int gml_surface_set_target(GmlRender *r, int id){
     int lit_=0;
     for(size_t i_=0;i_<(size_t)w*(size_t)h;i_++) if(px[i_]&0x00FFFFFFu) lit_++;
     anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
-      "[surf] set_target %d lit_on_entry=%d of %d\n",id,lit_,w*h);
+      "[surf] set_target %d px=%p lit_on_entry=%d of %d\n",id,(const void *)px,lit_,w*h);
   }
   r->fb=px; r->fbw=w; r->fbh=h;
   r->target_id=id;
@@ -249,8 +249,8 @@ void gml_surface_reset_target(GmlRender *r){
     int after_=0;
     for(size_t i_=0;i_<(size_t)r->fbw*(size_t)r->fbh;i_++) if(r->fb[i_]&0x00FFFFFFu) after_++;
     anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
-      "[surf] reset_target released=%d restored=%d lit_before=%d lit_after=%d of %d\n",
-      released_,r->target_id,before_,after_,r->fbw*r->fbh);
+      "[surf] reset_target released=%d px=%p lit_before=%d lit_after=%d of %d\n",
+      released_,(const void *)r->fb,before_,after_,r->fbw*r->fbh);
   }
   if(r->target_sp>0){
     typeof(r->target_stack[0]) t=r->target_stack[--r->target_sp];

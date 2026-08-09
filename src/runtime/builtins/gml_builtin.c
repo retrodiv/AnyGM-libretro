@@ -1022,10 +1022,16 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
   if(!strcmp(name,"draw_rectangle")||!strcmp(name,"draw_rectangle_color")||!strcmp(name,"draw_rectangle_colour")){
     int plain=!strcmp(name,"draw_rectangle"); uint32_t colors[4];
     for(int i=0;i<4;i++) colors[i]=plain?draw.color:NU32(args,count,4+i);
-    gml_software3d_draw_rectangle_2d(
-      R,draw_gui_x(R,N(args,count,0)),draw_gui_y(R,N(args,count,1)),
-      draw_gui_x(R,N(args,count,2)),draw_gui_y(R,N(args,count,3)),colors,alpha,
-      (int)N(args,count,plain?4:8)); return 1;
+    double rx1=draw_gui_x(R,N(args,count,0)),ry1=draw_gui_y(R,N(args,count,1));
+    double rx2=draw_gui_x(R,N(args,count,2)),ry2=draw_gui_y(R,N(args,count,3));
+    int outline=(int)N(args,count,plain?4:8);
+    if(builtin_setting(vm,"GML_LOG_SURF")){
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+        "[prim] rectangle x1=%.1f y1=%.1f x2=%.1f y2=%.1f colour=%06x alpha=%.3f outline=%d\n",
+        rx1,ry1,rx2,ry2,(unsigned)(colors[0]&0xffffffu),alpha,outline);
+    }
+    gml_software3d_draw_rectangle_2d(R,rx1,ry1,rx2,ry2,colors,alpha,outline);
+    return 1;
   }
   if(!strcmp(name,"draw_triangle")||!strcmp(name,"draw_triangle_color")||!strcmp(name,"draw_triangle_colour")){
     int plain=!strcmp(name,"draw_triangle"); uint32_t c1=plain?draw.color:NU32(args,count,6);
@@ -1359,6 +1365,14 @@ GmlVal gml_builtin_call(GmlVM *vm, const char *nm, GmlVal *a, int n){
   return v;
 }
 GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  if(builtin_setting(vm,"GML_LOG_CALLS_IN_TARGET")){
+    /* Opt-in trace of builtin calls made while a surface target is active. */
+    GmlRender *Rc=(GmlRender*)vm->render;
+    int tgt=Rc?gml_surface_get_target(Rc):-1;
+    if(tgt>0){
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[call] target=%d %s/%d\n",tgt,nm,n);
+    }
+  }
   int id=gml_builtin_fast_id(vm,nm);
   if(id>0) return gml_builtin_call_fast_id(vm,id,nm,a,n);
   GmlRender *R=(GmlRender*)vm->render;
@@ -1497,7 +1511,9 @@ GmlVal gml_builtin_try_platform_tail(GmlVM *vm, const char *nm, GmlVal *a, int n
    * (bm_zero,bm_inv_src_colour), distinct from the arithmetic subtract equation. */
   if(!strcmp(nm,"draw_set_blend_mode")||   /* GMS1.x compatibility name */
      !strcmp(nm,"gpu_set_blendmode")){ GmlRender *R2=(GmlRender*)vm->render; int bm=(int)N(a,n,0);
-    if(builtin_setting(vm,"GML_DBG_BM")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[bm] gpu_set_blendmode(%d)\n",bm);
+    if(builtin_setting(vm,"GML_DBG_BM")||builtin_setting(vm,"GML_LOG_SURF")){
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[bm] gpu_set_blendmode(%d)\n",bm);
+    }
     builtin_set_blendmode(R2,bm); return vreal(0); }
   if(!strcmp(nm,"gpu_get_blendmode")){
     GmlRender *R2=(GmlRender*)vm->render;
@@ -1514,6 +1530,9 @@ GmlVal gml_builtin_try_platform_tail(GmlVM *vm, const char *nm, GmlVal *a, int n
   }
   if(!strcmp(nm,"gpu_set_colorwriteenable")){
     GmlRender *R2=(GmlRender*)vm->render;
+    if(builtin_setting(vm,"GML_LOG_SURF")){
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[cwe] gpu_set_colorwriteenable argc=%d\n",n);
+    }
     if(R2 && n>0){
       unsigned mask=0;
       if(a[0].t==V_ARR){
