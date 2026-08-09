@@ -367,8 +367,9 @@ static void growth_report(int index,int length){
   if(!growth_vm || index<growth_threshold || index<growth_next) return;
   growth_next = index ? index*2 : 1;
   anygm_host_logf(growth_vm->host,ANYGM_LOG_DEBUG,
-    "[arrgrow] index %d (len was %d) in %s\n",
-    index,length,trace_code_name(growth_vm,growth_vm->cur_code_index));
+    "[arrgrow] index %d (len was %d) in %s called from %s\n",
+    index,length,trace_code_name(growth_vm,growth_vm->cur_code_index),
+    trace_code_name(growth_vm,growth_vm->caller_code_index));
 }
 void gml_vm_diagnostics_array_growth_init(GmlVM *vm){
   if(!vm) return;
