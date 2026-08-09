@@ -3081,8 +3081,11 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         GML_VM_DIAGNOSTIC_CALLV_STACK(vm,na,callv_sp_in,sp);
         if(fci<0 && anygm_host_development_setting(vm->host,"GML_LOG_CALLV_MISS")){
           /* Report unresolved dynamic calls when the optional setting is present. */
+          double top_=callv_sp_in>0?asnum(stk[callv_sp_in-1]):0.0;
+          double under_=callv_sp_in>1?asnum(stk[callv_sp_in-2]):0.0;
           anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
-            "[callv-miss] argc=%d in %s\n",na,
+            "[callv-miss] argc=%d top=%.17g under=%.17g struct_top=%d funcval_top=%d in %s\n",na,
+            top_,under_,GML_IS_STRUCT_ID(top_)?1:0,GML_IS_FUNCVAL((int)top_)?1:0,
             (vm->win && vm->cur_code_index>=0 && vm->cur_code_index<vm->win->n_code &&
              vm->win->code[vm->cur_code_index].name)?vm->win->code[vm->cur_code_index].name:"");
         }
