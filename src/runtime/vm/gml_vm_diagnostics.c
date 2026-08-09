@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_vm_internal.h"
+#include "gml_value_internal.h"
 
 #include "anygm_host.h"
 
