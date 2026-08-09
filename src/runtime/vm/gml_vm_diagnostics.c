@@ -366,11 +366,20 @@ static int growth_next=0;
 static void growth_report(int index,int length){
   if(!growth_vm || index<growth_threshold || index<growth_next) return;
   growth_next = index ? index*2 : 1;
-  anygm_host_logf(growth_vm->host,ANYGM_LOG_DEBUG,
-    "[arrgrow] index %d (len was %d) call#%u in %s called from %s\n",
-    index,length,growth_vm->call_seq,
-    trace_code_name(growth_vm,growth_vm->cur_code_index),
-    trace_code_name(growth_vm,growth_vm->caller_code_index));
+  {
+    /* Format the bounded call chain with the innermost entry last. */
+    char chain[512]; size_t used=0; chain[0]=0;
+    int depth=growth_vm->code_depth<16?growth_vm->code_depth:16;
+    for(int i=0;i<depth;i++){
+      const char *nm=trace_code_name(growth_vm,growth_vm->code_stack[i]);
+      int wrote=snprintf(chain+used,sizeof chain-used,"%s%s",used?" > ":"",nm);
+      if(wrote<0 || (size_t)wrote>=sizeof chain-used) break;
+      used+=(size_t)wrote;
+    }
+    anygm_host_logf(growth_vm->host,ANYGM_LOG_DEBUG,
+      "[arrgrow] index %d (len was %d) call#%u depth=%d chain: %s\n",
+      index,length,growth_vm->call_seq,growth_vm->code_depth,chain);
+  }
 }
 void gml_vm_diagnostics_array_growth_init(GmlVM *vm){
   if(!vm) return;

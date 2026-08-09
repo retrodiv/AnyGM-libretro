@@ -2428,6 +2428,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   vm->caller_code_index=save_code_index;
   /* VM-owned sequence distinguishes separate code invocations. */
   vm->call_seq=++vm->call_seq_next;
+  if(vm->code_depth<16) vm->code_stack[vm->code_depth]=ci;
+  vm->code_depth++;
   GmlVarMap locals={0};
   int argc=n_args<0?0:(n_args<16?n_args:16);
   vm->script_argc=argc;
@@ -3219,6 +3221,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   vm->cur_code_index=save_code_index;
   vm->caller_code_index=save_caller_index;
   vm->call_seq=save_call_seq;
+  if(vm->code_depth>0) vm->code_depth--;
   vm->script_argc=save_argc;
   for(int i=0;i<16;i++) vm->script_args[i]=save_args[i];
   if(cp) codeprof_add(w,ci,codeprof_now_ms()-cp_t0,watchdog);
