@@ -1467,6 +1467,12 @@ static void run_selftest(AnygmEngine *engine){
   a[0]=b64buf; a[1]=vreal(1); GmlVal b64a=BI("buffer_read",2);
   a[0]=b64buf; a[1]=vreal(1); GmlVal b64b=BI("buffer_read",2);
   CHK("buffer_base64_decode bytes", (int)b64a.d=='H' && (int)b64b.d=='i');
+  a[0]=b64buf; a[1]=vreal(0); a[2]=vreal(-1); GmlVal b64enc=BI("buffer_base64_encode",3);
+  CHK("buffer_base64_encode", b64enc.t==V_STR && b64enc.s && !strcmp(b64enc.s,"SGk="));
+  /* A negative size means the rest of the buffer, so asking for it from zero
+   * covers the full buffer. Verify the encoded result before deleting it. */
+  a[0]=b64buf; a[1]=vreal(1); a[2]=vreal(-1); GmlVal b64tail=BI("buffer_base64_encode",3);
+  CHK("buffer_base64_encode offset", b64tail.t==V_STR && b64tail.s && !strcmp(b64tail.s,"aQ=="));
   a[0]=b64buf; BI("buffer_delete",1);
   a[0]=vstr("{\"a\":1,\"b\":\"x\"}"); GmlVal jsobj=BI("json_parse",1);
   CHK("json_parse struct", jsobj.t==V_REAL && GML_IS_STRUCT_ID(jsobj.d));

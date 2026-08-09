@@ -349,6 +349,7 @@ char *dup_n(const char *source, int length);
 GmlVal md5_hex_val(const uint8_t *bytes, size_t length);
 GmlVal sha1_hex_val(const uint8_t *bytes, size_t length);
 unsigned char *base64_decode_alloc(const char *text, int *output_length);
+char *base64_encode_alloc(const unsigned char *bytes, int length);
 const char *S(GmlVM *vm, GmlVal *args, int count, int index);
 GmlVal array4(double a, double b, double c, double d);
 GmlVal arr_newv(int count);

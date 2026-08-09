@@ -737,6 +737,24 @@ GmlVal sha1_hex_val(const uint8_t *p, size_t n){
   out[40]=0;
   return vstr_owned(out);
 }
+char *base64_encode_alloc(const unsigned char *bytes, int length){
+  static const char B64[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  if(length<0) length=0;
+  char *out=malloc(((size_t)length+2)/3*4+1);
+  if(!out) return NULL;
+  char *p=out;
+  int i=0;
+  for(; i+3<=length; i+=3){
+    uint32_t v=((uint32_t)bytes[i]<<16)|((uint32_t)bytes[i+1]<<8)|bytes[i+2];
+    *p++=B64[(v>>18)&63]; *p++=B64[(v>>12)&63]; *p++=B64[(v>>6)&63]; *p++=B64[v&63];
+  }
+  if(length-i==1){ uint32_t v=(uint32_t)bytes[i]<<16;
+    *p++=B64[(v>>18)&63]; *p++=B64[(v>>12)&63]; *p++='='; *p++='='; }
+  else if(length-i==2){ uint32_t v=((uint32_t)bytes[i]<<16)|((uint32_t)bytes[i+1]<<8);
+    *p++=B64[(v>>18)&63]; *p++=B64[(v>>12)&63]; *p++=B64[(v>>6)&63]; *p++='='; }
+  *p=0;
+  return out;
+}
 unsigned char *base64_decode_alloc(const char *s, int *out_len){
   size_t L=s?strlen(s):0;
   unsigned char *o=malloc(L/4*3+4);
@@ -1113,6 +1131,19 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     free(bytes);
     return vreal(id);
+  }
+  if(!strcmp(nm,"buffer_base64_encode")){
+    /* Encode the selected range of an existing buffer. A negative length
+     * consumes the remaining bytes from the clamped offset. */
+    int i=vm_buffer_slot(vm,(int)N(a,n,0));
+    if(i<0) return vstr("");
+    int size=vm->builtins->buffer[i].size;
+    int off=(int)N(a,n,1), len=(int)N(a,n,2);
+    if(off<0) off=0;
+    if(off>size) off=size;
+    if(len<0 || off+len>size) len=size-off;
+    char *text=base64_encode_alloc(vm->builtins->buffer[i].data+off,len);
+    return text ? vstr_owned(text) : vstr("");
   }
   if(!strcmp(nm,"buffer_delete")){ int i=vm_buffer_slot(vm,(int)N(a,n,0));
     if(i>=0){ free(vm->builtins->buffer[i].data); memset(&vm->builtins->buffer[i],0,sizeof(vm->builtins->buffer[i])); } return vreal(0); }
