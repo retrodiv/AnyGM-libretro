@@ -231,6 +231,13 @@ int gml_surface_set_target(GmlRender *r, int id){
   r->projection_cam_x=0; r->projection_cam_y=0;
   r->cam_x=0; r->cam_y=0;
   gml_d3_sync_render_camera(r);
+  if(render_setting(r,"GML_LOG_SURF")){
+    /* Count RGB again at function exit, paired with the entry count. */
+    int lit_=0;
+    for(size_t i_=0;i_<(size_t)w*(size_t)h;i_++) if(px[i_]&0x00FFFFFFu) lit_++;
+    anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
+      "[surf] set_target %d lit_on_exit=%d of %d\n",id,lit_,w*h);
+  }
   return 1;
 }
 void gml_surface_reset_target(GmlRender *r){

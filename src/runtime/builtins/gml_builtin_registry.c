@@ -206,6 +206,13 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
   if(!gml_builtin_state_ensure(vm)) return vundef();
   GmlRender *R=(GmlRender*)vm->render;
   (void)graphics_state_for_vm(vm);
+  if(builtin_setting(vm,"GML_LOG_CALLS_IN_TARGET")){
+    /* Cover the direct cached-dispatch path while a surface target is active. */
+    int tgt_=R?gml_surface_get_target(R):-1;
+    if(tgt_>0){
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[call] target=%d %s/%d\n",tgt_,nm?nm:"?",n);
+    }
+  }
   switch(id){
     /* the bodies below mirror their generic-chain handlers exactly; keep both in sync */
     case BID_FMOD_PREFIX:
