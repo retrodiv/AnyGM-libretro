@@ -285,6 +285,7 @@ typedef struct GmlVM {
   unsigned call_seq_next;    /* VM-owned invocation counter */
   int      code_stack[16];   /* diagnostics only: bounded code-entry chain */
   int      code_depth;       /* number of entries, including unrecorded deeper frames */
+  int      callv_reports;    /* diagnostics only: bounded stack-balance reports */
   int32_t call_script_ci;   /* side channel: generic dispatch reports "name resolved to script <ci>" for the caller's per-site cache */
   const char *cur_event; int cur_event_obj;   /* current event suffix + object level (for event_inherited) */
   int      event_type, event_number;          /* transient GM event_type/event_number builtins */

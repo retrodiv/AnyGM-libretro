@@ -392,6 +392,19 @@ void gml_vm_diagnostics_array_growth_init(GmlVM *vm){
   gml_arr_growth_hook = growth_report;
 }
 
+/* Report bounded call-value stack-balance anomalies when requested by the host. */
+void gml_vm_diagnostics_callv_stack(GmlVM *vm,int argc,int sp_in,int sp_out){
+  if(!vm || !anygm_host_development_setting(vm->host,"GML_LOG_CALLV_STACK")) return;
+  /* Consuming arguments, callee and receiver leaves one result. */
+  int expected=sp_in-argc-1;
+  if(sp_out==expected || vm->callv_reports>=24) return;
+  vm->callv_reports++;
+  anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+    "[callv] argc=%d sp %d -> %d (expected %d, off by %+d) in %s\n",
+    argc,sp_in,sp_out,expected,sp_out-expected,
+    trace_code_name(vm,vm->cur_code_index));
+}
+
 int gml_vm_diagnostics_opcode_enabled(GmlVM *vm,const char *code_name){
   GmlVmFineTrace *trace=trace_get(vm);
   return trace_frame_matches(vm,trace) &&

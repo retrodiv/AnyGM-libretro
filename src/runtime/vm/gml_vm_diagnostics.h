@@ -12,6 +12,7 @@ void gml_vm_diagnostics_opcode(GmlVM *vm, const char *code_name,
                                uint32_t offset, const char *opcode,
                                int stack_depth);
 void gml_vm_diagnostics_array_growth_init(GmlVM *vm);
+void gml_vm_diagnostics_callv_stack(GmlVM *vm,int argc,int sp_in,int sp_out);
 int gml_vm_diagnostics_opcode_enabled(GmlVM *vm, const char *code_name);
 void gml_vm_diagnostics_event(GmlVM *vm, const GmlInstance *instance,
                               const char *event_name, int code_index);

@@ -2936,6 +2936,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         break;
       }
       case OP_CALLV:{
+        int callv_sp_in=sp;   /* optional stack-balance diagnostic input */
         /* GMS2.3 call-a-value: a function VALUE sits under the args. GM stack order is
          * func, argN..arg1, arg0 (arg0 on top). Pop args (arg0 first) then the function value.
          * A tagged function-value (from a push.i32 fref or method()) carries the code index. */
@@ -3037,6 +3038,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
          * by this frame's str_gc and are freed there, so don't touch them. */
         if(STR_IS_HEAP(rv)){ int isarg=0; for(int _k=0;_k<na;_k++) if(a[_k].t==V_STR && a[_k].s==rv.s){isarg=1;break;} if(!isarg) GC_TRACK(rv.s); }
         if(sp<STK){ stk[sp]=rv; stkt[sp]=DT_VAR; sp++; }
+        GML_VM_DIAGNOSTIC_CALLV_STACK(vm,na,callv_sp_in,sp);
         break;
       }
       case OP_RET: ret = sp>0? stk[--sp]:vreal(0); if(use_cache) ip=cached_n; else pc=end; continue;
