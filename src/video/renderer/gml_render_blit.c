@@ -5323,6 +5323,14 @@ void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr){
 static void sprite_region_coarse_texel(GmlAtlas *a, int sx, int sy, int sw, int sh, double out[4]){
   out[0]=out[1]=out[2]=out[3]=0;
   if(!a || !a->px || sw<=0 || sh<=0) return;
+  /* Clamp source coordinates before reading atlas pixels. */
+  if(a->w<=0 || a->h<=0) return;
+  if(sx<0){ sw+=sx; sx=0; }
+  if(sy<0){ sh+=sy; sy=0; }
+  if(sx>=a->w || sy>=a->h) return;
+  if(sx+sw>a->w) sw=a->w-sx;
+  if(sy+sh>a->h) sh=a->h-sy;
+  if(sw<=0 || sh<=0) return;
   int w=sw, h=sh;
   float *buf=(float*)malloc((size_t)w*(size_t)h*4u*sizeof(float));
   if(!buf) return;
