@@ -3079,6 +3079,13 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         if(STR_IS_HEAP(rv)){ int isarg=0; for(int _k=0;_k<na;_k++) if(a[_k].t==V_STR && a[_k].s==rv.s){isarg=1;break;} if(!isarg) GC_TRACK(rv.s); }
         if(sp<STK){ stk[sp]=rv; stkt[sp]=DT_VAR; sp++; }
         GML_VM_DIAGNOSTIC_CALLV_STACK(vm,na,callv_sp_in,sp);
+        if(fci<0 && anygm_host_development_setting(vm->host,"GML_LOG_CALLV_MISS")){
+          /* Report unresolved dynamic calls when the optional setting is present. */
+          anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+            "[callv-miss] argc=%d in %s\n",na,
+            (vm->win && vm->cur_code_index>=0 && vm->cur_code_index<vm->win->n_code &&
+             vm->win->code[vm->cur_code_index].name)?vm->win->code[vm->cur_code_index].name:"");
+        }
         break;
       }
       case OP_RET: ret = sp>0? stk[--sp]:vreal(0); if(use_cache) ip=cached_n; else pc=end; continue;
