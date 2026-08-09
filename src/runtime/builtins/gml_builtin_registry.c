@@ -313,8 +313,19 @@ static GmlVal gml_builtin_call_fast_id_impl(GmlVM *vm, int id, const char *nm, G
     case BID_INI_OPEN:
       return builtin_ini_open_file(vm,a,n);
     case BID_ARRAY_LENGTH:
-    case BID_ARRAY_LENGTH_1D:
-      return vreal(n>0?gml_val_array_length(a[0]):0);
+    case BID_ARRAY_LENGTH_1D:{
+      int len_=n>0?gml_val_array_length(a[0]):0;
+      if(len_>=64 && builtin_setting(vm,"GML_LOG_ARR_LENGTH")){
+        /* Report the answer and array metadata alongside the current code entry. */
+        const GmlArr *A_=(n>0 && a[0].t==V_ARR)?(const GmlArr*)a[0].arr:NULL;
+        const char *where_=(vm&&vm->win&&vm->cur_code_index>=0&&vm->cur_code_index<vm->win->n_code&&
+                            vm->win->code[vm->cur_code_index].name)
+                           ?vm->win->code[vm->cur_code_index].name:"";
+        anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,
+          "[arrlen] %d (len=%d is_2d=%d height2d=%d) in %s\n",
+          len_,A_?A_->len:-1,A_?A_->is_2d:-1,A_?A_->height2d:-1,where_);
+      }
+      return vreal(len_); }
     case BID_ARRAY_GET:
       return n>1?gml_arr_get(a[0],(int)N(a,n,1)):vreal(0);
     case BID_ARRAY_SET:
