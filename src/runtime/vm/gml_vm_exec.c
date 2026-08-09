@@ -2998,12 +2998,32 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
             member_value_call=scope->kind==OP_CALL && sn &&
                               (!strcmp(sn,"@@This@@") || !strcmp(sn,"@@Other@@"));
           }
+          if(!member_value_call && ip>1 && prev->kind==OP_BREAK && prev->sval==-11){
+            /* `self.method(args)` where the callee is a pushref rather than a field read:
+             * call @@This@@(0); break -11 ref=...; callv. The reference is pushed last, so the
+             * function value is on TOP and the args are under it — the same shape as a field call
+             * and the opposite of the plain funcval convention the fallback assumes. Read as a
+             * plain call it pops the reference as an argument, finds an instance id where the
+             * function should be, and dispatches nothing at all, silently. */
+            GmlInsn *scope=&cached_ins[ip-2];
+            const char *sn=scope->refname?scope->refname:gml_ref_name(w,scope->refaddr);
+            member_value_call=scope->kind==OP_CALL && sn &&
+                              (!strcmp(sn,"@@This@@") || !strcmp(sn,"@@Other@@"));
+          }
         } else if(!use_cache && pc>=start+8){
           GmlInsn prev;
           int psz=gml_decode_bc_bounded(d,w->size,pc-8,w->bytecode,&prev);
           member_value_call=psz==8 && prev.kind==OP_PUSH && prev.type1==DT_VAR &&
                             (prev.inst==IT_STACK || prev.reftype==0x80);
           if(!member_value_call && psz==8 && prev.kind==OP_PUSH && prev.type1==DT_VAR &&
+             pc>=start+16){
+            GmlInsn scope;
+            int ssz=gml_decode_bc_bounded(d,w->size,pc-16,w->bytecode,&scope);
+            const char *sn=ssz==8?(scope.refname?scope.refname:gml_ref_name(w,scope.refaddr)):NULL;
+            member_value_call=ssz==8 && scope.kind==OP_CALL && sn &&
+                              (!strcmp(sn,"@@This@@") || !strcmp(sn,"@@Other@@"));
+          }
+          if(!member_value_call && psz==8 && prev.kind==OP_BREAK && prev.sval==-11 &&
              pc>=start+16){
             GmlInsn scope;
             int ssz=gml_decode_bc_bounded(d,w->size,pc-16,w->bytecode,&scope);
