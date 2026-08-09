@@ -251,6 +251,16 @@ static void atlas_dump_maybe(GmlRender *r, int idx){
 uint8_t *atlas_pixels(GmlRender *r, int idx){
   if(!r || idx<0 || idx>=r->n_atlas || !r->atlas) return NULL;
   GmlAtlas *a=&r->atlas[idx];
+  if(!a->px && !atlas_has_source(r,a) && render_setting(r,"GML_LOG_ATLAS")){
+    /* Report a requested page without a pixel source once per page. */
+    if(!a->no_source_reported){
+      a->no_source_reported=1;
+      anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
+        "[atlas] NO SOURCE %d blob=%llu external=%p/%llu\n",idx,
+        (unsigned long long)a->blob,(const void *)a->external_blob,
+        (unsigned long long)a->external_size);
+    }
+  }
   uint8_t *p=__atomic_load_n(&a->px,__ATOMIC_ACQUIRE);
   if(p){ atlas_dump_maybe(r,idx); return p; }
   GmlAtlasPool *pool=(GmlAtlasPool*)r->prefetch;

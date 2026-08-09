@@ -202,6 +202,7 @@ static GmlVal gml_builtin_call_registered_stage(
   return builtin_call_impl(vm,nm,a,n);
 }
 
+static GmlVal gml_builtin_call_fast_id_impl(GmlVM *vm, int id, const char *nm, GmlVal *a, int n);
 GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, int n){
   if(!gml_builtin_state_ensure(vm)) return vundef();
   GmlRender *R=(GmlRender*)vm->render;
@@ -213,6 +214,26 @@ GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, in
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[call] target=%d %s/%d\n",tgt_,nm?nm:"?",n);
     }
   }
+  if(R && nm && builtin_setting(vm,"GML_LOG_SURF_DELTA") && strstr(nm,"draw")){
+    /* Scan only selected drawing calls while a surface target is active. */
+    int before_=gml_surface_target_lit(R);
+    if(before_>=0){
+      GmlVal out_=gml_builtin_call_fast_id_impl(vm,id,nm,a,n);
+      int after_=gml_surface_target_lit(R);
+      if(after_!=before_){
+        /* Report the final two arguments alongside the colour-coverage delta. */
+        double a1_=n>=2?N(a,n,n-2):0.0, a0_=n>=1?N(a,n,n-1):0.0;
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+          "[delta] %s/%d lit %d -> %d (%+d) arg[%d]=%.4f arg[%d]=%.4f\n",
+          nm,n,before_,after_,after_-before_,n-2,a1_,n-1,a0_);
+      }
+      return out_;
+    }
+  }
+  return gml_builtin_call_fast_id_impl(vm,id,nm,a,n);
+}
+static GmlVal gml_builtin_call_fast_id_impl(GmlVM *vm, int id, const char *nm, GmlVal *a, int n){
+  GmlRender *R=(GmlRender*)vm->render;
   switch(id){
     /* the bodies below mirror their generic-chain handlers exactly; keep both in sync */
     case BID_FMOD_PREFIX:

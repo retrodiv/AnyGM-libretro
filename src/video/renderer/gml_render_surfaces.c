@@ -300,6 +300,13 @@ void gml_surface_reset_target(GmlRender *r){
 int gml_surface_get_target(GmlRender *r){
   return r ? r->target_id : -1;
 }
+int gml_surface_target_lit(GmlRender *r){
+  /* Count nonzero RGB in the active surface; alpha is not part of this probe. */
+  if(!r || r->target_id<=0 || !r->fb || r->fbw<=0 || r->fbh<=0) return -1;
+  int lit=0;
+  for(size_t i=0;i<(size_t)r->fbw*(size_t)r->fbh;i++) if(r->fb[i]&0x00FFFFFFu) lit++;
+  return lit;
+}
 static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, int sw, int sh,
                                            int x0, int y0, int W, int H,
                                            int source_all_opaque){

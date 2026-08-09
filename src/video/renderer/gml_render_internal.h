@@ -96,6 +96,7 @@ typedef struct {
   uint32_t blob; size_t avail, chunk_end; int decode_attempted;    /* offsets into data.win, never addresses */
   uint8_t *external_blob; size_t external_size;                    /* encoded VFS sidecar, if any */
   int debug_dumped;                                                /* one-shot opt-in atlas diagnostic */
+  int no_source_reported;                                          /* one-shot: page carries no blob */
 } GmlAtlas;
 typedef struct {
   int atlas, sx, sy, sw, sh;
