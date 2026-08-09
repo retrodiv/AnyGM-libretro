@@ -2520,6 +2520,9 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     int py = flipy ? (y0-yy) : (y0+yy);
     int ly=(int)((yy+sample_y)/ays); if(ly<0||ly>=t->sh) continue;
     int sy=t->sy+ly;
+    /* Bound the row and the generic sampled column to the atlas. */
+    if(sy<0 || sy>=a->h) continue;
+    int sx_limit = a->w - t->sx;
     if(fastcase){
       const uint8_t *srow=a->px + ((size_t)sy*a->w + t->sx)*4;
       uint32_t *drow=&r->fb[(size_t)py*r->fbw];
@@ -2545,6 +2548,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     for(int xx=xx0; xx<xx1; xx++){
       int px = flipx ? (x0-xx) : (x0+xx);
       int lx=lxtab? lxtab[xx-xx0] : (int)((xx+sample_x)/axs); if(lx<0||lx>=t->sw) continue;
+      if(lx>=sx_limit) continue;                    /* column outside the atlas */
       int sx=t->sx+lx;
       const uint8_t *sp=wave_map
         ? a->px+(size_t)wave_map[(size_t)ly*t->sw+lx]*4u
