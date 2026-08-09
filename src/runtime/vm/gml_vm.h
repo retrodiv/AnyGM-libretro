@@ -128,6 +128,9 @@ typedef struct {
 
 typedef struct {
   int hot_builtin_profile;
+  int      code_profile;      /* -1 unread, 0 off, 1 on: GML_PROFILE_CODE */
+  double  *code_profile_ms;   /* accumulated milliseconds per CODE entry */
+  uint64_t*code_profile_hits; /* invocations per CODE entry */
   int watchdog_warnings;
   int pc_initialized;
   char pc_name[128];

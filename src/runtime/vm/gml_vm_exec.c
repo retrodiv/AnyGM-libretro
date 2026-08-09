@@ -1864,10 +1864,48 @@ int gml_vm_code_cache_ensure(GmlWin *win, int code_index){
   return code_cache_ensure(win,code_index);
 }
 
-static int codeprof_on(void){ return 0; }
-static double codeprof_now_ms(void){ return 0.0; }
-static void codeprof_add(GmlWin *w, int ci, double ms, uint64_t insn){
-  (void)w; (void)ci; (void)ms; (void)insn;
+/* Optional per-code wall time and invocation counts, owned by the VM. */
+static int codeprof_on(GmlVM *vm){
+  if(!vm) return 0;
+  if(vm->diagnostics.code_profile<0){
+    const char *v=anygm_host_development_setting(vm->host,"GML_PROFILE_CODE");
+    vm->diagnostics.code_profile=(v && *v)?1:0;
+  }
+  return vm->diagnostics.code_profile;
+}
+static double codeprof_now_ms(GmlVM *vm){
+  /* Obtain time through host services rather than directly from the operating system. */
+  return vm ? (double)anygm_host_monotonic_time_ns(vm->host)/1000000.0 : 0.0;
+}
+static void codeprof_add(GmlVM *vm, int ci, double ms, uint64_t insn){
+  (void)insn;
+  if(!vm || !vm->win || ci<0 || ci>=vm->win->n_code) return;
+  if(!vm->diagnostics.code_profile_ms){
+    vm->diagnostics.code_profile_ms=calloc((size_t)vm->win->n_code,sizeof(double));
+    vm->diagnostics.code_profile_hits=calloc((size_t)vm->win->n_code,sizeof(uint64_t));
+    if(!vm->diagnostics.code_profile_ms || !vm->diagnostics.code_profile_hits) return;
+  }
+  vm->diagnostics.code_profile_ms[ci]+=ms;
+  vm->diagnostics.code_profile_hits[ci]++;
+}
+void gml_vm_code_profile_report(GmlVM *vm){
+  if(!vm || !vm->win || !vm->diagnostics.code_profile_ms) return;
+  int n=vm->win->n_code, shown=0;
+  for(int round=0;round<12;round++){
+    int best=-1;
+    for(int i=0;i<n;i++){
+      if(vm->diagnostics.code_profile_ms[i]<=0) continue;
+      if(best<0 || vm->diagnostics.code_profile_ms[i]>vm->diagnostics.code_profile_ms[best]) best=i;
+    }
+    if(best<0) break;
+    anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,"[codeprof] %10.1f ms  %8llu calls  %s\n",
+      vm->diagnostics.code_profile_ms[best],
+      (unsigned long long)vm->diagnostics.code_profile_hits[best],
+      vm->win->code[best].name?vm->win->code[best].name:"");
+    vm->diagnostics.code_profile_ms[best]=-1;   /* consumed, so the next round finds the next */
+    shown++;
+  }
+  (void)shown;
 }
 
 /* ---------------- builtins ---------------- */
@@ -1962,13 +2000,13 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
   if(builtin_hotprof_on(vm)) return 0;
   const char *arglog=anygm_host_development_setting(vm->host,"GML_LOG_CODE_ARGS");
   if(arglog && *arglog && c->name && strstr(c->name,arglog)) return 0;
-  double t0=codeprof_on()?codeprof_now_ms():0.0;
+  double t0=codeprof_on(vm)?codeprof_now_ms(vm):0.0;
   if(c->micro_kind==GML_MICRO_DS_MAP_GLOBAL_ARG0 && c->micro_name){
     GmlVal *map=gml_varmap_get_hashed(&vm->globals,c->micro_name,c->micro_hash);
     *out = gml_ds_map_find_value_direct(vm,(int)(map?asnum(*map):0.0),
       (args && n_args>0)?args[0]:vundef(), args && n_args>0);
     gml_arr_mark_escaped(*out);
-    if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,4);
+    if(codeprof_on(vm)) codeprof_add(vm,ci,codeprof_now_ms(vm)-t0,4);
     return 1;
   }
   if(c->micro_kind==GML_MICRO_APPROACH3){
@@ -1983,7 +2021,7 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
       if(cur<target) cur=target;
     }
     *out=vreal(cur);
-    if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,28);
+    if(codeprof_on(vm)) codeprof_add(vm,ci,codeprof_now_ms(vm)-t0,28);
     return 1;
   }
   if(c->micro_kind==GML_MICRO_CALL_GLOBAL_ARG0 && c->micro_name && c->insn){
@@ -1996,7 +2034,7 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
       GmlVal *gv=gml_varmap_get_hashed(&vm->globals,c->micro_name,c->micro_hash);
       GmlVal a[2]={ gv?*gv:vreal(0), (args && n_args>0)?args[0]:vundef() };
       *out=gml_vm_run_code(vm,fci,vm->cur_self,vm->cur_other,a,2);
-      if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,4);
+      if(codeprof_on(vm)) codeprof_add(vm,ci,codeprof_now_ms(vm)-t0,4);
       return 1;
     }
   }
@@ -2018,7 +2056,7 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
       key=gml_ds_map_find_next_direct(vm,mapid,key,1);
     }
     *out=vreal(0);
-    if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,41);
+    if(codeprof_on(vm)) codeprof_add(vm,ci,codeprof_now_ms(vm)-t0,41);
     return 1;
   }
   if(c->micro_kind==GML_MICRO_DS_MAP_NESTED_FALLBACK && c->micro_name && c->insn){
@@ -2033,7 +2071,7 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
       if(val.t!=V_UNDEF){
         *out=val;
         gml_arr_mark_escaped(*out);
-        if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,16);
+        if(codeprof_on(vm)) codeprof_add(vm,ci,codeprof_now_ms(vm)-t0,16);
         return 1;
       }
     }
@@ -2044,7 +2082,7 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
       if(val.t!=V_UNDEF){
         *out=val;
         gml_arr_mark_escaped(*out);
-        if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,16);
+        if(codeprof_on(vm)) codeprof_add(vm,ci,codeprof_now_ms(vm)-t0,16);
         return 1;
       }
     }
@@ -2087,7 +2125,7 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
       }
     }
     *out=vreal(0);
-    if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,67);
+    if(codeprof_on(vm)) codeprof_add(vm,ci,codeprof_now_ms(vm)-t0,67);
     return 1;
   }
   if(c->micro_kind==GML_MICRO_INPUT_ACTION_UPDATE && c->insn){
@@ -2116,7 +2154,7 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
       micro_set_bool_fields(vm,self,&in[47],&in[24],&in[60],pressed,held,released);
     }
     *out=vreal(0);
-    if(codeprof_on()) codeprof_add(vm->win,ci,codeprof_now_ms()-t0,42);
+    if(codeprof_on(vm)) codeprof_add(vm,ci,codeprof_now_ms(vm)-t0,42);
     return 1;
   }
   return 0;
@@ -2479,9 +2517,9 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   uint32_t *cached_pc = use_cache ? w->code[ci].insn_pc : NULL;
   int32_t *cached_branch = use_cache ? w->code[ci].branch_index : NULL;
   uint32_t cached_n = use_cache ? w->code[ci].n_insn : 0;
-  int cp = codeprof_on();
+  int cp = codeprof_on(vm);
   int hp_builtin = builtin_hotprof_on(vm);
-  double cp_t0 = cp ? codeprof_now_ms() : 0.0;
+  double cp_t0 = cp ? codeprof_now_ms(vm) : 0.0;
   /* Watchdog: a single code run should never execute more than a few million instructions. If one
    * blows past a large budget it is a runaway loop (e.g. a control-flow condition corrupted by an
    * unimplemented opcode) — abort the run instead of freezing the whole host. Real per-event
@@ -3230,7 +3268,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   if(vm->code_depth>0) vm->code_depth--;
   vm->script_argc=save_argc;
   for(int i=0;i<16;i++) vm->script_args[i]=save_args[i];
-  if(cp) codeprof_add(w,ci,codeprof_now_ms()-cp_t0,watchdog);
+  if(cp) codeprof_add(vm,ci,codeprof_now_ms(vm)-cp_t0,watchdog);
   vm->execution_depth--;
   return ret;
 }
