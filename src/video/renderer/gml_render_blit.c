@@ -2520,6 +2520,9 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     int py = flipy ? (y0-yy) : (y0+yy);
     int ly=(int)((yy+sample_y)/ays); if(ly<0||ly>=t->sh) continue;
     int sy=t->sy+ly;
+    /* Clamp the sampled row and generic-path column while retaining the draw. */
+    if(a->h>0){ if(sy<0) sy=0; else if(sy>=a->h) sy=a->h-1; }
+    const int sx_max = a->w>0 ? a->w-1 : 0;
     if(fastcase){
       const uint8_t *srow=a->px + ((size_t)sy*a->w + t->sx)*4;
       uint32_t *drow=&r->fb[(size_t)py*r->fbw];
@@ -2546,6 +2549,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       int px = flipx ? (x0-xx) : (x0+xx);
       int lx=lxtab? lxtab[xx-xx0] : (int)((xx+sample_x)/axs); if(lx<0||lx>=t->sw) continue;
       int sx=t->sx+lx;
+      if(sx<0) sx=0; else if(sx>sx_max) sx=sx_max;      /* clamp to atlas width */
       const uint8_t *sp=wave_map
         ? a->px+(size_t)wave_map[(size_t)ly*t->sw+lx]*4u
         : a->px+((size_t)sy*a->w+sx)*4u;
