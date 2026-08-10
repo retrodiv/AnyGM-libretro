@@ -4862,8 +4862,51 @@ static int draw_spine_sprite(GmlRender *r,GmlSprite *sprite,double x,double y,
   return 1;
 }
 
-void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
-                         double xs, double ys, double rot, uint32_t blend, double alpha){
+typedef struct {
+  uint32_t *framebuffer;
+  size_t pixel_count;
+  uint8_t mask;
+  int active;
+} GmlMaskedSpriteDraw;
+
+static GmlMaskedSpriteDraw masked_sprite_draw_begin(GmlRender *r){
+  GmlMaskedSpriteDraw draw={0};
+  if(!r || !r->fb || r->fbw<=0 || r->fbh<=0 || r->color_write_mask==0x0F ||
+     gml_d3_is_active(r)) return draw;
+  gml_render_flush_rotated_batch(r);
+  if(r->pending_underlay || r->pending_fill) gml_render_prepare_draw(r);
+  size_t pixels=(size_t)r->fbw*(size_t)r->fbh;
+  if(pixels>SIZE_MAX/sizeof(uint32_t)) return draw;
+  if(r->color_write_scratch_capacity<pixels){
+    uint32_t *grown=realloc(r->color_write_scratch,pixels*sizeof(uint32_t));
+    if(!grown) return draw;
+    r->color_write_scratch=grown;
+    r->color_write_scratch_capacity=pixels;
+  }
+  memcpy(r->color_write_scratch,r->fb,pixels*sizeof(uint32_t));
+  draw.framebuffer=r->fb;
+  draw.pixel_count=pixels;
+  draw.mask=r->color_write_mask;
+  draw.active=1;
+  r->color_write_mask=0x0F;
+  return draw;
+}
+
+static void masked_sprite_draw_end(GmlRender *r,GmlMaskedSpriteDraw draw){
+  if(!r || !draw.active) return;
+  gml_render_flush_rotated_batch(r);
+  r->color_write_mask=draw.mask;
+  if(r->fb==draw.framebuffer){
+    for(size_t index=0;index<draw.pixel_count;index++)
+      r->fb[index]=color_write_merge(r,r->color_write_scratch[index],r->fb[index]);
+    r->fb_opaque_known=0;
+    r->fb_all_opaque=0;
+    r->fb_all_transparent=0;
+  }
+}
+
+static void draw_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, double x, double y,
+                                     double xs, double ys, double rot, uint32_t blend, double alpha){
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   if(r && sprite>=0 && sprite<r->n_spr &&
@@ -4940,14 +4983,23 @@ void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double 
   else blit_rotated_with_phase(r,s,t,x,y,xs,ys,rr,blend,alpha);
   if(sprof) sprof_add(sprite,s->name,(rprof_now()-sprof_t0)*1000.0);
 }
+
+void gml_draw_sprite_ext(GmlRender *r, int sprite, int subimg, double x, double y,
+                         double xs, double ys, double rot, uint32_t blend, double alpha){
+  GmlMaskedSpriteDraw masked=masked_sprite_draw_begin(r);
+  draw_sprite_ext_unmasked(r,sprite,subimg,x,y,xs,ys,rot,blend,alpha);
+  masked_sprite_draw_end(r,masked);
+}
+
 void gml_draw_sprite(GmlRender *r, int sprite, int subimg, double x, double y){
   gml_draw_sprite_ext(r,sprite,subimg,x,y,1,1,0,0xFFFFFF,
                       r && !r->classic ? r->alpha : 1.0);
 }
 /* draw_sprite_tiled_ext: repeat a sprite frame to fill the screen (both axes),
  * anchored at (x,y). Used by GML effects and tiled background scripts. */
-void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
-                               double xs, double ys, uint32_t blend, double alpha){
+static void draw_sprite_tiled_ext_unmasked(GmlRender *r, int sprite, int subimg,
+                                           double x, double y, double xs, double ys,
+                                           uint32_t blend, double alpha){
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   if(sprite<0||sprite>=r->n_spr) return;
@@ -5000,6 +5052,13 @@ void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, d
   for(double yy=y0; yy<r->fbh; yy+=bh)
     for(double xx=x0; xx<r->fbw; xx+=bw)
 	      blit_with_phase(r,t,xx+t->tx*xs,yy+t->ty*ys,xs,ys,blend,alpha,0);
+}
+
+void gml_draw_sprite_tiled_ext(GmlRender *r, int sprite, int subimg, double x, double y,
+                               double xs, double ys, uint32_t blend, double alpha){
+  GmlMaskedSpriteDraw masked=masked_sprite_draw_begin(r);
+  draw_sprite_tiled_ext_unmasked(r,sprite,subimg,x,y,xs,ys,blend,alpha);
+  masked_sprite_draw_end(r,masked);
 }
 /* Background layers are not sprite instances.  Their x/y is the top-left of the logical sprite
  * cell, irrespective of the sprite's authored origin, and horizontal/vertical tiling are separate

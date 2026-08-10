@@ -500,7 +500,7 @@ int write_bgnd(Pkg *pkg, const GmlcProject *p){
     wi32(&pkg->b,1);
     wi32(&pkg->b,ts->tile_count);
     while(pkg->b.len<rec+64) wu8(&pkg->b,0);
-    for(int id=0;id<ts->tile_count;id++) wi32(&pkg->b,id>0?id-1:0);
+    for(int id=0;id<ts->tile_count;id++) wi32(&pkg->b,id);
   }
   chunk_end(pkg,s);
   return 1;

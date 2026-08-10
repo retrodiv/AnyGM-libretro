@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "synthetic_content.h"
+#include "gmlc_package.h"
 #include "gmlc_project.h"
 #include "stdio_vfs.h"
 
@@ -30,14 +31,104 @@ static int write_text(const char *path,const char *text){
   return write_bytes(path,(const uint8_t *)text,strlen(text));
 }
 
+static uint32_t read_u32le(const uint8_t *data,size_t size,size_t offset,int *ok){
+  if(offset>size || size-offset<4){
+    *ok=0;
+    return 0;
+  }
+  return (uint32_t)data[offset] |
+         ((uint32_t)data[offset+1]<<8) |
+         ((uint32_t)data[offset+2]<<16) |
+         ((uint32_t)data[offset+3]<<24);
+}
+
+static int read_bytes(const char *path,uint8_t **data,size_t *size){
+  FILE *file=fopen(path,"rb");
+  if(!file || fseek(file,0,SEEK_END)!=0){
+    if(file) fclose(file);
+    return 0;
+  }
+  long length=ftell(file);
+  if(length<0 || fseek(file,0,SEEK_SET)!=0){
+    fclose(file);
+    return 0;
+  }
+  uint8_t *bytes=(uint8_t *)malloc((size_t)length ? (size_t)length : 1);
+  int ok=bytes && fread(bytes,1,(size_t)length,file)==(size_t)length;
+  if(fclose(file)!=0) ok=0;
+  if(!ok){
+    free(bytes);
+    return 0;
+  }
+  *data=bytes;
+  *size=(size_t)length;
+  return 1;
+}
+
+static int expect_tileset_source_indices(const char *directory){
+  char package_path[256];
+  snprintf(package_path,sizeof package_path,"%s/tileset-indices.win",directory);
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  GmlcTileset tileset={0};
+  tileset.id=tileset.name=(char *)"neutral_tileset";
+  tileset.sprite_id=-1;
+  tileset.tile_width=tileset.tile_height=16;
+  tileset.columns=2;
+  tileset.tile_count=4;
+  GmlcProject project={0};
+  project.host=&services;
+  project.name=(char *)"neutral-tileset-indices";
+  project.tilesets=&tileset;
+  project.n_tilesets=project.cap_tilesets=1;
+  char error[256]={0};
+  uint8_t *data=NULL;
+  size_t size=0;
+  int ok=gmlc_package_write_structural(&project,package_path,error,sizeof error) &&
+         read_bytes(package_path,&data,&size);
+  if(!ok){
+    fprintf(stderr,"tileset source-index package failed: %s\n",error);
+  }else{
+    size_t chunk=8, background=0;
+    while(chunk<=size && size-chunk>=8){
+      int bounded=1;
+      uint32_t chunk_size=read_u32le(data,size,chunk+4,&bounded);
+      size_t next=chunk+8+(size_t)chunk_size;
+      if(!bounded || next<chunk || next>size){ ok=0; break; }
+      if(!memcmp(data+chunk,"BGND",4)){ background=chunk+8; break; }
+      chunk=next;
+    }
+    int bounded=background!=0;
+    uint32_t count=bounded?read_u32le(data,size,background,&bounded):0;
+    uint32_t record=count==1?read_u32le(data,size,background+4,&bounded):0;
+    uint32_t ids[4]={0};
+    for(size_t i=0;i<4 && bounded;i++)
+      ids[i]=read_u32le(data,size,(size_t)record+64+i*4,&bounded);
+    ok=bounded && count==1 && ids[0]==0 && ids[1]==1 && ids[2]==2 && ids[3]==3;
+    if(!ok){
+      fprintf(stderr,"tileset source indices were [%" PRIu32 ", %" PRIu32 ", %" PRIu32 ", %" PRIu32 "]\n",
+              ids[0],ids[1],ids[2],ids[3]);
+    }
+  }
+  free(data);
+  remove(package_path);
+  return ok;
+}
+
 static int expect_modern_project_room_schema(const char *directory){
-  char yyp[256], sprite[256], object[256], font[256], font_png[256];
+  char yyp[256], sprite[256], sprite_png[256], object[256], font[256], font_png[256];
+  char tileset[256], tileset_output[256];
   char first_room[256], second_room[256];
   snprintf(yyp,sizeof(yyp),"%s/project.yyp",directory);
   snprintf(sprite,sizeof(sprite),"%s/sprite.yy",directory);
+  snprintf(sprite_png,sizeof(sprite_png),"%s/sprite-frame.png",directory);
   snprintf(object,sizeof(object),"%s/object.yy",directory);
   snprintf(font,sizeof(font),"%s/font.yy",directory);
   snprintf(font_png,sizeof(font_png),"%s/font_neutral.png",directory);
+  snprintf(tileset,sizeof(tileset),"%s/tileset.yy",directory);
+  snprintf(tileset_output,sizeof(tileset_output),"%s/output_tileset.png",directory);
   snprintf(first_room,sizeof(first_room),"%s/first-room.yy",directory);
   snprintf(second_room,sizeof(second_room),"%s/second-room.yy",directory);
   const char *project_text=
@@ -45,6 +136,7 @@ static int expect_modern_project_room_schema(const char *directory){
     "\"name\":\"neutral-modern-project\","
     "\"resources\":["
       "{\"Value\":{\"id\":\"sprite_neutral\",\"resourceType\":\"GMSprite\",\"resourcePath\":\"sprite.yy\"}},"
+      "{\"Value\":{\"id\":\"tileset_neutral\",\"resourceType\":\"GMTileSet\",\"resourcePath\":\"tileset.yy\"}},"
       "{\"Value\":{\"id\":\"font_neutral\",\"resourceType\":\"GMFont\",\"resourcePath\":\"font.yy\"}},"
       "{\"Value\":{\"id\":\"object_neutral\",\"resourceType\":\"GMObject\",\"resourcePath\":\"object.yy\"}},"
       "{\"Value\":{\"id\":\"room_second\",\"resourceType\":\"GMRoom\",\"resourcePath\":\"second-room.yy\"}},"
@@ -57,8 +149,16 @@ static int expect_modern_project_room_schema(const char *directory){
     "}";
   const char *sprite_text=
     "{"
-    "\"name\":\"sprite_neutral\",\"width\":16,\"height\":8,"
-    "\"frames\":[],\"resourceType\":\"GMSprite\",\"resourceVersion\":\"2.0\""
+    "\"name\":\"sprite_neutral\",\"width\":128,\"height\":128,"
+    "\"frames\":[{\"id\":\"sprite-frame\"}],\"resourceType\":\"GMSprite\",\"resourceVersion\":\"2.0\""
+    "}";
+  const char *tileset_text=
+    "{"
+    "\"name\":\"tileset_neutral\","
+    "\"spriteId\":\"sprite_neutral\",\"sprite_no_export\":true,"
+    "\"tilewidth\":32,\"tileheight\":32,\"out_tilehborder\":2,\"out_tilevborder\":2,"
+    "\"out_columns\":4,\"tile_count\":16,"
+    "\"resourceType\":\"GMTileSet\",\"resourceVersion\":\"1.0\""
     "}";
   const char *object_text=
     "{"
@@ -78,6 +178,14 @@ static int expect_modern_project_room_schema(const char *directory){
     0,0,0,13,'I','H','D','R',
     0,0,0,16,0,0,0,8
   };
+  uint8_t sprite_png_header[24];
+  uint8_t tileset_png_header[24];
+  memcpy(sprite_png_header,font_png_header,sizeof sprite_png_header);
+  memcpy(tileset_png_header,font_png_header,sizeof tileset_png_header);
+  sprite_png_header[19]=128;
+  sprite_png_header[23]=128;
+  tileset_png_header[18]=tileset_png_header[22]=0;
+  tileset_png_header[19]=tileset_png_header[23]=144;
   const char *first_room_text=
     "{"
     "\"name\":\"room_first\","
@@ -110,6 +218,9 @@ static int expect_modern_project_room_schema(const char *directory){
   char error[256]={0};
   int ok=write_text(yyp,project_text) &&
          write_text(sprite,sprite_text) &&
+         write_bytes(sprite_png,sprite_png_header,sizeof sprite_png_header) &&
+         write_text(tileset,tileset_text) &&
+         write_bytes(tileset_output,tileset_png_header,sizeof tileset_png_header) &&
          write_text(font,font_text) &&
          write_bytes(font_png,font_png_header,sizeof font_png_header) &&
          write_text(object,object_text) &&
@@ -122,6 +233,13 @@ static int expect_modern_project_room_schema(const char *directory){
     const GmlcRoom *room=&project.rooms[0];
     const GmlcRoomInstance *instance=room->n_instances?&room->instances[0]:NULL;
     ok=project.n_sprites==1 &&
+       project.n_tilesets==1 &&
+       project.tilesets[0].columns==4 &&
+       project.tilesets[0].tile_count==16 &&
+       project.sprites[0].width==144 &&
+       project.sprites[0].height==144 &&
+       project.sprites[0].n_frames==1 &&
+       !strcmp(project.sprites[0].frame_paths[0],tileset_output) &&
        project.n_fonts==1 &&
        project.fonts[0].n_glyphs==1 &&
        project.fonts[0].glyphs[0].ch==65 &&
@@ -155,6 +273,9 @@ static int expect_modern_project_room_schema(const char *directory){
   remove(second_room);
   remove(first_room);
   remove(object);
+  remove(tileset_output);
+  remove(tileset);
+  remove(sprite_png);
   remove(font_png);
   remove(font);
   remove(sprite);
@@ -196,6 +317,7 @@ int main(int argc,char **argv){
     ok=0;
   }
   if(ok && !expect_modern_project_room_schema(first.directory)) ok=0;
+  if(ok && !expect_tileset_source_indices(first.directory)) ok=0;
 
   free(first_bytes);
   free(second_bytes);

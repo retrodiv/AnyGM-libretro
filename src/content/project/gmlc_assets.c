@@ -528,10 +528,30 @@ static int parse_tileset(GmlcProject *p, const GmlcResource *res, const GmlcJson
   t.tile_height=gmlc_json_int(gmlc_json_obj(yy,"tileheight"),gmlc_json_int(gmlc_json_obj(yy,"tileHeight"),16));
   t.border_x=gmlc_json_int(gmlc_json_obj(yy,"out_tilehborder"),gmlc_json_int(gmlc_json_obj(yy,"tilehborder"),0));
   t.border_y=gmlc_json_int(gmlc_json_obj(yy,"out_tilevborder"),gmlc_json_int(gmlc_json_obj(yy,"tilevborder"),0));
-  t.columns=gmlc_json_int(gmlc_json_obj(yy,"tile_columns"),0);
+  t.columns=gmlc_json_int(gmlc_json_obj(yy,"tile_columns"),
+                          gmlc_json_int(gmlc_json_obj(yy,"out_columns"),0));
   t.tile_count=gmlc_json_int(gmlc_json_obj(yy,"tile_count"),gmlc_json_int(gmlc_json_obj(yy,"tilecount"),0));
   if(t.sprite_id>=0 && t.sprite_id<p->n_sprites){
-    const GmlcSprite *sp=&p->sprites[t.sprite_id];
+    GmlcSprite *sp=&p->sprites[t.sprite_id];
+    if(t.sprite_no_export && sp->n_frames>0 && sp->frame_paths){
+      char *dir=gmlc_path_dirname(res->abs_path);
+      char *output=gmlc_path_join(dir,"output_tileset.png");
+      int width=0,height=0;
+      if(output && png_file_dims(p,output,&width,&height)){
+        char *path=gmlc_strdup(output);
+        if(!path){
+          free(output); free(dir); free(t.id); free(t.name);
+          snprintf(err,errcap,"out of memory while loading tileset output texture");
+          return 0;
+        }
+        free(sp->frame_paths[0]);
+        sp->frame_paths[0]=path;
+        sp->width=width;
+        sp->height=height;
+      }
+      free(output);
+      free(dir);
+    }
     int pitch_x=t.tile_width + 2*t.border_x;
     int pitch_y=t.tile_height + 2*t.border_y;
     if(t.columns<=0 && pitch_x>0) t.columns=sp->width/pitch_x;

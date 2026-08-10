@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define REQUIRE(condition,label) do{ \
@@ -467,6 +468,69 @@ static int subtract_surface_coverage_case(void){
   return 0;
 }
 
+static int masked_sprite_surface_case(void){
+  enum { WIDTH=4,HEIGHT=3 };
+  GmlRender render;
+  uint32_t frame[WIDTH*HEIGHT];
+  memset(&render,0,sizeof render);
+  for(size_t index=0;index<WIDTH*HEIGHT;index++) frame[index]=0xFF000000u;
+  render.fb=render.base_fb=frame;
+  render.fbw=render.base_fbw=WIDTH;
+  render.fbh=render.base_fbh=HEIGHT;
+  render.target_id=-1;
+  render.next_surface_id=1;
+  render.alphablend=1;
+  render.alpha=1.0;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+  render.n_spr=1;
+  render.spr=calloc(1,sizeof(*render.spr));
+  REQUIRE(render.spr!=NULL,"masked sprite allocation");
+  render.spr[0].w=render.spr[0].h=1;
+  render.spr[0].n_frames=1;
+  render.spr[0].runtime_owned=1;
+  render.spr[0].runtime_opaque=1;
+  render.spr[0].runtime_rgba=malloc(4);
+  REQUIRE(render.spr[0].runtime_rgba!=NULL,"masked sprite pixels");
+  render.spr[0].runtime_rgba[0]=0;
+  render.spr[0].runtime_rgba[1]=0;
+  render.spr[0].runtime_rgba[2]=255;
+  render.spr[0].runtime_rgba[3]=255;
+
+  int surface=gml_surface_create(&render,WIDTH,HEIGHT);
+  REQUIRE(surface==1,"masked sprite surface id");
+  REQUIRE(gml_surface_set_target(&render,surface),"masked sprite set target");
+  gml_render_clear(&render,0xFFFFFFu,0.25);
+  render.color_write_mask=0x08;
+  gml_draw_sprite_ext(&render,0,0,1.0,1.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  const uint32_t *surface_pixels_now=surface_pixels(&render,surface,NULL,NULL);
+  REQUIRE(surface_pixels_now[0]==0x40FFFFFFu,
+          "alpha-only sprite preserves surface rgb");
+  REQUIRE(surface_pixels_now[WIDTH+1]==0xFFFFFFFFu,
+          "alpha-only sprite updates selected alpha");
+  render.color_write_mask=0x07;
+  gml_draw_sprite_tiled_ext(&render,0,0,0.0,0.0,1.0,1.0,0xFFFFFFu,1.0);
+  REQUIRE(surface_pixels_now[0]==0x400000FFu,
+          "rgb-only tiled sprite preserves surface alpha");
+  REQUIRE(surface_pixels_now[WIDTH+1]==0xFF0000FFu,
+          "rgb-only tiled sprite preserves opaque mask alpha");
+  render.color_write_mask=0x0F;
+  gml_surface_reset_target(&render);
+  gml_draw_surface_stretched(&render,surface,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  if(frame[0]!=0xFF00003Fu || frame[WIDTH+1]!=0xFF0000FFu){
+    fprintf(stderr,"renderer masked surface composite mismatch: %08x / %08x\n",
+            frame[0],frame[WIDTH+1]);
+    gml_render_free(&render);
+    return 1;
+  }
+  gml_render_free(&render);
+  return 0;
+}
+
 static int world_raster_scale_case(void){
   enum { TARGET_WIDTH=12,TARGET_HEIGHT=8 };
   GmlRender render;
@@ -610,6 +674,7 @@ int main(void){
           "zero-reference alpha-test case");
   REQUIRE(max_preset_surface_case()==0,"maximum preset surface case");
   REQUIRE(subtract_surface_coverage_case()==0,"subtract surface coverage case");
+  REQUIRE(masked_sprite_surface_case()==0,"masked sprite surface case");
   REQUIRE(world_raster_scale_case()==0,"world raster scale case");
   puts("renderer surfaces: ok");
   return 0;
