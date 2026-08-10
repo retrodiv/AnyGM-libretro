@@ -6,12 +6,13 @@
 #include <stdio.h>
 #include <string.h>
 
-static int resolve(uint32_t classic,uint32_t bytecode,uint64_t option_flags,
+static int resolve(uint32_t classic,uint32_t bytecode,uint64_t option_flags,int room_layers,
                    AnygmCompatibilityProfile *profile){
   GmlWin content={0};
   content.classic_version=(int)classic;
   content.bytecode=(uint8_t)bytecode;
   content.option_flags=option_flags;
+  content.has_room_layers=room_layers;
   AnygmContentFacts facts={0};
   char error[128]={0};
   return anygm_content_facts_detect(&content,&facts,error,sizeof error) &&
@@ -21,10 +22,12 @@ static int resolve(uint32_t classic,uint32_t bytecode,uint64_t option_flags,
 int main(void){
   AnygmCompatibilityProfile classic_early={0},classic_late={0};
   AnygmCompatibilityProfile first_early={0},first_late={0},second={0},flagged={0},beta={0};
-  if(!resolve(600,16,0,&classic_early) || !resolve(800,16,0,&classic_late) ||
-     !resolve(0,14,0,&first_early) || !resolve(0,16,0,&first_late) ||
-     !resolve(0,17,0,&second) || !resolve(0,15,UINT64_C(0x08000000),&flagged) ||
-     !resolve(0,15,UINT64_C(0x00400000),&beta)){
+  AnygmCompatibilityProfile flagged_without_layers={0};
+  if(!resolve(600,16,0,0,&classic_early) || !resolve(800,16,0,0,&classic_late) ||
+     !resolve(0,14,0,0,&first_early) || !resolve(0,16,0,0,&first_late) ||
+     !resolve(0,17,0,0,&second) || !resolve(0,15,UINT64_C(0x08000000),0,&flagged) ||
+     !resolve(0,15,UINT64_C(0x00400000),1,&beta) ||
+     !resolve(0,15,UINT64_C(0x00400000),0,&flagged_without_layers)){
     fputs("known compatibility facts were rejected\n",stderr);
     return 1;
   }
@@ -66,6 +69,11 @@ int main(void){
     fputs("early second-generation presentation policy mismatch\n",stderr);
     return 1;
   }
+  if(flagged_without_layers.has_modern_layer_semantics ||
+     flagged_without_layers.blend!=ANYGM_BLEND_STUDIO_FIRST){
+    fputs("layerless flagged Studio package selected second-generation rendering\n",stderr);
+    return 1;
+  }
   if(second.diagnostic_family!=ANYGM_FAMILY_STUDIO_SECOND ||
      !second.has_modern_function_values || !second.has_modern_struct_semantics ||
      !second.has_modern_screen_stage ||
@@ -84,11 +92,11 @@ int main(void){
     return 1;
   }
   AnygmCompatibilityProfile repeated={0};
-  if(!resolve(0,17,0,&repeated) || memcmp(&repeated,&second,sizeof second)){
+  if(!resolve(0,17,0,0,&repeated) || memcmp(&repeated,&second,sizeof second)){
     fputs("compatibility resolution was not deterministic\n",stderr);
     return 1;
   }
-  if(resolve(650,16,0,&repeated) || resolve(0,18,0,&repeated)){
+  if(resolve(650,16,0,0,&repeated) || resolve(0,18,0,0,&repeated)){
     fputs("unknown compatibility facts were accepted\n",stderr);
     return 1;
   }

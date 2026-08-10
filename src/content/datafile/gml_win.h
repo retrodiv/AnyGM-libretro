@@ -129,6 +129,7 @@ typedef struct GmlWin {
    * helper binaries built against an older header retain all pre-existing field offsets. */
   uint64_t option_flags;             /* OPTN flags when the package uses the flagged layout */
   int classic_executable_layout;     /* CLSC tail: embedded rooms retain encoded chain order */
+  int has_room_layers;               /* at least one structurally valid GMS2 ROOM layer list */
   const struct AnygmCompatibilityProfile *compatibility; /* immutable runtime policy, engine-owned */
   const struct AnygmHostServices *host; /* borrowed immutable service table, engine-owned */
 } GmlWin;
@@ -146,6 +147,7 @@ const char  *gml_win_intern_lookup(GmlWin *w, const char *s);   /* O(1) STRG con
 const char  *gml_ref_name(const GmlWin *w, uint32_t addr);
 int          gml_room_count(const GmlWin *w);
 int          gml_room_get(const GmlWin *w, int room_index, GmlRoom *out);
+uint32_t     gml_room_layer_list(const GmlWin *w, int room_index, uint32_t *out_count);
 
 /* The low-level decoder requires enough readable operand bytes for the encoded
  * instruction. Content-derived callers use the bounded entry point. */

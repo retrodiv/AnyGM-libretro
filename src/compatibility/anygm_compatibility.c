@@ -86,6 +86,7 @@ int anygm_content_facts_detect(const GmlWin *content,AnygmContentFacts *facts,
   facts->classic_revision=content->classic_version>0?(uint32_t)content->classic_version:0;
   facts->bytecode_revision=content->bytecode;
   facts->option_flags=content->option_flags;
+  facts->has_room_layers=content->has_room_layers?1u:0u;
   facts->classic_scaling=content->classic_scaling>0?(uint32_t)content->classic_scaling:0;
   facts->classic_interpolate=content->classic_interpolate?1u:0u;
   facts->classic_swap_creation_events=content->classic_swap_creation_events?1u:0u;
@@ -115,11 +116,12 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   profile->schema_version=ANYGM_COMPATIBILITY_SCHEMA;
   int classic=facts->classic_revision!=0;
   int modern=facts->bytecode_revision>=17;
-  /* The structural option flag selects second-generation rendering independently from the
-   * instruction encoding. Keep language and value semantics tied to bytecode while resolving
-   * layer and pixel policies from the declared presentation format. */
+  /* The ROOM layer list is the structural rendering-generation fact. An
+   * OPTN capability bit also occurs in packages without this layout. Keep
+   * language and value semantics tied to instruction encoding while resolving
+   * layer and pixel policies independently from the effective ROOM layout. */
   int second_generation_rendering=!classic &&
-    (modern || (facts->option_flags&UINT64_C(0x00400000))!=0);
+    (modern || facts->has_room_layers);
   profile->diagnostic_family=classic?ANYGM_FAMILY_CLASSIC:
     (modern?ANYGM_FAMILY_STUDIO_SECOND:ANYGM_FAMILY_STUDIO_FIRST);
   profile->uses_classic_runtime=classic;

@@ -297,7 +297,8 @@ static void gml_vm_apply_pending_room(GmlVM *vm){
     /* Newly bound layer assets receive the first animation tick at the same room-entry step
      * boundary as new instances. Scrolling still derives from room_enter_frame, so only stateful
      * layer elements advance here. */
-    gml_vm_frame_advance_layers(vm);
+    if(anygm_policy_has_modern_layer_semantics(vm->win))
+      gml_vm_frame_advance_layers(vm);
     GmlRender *render=(GmlRender*)vm->render;
     const char *anim_dbg=anygm_host_development_setting(vm->host,"GML_ANIM_OBJ");
     for(int i=0;i<vm->inst_count;i++){

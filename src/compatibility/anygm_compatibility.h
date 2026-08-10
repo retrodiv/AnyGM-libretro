@@ -56,6 +56,7 @@ typedef struct AnygmContentFacts {
   uint32_t classic_revision;
   uint32_t bytecode_revision;
   uint64_t option_flags;
+  uint32_t has_room_layers;
   uint32_t classic_scaling;
   uint32_t classic_interpolate;
   uint32_t classic_swap_creation_events;

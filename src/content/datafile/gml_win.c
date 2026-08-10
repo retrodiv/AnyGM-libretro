@@ -348,6 +348,45 @@ int gml_room_get(const GmlWin *w, int idx, GmlRoom *o){
   return 0;
 }
 
+/* ROOM layer lists are a data-layout feature, not an instruction-encoding
+ * feature. Detect the list structurally so content policy and runtime consume
+ * the same fact; an OPTN capability bit alone does not identify this layout. */
+uint32_t gml_room_layer_list(const GmlWin *w, int room_index, uint32_t *out_count){
+  if(out_count) *out_count=0;
+  int room_count=gml_room_count(w);
+  if(!w || !w->data || room_index<0 || room_index>=room_count) return 0;
+  const GmlChunk *room=gml_chunk(w,"ROOM");
+  if(!room) return 0;
+  uint64_t end=(uint64_t)room->off+room->size;
+  uint64_t slot=(uint64_t)room->off+4u+(uint64_t)(uint32_t)room_index*4u;
+  if(slot+4u>end) return 0;
+  uint32_t record=u32(w->data,(uint32_t)slot);
+  if(record<room->off || (uint64_t)record+92u>end) return 0;
+  static const uint8_t layer_slots[]={88,92,96,100,104,108,112,116,120};
+  for(size_t candidate=0;candidate<sizeof layer_slots/sizeof layer_slots[0];candidate++){
+    uint32_t offset=layer_slots[candidate];
+    if((uint64_t)record+offset+4u>end) break;
+    uint32_t list=u32(w->data,record+offset);
+    if(list<room->off || (uint64_t)list+4u>end) continue;
+    uint32_t count=u32(w->data,list);
+    if(count==0 || count>=512 || (uint64_t)list+4u+(uint64_t)count*4u>end) continue;
+    int valid=1;
+    for(uint32_t index=0;index<count;index++){
+      uint32_t layer=u32(w->data,list+4u+index*4u);
+      if(layer<room->off || (uint64_t)layer+36u>end){ valid=0; break; }
+      uint32_t type=u32(w->data,layer+8u);
+      if(type<1 || type>8 || u32(w->data,layer+32u)>1){ valid=0; break; }
+      uint32_t name=u32(w->data,layer);
+      if(name && name>=w->size){ valid=0; break; }
+    }
+    if(valid){
+      if(out_count) *out_count=count;
+      return list;
+    }
+  }
+  return 0;
+}
+
 static int room_table_valid(const GmlWin *w){
   const GmlChunk *c=gml_chunk(w,"ROOM");
   if(!c) return 1;
@@ -454,6 +493,12 @@ int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
     return discard_partial_win_because(w,"the string table (STRG) could not be read");
   if(!room_table_valid(w))
     return discard_partial_win_because(w,"the room table (ROOM) is not valid");
+  for(int room=0;room<gml_room_count(w);room++){
+    if(gml_room_layer_list(w,room,NULL)){
+      w->has_room_layers=1;
+      break;
+    }
+  }
   if(!parse_gen8(w))
     return discard_partial_win_because(w,"the general header (GEN8) could not be read");
   const GmlChunk *opt=gml_chunk(w,"OPTN");

@@ -43,6 +43,12 @@ int expect_early_native_layer_animation(void){
   win.chunks[0].off=0;
   win.chunks[0].size=sizeof data;
 
+  uint32_t detected_layers=0;
+  if(gml_room_layer_list(&win,0,&detected_layers)!=180 || detected_layers!=1){
+    fputs("early native ROOM layer list was not detected structurally\n",stderr);
+    return 0;
+  }
+
   GmlRtLayer layer={0};
   layer.id=1001;
   layer.used=1;

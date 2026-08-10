@@ -544,44 +544,8 @@ static void room_runtime_state_restore(GmlVM *vm, int room){
   }
 }
 
-/* GMS2-style ROOM layers are a data-layout feature, not a bytecode-version feature. Early
- * exports can still use bytecode 15, while newer room records inserted an editor scalar before
- * the layer pointer and shifted it from +88 to +92. Detect the slot structurally inside ROOM so
- * both layouts work and classic records cannot be mistaken for a layer list. */
 uint32_t gml_vm_rooms_layer_list(GmlVM *vm, int room_index, uint32_t *out_count){
-  if(out_count) *out_count=0;
-  if(!vm || !vm->win || room_index<0 || room_index>=gml_room_count(vm->win)) return 0;
-  const GmlChunk *rc=gml_chunk(vm->win,"ROOM");
-  if(!rc) return 0;
-  const uint8_t *d=vm->win->data;
-  uint64_t rend=(uint64_t)rc->off+rc->size;
-  uint64_t slot=(uint64_t)rc->off+4u+(uint64_t)(uint32_t)room_index*4u;
-  if(slot+4u>rend) return 0;
-  uint32_t rp=gml_vm_read_u32_le(d,(uint32_t)slot);
-  if(rp<rc->off || (uint64_t)rp+92u>rend) return 0;
-  static const uint8_t layer_slots[]={88,92,96,100,104,108,112,116,120};
-  for(size_t s=0;s<sizeof(layer_slots)/sizeof(layer_slots[0]);s++){
-    uint32_t lo=layer_slots[s];
-    if((uint64_t)rp+lo+4u>rend) break;
-    uint32_t lay=gml_vm_read_u32_le(d,rp+lo);
-    if(lay<rc->off || (uint64_t)lay+4u>rend) continue;
-    uint32_t lcnt=gml_vm_read_u32_le(d,lay);
-    if(lcnt==0 || lcnt>=512 || (uint64_t)lay+4u+(uint64_t)lcnt*4u>rend) continue;
-    int valid=1;
-    for(uint32_t i=0;i<lcnt;i++){
-      uint32_t lp=gml_vm_read_u32_le(d,lay+4+i*4);
-      if(lp<rc->off || (uint64_t)lp+36u>rend){ valid=0; break; }
-      uint32_t type=gml_vm_read_u32_le(d,lp+8);
-      if(type<1 || type>8 || gml_vm_read_u32_le(d,lp+32)>1){ valid=0; break; }
-      uint32_t name=gml_vm_read_u32_le(d,lp);
-      if(name && name>=vm->win->size){ valid=0; break; }
-    }
-    if(valid){
-      if(out_count) *out_count=lcnt;
-      return lay;
-    }
-  }
-  return 0;
+  return vm?gml_room_layer_list(vm->win,room_index,out_count):0;
 }
 
 /* GMS2 room-layer type-data offset (+36, or +48 plus 12 bytes per effect property when the

@@ -2435,7 +2435,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   double inv_x=1.0/axs, inv_y=1.0/ays;
   int reciprocal_x=fabs(inv_x-nearbyint(inv_x))<1e-9;
   int reciprocal_y=fabs(inv_y-nearbyint(inv_y))<1e-9;
-  int studio_point_phase=!r->classic;
+  int studio_point_phase=r->win && anygm_policy_has_modern_layer_semantics(r->win);
   double sample_x=!flipx && (studio_point_phase || (r->classic&&!reciprocal_x))
     ? x0+0.5-dx : 0.5;
   double sample_y=!flipy && (studio_point_phase || (r->classic&&!reciprocal_y))
