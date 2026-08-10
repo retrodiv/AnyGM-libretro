@@ -117,13 +117,39 @@ static inline int shader_discards_alpha_value(GmlRender *r, double alpha){
 static inline int shader_discards_alpha(GmlRender *r, unsigned alpha){
   return shader_discards_alpha_value(r,(double)alpha);
 }
+/* Evaluate the ordered-dither cutout for one destination pixel. The cell order is the fragment's
+ * own arithmetic rather than a copied table: for each of the sixteen steps the column is
+ * floor(i/2)*2 + floor((i-1)/4) - floor((i-1)/8) and the row is floor((i-1)/4), plus two when i is
+ * even, both wrapped to four. The position is wrapped by the same floor identity the fragment uses,
+ * so a negative world coordinate lands on the cell the shader would pick. */
+static inline int shader_ordered_dither_active(GmlRender *r){
+  const struct GmlShaderPal *sp=shader_active(r);
+  return sp && sp->ordered_dither;
+}
+static inline int shader_ordered_dither_drops(GmlRender *r, double position_x, double position_y){
+  const struct GmlShaderPal *sp=shader_active(r);
+  if(!sp || !sp->ordered_dither) return 0;
+  int level=(int)(sp->ordered_dither_alpha*16.0f);   /* GLSL int() truncates toward zero */
+  if(level<=0) return 1;
+  if(level>16) level=16;
+  int cell_x=(int)(position_x-floor(position_x/4.0)*4.0);
+  int cell_y=(int)(position_y-floor(position_y/4.0)*4.0);
+  for(int step=1;step<=level;step++){
+    int column=((step/2)*2 + (step-1)/4 - (step-1)/8) & 3;
+    int row=((step&1) ? (step-1)/4 : 2+(step-1)/4) & 3;
+    if(column==cell_x && row==cell_y) return 0;
+  }
+  return 1;
+}
 static inline int shader_alpha_test_active(GmlRender *r){
   const struct GmlShaderPal *sp=shader_active(r);
-  return (sp && sp->alpha_discard) || (r && r->alpha_test_enable);
+  return (sp && (sp->alpha_discard || sp->ordered_dither)) || (r && r->alpha_test_enable);
 }
 static inline int shader_alpha_test_requires_filter(GmlRender *r){
   const struct GmlShaderPal *sp=shader_active(r);
-  if(sp && sp->alpha_discard) return 1;
+  /* A dithered pass covers at most every pixel and usually far fewer, so the caches that assume a
+   * textured draw is opaque must not be taken. */
+  if(sp && (sp->alpha_discard || sp->ordered_dither)) return 1;
   /* Ordinary textured kernels already skip zero-coverage texels. Fixed-function alpha testing at
    * reference zero therefore changes no output and must not disable sparse and opaque caches. */
   return r && r->alpha_test_enable && r->alpha_test_ref>0;

@@ -1910,6 +1910,12 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
          world_space ? (double)py+0.5+r->cam_y : (double)py+0.5) : ly*sw+lx);
     const uint8_t *sp=src+(size_t)source_index*4u;
       if(shader_discards_alpha(r,sp[3])) continue;
+      /* An ordered-dither pass keeps or drops the whole texel by its position. The fragment reads
+       * the interpolated object-space vertex position, which for this blit is the destination pixel
+       * carried back into world space the same way the wave sampler above does it. */
+      if(shader_ordered_dither_drops(r,
+           world_space ? (double)px+0.5+r->cam_x : (double)px+0.5,
+           world_space ? (double)py+0.5+r->cam_y : (double)py+0.5)) continue;
       uint32_t sampled=((uint32_t)sp[3]<<24)|((uint32_t)sp[0]<<16)|
                        ((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
       if(mapped_texture_active(r)) sampled=mapped_texture_pixel(r,sampled);
@@ -5513,6 +5519,11 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
         if(ix<0||ix>=t->sw) continue;
         uint8_t *sp=a->px + ((size_t)(t->sy+iy)*a->w + (t->sx+ix))*4;
         if(shader_discards_alpha(r,sp[3])) continue;
+        /* The destination is in framebuffer space and the camera was subtracted from the
+         * destination origin above, so adding it back gives the object-space position the
+         * fragment interpolates. */
+        if(shader_ordered_dither_drops(r,(double)(cx0+xx)+0.5+r->cam_x,
+                                         (double)(cy0+yy)+0.5+r->cam_y)) continue;
         uint32_t sampled=((uint32_t)sp[3]<<24)|((uint32_t)sp[0]<<16)|
                          ((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
         if(mapped_texture_active(r)) sampled=mapped_texture_pixel(r,sampled);
@@ -5565,6 +5576,10 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
         for(int yy=cy0; yy<cy1; yy++){
           uint32_t *dp=r->fb+(size_t)yy*r->fbw+cx0;
           for(int xx=cx0; xx<cx1; xx++,dp++){
+            /* A dithered veil covers only its pattern cells and preserves the other
+             * destination pixels in the framebuffer. */
+            if(shader_ordered_dither_drops(r,(double)xx+0.5+r->cam_x,
+                                             (double)yy+0.5+r->cam_y)) continue;
             if(!r->alphablend || sa>=1.0){ *dp=opaque; continue; }
             uint32_t dv=*dp; int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
             *dp=0xFF000000u | ((int)(srcR*sa+dr*ia+0.5)<<16) | ((int)(srcG*sa+dg*ia+0.5)<<8) | (int)(srcB*sa+db*ia+0.5);
@@ -5577,7 +5592,9 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
   gml_render_maybe_prepare_draw(r);
   /* Bilinear magnification when interpolation is on (matches the GPU; e.g. a full-screen overlay
    * sprite stretched up for the "old TV" veil). Sample 4 sprite texels at the output pixel centre. */
-  if(r->interp && W>sw && H>sh){
+  /* The banded bilinear kernel writes every destination pixel it covers. A dithered pass covers
+   * only its pattern cells, so it takes the general loop below, which consults the pattern. */
+  if(r->interp && W>sw && H>sh && !shader_ordered_dither_active(r)){
     /* per-column/row atlas offsets precomputed (with the tpag crop resolved to a byte offset or -1
      * for transparent), so the inner loop is 4 reads + float taps — no per-pixel div/floor/branches. */
     ptrdiff_t *colA=malloc((size_t)W*sizeof(ptrdiff_t)), *colB=malloc((size_t)W*sizeof(ptrdiff_t));
@@ -5624,6 +5641,8 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
        * systematically DARKENED a bright overlay; keep full float precision and round at the end. */
       double fA=A/(double)n;
       if(shader_discards_alpha_value(r,fA)) continue;
+      if(shader_ordered_dither_drops(r,(double)tx_+0.5+r->cam_x,
+                                       (double)ty_+0.5+r->cam_y)) continue;
       int sample_a=(int)floor(fA+0.5);
       int sample_r=(int)floor(R/(double)n+0.5);
       int sample_g=(int)floor(G/(double)n+0.5);

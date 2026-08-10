@@ -761,6 +761,8 @@ int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *n
         if(!strcmp(name,recognized->noise_jumble_uniform[index]))
           return GML_RENDER_SHADER_HANDLE(
             shader,GML_RENDER_NOISE_JUMBLE_HANDLE_BASE+index);
+    if(recognized->ordered_dither && !strcmp(name,recognized->ordered_dither_uniform))
+      return GML_RENDER_SHADER_HANDLE(shader,64);
     if(recognized->lut && !strcmp(name,recognized->lut_row_uniform))
       return GML_RENDER_SHADER_HANDLE(shader,1);
     if(recognized->lut_indexed){
@@ -866,6 +868,10 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
     int index=slot-20;
     for(int component=0;component<4;component++)
       recognized->sampled_crt_value[index][component]=(float)values[component];
+    return;
+  }
+  if(slot==64){
+    if(recognized->ordered_dither) recognized->ordered_dither_alpha=(float)values[0];
     return;
   }
   if(slot==1){

@@ -269,6 +269,16 @@ typedef struct GmlRender {
      * the embedded GLSL, so texture draws can preserve hard sprite edges without a GPU. */
     int alpha_discard, alpha_discard_inclusive;
     float alpha_discard_cutoff;
+    /* Ordered-dither cutout family. The fragment samples gm_BaseTexture once, multiplies it by the
+     * vertex colour, then replaces the alpha with one cell of a 4x4 pattern selected by the
+     * interpolated object-space position. The pattern is built from a single float uniform
+     * quantised to seventeen levels, so the result is an exact per-pixel keep-or-drop decision
+     * with no filtering: a fade that a software renderer can reproduce rather than approximate.
+     * Drawing such a pass unshaded paints the source at full coverage, which is the opposite of
+     * what a low uniform asks for. */
+    int ordered_dither;
+    char ordered_dither_uniform[32];
+    float ordered_dither_alpha;
     /* Constant-colour alpha-mask family. The fragment samples the base texture once, clears alpha
      * below a parsed literal threshold, and emits a uniform RGB with the remaining source alpha.
      * The parser derives the uniform and comparison from the complete fragment operation graph. */
