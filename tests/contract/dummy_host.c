@@ -173,9 +173,13 @@ static int exercise_forced_aspect_shapes(void){
 
 static int exercise_declared_global_cadence(AnygmEngine *engine){
   double saved_content_fps=engine->win.game_speed;
+  uint8_t saved_bytecode=engine->win.bytecode;
   unsigned saved_modern_layers=engine->compatibility.has_modern_layer_semantics;
   double saved_fps=engine->fps;
   int saved_fps_room=engine->fps_room;
+  GmlVal *room_speed=gml_varmap_get(&engine->vm.globals,"room_speed");
+  int had_room_speed=room_speed!=NULL;
+  GmlVal saved_room_speed=had_room_speed?*room_speed:vundef();
 
   engine->win.game_speed=30.0;
   engine->compatibility.has_modern_layer_semantics=1;
@@ -186,7 +190,18 @@ static int exercise_declared_global_cadence(AnygmEngine *engine){
   av.struct_size=sizeof av;
   int ok=anygm_get_av_info(engine,&av)==ANYGM_OK && av.frames_per_second==30.0;
 
+  /* Revision-16 Studio 1 can use later presentation while retaining the
+   * room resource as its only authored cadence. */
+  engine->win.game_speed=0.0;
+  engine->win.bytecode=16;
+  *gml_varmap_put(&engine->vm.globals,"room_speed")=vreal(30.0);
+  engine->fps_room=-1;
+  sync_room_fps(engine,0);
+  ok=ok && anygm_get_av_info(engine,&av)==ANYGM_OK && av.frames_per_second==30.0;
+
   engine->win.game_speed=saved_content_fps;
+  engine->win.bytecode=saved_bytecode;
+  *gml_varmap_put(&engine->vm.globals,"room_speed")=had_room_speed?saved_room_speed:vundef();
   engine->compatibility.has_modern_layer_semantics=saved_modern_layers;
   engine->fps=saved_fps;
   engine->fps_room=saved_fps_room;

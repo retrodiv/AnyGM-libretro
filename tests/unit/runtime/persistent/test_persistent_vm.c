@@ -138,6 +138,10 @@ int expect_room_camera_reservation(void){
   win.strs=strings;
   win.str_charoff=string_offsets;
   win.n_strs=1;
+  AnygmCompatibilityProfile profile={0};
+  profile.has_modern_layer_semantics=1;
+  profile.legacy_view_slots=1;
+  win.compatibility=&profile;
 
   GmlVM vm;
   if(gml_vm_init(&vm,&win,NULL)) return 0;
@@ -168,6 +172,68 @@ int expect_room_camera_reservation(void){
   return ok;
 }
 
+
+int expect_revision16_room_uses_legacy_view(void){
+  uint8_t data[512]={0};
+  char *strings[]={(char*)"legacy_camera_room"};
+  uint32_t string_offsets[]={400};
+  fixture_w32(data,0,1);
+  fixture_w32(data,4,16);
+  fixture_w32(data,16,400);
+  fixture_w32(data,24,320);
+  fixture_w32(data,28,480);
+  fixture_w32(data,32,30);
+  fixture_w32(data,52,1);
+  fixture_w32(data,56,284);
+  fixture_w32(data,60,128);
+  fixture_w32(data,64,288);
+  fixture_w32(data,68,292);
+  fixture_w32(data,128,1);
+  fixture_w32(data,132,160);
+  fixture_w32(data,160,1);
+  fixture_w32(data,164,0);
+  fixture_w32(data,168,48);
+  fixture_w32(data,172,320);
+  fixture_w32(data,176,240);
+  fixture_w32(data,188,640);
+  fixture_w32(data,192,480);
+  fixture_w32(data,204,(uint32_t)-1);
+  fixture_w32(data,208,(uint32_t)-1);
+  fixture_w32(data,212,(uint32_t)-1);
+
+  GmlWin win={0};
+  win.data=data;
+  win.size=sizeof data;
+  win.bytecode=16;
+  win.option_flags=UINT64_C(0x00400000);
+  win.n_chunks=1;
+  memcpy(win.chunks[0].name,"ROOM",5);
+  win.chunks[0].off=0;
+  win.chunks[0].size=sizeof data;
+  win.strs=strings;
+  win.str_charoff=string_offsets;
+  win.n_strs=1;
+
+  AnygmCompatibilityProfile profile={0};
+  profile.has_modern_layer_semantics=1;
+  profile.legacy_view_slots=1;
+  win.compatibility=&profile;
+
+  GmlVM vm;
+  if(gml_vm_init(&vm,&win,NULL)) return 0;
+  gml_room_enter(&vm,0);
+  double camera=gml_global_arr(&vm,"view_camera",0);
+  int ok=camera==-1 &&
+    gml_global_arr(&vm,"__gml_camera_live",0)==0 &&
+    gml_global_arr(&vm,"view_yview",0)==48;
+  if(!ok)
+    fprintf(stderr,
+      "revision-16 legacy room view was replaced by a synthetic camera: camera=%.0f live=%.0f y=%.0f\n",
+      camera,
+      gml_global_arr(&vm,"__gml_camera_live",0),gml_global_arr(&vm,"view_yview",0));
+  gml_vm_free(&vm);
+  return ok;
+}
 
 int expect_room_order_boundaries(void){
   GmlcProject project={0};

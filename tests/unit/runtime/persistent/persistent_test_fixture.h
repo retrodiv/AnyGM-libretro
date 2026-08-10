@@ -30,6 +30,7 @@ int expect_member_callable_receiver(void);
 int expect_early_native_layer_animation(void);
 int expect_deactivated_instance_reference(void);
 int expect_room_camera_reservation(void);
+int expect_revision16_room_uses_legacy_view(void);
 int expect_room_order_boundaries(void);
 int expect_alarm_dispatch_order(void);
 int expect_automatic_motion_order(void);

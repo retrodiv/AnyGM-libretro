@@ -312,11 +312,19 @@ static double cur_room_fps(AnygmEngine *engine) {
   /* Keep the reported frame rate stable. Studio projects can change room_speed mid-play for
    * effects, so modern content uses its GEN8 global cadence instead of repeatedly reconfiguring
    * the host. game_set_speed() remains authoritative when code explicitly changes that cadence.
-   * Older content keeps its room resource speed, with GEN8 as a stable fallback when present. */
+   *
+   * Revision-16 Studio 1 packages can carry the later render-target OPTN bit even though their
+   * GEN8 layout has no global cadence. Presentation is second-generation for those packages, but
+   * scheduling still uses the authored room speed. Early revision-15 Studio 2 and revision-17
+   * packages retain the modern 60 Hz default when GEN8 supplies no speed. */
   double fps = explicit_game_speed_fps(engine);
   if(fps > 0.0) return fps;
-  if(anygm_policy_has_modern_layer_semantics(&engine->win))
-    return engine->win.game_speed > 0.0 ? engine->win.game_speed : 60.0;
+  if(anygm_policy_has_modern_layer_semantics(&engine->win)){
+    if(engine->win.game_speed > 0.0) return engine->win.game_speed;
+    if(engine->win.bytecode != 16) return 60.0;
+    fps = gml_room_speed(&engine->vm);
+    if(fps > 0.0) return fps;
+  }
   GmlRoom r;
   if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &r) == 0 && r.speed > 0) return (double)r.speed;
   if(engine->win.game_speed > 0.0) return engine->win.game_speed;

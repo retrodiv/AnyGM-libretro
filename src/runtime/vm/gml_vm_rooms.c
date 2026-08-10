@@ -441,6 +441,17 @@ static const char *const room_view_fields[]={
  * room is entered. */
 static void room_camera_resources_init(GmlVM *vm,int reset_bindings){
   if(!vm || !vm->win || !anygm_policy_has_modern_layer_semantics(vm->win)) return;
+  /* Revision-16 Studio 1 packages can use the later render-target/layer layout
+   * while retaining fourteen-field ROOM views. Keep those legacy view fields
+   * authoritative rather than synthesizing reserved room-camera resources.
+   * Dynamic cameras remain available when code creates and binds them. */
+  if(vm->win->bytecode==16){
+    for(int camera=0;camera<GML_ROOM_CAMERA_COUNT;camera++){
+      if(reset_bindings) gml_vm_global_array_set(vm,"view_camera",camera,-1);
+      gml_vm_global_array_set(vm,"__gml_camera_live",camera,0);
+    }
+    return;
+  }
   static const char *const camera_fields[]={
     "__gml_camera_x","__gml_camera_y","__gml_camera_w","__gml_camera_h",
     "__gml_camera_angle","__gml_camera_target","__gml_camera_xspeed",

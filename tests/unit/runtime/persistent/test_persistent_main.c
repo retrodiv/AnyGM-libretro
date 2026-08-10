@@ -24,6 +24,7 @@ int main(int argc,char **argv){
     {"early_native_layer_animation",expect_early_native_layer_animation},
     {"deactivated_instance_reference",expect_deactivated_instance_reference},
     {"room_camera_reservation",expect_room_camera_reservation},
+    {"revision16_legacy_room_view",expect_revision16_room_uses_legacy_view},
     {"room_order_boundaries",expect_room_order_boundaries},
     {"alarm_dispatch_order",expect_alarm_dispatch_order},
     {"automatic_motion_order",expect_automatic_motion_order},
