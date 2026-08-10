@@ -783,7 +783,7 @@ void compute_present(AnygmEngine *engine) {
    * explicit window is the drawing coordinate system even when the application surface remains at
    * the smaller view size. Preserve that authored raster; otherwise the Post-Draw margins are
    * clipped to the central view. The signals are runtime semantics, independent of game identity. */
-  if (anygm_policy_has_modern_layer_semantics(&engine->win) && !engine->aspect_force_active && !engine->canvas_mode &&
+  if (anygm_policy_has_modern_screen_stage(&engine->win) && !engine->aspect_force_active && !engine->canvas_mode &&
       !renderer.application_draw_enabled &&
       engine->vm.gui_w <= 0 && engine->vm.gui_h <= 0 &&
       engine->vm.window_w > 0 && engine->vm.window_h > 0 &&
@@ -804,7 +804,7 @@ void compute_present(AnygmEngine *engine) {
    * and automatic app-surface drawing.  Self-compositing games disable app_draw_enable and keep
    * their existing logical/GUI path; explicit GUI canvases and aspect overrides are likewise
    * left untouched. */
-  if (anygm_policy_has_modern_layer_semantics(&engine->win) && !engine->aspect_force_active && !engine->canvas_mode &&
+  if (anygm_policy_has_modern_screen_stage(&engine->win) && !engine->aspect_force_active && !engine->canvas_mode &&
       renderer.application_owned && renderer.application_draw_enabled &&
       engine->vm.gui_w <= 0 && engine->vm.gui_h <= 0 &&
       renderer.application_width > 0 && renderer.application_height > 0 &&

@@ -1167,7 +1167,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	   * surface as the final Studio raster.  Its view port describes the world inside that
 	   * already-composed surface; fitting the complete surface through the view's slightly
 	   * different aspect would introduce a one-pixel border. */
-	  if (!engine->aspect_force_active && anygm_policy_has_modern_layer_semantics(&engine->win) &&
+	  if (!engine->aspect_force_active && anygm_policy_has_modern_screen_stage(&engine->win) &&
 	      render_presentation.application_owned &&
 	      render_presentation.application_draw_enabled &&
 	      engine->vm.gui_w <= 0 && engine->vm.gui_h <= 0 &&

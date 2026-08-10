@@ -53,6 +53,7 @@ static uint64_t compatibility_fingerprint(const AnygmCompatibilityProfile *profi
   ENCODE_FIELD(has_modern_function_values);
   ENCODE_FIELD(has_modern_struct_semantics);
   ENCODE_FIELD(has_modern_layer_semantics);
+  ENCODE_FIELD(has_modern_screen_stage);
   ENCODE_FIELD(uses_room_speed_cadence);
   ENCODE_FIELD(uses_legacy_room_cameras);
   ENCODE_FIELD(advances_animation_before_step);
@@ -125,6 +126,8 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   profile->has_modern_function_values=modern;
   profile->has_modern_struct_semantics=modern;
   profile->has_modern_layer_semantics=second_generation_rendering;
+  /* The screen stage stays with the instruction encoding: see the policy's own comment. */
+  profile->has_modern_screen_stage=modern;
   profile->uses_room_speed_cadence=!classic&&facts->bytecode_revision==16;
   profile->uses_legacy_room_cameras=!classic&&facts->bytecode_revision==16;
   profile->comparison=classic?ANYGM_COMPARISON_CLASSIC_EPSILON:

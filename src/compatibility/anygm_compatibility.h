@@ -75,6 +75,7 @@ typedef struct AnygmCompatibilityProfile {
   uint32_t has_modern_function_values;
   uint32_t has_modern_struct_semantics;
   uint32_t has_modern_layer_semantics;
+  uint32_t has_modern_screen_stage;
   uint32_t uses_room_speed_cadence;
   uint32_t uses_legacy_room_cameras;
   uint32_t advances_animation_before_step;
@@ -119,6 +120,15 @@ static inline int anygm_policy_has_modern_struct_semantics(const GmlWin *content
 static inline int anygm_policy_has_modern_layer_semantics(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->has_modern_layer_semantics:(content&&content->bytecode>=17);
+}
+/* The presented raster is independent of layers, tilesets and blending.
+ * A format with second-generation rendering data can retain a window that
+ * describes display size rather than drawing coordinates. Screen-stage policy
+ * therefore follows instruction encoding, not rendering-format generation. */
+static inline int anygm_policy_has_modern_screen_stage(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?(int)p->has_modern_screen_stage:
+    (content&&!content->classic_version&&content->bytecode>=17);
 }
 static inline int anygm_policy_uses_room_speed_cadence(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);

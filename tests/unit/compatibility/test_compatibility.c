@@ -58,6 +58,9 @@ int main(void){
   if(beta.diagnostic_family!=ANYGM_FAMILY_STUDIO_FIRST ||
      beta.has_modern_function_values || beta.has_modern_struct_semantics ||
      !beta.has_modern_layer_semantics ||
+     /* Rendering-format generation does not carry the screen stage; this
+      * synthetic early profile keeps the screen stage with instruction encoding. */
+     beta.has_modern_screen_stage ||
      beta.blend!=ANYGM_BLEND_STUDIO_SECOND || beta.uses_room_speed_cadence ||
      beta.uses_legacy_room_cameras){
     fputs("early second-generation presentation policy mismatch\n",stderr);
@@ -65,6 +68,7 @@ int main(void){
   }
   if(second.diagnostic_family!=ANYGM_FAMILY_STUDIO_SECOND ||
      !second.has_modern_function_values || !second.has_modern_struct_semantics ||
+     !second.has_modern_screen_stage ||
      second.instance_iteration!=ANYGM_INSTANCE_ITERATION_FRAME_SNAPSHOT ||
      second.alarm_dispatch!=ANYGM_ALARM_DISPATCH_STANDARD ||
      second.solid_collision_transaction!=ANYGM_COLLISION_PREVIOUS_COORDINATES ||
