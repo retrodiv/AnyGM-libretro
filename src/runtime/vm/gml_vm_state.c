@@ -186,8 +186,25 @@ static const char *state_intern_ex(GmlVM *vm, char *owned, int *remains_owned){
   if(remains_owned) *remains_owned=1;
   return owned; /* the caller retains it as an owned map key or runtime string */
 }
-static const char *state_intern(GmlVM *vm, char *owned){
-  return state_intern_ex(vm,owned,NULL);
+static const char *state_runtime_string(StateR *s, char *owned){
+  if(!owned){ s->ok=0; return ""; }
+  const char *hit=gml_win_intern_lookup(s->vm->win,owned);
+  if(hit){ free(owned); return hit; }
+  GmlVM *vm=s->vm;
+  if(vm->state_runtime_string_count>=vm->state_runtime_string_capacity){
+    int next=vm->state_runtime_string_capacity?vm->state_runtime_string_capacity*2:64;
+    char **strings=realloc(vm->state_runtime_strings,(size_t)next*sizeof(*strings));
+    if(!strings){ free(owned); s->ok=0; return ""; }
+    vm->state_runtime_strings=strings;
+    vm->state_runtime_string_capacity=next;
+  }
+  vm->state_runtime_strings[vm->state_runtime_string_count++]=owned;
+  return owned;
+}
+void gml_vm_state_runtime_strings_clear(GmlVM *vm){
+  if(!vm) return;
+  for(int i=0;i<vm->state_runtime_string_count;i++) free(vm->state_runtime_strings[i]);
+  vm->state_runtime_string_count=0;
 }
 static int state_val_is_default_zero(GmlVal v){
   return v.t==V_REAL && v.d==0.0;
@@ -272,7 +289,7 @@ static void sw_val(StateW *s, GmlVal v, int depth){
 static GmlVal sr_val(GmlVM *vm, StateR *s, int depth){
   uint32_t t=sr_u32(s);
   if(t==V_REAL) return vreal(sr_d(s));
-  if(t==V_STR){ char *p=sr_str_dup(s); return vstr(state_intern(vm,p)); }
+  if(t==V_STR) return vstr(state_runtime_string(s,sr_str_dup(s)));
   if(t==V_UNDEF) return vundef();
   if(t==V_ARR && depth<8){
     uint32_t raw_len=sr_u32(s);
@@ -646,6 +663,7 @@ static void runtime_clear(GmlVM *vm){
                                       runtime_release_builtin_value,
                                       &free_context);
   gml_value_free_context_end(&free_context);
+  gml_vm_state_runtime_strings_clear(vm);
   gml_builtin_state_reset(vm->builtins);
   if(vm->code_static_init && vm->code_static_count>0)
     memset(vm->code_static_init,0,(size_t)vm->code_static_count);

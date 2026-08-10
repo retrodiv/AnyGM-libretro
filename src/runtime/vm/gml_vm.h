@@ -204,6 +204,9 @@ typedef struct GmlVM {
    * initialization latch driven by the isstaticok/setstatic bytecode pair. */
   GmlVarMap *code_static; unsigned char *code_static_init; int code_static_count;
   GmlVarSlot **state_sort_slots; int state_sort_slots_capacity;
+  /* Heap strings reconstructed from a state and borrowed by its values. One pool owns them
+   * because a restored string may be aliased across runtime containers. */
+  char **state_runtime_strings; int state_runtime_string_count, state_runtime_string_capacity;
   GmlObject *objects; int n_objects;
   int **obj_desc; int *obj_desc_n;   /* lazy per-object descendant lists; reset after hierarchy changes */
   int *obj_alive;    /* live instances per object INCLUDING descendants (family counts; runtime-only) */

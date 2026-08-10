@@ -363,6 +363,9 @@ void gml_vm_free(GmlVM *vm){
                                       gml_vm_release_builtin_value,
                                       &free_context);
   gml_value_free_context_end(&free_context);
+  gml_vm_state_runtime_strings_clear(vm);
+  free(vm->state_runtime_strings); vm->state_runtime_strings=NULL;
+  vm->state_runtime_string_capacity=0;
   free(vm->code_static); free(vm->code_static_init);
   vm->code_static=NULL; vm->code_static_init=NULL; vm->code_static_count=0;
   free(vm->state_sort_slots); vm->state_sort_slots=NULL; vm->state_sort_slots_capacity=0;

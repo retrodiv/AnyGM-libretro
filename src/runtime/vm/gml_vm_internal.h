@@ -99,6 +99,7 @@ int gml_vm_frame_apply_tile_mutation(GmlVM *vm, int depth,
                                      double *offset_x, double *offset_y);
 void gml_vm_rooms_clear_tilemaps(GmlVM *vm);
 void gml_vm_frame_cleanup(GmlVM *vm);
+void gml_vm_state_runtime_strings_clear(GmlVM *vm);
 int gml_vm_struct_ensure_capacity(GmlVM *vm, int need);
 void gml_vm_struct_free_slot_push(GmlVM *vm, int slot);
 int gml_vm_tilemap_ensure_owned(GmlTileMap *tilemap);
