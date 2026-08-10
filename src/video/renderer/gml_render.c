@@ -1139,6 +1139,8 @@ void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, doubl
   r->pending_underlay=0; r->underlay_x=r->underlay_y=r->underlay_w=r->underlay_h=0;
   r->pending_fill=0; r->pending_fill_color=0;
 }
+int gml_render_content_composited_screen(GmlRender *r){ return r?r->content_composited_screen:0; }
+void gml_render_clear_content_composited_screen(GmlRender *r){ if(r) r->content_composited_screen=0; }
 void gml_render_world_set_logical_extent(GmlRender *r,int width,int height){
   if(!r || width<=0 || height<=0 || r->fbw<=0 || r->fbh<=0 ||
      r->target_sp!=0 || r->target_id>=0) return;

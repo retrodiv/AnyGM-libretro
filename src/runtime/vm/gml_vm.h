@@ -346,6 +346,8 @@ typedef struct GmlVM {
    * supplies them to explicit redraw requests through a transient hook. */
   void (*room_layer_hook)(struct GmlVM *vm, int foreground, void *user);
   void *room_layer_hook_user;
+  void (*present_latch_hook)(struct GmlVM *vm, void *user);
+  void *present_latch_hook_user;
   int in_screen_redraw;  /* guard nested draw-event redraw requests */
   int *draw_ord; int draw_ord_cap;  /* scratch order buffer for draw passes (runtime-only) */
   void    *render;   /* GmlRender* (set by the engine coordinator) for draw_* builtins */

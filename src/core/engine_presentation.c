@@ -1016,6 +1016,13 @@ void screen_redraw_room_layer_hook(GmlVM *vm,int foreground,void *user) {
   if (object >= 0 && gml_find_instance(&engine->vm, object) != NULL) return;
   draw_runtime_backgrounds(engine, foreground);
 }
+/* A refresh after content composition latches the current screen for this
+ * frame; a bare refresh does not suppress coordinator presentation. */
+void screen_refresh_present_latch_hook(GmlVM *vm,void *user) {
+  AnygmEngine *engine=user; (void)vm;
+  if (!engine || !anygm_policy_uses_classic_runtime(&engine->win)) return;
+  if (gml_render_content_composited_screen(&engine->render)) engine->content_presented=1;
+}
 void draw_runtime_backgrounds(AnygmEngine *engine,int want_fg) {
   for (int i = 0; i < 8; i++) {
     int visible = gml_global_arr(&engine->vm, "background_visible", i) >= 0.5;

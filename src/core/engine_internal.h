@@ -179,6 +179,7 @@ struct AnygmEngine {
   uint64_t compatibility_fingerprint;
   int full_game_on_initial_boot;
   uint32_t *fb,*screen,*gui_buffer,*app_crop;
+  int content_presented;
   uint32_t *classic_phase_mem;
   size_t classic_phase_cap;
   unsigned width,height,base_width,base_height;
@@ -232,6 +233,7 @@ void classic_transition_reset(AnygmEngine *engine);
 void aspect_draw_event_hook(GmlVM *vm,GmlInstance *instance,const char *suffix,
                             int begin,void *user);
 void screen_redraw_room_layer_hook(GmlVM *vm,int foreground,void *user);
+void screen_refresh_present_latch_hook(GmlVM *vm,void *user);
 void sync_room_fps(AnygmEngine *engine,int publish_changes);
 int screen_stage_uses_requested_raster(
   const GmlWin *content,const GmlRenderPresentationMetrics *presentation,

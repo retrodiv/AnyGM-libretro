@@ -528,8 +528,15 @@ GmlVal gml_builtin_try_platform_extensions(GmlVM *vm, const char *nm, GmlVal *a,
   if(!strncmp(nm,"xboxone_",8)) return vreal(0);
   /* The host receives one completed video frame per anygm_run_frame. Desktop refresh/vsync calls
    * cannot expose an intermediate buffer here, and waiting would only stall emulation. */
-  if(!strcmp(nm,"screen_refresh")||!strcmp(nm,"screen_wait_vsync")||
+  if(!strcmp(nm,"screen_wait_vsync")||
      !strcmp(nm,"screen_save")||!strcmp(nm,"screen_save_part")) return vreal(0);
+  if(!strcmp(nm,"screen_refresh")){
+    if(vm && vm->win && anygm_policy_uses_classic_runtime(vm->win)){
+      if(R) gml_render_application_surface_set_draw_enabled(R,0);
+      if(vm->present_latch_hook) vm->present_latch_hook(vm,vm->present_latch_hook_user);
+    }
+    return vreal(0);
+  }
   /* Repeat the room draw sequence in the current target without presenting or
    * waiting. Nested redraw requests must not recurse. */
   if(!strcmp(nm,"screen_redraw")){

@@ -318,6 +318,8 @@ void gml_render_prefetch_bg(GmlRender *r, int bg);
 /* synchronously decode directly referenced pages; used at room boundaries to avoid first-draw hitches */
 void gml_render_warm_sprite(GmlRender *r, int sprite);
 void gml_render_warm_bg(GmlRender *r, int bg);
+int gml_render_content_composited_screen(GmlRender *r);
+void gml_render_clear_content_composited_screen(GmlRender *r);
 void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double camx, double camy);
 void gml_render_world_set_logical_extent(GmlRender *r,int width,int height);
 void gml_render_gui_begin(GmlRender *r, int logical_w, int logical_h);

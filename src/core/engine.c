@@ -335,6 +335,8 @@ static void boot_runtime(AnygmEngine *engine) {
   engine->vm.draw_event_hook_user = engine;
   engine->vm.room_layer_hook = screen_redraw_room_layer_hook;
   engine->vm.room_layer_hook_user = engine;
+  engine->vm.present_latch_hook = screen_refresh_present_latch_hook;
+  engine->vm.present_latch_hook_user = engine;
   engine->audio = gml_audio_create(&engine->win);
   engine->vm.audio = engine->audio;
   /* Boot the normal entry point unless the host supplied a neutral start-room override. */
@@ -992,7 +994,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
    * presentation object can composite the frame and overlays. If nothing draws the surface,
    * auto-blit it. */
   GmlRenderApplicationWriteView app_view={0};
-  if(direct_owned_world){
+  if(engine->content_presented){
+  } else if(direct_owned_world){
     GmlRenderTargetCoverage render_coverage={0};
     gml_render_target_coverage(&engine->render,&render_coverage);
     gml_render_application_surface_select_owned(
@@ -1117,7 +1120,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			  gml_render_begin(&engine->render, gtarget, gtw, gth,
 		                     (engine->aspect_force_active || aspect_gui_center) ? 0.0 : -(double)engine->gui_offset_x,
 		                     (engine->aspect_force_active || aspect_gui_center) ? 0.0 : -(double)engine->gui_offset_y);
-	  gml_render_set_pending_fill(&engine->render, 0);
+	  if(!engine->content_presented) gml_render_set_pending_fill(&engine->render, 0);
 	  /* The app surface normally presents into the view PORT fitted into GUI space. A classic
 	   * runtime window resize preserves the declared port rectangle and clears the new margins. */
 	  double pvis_ = gml_global_arr(&engine->vm, "view_visible", 0);
@@ -1735,6 +1738,13 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   engine->frame_flags=0;
   AnygmResult result=engine_run_frame(engine);
   if(result!=ANYGM_OK) return result;
+  if(anygm_host_development_setting(&engine->host,"GML_LOG_PRESENTED")){
+    size_t lit=0; unsigned ow2=engine->output_width, oh2=engine->output_height;
+    if(engine->screen) for(size_t i=0;i<(size_t)ow2*oh2;i++) if(engine->screen[i]&0xFFFFFF) lit++;
+    engine_logf(engine,ANYGM_LOG_DEBUG,"[presented] screen lit=%zu presented=%d\n",lit,engine->content_presented);
+  }
+  engine->content_presented=0;
+  gml_render_clear_content_composited_screen(&engine->render);
   output->pixels=engine->screen;
   output->width=engine->output_width?engine->output_width:engine->width;
   output->height=engine->output_height?engine->output_height:engine->height;

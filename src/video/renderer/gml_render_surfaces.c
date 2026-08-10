@@ -1101,6 +1101,9 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
 }
 void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
                                 double dw,double dh,uint32_t blend,double alpha){
+  /* A surface drawn onto the base canvas marks content composition for the
+   * current presentation frame. */
+  if(r && r->target_id<0) r->content_composited_screen=1;
   draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,1);
 }
 int gml_render_backend_surface_stretched(GmlRender *r,int surf,double dx,double dy,
