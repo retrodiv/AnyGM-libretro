@@ -138,9 +138,11 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
       free_imported_rooms(project); return 0;
     }
     room->view_enabled = view_enabled != 0; room->n_views = views < 8 ? (int)views : 8;
+    int gm53_room=!compact_legacy && slots[i].version==520u;
     for(uint32_t view = 0; view < views; ++view){
-      uint32_t value[14];
-      for(int field = 0; field < 14; ++field)
+      uint32_t value[14]={0};
+      int view_fields=gm53_room?12:14;
+      for(int field = 0; field < view_fields; ++field)
         if(!import_u32(&r, &value[field], "room view field")){
           free_imported_rooms(project); return 0;
         }
@@ -150,10 +152,17 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
       target->xview = (int32_t)value[1]; target->yview = (int32_t)value[2];
       target->wview = (int32_t)value[3]; target->hview = (int32_t)value[4];
       target->xport = (int32_t)value[5]; target->yport = (int32_t)value[6];
-      target->wport = (int32_t)value[7]; target->hport = (int32_t)value[8];
-      target->hborder = (int32_t)value[9]; target->vborder = (int32_t)value[10];
-      target->hspeed = (int32_t)value[11]; target->vspeed = (int32_t)value[12];
-      target->object_id = (int32_t)value[13];
+      if(gm53_room){
+        target->wport=target->wview; target->hport=target->hview;
+        target->hborder=(int32_t)value[7]; target->vborder=(int32_t)value[8];
+        target->hspeed=(int32_t)value[9]; target->vspeed=(int32_t)value[10];
+        target->object_id=(int32_t)value[11];
+      } else {
+        target->wport = (int32_t)value[7]; target->hport = (int32_t)value[8];
+        target->hborder = (int32_t)value[9]; target->vborder = (int32_t)value[10];
+        target->hspeed = (int32_t)value[11]; target->vspeed = (int32_t)value[12];
+        target->object_id = (int32_t)value[13];
+      }
     }
     if(room->n_views){
       room->view_w = room->views[0].wview; room->view_h = room->views[0].hview;
@@ -215,7 +224,7 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
     }
     if(!compact_legacy){
       uint32_t editor_field;
-      for(int field = 0; field < 14; ++field)
+      for(int field = 0; field < (gm53_room?20:14); ++field)
         if(!import_u32(&r, &editor_field, "room editor field")){
           free_imported_rooms(project); return 0;
         }

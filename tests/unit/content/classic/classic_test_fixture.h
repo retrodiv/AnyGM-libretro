@@ -30,6 +30,7 @@ Fixture game_information_fixture(void);
 Fixture manifest_fixture(unsigned container_version);
 int build_executable_fixture(Fixture *executable);
 int build_legacy_executable_fixture(Fixture *executable);
+int build_gm53_executable_fixture(Fixture *executable);
 void fixture_legacy_room(Fixture *f, const char *name);
 Fixture legacy_fixture_variant(unsigned container_version, int sparse_rooms);
 Fixture legacy_fixture(unsigned container_version);

@@ -15,11 +15,12 @@
 #endif
 
 static int expect_header(unsigned version){
-  unsigned char data[28] = {0};
+  unsigned char data[32] = {0};
+  size_t game_id_offset=version==530?12u:8u;
   put_u32le(data, GMLC_CLASSIC_MAGIC);
   put_u32le(data + 4, version);
-  put_u32le(data + 8, 0x12345678u);
-  for(int i = 0; i < 16; ++i) data[12 + i] = (unsigned char)(0xa0 + i);
+  put_u32le(data + game_id_offset, 0x12345678u);
+  for(int i = 0; i < 16; ++i) data[game_id_offset + 4u + (size_t)i] = (unsigned char)(0xa0 + i);
   GmlcClassicHeader h;
   char err[128];
   if(!gmlc_classic_probe(data, sizeof(data), &h, err, sizeof(err))){
@@ -28,7 +29,8 @@ static int expect_header(unsigned version){
   }
   int encrypted = version == 701 || version == 702;
   if((unsigned)h.version != version ||
-     (!encrypted && (h.game_id != 0x12345678u || memcmp(h.guid, data + 12, 16))) ||
+     (!encrypted && (h.game_id != 0x12345678u ||
+                     memcmp(h.guid, data + game_id_offset + 4u, 16))) ||
      (encrypted && h.game_id != 0)){
     fprintf(stderr, "probe %u returned incorrect fields\n", version);
     return 0;
@@ -187,6 +189,24 @@ static int expect_manifest_810(void){
   int ok = manifest.inventory.header.version == GMLC_CLASSIC_GM81 &&
            manifest.existing[GMLC_CLASSIC_SCRIPT] == 1;
   gmlc_classic_manifest_free(&manifest);
+  return ok;
+}
+
+static int expect_gm53_manifest(void){
+  Fixture plain=legacy_fixture(530),executable={{0},0};
+  GmlcClassicManifest manifest={0}; char err[256]={0};
+  int ok=gmlc_classic_manifest(plain.data,plain.size,&manifest,err,sizeof(err));
+  if(ok) ok=manifest.inventory.header.version==GMLC_CLASSIC_GM53 &&
+             manifest.inventory.header.game_id==42 &&
+             manifest.inventory.settings_version==530 &&
+             manifest.inventory.settings.scaling==100 && !manifest.executable_layout;
+  gmlc_classic_manifest_free(&manifest);
+  if(ok) ok=build_gm53_executable_fixture(&executable) &&
+            gmlc_classic_manifest(executable.data,executable.size,&manifest,err,sizeof(err));
+  if(ok) ok=manifest.inventory.header.version==GMLC_CLASSIC_GM53 &&
+             manifest.inventory.header.game_id==42 && !manifest.executable_layout;
+  gmlc_classic_manifest_free(&manifest);
+  if(!ok) fprintf(stderr,"Game Maker 5.3 manifest failed: %s\n",err);
   return ok;
 }
 
@@ -486,6 +506,7 @@ static int expect_legacy_media_import(void){
   return ok;
 }
 
+static int test_header_530(void){ return expect_header(530); }
 static int test_header_600(void){ return expect_header(600); }
 static int test_header_701(void){ return expect_header(701); }
 static int test_header_702(void){ return expect_header(702); }
@@ -507,6 +528,7 @@ static int test_legacy_manifest_701(void){ return expect_legacy_manifest(701); }
 
 AnygmTestGroup classic_test_format_group(void){
   static const AnygmTestCase cases[]={
+    {"header-530",test_header_530},
     {"header-600",test_header_600},
     {"header-701",test_header_701},
     {"header-702",test_header_702},
@@ -519,6 +541,7 @@ AnygmTestGroup classic_test_format_group(void){
     {"inventory-810",test_inventory_810},
     {"manifest-800",expect_manifest},
     {"manifest-810",expect_manifest_810},
+    {"manifest-530-executable",expect_gm53_manifest},
     {"executable-manifest",expect_executable_manifest},
     {"legacy-executable-manifest",expect_legacy_executable_manifest},
     {"legacy-executable-font-corruption",expect_legacy_executable_font_corruption},

@@ -216,6 +216,7 @@ int expect_revision16_room_uses_legacy_view(void){
 
   AnygmCompatibilityProfile profile={0};
   profile.has_modern_layer_semantics=1;
+  profile.uses_legacy_room_cameras=1;
   profile.legacy_view_slots=1;
   win.compatibility=&profile;
 

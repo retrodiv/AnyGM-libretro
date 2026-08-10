@@ -37,7 +37,8 @@ static void write_u32le(uint8_t *p,uint32_t value){
 }
 
 static int known_version(uint32_t version){
-  return version == GMLC_CLASSIC_GM6 || version == GMLC_CLASSIC_GM7 ||
+  return version == GMLC_CLASSIC_GM53 || version == GMLC_CLASSIC_GM6 ||
+         version == GMLC_CLASSIC_GM7 ||
          version == GMLC_CLASSIC_GM7_ALT || version == GMLC_CLASSIC_GM8 ||
          version == GMLC_CLASSIC_GM81;
 }
@@ -253,6 +254,22 @@ static int read_settings_prefix(ClassicReader *r, GmlcClassicSettings *out){
   return 1;
 }
 
+static int read_settings_53_prefix(ClassicReader *r, GmlcClassicSettings *out){
+  uint32_t field[22];
+  for(size_t i=0;i<sizeof(field)/sizeof(field[0]);i++)
+    if(!reader_u32(r,&field[i],"Game Maker 5.3 settings")) return 0;
+  out->start_fullscreen=(int)field[0];
+  out->borderless=(int)field[1];
+  out->show_cursor=(int)field[2];
+  out->scaling=(int32_t)field[3];
+  out->set_resolution=(int)field[6];
+  out->color_depth=(int)field[7];
+  out->resolution=(int)field[9];
+  out->frequency=(int)field[10];
+  out->hide_caption_buttons=(int)field[13];
+  return 1;
+}
+
 /* The optional tail grew after the original GM8 settings prefix. Read only the
  * creation-order flag needed by the runtime and leave truncated/older tails at
  * their historical default. Length-prefixed images are skipped without
@@ -431,7 +448,14 @@ static int require_payload_end(ClassicReader *r, const char *what){
   return 0;
 }
 
-static int validate_sound_payload(ClassicReader *r){
+static int validate_sound_payload(ClassicReader *r,uint32_t resource_version){
+  if(resource_version==440u){
+    uint32_t kind=0;
+    if(!reader_u32(r,&kind,"Game Maker 5.3 sound kind") ||
+       !reader_string(r,"Game Maker 5.3 sound file type")) return 0;
+    if(kind!=UINT32_MAX && !reader_blob(r,"Game Maker 5.3 sound data")) return 0;
+    return reader_words(r,3,"Game Maker 5.3 sound flags");
+  }
   uint32_t has_data;
   if(!reader_words(r, 1, "sound kind") || !reader_string(r, "sound file type") ||
      !reader_string(r, "sound filename") || !reader_u32(r, &has_data, "sound data flag")) return 0;
@@ -588,7 +612,7 @@ static int validate_object_payload(ClassicReader *r){
   return 1;
 }
 
-static int validate_room_gameplay_payload(ClassicReader *r){
+static int validate_room_gameplay_payload(ClassicReader *r,uint32_t resource_version){
   uint32_t backgrounds, views, instances, tiles;
   if(!reader_string(r, "room caption") || !reader_words(r, 9, "room fields") ||
      !reader_string(r, "room creation code") ||
@@ -597,7 +621,8 @@ static int validate_room_gameplay_payload(ClassicReader *r){
                    "room backgrounds") ||
      !reader_words(r, 1, "room view-enabled flag") ||
      !reader_u32(r, &views, "room view count") ||
-     !reader_words(r, views > UINT32_MAX / 14 ? UINT32_MAX : views * 14, "room views") ||
+     !reader_words(r, views > UINT32_MAX / (resource_version==520u?12u:14u) ? UINT32_MAX :
+                      views * (resource_version==520u?12u:14u), "room views") ||
      !reader_u32(r, &instances, "room instance count")) return 0;
   if(instances > (r->size - r->pos) / 24) return reader_fail(r, "room instances");
   for(uint32_t i = 0; i < instances; ++i)
@@ -608,8 +633,9 @@ static int validate_room_gameplay_payload(ClassicReader *r){
   return reader_words(r, tiles > UINT32_MAX / 10 ? UINT32_MAX : tiles * 10, "room tiles");
 }
 
-static int validate_room_payload(ClassicReader *r){
-  return validate_room_gameplay_payload(r) && reader_words(r, 14, "room editor fields");
+static int validate_room_payload(ClassicReader *r,uint32_t resource_version){
+  return validate_room_gameplay_payload(r,resource_version) &&
+         reader_words(r,resource_version==520u?20u:14u,"room editor fields");
 }
 
 /* Some GM8 executables compact the tail of an object block: trailing zero bytes are elided and
@@ -756,7 +782,8 @@ static int normalize_executable_room(char **raw_io, int *raw_size_io){
 
   ClassicReader body={(const uint8_t*)normalized,working_size,0,NULL,0};
   if(!reader_u32(&body,&exists,"room exists") || !reader_string(&body,"room name") ||
-     !reader_u32(&body,&version,"room version") || !validate_room_gameplay_payload(&body)){
+     !reader_u32(&body,&version,"room version") ||
+     !validate_room_gameplay_payload(&body,version)){
     free(normalized);
     return 0;
   }
@@ -814,12 +841,14 @@ int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
   out->version = (GmlcClassicVersion)version;
   
   if(version != GMLC_CLASSIC_GM7 && version != GMLC_CLASSIC_GM7_ALT){
-    if(size < 28){
+    size_t header_size=version==GMLC_CLASSIC_GM53?32u:28u;
+    size_t game_id_offset=version==GMLC_CLASSIC_GM53?12u:8u;
+    if(size < header_size){
       if(err && errcap) snprintf(err, errcap, "classic project: truncated common header (%" PRIu64 " bytes)", (uint64_t)size);
       return 0;
     }
-    out->game_id = read_u32le(p + 8);
-    memcpy(out->guid, p + 12, sizeof(out->guid));
+    out->game_id = read_u32le(p + game_id_offset);
+    memcpy(out->guid, p + game_id_offset + 4u, sizeof(out->guid));
   }
   return 1;
 }
@@ -834,7 +863,7 @@ int gmlc_classic_probe_file(const AnygmHostServices *host,const char *path,
     if(err && errcap) snprintf(err, errcap, "classic project: invalid file probe arguments");
     return 0;
   }
-  uint8_t header[28];
+  uint8_t header[32];
   size_t got=0;
   if(!anygm_vfs_read_prefix(host,path,header,sizeof header,&got)){
     if(err && errcap) snprintf(err, errcap, "classic project: cannot read %s", path);
@@ -854,10 +883,12 @@ static int skip_legacy_settings(ClassicReader *r, uint32_t container_version,
                                 uint32_t *constant_count, GmlcClassicManifest *manifest){
   uint32_t loading_bar, own_loading_image, constants;
   if(!reader_u32(r, settings_version, "legacy settings version")) return 0;
+  int gm53 = container_version == GMLC_CLASSIC_GM53;
   int gm7 = container_version == GMLC_CLASSIC_GM7 || container_version == GMLC_CLASSIC_GM7_ALT;
   uint32_t fixed_before_loading = gm7 ? 22u : 20u;
-  if(!read_settings_prefix(r,settings) ||
-     !reader_words(r, fixed_before_loading-14u, "legacy game settings") ||
+  if((gm53 ? !read_settings_53_prefix(r,settings) :
+             (!read_settings_prefix(r,settings) ||
+              !reader_words(r, fixed_before_loading-14u, "legacy game settings"))) ||
      !reader_u32(r, &loading_bar, "loading-bar mode")) return 0;
   if(loading_bar == 2 &&
      (!skip_legacy_image(r, "loading-bar background") ||
@@ -888,7 +919,7 @@ static int skip_legacy_settings(ClassicReader *r, uint32_t container_version,
     if(!reader_words(r, 4, "game version components") ||
        !reader_string(r, "company") || !reader_string(r, "product") ||
        !reader_string(r, "copyright") || !reader_string(r, "description")) return 0;
-  } else {
+  } else if(!gm53) {
     uint32_t includes;
     if(!reader_u32(r, &includes, "legacy include count")) return 0;
     if(includes > (r->size - r->pos) / 4) return reader_fail(r, "legacy includes");
@@ -909,9 +940,9 @@ static int validate_legacy_sprite_payload(ClassicReader *r){
   return 1;
 }
 
-static int validate_legacy_background_payload(ClassicReader *r){
+static int validate_legacy_background_payload(ClassicReader *r,uint32_t resource_version){
   uint32_t has_image;
-  if(!reader_words(r, 12, "legacy background fields") ||
+  if(!reader_words(r, resource_version==400u?5u:12u, "legacy background fields") ||
      !reader_u32(r, &has_image, "legacy background image flag")) return 0;
   return !has_image || skip_legacy_image(r, "legacy background image");
 }
@@ -978,16 +1009,17 @@ static int parse_legacy_slot(ClassicReader *r, GmlcClassicResourceType type,
   size_t payload_start = r->pos;
   int valid = 0;
   switch(type){
-    case GMLC_CLASSIC_SOUND: valid = validate_sound_payload(r); break;
+    case GMLC_CLASSIC_SOUND: valid = validate_sound_payload(r,slot->version); break;
     case GMLC_CLASSIC_SPRITE: valid = validate_legacy_sprite_payload(r); break;
-    case GMLC_CLASSIC_BACKGROUND: valid = validate_legacy_background_payload(r); break;
+    case GMLC_CLASSIC_BACKGROUND:
+      valid = validate_legacy_background_payload(r,slot->version); break;
     case GMLC_CLASSIC_PATH: valid = validate_path_payload(r, 0); break;
     case GMLC_CLASSIC_SCRIPT:
       valid = reader_string_copy(r, &slot->source, "legacy script source"); break;
     case GMLC_CLASSIC_FONT: valid = validate_font_payload(r,0,0); break;
     case GMLC_CLASSIC_TIMELINE: valid = validate_timeline_payload(r); break;
     case GMLC_CLASSIC_OBJECT: valid = validate_object_payload(r); break;
-    case GMLC_CLASSIC_ROOM: valid = validate_room_payload(r); break;
+    case GMLC_CLASSIC_ROOM: valid = validate_room_payload(r,slot->version); break;
     default: break;
   }
   if(!valid){
@@ -1021,7 +1053,7 @@ static int parse_legacy_executable_slot(ClassicReader *r,GmlcClassicResourceType
   size_t payload_start=r->pos;
   int valid=0;
   switch(type){
-    case GMLC_CLASSIC_SOUND: valid=validate_sound_payload(r); break;
+    case GMLC_CLASSIC_SOUND: valid=validate_sound_payload(r,slot->version); break;
     case GMLC_CLASSIC_SPRITE: valid=validate_legacy_executable_sprite_payload(r); break;
     case GMLC_CLASSIC_BACKGROUND: valid=validate_legacy_executable_background_payload(r); break;
     case GMLC_CLASSIC_PATH: valid=validate_legacy_executable_path_payload(r); break;
@@ -1207,6 +1239,63 @@ static int parse_legacy_tail(ClassicReader *r, uint32_t container_version,
   return 1;
 }
 
+static int read_gm53_data_file(ClassicReader *r,GmlcClassicIncludedFile *out,
+                               int *exists_out){
+  uint32_t exists=0,preamble=0,version=0,data_exists=0;
+  uint32_t overwrite=0,free_memory=0,remove_at_end=0;
+  GmlcClassicBlob compressed={0};
+  if(exists_out) *exists_out=0;
+  if(!reader_u32(r,&exists,"Game Maker 5.3 data-file existence flag")) return 0;
+  if(!exists) return 1;
+  if(exists_out) *exists_out=1;
+  if(!reader_u32(r,&preamble,"Game Maker 5.3 data-file preamble") ||
+     !reader_skip(r,preamble,"Game Maker 5.3 data-file preamble") ||
+     !reader_u32(r,&version,"Game Maker 5.3 data-file version") || version!=440u)
+    return reader_fail(r,"Game Maker 5.3 data file");
+  if(out){
+    memset(out,0,sizeof(*out));
+    if(!reader_string_copy(r,&out->source_path,"Game Maker 5.3 data-file path")) return 0;
+  } else if(!reader_string(r,"Game Maker 5.3 data-file path")) return 0;
+  if(!reader_u32(r,&data_exists,"Game Maker 5.3 data-file data flag")) return 0;
+  if(data_exists){
+    if(out){
+      if(!reader_blob_copy(r,&compressed,"Game Maker 5.3 data-file data")) return 0;
+    } else if(!reader_blob(r,"Game Maker 5.3 data-file data")) return 0;
+  }
+  uint32_t export_mode=0;
+  if(!reader_u32(r,&export_mode,"Game Maker 5.3 data-file export mode") ||
+     !reader_u32(r,&overwrite,"Game Maker 5.3 data-file overwrite flag") ||
+     !reader_u32(r,&free_memory,"Game Maker 5.3 data-file free-memory flag") ||
+     !reader_u32(r,&remove_at_end,"Game Maker 5.3 data-file remove flag")){
+    free(compressed.data);
+    return 0;
+  }
+  if(!out) return 1;
+  const char *leaf=out->source_path;
+  for(const char *p=out->source_path;*p;p++) if(*p=='/' || *p=='\\') leaf=p+1;
+  size_t leaf_size=strlen(leaf);
+  out->file_name=(char*)malloc(leaf_size+1u);
+  out->custom_folder=(char*)calloc(1,1);
+  if(out->file_name) memcpy(out->file_name,leaf,leaf_size+1u);
+  if(data_exists){
+    int decoded_size=0;
+    char *decoded=compressed.size<=INT_MAX?
+      classic_inflate_owned(compressed.data,compressed.size,GML_DEFLATE_ZLIB,&decoded_size):NULL;
+    if(!decoded || decoded_size<0){
+      free(decoded); free(compressed.data);
+      return reader_fail(r,"Game Maker 5.3 compressed data file");
+    }
+    out->data=(uint8_t*)decoded; out->data_size=(size_t)decoded_size;
+    out->source_length=(uint32_t)decoded_size;
+  }
+  free(compressed.data);
+  out->data_exists=data_exists!=0; out->stored_in_project=data_exists!=0;
+  out->export_mode=export_mode; out->overwrite_file=overwrite!=0;
+  out->free_memory=free_memory!=0; out->remove_at_end=remove_at_end!=0;
+  if(!out->file_name || !out->custom_folder) return reader_fail(r,"Game Maker 5.3 data-file allocation");
+  return 1;
+}
+
 static int parse_legacy_project(const void *data, size_t size,
                                 GmlcClassicInventory *inventory,
                                 GmlcClassicManifest *manifest,
@@ -1219,16 +1308,18 @@ static int parse_legacy_project(const void *data, size_t size,
     if(!(0 /* This operation is unavailable. */)) return 0;
     plain = decoded;
   }
-  if(plain_size < 28 || read_u32le(plain) != GMLC_CLASSIC_MAGIC){
+  size_t header_size=container_version==GMLC_CLASSIC_GM53?32u:28u;
+  size_t game_id_offset=container_version==GMLC_CLASSIC_GM53?12u:8u;
+  if(plain_size < header_size || read_u32le(plain) != GMLC_CLASSIC_MAGIC){
     if(err && errcap) snprintf(err, errcap, "classic project: truncated legacy project header");
     free(decoded);
     return 0;
   }
   memset(inventory, 0, sizeof(*inventory));
   inventory->header.version = (GmlcClassicVersion)container_version;
-  inventory->header.game_id = read_u32le(plain + 8);
-  memcpy(inventory->header.guid, plain + 12, 16);
-  ClassicReader r = {plain, plain_size, 28, err, errcap};
+  inventory->header.game_id = read_u32le(plain + game_id_offset);
+  memcpy(inventory->header.guid, plain + game_id_offset + 4u, 16);
+  ClassicReader r = {plain, plain_size, header_size, err, errcap};
   if(!skip_legacy_settings(&r, container_version, &inventory->settings_version,
                            &inventory->settings,&inventory->constants,manifest)){
     free(decoded);
@@ -1239,7 +1330,22 @@ static int parse_legacy_project(const void *data, size_t size,
     inventory->resource_section_offsets[type] = r.pos;
     if(!reader_u32(&r, &section_version, "legacy resource section version") ||
        !reader_u32(&r, &count, "legacy resource count")) goto fail;
-    (void)section_version;
+    if(container_version==GMLC_CLASSIC_GM53 && type==GMLC_CLASSIC_FONT &&
+       section_version==440u){
+      inventory->resource_slots[type]=0;
+      if(manifest && count){
+        manifest->included_files=(GmlcClassicIncludedFile*)calloc(count,sizeof(*manifest->included_files));
+        if(!manifest->included_files){ reader_fail(&r,"Game Maker 5.3 data-file allocation"); goto fail; }
+      }
+      for(uint32_t i=0;i<count;i++){
+        int exists=0;
+        GmlcClassicIncludedFile *target=manifest?
+          &manifest->included_files[manifest->included_file_count]:NULL;
+        if(!read_gm53_data_file(&r,target,&exists)) goto fail;
+        if(manifest && exists) manifest->included_file_count++;
+      }
+      continue;
+    }
     inventory->resource_slots[type] = count;
     if(count > (r.size - r.pos) / 4){ reader_fail(&r, "legacy resource slots"); goto fail; }
     GmlcClassicResourceSlot *slots = NULL;
@@ -1283,7 +1389,8 @@ int gmlc_classic_inventory(const void *data, size_t size,
   }
   memset(out, 0, sizeof(*out));
   if(!gmlc_classic_probe(data, size, &out->header, err, errcap)) return 0;
-  if(out->header.version == GMLC_CLASSIC_GM6 || out->header.version == GMLC_CLASSIC_GM7 ||
+  if(out->header.version == GMLC_CLASSIC_GM53 || out->header.version == GMLC_CLASSIC_GM6 ||
+     out->header.version == GMLC_CLASSIC_GM7 ||
      out->header.version == GMLC_CLASSIC_GM7_ALT)
     return parse_legacy_project(data, size, out, NULL, err, errcap);
   if(out->header.version != GMLC_CLASSIC_GM8 && out->header.version != GMLC_CLASSIC_GM81){
@@ -1408,7 +1515,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
   int valid = 1;
   if(slot->exists){
     switch(type){
-      case GMLC_CLASSIC_SOUND: valid = validate_sound_payload(&r); break;
+      case GMLC_CLASSIC_SOUND: valid = validate_sound_payload(&r,slot->version); break;
       case GMLC_CLASSIC_SPRITE: valid = validate_sprite_payload(&r,raw_deflate,slot->version); break;
       case GMLC_CLASSIC_BACKGROUND: valid = validate_background_payload(&r,raw_deflate); break;
       case GMLC_CLASSIC_PATH: valid = validate_path_payload(&r,raw_deflate); break;
@@ -1416,7 +1523,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
       case GMLC_CLASSIC_FONT: valid = validate_font_payload(&r,raw_deflate,0); break;
       case GMLC_CLASSIC_TIMELINE: valid = validate_timeline_payload(&r); break;
       case GMLC_CLASSIC_OBJECT: valid = validate_object_payload(&r); break;
-      case GMLC_CLASSIC_ROOM: valid = validate_room_payload(&r); break;
+      case GMLC_CLASSIC_ROOM: valid = validate_room_payload(&r,slot->version); break;
       default: break;
     }
     if(valid){
@@ -1970,12 +2077,13 @@ int gmlc_classic_manifest(const void *data, size_t size,
   memset(out, 0, sizeof(*out));
   if(size>=2 && ((const uint8_t*)data)[0]=='M' && ((const uint8_t*)data)[1]=='Z'){
     int ok=parse_executable_manifest((const uint8_t*)data,size,out,err,errcap);
-    if(ok) out->executable_layout=1;
+    if(ok && out->inventory.header.version!=GMLC_CLASSIC_GM53) out->executable_layout=1;
     return ok;
   }
   GmlcClassicHeader header;
   if(!gmlc_classic_probe(data, size, &header, err, errcap)) return 0;
-  if(header.version == GMLC_CLASSIC_GM6 || header.version == GMLC_CLASSIC_GM7 ||
+  if(header.version == GMLC_CLASSIC_GM53 || header.version == GMLC_CLASSIC_GM6 ||
+     header.version == GMLC_CLASSIC_GM7 ||
      header.version == GMLC_CLASSIC_GM7_ALT)
     return parse_legacy_project(data, size, &out->inventory, out, err, errcap);
   if(!gmlc_classic_inventory(data, size, &out->inventory, err, errcap)) return 0;
@@ -2051,6 +2159,7 @@ int gmlc_classic_inventory_file(const AnygmHostServices *host,const char *path,
 
 const char *gmlc_classic_version_name(GmlcClassicVersion version){
   switch(version){
+    case GMLC_CLASSIC_GM53: return "Game Maker 5.3";
     case GMLC_CLASSIC_GM6: return "GameMaker 6";
     case GMLC_CLASSIC_GM7:
     case GMLC_CLASSIC_GM7_ALT: return "GameMaker 7";

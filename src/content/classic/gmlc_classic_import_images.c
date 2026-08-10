@@ -470,7 +470,8 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
     if(slots[i].legacy_layout){
       ImportReader r={slots[i].payload,slots[i].payload_size,0,err,errcap};
       uint32_t fields[12]={0},has_image;
-      int field_count=slots[i].executable_layout?5:12;
+      int short_background=slots[i].executable_layout || slots[i].version==400u;
+      int field_count=short_background?5:12;
       for(int field=0;field<field_count;field++) if(!import_u32(&r,&fields[field],"legacy background field")){
         free_imported_backgrounds(project,first_sprite); return 0;
       }
@@ -500,8 +501,9 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
       free(rgba);
       if(!image_ok){ free_imported_backgrounds(project,first_sprite); return 0; }
       background->sprite_id=project->n_sprites-1;
-      background->sprite_no_export=slots[i].executable_layout?1:(fields[5]?0:1);
-      if(!slots[i].executable_layout){
+      background->sprite_no_export=slots[i].executable_layout?1:
+                                   (slots[i].version==400u?0:(fields[5]?0:1));
+      if(!short_background){
         background->tile_width=(int32_t)fields[6]; background->tile_height=(int32_t)fields[7];
         background->border_x=(int32_t)fields[8]; background->border_y=(int32_t)fields[9];
       }

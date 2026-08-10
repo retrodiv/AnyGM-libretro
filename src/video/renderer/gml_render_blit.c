@@ -1018,6 +1018,25 @@ static inline void blend_pixels_exact16_4(
   }
 #endif
 }
+static inline void blend_pixels_exact16_round_4(
+    uint32_t *destination,const uint32_t source[4],const uint32_t alpha[4]){
+  for(int i=0;i<4;i++){
+    uint32_t factor=alpha[i];
+    if(!factor) continue;
+    if(factor>=65536u){
+      destination[i]=source[i];
+      continue;
+    }
+    uint32_t inverse=65536u-factor;
+    uint32_t current=destination[i];
+    uint32_t red=((source[i]>>16)&255u)*factor+
+                 ((current>>16)&255u)*inverse+32768u;
+    uint32_t green=((source[i]>>8)&255u)*factor+
+                   ((current>>8)&255u)*inverse+32768u;
+    uint32_t blue=(source[i]&255u)*factor+(current&255u)*inverse+32768u;
+    destination[i]=0xFF000000u|((red>>16)<<16)|((green>>16)<<8)|(blue>>16);
+  }
+}
 static inline void copy_argb_force_opaque(uint32_t *dp, const uint32_t *sp, int run){
   if(run<=0) return;
   for(int k=0; k<run; k++) dp[k]=0xFF000000u|(sp[k]&0x00FFFFFFu);
@@ -2362,7 +2381,8 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
             uint32_t dv=dp[xx];
             int ia=255-aa;
             int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
-            if(r->classic){
+            int family=gml_blend_family(r);
+            if(family==GML_BLEND_CLASSIC){
               /* Fixed-function GM8 blending rounds the source and destination
                * products independently before adding them.  Rounding only the
                * combined numerator loses a channel at nearly-opaque texels. */
@@ -2374,6 +2394,10 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
               if(rb>255) rb=255;
               dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
                      ((uint32_t)rr<<16)|((uint32_t)rg<<8)|(uint32_t)rb;
+            } else if(family==GML_BLEND_STUDIO2) {
+              dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
+                     (((sr*aa+dr*ia+127)/255)<<16)|
+                     (((sg*aa+dg*ia+127)/255)<<8)|((sb*aa+db*ia+127)/255);
             } else {
               dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
                      (((sr*aa+dr*ia)/255)<<16)|
@@ -2405,15 +2429,17 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   int lxbuf[2048];
   int span=xx1-xx0;
   int *lxtab=(span<=(int)(sizeof lxbuf/sizeof *lxbuf))? lxbuf : malloc((size_t)span*sizeof(int));
-  /* The classic half-pixel compensation leaves the quad's fractional origin
-   * in the texture interpolation.  Keep that phase after snapping its raster
-   * bounds; assuming every snapped quad began at an integer picks an adjacent
-   * texel in scaled nearest-neighbour draws. */
+  /* Raster coverage snapping does not snap the quad's texture phase. Point sampling still
+   * measures destination-pixel centres from the fractional leading edge. Classic keeps its
+   * narrower reciprocal-scale rule; Studio retains that phase for scaled point sampling. */
   double inv_x=1.0/axs, inv_y=1.0/ays;
   int reciprocal_x=fabs(inv_x-nearbyint(inv_x))<1e-9;
   int reciprocal_y=fabs(inv_y-nearbyint(inv_y))<1e-9;
-  double sample_x=r->classic&&!flipx&&!reciprocal_x ? x0+0.5-dx : 0.5;
-  double sample_y=r->classic&&!flipy&&!reciprocal_y ? y0+0.5-dy : 0.5;
+  int studio_point_phase=!r->classic;
+  double sample_x=!flipx && (studio_point_phase || (r->classic&&!reciprocal_x))
+    ? x0+0.5-dx : 0.5;
+  double sample_y=!flipy && (studio_point_phase || (r->classic&&!reciprocal_y))
+    ? y0+0.5-dy : 0.5;
   if(lxtab) for(int xx=xx0;xx<xx1;xx++) lxtab[xx-xx0]=(int)((xx+sample_x)/axs);
   /* The displacement is evaluated in texture coordinates, not output coordinates. Scaled pixel
    * art repeats each source texel many times, so precompute one warped atlas index per logical
@@ -2470,7 +2496,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
    * free sample once and use packed byte saturation for the repeated destination pixels. */
   if(lxtab && !flipx && !flipy && !mapped_shader && r->alphablend &&
      r->blendmode==1 && r->target_sp==0){
-    int tint_bias=(r->win && anygm_policy_has_modern_layer_semantics(r->win))?127:0;
+    int tint_bias=gml_blend_family(r)==GML_BLEND_STUDIO2?127:0;
     for(int yy=yy0;yy<yy1;yy++){
       int py=y0+yy;
       int ly=(int)((yy+sample_y)/ays);
@@ -2536,10 +2562,21 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
         double sa=(aa/255.0)*alpha;
         uint32_t destination=*dp;
         int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
-        double bias=r->classic?0.5:0.0;
-        int or_=(int)(sp[0]*sa+dr*(1-sa)+bias); if(or_>255) or_=255; else if(or_<0) or_=0;
-        int og=(int)(sp[1]*sa+dg*(1-sa)+bias); if(og>255) og=255; else if(og<0) og=0;
-        int ob=(int)(sp[2]*sa+db*(1-sa)+bias); if(ob>255) ob=255; else if(ob<0) ob=0;
+        int family=gml_blend_family(r);
+        int or_,og,ob;
+        if(family==GML_BLEND_CLASSIC){
+          or_=(int)(sp[0]*sa+0.5)+(int)(dr*(1-sa)+0.5);
+          og=(int)(sp[1]*sa+0.5)+(int)(dg*(1-sa)+0.5);
+          ob=(int)(sp[2]*sa+0.5)+(int)(db*(1-sa)+0.5);
+        } else {
+          double bias=family==GML_BLEND_STUDIO2?0.5:0.0;
+          or_=(int)(sp[0]*sa+dr*(1-sa)+bias);
+          og=(int)(sp[1]*sa+dg*(1-sa)+bias);
+          ob=(int)(sp[2]*sa+db*(1-sa)+bias);
+        }
+        if(or_>255) or_=255; else if(or_<0) or_=0;
+        if(og>255) og=255; else if(og<0) og=0;
+        if(ob>255) ob=255; else if(ob<0) ob=0;
         unsigned source_alpha=(unsigned)lround((double)aa*alpha);
         *dp=gml_sprite_target_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
       }
@@ -2564,7 +2601,8 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       int sample_a=(int)(sampled>>24);
       double sa=(sample_a/255.0)*alpha; if(sa<=0) continue;
       uint32_t *dp=&r->fb[(size_t)py*r->fbw+px];
-      int tint_bias=(r->win && anygm_policy_has_modern_layer_semantics(r->win))?127:0;
+      int family=gml_blend_family(r);
+      int tint_bias=family==GML_BLEND_STUDIO2?127:0;
       int sr=(((sampled>>16)&255)*bR+tint_bias)/255;
       int sg=(((sampled>>8)&255)*bG+tint_bias)/255;
       int sb=((sampled&255)*bB+tint_bias)/255;
@@ -2594,7 +2632,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       /* clamp each channel to [0,255]: a blend>255 or a (legitimately clamped) alpha can still push
        * sr*sa over 255, and packing an out-of-range byte would corrupt the neighbouring channel. */
       int or_,og,ob;
-      if(r->classic){
+      if(family==GML_BLEND_CLASSIC){
         if(!reciprocal_x || !reciprocal_y){
           or_=(int)(sr*sa+0.5)+(int)(dr*(1-sa)+0.5);
           og=(int)(sg*sa+0.5)+(int)(dg*(1-sa)+0.5);
@@ -2605,9 +2643,10 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
           ob=(int)(sb*sa+db*(1-sa)+0.5);
         }
       } else {
-        or_=(int)(sr*sa+dr*(1-sa));
-        og=(int)(sg*sa+dg*(1-sa));
-        ob=(int)(sb*sa+db*(1-sa));
+        double bias=family==GML_BLEND_STUDIO2?0.5:0.0;
+        or_=(int)(sr*sa+dr*(1-sa)+bias);
+        og=(int)(sg*sa+dg*(1-sa)+bias);
+        ob=(int)(sb*sa+db*(1-sa)+bias);
       }
       if(or_>255) or_=255; else if(or_<0) or_=0;
       if(og>255) og=255; else if(og<0) og=0;
@@ -2858,7 +2897,7 @@ static void blit_interp_pretinted_constant_alpha_sample(
 static void blit_interp_constant_alpha_sample(
     GmlRender *r,uint32_t *destination,uint32_t rgb,int alpha,
     int blend_r,int blend_g,int blend_b,double draw_alpha){
-  int tint_bias=(r->win && anygm_policy_has_modern_layer_semantics(r->win))?127:0;
+  int tint_bias=gml_blend_family(r)==GML_BLEND_STUDIO2?127:0;
   int red=(((rgb>>16)&255)*blend_r+tint_bias)/255;
   int green=(((rgb>>8)&255)*blend_g+tint_bias)/255;
   int blue=((rgb&255)*blend_b+tint_bias)/255;
@@ -2997,7 +3036,7 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
     aa=(int)(sampled>>24); sr=(sampled>>16)&255; sg=(sampled>>8)&255; sb=sampled&255;
     if(aa<=0) return;
   }
-  int tint_bias=(r->win && anygm_policy_has_modern_layer_semantics(r->win))?127:0;
+  int tint_bias=gml_blend_family(r)==GML_BLEND_STUDIO2?127:0;
   sr=(sr*bR+tint_bias)/255; sg=(sg*bG+tint_bias)/255; sb=(sb*bB+tint_bias)/255;
   int precise_margin=transparent_tap && alpha>=1.0 &&
     (blend&0xFFFFFFu)==0xFFFFFFu && r->blendmode==0 && r->alphablend;
@@ -3679,7 +3718,7 @@ typedef struct {
   double qx[4], qy[4];
   double ax, ay, cosine, sine, inv_xscale, inv_yscale;
   double local_x_offset, local_y_offset;
-  int x0, x1, y0, y1, use_quad_span, white, vector_pixels;
+  int x0, x1, y0, y1, use_quad_span, white, vector_pixels, round_blend;
   int blend_r, blend_g, blend_b;
   int64_t delta_x, delta_y;
   uint32_t alpha_lut[256];
@@ -3735,8 +3774,12 @@ static void GML_HOT_RENDER exact_rotated_band_rows(
           sources[i]=0xFF000000u|((uint32_t)red<<16)|((uint32_t)green<<8)|
                      (uint32_t)blue;
         }
-        if(factors[0]||factors[1]||factors[2]||factors[3])
-          blend_pixels_exact16_4(&row[px],sources,factors);
+        if(factors[0]||factors[1]||factors[2]||factors[3]){
+          if(band->round_blend)
+            blend_pixels_exact16_round_4(&row[px],sources,factors);
+          else
+            blend_pixels_exact16_4(&row[px],sources,factors);
+        }
         lx_fp+=band->delta_x*4;
         ly_fp+=band->delta_y*4;
         px+=4;
@@ -3774,10 +3817,11 @@ static void GML_HOT_RENDER exact_rotated_band_rows(
               int current_red=(current>>16)&255;
               int current_green=(current>>8)&255;
               int current_blue=current&255;
+              uint32_t bias=band->round_blend?32768u:0u;
               destination[i]=0xFF000000u|
-                (((red_product+(uint32_t)current_red*inverse)>>16)<<16)|
-                (((green_product+(uint32_t)current_green*inverse)>>16)<<8)|
-                ((blue_product+(uint32_t)current_blue*inverse)>>16);
+                (((red_product+(uint32_t)current_red*inverse+bias)>>16)<<16)|
+                (((green_product+(uint32_t)current_green*inverse+bias)>>16)<<8)|
+                ((blue_product+(uint32_t)current_blue*inverse+bias)>>16);
             }
           }
         }
@@ -3962,7 +4006,8 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
    * framebuffer precision in packed 8-bit lanes; smaller draws keep the 16-bit path. A
    * structurally recognized constant-colour mask has no source-RGB quantization to preserve, so
    * it can enter the same kernel at a smaller area and join adjacent masks in one row dispatch. */
-  int fast8_blend = (r->target_sp==0 && r->alphablend &&
+  int fast8_blend = (gml_blend_family(r)!=GML_BLEND_STUDIO2 &&
+                     r->target_sp==0 && r->alphablend &&
                      r->blendmode==0 &&
                      vispix>=(batchable_constant_alpha?4096ull:262144ull));
   int fast8_alpha_floor=fast8_blend ? r->fast_alpha_cull : 0;
@@ -4190,6 +4235,7 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
       band.use_quad_span=use_quad_span;
       band.white=white;
       band.vector_pixels=fabs(dlx)>=0.125 || fabs(dly)>=0.125;
+      band.round_blend=gml_blend_family(r)==GML_BLEND_STUDIO2;
       band.blend_r=bR;
       band.blend_g=bG;
       band.blend_b=bB;

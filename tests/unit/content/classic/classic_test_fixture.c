@@ -330,11 +330,14 @@ void fixture_legacy_room(Fixture *f, const char *name){
 
 static Fixture legacy_fixture_build(unsigned container_version, int sparse_rooms, const char *gml){
   Fixture f = {{0}, 0};
+  int gm53 = container_version == 530;
   int gm7 = container_version == 701 || container_version == 702;
   fixture_u32(&f, GMLC_CLASSIC_MAGIC); fixture_u32(&f, container_version);
+  if(gm53) fixture_u32(&f,0); /* reserved */
   fixture_u32(&f, 42); fixture_zero(&f, 16);
-  fixture_u32(&f, gm7 ? 702 : 600);
-  for(unsigned i = 0; i < (gm7 ? 22u : 20u); ++i) fixture_u32(&f, 0);
+  fixture_u32(&f, gm53 ? 530 : gm7 ? 702 : 600);
+  for(unsigned i = 0; i < (gm53 || gm7 ? 22u : 20u); ++i)
+    fixture_u32(&f,gm53 && i==3?100:0);
   fixture_u32(&f, 0); /* loading bar */
   fixture_u32(&f, 0); /* custom loading image */
   fixture_u32(&f, 0); fixture_u32(&f, 255); fixture_u32(&f, 1);
@@ -348,14 +351,14 @@ static Fixture legacy_fixture_build(unsigned container_version, int sparse_rooms
   if(gm7){
     for(unsigned i = 0; i < 4; ++i) fixture_u32(&f, i == 0 ? 1 : 0);
     for(unsigned i = 0; i < 4; ++i) fixture_string(&f, "");
-  } else {
+  } else if(!gm53) {
     fixture_u32(&f, 0); /* includes */
     fixture_u32(&f, 0); fixture_u32(&f, 0); fixture_u32(&f, 0);
   }
   const unsigned section_versions[GMLC_CLASSIC_RESOURCE_TYPES] =
     {400, 400, 400, 420, 400, 540, 500, 400, 420};
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
-    fixture_u32(&f, section_versions[type]);
+    fixture_u32(&f, gm53 && type==GMLC_CLASSIC_FONT?440:section_versions[type]);
     if(sparse_rooms && type==GMLC_CLASSIC_ROOM){
       fixture_u32(&f,8);
       fixture_u32(&f,0); fixture_u32(&f,0);

@@ -13,6 +13,7 @@ struct AnygmHostServices;
 
 typedef enum {
   GMLC_CLASSIC_UNKNOWN = 0,
+  GMLC_CLASSIC_GM53 = 530,
   GMLC_CLASSIC_GM6 = 600,
   GMLC_CLASSIC_GM7 = 701,
   GMLC_CLASSIC_GM7_ALT = 702,

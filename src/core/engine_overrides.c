@@ -16,6 +16,40 @@ int core_opt_start_room(AnygmEngine *engine,int *room_idx) {
   return 1;
 }
 
+static int parse_nonnegative_index(const char **cursor,int *value){
+  const char *text=*cursor;
+  unsigned parsed=0;
+  if(!text || *text<'0' || *text>'9') return 0;
+  do{
+    unsigned digit=(unsigned)(*text-'0');
+    if(parsed>((unsigned)INT_MAX-digit)/10u) return 0;
+    parsed=parsed*10u+digit;
+    text++;
+  }while(*text>='0' && *text<='9');
+  *cursor=text;
+  *value=(int)parsed;
+  return 1;
+}
+
+int core_opt_redirect_room_order(AnygmEngine *engine) {
+  const char *setting=anygm_host_development_setting(
+    &engine->host,"GML_REDIRECT_ROOM_ORDER");
+  if(!setting || !setting[0]) return 0;
+  const char *cursor=setting;
+  int slot=-1,room=-1;
+  if(!parse_nonnegative_index(&cursor,&slot) || *cursor++!=':' ||
+     !parse_nonnegative_index(&cursor,&room) || *cursor ||
+     !engine->win.room_order || slot>=engine->win.n_room_order ||
+     room>=gml_room_count(&engine->win)){
+    engine_logf(engine,ANYGM_LOG_WARN,
+      "Ignoring invalid GML_REDIRECT_ROOM_ORDER=%s (expected slot:room within this payload)",
+      setting);
+    return 0;
+  }
+  engine->win.room_order[slot]=(uint32_t)room;
+  return 1;
+}
+
 
 /* ============================================================================================
  * Generic data-driven cheat engine.

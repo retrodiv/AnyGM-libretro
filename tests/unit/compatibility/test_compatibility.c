@@ -20,10 +20,11 @@ static int resolve(uint32_t classic,uint32_t bytecode,uint64_t option_flags,
 
 int main(void){
   AnygmCompatibilityProfile classic_early={0},classic_late={0};
-  AnygmCompatibilityProfile first_early={0},first_late={0},second={0},flagged={0};
+  AnygmCompatibilityProfile first_early={0},first_late={0},second={0},flagged={0},beta={0};
   if(!resolve(600,16,0,&classic_early) || !resolve(800,16,0,&classic_late) ||
      !resolve(0,14,0,&first_early) || !resolve(0,16,0,&first_late) ||
-     !resolve(0,17,0,&second) || !resolve(0,15,UINT64_C(0x08000000),&flagged)){
+     !resolve(0,17,0,&second) || !resolve(0,15,UINT64_C(0x08000000),&flagged) ||
+     !resolve(0,15,UINT64_C(0x00400000),&beta)){
     fputs("known compatibility facts were rejected\n",stderr);
     return 1;
   }
@@ -49,8 +50,17 @@ int main(void){
   if(first_late.alarm_dispatch!=ANYGM_ALARM_DISPATCH_RESOURCE_MAJOR ||
      first_late.alarm_threshold!=ANYGM_ALARM_TRIGGER_AT_ZERO ||
      !first_late.round_transformed_collision_bounds ||
-     first_late.has_modern_function_values){
+     first_late.has_modern_function_values || !first_late.uses_room_speed_cadence ||
+     !first_late.uses_legacy_room_cameras){
     fputs("first-generation late policy resolution mismatch\n",stderr);
+    return 1;
+  }
+  if(beta.diagnostic_family!=ANYGM_FAMILY_STUDIO_FIRST ||
+     beta.has_modern_function_values || beta.has_modern_struct_semantics ||
+     !beta.has_modern_layer_semantics ||
+     beta.blend!=ANYGM_BLEND_STUDIO_SECOND || beta.uses_room_speed_cadence ||
+     beta.uses_legacy_room_cameras){
+    fputs("early second-generation presentation policy mismatch\n",stderr);
     return 1;
   }
   if(second.diagnostic_family!=ANYGM_FAMILY_STUDIO_SECOND ||

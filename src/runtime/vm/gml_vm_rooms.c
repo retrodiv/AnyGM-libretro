@@ -445,7 +445,7 @@ static void room_camera_resources_init(GmlVM *vm,int reset_bindings){
    * while retaining fourteen-field ROOM views. Keep those legacy view fields
    * authoritative rather than synthesizing reserved room-camera resources.
    * Dynamic cameras remain available when code creates and binds them. */
-  if(vm->win->bytecode==16){
+  if(anygm_policy_uses_legacy_room_cameras(vm->win)){
     for(int camera=0;camera<GML_ROOM_CAMERA_COUNT;camera++){
       if(reset_bindings) gml_vm_global_array_set(vm,"view_camera",camera,-1);
       gml_vm_global_array_set(vm,"__gml_camera_live",camera,0);

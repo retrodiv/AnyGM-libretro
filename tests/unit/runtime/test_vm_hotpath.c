@@ -289,6 +289,22 @@ static int draw_item_sort_order(void){
   for(int i=0;i<n;i++){ fill_draw_item(&items[i],i,0); items[i].type=6; items[i].order=-1; items[i].depth=1e9; }
   ok &= check_equals_qsort(items,n,"classic background slots");
 
+  /* Asset-layer sprites retain their authored element sequence within one layer. */
+  GmlDrawItem asset_layer[3];
+  memset(asset_layer,0,sizeof asset_layer);
+  const int authored_shuffle[3]={2,0,1};
+  for(int i=0;i<3;i++){
+    asset_layer[i].depth=100;
+    asset_layer[i].type=5;
+    asset_layer[i].order=4;
+    asset_layer[i].seq=authored_shuffle[i];
+  }
+  ok &= sort_with_scratch(asset_layer,3);
+  if(ok && (asset_layer[0].seq!=0 || asset_layer[1].seq!=1 || asset_layer[2].seq!=2)){
+    fail("studio asset-layer sprites lost authored order");
+    ok=0;
+  }
+
   free(items);
   if(ok) return 1;
   failures++;

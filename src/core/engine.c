@@ -361,6 +361,7 @@ static void boot_runtime(AnygmEngine *engine) {
     }
   }
   int initial_boot_guard = engine->full_game_on_initial_boot;
+  core_opt_redirect_room_order(engine);
   if(!initial_boot_guard) core_opt_start_room(engine,&selected_room);
   engine->full_game_on_initial_boot = 0;
   /* always run the first room before a selected start room so game globals, fonts, and
@@ -1091,7 +1092,19 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 		  }
 		  int gsw = aspect_gui_center ? aspect_gui_w : (engine->gui_space_width > 0 ? engine->gui_space_width : (int)ow);
 		  int gsh = aspect_gui_center ? aspect_gui_h : (engine->gui_space_height > 0 ? engine->gui_space_height : (int)oh);
-			  int gui_indirect = !aspect_gui_center && !engine->canvas_mode && (gsw != (int)ow || gsh != (int)oh);
+		  /* An owned application surface that covers the declared window remains the GUI draw
+		   * target when GUI coordinates are changed; the coordinates do not create a new raster. */
+		  int gui_uses_window_target = !aspect_gui_center && !engine->canvas_mode &&
+		    render_presentation.application_owned && render_presentation.application_draw_enabled &&
+		    render_presentation.application_width==(int)ow &&
+		    render_presentation.application_height==(int)oh &&
+		    engine->vm.gui_w>0 && engine->vm.gui_h>0 && frame_view_count==1 &&
+		    application_surface_matches_first_generation_view_port(
+		      engine,frame_view_count,frame_views[0].px,frame_views[0].py,
+		      frame_views[0].pw,frame_views[0].ph,
+		      render_presentation.application_width,render_presentation.application_height);
+			  int gui_indirect = !aspect_gui_center && !engine->canvas_mode && !gui_uses_window_target &&
+			                     (gsw != (int)ow || gsh != (int)oh);
 			  if ((aspect_gui_center || gui_indirect) && !ensure_scratch_buffer(engine,&engine->gui_buffer)) {
 			    engine_errorf(engine,ANYGM_ERROR_OUT_OF_MEMORY,"Could not allocate the GUI scratch buffer");
 			    return ANYGM_ERROR_OUT_OF_MEMORY;
@@ -1153,6 +1166,18 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if (pw_ <= 0 || ph_ <= 0) { pw_ = engine->width; ph_ = engine->height; }
 	  int prw, prh, prx, pry;
 	  if (engine->canvas_mode) { prw = gsw; prh = gsh; prx = 0; pry = 0; }
+	  else if (render_presentation.application_owned &&
+	           ((int)lround(pw_)!=render_presentation.application_width ||
+	            (int)lround(ph_)!=render_presentation.application_height) &&
+	           application_surface_matches_first_generation_view_port(
+	             engine,frame_view_count,port_x_,port_y_,
+	             (int)lround(pw_),(int)lround(ph_),
+	             render_presentation.application_width,
+	             render_presentation.application_height)) {
+	    /* Present the complete window-owned target rather than letterboxing its automatic blit
+	     * through a smaller view port. GUI size still governs subsequent draw coordinates. */
+	    prx = pry = 0; prw = gtw; prh = gth;
+	  }
 	  else {
 	    int explicit_window_ = engine->vm.window_w>0 && engine->vm.window_h>0;
 	    if (!gml_classic_present_explicit_port(&engine->win,explicit_window_,gtw,gth,
@@ -1223,11 +1248,13 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	      owned_window_raster?render_presentation.application_height:
 	      legacy_window_raster?gth:(int)engine->height);
 	  } else {
-	  gml_render_gui_begin(&engine->render,gsw,gsh);
+	  gml_render_gui_begin(&engine->render,
+	    gui_uses_window_target?gtw:gsw,gui_uses_window_target?gth:gsh);
 	    /* display_set_gui_size() is normally called from Create/room setup, before the GUI pass
 	     * starts. Seed the renderer from that persistent VM state as well as accepting live changes
 	     * during Draw GUI. */
-	    if(anygm_policy_has_modern_layer_semantics(&engine->win) && engine->vm.gui_w>0 && engine->vm.gui_h>0)
+	    if((anygm_policy_has_modern_layer_semantics(&engine->win) || gui_uses_window_target) &&
+	       engine->vm.gui_w>0 && engine->vm.gui_h>0)
 	      gml_render_gui_set_size(&engine->render,engine->vm.gui_w,engine->vm.gui_h);
 	  }
 	  if(engine->vm.gui_maximise_active)

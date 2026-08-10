@@ -1150,6 +1150,14 @@ void gml_render_world_set_logical_extent(GmlRender *r,int width,int height){
   r->projection_cam_y*=scale_y;
   r->cam_x*=scale_x;
   r->cam_y*=scale_y;
+  /* The earlier camera representation uses an integer vertical origin when the owned
+   * application-surface projection is scaled. Later bytecode retains a fractional origin. */
+  if(r->win && scale_y>1.0 &&
+     anygm_policy_has_modern_layer_semantics(r->win) &&
+     anygm_policy_uses_first_generation_studio(r->win)){
+    r->projection_cam_y=floor(r->projection_cam_y);
+    r->cam_y=floor(r->cam_y);
+  }
   gml_d3_sync_render_camera(r);
 }
 void gml_render_gui_begin(GmlRender *r, int logical_w, int logical_h){

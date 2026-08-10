@@ -81,6 +81,43 @@ static int screen_stage_raster_policy(void){
   return 1;
 }
 
+typedef struct {
+  const char *room_redirect;
+} RoomRedirectFixture;
+
+static const char *room_redirect_setting(void *userdata,const char *name){
+  RoomRedirectFixture *fixture=(RoomRedirectFixture*)userdata;
+  return !strcmp(name,"GML_REDIRECT_ROOM_ORDER")?fixture->room_redirect:NULL;
+}
+
+static int room_order_redirect_policy(void){
+  uint8_t room_chunk[]={4,0,0,0};
+  uint32_t order[]={0,1,2,3};
+  RoomRedirectFixture fixture={.room_redirect="2:3"};
+  AnygmEngine engine={0};
+  engine.host.userdata=&fixture;
+  engine.host.development_setting=room_redirect_setting;
+  engine.win.room_order=order;
+  engine.win.n_room_order=4;
+  engine.win.data=room_chunk;
+  engine.win.size=sizeof room_chunk;
+  memcpy(engine.win.chunks[0].name,"ROOM",4);
+  engine.win.chunks[0].off=0;
+  engine.win.chunks[0].size=sizeof room_chunk;
+  engine.win.n_chunks=1;
+  int ok=core_opt_redirect_room_order(&engine) && order[2]==3;
+  const char *invalid[]={"-1:2","2:-1","4:2","2:4","2:1junk","2147483648:1",NULL};
+  for(int i=0;ok && invalid[i];i++){
+    order[2]=2;
+    fixture.room_redirect=invalid[i];
+    ok=!core_opt_redirect_room_order(&engine) && order[2]==2;
+  }
+  fixture.room_redirect=NULL;
+  ok=ok && !core_opt_redirect_room_order(&engine) && order[2]==2;
+  if(!ok) fputs("room-order redirect accepted an invalid route or changed the wrong slot\n",stderr);
+  return ok;
+}
+
 static int application_surface_port_scale_policy(void){
   AnygmEngine engine={0};
   engine.win.bytecode=17;
@@ -130,6 +167,14 @@ static int first_generation_application_surface_policy(void){
       &engine,1,8,0,640,480,view.width,view.height) &&
     !application_surface_matches_first_generation_view_port(
       &engine,1,0,0,320,240,view.width,view.height);
+  engine.vm.gui_w=500;
+  engine.vm.gui_h=380;
+  ok=ok && application_surface_matches_first_generation_view_port(
+    &engine,1,0,0,480,360,view.width,view.height);
+  engine.vm.gui_w=300;
+  engine.vm.gui_h=240;
+  ok=ok && !application_surface_matches_first_generation_view_port(
+    &engine,1,0,0,480,360,view.width,view.height);
   engine.win.bytecode=17;
   ok=ok && !application_surface_matches_first_generation_view_port(
     &engine,1,0,0,640,480,view.width,view.height);
@@ -722,6 +767,7 @@ int main(int argc,char **argv){
     return 1;
   }
   if(!screen_stage_raster_policy()) return 1;
+  if(!room_order_redirect_policy()) return 1;
   if(!application_surface_port_scale_policy()) return 1;
   if(!first_generation_application_surface_policy()) return 1;
   if(!first_generation_dynamic_camera_policy()) return 1;
@@ -842,7 +888,7 @@ int main(int argc,char **argv){
    * reviewed policy is added or changed, and again whenever the serialized layout itself changes. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
   if(deterministic_size!=19618 ||
-     deterministic_hash!=UINT64_C(0xa4d07a61e1ddde01)){
+     deterministic_hash!=UINT64_C(0xb4c9957de2fa46c1)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;

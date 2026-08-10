@@ -75,6 +75,8 @@ typedef struct AnygmCompatibilityProfile {
   uint32_t has_modern_function_values;
   uint32_t has_modern_struct_semantics;
   uint32_t has_modern_layer_semantics;
+  uint32_t uses_room_speed_cadence;
+  uint32_t uses_legacy_room_cameras;
   uint32_t advances_animation_before_step;
   uint32_t preserves_frame_without_background_clear;
   uint32_t path_motion_owns_velocity;
@@ -117,6 +119,16 @@ static inline int anygm_policy_has_modern_struct_semantics(const GmlWin *content
 static inline int anygm_policy_has_modern_layer_semantics(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->has_modern_layer_semantics:(content&&content->bytecode>=17);
+}
+static inline int anygm_policy_uses_room_speed_cadence(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?(int)p->uses_room_speed_cadence:
+    (content&&!content->classic_version&&content->bytecode==16);
+}
+static inline int anygm_policy_uses_legacy_room_cameras(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?(int)p->uses_legacy_room_cameras:
+    (content&&!content->classic_version&&content->bytecode==16);
 }
 static inline int anygm_policy_uses_first_generation_studio(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);

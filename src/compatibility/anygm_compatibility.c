@@ -16,7 +16,8 @@ static void compatibility_error(char *error,size_t error_size,const char *format
 }
 
 static int supported_classic_revision(uint32_t revision){
-  return revision==600 || revision==701 || revision==702 || revision==800 || revision==810;
+  return revision==530 || revision==600 || revision==701 || revision==702 ||
+         revision==800 || revision==810;
 }
 
 static uint64_t profile_hash_bytes(const uint8_t *data,size_t size){
@@ -52,6 +53,8 @@ static uint64_t compatibility_fingerprint(const AnygmCompatibilityProfile *profi
   ENCODE_FIELD(has_modern_function_values);
   ENCODE_FIELD(has_modern_struct_semantics);
   ENCODE_FIELD(has_modern_layer_semantics);
+  ENCODE_FIELD(uses_room_speed_cadence);
+  ENCODE_FIELD(uses_legacy_room_cameras);
   ENCODE_FIELD(advances_animation_before_step);
   ENCODE_FIELD(preserves_frame_without_background_clear);
   ENCODE_FIELD(path_motion_owns_velocity);
@@ -111,12 +114,19 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   profile->schema_version=ANYGM_COMPATIBILITY_SCHEMA;
   int classic=facts->classic_revision!=0;
   int modern=facts->bytecode_revision>=17;
+  /* The structural option flag selects second-generation rendering independently from the
+   * instruction encoding. Keep language and value semantics tied to bytecode while resolving
+   * layer and pixel policies from the declared presentation format. */
+  int second_generation_rendering=!classic &&
+    (modern || (facts->option_flags&UINT64_C(0x00400000))!=0);
   profile->diagnostic_family=classic?ANYGM_FAMILY_CLASSIC:
     (modern?ANYGM_FAMILY_STUDIO_SECOND:ANYGM_FAMILY_STUDIO_FIRST);
   profile->uses_classic_runtime=classic;
   profile->has_modern_function_values=modern;
   profile->has_modern_struct_semantics=modern;
-  profile->has_modern_layer_semantics=modern;
+  profile->has_modern_layer_semantics=second_generation_rendering;
+  profile->uses_room_speed_cadence=!classic&&facts->bytecode_revision==16;
+  profile->uses_legacy_room_cameras=!classic&&facts->bytecode_revision==16;
   profile->comparison=classic?ANYGM_COMPARISON_CLASSIC_EPSILON:
     ANYGM_COMPARISON_STUDIO_EPSILON;
   profile->default_comparison_epsilon=classic?1e-13:1e-5;
@@ -129,7 +139,7 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   profile->solid_collision_transaction=(classic||modern)?ANYGM_COLLISION_PREVIOUS_COORDINATES:
     ANYGM_COLLISION_CURRENT_COORDINATES;
   profile->blend=classic?ANYGM_BLEND_CLASSIC:
-    (modern?ANYGM_BLEND_STUDIO_SECOND:ANYGM_BLEND_STUDIO_FIRST);
+    (second_generation_rendering?ANYGM_BLEND_STUDIO_SECOND:ANYGM_BLEND_STUDIO_FIRST);
   profile->advances_animation_before_step=classic;
   profile->preserves_frame_without_background_clear=!classic;
   profile->path_motion_owns_velocity=classic||modern;

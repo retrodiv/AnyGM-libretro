@@ -321,7 +321,7 @@ static double cur_room_fps(AnygmEngine *engine) {
   if(fps > 0.0) return fps;
   if(anygm_policy_has_modern_layer_semantics(&engine->win)){
     if(engine->win.game_speed > 0.0) return engine->win.game_speed;
-    if(engine->win.bytecode != 16) return 60.0;
+    if(!anygm_policy_uses_room_speed_cadence(&engine->win)) return 60.0;
     fps = gml_room_speed(&engine->vm);
     if(fps > 0.0) return fps;
   }
@@ -419,11 +419,25 @@ int application_surface_matches_first_generation_view_port(
   int app_w,int app_h) {
   if(!engine || !anygm_policy_uses_first_generation_studio(&engine->win) ||
      view_count!=1 || px!=0 || py!=0 || pw<=0 || ph<=0 ||
-     app_w<=0 || app_h<=0 || pw!=app_w || ph!=app_h)
+     app_w<=0 || app_h<=0)
     return 0;
+  if(pw==app_w && ph==app_h) return 1;
   if(engine->win.disp_w && abs(app_w-(int)engine->win.disp_w)>1) return 0;
   if(engine->win.disp_h && abs(app_h-(int)engine->win.disp_h)>1) return 0;
-  return 1;
+  /* A sole same-aspect viewport can occupy a smaller area inside an owned application target.
+   * An independently declared GUI extent between viewport and target sizes distinguishes that
+   * scale from a deliberate inset port; all three extents must remain in a rounded aspect band. */
+  if(engine->vm.gui_w<=0 || engine->vm.gui_h<=0 ||
+     engine->vm.gui_w<pw || engine->vm.gui_h<ph ||
+     engine->vm.gui_w>app_w || engine->vm.gui_h>app_h)
+    return 0;
+  double app_ratio=(double)app_w/(double)app_h;
+  double port_ratio=(double)pw/(double)ph;
+  double gui_ratio=(double)engine->vm.gui_w/(double)engine->vm.gui_h;
+  double gui_tolerance=1.0/(double)(engine->vm.gui_h<engine->vm.gui_w
+                                    ? engine->vm.gui_h:engine->vm.gui_w);
+  return fabs(port_ratio-app_ratio)<0.0005 &&
+         fabs(gui_ratio-app_ratio)<=gui_tolerance*16.0;
 }
 
 /* native render size = the current room's view region (view_wview). Games render the world 1:1 into

@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gml_render_internal.h"
+#include "anygm_compatibility.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -426,6 +427,42 @@ static void check_fractional_sprite_part_extent(double source_height,int expecte
   free(page.argb_cache);
 }
 
+static void check_early_second_generation_camera_phase(void){
+  uint32_t framebuffer=0;
+  GmlWin content;
+  AnygmCompatibilityProfile compatibility;
+  GmlRender render;
+  memset(&content,0,sizeof content);
+  memset(&compatibility,0,sizeof compatibility);
+  memset(&render,0,sizeof render);
+  compatibility.diagnostic_family=ANYGM_FAMILY_STUDIO_FIRST;
+  compatibility.has_modern_layer_semantics=1;
+  content.compatibility=&compatibility;
+  render.win=&content;
+
+  gml_render_begin(&render,&framebuffer,1024,768,0.0,0.25);
+  gml_render_world_set_logical_extent(&render,480,360);
+  double x=0.0,y=0.0;
+  gml_render_draw_map_point(&render,&x,&y);
+  expect(x==0.0 && y==0.0 && render.cam_y==0.0,
+         "early Studio 2 kept a fractional scaled vertical camera origin");
+
+  gml_render_begin(&render,&framebuffer,480,360,0.0,0.0);
+  gml_render_world_set_logical_extent(&render,480,360);
+  x=y=0.0;
+  gml_render_draw_map_point(&render,&x,&y);
+  expect(x==0.0 && y==0.0,
+         "early Studio 2 altered a 1:1 world target");
+
+  compatibility.diagnostic_family=ANYGM_FAMILY_STUDIO_SECOND;
+  gml_render_begin(&render,&framebuffer,1024,768,0.0,0.25);
+  gml_render_world_set_logical_extent(&render,480,360);
+  x=y=0.0;
+  gml_render_draw_map_point(&render,&x,&y);
+  expect(x==0.0 && y==0.0 && render.cam_y>0.5,
+         "later Studio 2 inherited the revision-15 integer camera projection");
+}
+
 int main(void){
   static const uint32_t transformed[8][4]={
     {0xffff0000,0xff00ff00,0xff0000ff,0xffffffff},
@@ -451,6 +488,7 @@ int main(void){
   check_fractional_sprite_part_extent(0.6,1);
   check_fractional_sprite_part_extent(0.8,2);
   check_fractional_sprite_part_extent(0.2,0);
+  check_early_second_generation_camera_phase();
   if(failures){
     fprintf(stderr,"renderer tiles: %d failure(s)\n",failures);
     return 1;

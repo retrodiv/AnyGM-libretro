@@ -294,6 +294,10 @@ static void gml_vm_apply_pending_room(GmlVM *vm){
   vm->step_alloc_base=0;
   gml_room_enter(vm,target);
   if(advance_entered){
+    /* Newly bound layer assets receive the first animation tick at the same room-entry step
+     * boundary as new instances. Scrolling still derives from room_enter_frame, so only stateful
+     * layer elements advance here. */
+    gml_vm_frame_advance_layers(vm);
     GmlRender *render=(GmlRender*)vm->render;
     const char *anim_dbg=anygm_host_development_setting(vm->host,"GML_ANIM_OBJ");
     for(int i=0;i<vm->inst_count;i++){
@@ -857,6 +861,10 @@ int gml_vm_draw_item_cmp(const void *pa, const void *pb){
   if(a->type==0 && b->type==0 && !a->classic && a->order>=0 && a->order==b->order &&
      a->element_order>=0 && b->element_order>=0 && a->element_order!=b->element_order)
     return a->element_order<b->element_order? -1:1;
+  /* Asset-layer sprites retain their authored sequence rather than the reverse instance-chain
+   * ordering, so later elements composite over earlier elements in the same layer. */
+  if(a->type==5 && b->type==5 && a->order>=0 && a->order==b->order)
+    return a->seq<b->seq? -1 : (a->seq>b->seq?1:0);
   return a->seq>b->seq? -1 : (a->seq<b->seq?1:0);
 }
 /* Natural-run bottom-up merge sort for the draw list.

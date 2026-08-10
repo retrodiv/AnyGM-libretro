@@ -175,6 +175,7 @@ static int exercise_declared_global_cadence(AnygmEngine *engine){
   double saved_content_fps=engine->win.game_speed;
   uint8_t saved_bytecode=engine->win.bytecode;
   unsigned saved_modern_layers=engine->compatibility.has_modern_layer_semantics;
+  unsigned saved_room_speed_cadence=engine->compatibility.uses_room_speed_cadence;
   double saved_fps=engine->fps;
   int saved_fps_room=engine->fps_room;
   GmlVal *room_speed=gml_varmap_get(&engine->vm.globals,"room_speed");
@@ -194,6 +195,7 @@ static int exercise_declared_global_cadence(AnygmEngine *engine){
    * room resource as its only authored cadence. */
   engine->win.game_speed=0.0;
   engine->win.bytecode=16;
+  engine->compatibility.uses_room_speed_cadence=1;
   *gml_varmap_put(&engine->vm.globals,"room_speed")=vreal(30.0);
   engine->fps_room=-1;
   sync_room_fps(engine,0);
@@ -203,6 +205,7 @@ static int exercise_declared_global_cadence(AnygmEngine *engine){
   engine->win.bytecode=saved_bytecode;
   *gml_varmap_put(&engine->vm.globals,"room_speed")=had_room_speed?saved_room_speed:vundef();
   engine->compatibility.has_modern_layer_semantics=saved_modern_layers;
+  engine->compatibility.uses_room_speed_cadence=saved_room_speed_cadence;
   engine->fps=saved_fps;
   engine->fps_room=saved_fps_room;
   if(!ok) return fail("declared global cadence was not reported to the host");

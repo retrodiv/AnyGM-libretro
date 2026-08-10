@@ -84,17 +84,27 @@ int gmlc_classic_import_sounds(const GmlcClassicManifest *classic,
     double volume = 1.0;
     {
       ImportReader r = {source->payload, source->payload_size, 0, err, errcap};
-      uint32_t kind, type_length, filename_length, has_data, blob_size = 0, ignored;
+      uint32_t kind, type_length, filename_length=0, has_data=0, blob_size = 0, ignored;
       const uint8_t *type_text = NULL, *filename_text = NULL, *blob = NULL;
-      double pan;
-      if(!import_u32(&r, &kind, "sound kind") ||
-         !import_skip_string(&r, &type_text, &type_length, "sound file type") ||
-         !import_skip_string(&r, &filename_text, &filename_length, "sound filename") ||
-         !import_u32(&r, &has_data, "sound data flag") ||
-         (has_data && !import_blob(&r, &blob, &blob_size, "sound data")) ||
-         !import_u32(&r, &ignored, "sound effects") || !import_double(&r, &volume, "sound volume") ||
-         !import_double(&r, &pan, "sound pan") || !import_u32(&r, &ignored, "sound preload") ||
-         r.pos != r.size){
+      double pan=0.0;
+      int parsed=import_u32(&r,&kind,"sound kind") &&
+                 import_skip_string(&r,&type_text,&type_length,"sound file type");
+      if(parsed && source->version==440u){
+        has_data=kind!=UINT32_MAX;
+        parsed=(!has_data || import_blob(&r,&blob,&blob_size,"sound data")) &&
+               import_u32(&r,&ignored,"sound legacy flag") &&
+               import_u32(&r,&ignored,"sound legacy flag") &&
+               import_u32(&r,&ignored,"sound preload");
+      } else if(parsed){
+        parsed=import_skip_string(&r,&filename_text,&filename_length,"sound filename") &&
+               import_u32(&r,&has_data,"sound data flag") &&
+               (!has_data || import_blob(&r,&blob,&blob_size,"sound data")) &&
+               import_u32(&r,&ignored,"sound effects") &&
+               import_double(&r,&volume,"sound volume") &&
+               import_double(&r,&pan,"sound pan") &&
+               import_u32(&r,&ignored,"sound preload");
+      }
+      if(!parsed || r.pos != r.size){
         free_imported_sounds(project);
         return 0;
       }
