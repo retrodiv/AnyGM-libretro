@@ -342,6 +342,11 @@ typedef struct GmlVM {
   int draw_events_off;   /* draw_enable_drawevent(false): skip all instance drawing */
   void (*draw_event_hook)(struct GmlVM *vm, GmlInstance *in, const char *suffix, int begin, void *user);
   void *draw_event_hook_user;  /* host-only transient hook around individual draw events */
+  /* The coordinator owns room layers before and after the instance pass and
+   * supplies them to explicit redraw requests through a transient hook. */
+  void (*room_layer_hook)(struct GmlVM *vm, int foreground, void *user);
+  void *room_layer_hook_user;
+  int in_screen_redraw;  /* guard nested draw-event redraw requests */
   int *draw_ord; int draw_ord_cap;  /* scratch order buffer for draw passes (runtime-only) */
   void    *render;   /* GmlRender* (set by the engine coordinator) for draw_* builtins */
   void    *audio;    /* GmlAudio*  (set by the engine coordinator) for audio_* builtins */

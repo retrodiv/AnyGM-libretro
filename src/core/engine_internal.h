@@ -231,6 +231,7 @@ void engine_logf(AnygmEngine *engine,AnygmLogLevel level,const char *fmt,...);
 void classic_transition_reset(AnygmEngine *engine);
 void aspect_draw_event_hook(GmlVM *vm,GmlInstance *instance,const char *suffix,
                             int begin,void *user);
+void screen_redraw_room_layer_hook(GmlVM *vm,int foreground,void *user);
 void sync_room_fps(AnygmEngine *engine,int publish_changes);
 int screen_stage_uses_requested_raster(
   const GmlWin *content,const GmlRenderPresentationMetrics *presentation,

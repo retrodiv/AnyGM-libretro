@@ -1001,6 +1001,21 @@ int room_clears_application_surface(const GmlWin *content, const GmlRoom *room) 
   return room &&
     (room->draw_bg || (room->flags&GML_ROOM_FLAG_CLEAR_VIEW_BACKGROUND));
 }
+/* The coordinator draws room layers around the instance pass, including on an
+ * explicit redraw into the current target. Respect the current room and any
+ * content-owned background renderer. */
+void screen_redraw_room_layer_hook(GmlVM *vm,int foreground,void *user) {
+  AnygmEngine *engine=user;
+  if (!engine) return;
+  (void)vm;
+  GmlRoom room;
+  if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &room) != 0) return;
+  const char *bg_renderer = anygm_host_development_setting(&engine->host,"GML_BG_RENDERER_OBJ");
+  int object = (bg_renderer && *bg_renderer)
+    ? gml_object_index_by_name(&engine->vm, bg_renderer) : -1;
+  if (object >= 0 && gml_find_instance(&engine->vm, object) != NULL) return;
+  draw_runtime_backgrounds(engine, foreground);
+}
 void draw_runtime_backgrounds(AnygmEngine *engine,int want_fg) {
   for (int i = 0; i < 8; i++) {
     int visible = gml_global_arr(&engine->vm, "background_visible", i) >= 0.5;

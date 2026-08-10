@@ -333,6 +333,8 @@ static void boot_runtime(AnygmEngine *engine) {
   (void)gml_vm_software3d_ensure(&engine->vm);
   engine->vm.draw_event_hook = aspect_draw_event_hook;
   engine->vm.draw_event_hook_user = engine;
+  engine->vm.room_layer_hook = screen_redraw_room_layer_hook;
+  engine->vm.room_layer_hook_user = engine;
   engine->audio = gml_audio_create(&engine->win);
   engine->vm.audio = engine->audio;
   /* Boot the normal entry point unless the host supplied a neutral start-room override. */

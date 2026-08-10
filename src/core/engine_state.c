@@ -336,6 +336,8 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   engine->vm.render=&engine->render; engine->vm.audio=engine->audio;
   engine->vm.draw_event_hook = aspect_draw_event_hook;
   engine->vm.draw_event_hook_user = engine;
+  engine->vm.room_layer_hook = screen_redraw_room_layer_hook;
+  engine->vm.room_layer_hook_user = engine;
   /* The restored VM decides whether this is an ended state. Leave one presentation pass available
    * so its framebuffer can be reconstructed, then the normal Game End handling freezes it. */
   engine->runtime_ended = 0;

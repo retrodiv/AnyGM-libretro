@@ -528,8 +528,21 @@ GmlVal gml_builtin_try_platform_extensions(GmlVM *vm, const char *nm, GmlVal *a,
   if(!strncmp(nm,"xboxone_",8)) return vreal(0);
   /* The host receives one completed video frame per anygm_run_frame. Desktop refresh/vsync calls
    * cannot expose an intermediate buffer here, and waiting would only stall emulation. */
-  if(!strcmp(nm,"screen_redraw")||!strcmp(nm,"screen_refresh")||!strcmp(nm,"screen_wait_vsync")||
+  if(!strcmp(nm,"screen_refresh")||!strcmp(nm,"screen_wait_vsync")||
      !strcmp(nm,"screen_save")||!strcmp(nm,"screen_save_part")) return vreal(0);
+  /* Repeat the room draw sequence in the current target without presenting or
+   * waiting. Nested redraw requests must not recurse. */
+  if(!strcmp(nm,"screen_redraw")){
+    if(!vm || !vm->render || vm->in_screen_redraw) return vreal(0);
+    vm->in_screen_redraw=1;
+    if(vm->room_layer_hook) vm->room_layer_hook(vm,0,vm->room_layer_hook_user);
+    gml_vm_draw_pass(vm,"Draw_72");
+    gml_vm_draw(vm);
+    gml_vm_draw_pass(vm,"Draw_73");
+    if(vm->room_layer_hook) vm->room_layer_hook(vm,1,vm->room_layer_hook_user);
+    vm->in_screen_redraw=0;
+    return vreal(0);
+  }
   if(!strcmp(nm,"os_get_language")) return vstr(vm->os_language[0]?vm->os_language:"en");
   /* The locale contract exposes language lowercase and region uppercase. */
   if(!strcmp(nm,"os_get_region")) return vstr(vm->os_region[0]?vm->os_region:"US");
