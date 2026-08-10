@@ -1264,7 +1264,10 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
     while(p<end){
       unsigned cp=text_next_cp(&p);
       int fr=glyph_frame(f,cp);
-      if(fr>=0 && fr<s->n_frames){
+      /* A sprite font advances over the space without painting its cell. An
+       * authored space frame may contain nonblank pixels; the advance below
+       * still uses that frame's own width, leaving text layout unchanged. */
+      if(fr>=0 && fr<s->n_frames && cp!=' '){
         double glyph_ox=cx*xs,glyph_oy=base_y*ys;
         double glyph_x=use_rot?x+glyph_ox*ca+glyph_oy*sa:x+glyph_ox;
         double glyph_y=use_rot?y-glyph_ox*sa+glyph_oy*ca:y+glyph_oy;
