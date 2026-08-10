@@ -638,8 +638,33 @@ int gml_render_font_metrics(const GmlRender *R,int font,
     metrics->proportional=source->prop;
     metrics->separation=source->sep;
     metrics->sprite_backed=!source->real;
+    metrics->glyph_count=source->n_glyphs;
   }
   return 1;
+}
+
+int gml_render_font_glyph_metrics(const GmlRender *R,int font,int glyph,
+                                  GmlRenderFontGlyphMetrics *metrics){
+  if(metrics) memset(metrics,0,sizeof(*metrics));
+  if(!R || font<0 || font>=R->n_fonts || glyph<0 ||
+     glyph>=R->fonts[font].n_glyphs || !R->fonts[font].glyphs) return 0;
+  const GmlGlyph *source=&R->fonts[font].glyphs[glyph];
+  if(metrics){
+    metrics->character=source->ch;
+    metrics->x=source->sx; metrics->y=source->sy;
+    metrics->width=source->w; metrics->height=source->h;
+    metrics->shift=source->shift; metrics->offset=source->offset;
+  }
+  return 1;
+}
+
+int gml_render_font_texture_handle(const GmlRender *R,int font){
+  if(!R || font<0 || font>=R->n_fonts) return -1;
+  const GmlFont *source=&R->fonts[font];
+  if(source->real && source->atlas>=0 && source->atlas<R->n_atlas)
+    return (int)(GML_TEX_FONT_TAG|((unsigned)font&0x00FFFFFFu));
+  if(source->sprite>=0) return gml_render_sprite_texture_handle(source->sprite,0);
+  return -1;
 }
 
 int gml_render_font_exists(const GmlRender *R,int font){
@@ -719,6 +744,14 @@ int gml_render_backend_texture_view(GmlRender *R,int handle,int full_atlas,
     }
     return 1;
   }
+  if(kind==GML_TEX_FONT_TAG){
+    int font=(int)(encoded&0x00FFFFFFu);
+    if(font<0 || font>=R->n_fonts || !R->fonts[font].real) return 0;
+    int atlas=R->fonts[font].atlas;
+    int ok=gml_render_backend_atlas_view(R,atlas,view);
+    if(ok && view) view->resource_index=font;
+    return ok;
+  }
   if(kind!=GML_TEX_BG_TAG){
     if(anygm_host_development_setting(R->win?R->win->host:NULL,"GML_LOG_D3D"))
       anygm_host_logf(R->win?R->win->host:NULL,ANYGM_LOG_DEBUG,
@@ -752,6 +785,7 @@ int gml_render_texture_metrics(GmlRender *R,int handle,
   if(kind==GML_TEX_SPR_TAG) metrics->kind=GML_RENDER_TEXTURE_SPRITE;
   else if(kind==GML_TEX_SURF_TAG) metrics->kind=GML_RENDER_TEXTURE_SURFACE;
   else if(kind==GML_TEX_BG_TAG) metrics->kind=GML_RENDER_TEXTURE_BACKGROUND;
+  else if(kind==GML_TEX_FONT_TAG) metrics->kind=GML_RENDER_TEXTURE_FONT;
   else return 0;
   metrics->runtime=view.runtime;
   metrics->atlas_backed=view.pixel_kind==GML_RENDER_BACKEND_PIXELS_RGBA &&

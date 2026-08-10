@@ -441,9 +441,20 @@ int asset_lookup_fixture(void){
     fprintf(stderr,"asset lookup fixture missing-resource mismatch\n");
     return 0;
   }
+  GmlGlyph font_glyphs[]={
+    {.sx=2,.sy=3,.w=4,.h=5,.shift=6,.offset=1,.ch='A'},
+    {.sx=6,.sy=3,.w=2,.h=5,.shift=3,.offset=0,.ch=' '}
+  };
+  uint8_t font_pixels[8*8*4]={0};
+  GmlAtlas font_atlas={.px=font_pixels,.w=8,.h=8,.decode_attempted=1};
+  render.atlas=&font_atlas; render.n_atlas=1;
   render.n_fonts=2;
-  render.fonts[0].real=1;
+  render.fonts[0].real=1; render.fonts[0].atlas=0; render.fonts[0].line_height=19;
+  render.fonts[0].glyphs=font_glyphs; render.fonts[0].n_glyphs=2;
   render.fonts[1].sprite=0;
+  /* Detach stack-backed fixture tables before APIs allocate VM structs. */
+  vm.objects=NULL; vm.n_objects=0;
+  vm.timelines=NULL; vm.n_timelines=0;
   GmlVal embedded_font=vreal(0),runtime_font=vreal(1);
   GmlVal default_font=vreal(-1),absent_font=vreal(2);
   if(call_values(&vm,"font_exists",&embedded_font,1).d!=1 ||
@@ -453,11 +464,42 @@ int asset_lookup_fixture(void){
     fprintf(stderr,"font existence fixture mismatch\n");
     return 0;
   }
+  GmlVal font_name=call_values(&vm,"font_get_name",&embedded_font,1);
+  GmlVal font_texture=call_values(&vm,"font_get_texture",&embedded_font,1);
+  GmlVal font_uvs=call_values(&vm,"font_get_uvs",&embedded_font,1);
+  GmlVal texture_width=call_values(&vm,"texture_get_width",&font_texture,1);
+  GmlVal texel_width=call_values(&vm,"texture_get_texel_width",&font_texture,1);
+  GmlVal texel_height=call_values(&vm,"texture_get_texel_height",&font_texture,1);
+  GmlVal font_info=call_values(&vm,"font_get_info",&embedded_font,1);
+  GmlInstance *info=gml_struct_find(&vm,(unsigned)font_info.d);
+  GmlVal *glyphs_value=info?gml_varmap_get(&info->vars,"glyphs"):NULL;
+  GmlInstance *glyphs=glyphs_value?gml_struct_find(&vm,(unsigned)glyphs_value->d):NULL;
+  GmlVal *glyph_value=glyphs?gml_varmap_get(&glyphs->vars,"A"):NULL;
+  GmlVal *space_value=glyphs?gml_varmap_get(&glyphs->vars," "):NULL;
+  GmlInstance *glyph=glyph_value?gml_struct_find(&vm,(unsigned)glyph_value->d):NULL;
+  GmlVal *character=glyph?gml_varmap_get(&glyph->vars,"char"):NULL;
+  GmlVal *width=glyph?gml_varmap_get(&glyph->vars,"w"):NULL;
+  GmlRenderTextureMetrics texture_metrics={0};
+  if(font_name.t!=V_STR || strcmp(font_name.s,"neutral_font") ||
+     font_texture.t!=V_REAL ||
+     !gml_render_texture_metrics(&render,(int)font_texture.d,&texture_metrics) ||
+     texture_metrics.kind!=GML_RENDER_TEXTURE_FONT || texture_metrics.width!=8 ||
+     font_uvs.t!=V_ARR || gml_val_array_length(font_uvs)!=4 ||
+     gml_arr_get(font_uvs,0).d!=0 || gml_arr_get(font_uvs,2).d!=1 ||
+     texture_width.d!=1 || texel_width.d!=0.125 || texel_height.d!=0.125 ||
+     !info || !glyphs || !glyph || !space_value ||
+     !character || character->d!='A' || !width || width->d!=4){
+    fprintf(stderr,"font metadata fixture mismatch\n");
+    gml_vm_free(&vm);
+    return 0;
+  }
   gml_font_delete(&render,1);
   if(call_values(&vm,"font_exists",&runtime_font,1).d!=0){
     fprintf(stderr,"deleted font remained live\n");
+    gml_vm_free(&vm);
     return 0;
   }
+  gml_vm_free(&vm);
   return 1;
 }
 

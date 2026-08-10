@@ -236,8 +236,10 @@ int texture_info(GmlRender *R, int tex, double *uw, double *uh, double *tw, doub
   GmlRenderTextureMetrics metrics;
   if(gml_render_texture_metrics(R,tex,&metrics) &&
      (metrics.kind==GML_RENDER_TEXTURE_SPRITE ||
-      metrics.kind==GML_RENDER_TEXTURE_SURFACE)){
-    if((metrics.runtime || metrics.kind==GML_RENDER_TEXTURE_SURFACE) &&
+      metrics.kind==GML_RENDER_TEXTURE_SURFACE ||
+      metrics.kind==GML_RENDER_TEXTURE_FONT)){
+    if((metrics.runtime || metrics.kind==GML_RENDER_TEXTURE_SURFACE ||
+        metrics.kind==GML_RENDER_TEXTURE_FONT) &&
        metrics.full_width>0 && metrics.full_height>0){
       if(uw) *uw=1;
       if(uh) *uh=1;

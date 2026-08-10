@@ -412,6 +412,23 @@ int application_surface_scales_full_view_port(
               (double)engine->vm.gui_w/(double)engine->vm.gui_h)<0.0005;
 }
 
+/* A sole, origin-aligned modern view may rasterize at the full viewport by
+ * default while retaining its logical camera coordinates. An independently
+ * resized application surface, inset view or multiple views keep their
+ * established composition paths. */
+int default_application_surface_uses_full_view_port(
+  AnygmEngine *engine,int view_count,int px,int py,int pw,int ph,
+  int logical_w,int logical_h,int app_w,int app_h) {
+  if(!engine || !anygm_policy_has_modern_function_values(&engine->win) ||
+     view_count!=1 || px!=0 || py!=0 || pw<=0 || ph<=0 ||
+     logical_w<=0 || logical_h<=0 || app_w<=0 || app_h<=0 ||
+     !((abs(app_w-logical_w)<=1 && abs(app_h-logical_h)<=1) ||
+       (abs(app_w-pw)<=1 && abs(app_h-ph)<=1)) ||
+     (pw==logical_w && ph==logical_h))
+    return 0;
+  return fabs((double)pw/(double)ph-(double)logical_w/(double)logical_h)<0.0005;
+}
+
 /* First-generation presentation initializes application_surface at the exported display raster,
  * while a sole view can retain a smaller logical camera and scale into that complete surface. */
 int application_surface_matches_first_generation_view_port(

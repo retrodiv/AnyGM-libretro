@@ -60,6 +60,8 @@ static GmlVal texture_uvs(GmlRender *R, int tex){
     return array4(0,0,0,0);
   if(metrics.kind==GML_RENDER_TEXTURE_SURFACE)
     return array4(0,0,1,1);
+  if(metrics.kind==GML_RENDER_TEXTURE_FONT)
+    return array4(0,0,1,1);
   if(metrics.kind==GML_RENDER_TEXTURE_SPRITE){
     if(metrics.runtime) return arr8(0,0,1,1,0,0,1,1);
     if(metrics.atlas_backed && metrics.full_width>0 &&
@@ -77,6 +79,25 @@ static GmlVal texture_uvs(GmlRender *R, int tex){
     }
   }
   return array4(0,0,0,0);
+}
+static void font_glyph_key(unsigned codepoint,char key[5]){
+  if(codepoint<=0x7f){
+    key[0]=(char)codepoint; key[1]=0;
+  }else if(codepoint<=0x7ff){
+    key[0]=(char)(0xc0|(codepoint>>6));
+    key[1]=(char)(0x80|(codepoint&0x3f)); key[2]=0;
+  }else if(codepoint<=0xffff && (codepoint<0xd800 || codepoint>0xdfff)){
+    key[0]=(char)(0xe0|(codepoint>>12));
+    key[1]=(char)(0x80|((codepoint>>6)&0x3f));
+    key[2]=(char)(0x80|(codepoint&0x3f)); key[3]=0;
+  }else if(codepoint<=0x10ffff){
+    key[0]=(char)(0xf0|(codepoint>>18));
+    key[1]=(char)(0x80|((codepoint>>12)&0x3f));
+    key[2]=(char)(0x80|((codepoint>>6)&0x3f));
+    key[3]=(char)(0x80|(codepoint&0x3f)); key[4]=0;
+  }else{
+    key[0]=(char)0xef; key[1]=(char)0xbf; key[2]=(char)0xbd; key[3]=0;
+  }
 }
 static int vm_file_read_line_into(GmlVM *vm,int slot,char *buffer,size_t capacity){
   if(!buffer || !capacity) return 0;
@@ -557,13 +578,10 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"vertex_format_add_custom")){
       int type=(int)N(a,n,0),usage=(int)N(a,n,1),components=type>=1&&type<=4?type:4;
       int bytes=(type>=1&&type<=4)?type*4:4;
-      int kind=GML_SOFTWARE3D_VERTEX_CUSTOM;
-      if(usage==1) kind=components>=3?GML_SOFTWARE3D_VERTEX_POSITION3:
-        GML_SOFTWARE3D_VERTEX_POSITION2;
-      else if(usage==2) kind=GML_SOFTWARE3D_VERTEX_COLOR;
-      else if(usage==3) kind=GML_SOFTWARE3D_VERTEX_NORMAL;
-      else if(usage==4) kind=GML_SOFTWARE3D_VERTEX_TEXCOORD;
-      gml_software3d_vertex_format_add(GML_GRAPHICS,kind,type,usage,components,bytes); return vreal(0); }
+      /* A custom attribute does not become a fixed-function vertex field. */
+      gml_software3d_vertex_format_add(
+        GML_GRAPHICS,GML_SOFTWARE3D_VERTEX_CUSTOM,type,usage,components,bytes);
+      return vreal(0); }
     if(!strcmp(nm,"vertex_format_end")) return vreal(gml_software3d_vertex_format_finish(GML_GRAPHICS));
     if(!strcmp(nm,"vertex_format_delete")){
       gml_software3d_vertex_format_delete(GML_GRAPHICS,(int)N(a,n,0));
@@ -596,8 +614,10 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         GML_GRAPHICS,(int)N(a,n,0),GML_SOFTWARE3D_VERTEX_COLOR,value,2);
       return vreal(0); }
     if(!strcmp(nm,"vertex_argb")){
-      uint32_t red=NU32(a,n,2)&255,green=NU32(a,n,3)&255,blue=NU32(a,n,4)&255;
-      double value[4]={(double)(red|(green<<8)|(blue<<16)),N(a,n,1)/255.0,0,0};
+      uint32_t argb=NU32(a,n,1);
+      uint32_t red=(argb>>16)&255,green=(argb>>8)&255,blue=argb&255;
+      double value[4]={(double)(red|(green<<8)|(blue<<16)),
+                       ((argb>>24)&255)/255.0,0,0};
       gml_software3d_vertex_buffer_attribute(
         GML_GRAPHICS,(int)N(a,n,0),GML_SOFTWARE3D_VERTEX_COLOR,value,2);
       return vreal(0); }
@@ -1291,6 +1311,14 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"font_add_enable_aa")) return vreal(0);
     if(!strcmp(nm,"font_exists"))
       return vreal(gml_render_font_exists(R,(int)N(a,n,0)));
+    if(!strcmp(nm,"font_get_name")){
+      const char *name=chunk_asset_name_by_index(vm?vm->win:NULL,"FONT",0,(int)N(a,n,0));
+      return vstr(name?name:"");
+    }
+    if(!strcmp(nm,"font_get_texture"))
+      return vreal(gml_render_font_texture_handle(R,(int)N(a,n,0)));
+    if(!strcmp(nm,"font_get_uvs"))
+      return texture_uvs(R,gml_render_font_texture_handle(R,(int)N(a,n,0)));
     if(!strcmp(nm,"font_get_size")){
       GmlRenderFontMetrics font;
       return vreal(gml_render_font_metrics(R,(int)N(a,n,0),&font)&&font.line_height>0?font.line_height:0);
@@ -1303,14 +1331,39 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"font_get_info")){
       GmlInstance *st=gml_struct_new(vm);
       if(!st) return vreal(0);
-      int fid=(int)N(a,n,0), spr=-1, first=0, prop=0, sep=0;
+      int fid=(int)N(a,n,0), spr=-1, first=0, prop=0, sep=0, size=0;
       GmlRenderFontMetrics font;
-      if(fid>=0 && gml_render_font_metrics(R,fid,&font) && font.sprite_backed){
-        spr=font.sprite;
-        first=font.first;
-        prop=font.proportional;
-        sep=font.separation;
+      GmlInstance *glyphs=gml_struct_new(vm);
+      if(fid>=0 && gml_render_font_metrics(R,fid,&font)){
+        size=font.line_height;
+        if(font.sprite_backed){
+          spr=font.sprite; first=font.first;
+          prop=font.proportional; sep=font.separation;
+        }
+        if(glyphs){
+          for(int index=0;index<font.glyph_count;index++){
+            GmlRenderFontGlyphMetrics glyph;
+            if(!gml_render_font_glyph_metrics(R,fid,index,&glyph)) continue;
+            GmlInstance *record=gml_struct_new(vm);
+            if(!record) break;
+            *gml_varmap_put(&record->vars,"char")=vreal(glyph.character);
+            *gml_varmap_put(&record->vars,"x")=vreal(glyph.x);
+            *gml_varmap_put(&record->vars,"y")=vreal(glyph.y);
+            *gml_varmap_put(&record->vars,"w")=vreal(glyph.width);
+            *gml_varmap_put(&record->vars,"h")=vreal(glyph.height);
+            *gml_varmap_put(&record->vars,"shift")=vreal(glyph.shift);
+            *gml_varmap_put(&record->vars,"offset")=vreal(glyph.offset);
+            char key[5]; font_glyph_key(glyph.character,key);
+            char *owned_key=strdup(key);
+            if(!owned_key) break;
+            *gml_varmap_put_owned(&glyphs->vars,owned_key)=vreal((double)record->id);
+          }
+        }
       }
+      const char *font_name=chunk_asset_name_by_index(vm?vm->win:NULL,"FONT",0,fid);
+      *gml_varmap_put(&st->vars,"name")=vstr(font_name?font_name:"");
+      *gml_varmap_put(&st->vars,"size")=vreal(size);
+      *gml_varmap_put(&st->vars,"glyphs")=glyphs?vreal((double)glyphs->id):vundef();
       *gml_varmap_put(&st->vars,"spriteIndex")=vreal(spr);
       *gml_varmap_put(&st->vars,"first")=vreal(first);
       *gml_varmap_put(&st->vars,"prop")=vreal(prop);

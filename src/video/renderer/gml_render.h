@@ -87,7 +87,13 @@ typedef struct {
   int line_height;
   int sprite, first, proportional, separation;
   int sprite_backed;
+  int glyph_count;
 } GmlRenderFontMetrics;
+
+typedef struct {
+  unsigned character;
+  int x, y, width, height, shift, offset;
+} GmlRenderFontGlyphMetrics;
 
 typedef struct {
   int width, height;
@@ -107,7 +113,8 @@ enum {
   GML_RENDER_TEXTURE_NONE,
   GML_RENDER_TEXTURE_SPRITE,
   GML_RENDER_TEXTURE_SURFACE,
-  GML_RENDER_TEXTURE_BACKGROUND
+  GML_RENDER_TEXTURE_BACKGROUND,
+  GML_RENDER_TEXTURE_FONT
 };
 
 typedef struct {
@@ -491,6 +498,9 @@ int  gml_render_background_tile_source_index(const GmlRender *r, int background,
                                               int tile_index, int animation_frame);
 int  gml_render_font_metrics(const GmlRender *r, int font,
                              GmlRenderFontMetrics *metrics);
+int  gml_render_font_glyph_metrics(const GmlRender *r, int font, int glyph,
+                                   GmlRenderFontGlyphMetrics *metrics);
+int  gml_render_font_texture_handle(const GmlRender *r, int font);
 int  gml_render_font_exists(const GmlRender *r, int font);
 int  gml_sprite_duplicate(GmlRender *r, int sprite);
 void gml_sprite_set_offset(GmlRender *r, int sprite, int xorig, int yorig);

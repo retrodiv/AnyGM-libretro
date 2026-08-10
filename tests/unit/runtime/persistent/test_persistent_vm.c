@@ -1361,8 +1361,8 @@ static int expect_array_compound_shape(int retained_reference){
 }
 
 
-/* DUP measures data in encoded stack bytes, not logical values. Exercise normal mixed-width
- * duplication, adjacent-block swaps, and both compound-array reference shapes. */
+/* DUP measures encoded stack bytes, not logical values. Exercise mixed-width
+ * duplication, zero-argument member shuffles and compound-array shapes. */
 int expect_typed_stack_dup(void){
   unsigned char data[64]={0};
   const uint32_t normal[]={
@@ -1403,13 +1403,31 @@ int expect_typed_stack_dup(void){
   win.data=data; win.size=sizeof data; win.code=&code;
   GmlVal difference=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
   free(code.insn); free(code.insn_pc); free(code.branch_index);
+
+  memset(data,0,sizeof data); memset(&code,0,sizeof code);
+  const uint32_t zero_argument_shuffle[]={
+    (OP_PUSH<<24)|(DT_INT16<<16)|7u,                  /* enclosing loop counter */
+    (OP_PUSH<<24)|(DT_INT16<<16)|9u,                  /* member receiver */
+    (OP_CONV<<24)|(((DT_VAR<<4)|DT_INT16)<<16),
+    (OP_DUP<<24)|(DT_VAR<<16)|0x8800u,                /* move receiver over zero args */
+    (OP_POPZ<<24)|(DT_VAR<<16),                       /* stand in for the completed call */
+    (OP_RET<<24)|(DT_VAR<<16)
+  };
+  for(int i=0;i<(int)(sizeof zero_argument_shuffle/sizeof *zero_argument_shuffle);i++)
+    fixture_word(data,i,zero_argument_shuffle[i]);
+  code.name=(char*)"gml_Script_zero_argument_member_shuffle_fixture";
+  code.start=0; code.length=(uint32_t)sizeof zero_argument_shuffle;
+  win.data=data; win.size=sizeof data; win.code=&code;
+  GmlVal retained_counter=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
+  free(code.insn); free(code.insn_pc); free(code.branch_index);
   int retained_ok=expect_array_compound_shape(1);
   int saved_ok=expect_array_compound_shape(0);
   int ok=sum.t==V_REAL && sum.d==60 && difference.t==V_REAL && difference.d==1 &&
-    retained_ok && saved_ok;
-  if(!ok) fprintf(stderr,"typed stack DUP fixture failed: sum=%.0f swap=%.0f retained=%d saved=%d\n",
+    retained_counter.t==V_REAL && retained_counter.d==7 && retained_ok && saved_ok;
+  if(!ok) fprintf(stderr,
+                  "typed stack DUP fixture failed: sum=%.0f swap=%.0f zero=%.0f retained=%d saved=%d\n",
                   sum.t==V_REAL?sum.d:-1.0,difference.t==V_REAL?difference.d:-1.0,
-                  retained_ok,saved_ok);
+                  retained_counter.t==V_REAL?retained_counter.d:-1.0,retained_ok,saved_ok);
   return ok;
 }
 
@@ -1472,6 +1490,17 @@ int expect_member_callable_receiver(void){
   free(code.insn_pc);
   free(code.branch_index);
   free(win.ref_hix);
+  return ok;
+}
+
+int expect_builtin_numeric_constants(void){
+  GmlVM vm={0};
+  GmlVal infinity=gml_vm_identifier_get(&vm,"infinity");
+  int ok=infinity.t==V_REAL && isinf(infinity.d) && infinity.d>0;
+  if(!ok)
+    fprintf(stderr,"builtin infinity constant mismatch: type=%d value=%.17g\n",
+            (int)infinity.t,infinity.t==V_REAL?infinity.d:0.0);
+  free(vm.special_var_hash);
   return ok;
 }
 

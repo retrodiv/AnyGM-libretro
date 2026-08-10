@@ -141,6 +141,28 @@ static int application_surface_port_scale_policy(void){
     fputs("first-generation presentation selected current application scaling\n",stderr);
     return 0;
   }
+  engine.win.bytecode=17;
+  if(!default_application_surface_uses_full_view_port(
+       &engine,1,0,0,640,480,320,240,320,240) ||
+     !default_application_surface_uses_full_view_port(
+       &engine,1,0,0,640,480,320,240,640,480) ||
+     default_application_surface_uses_full_view_port(
+       &engine,2,0,0,640,480,320,240,640,480) ||
+     default_application_surface_uses_full_view_port(
+       &engine,1,8,0,640,480,320,240,640,480) ||
+     default_application_surface_uses_full_view_port(
+       &engine,1,0,0,640,480,640,480,640,480) ||
+     default_application_surface_uses_full_view_port(
+       &engine,1,0,0,640,360,320,240,640,480)){
+    fputs("default current application-surface viewport policy mismatch\n",stderr);
+    return 0;
+  }
+  engine.win.bytecode=15;
+  if(default_application_surface_uses_full_view_port(
+       &engine,1,0,0,640,480,320,240,640,480)){
+    fputs("first-generation content selected a current default application surface\n",stderr);
+    return 0;
+  }
   return 1;
 }
 

@@ -62,6 +62,9 @@ GmlVal *gml_varmap_put_owned_hashed(GmlVarMap *m, char *key, uint32_t kh){
 GmlVal *gml_varmap_put(GmlVarMap *m, const char *key){
   return gml_varmap_put_hashed(m,key,key?gml_value_name_hash(key):gml_value_name_hash(""));
 }
+GmlVal *gml_varmap_put_owned(GmlVarMap *m, char *key){
+  return gml_varmap_put_owned_hashed(m,key,gml_value_name_hash(key?key:""));
+}
 
 void gml_arr_row_ensure(GmlArr *A, int row){
   if(!A || row<0) return;

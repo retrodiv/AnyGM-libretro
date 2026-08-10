@@ -279,6 +279,9 @@ int stale_full_view_port(AnygmEngine *engine,int view_count,int x,int y,int widt
 int application_surface_scales_full_view_port(
   AnygmEngine *engine,int view_count,int x,int y,int width,int height,
   int app_width,int app_height);
+int default_application_surface_uses_full_view_port(
+  AnygmEngine *engine,int view_count,int x,int y,int width,int height,
+  int logical_width,int logical_height,int app_width,int app_height);
 int application_surface_matches_first_generation_view_port(
   AnygmEngine *engine,int view_count,int x,int y,int width,int height,
   int app_width,int app_height);

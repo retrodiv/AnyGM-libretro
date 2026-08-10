@@ -21,6 +21,7 @@ int main(int argc,char **argv){
   static const AnygmTestCase vm_cases[]={
     {"typed_stack",expect_typed_stack_dup},
     {"member_callable_receiver",expect_member_callable_receiver},
+    {"builtin_numeric_constants",expect_builtin_numeric_constants},
     {"early_native_layer_animation",expect_early_native_layer_animation},
     {"deactivated_instance_reference",expect_deactivated_instance_reference},
     {"room_camera_reservation",expect_room_camera_reservation},

@@ -1657,7 +1657,10 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1571, DS_GRID_ADD_GRID_REGION, "ds_grid_add_grid_region", DS, DS, ALWAYS) \
   ENTRY(1572, DS_GRID_MULTIPLY_GRID_REGION, "ds_grid_multiply_grid_region", DS, DS, ALWAYS) \
   ENTRY(1573, BUFFER_BASE64_ENCODE, "buffer_base64_encode", IO, IO, ALWAYS) \
-  ENTRY(1574, SPRITE_RESTORE, "sprite_restore", DRAW, DRAW, ALWAYS)
+  ENTRY(1574, SPRITE_RESTORE, "sprite_restore", DRAW, DRAW, ALWAYS) \
+  ENTRY(1575, FONT_GET_NAME, "font_get_name", DRAW, DRAW, ALWAYS) \
+  ENTRY(1576, FONT_GET_TEXTURE, "font_get_texture", DRAW, DRAW, ALWAYS) \
+  ENTRY(1577, FONT_GET_UVS, "font_get_uvs", DRAW, DRAW, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1672,7 +1675,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1575
+  GML_BUILTIN_ID_LIMIT = 1578
 } GmlBuiltinId;
 
 #endif

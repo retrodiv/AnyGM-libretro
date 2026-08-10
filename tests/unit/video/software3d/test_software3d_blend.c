@@ -403,10 +403,18 @@ int software3d_case_blend_shader(Software3dRasterFixture *fixture){
   }
   memset(fixture->pixels,0,sizeof(fixture->pixels));
   gml_render_begin(&fixture->render,fixture->pixels,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0);
-  gml_draw_layer_background_sprite(&fixture->render,fixture->flipped_sprite,0,-.5,10,1,1,0xFFFFFF,1,0,0);
+  gml_draw_layer_background_sprite(&fixture->render,fixture->flipped_sprite,0,-.49,10,1,1,0xFFFFFF,1,0,0);
   if((fixture->pixels[10*SOFTWARE3D_WIDTH]&0x00FFFFFFu)==0 ||
      (fixture->pixels[10*SOFTWARE3D_WIDTH+1]&0x00FFFFFFu)==0 || fixture->pixels[10*SOFTWARE3D_WIDTH+2]!=0){
     fprintf(stderr,"software layer-background negative fractional anchor mismatch\n");
+    return 0;
+  }
+  memset(fixture->pixels,0,sizeof(fixture->pixels));
+  gml_render_begin(&fixture->render,fixture->pixels,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0);
+  gml_draw_layer_background_sprite(&fixture->render,fixture->flipped_sprite,0,-.51,10,1,1,0xFFFFFF,1,0,0);
+  if((fixture->pixels[10*SOFTWARE3D_WIDTH]&0x00FFFFFFu)==0 ||
+     fixture->pixels[10*SOFTWARE3D_WIDTH+1]!=0){
+    fprintf(stderr,"software layer-background nearest-pixel anchor mismatch\n");
     return 0;
   }
   {

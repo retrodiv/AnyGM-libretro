@@ -1057,6 +1057,8 @@ int software3d_case_primitive_model(Software3dRasterFixture *fixture){
     call_numbers(&fixture->vm,"vertex_format_begin",NULL,0);
     call_numbers(&fixture->vm,"vertex_format_add_position",NULL,0);
     call_numbers(&fixture->vm,"vertex_format_add_colour",NULL,0);
+    const double custom_format[]={2,2};
+    call_numbers(&fixture->vm,"vertex_format_add_custom",custom_format,2);
     GmlVal format=call_values(&fixture->vm,"vertex_format_end",NULL,0);
     GmlVal buffer=call_values(&fixture->vm,"vertex_create_buffer",NULL,0);
     if(format.t!=V_REAL || format.d!=0 || buffer.t!=V_REAL || buffer.d!=0){
@@ -1064,24 +1066,65 @@ int software3d_case_primitive_model(Software3dRasterFixture *fixture){
       return 0;
     }
     const double begin[]={0,0};
-    const double position_a[]={0,8,8},position_b[]={0,56,8},position_c[]={0,32,40};
+    const double position_a[]={0,0,0},position_b[]={0,48,0},position_c[]={0,24,32};
     const double color_red[]={0,0x0000FF,1};
+    const double argb_red[]={0,4294901760.0};
+    const double custom_a[]={0,-3.25,3.25};
+    const double custom_b[]={0,-9.5,9.5};
     call_numbers(&fixture->vm,"vertex_begin",begin,2);
-    call_numbers(&fixture->vm,"vertex_position",position_a,3); call_numbers(&fixture->vm,"vertex_colour",color_red,3);
-    call_numbers(&fixture->vm,"vertex_position",position_b,3); call_numbers(&fixture->vm,"vertex_colour",color_red,3);
-    call_numbers(&fixture->vm,"vertex_position",position_c,3); call_numbers(&fixture->vm,"vertex_colour",color_red,3);
+    call_numbers(&fixture->vm,"vertex_position",position_a,3); call_numbers(&fixture->vm,"vertex_argb",argb_red,2); call_numbers(&fixture->vm,"vertex_float2",custom_a,3);
+    call_numbers(&fixture->vm,"vertex_position",position_b,3); call_numbers(&fixture->vm,"vertex_colour",color_red,3); call_numbers(&fixture->vm,"vertex_float2",custom_b,3);
+    call_numbers(&fixture->vm,"vertex_position",position_c,3); call_numbers(&fixture->vm,"vertex_argb",argb_red,2); call_numbers(&fixture->vm,"vertex_float2",custom_a,3);
     const double buffer_id[]={0};
     call_numbers(&fixture->vm,"vertex_end",buffer_id,1);
     GmlVal vertex_count=call_values(&fixture->vm,"vertex_get_number",(GmlVal[]){vreal(0)},1);
     GmlVal vertex_bytes=call_values(&fixture->vm,"vertex_get_buffer_size",(GmlVal[]){vreal(0)},1);
+    GmlVal world=call_values(&fixture->vm,"matrix_build_identity",NULL,0);
+    gml_arr_set(world,12,vreal(8)); gml_arr_set(world,13,vreal(8));
+    GmlVal world_set[2]={vreal(2),world};
+    call_values(&fixture->vm,"matrix_set",world_set,2);
     const double submit[]={0,4,-1};
     call_numbers(&fixture->vm,"vertex_submit",submit,3);
-    if(vertex_count.t!=V_REAL || vertex_count.d!=3 || vertex_bytes.t!=V_REAL || vertex_bytes.d!=36 ||
-       (fixture->pixels[20*SOFTWARE3D_WIDTH+32]&0x00FFFFFFu)!=0xFF0000u){
+    if(vertex_count.t!=V_REAL || vertex_count.d!=3 || vertex_bytes.t!=V_REAL || vertex_bytes.d!=60 ||
+       (fixture->pixels[20*SOFTWARE3D_WIDTH+32]&0x00FFFFFFu)!=0xFF0000u ||
+       fixture->pixels[2*SOFTWARE3D_WIDTH+24]!=0){
       fprintf(stderr,"software vertex buffer triangle mismatch: count=%g bytes=%g pixel=%08x\n",
               vertex_count.d,vertex_bytes.d,fixture->pixels[20*SOFTWARE3D_WIDTH+32]);
       return 0;
     }
+    memset(fixture->pixels,0,sizeof(fixture->pixels));
+    gml_render_begin(&fixture->render,fixture->pixels,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0);
+    gml_render_world_set_logical_extent(
+      &fixture->render,SOFTWARE3D_WIDTH/2,SOFTWARE3D_HEIGHT/2);
+    call_values(&fixture->vm,"matrix_set",world_set,2);
+    call_numbers(&fixture->vm,"vertex_submit",submit,3);
+    if((fixture->pixels[32*SOFTWARE3D_WIDTH+32]&0x00FFFFFFu)!=0xFF0000u ||
+       (fixture->pixels[16*SOFTWARE3D_WIDTH+16]&0x00FFFFFFu)!=0xFF0000u ||
+       fixture->pixels[8*SOFTWARE3D_WIDTH+8]!=0){
+      int min_x=SOFTWARE3D_WIDTH,max_x=-1,min_y=SOFTWARE3D_HEIGHT,max_y=-1;
+      for(int y=0;y<SOFTWARE3D_HEIGHT;y++) for(int x=0;x<SOFTWARE3D_WIDTH;x++)
+        if(fixture->pixels[y*SOFTWARE3D_WIDTH+x]&0x00FFFFFFu){
+          if(x<min_x) min_x=x;
+          if(x>max_x) max_x=x;
+          if(y<min_y) min_y=y;
+          if(y>max_y) max_y=y;
+        }
+      int row_min=SOFTWARE3D_WIDTH,row_max=-1;
+      for(int x=0;x<SOFTWARE3D_WIDTH;x++)
+        if(fixture->pixels[32*SOFTWARE3D_WIDTH+x]&0x00FFFFFFu){
+          if(x<row_min) row_min=x;
+          if(x>row_max) row_max=x;
+        }
+      fprintf(stderr,"scaled software vertex buffer triangle mismatch: %08x %08x %08x span=(%d,%d)-(%d,%d) row32=%d..%d\n",
+              fixture->pixels[32*SOFTWARE3D_WIDTH+32],
+              fixture->pixels[16*SOFTWARE3D_WIDTH+16],
+              fixture->pixels[8*SOFTWARE3D_WIDTH+8],
+              min_x,min_y,max_x,max_y,row_min,row_max);
+      return 0;
+    }
+    GmlVal identity=call_values(&fixture->vm,"matrix_build_identity",NULL,0);
+    GmlVal identity_set[2]={vreal(2),identity};
+    call_values(&fixture->vm,"matrix_set",identity_set,2);
     GmlVal frozen=call_values(&fixture->vm,"vertex_freeze",(GmlVal[]){vreal(0)},1);
     GmlVal rejected=call_values(&fixture->vm,"vertex_begin",(GmlVal[]){vreal(0),vreal(0)},2);
     if(frozen.t!=V_REAL || frozen.d!=0 || rejected.t!=V_REAL || rejected.d!=-1){

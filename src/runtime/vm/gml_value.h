@@ -54,6 +54,7 @@ void         gml_arr_insert(GmlVal arr, int index, GmlVal *values, int count);
 
 GmlVal *gml_varmap_get(GmlVarMap *m, const char *key);   /* NULL if absent */
 GmlVal *gml_varmap_put(GmlVarMap *m, const char *key);   /* get-or-create slot */
+GmlVal *gml_varmap_put_owned(GmlVarMap *m, char *key);   /* takes ownership of a heap key */
 
 void gml_arr_mark_escaped(GmlVal v);   /* array stored beyond its scope: locals cleanup must not free it */
 /* Release a bounded group of value roots with one alias-deduplication pass. */

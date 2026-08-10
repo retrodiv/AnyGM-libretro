@@ -1015,6 +1015,7 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
   if(first>buffer->vertex_n) first=buffer->vertex_n;
   if(number<0 || number>buffer->vertex_n-first) number=buffer->vertex_n-first;
   if(number<=0) return;
+  const GmlD3Vertex *vertex=buffer->vertex+first;
   GmlD3Texture texture={0};
   if(!vertex_texture(R,texture_handle,&texture)) memset(&texture,0,sizeof(texture));
   GmlRenderBackendDrawView draw;
@@ -1030,14 +1031,26 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
     saved=g_d3;
     g_d3.active=1; g_d3.ortho=1; g_d3.hidden=0; g_d3.zwrite=0;
     g_d3.lighting=0; g_d3.fog=0; g_d3.culling=0; g_d3.smooth=1;
-    g_d3.ortho_x=draw.camera_x; g_d3.ortho_y=draw.camera_y;
-    g_d3.ortho_w=draw.width>0?draw.width:1; g_d3.ortho_h=draw.height>0?draw.height:1;
+    double scale_x=draw.coordinate_scale_x>0?draw.coordinate_scale_x:1.0;
+    double scale_y=draw.coordinate_scale_y>0?draw.coordinate_scale_y:1.0;
+    g_d3.ortho_x=draw.camera_x/scale_x; g_d3.ortho_y=draw.camera_y/scale_y;
+    g_d3.ortho_w=draw.width>0?draw.width/scale_x:1;
+    g_d3.ortho_h=draw.height>0?draw.height/scale_y:1;
     g_d3.ortho_angle=0; g_d3.draw_depth=0;
-    gml_software3d_matrix_identity(g_d3.transform);
+    /* A pure world translation is mirrored into the renderer camera for
+     * non-vertex draws; adjust the projection anchor to apply it once. */
+    int translation=fabs(saved.transform[0]-1)<1e-10 &&
+      fabs(saved.transform[5]-1)<1e-10 && fabs(saved.transform[10]-1)<1e-10 &&
+      fabs(saved.transform[15]-1)<1e-10;
+    for(int i=0;i<12 && translation;i++)
+      if(i!=0 && i!=5 && i!=10 && fabs(saved.transform[i])>=1e-10) translation=0;
+    if(translation){
+      g_d3.ortho_x+=saved.transform[12];
+      g_d3.ortho_y+=saved.transform[13];
+    }
   }
   g_d3.shade_r=g_d3.shade_g=g_d3.shade_b=1;
   gml_render_backend_prepare_draw(R);
-  const GmlD3Vertex *vertex=buffer->vertex+first;
   if(primitive==1){
     for(int i=0;i<number;i++) d3_emit_point(R,vertex[i],&texture);
   } else if(primitive==2){

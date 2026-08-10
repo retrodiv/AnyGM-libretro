@@ -881,6 +881,15 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(!engine->output_width || !engine->output_height) compute_present(engine);
   GmlRenderPresentationMetrics render_presentation={0};
   gml_render_presentation_metrics(&engine->render,&render_presentation);
+  if(!render_presentation.application_owned && frame_view_count==1 &&
+     default_application_surface_uses_full_view_port(
+       engine,frame_view_count,
+       frame_views[0].px,frame_views[0].py,frame_views[0].pw,frame_views[0].ph,
+       (int)engine->width,(int)engine->height,
+       render_presentation.application_width,render_presentation.application_height) &&
+     gml_render_application_surface_ensure_owned(
+       &engine->render,frame_views[0].pw,frame_views[0].ph))
+    gml_render_presentation_metrics(&engine->render,&render_presentation);
   GmlRenderSamplePlanes sample_planes={0};
   gml_render_sample_planes_update(
     &engine->render,&sample_planes,GML_RENDER_SAMPLE_PLANES_APPLICATION);
@@ -909,7 +918,11 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      render_presentation.application_owned &&
      !(view_surface>0 && gml_surface_exists(&engine->render,view_surface))){
     GmlPresentView *view=&frame_views[0];
-    direct_owned_world=(application_surface_scales_full_view_port(
+    direct_owned_world=(default_application_surface_uses_full_view_port(
+      engine,frame_view_count,view->px,view->py,view->pw,view->ph,
+      (int)engine->width,(int)engine->height,
+      render_presentation.application_width,render_presentation.application_height) ||
+      application_surface_scales_full_view_port(
       engine,frame_view_count,view->px,view->py,view->pw,view->ph,
       render_presentation.application_width,render_presentation.application_height) ||
       application_surface_matches_first_generation_view_port(

@@ -407,7 +407,7 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
  * read and write. Hash-hit => run the original chain (its strcmps confirm; collisions are
  * safe); miss => the name is provably not special, go straight to the varmap. */
 static const char *const g_special_var_names[]={
-  "undefined","room","room_first","room_last","keyboard_lastkey","room_speed","working_directory","program_directory",
+  "undefined","infinity","room","room_first","room_last","keyboard_lastkey","room_speed","working_directory","program_directory",
   "fps","delta_time","view_current","view_enabled","room_persistent","background_color","background_colour",
   "event_type","event_number","mouse_x","mouse_y",
   "current_time","current_second","current_minute","current_hour","current_day","current_weekday",
@@ -508,6 +508,7 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
     return vreal(0);
   }
   if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
+  if(!strcmp(name,"infinity")) return vreal(INFINITY); /* unbounded numeric literal */
   if(!strcmp(name,"room")) return vreal(vm->room_index);   /* GM built-in: current room index */
   if(!strcmp(name,"room_first") || !strcmp(name,"room_last")){
     if(!vm->win || !vm->win->room_order || vm->win->n_room_order<=0) return vreal(-1);
@@ -2831,16 +2832,12 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           unit_size=vm_stack_type_size(DT_VAR);
         }
         if(bottom_units>0){
-          /* A zero-width top block is the no-argument member-call form. The instruction duplicates
-           * the adjacent receiver block so the following StackTop field read can consume one
-           * copy while CALLV retains the other as its implicit self. Treating it as a no-op
-           * loses the receiver and invokes an otherwise valid function value with no self. */
+          /* A full-width receiver needs no extra copy in the zero-argument
+           * member-call shuffle. A narrower receiver retains one logical
+           * value before the following VAR-width duplication. */
           if(in.type1==DT_VAR && top_units==0){
-            int count=bottom_units<sp?bottom_units:sp;
-            if(count>0 && sp+count<=STK){
-              memcpy(stk+sp,stk+sp-count,(size_t)count*sizeof(*stk));
-              memcpy(stkt+sp,stkt+sp-count,(size_t)count*sizeof(*stkt));
-              sp+=count;
+            if(sp>0 && vm_stack_type_size(stkt[sp-1])<unit_size && sp<STK){
+              stk[sp]=stk[sp-1]; stkt[sp]=stkt[sp-1]; sp++;
             }
             break;
           }
