@@ -1302,7 +1302,10 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
             double gy=y - ox*sa + oy*ca;
             blit_rotated(r,s,&gt,gx,gy,xs,ys,rr,blend,alpha);
           } else {
-            blit(r,&gt, x + (cx-s->originx+gt.tx)*xs - r->cam_x,
+            /* A proportional sprite font advances by the cropped glyph width,
+             * so the cursor is already at the glyph's left edge. A fixed-cell
+             * font retains the horizontal offset within its full cell. */
+            blit(r,&gt, x + (cx-s->originx+(f->prop?0:gt.tx))*xs - r->cam_x,
               y + (base_y-s->originy+gt.ty)*ys - r->cam_y, xs,ys, blend, alpha);
           } } }
         }

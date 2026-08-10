@@ -193,8 +193,11 @@ static int expect_renderer_semantics_exit_code(void){
     }
   }
   {
-    /* Sprite fonts retain the source sprite origin and each trimmed texture-page offset. A
-     * character outside the mapped range remains a blank full cell even for proportional text. */
+    /* Sprite fonts retain the source sprite origin. A fixed-cell font also
+     * retains the texture-page horizontal offset within the full cell;
+     * a proportional font advances by cropped width without adding that
+     * horizontal offset again. Both retain vertical offset. A character
+     * outside the mapped range remains a blank full cell. */
     GmlRender render={0}; GmlSprite sprite={0}; GmlTpag page={0}; GmlAtlas atlas={0};
     uint32_t framebuffer[16*8]={0}; uint8_t pixel[4]={255,255,255,255}; int frame=0;
     gml_render_begin(&render,framebuffer,16,8,0,0);
@@ -208,8 +211,8 @@ static int expect_renderer_semantics_exit_code(void){
     render.fonts[0]=(GmlFont){.sprite=0,.first='A',.prop=1};
     gml_draw_text(&render,4,4,"A A");
     int width=gml_text_width(&render,"A A");
-    if(width!=10 || !(framebuffer[3*16+2]&0xFFFFFFu) ||
-       !(framebuffer[3*16+11]&0xFFFFFFu) || (framebuffer[4*16+4]&0xFFFFFFu)){
+    if(width!=10 || !(framebuffer[3*16+1]&0xFFFFFFu) ||
+       !(framebuffer[3*16+10]&0xFFFFFFu) || (framebuffer[4*16+4]&0xFFFFFFu)){
       fprintf(stderr,"sprite-font origin or blank-cell mismatch: width=%d pixels=%08x,%08x,%08x\n",
               width,framebuffer[3*16+2],framebuffer[3*16+11],framebuffer[4*16+4]);
       return 1;
