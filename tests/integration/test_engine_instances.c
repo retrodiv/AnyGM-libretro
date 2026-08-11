@@ -906,11 +906,11 @@ int main(int argc,char **argv){
     fprintf(stderr,"repeated serialization was not deterministic\n");
     return 1;
   }
-  /* The state carries the resolved compatibility fingerprint, so this hash moves whenever a
-   * reviewed policy is added or changed, and again whenever the serialized layout itself changes. */
+  /* The synthetic-state checksum tracks the complete serialized bytes,
+   * including the resolved content and compatibility identifiers. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
   if(deterministic_size!=19618 ||
-     deterministic_hash!=UINT64_C(0x9e14d459299a1ea1)){
+     deterministic_hash!=UINT64_C(0x2971c0d9c6af1af5)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;

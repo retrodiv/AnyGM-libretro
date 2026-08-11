@@ -54,6 +54,7 @@ void free_extension_fixture(GmlVM *vm);
 void store_u32le(uint8_t *dst,uint32_t value);
 size_t classic_information_record(uint8_t *dst,size_t capacity);
 int pushref_function_fixture(void);
+int variable_hash_reference_fixture(void);
 int member_function_self_fixture(void);
 int member_function_argument_fixture(void);
 

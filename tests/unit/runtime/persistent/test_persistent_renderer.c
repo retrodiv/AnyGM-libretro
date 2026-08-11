@@ -247,6 +247,40 @@ static int expect_renderer_semantics_exit_code(void){
     gml_render_free(&render);
   }
   {
+    /* Modern FONT records expose ascender and distance-field metadata alongside the authored
+     * line advance. A zero spread remains meaningful because font_get_info must still publish it. */
+    uint8_t data[192]={0}; GmlWin win={0}; GmlRender render={0};
+    const uint32_t font_record=32,texture_record=120,glyph_record=160;
+    fixture_w32(data,0,1);
+    fixture_w32(data,4,font_record);
+    fixture_w32(data,font_record+8,12);
+    fixture_w32(data,font_record+28,texture_record);
+    fixture_w32(data,font_record+40,2);
+    fixture_w32(data,font_record+44,10);
+    fixture_w32(data,font_record+48,8);
+    fixture_w32(data,font_record+52,12);
+    fixture_w32(data,font_record+56,1);
+    fixture_w32(data,font_record+60,glyph_record);
+    fixture_w32(data,glyph_record+0,'A');
+    fixture_w32(data,glyph_record+4,1u<<16);
+    fixture_w32(data,glyph_record+8,8u|(1u<<16));
+    win.data=data; win.size=sizeof data; win.bytecode=17; win.n_chunks=1;
+    memcpy(win.chunks[0].name,"FONT",4);
+    win.chunks[0].off=0; win.chunks[0].size=sizeof data;
+    render.win=&win;
+    parse_font(&render);
+    if(render.n_fonts!=1 || render.fonts[0].n_glyphs!=1 ||
+       render.fonts[0].line_height!=12 || render.fonts[0].ascender!=10 ||
+       render.fonts[0].ascender_offset!=2 || render.fonts[0].sdf_spread!=8){
+      fprintf(stderr,"modern font metadata mismatch: fonts=%d glyphs=%d line=%d ascender=%d offset=%d spread=%d\n",
+              render.n_fonts,render.fonts[0].n_glyphs,render.fonts[0].line_height,
+              render.fonts[0].ascender,render.fonts[0].ascender_offset,
+              render.fonts[0].sdf_spread);
+      gml_render_free(&render); return 1;
+    }
+    gml_render_free(&render);
+  }
+  {
     /* Vertical centring uses the complete glyph-cell extent while line_height remains the
      * authored line advance. A font can legitimately have descenders taller than its nominal
      * em; centring only the advance moves every visible glyph down. */

@@ -85,6 +85,7 @@ typedef struct {
 
 typedef struct {
   int line_height;
+  int ascender, ascender_offset, sdf_spread;
   int sprite, first, proportional, separation;
   int sprite_backed;
   int glyph_count;

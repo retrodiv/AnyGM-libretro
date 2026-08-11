@@ -450,6 +450,8 @@ int asset_lookup_fixture(void){
   render.atlas=&font_atlas; render.n_atlas=1;
   render.n_fonts=2;
   render.fonts[0].real=1; render.fonts[0].atlas=0; render.fonts[0].line_height=19;
+  render.fonts[0].ascender=14; render.fonts[0].ascender_offset=3;
+  render.fonts[0].sdf_spread=8;
   render.fonts[0].glyphs=font_glyphs; render.fonts[0].n_glyphs=2;
   render.fonts[1].sprite=0;
   /* Detach stack-backed fixture tables before APIs allocate VM structs. */
@@ -479,6 +481,10 @@ int asset_lookup_fixture(void){
   GmlInstance *glyph=glyph_value?gml_struct_find(&vm,(unsigned)glyph_value->d):NULL;
   GmlVal *character=glyph?gml_varmap_get(&glyph->vars,"char"):NULL;
   GmlVal *width=glyph?gml_varmap_get(&glyph->vars,"w"):NULL;
+  GmlVal *ascender=info?gml_varmap_get(&info->vars,"ascender"):NULL;
+  GmlVal *ascender_offset=info?gml_varmap_get(&info->vars,"ascenderOffset"):NULL;
+  GmlVal *sdf_enabled=info?gml_varmap_get(&info->vars,"sdfEnabled"):NULL;
+  GmlVal *sdf_spread=info?gml_varmap_get(&info->vars,"sdfSpread"):NULL;
   GmlRenderTextureMetrics texture_metrics={0};
   if(font_name.t!=V_STR || strcmp(font_name.s,"neutral_font") ||
      font_texture.t!=V_REAL ||
@@ -488,7 +494,9 @@ int asset_lookup_fixture(void){
      gml_arr_get(font_uvs,0).d!=0 || gml_arr_get(font_uvs,2).d!=1 ||
      texture_width.d!=1 || texel_width.d!=0.125 || texel_height.d!=0.125 ||
      !info || !glyphs || !glyph || !space_value ||
-     !character || character->d!='A' || !width || width->d!=4){
+     !character || character->d!='A' || !width || width->d!=4 ||
+     !ascender || ascender->d!=14 || !ascender_offset || ascender_offset->d!=3 ||
+     !sdf_enabled || sdf_enabled->d!=1 || !sdf_spread || sdf_spread->d!=8){
     fprintf(stderr,"font metadata fixture mismatch\n");
     gml_vm_free(&vm);
     return 0;
@@ -540,6 +548,46 @@ int pushref_function_fixture(void){
   GmlVal result=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
   int ok=result.t==V_REAL && result.d==73;
   if(!ok) fprintf(stderr,"pushref function dispatch mismatch: %.17g\n",result.d);
+  gml_vm_free(&vm);
+  gml_win_free(&win);
+  return ok;
+}
+
+
+int variable_hash_reference_fixture(void){
+  /* A modern optimized member-name hash is serialized as a VARI reference on push.i32. Its raw
+   * word is an occurrence-chain link, not the value that the VM must expose to hash APIs. */
+  GmlWin win={0}; GmlVM vm={0};
+  const char *name="neutral_field";
+  win.bytecode=17; win.size=12; win.owns=1;
+  win.data=calloc(win.size,1);
+  win.n_code=1; win.code=calloc(1,sizeof(*win.code));
+  win.n_refs=1; win.ref_addr=calloc(1,sizeof(*win.ref_addr));
+  win.ref_name=calloc(1,sizeof(*win.ref_name));
+  win.ref_kind=calloc(1,sizeof(*win.ref_kind));
+  if(!win.data || !win.code || !win.ref_addr || !win.ref_name || !win.ref_kind){
+    gml_win_free(&win);
+    fprintf(stderr,"variable hash reference fixture allocation failed\n");
+    return 0;
+  }
+  store_u32le(win.data+0,0xC0020000u);  /* push.i32 <VARI occurrence link> */
+  store_u32le(win.data+4,0x00025D9Cu);
+  store_u32le(win.data+8,0x9C050000u);  /* ret.v */
+  win.code[0]=(GmlCode){.name="gml_Script_neutral_hash",.start=0,.length=12};
+  win.ref_addr[0]=4; win.ref_name[0]=name; win.ref_kind[0]=GML_REF_VARIABLE;
+  if(gml_vm_init(&vm,&win,NULL)){
+    gml_win_free(&win);
+    fprintf(stderr,"variable hash VM initialization failed\n");
+    return 0;
+  }
+  uint32_t expected=2166136261u;
+  for(const unsigned char *cursor=(const unsigned char*)name;*cursor;cursor++){
+    expected^=*cursor; expected*=16777619u;
+  }
+  GmlVal result=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
+  int ok=result.t==V_REAL && result.d==(double)expected;
+  if(!ok) fprintf(stderr,"variable hash relocation mismatch: %.17g expected %u\n",
+                  result.d,expected);
   gml_vm_free(&vm);
   gml_win_free(&win);
   return ok;

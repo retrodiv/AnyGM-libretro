@@ -39,6 +39,7 @@ enum { IT_SELF=-1, IT_OTHER=-2, IT_ALL=-3, IT_NOONE=-4, IT_GLOBAL=-5, IT_BUILTIN
        IT_LOCAL=-7, IT_STACK=-9, IT_ARG=-15, IT_STATIC=-16 };
 /* ComparisonType */
 enum { CMP_LT=1, CMP_LTE=2, CMP_EQ=3, CMP_NEQ=4, CMP_GTE=5, CMP_GT=6 };
+enum { GML_REF_NONE=0, GML_REF_VARIABLE=1, GML_REF_FUNCTION=2 };
 
 typedef struct {
   uint8_t  kind;       /* new opcode */
@@ -110,8 +111,8 @@ typedef struct GmlWin {
   GmlCode *code;  int n_code;
   /* content-hash index over code names (lazy; for O(1) exact code lookup) */
   int32_t *code_hix; uint32_t code_hix_cap;
-  /* reference name map: addr -> name (sorted by addr) */
-  uint32_t *ref_addr; const char **ref_name; int n_refs;
+  /* reference map: addr -> name/kind (sorted by addr) */
+  uint32_t *ref_addr; const char **ref_name; uint8_t *ref_kind; int n_refs;
   /* address-hash index over ref_addr/ref_name (lazy; for O(1) ref lookup) */
   int32_t *ref_hix; uint32_t ref_hix_cap;
   /* header */
@@ -145,6 +146,7 @@ const char  *gml_str_by_index(const GmlWin *w, uint32_t idx);
 const char  *gml_str_by_ptr(const GmlWin *w, uint32_t fileoff);
 const char  *gml_win_intern_lookup(GmlWin *w, const char *s);   /* O(1) STRG content lookup, NULL if absent */
 const char  *gml_ref_name(const GmlWin *w, uint32_t addr);
+int          gml_ref_kind(const GmlWin *w, uint32_t addr);
 int          gml_room_count(const GmlWin *w);
 int          gml_room_get(const GmlWin *w, int room_index, GmlRoom *out);
 uint32_t     gml_room_layer_list(const GmlWin *w, int room_index, uint32_t *out_count);

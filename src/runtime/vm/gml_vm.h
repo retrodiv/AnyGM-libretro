@@ -296,7 +296,7 @@ typedef struct GmlVM {
   const char *cur_event; int cur_event_obj;   /* current event suffix + object level (for event_inherited) */
   int      event_type, event_number;          /* transient GM event_type/event_number builtins */
   GmlVal script_args[16]; int script_argc;     /* current script argumentN/argument_count */
-  /* WELL512 uses the Lomont recurrence and signed MSVC-LCG high-word seed expansion.
+  /* WELL512 uses the Lomont recurrence and unsigned MSVC-LCG high-word seed expansion.
    * random(x) scales the next value by x/2^32. */
   uint32_t rng_well[16]; int rng_index;
   uint32_t rng_state;   /* last seed set (randomize/random_set_seed); random_get_seed reads it */

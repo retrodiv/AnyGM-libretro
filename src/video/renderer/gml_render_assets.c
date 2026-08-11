@@ -633,6 +633,9 @@ int gml_render_font_metrics(const GmlRender *R,int font,
   }
   if(metrics){
     metrics->line_height=source->line_height;
+    metrics->ascender=source->ascender;
+    metrics->ascender_offset=source->ascender_offset;
+    metrics->sdf_spread=source->sdf_spread;
     metrics->sprite=source->sprite;
     metrics->first=source->first;
     metrics->proportional=source->prop;

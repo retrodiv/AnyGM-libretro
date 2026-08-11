@@ -1332,10 +1332,14 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       GmlInstance *st=gml_struct_new(vm);
       if(!st) return vreal(0);
       int fid=(int)N(a,n,0), spr=-1, first=0, prop=0, sep=0, size=0;
+      int ascender=0, ascender_offset=0, sdf_spread=0;
       GmlRenderFontMetrics font;
       GmlInstance *glyphs=gml_struct_new(vm);
       if(fid>=0 && gml_render_font_metrics(R,fid,&font)){
         size=font.line_height;
+        ascender=font.ascender;
+        ascender_offset=font.ascender_offset;
+        sdf_spread=font.sdf_spread;
         if(font.sprite_backed){
           spr=font.sprite; first=font.first;
           prop=font.proportional; sep=font.separation;
@@ -1363,8 +1367,12 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       const char *font_name=chunk_asset_name_by_index(vm?vm->win:NULL,"FONT",0,fid);
       *gml_varmap_put(&st->vars,"name")=vstr(font_name?font_name:"");
       *gml_varmap_put(&st->vars,"size")=vreal(size);
+      *gml_varmap_put(&st->vars,"ascender")=vreal(ascender);
+      *gml_varmap_put(&st->vars,"ascenderOffset")=vreal(ascender_offset);
       *gml_varmap_put(&st->vars,"glyphs")=glyphs?vreal((double)glyphs->id):vundef();
       *gml_varmap_put(&st->vars,"spriteIndex")=vreal(spr);
+      *gml_varmap_put(&st->vars,"sdfEnabled")=vreal(sdf_spread>0);
+      *gml_varmap_put(&st->vars,"sdfSpread")=vreal(sdf_spread);
       *gml_varmap_put(&st->vars,"first")=vreal(first);
       *gml_varmap_put(&st->vars,"prop")=vreal(prop);
       *gml_varmap_put(&st->vars,"sep")=vreal(sep);

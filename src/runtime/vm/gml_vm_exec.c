@@ -1819,14 +1819,22 @@ static int code_cache_ensure(GmlWin *w, int ci){
       in.refname=gml_ref_name(w,in.refaddr);
       if(in.refname) in.refhash=gml_value_name_hash(in.refname);
     }
-    if(in.kind==OP_PUSH && in.type1==DT_INT32 && anygm_policy_has_modern_function_values(w)){
-      /* resolve once at decode: -2 = checked, NOT a function-value. Leaving it -1 made the
-       * interpreter redo the ref-chain walk + name lookup on every plain push.i32 execution. */
+    if(in.kind==OP_PUSH && in.type1==DT_INT32){
+      /* A VARI occurrence on push.i32 names a stable member hash. Its stored
+       * operand is an occurrence-chain link, not the value to expose. */
+      if(gml_ref_kind(w,pc+4)==GML_REF_VARIABLE){
+        in.refname=gml_ref_name(w,pc+4);
+        in.refhash=gml_value_name_hash(in.refname);
+      }
+      /* Resolve function values once at decode: -2 = checked, NOT a function-value. Leaving it -1
+       * made the interpreter redo the ref-chain walk + name lookup on every plain push.i32. */
       in.funcval_ci=-2;
-      const char *fn=gml_ref_name(w,pc+4);
-      if(fn && fn[0]!='?' && !strncmp(fn,"gml_",4)){
-        int fci=gml_code_index_by_name(w,fn);
-        if(fci>=0) in.funcval_ci=fci;
+      if(!in.refname && anygm_policy_has_modern_function_values(w)){
+        const char *fn=gml_ref_name(w,pc+4);
+        if(fn && fn[0]!='?' && !strncmp(fn,"gml_",4)){
+          int fci=gml_code_index_by_name(w,fn);
+          if(fci>=0) in.funcval_ci=fci;
+        }
       }
     }
     if(in.kind==OP_BREAK && in.sval==-11 && anygm_policy_has_modern_function_values(w)){
@@ -2619,11 +2627,15 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         GmlVal v;
         if(in.type1==DT_INT16) v=vreal(in.sval);
         else if(in.type1==DT_DOUBLE) v=vreal(in.dval);
-        else if(in.type1==DT_INT32){ v=vreal(in.ival);
+        else if(in.type1==DT_INT32){
+          const char *hash_name=use_cache ? in.refname :
+            (gml_ref_kind(w,pc+4)==GML_REF_VARIABLE?gml_ref_name(w,pc+4):NULL);
+          v=vreal(hash_name ? (double)(use_cache?in.refhash:gml_value_name_hash(hash_name))
+                            : (double)in.ival);
           /* GMS2.3 function-value: a `push.i32` whose reference word (pc+4) resolves via the FUNC
            * occurrence chain to a script code-entry is pushing that function as a value (later called
            * by OP_CALLV or bound by method()). Tag it so OP_CALLV can dispatch the code entry. */
-          if(anygm_policy_has_modern_function_values(w)){
+          if(!hash_name && anygm_policy_has_modern_function_values(w)){
             int fci=use_cache ? in.funcval_ci : -1;
             const char *fn=NULL;
             if(fci==-1){   /* -2 = decode already determined it is not a function-value */

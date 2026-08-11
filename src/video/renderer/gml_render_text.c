@@ -71,6 +71,14 @@ void parse_font(GmlRender *r){
       int32_t ascender=(int32_t)u32(d,p+40);
       if(ascender>-32768 && ascender<32768) f->ascender_offset=(int)ascender;
     }
+    if(goff>=48){
+      uint32_t ascender=u32(d,p+44);
+      if(ascender<=32768) f->ascender=(int)ascender;
+    }
+    if(goff>=52){
+      uint32_t spread=u32(d,p+48);
+      if(spread<=4096) f->sdf_spread=(int)spread;
+    }
     /* Newer FONT records serialize their actual line advance after AscenderOffset,
      * Ascender and SDFSpread.  The point/em size and the tallest packed glyph are not equivalent:
      * using either for vertical alignment moves centred labels by a logical pixel and spaces
@@ -111,9 +119,9 @@ void parse_font(GmlRender *r){
       if((goff==40 || em_is_float) && mh>f->line_height) f->line_height=mh;
     }
     if(render_setting(r,"GML_LOG_FONT"))
-      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[font] real id=%d name=%s line=%d align=%d maxglyph=%d ascender_offset=%d atlas=%d glyphs=%d\n",
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[font] real id=%d name=%s line=%d align=%d maxglyph=%d ascender=%d ascender_offset=%d sdf_spread=%d atlas=%d glyphs=%d\n",
         i, gml_str_by_ptr(r->win,u32(d,p)), f->line_height, f->align_height,mh,
-        f->ascender_offset,f->atlas,f->n_glyphs);
+        f->ascender,f->ascender_offset,f->sdf_spread,f->atlas,f->n_glyphs);
     if(render_setting(r,"GML_LOG_FONT_GLYPHS"))
       for(int ch=32;ch<127;ch++){
         int gi=f->glyph_by_char[ch];

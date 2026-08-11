@@ -89,8 +89,8 @@ const char *gml_str_by_ptr(const GmlWin *w, uint32_t off){
   const char *value=NULL;
   return string_by_pointer(w,off,&value)?value:"<@?>";
 }
-const char *gml_ref_name(const GmlWin *w, uint32_t addr){
-  if(!w) return "?";
+static int ref_index(const GmlWin *w, uint32_t addr){
+  if(!w) return -1;
   GmlWin *mw=(GmlWin*)w;
   if(!w->ref_hix && w->n_refs>0){
     uint32_t cap=1;
@@ -113,16 +113,25 @@ const char *gml_ref_name(const GmlWin *w, uint32_t addr){
     uint32_t h=(addr*2654435761u)&(w->ref_hix_cap-1);
     for(uint32_t probe=0; probe<w->ref_hix_cap; probe++){
       int32_t i=w->ref_hix[h];
-      if(i<0) return "?";
-      if(i<w->n_refs && w->ref_addr[i]==addr) return w->ref_name[i];
+      if(i<0) return -1;
+      if(i<w->n_refs && w->ref_addr[i]==addr) return i;
       h=(h+1)&(w->ref_hix_cap-1);
     }
-    return "?";
+    return -1;
   }
   int lo=0,hi=w->n_refs-1;
-  while(lo<=hi){int m=(lo+hi)/2; if(w->ref_addr[m]==addr)return w->ref_name[m];
+  while(lo<=hi){int m=(lo+hi)/2; if(w->ref_addr[m]==addr)return m;
     if(w->ref_addr[m]<addr)lo=m+1;else hi=m-1;}
+  return -1;
+}
+const char *gml_ref_name(const GmlWin *w, uint32_t addr){
+  int index=ref_index(w,addr);
+  if(index>=0) return w->ref_name[index];
   return "?";
+}
+int gml_ref_kind(const GmlWin *w, uint32_t addr){
+  int index=ref_index(w,addr);
+  return index>=0 && w->ref_kind ? w->ref_kind[index] : GML_REF_NONE;
 }
 
 
@@ -236,7 +245,7 @@ static int parse_code(GmlWin *w){
   return 1;
 }
 
-typedef struct { uint32_t addr; const char *name; } RefRec;
+typedef struct { uint32_t addr; const char *name; uint8_t kind; } RefRec;
 static int cmp_ref_addr(const void *A, const void *B){
   uint32_t a=((const RefRec*)A)->addr, b=((const RefRec*)B)->addr;
   return a<b?-1:(a>b?1:0);
@@ -274,7 +283,8 @@ static int parse_refs(GmlWin *w){
     w->ref_addr=calloc(1,allocation_bytes);
     if(!size_mul((size_t)total,sizeof(*w->ref_name),&allocation_bytes)) return 0;
     w->ref_name=calloc(1,allocation_bytes);
-    if(!w->ref_addr || !w->ref_name) return 0;
+    w->ref_kind=calloc((size_t)total,sizeof(*w->ref_kind));
+    if(!w->ref_addr || !w->ref_name || !w->ref_kind) return 0;
   }
   uint32_t n=0;
   for(int ci=0;ci<2;ci++){
@@ -292,7 +302,8 @@ static int parse_refs(GmlWin *w){
            l.chain_off>UINT32_MAX-addr ||
            !win_has(w,(size_t)addr+l.ref_off,4) ||
            !win_has(w,(size_t)addr+l.chain_off,4)) return 0;
-        w->ref_addr[n]=addr+l.ref_off; w->ref_name[n]=nm; n++;
+        w->ref_addr[n]=addr+l.ref_off; w->ref_name[n]=nm;
+        w->ref_kind[n]=(uint8_t)(ci==0?GML_REF_VARIABLE:GML_REF_FUNCTION); n++;
         /* The key is the reference-word address, matching GmlInsn.refaddr. */
         uint32_t ref=u32(w->data,addr+l.chain_off);
         uint32_t nxt=ref & 0x07FFFFFF;
@@ -312,10 +323,14 @@ static int parse_refs(GmlWin *w){
     if(!size_mul((size_t)n,sizeof(RefRec),&allocation_bytes)) return 0;
     RefRec *rec=malloc(allocation_bytes);
     if(!rec) return 0;
-    for(uint32_t i=0;i<n;i++){ rec[i].addr=w->ref_addr[i]; rec[i].name=w->ref_name[i]; }
+    for(uint32_t i=0;i<n;i++){
+      rec[i].addr=w->ref_addr[i]; rec[i].name=w->ref_name[i]; rec[i].kind=w->ref_kind[i];
+    }
     qsort(rec,(size_t)n,sizeof(*rec),cmp_ref_addr);
     for(uint32_t i=1;i<n;i++) if(rec[i-1].addr==rec[i].addr){ free(rec); return 0; }
-    for(uint32_t i=0;i<n;i++){ w->ref_addr[i]=rec[i].addr; w->ref_name[i]=rec[i].name; }
+    for(uint32_t i=0;i<n;i++){
+      w->ref_addr[i]=rec[i].addr; w->ref_name[i]=rec[i].name; w->ref_kind[i]=rec[i].kind;
+    }
     free(rec);
   }
   return 1;
@@ -591,7 +606,7 @@ void gml_win_free(GmlWin *w){
   free(w->str_hix);
   free(w->code_hix);
   free(w->ref_hix);
-  free(w->ref_addr); free(w->ref_name); free(w->room_order);
+  free(w->ref_addr); free(w->ref_name); free(w->ref_kind); free(w->room_order);
   if(w->owns==1) free(w->data);
   else if(w->owns==2 && w->mapping_handle && w->host && w->host->file_unmap)
     w->host->file_unmap(w->host->userdata,w->mapping_handle,w->data,w->size);

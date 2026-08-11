@@ -6,6 +6,7 @@
 
 int software3d_case_language(Software3dRasterFixture *fixture){
   if(!pushref_function_fixture()) return 0;
+  if(!variable_hash_reference_fixture()) return 0;
   if(!member_function_self_fixture()) return 0;
   if(!member_function_argument_fixture()) return 0;
 
