@@ -70,6 +70,134 @@ static void path_build_samples(GmlPath *p, PathCtlPt *ctl, int npt){
   if(!p->closed) path_append_sample(p,&cap,ctl[npt-1].x,ctl[npt-1].y,ctl[npt-1].sp);
 }
 
+/* ---- sequences (SEQN) ----
+ * The supported record path reads sequence timing, graphic tracks and real/colour subtrack keys.
+ * Unknown record variants do not produce graphic tracks. The graphic-track tail is a fixed
+ * structural field in this path, consumed before moving to the next record. */
+#define SEQ_TRACK_TAIL 32u
+
+static int seq_sprite_by_name(const GmlWin *w, const char *name){
+  const GmlChunk *c=(w&&name&&*name)?gml_chunk(w,"SPRT"):NULL;
+  if(!c) return -1;
+  const uint8_t *d=w->data; uint32_t count=gml_vm_read_u32_le(d,c->off);
+  if(count>65536u) return -1;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t record=gml_vm_read_u32_le(d,c->off+4u+i*4u);
+    const char *candidate=gml_str_by_ptr(w,gml_vm_read_u32_le(d,record));
+    if(candidate && !strcmp(candidate,name)) return (int)i;
+  }
+  return -1;
+}
+
+double gml_sequence_value(const GmlSeqGraphic *g, const char *track, int channel, double head,
+                          double fallback){
+  if(!g || !track || channel<0 || channel>=GML_SEQ_CHANNELS) return fallback;
+  for(int i=0;i<g->n_tracks;i++){
+    const GmlSeqTrack *t=&g->tracks[i];
+    if(strcmp(t->name,track)) continue;
+    if(t->n_keys<=0) return fallback;
+    double v=t->keys[0].value[channel<t->keys[0].channels?channel:0];
+    for(int k=0;k<t->n_keys;k++){
+      if(t->keys[k].key>head) break;
+      v=t->keys[k].value[channel<t->keys[k].channels?channel:0];
+    }
+    return v;
+  }
+  return fallback;
+}
+
+/* A subtrack has a header, interpolation value, count and that many keyframes. Real and colour
+ * tracks share this layout; callers interpret the sampled double for their own operation. */
+static int seq_parse_subtrack(GmlWin *w, uint32_t *cursor, GmlSeqTrack *out){
+  const uint8_t *d=w->data; uint32_t q=*cursor;
+  const char *model=gml_str_by_ptr(w,gml_vm_read_u32_le(d,q));
+  if(!model || (strcmp(model,"GMRealTrack") && strcmp(model,"GMColourTrack"))) return 0;
+  if(gml_vm_read_u32_le(d,q+20)!=0 || gml_vm_read_u32_le(d,q+24)!=0 ||
+     gml_vm_read_u32_le(d,q+28)!=0) return 0;                 /* tags, owned resources, subtracks */
+  const char *nm=gml_str_by_ptr(w,gml_vm_read_u32_le(d,q+4));
+  if(nm){ size_t k=0; while(nm[k] && k<sizeof out->name-1){ out->name[k]=nm[k]; k++; } out->name[k]=0; }
+  q+=32;
+  q+=4;                                                       /* interpolation */
+  int count=(int)gml_vm_read_u32_le(d,q); q+=4;
+  if(count<0 || count>4096) return 0;
+  out->keys=calloc(count>0?(size_t)count:1,sizeof(GmlSeqKey));
+  if(!out->keys) return 0;
+  for(int i=0;i<count;i++){
+    double key=(double)gml_vm_read_f32_le(d,q);
+    int channels=(int)gml_vm_read_u32_le(d,q+16);
+    q+=20;
+    if(channels<0 || channels>64){ return 0; }
+    GmlSeqKey *k=&out->keys[out->n_keys];
+    k->key=key; k->channels=channels<GML_SEQ_CHANNELS?channels:GML_SEQ_CHANNELS;
+    for(int c=0;c<channels;c++){
+      int index=(int)gml_vm_read_u32_le(d,q);
+      double value=(double)gml_vm_read_f32_le(d,q+4);
+      if(index>=0 && index<GML_SEQ_CHANNELS) k->value[index]=value;
+      q+=16;
+    }
+    if(k->channels<1) k->channels=1;
+    out->n_keys++;
+  }
+  *cursor=q;
+  return 1;
+}
+
+static void parse_sequences(GmlVM *vm){
+  GmlWin *w=vm->win; const GmlChunk *c=gml_chunk(w,"SEQN"); if(!c) return;
+  const uint8_t *d=w->data; uint32_t base=c->off;
+  uint32_t count=gml_vm_read_u32_le(d,base+4);
+  if(count==0 || count>4096) return;
+  vm->sequences=calloc(count,sizeof(GmlSequence)); if(!vm->sequences) return;
+  vm->n_sequences=(int)count;
+  for(uint32_t i=0;i<count;i++){
+    uint32_t sp=gml_vm_read_u32_le(d,base+8+i*4);
+    GmlSequence *s=&vm->sequences[i];
+    const char *nm=gml_str_by_ptr(w,gml_vm_read_u32_le(d,sp));
+    s->name=nm?strdup(nm):NULL;
+    s->speed=(double)gml_vm_read_f32_le(d,sp+8);
+    s->speed_type=(int)gml_vm_read_u32_le(d,sp+12);
+    s->length=(double)gml_vm_read_f32_le(d,sp+16);
+    if(gml_vm_read_u32_le(d,sp+32)!=0) continue;       /* a broadcast store this reader cannot skip */
+    uint32_t q=sp+36;
+    int tracks=(int)gml_vm_read_u32_le(d,q); q+=4;
+    if(tracks<=0 || tracks>256) continue;
+    s->graphics=calloc((size_t)tracks,sizeof(GmlSeqGraphic));
+    if(!s->graphics) continue;
+    for(int t=0;t<tracks;t++){
+      const char *model=gml_str_by_ptr(w,gml_vm_read_u32_le(d,q));
+      int subs=(int)gml_vm_read_u32_le(d,q+28);
+      if(!model || strcmp(model,"GMGraphicTrack") ||
+         gml_vm_read_u32_le(d,q+20)!=0 || gml_vm_read_u32_le(d,q+24)!=0 ||
+         subs<=0 || subs>64){ break; }
+      GmlSeqGraphic *g=&s->graphics[s->n_graphics];
+      const char *spn=gml_str_by_ptr(w,gml_vm_read_u32_le(d,q+4));
+      g->sprite=spn?seq_sprite_by_name(w,spn):-1;
+      g->tracks=calloc((size_t)subs,sizeof(GmlSeqTrack));
+      if(!g->tracks) break;
+      q+=32;
+      int ok=1;
+      for(int k=0;k<subs;k++){
+        if(!seq_parse_subtrack(w,&q,&g->tracks[g->n_tracks])){ ok=0; break; }
+        g->n_tracks++;
+      }
+      if(!ok) break;
+      q+=SEQ_TRACK_TAIL;
+      s->n_graphics++;
+    }
+    if(anygm_host_development_setting(vm->host,"GML_LOG_SEQUENCE")){
+      anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,"[seq] %u %s len=%.0f speed=%.0f type=%d graphics=%d\n",
+        i,s->name?s->name:"?",s->length,s->speed,s->speed_type,s->n_graphics);
+      for(int g2=0;g2<s->n_graphics;g2++)
+        for(int k=0;k<s->graphics[g2].n_tracks;k++)
+          anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,"[seq]   g%d sprite=%d '%s' keys=%d first=%.2f,%.2f\n",
+            g2,s->graphics[g2].sprite,s->graphics[g2].tracks[k].name,
+            s->graphics[g2].tracks[k].n_keys,
+            s->graphics[g2].tracks[k].n_keys?s->graphics[g2].tracks[k].keys[0].value[0]:0.0,
+            s->graphics[g2].tracks[k].n_keys?s->graphics[g2].tracks[k].keys[0].value[1]:0.0);
+    }
+  }
+}
+
 static void parse_paths(GmlVM *vm){
   GmlWin *w=vm->win; const GmlChunk *c=gml_chunk(w,"PATH"); if(!c) return;
   const uint8_t *d=w->data; uint32_t base=c->off;
@@ -369,6 +497,7 @@ static void run_paths(GmlVM *vm){
 void gml_vm_rooms_init(GmlVM *vm){
   parse_paths(vm);
   parse_timelines(vm);
+  parse_sequences(vm);
 }
 
 void gml_vm_rooms_step_paths(GmlVM *vm){

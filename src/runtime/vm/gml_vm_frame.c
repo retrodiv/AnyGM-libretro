@@ -247,6 +247,17 @@ void gml_vm_frame_advance_layers(GmlVM *vm){
    * untouched ones are derived on the fly from the room definition (see the draw path). */
   for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used && vm->rtl[i].touched){
     vm->rtl[i].x += vm->rtl[i].hs; vm->rtl[i].y += vm->rtl[i].vs; }
+  /* A sequence element advances its head by the declared speed. Type 0 is frames per second
+   * divided by the room rate; type 1 is frames per step. */
+  for(int i=0;i<vm->n_rte;i++){
+    GmlRtElem *e=&vm->rte[i];
+    if(!e->used || e->type!=9 || e->sprite<0 || e->sprite>=vm->n_sequences) continue;
+    const GmlSequence *s=&vm->sequences[e->sprite];
+    double rate=s->speed;
+    if(s->speed_type==0){ double rs=gml_room_speed(vm); rate=(rs>0)?s->speed/rs:1.0; }
+    if(!(rate>0)) rate=1.0;
+    e->image_index+=rate;
+  }
   { GmlRender *R=(GmlRender*)vm->render;
     for(int i=0;i<vm->n_rte;i++){
       GmlRtElem *e=&vm->rte[i];
@@ -1438,6 +1449,28 @@ void gml_vm_draw(GmlVM *vm){
       lsp[nls].x=lx+e->x; lsp[nls].y=ly+e->y; lsp[nls].xs=e->xs; lsp[nls].ys=e->ys;
       lsp[nls].angle=e->image_angle; lsp[nls].blend=e->blend; lsp[nls].alpha=e->alpha; lsp[nls].depth=l->depth; lsp[nls].order=l->order;
       nls++;
+    } else if(e->type==9 && e->sprite>=0 && e->sprite<vm->n_sequences){
+      /* Sample each graphic track at the element head into the existing layer-sprite list so
+       * sequence sprites take part in the same depth ordering as other layer elements. */
+      const GmlSequence *s=&vm->sequences[e->sprite];
+      double head=e->image_index;
+      for(int g=0;g<s->n_graphics;g++){
+        const GmlSeqGraphic *gr=&s->graphics[g];
+        if(gr->sprite<0) continue;
+        if(!dl_grow((void**)&scratch->layer_sprite,
+                    &scratch->layer_sprite_capacity,nls+1,sizeof(*lsp))) continue;
+        lsp=scratch->layer_sprite;
+        lsp[nls].sprite=gr->sprite;
+        lsp[nls].subimg=(int)gml_sequence_value(gr,"image_index",0,head,0);
+        lsp[nls].x=lx+e->x+gml_sequence_value(gr,"position",0,head,0);
+        lsp[nls].y=ly+e->y+gml_sequence_value(gr,"position",1,head,0);
+        lsp[nls].xs=gml_sequence_value(gr,"scale",0,head,1);
+        lsp[nls].ys=gml_sequence_value(gr,"scale",1,head,1);
+        lsp[nls].angle=gml_sequence_value(gr,"rotation",0,head,0);
+        lsp[nls].blend=0xFFFFFFu; lsp[nls].alpha=e->alpha;
+        lsp[nls].depth=l->depth; lsp[nls].order=l->order;
+        nls++;
+      }
     }
   }
   /* unified depth-sorted draw list of instances + tiles + GMS2 layers + auto-draw particle systems */

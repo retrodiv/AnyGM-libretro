@@ -139,6 +139,35 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
     GmlRtElem *e=rt_sprite_for_layer_name(vm,l?l->id:-1,S(vm,a,n,1));
     *out=vreal(e?e->id:-1); return 1;
   }
+  /* Playing sequences use one runtime layer element each. Type 9 identifies it; `sprite` holds
+   * the sequence and `image_index` its head in the existing element-state representation. The
+   * frame advance updates that head and the layer draw samples the graphic tracks at it. */
+  if(!strcmp(nm,"layer_sequence_create")){
+    GmlRtLayer *l=rt_layer_resolve(vm,a,n);
+    int seq=(int)N(a,n,3);
+    if(seq<0 || seq>=vm->n_sequences){ *out=vreal(-1); return 1; }
+    GmlRtElem *e=gml_rt_elem_new(vm);
+    if(!e){ *out=vreal(-1); return 1; }
+    e->type=9; e->layer=l?l->id:0; e->x=N(a,n,1); e->y=N(a,n,2);
+    e->sprite=seq; e->image_index=0.0; e->alpha=1.0; e->xs=e->ys=1.0; e->visible=1;
+    e->blend=0xFFFFFFu;
+    *out=vreal(e->id); return 1;
+  }
+  if(!strcmp(nm,"layer_sequence_destroy")){
+    GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0)); if(e && e->type==9) e->used=0;
+    *out=vreal(0); return 1; }
+  if(!strcmp(nm,"layer_sequence_exists")){
+    GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,n>1?1:0));
+    *out=vreal(e && e->type==9 && e->used); return 1; }
+  if(!strcmp(nm,"layer_sequence_is_finished")){
+    GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0));
+    if(!e || e->type!=9 || e->sprite<0 || e->sprite>=vm->n_sequences){ *out=vreal(1); return 1; }
+    *out=vreal(e->image_index>=vm->sequences[e->sprite].length); return 1; }
+  if(!strcmp(nm,"layer_sequence_headpos")){
+    GmlRtElem *e=gml_rt_elem_find(vm,(int)N(a,n,0));
+    if(n>1){ if(e && e->type==9) e->image_index=N(a,n,1); *out=vreal(0); }
+    else *out=vreal((e && e->type==9)?e->image_index:0);
+    return 1; }
   if(!strcmp(nm,"layer_sprite_create")){
     GmlRtLayer *l=rt_layer_resolve(vm,a,n);
     if(!l){ *out=vreal(-1); return 1; }

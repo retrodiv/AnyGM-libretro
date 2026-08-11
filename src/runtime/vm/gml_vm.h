@@ -53,6 +53,19 @@ typedef struct {
 /* ---- path (parsed from PATH) ---- */
 typedef struct { double x, y, sp, clen; } GmlPathPt;   /* sp = point speed factor, clen = cumulative length */
 typedef struct { GmlPathPt *pts; int n; int kind, closed, precision; double len; } GmlPath;
+/* ---- sequences (SEQN chunk, GMS2.3+) ----
+ * A sequence stores a length, playback speed and graphic tracks. Graphic subtracks supply held
+ * values for image index, origin, position, rotation and scale. Origin, position and scale use
+ * two independent channels, so the renderer samples each channel at the current head. */
+#define GML_SEQ_CHANNELS 2
+typedef struct { double key, value[GML_SEQ_CHANNELS]; int channels; } GmlSeqKey;
+typedef struct { char name[24]; GmlSeqKey *keys; int n_keys; } GmlSeqTrack;
+typedef struct { int sprite; GmlSeqTrack *tracks; int n_tracks; } GmlSeqGraphic;
+typedef struct { char *name; double length, speed; int speed_type;
+                 GmlSeqGraphic *graphics; int n_graphics; } GmlSequence;
+/* The held value of `channel` at `head`, or `fallback` when the track has no keys. */
+double gml_sequence_value(const GmlSeqGraphic *g, const char *track, int channel, double head,
+                          double fallback);
 
 /* ---- timelines (parsed from native package and compiler-authored TMLN records) ---- */
 typedef struct { int step, code; } GmlTimelineMoment;
@@ -214,6 +227,7 @@ typedef struct GmlVM {
   int *inst_next, *inst_prev;   /* doubly-linked per-type instance lists over pool slots */
   long obj_list_gen; /* bumped on any create/destroy/change — invalidates per-frame candidate caches */
   GmlPath *paths; int n_paths;
+  GmlSequence *sequences; int n_sequences;
   GmlTimeline *timelines; int n_timelines, cap_timelines;
   GmlColEvent *col_events; int n_col_events;
   GmlColPairCache *col_pair_cache; int col_pair_cache_cap;
