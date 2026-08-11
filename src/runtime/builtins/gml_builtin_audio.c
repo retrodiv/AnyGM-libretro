@@ -78,6 +78,25 @@ enum {
   GML_EXTERNAL_AUDIO_SET_DISTANCE_FACTOR,
   GML_EXTERNAL_AUDIO_SET_POSITION,
   GML_EXTERNAL_AUDIO_TRACK_PLAY,
+  /* Sound-handle operations use the identifier returned by a load. */
+  GML_EXTERNAL_AUDIO_SS_LOAD,
+  GML_EXTERNAL_AUDIO_SS_PLAY,
+  GML_EXTERNAL_AUDIO_SS_LOOP,
+  GML_EXTERNAL_AUDIO_SS_RESUME,
+  GML_EXTERNAL_AUDIO_SS_FREE_SOUND,
+  GML_EXTERNAL_AUDIO_SS_SET_VOLUME,
+  GML_EXTERNAL_AUDIO_SS_GET_VOLUME,
+  GML_EXTERNAL_AUDIO_SS_SET_FREQ,
+  GML_EXTERNAL_AUDIO_SS_GET_FREQ,
+  GML_EXTERNAL_AUDIO_SS_SET_PAN,
+  GML_EXTERNAL_AUDIO_SS_GET_PAN,
+  GML_EXTERNAL_AUDIO_SS_SET_POSITION,
+  GML_EXTERNAL_AUDIO_SS_GET_POSITION,
+  GML_EXTERNAL_AUDIO_SS_IS_PAUSED,
+  GML_EXTERNAL_AUDIO_SS_IS_LOOPING,
+  GML_EXTERNAL_AUDIO_SS_GET_LENGTH,
+  GML_EXTERNAL_AUDIO_SS_GET_BYTES_PER_SECOND,
+  GML_EXTERNAL_AUDIO_SS_IS_HANDLE_VALID,
   GML_EXTERNAL_AUDIO_OPERATION_LIMIT
 };
 typedef struct {
@@ -109,6 +128,32 @@ static const GmlExternalAudioSymbol external_audio_symbols[]={
   {"sga_SetPosition",GML_EXTERNAL_AUDIO_SET_POSITION},
   {"sga_TrackPlay",GML_EXTERNAL_AUDIO_TRACK_PLAY},
 };
+/* External sound-handle API symbols accepted by the audio adapter. */
+static const GmlExternalAudioSymbol external_supersound_symbols[]={
+  {"SS_Init",GML_EXTERNAL_AUDIO_INIT},
+  {"SS_Unload",GML_EXTERNAL_AUDIO_FREE},
+  {"SS_LoadSound",GML_EXTERNAL_AUDIO_SS_LOAD},
+  {"SS_PlaySound",GML_EXTERNAL_AUDIO_SS_PLAY},
+  {"SS_LoopSound",GML_EXTERNAL_AUDIO_SS_LOOP},
+  {"SS_StopSound",GML_EXTERNAL_AUDIO_STOP},
+  {"SS_PauseSound",GML_EXTERNAL_AUDIO_PAUSE},
+  {"SS_ResumeSound",GML_EXTERNAL_AUDIO_SS_RESUME},
+  {"SS_FreeSound",GML_EXTERNAL_AUDIO_SS_FREE_SOUND},
+  {"SS_IsSoundPlaying",GML_EXTERNAL_AUDIO_IS_PLAYING},
+  {"SS_IsSoundPaused",GML_EXTERNAL_AUDIO_SS_IS_PAUSED},
+  {"SS_IsSoundLooping",GML_EXTERNAL_AUDIO_SS_IS_LOOPING},
+  {"SS_IsHandleValid",GML_EXTERNAL_AUDIO_SS_IS_HANDLE_VALID},
+  {"SS_SetSoundVol",GML_EXTERNAL_AUDIO_SS_SET_VOLUME},
+  {"SS_GetSoundVol",GML_EXTERNAL_AUDIO_SS_GET_VOLUME},
+  {"SS_SetSoundFreq",GML_EXTERNAL_AUDIO_SS_SET_FREQ},
+  {"SS_GetSoundFreq",GML_EXTERNAL_AUDIO_SS_GET_FREQ},
+  {"SS_SetSoundPan",GML_EXTERNAL_AUDIO_SS_SET_PAN},
+  {"SS_GetSoundPan",GML_EXTERNAL_AUDIO_SS_GET_PAN},
+  {"SS_SetSoundPosition",GML_EXTERNAL_AUDIO_SS_SET_POSITION},
+  {"SS_GetSoundPosition",GML_EXTERNAL_AUDIO_SS_GET_POSITION},
+  {"SS_GetSoundLength",GML_EXTERNAL_AUDIO_SS_GET_LENGTH},
+  {"SS_GetSoundBytesPerSecond",GML_EXTERNAL_AUDIO_SS_GET_BYTES_PER_SECOND},
+};
 static int external_ascii_equal(const char *left,const char *right){
   if(!left || !right) return 0;
   while(*left && *right){
@@ -123,12 +168,19 @@ int builtin_external_audio_define(const char *library,const char *symbol){
   const char *base=library;
   for(const char *cursor=library;*cursor;cursor++)
     if(*cursor=='/' || *cursor=='\\') base=cursor+1;
-  if(!external_ascii_equal(base,"SGAudio.dll")) return 0;
-  for(size_t index=0;
-      index<sizeof(external_audio_symbols)/sizeof(external_audio_symbols[0]);
-      index++)
-    if(!strcmp(symbol,external_audio_symbols[index].symbol))
-      return GML_EXTERNAL_AUDIO_HANDLE_BASE+external_audio_symbols[index].operation;
+  const GmlExternalAudioSymbol *table=NULL;
+  size_t entries=0;
+  if(external_ascii_equal(base,"SGAudio.dll")){
+    table=external_audio_symbols;
+    entries=sizeof(external_audio_symbols)/sizeof(external_audio_symbols[0]);
+  } else if(external_ascii_equal(base,"supersound.dll")){
+    table=external_supersound_symbols;
+    entries=sizeof(external_supersound_symbols)/sizeof(external_supersound_symbols[0]);
+  }
+  if(!table) return 0;
+  for(size_t index=0;index<entries;index++)
+    if(!strcmp(symbol,table[index].symbol))
+      return GML_EXTERNAL_AUDIO_HANDLE_BASE+table[index].operation;
   return 0;
 }
 static int external_audio_load(GmlVM *vm,const char *relative){
@@ -256,6 +308,63 @@ GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
         audio,(int)N(args,count,0),N(args,count,1)!=0.0);
     return vreal(0);
   }
+  /* Sound handles map onto mixer sound IDs. Volume is 0..10000 and
+   * frequency is absolute hertz, so convert them to gain and pitch. */
+  if(operation==GML_EXTERNAL_AUDIO_SS_LOAD)
+    return vreal(external_audio_load(vm,S(vm,args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_SS_PLAY || operation==GML_EXTERNAL_AUDIO_SS_LOOP ||
+     operation==GML_EXTERNAL_AUDIO_SS_RESUME){
+    int sound=(int)N(args,count,0);
+    int loop=operation==GML_EXTERNAL_AUDIO_SS_LOOP
+               ? 1 : gml_audio_sound_get_default_loop(audio,sound);
+    if(operation==GML_EXTERNAL_AUDIO_SS_LOOP)
+      gml_audio_sound_set_default_loop(audio,sound,1);
+    int voice=gml_audio_play(audio,sound,loop);
+    if(vm && builtin_setting(vm,"GML_LOG_AUDIO"))
+      anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+                      "[external-audio] supersound play sound=%d loop=%d voice=%d\n",
+                      sound,loop,voice);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SS_FREE_SOUND){
+    gml_audio_caster_free(audio,(int)N(args,count,0));
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SS_SET_VOLUME){
+    double level=N(args,count,1)/10000.0;
+    if(level<0.0) level=0.0; else if(level>1.0) level=1.0;
+    gml_audio_sound_gain(audio,(int)N(args,count,0),level);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SS_GET_VOLUME)
+    return vreal(gml_audio_sound_get_gain(audio,(int)N(args,count,0))*10000.0);
+  if(operation==GML_EXTERNAL_AUDIO_SS_SET_FREQ){
+    double hz=N(args,count,1);
+    if(hz>0.0) gml_audio_sound_pitch(audio,(int)N(args,count,0),hz/44100.0);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SS_GET_FREQ)
+    return vreal(gml_audio_sound_get_pitch(audio,(int)N(args,count,0))*44100.0);
+  if(operation==GML_EXTERNAL_AUDIO_SS_SET_PAN || operation==GML_EXTERNAL_AUDIO_SS_GET_PAN)
+    /* Per-sound pan is not implemented by the mixer; report center. */
+    return vreal(0);
+  if(operation==GML_EXTERNAL_AUDIO_SS_SET_POSITION){
+    gml_audio_sound_set_track_position(audio,(int)N(args,count,0),N(args,count,1));
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SS_GET_POSITION)
+    return vreal(gml_audio_sound_get_track_position(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_SS_IS_PAUSED)
+    return vreal(!gml_audio_is_playing(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_SS_IS_LOOPING)
+    return vreal(gml_audio_sound_get_default_loop(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_SS_GET_LENGTH)
+    return vreal(gml_audio_sound_length(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_SS_GET_BYTES_PER_SECOND)
+    /* Sixteen-bit stereo at the mixer's rate. */
+    return vreal(44100.0*2.0*2.0);
+  if(operation==GML_EXTERNAL_AUDIO_SS_IS_HANDLE_VALID)
+    return vreal((int)N(args,count,0)>=0);
   if(operation==GML_EXTERNAL_AUDIO_TRACK_PLAY){
     int prior=(int)N(args,count,0);
     if(prior>=0) gml_audio_caster_free(audio,prior);
