@@ -931,8 +931,9 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* The high-score table retains ten places in score order. Reads beyond
    * populated places return zero or an empty string. */
   if(!strncmp(nm,"highscore_",10)){
-    GmlBuiltinState *hs=builtin_state_ensure(vm);
-    if(!hs) return vreal(0);
+    /* Keep this storage outside GmlBuiltinState without shifting its fields. */
+    static GmlBuiltinHighscore table[GML_HIGHSCORE_PLACES];
+    struct { GmlBuiltinHighscore *highscore; } hs_storage = { table }, *hs = &hs_storage;
     if(!strcmp(nm,"highscore_clear")){
       for(int i=0;i<GML_HIGHSCORE_PLACES;i++){ hs->highscore[i].used=0; hs->highscore[i].score=0;
         hs->highscore[i].name[0]=0; }
