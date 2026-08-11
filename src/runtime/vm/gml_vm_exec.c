@@ -2718,7 +2718,15 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
              * `expr.field` where expr is a temporary — notably struct method dispatch `b.method(...)`,
              * where mis-routing this to var_get(-9) read nobody and every struct method call got 0. */
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
-            GmlInstance *t=vm_inst_from_ref(vm,iv); v=t?inst_get_any_h(vm,t,nm,nh):vreal(0);
+            GmlInstance *t=vm_inst_from_ref(vm,iv);
+            if(t) v=inst_get_any_h(vm,t,nm,nh);
+            /* A direct StackTop owner can be a numeric scope sentinel. Resolve it through the
+             * scope reader only when no instance was found. Struct identifiers retain the
+             * instance path and IT_STACK remains a marker rather than an owner scope. */
+            else if(iv.t==V_REAL && !GML_IS_STRUCT_ID(iv.d) &&
+                    gml_it_is_scope_to_read((int)iv.d))
+              v=var_get_h(vm,(int)iv.d,nm,nh);
+            else v=vreal(0);
           } else if(in.inst==0 && in.reftype==0xA0 && prev_conv_v_i32){
             GmlVal iv=sp>0?stk[--sp]:vreal(0);
             int it=(int)asnum(iv);
@@ -3112,11 +3120,14 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           /* Report unresolved dynamic calls when the optional setting is present. */
           double top_=callv_sp_in>0?asnum(stk[callv_sp_in-1]):0.0;
           double under_=callv_sp_in>1?asnum(stk[callv_sp_in-2]):0.0;
+          /* Include the offset within a code entry so an unresolved call can be localized even
+           * when several call sites share the same entry name. */
           anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
-            "[callv-miss] argc=%d top=%.17g under=%.17g struct_top=%d funcval_top=%d in %s\n",na,
+            "[callv-miss] argc=%d top=%.17g under=%.17g struct_top=%d funcval_top=%d in %s+%u\n",na,
             top_,under_,GML_IS_STRUCT_ID(top_)?1:0,GML_IS_FUNCVAL((int)top_)?1:0,
             (vm->win && vm->cur_code_index>=0 && vm->cur_code_index<vm->win->n_code &&
-             vm->win->code[vm->cur_code_index].name)?vm->win->code[vm->cur_code_index].name:"");
+             vm->win->code[vm->cur_code_index].name)?vm->win->code[vm->cur_code_index].name:"",
+            (unsigned)(pc-start));
         }
         break;
       }

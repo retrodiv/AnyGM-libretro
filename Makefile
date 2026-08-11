@@ -96,7 +96,7 @@ endif
 
 TEST_DIR := $(BUILD_DIR)/tests
 RUNTIME_TESTS := test_rng test_persistent_room test_d3_state test_ds_grid \
-	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_map_arrays test_builtin_struct_exists
+	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_map_arrays test_builtin_struct_exists test_stacktop_scope
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets \
 	test_renderer_texture_shells
@@ -170,6 +170,10 @@ $(TEST_DIR)/test_builtin_map_arrays: tests/unit/runtime/test_builtin_map_arrays.
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
 
 $(TEST_DIR)/test_builtin_struct_exists: tests/unit/runtime/test_builtin_struct_exists.c $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+
+$(TEST_DIR)/test_stacktop_scope: tests/unit/runtime/test_stacktop_scope.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
 
@@ -312,7 +316,8 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_vm_gc
 	$(TEST_DIR)/test_builtin_string_format
 	$(TEST_DIR)/test_builtin_map_arrays
-	$(TEST_DIR)/test_builtin_struct_exists
+	$(TEST_DIR)/test_builtin_struct_exists \
+	$(TEST_DIR)/test_stacktop_scope
 else
 FOCUSED_TEST_TARGET := $(TEST_DIR)/test_$(TEST)
 check: CFLAGS += -Werror

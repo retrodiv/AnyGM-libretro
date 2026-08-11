@@ -37,6 +37,13 @@ enum { DT_DOUBLE=0, DT_FLOAT=1, DT_INT32=2, DT_INT64=3, DT_BOOL=4, DT_VAR=5,
 /* InstanceType */
 enum { IT_SELF=-1, IT_OTHER=-2, IT_ALL=-3, IT_NOONE=-4, IT_GLOBAL=-5, IT_BUILTIN=-6,
        IT_LOCAL=-7, IT_STACK=-9, IT_ARG=-15, IT_STATIC=-16 };
+/* A member-access owner on the value stack can be a scope sentinel rather than an instance.
+ * `@@Global@@` supplies IT_GLOBAL as a number for a StackTop read of `global.f`, and the scope
+ * reader must handle that sentinel. IT_STACK marks another value below it, not a scope; the
+ * caller keeps struct identifiers on the instance path. */
+static inline int gml_it_is_scope_to_read(int instance_type){
+  return instance_type<0 && instance_type!=IT_STACK;
+}
 /* ComparisonType */
 enum { CMP_LT=1, CMP_LTE=2, CMP_EQ=3, CMP_NEQ=4, CMP_GTE=5, CMP_GT=6 };
 enum { GML_REF_NONE=0, GML_REF_VARIABLE=1, GML_REF_FUNCTION=2 };
