@@ -2958,7 +2958,14 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
               nm?nm:"?",na);
           }
         }
-        GmlVal a[64]; if(na>64) na=64;
+        /* Spill argument lists beyond the inline capacity so wide calls retain their tail.
+         * If allocation fails, keep the historical truncation fallback for this call. */
+        GmlVal a_inline[64];
+        GmlVal *a=a_inline, *a_spill=NULL;
+        if(na>64){
+          a_spill=(GmlVal*)calloc((size_t)na,sizeof(GmlVal));
+          if(a_spill) a=a_spill; else na=64;
+        }
         /* GM pushes args in reverse, so arg0 is on top: pop forward -> a[0]=arg0 */
         for(int i=0;i<na;i++) a[i] = sp>0? stk[--sp] : vreal(0);
         int sci = pin ? pin->funcval_ci : -1;
@@ -2990,6 +2997,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
          * arg pass-through (the arg's owner frees it) to avoid double-tracking a var's string. */
         if(STR_IS_HEAP(rv)){ int isarg=0; for(int _k=0;_k<na;_k++) if(a[_k].t==V_STR && a[_k].s==rv.s){isarg=1;break;} if(!isarg) GC_TRACK(rv.s); }
         if(sp<STK){ stk[sp]=rv; stkt[sp]=DT_VAR; sp++; }
+        free(a_spill);
         break;
       }
       case OP_CALLV:{
@@ -2997,7 +3005,15 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         /* GMS2.3 call-a-value: a function VALUE sits under the args. GM stack order is
          * func, argN..arg1, arg0 (arg0 on top). Pop args (arg0 first) then the function value.
          * A tagged function-value (from a push.i32 fref or method()) carries the code index. */
-        int na=in.argc; GmlVal a[64]; if(na>64) na=64;
+        /* Use the same spill policy as OP_CALL; otherwise a wide dynamic call loses tail arguments
+         * without distinguishing them from values the callee deliberately received as zero. */
+        int na=in.argc;
+        GmlVal a_inline[64];
+        GmlVal *a=a_inline, *a_spill=NULL;
+        if(na>64){
+          a_spill=(GmlVal*)calloc((size_t)na,sizeof(GmlVal));
+          if(a_spill) a=a_spill; else na=64;
+        }
         int fci=-1; GmlInstance *call_self=vm->cur_self;
         /* A field call `receiver.callback(args)` is emitted as a StackTop field push immediately
          * before callv. Its final stack shape is [args..., receiver, callback], with callback on
@@ -3129,6 +3145,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
              vm->win->code[vm->cur_code_index].name)?vm->win->code[vm->cur_code_index].name:"",
             (unsigned)(pc-start));
         }
+        free(a_spill);
         break;
       }
       case OP_RET: ret = sp>0? stk[--sp]:vreal(0); if(use_cache) ip=cached_n; else pc=end; continue;
