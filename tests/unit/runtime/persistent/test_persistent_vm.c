@@ -1510,6 +1510,48 @@ int expect_builtin_numeric_constants(void){
   return ok;
 }
 
+static void smooth_path_fixture_f32(uint8_t *data,size_t offset,float value){
+  uint32_t bits=0;
+  memcpy(&bits,&value,sizeof bits);
+  fixture_w32(data,offset,bits);
+}
+
+int expect_smooth_path_midpoint_interpolation(void){
+  uint8_t data[128]={0};
+  fixture_w32(data,0,1);
+  fixture_w32(data,4,16);
+  fixture_w32(data,20,1);
+  fixture_w32(data,24,0);
+  fixture_w32(data,28,4);
+  fixture_w32(data,32,3);
+  const float points[9]={
+    0,0,100,
+    100,100,100,
+    200,0,100,
+  };
+  for(size_t index=0;index<sizeof points/sizeof points[0];index++)
+    smooth_path_fixture_f32(data,36+index*4,points[index]);
+
+  GmlWin win={0};
+  win.data=data;
+  win.size=sizeof data;
+  win.bytecode=15;
+  win.game_speed=60;
+  win.n_chunks=1;
+  memcpy(win.chunks[0].name,"PATH",5);
+  win.chunks[0].off=0;
+  win.chunks[0].size=sizeof data;
+  GmlVM vm;
+  if(gml_vm_init(&vm,&win,NULL)) return 0;
+  double x=0,y=0;
+  gml_path_eval_public(&vm,0,0.5,&x,&y);
+  int ok=fabs(x-100.0)<1e-9 && fabs(y-75.0)<1e-9;
+  if(!ok)
+    fprintf(stderr,"smooth path midpoint interpolation mismatch: (%.9f,%.9f)\n",x,y);
+  gml_vm_free(&vm);
+  return ok;
+}
+
 
 static int expect_persistent_lifecycle_exit_code(void){
   GmlcProject project; GmlcObject objects[3]; GmlcRoom rooms[2];

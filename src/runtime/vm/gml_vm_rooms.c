@@ -20,19 +20,14 @@
 /* ---------------- path parsing + evaluation (PATH chunk) ---------------- */
 typedef struct { double x,y,sp; } PathCtlPt;
 
-static PathCtlPt path_ctl_at(PathCtlPt *pt, int n, int idx, int closed){
-  if(closed){
-    idx%=n; if(idx<0) idx+=n;
-    return pt[idx];
-  }
-  if(idx<0) return pt[0];
-  if(idx>=n) return pt[n-1];
-  return pt[idx];
+static PathCtlPt path_midpoint(PathCtlPt a, PathCtlPt b){
+  PathCtlPt result={(a.x+b.x)*0.5,(a.y+b.y)*0.5,(a.sp+b.sp)*0.5};
+  return result;
 }
 
-static double path_catmull(double p0, double p1, double p2, double p3, double t){
-  double t2=t*t, t3=t2*t;
-  return 0.5*((2.0*p1)+(-p0+p2)*t+(2.0*p0-5.0*p1+4.0*p2-p3)*t2+(-p0+3.0*p1-3.0*p2+p3)*t3);
+static double path_quadratic(double p0, double p1, double p2, double t){
+  double u=1.0-t;
+  return u*u*p0+2.0*u*t*p1+t*t*p2;
 }
 
 static void path_append_sample(GmlPath *p, int *cap, double x, double y, double sp){
@@ -58,17 +53,17 @@ static void path_build_samples(GmlPath *p, PathCtlPt *ctl, int npt){
   int subdiv=1 << (p->precision>0?p->precision:1);
   if(subdiv<2) subdiv=2;
   if(subdiv>256) subdiv=256;
-  int seg=p->closed?npt:npt-1;
-  for(int i=0;i<seg;i++){
-    PathCtlPt p0=path_ctl_at(ctl,npt,i-1,p->closed);
-    PathCtlPt p1=path_ctl_at(ctl,npt,i,p->closed);
-    PathCtlPt p2=path_ctl_at(ctl,npt,i+1,p->closed);
-    PathCtlPt p3=path_ctl_at(ctl,npt,i+2,p->closed);
+  for(int i=0;i<npt;i++){
+    int previous=i>0?i-1:npt-1;
+    int next=i+1<npt?i+1:0;
+    PathCtlPt p1=ctl[i];
+    PathCtlPt p0=(!p->closed && i==0)?p1:path_midpoint(ctl[previous],p1);
+    PathCtlPt p2=(!p->closed && i==npt-1)?p1:path_midpoint(p1,ctl[next]);
     for(int m=0;m<subdiv;m++){
       double t=(double)m/(double)subdiv;
-      double x=path_catmull(p0.x,p1.x,p2.x,p3.x,t);
-      double y=path_catmull(p0.y,p1.y,p2.y,p3.y,t);
-      double sp=p1.sp+(p2.sp-p1.sp)*t;
+      double x=path_quadratic(p0.x,p1.x,p2.x,t);
+      double y=path_quadratic(p0.y,p1.y,p2.y,t);
+      double sp=path_quadratic(p0.sp,p1.sp,p2.sp,t);
       path_append_sample(p,&cap,x,y,sp);
     }
   }
