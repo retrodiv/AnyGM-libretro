@@ -237,7 +237,8 @@ typedef struct GmlRender {
   uint32_t *color_write_scratch;
   size_t    color_write_scratch_capacity;
   int       software_overlay; /* bypass world-space D3 projection for a final 2D modal pass */
-  int       blendmode;   /* 0=normal, 1=add, 2=(zero, inverse-source-colour), 3=multiply, 4=max preset. */
+  int       blendmode;   /* 0=normal, 1=add, 2=(zero, inverse-source-colour), 3=multiply, 4=max preset,
+                          * 5=(source colour, one). */
   int       blend_equation, blend_equation_alpha; /* 1 add, 2 max, 3 subtract, 4 reverse-subtract, 5 min */
   struct GmlGpuState {
     int alphablend, alpha_test_enable, blendmode, blend_equation, blend_equation_alpha, interp;

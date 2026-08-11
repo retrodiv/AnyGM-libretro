@@ -191,11 +191,12 @@ void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gm
     int sc[4]={(src>>16)&255,(src>>8)&255,src&255,(int)lround(alpha*255.0)};
     int dc[4]={(*dp>>16)&255,(*dp>>8)&255,*dp&255,R->target_sp>0?(int)(*dp>>24):255};
     double sf=alpha, df=1.0-alpha;
-    if(R->blendmode==1 || R->blendmode==2) df=1.0;
+    if(R->blendmode==1 || R->blendmode==2 || R->blendmode==5) df=1.0;
     int oc[4];
     for(int k=0;k<4;k++){
       int eq=k==3?R->blend_equation_alpha:R->blend_equation;
       if(R->blendmode==4) df=1.0-sc[k]/255.0;
+      if(R->blendmode==5) sf=sc[k]/255.0;   /* bm_src_colour scales the source by itself */
       double v;
       if(eq==2) v=sc[k]>dc[k]?sc[k]:dc[k];
       else if(eq==5) v=sc[k]<dc[k]?sc[k]:dc[k];
@@ -227,6 +228,20 @@ void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gm
       if(og>255) og=255;
       if(ob>255) ob=255;
       if(R->target_sp>0){ uint32_t a=oc+(uint32_t)(255*alpha); oc=a>255?255:a; }
+    } else if(R->blendmode==5){
+      /* Add source channels scaled by their own values. A black source
+       * leaves destination colour unchanged while increasing coverage. */
+      unsigned source_alpha=(unsigned)lround(alpha*255.0);
+      or_=dr+(int)(((unsigned)sr*(unsigned)sr+127u)/255u);
+      og=dg+(int)(((unsigned)sg*(unsigned)sg+127u)/255u);
+      ob=db+(int)(((unsigned)sb*(unsigned)sb+127u)/255u);
+      if(or_>255) or_=255;
+      if(og>255) og=255;
+      if(ob>255) ob=255;
+      if(R->target_sp>0){
+        uint32_t a=oc+(uint32_t)((source_alpha*source_alpha+127u)/255u);
+        oc=a>255?255:a;
+      }
     } else {
       /* bm_subtract is the preset (bm_zero, bm_inv_src_colour): RGB is
        * destination*(1-source RGB), while coverage uses inverse source alpha. */
