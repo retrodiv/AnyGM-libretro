@@ -6,6 +6,7 @@
 #include "anygm_host.h"
 
 static int core_opt_mouse_mode(AnygmEngine *engine);
+static int core_opt_gamepad_connected(AnygmEngine *engine);
 
 /* ---- normalized input snapshot (held this frame plus prior-frame edges) ---- */
 static int anygm_key_for_vk(int vk);
@@ -57,7 +58,14 @@ static int engine_input_key(void *userdata,int vk, int edge){
   AnygmEngine *engine=userdata;
   if(vk == 1 || vk == 0){   /* vk_anykey (1) / vk_nokey (0): aggregate over every input */
     int any = 0, anyp = 0;
-    for(int i = 0; i < NPAD; i++){ any |= engine->pad_current[i]; anyp |= engine->pad_previous[i]; }
+    /* The gamepad option selects ownership. Off makes RetroPad a keyboard compatibility layer;
+     * On exposes an independent pad and leaves keyboard state to the frontend's key source. */
+    if(!core_opt_gamepad_connected(engine)){
+      for(int i = 0; i < NPAD; i++){
+        any |= engine->pad_current[i];
+        anyp |= engine->pad_previous[i];
+      }
+    }
     for(int i = 2; i < NKEY; i++){
       any |= engine->key_current[i] | engine->hardware_key_current[i] | engine->event_vk_current[i];
       anyp |= engine->key_previous[i] | engine->hardware_key_previous[i] | engine->event_vk_previous[i];
@@ -79,8 +87,10 @@ static int engine_input_key(void *userdata,int vk, int edge){
   }
   cur |= event_key_state_for_vk(engine,vk, 0);
   prev |= event_key_state_for_vk(engine,vk, 1);
-  int b = vk_to_pad(engine,vk);
-  if(b >= 0){ cur |= engine->pad_current[b]; prev |= engine->pad_previous[b]; }
+  if(!core_opt_gamepad_connected(engine)){
+    int b = vk_to_pad(engine,vk);
+    if(b >= 0){ cur |= engine->pad_current[b]; prev |= engine->pad_previous[b]; }
+  }
   int out = edge==1 ? (cur && !prev) : edge==2 ? (!cur && prev) : cur;
   dbg_key_log(engine,vk, edge, cur, prev, out);
   return out;

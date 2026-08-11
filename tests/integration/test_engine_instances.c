@@ -745,6 +745,32 @@ static int state_input_history_roundtrip(void){
   return ok;
 }
 
+static int input_binding_ownership_policy(void){
+  AnygmEngine keyboard_only={0};
+  keyboard_only.win.classic_version=800;
+  engine_input_bind(&keyboard_only);
+  keyboard_only.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  int ok=keyboard_only.vm.input.key(keyboard_only.vm.input.userdata,'Z',0) &&
+         keyboard_only.vm.input.key(keyboard_only.vm.input.userdata,1,0);
+
+  AnygmEngine gamepad_mode={0};
+  gamepad_mode.win.classic_version=800;
+  gamepad_mode.config.gamepad_connected=1;
+  engine_input_bind(&gamepad_mode);
+  gamepad_mode.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  ok=ok &&
+     !gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,'Z',0) &&
+     !gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,1,0) &&
+     gamepad_mode.vm.input.gamepad(gamepad_mode.vm.input.userdata,32769,0);
+
+  gamepad_mode.event_key_current[ANYGM_KEY_z]=1;
+  ok=ok && gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,'Z',0) &&
+     gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,1,0);
+  if(!ok)
+    fputs("RetroPad input was not isolated from native keyboard input\n",stderr);
+  return ok;
+}
+
 static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidate,size_t size,
                                      const uint8_t *baseline,size_t baseline_size,
                                      const char *label){
@@ -799,6 +825,8 @@ int main(int argc,char **argv){
         anygm_synthetic_multiview_framebuffer_content_create,"multi-view")?0:1;
     if(!strcmp(argv[2],"game_change"))
       return game_change_policy()?0:1;
+    if(!strcmp(argv[2],"input_binding_ownership"))
+      return input_binding_ownership_policy()?0:1;
     fprintf(stderr,"unknown integration case: %s\n",argv[2]);
     return 1;
   }
@@ -809,7 +837,8 @@ int main(int argc,char **argv){
           "game_restart|"
           "first_generation_dynamic_camera|"
           "explicit_window_screen_stage|"
-          "background_color|multi_view_application_canvas|game_change]\n",stderr);
+          "background_color|multi_view_application_canvas|game_change|"
+          "input_binding_ownership]\n",stderr);
     return 1;
   }
   if(!screen_stage_raster_policy()) return 1;
@@ -826,6 +855,7 @@ int main(int argc,char **argv){
   if(!game_restart_policy()) return 1;
   if(!game_change_policy()) return 1;
   if(!state_input_history_roundtrip()) return 1;
+  if(!input_binding_ownership_policy()) return 1;
   char label[128];
   anygm_content_save_label("/library/fixture_bundle/data.win",label,sizeof label);
   if(strcmp(label,"fixture_bundle")){
