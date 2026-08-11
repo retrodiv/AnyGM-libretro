@@ -1038,7 +1038,10 @@ void screen_redraw_room_layer_hook(GmlVM *vm,int foreground,void *user) {
 void screen_refresh_present_latch_hook(GmlVM *vm,void *user) {
   AnygmEngine *engine=user; (void)vm;
   if (!engine || !anygm_policy_uses_classic_runtime(&engine->win)) return;
-  if (gml_render_content_composited_screen(&engine->render)) engine->content_presented=1;
+  if (gml_render_content_composited_screen(&engine->render)) {
+    gml_render_application_surface_set_draw_enabled(&engine->render,0);
+    engine->content_presented=1;
+  }
 }
 void draw_runtime_backgrounds(AnygmEngine *engine,int want_fg) {
   for (int i = 0; i < 8; i++) {

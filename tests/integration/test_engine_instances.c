@@ -118,6 +118,27 @@ static int room_order_redirect_policy(void){
   return ok;
 }
 
+static int screen_refresh_present_latch_policy(void){
+  AnygmEngine engine={0};
+  engine.win.classic_version=800;
+  engine.vm.win=&engine.win;
+  gml_render_application_surface_set_draw_enabled(&engine.render,1);
+
+  screen_refresh_present_latch_hook(&engine.vm,&engine);
+  GmlRenderPresentationMetrics presentation={0};
+  gml_render_presentation_metrics(&engine.render,&presentation);
+  int ok=!engine.content_presented && presentation.application_draw_enabled;
+
+  engine.render.content_composited_screen=1;
+  screen_refresh_present_latch_hook(&engine.vm,&engine);
+  gml_render_presentation_metrics(&engine.render,&presentation);
+  ok=ok && engine.content_presented && !presentation.application_draw_enabled;
+
+  if(!ok)
+    fputs("screen_refresh did not distinguish a transparent scratch blit from a composed frame\n",stderr);
+  return ok;
+}
+
 static int application_surface_port_scale_policy(void){
   AnygmEngine engine={0};
   engine.win.bytecode=17;
@@ -759,6 +780,8 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
 
 int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
+    if(!strcmp(argv[2],"screen_refresh_present_latch"))
+      return screen_refresh_present_latch_policy()?0:1;
     if(!strcmp(argv[2],"application_surface_port_scale"))
       return application_surface_port_scale_policy()?0:1;
     if(!strcmp(argv[2],"first_generation_application_surface"))
@@ -780,7 +803,8 @@ int main(int argc,char **argv){
     return 1;
   }
   if(argc!=1){
-    fputs("usage: test_engine_instances [--case application_surface_port_scale|"
+    fputs("usage: test_engine_instances [--case screen_refresh_present_latch|"
+          "application_surface_port_scale|"
           "first_generation_application_surface|"
           "game_restart|"
           "first_generation_dynamic_camera|"
@@ -790,6 +814,7 @@ int main(int argc,char **argv){
   }
   if(!screen_stage_raster_policy()) return 1;
   if(!room_order_redirect_policy()) return 1;
+  if(!screen_refresh_present_latch_policy()) return 1;
   if(!application_surface_port_scale_policy()) return 1;
   if(!first_generation_application_surface_policy()) return 1;
   if(!first_generation_dynamic_camera_policy()) return 1;

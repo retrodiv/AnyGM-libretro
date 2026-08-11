@@ -31,6 +31,65 @@ static uint64_t pixel_hash(const uint32_t *pixels,size_t count){
   return pixel_hash_update(UINT64_C(1469598103934665603),pixels,count);
 }
 
+static int presentation_latch_coverage_case(void){
+  enum { WIDTH=4,HEIGHT=3 };
+  GmlRender render;
+  uint32_t frame[WIDTH*HEIGHT];
+  memset(&render,0,sizeof render);
+  memset(frame,0,sizeof frame);
+  render.fb=render.base_fb=frame;
+  render.fbw=render.base_fbw=WIDTH;
+  render.fbh=render.base_fbh=HEIGHT;
+  render.target_id=-1;
+  render.next_surface_id=1;
+  render.alphablend=1;
+  render.alpha=1.0;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+
+  int source=gml_surface_create(&render,WIDTH,HEIGHT);
+  REQUIRE(source==1 && surface_known_transparent(&render,source),
+          "presentation transparent source");
+  gml_draw_surface_stretched(
+    &render,source,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  REQUIRE(!gml_render_content_composited_screen(&render),
+          "transparent scratch surface does not latch presentation");
+
+  REQUIRE(gml_surface_set_target(&render,source),
+          "presentation authored transparent source target");
+  gml_render_primitive_rectangle(&render,0,0,0,0,0xFFFFFFu,0);
+  gml_render_set_pending_fill(&render,0);
+  gml_surface_reset_target(&render);
+  REQUIRE(surface_known_transparent(&render,source),
+          "presentation authored source resolves transparent");
+  gml_draw_surface_stretched(
+    &render,source,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  REQUIRE(gml_render_content_composited_screen(&render),
+          "authored transparent surface latches presentation");
+
+  gml_render_clear_content_composited_screen(&render);
+  REQUIRE(gml_surface_set_target(&render,source),
+          "presentation opaque source target");
+  gml_render_clear(&render,0x000000u,1.0);
+  gml_surface_reset_target(&render);
+  REQUIRE(surface_known_opaque(&render,source),
+          "presentation opaque source coverage");
+  gml_draw_surface_stretched(
+    &render,source,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  REQUIRE(gml_render_content_composited_screen(&render),
+          "opaque black surface latches presentation");
+
+  gml_render_clear_content_composited_screen(&render);
+  REQUIRE(!gml_render_content_composited_screen(&render),
+          "presentation latch clears between frames");
+  gml_surface_free(&render,source);
+  return 0;
+}
+
 static int composition_cases(void){
   GmlRender render;
   uint32_t frame[12*10];
@@ -664,6 +723,8 @@ int main(void){
   gml_surface_free(&render,destination);
   REQUIRE(!gml_surface_exists(&render,source) &&
           !gml_surface_exists(&render,destination),"freed surfaces");
+  REQUIRE(presentation_latch_coverage_case()==0,
+          "presentation latch coverage case");
   REQUIRE(composition_cases()==0,"composition cases");
   REQUIRE(screen_raster_part_case()==0,"screen raster part case");
   REQUIRE(opaque_integer_scale_case()==0,"opaque integer scale case");

@@ -248,6 +248,11 @@ void gml_surface_reset_target(GmlRender *r){
   int before_=0;
   if(dbg_) for(size_t i_=0;i_<(size_t)r->fbw*(size_t)r->fbh;i_++) if(r->fb[i_]&0x00FFFFFFu) before_++;
   if(r && surface_slot(r->target_id)>=0){
+    /* Remember that content really authored this surface before a deferred transparent clear is
+     * resolved. A later screen blit of that now-transparent surface is still a compositor action;
+     * this is distinct from blitting a scratch surface that received no draw at all. */
+    if(!r->fb_all_transparent)
+      r->content_authored_surfaces|=UINT64_C(1)<<(r->target_id-1);
     gml_render_flush_pending_underlay(r);
     gml_render_flush_pending_fill(r);
     surface_store_target_coverage(r);
@@ -1111,9 +1116,14 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
 }
 void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
                                 double dw,double dh,uint32_t blend,double alpha){
-  /* A surface drawn onto the base canvas marks content composition for the
-   * current presentation frame. */
-  if(r && r->target_id<0) r->content_composited_screen=1;
+  /* A surface drawn onto the base canvas, rather than into another surface, is content compositing
+   * its own screen. A bare refresh means only presentation, and a newly created transparent scratch
+   * surface writes no pixels. An authored surface can still count after a transparent clear. */
+  int slot=surface_slot(surf);
+  if(r && r->target_id<0 && alpha>0.0 && slot>=0 &&
+     (!surface_known_transparent(r,surf) ||
+      (r->content_authored_surfaces&(UINT64_C(1)<<slot))))
+    r->content_composited_screen=1;
   draw_surface_stretched_impl(r,surf,dx,dy,dw,dh,blend,alpha,1);
 }
 int gml_render_backend_surface_stretched(GmlRender *r,int surf,double dx,double dy,

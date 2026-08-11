@@ -200,8 +200,10 @@ typedef struct GmlRender {
   double    gui_maximise_xoffset, gui_maximise_yoffset;
   /* the application_surface: the buffer the game is rendered into and later
    * readable by draw_surface_* calls. Set by the host; same w/h as fbw/fbh. */
-  uint32_t *app_surface; int app_draw_enable;   /* GM application_surface_draw_enable, default 1 */
-  int content_composited_screen;  /* a surface was drawn onto the base canvas */
+  uint32_t *app_surface; int app_draw_enable;
+  int content_composited_screen;       /* a surface was drawn onto the base canvas */
+  uint64_t content_authored_surfaces;  /* frame-local authored surfaces, including cleared ones */
+  /* GM application_surface_draw_enable, default 1 */
   /* surface_resize(application_surface, ...) changes the application surface independently of
    * the active camera/view. The host normally lends its world framebuffer through
    * app_surface; once GML explicitly resizes surface 0 this owned buffer persists across room and

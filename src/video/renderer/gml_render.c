@@ -1159,7 +1159,12 @@ void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, doubl
   r->pending_fill=0; r->pending_fill_color=0;
 }
 int gml_render_content_composited_screen(GmlRender *r){ return r?r->content_composited_screen:0; }
-void gml_render_clear_content_composited_screen(GmlRender *r){ if(r) r->content_composited_screen=0; }
+void gml_render_clear_content_composited_screen(GmlRender *r){
+  if(r){
+    r->content_composited_screen=0;
+    r->content_authored_surfaces=0;
+  }
+}
 void gml_render_world_set_logical_extent(GmlRender *r,int width,int height){
   if(!r || width<=0 || height<=0 || r->fbw<=0 || r->fbh<=0 ||
      r->target_sp!=0 || r->target_id>=0) return;
@@ -1357,6 +1362,11 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0) return;
   gml_render_flush_rotated_batch(r);
   gml_render_cancel_pending_underlay(r);
+  /* Preserve the fact that content authored the bound surface before replacing it with a deferred
+   * transparent clear. The surface compositor consumes this frame-local signal after the target
+   * closes; coverage alone correctly describes the final transparent pixels but loses that intent. */
+  if(r->target_id>0 && r->target_id<=GML_MAX_SURFACES && !r->fb_all_transparent)
+    r->content_authored_surfaces|=UINT64_C(1)<<(r->target_id-1);
   r->pending_fill=1;
   r->pending_fill_color=color;
   r->fb_opaque_known=1;

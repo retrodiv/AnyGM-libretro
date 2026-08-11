@@ -532,7 +532,6 @@ GmlVal gml_builtin_try_platform_extensions(GmlVM *vm, const char *nm, GmlVal *a,
      !strcmp(nm,"screen_save")||!strcmp(nm,"screen_save_part")) return vreal(0);
   if(!strcmp(nm,"screen_refresh")){
     if(vm && vm->win && anygm_policy_uses_classic_runtime(vm->win)){
-      if(R) gml_render_application_surface_set_draw_enabled(R,0);
       if(vm->present_latch_hook) vm->present_latch_hook(vm,vm->present_latch_hook_user);
     }
     return vreal(0);
