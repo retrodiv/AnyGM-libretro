@@ -1159,6 +1159,8 @@ void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
   gml_render_maybe_prepare_draw(r);
   int bR=blend&255,bG=(blend>>8)&255,bB=(blend>>16)&255;
   const struct GmlShaderPal *spal=pal_active(r),*slut=lut_active(r),*sgrid=grid_active(r);
+  /* Apply the active four-band mapper to sampled surface pixels. */
+  const struct GmlShaderPal *squant=quantise4_active(r);
   for(int py=y0;py<y1;py++) for(int px=x0;px<x1;px++){
     double rx=px+0.5-ax,ry=py+0.5-ay;
     double u=(rx*c-ry*sn)/xs,v=(rx*sn+ry*c)/ys;
@@ -1177,7 +1179,8 @@ void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
         cb+=(int)((p[k]&255)*w[k]); ca+=(int)((p[k]>>24)*w[k]); }
       sv=((uint32_t)ca<<24)|((uint32_t)cr<<16)|((uint32_t)cg<<8)|(uint32_t)cb;
     } else sv=src[(size_t)(int)floor(v)*sw+(int)floor(u)];
-    if(spal) sv=pal_map_px(spal,sv); else if(slut) sv=lut_map_px(r,slut,sv); else if(sgrid) sv=grid_map_px(r,sgrid,sv);
+    if(squant) sv=quantise4_map_px(squant,sv);
+    else if(spal) sv=pal_map_px(spal,sv); else if(slut) sv=lut_map_px(r,slut,sv); else if(sgrid) sv=grid_map_px(r,sgrid,sv);
     int sr=((sv>>16)&255)*bR/255,sg=((sv>>8)&255)*bG/255,sb=(sv&255)*bB/255;
     uint32_t *dp=&r->fb[(size_t)py*r->fbw+px],old=*dp,out;
     double sa=((sv>>24)/255.0)*alpha;
