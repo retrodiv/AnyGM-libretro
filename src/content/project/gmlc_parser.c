@@ -243,8 +243,22 @@ static int resolve_const(Compiler *c, const char *name, double *out){
   };
   for(int i=0;i<(int)(sizeof(mouse_buttons)/sizeof(*mouse_buttons));i++)
     if(!strcmp(name,mouse_buttons[i].name)){ *out=mouse_buttons[i].value; return 1; }
-  if(!strcmp(name,"bm_normal")){ *out=0; return 1; }
-  if(!strcmp(name,"bm_subtract")){ *out=3; return 1; }
+  /* Blend modes and extended blend factors are distinct bm_ constant families.
+   * Resolve both here so an unknown name cannot silently read as zero. */
+  static const struct { const char *name; int value; } blend_constants[]={
+    /* modes, for draw_set_blend_mode */
+    {"bm_normal",0}, {"bm_add",1}, {"bm_max",2}, {"bm_subtract",3},
+    /* factors, for draw_set_blend_mode_ext */
+    {"bm_zero",1}, {"bm_one",2},
+    {"bm_src_colour",3}, {"bm_src_color",3},
+    {"bm_inv_src_colour",4}, {"bm_inv_src_color",4},
+    {"bm_src_alpha",5}, {"bm_inv_src_alpha",6},
+    {"bm_dest_alpha",7}, {"bm_inv_dest_alpha",8},
+    {"bm_dest_colour",9}, {"bm_dest_color",9},
+    {"bm_inv_dest_colour",10}, {"bm_inv_dest_color",10}
+  };
+  for(int i=0;i<(int)(sizeof(blend_constants)/sizeof(*blend_constants));i++)
+    if(!strcmp(name,blend_constants[i].name)){ *out=blend_constants[i].value; return 1; }
   static const char *effect_kinds[]={
     "ef_explosion","ef_ring","ef_ellipse","ef_firework","ef_smoke","ef_smokeup",
     "ef_star","ef_spark","ef_flare","ef_cloud","ef_rain","ef_snow"
