@@ -708,6 +708,9 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   const struct GmlShaderPal *spal=pal_active(r);
   const struct GmlShaderPal *slut=lut_active(r);
   const struct GmlShaderPal *sgrid=grid_active(r);
+  /* The one-to-one surface kernel needs a dedicated four-band branch so
+   * opaque copy and channel-mask fast paths do not bypass active mapping. */
+  const struct GmlShaderPal *squant=quantise4_active(r);
   GmlGridPixelCache grid_cache={0};
   int alpha_test=shader_alpha_test_requires_filter(r);
   int opaque_alpha_test_passthrough=
@@ -729,7 +732,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
     if(cw>0 && ch>0){
       int sx_start=cx0-x0, sy_start=cy0-y0;
       int white=((blend & 0xFFFFFF) == 0xFFFFFF);
-      if(src_all_opaque && r->blendmode==0 && alpha>=1.0 && white && !spal && !slut && !sgrid &&
+      if(src_all_opaque && r->blendmode==0 && alpha>=1.0 && white && !spal && !slut && !sgrid && !squant &&
          r->color_write_mask==0x0F &&
          src!=r->fb && cx0==0 && cy0==0 && cw==r->fbw && ch==r->fbh &&
          sx_start==0 && sy_start==0 && sw==r->fbw && sh==r->fbh){
@@ -742,7 +745,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
         return;
       }
       gml_render_maybe_prepare_draw(r);
-      if(r->color_write_mask!=0x0F && r->blendmode==0 && alpha>=1.0 && white && !spal && !slut && !sgrid){
+      if(r->color_write_mask!=0x0F && r->blendmode==0 && alpha>=1.0 && white && !spal && !slut && !sgrid && !squant){
         /* Channel-masked surface copy. This is the common mask-construction idiom: draw an
          * opaque color/shape first, disable alpha writes, then copy scene RGB through it. */
         for(int yy=0; yy<ch; yy++){
@@ -839,6 +842,13 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             }
             dp[xx]=(oc<<24)|((uint32_t)orr<<16)|((uint32_t)og<<8)|(uint32_t)ob;
           }
+        }
+      } else if((!r->alphablend || alpha>=1.0) && white && squant){
+        for(int yy=0; yy<ch; yy++){
+          const uint32_t *sp=src+(size_t)(sy_start+yy)*sw+sx_start;
+          uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
+          for(int xx=0; xx<cw; xx++){ if(!(sp[xx]>>24)) continue;
+            dp[xx]=quantise4_map_px(squant,sp[xx]); }
         }
       } else if((!r->alphablend || alpha>=1.0) && white && spal){
         for(int yy=0; yy<ch; yy++){
