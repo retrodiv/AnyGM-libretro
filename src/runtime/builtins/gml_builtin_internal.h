@@ -94,8 +94,13 @@ typedef struct {
   int hc, vc, cw, ch;
   uint8_t *cell;
 } GmlMpGrid;
+/* Ten high-score places, ordered by score. */
+#define GML_HIGHSCORE_PLACES 10
+typedef struct { char name[64]; double score; int used; } GmlBuiltinHighscore;
+
 struct GmlBuiltinState {
   GmlVM *vm;
+  GmlBuiltinHighscore highscore[GML_HIGHSCORE_PLACES];
   GmlBuiltinIniEntry ini_kv[GML_INI_MAX];
   int ini_n, ini_open;
   char ini_path[256];

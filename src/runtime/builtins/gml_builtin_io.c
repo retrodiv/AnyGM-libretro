@@ -928,6 +928,33 @@ GmlVal gml_builtin_try_io_ini(GmlVM *vm, const char *nm, GmlVal *a, int n){
 
 
 GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
+  /* The high-score table retains ten places in score order. Reads beyond
+   * populated places return zero or an empty string. */
+  if(!strncmp(nm,"highscore_",10)){
+    GmlBuiltinState *hs=builtin_state_ensure(vm);
+    if(!hs) return vreal(0);
+    if(!strcmp(nm,"highscore_clear")){
+      for(int i=0;i<GML_HIGHSCORE_PLACES;i++){ hs->highscore[i].used=0; hs->highscore[i].score=0;
+        hs->highscore[i].name[0]=0; }
+      return vreal(0);
+    }
+    if(!strcmp(nm,"highscore_add")){
+      const char *who=S(vm,a,n,0); double score=N(a,n,1);
+      int at=GML_HIGHSCORE_PLACES;
+      for(int i=0;i<GML_HIGHSCORE_PLACES;i++)
+        if(!hs->highscore[i].used || score>hs->highscore[i].score){ at=i; break; }
+      if(at>=GML_HIGHSCORE_PLACES) return vreal(0);
+      for(int i=GML_HIGHSCORE_PLACES-1;i>at;i--) hs->highscore[i]=hs->highscore[i-1];
+      hs->highscore[at].used=1;
+      hs->highscore[at].score=score;
+      snprintf(hs->highscore[at].name,sizeof hs->highscore[at].name,"%s",who?who:"");
+      return vreal(0);
+    }
+    int place=(int)N(a,n,0)-1;   /* Places are one-based. */
+    int have=place>=0 && place<GML_HIGHSCORE_PLACES && hs->highscore[place].used;
+    if(!strcmp(nm,"highscore_value")) return vreal(have?hs->highscore[place].score:0.0);
+    if(!strcmp(nm,"highscore_name")) return vstr(have?hs->highscore[place].name:"");
+  }
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
   /* ---- file / buffer runtime I/O ---- */

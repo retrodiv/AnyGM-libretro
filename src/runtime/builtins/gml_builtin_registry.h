@@ -1665,7 +1665,11 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1579, LAYER_SEQUENCE_DESTROY, "layer_sequence_destroy", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS) \
   ENTRY(1580, LAYER_SEQUENCE_EXISTS, "layer_sequence_exists", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS) \
   ENTRY(1581, LAYER_SEQUENCE_IS_FINISHED, "layer_sequence_is_finished", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS) \
-  ENTRY(1582, LAYER_SEQUENCE_HEADPOS, "layer_sequence_headpos", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS)
+  ENTRY(1582, LAYER_SEQUENCE_HEADPOS, "layer_sequence_headpos", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS) \
+  ENTRY(1583, HIGHSCORE_ADD, "highscore_add", IO, IO, ALWAYS) \
+  ENTRY(1584, HIGHSCORE_VALUE, "highscore_value", IO, IO, ALWAYS) \
+  ENTRY(1585, HIGHSCORE_CLEAR, "highscore_clear", IO, IO, ALWAYS) \
+  ENTRY(1586, HIGHSCORE_NAME, "highscore_name", IO, IO, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1680,7 +1684,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1583
+  GML_BUILTIN_ID_LIMIT = 1587
 } GmlBuiltinId;
 
 #endif
