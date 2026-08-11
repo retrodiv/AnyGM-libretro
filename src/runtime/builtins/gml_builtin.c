@@ -97,7 +97,9 @@ void builtin_set_blendmode_ext(GmlVM *vm,GmlRender *R,int src,int dst){
   else if(src==5 && dst==4) state.blend_mode=4;        /* source alpha, inverse source colour */
   /* The (source colour, one) factor pair adds source-colour-scaled colour
    * while preserving destination colour for a black source. */
-  else if(src==3 && dst==2) state.blend_mode=5;        /* source colour, one */
+  /* Hold this mapping until a surface target retained across Draw and the
+   * presented buffer agree. The mode-5 kernel remains implemented but unused. */
+  /* else if(src==3 && dst==2) state.blend_mode=5; */
   else state.blend_mode=0;                             /* includes normal (5,6) */
   gml_render_draw_state_update(R,&state,GML_RENDER_DRAW_STATE_BLEND_MODE);
   if(builtin_setting(vm,"GML_DBG_BM"))
