@@ -1777,8 +1777,11 @@ static int parse_executable_extensions(ClassicReader *r, GmlcClassicManifest *ou
 
 
 static int parse_legacy_executable_data(const uint8_t *data,size_t size,
+                                        GmlcClassicVersion project_version,
                                         uint32_t settings_version,
                                         const GmlcClassicSettings *settings,
+                                        size_t resource_offset,
+                                        int has_extensions,int has_includes,
                                         GmlcClassicManifest *out,char *err,size_t errcap){
   ClassicReader r={data,size,0,err,errcap};
   uint32_t runner_id=0,version=0,count=0;
@@ -1786,19 +1789,25 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
      !reader_u32(&r,&out->inventory.header.game_id,"legacy executable game id") ||
      !reader_skip(&r,16,"legacy executable guid")) return 0;
   memcpy(out->inventory.header.guid,data+r.pos-16u,16u);
-  out->inventory.header.version=GMLC_CLASSIC_GM7;
+  out->inventory.header.version=project_version;
   out->inventory.settings_version=settings_version;
   if(settings) out->inventory.settings=*settings;
   (void)runner_id;
 
   size_t section_offset=r.pos;
-  if(!reader_u32(&r,&version,"legacy executable extension version") || version<700 ||
-     !reader_u32(&r,&count,"legacy executable extension count") ||
-     !parse_executable_extensions(&r,out,count)){
-    if(err && errcap && !err[0])
-      snprintf(err,errcap,"classic executable: invalid extension section at offset %" PRIu64,
-               (uint64_t)section_offset);
-    return 0;
+  if(resource_offset){
+    if(resource_offset<r.pos || resource_offset>r.size)
+      return reader_fail(&r,"legacy executable resource offset");
+    r.pos=resource_offset;
+  } else if(has_extensions){
+    if(!reader_u32(&r,&version,"legacy executable extension version") || version<700 ||
+       !reader_u32(&r,&count,"legacy executable extension count") ||
+       !parse_executable_extensions(&r,out,count)){
+      if(err && errcap && !err[0])
+        snprintf(err,errcap,"classic executable: invalid extension section at offset %" PRIu64,
+                 (uint64_t)section_offset);
+      return 0;
+    }
   }
 
   for(int type=0;type<GMLC_CLASSIC_RESOURCE_TYPES;type++){
@@ -1834,23 +1843,25 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
      !reader_u32(&r,&out->inventory.last_tile_id,"legacy executable last tile id")) return 0;
   out->inventory.payload_end=r.pos;
 
-  section_offset=r.pos;
-  if(!reader_u32(&r,&version,"legacy executable include version") || version<620 ||
-     !reader_u32(&r,&count,"legacy executable include count") ||
-     count>(r.size-r.pos)/36u){
-    if(err && errcap && !err[0])
-      snprintf(err,errcap,
-               "classic executable: invalid included-file section at offset %" PRIu64,
-               (uint64_t)section_offset);
-    return 0;
+  if(has_includes){
+    section_offset=r.pos;
+    if(!reader_u32(&r,&version,"legacy executable include version") || version<620 ||
+       !reader_u32(&r,&count,"legacy executable include count") ||
+       count>(r.size-r.pos)/36u){
+      if(err && errcap && !err[0])
+        snprintf(err,errcap,
+                 "classic executable: invalid included-file section at offset %" PRIu64,
+                 (uint64_t)section_offset);
+      return 0;
+    }
+    if(count){
+      out->included_files=(GmlcClassicIncludedFile*)calloc(count,sizeof(*out->included_files));
+      if(!out->included_files) return reader_fail(&r,"legacy executable include allocation");
+      out->included_file_count=count;
+    }
+    for(uint32_t include=0;include<count;include++)
+      if(!read_legacy_included_file(&r,&out->included_files[include])) return 0;
   }
-  if(count){
-    out->included_files=(GmlcClassicIncludedFile*)calloc(count,sizeof(*out->included_files));
-    if(!out->included_files) return reader_fail(&r,"legacy executable include allocation");
-    out->included_file_count=count;
-  }
-  for(uint32_t include=0;include<count;include++)
-    if(!read_legacy_included_file(&r,&out->included_files[include])) return 0;
 
   section_offset=r.pos;
   if(!reader_u32(&r,&version,"legacy executable game-information version") || version<430 ||
@@ -1948,8 +1959,8 @@ static int parse_legacy_executable_manifest(const uint8_t *file,size_t size,size
   uint8_t *decoded=NULL; size_t decoded_size=0;
   int ok=0; /* This operation is unavailable. */
   free(envelope);
-  if(ok) ok=parse_legacy_executable_data(decoded,decoded_size,settings_version,
-                                         &settings,out,err,errcap);
+  if(ok) ok=parse_legacy_executable_data(decoded,decoded_size,GMLC_CLASSIC_GM7,
+                                         settings_version,&settings,0,1,1,out,err,errcap);
   free(decoded);
   if(!ok) gmlc_classic_manifest_free(out);
   return ok;
