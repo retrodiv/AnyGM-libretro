@@ -166,6 +166,8 @@ struct GmlBuiltinState {
   int shader_texture_log_count;
   int gpu_log_count;
   char collision_filter[128];
+  /* Keep this table last so preceding builtin-state fields retain their offsets. */
+  GmlBuiltinHighscore highscore[GML_HIGHSCORE_PLACES];
 };
 
 struct GmlRender;
