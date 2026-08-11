@@ -100,7 +100,6 @@ typedef struct { char name[64]; double score; int used; } GmlBuiltinHighscore;
 
 struct GmlBuiltinState {
   GmlVM *vm;
-  GmlBuiltinHighscore highscore[GML_HIGHSCORE_PLACES];
   GmlBuiltinIniEntry ini_kv[GML_INI_MAX];
   int ini_n, ini_open;
   char ini_path[256];
@@ -167,6 +166,8 @@ struct GmlBuiltinState {
   int shader_texture_log_count;
   int gpu_log_count;
   char collision_filter[128];
+  /* Keep this last so earlier builtin-state field offsets remain unchanged. */
+  GmlBuiltinHighscore highscore[GML_HIGHSCORE_PLACES];
 };
 
 struct GmlRender;
