@@ -280,6 +280,13 @@ typedef struct GmlRender {
     int ordered_dither;
     char ordered_dither_uniform[32];
     float ordered_dither_alpha;
+    /* Four-band intensity quantiser. Stored thresholds select one of four
+     * configured RGB triplets from the mean input-channel intensity. */
+    int quantise4;
+    char quantise4_uniform[4][32];
+    float quantise4_colour[4][3];
+    int quantise4_set;
+    float quantise4_threshold[3];
     /* Constant-colour alpha-mask family. The fragment samples the base texture once, clears alpha
      * below a parsed literal threshold, and emits a uniform RGB with the remaining source alpha.
      * The parser derives the uniform and comparison from the complete fragment operation graph. */

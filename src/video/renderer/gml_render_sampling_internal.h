@@ -257,9 +257,31 @@ static inline uint32_t grid_map_px_cached(GmlRender *r, const struct GmlShaderPa
   cache->value[slot]=mapped;
   return mapped;
 }
+/* Four-band quantiser for eligible mapped texels. Configured thresholds
+ * select an RGB triplet using mean input-channel intensity. */
+static inline const struct GmlShaderPal *quantise4_active(GmlRender *r){
+  if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
+  const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
+  return (sp->quantise4 && sp->quantise4_set==0xF) ? sp : NULL;
+}
+static inline uint32_t quantise4_map_px(const struct GmlShaderPal *sp, uint32_t value){
+  float intensity=(float)(((value>>16)&255)+((value>>8)&255)+(value&255))/(3.0f*255.0f);
+  int band=0;
+  if(intensity>sp->quantise4_threshold[0]) band=1;
+  if(intensity>sp->quantise4_threshold[1]) band=2;
+  if(intensity>sp->quantise4_threshold[2]) band=3;
+  int red=(int)(sp->quantise4_colour[band][0]+0.5f);
+  int green=(int)(sp->quantise4_colour[band][1]+0.5f);
+  int blue=(int)(sp->quantise4_colour[band][2]+0.5f);
+  if(red<0)red=0; else if(red>255)red=255;
+  if(green<0)green=0; else if(green>255)green=255;
+  if(blue<0)blue=0; else if(blue>255)blue=255;
+  return (value&0xFF000000u)|((uint32_t)red<<16)|((uint32_t)green<<8)|(uint32_t)blue;
+}
 static inline int mapped_texture_active(GmlRender *r){
   return pal_active(r)!=NULL || lut_active(r)!=NULL || grid_active(r)!=NULL ||
-         grayscale_active(r)!=NULL || solid_alpha_mask_active(r)!=NULL;
+         grayscale_active(r)!=NULL || solid_alpha_mask_active(r)!=NULL ||
+         quantise4_active(r)!=NULL;
 }
 static inline uint32_t mapped_texture_pixel(GmlRender *r, uint32_t value){
   const struct GmlShaderPal *shader;
@@ -270,6 +292,7 @@ static inline uint32_t mapped_texture_pixel(GmlRender *r, uint32_t value){
          : alpha< shader->solid_alpha_mask_cutoff_step) alpha=0;
     return ((uint32_t)alpha<<24)|shader->solid_alpha_mask_rgb;
   }
+  if((shader=quantise4_active(r))) return quantise4_map_px(shader,value);
   if((shader=lut_active(r))) return lut_map_px(r,shader,value);
   if((shader=grid_active(r))) return grid_map_px(r,shader,value);
   if((shader=grayscale_active(r))){

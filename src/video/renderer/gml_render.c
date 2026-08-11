@@ -762,7 +762,11 @@ int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *n
           return GML_RENDER_SHADER_HANDLE(
             shader,GML_RENDER_NOISE_JUMBLE_HANDLE_BASE+index);
     if(recognized->ordered_dither && !strcmp(name,recognized->ordered_dither_uniform))
-      return GML_RENDER_SHADER_HANDLE(shader,64);
+      return GML_RENDER_SHADER_HANDLE(shader,40);
+    if(recognized->quantise4)
+      for(int index=0;index<4;index++)
+        if(!strcmp(name,recognized->quantise4_uniform[index]))
+          return GML_RENDER_SHADER_HANDLE(shader,41+index);
     if(recognized->lut && !strcmp(name,recognized->lut_row_uniform))
       return GML_RENDER_SHADER_HANDLE(shader,1);
     if(recognized->lut_indexed){
@@ -870,8 +874,17 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
       recognized->sampled_crt_value[index][component]=(float)values[component];
     return;
   }
-  if(slot==64){
+  if(slot==40){
     if(recognized->ordered_dither) recognized->ordered_dither_alpha=(float)values[0];
+    return;
+  }
+  if(slot>=41 && slot<=44){
+    if(recognized->quantise4){
+      int index=slot-41;
+      for(int component=0;component<3;component++)
+        recognized->quantise4_colour[index][component]=(float)values[component];
+      recognized->quantise4_set|=1<<index;
+    }
     return;
   }
   if(slot==1){
