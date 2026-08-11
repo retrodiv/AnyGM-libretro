@@ -741,6 +741,12 @@ void gml_render_shader_set_current(GmlRender *r,int shader){
 int gml_render_shader_current(const GmlRender *r){
   return r?r->active_shader:-1;
 }
+/* Whether this renderer is rasterizing under the classic conventions. Builtins see GmlRender as an
+ * incomplete type, and primitive coordinate rules differ between the generations, so the ones that
+ * have to choose a rule ask here rather than keeping a second copy of the flag. */
+int gml_render_is_classic(const GmlRender *r){
+  return r?r->classic:0;
+}
 
 #define GML_RENDER_SHADER_HANDLE_STRIDE 64
 #define GML_RENDER_SHADER_HANDLE(shader,slot) \

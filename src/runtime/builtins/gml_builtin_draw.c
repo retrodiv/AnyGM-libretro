@@ -734,6 +734,9 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
                                        :(int)ceil(raster_x2);
         int y2=first_generation_outline?primitive_raster_coordinate(vm,raster_y2)
                                        :(int)ceil(raster_y2);
+        /* Modern outlines stroke the ring immediately outside the pixels filled by the same
+         * coordinates. Classic and first-generation paths retain their own edge conventions. */
+        if(outline && !first_generation_outline && !gml_render_is_classic(R)){ x1--; y1--; x2++; y2++; }
         if(plain) gml_render_primitive_rectangle(R,x1,y1,x2,y2,draw.color,outline);
         else gml_render_primitive_rectangle_color(R,x1,y1,x2,y2,NU32(a,n,4),NU32(a,n,5),NU32(a,n,6),NU32(a,n,7),outline); }
       return vreal(0); }

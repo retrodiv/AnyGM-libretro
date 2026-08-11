@@ -309,6 +309,7 @@ void gml_render_application_surface_set_draw_enabled(GmlRender *r,int enabled);
 int gml_render_target_pixel(GmlRender *r,int x,int y,uint32_t *pixel);
 void gml_render_shader_set_current(GmlRender *r,int shader);
 int gml_render_shader_current(const GmlRender *r);
+int gml_render_is_classic(const GmlRender *r);
 int gml_render_shader_is_compiled(const GmlRender *r,int shader);
 int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *name);
 int gml_render_shader_sampler_handle(const GmlRender *r,int shader,const char *name);
