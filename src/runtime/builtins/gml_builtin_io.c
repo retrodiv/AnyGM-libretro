@@ -953,7 +953,14 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int place=(int)N(a,n,0)-1;   /* Places are one-based. */
     int have=place>=0 && place<GML_HIGHSCORE_PLACES && hs->highscore[place].used;
     if(!strcmp(nm,"highscore_value")) return vreal(have?hs->highscore[place].score:0.0);
-    if(!strcmp(nm,"highscore_name")) return vstr(have?hs->highscore[place].name:"");
+    if(!strcmp(nm,"highscore_name")){
+      /* Return owned storage: vstr retains a borrowed pointer to builtin state. */
+      const char *who=have?hs->highscore[place].name:"";
+      char *copy=(char*)malloc(strlen(who)+1);
+      if(!copy) return vstr("");
+      memcpy(copy,who,strlen(who)+1);
+      return vstr_owned(copy);
+    }
   }
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
