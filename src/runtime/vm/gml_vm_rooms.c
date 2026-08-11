@@ -157,8 +157,22 @@ static void parse_sequences(GmlVM *vm){
     s->speed=(double)gml_vm_read_f32_le(d,sp+8);
     s->speed_type=(int)gml_vm_read_u32_le(d,sp+12);
     s->length=(double)gml_vm_read_f32_le(d,sp+16);
-    if(gml_vm_read_u32_le(d,sp+32)!=0) continue;       /* a broadcast store this reader cannot skip */
+    /* The broadcast-message keyframe store lies between the sequence header and graphic tracks.
+     * Advance through its fixed prefix and per-channel message offsets before reading the tracks. */
     uint32_t q=sp+36;
+    { int broadcasts=(int)gml_vm_read_u32_le(d,sp+32);
+      if(broadcasts<0 || broadcasts>4096) continue;
+      for(int b=0;b<broadcasts;b++){
+        int channels=(int)gml_vm_read_u32_le(d,q+16);
+        q+=20;
+        if(channels<0 || channels>64){ channels=-1; break; }
+        for(int c=0;c<channels;c++){
+          int messages=(int)gml_vm_read_u32_le(d,q+4);
+          if(messages<0 || messages>4096){ messages=0; }
+          q+=8+(uint32_t)messages*4u;
+        }
+      }
+    }
     int tracks=(int)gml_vm_read_u32_le(d,q); q+=4;
     if(tracks<=0 || tracks>256) continue;
     s->graphics=calloc((size_t)tracks,sizeof(GmlSeqGraphic));
