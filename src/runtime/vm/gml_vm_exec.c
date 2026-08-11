@@ -654,6 +654,16 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
     }
     return;
   }
+  /* A struct target owns its field names even when the same name has a VM-defined meaning for
+   * ordinary instances. Resolve that target before the special-name dispatch below. */
+  {
+    GmlInstance *st=var_target(vm,inst);
+    if(st && inst_is_struct_ref(st)){
+      method_cache_invalidate(st,name);
+      *gml_varmap_put_hashed(&st->vars,name,nh)=v;
+      return;
+    }
+  }
   if(!strcmp(name,"room")){
     int target=(int)asnum(v);
     gml_vm_warm_audio_for_room(vm,target);

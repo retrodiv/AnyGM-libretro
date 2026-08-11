@@ -1220,9 +1220,13 @@ void gml_room_enter(GmlVM *vm, int room_index){
       memset(&gs_scratch.vars,0,sizeof gs_scratch.vars);
     }
   }
-  if(anygm_host_development_setting(vm->host,"GML_LOG_ROOMGOTO")){ 
+  if(anygm_host_development_setting(vm->host,"GML_LOG_ROOMGOTO")){
     const char *who=(vm->cur_self && vm->cur_self->obj>=0 && vm->cur_self->obj<vm->n_objects)?vm->objects[vm->cur_self->obj].name:"(none)";
-    anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[roomgoto] f%ld %d -> %d  by=%s\n",vm->frame,prev_room,room_index,who); }
+    /* A struct method may have no object self; the code entry identifies its room-entry context. */
+    const char *from=(vm->win && vm->cur_code_index>=0 && vm->cur_code_index<vm->win->n_code &&
+                      vm->win->code[vm->cur_code_index].name)?vm->win->code[vm->cur_code_index].name:"?";
+    anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[roomgoto] f%ld %d -> %d  by=%s in=%s\n",
+      vm->frame,prev_room,room_index,who,from); }
   vm->step_alloc_base=0;
   /* Room End (Other_5): fire on all active instances before clearing the old
    * room. Persistent instances survive. */

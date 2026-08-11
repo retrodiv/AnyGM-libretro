@@ -234,7 +234,12 @@ GmlVal gml_builtin_try_instances_rooms(GmlVM *vm, const char *nm, GmlVal *a, int
   }
   if(!strcmp(nm,"room_goto")||!strcmp(nm,"room_restart")||!strcmp(nm,"room_goto_next")){
     if(builtin_setting(vm,"GML_LOG_ROOMGOTO")){ const char*w=(vm->cur_self&&vm->cur_self->obj>=0&&vm->cur_self->obj<vm->n_objects)?vm->objects[vm->cur_self->obj].name:"?";
-      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[rg] %s by=%s from=%d\n",nm,w,vm->room_index); } }
+      /* Include the active code entry alongside the object for calls issued through struct methods. */
+      const char *in=(vm->win && vm->cur_code_index>=0 && vm->cur_code_index<vm->win->n_code &&
+                      vm->win->code[vm->cur_code_index].name)?vm->win->code[vm->cur_code_index].name:"?";
+      /* Log the requested target separately from the current room. */
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[rg] %s by=%s from=%d to=%d in=%s\n",
+        nm,w,vm->room_index,(n>0)?(int)N(a,n,0):-1,in); } }
   if(!strcmp(nm,"room_goto")){
     int target=(int)N(a,n,0);
     gml_vm_warm_audio_for_room(vm,target);
