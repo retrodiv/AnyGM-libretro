@@ -585,12 +585,9 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
     if(!strcmp(name,"image_number")){ GmlRender *R=(GmlRender*)vm->render;
       return vreal(R? gml_sprite_frames(R,(int)self->sprite_index):0); }
     if(inst_sprite_metric_get(vm,self,name,&out)) return out;
-    /* bbox_left/right/top/bottom = the instance's collision bounding box (from the sprite mask margins) */
+    /* bbox_left/right/top/bottom expose inclusive collision-mask bounds. */
     if(!strncmp(name,"bbox_",5)){ double l,t,r,b;
       if(gml_vm_instance_bbox(vm,self,&l,&t,&r,&b)){
-        /* Modern special variables expose far edges as exclusive coordinates while the collision
-         * engine keeps inclusive pixel bounds internally. Classic formats expose inclusive edges. */
-        if(!vm->win || !anygm_policy_uses_classic_runtime(vm->win)){ r+=1.0; b+=1.0; }
         if(!strcmp(name,"bbox_left"))   return vreal(l);
         if(!strcmp(name,"bbox_right"))  return vreal(r);
         if(!strcmp(name,"bbox_top"))    return vreal(t);
@@ -1061,7 +1058,6 @@ static GmlVal inst_get_any_h(GmlVM *vm, GmlInstance *t, const char *nm, uint32_t
   if(inst_sprite_metric_get(vm,t,nm,&o)) return o;
   if(!strncmp(nm,"bbox_",5)){ double l,tp,r,b;
     if(gml_vm_instance_bbox(vm,t,&l,&tp,&r,&b)){
-      if(!vm->win || !anygm_policy_uses_classic_runtime(vm->win)){ r+=1.0; b+=1.0; }
       if(!strcmp(nm,"bbox_left"))   return vreal(l);
       if(!strcmp(nm,"bbox_right"))  return vreal(r);
       if(!strcmp(nm,"bbox_top"))    return vreal(tp);

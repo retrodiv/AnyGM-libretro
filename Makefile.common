@@ -116,6 +116,7 @@ ANYGM_PERSISTENT_TEST_SOURCES := \
 	tests/unit/runtime/persistent/test_persistent_state.c \
 	tests/unit/runtime/persistent/test_persistent_timeline.c \
 	tests/unit/runtime/persistent/test_persistent_vm.c \
+	tests/unit/runtime/persistent/test_persistent_vm_fields.c \
 	tests/unit/runtime/persistent/test_persistent_main.c
 
 ANYGM_CORE_SOURCES := \
