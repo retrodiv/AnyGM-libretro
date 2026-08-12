@@ -344,6 +344,60 @@ static int global_frame_index(const GmlcProject *p, int sprite, int frame){
   return n+frame;
 }
 
+static uint8_t *load_sprite_mask_alpha(const GmlcProject *project,const GmlcSprite *sprite,
+                                       int mask_index,char *err,size_t errcap){
+  size_t pixels=(size_t)sprite->width*(size_t)sprite->height;
+  uint8_t *alpha=(uint8_t*)calloc(pixels?pixels:1u,1u);
+  if(!alpha){ snprintf(err,errcap,"out of memory while reading sprite mask images"); return NULL; }
+  /* Revision 800 combines all subimage alpha planes into one shared precise mask.
+   * Earlier classic layouts retain the last subimage instead. */
+  int first_frame=sprite->sep_masks?mask_index:
+                  (project->classic_version>=800?0:sprite->n_frames-1);
+  int end_frame=sprite->sep_masks?mask_index+1:sprite->n_frames;
+  for(int frame=first_frame;frame<end_frame;frame++){
+    int width=0,height=0,components=0;
+    const char *path=(sprite->frame_paths && sprite->frame_paths[frame])?
+                     sprite->frame_paths[frame]:NULL;
+    unsigned char *rgba=load_project_rgba(project,path,&width,&height,&components);
+    if(!rgba){
+      free(alpha); snprintf(err,errcap,"%s: sprite mask image read failed",path?path:"<missing>");
+      return NULL;
+    }
+    int mask_width=width<sprite->width?width:sprite->width;
+    int mask_height=height<sprite->height?height:sprite->height;
+    for(int y=0;y<mask_height;y++) for(int x=0;x<mask_width;x++){
+      uint8_t value=rgba[((size_t)y*(size_t)width+(size_t)x)*4u+3u];
+      if(value>alpha[(size_t)y*(size_t)sprite->width+(size_t)x])
+        alpha[(size_t)y*(size_t)sprite->width+(size_t)x]=value;
+    }
+    free(rgba);
+  }
+  return alpha;
+}
+
+static void sprite_mask_bounds(const GmlcSprite *sprite,const uint8_t *alpha,int tolerance,
+                               int *left,int *top,int *right,int *bottom){
+  if(sprite->bbox_mode==1){
+    *left=*top=0; *right=sprite->width-1; *bottom=sprite->height-1; return;
+  }
+  if(sprite->bbox_mode==2){
+    *left=sprite->bbox_left; *top=sprite->bbox_top;
+    *right=sprite->bbox_right; *bottom=sprite->bbox_bottom; return;
+  }
+  int found=0;
+  *left=sprite->width-1; *right=0; *top=sprite->height-1; *bottom=0;
+  for(int y=0;y<sprite->height;y++) for(int x=0;x<sprite->width;x++){
+    if(alpha[(size_t)y*(size_t)sprite->width+(size_t)x]<=tolerance) continue;
+    if(!found){ *left=*right=x; *top=*bottom=y; found=1; }
+    else {
+      if(x<*left) *left=x;
+      if(x>*right) *right=x;
+      if(y<*top) *top=y;
+      if(y>*bottom) *bottom=y;
+    }
+  }
+}
+
 static int write_sprite_masks(Pkg *pkg, const GmlcProject *project,
                               const GmlcSprite *sp, char *err, size_t errcap){
   if(sp->n_frames<=0 || sp->width<=0 || sp->height<=0){
@@ -380,43 +434,28 @@ static int write_sprite_masks(Pkg *pkg, const GmlcProject *project,
       snprintf(err,errcap,"out of memory while writing sprite mask");
       return 0;
     }
-    /* When separate collision masks are disabled, the shared mask carries the final
-     * subimage's silhouette. */
-    int first_frame=sp->sep_masks ? f : sp->n_frames-1;
-    int end_frame=sp->sep_masks ? f+1 : sp->n_frames;
-    for(int source_frame=first_frame;source_frame<end_frame;source_frame++){
-      int w=0,h=0,comp=0;
-      const char *path=(sp->frame_paths && sp->frame_paths[source_frame]) ?
-                       sp->frame_paths[source_frame] : NULL;
-      unsigned char *rgba=load_project_rgba(project,path,&w,&h,&comp);
-      if(!rgba){
-        free(mask);
-        snprintf(err,errcap,"%s: sprite mask image read failed",path?path:"<missing>");
-        return 0;
-      }
-      int mw=w<sp->width?w:sp->width;
-      int mh=h<sp->height?h:sp->height;
-      for(int y=0;y<mh;y++) for(int x=0;x<mw;x++){
-        int inside=x>=sp->bbox_left && x<=sp->bbox_right &&
-                   y>=sp->bbox_top && y<=sp->bbox_bottom;
+    uint8_t *alpha=load_sprite_mask_alpha(project,sp,f,err,errcap);
+    if(!alpha){ free(mask); return 0; }
+    int left=0,top=0,right=0,bottom=0;
+    sprite_mask_bounds(sp,alpha,tol,&left,&top,&right,&bottom);
+    for(int y=0;y<sp->height;y++) for(int x=0;x<sp->width;x++){
+        int inside=x>=left && x<=right && y>=top && y<=bottom;
         int solid=0;
         if(inside && sp->col_kind==1) solid=1;
         else if(inside && (sp->col_kind==2 || sp->col_kind==3)){
-          double hw=(sp->bbox_right-sp->bbox_left+1)/2.0;
-          double hh=(sp->bbox_bottom-sp->bbox_top+1)/2.0;
+          double hw=(right-left+1)/2.0;
+          double hh=(bottom-top+1)/2.0;
           if(hw>0.0 && hh>0.0){
-            double cx=sp->bbox_left+hw-0.5, cy=sp->bbox_top+hh-0.5;
+            double cx=left+hw-0.5, cy=top+hh-0.5;
             double dx=fabs((x-cx)/hw), dy=fabs((y-cy)/hh);
             solid=sp->col_kind==2 ? dx*dx+dy*dy<=1.0 : dx+dy<=1.0;
           }
         } else if(inside){
-          unsigned char a=rgba[((size_t)y*(size_t)w+(size_t)x)*4u+3u];
-          solid=a>tol;
+          solid=alpha[(size_t)y*(size_t)sp->width+(size_t)x]>tol;
         }
         if(solid) mask[(size_t)y*(size_t)rowb+(size_t)x/8u] |= (uint8_t)(1u<<(7-(x&7)));
-      }
-      free(rgba);
     }
+    free(alpha);
     if(!wbytes(&pkg->b,mask,mask_bytes)){
       free(mask);
       snprintf(err,errcap,"out of memory while writing sprite mask");

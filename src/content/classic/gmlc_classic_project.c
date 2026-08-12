@@ -3,6 +3,7 @@
  */
 #include "gmlc_classic_project.h"
 #include "gmlc_classic.h"
+#include "gmlc_classic_fidelity.h"
 #include "gmlc_classic_import.h"
 #include "anygm_vfs.h"
 
@@ -24,7 +25,55 @@ static char *classic_stem(const char *path){
 
 static int classic_read_file(const AnygmHostServices *host,const char *path,
                              uint8_t **data,size_t *size){
-  return anygm_vfs_read_all(host,path,data,size,512u*1024u*1024u);
+  return anygm_vfs_read_all(host,path,data,size,(size_t)GMLC_CLASSIC_FILE_LIMIT);
+}
+
+static void classic_included_hash_bytes(uint64_t *hash,const void *data,size_t size){
+  const uint8_t *bytes=(const uint8_t*)data;
+  for(size_t i=0;i<size;i++){ *hash^=bytes[i]; *hash*=UINT64_C(1099511628211); }
+}
+
+static void classic_included_hash_u64(uint64_t *hash,uint64_t value){
+  uint8_t bytes[8];
+  for(unsigned i=0;i<8;i++) bytes[i]=(uint8_t)(value>>(i*8u));
+  classic_included_hash_bytes(hash,bytes,sizeof(bytes));
+}
+
+int gmlc_classic_included_dependency_hash(const AnygmHostServices *host,
+                                          const char *project_path,
+                                          uint64_t seed,uint64_t *hash_out){
+  if(!project_path || !*project_path || !hash_out) return 0;
+  uint8_t *project_data=NULL; size_t project_size=0;
+  if(!classic_read_file(host,project_path,&project_data,&project_size)) return 0;
+  GmlcClassicManifest manifest={0}; char error[1];
+  int ok=gmlc_classic_manifest(project_data,project_size,&manifest,error,sizeof(error));
+  free(project_data);
+  char *root=ok?gmlc_path_dirname(project_path):NULL;
+  if(ok && !root) ok=0;
+  uint64_t hash=seed,external_count=0;
+  static const uint8_t domain[4]={'A','G','I','F'};
+  if(ok) classic_included_hash_bytes(&hash,domain,sizeof(domain));
+  for(uint32_t i=0;ok && i<manifest.included_file_count;i++){
+    const GmlcClassicIncludedFile *included=&manifest.included_files[i];
+    if(included->data_size || !included->data_exists || included->stored_in_project) continue;
+    if(!included->source_path || !*included->source_path){ ok=0; break; }
+    char *path=gmlc_path_join(root,included->source_path);
+    uint8_t *contents=NULL; size_t size=0;
+    ok=path && classic_read_file(host,path,&contents,&size);
+    free(path);
+    if(!ok){ free(contents); break; }
+    external_count++;
+    classic_included_hash_u64(&hash,(uint64_t)i);
+    classic_included_hash_u64(&hash,(uint64_t)strlen(included->source_path));
+    classic_included_hash_bytes(&hash,included->source_path,strlen(included->source_path));
+    classic_included_hash_u64(&hash,(uint64_t)size);
+    classic_included_hash_bytes(&hash,contents,size);
+    free(contents);
+  }
+  if(ok) classic_included_hash_u64(&hash,external_count);
+  free(root); gmlc_classic_manifest_free(&manifest);
+  if(ok) *hash_out=hash;
+  return ok;
 }
 
 static char *classic_store_source(GmlcProject *project, const char *cache_dir,
@@ -220,8 +269,20 @@ int gmlc_classic_project_load(GmlcProject *project,const AnygmHostServices *host
   gmlc_project_init(project);
   project->host=host;
   project->prefer_memory_files=1;
+  uint8_t *project_data=NULL; size_t project_size=0;
+  if(!classic_read_file(host,project_path,&project_data,&project_size)){
+    if(err&&errcap) snprintf(err,errcap,"classic project: cannot read project file");
+    return 0;
+  }
   GmlcClassicManifest manifest;
-  if(!gmlc_classic_manifest_file(host,project_path, &manifest, err, errcap)) return 0;
+  if(!gmlc_classic_manifest(project_data,project_size,&manifest,err,errcap)){
+    free(project_data); return 0;
+  }
+  if(!gmlc_classic_fidelity_apply(&manifest,host,project_path,project_data,project_size,
+                                  err,errcap)){
+    free(project_data); gmlc_classic_manifest_free(&manifest); return 0;
+  }
+  free(project_data);
   project->classic_version=(int)manifest.inventory.header.version;
   project->classic_scaling=manifest.inventory.settings.scaling;
   project->classic_interpolate=manifest.inventory.settings.interpolate;

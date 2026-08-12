@@ -97,6 +97,26 @@ enum {
   GML_EXTERNAL_AUDIO_SS_GET_LENGTH,
   GML_EXTERNAL_AUDIO_SS_GET_BYTES_PER_SECOND,
   GML_EXTERNAL_AUDIO_SS_IS_HANDLE_VALID,
+  /* Saudio uses caller-selected string IDs rather than numeric sound handles. */
+  GML_EXTERNAL_AUDIO_SA_OPEN,
+  GML_EXTERNAL_AUDIO_SA_PLAY,
+  GML_EXTERNAL_AUDIO_SA_LOOP,
+  GML_EXTERNAL_AUDIO_SA_STOP,
+  GML_EXTERNAL_AUDIO_SA_STOP_ALL,
+  GML_EXTERNAL_AUDIO_SA_PAUSE,
+  GML_EXTERNAL_AUDIO_SA_RESUME,
+  GML_EXTERNAL_AUDIO_SA_POSITION,
+  GML_EXTERNAL_AUDIO_SA_LENGTH,
+  GML_EXTERNAL_AUDIO_SA_SEEK,
+  GML_EXTERNAL_AUDIO_SA_STATUS,
+  GML_EXTERNAL_AUDIO_SA_CHANNELS,
+  GML_EXTERNAL_AUDIO_SA_BYTES_PER_SECOND,
+  GML_EXTERNAL_AUDIO_SA_CAN_PLAY,
+  GML_EXTERNAL_AUDIO_SA_OPEN_RECORD,
+  GML_EXTERNAL_AUDIO_SA_RECORD,
+  GML_EXTERNAL_AUDIO_SA_SAVE_RECORD,
+  GML_EXTERNAL_AUDIO_SA_CLOSE,
+  GML_EXTERNAL_AUDIO_SA_CLOSE_ALL,
   GML_EXTERNAL_AUDIO_OPERATION_LIMIT
 };
 typedef struct {
@@ -154,6 +174,27 @@ static const GmlExternalAudioSymbol external_supersound_symbols[]={
   {"SS_GetSoundLength",GML_EXTERNAL_AUDIO_SS_GET_LENGTH},
   {"SS_GetSoundBytesPerSecond",GML_EXTERNAL_AUDIO_SS_GET_BYTES_PER_SECOND},
 };
+static const GmlExternalAudioSymbol external_saudio_symbols[]={
+  {"open",GML_EXTERNAL_AUDIO_SA_OPEN},
+  {"play",GML_EXTERNAL_AUDIO_SA_PLAY},
+  {"loop",GML_EXTERNAL_AUDIO_SA_LOOP},
+  {"stop",GML_EXTERNAL_AUDIO_SA_STOP},
+  {"stop_all",GML_EXTERNAL_AUDIO_SA_STOP_ALL},
+  {"pause",GML_EXTERNAL_AUDIO_SA_PAUSE},
+  {"resume",GML_EXTERNAL_AUDIO_SA_RESUME},
+  {"position",GML_EXTERNAL_AUDIO_SA_POSITION},
+  {"length",GML_EXTERNAL_AUDIO_SA_LENGTH},
+  {"seek",GML_EXTERNAL_AUDIO_SA_SEEK},
+  {"status",GML_EXTERNAL_AUDIO_SA_STATUS},
+  {"channels",GML_EXTERNAL_AUDIO_SA_CHANNELS},
+  {"bytespersec",GML_EXTERNAL_AUDIO_SA_BYTES_PER_SECOND},
+  {"canplay",GML_EXTERNAL_AUDIO_SA_CAN_PLAY},
+  {"open_record",GML_EXTERNAL_AUDIO_SA_OPEN_RECORD},
+  {"record",GML_EXTERNAL_AUDIO_SA_RECORD},
+  {"save_record",GML_EXTERNAL_AUDIO_SA_SAVE_RECORD},
+  {"close",GML_EXTERNAL_AUDIO_SA_CLOSE},
+  {"close_all",GML_EXTERNAL_AUDIO_SA_CLOSE_ALL},
+};
 static int external_ascii_equal(const char *left,const char *right){
   if(!left || !right) return 0;
   while(*left && *right){
@@ -176,6 +217,9 @@ int builtin_external_audio_define(const char *library,const char *symbol){
   } else if(external_ascii_equal(base,"supersound.dll")){
     table=external_supersound_symbols;
     entries=sizeof(external_supersound_symbols)/sizeof(external_supersound_symbols[0]);
+  } else if(external_ascii_equal(base,"saudio.dll")){
+    table=external_saudio_symbols;
+    entries=sizeof(external_saudio_symbols)/sizeof(external_saudio_symbols[0]);
   }
   if(!table) return 0;
   for(size_t index=0;index<entries;index++)
@@ -183,15 +227,87 @@ int builtin_external_audio_define(const char *library,const char *symbol){
       return GML_EXTERNAL_AUDIO_HANDLE_BASE+table[index].operation;
   return 0;
 }
-static int external_audio_load(GmlVM *vm,const char *relative){
-  if(!vm || !relative || !*relative) return -1;
+
+static int external_hex_value(unsigned char value){
+  if(value>='0' && value<='9') return value-'0';
+  if(value>='a' && value<='f') return value-'a'+10;
+  if(value>='A' && value<='F') return value-'A'+10;
+  return -1;
+}
+
+static char *external_hex_decode(const char *encoded,size_t size){
+  enum { EXTERNAL_NAME_MAX=4096 };
+  if(!encoded || !size || (size&1u) || size/2u>EXTERNAL_NAME_MAX) return NULL;
+  char *decoded=(char*)malloc(size/2u+1u);
+  if(!decoded) return NULL;
+  for(size_t i=0;i<size;i+=2u){
+    int high=external_hex_value((unsigned char)encoded[i]);
+    int low=external_hex_value((unsigned char)encoded[i+1u]);
+    if(high<0 || low<0 || (high==0 && low==0)){
+      free(decoded);
+      return NULL;
+    }
+    decoded[i/2u]=(char)((high<<4)|low);
+  }
+  decoded[size/2u]='\0';
+  return decoded;
+}
+
+GmlVal builtin_external_audio_call_encoded(GmlVM *vm,const char *name,
+                                           GmlVal *args,int count,int *handled){
+  static const char prefix[]="__anygm_external_";
+  if(handled) *handled=0;
+  if(!name || strncmp(name,prefix,sizeof(prefix)-1u)) return vreal(0);
+  const char *library_hex=name+sizeof(prefix)-1u;
+  const char *separator=strchr(library_hex,'_');
+  if(!separator || separator==library_hex || !separator[1]) return vreal(0);
+  size_t library_size=(size_t)(separator-library_hex);
+  size_t symbol_size=strlen(separator+1u);
+  char *library=external_hex_decode(library_hex,library_size);
+  char *symbol=external_hex_decode(separator+1u,symbol_size);
+  int handle=(library && symbol)?builtin_external_audio_define(library,symbol):0;
+  free(library); free(symbol);
+  if(!handle) return vreal(0);
+  return builtin_external_audio_call(vm,handle,args,count,handled);
+}
+static void external_audio_free(GmlVM *vm,int sound){
+  GmlBuiltinState *state=vm?builtin_state_ensure(vm):NULL;
+  builtin_state_external_audio_remove(state,sound);
+  gml_audio_caster_free(vm?(GmlAudio*)vm->audio:NULL,sound);
+}
+
+static void external_audio_free_all(GmlVM *vm){
+  GmlBuiltinState *state=vm?builtin_state_ensure(vm):NULL;
+  /* The legacy unload/free-all entry points share one dynamic-sound pool. Keeping API-level
+   * records after that pool is released would leave valid-looking IDs pointing at recycled
+   * handles, so clear every view of the pool together. */
+  builtin_state_saudio_clear(state);
+  builtin_state_external_audio_clear(state);
+  gml_audio_caster_free_all(vm?(GmlAudio*)vm->audio:NULL);
+}
+
+static int external_audio_load_hashed_mode(GmlVM *vm,const char *relative,
+                                           uint8_t digest[32],int eager_ogg){
+  if(digest) memset(digest,0,32);
+  if(!vm || !relative || !*relative || strlen(relative)>4096u) return -1;
   char *path=resolve_read_path(vm,relative);
   uint8_t *encoded=NULL;
   size_t size=0;
   int handle=-1;
   if(path && anygm_vfs_read_all(vm->host,path,&encoded,&size,64u*1024u*1024u) &&
      size>0 && size<=INT_MAX)
-    handle=gml_audio_add_encoded((GmlAudio*)vm->audio,encoded,(int)size);
+    handle=eager_ogg
+      ? gml_audio_add_ogg((GmlAudio*)vm->audio,encoded,(int)size)
+      : gml_audio_add_encoded((GmlAudio*)vm->audio,encoded,(int)size);
+  uint8_t identity[32];
+  if(handle>=0 &&
+     (!gml_audio_sound_content_hash((GmlAudio*)vm->audio,handle,identity) ||
+      !builtin_state_external_audio_store(
+        builtin_state_ensure(vm),handle,relative,identity))){
+    external_audio_free(vm,handle);
+    handle=-1;
+  }
+  if(handle>=0 && digest) memcpy(digest,identity,sizeof(identity));
   if(builtin_setting(vm,"GML_LOG_AUDIO"))
     anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
                     "[external-audio] load %s handle=%d\n",
@@ -199,6 +315,169 @@ static int external_audio_load(GmlVM *vm,const char *relative){
   free(encoded);
   free(path);
   return handle;
+}
+
+static int external_audio_load_hashed(GmlVM *vm,const char *relative,uint8_t digest[32]){
+  return external_audio_load_hashed_mode(vm,relative,digest,0);
+}
+
+static int external_audio_load(GmlVM *vm,const char *relative){
+  return external_audio_load_hashed(vm,relative,NULL);
+}
+
+int builtin_external_audio_restore(GmlVM *vm,const char *relative,int sound,
+                                   const uint8_t expected_sha256[32]){
+  if(!vm || !vm->audio || !relative || !relative[0] || strlen(relative)>4096u ||
+     !expected_sha256) return 0;
+  uint8_t current[32];
+  if(gml_audio_sound_content_hash((GmlAudio*)vm->audio,sound,current) &&
+     !memcmp(current,expected_sha256,sizeof(current))) return 1;
+  char *path=resolve_read_path(vm,relative);
+  uint8_t *encoded=NULL;
+  size_t size=0;
+  int ok=path && anygm_vfs_read_all(vm->host,path,&encoded,&size,64u*1024u*1024u) &&
+    size>0 && size<=INT_MAX &&
+    gml_audio_restore_encoded((GmlAudio*)vm->audio,sound,encoded,(int)size,
+                              expected_sha256);
+  free(encoded);
+  free(path);
+  return ok;
+}
+
+static GmlVal external_saudio_number_string(GmlVM *vm,double value){
+  GmlBuiltinState *state=builtin_state_ensure(vm);
+  if(!state || !isfinite(value) || value<0.0) return vstr("0");
+  char *buffer=state->string_ring[state->string_ring_index++&7u];
+  snprintf(buffer,sizeof(state->string_ring[0]),"%.0f",value);
+  return vstr(buffer);
+}
+
+static int external_saudio_close(GmlVM *vm,const char *id){
+  GmlBuiltinState *state=builtin_state_ensure(vm);
+  GmlSaudioEntry *entry=builtin_state_saudio_find(state,id);
+  if(!entry) return 0;
+  if(entry->sound>=0)
+    external_audio_free(vm,entry->sound);
+  builtin_state_saudio_remove(state,id);
+  return 1;
+}
+
+static void external_saudio_close_all(GmlVM *vm){
+  GmlBuiltinState *state=builtin_state_ensure(vm);
+  if(!state) return;
+  for(uint32_t i=0;i<state->saudio_count;i++)
+    if(state->saudio_entries[i].sound>=0)
+      external_audio_free(vm,state->saudio_entries[i].sound);
+  builtin_state_saudio_clear(state);
+}
+
+static GmlVal external_saudio_call(GmlVM *vm,int operation,
+                                   GmlVal *args,int count){
+  GmlBuiltinState *state=builtin_state_ensure(vm);
+  GmlAudio *audio=vm?(GmlAudio*)vm->audio:NULL;
+  if(!state || !audio) return vreal(1);
+  if(operation==GML_EXTERNAL_AUDIO_SA_OPEN){
+    const char *path=S(vm,args,count,0);
+    const char *id=S(vm,args,count,1);
+    if(!id[0] || strlen(id)>4096u || !path[0] || strlen(path)>4096u) return vreal(1);
+    (void)external_saudio_close(vm,id);
+    uint8_t digest[32];
+    int sound=external_audio_load_hashed(vm,path,digest);
+    if(sound<0) return vreal(1);
+    if(!builtin_state_saudio_store(state,id,path,digest,sound,0)){
+      external_audio_free(vm,sound);
+      return vreal(1);
+    }
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SA_STOP_ALL){
+    for(uint32_t i=0;i<state->saudio_count;i++){
+      GmlSaudioEntry *entry=&state->saudio_entries[i];
+      if(entry->sound<0) continue;
+      entry->position_ms=gml_audio_sound_get_track_position(audio,entry->sound)*1000.0;
+      gml_audio_stop(audio,entry->sound);
+    }
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SA_CLOSE_ALL){
+    external_saudio_close_all(vm);
+    return vreal(0);
+  }
+  const char *id=operation==GML_EXTERNAL_AUDIO_SA_SEEK
+    ? S(vm,args,count,1) : S(vm,args,count,0);
+  GmlSaudioEntry *entry=builtin_state_saudio_find(state,id);
+  if(operation==GML_EXTERNAL_AUDIO_SA_STATUS){
+    if(!entry) return vstr("");
+    if(entry->recording) return vstr(entry->record_active?"recording":"stopped");
+    if(!gml_audio_is_playing(audio,entry->sound)) return vstr("stopped");
+    return vstr(gml_audio_voice_paused(audio,entry->sound)?"paused":"playing");
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SA_CAN_PLAY)
+    return vstr(entry && !entry->recording && gml_audio_exists(audio,entry->sound)
+      ? "true" : "false");
+  if(operation==GML_EXTERNAL_AUDIO_SA_POSITION){
+    double position=entry?entry->position_ms:0.0;
+    if(entry && !entry->recording && gml_audio_is_playing(audio,entry->sound)){
+      position=gml_audio_sound_get_track_position(audio,entry->sound)*1000.0;
+      entry->position_ms=position;
+    }
+    return external_saudio_number_string(vm,position);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SA_LENGTH)
+    return external_saudio_number_string(vm,
+      entry && !entry->recording?gml_audio_sound_length(audio,entry->sound)*1000.0:0.0);
+  if(operation==GML_EXTERNAL_AUDIO_SA_CHANNELS ||
+     operation==GML_EXTERNAL_AUDIO_SA_BYTES_PER_SECOND){
+    int channels=0,sample_rate=0,bytes_per_second=0;
+    if(entry && !entry->recording)
+      (void)gml_audio_sound_format(audio,entry->sound,&channels,&sample_rate,
+                                   &bytes_per_second);
+    (void)sample_rate;
+    return external_saudio_number_string(vm,
+      operation==GML_EXTERNAL_AUDIO_SA_CHANNELS?channels:bytes_per_second);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SA_OPEN_RECORD ||
+     operation==GML_EXTERNAL_AUDIO_SA_RECORD ||
+     operation==GML_EXTERNAL_AUDIO_SA_SAVE_RECORD){
+    /* Libretro exposes no microphone callback. Return MCI's nonzero error convention instead of
+     * fabricating a recording; ordinary playback remains entirely portable. */
+    return vreal(1);
+  }
+  if(!entry || entry->recording || entry->sound<0) return vreal(1);
+  if(operation==GML_EXTERNAL_AUDIO_SA_PLAY || operation==GML_EXTERNAL_AUDIO_SA_LOOP){
+    int loop=operation==GML_EXTERNAL_AUDIO_SA_LOOP;
+    gml_audio_stop(audio,entry->sound);
+    entry->position_ms=0.0;
+    gml_audio_sound_set_default_loop(audio,entry->sound,loop);
+    return vreal(gml_audio_play(audio,entry->sound,loop)>=0?0:1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SA_STOP){
+    entry->position_ms=gml_audio_sound_get_track_position(audio,entry->sound)*1000.0;
+    gml_audio_stop(audio,entry->sound);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SA_PAUSE){
+    entry->position_ms=gml_audio_sound_get_track_position(audio,entry->sound)*1000.0;
+    gml_audio_pause_sound(audio,entry->sound,1);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SA_RESUME){
+    gml_audio_pause_sound(audio,entry->sound,0);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SA_SEEK){
+    char *end=NULL;
+    double position=strtod(S(vm,args,count,0),&end);
+    if(!end || *end || !isfinite(position) || position<0.0) return vreal(1);
+    entry->position_ms=position;
+    gml_audio_sound_set_track_position(audio,entry->sound,position/1000.0);
+    return vreal(0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_SA_CLOSE){
+    (void)external_saudio_close(vm,id);
+    return vreal(0);
+  }
+  return vreal(1);
 }
 GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
                                    GmlVal *args,int count,int *handled){
@@ -208,9 +487,12 @@ GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
     return vreal(0);
   if(handled) *handled=1;
   GmlAudio *audio=vm?(GmlAudio*)vm->audio:NULL;
+  if(operation>=GML_EXTERNAL_AUDIO_SA_OPEN &&
+     operation<=GML_EXTERNAL_AUDIO_SA_CLOSE_ALL)
+    return external_saudio_call(vm,operation,args,count);
   if(operation==GML_EXTERNAL_AUDIO_INIT) return vreal(1);
   if(operation==GML_EXTERNAL_AUDIO_FREE){
-    gml_audio_caster_free_all(audio);
+    external_audio_free_all(vm);
     return vreal(0);
   }
   if(operation==GML_EXTERNAL_AUDIO_SET_LISTENER_POSITION){
@@ -243,7 +525,7 @@ GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
   if(operation==GML_EXTERNAL_AUDIO_CREATE_EMITTER)
     return vreal(external_audio_load(vm,S(vm,args,count,0)));
   if(operation==GML_EXTERNAL_AUDIO_DESTROY_EMITTER){
-    gml_audio_caster_free(audio,(int)N(args,count,0));
+    external_audio_free(vm,(int)N(args,count,0));
     return vreal(0);
   }
   if(operation==GML_EXTERNAL_AUDIO_PLAY){
@@ -327,7 +609,7 @@ GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
     return vreal(0);
   }
   if(operation==GML_EXTERNAL_AUDIO_SS_FREE_SOUND){
-    gml_audio_caster_free(audio,(int)N(args,count,0));
+    external_audio_free(vm,(int)N(args,count,0));
     return vreal(0);
   }
   if(operation==GML_EXTERNAL_AUDIO_SS_SET_VOLUME){
@@ -367,7 +649,7 @@ GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
     return vreal((int)N(args,count,0)>=0);
   if(operation==GML_EXTERNAL_AUDIO_TRACK_PLAY){
     int prior=(int)N(args,count,0);
-    if(prior>=0) gml_audio_caster_free(audio,prior);
+    if(prior>=0) external_audio_free(vm,prior);
     int sound=external_audio_load(vm,S(vm,args,count,1));
     if(sound>=0){
       gml_audio_sound_set_default_loop(audio,sound,N(args,count,2)!=0.0);
@@ -463,14 +745,15 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"caster_load")){
       const char *arg=S(vm,a,n,0);
       const char *base=strrchr(arg,'/'); base=base?base+1:arg;
-      char mus[300]; snprintf(mus,sizeof mus,"mus_%s",base);
-      char *full=resolve_read_path(vm,mus); int handle=-1;
-      uint8_t *data=NULL; size_t size=0;
-      if(full && anygm_vfs_read_all(vm->host,full,&data,&size,64u*1024u*1024u) &&
-         size>0 && size<=INT_MAX) handle=gml_audio_add_ogg(AU,data,(int)size);
-      free(data);
-      if(builtin_setting(vm,"GML_LOG_AUDIO")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[caster] load %s -> %s handle=%d\n",arg,full?full:"?",handle);
-      free(full); return vreal(handle);
+      char mus[4097];
+      int written=snprintf(mus,sizeof mus,"mus_%s",base);
+      int handle=written>0 && (size_t)written<sizeof(mus)
+        ? external_audio_load_hashed_mode(vm,mus,NULL,1) : -1;
+      if(builtin_setting(vm,"GML_LOG_AUDIO"))
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+                        "[caster] load %s -> %s handle=%d\n",
+                        arg,written>0 && (size_t)written<sizeof(mus)?mus:"?",handle);
+      return vreal(handle);
     }
     if(!strcmp(nm,"caster_play")||!strcmp(nm,"caster_play_l")||!strcmp(nm,"caster_loop")){
       int h=(int)N(a,n,0); double vol=n>=2?N(a,n,1):1.0, pit=n>=3?N(a,n,2):1.0;
@@ -479,7 +762,7 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(gml_audio_play(AU,h,loop));
     }
     if(!strcmp(nm,"caster_stop")){ int h=(int)N(a,n,0); if(h<0) gml_audio_stop_all(AU); else gml_audio_stop(AU,h); return vreal(0); }
-    if(!strcmp(nm,"caster_free")){ int h=(int)N(a,n,0); if(h<0) gml_audio_caster_free_all(AU); else gml_audio_caster_free(AU,h); return vreal(0); }
+    if(!strcmp(nm,"caster_free")){ int h=(int)N(a,n,0); if(h<0) external_audio_free_all(vm); else external_audio_free(vm,h); return vreal(0); }
     if(!strcmp(nm,"caster_set_volume")){ gml_audio_sound_gain(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"caster_get_volume")) return vreal(gml_audio_sound_get_gain(AU,(int)N(a,n,0)));
     if(!strcmp(nm,"caster_set_pitch")){ gml_audio_sound_pitch(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }

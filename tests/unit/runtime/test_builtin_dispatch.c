@@ -465,12 +465,38 @@ static int external_audio_definition_dispatch(GmlVM *vm){
       vm,"external_define",unknown_definition,5);
   GmlVal call_args[]={handle};
   GmlVal initialized=gml_builtin_call(vm,"external_call",call_args,1);
+  GmlVal encoded_initialized=gml_builtin_call(vm,
+      "__anygm_external_5347417564696f2e646c6c_7367615f496e6974",NULL,0);
+  GmlVal malformed_encoded=gml_builtin_call(vm,
+      "__anygm_external_not_hex_7367615f496e6974",NULL,0);
+  static const char encoded_prefix[]="__anygm_external_";
+  static const char encoded_symbol[]="7367615f496e6974";
+  size_t oversized_size=sizeof(encoded_prefix)-1u+8194u+1u+
+    sizeof(encoded_symbol)-1u;
+  char *oversized_name=(char*)malloc(oversized_size+1u);
+  GmlVal oversized_encoded=vreal(-1);
+  if(oversized_name){
+    size_t at=0;
+    memcpy(oversized_name+at,encoded_prefix,sizeof(encoded_prefix)-1u);
+    at+=sizeof(encoded_prefix)-1u;
+    memset(oversized_name+at,'4',8194u); at+=8194u;
+    oversized_name[at++]='_';
+    memcpy(oversized_name+at,encoded_symbol,sizeof(encoded_symbol)-1u);
+    at+=sizeof(encoded_symbol)-1u;
+    oversized_name[at]='\0';
+    oversized_encoded=gml_builtin_call(vm,oversized_name,NULL,0);
+  }
   GmlVal library=vstr("SGAudio.dll");
   GmlVal freed=gml_builtin_call(vm,"external_free",&library,1);
-  return handle.t==V_REAL && handle.d>0.0 &&
+  int ok=oversized_name && handle.t==V_REAL && handle.d>0.0 &&
          expect_real("unknown external library",unknown,0) &&
          expect_real("portable external audio init",initialized,1) &&
+         expect_real("encoded portable external audio init",encoded_initialized,1) &&
+         expect_real("malformed encoded external call",malformed_encoded,0) &&
+         expect_real("oversized encoded external call",oversized_encoded,0) &&
          expect_real("external library release",freed,0);
+  free(oversized_name);
+  return ok;
 }
 
 static int layer_instance_move(GmlVM *vm){

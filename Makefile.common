@@ -13,6 +13,7 @@ ANYGM_BZIP2_SOURCES := \
 	src/third_party/bzip2/randtable.c
 
 ANYGM_MEDIA_SOURCES := \
+	src/media/gml_hash.c \
 	src/media/gml_image_codec.c \
 	src/media/gml_font_raster.c
 
@@ -51,6 +52,7 @@ ANYGM_CLASSIC_IMPORT_SOURCES := \
 
 ANYGM_CLASSIC_SOURCES := \
 	src/content/classic/gmlc_classic.c \
+	src/content/classic/gmlc_classic_fidelity.c \
 	$(ANYGM_CLASSIC_IMPORT_SOURCES) \
 	src/content/classic/gmlc_classic_project.c
 

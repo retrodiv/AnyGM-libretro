@@ -16,7 +16,8 @@
 enum {
   CLASSIC_EXTENSION_FILE_LIMIT = 16 * 1024 * 1024,
   CLASSIC_EXTENSION_COMPRESSED_SCRIPT_LIMIT = 4 * 1024 * 1024,
-  CLASSIC_EXTENSION_SCRIPT_LIMIT = 8 * 1024 * 1024
+  CLASSIC_EXTENSION_SCRIPT_LIMIT = 8 * 1024 * 1024,
+  CLASSIC_EXTENSION_EXTERNAL_NAME_LIMIT = 4096
 };
 
 typedef struct {
@@ -29,7 +30,42 @@ typedef struct {
   char *public_name;
   char *target_name;
   uint32_t file_index;
+  int needs_script;
 } ClassicExtensionAlias;
+
+/* Binary-extension calls cannot retain a native function pointer in a portable
+ * package. Encode the declared library and symbol in a valid GML identifier.
+ * The runtime compatibility owner decodes this self-describing name and may
+ * provide a portable implementation; unknown APIs remain unknown. */
+static char *classic_extension_external_target(const char *library,
+                                               const char *symbol){
+  static const char prefix[]="__anygm_external_";
+  static const char hex[]="0123456789abcdef";
+  size_t library_size=library?strlen(library):0;
+  size_t symbol_size=symbol?strlen(symbol):0;
+  if(!library_size || !symbol_size ||
+     library_size>CLASSIC_EXTENSION_EXTERNAL_NAME_LIMIT ||
+     symbol_size>CLASSIC_EXTENSION_EXTERNAL_NAME_LIMIT ||
+     library_size>(SIZE_MAX-sizeof(prefix)-2u)/2u) return NULL;
+  size_t size=sizeof(prefix)-1u+library_size*2u+1u;
+  if(symbol_size>(SIZE_MAX-size-1u)/2u) return NULL;
+  size+=symbol_size*2u;
+  char *target=(char*)malloc(size+1u);
+  if(!target) return NULL;
+  size_t at=0;
+  memcpy(target,prefix,sizeof(prefix)-1u); at+=sizeof(prefix)-1u;
+  for(size_t i=0;i<library_size;i++){
+    unsigned char value=(unsigned char)library[i];
+    target[at++]=hex[value>>4]; target[at++]=hex[value&15u];
+  }
+  target[at++]='_';
+  for(size_t i=0;i<symbol_size;i++){
+    unsigned char value=(unsigned char)symbol[i];
+    target[at++]=hex[value>>4]; target[at++]=hex[value&15u];
+  }
+  target[at]='\0';
+  return target;
+}
 
 
 
@@ -324,6 +360,31 @@ static int classic_extension_add_project_alias(GmlcProject *project,
   return 1;
 }
 
+static int classic_extension_import_manifest_aliases(
+  const GmlcClassicManifest *classic,GmlcProject *project
+){
+  if(!classic->extensions || !classic->extension_detail_count) return 1;
+  for(uint32_t extension=0;extension<classic->extension_detail_count;extension++){
+    const GmlcClassicExtension *detail=&classic->extensions[extension];
+    for(uint32_t file_index=0;file_index<detail->file_count;file_index++){
+      const GmlcClassicExtensionFile *file=&detail->files[file_index];
+      if(file->kind!=1 || !file->name || !file->name[0]) continue;
+      for(uint32_t function=0;function<file->function_count;function++){
+        const GmlcClassicExtensionFunction *item=&file->functions[function];
+        if(!item->name || !item->name[0] ||
+           !item->external_name || !item->external_name[0]) continue;
+        char *target=classic_extension_external_target(file->name,item->external_name);
+        if(!target || !classic_extension_add_project_alias(project,item->name,target)){
+          free(target);
+          return 0;
+        }
+        free(target);
+      }
+    }
+  }
+  return 1;
+}
+
 static int classic_extension_add_project_constant(GmlcProject *project,
                                                    const char *name,
                                                    const char *expression){
@@ -493,6 +554,11 @@ int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
   if(!classic->extension_count) return 1;
   int aliases_before=project->n_function_aliases;
   int scripts_before=project->n_scripts;
+  if(!classic_extension_import_manifest_aliases(classic,project)){
+    if(err && errcap)
+      snprintf(err,errcap,"classic import: invalid, oversized, or unavailable binary extension metadata");
+    return 0;
+  }
   char **names=NULL; size_t count=0;
   int ok=classic_extension_names(project->host,project_dir,&names,&count);
   for(size_t i=0;ok && i<count;i++){

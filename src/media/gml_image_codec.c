@@ -139,6 +139,33 @@ int gml_image_encode_png(const uint8_t *pixels, int width, int height,
   return 1;
 }
 
+int gml_deflate_encode_zlib(const uint8_t *decoded, size_t decoded_size,
+                            GmlMediaBuffer *out){
+  static const uint8_t empty_zlib[]={
+    0x78,0x01,0x01,0x00,0x00,0xff,0xff,0x00,0x00,0x00,0x01
+  };
+  if(!out) return 0;
+  gml_media_buffer_reset(out);
+  if((!decoded && decoded_size) || decoded_size>(size_t)INT_MAX) return 0;
+  if(!decoded_size){
+    out->data=(uint8_t*)malloc(sizeof(empty_zlib));
+    if(!out->data) return 0;
+    memcpy(out->data,empty_zlib,sizeof(empty_zlib));
+    out->size=sizeof(empty_zlib);
+    return 1;
+  }
+  int encoded_size=0;
+  uint8_t *encoded=stbi_zlib_compress((uint8_t*)decoded,(int)decoded_size,
+                                      &encoded_size,8);
+  if(!encoded || encoded_size<=0){
+    free(encoded);
+    return 0;
+  }
+  out->data=encoded;
+  out->size=(size_t)encoded_size;
+  return 1;
+}
+
 int gml_deflate_decode(const uint8_t *encoded, size_t encoded_size,
                        GmlDeflateFraming framing, GmlMediaBuffer *out){
   if(!out) return 0;

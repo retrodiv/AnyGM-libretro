@@ -25,6 +25,25 @@ project it was built from, omitting fields only an editor uses. That difference
 belongs to the compiled layout and is not a revision fact: every compiled
 revision writes the short form.
 
+Revision 600 compiled executables are parsed as user-supplied content and
+normalized through the same classic importer as `.gm6` projects. Native code
+and bundled support libraries are not executed.
+
+An editor-standard `.gm6`, `.gmk`, or `.gm81` may have adjacent standard `.gex`
+packages, ordinary externally referenced included files (notably GM6), and an optional
+`.anygm-classic-fidelity` companion supplied alongside an editor project. The companion is
+applied only when its
+generation, project length, and embedded SHA-256 match the exact project bytes;
+it restores compiled resource details and normalized game-information presence that the editor
+format cannot encode. Referenced included files are read through the host VFS and their complete
+bytes contribute to the derived-content cache key, so changing one cannot reuse a stale package.
+Extension binary calls are imported as self-describing encoded library/symbol
+aliases. Runtime support is selected from those names, never from a game title
+or hardcoded content hash, and native DLLs are not loaded. Portable Saudio, SGAudio, SuperSound,
+and `caster_*` playback reads bounded WAV/OGG/MP3 assets through the host VFS. Savestates retain
+their logical paths and dynamically computed SHA-256 identities so a closed handle can be recreated
+without embedding an entire soundtrack or accepting changed bytes.
+
 ## Source projects and packages
 
 The content layer can normalize supported project manifests, project archives,

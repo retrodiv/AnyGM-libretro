@@ -10,6 +10,8 @@
 struct AnygmHostServices;
 
 #define GMLC_CLASSIC_MAGIC 1234321u
+/* Keep direct classic-project reads aligned with the public content-router member limit. */
+#define GMLC_CLASSIC_FILE_LIMIT UINT64_C(1073741824)
 
 typedef enum {
   GMLC_CLASSIC_UNKNOWN = 0,
@@ -55,6 +57,25 @@ typedef struct {
   int frequency;
   int hide_caption_buttons;
   int synchronize;
+  int force_software_vertex_processing;
+  int disable_screensaver;
+  int f4_fullscreen;
+  int f1_help;
+  int escape_ends_game;
+  int f5_save_f6_load;
+  int f9_screenshot;
+  int close_as_escape;
+  uint32_t priority;
+  int freeze_on_focus_loss;
+  uint32_t loading_bar;
+  int loading_transparent;
+  uint32_t loading_alpha;
+  int scale_progress_bar;
+  int show_errors;
+  int log_errors;
+  int abort_errors;
+  int uninitialized_as_zero;
+  int error_on_uninitialized_arguments;
   int swap_creation_events;
 } GmlcClassicSettings;
 
@@ -117,6 +138,45 @@ typedef struct {
   int remove_at_end;
 } GmlcClassicIncludedFile;
 
+enum { GMLC_CLASSIC_EXTENSION_FUNCTION_WORDS = 21 };
+
+typedef struct {
+  uint32_t version;
+  char *name;
+  char *external_name;
+  /* Call convention, compiled function id, argument count, 17 argument types and return type. */
+  uint32_t signature[GMLC_CLASSIC_EXTENSION_FUNCTION_WORDS];
+} GmlcClassicExtensionFunction;
+
+typedef struct {
+  uint32_t version;
+  char *name;
+  char *value;
+} GmlcClassicExtensionConstant;
+
+typedef struct {
+  uint32_t version;
+  char *name;
+  uint32_t kind;
+  char *initializer;
+  char *finalizer;
+  GmlcClassicExtensionFunction *functions;
+  uint32_t function_count;
+  GmlcClassicExtensionConstant *constants;
+  uint32_t constant_count;
+} GmlcClassicExtensionFile;
+
+typedef struct {
+  uint32_t version;
+  char *name;
+  char *folder;
+  GmlcClassicExtensionFile *files;
+  uint32_t file_count;
+  /* Installed extension data: seed plus encrypted file blobs. */
+  uint8_t *data;
+  size_t data_size;
+} GmlcClassicExtension;
+
 typedef struct {
   GmlcClassicInventory inventory;
   /* True when the manifest uses embedded-content ordering rather than editor-project grouping.
@@ -133,9 +193,16 @@ typedef struct {
   uint32_t included_file_count;
   char **extension_names;
   uint32_t extension_count;
+  /* Compiled layouts include complete extension records. Editable projects retain package names
+   * and resolve the corresponding .gex/.ged files from the installation. */
+  GmlcClassicExtension *extensions;
+  uint32_t extension_detail_count;
   /* Raw, versioned game-information payload.  The project converter owns the
    * bytes and decides how much of the legacy rich-text metadata to preserve. */
   GmlcClassicBlob game_information;
+  GmlcClassicBlob loading_bar_background;
+  GmlcClassicBlob loading_bar_foreground;
+  GmlcClassicBlob loading_image;
   char **library_creation_code;
   uint32_t library_creation_code_count;
   uint32_t *room_order;

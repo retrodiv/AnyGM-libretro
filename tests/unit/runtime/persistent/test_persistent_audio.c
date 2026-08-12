@@ -5,11 +5,14 @@
 
 #include "gml_audio.h"
 #include "gml_builtin.h"
+#include "stdio_vfs.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 
 static void fixture_write_u32(unsigned char *data,size_t off,uint32_t value){
@@ -97,7 +100,7 @@ int expect_audio_group_gain(void){
  * every frame, as run-ahead and rewind do, hits this on the first sound a session loads at run
  * time. */
 int expect_state_load_releases_later_dynamic_sounds(void){
-  unsigned char wav[48]={0};
+  unsigned char wav[44+4410]={0};
   memcpy(wav,"RIFF",4);
   fixture_write_u32(wav,4,sizeof(wav)-8);
   memcpy(wav+8,"WAVEfmt ",8);
@@ -109,7 +112,8 @@ int expect_state_load_releases_later_dynamic_sounds(void){
   fixture_write_u16(wav,32,1);
   fixture_write_u16(wav,34,8);
   memcpy(wav+36,"data",4);
-  fixture_write_u32(wav,40,4);
+  fixture_write_u32(wav,40,4410);
+  memset(wav+44,128,4410);
   wav[44]=255; wav[45]=0; wav[46]=192; wav[47]=64;
 
   GmlWin win={0};
@@ -155,7 +159,8 @@ int expect_state_load_releases_later_dynamic_sounds(void){
  * then not be applied to whatever occupies those slots, and the sounds the state says nothing
  * trustworthy about must keep what they have rather than being reset. */
 int expect_state_load_ignores_unmatched_dynamic_records(void){
-  unsigned char wav[48]={0};
+  enum { sample_count=4410 };
+  unsigned char wav[44+sample_count]={0};
   memcpy(wav,"RIFF",4);
   fixture_write_u32(wav,4,sizeof(wav)-8);
   memcpy(wav+8,"WAVEfmt ",8);
@@ -167,8 +172,9 @@ int expect_state_load_ignores_unmatched_dynamic_records(void){
   fixture_write_u16(wav,32,1);
   fixture_write_u16(wav,34,8);
   memcpy(wav+36,"data",4);
-  fixture_write_u32(wav,40,4);
-  wav[44]=255; wav[45]=0; wav[46]=192; wav[47]=64;
+  fixture_write_u32(wav,40,sample_count);
+  for(int sample=0;sample<sample_count;sample++)
+    wav[44+sample]=(unsigned char)(128+((sample%64)-32)*3);
 
   GmlWin win={0};
   GmlAudio *audio=gml_audio_create(&win);
@@ -204,7 +210,8 @@ int expect_state_load_ignores_unmatched_dynamic_records(void){
 }
 
 int expect_dynamic_audio_extension_state(void){
-  unsigned char wav[48]={0};
+  enum { sample_count=4410 };
+  unsigned char wav[44+sample_count]={0};
   memcpy(wav,"RIFF",4);
   fixture_write_u32(wav,4,sizeof(wav)-8);
   memcpy(wav+8,"WAVEfmt ",8);
@@ -263,5 +270,267 @@ int expect_dynamic_audio_extension_state(void){
   ok=ok && !gml_audio_exists(audio,sound);
   gml_audio_free(audio);
   if(!ok) fprintf(stderr,"dynamic loose-audio/state fixture failed\n");
+  return ok;
+}
+
+int expect_saudio_portable_playback(void){
+  int failure_stage=0;
+  static const char open_name[]=
+    "__anygm_external_73617564696f2e646c6c_6f70656e";
+  static const char play_name[]=
+    "__anygm_external_73617564696f2e646c6c_706c6179";
+  static const char stop_name[]=
+    "__anygm_external_73617564696f2e646c6c_73746f70";
+  static const char pause_name[]=
+    "__anygm_external_73617564696f2e646c6c_7061757365";
+  static const char resume_name[]=
+    "__anygm_external_73617564696f2e646c6c_726573756d65";
+  static const char position_name[]=
+    "__anygm_external_73617564696f2e646c6c_706f736974696f6e";
+  static const char length_name[]=
+    "__anygm_external_73617564696f2e646c6c_6c656e677468";
+  static const char seek_name[]=
+    "__anygm_external_73617564696f2e646c6c_7365656b";
+  static const char status_name[]=
+    "__anygm_external_73617564696f2e646c6c_737461747573";
+  static const char channels_name[]=
+    "__anygm_external_73617564696f2e646c6c_6368616e6e656c73";
+  static const char bytes_name[]=
+    "__anygm_external_73617564696f2e646c6c_6279746573706572736563";
+  static const char canplay_name[]=
+    "__anygm_external_73617564696f2e646c6c_63616e706c6179";
+  static const char close_name[]=
+    "__anygm_external_73617564696f2e646c6c_636c6f7365";
+
+  enum { sample_count=4410 };
+  unsigned char wav[44+sample_count]={0};
+  memcpy(wav,"RIFF",4);
+  fixture_write_u32(wav,4,sizeof(wav)-8);
+  memcpy(wav+8,"WAVEfmt ",8);
+  fixture_write_u32(wav,16,16);
+  fixture_write_u16(wav,20,1);
+  fixture_write_u16(wav,22,1);
+  fixture_write_u32(wav,24,44100);
+  fixture_write_u32(wav,28,44100);
+  fixture_write_u16(wav,32,1);
+  fixture_write_u16(wav,34,8);
+  memcpy(wav+36,"data",4);
+  fixture_write_u32(wav,40,sample_count);
+  for(int sample=0;sample<sample_count;sample++)
+    wav[44+sample]=(unsigned char)(128+((sample%64)-32)*3);
+
+  char directory[]="/tmp/anygm-saudio-XXXXXX";
+  if(!mkdtemp(directory)) return 0;
+  char path[256];
+  snprintf(path,sizeof(path),"%s/tone.wav",directory);
+  FILE *file=fopen(path,"wb");
+  int ok=file && fwrite(wav,1,sizeof(wav),file)==sizeof(wav);
+  if(file && fclose(file)!=0) ok=0;
+
+  AnygmHostServices host={0};
+  host.struct_size=sizeof(host);
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&host);
+  GmlWin win={0};
+  snprintf(win.content_dir,sizeof(win.content_dir),"%s",directory);
+  GmlVM vm={0};
+  if(!ok || gml_vm_init(&vm,&win,&host)!=0){
+    unlink(path); rmdir(directory);
+    return 0;
+  }
+  GmlAudio *audio=gml_audio_create(&win);
+  vm.audio=audio;
+  if(!audio){
+    gml_vm_free(&vm);
+    unlink(path); rmdir(directory);
+    return 0;
+  }
+
+  GmlVal id=vstr("music");
+  GmlVal open_args[]={vstr("tone.wav"),id};
+  GmlVal opened=gml_builtin_call(&vm,open_name,open_args,2);
+  GmlVal canplay=gml_builtin_call(&vm,canplay_name,&id,1);
+  GmlVal status=gml_builtin_call(&vm,status_name,&id,1);
+  GmlVal channels=gml_builtin_call(&vm,channels_name,&id,1);
+  GmlVal bytes=gml_builtin_call(&vm,bytes_name,&id,1);
+  ok=opened.t==V_REAL && opened.d==0.0 &&
+     canplay.t==V_STR && !strcmp(canplay.s,"true") &&
+     status.t==V_STR && !strcmp(status.s,"stopped") &&
+     channels.t==V_STR && !strcmp(channels.s,"1") &&
+     bytes.t==V_STR && !strcmp(bytes.s,"44100");
+  if(!ok){
+    failure_stage=1;
+    fprintf(stderr,
+      "Saudio initial values: open=%d/%g canplay=%d/%s status=%d/%s channels=%d/%s bytes=%d/%s\n",
+      opened.t,opened.d,canplay.t,canplay.t==V_STR?canplay.s:"?",
+      status.t,status.t==V_STR?status.s:"?",
+      channels.t,channels.t==V_STR?channels.s:"?",
+      bytes.t,bytes.t==V_STR?bytes.s:"?");
+  }
+
+  GmlVal played=gml_builtin_call(&vm,play_name,&id,1);
+  status=gml_builtin_call(&vm,status_name,&id,1);
+  ok=ok && played.t==V_REAL && played.d==0.0 && status.t==V_STR &&
+     !strcmp(status.s,"playing");
+  if(!ok && !failure_stage) failure_stage=2;
+  int16_t mixed[128];
+  gml_audio_mix(audio,mixed,64);
+  GmlVal position=gml_builtin_call(&vm,position_name,&id,1);
+  GmlVal length=gml_builtin_call(&vm,length_name,&id,1);
+  ok=ok && position.t==V_STR && strtod(position.s,NULL)>=0.0 &&
+     length.t==V_STR && strtod(length.s,NULL)>=0.0;
+  if(!ok && !failure_stage) failure_stage=3;
+
+  (void)gml_builtin_call(&vm,pause_name,&id,1);
+  status=gml_builtin_call(&vm,status_name,&id,1);
+  ok=ok && status.t==V_STR && !strcmp(status.s,"paused");
+  if(!ok && !failure_stage){
+    failure_stage=4;
+    fprintf(stderr,"Saudio paused status: type=%d value=%s playing=%d paused=%d\n",
+            status.t,status.t==V_STR?status.s:"?",
+            gml_audio_is_playing(audio,0),gml_audio_voice_paused(audio,0));
+  }
+  (void)gml_builtin_call(&vm,resume_name,&id,1);
+  status=gml_builtin_call(&vm,status_name,&id,1);
+  ok=ok && status.t==V_STR && !strcmp(status.s,"playing");
+  if(!ok && !failure_stage) failure_stage=5;
+
+  GmlVal seek_args[]={vstr("0"),id};
+  ok=ok && gml_builtin_call(&vm,seek_name,seek_args,2).d==0.0;
+  size_t state_size=gml_vm_state_size(&vm),written=0,used=0;
+  unsigned char *before=(unsigned char*)malloc(state_size?state_size:1u);
+  unsigned char *after=(unsigned char*)malloc(state_size?state_size:1u);
+  ok=ok && before && after &&
+     gml_vm_state_save(&vm,before,state_size,&written) && written==state_size;
+  if(!ok && !failure_stage) failure_stage=6;
+  /* Closing releases the dynamic mixer slot. Loading the older canonical state must rehydrate the
+   * exact SHA-bound file into that same handle before restoring the Saudio registry. */
+  (void)gml_builtin_call(&vm,close_name,&id,1);
+  canplay=gml_builtin_call(&vm,canplay_name,&id,1);
+  ok=ok && canplay.t==V_STR && !strcmp(canplay.s,"false") &&
+     gml_vm_state_load(&vm,before,written,&used) && used==written;
+  if(!ok && !failure_stage) failure_stage=7;
+  canplay=gml_builtin_call(&vm,canplay_name,&id,1);
+  size_t repeated=0;
+  ok=ok && canplay.t==V_STR && !strcmp(canplay.s,"true") &&
+     gml_vm_state_save(&vm,after,state_size,&repeated) && repeated==written &&
+     !memcmp(before,after,written);
+  if(!ok && !failure_stage) failure_stage=8;
+
+  (void)gml_builtin_call(&vm,stop_name,&id,1);
+  status=gml_builtin_call(&vm,status_name,&id,1);
+  ok=ok && status.t==V_STR && !strcmp(status.s,"stopped");
+  gml_audio_pause_all(audio,1);
+  status=gml_builtin_call(&vm,status_name,&id,1);
+  ok=ok && status.t==V_STR && !strcmp(status.s,"stopped");
+  gml_audio_pause_all(audio,0);
+  if(!ok && !failure_stage) failure_stage=9;
+  (void)gml_builtin_call(&vm,close_name,&id,1);
+  canplay=gml_builtin_call(&vm,canplay_name,&id,1);
+  ok=ok && canplay.t==V_STR && !strcmp(canplay.s,"false");
+  if(!ok && !failure_stage) failure_stage=10;
+
+  /* A savestate cannot silently bind its handle to different bytes at the same path. */
+  wav[44]^=1u;
+  file=fopen(path,"wb");
+  int changed=file && fwrite(wav,1,sizeof(wav),file)==sizeof(wav);
+  if(file && fclose(file)!=0) changed=0;
+  used=0;
+  ok=ok && changed && !gml_vm_state_load(&vm,before,written,&used);
+  if(!ok && !failure_stage) failure_stage=11;
+
+  free(before); free(after);
+  gml_vm_free(&vm);
+  gml_audio_free(audio);
+  unlink(path); rmdir(directory);
+  if(!ok) fprintf(stderr,"portable Saudio playback/state fixture failed at stage %d\n",
+                  failure_stage);
+  return ok;
+}
+
+int expect_generic_external_audio_restore(void){
+  static const char create_name[]=
+    "__anygm_external_5347417564696f2e646c6c_7367615f437265617465456d6974746572";
+  static const char destroy_name[]=
+    "__anygm_external_5347417564696f2e646c6c_7367615f44657374726f79456d6974746572";
+  enum { sample_count=4410 };
+  unsigned char wav[44+sample_count]={0};
+  memcpy(wav,"RIFF",4);
+  fixture_write_u32(wav,4,sizeof(wav)-8);
+  memcpy(wav+8,"WAVEfmt ",8);
+  fixture_write_u32(wav,16,16);
+  fixture_write_u16(wav,20,1);
+  fixture_write_u16(wav,22,1);
+  fixture_write_u32(wav,24,44100);
+  fixture_write_u32(wav,28,44100);
+  fixture_write_u16(wav,32,1);
+  fixture_write_u16(wav,34,8);
+  memcpy(wav+36,"data",4);
+  fixture_write_u32(wav,40,sample_count);
+  for(int sample=0;sample<sample_count;sample++)
+    wav[44+sample]=(unsigned char)(128+((sample%64)-32)*3);
+
+  char directory[]="/tmp/anygm-external-audio-XXXXXX";
+  if(!mkdtemp(directory)) return 0;
+  char path[256];
+  snprintf(path,sizeof(path),"%s/tone.wav",directory);
+  FILE *file=fopen(path,"wb");
+  int ok=file && fwrite(wav,1,sizeof(wav),file)==sizeof(wav);
+  if(file && fclose(file)!=0) ok=0;
+
+  AnygmHostServices host={0};
+  host.struct_size=sizeof(host);
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&host);
+  GmlWin win={0};
+  snprintf(win.content_dir,sizeof(win.content_dir),"%s",directory);
+  GmlVM vm={0};
+  if(!ok || gml_vm_init(&vm,&win,&host)!=0){
+    unlink(path); rmdir(directory);
+    return 0;
+  }
+  GmlAudio *audio=gml_audio_create(&win);
+  vm.audio=audio;
+  if(!audio){
+    gml_vm_free(&vm);
+    unlink(path); rmdir(directory);
+    return 0;
+  }
+
+  GmlVal relative=vstr("tone.wav");
+  GmlVal loaded=gml_builtin_call(&vm,create_name,&relative,1);
+  int sound=loaded.t==V_REAL?(int)loaded.d:-1;
+  ok=ok && sound>=0 && gml_audio_exists(audio,sound);
+  size_t state_size=gml_vm_state_size(&vm),written=0,used=0;
+  unsigned char *before=(unsigned char*)malloc(state_size?state_size:1u);
+  unsigned char *after=(unsigned char*)malloc(state_size?state_size:1u);
+  ok=ok && before && after &&
+    gml_vm_state_save(&vm,before,state_size,&written) && written==state_size;
+
+  GmlVal handle=vreal(sound);
+  (void)gml_builtin_call(&vm,destroy_name,&handle,1);
+  ok=ok && !gml_audio_exists(audio,sound) &&
+    gml_vm_state_load(&vm,before,written,&used) && used==written &&
+    gml_audio_exists(audio,sound);
+  size_t repeated=0;
+  ok=ok && gml_vm_state_save(&vm,after,state_size,&repeated) &&
+    repeated==written && !memcmp(before,after,written);
+
+  /* Identity is content-based for every supported extension API, not only for Saudio IDs. */
+  (void)gml_builtin_call(&vm,destroy_name,&handle,1);
+  wav[44]^=1u;
+  file=fopen(path,"wb");
+  int changed=file && fwrite(wav,1,sizeof(wav),file)==sizeof(wav);
+  if(file && fclose(file)!=0) changed=0;
+  used=0;
+  ok=ok && changed && !gml_vm_state_load(&vm,before,written,&used);
+
+  free(before);
+  free(after);
+  gml_vm_free(&vm);
+  gml_audio_free(audio);
+  unlink(path);
+  rmdir(directory);
+  if(!ok) fprintf(stderr,"generic external-audio identity/state fixture failed\n");
   return ok;
 }

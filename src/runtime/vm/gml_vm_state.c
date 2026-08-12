@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=3 };
+enum { GML_VM_STATE_SCHEMA=4 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* Writing a state walks every instance's variables, and the names repeat across them: every
  * instance carries the same handful of built-in names, each time as the very same pointer into

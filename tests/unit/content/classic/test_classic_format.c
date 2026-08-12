@@ -86,11 +86,21 @@ static Fixture inventory_fixture(unsigned container_version){
   fixture_u32(&f, 7);
   fixture_zero(&f, 16);
   fixture_u32(&f, 800); /* settings version */
-  unsigned char settings[35 * 4] = {0};
-  put_u32le(settings + 4, 1);      /* interpolation */
-  put_u32le(settings + 16, 200);   /* fixed two-times scaling */
-  put_u32le(settings + 34 * 4, 1); /* Create runs before room-instance code */
-  fixture_compressed(&f, settings, sizeof(settings));
+  Fixture settings={{0},0};
+  for(unsigned field=0;field<14;field++)
+    fixture_u32(&settings,field==1?1u:field==4?200u:0u);
+  fixture_zero(&settings,9u*4u); /* shortcuts and process settings */
+  fixture_u32(&settings,0); /* loading bar */
+  fixture_u32(&settings,0); /* custom loading image */
+  fixture_u32(&settings,0); fixture_u32(&settings,255); fixture_u32(&settings,1);
+  fixture_u32(&settings,0); /* icon */
+  fixture_zero(&settings,4u*4u); /* error settings */
+  fixture_string(&settings,""); fixture_string(&settings,"");
+  fixture_zero(&settings,8); fixture_string(&settings,"");
+  fixture_u32(&settings,1); fixture_zero(&settings,3u*4u);
+  for(unsigned i=0;i<4;i++) fixture_string(&settings,"");
+  fixture_zero(&settings,8);
+  fixture_compressed(&f, settings.data, (int)settings.size);
   fixture_u32(&f, 800); fixture_u32(&f, 0); fixture_zero(&f, 8); /* triggers */
   fixture_u32(&f, 800); fixture_u32(&f, 0); fixture_zero(&f, 8); /* constants */
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
@@ -113,7 +123,7 @@ static int expect_inventory(unsigned version){
   }
   if(in.payload_end != f.size || in.last_instance_id != 100123 || in.last_tile_id != 1000456 ||
      in.settings.interpolate != 1 || in.settings.scaling != 200 ||
-     in.settings.swap_creation_events != 1)
+     in.settings.swap_creation_events != 0)
     return 0;
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type)
     if(in.resource_slots[type] != type) return 0;
@@ -218,9 +228,26 @@ static int expect_executable_manifest_variant(const Fixture *executable){
   if(ok){
     ok=manifest.executable_layout &&
        manifest.inventory.header.version==GMLC_CLASSIC_GM8 &&
+       manifest.inventory.settings.swap_creation_events==1 &&
        manifest.inventory.header.game_id==0x13572468 && manifest.room_order_count==1 &&
        manifest.room_order[0]==0 &&
        manifest.extension_count==1 && !strcmp(manifest.extension_names[0],"fixture_executable_extension") &&
+       manifest.extension_detail_count==1 && manifest.extensions &&
+       manifest.extensions[0].version==700 &&
+       !strcmp(manifest.extensions[0].name,"fixture_executable_extension") &&
+       !strcmp(manifest.extensions[0].folder,"fixture_folder") &&
+       manifest.extensions[0].file_count==1 && manifest.extensions[0].data_size==4 &&
+       manifest.extensions[0].files[0].version==700 &&
+       !strcmp(manifest.extensions[0].files[0].name,"fixture.bin") &&
+       manifest.extensions[0].files[0].kind==4 &&
+       manifest.extensions[0].files[0].function_count==1 &&
+       !strcmp(manifest.extensions[0].files[0].functions[0].name,"fixture_function") &&
+       !strcmp(manifest.extensions[0].files[0].functions[0].external_name,"fixture_external") &&
+       manifest.extensions[0].files[0].functions[0].signature[0]==100 &&
+       manifest.extensions[0].files[0].functions[0].signature[20]==120 &&
+       manifest.extensions[0].files[0].constant_count==1 &&
+       !strcmp(manifest.extensions[0].files[0].constants[0].name,
+               "fixture_extension_constant") &&
        manifest.existing[GMLC_CLASSIC_SCRIPT]==1 &&
        manifest.existing[GMLC_CLASSIC_SPRITE]==1 &&
        manifest.existing[GMLC_CLASSIC_BACKGROUND]==1 &&
@@ -280,6 +307,35 @@ static int expect_executable_manifest(void){
   memmove(executable.data+16,executable.data+20,executable.size-20);
   executable.size-=4;
   return expect_executable_manifest_variant(&executable);
+}
+
+static int expect_executable_manifest_ignores_late_decoy(void){
+  Fixture executable;
+  if(!build_executable_fixture(&executable)) return 0;
+  fixture_u32(&executable,GMLC_CLASSIC_MAGIC);
+  fixture_u32(&executable,GMLC_CLASSIC_GM8);
+  fixture_u32(&executable,0);
+  fixture_u32(&executable,GMLC_CLASSIC_GM8);
+  fixture_u32(&executable,0);
+  return expect_executable_manifest_variant(&executable);
+}
+
+static int expect_executable_candidate_flood_rejected(void){
+  Fixture executable={{'M','Z'},2};
+  for(unsigned candidate=0;candidate<66;candidate++){
+    fixture_u32(&executable,GMLC_CLASSIC_MAGIC);
+    fixture_u32(&executable,GMLC_CLASSIC_GM8);
+    fixture_u32(&executable,0);
+    fixture_u32(&executable,GMLC_CLASSIC_GM8);
+    fixture_u32(&executable,0);
+  }
+  GmlcClassicManifest manifest={0}; char error[256]={0};
+  int ok=!gmlc_classic_manifest(executable.data,executable.size,&manifest,
+                                error,sizeof(error)) &&
+    strstr(error,"too many embedded-data candidates");
+  gmlc_classic_manifest_free(&manifest);
+  if(!ok) fprintf(stderr,"candidate flood was not rejected: %s\n",error);
+  return ok;
 }
 
 static int expect_legacy_executable_manifest(void){
@@ -352,6 +408,33 @@ static int expect_legacy_executable_manifest(void){
                            project.n_rooms&&project.rooms[0].n_tiles?project.rooms[0].tiles[0].tile_id:0);
     gmlc_project_free(&project);
   }
+  gmlc_classic_manifest_free(&manifest);
+  return ok;
+}
+
+static int expect_gm6_executable_manifest(void){
+  Fixture executable;
+  if(!build_gm6_executable_fixture(&executable)) return 0;
+  GmlcClassicManifest manifest={0}; char err[256]={0};
+  int ok=gmlc_classic_manifest(executable.data,executable.size,&manifest,err,sizeof(err));
+  if(ok) ok=manifest.executable_layout &&
+    manifest.inventory.header.version==GMLC_CLASSIC_GM6 &&
+    manifest.inventory.header.game_id==0x31415926 &&
+    manifest.inventory.settings_version==GMLC_CLASSIC_GM6 &&
+    manifest.inventory.settings.interpolate==1 && manifest.inventory.settings.scaling==150 &&
+    manifest.constant_def_count==1 &&
+    !strcmp(manifest.constant_defs[0].name,"fixture_gm6_constant") &&
+    !strcmp(manifest.constant_defs[0].value,"6*7") &&
+    manifest.library_creation_code_count==1 &&
+    !strcmp(manifest.library_creation_code[0],"global.gm6_executable_started = 1;") &&
+    manifest.room_order_count==0 && manifest.included_file_count==2 &&
+    !strcmp(manifest.included_files[0].file_name,"before.dat") &&
+    manifest.included_files[0].data_size==6 &&
+    !memcmp(manifest.included_files[0].data,"before",6) &&
+    !strcmp(manifest.included_files[1].file_name,"after.dat") &&
+    manifest.included_files[1].data_size==5 &&
+    !memcmp(manifest.included_files[1].data,"after",5);
+  if(!ok) fprintf(stderr,"Game Maker 6 executable manifest failed: %s\n",err);
   gmlc_classic_manifest_free(&manifest);
   return ok;
 }
@@ -543,6 +626,9 @@ AnygmTestGroup classic_test_format_group(void){
     {"manifest-810",expect_manifest_810},
     {"manifest-530-executable",expect_gm53_manifest},
     {"executable-manifest",expect_executable_manifest},
+    {"executable-manifest-late-decoy",expect_executable_manifest_ignores_late_decoy},
+    {"executable-candidate-flood",expect_executable_candidate_flood_rejected},
+    {"gm6-executable-manifest",expect_gm6_executable_manifest},
     {"legacy-executable-manifest",expect_legacy_executable_manifest},
     {"legacy-executable-font-corruption",expect_legacy_executable_font_corruption},
     {"gm7-decode",expect_gm7_decode},

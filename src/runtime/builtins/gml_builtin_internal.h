@@ -98,6 +98,24 @@ typedef struct {
 #define GML_HIGHSCORE_PLACES 10
 typedef struct { char name[64]; double score; int used; } GmlBuiltinHighscore;
 
+#define GML_SAUDIO_ENTRY_MAX 65536u
+typedef struct {
+  char *id;
+  char *path;
+  uint8_t content_sha256[32];
+  int sound;
+  int recording;
+  int record_active;
+  double position_ms;
+} GmlSaudioEntry;
+
+#define GML_EXTERNAL_AUDIO_ASSET_MAX 65536u
+typedef struct {
+  char *path;
+  uint8_t content_sha256[32];
+  int sound;
+} GmlExternalAudioAsset;
+
 struct GmlBuiltinState {
   GmlVM *vm;
   GmlBuiltinIniEntry ini_kv[GML_INI_MAX];
@@ -166,8 +184,13 @@ struct GmlBuiltinState {
   int shader_texture_log_count;
   int gpu_log_count;
   char collision_filter[128];
-  /* Keep this table last so preceding builtin-state fields retain their offsets. */
+  /* Append-only tail: preserve established field offsets across separately built objects.
+   * New builtin-owned storage belongs after this point. */
   GmlBuiltinHighscore highscore[GML_HIGHSCORE_PLACES];
+  GmlSaudioEntry *saudio_entries;
+  uint32_t saudio_count,saudio_capacity;
+  GmlExternalAudioAsset *external_audio_assets;
+  uint32_t external_audio_asset_count,external_audio_asset_capacity;
 };
 
 struct GmlRender;
@@ -224,6 +247,8 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *name,
 int builtin_external_audio_define(const char *library,const char *symbol);
 GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
                                    GmlVal *args,int count,int *handled);
+GmlVal builtin_external_audio_call_encoded(GmlVM *vm,const char *name,
+                                           GmlVal *args,int count,int *handled);
 GmlVal gml_builtin_try_instances_paths(GmlVM *vm, const char *name,
                                        GmlVal *args, int count);
 GmlVal gml_builtin_try_layers_early(GmlVM *vm, const char *name,
@@ -267,6 +292,20 @@ const char *builtin_setting(const GmlVM *vm, const char *name);
 void file_find_reset(GmlBuiltinState *state);
 void builtin_io_files_close(GmlBuiltinState *state);
 void builtin_state_ini_reset(GmlBuiltinState *state);
+GmlSaudioEntry *builtin_state_saudio_find(GmlBuiltinState *state,const char *id);
+int builtin_state_saudio_store(GmlBuiltinState *state,const char *id,const char *path,
+                               const uint8_t content_sha256[32],int sound,int recording);
+void builtin_state_saudio_remove(GmlBuiltinState *state,const char *id);
+void builtin_state_saudio_clear(GmlBuiltinState *state);
+GmlExternalAudioAsset *builtin_state_external_audio_find(
+    GmlBuiltinState *state,int sound);
+int builtin_state_external_audio_store(GmlBuiltinState *state,int sound,
+                                       const char *path,
+                                       const uint8_t content_sha256[32]);
+void builtin_state_external_audio_remove(GmlBuiltinState *state,int sound);
+void builtin_state_external_audio_clear(GmlBuiltinState *state);
+int builtin_external_audio_restore(GmlVM *vm,const char *relative,int sound,
+                                   const uint8_t expected_sha256[32]);
 GmlRenderDrawState builtin_draw_state(const GmlRender *render);
 GmlRenderTargetMetrics builtin_target_metrics(const GmlRender *render);
 GmlRenderPresentationMetrics

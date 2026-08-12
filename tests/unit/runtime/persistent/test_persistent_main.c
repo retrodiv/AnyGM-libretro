@@ -44,6 +44,8 @@ int main(int argc,char **argv){
     {"group_paths",expect_audio_group_paths},
     {"group_gain",expect_audio_group_gain},
     {"dynamic_extension_state",expect_dynamic_audio_extension_state},
+    {"saudio_portable_playback",expect_saudio_portable_playback},
+    {"generic_external_audio_restore",expect_generic_external_audio_restore},
     {"state_load_releases_later_sounds",expect_state_load_releases_later_dynamic_sounds},
     {"state_load_ignores_unmatched_records",expect_state_load_ignores_unmatched_dynamic_records},
   };

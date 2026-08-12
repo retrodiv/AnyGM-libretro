@@ -28,6 +28,11 @@ int  gml_audio_warm_sound(GmlAudio *a, int snd);
  * are sound indices usable with the regular playback controls and are recycled after free. */
 int  gml_audio_add_ogg(GmlAudio *a, const uint8_t *ogg, int len);
 int  gml_audio_add_encoded(GmlAudio *a, const uint8_t *encoded, int len);
+/* Rehydrate a dynamic handle from its exact bounded source bytes during canonical state restore.
+ * The replacement is accepted only when the bytes match the state-owned SHA-256 identity. */
+int  gml_audio_restore_encoded(GmlAudio *a,int handle,const uint8_t *encoded,int len,
+                               const uint8_t expected_sha256[32]);
+int  gml_audio_sound_content_hash(GmlAudio *a,int handle,uint8_t digest[32]);
 void gml_audio_caster_free(GmlAudio *a, int handle);
 void gml_audio_caster_free_all(GmlAudio *a);
 void gml_audio_stop(GmlAudio *a, int snd);   /* stop every voice of this sound */
@@ -54,6 +59,8 @@ int  gml_audio_sound_get_default_loop(GmlAudio *a, int sound);
 void gml_audio_sound_set_external_type(GmlAudio *a, int sound, uint32_t type);
 uint32_t gml_audio_sound_get_external_type(GmlAudio *a, int sound);
 double gml_audio_sound_length(GmlAudio *a, int sound);
+int gml_audio_sound_format(GmlAudio *a,int sound,int *channels,
+                           int *sample_rate,int *bytes_per_second);
 void gml_audio_sound_set_track_position(GmlAudio *a, int target, double seconds);
 double gml_audio_sound_get_track_position(GmlAudio *a, int target);
 void gml_audio_sound_loop_start(GmlAudio *a, int target, double seconds);

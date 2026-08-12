@@ -191,7 +191,12 @@ int build_executable_fixture(Fixture *executable){
   fixture_u32(&decoded,700); fixture_string(&decoded,"fixture_executable_extension"); fixture_string(&decoded,"fixture_folder");
   fixture_u32(&decoded,1); fixture_u32(&decoded,700); fixture_string(&decoded,"fixture.bin");
   fixture_u32(&decoded,4); fixture_string(&decoded,"global.fixture_extension_started = 1;"); fixture_string(&decoded,"");
-  fixture_u32(&decoded,0); fixture_u32(&decoded,1); /* functions, constants */
+  fixture_u32(&decoded,1); /* functions */
+  fixture_u32(&decoded,700); fixture_string(&decoded,"fixture_function");
+  fixture_string(&decoded,"fixture_external");
+  for(unsigned word=0;word<GMLC_CLASSIC_EXTENSION_FUNCTION_WORDS;word++)
+    fixture_u32(&decoded,100u+word);
+  fixture_u32(&decoded,1); /* constants */
   fixture_u32(&decoded,700); fixture_string(&decoded,"fixture_extension_constant"); fixture_string(&decoded,"7*6");
   fixture_u32(&decoded,4); fixture_u32(&decoded,0); 
   fixture_u32(&decoded,800); fixture_u32(&decoded,1); /* triggers */
@@ -288,7 +293,15 @@ int build_executable_fixture(Fixture *executable){
   fixture_u32(executable,20); /* embedded-data self pointer */
   fixture_u32(executable,GMLC_CLASSIC_MAGIC); fixture_u32(executable,800);
   fixture_u32(executable,0); fixture_u32(executable,800);
-  fixture_u32(executable,0); /* settings */
+  { Fixture settings={{0},0};
+    for(unsigned field=0;field<14;field++) fixture_u32(&settings,0);
+    fixture_zero(&settings,9u*4u); /* shortcuts and process settings */
+    fixture_u32(&settings,0); /* loading bar */
+    fixture_u32(&settings,0); /* custom loading image */
+    fixture_zero(&settings,3u*4u); /* loading image settings */
+    fixture_zero(&settings,4u*4u); /* error settings */
+    fixture_u32(&settings,0); fixture_u32(&settings,1); /* WebGL, creation order */
+    fixture_compressed(executable,settings.data,(int)settings.size); }
   fixture_u32(executable,0); fixture_u32(executable,0); /* wrapper strings */
   fixture_u32(executable,0); fixture_u32(executable,0); /* junk counts */
   unsigned char table[256];

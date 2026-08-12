@@ -101,7 +101,7 @@ VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_su
 	test_renderer_tiles test_renderer_primitives test_renderer_assets \
 	test_renderer_texture_shells
 CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks
-MEDIA_TESTS := test_image_codec test_font_raster
+MEDIA_TESTS := test_hash test_image_codec test_font_raster
 COMPATIBILITY_TESTS := test_compatibility
 CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TESTS) \
 	$(CONTENT_TESTS) $(MEDIA_TESTS) $(COMPATIBILITY_TESTS))
@@ -277,6 +277,10 @@ $(TEST_DIR)/test_image_codec: tests/unit/media/test_image_codec.c \
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
 
+$(TEST_DIR)/test_hash: tests/unit/media/test_hash.c src/media/gml_hash.c
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
+
 $(TEST_DIR)/test_font_raster: tests/unit/media/test_font_raster.c \
 	src/media/gml_font_raster.c
 	mkdir -p $(dir $@)
@@ -295,6 +299,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_package
 	$(TEST_DIR)/test_classic
 	$(TEST_DIR)/test_sprite_masks
+	$(TEST_DIR)/test_hash
 	$(TEST_DIR)/test_image_codec
 	$(TEST_DIR)/test_font_raster
 	$(TEST_DIR)/test_compatibility

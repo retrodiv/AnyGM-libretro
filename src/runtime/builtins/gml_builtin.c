@@ -1382,6 +1382,10 @@ GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   int id=gml_builtin_fast_id(vm,nm);
   if(id>0) return gml_builtin_call_fast_id(vm,id,nm,a,n);
+  int external_handled=0;
+  GmlVal external_result=builtin_external_audio_call_encoded(
+      vm,nm,a,n,&external_handled);
+  if(external_handled) return external_result;
   GmlRender *R=(GmlRender*)vm->render;
   (void)graphics_state_for_vm(vm);
   if(d3_try_draw_2d_builtin(vm,nm,a,n)) return vreal(0);

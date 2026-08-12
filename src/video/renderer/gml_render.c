@@ -104,6 +104,7 @@ static void parse_sprt(GmlRender *r){
   if(!r->spr){ r->n_spr=0; r->spr_cap=0; return; }
   for(uint32_t i=0;i<n;i++){
     uint32_t p=u32(d,c->off+4+i*4);
+    if(!p) continue;
     GmlSprite *s=&r->spr[i];
     s->name=gml_str_by_ptr(r->win,u32(d,p));
     s->playback_speed=1.0f; s->playback_speed_type=1; s->playback_speed_valid=0;

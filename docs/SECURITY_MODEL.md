@@ -78,6 +78,22 @@ counts before allocation or pointer arithmetic. A new variable-length field
 must introduce a matching limit and a synthetic boundary test in its owning
 module.
 
+Classic binary-extension library and symbol names are limited to 4,096 bytes before their
+self-describing aliases are created or decoded. Portable external audio reads at most 64 MiB per
+loose asset. External-audio state records limit logical paths (and Saudio IDs) to 4,096 bytes and
+cap the dynamic sound table at 65,536 entries. Every restored handle is bound to the SHA-256
+computed from its original bytes; rehydration rejects a missing, oversized, malformed, or changed
+VFS asset.
+
+Classic fidelity companions are untrusted inputs. Their fixed header, project
+generation, exact byte length, SHA-256, record counts, resource identities,
+compressed and expanded lengths, duplicates, and trailing bytes are validated
+before restored data is published. Adjacent extension packages use independent
+size/count limits and rollback any aliases appended before a later malformed
+record. Externally referenced Classic included files use the same 1 GiB per-file bound and their
+complete paths, lengths, and contents contribute to the cache dependency hash. Neither format may
+select behavior by title or content hash.
+
 ## VFS confinement
 
 All production file access crosses `AnygmHostServices`. A path is a name in the
@@ -113,8 +129,8 @@ exact pre-load snapshot.
 
 The VM state reader exposes an opaque bounded cursor to the builtin resource
 owner at four established field positions. That owner validates INI,
-map/list/grid, physics, emitter, and time-source counts and dimensions before
-allocation or indexed access. It cannot change the root framing, advance
+map/list/grid, physics, emitter, external-audio handle/path/hash, Saudio ID, and time-source counts
+and dimensions before allocation or indexed access. It cannot change the root framing, advance
 outside the VM section, or publish an independently restored object. Decoding
 occurs in the engine's scratch transaction, so any resource-stage failure
 discards the candidate and preserves the prior live engine exactly.

@@ -4,6 +4,7 @@
 /* Builtin-owned mutable resource lifetime and canonical VM-state sections. */
 #include "gml_builtin_internal.h"
 #include "gml_vm_state_codec.h"
+#include "gml_audio.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -62,6 +63,161 @@ void builtin_state_ini_reset(GmlBuiltinState *state){
   state->ini_n=0;
   state->ini_open=0;
   state->ini_path[0]=0;
+}
+
+GmlSaudioEntry *builtin_state_saudio_find(GmlBuiltinState *state,const char *id){
+  if(!state || !id) return NULL;
+  for(uint32_t i=0;i<state->saudio_count;i++)
+    if(state->saudio_entries[i].id && !strcmp(state->saudio_entries[i].id,id))
+      return &state->saudio_entries[i];
+  return NULL;
+}
+
+int builtin_state_saudio_store(GmlBuiltinState *state,const char *id,const char *path,
+                               const uint8_t content_sha256[32],int sound,int recording){
+  if(!state || !id || !id[0] || strlen(id)>4096u || !path || strlen(path)>4096u ||
+     (!recording && (!path[0] || !content_sha256))) return 0;
+  char *path_copy=strdup(path);
+  if(!path_copy) return 0;
+  GmlSaudioEntry *existing=builtin_state_saudio_find(state,id);
+  if(existing){
+    free(existing->path);
+    existing->path=path_copy;
+    if(content_sha256) memcpy(existing->content_sha256,content_sha256,32);
+    else memset(existing->content_sha256,0,32);
+    existing->sound=sound;
+    existing->recording=recording!=0;
+    existing->record_active=0;
+    existing->position_ms=0.0;
+    return 1;
+  }
+  if(state->saudio_count>=GML_SAUDIO_ENTRY_MAX){ free(path_copy); return 0; }
+  if(state->saudio_count==state->saudio_capacity){
+    uint32_t capacity=state->saudio_capacity?state->saudio_capacity*2u:16u;
+    if(capacity<state->saudio_capacity || capacity>GML_SAUDIO_ENTRY_MAX)
+      capacity=GML_SAUDIO_ENTRY_MAX;
+    GmlSaudioEntry *grown=(GmlSaudioEntry*)realloc(
+      state->saudio_entries,(size_t)capacity*sizeof(*grown));
+    if(!grown){ free(path_copy); return 0; }
+    memset(grown+state->saudio_capacity,0,
+           (size_t)(capacity-state->saudio_capacity)*sizeof(*grown));
+    state->saudio_entries=grown;
+    state->saudio_capacity=capacity;
+  }
+  char *copy=strdup(id);
+  if(!copy){ free(path_copy); return 0; }
+  GmlSaudioEntry *entry=&state->saudio_entries[state->saudio_count++];
+  entry->id=copy;
+  entry->path=path_copy;
+  if(content_sha256) memcpy(entry->content_sha256,content_sha256,32);
+  entry->sound=sound;
+  entry->recording=recording!=0;
+  entry->record_active=0;
+  entry->position_ms=0.0;
+  return 1;
+}
+
+void builtin_state_saudio_remove(GmlBuiltinState *state,const char *id){
+  if(!state || !id) return;
+  for(uint32_t i=0;i<state->saudio_count;i++){
+    if(!state->saudio_entries[i].id || strcmp(state->saudio_entries[i].id,id)) continue;
+    free(state->saudio_entries[i].id);
+    free(state->saudio_entries[i].path);
+    if(i+1u<state->saudio_count)
+      memmove(&state->saudio_entries[i],&state->saudio_entries[i+1u],
+              (size_t)(state->saudio_count-i-1u)*sizeof(*state->saudio_entries));
+    state->saudio_count--;
+    memset(&state->saudio_entries[state->saudio_count],0,
+           sizeof(*state->saudio_entries));
+    return;
+  }
+}
+
+void builtin_state_saudio_clear(GmlBuiltinState *state){
+  if(!state) return;
+  for(uint32_t i=0;i<state->saudio_count;i++){
+    free(state->saudio_entries[i].id);
+    free(state->saudio_entries[i].path);
+  }
+  free(state->saudio_entries);
+  state->saudio_entries=NULL;
+  state->saudio_count=state->saudio_capacity=0;
+}
+
+GmlExternalAudioAsset *builtin_state_external_audio_find(
+    GmlBuiltinState *state,int sound){
+  if(!state || sound<0) return NULL;
+  for(uint32_t i=0;i<state->external_audio_asset_count;i++)
+    if(state->external_audio_assets[i].sound==sound)
+      return &state->external_audio_assets[i];
+  return NULL;
+}
+
+int builtin_state_external_audio_store(GmlBuiltinState *state,int sound,
+                                       const char *path,
+                                       const uint8_t content_sha256[32]){
+  if(!state || sound<0 || !path || !path[0] || strlen(path)>4096u ||
+     !content_sha256) return 0;
+  char *path_copy=strdup(path);
+  if(!path_copy) return 0;
+  GmlExternalAudioAsset *existing=
+    builtin_state_external_audio_find(state,sound);
+  if(existing){
+    free(existing->path);
+    existing->path=path_copy;
+    memcpy(existing->content_sha256,content_sha256,32);
+    return 1;
+  }
+  if(state->external_audio_asset_count>=GML_EXTERNAL_AUDIO_ASSET_MAX){
+    free(path_copy);
+    return 0;
+  }
+  if(state->external_audio_asset_count==state->external_audio_asset_capacity){
+    uint32_t capacity=state->external_audio_asset_capacity
+      ? state->external_audio_asset_capacity*2u : 16u;
+    if(capacity<state->external_audio_asset_capacity ||
+       capacity>GML_EXTERNAL_AUDIO_ASSET_MAX)
+      capacity=GML_EXTERNAL_AUDIO_ASSET_MAX;
+    GmlExternalAudioAsset *grown=(GmlExternalAudioAsset*)realloc(
+      state->external_audio_assets,(size_t)capacity*sizeof(*grown));
+    if(!grown){ free(path_copy); return 0; }
+    memset(grown+state->external_audio_asset_capacity,0,
+           (size_t)(capacity-state->external_audio_asset_capacity)*sizeof(*grown));
+    state->external_audio_assets=grown;
+    state->external_audio_asset_capacity=capacity;
+  }
+  GmlExternalAudioAsset *asset=
+    &state->external_audio_assets[state->external_audio_asset_count++];
+  asset->path=path_copy;
+  memcpy(asset->content_sha256,content_sha256,32);
+  asset->sound=sound;
+  return 1;
+}
+
+void builtin_state_external_audio_remove(GmlBuiltinState *state,int sound){
+  if(!state || sound<0) return;
+  for(uint32_t i=0;i<state->external_audio_asset_count;i++){
+    if(state->external_audio_assets[i].sound!=sound) continue;
+    free(state->external_audio_assets[i].path);
+    if(i+1u<state->external_audio_asset_count)
+      memmove(&state->external_audio_assets[i],
+              &state->external_audio_assets[i+1u],
+              (size_t)(state->external_audio_asset_count-i-1u)*
+                sizeof(*state->external_audio_assets));
+    state->external_audio_asset_count--;
+    memset(&state->external_audio_assets[state->external_audio_asset_count],0,
+           sizeof(*state->external_audio_assets));
+    return;
+  }
+}
+
+void builtin_state_external_audio_clear(GmlBuiltinState *state){
+  if(!state) return;
+  for(uint32_t i=0;i<state->external_audio_asset_count;i++)
+    free(state->external_audio_assets[i].path);
+  free(state->external_audio_assets);
+  state->external_audio_assets=NULL;
+  state->external_audio_asset_count=state->external_audio_asset_capacity=0;
 }
 
 static void builtin_state_ds_reset(GmlBuiltinState *state){
@@ -192,6 +348,8 @@ void gml_builtin_state_reset(GmlBuiltinState *state){
   state->listener_up_x=state->listener_up_z=0;
   state->listener_up_y=1;
   state->audio_falloff_model=0;
+  builtin_state_saudio_clear(state);
+  builtin_state_external_audio_clear(state);
   builtin_state_physics_reset(state);
   file_find_reset(state);
   memset(state->gamepad_deadzone,0,sizeof(state->gamepad_deadzone));
@@ -617,6 +775,25 @@ void gml_builtin_state_write_audio(const GmlBuiltinState *state,
   gml_vm_state_write_real(writer,state->listener_up_y);
   gml_vm_state_write_real(writer,state->listener_up_z);
   gml_vm_state_write_i32(writer,state->audio_falloff_model);
+  gml_vm_state_write_u32(writer,state->external_audio_asset_count);
+  for(uint32_t i=0;i<state->external_audio_asset_count;i++){
+    const GmlExternalAudioAsset *asset=&state->external_audio_assets[i];
+    gml_vm_state_write_i32(writer,asset->sound);
+    gml_vm_state_write_string(writer,asset->path);
+    gml_vm_state_write_raw(writer,asset->content_sha256,
+                           sizeof(asset->content_sha256));
+  }
+  gml_vm_state_write_u32(writer,state->saudio_count);
+  for(uint32_t i=0;i<state->saudio_count;i++){
+    const GmlSaudioEntry *entry=&state->saudio_entries[i];
+    gml_vm_state_write_string(writer,entry->id);
+    gml_vm_state_write_string(writer,entry->path);
+    gml_vm_state_write_raw(writer,entry->content_sha256,sizeof(entry->content_sha256));
+    gml_vm_state_write_i32(writer,entry->sound);
+    gml_vm_state_write_i32(writer,entry->recording!=0);
+    gml_vm_state_write_i32(writer,entry->record_active!=0);
+    gml_vm_state_write_real(writer,entry->position_ms);
+  }
 }
 
 int gml_builtin_state_read_audio(GmlBuiltinState *state,
@@ -652,6 +829,76 @@ int gml_builtin_state_read_audio(GmlBuiltinState *state,
   if(state->audio_falloff_model<0 || state->audio_falloff_model>6)
     gml_vm_state_reader_fail(reader,"bad audio falloff model",
                              (uint32_t)state->audio_falloff_model);
+  uint32_t asset_count=gml_vm_state_read_u32(reader);
+  if(asset_count>GML_EXTERNAL_AUDIO_ASSET_MAX)
+    gml_vm_state_reader_fail(reader,"too many external audio assets",asset_count);
+  for(uint32_t i=0;i<asset_count && gml_vm_state_reader_ok(reader);i++){
+    int sound=gml_vm_state_read_i32(reader);
+    char *path=gml_vm_state_read_string(reader);
+    uint8_t digest[32];
+    gml_vm_state_read_raw(reader,digest,sizeof(digest));
+    if(sound<0 || !path || !path[0] || strlen(path)>4096u ||
+       builtin_state_external_audio_find(state,sound) ||
+       !builtin_external_audio_restore(state->vm,path,sound,digest) ||
+       !builtin_state_external_audio_store(state,sound,path,digest)){
+      if(sound>=0) gml_audio_caster_free((GmlAudio*)state->vm->audio,sound);
+      free(path);
+      gml_vm_state_reader_fail(reader,"bad external audio asset",i);
+      break;
+    }
+    free(path);
+  }
+  uint32_t saudio_count=gml_vm_state_read_u32(reader);
+  if(saudio_count>GML_SAUDIO_ENTRY_MAX)
+    gml_vm_state_reader_fail(reader,"too many Saudio entries",saudio_count);
+  for(uint32_t i=0;i<saudio_count && gml_vm_state_reader_ok(reader);i++){
+    char *id=gml_vm_state_read_string(reader);
+    char *path=gml_vm_state_read_string(reader);
+    uint8_t digest[32];
+    gml_vm_state_read_raw(reader,digest,sizeof(digest));
+    int sound=gml_vm_state_read_i32(reader);
+    int recording=gml_vm_state_read_i32(reader);
+    int record_active=gml_vm_state_read_i32(reader);
+    double position_ms=gml_vm_state_read_real(reader);
+    GmlExternalAudioAsset *asset=
+      builtin_state_external_audio_find(state,sound);
+    int duplicate_sound=0;
+    if(!recording)
+      for(uint32_t previous=0;previous<state->saudio_count;previous++)
+        if(!state->saudio_entries[previous].recording &&
+           state->saudio_entries[previous].sound==sound){
+          duplicate_sound=1;
+          break;
+        }
+    if(!id || !id[0] || strlen(id)>4096u || !path || strlen(path)>4096u ||
+       builtin_state_saudio_find(state,id) ||
+       duplicate_sound ||
+       (recording!=0 && recording!=1) ||
+       (record_active!=0 && record_active!=1) ||
+       !isfinite(position_ms) || position_ms<0.0 ||
+       (!recording && (sound<0 || !path[0] || !asset ||
+        strcmp(asset->path,path) ||
+        memcmp(asset->content_sha256,digest,sizeof(digest)))) ||
+       (recording && sound!=-1)){
+      free(path); free(id);
+      gml_vm_state_reader_fail(reader,"bad Saudio entry",i);
+      break;
+    }
+    if(!builtin_state_saudio_store(state,id,path,digest,sound,recording)){
+      free(path); free(id);
+      gml_vm_state_reader_fail(reader,"Saudio entry allocation",i);
+      break;
+    }
+    GmlSaudioEntry *entry=builtin_state_saudio_find(state,id);
+    free(path);
+    free(id);
+    if(!entry){
+      gml_vm_state_reader_fail(reader,"missing Saudio entry",i);
+      break;
+    }
+    entry->record_active=record_active;
+    entry->position_ms=position_ms;
+  }
   return gml_vm_state_reader_ok(reader);
 }
 

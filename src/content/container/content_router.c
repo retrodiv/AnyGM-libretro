@@ -10,6 +10,7 @@
 #include "gmlc_package.h"
 #include "gmlc_classic_project.h"
 #include "gmlc_classic_import.h"
+#include "gmlc_classic_fidelity.h"
 #include "gmlc_project.h"
 #include "gml_win.h"
 #include "gml_image_codec.h"
@@ -28,6 +29,9 @@
 #else
 #include <strings.h>
 #endif
+
+_Static_assert(GMLC_CLASSIC_FILE_LIMIT==ANYGM_CONTENT_MAX_MEMBER_BYTES,
+               "classic project and content-router limits must remain aligned");
 
 static void content_log(const AnygmContentRouter *router,int level,const char *format,...){
   if(!router || !router->log) return;
@@ -920,6 +924,8 @@ static int load_classic_project_content(const AnygmContentRouter *router,const c
   char source_dir[4096];
   anygm_content_path_parent(srcpath,source_dir,sizeof(source_dir));
   if(!gmlc_classic_extension_dependency_hash(router->host,source_dir,src_hash,&src_hash)) return 0;
+  if(!gmlc_classic_fidelity_dependency_hash(router->host,srcpath,src_hash,&src_hash)) return 0;
+  if(!gmlc_classic_included_dependency_hash(router->host,srcpath,src_hash,&src_hash)) return 0;
   char outdir[768];
   snprintf(outdir,sizeof outdir,"%s/%s-%016llx-anygm-classic",base,stem,
            (unsigned long long)src_hash);

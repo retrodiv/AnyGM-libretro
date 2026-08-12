@@ -32,6 +32,9 @@ int gml_image_encode_png(const uint8_t *pixels, int width, int height,
                          int components, int stride_bytes,
                          GmlMediaBuffer *out);
 
+/* Deterministic RFC 1950/1951 encoding with the repository-pinned fixed-Huffman implementation. */
+int gml_deflate_encode_zlib(const uint8_t *decoded, size_t decoded_size,
+                            GmlMediaBuffer *out);
 int gml_deflate_decode(const uint8_t *encoded, size_t encoded_size,
                        GmlDeflateFraming framing, GmlMediaBuffer *out);
 int gml_deflate_decode_to_buffer(const uint8_t *encoded, size_t encoded_size,

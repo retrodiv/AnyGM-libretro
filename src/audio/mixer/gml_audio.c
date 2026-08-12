@@ -21,8 +21,10 @@
 #include "minimp3_ex.h"
 #include "gml_audio.h"
 #include "gml_fmod.h"
+#include "gml_hash.h"
 #include "anygm_host.h"
 #include "anygm_vfs.h"
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -40,7 +42,10 @@ typedef struct {
   const uint8_t *mp3; uint32_t mp3_len; int mp3_failed;
   double length_seconds, loop_start_seconds, gain_target;
   int length_known, group, gain_fade_frames, default_loop;
+  int bytes_per_second;
   uint32_t external_type;
+  uint8_t content_sha256[32];
+  int content_hash_known;
 } GmlSound; /* own is decoded/copied PCM; encoded_own backs a dynamic compressed blob */
 typedef struct {
   int snd, loop, active, paused, id, emitter;
@@ -50,6 +55,7 @@ typedef struct {
 #define GML_MAX_VOICES 32
 #define GML_AUDIO_BUS_GAIN 0.55
 #define GML_MAX_AUDIOGROUPS 64
+#define GML_DYNAMIC_SOUND_LIMIT 65536
 struct GmlAudio {
   GmlWin *win;
   GmlSound *snd; int n_snd, n_base_snd;   /* n_base_snd = SOND resources; dynamic sounds follow */
@@ -289,8 +295,11 @@ static int audio_dynamic_slot(GmlAudio *a){
        !a->snd[i].ogg && !a->snd[i].mp3 && !a->snd[i].nval){
       slot=i;
       break;
-    }
+  }
   if(slot<0){
+    if(a->n_snd<a->n_base_snd ||
+       (uint64_t)(unsigned)(a->n_snd-a->n_base_snd)>=GML_DYNAMIC_SOUND_LIMIT)
+      return -1;
     GmlSound *ns=realloc(a->snd,(size_t)(a->n_snd+1)*sizeof(GmlSound));
     if(!ns) return -1;
     a->snd=ns; slot=a->n_snd++;
@@ -304,30 +313,72 @@ static int audio_dynamic_slot(GmlAudio *a){
   return slot;
 }
 
+static int audio_dynamic_slot_at(GmlAudio *a,int requested){
+  if(requested<0) return audio_dynamic_slot(a);
+  if(!a || requested<a->n_base_snd ||
+     (uint64_t)(unsigned)(requested-a->n_base_snd)>=GML_DYNAMIC_SOUND_LIMIT)
+    return -1;
+  if(requested>=a->n_snd){
+    size_t count=(size_t)requested+1u;
+    GmlSound *sounds=(GmlSound*)realloc(a->snd,count*sizeof(*sounds));
+    if(!sounds) return -1;
+    memset(sounds+a->n_snd,0,(count-(size_t)a->n_snd)*sizeof(*sounds));
+    a->snd=sounds;
+    a->n_snd=requested+1;
+  } else {
+    gml_audio_stop(a,requested);
+    free(a->snd[requested].own);
+    free(a->snd[requested].encoded_own);
+  }
+  memset(&a->snd[requested],0,sizeof(a->snd[requested]));
+  a->snd[requested].vol=1.0f;
+  a->snd[requested].gain=1.0;
+  a->snd[requested].gain_target=1.0;
+  a->snd[requested].pitch=1.0;
+  a->snd[requested].sample_rate=44100;
+  return requested;
+}
+
 /* Register an external OGG blob (caster_load) as a new sound. Decode eagerly to retain the
  * established caster failure behavior while the generic loose-file path below stays lazy. */
 int gml_audio_add_ogg(GmlAudio *a, const uint8_t *ogg, int len){
   if(!a || !ogg || len<=0) return -1;
   int ch=0, rate=0; int16_t *out=NULL;
   int nsamp=stb_vorbis_decode_memory(ogg,len,&ch,&rate,&out);
-  if(nsamp<=0 || !out){ free(out); return -1; }
+  if(nsamp<=0 || !out || ch<=0 || ch>2 || rate<=0 || rate>384000 ||
+     (uint64_t)(unsigned)nsamp*(uint64_t)(unsigned)ch>UINT32_MAX){
+    free(out);
+    return -1;
+  }
   int slot=audio_dynamic_slot(a);
   if(slot<0){ free(out); return -1; }
   a->snd[slot].pcm=out; a->snd[slot].own=out;
-  a->snd[slot].nval=(uint32_t)(nsamp*(ch>0?ch:1));
-  a->snd[slot].channels=ch>0?ch:1;
-  a->snd[slot].sample_rate=rate>0?rate:44100;
+  a->snd[slot].nval=(uint32_t)((unsigned)nsamp*(unsigned)ch);
+  a->snd[slot].channels=ch;
+  a->snd[slot].sample_rate=rate;
+  a->snd[slot].length_seconds=(double)nsamp/(double)rate;
+  a->snd[slot].length_known=1;
+  if(a->snd[slot].length_seconds>0.0){
+    double estimate=(double)len/a->snd[slot].length_seconds;
+    if(isfinite(estimate) && estimate>0.0)
+      a->snd[slot].bytes_per_second=estimate>(double)INT_MAX
+        ? INT_MAX : (int)llround(estimate);
+  }
+  gml_sha256(ogg,(size_t)len,a->snd[slot].content_sha256);
+  a->snd[slot].content_hash_known=1;
   if(audio_setting(a,"GML_LOG_AUDIO")){ int live=0; for(int i=a->n_base_snd;i<a->n_snd;i++) if(a->snd[i].own) live++;
     anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[add_ogg] slot=%d n_snd=%d live=%d nval=%u\n",slot,a->n_snd,live,a->snd[slot].nval); }
   return slot;
 }
 
-int gml_audio_add_encoded(GmlAudio *a, const uint8_t *encoded, int len){
+static int audio_add_encoded_at(GmlAudio *a,const uint8_t *encoded,int len,int requested,
+                                const uint8_t expected_sha256[32]){
   if(!a || !encoded || len<=0) return -1;
   const uint8_t *pcm=NULL;
   uint32_t pcm_bytes=0;
   int channels=0;
   int sample_rate=0;
+  int bytes_per_second=0;
   int pcm_bits=0;
   enum { DYNAMIC_WAV, DYNAMIC_OGG, DYNAMIC_MP3 } kind;
   double length_seconds=0.0;
@@ -345,6 +396,7 @@ int gml_audio_add_encoded(GmlAudio *a, const uint8_t *encoded, int len){
         format=rd16(encoded,body);
         channels=(int)rd16(encoded,body+2);
         sample_rate=(int)rd32(encoded,body+4);
+        bytes_per_second=(int)rd32(encoded,body+8);
         block_align=rd16(encoded,body+12);
         bits=rd16(encoded,body+14);
       } else if(!memcmp(encoded+offset,"data",4) && !pcm){
@@ -390,42 +442,72 @@ int gml_audio_add_encoded(GmlAudio *a, const uint8_t *encoded, int len){
     return -1;
   }
 
-  int slot=audio_dynamic_slot(a);
-  if(slot<0) return -1;
+  uint8_t digest[32];
+  gml_sha256(encoded,(size_t)len,digest);
+  if(expected_sha256 && memcmp(digest,expected_sha256,sizeof(digest))) return -1;
+  int16_t *prepared_pcm=NULL;
+  uint8_t *prepared_encoded=NULL;
+  size_t sample_count=0;
+  if(kind==DYNAMIC_WAV){
+    sample_count=pcm_bytes/(size_t)(pcm_bits/8);
+    if(sample_count>SIZE_MAX/sizeof(*prepared_pcm)) return -1;
+    prepared_pcm=(int16_t*)malloc(sample_count*sizeof(*prepared_pcm));
+    if(!prepared_pcm) return -1;
+    if(pcm_bits==16) memcpy(prepared_pcm,pcm,sample_count*sizeof(*prepared_pcm));
+    else for(size_t index=0;index<sample_count;index++)
+      prepared_pcm[index]=(int16_t)(((int)pcm[index]-128)*256);
+  } else {
+    prepared_encoded=(uint8_t*)malloc((size_t)len);
+    if(!prepared_encoded) return -1;
+    memcpy(prepared_encoded,encoded,(size_t)len);
+  }
+  int slot=audio_dynamic_slot_at(a,requested);
+  if(slot<0){ free(prepared_pcm); free(prepared_encoded); return -1; }
   GmlSound *sound=&a->snd[slot];
   sound->channels=channels;
   sound->sample_rate=sample_rate;
   sound->length_seconds=isfinite(length_seconds) && length_seconds>=0.0
     ? length_seconds : 0.0;
+  if(bytes_per_second<=0 && sound->length_seconds>0.0){
+    double estimated=(double)len/sound->length_seconds;
+    if(isfinite(estimated) && estimated>0.0)
+      bytes_per_second=estimated>(double)INT_MAX?INT_MAX:(int)llround(estimated);
+  }
+  sound->bytes_per_second=bytes_per_second;
   sound->length_known=1;
+  memcpy(sound->content_sha256,digest,sizeof(digest));
+  sound->content_hash_known=1;
   if(kind==DYNAMIC_WAV){
-    size_t sample_count=pcm_bytes/(size_t)(pcm_bits/8);
-    if(sample_count>SIZE_MAX/sizeof(int16_t)){
-      memset(sound,0,sizeof(*sound));
-      return -1;
-    }
-    int16_t *owned=malloc(sample_count*sizeof(*owned));
-    if(!owned){ memset(sound,0,sizeof(*sound)); return -1; }
-    if(pcm_bits==16) memcpy(owned,pcm,sample_count*sizeof(*owned));
-    else for(size_t index=0;index<sample_count;index++)
-      owned[index]=(int16_t)(((int)pcm[index]-128)*256);
-    sound->pcm=owned;
-    sound->own=owned;
+    sound->pcm=prepared_pcm;
+    sound->own=prepared_pcm;
     sound->nval=(uint32_t)sample_count;
   } else {
-    uint8_t *owned=malloc((size_t)len);
-    if(!owned){ memset(sound,0,sizeof(*sound)); return -1; }
-    memcpy(owned,encoded,(size_t)len);
-    sound->encoded_own=owned;
+    sound->encoded_own=prepared_encoded;
     if(kind==DYNAMIC_OGG){
-      sound->ogg=owned;
+      sound->ogg=prepared_encoded;
       sound->ogg_len=(uint32_t)len;
     } else {
-      sound->mp3=owned;
+      sound->mp3=prepared_encoded;
       sound->mp3_len=(uint32_t)len;
     }
   }
   return slot;
+}
+
+int gml_audio_add_encoded(GmlAudio *a,const uint8_t *encoded,int len){
+  return audio_add_encoded_at(a,encoded,len,-1,NULL);
+}
+
+int gml_audio_restore_encoded(GmlAudio *a,int handle,const uint8_t *encoded,int len,
+                              const uint8_t expected_sha256[32]){
+  return audio_add_encoded_at(a,encoded,len,handle,expected_sha256)==handle;
+}
+
+int gml_audio_sound_content_hash(GmlAudio *a,int handle,uint8_t digest[32]){
+  if(!a || !digest || handle<a->n_base_snd || handle>=a->n_snd ||
+     !a->snd[handle].content_hash_known) return 0;
+  memcpy(digest,a->snd[handle].content_sha256,32);
+  return 1;
 }
 
 void gml_audio_caster_free(GmlAudio *a, int handle){
@@ -726,6 +808,19 @@ double gml_audio_sound_length(GmlAudio *a, int sound){
   if(audio_setting(a,"GML_LOG_AUDIO"))
     anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[audio] sound_length id=%d seconds=%.6f\n",sound,seconds);
   return seconds;
+}
+int gml_audio_sound_format(GmlAudio *a,int sound,int *channels,
+                           int *sample_rate,int *bytes_per_second){
+  if(channels) *channels=0;
+  if(sample_rate) *sample_rate=0;
+  if(bytes_per_second) *bytes_per_second=0;
+  if(!a || sound<0 || sound>=a->n_snd || !gml_audio_exists(a,sound)) return 0;
+  GmlSound *entry=&a->snd[sound];
+  if(channels) *channels=entry->channels>0?entry->channels:0;
+  if(sample_rate) *sample_rate=entry->sample_rate>0?entry->sample_rate:0;
+  if(bytes_per_second)
+    *bytes_per_second=entry->bytes_per_second>0?entry->bytes_per_second:0;
+  return 1;
 }
 void gml_audio_sound_set_track_position(GmlAudio *a, int target, double seconds){
   if(!a) return;

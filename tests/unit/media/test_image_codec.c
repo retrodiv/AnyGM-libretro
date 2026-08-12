@@ -82,6 +82,35 @@ int main(void){
   gml_media_buffer_release(&decoded);
 
   GmlMediaBuffer inflated={0};
+  GmlMediaBuffer compressed={0},compressed_again={0};
+  ok&=expect(gml_deflate_encode_zlib(plain,sizeof(plain)-1,&compressed),
+             "zlib deflate");
+  ok&=expect(gml_deflate_encode_zlib(plain,sizeof(plain)-1,&compressed_again),
+             "repeat zlib deflate");
+  ok&=expect(compressed.size==compressed_again.size &&
+             !memcmp(compressed.data,compressed_again.data,compressed.size),
+             "deterministic zlib bytes");
+  ok&=expect(compressed.size==34 &&
+             fnv64(compressed.data,compressed.size)==UINT64_C(0x8f2552ae81a379fd),
+             "pinned zlib encoder output");
+  ok&=expect(gml_deflate_decode(compressed.data,compressed.size,
+                                GML_DEFLATE_ZLIB,&inflated),"encoded zlib inflate");
+  ok&=expect(inflated.size==sizeof(plain)-1 &&
+             !memcmp(inflated.data,plain,sizeof(plain)-1),"encoded zlib bytes");
+  gml_media_buffer_release(&inflated);
+  gml_media_buffer_release(&compressed_again);
+  gml_media_buffer_release(&compressed);
+
+  ok&=expect(gml_deflate_encode_zlib(NULL,0,&compressed),"empty zlib deflate");
+  ok&=expect(compressed.size==11 &&
+             !memcmp(compressed.data,"\x78\x01\x01\x00\x00\xff\xff\x00\x00\x00\x01",11),
+             "canonical empty zlib bytes");
+  ok&=expect(gml_deflate_decode(compressed.data,compressed.size,
+                                GML_DEFLATE_ZLIB,&inflated) && inflated.size==0,
+             "empty zlib inflate");
+  gml_media_buffer_release(&inflated);
+  gml_media_buffer_release(&compressed);
+
   ok&=expect(gml_deflate_decode(zlib_stream,sizeof(zlib_stream),
                                 GML_DEFLATE_ZLIB,&inflated),"zlib inflate");
   ok&=expect(inflated.size==sizeof(plain)-1 &&

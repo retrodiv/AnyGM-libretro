@@ -70,6 +70,20 @@ static int reader_skip(ClassicReader *r, size_t count, const char *what){
   return 1;
 }
 
+static int reader_data_copy(ClassicReader *r,size_t count,uint8_t **out,const char *what){
+  *out=NULL;
+  if(r->pos>r->size || count>r->size-r->pos) return reader_fail(r,what);
+  uint8_t *copy=(uint8_t*)malloc(count?count:1u);
+  if(!copy){
+    if(r->err && r->errcap)
+      snprintf(r->err,r->errcap,"classic project: out of memory reading %s",what);
+    return 0;
+  }
+  if(count) memcpy(copy,r->data+r->pos,count);
+  r->pos+=count; *out=copy;
+  return 1;
+}
+
 static int reader_string(ClassicReader *r, const char *what){
   uint32_t length;
   return reader_u32(r, &length, what) && reader_skip(r, length, what);
@@ -250,7 +264,8 @@ static int read_settings_prefix(ClassicReader *r, GmlcClassicSettings *out){
   out->resolution=(int)field[10];
   out->frequency=(int)field[11];
   out->hide_caption_buttons=(int)field[12];
-  out->synchronize=(int)field[13];
+  out->synchronize=(field[13]&1u)!=0;
+  out->force_software_vertex_processing=(field[13]&UINT32_C(0x80000000))!=0;
   return 1;
 }
 
@@ -270,10 +285,10 @@ static int read_settings_53_prefix(ClassicReader *r, GmlcClassicSettings *out){
   return 1;
 }
 
-/* The optional tail grew after the original GM8 settings prefix. Read only the
- * creation-order flag needed by the runtime and leave truncated/older tails at
- * their historical default. Length-prefixed images are skipped without
- * inflating them. */
+/* The executable settings tail is shorter than the editor-project tail: it has
+ * no icon or author/version metadata, and a custom loading image has only one
+ * presence flag. Keep this parser separate so ordinary project metadata can
+ * never be mistaken for the executable-only creation-order flag. */
 static int settings_tail_u32(ClassicReader *r, uint32_t *out){
   if(!r || r->pos>r->size || r->size-r->pos<4) return 0;
   const uint8_t *p=r->data+r->pos;
@@ -286,36 +301,74 @@ static int settings_tail_skip_bytes(ClassicReader *r, uint32_t size){
   r->pos+=size;
   return 1;
 }
-static int settings_tail_skip_data(ClassicReader *r){
+static int settings_tail_data(ClassicReader *r,GmlcClassicBlob *out,int compressed){
   uint32_t present=0,size=0;
-  if(!settings_tail_u32(r,&present)) return 0;
+  if(!settings_tail_u32(r,&present) || present>1u) return 0;
   if(!present) return 1;
-  return settings_tail_u32(r,&size) && settings_tail_skip_bytes(r,size);
+  if(!settings_tail_u32(r,&size) || size>r->size-r->pos) return 0;
+  if(out){
+    if(compressed){
+      int decoded_size=0;
+      char *decoded=size<=INT_MAX?classic_inflate_owned(r->data+r->pos,size,
+        GML_DEFLATE_ZLIB,&decoded_size):NULL;
+      if(!decoded || decoded_size<0){ free(decoded); return 0; }
+      out->data=(uint8_t*)decoded; out->size=(size_t)decoded_size;
+    } else {
+      out->data=(uint8_t*)malloc(size?size:1u);
+      if(!out->data) return 0;
+      if(size) memcpy(out->data,r->data+r->pos,size);
+      out->size=size;
+    }
+  }
+  r->pos+=size; return 1;
 }
-static void read_settings_tail(ClassicReader *r, GmlcClassicSettings *out){
+
+static int read_settings_tail(ClassicReader *r,int executable_layout,
+                              GmlcClassicSettings *out,GmlcClassicManifest *manifest){
   ClassicReader q=*r;
-  uint32_t field=0,loading_bar=0;
+  uint32_t field[9]={0};
   /* screensaver, F4, F1, Escape, F5/F6, F9, close-as-Escape,
    * priority and freeze-on-focus-loss */
-  for(int i=0;i<9;i++) if(!settings_tail_u32(&q,&field)) return;
-  if(!settings_tail_u32(&q,&loading_bar)) return;
-  if(loading_bar==2 && (!settings_tail_skip_data(&q) || !settings_tail_skip_data(&q))) return;
-  /* Custom loading image has an outer enable followed by the ordinary data flag. */
-  if(!settings_tail_u32(&q,&field)) return;
-  if(field && !settings_tail_skip_data(&q)) return;
+  for(int i=0;i<9;i++) if(!settings_tail_u32(&q,&field[i])) return 0;
+  out->disable_screensaver=field[0]!=0; out->f4_fullscreen=field[1]!=0;
+  out->f1_help=field[2]!=0; out->escape_ends_game=field[3]!=0;
+  out->f5_save_f6_load=field[4]!=0; out->f9_screenshot=field[5]!=0;
+  out->close_as_escape=field[6]!=0; out->priority=field[7];
+  out->freeze_on_focus_loss=field[8]!=0;
+  if(!settings_tail_u32(&q,&out->loading_bar) || out->loading_bar>2u) return 0;
+  if((executable_layout?out->loading_bar!=0:out->loading_bar==2) &&
+     (!settings_tail_data(&q,manifest?&manifest->loading_bar_background:NULL,
+                          !executable_layout) ||
+      !settings_tail_data(&q,manifest?&manifest->loading_bar_foreground:NULL,
+                          !executable_layout))) return 0;
+  if(executable_layout){
+    if(!settings_tail_data(&q,manifest?&manifest->loading_image:NULL,0)) return 0;
+  } else {
+    uint32_t enabled=0;
+    if(!settings_tail_u32(&q,&enabled) || enabled>1u) return 0;
+    if(enabled && !settings_tail_data(&q,manifest?&manifest->loading_image:NULL,1)) return 0;
+  }
   /* transparency, translucency, scale-progress */
-  for(int i=0;i<3;i++) if(!settings_tail_u32(&q,&field)) return;
-  /* raw icon */
-  if(!settings_tail_u32(&q,&field) || !settings_tail_skip_bytes(&q,field)) return;
+  if(!settings_tail_u32(&q,&field[0]) || !settings_tail_u32(&q,&field[1]) ||
+     !settings_tail_u32(&q,&field[2])) return 0;
+  out->loading_transparent=field[0]!=0; out->loading_alpha=field[1];
+  out->scale_progress_bar=field[2]!=0;
+  if(!executable_layout &&
+     (!settings_tail_u32(&q,&field[0]) || !settings_tail_skip_bytes(&q,field[0]))) return 0;
   /* show/log/abort errors and uninitialized-variable policy */
-  for(int i=0;i<4;i++) if(!settings_tail_u32(&q,&field)) return;
-  /* Later writers append WebGL and then the Create-vs-instance-code order. */
-  if(!settings_tail_u32(&q,&field)) return;
-  if(settings_tail_u32(&q,&field)) out->swap_creation_events=field!=0;
+  for(int i=0;i<4;i++) if(!settings_tail_u32(&q,&field[i])) return 0;
+  out->show_errors=field[0]!=0; out->log_errors=field[1]!=0;
+  out->abort_errors=field[2]!=0; out->uninitialized_as_zero=(field[3]&1u)!=0;
+  out->error_on_uninitialized_arguments=(field[3]&2u)!=0;
+  if(executable_layout && settings_tail_u32(&q,&field[0]) &&
+     settings_tail_u32(&q,&field[1])) out->swap_creation_events=field[1]!=0;
+  return 1;
 }
 
 static int read_compressed_settings(const uint8_t *compressed, uint32_t compressed_size,
-                                    GmlcClassicSettings *out, char *err, size_t errcap){
+                                    int executable_layout,GmlcClassicSettings *out,
+                                    GmlcClassicManifest *manifest,
+                                    char *err, size_t errcap){
   if(!compressed_size) return 1;
   if(compressed_size>INT_MAX){
     if(err&&errcap) snprintf(err,errcap,"classic project: compressed settings are too large");
@@ -331,7 +384,7 @@ static int read_compressed_settings(const uint8_t *compressed, uint32_t compress
   }
   ClassicReader settings={(const uint8_t*)raw,(size_t)raw_size,0,err,errcap};
   int ok=read_settings_prefix(&settings,out);
-  if(ok) read_settings_tail(&settings,out);
+  if(ok) ok=read_settings_tail(&settings,executable_layout,out,manifest);
   free(raw);
   return ok;
 }
@@ -806,7 +859,7 @@ static int read_file(const AnygmHostServices *host,const char *path,
   *size = 0;
   uint8_t *bytes=NULL;
   size_t got=0;
-  if(!anygm_vfs_read_all(host,path,&bytes,&got,512u*1024u*1024u)){
+  if(!anygm_vfs_read_all(host,path,&bytes,&got,(size_t)GMLC_CLASSIC_FILE_LIMIT)){
     if(err && errcap) snprintf(err, errcap, "classic project: cannot read %s", path);
     return 0;
   }
@@ -878,6 +931,33 @@ static int skip_legacy_image(ClassicReader *r, const char *what){
   return marker == UINT32_MAX || reader_blob(r, what);
 }
 
+static char *classic_text_copy(const char *source);
+
+static int read_legacy_image(ClassicReader *r,GmlcClassicBlob *out,const char *what){
+  uint32_t marker=0,size=0;
+  if(!reader_u32(r,&marker,what)) return 0;
+  if(marker==UINT32_MAX) return 1;
+  if(!reader_u32(r,&size,what) || size>r->size-r->pos || size>INT_MAX) return 0;
+  if(out){
+    int decoded_size=0;
+    char *decoded=classic_inflate_owned(r->data+r->pos,size,GML_DEFLATE_ZLIB,&decoded_size);
+    if(!decoded || decoded_size<0){ free(decoded); return reader_fail(r,what); }
+    out->data=(uint8_t*)decoded; out->size=(size_t)decoded_size;
+  }
+  r->pos+=size; return 1;
+}
+
+static int read_legacy_settings_tail(ClassicReader *r,int gm7,GmlcClassicSettings *settings){
+  uint32_t fields[8]={0}; unsigned count=gm7?8u:6u;
+  for(unsigned i=0;i<count;i++) if(!reader_u32(r,&fields[i],"legacy game settings")) return 0;
+  settings->f4_fullscreen=fields[0]!=0; settings->f1_help=fields[1]!=0;
+  settings->escape_ends_game=fields[2]!=0; settings->f5_save_f6_load=fields[3]!=0;
+  unsigned tail=4;
+  if(gm7){ settings->f9_screenshot=fields[4]!=0; settings->close_as_escape=fields[5]!=0; tail=6; }
+  settings->priority=fields[tail]; settings->freeze_on_focus_loss=fields[tail+1]!=0;
+  return 1;
+}
+
 static int skip_legacy_settings(ClassicReader *r, uint32_t container_version,
                                 uint32_t *settings_version, GmlcClassicSettings *settings,
                                 uint32_t *constant_count, GmlcClassicManifest *manifest){
@@ -885,18 +965,31 @@ static int skip_legacy_settings(ClassicReader *r, uint32_t container_version,
   if(!reader_u32(r, settings_version, "legacy settings version")) return 0;
   int gm53 = container_version == GMLC_CLASSIC_GM53;
   int gm7 = container_version == GMLC_CLASSIC_GM7 || container_version == GMLC_CLASSIC_GM7_ALT;
-  uint32_t fixed_before_loading = gm7 ? 22u : 20u;
   if((gm53 ? !read_settings_53_prefix(r,settings) :
              (!read_settings_prefix(r,settings) ||
-              !reader_words(r, fixed_before_loading-14u, "legacy game settings"))) ||
+              !read_legacy_settings_tail(r,gm7,settings))) ||
      !reader_u32(r, &loading_bar, "loading-bar mode")) return 0;
+  settings->loading_bar=loading_bar;
   if(loading_bar == 2 &&
-     (!skip_legacy_image(r, "loading-bar background") ||
-      !skip_legacy_image(r, "loading-bar foreground"))) return 0;
+     (!read_legacy_image(r,manifest?&manifest->loading_bar_background:NULL,
+                         "loading-bar background") ||
+      !read_legacy_image(r,manifest?&manifest->loading_bar_foreground:NULL,
+                         "loading-bar foreground"))) return 0;
   if(!reader_u32(r, &own_loading_image, "custom loading-image flag")) return 0;
-  if(own_loading_image && !skip_legacy_image(r, "custom loading image")) return 0;
-  if(!reader_words(r, 3, "loading-image settings") || !reader_blob(r, "game icon") ||
-     !reader_words(r, 4, "legacy error settings") || !reader_string(r, "game author")) return 0;
+  if(own_loading_image &&
+     !read_legacy_image(r,manifest?&manifest->loading_image:NULL,"custom loading image")) return 0;
+  uint32_t transparent=0,alpha=0,scale=0,show=0,log=0,abort=0,uninitialized=0;
+  if(!reader_u32(r,&transparent,"loading-image transparency") ||
+     !reader_u32(r,&alpha,"loading-image alpha") ||
+     !reader_u32(r,&scale,"loading-image scaling") || !reader_blob(r, "game icon") ||
+     !reader_u32(r,&show,"display errors") || !reader_u32(r,&log,"log errors") ||
+     !reader_u32(r,&abort,"abort errors") || !reader_u32(r,&uninitialized,"uninitialized variables") ||
+     !reader_string(r, "game author")) return 0;
+  settings->loading_transparent=transparent!=0; settings->loading_alpha=alpha;
+  settings->scale_progress_bar=scale!=0; settings->show_errors=show!=0;
+  settings->log_errors=log!=0; settings->abort_errors=abort!=0;
+  settings->uninitialized_as_zero=(uninitialized&1u)!=0;
+  settings->error_on_uninitialized_arguments=(uninitialized&2u)!=0;
   if(gm7){
     if(!reader_string(r, "game version")) return 0;
   } else if(!reader_words(r, 1, "numeric game version")) return 0;
@@ -923,8 +1016,26 @@ static int skip_legacy_settings(ClassicReader *r, uint32_t container_version,
     uint32_t includes;
     if(!reader_u32(r, &includes, "legacy include count")) return 0;
     if(includes > (r->size - r->pos) / 4) return reader_fail(r, "legacy includes");
-    for(uint32_t i = 0; i < includes; ++i)
-      if(!reader_string(r, "legacy include filename")) return 0;
+    if(manifest && includes){
+      manifest->included_files=(GmlcClassicIncludedFile*)calloc(includes,
+        sizeof(*manifest->included_files));
+      if(!manifest->included_files) return reader_fail(r,"legacy includes allocation");
+      manifest->included_file_count=includes;
+    }
+    for(uint32_t i = 0; i < includes; ++i){
+      if(manifest){
+        GmlcClassicIncludedFile *include=&manifest->included_files[i];
+        if(!reader_string_copy(r,&include->source_path,"legacy include filename")) return 0;
+        const char *leaf=include->source_path;
+        for(const char *p=leaf;*p;p++) if(*p=='/' || *p=='\\') leaf=p+1;
+        include->file_name=classic_text_copy(leaf);
+        include->custom_folder=classic_text_copy("");
+        include->data_exists=1; include->stored_in_project=0;
+        include->export_mode=2; include->overwrite_file=1;
+        if(!include->file_name || !include->custom_folder)
+          return reader_fail(r,"legacy include metadata allocation");
+      } else if(!reader_string(r, "legacy include filename")) return 0;
+    }
     if(!reader_words(r, 3, "legacy include settings")) return 0;
   }
   return 1;
@@ -1405,7 +1516,7 @@ int gmlc_classic_inventory(const void *data, size_t size,
   if(!reader_u32(&r, &out->settings_version, "settings version") ||
      !reader_u32(&r, &compressed_length, "compressed settings length")) return 0;
   if(r.pos>r.size || compressed_length>r.size-r.pos) return reader_fail(&r,"compressed settings");
-  if(!read_compressed_settings(r.data+r.pos,compressed_length,&out->settings,err,errcap) ||
+  if(!read_compressed_settings(r.data+r.pos,compressed_length,0,&out->settings,NULL,err,errcap) ||
      !reader_skip(&r, compressed_length, "compressed settings")) return 0;
 
   if(!reader_u32(&r, &section_version, "trigger section version") ||
@@ -1601,7 +1712,29 @@ void gmlc_classic_manifest_free(GmlcClassicManifest *manifest){
   free(manifest->included_files);
   for(uint32_t i=0;i<manifest->extension_count;i++) free(manifest->extension_names[i]);
   free(manifest->extension_names);
+  for(uint32_t i=0;i<manifest->extension_detail_count;i++){
+    GmlcClassicExtension *extension=&manifest->extensions[i];
+    free(extension->name); free(extension->folder); free(extension->data);
+    for(uint32_t file_index=0;file_index<extension->file_count;file_index++){
+      GmlcClassicExtensionFile *file=&extension->files[file_index];
+      free(file->name); free(file->initializer); free(file->finalizer);
+      for(uint32_t function=0;function<file->function_count;function++){
+        free(file->functions[function].name);
+        free(file->functions[function].external_name);
+      }
+      free(file->functions);
+      for(uint32_t constant=0;constant<file->constant_count;constant++){
+        free(file->constants[constant].name); free(file->constants[constant].value);
+      }
+      free(file->constants);
+    }
+    free(extension->files);
+  }
+  free(manifest->extensions);
   free(manifest->game_information.data);
+  free(manifest->loading_bar_background.data);
+  free(manifest->loading_bar_foreground.data);
+  free(manifest->loading_image.data);
   for(uint32_t i=0;i<manifest->library_creation_code_count;i++) free(manifest->library_creation_code[i]);
   free(manifest->library_creation_code);
   free(manifest->room_order);
@@ -1615,6 +1748,9 @@ static int parse_modern_metadata(const void *data, size_t size,
   uint32_t version,count,compressed_length;
   if(!reader_u32(&r,&version,"settings version") ||
      !reader_u32(&r,&compressed_length,"compressed settings length") ||
+     r.pos>r.size || compressed_length>r.size-r.pos ||
+     !read_compressed_settings(r.data+r.pos,compressed_length,0,
+       &manifest->inventory.settings,manifest,err,errcap) ||
      !reader_skip(&r,compressed_length,"compressed settings") ||
      !reader_u32(&r,&version,"trigger section version") || version<800 ||
      !reader_u32(&r,&count,"trigger count") || count!=manifest->inventory.trigger_slots)
@@ -1719,57 +1855,104 @@ static int manifest_append_library_code(GmlcClassicManifest *manifest, char *sou
   return 1;
 }
 
+static char *classic_text_copy(const char *source){
+  size_t size=source?strlen(source):0;
+  char *copy=(char*)malloc(size+1u);
+  if(!copy) return NULL;
+  if(size) memcpy(copy,source,size);
+  copy[size]='\0';
+  return copy;
+}
+
 static int parse_executable_extensions(ClassicReader *r, GmlcClassicManifest *out,
                                        uint32_t count){
   if(count){
     out->extension_names=(char**)calloc(count,sizeof(*out->extension_names));
-    if(!out->extension_names) return reader_fail(r,"executable extension allocation");
+    out->extensions=(GmlcClassicExtension*)calloc(count,sizeof(*out->extensions));
+    if(!out->extension_names || !out->extensions)
+      return reader_fail(r,"executable extension allocation");
     out->extension_count=count;
+    out->extension_detail_count=count;
   }
   for(uint32_t extension=0;extension<count;extension++){
-    uint32_t version=0,file_count=0;
-    if(!reader_u32(r,&version,"executable extension version") || version<700 ||
-       !reader_string_copy(r,&out->extension_names[extension],"executable extension name") ||
-       !reader_string(r,"executable extension folder") ||
+    GmlcClassicExtension *detail=&out->extensions[extension];
+    uint32_t file_count=0;
+    if(!reader_u32(r,&detail->version,"executable extension version") ||
+       detail->version<700 ||
+       !reader_string_copy(r,&detail->name,"executable extension name") ||
+       !reader_string_copy(r,&detail->folder,"executable extension folder") ||
        !reader_u32(r,&file_count,"executable extension file count")) return 0;
+    out->extension_names[extension]=classic_text_copy(detail->name);
+    if(!out->extension_names[extension]) return reader_fail(r,"executable extension name allocation");
     if(file_count>(r->size-r->pos)/20) return reader_fail(r,"executable extension files");
+    detail->file_count=file_count;
+    if(file_count){
+      detail->files=(GmlcClassicExtensionFile*)calloc(file_count,sizeof(*detail->files));
+      if(!detail->files) return reader_fail(r,"executable extension-file allocation");
+    }
     for(uint32_t file=0;file<file_count;file++){
-      uint32_t kind=0,function_count=0,constant_count=0;
-      char *initializer=NULL,*finalizer=NULL;
-      if(!reader_u32(r,&version,"executable extension-file version") || version<700 ||
-         !reader_string(r,"executable extension-file name") ||
-         !reader_u32(r,&kind,"executable extension-file kind") ||
-         !reader_string_copy(r,&initializer,"executable extension initializer") ||
-         !reader_string_copy(r,&finalizer,"executable extension finalizer") ||
-         !reader_u32(r,&function_count,"executable extension function count")){
-        free(initializer); free(finalizer); return 0;
+      GmlcClassicExtensionFile *file_detail=&detail->files[file];
+      uint32_t function_count=0,constant_count=0;
+      if(!reader_u32(r,&file_detail->version,"executable extension-file version") ||
+         file_detail->version<700 ||
+         !reader_string_copy(r,&file_detail->name,"executable extension-file name") ||
+         !reader_u32(r,&file_detail->kind,"executable extension-file kind") ||
+         !reader_string_copy(r,&file_detail->initializer,"executable extension initializer") ||
+         !reader_string_copy(r,&file_detail->finalizer,"executable extension finalizer") ||
+         !reader_u32(r,&function_count,"executable extension function count")) return 0;
+      if(file_detail->initializer && *file_detail->initializer){
+        char *initializer=classic_text_copy(file_detail->initializer);
+        if(!initializer || !manifest_append_library_code(out,initializer)){
+          free(initializer); return reader_fail(r,"executable extension initializer allocation");
+        }
       }
-      if(initializer && *initializer){
-        if(!manifest_append_library_code(out,initializer)){ free(initializer); free(finalizer); return 0; }
-      } else free(initializer);
-      free(finalizer);
-      (void)kind;
       if(function_count>(r->size-r->pos)/96) return reader_fail(r,"executable extension functions");
-      for(uint32_t function=0;function<function_count;function++)
-        if(!reader_u32(r,&version,"executable extension-function version") || version<700 ||
-           !reader_string(r,"executable extension-function name") ||
-           !reader_string(r,"executable extension-function external name") ||
-           !reader_words(r,21,"executable extension-function signature")) return 0;
+      file_detail->function_count=function_count;
+      if(function_count){
+        file_detail->functions=(GmlcClassicExtensionFunction*)calloc(
+          function_count,sizeof(*file_detail->functions));
+        if(!file_detail->functions)
+          return reader_fail(r,"executable extension-function allocation");
+      }
+      for(uint32_t function=0;function<function_count;function++){
+        GmlcClassicExtensionFunction *function_detail=&file_detail->functions[function];
+        if(!reader_u32(r,&function_detail->version,"executable extension-function version") ||
+           function_detail->version<700 ||
+           !reader_string_copy(r,&function_detail->name,"executable extension-function name") ||
+           !reader_string_copy(r,&function_detail->external_name,
+                               "executable extension-function external name")) return 0;
+        for(size_t word=0;word<GMLC_CLASSIC_EXTENSION_FUNCTION_WORDS;word++)
+          if(!reader_u32(r,&function_detail->signature[word],
+                         "executable extension-function signature")) return 0;
+      }
       if(!reader_u32(r,&constant_count,"executable extension constant count")) return 0;
       if(constant_count>(r->size-r->pos)/12) return reader_fail(r,"executable extension constants");
+      file_detail->constant_count=constant_count;
+      if(constant_count){
+        file_detail->constants=(GmlcClassicExtensionConstant*)calloc(
+          constant_count,sizeof(*file_detail->constants));
+        if(!file_detail->constants)
+          return reader_fail(r,"executable extension-constant allocation");
+      }
       for(uint32_t constant=0;constant<constant_count;constant++){
-        char *name=NULL,*value=NULL;
-        if(!reader_u32(r,&version,"executable extension-constant version") || version<700 ||
-           !reader_string_copy(r,&name,"executable extension-constant name") ||
-           !reader_string_copy(r,&value,"executable extension-constant value") ||
-           !manifest_append_constant(out,name,value)){
-          free(name); free(value); return 0;
+        GmlcClassicExtensionConstant *constant_detail=&file_detail->constants[constant];
+        if(!reader_u32(r,&constant_detail->version,"executable extension-constant version") ||
+           constant_detail->version<700 ||
+           !reader_string_copy(r,&constant_detail->name,"executable extension-constant name") ||
+           !reader_string_copy(r,&constant_detail->value,"executable extension-constant value"))
+          return 0;
+        char *name=classic_text_copy(constant_detail->name);
+        char *value=classic_text_copy(constant_detail->value);
+        if(!name || !value || !manifest_append_constant(out,name,value)){
+          free(name); free(value);
+          return reader_fail(r,"executable extension-constant allocation");
         }
       }
     }
     uint32_t encrypted_size=0;
     if(!reader_u32(r,&encrypted_size,"executable extension data length") || encrypted_size<4 ||
-       !reader_skip(r,encrypted_size,"executable extension data")) return 0;
+       !reader_data_copy(r,encrypted_size,&detail->data,"executable extension data")) return 0;
+    detail->data_size=encrypted_size;
   }
   return 1;
 }
@@ -1948,6 +2131,10 @@ static int parse_legacy_executable_manifest(const uint8_t *file,size_t size,size
     if(err && errcap) snprintf(err,errcap,"classic executable: legacy data block not found");
     return 0;
   }
+  if(settings_reader.pos<=compressed_pos-4u &&
+     compressed_pos-4u-settings_reader.pos>=8u*4u){
+    (void)read_legacy_settings_tail(&settings_reader,1,&settings);
+  }
   int envelope_size=0;
   char *envelope=classic_inflate_owned(file+compressed_pos,compressed_size,
                                        GML_DEFLATE_ZLIB,&envelope_size);
@@ -2077,6 +2264,270 @@ static int parse_executable_data(const uint8_t *data, size_t size,
 }
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* Returns zero without a diagnostic when the marker is absent, so the caller keeps its own. */
+
+
+
+
+
+static int read_gm6_executable_settings(const uint8_t *data,size_t size,
+                                        uint32_t *settings_version,
+                                        GmlcClassicSettings *settings,
+                                        size_t *resource_offset,
+                                        GmlcClassicManifest *manifest,
+                                        char *err,size_t errcap){
+  ClassicReader r={data,size,24u,err,errcap};
+  uint32_t loading_images=0,constants=0;
+  if(size<24u || !reader_u32(&r,settings_version,"Game Maker 6 executable settings version") ||
+     *settings_version!=GMLC_CLASSIC_GM6) return 0;
+  if(!read_settings_prefix(&r,settings) || !read_legacy_settings_tail(&r,0,settings) ||
+     !reader_u32(&r,&loading_images,"Game Maker 6 loading-image mode") ||
+     loading_images>1u) return 0;
+  settings->loading_bar=loading_images?2u:0u;
+  if(loading_images &&
+     (!settings_tail_data(&r,&manifest->loading_bar_background,0) ||
+      !settings_tail_data(&r,&manifest->loading_bar_foreground,0))) return 0;
+  if(!settings_tail_data(&r,&manifest->loading_image,0)) return 0;
+  uint32_t transparent=0,alpha=0,scale=0,show=0,log=0,abort=0,uninitialized=0;
+  if(!reader_u32(&r,&transparent,"Game Maker 6 loading transparency") ||
+     !reader_u32(&r,&alpha,"Game Maker 6 loading alpha") ||
+     !reader_u32(&r,&scale,"Game Maker 6 loading scaling") ||
+     !reader_u32(&r,&show,"Game Maker 6 display errors") ||
+     !reader_u32(&r,&log,"Game Maker 6 log errors") ||
+     !reader_u32(&r,&abort,"Game Maker 6 abort errors") ||
+     !reader_u32(&r,&uninitialized,"Game Maker 6 uninitialized variables") ||
+     !reader_u32(&r,&constants,"Game Maker 6 executable constant count") ||
+     constants>(r.size-r.pos)/8u) return 0;
+  settings->loading_transparent=transparent!=0; settings->loading_alpha=alpha;
+  settings->scale_progress_bar=scale!=0; settings->show_errors=show!=0;
+  settings->log_errors=log!=0; settings->abort_errors=abort!=0;
+  settings->uninitialized_as_zero=(uninitialized&1u)!=0;
+  if(constants){
+    manifest->constant_defs=(GmlcClassicConstant*)calloc(constants,sizeof(*manifest->constant_defs));
+    if(!manifest->constant_defs) return reader_fail(&r,"Game Maker 6 executable constants");
+    manifest->constant_def_count=constants;
+  }
+  for(uint32_t i=0;i<constants;i++)
+    if(!reader_string_copy(&r,&manifest->constant_defs[i].name,
+                           "Game Maker 6 executable constant name") ||
+       !reader_string_copy(&r,&manifest->constant_defs[i].value,
+                           "Game Maker 6 executable constant value")) return 0;
+  *resource_offset=r.pos;
+  return 1;
+}
+
+
+
+static int parse_gm6_executable_at(const uint8_t *file,size_t size,size_t payload,
+                                   GmlcClassicManifest *out,char *err,size_t errcap){
+  if(payload>size || size-payload<24u) return 0;
+  ClassicReader outer={file,size,payload+8u,err,errcap};
+  if(!reader_words(&outer,3u,"classic revision 600 archive header")) return 0;
+  GmlcClassicManifest extras={0}; int ready_found=0;
+  for(uint32_t entry=0;entry<1024u && outer.pos<outer.size;entry++){
+    char *name=NULL;
+    uint32_t compressed_size=0;
+    if(!reader_string_copy(&outer,&name,"classic revision 600 archive entry name") ||
+       !reader_u32(&outer,&compressed_size,"classic revision 600 archive entry length") ||
+       compressed_size>outer.size-outer.pos){
+      free(name); goto fail;
+    }
+    const uint8_t *compressed=outer.data+outer.pos;
+    outer.pos+=compressed_size;
+    int ready=name && strcmp(name,"READY")==0;
+    if(ready){
+      free(name);
+      if(ready_found++) goto fail;
+      int envelope_size=0;
+      char *envelope=compressed_size<=INT_MAX?
+        classic_inflate_owned(compressed,compressed_size,GML_DEFLATE_ZLIB,&envelope_size):NULL;
+      if(!envelope || envelope_size<0){ free(envelope); goto fail; }
+      uint8_t *decoded=NULL; size_t decoded_size=0;
+      int ok=decode_gm6_executable_envelope((const uint8_t*)envelope,(size_t)envelope_size,
+                                            &decoded,&decoded_size,err,errcap);
+      free(envelope);
+      if(!ok){ free(decoded); goto fail; }
+      uint32_t settings_version=0; size_t resource_offset=0;
+      GmlcClassicSettings settings={0};
+      const uint8_t *game=decoded+16u;
+      size_t game_size=decoded_size-16u;
+      ok=read_gm6_executable_settings(game,game_size,&settings_version,&settings,
+                                      &resource_offset,out,err,errcap);
+      if(ok) ok=parse_legacy_executable_data(game,game_size,GMLC_CLASSIC_GM6,
+                                             settings_version,&settings,resource_offset,
+                                             0,0,out,err,errcap);
+      free(decoded);
+      if(!ok) goto fail;
+      continue;
+    }
+    if(!name || !*name){ free(name); goto fail; }
+    int decoded_size=0;
+    char *decoded=compressed_size<=INT_MAX?
+      classic_inflate_owned(compressed,compressed_size,GML_DEFLATE_ZLIB,&decoded_size):NULL;
+    if(!decoded || decoded_size<0){ free(name); free(decoded); goto fail; }
+    /* An optional first member may be a support image. Identify it by the PE structure
+     * rather than a filename or fixed content identity. */
+    int support_image=0;
+    if(entry==0u && decoded_size>=68 && (uint8_t)decoded[0]=='M' && (uint8_t)decoded[1]=='Z'){
+      uint32_t pe_offset=read_u32le((const uint8_t*)decoded+60u);
+      support_image=pe_offset<=(uint32_t)decoded_size-4u &&
+        !memcmp(decoded+pe_offset,"PE\0\0",4u);
+    }
+    if(support_image){ free(name); free(decoded); continue; }
+    const char *leaf=name;
+    for(const char *at=name;*at;at++) if(*at=='/' || *at=='\\') leaf=at+1;
+    if(!*leaf){ free(name); free(decoded); goto fail; }
+    char *file_name=classic_text_copy(leaf);
+    char *source_path=classic_text_copy(leaf);
+    free(name);
+    if(!file_name || !source_path){ free(file_name); free(source_path); free(decoded); goto fail; }
+    uint32_t count=extras.included_file_count;
+    GmlcClassicIncludedFile *grown=(GmlcClassicIncludedFile*)realloc(extras.included_files,
+      (size_t)(count+1u)*sizeof(*grown));
+    if(!grown){ free(file_name); free(source_path); free(decoded); goto fail; }
+    extras.included_files=grown;
+    GmlcClassicIncludedFile *include=&grown[count]; memset(include,0,sizeof(*include));
+    extras.included_file_count=count+1u;
+    include->file_name=file_name; include->source_path=source_path;
+    include->custom_folder=classic_text_copy(""); include->data=(uint8_t*)decoded;
+    include->data_size=(size_t)decoded_size; include->source_length=(uint32_t)decoded_size;
+    include->export_mode=2; include->data_exists=1; include->stored_in_project=0;
+    include->overwrite_file=1;
+    if(!include->custom_folder) goto fail;
+  }
+  if(ready_found){
+    out->included_files=extras.included_files;
+    out->included_file_count=extras.included_file_count;
+    extras.included_files=NULL; extras.included_file_count=0;
+    return 1;
+  }
+  if(err && errcap) snprintf(err,errcap,"classic executable: Game Maker 6 READY block not found");
+fail:
+  gmlc_classic_manifest_free(&extras);
+  gmlc_classic_manifest_free(out);
+  return 0;
+}
+
+static int parse_gm6_executable_manifest(const uint8_t *file,size_t size,
+                                         GmlcClassicManifest *out,char *err,size_t errcap){
+  enum { GM6_CANDIDATE_LIMIT=64 };
+  GmlcClassicManifest found={0};
+  unsigned candidates=0,matches=0;
+  char last_error[256]={0};
+  for(size_t i=0;i+24u<=size;i++){
+    if(read_u32le(file+i)!=GMLC_CLASSIC_MAGIC || read_u32le(file+i+4u)!=GMLC_CLASSIC_GM6)
+      continue;
+    if(++candidates>GM6_CANDIDATE_LIMIT){
+      gmlc_classic_manifest_free(&found);
+      if(err && errcap)
+        snprintf(err,errcap,"classic executable: too many Game Maker 6 data candidates");
+      return 0;
+    }
+    GmlcClassicManifest candidate={0}; char candidate_err[256]={0};
+    if(parse_gm6_executable_at(file,size,i,&candidate,candidate_err,sizeof candidate_err)){
+      if(matches++){
+        gmlc_classic_manifest_free(&candidate);
+        gmlc_classic_manifest_free(&found);
+        if(err && errcap)
+          snprintf(err,errcap,"classic executable: ambiguous Game Maker 6 embedded data");
+        return 0;
+      }
+      found=candidate;
+    } else {
+      gmlc_classic_manifest_free(&candidate);
+      if(candidate_err[0]) snprintf(last_error,sizeof(last_error),"%s",candidate_err);
+    }
+  }
+  if(matches){ *out=found; return 1; }
+  if(candidates && err && errcap && !err[0])
+    snprintf(err,errcap,"%s",last_error[0]?last_error:
+             "classic executable: no valid Game Maker 6 embedded data");
+  return 0;
+}
+
+static int parse_executable_manifest(const uint8_t *file, size_t size,
+                                     GmlcClassicManifest *out, char *err, size_t errcap){
+  enum { PLAINTEXT_CANDIDATE_LIMIT=64 };
+  GmlcClassicManifest found={0};
+  unsigned matches=0,candidates=0;
+  char candidate_error[256]={0};
+  /* Compiled layouts may have a direct embedded header or an optional self-offset word.
+   * Match the complete header tuple instead of requiring the wrapper word. */
+  for(size_t i=0;i+20<size;i++){
+    uint32_t version=read_u32le(file+i+4), settings_version=read_u32le(file+i+12);
+    if(read_u32le(file+i)==GMLC_CLASSIC_MAGIC &&
+       (version==GMLC_CLASSIC_GM8 || version==GMLC_CLASSIC_GM81) &&
+       read_u32le(file+i+8)<=1u &&
+       (settings_version==GMLC_CLASSIC_GM8 || settings_version==GMLC_CLASSIC_GM81)){
+      GmlcClassicManifest candidate={0}; char local_error[256]={0};
+      if(++candidates>PLAINTEXT_CANDIDATE_LIMIT){
+        gmlc_classic_manifest_free(&found);
+        if(err && errcap)
+          snprintf(err,errcap,"classic executable: too many embedded-data candidates");
+        return 0;
+      }
+      if(parse_executable_stream(file,size,i+16u,version,settings_version,&candidate,
+                                 local_error,sizeof(local_error))){
+        if(matches++){
+          gmlc_classic_manifest_free(&candidate);
+          gmlc_classic_manifest_free(&found);
+          if(err && errcap) snprintf(err,errcap,"classic executable: ambiguous embedded data");
+          return 0;
+        }
+        found=candidate;
+      } else {
+        gmlc_classic_manifest_free(&candidate);
+        if(local_error[0]) snprintf(candidate_error,sizeof(candidate_error),"%s",local_error);
+      }
+    } else if(read_u32le(file+i)==GMLC_CLASSIC_MAGIC && version==700u &&
+              read_u32le(file+i+8)<=1u && settings_version>=700u && settings_version<=702u){
+      GmlcClassicManifest candidate={0}; char local_error[256]={0};
+      if(++candidates>PLAINTEXT_CANDIDATE_LIMIT){
+        gmlc_classic_manifest_free(&found);
+        if(err && errcap)
+          snprintf(err,errcap,"classic executable: too many embedded-data candidates");
+        return 0;
+      }
+      if(parse_legacy_executable_manifest(file,size,i,&candidate,
+                                          local_error,sizeof(local_error))){
+        if(matches++){
+          gmlc_classic_manifest_free(&candidate);
+          gmlc_classic_manifest_free(&found);
+          if(err && errcap) snprintf(err,errcap,"classic executable: ambiguous embedded data");
+          return 0;
+        }
+        found=candidate;
+      } else {
+        gmlc_classic_manifest_free(&candidate);
+        if(local_error[0]) snprintf(candidate_error,sizeof(candidate_error),"%s",local_error);
+      }
+    }
+  }
+  if(matches){ *out=found; return 1; }
+  if(parse_gm6_executable_manifest(file,size,out,err,errcap)) return 1;
+  if(parse_gm53_executable_manifest(file,size,out,err,errcap)) return 1;
+
+  if((0 /* Revision-selected adapter omitted from unpublished history. */)) return 1;
+  if(err && errcap && !err[0])
+    snprintf(err,errcap,"%s",candidates && candidate_error[0]?candidate_error:
+             "classic executable: embedded-data marker not found");
+  return 0;
+}
 
 int gmlc_classic_manifest(const void *data, size_t size,
                           GmlcClassicManifest *out, char *err, size_t errcap){

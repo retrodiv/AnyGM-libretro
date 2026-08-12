@@ -44,6 +44,8 @@ int expect_ds_priority_lookup_mutation(void);
 int expect_audio_group_paths(void);
 int expect_audio_group_gain(void);
 int expect_dynamic_audio_extension_state(void);
+int expect_saudio_portable_playback(void);
+int expect_generic_external_audio_restore(void);
 int expect_state_load_releases_later_dynamic_sounds(void);
 int expect_state_load_ignores_unmatched_dynamic_records(void);
 int expect_file_sandbox(GmlVM *vm,const char *save_dir);
