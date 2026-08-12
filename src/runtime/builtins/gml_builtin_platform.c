@@ -468,6 +468,27 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return handled?result:vreal(0);
   }
   if(!strcmp(nm,"external_free")) return vreal(0);
+  /* Optional desktop services have no process, window or network authority in the portable
+   * runtime. Their adapters report a stable unavailable/offline state instead of pretending to
+   * connect, launching a process, or falling through as an unresolved function. */
+  if(!strncmp(nm,"FOCAL_Network",13)){
+    if(strstr(nm,"MyName")||strstr(nm,"OpponentName")) return vstr("");
+    if(strstr(nm,"MyID")||strstr(nm,"OpponentID")||strstr(nm,"Player")) return vreal(-1);
+    return vreal(0);
+  }
+  if(!strncmp(nm,"FOCAL_Steam",11)) return vreal(0);
+  if(!strncmp(nm,"Discord_",8)||!strncmp(nm,"discord_",8)||
+     !strncmp(nm,"rousr",5)||!strncmp(nm,"NekoPresence",12)||
+     !strncmp(nm,"tsuspresence",12)) return vreal(0);
+  if(!strncmp(nm,"execute_shell_simple",20)||!strncmp(nm,"drago_",6)) return vreal(0);
+  if(!strncmp(nm,"file_drop",9))
+    return strstr(nm,"get")?vstr(""):vreal(0);
+  if(!strncmp(nm,"HumbleAPI_",10)) return vreal(0);
+  if(!strncmp(nm,"gmsched_",8)||!strncmp(nm,"scheduler_resolution_",21)) return vreal(0);
+  if(!strncmp(nm,"window_command_",15)||!strncmp(nm,"Borderless",10)||
+     !strncmp(nm,"borderless",10)||!strncmp(nm,"gamepad_force_focus",19)||
+     !strncmp(nm,"catch_error",11)||!strncmp(nm,"CleanMem",8)||
+     !strncmp(nm,"ram_",4)) return vreal(0);
   if(!strcmp(nm,"keyboard_virtual_show")||!strcmp(nm,"keyboard_virtual_hide")) return vreal(0);
   if(!strcmp(nm,"virtual_key_add")) return vreal(0);
   if(!strcmp(nm,"virtual_key_delete")) return vreal(0);

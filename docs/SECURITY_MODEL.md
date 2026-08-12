@@ -85,6 +85,12 @@ cap the dynamic sound table at 65,536 entries. Every restored handle is bound to
 computed from its original bytes; rehydration rejects a missing, oversized, malformed, or changed
 VFS asset.
 
+Portable Wwise parsing accepts at most 16 loaded banks, reads at most 256 MiB
+per bank, and caps both embedded-media and hierarchy-object tables at 65,536
+records. Every chunk, media slice, hierarchy object, and recursive event walk
+is bounded before use. Savestates retain only bank paths and SHA-256 identities;
+changed or missing banks reject restoration transactionally.
+
 Classic fidelity companions are untrusted inputs. Their fixed header, project
 generation, exact byte length, SHA-256, record counts, resource identities,
 compressed and expanded lengths, duplicates, and trailing bytes are validated
@@ -106,6 +112,12 @@ Writable content files are confined below the explicit save root in
 `anygm/<sanitized-label>-<path-hash>/`. The human-readable label contains only
 ASCII letters, digits, dots, hyphens, and underscores. It is descriptive only;
 the path hash keeps separate source identities from colliding by label alone.
+
+The portable nsfs adapter applies an additional content/save-root check before
+using the ordinary overlay resolver. Absolute names outside those roots and any
+parent-traversal component are rejected. Recursive directory copy/delete is
+bounded to 32 levels and 32,768 entries; copy additionally accepts at most 4 GiB
+of regular-file data. It cannot change the host process working directory.
 
 The optional file-mapping callbacks use that same namespace and borrow only
 immutable bytes. The runtime validates mapped size and content exactly as it

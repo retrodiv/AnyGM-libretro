@@ -200,11 +200,17 @@ ANYGM_RUNTIME_SOURCES := \
 	src/audio/mixer/gml_audio.c \
 	src/audio/codecs/gml_mp3.c \
 	src/audio/banks/gml_fmod.c \
+	src/third_party/ww2ogg/crc.c \
 	$(ANYGM_BZIP2_SOURCES) \
 	$(ANYGM_PROJECT_SOURCES) \
 	$(ANYGM_CLASSIC_SOURCES)
 
-ANYGM_RUNTIME_CXX_SOURCES := $(ANYGM_PXTONE_SOURCES)
+ANYGM_WWISE_SOURCES := \
+	src/audio/banks/gml_wwise.cpp \
+	src/third_party/ww2ogg/codebook.cpp \
+	src/third_party/ww2ogg/wwriff.cpp
+
+ANYGM_RUNTIME_CXX_SOURCES := $(ANYGM_PXTONE_SOURCES) $(ANYGM_WWISE_SOURCES)
 
 ANYGM_TEST_HOST_SOURCES := \
 	src/host/stdio_vfs.c
@@ -243,6 +249,7 @@ ANYGM_RUNTIME_INCLUDE_DIRS := \
 	src/third_party/stb
 
 ANYGM_RUNTIME_INCLUDE_DIRS += src/third_party/pxtone
+ANYGM_RUNTIME_INCLUDE_DIRS += src/third_party/ww2ogg
 
 ANYGM_LIBRETRO_INCLUDE_DIRS := \
 	src/adapters/libretro \

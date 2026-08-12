@@ -6,6 +6,8 @@
 #include "gml_render.h"
 #include "gml_audio.h"
 #include "gml_pxtone.h"
+#include "gml_wwise.h"
+#include "gml_hash.h"
 #include "anygm_host.h"
 #include "anygm_vfs.h"
 
@@ -15,6 +17,272 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef struct {
+  uint32_t id;
+  uint32_t offset;
+  uint32_t size;
+  int sound;
+} GmlWwiseMedia;
+
+typedef struct {
+  uint32_t id;
+  uint8_t type;
+  const uint8_t *body;
+  uint32_t size;
+} GmlWwiseObject;
+
+typedef struct {
+  char *path;
+  uint8_t *data;
+  size_t size;
+  uint8_t content_sha256[32];
+  const uint8_t *media_data;
+  size_t media_data_size;
+  GmlWwiseMedia *media;
+  uint32_t media_count;
+  GmlWwiseObject *objects;
+  uint32_t object_count;
+} GmlWwiseBank;
+
+typedef struct {
+  char base_path[768];
+  GmlWwiseBank banks[16];
+  uint32_t bank_count;
+} GmlWwiseState;
+
+static uint32_t wwise_u32(const uint8_t *bytes){
+  return (uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|
+         ((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
+}
+
+static void wwise_bank_free(GmlWwiseBank *bank){
+  if(!bank) return;
+  free(bank->path);
+  free(bank->media);
+  free(bank->objects);
+  free(bank->data);
+  memset(bank,0,sizeof *bank);
+}
+
+void builtin_wwise_state_free(GmlBuiltinState *state){
+  GmlWwiseState *wwise=state?(GmlWwiseState *)state->wwise:NULL;
+  if(!wwise) return;
+  for(uint32_t index=0;index<wwise->bank_count;index++)
+    wwise_bank_free(&wwise->banks[index]);
+  free(wwise);
+  state->wwise=NULL;
+}
+
+static GmlWwiseState *wwise_state(GmlVM *vm){
+  GmlBuiltinState *state=builtin_state_ensure(vm);
+  if(!state) return NULL;
+  if(!state->wwise) state->wwise=calloc(1,sizeof(GmlWwiseState));
+  return (GmlWwiseState *)state->wwise;
+}
+
+static int wwise_bank_parse(GmlWwiseBank *bank){
+  const uint8_t *didx=NULL,*hirc=NULL;
+  size_t didx_size=0,hirc_size=0;
+  for(size_t offset=0;offset+8u<=bank->size;){
+    uint32_t chunk_size=wwise_u32(bank->data+offset+4u);
+    if((size_t)chunk_size>bank->size-offset-8u) return 0;
+    const uint8_t *chunk=bank->data+offset+8u;
+    if(!memcmp(bank->data+offset,"DIDX",4)){ didx=chunk; didx_size=chunk_size; }
+    else if(!memcmp(bank->data+offset,"DATA",4)){
+      bank->media_data=chunk; bank->media_data_size=chunk_size;
+    } else if(!memcmp(bank->data+offset,"HIRC",4)){ hirc=chunk; hirc_size=chunk_size; }
+    offset+=8u+(size_t)chunk_size;
+  }
+  if(didx){
+    if(didx_size%12u || didx_size/12u>65536u || !bank->media_data) return 0;
+    bank->media_count=(uint32_t)(didx_size/12u);
+    bank->media=calloc(bank->media_count?bank->media_count:1u,sizeof *bank->media);
+    if(!bank->media) return 0;
+    for(uint32_t index=0;index<bank->media_count;index++){
+      const uint8_t *entry=didx+(size_t)index*12u;
+      bank->media[index]=(GmlWwiseMedia){
+        wwise_u32(entry),wwise_u32(entry+4),wwise_u32(entry+8),-1
+      };
+      if((uint64_t)bank->media[index].offset+bank->media[index].size>
+         bank->media_data_size) return 0;
+    }
+  }
+  if(hirc){
+    if(hirc_size<4u) return 0;
+    uint32_t count=wwise_u32(hirc);
+    if(count>65536u) return 0;
+    bank->objects=calloc(count?count:1u,sizeof *bank->objects);
+    if(!bank->objects) return 0;
+    size_t offset=4u;
+    for(uint32_t index=0;index<count;index++){
+      if(offset+9u>hirc_size) return 0;
+      uint8_t type=hirc[offset];
+      uint32_t size=wwise_u32(hirc+offset+1u);
+      if(size<4u || (size_t)size>hirc_size-offset-5u) return 0;
+      bank->objects[index]=(GmlWwiseObject){
+        wwise_u32(hirc+offset+5u),type,hirc+offset+9u,size-4u
+      };
+      offset+=5u+(size_t)size;
+    }
+    bank->object_count=count;
+  }
+  return bank->media_count || bank->object_count;
+}
+
+static GmlWwiseObject *wwise_object(GmlWwiseState *state,uint32_t id){
+  if(!state) return NULL;
+  for(uint32_t bank=0;bank<state->bank_count;bank++)
+    for(uint32_t index=0;index<state->banks[bank].object_count;index++)
+      if(state->banks[bank].objects[index].id==id) return &state->banks[bank].objects[index];
+  return NULL;
+}
+
+static GmlWwiseMedia *wwise_media(GmlWwiseState *state,uint32_t id,GmlWwiseBank **owner){
+  if(owner) *owner=NULL;
+  if(!state) return NULL;
+  for(uint32_t bank=0;bank<state->bank_count;bank++)
+    for(uint32_t index=0;index<state->banks[bank].media_count;index++)
+      if(state->banks[bank].media[index].id==id){
+        if(owner) *owner=&state->banks[bank];
+        return &state->banks[bank].media[index];
+      }
+  return NULL;
+}
+
+static int wwise_play_media(GmlVM *vm,GmlWwiseState *state,uint32_t id){
+  GmlWwiseBank *bank=NULL;
+  GmlWwiseMedia *media=wwise_media(state,id,&bank);
+  GmlAudio *audio=vm?(GmlAudio *)vm->audio:NULL;
+  if(!media || !bank || !audio) return 0;
+  if(media->sound<0){
+    uint8_t *ogg=NULL; size_t ogg_size=0;
+    if(!gml_wwise_wem_to_ogg(bank->media_data+media->offset,media->size,&ogg,&ogg_size))
+      return 0;
+    media->sound=gml_audio_add_encoded(audio,ogg,ogg_size);
+    free(ogg);
+    if(media->sound<0) return 0;
+  }
+  return gml_audio_play(audio,media->sound,0)>=0;
+}
+
+static int wwise_play_object(GmlVM *vm,GmlWwiseState *state,uint32_t id,
+                             uint32_t *visited,int visited_count,int depth){
+  if(depth>16 || visited_count>=64) return 0;
+  for(int index=0;index<visited_count;index++) if(visited[index]==id) return 0;
+  GmlWwiseObject *object=wwise_object(state,id);
+  if(!object) return 0;
+  visited[visited_count++]=id;
+  if(object->type==2 && object->size>=9u)
+    return wwise_play_media(vm,state,wwise_u32(object->body+5u));
+  int played=0;
+  for(uint32_t offset=0;offset+4u<=object->size;offset++){
+    uint32_t child=wwise_u32(object->body+offset);
+    if(!wwise_object(state,child)) continue;
+    played+=wwise_play_object(vm,state,child,visited,visited_count,depth+1);
+    if(played && (object->type==5 || object->type==6 ||
+                  object->type==12 || object->type==13)) break;
+  }
+  return played;
+}
+
+static uint32_t wwise_string_id(const char *value){
+  uint32_t hash=2166136261u;
+  if(!value) return 0;
+  for(;*value;value++) hash=hash*16777619u^(uint8_t)tolower((unsigned char)*value);
+  return hash;
+}
+
+static uint32_t wwise_argument_id(GmlVM *vm,GmlVal *args,int count,int index){
+  if(index<0 || index>=count) return 0;
+  return args[index].t==V_STR?wwise_string_id(S(vm,args,count,index)):
+    (uint32_t)(uint64_t)N(args,count,index);
+}
+
+static int wwise_load_bank(GmlVM *vm,const char *name){
+  GmlWwiseState *state=wwise_state(vm);
+  if(!state || !name || !name[0] || state->bank_count>=16u) return 0;
+  char relative[1536];
+  if(state->base_path[0])
+    snprintf(relative,sizeof relative,"%s/%s",state->base_path,name);
+  else snprintf(relative,sizeof relative,"%s",name);
+  for(uint32_t index=0;index<state->bank_count;index++)
+    if(state->banks[index].path && !strcmp(state->banks[index].path,relative)) return 1;
+  char *path=resolve_read_path(vm,relative);
+  uint8_t *data=NULL; size_t size=0;
+  if(!path || !anygm_vfs_read_all(vm->host,path,&data,&size,256u*1024u*1024u)){
+    free(path); free(data); return 0;
+  }
+  GmlWwiseBank bank={0};
+  bank.path=strdup(relative); bank.data=data; bank.size=size;
+  gml_sha256(data,size,bank.content_sha256);
+  int ok=bank.path && wwise_bank_parse(&bank);
+  free(path);
+  if(!ok){ wwise_bank_free(&bank); return 0; }
+  state->banks[state->bank_count++]=bank;
+  return 1;
+}
+
+static int wwise_post_event(GmlVM *vm,uint32_t event_id){
+  GmlWwiseState *state=wwise_state(vm);
+  GmlWwiseObject *event=wwise_object(state,event_id);
+  if(!event || event->type!=4 || event->size<4u) return 0;
+  uint32_t count=wwise_u32(event->body);
+  if(count>(event->size-4u)/4u) return 0;
+  int played=0;
+  for(uint32_t index=0;index<count;index++){
+    GmlWwiseObject *action=wwise_object(state,wwise_u32(event->body+4u+index*4u));
+    if(!action || action->type!=3 || action->size<6u) continue;
+    uint8_t action_type=action->body[1];
+    if(action_type==4){
+      uint32_t visited[64]={0};
+      played+=wwise_play_object(vm,state,wwise_u32(action->body+2u),visited,0,0);
+    } else if(action_type==1 && vm && vm->audio){
+      for(uint32_t bank=0;bank<state->bank_count;bank++)
+        for(uint32_t media=0;media<state->banks[bank].media_count;media++)
+          if(state->banks[bank].media[media].sound>=0)
+            gml_audio_stop((GmlAudio *)vm->audio,state->banks[bank].media[media].sound);
+    }
+  }
+  return played;
+}
+
+uint32_t builtin_wwise_bank_count(const GmlBuiltinState *state){
+  const GmlWwiseState *wwise=state?(const GmlWwiseState *)state->wwise:NULL;
+  return wwise?wwise->bank_count:0;
+}
+
+const char *builtin_wwise_base_path(const GmlBuiltinState *state){
+  const GmlWwiseState *wwise=state?(const GmlWwiseState *)state->wwise:NULL;
+  return wwise?wwise->base_path:"";
+}
+
+const char *builtin_wwise_bank_path(const GmlBuiltinState *state,uint32_t index){
+  const GmlWwiseState *wwise=state?(const GmlWwiseState *)state->wwise:NULL;
+  return wwise && index<wwise->bank_count && wwise->banks[index].path?
+    wwise->banks[index].path:"";
+}
+
+const uint8_t *builtin_wwise_bank_digest(const GmlBuiltinState *state,uint32_t index){
+  const GmlWwiseState *wwise=state?(const GmlWwiseState *)state->wwise:NULL;
+  return wwise && index<wwise->bank_count?wwise->banks[index].content_sha256:NULL;
+}
+
+int builtin_wwise_state_restore(GmlBuiltinState *state,const char *base,
+                                const char *const *paths,const uint8_t digests[][32],
+                                uint32_t count){
+  if(!state || !base || strlen(base)>=sizeof(((GmlWwiseState *)0)->base_path) ||
+     count>16u) return 0;
+  GmlWwiseState *wwise=wwise_state(state->vm);
+  if(!wwise) return 0;
+  wwise->base_path[0]=0;
+  for(uint32_t index=0;index<count;index++)
+    if(!paths || !paths[index] || !paths[index][0] || strlen(paths[index])>=1536u ||
+       !digests || !wwise_load_bank(state->vm,paths[index]) ||
+       memcmp(wwise->banks[index].content_sha256,digests[index],32u)) return 0;
+  snprintf(wwise->base_path,sizeof wwise->base_path,"%s",base);
+  return 1;
+}
 static double audio_emitter_attenuation(GmlVM *vm, int e, double distance){
   if(!vm || e<0 || e>=GML_MAX_EMITTERS || vm->builtins->audio_falloff_model==0) return 1.0;
   double ref=vm->builtins->emitter_ref[e], maxd=vm->builtins->emitter_max[e], factor=vm->builtins->emitter_factor[e];
@@ -1134,9 +1402,173 @@ GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
   return vreal(0);
 }
 
+static GmlVal builtin_faudio_gms(GmlVM *vm,const char *name,GmlVal *args,int count){
+  GmlAudio *audio=vm?(GmlAudio*)vm->audio:NULL;
+  if(!audio || !name) return vreal(0);
+  if(!strcmp(name,"FAudioGMS_Init")) return vreal(1);
+  if(!strcmp(name,"FAudioGMS_Destroy")){
+    external_audio_free_all(vm); return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_Update")) return vreal(0);
+  if(!strcmp(name,"FAudioGMS_StaticSound_LoadWAV")||
+     !strcmp(name,"FAudioGMS_StreamingSound_LoadOGG"))
+    return vreal(external_audio_load(vm,S(vm,args,count,0)));
+  if(!strcmp(name,"FAudioGMS_StaticSound_CreateSoundInstance")){
+    GmlBuiltinState *state=builtin_state_ensure(vm);
+    GmlExternalAudioAsset *asset=state?
+      builtin_state_external_audio_find(state,(int)N(args,count,0)):NULL;
+    return vreal(asset&&asset->path?external_audio_load(vm,asset->path):-1);
+  }
+  if(!strcmp(name,"FAudioGMS_StaticSound_Destroy")){
+    external_audio_free(vm,(int)N(args,count,0)); return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SoundInstance_Play")){
+    int sound=(int)N(args,count,0);
+    gml_audio_stop(audio,sound);
+    (void)gml_audio_play(audio,sound,gml_audio_sound_get_default_loop(audio,sound));
+    return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SoundInstance_Stop")){
+    gml_audio_stop(audio,(int)N(args,count,0)); return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SoundInstance_Pause")){
+    gml_audio_pause_sound(audio,(int)N(args,count,0),1); return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SoundInstance_Destroy")){
+    external_audio_free(vm,(int)N(args,count,0)); return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SoundInstance_DestroyWhenFinished")) return vreal(0);
+  if(!strcmp(name,"FAudioGMS_SoundInstance_SetLoop")){
+    gml_audio_sound_set_default_loop(audio,(int)N(args,count,0),N(args,count,1)!=0.0);
+    return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SoundInstance_SetPlayRegion")){
+    int sound=(int)N(args,count,0);
+    double start=N(args,count,1)/1000.0;
+    gml_audio_sound_loop_start(audio,sound,start);
+    gml_audio_sound_set_track_position(audio,sound,start);
+    return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SoundInstance_SetVolume")){
+    gml_audio_sound_gain(audio,(int)N(args,count,0),N(args,count,1)); return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SoundInstance_GetVolume"))
+    return vreal(gml_audio_sound_get_gain(audio,(int)N(args,count,0)));
+  if(!strcmp(name,"FAudioGMS_SoundInstance_SetVolumeOverTime")){
+    gml_audio_sound_gain_fade(audio,(int)N(args,count,0),N(args,count,1),
+                              (int)(N(args,count,2)*1000.0));
+    return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SoundInstance_SetPitch")){
+    gml_audio_sound_pitch(audio,(int)N(args,count,0),N(args,count,1)); return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SoundInstance_GetPitch"))
+    return vreal(gml_audio_sound_get_pitch(audio,(int)N(args,count,0)));
+  if(!strcmp(name,"FAudioGMS_SoundInstance_SetTrackPositionInSeconds")){
+    gml_audio_sound_set_track_position(audio,(int)N(args,count,0),N(args,count,1));
+    return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SoundInstance_GetTrackPositionInSeconds"))
+    return vreal(gml_audio_sound_get_track_position(audio,(int)N(args,count,0)));
+  if(!strcmp(name,"FAudioGMS_SoundInstance_GetTrackLengthInSeconds"))
+    return vreal(gml_audio_sound_length(audio,(int)N(args,count,0)));
+  if(!strcmp(name,"FAudioGMS_SoundInstance_SetPan")){
+    int sound=(int)N(args,count,0);
+    gml_audio_voice_spatial(audio,sound,gml_audio_sound_get_gain(audio,sound),N(args,count,1));
+    return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SoundInstance_Set3DPosition")){
+    int sound=(int)N(args,count,0);
+    double dx=N(args,count,1)-vm->builtins->listener_x;
+    double dy=N(args,count,2)-vm->builtins->listener_y;
+    double dz=N(args,count,3)-vm->builtins->listener_z;
+    double distance=sqrt(dx*dx+dy*dy+dz*dz);
+    gml_audio_voice_spatial(audio,sound,gml_audio_sound_get_gain(audio,sound),
+                            distance>0.0?dx/distance:0.0);
+    return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_SetListenerPosition")){
+    vm->builtins->listener_x=N(args,count,0);
+    vm->builtins->listener_y=N(args,count,1);
+    vm->builtins->listener_z=N(args,count,2);
+    return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_PauseAll")){
+    gml_audio_pause_all(audio,1); return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_ResumeAll")){
+    gml_audio_pause_all(audio,0); return vreal(0);
+  }
+  if(!strcmp(name,"FAudioGMS_StopAll")){
+    gml_audio_stop_all(audio); return vreal(0);
+  }
+  /* Effect chains, filters, velocity/orientation and queued synchronization have no exact mixer
+   * equivalent yet. They retain valid deterministic control flow while the decoded sound and its
+   * principal playback, gain, pitch, loop, position and pan controls remain functional. */
+  if(!strncmp(name,"FAudioGMS_",10)) return vreal(0);
+  return vundef();
+}
+
+static GmlVal builtin_gmwwise(GmlVM *vm,const char *name,GmlVal *args,int count){
+  GmlWwiseState *state=wwise_state(vm);
+  if(!state || !name) return vreal(0);
+  if(!strcmp(name,"gmwInit")) return vreal(1);
+  if(!strcmp(name,"gmwSetBasePath")){
+    snprintf(state->base_path,sizeof state->base_path,"%s",S(vm,args,count,0));
+    for(char *cursor=state->base_path;*cursor;cursor++) if(*cursor=='\\') *cursor='/';
+    size_t length=strlen(state->base_path);
+    while(length && state->base_path[length-1]=='/') state->base_path[--length]=0;
+    return vreal(1);
+  }
+  if(!strcmp(name,"gmwLoadBank")) return vreal(wwise_load_bank(vm,S(vm,args,count,0)));
+  if(!strcmp(name,"gmwUnloadBank")){
+    const char *requested=S(vm,args,count,0);
+    for(uint32_t index=0;index<state->bank_count;index++){
+      const char *path=state->banks[index].path?state->banks[index].path:"";
+      const char *base=strrchr(path,'/');
+      if(strcmp(path,requested) && strcmp(base?base+1:path,requested)) continue;
+      wwise_bank_free(&state->banks[index]);
+      if(index+1u<state->bank_count)
+        memmove(&state->banks[index],&state->banks[index+1u],
+                (size_t)(state->bank_count-index-1u)*sizeof(state->banks[0]));
+      state->bank_count--;
+      memset(&state->banks[state->bank_count],0,sizeof(state->banks[0]));
+      return vreal(1);
+    }
+    return vreal(0);
+  }
+  if(!strcmp(name,"gmwPostEvent"))
+    return vreal(wwise_post_event(vm,wwise_argument_id(vm,args,count,0)));
+  if(!strcmp(name,"gmwStop")||!strcmp(name,"gmwStopAll")){
+    GmlAudio *audio=vm?(GmlAudio *)vm->audio:NULL;
+    if(audio) for(uint32_t bank=0;bank<state->bank_count;bank++)
+      for(uint32_t media=0;media<state->banks[bank].media_count;media++)
+        if(state->banks[bank].media[media].sound>=0)
+          gml_audio_stop(audio,state->banks[bank].media[media].sound);
+    return vreal(1);
+  }
+  if(!strcmp(name,"gmwGetError")) return vstr("");
+  if(!strcmp(name,"gmwGetParameter")) return vreal(0);
+  /* These calls mutate Wwise's object/spatial/RTPC routing, for which AnyGM currently has no
+   * equivalent graph. Accepting them is deliberate: the event/media graph remains playable and
+   * the success result is stable, while no unavailable native service is implied. */
+  if(!strcmp(name,"gmwRegisterObject")||!strcmp(name,"gmwUnregisterObject")||
+     !strcmp(name,"gmwRegisterGroup")||!strcmp(name,"gmwUnregisterGroup")||
+     !strcmp(name,"gmwSetParameter")||!strcmp(name,"gmwSetGlobalParameter")||
+     !strcmp(name,"gmwSetSwitch")||!strcmp(name,"gmwSetState")||
+     !strcmp(name,"gmwSet2DListenerPosition")||!strcmp(name,"gmwSet2DPosition")||
+     !strcmp(name,"gmwSet3DListenerPosition")||!strcmp(name,"gmwSet3DPosition")||
+     !strcmp(name,"gmwSetActiveListeners")||!strcmp(name,"gmwPostTrigger")||
+     !strcmp(name,"gmwProcess")) return vreal(1);
+  if(!strncmp(name,"gmw",3)) return vreal(0);
+  return vundef();
+}
+
 GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
+  if(!strncmp(nm,"gmw",3)) return builtin_gmwwise(vm,nm,a,n);
+  if(!strncmp(nm,"FAudioGMS_",10)) return builtin_faudio_gms(vm,nm,a,n);
   /* ---- audio ---- */
   { GmlAudio *AU=(GmlAudio*)vm->audio;
     if(!strcmp(nm,"action_sound")){ gml_audio_play(AU,(int)N(a,n,0),(int)N(a,n,1)); return vreal(0); }

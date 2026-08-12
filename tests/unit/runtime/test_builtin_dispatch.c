@@ -28,6 +28,21 @@ typedef struct {
   AnygmLogLevel level;
 } LogFixture;
 
+static int gamepad_fixture_connected(void *userdata,int device){
+  (void)userdata;
+  return device==0;
+}
+
+static int gamepad_fixture_button(void *userdata,int button,int edge){
+  (void)userdata;
+  return button==32771 && edge==0;
+}
+
+static double gamepad_fixture_axis(void *userdata,int device,int axis){
+  (void)userdata;
+  return device==0 && axis==32785?0.625:0.0;
+}
+
 static void log_fixture_write(void *userdata,AnygmLogLevel level,
                               const char *message){
   LogFixture *fixture=(LogFixture *)userdata;
@@ -581,6 +596,44 @@ static int layer_instance_move(GmlVM *vm){
   return ok;
 }
 
+static int portable_service_contracts(GmlVM *vm){
+  GmlVal player=gml_builtin_call(vm,"FOCAL_NetworkGetPlayer",NULL,0);
+  GmlVal opponent=gml_builtin_call(vm,"FOCAL_NetworkGetOpponentName",NULL,0);
+  GmlVal dropped=gml_builtin_call(vm,"file_drop_get_files",NULL,0);
+  return expect_real("offline network player",player,-1) &&
+         expect_string("offline network opponent",opponent,"") &&
+         expect_string("unavailable file drop",dropped,"") &&
+         expect_real("unavailable process launch",
+                     gml_builtin_call(vm,"execute_shell_simple",NULL,0),0) &&
+         expect_real("unavailable clipboard bridge",
+                     gml_builtin_call(vm,"drago_clipboard_set_text",NULL,0),0) &&
+         expect_real("unavailable presence bridge",
+                     gml_builtin_call(vm,"Discord_UpdatePresence",NULL,0),0) &&
+         expect_real("unavailable borderless window",
+                     gml_builtin_call(vm,"BorderlessToggle",NULL,0),0);
+}
+
+static int portable_joystick_contract(GmlVM *vm){
+  vm->input.gamepad_connected=gamepad_fixture_connected;
+  vm->input.gamepad=gamepad_fixture_button;
+  vm->input.gamepad_axis=gamepad_fixture_axis;
+  GmlVal device=vreal(0);
+  GmlVal button_args[]={device,vreal(2)};
+  GmlVal axis_args[]={device,vreal(0)};
+  int ok=expect_real("portable joystick count",
+                     gml_builtin_call(vm,"joy_count",NULL,0),1) &&
+         expect_string("portable joystick name",
+                       gml_builtin_call(vm,"joy_name",&device,1),"AnyGM Gamepad") &&
+         expect_real("portable joystick button",
+                     gml_builtin_call(vm,"joy_button",button_args,2),1) &&
+         expect_real("portable joystick axis",
+                     gml_builtin_call(vm,"joy_axis",axis_args,2),0.625);
+  vm->input.gamepad_connected=NULL;
+  vm->input.gamepad=NULL;
+  vm->input.gamepad_axis=NULL;
+  return ok;
+}
+
 static int canonical_registry_resolution(GmlVM *vm){
   int ok=1;
   int checked=0;
@@ -652,6 +705,8 @@ int main(void){
          ds_fast_interface(&vm) &&
          classic_dynamic_global_declaration(&vm) &&
          external_audio_definition_dispatch(&vm) &&
+         portable_service_contracts(&vm) &&
+         portable_joystick_contract(&vm) &&
          layer_instance_move(&vm);
   gml_vm_free(&vm);
   gml_win_free(&win);

@@ -9,11 +9,12 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `7`. It is the format transported by
+The current AnyGM save-state schema is `8`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
 
-Schema `7` adds portable external-audio asset identities plus the Saudio string-ID registry to the
+Schema `8` adds the logical paths and SHA-256 identities of loaded portable
+Wwise banks to the canonical VM audio stage. Schema `7` adds portable external-audio asset identities plus the Saudio string-ID registry to the
 canonical VM audio stage. Every loose dynamic sound records its logical source path and dynamically
 computed source SHA-256; Saudio additionally records the extension-visible string ID. Schema
 `6` preserves the frame-redraw state needed after restore. Schema `4` preserves the semantic
@@ -30,9 +31,9 @@ reader rejects the input after decoding begins, the engine restores an exact
 snapshot of its prior state before returning an error.
 
 If a future release deliberately breaks state compatibility, increment the
-schema to `8`, then `9`, and so on. Older schemas are rejected without legacy
-readers. A refactor does not require a bump when the canonical bytes and
-semantics remain unchanged.
+schema to `9`, then `10`, and so on. Supporting an older schema requires an
+explicit compatibility reader. A refactor does not require a bump when the
+canonical bytes and semantics remain unchanged.
 
 ## Canonical encoding
 
@@ -54,7 +55,7 @@ bytes.
 ## VM payload ownership
 
 `src/core/engine_state.c` owns the root framing and section transaction.
-Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `4`,
+Within the VM section, `src/runtime/vm/gml_vm_state.c` alone owns schema `5`,
 field order, value-graph encoding, sizing, and restore scratch.
 
 Builtin resources have a separate storage and lifetime owner, not a separate
@@ -71,13 +72,18 @@ therefore adds no independent state framing or schema.
 Transient host file handles, binary buffers, asynchronous request queues,
 search cursors, and derived caches are reset rather than serialized. INI
 values, maps/lists/grids, physics resources, spatial-audio state, external-audio source identities,
-Saudio IDs, and time sources remain serialized.
+Saudio IDs, loaded Wwise-bank identities, and time sources remain serialized.
 
 External-audio states do not embed potentially large MP3/OGG/WAV files. If a dynamic handle loaded
 through Saudio, SGAudio, SuperSound, or `caster_*` has been closed, restoration reads its bounded
 logical VFS path and recreates that exact handle only when the current file matches the SHA-256
 stored by the state. A missing or changed file rejects the state and the root state transaction
 restores the previous live engine.
+
+Wwise bank state follows the same rule: it stores bounded logical paths and
+SHA-256 identities, not bank or media bytes. Restore reparses each bank through
+the host VFS and rejects the complete state transaction if a bank is absent or
+has changed.
 
 `make check TEST=builtin_state` constructs every resource family, proves reset
 and transient exclusion, restores from a fresh VM, and requires the second

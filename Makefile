@@ -63,7 +63,7 @@ PIC_FLAGS := -fPIC -fvisibility=hidden
 ifneq (,$(findstring win,$(platform)))
 CORE_EXTENSION := dll
 CORE_PLATFORM_LDLIBS := -lm -lgdi32 -luser32
-CORE_PLATFORM_LDFLAGS := -Wl,--no-insert-timestamp -static-libgcc
+CORE_PLATFORM_LDFLAGS := -Wl,--no-insert-timestamp -static-libgcc -static-libstdc++
 endif
 ifneq (,$(findstring osx,$(platform)))
 CORE_EXTENSION := dylib
@@ -88,6 +88,8 @@ LIBRETRO_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_LIBRETRO_SOURCES
 TEST_HOST_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_TEST_HOST_SOURCES))
 VENDORED_BZIP2_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/bzip2/%,$(RUNTIME_OBJECTS))
 VENDORED_PXTONE_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/pxtone/%,$(RUNTIME_OBJECTS))
+VENDORED_WW2OGG_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/ww2ogg/%,$(RUNTIME_OBJECTS))
+WWISE_ADAPTER_OBJECT := $(BUILD_DIR)/obj/src/audio/banks/gml_wwise.o
 PXTONE_ADAPTER_OBJECT := $(BUILD_DIR)/obj/src/audio/codecs/gml_pxtone.o
 CORE_OBJECTS := $(RUNTIME_OBJECTS) $(LIBRETRO_OBJECTS)
 UNIT_RUNTIME_OBJECTS := $(filter-out $(CORE_RUNTIME_OBJECTS),$(RUNTIME_OBJECTS)) $(TEST_HOST_OBJECTS)
@@ -134,7 +136,7 @@ $(CORE_TARGET): $(CORE_OBJECTS)
 	$(AR) $(ARFLAGS) $@ $^
 else
 $(CORE_TARGET): $(CORE_OBJECTS) link.T
-	$(CC) $(LDFLAGS) $(CORE_SHARED_FLAG) $(PIC_FLAGS) $(CORE_PLATFORM_LDFLAGS) -o $@ $(CORE_OBJECTS) $(LDLIBS) $(CORE_PLATFORM_LDLIBS)
+	$(CXX) $(LDFLAGS) $(CORE_SHARED_FLAG) $(PIC_FLAGS) $(CORE_PLATFORM_LDFLAGS) -o $@ $(CORE_OBJECTS) $(LDLIBS) $(CORE_PLATFORM_LDLIBS)
 endif
 
 $(RUNTIME_LIBRARY): $(RUNTIME_OBJECTS)
@@ -161,96 +163,108 @@ $(VENDORED_BZIP2_OBJECTS): CFLAGS += -Wno-unused-parameter -Wno-implicit-fallthr
 # its own implementation remains covered by every other warning (and -Werror).
 $(VENDORED_PXTONE_OBJECTS): CXXFLAGS += -w
 $(PXTONE_ADAPTER_OBJECT): CXXFLAGS += -Wno-unused-parameter -Wno-extra
+$(VENDORED_WW2OGG_OBJECTS): CXXFLAGS += -w -fexceptions
+$(WWISE_ADAPTER_OBJECT): CXXFLAGS += -fexceptions -Wno-unused-function
+
+# Runtime tests compile their fixtures as C, so keep the C driver and add the
+# platform C++ runtime explicitly for portable C++ codecs.
+CXX_RUNTIME_LDLIBS := -lstdc++
+ifneq (,$(filter osx ios tvos,$(platform)))
+CXX_RUNTIME_LDLIBS := -lc++
+endif
+define link_runtime_test
+	$(CC) $(1) $(CFLAGS) $^ -o $@ -lm -pthread $(CXX_RUNTIME_LDLIBS)
+endef
 
 $(TEST_DIR)/test_rng: tests/unit/runtime/test_rng.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_persistent_room: $(ANYGM_PERSISTENT_TEST_SOURCES) \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_d3_state: $(ANYGM_SOFTWARE3D_TEST_SOURCES) $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_builtin_args: tests/unit/runtime/test_builtin_args.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_builtin_map_arrays: tests/unit/runtime/test_builtin_map_arrays.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_builtin_struct_exists: tests/unit/runtime/test_builtin_struct_exists.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_stacktop_scope: tests/unit/runtime/test_stacktop_scope.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_vm_hotpath: tests/unit/runtime/test_vm_hotpath.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_ds_grid: tests/unit/runtime/test_ds_grid.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_builtin_string_format: tests/unit/runtime/test_builtin_string_format.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_vm_gc: tests/unit/runtime/test_vm_gc.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_builtin_dispatch: tests/unit/runtime/test_builtin_dispatch.c \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_builtin_state: tests/unit/runtime/test_builtin_state.c \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_renderer_effects: tests/unit/video/renderer/test_renderer_effects.c \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_renderer_crt: tests/unit/video/renderer/test_renderer_crt.c \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_renderer_surfaces: tests/unit/video/renderer/test_renderer_surfaces.c \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_renderer_assets: tests/unit/video/renderer/test_renderer_assets.c \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_renderer_texture_shells: tests/unit/video/renderer/test_renderer_texture_shells.c \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_renderer_tiles: tests/unit/video/renderer/test_renderer_tiles.c \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_renderer_primitives: tests/unit/video/renderer/test_renderer_primitives.c \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_bytecode: tests/unit/content/test_bytecode.c \
 	src/host/anygm_host.c src/host/anygm_vfs.c \
@@ -272,7 +286,7 @@ $(TEST_DIR)/test_package: tests/unit/content/test_package.c \
 $(TEST_DIR)/test_sprite_masks: tests/unit/content/test_sprite_masks.c \
 	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_classic: $(ANYGM_CLASSIC_TEST_SOURCES) \
 	src/host/anygm_host.c src/host/anygm_vfs.c src/host/stdio_vfs.c \
@@ -398,12 +412,12 @@ security-check: $(SECURITY_TESTS)
 $(TEST_DIR)/test_content_security: tests/fuzz/test_content_security.c \
 	$(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_state_security: tests/fuzz/test_state_security.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_vfs: tests/unit/host/test_vfs.c src/host/anygm_vfs.c
 	mkdir -p $(dir $@)
@@ -443,17 +457,17 @@ export-check: core
 $(TEST_DIR)/test_engine_instances: tests/integration/test_engine_instances.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_host_setting_budget: tests/integration/test_host_setting_budget.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/dummy_host: tests/contract/dummy_host.c tests/support/synthetic_content.c \
 	$(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_libretro_state_transport: tests/contract/libretro_state_transport.c \
 	src/adapters/libretro/libretro_entry.c src/adapters/libretro/libretro_context.c
@@ -507,7 +521,7 @@ $(TEST_DIR)/test_load: tests/unit/content/test_load.c \
 
 $(TEST_DIR)/test_vm: tests/unit/runtime/test_vm.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm -pthread
+	$(call link_runtime_test,$(CPPFLAGS))
 
 clean:
 	tests/architecture/safe_clean.sh "$(BUILD_DIR)" \

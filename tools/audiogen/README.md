@@ -36,7 +36,11 @@ headers after reproduction succeeds. A report is written to the external work
 directory only after comparison or replacement succeeds. Generated identifiers
 use ordinal indices, not fingerprints.
 
-At this historical revision, the checked-in setup table contains all 161
-packets in ordinal recipe order. The packed-codebook candidate is not checked in,
-so default comparison covers only generated artifacts present in this tree.
-Generation and replacement do not by themselves establish runtime compatibility.
+At this historical revision, both generated tables are checked in. The setup
+table contains all 161 packets in ordinal recipe order, and the packed
+codebook table contains 598 entries. A source-to-output reproduction establishes
+the numeric bodies, but the default whole-header comparison can still report
+an attribution-only drift against the previously adapted setup-table header.
+Treat that result as a failed whole-header comparison and retain its exact
+diagnostic in external verification evidence. Generation and replacement do
+not by themselves establish runtime compatibility.

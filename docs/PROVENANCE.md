@@ -46,6 +46,30 @@ The setup arrays use ordinal identifiers. Each table entry stores the CRC-32
 of its generated setup packet for runtime lookup; the catalog check verifies
 the key against the packet bytes. No encoder is linked into the core.
 
+## Wwise Vorbis codebooks
+
+`src/generated/wwise_codebooks.h` is generated from named `static_codebook`
+declarations in the official Xiph libvorbis 1.2.0 source release. The source
+codebook notices and BSD license are retained in
+`LICENSES/libvorbis-1.2.0.txt`. The recipe associates 598 wire identifiers
+with named source declarations; `emit_books.c` reads those declarations and
+`packed_books.py` encodes the compact fields and offset table. The resulting
+74,164-byte catalog is immutable and is consumed in memory. Its data license
+is Xiph's, separate from the MIT-licensed first-party generator and wrapper.
+The source-to-output byte comparison and concrete verification values are
+kept in external evidence, not this repository.
+
+## ww2ogg adaptation
+
+The in-memory Wwise Vorbis reconstruction in `src/third_party/ww2ogg/` is
+adapted from [ww2ogg](https://github.com/hcs64/ww2ogg) under its retained
+BSD-style terms in `LICENSES/ww2ogg.txt`. The `codebook_library` constructor
+takes a byte range, `Wwise_RIFF_Vorbis` reads RIFF and catalog bytes from
+memory, and `generate_ogg` writes to an output stream. The CRC files are
+unmodified upstream copies; `Bit_stream.h` and `errors.h` differ only in
+trailing whitespace. The upstream revision and file-by-file comparison values
+are recorded in external verification evidence.
+
 ## Vendored third-party sources
 
 The repository includes these source components with their upstream notices:

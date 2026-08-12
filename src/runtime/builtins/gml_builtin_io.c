@@ -5,6 +5,7 @@
 #include "gml_builtin_internal.h"
 #include "anygm_host.h"
 #include "anygm_vfs.h"
+#include "gml_image_codec.h"
 
 #include <ctype.h>
 #include <inttypes.h>
@@ -205,6 +206,207 @@ char *resolve_write_path(GmlVM *vm, const char *p){
 }
 static int copy_file_path(GmlVM *vm,const char *src,const char *dst){
   return vm && anygm_vfs_copy(vm->host,src,dst);
+}
+
+/* Portable nsfs operations must not acquire ambient desktop filesystem authority. Accept only
+ * relative names or absolute names inside explicit content/save roots, and reject parent
+ * traversal before the generic overlay resolver joins either root. */
+static int extension_path_safe(GmlVM *vm,const char *raw){
+  if(!raw || !raw[0]) return 0;
+  const char *cursor=raw;
+  while(*cursor){
+    while(*cursor=='/' || *cursor=='\\') cursor++;
+    const char *end=cursor;
+    while(*end && *end!='/' && *end!='\\') end++;
+    if((size_t)(end-cursor)==2 && cursor[0]=='.' && cursor[1]=='.') return 0;
+    cursor=end;
+  }
+  if(!path_absolute(raw)) return 1;
+  if(!vm || !vm->win) return 0;
+  return path_relative_to_root(raw,vm->win->content_dir)!=NULL ||
+         path_relative_to_root(raw,vm->win->save_dir)!=NULL;
+}
+
+static char *extension_read_path(GmlVM *vm,const char *raw){
+  return extension_path_safe(vm,raw)?resolve_read_path(vm,raw):NULL;
+}
+
+static char *extension_write_path(GmlVM *vm,const char *raw){
+  return extension_path_safe(vm,raw)?resolve_write_path(vm,raw):NULL;
+}
+
+#define EXTENSION_DIRECTORY_MAX_DEPTH 32u
+#define EXTENSION_DIRECTORY_MAX_ENTRIES 32768u
+#define EXTENSION_DIRECTORY_MAX_BYTES (UINT64_C(4)*1024u*1024u*1024u)
+
+typedef struct {
+  uint32_t entries;
+  uint64_t bytes;
+} ExtensionDirectoryBudget;
+
+static int extension_entry_name_safe(const char *name){
+  return name && name[0] && strcmp(name,".") && strcmp(name,"..") &&
+         !strchr(name,'/') && !strchr(name,'\\');
+}
+
+static char *extension_join_path(const char *directory,const char *name){
+  if(!directory || !name) return NULL;
+  size_t directory_size=strlen(directory),name_size=strlen(name);
+  if(directory_size>4095u || name_size>511u ||
+     directory_size>SIZE_MAX-name_size-2u) return NULL;
+  char *joined=malloc(directory_size+name_size+2u);
+  if(!joined) return NULL;
+  snprintf(joined,directory_size+name_size+2u,"%s/%s",directory,name);
+  return joined;
+}
+
+static int extension_path_same_or_child(const char *path,const char *directory){
+  if(!path || !directory) return 0;
+  size_t size=strlen(directory);
+  while(size>0 && (directory[size-1]=='/' || directory[size-1]=='\\')) size--;
+  return !strncmp(path,directory,size) &&
+    (!path[size] || path[size]=='/' || path[size]=='\\');
+}
+
+static int extension_directory_copy(GmlVM *vm,const char *source,const char *destination,
+                                    unsigned depth,ExtensionDirectoryBudget *budget){
+  if(!vm || !vm->host || !source || !destination || !budget ||
+     depth>EXTENSION_DIRECTORY_MAX_DEPTH ||
+     !vm->host->directory_open || !vm->host->directory_read ||
+     !vm->host->directory_close || !anygm_vfs_mkdirs(vm->host,destination)) return 0;
+  void *handle=vm->host->directory_open(vm->host->userdata,source);
+  if(!handle) return 0;
+  int ok=1;
+  AnygmResult read_result=ANYGM_OK;
+  AnygmDirectoryEntry entry={0};
+  entry.struct_size=sizeof entry;
+  while((read_result=vm->host->directory_read(vm->host->userdata,handle,&entry))==ANYGM_OK){
+    if(!strcmp(entry.name,".") || !strcmp(entry.name,"..")) continue;
+    if(!extension_entry_name_safe(entry.name) ||
+       ++budget->entries>EXTENSION_DIRECTORY_MAX_ENTRIES){ ok=0; break; }
+    char *child_source=extension_join_path(source,entry.name);
+    char *child_destination=extension_join_path(destination,entry.name);
+    if(!child_source || !child_destination){
+      free(child_source); free(child_destination); ok=0; break;
+    }
+    if(entry.flags&ANYGM_FILE_INFO_DIRECTORY){
+      ok=extension_directory_copy(vm,child_source,child_destination,depth+1u,budget);
+    } else if(entry.flags&ANYGM_FILE_INFO_REGULAR){
+      AnygmFileInfo info={0};
+      ok=anygm_vfs_stat(vm->host,child_source,&info) &&
+         info.size<=EXTENSION_DIRECTORY_MAX_BYTES-budget->bytes;
+      if(ok){
+        budget->bytes+=info.size;
+        ok=copy_file_path(vm,child_source,child_destination);
+      }
+    } else ok=0;
+    free(child_source); free(child_destination);
+    if(!ok) break;
+    memset(&entry,0,sizeof entry);
+    entry.struct_size=sizeof entry;
+  }
+  if(read_result!=ANYGM_RESULT_END) ok=0;
+  vm->host->directory_close(vm->host->userdata,handle);
+  return ok;
+}
+
+static int extension_directory_delete(GmlVM *vm,const char *directory,unsigned depth,
+                                      ExtensionDirectoryBudget *budget){
+  if(!vm || !vm->host || !directory || !budget ||
+     depth>EXTENSION_DIRECTORY_MAX_DEPTH ||
+     !vm->host->directory_open || !vm->host->directory_read ||
+     !vm->host->directory_close || !vm->host->path_remove) return 0;
+  void *handle=vm->host->directory_open(vm->host->userdata,directory);
+  if(!handle) return 0;
+  int ok=1;
+  AnygmResult read_result=ANYGM_OK;
+  AnygmDirectoryEntry entry={0};
+  entry.struct_size=sizeof entry;
+  while((read_result=vm->host->directory_read(vm->host->userdata,handle,&entry))==ANYGM_OK){
+    if(!strcmp(entry.name,".") || !strcmp(entry.name,"..")) continue;
+    if(!extension_entry_name_safe(entry.name) ||
+       ++budget->entries>EXTENSION_DIRECTORY_MAX_ENTRIES){ ok=0; break; }
+    char *child=extension_join_path(directory,entry.name);
+    if(!child){ ok=0; break; }
+    if(entry.flags&ANYGM_FILE_INFO_DIRECTORY)
+      ok=extension_directory_delete(vm,child,depth+1u,budget);
+    else if(entry.flags&ANYGM_FILE_INFO_REGULAR)
+      ok=vm->host->path_remove(vm->host->userdata,child)==ANYGM_OK;
+    else ok=0;
+    free(child);
+    if(!ok) break;
+    memset(&entry,0,sizeof entry);
+    entry.struct_size=sizeof entry;
+  }
+  if(read_result!=ANYGM_RESULT_END) ok=0;
+  vm->host->directory_close(vm->host->userdata,handle);
+  return ok && vm->host->path_remove(vm->host->userdata,directory)==ANYGM_OK;
+}
+
+static int buffer_alloc(GmlVM *vm,int cap);
+static void buffer_resize_slot(GmlVM *vm,int slot,int size);
+
+static GmlVal nsfs_load_buffer(GmlVM *vm,const char *raw){
+  char *path=extension_read_path(vm,raw);
+  uint8_t *data=NULL;
+  size_t size=0;
+  if(!path || !anygm_vfs_read_all(vm->host,path,&data,&size,256u*1024u*1024u) ||
+     size>(size_t)INT_MAX){
+    free(data); free(path); return vreal(-1);
+  }
+  int id=buffer_alloc(vm,size?(int)size:1);
+  int slot=vm_buffer_slot(vm,id);
+  if(slot>=0){
+    buffer_resize_slot(vm,slot,(int)size);
+    if(size) memcpy(vm->builtins->buffer[slot].data,data,size);
+    vm->builtins->buffer[slot].pos=0;
+  }
+  free(data); free(path);
+  return vreal(id);
+}
+
+static GmlVal nsfs_load_string(GmlVM *vm,const char *raw){
+  char *path=extension_read_path(vm,raw);
+  uint8_t *data=NULL;
+  size_t size=0;
+  if(!path || !anygm_vfs_read_all(vm->host,path,&data,&size,256u*1024u*1024u) ||
+     size>(size_t)INT_MAX){
+    free(data); free(path); return vstr("");
+  }
+  char *text=malloc(size+1u);
+  if(text){ memcpy(text,data,size); text[size]=0; }
+  free(data); free(path);
+  return text?vstr_owned(text):vstr("");
+}
+
+static int color_key_file(GmlVM *vm,const char *raw,uint32_t color){
+  char *read_path=extension_read_path(vm,raw);
+  uint8_t *encoded=NULL;
+  size_t encoded_size=0;
+  GmlMediaBuffer pixels={0},png={0};
+  int width=0,height=0,components=0,ok=0;
+  if(read_path && anygm_vfs_read_all(vm->host,read_path,&encoded,&encoded_size,
+                                     256u*1024u*1024u) &&
+     gml_image_decode_rgba(encoded,encoded_size,&pixels,&width,&height,&components) &&
+     width>0 && height>0 && (size_t)width<=(SIZE_MAX/4u)/(size_t)height){
+    uint8_t red=(uint8_t)(color&255u);
+    uint8_t green=(uint8_t)((color>>8)&255u);
+    uint8_t blue=(uint8_t)((color>>16)&255u);
+    size_t count=(size_t)width*(size_t)height;
+    for(size_t index=0;index<count;index++){
+      uint8_t *pixel=pixels.data+index*4u;
+      if(pixel[0]==red && pixel[1]==green && pixel[2]==blue) pixel[3]=0;
+    }
+    if(gml_image_encode_png(pixels.data,width,height,4,width*4,&png)){
+      char *write_path=extension_write_path(vm,raw);
+      ok=write_path && anygm_vfs_write_all(vm->host,write_path,png.data,png.size);
+      free(write_path);
+    }
+  }
+  gml_media_buffer_release(&png);
+  gml_media_buffer_release(&pixels);
+  free(encoded); free(read_path);
+  return ok;
 }
 
 int vm_file_slot(GmlVM *vm, int id){
@@ -992,6 +1194,104 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
       free(cand);
     }
     return vstr_owned(strdup(raw));
+  }
+  /* Non-sandboxed filesystem extensions are confined to the same content/save overlay as every
+   * other file builtin. The raw variants used by extension wrappers accept either argument order;
+   * identify the filename by value type so both 32-bit and 64-bit packages share one adapter. */
+  if(!strcmp(nm,"nsfs_init_raw")||!strcmp(nm,"nsfs_init_raw1")||
+     !strcmp(nm,"nsfs_init_raw2")) return vreal(1);
+  if(!strcmp(nm,"nsfs_get_status")) return vreal(1);
+  if(!strcmp(nm,"nsfs_get_directory"))
+    return vstr(vm&&vm->win?vm->win->content_dir:"");
+  /* Changing the process working directory is intentionally unavailable. Paths below continue
+   * to resolve against the explicit content/save overlay. */
+  if(!strcmp(nm,"nsfs_set_directory")) return vreal(0);
+  if(!strcmp(nm,"buffer_load_ns_raw1")||!strcmp(nm,"buffer_load_ns_raw2")){
+    const char *path="";
+    for(int index=0;index<n;index++) if(a[index].t==V_STR){ path=S(vm,a,n,index); break; }
+    return nsfs_load_buffer(vm,path);
+  }
+  if(!strcmp(nm,"buffer_save_ns_raw")){
+    int buffer=-1;
+    const char *raw="";
+    for(int index=0;index<n;index++){
+      if(a[index].t==V_STR) raw=S(vm,a,n,index);
+      else if(a[index].t==V_REAL && buffer<0) buffer=(int)a[index].d;
+    }
+    int slot=vm_buffer_slot(vm,buffer),ok=0;
+    if(slot>=0 && raw[0]){
+      char *path=extension_write_path(vm,raw);
+      ok=path && anygm_vfs_write_all(vm->host,path,vm->builtins->buffer[slot].data,
+                                     (size_t)vm->builtins->buffer[slot].size);
+      free(path);
+    }
+    return vreal(ok);
+  }
+  if(!strcmp(nm,"string_load_ns")) return nsfs_load_string(vm,S(vm,a,n,0));
+  if(!strcmp(nm,"string_save_ns")){
+    const char *raw=S(vm,a,n,0),*text=S(vm,a,n,1);
+    char *path=extension_write_path(vm,raw);
+    int ok=path && anygm_vfs_write_all(vm->host,path,text,strlen(text));
+    free(path); return vreal(ok);
+  }
+  if(!strcmp(nm,"file_copy_ns")){
+    char *src=extension_read_path(vm,S(vm,a,n,0));
+    char *dst=extension_write_path(vm,S(vm,a,n,1));
+    int ok=copy_file_path(vm,src,dst);
+    free(src); free(dst); return vreal(ok);
+  }
+  if(!strcmp(nm,"file_exists_ns")){
+    char *path=extension_read_path(vm,S(vm,a,n,0));
+    int ok=path_readable(vm,path); free(path); return vreal(ok);
+  }
+  if(!strcmp(nm,"file_delete_ns")){
+    char *path=extension_write_path(vm,S(vm,a,n,0));
+    int ok=path && vm->host && vm->host->path_remove &&
+      vm->host->path_remove(vm->host->userdata,path)==ANYGM_OK;
+    free(path); return vreal(ok);
+  }
+  if(!strcmp(nm,"directory_exists_ns")){
+    char *path=extension_read_path(vm,S(vm,a,n,0));
+    AnygmFileInfo info={0};
+    int ok=path && anygm_vfs_stat(vm->host,path,&info) &&
+      (info.flags&ANYGM_FILE_INFO_DIRECTORY)!=0;
+    free(path); return vreal(ok);
+  }
+  if(!strcmp(nm,"directory_create_ns")){
+    char *path=extension_write_path(vm,S(vm,a,n,0));
+    int ok=path && anygm_vfs_mkdirs(vm->host,path);
+    free(path); return vreal(ok);
+  }
+  if(!strcmp(nm,"directory_copy_ns")){
+    char *src=extension_read_path(vm,S(vm,a,n,0));
+    char *dst=extension_write_path(vm,S(vm,a,n,1));
+    ExtensionDirectoryBudget budget={0};
+    int ok=src && dst && !extension_path_same_or_child(dst,src) &&
+      extension_directory_copy(vm,src,dst,0,&budget);
+    free(src); free(dst); return vreal(ok);
+  }
+  if(!strcmp(nm,"directory_delete_ns")){
+    char *path=extension_write_path(vm,S(vm,a,n,0));
+    ExtensionDirectoryBudget budget={0};
+    int ok=path && extension_directory_delete(vm,path,0,&budget);
+    free(path); return vreal(ok);
+  }
+  if(!strcmp(nm,"file_move_ns")||!strcmp(nm,"file_rename_ns")||
+     !strcmp(nm,"directory_move_ns")||!strcmp(nm,"directory_rename_ns")){
+    char *src=extension_write_path(vm,S(vm,a,n,0));
+    char *dst=extension_write_path(vm,S(vm,a,n,1));
+    int ok=src&&dst&&vm->host&&vm->host->path_rename&&
+      vm->host->path_rename(vm->host->userdata,src,dst)==ANYGM_OK;
+    free(src); free(dst); return vreal(ok);
+  }
+  if(!strcmp(nm,"MakeColorTransparent")||!strcmp(nm,"SetTransparent")){
+    const char *raw="";
+    uint32_t color=0;
+    for(int index=0;index<n;index++){
+      if(a[index].t==V_STR && !raw[0]) raw=S(vm,a,n,index);
+      else if(a[index].t==V_REAL) color=(uint32_t)(uint64_t)a[index].d;
+    }
+    return vreal(raw[0]&&color_key_file(vm,raw,color));
   }
   if(!strcmp(nm,"file_exists")||!strcmp(nm,"FS_file_exists")){ char *path=resolve_read_path(vm,S(vm,a,n,0));
     AnygmFileInfo info; int ok=path && anygm_vfs_stat(vm->host,path,&info) &&

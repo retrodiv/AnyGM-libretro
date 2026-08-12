@@ -46,6 +46,8 @@ int main(int argc,char **argv){
     {"group_gain",expect_audio_group_gain},
     {"dynamic_extension_state",expect_dynamic_audio_extension_state},
     {"saudio_portable_playback",expect_saudio_portable_playback},
+    {"faudio_gms_portable_playback",expect_faudio_gms_portable_playback},
+    {"wwise_portable_bank_state",expect_wwise_portable_bank_state},
     {"generic_external_audio_restore",expect_generic_external_audio_restore},
     {"state_load_releases_later_sounds",expect_state_load_releases_later_dynamic_sounds},
     {"state_load_ignores_unmatched_records",expect_state_load_ignores_unmatched_dynamic_records},
@@ -56,6 +58,7 @@ int main(int argc,char **argv){
   };
   static const AnygmTestCase io_cases[]={
     {"save_overlay_sandbox",expect_file_sandbox_case},
+    {"portable_extensions",expect_portable_extension_io},
   };
   static const AnygmTestCase timeline_cases[]={
     {"native_import_and_step",expect_timeline_case},

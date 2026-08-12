@@ -4,6 +4,8 @@
 #include "persistent_test_fixture.h"
 
 #include "gml_builtin.h"
+#include "anygm_vfs.h"
+#include "gml_image_codec.h"
 #include "stdio_vfs.h"
 
 #include <stdio.h>
@@ -206,5 +208,125 @@ int expect_file_sandbox_case(void){
   gml_vm_free(&vm);
   rmdir(save_root);
   rmdir(content_root);
+  return ok;
+}
+
+int expect_portable_extension_io(void){
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  char content_root[]="/tmp/gml-extension-content-XXXXXX";
+  char save_root[]="/tmp/gml-extension-save-XXXXXX";
+  if(!mkdtemp(content_root)) return 0;
+  if(!mkdtemp(save_root)){ rmdir(content_root); return 0; }
+  char outside[]="/tmp/gml-extension-outside-XXXXXX";
+  int outside_fd=mkstemp(outside);
+  if(outside_fd<0){ rmdir(save_root); rmdir(content_root); return 0; }
+  close(outside_fd);
+  if(!fixture_write_text(outside,"outside")){
+    unlink(outside); rmdir(save_root); rmdir(content_root); return 0;
+  }
+  GmlWin win={0};
+  snprintf(win.content_dir,sizeof win.content_dir,"%s",content_root);
+  snprintf(win.save_dir,sizeof win.save_dir,"%s",save_root);
+  GmlVM vm={0};
+  vm.win=&win;
+  vm.host=&services;
+
+  GmlVal save_args[]={vstr("note.txt"),vstr("portable-data")};
+  GmlVal saved=gml_builtin_call(&vm,"string_save_ns",save_args,2);
+  GmlVal filename=vstr("note.txt");
+  GmlVal loaded=gml_builtin_call(&vm,"string_load_ns",&filename,1);
+  GmlVal copy_args[]={filename,vstr("copy.txt")};
+  GmlVal copied=gml_builtin_call(&vm,"file_copy_ns",copy_args,2);
+  char copied_path[512],observed[64]={0};
+  snprintf(copied_path,sizeof copied_path,"%s/copy.txt",save_root);
+  int ok=saved.t==V_REAL && saved.d==1 && loaded.t==V_STR && loaded.s &&
+    !strcmp(loaded.s,"portable-data") && copied.t==V_REAL && copied.d==1 &&
+    fixture_read_text(copied_path,observed,sizeof observed) &&
+    !strcmp(observed,"portable-data");
+  if(loaded.t==V_STR && loaded.d!=0) free((void*)loaded.s);
+
+  GmlVal outside_name=vstr(outside);
+  GmlVal outside_loaded=gml_builtin_call(&vm,"string_load_ns",&outside_name,1);
+  GmlVal outside_save_args[]={outside_name,vstr("changed")};
+  GmlVal outside_saved=gml_builtin_call(&vm,"string_save_ns",outside_save_args,2);
+  GmlVal traversal_args[]={vstr("../escape.txt"),vstr("changed")};
+  GmlVal traversal_saved=gml_builtin_call(&vm,"string_save_ns",traversal_args,2);
+  memset(observed,0,sizeof observed);
+  ok=ok && outside_loaded.t==V_STR && outside_loaded.s && !outside_loaded.s[0] &&
+    outside_saved.t==V_REAL && outside_saved.d==0 &&
+    traversal_saved.t==V_REAL && traversal_saved.d==0 &&
+    fixture_read_text(outside,observed,sizeof observed) && !strcmp(observed,"outside");
+  if(outside_loaded.t==V_STR && outside_loaded.d!=0) free((void*)outside_loaded.s);
+
+  char tree_path[512],tree_file[768],copied_tree_file[768],moved_tree[512];
+  snprintf(tree_path,sizeof tree_path,"%s/tree",content_root);
+  snprintf(tree_file,sizeof tree_file,"%s/a.txt",tree_path);
+  snprintf(copied_tree_file,sizeof copied_tree_file,"%s/tree-copy/a.txt",save_root);
+  snprintf(moved_tree,sizeof moved_tree,"%s/tree-moved",save_root);
+  if(mkdir(tree_path,0700)!=0 || !fixture_write_text(tree_file,"tree-data")) ok=0;
+  GmlVal directory_copy_args[]={vstr("tree"),vstr("tree-copy")};
+  GmlVal directory_copy=gml_builtin_call(&vm,"directory_copy_ns",directory_copy_args,2);
+  GmlVal copied_directory=vstr("tree-copy");
+  GmlVal directory_exists=gml_builtin_call(&vm,"directory_exists_ns",&copied_directory,1);
+  memset(observed,0,sizeof observed);
+  int tree_copied=fixture_read_text(copied_tree_file,observed,sizeof observed) &&
+    !strcmp(observed,"tree-data");
+  GmlVal directory_move_args[]={vstr("tree-copy"),vstr("tree-moved")};
+  GmlVal directory_moved=gml_builtin_call(&vm,"directory_move_ns",directory_move_args,2);
+  GmlVal moved_directory=vstr("tree-moved");
+  GmlVal directory_deleted=gml_builtin_call(&vm,"directory_delete_ns",&moved_directory,1);
+  ok=ok && directory_copy.t==V_REAL && directory_copy.d==1 &&
+    directory_exists.t==V_REAL && directory_exists.d==1 &&
+    tree_copied && directory_moved.t==V_REAL && directory_moved.d==1 &&
+    directory_deleted.t==V_REAL && directory_deleted.d==1 && access(moved_tree,F_OK)!=0;
+
+  const uint8_t pixels[]={255,0,0,255, 0,255,0,255};
+  GmlMediaBuffer png={0};
+  char source_png[512],saved_png[512];
+  snprintf(source_png,sizeof source_png,"%s/mask.png",content_root);
+  snprintf(saved_png,sizeof saved_png,"%s/mask.png",save_root);
+  if(!gml_image_encode_png(pixels,2,1,4,8,&png)) ok=0;
+  FILE *file=png.data?fopen(source_png,"wb"):NULL;
+  if(!file || fwrite(png.data,1,png.size,file)!=png.size) ok=0;
+  if(file && fclose(file)!=0) ok=0;
+  gml_media_buffer_release(&png);
+  GmlVal color_args[]={vstr("mask.png"),vreal(255)};
+  GmlVal keyed=gml_builtin_call(&vm,"MakeColorTransparent",color_args,2);
+  uint8_t *encoded=NULL;
+  size_t encoded_size=0;
+  GmlMediaBuffer decoded={0};
+  int width=0,height=0,components=0;
+  ok=ok && keyed.t==V_REAL && keyed.d==1 &&
+    anygm_vfs_read_all(&services,saved_png,&encoded,&encoded_size,1024u*1024u) &&
+    gml_image_decode_rgba(encoded,encoded_size,&decoded,&width,&height,&components) &&
+    width==2 && height==1 && decoded.size>=8 && decoded.data[3]==0 && decoded.data[7]==255;
+  free(encoded);
+  gml_media_buffer_release(&decoded);
+
+  gml_vm_free(&vm);
+  unlink(source_png);
+  unlink(saved_png);
+  unlink(outside);
+  unlink(tree_file);
+  rmdir(tree_path);
+  char note_path[512];
+  snprintf(note_path,sizeof note_path,"%s/note.txt",save_root);
+  unlink(note_path); unlink(copied_path);
+  rmdir(save_root); rmdir(content_root);
+  if(!ok) fprintf(stderr,
+    "portable filesystem/color-key extension fixture failed "
+    "save=%.0f copy=%.0f outside_save=%.0f traversal=%.0f "
+    "dir_copy=%.0f dir_exists=%.0f dir_move=%.0f dir_delete=%.0f key=%.0f\n",
+    saved.t==V_REAL?saved.d:-1.0,copied.t==V_REAL?copied.d:-1.0,
+    outside_saved.t==V_REAL?outside_saved.d:-1.0,
+    traversal_saved.t==V_REAL?traversal_saved.d:-1.0,
+    directory_copy.t==V_REAL?directory_copy.d:-1.0,
+    directory_exists.t==V_REAL?directory_exists.d:-1.0,
+    directory_moved.t==V_REAL?directory_moved.d:-1.0,
+    directory_deleted.t==V_REAL?directory_deleted.d:-1.0,
+    keyed.t==V_REAL?keyed.d:-1.0);
   return ok;
 }

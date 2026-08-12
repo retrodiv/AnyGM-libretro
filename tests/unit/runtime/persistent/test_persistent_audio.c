@@ -4,6 +4,7 @@
 #include "persistent_test_fixture.h"
 
 #include "gml_audio.h"
+#include "gml_wwise.h"
 #include "gml_builtin.h"
 #include "stdio_vfs.h"
 
@@ -645,5 +646,155 @@ int expect_generic_external_audio_restore(void){
   unlink(path);
   rmdir(directory);
   if(!ok) fprintf(stderr,"generic external-audio identity/state fixture failed\n");
+  return ok;
+}
+
+int expect_faudio_gms_portable_playback(void){
+  enum { sample_count=4410 };
+  unsigned char wav[44+sample_count]={0};
+  memcpy(wav,"RIFF",4);
+  fixture_write_u32(wav,4,sizeof(wav)-8);
+  memcpy(wav+8,"WAVEfmt ",8);
+  fixture_write_u32(wav,16,16);
+  fixture_write_u16(wav,20,1);
+  fixture_write_u16(wav,22,1);
+  fixture_write_u32(wav,24,44100);
+  fixture_write_u32(wav,28,44100);
+  fixture_write_u16(wav,32,1);
+  fixture_write_u16(wav,34,8);
+  memcpy(wav+36,"data",4);
+  fixture_write_u32(wav,40,sample_count);
+  for(int sample=0;sample<sample_count;sample++)
+    wav[44+sample]=(unsigned char)(128+((sample%64)-32)*3);
+
+  char directory[]="/tmp/anygm-faudio-gms-XXXXXX";
+  if(!mkdtemp(directory)) return 0;
+  char path[256];
+  snprintf(path,sizeof path,"%s/tone.wav",directory);
+  FILE *file=fopen(path,"wb");
+  int ok=file && fwrite(wav,1,sizeof wav,file)==sizeof wav;
+  if(file && fclose(file)!=0) ok=0;
+
+  AnygmHostServices host={0};
+  host.struct_size=sizeof host;
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&host);
+  GmlWin win={0};
+  snprintf(win.content_dir,sizeof win.content_dir,"%s",directory);
+  GmlVM vm={0};
+  if(!ok || gml_vm_init(&vm,&win,&host)!=0){
+    unlink(path); rmdir(directory); return 0;
+  }
+  GmlAudio *audio=gml_audio_create(&win);
+  vm.audio=audio;
+  if(!audio){ gml_vm_free(&vm); unlink(path); rmdir(directory); return 0; }
+
+  GmlVal relative=vstr("tone.wav");
+  GmlVal loaded=gml_builtin_call(&vm,"FAudioGMS_StaticSound_LoadWAV",&relative,1);
+  GmlVal instance=gml_builtin_call(
+    &vm,"FAudioGMS_StaticSound_CreateSoundInstance",&loaded,1);
+  int source=loaded.t==V_REAL?(int)loaded.d:-1;
+  int sound=instance.t==V_REAL?(int)instance.d:-1;
+  ok=ok && source>=0 && sound>=0 && source!=sound &&
+    gml_audio_exists(audio,source) && gml_audio_exists(audio,sound);
+
+  (void)gml_builtin_call(&vm,"FAudioGMS_SoundInstance_Play",&instance,1);
+  GmlVal gain_args[]={instance,vreal(0.25)};
+  GmlVal pitch_args[]={instance,vreal(1.5)};
+  (void)gml_builtin_call(&vm,"FAudioGMS_SoundInstance_SetVolume",gain_args,2);
+  (void)gml_builtin_call(&vm,"FAudioGMS_SoundInstance_SetPitch",pitch_args,2);
+  GmlVal gain=gml_builtin_call(&vm,"FAudioGMS_SoundInstance_GetVolume",&instance,1);
+  GmlVal pitch_value=gml_builtin_call(
+    &vm,"FAudioGMS_SoundInstance_GetPitch",&instance,1);
+  GmlVal length=gml_builtin_call(
+    &vm,"FAudioGMS_SoundInstance_GetTrackLengthInSeconds",&instance,1);
+  int16_t mixed[128]={0};
+  gml_audio_mix(audio,mixed,64);
+  ok=ok && gml_audio_is_playing(audio,sound) && gain.t==V_REAL && gain.d==0.25 &&
+    pitch_value.t==V_REAL && pitch_value.d==1.5 && length.t==V_REAL && length.d>0.09;
+
+  (void)gml_builtin_call(&vm,"FAudioGMS_SoundInstance_Stop",&instance,1);
+  (void)gml_builtin_call(&vm,"FAudioGMS_SoundInstance_Destroy",&instance,1);
+  ok=ok && !gml_audio_exists(audio,sound) && gml_audio_exists(audio,source);
+  (void)gml_builtin_call(&vm,"FAudioGMS_StaticSound_Destroy",&loaded,1);
+  ok=ok && !gml_audio_exists(audio,source);
+
+  gml_vm_free(&vm);
+  gml_audio_free(audio);
+  unlink(path); rmdir(directory);
+  if(!ok) fprintf(stderr,"portable FAudioGMS playback fixture failed\n");
+  return ok;
+}
+
+int expect_wwise_portable_bank_state(void){
+  unsigned char bank[25]={0};
+  memcpy(bank,"HIRC",4);
+  fixture_write_u32(bank,4,17);
+  fixture_write_u32(bank,8,1);
+  bank[12]=4;
+  fixture_write_u32(bank,13,8);
+  fixture_write_u32(bank,17,UINT32_C(0x12345678));
+  fixture_write_u32(bank,21,0);
+  uint8_t *invalid_ogg=(uint8_t *)1;
+  size_t invalid_size=1;
+  int ok=!gml_wwise_wem_to_ogg(bank,sizeof bank,&invalid_ogg,&invalid_size) &&
+    invalid_ogg==NULL && invalid_size==0;
+
+  char directory[]="/tmp/anygm-wwise-bank-XXXXXX";
+  if(!mkdtemp(directory)) return 0;
+  char path[256];
+  snprintf(path,sizeof path,"%s/Synthetic.bnk",directory);
+  FILE *file=fopen(path,"wb");
+  ok=ok && file && fwrite(bank,1,sizeof bank,file)==sizeof bank;
+  if(file && fclose(file)!=0) ok=0;
+  AnygmHostServices host={0};
+  host.struct_size=sizeof host;
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&host);
+  GmlWin win={0};
+  snprintf(win.content_dir,sizeof win.content_dir,"%s",directory);
+  GmlVM vm={0};
+  if(!ok || gml_vm_init(&vm,&win,&host)!=0){ unlink(path); rmdir(directory); return 0; }
+  GmlAudio *audio=gml_audio_create(&win);
+  vm.audio=audio;
+  GmlVal base=vstr(directory),name=vstr("Synthetic.bnk");
+  ok=audio && gml_builtin_call(&vm,"gmwSetBasePath",&base,1).d==1 &&
+    gml_builtin_call(&vm,"gmwLoadBank",&name,1).d==1;
+  const char *const accepted[]={
+    "gmwRegisterObject","gmwUnregisterObject","gmwRegisterGroup","gmwUnregisterGroup",
+    "gmwSetParameter","gmwSetGlobalParameter","gmwSetSwitch","gmwSetState",
+    "gmwSet2DListenerPosition","gmwSet2DPosition","gmwSet3DListenerPosition",
+    "gmwSet3DPosition","gmwSetActiveListeners","gmwPostTrigger","gmwProcess"
+  };
+  for(size_t index=0;index<sizeof accepted/sizeof accepted[0];index++){
+    GmlVal result=gml_builtin_call(&vm,accepted[index],NULL,0);
+    ok=ok && result.t==V_REAL && result.d==1;
+  }
+  GmlVal error=gml_builtin_call(&vm,"gmwGetError",NULL,0);
+  GmlVal parameter=gml_builtin_call(&vm,"gmwGetParameter",NULL,0);
+  ok=ok && error.t==V_STR && !strcmp(error.s,"") &&
+    parameter.t==V_REAL && parameter.d==0;
+  size_t state_size=gml_vm_state_size(&vm),written=0,used=0;
+  uint8_t *state=malloc(state_size?state_size:1u);
+  ok=ok && state && gml_vm_state_save(&vm,state,state_size,&written) &&
+    written==state_size && gml_builtin_call(&vm,"gmwUnloadBank",&name,1).d==1;
+  unsigned char changed[sizeof bank];
+  memcpy(changed,bank,sizeof changed);
+  changed[17]^=1u;
+  file=fopen(path,"wb");
+  ok=ok && file && fwrite(changed,1,sizeof changed,file)==sizeof changed;
+  if(file && fclose(file)!=0) ok=0;
+  ok=ok && !gml_vm_state_load(&vm,state,written,&used);
+  file=fopen(path,"wb");
+  ok=ok && file && fwrite(bank,1,sizeof bank,file)==sizeof bank;
+  if(file && fclose(file)!=0) ok=0;
+  ok=ok &&
+    gml_vm_state_load(&vm,state,written,&used) && used==written &&
+    gml_builtin_call(&vm,"gmwUnloadBank",&name,1).d==1;
+  free(state);
+  gml_vm_free(&vm);
+  gml_audio_free(audio);
+  unlink(path); rmdir(directory);
+  if(!ok) fprintf(stderr,"portable Wwise bank/state fixture failed\n");
   return ok;
 }

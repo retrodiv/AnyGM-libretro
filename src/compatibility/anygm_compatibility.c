@@ -17,6 +17,16 @@ static int compatibility_ascii_equal(const char *left,const char *right){
   return *left==0 && *right==0;
 }
 
+static int compatibility_ascii_starts_with(const char *value,const char *prefix){
+  if(!value || !prefix) return 0;
+  while(*prefix){
+    if(!*value || tolower((unsigned char)*value)!=
+                   tolower((unsigned char)*prefix)) return 0;
+    value++; prefix++;
+  }
+  return 1;
+}
+
 AnygmExternalLibraryPolicy anygm_external_library_policy(const char *library){
   if(!library || !*library) return ANYGM_EXTERNAL_LIBRARY_KEEP;
   const char *base=library;
@@ -24,16 +34,32 @@ AnygmExternalLibraryPolicy anygm_external_library_policy(const char *library){
     if(*cursor=='/' || *cursor=='\\') base=cursor+1;
   static const char *const portable[]={
     "SGAudio.dll","supersound.dll","saudio.dll","bgm.dll",
-    "GMFMODSimple.dll","GMXInput.dll","pxwrap.dll"
+    "GMFMODSimple.dll","GMXInput.dll","pxwrap.dll",
+    "fmod-gamemaker.dll","fmod.dll","fmodstudio.dll","gameframe_x64.dll",
+    "GMFile.dll","GMIni.dll","GMResource.dll","GMXML.dll",
+    "FAudioGMS.dll","GMWwise_profile.dll","joydll.dll","nsfs.dll",
+    "ColorkeyMaskDLL.dll"
   };
   static const char *const noop[]={
-    "CleanMem.dll","gmSteam.dll","gmSteamInitOnly.dll","Steam.dll","Steamworks.dll"
+    "CleanMem.dll","gmSteam.dll","gmSteamInitOnly.dll","Steam.dll","Steamworks.dll",
+    "steam_api.dll","steam_api64.dll","Steamworks_x64.dll","Steamworks.gml.dll",
+    "Steamworks_gml_x64.dll","SteamExt.dll",
+    "Galaxy.dll","Galaxy64.dll","GOG.gml.dll","GOG_x64.dll","goggame.dll",
+    "GameAnalytics.dll","discord_game_sdk.dll","tsuspresence_x64.dll",
+    "rousrDissonance.dll","NekoPresence.dll","humble_api_gms.dll",
+    "display_mouse_lock.dll","gamepad_force_focus.dll",
+    "window_command_hook.dll","window_set_cursor.dll","GMS1 BorderlessFix.dll",
+    "BorderlessToggle.dll","catch_error.dll","catch_error_mini.dll","ram.dll",
+    "execute_shell_simple.dll","execute_shell_simple_ext.dll",
+    "execute_shell_simple_ext_x64.dll","PC_FOCAL_Network.dll","gmsched.dll",
+    "file_dropper.dll","drago.dll"
   };
   static const char *const dependency[]={
     "wrap_oal.dll","OpenAL32.dll","fmodex.dll","libvorbis.dll",
     "libvorbisfile.dll","libogg.dll","bass.dll","pxtone.dll",
-    "steam_api.dll","steamclient.dll","tier0_s.dll","vstdlib_s.dll",
-    "cg.dll","cgGL.dll"
+    "steamclient.dll","tier0_s.dll","vstdlib_s.dll",
+    "cg.dll","cgGL.dll","DSETUP.dll","dsetup32.dll",
+    "FreeImage.dll","glew32.dll","SDL2.dll","libsndfile-1.dll"
   };
   for(size_t i=0;i<sizeof(portable)/sizeof(portable[0]);i++)
     if(compatibility_ascii_equal(base,portable[i])) return ANYGM_EXTERNAL_LIBRARY_PORTABLE;
@@ -41,6 +67,9 @@ AnygmExternalLibraryPolicy anygm_external_library_policy(const char *library){
     if(compatibility_ascii_equal(base,noop[i])) return ANYGM_EXTERNAL_LIBRARY_NOOP;
   for(size_t i=0;i<sizeof(dependency)/sizeof(dependency[0]);i++)
     if(compatibility_ascii_equal(base,dependency[i])) return ANYGM_EXTERNAL_LIBRARY_DEPENDENCY;
+  if(compatibility_ascii_starts_with(base,"goggame-") ||
+     compatibility_ascii_starts_with(base,"steam_api."))
+    return ANYGM_EXTERNAL_LIBRARY_NOOP;
   return ANYGM_EXTERNAL_LIBRARY_KEEP;
 }
 

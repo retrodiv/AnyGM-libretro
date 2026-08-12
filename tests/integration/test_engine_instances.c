@@ -1074,8 +1074,8 @@ int main(int argc,char **argv){
   /* The synthetic-state checksum tracks the complete serialized bytes,
    * including the resolved content and compatibility identifiers. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
-  if(deterministic_size!=19626 ||
-     deterministic_hash!=UINT64_C(0x074e8ba3b4eeca13)){
+  if(deterministic_size!=19634 ||
+     deterministic_hash!=UINT64_C(0x61beb0f5564ccd25)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;
@@ -1108,11 +1108,32 @@ int main(int argc,char **argv){
   free(damaged);
 
   first_output.struct_size=sizeof first_output;
-  if(anygm_run_frame(first,&input,&first_output)!=ANYGM_OK ||
-     anygm_state_load(first,first_state,first_written)!=ANYGM_OK ||
-     !save_state(first,&deterministic,&deterministic_size) ||
+  AnygmResult roundtrip_run=anygm_run_frame(first,&input,&first_output);
+  AnygmResult roundtrip_load=roundtrip_run==ANYGM_OK?
+    anygm_state_load(first,first_state,first_written):ANYGM_ERROR_INVALID_STATE;
+  int roundtrip_save=roundtrip_load==ANYGM_OK?
+    save_state(first,&deterministic,&deterministic_size):0;
+  if(roundtrip_run!=ANYGM_OK || roundtrip_load!=ANYGM_OK || !roundtrip_save ||
      deterministic_size!=first_written || memcmp(deterministic,first_state,first_written)){
-    fprintf(stderr,"state roundtrip did not restore exact serialized state\n");
+    if(deterministic)
+      for(size_t index=112;index<(deterministic_size<first_written?
+                              deterministic_size:first_written);index++)
+        if(deterministic[index]!=first_state[index]){
+          fprintf(stderr,"first state difference at %zu: %02x != %02x\n",index,
+                  deterministic[index],first_state[index]);
+          break;
+        }
+    if(deterministic && deterministic_size>=112 && first_written>=112)
+      fprintf(stderr,"sections restored=%llu/%llu/%llu expected=%llu/%llu/%llu\n",
+              (unsigned long long)read_u64(deterministic+64),
+              (unsigned long long)read_u64(deterministic+72),
+              (unsigned long long)read_u64(deterministic+80),
+              (unsigned long long)read_u64(first_state+64),
+              (unsigned long long)read_u64(first_state+72),
+              (unsigned long long)read_u64(first_state+80));
+    fprintf(stderr,"state roundtrip did not restore exact serialized state: run=%d load=%d "
+                   "save=%d size=%zu expected=%zu\n",roundtrip_run,roundtrip_load,
+            roundtrip_save,deterministic_size,first_written);
     return 1;
   }
   free(deterministic);

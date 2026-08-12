@@ -78,6 +78,23 @@ static int external_input_button_mask(GmlVM *vm){
   return mask;
 }
 
+static int joy_device(double value){
+  return (int)value;
+}
+
+static int joy_button_code(int button){
+  return button>=0 && button<16 ? 32769+button : 0;
+}
+
+static double joy_axis_value(GmlVM *vm,int device,int axis){
+  int code=axis==0?32785:axis==1?32786:axis==2?32787:axis==3?32788:0;
+  if(!code) return 0.0;
+  double value=gml_input_gamepad_axis(vm,device,code);
+  if(!isfinite(value)) return 0.0;
+  if(value<-1.0) value=-1.0; else if(value>1.0) value=1.0;
+  return value;
+}
+
 GmlVal builtin_external_input_call(GmlVM *vm,int handle,
                                    GmlVal *args,int count,int *handled){
   if(handled) *handled=0;
@@ -160,6 +177,50 @@ GmlVal gml_builtin_try_input(GmlVM *vm, const char *nm, GmlVal *a, int n){
    * unknown-builtin path every frame. */
   if(!strcmp(nm,"display_mouse_lock")||!strcmp(nm,"display_mouse_unlock")) return vreal(0);
   if(!strcmp(nm,"window_mouse_set")) return vreal(0);
+  /* The common SDL joydll extension uses zero-based devices, axes and buttons. Translate its
+   * polling surface to the same normalized gamepad snapshot as GameMaker's joystick builtins.
+   * Trackballs are not represented by the host input contract and hats use the first d-pad. */
+  if(!strcmp(nm,"joy_init")||!strcmp(nm,"joy_update")||!strcmp(nm,"joy_close"))
+    return vreal(1);
+  if(!strcmp(nm,"joy_count")){
+    int count=0;
+    for(int device=0;device<4;device++) if(gml_input_gamepad_connected(vm,device)) count++;
+    return vreal(count);
+  }
+  if(!strcmp(nm,"joy_find")){
+    for(int device=0;device<4;device++) if(gml_input_gamepad_connected(vm,device)) return vreal(device);
+    return vreal(-1);
+  }
+  if(!strcmp(nm,"joy_name"))
+    return vstr(gml_input_gamepad_connected(vm,joy_device(N(a,n,0)))?"AnyGM Gamepad":"");
+  if(!strcmp(nm,"joy_axes")) return vreal(4);
+  if(!strcmp(nm,"joy_axis"))
+    return vreal(joy_axis_value(vm,joy_device(N(a,n,0)),(int)N(a,n,1)));
+  if(!strcmp(nm,"joy_buttons")) return vreal(16);
+  if(!strcmp(nm,"joy_button")){
+    int device=joy_device(N(a,n,0));
+    int code=joy_button_code((int)N(a,n,1));
+    return vreal(device==0&&code?gml_input_gamepad(vm,code,0):0);
+  }
+  if(!strcmp(nm,"joy_hats")) return vreal(1);
+  if(!strcmp(nm,"joy_hat")){
+    int device=joy_device(N(a,n,0));
+    int up=device==0&&gml_input_gamepad(vm,32781,0);
+    int down=device==0&&gml_input_gamepad(vm,32782,0);
+    int left=device==0&&gml_input_gamepad(vm,32783,0);
+    int right=device==0&&gml_input_gamepad(vm,32784,0);
+    if(up&&right) return vreal(1);
+    if(right&&down) return vreal(3);
+    if(down&&left) return vreal(5);
+    if(left&&up) return vreal(7);
+    if(up) return vreal(0);
+    if(right) return vreal(2);
+    if(down) return vreal(4);
+    if(left) return vreal(6);
+    return vreal(-1);
+  }
+  if(!strcmp(nm,"joy_balls")) return vreal(0);
+  if(!strcmp(nm,"joy_ball_x")||!strcmp(nm,"joy_ball_y")) return vreal(0);
   if(!strcmp(nm,"joystick_exists")){
     int joy=(int)N(a,n,0), dev=joy>0?joy-1:joy;
     return vreal(gml_input_gamepad_connected(vm,dev)); }

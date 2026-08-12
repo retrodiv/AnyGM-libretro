@@ -1669,7 +1669,46 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1583, HIGHSCORE_ADD, "highscore_add", IO, IO, ALWAYS) \
   ENTRY(1584, HIGHSCORE_VALUE, "highscore_value", IO, IO, ALWAYS) \
   ENTRY(1585, HIGHSCORE_CLEAR, "highscore_clear", IO, IO, ALWAYS) \
-  ENTRY(1586, HIGHSCORE_NAME, "highscore_name", IO, IO, ALWAYS)
+  ENTRY(1586, HIGHSCORE_NAME, "highscore_name", IO, IO, ALWAYS) \
+  ENTRY(1587, JOY_INIT, "joy_init", INPUT, INPUT, ALWAYS) \
+  ENTRY(1588, JOY_UPDATE, "joy_update", INPUT, INPUT, ALWAYS) \
+  ENTRY(1589, JOY_CLOSE, "joy_close", INPUT, INPUT, ALWAYS) \
+  ENTRY(1590, JOY_COUNT, "joy_count", INPUT, INPUT, ALWAYS) \
+  ENTRY(1591, JOY_FIND, "joy_find", INPUT, INPUT, ALWAYS) \
+  ENTRY(1592, JOY_NAME, "joy_name", INPUT, INPUT, ALWAYS) \
+  ENTRY(1593, JOY_AXES, "joy_axes", INPUT, INPUT, ALWAYS) \
+  ENTRY(1594, JOY_AXIS, "joy_axis", INPUT, INPUT, ALWAYS) \
+  ENTRY(1595, JOY_BUTTONS, "joy_buttons", INPUT, INPUT, ALWAYS) \
+  ENTRY(1596, JOY_BUTTON, "joy_button", INPUT, INPUT, ALWAYS) \
+  ENTRY(1597, JOY_HATS, "joy_hats", INPUT, INPUT, ALWAYS) \
+  ENTRY(1598, JOY_HAT, "joy_hat", INPUT, INPUT, ALWAYS) \
+  ENTRY(1599, JOY_BALLS, "joy_balls", INPUT, INPUT, ALWAYS) \
+  ENTRY(1600, JOY_BALL_X, "joy_ball_x", INPUT, INPUT, ALWAYS) \
+  ENTRY(1601, JOY_BALL_Y, "joy_ball_y", INPUT, INPUT, ALWAYS) \
+  ENTRY(1602, NSFS_INIT_RAW, "nsfs_init_raw", IO, IO, ALWAYS) \
+  ALIAS(NSFS_INIT_RAW, "nsfs_init_raw1", IO, IO, ALWAYS) \
+  ALIAS(NSFS_INIT_RAW, "nsfs_init_raw2", IO, IO, ALWAYS) \
+  ENTRY(1603, NSFS_GET_STATUS, "nsfs_get_status", IO, IO, ALWAYS) \
+  ENTRY(1604, NSFS_GET_DIRECTORY, "nsfs_get_directory", IO, IO, ALWAYS) \
+  ENTRY(1605, NSFS_SET_DIRECTORY, "nsfs_set_directory", IO, IO, ALWAYS) \
+  ENTRY(1606, BUFFER_LOAD_NS_RAW1, "buffer_load_ns_raw1", IO, IO, ALWAYS) \
+  ENTRY(1607, BUFFER_LOAD_NS_RAW2, "buffer_load_ns_raw2", IO, IO, ALWAYS) \
+  ENTRY(1608, BUFFER_SAVE_NS_RAW, "buffer_save_ns_raw", IO, IO, ALWAYS) \
+  ENTRY(1609, STRING_LOAD_NS, "string_load_ns", IO, IO, ALWAYS) \
+  ENTRY(1610, STRING_SAVE_NS, "string_save_ns", IO, IO, ALWAYS) \
+  ENTRY(1611, FILE_COPY_NS, "file_copy_ns", IO, IO, ALWAYS) \
+  ENTRY(1612, FILE_EXISTS_NS, "file_exists_ns", IO, IO, ALWAYS) \
+  ENTRY(1613, FILE_DELETE_NS, "file_delete_ns", IO, IO, ALWAYS) \
+  ENTRY(1614, FILE_MOVE_NS, "file_move_ns", IO, IO, ALWAYS) \
+  ENTRY(1615, FILE_RENAME_NS, "file_rename_ns", IO, IO, ALWAYS) \
+  ENTRY(1616, DIRECTORY_MOVE_NS, "directory_move_ns", IO, IO, ALWAYS) \
+  ENTRY(1617, DIRECTORY_RENAME_NS, "directory_rename_ns", IO, IO, ALWAYS) \
+  ENTRY(1618, MAKE_COLOR_TRANSPARENT, "MakeColorTransparent", IO, IO, ALWAYS) \
+  ENTRY(1619, SET_TRANSPARENT, "SetTransparent", IO, IO, ALWAYS) \
+  ENTRY(1620, DIRECTORY_EXISTS_NS, "directory_exists_ns", IO, IO, ALWAYS) \
+  ENTRY(1621, DIRECTORY_CREATE_NS, "directory_create_ns", IO, IO, ALWAYS) \
+  ENTRY(1622, DIRECTORY_DELETE_NS, "directory_delete_ns", IO, IO, ALWAYS) \
+  ENTRY(1623, DIRECTORY_COPY_NS, "directory_copy_ns", IO, IO, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1684,7 +1723,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1587
+  GML_BUILTIN_ID_LIMIT = 1624
 } GmlBuiltinId;
 
 #endif

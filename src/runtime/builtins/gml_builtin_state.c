@@ -350,6 +350,7 @@ void gml_builtin_state_reset(GmlBuiltinState *state){
   state->audio_falloff_model=0;
   builtin_state_saudio_clear(state);
   builtin_state_external_audio_clear(state);
+  builtin_wwise_state_free(state);
   builtin_state_physics_reset(state);
   file_find_reset(state);
   memset(state->gamepad_deadzone,0,sizeof(state->gamepad_deadzone));
@@ -794,6 +795,15 @@ void gml_builtin_state_write_audio(const GmlBuiltinState *state,
     gml_vm_state_write_i32(writer,entry->record_active!=0);
     gml_vm_state_write_real(writer,entry->position_ms);
   }
+  gml_vm_state_write_string(writer,builtin_wwise_base_path(state));
+  uint32_t wwise_count=builtin_wwise_bank_count(state);
+  gml_vm_state_write_u32(writer,wwise_count);
+  for(uint32_t index=0;index<wwise_count;index++){
+    gml_vm_state_write_string(writer,builtin_wwise_bank_path(state,index));
+    const uint8_t *digest=builtin_wwise_bank_digest(state,index);
+    uint8_t zero_digest[32]={0};
+    gml_vm_state_write_raw(writer,digest?digest:zero_digest,32u);
+  }
 }
 
 int gml_builtin_state_read_audio(GmlBuiltinState *state,
@@ -898,6 +908,25 @@ int gml_builtin_state_read_audio(GmlBuiltinState *state,
     }
     entry->record_active=record_active;
     entry->position_ms=position_ms;
+  }
+  if(gml_vm_state_reader_ok(reader)){
+    char *base=gml_vm_state_read_string(reader);
+    uint32_t count=gml_vm_state_read_u32(reader);
+    char *paths[16]={0};
+    uint8_t digests[16][32]={{0}};
+    if(!base || strlen(base)>=768u || count>16u)
+      gml_vm_state_reader_fail(reader,"bad Wwise bank header",count);
+    for(uint32_t index=0;index<count && gml_vm_state_reader_ok(reader);index++){
+      paths[index]=gml_vm_state_read_string(reader);
+      if(!paths[index] || !paths[index][0] || strlen(paths[index])>=1536u)
+        gml_vm_state_reader_fail(reader,"bad Wwise bank path",index);
+      gml_vm_state_read_raw(reader,digests[index],sizeof(digests[index]));
+    }
+    if(gml_vm_state_reader_ok(reader) &&
+       !builtin_wwise_state_restore(state,base,(const char *const *)paths,digests,count))
+      gml_vm_state_reader_fail(reader,"Wwise bank restore",count);
+    for(uint32_t index=0;index<16u;index++) free(paths[index]);
+    free(base);
   }
   return gml_vm_state_reader_ok(reader);
 }

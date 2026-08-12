@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=4 };
+enum { GML_VM_STATE_SCHEMA=5 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* Writing a state walks every instance's variables, and the names repeat across them: every
  * instance carries the same handful of built-in names, each time as the very same pointer into
@@ -154,12 +154,18 @@ static int state_str_index_by_ptr(GmlVM *vm, const char *p){
 static void sw_str(StateW *s, const char *p){
   if(!p) p="";
   if(s->compact_strings){
-    unsigned slot=state_str_memo_slot(p);
-    int idx;
-    if(s->memo && s->memo->key[slot]==p) idx=s->memo->index[slot];
-    else {
-      idx=state_str_index_by_ptr(s->vm,p);
-      if(s->memo){ s->memo->key[slot]=p; s->memo->index[slot]=idx; }
+    /* Only mapping-owned pointers are stable for the lifetime of this memo. A runtime allocation
+     * may be freed during state restore and later reused for unrelated text, so retaining that
+     * address could emit a stale STRG index on the next save. */
+    const char *stable=s->vm&&s->vm->win?gml_win_intern_lookup(s->vm->win,p):NULL;
+    int idx=-1;
+    if(stable){
+      unsigned slot=state_str_memo_slot(stable);
+      if(s->memo && s->memo->key[slot]==stable) idx=s->memo->index[slot];
+      else {
+        idx=state_str_index_by_ptr(s->vm,stable);
+        if(s->memo){ s->memo->key[slot]=stable; s->memo->index[slot]=idx; }
+      }
     }
     if(idx>=0){ sw_u32(s,0x80000000u | (uint32_t)idx); return; }
   }

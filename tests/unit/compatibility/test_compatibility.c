@@ -25,6 +25,14 @@ int main(void){
      anygm_external_library_policy("gmSteam.dll")!=ANYGM_EXTERNAL_LIBRARY_NOOP ||
      anygm_external_library_policy("fmodex.dll")!=ANYGM_EXTERNAL_LIBRARY_DEPENDENCY ||
      anygm_external_library_policy("CustomLighting.dll")!=ANYGM_EXTERNAL_LIBRARY_KEEP ||
+     anygm_external_library_policy("FAudioGMS.dll")!=ANYGM_EXTERNAL_LIBRARY_PORTABLE ||
+     anygm_external_library_policy("GMWwise_profile.dll")!=ANYGM_EXTERNAL_LIBRARY_PORTABLE ||
+     anygm_external_library_policy("joydll.dll")!=ANYGM_EXTERNAL_LIBRARY_PORTABLE ||
+     anygm_external_library_policy("nsfs.dll")!=ANYGM_EXTERNAL_LIBRARY_PORTABLE ||
+     anygm_external_library_policy("goggame-123456.dll")!=ANYGM_EXTERNAL_LIBRARY_NOOP ||
+     anygm_external_library_policy("PC_FOCAL_Network.dll")!=ANYGM_EXTERNAL_LIBRARY_NOOP ||
+     anygm_external_library_policy("videoPlayer.dll")!=ANYGM_EXTERNAL_LIBRARY_KEEP ||
+     anygm_external_library_policy("avcodec-56.dll")!=ANYGM_EXTERNAL_LIBRARY_KEEP ||
      strcmp(anygm_external_library_policy_name(ANYGM_EXTERNAL_LIBRARY_NOOP),"noop")){
     fputs("external library policy mismatch\n",stderr);
     return 1;

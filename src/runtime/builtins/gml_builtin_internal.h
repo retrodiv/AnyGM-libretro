@@ -191,6 +191,7 @@ struct GmlBuiltinState {
   uint32_t saudio_count,saudio_capacity;
   GmlExternalAudioAsset *external_audio_assets;
   uint32_t external_audio_asset_count,external_audio_asset_capacity;
+  void *wwise;
 };
 
 struct GmlRender;
@@ -310,6 +311,14 @@ int builtin_state_external_audio_store(GmlBuiltinState *state,int sound,
                                        const uint8_t content_sha256[32]);
 void builtin_state_external_audio_remove(GmlBuiltinState *state,int sound);
 void builtin_state_external_audio_clear(GmlBuiltinState *state);
+void builtin_wwise_state_free(GmlBuiltinState *state);
+uint32_t builtin_wwise_bank_count(const GmlBuiltinState *state);
+const char *builtin_wwise_base_path(const GmlBuiltinState *state);
+const char *builtin_wwise_bank_path(const GmlBuiltinState *state,uint32_t index);
+const uint8_t *builtin_wwise_bank_digest(const GmlBuiltinState *state,uint32_t index);
+int builtin_wwise_state_restore(GmlBuiltinState *state,const char *base,
+                                const char *const *paths,const uint8_t digests[][32],
+                                uint32_t count);
 int builtin_external_audio_restore(GmlVM *vm,const char *relative,int sound,
                                    const uint8_t expected_sha256[32]);
 GmlRenderDrawState builtin_draw_state(const GmlRender *render);
