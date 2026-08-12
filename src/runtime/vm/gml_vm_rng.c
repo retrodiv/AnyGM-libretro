@@ -9,13 +9,18 @@
 #include <math.h>
 
 /* WELL512 follows the Lomont recurrence credited in LICENSES/WELL512.txt.
- * Expand the state from the unsigned high word of each wrapped MSVC-LCG
- * step. Real draws scale the complete word by 2^32. */
+ * Studio compatibility profiles select either a limited signed high-word
+ * seed expansion or the full unsigned high word of the wrapped MSVC-LCG step.
+ * Real draws scale the complete WELL output word by 2^32. */
 void gml_rng_seed(GmlVM *vm, uint32_t seed){
   uint32_t s=seed;
   for(int i=0;i<16;i++){
     uint32_t mixed=s*214013u+2531011u;
     s=mixed>>16;
+    if(anygm_policy_uses_limited_random_seed_expansion(vm->win)){
+      if(mixed&UINT32_C(0x80000000)) s|=UINT32_C(0xffff0000);
+      s&=UINT32_C(0x7fffffff);
+    }
     vm->rng_well[i]=s;
   }
   vm->rng_index=0;

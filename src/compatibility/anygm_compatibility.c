@@ -66,6 +66,7 @@ static uint64_t compatibility_fingerprint(const AnygmCompatibilityProfile *profi
   ENCODE_FIELD(classic_interpolate);
   ENCODE_FIELD(classic_scaling);
   ENCODE_FIELD(classic_executable_layout);
+  ENCODE_FIELD(uses_limited_random_seed_expansion);
   ENCODE_FIELD(legacy_view_slots);
 #undef ENCODE_FIELD
   uint64_t epsilon=0;
@@ -156,6 +157,7 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   profile->classic_interpolate=classic&&facts->classic_interpolate;
   profile->classic_scaling=classic?facts->classic_scaling:0;
   profile->classic_executable_layout=classic&&facts->classic_executable_layout;
+  profile->uses_limited_random_seed_expansion=!classic&&!modern;
   profile->legacy_view_slots=classic?8u:1u;
   profile->fingerprint=compatibility_fingerprint(profile);
   return 1;

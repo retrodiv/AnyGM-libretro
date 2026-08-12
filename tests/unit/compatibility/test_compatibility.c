@@ -45,6 +45,7 @@ int main(void){
      first_early.alarm_dispatch!=ANYGM_ALARM_DISPATCH_STANDARD ||
      first_early.alarm_threshold!=ANYGM_ALARM_TRIGGER_BELOW_ZERO ||
      first_early.instance_iteration!=ANYGM_INSTANCE_ITERATION_LIVE ||
+     !first_early.uses_limited_random_seed_expansion ||
      !first_early.preserves_frame_without_background_clear ||
      first_early.solid_collision_transaction!=ANYGM_COLLISION_CURRENT_COORDINATES){
     fputs("first-generation early policy resolution mismatch\n",stderr);
@@ -54,6 +55,7 @@ int main(void){
      first_late.alarm_threshold!=ANYGM_ALARM_TRIGGER_AT_ZERO ||
      !first_late.round_transformed_collision_bounds ||
      first_late.has_modern_function_values || !first_late.uses_room_speed_cadence ||
+     !first_late.uses_limited_random_seed_expansion ||
      !first_late.uses_legacy_room_cameras){
     fputs("first-generation late policy resolution mismatch\n",stderr);
     return 1;
@@ -79,6 +81,7 @@ int main(void){
      !second.has_modern_screen_stage ||
      second.instance_iteration!=ANYGM_INSTANCE_ITERATION_FRAME_SNAPSHOT ||
      second.alarm_dispatch!=ANYGM_ALARM_DISPATCH_STANDARD ||
+     second.uses_limited_random_seed_expansion ||
      second.solid_collision_transaction!=ANYGM_COLLISION_PREVIOUS_COORDINATES ||
      !second.preserves_frame_without_background_clear ||
      second.blend!=ANYGM_BLEND_STUDIO_SECOND){

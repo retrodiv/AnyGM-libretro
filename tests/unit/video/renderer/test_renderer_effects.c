@@ -293,8 +293,14 @@ static void check_shader_recognition(void) {
     "float wrap_value(float v,float d){return mod(mod(v,d)+d,d);}"
     "float near_quantize(float v,float r){return floor(v*r)/r;}"
     "float near_wrap(float v,float d){return mod(mod(v,d)+d,d);}"
+    "void main(){gl_FragColor=v_vColour*"
+    "texture2D(gm_BaseTexture,v_vTexcoord);"
+    "gl_FragColor.gb=vec2(0.0,0.0);}",
+    "void main(){gl_FragColor=v_vColour*"
+    "texture2D(gm_BaseTexture,v_vTexcoord);"
+    "gl_FragColor.gb=vec2(0.0,0.0);gl_FragColor.r*=0.5;}"
   };
-  enum { SHADER_COUNT = 13, DATA_SIZE = 16384 };
+  enum { SHADER_COUNT = 15, DATA_SIZE = 16384 };
   uint8_t data[DATA_SIZE];
   GmlWin content;
   GmlRender render;
@@ -313,7 +319,7 @@ static void check_shader_recognition(void) {
     memcpy(data + fragment_offset, fragments[i], length + 1);
     fragment_offset += length + 1;
   }
-  write_u32(data, 4 + 12 * 4, DATA_SIZE - 8);
+  write_u32(data, 4 + 14 * 4, DATA_SIZE - 8);
 
   content.data = data;
   content.size = sizeof(data);
@@ -340,7 +346,9 @@ static void check_shader_recognition(void) {
     const struct GmlShaderPal *binary_hsv_near_match = &render.shader_pal[9];
     struct GmlShaderPal *noise_jumble = &render.shader_pal[10];
     const struct GmlShaderPal *noise_jumble_near_match = &render.shader_pal[11];
-    const struct GmlShaderPal *bounded = &render.shader_pal[12];
+    const struct GmlShaderPal *channel_mask = &render.shader_pal[12];
+    const struct GmlShaderPal *channel_mask_near_match = &render.shader_pal[13];
+    const struct GmlShaderPal *bounded = &render.shader_pal[14];
     expect(alpha->alpha_discard && alpha->alpha_discard_inclusive &&
            alpha->alpha_discard_cutoff == 0.25f,
            "alpha-discard structure was not recognized exactly");
@@ -421,8 +429,55 @@ static void check_shader_recognition(void) {
            noise_jumble->noise_jumble_value[GML_NOISE_JUMBLE_RESOLUTION][1]==180.0f &&
            noise_jumble->noise_jumble_value[GML_NOISE_JUMBLE_NOISE_LEVEL][0]==0.625f,
            "noise/jumble uniform handles did not retain scalar and vector values");
+    expect(channel_mask->channel_mask && channel_mask->channel_mask_keep==4 &&
+           gml_render_shader_is_compiled(&render,12),
+           "complete sampled RGB channel-clear graph was not recognized exactly");
+    expect(!channel_mask_near_match->channel_mask,
+           "channel-clear graph with an extra colour operation was accepted");
   }
   gml_render_free(&render);
+}
+
+static void check_channel_mask_pixels(void) {
+  uint8_t rgba[4]={120,80,40,255};
+  uint32_t target=UINT32_C(0xff102030);
+  int frame_index=0;
+  GmlSprite sprite;
+  GmlTpag tpag;
+  GmlAtlas atlas;
+  struct GmlShaderPal shader;
+  GmlRender render;
+  memset(&sprite,0,sizeof sprite);
+  memset(&tpag,0,sizeof tpag);
+  memset(&atlas,0,sizeof atlas);
+  memset(&shader,0,sizeof shader);
+  memset(&render,0,sizeof render);
+  sprite.w=sprite.h=1;
+  sprite.n_frames=1;
+  sprite.frame=&frame_index;
+  tpag.sw=tpag.sh=tpag.bw=tpag.bh=1;
+  tpag.atlas=0;
+  atlas.w=atlas.h=1;
+  atlas.px=rgba;
+  atlas.decode_attempted=1;
+  shader.channel_mask=1;
+  shader.channel_mask_keep=4;
+  render.spr=&sprite;
+  render.tpag=&tpag;
+  render.atlas=&atlas;
+  render.shader_pal=&shader;
+  render.n_spr=render.n_tpag=render.n_atlas=render.n_shader_pal=1;
+  render.active_shader=0;
+  render.fb=render.base_fb=&target;
+  render.fbw=render.fbh=render.base_fbw=render.base_fbh=1;
+  render.target_id=-1;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0F;
+  render.lut_pal_sprite=-1;
+  gml_draw_sprite_ext(&render,0,0,0.0,0.0,1.0,1.0,0.0,0xFFFFFFu,1.0);
+  expect(target==UINT32_C(0xff780000),
+         "sampled RGB channel clear did not preserve only the requested red channel");
 }
 
 
@@ -1050,6 +1105,7 @@ int main(void) {
   uint64_t noise = run_noise();
   uint64_t tint = run_tint();
   check_shader_recognition();
+  check_channel_mask_pixels();
   check_binary_hsv_pixels();
   check_palette_alpha_threshold();
   check_zero_reference_alpha_test_pixels();

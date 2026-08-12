@@ -269,6 +269,10 @@ typedef struct GmlRender {
    * Parsed data-driven from the SHDR chunk's GLSL at init; shader_set activates one and the
    * surface-composite blit applies the map per pixel. has==0 -> unknown shader, no-op. */
   struct GmlShaderPal { int has; uint8_t L[3],M[3],D[3],S[3];
+    /* Passthrough texture fragments that clear a subset of sampled RGB channels after vertex
+     * colour modulation (for example `.bg = vec2(0)`). The parser retains the channels that the
+     * fragment leaves enabled; alpha is unaffected. */
+    int channel_mask, channel_mask_keep;
     /* Literal alpha-discard pass-through fragment. The threshold and comparison are parsed from
      * the embedded GLSL, so texture draws can preserve hard sprite edges without a GPU. */
     int alpha_discard, alpha_discard_inclusive;

@@ -78,11 +78,14 @@ typedef struct {
 } GmlTimeline;
 
 /* ---- object (parsed from OBJT) ---- */
+#define GML_OBJECT_PHYSICS_POINT_MAX 32
 typedef struct {
   const char *name;
   int sprite_index, mask_index, parent, depth, visible, solid, persistent;
-  int physics_enabled, physics_kinematic;
+  int physics_enabled, physics_sensor, physics_shape, physics_group;
+  int physics_awake, physics_kinematic, physics_point_count;
   double physics_density, physics_area_px;
+  float physics_point[GML_OBJECT_PHYSICS_POINT_MAX][2];
   int bevents;   /* classic boundary flags: room bits 0..1, outside-view 2..9, intersect-view 10..17 */
   int colself;   /* this object (or an ancestor) owns >=1 Collision_* handler — run_collisions outer filter */
   /* (collision-grid stamps live per-instance, see GmlInstance.cg_*) */

@@ -5,8 +5,10 @@
 #include "gml_render_internal.h"
 #include "gml_font_raster.h"
 #include "gml_default_font_data.h"
+#include "gml_studio_default_font_data.h"
 #include "gml_classic_info_font_data.h"
 
+#include "anygm_compatibility.h"
 #include "anygm_host.h"
 #include "anygm_vfs.h"
 
@@ -138,7 +140,14 @@ void parse_font(GmlRender *r){
  * continue to resolve only to fonts supplied by the loaded package. */
 int build_default_font(GmlRender *r){
   enum { AW=512, AH=128 };
-  const int ng=GML_DEFAULT_FONT_LAST-GML_DEFAULT_FONT_FIRST+1;
+  const int studio=r->win&&anygm_policy_has_modern_layer_semantics(r->win);
+  const int source_first=studio?GML_STUDIO_DEFAULT_FONT_FIRST:GML_DEFAULT_FONT_FIRST;
+  const int source_last=studio?GML_STUDIO_DEFAULT_FONT_LAST:GML_DEFAULT_FONT_LAST;
+  const int ng=source_last-source_first+1;
+  const GmlDefaultGlyph *source_glyphs=studio?
+    gml_studio_default_glyphs:gml_default_glyphs;
+  const uint8_t *source_alpha=studio?
+    gml_studio_default_font_alpha:gml_default_font_alpha;
   GmlGlyph *glyphs=calloc((size_t)ng,sizeof(*glyphs));
   uint8_t *px=calloc((size_t)AW*AH,4);
   if(!glyphs || !px){ free(glyphs); free(px); return 0; }
@@ -154,22 +163,22 @@ int build_default_font(GmlRender *r){
   memset(f,0,sizeof(*f));
   for(int i=0;i<256;i++) f->glyph_by_char[i]=-1;
   f->real=1; f->sprite=-1; f->atlas=atlas_id;
-  f->line_height=GML_DEFAULT_FONT_LINE_HEIGHT;
+  f->line_height=studio?GML_STUDIO_DEFAULT_FONT_LINE_HEIGHT:GML_DEFAULT_FONT_LINE_HEIGHT;
   f->align_height=f->line_height;
   f->glyphs=glyphs; f->n_glyphs=ng; f->glyphs_sorted=1;
   int ax=0, ay=0, row_height=0;
   for(int i=0;i<ng;i++){
-    const GmlDefaultGlyph *src=&gml_default_glyphs[i];
+    const GmlDefaultGlyph *src=&source_glyphs[i];
     int w=src->width, h=src->height;
     if(ax+w>AW){ ax=0; ay+=row_height; row_height=0; }
     if(h>row_height) row_height=h;
     if(ay+h>AH) break;
     GmlGlyph *g=&glyphs[i];
-    g->ch=(uint16_t)(GML_DEFAULT_FONT_FIRST+i);
+    g->ch=(uint16_t)(source_first+i);
     g->sx=ax; g->sy=ay; g->w=w; g->h=h;
     g->shift=src->shift; g->offset=src->offset;
     f->glyph_by_char[g->ch]=i;
-    const uint8_t *cov=gml_default_font_alpha+src->off;
+    const uint8_t *cov=source_alpha+src->off;
     for(int y=0;y<h;y++) for(int x=0;x<w;x++){
       uint8_t alpha=cov[y*w+x];
       if(alpha){
@@ -620,10 +629,11 @@ static int classic_info_subpixel_glyph(GmlRender *r,GmlFont *font,GmlGlyph *glyp
   return 1;
 }
 
-/* Draw glyph atlas rectangles top-aligned and advance the pen by each shift.
- * Rotation changes pen positions; glyph rectangles remain axis-aligned. */
+/* Draw a string with a real FONT-chunk font: each glyph is an atlas sub-rect drawn top-aligned
+ * at the baseline-top (GM bakes the ascent whitespace into the glyph height), advancing by shift.
+ * A transformed draw rotates both the pen and each glyph quad around that pen. */
 static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const char *str,
-                           double xs, double ys, double ca, double sa, int use_rot,
+                           double xs, double ys, double rotation, double ca, double sa, int use_rot,
                            uint32_t blend, double alpha){
   int lh=f->line_height>0? f->line_height:12;
   int ah=f->align_height>0?f->align_height:lh;
@@ -645,15 +655,18 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
         double glyph_x=use_rot?x+dx*ca+dy*sa:x+dx;
         double glyph_y=use_rot?y-dx*sa+dy*ca:y+dy;
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
-        if(f->subpixel && r->software_overlay && !use_rot &&
+        if(use_rot){
+          GmlSprite glyph_sprite={.w=g->w,.h=g->h,.originx=0,.originy=0};
+          blit_rotated(r,&glyph_sprite,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,
+                       xs,ys,rotation,blend,alpha);
+        } else if(f->subpixel && r->software_overlay &&
            classic_info_subpixel_glyph(r,f,g,glyph_x-r->cam_x,glyph_y-r->cam_y,
                                        xs,ys,blend,alpha)){
           /* Per-channel coverage was composed directly above. */
         } else if(r->software_overlay ||
            !gml_d3_draw_atlas_part_2d(r,f->atlas,g->sx,g->sy,g->w,g->h,
                                       glyph_x,glyph_y,xs,ys,glyph_blend,alpha)){
-          if(use_rot) blit(r,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
-          else        blit(r,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
+          blit(r,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
         }
       }
       if(g) cx += g->shift;
@@ -1252,7 +1265,7 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
   int use_rot = fabs(rr)>0.001 && fabs(rr-360.0)>0.001;
   if(render_setting(r,"GML_LOG_TEXT")) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[text] x=%.0f y=%.0f font=%d halign=%d valign=%d scale=(%.2f,%.2f) rot=%.1f col=%06X a=%.2f \"%s\"\n",
     x,y,r->font,r->halign,r->valign,xs,ys,rr,(unsigned)(blend&0xffffff),alpha,str);
-  if(f->real){ draw_text_real(r,f,x,y,str,xs,ys,ca,sa,use_rot,blend,alpha); return; }
+  if(f->real){ draw_text_real(r,f,x,y,str,xs,ys,rr,ca,sa,use_rot,blend,alpha); return; }
   if(f->sprite<0 || f->sprite>=r->n_spr) return;
   GmlSprite *s=&r->spr[f->sprite];
   if(s->n_frames<=0) return;

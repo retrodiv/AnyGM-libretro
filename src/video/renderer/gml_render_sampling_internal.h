@@ -91,6 +91,11 @@ static inline const struct GmlShaderPal *grayscale_active(GmlRender *r){
   const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
   return sp->grayscale ? sp : NULL;
 }
+static inline const struct GmlShaderPal *channel_mask_active(GmlRender *r){
+  if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
+  const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
+  return sp->channel_mask ? sp : NULL;
+}
 static inline const struct GmlShaderPal *solid_alpha_mask_active(GmlRender *r){
   if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
   const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
@@ -281,10 +286,17 @@ static inline uint32_t quantise4_map_px(const struct GmlShaderPal *sp, uint32_t 
 static inline int mapped_texture_active(GmlRender *r){
   return pal_active(r)!=NULL || lut_active(r)!=NULL || grid_active(r)!=NULL ||
          grayscale_active(r)!=NULL || solid_alpha_mask_active(r)!=NULL ||
-         quantise4_active(r)!=NULL;
+         quantise4_active(r)!=NULL || channel_mask_active(r)!=NULL;
 }
 static inline uint32_t mapped_texture_pixel(GmlRender *r, uint32_t value){
   const struct GmlShaderPal *shader;
+  if((shader=channel_mask_active(r))){
+    uint32_t keep=0;
+    if(shader->channel_mask_keep&4) keep|=UINT32_C(0x00ff0000);
+    if(shader->channel_mask_keep&2) keep|=UINT32_C(0x0000ff00);
+    if(shader->channel_mask_keep&1) keep|=UINT32_C(0x000000ff);
+    return (value&UINT32_C(0xff000000))|(value&keep);
+  }
   if((shader=solid_alpha_mask_active(r))){
     int alpha=(value>>24)&255;
     if(shader->solid_alpha_mask_inclusive

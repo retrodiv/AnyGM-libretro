@@ -89,6 +89,7 @@ typedef struct AnygmCompatibilityProfile {
   uint32_t classic_interpolate;
   uint32_t classic_scaling;
   uint32_t classic_executable_layout;
+  uint32_t uses_limited_random_seed_expansion;
   uint32_t legacy_view_slots;
   double default_comparison_epsilon;
   uint64_t fingerprint;
@@ -207,6 +208,13 @@ static inline int anygm_policy_preserves_frame_without_background_clear(const Gm
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->preserves_frame_without_background_clear:
     (content&&!content->classic_version);
+}
+/* Early Studio profiles retain a limited high-word seed expansion;
+ * later profiles use the full unsigned high word. Classic uses a separate stream. */
+static inline int anygm_policy_uses_limited_random_seed_expansion(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?(int)p->uses_limited_random_seed_expansion:
+    (content&&!content->classic_version&&content->bytecode>=13&&content->bytecode<17);
 }
 static inline unsigned anygm_policy_legacy_view_slots(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);

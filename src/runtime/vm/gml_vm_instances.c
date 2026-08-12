@@ -115,25 +115,39 @@ static void parse_objects(GmlVM *vm){
       nvert=gml_vm_read_u32_le(d,q+32);
       double density=gml_vm_read_f32_le(d,q+12);
       uint64_t vend=(uint64_t)q+48u+(uint64_t)nvert*8u;
-      if(enabled<=1 && kinematic<=1 && isfinite(density) && density>=0.0 && density<=1000000.0 &&
-         nvert<=128 && vend<=cend && vend<=w->size){
+      uint32_t sensor=gml_vm_read_u32_le(d,q+4), awake=gml_vm_read_u32_le(d,q+40);
+      int32_t shape=(int32_t)gml_vm_read_u32_le(d,q+8);
+      int32_t group=(int32_t)gml_vm_read_u32_le(d,q+20);
+      if(enabled<=1 && sensor<=1 && awake<=1 && kinematic<=1 && shape>=0 && shape<=2 &&
+         isfinite(density) && density>=0.0 && density<=1000000.0 && nvert<=128 &&
+         vend<=cend && vend<=w->size){
         o->physics_enabled=(int)enabled;
+        o->physics_sensor=(int)sensor;
+        o->physics_shape=(int)shape;
+        o->physics_group=(int)group;
+        o->physics_awake=(int)awake;
         o->physics_kinematic=(int)kinematic;
         o->physics_density=density;
-        if(nvert>=3){
+        if(nvert<=GML_OBJECT_PHYSICS_POINT_MAX){
+          int points_valid=1;
+          for(uint32_t vi=0;vi<nvert;vi++){
+            o->physics_point[vi][0]=gml_vm_read_f32_le(d,q+48u+vi*8u);
+            o->physics_point[vi][1]=gml_vm_read_f32_le(d,q+52u+vi*8u);
+            if(!isfinite(o->physics_point[vi][0]) || !isfinite(o->physics_point[vi][1]) ||
+               fabs(o->physics_point[vi][0])>1000000.0f ||
+               fabs(o->physics_point[vi][1])>1000000.0f) points_valid=0;
+          }
+          if(points_valid) o->physics_point_count=(int)nvert;
+        }
+        if(o->physics_point_count>=3){
           double twice_area=0.0;
-          int valid=1;
           for(uint32_t vi=0;vi<nvert;vi++){
             uint32_t vj=(vi+1u)%nvert;
-            double xi=gml_vm_read_f32_le(d,q+48u+vi*8u), yi=gml_vm_read_f32_le(d,q+52u+vi*8u);
-            double xj=gml_vm_read_f32_le(d,q+48u+vj*8u), yj=gml_vm_read_f32_le(d,q+52u+vj*8u);
-            if(!isfinite(xi)||!isfinite(yi)||!isfinite(xj)||!isfinite(yj) ||
-               fabs(xi)>1000000.0||fabs(yi)>1000000.0||fabs(xj)>1000000.0||fabs(yj)>1000000.0){
-              valid=0; break;
-            }
+            double xi=o->physics_point[vi][0], yi=o->physics_point[vi][1];
+            double xj=o->physics_point[vj][0], yj=o->physics_point[vj][1];
             twice_area+=xi*yj-xj*yi;
           }
-          if(valid) o->physics_area_px=fabs(twice_area)*0.5;
+          o->physics_area_px=fabs(twice_area)*0.5;
         }
       }
     }
@@ -893,6 +907,134 @@ static double gml_vm_instances_profile_now(GmlVM *vm){
 static int inst_mask_sprite_index(GmlInstance *in){
   return in->mask_index>=0 ? (int)in->mask_index : (int)in->sprite_index;
 }
+static int vm_room_has_physics(GmlVM *vm){
+  if(!vm || !vm->win || vm->room_index<0) return 0;
+  GmlVal *dynamic_room=gml_varmap_get(&vm->globals,"__physics_world_scale_room");
+  if(dynamic_room && dynamic_room->t==V_REAL && (int)dynamic_room->d==vm->room_index)
+    return 1;
+  const GmlChunk *room=gml_chunk(vm->win,"ROOM");
+  if(!room) return 0;
+  uint64_t end=(uint64_t)room->off+room->size;
+  uint64_t slot=(uint64_t)room->off+4u+(uint64_t)(uint32_t)vm->room_index*4u;
+  if(slot+4u>end) return 0;
+  uint32_t record=gml_vm_read_u32_le(vm->win->data,(uint32_t)slot);
+  return record>=room->off && (uint64_t)record+60u<=end &&
+         gml_vm_read_u32_le(vm->win->data,record+56u)==1;
+}
+static int vm_fixture_active(GmlVM *vm,GmlInstance *in){
+  if(!vm || !in || in->obj<0 || in->obj>=vm->n_objects || !vm_room_has_physics(vm))
+    return 0;
+  GmlObject *object=&vm->objects[in->obj];
+  return object->physics_enabled && object->physics_shape>=1 &&
+         object->physics_shape<=2 && object->physics_point_count>=3;
+}
+static void vm_fixture_vertex(const GmlObject *object,const GmlInstance *in,int index,
+                              double *x,double *y){
+  double px=object->physics_point[index][0], py=object->physics_point[index][1];
+  double angle=in->image_angle*M_PI/180.0, c=cos(angle), s=sin(angle);
+  *x=in->x+px*c+py*s;
+  *y=in->y-px*s+py*c;
+}
+static int vm_fixture_bbox(GmlVM *vm,GmlInstance *in,
+                           double *left,double *top,double *right,double *bottom){
+  if(!vm_fixture_active(vm,in)) return 0;
+  GmlObject *object=&vm->objects[in->obj];
+  double l=1e30,t=1e30,r=-1e30,b=-1e30;
+  for(int point=0;point<object->physics_point_count;point++){
+    double x,y; vm_fixture_vertex(object,in,point,&x,&y);
+    if(x<l) l=x;
+    if(x>r) r=x;
+    if(y<t) t=y;
+    if(y>b) b=y;
+  }
+  *left=l; *top=t; *right=r; *bottom=b;
+  return l<=r && t<=b;
+}
+static int vm_fixture_axis_contact(const GmlObject *first,const GmlInstance *a,
+                                   const GmlObject *second,const GmlInstance *b,
+                                   double axis_x,double axis_y,
+                                   double *least_overlap,double *normal_x,double *normal_y){
+  double length=hypot(axis_x,axis_y);
+  if(length<1e-12) return 1;
+  axis_x/=length; axis_y/=length;
+  double first_min=1e30,first_max=-1e30,second_min=1e30,second_max=-1e30;
+  for(int point=0;point<first->physics_point_count;point++){
+    double x,y; vm_fixture_vertex(first,a,point,&x,&y);
+    double projection=x*axis_x+y*axis_y;
+    if(projection<first_min) first_min=projection;
+    if(projection>first_max) first_max=projection;
+  }
+  for(int point=0;point<second->physics_point_count;point++){
+    double x,y; vm_fixture_vertex(second,b,point,&x,&y);
+    double projection=x*axis_x+y*axis_y;
+    if(projection<second_min) second_min=projection;
+    if(projection>second_max) second_max=projection;
+  }
+  double overlap=fmin(first_max,second_max)-fmax(first_min,second_min);
+  if(overlap < -1e-9) return 0;
+  if(overlap<*least_overlap){
+    double first_centre=(first_min+first_max)*0.5;
+    double second_centre=(second_min+second_max)*0.5;
+    if(second_centre<first_centre){ axis_x=-axis_x; axis_y=-axis_y; }
+    *least_overlap=overlap;
+    *normal_x=axis_x;
+    *normal_y=axis_y;
+  }
+  return 1;
+}
+static int vm_fixture_contact(GmlVM *vm,GmlInstance *a,GmlInstance *b,
+                              double *normal_x,double *normal_y,double *penetration){
+  if(!vm_fixture_active(vm,a) || !vm_fixture_active(vm,b)) return 0;
+  GmlObject *first=&vm->objects[a->obj], *second=&vm->objects[b->obj];
+  if(first->physics_group<0 && first->physics_group==second->physics_group) return 0;
+  double least_overlap=1e30,nx=0.0,ny=0.0;
+  const GmlObject *objects[2]={first,second};
+  const GmlInstance *instances[2]={a,b};
+  for(int polygon=0;polygon<2;polygon++){
+    const GmlObject *object=objects[polygon];
+    const GmlInstance *instance=instances[polygon];
+    for(int point=0;point<object->physics_point_count;point++){
+      int next=(point+1)%object->physics_point_count;
+      double x0,y0,x1,y1;
+      vm_fixture_vertex(object,instance,point,&x0,&y0);
+      vm_fixture_vertex(object,instance,next,&x1,&y1);
+      double axis_x=-(y1-y0),axis_y=x1-x0;
+      if(fabs(axis_x)+fabs(axis_y)<1e-12) continue;
+      if(!vm_fixture_axis_contact(first,a,second,b,axis_x,axis_y,
+                                  &least_overlap,&nx,&ny)) return 0;
+    }
+  }
+  if(least_overlap==1e30) return 0;
+  if(normal_x) *normal_x=nx;
+  if(normal_y) *normal_y=ny;
+  if(penetration) *penetration=least_overlap>0.0?least_overlap:0.0;
+  return 1;
+}
+static void vm_fixture_resolve(GmlVM *vm,GmlInstance *a,GmlInstance *b,
+                               double normal_x,double normal_y,double penetration){
+  if(!vm || !a || !b || penetration<=0.0) return;
+  GmlObject *first=&vm->objects[a->obj], *second=&vm->objects[b->obj];
+  if(first->physics_sensor || second->physics_sensor) return;
+  double first_mass=(!first->physics_kinematic && first->physics_density>0.0)
+    ? first->physics_density*first->physics_area_px : 0.0;
+  double second_mass=(!second->physics_kinematic && second->physics_density>0.0)
+    ? second->physics_density*second->physics_area_px : 0.0;
+  double first_inverse=first_mass>0.0?1.0/first_mass:0.0;
+  double second_inverse=second_mass>0.0?1.0/second_mass:0.0;
+  double inverse_sum=first_inverse+second_inverse;
+  if(inverse_sum<=0.0) return;
+  /* Apply one minimum-translation correction with a small contact slop.
+   * Mass weighting handles static and unequal-density contacts. */
+  double correction=fmax(0.0,penetration-0.01);
+  double first_share=first_inverse/inverse_sum;
+  double second_share=second_inverse/inverse_sum;
+  a->x-=normal_x*correction*first_share;
+  a->y-=normal_y*correction*first_share;
+  b->x+=normal_x*correction*second_share;
+  b->y+=normal_y*correction*second_share;
+  gml_colgrid_touch(vm,a);
+  gml_colgrid_touch(vm,b);
+}
 static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
                       double *l, double *t, double *r, double *b){
   GmlRender *R=(GmlRender*)vm->render; if(!R) return 0;
@@ -1232,12 +1374,14 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
   if(!vm->render) return;
   const char *clog=anygm_host_development_setting(vm->host,"GML_LOG_COLLISION");   /* hoisted: this ran PER PAIR (1.3M getenv/frame) */
   int cmode=gml_colgrid_mode(vm);
-  uint64_t *classic_done=NULL;
-  int classic_done_n=0, classic_done_cap=0;
+  uint64_t *collision_done=NULL;
+  int collision_done_n=0, collision_done_cap=0;
   for(int i=0;i<vm->inst_count;i++){ GmlInstance *si=&vm->inst[i];
     if(!si->active||si->marked||si->obj<0||si->obj>=vm->n_objects) continue;
     if(!vm->objects[si->obj].colself) continue;   /* no Collision_* handler anywhere in its chain */
-    double l1,t1,r1,b1; if(!gml_vm_instances_bbox(vm,si,&l1,&t1,&r1,&b1)) continue;
+    double l1,t1,r1,b1;
+    if(!gml_vm_instances_bbox(vm,si,&l1,&t1,&r1,&b1) &&
+       !vm_fixture_bbox(vm,si,&l1,&t1,&r1,&b1)) continue;
     int *fcand=NULL; int fcn=-1, fpos=0; long jlin=-1;
     if(cmode==1) fcn=colcand_get(vm,si->obj,&fcand);
     for(int j=0;j<vm->inst_count;j++){
@@ -1250,15 +1394,12 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
       if(oi==si||!oi->active||oi->marked||oi->obj<0||oi->obj>=vm->n_objects) continue;
       int solid_pair=si->solid || oi->solid;
       int classic_pair=solid_pair && vm->win && anygm_policy_uses_classic_runtime(vm->win);
-      /* GM8 and GMS2 present solid contacts from their pre-movement coordinates. Studio 1
-       * dispatches the event at the current coordinates instead; treating every
-       * first-generation package as a classic transaction changes the late state of otherwise stable
-       * collision-heavy rooms.  Use the package family, not a content-specific exception. */
+      int fixture_pair=vm_fixture_active(vm,si) && vm_fixture_active(vm,oi);
       int rollback_pair=solid_pair && anygm_policy_previous_solid_coordinates(vm->win);
       uint64_t pair_key=((uint64_t)(unsigned)(i<j?i:j)<<32)|(unsigned)(i<j?j:i);
       int pair_done=0;
-      if(classic_pair)
-        for(int p=0;p<classic_done_n;p++) if(classic_done[p]==pair_key){ pair_done=1; break; }
+      if(classic_pair || fixture_pair)
+        for(int p=0;p<collision_done_n;p++) if(collision_done[p]==pair_key){ pair_done=1; break; }
       if(pair_done) continue;
       int handler_obj=-1, target_obj=-1, code=-1;
       if(!col_event_for_pair(vm,si->obj,oi->obj,&handler_obj,&target_obj,&code)) continue;
@@ -1267,9 +1408,19 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
         for(int q=0;q<vn;q++) if(vc[q]==j){ found=1; break; }
         if(vn>=0 && !found){ 
           anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gridcheck] MISMATCH colcand f%ld si_obj=%d oi_obj=%d slot=%d\n",vm->frame,si->obj,oi->obj,j); } }
-      double l2,t2,r2,b2; if(!gml_vm_instances_bbox(vm,oi,&l2,&t2,&r2,&b2)) continue;
+      double l2,t2,r2,b2;
+      if(fixture_pair){
+        if(!vm_fixture_bbox(vm,si,&l1,&t1,&r1,&b1) ||
+           !vm_fixture_bbox(vm,oi,&l2,&t2,&r2,&b2)) continue;
+      } else {
+        if(!gml_vm_instances_bbox(vm,si,&l1,&t1,&r1,&b1) ||
+           !gml_vm_instances_bbox(vm,oi,&l2,&t2,&r2,&b2)) continue;
+      }
       int bbox_hit=vm_overlap(l1,t1,r1,b1,l2,t2,r2,b2);
-      int mask_hit=bbox_hit ? vm_masks_overlap(vm,si,oi,l1,t1,r1,b1,l2,t2,r2,b2) : 0;
+      double fixture_normal_x=0.0,fixture_normal_y=0.0,fixture_penetration=0.0;
+      int mask_hit=bbox_hit ? (fixture_pair?
+        vm_fixture_contact(vm,si,oi,&fixture_normal_x,&fixture_normal_y,&fixture_penetration):
+        vm_masks_overlap(vm,si,oi,l1,t1,r1,b1,l2,t2,r2,b2)) : 0;
       GML_VM_DIAGNOSTIC_COLLISION(vm,si,oi,code,bbox_hit&&mask_hit);
       if(clog){
         const char *sn=(si->obj>=0&&si->obj<vm->n_objects)?vm->objects[si->obj].name:"?";
@@ -1279,6 +1430,8 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
             vm->frame,sn,si->id,l1,t1,r1,b1,on,oi->id,l2,t2,r2,b2,mask_hit,target_obj);
       }
       if(bbox_hit && mask_hit){
+        if(fixture_pair)
+          vm_fixture_resolve(vm,si,oi,fixture_normal_x,fixture_normal_y,fixture_penetration);
         if(clog){
           const char *sn=(si->obj>=0&&si->obj<vm->n_objects)?vm->objects[si->obj].name:"?";
           const char *on=(oi->obj>=0&&oi->obj<vm->n_objects)?vm->objects[oi->obj].name:"?";
@@ -1309,8 +1462,9 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
               (si->obj>=0&&si->obj<vm->n_objects)?vm->objects[si->obj].name:"?",
               (oi->obj>=0&&oi->obj<vm->n_objects)?vm->objects[oi->obj].name:"?",dt);
           } else run_event_code_from(vm,si,oi,suffix,handler_obj,code); }
-        if(classic_pair){
-          /* Classic collision dispatch treats the two directed events as one transaction. */
+        if(classic_pair || fixture_pair){
+          /* Classic solid collisions and physics contacts are pair transactions. The contact is
+           * calculated once, then both directed handlers observe that same resolved contact. */
           if(si->active && !si->marked && oi->active && !oi->marked){
             int reverse_handler=-1, reverse_target=-1, reverse_code=-1;
             if(col_event_for_pair(vm,oi->obj,si->obj,&reverse_handler,&reverse_target,&reverse_code)){
@@ -1318,9 +1472,9 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
               run_event_code_from(vm,oi,si,reverse_suffix,reverse_handler,reverse_code);
             }
           }
-          if(si->active && !si->marked){ si->x+=si->hspeed; si->y+=si->vspeed; gml_colgrid_touch(vm,si); }
-          if(oi->active && !oi->marked){ oi->x+=oi->hspeed; oi->y+=oi->vspeed; gml_colgrid_touch(vm,oi); }
-          if(si->active && !si->marked && oi->active && !oi->marked){
+          if(classic_pair && si->active && !si->marked){ si->x+=si->hspeed; si->y+=si->vspeed; gml_colgrid_touch(vm,si); }
+          if(classic_pair && oi->active && !oi->marked){ oi->x+=oi->hspeed; oi->y+=oi->vspeed; gml_colgrid_touch(vm,oi); }
+          if(classic_pair && si->active && !si->marked && oi->active && !oi->marked){
             double cl1,ct1,cr1,cb1,cl2,ct2,cr2,cb2;
             int still_hit=gml_vm_instances_bbox(vm,si,&cl1,&ct1,&cr1,&cb1) &&
                           gml_vm_instances_bbox(vm,oi,&cl2,&ct2,&cr2,&cb2) &&
@@ -1332,19 +1486,20 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
               gml_colgrid_touch(vm,si); gml_colgrid_touch(vm,oi);
             }
           }
-          if(classic_done_n>=classic_done_cap){
-            int nc=classic_done_cap?classic_done_cap*2:16;
-            uint64_t *np=realloc(classic_done,(size_t)nc*sizeof(*np));
-            if(np){ classic_done=np; classic_done_cap=nc; }
+          if(collision_done_n>=collision_done_cap){
+            int nc=collision_done_cap?collision_done_cap*2:16;
+            uint64_t *np=realloc(collision_done,(size_t)nc*sizeof(*np));
+            if(np){ collision_done=np; collision_done_cap=nc; }
           }
-          if(classic_done_n<classic_done_cap) classic_done[classic_done_n++]=pair_key;
+          if(collision_done_n<collision_done_cap) collision_done[collision_done_n++]=pair_key;
         }
         /* If Collision code left the pair intersecting, apply the solid fallback
          * to the participant that entered the contact. Classic actions that stop
          * an incoming motion restore the pre-contact coordinate too; motion that
          * remains active stays under the event's explicit contact resolution. */
         int oi_stopped=oi->hspeed==0.0 && oi->vspeed==0.0;
-        if(!rollback_pair && si->active && !si->marked && oi->active && !oi->marked &&
+        if(!fixture_pair && !rollback_pair && si->active && !si->marked &&
+           oi->active && !oi->marked &&
            si->solid && oi_moved && (!oi_kinematic ||
              (vm->win && anygm_policy_uses_classic_runtime(vm->win) && oi_stopped))){
           double pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2;
@@ -1357,14 +1512,13 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
           }
         }
         if(!si->active||si->marked) break;   /* self destroyed by the event */
-        if(!gml_vm_instances_bbox(vm,si,&l1,&t1,&r1,&b1)) break;
         /* the event may have mutated the world (and the shared candidate cache): finish this
          * si with the plain linear scan from the next slot — identical event sequence */
         if(jlin<0 && fcn>=0){ jlin=j; fcn=-1; }
       }
     }
   }
-  free(classic_done);
+  free(collision_done);
 }
 /* Precompute boundary handlers (including inherited ones). Bits 0..1 are room events,
  * 2..9 are Outside View 0..7 and 10..17 are Intersect View 0..7. */

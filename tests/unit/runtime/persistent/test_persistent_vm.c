@@ -3110,6 +3110,76 @@ static int expect_persistent_lifecycle_exit_code(void){
       studio_actor?studio_actor->y:-1.0,
       studio_solid_hits&&studio_solid_hits->t==V_REAL?studio_solid_hits->d:-1.0); return 1;
   }
+
+  /* A Studio physics room uses the fixture polygons stored in OBJT rather than sprite masks.
+   * Exercise the contact, sensor and negative collision-group rules with the existing directed
+   * collision event so the test also proves that a physical pair is dispatched only once. */
+  GmlObject saved_contact_object=vm.objects[1];
+  GmlObject saved_actor_object=vm.objects[2];
+  unsigned char *saved_active=malloc((size_t)vm.inst_count);
+  if(!saved_active) return 1;
+  for(int index=0;index<vm.inst_count;index++){
+    saved_active[index]=(unsigned char)vm.inst[index].active;
+    if(&vm.inst[index]!=studio_contact && &vm.inst[index]!=studio_actor)
+      vm.inst[index].active=0;
+  }
+  GmlObject *physics_objects[2]={&vm.objects[1],&vm.objects[2]};
+  for(int object_index=0;object_index<2;object_index++){
+    GmlObject *object=physics_objects[object_index];
+    object->physics_enabled=1;
+    object->physics_shape=1;
+    object->physics_density=1.0;
+    object->physics_area_px=100.0;
+    object->physics_point_count=4;
+    object->physics_point[0][0]=-5; object->physics_point[0][1]=-5;
+    object->physics_point[1][0]= 5; object->physics_point[1][1]=-5;
+    object->physics_point[2][0]= 5; object->physics_point[2][1]= 5;
+    object->physics_point[3][0]=-5; object->physics_point[3][1]= 5;
+  }
+  vm.objects[1].physics_kinematic=1;
+  *gml_varmap_put(&vm.globals,"__physics_world_scale_room")=vreal(vm.room_index);
+  studio_contact->active=studio_actor->active=1;
+  studio_contact->marked=studio_actor->marked=0;
+  studio_contact->x=studio_contact->xprevious=120;
+  studio_contact->y=studio_contact->yprevious=120;
+  studio_actor->x=studio_actor->xprevious=127;
+  studio_actor->y=studio_actor->yprevious=120;
+  *gml_varmap_put(&vm.globals,"studio_solid_hits")=vreal(0);
+  gml_colgrid_invalidate(&vm);
+  gml_vm_instances_run_collisions(&vm);
+  studio_solid_hits=gml_varmap_get(&vm.globals,"studio_solid_hits");
+  if(fabs(studio_actor->x-129.99)>1e-6 || studio_actor->y!=119 ||
+     !studio_solid_hits || studio_solid_hits->t!=V_REAL || studio_solid_hits->d!=1){
+    fprintf(stderr,"physics fixture contact mismatch: position=(%.3f,%.3f) hits=%.0f\n",
+      studio_actor->x,studio_actor->y,
+      studio_solid_hits&&studio_solid_hits->t==V_REAL?studio_solid_hits->d:-1.0);
+    free(saved_active); return 1;
+  }
+  vm.objects[1].physics_sensor=1;
+  studio_actor->x=studio_actor->xprevious=127;
+  studio_actor->y=studio_actor->yprevious=120;
+  studio_solid_hits->d=0;
+  gml_vm_instances_run_collisions(&vm);
+  if(studio_actor->x!=127 || studio_actor->y!=119 || studio_solid_hits->d!=1){
+    fprintf(stderr,"physics sensor resolution mismatch: position=(%.3f,%.3f) hits=%.0f\n",
+      studio_actor->x,studio_actor->y,studio_solid_hits->d);
+    free(saved_active); return 1;
+  }
+  vm.objects[1].physics_sensor=0;
+  vm.objects[1].physics_group=vm.objects[2].physics_group=-7;
+  studio_actor->x=studio_actor->xprevious=127;
+  studio_actor->y=studio_actor->yprevious=120;
+  studio_solid_hits->d=0;
+  gml_vm_instances_run_collisions(&vm);
+  if(studio_actor->x!=127 || studio_actor->y!=120 || studio_solid_hits->d!=0){
+    fprintf(stderr,"negative physics collision group was not suppressed\n");
+    free(saved_active); return 1;
+  }
+  vm.objects[1]=saved_contact_object;
+  vm.objects[2]=saved_actor_object;
+  for(int index=0;index<vm.inst_count;index++) vm.inst[index].active=saved_active[index];
+  free(saved_active);
+  *gml_varmap_put(&vm.globals,"__physics_world_scale_room")=vundef();
   studio_contact->marked=1; studio_actor->marked=1;
 
   /* GMS2 changed solid dispatch to expose pre-movement coordinates to the event. Keep the

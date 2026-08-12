@@ -95,6 +95,25 @@ int main(void){
         return 1;
       }
     }
+    {
+      static const uint32_t expected_limited_seeded_words[]={
+        0x176c4976u,0x67312ae8u,0xe23c7ab9u,0x63fd35a0u,
+        0x041d9375u,0xb385e392u,0xb7e91f56u,0x30294919u
+      };
+      studio.bytecode=15;
+      gml_rng_seed(&vm,1);
+      for(size_t i=0;
+          i<sizeof expected_limited_seeded_words/sizeof expected_limited_seeded_words[0];i++){
+        double actual=gml_rng_value(&vm);
+        double expected_value=(double)expected_limited_seeded_words[i]/4294967296.0;
+        if(actual!=expected_value){
+          fprintf(stderr,"first-generation Studio seeded RNG mismatch at %zu: "
+                         "got=%.17g expected=%.17g\n",i,actual,expected_value);
+          return 1;
+        }
+      }
+      studio.bytecode=17;
+    }
     gml_rng_seed(&vm,12345);
     for(size_t i=0;i<sizeof expected/sizeof expected[0];i++){
       uint64_t actual=gml_rng_integer(&vm,20);

@@ -70,9 +70,22 @@ rendering conditions, while `LICENSES/font-ofl-1.1.txt` retains the SIL Open Fon
 License and upstream copyright notices. The font programs themselves are not
 bundled.
 
-This revision does not include a font-data generator. The checked-in headers and
-license record establish the declared source and terms, but this tree alone does
-not provide byte-for-byte regeneration evidence for those two artifacts.
+`src/generated/gml_studio_default_font_data.h` contains fallback glyph
+coverage and metrics derived from Roboto Mono Medium in the
+[`v3.001` upstream release](https://github.com/googlefonts/RobotoMono/tree/v3.001).
+The first-party generator `tools/fontgen/gen_studio_font.c` uses the vendored
+stb TrueType rasterizer with a fixed nine-pixel advance, 20-row line box,
+baseline at row 16, and code points 32 through 127. The source font program
+is not bundled. Its derived coverage remains under the SIL Open Font
+License in `LICENSES/font-roboto-mono-ofl-1.1.txt`; the first-party
+generator and C declarations retain their separate MIT terms. Concrete
+input and output verification values belong in external evidence, not in
+this repository.
+
+This revision still does not include generators for the two Liberation
+headers. Their checked-in declarations and licence record identify the
+declared source and terms, but this tree alone does not provide
+byte-for-byte regeneration evidence for those two artifacts.
 
 ## Publication and validation
 
