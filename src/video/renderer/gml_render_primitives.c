@@ -189,15 +189,26 @@ typedef struct {
   GmlRender *render;
   int x,y,width,height_denominator;
   uint32_t top_left,top_right,bottom_right,bottom_left;
+  /* The gradient belongs to the authored rectangle, not to its visible part. When the rectangle
+   * ran off the framebuffer, these carry the visible region's position inside the authored one,
+   * so every colour is still evaluated in authored space. */
+  int x_offset,y_offset,width_denominator;
 } GmlGradientRows;
 static void draw_gradient_rows(void *context,int row_start,int row_end,int slot){
   (void)slot;
   GmlGradientRows *rows=(GmlGradientRows*)context;
   for(int row=row_start;row<row_end;row++){
     uint32_t left=gml_render_backend_lerp_xrgb(
-      rows->top_left,rows->bottom_left,row,rows->height_denominator);
+      rows->top_left,rows->bottom_left,rows->y_offset+row,rows->height_denominator);
     uint32_t right=gml_render_backend_lerp_xrgb(
-      rows->top_right,rows->bottom_right,row,rows->height_denominator);
+      rows->top_right,rows->bottom_right,rows->y_offset+row,rows->height_denominator);
+    if(rows->x_offset>0 || rows->x_offset+rows->width-1<rows->width_denominator){
+      uint32_t clipped_left=gml_render_backend_lerp_xrgb(
+        left,right,rows->x_offset,rows->width_denominator);
+      right=gml_render_backend_lerp_xrgb(
+        left,right,rows->x_offset+rows->width-1,rows->width_denominator);
+      left=clipped_left;
+    }
     uint32_t *pixels=rows->render->fb+
       (size_t)(rows->y+row)*rows->render->fbw+rows->x;
     if(left==right) gml_render_backend_fill_xrgb(pixels,rows->width,left);
@@ -220,18 +231,23 @@ static void draw_rect_colour_prim(GmlRender *R, int x1, int y1, int x2, int y2,
   if(x1>x2){ int t=x1; x1=x2; x2=t; }
   if(y1>y2){ int t=y1; y1=y2; y2=t; }
   if(x2<0||y2<0||x1>=R->fbw||y1>=R->fbh) return;
+  /* The four colours span the authored rectangle. Clipping selects which pixels are drawn,
+   * not where the gradient's endpoints sit. */
+  int ox1=x1, oy1=y1;
+  int owden=x2-x1, ohden=y2-y1;
   if(x1<0) x1=0;
   if(y1<0) y1=0;
   if(x2>=R->fbw) x2=R->fbw-1;
   if(y2>=R->fbh) y2=R->fbh-1;
+  int x_off=x1-ox1, y_off=y1-oy1;
   double alpha=R->alpha; if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(alpha<=0) return;
   if(alpha>=1.0 || !R->alphablend) gml_render_maybe_prepare_opaque_rect(R,x1,y1,x2+1,y2+1);
   else gml_render_maybe_prepare_draw(R);
   uint32_t tl=gml_render_backend_color_to_xrgb(c1), tr=gml_render_backend_color_to_xrgb(c2), br=gml_render_backend_color_to_xrgb(c3), bl=gml_render_backend_color_to_xrgb(c4);
-  int wden=x2-x1, hden=y2-y1, n=x2-x1+1;
+  int wden=owden, hden=ohden, n=x2-x1+1;
   if(alpha>=1.0){
-    GmlGradientRows rows={R,x1,y1,n,hden,tl,tr,br,bl};
+    GmlGradientRows rows={R,x1,y1,n,hden,tl,tr,br,bl,x_off,y_off,wden};
     if((size_t)n*(size_t)(y2-y1+1)>=262144u)
       gml_run_row_bands(R,y2-y1+1,draw_gradient_rows,&rows);
     else
@@ -240,18 +256,18 @@ static void draw_rect_colour_prim(GmlRender *R, int x1, int y1, int x2, int y2,
   }
   if(tl==tr && bl==br){
     for(int y=y1;y<=y2;y++){
-      uint32_t rowc=gml_render_backend_lerp_xrgb(tl,bl,y-y1,hden);
+      uint32_t rowc=gml_render_backend_lerp_xrgb(tl,bl,y_off+(y-y1),hden);
       gml_render_backend_draw_xrgb_alpha(R,R->fb+(size_t)y*R->fbw+x1,n,rowc,alpha);
     }
     return;
   }
   for(int y=y1;y<=y2;y++){
-    uint32_t lc=gml_render_backend_lerp_xrgb(tl,bl,y-y1,hden);
-    uint32_t rc=gml_render_backend_lerp_xrgb(tr,br,y-y1,hden);
+    uint32_t lc=gml_render_backend_lerp_xrgb(tl,bl,y_off+(y-y1),hden);
+    uint32_t rc=gml_render_backend_lerp_xrgb(tr,br,y_off+(y-y1),hden);
     uint32_t *row=R->fb+(size_t)y*R->fbw+x1;
     if(lc==rc){ gml_render_backend_draw_xrgb_alpha(R,row,n,lc,alpha); continue; }
     for(int x=0;x<n;x++){
-      uint32_t c=gml_render_backend_lerp_xrgb(lc,rc,x,wden);
+      uint32_t c=gml_render_backend_lerp_xrgb(lc,rc,x_off+x,wden);
       gml_render_backend_draw_xrgb_alpha(R,row+x,1,c,alpha);
     }
   }

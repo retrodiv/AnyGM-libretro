@@ -199,7 +199,11 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   profile->creation_code_before_create=classic&&!facts->classic_swap_creation_events;
   profile->classic_presentation=classic;
   profile->classic_modern_presentation=classic&&facts->classic_revision>=800;
-  profile->classic_interpolate=classic&&facts->classic_interpolate;
+  /* Sprite-sampling interpolation. Classic content declares it in its CLSC record;
+   * Studio packages use the "interpolate colours between pixels" option bit. */
+  profile->classic_interpolate=classic
+    ? facts->classic_interpolate
+    : (facts->option_flags&UINT64_C(0x2))!=0;
   profile->classic_scaling=classic?facts->classic_scaling:0;
   profile->classic_executable_layout=classic&&facts->classic_executable_layout;
   profile->uses_limited_random_seed_expansion=!classic&&!modern;

@@ -103,6 +103,15 @@ int main(void){
     fputs("compatibility fingerprint mismatch\n",stderr);
     return 1;
   }
+  /* A Studio package carries sprite-sampling interpolation as option bit 0x2; a package without
+   * the bit stays point-sampled, and the bit changes the profile fingerprint. */
+  AnygmCompatibilityProfile filtered={0};
+  if(!resolve(0,17,UINT64_C(0x2),0,&filtered) ||
+     !filtered.classic_interpolate || second.classic_interpolate ||
+     filtered.fingerprint==second.fingerprint){
+    fputs("studio interpolation option resolution mismatch\n",stderr);
+    return 1;
+  }
   AnygmCompatibilityProfile repeated={0};
   if(!resolve(0,17,0,0,&repeated) || memcmp(&repeated,&second,sizeof second)){
     fputs("compatibility resolution was not deterministic\n",stderr);

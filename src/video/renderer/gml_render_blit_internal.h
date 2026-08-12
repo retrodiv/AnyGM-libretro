@@ -159,6 +159,40 @@ static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run
 typedef struct { GmlRender *r; const uint32_t *src; const int *cxa,*cxb; const float *cfx;
   int sw,sh,W,H,x0,y0; double sy0d,shd,sy_phase,sy_bias;
   float fa,fbRr,fbGg,fbBb; int noblend; } SurfBiCtx;
+/* Byte-RGBA variant for runtime sprites (sprite_add frames), which store R,G,B,A bytes rather
+ * than packed ARGB words. Same taps, same weights, same blend as surf_bi_band, so a filtered
+ * runtime sprite and a filtered atlas sprite sample identically. */
+typedef struct { GmlRender *r; const uint8_t *src; const int *cxa,*cxb; const float *cfx;
+  int sw,sh,W,x0,y0; double sy0d,sy_step;
+  float fa,fbRr,fbGg,fbBb; int noblend; } RgbaBiCtx;
+static inline void rgba_bi_band(void *p, int py0, int py1, int slot){
+  (void)slot;
+  RgbaBiCtx *c=(RgbaBiCtx*)p; GmlRender *r=c->r; const int W=c->W, sw=c->sw, sh=c->sh;
+  for(int py=py0; py<py1; py++){ int ty_=c->y0+py; if(ty_<0||ty_>=r->fbh) continue;
+    double fsy=c->sy0d+py*c->sy_step;
+    int sya=(int)floor(fsy); float fy=(float)(fsy-sya);
+    int syb=sya+1; if(sya<0)sya=0; else if(sya>sh-1)sya=sh-1; if(syb<0)syb=0; else if(syb>sh-1)syb=sh-1;
+    const uint8_t *rowa=c->src+(size_t)sya*sw*4u, *rowb=c->src+(size_t)syb*sw*4u;
+    uint32_t *dprow=r->fb+(size_t)ty_*r->fbw; float wy0=1.0f-fy;
+    for(int px=0; px<W; px++){ int tx_=c->x0+px; if(tx_<0||tx_>=r->fbw) continue;
+      int sxa=c->cxa[px], sxb=c->cxb[px]; float fx=c->cfx[px], wx0=1.0f-fx;
+      const uint8_t *p00=rowa+(size_t)sxa*4u, *p01=rowa+(size_t)sxb*4u;
+      const uint8_t *p10=rowb+(size_t)sxa*4u, *p11=rowb+(size_t)sxb*4u;
+      float w00=wx0*wy0,w01=fx*wy0,w10=wx0*fy,w11=fx*fy;
+      float Av=p00[3]*w00+p01[3]*w01+p10[3]*w10+p11[3]*w11;
+      if(shader_discards_alpha_value(r,Av)) continue;
+      float ea=(Av*(1.0f/255.0f))*c->fa; if(ea<=0.0f) continue;
+      float Rv=p00[0]*w00+p01[0]*w01+p10[0]*w10+p11[0]*w11;
+      float Gv=p00[1]*w00+p01[1]*w01+p10[1]*w10+p11[1]*w11;
+      float Bv=p00[2]*w00+p01[2]*w01+p10[2]*w10+p11[2]*w11;
+      float sr=Rv*c->fbRr, sg=Gv*c->fbGg, sb=Bv*c->fbBb; uint32_t *dp=&dprow[tx_];
+      if(c->noblend || ea>=1.0f){ *dp=0xFF000000u|((uint32_t)(sr+0.5f)<<16)|((uint32_t)(sg+0.5f)<<8)|(uint32_t)(sb+0.5f); }
+      else { float ia=1.0f-ea; int dr=(*dp>>16)&0xFF,dg=(*dp>>8)&0xFF,db=*dp&0xFF;
+        *dp=0xFF000000u|((int)(sr*ea+dr*ia+0.5f)<<16)|((int)(sg*ea+dg*ia+0.5f)<<8)|(int)(sb*ea+db*ia+0.5f); }
+    }
+  }
+}
+
 static inline void surf_bi_band(void *p, int py0, int py1, int slot){
   (void)slot;
   SurfBiCtx *c=(SurfBiCtx*)p; GmlRender *r=c->r; const int W=c->W, sw=c->sw, sh=c->sh;

@@ -1689,6 +1689,36 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
   else gml_render_maybe_prepare_draw(r);
   if((alpha<1.0 || r->blendmode==2) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
+  /* The global texture filter reaches runtime RGBA sprites as well as atlas sprites.
+   * Sampling identity holds at an integer-aligned 1:1 draw, so that case keeps the exact
+   * fast paths; classic partial-row bounds stay with the point-sampled kernels below. */
+  if(r->interp && r->win && anygm_policy_has_modern_layer_semantics(r->win) &&
+     !row_min && !row_max &&
+     !(fabs(xs-1.0)<0.001 && fabs(ys-1.0)<0.001 &&
+       fabs(minx-nearbyint(minx))<1e-9 && fabs(miny-nearbyint(miny))<1e-9)){
+    int W=x1-x0, H=y1-y0;
+    int *cxa=malloc((size_t)W*sizeof(*cxa));
+    int *cxb=malloc((size_t)W*sizeof(*cxb));
+    float *cfx=malloc((size_t)W*sizeof(*cfx));
+    if(cxa && cxb && cfx){
+      for(int px=0; px<W; px++){
+        double fsx=((double)(x0+px)+0.5-ax)/xs+(double)originx-0.5;
+        int sxa=(int)floor(fsx); float fx=(float)(fsx-sxa);
+        int sxb=sxa+1;
+        if(sxa<0)sxa=0; else if(sxa>sw-1)sxa=sw-1;
+        if(sxb<0)sxb=0; else if(sxb>sw-1)sxb=sw-1;
+        cxa[px]=sxa; cxb[px]=sxb; cfx[px]=fx;
+      }
+      RgbaBiCtx ctx={ r,src,cxa,cxb,cfx,sw,sh,W,x0,y0,
+        ((double)y0+0.5-ay)/ys+(double)originy-0.5, 1.0/ys,
+        (float)alpha,(float)bR*(1.0f/255.0f),(float)bG*(1.0f/255.0f),(float)bB*(1.0f/255.0f),
+        opaque && alpha>=1.0 && !r->alphablend };
+      gml_run_row_bands(r,H,rgba_bi_band,&ctx);
+      free(cxa); free(cxb); free(cfx);
+      return 1;
+    }
+    free(cxa); free(cxb); free(cfx);
+  }
   if(owner && !gml_render_target_preserves_alpha(r) && r->alphablend && alpha>0 &&
      xs<1.5 && ys<1.5 && vispix>=262144ull){
     GmlRuntimeAxisKey key={
@@ -1942,15 +1972,39 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
   gml_render_maybe_prepare_draw(r);
   if((alpha<1.0 || r->blendmode==2) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
+  /* The global texture filter reaches rotated and flipped runtime sprites too; the wave
+   * samplers keep their own indexed fetches. */
+  int rot_interp=r->interp && r->win && anygm_policy_has_modern_layer_semantics(r->win) &&
+                 !wave && !uvwave;
   for(int py=y0; py<y1; py++) for(int px=x0; px<x1; px++){
     double rx=px+0.5-ax, ry=py+0.5-ay;
     double sxr=rx*c - ry*sn, syr=rx*sn + ry*c;
     int lx=(int)floor(sxr/xs + originx), ly=(int)floor(syr/ys + originy);
-    if(lx<0||ly<0||lx>=sw||ly>=sh) continue;
-    int source_index=wave ? radial_wave_sample_index(wave,sw,sh,lx,ly) :
-      (uvwave ? uv_wave_sample_index(uvwave,sw,sh,lx,ly,
-         world_space ? (double)py+0.5+r->cam_y : (double)py+0.5) : ly*sw+lx);
-    const uint8_t *sp=src+(size_t)source_index*4u;
+    uint8_t lerped[4];
+    const uint8_t *sp;
+    if(rot_interp){
+      double u=sxr/xs + originx - 0.5, v=syr/ys + originy - 0.5;
+      if(u<-1.0 || v<-1.0 || u>=(double)sw || v>=(double)sh) continue;
+      int ua=(int)floor(u), va=(int)floor(v);
+      double fx=u-ua, fy=v-va;
+      int ub=ua+1, vb=va+1;
+      if(ua<0)ua=0; else if(ua>sw-1)ua=sw-1;
+      if(ub<0)ub=0; else if(ub>sw-1)ub=sw-1;
+      if(va<0)va=0; else if(va>sh-1)va=sh-1;
+      if(vb<0)vb=0; else if(vb>sh-1)vb=sh-1;
+      const uint8_t *p00=src+((size_t)va*sw+ua)*4u, *p01=src+((size_t)va*sw+ub)*4u;
+      const uint8_t *p10=src+((size_t)vb*sw+ua)*4u, *p11=src+((size_t)vb*sw+ub)*4u;
+      double w00=(1.0-fx)*(1.0-fy), w01=fx*(1.0-fy), w10=(1.0-fx)*fy, w11=fx*fy;
+      for(int ch=0;ch<4;ch++)
+        lerped[ch]=(uint8_t)(p00[ch]*w00+p01[ch]*w01+p10[ch]*w10+p11[ch]*w11+0.5);
+      sp=lerped;
+    } else {
+      if(lx<0||ly<0||lx>=sw||ly>=sh) continue;
+      int source_index=wave ? radial_wave_sample_index(wave,sw,sh,lx,ly) :
+        (uvwave ? uv_wave_sample_index(uvwave,sw,sh,lx,ly,
+           world_space ? (double)py+0.5+r->cam_y : (double)py+0.5) : ly*sw+lx);
+      sp=src+(size_t)source_index*4u;
+    }
       /* The fixed-function subtract preset is (zero, inverse source colour): RGB depends on the
        * sampled colour, not on source alpha.  Treating ordinary zero coverage as a discarded
        * fragment therefore makes a transparent black mask a no-op instead of copying the
@@ -2395,10 +2449,10 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     uint32_t solid_rgb=interp_solid_mask
       ? interp_solid_mask->solid_alpha_mask_rgb
       : (solid_blur_alpha?solid_blur->solid_blur_alpha_rgb:0);
-    int tint_bias=127;
-    int solid_red=(((solid_rgb>>16)&255)*bR+tint_bias)/255;
-    int solid_green=(((solid_rgb>>8)&255)*bG+tint_bias)/255;
-    int solid_blue=((solid_rgb&255)*bB+tint_bias)/255;
+    /* Recognized solid fragments never read v_vColour; the uniform is the whole tint. */
+    int solid_red=(solid_rgb>>16)&255;
+    int solid_green=(solid_rgb>>8)&255;
+    int solid_blue=solid_rgb&255;
     GmlInterpBlitBand band={
       r,a,t,interp_solid_mask,
       interp_solid_mask&&!logical_margin?tpag_argb_cache(r,t,a):NULL,
@@ -2519,11 +2573,12 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
      !r->classic && r->win && anygm_policy_has_modern_layer_semantics(r->win)){
     uint32_t *source=tpag_argb_cache(r,t,a);
     if(source){
-      int tint_bias=127;
+      /* The recognized fragment is gl_FragColor=vec4(uniform.rgb, alpha), and the structural
+       * parser rejects any use of v_vColour. The uniform is therefore the whole tint. */
       uint32_t mask_rgb=solid_mask->solid_alpha_mask_rgb;
-      int red=(((mask_rgb>>16)&255u)*(unsigned)bR+tint_bias)/255;
-      int green=(((mask_rgb>>8)&255u)*(unsigned)bG+tint_bias)/255;
-      int blue=((mask_rgb&255u)*(unsigned)bB+tint_bias)/255;
+      int red=(mask_rgb>>16)&255u;
+      int green=(mask_rgb>>8)&255u;
+      int blue=mask_rgb&255u;
       GmlNearestSolidMaskBand band={
         .render=r,.tpag=t,.source=source,.source_x=lxtab,
         .destination_x=x0,.destination_y=y0,
@@ -2662,9 +2717,13 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       uint32_t *dp=&r->fb[(size_t)py*r->fbw+px];
       int family=gml_blend_family(r);
       int tint_bias=family==GML_BLEND_STUDIO2?127:0;
-      int sr=(((sampled>>16)&255)*bR+tint_bias)/255;
-      int sg=(((sampled>>8)&255)*bG+tint_bias)/255;
-      int sb=((sampled&255)*bB+tint_bias)/255;
+      /* A solid-blur fragment's colour is its uniform alone: v_vColour never reaches it. */
+      int sr=solid_blur_alpha?(int)((sampled>>16)&255)
+            :(int)((((sampled>>16)&255)*bR+tint_bias)/255);
+      int sg=solid_blur_alpha?(int)((sampled>>8)&255)
+            :(int)((((sampled>>8)&255)*bG+tint_bias)/255);
+      int sb=solid_blur_alpha?(int)(sampled&255)
+            :(int)(((sampled&255)*bB+tint_bias)/255);
       if(!r->alphablend){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
       uint32_t destination=*dp;
       int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
@@ -2982,9 +3041,11 @@ static void blit_interp_solid_mask_sample(
   if(mask->solid_alpha_mask_inclusive
        ? alpha<=mask->solid_alpha_mask_cutoff_step
        : alpha< mask->solid_alpha_mask_cutoff_step) alpha=0;
+  /* Recognized solid fragments never read v_vColour; the uniform is the whole tint. */
+  (void)blend_r; (void)blend_g; (void)blend_b;
   blit_interp_constant_alpha_sample(
     r,destination,mask->solid_alpha_mask_rgb,alpha,
-    blend_r,blend_g,blend_b,draw_alpha);
+    255,255,255,draw_alpha);
 }
 static uint32_t solid_blur_cache_sample(
     const uint32_t *alpha,const GmlTpag *tpag,int x,int y){
@@ -4000,6 +4061,43 @@ static GmlRotatedBatchItem *rotated_batch_append(GmlRender *r,int kind){
   item->kind=kind;
   return item;
 }
+/* One filtered rotated draw: per destination pixel the sprite-local position is mapped back to
+ * tpag texels and sampled through the same four-tap kernel the axis-aligned filtered blit uses,
+ * so a rotating filtered sprite and a still one quantize identically. */
+typedef struct GmlRotInterpBand {
+  GmlRender *r; GmlAtlas *atlas; GmlTpag *tpag; GmlSprite *sprite;
+  double ax,ay,cosine,sine,inv_xscale,inv_yscale;
+  int x0,x1,y0;
+  int logical_margin;
+  int bR,bG,bB; double alpha; uint32_t blend;
+  double qx[4], qy[4]; int use_quad_span;
+} GmlRotInterpBand;
+static void rot_interp_band_rows(void *context, int row_start, int row_end, int slot){
+  GmlRotInterpBand *band=(GmlRotInterpBand*)context;
+  (void)slot;
+  GmlRender *r=band->r; GmlTpag *t=band->tpag;
+  for(int row_index=row_start;row_index<row_end;row_index++){
+    int py=band->y0+row_index;
+    int rx0=band->x0, rx1=band->x1;
+    if(band->use_quad_span &&
+       !rotated_quad_row_span(band->qx,band->qy,py+0.5,band->x0,band->x1,&rx0,&rx1))
+      continue;
+    uint32_t *row=r->fb+(size_t)py*r->fbw;
+    double ry=py+0.5-band->ay;
+    for(int px=rx0;px<rx1;px++){
+      double rx=px+0.5-band->ax;
+      double local_x=(rx*band->cosine-ry*band->sine)*band->inv_xscale+band->sprite->originx;
+      double local_y=(rx*band->sine+ry*band->cosine)*band->inv_yscale+band->sprite->originy;
+      double u=local_x-t->tx-0.5, v=local_y-t->ty-0.5;
+      if(u<-1.0 || v<-1.0 || u>=(double)t->sw || v>=(double)t->sh) continue;
+      int ua=(int)floor(u), va=(int)floor(v);
+      blit_interp_sample(r,&row[px],band->atlas,t,ua,ua+1,va,va+1,
+                         u-ua,v-va,band->logical_margin,0,
+                         band->bR,band->bG,band->bB,band->blend,band->alpha);
+    }
+  }
+}
+
 void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, double x, double y,
                          double xs, double ys, double rot, uint32_t blend, double alpha){
   if(t->atlas<0 || t->atlas>=r->n_atlas) return;
@@ -4054,6 +4152,27 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
   if((alpha<1.0 || r->blendmode==2) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
   unsigned long long vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
+  /* The global texture filter reaches rotated draws. Recognized-shader masks and
+   * mapped textures keep their structural kernels; a plain filtered rotated sprite samples the
+   * same four-tap path the axis-aligned filtered blit uses. */
+  if(r->interp && r->win && anygm_policy_has_modern_layer_semantics(r->win) &&
+     !mapped_shader && !batchable_constant_alpha){
+    /* This filtered path paints now, while constant-alpha rotated draws queue in the rotated
+     * batch. Anything already queued was issued earlier and must reach the framebuffer first,
+     * or a background layer flushed later paints over this sprite. */
+    gml_render_flush_rotated_batch(r);
+    GmlRotInterpBand band={
+      r,a,t,spr,ax,ay,c,sn,invxs,invys,x0,x1,y0,
+      t->tx>0 || t->ty>0 || t->tx+t->sw<t->bw || t->ty+t->sh<t->bh,
+      bR,bG,bB,alpha,blend,{0},{0},0};
+    memcpy(band.qx,qx,sizeof qx); memcpy(band.qy,qy,sizeof qy);
+    double qarea_interp=fabs(qx[0]*qy[1]-qx[1]*qy[0] + qx[1]*qy[2]-qx[2]*qy[1] +
+                             qx[2]*qy[3]-qx[3]*qy[2] + qx[3]*qy[0]-qx[0]*qy[3]) * 0.5;
+    band.use_quad_span=(qarea_interp>0.0 && qarea_interp < (double)vispix * 0.85);
+    if(vispix>=262144ull) gml_run_row_bands(r,y1-y0,rot_interp_band_rows,&band);
+    else rot_interp_band_rows(&band,0,y1-y0,0);
+    return;
+  }
   double qarea=fabs(qx[0]*qy[1]-qx[1]*qy[0] + qx[1]*qy[2]-qx[2]*qy[1] +
                     qx[2]*qy[3]-qx[3]*qy[2] + qx[3]*qy[0]-qx[0]*qy[3]) * 0.5;
   int use_quad_span=(qarea>0.0 && qarea < (double)vispix * 0.85);
@@ -4064,7 +4183,7 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
    * framebuffer precision in packed 8-bit lanes; smaller draws keep the 16-bit path. A
    * structurally recognized constant-colour mask has no source-RGB quantization to preserve, so
    * it can enter the same kernel at a smaller area and join adjacent masks in one row dispatch. */
-  int fast8_blend = (gml_blend_family(r)!=GML_BLEND_STUDIO2 &&
+  int fast8_blend = ((gml_blend_family(r)!=GML_BLEND_STUDIO2 || batchable_constant_alpha) &&
                      !gml_render_target_preserves_alpha(r) && r->alphablend &&
                      r->blendmode==0 &&
                      vispix>=(batchable_constant_alpha?4096ull:262144ull));
@@ -4193,14 +4312,10 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
     memcpy(band.alpha_lut,a8_lut,sizeof a8_lut);
     uint32_t constant_rgb=solid_mask
       ? solid_mask->solid_alpha_mask_rgb : solid_blur->solid_blur_alpha_rgb;
+    /* Recognized solid fragments never read v_vColour; the uniform is the whole tint. */
     int solid_r=(constant_rgb>>16)&255;
     int solid_g=(constant_rgb>>8)&255;
     int solid_b=constant_rgb&255;
-    if(!white){
-      solid_r=solid_r*bR/255;
-      solid_g=solid_g*bG/255;
-      solid_b=solid_b*bB/255;
-    }
     band.source=0xFF000000u|((uint32_t)solid_r<<16)|((uint32_t)solid_g<<8)|
                 (uint32_t)solid_b;
     GmlRotatedBatchItem *item=rotated_batch_append(r,1);

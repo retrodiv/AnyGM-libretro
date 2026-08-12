@@ -236,8 +236,11 @@ static inline unsigned anygm_policy_legacy_view_slots(const GmlWin *content){
 }
 static inline int anygm_policy_classic_interpolate(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
-  return p?(int)p->classic_interpolate:
-    (content&&content->classic_version&&content->classic_interpolate);
+  if(p) return (int)p->classic_interpolate;
+  if(!content) return 0;
+  return content->classic_version
+    ? content->classic_interpolate!=0
+    : (content->option_flags&UINT64_C(0x2))!=0;
 }
 static inline AnygmBlendPolicy anygm_policy_blend(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
