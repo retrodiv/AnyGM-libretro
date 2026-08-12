@@ -489,6 +489,14 @@ typedef struct GmlRender {
   long     generated_sprite_log_count;
 } GmlRender;
 
+/* The application surface is a render target even when the host binds it without pushing the
+ * explicit surface stack.  Its alpha is observable when Draw GUI later samples surface 0, so
+ * fixed-function draws must preserve coverage there just as they do on an ordinary surface. */
+static inline int gml_render_target_preserves_alpha(const GmlRender *render){
+  return render && (render->target_sp>0 ||
+    (render->app_surface && render->fb==render->app_surface));
+}
+
 /* Renderer-private cross-unit operations. These are implementation seams, not
  * subsystem-facing APIs; callers outside renderer .c owners must not use them. */
 typedef void (*GmlRowBandFn)(void *ctx,int row_start,int row_end,int slot);

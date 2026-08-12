@@ -511,6 +511,59 @@ static int expect_renderer_semantics_exit_code(void){
               framebuffer,active.d); return 1;
     }
   }
+  {
+    /* Fixed-function colour factors still run for a sampled texel whose alpha is zero. The alpha
+     * controls coverage only; bm_subtract's RGB factors are zero and inverse-source-colour. */
+    GmlRender render={0}; GmlSprite sprite={0}; GmlTpag page={0}; GmlAtlas atlas={0};
+    uint32_t framebuffer=0xFF80C840u; uint8_t pixel[4]={64,128,192,0}; int frame=0;
+    gml_render_begin(&render,&framebuffer,1,1,0,0);
+    render.spr=&sprite; render.n_spr=1; render.tpag=&page; render.n_tpag=1;
+    render.atlas=&atlas; render.n_atlas=1; render.alpha=1; render.alphablend=1;
+    render.color_write_mask=0x0F; render.blendmode=2;
+    sprite.w=sprite.h=1; sprite.n_frames=1; sprite.frame=&frame;
+    page.sw=page.sh=page.bw=page.bh=1; page.atlas=0;
+    atlas.px=pixel; atlas.w=atlas.h=1; atlas.decode_attempted=1;
+    for(int interpolation=0;interpolation<=1;interpolation++){
+      framebuffer=0xFF80C840u; render.interp=interpolation;
+      gml_draw_sprite(&render,0,0,0,0);
+      if(framebuffer!=0xFF606410u){
+        fprintf(stderr,"transparent bm_subtract texture did not apply RGB factors "
+                "with interpolation %d: pixel=%08x\n",interpolation,framebuffer); return 1;
+      }
+    }
+  }
+  {
+    /* The application surface is sampled later by Draw GUI, so its alpha is real render-target
+     * state even though the host binds it without surface_set_target().  A translucent normal mask
+     * followed by bm_subtract must leave both coverage operations for that later composite. */
+    GmlRender render={0}; GmlSprite sprite={0}; GmlTpag page={0}; GmlAtlas atlas={0};
+    GmlWin win={0};
+    uint32_t application=0xFF009DAEu, screen=0; uint8_t black[4]={0,0,0,255}; int frame=0;
+    gml_render_begin(&render,&application,1,1,0,0);
+    render.win=&win; win.bytecode=14;
+    gml_render_application_surface_bind(&render,&application,1,1,1);
+    render.spr=&sprite; render.n_spr=1; render.tpag=&page; render.n_tpag=1;
+    render.atlas=&atlas; render.n_atlas=1; render.alpha=1; render.alphablend=1;
+    render.color_write_mask=0x0F;
+    sprite.w=sprite.h=1; sprite.n_frames=1; sprite.frame=&frame;
+    page.sw=page.sh=page.bw=page.bh=1; page.atlas=0;
+    atlas.px=black; atlas.w=atlas.h=1; atlas.decode_attempted=1;
+    gml_draw_sprite_ext(&render,0,0,0,0,1,1,0,0xFFFFFF,0.04);
+    render.blendmode=2;
+    gml_draw_sprite_ext(&render,0,0,0,0,1,1,0,0xFFFFFF,0.10);
+    if(application!=0xDD0097A7u){
+      fprintf(stderr,"application-surface alpha blend mismatch: pixel=%08x\n",application);
+      return 1;
+    }
+    gml_render_begin(&render,&screen,1,1,0,0);
+    gml_render_application_surface_bind(&render,&application,1,1,0);
+    render.alphablend=1; render.blendmode=0;
+    gml_draw_surface_stretched(&render,0,0,0,1,1,0xFFFFFF,1.0);
+    if(screen!=0xFF008391u){
+      fprintf(stderr,"application-surface composite ignored retained alpha: pixel=%08x\n",screen);
+      return 1;
+    }
+  }
   return 0;
 }
 

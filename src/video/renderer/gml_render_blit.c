@@ -798,15 +798,37 @@ static inline int gml_blend_family(const GmlRender *r){
   if(policy==ANYGM_BLEND_CLASSIC) return GML_BLEND_CLASSIC;
   return policy==ANYGM_BLEND_STUDIO_SECOND?GML_BLEND_STUDIO2:GML_BLEND_STUDIO1;
 }
+static inline int gml_render_target_is_first_generation_application_surface(
+    const GmlRender *render){
+  return render && render->win &&
+    anygm_policy_uses_first_generation_studio(render->win) &&
+    render->app_surface && render->fb==render->app_surface;
+}
 static inline uint32_t gml_sprite_target_alpha(const GmlRender *r,uint32_t dst,
                                                unsigned source_alpha){
-  if(!r || r->target_sp<=0) return 0xFF000000u;
+  if(!gml_render_target_preserves_alpha(r)) return 0xFF000000u;
   if(source_alpha>255u) source_alpha=255u;
   unsigned destination_alpha=dst>>24;
   unsigned inverse=255u-source_alpha;
   unsigned output=(source_alpha*source_alpha+destination_alpha*inverse+127u)/255u;
   if(output>255u) output=255u;
   return output<<24;
+}
+static inline uint32_t gml_sprite_target_inverse_alpha(const GmlRender *r,uint32_t dst,
+                                                       double source_alpha){
+  if(!gml_render_target_preserves_alpha(r)) return 0xFF000000u;
+  if(source_alpha<0.0) source_alpha=0.0;
+  else if(source_alpha>255.0) source_alpha=255.0;
+  unsigned destination_alpha=dst>>24;
+  unsigned output=(unsigned)lround((double)destination_alpha*(1.0-source_alpha/255.0));
+  if(output>255u) output=255u;
+  return output<<24;
+}
+static inline void gml_sprite_target_may_change_alpha(GmlRender *r){
+  if(!gml_render_target_preserves_alpha(r)) return;
+  r->fb_opaque_known=0;
+  r->fb_all_opaque=0;
+  if(r->app_surface && r->fb==r->app_surface) r->app_surface_opaque=0;
 }
 static inline void blend_argb_src_over_exact(GmlRender *r,uint32_t *dp,const uint32_t *sp,
                                              int run,uint32_t aa,int family){
@@ -1115,13 +1137,14 @@ static inline void blend_argb_src_over_draw_alpha(GmlRender *r,uint32_t *dp,cons
   }
   if(family==GML_BLEND_STUDIO1){
     double sa=(aa/255.0)*alpha, ia=1.0-sa;
+    double bias=gml_render_target_is_first_generation_application_surface(r)?0.5:0.0;
     for(int k=0; k<run; k++){
       uint32_t src=sp[k], dst=dp[k];
       int sr=(src>>16)&0xFF, sg=(src>>8)&0xFF, sb=src&0xFF;
       int dr=(dst>>16)&0xFF, dg=(dst>>8)&0xFF, db=dst&0xFF;
-      int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
-      int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
-      int ob=(int)(sb*sa+db*ia); if(ob>255) ob=255; else if(ob<0) ob=0;
+      int or_=(int)(sr*sa+dr*ia+bias); if(or_>255) or_=255; else if(or_<0) or_=0;
+      int og=(int)(sg*sa+dg*ia+bias); if(og>255) og=255; else if(og<0) og=0;
+      int ob=(int)(sb*sa+db*ia+bias); if(ob>255) ob=255; else if(ob<0) ob=0;
       uint32_t effective=(uint32_t)lround((double)aa*alpha);
       if(effective>255u) effective=255u;
       dp[k]=gml_sprite_target_alpha(r,dst,effective)|((uint32_t)or_<<16)|
@@ -1664,7 +1687,9 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
   unsigned long long vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
   if(opaque && alpha>=1.0 && r->blendmode==0) gml_render_maybe_prepare_opaque_rect(r,x0,y0,x1,y1);
   else gml_render_maybe_prepare_draw(r);
-  if(owner && r->target_sp==0 && r->alphablend && alpha>0 &&
+  if((alpha<1.0 || r->blendmode==2) && r->alphablend)
+    gml_sprite_target_may_change_alpha(r);
+  if(owner && !gml_render_target_preserves_alpha(r) && r->alphablend && alpha>0 &&
      xs<1.5 && ys<1.5 && vispix>=262144ull){
     GmlRuntimeAxisKey key={
       src,sw,sh,r->fbw,r->fbh,x0,y0,x1-x0,y1-y0,originx,originy,
@@ -1676,7 +1701,7 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
   uint32_t a8_lut[256];
   /* Large runtime RGBA sprites are used for full-screen/background layers.
    * Blend them at framebuffer precision; small sprites keep the exact 16-bit path. */
-  int fast8_blend = (r->target_sp==0 && r->alphablend &&
+  int fast8_blend = (!gml_render_target_preserves_alpha(r) && r->alphablend &&
                      r->blendmode==0 && vispix>=262144ull);
   if(fast8_blend && alpha < (1.0/256.0)) return 1;
   for(int i=0;i<256;i++){
@@ -1915,6 +1940,8 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
   if(y1>r->fbh) y1=r->fbh;
   if(x1<=x0 || y1<=y0) return;
   gml_render_maybe_prepare_draw(r);
+  if((alpha<1.0 || r->blendmode==2) && r->alphablend)
+    gml_sprite_target_may_change_alpha(r);
   for(int py=y0; py<y1; py++) for(int px=x0; px<x1; px++){
     double rx=px+0.5-ax, ry=py+0.5-ay;
     double sxr=rx*c - ry*sn, syr=rx*sn + ry*c;
@@ -1924,7 +1951,12 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
       (uvwave ? uv_wave_sample_index(uvwave,sw,sh,lx,ly,
          world_space ? (double)py+0.5+r->cam_y : (double)py+0.5) : ly*sw+lx);
     const uint8_t *sp=src+(size_t)source_index*4u;
-      if(shader_discards_alpha(r,sp[3])) continue;
+      /* The fixed-function subtract preset is (zero, inverse source colour): RGB depends on the
+       * sampled colour, not on source alpha.  Treating ordinary zero coverage as a discarded
+       * fragment therefore makes a transparent black mask a no-op instead of copying the
+       * destination.  An explicit alpha test or shader discard still wins, as on hardware. */
+      if(shader_discards_alpha(r,sp[3]) &&
+         !(r->blendmode==2 && !shader_alpha_test_active(r))) continue;
       /* An ordered-dither pass keeps or drops the whole texel by its position. The fragment reads
        * the interpolated object-space vertex position, which for this blit is the destination pixel
        * carried back into world space the same way the wave sampler above does it. */
@@ -1935,7 +1967,8 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
                        ((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
       if(mapped_texture_active(r)) sampled=mapped_texture_pixel(r,sampled);
       int sample_a=(int)(sampled>>24);
-      double sa=(sample_a/255.0)*alpha; if(sa<=0) continue;
+      double sa=(sample_a/255.0)*alpha;
+      if(sa<=0 && r->blendmode!=2) continue;
       uint32_t *dp=&r->fb[(size_t)py*r->fbw+px];
       int sr=((sampled>>16)&255)*bR/255;
       int sg=((sampled>>8)&255)*bG/255;
@@ -2323,6 +2356,8 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   int mapped_shader=mapped_texture_active(r) || solid_blur_alpha ||
                     shader_alpha_test_requires_filter(r) || wave!=NULL || uvwave!=NULL;
   gml_render_maybe_prepare_draw(r);
+  if((alpha<1.0 || r->blendmode==2) && r->alphablend)
+    gml_sprite_target_may_change_alpha(r);
   unsigned long long vispix=(unsigned long long)(xx1-xx0)*(unsigned long long)(yy1-yy0);
   /* Hardware filtering samples the four neighbouring texels at the destination pixel centre.
    * Preserve the quad's fractional origin in the inverse map: snapping before sampling shifts a
@@ -2479,7 +2514,8 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     }
   }
   if(lxtab && !flipx && !flipy && solid_mask && !solid_blur_alpha &&
-     alpha>=1.0 && r->alphablend && r->blendmode==0 && r->target_sp==0 &&
+     alpha>=1.0 && r->alphablend && r->blendmode==0 &&
+     !gml_render_target_preserves_alpha(r) &&
      !r->classic && r->win && anygm_policy_has_modern_layer_semantics(r->win)){
     uint32_t *source=tpag_argb_cache(r,t,a);
     if(source){
@@ -2516,7 +2552,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
    * applies the same saturated RGB increment to every pixel in that run, so calculate the shader-
    * free sample once and use packed byte saturation for the repeated destination pixels. */
   if(lxtab && !flipx && !flipy && !mapped_shader && r->alphablend &&
-     r->blendmode==1 && r->target_sp==0){
+     r->blendmode==1 && !gml_render_target_preserves_alpha(r)){
     int tint_bias=gml_blend_family(r)==GML_BLEND_STUDIO2?127:0;
     for(int yy=yy0;yy<yy1;yy++){
       int py=y0+yy;
@@ -2611,7 +2647,8 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       const uint8_t *sp=wave_map
         ? a->px+(size_t)wave_map[(size_t)ly*t->sw+lx]*4u
         : a->px+((size_t)sy*a->w+sx)*4u;
-      if(shader_discards_alpha(r,sp[3])) continue;
+      if(shader_discards_alpha(r,sp[3]) &&
+         !(r->blendmode==2 && !shader_alpha_test_active(r))) continue;
       uint32_t sampled=((uint32_t)sp[3]<<24)|((uint32_t)sp[0]<<16)|
                        ((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
       if(solid_blur_alpha)
@@ -2620,7 +2657,8 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       else if(mapped_texture_active(r))
         sampled=mapped_texture_pixel(r,sampled);
       int sample_a=(int)(sampled>>24);
-      double sa=(sample_a/255.0)*alpha; if(sa<=0) continue;
+      double sa=(sample_a/255.0)*alpha;
+      if(sa<=0 && r->blendmode!=2) continue;
       uint32_t *dp=&r->fb[(size_t)py*r->fbw+px];
       int family=gml_blend_family(r);
       int tint_bias=family==GML_BLEND_STUDIO2?127:0;
@@ -2637,13 +2675,8 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
         unsigned ar=gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
         unsigned ag=gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
         unsigned ab=gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
-        uint32_t oc=0xFF;
-        if(r->target_sp>0){
-          unsigned source_alpha=(unsigned)lround(sample_a*alpha);
-          if(source_alpha>255u) source_alpha=255u;
-          oc=gml_blend_inv_source_u8(*dp>>24,source_alpha);
-        }
-        *dp=(oc<<24)|(ar<<16)|(ag<<8)|ab; continue; }
+        uint32_t coverage=gml_sprite_target_inverse_alpha(r,*dp,(double)sample_a*alpha);
+        *dp=coverage|(ar<<16)|(ag<<8)|ab; continue; }
       if(r->blendmode==4){
         unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
         *dp=color_write_merge(r,*dp,
@@ -2664,7 +2697,8 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
           ob=(int)(sb*sa+db*(1-sa)+0.5);
         }
       } else {
-        double bias=family==GML_BLEND_STUDIO2?0.5:0.0;
+        double bias=(family==GML_BLEND_STUDIO2 ||
+                     gml_render_target_is_first_generation_application_surface(r))?0.5:0.0;
         or_=(int)(sr*sa+dr*(1-sa)+bias);
         og=(int)(sg*sa+dg*(1-sa)+bias);
         ob=(int)(sb*sa+db*(1-sa)+bias);
@@ -3023,7 +3057,8 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
   double fsg=p00[1]*w00+p01[1]*w01+p10[1]*w10+p11[1]*w11;
   double fsb=p00[2]*w00+p01[2]*w01+p10[2]*w10+p11[2]*w11;
   double faa=p00[3]*w00+p01[3]*w01+p10[3]*w10+p11[3]*w11;
-  if(shader_discards_alpha_value(r,faa)) return;
+  if(shader_discards_alpha_value(r,faa) &&
+     !(r->blendmode==2 && !shader_alpha_test_active(r))) return;
   /* A Studio 2 shader receives the filtered sample as floating-point colour. Keep that precision
    * through vertex-colour modulation and ordinary source-alpha blending; quantizing the sample
    * first produces systematic one-channel errors on minified artwork. */
@@ -3050,12 +3085,12 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
   }
   int sr=(int)(fsr+0.5), sg=(int)(fsg+0.5), sb=(int)(fsb+0.5);
   int aa=(int)(faa+0.5);
-  if(aa<=0) return;
+  if(aa<=0 && r->blendmode!=2) return;
   if(mapped_texture_active(r)){
     uint32_t sampled=mapped_texture_pixel(r,((uint32_t)aa<<24)|((uint32_t)sr<<16)|
                                              ((uint32_t)sg<<8)|(uint32_t)sb);
     aa=(int)(sampled>>24); sr=(sampled>>16)&255; sg=(sampled>>8)&255; sb=sampled&255;
-    if(aa<=0) return;
+    if(aa<=0 && r->blendmode!=2) return;
   }
   int tint_bias=gml_blend_family(r)==GML_BLEND_STUDIO2?127:0;
   sr=(sr*bR+tint_bias)/255; sg=(sg*bG+tint_bias)/255; sb=(sb*bB+tint_bias)/255;
@@ -3976,7 +4011,7 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
   const struct GmlShaderPal *batchable_solid_mask=solid_alpha_mask_active(r);
   const struct GmlShaderPal *batchable_constant_alpha=
     batchable_solid_mask?batchable_solid_mask:(solid_blur_alpha?solid_blur:NULL);
-  int batchable_rotation=!r->classic && r->target_sp==0 &&
+  int batchable_rotation=!r->classic && !gml_render_target_preserves_alpha(r) &&
                          r->alphablend && r->blendmode==0;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(alpha<=0) return;
@@ -4016,6 +4051,8 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
   if(batchable_rotation) r->rotated_batch_building++;
   gml_render_maybe_prepare_draw(r);
   if(batchable_rotation) r->rotated_batch_building--;
+  if((alpha<1.0 || r->blendmode==2) && r->alphablend)
+    gml_sprite_target_may_change_alpha(r);
   unsigned long long vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
   double qarea=fabs(qx[0]*qy[1]-qx[1]*qy[0] + qx[1]*qy[2]-qx[2]*qy[1] +
                     qx[2]*qy[3]-qx[3]*qy[2] + qx[3]*qy[0]-qx[0]*qy[3]) * 0.5;
@@ -4028,7 +4065,7 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
    * structurally recognized constant-colour mask has no source-RGB quantization to preserve, so
    * it can enter the same kernel at a smaller area and join adjacent masks in one row dispatch. */
   int fast8_blend = (gml_blend_family(r)!=GML_BLEND_STUDIO2 &&
-                     r->target_sp==0 && r->alphablend &&
+                     !gml_render_target_preserves_alpha(r) && r->alphablend &&
                      r->blendmode==0 &&
                      vispix>=(batchable_constant_alpha?4096ull:262144ull));
   int fast8_alpha_floor=fast8_blend ? r->fast_alpha_cull : 0;
@@ -4550,13 +4587,8 @@ cached_rotated_fallback:
         unsigned ar=gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
         unsigned ag=gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
         unsigned ab=gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
-        uint32_t oc=0xFF;
-        if(r->target_sp>0){
-          unsigned source_alpha=(unsigned)lround(aa*alpha);
-          if(source_alpha>255u) source_alpha=255u;
-          oc=gml_blend_inv_source_u8(*dp>>24,source_alpha);
-        }
-        *dp=(oc<<24)|(ar<<16)|(ag<<8)|ab; continue; }
+        uint32_t coverage=gml_sprite_target_inverse_alpha(r,*dp,(double)aa*alpha);
+        *dp=coverage|(ar<<16)|(ag<<8)|ab; continue; }
       if(r->blendmode==4){
         unsigned source_alpha=(unsigned)lround((double)aa*alpha);
         *dp=color_write_merge(r,*dp,
@@ -4717,13 +4749,8 @@ static void sprite_pos_pixel(GmlRender *r,int x,int y,const double sample[4],dou
     unsigned rr=gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
     unsigned gg=gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
     unsigned bb=gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
-    uint32_t coverage=255;
-    if(r->target_sp>0){
-      unsigned source_alpha=(unsigned)lround(sample[3]*alpha);
-      if(source_alpha>255u) source_alpha=255u;
-      coverage=gml_blend_inv_source_u8(*dst>>24,source_alpha);
-    }
-    *dst=(coverage<<24)|(rr<<16)|(gg<<8)|bb;
+    uint32_t coverage=gml_sprite_target_inverse_alpha(r,*dst,sample[3]*alpha);
+    *dst=coverage|(rr<<16)|(gg<<8)|bb;
     return;
   }
   if(r->blendmode==4){
@@ -4981,7 +5008,7 @@ static void draw_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, doubl
   }
   if(unrot){
     int can_batch_axis=
-      r->target_sp==0 && !r->classic && !r->interp && r->alphablend &&
+      !gml_render_target_preserves_alpha(r) && !r->classic && !r->interp && r->alphablend &&
       r->blendmode==0 && !r->classic_phase_y &&
       !r->classic_interp_phase[0] && !r->classic_interp_phase[1] &&
       !r->classic_interp_phase[2] &&
@@ -5059,6 +5086,13 @@ static void draw_sprite_tiled_ext_unmasked(GmlRender *r, int sprite, int subimg,
   double bw=s->w*fabs(xs), bh=s->h*fabs(ys); if(bw<=0||bh<=0) return;
   double ax=floor(x-r->cam_x);
   double ay=floor(y-r->cam_y);
+  /* The first-generation profile uses a half-pixel correction for tiled sprite cells when the
+   * camera is fractional: integer camera positions retain the authored phase, while a non-integer
+   * position selects the following cell sample. Snapping only after the subtraction loses that
+   * distinction and moves a screen-space mask one column relative to ordinary world sprites. */
+  if(r->win && anygm_policy_uses_first_generation_studio(r->win) &&
+     fabs(r->cam_x-nearbyint(r->cam_x))>1e-9)
+    ax+=1.0;
   double x0=fmod(ax,bw); if(x0>0) x0-=bw;
   double y0=fmod(ay,bh); if(y0>0) y0-=bh;
   if(gml_d3_is_active(r)){

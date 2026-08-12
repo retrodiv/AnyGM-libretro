@@ -527,9 +527,19 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
           if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
           else {
             int dr = (*dp >> 16) & 0xFF, dg = (*dp >> 8) & 0xFF, db = *dp & 0xFF;
-            *dp = 0xFF000000u | ((int)(sr * pa + dr * (1.0 - pa)) << 16) |
-                  ((int)(sg * pa + dg * (1.0 - pa)) << 8) |
-                  (int)(sb * pa + db * (1.0 - pa));
+            int round_target=r->win && anygm_policy_uses_first_generation_studio(r->win) &&
+                             r->app_surface==src;
+            if(round_target){
+              uint32_t inverse=255u-a;
+              *dp=0xFF000000u|
+                ((uint32_t)(((uint32_t)sr*a+(uint32_t)dr*inverse+127u)/255u)<<16)|
+                ((uint32_t)(((uint32_t)sg*a+(uint32_t)dg*inverse+127u)/255u)<<8)|
+                (uint32_t)(((uint32_t)sb*a+(uint32_t)db*inverse+127u)/255u);
+            } else {
+              *dp = 0xFF000000u | ((int)(sr * pa + dr * (1.0 - pa)) << 16) |
+                    ((int)(sg * pa + dg * (1.0 - pa)) << 8) |
+                    (int)(sb * pa + db * (1.0 - pa));
+            }
           }
         }
         dp++;
@@ -897,8 +907,22 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             if(sa8==255){
               memcpy(dp+xx,sp+xx,(size_t)run*sizeof(uint32_t));
             } else if(sa8){
-              uint32_t af=(uint32_t)((sa8*256u)/255u);
-              if(af) blend_fast8_src_run(dp+xx,sp+xx,run,af);
+              if(r->win && anygm_policy_uses_first_generation_studio(r->win) &&
+                 r->app_surface==src){
+                uint32_t inverse=255u-sa8;
+                for(int k=0;k<run;k++){
+                  uint32_t source=sp[xx+k],destination=dp[xx+k];
+                  uint32_t sr=(source>>16)&255u,sg=(source>>8)&255u,sb=source&255u;
+                  uint32_t dr=(destination>>16)&255u,dg=(destination>>8)&255u,db=destination&255u;
+                  dp[xx+k]=0xFF000000u|
+                    (((sr*sa8+dr*inverse+127u)/255u)<<16)|
+                    (((sg*sa8+dg*inverse+127u)/255u)<<8)|
+                    ((sb*sa8+db*inverse+127u)/255u);
+                }
+              } else {
+                uint32_t af=(uint32_t)((sa8*256u)/255u);
+                if(af) blend_fast8_src_run(dp+xx,sp+xx,run,af);
+              }
             }
             xx+=run;
           }
