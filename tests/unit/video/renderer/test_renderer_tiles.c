@@ -4,6 +4,7 @@
 #include "gml_render_internal.h"
 #include "anygm_compatibility.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -463,6 +464,154 @@ static void check_early_second_generation_camera_phase(void){
          "later Studio 2 inherited the revision-15 integer camera projection");
 }
 
+static void check_first_generation_default_font_metrics(void){
+  GmlWin content;
+  AnygmCompatibilityProfile compatibility;
+  GmlRender render;
+  memset(&content,0,sizeof content);
+  memset(&compatibility,0,sizeof compatibility);
+  memset(&render,0,sizeof render);
+  compatibility.diagnostic_family=ANYGM_FAMILY_STUDIO_FIRST;
+  content.compatibility=&compatibility;
+  render.win=&content;
+  expect(build_default_font(&render),
+         "first-generation default font did not build");
+  GmlFont *font=&render.default_font;
+  int h=font->glyph_by_char['H'];
+  int i=font->glyph_by_char['I'];
+  int s=font->glyph_by_char['S'];
+  int colon=font->glyph_by_char[':'];
+  int space=font->glyph_by_char[' '];
+  expect(font->line_height==15 && h>=0 && i>=0 && s>=0 && colon>=0 && space>=0 &&
+         font->glyphs[h].shift==11 && font->glyphs[i].shift==5 &&
+         font->glyphs[s].shift==10 && font->glyphs[colon].shift==6 &&
+         font->glyphs[space].shift==7,
+         "first-generation default-font metrics do not match the selected profile");
+  gml_render_free(&render);
+}
+
+static void check_render_pass_restores_normal_blending(void){
+  uint32_t framebuffer=0;
+  GmlRender render;
+  memset(&render,0,sizeof render);
+  render.alphablend=0;
+  render.blendmode=3;
+  render.blend_equation=2;
+  render.blend_equation_alpha=2;
+  gml_render_begin(&render,&framebuffer,1,1,0.0,0.0);
+  expect(render.alphablend==1 && render.blendmode==0 &&
+         render.blend_equation==1 && render.blend_equation_alpha==1,
+         "a new render-target pass retained disabled or non-normal blending");
+}
+
+/* A first-generation application surface can be fractionally larger than the logical camera.
+ * Tiles are independent quads, so their coverage must retain the fractional position of each
+ * projected edge.  When outward rounding puts the final sample just beyond a subrectangle, the
+ * first contiguous atlas texel supplies it rather than leaving a transparent line. */
+static void check_first_generation_fractional_tile_projection(void){
+  enum { LOGICAL_HEIGHT=26, SURFACE_HEIGHT=30, WIDTH=1 };
+  uint8_t rgba[LOGICAL_HEIGHT*4];
+  uint32_t application[SURFACE_HEIGHT];
+  GmlWin content;
+  GmlRender render;
+  GmlAtlas atlas;
+  GmlTpag page;
+  GmlBg background;
+
+  memset(&content,0,sizeof content);
+  memset(&render,0,sizeof render);
+  memset(&atlas,0,sizeof atlas);
+  memset(&page,0,sizeof page);
+  memset(&background,0,sizeof background);
+  memset(application,0,sizeof application);
+  for(int y=0;y<LOGICAL_HEIGHT;y++){
+    rgba[y*4+0]=(uint8_t)(y+1);
+    rgba[y*4+1]=(uint8_t)(255-y);
+    rgba[y*4+2]=(uint8_t)(y*7);
+    rgba[y*4+3]=255;
+  }
+  content.bytecode=15;
+  atlas.px=rgba;
+  atlas.w=1; atlas.h=LOGICAL_HEIGHT;
+  page.atlas=0;
+  page.sw=page.bw=1;
+  page.sh=page.bh=LOGICAL_HEIGHT;
+  page.alpha_scanned=1;
+  page.alpha_max=255;
+  page.ax1=0; page.ay1=LOGICAL_HEIGHT-1;
+  background.tpag=0;
+  render.win=&content;
+  render.atlas=&atlas; render.n_atlas=1;
+  render.tpag=&page; render.n_tpag=1;
+  render.bg=&background; render.n_bg=1;
+  render.app_surface=application;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+  gml_render_begin(&render,application,WIDTH,SURFACE_HEIGHT,0.0,0.0);
+  gml_render_world_set_logical_extent(&render,WIDTH,LOGICAL_HEIGHT);
+  gml_draw_background_tile(&render,0,0,1,1,3,0,1,1,1,0,0,0,0xffffff,1.0);
+  static const int expected_source[4]={1,2,3,4};
+  for(int y=1;y<=4;y++){
+    int source_y=expected_source[y-1];
+    uint32_t expected=0xff000000u|((uint32_t)rgba[source_y*4]<<16)|
+      ((uint32_t)rgba[source_y*4+1]<<8)|rgba[source_y*4+2];
+    if(application[y]!=expected){
+      fprintf(stderr,"renderer tiles: fractional application projection row %d was %08x, expected %08x\n",
+              y,application[y],expected);
+      failures++;
+      break;
+    }
+  }
+  free(page.argb_cache);
+}
+
+static void check_application_surface_partial_alpha_coverage(void){
+  static const uint8_t rgba[4]={255,255,255,128};
+  uint32_t application=0xff000000u;
+  uint32_t presentation=0xff000000u;
+  GmlRender render;
+  GmlAtlas atlas;
+  GmlTpag page;
+  GmlBg background;
+
+  memset(&render,0,sizeof render);
+  memset(&atlas,0,sizeof atlas);
+  memset(&page,0,sizeof page);
+  memset(&background,0,sizeof background);
+  atlas.px=(uint8_t*)rgba;
+  atlas.w=atlas.h=1;
+  page.atlas=0;
+  page.sw=page.sh=page.bw=page.bh=1;
+  background.tpag=0;
+  render.atlas=&atlas; render.n_atlas=1;
+  render.tpag=&page; render.n_tpag=1;
+  render.bg=&background; render.n_bg=1;
+  render.app_surface=&application;
+  render.app_w=render.app_h=1;
+  render.app_surface_opaque=1;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+
+  gml_render_begin(&render,&application,1,1,0.0,0.0);
+  gml_render_clear(&render,0,1.0);
+  gml_draw_background(&render,0,0.0,0.0);
+  expect((application>>24)<255u,
+         "a partial atlas texel did not change application-surface alpha");
+  expect(!render.app_surface_opaque &&
+         !(render.fb_opaque_known && render.fb_all_opaque),
+         "a partial atlas draw left an opaque application-surface certificate");
+
+  gml_render_begin(&render,&presentation,1,1,0.0,0.0);
+  gml_draw_surface_stretched(&render,0,0.0,0.0,1.0,1.0,0xffffffu,1.0);
+  expect((presentation&0x00ffffffu)<(application&0x00ffffffu),
+         "application-surface presentation skipped its second alpha composition");
+  free(page.argb_cache);
+}
+
 int main(void){
   static const uint32_t transformed[8][4]={
     {0xffff0000,0xff00ff00,0xff0000ff,0xffffffff},
@@ -489,6 +638,10 @@ int main(void){
   check_fractional_sprite_part_extent(0.8,2);
   check_fractional_sprite_part_extent(0.2,0);
   check_early_second_generation_camera_phase();
+  check_first_generation_default_font_metrics();
+  check_render_pass_restores_normal_blending();
+  check_first_generation_fractional_tile_projection();
+  check_application_surface_partial_alpha_coverage();
   if(failures){
     fprintf(stderr,"renderer tiles: %d failure(s)\n",failures);
     return 1;

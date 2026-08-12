@@ -12,6 +12,7 @@ typedef struct {
   int sx,sy,sw,sh, tx,ty, bw,bh, atlas;  /* texture page item */
   int alpha_scanned, ax0, ay0, ax1, ay1; /* nontransparent source bbox, cached after atlas decode */
   int alpha_max;                          /* max source alpha in the texture-page item */
+  int alpha_partial;                      /* at least one source texel has alpha 1..254 */
   int *alpha_row_min, *alpha_row_max;     /* per-source-row nontransparent span, optional */
   uint16_t *alpha_qrow_min, *alpha_qrow_max; /* per-alpha-threshold row spans, built lazily */
   uint8_t *alpha_qrow_built;

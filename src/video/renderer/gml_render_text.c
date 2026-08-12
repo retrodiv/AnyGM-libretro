@@ -138,9 +138,31 @@ void parse_font(GmlRender *r){
 /* The built-in default font remains available when FONT contains no user resources. Keep it
  * separate from the asset-id namespace: draw_set_font(-1) selects this data, while ids 0..n-1
  * continue to resolve only to fonts supplied by the loaded package. */
+static int first_generation_default_advance(int ch,int fallback){
+  /* First-generation glyph advances are independent of padded-cell width and fallback coverage.
+   * Keep the layout metrics separate from the redistributable fallback raster. */
+  switch(ch){
+    case ' ': return 7;
+    case '-': return 5;
+    case ':': return 6;
+    case '0': case '8': return 11;
+    case '7': return 10;
+    case 'A': case 'B': case 'D': case 'H': case 'O': return 11;
+    case 'C': case 'E': case 'G': case 'L': case 'R': case 'S':
+    case 'T': case 'Y': case 'Z': return 10;
+    case 'I': return 5;
+    case 'M': case 'N': return 12;
+    default: return fallback;
+  }
+}
+
 int build_default_font(GmlRender *r){
   enum { AW=512, AH=128 };
-  const int studio=r->win&&anygm_policy_has_modern_layer_semantics(r->win);
+  /* Select the built-in font from the runtime generation, not the room-resource layout.
+   * A revision-15 export can have second-generation layers and first-generation font policy. */
+  const int studio=r->win&&!anygm_policy_uses_first_generation_studio(r->win)&&
+    anygm_policy_has_modern_layer_semantics(r->win);
+  const int first_generation=r->win&&anygm_policy_uses_first_generation_studio(r->win);
   const int source_first=studio?GML_STUDIO_DEFAULT_FONT_FIRST:GML_DEFAULT_FONT_FIRST;
   const int source_last=studio?GML_STUDIO_DEFAULT_FONT_LAST:GML_DEFAULT_FONT_LAST;
   const int ng=source_last-source_first+1;
@@ -163,7 +185,8 @@ int build_default_font(GmlRender *r){
   memset(f,0,sizeof(*f));
   for(int i=0;i<256;i++) f->glyph_by_char[i]=-1;
   f->real=1; f->sprite=-1; f->atlas=atlas_id;
-  f->line_height=studio?GML_STUDIO_DEFAULT_FONT_LINE_HEIGHT:GML_DEFAULT_FONT_LINE_HEIGHT;
+  f->line_height=studio?GML_STUDIO_DEFAULT_FONT_LINE_HEIGHT:
+    (first_generation?15:GML_DEFAULT_FONT_LINE_HEIGHT);
   f->align_height=f->line_height;
   f->glyphs=glyphs; f->n_glyphs=ng; f->glyphs_sorted=1;
   int ax=0, ay=0, row_height=0;
@@ -177,13 +200,17 @@ int build_default_font(GmlRender *r){
     g->ch=(uint16_t)(source_first+i);
     g->sx=ax; g->sy=ay; g->w=w; g->h=h;
     g->shift=src->shift; g->offset=src->offset;
+    if(first_generation){
+      g->shift=first_generation_default_advance(g->ch,g->shift);
+    }
     f->glyph_by_char[g->ch]=i;
     const uint8_t *cov=source_alpha+src->off;
     for(int y=0;y<h;y++) for(int x=0;x<w;x++){
       uint8_t alpha=cov[y*w+x];
       if(alpha){
         uint8_t *q=px+((size_t)(ay+y)*AW+ax+x)*4;
-        q[0]=q[1]=q[2]=255; q[3]=alpha;
+        q[0]=q[1]=q[2]=255;
+        q[3]=alpha;
       }
     }
     ax+=w;

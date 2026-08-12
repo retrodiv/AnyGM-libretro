@@ -523,7 +523,7 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
   if(!t || !a || !a->px || t->sw<=0 || t->sh<=0) return 0;
   if(!t->alpha_scanned){
     int minx=t->sw, miny=t->sh, maxx=-1, maxy=-1;
-    int maxa=0;
+    int maxa=0,partial=0;
     int log_alpha=render_setting(r,"GML_LOG_TPAG_ALPHA")!=NULL;
     int real_tpag = rprof_tpag_id(r,t)>=0;
     if(real_tpag && !t->alpha_row_min && !t->alpha_row_max){
@@ -547,6 +547,7 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
         const uint8_t *sp=row+(size_t)sx*4;
         if(!sp[3]) continue;
         if(sp[3]>maxa) maxa=sp[3];
+        if(sp[3]<255) partial=1;
         if(log_alpha) nz++;
         if(xx<minx) minx=xx;
         if(xx>maxx) maxx=xx;
@@ -559,6 +560,7 @@ static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
       }
     }
     t->ax0=minx; t->ay0=miny; t->ax1=maxx; t->ay1=maxy; t->alpha_max=maxa;
+    t->alpha_partial=partial;
     t->alpha_scanned=1;
     if(log_alpha){
       int id=rprof_tpag_id(r,t);
@@ -1687,7 +1689,7 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
   unsigned long long vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
   if(opaque && alpha>=1.0 && r->blendmode==0) gml_render_maybe_prepare_opaque_rect(r,x0,y0,x1,y1);
   else gml_render_maybe_prepare_draw(r);
-  if((alpha<1.0 || r->blendmode==2) && r->alphablend)
+  if((alpha<1.0 || r->blendmode==2 || !opaque) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
   /* The global texture filter reaches runtime RGBA sprites as well as atlas sprites.
    * Sampling identity holds at an integer-aligned 1:1 draw, so that case keeps the exact
@@ -1970,7 +1972,7 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
   if(y1>r->fbh) y1=r->fbh;
   if(x1<=x0 || y1<=y0) return;
   gml_render_maybe_prepare_draw(r);
-  if((alpha<1.0 || r->blendmode==2) && r->alphablend)
+  if((alpha<1.0 || r->blendmode==2 || !opaque) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
   /* The global texture filter reaches rotated and flipped runtime sprites too; the wave
    * samplers keep their own indexed fetches. */
@@ -2174,6 +2176,7 @@ static int tpag_part_view(const GmlTpag *t,
   view->alpha_scanned=1;
   view->ax0=0; view->ay0=0; view->ax1=view->sw-1; view->ay1=view->sh-1;
   view->alpha_max=t->alpha_scanned ? t->alpha_max : 255;
+  view->alpha_partial=t->alpha_scanned ? t->alpha_partial : 1;
   view->alpha_row_min=view->alpha_row_max=NULL;
   view->alpha_qrow_min=view->alpha_qrow_max=NULL; view->alpha_qrow_built=NULL;
   view->alpha_runs=NULL; view->alpha_run_count=0; view->alpha_runs_built=0;
@@ -2334,6 +2337,14 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
    * tiles are unaffected. */
   int x0=(int)floor(dx+0.5), y0=(int)floor(dy+0.5);
   int w=(int)lround(t->sw*axs), h=(int)lround(t->sh*ays);
+  /* First-generation application surfaces project each authored edge separately.  Preserve that
+   * accumulated fractional coverage instead of rounding every independent quad to the same size. */
+  if(gml_render_target_is_first_generation_application_surface(r)){
+    if(xs>0.0 && fabs(axs-nearbyint(axs))>1e-9)
+      w=(int)floor(dx+t->sw*axs+0.5)-x0;
+    if(ys>0.0 && fabs(ays-nearbyint(ays))>1e-9)
+      h=(int)floor(dy+t->sh*ays+0.5)-y0;
+  }
   if(w<=0 || h<=0) return;
   /* Report blits whose destination rectangle overlaps an explicitly selected
    * area. This is diagnostic only and does not alter rasterization. */
@@ -2409,8 +2420,13 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     ? tpag_solid_blur_alpha_cache(r,t,a,solid_blur) : NULL;
   int mapped_shader=mapped_texture_active(r) || solid_blur_alpha ||
                     shader_alpha_test_requires_filter(r) || wave!=NULL || uvwave!=NULL;
+  if(!t->alpha_scanned) (void)tpag_alpha_bounds(r,t,a,NULL,NULL,NULL,NULL);
   gml_render_maybe_prepare_draw(r);
-  if((alpha<1.0 || r->blendmode==2) && r->alphablend)
+  /* SRCALPHA/INVSRCALPHA also blends the destination alpha channel. A partially covered texel
+   * therefore makes an opaque render target non-opaque even when the draw alpha is one. Keep the
+   * coverage certificate honest so a later surface composite does not take an opaque-copy path. */
+  if((alpha<1.0 || r->blendmode==2 || t->alpha_partial ||
+      (r->interp && t->alpha_max>0) || mapped_shader) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
   unsigned long long vispix=(unsigned long long)(xx1-xx0)*(unsigned long long)(yy1-yy0);
   /* Hardware filtering samples the four neighbouring texels at the destination pixel centre.
@@ -2546,11 +2562,22 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   int reciprocal_x=fabs(inv_x-nearbyint(inv_x))<1e-9;
   int reciprocal_y=fabs(inv_y-nearbyint(inv_y))<1e-9;
   int studio_point_phase=r->win && anygm_policy_has_modern_layer_semantics(r->win);
+  int first_generation_edge_phase_x=
+    gml_render_target_is_first_generation_application_surface(r) && !flipx && !reciprocal_x;
+  int first_generation_edge_phase_y=
+    gml_render_target_is_first_generation_application_surface(r) && !flipy && !reciprocal_y;
   double sample_x=!flipx && (studio_point_phase || (r->classic&&!reciprocal_x))
     ? x0+0.5-dx : 0.5;
   double sample_y=!flipy && (studio_point_phase || (r->classic&&!reciprocal_y))
     ? y0+0.5-dy : 0.5;
-  if(lxtab) for(int xx=xx0;xx<xx1;xx++) lxtab[xx-xx0]=(int)((xx+sample_x)/axs);
+  /* First-generation application surfaces keep the same authored-space sampling phase across
+   * independently submitted tiles; resetting to half a texel selects the neighbouring edge row.
+   * Coverage rounding can put the final pixel just beyond the selected subrectangle.  The hardware
+   * samples the contiguous atlas texel there; atlas padding is what normally supplies the edge. */
+  if(first_generation_edge_phase_x) sample_x=x0+1.0-dx-1e-9;
+  if(first_generation_edge_phase_y) sample_y=y0+1.0-dy-1e-9;
+  if(lxtab) for(int xx=xx0;xx<xx1;xx++)
+    lxtab[xx-xx0]=(int)((xx+sample_x)/axs);
   /* The displacement is evaluated in texture coordinates, not output coordinates. Scaled pixel
    * art repeats each source texel many times, so precompute one warped atlas index per logical
    * source pixel instead of performing hypot/sin for every enlarged destination pixel. */
@@ -2656,7 +2683,10 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   }
   for(int yy=yy0; yy<yy1; yy++){
     int py = flipy ? (y0-yy) : (y0+yy);
-    int ly=(int)((yy+sample_y)/ays); if(ly<0||ly>=t->sh) continue;
+    int ly=(int)((yy+sample_y)/ays);
+    int contiguous_y=fastcase && first_generation_edge_phase_y && ly==t->sh &&
+                     t->sy+ly>=0 && t->sy+ly<a->h;
+    if((ly<0||ly>=t->sh) && !contiguous_y) continue;
     int sy=t->sy+ly;
     /* Clamp the sampled row and generic-path column while retaining the draw. */
     if(a->h>0){ if(sy<0) sy=0; else if(sy>=a->h) sy=a->h-1; }
@@ -2665,7 +2695,10 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       const uint8_t *srow=a->px + ((size_t)sy*a->w + t->sx)*4;
       uint32_t *drow=&r->fb[(size_t)py*r->fbw];
       for(int xx=xx0; xx<xx1; xx++){
-        int lx=lxtab[xx-xx0]; if(lx<0||lx>=t->sw) continue;
+        int lx=lxtab[xx-xx0];
+        int contiguous_x=first_generation_edge_phase_x && lx==t->sw &&
+                         t->sx+lx>=0 && t->sx+lx<a->w;
+        if((lx<0||lx>=t->sw) && !contiguous_x) continue;
         const uint8_t *sp=srow + (size_t)lx*4;
         int aa=sp[3]; if(!aa) continue;
         int px = flipx ? (x0-xx) : (x0+xx);
@@ -4149,7 +4182,8 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
   if(batchable_rotation) r->rotated_batch_building++;
   gml_render_maybe_prepare_draw(r);
   if(batchable_rotation) r->rotated_batch_building--;
-  if((alpha<1.0 || r->blendmode==2) && r->alphablend)
+  if((alpha<1.0 || r->blendmode==2 || t->alpha_partial || r->interp ||
+      mapped_shader) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
   unsigned long long vispix=(unsigned long long)(x1-x0)*(unsigned long long)(y1-y0);
   /* The global texture filter reaches rotated draws. Recognized-shader masks and

@@ -1159,8 +1159,12 @@ void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, doubl
   r->world_scale_x=r->world_scale_y=1.0;
   r->projection_cam_x=cx; r->projection_cam_y=cy; r->cam_x=cx; r->cam_y=cy;
   gml_d3_sync_render_camera(r);
+  r->alphablend=1;
   r->blendmode=0;
-  r->blend_equation=r->blend_equation_alpha=1; r->gpu_state_sp=0; r->active_shader=-1;   /* GM resets blend mode/shader each frame */
+  r->blend_equation=r->blend_equation_alpha=1; r->gpu_state_sp=0; r->active_shader=-1;
+  /* The fixed-function renderer restores normal source-alpha drawing when it begins a target
+   * pass. A draw_enable_alphablend(false) still affects the rest of its current pass, but it must
+   * not leak from the screen stage into the next frame's world pass. */
   r->fb_opaque_known=0; r->fb_all_opaque=0; r->fb_all_transparent=0;
   r->pending_underlay=0; r->underlay_x=r->underlay_y=r->underlay_w=r->underlay_h=0;
   r->pending_fill=0; r->pending_fill_color=0;
