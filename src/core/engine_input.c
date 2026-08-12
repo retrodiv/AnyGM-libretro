@@ -168,6 +168,13 @@ void engine_input_poll_keyboard(AnygmEngine *engine){
     else if(vk == 18) down |= engine->input.keys[ANYGM_KEY_RALT] != 0;
     engine->hardware_key_current[vk] = down ? 1 : 0;
   }
+  /* keyboard_key_press latches a simulated key until keyboard_key_release or a falling edge
+   * from the corresponding physical key. A gamepad-to-keyboard bridge can release it explicitly
+   * when the pad direction changes. */
+  for(int vk=0;vk<NKEY;vk++)
+    if(engine->key_current[vk] && engine->hardware_key_previous[vk] &&
+       !engine->hardware_key_current[vk])
+      engine->key_current[vk]=0;
 }
 /* GM gamepad button constant (gp_face1=32769 …) -> RetroPad button id (-1 = unmapped) */
 static int gp_to_pad(AnygmEngine *engine,int gp){

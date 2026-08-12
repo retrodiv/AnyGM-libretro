@@ -629,10 +629,6 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   /* Snapshot neutral input, retaining the previous frame for edge detection. */
   memcpy(engine->pad_previous, engine->pad_current, sizeof(engine->pad_current));
   memcpy(engine->key_previous, engine->key_current, sizeof(engine->key_current));
-  /* A simulated key contributes to one frame instead of remaining held. Rotating current into
-   * previous preserves its press edge; clear it before device polling so the release edge follows
-   * and later state comes from the device. */
-  memset(engine->key_current, 0, sizeof(engine->key_current));
   memcpy(engine->axis_previous, engine->axis_current, sizeof(engine->axis_current));
   for (int b = 0; b < NPAD; b++)
     engine->pad_current[b]=engine->input.gamepad_buttons[0][b]?1:0;

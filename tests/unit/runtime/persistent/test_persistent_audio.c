@@ -25,6 +25,48 @@ static void fixture_write_u16(unsigned char *data,size_t off,uint16_t value){
   data[off]=(unsigned char)value;
   data[off+1]=(unsigned char)(value>>8);
 }
+static size_t fixture_pcm16_wav(unsigned char *out,size_t cap,int samples,int16_t value){
+  size_t bytes=44u+(size_t)samples*2u;
+  if(!out || samples<=0 || bytes>cap) return 0;
+  memset(out,0,bytes);
+  memcpy(out,"RIFF",4);
+  fixture_write_u32(out,4,(uint32_t)bytes-8u);
+  memcpy(out+8,"WAVEfmt ",8);
+  fixture_write_u32(out,16,16);
+  fixture_write_u16(out,20,1);
+  fixture_write_u16(out,22,1);
+  fixture_write_u32(out,24,8000);
+  fixture_write_u32(out,28,16000);
+  fixture_write_u16(out,32,2);
+  fixture_write_u16(out,34,16);
+  memcpy(out+36,"data",4);
+  fixture_write_u32(out,40,(uint32_t)samples*2u);
+  for(int sample=0;sample<samples;sample++) fixture_write_u16(out,44u+(size_t)sample*2u,(uint16_t)value);
+  return bytes;
+}
+static int fixture_base64_value(unsigned char byte){
+  if(byte>='A' && byte<='Z') return byte-'A';
+  if(byte>='a' && byte<='z') return byte-'a'+26;
+  if(byte>='0' && byte<='9') return byte-'0'+52;
+  return byte=='+'?62:byte=='/'?63:-1;
+}
+static size_t fixture_base64_decode(const char *text,unsigned char *out,size_t cap){
+  size_t written=0;
+  int bits=0,value=0;
+  for(;text && *text;text++){
+    int digit=fixture_base64_value((unsigned char)*text);
+    if(digit<0) continue;
+    value=(value<<6)|digit;
+    bits+=6;
+    if(bits>=8){
+      bits-=8;
+      if(written>=cap) return 0;
+      out[written++]=(unsigned char)(value>>bits);
+      value&=(1<<bits)-1;
+    }
+  }
+  return written;
+}
 
 
 int expect_audio_group_paths(void){
@@ -57,6 +99,77 @@ int expect_audio_group_paths(void){
   ok=ok && gml_audio_group_file_path(&win,1,path,sizeof path) &&
      !strcmp(path,"/bundle/groups/music.dat");
   if(!ok) fprintf(stderr,"audio-group path layout mismatch: %s\n",path);
+  return ok;
+}
+
+
+int expect_flagged_external_sound_precedes_embedded_audio_id(void){
+  enum { embedded_samples=4 };
+  unsigned char data[256]={0},embedded[44+embedded_samples*2],external[576];
+  size_t embedded_size=fixture_pcm16_wav(embedded,sizeof embedded,embedded_samples,1000);
+  /* First-party synthetic 8 kHz MP3 tone, not audio copied from external content. */
+  static const char external_base64[]=
+    "/+M4wAAAAAAAAAAAAEluZm8AAAAPAAAACwAABwgAMzMzMzMzMzMzR0dHR0dHR0dHXFxcXFxcXFxccHBwcHBwcHBwhYWFhYWFhYWFmZmZmZmZmZmZrq6urq6urq6uwsLCwsLCwsLC19fX19fX19fX6+vr6+vr6+vr////////////AAAAAExhdmM2Mi4xMQAAAAAAAAAAAAAAACQDwAAAAAAAAAcIs8j25gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+MoxAAdMKqIX08AAAubclAAfv379+/f3vSA8ePHjylLv379+/34bJBL+F+A7gLYEMMM463o8ePAQrB8/lDnygf6PfrBw5iAH31g4GMgD76wIc0A/yju/B8HAQBAEAQB8HwfB8CAgCAIBgHwfB+UBAMb//B8HwICAIAg4Dg+D76gQU0i7wBAyE3/1///gAAm/+MoxA4dwdpsAZyQAAYIhUCGCwl+/x//8xGOjAgbPUKo0OXtJ0Hq0kEEzxCAzulLAxDAI0DyQNpDZgsiCwr/8UiHyhq0coUEKCIaLl//8XKTQ5w5xRIqRUyIsRb///MS6XTIvF5Eul1IGv/xKEgaEp0O///9ixwAgYCGr7etL1bhb8BgBYBwBgKoCMBgGYAY/+MoxBof+3oZk9cQAAYBCAxAYGSC5AYOuDMAYPmIzAYc7DRAYvEITAYX+CyAYIOCHAYESAZgYAyAlgYDIAagYBIAVgHADhCv";
+  size_t external_size=fixture_base64_decode(external_base64,external,sizeof external);
+  char directory[]="/tmp/anygm-flagged-external-audio-XXXXXX";
+  if(!embedded_size || external_size!=sizeof external || !mkdtemp(directory)) return 0;
+  char path[256];
+  snprintf(path,sizeof(path),"%s/menu.mp3",directory);
+  FILE *file=fopen(path,"wb");
+  int ok=file && fwrite(external,1,external_size,file)==external_size;
+  if(file && fclose(file)!=0) ok=0;
+
+  enum { sound_record=32, audo_chunk=72, audo_blob=96, file_string_pointer=300 };
+  fixture_write_u32(data,0,1);                         /* SOND count */
+  fixture_write_u32(data,4,sound_record);
+  fixture_write_u32(data,sound_record+4,100);          /* Regular, deliberately not IsEmbedded */
+  fixture_write_u32(data,sound_record+12,file_string_pointer);
+  float one=1.0f;
+  memcpy(data+sound_record+20,&one,sizeof one);
+  fixture_write_u32(data,sound_record+28,0);           /* default audio group */
+  fixture_write_u32(data,sound_record+32,0);           /* stale/dummy embedded AudioID */
+  fixture_write_u32(data,audo_chunk,1);                /* AUDO count */
+  fixture_write_u32(data,audo_chunk+4,audo_blob);
+  fixture_write_u32(data,audo_blob,(uint32_t)embedded_size);
+  memcpy(data+audo_blob+4,embedded,embedded_size);
+
+  char *strings[]={(char*)"menu.mp3"};
+  uint32_t string_offsets[]={file_string_pointer};
+  AnygmHostServices host={0};
+  host.struct_size=sizeof(host);
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&host);
+  GmlWin win={0};
+  win.data=data; win.size=sizeof data; win.n_chunks=2;
+  memcpy(win.chunks[0].name,"SOND",4); win.chunks[0].off=0; win.chunks[0].size=audo_chunk;
+  memcpy(win.chunks[1].name,"AUDO",4); win.chunks[1].off=audo_chunk;
+  win.chunks[1].size=sizeof(data)-audo_chunk;
+  win.strs=strings; win.str_charoff=string_offsets; win.n_strs=1;
+  win.host=&host;
+  snprintf(win.content_dir,sizeof win.content_dir,"%s",directory);
+
+  GmlAudio *audio=ok?gml_audio_create(&win):NULL;
+  /* This fixture's external MP3 is much longer than the four-sample embedded dummy, proving that
+   * the IsEmbedded flag, rather than a convenient AudioID, selected the source. */
+  double length=audio?gml_audio_sound_length(audio,0):0.0;
+  int voice=audio?gml_audio_play(audio,0,1):-1;
+  int16_t mixed[8192]={0};
+  if(audio) gml_audio_mix(audio,mixed,4096);
+  int audible=0;
+  for(size_t index=0;index<sizeof mixed/sizeof mixed[0];index++) audible|=mixed[index]!=0;
+  ok=ok && audio && length>0.05 && voice>=1000000 && audible;
+  gml_audio_free(audio);
+
+  /* The external flag is authoritative. If its sidecar is absent, a stale AudioID must not turn
+   * into an unrelated short embedded loop. */
+  ok=ok && unlink(path)==0;
+  audio=gml_audio_create(&win);
+  ok=ok && audio && gml_audio_play(audio,0,1)<0;
+  gml_audio_free(audio);
+  rmdir(directory);
+  if(!ok) fprintf(stderr,
+    "flagged external SOND did not override its embedded AudioID: length=%.6f voice=%d audible=%d\n",
+    length,voice,audible);
   return ok;
 }
 

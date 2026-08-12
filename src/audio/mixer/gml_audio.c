@@ -40,8 +40,9 @@ typedef struct {
   double gain, pitch; int16_t *own; uint8_t *encoded_own;
   const uint8_t *ogg; uint32_t ogg_len; int ogg_failed;
   const uint8_t *mp3; uint32_t mp3_len; int mp3_failed;
+  const char *external_filename;
   double length_seconds, loop_start_seconds, gain_target;
-  int length_known, group, gain_fade_frames, default_loop;
+  int length_known, group, gain_fade_frames, default_loop, external_tried;
   int bytes_per_second;
   uint32_t external_type;
   uint8_t content_sha256[32];
@@ -55,6 +56,7 @@ typedef struct {
 #define GML_MAX_VOICES 32
 #define GML_AUDIO_BUS_GAIN 0.55
 #define GML_MAX_AUDIOGROUPS 64
+#define GML_LOOSE_AUDIO_BYTES_MAX (64u*1024u*1024u)
 #define GML_DYNAMIC_SOUND_LIMIT 65536
 #define GML_EXTERNAL_GROUP_FLAG UINT32_C(0x80000000)
 struct GmlAudio {
@@ -169,6 +171,40 @@ static int audio_group_load_dat(GmlAudio *a, int g){
     anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[audio] group=%d loaded=%u path=%s\n",g,count,path);
   return a->grp_n[g]>0;
 }
+static int audio_sound_load_loose(GmlAudio *a,GmlSound *sound){
+  const char *filename=sound?sound->external_filename:NULL;
+  if(sound && sound->external_tried) return sound->ogg || sound->mp3;
+  if(sound) sound->external_tried=1;
+  if(!a || !sound || !filename || !filename[0] || filename[0]=='/' || filename[0]=='\\' ||
+     strchr(filename,':') || strstr(filename,"..")) return 0;
+  size_t length=strlen(filename);
+  if(length<=4 || (strcmp(filename+length-4,".ogg") && strcmp(filename+length-4,".mp3")))
+    return 0;
+  char path[600];
+  int written=snprintf(path,sizeof path,"%s/%s",
+                       a->win->content_dir[0]?a->win->content_dir:".",filename);
+  if(written<0 || (size_t)written>=sizeof path) return 0;
+  uint8_t *buffer=NULL;
+  size_t size=0;
+  if(!anygm_vfs_read_all(a->win->host,path,&buffer,&size,GML_LOOSE_AUDIO_BYTES_MAX)) return 0;
+  if(size<=4 || size>UINT32_MAX ||
+     (memcmp(buffer,"OggS",4) && !is_mp3_blob(buffer,(uint32_t)size))){
+    free(buffer);
+    return 0;
+  }
+  uint8_t **external=realloc(a->extbuf,(size_t)(a->n_ext+1)*sizeof(*external));
+  if(!external){ free(buffer); return 0; }
+  a->extbuf=external;
+  a->extbuf[a->n_ext++]=buffer;
+  if(!memcmp(buffer,"OggS",4)){
+    sound->ogg=buffer;
+    sound->ogg_len=(uint32_t)size;
+  } else {
+    sound->mp3=buffer;
+    sound->mp3_len=(uint32_t)size;
+  }
+  return 1;
+}
 GmlAudio *gml_audio_create(GmlWin *win){
   GmlAudio *a=calloc(1,sizeof(GmlAudio)); a->win=win; a->next_voice_id=1000000; a->channel_num=128; a->master_gain=1.0;
   for(int g=0;g<GML_MAX_AUDIOGROUPS;g++) a->group_gain[g]=a->group_target[g]=1.0;
@@ -185,6 +221,7 @@ GmlAudio *gml_audio_create(GmlWin *win){
     a->snd[i].pitch=1.0;
     a->snd[i].sample_rate=44100;
     a->snd[i].vol=rdf32(d,p+20);                  /* SOND: vol(+20 f), pitch(+24 f), group(+28 i), audoid(+32 i) */
+    uint32_t flags=rd32(d,p+4);
     int32_t group=(int32_t)rd32(d,p+28);
     a->snd[i].group=(group>=0 && group<GML_MAX_AUDIOGROUPS)?group:0;
     int32_t audoid=(int32_t)rd32(d,p+32);
@@ -220,26 +257,18 @@ GmlAudio *gml_audio_create(GmlWin *win){
       }
       continue;
     }
+    if(!(flags&1u)){
+      /* A clear IsEmbedded bit selects the loose path named at SOND +12. AudioID remains a
+       * mandatory reference in this format even for streamed sounds and can name an unrelated
+       * embedded blob, so it must never be used as a fallback. Audio-group sidecars
+       * above are their own external container and retain precedence when one is available. */
+      const char *filename=gml_str_by_ptr(win,rd32(d,p+12));
+      a->snd[i].external_filename=filename;
+      continue;
+    }
     if(audoid<0){
       /* Not embedded: SOND +12 names a loose sound file. Load it and decode lazily. */
-      const char *fn=gml_str_by_ptr(win,rd32(d,p+12));
-      size_t fl=fn?strlen(fn):0;
-      if(fn && fl>4 && (!strcmp(fn+fl-4,".ogg") || !strcmp(fn+fl-4,".mp3"))){
-        char path[600];
-        snprintf(path,sizeof path,"%s/%s",win->content_dir[0]?win->content_dir:".",fn);
-        uint8_t *buf=NULL;
-        size_t szf=0;
-        if(anygm_vfs_read_all(win->host,path,&buf,&szf,UINT32_MAX)){
-          if(szf>4 && szf<=UINT32_MAX &&
-             (!memcmp(buf,"OggS",4) || is_mp3_blob(buf,(uint32_t)szf))){
-              uint8_t **ne=realloc(a->extbuf,(a->n_ext+1)*sizeof(*ne));
-              if(ne){ a->extbuf=ne; a->extbuf[a->n_ext++]=buf;
-                if(!memcmp(buf,"OggS",4)){ a->snd[i].ogg=buf; a->snd[i].ogg_len=(uint32_t)szf; }
-                else { a->snd[i].mp3=buf; a->snd[i].mp3_len=(uint32_t)szf; }
-                buf=NULL; }
-          }
-          free(buf);
-        } }
+      a->snd[i].external_filename=gml_str_by_ptr(win,rd32(d,p+12));
       continue;
     }
     if((uint32_t)audoid>=na) continue;
@@ -565,9 +594,15 @@ void gml_audio_caster_free_all(GmlAudio *a){
   for(int i=a->n_base_snd;i<a->n_snd;i++) gml_audio_caster_free(a,i);
 }
 
-static int sound_ensure_pcm(GmlSound *s){
+static int sound_ensure_pcm(GmlAudio *a,GmlSound *s){
   if(!s) return 0;
   if(s->pcm) return 1;
+  if(!s->ogg && !s->mp3 && s->external_filename && !audio_sound_load_loose(a,s)){
+    if(audio_setting(a,"GML_LOG_AUDIO"))
+      anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,
+                      "[audio] streamed sound open failed: %s\n",s->external_filename);
+    return 0;
+  }
   if(s->ogg && !s->ogg_failed){
     int ch=0, rate=0; int16_t *out=NULL;
     int nsamp=stb_vorbis_decode_memory(s->ogg,(int)s->ogg_len,&ch,&rate,&out);
@@ -602,7 +637,7 @@ int gml_audio_warm_sound(GmlAudio *a, int snd){
   if(!a || snd<0 || snd>=a->n_snd) return 0;
   GmlSound *s=&a->snd[snd];
   int had_pcm=s->pcm!=NULL;
-  if(!sound_ensure_pcm(s)) return 0;
+  if(!sound_ensure_pcm(a,s)) return 0;
   if(!had_pcm && audio_setting(a,"GML_LOG_AUDIO"))
     anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[audio] warm_sound sound=%d ogg=%u pcm=%u\n",snd,s->ogg_len,s->nval);
   return 1;
@@ -624,10 +659,13 @@ static void audio_warm_initial_ogg(GmlAudio *a){
   uint32_t used=0;
   for(int i=0;i<a->n_snd;i++){
     GmlSound *s=&a->snd[i];
-    if(s->pcm || !s->ogg || s->ogg_failed) continue;
+    /* Streaming is observable not only as the source path but as its lifetime: decoding every
+     * loose music track during boot defeats the format's memory policy and can exhaust a frontend
+     * before the first room. Decode a streamed sound when it is first played. */
+    if(s->external_filename || s->pcm || !s->ogg || s->ogg_failed) continue;
     if(used>=budget) break;
     if(s->ogg_len>budget-used) continue;
-    if(sound_ensure_pcm(s)){
+    if(sound_ensure_pcm(a,s)){
       used += s->ogg_len;
       warmed++;
       if(audio_setting(a,"GML_LOG_AUDIO"))
@@ -647,7 +685,7 @@ static int audio_voice_prepare(GmlAudio *a, GmlVoice *v){
   if(!isfinite(v->pan)) v->pan=0.0;
   if(v->pan<-1.0) v->pan=-1.0; else if(v->pan>1.0) v->pan=1.0;
   GmlSound *s=&a->snd[v->snd];
-  if(!sound_ensure_pcm(s)){ v->active=0; return 0; }
+  if(!sound_ensure_pcm(a,s)){ v->active=0; return 0; }
   if(s->nval==0){ v->active=0; return 0; }
   if(v->loop_start>(double)s->nval) v->loop_start=0.0;
   if(v->pos>(double)s->nval){
@@ -664,7 +702,7 @@ static int voice_matches(GmlAudio *a, GmlVoice *v, int target){
   return v->snd==target;
 }
 int gml_audio_play_on(GmlAudio *a, int snd, int loop, int emitter){
-  if(!a||snd<0||snd>=a->n_snd||!sound_ensure_pcm(&a->snd[snd])) return -1;
+  if(!a||snd<0||snd>=a->n_snd||!sound_ensure_pcm(a,&a->snd[snd])) return -1;
   int limit=audio_voice_limit(a); if(limit<=0) return -1;
   int slot=-1; for(int i=0;i<limit;i++) if(!a->voice[i].active){ slot=i; break; }
   if(slot<0) slot=0;
@@ -844,6 +882,7 @@ double gml_audio_sound_length(GmlAudio *a, int sound){
   if(sound<0 || sound>=a->n_snd) return 0.0;
   GmlSound *s=&a->snd[sound];
   if(s->length_known) return s->length_seconds;
+  if(!s->ogg && !s->mp3 && s->external_filename) (void)audio_sound_load_loose(a,s);
 
   double seconds=0.0;
   if(s->pcm && s->nval){

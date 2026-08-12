@@ -803,6 +803,74 @@ static int input_binding_ownership_policy(void){
   return ok;
 }
 
+static int simulated_key_lifetime_policy(void){
+  AnygmEngine engine={0};
+  engine_input_bind(&engine);
+
+  /* A simulated press remains held across polls until the matching release. */
+  engine.vm.input.key_press(engine.vm.input.userdata,39);
+  int ok=engine.vm.input.key(engine.vm.input.userdata,39,0) &&
+         engine.vm.input.key(engine.vm.input.userdata,39,1);
+  memcpy(engine.key_previous,engine.key_current,sizeof engine.key_current);
+  engine_input_poll_keyboard(&engine);
+  ok=ok && engine.vm.input.key(engine.vm.input.userdata,39,0) &&
+     !engine.vm.input.key(engine.vm.input.userdata,39,1);
+  engine.vm.input.key_release(engine.vm.input.userdata,39);
+  ok=ok && !engine.vm.input.key(engine.vm.input.userdata,39,0) &&
+     engine.vm.input.key(engine.vm.input.userdata,39,2);
+
+  /* A simulated key raised while the same physical key is down also follows its falling edge. */
+  memset(&engine,0,sizeof engine);
+  engine_input_bind(&engine);
+  engine.input.keys[ANYGM_KEY_RIGHT]=1;
+  engine_input_poll_keyboard(&engine);
+  engine.vm.input.key_press(engine.vm.input.userdata,39);
+  memcpy(engine.key_previous,engine.key_current,sizeof engine.key_current);
+  engine.input.keys[ANYGM_KEY_RIGHT]=0;
+  engine_input_poll_keyboard(&engine);
+  ok=ok && !engine.vm.input.key(engine.vm.input.userdata,39,0) &&
+     engine.vm.input.key(engine.vm.input.userdata,39,2);
+  if(!ok)
+    fputs("simulated keyboard input did not retain and release its latched lifetime\n",stderr);
+  return ok;
+}
+
+static int simulated_key_frame_lifetime_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_simulated_key_content_create(&fixture)){
+    fputs("simulated-key frame fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK && anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  for(int frame=0;ok && frame<5;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  ok=ok && gml_global_num(&engine->vm,"fixture_ticks")==3 &&
+     !engine->vm.input.key(engine->vm.input.userdata,39,0);
+  if(!ok)
+    fprintf(stderr,"simulated key did not span engine frames until explicit release: ticks=%.0f\n",
+            engine?gml_global_num(&engine->vm,"fixture_ticks"):-1.0);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidate,size_t size,
                                      const uint8_t *baseline,size_t baseline_size,
                                      const char *label){
@@ -861,6 +929,10 @@ int main(int argc,char **argv){
       return game_change_policy()?0:1;
     if(!strcmp(argv[2],"input_binding_ownership"))
       return input_binding_ownership_policy()?0:1;
+    if(!strcmp(argv[2],"simulated_key_lifetime"))
+      return simulated_key_lifetime_policy()?0:1;
+    if(!strcmp(argv[2],"simulated_key_frame_lifetime"))
+      return simulated_key_frame_lifetime_policy()?0:1;
     fprintf(stderr,"unknown integration case: %s\n",argv[2]);
     return 1;
   }
@@ -873,7 +945,7 @@ int main(int argc,char **argv){
           "explicit_window_screen_stage|"
           "first_generation_oversized_gui|"
           "background_color|multi_view_application_canvas|game_change|"
-          "input_binding_ownership]\n",stderr);
+          "input_binding_ownership|simulated_key_lifetime|simulated_key_frame_lifetime]\n",stderr);
     return 1;
   }
   if(!screen_stage_raster_policy()) return 1;
@@ -892,6 +964,8 @@ int main(int argc,char **argv){
   if(!game_change_policy()) return 1;
   if(!state_input_history_roundtrip()) return 1;
   if(!input_binding_ownership_policy()) return 1;
+  if(!simulated_key_lifetime_policy()) return 1;
+  if(!simulated_key_frame_lifetime_policy()) return 1;
   char label[128];
   anygm_content_save_label("/library/fixture_bundle/data.win",label,sizeof label);
   if(strcmp(label,"fixture_bundle")){
