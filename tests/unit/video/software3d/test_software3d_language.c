@@ -553,6 +553,36 @@ int software3d_case_language(Software3dRasterFixture *fixture){
               target[0],target[7],target[7*8],target[63]);
       return 0;
     }
+    memset(target,0,sizeof(target));
+    gml_render_begin(&fixture->render,target,8,8,0,0);
+    gml_render_gui_begin(&fixture->render,8,8);
+    gml_render_gui_set_size(&fixture->render,16,16);
+    gml_draw_surface_stretched(&fixture->render,0,0,0,8,8,0xFFFFFFu,1.0);
+    gml_render_gui_end(&fixture->render);
+    if(target[0]!=0xFFFF0000u || target[3]!=0xFF00FF00u ||
+       target[3*8]!=0xFF0000FFu || target[3*8+3]!=0xFFFFFFFFu ||
+       target[7]!=0 || target[7*8]!=0){
+      fprintf(stderr,"oversized GUI surface transform mismatch: %08x %08x %08x %08x edges=%08x,%08x\n",
+              target[0],target[3],target[3*8],target[3*8+3],target[7],target[7*8]);
+      return 0;
+    }
+    memset(target,0,sizeof(target));
+    GmlWin early_studio={0}; early_studio.bytecode=14;
+    fixture->render.win=&early_studio;
+    gml_render_begin(&fixture->render,target,8,8,0,0);
+    gml_render_gui_begin(&fixture->render,8,8);
+    gml_render_gui_set_size(&fixture->render,9,9);
+    gml_draw_surface_stretched(&fixture->render,0,1,1,2,2,0xFFFFFFu,1.0);
+    gml_render_gui_end(&fixture->render);
+    fixture->render.win=NULL;
+    if(target[1*8+1]!=0xFFFF0000u || target[1*8+2]!=0xFF00FF00u ||
+       target[2*8+1]!=0xFF0000FFu || target[2*8+2]!=0xFFFFFFFFu ||
+       target[0]!=0 || target[3*8+3]!=0){
+      fprintf(stderr,"first-generation fractional GUI surface mismatch: %08x %08x %08x %08x edges=%08x,%08x\n",
+              target[1*8+1],target[1*8+2],target[2*8+1],target[2*8+2],
+              target[0],target[3*8+3]);
+      return 0;
+    }
     fixture->render.app_surface=NULL; fixture->render.app_w=fixture->render.app_h=0; fixture->render.app_surface_opaque=0;
   }
 

@@ -204,7 +204,7 @@ static GmlInstance *var_target(GmlVM *vm, int inst){
  * bytecode reference uses the current-instance scope. */
 static int is_global_builtin(const char *n){
   return !strcmp(n,"health")||!strcmp(n,"lives")||!strcmp(n,"score")||!strcmp(n,"async_load")||
-         !strcmp(n,"view_enabled")||!strcmp(n,"cursor_sprite"); }
+         !strcmp(n,"view_enabled")||!strcmp(n,"cursor_sprite")||!strcmp(n,"room_caption"); }
 static int is_classic_transition_builtin(GmlVM *vm,const char *n){
   return vm && vm->win && anygm_policy_uses_classic_runtime(vm->win) &&
          (!strcmp(n,"transition_kind") || !strcmp(n,"transition_steps"));
@@ -416,7 +416,7 @@ static const char *const g_special_var_names[]={
   "time_source_global","time_source_game","time_source_units_seconds","time_source_units_frames",
   "time_source_expire_nearest","time_source_expire_after","time_source_state_initial",
   "time_source_state_active","time_source_state_paused","time_source_state_stopped",
-  "room_height","instance_count","health","lives","score","async_load","id","object_index",
+  "room_height","room_caption","instance_count","health","lives","score","async_load","id","object_index",
   "cursor_sprite",
   "image_number","sprite_width","sprite_height","sprite_xoffset","sprite_yoffset","image_single",
   "x","y","xprevious","yprevious","xstart","ystart","sprite_index","mask_index","image_index",

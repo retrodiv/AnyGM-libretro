@@ -1016,8 +1016,59 @@ static int surface_draw_targets_screen_raster(const GmlRender *r,int surf,
                                               double width,double height){
   return r && surf==0 && gml_render_gui_transform_active(r) &&
          r->target_sp==0 && r->fbw>0 && r->fbh>0 &&
+         gml_render_gui_logical_width(r)<=(double)r->fbw+0.001 &&
+         gml_render_gui_logical_height(r)<=(double)r->fbh+0.001 &&
          fabs(fabs(width)-(double)r->fbw)<0.001 &&
          fabs(fabs(height)-(double)r->fbh)<0.001;
+}
+
+/* Early Studio GUI composition keeps transformed quad edges fractional. Coverage is
+ * decided at each destination pixel centre and the same centre is then projected back into the
+ * application surface. Rounding the rectangle first changes both its leading row/column and every
+ * repeated texel in a reduction.
+ *
+ * Keep this at the host-owned application-surface boundary: ordinary runtime surfaces
+ * retain their established sprite raster rules, while the one opaque, unfiltered GUI presentation
+ * blit follows the fixed-function viewport convention. */
+static int draw_first_generation_gui_app_surface(GmlRender *r,int surf,
+                                                  const uint32_t *src,int sw,int sh,
+                                                  double dx,double dy,double dw,double dh,
+                                                  uint32_t blend,double alpha){
+  if(!r || !src || !r->fb || surf!=0 || !r->win ||
+     !anygm_policy_uses_first_generation_studio(r->win) ||
+     !gml_render_gui_transform_active(r) || r->target_sp!=0 || r->target_id>=0 ||
+     r->interp || r->blendmode!=0 || r->color_write_mask!=0x0F ||
+     alpha<1.0 || (blend&0xFFFFFFu)!=0xFFFFFFu ||
+     !surface_known_opaque(r,surf) || src==r->fb || dw<=0.0 || dh<=0.0 ||
+     fabs(dw-(double)sw*r->gui_scale_x)>0.001 ||
+     fabs(dh-(double)sh*r->gui_scale_y)>0.001 ||
+     (fabs(dw-lround(dw))<0.001 && fabs(dh-lround(dh))<0.001)) return 0;
+  dx-=r->cam_x;
+  dy-=r->cam_y;
+  int x0=(int)ceil(dx-0.5), y0=(int)ceil(dy-0.5);
+  int x1=(int)ceil(dx+dw-0.5), y1=(int)ceil(dy+dh-0.5);
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>r->fbw) x1=r->fbw;
+  if(y1>r->fbh) y1=r->fbh;
+  if(x0>=x1 || y0>=y1) return 1;
+  gml_render_maybe_prepare_draw(r);
+  for(int y=y0;y<y1;y++){
+    int sy=(int)floor((((double)y+0.5)-dy)*(double)sh/dh);
+    if(sy<0) sy=0; else if(sy>=sh) sy=sh-1;
+    uint32_t *destination=r->fb+(size_t)y*r->fbw+x0;
+    for(int x=x0;x<x1;x++,destination++){
+      int sx=(int)floor((((double)x+0.5)-dx)*(double)sw/dw);
+      if(sx<0) sx=0; else if(sx>=sw) sx=sw-1;
+      *destination=src[(size_t)sy*sw+sx]|0xFF000000u;
+    }
+  }
+  if(rect_covers_target(r,x0,y0,x1,y1)){
+    r->fb_opaque_known=1;
+    r->fb_all_opaque=1;
+    r->fb_all_transparent=0;
+  }
+  return 1;
 }
 
 /* draw_surface_stretched[_ext]: blit a runtime surface into the current target, box-averaged. */
@@ -1073,6 +1124,7 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
     if(sampled){ draw_surface_sampled_crt(r,sampled,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; } }
   { const struct GmlShaderPal *scrt=crt_active(r);
     if(scrt){ draw_surface_crt(r,scrt,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; } }
+  if(draw_first_generation_gui_app_surface(r,surf,spx,sw,sh,dx,dy,dw,dh,blend,alpha)) return;
   if(r->surface_draw_logging < 0) r->surface_draw_logging = render_setting(r,"GML_LOG_SURF_DRAW") != NULL;
   const char *log_surf_frame = r->surface_draw_logging ? render_setting(r,"GML_LOG_SURF_DRAW_FRAME") : NULL;
   

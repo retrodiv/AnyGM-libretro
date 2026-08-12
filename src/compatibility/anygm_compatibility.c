@@ -138,8 +138,7 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   profile->default_comparison_epsilon=classic?1e-13:1e-5;
   profile->alarm_dispatch=(classic||facts->bytecode_revision==16)?
     ANYGM_ALARM_DISPATCH_RESOURCE_MAJOR:ANYGM_ALARM_DISPATCH_STANDARD;
-  profile->alarm_threshold=(classic||facts->bytecode_revision>=16)?
-    ANYGM_ALARM_TRIGGER_AT_ZERO:ANYGM_ALARM_TRIGGER_BELOW_ZERO;
+  profile->alarm_threshold=ANYGM_ALARM_TRIGGER_AT_ZERO;
   profile->instance_iteration=(!classic&&modern)?ANYGM_INSTANCE_ITERATION_FRAME_SNAPSHOT:
     ANYGM_INSTANCE_ITERATION_LIVE;
   profile->solid_collision_transaction=(classic||modern)?ANYGM_COLLISION_PREVIOUS_COORDINATES:

@@ -716,6 +716,9 @@ void compute_present(AnygmEngine *engine) {
    * diagnostics. This affects presentation only, not simulation or serialized state. */
   { if (engine->diagnostics.force_present_view < 0) engine->diagnostics.force_present_view = anygm_host_development_setting(&engine->host,"GML_PRESENT_VIEW") ? 1 : 0;
     if (!engine->vm.gui_maximise_active && !engine->diagnostics.force_present_view && !engine->canvas_mode && !gui_window_mode
+        && pw > 0 && ph > 0
+        && labs(lround(pw) - engine->gui_space_width) <= 1
+        && labs(lround(ph) - engine->gui_space_height) <= 1
         && engine->gui_space_width >= (int)engine->output_width && engine->gui_space_height >= (int)engine->output_height
         && (engine->gui_space_width > (int)engine->output_width || engine->gui_space_height > (int)engine->output_height)
         && engine->gui_space_width <= FB_MAX_W && engine->gui_space_height <= FB_MAX_H) {

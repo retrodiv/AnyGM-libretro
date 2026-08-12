@@ -1663,6 +1663,7 @@ static int expect_persistent_lifecycle_exit_code(void){
     "global.date_minute_span_fixture = date_minute_span(100, 99.5); "
     "global.view_fixture_scalar = 7; global.background_fixture_scalar = 9; "
     "view_enabled[0] = true; global.view_enabled_alias = view_enabled[1]; "
+    "room_caption = \"fixture caption\"; global.room_caption_fixture = room_caption; "
     "global.delta_fixture = delta_time; "
     "global.working_fixture = working_directory; global.program_fixture = program_directory; "
     "global.fixture_orange = c_orange; global.fixture_rain = ef_rain;\n";
@@ -2157,6 +2158,8 @@ static int expect_persistent_lifecycle_exit_code(void){
   GmlVal *view_fixture_scalar=gml_varmap_get(&vm.globals,"view_fixture_scalar");
   GmlVal *background_fixture_scalar=gml_varmap_get(&vm.globals,"background_fixture_scalar");
   GmlVal *view_enabled_alias=gml_varmap_get(&vm.globals,"view_enabled_alias");
+  GmlVal *room_caption_fixture=gml_varmap_get(&vm.globals,"room_caption_fixture");
+  GmlVal *room_caption=gml_varmap_get(&vm.globals,"room_caption");
   GmlVal *delta_fixture=gml_varmap_get(&vm.globals,"delta_fixture");
   GmlVal *working_fixture=gml_varmap_get(&vm.globals,"working_fixture");
   GmlVal *program_fixture=gml_varmap_get(&vm.globals,"program_fixture");
@@ -2172,6 +2175,9 @@ static int expect_persistent_lifecycle_exit_code(void){
      !view_fixture_scalar || view_fixture_scalar->t!=V_REAL || view_fixture_scalar->d!=7 ||
      !background_fixture_scalar || background_fixture_scalar->t!=V_REAL || background_fixture_scalar->d!=9 ||
      !view_enabled_alias || view_enabled_alias->t!=V_REAL || view_enabled_alias->d!=1 ||
+     !room_caption_fixture || room_caption_fixture->t!=V_STR ||
+       strcmp(room_caption_fixture->s,"fixture caption") ||
+     !room_caption || room_caption->t!=V_STR || strcmp(room_caption->s,"fixture caption") ||
      !delta_fixture || delta_fixture->t!=V_REAL || fabs(delta_fixture->d-1000000.0/60.0)>1e-6 ||
      !working_fixture || working_fixture->t!=V_STR || strcmp(working_fixture->s,expected_working) ||
      !program_fixture || program_fixture->t!=V_STR || strcmp(program_fixture->s,expected_program) ||
@@ -3235,6 +3241,19 @@ static int expect_persistent_lifecycle_exit_code(void){
   if(!studio_actor || studio_actor->alarm[5]!=-1){
     fprintf(stderr,"empty native alarm declaration did not count down: %.0f\n",
       studio_actor?studio_actor->alarm[5]:-999.0); return 1;
+  }
+
+  /* Studio treats a value within its real-comparison epsilon of an integer as that integer when
+   * advancing an instance animation. Repeated decimal image speeds otherwise leave e.g. 0.2 * 5
+   * just below one and render the preceding subimage for an extra frame. */
+  studio_actor->image_index=0;
+  studio_actor->image_speed=0.2;
+  studio_actor->sprite_index=studio_actor->mask_index=0;
+  for(int frame=0;frame<5;frame++) gml_vm_step(&vm);
+  studio_actor=find_slot(&vm,studio_actor_id);
+  if(!studio_actor || studio_actor->image_index!=1.0){
+    fprintf(stderr,"Studio fractional animation did not snap at its epsilon: %.17g\n",
+      studio_actor?studio_actor->image_index:-1.0); return 1;
   }
 
   /* Studio takes a fixed event snapshot at frame start, but dead slots from older frames are

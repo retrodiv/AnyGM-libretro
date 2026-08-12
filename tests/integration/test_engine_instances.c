@@ -292,6 +292,38 @@ static int explicit_window_screen_stage_policy(void){
   return ok;
 }
 
+static int first_generation_oversized_gui_policy(void){
+  AnygmEngine engine={0};
+  engine.win.bytecode=14;
+  engine.win.disp_w=256;
+  engine.win.disp_h=192;
+  engine.width=256;
+  engine.height=192;
+  engine.vm.win=&engine.win;
+  engine.vm.gui_w=288;
+  engine.vm.gui_h=216;
+  gml_vm_global_array_set(&engine.vm,"view_visible",0,1);
+  gml_vm_global_array_set(&engine.vm,"view_xview",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_yview",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_wview",0,256);
+  gml_vm_global_array_set(&engine.vm,"view_hview",0,192);
+  gml_vm_global_array_set(&engine.vm,"view_xport",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_yport",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_wport",0,256);
+  gml_vm_global_array_set(&engine.vm,"view_hport",0,192);
+  compute_present(&engine);
+  int ok=engine.gui_space_width==288 && engine.gui_space_height==216 &&
+         engine.output_width==256 && engine.output_height==192;
+  if(!ok)
+    fprintf(stderr,
+      "first-generation oversized GUI replaced the authored presentation raster:"
+      " gui=%dx%d output=%ux%u\n",
+      engine.gui_space_width,engine.gui_space_height,
+      engine.output_width,engine.output_height);
+  gml_vm_free(&engine.vm);
+  return ok;
+}
+
 static int draw_schedule_policy(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_draw_content_create(&fixture)){
@@ -818,6 +850,8 @@ int main(int argc,char **argv){
       return first_generation_dynamic_camera_policy()?0:1;
     if(!strcmp(argv[2],"explicit_window_screen_stage"))
       return explicit_window_screen_stage_policy()?0:1;
+    if(!strcmp(argv[2],"first_generation_oversized_gui"))
+      return first_generation_oversized_gui_policy()?0:1;
     if(!strcmp(argv[2],"background_color"))
       return background_color_policy()?0:1;
     if(!strcmp(argv[2],"multi_view_application_canvas"))
@@ -837,6 +871,7 @@ int main(int argc,char **argv){
           "game_restart|"
           "first_generation_dynamic_camera|"
           "explicit_window_screen_stage|"
+          "first_generation_oversized_gui|"
           "background_color|multi_view_application_canvas|game_change|"
           "input_binding_ownership]\n",stderr);
     return 1;
@@ -848,6 +883,7 @@ int main(int argc,char **argv){
   if(!first_generation_application_surface_policy()) return 1;
   if(!first_generation_dynamic_camera_policy()) return 1;
   if(!explicit_window_screen_stage_policy()) return 1;
+  if(!first_generation_oversized_gui_policy()) return 1;
   if(!draw_schedule_policy()) return 1;
   if(!background_color_policy()) return 1;
   if(!framebuffer_retention_policy()) return 1;

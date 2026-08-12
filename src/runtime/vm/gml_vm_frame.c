@@ -136,6 +136,10 @@ static void advance_instance_animation(GmlVM *vm,GmlInstance *in,
       ? gml_sprite_animation_delta(render,(int)in->sprite_index,in->image_speed,gml_room_speed(vm))
       : in->image_speed;
     double ni=in->image_index+step;
+    if(vm->win && !classic_runtime){
+      double nearest=round(ni);
+      if(fabs(ni-nearest)<=vm->math_epsilon) ni=nearest;
+    }
     int wrapped=nf>0 && ((ni>=nf)||(ni<0));
     if(nf>0){ while(ni>=nf) ni-=nf; while(ni<0) ni+=nf; }
     in->image_index=ni;
@@ -419,15 +423,11 @@ void gml_vm_step(GmlVM *vm){
    * Step phases. Sources created by a callback join on the next tick via the scheduler snapshot. */
   gml_time_sources_tick(vm);
   gml_vm_rooms_step_timelines(vm,n);
-  /* Alarm firing thresholds and dispatch order depend on the compatibility generation:
-   *  Bytecode 14/15: decrement any alarm > -1, fire when the result crosses BELOW 0. An integer
-   *    alarm[i]=N fires N+1 steps later.
-   *  Bytecode 16 and later: decrement only alarms > 0, fire when the result reaches <= 0. An integer
-   *    alarm[i]=N fires N steps later.
-   *  Fractional alarms (e.g. a length-scaled cost) fire on the SAME tick under both rules (first
-   *  decrement that lands <= 0), so cutscene typewriters are unaffected. Set -1 before running
-   *  the event so the handler can re-arm. Classic and bytecode-16 policies dispatch each
-   *  alarm subtype by ascending exact object resource, then insertion order within that object. */
+  /* Alarm dispatch order varies by format, but positive alarms fire on reaching zero:
+   * alarm[i]=N fires N steps later. A below-zero policy adds one frame on every re-arm.
+   * Fractional alarms fire on the first tick at or below zero. Set -1 before running the
+   * event so the handler can re-arm. Classic and Studio bytecode 16 dispatch each alarm
+   * subtype by ascending exact object resource, then insertion order within that object. */
   int resource_major_alarm_order=anygm_policy_resource_major_alarm_dispatch(vm->win);
   int alarm_at_zero = anygm_policy_alarm_at_zero(vm->win);
   if(resource_major_alarm_order){

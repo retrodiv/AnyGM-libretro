@@ -43,7 +43,7 @@ int main(void){
   if(first_early.diagnostic_family!=ANYGM_FAMILY_STUDIO_FIRST ||
      first_early.comparison!=ANYGM_COMPARISON_STUDIO_EPSILON ||
      first_early.alarm_dispatch!=ANYGM_ALARM_DISPATCH_STANDARD ||
-     first_early.alarm_threshold!=ANYGM_ALARM_TRIGGER_BELOW_ZERO ||
+     first_early.alarm_threshold!=ANYGM_ALARM_TRIGGER_AT_ZERO ||
      first_early.instance_iteration!=ANYGM_INSTANCE_ITERATION_LIVE ||
      !first_early.uses_limited_random_seed_expansion ||
      !first_early.preserves_frame_without_background_clear ||

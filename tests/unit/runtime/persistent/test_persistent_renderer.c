@@ -247,6 +247,25 @@ static int expect_renderer_semantics_exit_code(void){
     gml_render_free(&render);
   }
   {
+    /* GameMaker's right alignment treats the text origin as the inclusive rightmost pixel of a
+     * sprite-font line. A one-pixel glyph drawn at x=4 therefore covers x=4, not x=3. */
+    GmlRender render={0}; GmlSprite sprite={0}; GmlTpag page={0}; GmlAtlas atlas={0};
+    uint32_t framebuffer[8]={0}; uint8_t pixel[4]={255,255,255,255}; int frame=0;
+    gml_render_begin(&render,framebuffer,8,1,0,0);
+    render.spr=&sprite; render.n_spr=1; render.tpag=&page; render.n_tpag=1;
+    render.atlas=&atlas; render.n_atlas=1; render.font=0; render.n_fonts=1;
+    render.color=0xFFFFFF; render.alpha=1; render.alphablend=1; render.software_overlay=1;
+    render.halign=2;
+    sprite.w=sprite.h=1; sprite.n_frames=1; sprite.frame=&frame;
+    page.sw=page.sh=page.bw=page.bh=1; page.atlas=0;
+    atlas.px=pixel; atlas.w=atlas.h=1; atlas.decode_attempted=1;
+    render.fonts[0]=(GmlFont){.sprite=0,.first='A',.prop=0};
+    gml_draw_text(&render,4,0,"A");
+    if(!(framebuffer[4]&0xFFFFFFu) || (framebuffer[3]&0xFFFFFFu)){
+      fprintf(stderr,"sprite-font right alignment did not include its origin pixel\n"); return 1;
+    }
+  }
+  {
     /* Modern FONT records expose ascender and distance-field metadata alongside the authored
      * line advance. A zero spread remains meaningful because font_get_info must still publish it. */
     uint8_t data[192]={0}; GmlWin win={0}; GmlRender render={0};
