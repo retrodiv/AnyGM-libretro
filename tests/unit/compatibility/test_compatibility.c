@@ -20,6 +20,15 @@ static int resolve(uint32_t classic,uint32_t bytecode,uint64_t option_flags,int 
 }
 
 int main(void){
+  if(anygm_external_library_policy("C:\\game\\SGAudio.DLL")!=
+       ANYGM_EXTERNAL_LIBRARY_PORTABLE ||
+     anygm_external_library_policy("gmSteam.dll")!=ANYGM_EXTERNAL_LIBRARY_NOOP ||
+     anygm_external_library_policy("fmodex.dll")!=ANYGM_EXTERNAL_LIBRARY_DEPENDENCY ||
+     anygm_external_library_policy("CustomLighting.dll")!=ANYGM_EXTERNAL_LIBRARY_KEEP ||
+     strcmp(anygm_external_library_policy_name(ANYGM_EXTERNAL_LIBRARY_NOOP),"noop")){
+    fputs("external library policy mismatch\n",stderr);
+    return 1;
+  }
   AnygmCompatibilityProfile classic_early={0},classic_late={0};
   AnygmCompatibilityProfile first_early={0},first_late={0},second={0},flagged={0},beta={0};
   AnygmCompatibilityProfile flagged_without_layers={0};

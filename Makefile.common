@@ -17,6 +17,30 @@ ANYGM_MEDIA_SOURCES := \
 	src/media/gml_image_codec.c \
 	src/media/gml_font_raster.c
 
+ANYGM_PXTONE_SOURCES := \
+	src/audio/codecs/gml_pxtone.cpp \
+	src/third_party/pxtone/pxtnData.cpp \
+	src/third_party/pxtone/pxtnDelay.cpp \
+	src/third_party/pxtone/pxtnError.cpp \
+	src/third_party/pxtone/pxtnEvelist.cpp \
+	src/third_party/pxtone/pxtnMaster.cpp \
+	src/third_party/pxtone/pxtnMem.cpp \
+	src/third_party/pxtone/pxtnOverDrive.cpp \
+	src/third_party/pxtone/pxtnPulse_Frequency.cpp \
+	src/third_party/pxtone/pxtnPulse_Noise.cpp \
+	src/third_party/pxtone/pxtnPulse_NoiseBuilder.cpp \
+	src/third_party/pxtone/pxtnPulse_Oggv.cpp \
+	src/third_party/pxtone/pxtnPulse_Oscillator.cpp \
+	src/third_party/pxtone/pxtnPulse_PCM.cpp \
+	src/third_party/pxtone/pxtnService.cpp \
+	src/third_party/pxtone/pxtnService_moo.cpp \
+	src/third_party/pxtone/pxtnText.cpp \
+	src/third_party/pxtone/pxtnUnit.cpp \
+	src/third_party/pxtone/pxtnWoice.cpp \
+	src/third_party/pxtone/pxtnWoicePTV.cpp \
+	src/third_party/pxtone/pxtnWoice_io.cpp \
+	src/third_party/pxtone/pxtoneNoise.cpp
+
 ANYGM_PROJECT_COMPILER_SOURCES := \
 	src/content/project/gmlc_bytecode.c \
 	src/content/project/gmlc_lexer.c \
@@ -180,6 +204,8 @@ ANYGM_RUNTIME_SOURCES := \
 	$(ANYGM_PROJECT_SOURCES) \
 	$(ANYGM_CLASSIC_SOURCES)
 
+ANYGM_RUNTIME_CXX_SOURCES := $(ANYGM_PXTONE_SOURCES)
+
 ANYGM_TEST_HOST_SOURCES := \
 	src/host/stdio_vfs.c
 
@@ -215,6 +241,8 @@ ANYGM_RUNTIME_INCLUDE_DIRS := \
 	src/third_party/bzip2 \
 	src/third_party/minimp3 \
 	src/third_party/stb
+
+ANYGM_RUNTIME_INCLUDE_DIRS += src/third_party/pxtone
 
 ANYGM_LIBRETRO_INCLUDE_DIRS := \
 	src/adapters/libretro \

@@ -56,6 +56,7 @@ typedef struct {
 #define GML_AUDIO_BUS_GAIN 0.55
 #define GML_MAX_AUDIOGROUPS 64
 #define GML_DYNAMIC_SOUND_LIMIT 65536
+#define GML_EXTERNAL_GROUP_FLAG UINT32_C(0x80000000)
 struct GmlAudio {
   GmlWin *win;
   GmlSound *snd; int n_snd, n_base_snd;   /* n_base_snd = SOND resources; dynamic sounds follow */
@@ -498,9 +499,51 @@ int gml_audio_add_encoded(GmlAudio *a,const uint8_t *encoded,int len){
   return audio_add_encoded_at(a,encoded,len,-1,NULL);
 }
 
+static int audio_add_pcm16_at(GmlAudio *a,const int16_t *pcm,uint32_t frames,
+                              int channels,int sample_rate,
+                              const uint8_t *identity,size_t identity_size,int requested,
+                              const uint8_t expected_sha256[32]){
+  if(!a || !pcm || !frames || (channels!=1 && channels!=2) || sample_rate<=0 ||
+     sample_rate>384000 || !identity || !identity_size ||
+     (uint64_t)frames*(uint32_t)channels>UINT32_MAX) return -1;
+  uint8_t digest[32];
+  gml_sha256(identity,identity_size,digest);
+  if(expected_sha256 && memcmp(digest,expected_sha256,sizeof(digest))) return -1;
+  size_t values=(size_t)frames*(size_t)channels;
+  if(values>SIZE_MAX/sizeof(*pcm)) return -1;
+  int16_t *copy=(int16_t*)malloc(values*sizeof(*copy));
+  if(!copy) return -1;
+  memcpy(copy,pcm,values*sizeof(*copy));
+  int slot=audio_dynamic_slot_at(a,requested);
+  if(slot<0){ free(copy); return -1; }
+  GmlSound *sound=&a->snd[slot];
+  sound->pcm=copy; sound->own=copy; sound->nval=(uint32_t)values;
+  sound->channels=channels; sound->sample_rate=sample_rate;
+  sound->length_seconds=(double)frames/(double)sample_rate;
+  sound->length_known=1;
+  sound->bytes_per_second=sample_rate*channels*(int)sizeof(int16_t);
+  memcpy(sound->content_sha256,digest,sizeof(digest));
+  sound->content_hash_known=1;
+  return slot;
+}
+
+int gml_audio_add_pcm16(GmlAudio *a,const int16_t *pcm,uint32_t frames,
+                        int channels,int sample_rate,
+                        const uint8_t *identity,size_t identity_size){
+  return audio_add_pcm16_at(a,pcm,frames,channels,sample_rate,identity,identity_size,-1,NULL);
+}
+
 int gml_audio_restore_encoded(GmlAudio *a,int handle,const uint8_t *encoded,int len,
                               const uint8_t expected_sha256[32]){
   return audio_add_encoded_at(a,encoded,len,handle,expected_sha256)==handle;
+}
+
+int gml_audio_restore_pcm16(GmlAudio *a,int handle,const int16_t *pcm,uint32_t frames,
+                            int channels,int sample_rate,
+                            const uint8_t *identity,size_t identity_size,
+                            const uint8_t expected_sha256[32]){
+  return audio_add_pcm16_at(a,pcm,frames,channels,sample_rate,identity,identity_size,
+                            handle,expected_sha256)==handle;
 }
 
 int gml_audio_sound_content_hash(GmlAudio *a,int handle,uint8_t digest[32]){
@@ -675,6 +718,18 @@ int  gml_audio_voice_paused(GmlAudio *a, int snd){
     if(voice_matches(a,&a->voice[i],snd)) return a->voice[i].paused;
   return 0;
 }
+int gml_audio_voice_sound(GmlAudio *a,int voice){
+  if(!a) return -1;
+  for(int i=0;i<GML_MAX_VOICES;i++)
+    if(a->voice[i].active && a->voice[i].id==voice) return a->voice[i].snd;
+  return -1;
+}
+double gml_audio_voice_pan(GmlAudio *a,int voice){
+  if(!a) return 0.0;
+  for(int i=0;i<GML_MAX_VOICES;i++)
+    if(a->voice[i].active && a->voice[i].id==voice) return a->voice[i].pan;
+  return 0.0;
+}
 void gml_audio_set_master_gain(GmlAudio *a, double gain){
   if(!a) return;
   if(gain<0) gain=0;
@@ -702,7 +757,12 @@ void gml_audio_group_stop_all(GmlAudio *a, int group){
   if(!a || group<0 || group>=GML_MAX_AUDIOGROUPS) return;
   for(int i=0;i<GML_MAX_VOICES;i++){
     GmlVoice *v=&a->voice[i];
-    if(v->active && v->snd>=0 && v->snd<a->n_snd && a->snd[v->snd].group==group) v->active=0;
+    if(v->active && v->snd>=0 && v->snd<a->n_snd){
+      GmlSound *sound=&a->snd[v->snd];
+      int sound_group=(sound->external_type&GML_EXTERNAL_GROUP_FLAG)
+        ? (int)(sound->external_type&~GML_EXTERNAL_GROUP_FLAG) : sound->group;
+      if(sound_group==group) v->active=0;
+    }
   }
 }
 void gml_audio_channel_num(GmlAudio *a, int channels){
@@ -768,6 +828,10 @@ void gml_audio_sound_set_external_type(GmlAudio *a, int sound, uint32_t type){
 }
 uint32_t gml_audio_sound_get_external_type(GmlAudio *a, int sound){
   return a && sound>=0 && sound<a->n_snd ? a->snd[sound].external_type : 0;
+}
+void gml_audio_sound_set_external_group(GmlAudio *a,int sound,int group){
+  if(a && sound>=0 && sound<a->n_snd && group>=0 && group<GML_MAX_AUDIOGROUPS)
+    a->snd[sound].external_type=GML_EXTERNAL_GROUP_FLAG|(uint32_t)group;
 }
 double gml_audio_sound_length(GmlAudio *a, int sound){
   if(!a) return 0.0;
@@ -904,7 +968,9 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
     int gain_remaining=s->gain_fade_frames;
     double gain_step=gain_remaining>0
       ? (gain_target-gain_start)/(double)gain_remaining : 0.0;
-    int group=s->group>=0 && s->group<GML_MAX_AUDIOGROUPS?s->group:0;
+    int group=(s->external_type&GML_EXTERNAL_GROUP_FLAG)
+      ? (int)(s->external_type&~GML_EXTERNAL_GROUP_FLAG)
+      : (s->group>=0 && s->group<GML_MAX_AUDIOGROUPS?s->group:0);
     double group_start=a->group_gain[group], group_target=a->group_target[group];
     int group_remaining=a->group_fade_frames[group];
     double group_step=group_remaining>0?(group_target-group_start)/(double)group_remaining:0.0;

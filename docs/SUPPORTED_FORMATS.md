@@ -40,7 +40,10 @@ bytes contribute to the derived-content cache key, so changing one cannot reuse 
 Extension binary calls are imported as self-describing encoded library/symbol
 aliases. Runtime support is selected from those names, never from a game title
 or hardcoded content hash, and native DLLs are not loaded. Portable Saudio, SGAudio, SuperSound,
-and `caster_*` playback reads bounded WAV/OGG/MP3 assets through the host VFS. Savestates retain
+BGM, GMFMODSimple, and `caster_*` playback reads bounded WAV/OGG/MP3 assets through the host VFS;
+the pxwrap adapter renders Pxtone projects in memory, and GMXInput maps to the host gamepad.
+Steam-family extension calls are deliberately offline no-ops: they neither contact nor integrate
+with Valve services, but their absence does not abort a game. Savestates retain
 their logical paths and dynamically computed SHA-256 identities so a closed handle can be recreated
 without embedding an entire soundtrack or accepting changed bytes.
 

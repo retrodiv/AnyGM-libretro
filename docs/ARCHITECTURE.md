@@ -304,8 +304,11 @@ The stage delegates unrecognized names directly to the I/O stage, preserving
 precedence without indirect dispatch.
 
 `gml_builtin_audio.c` owns audio argument adaptation, spatial-emitter
-attenuation and refresh policy, external audio-sidecar loading, and the ordered
-audio stage. Shared string conversion, fixed-array construction, and
+attenuation and refresh policy, external audio-sidecar loading, the portable
+Saudio/SGAudio/SuperSound/BGM/GMFMODSimple/pxwrap adapters, and the ordered audio
+stage. `gml_builtin_platform.c` owns generic encoded external-call decoding and
+the deterministic no-op policy for offline-only platform libraries; the input
+owner maps GMXInput to the normalized host gamepad. Shared string conversion, fixed-array construction, and
 content-relative path resolution remain single facade operations while exact
 and ordered lookup coexist. The stage delegates unrecognized names directly to
 the instance-path stage, preserving precedence without indirect dispatch.

@@ -26,7 +26,7 @@ from pathlib import Path
 HEADER_PATH = Path("src/generated/anygm_producer_fingerprint.h")
 SOURCE_ROOT = Path("src")
 EXCLUDED_DIRECTORIES = ("src/third_party",)
-SUFFIXES = (".c", ".h")
+SUFFIXES = (".c", ".cpp", ".h")
 
 
 def hashed_sources(root: Path) -> list[tuple[str, str]]:

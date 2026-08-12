@@ -5,6 +5,7 @@
 #include "gml_builtin_internal.h"
 #include "gml_render.h"
 #include "gml_audio.h"
+#include "gml_pxtone.h"
 #include "anygm_host.h"
 #include "anygm_vfs.h"
 
@@ -117,6 +118,84 @@ enum {
   GML_EXTERNAL_AUDIO_SA_SAVE_RECORD,
   GML_EXTERNAL_AUDIO_SA_CLOSE,
   GML_EXTERNAL_AUDIO_SA_CLOSE_ALL,
+  /* BGM.dll: local sampled-file playback through AnyGM's portable mixer. */
+  GML_EXTERNAL_AUDIO_BGM_INIT,
+  GML_EXTERNAL_AUDIO_BGM_CLOSE,
+  GML_EXTERNAL_AUDIO_BGM_LOAD,
+  GML_EXTERNAL_AUDIO_BGM_UNLOAD_ID,
+  GML_EXTERNAL_AUDIO_BGM_UNLOAD_NAME,
+  GML_EXTERNAL_AUDIO_BGM_LOADED_ID,
+  GML_EXTERNAL_AUDIO_BGM_LOADED_NAME,
+  GML_EXTERNAL_AUDIO_BGM_PLAY_ID,
+  GML_EXTERNAL_AUDIO_BGM_PLAY_NAME,
+  GML_EXTERNAL_AUDIO_BGM_STOP_ID,
+  GML_EXTERNAL_AUDIO_BGM_STOP_NAME,
+  GML_EXTERNAL_AUDIO_BGM_PAUSE_ID,
+  GML_EXTERNAL_AUDIO_BGM_PAUSE_NAME,
+  GML_EXTERNAL_AUDIO_BGM_RESUME_ID,
+  GML_EXTERNAL_AUDIO_BGM_RESUME_NAME,
+  GML_EXTERNAL_AUDIO_BGM_PLAYING_ID,
+  GML_EXTERNAL_AUDIO_BGM_PLAYING_NAME,
+  GML_EXTERNAL_AUDIO_BGM_LENGTH_ID,
+  GML_EXTERNAL_AUDIO_BGM_LENGTH_NAME,
+  GML_EXTERNAL_AUDIO_BGM_POSITION_ID,
+  GML_EXTERNAL_AUDIO_BGM_POSITION_NAME,
+  GML_EXTERNAL_AUDIO_BGM_GET_ATTR_ID,
+  GML_EXTERNAL_AUDIO_BGM_GET_ATTR_NAME,
+  GML_EXTERNAL_AUDIO_BGM_SET_ATTR_ID,
+  GML_EXTERNAL_AUDIO_BGM_SET_ATTR_NAME,
+  GML_EXTERNAL_AUDIO_BGM_FADE_ID,
+  GML_EXTERNAL_AUDIO_BGM_FADE_NAME,
+  GML_EXTERNAL_AUDIO_BGM_ERROR,
+  GML_EXTERNAL_AUDIO_BGM_NOOP,
+  /* GMFMODSimple.dll: the subset with portable mixer semantics plus successful no-ops for
+   * optional DSP/occlusion/spectrum controls unsupported by the software mixer. */
+  GML_EXTERNAL_AUDIO_FMOD_INIT,
+  GML_EXTERNAL_AUDIO_FMOD_FREE,
+  GML_EXTERNAL_AUDIO_FMOD_SOUND_ADD,
+  GML_EXTERNAL_AUDIO_FMOD_SOUND_GROUP,
+  GML_EXTERNAL_AUDIO_FMOD_GROUP_VOLUME,
+  GML_EXTERNAL_AUDIO_FMOD_SOUND_VOLUME,
+  GML_EXTERNAL_AUDIO_FMOD_SOUND_PLAY,
+  GML_EXTERNAL_AUDIO_FMOD_SOUND_LOOP,
+  GML_EXTERNAL_AUDIO_FMOD_SOUND_FREE,
+  GML_EXTERNAL_AUDIO_FMOD_GROUP_STOP,
+  GML_EXTERNAL_AUDIO_FMOD_ALL_STOP,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_STOP,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_PLAYING,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_PAUSED,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_PAUSED,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_SOUND,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_POSITION,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_VOLUME,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_VOLUME,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_PAN,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_PAN,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_FREQUENCY,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_FREQUENCY,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_POSITION,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_SOUND_LENGTH,
+  GML_EXTERNAL_AUDIO_FMOD_GROUP_GET_VOLUME,
+  GML_EXTERNAL_AUDIO_FMOD_MASTER_VOLUME,
+  GML_EXTERNAL_AUDIO_FMOD_SOUND_LENGTH,
+  GML_EXTERNAL_AUDIO_FMOD_SOUND_MAX_VOLUME,
+  GML_EXTERNAL_AUDIO_FMOD_SOUND_READY,
+  GML_EXTERNAL_AUDIO_FMOD_SOUND_PLAY_3D,
+  GML_EXTERNAL_AUDIO_FMOD_SOUND_LOOP_3D,
+  GML_EXTERNAL_AUDIO_FMOD_INSTANCE_POSITION_3D,
+  GML_EXTERNAL_AUDIO_FMOD_LISTENER_POSITION_3D,
+  GML_EXTERNAL_AUDIO_FMOD_UPDATE,
+  GML_EXTERNAL_AUDIO_FMOD_LAST_ERROR,
+  GML_EXTERNAL_AUDIO_FMOD_NOOP,
+  GML_EXTERNAL_AUDIO_PXTONE_INIT,
+  GML_EXTERNAL_AUDIO_PXTONE_LOAD,
+  GML_EXTERNAL_AUDIO_PXTONE_PLAY,
+  GML_EXTERNAL_AUDIO_PXTONE_VOLUME,
+  GML_EXTERNAL_AUDIO_PXTONE_FADE,
+  GML_EXTERNAL_AUDIO_PXTONE_LOOP,
+  GML_EXTERNAL_AUDIO_PXTONE_STOP,
+  GML_EXTERNAL_AUDIO_PXTONE_RELEASE,
+  GML_EXTERNAL_AUDIO_PXTONE_SHUTDOWN,
   GML_EXTERNAL_AUDIO_OPERATION_LIMIT
 };
 typedef struct {
@@ -195,6 +274,90 @@ static const GmlExternalAudioSymbol external_saudio_symbols[]={
   {"close",GML_EXTERNAL_AUDIO_SA_CLOSE},
   {"close_all",GML_EXTERNAL_AUDIO_SA_CLOSE_ALL},
 };
+static const GmlExternalAudioSymbol external_bgm_symbols[]={
+  {"bgm_Init",GML_EXTERNAL_AUDIO_BGM_INIT},
+  {"bgm_Close",GML_EXTERNAL_AUDIO_BGM_CLOSE},
+  {"bgm_Load",GML_EXTERNAL_AUDIO_BGM_LOAD},
+  {"bgm_LoadMod",GML_EXTERNAL_AUDIO_BGM_LOAD},
+  {"bgm_LoadSample",GML_EXTERNAL_AUDIO_BGM_LOAD},
+  {"bgm_LoadStream",GML_EXTERNAL_AUDIO_BGM_LOAD},
+  {"bgm_LoadNetStream",GML_EXTERNAL_AUDIO_BGM_LOAD},
+  {"bgm_UnloadById",GML_EXTERNAL_AUDIO_BGM_UNLOAD_ID},
+  {"bgm_UnloadByFname",GML_EXTERNAL_AUDIO_BGM_UNLOAD_NAME},
+  {"bgm_IsLoadedById",GML_EXTERNAL_AUDIO_BGM_LOADED_ID},
+  {"bgm_IsLoadedByFname",GML_EXTERNAL_AUDIO_BGM_LOADED_NAME},
+  {"bgm_PlayById",GML_EXTERNAL_AUDIO_BGM_PLAY_ID},
+  {"bgm_PlayByFname",GML_EXTERNAL_AUDIO_BGM_PLAY_NAME},
+  {"bgm_StopById",GML_EXTERNAL_AUDIO_BGM_STOP_ID},
+  {"bgm_StopByFname",GML_EXTERNAL_AUDIO_BGM_STOP_NAME},
+  {"bgm_PauseById",GML_EXTERNAL_AUDIO_BGM_PAUSE_ID},
+  {"bgm_PauseByFname",GML_EXTERNAL_AUDIO_BGM_PAUSE_NAME},
+  {"bgm_UnpauseById",GML_EXTERNAL_AUDIO_BGM_RESUME_ID},
+  {"bgm_UnpauseByFname",GML_EXTERNAL_AUDIO_BGM_RESUME_NAME},
+  {"bgm_IsPlayingById",GML_EXTERNAL_AUDIO_BGM_PLAYING_ID},
+  {"bgm_IsPlayingByFname",GML_EXTERNAL_AUDIO_BGM_PLAYING_NAME},
+  {"bgm_GetLenById",GML_EXTERNAL_AUDIO_BGM_LENGTH_ID},
+  {"bgm_GetLenByFname",GML_EXTERNAL_AUDIO_BGM_LENGTH_NAME},
+  {"bgm_GetPosById",GML_EXTERNAL_AUDIO_BGM_POSITION_ID},
+  {"bgm_GetPosByFname",GML_EXTERNAL_AUDIO_BGM_POSITION_NAME},
+  {"bgm_GetAttrById",GML_EXTERNAL_AUDIO_BGM_GET_ATTR_ID},
+  {"bgm_GetAttrByFname",GML_EXTERNAL_AUDIO_BGM_GET_ATTR_NAME},
+  {"bgm_SetAttrById",GML_EXTERNAL_AUDIO_BGM_SET_ATTR_ID},
+  {"bgm_SetAttrByFname",GML_EXTERNAL_AUDIO_BGM_SET_ATTR_NAME},
+  {"bgm_FadeVolById",GML_EXTERNAL_AUDIO_BGM_FADE_ID},
+  {"bgm_FadeVolByFname",GML_EXTERNAL_AUDIO_BGM_FADE_NAME},
+  {"bgm_Error",GML_EXTERNAL_AUDIO_BGM_ERROR},
+};
+static const GmlExternalAudioSymbol external_fmod_symbols[]={
+  {"FMODinit",GML_EXTERNAL_AUDIO_FMOD_INIT},
+  {"FMODfree",GML_EXTERNAL_AUDIO_FMOD_FREE},
+  {"FMODSoundAdd",GML_EXTERNAL_AUDIO_FMOD_SOUND_ADD},
+  {"FMODSoundSetGroup",GML_EXTERNAL_AUDIO_FMOD_SOUND_GROUP},
+  {"FMODGroupSetVolume",GML_EXTERNAL_AUDIO_FMOD_GROUP_VOLUME},
+  {"FMODSoundSetMaxVolume",GML_EXTERNAL_AUDIO_FMOD_SOUND_VOLUME},
+  {"FMODSoundPlay",GML_EXTERNAL_AUDIO_FMOD_SOUND_PLAY},
+  {"FMODSoundLoop",GML_EXTERNAL_AUDIO_FMOD_SOUND_LOOP},
+  {"FMODSoundFree",GML_EXTERNAL_AUDIO_FMOD_SOUND_FREE},
+  {"FMODGroupStop",GML_EXTERNAL_AUDIO_FMOD_GROUP_STOP},
+  {"FMODAllStop",GML_EXTERNAL_AUDIO_FMOD_ALL_STOP},
+  {"FMODInstanceStop",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_STOP},
+  {"FMODInstanceIsPlaying",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_PLAYING},
+  {"FMODInstanceSetPaused",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_PAUSED},
+  {"FMODInstanceGetPaused",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_PAUSED},
+  {"FMODInstanceGetSound",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_SOUND},
+  {"FMODInstanceSetPosition",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_POSITION},
+  {"FMODInstanceSetVolume",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_VOLUME},
+  {"FMODInstanceGetVolume",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_VOLUME},
+  {"FMODInstanceSetPan",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_PAN},
+  {"FMODInstanceGetPan",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_PAN},
+  {"FMODInstanceSetFrequency",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_FREQUENCY},
+  {"FMODInstanceGetFrequency",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_FREQUENCY},
+  {"FMODInstanceGetPosition",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_POSITION},
+  {"FMODInstanceSoundGetLength",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_SOUND_LENGTH},
+  {"FMODGroupGetVolume",GML_EXTERNAL_AUDIO_FMOD_GROUP_GET_VOLUME},
+  {"FMODMasterSetVolume",GML_EXTERNAL_AUDIO_FMOD_MASTER_VOLUME},
+  {"FMODSoundGetLength",GML_EXTERNAL_AUDIO_FMOD_SOUND_LENGTH},
+  {"FMODSoundGetMaxVolume",GML_EXTERNAL_AUDIO_FMOD_SOUND_MAX_VOLUME},
+  {"FMODSoundAsyncReady",GML_EXTERNAL_AUDIO_FMOD_SOUND_READY},
+  {"FMODInstanceAsyncOK",GML_EXTERNAL_AUDIO_FMOD_SOUND_READY},
+  {"FMODSoundPlay3d",GML_EXTERNAL_AUDIO_FMOD_SOUND_PLAY_3D},
+  {"FMODSoundLoop3d",GML_EXTERNAL_AUDIO_FMOD_SOUND_LOOP_3D},
+  {"FMODInstanceSet3dPosition",GML_EXTERNAL_AUDIO_FMOD_INSTANCE_POSITION_3D},
+  {"FMODListenerSet3dPosition",GML_EXTERNAL_AUDIO_FMOD_LISTENER_POSITION_3D},
+  {"FMODUpdate",GML_EXTERNAL_AUDIO_FMOD_UPDATE},
+  {"FMODGetLastError",GML_EXTERNAL_AUDIO_FMOD_LAST_ERROR},
+};
+static const GmlExternalAudioSymbol external_pxtone_symbols[]={
+  {"pxtone_init",GML_EXTERNAL_AUDIO_PXTONE_INIT},
+  {"pxtone_load",GML_EXTERNAL_AUDIO_PXTONE_LOAD},
+  {"pxtone_play",GML_EXTERNAL_AUDIO_PXTONE_PLAY},
+  {"pxtone_volume",GML_EXTERNAL_AUDIO_PXTONE_VOLUME},
+  {"pxtone_fadeout",GML_EXTERNAL_AUDIO_PXTONE_FADE},
+  {"pxtone_setloop",GML_EXTERNAL_AUDIO_PXTONE_LOOP},
+  {"pxtone_stop",GML_EXTERNAL_AUDIO_PXTONE_STOP},
+  {"pxtone_release",GML_EXTERNAL_AUDIO_PXTONE_RELEASE},
+  {"pxtone_shutdown",GML_EXTERNAL_AUDIO_PXTONE_SHUTDOWN},
+};
 static int external_ascii_equal(const char *left,const char *right){
   if(!left || !right) return 0;
   while(*left && *right){
@@ -220,56 +383,26 @@ int builtin_external_audio_define(const char *library,const char *symbol){
   } else if(external_ascii_equal(base,"saudio.dll")){
     table=external_saudio_symbols;
     entries=sizeof(external_saudio_symbols)/sizeof(external_saudio_symbols[0]);
+  } else if(external_ascii_equal(base,"bgm.dll")){
+    table=external_bgm_symbols;
+    entries=sizeof(external_bgm_symbols)/sizeof(external_bgm_symbols[0]);
+  } else if(external_ascii_equal(base,"GMFMODSimple.dll")){
+    table=external_fmod_symbols;
+    entries=sizeof(external_fmod_symbols)/sizeof(external_fmod_symbols[0]);
+  } else if(external_ascii_equal(base,"pxwrap.dll")){
+    table=external_pxtone_symbols;
+    entries=sizeof(external_pxtone_symbols)/sizeof(external_pxtone_symbols[0]);
   }
-  if(!table) return 0;
-  for(size_t index=0;index<entries;index++)
+  for(size_t index=0;table && index<entries;index++)
     if(!strcmp(symbol,table[index].symbol))
       return GML_EXTERNAL_AUDIO_HANDLE_BASE+table[index].operation;
+  if(external_ascii_equal(base,"bgm.dll") && !strncmp(symbol,"bgm_",4))
+    return GML_EXTERNAL_AUDIO_HANDLE_BASE+GML_EXTERNAL_AUDIO_BGM_NOOP;
+  if(external_ascii_equal(base,"GMFMODSimple.dll") && !strncmp(symbol,"FMOD",4))
+    return GML_EXTERNAL_AUDIO_HANDLE_BASE+GML_EXTERNAL_AUDIO_FMOD_NOOP;
   return 0;
 }
 
-static int external_hex_value(unsigned char value){
-  if(value>='0' && value<='9') return value-'0';
-  if(value>='a' && value<='f') return value-'a'+10;
-  if(value>='A' && value<='F') return value-'A'+10;
-  return -1;
-}
-
-static char *external_hex_decode(const char *encoded,size_t size){
-  enum { EXTERNAL_NAME_MAX=4096 };
-  if(!encoded || !size || (size&1u) || size/2u>EXTERNAL_NAME_MAX) return NULL;
-  char *decoded=(char*)malloc(size/2u+1u);
-  if(!decoded) return NULL;
-  for(size_t i=0;i<size;i+=2u){
-    int high=external_hex_value((unsigned char)encoded[i]);
-    int low=external_hex_value((unsigned char)encoded[i+1u]);
-    if(high<0 || low<0 || (high==0 && low==0)){
-      free(decoded);
-      return NULL;
-    }
-    decoded[i/2u]=(char)((high<<4)|low);
-  }
-  decoded[size/2u]='\0';
-  return decoded;
-}
-
-GmlVal builtin_external_audio_call_encoded(GmlVM *vm,const char *name,
-                                           GmlVal *args,int count,int *handled){
-  static const char prefix[]="__anygm_external_";
-  if(handled) *handled=0;
-  if(!name || strncmp(name,prefix,sizeof(prefix)-1u)) return vreal(0);
-  const char *library_hex=name+sizeof(prefix)-1u;
-  const char *separator=strchr(library_hex,'_');
-  if(!separator || separator==library_hex || !separator[1]) return vreal(0);
-  size_t library_size=(size_t)(separator-library_hex);
-  size_t symbol_size=strlen(separator+1u);
-  char *library=external_hex_decode(library_hex,library_size);
-  char *symbol=external_hex_decode(separator+1u,symbol_size);
-  int handle=(library && symbol)?builtin_external_audio_define(library,symbol):0;
-  free(library); free(symbol);
-  if(!handle) return vreal(0);
-  return builtin_external_audio_call(vm,handle,args,count,handled);
-}
 static void external_audio_free(GmlVM *vm,int sound){
   GmlBuiltinState *state=vm?builtin_state_ensure(vm):NULL;
   builtin_state_external_audio_remove(state,sound);
@@ -325,6 +458,47 @@ static int external_audio_load(GmlVM *vm,const char *relative){
   return external_audio_load_hashed(vm,relative,NULL);
 }
 
+static int external_audio_pxtone_path(const char *path){
+  if(!path) return 0;
+  size_t size=strlen(path);
+  return (size>=6u && external_ascii_equal(path+size-6u,".ptcop")) ||
+    (size>=7u && external_ascii_equal(path+size-7u,".pttune"));
+}
+
+static int external_pxtone_current(GmlVM *vm){
+  GmlBuiltinState *state=builtin_state_ensure(vm);
+  if(!state) return -1;
+  for(uint32_t i=0;i<state->external_audio_asset_count;i++)
+    if(external_audio_pxtone_path(state->external_audio_assets[i].path))
+      return state->external_audio_assets[i].sound;
+  return -1;
+}
+
+static int external_pxtone_load(GmlVM *vm,const char *relative){
+  if(!vm || !relative || !*relative || strlen(relative)>4096u) return -1;
+  int previous=external_pxtone_current(vm);
+  if(previous>=0) external_audio_free(vm,previous);
+  char *path=resolve_read_path(vm,relative);
+  uint8_t *encoded=NULL; size_t size=0;
+  int16_t *pcm=NULL; uint32_t frames=0,loop_start=0;
+  int sound=-1;
+  if(path && anygm_vfs_read_all(vm->host,path,&encoded,&size,64u*1024u*1024u) && size &&
+     gml_pxtone_render(encoded,size,&pcm,&frames,&loop_start)){
+    sound=gml_audio_add_pcm16((GmlAudio*)vm->audio,pcm,frames,2,44100,encoded,size);
+    if(sound>=0){
+      uint8_t identity[32];
+      if(!gml_audio_sound_content_hash((GmlAudio*)vm->audio,sound,identity) ||
+         !builtin_state_external_audio_store(
+           builtin_state_ensure(vm),sound,relative,identity)){
+        external_audio_free(vm,sound); sound=-1;
+      } else gml_audio_sound_loop_start((GmlAudio*)vm->audio,sound,
+                                        (double)loop_start/44100.0);
+    }
+  }
+  free(pcm); free(encoded); free(path);
+  return sound;
+}
+
 int builtin_external_audio_restore(GmlVM *vm,const char *relative,int sound,
                                    const uint8_t expected_sha256[32]){
   if(!vm || !vm->audio || !relative || !relative[0] || strlen(relative)>4096u ||
@@ -339,6 +513,16 @@ int builtin_external_audio_restore(GmlVM *vm,const char *relative,int sound,
     size>0 && size<=INT_MAX &&
     gml_audio_restore_encoded((GmlAudio*)vm->audio,sound,encoded,(int)size,
                               expected_sha256);
+  if(!ok && encoded && size && external_audio_pxtone_path(relative)){
+    int16_t *pcm=NULL; uint32_t frames=0,loop_start=0;
+    if(gml_pxtone_render(encoded,size,&pcm,&frames,&loop_start)){
+      ok=gml_audio_restore_pcm16((GmlAudio*)vm->audio,sound,pcm,frames,2,44100,
+                                 encoded,size,expected_sha256);
+      if(ok) gml_audio_sound_loop_start((GmlAudio*)vm->audio,sound,
+                                        (double)loop_start/44100.0);
+    }
+    free(pcm);
+  }
   free(encoded);
   free(path);
   return ok;
@@ -479,6 +663,282 @@ static GmlVal external_saudio_call(GmlVM *vm,int operation,
   }
   return vreal(1);
 }
+
+static GmlExternalAudioAsset *external_audio_asset_by_path(GmlBuiltinState *state,
+                                                           const char *path){
+  if(!state || !path) return NULL;
+  for(uint32_t i=0;i<state->external_audio_asset_count;i++)
+    if(state->external_audio_assets[i].path &&
+       external_ascii_equal(state->external_audio_assets[i].path,path))
+      return &state->external_audio_assets[i];
+  return NULL;
+}
+
+static int external_bgm_sound(GmlVM *vm,int operation,GmlVal *args,int count){
+  if(operation==GML_EXTERNAL_AUDIO_BGM_UNLOAD_NAME ||
+     operation==GML_EXTERNAL_AUDIO_BGM_LOADED_NAME ||
+     operation==GML_EXTERNAL_AUDIO_BGM_PLAY_NAME ||
+     operation==GML_EXTERNAL_AUDIO_BGM_STOP_NAME ||
+     operation==GML_EXTERNAL_AUDIO_BGM_PAUSE_NAME ||
+     operation==GML_EXTERNAL_AUDIO_BGM_RESUME_NAME ||
+     operation==GML_EXTERNAL_AUDIO_BGM_PLAYING_NAME ||
+     operation==GML_EXTERNAL_AUDIO_BGM_LENGTH_NAME ||
+     operation==GML_EXTERNAL_AUDIO_BGM_POSITION_NAME ||
+     operation==GML_EXTERNAL_AUDIO_BGM_GET_ATTR_NAME ||
+     operation==GML_EXTERNAL_AUDIO_BGM_SET_ATTR_NAME ||
+     operation==GML_EXTERNAL_AUDIO_BGM_FADE_NAME){
+    GmlExternalAudioAsset *asset=external_audio_asset_by_path(
+      builtin_state_ensure(vm),S(vm,args,count,0));
+    return asset?asset->sound:-1;
+  }
+  return (int)N(args,count,0);
+}
+
+static GmlVal external_bgm_call(GmlVM *vm,int operation,GmlVal *args,int count){
+  GmlAudio *audio=vm?(GmlAudio*)vm->audio:NULL;
+  if(!audio) return vreal(0);
+  if(operation==GML_EXTERNAL_AUDIO_BGM_INIT) return vreal(1);
+  if(operation==GML_EXTERNAL_AUDIO_BGM_CLOSE){ external_audio_free_all(vm); return vreal(1); }
+  if(operation==GML_EXTERNAL_AUDIO_BGM_LOAD){
+    int sound=external_audio_load(vm,S(vm,args,count,0));
+    return vreal(sound>=0?sound:0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_BGM_ERROR) return vstr("");
+  if(operation==GML_EXTERNAL_AUDIO_BGM_NOOP) return vreal(1);
+  int sound=external_bgm_sound(vm,operation,args,count);
+  if(operation==GML_EXTERNAL_AUDIO_BGM_LOADED_ID ||
+     operation==GML_EXTERNAL_AUDIO_BGM_LOADED_NAME)
+    return vreal(gml_audio_exists(audio,sound));
+  if(sound<0 || !gml_audio_exists(audio,sound)) return vreal(0);
+  if(operation==GML_EXTERNAL_AUDIO_BGM_UNLOAD_ID ||
+     operation==GML_EXTERNAL_AUDIO_BGM_UNLOAD_NAME){ external_audio_free(vm,sound); return vreal(1); }
+  if(operation==GML_EXTERNAL_AUDIO_BGM_PLAY_ID ||
+     operation==GML_EXTERNAL_AUDIO_BGM_PLAY_NAME){
+    int loop=N(args,count,1)!=0.0;
+    gml_audio_sound_set_default_loop(audio,sound,loop);
+    return vreal(gml_audio_play(audio,sound,loop)>=0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_BGM_STOP_ID ||
+     operation==GML_EXTERNAL_AUDIO_BGM_STOP_NAME){ gml_audio_stop(audio,sound); return vreal(1); }
+  if(operation==GML_EXTERNAL_AUDIO_BGM_PAUSE_ID ||
+     operation==GML_EXTERNAL_AUDIO_BGM_PAUSE_NAME){ gml_audio_pause_sound(audio,sound,1); return vreal(1); }
+  if(operation==GML_EXTERNAL_AUDIO_BGM_RESUME_ID ||
+     operation==GML_EXTERNAL_AUDIO_BGM_RESUME_NAME){ gml_audio_pause_sound(audio,sound,0); return vreal(1); }
+  if(operation==GML_EXTERNAL_AUDIO_BGM_PLAYING_ID ||
+     operation==GML_EXTERNAL_AUDIO_BGM_PLAYING_NAME)
+    return vreal(gml_audio_is_playing(audio,sound));
+  if(operation==GML_EXTERNAL_AUDIO_BGM_LENGTH_ID ||
+     operation==GML_EXTERNAL_AUDIO_BGM_LENGTH_NAME)
+    return vreal(gml_audio_sound_length(audio,sound));
+  if(operation==GML_EXTERNAL_AUDIO_BGM_POSITION_ID ||
+     operation==GML_EXTERNAL_AUDIO_BGM_POSITION_NAME)
+    return vreal(gml_audio_sound_get_track_position(audio,sound));
+  if(operation==GML_EXTERNAL_AUDIO_BGM_GET_ATTR_ID ||
+     operation==GML_EXTERNAL_AUDIO_BGM_GET_ATTR_NAME){
+    const char *attribute=S(vm,args,count,1);
+    if(external_ascii_equal(attribute,"cVolume")){
+      GmlBuiltinState *state=builtin_state_ensure(vm);
+      char *buffer=state->string_ring[state->string_ring_index++&7u];
+      snprintf(buffer,sizeof(state->string_ring[0]),"%.6g",
+               gml_audio_sound_get_gain(audio,sound)*100.0);
+      return vstr(buffer);
+    }
+    return vstr("");
+  }
+  if(operation==GML_EXTERNAL_AUDIO_BGM_SET_ATTR_ID ||
+     operation==GML_EXTERNAL_AUDIO_BGM_SET_ATTR_NAME){
+    const char *attribute=S(vm,args,count,1);
+    if(external_ascii_equal(attribute,"cVolume")){
+      char *end=NULL; double volume=strtod(S(vm,args,count,2),&end);
+      if(end && !*end){
+        if(volume<0.0) volume=0.0; else if(volume>100.0) volume=100.0;
+        gml_audio_sound_gain(audio,sound,volume/100.0);
+      }
+    }
+    return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_BGM_FADE_ID ||
+     operation==GML_EXTERNAL_AUDIO_BGM_FADE_NAME){
+    double volume=N(args,count,1);
+    if(volume>1.0) volume/=100.0;
+    int duration=(int)N(args,count,2);
+    gml_audio_sound_gain_fade(audio,sound,volume,duration);
+    return vreal(1);
+  }
+  return vreal(1);
+}
+
+static GmlVal external_fmod_call(GmlVM *vm,int operation,GmlVal *args,int count){
+  GmlAudio *audio=vm?(GmlAudio*)vm->audio:NULL;
+  if(!audio) return vreal(0);
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INIT) return vreal(1);
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_FREE){ external_audio_free_all(vm); return vreal(1); }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_ADD)
+    return vreal(external_audio_load(vm,S(vm,args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_GROUP){
+    gml_audio_sound_set_external_group(audio,(int)N(args,count,0),(int)N(args,count,1));
+    return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_GROUP_VOLUME){
+    gml_audio_group_gain(audio,(int)N(args,count,0),N(args,count,1),0); return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_VOLUME){
+    gml_audio_sound_gain(audio,(int)N(args,count,0),N(args,count,1)); return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_PLAY ||
+     operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_LOOP){
+    int sound=(int)N(args,count,0);
+    int loop=operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_LOOP;
+    gml_audio_sound_set_default_loop(audio,sound,loop);
+    int voice=gml_audio_play(audio,sound,loop);
+    if(voice>=0 && N(args,count,1)!=0.0) gml_audio_pause_sound(audio,voice,1);
+    return vreal(voice);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_PLAY_3D ||
+     operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_LOOP_3D){
+    int sound=(int)N(args,count,0);
+    int loop=operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_LOOP_3D;
+    int voice=gml_audio_play(audio,sound,loop);
+    if(voice>=0){
+      double dx=N(args,count,1)-vm->builtins->listener_x;
+      double dy=N(args,count,2)-vm->builtins->listener_y;
+      double distance=sqrt(dx*dx+dy*dy);
+      double pan=distance>0.0?dx/distance:0.0;
+      gml_audio_voice_spatial(audio,voice,1.0,pan);
+      if(N(args,count,4)!=0.0) gml_audio_pause_sound(audio,voice,1);
+    }
+    return vreal(voice);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_FREE){
+    external_audio_free(vm,(int)N(args,count,0)); return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_GROUP_STOP){
+    gml_audio_group_stop_all(audio,(int)N(args,count,0)); return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_ALL_STOP){ gml_audio_stop_all(audio); return vreal(1); }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_STOP){
+    gml_audio_stop(audio,(int)N(args,count,0)); return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_PLAYING)
+    return vreal(gml_audio_is_playing(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_PAUSED){
+    gml_audio_pause_sound(audio,(int)N(args,count,0),N(args,count,1)!=0.0); return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_PAUSED)
+    return vreal(gml_audio_voice_paused(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_SOUND)
+    return vreal(gml_audio_voice_sound(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_POSITION){
+    int voice=(int)N(args,count,0);
+    int sound=gml_audio_voice_sound(audio,voice);
+    double length=gml_audio_sound_length(audio,sound);
+    double position=N(args,count,1);
+    if(position<0.0) position=0.0; else if(position>1.0) position=1.0;
+    gml_audio_sound_set_track_position(audio,voice,position*length);
+    return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_VOLUME){
+    gml_audio_sound_gain(audio,(int)N(args,count,0),N(args,count,1)); return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_VOLUME)
+    return vreal(gml_audio_sound_get_gain(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_PAN){
+    gml_audio_voice_spatial(audio,(int)N(args,count,0),1.0,N(args,count,1)); return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_PAN)
+    return vreal(gml_audio_voice_pan(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_FREQUENCY){
+    int voice=(int)N(args,count,0),sound=gml_audio_voice_sound(audio,voice);
+    int sample_rate=44100;
+    (void)gml_audio_sound_format(audio,sound,NULL,&sample_rate,NULL);
+    gml_audio_sound_pitch(audio,voice,N(args,count,1)/(double)sample_rate);
+    return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_FREQUENCY){
+    int voice=(int)N(args,count,0),sound=gml_audio_voice_sound(audio,voice);
+    int sample_rate=44100;
+    (void)gml_audio_sound_format(audio,sound,NULL,&sample_rate,NULL);
+    return vreal(gml_audio_sound_get_pitch(audio,voice)*(double)sample_rate);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_GET_POSITION){
+    int voice=(int)N(args,count,0);
+    int sound=gml_audio_voice_sound(audio,voice);
+    double length=gml_audio_sound_length(audio,sound);
+    return vreal(length>0.0?gml_audio_sound_get_track_position(audio,voice)/length:0.0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_SOUND_LENGTH){
+    int sound=gml_audio_voice_sound(audio,(int)N(args,count,0));
+    return vreal(gml_audio_sound_length(audio,sound)*1000.0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_GROUP_GET_VOLUME)
+    return vreal(gml_audio_group_get_gain(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_MASTER_VOLUME){
+    gml_audio_set_master_gain(audio,N(args,count,0)); return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_LENGTH)
+    return vreal(gml_audio_sound_length(audio,(int)N(args,count,0))*1000.0);
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_MAX_VOLUME)
+    return vreal(gml_audio_sound_get_gain(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_SOUND_READY)
+    return vreal(gml_audio_exists(audio,(int)N(args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_INSTANCE_POSITION_3D){
+    double dx=N(args,count,1)-vm->builtins->listener_x;
+    double dy=N(args,count,2)-vm->builtins->listener_y;
+    double distance=sqrt(dx*dx+dy*dy);
+    gml_audio_voice_spatial(audio,(int)N(args,count,0),1.0,
+                            distance>0.0?dx/distance:0.0);
+    return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_LISTENER_POSITION_3D){
+    vm->builtins->listener_x=N(args,count,1);
+    vm->builtins->listener_y=N(args,count,2);
+    vm->builtins->listener_z=N(args,count,3);
+    return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_LAST_ERROR) return vreal(0);
+  if(operation==GML_EXTERNAL_AUDIO_FMOD_UPDATE ||
+     operation==GML_EXTERNAL_AUDIO_FMOD_NOOP) return vreal(1);
+  return vreal(1);
+}
+
+static GmlVal external_pxtone_call(GmlVM *vm,int operation,GmlVal *args,int count){
+  GmlAudio *audio=vm?(GmlAudio*)vm->audio:NULL;
+  if(!audio) return vreal(0);
+  if(operation==GML_EXTERNAL_AUDIO_PXTONE_INIT) return vreal(1);
+  if(operation==GML_EXTERNAL_AUDIO_PXTONE_LOAD)
+    return vreal(external_pxtone_load(vm,S(vm,args,count,0))>=0);
+  int sound=external_pxtone_current(vm);
+  if(operation==GML_EXTERNAL_AUDIO_PXTONE_SHUTDOWN ||
+     operation==GML_EXTERNAL_AUDIO_PXTONE_RELEASE){
+    if(sound>=0) external_audio_free(vm,sound);
+    return vreal(1);
+  }
+  if(sound<0) return vreal(0);
+  if(operation==GML_EXTERNAL_AUDIO_PXTONE_PLAY){
+    int loop=N(args,count,2)!=0.0;
+    gml_audio_sound_set_default_loop(audio,sound,loop);
+    gml_audio_sound_gain(audio,sound,1.0);
+    gml_audio_sound_set_track_position(audio,sound,0.0);
+    return vreal(gml_audio_play(audio,sound,loop)>=0);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_PXTONE_VOLUME){
+    double volume=N(args,count,0);
+    if(volume<0.0) volume=0.0; else if(volume>1.0) volume=1.0;
+    gml_audio_sound_gain(audio,sound,volume); return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_PXTONE_FADE){
+    int milliseconds=(int)N(args,count,0);
+    gml_audio_sound_gain_fade(audio,sound,0.0,milliseconds); return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_PXTONE_LOOP){
+    gml_audio_sound_set_default_loop(audio,sound,N(args,count,0)!=0.0); return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_AUDIO_PXTONE_STOP){
+    gml_audio_stop(audio,sound); return vreal(1);
+  }
+  return vreal(1);
+}
+
 GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
                                    GmlVal *args,int count,int *handled){
   if(handled) *handled=0;
@@ -490,6 +950,15 @@ GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
   if(operation>=GML_EXTERNAL_AUDIO_SA_OPEN &&
      operation<=GML_EXTERNAL_AUDIO_SA_CLOSE_ALL)
     return external_saudio_call(vm,operation,args,count);
+  if(operation>=GML_EXTERNAL_AUDIO_BGM_INIT &&
+     operation<=GML_EXTERNAL_AUDIO_BGM_NOOP)
+    return external_bgm_call(vm,operation,args,count);
+  if(operation>=GML_EXTERNAL_AUDIO_FMOD_INIT &&
+     operation<=GML_EXTERNAL_AUDIO_FMOD_NOOP)
+    return external_fmod_call(vm,operation,args,count);
+  if(operation>=GML_EXTERNAL_AUDIO_PXTONE_INIT &&
+     operation<=GML_EXTERNAL_AUDIO_PXTONE_SHUTDOWN)
+    return external_pxtone_call(vm,operation,args,count);
   if(operation==GML_EXTERNAL_AUDIO_INIT) return vreal(1);
   if(operation==GML_EXTERNAL_AUDIO_FREE){
     external_audio_free_all(vm);

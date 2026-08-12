@@ -68,6 +68,13 @@ static int expect_real(const char *case_name,GmlVal actual,double expected){
   return 0;
 }
 
+static int expect_string(const char *case_name,GmlVal actual,const char *expected){
+  if(actual.t==V_STR && actual.s && !strcmp(actual.s,expected)) return 1;
+  fprintf(stderr,"%s: expected string \"%s\", got type=%d value=\"%s\"\n",
+          case_name,expected,actual.t,actual.s?actual.s:"");
+  return 0;
+}
+
 static GmlVal call_fast(GmlVM *vm,const char *name,
                         GmlVal *arguments,int count,int *ok){
   int id=gml_builtin_fast_id(vm,name);
@@ -460,11 +467,41 @@ static int external_audio_definition_dispatch(GmlVM *vm){
   GmlVal unknown_definition[]={
     vstr("neutral.dll"),vstr("sga_Init"),vreal(0),vreal(0),vreal(0)
   };
+  GmlVal bgm_definition[]={
+    vstr("bgm.dll"),vstr("bgm_init"),vreal(0),vreal(0),vreal(0)
+  };
+  GmlVal fmod_definition[]={
+    vstr("GMFMODSimple.dll"),vstr("FMODinit"),vreal(0),vreal(0),vreal(0)
+  };
+  GmlVal pxtone_definition[]={
+    vstr("pxwrap.dll"),vstr("pxtone_init"),vreal(0),vreal(0),vreal(0)
+  };
+  GmlVal input_definition[]={
+    vstr("GMXInput.dll"),vstr("getCtrlState"),vreal(0),vreal(0),vreal(0)
+  };
+  GmlVal steam_definition[]={
+    vstr("gmSteam.dll"),vstr("SteamSetAchievement"),vreal(0),vreal(0),vreal(0)
+  };
+  GmlVal steam_string_definition[]={
+    vstr("Steamworks.dll"),vstr("SteamGetPersonaName"),vreal(0),vreal(0),vreal(0)
+  };
   GmlVal handle=gml_builtin_call(vm,"external_define",definition,5);
+  GmlVal bgm_handle=gml_builtin_call(vm,"external_define",bgm_definition,5);
+  GmlVal fmod_handle=gml_builtin_call(vm,"external_define",fmod_definition,5);
+  GmlVal pxtone_handle=gml_builtin_call(vm,"external_define",pxtone_definition,5);
+  GmlVal input_handle=gml_builtin_call(vm,"external_define",input_definition,5);
+  GmlVal steam_handle=gml_builtin_call(vm,"external_define",steam_definition,5);
+  GmlVal steam_string_handle=gml_builtin_call(
+      vm,"external_define",steam_string_definition,5);
   GmlVal unknown=gml_builtin_call(
       vm,"external_define",unknown_definition,5);
   GmlVal call_args[]={handle};
   GmlVal initialized=gml_builtin_call(vm,"external_call",call_args,1);
+  GmlVal steam_args[]={steam_handle};
+  GmlVal steam_result=gml_builtin_call(vm,"external_call",steam_args,1);
+  GmlVal steam_string_args[]={steam_string_handle};
+  GmlVal steam_string_result=gml_builtin_call(
+      vm,"external_call",steam_string_args,1);
   GmlVal encoded_initialized=gml_builtin_call(vm,
       "__anygm_external_5347417564696f2e646c6c_7367615f496e6974",NULL,0);
   GmlVal malformed_encoded=gml_builtin_call(vm,
@@ -489,8 +526,16 @@ static int external_audio_definition_dispatch(GmlVM *vm){
   GmlVal library=vstr("SGAudio.dll");
   GmlVal freed=gml_builtin_call(vm,"external_free",&library,1);
   int ok=oversized_name && handle.t==V_REAL && handle.d>0.0 &&
+         bgm_handle.t==V_REAL && bgm_handle.d>0.0 &&
+         fmod_handle.t==V_REAL && fmod_handle.d>0.0 &&
+         pxtone_handle.t==V_REAL && pxtone_handle.d>0.0 &&
+         input_handle.t==V_REAL && input_handle.d>0.0 &&
+         steam_handle.t==V_REAL && steam_handle.d>0.0 &&
+         steam_string_handle.t==V_REAL && steam_string_handle.d>0.0 &&
          expect_real("unknown external library",unknown,0) &&
          expect_real("portable external audio init",initialized,1) &&
+         expect_real("offline Steam real no-op",steam_result,0) &&
+         expect_string("offline Steam string no-op",steam_string_result,"") &&
          expect_real("encoded portable external audio init",encoded_initialized,1) &&
          expect_real("malformed encoded external call",malformed_encoded,0) &&
          expect_real("oversized encoded external call",oversized_encoded,0) &&

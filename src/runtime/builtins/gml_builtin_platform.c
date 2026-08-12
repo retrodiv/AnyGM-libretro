@@ -13,7 +13,83 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The documented os_is_network_connected operation reports host connectivity independently of whether a
+enum {
+  GML_EXTERNAL_NOOP_HANDLE_BASE=0x4A300000,
+  GML_EXTERNAL_NOOP_REAL=1,
+  GML_EXTERNAL_NOOP_STRING=2
+};
+
+static int external_hex_value(unsigned char value){
+  if(value>='0' && value<='9') return value-'0';
+  if(value>='a' && value<='f') return value-'a'+10;
+  if(value>='A' && value<='F') return value-'A'+10;
+  return -1;
+}
+
+static char *external_hex_decode(const char *encoded,size_t size){
+  enum { EXTERNAL_NAME_MAX=4096 };
+  if(!encoded || !size || (size&1u) || size/2u>EXTERNAL_NAME_MAX) return NULL;
+  char *decoded=(char*)malloc(size/2u+1u);
+  if(!decoded) return NULL;
+  for(size_t i=0;i<size;i+=2u){
+    int high=external_hex_value((unsigned char)encoded[i]);
+    int low=external_hex_value((unsigned char)encoded[i+1u]);
+    if(high<0 || low<0 || (high==0 && low==0)){ free(decoded); return NULL; }
+    decoded[i/2u]=(char)((high<<4)|low);
+  }
+  decoded[size/2u]='\0';
+  return decoded;
+}
+
+static int external_noop_string_symbol(const char *symbol){
+  return symbol && (
+    strstr(symbol,"Name") || strstr(symbol,"Error") || strstr(symbol,"Data") ||
+    strstr(symbol,"String"));
+}
+
+int builtin_external_define(const char *library,const char *symbol){
+  int handle=builtin_external_audio_define(library,symbol);
+  if(handle) return handle;
+  handle=builtin_external_input_define(library,symbol);
+  if(handle) return handle;
+  if(anygm_external_library_policy(library)==ANYGM_EXTERNAL_LIBRARY_NOOP)
+    return GML_EXTERNAL_NOOP_HANDLE_BASE+
+      (external_noop_string_symbol(symbol)?GML_EXTERNAL_NOOP_STRING:GML_EXTERNAL_NOOP_REAL);
+  return 0;
+}
+
+GmlVal builtin_external_call(GmlVM *vm,int handle,
+                             GmlVal *args,int count,int *handled){
+  GmlVal result=builtin_external_audio_call(vm,handle,args,count,handled);
+  if(handled && *handled) return result;
+  result=builtin_external_input_call(vm,handle,args,count,handled);
+  if(handled && *handled) return result;
+  int operation=handle-GML_EXTERNAL_NOOP_HANDLE_BASE;
+  if(operation==GML_EXTERNAL_NOOP_REAL || operation==GML_EXTERNAL_NOOP_STRING){
+    if(handled) *handled=1;
+    return operation==GML_EXTERNAL_NOOP_STRING?vstr(""):vreal(0);
+  }
+  if(handled) *handled=0;
+  return vreal(0);
+}
+
+GmlVal builtin_external_call_encoded(GmlVM *vm,const char *name,
+                                     GmlVal *args,int count,int *handled){
+  static const char prefix[]="__anygm_external_";
+  if(handled) *handled=0;
+  if(!name || strncmp(name,prefix,sizeof(prefix)-1u)) return vreal(0);
+  const char *library_hex=name+sizeof(prefix)-1u;
+  const char *separator=strchr(library_hex,'_');
+  if(!separator || separator==library_hex || !separator[1]) return vreal(0);
+  char *library=external_hex_decode(library_hex,(size_t)(separator-library_hex));
+  char *symbol=external_hex_decode(separator+1u,strlen(separator+1u));
+  int handle=(library&&symbol)?builtin_external_define(library,symbol):0;
+  free(library); free(symbol);
+  if(!handle) return vreal(0);
+  return builtin_external_call(vm,handle,args,count,handled);
+}
+
+/* GameMaker's os_is_network_connected reports host connectivity, independently of whether a
  * platform service such as Steam is initialised. Host has no environment callback for this,
  * so inspect the host without sending traffic. The explicit override is useful to hosts that
  * deliberately sandbox networking and also makes the offline state reproducible in tests. */
@@ -383,11 +459,11 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
      !strcmp(nm,"network_connect")) return vreal(-1);
   if(!strcmp(nm,"network_send_packet")||!strcmp(nm,"network_destroy")) return vreal(0);
   if(!strcmp(nm,"external_define"))
-    return vreal(builtin_external_audio_define(
+    return vreal(builtin_external_define(
         S(vm,a,n,0),S(vm,a,n,1)));
   if(!strcmp(nm,"external_call")){
     int handled=0;
-    GmlVal result=builtin_external_audio_call(
+    GmlVal result=builtin_external_call(
         vm,(int)N(a,n,0),n>1?a+1:NULL,n>1?n-1:0,&handled);
     return handled?result:vreal(0);
   }

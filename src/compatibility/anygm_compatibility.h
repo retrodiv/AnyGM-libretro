@@ -51,6 +51,18 @@ typedef enum AnygmBlendPolicy {
   ANYGM_BLEND_STUDIO_SECOND=3
 } AnygmBlendPolicy;
 
+/* Some supported content references native extension libraries. AnyGM never loads native code;
+ * this policy names the portable replacement contract used by the runtime.
+ * PORTABLE libraries have a functional adapter, NOOP libraries intentionally expose an offline
+ * API, DEPENDENCY libraries are native implementation details of one of those adapters, and KEEP
+ * means that no generic replacement is claimed. */
+typedef enum AnygmExternalLibraryPolicy {
+  ANYGM_EXTERNAL_LIBRARY_KEEP=0,
+  ANYGM_EXTERNAL_LIBRARY_PORTABLE=1,
+  ANYGM_EXTERNAL_LIBRARY_NOOP=2,
+  ANYGM_EXTERNAL_LIBRARY_DEPENDENCY=3
+} AnygmExternalLibraryPolicy;
+
 typedef struct AnygmContentFacts {
   uint32_t schema_version;
   uint32_t classic_revision;
@@ -100,6 +112,8 @@ int anygm_content_facts_detect(const GmlWin *content,AnygmContentFacts *facts,
 int anygm_compatibility_resolve(const AnygmContentFacts *facts,
                                 AnygmCompatibilityProfile *profile,
                                 char *error,size_t error_size);
+AnygmExternalLibraryPolicy anygm_external_library_policy(const char *library);
+const char *anygm_external_library_policy_name(AnygmExternalLibraryPolicy policy);
 
 /* Tests for low-level runtime modules often construct a minimal GmlWin directly. These accessors
  * retain deterministic structural fallbacks for such fixtures; a loaded AnygmEngine always owns

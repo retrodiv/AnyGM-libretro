@@ -5,7 +5,115 @@
 #include "gml_builtin_internal.h"
 #include "gml_render.h"
 
+#include <ctype.h>
+#include <math.h>
 #include <string.h>
+
+enum {
+  GML_EXTERNAL_INPUT_HANDLE_BASE=0x4A200000,
+  GML_EXTERNAL_INPUT_RUMBLE=1,
+  GML_EXTERNAL_INPUT_LEFT_TRIGGER,
+  GML_EXTERNAL_INPUT_RIGHT_TRIGGER,
+  GML_EXTERNAL_INPUT_LEFT_X,
+  GML_EXTERNAL_INPUT_LEFT_Y,
+  GML_EXTERNAL_INPUT_RIGHT_X,
+  GML_EXTERNAL_INPUT_RIGHT_Y,
+  GML_EXTERNAL_INPUT_BUTTON_STATE,
+  GML_EXTERNAL_INPUT_CHECK_BUTTON,
+  GML_EXTERNAL_INPUT_CONTROLLER_STATE,
+  GML_EXTERNAL_INPUT_OPERATION_LIMIT
+};
+
+typedef struct { const char *name; int operation; } GmlExternalInputSymbol;
+static const GmlExternalInputSymbol external_input_symbols[]={
+  {"setRumble",GML_EXTERNAL_INPUT_RUMBLE},
+  {"leftTrigger",GML_EXTERNAL_INPUT_LEFT_TRIGGER},
+  {"rightTrigger",GML_EXTERNAL_INPUT_RIGHT_TRIGGER},
+  {"leftThumbX",GML_EXTERNAL_INPUT_LEFT_X},
+  {"leftThumbY",GML_EXTERNAL_INPUT_LEFT_Y},
+  {"rightThumbX",GML_EXTERNAL_INPUT_RIGHT_X},
+  {"rightThumbY",GML_EXTERNAL_INPUT_RIGHT_Y},
+  {"getButtonState",GML_EXTERNAL_INPUT_BUTTON_STATE},
+  {"checkButton",GML_EXTERNAL_INPUT_CHECK_BUTTON},
+  {"getCtrlState",GML_EXTERNAL_INPUT_CONTROLLER_STATE},
+};
+
+static int external_input_ascii_equal(const char *left,const char *right){
+  if(!left || !right) return 0;
+  while(*left && *right){
+    if(tolower((unsigned char)*left)!=tolower((unsigned char)*right)) return 0;
+    left++; right++;
+  }
+  return *left==0 && *right==0;
+}
+
+int builtin_external_input_define(const char *library,const char *symbol){
+  if(!library || !symbol) return 0;
+  const char *base=library;
+  for(const char *cursor=library;*cursor;cursor++)
+    if(*cursor=='/' || *cursor=='\\') base=cursor+1;
+  if(!external_input_ascii_equal(base,"GMXInput.dll")) return 0;
+  for(size_t i=0;i<sizeof(external_input_symbols)/sizeof(external_input_symbols[0]);i++)
+    if(!strcmp(symbol,external_input_symbols[i].name))
+      return GML_EXTERNAL_INPUT_HANDLE_BASE+external_input_symbols[i].operation;
+  return 0;
+}
+
+static int external_input_button_mask(GmlVM *vm){
+  int mask=0;
+  if(gml_input_gamepad(vm,32781,0)) mask|=0x0001;
+  if(gml_input_gamepad(vm,32782,0)) mask|=0x0002;
+  if(gml_input_gamepad(vm,32783,0)) mask|=0x0004;
+  if(gml_input_gamepad(vm,32784,0)) mask|=0x0008;
+  if(gml_input_gamepad(vm,32778,0)) mask|=0x0010;
+  if(gml_input_gamepad(vm,32777,0)) mask|=0x0020;
+  if(gml_input_gamepad(vm,32779,0)) mask|=0x0040;
+  if(gml_input_gamepad(vm,32780,0)) mask|=0x0080;
+  if(gml_input_gamepad(vm,32773,0)) mask|=0x0100;
+  if(gml_input_gamepad(vm,32774,0)) mask|=0x0200;
+  if(gml_input_gamepad(vm,32769,0)) mask|=0x1000;
+  if(gml_input_gamepad(vm,32770,0)) mask|=0x2000;
+  if(gml_input_gamepad(vm,32771,0)) mask|=0x4000;
+  if(gml_input_gamepad(vm,32772,0)) mask|=0x8000;
+  return mask;
+}
+
+GmlVal builtin_external_input_call(GmlVM *vm,int handle,
+                                   GmlVal *args,int count,int *handled){
+  if(handled) *handled=0;
+  int operation=handle-GML_EXTERNAL_INPUT_HANDLE_BASE;
+  if(operation<=0 || operation>=GML_EXTERNAL_INPUT_OPERATION_LIMIT) return vreal(0);
+  if(handled) *handled=1;
+  int device=(int)N(args,count,0);
+  if(operation==GML_EXTERNAL_INPUT_RUMBLE){
+    double low=N(args,count,1)/65535.0,high=N(args,count,2)/65535.0;
+    gml_input_gamepad_set_vibration(vm,device,low,high);
+    return vreal(1);
+  }
+  if(operation==GML_EXTERNAL_INPUT_CONTROLLER_STATE)
+    return vreal(gml_input_gamepad_connected(vm,device));
+  if(operation==GML_EXTERNAL_INPUT_BUTTON_STATE)
+    return vreal(gml_input_gamepad_connected(vm,device)?external_input_button_mask(vm):0);
+  if(operation==GML_EXTERNAL_INPUT_CHECK_BUTTON){
+    int requested=(int)N(args,count,1);
+    return vreal(gml_input_gamepad_connected(vm,device) &&
+                 (external_input_button_mask(vm)&requested)!=0);
+  }
+  if(operation==GML_EXTERNAL_INPUT_LEFT_TRIGGER ||
+     operation==GML_EXTERNAL_INPUT_RIGHT_TRIGGER){
+    int button=operation==GML_EXTERNAL_INPUT_LEFT_TRIGGER?32775:32776;
+    return vreal(gml_input_gamepad(vm,button,0)?255:0);
+  }
+  int axis=operation==GML_EXTERNAL_INPUT_LEFT_X?32785:
+    operation==GML_EXTERNAL_INPUT_LEFT_Y?32786:
+    operation==GML_EXTERNAL_INPUT_RIGHT_X?32787:32788;
+  double value=gml_input_gamepad_axis(vm,device,axis);
+  if(!isfinite(value)) value=0.0;
+  if(value<-1.0) value=-1.0; else if(value>1.0) value=1.0;
+  if(operation==GML_EXTERNAL_INPUT_LEFT_Y || operation==GML_EXTERNAL_INPUT_RIGHT_Y)
+    value=-value;
+  return vreal(value<0.0?value*32768.0:value*32767.0);
+}
 
 GmlVal gml_builtin_try_input(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;

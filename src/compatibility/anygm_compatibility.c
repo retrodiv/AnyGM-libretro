@@ -3,9 +3,55 @@
  */
 #include "anygm_compatibility.h"
 
+#include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+
+static int compatibility_ascii_equal(const char *left,const char *right){
+  if(!left || !right) return 0;
+  while(*left && *right){
+    if(tolower((unsigned char)*left)!=tolower((unsigned char)*right)) return 0;
+    left++; right++;
+  }
+  return *left==0 && *right==0;
+}
+
+AnygmExternalLibraryPolicy anygm_external_library_policy(const char *library){
+  if(!library || !*library) return ANYGM_EXTERNAL_LIBRARY_KEEP;
+  const char *base=library;
+  for(const char *cursor=library;*cursor;cursor++)
+    if(*cursor=='/' || *cursor=='\\') base=cursor+1;
+  static const char *const portable[]={
+    "SGAudio.dll","supersound.dll","saudio.dll","bgm.dll",
+    "GMFMODSimple.dll","GMXInput.dll","pxwrap.dll"
+  };
+  static const char *const noop[]={
+    "CleanMem.dll","gmSteam.dll","gmSteamInitOnly.dll","Steam.dll","Steamworks.dll"
+  };
+  static const char *const dependency[]={
+    "wrap_oal.dll","OpenAL32.dll","fmodex.dll","libvorbis.dll",
+    "libvorbisfile.dll","libogg.dll","bass.dll","pxtone.dll",
+    "steam_api.dll","steamclient.dll","tier0_s.dll","vstdlib_s.dll",
+    "cg.dll","cgGL.dll"
+  };
+  for(size_t i=0;i<sizeof(portable)/sizeof(portable[0]);i++)
+    if(compatibility_ascii_equal(base,portable[i])) return ANYGM_EXTERNAL_LIBRARY_PORTABLE;
+  for(size_t i=0;i<sizeof(noop)/sizeof(noop[0]);i++)
+    if(compatibility_ascii_equal(base,noop[i])) return ANYGM_EXTERNAL_LIBRARY_NOOP;
+  for(size_t i=0;i<sizeof(dependency)/sizeof(dependency[0]);i++)
+    if(compatibility_ascii_equal(base,dependency[i])) return ANYGM_EXTERNAL_LIBRARY_DEPENDENCY;
+  return ANYGM_EXTERNAL_LIBRARY_KEEP;
+}
+
+const char *anygm_external_library_policy_name(AnygmExternalLibraryPolicy policy){
+  switch(policy){
+    case ANYGM_EXTERNAL_LIBRARY_PORTABLE: return "portable";
+    case ANYGM_EXTERNAL_LIBRARY_NOOP: return "noop";
+    case ANYGM_EXTERNAL_LIBRARY_DEPENDENCY: return "dependency";
+    default: return "keep";
+  }
+}
 
 static void compatibility_error(char *error,size_t error_size,const char *format,...){
   if(!error || !error_size) return;

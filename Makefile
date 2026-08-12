@@ -46,6 +46,7 @@ LIBRETRO_CPPFLAGS := $(CPPFLAGS) $(addprefix -I,$(ANYGM_LIBRETRO_INCLUDE_DIRS))
 TEST_CPPFLAGS := $(CPPFLAGS) -Itests/support -Itests/unit/content/classic
 CFLAGS += -std=gnu11 -Wall -Wextra $(REPRODUCIBLE_CFLAGS)
 CXXFLAGS += -std=c++11 -Wall -Wextra $(REPRODUCIBLE_CFLAGS)
+CXXFLAGS += -fno-exceptions -fno-rtti -fcheck-new
 ifeq ($(DEBUG),1)
 CFLAGS += -O0 -g3
 else
@@ -80,11 +81,14 @@ CORE_PLATFORM_LDFLAGS := -dynamiclib
 CORE_SHARED_FLAG :=
 endif
 
-RUNTIME_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_RUNTIME_SOURCES))
+RUNTIME_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_RUNTIME_SOURCES)) \
+	$(patsubst %.cpp,$(BUILD_DIR)/obj/%.o,$(ANYGM_RUNTIME_CXX_SOURCES))
 CORE_RUNTIME_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_CORE_SOURCES))
 LIBRETRO_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_LIBRETRO_SOURCES))
 TEST_HOST_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_TEST_HOST_SOURCES))
 VENDORED_BZIP2_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/bzip2/%,$(RUNTIME_OBJECTS))
+VENDORED_PXTONE_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/pxtone/%,$(RUNTIME_OBJECTS))
+PXTONE_ADAPTER_OBJECT := $(BUILD_DIR)/obj/src/audio/codecs/gml_pxtone.o
 CORE_OBJECTS := $(RUNTIME_OBJECTS) $(LIBRETRO_OBJECTS)
 UNIT_RUNTIME_OBJECTS := $(filter-out $(CORE_RUNTIME_OBJECTS),$(RUNTIME_OBJECTS)) $(TEST_HOST_OBJECTS)
 RUNTIME_LIBRARY := $(BUILD_DIR)/libanygm_runtime.a
@@ -141,12 +145,22 @@ $(BUILD_DIR)/obj/%.o: %.c
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(PIC_FLAGS) -MMD -MP -c $< -o $@
 
+$(BUILD_DIR)/obj/%.o: %.cpp
+	mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(PIC_FLAGS) -MMD -MP -c $< -o $@
+
 $(LIBRETRO_OBJECTS): $(BUILD_DIR)/obj/%.o: %.c
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $(PIC_FLAGS) -MMD -MP -c $< -o $@
 
 # Keep warnings from imported bzip2 sources isolated without weakening diagnostics for owned code.
 $(VENDORED_BZIP2_OBJECTS): CFLAGS += -Wno-unused-parameter -Wno-implicit-fallthrough
+
+# Keep imported pxtone warnings isolated without weakening diagnostics for owned runtime code.
+# The adapter includes upstream headers, whose declarations trigger these two diagnostics, but
+# its own implementation remains covered by every other warning (and -Werror).
+$(VENDORED_PXTONE_OBJECTS): CXXFLAGS += -w
+$(PXTONE_ADAPTER_OBJECT): CXXFLAGS += -Wno-unused-parameter -Wno-extra
 
 $(TEST_DIR)/test_rng: tests/unit/runtime/test_rng.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)

@@ -28,10 +28,17 @@ int  gml_audio_warm_sound(GmlAudio *a, int snd);
  * are sound indices usable with the regular playback controls and are recycled after free. */
 int  gml_audio_add_ogg(GmlAudio *a, const uint8_t *ogg, int len);
 int  gml_audio_add_encoded(GmlAudio *a, const uint8_t *encoded, int len);
+int  gml_audio_add_pcm16(GmlAudio *a,const int16_t *pcm,uint32_t frames,
+                         int channels,int sample_rate,
+                         const uint8_t *identity,size_t identity_size);
 /* Rehydrate a dynamic handle from its exact bounded source bytes during canonical state restore.
  * The replacement is accepted only when the bytes match the state-owned SHA-256 identity. */
 int  gml_audio_restore_encoded(GmlAudio *a,int handle,const uint8_t *encoded,int len,
                                const uint8_t expected_sha256[32]);
+int  gml_audio_restore_pcm16(GmlAudio *a,int handle,const int16_t *pcm,uint32_t frames,
+                             int channels,int sample_rate,
+                             const uint8_t *identity,size_t identity_size,
+                             const uint8_t expected_sha256[32]);
 int  gml_audio_sound_content_hash(GmlAudio *a,int handle,uint8_t digest[32]);
 void gml_audio_caster_free(GmlAudio *a, int handle);
 void gml_audio_caster_free_all(GmlAudio *a);
@@ -42,6 +49,8 @@ void gml_audio_pause_sound(GmlAudio *a, int target, int paused);
 int  gml_audio_is_playing(GmlAudio *a, int snd);
 int  gml_audio_exists(GmlAudio *a, int target);       /* sound asset or live voice handle */
 int  gml_audio_voice_paused(GmlAudio *a, int snd);   /* 1 if a matching voice exists and is paused */
+int  gml_audio_voice_sound(GmlAudio *a, int voice);  /* sound index behind a live voice, or -1 */
+double gml_audio_voice_pan(GmlAudio *a,int voice);
 void gml_audio_set_master_gain(GmlAudio *a, double gain);
 double gml_audio_get_master_gain(GmlAudio *a);
 void gml_audio_group_gain(GmlAudio *a, int group, double gain, int milliseconds);
@@ -58,6 +67,7 @@ void gml_audio_sound_set_default_loop(GmlAudio *a, int sound, int loop);
 int  gml_audio_sound_get_default_loop(GmlAudio *a, int sound);
 void gml_audio_sound_set_external_type(GmlAudio *a, int sound, uint32_t type);
 uint32_t gml_audio_sound_get_external_type(GmlAudio *a, int sound);
+void gml_audio_sound_set_external_group(GmlAudio *a,int sound,int group);
 double gml_audio_sound_length(GmlAudio *a, int sound);
 int gml_audio_sound_format(GmlAudio *a,int sound,int *channels,
                            int *sample_rate,int *bytes_per_second);

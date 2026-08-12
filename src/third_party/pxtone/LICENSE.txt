@@ -1,0 +1,16 @@
+＜ライセンス的なこと＞
+
+    ・再生に必要な ソースコード(pxtoneフォルダ内)は無償で使えます。改変もOKです。
+    ・特に許可をとる必要はありません。
+    ・利用の明記についてはお任せします。
+    ・利用が原因で何か問題があった場合の責任は負いかねます。
+
+(Unofficial English translation; the Japanese text above is authoritative)
+
+<About licensing>
+
+    - The source code required for playback (inside the pxtone folder) may be
+      used free of charge. Modification is also permitted.
+    - No specific permission needs to be obtained.
+    - Whether and how you credit the use is left to you.
+    - The author cannot accept responsibility for any problems caused by use.
