@@ -790,7 +790,9 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
           GmlRenderTargetMetrics target=builtin_target_metrics(R);
           GmlRenderDrawState draw=builtin_draw_state(R);
           GmlPath *p=&vm->paths[pi];
-          double ox=absolute?0:N(a,n,1), oy=absolute?0:N(a,n,2);
+          /* Relative mode places the path's first point at the requested position rather than
+           * adding the position to every point. Subtract the first point to obtain the offset. */
+          double ox=absolute?0:N(a,n,1)-p->pts[0].x, oy=absolute?0:N(a,n,2)-p->pts[0].y;
           for(int k=1;k<p->n;k++)
             gml_render_primitive_line(R,(int)floor(draw_gui_x(R,p->pts[k-1].x+ox)-target.camera_x),(int)floor(draw_gui_y(R,p->pts[k-1].y+oy)-target.camera_y),
                              (int)floor(draw_gui_x(R,p->pts[k].x+ox)-target.camera_x),(int)floor(draw_gui_y(R,p->pts[k].y+oy)-target.camera_y),draw.color,1);
