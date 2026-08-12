@@ -69,6 +69,9 @@ void gml_audio_sound_set_external_type(GmlAudio *a, int sound, uint32_t type);
 uint32_t gml_audio_sound_get_external_type(GmlAudio *a, int sound);
 void gml_audio_sound_set_external_group(GmlAudio *a,int sound,int group);
 double gml_audio_sound_length(GmlAudio *a, int sound);
+/* Read-only view of a sound's decoded PCM, for analysis such as jbfmod's spectrum. Returns NULL
+ * when the sound holds no decoded samples. */
+const int16_t *gml_audio_sound_pcm16(GmlAudio *a,int sound,uint32_t *frames,int *channels);
 int gml_audio_sound_format(GmlAudio *a,int sound,int *channels,
                            int *sample_rate,int *bytes_per_second);
 void gml_audio_sound_set_track_position(GmlAudio *a, int target, double seconds);

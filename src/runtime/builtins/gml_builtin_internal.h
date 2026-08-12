@@ -192,6 +192,10 @@ struct GmlBuiltinState {
   GmlExternalAudioAsset *external_audio_assets;
   uint32_t external_audio_asset_count,external_audio_asset_capacity;
   void *wwise;
+  /* jbfmod.dll runtime cache: parsed modules and slot bookkeeping. Serialized state lives in the
+   * external-audio asset records and jbfmod-prefixed Saudio entries; this cache is rebuilt lazily
+   * after a state load, so it carries nothing a restore could not re-derive. */
+  void *jbfmod;
 };
 
 struct GmlRender;
@@ -319,6 +323,7 @@ const uint8_t *builtin_wwise_bank_digest(const GmlBuiltinState *state,uint32_t i
 int builtin_wwise_state_restore(GmlBuiltinState *state,const char *base,
                                 const char *const *paths,const uint8_t digests[][32],
                                 uint32_t count);
+void builtin_jbfmod_state_free(GmlBuiltinState *state);
 int builtin_external_audio_restore(GmlVM *vm,const char *relative,int sound,
                                    const uint8_t expected_sha256[32]);
 GmlRenderDrawState builtin_draw_state(const GmlRender *render);

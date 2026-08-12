@@ -351,6 +351,7 @@ void gml_builtin_state_reset(GmlBuiltinState *state){
   builtin_state_saudio_clear(state);
   builtin_state_external_audio_clear(state);
   builtin_wwise_state_free(state);
+  builtin_jbfmod_state_free(state);
   builtin_state_physics_reset(state);
   file_find_reset(state);
   memset(state->gamepad_deadzone,0,sizeof(state->gamepad_deadzone));

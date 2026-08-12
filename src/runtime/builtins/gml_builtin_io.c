@@ -3,6 +3,7 @@
  */
 /* VFS-backed files, buffers, INI data, encoding, hashing, and ordered I/O dispatch. */
 #include "gml_builtin_internal.h"
+#include "anygm_compatibility.h"
 #include "anygm_host.h"
 #include "anygm_vfs.h"
 #include "gml_image_codec.h"
@@ -15,6 +16,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#define strcasecmp _stricmp
+#else
+#include <strings.h>
+#endif
 
 static int wild_match(const char *pat, const char *s){
   if(*pat==0) return *s==0;
@@ -1262,7 +1268,7 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int ok=path && anygm_vfs_mkdirs(vm->host,path);
     free(path); return vreal(ok);
   }
-  if(!strcmp(nm,"directory_copy_ns")){
+  if(!strcmp(nm,"directory_copy_ns")||!strcmp(nm,"directory_copy")){
     char *src=extension_read_path(vm,S(vm,a,n,0));
     char *dst=extension_write_path(vm,S(vm,a,n,1));
     ExtensionDirectoryBudget budget={0};
@@ -1277,7 +1283,8 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     free(path); return vreal(ok);
   }
   if(!strcmp(nm,"file_move_ns")||!strcmp(nm,"file_rename_ns")||
-     !strcmp(nm,"directory_move_ns")||!strcmp(nm,"directory_rename_ns")){
+     !strcmp(nm,"directory_move_ns")||!strcmp(nm,"directory_rename_ns")||
+     !strcmp(nm,"directory_rename")){
     char *src=extension_write_path(vm,S(vm,a,n,0));
     char *dst=extension_write_path(vm,S(vm,a,n,1));
     int ok=src&&dst&&vm->host&&vm->host->path_rename&&
@@ -1296,6 +1303,13 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"file_exists")||!strcmp(nm,"FS_file_exists")){ char *path=resolve_read_path(vm,S(vm,a,n,0));
     AnygmFileInfo info; int ok=path && anygm_vfs_stat(vm->host,path,&info) &&
       (info.flags&ANYGM_FILE_INFO_REGULAR)!=0;
+    /* The portable runtime reports covered virtual DLL interfaces as available even when the
+     * package omits native bytes. Uncovered libraries keep the filesystem result. */
+    if(!ok){
+      const char *raw=S(vm,a,n,0); size_t len=raw?strlen(raw):0;
+      if(len>4 && !strcasecmp(raw+len-4,".dll") &&
+         anygm_external_library_policy(raw)!=ANYGM_EXTERNAL_LIBRARY_KEEP) ok=1;
+    }
     if(builtin_setting(vm,"GML_LOG_IO"))
       anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,
                       "[io] file_exists raw=%s resolved=%s result=%d\n",
@@ -1318,6 +1332,71 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     char *src=resolve_read_path(vm,S(vm,a,n,0)); char *dst=resolve_write_path(vm,S(vm,a,n,1));
     int ok=copy_file_path(vm,src,dst);
     free(src); free(dst); return vreal(ok); }
+  /* libfilesystem.dll names map to host-backed file operations and existing aliases.
+   * Program-directory queries return an empty string to keep paths inside the sandbox.
+   * Directory listings are sorted and newline-separated; that separator is a chosen policy,
+   * not a verified compatibility observation. */
+  if(!strcmp(nm,"directory_contents")||!strcmp(nm,"directory_contents_ext")){
+    GmlBuiltinState *state=builtin_state_ensure(vm);
+    if(!state) return vstr("");
+    char *dir=extension_read_path(vm,S(vm,a,n,0));
+    const char *mask=n>=2?S(vm,a,n,1):"*";
+    if(!mask || !mask[0]) mask="*";
+    int include_directories=!strcmp(nm,"directory_contents") || N(a,n,2)!=0.0;
+    char *names[GML_FF_MAX]; int name_count=0;
+    void *directory=dir && vm->host && vm->host->directory_open?
+      vm->host->directory_open(vm->host->userdata,dir):NULL;
+    if(directory){
+      AnygmDirectoryEntry entry={.struct_size=sizeof entry};
+      while(name_count<GML_FF_MAX &&
+            vm->host->directory_read(vm->host->userdata,directory,&entry)==ANYGM_OK){
+        int is_directory=(entry.flags&ANYGM_FILE_INFO_DIRECTORY)!=0;
+        if(entry.name[0]=='.' ||
+           (is_directory && !include_directories) ||
+           !wild_match(mask,entry.name)){ entry.struct_size=sizeof entry; continue; }
+        names[name_count++]=strdup(entry.name);
+        entry.struct_size=sizeof entry;
+      }
+      if(vm->host->directory_close) vm->host->directory_close(vm->host->userdata,directory);
+    }
+    free(dir);
+    for(int i=0;i<name_count;i++) for(int j=i+1;j<name_count;j++)
+      if(names[j] && names[i] && strcmp(names[j],names[i])<0){
+        char *swap=names[i]; names[i]=names[j]; names[j]=swap;
+      }
+    size_t joined_size=1;
+    for(int i=0;i<name_count;i++) joined_size+=names[i]?strlen(names[i])+1:0;
+    char *joined=(char*)malloc(joined_size);
+    size_t at=0;
+    for(int i=0;i<name_count && joined;i++){
+      if(!names[i]) continue;
+      size_t len=strlen(names[i]);
+      if(at){ joined[at++]='\n'; }
+      memcpy(joined+at,names[i],len); at+=len;
+    }
+    if(joined) joined[at]=0;
+    for(int i=0;i<name_count;i++) free(names[i]);
+    return joined?vstr_owned(joined):vstr("");
+  }
+  if(!strcmp(nm,"filename_absolute")){
+    char *path=resolve_read_path(vm,S(vm,a,n,0));
+    return path?vstr_owned(path):vstr("");
+  }
+  if(!strcmp(nm,"environment_set_variable"))
+    /* The portable core never mutates its host's environment; reads keep answering from the
+     * explicit settings the frontend passed in. */
+    return vreal(0);
+  if(!strcmp(nm,"get_working_directory")||!strcmp(nm,"get_program_directory")||
+     !strcmp(nm,"get_program_pathname")||!strcmp(nm,"get_temp_directory"))
+    return vstr("");
+  if(!strcmp(nm,"get_program_filename")){
+    const char *content=vm && vm->parameter_executable?vm->parameter_executable:"";
+    const char *base=content;
+    for(const char *cursor=content;*cursor;cursor++)
+      if(*cursor=='/'||*cursor=='\\') base=cursor+1;
+    return vstr_owned(strdup(base));
+  }
+  if(!strcmp(nm,"set_working_directory")) return vreal(1);
   /* file_find_first/next/close scans a directory with a glob mask. Names are returned without the
    * directory, matching GM behavior, and an empty string marks the end. */
   if(!strcmp(nm,"file_find_first")){

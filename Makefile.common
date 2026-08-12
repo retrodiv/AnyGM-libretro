@@ -200,6 +200,7 @@ ANYGM_RUNTIME_SOURCES := \
 	src/runtime/particles/gml_particle.c \
 	src/audio/mixer/gml_audio.c \
 	src/audio/codecs/gml_mp3.c \
+	src/audio/codecs/gml_tracker.c \
 	src/audio/banks/gml_fmod.c \
 	src/third_party/ww2ogg/crc.c \
 	$(ANYGM_BZIP2_SOURCES) \

@@ -6,6 +6,7 @@
 #include "gml_render.h"
 #include "gml_audio.h"
 #include "gml_pxtone.h"
+#include "gml_tracker.h"
 #include "gml_wwise.h"
 #include "gml_hash.h"
 #include "anygm_host.h"
@@ -464,6 +465,56 @@ enum {
   GML_EXTERNAL_AUDIO_PXTONE_STOP,
   GML_EXTERNAL_AUDIO_PXTONE_RELEASE,
   GML_EXTERNAL_AUDIO_PXTONE_SHUTDOWN,
+  /* Tracker-music extension operations. A single spectrum operation accepts either a band
+   * argument or a two-argument mean request. */
+  GML_EXTERNAL_AUDIO_JB_INIT,
+  GML_EXTERNAL_AUDIO_JB_CLOSE,
+  GML_EXTERNAL_AUDIO_JB_LOAD_SONG,
+  GML_EXTERNAL_AUDIO_JB_LOAD_SONG_PACK,
+  GML_EXTERNAL_AUDIO_JB_PLAY_SONG,
+  GML_EXTERNAL_AUDIO_JB_STOP_SONG,
+  GML_EXTERNAL_AUDIO_JB_SET_LOOPING,
+  GML_EXTERNAL_AUDIO_JB_SET_MASTER_VOLUME,
+  GML_EXTERNAL_AUDIO_JB_GET_MASTER_VOLUME,
+  GML_EXTERNAL_AUDIO_JB_SET_ORDER,
+  GML_EXTERNAL_AUDIO_JB_SET_PAN_SEPARATION,
+  GML_EXTERNAL_AUDIO_JB_SET_PAUSED,
+  GML_EXTERNAL_AUDIO_JB_GET_PAUSED,
+  GML_EXTERNAL_AUDIO_JB_IS_PLAYING,
+  GML_EXTERNAL_AUDIO_JB_IS_FINISHED,
+  GML_EXTERNAL_AUDIO_JB_GET_ORDER,
+  GML_EXTERNAL_AUDIO_JB_GET_PATTERN,
+  GML_EXTERNAL_AUDIO_JB_GET_PATTERN_LENGTH,
+  GML_EXTERNAL_AUDIO_JB_GET_ROW,
+  GML_EXTERNAL_AUDIO_JB_GET_SPEED,
+  GML_EXTERNAL_AUDIO_JB_GET_BPM,
+  GML_EXTERNAL_AUDIO_JB_GET_TIME,
+  GML_EXTERNAL_AUDIO_JB_GET_TIME_FORMAT,
+  GML_EXTERNAL_AUDIO_JB_GET_CURRENT_SONG,
+  GML_EXTERNAL_AUDIO_JB_GET_SONG_EXISTS,
+  GML_EXTERNAL_AUDIO_JB_GET_NAME,
+  GML_EXTERNAL_AUDIO_JB_GET_TYPE,
+  GML_EXTERNAL_AUDIO_JB_GET_NUM_CHANNELS,
+  GML_EXTERNAL_AUDIO_JB_GET_NUM_INSTRUMENTS,
+  GML_EXTERNAL_AUDIO_JB_GET_NUM_ORDERS,
+  GML_EXTERNAL_AUDIO_JB_GET_NUM_PATTERNS,
+  GML_EXTERNAL_AUDIO_JB_GET_NUM_SAMPLES,
+  GML_EXTERNAL_AUDIO_JB_GET_CHANNELS_PLAYING,
+  GML_EXTERNAL_AUDIO_JB_GET_CPU_USAGE,
+  GML_EXTERNAL_AUDIO_JB_GET_FREQUENCY,
+  GML_EXTERNAL_AUDIO_JB_GET_ERROR_CODE,
+  GML_EXTERNAL_AUDIO_JB_GET_ERROR_MESSAGE,
+  GML_EXTERNAL_AUDIO_JB_GET_JB_INFO,
+  GML_EXTERNAL_AUDIO_JB_GET_PACK_INFO,
+  GML_EXTERNAL_AUDIO_JB_GET_INSTRUMENT_PLAYED,
+  GML_EXTERNAL_AUDIO_JB_GET_INSTRUMENT_PLAYED_ONCE,
+  GML_EXTERNAL_AUDIO_JB_GET_ZXX,
+  GML_EXTERNAL_AUDIO_JB_GET_ZXX_ONCE,
+  GML_EXTERNAL_AUDIO_JB_GET_ZXX_PLAYED,
+  GML_EXTERNAL_AUDIO_JB_GET_ZXX_PLAYED_ONCE,
+  GML_EXTERNAL_AUDIO_JB_INIT_SPECTRUM,
+  GML_EXTERNAL_AUDIO_JB_CLOSE_SPECTRUM,
+  GML_EXTERNAL_AUDIO_JB_GET_SPECTRUM,
   GML_EXTERNAL_AUDIO_OPERATION_LIMIT
 };
 typedef struct {
@@ -635,6 +686,59 @@ static int external_ascii_equal(const char *left,const char *right){
   }
   return *left==0 && *right==0;
 }
+/* jbfmod.dll extension symbols. Spectrum requests share one operation, with argument count
+ * distinguishing the band and mean forms. */
+static const GmlExternalAudioSymbol external_jbfmod_symbols[]={
+  {"Init",GML_EXTERNAL_AUDIO_JB_INIT},
+  {"Close",GML_EXTERNAL_AUDIO_JB_CLOSE},
+  {"LoadSong",GML_EXTERNAL_AUDIO_JB_LOAD_SONG},
+  {"LoadSongPack",GML_EXTERNAL_AUDIO_JB_LOAD_SONG_PACK},
+  {"PlaySong",GML_EXTERNAL_AUDIO_JB_PLAY_SONG},
+  {"StopSong",GML_EXTERNAL_AUDIO_JB_STOP_SONG},
+  {"SetLooping",GML_EXTERNAL_AUDIO_JB_SET_LOOPING},
+  {"SetMasterVolume",GML_EXTERNAL_AUDIO_JB_SET_MASTER_VOLUME},
+  {"GetMasterVolume",GML_EXTERNAL_AUDIO_JB_GET_MASTER_VOLUME},
+  {"SetOrder",GML_EXTERNAL_AUDIO_JB_SET_ORDER},
+  {"SetPanSeperation",GML_EXTERNAL_AUDIO_JB_SET_PAN_SEPARATION},
+  {"SetPaused",GML_EXTERNAL_AUDIO_JB_SET_PAUSED},
+  {"GetPaused",GML_EXTERNAL_AUDIO_JB_GET_PAUSED},
+  {"IsPlaying",GML_EXTERNAL_AUDIO_JB_IS_PLAYING},
+  {"IsFinished",GML_EXTERNAL_AUDIO_JB_IS_FINISHED},
+  {"GetOrder",GML_EXTERNAL_AUDIO_JB_GET_ORDER},
+  {"GetPattern",GML_EXTERNAL_AUDIO_JB_GET_PATTERN},
+  {"GetPatternLength",GML_EXTERNAL_AUDIO_JB_GET_PATTERN_LENGTH},
+  {"GetRow",GML_EXTERNAL_AUDIO_JB_GET_ROW},
+  {"GetSpeed",GML_EXTERNAL_AUDIO_JB_GET_SPEED},
+  {"GetBPM",GML_EXTERNAL_AUDIO_JB_GET_BPM},
+  {"GetTime",GML_EXTERNAL_AUDIO_JB_GET_TIME},
+  {"GetTimeFormat",GML_EXTERNAL_AUDIO_JB_GET_TIME_FORMAT},
+  {"GetCurrentSong",GML_EXTERNAL_AUDIO_JB_GET_CURRENT_SONG},
+  {"GetSongExists",GML_EXTERNAL_AUDIO_JB_GET_SONG_EXISTS},
+  {"GetName",GML_EXTERNAL_AUDIO_JB_GET_NAME},
+  {"GetType",GML_EXTERNAL_AUDIO_JB_GET_TYPE},
+  {"GetNumChannels",GML_EXTERNAL_AUDIO_JB_GET_NUM_CHANNELS},
+  {"GetNumInstruments",GML_EXTERNAL_AUDIO_JB_GET_NUM_INSTRUMENTS},
+  {"GetNumOrders",GML_EXTERNAL_AUDIO_JB_GET_NUM_ORDERS},
+  {"GetNumPatterns",GML_EXTERNAL_AUDIO_JB_GET_NUM_PATTERNS},
+  {"GetNumSamples",GML_EXTERNAL_AUDIO_JB_GET_NUM_SAMPLES},
+  {"GetChannelsPlaying",GML_EXTERNAL_AUDIO_JB_GET_CHANNELS_PLAYING},
+  {"GetCPUUsage",GML_EXTERNAL_AUDIO_JB_GET_CPU_USAGE},
+  {"GetFrequency",GML_EXTERNAL_AUDIO_JB_GET_FREQUENCY},
+  {"GetErrorCode",GML_EXTERNAL_AUDIO_JB_GET_ERROR_CODE},
+  {"GetErrorMessage",GML_EXTERNAL_AUDIO_JB_GET_ERROR_MESSAGE},
+  {"GetJBInfo",GML_EXTERNAL_AUDIO_JB_GET_JB_INFO},
+  {"GetPackInfo",GML_EXTERNAL_AUDIO_JB_GET_PACK_INFO},
+  {"GetInstrumentPlayed",GML_EXTERNAL_AUDIO_JB_GET_INSTRUMENT_PLAYED},
+  {"GetInstrumentPlayedOnce",GML_EXTERNAL_AUDIO_JB_GET_INSTRUMENT_PLAYED_ONCE},
+  {"GetZxx",GML_EXTERNAL_AUDIO_JB_GET_ZXX},
+  {"GetZxxOnce",GML_EXTERNAL_AUDIO_JB_GET_ZXX_ONCE},
+  {"GetZxxPlayed",GML_EXTERNAL_AUDIO_JB_GET_ZXX_PLAYED},
+  {"GetZxxPlayedOnce",GML_EXTERNAL_AUDIO_JB_GET_ZXX_PLAYED_ONCE},
+  {"InitSpectrum",GML_EXTERNAL_AUDIO_JB_INIT_SPECTRUM},
+  {"CloseSpectrum",GML_EXTERNAL_AUDIO_JB_CLOSE_SPECTRUM},
+  {"GetSpectrum",GML_EXTERNAL_AUDIO_JB_GET_SPECTRUM},
+};
+
 int builtin_external_audio_define(const char *library,const char *symbol){
   if(!library || !symbol) return 0;
   const char *base=library;
@@ -660,6 +764,9 @@ int builtin_external_audio_define(const char *library,const char *symbol){
   } else if(external_ascii_equal(base,"pxwrap.dll")){
     table=external_pxtone_symbols;
     entries=sizeof(external_pxtone_symbols)/sizeof(external_pxtone_symbols[0]);
+  } else if(external_ascii_equal(base,"jbfmod.dll")){
+    table=external_jbfmod_symbols;
+    entries=sizeof(external_jbfmod_symbols)/sizeof(external_jbfmod_symbols[0]);
   }
   for(size_t index=0;table && index<entries;index++)
     if(!strcmp(symbol,table[index].symbol))
@@ -767,6 +874,8 @@ static int external_pxtone_load(GmlVM *vm,const char *relative){
   return sound;
 }
 
+static int external_tracker_path(const char *path);
+
 int builtin_external_audio_restore(GmlVM *vm,const char *relative,int sound,
                                    const uint8_t expected_sha256[32]){
   if(!vm || !vm->audio || !relative || !relative[0] || strlen(relative)>4096u ||
@@ -790,6 +899,22 @@ int builtin_external_audio_restore(GmlVM *vm,const char *relative,int sound,
                                         (double)loop_start/44100.0);
     }
     free(pcm);
+  }
+  if(!ok && encoded && size && external_tracker_path(relative)){
+    /* A tracker module restores the way it loaded: re-render the source bytes the state named.
+     * The render is deterministic, so the voice resumes over identical samples. */
+    GmlTrackerModule *module=gml_tracker_load(encoded,size,NULL,0);
+    if(module){
+      int16_t *pcm=NULL; uint32_t frames=0,loop_start=0;
+      if(gml_tracker_render(module,44100,128,&pcm,&frames,&loop_start)){
+        ok=gml_audio_restore_pcm16((GmlAudio*)vm->audio,sound,pcm,frames,2,44100,
+                                   encoded,size,expected_sha256);
+        if(ok) gml_audio_sound_loop_start((GmlAudio*)vm->audio,sound,
+                                          (double)loop_start/44100.0);
+      }
+      free(pcm);
+      gml_tracker_free(module);
+    }
   }
   free(encoded);
   free(path);
@@ -1207,6 +1332,369 @@ static GmlVal external_pxtone_call(GmlVM *vm,int operation,GmlVal *args,int coun
   return vreal(1);
 }
 
+
+/* ---------------------------------------------------------------- jbfmod.dll */
+
+/* Module playback rides the ordinary mixer exactly as pxtone does: LoadSong renders the module
+ * once at 44100 and registers the PCM as a dynamic sound whose identity is the source file's
+ * bytes, so savestates restore it by re-reading the module and re-rendering — both deterministic.
+ * Slot bookkeeping is persisted through jbfmod-prefixed Saudio entries, which already serialize;
+ * the in-memory cache below only holds what a restore can re-derive (the parsed module and its
+ * timeline), and is rebuilt lazily when a getter first asks after a state load. */
+enum { JB_SLOTS = 64, JB_SPECTRUM_BANDS = 512 };
+typedef struct {
+  GmlTrackerModule *module;
+  int sound;
+  uint32_t loop_frame;
+  uint32_t once_cursor[128];       /* GetInstrumentPlayedOnce per-instrument consumption */
+} JbSlot;
+typedef struct {
+  JbSlot slot[JB_SLOTS];
+  int current;
+  int master_volume;               /* 0..255 as the DLL takes */
+  int pan_separation;              /* 0..128; applies to renders made after it is set */
+  int looping;
+  int spectrum_on;
+  int error_code;
+  char error_message[96];
+} JbState;
+
+static int external_tracker_path(const char *path){
+  if(!path) return 0;
+  size_t size=strlen(path);
+  return (size>=4u && external_ascii_equal(path+size-4u,".mod")) ||
+         (size>=3u && external_ascii_equal(path+size-3u,".xm"));
+}
+
+static JbState *jbfmod_state(GmlVM *vm){
+  GmlBuiltinState *state=vm?builtin_state_ensure(vm):NULL;
+  if(!state) return NULL;
+  if(!state->jbfmod){
+    JbState *jb=(JbState*)calloc(1,sizeof *jb);
+    if(!jb) return NULL;
+    jb->current=-1;
+    jb->master_volume=255;
+    jb->pan_separation=128;
+    jb->looping=1;
+    for(int i=0;i<JB_SLOTS;i++) jb->slot[i].sound=-1;
+    state->jbfmod=jb;
+  }
+  return (JbState*)state->jbfmod;
+}
+
+void builtin_jbfmod_state_free(GmlBuiltinState *state){
+  if(!state || !state->jbfmod) return;
+  JbState *jb=(JbState*)state->jbfmod;
+  for(int i=0;i<JB_SLOTS;i++) gml_tracker_free(jb->slot[i].module);
+  free(jb);
+  state->jbfmod=NULL;
+}
+
+static void jb_error(JbState *jb,int code,const char *message){
+  if(!jb) return;
+  jb->error_code=code;
+  snprintf(jb->error_message,sizeof(jb->error_message),"%s",message?message:"");
+}
+
+static void jb_saudio_id(int slot,char out[24]){ snprintf(out,24,"jbfmod:%02d",slot); }
+
+static void jb_drop_slot(GmlVM *vm,JbState *jb,int slot){
+  JbSlot *s=&jb->slot[slot];
+  if(s->sound>=0) external_audio_free(vm,s->sound);
+  gml_tracker_free(s->module);
+  char id[24]; jb_saudio_id(slot,id);
+  builtin_state_saudio_remove(builtin_state_ensure(vm),id);
+  memset(s,0,sizeof *s);
+  s->sound=-1;
+  if(jb->current==slot) jb->current=-1;
+}
+
+static int jb_load_slot(GmlVM *vm,JbState *jb,int slot,const char *relative){
+  if(!vm || !relative || !*relative || strlen(relative)>4096u){
+    jb_error(jb,1,"bad song path"); return 0;
+  }
+  jb_drop_slot(vm,jb,slot);
+  char *path=resolve_read_path(vm,relative);
+  uint8_t *encoded=NULL; size_t size=0;
+  int16_t *pcm=NULL; uint32_t frames=0,loop_frame=0;
+  char reason[96]={0};
+  GmlTrackerModule *module=NULL;
+  int sound=-1;
+  if(path && anygm_vfs_read_all(vm->host,path,&encoded,&size,16u*1024u*1024u) && size)
+    module=gml_tracker_load(encoded,size,reason,sizeof(reason));
+  if(module && gml_tracker_render(module,44100,jb->pan_separation,&pcm,&frames,&loop_frame)){
+    sound=gml_audio_add_pcm16((GmlAudio*)vm->audio,pcm,frames,2,44100,encoded,size);
+    if(sound>=0){
+      uint8_t identity[32];
+      char id[24]; jb_saudio_id(slot,id);
+      GmlBuiltinState *state=builtin_state_ensure(vm);
+      if(!gml_audio_sound_content_hash((GmlAudio*)vm->audio,sound,identity) ||
+         !builtin_state_external_audio_store(state,sound,relative,identity) ||
+         !builtin_state_saudio_store(state,id,relative,identity,sound,0)){
+        external_audio_free(vm,sound); sound=-1;
+      } else {
+        gml_audio_sound_loop_start((GmlAudio*)vm->audio,sound,(double)loop_frame/44100.0);
+        gml_audio_sound_set_default_loop((GmlAudio*)vm->audio,sound,jb->looping);
+        gml_audio_sound_gain((GmlAudio*)vm->audio,sound,jb->master_volume/255.0);
+      }
+    }
+  }
+  free(pcm); free(encoded); free(path);
+  if(sound<0){
+    gml_tracker_free(module);
+    jb_error(jb,1,reason[0]?reason:"could not load the module");
+    return 0;
+  }
+  jb->slot[slot].module=module;
+  jb->slot[slot].sound=sound;
+  jb->slot[slot].loop_frame=loop_frame;
+  jb_error(jb,0,"");
+  return 1;
+}
+
+/* After a state load the mixer already holds the song (asset restore re-rendered it); the module
+ * metadata is re-derived here from the Saudio record the state carried. */
+static JbSlot *jb_slot_get(GmlVM *vm,JbState *jb,int slot){
+  if(slot<0 || slot>=JB_SLOTS) return NULL;
+  JbSlot *s=&jb->slot[slot];
+  if(s->module) return s;
+  char id[24]; jb_saudio_id(slot,id);
+  GmlSaudioEntry *entry=builtin_state_saudio_find(builtin_state_ensure(vm),id);
+  if(!entry || !entry->path) return NULL;
+  char *path=resolve_read_path(vm,entry->path);
+  uint8_t *encoded=NULL; size_t size=0;
+  if(path && anygm_vfs_read_all(vm->host,path,&encoded,&size,16u*1024u*1024u) && size){
+    GmlTrackerModule *module=gml_tracker_load(encoded,size,NULL,0);
+    if(module){
+      int16_t *pcm=NULL; uint32_t frames=0,loop_frame=0;
+      if(gml_tracker_render(module,44100,jb->pan_separation,&pcm,&frames,&loop_frame)){
+        s->module=module;
+        s->sound=entry->sound;
+        s->loop_frame=loop_frame;
+      } else gml_tracker_free(module);
+      free(pcm);
+    }
+  }
+  free(encoded); free(path);
+  return s->module?s:NULL;
+}
+
+static uint32_t jb_position_frames(GmlVM *vm,const JbSlot *s){
+  double seconds=gml_audio_sound_get_track_position((GmlAudio*)vm->audio,s->sound);
+  if(seconds<0.0) seconds=0.0;
+  return (uint32_t)(seconds*44100.0);
+}
+
+static const GmlTrackerRowMark *jb_mark_at(const JbSlot *s,uint32_t frame){
+  uint32_t count=0;
+  const GmlTrackerRowMark *marks=gml_tracker_timeline(s->module,&count);
+  if(!marks || !count) return NULL;
+  uint32_t low=0,high=count;
+  while(low+1<high){
+    uint32_t mid=(low+high)/2;
+    if(marks[mid].frame<=frame) low=mid; else high=mid;
+  }
+  return &marks[low];
+}
+
+static GmlVal external_jbfmod_call(GmlVM *vm,int operation,GmlVal *args,int count){
+  JbState *jb=jbfmod_state(vm);
+  GmlAudio *audio=vm?(GmlAudio*)vm->audio:NULL;
+  GmlBuiltinState *state=vm?builtin_state_ensure(vm):NULL;
+  if(!jb || !audio || !state) return vreal(0);
+  JbSlot *cur=jb->current>=0?jb_slot_get(vm,jb,jb->current):NULL;
+  switch(operation){
+    case GML_EXTERNAL_AUDIO_JB_INIT: jb_error(jb,0,""); return vreal(1);
+    case GML_EXTERNAL_AUDIO_JB_CLOSE:
+      for(int i=0;i<JB_SLOTS;i++) if(jb->slot[i].sound>=0 || jb->slot[i].module) jb_drop_slot(vm,jb,i);
+      jb->current=-1;
+      return vreal(1);
+    case GML_EXTERNAL_AUDIO_JB_LOAD_SONG: {
+      int slot=(int)N(args,count,0);
+      if(slot<0 || slot>=JB_SLOTS){ jb_error(jb,1,"song id out of range"); return vreal(0); }
+      return vreal(jb_load_slot(vm,jb,slot,S(vm,args,count,1)));
+    }
+    case GML_EXTERNAL_AUDIO_JB_LOAD_SONG_PACK:
+      /* Song-pack decoding is unsupported; refuse instead of reporting a successful load. */
+      jb_error(jb,1,"song packs are not supported");
+      return vreal(0);
+    case GML_EXTERNAL_AUDIO_JB_PLAY_SONG: {
+      int slot=(int)N(args,count,0);
+      JbSlot *s=jb_slot_get(vm,jb,slot);
+      if(!s){ jb_error(jb,1,"song is not loaded"); return vreal(0); }
+      if(cur && cur->sound>=0) gml_audio_stop(audio,cur->sound);
+      gml_audio_sound_set_default_loop(audio,s->sound,jb->looping);
+      gml_audio_play(audio,s->sound,jb->looping);
+      jb->current=slot;
+      return vreal(1);
+    }
+    case GML_EXTERNAL_AUDIO_JB_STOP_SONG:
+      if(cur && cur->sound>=0) gml_audio_stop(audio,cur->sound);
+      return vreal(1);
+    case GML_EXTERNAL_AUDIO_JB_SET_LOOPING:
+      jb->looping=N(args,count,0)!=0.0;
+      for(int i=0;i<JB_SLOTS;i++)
+        if(jb->slot[i].sound>=0) gml_audio_sound_set_default_loop(audio,jb->slot[i].sound,jb->looping);
+      return vreal(1);
+    case GML_EXTERNAL_AUDIO_JB_SET_MASTER_VOLUME: {
+      int volume=(int)N(args,count,0);
+      if(volume<0) volume=0; if(volume>255) volume=255;
+      jb->master_volume=volume;
+      for(int i=0;i<JB_SLOTS;i++)
+        if(jb->slot[i].sound>=0) gml_audio_sound_gain(audio,jb->slot[i].sound,volume/255.0);
+      return vreal(1);
+    }
+    case GML_EXTERNAL_AUDIO_JB_GET_MASTER_VOLUME: return vreal(jb->master_volume);
+    case GML_EXTERNAL_AUDIO_JB_SET_ORDER: {
+      if(!cur) return vreal(0);
+      int order=(int)N(args,count,0);
+      uint32_t mark_count=0;
+      const GmlTrackerRowMark *marks=gml_tracker_timeline(cur->module,&mark_count);
+      for(uint32_t i=0;i<mark_count;i++)
+        if(marks[i].order==order){
+          gml_audio_sound_set_track_position(audio,cur->sound,(double)marks[i].frame/44100.0);
+          return vreal(1);
+        }
+      return vreal(0);
+    }
+    case GML_EXTERNAL_AUDIO_JB_SET_PAN_SEPARATION: {
+      int separation=(int)N(args,count,0);
+      if(separation<0) separation=0; if(separation>128) separation=128;
+      /* Applies to songs loaded from here on: panning is baked into the render, and re-rendering
+       * a playing song would tear the voice under it. */
+      jb->pan_separation=separation;
+      return vreal(1);
+    }
+    case GML_EXTERNAL_AUDIO_JB_SET_PAUSED:
+      if(cur && cur->sound>=0) gml_audio_pause_sound(audio,cur->sound,N(args,count,0)!=0.0);
+      return vreal(1);
+    case GML_EXTERNAL_AUDIO_JB_GET_PAUSED:
+      return vreal(cur && cur->sound>=0 && gml_audio_voice_paused(audio,cur->sound));
+    case GML_EXTERNAL_AUDIO_JB_IS_PLAYING:
+      return vreal(cur && cur->sound>=0 && gml_audio_is_playing(audio,cur->sound));
+    case GML_EXTERNAL_AUDIO_JB_IS_FINISHED:
+      return vreal(cur && cur->sound>=0 && !gml_audio_is_playing(audio,cur->sound));
+    case GML_EXTERNAL_AUDIO_JB_GET_ORDER: case GML_EXTERNAL_AUDIO_JB_GET_PATTERN:
+    case GML_EXTERNAL_AUDIO_JB_GET_ROW: case GML_EXTERNAL_AUDIO_JB_GET_SPEED:
+    case GML_EXTERNAL_AUDIO_JB_GET_BPM: case GML_EXTERNAL_AUDIO_JB_GET_PATTERN_LENGTH: {
+      if(!cur) return vreal(0);
+      const GmlTrackerRowMark *mark=jb_mark_at(cur,jb_position_frames(vm,cur));
+      if(!mark) return vreal(0);
+      switch(operation){
+        case GML_EXTERNAL_AUDIO_JB_GET_ORDER: return vreal(mark->order);
+        case GML_EXTERNAL_AUDIO_JB_GET_PATTERN: return vreal(mark->pattern);
+        case GML_EXTERNAL_AUDIO_JB_GET_ROW: return vreal(mark->row);
+        case GML_EXTERNAL_AUDIO_JB_GET_SPEED: return vreal(mark->speed);
+        case GML_EXTERNAL_AUDIO_JB_GET_BPM: return vreal(mark->bpm);
+        default: return vreal(gml_tracker_pattern_rows(cur->module,mark->pattern));
+      }
+    }
+    case GML_EXTERNAL_AUDIO_JB_GET_TIME:
+      return vreal(cur?gml_audio_sound_get_track_position(audio,cur->sound)*1000.0:0.0);
+    case GML_EXTERNAL_AUDIO_JB_GET_TIME_FORMAT: {
+      double seconds=cur?gml_audio_sound_get_track_position(audio,cur->sound):0.0;
+      if(seconds<0.0) seconds=0.0;
+      char *buffer=state->string_ring[state->string_ring_index++&7u];
+      snprintf(buffer,sizeof(state->string_ring[0]),"%d:%02d",
+               (int)(seconds/60.0),(int)seconds%60);
+      return vstr(buffer);
+    }
+    case GML_EXTERNAL_AUDIO_JB_GET_CURRENT_SONG: return vreal(jb->current);
+    case GML_EXTERNAL_AUDIO_JB_GET_SONG_EXISTS: {
+      int slot=(int)N(args,count,0);
+      return vreal(jb_slot_get(vm,jb,slot)!=NULL);
+    }
+    case GML_EXTERNAL_AUDIO_JB_GET_NAME: case GML_EXTERNAL_AUDIO_JB_GET_TYPE:
+    case GML_EXTERNAL_AUDIO_JB_GET_NUM_CHANNELS: case GML_EXTERNAL_AUDIO_JB_GET_NUM_INSTRUMENTS:
+    case GML_EXTERNAL_AUDIO_JB_GET_NUM_ORDERS: case GML_EXTERNAL_AUDIO_JB_GET_NUM_PATTERNS:
+    case GML_EXTERNAL_AUDIO_JB_GET_NUM_SAMPLES: {
+      JbSlot *s=jb_slot_get(vm,jb,(int)N(args,count,0));
+      if(!s){
+        return operation==GML_EXTERNAL_AUDIO_JB_GET_NAME?vstr(""):vreal(0);
+      }
+      switch(operation){
+        case GML_EXTERNAL_AUDIO_JB_GET_NAME: {
+          char *buffer=state->string_ring[state->string_ring_index++&7u];
+          snprintf(buffer,sizeof(state->string_ring[0]),"%s",gml_tracker_name(s->module));
+          return vstr(buffer);
+        }
+        /* FMOD's own type codes: 1 is MOD, 3 is XM. */
+        case GML_EXTERNAL_AUDIO_JB_GET_TYPE:
+          return vreal(gml_tracker_type(s->module)[0]=='X'?3:1);
+        case GML_EXTERNAL_AUDIO_JB_GET_NUM_CHANNELS:
+          return vreal(gml_tracker_num_channels(s->module));
+        case GML_EXTERNAL_AUDIO_JB_GET_NUM_INSTRUMENTS:
+          return vreal(gml_tracker_num_instruments(s->module));
+        case GML_EXTERNAL_AUDIO_JB_GET_NUM_ORDERS:
+          return vreal(gml_tracker_num_orders(s->module));
+        case GML_EXTERNAL_AUDIO_JB_GET_NUM_PATTERNS:
+          return vreal(gml_tracker_num_patterns(s->module));
+        default:
+          return vreal(gml_tracker_num_samples(s->module));
+      }
+    }
+    case GML_EXTERNAL_AUDIO_JB_GET_CHANNELS_PLAYING:
+      return vreal(cur && gml_audio_is_playing(audio,cur->sound)
+                     ?gml_tracker_num_channels(cur->module):0);
+    case GML_EXTERNAL_AUDIO_JB_GET_CPU_USAGE: return vreal(0);
+    case GML_EXTERNAL_AUDIO_JB_GET_FREQUENCY: return vreal(44100);
+    case GML_EXTERNAL_AUDIO_JB_GET_ERROR_CODE: return vreal(jb->error_code);
+    case GML_EXTERNAL_AUDIO_JB_GET_ERROR_MESSAGE: {
+      char *buffer=state->string_ring[state->string_ring_index++&7u];
+      snprintf(buffer,sizeof(state->string_ring[0]),"%s",jb->error_message);
+      return vstr(buffer);
+    }
+    case GML_EXTERNAL_AUDIO_JB_GET_JB_INFO: return vstr("AnyGM portable jbfmod");
+    case GML_EXTERNAL_AUDIO_JB_GET_PACK_INFO: return vstr("");
+    case GML_EXTERNAL_AUDIO_JB_GET_INSTRUMENT_PLAYED:
+    case GML_EXTERNAL_AUDIO_JB_GET_INSTRUMENT_PLAYED_ONCE: {
+      if(!cur) return vreal(0);
+      int instrument=(int)N(args,count,0);
+      if(instrument<0 || instrument>=128) return vreal(0);
+      uint32_t position=jb_position_frames(vm,cur);
+      uint32_t event_count=0;
+      const GmlTrackerNoteEvent *events=gml_tracker_events(cur->module,&event_count);
+      if(operation==GML_EXTERNAL_AUDIO_JB_GET_INSTRUMENT_PLAYED){
+        uint32_t played=0;
+        for(uint32_t i=0;i<event_count && events[i].frame<=position;i++)
+          if(events[i].instrument==(uint16_t)instrument) played++;
+        return vreal(played);
+      }
+      uint32_t since=cur->once_cursor[instrument];
+      for(uint32_t i=0;i<event_count && events[i].frame<=position;i++)
+        if(events[i].frame>since && events[i].instrument==(uint16_t)instrument){
+          cur->once_cursor[instrument]=position;
+          return vreal(1);
+        }
+      return vreal(0);
+    }
+    /* Neither MOD nor XM has a Zxx effect — it is an Impulse Tracker MIDI macro — so there is
+     * nothing these can ever report for the formats this engine plays. */
+    case GML_EXTERNAL_AUDIO_JB_GET_ZXX: case GML_EXTERNAL_AUDIO_JB_GET_ZXX_ONCE:
+    case GML_EXTERNAL_AUDIO_JB_GET_ZXX_PLAYED: case GML_EXTERNAL_AUDIO_JB_GET_ZXX_PLAYED_ONCE:
+      return vreal(0);
+    case GML_EXTERNAL_AUDIO_JB_INIT_SPECTRUM: jb->spectrum_on=1; return vreal(1);
+    case GML_EXTERNAL_AUDIO_JB_CLOSE_SPECTRUM: jb->spectrum_on=0; return vreal(1);
+    case GML_EXTERNAL_AUDIO_JB_GET_SPECTRUM: {
+      if(!jb->spectrum_on || !cur || cur->sound<0) return vreal(0);
+      uint32_t frames=0; int channels=0;
+      const int16_t *pcm=gml_audio_sound_pcm16(audio,cur->sound,&frames,&channels);
+      if(!pcm || channels!=2) return vreal(0);
+      uint32_t position=jb_position_frames(vm,cur);
+      int first=(int)N(args,count,0);
+      int last=count>=2?(int)N(args,count,1):first;
+      if(first<0) first=0; if(first>=JB_SPECTRUM_BANDS) first=JB_SPECTRUM_BANDS-1;
+      if(last<first) last=first;
+      if(last>=JB_SPECTRUM_BANDS) last=JB_SPECTRUM_BANDS-1;
+      uint64_t sum=0;
+      for(int band=first;band<=last;band++)
+        sum+=gml_tracker_spectrum(pcm,frames,position,band,JB_SPECTRUM_BANDS);
+      return vreal((double)(sum/(uint64_t)(last-first+1))/65536.0);
+    }
+    default: return vreal(0);
+  }
+}
+
 GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
                                    GmlVal *args,int count,int *handled){
   if(handled) *handled=0;
@@ -1227,6 +1715,9 @@ GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
   if(operation>=GML_EXTERNAL_AUDIO_PXTONE_INIT &&
      operation<=GML_EXTERNAL_AUDIO_PXTONE_SHUTDOWN)
     return external_pxtone_call(vm,operation,args,count);
+  if(operation>=GML_EXTERNAL_AUDIO_JB_INIT &&
+     operation<=GML_EXTERNAL_AUDIO_JB_GET_SPECTRUM)
+    return external_jbfmod_call(vm,operation,args,count);
   if(operation==GML_EXTERNAL_AUDIO_INIT) return vreal(1);
   if(operation==GML_EXTERNAL_AUDIO_FREE){
     external_audio_free_all(vm);

@@ -871,6 +871,17 @@ void gml_audio_sound_set_external_group(GmlAudio *a,int sound,int group){
   if(a && sound>=0 && sound<a->n_snd && group>=0 && group<GML_MAX_AUDIOGROUPS)
     a->snd[sound].external_type=GML_EXTERNAL_GROUP_FLAG|(uint32_t)group;
 }
+const int16_t *gml_audio_sound_pcm16(GmlAudio *a,int sound,uint32_t *frames,int *channels){
+  if(frames) *frames=0;
+  if(channels) *channels=0;
+  if(!a || sound<0 || sound>=a->n_snd) return NULL;
+  GmlSound *s=&a->snd[sound];
+  if(!s->pcm || !s->nval) return NULL;
+  int ch=s->channels>0?s->channels:1;
+  if(frames) *frames=s->nval/(uint32_t)ch;
+  if(channels) *channels=ch;
+  return s->pcm;
+}
 double gml_audio_sound_length(GmlAudio *a, int sound){
   if(!a) return 0.0;
   if(sound>=1000000){

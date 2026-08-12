@@ -38,7 +38,7 @@ AnygmExternalLibraryPolicy anygm_external_library_policy(const char *library){
     "fmod-gamemaker.dll","fmod.dll","fmodstudio.dll","gameframe_x64.dll",
     "GMFile.dll","GMIni.dll","GMResource.dll","GMXML.dll",
     "FAudioGMS.dll","GMWwise_profile.dll","joydll.dll","nsfs.dll",
-    "ColorkeyMaskDLL.dll"
+    "ColorkeyMaskDLL.dll","libfilesystem.dll","jbfmod.dll"
   };
   static const char *const noop[]={
     "CleanMem.dll","gmSteam.dll","gmSteamInitOnly.dll","Steam.dll","Steamworks.dll",
@@ -47,7 +47,7 @@ AnygmExternalLibraryPolicy anygm_external_library_policy(const char *library){
     "Galaxy.dll","Galaxy64.dll","GOG.gml.dll","GOG_x64.dll","goggame.dll",
     "GameAnalytics.dll","discord_game_sdk.dll","tsuspresence_x64.dll",
     "rousrDissonance.dll","NekoPresence.dll","humble_api_gms.dll",
-    "display_mouse_lock.dll","gamepad_force_focus.dll",
+    "display_mouse_lock.dll","display_mouse_lock_x64.dll","gamepad_force_focus.dll",
     "window_command_hook.dll","window_set_cursor.dll","GMS1 BorderlessFix.dll",
     "BorderlessToggle.dll","catch_error.dll","catch_error_mini.dll","ram.dll",
     "execute_shell_simple.dll","execute_shell_simple_ext.dll",
@@ -59,7 +59,13 @@ AnygmExternalLibraryPolicy anygm_external_library_policy(const char *library){
     "libvorbisfile.dll","libogg.dll","bass.dll","pxtone.dll",
     "steamclient.dll","tier0_s.dll","vstdlib_s.dll",
     "cg.dll","cgGL.dll","DSETUP.dll","dsetup32.dll",
-    "FreeImage.dll","glew32.dll","SDL2.dll","libsndfile-1.dll"
+    "FreeImage.dll","glew32.dll","SDL2.dll","libsndfile-1.dll",
+    /* The D3D9 extension runtime is an external platform dependency. */
+    "D3DX9_43.dll",
+    /* Optional platform installation helper, not a language-visible extension. */
+    "GameuxInstallHelper.dll",
+    /* Embedded browser control treated as a non-language dependency in this policy. */
+    "TinyWeb.dll"
   };
   for(size_t i=0;i<sizeof(portable)/sizeof(portable[0]);i++)
     if(compatibility_ascii_equal(base,portable[i])) return ANYGM_EXTERNAL_LIBRARY_PORTABLE;
