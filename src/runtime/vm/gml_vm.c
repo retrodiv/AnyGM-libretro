@@ -283,6 +283,13 @@ int gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
     const char *fixed=anygm_host_development_setting(vm->host,"GML_RNG_SEED");
     uint32_t seed=fixed ? (uint32_t)strtoll(fixed,NULL,10) : 0u;
     gml_rng_seed(vm,seed);
+    /* The second-generation profile advances the default stream twice before user code begins.
+     * An explicit seed call still resets the stream to position zero. */
+    if(vm->win && !anygm_policy_uses_classic_runtime(vm->win) &&
+       anygm_policy_has_modern_function_values(vm->win)){
+      (void)gml_rng_value(vm);
+      (void)gml_rng_value(vm);
+    }
   }
   gml_vm_instances_parse_objects(vm);
   gml_vm_rooms_init(vm);
