@@ -392,6 +392,7 @@ int gml_render_init(GmlRender *r, GmlWin *win){
   r->alpha_test_enable=0; r->alpha_test_ref=0;
   r->blend_equation=r->blend_equation_alpha=1;
   r->app_draw_enable=1; r->next_surface_id=1; r->crt_shader_enable=1; r->crt_mask_enable=1; r->crt_scanlines_enable=1; r->crt_gamma_enable=1; r->crt_curvature=-1; r->crt_vignette=-1;
+  r->shader_report_all_compiled=1;
   r->interp=anygm_policy_classic_interpolate(win);
   r->composites_app=0;
   r->fast_alpha_cull=env_fast_alpha_cull(r);
@@ -448,6 +449,7 @@ void gml_render_control_update(GmlRender *r,const GmlRenderControl *control,
     r->crt_gamma_enable=control->crt_gamma_enabled;
     r->crt_curvature=control->crt_curvature;
     r->crt_vignette=control->crt_vignette;
+    r->shader_report_all_compiled=control->shader_report_all_compiled;
   }
   if(fields&GML_RENDER_CONTROL_FAST_FORWARD)
     r->crt_ff=control->fast_forward;
@@ -754,11 +756,20 @@ int gml_render_is_classic(const GmlRender *r){
   ((shader)*GML_RENDER_SHADER_HANDLE_STRIDE+(slot))
 #define GML_RENDER_NOISE_JUMBLE_HANDLE_BASE 20
 
-/* Report a declared shader as compiled even when the software evaluator does not
- * recognize its effect. An invalid shader index is not a compiled shader. */
+/* Whether the software evaluator recognizes a declared shader family. */
+static int shader_pal_recognized(const struct GmlShaderPal *p){
+  return p->has || p->channel_mask || p->alpha_discard || p->ordered_dither || p->quantise4 ||
+         p->solid_alpha_mask || p->solid_blur_alpha || p->lut || p->lut_indexed || p->grid ||
+         p->crt || p->sampled_crt || p->dual_sample || p->hsv_scan || p->hsv_scan_binary_palette ||
+         p->noise_jumble || p->radial_wave || p->uv_wave_mode || p->paint || p->grayscale;
+}
+
 int gml_render_shader_is_compiled(const GmlRender *r,int shader){
   if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
-  return 1;
+  /* Default policy reports declared shaders compiled; strict policy reports only
+   * software-recognized families. Invalid indices always report uncompiled. */
+  if(r->shader_report_all_compiled) return 1;
+  return shader_pal_recognized(&r->shader_pal[shader]);
 }
 
 int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *name){

@@ -219,6 +219,8 @@ int core_opt_onoff(AnygmEngine *engine,const char *key, const char *env, int def
   (void)env;
   if(!strcmp(key,"anygm_crt_scanlines")) return engine->config.crt_scanlines?1:0;
   if(!strcmp(key,"anygm_crt_gamma")) return engine->config.crt_gamma?1:0;
+  if(!strcmp(key,"anygm_report_shaders_compiled"))
+    return engine->config.report_all_shaders_compiled?1:0;
   return def;
 }
 int core_opt_crt_tristate(AnygmEngine *engine,const char *key, const char *env) { /* -1 auto / 0 off / 1 on */

@@ -216,6 +216,10 @@ typedef struct {
   int crt_shader_enabled, crt_mask_enabled;
   int crt_scanlines_enabled, crt_gamma_enabled;
   int crt_curvature, crt_vignette;
+  /* Non-zero: shader_is_compiled answers yes for every payload shader, as a GPU would.
+   * Zero: only recognized shader families answer yes, so content that carries its own
+   * no-shader presentation selects it. */
+  int shader_report_all_compiled;
   int fast_forward, fast_alpha_cull;
   int wide_aspect_active, wide_width, wide_height;
 } GmlRenderControl;

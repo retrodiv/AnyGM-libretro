@@ -328,7 +328,9 @@ static void boot_runtime(AnygmEngine *engine) {
     .crt_scanlines_enabled=core_opt_onoff(engine,"anygm_crt_scanlines", "ANYGM_CRT_SCANLINES", 1),
     .crt_gamma_enabled=core_opt_onoff(engine,"anygm_crt_gamma", "ANYGM_CRT_GAMMA", 1),
     .crt_curvature=core_opt_crt_tristate(engine,"anygm_crt_curvature", "ANYGM_CRT_CURVATURE"),
-    .crt_vignette=core_opt_crt_tristate(engine,"anygm_crt_vignette", "ANYGM_CRT_VIGNETTE")
+    .crt_vignette=core_opt_crt_tristate(engine,"anygm_crt_vignette", "ANYGM_CRT_VIGNETTE"),
+    .shader_report_all_compiled=core_opt_onoff(engine,"anygm_report_shaders_compiled",
+                                               "ANYGM_REPORT_SHADERS_COMPILED",1)
   };
   gml_render_control_update(&engine->render,&render_control,GML_RENDER_CONTROL_HOST_OPTIONS);
   engine->vm.render = &engine->render;
@@ -596,7 +598,9 @@ static void poll_option_updates(AnygmEngine *engine) {
     .crt_scanlines_enabled=core_opt_onoff(engine,"anygm_crt_scanlines", "ANYGM_CRT_SCANLINES", 1),
     .crt_gamma_enabled=core_opt_onoff(engine,"anygm_crt_gamma", "ANYGM_CRT_GAMMA", 1),
     .crt_curvature=core_opt_crt_tristate(engine,"anygm_crt_curvature", "ANYGM_CRT_CURVATURE"),
-    .crt_vignette=core_opt_crt_tristate(engine,"anygm_crt_vignette", "ANYGM_CRT_VIGNETTE")
+    .crt_vignette=core_opt_crt_tristate(engine,"anygm_crt_vignette", "ANYGM_CRT_VIGNETTE"),
+    .shader_report_all_compiled=core_opt_onoff(engine,"anygm_report_shaders_compiled",
+                                               "ANYGM_REPORT_SHADERS_COMPILED",1)
   };
   gml_render_control_update(&engine->render,&control,GML_RENDER_CONTROL_HOST_OPTIONS);
 }
@@ -1605,6 +1609,7 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
   engine->config.crt_vignette=-1;
   engine->config.fast_alpha_cull=0;
   engine->config.start_room=-1;
+  engine->config.report_all_shaders_compiled=1;
   snprintf(engine->language,sizeof engine->language,"en");
   snprintf(engine->region,sizeof engine->region,"US");
   snprintf(engine->language_tag,sizeof engine->language_tag,"en-US");
@@ -1788,6 +1793,8 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   if(f&ANYGM_CONFIG_CRT_CURVATURE) engine->config.crt_curvature=delta->values.crt_curvature;
   if(f&ANYGM_CONFIG_CRT_VIGNETTE) engine->config.crt_vignette=delta->values.crt_vignette;
   if(f&ANYGM_CONFIG_EMBEDDED_SHADERS) engine->config.embedded_shaders=delta->values.embedded_shaders;
+  if(f&ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED)
+    engine->config.report_all_shaders_compiled=delta->values.report_all_shaders_compiled?1u:0u;
   if(f&ANYGM_CONFIG_GAMEPAD_CONNECTED) engine->config.gamepad_connected=delta->values.gamepad_connected;
   if(f&ANYGM_CONFIG_FAST_ALPHA_CULL) engine->config.fast_alpha_cull=delta->values.fast_alpha_cull;
   if(f&ANYGM_CONFIG_FAST_FORWARD) engine->config.fast_forward=delta->values.fast_forward;

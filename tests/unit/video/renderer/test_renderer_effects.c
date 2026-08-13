@@ -434,6 +434,23 @@ static void check_shader_recognition(void) {
            "complete sampled RGB channel-clear graph was not recognized exactly");
     expect(!channel_mask_near_match->channel_mask,
            "channel-clear graph with an extra colour operation was accepted");
+    /* The compile answer is host policy. The default reports every payload shader compiled, as a
+     * GPU would; the strict mode reports only recognized families, which is how content with an
+     * authored no-shader fallback selects it. Out-of-range ids stay uncompiled either way. */
+    expect(gml_render_shader_is_compiled(&render, 3) &&
+           gml_render_shader_is_compiled(&render, 5),
+           "the default answer stopped reporting unrecognized shaders as compiled");
+    render.shader_report_all_compiled = 0;
+    expect(!gml_render_shader_is_compiled(&render, 3) &&
+           !gml_render_shader_is_compiled(&render, 5) &&
+           gml_render_shader_is_compiled(&render, 2) &&
+           gml_render_shader_is_compiled(&render, 8) &&
+           gml_render_shader_is_compiled(&render, 10),
+           "the strict answer did not follow family recognition");
+    expect(!gml_render_shader_is_compiled(&render, SHADER_COUNT) &&
+           !gml_render_shader_is_compiled(&render, -1),
+           "an out-of-range shader id reported compiled");
+    render.shader_report_all_compiled = 1;
   }
   gml_render_free(&render);
 }

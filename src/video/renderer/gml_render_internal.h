@@ -452,6 +452,10 @@ typedef struct GmlRender {
   int       crt_gamma_enable;     /* input/output gamma curve. Off -> linear (no CRT gamma). */
   int       crt_curvature;        /* radial warp (distort uniform): -1 auto / 0 off / 1 on. */
   int       crt_vignette;         /* corner darkening (border uniform): -1 auto / 0 off / 1 on. */
+  int       shader_report_all_compiled; /* non-zero (default): shader_is_compiled answers yes for
+                                   * every payload shader, as a GPU would, and an unrecognized one
+                                   * draws unshaded. 0: only recognized families answer yes, so
+                                   * content carrying its own no-shader presentation selects it. */
   int       crt_ff;               /* host is fast-forwarding. Presentation resolution and CRT
                                    * state remain unchanged; this is only an optimization hint. */
   int       aspect_fullwidth;     /* a forced-wide aspect is active and the compositor should
