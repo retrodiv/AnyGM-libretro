@@ -51,9 +51,11 @@ int software3d_case_assets(Software3dRasterFixture *fixture){
     shader->sampled_crt_value[17][0]=1;
     shader->sampled_crt_value[18][0]=0.5f;
     for(int sampler=0;sampler<3;sampler++) shader->sampled_crt_sprite[sampler]=-1;
-    fixture->render.crt_shader_enable=1; fixture->render.alphablend=0;
+    fixture->render.crt_shader_enable=1;
     memset(fixture->pixels,0,sizeof(fixture->pixels));
-    gml_render_begin(&fixture->render,fixture->pixels,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0); fixture->render.active_shader=0;
+    /* begin restores source-alpha drawing, so the no-blend intent must follow it */
+    gml_render_begin(&fixture->render,fixture->pixels,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0);
+    fixture->render.alphablend=0; fixture->render.active_shader=0;
     gml_draw_surface_stretched(&fixture->render,fixture->surface,20,20,2,2,0xFFFFFFu,1.0);
     fixture->render.active_shader=-1; fixture->render.alphablend=1;
     if((fixture->pixels[20*SOFTWARE3D_WIDTH+20]&0xFFFFFFu)!=0x800000u ||
