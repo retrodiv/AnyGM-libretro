@@ -343,6 +343,12 @@ typedef struct AnygmConfig {
   uint32_t present_logical_raster;
   /* Delete this content's generated local data (saves, extracted archive cache) and reload. */
   uint32_t clear_local_data;
+  /* How shader_is_compiled answers for the game's own shaders. Non-zero matches a GPU: every
+   * shader in the payload reports compiled, and one the software evaluator does not recognize
+   * draws unshaded. Zero reports only recognized shader families as compiled, so content that
+   * carries its own no-shader presentation selects it. Hosts default to non-zero; some content
+   * ends itself when told a shader did not compile. */
+  uint32_t report_all_shaders_compiled;
 } AnygmConfig;
 
 typedef struct AnygmConfigDelta {
@@ -369,7 +375,8 @@ enum {
   ANYGM_CONFIG_FAST_FORWARD=1ull<<14,
   ANYGM_CONFIG_START_ROOM=1ull<<15,
   ANYGM_CONFIG_PRESENT_LOGICAL_RASTER=1ull<<16,
-  ANYGM_CONFIG_CLEAR_LOCAL_DATA=1ull<<17
+  ANYGM_CONFIG_CLEAR_LOCAL_DATA=1ull<<17,
+  ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED=1ull<<18
 };
 
 typedef struct AnygmInputFrame {
@@ -444,6 +451,13 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta);
 AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_t enabled,
                                        const char *expression);
 size_t anygm_state_size(AnygmEngine *engine);
+/* The largest serialized size this content is known to reach, gathered from earlier sessions'
+ * saves and remembered as a disposable cache entry in the content's writable namespace. 0 when
+ * nothing is remembered. A host that must announce one state size for a whole session (a frontend
+ * that sizes a rewind ring once, at load) can start from this instead of the boot-time size,
+ * which content routinely dwarfs once gameplay allocates. A hint is advisory: the exact size of
+ * the current state is always anygm_state_size. */
+size_t anygm_state_capacity_hint(const AnygmEngine *engine);
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written);
 AnygmResult anygm_state_load(AnygmEngine *engine,const void *data,size_t size);
 size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capacity);

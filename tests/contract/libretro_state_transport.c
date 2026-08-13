@@ -17,6 +17,7 @@ bool retro_serialize(void *data,size_t size);
 bool retro_unserialize(const void *data,size_t size);
 
 static size_t stub_state_bytes;
+static size_t stub_hint_bytes;
 static size_t last_load_bytes;
 static int variable_frontend;
 static int serialization_query_seen;
@@ -66,6 +67,7 @@ AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_
   (void)engine; (void)slot; (void)enabled; (void)expression; return ANYGM_OK;
 }
 size_t anygm_state_size(AnygmEngine *engine){ (void)engine; return stub_state_bytes; }
+size_t anygm_state_capacity_hint(const AnygmEngine *engine){ (void)engine; return stub_hint_bytes; }
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
   (void)engine;
   if(written) *written=0;
@@ -112,6 +114,7 @@ static int begin_frontend(int variable_support){
   serialization_query_seen=0;
   development_setting_seen=0;
   last_load_bytes=0;
+  stub_hint_bytes=0;
   if(setenv("ANYGM_TEST_SETTING","visible",1)!=0) return 0;
   retro_set_environment(environment_callback);
   retro_init();
@@ -120,10 +123,9 @@ static int begin_frontend(int variable_support){
   return 1;
 }
 
-static int stable_transport(int negotiation_result,int variable_acknowledged){
+static int stable_transport(int negotiation_result){
   stub_state_bytes=113u;
-  if(!begin_frontend(negotiation_result) ||
-     g_libretro.variable_state_supported!=variable_acknowledged) return 0;
+  if(!begin_frontend(negotiation_result)) return 0;
   const size_t expected_capacity=113u*2u+512u*1024u;
   if(retro_serialize_size()!=expected_capacity ||
      retro_serialize_size()!=expected_capacity) return 0;
@@ -144,9 +146,14 @@ static int stable_transport(int negotiation_result,int variable_acknowledged){
   return ok;
 }
 
-static int growing_transport(void){
+/* The size answer grows past its previous value whatever the frontend answered during quirk
+ * negotiation. RetroArch stores the declared core-variable-size quirk without acknowledging it and
+ * still re-queries the size on every save; when the answer stayed frozen at the boot-time
+ * capacity, every mid-session save of content that had allocated failed. A serialize into a stale
+ * older capacity — a rewind ring sized at load — must still fail cleanly rather than truncate. */
+static int growing_transport(int negotiation_result){
   stub_state_bytes=113u;
-  if(!begin_frontend(1) || !g_libretro.variable_state_supported) return 0;
+  if(!begin_frontend(negotiation_result)) return 0;
   const size_t initial_capacity=retro_serialize_size();
   stub_state_bytes=initial_capacity+1u;
   const size_t grown_capacity=retro_serialize_size();
@@ -154,21 +161,28 @@ static int growing_transport(void){
   uint8_t *state=(uint8_t *)malloc(grown_capacity);
   if(!state) return 0;
   int ok=retro_serialize(state,grown_capacity);
+  if(ok){
+    uint8_t *stale=(uint8_t *)malloc(initial_capacity);
+    ok=stale && !retro_serialize(stale,initial_capacity);
+    free(stale);
+  }
   free(state);
   retro_unload_game();
   retro_deinit();
   return ok;
 }
 
-static int fixed_transport_rejects_growth(void){
+/* A remembered peak from an earlier session raises the first answer of a fresh load, so a
+ * frontend that sizes a rewind ring once, at load, covers the gameplay the content is known to
+ * reach instead of only its boot state. */
+static int remembered_peak_covers_first_answer(void){
   stub_state_bytes=113u;
-  if(!begin_frontend(0) || g_libretro.variable_state_supported) return 0;
+  if(!begin_frontend(0)) return 0;
+  stub_hint_bytes=6u*1024u*1024u;
   const size_t capacity=retro_serialize_size();
-  stub_state_bytes=capacity+1u;
-  uint8_t *state=(uint8_t *)malloc(capacity);
-  if(!state) return 0;
-  int ok=retro_serialize_size()==capacity && !retro_serialize(state,capacity);
-  free(state);
+  int ok=capacity>=stub_hint_bytes;
+  stub_state_bytes=197u;
+  if(retro_serialize_size()!=capacity) ok=0;
   retro_unload_game();
   retro_deinit();
   return ok;
@@ -208,8 +222,9 @@ int main(void){
   uint8_t byte=0;
   memset(&g_libretro,0,sizeof g_libretro);
   if(retro_serialize_size()!=0 || retro_serialize(&byte,1) || retro_unserialize(&byte,1) ||
-     !stable_transport(1,1) || !stable_transport(0,0) || !stable_transport(-1,0) ||
-     !growing_transport() || !fixed_transport_rejects_growth() ||
+     !stable_transport(1) || !stable_transport(0) || !stable_transport(-1) ||
+     !growing_transport(1) || !growing_transport(0) || !growing_transport(-1) ||
+     !remembered_peak_covers_first_answer() ||
      !restart_rereads_settings() || !starting_declares_the_settings()){
     fprintf(stderr,"libretro state transport contract failed\n");
     return 1;

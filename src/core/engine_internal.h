@@ -195,6 +195,13 @@ struct AnygmEngine {
   int state_just_loaded;
   uint8_t *state_reapply;
   size_t state_reapply_capacity,state_reapply_size;
+  /* Peak serialized size for this content: what the namespace cache remembered at load, the
+   * largest save observed since, and the value most recently persisted back. The cache entry is
+   * untrusted input: reads validate and clamp before believing it. It exists only when the host
+   * supplied a save root and the per-content namespace is in use — without one, win.save_dir
+   * falls back to the content directory, and a cache file must never appear beside content. */
+  int state_peak_enabled;
+  size_t state_peak_hint,state_peak_persisted;
   int runtime_ended,shutdown_sent;
   ClassicTransition classic_transition;
   int have_presented_frame;
@@ -308,6 +315,9 @@ void engine_input_poll_mouse(AnygmEngine *engine);
 
 uint64_t state_hash_bytes(const void *data,size_t size);
 void state_identity_refresh(AnygmEngine *engine);
+void engine_state_peak_load(AnygmEngine *engine);
+void engine_state_peak_note(AnygmEngine *engine,size_t written);
+void engine_state_peak_flush(AnygmEngine *engine);
 bool state_unserialize_impl(AnygmEngine *engine,const void *data,size_t size,
                             int schedule_reapply);
 size_t engine_state_size(AnygmEngine *engine);

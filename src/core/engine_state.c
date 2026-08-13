@@ -5,6 +5,7 @@
  * transactional restore for the single shared engine. */
 #include "engine_internal.h"
 #include "anygm_host.h"
+#include "anygm_vfs.h"
 #include "gml_render_state.h"
 
 
@@ -399,4 +400,62 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
   engine->state_reapply_size=target_size;
   free(snapshot);
   return true;
+}
+
+/* Peak serialized size, remembered across sessions as a disposable cache entry in the content's
+ * writable namespace. A frontend that sizes a rewind ring once, at load, otherwise sizes it from
+ * the boot-time state, which gameplay allocation routinely dwarfs; the remembered peak lets the
+ * next session announce a capacity the whole run fits in. The entry is untrusted input: only a
+ * short ASCII decimal with an optional trailing newline is believed, and the value is bounded. */
+#define ENGINE_STATE_PEAK_FILE ".anygm-state-peak"
+#define ENGINE_STATE_PEAK_LIMIT ((size_t)1u<<30)
+
+static int state_peak_path(const AnygmEngine *engine,char *out,size_t out_size){
+  if(!engine->state_peak_enabled || !engine->win.save_dir[0]) return 0;
+  int n=snprintf(out,out_size,"%s/%s",engine->win.save_dir,ENGINE_STATE_PEAK_FILE);
+  return n>0 && (size_t)n<out_size;
+}
+
+void engine_state_peak_load(AnygmEngine *engine){
+  engine->state_peak_hint=0;
+  engine->state_peak_persisted=0;
+  char path[1088];
+  if(!state_peak_path(engine,path,sizeof path)) return;
+  uint8_t *data=NULL;
+  size_t size=0;
+  if(!anygm_vfs_read_all(&engine->host,path,&data,&size,32)) return;
+  uint64_t value=0;
+  size_t digits=0;
+  while(digits<size && digits<12 && data[digits]>='0' && data[digits]<='9'){
+    value=value*10u+(uint64_t)(data[digits]-'0');
+    digits++;
+  }
+  int valid=digits>0 && value<=ENGINE_STATE_PEAK_LIMIT &&
+            (digits==size || (data[digits]=='\n' && digits+1==size));
+  free(data);
+  if(!valid) return;
+  engine->state_peak_hint=(size_t)value;
+  engine->state_peak_persisted=(size_t)value;
+}
+
+void engine_state_peak_flush(AnygmEngine *engine){
+  if(engine->state_peak_hint<=engine->state_peak_persisted) return;
+  char path[1088];
+  if(!state_peak_path(engine,path,sizeof path)) return;
+  char text[32];
+  int n=snprintf(text,sizeof text,"%llu\n",(unsigned long long)engine->state_peak_hint);
+  if(n<=0) return;
+  if(anygm_vfs_write_all(&engine->host,path,text,(size_t)n))
+    engine->state_peak_persisted=engine->state_peak_hint;
+}
+
+void engine_state_peak_note(AnygmEngine *engine,size_t written){
+  if(written>ENGINE_STATE_PEAK_LIMIT || written<=engine->state_peak_hint) return;
+  engine->state_peak_hint=written;
+  /* Rewind serializes every frame and a growing state grows by a few bytes at a time, so the
+   * cache is rewritten on meaningful growth only; unload flushes the exact final value. */
+  size_t persisted=engine->state_peak_persisted;
+  if(engine->state_peak_hint>persisted+(persisted>>2) ||
+     engine->state_peak_hint-persisted>=((size_t)1u<<20))
+    engine_state_peak_flush(engine);
 }

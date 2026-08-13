@@ -105,13 +105,13 @@ static bool create_engine(void){
   return true;
 }
 
+/* Declares that this core's serialized size changes within a session. Nothing is read back:
+ * retro_serialize_size grows past its previous answer either way, because frontends that store the
+ * quirk without acknowledging it (RetroArch) still re-query the size on every save. */
 static void negotiate_serialization(void){
   uint64_t quirks=RETRO_SERIALIZATION_QUIRK_CORE_VARIABLE_SIZE;
-  g_libretro.variable_state_supported=false;
-  if(g_libretro.environment &&
-     g_libretro.environment(RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS,&quirks))
-    g_libretro.variable_state_supported=
-        (quirks&RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE)!=0;
+  if(g_libretro.environment)
+    g_libretro.environment(RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS,&quirks);
 }
 
 static size_t fixed_state_capacity(size_t actual){
@@ -352,8 +352,17 @@ void retro_run(void){
 size_t retro_serialize_size(void){
   if(!g_libretro.loaded) return 0;
   size_t actual=anygm_state_size(g_libretro.engine);
-  if(!g_libretro.fixed_state_capacity ||
-     (g_libretro.variable_state_supported && actual>g_libretro.fixed_state_capacity))
+  /* Sessions that already saw gameplay teach the first answer: a frontend that sizes a rewind
+   * ring once, at load, otherwise sizes it from the boot-time state, which gameplay routinely
+   * dwarfs. */
+  size_t hint=anygm_state_capacity_hint(g_libretro.engine);
+  if(hint>actual) actual=hint;
+  /* The answer grows whenever the state outgrows the last one, whether or not the frontend
+   * acknowledged RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE. RetroArch stores the declared
+   * core-variable-size quirk without acknowledging it, yet re-queries this size on every save; a
+   * frozen boot-time answer therefore made every mid-session save fail once content allocated,
+   * while a frontend that truly allocates once is no worse off than under that hard failure. */
+  if(!g_libretro.fixed_state_capacity || actual>g_libretro.fixed_state_capacity)
     g_libretro.fixed_state_capacity=fixed_state_capacity(actual);
   return g_libretro.fixed_state_capacity;
 }

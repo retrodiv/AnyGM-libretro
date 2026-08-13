@@ -192,6 +192,7 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
   /* Give each content identity a stable writable namespace under the host-provided root. */
   {
     const char *base=source->save_directory;
+    engine->state_peak_enabled=(base&&base[0])?1:0;
     if(base&&base[0]){
       const char *identity=source->path&&source->path[0]?source->path:NULL;
       char label[128];
@@ -255,6 +256,7 @@ static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSou
            engine->win.content_dir);
   engine->launch_parameters[0]='\0';
   state_identity_refresh(engine);
+  engine_state_peak_load(engine);
   engine->loaded = 1;
   engine_logf(engine,ANYGM_LOG_INFO,"Loaded content: bytecode=%u rooms=%d code=%d\n",
               engine->win.bytecode,gml_room_count(&engine->win),engine->win.n_code);
@@ -1670,6 +1672,9 @@ AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
 
 void anygm_unload(AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return;
+  /* A session that never saved still teaches the cache: measure once at teardown. */
+  engine_state_peak_note(engine,engine_state_size(engine));
+  engine_state_peak_flush(engine);
   engine_unload(engine);
   engine_override_reset(engine);
   engine->lifecycle=ENGINE_EMPTY;
@@ -1821,11 +1826,20 @@ size_t anygm_state_size(AnygmEngine *engine){
   return engine_state_size(engine);
 }
 
+size_t anygm_state_capacity_hint(const AnygmEngine *engine){
+  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return 0;
+  return engine->state_peak_hint;
+}
+
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
-  if(written) *written=0;
+  size_t local_written=0;
+  if(!written) written=&local_written;
+  *written=0;
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED || !data)
     return ANYGM_ERROR_INVALID_STATE;
-  return engine_state_save(engine,data,capacity,written)?ANYGM_OK:ANYGM_ERROR_OUT_OF_MEMORY;
+  if(!engine_state_save(engine,data,capacity,written)) return ANYGM_ERROR_OUT_OF_MEMORY;
+  engine_state_peak_note(engine,*written);
+  return ANYGM_OK;
 }
 
 AnygmResult anygm_state_load(AnygmEngine *engine,const void *data,size_t size){
