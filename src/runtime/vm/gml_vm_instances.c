@@ -270,6 +270,30 @@ static uint32_t suffix_hash(const char *s){
   for(const unsigned char *p=(const unsigned char*)s; p && *p; p++) h=(h^*p)*16777619u;
   return h;
 }
+/* Resolve an event suffix at one object level. For numeric collision targets,
+ * try the target object's CODE spelling and declared OBJT entry after the
+ * literal suffix. Keep inherited lookup consistent with collision registration. */
+static int event_code_at_level(GmlVM *vm, int level, const char *suffix){
+  char name[160];
+  snprintf(name,sizeof name,"gml_Object_%s_%s",vm->objects[level].name,suffix);
+  int ci=gml_code_index_by_name(vm->win,name);
+  if(ci>=0) return ci;
+  if(!strncmp(suffix,"Collision_",10) && suffix[10]>='0' && suffix[10]<='9'){
+    int target=atoi(suffix+10);
+    if(target>=0 && target<vm->n_objects){
+      snprintf(name,sizeof name,"gml_Object_%s_Collision_%s",
+               vm->objects[level].name,vm->objects[target].name);
+      ci=gml_code_index_by_name(vm->win,name);
+      if(ci>=0) return ci;
+      GmlObject *object=&vm->objects[level];
+      for(int e=0;e<object->n_events;e++)
+        if(object->events[e].evtype==4 && object->events[e].subtype==target &&
+           object->events[e].code>=0 && object->events[e].code<vm->win->n_code)
+          return object->events[e].code;
+    }
+  }
+  return -1;
+}
 int gml_vm_instances_event_lookup(GmlVM *vm, const char *suffix, int obj, int *handler_obj, int *code){
   if(!suffix || obj<0 || obj>=vm->n_objects) return 0;
   if(vm->event_cache && vm->event_cache_cap>0){
@@ -281,11 +305,9 @@ int gml_vm_instances_event_lookup(GmlVM *vm, const char *suffix, int obj, int *h
       if(code) *code=c->code;
       return 1;
     }
-    char name[160];
     int ho=-1, ci=-1;
     for(int p=obj; p>=0 && p<vm->n_objects; p=vm->objects[p].parent){
-      snprintf(name,sizeof name,"gml_Object_%s_%s",vm->objects[p].name,suffix);
-      ci=gml_code_index_by_name(vm->win,name);
+      ci=event_code_at_level(vm,p,suffix);
       if(ci>=0){ ho=p; break; }
     }
     c->valid=1; c->start_obj=obj; c->handler_obj=ho; c->code=ci;
@@ -295,10 +317,8 @@ int gml_vm_instances_event_lookup(GmlVM *vm, const char *suffix, int obj, int *h
     if(code) *code=ci;
     return 1;
   }
-  char name[160];
   for(int p=obj; p>=0 && p<vm->n_objects; p=vm->objects[p].parent){
-    snprintf(name,sizeof name,"gml_Object_%s_%s",vm->objects[p].name,suffix);
-    int ci=gml_code_index_by_name(vm->win,name);
+    int ci=event_code_at_level(vm,p,suffix);
     if(ci>=0){
       if(handler_obj) *handler_obj=p;
       if(code) *code=ci;
@@ -1585,11 +1605,34 @@ static void classic_boundary_box(GmlVM *vm, GmlInstance *in,
    * historical rectangle test. Boundary events are commonly used by invisible controllers. */
   *l=floor(in->x); *t=floor(in->y); *r=ceil(in->x); *b=ceil(in->y);
 }
+/* Resolve the world rectangle of a Studio view from a live bound camera first,
+ * then fall back to the legacy view arrays. Boundary checks and rendering
+ * use the same camera coordinates. */
+static void studio_view_world_rect(GmlVM *vm,int view,
+                                   double *x,double *y,double *w,double *h){
+  int camera=(int)gml_vm_global_array_number(vm,"view_camera",view);
+  if(camera>=0 && camera<GML_CAMERA_LIMIT &&
+     gml_vm_global_array_number(vm,"__gml_camera_live",camera)>=0.5){
+    double camera_w=gml_vm_global_array_number(vm,"__gml_camera_w",camera);
+    double camera_h=gml_vm_global_array_number(vm,"__gml_camera_h",camera);
+    if(camera_w>0 && camera_h>0){
+      *x=gml_vm_global_array_number(vm,"__gml_camera_x",camera);
+      *y=gml_vm_global_array_number(vm,"__gml_camera_y",camera);
+      *w=camera_w;
+      *h=camera_h;
+      return;
+    }
+  }
+  *x=gml_vm_global_array_number(vm,"view_xview",view);
+  *y=gml_vm_global_array_number(vm,"view_yview",view);
+  *w=gml_vm_global_array_number(vm,"view_wview",view);
+  *h=gml_vm_global_array_number(vm,"view_hview",view);
+}
 void gml_vm_instances_run_boundary_events(GmlVM *vm){
   if(!vm->render) return;
   GmlRoom rm; int hr=(gml_vm_room_get(vm,vm->room_index,&rm)==0);
-  double vx=gml_vm_global_array_number(vm,"view_xview",0), vy=gml_vm_global_array_number(vm,"view_yview",0);
-  double vw=gml_vm_global_array_number(vm,"view_wview",0), vh=gml_vm_global_array_number(vm,"view_hview",0);
+  double vx,vy,vw,vh;
+  studio_view_world_rect(vm,0,&vx,&vy,&vw,&vh);
   int has_view=(vw>0 && vh>0);
   /* Classic dispatch completes one boundary subtype at a time, grouped by exact object
    * resource inside that subtype. Keep Studio's instance-major dispatch below unchanged. */
@@ -1634,7 +1677,14 @@ void gml_vm_instances_run_boundary_events(GmlVM *vm){
     if((bits&2) && hr && !(l>=0&&r<=rm.width&&t>=0&&b<=rm.height)
        && (r>=0&&l<=rm.width&&b>=0&&t<=rm.height)) gml_run_event(vm,in,"Other_1");
     if(!in->active||in->marked) continue;
-    if((bits&4) && has_view && (r<vx||l>vx+vw||b<vy||t>vy+vh)) gml_run_event(vm,in,"Other_40");
+    if((bits&4) && has_view && (r<vx||l>vx+vw||b<vy||t>vy+vh)){
+      /* Log the bbox and view rectangle used in this boundary decision. */
+      if(anygm_host_development_setting(vm->host,"GML_LOG_EVENT"))
+        anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+          "[event] f%ld boundary Other_40: id=%u bbox=(%.1f,%.1f)-(%.1f,%.1f) view0=(%.1f,%.1f %.1fx%.1f)\n",
+          vm->frame,in->id,l,t,r,b,vx,vy,vw,vh);
+      gml_run_event(vm,in,"Other_40");
+    }
     if(!in->active||in->marked) continue;
     if((bits&(1<<10)) && has_view && !(l>=vx&&r<=vx+vw&&t>=vy&&b<=vy+vh)) gml_run_event(vm,in,"Other_50");
   }

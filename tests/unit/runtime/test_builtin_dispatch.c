@@ -596,6 +596,37 @@ static int layer_instance_move(GmlVM *vm){
   return ok;
 }
 
+/* Resolve a numeric collision suffix through a parent declaration when
+ * no CODE name exists for that inherited handler. */
+static int inherited_collision_resolves_numeric_suffix(GmlVM *vm){
+  /* The fixture content declares no objects, so the case supplies its own three-entry table:
+   * a parent carrying a native collision declaration against the target, and a child whose
+   * lookup must reach it through the numeric suffix the collision dispatcher spells. */
+  GmlObject *prior_objects=vm->objects;
+  int prior_n_objects=vm->n_objects;
+  static GmlObject table[3];
+  static int declared[3];
+  memset(table,0,sizeof table);
+  table[0].name=(char*)"obj_test_parent";
+  table[1].name=(char*)"obj_test_child";
+  table[2].name=(char*)"obj_test_target";
+  table[0].parent=-1; table[1].parent=0; table[2].parent=-1;
+  declared[0]=4; declared[1]=2; declared[2]=0;   /* evtype=collision, subtype=target, code entry 0 */
+  table[0].events=(typeof(table[0].events))(void*)declared;
+  table[0].n_events=1;
+  vm->objects=table;
+  vm->n_objects=3;
+  int handler=-1, code=-1;
+  int found=gml_vm_instances_event_lookup(vm,"Collision_2",1,&handler,&code);
+  int ok=found && handler==0 && code==0;
+  vm->objects=prior_objects;
+  vm->n_objects=prior_n_objects;
+  if(!ok) fprintf(stderr,
+    "numeric collision suffix did not reach the parent's declared handler (found=%d handler=%d code=%d)\n",
+    found,handler,code);
+  return ok;
+}
+
 /* A plain layer has no assigned FX. A visibility walk must not hide it. */
 static int layer_fx_answers_none(GmlVM *vm){
   GmlVal create_args[]={vreal(64),vstr("neutral_fx_probe")};
@@ -737,7 +768,8 @@ int main(void){
          portable_service_contracts(&vm) &&
          portable_joystick_contract(&vm) &&
          layer_instance_move(&vm) &&
-         layer_fx_answers_none(&vm);
+         layer_fx_answers_none(&vm) &&
+         inherited_collision_resolves_numeric_suffix(&vm);
   gml_vm_free(&vm);
   gml_win_free(&win);
   if(!ok) return 1;
