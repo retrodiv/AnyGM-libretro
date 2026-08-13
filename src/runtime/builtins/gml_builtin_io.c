@@ -1332,29 +1332,46 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     char *src=resolve_read_path(vm,S(vm,a,n,0)); char *dst=resolve_write_path(vm,S(vm,a,n,1));
     int ok=copy_file_path(vm,src,dst);
     free(src); free(dst); return vreal(ok); }
-  /* libfilesystem.dll names map to host-backed file operations and existing aliases.
-   * Program-directory queries return an empty string to keep paths inside the sandbox.
-   * Directory listings are sorted and newline-separated; that separator is a chosen policy,
-   * not a verified compatibility observation. */
+  /* libfilesystem.dll names use host-backed operations and existing aliases.
+   * Listings are sorted and newline-separated, prefix each entry with the caller's directory,
+   * include dotfiles and mark directories with a trailing backslash.
+   * The ext mask is a case-sensitive suffix filter rather than a glob: "" and "*.*" pass all
+   * files, while a pattern such as "*.txt" passes only names ending in ".txt".
+   * A nonzero attribute flag also includes directories without filtering them by suffix. */
   if(!strcmp(nm,"directory_contents")||!strcmp(nm,"directory_contents_ext")){
     GmlBuiltinState *state=builtin_state_ensure(vm);
     if(!state) return vstr("");
-    char *dir=extension_read_path(vm,S(vm,a,n,0));
-    const char *mask=n>=2?S(vm,a,n,1):"*";
-    if(!mask || !mask[0]) mask="*";
-    int include_directories=!strcmp(nm,"directory_contents") || N(a,n,2)!=0.0;
-    char *names[GML_FF_MAX]; int name_count=0;
+    const char *given=S(vm,a,n,0);
+    int ext_form=!strcmp(nm,"directory_contents_ext");
+    const char *mask=ext_form?S(vm,a,n,1):"";
+    int include_directories=!ext_form || N(a,n,2)!=0.0;
+    int pass_all=!mask[0] || !strcmp(mask,"*.*");
+    const char *suffix=(!pass_all && mask[0]=='*' && mask[1]=='.')?mask+1:NULL;
+    char *dir=extension_read_path(vm,given);
+    char base[1024];
+    snprintf(base,sizeof base,"%s",given?given:"");
+    for(size_t k=strlen(base);k && (base[k-1]=='/'||base[k-1]=='\\');k--) base[k-1]=0;
+    char *names[GML_FF_MAX]; uint8_t is_dir[GML_FF_MAX]; int name_count=0;
     void *directory=dir && vm->host && vm->host->directory_open?
       vm->host->directory_open(vm->host->userdata,dir):NULL;
     if(directory){
       AnygmDirectoryEntry entry={.struct_size=sizeof entry};
       while(name_count<GML_FF_MAX &&
             vm->host->directory_read(vm->host->userdata,directory,&entry)==ANYGM_OK){
-        int is_directory=(entry.flags&ANYGM_FILE_INFO_DIRECTORY)!=0;
-        if(entry.name[0]=='.' ||
-           (is_directory && !include_directories) ||
-           !wild_match(mask,entry.name)){ entry.struct_size=sizeof entry; continue; }
-        names[name_count++]=strdup(entry.name);
+        int entry_is_dir=(entry.flags&ANYGM_FILE_INFO_DIRECTORY)!=0;
+        int wanted;
+        if(!strcmp(entry.name,".")||!strcmp(entry.name,"..")) wanted=0;
+        else if(entry_is_dir) wanted=include_directories;
+        else if(pass_all) wanted=1;
+        else if(suffix){
+          size_t len=strlen(entry.name),slen=strlen(suffix);
+          wanted=len>=slen && !strcmp(entry.name+len-slen,suffix);
+        } else wanted=0;
+        if(wanted){
+          names[name_count]=strdup(entry.name);
+          is_dir[name_count]=(uint8_t)entry_is_dir;
+          name_count++;
+        }
         entry.struct_size=sizeof entry;
       }
       if(vm->host->directory_close) vm->host->directory_close(vm->host->userdata,directory);
@@ -1363,16 +1380,21 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     for(int i=0;i<name_count;i++) for(int j=i+1;j<name_count;j++)
       if(names[j] && names[i] && strcmp(names[j],names[i])<0){
         char *swap=names[i]; names[i]=names[j]; names[j]=swap;
+        uint8_t flag=is_dir[i]; is_dir[i]=is_dir[j]; is_dir[j]=flag;
       }
+    size_t base_len=strlen(base);
     size_t joined_size=1;
-    for(int i=0;i<name_count;i++) joined_size+=names[i]?strlen(names[i])+1:0;
+    for(int i=0;i<name_count;i++)
+      joined_size+=names[i]?base_len+1+strlen(names[i])+2:0;
     char *joined=(char*)malloc(joined_size);
     size_t at=0;
     for(int i=0;i<name_count && joined;i++){
       if(!names[i]) continue;
+      if(at) joined[at++]='\n';
+      if(base_len){ memcpy(joined+at,base,base_len); at+=base_len; joined[at++]='\\'; }
       size_t len=strlen(names[i]);
-      if(at){ joined[at++]='\n'; }
       memcpy(joined+at,names[i],len); at+=len;
+      if(is_dir[i]) joined[at++]='\\';
     }
     if(joined) joined[at]=0;
     for(int i=0;i<name_count;i++) free(names[i]);
@@ -1390,7 +1412,7 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
      !strcmp(nm,"get_program_pathname")||!strcmp(nm,"get_temp_directory"))
     return vstr("");
   if(!strcmp(nm,"get_program_filename")){
-    const char *content=vm && vm->parameter_executable?vm->parameter_executable:"";
+    const char *content=vm?vm->parameter_executable:"";
     const char *base=content;
     for(const char *cursor=content;*cursor;cursor++)
       if(*cursor=='/'||*cursor=='\\') base=cursor+1;

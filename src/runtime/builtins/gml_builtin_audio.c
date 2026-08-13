@@ -465,8 +465,8 @@ enum {
   GML_EXTERNAL_AUDIO_PXTONE_STOP,
   GML_EXTERNAL_AUDIO_PXTONE_RELEASE,
   GML_EXTERNAL_AUDIO_PXTONE_SHUTDOWN,
-  /* Tracker-music extension operations. A single spectrum operation accepts either a band
-   * argument or a two-argument mean request. */
+  /* Tracker-music extension operations. Spectrum requests use the first band argument
+   * and ignore an optional second argument. */
   GML_EXTERNAL_AUDIO_JB_INIT,
   GML_EXTERNAL_AUDIO_JB_CLOSE,
   GML_EXTERNAL_AUDIO_JB_LOAD_SONG,
@@ -686,8 +686,7 @@ static int external_ascii_equal(const char *left,const char *right){
   }
   return *left==0 && *right==0;
 }
-/* jbfmod.dll extension symbols. Spectrum requests share one operation, with argument count
- * distinguishing the band and mean forms. */
+/* jbfmod.dll extension names. Both spectrum wrappers map to the same one-band operation. */
 static const GmlExternalAudioSymbol external_jbfmod_symbols[]={
   {"Init",GML_EXTERNAL_AUDIO_JB_INIT},
   {"Close",GML_EXTERNAL_AUDIO_JB_CLOSE},
@@ -1351,7 +1350,7 @@ typedef struct {
 typedef struct {
   JbSlot slot[JB_SLOTS];
   int current;
-  int master_volume;               /* 0..255 as the DLL takes */
+  int master_volume;               /* 0..256 extension volume scale */
   int pan_separation;              /* 0..128; applies to renders made after it is set */
   int looping;
   int spectrum_on;
@@ -1373,7 +1372,7 @@ static JbState *jbfmod_state(GmlVM *vm){
     JbState *jb=(JbState*)calloc(1,sizeof *jb);
     if(!jb) return NULL;
     jb->current=-1;
-    jb->master_volume=255;
+    jb->master_volume=256;
     jb->pan_separation=128;
     jb->looping=1;
     for(int i=0;i<JB_SLOTS;i++) jb->slot[i].sound=-1;
@@ -1435,7 +1434,7 @@ static int jb_load_slot(GmlVM *vm,JbState *jb,int slot,const char *relative){
       } else {
         gml_audio_sound_loop_start((GmlAudio*)vm->audio,sound,(double)loop_frame/44100.0);
         gml_audio_sound_set_default_loop((GmlAudio*)vm->audio,sound,jb->looping);
-        gml_audio_sound_gain((GmlAudio*)vm->audio,sound,jb->master_volume/255.0);
+        gml_audio_sound_gain((GmlAudio*)vm->audio,sound,jb->master_volume/256.0);
       }
     }
   }
@@ -1530,6 +1529,7 @@ static GmlVal external_jbfmod_call(GmlVM *vm,int operation,GmlVal *args,int coun
     }
     case GML_EXTERNAL_AUDIO_JB_STOP_SONG:
       if(cur && cur->sound>=0) gml_audio_stop(audio,cur->sound);
+      jb->current=-1;
       return vreal(1);
     case GML_EXTERNAL_AUDIO_JB_SET_LOOPING:
       jb->looping=N(args,count,0)!=0.0;
@@ -1538,10 +1538,11 @@ static GmlVal external_jbfmod_call(GmlVM *vm,int operation,GmlVal *args,int coun
       return vreal(1);
     case GML_EXTERNAL_AUDIO_JB_SET_MASTER_VOLUME: {
       int volume=(int)N(args,count,0);
-      if(volume<0) volume=0; if(volume>255) volume=255;
+      if(volume<0) volume=0;
+      if(volume>256) volume=256;
       jb->master_volume=volume;
       for(int i=0;i<JB_SLOTS;i++)
-        if(jb->slot[i].sound>=0) gml_audio_sound_gain(audio,jb->slot[i].sound,volume/255.0);
+        if(jb->slot[i].sound>=0) gml_audio_sound_gain(audio,jb->slot[i].sound,volume/256.0);
       return vreal(1);
     }
     case GML_EXTERNAL_AUDIO_JB_GET_MASTER_VOLUME: return vreal(jb->master_volume);
@@ -1559,7 +1560,8 @@ static GmlVal external_jbfmod_call(GmlVM *vm,int operation,GmlVal *args,int coun
     }
     case GML_EXTERNAL_AUDIO_JB_SET_PAN_SEPARATION: {
       int separation=(int)N(args,count,0);
-      if(separation<0) separation=0; if(separation>128) separation=128;
+      if(separation<0) separation=0;
+      if(separation>128) separation=128;
       /* Applies to songs loaded from here on: panning is baked into the render, and re-rendering
        * a playing song would tear the voice under it. */
       jb->pan_separation=separation;
@@ -1595,11 +1597,11 @@ static GmlVal external_jbfmod_call(GmlVM *vm,int operation,GmlVal *args,int coun
       double seconds=cur?gml_audio_sound_get_track_position(audio,cur->sound):0.0;
       if(seconds<0.0) seconds=0.0;
       char *buffer=state->string_ring[state->string_ring_index++&7u];
-      snprintf(buffer,sizeof(state->string_ring[0]),"%d:%02d",
-               (int)(seconds/60.0),(int)seconds%60);
+      snprintf(buffer,sizeof(state->string_ring[0]),"%02d:%02d:%02d",
+               (int)(seconds/60.0),(int)seconds%60,((int)(seconds*100.0))%100);
       return vstr(buffer);
     }
-    case GML_EXTERNAL_AUDIO_JB_GET_CURRENT_SONG: return vreal(jb->current);
+    case GML_EXTERNAL_AUDIO_JB_GET_CURRENT_SONG: return vreal(jb->current<0?0:jb->current);
     case GML_EXTERNAL_AUDIO_JB_GET_SONG_EXISTS: {
       int slot=(int)N(args,count,0);
       return vreal(jb_slot_get(vm,jb,slot)!=NULL);
@@ -1624,27 +1626,32 @@ static GmlVal external_jbfmod_call(GmlVM *vm,int operation,GmlVal *args,int coun
         case GML_EXTERNAL_AUDIO_JB_GET_NUM_CHANNELS:
           return vreal(gml_tracker_num_channels(s->module));
         case GML_EXTERNAL_AUDIO_JB_GET_NUM_INSTRUMENTS:
-          return vreal(gml_tracker_num_instruments(s->module));
+          /* This interface reports no instrument count for MOD modules. */
+          return vreal(gml_tracker_type(s->module)[0]=='X'
+                         ?gml_tracker_num_instruments(s->module):0);
         case GML_EXTERNAL_AUDIO_JB_GET_NUM_ORDERS:
           return vreal(gml_tracker_num_orders(s->module));
         case GML_EXTERNAL_AUDIO_JB_GET_NUM_PATTERNS:
           return vreal(gml_tracker_num_patterns(s->module));
         default:
-          return vreal(gml_tracker_num_samples(s->module));
+          /* MOD modules expose 31 fixed sample slots, including empty slots. */
+          return vreal(gml_tracker_type(s->module)[0]=='X'
+                         ?gml_tracker_num_samples(s->module):31);
       }
     }
     case GML_EXTERNAL_AUDIO_JB_GET_CHANNELS_PLAYING:
       return vreal(cur && gml_audio_is_playing(audio,cur->sound)
                      ?gml_tracker_num_channels(cur->module):0);
     case GML_EXTERNAL_AUDIO_JB_GET_CPU_USAGE: return vreal(0);
-    case GML_EXTERNAL_AUDIO_JB_GET_FREQUENCY: return vreal(44100);
+    case GML_EXTERNAL_AUDIO_JB_GET_FREQUENCY: return vreal(0);
     case GML_EXTERNAL_AUDIO_JB_GET_ERROR_CODE: return vreal(jb->error_code);
     case GML_EXTERNAL_AUDIO_JB_GET_ERROR_MESSAGE: {
       char *buffer=state->string_ring[state->string_ring_index++&7u];
-      snprintf(buffer,sizeof(state->string_ring[0]),"%s",jb->error_message);
+      snprintf(buffer,sizeof(state->string_ring[0]),"%.*s",
+               (int)sizeof(state->string_ring[0])-1,jb->error_message);
       return vstr(buffer);
     }
-    case GML_EXTERNAL_AUDIO_JB_GET_JB_INFO: return vstr("AnyGM portable jbfmod");
+    case GML_EXTERNAL_AUDIO_JB_GET_JB_INFO: return vstr("");
     case GML_EXTERNAL_AUDIO_JB_GET_PACK_INFO: return vstr("");
     case GML_EXTERNAL_AUDIO_JB_GET_INSTRUMENT_PLAYED:
     case GML_EXTERNAL_AUDIO_JB_GET_INSTRUMENT_PLAYED_ONCE: {
@@ -1681,15 +1688,10 @@ static GmlVal external_jbfmod_call(GmlVM *vm,int operation,GmlVal *args,int coun
       const int16_t *pcm=gml_audio_sound_pcm16(audio,cur->sound,&frames,&channels);
       if(!pcm || channels!=2) return vreal(0);
       uint32_t position=jb_position_frames(vm,cur);
-      int first=(int)N(args,count,0);
-      int last=count>=2?(int)N(args,count,1):first;
-      if(first<0) first=0; if(first>=JB_SPECTRUM_BANDS) first=JB_SPECTRUM_BANDS-1;
-      if(last<first) last=first;
-      if(last>=JB_SPECTRUM_BANDS) last=JB_SPECTRUM_BANDS-1;
-      uint64_t sum=0;
-      for(int band=first;band<=last;band++)
-        sum+=gml_tracker_spectrum(pcm,frames,position,band,JB_SPECTRUM_BANDS);
-      return vreal((double)(sum/(uint64_t)(last-first+1))/65536.0);
+      /* Spectrum uses the first band argument; an optional second argument is ignored. */
+      int band=(int)N(args,count,0);
+      if(band<0 || band>=JB_SPECTRUM_BANDS) return vreal(0);
+      return vreal((double)gml_tracker_spectrum(pcm,frames,position,band,JB_SPECTRUM_BANDS)/65536.0);
     }
     default: return vreal(0);
   }
