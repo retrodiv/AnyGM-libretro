@@ -360,6 +360,32 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(d>31) d=31;
     return vreal(25569.0+(double)gm_days_from_civil(y,mo,d)+(h*3600.0+mi*60.0+s)/86400.0);
   }
+  if(!strncmp(nm,"native_cursor_",14)){
+    /* A frontend owns pointer presentation. Keep the extension's raw handle contract without
+     * requiring a host cursor: create writes one nonzero opaque value into the caller's buffer. */
+    if(!strcmp(nm,"native_cursor_create_empty_raw")||
+       !strcmp(nm,"native_cursor_create_from_full_path_raw")||
+       !strcmp(nm,"native_cursor_create_from_buffer_raw")){
+      int bi=vm_buffer_slot_from_addr(vm,N(a,n,0));
+      if(bi<0 || vm->builtins->buffer[bi].size<8 || !vm->builtins->buffer[bi].data) return vreal(0);
+      uint64_t handle=0xA9C0DAull;
+      memcpy(vm->builtins->buffer[bi].data,&handle,sizeof handle);
+      return vreal(1);
+    }
+    if(!strcmp(nm,"native_cursor_get_frame_raw")) return vreal(0);
+    if(!strcmp(nm,"native_cursor_get_framerate_raw")) return vreal(30);
+    if(!strcmp(nm,"native_cursor_check_full_path")) return vreal(0);
+    if(!strcmp(nm,"native_cursor_preinit_raw")||
+       !strcmp(nm,"native_cursor_add_from_full_path_raw")||
+       !strcmp(nm,"native_cursor_add_from_buffer_raw")||
+       !strcmp(nm,"native_cursor_set_raw")||
+       !strcmp(nm,"native_cursor_reset_raw")||
+       !strcmp(nm,"native_cursor_set_frame_raw")||
+       !strcmp(nm,"native_cursor_set_framerate_raw")||
+       !strcmp(nm,"native_cursor_destroy_raw")||
+       !strcmp(nm,"native_cursor_update"))
+      return vreal(1);
+  }
   if(!strcmp(nm,"date_second_span")) return vreal(fabs(N(a,n,0)-N(a,n,1))*86400.0);
   if(!strcmp(nm,"date_minute_span")) return vreal(fabs(N(a,n,0)-N(a,n,1))*1440.0);
   if(!strcmp(nm,"date_hour_span")) return vreal(fabs(N(a,n,0)-N(a,n,1))*24.0);

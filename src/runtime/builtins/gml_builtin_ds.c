@@ -992,6 +992,13 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_grid_set")||!strcmp(nm,"ds_grid_set_post")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
     if(n>=4) ds_grid_store(g,x,y,a[3]);
     return n>=4?a[3]:vreal(0); }
+  if(!strcmp(nm,"ds_grid_copy")){ GmlDSGrid *d=ds_grid_slot(vm,(int)N(a,n,0)), *s=ds_grid_slot(vm,(int)N(a,n,1));
+    if(!d || !s || d==s) return vreal(0);
+    if(!ds_grid_resize_cells(d,s->w,s->h)) return vreal(0);
+    for(int y=0;y<s->h;y++)
+      for(int x=0;x<s->w;x++)
+        ds_grid_store(d,x,y,s->cell[(size_t)y*s->w+x]);
+    return vreal(1); }
   if(!strcmp(nm,"ds_grid_add")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
     if(g && g->cell && x>=0 && y>=0 && x<g->w && y<g->h && n>=4){
       GmlVal old=g->cell[(size_t)y*g->w+x];

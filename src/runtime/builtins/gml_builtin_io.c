@@ -1591,6 +1591,40 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return md5_hex_val(vm->builtins->buffer[i].data+off,(size_t)sz); }
   if(!strcmp(nm,"buffer_get_address")){ int id=(int)N(a,n,0), i=vm_buffer_slot(vm,id);
     return vreal(i>=0 ? (double)(0xB0000000u | (uint32_t)(id&0xFFFF)) : 0); }
+  if(!strcmp(nm,"buffer_get_surface")){  /* Copy surface pixels as R,G,B,A bytes. */
+    int di=vm_buffer_slot(vm,(int)N(a,n,0)); int sid=(int)N(a,n,1); int off=(int)N(a,n,2);
+    GmlRender *R=(GmlRender*)vm->render;
+    int w=0,h=0;
+    const uint32_t *px = R?gml_surface_pixels_read(R,sid,&w,&h):NULL;
+    if(di<0 || !px || off<0 || w<=0 || h<=0) return vreal(0);
+    size_t count=(size_t)w*(size_t)h;
+    unsigned char *out=malloc(count*4);
+    if(!out) return vreal(0);
+    for(size_t k=0;k<count;k++){ uint32_t p=px[k];
+      out[k*4+0]=(unsigned char)(p>>16);
+      out[k*4+1]=(unsigned char)(p>>8);
+      out[k*4+2]=(unsigned char)p;
+      out[k*4+3]=(unsigned char)(p>>24); }
+    buffer_write_at(vm,di,off,out,(int)(count*4));
+    free(out);
+    return vreal(0); }
+  if(!strcmp(nm,"file_text_open_from_string")){
+    /* A caller-supplied text as a readable text-file handle. The bytes go through the save-dir VFS
+     * so every read path below stays the one real files use; the scratch name rotates through the
+     * handle count, which bounds what a run can leave behind. */
+    const char *text=S(vm,a,n,0);
+    char name[64];
+    snprintf(name,sizeof name,"__anygm_text_source_%u.txt",vm->builtins->text_source_serial++ & 15u);
+    char *path=resolve_write_path(vm,name);
+    if(!path) return vreal(-1);
+    int wid=vm_file_open(vm,path,"w");
+    if(wid>0){
+      vm_file_write(vm,wid-1,text,strlen(text));
+      vm_file_close(vm,wid-1);
+    }
+    int id=vm_file_open(vm,path,"r");
+    free(path);
+    return vreal(id); }
   if(!strcmp(nm,"buffer_tell")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); return vreal(i>=0?vm->builtins->buffer[i].pos:0); }
   if(!strcmp(nm,"buffer_resize")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); if(i>=0) buffer_resize_slot(vm,i,(int)N(a,n,1)); return vreal(0); }
   if(!strcmp(nm,"buffer_seek")){ int i=vm_buffer_slot(vm,(int)N(a,n,0)); if(i>=0){

@@ -200,6 +200,8 @@ struct GmlBuiltinState {
    * builtin is logged once: a single early miss must not silence every later one for a whole run. */
   uint32_t unknown_builtin_seen[128];
   int unknown_builtin_seen_count;
+  unsigned text_source_serial;   /* rotates file_text_open_from_string scratch names, IO-owned */
+  int surface_depth_disabled;    /* surface_depth_disable() latch the getter reads back, DRAW-owned */
 };
 
 struct GmlRender;

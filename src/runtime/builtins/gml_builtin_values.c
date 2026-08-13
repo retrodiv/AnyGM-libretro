@@ -626,6 +626,8 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
   if(!strcmp(nm,"string_hash_to_newline")){ /* legacy text helper: keep the string intact (safer than 0) */
     const char*s=S(vm,a,n,0); return vstr_owned(strdup(s?s:"")); }
   if(!strcmp(nm,"int64")){ return vreal((double)(int64_t)N(a,n,0)); }
+  if(!strcmp(nm,"ptr")){  /* pointers are opaque numbers here; the conversion must keep the value */
+    return vreal(N(a,n,0)); }
   if(!strcmp(nm,"string_upper")){ const char*s=S(vm,a,n,0); int len=(int)strlen(s); char *o=dup_n(s,len);
     for(int i=0;i<len;i++) o[i]=(char)toupper((unsigned char)o[i]);
     return vstr_owned(o); }
@@ -935,6 +937,19 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
                  gml_struct_find(vm,(unsigned)a[0].d)!=NULL);
   }
   if(!strcmp(nm,"is_method")) return vreal(n>0 && gml_value_is_method(vm,a[0]));
+  if(!strcmp(nm,"method_get_index")||!strcmp(nm,"method_get_self")){
+    int want_index = nm[11]=='i';
+    if(n>0 && a[0].t==V_REAL && GML_IS_STRUCT_ID(a[0].d)){
+      GmlInstance *st=gml_struct_find(vm,(unsigned)a[0].d);
+      if(st){
+        GmlVal *p=gml_varmap_get(&st->vars,want_index?"__fn":"__self");
+        if(p) return *p;
+      }
+    }
+    /* A bare function used as a method index answers with its own function value. */
+    if(want_index && n>0 && a[0].t==V_REAL && GML_IS_FUNCVAL((int)a[0].d)) return a[0];
+    return vundef();
+  }
   if(!strcmp(nm,"is_callable")){
     int raw=n>0 && a[0].t==V_REAL && GML_IS_FUNCVAL((int)a[0].d);
     return vreal(raw || (n>0 && gml_value_is_method(vm,a[0])));
