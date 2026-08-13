@@ -184,6 +184,7 @@ ANYGM_BUILTIN_SOURCES := \
 ANYGM_RUNTIME_SOURCES := \
 	src/host/anygm_host.c \
 	src/host/anygm_vfs.c \
+	src/host/anygm_libm_compat.c \
 	$(ANYGM_CORE_SOURCES) \
 	src/compatibility/anygm_compatibility.c \
 	src/content/container/content_router.c \

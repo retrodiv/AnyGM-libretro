@@ -82,6 +82,11 @@ changes rather than after each mechanical edit.
 Cross-builds may set `platform`, `CC`, `AR`, and `CROSS_COMPILE`. The root
 `Makefile` follows libretro buildbot conventions and the included GitLab CI
 matrix documents the intended Linux, Windows, and Apple compiler targets.
+A generic `aarch64-linux-gnu-gcc` distro package can link against a newer
+glibc than an older aarch64 target actually has; compare the target's own
+`/lib64/libc.so.6` banner against `objdump -T` on the built core before
+trusting a fresh cross-build (see `src/host/anygm_libm_compat.c`, which
+exists for exactly this reason on one such target).
 
 ## Architecture
 

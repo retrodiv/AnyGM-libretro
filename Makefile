@@ -81,6 +81,15 @@ CORE_PLATFORM_LDFLAGS := -dynamiclib
 CORE_SHARED_FLAG :=
 endif
 
+ANYGM_TARGET_TRIPLE := $(shell $(CC) -dumpmachine 2>/dev/null)
+ifneq (,$(findstring aarch64,$(ANYGM_TARGET_TRIPLE)))
+ifneq (,$(findstring linux,$(ANYGM_TARGET_TRIPLE)))
+# See src/host/anygm_libm_compat.c: pins sqrtf/atan2f to an older glibc
+# symbol version than a newer aarch64-linux cross toolchain binds by default.
+CORE_PLATFORM_LDFLAGS += -Wl,--wrap=sqrtf -Wl,--wrap=atan2f
+endif
+endif
+
 RUNTIME_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_RUNTIME_SOURCES)) \
 	$(patsubst %.cpp,$(BUILD_DIR)/obj/%.o,$(ANYGM_RUNTIME_CXX_SOURCES))
 CORE_RUNTIME_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_CORE_SOURCES))
