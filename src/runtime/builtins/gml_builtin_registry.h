@@ -1708,7 +1708,19 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1620, DIRECTORY_EXISTS_NS, "directory_exists_ns", IO, IO, ALWAYS) \
   ENTRY(1621, DIRECTORY_CREATE_NS, "directory_create_ns", IO, IO, ALWAYS) \
   ENTRY(1622, DIRECTORY_DELETE_NS, "directory_delete_ns", IO, IO, ALWAYS) \
-  ENTRY(1623, DIRECTORY_COPY_NS, "directory_copy_ns", IO, IO, ALWAYS)
+  ENTRY(1623, DIRECTORY_COPY_NS, "directory_copy_ns", IO, IO, ALWAYS) \
+  ENTRY(1624, DIRECTORY_CONTENTS, "directory_contents", IO, IO, ALWAYS) \
+  ENTRY(1625, DIRECTORY_CONTENTS_EXT, "directory_contents_ext", IO, IO, ALWAYS) \
+  ENTRY(1626, DIRECTORY_COPY, "directory_copy", IO, IO, ALWAYS) \
+  ENTRY(1627, DIRECTORY_RENAME, "directory_rename", IO, IO, ALWAYS) \
+  ENTRY(1628, ENVIRONMENT_SET_VARIABLE, "environment_set_variable", IO, IO, ALWAYS) \
+  ENTRY(1629, FILENAME_ABSOLUTE, "filename_absolute", IO, IO, ALWAYS) \
+  ENTRY(1630, GET_PROGRAM_DIRECTORY, "get_program_directory", IO, IO, ALWAYS) \
+  ENTRY(1631, GET_PROGRAM_FILENAME, "get_program_filename", IO, IO, ALWAYS) \
+  ENTRY(1632, GET_PROGRAM_PATHNAME, "get_program_pathname", IO, IO, ALWAYS) \
+  ENTRY(1633, GET_TEMP_DIRECTORY, "get_temp_directory", IO, IO, ALWAYS) \
+  ENTRY(1634, GET_WORKING_DIRECTORY, "get_working_directory", IO, IO, ALWAYS) \
+  ENTRY(1635, SET_WORKING_DIRECTORY, "set_working_directory", IO, IO, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1723,7 +1735,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1624
+  GML_BUILTIN_ID_LIMIT = 1636
 } GmlBuiltinId;
 
 #endif
