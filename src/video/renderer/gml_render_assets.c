@@ -670,6 +670,18 @@ int gml_render_font_texture_handle(const GmlRender *R,int font){
   return -1;
 }
 
+int gml_render_font_cached_glyphs_get(const GmlRender *R,int font,unsigned *epoch){
+  if(!R || font<0 || font>=R->n_fonts) return 0;
+  if(epoch) *epoch=R->fonts[font].cached_glyphs_epoch;
+  return R->fonts[font].cached_glyphs_struct_id;
+}
+
+void gml_render_font_cached_glyphs_set(GmlRender *R,int font,int struct_id,unsigned epoch){
+  if(!R || font<0 || font>=R->n_fonts) return;
+  R->fonts[font].cached_glyphs_struct_id=struct_id;
+  R->fonts[font].cached_glyphs_epoch=epoch;
+}
+
 int gml_render_font_exists(const GmlRender *R,int font){
   if(!R || font<0 || font>=R->n_fonts) return 0;
   const GmlFont *source=&R->fonts[font];

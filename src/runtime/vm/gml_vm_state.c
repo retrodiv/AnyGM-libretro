@@ -676,6 +676,7 @@ static void runtime_clear(GmlVM *vm){
   for(int i=0;i<vm->n_structs;i++){ free(vm->structs[i]); vm->structs[i]=NULL; }
   if(vm->struct_gen && vm->cap_structs>0) memset(vm->struct_gen,0,(size_t)vm->cap_structs);
   vm->n_structs=0; vm->n_struct_free=0; vm->structs_last_gc_frame=0;
+  vm->struct_reset_epoch++;   /* invalidate any C-side cache keyed on a pre-load struct id (see gml_vm.h) */
   if(vm->inst && vm->inst_cap>0) memset(vm->inst,0,(size_t)vm->inst_cap*sizeof(GmlInstance));
   vm->inst_count=0; vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;
   vm->next_creation_seq=1;

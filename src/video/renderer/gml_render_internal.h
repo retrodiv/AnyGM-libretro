@@ -132,6 +132,12 @@ typedef struct {
   float runtime_scale; int runtime_ascent;
   int runtime_pen_x, runtime_pen_y, runtime_row_h, runtime_glyph_cap;
   int glyph_by_char[256];                                        /* fast ASCII lookup, -1 = none */
+  /* font_get_info builds a struct per glyph; that is too costly to redo every call for a caller
+   * that queries it every step (character-by-character text effects). Cache the built glyph-map
+   * struct id here and validate it against the VM's struct-reset epoch plus gml_struct_find before
+   * reuse, so a state load, rewind, or an intervening GC sweep is never handed a stale/wrong struct. */
+  int cached_glyphs_struct_id;                                   /* 0 = none */
+  unsigned cached_glyphs_epoch;                                  /* vm->struct_reset_epoch at cache time */
 } GmlFont;                                                        /* sprite font or real FONT-chunk font */
 typedef struct { uint32_t *px; int w, h, live;
                  int dirty;                       /* px changed since the RLE cache was built */

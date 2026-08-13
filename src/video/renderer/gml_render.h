@@ -507,6 +507,8 @@ int  gml_render_font_metrics(const GmlRender *r, int font,
 int  gml_render_font_glyph_metrics(const GmlRender *r, int font, int glyph,
                                    GmlRenderFontGlyphMetrics *metrics);
 int  gml_render_font_texture_handle(const GmlRender *r, int font);
+int  gml_render_font_cached_glyphs_get(const GmlRender *r, int font, unsigned *epoch);
+void gml_render_font_cached_glyphs_set(GmlRender *r, int font, int struct_id, unsigned epoch);
 int  gml_render_font_exists(const GmlRender *r, int font);
 int  gml_sprite_duplicate(GmlRender *r, int sprite);
 void gml_sprite_set_offset(GmlRender *r, int sprite, int xorig, int yorig);

@@ -1343,7 +1343,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       int fid=(int)N(a,n,0), spr=-1, first=0, prop=0, sep=0, size=0;
       int ascender=0, ascender_offset=0, sdf_spread=0;
       GmlRenderFontMetrics font;
-      GmlInstance *glyphs=gml_struct_new(vm);
+      int glyphs_id=0;
       if(fid>=0 && gml_render_font_metrics(R,fid,&font)){
         size=font.line_height;
         ascender=font.ascender;
@@ -1353,23 +1353,38 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
           spr=font.sprite; first=font.first;
           prop=font.proportional; sep=font.separation;
         }
-        if(glyphs){
-          for(int index=0;index<font.glyph_count;index++){
-            GmlRenderFontGlyphMetrics glyph;
-            if(!gml_render_font_glyph_metrics(R,fid,index,&glyph)) continue;
-            GmlInstance *record=gml_struct_new(vm);
-            if(!record) break;
-            *gml_varmap_put(&record->vars,"char")=vreal(glyph.character);
-            *gml_varmap_put(&record->vars,"x")=vreal(glyph.x);
-            *gml_varmap_put(&record->vars,"y")=vreal(glyph.y);
-            *gml_varmap_put(&record->vars,"w")=vreal(glyph.width);
-            *gml_varmap_put(&record->vars,"h")=vreal(glyph.height);
-            *gml_varmap_put(&record->vars,"shift")=vreal(glyph.shift);
-            *gml_varmap_put(&record->vars,"offset")=vreal(glyph.offset);
-            char key[5]; font_glyph_key(glyph.character,key);
-            char *owned_key=strdup(key);
-            if(!owned_key) break;
-            *gml_varmap_put_owned(&glyphs->vars,owned_key)=vreal((double)record->id);
+        /* Building one GmlInstance per glyph is too costly to redo on every call for a caller that
+         * queries this every step (e.g. character-by-character text effects). A font's glyph metrics
+         * are static content data, so the built map is cacheable per font id — validated against the
+         * VM's struct-reset epoch and gml_struct_find so a state load, rewind, or an intervening GC
+         * sweep never hands back a stale or wrong struct. */
+        unsigned cached_epoch=0;
+        int cached_id=gml_render_font_cached_glyphs_get(R,fid,&cached_epoch);
+        if(cached_id && cached_epoch==vm->struct_reset_epoch &&
+           gml_struct_find(vm,(unsigned)cached_id))
+          glyphs_id=cached_id;
+        else{
+          GmlInstance *glyphs=gml_struct_new(vm);
+          if(glyphs){
+            for(int index=0;index<font.glyph_count;index++){
+              GmlRenderFontGlyphMetrics glyph;
+              if(!gml_render_font_glyph_metrics(R,fid,index,&glyph)) continue;
+              GmlInstance *record=gml_struct_new(vm);
+              if(!record) break;
+              *gml_varmap_put(&record->vars,"char")=vreal(glyph.character);
+              *gml_varmap_put(&record->vars,"x")=vreal(glyph.x);
+              *gml_varmap_put(&record->vars,"y")=vreal(glyph.y);
+              *gml_varmap_put(&record->vars,"w")=vreal(glyph.width);
+              *gml_varmap_put(&record->vars,"h")=vreal(glyph.height);
+              *gml_varmap_put(&record->vars,"shift")=vreal(glyph.shift);
+              *gml_varmap_put(&record->vars,"offset")=vreal(glyph.offset);
+              char key[5]; font_glyph_key(glyph.character,key);
+              char *owned_key=strdup(key);
+              if(!owned_key) break;
+              *gml_varmap_put_owned(&glyphs->vars,owned_key)=vreal((double)record->id);
+            }
+            glyphs_id=(int)glyphs->id;
+            gml_render_font_cached_glyphs_set(R,fid,glyphs_id,vm->struct_reset_epoch);
           }
         }
       }
@@ -1378,7 +1393,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       *gml_varmap_put(&st->vars,"size")=vreal(size);
       *gml_varmap_put(&st->vars,"ascender")=vreal(ascender);
       *gml_varmap_put(&st->vars,"ascenderOffset")=vreal(ascender_offset);
-      *gml_varmap_put(&st->vars,"glyphs")=glyphs?vreal((double)glyphs->id):vundef();
+      *gml_varmap_put(&st->vars,"glyphs")=glyphs_id?vreal((double)glyphs_id):vundef();
       *gml_varmap_put(&st->vars,"spriteIndex")=vreal(spr);
       *gml_varmap_put(&st->vars,"sdfEnabled")=vreal(sdf_spread>0);
       *gml_varmap_put(&st->vars,"sdfSpread")=vreal(sdf_spread);
