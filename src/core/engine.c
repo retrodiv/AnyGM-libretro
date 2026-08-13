@@ -258,6 +258,7 @@ static void engine_adopt_boot_overrides(AnygmEngine *engine,
   engine->boot_cheat_count=prepared->boot_cheat_count;
   snprintf(engine->content_overrides_text,sizeof engine->content_overrides_text,"%s",
            prepared->content_overrides);
+  engine->introskip_enabled=-1;
   engine_override_menu_refresh(engine);
   if(engine->boot_cheat_count)
     engine_logf(engine,ANYGM_LOG_INFO,"Content overrides: %d directive(s) from the anchor%s\n",
@@ -1846,7 +1847,9 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
     uint32_t want=delta->values.content_overrides?1u:0u;
     if(want!=engine->config.content_overrides){
       engine->config.content_overrides=want;
-      /* The development menu can be declared by content directives; follow the toggle. */
+      /* The development menu and the intro-skip list can be declared by content directives;
+       * both follow the toggle. */
+      engine->introskip_enabled=-1;
       if(engine->lifecycle==ENGINE_LOADED) engine_override_menu_refresh(engine);
     }
   }

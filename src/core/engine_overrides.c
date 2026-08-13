@@ -355,7 +355,19 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
       memcpy(slot->code,cursor,length);
       slot->code[length]=0;
       slot->enabled=1;
-      if(!boot_line_is_menu(slot->code)){
+      if(!strncmp(slot->code,"introskip|",10)){
+        const char *list=slot->code+10;
+        int digits=0,list_ok=list[0]!=0;
+        for(const char *scan=list;*scan && list_ok;scan++){
+          if(*scan>='0' && *scan<='9') digits=1;
+          else if(*scan!=',' && *scan!='-' && *scan!=' ' && *scan!='\t') list_ok=0;
+        }
+        if(!list_ok || !digits){
+          snprintf(error,error_capacity,
+                   "directive %d: introskip| takes a room index list such as 1,3-5",line_number);
+          return 0;
+        }
+      } else if(!boot_line_is_menu(slot->code)){
         cheat_parse(slot->code,&slot->act);
         if(slot->act.kind==CK_NONE){
           snprintf(error,error_capacity,"directive %d is not a recognized override",line_number);
@@ -575,8 +587,10 @@ void room_skip_hook(AnygmEngine *engine){
 }
 
 
-/* GML_INTROSKIP="1,2,4,5" or "1-4,9": in the listed room indices, A or B advances to the next
- * room in play order. The room list is supplied at launch. */
+/* "1,2,4,5" or "1-4,9": in the listed room indices, A, B, or Start advances to the next room in
+ * play order. The list comes from the GML_INTROSKIP development setting, or — when the setting is
+ * absent — from the loaded content's introskip| anchor directive, which follows the
+ * content-override switch like every other content directive. */
 static void introskip_parse(AnygmEngine *engine,const char *s){
   memset(engine->introskip_set, 0, sizeof engine->introskip_set);
   engine->introskip_enabled = (s && *s) ? 1 : 0;
@@ -592,14 +606,25 @@ static void introskip_parse(AnygmEngine *engine,const char *s){
   }
 }
 void introskip_hook(AnygmEngine *engine){
-  if(engine->introskip_enabled < 0) introskip_parse(engine,anygm_host_development_setting(&engine->host,"GML_INTROSKIP"));
+  if(engine->introskip_enabled < 0){
+    const char *setting=anygm_host_development_setting(&engine->host,"GML_INTROSKIP");
+    if(!setting || !setting[0]){
+      int active=engine_boot_cheats_active(engine);
+      for(int i=0;i<active && (!setting || !setting[0]);i++)
+        if(engine->boot_cheats[i].enabled &&
+           !strncmp(engine->boot_cheats[i].code,"introskip|",10))
+          setting=engine->boot_cheats[i].code+10;
+    }
+    introskip_parse(engine,setting);
+  }
   if(!engine->introskip_enabled) return;
   int room = engine->vm.room_index;
   if(room < 0 || room >= 1024) return;
   if(!(engine->introskip_set[room>>3] & (1u<<(room&7)))) return;   /* not a listed intro room */
   int a = engine->pad_current[ANYGM_PAD_FACE_RIGHT] && !engine->pad_previous[ANYGM_PAD_FACE_RIGHT];
   int b = engine->pad_current[ANYGM_PAD_FACE_BOTTOM] && !engine->pad_previous[ANYGM_PAD_FACE_BOTTOM];
-  if((a||b) && engine->vm.pending_room < 0){
+  int start = engine->pad_current[ANYGM_PAD_START] && !engine->pad_previous[ANYGM_PAD_START];
+  if((a||b||start) && engine->vm.pending_room < 0){
     int ord=-1; for(int i=0;i<engine->win.n_room_order;i++) if((int)engine->win.room_order[i]==room){ ord=i; break; }
     if(ord>=0 && ord+1<engine->win.n_room_order) gml_vm_goto_room_order(&engine->vm, ord+1);
   }

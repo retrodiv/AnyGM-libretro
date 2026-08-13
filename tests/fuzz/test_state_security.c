@@ -110,7 +110,7 @@ static int content_override_state_cases(const AnygmHostServices *services,
   char anchor_text[512];
   int anchor_length=snprintf(anchor_text,sizeof anchor_text,
                              "[anygm]\npayload=%s\n[overrides]\n# freeze one probe global\n"
-                             "$anygm_probe=1\n",payload_name);
+                             "$anygm_probe=1\nintroskip|3-5,9\n",payload_name);
   if(anchor_length<0 || (size_t)anchor_length>=sizeof anchor_text)
     return fail("anchor text is too long");
   FILE *file=fopen(anchor,"wb");
@@ -168,8 +168,20 @@ static int content_override_state_cases(const AnygmHostServices *services,
   if(anygm_create(services,&engine)!=ANYGM_OK) return fail("broken-override engine creation failed");
   ok=anygm_load(engine,&source,NULL)!=ANYGM_OK;
   anygm_destroy(engine);
+  if(!ok){ remove(anchor); return fail("an unrecognized override directive did not fail the load"); }
+
+  file=fopen(anchor,"wb");
+  written=file && fwrite("[anygm]\npayload=",1,16,file)==16 &&
+          fwrite(payload_name,1,strlen(payload_name),file)==strlen(payload_name) &&
+          fwrite("\n[overrides]\nintroskip|abc\n",1,27,file)==27;
+  if(file && fclose(file)!=0) written=0;
+  if(!written) return fail("could not rewrite the introskip anchor");
+  engine=NULL;
+  if(anygm_create(services,&engine)!=ANYGM_OK) return fail("introskip engine creation failed");
+  ok=anygm_load(engine,&source,NULL)!=ANYGM_OK;
+  anygm_destroy(engine);
   remove(anchor);
-  if(!ok) return fail("an unrecognized override directive did not fail the load");
+  if(!ok) return fail("a malformed introskip list did not fail the load");
   return 1;
 }
 
