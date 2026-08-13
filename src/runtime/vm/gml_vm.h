@@ -377,10 +377,6 @@ typedef struct GmlVM {
   unsigned char *struct_gen;                      /* per-slot generation (id = BASE|gen<<20|slot); a stale id to a
                                                    * reused slot fails the gen check → NULL, not a wrong struct. */
   int *struct_free, n_struct_free, cap_struct_free;  /* GC free-list: reclaimed struct slots for reuse (bounded pool) */
-  unsigned struct_reset_epoch;                    /* bumped once per state load/rewind (runtime_clear): restored
-                                                   * slot generations can coincidentally match a pre-load id, so a
-                                                   * C-side cache holding a struct id must also check this before
-                                                   * trusting gml_struct_find's result across a load. */
   unsigned gc_epoch;                              /* bumped per collection; stamps arrays already scanned this pass */
   long structs_last_gc_frame;
   GmlTileMap *tilemaps; int n_tilemaps, cap_tilemaps, next_tilemap_id;  /* per-room GMS2 tile layers (collision) */
