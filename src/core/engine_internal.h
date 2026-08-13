@@ -187,6 +187,11 @@ struct AnygmEngine {
   double aspect_cam_dx,aspect_cam_dy;
   int aspect_gui_ox,aspect_gui_oy,aspect_draw_full_context;
   double aspect_draw_full_x,aspect_draw_full_y;
+  /* Set when the core, not content, owns a first-generation application surface, and the extent
+   * that surface had before a widened window was reported, so withdrawing the widening restores
+   * exactly the raster that was in place. */
+  int first_generation_app_owned;
+  int wide_app_restore_width,wide_app_restore_height;
   uint32_t background;
   double fps;
   int fps_room,follow_player,player_object;

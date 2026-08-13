@@ -357,11 +357,16 @@ static void boot_runtime(AnygmEngine *engine) {
   /* First-generation presentation keeps the default application surface at the exported
    * display raster even when a room uses a smaller logical view. Own that stable raster so
    * later room-size changes do not collapse surface 0 to the camera dimensions. */
-  if(anygm_policy_uses_first_generation_studio(&engine->win) &&
-     !gml_render_application_surface_ensure_owned(
-       &engine->render,(int)engine->width,(int)engine->height))
-    engine_logf(engine,ANYGM_LOG_WARN,
-      "[anygm] could not allocate the first-generation application surface\n");
+  engine->first_generation_app_owned=0;
+  engine->wide_app_restore_width=engine->wide_app_restore_height=0;
+  if(anygm_policy_uses_first_generation_studio(&engine->win)){
+    if(gml_render_application_surface_ensure_owned(
+         &engine->render,(int)engine->width,(int)engine->height))
+      engine->first_generation_app_owned=1;
+    else
+      engine_logf(engine,ANYGM_LOG_WARN,
+        "[anygm] could not allocate the first-generation application surface\n");
+  }
   GmlRenderControl render_control={
     .requested_width=core_opt_resolution(engine,0),
     .requested_height=core_opt_resolution(engine,1),
@@ -724,7 +729,28 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       .wide_width=fw ? (int)engine->width : 0,
       .wide_height=fw ? (int)engine->height : 0
     };
-    gml_render_control_update(&engine->render,&control,GML_RENDER_CONTROL_WIDE_ASPECT); }
+    gml_render_control_update(&engine->render,&control,GML_RENDER_CONTROL_WIDE_ASPECT);
+    /* A core-owned first-generation application surface follows the reported widened window
+     * extent while wide aspect is active. Restore the prior extent when widening stops. */
+    if(engine->first_generation_app_owned){
+      GmlRenderPresentationMetrics wide_presentation;
+      gml_render_presentation_metrics(&engine->render,&wide_presentation);
+      if(fw && wide_presentation.application_owned && engine->width>0 && engine->height>0 &&
+         (wide_presentation.application_width!=(int)engine->width ||
+          wide_presentation.application_height!=(int)engine->height)){
+        if(engine->wide_app_restore_width<=0){
+          engine->wide_app_restore_width=wide_presentation.application_width;
+          engine->wide_app_restore_height=wide_presentation.application_height;
+        }
+        (void)gml_render_application_surface_ensure_owned(
+          &engine->render,(int)engine->width,(int)engine->height);
+      } else if(!fw && engine->wide_app_restore_width>0){
+        if(wide_presentation.application_owned)
+          (void)gml_render_application_surface_ensure_owned(
+            &engine->render,engine->wide_app_restore_width,engine->wide_app_restore_height);
+        engine->wide_app_restore_width=engine->wide_app_restore_height=0;
+      }
+    } }
   if(run_step){
     AspectViewOverlay step_ov;
     aspect_view_overlay_begin(engine,&step_ov, 0, ASPECT_VIEW_TRACKING);
@@ -1076,6 +1102,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
          * authored rectangles. */
         int one_view = frame_view_count==1;
         int port_is_logical = abs(dw-(int)engine->width)<=1 && abs(dh-(int)engine->height)<=1;
+        /* When the owned application surface covers the forced framebuffer, a sole full-window
+         * view port describes placement within that frame rather than a new fit rectangle. */
+        int wide_window_raster = engine->aspect_force_active &&
+                                 aw==(int)engine->width && ah==(int)engine->height;
         /* A room can retain a full-window port authored for a larger display after game code has
          * selected a smaller window/application surface (for example 1920x1080 -> 960x540). The
          * full-origin viewport scales with the window; treating its raw pixel size as
@@ -1091,7 +1121,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
           engine,frame_view_count,dx,dy,dw,dh,aw,ah);
         int full_logical_view = one_view && dx==0 && dy==0 &&
                                 (port_is_logical || oversized_full_port || resized_full_port ||
-                                 scaled_full_port);
+                                 scaled_full_port || wide_window_raster);
         if(full_logical_view){ dx=dy=0; dw=aw; dh=ah; }
         compose_view_rect(engine->fb,(int)engine->width,(int)engine->height,app_view.pixels,aw,ah,
                           dx,dy,dw,dh);
