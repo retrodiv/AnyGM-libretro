@@ -756,9 +756,28 @@ void compute_present(AnygmEngine *engine) {
     int logical_gh = engine->vm.gui_h > 0 ? engine->vm.gui_h : (int)engine->base_height;
     if (logical_gw < 16) logical_gw = (int)engine->base_width;
     if (logical_gh < 16) logical_gh = (int)engine->base_height;
+    /* Un-forced, the window-raster path above presents at the extent the content requested when
+     * the logical-raster option is off. The force machinery reshapes views and ports, so those
+     * signals no longer say how large the un-forced picture presented — the window request
+     * still does. Present the forced frame at the same scale; collapsing it to the logical
+     * extent instead drops the picture's pixel density and the host upscale turns visibly
+     * coarse. The logical-raster default keeps scale 1 and is unchanged. */
+    double scale = 1.0;
+    if (!engine->config.present_logical_raster &&
+        engine->base_width > 0 && engine->base_height > 0 &&
+        screen_stage_window_w > 0 && screen_stage_window_h > 0) {
+      double scale_w = (double)screen_stage_window_w / (double)engine->base_width;
+      double scale_h = (double)screen_stage_window_h / (double)engine->base_height;
+      scale = scale_w < scale_h ? scale_w : scale_h;
+    }
+    if (scale < 1.0) scale = 1.0;
+    if (engine->width > 0 && scale > (double)FB_MAX_W / (double)engine->width)
+      scale = (double)FB_MAX_W / (double)engine->width;
+    if (engine->height > 0 && scale > (double)FB_MAX_H / (double)engine->height)
+      scale = (double)FB_MAX_H / (double)engine->height;
     engine->canvas_mode = 0;
-    engine->output_width = engine->width;
-    engine->output_height = engine->height;
+    engine->output_width = (unsigned)lround((double)engine->width * scale);
+    engine->output_height = (unsigned)lround((double)engine->height * scale);
     engine->gui_space_width = (int)engine->width;
     engine->gui_space_height = (int)engine->height;
     engine->gui_offset_x = (int)lround(((double)engine->width - (double)logical_gw) * 0.5) + engine->aspect_gui_ox;

@@ -1413,18 +1413,38 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	    }
 	  }
 			  if (aspect_gui_center) {
-			    if (ow == engine->width && oh == engine->height)
+			    /* Composite the complete logical frame first: the world raster with the centered GUI
+			     * crop laid back over it. At logical output this lands in the screen directly; a
+			     * window-scaled output then takes one nearest upscale of that finished frame, the same
+			     * transform the un-forced window-raster path performs. */
+			    uint32_t *logical = ow == engine->width && oh == engine->height
+			                      ? engine->screen : engine->fb;
+			    if (logical == engine->screen)
 			      memcpy(engine->screen, engine->fb, (size_t)ow * oh * sizeof(uint32_t));
-			    else
-			      memset(engine->screen, 0, (size_t)ow * oh * sizeof(uint32_t));
-			    for (int yy = 0; yy < aspect_gui_h && aspect_gui_y + yy < (int)oh; yy++) {
-			      if (aspect_gui_x >= (int)ow) continue;
+			    for (int yy = 0; yy < aspect_gui_h && aspect_gui_y + yy < (int)engine->height; yy++) {
+			      if (aspect_gui_x >= (int)engine->width) continue;
 		      int copy_w = aspect_gui_w;
-		      if (aspect_gui_x + copy_w > (int)ow) copy_w = (int)ow - aspect_gui_x;
+		      if (aspect_gui_x + copy_w > (int)engine->width) copy_w = (int)engine->width - aspect_gui_x;
 		      if (copy_w > 0)
-		        memcpy(engine->screen + (size_t)(aspect_gui_y + yy) * ow + aspect_gui_x,
+		        memcpy(logical + (size_t)(aspect_gui_y + yy) * engine->width + aspect_gui_x,
 		               engine->gui_buffer + (size_t)yy * aspect_gui_w,
 		               (size_t)copy_w * sizeof(uint32_t));
+		    }
+		    if (logical != engine->screen) {
+		      unsigned lw = engine->width, lh = engine->height;
+		      unsigned sy = 0, yacc = lh;
+		      for (unsigned oy2 = 0; oy2 < oh; oy2++) {
+		        const uint32_t *src = logical + (size_t)sy * lw;
+		        uint32_t *dst = engine->screen + (size_t)oy2 * ow;
+		        unsigned sx = 0, xacc = lw;
+		        for (unsigned ox2 = 0; ox2 < ow; ox2++) {
+		          dst[ox2] = src[sx] & 0xFFFFFFu;
+		          xacc += lw * 2u;
+		          if (xacc >= ow * 2u) { xacc -= ow * 2u; sx++; }
+		        }
+		        yacc += lh * 2u;
+		        if (yacc >= oh * 2u) { yacc -= oh * 2u; sy++; }
+		      }
 		    }
 	  } else if (gui_indirect) {
 		    if (ow >= (unsigned)gtw && oh >= (unsigned)gth) {
