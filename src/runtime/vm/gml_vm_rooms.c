@@ -1334,6 +1334,11 @@ void gml_vm_warm_audio_for_room_window(GmlVM *vm){
     if(!seen) gml_vm_warm_audio_for_room(vm,room);
   }
 }
+/* Room allocation precedes Create dispatch. Pending PreCreate/Create remains eligible after
+ * deactivation, but not after destruction; deactivation remains in force afterwards. */
+static int room_creation_pending(const GmlInstance *in){
+  return !in->marked && (in->active || in->deactivated);
+}
 void gml_room_enter(GmlVM *vm, int room_index){
   gml_colgrid_invalidate(vm);
   int prev_room=vm->room_index;
@@ -1586,7 +1591,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
    * bytecode-17 records also carry overrides between the object's PreCreate defaults and Create. */
   for(uint32_t i=0;i<cnt;i++){
     int idx=room_inst_idx[i]; if(idx<0 || idx>=vm->inst_count) continue;
-    GmlInstance *in=&vm->inst[idx]; if(!in->active || in->marked) continue;
+    GmlInstance *in=&vm->inst[idx]; if(!room_creation_pending(in)) continue;
     uint32_t ip=gml_vm_read_u32_le(d,op+4+i*4);
     int cc=(int32_t)gml_vm_read_u32_le(d,ip+16);
     int pre_cc=gml_room_instance_precreate_code(vm,ip);
@@ -1595,15 +1600,15 @@ void gml_room_enter(GmlVM *vm, int room_index){
       GmlVal _r=gml_vm_run_code(vm,cc,in,NULL,NULL,0);
       if(_r.t==V_STR && _r.d!=0) free((char*)_r.s);
     }
-    if(in->active && !in->marked){
+    if(room_creation_pending(in)){
       gml_run_event(vm,in,"PreCreate_0");   /* GMS2: variable-definitions, before Create */
-      if(in->active && !in->marked && pre_cc>=0 && pre_cc<vm->win->n_code){
+      if(room_creation_pending(in) && pre_cc>=0 && pre_cc<vm->win->n_code){
         GmlVal _r=gml_vm_run_code(vm,pre_cc,in,NULL,NULL,0);
         if(_r.t==V_STR && _r.d!=0) free((char*)_r.s);
       }
-      if(in->active && !in->marked) gml_run_event(vm,in,"Create_0");
+      if(room_creation_pending(in)) gml_run_event(vm,in,"Create_0");
     }
-    if(!code_before_create && in->active && !in->marked && cc>=0 && cc<vm->win->n_code){
+    if(!code_before_create && room_creation_pending(in) && cc>=0 && cc<vm->win->n_code){
       GmlVal _r=gml_vm_run_code(vm,cc,in,NULL,NULL,0);
       if(_r.t==V_STR && _r.d!=0) free((char*)_r.s);
     }

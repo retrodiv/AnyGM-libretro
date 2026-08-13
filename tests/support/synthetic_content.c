@@ -464,6 +464,93 @@ int anygm_synthetic_classic_multiview_framebuffer_content_create(
   return synthetic_framebuffer_content_create(fixture,1,0,1);
 }
 
+/* The first placed instance deactivates the second before its Create. The second must complete
+ * creation once, remain inactive, and retain its variables after activation. */
+int anygm_synthetic_room_deactivation_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+
+  char warden_create[192],warden_step[192],sleeper_create[192],sleeper_step[192];
+  snprintf(warden_create,sizeof warden_create,"%s/warden_create.gml",fixture->directory);
+  snprintf(warden_step,sizeof warden_step,"%s/warden_step.gml",fixture->directory);
+  snprintf(sleeper_create,sizeof sleeper_create,"%s/sleeper_create.gml",fixture->directory);
+  snprintf(sleeper_step,sizeof sleeper_step,"%s/sleeper_step.gml",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  if(!write_text(warden_create,
+                 "global.fixture_ticks = 0;\n"
+                 "global.fixture_sleeper_created = 0;\n"
+                 "global.fixture_sleeper_steps = 0;\n"
+                 "global.fixture_sleeper_endurance = -1;\n"
+                 "instance_deactivate_all(true);\n") ||
+     !write_text(warden_step,
+                 "global.fixture_ticks += 1;\n"
+                 "if (global.fixture_ticks == 3) instance_activate_all();\n") ||
+     !write_text(sleeper_create,
+                 "global.fixture_sleeper_created += 1;\n"
+                 "fixture_endurance = 150;\n") ||
+     !write_text(sleeper_step,
+                 "global.fixture_sleeper_steps += 1;\n"
+                 "global.fixture_sleeper_endurance = fixture_endurance;\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+
+  GmlcProject project={0};
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  project.host=&file_services;
+  GmlcObject objects[2]={0};
+  GmlcObjectEvent warden_events[2]={0};
+  GmlcObjectEvent sleeper_events[2]={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance instances[2]={0};
+  int room_order=0;
+  project.name=(char *)"room-deactivation-fixture";
+  project.objects=objects; project.n_objects=project.cap_objects=2;
+  project.rooms=&room; project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order; project.n_room_order=1;
+
+  objects[0].id=objects[0].name=(char *)"obj_warden";
+  objects[0].sprite_id=objects[0].mask_id=objects[0].parent_id=-1;
+  objects[0].visible=0;
+  objects[0].events=warden_events; objects[0].n_events=objects[0].cap_events=2;
+  warden_events[0].event_type=0; warden_events[0].event_number=0;
+  warden_events[0].source_path=warden_create;
+  warden_events[1].event_type=3; warden_events[1].event_number=0;
+  warden_events[1].source_path=warden_step;
+
+  objects[1].id=objects[1].name=(char *)"obj_sleeper";
+  objects[1].sprite_id=objects[1].mask_id=objects[1].parent_id=-1;
+  objects[1].visible=0;
+  objects[1].events=sleeper_events; objects[1].n_events=objects[1].cap_events=2;
+  sleeper_events[0].event_type=0; sleeper_events[0].event_number=0;
+  sleeper_events[0].source_path=sleeper_create;
+  sleeper_events[1].event_type=3; sleeper_events[1].event_number=0;
+  sleeper_events[1].source_path=sleeper_step;
+
+  room.id=room.name=(char *)"room_fixture"; room.width=64; room.height=48; room.speed=60;
+  room.draw_background_color=1;
+  room.instances=instances; room.n_instances=room.cap_instances=2;
+  /* Room order is what puts the deactivation before the sleeper's own Create. */
+  instances[0].id=instances[0].name=(char *)"instance_warden"; instances[0].object_id=0;
+  instances[0].instance_id=100000; instances[0].sx=instances[0].sy=1.0f;
+  instances[0].color=0xFFFFFFFFu;
+  instances[1].id=instances[1].name=(char *)"instance_sleeper"; instances[1].object_id=1;
+  instances[1].instance_id=100001; instances[1].sx=instances[1].sy=1.0f;
+  instances[1].color=0xFFFFFFFFu;
+
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"room-deactivation package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  return 1;
+}
+
 int anygm_synthetic_game_change_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);

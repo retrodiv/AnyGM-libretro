@@ -595,6 +595,57 @@ static int clear_view_background_policy(void){
            anygm_synthetic_multiview_clear_view_content_create,"multi-view");
 }
 
+/* A deactivated pending room instance finishes Create once, remains inactive, and retains its
+ * authored variable after activation. */
+static int room_start_deactivation_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_room_deactivation_content_create(&fixture)){
+    fputs("room-deactivation fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  output.struct_size=sizeof output;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK &&
+         anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  double created=ok?gml_global_num(&engine->vm,"fixture_sleeper_created"):-1;
+  double asleep_steps=ok?gml_global_num(&engine->vm,"fixture_sleeper_steps"):-1;
+  ok=ok && created==1 && asleep_steps==0;
+  for(int frame=0;ok && frame<4;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  double woken_steps=ok?gml_global_num(&engine->vm,"fixture_sleeper_steps"):-1;
+  double endurance=ok?gml_global_num(&engine->vm,"fixture_sleeper_endurance"):-1;
+  ok=ok && gml_global_num(&engine->vm,"fixture_sleeper_created")==1 &&
+     woken_steps>0 && endurance==150;
+  if(!ok){
+    char error[512]={0};
+    if(engine) anygm_get_last_error(engine,error,sizeof error);
+    fprintf(stderr,
+      "room-start deactivation mismatch: error=%s created=%.0f asleep_steps=%.0f "
+      "woken_steps=%.0f endurance=%.0f\n",
+      error,created,asleep_steps,woken_steps,endurance);
+  }
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int game_change_policy(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_game_change_content_create(&fixture)){
@@ -927,6 +978,8 @@ int main(int argc,char **argv){
         anygm_synthetic_multiview_framebuffer_content_create,"multi-view")?0:1;
     if(!strcmp(argv[2],"game_change"))
       return game_change_policy()?0:1;
+    if(!strcmp(argv[2],"room_start_deactivation"))
+      return room_start_deactivation_policy()?0:1;
     if(!strcmp(argv[2],"input_binding_ownership"))
       return input_binding_ownership_policy()?0:1;
     if(!strcmp(argv[2],"simulated_key_lifetime"))
@@ -945,7 +998,8 @@ int main(int argc,char **argv){
           "explicit_window_screen_stage|"
           "first_generation_oversized_gui|"
           "background_color|multi_view_application_canvas|game_change|"
-          "input_binding_ownership|simulated_key_lifetime|simulated_key_frame_lifetime]\n",stderr);
+          "input_binding_ownership|simulated_key_lifetime|simulated_key_frame_lifetime|"
+          "room_start_deactivation]\n",stderr);
     return 1;
   }
   if(!screen_stage_raster_policy()) return 1;
@@ -962,6 +1016,7 @@ int main(int argc,char **argv){
   if(!clear_view_background_policy()) return 1;
   if(!game_restart_policy()) return 1;
   if(!game_change_policy()) return 1;
+  if(!room_start_deactivation_policy()) return 1;
   if(!state_input_history_roundtrip()) return 1;
   if(!input_binding_ownership_policy()) return 1;
   if(!simulated_key_lifetime_policy()) return 1;
