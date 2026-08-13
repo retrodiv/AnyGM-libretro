@@ -348,8 +348,8 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
       }
       CheatSlot *slot=&slots[*count];
       if(length>=sizeof slot->code){
-        snprintf(error,error_capacity,"directive %d is longer than %zu bytes",
-                 line_number,sizeof slot->code-1u);
+        snprintf(error,error_capacity,"directive %d is longer than %llu bytes",
+                 line_number,(unsigned long long)(sizeof slot->code-1u));
         return 0;
       }
       memcpy(slot->code,cursor,length);
