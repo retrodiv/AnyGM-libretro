@@ -222,158 +222,112 @@ int write_scpt(Pkg *pkg, const GmlcProject *p){
   return 1;
 }
 
-/* GLSL preambles provide matrix, lighting, fog and alpha-test interfaces. */
+/* GMS2 shader preambles.
+ *
+ * Game shaders are written against a fixed engine-provided interface: the
+ * gm_* uniforms, the MATRIX_* and MAX_VS_LIGHTS macros, the fog/lighting
+ * helpers declared here, and the trailing _YY_GLSLES_/_YY_GLSL_ markers
+ * that shader code probes with #ifdef to tell the two GLSL dialects
+ * apart. Those names, types, signatures and declaration order are
+ * interoperability facts. The following first-party bodies implement
+ * the interface: CalcFogFactor returns
+ * unclamped linear view depth (DoFog clamps at blend time), DoLighting
+ * derives the world-space normal through the world-view matrix and
+ * negates it, and point-light attenuation is range/distance cut to zero
+ * outside the range -- inside the range it is always >= 1, so point
+ * lights show no visible falloff. */
+#define GMS2_VERTEX_PREAMBLE \
+  "#define MATRIX_VIEW 0\n" \
+  "#define MATRIX_PROJECTION 1\n" \
+  "#define MATRIX_WORLD 2\n" \
+  "#define MATRIX_WORLD_VIEW 3\n" \
+  "#define MATRIX_WORLD_VIEW_PROJECTION 4\n" \
+  "#define MATRICES_MAX 5\n" \
+  "#define MAX_VS_LIGHTS 8\n" \
+  "\n" \
+  "uniform mat4 gm_Matrices[MATRICES_MAX];\n" \
+  "uniform bool gm_LightingEnabled;\n" \
+  "uniform bool gm_VS_FogEnabled;\n" \
+  "uniform float gm_FogStart;\n" \
+  "uniform float gm_RcpFogRange;\n" \
+  "uniform vec4 gm_AmbientColour;\n" \
+  "uniform vec4 gm_Lights_Direction[MAX_VS_LIGHTS];\n" \
+  "uniform vec4 gm_Lights_PosRange[MAX_VS_LIGHTS];\n" \
+  "uniform vec4 gm_Lights_Colour[MAX_VS_LIGHTS];\n" \
+  "\n" \
+  "float CalcFogFactor(vec4 pos)\n" \
+  "{\n" \
+  "  if (!gm_VS_FogEnabled) return 0.0;\n" \
+  "  vec4 viewpos = gm_Matrices[MATRIX_WORLD_VIEW] * pos;\n" \
+  "  return (viewpos.z - gm_FogStart) * gm_RcpFogRange;\n" \
+  "}\n" \
+  "\n" \
+  "vec4 DoDirLight(vec3 normal, vec4 direction, vec4 tint)\n" \
+  "{\n" \
+  "  return max(0.0, dot(normal, direction.xyz)) * tint;\n" \
+  "}\n" \
+  "\n" \
+  "vec4 DoPointLight(vec3 position, vec3 normal, vec4 posrange, vec4 tint)\n" \
+  "{\n" \
+  "  vec3 offset = position - posrange.xyz;\n" \
+  "  float dist = length(offset);\n" \
+  "  float atten = dist > posrange.w ? 0.0 : posrange.w / dist;\n" \
+  "  return max(0.0, dot(normal, offset / dist)) * atten * tint;\n" \
+  "}\n" \
+  "\n" \
+  "vec4 DoLighting(vec4 base, vec4 pos, vec3 srcnormal)\n" \
+  "{\n" \
+  "  if (!gm_LightingEnabled) return base;\n" \
+  "  vec3 normal = -normalize((gm_Matrices[MATRIX_WORLD_VIEW] * vec4(srcnormal, 0.0)).xyz);\n" \
+  "  vec3 position = (gm_Matrices[MATRIX_WORLD] * pos).xyz;\n" \
+  "  vec4 lit = vec4(0.0);\n" \
+  "  for (int i = 0; i < MAX_VS_LIGHTS; i++)\n" \
+  "    lit += DoDirLight(normal, gm_Lights_Direction[i], gm_Lights_Colour[i]);\n" \
+  "  for (int i = 0; i < MAX_VS_LIGHTS; i++)\n" \
+  "    lit += DoPointLight(position, normal, gm_Lights_PosRange[i], gm_Lights_Colour[i]);\n" \
+  "  return min(vec4(1.0), lit * base + gm_AmbientColour);\n" \
+  "}\n" \
+  "\n"
+
 static const char gms2_glsles_vertex_prefix[] =
   "#define LOWPREC lowp\n"
-  "#define MATRIX_VIEW 0\n"
-  "#define MATRIX_PROJECTION 1\n"
-  "#define MATRIX_WORLD 2\n"
-  "#define MATRIX_WORLD_VIEW 3\n"
-  "#define MATRIX_WORLD_VIEW_PROJECTION 4\n"
-  "#define MATRICES_MAX 5\n"
-  "#define MAX_VS_LIGHTS 8\n"
-  "\n"
-  "uniform mat4 gm_Matrices[MATRICES_MAX];\n"
-  "uniform bool gm_LightingEnabled;\n"
-  "uniform bool gm_VS_FogEnabled;\n"
-  "uniform float gm_FogStart;\n"
-  "uniform float gm_RcpFogRange;\n"
-  "uniform vec4 gm_AmbientColour;\n"
-  "uniform vec4 gm_Lights_Direction[MAX_VS_LIGHTS];\n"
-  "uniform vec4 gm_Lights_PosRange[MAX_VS_LIGHTS];\n"
-  "uniform vec4 gm_Lights_Colour[MAX_VS_LIGHTS];\n"
-  "\n"
-  "float CalcFogFactor(vec4 pos)\n"
-  "{\n"
-  "  if (!gm_VS_FogEnabled) return 0.0;\n"
-  "  vec4 viewpos = gm_Matrices[MATRIX_WORLD_VIEW] * pos;\n"
-  "  return (viewpos.z - gm_FogStart) * gm_RcpFogRange;\n"
-  "}\n"
-  "\n"
-  "vec4 DoDirLight(vec3 normal, vec4 direction, vec4 tint)\n"
-  "{\n"
-  "  return max(0.0, dot(normal, direction.xyz)) * tint;\n"
-  "}\n"
-  "\n"
-  "vec4 DoPointLight(vec3 position, vec3 normal, vec4 posrange, vec4 tint)\n"
-  "{\n"
-  "  vec3 offset = position - posrange.xyz;\n"
-  "  float dist = length(offset);\n"
-  "  float atten = dist > posrange.w ? 0.0 : posrange.w / dist;\n"
-  "  return max(0.0, dot(normal, offset / dist)) * atten * tint;\n"
-  "}\n"
-  "\n"
-  "vec4 DoLighting(vec4 base, vec4 pos, vec3 srcnormal)\n"
-  "{\n"
-  "  if (!gm_LightingEnabled) return base;\n"
-  "  vec3 normal = -normalize((gm_Matrices[MATRIX_WORLD_VIEW] * vec4(srcnormal, 0.0)).xyz);\n"
-  "  vec3 position = (gm_Matrices[MATRIX_WORLD] * pos).xyz;\n"
-  "  vec4 lit = vec4(0.0);\n"
-  "  for (int i = 0; i < MAX_VS_LIGHTS; i++)\n"
-  "    lit += DoDirLight(normal, gm_Lights_Direction[i], gm_Lights_Colour[i]);\n"
-  "  for (int i = 0; i < MAX_VS_LIGHTS; i++)\n"
-  "    lit += DoPointLight(position, normal, gm_Lights_PosRange[i], gm_Lights_Colour[i]);\n"
-  "  return min(vec4(1.0), lit * base + gm_AmbientColour);\n"
-  "}\n"
-  "\n"
+  GMS2_VERTEX_PREAMBLE
   "#define _YY_GLSLES_ 1\n";
 
 static const char gms2_glsl_vertex_prefix[] =
   "#version 120\n"
   "#define LOWPREC\n"
-  "#define MATRIX_VIEW 0\n"
-  "#define MATRIX_PROJECTION 1\n"
-  "#define MATRIX_WORLD 2\n"
-  "#define MATRIX_WORLD_VIEW 3\n"
-  "#define MATRIX_WORLD_VIEW_PROJECTION 4\n"
-  "#define MATRICES_MAX 5\n"
-  "#define MAX_VS_LIGHTS 8\n"
-  "\n"
-  "uniform mat4 gm_Matrices[MATRICES_MAX];\n"
-  "uniform bool gm_LightingEnabled;\n"
-  "uniform bool gm_VS_FogEnabled;\n"
-  "uniform float gm_FogStart;\n"
-  "uniform float gm_RcpFogRange;\n"
-  "uniform vec4 gm_AmbientColour;\n"
-  "uniform vec4 gm_Lights_Direction[MAX_VS_LIGHTS];\n"
-  "uniform vec4 gm_Lights_PosRange[MAX_VS_LIGHTS];\n"
-  "uniform vec4 gm_Lights_Colour[MAX_VS_LIGHTS];\n"
-  "\n"
-  "float CalcFogFactor(vec4 pos)\n"
-  "{\n"
-  "  if (!gm_VS_FogEnabled) return 0.0;\n"
-  "  vec4 viewpos = gm_Matrices[MATRIX_WORLD_VIEW] * pos;\n"
-  "  return (viewpos.z - gm_FogStart) * gm_RcpFogRange;\n"
-  "}\n"
-  "\n"
-  "vec4 DoDirLight(vec3 normal, vec4 direction, vec4 tint)\n"
-  "{\n"
-  "  return max(0.0, dot(normal, direction.xyz)) * tint;\n"
-  "}\n"
-  "\n"
-  "vec4 DoPointLight(vec3 position, vec3 normal, vec4 posrange, vec4 tint)\n"
-  "{\n"
-  "  vec3 offset = position - posrange.xyz;\n"
-  "  float dist = length(offset);\n"
-  "  float atten = dist > posrange.w ? 0.0 : posrange.w / dist;\n"
-  "  return max(0.0, dot(normal, offset / dist)) * atten * tint;\n"
-  "}\n"
-  "\n"
-  "vec4 DoLighting(vec4 base, vec4 pos, vec3 srcnormal)\n"
-  "{\n"
-  "  if (!gm_LightingEnabled) return base;\n"
-  "  vec3 normal = -normalize((gm_Matrices[MATRIX_WORLD_VIEW] * vec4(srcnormal, 0.0)).xyz);\n"
-  "  vec3 position = (gm_Matrices[MATRIX_WORLD] * pos).xyz;\n"
-  "  vec4 lit = vec4(0.0);\n"
-  "  for (int i = 0; i < MAX_VS_LIGHTS; i++)\n"
-  "    lit += DoDirLight(normal, gm_Lights_Direction[i], gm_Lights_Colour[i]);\n"
-  "  for (int i = 0; i < MAX_VS_LIGHTS; i++)\n"
-  "    lit += DoPointLight(position, normal, gm_Lights_PosRange[i], gm_Lights_Colour[i]);\n"
-  "  return min(vec4(1.0), lit * base + gm_AmbientColour);\n"
-  "}\n"
-  "\n"
+  GMS2_VERTEX_PREAMBLE
   "#define _YY_GLSL_ 1\n";
+
+#define GMS2_FRAGMENT_PREAMBLE \
+  "uniform sampler2D gm_BaseTexture;\n" \
+  "uniform bool gm_PS_FogEnabled;\n" \
+  "uniform vec4 gm_FogColour;\n" \
+  "uniform bool gm_AlphaTestEnabled;\n" \
+  "uniform float gm_AlphaRefValue;\n" \
+  "\n" \
+  "void DoAlphaTest(vec4 colour)\n" \
+  "{\n" \
+  "  if (gm_AlphaTestEnabled && colour.a <= gm_AlphaRefValue) discard;\n" \
+  "}\n" \
+  "\n" \
+  "void DoFog(inout vec4 colour, float amount)\n" \
+  "{\n" \
+  "  if (gm_PS_FogEnabled) colour = mix(colour, gm_FogColour, clamp(amount, 0.0, 1.0));\n" \
+  "}\n" \
+  "\n"
 
 static const char gms2_glsles_fragment_prefix[] =
   "precision mediump float;\n"
   "#define LOWPREC lowp\n"
-  "uniform sampler2D gm_BaseTexture;\n"
-  "uniform bool gm_PS_FogEnabled;\n"
-  "uniform vec4 gm_FogColour;\n"
-  "uniform bool gm_AlphaTestEnabled;\n"
-  "uniform float gm_AlphaRefValue;\n"
-  "\n"
-  "void DoAlphaTest(vec4 colour)\n"
-  "{\n"
-  "  if (gm_AlphaTestEnabled && colour.a <= gm_AlphaRefValue) discard;\n"
-  "}\n"
-  "\n"
-  "void DoFog(inout vec4 colour, float amount)\n"
-  "{\n"
-  "  if (gm_PS_FogEnabled) colour = mix(colour, gm_FogColour, clamp(amount, 0.0, 1.0));\n"
-  "}\n"
-  "\n"
+  GMS2_FRAGMENT_PREAMBLE
   "#define _YY_GLSLES_ 1\n";
 
 static const char gms2_glsl_fragment_prefix[] =
   "#version 120\n"
   "#define LOWPREC\n"
-  "uniform sampler2D gm_BaseTexture;\n"
-  "uniform bool gm_PS_FogEnabled;\n"
-  "uniform vec4 gm_FogColour;\n"
-  "uniform bool gm_AlphaTestEnabled;\n"
-  "uniform float gm_AlphaRefValue;\n"
-  "\n"
-  "void DoAlphaTest(vec4 colour)\n"
-  "{\n"
-  "  if (gm_AlphaTestEnabled && colour.a <= gm_AlphaRefValue) discard;\n"
-  "}\n"
-  "\n"
-  "void DoFog(inout vec4 colour, float amount)\n"
-  "{\n"
-  "  if (gm_PS_FogEnabled) colour = mix(colour, gm_FogColour, clamp(amount, 0.0, 1.0));\n"
-  "}\n"
-  "\n"
+  GMS2_FRAGMENT_PREAMBLE
   "#define _YY_GLSL_ 1\n";
 
 static char *join2(const char *a, const char *b){
@@ -394,33 +348,12 @@ static char *join3(const char *a, const char *b, const char *c){
   return out;
 }
 
-static char *with_crlf_first_newlines(const char *s, int count){
-  if(!s) return gmlc_strdup("");
-  size_t extra=0;
-  int seen=0;
-  for(size_t i=0;s[i];i++){
-    if(s[i]=='\n'){
-      if(seen<count && (i==0 || s[i-1]!='\r')) extra++;
-      seen++;
-    }
-  }
-  size_t n=strlen(s);
-  char *out=(char*)malloc(n+extra+1);
-  if(!out) return NULL;
-  size_t j=0;
-  seen=0;
-  for(size_t i=0;i<n;i++){
-    if(s[i]=='\n'){
-      if(seen<count && (i==0 || s[i-1]!='\r')) out[j++]='\r';
-      seen++;
-    }
-    out[j++]=s[i];
-  }
-  out[j]=0;
-  return out;
-}
-
-/* HLSL entries provide fixed vertex layouts and limited fragment variants. */
+/* HLSL (Direct3D 9) counterparts. The packaged HLSL entries exist so the
+ * emitted SHDR chunk is structurally complete; nothing in the software
+ * renderer parses them. They use the gm_* uniform names, dx_ViewAdjust register slot
+ * and POSITION/COLOR0/TEXCOORD semantics as the D3D9 pipeline expects,
+ * with the varying layout matching the GLSL side (colour in TEXCOORD0,
+ * texture coordinate in TEXCOORD1 when both are present). */
 static const char gms2_hlsl_vertex_shared[] =
   "#define MATRIX_VIEW 0\n"
   "#define MATRIX_PROJECTION 1\n"
@@ -534,9 +467,9 @@ static const char gms2_hlsl_fragment_gray[] =
 
 static const char *hlsl_zero_swizzle(const char *fragment_source){
   if(!fragment_source) return NULL;
-  if(strstr(fragment_source,"gl_FragColor.br")) return "(gl_Color[0].zx = float2(0.0, 0.0));";
-  if(strstr(fragment_source,"gl_FragColor.bg")) return "(gl_Color[0].zy = float2(0.0, 0.0));";
-  if(strstr(fragment_source,"gl_FragColor.gr")) return "(gl_Color[0].yx = float2(0.0, 0.0));";
+  if(strstr(fragment_source,"gl_FragColor.br")) return "  shaded.br = float2(0.0, 0.0);\n";
+  if(strstr(fragment_source,"gl_FragColor.bg")) return "  shaded.bg = float2(0.0, 0.0);\n";
+  if(strstr(fragment_source,"gl_FragColor.gr")) return "  shaded.gr = float2(0.0, 0.0);\n";
   return NULL;
 }
 
@@ -563,19 +496,16 @@ int write_shdr(Pkg *pkg, const GmlcProject *p){
     char *f_gl=join2(gms2_glsl_fragment_prefix,sh->fragment_source?sh->fragment_source:"");
     int hlsl_gray=shader_looks_grayscale(sh->fragment_source);
     int hlsl_uses_color=!hlsl_gray && sh->fragment_source && strstr(sh->fragment_source,"v_vColour");
-    char *v_hlsl_lf=join2(gms2_hlsl_vertex_shared,hlsl_uses_color?gms2_hlsl_vertex_color_tail:gms2_hlsl_vertex_texcoord_tail);
-    char *f_hlsl_lf=NULL;
+    char *v_hlsl=join2(gms2_hlsl_vertex_shared,hlsl_uses_color?gms2_hlsl_vertex_color_tail:gms2_hlsl_vertex_texcoord_tail);
+    char *f_hlsl=NULL;
     const char *swiz=hlsl_zero_swizzle(sh->fragment_source);
     if(hlsl_gray){
-      f_hlsl_lf=join2("",gms2_hlsl_fragment_gray);
+      f_hlsl=join2("",gms2_hlsl_fragment_gray);
     } else if(swiz){
-      f_hlsl_lf=join3(gms2_hlsl_fragment_color_prefix,swiz,gms2_hlsl_fragment_color_suffix);
+      f_hlsl=join3(gms2_hlsl_fragment_color_prefix,swiz,gms2_hlsl_fragment_color_suffix);
     } else {
-      f_hlsl_lf=join2("",sh->fragment_source?sh->fragment_source:"");
+      f_hlsl=join2("",sh->fragment_source?sh->fragment_source:"");
     }
-    char *v_hlsl=with_crlf_first_newlines(v_hlsl_lf,20);
-    char *f_hlsl=with_crlf_first_newlines(f_hlsl_lf,8);
-    free(v_hlsl_lf); free(f_hlsl_lf);
     if(!v_gles || !f_gles || !v_gl || !f_gl || !v_hlsl || !f_hlsl){
       free(v_gles); free(f_gles); free(v_gl); free(f_gl); free(v_hlsl); free(f_hlsl);
       return 0;

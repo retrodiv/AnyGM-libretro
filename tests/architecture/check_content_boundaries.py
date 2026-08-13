@@ -197,7 +197,6 @@ PACKAGE_CHUNK_OPERATIONS = (
     "write_scpt",
     "join2",
     "join3",
-    "with_crlf_first_newlines",
     "hlsl_zero_swizzle",
     "shader_looks_grayscale",
     "write_shdr",

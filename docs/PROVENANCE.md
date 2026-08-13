@@ -111,6 +111,30 @@ headers. Their checked-in declarations and licence record identify the
 declared source and terms, but this tree alone does not provide
 byte-for-byte regeneration evidence for those two artifacts.
 
+## Interoperability constants
+
+A small number of literal constants in first-party source are facts of the
+formats being read rather than derived data. They are recorded here so their
+origin is documented deliberately instead of discovered.
+
+- **FMOD Studio bank layout** (`src/audio/banks/gml_fmod.c`). The FEV metadata
+  reader is adapted from the public
+  [FModBankParser](https://github.com/Masusder/FModBankParser) project. Its
+  reading order, element-list encodings and node kinds inform the C adaptation;
+  the upstream Apache-2.0 grant and notice remain in `LICENSES/` and `NOTICE`.
+  Project-original contributions retain their separate MIT terms.
+- **GLSL effect-recognition patterns** (`src/video/renderer/`). Renderer
+  policy records describe narrow shader families through structural
+  operations and parameterized identifiers. The repository does not bundle
+  content shader programs. This historical revision does not yet provide a
+  complete recognition implementation.
+- **GMS2 shader preambles**
+  (`src/content/project/gmlc_package_chunks.c`). The gm_* uniform names,
+  MATRIX_*/MAX_VS_LIGHTS macros, helper-function signatures and the
+  `_YY_GLSLES_`/`_YY_GLSL_` dialect markers form an interoperability interface
+  for authored shaders. The preamble function bodies and formatting here are
+  first-party implementations; no proprietary shader program is bundled.
+
 ## Publication and validation
 
 Generated data is kept under `src/generated/` and is not regenerated as part of
