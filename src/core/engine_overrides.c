@@ -315,11 +315,70 @@ static void menu_rebuild(AnygmEngine *engine){
     if(engine->cheats[i].enabled && menu_decl_code(engine->cheats[i].code)){ host_menu=1; break; }
   memset(&engine->menu,0,sizeof engine->menu);
   const CheatSlot *arr=host_menu?engine->cheats:engine->boot_cheats;
-  int n=host_menu?engine->cheat_count:engine->boot_cheat_count;
+  int n=host_menu?engine->cheat_count:engine_boot_cheats_active(engine);
   for(int i=0;i<n;i++) if(arr[i].enabled) menu_directive_parse(engine,arr[i].code);
 }
 void engine_override_reset(AnygmEngine *engine){
   engine->cheat_count = 0; memset(engine->cheats, 0, sizeof engine->cheats);
+  menu_rebuild(engine);
+}
+/* Menu declarations carry no CheatAct; menu_rebuild consumes their codes directly. */
+static int boot_line_is_menu(const char *code){
+  return !strncmp(code,"menu|",5) || !strncmp(code,"mset|",5) ||
+         !strncmp(code,"mtoggle|",8) || !strncmp(code,"mrange|",7) || !strncmp(code,"mwarp|",6);
+}
+int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
+                                char *error,size_t error_capacity){
+  *count=0;
+  memset(slots,0,sizeof *slots*GML_MAX_CHEATS);
+  if(!text || !text[0]) return 1;
+  int line_number=0;
+  const char *cursor=text;
+  while(*cursor){
+    const char *line_end=strchr(cursor,'\n');
+    size_t length=line_end?(size_t)(line_end-cursor):strlen(cursor);
+    line_number++;
+    while(length && (cursor[0]==' '||cursor[0]=='\t')){ cursor++; length--; }
+    while(length && (cursor[length-1]==' '||cursor[length-1]=='\t'||cursor[length-1]=='\r'))
+      length--;
+    if(length && cursor[0]!='#'){
+      if(*count>=GML_MAX_CHEATS){
+        snprintf(error,error_capacity,"more than %d directives",GML_MAX_CHEATS);
+        return 0;
+      }
+      CheatSlot *slot=&slots[*count];
+      if(length>=sizeof slot->code){
+        snprintf(error,error_capacity,"directive %d is longer than %zu bytes",
+                 line_number,sizeof slot->code-1u);
+        return 0;
+      }
+      memcpy(slot->code,cursor,length);
+      slot->code[length]=0;
+      slot->enabled=1;
+      if(!boot_line_is_menu(slot->code)){
+        cheat_parse(slot->code,&slot->act);
+        if(slot->act.kind==CK_NONE){
+          snprintf(error,error_capacity,"directive %d is not a recognized override",line_number);
+          return 0;
+        }
+        if(slot->act.kind==CK_ROOM){
+          snprintf(error,error_capacity,
+                   "directive %d: room= is a one-shot warp; declare an mwarp menu entry instead",
+                   line_number);
+          return 0;
+        }
+      }
+      (*count)++;
+    }
+    if(!line_end) break;
+    cursor=line_end+1;
+  }
+  return 1;
+}
+int engine_boot_cheats_active(AnygmEngine *engine){
+  return engine->config.content_overrides?engine->boot_cheat_count:0;
+}
+void engine_override_menu_refresh(AnygmEngine *engine){
   menu_rebuild(engine);
 }
 void engine_override_set(AnygmEngine *engine,unsigned i,bool e,const char *c){
@@ -346,7 +405,7 @@ static void cheat_sticky_pass(AnygmEngine *engine,const CheatSlot *arr, int n){
 /* Re-apply un-scoped freeze cheats — called every frame after the game step. */
 void apply_sticky_cheats(AnygmEngine *engine){
   cheat_sticky_pass(engine,engine->cheats, engine->cheat_count);
-  cheat_sticky_pass(engine,engine->boot_cheats, engine->boot_cheat_count);
+  cheat_sticky_pass(engine,engine->boot_cheats, engine_boot_cheats_active(engine));
 }
 static void cheat_aspect_pass(AnygmEngine *engine,const CheatSlot *arr, int n){
   for(int i=0;i<n;i++){
@@ -362,7 +421,7 @@ static void cheat_aspect_pass(AnygmEngine *engine,const CheatSlot *arr, int n){
 void aspect_apply_program(AnygmEngine *engine){
   if(!engine->aspect_force_active) return;
   cheat_aspect_pass(engine,engine->cheats, engine->cheat_count);
-  cheat_aspect_pass(engine,engine->boot_cheats, engine->boot_cheat_count);
+  cheat_aspect_pass(engine,engine->boot_cheats, engine_boot_cheats_active(engine));
 }
 static int cheat_compositor_pass(AnygmEngine *engine,const CheatSlot *arr, int n){
   for(int i=0;i<n;i++){
@@ -378,7 +437,7 @@ static int cheat_compositor_pass(AnygmEngine *engine,const CheatSlot *arr, int n
  * compositor at the full forced-wide resolution instead of a centered sub-rect. */
 int aspect_compositor_fullwidth_gen(AnygmEngine *engine){
   return cheat_compositor_pass(engine,engine->cheats, engine->cheat_count)
-      || cheat_compositor_pass(engine,engine->boot_cheats, engine->boot_cheat_count);
+      || cheat_compositor_pass(engine,engine->boot_cheats, engine_boot_cheats_active(engine));
 }
 static int cheat_center_target_pass(AnygmEngine *engine,const CheatSlot *arr, int n){
   for(int i=0;i<n;i++){
@@ -392,7 +451,7 @@ static int cheat_center_target_pass(AnygmEngine *engine,const CheatSlot *arr, in
 }
 int aspect_center_view_target_gen(AnygmEngine *engine){
   return cheat_center_target_pass(engine,engine->cheats, engine->cheat_count)
-      || cheat_center_target_pass(engine,engine->boot_cheats, engine->boot_cheat_count);
+      || cheat_center_target_pass(engine,engine->boot_cheats, engine_boot_cheats_active(engine));
 }
 static int cheat_wide_gameplay_pass(AnygmEngine *engine,const CheatSlot *arr, int n){
   for(int i=0;i<n;i++){
@@ -406,7 +465,7 @@ static int cheat_wide_gameplay_pass(AnygmEngine *engine,const CheatSlot *arr, in
 }
 int aspect_wide_gameplay_view_gen(AnygmEngine *engine){
   return cheat_wide_gameplay_pass(engine,engine->cheats, engine->cheat_count)
-      || cheat_wide_gameplay_pass(engine,engine->boot_cheats, engine->boot_cheat_count);
+      || cheat_wide_gameplay_pass(engine,engine->boot_cheats, engine_boot_cheats_active(engine));
 }
 static int cheat_route_pass(AnygmEngine *engine,const CheatSlot *arr, int n, const char *obj, const char *suffix){
   for(int i=0;i<n;i++){
@@ -426,7 +485,7 @@ int aspect_draw_full_view_gen(AnygmEngine *engine,const GmlInstance *in, const c
   const char *obj = (in->obj>=0 && in->obj<engine->vm.n_objects) ? engine->vm.objects[in->obj].name : NULL;
   if(!obj) return GMC_ASPECT_DRAW_DEFAULT;
   int r = cheat_route_pass(engine,engine->cheats, engine->cheat_count, obj, suffix);
-  if(r < 0) r = cheat_route_pass(engine,engine->boot_cheats, engine->boot_cheat_count, obj, suffix);
+  if(r < 0) r = cheat_route_pass(engine,engine->boot_cheats, engine_boot_cheats_active(engine), obj, suffix);
   return r < 0 ? GMC_ASPECT_DRAW_DEFAULT : r;
 }
 /* Fresh press this frame from either the RetroPad button or a keyboard key. */

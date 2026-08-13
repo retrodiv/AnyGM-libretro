@@ -116,6 +116,12 @@ typedef struct {
   AnygmContentFacts facts;
   AnygmCompatibilityProfile compatibility;
   char loaded_path[1024];
+  /* Override directives the content's anchor carried, kept as the verbatim text the state
+   * identity hashes, plus the slots it parsed to. Both are validated before the running
+   * content is torn down, so a rejected directive fails the load transactionally. */
+  char content_overrides[ANYGM_CONTENT_MAX_ANCHOR_BYTES];
+  CheatSlot boot_cheats[GML_MAX_CHEATS];
+  int boot_cheat_count;
 } EnginePreparedContent;
 
 static AnygmResult engine_prepare_content(AnygmEngine *engine,
@@ -148,7 +154,9 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
     router.log_userdata=engine;
     char asset_root[1024];
     if(!anygm_content_resolve_path(&router,source->path,content,sizeof content,
-                                   asset_root,sizeof asset_root)){
+                                   asset_root,sizeof asset_root,
+                                   prepared->content_overrides,
+                                   sizeof prepared->content_overrides)){
       engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Failed to resolve content path: %s",source->path);
       return ANYGM_ERROR_INVALID_CONTENT;
     }
@@ -232,7 +240,29 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
     gml_win_free(&prepared->win);
     return ANYGM_ERROR_UNSUPPORTED;
   }
+  char override_error[256]={0};
+  if(!engine_boot_overrides_parse(prepared->content_overrides,prepared->boot_cheats,
+                                  &prepared->boot_cheat_count,
+                                  override_error,sizeof override_error)){
+    engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Content overrides rejected: %s",
+                  override_error[0]?override_error:"unrecognized directive");
+    gml_win_free(&prepared->win);
+    return ANYGM_ERROR_INVALID_CONTENT;
+  }
   return ANYGM_OK;
+}
+
+static void engine_adopt_boot_overrides(AnygmEngine *engine,
+                                        const EnginePreparedContent *prepared){
+  memcpy(engine->boot_cheats,prepared->boot_cheats,sizeof engine->boot_cheats);
+  engine->boot_cheat_count=prepared->boot_cheat_count;
+  snprintf(engine->content_overrides_text,sizeof engine->content_overrides_text,"%s",
+           prepared->content_overrides);
+  engine_override_menu_refresh(engine);
+  if(engine->boot_cheat_count)
+    engine_logf(engine,ANYGM_LOG_INFO,"Content overrides: %d directive(s) from the anchor%s\n",
+                engine->boot_cheat_count,
+                engine->config.content_overrides?"":" (disabled by configuration)");
 }
 
 static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSource *source,
@@ -255,6 +285,7 @@ static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSou
   snprintf(engine->content_program_directory,sizeof engine->content_program_directory,"%s",
            engine->win.content_dir);
   engine->launch_parameters[0]='\0';
+  engine_adopt_boot_overrides(engine,&prepared);
   state_identity_refresh(engine);
   engine_state_peak_load(engine);
   engine->loaded = 1;
@@ -543,6 +574,7 @@ static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed){
   snprintf(engine->current_content_path,sizeof engine->current_content_path,"%s",
            prepared.loaded_path);
   snprintf(engine->launch_parameters,sizeof engine->launch_parameters,"%s",parameters);
+  engine_adopt_boot_overrides(engine,&prepared);
   state_identity_refresh(engine);
   engine_logf(engine,ANYGM_LOG_INFO,"Changed content: bytecode=%u rooms=%d code=%d\n",
               engine->win.bytecode,gml_room_count(&engine->win),engine->win.n_code);
@@ -1610,6 +1642,7 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
   engine->config.fast_alpha_cull=0;
   engine->config.start_room=-1;
   engine->config.report_all_shaders_compiled=1;
+  engine->config.content_overrides=1;
   snprintf(engine->language,sizeof engine->language,"en");
   snprintf(engine->region,sizeof engine->region,"US");
   snprintf(engine->language_tag,sizeof engine->language_tag,"en-US");
@@ -1809,6 +1842,14 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   }
   if(f&ANYGM_CONFIG_CLEAR_LOCAL_DATA)
     engine->config.clear_local_data=delta->values.clear_local_data?1u:0u;
+  if(f&ANYGM_CONFIG_CONTENT_OVERRIDES){
+    uint32_t want=delta->values.content_overrides?1u:0u;
+    if(want!=engine->config.content_overrides){
+      engine->config.content_overrides=want;
+      /* The development menu can be declared by content directives; follow the toggle. */
+      if(engine->lifecycle==ENGINE_LOADED) engine_override_menu_refresh(engine);
+    }
+  }
   if(engine->lifecycle==ENGINE_LOADED){
     poll_option_updates(engine);
     engine->vm.god_mode=core_opt_god(engine);

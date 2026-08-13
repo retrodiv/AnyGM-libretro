@@ -81,11 +81,17 @@ uint64_t state_hash_bytes(const void *data,size_t size){
 }
 
 static uint64_t state_current_config_fingerprint(AnygmEngine *engine){
-  uint8_t encoded[4]={0};
+  uint8_t encoded[16]={0};
   CoreW writer={encoded,sizeof encoded,0,1};
   /* Presentation configuration remains host-owned across a state load. Only configuration which
-   * changes simulation semantics belongs in the state identity. */
+   * changes simulation semantics belongs in the state identity. Active content overrides change
+   * what every frame simulates, so their text joins the identity — but only while they are
+   * active, which keeps the encoding of override-free content byte-identical to what it always
+   * was and lets its states keep loading. */
   cw_u32(&writer,engine->config.god_mode);
+  if(engine_boot_cheats_active(engine)>0 && engine->content_overrides_text[0])
+    cw_u64(&writer,state_hash_bytes(engine->content_overrides_text,
+                                    strlen(engine->content_overrides_text)));
   return writer.ok?state_hash_bytes(encoded,writer.pos):0;
 }
 

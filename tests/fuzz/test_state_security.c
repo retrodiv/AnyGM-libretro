@@ -97,6 +97,82 @@ static int reject_payload_u32(AnygmEngine *engine,uint8_t *candidate,size_t size
   return reject_unchanged(engine,candidate,size,baseline,baseline_size,label);
 }
 
+/* Content-override directives join the state identity while active: a state saved with them
+ * must not load without them, and a directive the engine does not recognize must fail the load
+ * transactionally instead of being dropped. */
+static int content_override_state_cases(const AnygmHostServices *services,
+                                        const AnygmSyntheticContent *fixture){
+  const char *slash=strrchr(fixture->path,'/');
+  const char *payload_name=slash?slash+1:fixture->path;
+  char anchor[256];
+  if(snprintf(anchor,sizeof anchor,"%s/title.anygm",fixture->directory)>=(int)sizeof anchor)
+    return fail("anchor path is too long");
+  char anchor_text[512];
+  int anchor_length=snprintf(anchor_text,sizeof anchor_text,
+                             "[anygm]\npayload=%s\n[overrides]\n# freeze one probe global\n"
+                             "$anygm_probe=1\n",payload_name);
+  if(anchor_length<0 || (size_t)anchor_length>=sizeof anchor_text)
+    return fail("anchor text is too long");
+  FILE *file=fopen(anchor,"wb");
+  int written=file && fwrite(anchor_text,1,(size_t)anchor_length,file)==(size_t)anchor_length;
+  if(file && fclose(file)!=0) written=0;
+  if(!written) return fail("could not write the override anchor");
+
+  AnygmEngine *engine=NULL;
+  if(anygm_create(services,&engine)!=ANYGM_OK) return fail("override engine creation failed");
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=anchor;
+  source.cache_directory=fixture->directory;
+  int ok=anygm_load(engine,&source,NULL)==ANYGM_OK;
+  if(!ok){ anygm_destroy(engine); return fail("anchored content with overrides did not load"); }
+
+  AnygmInputFrame input={0};
+  AnygmFrameOutput output={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  output.struct_size=sizeof output;
+  uint8_t *baseline=NULL;
+  size_t state_size=0;
+  ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     save_state(engine,&baseline,&state_size);
+  if(!ok){ anygm_destroy(engine); return fail("override state baseline failed"); }
+
+  AnygmConfigDelta delta;
+  memset(&delta,0,sizeof delta);
+  delta.struct_size=sizeof delta;
+  delta.values.struct_size=sizeof delta.values;
+  delta.fields=ANYGM_CONFIG_CONTENT_OVERRIDES;
+  delta.values.content_overrides=0;
+  ok=anygm_set_config(engine,&delta)==ANYGM_OK &&
+     anygm_state_load(engine,baseline,state_size)==ANYGM_ERROR_STATE_MISMATCH;
+  if(!ok) fail("a state saved with overrides loaded without them");
+  if(ok){
+    delta.values.content_overrides=1;
+    ok=anygm_set_config(engine,&delta)==ANYGM_OK &&
+       anygm_state_load(engine,baseline,state_size)==ANYGM_OK;
+    if(!ok) fail("re-enabling overrides did not restore the state identity");
+  }
+  free(baseline);
+  anygm_destroy(engine);
+  if(!ok) return 0;
+
+  file=fopen(anchor,"wb");
+  written=file && fwrite("[anygm]\npayload=",1,16,file)==16 &&
+          fwrite(payload_name,1,strlen(payload_name),file)==strlen(payload_name) &&
+          fwrite("\n[overrides]\nnot a directive\n",1,29,file)==29;
+  if(file && fclose(file)!=0) written=0;
+  if(!written) return fail("could not rewrite the broken anchor");
+  engine=NULL;
+  if(anygm_create(services,&engine)!=ANYGM_OK) return fail("broken-override engine creation failed");
+  ok=anygm_load(engine,&source,NULL)!=ANYGM_OK;
+  anygm_destroy(engine);
+  remove(anchor);
+  if(!ok) return fail("an unrecognized override directive did not fail the load");
+  return 1;
+}
+
 int main(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_content_create(&fixture)) return fail("fixture creation failed")?0:1;
@@ -238,6 +314,8 @@ int main(void){
        engine_matches(engine,baseline,state_size);
     if(!ok) fail("runtime override bounds were not transactional");
   }
+
+  if(ok) ok=content_override_state_cases(&services,&fixture);
 
   free(candidate);
   free(baseline);

@@ -226,6 +226,9 @@ struct AnygmEngine {
   int aspect_event_view_stack_pointer,aspect_event_view_overflow;
   CheatSlot cheats[GML_MAX_CHEATS],boot_cheats[GML_MAX_CHEATS];
   int cheat_count,boot_cheat_count;
+  /* Verbatim override text the loaded content's anchor carried; hashed into the state identity
+   * while the content-override channel is active. boot_cheats holds its parsed form. */
+  char content_overrides_text[4096];
   MenuState menu;
   uint8_t introskip_set[1024/8];
   int introskip_enabled;
@@ -257,6 +260,13 @@ int core_opt_start_room(AnygmEngine *engine,int *room_index);
 int core_opt_redirect_room_order(AnygmEngine *engine);
 void engine_override_reset(AnygmEngine *engine);
 void engine_override_set(AnygmEngine *engine,unsigned slot,bool enabled,const char *expression);
+/* Content-override channel: directives a content anchor declared, parsed into boot slots that
+ * survive host cheat resets. Parsing is fail-closed: an unrecognized or one-shot directive
+ * rejects the whole block, and the caller fails the load rather than dropping lines. */
+int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
+                                char *error,size_t error_capacity);
+int engine_boot_cheats_active(AnygmEngine *engine);
+void engine_override_menu_refresh(AnygmEngine *engine);
 void apply_sticky_cheats(AnygmEngine *engine);
 void aspect_apply_program(AnygmEngine *engine);
 void menu_run(AnygmEngine *engine);

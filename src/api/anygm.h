@@ -349,6 +349,9 @@ typedef struct AnygmConfig {
    * carries its own no-shader presentation selects it. Hosts default to non-zero; some content
    * ends itself when told a shader did not compile. */
   uint32_t report_all_shaders_compiled;
+  /* Apply the override directives the loaded content carried in its anchor file. Enabled by
+   * default; disabling ignores this channel without changing host cheats. */
+  uint32_t content_overrides;
 } AnygmConfig;
 
 typedef struct AnygmConfigDelta {
@@ -376,7 +379,8 @@ enum {
   ANYGM_CONFIG_START_ROOM=1ull<<15,
   ANYGM_CONFIG_PRESENT_LOGICAL_RASTER=1ull<<16,
   ANYGM_CONFIG_CLEAR_LOCAL_DATA=1ull<<17,
-  ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED=1ull<<18
+  ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED=1ull<<18,
+  ANYGM_CONFIG_CONTENT_OVERRIDES=1ull<<19
 };
 
 typedef struct AnygmInputFrame {

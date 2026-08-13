@@ -51,11 +51,16 @@ extracted. Local-header bounds, method, compressed and uncompressed sizes, and
 CRC are validated before a member is accepted. Unsupported ZIP64 input is
 rejected.
 
-An `.anygm` anchor reference is parsed from a bounded one-line file, passes
+An `.anygm` anchor is parsed from a bounded file; its payload reference passes
 the same member-path normalization, may not name another anchor, and is
-resolved only against the anchor's own directory. A present anchor that fails
-any of these checks rejects its archive; a directly loaded anchor that fails
-them loads nothing.
+resolved only against the anchor's own directory. Anchor override directives
+are bounded in count and per-line length, validated fail-closed against the
+override grammar before any live engine state is torn down, and confer no
+authority beyond what the loaded content's own code already has. An archive's
+anchor is staged into the disposable extraction cache and reparsed as
+untrusted input on every load. A present anchor that fails any of these
+checks rejects its archive; a directly loaded anchor that fails them loads
+nothing.
 
 The normalized FORM reader enforces a separate set of compile-time limits:
 

@@ -9,15 +9,40 @@ built-in operation present in arbitrary content is implemented.
 
 ## Anchor files
 
-An `.anygm` anchor is a one-line text file naming the payload to load,
-relative to the anchor's own directory. It provides a stable alias for a
-selected payload without renaming that payload. A directly loaded anchor routes its
-referenced file as if it had been loaded itself. Inside a ZIP-compatible
-archive an anchor member overrides scored payload selection, may name a nested
-archive, and a present anchor that cannot be read, parsed, or matched to a
-member rejects the archive rather than silently losing to the scores. The
-reference uses the same normalization as archive member paths, is confined to
-the anchor's subtree, and may not name another anchor.
+An `.anygm` anchor is a text file naming the payload to load, relative to the
+anchor's own directory. It provides a stable alias for the selected payload
+without renaming it. A directly loaded anchor routes its referenced file as if
+it had been loaded itself. Inside a ZIP-compatible archive an anchor member
+overrides scored payload selection, may name a nested archive, and a present
+anchor that cannot be read, parsed, or matched to a member rejects the archive
+rather than silently losing to the scores. The reference uses the same
+normalization as archive member paths, is confined to the anchor's subtree,
+and may not name another anchor. Blank lines and lines whose first significant
+character is `#` are comments.
+
+The basic form is one significant line holding the reference. The advanced
+form opens with the exact header line `[anygm]`, selects the payload with one
+`payload=<reference>` key, and may add an `[overrides]` section:
+
+```
+[anygm]
+payload=data.win
+
+[overrides]
+# freeze a global, patch a forced-aspect view
+$lives=99
+?aspect view_wport[0]=$forced_w
+```
+
+Each `[overrides]` line is one directive in the same grammar the host cheat
+interface uses, including development-menu declarations. Directives load into
+a channel separate from host cheats: host cheat resets do not clear them, and
+the content-override configuration switch disables them without touching host
+cheats. Parsing is fail-closed — an unrecognized directive, or the one-shot
+`room=` form, rejects the load rather than being dropped. Active directives
+join the save-state identity, so a state saved with them loads only while
+they are active; content without directives keeps its state identity
+unchanged.
 
 ## Normalized data containers
 

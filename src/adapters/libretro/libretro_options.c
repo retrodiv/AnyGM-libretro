@@ -83,6 +83,14 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"shaders",
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},
+  {"anygm_content_overrides","Content override directives",NULL,
+   "Applies the override directives the loaded content carries in its .anygm anchor (frozen "
+   "variables, aspect patches, a development menu). Off ignores only this anchor "
+   "channel without changing host cheats. Save states remember whether directives "
+   "were active and only load under the same setting.",
+   NULL,"development",
+   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "On"},
   {"anygm_report_shaders_compiled","Report content shaders as compiled",NULL,
    "How shader_is_compiled() answers for content shaders. On reports every declared "
    "shader as compiled, including effects not executed in software. Off reports only "
@@ -509,6 +517,7 @@ void libretro_options_apply(bool all_fields){
   config->crt_vignette=option_tristate("anygm_crt_vignette");
   config->embedded_shaders=option_on("anygm_embedded_shaders",1);
   config->report_all_shaders_compiled=option_on("anygm_report_shaders_compiled",1);
+  config->content_overrides=option_on("anygm_content_overrides",1);
   /* Content that offers a gamepad-only path checks this before the player can reach any menu, so
    * a host that never sets the option must still report a pad. */
   config->gamepad_connected=option_on("anygm_gamepad",1);
@@ -549,6 +558,7 @@ void libretro_options_apply(bool all_fields){
       ANYGM_CONFIG_EMBEDDED_SHADERS|ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED|
       ANYGM_CONFIG_GAMEPAD_CONNECTED|
       ANYGM_CONFIG_FAST_ALPHA_CULL|ANYGM_CONFIG_START_ROOM|
-      ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_CLEAR_LOCAL_DATA;
+      ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_CLEAR_LOCAL_DATA|
+      ANYGM_CONFIG_CONTENT_OVERRIDES;
   anygm_set_config(g_libretro.engine,&delta);
 }

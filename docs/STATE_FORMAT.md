@@ -44,6 +44,9 @@ canonical bytes and semantics remain unchanged.
 - Maps and other unordered collections are written in deterministic order.
 - Every variable section is length-delimited and must be consumed exactly.
 - Content, compatibility, and stateful configuration fingerprints are distinct.
+- Active content-override directives join the configuration fingerprint, so a state saved with
+  them loads only while they are active. Content without directives keeps the configuration
+  encoding it always had.
 - Presentation-only settings such as output resolution, aspect ratio, and CRT effects are not
   state identity; the host's current presentation settings remain active when a state is loaded.
 - Diagnostics, host handles, and disposable caches are excluded.

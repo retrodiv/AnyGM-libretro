@@ -644,29 +644,86 @@ static int zip_under_root(const char *name,const char *selected){
   return !strncasecmp(name,selected,root);
 }
 /* ---- Anchor files (.anygm) ----
- * A one-line text file names a payload relative to the anchor's own directory.
- * The anchor is an alias for a selected payload without renaming that payload.
- * Normalize the reference as an archive member, confine it to the anchor's
- * subtree, and reject another anchor as the target so resolution cannot recurse. */
-static int anchor_reference_parse(const uint8_t *data,size_t size,char *out,size_t outsz){
-  if(!data || !size || size>ANYGM_CONTENT_MAX_ANCHOR_BYTES) return 0;
-  size_t begin=0;
-  if(size>=3 && data[0]==0xefu && data[1]==0xbbu && data[2]==0xbfu) begin=3;
-  size_t line_end=begin;
-  while(line_end<size && data[line_end]!='\n' && data[line_end]!='\r') line_end++;
-  for(size_t i=line_end;i<size;i++){
-    uint8_t c=data[i];
-    if(c!='\n' && c!='\r' && c!=' ' && c!='\t') return 0;
+ * A text file names a payload relative to the anchor's own directory and provides
+ * an alias without renaming that payload. Normalize the reference as an archive
+ * member, confine it to the anchor's subtree, and reject another anchor target
+ * so resolution cannot recurse.
+ *
+ * The basic form is one significant line holding the reference. The advanced form opens with the
+ * exact header line "[anygm]", selects the payload with one "payload=<reference>" key, and may
+ * carry an "[overrides]" section whose lines are handed verbatim to the engine's override
+ * channel. Blank lines and lines whose first significant character is '#' are comments in both
+ * forms. Structure is validated here; directive grammar belongs to the engine and is validated
+ * at load. When several anchors take part in one resolution (an anchor selecting an archive that
+ * carries its own), the outermost override block wins: it is the distribution wrapper speaking. */
+#define ANYGM_CONTENT_ANCHOR_MEMBER_COPY ".anygm_anchor"
+static int anchor_next_line(const uint8_t *data,size_t size,size_t *cursor,
+                            const uint8_t **line,size_t *length){
+  while(*cursor<size){
+    size_t begin=*cursor,end=begin;
+    while(end<size && data[end]!='\n' && data[end]!='\r') end++;
+    size_t next=end;
+    if(next<size && data[next]=='\r') next++;
+    if(next<size && data[next]=='\n') next++;
+    *cursor=next;
+    while(begin<end && (data[begin]==' '||data[begin]=='\t')) begin++;
+    while(end>begin && (data[end-1]==' '||data[end-1]=='\t')) end--;
+    if(begin==end || data[begin]=='#') continue;
+    *line=data+begin;
+    *length=end-begin;
+    return 1;
   }
-  while(begin<line_end && (data[begin]==' '||data[begin]=='\t')) begin++;
-  while(line_end>begin && (data[line_end-1]==' '||data[line_end-1]=='\t')) line_end--;
-  size_t length=line_end-begin;
+  return 0;
+}
+static int anchor_reference_normalize(const uint8_t *line,size_t length,char *out,size_t outsz){
   if(!length || length>ANYGM_CONTENT_MAX_MEMBER_PATH || length+1>outsz) return 0;
-  memcpy(out,data+begin,length);
+  memcpy(out,line,length);
   if(!zip_name_normalize(out,length)) return 0;
   if(out[strlen(out)-1]=='/') return 0;
   if(zip_endswith(out,".anygm")) return 0;
   return 1;
+}
+/* overrides may be NULL when the caller has no channel to hand directives to; the payload
+ * selection still resolves and the directives are dropped. The engine always supplies one. */
+static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t refsz,
+                        char *overrides,size_t overrides_size){
+  if(overrides && overrides_size) overrides[0]=0;
+  if(!data || !size || size>ANYGM_CONTENT_MAX_ANCHOR_BYTES) return 0;
+  size_t cursor=0;
+  if(size>=3 && data[0]==0xefu && data[1]==0xbbu && data[2]==0xbfu) cursor=3;
+  const uint8_t *line=NULL;
+  size_t length=0;
+  if(!anchor_next_line(data,size,&cursor,&line,&length)) return 0;
+  if(!(length==7 && !memcmp(line,"[anygm]",7))){
+    if(!anchor_reference_normalize(line,length,reference,refsz)) return 0;
+    return !anchor_next_line(data,size,&cursor,&line,&length);
+  }
+  int in_overrides=0,have_payload=0;
+  size_t used=0;
+  while(anchor_next_line(data,size,&cursor,&line,&length)){
+    if(line[0]=='['){
+      if(length==11 && !memcmp(line,"[overrides]",11) && !in_overrides){ in_overrides=1; continue; }
+      return 0;
+    }
+    if(!in_overrides){
+      if(have_payload || length<7 || memcmp(line,"payload",7)) return 0;
+      const uint8_t *value=line+7;
+      size_t value_length=length-7;
+      while(value_length && (value[0]==' '||value[0]=='\t')){ value++; value_length--; }
+      if(!value_length || value[0]!='=') return 0;
+      value++; value_length--;
+      while(value_length && (value[0]==' '||value[0]=='\t')){ value++; value_length--; }
+      if(!anchor_reference_normalize(value,value_length,reference,refsz)) return 0;
+      have_payload=1;
+    } else if(overrides){
+      if(overrides_size-used<length+2u) return 0;
+      memcpy(overrides+used,line,length);
+      used+=length;
+      overrides[used++]='\n';
+      overrides[used]=0;
+    }
+  }
+  return have_payload;
 }
 
 static uint32_t zip_crc32(const uint8_t *data,size_t size){
@@ -804,7 +861,7 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
       }
     }
     if(anchor_ok)
-      anchor_ok=anchor_reference_parse(anchor_data,anchor_usz,reference,sizeof reference);
+      anchor_ok=anchor_parse(anchor_data,anchor_usz,reference,sizeof reference,NULL,0);
     if(anchor_ok){
       const char *slash=strrchr(anchor_rel,'/');
       size_t rootlen=slash?(size_t)(slash-anchor_rel)+1u:0u;
@@ -837,6 +894,20 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
                   "archive: anchor %s is invalid or names no member of %s",anchor_rel,zpath);
       file_map_close(&map);
       return 0;
+    }
+    /* Keep a copy of the anchor beside the extracted payload so a warm cache load can hand the
+     * archive's override directives to the engine without reopening the archive. The copy lives
+     * in the disposable hash-keyed cache and is parsed as untrusted input on every read. */
+    {
+      char anchor_copy[1536];
+      if(!path_join_bounded(anchor_copy,sizeof anchor_copy,outdir,
+                            ANYGM_CONTENT_ANCHOR_MEMBER_COPY) ||
+         !anygm_vfs_write_all(router->host,anchor_copy,anchor_data,anchor_usz)){
+        content_log(router,ANYGM_CONTENT_LOG_ERROR,
+                    "archive: could not stage the anchor copy for %s",zpath);
+        file_map_close(&map);
+        return 0;
+      }
     }
     if(zip_nested_score(target)>0){
       content_rel[0]=0;
@@ -932,7 +1003,9 @@ static int sibling_payload(const AnygmContentRouter *router,const char *archive,
 }
 static int load_archive_content_depth(const AnygmContentRouter *router,const char *zpath,
                                       char *content_path,size_t cpsz,
-                                      char *asset_root,size_t arsz,int depth){
+                                      char *asset_root,size_t arsz,
+                                      char *content_overrides,size_t content_overrides_size,
+                                      int depth){
   if(depth>=(int)ANYGM_CONTENT_MAX_NESTING_LEVELS){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"archive: nesting limit reached at %s",zpath);
     return 0;
@@ -971,10 +1044,14 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
              existing_size==marker_payload_size && file_hash64(router,existing,&existing_hash) &&
              existing_hash==marker_payload_hash;
   }
+  char anchor_copy[1536];
+  if(!path_join_bounded(anchor_copy,sizeof anchor_copy,outdir,
+                        ANYGM_CONTENT_ANCHOR_MEMBER_COPY)) return 0;
   if(!cache_ok){
     char nested[512]=""; rel[0]=0; kind=0;
     int classic_payload=0;
     if(!mkdirs_for(router,outdir,1)) return 0;
+    anygm_vfs_remove(router->host,anchor_copy);
     int n=zip_extract_all(router,zpath,outdir,rel,sizeof rel,NULL,0,nested,sizeof nested,
                           &classic_payload);
     if(n<=0 || (!rel[0] && !nested[0])){
@@ -1000,9 +1077,34 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"archive: resolved payload path is too long");
     return 0;
   }
+  /* Hand this archive's override directives to the caller before any nested resolution runs, so
+   * the outermost anchor wins. The staged copy is untrusted input reparsed on every load; a copy
+   * that no longer parses is a corrupted cache entry and rejects the load rather than dropping
+   * directives the archive declared. */
+  if(content_overrides && content_overrides_size && !content_overrides[0]){
+    AnygmFileInfo anchor_info;
+    if(anygm_vfs_stat(router->host,anchor_copy,&anchor_info) &&
+       (anchor_info.flags&ANYGM_FILE_INFO_EXISTS) &&
+       !(anchor_info.flags&ANYGM_FILE_INFO_DIRECTORY)){
+      uint8_t *anchor_bytes=NULL;
+      size_t anchor_size=0;
+      char anchor_ref[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
+      int parsed=anygm_vfs_read_all(router->host,anchor_copy,&anchor_bytes,&anchor_size,
+                                    (size_t)ANYGM_CONTENT_MAX_ANCHOR_BYTES) &&
+                 anchor_parse(anchor_bytes,anchor_size,anchor_ref,sizeof anchor_ref,
+                              content_overrides,content_overrides_size);
+      free(anchor_bytes);
+      if(!parsed){
+        content_log(router,ANYGM_CONTENT_LOG_ERROR,
+                    "archive: staged anchor copy is corrupt: %s",anchor_copy);
+        return 0;
+      }
+    }
+  }
   int magic=file_magic_kind(router,resolved);
   if(kind=='N' || (kind!='S' && magic==2))
-    return load_archive_content_depth(router,resolved,content_path,cpsz,asset_root,arsz,depth+1);
+    return load_archive_content_depth(router,resolved,content_path,cpsz,asset_root,arsz,
+                                      content_overrides,content_overrides_size,depth+1);
   if(kind=='S'){
     /* The generated payload lands in the cache, so the extracted tree stays the asset root the
      * content opens by path. Mirror the direct executable order: an embedded Studio payload wins
@@ -1021,8 +1123,10 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
   return 1;
 }
 static int load_archive_content(const AnygmContentRouter *router,const char *zpath,
-                                char *content_path,size_t cpsz,char *asset_root,size_t arsz){
-  return load_archive_content_depth(router,zpath,content_path,cpsz,asset_root,arsz,0);
+                                char *content_path,size_t cpsz,char *asset_root,size_t arsz,
+                                char *content_overrides,size_t content_overrides_size){
+  return load_archive_content_depth(router,zpath,content_path,cpsz,asset_root,arsz,
+                                    content_overrides,content_overrides_size,0);
 }
 
 static int load_classic_project_content(const AnygmContentRouter *router,const char *srcpath,
@@ -1154,7 +1258,8 @@ static int load_source_project_content(const AnygmContentRouter *router,const ch
  * accounting. */
 static int load_anchor_content(const AnygmContentRouter *router,const char *anchor_path,
                                char *resolved_path,size_t resolved_path_size,
-                               char *asset_root,size_t asset_root_size){
+                               char *asset_root,size_t asset_root_size,
+                               char *content_overrides,size_t content_overrides_size){
   uint8_t *bytes=NULL;
   size_t size=0;
   if(!router || !anygm_vfs_read_all(router->host,anchor_path,&bytes,&size,
@@ -1164,11 +1269,12 @@ static int load_anchor_content(const AnygmContentRouter *router,const char *anch
     return 0;
   }
   char reference[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
-  int ok=anchor_reference_parse(bytes,size,reference,sizeof reference);
+  int ok=anchor_parse(bytes,size,reference,sizeof reference,
+                      content_overrides,content_overrides_size);
   free(bytes);
   if(!ok){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,
-                "anchor: %s must hold one normalized relative payload path",anchor_path);
+                "anchor: %s is not a valid anchor file",anchor_path);
     return 0;
   }
   char parent[1024],target[1536];
@@ -1187,12 +1293,18 @@ static int load_anchor_content(const AnygmContentRouter *router,const char *anch
   }
   content_log(router,ANYGM_CONTENT_LOG_INFO,"anchor: %s -> %s",anchor_path,target);
   return anygm_content_resolve_path(router,target,resolved_path,resolved_path_size,
-                                    asset_root,asset_root_size);
+                                    asset_root,asset_root_size,
+                                    content_overrides,content_overrides_size);
 }
 
+/* content_overrides receives the override directives the resolved content carried, when the
+ * caller supplies a buffer. The buffer is only written while it is empty, which is what makes
+ * the outermost anchor win across nested resolutions, so a caller starting a fresh resolution
+ * clears it first. */
 int anygm_content_resolve_path(const AnygmContentRouter *router,const char *input_path,
                                char *resolved_path,size_t resolved_path_size,
-                               char *asset_root,size_t asset_root_size){
+                               char *asset_root,size_t asset_root_size,
+                               char *content_overrides,size_t content_overrides_size){
   if(!input_path || !input_path[0] || !resolved_path || resolved_path_size==0) return 0;
   resolved_path[0]=0;
   if(asset_root && asset_root_size) asset_root[0]=0;
@@ -1211,12 +1323,14 @@ int anygm_content_resolve_path(const AnygmContentRouter *router,const char *inpu
   }
   if(path_ext_is(input_path,".anygm")){
     return load_anchor_content(router,input_path,resolved_path,resolved_path_size,
-                               asset_root,asset_root_size);
+                               asset_root,asset_root_size,
+                               content_overrides,content_overrides_size);
   }
   if(path_ext_is(input_path,".zip") || path_ext_is(input_path,".port") ||
      path_ext_is(input_path,".apk") || file_magic_kind(router,input_path)==2){
     return load_archive_content(router,input_path,resolved_path,resolved_path_size,
-                                asset_root,asset_root_size);
+                                asset_root,asset_root_size,
+                                content_overrides,content_overrides_size);
   }
   if(snprintf(resolved_path,resolved_path_size,"%s",input_path)>=(int)resolved_path_size){
     resolved_path[0]=0;
