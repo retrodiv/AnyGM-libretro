@@ -72,7 +72,19 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
     *out=vreal(-1); return 1;
   }
   if(!strcmp(nm,"layer_exists")){ *out=vreal(rt_layer_resolve(vm,a,n)!=NULL); return 1; }
-  if(!strcmp(nm,"layer_set_visible")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); if(l) l->visible=(int)N(a,n,1); *out=vreal(0); return 1; }
+  /* Effect structures are not modeled here. Preserve the absent-effect sentinel
+   * without changing layer visibility. */
+  if(!strcmp(nm,"layer_get_fx")){ *out=vreal(-1); return 1; }
+  if(!strcmp(nm,"layer_enable_fx")){ *out=vreal(0); return 1; }
+  if(!strcmp(nm,"layer_set_visible")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n);
+    if(builtin_setting(vm,"GML_LOG_RTL")){
+      if(l) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+        "[rtl] f%ld layer_set_visible %s id=%d -> %d\n",vm->frame,l->name,l->id,(int)N(a,n,1));
+      else anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+        "[rtl] f%ld layer_set_visible unresolved arg0=%s(%.0f) -> %d\n",
+        vm->frame,a&&n>0&&a[0].t==V_STR&&a[0].s?a[0].s:"<num>",N(a,n,0),(int)N(a,n,1));
+    }
+    if(l) l->visible=(int)N(a,n,1); *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_get_visible")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); *out=vreal(l?l->visible:0); return 1; }
   if(!strcmp(nm,"layer_add_instance")){
     GmlRtLayer *l=rt_layer_resolve(vm,a,n);

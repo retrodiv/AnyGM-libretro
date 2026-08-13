@@ -596,6 +596,35 @@ static int layer_instance_move(GmlVM *vm){
   return ok;
 }
 
+/* A plain layer has no assigned FX. A visibility walk must not hide it. */
+static int layer_fx_answers_none(GmlVM *vm){
+  GmlVal create_args[]={vreal(64),vstr("neutral_fx_probe")};
+  GmlVal layer_id=gml_builtin_call(vm,"layer_create",create_args,2);
+  if(layer_id.t!=V_REAL || layer_id.d<0.0) return 0;
+  GmlVal by_id=gml_builtin_call(vm,"layer_get_fx",&layer_id,1);
+  GmlVal name_arg=vstr("neutral_fx_probe");
+  GmlVal by_name=gml_builtin_call(vm,"layer_get_fx",&name_arg,1);
+  GmlVal enable_args[]={layer_id,vreal(0)};
+  GmlVal enabled=gml_builtin_call(vm,"layer_enable_fx",enable_args,2);
+  int ok=expect_real("fx of a plain layer by id",by_id,-1) &&
+         expect_real("fx of a plain layer by name",by_name,-1) &&
+         expect_real("fx enable is an accepted no-op",enabled,0);
+  if(ok && by_id.t==V_REAL && by_id.d!=-1.0) ok=0;
+  if(ok){
+    /* Hide only layers with an assigned effect. */
+    if(by_id.d!=-1.0){
+      GmlVal hide_args[]={layer_id,vreal(0)};
+      gml_builtin_call(vm,"layer_set_visible",hide_args,2);
+    }
+    GmlVal visible=gml_builtin_call(vm,"layer_get_visible",&layer_id,1);
+    ok=expect_real("a plain layer survives the effect-stripping walk",visible,1);
+  }
+  GmlVal destroy_ok=gml_builtin_call(vm,"layer_destroy",&layer_id,1);
+  (void)destroy_ok;
+  if(!ok) fprintf(stderr,"layer fx contract failed\n");
+  return ok;
+}
+
 static int portable_service_contracts(GmlVM *vm){
   GmlVal player=gml_builtin_call(vm,"FOCAL_NetworkGetPlayer",NULL,0);
   GmlVal opponent=gml_builtin_call(vm,"FOCAL_NetworkGetOpponentName",NULL,0);
@@ -707,7 +736,8 @@ int main(void){
          external_audio_definition_dispatch(&vm) &&
          portable_service_contracts(&vm) &&
          portable_joystick_contract(&vm) &&
-         layer_instance_move(&vm);
+         layer_instance_move(&vm) &&
+         layer_fx_answers_none(&vm);
   gml_vm_free(&vm);
   gml_win_free(&win);
   if(!ok) return 1;
