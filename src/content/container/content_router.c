@@ -1318,6 +1318,13 @@ int anygm_content_identity_path(const AnygmContentRouter *router,const char *inp
   anygm_content_path_parent(input_path,parent,sizeof parent);
   char target[1536];
   if(!path_join_bounded(target,sizeof target,parent,reference)) return 0;
+  /* The identity is compared as a string against the path the frontend passes when the payload
+   * is loaded directly, so it must be spelled in the same separator flavor. The join and the
+   * parsed reference use forward slashes; a frontend that spelled the anchor's own path with
+   * backslashes spells the payload's path that way too. */
+  if(strchr(input_path,'\\') && !strchr(input_path,'/'))
+    for(char *cursor=target;*cursor;cursor++)
+      if(*cursor=='/') *cursor='\\';
   return snprintf(output,output_size,"%s",target)<(int)output_size;
 }
 
