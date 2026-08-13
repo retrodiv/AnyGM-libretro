@@ -985,11 +985,17 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   int world_height=(int)engine->height;
   if (!multiview_rendered) {
   *gml_varmap_put(&engine->vm.globals,"view_current")=vreal(frame_view_index);
-  if(!engine->aspect_force_active && frame_view_count==1 &&
+  if(!engine->aspect_force_active && frame_view_count<=1 &&
      render_presentation.application_owned &&
      !(view_surface>0 && gml_surface_exists(&engine->render,view_surface))){
     GmlPresentView *view=&frame_views[0];
-    direct_owned_world=(default_application_surface_uses_full_view_port(
+    /* A viewless modern room draws into its owned application surface. Drawing only to a
+     * smaller logical framebuffer can leave retained pixels outside that raster. */
+    int viewless_owned_world = frame_view_count==0 &&
+      anygm_policy_has_modern_layer_semantics(&engine->win);
+    direct_owned_world=(viewless_owned_world ||
+      (frame_view_count==1 &&
+      (default_application_surface_uses_full_view_port(
       engine,frame_view_count,view->px,view->py,view->pw,view->ph,
       (int)engine->width,(int)engine->height,
       render_presentation.application_width,render_presentation.application_height) ||
@@ -998,7 +1004,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       render_presentation.application_width,render_presentation.application_height) ||
       application_surface_matches_first_generation_view_port(
         engine,frame_view_count,view->px,view->py,view->pw,view->ph,
-        render_presentation.application_width,render_presentation.application_height)) &&
+        render_presentation.application_width,render_presentation.application_height)))) &&
       gml_render_application_surface_owned_view(&engine->render,&direct_world_view);
   }
   world_pixels=direct_owned_world?direct_world_view.pixels:engine->fb;

@@ -9,7 +9,8 @@
 
 typedef struct { uint16_t y, x, len; uint8_t alpha; } GmlTpagAlphaRun;
 typedef struct {
-  int sx,sy,sw,sh, tx,ty, bw,bh, atlas;  /* texture page item */
+  int sx,sy,sw,sh, tx,ty, tw,th, bw,bh, atlas;  /* texture page item; tw/th = logical extent of the
+                                                   stored rectangle (differs when the page is scaled) */
   int alpha_scanned, ax0, ay0, ax1, ay1; /* nontransparent source bbox, cached after atlas decode */
   int alpha_max;                          /* max source alpha in the texture-page item */
   int alpha_partial;                      /* at least one source texel has alpha 1..254 */
@@ -527,6 +528,7 @@ uint32_t be32(const uint8_t *data);
 
 void atlas_pool_free(GmlRender *r);
 uint8_t *atlas_pixels(GmlRender *r,int index);
+void gml_render_materialize_scaled_pages(GmlRender *r);
 void parse_txtr(GmlRender *r);
 void parse_shader_palettes(GmlRender *r);
 int gml_render_parse_spine(GmlRender *r,GmlSprite *sprite,uint32_t record,

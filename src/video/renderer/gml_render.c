@@ -71,7 +71,8 @@ static void parse_tpag(GmlRender *r){
     uint32_t p=u32(d,c->off+4+i*4); r->tpag_ptr[i]=p;
     GmlTpag *t=&r->tpag[i];
     t->sx=u16(d,p); t->sy=u16(d,p+2); t->sw=u16(d,p+4); t->sh=u16(d,p+6);
-    t->tx=u16(d,p+8); t->ty=u16(d,p+10); t->bw=u16(d,p+16); t->bh=u16(d,p+18);
+    t->tx=u16(d,p+8); t->ty=u16(d,p+10); t->tw=u16(d,p+12); t->th=u16(d,p+14);
+    t->bw=u16(d,p+16); t->bh=u16(d,p+18);
     t->atlas=(int16_t)u16(d,p+20);
   }
 }
@@ -398,6 +399,7 @@ int gml_render_init(GmlRender *r, GmlWin *win){
   r->fast_alpha_cull=env_fast_alpha_cull(r);
   r->lut_pal_sprite=-1; r->lut_pal_frame=0;
   parse_txtr(r); parse_tpag(r); parse_sprt(r); parse_bgnd(r); parse_font(r); build_default_font(r);
+  gml_render_materialize_scaled_pages(r);
   parse_shader_palettes(r);
   r->base_n_spr=r->n_spr;
   return 0;

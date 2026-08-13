@@ -1336,3 +1336,57 @@ int gml_sprite_replace_from_file(GmlRender *r, int sprite, const char *path, int
   if(!ok) free(rgba);
   return ok;
 }
+
+/* A TPAG item may declare a logical target larger than its stored texel rectangle. Materialize
+ * only those reduced-resolution sprites as runtime RGBA frames at the logical size, preserving
+ * the specialized texel blits for other items. */
+void gml_render_materialize_scaled_pages(GmlRender *r){
+  if(!r || !r->spr || !r->tpag) return;
+  for(int i=0;i<r->n_spr;i++){
+    GmlSprite *s=&r->spr[i];
+    if(s->runtime_rgba || !s->frame || s->n_frames<=0 || s->w<=0 || s->h<=0) continue;
+    int scaled=0;
+    for(int f=0;f<s->n_frames && !scaled;f++){
+      int ti=s->frame[f];
+      if(ti<0 || ti>=r->n_tpag) continue;
+      GmlTpag *t=&r->tpag[ti];
+      /* A smaller target may represent ordinary trim or padding. Materialize only when the
+       * logical target is larger than the stored texel rectangle. */
+      if(t->tw>t->sw || t->th>t->sh) scaled=1;
+    }
+    if(!scaled) continue;
+    size_t frame_px=(size_t)s->w*(size_t)s->h;
+    if(frame_px==0 || frame_px>(size_t)64*1024*1024) continue;
+    uint8_t *rgba=calloc((size_t)s->n_frames*frame_px,4);
+    if(!rgba) continue;
+    int ok=1;
+    for(int f=0;f<s->n_frames && ok;f++){
+      int ti=s->frame[f];
+      if(ti<0 || ti>=r->n_tpag) continue;
+      GmlTpag *t=&r->tpag[ti];
+      if(t->atlas<0 || t->atlas>=r->n_atlas || !atlas_pixels(r,t->atlas)){ ok=0; break; }
+      GmlAtlas *a=&r->atlas[t->atlas];
+      int tw=t->tw>0?t->tw:t->sw, th=t->th>0?t->th:t->sh;
+      if(t->sw<=0 || t->sh<=0 || tw<=0 || th<=0) continue;
+      uint8_t *dst_frame=rgba+(size_t)f*frame_px*4;
+      for(int y=0;y<th;y++){
+        int dy=t->ty+y;
+        if(dy<0 || dy>=s->h) continue;
+        int sy=t->sy+(int)(((int64_t)y*t->sh)/th);
+        if(sy<0 || sy>=a->h) continue;
+        const uint8_t *srow=a->px+(size_t)sy*a->w*4;
+        for(int x=0;x<tw;x++){
+          int dx=t->tx+x;
+          if(dx<0 || dx>=s->w) continue;
+          int sx=t->sx+(int)(((int64_t)x*t->sw)/tw);
+          if(sx<0 || sx>=a->w) continue;
+          uint8_t *dp=dst_frame+((size_t)dy*s->w+dx)*4;
+          const uint8_t *sp=srow+(size_t)sx*4;
+          dp[0]=sp[0]; dp[1]=sp[1]; dp[2]=sp[2]; dp[3]=sp[3];
+        }
+      }
+    }
+    if(!ok){ free(rgba); continue; }
+    sprite_set_runtime_rgba(s,rgba,s->w,s->h,s->n_frames,s->originx,s->originy,0);
+  }
+}

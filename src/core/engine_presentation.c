@@ -707,9 +707,15 @@ void compute_present(AnygmEngine *engine) {
     } else if (gui_window_near_native(win_w, win_h, gw, gh) &&
                win_w <= FB_MAX_W && win_h <= FB_MAX_H) {
       /* A near-native GUI size is a coordinate system stretched to the window, not a request
-       * for a small uniform-fit canvas. Preserve the declared window pixels. */
+       * for a small uniform-fit canvas. Preserve the declared window pixels. When content
+       * composites its application surface, report that same window as the effective extent. */
       gui_window_mode = 1;
       engine->output_width = (unsigned)win_w; engine->output_height = (unsigned)win_h;
+      /* Self-composition uses the reported extent as its final destination; automatic surface
+       * presentation retains the existing effective size. */
+      if(!renderer.application_draw_enabled){
+        effective_width = win_w; effective_height = win_h;
+      }
     }
   }
   /* When a port is larger than its view, present at GUI/port resolution rather than downscaling
