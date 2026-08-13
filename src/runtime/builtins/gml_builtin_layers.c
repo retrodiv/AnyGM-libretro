@@ -84,7 +84,8 @@ int builtin_layer_exact(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out
         "[rtl] f%ld layer_set_visible unresolved arg0=%s(%.0f) -> %d\n",
         vm->frame,a&&n>0&&a[0].t==V_STR&&a[0].s?a[0].s:"<num>",N(a,n,0),(int)N(a,n,1));
     }
-    if(l) l->visible=(int)N(a,n,1); *out=vreal(0); return 1; }
+    if(l) l->visible=(int)N(a,n,1);
+    *out=vreal(0); return 1; }
   if(!strcmp(nm,"layer_get_visible")){ GmlRtLayer *l=rt_layer_resolve(vm,a,n); *out=vreal(l?l->visible:0); return 1; }
   if(!strcmp(nm,"layer_add_instance")){
     GmlRtLayer *l=rt_layer_resolve(vm,a,n);
