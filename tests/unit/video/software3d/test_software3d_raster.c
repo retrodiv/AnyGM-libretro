@@ -1068,7 +1068,9 @@ int software3d_case_primitive_model(Software3dRasterFixture *fixture){
     const double begin[]={0,0};
     const double position_a[]={0,0,0},position_b[]={0,48,0},position_c[]={0,24,32};
     const double color_red[]={0,0x0000FF,1};
-    const double argb_red[]={0,4294901760.0};
+    /* The low colour bits put red in the low byte and coverage in the top byte, so an
+     * opaque red vertex colour uses 0xFF0000FF. */
+    const double argb_red[]={0,4278190335.0};
     const double custom_a[]={0,-3.25,3.25};
     const double custom_b[]={0,-9.5,9.5};
     call_numbers(&fixture->vm,"vertex_begin",begin,2);

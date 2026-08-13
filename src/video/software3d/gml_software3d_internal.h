@@ -72,6 +72,10 @@ struct GmlSoftware3D {
   GmlVertexFormat vertex_builder;
   int vertex_builder_active;
   GmlVertexBuffer vertex_buffer[GML_VERTEX_BUFFER_MAX];
+  /* Scratch for one submission's vertices after a vertex program's colour modulation. Grown to the
+   * largest submission seen and never serialized: it is rebuilt by the draw that needs it. */
+  GmlD3Vertex *vertex_blend_scratch;
+  int vertex_blend_scratch_capacity;
   GmlD3State d3;
   double matrix_view[16],matrix_projection[16];
   GmlD3Vertex d3_prim[GML_D3_PRIM_MAX];

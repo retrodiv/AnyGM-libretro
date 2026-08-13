@@ -325,6 +325,11 @@ typedef struct GmlRender {
     int solid_blur_alpha_x_count, solid_blur_alpha_y_count;
     float solid_blur_alpha_x_offset[16], solid_blur_alpha_x_weight[16];
     float solid_blur_alpha_y_offset[16], solid_blur_alpha_y_weight[16];
+    /* Vertex-stage colour modulation multiplies a colour varying by a uniform vec4 before
+     * the fragment stage samples the texture. */
+    int vertex_colour_blend, vertex_colour_blend_alpha_only, vertex_colour_blend_set;
+    char vertex_colour_blend_uniform[64];
+    float vertex_colour_blend_value[4];
     int lut;                    /* palette-LUT shader: out = palette[(src.r, row)] */
     char lut_row_uniform[32];   /* uniform float selecting the palette row */
     char lut_sampler[32];       /* sampler2D holding the palette texture */

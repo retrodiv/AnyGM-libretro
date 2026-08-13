@@ -596,9 +596,10 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         GML_GRAPHICS,(int)N(a,n,0),GML_SOFTWARE3D_VERTEX_COLOR,value,2);
       return vreal(0); }
     if(!strcmp(nm,"vertex_argb")){
+      /* The low 24 bits use the ordinary colour layout with red in the low byte and blue
+       * in the high byte; the top byte supplies coverage. Do not exchange red and blue. */
       uint32_t argb=NU32(a,n,1);
-      uint32_t red=(argb>>16)&255,green=(argb>>8)&255,blue=argb&255;
-      double value[4]={(double)(red|(green<<8)|(blue<<16)),
+      double value[4]={(double)(argb&0xFFFFFFu),
                        ((argb>>24)&255)/255.0,0,0};
       gml_software3d_vertex_buffer_attribute(
         GML_GRAPHICS,(int)N(a,n,0),GML_SOFTWARE3D_VERTEX_COLOR,value,2);

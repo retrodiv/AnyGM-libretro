@@ -25,6 +25,9 @@ static void vertex_resources_reset(GmlSoftware3D *graphics){
   memset(graphics->vertex_format,0,sizeof(graphics->vertex_format));
   memset(&graphics->vertex_builder,0,sizeof(graphics->vertex_builder));
   graphics->vertex_builder_active=0;
+  free(graphics->vertex_blend_scratch);
+  graphics->vertex_blend_scratch=NULL;
+  graphics->vertex_blend_scratch_capacity=0;
 }
 int gml_software3d_vertex_format_add(GmlSoftware3D *graphics,int kind,int type,int usage,int count,int bytes){
   if(!graphics || !graphics->vertex_builder_active ||
@@ -124,6 +127,7 @@ void gml_software3d_destroy(GmlSoftware3D *graphics){
   if(!graphics) return;
   for(int i=0;i<GML_VERTEX_BUFFER_MAX;i++) free(graphics->vertex_buffer[i].vertex);
   for(int i=0;i<GML_D3_MODEL_MAX;i++) gml_software3d_model_clear_data(&graphics->d3_model[i]);
+  free(graphics->vertex_blend_scratch);
   free(graphics->d3.depth);
   free(graphics);
 }

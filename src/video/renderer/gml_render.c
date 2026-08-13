@@ -776,6 +776,20 @@ void gml_render_shader_set_current(GmlRender *r,int shader){
 int gml_render_shader_current(const GmlRender *r){
   return r?r->active_shader:-1;
 }
+/* The colour modulation the active vertex program applies to every vertex colour it passes on, as
+ * red, green, blue and alpha factors. Answers zero when no such program is set, so callers keep
+ * their unmodulated path; the identity is answered while a recognized program's uniform has not
+ * arrived yet, because a shader is not a reason to blank what content drew. */
+int gml_render_shader_vertex_colour_blend(const GmlRender *r,double blend[4]){
+  if(!r || !blend || r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal)
+    return 0;
+  const struct GmlShaderPal *recognized=&r->shader_pal[r->active_shader];
+  if(!recognized->vertex_colour_blend) return 0;
+  for(int component=0;component<4;component++)
+    blend[component]=recognized->vertex_colour_blend_alpha_only && component<3
+      ? 1.0 : (double)recognized->vertex_colour_blend_value[component];
+  return 1;
+}
 /* Whether this renderer is rasterizing under the classic conventions. Builtins see GmlRender as an
  * incomplete type, and primitive coordinate rules differ between the generations, so the ones that
  * have to choose a rule ask here rather than keeping a second copy of the flag. */
@@ -889,6 +903,9 @@ int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *n
     if(recognized->solid_blur_alpha &&
        !strcmp(name,recognized->solid_blur_alpha_uniform))
       return GML_RENDER_SHADER_HANDLE(shader,52);
+    if(recognized->vertex_colour_blend &&
+       !strcmp(name,recognized->vertex_colour_blend_uniform))
+      return GML_RENDER_SHADER_HANDLE(shader,53);
   }
   return shader>=0?GML_RENDER_SHADER_HANDLE(shader,63):-1;
 }
@@ -1006,6 +1023,16 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
       packed|=(uint32_t)channel<<(16-component*8);
     }
     recognized->solid_alpha_mask_rgb=packed;
+    return;
+  }
+  if(recognized->vertex_colour_blend && slot==53){
+    for(int component=0;component<4;component++){
+      double value=values[component];
+      if(value<0.0) value=0.0;
+      else if(value>1.0) value=1.0;
+      recognized->vertex_colour_blend_value[component]=(float)value;
+    }
+    recognized->vertex_colour_blend_set=1;
     return;
   }
   if(recognized->solid_blur_alpha && slot==52){

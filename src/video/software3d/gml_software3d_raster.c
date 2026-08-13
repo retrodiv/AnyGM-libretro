@@ -1007,6 +1007,18 @@ static void d3_primitive_flush(GmlRender *R){
     }
   }
 }
+static GmlD3Vertex *vertex_blend_scratch_ensure(GmlRender *R,int count){
+  GmlSoftware3D *graphics=GML_GRAPHICS;
+  if(!graphics || count<=0) return NULL;
+  if(count>graphics->vertex_blend_scratch_capacity){
+    GmlD3Vertex *grown=realloc(graphics->vertex_blend_scratch,
+                               (size_t)count*sizeof(GmlD3Vertex));
+    if(!grown) return NULL;
+    graphics->vertex_blend_scratch=grown;
+    graphics->vertex_blend_scratch_capacity=count;
+  }
+  return graphics->vertex_blend_scratch;
+}
 static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_handle,
                                  int first,int number){
   if(!R || id<0 || id>=GML_VERTEX_BUFFER_MAX || !g_vertex_buffer[id].used) return;
@@ -1016,6 +1028,24 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
   if(number<0 || number>buffer->vertex_n-first) number=buffer->vertex_n-first;
   if(number<=0) return;
   const GmlD3Vertex *vertex=buffer->vertex+first;
+  /* A vertex program may modulate the colour it passes on by a uniform, which is how text
+   * libraries carry a string's tint and fade. Apply it here, to a copy, so the rasterizer keeps
+   * receiving plain vertex colours and every other submission path is untouched. */
+  double blend[4];
+  if(gml_render_shader_vertex_colour_blend(R,blend) &&
+     (blend[0]<1.0 || blend[1]<1.0 || blend[2]<1.0 || blend[3]<1.0)){
+    GmlD3Vertex *modulated=vertex_blend_scratch_ensure(R,number);
+    if(modulated){
+      for(int i=0;i<number;i++){
+        modulated[i]=vertex[i];
+        modulated[i].r*=blend[0];
+        modulated[i].g*=blend[1];
+        modulated[i].b*=blend[2];
+        modulated[i].alpha*=blend[3];
+      }
+      vertex=modulated;
+    }
+  }
   GmlD3Texture texture={0};
   if(!vertex_texture(R,texture_handle,&texture)) memset(&texture,0,sizeof(texture));
   GmlRenderBackendDrawView draw;
