@@ -651,6 +651,9 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
     }
     return;
   }
+  /* Route IT_ARG writes to the argument register before struct-field handling.
+   * Reads already select that register before instance or struct fields. */
+  if(inst==IT_ARG && argument_set(vm,name,v)) return;
   /* A struct target owns its field names even when the same name has a VM-defined meaning for
    * ordinary instances. Resolve that target before the special-name dispatch below. */
   {

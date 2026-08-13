@@ -668,6 +668,23 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
   if(!strcmp(nm,"string_pos")){ const char*needle=S(vm,a,n,0), *hay=S(vm,a,n,1);
     if(!needle[0]) return vreal(0);
     char *p=strstr(hay,needle); return vreal(p ? (double)(p-hay+1) : 0); }
+  if(!strcmp(nm,"string_pos_ext")){  /* the search skips the first start_pos characters */
+    const char*needle=S(vm,a,n,0), *hay=S(vm,a,n,1); int start=(int)N(a,n,2);
+    if(!needle[0]) return vreal(0);
+    if(start<0) start=0;
+    if((size_t)start>=strlen(hay)) return vreal(0);
+    char *p=strstr(hay+start,needle); return vreal(p ? (double)(p-hay+1) : 0); }
+  if(!strcmp(nm,"string_last_pos")){ const char*needle=S(vm,a,n,0), *hay=S(vm,a,n,1);
+    if(!needle[0]) return vreal(0);
+    const char *last=NULL, *p=hay;
+    while((p=strstr(p,needle))){ last=p; p++; }
+    return vreal(last ? (double)(last-hay+1) : 0); }
+  if(!strcmp(nm,"string_last_pos_ext")){  /* a match may begin at or before start_pos characters in */
+    const char*needle=S(vm,a,n,0), *hay=S(vm,a,n,1); int start=(int)N(a,n,2);
+    if(!needle[0] || start<0) return vreal(0);
+    const char *last=NULL, *p=hay;
+    while((p=strstr(p,needle)) && p-hay<=start){ last=p; p++; }
+    return vreal(last ? (double)(last-hay+1) : 0); }
   if(!strcmp(nm,"string_format")){  /* string_format(val, tot, dec): width-padded fixed-point (GM) */
     double v=N(a,n,0); int tot=(int)N(a,n,1), dec=(int)N(a,n,2);
     if(dec<0) dec=0;

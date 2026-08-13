@@ -1627,11 +1627,20 @@ GmlVal gml_builtin_try_platform_tail(GmlVM *vm, const char *nm, GmlVal *a, int n
     return vreal(0);
   }
 
-  /* unknown builtin: log once per run so coverage audits can spot regressions */
+  /* Log each unknown builtin name once so later misses remain visible. */
   if(log_stub) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[unk] %s\n",nm);
-  if(!state || !state->unknown_builtin_logged){
+  if(state){
+    uint32_t hash=2166136261u; const char *c; int i, seen=0;
+    int capacity=(int)(sizeof state->unknown_builtin_seen/sizeof state->unknown_builtin_seen[0]);
+    for(c=nm;*c;c++){ hash^=(unsigned char)*c; hash*=16777619u; }
+    for(i=0;i<state->unknown_builtin_seen_count;i++)
+      if(state->unknown_builtin_seen[i]==hash){ seen=1; break; }
+    if(!seen && state->unknown_builtin_seen_count<capacity){
+      state->unknown_builtin_seen[state->unknown_builtin_seen_count++]=hash;
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gml] unknown builtin: %s\n",nm);
+    }
+  }else{
     anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gml] unknown builtin: %s\n",nm);
-    if(state) state->unknown_builtin_logged=1;
   }
   return vreal(0);
 }

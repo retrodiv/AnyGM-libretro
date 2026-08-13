@@ -102,7 +102,7 @@ endif
 
 TEST_DIR := $(BUILD_DIR)/tests
 RUNTIME_TESTS := test_rng test_persistent_room test_d3_state test_ds_grid \
-	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_map_arrays test_builtin_struct_exists test_stacktop_scope
+	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_string_search test_builtin_map_arrays test_builtin_struct_exists test_stacktop_scope
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets \
 	test_renderer_texture_shells
@@ -214,6 +214,10 @@ $(TEST_DIR)/test_ds_grid: tests/unit/runtime/test_ds_grid.c $(UNIT_RUNTIME_OBJEC
 	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_builtin_string_format: tests/unit/runtime/test_builtin_string_format.c $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(CPPFLAGS))
+
+$(TEST_DIR)/test_builtin_string_search: tests/unit/runtime/test_builtin_string_search.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(CPPFLAGS))
 
@@ -348,6 +352,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_builtin_args
 	$(TEST_DIR)/test_vm_gc
 	$(TEST_DIR)/test_builtin_string_format
+	$(TEST_DIR)/test_builtin_string_search
 	$(TEST_DIR)/test_builtin_map_arrays
 	$(TEST_DIR)/test_builtin_struct_exists \
 	$(TEST_DIR)/test_stacktop_scope

@@ -196,6 +196,10 @@ struct GmlBuiltinState {
    * external-audio asset records and jbfmod-prefixed Saudio entries; this cache is rebuilt lazily
    * after a state load, so it carries nothing a restore could not re-derive. */
   void *jbfmod;
+  /* Diagnostics only, never serialized. Name hashes already reported as unknown, so each missing
+   * builtin is logged once: a single early miss must not silence every later one for a whole run. */
+  uint32_t unknown_builtin_seen[128];
+  int unknown_builtin_seen_count;
 };
 
 struct GmlRender;

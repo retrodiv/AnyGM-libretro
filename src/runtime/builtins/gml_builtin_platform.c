@@ -295,6 +295,17 @@ static int gm_datetime_calendar(double serial,AnygmCalendarTime *out){
   double seconds=(serial-25569.0)*86400.0;
   return anygm_calendar_from_unix_seconds((int64_t)floor(seconds+0.5),out);
 }
+/* Proleptic Gregorian civil date to days since the Unix epoch.
+ * The GM serial origin is 25569 days before that epoch. */
+static int64_t gm_days_from_civil(int y,int m,int d){
+  int era; unsigned yoe,doy,doe;
+  y-=m<=2;
+  era=(y>=0?y:y-399)/400;
+  yoe=(unsigned)(y-era*400);
+  doy=(153u*(unsigned)(m+(m>2?-3:9))+2u)/5u+(unsigned)d-1u;
+  doe=yoe*365u+yoe/4u-yoe/100u+doy;
+  return (int64_t)era*146097+(int64_t)doe-719468;
+}
 static void gm_datetime_format(GmlVM *vm,double serial,uint32_t style,
                                char *text,size_t text_size){
   AnygmCalendarTime calendar;
@@ -339,6 +350,15 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(wall.flags&ANYGM_WALL_TIME_OFFSET_VALID)
       seconds+=(int64_t)wall.utc_offset_minutes*60;
     return vreal(25569.0+(double)seconds/86400.0);
+  }
+  if(!strcmp(nm,"date_create_datetime")){
+    int y=(int)N(a,n,0), mo=(int)N(a,n,1), d=(int)N(a,n,2);
+    double h=N(a,n,3), mi=N(a,n,4), s=N(a,n,5);
+    if(mo<1) mo=1;
+    if(mo>12) mo=12;
+    if(d<1) d=1;
+    if(d>31) d=31;
+    return vreal(25569.0+(double)gm_days_from_civil(y,mo,d)+(h*3600.0+mi*60.0+s)/86400.0);
   }
   if(!strcmp(nm,"date_second_span")) return vreal(fabs(N(a,n,0)-N(a,n,1))*86400.0);
   if(!strcmp(nm,"date_minute_span")) return vreal(fabs(N(a,n,0)-N(a,n,1))*1440.0);
