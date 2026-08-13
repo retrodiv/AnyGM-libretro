@@ -538,7 +538,8 @@ static int channel_note_period(const TrPlayer *pl, const TrChannel *c, int note)
   if(!s) return 0;
   if(pl->m->is_xm){
     int real = note + s->relative_note;
-    if(real < 1) real = 1; if(real > 118) real = 118;
+    if(real < 1) real = 1;
+    if(real > 118) real = 118;
     if(pl->m->linear_freq)
       return 7680 - real * 64 - s->finetune / 2;
     return xm_amiga_period((real - 1) * 64 + s->finetune / 2);
@@ -652,6 +653,7 @@ static void volume_column_tick0(TrPlayer *pl, TrChannel *c, int v){
 }
 
 static void volume_column_tick(TrPlayer *pl, TrChannel *c, int v){
+  (void)pl;
   if((v & 0xF0) == 0x60){ c->volume -= v & 15; if(c->volume < 0) c->volume = 0; }
   else if((v & 0xF0) == 0x70){ c->volume += v & 15; if(c->volume > 64) c->volume = 64; }
   else if((v & 0xF0) == 0xB0){
@@ -673,7 +675,8 @@ static void volume_column_tick(TrPlayer *pl, TrChannel *c, int v){
 static void do_volslide(TrChannel *c, int param){
   int up = param >> 4, down = param & 15;
   if(up) c->volume += up; else c->volume -= down;
-  if(c->volume < 0) c->volume = 0; if(c->volume > 64) c->volume = 64;
+  if(c->volume < 0) c->volume = 0;
+  if(c->volume > 64) c->volume = 64;
 }
 
 static void do_tone_porta(TrChannel *c){
@@ -733,7 +736,8 @@ static void row_effects_tick0(TrPlayer *pl, TrChannel *c, const TrCell *cell){
             if(m->is_xm){
               int ft = ((p & 15) << 4) - 128;
               int real = cell->note + c->sample->relative_note;
-              if(real < 1) real = 1; if(real > 118) real = 118;
+              if(real < 1) real = 1;
+              if(real > 118) real = 118;
               c->period = m->linear_freq ? 7680 - real * 64 - ft / 2
                                          : xm_amiga_period((real - 1) * 64 + ft / 2);
             } else {
@@ -827,11 +831,14 @@ static void row_effects_tick(TrPlayer *pl, TrChannel *c, const TrCell *cell){
     case 0x11: { int up = c->mem_gvol_slide >> 4, down = c->mem_gvol_slide & 15;   /* Hxx */
                  if(up) pl->global_volume += up; else pl->global_volume -= down;
                  if(pl->global_volume < 0) pl->global_volume = 0;
-                 if(pl->global_volume > 64) pl->global_volume = 64; break; }
+                 if(pl->global_volume > 64) pl->global_volume = 64;
+                 break; }
     case 0x14: if(pl->tick == p) c->keyoff = 1; break;                              /* Kxx */
     case 0x19: { int left = c->mem_pan_slide >> 4, right = c->mem_pan_slide & 15;   /* Pxx */
                  c->panning += right - left;
-                 if(c->panning < 0) c->panning = 0; if(c->panning > 255) c->panning = 255; break; }
+                 if(c->panning < 0) c->panning = 0;
+                 if(c->panning > 255) c->panning = 255;
+                 break; }
     case 0x1B: {                                                                    /* Rxx */
       int interval = c->mem_retrig & 15, vol = c->mem_retrig >> 4;
       if(interval && pl->tick % interval == 0){
@@ -840,7 +847,8 @@ static void row_effects_tick(TrPlayer *pl, TrChannel *c, const TrCell *cell){
         static const int8_t scale[16] = {1,1,1,1,1,1,2,1,1,1,1,1,1,1,3,2};
         static const int8_t divv[16]  = {1,1,1,1,1,1,3,2,1,1,1,1,1,1,2,1};
         c->volume = c->volume * scale[vol] / divv[vol] + slide[vol];
-        if(c->volume < 0) c->volume = 0; if(c->volume > 64) c->volume = 64;
+        if(c->volume < 0) c->volume = 0;
+        if(c->volume > 64) c->volume = 64;
       }
       break;
     }
@@ -916,7 +924,8 @@ static void mix_tick(TrPlayer *pl, int16_t *out, uint32_t frames){
     uint64_t freq = channel_frequency(pl, period);              /* 16.16 Hz */
     uint64_t step = (freq << 16) / (uint32_t)pl->rate;          /* 32.32 per frame */
     int vol = c->volume + c->trem_vol_offset;
-    if(vol < 0) vol = 0; if(vol > 64) vol = 64;
+    if(vol < 0) vol = 0;
+    if(vol > 64) vol = 64;
     /* Txx tremor gates the volume */
     if(c->mem_tremor){
       int on = (c->mem_tremor >> 4) + 1;
@@ -934,7 +943,8 @@ static void mix_tick(TrPlayer *pl, int16_t *out, uint32_t frames){
       int center_distance = pan >= 128 ? pan - 128 : 128 - pan;
       pan = pan + (env_pan - 32) * (128 - center_distance) / 32;
     }
-    if(pan < 0) pan = 0; if(pan > 255) pan = 255;
+    if(pan < 0) pan = 0;
+    if(pan > 255) pan = 255;
     /* jbfmod's pan separation: 0 collapses to mono, 128 leaves authored panning alone. */
     pan = 128 + ((pan - 128) * pl->pan_separation) / 128;
     /* final gain in 0..(64*64*64*65536) → precompute a 16.16 multiplier */
@@ -973,8 +983,10 @@ static void mix_tick(TrPlayer *pl, int16_t *out, uint32_t frames){
       int32_t l = (int32_t)(scaled * lgain / 255);
       int32_t r = (int32_t)(scaled * rgain / 255);
       int32_t L = out[f * 2] + l, R = out[f * 2 + 1] + r;
-      if(L > 32767) L = 32767; if(L < -32768) L = -32768;
-      if(R > 32767) R = 32767; if(R < -32768) R = -32768;
+      if(L > 32767) L = 32767;
+      if(L < -32768) L = -32768;
+      if(R > 32767) R = 32767;
+      if(R < -32768) R = -32768;
       out[f * 2] = (int16_t)L; out[f * 2 + 1] = (int16_t)R;
       if(c->dir >= 0) c->pos += step; else c->pos -= step;
     }

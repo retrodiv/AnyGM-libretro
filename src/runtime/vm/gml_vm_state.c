@@ -126,7 +126,7 @@ static void sw_particle_state(StateW *s){
   s->pos+=pn;
 }
 static unsigned state_str_memo_slot(const char *p){
-  uintptr_t v=(uintptr_t)p;
+  uint64_t v=(uintptr_t)p; /* widen before mixing: uintptr_t is 32 bits on i686 targets and v>>33 would be UB */
   v^=v>>33; v*=UINT64_C(0xff51afd7ed558ccd); v^=v>>29;
   return (unsigned)(v&(STATE_STR_MEMO_SLOTS-1u));
 }
