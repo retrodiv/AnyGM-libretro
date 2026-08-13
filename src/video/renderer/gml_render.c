@@ -91,10 +91,40 @@ uint32_t gml_render_named_tpag_ptr(GmlRender *r, const char *name){
   return 0;
 }
 
+/* Exact sprite-name lookup uses a lazy open-addressed index. Rebuild on sprite-name changes
+ * and retain first-match order when multiple sprites share one name. */
+static uint32_t render_strhash(const char *s){
+  uint32_t h=2166136261u; while(*s){ h^=(uint8_t)*s++; h*=16777619u; } return h;
+}
+static void render_named_sprite_reindex(GmlRender *r){
+  uint32_t cap=1; while(cap < (uint32_t)(r->n_spr<0?0:r->n_spr)*2u+1u) cap<<=1;
+  int32_t *hix=malloc((size_t)cap*sizeof(int32_t));
+  if(!hix) return;
+  for(uint32_t i=0;i<cap;i++) hix[i]=-1;
+  for(int i=0;i<r->n_spr;i++){
+    if(!r->spr[i].name) continue;
+    uint32_t h=render_strhash(r->spr[i].name)&(cap-1);
+    while(hix[h]>=0) h=(h+1)&(cap-1);   /* first insertion wins on a name shared by duplicates */
+    hix[h]=i;
+  }
+  free(r->spr_name_hix);
+  r->spr_name_hix=hix; r->spr_name_hix_cap=cap; r->spr_name_hix_built_gen=r->spr_name_gen;
+}
 int gml_render_named_sprite(GmlRender *r, const char *name){
   if(!r || !name || !*name) return -1;
-  for(int i=0;i<r->n_spr;i++)
-    if(r->spr[i].name && !strcmp(r->spr[i].name,name)) return i;
+  if(!r->spr_name_hix || r->spr_name_hix_built_gen!=r->spr_name_gen) render_named_sprite_reindex(r);
+  if(!r->spr_name_hix){
+    for(int i=0;i<r->n_spr;i++)
+      if(r->spr[i].name && !strcmp(r->spr[i].name,name)) return i;
+    return -1;
+  }
+  uint32_t h=render_strhash(name)&(r->spr_name_hix_cap-1);
+  for(uint32_t probe=0; probe<r->spr_name_hix_cap; probe++){
+    int32_t i=r->spr_name_hix[h];
+    if(i<0) return -1;
+    if(i<r->n_spr && r->spr[i].name && !strcmp(r->spr[i].name,name)) return i;
+    h=(h+1)&(r->spr_name_hix_cap-1);
+  }
   return -1;
 }
 
@@ -1138,6 +1168,7 @@ void gml_render_free(GmlRender *r){
     free(r->atlas[i].external_blob);
   }
   for(int i=0;i<r->n_spr;i++) free(r->spr[i].frame);
+  free(r->spr_name_hix); r->spr_name_hix=NULL; r->spr_name_hix_cap=0;
   free(r->classic_info_native_pixels);
   free(r->crt_gamma_scratch); free(r->crt_cols_scratch); free(r->crt_conv_scratch);
   crt_tables_free(r);

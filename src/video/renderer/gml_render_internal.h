@@ -157,6 +157,11 @@ typedef struct GmlRender {
   int interp_subrect_count, interp_subrect_capacity;
   size_t interp_subrect_bytes;
   GmlSprite *spr; int n_spr, base_n_spr, spr_cap, spr_has_free;
+  /* content-hash index over spr[].name (lazy; for O(1) gml_render_named_sprite lookups).
+   * spr_name_gen bumps on every append/delete so the index rebuilds after a runtime sprite's
+   * name is added or a slot's name is cleared; base (SPRT) sprites never rename in place. */
+  unsigned spr_name_gen;
+  int32_t *spr_name_hix; uint32_t spr_name_hix_cap; unsigned spr_name_hix_built_gen;
   GmlRenderSkeletonState skeleton_state;
   int skeleton_state_active;
   GmlBg    *bg; int n_bg;

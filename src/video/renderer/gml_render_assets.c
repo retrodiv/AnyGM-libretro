@@ -946,6 +946,7 @@ int gml_sprite_append_from_rgba_frames(GmlRender *r, uint8_t *rgba, int w, int h
     s->owned_name=strdup(generated);
   }
   s->name=s->owned_name?s->owned_name:"<runtime-sprite>";
+  r->spr_name_gen++;
   sprite_set_runtime_rgba(s,rgba,w,h,frames,xorig,yorig,1);
   return id;
 }
@@ -1231,6 +1232,7 @@ void gml_sprite_delete(GmlRender *r, int sprite){
   memset(s,0,sizeof(*s));
   s->runtime_extra=1;
   r->spr_has_free=1;   /* a reusable freed slot now exists */
+  r->spr_name_gen++;   /* the deleted sprite's name is gone */
   while(r->n_spr>base){
     GmlSprite *last=&r->spr[r->n_spr-1];
     if(!(last->runtime_extra && !last->runtime_rgba && last->n_frames<=0)) break;
