@@ -20,6 +20,10 @@ normalization as archive member paths, is confined to the anchor's subtree,
 and may not name another anchor. Blank lines and lines whose first significant
 character is `#` are comments.
 
+An anchor is an alias for the payload it references: its writable save
+namespace follows that payload. Loading through the anchor or loading the
+payload directly therefore shares the same profile and settings.
+
 The basic form is one significant line holding the reference. The advanced
 form opens with the exact header line `[anygm]`, selects the payload with one
 `payload=<reference>` key, and may add an `[overrides]` section:

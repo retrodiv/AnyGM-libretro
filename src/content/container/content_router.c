@@ -1297,6 +1297,30 @@ static int load_anchor_content(const AnygmContentRouter *router,const char *anch
                                     content_overrides,content_overrides_size);
 }
 
+int anygm_content_identity_path(const AnygmContentRouter *router,const char *input_path,
+                                char *output,size_t output_size){
+  if(!input_path || !output || !output_size) return 0;
+  if(!path_ext_is(input_path,".anygm")){
+    return snprintf(output,output_size,"%s",input_path)<(int)output_size;
+  }
+  uint8_t *bytes=NULL;
+  size_t size=0;
+  if(!router || !anygm_vfs_read_all(router->host,input_path,&bytes,&size,
+                                    (size_t)ANYGM_CONTENT_MAX_ANCHOR_BYTES)){
+    free(bytes);
+    return 0;
+  }
+  char reference[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
+  int ok=anchor_parse(bytes,size,reference,sizeof reference,NULL,0);
+  free(bytes);
+  if(!ok) return 0;
+  char parent[1024];
+  anygm_content_path_parent(input_path,parent,sizeof parent);
+  char target[1536];
+  if(!path_join_bounded(target,sizeof target,parent,reference)) return 0;
+  return snprintf(output,output_size,"%s",target)<(int)output_size;
+}
+
 /* content_overrides receives the override directives the resolved content carried, when the
  * caller supplies a buffer. The buffer is only written while it is empty, which is what makes
  * the outermost anchor win across nested resolutions, so a caller starting a fresh resolution

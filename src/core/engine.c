@@ -197,12 +197,22 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
       anygm_content_path_parent(source->path,prepared->win.content_dir,
                                 sizeof prepared->win.content_dir);
   }
-  /* Give each content identity a stable writable namespace under the host-provided root. */
+  /* Give each content identity a stable writable namespace under the host-provided root. An
+   * anchor aliases its referenced payload, so both entry paths share the same save namespace. */
   {
     const char *base=source->save_directory;
     engine->state_peak_enabled=(base&&base[0])?1:0;
     if(base&&base[0]){
       const char *identity=source->path&&source->path[0]?source->path:NULL;
+      char identity_path[1536];
+      if(identity){
+        AnygmContentRouter identity_router={0};
+        identity_router.host=&engine->host;
+        identity_router.cache_directory=source->cache_directory;
+        if(anygm_content_identity_path(&identity_router,identity,identity_path,
+                                       sizeof identity_path))
+          identity=identity_path;
+      }
       char label[128];
       if(identity) anygm_content_save_label(identity,label,sizeof label);
       else snprintf(label,sizeof label,"memory");

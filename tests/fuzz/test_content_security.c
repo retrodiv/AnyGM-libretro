@@ -637,6 +637,19 @@ static int direct_anchor_cases(const AnygmHostServices *services,const char *roo
     if(anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,NULL,0))
       return fail("an oversized direct anchor was accepted");
   }
+  /* An anchor's identity is its referenced payload; other inputs keep their own identity. */
+  {
+    char identity[1024],expected[1024];
+    if(snprintf(anchor,sizeof anchor,"%s/title.anygm",dir)>=(int)sizeof anchor ||
+       snprintf(expected,sizeof expected,"%s/payload.win",dir)>=(int)sizeof expected)
+      return fail("identity paths are too long");
+    if(!anygm_content_identity_path(&router,anchor,identity,sizeof identity) ||
+       strcmp(identity,expected))
+      return fail("the anchor's identity is not its referenced payload");
+    if(!anygm_content_identity_path(&router,expected,identity,sizeof identity) ||
+       strcmp(identity,expected))
+      return fail("a direct payload's identity is not itself");
+  }
   return 1;
 }
 

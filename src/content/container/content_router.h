@@ -49,6 +49,11 @@ int anygm_content_load_win(const AnygmContentRouter *router,GmlWin *win,const ch
 void anygm_content_path_stem(const char *path,char *output,size_t output_size);
 void anygm_content_path_parent(const char *path,char *output,size_t output_size);
 void anygm_content_save_label(const char *path,char *output,size_t output_size);
+/* The path whose identity names the content's writable namespace. An anchor is an alias for the
+ * payload it references, so its identity is its immediate referenced target. Every other input
+ * is its own identity. Returns 0 only when an anchor cannot be read or parsed. */
+int anygm_content_identity_path(const AnygmContentRouter *router,const char *input_path,
+                                char *output,size_t output_size);
 unsigned anygm_content_path_hash(const char *path);
 int anygm_content_directory_create(const struct AnygmHostServices *host,const char *path);
 /* Delete a generated namespace and its contents. Returns non-zero when the path is gone. */
