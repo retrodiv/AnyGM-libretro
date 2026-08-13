@@ -367,7 +367,7 @@ enum {
 
 /* Resource-list chunks store a count and absolute record pointers; modern list families add a
  * version word before the count.  Every native record starts with its STRG name pointer. */
-/* Reverse chunk_asset_index_by_name by returning the stored name at a given index. Return NULL
+/* Reverse gml_win_asset_index_by_name by returning the stored name at a given index. Return NULL
  * for an absent index so callers can distinguish lookup failure from an empty stored name. */
 static const char *chunk_asset_name_by_index(const GmlWin *w, const char *chunk, int versioned,
                                              int index){
@@ -383,24 +383,6 @@ static const char *chunk_asset_name_by_index(const GmlWin *w, const char *chunk,
   return gml_str_by_ptr(w,u32(w->data,record));
 }
 
-static int chunk_asset_index_by_name(const GmlWin *w, const char *chunk, int versioned,
-                                     const char *name){
-  const GmlChunk *c=(w&&name&&*name)?gml_chunk(w,chunk):NULL;
-  if(!c || (size_t)c->off+c->size>w->size) return -1;
-  size_t count_at=(size_t)c->off+(versioned?4u:0u), end=(size_t)c->off+c->size;
-  if(count_at+4>end) return -1;
-  uint32_t count=u32(w->data,(uint32_t)count_at);
-  size_t table=count_at+4;
-  if(count>(end-table)/4u) return -1;
-  for(uint32_t i=0;i<count;i++){
-    uint32_t record=u32(w->data,(uint32_t)(table+(size_t)i*4u));
-    if((size_t)record+4>w->size) continue;
-    const char *candidate=gml_str_by_ptr(w,u32(w->data,record));
-    if(candidate && !strcmp(candidate,name)) return (int)i;
-  }
-  return -1;
-}
-
 static int asset_index_and_type_by_name(GmlVM *vm, const char *name, int *out_type){
   int index=-1, type=GML_ASSET_UNKNOWN;
   GmlRender *render=vm?vm->render:NULL;
@@ -408,24 +390,24 @@ static int asset_index_and_type_by_name(GmlVM *vm, const char *name, int *out_ty
 
   index=gml_render_named_sprite(render,name);
   if(index>=0){ type=GML_ASSET_SPRITE; goto done; }
-  index=chunk_asset_index_by_name(vm->win,"SPRT",0,name);
+  index=gml_win_asset_index_by_name(vm->win,"SPRT",0,name);
   if(index>=0){ type=GML_ASSET_SPRITE; goto done; }
-  index=chunk_asset_index_by_name(vm->win,"SOND",0,name);
+  index=gml_win_asset_index_by_name(vm->win,"SOND",0,name);
   if(index>=0){ type=GML_ASSET_SOUND; goto done; }
-  index=chunk_asset_index_by_name(vm->win,"BGND",0,name);
+  index=gml_win_asset_index_by_name(vm->win,"BGND",0,name);
   if(index>=0){ type=GML_ASSET_TILESET; goto done; }
-  index=chunk_asset_index_by_name(vm->win,"PATH",0,name);
+  index=gml_win_asset_index_by_name(vm->win,"PATH",0,name);
   if(index>=0){ type=GML_ASSET_PATH; goto done; }
-  index=chunk_asset_index_by_name(vm->win,"SCPT",0,name);
+  index=gml_win_asset_index_by_name(vm->win,"SCPT",0,name);
   if(index<0){
     /* Script records may use the gml_Script_ prefix associated with their CODE entries.
      * Try that spelling only after the exact SCPT name fails, preserving exact-match priority. */
     char prefixed[256];
     if(snprintf(prefixed,sizeof prefixed,"gml_Script_%s",name)<(int)sizeof prefixed)
-      index=chunk_asset_index_by_name(vm->win,"SCPT",0,prefixed);
+      index=gml_win_asset_index_by_name(vm->win,"SCPT",0,prefixed);
   }
   if(index>=0){ type=GML_ASSET_SCRIPT; goto done; }
-  index=chunk_asset_index_by_name(vm->win,"FONT",0,name);
+  index=gml_win_asset_index_by_name(vm->win,"FONT",0,name);
   if(index>=0){ type=GML_ASSET_FONT; goto done; }
   for(int i=0;i<vm->n_timelines;i++)
     if(vm->timelines[i].name && !strcmp(vm->timelines[i].name,name)){
@@ -435,13 +417,13 @@ static int asset_index_and_type_by_name(GmlVM *vm, const char *name, int *out_ty
   if(index>=0){ type=GML_ASSET_OBJECT; goto done; }
   index=gml_room_index_by_name(vm->win,name);
   if(index>=0){ type=GML_ASSET_ROOM; goto done; }
-  index=chunk_asset_index_by_name(vm->win,"SHDR",0,name);
+  index=gml_win_asset_index_by_name(vm->win,"SHDR",0,name);
   if(index>=0){ type=GML_ASSET_SHADER; goto done; }
-  index=chunk_asset_index_by_name(vm->win,"SEQN",1,name);
+  index=gml_win_asset_index_by_name(vm->win,"SEQN",1,name);
   if(index>=0){ type=GML_ASSET_SEQUENCE; goto done; }
-  index=chunk_asset_index_by_name(vm->win,"ACRV",1,name);
+  index=gml_win_asset_index_by_name(vm->win,"ACRV",1,name);
   if(index>=0){ type=GML_ASSET_ANIMATION_CURVE; goto done; }
-  index=chunk_asset_index_by_name(vm->win,"PSYS",1,name);
+  index=gml_win_asset_index_by_name(vm->win,"PSYS",1,name);
   if(index>=0){ type=GML_ASSET_PARTICLE_SYSTEM; goto done; }
 done:
   if(out_type) *out_type=type;

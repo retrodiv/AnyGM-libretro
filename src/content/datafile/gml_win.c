@@ -166,6 +166,70 @@ const char *gml_win_intern_lookup(GmlWin *w, const char *s){
   return NULL;
 }
 
+/* O(1) exact-name lookup within one chunk's { count:u32, [record:u32]*count } asset-name table.
+ * asset_get_index tries every asset family (chunk) in turn until one matches, so the same
+ * handful of (chunk,versioned) pairs get looked up over and over; cache each pair's table as a
+ * content-hash index the first time it is queried instead of re-scanning it linearly every call. */
+int gml_win_asset_index_by_name(GmlWin *w, const char *chunk, int versioned, const char *name){
+  const GmlChunk *c=(w&&chunk&&name&&*name)?gml_chunk(w,chunk):NULL;
+  if(!c || (size_t)c->off+c->size>w->size) return -1;
+  size_t count_at=(size_t)c->off+(versioned?4u:0u), end=(size_t)c->off+c->size;
+  if(count_at+4>end) return -1;
+  uint32_t count=u32(w->data,(uint32_t)count_at);
+  size_t table=count_at+4;
+  if(count>(end-table)/4u) return -1;
+
+  GmlWinAssetIndexCache *slot=NULL;
+  for(int i=0;i<w->n_asset_index_cache;i++){
+    GmlWinAssetIndexCache *s=&w->asset_index_cache[i];
+    if(s->versioned==versioned && !memcmp(s->chunk,chunk,4)){ slot=s; break; }
+  }
+  if(!slot && (uint32_t)w->n_asset_index_cache<GML_WIN_MAX_ASSET_INDEX_CACHES){
+    slot=&w->asset_index_cache[w->n_asset_index_cache++];
+    memset(slot,0,sizeof(*slot));
+    memcpy(slot->chunk,chunk,4);
+    slot->versioned=versioned;
+  }
+  if(!slot){
+    /* Every (chunk,versioned) pair asset_get_index's fixed family list can ask for already has a
+     * slot reserved (see GML_WIN_MAX_ASSET_INDEX_CACHES); an unexpected caller with a novel pair
+     * still gets a correct answer, just without the cache. */
+    for(uint32_t i=0;i<count;i++){
+      uint32_t record=u32(w->data,(uint32_t)(table+(size_t)i*4u));
+      if((size_t)record+4>w->size) continue;
+      const char *candidate=gml_str_by_ptr(w,u32(w->data,record));
+      if(candidate && !strcmp(candidate,name)) return (int)i;
+    }
+    return -1;
+  }
+  if(!slot->hix){
+    uint32_t cap=1; while(cap<count*2u+1u) cap<<=1;
+    slot->hix=malloc((size_t)cap*sizeof(int32_t));
+    if(!slot->hix) return -1;
+    for(uint32_t i=0;i<cap;i++) slot->hix[i]=-1;
+    slot->hix_cap=cap;
+    for(uint32_t i=0;i<count;i++){
+      uint32_t record=u32(w->data,(uint32_t)(table+(size_t)i*4u));
+      if((size_t)record+4>w->size) continue;
+      const char *candidate=gml_str_by_ptr(w,u32(w->data,record));
+      if(!candidate) continue;
+      uint32_t h=win_strhash(candidate)&(cap-1);
+      while(slot->hix[h]>=0) h=(h+1)&(cap-1);
+      slot->hix[h]=(int32_t)i;
+    }
+  }
+  uint32_t h=win_strhash(name)&(slot->hix_cap-1);
+  for(uint32_t probe=0; probe<slot->hix_cap; probe++){
+    int32_t i=slot->hix[h];
+    if(i<0) return -1;
+    uint32_t record=u32(w->data,(uint32_t)(table+(size_t)i*4u));
+    const char *candidate=((size_t)record+4<=w->size)?gml_str_by_ptr(w,u32(w->data,record)):NULL;
+    if(candidate && !strcmp(candidate,name)) return i;
+    h=(h+1)&(slot->hix_cap-1);
+  }
+  return -1;
+}
+
 static int parse_strg(GmlWin *w){
   const GmlChunk *c=gml_chunk(w,"STRG");
   if(!c) return 1;
@@ -606,6 +670,7 @@ void gml_win_free(GmlWin *w){
   free(w->str_hix);
   free(w->code_hix);
   free(w->ref_hix);
+  for(int i=0;i<w->n_asset_index_cache;i++) free(w->asset_index_cache[i].hix);
   free(w->ref_addr); free(w->ref_name); free(w->ref_kind); free(w->room_order);
   if(w->owns==1) free(w->data);
   else if(w->owns==2 && w->mapping_handle && w->host && w->host->file_unmap)

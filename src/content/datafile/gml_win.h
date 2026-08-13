@@ -22,6 +22,10 @@ struct AnygmHostServices;
 #define GML_WIN_MAX_ROOMS                  1048576u
 #define GML_WIN_MAX_ROOM_ORDER             1048576u
 #define GML_WIN_MAX_CLASSIC_INFO_BYTES     8388608u
+/* asset_get_index tries a bounded, fixed set of (chunk, versioned) pairs in turn (sprite, sound,
+ * background, path, script, font, shader, sequence, animcurve, particle system); one cache slot
+ * per distinct pair actually queried is enough, no eviction needed. */
+#define GML_WIN_MAX_ASSET_INDEX_CACHES     12u
 
 /* ---- normalized opcodes (bc14 old opcodes and bc15+ split opcodes decode into these) ---- */
 enum {
@@ -72,6 +76,8 @@ typedef struct {
 } GmlInsn;
 
 typedef struct { char name[8]; uint32_t off, size; } GmlChunk;
+/* content-hash index over one chunk's asset-name table (lazy; for O(1) exact asset-name lookup) */
+typedef struct { char chunk[8]; int versioned; int32_t *hix; uint32_t hix_cap; } GmlWinAssetIndexCache;
 typedef struct {
   const char *name;
   uint32_t start, length;
@@ -122,6 +128,8 @@ typedef struct GmlWin {
   uint32_t *ref_addr; const char **ref_name; uint8_t *ref_kind; int n_refs;
   /* address-hash index over ref_addr/ref_name (lazy; for O(1) ref lookup) */
   int32_t *ref_hix; uint32_t ref_hix_cap;
+  /* per-(chunk,versioned) asset-name indexes, see gml_win_asset_index_by_name */
+  GmlWinAssetIndexCache asset_index_cache[GML_WIN_MAX_ASSET_INDEX_CACHES]; int n_asset_index_cache;
   /* header */
   uint8_t bytecode; uint32_t gameid; int classic_version;
   int classic_scaling, classic_interpolate, classic_swap_creation_events;
@@ -152,6 +160,10 @@ const GmlChunk *gml_chunk(const GmlWin *w, const char *name);
 const char  *gml_str_by_index(const GmlWin *w, uint32_t idx);
 const char  *gml_str_by_ptr(const GmlWin *w, uint32_t fileoff);
 const char  *gml_win_intern_lookup(GmlWin *w, const char *s);   /* O(1) STRG content lookup, NULL if absent */
+/* O(1) exact name lookup in one asset chunk's name table (e.g. "SPRT", "FONT"); -1 if chunk
+ * missing/malformed or name absent. versioned=1 when the chunk's own count field sits 4 bytes
+ * into the chunk body instead of at its start (a leading version word, e.g. SEQN/ACRV/PSYS). */
+int          gml_win_asset_index_by_name(GmlWin *w, const char *chunk, int versioned, const char *name);
 const char  *gml_ref_name(const GmlWin *w, uint32_t addr);
 int          gml_ref_kind(const GmlWin *w, uint32_t addr);
 int          gml_room_count(const GmlWin *w);
