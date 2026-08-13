@@ -104,6 +104,63 @@ int expect_audio_group_paths(void){
 }
 
 
+/* A streamed sound can have its own compressed AUDO blob but no loose file.
+ * This first-party synthetic MP3 tone checks that fallback only; the raw-PCM
+ * stale-AudioID case below still declines a fallback. */
+int expect_streamed_sound_without_sidecar_plays_embedded_compressed_blob(void){
+  unsigned char data[1024]={0},external[576];
+  static const char external_base64[]=
+    "/+M4wAAAAAAAAAAAAEluZm8AAAAPAAAACwAABwgAMzMzMzMzMzMzR0dHR0dHR0dHXFxcXFxcXFxccHBwcHBwcHBwhYWFhYWFhYWFmZmZmZmZmZmZrq6urq6urq6uwsLCwsLCwsLC19fX19fX19fX6+vr6+vr6+vr////////////AAAAAExhdmM2Mi4xMQAAAAAAAAAAAAAAACQDwAAAAAAAAAcIs8j25gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/+MoxAAdMKqIX08AAAubclAAfv379+/f3vSA8ePHjylLv379+/34bJBL+F+A7gLYEMMM463o8ePAQrB8/lDnygf6PfrBw5iAH31g4GMgD76wIc0A/yju/B8HAQBAEAQB8HwfB8CAgCAIBgHwfB+UBAMb//B8HwICAIAg4Dg+D76gQU0i7wBAyE3/1///gAAm/+MoxA4dwdpsAZyQAAYIhUCGCwl+/x//8xGOjAgbPUKo0OXtJ0Hq0kEEzxCAzulLAxDAI0DyQNpDZgsiCwr/8UiHyhq0coUEKCIaLl//8XKTQ5w5xRIqRUyIsRb///MS6XTIvF5Eul1IGv/xKEgaEp0O///9ixwAgYCGr7etL1bhb8BgBYBwBgKoCMBgGYAY/+MoxBof+3oZk9cQAAYBCAxAYGSC5AYOuDMAYPmIzAYc7DRAYvEITAYX+CyAYIOCHAYESAZgYAyAlgYDIAagYBIAVgHADhCv";
+  size_t external_size=fixture_base64_decode(external_base64,external,sizeof external);
+  if(external_size!=sizeof external) return 0;
+
+  enum { sound_record=32, audo_chunk=72, audo_blob=96, file_string_pointer=900 };
+  fixture_write_u32(data,0,1);                         /* SOND count */
+  fixture_write_u32(data,4,sound_record);
+  fixture_write_u32(data,sound_record+4,100);          /* Regular, deliberately not IsEmbedded */
+  fixture_write_u32(data,sound_record+12,file_string_pointer);
+  float one=1.0f;
+  memcpy(data+sound_record+20,&one,sizeof one);
+  fixture_write_u32(data,sound_record+28,0);           /* default audio group */
+  fixture_write_u32(data,sound_record+32,0);           /* AudioID names the sound's own bytes */
+  fixture_write_u32(data,audo_chunk,1);                /* AUDO count */
+  fixture_write_u32(data,audo_chunk+4,audo_blob);
+  fixture_write_u32(data,audo_blob,(uint32_t)external_size);
+  memcpy(data+audo_blob+4,external,external_size);
+
+  char directory[]="/tmp/anygm-streamed-fallback-audio-XXXXXX";
+  if(!mkdtemp(directory)) return 0;                    /* empty: the sidecar never exists */
+  char *strings[]={(char*)"menu.mp3"};
+  uint32_t string_offsets[]={file_string_pointer};
+  AnygmHostServices host={0};
+  host.struct_size=sizeof(host);
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&host);
+  GmlWin win={0};
+  win.data=data; win.size=sizeof data; win.n_chunks=2;
+  memcpy(win.chunks[0].name,"SOND",4); win.chunks[0].off=0; win.chunks[0].size=audo_chunk;
+  memcpy(win.chunks[1].name,"AUDO",4); win.chunks[1].off=audo_chunk;
+  win.chunks[1].size=sizeof(data)-audo_chunk;
+  win.strs=strings; win.str_charoff=string_offsets; win.n_strs=1;
+  win.host=&host;
+  snprintf(win.content_dir,sizeof win.content_dir,"%s",directory);
+
+  GmlAudio *audio=gml_audio_create(&win);
+  double length=audio?gml_audio_sound_length(audio,0):0.0;
+  int voice=audio?gml_audio_play(audio,0,1):-1;
+  int16_t mixed[8192]={0};
+  if(audio) gml_audio_mix(audio,mixed,4096);
+  int audible=0;
+  for(size_t index=0;index<sizeof mixed/sizeof mixed[0];index++) audible|=mixed[index]!=0;
+  int ok=audio && length>0.05 && voice>=1000000 && audible;
+  gml_audio_free(audio);
+  rmdir(directory);
+  if(!ok) fprintf(stderr,
+    "streamed sound without a sidecar did not play its embedded blob:"
+    " length=%.6f voice=%d audible=%d\n",length,voice,audible);
+  return ok;
+}
+
 int expect_flagged_external_sound_precedes_embedded_audio_id(void){
   enum { embedded_samples=4 };
   unsigned char data[256]={0},embedded[44+embedded_samples*2],external[576];

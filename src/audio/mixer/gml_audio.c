@@ -41,6 +41,9 @@ typedef struct {
   const uint8_t *ogg; uint32_t ogg_len; int ogg_failed;
   const uint8_t *mp3; uint32_t mp3_len; int mp3_failed;
   const char *external_filename;
+  /* Embedded compressed AUDO fallback when a streamed sound has no loose file.
+   * Loose files keep precedence; -1 means no validated fallback blob. */
+  int fallback_audoid;
   double length_seconds, loop_start_seconds, gain_target;
   int length_known, group, gain_fade_frames, default_loop, external_tried;
   int bytes_per_second;
@@ -74,6 +77,7 @@ struct GmlAudio {
   uint8_t *grp_data[GML_MAX_AUDIOGROUPS];
   uint32_t grp_size[GML_MAX_AUDIOGROUPS], grp_audo_off[GML_MAX_AUDIOGROUPS], grp_n[GML_MAX_AUDIOGROUPS];
   uint8_t **extbuf; int n_ext;
+  uint32_t audo_off, audo_n;   /* data.win AUDO chunk, for streamed-sound embedded fallbacks */
 };
 
 static const char *audio_setting(const GmlAudio *audio,const char *name){
@@ -171,7 +175,7 @@ static int audio_group_load_dat(GmlAudio *a, int g){
     anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,"[audio] group=%d loaded=%u path=%s\n",g,count,path);
   return a->grp_n[g]>0;
 }
-static int audio_sound_load_loose(GmlAudio *a,GmlSound *sound){
+static int audio_sound_load_loose_file(GmlAudio *a,GmlSound *sound){
   const char *filename=sound?sound->external_filename:NULL;
   if(sound && sound->external_tried) return sound->ogg || sound->mp3;
   if(sound) sound->external_tried=1;
@@ -205,6 +209,54 @@ static int audio_sound_load_loose(GmlAudio *a,GmlSound *sound){
   }
   return 1;
 }
+/* Attach one data.win AUDO blob: RIFF PCM stays raw, OGG and MP3 stay compressed. */
+static void audio_sound_attach_embedded(GmlAudio *a,GmlSound *s,uint32_t audoid){
+  const GmlWin *win=a->win;
+  const uint8_t *d=win->data;
+  if(audoid>=a->audo_n) return;
+  uint32_t ap=rd32(d,a->audo_off+4+audoid*4);       /* AUDO blob: len(u32) + bytes */
+  uint32_t blen=rd32(d,ap), base=ap+4;
+  if(base+12>win->size) return;
+  /* uncompressed RIFF/WAV */
+  if(memcmp(d+base,"RIFF",4)==0){
+    uint32_t end=base+8+rd32(d,base+4); if(end>base+blen) end=base+blen;
+    uint32_t o=base+12; const uint8_t *pcm=NULL; uint32_t plen=0;
+    while(o+8<=end){
+      uint32_t csz=rd32(d,o+4);
+      if(memcmp(d+o,"fmt ",4)==0){
+        s->channels=rd16(d,o+10);
+        s->sample_rate=(int)rd32(d,o+12);
+      }
+      else if(memcmp(d+o,"data",4)==0){ pcm=d+o+8; plen=csz; }
+      o+=8+csz+(csz&1);
+    }
+    if(pcm){ s->pcm=(const int16_t*)pcm; s->nval=plen/2; }
+  }
+  /* OGG Vorbis stays compressed until playback. */
+  else if(memcmp(d+base,"OggS",4)==0){
+    s->ogg=d+base;
+    s->ogg_len=blen;
+  }
+  else if(is_mp3_blob(d+base,blen)){
+    s->mp3=d+base;
+    s->mp3_len=blen;
+  }
+}
+static int audio_sound_load_loose(GmlAudio *a,GmlSound *sound){
+  if(!sound) return 0;
+  if(sound->ogg || sound->mp3 || sound->pcm) return 1;
+  if(audio_sound_load_loose_file(a,sound)) return 1;
+  if(sound->fallback_audoid>=0){
+    audio_sound_attach_embedded(a,sound,(uint32_t)sound->fallback_audoid);
+    sound->fallback_audoid=-1;
+    if(sound->ogg || sound->mp3 || sound->pcm){
+      anygm_host_logf(a->win?a->win->host:NULL,ANYGM_LOG_DEBUG,
+                      "[audio] streamed sound file is absent; playing its embedded blob\n");
+      return 1;
+    }
+  }
+  return 0;
+}
 GmlAudio *gml_audio_create(GmlWin *win){
   GmlAudio *a=calloc(1,sizeof(GmlAudio)); a->win=win; a->next_voice_id=1000000; a->channel_num=128; a->master_gain=1.0;
   for(int g=0;g<GML_MAX_AUDIOGROUPS;g++) a->group_gain[g]=a->group_target[g]=1.0;
@@ -213,6 +265,8 @@ GmlAudio *gml_audio_create(GmlWin *win){
   const GmlChunk *sc=gml_chunk(win,"SOND"), *ac=gml_chunk(win,"AUDO");
   if(!sc||!ac) return a;
   uint32_t ns=rd32(d,sc->off), na=rd32(d,ac->off);
+  a->audo_off=ac->off;
+  a->audo_n=na;
   a->n_snd=(int)ns; a->snd=calloc(ns?ns:1,sizeof(GmlSound));
   for(uint32_t i=0;i<ns;i++){
     uint32_t p=rd32(d,sc->off+4+i*4);
@@ -220,6 +274,7 @@ GmlAudio *gml_audio_create(GmlWin *win){
     a->snd[i].gain_target=1.0;
     a->snd[i].pitch=1.0;
     a->snd[i].sample_rate=44100;
+    a->snd[i].fallback_audoid=-1;
     a->snd[i].vol=rdf32(d,p+20);                  /* SOND: vol(+20 f), pitch(+24 f), group(+28 i), audoid(+32 i) */
     uint32_t flags=rd32(d,p+4);
     int32_t group=(int32_t)rd32(d,p+28);
@@ -258,12 +313,19 @@ GmlAudio *gml_audio_create(GmlWin *win){
       continue;
     }
     if(!(flags&1u)){
-      /* A clear IsEmbedded bit selects the loose path named at SOND +12. AudioID remains a
-       * mandatory reference in this format even for streamed sounds and can name an unrelated
-       * embedded blob, so it must never be used as a fallback. Audio-group sidecars
-       * above are their own external container and retain precedence when one is available. */
+      /* A clear IsEmbedded bit selects the loose path at SOND +12 when present.
+       * If absent, a valid AudioID can provide compressed embedded bytes.
+       * Only OGG/MP3 qualify; a raw PCM AudioID remains unused for a
+       * streamed sound. Audio-group sidecars retain their precedence. */
       const char *filename=gml_str_by_ptr(win,rd32(d,p+12));
       a->snd[i].external_filename=filename;
+      if(audoid>=0 && (uint32_t)audoid<na){
+        uint32_t fap=rd32(d,ac->off+4+(uint32_t)audoid*4);
+        uint32_t fblen=rd32(d,fap), fbase=fap+4;
+        if(fbase+12<=win->size && fblen>=4 && fblen<=win->size-fbase &&
+           (!memcmp(d+fbase,"OggS",4) || is_mp3_blob(d+fbase,fblen)))
+          a->snd[i].fallback_audoid=audoid;
+      }
       continue;
     }
     if(audoid<0){
@@ -272,33 +334,7 @@ GmlAudio *gml_audio_create(GmlWin *win){
       continue;
     }
     if((uint32_t)audoid>=na) continue;
-    uint32_t ap=rd32(d,ac->off+4+audoid*4);       /* AUDO blob: len(u32) + bytes */
-    uint32_t blen=rd32(d,ap), base=ap+4;
-    if(base+12>win->size) continue;
-    /* uncompressed RIFF/WAV */
-    if(memcmp(d+base,"RIFF",4)==0){
-      uint32_t end=base+8+rd32(d,base+4); if(end>base+blen) end=base+blen;
-      uint32_t o=base+12; const uint8_t *pcm=NULL; uint32_t plen=0;
-      while(o+8<=end){
-        uint32_t csz=rd32(d,o+4);
-        if(memcmp(d+o,"fmt ",4)==0){
-          a->snd[i].channels=rd16(d,o+10);
-          a->snd[i].sample_rate=(int)rd32(d,o+12);
-        }
-        else if(memcmp(d+o,"data",4)==0){ pcm=d+o+8; plen=csz; }
-        o+=8+csz+(csz&1);
-      }
-      if(pcm){ a->snd[i].pcm=(const int16_t*)pcm; a->snd[i].nval=plen/2; }
-    }
-    /* OGG Vorbis: keep compressed until playback. */
-    else if(memcmp(d+base,"OggS",4)==0){
-      a->snd[i].ogg=d+base;
-      a->snd[i].ogg_len=blen;
-    }
-    else if(is_mp3_blob(d+base,blen)){
-      a->snd[i].mp3=d+base;
-      a->snd[i].mp3_len=blen;
-    }
+    audio_sound_attach_embedded(a,&a->snd[i],(uint32_t)audoid);
   }
   a->n_base_snd=a->n_snd;
   audio_warm_initial_ogg(a);

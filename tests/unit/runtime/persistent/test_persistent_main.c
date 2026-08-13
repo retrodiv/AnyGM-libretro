@@ -44,6 +44,8 @@ int main(int argc,char **argv){
   static const AnygmTestCase audio_cases[]={
     {"group_paths",expect_audio_group_paths},
     {"flagged_external_sound",expect_flagged_external_sound_precedes_embedded_audio_id},
+    {"streamed_embedded_fallback",
+     expect_streamed_sound_without_sidecar_plays_embedded_compressed_blob},
     {"group_gain",expect_audio_group_gain},
     {"dynamic_extension_state",expect_dynamic_audio_extension_state},
     {"saudio_portable_playback",expect_saudio_portable_playback},
