@@ -47,13 +47,17 @@ static uint8_t *decode_texture_blob(const uint8_t *blob, size_t avail, size_t ch
        * own raw size, and the dimensions are right there in the header. */
       uint32_t w=u16(blob,4), h=u16(blob,6);
       uint64_t bound=(uint64_t)w*(uint64_t)h*4ull+64ull;
-      if(!w || !h || bound>64ull*1024*1024) return NULL;
+      /* Match texture_blob_dims' 64-megapixel bound. A page at that limit
+       * decompresses to 256 MiB and must remain admissible. */
+      if(!w || !h || bound>256ull*1024*1024+64ull) return NULL;
       dlen=(uint32_t)bound;
     } else if(avail>=15 && !memcmp(blob+12,"BZh",3)){
       stream=12;
       dlen=u32(blob,8);
     } else return NULL;
-    if(dlen<12 || dlen>64u*1024*1024) return NULL;
+    /* A stored length is authoritative but still bounded: 64 megapixels at QOI's five-byte
+     * worst case. */
+    if(dlen<12 || dlen>336u*1024*1024) return NULL;
     char *dec=malloc(dlen); if(!dec) return NULL;
     unsigned int declen=dlen;
     unsigned int srclen=(unsigned int)(chunk_end>(size_t)(blob+stream)? chunk_end-(size_t)(blob+stream) : 0);

@@ -126,6 +126,11 @@ typedef struct {
   int runtime_owned;                                             /* font + atlas created after load */
   int subpixel;                                                   /* per-channel GDI coverage for classic info */
   GmlGlyph *glyphs; int n_glyphs, glyphs_sorted;
+  /* Runtime TTF fonts retain their rasterizer face so missing glyphs outside
+   * the initial font_add range can be appended to the private atlas on demand. */
+  struct GmlFontRasterFace *runtime_face;
+  float runtime_scale; int runtime_ascent;
+  int runtime_pen_x, runtime_pen_y, runtime_row_h, runtime_glyph_cap;
   int glyph_by_char[256];                                        /* fast ASCII lookup, -1 = none */
 } GmlFont;                                                        /* sprite font or real FONT-chunk font */
 typedef struct { uint32_t *px; int w, h, live;

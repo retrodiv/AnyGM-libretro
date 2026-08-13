@@ -10,6 +10,7 @@
 #include "gml_render_backend.h"
 #include "anygm_compatibility.h"
 #include "gml_thread.h"
+#include "gml_font_raster.h"
 #include "anygm_host.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -1101,7 +1102,10 @@ void gml_render_free(GmlRender *r){
   atlas_pool_free(r);   /* before atlas teardown: workers read r->atlas/win */
   gml_row_pool_free(r);  /* compositor workers must stop before their renderer workspaces vanish */
   for(int i=0;i<GML_MAX_SURFACES;i++) free(r->surface[i].px);
-  for(int i=0;i<GML_MAX_FONTS;i++){ free(r->fonts[i].map); free(r->fonts[i].glyphs); }
+  for(int i=0;i<GML_MAX_FONTS;i++){
+    if(r->fonts[i].runtime_face) gml_font_raster_face_close(r->fonts[i].runtime_face);
+    free(r->fonts[i].map); free(r->fonts[i].glyphs);
+  }
   free(r->default_font.map); free(r->default_font.glyphs);
   for(int i=0;i<r->n_spr;i++){
     gml_render_sprite_cache_free(&r->spr[i]);

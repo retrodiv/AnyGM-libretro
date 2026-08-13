@@ -446,13 +446,17 @@ int gml_font_add_file(GmlRender *r, const char *path, double point_size,
     ng++;
     ax+=cw[i];
   }
-  free(cw); free(cps); gml_font_raster_face_close(face);
+  free(cw); free(cps);
   int id=r->n_fonts++;
   GmlFont *f=&r->fonts[id];
   memset(f,0,sizeof(*f));
   for(int k=0;k<256;k++) f->glyph_by_char[k]=-1;
   f->real=1; f->atlas=atlas_id; f->line_height=lh; f->align_height=lh; f->runtime_owned=1;
   f->glyphs=glyphs; f->n_glyphs=ng; f->glyphs_sorted=1;
+  /* The face stays open for on-demand glyphs outside the requested range. */
+  f->runtime_face=face; f->runtime_scale=scale; f->runtime_ascent=ascent;
+  f->runtime_pen_x=ax; f->runtime_pen_y=ay; f->runtime_row_h=rowh;
+  f->runtime_glyph_cap=ng;
   for(int g=0;g<ng;g++) if(glyphs[g].ch<256) f->glyph_by_char[glyphs[g].ch]=g;
   if(render_setting(r,"GML_LOG_FONT"))
     anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[font] ttf id=%d path=%s pt=%.1f px=%d lh=%d range=%d-%d atlas=%d(%dx%d) glyphs=%d\n",
@@ -472,6 +476,7 @@ void gml_font_delete(GmlRender *r, int font){
     free(atlas->px);
     memset(atlas,0,sizeof(*atlas));
   }
+  if(f->runtime_face) gml_font_raster_face_close(f->runtime_face);
   free(f->map); free(f->glyphs);
   memset(f,0,sizeof(*f));
   f->sprite=-1; f->atlas=-1;
@@ -585,14 +590,82 @@ static GmlGlyph *real_glyph(GmlFont *f, unsigned cp){
   for(int i=0;i<f->n_glyphs;i++) if(f->glyphs[i].ch==cp) return &f->glyphs[i];
   return NULL;
 }
+/* Rasterize one missing glyph into a runtime TTF font's private atlas. The pen continues from
+ * where font_add stopped; the atlas grows downward under the same 128 MiB ceiling font_add
+ * enforces, and a failure simply draws nothing for that glyph. */
+static GmlGlyph *font_runtime_rasterize(GmlRender *r, GmlFont *f, unsigned cp){
+  if(!f->runtime_face || cp>0xFFFFu || f->atlas<0 || f->atlas>=r->n_atlas) return NULL;
+  if(!gml_font_raster_has_glyph(f->runtime_face,(int)cp)) return NULL;
+  GmlFontRasterGlyphMetrics metrics;
+  if(!gml_font_raster_glyph_metrics(f->runtime_face,(int)cp,f->runtime_scale,&metrics)) return NULL;
+  GmlAtlas *A=&r->atlas[f->atlas];
+  if(!A->px || A->w<=0) return NULL;
+  int w=(int)ceilf(metrics.advance*f->runtime_scale);
+  if(metrics.x1>w) w=metrics.x1;
+  if(w<1) w=1;
+  int cell=w+1;
+  if(cell>A->w) return NULL;
+  if(f->runtime_pen_x+cell>A->w){ f->runtime_pen_x=0; f->runtime_pen_y+=f->runtime_row_h; }
+  int needed_h=f->runtime_pen_y+f->runtime_row_h;
+  if(needed_h>A->h){
+    enum { MAX_RUNTIME_FONT_ATLAS_BYTES=128*1024*1024 };
+    int grown_h=A->h*2; if(grown_h<needed_h) grown_h=needed_h;
+    if((size_t)A->w*(size_t)grown_h>(size_t)MAX_RUNTIME_FONT_ATLAS_BYTES/4) return NULL;
+    uint8_t *grown=(uint8_t*)realloc(A->px,(size_t)A->w*(size_t)grown_h*4u);
+    if(!grown) return NULL;
+    memset(grown+(size_t)A->w*(size_t)A->h*4u,0,
+           (size_t)A->w*(size_t)(grown_h-A->h)*4u);
+    A->px=grown; A->h=grown_h;
+  }
+  if(f->n_glyphs==f->runtime_glyph_cap){
+    int cap=f->runtime_glyph_cap?f->runtime_glyph_cap*2:16;
+    GmlGlyph *glyphs=(GmlGlyph*)realloc(f->glyphs,(size_t)cap*sizeof(*glyphs));
+    if(!glyphs) return NULL;
+    f->glyphs=glyphs; f->runtime_glyph_cap=cap;
+  }
+  int gw=metrics.x1-metrics.x0, gh=metrics.y1-metrics.y0;
+  if(gw>0 && gh>0){
+    unsigned char *bmp=(unsigned char*)malloc((size_t)gw*gh);
+    if(bmp){
+      (void)gml_font_raster_render_glyph(f->runtime_face,(int)cp,f->runtime_scale,
+                                         bmp,(size_t)gw*gh,gw,gh,gw);
+      int ox=metrics.x0<0?0:metrics.x0;
+      int oy=f->runtime_ascent+metrics.y0;
+      if(oy<0) oy=0;
+      for(int yy=0;yy<gh;yy++){
+        int py=f->runtime_pen_y+oy+yy; if(py>=A->h) break;
+        for(int xx=0;xx<gw;xx++){
+          int pxx=f->runtime_pen_x+ox+xx; if(pxx>=A->w) continue;
+          uint8_t a8=bmp[yy*gw+xx];
+          if(a8){ uint8_t *q=A->px+((size_t)py*A->w+pxx)*4; q[0]=255;q[1]=255;q[2]=255;q[3]=a8; }
+        }
+      }
+      free(bmp);
+    }
+  }
+  GmlGlyph *gl=&f->glyphs[f->n_glyphs++];
+  gl->ch=(uint16_t)cp;
+  gl->sx=f->runtime_pen_x; gl->sy=f->runtime_pen_y;
+  gl->w=cell-1; gl->h=f->line_height;
+  gl->shift=(int16_t)lround(metrics.advance*f->runtime_scale); gl->offset=0;
+  f->glyphs_sorted=0;
+  if(cp<256) f->glyph_by_char[cp]=f->n_glyphs-1;
+  f->runtime_pen_x+=cell;
+  return gl;
+}
+static GmlGlyph *real_glyph_demand(GmlRender *r, GmlFont *f, unsigned cp){
+  GmlGlyph *g=real_glyph(f,cp);
+  if(g || !f->runtime_face) return g;
+  return font_runtime_rasterize(r,f,cp);
+}
 /* advance width of one line (up to '#', LF, or NUL), '\#' counts as a literal '#'. */
-static int real_line_width(GmlFont *f, const char *p, const char **end){
+static int real_line_width(GmlRender *r, GmlFont *f, const char *p, const char **end){
   int w=0;
   while(*p && !text_is_linebreak(p)){
     unsigned cp;
     if(p[0]=='\\' && p[1]=='#'){ cp='#'; p+=2; }
     else cp=text_next_cp(&p);
-    GmlGlyph *g=real_glyph(f,cp);
+    GmlGlyph *g=real_glyph_demand(r,f,cp);
     if(g) w+=g->shift;
   }
   *end=p; return w;
@@ -670,12 +743,12 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
   if(r->valign==1) base_y=-block_height/2.0; else if(r->valign==2) base_y=-block_height;
   const char *p=str;
   for(int li=0; *p || li==0; li++){
-    const char *end; int lw=real_line_width(f,p,&end);
+    const char *end; int lw=real_line_width(r,f,p,&end);
     double cx=0;
     if(r->halign==1) cx=-lw/2.0; else if(r->halign==2) cx=-lw;
     while(p<end){
       unsigned cp=text_next_cp(&p);
-      GmlGlyph *g=real_glyph(f,cp);
+      GmlGlyph *g=real_glyph_demand(r,f,cp);
       if(g && g->w>0 && g->h>0){
         GmlTpag gt={ .sx=g->sx,.sy=g->sy,.sw=g->w,.sh=g->h,.tx=0,.ty=0,.bw=g->w,.bh=g->h,.atlas=f->atlas };
         double dx=(cx+g->offset)*xs, dy=(base_y-f->ascender_offset)*ys;
@@ -715,7 +788,7 @@ int gml_text_width(GmlRender *r, const char *str){
   if(!f||!str) return 0;
   int best=0; const char *p=str;
   for(;;){
-    const char *end; int w = f->real ? real_line_width(f,p,&end) : line_width(r,f,p,&end);
+    const char *end; int w = f->real ? real_line_width(r,f,p,&end) : line_width(r,f,p,&end);
     if(w>best) best=w;
     if(!text_is_linebreak(end)) break;
     p=end+1;
