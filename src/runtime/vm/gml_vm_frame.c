@@ -136,10 +136,7 @@ static void advance_instance_animation(GmlVM *vm,GmlInstance *in,
       ? gml_sprite_animation_delta(render,(int)in->sprite_index,in->image_speed,gml_room_speed(vm))
       : in->image_speed;
     double ni=in->image_index+step;
-    if(vm->win && !classic_runtime){
-      double nearest=round(ni);
-      if(fabs(ni-nearest)<=vm->math_epsilon) ni=nearest;
-    }
+    /* Preserve the accumulated fractional index until wrap and display-frame selection. */
     int wrapped=nf>0 && ((ni>=nf)||(ni<0));
     if(nf>0){ while(ni>=nf) ni-=nf; while(ni<0) ni+=nf; }
     in->image_index=ni;

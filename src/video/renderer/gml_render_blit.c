@@ -2424,8 +2424,10 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   gml_render_maybe_prepare_draw(r);
   /* SRCALPHA/INVSRCALPHA also blends the destination alpha channel. A partially covered texel
    * therefore makes an opaque render target non-opaque even when the draw alpha is one. Keep the
-   * coverage certificate honest so a later surface composite does not take an opaque-copy path. */
-  if((alpha<1.0 || r->blendmode==2 || t->alpha_partial ||
+   * coverage certificate honest so a later surface composite does not take an opaque-copy path.
+   * First-generation application surfaces present opaque independently of texel coverage. */
+  if((alpha<1.0 || r->blendmode==2 ||
+      (t->alpha_partial && !gml_render_target_is_first_generation_application_surface(r)) ||
       (r->interp && t->alpha_max>0) || mapped_shader) && r->alphablend)
     gml_sprite_target_may_change_alpha(r);
   unsigned long long vispix=(unsigned long long)(xx1-xx0)*(unsigned long long)(yy1-yy0);
