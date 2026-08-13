@@ -643,6 +643,32 @@ static int zip_under_root(const char *name,const char *selected){
   size_t root=(size_t)(slash-selected)+1;
   return !strncasecmp(name,selected,root);
 }
+/* ---- Anchor files (.anygm) ----
+ * A one-line text file names a payload relative to the anchor's own directory.
+ * The anchor is an alias for a selected payload without renaming that payload.
+ * Normalize the reference as an archive member, confine it to the anchor's
+ * subtree, and reject another anchor as the target so resolution cannot recurse. */
+static int anchor_reference_parse(const uint8_t *data,size_t size,char *out,size_t outsz){
+  if(!data || !size || size>ANYGM_CONTENT_MAX_ANCHOR_BYTES) return 0;
+  size_t begin=0;
+  if(size>=3 && data[0]==0xefu && data[1]==0xbbu && data[2]==0xbfu) begin=3;
+  size_t line_end=begin;
+  while(line_end<size && data[line_end]!='\n' && data[line_end]!='\r') line_end++;
+  for(size_t i=line_end;i<size;i++){
+    uint8_t c=data[i];
+    if(c!='\n' && c!='\r' && c!=' ' && c!='\t') return 0;
+  }
+  while(begin<line_end && (data[begin]==' '||data[begin]=='\t')) begin++;
+  while(line_end>begin && (data[line_end-1]==' '||data[line_end-1]=='\t')) line_end--;
+  size_t length=line_end-begin;
+  if(!length || length>ANYGM_CONTENT_MAX_MEMBER_PATH || length+1>outsz) return 0;
+  memcpy(out,data+begin,length);
+  if(!zip_name_normalize(out,length)) return 0;
+  if(out[strlen(out)-1]=='/') return 0;
+  if(zip_endswith(out,".anygm")) return 0;
+  return 1;
+}
+
 static uint32_t zip_crc32(const uint8_t *data,size_t size){
   uint32_t crc=UINT32_MAX;
   for(size_t i=0;i<size;i++){
@@ -707,8 +733,11 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
   }
   ZipSeenNames seen;
   memset(&seen,0,sizeof seen);
-  int content_best=0,nested_best=0,classic_best=0;
+  int content_best=0,nested_best=0,classic_best=0,anchor_best=0;
   char classic_rel[ANYGM_CONTENT_MAX_MEMBER_PATH+1u]="";
+  char anchor_rel[ANYGM_CONTENT_MAX_MEMBER_PATH+1u]="";
+  uint32_t anchor_crc=0,anchor_csz=0,anchor_usz=0,anchor_lho=0;
+  unsigned anchor_flags=0,anchor_method=0;
   size_t p=cdir;
   if(content_rel && crsz) content_rel[0]=0;
   if(project_rel && prsz) project_rel[0]=0;
@@ -732,7 +761,92 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
     if(ns>nested_best){ snprintf(nested_rel,nrsz,"%s",name); nested_best=ns; }
     int ks=(content_rel && content_is_classic)?zip_classic_score(name):0;
     if(ks>classic_best){ snprintf(classic_rel,sizeof classic_rel,"%s",name); classic_best=ks; }
+    if(content_rel && name[strlen(name)-1]!='/' && zip_endswith(name,".anygm")){
+      int as=1000;
+      for(const char *q=name;*q;q++) if(*q=='/') as--;
+      if(as>anchor_best){
+        anchor_best=as;
+        snprintf(anchor_rel,sizeof anchor_rel,"%s",name);
+        anchor_flags=zu16(zd+p+8);
+        anchor_method=zu16(zd+p+10);
+        anchor_crc=zu32(zd+p+16);
+        anchor_csz=zu32(zd+p+20);
+        anchor_usz=zu32(zd+p+24);
+        anchor_lho=zu32(zd+p+42);
+      }
+    }
     p=next;
+  }
+  /* An anchor member overrides scored selection: it is the archive stating which payload it
+   * carries. A present anchor that cannot be read, parsed, or matched to a member rejects the
+   * archive instead of quietly losing to the scores, because silently loading something other
+   * than what the archive declared is worse than not loading it. */
+  if(valid && content_rel && anchor_best){
+    uint8_t anchor_data[ANYGM_CONTENT_MAX_ANCHOR_BYTES];
+    char reference[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
+    char target[ANYGM_CONTENT_MAX_MEMBER_PATH+1u]="";
+    int anchor_ok=0;
+    if(!(anchor_flags&1u) && anchor_usz && anchor_usz<=sizeof anchor_data &&
+       (uint64_t)anchor_lho+30u<=fsz && zu32(zd+anchor_lho)==0x04034b50u){
+      unsigned lnl=zu16(zd+anchor_lho+26),lel=zu16(zd+anchor_lho+28);
+      uint64_t doff=(uint64_t)anchor_lho+30u+lnl+lel;
+      if(doff<=fsz && (uint64_t)anchor_csz<=(uint64_t)fsz-doff){
+        size_t got=0;
+        if(anchor_method==0 && anchor_csz==anchor_usz){
+          memcpy(anchor_data,zd+(size_t)doff,anchor_usz);
+          anchor_ok=1;
+        } else if(anchor_method==8){
+          anchor_ok=gml_deflate_decode_to_buffer(zd+(size_t)doff,anchor_csz,GML_DEFLATE_RAW,
+                                                 anchor_data,anchor_usz,&got) &&
+                    got==(size_t)anchor_usz;
+        }
+        if(anchor_ok) anchor_ok=zip_crc32(anchor_data,anchor_usz)==anchor_crc;
+      }
+    }
+    if(anchor_ok)
+      anchor_ok=anchor_reference_parse(anchor_data,anchor_usz,reference,sizeof reference);
+    if(anchor_ok){
+      const char *slash=strrchr(anchor_rel,'/');
+      size_t rootlen=slash?(size_t)(slash-anchor_rel)+1u:0u;
+      if(rootlen+strlen(reference)>=sizeof target) anchor_ok=0;
+      else {
+        memcpy(target,anchor_rel,rootlen);
+        snprintf(target+rootlen,sizeof target-rootlen,"%s",reference);
+      }
+    }
+    int target_found=0;
+    if(anchor_ok){
+      size_t q=cdir;
+      for(unsigned e2=0;e2<n_ent && !target_found;e2++){
+        if(q>fsz || fsz-q<46) break;
+        unsigned nl2=zu16(zd+q+28),el2=zu16(zd+q+30),cl2=zu16(zd+q+32);
+        char name2[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
+        if(!nl2 || nl2>ANYGM_CONTENT_MAX_MEMBER_PATH || 46u+(size_t)nl2>fsz-q) break;
+        memcpy(name2,zd+q+46,nl2);
+        q+=46u+nl2+el2+cl2;
+        if(!zip_name_normalize(name2,nl2)) break;
+        if(name2[strlen(name2)-1]=='/') continue;
+        if(zip_name_equal_folded(name2,target)){
+          snprintf(target,sizeof target,"%s",name2);
+          target_found=1;
+        }
+      }
+    }
+    if(!anchor_ok || !target_found){
+      content_log(router,ANYGM_CONTENT_LOG_ERROR,
+                  "archive: anchor %s is invalid or names no member of %s",anchor_rel,zpath);
+      file_map_close(&map);
+      return 0;
+    }
+    if(zip_nested_score(target)>0){
+      content_rel[0]=0;
+      if(nested_rel) snprintf(nested_rel,nrsz,"%s",target);
+    } else {
+      snprintf(content_rel,crsz,"%s",target);
+      if(content_is_classic) *content_is_classic=zip_classic_score(target)>0;
+    }
+    content_log(router,ANYGM_CONTENT_LOG_INFO,"archive: anchor %s selected %s",
+                anchor_rel,target);
   }
   if(valid && content_rel && !content_rel[0] && (!nested_rel || !nested_rel[0]) &&
      classic_rel[0]){
@@ -1034,6 +1148,48 @@ static int load_source_project_content(const AnygmContentRouter *router,const ch
   return 1;
 }
 
+/* A directly loaded anchor resolves its reference against its own directory and routes the
+ * result as if that file had been loaded. The parser already refuses a reference to another
+ * anchor, so this cannot recurse through itself; every other container keeps its own depth
+ * accounting. */
+static int load_anchor_content(const AnygmContentRouter *router,const char *anchor_path,
+                               char *resolved_path,size_t resolved_path_size,
+                               char *asset_root,size_t asset_root_size){
+  uint8_t *bytes=NULL;
+  size_t size=0;
+  if(!router || !anygm_vfs_read_all(router->host,anchor_path,&bytes,&size,
+                                    (size_t)ANYGM_CONTENT_MAX_ANCHOR_BYTES)){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,"anchor: cannot read %s",anchor_path);
+    free(bytes);
+    return 0;
+  }
+  char reference[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
+  int ok=anchor_reference_parse(bytes,size,reference,sizeof reference);
+  free(bytes);
+  if(!ok){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,
+                "anchor: %s must hold one normalized relative payload path",anchor_path);
+    return 0;
+  }
+  char parent[1024],target[1536];
+  anygm_content_path_parent(anchor_path,parent,sizeof parent);
+  if(!path_join_bounded(target,sizeof target,parent,reference)){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,"anchor: referenced path is too long: %s",
+                anchor_path);
+    return 0;
+  }
+  AnygmFileInfo info;
+  if(!anygm_vfs_stat(router->host,target,&info) || !(info.flags&ANYGM_FILE_INFO_EXISTS) ||
+     (info.flags&ANYGM_FILE_INFO_DIRECTORY)){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,"anchor: referenced payload is missing: %s",
+                target);
+    return 0;
+  }
+  content_log(router,ANYGM_CONTENT_LOG_INFO,"anchor: %s -> %s",anchor_path,target);
+  return anygm_content_resolve_path(router,target,resolved_path,resolved_path_size,
+                                    asset_root,asset_root_size);
+}
+
 int anygm_content_resolve_path(const AnygmContentRouter *router,const char *input_path,
                                char *resolved_path,size_t resolved_path_size,
                                char *asset_root,size_t asset_root_size){
@@ -1052,6 +1208,10 @@ int anygm_content_resolve_path(const AnygmContentRouter *router,const char *inpu
   }
   if(path_ext_is(input_path,".yyp") || path_ext_is(input_path,".yyz")){
     return load_source_project_content(router,input_path,resolved_path,resolved_path_size);
+  }
+  if(path_ext_is(input_path,".anygm")){
+    return load_anchor_content(router,input_path,resolved_path,resolved_path_size,
+                               asset_root,asset_root_size);
   }
   if(path_ext_is(input_path,".zip") || path_ext_is(input_path,".port") ||
      path_ext_is(input_path,".apk") || file_magic_kind(router,input_path)==2){

@@ -314,6 +314,262 @@ static int archive_source_container_cases(const AnygmHostServices *services,cons
   };
 
   Buffer archive={0};
+  char path[512],resolved[1024],asset_root[1024],staged[1600];
+  int ok=build_zip(entries,2,&archive) &&
+         snprintf(path,sizeof path,"%s/source-container.zip",root)<(int)sizeof path &&
+         write_file(path,archive.data,archive.size);
+  free(archive.data);
+  if(!ok) return fail("could not write the source-container archive");
+  AnygmContentRouter router={0};
+  router.host=services;
+  router.cache_directory=root;
+  asset_root[0]=0;
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,
+                                 asset_root,sizeof asset_root) || !asset_root[0])
+    return fail("archive source container was not imported");
+  uint8_t magic[4];
+  if(!read_prefix(resolved,magic,sizeof magic) || memcmp(magic,"FORM",4))
+    return fail("archive source container did not produce a payload");
+  if(snprintf(staged,sizeof staged,"%s/assets/level.txt",asset_root)>=(int)sizeof staged)
+    return fail("reported asset root is too long");
+  uint8_t staged_prefix[7];
+  if(!read_prefix(staged,staged_prefix,sizeof staged_prefix) ||
+     memcmp(staged_prefix,"fixture",sizeof staged_prefix))
+    return fail("reported asset root does not hold the extracted sidecar");
+
+  memset(&archive,0,sizeof archive);
+  ok=build_zip(entries,3,&archive) &&
+     snprintf(path,sizeof path,"%s/payload-and-source.zip",root)<(int)sizeof path &&
+     write_file(path,archive.data,archive.size);
+  free(archive.data);
+  if(!ok) return fail("could not write the payload-and-source archive");
+  asset_root[0]=0;
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,
+                                 asset_root,sizeof asset_root) || asset_root[0])
+    return fail("a compiled payload lost priority to a source container");
+  return 1;
+}
+
+/* A cached payload is only reusable while the code that produced it is unchanged. The marker
+ * therefore carries a producer fingerprint, and a marker written by a different producer must be
+ * regenerated rather than trusted; the alternative is content silently running bytes that the
+ * current revision would not produce. */
+static int cache_producer_change_case(const AnygmHostServices *services,const char *root){
+  uint8_t form[200],executable[224]={0};
+  build_no_code_form(form);
+  executable[0]='M';
+  executable[1]='Z';
+  memcpy(executable+4,"FORM",4);
+  store_u32(executable,8,UINT32_MAX);
+  memcpy(executable+24,form,sizeof form);
+
+  char path[512],resolved[1024],marker[1200];
+  if(snprintf(path,sizeof path,"%s/producer.exe",root)>=(int)sizeof path ||
+     !write_file(path,executable,sizeof executable)) return fail("producer fixture");
+  AnygmContentRouter router={0};
+  router.host=services;
+  router.cache_directory=root;
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0))
+    return fail("producer fixture was not resolved");
+  char *slash=strrchr(resolved,'/');
+  if(!slash) return fail("resolved payload has no directory");
+  *slash=0;
+  int marker_size=snprintf(marker,sizeof marker,"%s/.anygm_cache",resolved);
+  *slash='/';
+  if(marker_size<0 || marker_size>=(int)sizeof marker) return fail("marker path is too long");
+
+  uint8_t *stored=NULL;
+  size_t stored_size=0;
+  if(!read_file(marker,&stored,&stored_size) || stored_size<72)
+    return fail("cache marker was not published");
+  uint8_t original[8];
+  memcpy(original,stored+64,sizeof original);
+  for(size_t i=0;i<sizeof original;i++) stored[64+i]^=0xA5u;
+  int written=write_file(marker,stored,stored_size);
+  free(stored);
+  if(!written) return fail("could not rewrite the cache marker");
+
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0))
+    return fail("a marker from another producer was not regenerated");
+  stored=NULL;
+  stored_size=0;
+  int ok=read_file(marker,&stored,&stored_size) && stored_size>=72 &&
+         !memcmp(stored+64,original,sizeof original);
+  free(stored);
+  if(!ok) return fail("the regenerated marker did not restore this producer");
+  return 1;
+}
+
+/* An anchor member is the archive stating which payload it carries, so it overrides scored
+ * selection, resolves relative to its own directory, may name a nested archive, and a present
+ * anchor that is broken rejects the archive rather than silently losing to the scores. */
+static int archive_anchor_cases(const AnygmHostServices *services,const char *root){
+  uint8_t decoy_form[200],picked_form[200];
+  build_no_code_form(decoy_form);
+  build_no_code_form(picked_form);
+  store_u32(picked_form,80,241);
+
+  static const uint8_t decoy_name[]="data.win";
+  static const uint8_t picked_name[]="alt/payload.win";
+  static const uint8_t anchor_name[]="pick.anygm";
+  static const uint8_t anchor_text[]="alt/payload.win\n";
+  ZipEntry entries[3]={
+    {decoy_name,sizeof decoy_name-1,decoy_form,sizeof decoy_form,sizeof decoy_form,0,0,0,0},
+    {picked_name,sizeof picked_name-1,picked_form,sizeof picked_form,sizeof picked_form,0,0,0,0},
+    {anchor_name,sizeof anchor_name-1,anchor_text,sizeof anchor_text-1,sizeof anchor_text-1,
+     0,0,0,0},
+  };
+  Buffer archive={0};
+  char path[512],resolved[1024];
+  AnygmContentRouter router={0};
+  router.host=services;
+  router.cache_directory=root;
+  int ok=build_zip(entries,3,&archive) &&
+         snprintf(path,sizeof path,"%s/anchored.zip",root)<(int)sizeof path &&
+         write_file(path,archive.data,archive.size);
+  free(archive.data);
+  if(!ok) return fail("could not write the anchored archive");
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0))
+    return fail("anchored archive was not resolved");
+  uint8_t *extracted=NULL;
+  size_t extracted_size=0;
+  ok=read_file(resolved,&extracted,&extracted_size) &&
+     extracted_size==sizeof picked_form && !memcmp(extracted,picked_form,sizeof picked_form);
+  free(extracted);
+  if(!ok) return fail("the anchor did not override payload scoring");
+
+  static const uint8_t sub_anchor_name[]="sub/pick.anygm";
+  static const uint8_t sub_anchor_text[]="payload.win";
+  static const uint8_t sub_picked_name[]="sub/payload.win";
+  ZipEntry sub_entries[3]={
+    {decoy_name,sizeof decoy_name-1,decoy_form,sizeof decoy_form,sizeof decoy_form,0,0,0,0},
+    {sub_picked_name,sizeof sub_picked_name-1,picked_form,sizeof picked_form,
+     sizeof picked_form,0,0,0,0},
+    {sub_anchor_name,sizeof sub_anchor_name-1,sub_anchor_text,sizeof sub_anchor_text-1,
+     sizeof sub_anchor_text-1,0,0,0,0},
+  };
+  memset(&archive,0,sizeof archive);
+  ok=build_zip(sub_entries,3,&archive) &&
+     snprintf(path,sizeof path,"%s/sub-anchored.zip",root)<(int)sizeof path &&
+     write_file(path,archive.data,archive.size);
+  free(archive.data);
+  if(!ok) return fail("could not write the subdirectory-anchored archive");
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0))
+    return fail("subdirectory-anchored archive was not resolved");
+  extracted=NULL;
+  ok=read_file(resolved,&extracted,&extracted_size) &&
+     extracted_size==sizeof picked_form && !memcmp(extracted,picked_form,sizeof picked_form);
+  free(extracted);
+  if(!ok) return fail("the anchor reference was not resolved against its own directory");
+
+  Buffer inner={0};
+  static const uint8_t inner_payload_name[]="data.win";
+  ZipEntry inner_entry={inner_payload_name,sizeof inner_payload_name-1,picked_form,
+                        sizeof picked_form,sizeof picked_form,0,0,0,0};
+  if(!build_zip(&inner_entry,1,&inner)) return fail("could not build the inner archive");
+  static const uint8_t decoy_win_name[]="decoy.win";
+  static const uint8_t inner_name[]="inner.zip";
+  static const uint8_t nested_anchor_text[]="inner.zip";
+  ZipEntry nested_entries[3]={
+    {decoy_win_name,sizeof decoy_win_name-1,decoy_form,sizeof decoy_form,sizeof decoy_form,
+     0,0,0,0},
+    {inner_name,sizeof inner_name-1,inner.data,(uint32_t)inner.size,(uint32_t)inner.size,
+     0,0,0,0},
+    {anchor_name,sizeof anchor_name-1,nested_anchor_text,sizeof nested_anchor_text-1,
+     sizeof nested_anchor_text-1,0,0,0,0},
+  };
+  memset(&archive,0,sizeof archive);
+  ok=build_zip(nested_entries,3,&archive) &&
+     snprintf(path,sizeof path,"%s/nested-anchored.zip",root)<(int)sizeof path &&
+     write_file(path,archive.data,archive.size);
+  free(inner.data);
+  free(archive.data);
+  if(!ok) return fail("could not write the nested-anchored archive");
+  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0))
+    return fail("nested-anchored archive was not resolved");
+  extracted=NULL;
+  ok=read_file(resolved,&extracted,&extracted_size) &&
+     extracted_size==sizeof picked_form && !memcmp(extracted,picked_form,sizeof picked_form);
+  free(extracted);
+  if(!ok) return fail("the anchor did not select the nested archive");
+
+  static const uint8_t traversal_text[]="../escape.win";
+  static const uint8_t dangling_text[]="missing.win";
+  static const uint8_t chained_text[]="other.anygm";
+  static const uint8_t empty_text[]="\n";
+  const struct { const char *filename; const uint8_t *text; size_t size; } broken[]={
+    {"anchor-traversal.zip",traversal_text,sizeof traversal_text-1},
+    {"anchor-dangling.zip",dangling_text,sizeof dangling_text-1},
+    {"anchor-chained.zip",chained_text,sizeof chained_text-1},
+    {"anchor-empty.zip",empty_text,sizeof empty_text-1},
+  };
+  for(size_t i=0;i<sizeof broken/sizeof broken[0];i++){
+    ZipEntry broken_entries[2]={
+      {decoy_name,sizeof decoy_name-1,decoy_form,sizeof decoy_form,sizeof decoy_form,0,0,0,0},
+      {anchor_name,sizeof anchor_name-1,broken[i].text,(uint32_t)broken[i].size,
+       (uint32_t)broken[i].size,0,0,0,0},
+    };
+    if(!invalid_case(services,root,broken[i].filename,broken_entries,2))
+      return fail("a broken anchor did not reject its archive");
+  }
+  return 1;
+}
+
+/* A directly loaded anchor routes its referenced payload, confined to its own subtree. */
+static int direct_anchor_cases(const AnygmHostServices *services,const char *root){
+  uint8_t form[200];
+  build_no_code_form(form);
+  char dir[600],payload[700],anchor[700],resolved[1024];
+  if(snprintf(dir,sizeof dir,"%s/anchor-dir",root)>=(int)sizeof dir ||
+     (mkdir(dir,0777)!=0 && errno!=EEXIST))
+    return fail("could not create the anchor directory");
+  if(snprintf(payload,sizeof payload,"%s/payload.win",dir)>=(int)sizeof payload ||
+     !write_file(payload,form,sizeof form))
+    return fail("could not write the anchored payload");
+  AnygmContentRouter router={0};
+  router.host=services;
+  router.cache_directory=root;
+  if(snprintf(anchor,sizeof anchor,"%s/title.anygm",dir)>=(int)sizeof anchor ||
+     !write_file(anchor," payload.win \r\n",15))
+    return fail("could not write the direct anchor");
+  if(!anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0))
+    return fail("direct anchor was not resolved");
+  uint8_t magic[4];
+  if(!read_prefix(resolved,magic,sizeof magic) || memcmp(magic,"FORM",4) ||
+     !strstr(resolved,"payload.win"))
+    return fail("direct anchor did not resolve its referenced payload");
+
+  const struct { const char *name; const char *text; } broken[]={
+    {"traversal.anygm","../payload.win"},
+    {"missing.anygm","absent.win"},
+    {"chained.anygm","title.anygm"},
+    {"absolute.anygm","/payload.win"},
+  };
+  for(size_t i=0;i<sizeof broken/sizeof broken[0];i++){
+    if(snprintf(anchor,sizeof anchor,"%s/%s",dir,broken[i].name)>=(int)sizeof anchor ||
+       !write_file(anchor,broken[i].text,strlen(broken[i].text)))
+      return fail("could not write a broken direct anchor");
+    if(anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0))
+      return fail("a broken direct anchor was accepted");
+  }
+  {
+    uint8_t oversized[4097];
+    memset(oversized,'a',sizeof oversized);
+    if(snprintf(anchor,sizeof anchor,"%s/oversized.anygm",dir)>=(int)sizeof anchor ||
+       !write_file(anchor,oversized,sizeof oversized))
+      return fail("could not write the oversized direct anchor");
+    if(anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0))
+      return fail("an oversized direct anchor was accepted");
+  }
+  return 1;
+}
+
+/* A marker from another producer must be regenerated for an ordinary archive. */
+static int cache_producer_change_case(const AnygmHostServices *services,const char *root){
+  static const uint8_t name[]="data.win";
+  static const uint8_t form[]="FORM";
+  ZipEntry entry={name,sizeof name-1,form,sizeof form-1,sizeof form-1,0,0,0,0};
+  Buffer archive={0};
   char path[512],resolved[1024],marker[1200];
   int ok=build_zip(&entry,1,&archive) &&
          snprintf(path,sizeof path,"%s/producer.zip",root)<(int)sizeof path &&
@@ -391,7 +647,9 @@ int main(void){
   bad_crc.corrupt_crc=1;
 
   int ok=embedded_executable_cases(&services,root) &&
-         cache_producer_change_case(&services,root);
+         cache_producer_change_case(&services,root) &&
+         archive_anchor_cases(&services,root) &&
+         direct_anchor_cases(&services,root);
   ZipEntry pair[2]={traversal,safe};
   ok=ok&&invalid_case(&services,root,"traversal.zip",pair,2);
   pair[0]=absolute;

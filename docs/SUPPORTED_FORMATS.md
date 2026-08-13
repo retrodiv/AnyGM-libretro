@@ -7,6 +7,18 @@ AnyGM recognizes structural format families and resolves their runtime
 semantics through one shared engine. Recognition is not a promise that every
 built-in operation present in arbitrary content is implemented.
 
+## Anchor files
+
+An `.anygm` anchor is a one-line text file naming the payload to load,
+relative to the anchor's own directory. It provides a stable alias for a
+selected payload without renaming that payload. A directly loaded anchor routes its
+referenced file as if it had been loaded itself. Inside a ZIP-compatible
+archive an anchor member overrides scored payload selection, may name a nested
+archive, and a present anchor that cannot be read, parsed, or matched to a
+member rejects the archive rather than silently losing to the scores. The
+reference uses the same normalization as archive member paths, is confined to
+the anchor's subtree, and may not name another anchor.
+
 ## Normalized data containers
 
 Studio data containers using bytecode revisions 14, 15, 16, and 17 are

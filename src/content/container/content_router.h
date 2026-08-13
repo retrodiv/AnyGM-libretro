@@ -16,6 +16,7 @@
 #define ANYGM_CONTENT_MAX_EXPANSION_RATIO 1000u
 #define ANYGM_CONTENT_EXPANSION_ALLOWANCE UINT64_C(16777216)
 #define ANYGM_CONTENT_MAX_NESTING_LEVELS 4u
+#define ANYGM_CONTENT_MAX_ANCHOR_BYTES 4096u
 
 typedef void (*AnygmContentLogFn)(void *userdata,int level,const char *message);
 

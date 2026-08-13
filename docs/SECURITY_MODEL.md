@@ -42,6 +42,7 @@ ZIP-compatible routing enforces these compile-time limits:
 | Total extracted bytes per level | 4 GiB |
 | Deflate expansion ratio after a small-output allowance | 1,000:1 |
 | Nested archive levels | 4 |
+| Anchor (`.anygm`) file bytes | 4 KiB |
 
 Member paths are normalized before selection. Absolute paths, drive or stream
 syntax, empty and dot segments, parent traversal, embedded control bytes,
@@ -49,6 +50,12 @@ ASCII case-folded duplicates, encrypted members, and Unix symbolic links are not
 extracted. Local-header bounds, method, compressed and uncompressed sizes, and
 CRC are validated before a member is accepted. Unsupported ZIP64 input is
 rejected.
+
+An `.anygm` anchor reference is parsed from a bounded one-line file, passes
+the same member-path normalization, may not name another anchor, and is
+resolved only against the anchor's own directory. A present anchor that fails
+any of these checks rejects its archive; a directly loaded anchor that fails
+them loads nothing.
 
 The normalized FORM reader enforces a separate set of compile-time limits:
 

@@ -178,7 +178,7 @@ void retro_get_system_info(struct retro_system_info *info){
   memset(info,0,sizeof *info);
   info->library_name="AnyGM";
   info->library_version="0.1.0";
-  info->valid_extensions="win|droid|zip|port|apk|yyp|yyz|gmk|gm6|gm81|exe";
+  info->valid_extensions="win|droid|zip|port|apk|yyp|yyz|gmk|gm6|gm81|exe|anygm";
   info->need_fullpath=true;
   info->block_extract=true;
 }
