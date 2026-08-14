@@ -1319,33 +1319,17 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	                         !engine->aspect_force_active && engine->vm.gui_w<=0 && engine->vm.gui_h<=0 &&
 	                         prw>0 && prh>0;
 	  if(screen_default_gui){
-	    gml_render_gui_begin(&engine->render,prw,prh);
-	    /* A self-compositor can own an application surface that already is the explicit window
-	     * raster while its camera remains much smaller. Post-Draw addresses that complete raster
-	     * in window coordinates; applying the camera-to-port scale again turns a full-surface blit
-	     * into an oversized, clipped image. A compositor which keeps a logical application surface
-	     * still uses the camera-sized coordinate system below. */
-	    int owned_window_raster=render_presentation.application_owned &&
-	                            render_presentation.application_width>0 &&
-	                            render_presentation.application_height>0 &&
-	                            render_presentation.application_width==engine->vm.window_w &&
-	                            render_presentation.application_height==engine->vm.window_h &&
-	                            render_presentation.application_width==gtw &&
-	                            render_presentation.application_height==gth;
-	    /* Studio 1.x self-compositors can deliberately keep the application surface at the
-	     * logical view size while deriving every screen-stage coordinate from the explicit window
-	     * resolution. At an integer same-aspect host scale, that authored coordinate system is
-	     * already the final raster. Applying the view-to-window transform again doubles positions
-	     * and sizes. Modern formats expose this intent through independently owned surfaces;
-	     * classic runtimes do not have the Studio screen-stage contract. */
-	    int legacy_window_raster=screen_stage_uses_requested_raster(
-	      &engine->win,&render_presentation,
-	      (int)engine->width,(int)engine->height,gtw,gth);
-	    gml_render_gui_set_size(&engine->render,
-	      owned_window_raster?render_presentation.application_width:
-	      legacy_window_raster?gtw:(int)engine->width,
-	      owned_window_raster?render_presentation.application_height:
-	      legacy_window_raster?gth:(int)engine->height);
+	    /* A self-compositor can address either its logical application surface or a complete
+	     * content-owned window raster. Keep its GUI coordinates paired with the physical target:
+	     * scaling only one of them either shrinks the complete compositor into the fitted viewport
+	     * or displaces HUD elements which use window_get_width/height. */
+	    int gui_target_width=prw,gui_target_height=prh;
+	    int gui_logical_width,gui_logical_height;
+	    screen_stage_gui_geometry(
+	      engine,&render_presentation,gtw,gth,
+	      &gui_target_width,&gui_target_height,&gui_logical_width,&gui_logical_height);
+	    gml_render_gui_begin(&engine->render,gui_target_width,gui_target_height);
+	    gml_render_gui_set_size(&engine->render,gui_logical_width,gui_logical_height);
 	  } else {
 	  gml_render_gui_begin(&engine->render,
 	    gui_uses_window_target?gtw:gsw,gui_uses_window_target?gth:gsh);
@@ -1371,7 +1355,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 		  log_present_pass(engine,"gui-begin",gtarget,gtw,gth);
 		  GmlRenderTargetMetrics screen_target={0};
 		  gml_render_target_metrics(&engine->render,&screen_target);
-		  int screen_viewport_offset=screen_default_gui && (prx!=0 || pry!=0);
+		  int screen_viewport_offset=screen_default_gui && !engine->screen_stage_window_raster &&
+		                             (prx!=0 || pry!=0);
 		  if(screen_viewport_offset){
 		    GmlRenderTargetMetrics offset_target=screen_target;
 		    offset_target.camera_x=-(double)prx;

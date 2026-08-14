@@ -292,6 +292,54 @@ static int explicit_window_screen_stage_policy(void){
   return ok;
 }
 
+static int first_generation_window_raster_policy(void){
+  AnygmEngine engine={0};
+  engine.win.bytecode=15;
+  engine.win.disp_w=288;
+  engine.win.disp_h=216;
+  engine.width=288;
+  engine.height=216;
+  engine.vm.win=&engine.win;
+  engine.vm.window_w=1366;
+  engine.vm.window_h=768;
+  engine.config.present_logical_raster=0;
+  gml_vm_global_array_set(&engine.vm,"view_visible",0,1);
+  gml_vm_global_array_set(&engine.vm,"view_xview",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_yview",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_wview",0,288);
+  gml_vm_global_array_set(&engine.vm,"view_hview",0,216);
+  gml_vm_global_array_set(&engine.vm,"view_xport",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_yport",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_wport",0,288);
+  gml_vm_global_array_set(&engine.vm,"view_hport",0,216);
+  gml_render_application_surface_set_draw_enabled(&engine.render,0);
+  compute_present(&engine);
+  GmlRenderPresentationMetrics presentation={0};
+  gml_render_presentation_metrics(&engine.render,&presentation);
+  int target_width=1024,target_height=768,logical_width=0,logical_height=0;
+  screen_stage_gui_geometry(
+    &engine,&presentation,(int)engine.output_width,(int)engine.output_height,
+    &target_width,&target_height,&logical_width,&logical_height);
+  int ok=engine.screen_stage_window_raster &&
+         engine.gui_space_width==1366 && engine.gui_space_height==768 &&
+         engine.output_width==1366 && engine.output_height==768 &&
+         presentation.effective_width==1366 && presentation.effective_height==768 &&
+         target_width==1366 && target_height==768 &&
+         logical_width==1366 && logical_height==768;
+  if(!ok)
+    fprintf(stderr,
+      "first-generation content-owned window raster was not coherent:"
+      " flag=%d gui=%dx%d output=%ux%u effective=%dx%d target=%dx%d logical=%dx%d\n",
+      engine.screen_stage_window_raster,
+      engine.gui_space_width,engine.gui_space_height,
+      engine.output_width,engine.output_height,
+      presentation.effective_width,presentation.effective_height,
+      target_width,target_height,
+      logical_width,logical_height);
+  gml_vm_free(&engine.vm);
+  return ok;
+}
+
 static int first_generation_oversized_gui_policy(void){
   AnygmEngine engine={0};
   engine.win.bytecode=14;
@@ -969,6 +1017,8 @@ int main(int argc,char **argv){
       return first_generation_dynamic_camera_policy()?0:1;
     if(!strcmp(argv[2],"explicit_window_screen_stage"))
       return explicit_window_screen_stage_policy()?0:1;
+    if(!strcmp(argv[2],"first_generation_window_raster"))
+      return first_generation_window_raster_policy()?0:1;
     if(!strcmp(argv[2],"first_generation_oversized_gui"))
       return first_generation_oversized_gui_policy()?0:1;
     if(!strcmp(argv[2],"background_color"))
@@ -996,6 +1046,7 @@ int main(int argc,char **argv){
           "game_restart|"
           "first_generation_dynamic_camera|"
           "explicit_window_screen_stage|"
+          "first_generation_window_raster|"
           "first_generation_oversized_gui|"
           "background_color|multi_view_application_canvas|game_change|"
           "input_binding_ownership|simulated_key_lifetime|simulated_key_frame_lifetime|"
@@ -1009,6 +1060,7 @@ int main(int argc,char **argv){
   if(!first_generation_application_surface_policy()) return 1;
   if(!first_generation_dynamic_camera_policy()) return 1;
   if(!explicit_window_screen_stage_policy()) return 1;
+  if(!first_generation_window_raster_policy()) return 1;
   if(!first_generation_oversized_gui_policy()) return 1;
   if(!draw_schedule_policy()) return 1;
   if(!background_color_policy()) return 1;

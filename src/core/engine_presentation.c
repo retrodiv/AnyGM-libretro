@@ -663,6 +663,36 @@ int screen_stage_uses_requested_raster(
   int scale_y=target_height/logical_height;
   return scale_x>1 && scale_x==scale_y;
 }
+void screen_stage_gui_geometry(
+  const AnygmEngine *engine,const GmlRenderPresentationMetrics *presentation,
+  int window_width,int window_height,int *target_width,int *target_height,
+  int *logical_width,int *logical_height){
+  int width=engine?(int)engine->width:0;
+  int height=engine?(int)engine->height:0;
+  if(engine && presentation && window_width>0 && window_height>0){
+    int owned_window_raster=presentation->application_owned &&
+                            presentation->application_width>0 &&
+                            presentation->application_height>0 &&
+                            presentation->application_width==engine->vm.window_w &&
+                            presentation->application_height==engine->vm.window_h &&
+                            presentation->application_width==window_width &&
+                            presentation->application_height==window_height;
+    int requested_window_raster=screen_stage_uses_requested_raster(
+      &engine->win,presentation,
+      (int)engine->width,(int)engine->height,window_width,window_height);
+    if(owned_window_raster){
+      width=presentation->application_width;
+      height=presentation->application_height;
+    } else if(engine->screen_stage_window_raster || requested_window_raster){
+      width=window_width;
+      height=window_height;
+      if(target_width) *target_width=window_width;
+      if(target_height) *target_height=window_height;
+    }
+  }
+  if(logical_width) *logical_width=width;
+  if(logical_height) *logical_height=height;
+}
 void compute_present(AnygmEngine *engine) {
   GmlRenderPresentationMetrics renderer;
   gml_render_presentation_metrics(&engine->render,&renderer);
@@ -690,6 +720,7 @@ void compute_present(AnygmEngine *engine) {
    * display scaling, so the host receives the native view. */
   int gui_window_mode = 0;
   engine->canvas_mode = 0; engine->output_width = engine->width; engine->output_height = engine->height; engine->gui_offset_x = engine->gui_offset_y = 0;
+  engine->screen_stage_window_raster=0;
   if (!engine->vm.gui_maximise_active && engine->vm.gui_w > 0 && engine->vm.gui_h > 0) {
     int win_w = engine->vm.window_w > 0 ? engine->vm.window_w : (int)(engine->win.disp_w ? engine->win.disp_w : engine->width);
     int win_h = engine->vm.window_h > 0 ? engine->vm.window_h : (int)(engine->win.disp_h ? engine->win.disp_h : engine->height);
@@ -756,8 +787,16 @@ void compute_present(AnygmEngine *engine) {
        screen_stage_window_h != (int)engine->output_height)) {
     engine->output_width = (unsigned)screen_stage_window_w;
     engine->output_height = (unsigned)screen_stage_window_h;
+    if(!renderer.application_draw_enabled){
+      engine->gui_space_width=screen_stage_window_w;
+      engine->gui_space_height=screen_stage_window_h;
+      effective_width=screen_stage_window_w;
+      effective_height=screen_stage_window_h;
+      engine->screen_stage_window_raster=1;
+    }
   }
   if (engine->aspect_force_active) {
+    engine->screen_stage_window_raster=0;
     int logical_gw = engine->vm.gui_w > 0 ? engine->vm.gui_w : (int)engine->base_width;
     int logical_gh = engine->vm.gui_h > 0 ? engine->vm.gui_h : (int)engine->base_height;
     if (logical_gw < 16) logical_gw = (int)engine->base_width;
@@ -799,6 +838,7 @@ void compute_present(AnygmEngine *engine) {
     int window_w = engine->vm.window_w > 0 ? engine->vm.window_w : (int)room_window_w;
     int window_h = engine->vm.window_h > 0 ? engine->vm.window_h : (int)room_window_h;
     if (window_w > 0 && window_h > 0 && window_w <= FB_MAX_W && window_h <= FB_MAX_H) {
+      engine->screen_stage_window_raster=0;
       engine->canvas_mode = 0;
       engine->output_width = (unsigned)window_w;
       engine->output_height = (unsigned)window_h;
@@ -818,6 +858,7 @@ void compute_present(AnygmEngine *engine) {
       engine->vm.gui_w <= 0 && engine->vm.gui_h <= 0 &&
       engine->vm.window_w > 0 && engine->vm.window_h > 0 &&
       engine->vm.window_w <= FB_MAX_W && engine->vm.window_h <= FB_MAX_H) {
+    engine->screen_stage_window_raster=0;
     engine->output_width = (unsigned)engine->vm.window_w;
     engine->output_height = (unsigned)engine->vm.window_h;
     engine->gui_space_width = engine->vm.window_w;
@@ -841,6 +882,7 @@ void compute_present(AnygmEngine *engine) {
       renderer.application_width <= FB_MAX_W && renderer.application_height <= FB_MAX_H &&
       engine->vm.window_w == renderer.application_width &&
       engine->vm.window_h == renderer.application_height) {
+    engine->screen_stage_window_raster=0;
     engine->output_width = (unsigned)renderer.application_width;
     engine->output_height = (unsigned)renderer.application_height;
     engine->gui_space_width = renderer.application_width;
@@ -867,6 +909,7 @@ void compute_present(AnygmEngine *engine) {
       if (target_w > FB_MAX_W) target_w = FB_MAX_W & ~7;
     }
     if (target_w > 0 && target_h > 0 && target_w <= FB_MAX_W && target_h <= FB_MAX_H) {
+      engine->screen_stage_window_raster=0;
       engine->canvas_mode = 0;
       engine->gui_space_width = target_w; engine->gui_space_height = target_h;
       engine->output_width = (unsigned)target_w; engine->output_height = (unsigned)target_h;
@@ -879,6 +922,7 @@ void compute_present(AnygmEngine *engine) {
    * transform.  The GUI canvas must therefore neither select a larger host resolution nor be
    * rendered off-screen and reduced a second time. */
   if (engine->vm.gui_maximise_active) {
+    engine->screen_stage_window_raster=0;
     engine->canvas_mode=0;
     engine->gui_space_width=(int)engine->output_width;
     engine->gui_space_height=(int)engine->output_height;

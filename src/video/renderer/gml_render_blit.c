@@ -2434,20 +2434,23 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   /* Hardware filtering samples the four neighbouring texels at the destination pixel centre.
    * Preserve the quad's fractional origin in the inverse map: snapping before sampling shifts a
    * heavily minified texture by several source texels and is visible in presentation overlays. */
-  /* At unit scale, an integer-aligned modern white quad maps every destination pixel centre
+  /* At unit scale, an integer-aligned Studio white quad maps every destination pixel centre
    * exactly onto one source texel centre. With full draw alpha and ordinary source-over blending,
    * the cached exact-copy kernel also preserves the filtered path's UNORM result. Keep tinted,
    * draw-alpha and special-blend cases on the general filtered path because their quantization
    * can differ even when the selected source texel is the same. */
-  int exact_modern_white_copy=
-    r->win && anygm_policy_has_modern_layer_semantics(r->win) &&
+  int studio_texture_filtering=
+    r->win && (anygm_policy_uses_first_generation_studio(r->win) ||
+               anygm_policy_has_modern_layer_semantics(r->win));
+  int exact_studio_white_copy=
+    studio_texture_filtering &&
     !flipx && !flipy &&
     fabs(axs-1.0)<0.001 && fabs(ays-1.0)<0.001 &&
     fabs(dx-nearbyint(dx))<1e-9 && fabs(dy-nearbyint(dy))<1e-9 &&
     alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu &&
     r->blendmode==0 && !mapped_shader;
-  if(r->interp && r->win && anygm_policy_has_modern_layer_semantics(r->win) &&
-     !wave && !uvwave && !exact_modern_white_copy){
+  if(r->interp && studio_texture_filtering &&
+     !wave && !uvwave && !exact_studio_white_copy){
     int columns=xx1-xx0;
     int *source_a=columns>0?malloc((size_t)columns*sizeof(*source_a)):NULL;
     double *fraction_x=columns>0?malloc((size_t)columns*sizeof(*fraction_x)):NULL;

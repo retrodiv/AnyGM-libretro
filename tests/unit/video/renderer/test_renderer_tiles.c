@@ -612,6 +612,50 @@ static void check_application_surface_partial_alpha_coverage(void){
   free(page.argb_cache);
 }
 
+static void check_first_generation_filtered_minification(void){
+  static const uint8_t rgba[16]={
+    255,0,0,255, 0,255,0,255,
+    0,0,255,255, 255,255,255,255
+  };
+  uint32_t framebuffer=0xff000000u;
+  GmlWin content;
+  GmlRender render;
+  GmlAtlas atlas;
+  GmlTpag page;
+  GmlBg background;
+
+  memset(&content,0,sizeof content);
+  memset(&render,0,sizeof render);
+  memset(&atlas,0,sizeof atlas);
+  memset(&page,0,sizeof page);
+  memset(&background,0,sizeof background);
+  content.bytecode=14;
+  atlas.px=(uint8_t*)rgba;
+  atlas.w=atlas.h=2;
+  page.atlas=0;
+  page.sw=page.sh=page.bw=page.bh=2;
+  page.alpha_scanned=1;
+  page.alpha_max=255;
+  background.tpag=0;
+  render.win=&content;
+  render.fb=render.base_fb=&framebuffer;
+  render.fbw=render.fbh=render.base_fbw=render.base_fbh=1;
+  render.atlas=&atlas; render.n_atlas=1;
+  render.tpag=&page; render.n_tpag=1;
+  render.bg=&background; render.n_bg=1;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.interp=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+  render.target_id=-1;
+
+  gml_draw_background_ext(&render,0,0.0,0.0,0.5,0.5,0xffffffu,1.0);
+  expect(framebuffer==0xff808080u,
+         "first-generation filtered minification did not sample all four neighbouring texels");
+  free(page.argb_cache);
+}
+
 int main(void){
   static const uint32_t transformed[8][4]={
     {0xffff0000,0xff00ff00,0xff0000ff,0xffffffff},
@@ -642,6 +686,7 @@ int main(void){
   check_render_pass_restores_normal_blending();
   check_first_generation_fractional_tile_projection();
   check_application_surface_partial_alpha_coverage();
+  check_first_generation_filtered_minification();
   if(failures){
     fprintf(stderr,"renderer tiles: %d failure(s)\n",failures);
     return 1;

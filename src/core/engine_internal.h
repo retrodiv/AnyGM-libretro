@@ -221,6 +221,10 @@ struct AnygmEngine {
   double axis_current[4],axis_previous[4];
   unsigned output_width,output_height;
   int gui_offset_x,gui_offset_y,canvas_mode,gui_space_width,gui_space_height;
+  /* Derived presentation state: content owns the non-native window raster while automatic
+   * application-surface drawing is disabled. The screen-stage GUI must use that same raster for
+   * both its physical target and its logical coordinates. */
+  int screen_stage_window_raster;
   double mouse_pixel_x,mouse_pixel_y;
   int pointer_active;
   uint8_t mouse_button_current[3],mouse_button_previous[3];
@@ -253,6 +257,10 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes);
 int screen_stage_uses_requested_raster(
   const GmlWin *content,const GmlRenderPresentationMetrics *presentation,
   int logical_width,int logical_height,int target_width,int target_height);
+void screen_stage_gui_geometry(
+  const AnygmEngine *engine,const GmlRenderPresentationMetrics *presentation,
+  int window_width,int window_height,int *target_width,int *target_height,
+  int *logical_width,int *logical_height);
 void aspect_forced_camera(AnygmEngine *engine,double raw_x,double raw_y,
                           double *out_x,double *out_y);
 int aspect_compositor_fullwidth_gen(AnygmEngine *engine);
