@@ -1380,7 +1380,8 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
   for(int li=0; *p || li==0; li++){
     const char *end; int lw=line_width(r,f,p,&end);
     double base_x=0;
-    if(r->halign==1) base_x=-lw/2.0; else if(r->halign==2) base_x=1-lw;
+    /* Centred text offsets by an integer half-width, keeping odd-width lines on whole pixels. */
+    if(r->halign==1) base_x=-(double)(lw/2); else if(r->halign==2) base_x=1-lw;
     double cx=base_x;
     while(p<end){
       unsigned cp=text_next_cp(&p);
