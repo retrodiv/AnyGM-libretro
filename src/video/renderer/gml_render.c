@@ -470,9 +470,9 @@ void gml_render_set_frame(GmlRender *r,long frame){
 void gml_render_control_update(GmlRender *r,const GmlRenderControl *control,
                                unsigned fields){
   if(!r || !control) return;
-  if(fields&GML_RENDER_CONTROL_REQUESTED_SIZE){
-    r->resolution_w=control->requested_width;
-    r->resolution_h=control->requested_height;
+  if(fields&GML_RENDER_CONTROL_MONITOR_SIZE){
+    r->monitor_w=control->monitor_width;
+    r->monitor_h=control->monitor_height;
   }
   if(fields&GML_RENDER_CONTROL_CRT){
     r->crt_shader_enable=control->crt_shader_enabled;
@@ -558,8 +558,8 @@ int gml_render_presentation_metrics(const GmlRender *r,
   if(metrics) memset(metrics,0,sizeof(*metrics));
   if(!r) return 0;
   if(metrics){
-    metrics->requested_width=r->resolution_w;
-    metrics->requested_height=r->resolution_h;
+    metrics->monitor_width=r->monitor_w;
+    metrics->monitor_height=r->monitor_h;
     metrics->effective_width=r->presentation_w;
     metrics->effective_height=r->presentation_h;
     metrics->wide_aspect_active=r->aspect_fullwidth;

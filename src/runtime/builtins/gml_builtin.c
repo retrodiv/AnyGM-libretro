@@ -133,16 +133,24 @@ static int presentation_base_size(const GmlVM *vm, const GmlRender *r, int heigh
 }
 int presentation_size(const GmlVM *vm, const GmlRender *r, int height){
   GmlRenderPresentationMetrics metrics=builtin_presentation_metrics(r);
+  /* Fullscreen is a content-owned request to occupy the monitor. The monitor option alone never
+   * changes the window, but once content enters fullscreen its window queries resolve against that
+   * virtual monitor immediately, before the next presentation pass has recomputed its raster. */
+  if(vm && vm->window_fullscreen){
+    int monitor=r?(height?metrics.monitor_height:metrics.monitor_width):0;
+    if(monitor>0) return monitor;
+  }
   int effective=r?(height?metrics.effective_height:metrics.effective_width):0;
   if(effective>0) return effective;
-  int configured=r?(height?metrics.requested_height:metrics.requested_width):0;
-  if(configured>0) return configured;
   return presentation_base_size(vm,r,height);
 }
-/* GM7/8 distinguishes the desktop display from the game window. A host core has no host
- * desktop to query, so expose the same deterministic virtual display required by the classic presentation contract.
- * Keep window_get_* tied to the presented framebuffer; modern projects also rely on that size. */
+/* The host has no physical desktop to expose. An explicit virtual monitor wins for every runtime;
+ * otherwise classic content gets its deterministic desktop and modern content follows the current
+ * presentation. Window queries remain tied to the content-owned window/framebuffer. */
 int display_size(const GmlVM *vm, const GmlRender *r, int height){
+  GmlRenderPresentationMetrics metrics=builtin_presentation_metrics(r);
+  int configured=r?(height?metrics.monitor_height:metrics.monitor_width):0;
+  if(configured>0) return configured;
   if(vm && vm->win && anygm_policy_uses_classic_runtime(vm->win)) return height?720:1280;
   return presentation_size(vm,r,height);
 }

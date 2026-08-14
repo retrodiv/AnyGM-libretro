@@ -45,40 +45,110 @@ static uint64_t state_checksum(const uint8_t *data,size_t size){
   return hash;
 }
 
-static int screen_stage_raster_policy(void){
-  GmlWin content={0};
-  GmlRenderPresentationMetrics presentation={0};
-  content.bytecode=15;
-  presentation.requested_width=576;
-  presentation.requested_height=432;
-  if(!screen_stage_uses_requested_raster(&content,&presentation,288,216,576,432)){
-    fputs("first-generation requested screen raster was not recognized\n",stderr);
-    return 0;
-  }
-  presentation.application_draw_enabled=1;
-  if(screen_stage_uses_requested_raster(&content,&presentation,288,216,576,432)){
-    fputs("automatic application drawing selected a screen raster\n",stderr);
-    return 0;
-  }
-  presentation.application_draw_enabled=0;
-  content.classic_version=800;
-  if(screen_stage_uses_requested_raster(&content,&presentation,288,216,576,432)){
-    fputs("classic content selected a Studio screen raster\n",stderr);
-    return 0;
-  }
-  content.classic_version=0;
-  content.bytecode=17;
-  if(screen_stage_uses_requested_raster(&content,&presentation,288,216,576,432)){
-    fputs("current layer semantics selected a first-generation screen raster\n",stderr);
-    return 0;
-  }
-  content.bytecode=15;
-  if(screen_stage_uses_requested_raster(&content,&presentation,288,216,600,432) ||
-     screen_stage_uses_requested_raster(&content,&presentation,288,216,288,216)){
-    fputs("non-uniform or native presentation selected a scaled screen raster\n",stderr);
-    return 0;
-  }
-  return 1;
+static int virtual_monitor_geometry_policy(void){
+  AnygmEngine engine={0};
+  engine.win.bytecode=15;
+  engine.win.disp_w=288;
+  engine.win.disp_h=216;
+  engine.width=288;
+  engine.height=216;
+  engine.vm.win=&engine.win;
+  engine.vm.render=&engine.render;
+  engine.vm.window_w=1366;
+  engine.vm.window_h=768;
+  engine.config.present_logical_raster=0;
+  gml_vm_global_array_set(&engine.vm,"view_visible",0,1);
+  gml_vm_global_array_set(&engine.vm,"view_xview",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_yview",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_wview",0,288);
+  gml_vm_global_array_set(&engine.vm,"view_hview",0,216);
+  gml_vm_global_array_set(&engine.vm,"view_xport",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_yport",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_wport",0,288);
+  gml_vm_global_array_set(&engine.vm,"view_hport",0,216);
+  gml_render_application_surface_set_draw_enabled(&engine.render,0);
+  GmlRenderControl monitor={.monitor_width=1920,.monitor_height=1080};
+  engine.config.monitor_width=1920;
+  engine.config.monitor_height=1080;
+  gml_render_control_update(&engine.render,&monitor,GML_RENDER_CONTROL_MONITOR_SIZE);
+
+  compute_present(&engine);
+
+  GmlVal configured_display_w=gml_builtin_call(&engine.vm,"display_get_width",NULL,0);
+  GmlVal configured_display_h=gml_builtin_call(&engine.vm,"display_get_height",NULL,0);
+  GmlVal window_w=gml_builtin_call(&engine.vm,"window_get_width",NULL,0);
+  GmlVal window_h=gml_builtin_call(&engine.vm,"window_get_height",NULL,0);
+  GmlVal position=gml_builtin_call(&engine.vm,"application_get_position",NULL,0);
+  GmlArr *position_values=position.t==V_ARR?(GmlArr*)position.arr:NULL;
+  int position_ok=position_values && position_values->len==4 &&
+                  position_values->data[0].d==0 && position_values->data[1].d==0 &&
+                  position_values->data[2].d==1366 && position_values->data[3].d==768;
+  int ok=configured_display_w.t==V_REAL && configured_display_w.d==1920 &&
+         configured_display_h.t==V_REAL && configured_display_h.d==1080 &&
+         window_w.t==V_REAL && window_w.d==1366 &&
+         window_h.t==V_REAL && window_h.d==768 && position_ok &&
+         engine.output_width==1366 && engine.output_height==768 &&
+         engine.gui_space_width==1366 && engine.gui_space_height==768;
+
+  engine.vm.window_fullscreen=1;
+  compute_present(&engine);
+  GmlVal fullscreen_window_w=gml_builtin_call(&engine.vm,"window_get_width",NULL,0);
+  GmlVal fullscreen_window_h=gml_builtin_call(&engine.vm,"window_get_height",NULL,0);
+  GmlVal fullscreen_position=gml_builtin_call(&engine.vm,"application_get_position",NULL,0);
+  GmlArr *fullscreen_position_values=
+    fullscreen_position.t==V_ARR?(GmlArr*)fullscreen_position.arr:NULL;
+  int fullscreen_position_ok=fullscreen_position_values && fullscreen_position_values->len==4 &&
+                             fullscreen_position_values->data[0].d==0 &&
+                             fullscreen_position_values->data[1].d==0 &&
+                             fullscreen_position_values->data[2].d==1920 &&
+                             fullscreen_position_values->data[3].d==1080;
+  unsigned fullscreen_output_width=engine.output_width;
+  unsigned fullscreen_output_height=engine.output_height;
+  int fullscreen_gui_width=engine.gui_space_width;
+  int fullscreen_gui_height=engine.gui_space_height;
+  ok=ok && fullscreen_window_w.t==V_REAL && fullscreen_window_w.d==1920 &&
+           fullscreen_window_h.t==V_REAL && fullscreen_window_h.d==1080 &&
+           engine.output_width==1920 && engine.output_height==1080 &&
+           engine.gui_space_width==1920 && engine.gui_space_height==1080 &&
+           fullscreen_position_ok;
+
+  engine.vm.window_fullscreen=0;
+  compute_present(&engine);
+  GmlVal restored_window_w=gml_builtin_call(&engine.vm,"window_get_width",NULL,0);
+  GmlVal restored_window_h=gml_builtin_call(&engine.vm,"window_get_height",NULL,0);
+  ok=ok && restored_window_w.t==V_REAL && restored_window_w.d==1366 &&
+           restored_window_h.t==V_REAL && restored_window_h.d==768 &&
+           engine.output_width==1366 && engine.output_height==768 &&
+           engine.gui_space_width==1366 && engine.gui_space_height==768;
+
+  monitor.monitor_width=0;
+  monitor.monitor_height=0;
+  engine.config.monitor_width=0;
+  engine.config.monitor_height=0;
+  gml_render_control_update(&engine.render,&monitor,GML_RENDER_CONTROL_MONITOR_SIZE);
+  GmlVal fallback_display_w=gml_builtin_call(&engine.vm,"display_get_width",NULL,0);
+  GmlVal fallback_display_h=gml_builtin_call(&engine.vm,"display_get_height",NULL,0);
+  ok=ok && fallback_display_w.t==V_REAL && fallback_display_w.d==1366 &&
+           fallback_display_h.t==V_REAL && fallback_display_h.d==768;
+  if(!ok)
+    fprintf(stderr,
+      "virtual monitor changed content-owned geometry or was not reported independently:"
+      " configured=%.0fx%.0f fallback=%.0fx%.0f window=%.0fx%.0f"
+      " fullscreen=%.0fx%.0f fullscreen_output=%ux%u fullscreen_gui=%dx%d"
+      " restored=%.0fx%.0f output=%ux%u gui=%dx%d"
+      " position=%d fullscreen_position=%d\n",
+      configured_display_w.d,configured_display_h.d,
+      fallback_display_w.d,fallback_display_h.d,window_w.d,window_h.d,
+      fullscreen_window_w.d,fullscreen_window_h.d,
+      fullscreen_output_width,fullscreen_output_height,
+      fullscreen_gui_width,fullscreen_gui_height,
+      restored_window_w.d,restored_window_h.d,
+      engine.output_width,engine.output_height,
+      engine.gui_space_width,engine.gui_space_height,position_ok,fullscreen_position_ok);
+  gml_values_release(&position,1);
+  gml_values_release(&fullscreen_position,1);
+  gml_vm_free(&engine.vm);
+  return ok;
 }
 
 typedef struct {
@@ -1005,6 +1075,8 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
 
 int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
+    if(!strcmp(argv[2],"virtual_monitor_geometry"))
+      return virtual_monitor_geometry_policy()?0:1;
     if(!strcmp(argv[2],"screen_refresh_present_latch"))
       return screen_refresh_present_latch_policy()?0:1;
     if(!strcmp(argv[2],"application_surface_port_scale"))
@@ -1041,7 +1113,7 @@ int main(int argc,char **argv){
   }
   if(argc!=1){
     fputs("usage: test_engine_instances [--case screen_refresh_present_latch|"
-          "application_surface_port_scale|"
+          "virtual_monitor_geometry|application_surface_port_scale|"
           "first_generation_application_surface|"
           "game_restart|"
           "first_generation_dynamic_camera|"
@@ -1053,7 +1125,7 @@ int main(int argc,char **argv){
           "room_start_deactivation]\n",stderr);
     return 1;
   }
-  if(!screen_stage_raster_policy()) return 1;
+  if(!virtual_monitor_geometry_policy()) return 1;
   if(!room_order_redirect_policy()) return 1;
   if(!screen_refresh_present_latch_policy()) return 1;
   if(!application_surface_port_scale_policy()) return 1;

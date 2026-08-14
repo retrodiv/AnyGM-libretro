@@ -200,8 +200,8 @@ static uint32_t gm_to_xrgb(uint32_t c) {
 }
 
 
-int core_opt_resolution(AnygmEngine *engine,int height) {
-  uint32_t value=height?engine->config.present_height:engine->config.present_width;
+int core_opt_monitor_size(AnygmEngine *engine,int height) {
+  uint32_t value=height?engine->config.monitor_height:engine->config.monitor_width;
   uint32_t maximum=height?FB_MAX_H:FB_MAX_W;
   return (int)(value>maximum?maximum:value);
 }
@@ -503,6 +503,24 @@ static int gui_window_near_native(int win_w, int win_h, int gui_w, int gui_h) {
   if (ytol < 8) ytol = 8;
   return labs((long)win_w - gui_w) <= xtol && labs((long)win_h - gui_h) <= ytol;
 }
+/* A virtual monitor is descriptive until content itself enters fullscreen. Keep the last authored
+ * window dimensions intact so leaving fullscreen restores them naturally, while presentation and
+ * window queries use the monitor extent for as long as the fullscreen request remains active. */
+static void content_window_extent(const AnygmEngine *engine,int fallback_width,int fallback_height,
+                                  int *width,int *height){
+  int out_width=engine->vm.window_w>0?engine->vm.window_w:fallback_width;
+  int out_height=engine->vm.window_h>0?engine->vm.window_h:fallback_height;
+  if(engine->vm.window_fullscreen){
+    uint32_t monitor_width=engine->config.monitor_width;
+    uint32_t monitor_height=engine->config.monitor_height;
+    if(monitor_width>FB_MAX_W) monitor_width=FB_MAX_W;
+    if(monitor_height>FB_MAX_H) monitor_height=FB_MAX_H;
+    if(monitor_width>0) out_width=(int)monitor_width;
+    if(monitor_height>0) out_height=(int)monitor_height;
+  }
+  if(width) *width=out_width;
+  if(height) *height=out_height;
+}
 static int aspect_canvas_present_res(AnygmEngine *engine,unsigned base_w, unsigned base_h,
                                      unsigned *out_w, unsigned *out_h) {
   if (!out_w || !out_h || engine->vm.gui_w <= 0 || engine->vm.gui_h <= 0) return 0;
@@ -517,8 +535,10 @@ static int aspect_canvas_present_res(AnygmEngine *engine,unsigned base_w, unsign
   if (gw < 16) gw = (int)base_w;
   if (gh < 16) gh = (int)base_h;
   if (gw <= 0 || gh <= 0) return 0;
-  int win_w = engine->vm.window_w > 0 ? engine->vm.window_w : (int)(engine->win.disp_w ? engine->win.disp_w : base_w);
-  int win_h = engine->vm.window_h > 0 ? engine->vm.window_h : (int)(engine->win.disp_h ? engine->win.disp_h : base_h);
+  int win_w,win_h;
+  content_window_extent(engine,
+    (int)(engine->win.disp_w?engine->win.disp_w:base_w),
+    (int)(engine->win.disp_h?engine->win.disp_h:base_h),&win_w,&win_h);
   if (win_w <= 0 || win_h <= 0) return 0;
   double s = (double)win_w / (double)gw, s2 = (double)win_h / (double)gh;
   if (s2 < s) s = s2;
@@ -647,22 +667,6 @@ void aspect_hud_rect(AnygmEngine *engine,int *out_x, int *out_y, int *out_w, int
   if (out_w) *out_w = hw;
   if (out_h) *out_h = hh;
 }
-int screen_stage_uses_requested_raster(
-  const GmlWin *content,const GmlRenderPresentationMetrics *presentation,
-  int logical_width,int logical_height,int target_width,int target_height){
-  if(!content || !presentation || logical_width<=0 || logical_height<=0 ||
-     target_width<=0 || target_height<=0 ||
-     anygm_policy_uses_classic_runtime(content) ||
-     anygm_policy_has_modern_layer_semantics(content) ||
-     presentation->application_draw_enabled ||
-     presentation->requested_width!=target_width ||
-     presentation->requested_height!=target_height ||
-     target_width%logical_width || target_height%logical_height)
-    return 0;
-  int scale_x=target_width/logical_width;
-  int scale_y=target_height/logical_height;
-  return scale_x>1 && scale_x==scale_y;
-}
 void screen_stage_gui_geometry(
   const AnygmEngine *engine,const GmlRenderPresentationMetrics *presentation,
   int window_width,int window_height,int *target_width,int *target_height,
@@ -673,17 +677,12 @@ void screen_stage_gui_geometry(
     int owned_window_raster=presentation->application_owned &&
                             presentation->application_width>0 &&
                             presentation->application_height>0 &&
-                            presentation->application_width==engine->vm.window_w &&
-                            presentation->application_height==engine->vm.window_h &&
                             presentation->application_width==window_width &&
                             presentation->application_height==window_height;
-    int requested_window_raster=screen_stage_uses_requested_raster(
-      &engine->win,presentation,
-      (int)engine->width,(int)engine->height,window_width,window_height);
     if(owned_window_raster){
       width=presentation->application_width;
       height=presentation->application_height;
-    } else if(engine->screen_stage_window_raster || requested_window_raster){
+    } else if(engine->screen_stage_window_raster){
       width=window_width;
       height=window_height;
       if(target_width) *target_width=window_width;
@@ -697,6 +696,11 @@ void compute_present(AnygmEngine *engine) {
   GmlRenderPresentationMetrics renderer;
   gml_render_presentation_metrics(&engine->render,&renderer);
   int effective_width=0,effective_height=0;
+  int content_window_width,content_window_height;
+  content_window_extent(engine,
+    (int)(engine->win.disp_w?engine->win.disp_w:engine->width),
+    (int)(engine->win.disp_h?engine->win.disp_h:engine->height),
+    &content_window_width,&content_window_height);
   /* GUI drawing space: explicit (display_set_gui_size) or the enabled view port, falling back to
    * the view. A disabled view can still carry a default port in its data, which must not affect
    * presentation geometry. */
@@ -722,8 +726,8 @@ void compute_present(AnygmEngine *engine) {
   engine->canvas_mode = 0; engine->output_width = engine->width; engine->output_height = engine->height; engine->gui_offset_x = engine->gui_offset_y = 0;
   engine->screen_stage_window_raster=0;
   if (!engine->vm.gui_maximise_active && engine->vm.gui_w > 0 && engine->vm.gui_h > 0) {
-    int win_w = engine->vm.window_w > 0 ? engine->vm.window_w : (int)(engine->win.disp_w ? engine->win.disp_w : engine->width);
-    int win_h = engine->vm.window_h > 0 ? engine->vm.window_h : (int)(engine->win.disp_h ? engine->win.disp_h : engine->height);
+    int win_w=content_window_width;
+    int win_h=content_window_height;
     double s = (double)win_w / gw, s2 = (double)win_h / gh;
     if (s2 < s) s = s2;
     if (s < 1e-6) s = 1.0;
@@ -766,10 +770,8 @@ void compute_present(AnygmEngine *engine) {
   /* A non-uniform declared or runtime window size can coexist with one view port that remains
    * the screen-stage raster. Exposing only the port would discard the final presentation
    * transform, so retain the port as GUI space and let the indirect presentation path scale it. */
-  int screen_stage_window_w = engine->vm.window_w > 0
-                            ? engine->vm.window_w : (int)engine->win.disp_w;
-  int screen_stage_window_h = engine->vm.window_h > 0
-                            ? engine->vm.window_h : (int)engine->win.disp_h;
+  int screen_stage_window_w=content_window_width;
+  int screen_stage_window_h=content_window_height;
   /* The window extent is a request from content, not a host measurement: no host reports its
    * presentation window to the engine. When the window is only larger than the view, matching it
    * here costs a full software upscale carrying no detail the host would not produce itself while
@@ -831,12 +833,11 @@ void compute_present(AnygmEngine *engine) {
   /* Classic presentation keeps the window/port size stable when game code changes view_wview or
    * view_hview: those variables zoom the camera, they do not resize the host window. The world
    * is still rendered at the logical view extent above and is presented into this fixed window. */
-  if (anygm_policy_uses_classic_runtime(&engine->win) && !engine->aspect_force_active &&
-      renderer.requested_width <= 0 && renderer.requested_height <= 0) {
+  if (anygm_policy_uses_classic_runtime(&engine->win) && !engine->aspect_force_active) {
     unsigned room_window_w, room_window_h;
     cur_classic_room_window_res(engine,&room_window_w, &room_window_h);
-    int window_w = engine->vm.window_w > 0 ? engine->vm.window_w : (int)room_window_w;
-    int window_h = engine->vm.window_h > 0 ? engine->vm.window_h : (int)room_window_h;
+    int window_w,window_h;
+    content_window_extent(engine,(int)room_window_w,(int)room_window_h,&window_w,&window_h);
     if (window_w > 0 && window_h > 0 && window_w <= FB_MAX_W && window_h <= FB_MAX_H) {
       engine->screen_stage_window_raster=0;
       engine->canvas_mode = 0;
@@ -856,16 +857,16 @@ void compute_present(AnygmEngine *engine) {
   if (anygm_policy_has_modern_screen_stage(&engine->win) && !engine->aspect_force_active && !engine->canvas_mode &&
       !renderer.application_draw_enabled &&
       engine->vm.gui_w <= 0 && engine->vm.gui_h <= 0 &&
-      engine->vm.window_w > 0 && engine->vm.window_h > 0 &&
-      engine->vm.window_w <= FB_MAX_W && engine->vm.window_h <= FB_MAX_H) {
+      content_window_width > 0 && content_window_height > 0 &&
+      content_window_width <= FB_MAX_W && content_window_height <= FB_MAX_H) {
     engine->screen_stage_window_raster=0;
-    engine->output_width = (unsigned)engine->vm.window_w;
-    engine->output_height = (unsigned)engine->vm.window_h;
-    engine->gui_space_width = engine->vm.window_w;
-    engine->gui_space_height = engine->vm.window_h;
+    engine->output_width = (unsigned)content_window_width;
+    engine->output_height = (unsigned)content_window_height;
+    engine->gui_space_width = content_window_width;
+    engine->gui_space_height = content_window_height;
     engine->gui_offset_x = engine->gui_offset_y = 0;
-    effective_width = engine->vm.window_w;
-    effective_height = engine->vm.window_h;
+    effective_width = content_window_width;
+    effective_height = content_window_height;
   }
   /* A Studio game can explicitly resize application_surface to the window and keep the normal
    * automatic presentation path.  That surface is the final presentation raster, not an oversized
@@ -880,8 +881,8 @@ void compute_present(AnygmEngine *engine) {
       engine->vm.gui_w <= 0 && engine->vm.gui_h <= 0 &&
       renderer.application_width > 0 && renderer.application_height > 0 &&
       renderer.application_width <= FB_MAX_W && renderer.application_height <= FB_MAX_H &&
-      engine->vm.window_w == renderer.application_width &&
-      engine->vm.window_h == renderer.application_height) {
+      content_window_width == renderer.application_width &&
+      content_window_height == renderer.application_height) {
     engine->screen_stage_window_raster=0;
     engine->output_width = (unsigned)renderer.application_width;
     engine->output_height = (unsigned)renderer.application_height;
@@ -890,33 +891,6 @@ void compute_present(AnygmEngine *engine) {
     engine->gui_offset_x = engine->gui_offset_y = 0;
     effective_width = renderer.application_width;
     effective_height = renderer.application_height;
-  }
-  /* An explicit resolution is the final framebuffer and GUI/compositor space. Aspect forcing still
-   * controls the logical room/view width independently. Fast-forward must not change geometry. */
-  if (renderer.requested_width > 0 || renderer.requested_height > 0) {
-    int base_w = (renderer.wide_aspect_active && renderer.wide_width > 0)
-               ? renderer.wide_width : (int)(engine->win.disp_w ? engine->win.disp_w : engine->width);
-    int base_h = (renderer.wide_aspect_active && renderer.wide_height > 0)
-               ? renderer.wide_height : (int)(engine->win.disp_h ? engine->win.disp_h : engine->height);
-    int target_h = renderer.requested_height > 0 ? renderer.requested_height : base_h;
-    int target_w = renderer.requested_width > 0 ? renderer.requested_width : base_w;
-    /* Aspect Ratio Force composes with explicit resolution instead of being overwritten by it.
-     * The vertical axis is authoritative and the effective width is derived from it; the raw
-     * width option deliberately remains untouched so the host still shows what was selected. */
-    if (engine->aspect_force_mode != GMC_ASPECT_FORCE_NONE && target_h > 0) {
-      double ratio = gmc_aspect_force_ratio(engine->aspect_force_mode);
-      target_w = (int)round_to_multiple_of_8((double)target_h * ratio);
-      if (target_w > FB_MAX_W) target_w = FB_MAX_W & ~7;
-    }
-    if (target_w > 0 && target_h > 0 && target_w <= FB_MAX_W && target_h <= FB_MAX_H) {
-      engine->screen_stage_window_raster=0;
-      engine->canvas_mode = 0;
-      engine->gui_space_width = target_w; engine->gui_space_height = target_h;
-      engine->output_width = (unsigned)target_w; engine->output_height = (unsigned)target_h;
-      engine->gui_offset_x = engine->gui_offset_y = 0;
-      effective_width = target_w;
-      effective_height = target_h;
-    }
   }
   /* A maximised GUI is screen-relative and its explicit scale is already the logical-to-screen
    * transform.  The GUI canvas must therefore neither select a larger host resolution nor be

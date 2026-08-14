@@ -506,16 +506,16 @@ int main(void){
   AnygmConfigDelta presentation_delta={0};
   presentation_delta.struct_size=sizeof presentation_delta;
   presentation_delta.values.struct_size=sizeof presentation_delta.values;
-  presentation_delta.fields=ANYGM_CONFIG_PRESENT_WIDTH|ANYGM_CONFIG_PRESENT_HEIGHT|
+  presentation_delta.fields=ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT|
                             ANYGM_CONFIG_ASPECT_MODE;
-  presentation_delta.values.present_width=640;
-  presentation_delta.values.present_height=360;
+  presentation_delta.values.monitor_width=640;
+  presentation_delta.values.monitor_height=360;
   presentation_delta.values.aspect_mode=2;
   if(anygm_set_config(engine,&presentation_delta)!=ANYGM_OK ||
      anygm_state_load(engine,baseline,baseline_size)!=ANYGM_OK)
     return fail("presentation configuration prevented state loading");
-  presentation_delta.values.present_width=0;
-  presentation_delta.values.present_height=0;
+  presentation_delta.values.monitor_width=0;
+  presentation_delta.values.monitor_height=0;
   presentation_delta.values.aspect_mode=0;
   if(anygm_set_config(engine,&presentation_delta)!=ANYGM_OK)
     return fail("presentation configuration could not be restored");

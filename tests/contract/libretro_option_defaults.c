@@ -22,6 +22,8 @@ static const struct retro_core_option_v2_category *declared_categories;
 static const struct retro_core_option_v2_definition *declared_definitions;
 static const struct retro_variable *declared_variables;
 static unsigned host_options_version=2;
+static AnygmConfigDelta applied_config;
+static unsigned config_apply_count;
 
 /* Whatever the core last told the host to show or hide, by key. */
 #define MAX_VISIBILITY 32
@@ -79,7 +81,10 @@ static bool environment_callback(unsigned command,void *data){
 LibretroAdapter g_libretro;
 AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   (void)engine;
-  (void)delta;
+  if(delta){
+    applied_config=*delta;
+    config_apply_count++;
+  }
   return ANYGM_OK;
 }
 
@@ -151,6 +156,8 @@ static void begin(unsigned version,uint32_t rooms){
   visibility_count=0;
   answered_value=NULL;
   menu_time_visibility=NULL;
+  memset(&applied_config,0,sizeof applied_config);
+  config_apply_count=0;
   memset(&g_libretro.config,0,sizeof g_libretro.config);
   g_libretro.environment=environment_callback;
   g_libretro.engine=engine_placeholder;
@@ -212,6 +219,31 @@ static void unset_settings_keep_content_reachable(void){
   /* Resolving an unknown amount to none would leave the slowest setting in place unasked. */
   expect("no host value for the culling",g_libretro.config.fast_alpha_cull,24u);
   expect("no host value for the raster",g_libretro.config.present_logical_raster,1u);
+}
+
+/* These dimensions describe the monitor content can query. They retain their stable frontend keys,
+ * but the adapter must not translate them back into the former presentation-size API. */
+static void monitor_dimensions_reach_the_virtual_monitor_fields(void){
+  begin(2,3);
+  const struct retro_core_option_v2_definition *width=definition("anygm_width_resolution");
+  const struct retro_core_option_v2_definition *height=definition("anygm_height_resolution");
+  if(!width || !height || strcmp(width->desc,"Monitor width") ||
+     strcmp(height->desc,"Monitor height"))
+    complain("the virtual-monitor dimensions are presented as framebuffer dimensions");
+
+  answered_value="1920";
+  libretro_options_apply(true);
+  if(config_apply_count!=1 ||
+     (applied_config.fields&(ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT)) !=
+       (ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT))
+    complain("the virtual-monitor fields were not sent to the engine");
+  expect("configured monitor width",applied_config.values.monitor_width,1920u);
+  expect("configured monitor height",applied_config.values.monitor_height,1920u);
+
+  answered_value="Game Base";
+  libretro_options_apply(false);
+  expect("fallback monitor width",applied_config.values.monitor_width,0u);
+  expect("fallback monitor height",applied_config.values.monitor_height,0u);
 }
 
 /* The names describe how much is dropped, and the thresholds have to rise with them. */
@@ -360,6 +392,7 @@ static void a_restarted_core_declares_its_settings_again(void){
 int main(void){
   every_setting_sits_in_a_group();
   unset_settings_keep_content_reachable();
+  monitor_dimensions_reach_the_virtual_monitor_fields();
   culling_names_rise_with_their_thresholds();
   hidden_settings_are_the_ones_that_cannot_act();
   loaded_content_names_its_rooms();

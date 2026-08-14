@@ -11,7 +11,7 @@
  * understand is derived from that same table. Two hand-maintained lists drift, and the one that
  * drifts is always the one the host in front of the player happens to read. */
 static const struct retro_core_option_v2_category g_categories[]={
-  {"video","Video","Resolution, shape and rasterization of the delivered frame."},
+  {"video","Video","Virtual monitor, shape and rasterization of the delivered frame."},
   {"input","Input","Controllers and pointer."},
   {"shaders","Shaders","The built-in CRT shader and the parts it draws."},
   {"development","Development","Tools for exercising content."},
@@ -35,8 +35,8 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"video",
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},
-  {"anygm_width_resolution","Width resolution",NULL,
-   "Forces the width of the delivered frame. Game Base keeps the game's own.",
+  {"anygm_width_resolution","Monitor width",NULL,
+   "Reports this virtual monitor width to the game. Game Base uses the runtime fallback.",
    NULL,"video",
    {{"Game Base",NULL},{"64",NULL},{"128",NULL},{"144",NULL},{"160",NULL},{"176",NULL},
     {"192",NULL},{"200",NULL},{"224",NULL},{"240",NULL},{"256",NULL},{"288",NULL},{"300",NULL},
@@ -49,8 +49,8 @@ static struct retro_core_option_v2_definition g_definitions[]={
     {"2400",NULL},{"2560",NULL},{"2880",NULL},{"3200",NULL},{"3440",NULL},{"3840",NULL},
     {NULL,NULL}},
    "Game Base"},
-  {"anygm_height_resolution","Height resolution",NULL,
-   "Forces the height of the delivered frame. Game Base keeps the game's own.",
+  {"anygm_height_resolution","Monitor height",NULL,
+   "Reports this virtual monitor height to the game. Game Base uses the runtime fallback.",
    NULL,"video",
    {{"Game Base",NULL},{"64",NULL},{"128",NULL},{"144",NULL},{"160",NULL},{"176",NULL},
     {"180",NULL},{"192",NULL},{"200",NULL},{"216",NULL},{"224",NULL},{"240",NULL},{"256",NULL},
@@ -494,8 +494,8 @@ void libretro_options_apply(bool all_fields){
   if(!g_libretro.engine) return;
   AnygmConfig *config=&g_libretro.config;
   config->struct_size=sizeof *config;
-  config->present_width=option_resolution("anygm_width_resolution");
-  config->present_height=option_resolution("anygm_height_resolution");
+  config->monitor_width=option_resolution("anygm_width_resolution");
+  config->monitor_height=option_resolution("anygm_height_resolution");
   const char *value=option_value("anygm_aspect_ratio_force");
   config->aspect_mode=value&&!strcmp(value,"4:3")?1u:
                       value&&!strcmp(value,"16:9")?2u:
@@ -551,7 +551,7 @@ void libretro_options_apply(bool all_fields){
   delta.struct_size=sizeof delta;
   delta.values=*config;
   delta.fields=all_fields?UINT64_MAX:
-      ANYGM_CONFIG_PRESENT_WIDTH|ANYGM_CONFIG_PRESENT_HEIGHT|ANYGM_CONFIG_ASPECT_MODE|
+      ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT|ANYGM_CONFIG_ASPECT_MODE|
       ANYGM_CONFIG_MOUSE_MODE|ANYGM_CONFIG_ROOM_SKIP_BUTTON|ANYGM_CONFIG_GOD_MODE|
       ANYGM_CONFIG_CRT_MASK|ANYGM_CONFIG_CRT_SCANLINES|ANYGM_CONFIG_CRT_GAMMA|
       ANYGM_CONFIG_CRT_CURVATURE|ANYGM_CONFIG_CRT_VIGNETTE|

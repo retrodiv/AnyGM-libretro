@@ -997,7 +997,7 @@ fail_matches "VM code must not dereference renderer storage:" \
 
 builtin_renderer_state_access=$(find src/runtime/builtins -type f \
   \( -name '*.c' -o -name '*.h' \) -exec grep -n -H -E -- \
-  '(^|[^[:alnum:]_])(R|R2|r|render|renderer)[[:space:]]*->[[:space:]]*(active_shader|alpha|alphablend|app_draw_enable|app_h|app_surface|app_w|blend_equation|blend_equation_alpha|blendmode|cam_x|cam_y|circle_precision|color|fb|fbh|fbw|font|gui_base_logical_h|gui_base_logical_w|gui_pass_active|halign|interp|presentation_h|presentation_w|resolution_h|resolution_w|aspect_fullwidth|aspect_wide_h|aspect_wide_w|valign|alpha_test_enable|alpha_test_ref|color_write_mask|gpu_state_sp|gpu_state_stack|win)([^[:alnum:]_]|$)' \
+  '(^|[^[:alnum:]_])(R|R2|r|render|renderer)[[:space:]]*->[[:space:]]*(active_shader|alpha|alphablend|app_draw_enable|app_h|app_surface|app_w|blend_equation|blend_equation_alpha|blendmode|cam_x|cam_y|circle_precision|color|fb|fbh|fbw|font|gui_base_logical_h|gui_base_logical_w|gui_pass_active|halign|interp|monitor_h|monitor_w|presentation_h|presentation_w|aspect_fullwidth|aspect_wide_h|aspect_wide_w|valign|alpha_test_enable|alpha_test_ref|color_write_mask|gpu_state_sp|gpu_state_stack|win)([^[:alnum:]_]|$)' \
   {} + 2>/dev/null || true)
 fail_matches "Builtins must use typed renderer draw, target, presentation, shader, and GPU operations:" \
   "$builtin_renderer_state_access"

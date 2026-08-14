@@ -161,7 +161,7 @@ enum {
 /* Presentation controls are queried together because window/display builtins
  * apply language-level fallbacks across several related values. */
 typedef struct {
-  int requested_width, requested_height;
+  int monitor_width, monitor_height;
   int effective_width, effective_height;
   int wide_aspect_active, wide_width, wide_height;
   int gui_pass_active, gui_base_width, gui_base_height;
@@ -212,7 +212,7 @@ typedef struct {
  * value-copy update keeps boot, live configuration, and per-frame hints coarse
  * without exposing renderer storage. */
 typedef struct {
-  int requested_width, requested_height;
+  int monitor_width, monitor_height;
   int crt_shader_enabled, crt_mask_enabled;
   int crt_scanlines_enabled, crt_gamma_enabled;
   int crt_curvature, crt_vignette;
@@ -225,13 +225,13 @@ typedef struct {
 } GmlRenderControl;
 
 enum {
-  GML_RENDER_CONTROL_REQUESTED_SIZE = 1u<<0,
+  GML_RENDER_CONTROL_MONITOR_SIZE   = 1u<<0,
   GML_RENDER_CONTROL_CRT            = 1u<<1,
   GML_RENDER_CONTROL_FAST_FORWARD   = 1u<<2,
   GML_RENDER_CONTROL_FAST_ALPHA     = 1u<<3,
   GML_RENDER_CONTROL_WIDE_ASPECT    = 1u<<4,
   GML_RENDER_CONTROL_HOST_OPTIONS =
-    GML_RENDER_CONTROL_REQUESTED_SIZE | GML_RENDER_CONTROL_CRT
+    GML_RENDER_CONTROL_MONITOR_SIZE | GML_RENDER_CONTROL_CRT
 };
 
 typedef struct {

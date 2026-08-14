@@ -368,8 +368,8 @@ static void boot_runtime(AnygmEngine *engine) {
         "[anygm] could not allocate the first-generation application surface\n");
   }
   GmlRenderControl render_control={
-    .requested_width=core_opt_resolution(engine,0),
-    .requested_height=core_opt_resolution(engine,1),
+    .monitor_width=core_opt_monitor_size(engine,0),
+    .monitor_height=core_opt_monitor_size(engine,1),
     .crt_shader_enabled=core_opt_embedded_shaders(engine),
     .crt_mask_enabled=core_opt_crt_mask(engine),
     .crt_scanlines_enabled=core_opt_onoff(engine,"anygm_crt_scanlines", "ANYGM_CRT_SCANLINES", 1),
@@ -380,6 +380,9 @@ static void boot_runtime(AnygmEngine *engine) {
                                                "ANYGM_REPORT_SHADERS_COMPILED",1)
   };
   gml_render_control_update(&engine->render,&render_control,GML_RENDER_CONTROL_HOST_OPTIONS);
+  if(anygm_host_development_setting(&engine->host,"GML_LOG_MONITOR"))
+    engine_logf(engine,ANYGM_LOG_DEBUG,"[monitor] %dx%d\n",
+                render_control.monitor_width,render_control.monitor_height);
   engine->vm.render = &engine->render;
   (void)gml_vm_software3d_ensure(&engine->vm);
   engine->vm.draw_event_hook = aspect_draw_event_hook;
@@ -639,8 +642,8 @@ static void engine_unload(AnygmEngine *engine){
 /* Apply the current neutral configuration before the frame. */
 static void poll_option_updates(AnygmEngine *engine) {
   GmlRenderControl control={
-    .requested_width=core_opt_resolution(engine,0),
-    .requested_height=core_opt_resolution(engine,1),
+    .monitor_width=core_opt_monitor_size(engine,0),
+    .monitor_height=core_opt_monitor_size(engine,1),
     .crt_shader_enabled=core_opt_embedded_shaders(engine),
     .crt_mask_enabled=core_opt_crt_mask(engine),
     .crt_scanlines_enabled=core_opt_onoff(engine,"anygm_crt_scanlines", "ANYGM_CRT_SCANLINES", 1),
@@ -651,6 +654,9 @@ static void poll_option_updates(AnygmEngine *engine) {
                                                "ANYGM_REPORT_SHADERS_COMPILED",1)
   };
   gml_render_control_update(&engine->render,&control,GML_RENDER_CONTROL_HOST_OPTIONS);
+  if(anygm_host_development_setting(&engine->host,"GML_LOG_MONITOR"))
+    engine_logf(engine,ANYGM_LOG_DEBUG,"[monitor] %dx%d\n",
+                control.monitor_width,control.monitor_height);
 }
 /* Fast-forward is an optimization hint only. */
 static void poll_fast_forward(AnygmEngine *engine) {
@@ -673,8 +679,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     engine->frame_flags|=ANYGM_FRAME_SHUTDOWN_REQUESTED;
     return ANYGM_OK;
   }
-  /* Hosts apply live presentation changes through anygm_set_config. Keeping option resolution out
-   * of the frame loop makes the framework seam a cold control path rather than recurring work. */
+  /* Hosts apply live presentation changes through anygm_set_config. Keeping virtual-monitor
+   * changes out of the frame loop makes the framework seam a cold control path. */
   poll_fast_forward(engine);     /* optimization hint; never changes presentation state */
   int prof = profile_enabled(engine);
   double t_total = prof ? profile_now_ms(engine) : 0.0;
@@ -1344,8 +1350,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	    gml_render_gui_set_maximise(&engine->render,1,
 	      engine->vm.gui_maximise_xscale,engine->vm.gui_maximise_yscale,
 	      engine->vm.gui_maximise_xoffset,engine->vm.gui_maximise_yoffset,
-	      engine->vm.window_w>0?engine->vm.window_w:(int)engine->win.disp_w,
-	      engine->vm.window_h>0?engine->vm.window_h:(int)engine->win.disp_h);
+	      (int)engine->output_width,(int)engine->output_height);
 	  /* GM screen-stage events: Pre-Draw -> [default app-surface blit] -> Post-Draw -> GUI.
 	   * Content that composites the application surface itself, for example through a presentation
 	   * object applying a palette shader in Post-Draw) disable the default blit and draw here.
@@ -1866,8 +1871,8 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   if(delta->struct_size<sizeof *delta || delta->values.struct_size<sizeof delta->values)
     return ANYGM_ERROR_INCOMPATIBLE_ABI;
   uint64_t f=delta->fields;
-  if(f&ANYGM_CONFIG_PRESENT_WIDTH) engine->config.present_width=delta->values.present_width;
-  if(f&ANYGM_CONFIG_PRESENT_HEIGHT) engine->config.present_height=delta->values.present_height;
+  if(f&ANYGM_CONFIG_MONITOR_WIDTH) engine->config.monitor_width=delta->values.monitor_width;
+  if(f&ANYGM_CONFIG_MONITOR_HEIGHT) engine->config.monitor_height=delta->values.monitor_height;
   if(f&ANYGM_CONFIG_ASPECT_MODE) engine->config.aspect_mode=delta->values.aspect_mode;
   if(f&ANYGM_CONFIG_MOUSE_MODE) engine->config.mouse_mode=delta->values.mouse_mode;
   if(f&ANYGM_CONFIG_ROOM_SKIP_BUTTON) engine->config.room_skip_button=delta->values.room_skip_button;

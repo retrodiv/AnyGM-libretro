@@ -754,8 +754,7 @@ GmlVal gml_builtin_try_platform_extensions(GmlVM *vm, const char *nm, GmlVal *a,
       gml_render_gui_set_maximise(R,vm->gui_maximise_active,
         vm->gui_maximise_xscale,vm->gui_maximise_yscale,
         vm->gui_maximise_xoffset,vm->gui_maximise_yoffset,
-        vm->window_w>0?vm->window_w:(vm->win?(int)vm->win->disp_w:0),
-        vm->window_h>0?vm->window_h:(vm->win?(int)vm->win->disp_h:0));
+        presentation_size(vm,R,0),presentation_size(vm,R,1));
     return vreal(0);
   }
 

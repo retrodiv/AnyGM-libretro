@@ -254,9 +254,6 @@ void aspect_draw_event_hook(GmlVM *vm,GmlInstance *instance,const char *suffix,
 void screen_redraw_room_layer_hook(GmlVM *vm,int foreground,void *user);
 void screen_refresh_present_latch_hook(GmlVM *vm,void *user);
 void sync_room_fps(AnygmEngine *engine,int publish_changes);
-int screen_stage_uses_requested_raster(
-  const GmlWin *content,const GmlRenderPresentationMetrics *presentation,
-  int logical_width,int logical_height,int target_width,int target_height);
 void screen_stage_gui_geometry(
   const AnygmEngine *engine,const GmlRenderPresentationMetrics *presentation,
   int window_width,int window_height,int *target_width,int *target_height,
@@ -295,7 +292,7 @@ void classic_transition_release(AnygmEngine *engine);
 int classic_transition_start(AnygmEngine *engine,unsigned width,unsigned height,int steps);
 void classic_transition_apply(AnygmEngine *engine,uint32_t *frame,unsigned width,unsigned height);
 void draw_game_cursor(AnygmEngine *engine,unsigned width,unsigned height);
-int core_opt_resolution(AnygmEngine *engine,int height);
+int core_opt_monitor_size(AnygmEngine *engine,int height);
 int core_opt_embedded_shaders(AnygmEngine *engine);
 int core_opt_crt_mask(AnygmEngine *engine);
 int core_opt_onoff(AnygmEngine *engine,const char *key,const char *environment,int default_value);

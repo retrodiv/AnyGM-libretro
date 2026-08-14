@@ -439,13 +439,9 @@ typedef struct GmlRender {
   } *shader_pal; int n_shader_pal;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
   int       active_shader;   /* shader_set asset id, -1 = none. Reset per frame. */
-  int       resolution_w;    /* requested final presentation width, or 0 for the content base size.
-                              * Window/display getters expose the same value so window-sized render
-                              * surfaces and the host framebuffer stay in one coordinate space. */
-  int       resolution_h;    /* requested final presentation height, or 0 for the content base size. */
-  int       presentation_w;  /* effective final width after presentation policies (for example an
-                              * aspect override derived from the requested height). The requested
-                              * core-option axes above stay unchanged. */
+  int       monitor_w;       /* virtual monitor width reported to content, or 0 for fallback. */
+  int       monitor_h;       /* virtual monitor height reported to content, or 0 for fallback. */
+  int       presentation_w;  /* effective final width after presentation policies. */
   int       presentation_h;  /* effective final height; recomputed by the host wrapper. */
   int       crt_shader_enable; /* run recognized embedded CRT post-process shaders (default 1). 0 =
                               * report them not-compiled and never execute them, so content falls back

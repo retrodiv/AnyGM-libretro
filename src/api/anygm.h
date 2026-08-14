@@ -321,8 +321,10 @@ typedef struct AnygmLoadConfig {
 
 typedef struct AnygmConfig {
   uint32_t struct_size;
-  uint32_t present_width;
-  uint32_t present_height;
+  /* Optional virtual-monitor dimensions reported to content. Zero selects the runtime fallback.
+   * These values do not resize the content's window or the framebuffer delivered to the host. */
+  uint32_t monitor_width;
+  uint32_t monitor_height;
   uint32_t aspect_mode;
   uint32_t mouse_mode;
   uint32_t room_skip_button;
@@ -361,8 +363,8 @@ typedef struct AnygmConfigDelta {
 } AnygmConfigDelta;
 
 enum {
-  ANYGM_CONFIG_PRESENT_WIDTH=1ull<<0,
-  ANYGM_CONFIG_PRESENT_HEIGHT=1ull<<1,
+  ANYGM_CONFIG_MONITOR_WIDTH=1ull<<0,
+  ANYGM_CONFIG_MONITOR_HEIGHT=1ull<<1,
   ANYGM_CONFIG_ASPECT_MODE=1ull<<2,
   ANYGM_CONFIG_MOUSE_MODE=1ull<<3,
   ANYGM_CONFIG_ROOM_SKIP_BUTTON=1ull<<4,
