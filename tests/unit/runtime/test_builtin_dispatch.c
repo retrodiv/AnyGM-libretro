@@ -627,6 +627,26 @@ static int inherited_collision_resolves_numeric_suffix(GmlVM *vm){
   return ok;
 }
 
+/* A missing stream must not alias sound index zero, and audio_exists must reject it. */
+static int missing_stream_is_not_sound_zero(GmlVM *vm){
+  GmlVal path=vstr("no/such/announcer/line.ogg");
+  GmlVal handle=gml_builtin_call(vm,"audio_create_stream",&path,1);
+  int ok=handle.t==V_REAL && handle.d<0.0;
+  if(!ok) fprintf(stderr,"a stream that cannot be created answered %g\n",
+                  handle.t==V_REAL?handle.d:-999.0);
+  if(ok){
+    GmlVal exists=gml_builtin_call(vm,"audio_exists",&handle,1);
+    ok=exists.t==V_REAL && exists.d==0.0;
+    if(!ok) fprintf(stderr,"audio_exists accepted a stream that was never created\n");
+  }
+  if(ok){
+    GmlVal destroyed=gml_builtin_call(vm,"audio_destroy_stream",&handle,1);
+    ok=destroyed.t==V_REAL;
+    if(!ok) fprintf(stderr,"destroying an uncreated stream did not answer\n");
+  }
+  return ok;
+}
+
 /* A plain layer has no assigned FX. A visibility walk must not hide it. */
 static int layer_fx_answers_none(GmlVM *vm){
   GmlVal create_args[]={vreal(64),vstr("neutral_fx_probe")};
@@ -769,6 +789,7 @@ int main(void){
          portable_joystick_contract(&vm) &&
          layer_instance_move(&vm) &&
          layer_fx_answers_none(&vm) &&
+         missing_stream_is_not_sound_zero(&vm) &&
          inherited_collision_resolves_numeric_suffix(&vm);
   gml_vm_free(&vm);
   gml_win_free(&win);

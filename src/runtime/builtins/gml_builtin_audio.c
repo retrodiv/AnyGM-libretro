@@ -2133,6 +2133,22 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"audio_resume_all")){ gml_audio_pause_all(AU,0); return vreal(0); }
     if(!strcmp(nm,"audio_is_playing")||!strcmp(nm,"sound_isplaying")) return vreal(gml_audio_is_playing(AU,(int)N(a,n,0)));
 
+    /* Streams use the existing external-audio loader. An unavailable stream returns -1 so it
+     * cannot alias the valid sound index zero. */
+    if(!strcmp(nm,"audio_create_stream")){
+      const char *path=S(vm,a,n,0);
+      int handle=path&&*path ? external_audio_load(vm,path) : -1;
+      if(builtin_setting(vm,"GML_LOG_AUDIO"))
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+                        "[audio] create_stream %s handle=%d\n",path?path:"",handle);
+      return vreal(handle);
+    }
+    if(!strcmp(nm,"audio_destroy_stream")){
+      int handle=(int)N(a,n,0);
+      if(handle>=0) external_audio_free(vm,handle);
+      return vreal(0);
+    }
+
     /* ---- caster_* : external Ogg streaming. caster_load("music/X.ogg") resolves the exported
      * "mus_X.ogg" sidecar in the content directory; the resulting sound handle is reused by the
      * regular voice API. */
