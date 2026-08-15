@@ -178,7 +178,7 @@ struct AnygmEngine {
   uint64_t content_fingerprint;
   uint64_t compatibility_fingerprint;
   int full_game_on_initial_boot;
-  uint32_t *fb,*screen,*gui_buffer,*app_crop;
+  uint32_t *fb,*screen,*gui_buffer,*app_crop,*host_screen;
   int content_presented;
   uint32_t *classic_phase_mem;
   size_t classic_phase_cap;
@@ -220,6 +220,11 @@ struct AnygmEngine {
   uint8_t event_key_current[ANYGM_KEY_LAST],event_key_previous[ANYGM_KEY_LAST];
   double axis_current[4],axis_previous[4];
   unsigned output_width,output_height;
+  /* The game composes into output_width/output_height. Most presentation paths adopt the virtual
+   * monitor as that effective window extent; a path which deliberately retains a narrower raster
+   * can still wrap its completed frame in the distinct host framebuffer below. */
+  unsigned host_output_width,host_output_height;
+  int host_canvas_active,host_canvas_x,host_canvas_y,host_canvas_width,host_canvas_height;
   int gui_offset_x,gui_offset_y,canvas_mode,gui_space_width,gui_space_height;
   /* Derived presentation state: content owns the non-native window raster while automatic
    * application-surface drawing is disabled. The screen-stage GUI must use that same raster for
@@ -286,6 +291,8 @@ void introskip_hook(AnygmEngine *engine);
 int ensure_classic_phase(AnygmEngine *engine,size_t pixels);
 int ensure_primary_buffers(AnygmEngine *engine);
 int ensure_scratch_buffer(AnygmEngine *engine,uint32_t **buffer);
+int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
+                       unsigned *width,unsigned *height);
 void log_present_pass(AnygmEngine *engine,const char *pass,const uint32_t *pixels,
                       int width,int height);
 void classic_transition_release(AnygmEngine *engine);

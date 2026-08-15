@@ -29,14 +29,14 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"None",NULL},{"Light",NULL},{"Medium",NULL},{"High",NULL},{"Maximum",NULL},{NULL,NULL}},
    "High"},
   {"anygm_render_game_resolution","Render at game resolution",NULL,
-   "Delivers the game's own raster and lets this program scale it. Off matches the window size "
-   "the game asks for, which costs a software upscale and reshapes content whose window and view "
-   "disagree.",
+   "Delivers the game's own raster and lets this program scale it. Off renders at the effective "
+   "presentation window: Monitor width and height supply that extent when set, while Game Base "
+   "follows the game's request.",
    NULL,"video",
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},
   {"anygm_width_resolution","Monitor width",NULL,
-   "Reports this virtual monitor width to the game. Game Base uses the runtime fallback.",
+   "Reports this virtual monitor width to the game. With Render at game resolution off, it also supplies the effective presentation-window and framebuffer width. Game Base follows the game's request.",
    NULL,"video",
    {{"Game Base",NULL},{"64",NULL},{"128",NULL},{"144",NULL},{"160",NULL},{"176",NULL},
     {"192",NULL},{"200",NULL},{"224",NULL},{"240",NULL},{"256",NULL},{"288",NULL},{"300",NULL},
@@ -50,7 +50,7 @@ static struct retro_core_option_v2_definition g_definitions[]={
     {NULL,NULL}},
    "Game Base"},
   {"anygm_height_resolution","Monitor height",NULL,
-   "Reports this virtual monitor height to the game. Game Base uses the runtime fallback.",
+   "Reports this virtual monitor height to the game. With Render at game resolution off, it also supplies the effective presentation-window and framebuffer height. Game Base follows the game's request.",
    NULL,"video",
    {{"Game Base",NULL},{"64",NULL},{"128",NULL},{"144",NULL},{"160",NULL},{"176",NULL},
     {"180",NULL},{"192",NULL},{"200",NULL},{"216",NULL},{"224",NULL},{"240",NULL},{"256",NULL},
@@ -532,10 +532,9 @@ void libretro_options_apply(bool all_fields){
                           !strcmp(value,"Maximum")?32u:24u;
   value=option_value("anygm_start_room");
   config->start_room=value&&strcmp(value,"Full game")?(int32_t)strtol(value,NULL,10):-1;
-  /* Matching a requested window larger than the view costs a full software upscale carrying no
-     detail the host would not produce itself, and reshapes content whose window proportions
-     differ from its view. Rasterizing at the view is the default; the window-matching path stays
-     available for content that depends on it. */
+  /* Rendering at the effective presentation window costs a full software upscale when it is
+     larger than the view. Rasterizing at the view is the default; the window-matching path stays
+     available for content and host-monitor layouts that depend on it. */
   config->present_logical_raster=option_on("anygm_render_game_resolution",1);
   config->clear_local_data=option_on("anygm_clear_local_data",0);
 

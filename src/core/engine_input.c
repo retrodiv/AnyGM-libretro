@@ -242,6 +242,14 @@ void engine_input_poll_mouse(AnygmEngine *engine){
   int pp=engine->input.pointer_pressed?1:0;
   int dx=engine->input.mouse_delta_x,dy=engine->input.mouse_delta_y;
   unsigned ow = engine->output_width ? engine->output_width : engine->width, oh = engine->output_height ? engine->output_height : engine->height;
+  if(engine->host_canvas_active && engine->host_canvas_width>0 && engine->host_canvas_height>0){
+    if(px>=0)
+      px=(int)lround((px-engine->host_canvas_x)*(double)ow/engine->host_canvas_width);
+    if(py>=0)
+      py=(int)lround((py-engine->host_canvas_y)*(double)oh/engine->host_canvas_height);
+    dx=(int)lround(dx*(double)ow/engine->host_canvas_width);
+    dy=(int)lround(dy*(double)oh/engine->host_canvas_height);
+  }
   int mmode = core_opt_mouse_mode(engine);              /* 0 auto, 1 absolute, 2 relative */
   int pointer_signal=(px>=0 && py>=0) || pp;
   if(pointer_signal) engine->pointer_active = 1;

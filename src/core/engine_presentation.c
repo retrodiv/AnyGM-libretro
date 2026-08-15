@@ -39,6 +39,84 @@ int ensure_scratch_buffer(AnygmEngine *engine,uint32_t **buffer){
   return *buffer!=NULL;
 }
 
+static void scale_completed_frame(const uint32_t *source,unsigned source_width,
+                                  unsigned source_height,uint32_t *destination,
+                                  unsigned destination_stride,int destination_x,
+                                  int destination_y,unsigned destination_width,
+                                  unsigned destination_height){
+  if(destination_width>=source_width && destination_height>=source_height){
+    unsigned source_y=0,y_accumulator=source_height;
+    for(unsigned y=0;y<destination_height;y++){
+      const uint32_t *source_row=source+(size_t)source_y*source_width;
+      uint32_t *destination_row=destination+
+        (size_t)(destination_y+(int)y)*destination_stride+destination_x;
+      unsigned source_x=0,x_accumulator=source_width;
+      for(unsigned x=0;x<destination_width;x++){
+        destination_row[x]=source_row[source_x]&0xFFFFFFu;
+        x_accumulator+=source_width*2u;
+        if(x_accumulator>=destination_width*2u){
+          x_accumulator-=destination_width*2u;
+          source_x++;
+        }
+      }
+      y_accumulator+=source_height*2u;
+      if(y_accumulator>=destination_height*2u){
+        y_accumulator-=destination_height*2u;
+        source_y++;
+      }
+    }
+    return;
+  }
+  for(unsigned y=0;y<destination_height;y++){
+    unsigned source_y0=y*source_height/destination_height;
+    unsigned source_y1=(y+1)*source_height/destination_height;
+    if(source_y1<=source_y0) source_y1=source_y0+1;
+    for(unsigned x=0;x<destination_width;x++){
+      unsigned source_x0=x*source_width/destination_width;
+      unsigned source_x1=(x+1)*source_width/destination_width;
+      if(source_x1<=source_x0) source_x1=source_x0+1;
+      unsigned red=0,green=0,blue=0,count=0;
+      for(unsigned source_y=source_y0;
+          source_y<source_y1 && source_y<source_height;source_y++)
+        for(unsigned source_x=source_x0;
+            source_x<source_x1 && source_x<source_width;source_x++){
+          uint32_t pixel=source[(size_t)source_y*source_width+source_x];
+          red+=(pixel>>16)&0xFFu;
+          green+=(pixel>>8)&0xFFu;
+          blue+=pixel&0xFFu;
+          count++;
+        }
+      if(!count) count=1;
+      destination[(size_t)(destination_y+(int)y)*destination_stride+
+                  destination_x+(int)x]=
+        ((red/count)<<16)|((green/count)<<8)|(blue/count);
+    }
+  }
+}
+
+int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
+                       unsigned *width,unsigned *height){
+  unsigned host_width=engine->host_output_width?engine->host_output_width:engine->output_width;
+  unsigned host_height=engine->host_output_height?engine->host_output_height:engine->output_height;
+  if(!engine->host_canvas_active){
+    if(pixels) *pixels=engine->screen;
+    if(width) *width=host_width;
+    if(height) *height=host_height;
+    return 1;
+  }
+  if(!ensure_scratch_buffer(engine,&engine->host_screen)) return 0;
+  memset(engine->host_screen,0,(size_t)host_width*host_height*sizeof(*engine->host_screen));
+  scale_completed_frame(
+    engine->screen,engine->output_width,engine->output_height,
+    engine->host_screen,host_width,
+    engine->host_canvas_x,engine->host_canvas_y,
+    (unsigned)engine->host_canvas_width,(unsigned)engine->host_canvas_height);
+  if(pixels) *pixels=engine->host_screen;
+  if(width) *width=host_width;
+  if(height) *height=host_height;
+  return 1;
+}
+
 
 /* Preserve the completed frame after a shutdown request instead of advancing a runtime which has
  * already fired its final event. These flags belong to the loaded runtime, not to the process. */
@@ -503,14 +581,15 @@ static int gui_window_near_native(int win_w, int win_h, int gui_w, int gui_h) {
   if (ytol < 8) ytol = 8;
   return labs((long)win_w - gui_w) <= xtol && labs((long)win_h - gui_h) <= ytol;
 }
-/* A virtual monitor is descriptive until content itself enters fullscreen. Keep the last authored
- * window dimensions intact so leaving fullscreen restores them naturally, while presentation and
- * window queries use the monitor extent for as long as the fullscreen request remains active. */
+/* With logical-raster presentation disabled, the frontend cannot tell the core the physical
+ * presentation extent by any standard libretro channel. The configured virtual monitor supplies
+ * that missing window extent. Keep the authored window request intact so returning to Game Base
+ * restores it naturally; fullscreen uses the same monitor even under logical-raster presentation. */
 static void content_window_extent(const AnygmEngine *engine,int fallback_width,int fallback_height,
                                   int *width,int *height){
   int out_width=engine->vm.window_w>0?engine->vm.window_w:fallback_width;
   int out_height=engine->vm.window_h>0?engine->vm.window_h:fallback_height;
-  if(engine->vm.window_fullscreen){
+  if(engine->vm.window_fullscreen || !engine->config.present_logical_raster){
     uint32_t monitor_width=engine->config.monitor_width;
     uint32_t monitor_height=engine->config.monitor_height;
     if(monitor_width>FB_MAX_W) monitor_width=FB_MAX_W;
@@ -691,6 +770,44 @@ void screen_stage_gui_geometry(
   }
   if(logical_width) *logical_width=width;
   if(logical_height) *logical_height=height;
+}
+static void host_canvas_update(AnygmEngine *engine){
+  unsigned source_width=engine->output_width;
+  unsigned source_height=engine->output_height;
+  unsigned host_width=source_width;
+  unsigned host_height=source_height;
+  if(!engine->config.present_logical_raster){
+    int configured_width=core_opt_monitor_size(engine,0);
+    int configured_height=core_opt_monitor_size(engine,1);
+    if(configured_width>0) host_width=(unsigned)configured_width;
+    if(configured_height>0) host_height=(unsigned)configured_height;
+  }
+  engine->host_output_width=host_width;
+  engine->host_output_height=host_height;
+  engine->host_canvas_active=source_width!=host_width || source_height!=host_height;
+  engine->host_canvas_x=0;
+  engine->host_canvas_y=0;
+  engine->host_canvas_width=(int)host_width;
+  engine->host_canvas_height=(int)host_height;
+  if(!engine->host_canvas_active || !source_width || !source_height ||
+     !host_width || !host_height) return;
+  uint64_t width_limited=(uint64_t)host_width*source_height;
+  uint64_t height_limited=(uint64_t)host_height*source_width;
+  if(width_limited<=height_limited){
+    engine->host_canvas_width=(int)host_width;
+    engine->host_canvas_height=(int)(((uint64_t)source_height*host_width+
+                                      source_width/2u)/source_width);
+  } else {
+    engine->host_canvas_height=(int)host_height;
+    engine->host_canvas_width=(int)(((uint64_t)source_width*host_height+
+                                     source_height/2u)/source_height);
+  }
+  if(engine->host_canvas_width<1) engine->host_canvas_width=1;
+  if(engine->host_canvas_height<1) engine->host_canvas_height=1;
+  if(engine->host_canvas_width>(int)host_width) engine->host_canvas_width=(int)host_width;
+  if(engine->host_canvas_height>(int)host_height) engine->host_canvas_height=(int)host_height;
+  engine->host_canvas_x=((int)host_width-engine->host_canvas_width)/2;
+  engine->host_canvas_y=((int)host_height-engine->host_canvas_height)/2;
 }
 void compute_present(AnygmEngine *engine) {
   GmlRenderPresentationMetrics renderer;
@@ -902,6 +1019,10 @@ void compute_present(AnygmEngine *engine) {
     engine->gui_space_height=(int)engine->output_height;
     engine->gui_offset_x=engine->gui_offset_y=0;
   }
+  /* The configured extent has already participated in the effective window and GUI policies
+   * above. A presentation path which intentionally retains a narrower completed raster still
+   * needs a correctly shaped host framebuffer, so uniformly fit that last result as a fallback. */
+  host_canvas_update(engine);
   gml_render_presentation_effective_set(&engine->render,effective_width,effective_height);
 }
 void aspect_view_overlay_begin(AnygmEngine *engine,AspectViewOverlay *ov, int center_hud, int view_mode) {
@@ -1034,18 +1155,27 @@ void sync_room_fps(AnygmEngine *engine,int publish_changes) {
   double fps = cur_room_fps(engine);
   unsigned nw, nh; cur_room_res(engine,&nw, &nh);
   unsigned pw = engine->output_width, ph = engine->output_height;
+  unsigned host_pw=engine->host_output_width,host_ph=engine->host_output_height;
   unsigned prev_w = engine->width, prev_h = engine->height;
   engine->width = nw; engine->height = nh;
   compute_present(engine);
   if (room == engine->fps_room && fps == engine->fps && nw == prev_w && nh == prev_h &&
-      engine->output_width == pw && engine->output_height == ph) { engine->fps_room = room; return; }
+      engine->output_width == pw && engine->output_height == ph &&
+      engine->host_output_width==host_pw && engine->host_output_height==host_ph) {
+    engine->fps_room = room;
+    return;
+  }
   engine->fps_room = room;
   int fps_changed = (fps != engine->fps);
-  int geom_changed = (nw != prev_w) || (nh != prev_h) || (engine->output_width != pw) || (engine->output_height != ph);
+  int geom_changed = (nw != prev_w) || (nh != prev_h) ||
+                     (engine->output_width != pw) || (engine->output_height != ph) ||
+                     (engine->host_output_width != host_pw) ||
+                     (engine->host_output_height != host_ph);
   int changed = fps_changed || geom_changed;
   if(changed && anygm_host_development_setting(&engine->host,"GML_LOG_AV"))
-    engine_logf(engine,ANYGM_LOG_DEBUG, "[av] room=%d bytecode=%u fps=%.2f size=%ux%u out=%ux%u window=%dx%d gui=%dx%d\n",
+    engine_logf(engine,ANYGM_LOG_DEBUG, "[av] room=%d bytecode=%u fps=%.2f size=%ux%u out=%ux%u host=%ux%u window=%dx%d gui=%dx%d\n",
       room, (unsigned)engine->win.bytecode, fps, nw, nh, engine->output_width, engine->output_height,
+      engine->host_output_width,engine->host_output_height,
       engine->vm.window_w,engine->vm.window_h,engine->vm.gui_w,engine->vm.gui_h);
   if (fps_changed) engine->audio_accumulator = 0.0;
   engine->fps = fps;

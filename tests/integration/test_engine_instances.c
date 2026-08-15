@@ -82,13 +82,16 @@ static int virtual_monitor_geometry_policy(void){
   GmlArr *position_values=position.t==V_ARR?(GmlArr*)position.arr:NULL;
   int position_ok=position_values && position_values->len==4 &&
                   position_values->data[0].d==0 && position_values->data[1].d==0 &&
-                  position_values->data[2].d==1366 && position_values->data[3].d==768;
+                  position_values->data[2].d==1920 && position_values->data[3].d==1080;
   int ok=configured_display_w.t==V_REAL && configured_display_w.d==1920 &&
          configured_display_h.t==V_REAL && configured_display_h.d==1080 &&
-         window_w.t==V_REAL && window_w.d==1366 &&
-         window_h.t==V_REAL && window_h.d==768 && position_ok &&
-         engine.output_width==1366 && engine.output_height==768 &&
-         engine.gui_space_width==1366 && engine.gui_space_height==768;
+         window_w.t==V_REAL && window_w.d==1920 &&
+         window_h.t==V_REAL && window_h.d==1080 && position_ok &&
+         engine.vm.window_w==1366 && engine.vm.window_h==768 &&
+         engine.output_width==1920 && engine.output_height==1080 &&
+         engine.gui_space_width==1920 && engine.gui_space_height==1080 &&
+         engine.host_output_width==1920 && engine.host_output_height==1080 &&
+         !engine.host_canvas_active;
 
   engine.vm.window_fullscreen=1;
   compute_present(&engine);
@@ -110,33 +113,73 @@ static int virtual_monitor_geometry_policy(void){
            fullscreen_window_h.t==V_REAL && fullscreen_window_h.d==1080 &&
            engine.output_width==1920 && engine.output_height==1080 &&
            engine.gui_space_width==1920 && engine.gui_space_height==1080 &&
+           engine.host_output_width==1920 && engine.host_output_height==1080 &&
+           !engine.host_canvas_active &&
            fullscreen_position_ok;
 
   engine.vm.window_fullscreen=0;
   compute_present(&engine);
   GmlVal restored_window_w=gml_builtin_call(&engine.vm,"window_get_width",NULL,0);
   GmlVal restored_window_h=gml_builtin_call(&engine.vm,"window_get_height",NULL,0);
-  ok=ok && restored_window_w.t==V_REAL && restored_window_w.d==1366 &&
-           restored_window_h.t==V_REAL && restored_window_h.d==768 &&
-           engine.output_width==1366 && engine.output_height==768 &&
-           engine.gui_space_width==1366 && engine.gui_space_height==768;
+  ok=ok && restored_window_w.t==V_REAL && restored_window_w.d==1920 &&
+           restored_window_h.t==V_REAL && restored_window_h.d==1080 &&
+           engine.vm.window_w==1366 && engine.vm.window_h==768 &&
+           engine.output_width==1920 && engine.output_height==1080 &&
+           engine.gui_space_width==1920 && engine.gui_space_height==1080 &&
+           engine.host_output_width==1920 && engine.host_output_height==1080 &&
+           !engine.host_canvas_active;
 
   monitor.monitor_width=0;
   monitor.monitor_height=0;
   engine.config.monitor_width=0;
   engine.config.monitor_height=0;
   gml_render_control_update(&engine.render,&monitor,GML_RENDER_CONTROL_MONITOR_SIZE);
+  compute_present(&engine);
   GmlVal fallback_display_w=gml_builtin_call(&engine.vm,"display_get_width",NULL,0);
   GmlVal fallback_display_h=gml_builtin_call(&engine.vm,"display_get_height",NULL,0);
+  GmlVal fallback_window_w=gml_builtin_call(&engine.vm,"window_get_width",NULL,0);
+  GmlVal fallback_window_h=gml_builtin_call(&engine.vm,"window_get_height",NULL,0);
   ok=ok && fallback_display_w.t==V_REAL && fallback_display_w.d==1366 &&
-           fallback_display_h.t==V_REAL && fallback_display_h.d==768;
+           fallback_display_h.t==V_REAL && fallback_display_h.d==768 &&
+           fallback_window_w.t==V_REAL && fallback_window_w.d==1366 &&
+           fallback_window_h.t==V_REAL && fallback_window_h.d==768 &&
+           engine.output_width==1366 && engine.output_height==768 &&
+           engine.gui_space_width==1366 && engine.gui_space_height==768 &&
+           engine.host_output_width==1366 && engine.host_output_height==768 &&
+           !engine.host_canvas_active;
+  uint32_t source_pixels[8]={
+    0x102030,0x405060,0x708090,0xA0B0C0,
+    0xC0B0A0,0x908070,0x605040,0x302010
+  };
+  uint32_t host_pixels[16];
+  AnygmEngine frame={0};
+  frame.screen=source_pixels;
+  frame.host_screen=host_pixels;
+  frame.output_width=4;
+  frame.output_height=2;
+  frame.host_output_width=4;
+  frame.host_output_height=4;
+  frame.host_canvas_active=1;
+  frame.host_canvas_x=0;
+  frame.host_canvas_y=1;
+  frame.host_canvas_width=4;
+  frame.host_canvas_height=2;
+  const uint32_t *resolved_pixels=NULL;
+  unsigned resolved_width=0,resolved_height=0;
+  int frame_ok=resolve_host_frame(
+    &frame,&resolved_pixels,&resolved_width,&resolved_height) &&
+    resolved_pixels==host_pixels && resolved_width==4 && resolved_height==4 &&
+    host_pixels[0]==0 && host_pixels[3]==0 &&
+    !memcmp(host_pixels+4,source_pixels,sizeof source_pixels) &&
+    host_pixels[12]==0 && host_pixels[15]==0;
+  ok=ok && frame_ok;
   if(!ok)
     fprintf(stderr,
-      "virtual monitor changed content-owned geometry or was not reported independently:"
+      "virtual monitor did not select coherent effective and host geometry:"
       " configured=%.0fx%.0f fallback=%.0fx%.0f window=%.0fx%.0f"
       " fullscreen=%.0fx%.0f fullscreen_output=%ux%u fullscreen_gui=%dx%d"
-      " restored=%.0fx%.0f output=%ux%u gui=%dx%d"
-      " position=%d fullscreen_position=%d\n",
+      " restored=%.0fx%.0f output=%ux%u gui=%dx%d host=%ux%u fit=%d,%d %dx%d"
+      " position=%d fullscreen_position=%d frame=%d\n",
       configured_display_w.d,configured_display_h.d,
       fallback_display_w.d,fallback_display_h.d,window_w.d,window_h.d,
       fullscreen_window_w.d,fullscreen_window_h.d,
@@ -144,7 +187,11 @@ static int virtual_monitor_geometry_policy(void){
       fullscreen_gui_width,fullscreen_gui_height,
       restored_window_w.d,restored_window_h.d,
       engine.output_width,engine.output_height,
-      engine.gui_space_width,engine.gui_space_height,position_ok,fullscreen_position_ok);
+      engine.gui_space_width,engine.gui_space_height,
+      engine.host_output_width,engine.host_output_height,
+      engine.host_canvas_x,engine.host_canvas_y,
+      engine.host_canvas_width,engine.host_canvas_height,
+      position_ok,fullscreen_position_ok,frame_ok);
   gml_values_release(&position,1);
   gml_values_release(&fullscreen_position,1);
   gml_vm_free(&engine.vm);

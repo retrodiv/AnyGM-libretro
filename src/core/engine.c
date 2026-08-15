@@ -668,6 +668,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(engine->vm.game_change_pending)
     return engine_apply_game_change_and_run_frame(engine);
   engine->audio_frames=0;
+  /* A live monitor-size change arrives before input. Resolve its host-to-content transform now so
+   * the first pointer sample under the new geometry is mapped through the same canvas as video. */
+  if(engine->fps_room<0 || !engine->output_width || !engine->output_height)
+    sync_room_fps(engine,1);
   /* Keep supplying the last completed picture and silence after the shutdown request without
    * advancing Step, Draw, particles, or animation. */
   if(engine->runtime_ended){
@@ -679,8 +683,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     engine->frame_flags|=ANYGM_FRAME_SHUTDOWN_REQUESTED;
     return ANYGM_OK;
   }
-  /* Hosts apply live presentation changes through anygm_set_config. Keeping virtual-monitor
-   * changes out of the frame loop makes the framework seam a cold control path. */
+  /* Hosts apply live presentation changes through anygm_set_config; only the fast-forward
+   * optimization hint still needs polling every frame. */
   poll_fast_forward(engine);     /* optimization hint; never changes presentation state */
   int prof = profile_enabled(engine);
   double t_total = prof ? profile_now_ms(engine) : 0.0;
@@ -1414,8 +1418,11 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   gml_render_flush_pending_fill(&engine->render);
   log_present_pass(engine,"flushed",gtarget,gtw,gth);
   if (anygm_host_development_setting(&engine->host,"GML_LOG_PRESENT")) {
-    if (engine->diagnostics.present_frame++ % 120 == 0) engine_logf(engine,ANYGM_LOG_DEBUG, "[present] out=%ux%u canvas=%d gui=%dx%d indirect=%d port=%dx%d prect=(%d,%d %dx%d) off=(%d,%d)\n",
-      ow, oh, engine->canvas_mode, gsw, gsh, gui_indirect, (int)pw_, (int)ph_, prx, pry, prw, prh, engine->gui_offset_x, engine->gui_offset_y); }
+    if (engine->diagnostics.present_frame++ % 120 == 0) engine_logf(engine,ANYGM_LOG_DEBUG, "[present] out=%ux%u canvas=%d gui=%dx%d indirect=%d port=%dx%d prect=(%d,%d %dx%d) off=(%d,%d) host=%ux%u fit=(%d,%d %dx%d)\n",
+      ow, oh, engine->canvas_mode, gsw, gsh, gui_indirect, (int)pw_, (int)ph_, prx, pry, prw, prh, engine->gui_offset_x, engine->gui_offset_y,
+      engine->host_output_width,engine->host_output_height,
+      engine->host_canvas_x,engine->host_canvas_y,
+      engine->host_canvas_width,engine->host_canvas_height); }
   /* Fallback: content can disable the automatic application-surface blit
    * intending to composite it itself in a Draw GUI event. If that compositor paints nothing to the
    * screen here (unsupported GUI-space transform, absent object, etc.) the frame would be black — so
@@ -1729,6 +1736,7 @@ void anygm_destroy(AnygmEngine *engine){
   free(engine->screen);
   free(engine->gui_buffer);
   free(engine->app_crop);
+  free(engine->host_screen);
   engine->guard=0;
   free(engine);
 }
@@ -1800,8 +1808,10 @@ AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED || !info)
     return ANYGM_ERROR_INVALID_STATE;
   if(info->struct_size<sizeof *info) return ANYGM_ERROR_INCOMPATIBLE_ABI;
-  info->base_width=engine->output_width?engine->output_width:engine->width;
-  info->base_height=engine->output_height?engine->output_height:engine->height;
+  info->base_width=engine->host_output_width?engine->host_output_width:
+                   (engine->output_width?engine->output_width:engine->width);
+  info->base_height=engine->host_output_height?engine->host_output_height:
+                    (engine->output_height?engine->output_height:engine->height);
   info->max_width=FB_MAX_W;
   info->max_height=FB_MAX_H;
   /* The ratio describes the frame actually handed over, so a host scaling to it preserves the
@@ -1847,16 +1857,25 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   engine->frame_flags=0;
   AnygmResult result=engine_run_frame(engine);
   if(result!=ANYGM_OK) return result;
+  const uint32_t *presented_pixels=NULL;
+  unsigned presented_width=0,presented_height=0;
+  if(!resolve_host_frame(
+       engine,&presented_pixels,&presented_width,&presented_height)){
+    engine_errorf(engine,ANYGM_ERROR_OUT_OF_MEMORY,"Could not allocate the host presentation buffer");
+    return ANYGM_ERROR_OUT_OF_MEMORY;
+  }
   if(anygm_host_development_setting(&engine->host,"GML_LOG_PRESENTED")){
-    size_t lit=0; unsigned ow2=engine->output_width, oh2=engine->output_height;
-    if(engine->screen) for(size_t i=0;i<(size_t)ow2*oh2;i++) if(engine->screen[i]&0xFFFFFF) lit++;
+    size_t lit=0;
+    if(presented_pixels)
+      for(size_t i=0;i<(size_t)presented_width*presented_height;i++)
+        if(presented_pixels[i]&0xFFFFFF) lit++;
     engine_logf(engine,ANYGM_LOG_DEBUG,"[presented] screen lit=%zu presented=%d\n",lit,engine->content_presented);
   }
   engine->content_presented=0;
   gml_render_clear_content_composited_screen(&engine->render);
-  output->pixels=engine->screen;
-  output->width=engine->output_width?engine->output_width:engine->width;
-  output->height=engine->output_height?engine->output_height:engine->height;
+  output->pixels=presented_pixels;
+  output->width=presented_width;
+  output->height=presented_height;
   output->pitch=(size_t)output->width*sizeof(uint32_t);
   output->pixel_format=ANYGM_PIXEL_XRGB8888;
   output->audio=engine->audio_output;
@@ -1871,8 +1890,15 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   if(delta->struct_size<sizeof *delta || delta->values.struct_size<sizeof delta->values)
     return ANYGM_ERROR_INCOMPATIBLE_ABI;
   uint64_t f=delta->fields;
-  if(f&ANYGM_CONFIG_MONITOR_WIDTH) engine->config.monitor_width=delta->values.monitor_width;
-  if(f&ANYGM_CONFIG_MONITOR_HEIGHT) engine->config.monitor_height=delta->values.monitor_height;
+  int presentation_changed=0;
+  if(f&ANYGM_CONFIG_MONITOR_WIDTH){
+    presentation_changed|=engine->config.monitor_width!=delta->values.monitor_width;
+    engine->config.monitor_width=delta->values.monitor_width;
+  }
+  if(f&ANYGM_CONFIG_MONITOR_HEIGHT){
+    presentation_changed|=engine->config.monitor_height!=delta->values.monitor_height;
+    engine->config.monitor_height=delta->values.monitor_height;
+  }
   if(f&ANYGM_CONFIG_ASPECT_MODE) engine->config.aspect_mode=delta->values.aspect_mode;
   if(f&ANYGM_CONFIG_MOUSE_MODE) engine->config.mouse_mode=delta->values.mouse_mode;
   if(f&ANYGM_CONFIG_ROOM_SKIP_BUTTON) engine->config.room_skip_button=delta->values.room_skip_button;
@@ -1897,6 +1923,7 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
       engine->fps_room=-1;
     }
   }
+  if(presentation_changed) engine->fps_room=-1;
   if(f&ANYGM_CONFIG_CLEAR_LOCAL_DATA)
     engine->config.clear_local_data=delta->values.clear_local_data?1u:0u;
   if(f&ANYGM_CONFIG_CONTENT_OVERRIDES){

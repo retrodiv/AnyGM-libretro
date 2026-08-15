@@ -490,6 +490,32 @@ int main(void){
      !output.width || !output.height || output.audio_rate!=44100)
     return fail("frame pull failed");
 
+  /* Libretro applies core-option changes to an already loaded engine. Prove that selecting a
+   * virtual monitor while logical-raster presentation is disabled changes the very next host
+   * frame, publishes the geometry change, and returns cleanly to the authored raster. */
+  unsigned authored_width=output.width,authored_height=output.height;
+  AnygmConfigDelta live_presentation={0};
+  live_presentation.struct_size=sizeof live_presentation;
+  live_presentation.values.struct_size=sizeof live_presentation.values;
+  live_presentation.fields=ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT|
+                           ANYGM_CONFIG_PRESENT_LOGICAL_RASTER;
+  live_presentation.values.monitor_width=640;
+  live_presentation.values.monitor_height=360;
+  live_presentation.values.present_logical_raster=0;
+  if(anygm_set_config(engine,&live_presentation)!=ANYGM_OK ||
+     anygm_run_frame(engine,&input,&output)!=ANYGM_OK ||
+     output.width!=640 || output.height!=360 ||
+     !(output.flags&ANYGM_FRAME_GEOMETRY_CHANGED))
+    return fail("live virtual monitor did not change the next presented frame");
+  live_presentation.values.monitor_width=0;
+  live_presentation.values.monitor_height=0;
+  live_presentation.values.present_logical_raster=1;
+  if(anygm_set_config(engine,&live_presentation)!=ANYGM_OK ||
+     anygm_run_frame(engine,&input,&output)!=ANYGM_OK ||
+     output.width!=authored_width || output.height!=authored_height ||
+     !(output.flags&ANYGM_FRAME_GEOMETRY_CHANGED))
+    return fail("restoring Game Base did not restore the authored frame");
+
   size_t capacity=anygm_state_size(engine),written=0;
   uint8_t *baseline=malloc(capacity?capacity:1);
   uint8_t *restored=malloc(capacity?capacity:1);

@@ -133,9 +133,10 @@ static int presentation_base_size(const GmlVM *vm, const GmlRender *r, int heigh
 }
 int presentation_size(const GmlVM *vm, const GmlRender *r, int height){
   GmlRenderPresentationMetrics metrics=builtin_presentation_metrics(r);
-  /* Fullscreen is a content-owned request to occupy the monitor. The monitor option alone never
-   * changes the window, but once content enters fullscreen its window queries resolve against that
-   * virtual monitor immediately, before the next presentation pass has recomputed its raster. */
+  /* Fullscreen is a content-owned request to occupy the monitor. Resolve it immediately, before
+   * the next presentation pass has recomputed its effective window raster. In windowed mode the
+   * presentation coordinator supplies the configured host extent when logical-raster output is
+   * disabled. */
   if(vm && vm->window_fullscreen){
     int monitor=r?(height?metrics.monitor_height:metrics.monitor_width):0;
     if(monitor>0) return monitor;
@@ -146,7 +147,8 @@ int presentation_size(const GmlVM *vm, const GmlRender *r, int height){
 }
 /* The host has no physical desktop to expose. An explicit virtual monitor wins for every runtime;
  * otherwise classic content gets its deterministic desktop and modern content follows the current
- * presentation. Window queries remain tied to the content-owned window/framebuffer. */
+ * presentation. The presentation coordinator decides separately whether that monitor also supplies
+ * the effective window extent. */
 int display_size(const GmlVM *vm, const GmlRender *r, int height){
   GmlRenderPresentationMetrics metrics=builtin_presentation_metrics(r);
   int configured=r?(height?metrics.monitor_height:metrics.monitor_width):0;
