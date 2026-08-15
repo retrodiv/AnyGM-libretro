@@ -655,7 +655,7 @@ static void authored_window_extent(const AnygmEngine *engine,int fallback_width,
   if(height) *height=out_height;
 }
 /* With logical-raster presentation disabled, the frontend cannot tell the core the physical
- * presentation extent by any standard libretro channel. The configured virtual monitor supplies
+ * presentation extent through any channel the host API defines. The configured virtual monitor supplies
  * that missing window extent. Keep the authored window request intact so returning to Game Base
  * restores it naturally; fullscreen uses the same monitor even under logical-raster presentation. */
 static void content_window_extent(const AnygmEngine *engine,int fallback_width,int fallback_height,
