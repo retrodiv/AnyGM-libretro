@@ -1507,8 +1507,8 @@ int main(int argc,char **argv){
   /* The synthetic-state checksum tracks the complete serialized bytes,
    * including the resolved content and compatibility identifiers. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
-  if(deterministic_size!=19634 ||
-     deterministic_hash!=UINT64_C(0x61beb0f5564ccd25)){
+  if(deterministic_size!=19654 ||
+     deterministic_hash!=UINT64_C(0x0d9230e3f0fc0c15)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;
@@ -1532,6 +1532,16 @@ int main(int argc,char **argv){
   uint64_t core_size=read_u64(damaged+64);
   uint64_t render_size=read_u64(damaged+72);
   uint64_t payload_size=read_u64(damaged+96);
+  size_t frame_width_offset=112u+44u+
+    sizeof first->pad_current+sizeof first->pad_previous+
+    sizeof first->key_current+sizeof first->key_previous;
+  if(frame_width_offset+12>112u+core_size) return 1;
+  write_u32(damaged+frame_width_offset,UINT32_MAX);
+  write_u64(damaged+56,state_checksum(damaged+112,(size_t)payload_size));
+  if(!expect_rejected_unchanged(first,damaged,first_written,first_state,first_written,
+                                "invalid completed frame")) return 1;
+
+  memcpy(damaged,first_state,first_written);
   uint64_t vm_offset=112+core_size+render_size;
   if(vm_offset+12>first_written || payload_size>first_written-112) return 1;
   write_u32(damaged+(size_t)vm_offset+8,UINT32_MAX);
@@ -1570,6 +1580,28 @@ int main(int argc,char **argv){
     return 1;
   }
   free(deterministic);
+
+  /* A completed frame is observable state in its own right. Post Draw may remove a transient that
+   * was visible in that frame, so loading the post-frame simulation and executing Draw again is
+   * not an equivalent reconstruction. Preserve the pixels and present them once before advancing. */
+  uint32_t retained_pixel=0x0013579Bu;
+  first->screen[0]=retained_pixel;
+  uint8_t *display_state=NULL;
+  size_t display_state_size=0;
+  if(!save_state(first,&display_state,&display_state_size)) return 1;
+  first_output.struct_size=sizeof first_output;
+  if(anygm_run_frame(first,&input,&first_output)!=ANYGM_OK ||
+     anygm_state_load(first,display_state,display_state_size)!=ANYGM_OK){
+    fprintf(stderr,"completed-frame state setup failed\n");
+    return 1;
+  }
+  first_output.struct_size=sizeof first_output;
+  if(anygm_run_frame(first,&input,&first_output)!=ANYGM_OK || !first_output.pixels ||
+     (((const uint32_t *)first_output.pixels)[0]&0x00FFFFFFu)!=retained_pixel){
+    fprintf(stderr,"loaded state did not present its completed frame\n");
+    return 1;
+  }
+  free(display_state);
 
   free(first_state); free(second_state);
   anygm_destroy(first);

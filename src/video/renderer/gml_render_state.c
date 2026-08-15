@@ -4,10 +4,8 @@
 /* Canonical renderer payload encoding for root savestates. */
 #include "gml_render_state.h"
 #include "gml_render_internal.h"
-#include "anygm_host.h"
 #include "anygm_vfs.h"
 
-#include <inttypes.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -212,7 +210,6 @@ static int render_state_read_font_records(GmlRender *render,CoreR *s, int from, 
 
 
 static int render_state_read(GmlRender *render,CoreR *s){
-  const AnygmHostServices *host=render&&render->win?render->win->host:NULL;
   int nf=cr_i32(s);
   if(nf<0 || nf>GML_MAX_FONTS) s->ok=0;
   for(int i=0;i<GML_MAX_FONTS;i++){
@@ -225,10 +222,6 @@ static int render_state_read(GmlRender *render,CoreR *s){
   if(!render_state_read_font_records(render,s,0,GML_MAX_FONTS)) return 0;
   render->n_fonts=nf;
   gml_render_rebuild_font_maps(render);
-  if(anygm_host_development_setting(host,"GML_LOG_STATE"))
-    anygm_host_logf(host,ANYGM_LOG_DEBUG,
-                    "[state] render: fonts ok (nf=%d pos=%" PRIu64 " ok=%d)\n",
-                    nf,(uint64_t)s->pos,s->ok);
   render->app_draw_enable=cr_i32(s); render->color=cr_u32(s); render->alpha=cr_d(s);
   render->halign=cr_i32(s); render->valign=cr_i32(s); render->font=cr_i32(s);
   render->alphablend=cr_i32(s)?1:0;
@@ -267,17 +260,9 @@ static int render_state_read(GmlRender *render,CoreR *s){
       render->surface[i].all_transparent=all_transparent;
     }
   }
-  if(anygm_host_development_setting(host,"GML_LOG_STATE"))
-    anygm_host_logf(host,ANYGM_LOG_DEBUG,
-                    "[state] render: surfaces ok (nsurf=%d pos=%" PRIu64 " ok=%d)\n",
-                    GML_MAX_SURFACES,(uint64_t)s->pos,s->ok);
   uint8_t *seen_runtime = NULL;
   int seen_cap = 0;
   int runtime_sprites=cr_i32(s);
-  if(anygm_host_development_setting(host,"GML_LOG_STATE"))
-    anygm_host_logf(host,ANYGM_LOG_DEBUG,
-                    "[state] render: runtime_sprites=%d (pos=%" PRIu64 ")\n",
-                    runtime_sprites,(uint64_t)s->pos);
   if(runtime_sprites<0 || runtime_sprites>4096){ s->ok=0; return 0; }
   seen_cap = render->spr_cap + runtime_sprites + 16;
   if(seen_cap < render->n_spr + runtime_sprites + 16) seen_cap = render->n_spr + runtime_sprites + 16;
@@ -353,13 +338,13 @@ static int render_state_read(GmlRender *render,CoreR *s){
     }
     if(id>=0 && id<render->n_spr){
       GmlSprite *sp=&render->spr[id];
-      if(kind<0 || kind>3) kind=0;
-      if(tolerance<0) tolerance=0;
-      if(tolerance>255) tolerance=255;
-      if(ml<0) ml=0;
-      if(mt<0) mt=0;
-      if(mr>=w) mr=w-1;
-      if(mb>=h) mb=h-1;
+      /* These values came from the running renderer and are part of the canonical snapshot.
+       * Classic assets may use the full width or height as their right/bottom extent. Rewriting
+       * such an extent while loading makes save-load-save non-canonical and changes collisions
+       * after rewind. Reject invalid enum fields, but restore authored bounds byte-for-byte. */
+      if(kind<0 || kind>3 || tolerance<0 || tolerance>255){
+        free(seen_runtime); s->ok=0; return 0;
+      }
       sp->ml=ml; sp->mt=mt; sp->mr=mr; sp->mb=mb;
       sp->collision_kind=kind; sp->collision_tolerance=tolerance;
     }

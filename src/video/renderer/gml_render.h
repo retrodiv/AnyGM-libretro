@@ -469,6 +469,7 @@ int  gml_sprite_replace_from_rgba(GmlRender *r, int sprite, uint8_t *rgba, int w
 int  gml_sprite_append_from_rgba(GmlRender *r, uint8_t *rgba, int w, int h, int xorig, int yorig, const char *name);
 int  gml_sprite_replace_from_rgba_frames(GmlRender *r, int sprite, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig);
 int  gml_sprite_append_from_rgba_frames(GmlRender *r, uint8_t *rgba, int w, int h, int frames, int xorig, int yorig, const char *name);
+int  gml_sprite_assign(GmlRender *r, int destination, int source);
 void gml_render_clear_runtime_sprites(GmlRender *r);
 int  gml_classic_present_explicit_port(const GmlWin *win, int explicit_window,
                                        int canvas_w, int canvas_h,
@@ -527,6 +528,8 @@ int  gml_sprite_add_file(GmlRender *r, const char *path, int imgnum, int removeb
 void gml_render_rebuild_font_maps(GmlRender *r);
 void gml_draw_text(GmlRender *r, double x, double y, const char *str);
 void gml_draw_text_ext(GmlRender *r, double x, double y, const char *str, double sep, double w);
+void gml_draw_text_sprite(GmlRender *r, double x, double y, const char *str,
+                          double sep, double w, int sprite, int first, double scale);
 void gml_draw_text_ext_transformed(GmlRender *r, double x, double y, const char *str,
                                    double sep, double w, double xs, double ys, double rot,
                                    uint32_t blend, double alpha);

@@ -167,7 +167,12 @@ static int inst_builtin_set(GmlVM *vm, GmlInstance *in, const char *n, GmlVal v)
   B("timeline_running",timeline_running) B("timeline_loop",timeline_loop)
   #undef B
   if(!strcmp(n,"path_index")){ in->path_index=d; return 1; }   /* set directly = follow that path */
-  if(!strcmp(n,"timeline_index")){ in->timeline_index=d; return 1; }
+  if(!strcmp(n,"timeline_index")){
+    in->timeline_index=d;
+    if(vm && vm->win && anygm_policy_uses_classic_runtime(vm->win))
+      in->timeline_running=d>=0;
+    return 1;
+  }
   /* speed/direction/hspeed/vspeed are linked in GM */
   if(!strcmp(n,"hspeed")){ in->hspeed=d; motion_from_components(vm,in); return 1; }
   if(!strcmp(n,"vspeed")){ in->vspeed=d; motion_from_components(vm,in); return 1; }

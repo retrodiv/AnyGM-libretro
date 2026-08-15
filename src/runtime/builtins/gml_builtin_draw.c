@@ -1235,6 +1235,8 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     if(!strcmp(nm,"sprite_delete")){ if(R) gml_sprite_delete(R,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"sprite_duplicate")) return vreal(R?gml_sprite_duplicate(R,(int)N(a,n,0)):-1);
+    if(!strcmp(nm,"sprite_assign"))
+      return vreal(R?gml_sprite_assign(R,(int)N(a,n,0),(int)N(a,n,1)):0);
     /* A packaged sprite remains immutable when no runtime replacement is active. */
     if(!strcmp(nm,"sprite_restore")) return vreal(R&&gml_sprite_exists(R,(int)N(a,n,0)));
     if(!strcmp(nm,"sprite_set_alpha_from_sprite")) return vreal(R?gml_sprite_set_alpha_from_sprite(R,(int)N(a,n,0),(int)N(a,n,1)):0);
@@ -1256,6 +1258,10 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       return vreal(ok);
     }
     if(!strcmp(nm,"background_delete")||!strcmp(nm,"background_save")) return vreal(0);
+    if(!strcmp(nm,"background_restore")){
+      GmlRenderBackgroundMetrics background;
+      return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background));
+    }
     if(!strcmp(nm,"background_get_width")){ GmlRenderBackgroundMetrics background; return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background)?background.logical_width:0); }
     if(!strcmp(nm,"background_get_height")){ GmlRenderBackgroundMetrics background; return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background)?background.logical_height:0); }
     if(!strcmp(nm,"background_get_texture")) return vreal(gml_render_background_texture_handle(R,(int)N(a,n,0)));
@@ -1273,6 +1279,11 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         gml_render_draw_state_update(R,&saved,GML_RENDER_DRAW_STATE_COLOR|GML_RENDER_DRAW_STATE_ALPHA); }
       return vreal(0); }
     if(!strcmp(nm,"draw_text_ext")){ if(R) gml_draw_text_ext(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4)); return vreal(0); }
+    if(!strcmp(nm,"draw_text_sprite")){
+      if(R) gml_draw_text_sprite(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4),
+                                 (int)N(a,n,5),(int)N(a,n,6),N(a,n,7));
+      return vreal(0);
+    }
     if(!strcmp(nm,"draw_text_ext_colour")||!strcmp(nm,"draw_text_ext_color")){
       if(R){ GmlRenderDrawState saved=builtin_draw_state(R),temporary=saved;
         temporary.color=NU32(a,n,5); temporary.alpha=N(a,n,9);

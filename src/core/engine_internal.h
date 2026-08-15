@@ -199,6 +199,8 @@ struct AnygmEngine {
   double audio_accumulator;
   char start_room_option[65536];
   int state_just_loaded;
+  int state_frame_available;
+  unsigned state_frame_width,state_frame_height;
   uint8_t *state_reapply;
   size_t state_reapply_capacity,state_reapply_size;
   /* Peak serialized size for this content: what the namespace cache remembered at load, the

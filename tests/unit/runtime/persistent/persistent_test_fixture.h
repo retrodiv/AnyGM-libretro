@@ -39,6 +39,7 @@ int expect_alarm_dispatch_order(void);
 int expect_automatic_motion_order(void);
 int expect_event_boundary_room_transition(void);
 int expect_room_transition_animation_phase(void);
+int expect_classic_timeline_index_activation(void);
 int expect_persistent_lifecycle(void);
 int expect_ds_list_text_roundtrip(void);
 int expect_ds_priority_lookup_mutation(void);
@@ -46,6 +47,7 @@ int expect_audio_group_paths(void);
 int expect_flagged_external_sound_precedes_embedded_audio_id(void);
 int expect_streamed_sound_without_sidecar_plays_embedded_compressed_blob(void);
 int expect_audio_group_gain(void);
+int expect_classic_dynamic_sound_lifecycle(void);
 int expect_dynamic_audio_extension_state(void);
 int expect_saudio_portable_playback(void);
 int expect_faudio_gms_portable_playback(void);
@@ -60,6 +62,9 @@ int expect_native_timeline_import(const char *path);
 int expect_timeline_case(void);
 int expect_vm_state_case(void);
 int expect_background_slot_dimensions(void);
+int expect_legacy_sprite_text_builtin(void);
+int expect_legacy_sprite_assign_builtin(void);
+int expect_runtime_sprite_state_preserves_collision_extent(void);
 int expect_renderer_semantics(void);
 
 #endif

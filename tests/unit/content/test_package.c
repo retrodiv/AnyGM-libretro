@@ -4,6 +4,7 @@
 #include "synthetic_content.h"
 #include "gmlc_package.h"
 #include "gmlc_project.h"
+#include "gml_win.h"
 #include "stdio_vfs.h"
 
 #include <inttypes.h>
@@ -112,6 +113,54 @@ static int expect_tileset_source_indices(const char *directory){
               ids[0],ids[1],ids[2],ids[3]);
     }
   }
+  free(data);
+  remove(package_path);
+  return ok;
+}
+
+static int expect_classic_room_order_display_extent(const char *directory){
+  char package_path[256];
+  snprintf(package_path,sizeof package_path,"%s/classic-room-order.win",directory);
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  GmlcRoom rooms[2]={0};
+  rooms[0].id=rooms[0].name=(char *)"room_storage_first";
+  rooms[0].width=320;
+  rooms[0].height=240;
+  rooms[0].speed=30;
+  rooms[1].id=rooms[1].name=(char *)"room_boot_first";
+  rooms[1].width=800;
+  rooms[1].height=600;
+  rooms[1].speed=30;
+  int room_order[2]={1,0};
+  GmlcProject project={0};
+  project.host=&services;
+  project.name=(char *)"neutral-classic-room-order";
+  project.classic_version=530;
+  project.classic_scaling=100;
+  project.rooms=rooms;
+  project.n_rooms=project.cap_rooms=2;
+  project.room_order=room_order;
+  project.n_room_order=2;
+  char error[256]={0};
+  uint8_t *data=NULL;
+  size_t size=0;
+  GmlWin win={0};
+  int ok=gmlc_package_write_structural(&project,package_path,error,sizeof error) &&
+         read_bytes(package_path,&data,&size) &&
+         gml_win_from_mem(&win,data,size,0)==0;
+  if(!ok){
+    fprintf(stderr,"classic room-order display fixture failed: %s\n",
+            error[0]?error:gml_win_last_load_error());
+  }else{
+    ok=win.disp_w==800 && win.disp_h==600 && win.n_room_order==2 &&
+       win.room_order[0]==1 && win.room_order[1]==0;
+    if(!ok)
+      fprintf(stderr,"classic display ignored boot room order: %ux%u\n",win.disp_w,win.disp_h);
+  }
+  gml_win_free(&win);
   free(data);
   remove(package_path);
   return ok;
@@ -318,6 +367,7 @@ int main(int argc,char **argv){
   }
   if(ok && !expect_modern_project_room_schema(first.directory)) ok=0;
   if(ok && !expect_tileset_source_indices(first.directory)) ok=0;
+  if(ok && !expect_classic_room_order_display_extent(first.directory)) ok=0;
 
   free(first_bytes);
   free(second_bytes);

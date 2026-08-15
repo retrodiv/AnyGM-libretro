@@ -16,6 +16,33 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+
+int expect_classic_timeline_index_activation(void){
+  GmlWin win={0}; GmlVM vm={0}; GmlInstance instance={0};
+  win.bytecode=15; win.classic_version=530; vm.win=&win;
+  instance.timeline_index=-1; instance.timeline_position=4; instance.timeline_speed=1;
+  if(!gml_vm_instance_builtin_set(&vm,&instance,"timeline_index",vreal(2)) ||
+     instance.timeline_index!=2 || instance.timeline_position!=4 || instance.timeline_running!=1){
+    fprintf(stderr,"classic timeline assignment did not activate playback: index=%.0f position=%.0f running=%.0f\n",
+            instance.timeline_index,instance.timeline_position,instance.timeline_running);
+    return 0;
+  }
+  (void)gml_vm_instance_builtin_set(&vm,&instance,"timeline_index",vreal(-1));
+  if(instance.timeline_index!=-1 || instance.timeline_running!=0){
+    fprintf(stderr,"classic timeline removal did not stop playback: index=%.0f running=%.0f\n",
+            instance.timeline_index,instance.timeline_running);
+    return 0;
+  }
+  win.classic_version=0; instance.timeline_running=0;
+  (void)gml_vm_instance_builtin_set(&vm,&instance,"timeline_index",vreal(3));
+  if(instance.timeline_index!=3 || instance.timeline_running!=0){
+    fprintf(stderr,"modern timeline assignment changed explicit playback state: index=%.0f running=%.0f\n",
+            instance.timeline_index,instance.timeline_running);
+    return 0;
+  }
+  return 1;
+}
 #include <sys/stat.h>
 #include <unistd.h>
 

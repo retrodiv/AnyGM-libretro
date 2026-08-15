@@ -319,6 +319,8 @@ static void boot_runtime(AnygmEngine *engine) {
   /* A reset is a cold boot. Keep engine time on the same timeline as an initial load. */
   { engine->vm.frame = 0; }
   engine->state_reapply_size = 0;
+  engine->state_frame_available = 0;
+  engine->state_frame_width = engine->state_frame_height = 0;
   memset(engine->pad_current, 0, sizeof(engine->pad_current));
   memset(engine->pad_previous, 0, sizeof(engine->pad_previous));
   memset(engine->axis_current, 0, sizeof(engine->axis_current));
@@ -636,6 +638,8 @@ static void engine_unload(AnygmEngine *engine){
   classic_transition_release(engine);
   engine->have_presented_frame=0; engine->audio_accumulator=0.0; engine->fps=60.0; engine->fps_room=-1;
   engine->state_just_loaded=0; engine->state_reapply_size=0;
+  engine->state_frame_available=0;
+  engine->state_frame_width=engine->state_frame_height=0;
   engine->content_fingerprint=0; engine->compatibility_fingerprint=0;
   engine->runtime_ended=0; engine->shutdown_sent=0; engine->loaded=0;
 }
@@ -666,9 +670,23 @@ static void poll_fast_forward(AnygmEngine *engine) {
 }
 static AnygmResult engine_run_frame(AnygmEngine *engine) {
   engine->vm.draw_phase=0;
+  engine->audio_frames=0;
   if(engine->vm.game_change_pending)
     return engine_apply_game_change_and_run_frame(engine);
-  engine->audio_frames=0;
+  /* A state carries the completed application frame. Present it once without running game code:
+   * the canonical simulation state is from after Post Draw, so executing Draw again cannot
+   * reconstruct a transient that was removed at that boundary. The next call resumes normally
+   * from the restored post-frame state. */
+  if(engine->state_just_loaded && engine->state_frame_available){
+    engine->output_width=engine->state_frame_width;
+    engine->output_height=engine->state_frame_height;
+    engine->state_just_loaded=0;
+    engine->state_reapply_size=0;
+    engine->state_frame_available=0;
+    engine->have_presented_frame=1;
+    engine->fps_room=-1;
+    return ANYGM_OK;
+  }
   /* A live monitor-size change arrives before input. Resolve its host-to-content transform now so
    * the first pointer sample under the new geometry is mapped through the same canvas as video. */
   if(engine->fps_room<0 || !engine->output_width || !engine->output_height)

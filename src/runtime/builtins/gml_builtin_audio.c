@@ -2067,7 +2067,21 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"action_sound")){ gml_audio_play(AU,(int)N(a,n,0),(int)N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"action_end_sound")){ gml_audio_stop(AU,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_channel_num")){ gml_audio_channel_num(AU,(int)N(a,n,0)); return vreal(0); }
-    if(!strcmp(nm,"sound_add")) return vreal(-1);
+    if(!strcmp(nm,"sound_add")){
+      const char *path=S(vm,a,n,0);
+      return vreal(path&&*path?external_audio_load(vm,path):-1);
+    }
+    if(!strcmp(nm,"sound_delete")){
+      external_audio_free(vm,(int)N(a,n,0));
+      return vreal(0);
+    }
+    if(!strcmp(nm,"sound_discard")) return vreal(0);
+    if(!strcmp(nm,"sound_exists"))
+      return vreal(gml_audio_exists(AU,(int)N(a,n,0)));
+    if(!strcmp(nm,"sound_restore")){
+      (void)gml_audio_warm_sound(AU,(int)N(a,n,0));
+      return vreal(0);
+    }
     if(!strcmp(nm,"sound_replace")) return vreal(0);
     if(!strcmp(nm,"audio_get_master_gain")) return vreal(gml_audio_get_master_gain(AU));
     if(!strcmp(nm,"audio_sound_get_gain")) return vreal(gml_audio_sound_get_gain(AU,(int)N(a,n,0)));

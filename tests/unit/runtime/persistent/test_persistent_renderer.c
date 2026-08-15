@@ -8,6 +8,7 @@
 #include "gml_value_internal.h"
 #include "gml_render.h"
 #include "gml_render_internal.h"
+#include "gml_render_state.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -78,6 +79,154 @@ int expect_background_slot_dimensions(void){
             height.t==V_REAL?height.d:-1.0,
             missing.t==V_REAL?missing.d:-1.0);
   gml_varmap_free(&vm.globals);
+  return ok;
+}
+
+
+int expect_legacy_sprite_text_builtin(void){
+  GmlVM vm={0}; GmlRender render={0}; GmlSprite sprite={0};
+  GmlTpag pages[2]={{0}}; GmlAtlas atlas={0};
+  uint32_t framebuffer[24*26]={0};
+  uint8_t pixels[2*4]={255,255,255,255,255,255,255,255};
+  int frames[2]={0,1};
+  gml_render_begin(&render,framebuffer,24,26,0,0);
+  render.spr=&sprite; render.n_spr=1; render.tpag=pages; render.n_tpag=2;
+  render.atlas=&atlas; render.n_atlas=1; render.font=7;
+  render.color=0; render.alpha=1; render.alphablend=1; render.software_overlay=1;
+  sprite.w=3; sprite.h=2; sprite.n_frames=2; sprite.frame=frames;
+  pages[0].sx=0; pages[0].sw=pages[0].sh=pages[0].bw=pages[0].bh=1; pages[0].atlas=0;
+  pages[1].sx=1; pages[1].sw=pages[1].sh=pages[1].bw=pages[1].bh=1; pages[1].atlas=0;
+  atlas.px=pixels; atlas.w=2; atlas.h=1; atlas.decode_attempted=1;
+  vm.render=&render;
+  GmlVal args[8]={vreal(1),vreal(1),vstr("  AB  AB    AB\r\nAB"),vreal(5),vreal(18),vreal(0),
+                  vreal('A'),vreal(1)};
+  (void)gml_builtin_call(&vm,"draw_text_sprite",args,8);
+  int ok=(framebuffer[1*24+7]&0xFFFFFFu) && (framebuffer[1*24+10]&0xFFFFFFu) &&
+         (framebuffer[6*24+1]&0xFFFFFFu) && (framebuffer[6*24+4]&0xFFFFFFu) &&
+         (framebuffer[11*24+1]&0xFFFFFFu) && (framebuffer[11*24+4]&0xFFFFFFu) &&
+         (framebuffer[21*24+1]&0xFFFFFFu) && (framebuffer[21*24+4]&0xFFFFFFu) &&
+         !(framebuffer[1*24+1]&0xFFFFFFu) && !(framebuffer[16*24+1]&0xFFFFFFu) &&
+         !(framebuffer[1*24+8]&0xFFFFFFu) && render.font==7 && render.n_fonts==0;
+  if(!ok)
+    fprintf(stderr,"legacy sprite text mismatch: first=%08x,%08x second=%08x,%08x third=%08x,%08x crlf=%08x,%08x leading=%08x blank=%08x gap=%08x font=%d count=%d\n",
+            framebuffer[1*24+7],framebuffer[1*24+10],framebuffer[6*24+1],
+            framebuffer[6*24+4],framebuffer[11*24+1],framebuffer[11*24+4],
+            framebuffer[21*24+1],framebuffer[21*24+4],framebuffer[1*24+1],
+            framebuffer[16*24+1],framebuffer[1*24+8],render.font,render.n_fonts);
+  memset(framebuffer,0,sizeof framebuffer);
+  GmlVal spaced[8]={vreal(1),vreal(1),vstr("A    B"),vreal(5),vreal(9),vreal(0),
+                    vreal('A'),vreal(1)};
+  (void)gml_builtin_call(&vm,"draw_text_sprite",spaced,8);
+  int whitespace_wrap=(framebuffer[6*24+1]&0xFFFFFFu) &&
+                      !(framebuffer[6*24+7]&0xFFFFFFu);
+  if(!whitespace_wrap)
+    fprintf(stderr,"legacy sprite text whitespace wrap mismatch: origin=%08x shifted=%08x\n",
+            framebuffer[6*24+1],framebuffer[6*24+7]);
+  ok=ok&&whitespace_wrap;
+  GmlValueFreeContext free_context={0};
+  gml_val_free(&free_context,args[2]);
+  gml_val_free(&free_context,spaced[2]);
+  return ok;
+}
+
+int expect_legacy_sprite_assign_builtin(void){
+  GmlRender render={0};
+  render.spr=calloc(2,sizeof(*render.spr));
+  render.tpag=calloc(2,sizeof(*render.tpag));
+  render.atlas=calloc(1,sizeof(*render.atlas));
+  if(!render.spr || !render.tpag || !render.atlas){
+    gml_render_free(&render);
+    return 0;
+  }
+  render.n_spr=render.base_n_spr=render.spr_cap=2;
+  render.n_tpag=2;
+  render.n_atlas=1;
+  render.atlas[0].px=malloc(8);
+  if(!render.atlas[0].px){ gml_render_free(&render); return 0; }
+  memcpy(render.atlas[0].px,(uint8_t[]){255,0,0,255,0,255,0,255},8);
+  render.atlas[0].w=2;
+  render.atlas[0].h=1;
+  render.atlas[0].decode_attempted=1;
+  for(int index=0;index<2;index++){
+    render.spr[index].w=render.spr[index].h=1;
+    render.spr[index].n_frames=1;
+    render.spr[index].frame=malloc(sizeof(int));
+    if(!render.spr[index].frame){ gml_render_free(&render); return 0; }
+    render.spr[index].frame[0]=index;
+    render.tpag[index].sx=index;
+    render.tpag[index].sw=render.tpag[index].sh=1;
+    render.tpag[index].bw=render.tpag[index].bh=1;
+    render.tpag[index].atlas=0;
+  }
+  render.spr[1].originx=3;
+  render.spr[1].originy=4;
+  GmlVM vm={0};
+  vm.render=&render;
+  GmlVal args[2]={vreal(0),vreal(1)};
+  GmlVal assigned=gml_builtin_call(&vm,"sprite_assign",args,2);
+  uint32_t assigned_color=render.spr[0].runtime_rgba?
+    ((uint32_t)render.spr[0].runtime_rgba[0]<<16)|
+    ((uint32_t)render.spr[0].runtime_rgba[1]<<8)|
+    render.spr[0].runtime_rgba[2]:0;
+  int ok=assigned.t==V_REAL && assigned.d==1 &&
+         assigned_color==0x00FF00u &&
+         render.spr[0].originx==3 && render.spr[0].originy==4;
+  if(!ok)
+    fprintf(stderr,"legacy sprite assignment mismatch: result=%.0f pixel=%06x origin=%d,%d\n",
+            assigned.t==V_REAL?assigned.d:-1.0,assigned_color,
+            render.spr[0].originx,render.spr[0].originy);
+  gml_render_free(&render);
+  return ok;
+}
+
+int expect_runtime_sprite_state_preserves_collision_extent(void){
+  GmlRender render={0};
+  render.alpha=1;
+  render.font=-1;
+  render.alphablend=1;
+  render.circle_precision=24;
+  render.app_draw_enable=1;
+  render.next_surface_id=1;
+  uint8_t *rgba=calloc(7u*5u,4u);
+  render.spr=calloc(1,sizeof(*render.spr));
+  render.n_spr=render.base_n_spr=render.spr_cap=1;
+  int sprite=0;
+  if(!rgba || !render.spr ||
+     !gml_sprite_replace_from_rgba_frames(&render,sprite,rgba,7,5,1,2,3)){
+    free(rgba);
+    free(render.spr);
+    return 0;
+  }
+  render.spr[sprite].ml=0;
+  render.spr[sprite].mt=0;
+  render.spr[sprite].mr=7;
+  render.spr[sprite].mb=5;
+  render.spr[sprite].collision_kind=1;
+  render.spr[sprite].collision_tolerance=58;
+
+  size_t size=gml_render_state_size(&render,0),written=0,used=0,repeated=0;
+  uint8_t *before=malloc(size?size:1u);
+  uint8_t *after=malloc(size?size:1u);
+  int ok=before && after &&
+    gml_render_state_save(&render,0,before,size,&written) && written==size &&
+    gml_render_state_load(&render,before,written,&used) && used==written &&
+    render.spr[sprite].mr==7 && render.spr[sprite].mb==5 &&
+    gml_render_state_save(&render,0,after,size,&repeated) && repeated==written &&
+    !memcmp(before,after,written);
+  if(!ok){
+    size_t difference=0;
+    while(difference<written && difference<repeated && before && after &&
+          before[difference]==after[difference]) difference++;
+    fprintf(stderr,"runtime sprite state extent mismatch: right=%d bottom=%d size=%zu/%zu/%zu diff=%zu values=%u/%u\n",
+            sprite>=0 && sprite<render.n_spr?render.spr[sprite].mr:-1,
+            sprite>=0 && sprite<render.n_spr?render.spr[sprite].mb:-1,
+            size,written,repeated,difference,
+            difference<written && before?before[difference]:0,
+            difference<repeated && after?after[difference]:0);
+  }
+  free(before);
+  free(after);
+  gml_render_free(&render);
   return ok;
 }
 

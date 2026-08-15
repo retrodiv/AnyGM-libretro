@@ -953,15 +953,16 @@ int gml_sprite_append_from_rgba_frames(GmlRender *r, uint8_t *rgba, int w, int h
 int gml_sprite_append_from_rgba(GmlRender *r, uint8_t *rgba, int w, int h, int xorig, int yorig, const char *name){
   return gml_sprite_append_from_rgba_frames(r,rgba,w,h,1,xorig,yorig,name);
 }
-int gml_sprite_duplicate(GmlRender *r, int sprite){
-  if(!r || sprite<0 || sprite>=r->n_spr) return -1;
+static uint8_t *sprite_copy_rgba(GmlRender *r,int sprite,
+                                 int *width,int *height,int *frame_count){
+  if(!r || sprite<0 || sprite>=r->n_spr) return NULL;
   GmlSprite *s=&r->spr[sprite];
-  if(s->w<=0 || s->h<=0 || s->n_frames<=0) return -1;
+  if(s->w<=0 || s->h<=0 || s->n_frames<=0) return NULL;
   int w=s->w, h=s->h, frames=s->n_frames;
   size_t pixels=(size_t)w*(size_t)h*(size_t)frames;
-  if(pixels==0 || pixels>SIZE_MAX/4) return -1;
+  if(pixels==0 || pixels>SIZE_MAX/4) return NULL;
   uint8_t *rgba=calloc(pixels,4);
-  if(!rgba) return -1;
+  if(!rgba) return NULL;
 
   for(int f=0; f<frames; f++){
     uint8_t *dst=rgba+(size_t)f*(size_t)w*(size_t)h*4;
@@ -986,6 +987,17 @@ int gml_sprite_duplicate(GmlRender *r, int sprite){
       dp[0]=sp[0]; dp[1]=sp[1]; dp[2]=sp[2]; dp[3]=sp[3];
     }
   }
+  if(width) *width=w;
+  if(height) *height=h;
+  if(frame_count) *frame_count=frames;
+  return rgba;
+}
+
+int gml_sprite_duplicate(GmlRender *r, int sprite){
+  int w=0,h=0,frames=0;
+  uint8_t *rgba=sprite_copy_rgba(r,sprite,&w,&h,&frames);
+  if(!rgba) return -1;
+  GmlSprite *s=&r->spr[sprite];
 
   int id=gml_sprite_append_from_rgba_frames(r,rgba,w,h,frames,s->originx,s->originy,
                                             s->name?s->name:"<sprite-copy>");
@@ -1000,6 +1012,29 @@ int gml_sprite_duplicate(GmlRender *r, int sprite){
     for(int i=0;i<5;i++) dst->ns_tile[i]=src->ns_tile[i];
   }
   return id;
+}
+
+int gml_sprite_assign(GmlRender *r,int destination,int source){
+  if(!r || destination<0 || destination>=r->n_spr ||
+     source<0 || source>=r->n_spr) return 0;
+  if(destination==source) return gml_sprite_exists(r,source);
+  int width=0,height=0,frames=0;
+  uint8_t *rgba=sprite_copy_rgba(r,source,&width,&height,&frames);
+  if(!rgba) return 0;
+  GmlSprite *src=&r->spr[source];
+  GmlSprite *dst=&r->spr[destination];
+  int extra=dst->runtime_extra;
+  sprite_set_runtime_rgba(dst,rgba,width,height,frames,src->originx,src->originy,extra);
+  dst->ml=src->ml; dst->mt=src->mt; dst->mr=src->mr; dst->mb=src->mb;
+  dst->collision_kind=src->collision_kind;
+  dst->collision_tolerance=src->collision_tolerance;
+  dst->playback_speed=src->playback_speed;
+  dst->playback_speed_type=src->playback_speed_type;
+  dst->playback_speed_valid=src->playback_speed_valid;
+  dst->ns_enabled=src->ns_enabled;
+  dst->ns_l=src->ns_l; dst->ns_t=src->ns_t; dst->ns_r=src->ns_r; dst->ns_b=src->ns_b;
+  for(int index=0;index<5;index++) dst->ns_tile[index]=src->ns_tile[index];
+  return 1;
 }
 
 static int sprite_read_rgba(GmlRender *r, GmlSprite *s, int frame, int x, int y, uint8_t out[4]){

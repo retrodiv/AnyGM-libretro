@@ -263,6 +263,54 @@ int expect_audio_group_gain(void){
   return ok;
 }
 
+int expect_classic_dynamic_sound_lifecycle(void){
+  enum { sample_count=128 };
+  unsigned char wav[44+sample_count*2]={0};
+  size_t wav_size=fixture_pcm16_wav(wav,sizeof wav,sample_count,12000);
+  char directory[]="/tmp/anygm-classic-dynamic-sound-XXXXXX";
+  if(!wav_size || !mkdtemp(directory)) return 0;
+  char path[256];
+  snprintf(path,sizeof path,"%s/effect.wav",directory);
+  FILE *file=fopen(path,"wb");
+  int ok=file && fwrite(wav,1,wav_size,file)==wav_size;
+  if(file && fclose(file)!=0) ok=0;
+
+  AnygmHostServices host={0};
+  host.struct_size=sizeof host;
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&host);
+  GmlWin win={0};
+  win.classic_version=530;
+  snprintf(win.content_dir,sizeof win.content_dir,"%s",directory);
+  GmlVM vm={0};
+  if(!ok || gml_vm_init(&vm,&win,&host)!=0){
+    unlink(path); rmdir(directory); return 0;
+  }
+  GmlAudio *audio=gml_audio_create(&win);
+  vm.audio=audio;
+  GmlVal add_args[4]={vstr("effect.wav"),vreal(1),vreal(0),vreal(1)};
+  GmlVal added=gml_builtin_call(&vm,"sound_add",add_args,4);
+  GmlVal sound=vreal(added.t==V_REAL?added.d:-1);
+  ok=ok && audio && sound.d>=0 &&
+     gml_builtin_call(&vm,"sound_exists",&sound,1).d==1;
+  GmlVal voice=gml_builtin_call(&vm,"sound_play",&sound,1);
+  int16_t mixed[256]={0};
+  if(audio) gml_audio_mix(audio,mixed,128);
+  int audible=0;
+  for(size_t index=0;index<sizeof mixed/sizeof mixed[0];index++)
+    audible|=mixed[index]!=0;
+  ok=ok && voice.t==V_REAL && voice.d>=1000000 && audible;
+  (void)gml_builtin_call(&vm,"sound_delete",&sound,1);
+  ok=ok && gml_builtin_call(&vm,"sound_exists",&sound,1).d==0;
+
+  gml_vm_free(&vm);
+  gml_audio_free(audio);
+  unlink(path);
+  rmdir(directory);
+  if(!ok) fprintf(stderr,"classic dynamic-sound lifecycle fixture failed\n");
+  return ok;
+}
+
 
 /* A state must fully describe the sound table it was taken from. Sounds created after a state was
  * saved are not in it, so restoring that state has to release them again; otherwise the table only

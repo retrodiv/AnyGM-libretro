@@ -446,6 +446,10 @@ static GmlVal gml_builtin_call_fast_id_impl(GmlVM *vm, int id, const char *nm, G
     case BID_DRAW_TEXT_EXT:
       if(R) gml_draw_text_ext(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4));
       return vreal(0);
+    case BID_DRAW_TEXT_SPRITE:
+      if(R) gml_draw_text_sprite(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4),
+                                 (int)N(a,n,5),(int)N(a,n,6),N(a,n,7));
+      return vreal(0);
     case BID_DRAW_TEXT_EXT_TRANSFORMED_COLOUR:
     case BID_DRAW_TEXT_EXT_TRANSFORMED_COLOR:
       if(R) gml_draw_text_ext_transformed(R,N(a,n,0),N(a,n,1),S(vm,a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),NU32(a,n,8),N(a,n,12));

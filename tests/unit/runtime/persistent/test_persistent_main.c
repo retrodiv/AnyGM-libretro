@@ -33,6 +33,7 @@ int main(int argc,char **argv){
     {"automatic_motion_order",expect_automatic_motion_order},
     {"event_boundary_room_transition",expect_event_boundary_room_transition},
     {"room_transition_animation_phase",expect_room_transition_animation_phase},
+    {"classic_timeline_index_activation",expect_classic_timeline_index_activation},
     {"hash_layer_gpu",expect_hash_layer_gpu_gap_closure},
     {"array_functions",expect_array_function_gap_closure},
     {"room_lifecycle",expect_persistent_lifecycle},
@@ -47,6 +48,7 @@ int main(int argc,char **argv){
     {"streamed_embedded_fallback",
      expect_streamed_sound_without_sidecar_plays_embedded_compressed_blob},
     {"group_gain",expect_audio_group_gain},
+    {"classic_dynamic_sound_lifecycle",expect_classic_dynamic_sound_lifecycle},
     {"dynamic_extension_state",expect_dynamic_audio_extension_state},
     {"saudio_portable_playback",expect_saudio_portable_playback},
     {"faudio_gms_portable_playback",expect_faudio_gms_portable_playback},
@@ -57,6 +59,9 @@ int main(int argc,char **argv){
   };
   static const AnygmTestCase render_cases[]={
     {"background_slot_dimensions",expect_background_slot_dimensions},
+    {"legacy_sprite_text_builtin",expect_legacy_sprite_text_builtin},
+    {"legacy_sprite_assign_builtin",expect_legacy_sprite_assign_builtin},
+    {"runtime_sprite_state_collision_extent",expect_runtime_sprite_state_preserves_collision_extent},
     {"font_primitive_blend",expect_renderer_semantics},
   };
   static const AnygmTestCase io_cases[]={

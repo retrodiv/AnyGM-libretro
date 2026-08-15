@@ -47,6 +47,61 @@ static int64_t cr_i64(CoreR *s){ return (int64_t)cr_u64(s); }
 static int cr_i32(CoreR *s){ return (int)(int32_t)cr_u32(s); }
 static double cr_d(CoreR *s){ uint64_t bits=cr_u64(s); double value=0; memcpy(&value,&bits,sizeof value); return value; }
 
+static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
+  unsigned width=0,height=0;
+  if(engine->have_presented_frame && engine->screen && engine->output_width && engine->output_height){
+    width=engine->output_width;
+    height=engine->output_height;
+  } else if(engine->state_frame_available && engine->screen){
+    width=engine->state_frame_width;
+    height=engine->state_frame_height;
+  }
+  if(width>FB_MAX_W || height>FB_MAX_H ||
+     (width && (height==0 || (size_t)width>SIZE_MAX/(size_t)height))){
+    state->ok=0;
+    width=height=0;
+  }
+  cw_u32(state,width);
+  cw_u32(state,height);
+  size_t pixels=(size_t)width*height;
+  uint32_t runs=0;
+  for(size_t at=0;at<pixels;){
+    uint32_t value=engine->screen[at];
+    size_t end=at+1;
+    while(end<pixels && engine->screen[end]==value && end-at<UINT32_MAX) end++;
+    if(runs==UINT32_MAX){ state->ok=0; break; }
+    runs++;
+    at=end;
+  }
+  cw_u32(state,runs);
+  for(size_t at=0;at<pixels;){
+    uint32_t value=engine->screen[at];
+    size_t end=at+1;
+    while(end<pixels && engine->screen[end]==value && end-at<UINT32_MAX) end++;
+    cw_u32(state,(uint32_t)(end-at));
+    cw_u32(state,value);
+    at=end;
+  }
+}
+
+static int state_read_completed_frame(AnygmEngine *engine,CoreR *state){
+  uint32_t width=cr_u32(state),height=cr_u32(state),runs=cr_u32(state);
+  if(width>FB_MAX_W || height>FB_MAX_H || (!!width != !!height)) return 0;
+  size_t pixels=(size_t)width*height;
+  if((!pixels && runs) || (pixels && (!runs || runs>pixels))) return 0;
+  size_t at=0;
+  for(uint32_t index=0;index<runs;index++){
+    uint32_t count=cr_u32(state),value=cr_u32(state);
+    if(!count || count>pixels-at) return 0;
+    for(uint32_t pixel=0;pixel<count;pixel++) engine->screen[at++]=value;
+  }
+  if(!state->ok || at!=pixels) return 0;
+  engine->state_frame_available=pixels?1:0;
+  engine->state_frame_width=width;
+  engine->state_frame_height=height;
+  return 1;
+}
+
 enum {
   ANYGM_STATE_HEADER_SIZE=112,
   ANYGM_STATE_ENCODING_LITTLE_ENDIAN_IEEE754=1
@@ -190,6 +245,7 @@ static void state_write(AnygmEngine *engine,CoreW *s){
   { cw_i64(s,(int64_t)engine->vm.frame); }
   cw_raw(s,engine->pad_current,sizeof(engine->pad_current)); cw_raw(s,engine->pad_previous,sizeof(engine->pad_previous));
   cw_raw(s,engine->key_current,sizeof(engine->key_current)); cw_raw(s,engine->key_previous,sizeof(engine->key_previous));
+  state_write_completed_frame(engine,s);
   size_t coren=s->pos-core_start;
   size_t render_start=s->pos;
   int derived_view_surface=(int)gml_global_arr(&engine->vm,"view_surface_id",0);
@@ -289,6 +345,7 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   { engine->vm.frame=(long)frame; }
   cr_raw(&core,engine->pad_current,sizeof(engine->pad_current)); cr_raw(&core,engine->pad_previous,sizeof(engine->pad_previous));
   cr_raw(&core,engine->key_current,sizeof(engine->key_current)); cr_raw(&core,engine->key_previous,sizeof(engine->key_previous));
+  if(!state_read_completed_frame(engine,&core)) return false;
   if(!core.ok || core.pos!=core.cap) return false;
   /* The serialized current state is the edge-detection baseline for the first advancing frame.
    * The presentation-only load frame clears input temporarily and reapplies this state afterward,
@@ -355,7 +412,7 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   sync_room_fps(engine,1);
   classic_transition_reset(engine);
   engine->have_presented_frame = 0;
-  engine->state_just_loaded = schedule_reapply ? 1 : 0;
+  engine->state_just_loaded = schedule_reapply && engine->state_frame_available ? 1 : 0;
   return offset==(size_t)header.payload_size;
 }
 bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){

@@ -756,7 +756,11 @@ int write_gen8(Pkg *pkg, const GmlcProject *p){
   if(sid_name<0 || sid_cfg<0 || sid_id<0) return 0;
   uint32_t dw=640, dh=480;
   if(p->n_rooms>0){
-    const GmlcRoom *room=&p->rooms[0];
+    int boot_room=0;
+    if(p->room_order && p->n_room_order>0 &&
+       p->room_order[0]>=0 && p->room_order[0]<p->n_rooms)
+      boot_room=p->room_order[0];
+    const GmlcRoom *room=&p->rooms[boot_room];
     dw=(uint32_t)(room->width>0?room->width:640);
     dh=(uint32_t)(room->height>0?room->height:480);
     if(room->view_enabled){
