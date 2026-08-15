@@ -88,10 +88,11 @@ static double profile_now_ms(AnygmEngine *engine){
 static void profile_report(AnygmEngine *engine,int force){
   if(!engine->profile.frames || (!force && engine->profile.frames < 300)) return;
   double f = (double)engine->profile.frames;
-  const char *fmt = "[profile] frames=%d avg_ms total=%.3f input=%.3f step=%.3f clear=%.3f draw=%.3f gui=%.3f video=%.3f audio=%.3f max=%.2fms@f%ld\n";
+  const char *fmt = "[profile] frames=%d avg_ms total=%.3f input=%.3f step=%.3f clear=%.3f draw=%.3f gui=%.3f video=%.3f audio=%.3f present=%.3f max=%.2fms@f%ld\n";
   engine_logf(engine,ANYGM_LOG_INFO,fmt,engine->profile.frames,engine->profile.total_ms/f,engine->profile.input_ms/f,
               engine->profile.step_ms/f,engine->profile.clear_ms/f,engine->profile.draw_ms/f,engine->profile.gui_ms/f,
-              engine->profile.video_ms/f,engine->profile.audio_ms/f,engine->profile.max_ms,engine->profile.max_frame);
+              engine->profile.video_ms/f,engine->profile.audio_ms/f,engine->profile.present_ms/f,
+              engine->profile.max_ms,engine->profile.max_frame);
   memset(&engine->profile, 0, sizeof(engine->profile));
 }
 
@@ -1545,9 +1546,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(prof){
     t1 = profile_now_ms(engine);
     engine->profile.audio_ms += t1 - t0;
-    engine->profile.total_ms += t1 - t_total;
+    engine->profile.frame_ms=t1-t_total;
+    engine->profile.total_ms += engine->profile.frame_ms;
     { double ft = t1 - t_total;
-      if(ft > engine->profile.max_ms){ engine->profile.max_ms = ft; engine->profile.max_frame = engine->vm.frame; }
       /* GML_PROFILE_SPIKE=<ms>: dump the phase split of any frame that exceeds the threshold */
       if(engine->diagnostics.profile_spike_ms < -1){ const char *sp=anygm_host_development_setting(&engine->host,"GML_PROFILE_SPIKE"); engine->diagnostics.profile_spike_ms = sp? atof(sp) : -1; }
       if(engine->diagnostics.profile_spike_ms > 0 && ft > engine->diagnostics.profile_spike_ms)
@@ -1555,7 +1556,6 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                 engine->vm.frame, ft, engine->profile.step_ms - sp_step, engine->profile.draw_ms - sp_draw,
                 engine->profile.gui_ms - sp_gui, engine->profile.video_ms - sp_video); }
     engine->profile.frames++;
-    profile_report(engine,0);
   }
   /* Snapshot key state after the step consumed it. */
   memcpy(engine->event_vk_previous, engine->event_vk_current, sizeof(engine->event_vk_current));
@@ -1859,10 +1859,23 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   if(result!=ANYGM_OK) return result;
   const uint32_t *presented_pixels=NULL;
   unsigned presented_width=0,presented_height=0;
+  int prof=profile_enabled(engine);
+  double present_started=prof?profile_now_ms(engine):0.0;
   if(!resolve_host_frame(
        engine,&presented_pixels,&presented_width,&presented_height)){
     engine_errorf(engine,ANYGM_ERROR_OUT_OF_MEMORY,"Could not allocate the host presentation buffer");
     return ANYGM_ERROR_OUT_OF_MEMORY;
+  }
+  if(prof){
+    double present_ms=profile_now_ms(engine)-present_started;
+    engine->profile.present_ms+=present_ms;
+    engine->profile.total_ms+=present_ms;
+    double frame_ms=engine->profile.frame_ms+present_ms;
+    if(frame_ms>engine->profile.max_ms){
+      engine->profile.max_ms=frame_ms;
+      engine->profile.max_frame=engine->vm.frame;
+    }
+    profile_report(engine,0);
   }
   if(anygm_host_development_setting(&engine->host,"GML_LOG_PRESENTED")){
     size_t lit=0;

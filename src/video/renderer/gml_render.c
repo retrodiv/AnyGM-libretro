@@ -1135,7 +1135,7 @@ void gml_render_backend_sync_camera(GmlRender *r,double translation_x,double tra
   r->cam_x=r->projection_cam_x-translation_x;
   r->cam_y=r->projection_cam_y-translation_y;
 }
-void gml_render_texture_page_cache_clear(GmlTpag *page){
+void gml_render_texture_page_cache_clear(GmlRender *render,GmlTpag *page){
   if(!page) return;
   int sx=page->sx,sy=page->sy,sw=page->sw,sh=page->sh;
   int tx=page->tx,ty=page->ty,bw=page->bw,bh=page->bh,atlas=page->atlas;
@@ -1150,6 +1150,14 @@ void gml_render_texture_page_cache_clear(GmlTpag *page){
   free(page->solid_blur_alpha_cache);
   for(int phase=0;phase<3;phase++) free(page->interp_phase_cache[phase]);
   free(page->fast8_draw_cache);
+  free(page->interp_draw_cache);
+  free(page->interp_draw_runs);
+  if(render){
+    if(page->interp_draw_cache_bytes<=render->interp_draw_cache_bytes)
+      render->interp_draw_cache_bytes-=page->interp_draw_cache_bytes;
+    else
+      render->interp_draw_cache_bytes=0;
+  }
   memset(page,0,sizeof(*page));
   page->sx=sx; page->sy=sy; page->sw=sw; page->sh=sh;
   page->tx=tx; page->ty=ty; page->bw=bw; page->bh=bh; page->atlas=atlas;
@@ -1187,7 +1195,7 @@ void gml_render_free(GmlRender *r){
     free(r->spr[i].runtime_source_path);
   }
   for(int i=0;i<r->n_tpag;i++){
-    gml_render_texture_page_cache_clear(&r->tpag[i]);
+    gml_render_texture_page_cache_clear(r,&r->tpag[i]);
   }
   gml_render_interpolated_subrect_cache_clear(r);
   for(int i=0;i<r->n_atlas;i++){

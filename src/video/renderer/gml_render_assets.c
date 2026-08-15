@@ -1173,7 +1173,7 @@ int gml_background_replace_from_rgba(GmlRender *r,int background,
     r->n_tpag++;
     r->bg[background].tpag=page_index;
   } else {
-    gml_render_texture_page_cache_clear(&r->tpag[page_index]);
+    gml_render_texture_page_cache_clear(r,&r->tpag[page_index]);
   }
   GmlTpag *page=&r->tpag[page_index];
   page->sx=page->sy=page->tx=page->ty=0;

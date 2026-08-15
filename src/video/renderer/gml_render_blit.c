@@ -30,6 +30,10 @@
 
 #define RFP_SHIFT 20
 #define RFP_ONE ((int64_t)1 << RFP_SHIFT)
+#define GML_INTERP_DRAW_CACHE_BUDGET (64u*1024u*1024u)
+#define GML_INTERP_DRAW_CACHE_MAX_PIXELS (8u*1024u*1024u)
+#define GML_INTERP_DRAW_CACHE_MAX_RUNS 262144
+#define GML_INTERP_DRAW_CACHE_MIN_PIXELS 16384u
 #if defined(__GNUC__) && !defined(__clang__)
 #define GML_HOT_RENDER __attribute__((hot,optimize("O3")))
 #else
@@ -2185,6 +2189,9 @@ static int tpag_part_view(const GmlTpag *t,
   view->solid_blur_alpha_cache=NULL; view->solid_blur_alpha_shader=-1;
   view->interp_phase_cache[0]=view->interp_phase_cache[1]=view->interp_phase_cache[2]=NULL;
   view->fast8_draw_cache=NULL; view->fast8_draw_cache_valid=0; view->fast8_draw_pending_count=0;
+  view->interp_draw_cache=NULL; view->interp_draw_runs=NULL;
+  view->interp_draw_cache_bytes=0; view->interp_draw_run_count=0;
+  view->interp_draw_cache_valid=0; view->interp_draw_pending_count=0;
   if(source_x) *source_x=ix0;
   if(source_y) *source_y=iy0;
   return 1;
@@ -2271,6 +2278,8 @@ typedef struct {
   uint32_t blend;
 } GmlInterpBlitBand;
 static void interp_blit_band_rows(void *context, int row_start, int row_end, int slot);
+static int tpag_interp_draw_cache_try(GmlRender *render,GmlTpag *tpag,
+                                      const GmlInterpBlitBand *band,int row_count);
 typedef struct {
   GmlRender *render;
   const GmlTpag *tpag;
@@ -2485,6 +2494,11 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       bR,bG,bB,solid_red,solid_green,solid_blue,
       dx,dy,axs,ays,alpha,blend
     };
+    if(tpag_interp_draw_cache_try(r,t,&band,yy1-yy0)){
+      free(source_a);
+      free(fraction_x);
+      return;
+    }
     if(vispix>=262144ull) gml_run_row_bands(r,yy1-yy0,interp_blit_band_rows,&band);
     else interp_blit_band_rows(&band,0,yy1-yy0,0);
     free(source_a);
@@ -2996,6 +3010,246 @@ static const uint8_t *interp_tpag_sample(const GmlAtlas *atlas, const GmlTpag *t
   if(y<0) y=0; else if(y>=t->sh) y=t->sh-1;
   return atlas->px+((size_t)(t->sy+y)*atlas->w+t->sx+x)*4;
 }
+static inline void interp_tpag_filtered_sample(
+    const GmlAtlas *atlas,const GmlTpag *tpag,
+    int ua,int ub,int va,int vb,double fx,double fy,int logical_margin,
+    double *red,double *green,double *blue,double *alpha){
+  const uint8_t *p00=interp_tpag_sample(atlas,tpag,ua,va,logical_margin);
+  const uint8_t *p01=interp_tpag_sample(atlas,tpag,ub,va,logical_margin);
+  const uint8_t *p10=interp_tpag_sample(atlas,tpag,ua,vb,logical_margin);
+  const uint8_t *p11=interp_tpag_sample(atlas,tpag,ub,vb,logical_margin);
+  double inverse_x=1.0-fx,inverse_y=1.0-fy;
+  double weight00=inverse_x*inverse_y;
+  double weight01=fx*inverse_y;
+  double weight10=inverse_x*fy;
+  double weight11=fx*fy;
+  *red=p00[0]*weight00+p01[0]*weight01+p10[0]*weight10+p11[0]*weight11;
+  *green=p00[1]*weight00+p01[1]*weight01+p10[1]*weight10+p11[1]*weight11;
+  *blue=p00[2]*weight00+p01[2]*weight01+p10[2]*weight10+p11[2]*weight11;
+  *alpha=p00[3]*weight00+p01[3]*weight01+p10[3]*weight10+p11[3]*weight11;
+}
+
+static int tpag_interp_draw_key_equal(
+    const GmlTpagInterpKey *left,const GmlTpagInterpKey *right){
+  return left->framebuffer_width==right->framebuffer_width &&
+         left->framebuffer_height==right->framebuffer_height &&
+         left->destination_x==right->destination_x &&
+         left->destination_y==right->destination_y &&
+         left->width==right->width && left->height==right->height &&
+         left->source_x==right->source_x && left->source_y==right->source_y &&
+         left->draw_x==right->draw_x && left->draw_y==right->draw_y &&
+         left->scale_x==right->scale_x && left->scale_y==right->scale_y;
+}
+
+static void tpag_interp_draw_cache_release(GmlRender *render,GmlTpag *tpag){
+  if(!tpag) return;
+  free(tpag->interp_draw_cache);
+  free(tpag->interp_draw_runs);
+  if(render){
+    if(tpag->interp_draw_cache_bytes<=render->interp_draw_cache_bytes)
+      render->interp_draw_cache_bytes-=tpag->interp_draw_cache_bytes;
+    else
+      render->interp_draw_cache_bytes=0;
+  }
+  tpag->interp_draw_cache=NULL;
+  tpag->interp_draw_runs=NULL;
+  tpag->interp_draw_run_count=0;
+  tpag->interp_draw_cache_bytes=0;
+  tpag->interp_draw_cache_valid=0;
+}
+
+static int tpag_interp_draw_cache_reserve(
+    GmlRender *render,const GmlTpag *keep,size_t bytes){
+  if(!render || bytes>GML_INTERP_DRAW_CACHE_BUDGET) return 0;
+  while(render->interp_draw_cache_bytes>
+        GML_INTERP_DRAW_CACHE_BUDGET-bytes){
+    GmlTpag *oldest=NULL;
+    for(int index=0;index<render->n_tpag;index++){
+      GmlTpag *candidate=&render->tpag[index];
+      if(candidate==keep || !candidate->interp_draw_cache_valid ||
+         !candidate->interp_draw_cache_bytes) continue;
+      if(!oldest || candidate->interp_draw_last_frame<oldest->interp_draw_last_frame)
+        oldest=candidate;
+    }
+    if(!oldest) return 0;
+    tpag_interp_draw_cache_release(render,oldest);
+  }
+  return 1;
+}
+
+static int tpag_interp_draw_cache_add_run(
+    GmlTpagInterpRun **runs,int *count,int *capacity,int limit,
+    int y,int x,int opaque){
+  if(!runs || !count || !capacity) return 0;
+  if(*count>0){
+    GmlTpagInterpRun *last=&(*runs)[*count-1];
+    if(last->y==y && last->x+last->len==x && last->opaque==(uint8_t)opaque){
+      last->len++;
+      return 1;
+    }
+  }
+  if(*count>=limit) return 0;
+  if(*count>=*capacity){
+    int grown=*capacity ? *capacity*2 : 1024;
+    if(grown>limit) grown=limit;
+    GmlTpagInterpRun *replacement=
+      realloc(*runs,(size_t)grown*sizeof(**runs));
+    if(!replacement) return 0;
+    *runs=replacement;
+    *capacity=grown;
+  }
+  (*runs)[*count]=(GmlTpagInterpRun){y,x,1,(uint8_t)opaque};
+  (*count)++;
+  return 1;
+}
+
+static void GML_HOT_RENDER tpag_interp_draw_cache_replay(
+    GmlRender *render,const GmlTpag *tpag){
+  const GmlTpagInterpKey *key=&tpag->interp_draw_key;
+  for(int index=0;index<tpag->interp_draw_run_count;index++){
+    const GmlTpagInterpRun *run=&tpag->interp_draw_runs[index];
+    uint32_t *destination=render->fb+
+      (size_t)(key->destination_y+run->y)*render->fbw+
+      key->destination_x+run->x;
+    const uint32_t *source=tpag->interp_draw_cache+
+      (size_t)run->y*key->width+run->x;
+    if(run->opaque){
+      memcpy(destination,source,(size_t)run->len*sizeof(*destination));
+      continue;
+    }
+    for(int pixel=0;pixel<run->len;pixel++){
+      uint32_t source_pixel=source[pixel];
+      uint32_t destination_pixel=destination[pixel];
+      unsigned source_alpha=source_pixel>>24;
+      unsigned inverse_alpha=255u-source_alpha;
+      unsigned red=(((source_pixel>>16)&255u)*source_alpha+127u)/255u+
+                   (((destination_pixel>>16)&255u)*inverse_alpha+127u)/255u;
+      unsigned green=(((source_pixel>>8)&255u)*source_alpha+127u)/255u+
+                     (((destination_pixel>>8)&255u)*inverse_alpha+127u)/255u;
+      unsigned blue=((source_pixel&255u)*source_alpha+127u)/255u+
+                    ((destination_pixel&255u)*inverse_alpha+127u)/255u;
+      if(red>255u) red=255u;
+      if(green>255u) green=255u;
+      if(blue>255u) blue=255u;
+      destination[pixel]=UINT32_C(0xFF000000)|(red<<16)|(green<<8)|blue;
+    }
+  }
+}
+
+static int tpag_interp_draw_cache_build(
+    GmlRender *render,GmlTpag *tpag,const GmlInterpBlitBand *band,
+    const GmlTpagInterpKey *key){
+  if(!band->source_a || !band->fraction_x || key->width<=0 || key->height<=0) return 0;
+  size_t pixel_count=(size_t)key->width*(size_t)key->height;
+  if(pixel_count==0 || pixel_count>GML_INTERP_DRAW_CACHE_MAX_PIXELS ||
+     pixel_count>SIZE_MAX/sizeof(uint32_t)) return 0;
+  size_t pixel_bytes=pixel_count*sizeof(uint32_t);
+  size_t maximum_runs=pixel_count;
+  if(maximum_runs>GML_INTERP_DRAW_CACHE_MAX_RUNS)
+    maximum_runs=GML_INTERP_DRAW_CACHE_MAX_RUNS;
+  size_t maximum_bytes=pixel_bytes+maximum_runs*sizeof(GmlTpagInterpRun);
+  if(maximum_bytes<pixel_bytes ||
+     !tpag_interp_draw_cache_reserve(render,tpag,maximum_bytes)) return 0;
+  size_t run_budget=GML_INTERP_DRAW_CACHE_BUDGET-
+                    render->interp_draw_cache_bytes-pixel_bytes;
+  int run_limit=(int)(run_budget/sizeof(GmlTpagInterpRun));
+  if(run_limit>GML_INTERP_DRAW_CACHE_MAX_RUNS)
+    run_limit=GML_INTERP_DRAW_CACHE_MAX_RUNS;
+  if(run_limit<=0) return 0;
+  uint32_t *pixels=malloc(pixel_bytes);
+  GmlTpagInterpRun *runs=NULL;
+  int run_count=0,run_capacity=0;
+  if(!pixels) return 0;
+  for(int row=0;row<key->height;row++){
+    int destination_y=key->destination_y+row;
+    double source_y=
+      (((double)destination_y+0.5)-band->destination_y)/band->abs_yscale-0.5;
+    int source_a_y=(int)floor(source_y);
+    int source_b_y=source_a_y+1;
+    double fraction_y=source_y-source_a_y;
+    uint32_t *output=pixels+(size_t)row*key->width;
+    for(int column=0;column<key->width;column++){
+      int source_a_x=band->source_a[column];
+      int source_b_x=source_a_x+1;
+      double filtered_red,filtered_green,filtered_blue,filtered_alpha;
+      interp_tpag_filtered_sample(
+        band->atlas,band->tpag,source_a_x,source_b_x,source_a_y,source_b_y,
+        band->fraction_x[column],fraction_y,band->logical_margin,
+        &filtered_red,&filtered_green,&filtered_blue,&filtered_alpha);
+      int red=(int)(filtered_red+0.5);
+      int green=(int)(filtered_green+0.5);
+      int blue=(int)(filtered_blue+0.5);
+      int alpha=(int)(filtered_alpha+0.5);
+      output[column]=((uint32_t)alpha<<24)|((uint32_t)red<<16)|
+                     ((uint32_t)green<<8)|(uint32_t)blue;
+      if(alpha>0 && !tpag_interp_draw_cache_add_run(
+           &runs,&run_count,&run_capacity,run_limit,row,column,alpha>=255)){
+        free(pixels);
+        free(runs);
+        return 0;
+      }
+    }
+  }
+  size_t run_bytes=(size_t)run_capacity*sizeof(*runs);
+  if(run_bytes>run_budget){
+    free(pixels);
+    free(runs);
+    return 0;
+  }
+  tpag->interp_draw_cache=pixels;
+  tpag->interp_draw_runs=runs;
+  tpag->interp_draw_run_count=run_count;
+  tpag->interp_draw_key=*key;
+  tpag->interp_draw_cache_bytes=pixel_bytes+run_bytes;
+  tpag->interp_draw_last_frame=render->frame;
+  tpag->interp_draw_cache_valid=1;
+  render->interp_draw_cache_bytes+=tpag->interp_draw_cache_bytes;
+  return 1;
+}
+
+static int tpag_interp_draw_cache_try(
+    GmlRender *render,GmlTpag *tpag,const GmlInterpBlitBand *band,int row_count){
+  if(!render || !tpag || !band || row_count<=0 ||
+     !render->win || !anygm_policy_uses_first_generation_studio(render->win) ||
+     rprof_tpag_id(render,tpag)<0 || band->flip_x || band->flip_y ||
+     band->solid_mask || band->solid_blur ||
+     mapped_texture_active(render) || shader_alpha_test_requires_filter(render) ||
+     render->blendmode!=0 || !render->alphablend ||
+     gml_render_target_preserves_alpha(render) || render->color_write_mask!=0x0F ||
+     band->alpha<1.0 || (band->blend&0xFFFFFFu)!=0xFFFFFFu)
+    return 0;
+  GmlTpagInterpKey key={
+    render->fbw,render->fbh,
+    band->x0+band->source_x0,band->y0+band->source_y0,
+    band->source_x1-band->source_x0,row_count,
+    band->source_x0,band->source_y0,
+    band->destination_x,band->destination_y,band->abs_xscale,band->abs_yscale
+  };
+  size_t visible_pixels=(size_t)key.width*(size_t)key.height;
+  if(visible_pixels<GML_INTERP_DRAW_CACHE_MIN_PIXELS) return 0;
+  if(tpag->interp_draw_cache_valid &&
+     tpag_interp_draw_key_equal(&tpag->interp_draw_key,&key)){
+    tpag->interp_draw_last_frame=render->frame;
+    tpag_interp_draw_cache_replay(render,tpag);
+    return 1;
+  }
+  if(tpag_interp_draw_key_equal(&tpag->interp_draw_pending_key,&key)){
+    if(tpag->interp_draw_pending_count<0) return 0;
+    tpag->interp_draw_pending_count++;
+  } else {
+    tpag->interp_draw_pending_key=key;
+    tpag->interp_draw_pending_count=1;
+  }
+  if(tpag->interp_draw_pending_count<2) return 0;
+  tpag_interp_draw_cache_release(render,tpag);
+  if(!tpag_interp_draw_cache_build(render,tpag,band,&key)){
+    tpag->interp_draw_pending_count=-1;
+    return 0;
+  }
+  tpag_interp_draw_cache_replay(render,tpag);
+  return 1;
+}
+
 static void blit_interp_pretinted_constant_alpha_sample(
     GmlRender *r,uint32_t *destination,int red,int green,int blue,
     int alpha,double draw_alpha){
@@ -3146,16 +3400,9 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
                                double fx, double fy, int logical_margin,
                                int transparent_tap, int bR, int bG, int bB,
                                uint32_t blend, double alpha){
-  const uint8_t *p00=interp_tpag_sample(atlas,t,ua,va,logical_margin);
-  const uint8_t *p01=interp_tpag_sample(atlas,t,ub,va,logical_margin);
-  const uint8_t *p10=interp_tpag_sample(atlas,t,ua,vb,logical_margin);
-  const uint8_t *p11=interp_tpag_sample(atlas,t,ub,vb,logical_margin);
-  double wx0=1.0-fx, wy0=1.0-fy;
-  double w00=wx0*wy0, w01=fx*wy0, w10=wx0*fy, w11=fx*fy;
-  double fsr=p00[0]*w00+p01[0]*w01+p10[0]*w10+p11[0]*w11;
-  double fsg=p00[1]*w00+p01[1]*w01+p10[1]*w10+p11[1]*w11;
-  double fsb=p00[2]*w00+p01[2]*w01+p10[2]*w10+p11[2]*w11;
-  double faa=p00[3]*w00+p01[3]*w01+p10[3]*w10+p11[3]*w11;
+  double fsr,fsg,fsb,faa;
+  interp_tpag_filtered_sample(
+    atlas,t,ua,ub,va,vb,fx,fy,logical_margin,&fsr,&fsg,&fsb,&faa);
   if(shader_discards_alpha_value(r,faa) &&
      !(r->blendmode==2 && !shader_alpha_test_active(r))) return;
   /* A Studio 2 shader receives the filtered sample as floating-point colour. Keep that precision
@@ -3433,6 +3680,9 @@ static GmlTpag phase_tpag_rows(const GmlTpag *src, int row, int count){
   t.solid_blur_alpha_cache=NULL; t.solid_blur_alpha_shader=-1;
   t.interp_phase_cache[0]=t.interp_phase_cache[1]=t.interp_phase_cache[2]=NULL;
   t.fast8_draw_cache=NULL; t.fast8_draw_cache_valid=0; t.fast8_draw_pending_count=0;
+  t.interp_draw_cache=NULL; t.interp_draw_runs=NULL;
+  t.interp_draw_cache_bytes=0; t.interp_draw_run_count=0;
+  t.interp_draw_cache_valid=0; t.interp_draw_pending_count=0;
   return t;
 }
 static void blit_phase_plane_previous(GmlRender *r, uint32_t *plane, GmlTpag *t,
@@ -5580,6 +5830,9 @@ void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x
   tt.argb_cache=NULL;
   tt.solid_blur_alpha_cache=NULL; tt.solid_blur_alpha_shader=-1;
   tt.fast8_draw_cache=NULL; tt.fast8_draw_cache_valid=0; tt.fast8_draw_pending_count=0;
+  tt.interp_draw_cache=NULL; tt.interp_draw_runs=NULL;
+  tt.interp_draw_cache_bytes=0; tt.interp_draw_run_count=0;
+  tt.interp_draw_cache_valid=0; tt.interp_draw_pending_count=0;
 
   blit_background_phase(r,&tt, x - r->cam_x, y - r->cam_y,
                         draw_xscale,draw_yscale,0xFFFFFF,1);
@@ -5620,6 +5873,9 @@ void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr){
     tt.argb_cache=NULL;
     tt.solid_blur_alpha_cache=NULL; tt.solid_blur_alpha_shader=-1;
     tt.fast8_draw_cache=NULL; tt.fast8_draw_cache_valid=0; tt.fast8_draw_pending_count=0;
+    tt.interp_draw_cache=NULL; tt.interp_draw_runs=NULL;
+    tt.interp_draw_cache_bytes=0; tt.interp_draw_run_count=0;
+    tt.interp_draw_cache_valid=0; tt.interp_draw_pending_count=0;
 
     blit_background_phase(r,&tt, t->x - r->cam_x, t->y - r->cam_y, 1,1, 0xFFFFFF, 1);
   }

@@ -1417,6 +1417,9 @@ void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str
         } else if(s->frame){ int ti=s->frame[fr];
           if(ti>=0 && ti<r->n_tpag){ GmlTpag *t=&r->tpag[ti];
           GmlTpag gt=*t;
+          gt.interp_draw_cache=NULL; gt.interp_draw_runs=NULL;
+          gt.interp_draw_cache_bytes=0; gt.interp_draw_run_count=0;
+          gt.interp_draw_cache_valid=0; gt.interp_draw_pending_count=0;
           if(use_rot){
             double ox=cx*xs;
             double oy=base_y*ys;

@@ -67,6 +67,7 @@ typedef struct {
 typedef struct {
   int frames;
   double total_ms, input_ms, step_ms, clear_ms, draw_ms, gui_ms, video_ms, audio_ms;
+  double present_ms,frame_ms;
   double max_ms; long max_frame;
 } CoreProfile;
 typedef struct {
@@ -225,6 +226,11 @@ struct AnygmEngine {
    * can still wrap its completed frame in the distinct host framebuffer below. */
   unsigned host_output_width,host_output_height;
   int host_canvas_active,host_canvas_x,host_canvas_y,host_canvas_width,host_canvas_height;
+  /* Geometry the host scratch buffer was last cleared for. The canvas rectangle is rewritten in
+   * full every frame, so the margins outside it survive until one of these changes. */
+  int host_clear_valid;
+  unsigned host_clear_host_width,host_clear_host_height;
+  int host_clear_canvas_x,host_clear_canvas_y,host_clear_canvas_width,host_clear_canvas_height;
   int gui_offset_x,gui_offset_y,canvas_mode,gui_space_width,gui_space_height;
   /* Derived presentation state: content owns the non-native window raster while automatic
    * application-surface drawing is disabled. The screen-stage GUI must use that same raster for

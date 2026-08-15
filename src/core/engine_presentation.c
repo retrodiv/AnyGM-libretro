@@ -45,6 +45,53 @@ static void scale_completed_frame(const uint32_t *source,unsigned source_width,
                                   int destination_y,unsigned destination_width,
                                   unsigned destination_height){
   if(destination_width>=source_width && destination_height>=source_height){
+    /* The column recurrence restarts identically on every row, and a destination row whose source
+     * row repeats the previous one holds exactly the pixels already written. Walk the recurrence
+     * once into a column map, expand one destination row per distinct source row, and copy the
+     * repeats. The accumulators below are the same recurrences the per-pixel form evaluated, so
+     * the result is unchanged. */
+    unsigned column_stack[1024];
+    unsigned *column=destination_width<=(unsigned)(sizeof column_stack/sizeof *column_stack)
+      ?column_stack:(unsigned*)malloc((size_t)destination_width*sizeof(*column));
+    if(column){
+      unsigned source_x=0,x_accumulator=source_width;
+      for(unsigned x=0;x<destination_width;x++){
+        column[x]=source_x;
+        x_accumulator+=source_width*2u;
+        if(x_accumulator>=destination_width*2u){
+          x_accumulator-=destination_width*2u;
+          source_x++;
+        }
+      }
+      unsigned source_y=0,y_accumulator=source_height,previous_source_y=0;
+      const uint32_t *previous_row=NULL;
+      for(unsigned y=0;y<destination_height;y++){
+        uint32_t *destination_row=destination+
+          (size_t)(destination_y+(int)y)*destination_stride+destination_x;
+        if(previous_row && source_y==previous_source_y){
+          memcpy(destination_row,previous_row,
+                 (size_t)destination_width*sizeof(*destination_row));
+        } else {
+          const uint32_t *source_row=source+(size_t)source_y*source_width;
+          unsigned run=0;
+          for(unsigned x=1;x<=destination_width;x++){
+            if(x<destination_width && column[x]==column[run]) continue;
+            uint32_t value=source_row[column[run]]&0xFFFFFFu;
+            for(unsigned i=run;i<x;i++) destination_row[i]=value;
+            run=x;
+          }
+          previous_row=destination_row;
+          previous_source_y=source_y;
+        }
+        y_accumulator+=source_height*2u;
+        if(y_accumulator>=destination_height*2u){
+          y_accumulator-=destination_height*2u;
+          source_y++;
+        }
+      }
+      if(column!=column_stack) free(column);
+      return;
+    }
     unsigned source_y=0,y_accumulator=source_height;
     for(unsigned y=0;y<destination_height;y++){
       const uint32_t *source_row=source+(size_t)source_y*source_width;
@@ -105,7 +152,26 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
     return 1;
   }
   if(!ensure_scratch_buffer(engine,&engine->host_screen)) return 0;
-  memset(engine->host_screen,0,(size_t)host_width*host_height*sizeof(*engine->host_screen));
+  /* The scratch buffer is allocated black and the scaler rewrites every pixel of the canvas
+   * rectangle each frame, so the margins around it only need clearing when the geometry that
+   * defines them changes. The buffer is read with host_width as its stride, so a changed host
+   * extent reinterprets every row and has to clear as well. */
+  if(!engine->host_clear_valid ||
+     engine->host_clear_host_width!=host_width ||
+     engine->host_clear_host_height!=host_height ||
+     engine->host_clear_canvas_x!=engine->host_canvas_x ||
+     engine->host_clear_canvas_y!=engine->host_canvas_y ||
+     engine->host_clear_canvas_width!=engine->host_canvas_width ||
+     engine->host_clear_canvas_height!=engine->host_canvas_height){
+    memset(engine->host_screen,0,(size_t)host_width*host_height*sizeof(*engine->host_screen));
+    engine->host_clear_valid=1;
+    engine->host_clear_host_width=host_width;
+    engine->host_clear_host_height=host_height;
+    engine->host_clear_canvas_x=engine->host_canvas_x;
+    engine->host_clear_canvas_y=engine->host_canvas_y;
+    engine->host_clear_canvas_width=engine->host_canvas_width;
+    engine->host_clear_canvas_height=engine->host_canvas_height;
+  }
   scale_completed_frame(
     engine->screen,engine->output_width,engine->output_height,
     engine->host_screen,host_width,

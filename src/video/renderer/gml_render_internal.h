@@ -9,6 +9,16 @@
 
 typedef struct { uint16_t y, x, len; uint8_t alpha; } GmlTpagAlphaRun;
 typedef struct {
+  int framebuffer_width, framebuffer_height;
+  int destination_x, destination_y, width, height;
+  int source_x, source_y;
+  double draw_x, draw_y, scale_x, scale_y;
+} GmlTpagInterpKey;
+typedef struct {
+  int y, x, len;
+  uint8_t opaque;
+} GmlTpagInterpRun;
+typedef struct {
   int sx,sy,sw,sh, tx,ty, tw,th, bw,bh, atlas;  /* texture page item; tw/th = logical extent of the
                                                    stored rectangle (differs when the page is scaled) */
   int alpha_scanned, ax0, ay0, ax1, ay1; /* nontransparent source bbox, cached after atlas decode */
@@ -31,8 +41,18 @@ typedef struct {
   int fast8_draw_alpha_floor_key;
   int fast8_draw_pending_alpha_floor_key;
   int fast8_draw_cache_valid, fast8_draw_cache_copy_255, fast8_draw_pending_count;
+  /* A repeated, axis-aligned filtered draw of immutable atlas content can retain the filtered
+   * source sample.  Replaying opaque spans and blending only coverage edges avoids evaluating the
+   * same four texture taps at every output pixel on every frame. */
+  uint32_t *interp_draw_cache;
+  GmlTpagInterpRun *interp_draw_runs;
+  int interp_draw_run_count;
+  GmlTpagInterpKey interp_draw_key, interp_draw_pending_key;
+  size_t interp_draw_cache_bytes;
+  long interp_draw_last_frame;
+  int interp_draw_cache_valid, interp_draw_pending_count;
 } GmlTpag;
-void gml_render_texture_page_cache_clear(GmlTpag *page);
+void gml_render_texture_page_cache_clear(GmlRender *render, GmlTpag *page);
 void gml_render_interpolated_subrect_cache_clear(GmlRender *render);
 void gml_render_apply_removeback_rgba(uint8_t *rgba, int width, int height,
                                       int removeback);
@@ -156,6 +176,7 @@ typedef struct GmlRender {
   GmlInterpSubrectCache *interp_subrect_cache;
   int interp_subrect_count, interp_subrect_capacity;
   size_t interp_subrect_bytes;
+  size_t interp_draw_cache_bytes;
   GmlSprite *spr; int n_spr, base_n_spr, spr_cap, spr_has_free;
   /* content-hash index over spr[].name (lazy; for O(1) gml_render_named_sprite lookups).
    * spr_name_gen bumps on every append/delete so the index rebuilds after a runtime sprite's

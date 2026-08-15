@@ -1078,15 +1078,49 @@ static int draw_first_generation_gui_app_surface(GmlRender *r,int surf,
   if(y1>r->fbh) y1=r->fbh;
   if(x0>=x1 || y0>=y1) return 1;
   gml_render_maybe_prepare_draw(r);
-  for(int y=y0;y<y1;y++){
-    int sy=(int)floor((((double)y+0.5)-dy)*(double)sh/dh);
-    if(sy<0) sy=0; else if(sy>=sh) sy=sh-1;
-    uint32_t *destination=r->fb+(size_t)y*r->fbw+x0;
-    for(int x=x0;x<x1;x++,destination++){
+  /* The source column a destination column selects does not depend on the row, and a destination
+   * row whose source row repeats the previous one is an exact copy of what was just written. Hoist
+   * the column map, expand one destination row per distinct source row, and repeat that row. The
+   * sampled coordinates are the same expressions the per-pixel form evaluated, so the pixels are
+   * identical; what changes is how many times they are computed. At a window-sized magnification
+   * this is a few hundred expanded rows instead of millions of floor() and divide pairs. */
+  int span=x1-x0;
+  int column_stack[1024];
+  int *column=span<=(int)(sizeof column_stack/sizeof *column_stack)?column_stack:
+              (int*)malloc((size_t)span*sizeof(*column));
+  if(!column){
+    for(int y=y0;y<y1;y++){
+      int sy=(int)floor((((double)y+0.5)-dy)*(double)sh/dh);
+      if(sy<0) sy=0; else if(sy>=sh) sy=sh-1;
+      uint32_t *destination=r->fb+(size_t)y*r->fbw+x0;
+      for(int x=x0;x<x1;x++,destination++){
+        int sx=(int)floor((((double)x+0.5)-dx)*(double)sw/dw);
+        if(sx<0) sx=0; else if(sx>=sw) sx=sw-1;
+        *destination=src[(size_t)sy*sw+sx]|0xFF000000u;
+      }
+    }
+  } else {
+    for(int x=x0;x<x1;x++){
       int sx=(int)floor((((double)x+0.5)-dx)*(double)sw/dw);
       if(sx<0) sx=0; else if(sx>=sw) sx=sw-1;
-      *destination=src[(size_t)sy*sw+sx]|0xFF000000u;
+      column[x-x0]=sx;
     }
+    int previous_sy=-1;
+    const uint32_t *previous_row=NULL;
+    for(int y=y0;y<y1;y++){
+      int sy=(int)floor((((double)y+0.5)-dy)*(double)sh/dh);
+      if(sy<0) sy=0; else if(sy>=sh) sy=sh-1;
+      uint32_t *destination=r->fb+(size_t)y*r->fbw+x0;
+      if(sy==previous_sy){
+        memcpy(destination,previous_row,(size_t)span*sizeof(*destination));
+        continue;
+      }
+      const uint32_t *source_row=src+(size_t)sy*sw;
+      for(int x=0;x<span;x++) destination[x]=source_row[column[x]]|0xFF000000u;
+      previous_sy=sy;
+      previous_row=destination;
+    }
+    if(column!=column_stack) free(column);
   }
   if(rect_covers_target(r,x0,y0,x1,y1)){
     r->fb_opaque_known=1;

@@ -198,6 +198,91 @@ static int virtual_monitor_geometry_policy(void){
   return ok;
 }
 
+static int host_canvas_scale_policy(void){
+  enum {
+    SOURCE_WIDTH=5,SOURCE_HEIGHT=3,
+    HOST_WIDTH=31,HOST_HEIGHT=23
+  };
+  uint32_t source_pixels[SOURCE_WIDTH*SOURCE_HEIGHT];
+  uint32_t host_pixels[HOST_WIDTH*HOST_HEIGHT];
+  for(int y=0;y<SOURCE_HEIGHT;y++) for(int x=0;x<SOURCE_WIDTH;x++)
+    source_pixels[(size_t)y*SOURCE_WIDTH+x]=
+      0xA0000000u|((uint32_t)(13+x*31+y*17)<<16)|
+      ((uint32_t)(19+x*23+y*29)<<8)|(uint32_t)(7+x*37+y*11);
+  memset(host_pixels,0x5A,sizeof host_pixels);
+  AnygmEngine engine={0};
+  engine.screen=source_pixels;
+  engine.host_screen=host_pixels;
+  engine.output_width=SOURCE_WIDTH;
+  engine.output_height=SOURCE_HEIGHT;
+  engine.host_output_width=HOST_WIDTH;
+  engine.host_output_height=HOST_HEIGHT;
+  engine.host_canvas_active=1;
+  engine.host_canvas_x=3;
+  engine.host_canvas_y=2;
+  engine.host_canvas_width=25;
+  engine.host_canvas_height=18;
+
+  const uint32_t *resolved_pixels=NULL;
+  unsigned resolved_width=0,resolved_height=0;
+  for(int pass=0;pass<2;pass++){
+    if(!resolve_host_frame(&engine,&resolved_pixels,&resolved_width,&resolved_height) ||
+       resolved_pixels!=host_pixels || resolved_width!=HOST_WIDTH ||
+       resolved_height!=HOST_HEIGHT){
+      fputs("host canvas magnification did not resolve the configured framebuffer\n",stderr);
+      return 0;
+    }
+    for(int y=0;y<HOST_HEIGHT;y++) for(int x=0;x<HOST_WIDTH;x++){
+      uint32_t expected=0;
+      if(x>=engine.host_canvas_x && x<engine.host_canvas_x+engine.host_canvas_width &&
+         y>=engine.host_canvas_y && y<engine.host_canvas_y+engine.host_canvas_height){
+        int canvas_x=x-engine.host_canvas_x;
+        int canvas_y=y-engine.host_canvas_y;
+        int source_x=(int)(((int64_t)(2*canvas_x+1)*SOURCE_WIDTH)/
+                           (2*engine.host_canvas_width));
+        int source_y=(int)(((int64_t)(2*canvas_y+1)*SOURCE_HEIGHT)/
+                           (2*engine.host_canvas_height));
+        expected=source_pixels[(size_t)source_y*SOURCE_WIDTH+source_x]&0xFFFFFFu;
+      }
+      if(host_pixels[(size_t)y*HOST_WIDTH+x]!=expected){
+        fprintf(stderr,"host canvas magnification mismatch at %d,%d on pass %d: %08x != %08x\n",
+                x,y,pass,host_pixels[(size_t)y*HOST_WIDTH+x],expected);
+        return 0;
+      }
+    }
+    for(size_t index=0;index<SOURCE_WIDTH*SOURCE_HEIGHT;index++)
+      source_pixels[index]^=0x0055AA33u;
+  }
+
+  engine.host_canvas_x=1;
+  engine.host_canvas_y=4;
+  engine.host_canvas_width=20;
+  engine.host_canvas_height=12;
+  if(!resolve_host_frame(&engine,&resolved_pixels,&resolved_width,&resolved_height)){
+    fputs("host canvas geometry change did not resolve\n",stderr);
+    return 0;
+  }
+  for(int y=0;y<HOST_HEIGHT;y++) for(int x=0;x<HOST_WIDTH;x++){
+    uint32_t expected=0;
+    if(x>=engine.host_canvas_x && x<engine.host_canvas_x+engine.host_canvas_width &&
+       y>=engine.host_canvas_y && y<engine.host_canvas_y+engine.host_canvas_height){
+      int canvas_x=x-engine.host_canvas_x;
+      int canvas_y=y-engine.host_canvas_y;
+      int source_x=(int)(((int64_t)(2*canvas_x+1)*SOURCE_WIDTH)/
+                         (2*engine.host_canvas_width));
+      int source_y=(int)(((int64_t)(2*canvas_y+1)*SOURCE_HEIGHT)/
+                         (2*engine.host_canvas_height));
+      expected=source_pixels[(size_t)source_y*SOURCE_WIDTH+source_x]&0xFFFFFFu;
+    }
+    if(host_pixels[(size_t)y*HOST_WIDTH+x]!=expected){
+      fprintf(stderr,"host canvas geometry-change mismatch at %d,%d: %08x != %08x\n",
+              x,y,host_pixels[(size_t)y*HOST_WIDTH+x],expected);
+      return 0;
+    }
+  }
+  return 1;
+}
+
 typedef struct {
   const char *room_redirect;
 } RoomRedirectFixture;
@@ -1235,6 +1320,8 @@ int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
     if(!strcmp(argv[2],"virtual_monitor_geometry"))
       return virtual_monitor_geometry_policy()?0:1;
+    if(!strcmp(argv[2],"host_canvas_scale"))
+      return host_canvas_scale_policy()?0:1;
     if(!strcmp(argv[2],"screen_refresh_present_latch"))
       return screen_refresh_present_latch_policy()?0:1;
     if(!strcmp(argv[2],"application_surface_port_scale"))
@@ -1275,7 +1362,7 @@ int main(int argc,char **argv){
   }
   if(argc!=1){
     fputs("usage: test_engine_instances [--case screen_refresh_present_latch|"
-          "virtual_monitor_geometry|application_surface_port_scale|"
+          "virtual_monitor_geometry|host_canvas_scale|application_surface_port_scale|"
           "first_generation_application_surface|"
           "game_restart|"
           "first_generation_dynamic_camera|"
@@ -1290,6 +1377,7 @@ int main(int argc,char **argv){
     return 1;
   }
   if(!virtual_monitor_geometry_policy()) return 1;
+  if(!host_canvas_scale_policy()) return 1;
   if(!room_order_redirect_policy()) return 1;
   if(!screen_refresh_present_latch_policy()) return 1;
   if(!application_surface_port_scale_policy()) return 1;

@@ -240,6 +240,18 @@ static void check_runtime_background_replacement(void){
   render.color_write_mask=0x0f;
   render.active_shader=-1;
   render.target_id=-1;
+  render.tpag[0].interp_draw_cache=malloc(sizeof(uint32_t));
+  render.tpag[0].interp_draw_runs=malloc(sizeof(GmlTpagInterpRun));
+  if(!render.tpag[0].interp_draw_cache || !render.tpag[0].interp_draw_runs){
+    free(rgba);
+    gml_render_free(&render);
+    expect(0,"runtime background cache fixture allocation failed");
+    return;
+  }
+  render.tpag[0].interp_draw_cache_valid=1;
+  render.tpag[0].interp_draw_cache_bytes=
+    sizeof(uint32_t)+sizeof(GmlTpagInterpRun);
+  render.interp_draw_cache_bytes=render.tpag[0].interp_draw_cache_bytes;
 
   expect(gml_background_replace_from_rgba(&render,0,rgba,2,2),
          "runtime background replacement rejected valid RGBA pixels");
@@ -248,6 +260,10 @@ static void check_runtime_background_replacement(void){
          render.tpag[0].sh==2 && render.tpag[0].bw==2 &&
          render.tpag[0].bh==2,
          "runtime background replacement did not publish its new texture page");
+  expect(!render.tpag[0].interp_draw_cache &&
+         !render.tpag[0].interp_draw_runs &&
+         render.interp_draw_cache_bytes==0,
+         "runtime background replacement retained filtered samples from the old image");
   gml_draw_background(&render,0,0,0);
   expect(!memcmp(framebuffer,expected,sizeof expected),
          "runtime background replacement did not affect background drawing");
@@ -656,6 +672,158 @@ static void check_first_generation_filtered_minification(void){
   free(page.argb_cache);
 }
 
+static void fill_cache_test_target(uint32_t *pixels,int width,int height,unsigned seed){
+  for(int y=0;y<height;y++) for(int x=0;x<width;x++){
+    unsigned red=(unsigned)(x*13+y*3+seed*17)&255u;
+    unsigned green=(unsigned)(x*5+y*11+seed*29)&255u;
+    unsigned blue=(unsigned)(x*7+y*19+seed*31)&255u;
+    pixels[(size_t)y*width+x]=UINT32_C(0xff000000)|(red<<16)|(green<<8)|blue;
+  }
+}
+
+static void init_first_generation_cache_renderer(
+    GmlRender *render,GmlWin *content,GmlAtlas *atlas,GmlTpag *page,
+    GmlBg *background,uint32_t *framebuffer,int width,int height){
+  memset(render,0,sizeof(*render));
+  render->win=content;
+  render->fb=render->base_fb=framebuffer;
+  render->fbw=render->base_fbw=width;
+  render->fbh=render->base_fbh=height;
+  render->atlas=atlas;
+  render->n_atlas=1;
+  render->tpag=page;
+  render->n_tpag=1;
+  render->bg=background;
+  render->n_bg=1;
+  render->alpha=1.0;
+  render->alphablend=1;
+  render->interp=1;
+  render->color_write_mask=0x0f;
+  render->active_shader=-1;
+  render->target_id=-1;
+}
+
+static void check_repeated_filtered_draw_cache(void){
+  enum { SOURCE_WIDTH=80,SOURCE_HEIGHT=80,ATLAS_WIDTH=82,ATLAS_HEIGHT=82,
+         TARGET_WIDTH=200,TARGET_HEIGHT=180 };
+  size_t atlas_bytes=(size_t)ATLAS_WIDTH*ATLAS_HEIGHT*4;
+  size_t target_bytes=(size_t)TARGET_WIDTH*TARGET_HEIGHT*sizeof(uint32_t);
+  uint8_t *rgba=calloc(atlas_bytes,1);
+  uint32_t *reference_pixels=malloc(target_bytes);
+  uint32_t *cached_pixels=malloc(target_bytes);
+  GmlWin content;
+  GmlAtlas atlas;
+  GmlTpag reference_page,cached_page;
+  GmlBg background;
+  GmlRender reference,cached;
+  if(!rgba || !reference_pixels || !cached_pixels){
+    free(rgba);
+    free(reference_pixels);
+    free(cached_pixels);
+    expect(0,"filtered draw cache fixture allocation failed");
+    return;
+  }
+  memset(&content,0,sizeof content);
+  memset(&atlas,0,sizeof atlas);
+  memset(&reference_page,0,sizeof reference_page);
+  memset(&background,0,sizeof background);
+  content.bytecode=14;
+  atlas.px=rgba;
+  atlas.w=ATLAS_WIDTH;
+  atlas.h=ATLAS_HEIGHT;
+  for(int y=0;y<SOURCE_HEIGHT;y++) for(int x=0;x<SOURCE_WIDTH;x++){
+    uint8_t *pixel=rgba+((size_t)(y+1)*ATLAS_WIDTH+x+1)*4;
+    pixel[0]=(uint8_t)(x*17+y*3);
+    pixel[1]=(uint8_t)(x*5+y*23);
+    pixel[2]=(uint8_t)(x*11+y*7);
+    switch((x/7+y/5)%5){
+      case 0: pixel[3]=0; break;
+      case 1: pixel[3]=47; break;
+      case 2: pixel[3]=128; break;
+      case 3: pixel[3]=219; break;
+      default: pixel[3]=255; break;
+    }
+  }
+  reference_page.sx=reference_page.sy=1;
+  reference_page.sw=reference_page.tw=SOURCE_WIDTH;
+  reference_page.sh=reference_page.th=SOURCE_HEIGHT;
+  reference_page.tx=reference_page.ty=1;
+  reference_page.bw=ATLAS_WIDTH;
+  reference_page.bh=ATLAS_HEIGHT;
+  reference_page.atlas=0;
+  cached_page=reference_page;
+  background.tpag=0;
+  init_first_generation_cache_renderer(
+    &reference,&content,&atlas,&reference_page,&background,
+    reference_pixels,TARGET_WIDTH,TARGET_HEIGHT);
+  init_first_generation_cache_renderer(
+    &cached,&content,&atlas,&cached_page,&background,
+    cached_pixels,TARGET_WIDTH,TARGET_HEIGHT);
+
+  fill_cache_test_target(reference_pixels,TARGET_WIDTH,TARGET_HEIGHT,1);
+  memcpy(cached_pixels,reference_pixels,target_bytes);
+  gml_draw_background_ext(&reference,0,8.25,6.75,2.125,1.9375,0xffffffu,1.0);
+  gml_draw_background_ext(&cached,0,8.25,6.75,2.125,1.9375,0xffffffu,1.0);
+  expect(!memcmp(reference_pixels,cached_pixels,target_bytes),
+         "the filtered cache warm-up draw changed a destination pixel");
+  expect(!cached_page.interp_draw_cache_valid,
+         "a one-off filtered draw populated the repeat cache");
+
+  fill_cache_test_target(reference_pixels,TARGET_WIDTH,TARGET_HEIGHT,2);
+  memcpy(cached_pixels,reference_pixels,target_bytes);
+  memset(&reference_page.interp_draw_pending_key,0,
+         sizeof(reference_page.interp_draw_pending_key));
+  reference_page.interp_draw_pending_count=0;
+  cached.frame=reference.frame=2;
+  gml_draw_background_ext(&reference,0,8.25,6.75,2.125,1.9375,0xffffffu,1.0);
+  gml_draw_background_ext(&cached,0,8.25,6.75,2.125,1.9375,0xffffffu,1.0);
+  expect(cached_page.interp_draw_cache_valid && cached.interp_draw_cache_bytes>0,
+         "a repeated filtered draw did not populate the repeat cache");
+  expect(!memcmp(reference_pixels,cached_pixels,target_bytes),
+         "building the filtered repeat cache changed a destination pixel");
+
+  fill_cache_test_target(reference_pixels,TARGET_WIDTH,TARGET_HEIGHT,3);
+  memcpy(cached_pixels,reference_pixels,target_bytes);
+  memset(&reference_page.interp_draw_pending_key,0,
+         sizeof(reference_page.interp_draw_pending_key));
+  reference_page.interp_draw_pending_count=0;
+  cached.frame=reference.frame=3;
+  gml_draw_background_ext(&reference,0,8.25,6.75,2.125,1.9375,0xffffffu,1.0);
+  gml_draw_background_ext(&cached,0,8.25,6.75,2.125,1.9375,0xffffffu,1.0);
+  expect(!memcmp(reference_pixels,cached_pixels,target_bytes),
+         "replaying filtered opaque and partial-alpha spans changed a destination pixel");
+
+  fill_cache_test_target(reference_pixels,TARGET_WIDTH,TARGET_HEIGHT,4);
+  memcpy(cached_pixels,reference_pixels,target_bytes);
+  memset(&reference_page.interp_draw_pending_key,0,
+         sizeof(reference_page.interp_draw_pending_key));
+  reference_page.interp_draw_pending_count=0;
+  cached.frame=reference.frame=4;
+  gml_draw_background_ext(&reference,0,9.0,7.0,2.0,1.875,0xffffffu,1.0);
+  gml_draw_background_ext(&cached,0,9.0,7.0,2.0,1.875,0xffffffu,1.0);
+  expect(!memcmp(reference_pixels,cached_pixels,target_bytes),
+         "a changed filtered geometry reused stale cached samples");
+
+  fill_cache_test_target(reference_pixels,TARGET_WIDTH,TARGET_HEIGHT,5);
+  memcpy(cached_pixels,reference_pixels,target_bytes);
+  memset(&reference_page.interp_draw_pending_key,0,
+         sizeof(reference_page.interp_draw_pending_key));
+  reference_page.interp_draw_pending_count=0;
+  cached.frame=reference.frame=5;
+  gml_draw_background_ext(&reference,0,8.25,6.75,2.125,1.9375,0xffffffu,1.0);
+  gml_draw_background_ext(&cached,0,8.25,6.75,2.125,1.9375,0xffffffu,1.0);
+  expect(!memcmp(reference_pixels,cached_pixels,target_bytes),
+         "returning to a cached filtered geometry changed a destination pixel");
+
+  gml_render_texture_page_cache_clear(&reference,&reference_page);
+  gml_render_texture_page_cache_clear(&cached,&cached_page);
+  expect(cached.interp_draw_cache_bytes==0,
+         "clearing a texture page left filtered cache memory accounted");
+  free(rgba);
+  free(reference_pixels);
+  free(cached_pixels);
+}
+
 int main(void){
   static const uint32_t transformed[8][4]={
     {0xffff0000,0xff00ff00,0xff0000ff,0xffffffff},
@@ -687,6 +855,7 @@ int main(void){
   check_first_generation_fractional_tile_projection();
   check_application_surface_partial_alpha_coverage();
   check_first_generation_filtered_minification();
+  check_repeated_filtered_draw_cache();
   if(failures){
     fprintf(stderr,"renderer tiles: %d failure(s)\n",failures);
     return 1;
