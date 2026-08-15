@@ -117,9 +117,10 @@ VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_su
 	test_renderer_texture_shells
 CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks
 MEDIA_TESTS := test_hash test_image_codec test_font_raster
+AUDIO_TESTS := test_mp3_detect
 COMPATIBILITY_TESTS := test_compatibility
 CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TESTS) \
-	$(CONTENT_TESTS) $(MEDIA_TESTS) $(COMPATIBILITY_TESTS))
+	$(CONTENT_TESTS) $(MEDIA_TESTS) $(AUDIO_TESTS) $(COMPATIBILITY_TESTS))
 INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_host_setting_budget
 CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_libretro_state_transport \
 	$(TEST_DIR)/test_libretro_vfs_transport $(TEST_DIR)/test_libretro_option_defaults \
@@ -322,6 +323,11 @@ $(TEST_DIR)/test_hash: tests/unit/media/test_hash.c src/media/gml_hash.c
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
 
+$(TEST_DIR)/test_mp3_detect: tests/unit/audio/test_mp3_detect.c \
+	src/audio/codecs/gml_mp3.c
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
+
 $(TEST_DIR)/test_font_raster: tests/unit/media/test_font_raster.c \
 	src/media/gml_font_raster.c
 	mkdir -p $(dir $@)
@@ -343,6 +349,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_hash
 	$(TEST_DIR)/test_image_codec
 	$(TEST_DIR)/test_font_raster
+	$(TEST_DIR)/test_mp3_detect
 	$(TEST_DIR)/test_compatibility
 	$(TEST_DIR)/test_renderer_effects
 	$(TEST_DIR)/test_renderer_crt

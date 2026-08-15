@@ -298,7 +298,14 @@ int mp3dec_detect_cb(mp3dec_io_t *io, uint8_t *buf, size_t buf_size)
         if (filled > MINIMP3_BUF_SIZE)
             filled = MINIMP3_BUF_SIZE;
     }
-    int free_format_bytes, frame_size;
+    /* Local modification licensed under MIT:
+       Copyright (c) 2026 retrodiv <retrodiv@proton.me>.
+       mp3d_find_frame reads *free_format_bytes before it writes it, so an
+       uninitialized pair here makes hdr_frame_bytes answer stack garbage. mp3d_match_frame then
+       accumulates that into its offset until the int wraps negative, its bound check passes, and
+       hdr_compare reads far outside the buffer. Every other call site in this file already
+       initializes both; this one did not. */
+    int free_format_bytes = 0, frame_size = 0;
     mp3d_find_frame(buf, filled, &free_format_bytes, &frame_size);
     if (frame_size)
         return 0; /* MAX_FRAME_SYNC_MATCHES consecutive frames found */
