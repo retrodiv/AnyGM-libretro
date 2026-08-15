@@ -10,6 +10,7 @@
 #include "anygm_host.h"
 
 #include <math.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -815,6 +816,23 @@ int gml_set_inst_var_all(GmlVM *vm, const char *objname, const char *var, double
     GmlVal v=vreal(val);
     if(gml_vm_instance_builtin_set(vm,in,var,v)){ n++; continue; }
     GmlVal *slot=gml_varmap_put(&in->vars,var); if(slot){ *slot=v; n++; }
+  }
+  return n;
+}
+int gml_resize_inst_surface_all(GmlVM *vm,const char *objname,const char *var,int width,int height){
+  if(!vm || !vm->render || !objname || !var || width<=0 || height<=0) return 0;
+  int obj=gml_object_index_by_name(vm,objname); if(obj<0) return 0;
+  int n=0;
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(!in->active || in->marked || !gml_object_is(vm,in->obj,obj)) continue;
+    GmlVal *value=gml_varmap_get(&in->vars,var);
+    if(!value || value->t!=V_REAL || !isfinite(value->d) || value->d<0 || value->d>INT_MAX)
+      continue;
+    int surface=(int)value->d;
+    if(surface<0 || !gml_surface_exists((GmlRender*)vm->render,surface)) continue;
+    gml_surface_resize((GmlRender*)vm->render,surface,width,height);
+    n++;
   }
   return n;
 }

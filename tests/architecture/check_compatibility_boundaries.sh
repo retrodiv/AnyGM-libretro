@@ -1129,7 +1129,7 @@ fail_matches "Presentation service definitions belong only to src/core/engine_pr
   "$presentation_owner_definitions"
 
 override_owner_definitions=$(find src/core -type f -name '*.c' -exec grep -n -H -E \
-  '^[[:space:]]*(static[[:space:]]+)?(int|void)[[:space:]]+(core_opt_(god|start_room|redirect_room_order)|engine_override_(reset|set)|apply_sticky_cheats|aspect_apply_program|aspect_(compositor_fullwidth|center_view_target|wide_gameplay_view|draw_full_view)_gen|menu_run|room_skip_hook|introskip_hook)[[:space:]]*\(' \
+  '^[[:space:]]*(static[[:space:]]+)?(int|void)[[:space:]]+(core_opt_(god|start_room|redirect_room_order)|engine_override_(reset|set)|apply_(sticky_cheats|monitor_overrides)|aspect_apply_program|aspect_(compositor_fullwidth|center_view_target|wide_gameplay_view|draw_full_view)_gen|menu_run|room_skip_hook|introskip_hook)[[:space:]]*\(' \
   {} + 2>/dev/null | grep -v '^src/core/engine_overrides\.c:' || true)
 fail_matches "Runtime override and menu service definitions belong only to src/core/engine_overrides.c:" \
   "$override_owner_definitions"

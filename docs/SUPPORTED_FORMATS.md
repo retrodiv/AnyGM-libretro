@@ -51,6 +51,20 @@ join the save-state identity, so a state saved with them loads only while
 they are active; content without directives keeps its state identity
 unchanged.
 
+Content that reads the display once during initialization may declare how its cached presentation
+state follows later virtual-monitor changes. `monitorview|H|MIN|MAX` derives a logical height `H`
+and a width from the monitor aspect, clamped between the `W:H` ratios `MIN` and `MAX`. A
+`?monitor` directive then runs once after each live Monitor width or Monitor height transition; it
+does not freeze the assigned value between transitions. The values `$monitor_w`, `$monitor_h`,
+`$monitor_view_w`, `$monitor_view_h`, `$monitor_extra_w`, and `$monitor_extra_h` are available to
+those expressions. In addition to globals, instance variables, and legacy view arrays, a monitor
+program may resize selected live cameras with `camera[LIST]:x|y|width|height=VALUE`, resize a surface
+named by an active instance variable with `surface|OBJECT|VARIABLE|WIDTH|HEIGHT`, and resize the
+owned application surface through `@application_w` and `@application_h`. Camera lists accept
+comma-separated handles and inclusive ranges. These operations affect only runtime resources that
+already exist; they do not rerun content initialization or manufacture missing objects, cameras, or
+surfaces.
+
 ## Normalized data containers
 
 Studio data containers using bytecode revisions 14, 15, 16, and 17 are

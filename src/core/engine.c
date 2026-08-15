@@ -642,6 +642,7 @@ static void engine_unload(AnygmEngine *engine){
   engine->state_frame_width=engine->state_frame_height=0;
   engine->content_fingerprint=0; engine->compatibility_fingerprint=0;
   engine->runtime_ended=0; engine->shutdown_sent=0; engine->loaded=0;
+  engine->monitor_override_pending=0;
 }
 
 /* Apply the current neutral configuration before the frame. */
@@ -745,6 +746,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     if (bits) engine_logf(engine,ANYGM_LOG_DEBUG, "[pad] f%d bits=%04x\n", engine->diagnostics.pad_frame, bits); }
   if(prof){ t1 = profile_now_ms(engine); engine->profile.input_ms += t1 - t0; t0 = t1; }
   engine->state_just_loaded = 0;
+  sync_room_fps(engine,1);
+  apply_monitor_overrides(engine);
   sync_room_fps(engine,1);
   aspect_apply_program(engine);
   sync_room_fps(engine,1);
@@ -1954,7 +1957,10 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
       engine->fps_room=-1;
     }
   }
-  if(presentation_changed) engine->fps_room=-1;
+  if(presentation_changed){
+    engine->fps_room=-1;
+    if(engine->lifecycle==ENGINE_LOADED) engine->monitor_override_pending=1;
+  }
   if(f&ANYGM_CONFIG_CLEAR_LOCAL_DATA)
     engine->config.clear_local_data=delta->values.clear_local_data?1u:0u;
   if(f&ANYGM_CONFIG_CONTENT_OVERRIDES){
@@ -1964,7 +1970,12 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
       /* The development menu and the intro-skip list can be declared by content directives;
        * both follow the toggle. */
       engine->introskip_enabled=-1;
-      if(engine->lifecycle==ENGINE_LOADED) engine_override_menu_refresh(engine);
+      if(engine->lifecycle==ENGINE_LOADED){
+        engine_override_menu_refresh(engine);
+        /* Enabling a monitor program after a frontend transition brings its cached content state
+         * to the monitor that is already active. Disabling it leaves authored state untouched. */
+        if(want) engine->monitor_override_pending=1;
+      }
     }
   }
   if(engine->lifecycle==ENGINE_LOADED){

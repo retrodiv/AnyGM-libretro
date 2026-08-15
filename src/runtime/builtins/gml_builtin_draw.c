@@ -455,6 +455,18 @@ static void gml_camera_field_set(GmlVM *vm,int id,int field,double value){
   if(!vm || id<0 || id>=GML_CAMERA_LIMIT || field<0 || field>GML_CAM_YBORDER) return;
   gml_set_global_arr(vm,gml_camera_field_name[field],id,value);
 }
+int gml_camera_override_mask(GmlVM *vm,uint64_t camera_mask,int field,double value){
+  if(!vm || field<GML_CAM_X || field>GML_CAM_H) return 0;
+  int changed=0;
+  for(int camera=0;camera<GML_CAMERA_LIMIT;camera++){
+    if(!(camera_mask&(UINT64_C(1)<<camera)) || !gml_camera_live(vm,camera)) continue;
+    gml_camera_field_set(vm,camera,field,value);
+    if(field==GML_CAM_X || field==GML_CAM_Y)
+      gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",camera,0);
+    changed++;
+  }
+  return changed;
+}
 static int gml_camera_alloc(GmlVM *vm){
   static const double defaults[10]={0,0,0,0,0,-1,-1,-1,0,0};
   int first=vm && vm->win && anygm_policy_has_modern_layer_semantics(vm->win)

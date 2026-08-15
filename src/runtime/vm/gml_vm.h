@@ -539,6 +539,12 @@ void    gml_set_global_scalar(GmlVM *vm, const char *name, double val);         
  * compiled. Record that declaration so later unqualified references resolve through globals. */
 int     gml_vm_declare_globalvar(GmlVM *vm, const char *name);
 int     gml_set_inst_var_all(GmlVM *vm, const char *objname, const char *var, double val); /* freeze inst var; returns count */
+/* Coarse operations used by external runtime-override programs. Camera fields use
+ * 0=x, 1=y, 2=width, 3=height; only live handles in the mask are touched. Surface variables are
+ * resolved on every active instance of an object or descendant, then resized by their handles. */
+int     gml_camera_override_mask(GmlVM *vm, uint64_t camera_mask, int field, double value);
+int     gml_resize_inst_surface_all(GmlVM *vm, const char *object, const char *variable,
+                                    int width, int height);
 /* generic pause-menu injection helpers (host menu editor) */
 int     gml_inst_get_num(const GmlInstance *in, const char *var);
 int     gml_inst_array_count(const GmlInstance *in, const char *var);

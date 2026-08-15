@@ -6,6 +6,8 @@
 #include "engine_internal.h"
 #include "anygm_host.h"
 
+#include <math.h>
+
 
 int core_opt_god(AnygmEngine *engine) {
   return engine->config.god_mode?1:0;
@@ -60,12 +62,16 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   name=V   | name[i]=V        freeze global ARRAY element   (GM8 / indexed reads)
  *   $name=V                     freeze global SCALAR          (GMS scalar reads; avoids V_ARR->0)
  *   obj:var=V | obj:var[i]=V    freeze a numeric var on every instance of object `obj`
+ *   camera[LIST]:field=V        write x, y, width, or height on selected live camera handles
+ *   surface|obj|var|W|H         resize surfaces named by an instance variable
+ *   monitorview|H|MIN|MAX       declare a monitor-derived logical view (ratios use W:H)
  *   @field=V                    engine state and data-declared aspect behavior
  *   obj@suffix->mode            Draw-GUI route: mode = full_view | backdrop | default
  *
  * A line may carry a SCOPE prefix:
  *   ?aspect      ...            only while an Aspect Ratio Force is active
  *   ?aspect=4:3  ...            only while that specific force mode is active (4:3|16:9|21:9)
+ *   ?monitor     ...            once, on each live virtual-monitor size change
  * Un-scoped freezes run every frame after the step (god mode, lives, ...). Aspect-scoped writes
  * run from the aspect hook while a force is active (screensizer / view / engine reshaping).
  *
@@ -73,10 +79,16 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   $base_w  $base_h            the native room resolution
  *   $forced_w $forced_h         the forced-aspect framebuffer resolution
  *   $extra_w $extra_h           forced minus base (the added width / height)
+ *   $monitor_w $monitor_h       configured virtual-monitor resolution
+ *   $monitor_view_w/_h          logical view declared by monitorview|
+ *   $monitor_extra_w/_h         monitor view minus the native room resolution
  * e.g.  some_object:some_width=$forced_w            view_wport[0]=$forced_w
  *       some_object:some_x=$forced_w-115            some_object:some_offset=$extra_w*0.5
  * ============================================================================================ */
 #define CHEAT_NAMECH(c) (((c)>='a'&&(c)<='z')||((c)>='A'&&(c)<='Z')||((c)>='0'&&(c)<='9')||(c)=='_')
+
+static void cheat_monitor_dimensions(AnygmEngine *engine,double *monitor_w,double *monitor_h,
+                                     double *view_w,double *view_h);
 
 static void cheat_parse_val(const char *s, CheatVal *v){
   memset(v,0,sizeof *v);
@@ -90,6 +102,12 @@ static void cheat_parse_val(const char *s, CheatVal *v){
     else if(L==8 && !strncmp(n,"forced_h",8)) v->tok=TK_FORCED_H;
     else if(L==7 && !strncmp(n,"extra_w",7))  v->tok=TK_EXTRA_W;
     else if(L==7 && !strncmp(n,"extra_h",7))  v->tok=TK_EXTRA_H;
+    else if(L==9 && !strncmp(n,"monitor_w",9)) v->tok=TK_MONITOR_W;
+    else if(L==9 && !strncmp(n,"monitor_h",9)) v->tok=TK_MONITOR_H;
+    else if(L==14 && !strncmp(n,"monitor_view_w",14)) v->tok=TK_MONITOR_VIEW_W;
+    else if(L==14 && !strncmp(n,"monitor_view_h",14)) v->tok=TK_MONITOR_VIEW_H;
+    else if(L==15 && !strncmp(n,"monitor_extra_w",15)) v->tok=TK_MONITOR_EXTRA_W;
+    else if(L==15 && !strncmp(n,"monitor_extra_h",15)) v->tok=TK_MONITOR_EXTRA_H;
     else { v->tok=TK_LIT; v->lit=0; return; }
     while(*s && v->nop<6){
       while(*s==' ') s++;
@@ -100,7 +118,9 @@ static void cheat_parse_val(const char *s, CheatVal *v){
   } else { v->tok=TK_LIT; v->lit=atof(s); }
 }
 static double cheat_val_eval(AnygmEngine *engine,const CheatVal *v){
-  double x;
+  double x,monitor_w=0,monitor_h=0,view_w=0,view_h=0;
+  if(v->tok>=TK_MONITOR_W)
+    cheat_monitor_dimensions(engine,&monitor_w,&monitor_h,&view_w,&view_h);
   switch(v->tok){
     case TK_BASE_W:   x=(double)engine->base_width; break;
     case TK_BASE_H:   x=(double)engine->base_height; break;
@@ -108,6 +128,12 @@ static double cheat_val_eval(AnygmEngine *engine,const CheatVal *v){
     case TK_FORCED_H: x=(double)engine->height; break;
     case TK_EXTRA_W:  x=(double)engine->width-(double)engine->base_width; break;
     case TK_EXTRA_H:  x=(double)engine->height-(double)engine->base_height; break;
+    case TK_MONITOR_W: x=monitor_w; break;
+    case TK_MONITOR_H: x=monitor_h; break;
+    case TK_MONITOR_VIEW_W: x=view_w; break;
+    case TK_MONITOR_VIEW_H: x=view_h; break;
+    case TK_MONITOR_EXTRA_W: x=view_w-(double)engine->base_width; break;
+    case TK_MONITOR_EXTRA_H: x=view_h-(double)engine->base_height; break;
     default:          return v->lit;
   }
   for(int i=0;i<v->nop;i++){ double n=v->num[i];
@@ -115,6 +141,40 @@ static double cheat_val_eval(AnygmEngine *engine,const CheatVal *v){
                       case '+': x+=n; break; case '-': x-=n; break; } }
   return x;
 }
+
+static int cheat_parse_ratio(const char *text,double *ratio,const char **end_out){
+  char *end=NULL;
+  double numerator=strtod(text,&end);
+  if(end==text || *end!=':' || !isfinite(numerator) || numerator<=0) return 0;
+  char *denominator_end=NULL;
+  double denominator=strtod(end+1,&denominator_end);
+  if(denominator_end==end+1 || !isfinite(denominator) || denominator<=0) return 0;
+  *ratio=numerator/denominator;
+  if(end_out) *end_out=denominator_end;
+  return 1;
+}
+
+static int cheat_parse_camera_mask(const char **cursor,uint64_t *mask){
+  const char *s=*cursor;
+  if(*s!='[') return 0;
+  s++; *mask=0;
+  while(*s && *s!=']'){
+    int first=-1,last=-1;
+    if(!parse_nonnegative_index(&s,&first) || first>=GML_CAMERA_LIMIT) return 0;
+    last=first;
+    if(*s=='-'){
+      s++;
+      if(!parse_nonnegative_index(&s,&last) || last<first || last>=GML_CAMERA_LIMIT) return 0;
+    }
+    for(int camera=first;camera<=last;camera++) *mask|=UINT64_C(1)<<camera;
+    if(*s==',') s++;
+    else if(*s!=']') return 0;
+  }
+  if(*s!=']' || !*mask) return 0;
+  *cursor=s+1;
+  return 1;
+}
+
 static void cheat_parse(const char *code, CheatAct *a){
   memset(a,0,sizeof *a);
   const char *s=code; while(*s==' '||*s=='\t') s++;
@@ -127,6 +187,53 @@ static void cheat_parse(const char *code, CheatAct *a){
       else if(!strncmp(s,"16:10",5)){ a->scope_mode=GMC_ASPECT_FORCE_16_10; s+=5; }
     }
     while(*s==' '||*s=='\t') s++;
+  } else if(!strncmp(s,"?monitor",8)){
+    a->scope_monitor=1; s+=8;
+    while(*s==' '||*s=='\t') s++;
+  }
+  if(!strncmp(s,"monitorview|",12)){
+    const char *height=s+12,*end=NULL;
+    char *height_end=NULL;
+    a->monitor_height=strtod(height,&height_end);
+    if(height_end==height || *height_end!='|' || !isfinite(a->monitor_height) ||
+       a->monitor_height<=0 ||
+       !cheat_parse_ratio(height_end+1,&a->monitor_min_aspect,&end) || *end!='|' ||
+       !cheat_parse_ratio(end+1,&a->monitor_max_aspect,&end) || *end ||
+       a->monitor_max_aspect<a->monitor_min_aspect){
+      a->kind=CK_NONE; return;
+    }
+    a->kind=CK_MONITOR_VIEW; return;
+  }
+  if(!strncmp(s,"surface|",8)){
+    s+=8; const char *bar=strchr(s,'|');
+    if(!bar || bar==s || (size_t)(bar-s)>=sizeof a->obj){ a->kind=CK_NONE; return; }
+    memcpy(a->obj,s,(size_t)(bar-s)); a->obj[bar-s]=0; s=bar+1;
+    bar=strchr(s,'|');
+    if(!bar || bar==s || (size_t)(bar-s)>=sizeof a->var){ a->kind=CK_NONE; return; }
+    memcpy(a->var,s,(size_t)(bar-s)); a->var[bar-s]=0; s=bar+1;
+    bar=strchr(s,'|');
+    if(!bar || bar==s){ a->kind=CK_NONE; return; }
+    char first[64]; size_t first_length=(size_t)(bar-s);
+    if(first_length>=sizeof first){ a->kind=CK_NONE; return; }
+    memcpy(first,s,first_length); first[first_length]=0;
+    cheat_parse_val(first,&a->val); cheat_parse_val(bar+1,&a->val2);
+    a->kind=CK_SURFACE; return;
+  }
+  if(!strncmp(s,"camera",6)){
+    s+=6;
+    if(!cheat_parse_camera_mask(&s,&a->camera_mask) || *s++!=':'){
+      a->kind=CK_NONE; return;
+    }
+    const char *field=s; while(*s && CHEAT_NAMECH(*s)) s++;
+    size_t length=(size_t)(s-field);
+    if(length==1 && !strncmp(field,"x",1)) a->camera_field=CF_X;
+    else if(length==1 && !strncmp(field,"y",1)) a->camera_field=CF_Y;
+    else if(length==5 && !strncmp(field,"width",5)) a->camera_field=CF_WIDTH;
+    else if(length==6 && !strncmp(field,"height",6)) a->camera_field=CF_HEIGHT;
+    else { a->kind=CK_NONE; return; }
+    while(*s==' ') s++;
+    if(*s!='='){ a->kind=CK_NONE; return; }
+    cheat_parse_val(s+1,&a->val); a->kind=CK_CAMERA; return;
   }
   if(*s=='@'){                                   /* engine: @field=V */
     s++; const char *n=s; while(*s && *s!='=' && *s!=' ') s++;
@@ -138,6 +245,8 @@ static void cheat_parse(const char *code, CheatAct *a){
     else if(!strcmp(f,"gui_h"))    a->eng=EF_GUI_H;
     else if(!strcmp(f,"fbw"))      a->eng=EF_FBW;
     else if(!strcmp(f,"fbh"))      a->eng=EF_FBH;
+    else if(!strcmp(f,"application_w")) a->eng=EF_APPLICATION_W;
+    else if(!strcmp(f,"application_h")) a->eng=EF_APPLICATION_H;
     else if(!strcmp(f,"compositor_fullwidth")) a->eng=EF_COMPOSITOR;
     else if(!strcmp(f,"center_view_target")) a->eng=EF_CENTER_VIEW_TARGET;
     else if(!strcmp(f,"wide_gameplay_view")) a->eng=EF_WIDE_GAMEPLAY_VIEW;
@@ -189,6 +298,15 @@ static void cheat_apply_one(AnygmEngine *engine,const CheatAct *a){
     case CK_GSCALAR: gml_set_global_scalar(&engine->vm, a->obj, cheat_val_eval(engine,&a->val)); break;
     case CK_GARR:    gml_set_global_arr(&engine->vm, a->obj, a->idx, cheat_val_eval(engine,&a->val)); break;
     case CK_INST:    gml_set_inst_var_all(&engine->vm, a->obj, a->var, cheat_val_eval(engine,&a->val)); break;
+    case CK_CAMERA:
+      gml_camera_override_mask(&engine->vm,a->camera_mask,(int)a->camera_field,
+                               cheat_val_eval(engine,&a->val));
+      break;
+    case CK_SURFACE:
+      gml_resize_inst_surface_all(
+        &engine->vm,a->obj,a->var,(int)cheat_val_eval(engine,&a->val),
+        (int)cheat_val_eval(engine,&a->val2));
+      break;
     case CK_ENGINE: { int iv=(int)cheat_val_eval(engine,&a->val);
       switch(a->eng){
         case EF_WINDOW_W: engine->vm.window_w=iv; break;
@@ -209,20 +327,35 @@ static void cheat_apply_one(AnygmEngine *engine,const CheatAct *a){
             gml_render_target_metrics_update(&engine->render,&target,GML_RENDER_TARGET_HEIGHT);
           }
           break; }
+        case EF_APPLICATION_W: {
+          GmlRenderPresentationMetrics presentation;
+          if(gml_render_presentation_metrics(&engine->render,&presentation) &&
+             presentation.application_height>0)
+            (void)gml_render_application_surface_ensure_owned(
+              &engine->render,iv,presentation.application_height);
+          break; }
+        case EF_APPLICATION_H: {
+          GmlRenderPresentationMetrics presentation;
+          if(gml_render_presentation_metrics(&engine->render,&presentation) &&
+             presentation.application_width>0)
+            (void)gml_render_application_surface_ensure_owned(
+              &engine->render,presentation.application_width,iv);
+          break; }
         case EF_COMPOSITOR: case EF_CENTER_VIEW_TARGET: case EF_WIDE_GAMEPLAY_VIEW: break; /* queried by aspect helpers */
       }
       break; }
     default: break;   /* CK_ROOM handled at set-time; CK_ROUTE consulted in the draw hook */
   }
 }
-/* aspect_phase: 0 = normal post-step sticky pass, 1 = aspect reshaping pass. */
-static int cheat_scope_ok(AnygmEngine *engine,const CheatAct *a, int aspect_phase){
+/* phase: 0 = normal post-step sticky pass, 1 = aspect reshaping, 2 = monitor-change edge. */
+static int cheat_scope_ok(AnygmEngine *engine,const CheatAct *a,int phase){
+  if(a->scope_monitor) return phase==2;
   if(a->scope_aspect){
-    if(!aspect_phase || !engine->aspect_force_active) return 0;
+    if(phase!=1 || !engine->aspect_force_active) return 0;
     if(a->scope_mode && a->scope_mode!=engine->aspect_force_mode) return 0;
     return 1;
   }
-  return !aspect_phase;
+  return phase==0;
 }
 /* ============================================================================================
  * Generic pause-menu editor. Configuration uses the caller-supplied .cht data and `|` separators
@@ -390,6 +523,46 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
 int engine_boot_cheats_active(AnygmEngine *engine){
   return engine->config.content_overrides?engine->boot_cheat_count:0;
 }
+static void cheat_monitor_declaration(const CheatSlot *slots,int count,
+                                      double *height,double *minimum,double *maximum){
+  for(int i=0;i<count;i++){
+    const CheatAct *action=&slots[i].act;
+    if(!slots[i].enabled || action->kind!=CK_MONITOR_VIEW) continue;
+    *height=action->monitor_height;
+    *minimum=action->monitor_min_aspect;
+    *maximum=action->monitor_max_aspect;
+  }
+}
+static void cheat_monitor_dimensions(AnygmEngine *engine,double *monitor_w,double *monitor_h,
+                                     double *view_w,double *view_h){
+  GmlRenderPresentationMetrics presentation={0};
+  (void)gml_render_presentation_metrics(&engine->render,&presentation);
+  double mw=presentation.monitor_width>0 ? (double)presentation.monitor_width :
+                                         (double)engine->config.monitor_width;
+  double mh=presentation.monitor_height>0 ? (double)presentation.monitor_height :
+                                          (double)engine->config.monitor_height;
+  if(mw<=0) mw=engine->vm.window_w>0 ? (double)engine->vm.window_w :
+                                      (double)engine->base_width;
+  if(mh<=0) mh=engine->vm.window_h>0 ? (double)engine->vm.window_h :
+                                      (double)engine->base_height;
+  double height=0,minimum=0,maximum=0;
+  cheat_monitor_declaration(engine->cheats,engine->cheat_count,&height,&minimum,&maximum);
+  cheat_monitor_declaration(engine->boot_cheats,engine_boot_cheats_active(engine),
+                            &height,&minimum,&maximum);
+  double width=engine->base_width;
+  if(height>0 && minimum>0 && maximum>=minimum && mh>0){
+    double aspect=mw/mh;
+    if(aspect<minimum) aspect=minimum;
+    if(aspect>maximum) aspect=maximum;
+    width=nearbyint(height*aspect);
+  } else if(engine->base_height>0) {
+    height=engine->base_height;
+  }
+  if(monitor_w) *monitor_w=mw;
+  if(monitor_h) *monitor_h=mh;
+  if(view_w) *view_w=width;
+  if(view_h) *view_h=height;
+}
 void engine_override_menu_refresh(AnygmEngine *engine){
   menu_rebuild(engine);
 }
@@ -418,6 +591,22 @@ static void cheat_sticky_pass(AnygmEngine *engine,const CheatSlot *arr, int n){
 void apply_sticky_cheats(AnygmEngine *engine){
   cheat_sticky_pass(engine,engine->cheats, engine->cheat_count);
   cheat_sticky_pass(engine,engine->boot_cheats, engine_boot_cheats_active(engine));
+}
+static void cheat_monitor_pass(AnygmEngine *engine,const CheatSlot *slots,int count){
+  for(int i=0;i<count;i++){
+    if(!slots[i].enabled || !cheat_scope_ok(engine,&slots[i].act,2)) continue;
+    cheat_apply_one(engine,&slots[i].act);
+  }
+}
+/* A frontend monitor-size transition is an edge, not a freeze. Content that cached its startup
+ * geometry can opt into exactly the writes it needs without rerunning initialization or resetting
+ * the game. */
+void apply_monitor_overrides(AnygmEngine *engine){
+  if(!engine->monitor_override_pending) return;
+  engine->monitor_override_pending=0;
+  cheat_monitor_pass(engine,engine->cheats,engine->cheat_count);
+  cheat_monitor_pass(engine,engine->boot_cheats,engine_boot_cheats_active(engine));
+  engine->fps_room=-1;
 }
 static void cheat_aspect_pass(AnygmEngine *engine,const CheatSlot *arr, int n){
   for(int i=0;i<n;i++){

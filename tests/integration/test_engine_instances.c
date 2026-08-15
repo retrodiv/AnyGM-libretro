@@ -198,6 +198,110 @@ static int virtual_monitor_geometry_policy(void){
   return ok;
 }
 
+static int live_monitor_override_policy(void){
+  static const char program[]=
+    "monitorview|240|4:3|7:3\n"
+    "?monitor @application_w=$monitor_view_w\n"
+    "?monitor @application_h=$monitor_view_h\n"
+    "?monitor $fixture_half_extra=$monitor_extra_w*0.5\n"
+    "?monitor view_wport[0]=$monitor_view_w\n"
+    "?monitor camera[8]:width=$monitor_view_w\n"
+    "?monitor camera[8]:height=$monitor_view_h\n"
+    "?monitor camera[8]:x=$monitor_extra_w*-0.5\n"
+    "view_wview[0]=$monitor_view_w\n"
+    "view_hview[0]=$monitor_view_h\n"
+    "view_wport[0]=$monitor_view_w\n"
+    "view_hport[0]=$monitor_view_h\n";
+  AnygmEngine engine={0};
+  engine.win.bytecode=17;
+  engine.win.disp_w=320;
+  engine.win.disp_h=240;
+  engine.base_width=320;
+  engine.base_height=240;
+  engine.width=320;
+  engine.height=240;
+  engine.vm.win=&engine.win;
+  engine.vm.render=&engine.render;
+  engine.config.content_overrides=1;
+  engine.config.monitor_width=1920;
+  engine.config.monitor_height=1080;
+  gml_vm_global_array_set(&engine.vm,"__gml_camera_live",8,1);
+  gml_vm_global_array_set(&engine.vm,"__gml_camera_x",8,0);
+  gml_vm_global_array_set(&engine.vm,"__gml_camera_w",8,320);
+  gml_vm_global_array_set(&engine.vm,"__gml_camera_h",8,240);
+  gml_vm_global_array_set(&engine.vm,"view_wport",0,320);
+  GmlRenderControl monitor={.monitor_width=1920,.monitor_height=1080};
+  gml_render_control_update(&engine.render,&monitor,GML_RENDER_CONTROL_MONITOR_SIZE);
+  if(!gml_render_application_surface_ensure_owned(&engine.render,320,240)){
+    fputs("monitor override application-surface setup failed\n",stderr);
+    gml_vm_free(&engine.vm);
+    return 0;
+  }
+  char error[256]={0};
+  if(!engine_boot_overrides_parse(program,engine.boot_cheats,&engine.boot_cheat_count,
+                                  error,sizeof error)){
+    fprintf(stderr,"monitor override program was rejected: %s\n",error);
+    gml_render_free(&engine.render);
+    gml_vm_free(&engine.vm);
+    return 0;
+  }
+
+  engine.monitor_override_pending=1;
+  apply_monitor_overrides(&engine);
+  GmlRenderApplicationWriteView application={0};
+  int ok=gml_render_application_surface_owned_view(&engine.render,&application) &&
+    application.width==427 && application.height==240 &&
+    gml_global_num(&engine.vm,"fixture_half_extra")==53.5 &&
+    gml_global_arr(&engine.vm,"view_wport",0)==427 &&
+    gml_global_arr(&engine.vm,"__gml_camera_x",8)==-53.5 &&
+    gml_global_arr(&engine.vm,"__gml_camera_w",8)==427 &&
+    gml_global_arr(&engine.vm,"__gml_camera_h",8)==240 &&
+    engine.monitor_override_pending==0;
+
+  /* The monitor scope is an edge. It must not freeze authored camera movement between changes. */
+  gml_vm_global_array_set(&engine.vm,"__gml_camera_x",8,123);
+  gml_vm_global_array_set(&engine.vm,"view_wport",0,123);
+  apply_monitor_overrides(&engine);
+  apply_sticky_cheats(&engine);
+  ok=ok && gml_global_arr(&engine.vm,"__gml_camera_x",8)==123 &&
+           gml_global_arr(&engine.vm,"view_wport",0)==427;
+
+  monitor.monitor_width=400;
+  monitor.monitor_height=400;
+  engine.config.monitor_width=400;
+  engine.config.monitor_height=400;
+  gml_render_control_update(&engine.render,&monitor,GML_RENDER_CONTROL_MONITOR_SIZE);
+  engine.monitor_override_pending=1;
+  apply_monitor_overrides(&engine);
+  memset(&application,0,sizeof application);
+  ok=ok && gml_render_application_surface_owned_view(&engine.render,&application) &&
+    application.width==320 && application.height==240 &&
+    gml_global_num(&engine.vm,"fixture_half_extra")==0 &&
+    gml_global_arr(&engine.vm,"view_wport",0)==320 &&
+    gml_global_arr(&engine.vm,"__gml_camera_x",8)==0 &&
+    gml_global_arr(&engine.vm,"__gml_camera_w",8)==320;
+
+  CheatSlot rejected[GML_MAX_CHEATS];
+  int rejected_count=0;
+  ok=ok && !engine_boot_overrides_parse(
+    "monitorview|240|4:0|7:3\n",rejected,&rejected_count,error,sizeof error);
+  rejected_count=0;
+  ok=ok && !engine_boot_overrides_parse(
+    "?monitor camera[9-8]:x=0\n",rejected,&rejected_count,error,sizeof error);
+  if(!ok)
+    fprintf(stderr,"live monitor override policy mismatch: app=%dx%d half=%.3f "
+                   "port=%.3f camera=(%.3f,%.3f,%.3f)\n",
+            application.width,application.height,
+            gml_global_num(&engine.vm,"fixture_half_extra"),
+            gml_global_arr(&engine.vm,"view_wport",0),
+            gml_global_arr(&engine.vm,"__gml_camera_x",8),
+            gml_global_arr(&engine.vm,"__gml_camera_w",8),
+            gml_global_arr(&engine.vm,"__gml_camera_h",8));
+  gml_render_free(&engine.render);
+  gml_vm_free(&engine.vm);
+  return ok;
+}
+
 static int host_canvas_scale_policy(void){
   enum {
     SOURCE_WIDTH=5,SOURCE_HEIGHT=3,
@@ -1320,6 +1424,8 @@ int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
     if(!strcmp(argv[2],"virtual_monitor_geometry"))
       return virtual_monitor_geometry_policy()?0:1;
+    if(!strcmp(argv[2],"live_monitor_override"))
+      return live_monitor_override_policy()?0:1;
     if(!strcmp(argv[2],"host_canvas_scale"))
       return host_canvas_scale_policy()?0:1;
     if(!strcmp(argv[2],"screen_refresh_present_latch"))
@@ -1362,7 +1468,8 @@ int main(int argc,char **argv){
   }
   if(argc!=1){
     fputs("usage: test_engine_instances [--case screen_refresh_present_latch|"
-          "virtual_monitor_geometry|host_canvas_scale|application_surface_port_scale|"
+          "virtual_monitor_geometry|live_monitor_override|host_canvas_scale|"
+          "application_surface_port_scale|"
           "first_generation_application_surface|"
           "game_restart|"
           "first_generation_dynamic_camera|"
@@ -1377,6 +1484,7 @@ int main(int argc,char **argv){
     return 1;
   }
   if(!virtual_monitor_geometry_policy()) return 1;
+  if(!live_monitor_override_policy()) return 1;
   if(!host_canvas_scale_policy()) return 1;
   if(!room_order_redirect_policy()) return 1;
   if(!screen_refresh_present_latch_policy()) return 1;

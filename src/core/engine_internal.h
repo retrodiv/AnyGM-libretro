@@ -116,21 +116,34 @@ enum {
   ASPECT_VIEW_TRACKING = 2
 };
 
-typedef enum { CK_NONE=0, CK_ROOM, CK_GARR, CK_GSCALAR, CK_INST, CK_ENGINE, CK_ROUTE } CheatKind;
-typedef enum { TK_LIT=0, TK_BASE_W, TK_BASE_H, TK_FORCED_W, TK_FORCED_H, TK_EXTRA_W, TK_EXTRA_H } CheatTok;
+typedef enum {
+  CK_NONE=0, CK_ROOM, CK_GARR, CK_GSCALAR, CK_INST, CK_ENGINE, CK_ROUTE,
+  CK_CAMERA, CK_SURFACE, CK_MONITOR_VIEW
+} CheatKind;
+typedef enum {
+  TK_LIT=0, TK_BASE_W, TK_BASE_H, TK_FORCED_W, TK_FORCED_H, TK_EXTRA_W, TK_EXTRA_H,
+  TK_MONITOR_W, TK_MONITOR_H, TK_MONITOR_VIEW_W, TK_MONITOR_VIEW_H,
+  TK_MONITOR_EXTRA_W, TK_MONITOR_EXTRA_H
+} CheatTok;
 typedef enum { EF_WINDOW_W=0, EF_WINDOW_H, EF_GUI_W, EF_GUI_H, EF_FBW, EF_FBH,
+               EF_APPLICATION_W, EF_APPLICATION_H,
                EF_COMPOSITOR, EF_CENTER_VIEW_TARGET, EF_WIDE_GAMEPLAY_VIEW } EngField;
+typedef enum { CF_X=0, CF_Y, CF_WIDTH, CF_HEIGHT } CameraField;
 typedef struct { CheatTok tok; double lit; char op[6]; double num[6]; int nop; } CheatVal;
 typedef struct {
   CheatKind kind;
   int scope_aspect;
+  int scope_monitor;
   int scope_mode;
   char obj[64];
   char var[64];
   int idx;
   EngField eng;
+  CameraField camera_field;
+  uint64_t camera_mask;
   int route_mode;
-  CheatVal val;
+  CheatVal val,val2;
+  double monitor_height,monitor_min_aspect,monitor_max_aspect;
 } CheatAct;
 typedef struct { int enabled; char code[128]; CheatAct act; } CheatSlot;
 
@@ -254,6 +267,9 @@ struct AnygmEngine {
   MenuState menu;
   uint8_t introskip_set[1024/8];
   int introskip_enabled;
+  /* A configured virtual-monitor edge is consumed once by ?monitor override directives. The
+   * program is external content data; the core retains only this transient scheduling latch. */
+  int monitor_override_pending;
 };
 
 #define ANYGM_ENGINE_GUARD 0x45474E41u
@@ -291,6 +307,7 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
 int engine_boot_cheats_active(AnygmEngine *engine);
 void engine_override_menu_refresh(AnygmEngine *engine);
 void apply_sticky_cheats(AnygmEngine *engine);
+void apply_monitor_overrides(AnygmEngine *engine);
 void aspect_apply_program(AnygmEngine *engine);
 void menu_run(AnygmEngine *engine);
 void room_skip_hook(AnygmEngine *engine);
