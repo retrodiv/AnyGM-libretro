@@ -976,7 +976,10 @@ void compute_present(AnygmEngine *engine) {
       engine->vm.gui_w <= 0 && engine->vm.gui_h <= 0 &&
       content_window_width > 0 && content_window_height > 0 &&
       content_window_width <= FB_MAX_W && content_window_height <= FB_MAX_H) {
-    engine->screen_stage_window_raster=0;
+    /* A virtual monitor is the self-compositor drawing space, not only
+     * the extent of the completed host frame. */
+    if(!engine->config.present_logical_raster)
+      engine->screen_stage_window_raster=1;
     engine->output_width = (unsigned)content_window_width;
     engine->output_height = (unsigned)content_window_height;
     engine->gui_space_width = content_window_width;
