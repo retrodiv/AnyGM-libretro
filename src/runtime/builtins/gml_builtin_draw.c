@@ -928,9 +928,10 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"surface_get_depth_disable")) return vreal(vm->builtins->surface_depth_disabled);
     if(!strcmp(nm,"application_surface_draw_enable")){ gml_render_application_surface_set_draw_enabled(R,(int)N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"application_surface_enable")){ gml_render_application_surface_set_draw_enabled(R,(int)N(a,n,0)); return vreal(0); }
-    /* ---- Studio camera API mapped onto legacy view globals; camera id equals view index. ---- */
+    /* ---- Studio camera API mapped onto legacy view globals and explicit room bindings. ---- */
     if(!strcmp(nm,"view_get_camera")) return vreal(gml_view_camera_id(vm,(int)N(a,n,0)));
-    if(!strcmp(nm,"room_get_camera")) return vreal((int)N(a,n,1));
+    if(!strcmp(nm,"room_get_camera"))
+      return vreal(gml_vm_room_camera_get(vm,(int)N(a,n,0),(int)N(a,n,1)));
     if(!strcmp(nm,"view_set_camera")){ int view=(int)N(a,n,0), camera=(int)N(a,n,1);
       if(view>=0 && view<8) gml_set_global_arr(vm,"view_camera",view,camera);
       return vreal(0); }
@@ -959,7 +960,9 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         gml_set_global_arr(vm,"__gml_camera_matrix_eye_valid",c,0);
       }
       return vreal(0); }
-    if(!strcmp(nm,"room_set_camera")) return vreal(0);
+    if(!strcmp(nm,"room_set_camera"))
+      return vreal(gml_vm_room_camera_set(
+        vm,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2))?0:-1);
     if(!strcmp(nm,"camera_set_view_angle")){ int c=(int)N(a,n,0);
       if(gml_camera_live(vm,c)) gml_camera_field_set(vm,c,GML_CAM_ANGLE,N(a,n,1));
       return vreal(0); }

@@ -2341,10 +2341,17 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   if(alpha<=0) return;
   double axs=fabs(xs), ays=fabs(ys); if(axs<=0||ays<=0) return;
   int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;  /* GM blend = BBGGRR */
-  /* Round-half-up (not floor): sprite quads use nearest-pixel snapping, so
-   * fractional positions round half up. Integer positions such as background
-   * tiles are unaffected. */
-  int x0=(int)floor(dx+0.5), y0=(int)floor(dy+0.5);
+  /* Sprite quads normally snap fractional positions by rounding half up. On modern
+   * world targets a half-integer camera offset biases exact ties toward the preceding
+   * output pixel; other targets retain ordinary half-up rounding. */
+  int modern_world_target=r->win &&
+    anygm_policy_has_modern_layer_semantics(r->win) &&
+    !r->gui_pass_active && r->target_sp==0 && r->target_id<0;
+  double x_camera_half=fabs(r->cam_x-nearbyint(r->cam_x));
+  double y_camera_half=fabs(r->cam_y-nearbyint(r->cam_y));
+  double x_tie=(modern_world_target && fabs(x_camera_half-0.5)<1e-9)?-1e-9:0.0;
+  double y_tie=(modern_world_target && fabs(y_camera_half-0.5)<1e-9)?-1e-9:0.0;
+  int x0=(int)floor(dx+0.5+x_tie), y0=(int)floor(dy+0.5+y_tie);
   int w=(int)lround(t->sw*axs), h=(int)lround(t->sh*ays);
   /* First-generation application surfaces project each authored edge separately.  Preserve that
    * accumulated fractional coverage instead of rounding every independent quad to the same size. */

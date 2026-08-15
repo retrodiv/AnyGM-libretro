@@ -501,6 +501,8 @@ void gml_fire_async_http(GmlVM *vm);      /* drain queued Other_62 (async HTTP, 
 void         gml_room_enter(GmlVM *vm, int room_index);      /* instantiate + Create events */
 int          gml_vm_room_get(GmlVM *vm, int room_index, GmlRoom *out);
 int          gml_vm_room_set_dimension(GmlVM *vm, int room_index, int height, double value);
+int          gml_vm_room_camera_get(GmlVM *vm, int room_index, int view_index);
+int          gml_vm_room_camera_set(GmlVM *vm, int room_index, int view_index, int camera);
 void         gml_vm_goto_room_order(GmlVM *vm, int order_index);
 void         gml_vm_warm_audio_for_room(GmlVM *vm, int room_index);
 /* Apply one generic cheat line ("room=N", "name=V", "name[i]=V"). Returns 1 if it is a

@@ -154,6 +154,13 @@ int expect_room_camera_reservation(void){
   GmlVal dynamic_camera=gml_builtin_call(&vm,"camera_create",NULL,0);
   GmlVal dynamic_position[3]={dynamic_camera,vreal(960),vreal(560)};
   (void)gml_builtin_call(&vm,"camera_set_view_pos",dynamic_position,3);
+  GmlVal dynamic_size[3]={dynamic_camera,vreal(427),vreal(240)};
+  (void)gml_builtin_call(&vm,"camera_set_view_size",dynamic_size,3);
+  GmlVal room_camera_args[2]={vreal(0),vreal(0)};
+  GmlVal before_binding=gml_builtin_call(&vm,"room_get_camera",room_camera_args,2);
+  GmlVal set_binding_args[3]={vreal(0),vreal(0),dynamic_camera};
+  GmlVal set_binding=gml_builtin_call(&vm,"room_set_camera",set_binding_args,3);
+  GmlVal stored_binding=gml_builtin_call(&vm,"room_get_camera",room_camera_args,2);
   gml_room_enter(&vm,0);
   GmlVal view=vreal(0);
   GmlVal room_camera=gml_builtin_call(&vm,"view_get_camera",&view,1);
@@ -163,15 +170,25 @@ int expect_room_camera_reservation(void){
   GmlVal room_h=gml_builtin_call(&vm,"camera_get_view_height",&room_camera,1);
   int dynamic_id=dynamic_camera.t==V_REAL?(int)dynamic_camera.d:-1;
   int ok=dynamic_id>=GML_ROOM_CAMERA_COUNT &&
-    room_camera.t==V_REAL && room_camera.d==0 && room_camera.d!=dynamic_camera.d &&
-    room_x.t==V_REAL && room_x.d==32 && room_y.t==V_REAL && room_y.d==48 &&
-    room_w.t==V_REAL && room_w.d==384 && room_h.t==V_REAL && room_h.d==216 &&
+    before_binding.t==V_REAL && before_binding.d==0 &&
+    set_binding.t==V_REAL && set_binding.d==0 &&
+    stored_binding.t==V_REAL && stored_binding.d==dynamic_camera.d &&
+    room_camera.t==V_REAL && room_camera.d==dynamic_camera.d &&
+    room_x.t==V_REAL && room_x.d==960 && room_y.t==V_REAL && room_y.d==560 &&
+    room_w.t==V_REAL && room_w.d==427 && room_h.t==V_REAL && room_h.d==240 &&
+    gml_global_arr(&vm,"__gml_camera_x",0)==32 &&
+    gml_global_arr(&vm,"__gml_camera_y",0)==48 &&
+    gml_global_arr(&vm,"__gml_camera_w",0)==384 &&
+    gml_global_arr(&vm,"__gml_camera_h",0)==216 &&
     gml_global_arr(&vm,"__gml_camera_x",dynamic_id)==960 &&
     gml_global_arr(&vm,"__gml_camera_y",dynamic_id)==560;
   if(!ok)
     fprintf(stderr,
-      "room/dynamic camera reservation failed: dynamic=%d room=%.0f rect=(%.0f,%.0f %.0fx%.0f)\n",
-      dynamic_id,room_camera.t==V_REAL?room_camera.d:-1.0,
+      "room/dynamic camera binding failed: dynamic=%d before=%.0f stored=%.0f room=%.0f"
+      " rect=(%.0f,%.0f %.0fx%.0f)\n",
+      dynamic_id,before_binding.t==V_REAL?before_binding.d:-2.0,
+      stored_binding.t==V_REAL?stored_binding.d:-2.0,
+      room_camera.t==V_REAL?room_camera.d:-1.0,
       room_x.t==V_REAL?room_x.d:-1.0,room_y.t==V_REAL?room_y.d:-1.0,
       room_w.t==V_REAL?room_w.d:-1.0,room_h.t==V_REAL?room_h.d:-1.0);
   gml_vm_free(&vm);

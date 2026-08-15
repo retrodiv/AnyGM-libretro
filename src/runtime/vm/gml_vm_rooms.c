@@ -546,6 +546,34 @@ static double room_state_restore_number(GmlVM *vm, int room, const char *field, 
   return value?gml_vm_value_as_number(*value):0.0;
 }
 
+int gml_vm_room_camera_get(GmlVM *vm,int room_index,int view_index){
+  if(!vm || !vm->win || room_index<0 || room_index>=gml_room_count(vm->win) ||
+     view_index<0 || view_index>=GML_ROOM_CAMERA_COUNT) return -1;
+  if(room_index==vm->room_index)
+    return (int)gml_vm_global_array_number(vm,"view_camera",view_index);
+  if(room_state_restore_number(vm,room_index,"camera_binding_set",view_index)<0.5)
+    return view_index;
+  return (int)room_state_restore_number(vm,room_index,"camera_binding",view_index);
+}
+
+int gml_vm_room_camera_set(GmlVM *vm,int room_index,int view_index,int camera){
+  if(!vm || !vm->win || room_index<0 || room_index>=gml_room_count(vm->win) ||
+     view_index<0 || view_index>=GML_ROOM_CAMERA_COUNT ||
+     camera<-1 || camera>=GML_CAMERA_LIMIT) return 0;
+  room_state_store_number(vm,room_index,"camera_binding_set",view_index,1);
+  room_state_store_number(vm,room_index,"camera_binding",view_index,camera);
+  if(room_index==vm->room_index)
+    gml_vm_global_array_set(vm,"view_camera",view_index,camera);
+  return 1;
+}
+
+static void room_camera_bindings_apply(GmlVM *vm,int room_index){
+  for(int view=0;view<GML_ROOM_CAMERA_COUNT;view++)
+    if(room_state_restore_number(vm,room_index,"camera_binding_set",view)>=0.5)
+      gml_vm_global_array_set(vm,"view_camera",view,
+        room_state_restore_number(vm,room_index,"camera_binding",view));
+}
+
 int gml_vm_room_get(GmlVM *vm, int room_index, GmlRoom *out){
   if(!vm || gml_room_get(vm->win,room_index,out)!=0) return -1;
   double width=room_state_restore_number(vm,room_index,"width",0);
@@ -1519,6 +1547,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
       }
     } }
   room_camera_resources_init(vm,1);
+  room_camera_bindings_apply(vm,room_index);
   if(anygm_host_development_setting(vm->host,"GML_LOG_VIEW")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[view] room=%d dim=%ux%u view0 en=%.0f wview=%.0f hview=%.0f wport=%.0f hport=%.0f\n",
     vm->room_index, r.width, r.height, gml_vm_global_array_number(vm,"view_visible",0),
     gml_vm_global_array_number(vm,"view_wview",0), gml_vm_global_array_number(vm,"view_hview",0),

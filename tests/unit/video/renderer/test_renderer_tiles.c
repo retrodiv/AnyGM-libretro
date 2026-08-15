@@ -583,6 +583,58 @@ static void check_first_generation_fractional_tile_projection(void){
   free(page.argb_cache);
 }
 
+static void check_modern_fractional_camera_tie(void){
+  static const uint8_t rgba[4]={255,255,255,255};
+  uint32_t application[4]={0,0,0,0};
+  GmlWin content;
+  GmlRender render;
+  GmlAtlas atlas;
+  GmlTpag page;
+  GmlBg background;
+
+  memset(&content,0,sizeof content);
+  memset(&render,0,sizeof render);
+  memset(&atlas,0,sizeof atlas);
+  memset(&page,0,sizeof page);
+  memset(&background,0,sizeof background);
+  content.bytecode=17;
+  atlas.px=(uint8_t*)rgba;
+  atlas.w=atlas.h=1;
+  page.atlas=0;
+  page.sw=page.sh=page.bw=page.bh=1;
+  page.alpha_scanned=1;
+  page.alpha_max=255;
+  background.tpag=0;
+  render.win=&content;
+  render.atlas=&atlas; render.n_atlas=1;
+  render.tpag=&page; render.n_tpag=1;
+  render.bg=&background; render.n_bg=1;
+  render.app_surface=application;
+  render.app_w=4; render.app_h=1;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+
+  gml_render_begin(&render,application,4,1,0.5,0.0);
+  gml_draw_background(&render,0,2.0,0.0);
+  expect(application[1]==0xffffffffu && application[2]==0,
+         "a fractional modern camera resolved a half-pixel edge forward");
+
+  memset(application,0,sizeof application);
+  gml_render_begin(&render,application,4,1,0.5,0.0);
+  gml_draw_background(&render,0,2.5,0.0);
+  expect(application[2]==0xffffffffu && application[1]==0,
+         "a fractional modern camera moved an integer projected edge");
+
+  memset(application,0,sizeof application);
+  gml_render_begin(&render,application,4,1,0.25,0.0);
+  gml_draw_background(&render,0,2.75,0.0);
+  expect(application[3]==0xffffffffu && application[2]==0,
+         "a non-half fractional camera changed ordinary half-up rounding");
+  free(page.argb_cache);
+}
+
 static void check_application_surface_partial_alpha_coverage(void){
   static const uint8_t rgba[4]={255,255,255,128};
   uint32_t application=0xff000000u;
@@ -853,6 +905,7 @@ int main(void){
   check_first_generation_default_font_metrics();
   check_render_pass_restores_normal_blending();
   check_first_generation_fractional_tile_projection();
+  check_modern_fractional_camera_tie();
   check_application_surface_partial_alpha_coverage();
   check_first_generation_filtered_minification();
   check_repeated_filtered_draw_cache();
