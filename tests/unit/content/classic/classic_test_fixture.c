@@ -341,7 +341,21 @@ void fixture_legacy_room(Fixture *f, const char *name){
   for(unsigned i=0;i<14;i++) fixture_u32(f,0);
 }
 
-static Fixture legacy_fixture_build(unsigned container_version, int sparse_rooms, const char *gml){
+static void fixture_object_payload(Fixture *f, const FixtureObject *object);
+static void fixture_room_payload(Fixture *f, const FixtureProgram *program);
+
+static void fixture_legacy_resource(Fixture *f,const char *name,unsigned version,
+                                    const Fixture *payload){
+  fixture_u32(f,1);
+  fixture_string(f,name);
+  fixture_u32(f,version);
+  if(f->size+payload->size>sizeof(f->data)) abort();
+  memcpy(f->data+f->size,payload->data,payload->size);
+  f->size+=payload->size;
+}
+
+static Fixture legacy_fixture_build(unsigned container_version, int sparse_rooms, const char *gml,
+                                    const FixtureProgram *program){
   Fixture f = {{0}, 0};
   int gm53 = container_version == 530;
   int gm7 = container_version == 701 || container_version == 702;
@@ -372,7 +386,19 @@ static Fixture legacy_fixture_build(unsigned container_version, int sparse_rooms
     {400, 400, 400, 420, 400, 540, 500, 400, 420};
   for(unsigned type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
     fixture_u32(&f, gm53 && type==GMLC_CLASSIC_FONT?440:section_versions[type]);
-    if(sparse_rooms && type==GMLC_CLASSIC_ROOM){
+    if(program && type==GMLC_CLASSIC_OBJECT){
+      fixture_u32(&f,(unsigned)program->object_count);
+      for(int i=0;i<program->object_count;i++){
+        Fixture payload={{0},0};
+        fixture_object_payload(&payload,&program->objects[i]);
+        fixture_legacy_resource(&f,program->objects[i].name,430,&payload);
+      }
+    } else if(program && type==GMLC_CLASSIC_ROOM){
+      Fixture payload={{0},0};
+      fixture_room_payload(&payload,program);
+      fixture_u32(&f,1);
+      fixture_legacy_resource(&f,"fixture_room",541,&payload);
+    } else if(sparse_rooms && type==GMLC_CLASSIC_ROOM){
       fixture_u32(&f,8);
       fixture_u32(&f,0); fixture_u32(&f,0);
       fixture_legacy_room(&f,"resource_room_two");
@@ -385,7 +411,7 @@ static Fixture legacy_fixture_build(unsigned container_version, int sparse_rooms
   /* The tail is optional and the plain fixture ends here. Either a sparse room order or an
    * embedded source needs it, and both need all of it: the sections are positional, so library
    * code cannot be reached without writing the game information that precedes it. */
-  if(sparse_rooms || gml){
+  if(sparse_rooms || gml || program){
     if(gm7){
       fixture_u32(&f,620); fixture_u32(&f,0); /* included files */
       fixture_u32(&f,700); fixture_u32(&f,0); /* extensions */
@@ -396,11 +422,15 @@ static Fixture legacy_fixture_build(unsigned container_version, int sparse_rooms
     fixture_u32(&f,600); fixture_u32(&f,400);
     fixture_u32(&f,1); fixture_u32(&f,1); fixture_u32(&f,0); fixture_u32(&f,1);
     fixture_string(&f,"");
-    fixture_u32(&f,500); fixture_u32(&f, gml ? 1 : 0); /* library code */
+    fixture_u32(&f,500); fixture_u32(&f, gml || (program && program->startup) ? 1 : 0); /* library code */
     if(gml) fixture_string(&f,gml);
+    else if(program && program->startup) fixture_string(&f,program->startup);
     if(sparse_rooms){
       fixture_u32(&f,700); fixture_u32(&f,2); /* explicit room order */
       fixture_u32(&f,6); fixture_u32(&f,2);
+    } else if(program){
+      fixture_u32(&f,700); fixture_u32(&f,1);
+      fixture_u32(&f,0);
     } else {
       fixture_u32(&f,700); fixture_u32(&f,0); /* no rooms to order */
     }
@@ -409,11 +439,11 @@ static Fixture legacy_fixture_build(unsigned container_version, int sparse_rooms
 }
 
 Fixture legacy_fixture_variant(unsigned container_version, int sparse_rooms){
-  return legacy_fixture_build(container_version,sparse_rooms,NULL);
+  return legacy_fixture_build(container_version,sparse_rooms,NULL,NULL);
 }
 
 Fixture legacy_fixture_source(unsigned container_version, const char *gml){
-  return legacy_fixture_build(container_version,0,gml);
+  return legacy_fixture_build(container_version,0,gml,NULL);
 }
 
 Fixture legacy_fixture(unsigned container_version){
@@ -585,11 +615,15 @@ static Fixture manifest_fixture_program(unsigned container_version, const Fixtur
 }
 
 int build_project_fixture_program(unsigned version, const FixtureProgram *program, Fixture *out){
-  /* Only the manifest families are written this way. The legacy families frame a resource
-   * differently — inline rather than compressed, and with their own sprite record — so a program
-   * asks for the generations it can actually be built for rather than being silently narrowed. */
-  if(version!=800 && version!=810) return 0;
   if(!program || program->room_width<=0 || program->room_height<=0) return 0;
+  /* A first-party GM5 rule can use the legacy inline object and room records. The compact legacy
+   * sprite record is deliberately not synthesized here; a program requiring one must continue to
+   * use a manifest generation until that distinct record is represented explicitly. */
+  if(version==530 && program->sprite_size==0){
+    *out=legacy_fixture_build(version,0,NULL,program);
+    return 1;
+  }
+  if(version!=800 && version!=810) return 0;
   *out=manifest_fixture_program(version,program);
   return 1;
 }
@@ -599,7 +633,7 @@ int build_project_fixture(unsigned version, Fixture *out){
 }
 
 int build_project_fixture_source(unsigned version, const char *gml, Fixture *out){
-  if(version==600){ *out=legacy_fixture_source(version,gml); return 1; }
+  if(version==530 || version==600){ *out=legacy_fixture_source(version,gml); return 1; }
   if(version==701 || version==702){
     Fixture plain=legacy_fixture_source(version,gml);
     size_t encoded_size=0;

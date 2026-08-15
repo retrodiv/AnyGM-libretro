@@ -502,6 +502,8 @@ void legacy_move_rpg(GmlVM *vm, GmlVal *args, int count);
 void legacy_direction_rpg(GmlVM *vm, GmlVal *args, int count);
 void legacy_friction_platform(GmlVM *vm, GmlVal *args, int count);
 void legacy_destroy_self(GmlVM *vm, int count);
+int builtin_classic_hollow_rectangle(GmlVM *vm,int argument_count,
+                                     uint32_t *color,int *outline);
 
 /* Draw-owner crossing operations. */
 void builtin_set_draw_alpha(GmlRender *render,double alpha);

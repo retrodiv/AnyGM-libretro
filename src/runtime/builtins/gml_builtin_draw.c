@@ -715,6 +715,8 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(R){ int plain=!strcmp(nm,"draw_rectangle"); int outline=(int)N(a,n,plain?4:8);
         GmlRenderTargetMetrics target=builtin_target_metrics(R);
         GmlRenderDrawState draw=builtin_draw_state(R);
+        uint32_t plain_color=draw.color;
+        if(plain) (void)builtin_classic_hollow_rectangle(vm,n,&plain_color,&outline);
         double raster_x1=draw_gui_x(R,N(a,n,0))-target.camera_x;
         double raster_y1=draw_gui_y(R,N(a,n,1))-target.camera_y;
         double raster_x2=draw_gui_x(R,N(a,n,2))-target.camera_x;
@@ -732,7 +734,7 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         /* Modern outlines stroke the ring immediately outside the pixels filled by the same
          * coordinates. Classic and first-generation paths retain their own edge conventions. */
         if(outline && !first_generation_outline && !gml_render_is_classic(R)){ x1--; y1--; x2++; y2++; }
-        if(plain) gml_render_primitive_rectangle(R,x1,y1,x2,y2,draw.color,outline);
+        if(plain) gml_render_primitive_rectangle(R,x1,y1,x2,y2,plain_color,outline);
         else gml_render_primitive_rectangle_color(R,x1,y1,x2,y2,NU32(a,n,4),NU32(a,n,5),NU32(a,n,6),NU32(a,n,7),outline); }
       return vreal(0); }
     if(!strcmp(nm,"draw_point")){ if(R){ GmlRenderTargetMetrics target=builtin_target_metrics(R); GmlRenderDrawState draw=builtin_draw_state(R);

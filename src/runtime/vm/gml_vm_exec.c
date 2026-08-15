@@ -414,6 +414,9 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
 static const char *const g_special_var_names[]={
   "undefined","infinity","room","room_first","room_last","keyboard_lastkey","room_speed","working_directory","program_directory",
   "fps","delta_time","view_current","view_enabled","room_persistent","background_color","background_colour",
+  "view_left","view_top","view_width","view_height","view_x","view_y",
+  "brush_color","brush_style","pen_color","pen_size",
+  "bs_hollow","bs_solid",
   "event_type","event_number","mouse_x","mouse_y",
   "current_time","current_second","current_minute","current_hour","current_day","current_weekday",
   "current_month","current_year","os_type","os_windows","os_uwp","os_xboxone","os_ps3","os_ps4","os_psvita",
@@ -472,6 +475,7 @@ int gml_vm_variable_name_maybe_special(GmlVM *vm, const char *name,
   return var_name_maybe_special(vm,name,name_hash);
 }
 static int is_room_global_array(const char *n);
+static const char *classic_room_global_array_alias(GmlVM *vm,const char *name);
 static int background_dimension_get(GmlVM *vm,const char *name,int index,GmlVal *out);
 static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   GmlVal out;
@@ -489,6 +493,10 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   }
   if(vm->win && anygm_policy_uses_classic_runtime(vm->win) &&
      background_dimension_get(vm,name,0,&out)) return out;
+  {
+    const char *alias=classic_room_global_array_alias(vm,name);
+    if(alias) return vreal(gml_vm_global_array_number(vm,alias,0));
+  }
   /* GM6/7/8 variables retain their old scalar-at-index-zero behaviour even when the same
    * built-in also exposes indexed view/background slots. Classic source commonly reads
    * `view_wview` with no brackets; returning the array value coerces to zero and can pin every
@@ -555,6 +563,18 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
      !strcmp(name,"time_source_expire_after") || !strcmp(name,"time_source_state_active")) return vreal(1);
   if(!strcmp(name,"time_source_state_paused")) return vreal(2);
   if(!strcmp(name,"time_source_state_stopped")) return vreal(3);
+  if(vm->win && anygm_policy_uses_classic_runtime(vm->win)){
+    if(!strcmp(name,"bs_solid")) return vreal(0);
+    if(!strcmp(name,"bs_hollow")) return vreal(1);
+    if(!strcmp(name,"brush_color") || !strcmp(name,"brush_style") ||
+       !strcmp(name,"pen_color") || !strcmp(name,"pen_size")){
+      GmlVal *slot=gml_varmap_get_hashed(&vm->globals,name,nh);
+      if(slot) return *slot;
+      if(!strcmp(name,"brush_color")) return vreal(0xFFFFFF);
+      if(!strcmp(name,"pen_size")) return vreal(1);
+      return vreal(0);
+    }
+  }
   if(!strcmp(name,"view_current")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
   if(!strcmp(name,"room_persistent")){ GmlVal *p=gml_varmap_get(&vm->globals,name); return p?*p:vreal(0); }
   if(!strcmp(name,"background_color")||!strcmp(name,"background_colour")){
@@ -679,6 +699,12 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
     *gml_varmap_put_hashed(&vm->globals,name,nh)=v;
     return;
   }
+  if(vm->win && anygm_policy_uses_classic_runtime(vm->win) &&
+     (!strcmp(name,"brush_color") || !strcmp(name,"brush_style") ||
+      !strcmp(name,"pen_color") || !strcmp(name,"pen_size"))){
+    *gml_varmap_put_hashed(&vm->globals,name,nh)=v;
+    return;
+  }
   if(!strcmp(name,"background_color")||!strcmp(name,"background_colour")){
     *gml_varmap_put(&vm->globals,"background_color")=v;
     return;
@@ -749,6 +775,19 @@ static int is_room_global_array(const char *n){
   }
   return 0;
 }
+/* GM5 names the room-space view rectangle and its screen-space origin differently from the
+ * GM6+ view arrays carried by normalized packages. They are aliases for the same eight slots,
+ * not independent arrays: a write through either spelling must be visible through the other. */
+static const char *classic_room_global_array_alias(GmlVM *vm,const char *name){
+  if(!vm || !vm->win || !anygm_policy_uses_classic_runtime(vm->win) || !name) return NULL;
+  if(!strcmp(name,"view_left")) return "view_xview";
+  if(!strcmp(name,"view_top")) return "view_yview";
+  if(!strcmp(name,"view_width")) return "view_wview";
+  if(!strcmp(name,"view_height")) return "view_hview";
+  if(!strcmp(name,"view_x")) return "view_xport";
+  if(!strcmp(name,"view_y")) return "view_yport";
+  return NULL;
+}
 static int background_dimension_get(GmlVM *vm,const char *name,int index,GmlVal *out){
   int width=!strcmp(name,"background_width");
   if(!width && strcmp(name,"background_height")) return 0;
@@ -809,6 +848,10 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[arrayset] f%ld scope=%d %s[%d] type=%d value=%.17g\n",
               vm->frame,inst_t,nm,idx,v.t,v.t==V_REAL?v.d:0.0);
     }
+  }
+  {
+    const char *alias=classic_room_global_array_alias(vm,nm);
+    if(alias){ nm=alias; nh=gml_value_name_hash(alias); }
   }
   if(vm_view_log(vm) && !strcmp(nm,"view_camera")){
     
@@ -919,6 +962,10 @@ static GmlVal array_get_h(
     GmlVM *vm,GmlVarMap *locals,int inst_t,
     const char *nm,uint32_t nh,int idx){
   GmlVal dimension;
+  {
+    const char *alias=classic_room_global_array_alias(vm,nm);
+    if(alias){ nm=alias; nh=gml_value_name_hash(alias); }
+  }
   if(background_dimension_get(vm,nm,idx,&dimension)) return dimension;
   if(!strcmp(nm,"view_enabled")){
     GmlVal *slot=gml_varmap_get_hashed(&vm->globals,nm,nh);

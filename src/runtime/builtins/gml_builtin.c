@@ -1042,6 +1042,8 @@ static int d3_try_draw_2d_builtin(GmlVM *vm,const char *name,GmlVal *args,int co
     double rx1=draw_gui_x(R,N(args,count,0)),ry1=draw_gui_y(R,N(args,count,1));
     double rx2=draw_gui_x(R,N(args,count,2)),ry2=draw_gui_y(R,N(args,count,3));
     int outline=(int)N(args,count,plain?4:8);
+    if(plain) (void)builtin_classic_hollow_rectangle(vm,count,&colors[0],&outline);
+    if(plain) for(int i=1;i<4;i++) colors[i]=colors[0];
     if(builtin_setting(vm,"GML_LOG_SURF")){
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
         "[prim] rectangle x1=%.1f y1=%.1f x2=%.1f y2=%.1f colour=%06x alpha=%.3f outline=%d\n",
@@ -1251,6 +1253,20 @@ int gp_debug_on(GmlVM *vm){
   if(!state) return builtin_setting(vm,"GML_DBG_GP")!=NULL;
   if(state->gamepad_debug<0) state->gamepad_debug=builtin_setting(vm,"GML_DBG_GP")!=NULL;
   return state->gamepad_debug;
+}
+
+int builtin_classic_hollow_rectangle(GmlVM *vm,int argument_count,
+                                     uint32_t *color,int *outline){
+  /* GM5 has no outline argument here. Its four-argument form reads the editor-era brush and pen
+   * state; a hollow brush keeps the interior and strokes the requested boundary with the pen. */
+  if(!vm || !vm->win || !anygm_policy_uses_classic_runtime(vm->win) ||
+     argument_count>=5 || !color || !outline) return 0;
+  GmlVal style=gml_vm_identifier_get(vm,"brush_style");
+  if((int)N(&style,1,0)!=1) return 0;
+  GmlVal pen=gml_vm_identifier_get(vm,"pen_color");
+  *color=U32(N(&pen,1,0));
+  *outline=1;
+  return 1;
 }
 
 /* keyboard/gamepad dispatch shared by the generic chain and the cached fast path — the

@@ -432,9 +432,12 @@ static GmlVal gml_builtin_call_fast_id_impl(GmlVM *vm, int id, const char *nm, G
       if(R){
         GmlRenderTargetMetrics target=builtin_target_metrics(R);
         GmlRenderDrawState draw=builtin_draw_state(R);
+        uint32_t color=draw.color;
+        int outline=(int)N(a,n,4);
+        (void)builtin_classic_hollow_rectangle(vm,n,&color,&outline);
         int x1=(int)floor(draw_gui_x(R,N(a,n,0))-target.camera_x), y1=(int)floor(draw_gui_y(R,N(a,n,1))-target.camera_y);
         int x2=(int)ceil(draw_gui_x(R,N(a,n,2))-target.camera_x), y2=(int)ceil(draw_gui_y(R,N(a,n,3))-target.camera_y);
-        gml_render_primitive_rectangle(R,x1,y1,x2,y2,draw.color,(int)N(a,n,4));
+        gml_render_primitive_rectangle(R,x1,y1,x2,y2,color,outline);
       }
       return vreal(0);
     case BID_DRAW_SET_COLOR:

@@ -62,6 +62,8 @@ int expect_native_timeline_import(const char *path);
 int expect_timeline_case(void);
 int expect_vm_state_case(void);
 int expect_background_slot_dimensions(void);
+int expect_classic_view_array_aliases(void);
+int expect_classic_hollow_rectangle(void);
 int expect_legacy_sprite_text_builtin(void);
 int expect_legacy_sprite_assign_builtin(void);
 int expect_runtime_sprite_state_preserves_collision_extent(void);

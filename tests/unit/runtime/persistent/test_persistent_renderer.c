@@ -16,7 +16,7 @@
 #include <string.h>
 
 
-static GmlVal read_background_slot_dimension(GmlVM *vm,const char *name,int index){
+static GmlVal read_array_slot(GmlVM *vm,const char *name,int index,int classic_version){
   unsigned char data[20]={0};
   fixture_word(data,0,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)IT_SELF);
   fixture_word(data,1,(0x84u<<24)|(DT_INT16<<16)|(uint16_t)index);
@@ -32,6 +32,7 @@ static GmlVal read_background_slot_dimension(GmlVM *vm,const char *name,int inde
   win.data=data;
   win.size=sizeof data;
   win.bytecode=15;
+  win.classic_version=classic_version;
   win.code=&code;
   win.n_code=1;
   win.ref_addr=&reference_address;
@@ -67,9 +68,9 @@ int expect_background_slot_dimensions(void){
   vm.cur_code_index=-1;
   gml_set_global_arr(&vm,"background_index",2,0);
   gml_set_global_arr(&vm,"background_index",3,-1);
-  GmlVal width=read_background_slot_dimension(&vm,"background_width",2);
-  GmlVal height=read_background_slot_dimension(&vm,"background_height",2);
-  GmlVal missing=read_background_slot_dimension(&vm,"background_width",3);
+  GmlVal width=read_array_slot(&vm,"background_width",2,0);
+  GmlVal height=read_array_slot(&vm,"background_height",2,0);
+  GmlVal missing=read_array_slot(&vm,"background_width",3,0);
   int ok=width.t==V_REAL && width.d==37 &&
          height.t==V_REAL && height.d==41 &&
          missing.t==V_REAL && missing.d==0;
@@ -79,6 +80,64 @@ int expect_background_slot_dimensions(void){
             height.t==V_REAL?height.d:-1.0,
             missing.t==V_REAL?missing.d:-1.0);
   gml_varmap_free(&vm.globals);
+  return ok;
+}
+
+int expect_classic_view_array_aliases(void){
+  GmlVM vm={0};
+  const char *canonical[]={
+    "view_xview","view_yview","view_wview","view_hview","view_xport","view_yport"
+  };
+  const char *legacy[]={
+    "view_left","view_top","view_width","view_height","view_x","view_y"
+  };
+  int ok=1;
+  for(int i=0;i<6;i++){
+    gml_set_global_arr(&vm,canonical[i],i,101+i);
+    GmlVal value=read_array_slot(&vm,legacy[i],i,530);
+    if(value.t!=V_REAL || value.d!=101+i){
+      fprintf(stderr,"classic view alias mismatch: %s[%d]=%.0f expected=%d\n",
+              legacy[i],i,value.t==V_REAL?value.d:-1.0,101+i);
+      ok=0;
+    }
+  }
+  GmlVal modern=read_array_slot(&vm,"view_left",0,0);
+  if(modern.t!=V_REAL || modern.d!=0){
+    fprintf(stderr,"classic view alias leaked into modern runtime: %.0f\n",
+            modern.t==V_REAL?modern.d:-1.0);
+    ok=0;
+  }
+  GmlWin classic={0}; classic.classic_version=530; classic.bytecode=15; vm.win=&classic;
+  GmlVal hollow=gml_vm_identifier_get(&vm,"bs_hollow");
+  GmlVal solid=gml_vm_identifier_get(&vm,"bs_solid");
+  if(hollow.t!=V_REAL || hollow.d!=1 || solid.t!=V_REAL || solid.d!=0){
+    fprintf(stderr,"classic brush constants mismatch: hollow=%.0f solid=%.0f\n",
+            hollow.t==V_REAL?hollow.d:-1.0,solid.t==V_REAL?solid.d:-1.0);
+    ok=0;
+  }
+  gml_varmap_free(&vm.globals);
+  return ok;
+}
+
+int expect_classic_hollow_rectangle(void){
+  GmlWin win={0}; win.classic_version=530; win.bytecode=15;
+  GmlVM vm={0}; GmlRender render={0}; uint32_t framebuffer[8*8]={0};
+  vm.win=&win; vm.render=&render;
+  gml_render_begin(&render,framebuffer,8,8,0,0);
+  render.alpha=1; render.alphablend=1; render.classic=1;
+  *gml_varmap_put(&vm.globals,"brush_style")=vreal(1);
+  *gml_varmap_put(&vm.globals,"pen_color")=vreal(0x44AAEE);
+  GmlVal rectangle[4]={vreal(1),vreal(1),vreal(6),vreal(6)};
+  (void)gml_builtin_call(&vm,"draw_rectangle",rectangle,4);
+  int ok=framebuffer[1*8+1]==UINT32_C(0xFFEEAA44) &&
+         framebuffer[6*8+6]==UINT32_C(0xFFEEAA44) &&
+         !(framebuffer[3*8+3]&0xFFFFFFu) &&
+         !(framebuffer[0]&0xFFFFFFu);
+  if(!ok)
+    fprintf(stderr,"classic hollow rectangle mismatch: edge=%08x,%08x centre=%08x outside=%08x\n",
+            framebuffer[1*8+1],framebuffer[6*8+6],framebuffer[3*8+3],framebuffer[0]);
+  gml_varmap_free(&vm.globals);
+  gml_render_free(&render);
   return ok;
 }
 
