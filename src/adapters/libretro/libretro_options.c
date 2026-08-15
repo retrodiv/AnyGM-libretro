@@ -29,14 +29,16 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"None",NULL},{"Light",NULL},{"Medium",NULL},{"High",NULL},{"Maximum",NULL},{NULL,NULL}},
    "High"},
   {"anygm_render_game_resolution","Render at game resolution",NULL,
-   "Delivers the game's own raster and lets this program scale it. Off renders at the effective "
-   "presentation window: Monitor width and height supply that extent when set, while Game Base "
-   "follows the game's request.",
+   "Delivers the game's own raster and lets this program scale it. Monitor width and height use "
+   "Game Base on this path. Off renders at the effective presentation window: the monitor "
+   "dimensions supply that extent when set, while Game Base follows the game's request.",
    NULL,"video",
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},
   {"anygm_width_resolution","Monitor width",NULL,
-   "Reports this virtual monitor width to the game. With Render at game resolution off, it also supplies the effective presentation-window and framebuffer width. Game Base follows the game's request.",
+   "With Render at game resolution off, reports this virtual monitor width to the game and "
+   "supplies the effective presentation-window and framebuffer width. Game Base follows the "
+   "game's request.",
    NULL,"video",
    {{"Game Base",NULL},{"64",NULL},{"128",NULL},{"144",NULL},{"160",NULL},{"176",NULL},
     {"192",NULL},{"200",NULL},{"224",NULL},{"240",NULL},{"256",NULL},{"288",NULL},{"300",NULL},
@@ -50,7 +52,9 @@ static struct retro_core_option_v2_definition g_definitions[]={
     {NULL,NULL}},
    "Game Base"},
   {"anygm_height_resolution","Monitor height",NULL,
-   "Reports this virtual monitor height to the game. With Render at game resolution off, it also supplies the effective presentation-window and framebuffer height. Game Base follows the game's request.",
+   "With Render at game resolution off, reports this virtual monitor height to the game and "
+   "supplies the effective presentation-window and framebuffer height. Game Base follows the "
+   "game's request.",
    NULL,"video",
    {{"Game Base",NULL},{"64",NULL},{"128",NULL},{"144",NULL},{"160",NULL},{"176",NULL},
     {"180",NULL},{"192",NULL},{"200",NULL},{"216",NULL},{"224",NULL},{"240",NULL},{"256",NULL},
@@ -441,8 +445,9 @@ void libretro_options_publish_rooms(void){
   update_option_visibility();
 }
 
-/* Options that cannot act are hidden rather than left to be tried: the CRT parts while the shader
- * that draws them is off, and the range selector when every room already fits in one list.
+/* Options that cannot act are hidden rather than left to be tried: the monitor dimensions while
+ * rendering at game resolution, the CRT parts while the shader that draws them is off, and the
+ * range selector when every room already fits in one list.
  *
  * The shader's own setting is read here rather than taken from the applied configuration. A player
  * turns the shader off from inside the host's menu, which is exactly when no frame is running to
@@ -453,10 +458,16 @@ static int update_option_visibility(void){
     "anygm_crt_scanlines","anygm_crt_mask","anygm_crt_gamma",
     "anygm_crt_curvature","anygm_crt_vignette",NULL
   };
-  static int published_parts=-1, published_ranges=-1;
+  static const char *const monitor_dimensions[]={
+    "anygm_width_resolution","anygm_height_resolution",NULL
+  };
+  static int published_parts=-1, published_ranges=-1, published_monitor_dimensions=-1;
   int parts=option_on("anygm_embedded_shaders",1)?1:0;
   int ranges=g_page_choice_count>1?1:0;
-  if(parts==published_parts && ranges==published_ranges) return 0;
+  int monitor_dimensions_visible=option_on("anygm_render_game_resolution",1)?0:1;
+  if(parts==published_parts && ranges==published_ranges &&
+     monitor_dimensions_visible==published_monitor_dimensions)
+    return 0;
   struct retro_core_option_display display;
   display.visible=parts?true:false;
   for(size_t i=0;crt_parts[i];i++){
@@ -466,8 +477,14 @@ static int update_option_visibility(void){
   display.key="anygm_start_room_page";
   display.visible=ranges?true:false;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+  display.visible=monitor_dimensions_visible?true:false;
+  for(size_t i=0;monitor_dimensions[i];i++){
+    display.key=monitor_dimensions[i];
+    g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+  }
   published_parts=parts;
   published_ranges=ranges;
+  published_monitor_dimensions=monitor_dimensions_visible;
   return 1;
 }
 
@@ -494,8 +511,14 @@ void libretro_options_apply(bool all_fields){
   if(!g_libretro.engine) return;
   AnygmConfig *config=&g_libretro.config;
   config->struct_size=sizeof *config;
-  config->monitor_width=option_resolution("anygm_width_resolution");
-  config->monitor_height=option_resolution("anygm_height_resolution");
+  uint32_t present_logical_raster=option_on("anygm_render_game_resolution",1);
+  /* A logical-raster frame has no monitor-sized drawing space. The frontend retains the hidden
+   * selections, so reading them again when this path is turned off restores them without a
+   * compatibility setting or a second source of truth. */
+  config->monitor_width=present_logical_raster?0u:
+                        option_resolution("anygm_width_resolution");
+  config->monitor_height=present_logical_raster?0u:
+                         option_resolution("anygm_height_resolution");
   const char *value=option_value("anygm_aspect_ratio_force");
   config->aspect_mode=value&&!strcmp(value,"4:3")?1u:
                       value&&!strcmp(value,"16:9")?2u:
@@ -535,7 +558,7 @@ void libretro_options_apply(bool all_fields){
   /* Rendering at the effective presentation window costs a full software upscale when it is
      larger than the view. Rasterizing at the view is the default; the window-matching path stays
      available for content and host-monitor layouts that depend on it. */
-  config->present_logical_raster=option_on("anygm_render_game_resolution",1);
+  config->present_logical_raster=present_logical_raster;
   config->clear_local_data=option_on("anygm_clear_local_data",0);
 
   /* Choosing another stretch of rooms changes which rooms the chooser holds, not any setting the

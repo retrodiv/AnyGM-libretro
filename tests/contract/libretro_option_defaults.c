@@ -17,6 +17,8 @@
 #include <string.h>
 
 static const char *answered_value;
+static const char *answered_raster_value;
+static const char *answered_monitor_value;
 static bool (*menu_time_visibility)(void);
 static const struct retro_core_option_v2_category *declared_categories;
 static const struct retro_core_option_v2_definition *declared_definitions;
@@ -69,8 +71,16 @@ static bool environment_callback(unsigned command,void *data){
     case RETRO_ENVIRONMENT_GET_VARIABLE:{
       struct retro_variable *variable=data;
       if(!variable) return false;
-      variable->value=answered_value;
-      return answered_value!=NULL; }
+      const char *value=answered_value;
+      if(variable->key && !strcmp(variable->key,"anygm_render_game_resolution") &&
+         answered_raster_value)
+        value=answered_raster_value;
+      if(variable->key &&
+         (!strcmp(variable->key,"anygm_width_resolution") ||
+          !strcmp(variable->key,"anygm_height_resolution")) && answered_monitor_value)
+        value=answered_monitor_value;
+      variable->value=value;
+      return value!=NULL; }
     default:
       return false;
   }
@@ -155,6 +165,8 @@ static void begin(unsigned version,uint32_t rooms){
   declared_variables=NULL;
   visibility_count=0;
   answered_value=NULL;
+  answered_raster_value=NULL;
+  answered_monitor_value=NULL;
   menu_time_visibility=NULL;
   memset(&applied_config,0,sizeof applied_config);
   config_apply_count=0;
@@ -244,6 +256,46 @@ static void monitor_dimensions_reach_the_virtual_monitor_fields(void){
   libretro_options_apply(false);
   expect("fallback monitor width",applied_config.values.monitor_width,0u);
   expect("fallback monitor height",applied_config.values.monitor_height,0u);
+}
+
+/* A logical-raster frame has no monitor-sized drawing space, so the monitor dimensions neither
+ * act nor occupy the menu while that path is selected. The frontend still owns their selected
+ * values: returning to the window-raster path must recover them without asking the player again. */
+static void monitor_dimensions_follow_the_window_raster(void){
+  begin(2,3);
+  if(!menu_time_visibility){
+    complain("no way was offered to update monitor-option visibility");
+    return;
+  }
+  answered_value="On";
+  answered_monitor_value="1920";
+  answered_raster_value="On";
+  menu_time_visibility();
+  if(shown("anygm_width_resolution")!=0 || shown("anygm_height_resolution")!=0)
+    complain("monitor dimensions stay offered while rendering at game resolution");
+  libretro_options_apply(true);
+  expect("logical-raster monitor width",applied_config.values.monitor_width,0u);
+  expect("logical-raster monitor height",applied_config.values.monitor_height,0u);
+  expect("logical-raster selection",applied_config.values.present_logical_raster,1u);
+
+  answered_raster_value="Off";
+  if(!menu_time_visibility())
+    complain("showing monitor dimensions was reported as no visibility change");
+  if(shown("anygm_width_resolution")!=1 || shown("anygm_height_resolution")!=1)
+    complain("monitor dimensions stay hidden while rendering at the presentation window");
+  libretro_options_apply(false);
+  expect("window-raster monitor width",applied_config.values.monitor_width,1920u);
+  expect("window-raster monitor height",applied_config.values.monitor_height,1920u);
+  expect("window-raster selection",applied_config.values.present_logical_raster,0u);
+
+  answered_raster_value="On";
+  menu_time_visibility();
+  libretro_options_apply(false);
+  answered_raster_value="Off";
+  menu_time_visibility();
+  libretro_options_apply(false);
+  expect("restored monitor width",applied_config.values.monitor_width,1920u);
+  expect("restored monitor height",applied_config.values.monitor_height,1920u);
 }
 
 /* The names describe how much is dropped, and the thresholds have to rise with them. */
@@ -393,6 +445,7 @@ int main(void){
   every_setting_sits_in_a_group();
   unset_settings_keep_content_reachable();
   monitor_dimensions_reach_the_virtual_monitor_fields();
+  monitor_dimensions_follow_the_window_raster();
   culling_names_rise_with_their_thresholds();
   hidden_settings_are_the_ones_that_cannot_act();
   loaded_content_names_its_rooms();
