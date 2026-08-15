@@ -595,7 +595,9 @@ int software3d_case_language(Software3dRasterFixture *fixture){
     gml_render_begin(&fixture->render,target,8,8,0,0);
     gml_render_gui_begin(&fixture->render,8,8);
     const double gui_size[]={2,2};
-    fixture->vm.window_w=16; fixture->vm.window_h=24;
+    /* GUI maximise uses the dimensions returned by window queries: the presented raster.
+     * Declare 16x24 over an 8x8 GUI target to exercise that conversion. */
+    gml_render_presentation_effective_set(&fixture->render,16,24);
     const double maximise[]={2,3,2,6};
     call_numbers(&fixture->vm,"display_set_gui_size",gui_size,2);
     call_numbers(&fixture->vm,"display_set_gui_maximise",maximise,4);
@@ -632,7 +634,7 @@ int software3d_case_language(Software3dRasterFixture *fixture){
     }
     call_numbers(&fixture->vm,"display_set_gui_maximise",reset,2);
     gml_render_gui_end(&fixture->render);
-    fixture->vm.window_w=fixture->vm.window_h=0;
+    gml_render_presentation_effective_set(&fixture->render,0,0);
     fixture->vm.win=NULL; fixture->render.win=NULL;
   }
 
