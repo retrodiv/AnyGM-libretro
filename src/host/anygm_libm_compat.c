@@ -12,14 +12,14 @@
 
 #if defined(__linux__) && defined(__aarch64__) && !defined(__ANDROID__)
 
-extern float anygm_libm_sqrtf_v217(float x);
+#include "anygm_libm_compat.h"
+
 __asm__(".symver anygm_libm_sqrtf_v217,sqrtf@GLIBC_2.17");
 
 float __wrap_sqrtf(float x) {
     return anygm_libm_sqrtf_v217(x);
 }
 
-extern float anygm_libm_atan2f_v217(float y, float x);
 __asm__(".symver anygm_libm_atan2f_v217,atan2f@GLIBC_2.17");
 
 float __wrap_atan2f(float y, float x) {

@@ -73,6 +73,10 @@ void gml_render_backend_draw_map_point(const GmlRender *render,double *x,double 
 int gml_render_backend_surface_stretched(GmlRender *render,int surface,
                                          double x,double y,double width,double height,
                                          uint32_t blend,double alpha);
+/* The colour modulation the active vertex program applies to every vertex colour it passes on, as
+ * red, green, blue and alpha factors. Answers zero when no such program is set, so callers keep
+ * their unmodulated path. Reads shader state and touches no draw target. */
+int gml_render_backend_shader_vertex_colour_blend(const GmlRender *render,double blend[4]);
 
 #define GML_TEX_SPR_TAG  0x54000000u
 #define GML_TEX_SURF_TAG 0x55000000u

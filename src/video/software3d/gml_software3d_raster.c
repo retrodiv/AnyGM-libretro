@@ -1032,7 +1032,7 @@ static void vertex_submit_buffer(GmlRender *R,int id,int primitive,int texture_h
    * libraries carry a string's tint and fade. Apply it here, to a copy, so the rasterizer keeps
    * receiving plain vertex colours and every other submission path is untouched. */
   double blend[4];
-  if(gml_render_shader_vertex_colour_blend(R,blend) &&
+  if(gml_render_backend_shader_vertex_colour_blend(R,blend) &&
      (blend[0]<1.0 || blend[1]<1.0 || blend[2]<1.0 || blend[3]<1.0)){
     GmlD3Vertex *modulated=vertex_blend_scratch_ensure(R,number);
     if(modulated){

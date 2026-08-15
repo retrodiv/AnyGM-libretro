@@ -780,7 +780,7 @@ int gml_render_shader_current(const GmlRender *r){
  * red, green, blue and alpha factors. Answers zero when no such program is set, so callers keep
  * their unmodulated path; the identity is answered while a recognized program's uniform has not
  * arrived yet, because a shader is not a reason to blank what content drew. */
-int gml_render_shader_vertex_colour_blend(const GmlRender *r,double blend[4]){
+int gml_render_backend_shader_vertex_colour_blend(const GmlRender *r,double blend[4]){
   if(!r || !blend || r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal)
     return 0;
   const struct GmlShaderPal *recognized=&r->shader_pal[r->active_shader];
