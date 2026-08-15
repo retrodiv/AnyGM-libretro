@@ -581,14 +581,21 @@ static int gui_window_near_native(int win_w, int win_h, int gui_w, int gui_h) {
   if (ytol < 8) ytol = 8;
   return labs((long)win_w - gui_w) <= xtol && labs((long)win_h - gui_h) <= ytol;
 }
+static void authored_window_extent(const AnygmEngine *engine,int fallback_width,int fallback_height,
+                                   int *width,int *height){
+  int out_width=engine->vm.window_w>0?engine->vm.window_w:fallback_width;
+  int out_height=engine->vm.window_h>0?engine->vm.window_h:fallback_height;
+  if(width) *width=out_width;
+  if(height) *height=out_height;
+}
 /* With logical-raster presentation disabled, the frontend cannot tell the core the physical
  * presentation extent by any standard libretro channel. The configured virtual monitor supplies
  * that missing window extent. Keep the authored window request intact so returning to Game Base
  * restores it naturally; fullscreen uses the same monitor even under logical-raster presentation. */
 static void content_window_extent(const AnygmEngine *engine,int fallback_width,int fallback_height,
                                   int *width,int *height){
-  int out_width=engine->vm.window_w>0?engine->vm.window_w:fallback_width;
-  int out_height=engine->vm.window_h>0?engine->vm.window_h:fallback_height;
+  int out_width,out_height;
+  authored_window_extent(engine,fallback_width,fallback_height,&out_width,&out_height);
   if(engine->vm.window_fullscreen || !engine->config.present_logical_raster){
     uint32_t monitor_width=engine->config.monitor_width;
     uint32_t monitor_height=engine->config.monitor_height;
@@ -889,6 +896,23 @@ void compute_present(AnygmEngine *engine) {
    * transform, so retain the port as GUI space and let the indirect presentation path scale it. */
   int screen_stage_window_w=content_window_width;
   int screen_stage_window_h=content_window_height;
+  /* A virtual monitor is the destination of the automatic application-surface presentation,
+   * not a content-authored request to reshape that surface. Retain the authored source raster so
+   * the host-canvas pass can fit it uniformly. Explicit surface owners and self-compositors are
+   * handled below and continue to own their final window raster. */
+  int automatic_surface_host_fit=
+      !engine->config.present_logical_raster &&
+      !anygm_policy_uses_classic_runtime(&engine->win) &&
+      renderer.application_draw_enabled &&
+      (core_opt_monitor_size(engine,0)>0 || core_opt_monitor_size(engine,1)>0);
+  if (automatic_surface_host_fit) {
+    authored_window_extent(engine,
+      (int)(engine->win.disp_w?engine->win.disp_w:engine->width),
+      (int)(engine->win.disp_h?engine->win.disp_h:engine->height),
+      &screen_stage_window_w,&screen_stage_window_h);
+    effective_width=content_window_width;
+    effective_height=content_window_height;
+  }
   /* The window extent is a request from content, not a host measurement: no host reports its
    * presentation window to the engine. When the window is only larger than the view, matching it
    * here costs a full software upscale carrying no detail the host would not produce itself while

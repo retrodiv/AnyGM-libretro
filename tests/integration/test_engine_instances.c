@@ -468,6 +468,8 @@ static int modern_self_compositor_window_raster_policy(void){
   engine.config.present_logical_raster=0;
   engine.config.monitor_width=1920;
   engine.config.monitor_height=1080;
+  GmlRenderControl monitor={.monitor_width=1920,.monitor_height=1080};
+  gml_render_control_update(&engine.render,&monitor,GML_RENDER_CONTROL_MONITOR_SIZE);
   gml_vm_global_array_set(&engine.vm,"view_visible",0,1);
   gml_vm_global_array_set(&engine.vm,"view_xview",0,0);
   gml_vm_global_array_set(&engine.vm,"view_yview",0,0);
@@ -501,6 +503,67 @@ static int modern_self_compositor_window_raster_policy(void){
       presentation.effective_width,presentation.effective_height,
       target_width,target_height,
       logical_width,logical_height);
+  gml_vm_free(&engine.vm);
+  return ok;
+}
+
+static int automatic_surface_monitor_fit_policy(void){
+  AnygmEngine engine={0};
+  engine.win.bytecode=16;
+  engine.win.disp_w=640;
+  engine.win.disp_h=480;
+  engine.width=640;
+  engine.height=480;
+  engine.vm.win=&engine.win;
+  engine.vm.render=&engine.render;
+  engine.vm.window_w=640;
+  engine.vm.window_h=480;
+  engine.config.present_logical_raster=0;
+  engine.config.monitor_width=1920;
+  engine.config.monitor_height=1080;
+  GmlRenderControl monitor={.monitor_width=1920,.monitor_height=1080};
+  gml_render_control_update(&engine.render,&monitor,GML_RENDER_CONTROL_MONITOR_SIZE);
+  gml_vm_global_array_set(&engine.vm,"view_visible",0,1);
+  gml_vm_global_array_set(&engine.vm,"view_xview",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_yview",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_wview",0,640);
+  gml_vm_global_array_set(&engine.vm,"view_hview",0,480);
+  gml_vm_global_array_set(&engine.vm,"view_xport",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_yport",0,0);
+  gml_vm_global_array_set(&engine.vm,"view_wport",0,640);
+  gml_vm_global_array_set(&engine.vm,"view_hport",0,480);
+  gml_render_application_surface_set_draw_enabled(&engine.render,1);
+
+  compute_present(&engine);
+
+  GmlVal display_width=gml_builtin_call(&engine.vm,"display_get_width",NULL,0);
+  GmlVal display_height=gml_builtin_call(&engine.vm,"display_get_height",NULL,0);
+  GmlVal window_width=gml_builtin_call(&engine.vm,"window_get_width",NULL,0);
+  GmlVal window_height=gml_builtin_call(&engine.vm,"window_get_height",NULL,0);
+  int ok=display_width.t==V_REAL && display_width.d==1920 &&
+         display_height.t==V_REAL && display_height.d==1080 &&
+         window_width.t==V_REAL && window_width.d==1920 &&
+         window_height.t==V_REAL && window_height.d==1080 &&
+         engine.vm.window_w==640 && engine.vm.window_h==480 &&
+         !engine.screen_stage_window_raster &&
+         engine.output_width==640 && engine.output_height==480 &&
+         engine.gui_space_width==640 && engine.gui_space_height==480 &&
+         engine.host_output_width==1920 && engine.host_output_height==1080 &&
+         engine.host_canvas_active &&
+         engine.host_canvas_x==240 && engine.host_canvas_y==0 &&
+         engine.host_canvas_width==1440 && engine.host_canvas_height==1080;
+  if(!ok)
+    fprintf(stderr,
+      "automatic surface did not retain aspect inside the virtual monitor:"
+      " queries=%gx%g/%gx%g flag=%d output=%ux%u gui=%dx%d"
+      " host=%ux%u fit=(%d,%d %dx%d)\n",
+      display_width.d,display_height.d,window_width.d,window_height.d,
+      engine.screen_stage_window_raster,
+      engine.output_width,engine.output_height,
+      engine.gui_space_width,engine.gui_space_height,
+      engine.host_output_width,engine.host_output_height,
+      engine.host_canvas_x,engine.host_canvas_y,
+      engine.host_canvas_width,engine.host_canvas_height);
   gml_vm_free(&engine.vm);
   return ok;
 }
@@ -1188,6 +1251,8 @@ int main(int argc,char **argv){
       return first_generation_window_raster_policy()?0:1;
     if(!strcmp(argv[2],"modern_self_compositor_window_raster"))
       return modern_self_compositor_window_raster_policy()?0:1;
+    if(!strcmp(argv[2],"automatic_surface_monitor_fit"))
+      return automatic_surface_monitor_fit_policy()?0:1;
     if(!strcmp(argv[2],"first_generation_oversized_gui"))
       return first_generation_oversized_gui_policy()?0:1;
     if(!strcmp(argv[2],"background_color"))
@@ -1217,6 +1282,7 @@ int main(int argc,char **argv){
           "explicit_window_screen_stage|"
           "first_generation_window_raster|"
           "modern_self_compositor_window_raster|"
+          "automatic_surface_monitor_fit|"
           "first_generation_oversized_gui|"
           "background_color|multi_view_application_canvas|game_change|"
           "input_binding_ownership|simulated_key_lifetime|simulated_key_frame_lifetime|"
@@ -1232,6 +1298,7 @@ int main(int argc,char **argv){
   if(!explicit_window_screen_stage_policy()) return 1;
   if(!first_generation_window_raster_policy()) return 1;
   if(!modern_self_compositor_window_raster_policy()) return 1;
+  if(!automatic_surface_monitor_fit_policy()) return 1;
   if(!first_generation_oversized_gui_policy()) return 1;
   if(!draw_schedule_policy()) return 1;
   if(!background_color_policy()) return 1;
