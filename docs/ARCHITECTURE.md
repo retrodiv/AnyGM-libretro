@@ -452,6 +452,16 @@ dispatch boundary.
 
 
 
+An optional graphics target sits beside that plan rather than inside the renderer.
+`src/video/gpu/` owns the context lifetime, the capability and resource generations, and one direct
+OpenGL / OpenGL ES backend; `src/core/engine_graphics.c` is the only core file that knows it exists,
+and the whole feature reaches the rest of the engine through one pointer on `AnygmEngine`. Eligible
+plans execute there; everything else keeps the software executor. A `GmlGpu` is a derived cache with
+a lifecycle rather than state: it is never serialized, it is absent from the state configuration
+fingerprint, and losing all of it costs a rebuild rather than a wrong frame. `HARDWARE_RENDER=0`
+removes the directory and the adapter bridge from the source lists and leaves the same engine, the
+same renderer, the same state format and the ordinary CPU video callback.
+
 A mapped content view remains host-owned and immutable. Its opaque mapping
 handle is retained by the owning content model and returned exactly once on
 failed parsing, unload, or destroy. Mapping is a coarse load-time optimization,
@@ -496,7 +506,9 @@ API seam is expensive.
 ## Libretro adapter
 
 `src/adapters/libretro/libretro_entry.c` owns the official `retro_*` entry
-points. The other files in that directory translate libretro environment/VFS,
+points. `libretro_hw_render.c` negotiates the optional frontend graphics context and forwards its
+lifecycle through the public graphics seam; it holds the one ABI-level record the adapter owns and
+names no graphics API type. The other files in that directory translate libretro environment/VFS,
 options, and input facilities into the public API. The linked core exports only
 the official libretro surface.
 

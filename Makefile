@@ -2,6 +2,9 @@
 # Copyright (c) 2026 retrodiv <retrodiv@proton.me>
 
 DIAGNOSTICS ?= 0
+# The optional hardware renderer. HARDWARE_RENDER=0 excludes the GPU objects and the libretro
+# hardware bridge, omits the core option, and leaves a build with no unresolved graphics symbol.
+HARDWARE_RENDER ?= 1
 
 include Makefile.common
 
@@ -13,6 +16,12 @@ TEST ?=
 
 ifeq ($(DIAGNOSTICS),1)
 CPPFLAGS += -DANYGM_DIAGNOSTICS=1
+endif
+
+ifeq ($(HARDWARE_RENDER),0)
+CPPFLAGS += -DANYGM_HARDWARE_RENDER=0
+else
+CPPFLAGS += -DANYGM_HARDWARE_RENDER=1
 endif
 
 ifeq ($(platform),)
@@ -115,6 +124,9 @@ RUNTIME_TESTS := test_rng test_persistent_room test_d3_state test_ds_grid \
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets \
 	test_renderer_texture_shells test_render_plan
+ifneq ($(HARDWARE_RENDER),0)
+VIDEO_RENDERER_TESTS += test_gpu
+endif
 CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks
 MEDIA_TESTS := test_hash test_image_codec test_font_raster
 AUDIO_TESTS := test_mp3_detect
@@ -125,6 +137,9 @@ INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_host_set
 CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_libretro_state_transport \
 	$(TEST_DIR)/test_libretro_vfs_transport $(TEST_DIR)/test_libretro_option_defaults \
 	$(TEST_DIR)/test_libretro_keyboard_source $(TEST_DIR)/test_libretro_locale_variables
+ifneq ($(HARDWARE_RENDER),0)
+CONTRACT_TESTS += $(TEST_DIR)/test_libretro_hardware_render
+endif
 SECURITY_TESTS := $(TEST_DIR)/test_content_security $(TEST_DIR)/test_state_security \
 	$(TEST_DIR)/test_vfs $(TEST_DIR)/test_datafile_security \
 	$(TEST_DIR)/test_bytecode_security
@@ -285,6 +300,11 @@ $(TEST_DIR)/test_render_plan: tests/unit/video/renderer/test_render_plan.c \
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
+$(TEST_DIR)/test_gpu: tests/unit/video/gpu/test_gpu.c \
+	tests/support/anygm_test_runner.c $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
+
 $(TEST_DIR)/test_bytecode: tests/unit/content/test_bytecode.c \
 	src/host/anygm_host.c src/host/anygm_vfs.c \
 	$(ANYGM_PROJECT_COMPILER_SOURCES) src/content/project/gmlc_project.c \
@@ -364,6 +384,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_renderer_tiles
 	$(TEST_DIR)/test_renderer_primitives
 	$(TEST_DIR)/test_render_plan
+	$(if $(filter-out 0,$(HARDWARE_RENDER)),$(TEST_DIR)/test_gpu,true)
 	$(TEST_DIR)/test_rng
 	$(TEST_DIR)/test_persistent_room
 	$(TEST_DIR)/test_d3_state
@@ -429,6 +450,7 @@ contract-check: $(CONTRACT_TESTS)
 	$(TEST_DIR)/test_libretro_option_defaults
 	$(TEST_DIR)/test_libretro_keyboard_source
 	$(TEST_DIR)/test_libretro_locale_variables
+	$(if $(filter-out 0,$(HARDWARE_RENDER)),$(TEST_DIR)/test_libretro_hardware_render,true)
 
 security-check: $(SECURITY_TESTS)
 	$(TEST_DIR)/test_content_security
@@ -519,6 +541,11 @@ $(TEST_DIR)/test_libretro_locale_variables: tests/contract/libretro_locale_varia
 
 $(TEST_DIR)/test_libretro_vfs_transport: tests/contract/libretro_vfs_transport.c \
 	src/adapters/libretro/libretro_vfs.c
+	mkdir -p $(dir $@)
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+
+$(TEST_DIR)/test_libretro_hardware_render: tests/contract/libretro_hardware_render.c \
+	$(ANYGM_LIBRETRO_SOURCES)
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
 

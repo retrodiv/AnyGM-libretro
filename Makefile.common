@@ -121,6 +121,7 @@ ANYGM_PERSISTENT_TEST_SOURCES := \
 
 ANYGM_CORE_SOURCES := \
 	 src/core/engine.c \
+	 src/core/engine_graphics.c \
 	 src/core/engine_input.c \
 	 src/core/engine_overrides.c \
 	 src/core/engine_presentation.c \
@@ -144,6 +145,19 @@ ANYGM_SOFTWARE3D_SOURCES := \
 	src/video/software3d/gml_software3d_models.c \
 	src/video/software3d/gml_software3d_raster.c \
 	src/video/software3d/gml_software3d_state.c
+
+# The optional hardware backend and its libretro bridge are one source-list switch, so removing the
+# feature is a deletion of bounded modules rather than a reversal of the renderer architecture.
+ifeq ($(HARDWARE_RENDER),0)
+ANYGM_GPU_SOURCES :=
+ANYGM_LIBRETRO_HARDWARE_SOURCES :=
+else
+ANYGM_GPU_SOURCES := \
+	src/video/gpu/gml_gpu.c \
+	src/video/gpu/gml_gpu_gl.c
+ANYGM_LIBRETRO_HARDWARE_SOURCES := \
+	src/adapters/libretro/libretro_hw_render.c
+endif
 
 ifeq ($(DIAGNOSTICS),1)
 ANYGM_DIAGNOSTIC_SOURCES := \
@@ -199,6 +213,7 @@ ANYGM_RUNTIME_SOURCES := \
 	$(ANYGM_VM_SOURCES) \
 	$(ANYGM_BUILTIN_SOURCES) \
 	$(ANYGM_RENDERER_SOURCES) \
+	$(ANYGM_GPU_SOURCES) \
 	$(ANYGM_SOFTWARE3D_SOURCES) \
 	src/runtime/particles/gml_particle.c \
 	src/audio/mixer/gml_audio.c \
@@ -225,7 +240,8 @@ ANYGM_LIBRETRO_SOURCES := \
 	src/adapters/libretro/libretro_context.c \
 	src/adapters/libretro/libretro_vfs.c \
 	src/adapters/libretro/libretro_options.c \
-	src/adapters/libretro/libretro_input.c
+	src/adapters/libretro/libretro_input.c \
+	$(ANYGM_LIBRETRO_HARDWARE_SOURCES)
 
 ANYGM_RUNTIME_INCLUDE_DIRS := \
 	src/api \
@@ -241,6 +257,7 @@ ANYGM_RUNTIME_INCLUDE_DIRS := \
 	src/runtime/builtins \
 	src/runtime/particles \
 	src/video/renderer \
+	src/video/gpu \
 	src/video/software3d \
 	src/video/assets \
 	src/audio/mixer \

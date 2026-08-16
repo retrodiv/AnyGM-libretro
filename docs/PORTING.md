@@ -41,6 +41,31 @@ cut: it neither compiles nor links the libretro adapter.
    its interleaved signed PCM before the next call on that engine.
 5. Translate window or device settings into `AnygmConfigDelta`; do not modify
    renderer internals.
+
+## Optional host graphics target
+
+A host that owns an OpenGL or OpenGL ES 3 context may lend it to the engine with
+`anygm_graphics_context_reset`, supplying an entry-point resolver and a callback that answers with
+the current framebuffer. The engine then renders eligible final passes into that framebuffer and
+says so by setting `ANYGM_FRAME_HARDWARE_TARGET` in the frame output; a frame without that flag
+still carries complete CPU pixels, and the two are never both authoritative.
+
+The rules a host has to honour:
+
+- the framebuffer callback is asked once per rendered frame, so a host may hand over a different
+  target each time;
+- the frame is written in the framebuffer's own bottom-left row order;
+- a reset with no destroy before it means the previous context is already gone, and the engine
+  forgets its objects instead of deleting them into the new one;
+- `anygm_graphics_context_destroy` deletes only when told the context is still current;
+- destroying the engine without a current context releases memory and issues no graphics call;
+- an unusable context returns `ANYGM_ERROR_UNSUPPORTED` and leaves the engine fully usable in
+  software.
+
+None of this is emulated state. It does not enter `AnygmConfig`, the state configuration
+fingerprint, or any serialized section, and a state saved with a graphics target loads without one.
+A host that wants nothing to do with it simply never calls these two entry points, and a core built
+with `HARDWARE_RENDER=0` answers `ANYGM_ERROR_UNSUPPORTED` to the first of them.
 6. Store bytes returned by the public state API if the host offers save states
    or rewind.
 7. Call `anygm_unload` before replacing content and destroy the engine before

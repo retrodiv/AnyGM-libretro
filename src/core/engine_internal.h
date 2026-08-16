@@ -9,6 +9,13 @@
 #include "gml_audio.h"
 #include "gml_render.h"
 #include "gml_render_plan.h"
+#if ANYGM_HARDWARE_RENDER
+#include "gml_gpu.h"
+#else
+/* Without the hardware backend the engine still carries the pointer, always null, so the
+ * lifecycle entry points keep one shape and the removal stays a deletion of bounded modules. */
+typedef struct GmlGpu GmlGpu;
+#endif
 #include "gml_vm.h"
 #include "gml_win.h"
 
@@ -284,6 +291,9 @@ struct AnygmEngine {
   /* Advances once per completed frame. It is what a GPU mirror of the completed frame is keyed on,
    * because the buffer address stays the same while its pixels do not. */
   uint32_t host_frame_generation;
+  /* The optional host graphics target. A derived cache with a lifecycle: never serialized, never
+   * part of the state configuration fingerprint, and safe to drop and rebuild at any point. */
+  GmlGpu *gpu;
 };
 
 #define ANYGM_ENGINE_GUARD 0x45474E41u
@@ -347,6 +357,14 @@ enum {
  * audio, and consumes nothing from the random sequence. Returns zero only when the frame genuinely
  * cannot be produced, and never leaves a caller reading stale pixels. */
 int engine_materialize_completed_frame(AnygmEngine *engine);
+/* Put the completed frame on the host graphics target when one has been adopted. Returns zero when
+ * there is no target or the pass could not be executed exactly, and the caller then presents the
+ * CPU frame exactly as it always has. */
+int engine_present_hardware_frame(AnygmEngine *engine,const uint32_t *pixels,
+                                  unsigned width,unsigned height);
+/* Release everything created in the host graphics context. Objects are deleted only while that
+ * context is still current; otherwise the handles are forgotten. */
+void engine_graphics_release(AnygmEngine *engine,int context_is_current);
 void log_present_pass(AnygmEngine *engine,const char *pass,const uint32_t *pixels,
                       int width,int height);
 void classic_transition_release(AnygmEngine *engine);

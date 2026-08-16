@@ -1758,6 +1758,9 @@ void anygm_destroy(AnygmEngine *engine){
   free(engine->gui_buffer);
   free(engine->app_crop);
   free(engine->host_screen);
+  /* Destroying an engine outside a current graphics context releases CPU metadata and forgets the
+   * handles; it must not issue a call into a context that is gone. */
+  engine_graphics_release(engine,0);
   engine->guard=0;
   free(engine);
 }
@@ -1916,6 +1919,8 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   output->audio_frames=engine->audio_frames;
   output->audio_rate=44100;
   output->flags=engine->frame_flags;
+  if(engine_present_hardware_frame(engine,presented_pixels,presented_width,presented_height))
+    output->flags|=ANYGM_FRAME_HARDWARE_TARGET;
   return ANYGM_OK;
 }
 

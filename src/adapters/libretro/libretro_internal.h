@@ -58,6 +58,17 @@ void libretro_options_apply(bool all_fields);
 const char *libretro_options_value(const char *key);
 void libretro_options_publish_rooms(void);
 void libretro_options_release(void);
+#if ANYGM_HARDWARE_RENDER
+/* Read the hybrid-GPU option and negotiate a frontend graphics context. Called once before content
+ * is loaded, because changing the choice mid-session would leave half the frame on one path. */
+void libretro_hw_render_request(void);
+void libretro_hw_render_release(void);
+bool libretro_hw_render_requested(void);
+#else
+static inline void libretro_hw_render_request(void){}
+static inline void libretro_hw_render_release(void){}
+static inline bool libretro_hw_render_requested(void){ return false; }
+#endif
 void libretro_input_register(void);
 void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t height);
 void libretro_update_av(void);

@@ -91,6 +91,13 @@ size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capac
   return 0;
 }
 
+/* The hardware bridge is part of the adapter's lifecycle, so its entry points exist here too.
+ * This scenario never turns the setting on, so they do nothing. */
+#if ANYGM_HARDWARE_RENDER
+void libretro_hw_render_request(void){}
+void libretro_hw_render_release(void){}
+bool libretro_hw_render_requested(void){ return false; }
+#endif
 void libretro_vfs_request(void){}
 void libretro_vfs_services_init(AnygmHostServices *services){ (void)services; }
 static unsigned options_registered;

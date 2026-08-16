@@ -53,6 +53,11 @@ canonical bytes and semantics remain unchanged.
 - Presentation-only settings such as virtual-monitor dimensions, aspect ratio, and CRT effects are not
   state identity; the host's current presentation settings remain active when a state is loaded.
 - Diagnostics, host handles, and disposable caches are excluded.
+- Graphics-target resources are excluded under every schema. Textures, programs, framebuffer
+  identifiers, entry-point tables, upload buffers, residency records, render plans and timing
+  queries are derived caches, so they are rebuilt rather than restored, and whether a host lent a
+  graphics context is a transport choice rather than emulated state: it is absent from the
+  configuration fingerprint, and a state saved with one loads without one and the reverse.
 
 `anygm_state_size` returns the exact size of the current canonical state.
 Repeated serialization without an intervening mutation produces identical

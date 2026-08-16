@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define ANYGM_API_VERSION 1u
+#define ANYGM_API_VERSION 2u
 #define ANYGM_HOST_SERVICES_VERSION 1u
 #define ANYGM_STATE_SCHEMA 9u
 #define ANYGM_MAX_GAMEPADS 4u
@@ -421,8 +421,57 @@ typedef struct AnygmFrameOutput {
 enum {
   ANYGM_FRAME_GEOMETRY_CHANGED=1u<<0,
   ANYGM_FRAME_TIMING_CHANGED=1u<<1,
-  ANYGM_FRAME_SHUTDOWN_REQUESTED=1u<<2
+  ANYGM_FRAME_SHUTDOWN_REQUESTED=1u<<2,
+  /* The frame was rendered into the host graphics target supplied through
+   * anygm_graphics_context_reset rather than into a CPU buffer. `pixels` may then be null and
+   * `width`/`height` still describe the rendered area, so a host that announced a hardware target
+   * presents that target instead of the pixel view. Without this flag a CPU frame is always
+   * available, and the two are never both authoritative for the same frame. */
+  ANYGM_FRAME_HARDWARE_TARGET=1u<<3
 };
+
+/* Optional host graphics target.
+ *
+ * A host that owns a graphics context may lend it to the engine. The engine renders eligible final
+ * passes into that context's current framebuffer and reports it through
+ * ANYGM_FRAME_HARDWARE_TARGET; everything else keeps the software renderer and the CPU frame. No
+ * graphics API type appears here: the host resolves entry points itself through the callback it
+ * supplies, and identifies the target by an opaque handle whose meaning belongs to the chosen API.
+ * This is a transport choice, not emulated state: it does not enter AnygmConfig, the state
+ * configuration fingerprint, or any serialized section. */
+typedef uint32_t AnygmGraphicsApi;
+enum {
+  ANYGM_GRAPHICS_OPENGL_CORE=1,
+  ANYGM_GRAPHICS_OPENGLES3=2
+};
+
+typedef void (*AnygmGraphicsProc)(void);
+typedef AnygmGraphicsProc (*AnygmGraphicsGetProcAddressFn)(void *userdata,const char *name);
+typedef uintptr_t (*AnygmGraphicsGetFramebufferFn)(void *userdata);
+
+typedef struct AnygmGraphicsContext {
+  uint32_t struct_size;
+  AnygmGraphicsApi api;
+  uint32_t version_major;
+  uint32_t version_minor;
+  void *userdata;
+  AnygmGraphicsGetProcAddressFn get_proc_address;
+  /* Queried once per rendered frame. A host is free to hand over a different target each time. */
+  AnygmGraphicsGetFramebufferFn get_current_framebuffer;
+} AnygmGraphicsContext;
+
+/* Adopt a host graphics context, or adopt a recreated one. Valid before or after content is
+ * loaded, and valid repeatedly without an intervening destroy: a reset with no destroy before it
+ * means the previous context is already gone, so previously created objects are forgotten rather
+ * than deleted against the new one. Returns ANYGM_ERROR_UNSUPPORTED when the context cannot be
+ * used, and the engine remains fully usable in software either way. */
+AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphicsContext *context);
+
+/* Release everything the engine created in the host context. Objects are deleted only when
+ * `context_is_current` says the context is still current on the calling thread; otherwise the
+ * handles are forgotten and only CPU-side records are released. Destroying an engine without a
+ * current context is safe and issues no graphics call. */
+void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_current);
 
 typedef struct AnygmAvInfo {
   uint32_t struct_size;

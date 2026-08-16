@@ -162,6 +162,7 @@ void retro_init(void){
 }
 
 void retro_deinit(void){
+  libretro_hw_render_release();
   if(g_libretro.engine){
     anygm_destroy(g_libretro.engine);
     g_libretro.engine=NULL;
@@ -243,6 +244,10 @@ bool retro_load_game(const struct retro_game_info *info){
   update_directories();
   update_locale();
   libretro_options_apply(true);
+  /* The graphics context is negotiated before the engine sees the content: a frontend decides
+   * whether it can provide one at load time, and the answer changes which video path every frame
+   * of this session takes. */
+  libretro_hw_render_request();
   AnygmContentSource source;
   memset(&source,0,sizeof source);
   source.struct_size=sizeof source;
@@ -278,6 +283,7 @@ bool retro_load_game_special(unsigned type,const struct retro_game_info *info,si
 
 void retro_unload_game(void){
   if(!g_libretro.loaded) return;
+  libretro_hw_render_release();
   anygm_unload(g_libretro.engine);
   g_libretro.loaded=false;
   g_libretro.fixed_state_capacity=0;
@@ -326,9 +332,17 @@ void retro_run(void){
     libretro_log(RETRO_LOG_ERROR,"Frame execution failed (%d)\n",result);
     return;
   }
-  if(g_libretro.video)
-    g_libretro.video(g_libretro.frame.pixels,g_libretro.frame.width,g_libretro.frame.height,
-                     g_libretro.frame.pitch);
+  if(g_libretro.video){
+    /* The engine reports which target it rendered into. The hardware sentinel says the frame is
+     * already on the frontend's own framebuffer; without it a complete CPU frame is available and
+     * the ordinary pixel callback carries it. The two are never both authoritative. */
+    if(g_libretro.frame.flags&ANYGM_FRAME_HARDWARE_TARGET)
+      g_libretro.video(RETRO_HW_FRAME_BUFFER_VALID,g_libretro.frame.width,
+                       g_libretro.frame.height,0);
+    else
+      g_libretro.video(g_libretro.frame.pixels,g_libretro.frame.width,g_libretro.frame.height,
+                       g_libretro.frame.pitch);
+  }
   if(g_libretro.frame.audio && g_libretro.frame.audio_frames){
     if(g_libretro.audio_batch)
       g_libretro.audio_batch(g_libretro.frame.audio,g_libretro.frame.audio_frames);
