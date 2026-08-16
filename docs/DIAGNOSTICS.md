@@ -118,6 +118,7 @@ unloaded:
 [hybrid-gpu] frames=N accepted=N replayed=N transport=N draws=N uploads=N bytes=N resets=N
              destroys=N losses=N program_failures=N fallback_unsupported=N fallback_box=N
              fallback_context=N fallback_upload=N fallback_overflow=N materializations=N
+             screen_passes=N canvas_passes=N
 ```
 
 `accepted` counts passes the device executed and `replayed` counts passes the software executor had
@@ -125,7 +126,11 @@ to take back. `transport` is the subset of accepted passes that merely carried a
 frame to the device, which is not acceleration: a session whose `accepted` equals its `transport`
 never accelerated anything, and a diagnostic that blurred the two would report it as a success.
 `bytes` distinguishes the two just as plainly — an accelerated presentation uploads its small
-source, while transport uploads the whole host-sized frame.
+source, while transport uploads the whole host-sized frame. `screen_passes` and `canvas_passes`
+separate the two accelerated shapes, because they remove different work: the first is the frame's
+last operation performed on the device so the processor's copy is never written, and the second is
+the fit of a completed frame into a larger host framebuffer. `materializations` counts the times
+something needed the processor's copy after all and it had to be rebuilt.
 
 A normal build pays nothing for this when the setting is absent: the counters are increments at
 pass granularity and no line is formatted.

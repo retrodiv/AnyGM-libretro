@@ -189,6 +189,50 @@ typedef struct {
   int opaque_known, all_opaque, all_transparent;
 } GmlRenderTargetCoverage;
 
+/* A terminal application-surface presentation the renderer has recorded but not yet written.
+ *
+ * It is deferred on exactly the discipline the renderer already uses for its other deferred
+ * writes: any subsequent draw flushes it through the same kernel that would have produced it, so
+ * the target is never observed half-written. Its purpose is to give the frame's last operation a
+ * chance to happen somewhere other than the processor; when nothing takes it, it is written here
+ * and nothing is different.
+ *
+ * The value record below describes that operation without exposing renderer storage. The sampling
+ * rectangle is stated in destination pixels and is already camera-adjusted, because that is the
+ * space the kernel samples in. */
+/* Which sampling convention the recorded presentation follows. They are not interchangeable: at a
+ * fractional magnification they disagree by one source texel at most boundaries. */
+enum {
+  /* Destination pixel centres over a fractional rectangle: a content-owned presentation. */
+  GML_RENDER_PRESENTATION_PIXEL_CENTRE=0,
+  /* Leading output edge in integer arithmetic: the automatic application-surface presentation. */
+  GML_RENDER_PRESENTATION_LEADING_EDGE=1
+};
+
+typedef struct {
+  int sampling_rule;
+  /* The buffer the operation was recorded against. Writing it later has to reach that buffer and
+   * not whichever one happens to be bound at the time. */
+  uint32_t *target_pixels;
+  int target_width, target_height;
+  const uint32_t *source_pixels;
+  int source_width, source_height, source_pitch;
+  /* The destination rectangle, clipped to the target. */
+  int destination_x, destination_y, destination_width, destination_height;
+  /* The unclipped rectangle the sampling expression is defined over. The pixel-centre rule reads
+   * the origin and the extent; the leading-edge rule reads the extent as an integer destination
+   * width and counts from the local offset, because it is defined in destination-local indices. */
+  double origin_x, origin_y, extent_x, extent_y;
+  int local_offset_x, local_offset_y;
+  /* A full-target fill the presentation was recorded together with. The two are one operation as
+   * far as the target is concerned: the fill is what makes the margins around a narrower
+   * presentation defined, and separating them would leave a frame half-described. */
+  int has_fill;
+  uint32_t fill_color;
+  /* Stable identity of the source resource and a generation that advances when its pixels do. */
+  uint32_t identity, generation;
+} GmlRenderDeferredPresentation;
+
 enum {
   GML_RENDER_COVERAGE_OPAQUE_KNOWN   = 1u<<0,
   GML_RENDER_COVERAGE_ALL_OPAQUE     = 1u<<1,
@@ -288,6 +332,17 @@ void gml_render_presentation_effective_set(GmlRender *r,int width,int height);
 void gml_render_sample_planes_update(GmlRender *r,
                                      const GmlRenderSamplePlanes *planes,
                                      unsigned fields);
+/* Allow the renderer to defer a terminal application-surface presentation instead of writing it.
+ * Off by default: with nothing able to take the deferred operation, deferring it only moves the
+ * same work later. */
+void gml_render_set_deferred_presentation(GmlRender *r,int enabled);
+/* Copy the deferred presentation out, leaving it deferred. Returns zero when there is none. */
+int gml_render_deferred_presentation(const GmlRender *r,GmlRenderDeferredPresentation *out);
+/* Write the deferred presentation through the exact kernel that recorded it. Idempotent. */
+void gml_render_flush_deferred_presentation(GmlRender *r);
+/* Forget it without writing. Only correct when the target it described is being rebuilt. */
+void gml_render_discard_deferred_presentation(GmlRender *r);
+
 int gml_render_target_coverage(const GmlRender *r,
                                GmlRenderTargetCoverage *coverage);
 void gml_render_target_coverage_update(GmlRender *r,

@@ -1450,8 +1450,14 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
    * screen here (unsupported GUI-space transform, absent object, etc.) the frame would be black — so
    * if the screen is still empty but the app-surface has pixels, blit it so the render isn't lost. */
   gml_render_presentation_metrics(&engine->render,&render_presentation);
+  /* A deferred presentation answers this question without asking it. The record exists only when
+   * an opaque draw of the application surface covers the whole target, so the target is empty
+   * exactly when that surface has no lit pixel — which is the same condition the recovery below
+   * then tests before doing anything. Both answers are therefore "do nothing", and scanning a
+   * monitor-sized target to arrive at it would also force the frame back onto the processor. */
   if (!render_presentation.application_draw_enabled &&
-      !anygm_host_development_setting(&engine->host,"GML_NO_CRT")) {
+      !anygm_host_development_setting(&engine->host,"GML_NO_CRT") &&
+      !gml_render_deferred_presentation(&engine->render,NULL)) {
     int screen_empty = 1;
     for (int i = 0; i < gtw * gth; i++) if (gtarget[i] & 0xFFFFFF) { screen_empty = 0; break; }
     if (screen_empty) {
@@ -1477,6 +1483,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	      }
 	    }
 	  }
+			  if (aspect_gui_center || gui_indirect) engine_materialize_completed_frame(engine);
 			  if (aspect_gui_center) {
 			    /* Composite the complete logical frame first: the world raster with the centered GUI
 			     * crop laid back over it. At logical output this lands in the screen directly; a
@@ -1547,6 +1554,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	      }
 	    }
 	  }
+	  if(engine->classic_transition.active || engine->vm.classic_info_active)
+	    engine_materialize_completed_frame(engine);
 	  classic_transition_apply(engine,engine->screen,ow,oh);
 	  if(engine->vm.classic_info_active && engine->win.classic_game_information_size)
 	    gml_draw_classic_game_information(&engine->render,engine->screen,(int)ow,(int)oh,
@@ -1823,6 +1832,8 @@ AnygmResult anygm_reset(AnygmEngine *engine){
     }
   }
   gml_audio_free(engine->audio); engine->audio=NULL; engine->vm.audio=NULL;
+  gml_render_discard_deferred_presentation(&engine->render);
+  engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
   gml_vm_free(&engine->vm);
   gml_render_free(&engine->render);
   boot_runtime(engine);
@@ -1879,6 +1890,12 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
     return ANYGM_ERROR_INCOMPATIBLE_ABI;
   if(input) memcpy(&engine->input,input,sizeof engine->input);
   else { memset(&engine->input,0,sizeof engine->input); engine->input.pointer_x=-1; engine->input.pointer_y=-1; }
+  /* The previous frame's deferred presentation describes a target that is about to be rebuilt, and
+   * content code runs before anything would flush it. Forget it here, ahead of all of that. */
+  gml_render_discard_deferred_presentation(&engine->render);
+  engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
+  /* Deferring the frame's last operation only pays when something else can perform it. */
+  gml_render_set_deferred_presentation(&engine->render,engine_graphics_active(engine));
   engine->frame_flags=0;
   AnygmResult result=engine_run_frame(engine);
   if(result!=ANYGM_OK) return result;
@@ -1891,7 +1908,9 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   engine->host_frame_generation++;
   /* The shortest path first: when a graphics target can produce the final presentation from the
    * completed frame itself, the host-sized copy is never built and never uploaded. */
-  hardware_frame=engine_present_hardware_canvas(engine,&presented_width,&presented_height);
+  hardware_frame=engine_present_hardware_screen(engine,&presented_width,&presented_height);
+  if(!hardware_frame)
+    hardware_frame=engine_present_hardware_canvas(engine,&presented_width,&presented_height);
   if(!hardware_frame){
     if(!resolve_host_frame(
          engine,&presented_pixels,&presented_width,&presented_height)){

@@ -49,6 +49,10 @@ static double cr_d(CoreR *s){ uint64_t bits=cr_u64(s); double value=0; memcpy(&v
 
 static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
   unsigned width=0,height=0;
+  /* The state carries the exact completed frame. A frame that was produced somewhere other than
+   * the processor has to be produced here first: serializing the buffer as it stands would write
+   * whatever the previous frame left in it. */
+  engine_materialize_completed_frame(engine);
   if(engine->have_presented_frame && engine->screen && engine->output_width && engine->output_height){
     width=engine->output_width;
     height=engine->output_height;
@@ -411,6 +415,11 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   engine->fps_room = -1;
   sync_room_fps(engine,1);
   classic_transition_reset(engine);
+  /* The restored frame replaces whatever the completed frame was, so a deferred presentation that
+   * described the previous one has nowhere to go. Derived graphics caches follow it: they are
+   * rebuilt from the restored state rather than restored. */
+  gml_render_discard_deferred_presentation(&engine->render);
+  engine->frame_authority = ENGINE_FRAME_CPU_MATERIALIZED;
   engine->have_presented_frame = 0;
   engine->state_just_loaded = schedule_reapply && engine->state_frame_available ? 1 : 0;
   return offset==(size_t)header.payload_size;

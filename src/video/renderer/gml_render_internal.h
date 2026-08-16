@@ -261,6 +261,12 @@ typedef struct GmlRender {
   int app_surface_opaque;                       /* host/render metadata: every app pixel has alpha 255 */
   int pending_underlay, underlay_x, underlay_y, underlay_w, underlay_h;  /* deferred default app-surface blit */
   int pending_fill; uint32_t pending_fill_color; /* deferred full-target overwrite */
+  /* Deferred terminal application-surface presentation. Recorded only when it covers the whole
+   * target, so whatever it would have overwritten cannot matter, and flushed by the same hooks
+   * that flush the two records above. */
+  int pending_presentation;
+  int presentation_deferral_enabled;
+  GmlRenderDeferredPresentation presentation;
   GmlSurface surface[GML_MAX_SURFACES]; int next_surface_id;
   /* draw state */
   uint32_t  color;  double alpha; int halign, valign, font, alphablend, circle_precision;
@@ -572,6 +578,8 @@ uint32_t *surface_pixels(GmlRender *r,int surface,int *width,int *height);
 int surface_known_opaque(GmlRender *r,int surface);
 int surface_known_transparent(GmlRender *r,int surface);
 int rect_covers_target(GmlRender *r,int x0,int y0,int x1,int y1);
+/* The surfaces owner holds the presentation kernel, so it owns writing a deferred one. */
+void render_write_deferred_presentation(GmlRender *r);
 void draw_surface_region(GmlRender *r,int surface,double source_x,double source_y,
                          double source_width,double source_height,double destination_x,
                          double destination_y,double destination_width,

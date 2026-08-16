@@ -290,6 +290,153 @@ static int presentation_software_replay_case(void){
   return 1;
 }
 
+/* ---- deferring the frame's last operation ---- */
+
+/* The whole claim of the deferral is that it changes when the operation happens and nothing else.
+ * These drive the same presentation twice, once written immediately and once recorded and then
+ * written, and require the two buffers to be identical. A rule that differed by one texel at a
+ * fractional boundary would show here rather than in a game. */
+static int deferred_presentation_matches_case(void){
+  enum { SOURCE_WIDTH=5,SOURCE_HEIGHT=3,TARGET_WIDTH=37,TARGET_HEIGHT=23 };
+  uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
+  uint32_t immediate[TARGET_WIDTH*TARGET_HEIGHT];
+  uint32_t deferred[TARGET_WIDTH*TARGET_HEIGHT];
+  GmlWin content={0};
+  GmlRender render;
+  content.bytecode=14;
+  fill_asymmetric(source,SOURCE_WIDTH,SOURCE_HEIGHT);
+  for(int pass=0;pass<2;pass++){
+    uint32_t *target=pass?deferred:immediate;
+    for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++) target[index]=0xFF5A5A5Au;
+    render_reset(&render,&content,source,SOURCE_WIDTH,SOURCE_HEIGHT,
+                 target,TARGET_WIDTH,TARGET_HEIGHT,0);
+    gml_render_set_deferred_presentation(&render,pass);
+    gml_render_gui_begin(&render,TARGET_WIDTH,TARGET_HEIGHT);
+    gml_render_gui_set_size(&render,TARGET_WIDTH,TARGET_HEIGHT);
+    gml_draw_surface_stretched(&render,0,0.0,0.0,TARGET_WIDTH,TARGET_HEIGHT,0xFFFFFFu,1.0);
+    if(pass){
+      GmlRenderDeferredPresentation record;
+      REQUIRE(gml_render_deferred_presentation(&render,&record),
+              "a covering presentation is deferred when deferral is enabled");
+      REQUIRE(record.sampling_rule==GML_RENDER_PRESENTATION_PIXEL_CENTRE,
+              "a content-owned presentation records the pixel-centre rule");
+      REQUIRE(record.target_pixels==target,"the record names the buffer it was made against");
+      /* Deferred means not yet written: the target still holds what it held. */
+      REQUIRE(target[0]==0xFF5A5A5Au,"a deferred presentation has written nothing");
+      gml_render_flush_deferred_presentation(&render);
+      REQUIRE(!gml_render_deferred_presentation(&render,NULL),"writing it clears the record");
+    } else {
+      REQUIRE(!gml_render_deferred_presentation(&render,NULL),
+              "nothing is deferred when deferral is off");
+    }
+    gml_render_gui_end(&render);
+  }
+  for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++)
+    if(immediate[index]!=deferred[index]){
+      fprintf(stderr,"render plan deferred presentation differs at %zu: %08x != %08x\n",
+              index,deferred[index],immediate[index]);
+      return 0;
+    }
+  return 1;
+}
+
+/* Anything drawn afterwards writes the record first, so the frame is what it always was. */
+static int deferred_presentation_flushes_case(void){
+  enum { SOURCE_WIDTH=4,SOURCE_HEIGHT=4,TARGET_WIDTH=24,TARGET_HEIGHT=20 };
+  uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
+  uint32_t immediate[TARGET_WIDTH*TARGET_HEIGHT];
+  uint32_t deferred[TARGET_WIDTH*TARGET_HEIGHT];
+  GmlWin content={0};
+  GmlRender render;
+  content.bytecode=14;
+  fill_asymmetric(source,SOURCE_WIDTH,SOURCE_HEIGHT);
+  for(int pass=0;pass<2;pass++){
+    uint32_t *target=pass?deferred:immediate;
+    for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++) target[index]=0xFF5A5A5Au;
+    render_reset(&render,&content,source,SOURCE_WIDTH,SOURCE_HEIGHT,
+                 target,TARGET_WIDTH,TARGET_HEIGHT,0);
+    gml_render_set_deferred_presentation(&render,pass);
+    gml_render_gui_begin(&render,TARGET_WIDTH,TARGET_HEIGHT);
+    gml_render_gui_set_size(&render,TARGET_WIDTH,TARGET_HEIGHT);
+    gml_draw_surface_stretched(&render,0,0.0,0.0,TARGET_WIDTH,TARGET_HEIGHT,0xFFFFFFu,1.0);
+    gml_render_primitive_rectangle(&render,5,4,14,11,0x3A3A3Au,0);
+    REQUIRE(!gml_render_deferred_presentation(&render,NULL),
+            "a later draw leaves nothing deferred");
+    gml_render_gui_end(&render);
+  }
+  for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++)
+    if(immediate[index]!=deferred[index]){
+      fprintf(stderr,"render plan deferred flush differs at %zu: %08x != %08x\n",
+              index,deferred[index],immediate[index]);
+      return 0;
+    }
+  return 1;
+}
+
+/* The automatic presentation the runtime performs itself. It samples at the leading output edge
+ * rather than at destination pixel centres, and it is recorded together with the full-target fill
+ * that makes the margins around it defined: separately they describe half a frame each. */
+static int deferred_underlay_case(void){
+  enum { SOURCE_WIDTH=6,SOURCE_HEIGHT=5,TARGET_WIDTH=41,TARGET_HEIGHT=31,
+         RECT_X=4,RECT_Y=3,RECT_WIDTH=33,RECT_HEIGHT=25 };
+  uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
+  uint32_t immediate[TARGET_WIDTH*TARGET_HEIGHT];
+  uint32_t deferred[TARGET_WIDTH*TARGET_HEIGHT];
+  GmlWin content={0};
+  GmlRender render;
+  content.bytecode=17;
+  fill_asymmetric(source,SOURCE_WIDTH,SOURCE_HEIGHT);
+  for(int pass=0;pass<2;pass++){
+    uint32_t *target=pass?deferred:immediate;
+    for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++) target[index]=0xFF5A5A5Au;
+    render_reset(&render,&content,source,SOURCE_WIDTH,SOURCE_HEIGHT,
+                 target,TARGET_WIDTH,TARGET_HEIGHT,1);
+    gml_render_set_deferred_presentation(&render,pass);
+    gml_render_set_pending_fill(&render,0u);
+    gml_render_set_pending_underlay(&render,RECT_X,RECT_Y,RECT_WIDTH,RECT_HEIGHT);
+    gml_render_flush_pending_underlay(&render);
+    if(pass){
+      GmlRenderDeferredPresentation record;
+      REQUIRE(gml_render_deferred_presentation(&render,&record),
+              "the automatic presentation is deferred");
+      REQUIRE(record.sampling_rule==GML_RENDER_PRESENTATION_LEADING_EDGE,
+              "it records the leading-edge rule");
+      REQUIRE(record.has_fill,"the fill in front of it is recorded with it");
+      REQUIRE(target[0]==0xFF5A5A5Au,"nothing is written yet, not even the fill");
+      gml_render_flush_deferred_presentation(&render);
+    }
+    gml_render_flush_pending_fill(&render);
+  }
+  for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++)
+    if(immediate[index]!=deferred[index]){
+      fprintf(stderr,"render plan deferred underlay differs at %zu (%zu,%zu): %08x != %08x\n",
+              index,index%TARGET_WIDTH,index/TARGET_WIDTH,deferred[index],immediate[index]);
+      return 0;
+    }
+  {
+    /* The margins are the recorded fill and the rectangle is the source, sampled at the leading
+     * edge. Asserting the rule here is what stops a later change substituting the centre rule,
+     * which agrees on integer scales and disagrees on this one. */
+    for(int y=0;y<TARGET_HEIGHT;y++) for(int x=0;x<TARGET_WIDTH;x++){
+      uint32_t actual=deferred[(size_t)y*TARGET_WIDTH+x];
+      uint32_t expected;
+      if(x>=RECT_X && x<RECT_X+RECT_WIDTH && y>=RECT_Y && y<RECT_Y+RECT_HEIGHT){
+        int sx=(int)(((int64_t)(x-RECT_X)*SOURCE_WIDTH)/RECT_WIDTH);
+        int sy=(int)(((int64_t)(y-RECT_Y)*SOURCE_HEIGHT)/RECT_HEIGHT);
+        expected=source[(size_t)sy*SOURCE_WIDTH+sx]|0xFF000000u;
+      } else {
+        expected=0u;
+      }
+      if(actual!=expected){
+        fprintf(stderr,"render plan underlay rule mismatch at %d,%d: %08x != %08x\n",
+                x,y,actual,expected);
+        return 0;
+      }
+    }
+  }
+  return 1;
+}
+
 /* ---- the host-canvas passes, described and executed as a plan ---- */
 
 static GmlPlanImage plan_image(const uint32_t *pixels,uint32_t width,uint32_t height){
@@ -542,6 +689,9 @@ int main(int argc,char **argv){
     {"orientation",presentation_orientation_case},
     {"transformed_quad",presentation_transformed_quad_case},
     {"software_replay",presentation_software_replay_case},
+    {"deferred_matches",deferred_presentation_matches_case},
+    {"deferred_flushes",deferred_presentation_flushes_case},
+    {"deferred_underlay",deferred_underlay_case},
   };
   static const AnygmTestCase plan_cases[]={
     {"host_canvas_magnify",host_canvas_magnify_case},

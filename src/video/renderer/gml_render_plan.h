@@ -49,9 +49,14 @@ typedef enum GmlPlanAxisRule {
    * arithmetic, defined only where the destination extent is at least the source extent. */
   GML_PLAN_AXIS_ACCUMULATOR=0,
   /* floor(((destination + 0.5) - origin) * source_extent / extent), clamped into the source. This
-   * is the fixed-function viewport convention the application-surface presentation reproduces, and
-   * its fractional origin and extent are why it is not the recurrence above. */
-  GML_PLAN_AXIS_PIXEL_CENTRE=1
+   * is the fixed-function viewport convention a content-owned presentation reproduces, and its
+   * fractional origin and extent are why it is not the recurrence above. */
+  GML_PLAN_AXIS_PIXEL_CENTRE=1,
+  /* (destination * source_extent) / destination_extent in integer arithmetic, clamped. The runtime's
+   * automatic application-surface presentation anchors at the leading output edge rather than at
+   * the pixel centre; the two disagree by one source texel at most fractional boundaries, which is
+   * exactly why the rules are named separately instead of one standing in for the other. */
+  GML_PLAN_AXIS_LEADING_EDGE=2
 } GmlPlanAxisRule;
 
 typedef struct GmlPlanAxis {

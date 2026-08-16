@@ -37,6 +37,8 @@ static int axis_ok(const GmlPlanAxis *axis,uint32_t written){
       return axis->destination_extent>=axis->source_extent;
     case GML_PLAN_AXIS_PIXEL_CENTRE:
       return axis->extent>0.0 && isfinite(axis->origin) && isfinite(axis->extent);
+    case GML_PLAN_AXIS_LEADING_EDGE:
+      return 1;
     default:
       return 0;
   }
@@ -196,6 +198,16 @@ int gml_render_plan_axis_map(const GmlPlanAxis *axis,uint16_t *map,uint32_t coun
     }
     return 1;
   }
+  if(axis->rule==GML_PLAN_AXIS_LEADING_EDGE){
+    for(uint32_t index=0;index<count;index++){
+      int64_t source=((int64_t)(first+index)*(int64_t)axis->source_extent)/
+                     (int64_t)axis->destination_extent;
+      if(source<0) source=0;
+      if(source>=(int64_t)axis->source_extent) source=(int64_t)axis->source_extent-1;
+      map[index]=(uint16_t)source;
+    }
+    return 1;
+  }
   for(uint32_t index=0;index<count;index++){
     double destination=(double)(first+index);
     int source=(int)floor(((destination+0.5)-axis->origin)*
@@ -234,6 +246,13 @@ int gml_render_plan_gpu_eligible(GmlRenderPlan *plan){
     if(op->opcode!=GML_PLAN_OP_CLEAR_XRGB &&
        op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_NEAREST &&
        op->opcode!=GML_PLAN_OP_PRESENT_CPU_FRAME){
+      plan->fallback_reason=GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION;
+      return 0;
+    }
+    if(op->opcode==GML_PLAN_OP_CLEAR_XRGB && op->clear_color!=0u){
+      /* Zero and one are the only values a float clear converts to a byte exactly on every
+       * implementation. An arbitrary colour is precisely where two conforming drivers round
+       * differently, and no exactness claim here may rest on that. */
       plan->fallback_reason=GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION;
       return 0;
     }

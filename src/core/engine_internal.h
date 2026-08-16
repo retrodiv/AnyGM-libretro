@@ -297,6 +297,11 @@ struct AnygmEngine {
   /* How many times the canonical CPU pixels of a completed frame had to be rebuilt because
    * something needed them after a pass produced only the host target. */
   uint32_t frame_materializations;
+  /* Which accelerated presentation carried a frame. Two shapes qualify and they remove different
+   * work, so a diagnostic that reported only "accelerated" could not say which one a session
+   * actually reached. */
+  uint32_t screen_pass_frames;
+  uint32_t canvas_pass_frames;
 };
 
 #define ANYGM_ENGINE_GUARD 0x45474E41u
@@ -372,8 +377,15 @@ int engine_present_hardware_frame(AnygmEngine *engine,const uint32_t *pixels,
  * rather than from a host-sized copy of it. Returns zero when there is no target or the pass is not
  * one the device reproduces exactly, and the caller then takes the ordinary software path. */
 int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned *height);
+/* Execute the frame's last operation on the graphics target instead of writing the completed frame
+ * on the processor. Returns zero unless the pass has the narrow structural shape that is
+ * reproduced exactly, and the completed frame is then produced the way it always was. */
+int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned *height);
 /* Report the opt-in hardware counters once, as one bounded content-neutral line. */
 void engine_graphics_report(AnygmEngine *engine);
+/* Whether a host graphics target is adopted right now. The one question core coordination asks
+ * about the feature, so it has an answer in a build without the backend as well. */
+int engine_graphics_active(const AnygmEngine *engine);
 /* Release everything created in the host graphics context. Objects are deleted only while that
  * context is still current; otherwise the handles are forgotten. */
 void engine_graphics_release(AnygmEngine *engine,int context_is_current);

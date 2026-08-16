@@ -95,6 +95,8 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
   unsigned host_width=engine->host_output_width?engine->host_output_width:engine->output_width;
   unsigned host_height=engine->host_output_height?engine->host_output_height:engine->output_height;
   engine->host_plan_valid=0;
+  /* Every path from here reads the completed frame, so it has to be the canonical one. */
+  engine_materialize_completed_frame(engine);
   if(!engine->host_canvas_active){
     if(pixels) *pixels=engine->screen;
     if(width) *width=host_width;
@@ -144,9 +146,15 @@ void engine_host_extent(const AnygmEngine *engine,unsigned *width,unsigned *heig
 
 int engine_materialize_completed_frame(AnygmEngine *engine){
   if(!engine) return 0;
-  if(engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED) return 1;
-  if(engine->frame_authority==ENGINE_FRAME_NONE) return 0;
-  return 0;
+  /* The renderer holds the frame's last operation and the exact kernel that produces it, so
+   * materializing is writing that operation. It runs no game code, no Draw event and no audio, and
+   * consumes nothing from the random sequence. */
+  if(gml_render_deferred_presentation(&engine->render,NULL)){
+    gml_render_flush_deferred_presentation(&engine->render);
+    engine->frame_materializations++;
+  }
+  engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
+  return 1;
 }
 
 
@@ -157,6 +165,8 @@ int engine_materialize_completed_frame(AnygmEngine *engine){
  * whole software target only when explicitly enabled, so normal emulation pays no extra cost. */
 void log_present_pass(AnygmEngine *engine,const char *pass, const uint32_t *px, int w, int h){
   if(!anygm_host_development_setting(&engine->host,"GML_LOG_PRESENT_PASSES") || !px || w<=0 || h<=0) return;
+  /* A diagnostic that reports the buffer rather than the frame is worse than none. */
+  engine_materialize_completed_frame(engine);
   const char *at=anygm_host_development_setting(&engine->host,"GML_LOG_PRESENT_FRAME");
   if(at && *at){ if(engine->vm.frame!=atol(at)) return; }
   else if(engine->vm.frame>8) return;
