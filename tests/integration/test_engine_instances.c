@@ -838,6 +838,90 @@ static int draw_schedule_policy(void){
   return ok;
 }
 
+/* An alarm pause holds the countdown still instead of writing a value into it. The property worth
+ * asserting is not that the ticks stop — a value freeze does that too — but what disarming leaves:
+ * the counter must carry on from its remainder, so the first tick after the pause arrives sooner
+ * than a full period. A design that captured and restored a value would restart the period here. */
+static int alarm_pause_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_alarm_content_create(&fixture)){
+    fprintf(stderr,"alarm-pause fixture creation failed\n");
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+
+  /* Run to the first tick so the phase is known — the alarm has just been re-armed to 60 — then
+   * thirty frames into the next period, which is where a partial remainder is worth holding. */
+  int ticked=0;
+  for(int frame=0;ok && frame<200 && !ticked;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+    ticked=ok && gml_global_num(&engine->vm,"fixture_alarm_ticks")>=1;
+  }
+  if(ok && !ticked){ fprintf(stderr,"alarm pause: fixture never ticked\n"); ok=0; }
+  for(int frame=0;ok && frame<30;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+
+  /* Arming takes effect on the following frame, because the pause table is rebuilt by the sticky
+   * pass after the step — the same latency every freeze in this engine has. Settle past it before
+   * reading the count that must then stay put. */
+  ok=ok && anygm_set_runtime_override(engine,0,1u,"alarmpause|obj_fixture|1")==ANYGM_OK;
+  for(int frame=0;ok && frame<2;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  double paused=ok?gml_global_num(&engine->vm,"fixture_alarm_ticks"):0;
+  for(int frame=0;ok && frame<300;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  double held=ok?gml_global_num(&engine->vm,"fixture_alarm_ticks"):0;
+  if(ok && held!=paused){
+    fprintf(stderr,"alarm pause: countdown kept running (%.0f -> %.0f over 300 frames)\n",
+            paused,held);
+    ok=0;
+  }
+
+  /* Disarm and count the frames the held remainder still needs. Landing inside the period is the
+   * assertion: a mechanism that restored a captured value would spend a whole 60 again. */
+  ok=ok && anygm_set_runtime_override(engine,0,0u,NULL)==ANYGM_OK;
+  int resumed_after=-1;
+  for(int frame=1;ok && frame<=60;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+    if(ok && gml_global_num(&engine->vm,"fixture_alarm_ticks")>held){ resumed_after=frame; break; }
+  }
+  if(ok && resumed_after<0){
+    fprintf(stderr,"alarm pause: countdown never resumed within a full period\n");
+    ok=0;
+  } else if(ok && resumed_after>=60){
+    fprintf(stderr,"alarm pause: countdown restarted its period instead of resuming (%d frames)\n",
+            resumed_after);
+    ok=0;
+  }
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int framebuffer_retention_case(
     int (*create_fixture)(AnygmSyntheticContent *),const char *label){
   AnygmSyntheticContent fixture;
@@ -1443,6 +1527,8 @@ int main(int argc,char **argv){
       return first_generation_application_surface_policy()?0:1;
     if(!strcmp(argv[2],"game_restart"))
       return game_restart_policy()?0:1;
+    if(!strcmp(argv[2],"alarm_pause"))
+      return alarm_pause_policy()?0:1;
     if(!strcmp(argv[2],"first_generation_dynamic_camera"))
       return first_generation_dynamic_camera_policy()?0:1;
     if(!strcmp(argv[2],"explicit_window_screen_stage"))
@@ -1514,6 +1600,7 @@ int main(int argc,char **argv){
   if(!input_binding_ownership_policy()) return 1;
   if(!simulated_key_lifetime_policy()) return 1;
   if(!simulated_key_frame_lifetime_policy()) return 1;
+  if(!alarm_pause_policy()) return 1;
   char label[128];
   anygm_content_save_label("/library/fixture_bundle/data.win",label,sizeof label);
   if(strcmp(label,"fixture_bundle")){

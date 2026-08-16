@@ -208,6 +208,25 @@ int gml_object_is(GmlVM *vm, int obj, int target){
   while(obj>=0 && obj<vm->n_objects){ if(obj==target) return 1; obj=vm->objects[obj].parent; }
   return 0;
 }
+void gml_alarm_pause_reset(GmlVM *vm){ if(vm) vm->alarm_pause_count=0; }
+int gml_alarm_pause_add(GmlVM *vm, const char *objname, int alarm_index){
+  if(!vm || !objname || alarm_index<0 || alarm_index>=GML_ALARMS) return 0;
+  int obj=gml_object_index_by_name(vm,objname); if(obj<0) return 0;
+  for(int i=0;i<vm->alarm_pause_count;i++)
+    if(vm->alarm_pause[i].obj==obj && vm->alarm_pause[i].alarm==alarm_index) return 1;
+  if(vm->alarm_pause_count>=GML_ALARM_PAUSES) return 0;
+  vm->alarm_pause[vm->alarm_pause_count].obj=obj;
+  vm->alarm_pause[vm->alarm_pause_count].alarm=alarm_index;
+  vm->alarm_pause_count++;
+  return 1;
+}
+/* Descendants pause with their declared family, matching how an instance freeze selects targets. */
+int gml_alarm_paused(GmlVM *vm, int obj, int alarm_index){
+  if(!vm || vm->alarm_pause_count<=0) return 0;
+  for(int i=0;i<vm->alarm_pause_count;i++)
+    if(vm->alarm_pause[i].alarm==alarm_index && gml_object_is(vm,obj,vm->alarm_pause[i].obj)) return 1;
+  return 0;
+}
 int gml_object_index_by_name(GmlVM *vm, const char *name){
   for(int i=0;i<vm->n_objects;i++) if(vm->objects[i].name && !strcmp(vm->objects[i].name,name)) return i;
   return -1;

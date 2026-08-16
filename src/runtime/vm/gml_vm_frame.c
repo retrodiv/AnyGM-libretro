@@ -445,6 +445,7 @@ void gml_vm_step(GmlVM *vm){
           if(i>=vm->inst_count) continue;
           GmlInstance *in=&vm->inst[i];
           if(!in->active||in->marked||in->obj!=object||!(in->alarm[a]>0)) continue;
+          if(gml_alarm_paused(vm,in->obj,a)) continue;   /* held still, not overwritten */
           in->alarm[a]-=1;
           if(in->alarm[a]<=0){ in->alarm[a]=-1;
             if(anygm_host_development_setting(vm->host,"GML_LOG_ALARM")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[alarm] f%ld %s.%s\n",vm->frame,
@@ -465,6 +466,7 @@ void gml_vm_step(GmlVM *vm){
        * records matter here because an empty event has no CODE name but still owns the countdown.
        * A genuinely unused alarm slot remains an ordinary writable value. */
       if(!native_declared && !gml_vm_instances_event_lookup(vm,s,in->obj,NULL,NULL)) continue;
+      if(gml_alarm_paused(vm,in->obj,a)) continue;       /* held still, not overwritten */
       in->alarm[a]-=1;
       int fire = alarm_at_zero ? (in->alarm[a]<=0) : (in->alarm[a]<0);
       if(fire){ in->alarm[a]=-1;

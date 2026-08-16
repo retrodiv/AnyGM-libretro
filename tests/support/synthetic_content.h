@@ -26,6 +26,9 @@ int anygm_synthetic_classic_multiview_framebuffer_content_create(
 int anygm_synthetic_room_deactivation_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_game_change_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_game_restart_content_create(AnygmSyntheticContent *fixture);
+/* One instance whose Alarm 1 counts a tick and re-arms itself on a sixty-frame period, long enough
+ * to tell a countdown that resumed from its remainder apart from one that started the period over. */
+int anygm_synthetic_alarm_content_create(AnygmSyntheticContent *fixture);
 void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture);
 int anygm_synthetic_content_read(const AnygmSyntheticContent *fixture,uint8_t **data,size_t *size);
 

@@ -13,6 +13,7 @@ struct GmlClassicDispatchCache;
 
 /* ---- instance ---- */
 #define GML_ALARMS 12
+#define GML_ALARM_PAUSES 16
 #define GML_ROOM_CAMERA_COUNT 8
 #define GML_CAMERA_LIMIT 64
 #define GML_GAME_CHANGE_TEXT_MAX 1024
@@ -300,6 +301,14 @@ typedef struct GmlVM {
   double   potential_max_rotation, potential_rotate_step, potential_check_distance;
   int      potential_rotate_on_spot;
   int      god_mode;          /* host core option; requires GML_GOD_OBJ to name a target family */
+  /* Alarm pauses. Holding an object family's alarm still is not the same as writing a value into
+   * it: nothing is overwritten, so disarming restores nothing and the countdown resumes from
+   * exactly where it stopped. The table is rebuilt from the enabled cheats every frame, so a
+   * cheat that goes away stops pausing on the next frame without anyone tracking a previous
+   * value — which is what an instance freeze cannot do, its instances having been destroyed and
+   * respawned while it was armed. */
+  int      alarm_pause_count;
+  struct { int obj, alarm; } alarm_pause[GML_ALARM_PAUSES];
   /* execution context */
   GmlInstance *cur_self, *cur_other;
   int      cur_code_index;   /* current CODE entry, so IT_STATIC resolves across nested calls */
@@ -539,6 +548,13 @@ void    gml_set_global_scalar(GmlVM *vm, const char *name, double val);         
  * compiled. Record that declaration so later unqualified references resolve through globals. */
 int     gml_vm_declare_globalvar(GmlVM *vm, const char *name);
 int     gml_set_inst_var_all(GmlVM *vm, const char *objname, const char *var, double val); /* freeze inst var; returns count */
+/* Alarm pauses: the frame loop skips the countdown for a paused (object family, alarm) pair.
+ * `reset` then `add` per enabled cheat, once a frame; `paused` is the hot-path query and returns
+ * early while no pause is declared. `add` resolves the object by name and returns 0 when the name
+ * is unknown, the index is out of range, or the table is full. */
+void    gml_alarm_pause_reset(GmlVM *vm);
+int     gml_alarm_pause_add(GmlVM *vm, const char *objname, int alarm_index);
+int     gml_alarm_paused(GmlVM *vm, int obj, int alarm_index);
 /* Coarse operations used by external runtime-override programs. Camera fields use
  * 0=x, 1=y, 2=width, 3=height; only live handles in the mask are touched. Surface variables are
  * resolved on every active instance of an object or descendant, then resized by their handles. */

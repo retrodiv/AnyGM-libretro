@@ -62,6 +62,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   name=V   | name[i]=V        freeze global ARRAY element   (GM8 / indexed reads)
  *   $name=V                     freeze global SCALAR          (GMS scalar reads; avoids V_ARR->0)
  *   obj:var=V | obj:var[i]=V    freeze a numeric var on every instance of object `obj`
+ *   alarmpause|obj|i            hold alarm i still on every instance of `obj` and its descendants
  *   camera[LIST]:field=V        write x, y, width, or height on selected live camera handles
  *   surface|obj|var|W|H         resize surfaces named by an instance variable
  *   monitorview|H|MIN|MAX       declare a monitor-derived logical view (ratios use W:H)
@@ -204,6 +205,15 @@ static void cheat_parse(const char *code, CheatAct *a){
     }
     a->kind=CK_MONITOR_VIEW; return;
   }
+  if(!strncmp(s,"alarmpause|",11)){
+    s+=11; const char *bar=strchr(s,'|');
+    if(!bar || bar==s || (size_t)(bar-s)>=sizeof a->obj){ a->kind=CK_NONE; return; }
+    memcpy(a->obj,s,(size_t)(bar-s)); a->obj[bar-s]=0; s=bar+1;
+    if(*s<'0' || *s>'9'){ a->kind=CK_NONE; return; }
+    a->idx=atoi(s); while(*s>='0' && *s<='9') s++;
+    if(*s || a->idx<0 || a->idx>=GML_ALARMS){ a->kind=CK_NONE; return; }
+    a->kind=CK_ALARM_PAUSE; return;
+  }
   if(!strncmp(s,"surface|",8)){
     s+=8; const char *bar=strchr(s,'|');
     if(!bar || bar==s || (size_t)(bar-s)>=sizeof a->obj){ a->kind=CK_NONE; return; }
@@ -298,6 +308,7 @@ static void cheat_apply_one(AnygmEngine *engine,const CheatAct *a){
     case CK_GSCALAR: gml_set_global_scalar(&engine->vm, a->obj, cheat_val_eval(engine,&a->val)); break;
     case CK_GARR:    gml_set_global_arr(&engine->vm, a->obj, a->idx, cheat_val_eval(engine,&a->val)); break;
     case CK_INST:    gml_set_inst_var_all(&engine->vm, a->obj, a->var, cheat_val_eval(engine,&a->val)); break;
+    case CK_ALARM_PAUSE: gml_alarm_pause_add(&engine->vm, a->obj, a->idx); break;
     case CK_CAMERA:
       gml_camera_override_mask(&engine->vm,a->camera_mask,(int)a->camera_field,
                                cheat_val_eval(engine,&a->val));
@@ -621,8 +632,12 @@ static void cheat_sticky_pass(AnygmEngine *engine,const CheatSlot *arr, int n){
     cheat_apply_one(engine,a);
   }
 }
-/* Re-apply un-scoped freeze cheats — called every frame after the game step. */
+/* Re-apply un-scoped freeze cheats — called every frame after the game step. Alarm pauses are
+ * rebuilt here rather than accumulated: they are the one directive that changes what the engine
+ * does instead of what a variable holds, so the table has to describe the cheats enabled right
+ * now. Clearing first is what makes disarming free — no captured value, nothing to put back. */
 void apply_sticky_cheats(AnygmEngine *engine){
+  gml_alarm_pause_reset(&engine->vm);
   cheat_sticky_pass(engine,engine->cheats, engine->cheat_count);
   cheat_sticky_pass(engine,engine->boot_cheats, engine_boot_cheats_active(engine));
 }
