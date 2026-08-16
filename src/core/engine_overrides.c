@@ -566,15 +566,49 @@ static void cheat_monitor_dimensions(AnygmEngine *engine,double *monitor_w,doubl
 void engine_override_menu_refresh(AnygmEngine *engine){
   menu_rebuild(engine);
 }
+/* A freeze overwrites whatever the game kept in the target and re-writes it every frame, so
+ * simply dropping the slot stops the writes but leaves the last forced value in place — from
+ * the player's side the cheat looks stuck on until the content is reset. Remembering the value
+ * the target held when the slot was armed makes an un-toggle in the frontend a real un-toggle.
+ *
+ * Only the global kinds are captured. An instance freeze has no single previous value to return
+ * to: it wrote to every instance of an object, and those instances may have been destroyed and
+ * respawned while it was armed. */
+static int cheat_slot_capturable(const CheatAct *a){
+  return a->kind==CK_GSCALAR || a->kind==CK_GARR;
+}
+static void cheat_slot_capture(AnygmEngine *engine,CheatSlot *slot){
+  slot->saved_valid=0;
+  if(!engine->loaded || !cheat_slot_capturable(&slot->act)) return;
+  slot->saved = slot->act.kind==CK_GSCALAR
+    ? gml_global_num(&engine->vm, slot->act.obj)
+    : gml_global_arr(&engine->vm, slot->act.obj, slot->act.idx);
+  slot->saved_valid=1;
+}
+static void cheat_slot_restore(AnygmEngine *engine,CheatSlot *slot){
+  if(!slot->saved_valid) return;
+  slot->saved_valid=0;
+  if(!engine->loaded) return;
+  if(slot->act.kind==CK_GSCALAR) gml_set_global_scalar(&engine->vm, slot->act.obj, slot->saved);
+  else if(slot->act.kind==CK_GARR)
+    gml_set_global_arr(&engine->vm, slot->act.obj, slot->act.idx, slot->saved);
+}
+
 void engine_override_set(AnygmEngine *engine,unsigned i,bool e,const char *c){
   if(!c || i >= GML_MAX_CHEATS) return;
   if((int)i >= engine->cheat_count) engine->cheat_count = (int)i + 1;
-  engine->cheats[i].enabled = e ? 1 : 0;
-  snprintf(engine->cheats[i].code, sizeof engine->cheats[i].code, "%s", c);
-  cheat_parse(engine->cheats[i].code, &engine->cheats[i].act);
+  CheatSlot *slot=&engine->cheats[i];
+  int was_enabled=slot->enabled;
+  int repointed=strcmp(slot->code,c)!=0;
+  /* Restore before the code is overwritten: the saved value belongs to the old target. */
+  if(was_enabled && (!e || repointed)) cheat_slot_restore(engine,slot);
+  slot->enabled = e ? 1 : 0;
+  snprintf(slot->code, sizeof slot->code, "%s", c);
+  cheat_parse(slot->code, &slot->act);
+  if(slot->enabled && (!was_enabled || repointed)) cheat_slot_capture(engine,slot);
   menu_rebuild(engine);
-  if(e && engine->loaded && engine->cheats[i].act.kind==CK_ROOM)
-    gml_cheat_apply(&engine->vm, engine->cheats[i].code);   /* fire the one-shot warp now */
+  if(e && engine->loaded && slot->act.kind==CK_ROOM)
+    gml_cheat_apply(&engine->vm, slot->code);   /* fire the one-shot warp now */
 }
 /* Consumer passes run over both API-provided overrides and boot overrides. Boot entries remain
  * active when the caller resets the API-provided slots. */

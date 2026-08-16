@@ -145,7 +145,9 @@ typedef struct {
   CheatVal val,val2;
   double monitor_height,monitor_min_aspect,monitor_max_aspect;
 } CheatAct;
-typedef struct { int enabled; char code[128]; CheatAct act; } CheatSlot;
+/* saved/saved_valid hold what the target read before this slot was armed, so disarming it can
+ * put the value back instead of leaving the last forced write behind. See cheat_slot_capture. */
+typedef struct { int enabled; char code[128]; CheatAct act; double saved; int saved_valid; } CheatSlot;
 
 typedef enum { MI_TOGGLE, MI_RANGE, MI_WARP } MenuItemKind;
 typedef struct {
