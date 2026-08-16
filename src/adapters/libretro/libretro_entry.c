@@ -3,6 +3,7 @@
  */
 #include "libretro_internal.h"
 
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -281,6 +282,9 @@ void retro_unload_game(void){
   anygm_unload(g_libretro.engine);
   g_libretro.loaded=false;
   g_libretro.fixed_state_capacity=0;
+  g_libretro.state_size_queried=false;
+  g_libretro.frames_since_state_save=0;
+  g_libretro.unsized_state_saves=0;
   memset(g_libretro.override_used,0,sizeof g_libretro.override_used);
   memset(&g_libretro.frame,0,sizeof g_libretro.frame);
   memset(&g_libretro.av,0,sizeof g_libretro.av);
@@ -315,6 +319,7 @@ void retro_run(void){
     return;
   }
   apply_live_options();
+  if(g_libretro.frames_since_state_save<UINT_MAX) g_libretro.frames_since_state_save++;
   AnygmInputFrame input;
   uint32_t width=g_libretro.frame.width?g_libretro.frame.width:g_libretro.av.base_width;
   uint32_t height=g_libretro.frame.height?g_libretro.frame.height:g_libretro.av.base_height;
@@ -349,8 +354,34 @@ void retro_run(void){
     g_libretro.environment(RETRO_ENVIRONMENT_SHUTDOWN,NULL);
 }
 
+/* What this snapshot is for, which libretro never says outright. RetroArch answers
+ * GET_SAVESTATE_CONTEXT with NORMAL while rewinding, so the context is no help; what does separate
+ * them is that a frontend sizes the buffer it is about to fill. Saving a state calls
+ * retro_serialize_size immediately before retro_serialize, every time. Rewind, run-ahead and
+ * netplay rollback do not: they size one slot when the feature starts and then reuse that size for
+ * every snapshot after it. So a serialize the frontend did not size for is one of a stream, and a
+ * stream is restored by resuming the run — it does not need the completed frame, which is the one
+ * part of a state that changes wholesale every frame and would otherwise cost the history its
+ * length. Requiring a run of them as well keeps a player's save whole even if some frontend saves
+ * without asking the size first. */
+enum { LIBRETRO_STREAMED_STATE_FRAMES=8, LIBRETRO_STREAMED_STATE_RUN=2 };
+
+static bool state_save_is_streamed(void){
+  bool sized=g_libretro.state_size_queried;
+  g_libretro.state_size_queried=false;
+  if(sized || g_libretro.frames_since_state_save>LIBRETRO_STREAMED_STATE_FRAMES){
+    g_libretro.unsized_state_saves=0;
+    g_libretro.frames_since_state_save=0;
+    return false;
+  }
+  if(g_libretro.unsized_state_saves<UINT_MAX) g_libretro.unsized_state_saves++;
+  g_libretro.frames_since_state_save=0;
+  return g_libretro.unsized_state_saves>=LIBRETRO_STREAMED_STATE_RUN;
+}
+
 size_t retro_serialize_size(void){
   if(!g_libretro.loaded) return 0;
+  g_libretro.state_size_queried=true;
   size_t actual=anygm_state_size(g_libretro.engine);
   /* Sessions that already saw gameplay teach the first answer: a frontend that sizes a rewind
    * ring once, at load, otherwise sizes it from the boot-time state, which gameplay routinely
@@ -369,8 +400,12 @@ size_t retro_serialize_size(void){
 
 bool retro_serialize(void *data,size_t size){
   size_t written=0;
-  if(!g_libretro.loaded ||
-     anygm_state_save(g_libretro.engine,data,size,&written)!=ANYGM_OK || written>size) return false;
+  if(!g_libretro.loaded) return false;
+  bool streamed=state_save_is_streamed();
+  AnygmResult result=streamed?
+      anygm_state_save_for_resume(g_libretro.engine,data,size,&written):
+      anygm_state_save(g_libretro.engine,data,size,&written);
+  if(result!=ANYGM_OK || written>size) return false;
   /* libretro persists the full advertised buffer, while AnyGM records its exact logical size in
    * the state header. Clear the capacity tail so files and rewind deltas never contain stale host
    * memory and remain deterministic for an identical runtime state. */

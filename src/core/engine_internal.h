@@ -375,7 +375,10 @@ void engine_state_peak_flush(AnygmEngine *engine);
 bool state_unserialize_impl(AnygmEngine *engine,const void *data,size_t size,
                             int schedule_reapply);
 size_t engine_state_size(AnygmEngine *engine);
-bool engine_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written);
+/* omit_frame leaves the completed frame out, for a host that will resume the run from this state
+ * rather than redisplay it. See anygm_state_save_for_resume. */
+bool engine_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written,
+                       int omit_frame);
 bool engine_state_load(AnygmEngine *engine,const void *data,size_t size);
 
 #endif

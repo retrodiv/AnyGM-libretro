@@ -47,8 +47,18 @@ static int64_t cr_i64(CoreR *s){ return (int64_t)cr_u64(s); }
 static int cr_i32(CoreR *s){ return (int)(int32_t)cr_u32(s); }
 static double cr_d(CoreR *s){ uint64_t bits=cr_u64(s); double value=0; memcpy(&value,&bits,sizeof value); return value; }
 
-static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
+/* The completed frame is written for a state that will be looked at again. A host resuming from a
+ * snapshot stream asks for it to be left out: 0x0 is the encoding for "this state carries no
+ * picture", which the reader below already accepts and which a load answers by redrawing from the
+ * restored simulation, exactly as every state did before the frame was carried at all. */
+static void state_write_completed_frame(AnygmEngine *engine,CoreW *state,int omit_frame){
   unsigned width=0,height=0;
+  if(omit_frame){
+    cw_u32(state,0);
+    cw_u32(state,0);
+    cw_u32(state,0);
+    return;
+  }
   if(engine->have_presented_frame && engine->screen && engine->output_width && engine->output_height){
     width=engine->output_width;
     height=engine->output_height;
@@ -236,7 +246,7 @@ static int state_header_read(AnygmEngine *engine,const void *data,size_t size,
   return state_hash_bytes(payload,(size_t)header->payload_size)==header->payload_checksum;
 }
 
-static void state_write(AnygmEngine *engine,CoreW *s){
+static void state_write(AnygmEngine *engine,CoreW *s,int omit_frame){
   uint8_t empty_header[ANYGM_STATE_HEADER_SIZE]={0};
   cw_raw(s,empty_header,sizeof empty_header);
   size_t core_start=s->pos;
@@ -245,7 +255,7 @@ static void state_write(AnygmEngine *engine,CoreW *s){
   { cw_i64(s,(int64_t)engine->vm.frame); }
   cw_raw(s,engine->pad_current,sizeof(engine->pad_current)); cw_raw(s,engine->pad_previous,sizeof(engine->pad_previous));
   cw_raw(s,engine->key_current,sizeof(engine->key_current)); cw_raw(s,engine->key_previous,sizeof(engine->key_previous));
-  state_write_completed_frame(engine,s);
+  state_write_completed_frame(engine,s,omit_frame);
   size_t coren=s->pos-core_start;
   size_t render_start=s->pos;
   int derived_view_surface=(int)gml_global_arr(&engine->vm,"view_surface_id",0);
@@ -304,12 +314,12 @@ size_t engine_state_size(AnygmEngine *engine){
   if(!engine->loaded) return 0;
   CoreW measure={0};
   measure.ok=1;
-  state_write(engine,&measure);
+  state_write(engine,&measure,0);
   return measure.ok?measure.pos:0;
 }
-bool engine_state_save(AnygmEngine *engine,void *d,size_t n,size_t *written){
+bool engine_state_save(AnygmEngine *engine,void *d,size_t n,size_t *written,int omit_frame){
   if(!engine->loaded || !d) return false;
-  CoreW s={(uint8_t*)d,n,0,1}; state_write(engine,&s);
+  CoreW s={(uint8_t*)d,n,0,1}; state_write(engine,&s,omit_frame);
   if(written) *written=s.pos;
   if(s.pos > n){
     /* Log the first few overflows and then a heartbeat without flooding a host that retries. */
@@ -412,7 +422,11 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   sync_room_fps(engine,1);
   classic_transition_reset(engine);
   engine->have_presented_frame = 0;
-  engine->state_just_loaded = schedule_reapply && engine->state_frame_available ? 1 : 0;
+  /* A load does not advance the run. A state carrying its completed frame presents those pixels;
+   * one without a frame reaches the same place the long way, by redrawing from the restored
+   * simulation with input held neutral and the state reapplied afterwards. Both are the load
+   * frame, and skipping it would let the first frame after a load run a step with live input. */
+  engine->state_just_loaded = schedule_reapply ? 1 : 0;
   return offset==(size_t)header.payload_size;
 }
 bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
@@ -422,13 +436,13 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
   size_t target_size=(size_t)target_header.total_size;
 
   CoreW measure={0}; measure.ok=1;
-  state_write(engine,&measure);
+  state_write(engine,&measure,0);
   if(!measure.ok || !measure.pos) return false;
   size_t snapshot_size=measure.pos;
   uint8_t *snapshot=malloc(snapshot_size);
   if(!snapshot) return false;
   CoreW snapshot_writer={snapshot,snapshot_size,0,1};
-  state_write(engine,&snapshot_writer);
+  state_write(engine,&snapshot_writer,0);
   if(!snapshot_writer.ok || snapshot_writer.pos!=snapshot_size){
     free(snapshot);
     return false;

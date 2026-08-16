@@ -16,7 +16,24 @@ snapshots. Those features remain supported.
 Schema `9` adds a run-length encoded copy of the completed application frame to the root section.
 The first frontend frame after a load presents those pixels without running game code; this keeps
 transient Draw output exact while simulation resumes from the canonical post-frame state on the
-following call. Schema `8` adds the logical paths and SHA-256 identities of loaded portable
+following call.
+
+That frame is optional, and `0x0` is how a state says it carries none. The reader has always
+accepted that, and a load answers it the way every state was answered before schema `9`: the load
+frame redraws from the restored simulation, with input held neutral and the state reapplied
+afterwards, so a load still never advances the run. Both kinds are ordinary schema `9` states and
+each loads in either build.
+
+Leaving the frame out is what `anygm_state_save_for_resume` is for, and the reason is arithmetic
+rather than storage. A host that rewinds, runs ahead, or rolls back netplay takes a snapshot every
+frame and keeps only the difference between consecutive ones, so the history it can offer is its
+buffer divided by that difference. The completed frame is the one part of a state that changes
+wholesale every frame, so carrying it through such a stream can shorten the available history
+while buying nothing the resumed run does not draw again. Only the host knows which kind
+of snapshot it is taking, so the choice is the host's to make and the format's to allow.
+`anygm_state_size` answers for the complete state either way, so one announced capacity covers both.
+
+Schema `8` adds the logical paths and SHA-256 identities of loaded portable
 Wwise banks to the canonical VM audio stage. Schema `7` adds portable external-audio asset identities plus the Saudio string-ID registry to the
 canonical VM audio stage. Every loose dynamic sound records its logical source path and dynamically
 computed source SHA-256; Saudio additionally records the extension-visible string ID. Schema

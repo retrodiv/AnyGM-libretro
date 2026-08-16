@@ -20,6 +20,12 @@ static size_t stub_state_bytes;
 static size_t stub_hint_bytes;
 static size_t last_load_bytes;
 static int variable_frontend;
+/* A resume-scoped save leaves the completed frame out; the stub stands in for that by writing a
+ * distinctly shorter state, so the adapter's choice of entry point is observable from the bytes as
+ * well as from the counters. */
+static size_t stub_resume_state_bytes;
+static unsigned complete_saves;
+static unsigned resume_saves;
 static int serialization_query_seen;
 static int development_setting_seen;
 
@@ -74,6 +80,17 @@ AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size
   if(!data || !written || capacity<stub_state_bytes) return ANYGM_ERROR_INVALID_ARGUMENT;
   memset(data,0x4D,stub_state_bytes);
   *written=stub_state_bytes;
+  complete_saves++;
+  return ANYGM_OK;
+}
+AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
+                                        size_t *written){
+  (void)engine;
+  if(written) *written=0;
+  if(!data || !written || capacity<stub_resume_state_bytes) return ANYGM_ERROR_INVALID_ARGUMENT;
+  memset(data,0x4D,stub_resume_state_bytes);
+  *written=stub_resume_state_bytes;
+  resume_saves++;
   return ANYGM_OK;
 }
 AnygmResult anygm_state_load(AnygmEngine *engine,const void *data,size_t size){
@@ -188,6 +205,66 @@ static int remembered_peak_covers_first_answer(void){
   return ok;
 }
 
+void retro_run(void);
+
+/* Which of the two kinds of snapshot this is, which libretro never states. A player saving asks
+ * the size and then serializes, every time. Rewind, run-ahead and netplay rollback size one slot
+ * when the feature starts and reuse it for every snapshot after that, and those are restored by
+ * resuming the run, so they can leave the completed frame out — which is what keeps a
+ * delta-compressed rewind history retaining more snapshots. A save the frontend
+ * sized must stay complete even when it lands in the middle of a rewind stream, which is the case
+ * on any machine where the player has rewind switched on. */
+static int snapshot_scope_follows_the_frontend(void){
+  stub_state_bytes=4096u;
+  stub_resume_state_bytes=64u;
+  if(!begin_frontend(0)) return 0;
+  const size_t capacity=retro_serialize_size();
+  uint8_t *state=(uint8_t *)malloc(capacity);
+  if(!state) return 0;
+  complete_saves=resume_saves=0;
+  int ok=1;
+
+  /* Sized, then saved: a player's state, and it carries everything. */
+  if(!retro_serialize(state,capacity) || complete_saves!=1u || resume_saves!=0u){
+    fprintf(stderr,"a sized save was not written complete\n");
+    ok=0;
+  }
+
+  /* A stream of snapshots into the slot the frontend sized earlier. The first of them still carry
+   * the frame — one frontend that saves without asking the size must not lose a player's picture
+   * to a single unsized call — and the run of them then settles into resume scope. */
+  for(unsigned i=0;ok && i<6u;i++){ retro_run(); if(!retro_serialize(state,capacity)) ok=0; }
+  if(ok && resume_saves==0u){
+    fprintf(stderr,"a stream of unsized snapshots never reached resume scope\n");
+    ok=0;
+  }
+  if(ok && resume_saves>=6u){
+    fprintf(stderr,"the first unsized snapshot dropped the frame with no run behind it\n");
+    ok=0;
+  }
+
+  /* The player saves in the middle of that stream. Asking the size is what says so. */
+  unsigned complete_before=complete_saves;
+  if(ok && (retro_serialize_size()!=capacity || !retro_serialize(state,capacity) ||
+            complete_saves!=complete_before+1u)){
+    fprintf(stderr,"a player's save inside a rewind stream lost its completed frame\n");
+    ok=0;
+  }
+
+  /* Frames apart with no snapshot between them is a player saving twice, not a stream. */
+  complete_before=complete_saves;
+  for(unsigned i=0;ok && i<12u;i++) retro_run();
+  if(ok && (!retro_serialize(state,capacity) || complete_saves!=complete_before+1u)){
+    fprintf(stderr,"a save far from the last one was treated as part of a stream\n");
+    ok=0;
+  }
+
+  free(state);
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
 void retro_reset(void);
 
 /* A player changes a setting in the host's menu and restarts from that same menu, so the core
@@ -225,6 +302,7 @@ int main(void){
      !stable_transport(1) || !stable_transport(0) || !stable_transport(-1) ||
      !growing_transport(1) || !growing_transport(0) || !growing_transport(-1) ||
      !remembered_peak_covers_first_answer() ||
+     !snapshot_scope_follows_the_frontend() ||
      !restart_rereads_settings() || !starting_declares_the_settings()){
     fprintf(stderr,"libretro state transport contract failed\n");
     return 1;

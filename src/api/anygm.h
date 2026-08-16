@@ -465,6 +465,20 @@ size_t anygm_state_size(AnygmEngine *engine);
  * the current state is always anygm_state_size. */
 size_t anygm_state_capacity_hint(const AnygmEngine *engine);
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written);
+/* The same state, minus the completed frame, for a host that will resume the run from it rather
+ * than redisplay what was on screen. A host that rewinds, runs ahead, or rolls back netplay takes
+ * a snapshot every frame and keeps only what changed between consecutive ones; the completed frame
+ * is the one part of a state that changes wholesale every frame, so carrying it through that
+ * stream costs the length of the history and buys nothing the resumed run does not draw again.
+ * Only the host knows which it is doing, so only the host can say.
+ *
+ * The result is an ordinary state: it loads through anygm_state_load, in this build or another,
+ * and the run continues identically. What it gives up is the first frame after the load, which is
+ * redrawn from the restored simulation instead of restored as pixels. Use anygm_state_save for a
+ * state a player will see again. anygm_state_size still answers for the complete state, so one
+ * announced capacity covers both. */
+AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
+                                        size_t *written);
 AnygmResult anygm_state_load(AnygmEngine *engine,const void *data,size_t size);
 size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capacity);
 
