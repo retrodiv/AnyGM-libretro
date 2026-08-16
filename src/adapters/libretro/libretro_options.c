@@ -76,6 +76,14 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"input",
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},
+  {"anygm_keyboard_source","Keyboard input",NULL,
+   "Frontend Events keeps keys bound to frontend commands out of the game and is the safe "
+   "default. Polled Device is for a frontend whose focus mode exposes held keys only through the "
+   "keyboard device. Enable that focus mode first; otherwise frontend hotkeys can also reach the "
+   "game.",
+   NULL,"input",
+   {{"Frontend Events",NULL},{"Polled Device (Game Focus)",NULL},{NULL,NULL}},
+   "Frontend Events"},
   {"anygm_mouse","Mouse input",NULL,
    "How pointer movement reaches the game. Auto follows what the content expects.",
    NULL,"input",
@@ -544,6 +552,8 @@ void libretro_options_apply(bool all_fields){
   /* Content that offers a gamepad-only path checks this before the player can reach any menu, so
    * a host that never sets the option must still report a pad. */
   config->gamepad_connected=option_on("anygm_gamepad",1);
+  value=option_value("anygm_keyboard_source");
+  g_libretro.poll_keyboard_device=value&&!strcmp(value,"Polled Device (Game Focus)");
   /* The names describe how much is dropped, and the thresholds rise with them. An unrecognised
    * name resolves to the shipped amount rather than to none, so a value left behind by a host
    * cannot quietly land on the slowest setting. */
