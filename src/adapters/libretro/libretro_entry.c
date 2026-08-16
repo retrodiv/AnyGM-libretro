@@ -3,7 +3,6 @@
  */
 #include "libretro_internal.h"
 
-#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -283,8 +282,6 @@ void retro_unload_game(void){
   g_libretro.loaded=false;
   g_libretro.fixed_state_capacity=0;
   g_libretro.state_size_queried=false;
-  g_libretro.frames_since_state_save=0;
-  g_libretro.unsized_state_saves=0;
   memset(g_libretro.override_used,0,sizeof g_libretro.override_used);
   memset(&g_libretro.frame,0,sizeof g_libretro.frame);
   memset(&g_libretro.av,0,sizeof g_libretro.av);
@@ -319,7 +316,6 @@ void retro_run(void){
     return;
   }
   apply_live_options();
-  if(g_libretro.frames_since_state_save<UINT_MAX) g_libretro.frames_since_state_save++;
   AnygmInputFrame input;
   uint32_t width=g_libretro.frame.width?g_libretro.frame.width:g_libretro.av.base_width;
   uint32_t height=g_libretro.frame.height?g_libretro.frame.height:g_libretro.av.base_height;
@@ -355,28 +351,26 @@ void retro_run(void){
 }
 
 /* What this snapshot is for, which libretro never says outright. RetroArch answers
- * GET_SAVESTATE_CONTEXT with NORMAL while rewinding, so the context is no help; what does separate
- * them is that a frontend sizes the buffer it is about to fill. Saving a state calls
- * retro_serialize_size immediately before retro_serialize, every time. Rewind, run-ahead and
- * netplay rollback do not: they size one slot when the feature starts and then reuse that size for
- * every snapshot after it. So a serialize the frontend did not size for is one of a stream, and a
- * stream is restored by resuming the run — it does not need the completed frame, which is the one
- * part of a state that changes wholesale every frame and would otherwise cost the history its
- * length. Requiring a run of them as well keeps a player's save whole even if some frontend saves
- * without asking the size first. */
-enum { LIBRETRO_STREAMED_STATE_FRAMES=8, LIBRETRO_STREAMED_STATE_RUN=2 };
-
+ * GET_SAVESTATE_CONTEXT with NORMAL while rewinding, so the context is no help. What does separate
+ * them is that a frontend sizes the buffer it is about to fill: content_save_state calls
+ * retro_serialize_size immediately before retro_serialize, every time, while rewind, run-ahead and
+ * netplay rollback size one slot when the feature starts and reuse that size for every snapshot
+ * after it. So a serialize the frontend did not size for is one of a stream, and a stream is
+ * restored by resuming the run: it does not need the completed frame, which is the one part of a
+ * state that changes wholesale every frame and would otherwise cost the history its length.
+ *
+ * Snapshot cadence is a frontend setting, not a statement of state purpose. The earlier
+ * interval threshold incorrectly classified distant unsized snapshots as complete saves, so
+ * this version does not read the interval.
+ *
+ * The cost of reading only the size query is that a frontend which saves a state without asking
+ * the size first gets one without its picture. That is what every state was before the picture was
+ * carried at all: the load frame redraws from the restored simulation. A shorter rewind is a
+ * feature that stopped working; a redrawn frame is not. */
 static bool state_save_is_streamed(void){
   bool sized=g_libretro.state_size_queried;
   g_libretro.state_size_queried=false;
-  if(sized || g_libretro.frames_since_state_save>LIBRETRO_STREAMED_STATE_FRAMES){
-    g_libretro.unsized_state_saves=0;
-    g_libretro.frames_since_state_save=0;
-    return false;
-  }
-  if(g_libretro.unsized_state_saves<UINT_MAX) g_libretro.unsized_state_saves++;
-  g_libretro.frames_since_state_save=0;
-  return g_libretro.unsized_state_saves>=LIBRETRO_STREAMED_STATE_RUN;
+  return !sized;
 }
 
 size_t retro_serialize_size(void){

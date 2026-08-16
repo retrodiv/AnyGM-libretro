@@ -33,10 +33,9 @@ typedef struct LibretroAdapter {
   bool loaded;
   bool rumble_available;
   size_t fixed_state_capacity;
-  /* How the frontend is taking this snapshot; see the scope note above retro_serialize. */
+  /* Whether the frontend sized the buffer it is about to fill; see the scope note above
+   * retro_serialize. */
   bool state_size_queried;
-  unsigned frames_since_state_save;
-  unsigned unsized_state_saves;
   char save_directory[1024];
   char cache_directory[1024];
   char language[16];

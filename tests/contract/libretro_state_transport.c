@@ -179,8 +179,12 @@ static int growing_transport(int negotiation_result){
   if(!state) return 0;
   int ok=retro_serialize(state,grown_capacity);
   if(ok){
+    /* Sized again, because what is being asserted is that a complete state refuses to truncate
+     * into a capacity that has gone stale. A snapshot the frontend did not size is a different
+     * question - it leaves the completed frame out, so it is far smaller and fits capacities a
+     * complete one cannot, which is the whole point of the scope. */
     uint8_t *stale=(uint8_t *)malloc(initial_capacity);
-    ok=stale && !retro_serialize(stale,initial_capacity);
+    ok=stale && retro_serialize_size()==grown_capacity && !retro_serialize(stale,initial_capacity);
     free(stale);
   }
   free(state);
@@ -209,11 +213,10 @@ void retro_run(void);
 
 /* Which of the two kinds of snapshot this is, which libretro never states. A player saving asks
  * the size and then serializes, every time. Rewind, run-ahead and netplay rollback size one slot
- * when the feature starts and reuse it for every snapshot after that, and those are restored by
- * resuming the run, so they can leave the completed frame out — which is what keeps a
- * delta-compressed rewind history retaining more snapshots. A save the frontend
- * sized must stay complete even when it lands in the middle of a rewind stream, which is the case
- * on any machine where the player has rewind switched on. */
+ * when the feature starts and reuse it for every snapshot after. Those states are restored by
+ * resuming the run, so the completed frame can be omitted. A size query selects a complete
+ * save; an unsized call selects the frame-free form regardless of snapshot cadence. The
+ * synthetic intervals below exercise that selection without a content-specific route. */
 static int snapshot_scope_follows_the_frontend(void){
   stub_state_bytes=4096u;
   stub_resume_state_bytes=64u;
@@ -221,41 +224,44 @@ static int snapshot_scope_follows_the_frontend(void){
   const size_t capacity=retro_serialize_size();
   uint8_t *state=(uint8_t *)malloc(capacity);
   if(!state) return 0;
-  complete_saves=resume_saves=0;
   int ok=1;
 
   /* Sized, then saved: a player's state, and it carries everything. */
+  complete_saves=resume_saves=0;
   if(!retro_serialize(state,capacity) || complete_saves!=1u || resume_saves!=0u){
     fprintf(stderr,"a sized save was not written complete\n");
     ok=0;
   }
 
-  /* A stream of snapshots into the slot the frontend sized earlier. The first of them still carry
-   * the frame — one frontend that saves without asking the size must not lose a player's picture
-   * to a single unsized call — and the run of them then settles into resume scope. */
-  for(unsigned i=0;ok && i<6u;i++){ retro_run(); if(!retro_serialize(state,capacity)) ok=0; }
-  if(ok && resume_saves==0u){
-    fprintf(stderr,"a stream of unsized snapshots never reached resume scope\n");
-    ok=0;
-  }
-  if(ok && resume_saves>=6u){
-    fprintf(stderr,"the first unsized snapshot dropped the frame with no run behind it\n");
+  /* Unsized is a stream from the very first one: there is no run-in to wait through, because
+   * waiting through one means guessing at a cadence. */
+  complete_saves=resume_saves=0;
+  if(ok && (!retro_serialize(state,capacity) || resume_saves!=1u || complete_saves!=0u)){
+    fprintf(stderr,"the first unsized snapshot was not treated as one of a stream\n");
     ok=0;
   }
 
-  /* The player saves in the middle of that stream. Asking the size is what says so. */
-  unsigned complete_before=complete_saves;
+  /* And at any cadence the frontend cares to use, including ones far apart. */
+  static const unsigned granularities[]={1u,2u,10u,60u,240u};
+  for(size_t g=0;ok && g<sizeof granularities/sizeof *granularities;g++){
+    complete_saves=resume_saves=0;
+    for(unsigned snapshot=0;ok && snapshot<4u;snapshot++){
+      for(unsigned f=0;f<granularities[g];f++) retro_run();
+      if(!retro_serialize(state,capacity)) ok=0;
+    }
+    if(ok && (resume_saves!=4u || complete_saves!=0u)){
+      fprintf(stderr,"at a granularity of %u a rewind snapshot was written complete (%u of 4)\n",
+              granularities[g],complete_saves);
+      ok=0;
+    }
+  }
+
+  /* A player's save keeps its picture wherever it lands, including in the middle of that stream,
+   * because asking the size is what says so. */
+  complete_saves=resume_saves=0;
   if(ok && (retro_serialize_size()!=capacity || !retro_serialize(state,capacity) ||
-            complete_saves!=complete_before+1u)){
+            complete_saves!=1u || resume_saves!=0u)){
     fprintf(stderr,"a player's save inside a rewind stream lost its completed frame\n");
-    ok=0;
-  }
-
-  /* Frames apart with no snapshot between them is a player saving twice, not a stream. */
-  complete_before=complete_saves;
-  for(unsigned i=0;ok && i<12u;i++) retro_run();
-  if(ok && (!retro_serialize(state,capacity) || complete_saves!=complete_before+1u)){
-    fprintf(stderr,"a save far from the last one was treated as part of a stream\n");
     ok=0;
   }
 
