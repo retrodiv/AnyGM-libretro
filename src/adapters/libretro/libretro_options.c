@@ -23,6 +23,16 @@ static const struct retro_core_option_v2_category g_categories[]={
 #define ROOM_CHOICE_LIMIT (RETRO_NUM_CORE_OPTION_VALUES_MAX-2)
 
 static struct retro_core_option_v2_definition g_definitions[]={
+  /* The completed frame is optional state data. Including it displays the exact stored
+   * image on load, while excluding it redraws from the restored simulation. A completed
+   * image can increase the difference between frequent rewind snapshots. Libretro does
+   * not identify a snapshot's purpose, so this setting chooses one policy for the session. */
+  {"anygm_state_exact_frame","Exact picture in save states",NULL,
+   "Stores the frame that was on screen inside every save state, so loading one shows those exact "
+   "pixels. May shorten rewind history because rewind stores repeated snapshots.",
+   NULL,"development",
+   {{"Off",NULL},{"On",NULL},{NULL,NULL}},
+   "Off"},
   {"anygm_alpha_cull","Transparency culling",NULL,
    "Skips pixels too faint to see. None draws every one; the rest trade faint detail for speed.",
    NULL,"video",

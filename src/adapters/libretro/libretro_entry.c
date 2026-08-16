@@ -350,32 +350,38 @@ void retro_run(void){
     g_libretro.environment(RETRO_ENVIRONMENT_SHUTDOWN,NULL);
 }
 
-/* What this snapshot is for, which libretro never says outright. RetroArch answers
- * GET_SAVESTATE_CONTEXT with NORMAL while rewinding, so the context is no help. What does separate
- * them is that a frontend sizes the buffer it is about to fill: content_save_state calls
- * retro_serialize_size immediately before retro_serialize, every time, while rewind, run-ahead and
- * netplay rollback size one slot when the feature starts and reuse that size for every snapshot
- * after it. So a serialize the frontend did not size for is one of a stream, and a stream is
- * restored by resuming the run: it does not need the completed frame, which is the one part of a
- * state that changes wholesale every frame and would otherwise cost the history its length.
- *
- * Snapshot cadence is a frontend setting, not a statement of state purpose. The earlier
- * interval threshold incorrectly classified distant unsized snapshots as complete saves, so
- * this version does not read the interval.
- *
- * The cost of reading only the size query is that a frontend which saves a state without asking
- * the size first gets one without its picture. That is what every state was before the picture was
- * carried at all: the load frame redraws from the restored simulation. A shorter rewind is a
- * feature that stopped working; a redrawn frame is not. */
-static bool state_save_is_streamed(void){
-  bool sized=g_libretro.state_size_queried;
-  g_libretro.state_size_queried=false;
-  return !sized;
+/* Whether a state carries the picture that was on screen. Only the host can answer, and libretro
+ * gives it no way to say: RetroArch reports the NORMAL savestate context while rewinding, and
+ * content_get_rastate_size asks the core for the state size before every rewind snapshot just as
+ * it does before a player's save, so neither the context nor the shape of the calls separates
+ * them. Two guesses were tried here and both were wrong - one read the cadence of the calls, which
+ * is the frontend's rewind_granularity and says nothing, and one read the size query, which the
+ * rewind path makes too. So the question is put to the player as a setting, and answered the same
+ * way for every snapshot. See the note beside anygm_state_exact_frame for what each answer costs.
+ */
+static bool state_carries_its_frame(void){
+  const char *value=libretro_options_value("anygm_state_exact_frame");
+  return value && !strcmp(value,"On");
+}
+
+/* Enough to answer, from a player's own log, what their frontend actually asks the core for. Both
+ * guesses above survived because the harness that tested them made the calls the way the guess
+ * expected; a count taken from the real session cannot. */
+static void note_state_traffic(bool sized,size_t written){
+  g_libretro.state_saves++;
+  if(sized) g_libretro.state_saves_sized++;
+  if(g_libretro.state_saves%1800u) return;
+  libretro_log(RETRO_LOG_INFO,
+               "[state] %u saves, %u of them sized first, %u size queries, last %llu bytes%s\n",
+               g_libretro.state_saves,g_libretro.state_saves_sized,g_libretro.state_size_queries,
+               (unsigned long long)written,
+               state_carries_its_frame()?", carrying the frame":"");
 }
 
 size_t retro_serialize_size(void){
   if(!g_libretro.loaded) return 0;
   g_libretro.state_size_queried=true;
+  g_libretro.state_size_queries++;
   size_t actual=anygm_state_size(g_libretro.engine);
   /* Sessions that already saw gameplay teach the first answer: a frontend that sizes a rewind
    * ring once, at load, otherwise sizes it from the boot-time state, which gameplay routinely
@@ -395,11 +401,13 @@ size_t retro_serialize_size(void){
 bool retro_serialize(void *data,size_t size){
   size_t written=0;
   if(!g_libretro.loaded) return false;
-  bool streamed=state_save_is_streamed();
-  AnygmResult result=streamed?
-      anygm_state_save_for_resume(g_libretro.engine,data,size,&written):
-      anygm_state_save(g_libretro.engine,data,size,&written);
+  bool sized=g_libretro.state_size_queried;
+  g_libretro.state_size_queried=false;
+  AnygmResult result=state_carries_its_frame()?
+      anygm_state_save(g_libretro.engine,data,size,&written):
+      anygm_state_save_for_resume(g_libretro.engine,data,size,&written);
   if(result!=ANYGM_OK || written>size) return false;
+  note_state_traffic(sized,written);
   /* libretro persists the full advertised buffer, while AnyGM records its exact logical size in
    * the state header. Clear the capacity tail so files and rewind deltas never contain stale host
    * memory and remain deterministic for an identical runtime state. */
