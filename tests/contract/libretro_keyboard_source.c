@@ -1,10 +1,16 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
-/* A frontend's keyboard events exclude its own hotkeys and therefore remain authoritative by
- * default. A frontend that accepts the callback but exposes focused key state only through
- * RETRO_DEVICE_KEYBOARD needs the explicit polled path. A frontend without events needs that
- * device regardless of the selected path. */
+/* A frontend binds keys to its own commands: a menu, a rewind, a state slot. Which keys those are
+ * is the frontend's choice, and it answers the question by what it delivers: a key it reserved
+ * never arrives as a key event until the player hands the keyboard to the content, while reading
+ * the keyboard device returns it regardless.
+ *
+ * Content that binds the same key to a soft reset then acts on a command aimed at the frontend, and
+ * a reset armed that way is written into every state that follows. The adapter therefore takes the
+ * events as the authority whenever the frontend accepts them, and reads the device only for a
+ * frontend that offers nothing else. Naming the reserved keys here instead would be guesswork.
+ */
 #include "libretro_internal.h"
 
 #include <stdio.h>
@@ -43,7 +49,7 @@ static void snapshot(AnygmInputFrame *input){
   libretro_input_snapshot(input,320,240);
 }
 
-static void reserved_key_stays_with_the_frontend_by_default(void){
+static void reserved_key_stays_with_the_frontend(void){
   memset(&g_libretro,0,sizeof g_libretro);
   g_libretro.environment=environment_callback;
   g_libretro.input_state=input_state_callback;
@@ -57,24 +63,6 @@ static void reserved_key_stays_with_the_frontend_by_default(void){
   snapshot(&input);
   if(input.keys[RETROK_F1]){
     fprintf(stderr,"libretro keyboard source: a key the frontend withheld reached the content\n");
-    failures++;
-  }
-}
-
-static void explicit_device_path_reads_focused_keys(void){
-  memset(&g_libretro,0,sizeof g_libretro);
-  g_libretro.environment=environment_callback;
-  g_libretro.input_state=input_state_callback;
-  keyboard_callback_accepted=1;
-  registered_callback=NULL;
-  libretro_input_register();
-  g_libretro.poll_keyboard_device=true;
-  /* No event arrived, but the frontend's focus mode made the key available on the device. */
-  polled_key=RETROK_SEMICOLON;
-  AnygmInputFrame input;
-  snapshot(&input);
-  if(!input.keys[RETROK_SEMICOLON]){
-    fprintf(stderr,"libretro keyboard source: the explicit device path lost a focused key\n");
     failures++;
   }
 }
@@ -125,8 +113,7 @@ static void device_still_serves_a_frontend_without_events(void){
 }
 
 int main(void){
-  reserved_key_stays_with_the_frontend_by_default();
-  explicit_device_path_reads_focused_keys();
+  reserved_key_stays_with_the_frontend();
   delivered_key_reaches_the_content();
   device_still_serves_a_frontend_without_events();
   if(failures) return 1;

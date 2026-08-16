@@ -52,10 +52,10 @@ void libretro_input_register(void){
   if(!g_libretro.environment) return;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO,(void *)g_controller_info);
   g_libretro.environment(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS,(void *)g_input_descriptors);
-  /* An accepted callback is normally the authority on which keys belong to content: the frontend
-   * withholds its own commands and delivers them only after it gives the keyboard to content. Some
-   * hosts expose focused key state only through the device, so the player can select that path
-   * explicitly without weakening hotkey isolation for every other host. */
+  /* A frontend that accepts this callback becomes the authority on which keys belong to the
+   * content: it withholds whatever it has bound to a command of its own, whatever key that is, and
+   * hands the whole keyboard over once the player gives the content focus. Remember the answer,
+   * because it decides where the keyboard is read from below. */
   struct retro_keyboard_callback callback={keyboard_event};
   g_libretro.keyboard_events_accepted=
       g_libretro.environment(RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK,&callback);
@@ -93,14 +93,28 @@ void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t heig
   input->gamepad_axes[0][3]=normalized_axis(input_state(
       0,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_Y));
 
-  /* Reading the device can expose the keys a frontend reserved for its own menu, rewind or state
-   * commands. Events therefore remain the safe default whenever the callback was accepted. Device
-   * polling is the fallback for hosts without events and the explicit path for a frontend whose
-   * focus mode exposes held keys only through RETRO_DEVICE_KEYBOARD. */
+  /* Reading the keyboard device directly returns every key the hardware reports, including the one
+   * the frontend just used to open its menu, rewind, or write a state. Content that binds the same
+   * key to a soft reset or a display toggle then answers a command that was never meant for it, and
+   * a soft reset armed that way is carried into every state written afterwards.
+   *
+   * So the device is read only when the frontend refused the callback and nothing else can supply a
+   * keyboard. Naming the reserved keys here instead would be guesswork: they are the frontend's to
+   * choose, and it already answers the question by what it delivers. */
   memcpy(input->keys,g_libretro.keyboard_events,sizeof input->keys);
-  if(g_libretro.keyboard_events_accepted && !g_libretro.poll_keyboard_device) goto pointer_state;
-  for(unsigned key=RETROK_FIRST;key<RETROK_LAST && key<ANYGM_MAX_KEYS;key++)
-    poll_key(input,key);
+  if(g_libretro.keyboard_events_accepted) goto pointer_state;
+  static const unsigned special_keys[]={
+    RETROK_BACKSPACE,RETROK_TAB,RETROK_RETURN,RETROK_PAUSE,RETROK_ESCAPE,RETROK_SPACE,
+    RETROK_DELETE,RETROK_UP,RETROK_DOWN,RETROK_RIGHT,RETROK_LEFT,RETROK_INSERT,
+    RETROK_HOME,RETROK_END,RETROK_PAGEUP,RETROK_PAGEDOWN,RETROK_NUMLOCK,
+    RETROK_CAPSLOCK,RETROK_SCROLLOCK,RETROK_RSHIFT,RETROK_LSHIFT,RETROK_RCTRL,
+    RETROK_LCTRL,RETROK_RALT,RETROK_LALT
+  };
+  for(unsigned i=0;i<sizeof special_keys/sizeof special_keys[0];i++) poll_key(input,special_keys[i]);
+  for(unsigned key=RETROK_0;key<=RETROK_9;key++) poll_key(input,key);
+  for(unsigned key=RETROK_a;key<=RETROK_z;key++) poll_key(input,key);
+  for(unsigned key=RETROK_F1;key<=RETROK_F12;key++) poll_key(input,key);
+  for(unsigned key=RETROK_KP0;key<=RETROK_KP_EQUALS;key++) poll_key(input,key);
 
 pointer_state:
   ;

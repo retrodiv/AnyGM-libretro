@@ -231,18 +231,6 @@ static void unset_settings_keep_content_reachable(void){
   /* Resolving an unknown amount to none would leave the slowest setting in place unasked. */
   expect("no host value for the culling",g_libretro.config.fast_alpha_cull,24u);
   expect("no host value for the raster",g_libretro.config.present_logical_raster,1u);
-  expect("no host value for keyboard polling",g_libretro.poll_keyboard_device,0u);
-}
-
-static void keyboard_polling_requires_an_explicit_choice(void){
-  begin(2,3);
-  answered_value="Polled Device (Game Focus)";
-  libretro_options_apply(true);
-  expect("explicit keyboard polling",g_libretro.poll_keyboard_device,1u);
-
-  answered_value="Frontend Events";
-  libretro_options_apply(false);
-  expect("restored keyboard event filtering",g_libretro.poll_keyboard_device,0u);
 }
 
 /* These dimensions describe the monitor content can query. They retain their stable frontend keys,
@@ -456,7 +444,6 @@ static void a_restarted_core_declares_its_settings_again(void){
 int main(void){
   every_setting_sits_in_a_group();
   unset_settings_keep_content_reachable();
-  keyboard_polling_requires_an_explicit_choice();
   monitor_dimensions_reach_the_virtual_monitor_fields();
   monitor_dimensions_follow_the_window_raster();
   culling_names_rise_with_their_thresholds();
