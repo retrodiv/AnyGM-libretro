@@ -114,7 +114,7 @@ RUNTIME_TESTS := test_rng test_persistent_room test_d3_state test_ds_grid \
 	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_string_search test_builtin_map_arrays test_builtin_struct_exists test_stacktop_scope
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets \
-	test_renderer_texture_shells
+	test_renderer_texture_shells test_render_plan
 CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks
 MEDIA_TESTS := test_hash test_image_codec test_font_raster
 AUDIO_TESTS := test_mp3_detect
@@ -280,6 +280,11 @@ $(TEST_DIR)/test_renderer_primitives: tests/unit/video/renderer/test_renderer_pr
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(CPPFLAGS))
 
+$(TEST_DIR)/test_render_plan: tests/unit/video/renderer/test_render_plan.c \
+	tests/support/anygm_test_runner.c $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
+
 $(TEST_DIR)/test_bytecode: tests/unit/content/test_bytecode.c \
 	src/host/anygm_host.c src/host/anygm_vfs.c \
 	$(ANYGM_PROJECT_COMPILER_SOURCES) src/content/project/gmlc_project.c \
@@ -358,6 +363,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_renderer_texture_shells
 	$(TEST_DIR)/test_renderer_tiles
 	$(TEST_DIR)/test_renderer_primitives
+	$(TEST_DIR)/test_render_plan
 	$(TEST_DIR)/test_rng
 	$(TEST_DIR)/test_persistent_room
 	$(TEST_DIR)/test_d3_state
