@@ -20,13 +20,6 @@ static int save_state(AnygmEngine *engine,uint8_t **data,size_t *written){
   return anygm_state_save(engine,*data,capacity,written)==ANYGM_OK;
 }
 
-static int save_state_for_resume(AnygmEngine *engine,uint8_t **data,size_t *written){
-  size_t capacity=anygm_state_size(engine);
-  *data=malloc(capacity?capacity:1);
-  if(!*data) return 0;
-  return anygm_state_save_for_resume(engine,*data,capacity,written)==ANYGM_OK;
-}
-
 static uint64_t read_u64(const uint8_t *data){
   uint64_t value=0;
   for(unsigned i=0;i<8;i++) value|=(uint64_t)data[i]<<(i*8);
@@ -1803,46 +1796,6 @@ int main(int argc,char **argv){
     fprintf(stderr,"loaded state did not present its completed frame\n");
     return 1;
   }
-  /* A host that will resume the run from a snapshot rather than redisplay it asks for the frame to
-   * be left out. That is what gives a rewind history its length back: the completed frame is the
-   * one part of a state that changes wholesale every frame, so a frontend keeping only the
-   * difference between consecutive snapshots pays for the whole picture on every one of them.
-   *
-   * Such a snapshot is smaller, it still loads, and — this is the part a rewind depends on — its
-   * load frame does not advance the run. It redraws from the restored simulation instead of
-   * presenting stored pixels, so it must not present the pixel the frame carried, and saving again
-   * afterwards must return the very bytes the snapshot was taken from. */
-  size_t complete_size=anygm_state_size(first);
-  uint8_t *resume_state=NULL;
-  size_t resume_written=0;
-  if(!save_state_for_resume(first,&resume_state,&resume_written) ||
-     resume_written>=complete_size){
-    fprintf(stderr,"a resume-scoped save still carried the completed frame: %zu of %zu\n",
-            resume_written,complete_size);
-    return 1;
-  }
-  first->screen[0]=~retained_pixel;
-  first_output.struct_size=sizeof first_output;
-  if(anygm_state_load(first,resume_state,resume_written)!=ANYGM_OK ||
-     anygm_run_frame(first,&input,&first_output)!=ANYGM_OK || !first_output.pixels){
-    fprintf(stderr,"a resume-scoped snapshot did not restore the run\n");
-    return 1;
-  }
-  if((((const uint32_t *)first_output.pixels)[0]&0x00FFFFFFu)==retained_pixel){
-    fprintf(stderr,"a resume-scoped snapshot presented pixels it never carried\n");
-    return 1;
-  }
-  uint8_t *resumed_state=NULL;
-  size_t resumed_written=0;
-  if(!save_state_for_resume(first,&resumed_state,&resumed_written) ||
-     resumed_written!=resume_written ||
-     memcmp(resumed_state,resume_state,resume_written)){
-    fprintf(stderr,"the frame after a resume-scoped load advanced the run: %zu then %zu\n",
-            resume_written,resumed_written);
-    return 1;
-  }
-  free(resume_state);
-  free(resumed_state);
   free(display_state);
 
 

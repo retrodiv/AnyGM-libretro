@@ -20,12 +20,6 @@ static size_t stub_state_bytes;
 static size_t stub_hint_bytes;
 static size_t last_load_bytes;
 static int variable_frontend;
-/* A resume-scoped save leaves the completed frame out; the stub stands in for that by writing a
- * distinctly shorter state, so the adapter's choice of entry point is observable from the bytes as
- * well as from the counters. */
-static size_t stub_resume_state_bytes;
-static unsigned complete_saves;
-static unsigned resume_saves;
 static int serialization_query_seen;
 static int development_setting_seen;
 
@@ -80,17 +74,6 @@ AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size
   if(!data || !written || capacity<stub_state_bytes) return ANYGM_ERROR_INVALID_ARGUMENT;
   memset(data,0x4D,stub_state_bytes);
   *written=stub_state_bytes;
-  complete_saves++;
-  return ANYGM_OK;
-}
-AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
-                                        size_t *written){
-  (void)engine;
-  if(written) *written=0;
-  if(!data || !written || capacity<stub_resume_state_bytes) return ANYGM_ERROR_INVALID_ARGUMENT;
-  memset(data,0x4D,stub_resume_state_bytes);
-  *written=stub_resume_state_bytes;
-  resume_saves++;
   return ANYGM_OK;
 }
 AnygmResult anygm_state_load(AnygmEngine *engine,const void *data,size_t size){
@@ -114,13 +97,8 @@ static unsigned options_registered;
 void libretro_options_register(void){ options_registered++; }
 static unsigned options_applied;
 void libretro_options_apply(bool all_fields){ (void)all_fields; options_applied++; }
-/* Unset, as a frontend answers before the player touches anything: the locale stays on Auto. The
- * one setting these cases drive is whether a state carries its picture. */
-static const char *exact_frame_setting;
-const char *libretro_options_value(const char *key){
-  if(key && !strcmp(key,"anygm_state_exact_frame")) return exact_frame_setting;
-  return NULL;
-}
+/* Unset, as a frontend answers before the player touches anything: the locale stays on Auto. */
+const char *libretro_options_value(const char *key){ (void)key; return NULL; }
 void libretro_options_publish_rooms(void){}
 void libretro_options_release(void){}
 void libretro_input_register(void){}
@@ -133,7 +111,6 @@ void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t heig
 static int begin_frontend(int variable_support){
   memset(&g_libretro,0,sizeof g_libretro);
   variable_frontend=variable_support;
-  exact_frame_setting=NULL;
   serialization_query_seen=0;
   development_setting_seen=0;
   last_load_bytes=0;
@@ -149,7 +126,6 @@ static int begin_frontend(int variable_support){
 static int stable_transport(int negotiation_result){
   stub_state_bytes=113u;
   if(!begin_frontend(negotiation_result)) return 0;
-  exact_frame_setting="On";
   const size_t expected_capacity=113u*2u+512u*1024u;
   if(retro_serialize_size()!=expected_capacity ||
      retro_serialize_size()!=expected_capacity) return 0;
@@ -178,9 +154,6 @@ static int stable_transport(int negotiation_result){
 static int growing_transport(int negotiation_result){
   stub_state_bytes=113u;
   if(!begin_frontend(negotiation_result)) return 0;
-  /* A complete state is what has to refuse to truncate; one written for a resumed run leaves the
-   * picture out and legitimately fits capacities a complete one cannot. */
-  exact_frame_setting="On";
   const size_t initial_capacity=retro_serialize_size();
   stub_state_bytes=initial_capacity+1u;
   const size_t grown_capacity=retro_serialize_size();
@@ -189,12 +162,8 @@ static int growing_transport(int negotiation_result){
   if(!state) return 0;
   int ok=retro_serialize(state,grown_capacity);
   if(ok){
-    /* Sized again, because what is being asserted is that a complete state refuses to truncate
-     * into a capacity that has gone stale. A snapshot the frontend did not size is a different
-     * question - it leaves the completed frame out, so it is far smaller and fits capacities a
-     * complete one cannot, which is the whole point of the scope. */
     uint8_t *stale=(uint8_t *)malloc(initial_capacity);
-    ok=stale && retro_serialize_size()==grown_capacity && !retro_serialize(stale,initial_capacity);
+    ok=stale && !retro_serialize(stale,initial_capacity);
     free(stale);
   }
   free(state);
@@ -214,66 +183,6 @@ static int remembered_peak_covers_first_answer(void){
   int ok=capacity>=stub_hint_bytes;
   stub_state_bytes=197u;
   if(retro_serialize_size()!=capacity) ok=0;
-  retro_unload_game();
-  retro_deinit();
-  return ok;
-}
-
-void retro_run(void);
-
-/* Whether a state carries the picture that was on screen follows the player's setting, and
- * nothing else. Two earlier attempts inferred it from what the frontend did - the cadence of the
- * calls, then whether the size was asked for first - and both were wrong, because rewind_granularity
- * is a preference that says nothing and because RetroArch's rewind path asks for the size before
- * every snapshot exactly as a save does. So this asserts the answer is the same for every snapshot
- * however the frontend behaves: sized or not, at any cadence, in any order. */
-static int snapshot_scope_follows_the_setting(void){
-  stub_state_bytes=4096u;
-  stub_resume_state_bytes=64u;
-  if(!begin_frontend(0)) return 0;
-  const size_t capacity=retro_serialize_size();
-  uint8_t *state=(uint8_t *)malloc(capacity);
-  if(!state) return 0;
-  int ok=1;
-
-  /* Unset, so the shipped answer applies: the picture stays out, and a rewind keeps its length. */
-  exact_frame_setting=NULL;
-  complete_saves=resume_saves=0;
-  if(!retro_serialize(state,capacity) || resume_saves!=1u || complete_saves!=0u){
-    fprintf(stderr,"the shipped setting did not leave the frame out\n");
-    ok=0;
-  }
-
-  /* However the frontend arranges its calls. Sized first or not, and at any granularity, because
-   * neither is a statement about what the snapshot is for. */
-  static const unsigned granularities[]={1u,2u,10u,60u,240u};
-  for(size_t g=0;ok && g<sizeof granularities/sizeof *granularities;g++){
-    complete_saves=resume_saves=0;
-    for(unsigned snapshot=0;ok && snapshot<4u;snapshot++){
-      for(unsigned f=0;f<granularities[g];f++) retro_run();
-      if(snapshot&1u) (void)retro_serialize_size();
-      if(!retro_serialize(state,capacity)) ok=0;
-    }
-    if(ok && (resume_saves!=4u || complete_saves!=0u)){
-      fprintf(stderr,"at a granularity of %u the answer moved (%u of 4 carried the frame)\n",
-              granularities[g],complete_saves);
-      ok=0;
-    }
-  }
-
-  /* Turned on, every snapshot carries it, just as consistently. */
-  exact_frame_setting="On";
-  complete_saves=resume_saves=0;
-  for(unsigned snapshot=0;ok && snapshot<3u;snapshot++){
-    retro_run();
-    if(!retro_serialize(state,capacity)) ok=0;
-  }
-  if(ok && (complete_saves!=3u || resume_saves!=0u)){
-    fprintf(stderr,"with the setting on, %u of 3 snapshots still left the frame out\n",resume_saves);
-    ok=0;
-  }
-
-  free(state);
   retro_unload_game();
   retro_deinit();
   return ok;
@@ -316,7 +225,6 @@ int main(void){
      !stable_transport(1) || !stable_transport(0) || !stable_transport(-1) ||
      !growing_transport(1) || !growing_transport(0) || !growing_transport(-1) ||
      !remembered_peak_covers_first_answer() ||
-     !snapshot_scope_follows_the_setting() ||
      !restart_rereads_settings() || !starting_declares_the_settings()){
     fprintf(stderr,"libretro state transport contract failed\n");
     return 1;

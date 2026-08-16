@@ -2007,26 +2007,15 @@ size_t anygm_state_capacity_hint(const AnygmEngine *engine){
   return engine->state_peak_hint;
 }
 
-static AnygmResult engine_state_save_entry(AnygmEngine *engine,void *data,size_t capacity,
-                                           size_t *written,int omit_frame){
+AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
   size_t local_written=0;
   if(!written) written=&local_written;
   *written=0;
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED || !data)
     return ANYGM_ERROR_INVALID_STATE;
-  if(!engine_state_save(engine,data,capacity,written,omit_frame)) return ANYGM_ERROR_OUT_OF_MEMORY;
-  /* Only a complete state measures the peak the announced capacity has to cover. */
-  if(!omit_frame) engine_state_peak_note(engine,*written);
+  if(!engine_state_save(engine,data,capacity,written)) return ANYGM_ERROR_OUT_OF_MEMORY;
+  engine_state_peak_note(engine,*written);
   return ANYGM_OK;
-}
-
-AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
-  return engine_state_save_entry(engine,data,capacity,written,0);
-}
-
-AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
-                                        size_t *written){
-  return engine_state_save_entry(engine,data,capacity,written,1);
 }
 
 AnygmResult anygm_state_load(AnygmEngine *engine,const void *data,size_t size){
