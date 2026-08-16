@@ -134,6 +134,9 @@ COMPATIBILITY_TESTS := test_compatibility
 CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TESTS) \
 	$(CONTENT_TESTS) $(MEDIA_TESTS) $(AUDIO_TESTS) $(COMPATIBILITY_TESTS))
 INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_host_setting_budget
+ifneq ($(HARDWARE_RENDER),0)
+INTEGRATION_TESTS += $(TEST_DIR)/test_graphics_state
+endif
 CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_libretro_state_transport \
 	$(TEST_DIR)/test_libretro_vfs_transport $(TEST_DIR)/test_libretro_option_defaults \
 	$(TEST_DIR)/test_libretro_keyboard_source $(TEST_DIR)/test_libretro_locale_variables
@@ -301,7 +304,8 @@ $(TEST_DIR)/test_render_plan: tests/unit/video/renderer/test_render_plan.c \
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_gpu: tests/unit/video/gpu/test_gpu.c \
-	tests/support/anygm_test_runner.c $(UNIT_RUNTIME_OBJECTS)
+	tests/support/anygm_test_runner.c tests/support/graphics_driver_fixture.c \
+	$(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
@@ -442,6 +446,7 @@ $(TEST_DIR)/public_header_cpp.o: tests/contract/public_header_cpp.cpp src/api/an
 integration-check: $(INTEGRATION_TESTS)
 	$(TEST_DIR)/test_engine_instances
 	$(TEST_DIR)/test_host_setting_budget
+	$(if $(filter-out 0,$(HARDWARE_RENDER)),$(TEST_DIR)/test_graphics_state,true)
 
 contract-check: $(CONTRACT_TESTS)
 	$(TEST_DIR)/dummy_host
@@ -511,6 +516,12 @@ $(TEST_DIR)/test_engine_instances: tests/integration/test_engine_instances.c \
 
 $(TEST_DIR)/test_host_setting_budget: tests/integration/test_host_setting_budget.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
+
+$(TEST_DIR)/test_graphics_state: tests/integration/test_graphics_state.c \
+	tests/support/synthetic_content.c tests/support/graphics_driver_fixture.c \
+	$(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
