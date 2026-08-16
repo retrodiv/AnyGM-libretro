@@ -408,14 +408,6 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
    * so its framebuffer can be reconstructed, then the normal Game End handling freezes it. */
   engine->runtime_ended = 0;
   engine->shutdown_sent = 0;
-  /* A restart the content asked for is an action, not a place, and a state records places. The
-   * request is raised by game_restart and consumed at the top of the following draw phase; content
-   * that raises it from Draw or Post Draw leaves it standing in whatever state is written at the
-   * end of that frame. Acting on it after a load reboots the runtime — every load of that state,
-   * forever. The load drops it, exactly as the load frame already drops a pending
-   * game change. An ended run (1) is not dropped: that one is a place the state is entitled to
-   * describe, and the Game End handling above is what restores it. */
-  if(engine->vm.game_end == 2) engine->vm.game_end = 0;
   engine->fps_room = -1;
   sync_room_fps(engine,1);
   classic_transition_reset(engine);

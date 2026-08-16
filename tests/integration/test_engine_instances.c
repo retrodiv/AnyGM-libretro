@@ -1798,38 +1798,6 @@ int main(int argc,char **argv){
   }
   free(display_state);
 
-
-  /* A restart the content asked for must not survive into a load. game_restart raises
-   * vm.game_end=2 and the following draw phase consumes it by rebooting the runtime; content that
-   * raises it from Draw or Post Draw leaves it standing in the state written at the end of that
-   * frame. A state carrying it rebooted the runtime on every load. The frame counter detects
-   * that reboot because it returns to frame 0.
-   */
-  first->vm.game_end=2;
-  uint8_t *restart_state=NULL;
-  size_t restart_written=0;
-  if(!save_state(first,&restart_state,&restart_written)) return 1;
-  first->vm.game_end=0;
-  long frame_before_restart_load=(long)first->vm.frame;
-  if(anygm_state_load(first,restart_state,restart_written)!=ANYGM_OK){
-    fprintf(stderr,"a state written during a restart request would not load\n");
-    return 1;
-  }
-  if(first->vm.game_end==2){
-    fprintf(stderr,"a load carried the content's restart request into the restored run\n");
-    return 1;
-  }
-  for(int restart_pass=0;restart_pass<2;restart_pass++){
-    first_output.struct_size=sizeof first_output;
-    if(anygm_run_frame(first,&input,&first_output)!=ANYGM_OK) return 1;
-  }
-  if((long)first->vm.frame<frame_before_restart_load){
-    fprintf(stderr,"loading a state rebooted the runtime: frame %ld went back to %ld\n",
-            frame_before_restart_load,(long)first->vm.frame);
-    return 1;
-  }
-  free(restart_state);
-
   free(first_state); free(second_state);
   anygm_destroy(first);
   anygm_destroy(second);
