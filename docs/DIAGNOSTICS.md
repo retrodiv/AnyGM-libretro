@@ -108,3 +108,24 @@ The variable hook covers interpreter-owned scalar and array stores. Mutations
 performed wholly inside an opaque builtin-owned container are outside the VM
 variable trace and remain the responsibility of that subsystem's focused
 diagnostics.
+
+## Hybrid GPU counters
+
+`GML_HYBRID_GPU_STATS` reports one bounded line when the graphics context is released or content is
+unloaded:
+
+```text
+[hybrid-gpu] frames=N accepted=N replayed=N transport=N draws=N uploads=N bytes=N resets=N
+             destroys=N losses=N program_failures=N fallback_unsupported=N fallback_box=N
+             fallback_context=N fallback_upload=N fallback_overflow=N materializations=N
+```
+
+`accepted` counts passes the device executed and `replayed` counts passes the software executor had
+to take back. `transport` is the subset of accepted passes that merely carried a complete software
+frame to the device, which is not acceleration: a session whose `accepted` equals its `transport`
+never accelerated anything, and a diagnostic that blurred the two would report it as a success.
+`bytes` distinguishes the two just as plainly — an accelerated presentation uploads its small
+source, while transport uploads the whole host-sized frame.
+
+A normal build pays nothing for this when the setting is absent: the counters are increments at
+pass granularity and no line is formatted.

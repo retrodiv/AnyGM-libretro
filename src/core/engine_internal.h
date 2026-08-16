@@ -294,6 +294,9 @@ struct AnygmEngine {
   /* The optional host graphics target. A derived cache with a lifecycle: never serialized, never
    * part of the state configuration fingerprint, and safe to drop and rebuild at any point. */
   GmlGpu *gpu;
+  /* How many times the canonical CPU pixels of a completed frame had to be rebuilt because
+   * something needed them after a pass produced only the host target. */
+  uint32_t frame_materializations;
 };
 
 #define ANYGM_ENGINE_GUARD 0x45474E41u
@@ -342,6 +345,9 @@ int ensure_primary_buffers(AnygmEngine *engine);
 int ensure_scratch_buffer(AnygmEngine *engine,uint32_t **buffer);
 int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
                        unsigned *width,unsigned *height);
+/* The extent the host is presented, which is the completed frame's own extent unless a distinct
+ * host framebuffer wraps it. */
+void engine_host_extent(const AnygmEngine *engine,unsigned *width,unsigned *height);
 /* Describe the final host presentation as a neutral plan against the given target class. */
 int engine_build_host_plan(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t target,
                            unsigned host_width,unsigned host_height,int include_clear);
@@ -362,6 +368,12 @@ int engine_materialize_completed_frame(AnygmEngine *engine);
  * CPU frame exactly as it always has. */
 int engine_present_hardware_frame(AnygmEngine *engine,const uint32_t *pixels,
                                   unsigned width,unsigned height);
+/* Produce the final host presentation directly on the graphics target, from the completed frame
+ * rather than from a host-sized copy of it. Returns zero when there is no target or the pass is not
+ * one the device reproduces exactly, and the caller then takes the ordinary software path. */
+int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned *height);
+/* Report the opt-in hardware counters once, as one bounded content-neutral line. */
+void engine_graphics_report(AnygmEngine *engine);
 /* Release everything created in the host graphics context. Objects are deleted only while that
  * context is still current; otherwise the handles are forgotten. */
 void engine_graphics_release(AnygmEngine *engine,int context_is_current);

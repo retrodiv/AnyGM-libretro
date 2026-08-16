@@ -83,6 +83,14 @@ int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan){
     return 0;
   }
   gpu->counters.passes_accepted++;
+  for(uint32_t index=0;index<plan->operation_count;index++)
+    if(plan->operations[index].opcode==GML_PLAN_OP_PRESENT_CPU_FRAME){
+      /* Counted apart from an accelerated pass on purpose: carrying a complete software frame to
+       * the device is transport, and a diagnostic that blurred the two would report a session
+       * that never accelerated anything as a success. */
+      gpu->counters.cpu_upload_frames++;
+      break;
+    }
   return 1;
 }
 

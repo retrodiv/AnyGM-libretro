@@ -95,7 +95,6 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
   unsigned host_width=engine->host_output_width?engine->host_output_width:engine->output_width;
   unsigned host_height=engine->host_output_height?engine->host_output_height:engine->output_height;
   engine->host_plan_valid=0;
-  engine->host_frame_generation++;
   if(!engine->host_canvas_active){
     if(pixels) *pixels=engine->screen;
     if(width) *width=host_width;
@@ -135,6 +134,12 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
   if(width) *width=host_width;
   if(height) *height=host_height;
   return 1;
+}
+
+void engine_host_extent(const AnygmEngine *engine,unsigned *width,unsigned *height){
+  if(!engine) return;
+  if(width) *width=engine->host_output_width?engine->host_output_width:engine->output_width;
+  if(height) *height=engine->host_output_height?engine->host_output_height:engine->output_height;
 }
 
 int engine_materialize_completed_frame(AnygmEngine *engine){

@@ -1802,6 +1802,7 @@ void anygm_unload(AnygmEngine *engine){
   /* A session that never saved still teaches the cache: measure once at teardown. */
   engine_state_peak_note(engine,engine_state_size(engine));
   engine_state_peak_flush(engine);
+  engine_graphics_report(engine);
   engine_unload(engine);
   engine_override_reset(engine);
   engine->lifecycle=ENGINE_EMPTY;
@@ -1883,12 +1884,24 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   if(result!=ANYGM_OK) return result;
   const uint32_t *presented_pixels=NULL;
   unsigned presented_width=0,presented_height=0;
+  int hardware_frame=0;
   int prof=profile_enabled(engine);
   double present_started=prof?profile_now_ms(engine):0.0;
-  if(!resolve_host_frame(
-       engine,&presented_pixels,&presented_width,&presented_height)){
-    engine_errorf(engine,ANYGM_ERROR_OUT_OF_MEMORY,"Could not allocate the host presentation buffer");
-    return ANYGM_ERROR_OUT_OF_MEMORY;
+  /* The completed frame's pixels are new, whatever carries them from here. */
+  engine->host_frame_generation++;
+  /* The shortest path first: when a graphics target can produce the final presentation from the
+   * completed frame itself, the host-sized copy is never built and never uploaded. */
+  hardware_frame=engine_present_hardware_canvas(engine,&presented_width,&presented_height);
+  if(!hardware_frame){
+    if(!resolve_host_frame(
+         engine,&presented_pixels,&presented_width,&presented_height)){
+      engine_errorf(engine,ANYGM_ERROR_OUT_OF_MEMORY,"Could not allocate the host presentation buffer");
+      return ANYGM_ERROR_OUT_OF_MEMORY;
+    }
+    /* An accepted graphics target still needs a valid picture when the pass was not one the device
+     * reproduces exactly, so the complete software frame is carried there unchanged. */
+    hardware_frame=engine_present_hardware_frame(engine,presented_pixels,
+                                                 presented_width,presented_height);
   }
   if(prof){
     double present_ms=profile_now_ms(engine)-present_started;
@@ -1919,8 +1932,13 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   output->audio_frames=engine->audio_frames;
   output->audio_rate=44100;
   output->flags=engine->frame_flags;
-  if(engine_present_hardware_frame(engine,presented_pixels,presented_width,presented_height))
+  if(hardware_frame){
+    /* The frame is on the host's own target. Its pixel view is withdrawn deliberately: two
+     * authoritative copies of one frame is exactly how a stale buffer gets presented. */
+    output->pixels=NULL;
+    output->pitch=0;
     output->flags|=ANYGM_FRAME_HARDWARE_TARGET;
+  }
   return ANYGM_OK;
 }
 

@@ -9,6 +9,8 @@
  * and the engine is otherwise unchanged — which is what keeps removing the backend a deletion of
  * bounded modules rather than a reversal of the renderer architecture. */
 #include "engine_internal.h"
+#include "anygm_host.h"
+
 
 #if ANYGM_HARDWARE_RENDER
 
@@ -52,8 +54,62 @@ void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_curr
 
 void engine_graphics_release(AnygmEngine *engine,int context_is_current){
   if(!engine || !engine->gpu) return;
+  /* Report before the counters go away with the object. A host releases the context when content
+   * closes, which is before the engine's own teardown. */
+  engine_graphics_report(engine);
   gml_gpu_destroy(engine->gpu,context_is_current);
   engine->gpu=NULL;
+}
+
+/* One bounded line, only when asked for. A normal build pays no frame scan and no formatting for
+ * this; the counters themselves are increments at pass granularity. */
+void engine_graphics_report(AnygmEngine *engine){
+  GmlGpuCounters counters;
+  if(!engine || !engine->gpu) return;
+  if(!anygm_host_development_setting(&engine->host,"GML_HYBRID_GPU_STATS")) return;
+  gml_gpu_counters(engine->gpu,&counters);
+  engine_logf(engine,ANYGM_LOG_INFO,
+    "[hybrid-gpu] frames=%u accepted=%u replayed=%u transport=%u draws=%u uploads=%u "
+    "bytes=%llu resets=%u destroys=%u losses=%u program_failures=%u "
+    "fallback_unsupported=%u fallback_box=%u fallback_context=%u fallback_upload=%u "
+    "fallback_overflow=%u materializations=%u\n",
+    counters.frames_offered,counters.passes_accepted,counters.passes_replayed,
+    counters.cpu_upload_frames,counters.draw_calls,counters.full_uploads,
+    (unsigned long long)counters.uploaded_bytes,
+    counters.context_resets,counters.context_destroys,counters.context_losses,
+    counters.program_failures,
+    counters.fallbacks[GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION],
+    counters.fallbacks[GML_PLAN_FALLBACK_BOX_REDUCTION],
+    counters.fallbacks[GML_PLAN_FALLBACK_CONTEXT_UNAVAILABLE],
+    counters.fallbacks[GML_PLAN_FALLBACK_RESOURCE_UPLOAD_FAILURE],
+    counters.fallbacks[GML_PLAN_FALLBACK_PLAN_OVERFLOW],
+    engine->frame_materializations);
+}
+
+int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned *height){
+  unsigned host_width=0,host_height=0;
+  if(!engine || !engine->gpu || !gml_gpu_context_active(engine->gpu)) return 0;
+  if(!engine->screen || !engine->output_width || !engine->output_height) return 0;
+  engine_host_extent(engine,&host_width,&host_height);
+  if(!host_width || !host_height) return 0;
+  if(!engine->host_canvas_active){
+    /* Nothing wraps the completed frame, so the presentation is the frame itself. That is the
+     * transport shape, and it is handled by the caller's fallback rather than duplicated here. */
+    return 0;
+  }
+  /* The graphics target's contents are undefined at the start of a frame, so this plan always
+   * produces its own margins; the software path may keep them from the previous frame because its
+   * buffer persists. */
+  if(!engine_build_host_plan(engine,&engine->host_plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,
+                             host_width,host_height,1)) return 0;
+  if(!gml_gpu_execute_plan(engine->gpu,&engine->host_plan)) return 0;
+  engine->host_plan_valid=1;
+  /* The host-sized copy was not written this frame, so its margins can no longer be assumed to
+   * survive: a later software frame has to clear them again. */
+  engine->host_clear_valid=0;
+  if(width) *width=host_width;
+  if(height) *height=host_height;
+  return 1;
 }
 
 int engine_present_hardware_frame(AnygmEngine *engine,const uint32_t *pixels,
@@ -107,6 +163,15 @@ void engine_graphics_release(AnygmEngine *engine,int context_is_current){
   (void)engine;
   (void)context_is_current;
 }
+
+int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned *height){
+  (void)engine;
+  (void)width;
+  (void)height;
+  return 0;
+}
+
+void engine_graphics_report(AnygmEngine *engine){ (void)engine; }
 
 int engine_present_hardware_frame(AnygmEngine *engine,const uint32_t *pixels,
                                   unsigned width,unsigned height){
