@@ -11,6 +11,7 @@
 #include "anygm_test_runner.h"
 
 #include "gml_render_internal.h"
+#include "gml_render_plan.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -289,6 +290,239 @@ static int presentation_software_replay_case(void){
   return 1;
 }
 
+/* ---- the host-canvas passes, described and executed as a plan ---- */
+
+static GmlPlanImage plan_image(const uint32_t *pixels,uint32_t width,uint32_t height){
+  GmlPlanImage image;
+  memset(&image,0,sizeof image);
+  image.image_class=GML_PLAN_IMAGE_COMPLETED_FRAME;
+  image.width=width;
+  image.height=height;
+  image.pitch_pixels=width;
+  image.pixel_format=GML_PLAN_PIXEL_XRGB8888;
+  image.opaque=1u;
+  image.cpu_pixels=pixels;
+  return image;
+}
+
+static GmlPlanAxis accumulator_axis(uint32_t source_extent,uint32_t destination_extent){
+  GmlPlanAxis axis;
+  memset(&axis,0,sizeof axis);
+  axis.rule=GML_PLAN_AXIS_ACCUMULATOR;
+  axis.source_extent=source_extent;
+  axis.destination_extent=destination_extent;
+  return axis;
+}
+
+/* The accumulator's closed form. Written independently of the recurrence so that agreement is
+ * evidence rather than a restatement: the recurrence is what the kernel walks, and this is what it
+ * is supposed to compute. */
+static uint32_t accumulator_reference(uint32_t destination,uint32_t source_extent,
+                                      uint32_t destination_extent){
+  return (uint32_t)(((uint64_t)source_extent*(2u*(uint64_t)destination+1u))/
+                    (2u*(uint64_t)destination_extent));
+}
+
+static int host_canvas_magnify_case(void){
+  enum { SOURCE_WIDTH=37,SOURCE_HEIGHT=23,HOST_WIDTH=311,HOST_HEIGHT=197,
+         CANVAS_X=17,CANVAS_Y=11,CANVAS_WIDTH=277,CANVAS_HEIGHT=173 };
+  uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
+  uint32_t target[HOST_WIDTH*HOST_HEIGHT];
+  GmlRenderPlan plan;
+  GmlPlanImage image=plan_image(source,SOURCE_WIDTH,SOURCE_HEIGHT);
+  GmlPlanRect whole={0,0,HOST_WIDTH,HOST_HEIGHT};
+  GmlPlanRect canvas={CANVAS_X,CANVAS_Y,CANVAS_WIDTH,CANVAS_HEIGHT};
+  uint32_t index;
+  fill_asymmetric(source,SOURCE_WIDTH,SOURCE_HEIGHT);
+  memset(target,0xCD,sizeof target);
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,HOST_WIDTH,HOST_HEIGHT);
+  REQUIRE(gml_render_plan_add_clear(&plan,whole,0x000000u),"canvas clear recorded");
+  index=gml_render_plan_add_image(&plan,&image);
+  REQUIRE(index!=GML_PLAN_NO_IMAGE,"canvas source recorded");
+  REQUIRE(gml_render_plan_add_blit_nearest(
+            &plan,index,canvas,
+            accumulator_axis(SOURCE_WIDTH,CANVAS_WIDTH),
+            accumulator_axis(SOURCE_HEIGHT,CANVAS_HEIGHT),0u),
+          "canvas magnification recorded");
+  REQUIRE(gml_render_plan_validate(&plan),"canvas plan validates");
+  REQUIRE(gml_render_plan_execute_software(&plan,target,HOST_WIDTH),"canvas plan executes");
+  for(int y=0;y<HOST_HEIGHT;y++) for(int x=0;x<HOST_WIDTH;x++){
+    uint32_t actual=target[(size_t)y*HOST_WIDTH+x];
+    uint32_t expected=0u;
+    if(x>=CANVAS_X && x<CANVAS_X+CANVAS_WIDTH &&
+       y>=CANVAS_Y && y<CANVAS_Y+CANVAS_HEIGHT){
+      uint32_t sx=accumulator_reference((uint32_t)(x-CANVAS_X),SOURCE_WIDTH,CANVAS_WIDTH);
+      uint32_t sy=accumulator_reference((uint32_t)(y-CANVAS_Y),SOURCE_HEIGHT,CANVAS_HEIGHT);
+      /* The magnification writes no alpha: the completed frame is XRGB. */
+      expected=source[(size_t)sy*SOURCE_WIDTH+sx]&0x00FFFFFFu;
+    }
+    if(actual!=expected){
+      fprintf(stderr,"render plan host canvas mismatch at %d,%d: %08x != %08x\n",
+              x,y,actual,expected);
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static int host_canvas_reduce_case(void){
+  enum { SOURCE_WIDTH=64,SOURCE_HEIGHT=48,HOST_WIDTH=25,HOST_HEIGHT=19 };
+  uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
+  uint32_t target[HOST_WIDTH*HOST_HEIGHT];
+  GmlRenderPlan plan;
+  GmlPlanImage image=plan_image(source,SOURCE_WIDTH,SOURCE_HEIGHT);
+  GmlPlanRect whole={0,0,HOST_WIDTH,HOST_HEIGHT};
+  uint32_t index;
+  fill_asymmetric(source,SOURCE_WIDTH,SOURCE_HEIGHT);
+  memset(target,0xCD,sizeof target);
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,HOST_WIDTH,HOST_HEIGHT);
+  index=gml_render_plan_add_image(&plan,&image);
+  REQUIRE(index!=GML_PLAN_NO_IMAGE,"reduction source recorded");
+  REQUIRE(gml_render_plan_add_blit_box(&plan,index,whole,0u),"reduction recorded");
+  REQUIRE(gml_render_plan_validate(&plan),"reduction plan validates");
+  REQUIRE(gml_render_plan_execute_software(&plan,target,HOST_WIDTH),"reduction executes");
+  for(unsigned y=0;y<HOST_HEIGHT;y++) for(unsigned x=0;x<HOST_WIDTH;x++){
+    unsigned y0=y*SOURCE_HEIGHT/HOST_HEIGHT,y1=(y+1)*SOURCE_HEIGHT/HOST_HEIGHT;
+    unsigned x0=x*SOURCE_WIDTH/HOST_WIDTH,x1=(x+1)*SOURCE_WIDTH/HOST_WIDTH;
+    unsigned red=0,green=0,blue=0,count=0;
+    if(y1<=y0) y1=y0+1;
+    if(x1<=x0) x1=x0+1;
+    for(unsigned sy=y0;sy<y1 && sy<SOURCE_HEIGHT;sy++)
+      for(unsigned sx=x0;sx<x1 && sx<SOURCE_WIDTH;sx++){
+        uint32_t pixel=source[(size_t)sy*SOURCE_WIDTH+sx];
+        red+=(pixel>>16)&0xFFu; green+=(pixel>>8)&0xFFu; blue+=pixel&0xFFu; count++;
+      }
+    if(!count) count=1;
+    {
+      uint32_t expected=((red/count)<<16)|((green/count)<<8)|(blue/count);
+      uint32_t actual=target[(size_t)y*HOST_WIDTH+x];
+      if(actual!=expected){
+        fprintf(stderr,"render plan reduction mismatch at %u,%u: %08x != %08x\n",
+                x,y,actual,expected);
+        return 0;
+      }
+    }
+  }
+  return 1;
+}
+
+static int axis_map_case(void){
+  enum { SOURCE=37,DESTINATION=277 };
+  uint16_t map[DESTINATION];
+  GmlPlanAxis axis=accumulator_axis(SOURCE,DESTINATION);
+  REQUIRE(gml_render_plan_axis_map(&axis,map,DESTINATION),"accumulator map produced");
+  for(uint32_t index=0;index<DESTINATION;index++)
+    REQUIRE(map[index]==accumulator_reference(index,SOURCE,DESTINATION),
+            "accumulator map agrees with its closed form");
+  {
+    /* The pixel-centre rule over the same extents differs from the recurrence only in the
+     * arithmetic used, so its map must agree where the recurrence is defined. That equality is
+     * what lets one integer map serve both software and GPU execution. */
+    GmlPlanAxis centre;
+    uint16_t centre_map[DESTINATION];
+    memset(&centre,0,sizeof centre);
+    centre.rule=GML_PLAN_AXIS_PIXEL_CENTRE;
+    centre.source_extent=SOURCE;
+    centre.destination_extent=DESTINATION;
+    centre.origin=0.0;
+    centre.extent=(double)DESTINATION;
+    REQUIRE(gml_render_plan_axis_map(&centre,centre_map,DESTINATION),"pixel-centre map produced");
+    for(uint32_t index=0;index<DESTINATION;index++)
+      REQUIRE(centre_map[index]==map[index],"pixel-centre map agrees with the recurrence");
+  }
+  {
+    /* Composition: the application surface reaches the host canvas through two nearest mappings,
+     * and one composed map must select the same texel as applying them in sequence. */
+    enum { MIDDLE=91,OUTER=311 };
+    uint16_t inner[MIDDLE],outer[OUTER],composed[OUTER];
+    GmlPlanAxis inner_axis=accumulator_axis(SOURCE,MIDDLE);
+    GmlPlanAxis outer_axis=accumulator_axis(MIDDLE,OUTER);
+    REQUIRE(gml_render_plan_axis_map(&inner_axis,inner,MIDDLE),"inner map produced");
+    REQUIRE(gml_render_plan_axis_map(&outer_axis,outer,OUTER),"outer map produced");
+    REQUIRE(gml_render_plan_compose_maps(outer,inner,composed,OUTER,MIDDLE),"maps composed");
+    for(uint32_t index=0;index<OUTER;index++)
+      REQUIRE(composed[index]==inner[outer[index]],"composed map is the sequence");
+  }
+  return 1;
+}
+
+static int plan_validation_case(void){
+  uint32_t source[8*8];
+  GmlRenderPlan plan;
+  GmlPlanImage image=plan_image(source,8,8);
+  GmlPlanRect whole={0,0,8,8};
+  uint32_t index;
+  memset(source,0,sizeof source);
+
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,8,8);
+  REQUIRE(!gml_render_plan_validate(&plan),"an empty plan does not validate");
+
+  /* A destination that leaves the target. The values a plan carries are derived from content, so
+   * the rectangle arithmetic is checked before anything indexes memory with it. */
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,8,8);
+  index=gml_render_plan_add_image(&plan,&image);
+  {
+    GmlPlanRect outside={4,0,8,8};
+    REQUIRE(gml_render_plan_add_blit_nearest(&plan,index,outside,
+              accumulator_axis(8,8),accumulator_axis(8,8),0u),"out-of-range blit recorded");
+    REQUIRE(!gml_render_plan_validate(&plan),"a destination outside the target is rejected");
+  }
+
+  /* A source whose pixels were never lent cannot be executed or uploaded. */
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,8,8);
+  {
+    GmlPlanImage unlent=image;
+    unlent.cpu_pixels=NULL;
+    index=gml_render_plan_add_image(&plan,&unlent);
+    REQUIRE(index!=GML_PLAN_NO_IMAGE,"unlent source recorded");
+    REQUIRE(gml_render_plan_add_blit_nearest(&plan,index,whole,
+              accumulator_axis(8,8),accumulator_axis(8,8),0u),"unlent blit recorded");
+    REQUIRE(!gml_render_plan_validate(&plan),"a source with no lent pixels is rejected");
+  }
+
+  /* An extent of zero, and one beyond the plan's own bound. */
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,0,8);
+  REQUIRE(!gml_render_plan_validate(&plan),"a zero target extent is rejected");
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,GML_PLAN_MAX_EXTENT+1u,8);
+  REQUIRE(!gml_render_plan_validate(&plan),"an unbounded target extent is rejected");
+
+  /* Recording beyond the operation bound marks the plan rather than growing it. */
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,8,8);
+  {
+    unsigned accepted=0;
+    for(unsigned attempt=0;attempt<(unsigned)GML_PLAN_MAX_OPERATIONS+4u;attempt++)
+      accepted+=gml_render_plan_add_clear(&plan,whole,0u)?1u:0u;
+    REQUIRE(accepted==(unsigned)GML_PLAN_MAX_OPERATIONS,"the operation bound is exact");
+    REQUIRE(!gml_render_plan_validate(&plan),"an overflowed plan does not validate");
+    REQUIRE(plan.fallback_reason==GML_PLAN_FALLBACK_PLAN_OVERFLOW,"overflow names itself");
+  }
+
+  /* The reduction is exact only in software: naming it as a fallback reason is what keeps it from
+   * being quietly executed by an approximate GPU filter. */
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,4,4);
+  {
+    GmlPlanRect small={0,0,4,4};
+    index=gml_render_plan_add_image(&plan,&image);
+    REQUIRE(gml_render_plan_add_blit_box(&plan,index,small,0u),"reduction recorded");
+    REQUIRE(gml_render_plan_validate(&plan),"the reduction plan is well formed");
+    REQUIRE(!gml_render_plan_gpu_eligible(&plan),"the reduction is not GPU eligible");
+    REQUIRE(plan.fallback_reason==GML_PLAN_FALLBACK_BOX_REDUCTION,"the reduction names itself");
+  }
+
+  /* The magnification is. */
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,16,16);
+  {
+    GmlPlanRect large={0,0,16,16};
+    index=gml_render_plan_add_image(&plan,&image);
+    REQUIRE(gml_render_plan_add_clear(&plan,large,0u),"clear recorded");
+    REQUIRE(gml_render_plan_add_blit_nearest(&plan,index,large,
+              accumulator_axis(8,16),accumulator_axis(8,16),0xFFu),"magnification recorded");
+    REQUIRE(gml_render_plan_gpu_eligible(&plan),"the magnification is GPU eligible");
+    REQUIRE(plan.fallback_reason==GML_PLAN_FALLBACK_NONE,"an eligible plan names no fallback");
+  }
+  return 1;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   for(int index=1;index<argc;++index){
@@ -309,9 +543,16 @@ int main(int argc,char **argv){
     {"transformed_quad",presentation_transformed_quad_case},
     {"software_replay",presentation_software_replay_case},
   };
+  static const AnygmTestCase plan_cases[]={
+    {"host_canvas_magnify",host_canvas_magnify_case},
+    {"host_canvas_reduce",host_canvas_reduce_case},
+    {"axis_map",axis_map_case},
+    {"validation",plan_validation_case},
+  };
   const AnygmTestGroup groups[]={
     {"presentation",presentation_cases,
      sizeof presentation_cases/sizeof presentation_cases[0]},
+    {"plan",plan_cases,sizeof plan_cases/sizeof plan_cases[0]},
   };
   AnygmTestResult result;
   anygm_test_run_groups(groups,sizeof groups/sizeof groups[0],filter,&result);

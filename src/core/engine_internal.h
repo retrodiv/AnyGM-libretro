@@ -8,6 +8,7 @@
 #include "anygm_compatibility.h"
 #include "gml_audio.h"
 #include "gml_render.h"
+#include "gml_render_plan.h"
 #include "gml_vm.h"
 #include "gml_win.h"
 
@@ -272,6 +273,17 @@ struct AnygmEngine {
   /* A configured virtual-monitor edge is consumed once by ?monitor override directives. The
    * program is external content data; the core retains only this transient scheduling latch. */
   int monitor_override_pending;
+  /* Where the canonical pixels of the completed frame currently live. Anything that needs those
+   * pixels — serialization, a CPU frame callback, a pixel diagnostic — goes through
+   * engine_materialize_completed_frame first rather than reading a buffer that may be stale. */
+  uint32_t frame_authority;
+  /* The plan the last host presentation was described by, retained so the frame can be rebuilt on
+   * the CPU without running game code. Never serialized. */
+  GmlRenderPlan host_plan;
+  uint32_t host_plan_valid;
+  /* Advances once per completed frame. It is what a GPU mirror of the completed frame is keyed on,
+   * because the buffer address stays the same while its pixels do not. */
+  uint32_t host_frame_generation;
 };
 
 #define ANYGM_ENGINE_GUARD 0x45474E41u
@@ -320,6 +332,21 @@ int ensure_primary_buffers(AnygmEngine *engine);
 int ensure_scratch_buffer(AnygmEngine *engine,uint32_t **buffer);
 int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
                        unsigned *width,unsigned *height);
+/* Describe the final host presentation as a neutral plan against the given target class. */
+int engine_build_host_plan(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t target,
+                           unsigned host_width,unsigned host_height,int include_clear);
+/* Where the canonical completed-frame pixels are. A frame presented only through a host graphics
+ * target is reconstructible from the retained plan; nothing may read stale pixels instead. */
+enum {
+  ENGINE_FRAME_CPU_MATERIALIZED=0,
+  ENGINE_FRAME_GPU_PRESENTED_CPU_RECONSTRUCTIBLE=1,
+  ENGINE_FRAME_NONE=2
+};
+/* Bring the canonical CPU pixels of the completed frame up to date, by replaying the retained plan
+ * through the exact software executor when they are not. Runs no game code, no Draw event, no
+ * audio, and consumes nothing from the random sequence. Returns zero only when the frame genuinely
+ * cannot be produced, and never leaves a caller reading stale pixels. */
+int engine_materialize_completed_frame(AnygmEngine *engine);
 void log_present_pass(AnygmEngine *engine,const char *pass,const uint32_t *pixels,
                       int width,int height);
 void classic_transition_release(AnygmEngine *engine);

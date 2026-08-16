@@ -397,6 +397,7 @@ warnings-check: core
 architecture-check: builtin-registry-check
 	tests/architecture/check_compatibility_boundaries.sh
 	tests/architecture/check_code_map.sh
+	tests/architecture/check_graphics_boundaries.sh
 	python3 tests/architecture/check_content_boundaries.py
 	tests/architecture/check_numeric_conversions.sh
 

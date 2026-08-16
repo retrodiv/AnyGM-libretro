@@ -39,112 +39,63 @@ int ensure_scratch_buffer(AnygmEngine *engine,uint32_t **buffer){
   return *buffer!=NULL;
 }
 
-static void scale_completed_frame(const uint32_t *source,unsigned source_width,
-                                  unsigned source_height,uint32_t *destination,
-                                  unsigned destination_stride,int destination_x,
-                                  int destination_y,unsigned destination_width,
-                                  unsigned destination_height){
-  if(destination_width>=source_width && destination_height>=source_height){
-    /* The column recurrence restarts identically on every row, and a destination row whose source
-     * row repeats the previous one holds exactly the pixels already written. Walk the recurrence
-     * once into a column map, expand one destination row per distinct source row, and copy the
-     * repeats. The accumulators below are the same recurrences the per-pixel form evaluated, so
-     * the result is unchanged. */
-    unsigned column_stack[1024];
-    unsigned *column=destination_width<=(unsigned)(sizeof column_stack/sizeof *column_stack)
-      ?column_stack:(unsigned*)malloc((size_t)destination_width*sizeof(*column));
-    if(column){
-      unsigned source_x=0,x_accumulator=source_width;
-      for(unsigned x=0;x<destination_width;x++){
-        column[x]=source_x;
-        x_accumulator+=source_width*2u;
-        if(x_accumulator>=destination_width*2u){
-          x_accumulator-=destination_width*2u;
-          source_x++;
-        }
-      }
-      unsigned source_y=0,y_accumulator=source_height,previous_source_y=0;
-      const uint32_t *previous_row=NULL;
-      for(unsigned y=0;y<destination_height;y++){
-        uint32_t *destination_row=destination+
-          (size_t)(destination_y+(int)y)*destination_stride+destination_x;
-        if(previous_row && source_y==previous_source_y){
-          memcpy(destination_row,previous_row,
-                 (size_t)destination_width*sizeof(*destination_row));
-        } else {
-          const uint32_t *source_row=source+(size_t)source_y*source_width;
-          unsigned run=0;
-          for(unsigned x=1;x<=destination_width;x++){
-            if(x<destination_width && column[x]==column[run]) continue;
-            uint32_t value=source_row[column[run]]&0xFFFFFFu;
-            for(unsigned i=run;i<x;i++) destination_row[i]=value;
-            run=x;
-          }
-          previous_row=destination_row;
-          previous_source_y=source_y;
-        }
-        y_accumulator+=source_height*2u;
-        if(y_accumulator>=destination_height*2u){
-          y_accumulator-=destination_height*2u;
-          source_y++;
-        }
-      }
-      if(column!=column_stack) free(column);
-      return;
-    }
-    unsigned source_y=0,y_accumulator=source_height;
-    for(unsigned y=0;y<destination_height;y++){
-      const uint32_t *source_row=source+(size_t)source_y*source_width;
-      uint32_t *destination_row=destination+
-        (size_t)(destination_y+(int)y)*destination_stride+destination_x;
-      unsigned source_x=0,x_accumulator=source_width;
-      for(unsigned x=0;x<destination_width;x++){
-        destination_row[x]=source_row[source_x]&0xFFFFFFu;
-        x_accumulator+=source_width*2u;
-        if(x_accumulator>=destination_width*2u){
-          x_accumulator-=destination_width*2u;
-          source_x++;
-        }
-      }
-      y_accumulator+=source_height*2u;
-      if(y_accumulator>=destination_height*2u){
-        y_accumulator-=destination_height*2u;
-        source_y++;
-      }
-    }
-    return;
+/* Describe the final host presentation as a neutral plan. The completed frame is the source, the
+ * host canvas rectangle is the destination, and the margins around it are a clear. Whether the
+ * canvas magnifies or reduces selects the operation, because the reduction is a real box average
+ * and not an information-free nearest scale.
+ *
+ * `include_clear` states whether this plan has to produce the margins itself. A CPU scratch buffer
+ * keeps them from the previous frame until the geometry that defines them changes, which is why
+ * the caller decides rather than the plan. */
+int engine_build_host_plan(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t target,
+                           unsigned host_width,unsigned host_height,int include_clear){
+  if(!engine || !plan) return 0;
+  gml_render_plan_reset(plan,target,host_width,host_height);
+  if(include_clear){
+    GmlPlanRect whole={0,0,host_width,host_height};
+    if(!gml_render_plan_add_clear(plan,whole,0x000000u)) return 0;
   }
-  for(unsigned y=0;y<destination_height;y++){
-    unsigned source_y0=y*source_height/destination_height;
-    unsigned source_y1=(y+1)*source_height/destination_height;
-    if(source_y1<=source_y0) source_y1=source_y0+1;
-    for(unsigned x=0;x<destination_width;x++){
-      unsigned source_x0=x*source_width/destination_width;
-      unsigned source_x1=(x+1)*source_width/destination_width;
-      if(source_x1<=source_x0) source_x1=source_x0+1;
-      unsigned red=0,green=0,blue=0,count=0;
-      for(unsigned source_y=source_y0;
-          source_y<source_y1 && source_y<source_height;source_y++)
-        for(unsigned source_x=source_x0;
-            source_x<source_x1 && source_x<source_width;source_x++){
-          uint32_t pixel=source[(size_t)source_y*source_width+source_x];
-          red+=(pixel>>16)&0xFFu;
-          green+=(pixel>>8)&0xFFu;
-          blue+=pixel&0xFFu;
-          count++;
-        }
-      if(!count) count=1;
-      destination[(size_t)(destination_y+(int)y)*destination_stride+
-                  destination_x+(int)x]=
-        ((red/count)<<16)|((green/count)<<8)|(blue/count);
-    }
-  }
+  GmlPlanImage source;
+  memset(&source,0,sizeof source);
+  source.image_class=GML_PLAN_IMAGE_COMPLETED_FRAME;
+  source.identity=0u;
+  source.content_generation=engine->host_frame_generation;
+  source.pixel_generation=engine->host_frame_generation;
+  source.width=engine->output_width;
+  source.height=engine->output_height;
+  source.pitch_pixels=engine->output_width;
+  source.pixel_format=GML_PLAN_PIXEL_XRGB8888;
+  source.opaque=1u;
+  source.cpu_pixels=engine->screen;
+  uint32_t image=gml_render_plan_add_image(plan,&source);
+  if(image==GML_PLAN_NO_IMAGE) return 0;
+  GmlPlanRect canvas;
+  canvas.x=engine->host_canvas_x;
+  canvas.y=engine->host_canvas_y;
+  canvas.width=(uint32_t)engine->host_canvas_width;
+  canvas.height=(uint32_t)engine->host_canvas_height;
+  if(canvas.width>=source.width && canvas.height>=source.height){
+    GmlPlanAxis axis_x,axis_y;
+    memset(&axis_x,0,sizeof axis_x);
+    memset(&axis_y,0,sizeof axis_y);
+    axis_x.rule=GML_PLAN_AXIS_ACCUMULATOR;
+    axis_x.source_extent=source.width;
+    axis_x.destination_extent=canvas.width;
+    axis_y.rule=GML_PLAN_AXIS_ACCUMULATOR;
+    axis_y.source_extent=source.height;
+    axis_y.destination_extent=canvas.height;
+    /* The magnification writes no alpha: the frame is XRGB and the top byte is not coverage. */
+    if(!gml_render_plan_add_blit_nearest(plan,image,canvas,axis_x,axis_y,0u)) return 0;
+  } else if(!gml_render_plan_add_blit_box(plan,image,canvas,0u)) return 0;
+  return gml_render_plan_validate(plan);
 }
 
 int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
                        unsigned *width,unsigned *height){
   unsigned host_width=engine->host_output_width?engine->host_output_width:engine->output_width;
   unsigned host_height=engine->host_output_height?engine->host_output_height:engine->output_height;
+  engine->host_plan_valid=0;
+  engine->host_frame_generation++;
   if(!engine->host_canvas_active){
     if(pixels) *pixels=engine->screen;
     if(width) *width=host_width;
@@ -156,14 +107,15 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
    * rectangle each frame, so the margins around it only need clearing when the geometry that
    * defines them changes. The buffer is read with host_width as its stride, so a changed host
    * extent reinterprets every row and has to clear as well. */
-  if(!engine->host_clear_valid ||
+  int clear_required=
+     !engine->host_clear_valid ||
      engine->host_clear_host_width!=host_width ||
      engine->host_clear_host_height!=host_height ||
      engine->host_clear_canvas_x!=engine->host_canvas_x ||
      engine->host_clear_canvas_y!=engine->host_canvas_y ||
      engine->host_clear_canvas_width!=engine->host_canvas_width ||
-     engine->host_clear_canvas_height!=engine->host_canvas_height){
-    memset(engine->host_screen,0,(size_t)host_width*host_height*sizeof(*engine->host_screen));
+     engine->host_clear_canvas_height!=engine->host_canvas_height;
+  if(clear_required){
     engine->host_clear_valid=1;
     engine->host_clear_host_width=host_width;
     engine->host_clear_host_height=host_height;
@@ -172,15 +124,24 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
     engine->host_clear_canvas_width=engine->host_canvas_width;
     engine->host_clear_canvas_height=engine->host_canvas_height;
   }
-  scale_completed_frame(
-    engine->screen,engine->output_width,engine->output_height,
-    engine->host_screen,host_width,
-    engine->host_canvas_x,engine->host_canvas_y,
-    (unsigned)engine->host_canvas_width,(unsigned)engine->host_canvas_height);
+  if(!engine_build_host_plan(engine,&engine->host_plan,GML_PLAN_TARGET_CPU_FRAME,
+                             host_width,host_height,clear_required) ||
+     !gml_render_plan_execute_software(&engine->host_plan,engine->host_screen,host_width)){
+    engine->host_clear_valid=0;
+    return 0;
+  }
+  engine->host_plan_valid=1;
   if(pixels) *pixels=engine->host_screen;
   if(width) *width=host_width;
   if(height) *height=host_height;
   return 1;
+}
+
+int engine_materialize_completed_frame(AnygmEngine *engine){
+  if(!engine) return 0;
+  if(engine->frame_authority==ENGINE_FRAME_CPU_MATERIALIZED) return 1;
+  if(engine->frame_authority==ENGINE_FRAME_NONE) return 0;
+  return 0;
 }
 
 

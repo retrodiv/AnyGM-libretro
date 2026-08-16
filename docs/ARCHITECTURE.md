@@ -425,6 +425,14 @@ or cross-unit calls. Its size is therefore an intentional exception to the
 soft source-size trigger, supported by the frame-boundary allocation and
 performance characterization; new non-raster policy does not belong there.
 
+The coarse presentation passes are additionally described by a framework-neutral render plan.
+`gml_render_plan.c` owns the plan's lifetime, bounded recording, validation, the two characterized
+axis rules and their composition, and the eligibility facts that decide whether a pass may leave the
+software executor. `gml_render_plan_software.c` is that executor and remains the canonical
+implementation: an alternative execution is accepted only when it reproduces these pixels exactly,
+and any pass that cannot be is replayed here in full. The plan carries value records only — no
+graphics API type, no host callback, no function pointer — and is never serialized under any schema.
+
 `gml_render_surfaces.c` owns surface lookup and coverage metadata, allocation,
 copy, resize, free, target-stack operations, and the complete normal,
 interpolated, part, stretched, and rotated surface composition kernels. The
