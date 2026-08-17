@@ -2444,6 +2444,180 @@ static void nearest_solid_mask_band_rows(
  * Handles negative xscale/yscale (horizontal/vertical mirror): the caller's (dx,dy) is the anchor
  * edge for the scale sign, and we walk the destination outward (right/down for +, left/up for −)
  * while sampling the source left-to-right/top-to-bottom. rotation not yet handled (rot ignored). */
+/* One band of blit_one's general point-sampled loop. Every row derives its source line and its
+ * destination row from the row index alone and writes only that row, so bands are independent; the
+ * per-column source table, the wave map and the shader state are all built before the bands run and
+ * only read inside them. The prior pixel loop remains whole inside this callback. */
+typedef struct GmlBlitOneBand {
+  GmlRender *r;
+  GmlAtlas *a;
+  GmlTpag *t;
+  const int *lxtab;
+  const int *wave_map;
+  const uint32_t *solid_blur_alpha;
+  const struct GmlShaderPal *solid_blur;
+  int fastcase;
+  int flipx,flipy;
+  int x0,y0;
+  int xx0,xx1,yy0;
+  int sx_max;
+  int first_generation_edge_phase_x,first_generation_edge_phase_y;
+  int reciprocal_x,reciprocal_y;
+  double sample_x,sample_y;
+  double axs,ays;
+  double alpha;
+  int bR,bG,bB;
+} GmlBlitOneBand;
+
+static void blit_one_band_rows(void *context,int row_start,int row_end,int slot){
+  GmlBlitOneBand *b=(GmlBlitOneBand*)context;
+  GmlRender *r=b->r;
+  GmlAtlas *a=b->a;
+  GmlTpag *t=b->t;
+  /* Locals, not b-> reads, inside the pixel loops: a framebuffer store may legally alias the
+   * context's integer fields, and a compiler that cannot prove otherwise reloads them per pixel.
+   * The neighbouring band callbacks hoist for the same reason. */
+  const int *lxtab=b->lxtab;
+  const int *wave_map=b->wave_map;
+  const uint32_t *solid_blur_alpha=b->solid_blur_alpha;
+  const struct GmlShaderPal *solid_blur=b->solid_blur;
+  const int fastcase=b->fastcase;
+  const int flipx=b->flipx,flipy=b->flipy;
+  const int x0=b->x0,y0=b->y0;
+  const int xx0=b->xx0,xx1=b->xx1,yy0=b->yy0;
+  const int sx_max=b->sx_max;
+  const int first_generation_edge_phase_x=b->first_generation_edge_phase_x;
+  const int first_generation_edge_phase_y=b->first_generation_edge_phase_y;
+  const int reciprocal_x=b->reciprocal_x,reciprocal_y=b->reciprocal_y;
+  const double sample_x=b->sample_x,sample_y=b->sample_y;
+  const double axs=b->axs,ays=b->ays;
+  const double alpha=b->alpha;
+  const int bR=b->bR,bG=b->bG,bB=b->bB;
+  (void)slot;
+  for(int row=row_start; row<row_end; row++){
+    int yy=yy0+row;
+    int py = flipy ? (y0-yy) : (y0+yy);
+    int ly=(int)((yy+sample_y)/ays);
+    int contiguous_y=fastcase && first_generation_edge_phase_y && ly==t->sh &&
+                     t->sy+ly>=0 && t->sy+ly<a->h;
+    if((ly<0||ly>=t->sh) && !contiguous_y) continue;
+    int sy=t->sy+ly;
+    /* Clamp the source row to atlas bounds rather than skipping the draw. */
+    if(a->h>0){ if(sy<0) sy=0; else if(sy>=a->h) sy=a->h-1; }
+    if(fastcase){
+      const uint8_t *srow=a->px + ((size_t)sy*a->w + t->sx)*4;
+      uint32_t *drow=&r->fb[(size_t)py*r->fbw];
+      for(int xx=xx0; xx<xx1; xx++){
+        int lx=lxtab[xx-xx0];
+        int contiguous_x=first_generation_edge_phase_x && lx==t->sw &&
+                         t->sx+lx>=0 && t->sx+lx<a->w;
+        if((lx<0||lx>=t->sw) && !contiguous_x) continue;
+        const uint8_t *sp=srow + (size_t)lx*4;
+        int aa=sp[3]; if(!aa) continue;
+        int px = flipx ? (x0-xx) : (x0+xx);
+        uint32_t *dp=&drow[px];
+        if(aa==255){ *dp=0xFF000000u|((uint32_t)sp[0]<<16)|((uint32_t)sp[1]<<8)|sp[2]; continue; }
+        double sa=(aa/255.0)*alpha;
+        uint32_t destination=*dp;
+        int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
+        int family=gml_blend_family(r);
+        int or_,og,ob;
+        if(family==GML_BLEND_CLASSIC){
+          or_=(int)(sp[0]*sa+0.5)+(int)(dr*(1-sa)+0.5);
+          og=(int)(sp[1]*sa+0.5)+(int)(dg*(1-sa)+0.5);
+          ob=(int)(sp[2]*sa+0.5)+(int)(db*(1-sa)+0.5);
+        } else {
+          double bias=family==GML_BLEND_STUDIO2?0.5:0.0;
+          or_=(int)(sp[0]*sa+dr*(1-sa)+bias);
+          og=(int)(sp[1]*sa+dg*(1-sa)+bias);
+          ob=(int)(sp[2]*sa+db*(1-sa)+bias);
+        }
+        if(or_>255) or_=255; else if(or_<0) or_=0;
+        if(og>255) og=255; else if(og<0) og=0;
+        if(ob>255) ob=255; else if(ob<0) ob=0;
+        unsigned source_alpha=(unsigned)lround((double)aa*alpha);
+        *dp=gml_sprite_target_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
+      }
+      continue;
+    }
+    for(int xx=xx0; xx<xx1; xx++){
+      int px = flipx ? (x0-xx) : (x0+xx);
+      int lx=lxtab? lxtab[xx-xx0] : (int)((xx+sample_x)/axs);
+      if(lx<0||lx>=t->sw) continue;
+      int sx=t->sx+lx;
+      if(sx<0) sx=0; else if(sx>sx_max) sx=sx_max;      /* clamp, never sample past the texture */
+      const uint8_t *sp=wave_map
+        ? a->px+(size_t)wave_map[(size_t)ly*t->sw+lx]*4u
+        : a->px+((size_t)sy*a->w+sx)*4u;
+      if(shader_discards_alpha(r,sp[3]) &&
+         !(r->blendmode==2 && !shader_alpha_test_active(r))) continue;
+      uint32_t sampled=((uint32_t)sp[3]<<24)|((uint32_t)sp[0]<<16)|
+                       ((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
+      if(solid_blur_alpha)
+        sampled=(solid_blur_alpha[(size_t)ly*t->sw+lx]&0xFF000000u)|
+                solid_blur->solid_blur_alpha_rgb;
+      else if(mapped_texture_active(r))
+        sampled=mapped_texture_pixel(r,sampled);
+      int sample_a=(int)(sampled>>24);
+      double sa=(sample_a/255.0)*alpha;
+      if(sa<=0 && r->blendmode!=2) continue;
+      uint32_t *dp=&r->fb[(size_t)py*r->fbw+px];
+      int family=gml_blend_family(r);
+      int tint_bias=family==GML_BLEND_STUDIO2?127:0;
+      /* A solid-blur fragment's colour is its uniform alone: v_vColour never reaches it. */
+      int sr=solid_blur_alpha?(int)((sampled>>16)&255)
+            :(int)((((sampled>>16)&255)*bR+tint_bias)/255);
+      int sg=solid_blur_alpha?(int)((sampled>>8)&255)
+            :(int)((((sampled>>8)&255)*bG+tint_bias)/255);
+      int sb=solid_blur_alpha?(int)(sampled&255)
+            :(int)(((sampled&255)*bB+tint_bias)/255);
+      if(!r->alphablend){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
+      uint32_t destination=*dp;
+      int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
+      if(r->blendmode==1){   /* bm_add: dst += src*srcAlpha (glow) */
+        int ar=dr+(int)(sr*sa); if(ar>255)ar=255; int ag=dg+(int)(sg*sa); if(ag>255)ag=255;
+        int ab=db+(int)(sb*sa); if(ab>255)ab=255; *dp=0xFF000000u|(ar<<16)|(ag<<8)|ab; continue; }
+      if(r->blendmode==2){   /* (bm_zero,bm_inv_src_colour), including inverse source alpha. */
+        unsigned ar=gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
+        unsigned ag=gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
+        unsigned ab=gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
+        uint32_t coverage=gml_sprite_target_inverse_alpha(r,*dp,(double)sample_a*alpha);
+        *dp=coverage|(ar<<16)|(ag<<8)|ab; continue; }
+      if(r->blendmode==4){
+        unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
+        *dp=color_write_merge(r,*dp,
+          blend_max_preset_pixel(r,*dp,sr,sg,sb,source_alpha));
+        continue;
+      }
+      /* clamp each channel to [0,255]: a blend>255 or a (legitimately clamped) alpha can still push
+       * sr*sa over 255, and packing an out-of-range byte would corrupt the neighbouring channel. */
+      int or_,og,ob;
+      if(family==GML_BLEND_CLASSIC){
+        if(!reciprocal_x || !reciprocal_y){
+          or_=(int)(sr*sa+0.5)+(int)(dr*(1-sa)+0.5);
+          og=(int)(sg*sa+0.5)+(int)(dg*(1-sa)+0.5);
+          ob=(int)(sb*sa+0.5)+(int)(db*(1-sa)+0.5);
+        } else {
+          or_=(int)(sr*sa+dr*(1-sa)+0.5);
+          og=(int)(sg*sa+dg*(1-sa)+0.5);
+          ob=(int)(sb*sa+db*(1-sa)+0.5);
+        }
+      } else {
+        double bias=(family==GML_BLEND_STUDIO2 ||
+                     gml_render_target_is_first_generation_application_surface(r))?0.5:0.0;
+        or_=(int)(sr*sa+dr*(1-sa)+bias);
+        og=(int)(sg*sa+dg*(1-sa)+bias);
+        ob=(int)(sb*sa+db*(1-sa)+bias);
+      }
+      if(or_>255) or_=255; else if(or_<0) or_=0;
+      if(og>255) og=255; else if(og<0) og=0;
+      if(ob>255) ob=255; else if(ob<0) ob=0;
+      unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
+      *dp=gml_sprite_target_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
+    }
+  }
+}
+
 static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
                      uint32_t blend, double alpha){
   if(!r || !t || !r->fb || r->fbw<=0 || r->fbh<=0) return;
@@ -2817,126 +2991,20 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
         "[drawrect]   branch fastcase=%d lxtab=%d mapped_shader=%d blend_white=%d alpha=%.3f bm=%d ab=%d target_sp=%d\n",
         fastcase,lxtab?1:0,mapped_shader?1:0,((blend&0xFFFFFF)==0xFFFFFF)?1:0,alpha,r->blendmode,r->alphablend,r->target_sp);
   }
-  for(int yy=yy0; yy<yy1; yy++){
-    int py = flipy ? (y0-yy) : (y0+yy);
-    int ly=(int)((yy+sample_y)/ays);
-    int contiguous_y=fastcase && first_generation_edge_phase_y && ly==t->sh &&
-                     t->sy+ly>=0 && t->sy+ly<a->h;
-    if((ly<0||ly>=t->sh) && !contiguous_y) continue;
-    int sy=t->sy+ly;
-    /* Clamp the sampled row and generic-path column while retaining the draw. */
-    if(a->h>0){ if(sy<0) sy=0; else if(sy>=a->h) sy=a->h-1; }
-    const int sx_max = a->w>0 ? a->w-1 : 0;
-    if(fastcase){
-      const uint8_t *srow=a->px + ((size_t)sy*a->w + t->sx)*4;
-      uint32_t *drow=&r->fb[(size_t)py*r->fbw];
-      for(int xx=xx0; xx<xx1; xx++){
-        int lx=lxtab[xx-xx0];
-        int contiguous_x=first_generation_edge_phase_x && lx==t->sw &&
-                         t->sx+lx>=0 && t->sx+lx<a->w;
-        if((lx<0||lx>=t->sw) && !contiguous_x) continue;
-        const uint8_t *sp=srow + (size_t)lx*4;
-        int aa=sp[3]; if(!aa) continue;
-        int px = flipx ? (x0-xx) : (x0+xx);
-        uint32_t *dp=&drow[px];
-        if(aa==255){ *dp=0xFF000000u|((uint32_t)sp[0]<<16)|((uint32_t)sp[1]<<8)|sp[2]; continue; }
-        double sa=(aa/255.0)*alpha;
-        uint32_t destination=*dp;
-        int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
-        int family=gml_blend_family(r);
-        int or_,og,ob;
-        if(family==GML_BLEND_CLASSIC){
-          or_=(int)(sp[0]*sa+0.5)+(int)(dr*(1-sa)+0.5);
-          og=(int)(sp[1]*sa+0.5)+(int)(dg*(1-sa)+0.5);
-          ob=(int)(sp[2]*sa+0.5)+(int)(db*(1-sa)+0.5);
-        } else {
-          double bias=family==GML_BLEND_STUDIO2?0.5:0.0;
-          or_=(int)(sp[0]*sa+dr*(1-sa)+bias);
-          og=(int)(sp[1]*sa+dg*(1-sa)+bias);
-          ob=(int)(sp[2]*sa+db*(1-sa)+bias);
-        }
-        if(or_>255) or_=255; else if(or_<0) or_=0;
-        if(og>255) og=255; else if(og<0) og=0;
-        if(ob>255) ob=255; else if(ob<0) ob=0;
-        unsigned source_alpha=(unsigned)lround((double)aa*alpha);
-        *dp=gml_sprite_target_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
-      }
-      continue;
-    }
-    for(int xx=xx0; xx<xx1; xx++){
-      int px = flipx ? (x0-xx) : (x0+xx);
-      int lx=lxtab? lxtab[xx-xx0] : (int)((xx+sample_x)/axs); if(lx<0||lx>=t->sw) continue;
-      int sx=t->sx+lx;
-      if(sx<0) sx=0; else if(sx>sx_max) sx=sx_max;      /* clamp to atlas width */
-      const uint8_t *sp=wave_map
-        ? a->px+(size_t)wave_map[(size_t)ly*t->sw+lx]*4u
-        : a->px+((size_t)sy*a->w+sx)*4u;
-      if(shader_discards_alpha(r,sp[3]) &&
-         !(r->blendmode==2 && !shader_alpha_test_active(r))) continue;
-      uint32_t sampled=((uint32_t)sp[3]<<24)|((uint32_t)sp[0]<<16)|
-                       ((uint32_t)sp[1]<<8)|(uint32_t)sp[2];
-      if(solid_blur_alpha)
-        sampled=(solid_blur_alpha[(size_t)ly*t->sw+lx]&0xFF000000u)|
-                solid_blur->solid_blur_alpha_rgb;
-      else if(mapped_texture_active(r))
-        sampled=mapped_texture_pixel(r,sampled);
-      int sample_a=(int)(sampled>>24);
-      double sa=(sample_a/255.0)*alpha;
-      if(sa<=0 && r->blendmode!=2) continue;
-      uint32_t *dp=&r->fb[(size_t)py*r->fbw+px];
-      int family=gml_blend_family(r);
-      int tint_bias=family==GML_BLEND_STUDIO2?127:0;
-      /* A solid-blur fragment's colour is its uniform alone: v_vColour never reaches it. */
-      int sr=solid_blur_alpha?(int)((sampled>>16)&255)
-            :(int)((((sampled>>16)&255)*bR+tint_bias)/255);
-      int sg=solid_blur_alpha?(int)((sampled>>8)&255)
-            :(int)((((sampled>>8)&255)*bG+tint_bias)/255);
-      int sb=solid_blur_alpha?(int)(sampled&255)
-            :(int)(((sampled&255)*bB+tint_bias)/255);
-      if(!r->alphablend){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
-      uint32_t destination=*dp;
-      int dr=(destination>>16)&0xFF, dg=(destination>>8)&0xFF, db=destination&0xFF;
-      if(r->blendmode==1){   /* bm_add: dst += src*srcAlpha (glow) */
-        int ar=dr+(int)(sr*sa); if(ar>255)ar=255; int ag=dg+(int)(sg*sa); if(ag>255)ag=255;
-        int ab=db+(int)(sb*sa); if(ab>255)ab=255; *dp=0xFF000000u|(ar<<16)|(ag<<8)|ab; continue; }
-      if(r->blendmode==2){   /* (bm_zero,bm_inv_src_colour), including inverse source alpha. */
-        unsigned ar=gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
-        unsigned ag=gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
-        unsigned ab=gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
-        uint32_t coverage=gml_sprite_target_inverse_alpha(r,*dp,(double)sample_a*alpha);
-        *dp=coverage|(ar<<16)|(ag<<8)|ab; continue; }
-      if(r->blendmode==4){
-        unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
-        *dp=color_write_merge(r,*dp,
-          blend_max_preset_pixel(r,*dp,sr,sg,sb,source_alpha));
-        continue;
-      }
-      /* clamp each channel to [0,255]: a blend>255 or a (legitimately clamped) alpha can still push
-       * sr*sa over 255, and packing an out-of-range byte would corrupt the neighbouring channel. */
-      int or_,og,ob;
-      if(family==GML_BLEND_CLASSIC){
-        if(!reciprocal_x || !reciprocal_y){
-          or_=(int)(sr*sa+0.5)+(int)(dr*(1-sa)+0.5);
-          og=(int)(sg*sa+0.5)+(int)(dg*(1-sa)+0.5);
-          ob=(int)(sb*sa+0.5)+(int)(db*(1-sa)+0.5);
-        } else {
-          or_=(int)(sr*sa+dr*(1-sa)+0.5);
-          og=(int)(sg*sa+dg*(1-sa)+0.5);
-          ob=(int)(sb*sa+db*(1-sa)+0.5);
-        }
-      } else {
-        double bias=(family==GML_BLEND_STUDIO2 ||
-                     gml_render_target_is_first_generation_application_surface(r))?0.5:0.0;
-        or_=(int)(sr*sa+dr*(1-sa)+bias);
-        og=(int)(sg*sa+dg*(1-sa)+bias);
-        ob=(int)(sb*sa+db*(1-sa)+bias);
-      }
-      if(or_>255) or_=255; else if(or_<0) or_=0;
-      if(og>255) og=255; else if(og<0) og=0;
-      if(ob>255) ob=255; else if(ob<0) ob=0;
-      unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
-      *dp=gml_sprite_target_alpha(r,destination,source_alpha)|(or_<<16)|(og<<8)|ob;
-    }
+  {
+    /* The band body is the loop this function always ran; see blit_one_band_rows. The clamp
+     * comment that lived on the loop's source-row computation moved with it. */
+    GmlBlitOneBand band={
+      r,a,t,lxtab,wave_map,
+      solid_blur_alpha,solid_blur,
+      fastcase,flipx,flipy,x0,y0,xx0,xx1,yy0,
+      a->w>0?a->w-1:0,
+      first_generation_edge_phase_x,first_generation_edge_phase_y,
+      reciprocal_x,reciprocal_y,
+      sample_x,sample_y,axs,ays,alpha,bR,bG,bB
+    };
+    if(vispix>=262144ull) gml_run_row_bands(r,yy1-yy0,blit_one_band_rows,&band);
+    else blit_one_band_rows(&band,0,yy1-yy0,0);
   }
   free(wave_map);
   if(lxtab && lxtab!=lxbuf) free(lxtab);
