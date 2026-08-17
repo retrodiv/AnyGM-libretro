@@ -133,6 +133,23 @@ int gml_ref_kind(const GmlWin *w, uint32_t addr){
   int index=ref_index(w,addr);
   return index>=0 && w->ref_kind ? w->ref_kind[index] : GML_REF_NONE;
 }
+int gml_win_references_pad_input(const GmlWin *w){
+  if(!w) return 0;
+  if(!w->pad_reference_scan){
+    /* Every call site lands in the function-reference table, in the datafile and in the
+     * classic-compiled package alike, so one scan answers for every generation. */
+    int8_t found=1;
+    if(w->ref_name && w->ref_kind)
+      for(int i=0;i<w->n_refs;i++)
+        if(w->ref_kind[i]==GML_REF_FUNCTION && w->ref_name[i] &&
+           (!strncmp(w->ref_name[i],"joystick_",9) || !strncmp(w->ref_name[i],"gamepad_",8))){
+          found=2;
+          break;
+        }
+    ((GmlWin *)w)->pad_reference_scan=found;
+  }
+  return w->pad_reference_scan==2;
+}
 
 
 /* O(1) content lookup over the STRG table (lazy open-addressed index). Returns the interned

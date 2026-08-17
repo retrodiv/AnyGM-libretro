@@ -54,13 +54,20 @@ static int vk_to_pad(AnygmEngine *engine,int vk){
     default: return -1;
   }
 }
+/* The gamepad option selects ownership. Off makes RetroPad a keyboard compatibility layer; On
+ * exposes an independent pad and leaves keyboard state to the frontend's key source — but only
+ * for content that can hear a pad at all. Content that never references a joystick_* or
+ * gamepad_* builtin has no other way to receive input from a pad-only frontend, so for it the
+ * RetroPad remains the keyboard whatever the option reports. */
+static int engine_pad_reserved_for_pad_api(AnygmEngine *engine){
+  return core_opt_gamepad_connected(engine) &&
+         gml_win_references_pad_input(&engine->win);
+}
 static int engine_input_key(void *userdata,int vk, int edge){
   AnygmEngine *engine=userdata;
   if(vk == 1 || vk == 0){   /* vk_anykey (1) / vk_nokey (0): aggregate over every input */
     int any = 0, anyp = 0;
-    /* The gamepad option selects ownership. Off makes RetroPad a keyboard compatibility layer;
-     * On exposes an independent pad and leaves keyboard state to the frontend's key source. */
-    if(!core_opt_gamepad_connected(engine)){
+    if(!engine_pad_reserved_for_pad_api(engine)){
       for(int i = 0; i < NPAD; i++){
         any |= engine->pad_current[i];
         anyp |= engine->pad_previous[i];
@@ -87,7 +94,7 @@ static int engine_input_key(void *userdata,int vk, int edge){
   }
   cur |= event_key_state_for_vk(engine,vk, 0);
   prev |= event_key_state_for_vk(engine,vk, 1);
-  if(!core_opt_gamepad_connected(engine)){
+  if(!engine_pad_reserved_for_pad_api(engine)){
     int b = vk_to_pad(engine,vk);
     if(b >= 0){ cur |= engine->pad_current[b]; prev |= engine->pad_previous[b]; }
   }

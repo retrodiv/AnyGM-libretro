@@ -1385,8 +1385,29 @@ static int input_binding_ownership_policy(void){
   int ok=keyboard_only.vm.input.key(keyboard_only.vm.input.userdata,'Z',0) &&
          keyboard_only.vm.input.key(keyboard_only.vm.input.userdata,1,0);
 
+  /* Content that never references a pad builtin cannot hear the pad any other way: the RetroPad
+   * stays a keyboard even while the frontend reports a pad connected. */
+  AnygmEngine keyboard_only_pad_connected={0};
+  keyboard_only_pad_connected.win.classic_version=800;
+  keyboard_only_pad_connected.config.gamepad_connected=1;
+  engine_input_bind(&keyboard_only_pad_connected);
+  keyboard_only_pad_connected.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  ok=ok &&
+     keyboard_only_pad_connected.vm.input.key(
+         keyboard_only_pad_connected.vm.input.userdata,'Z',0) &&
+     keyboard_only_pad_connected.vm.input.key(
+         keyboard_only_pad_connected.vm.input.userdata,1,0);
+
+  /* Content that reads the pad owns it while one is connected: no phantom keys. */
+  static uint32_t pad_ref_addr=0;
+  static const char *pad_ref_name="joystick_check_button";
+  static uint8_t pad_ref_kind=GML_REF_FUNCTION;
   AnygmEngine gamepad_mode={0};
   gamepad_mode.win.classic_version=800;
+  gamepad_mode.win.ref_addr=&pad_ref_addr;
+  gamepad_mode.win.ref_name=&pad_ref_name;
+  gamepad_mode.win.ref_kind=&pad_ref_kind;
+  gamepad_mode.win.n_refs=1;
   gamepad_mode.config.gamepad_connected=1;
   engine_input_bind(&gamepad_mode);
   gamepad_mode.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
@@ -1399,7 +1420,7 @@ static int input_binding_ownership_policy(void){
   ok=ok && gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,'Z',0) &&
      gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,1,0);
   if(!ok)
-    fputs("RetroPad input was not isolated from native keyboard input\n",stderr);
+    fputs("RetroPad ownership did not follow what the content can hear\n",stderr);
   return ok;
 }
 

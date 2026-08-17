@@ -148,6 +148,7 @@ typedef struct GmlWin {
   int has_room_layers;               /* at least one structurally valid GMS2 ROOM layer list */
   const struct AnygmCompatibilityProfile *compatibility; /* immutable runtime policy, engine-owned */
   const struct AnygmHostServices *host; /* borrowed immutable service table, engine-owned */
+  int8_t pad_reference_scan;         /* lazy: 0 unscanned, 1 no pad builtin referenced, 2 referenced */
 } GmlWin;
 
 int          gml_win_load_host(GmlWin *w,const struct AnygmHostServices *host,const char *path);
@@ -166,6 +167,10 @@ const char  *gml_win_intern_lookup(GmlWin *w, const char *s);   /* O(1) STRG con
 int          gml_win_asset_index_by_name(GmlWin *w, const char *chunk, int versioned, const char *name);
 const char  *gml_ref_name(const GmlWin *w, uint32_t addr);
 int          gml_ref_kind(const GmlWin *w, uint32_t addr);
+/* Whether any code in the package references a builtin that reads a pad (joystick_* or
+ * gamepad_*). Content that never names one has no way to hear a pad, whatever the frontend
+ * reports, and input ownership policy branches on that. */
+int          gml_win_references_pad_input(const GmlWin *w);
 int          gml_room_count(const GmlWin *w);
 int          gml_room_get(const GmlWin *w, int room_index, GmlRoom *out);
 uint32_t     gml_room_layer_list(const GmlWin *w, int room_index, uint32_t *out_count);
