@@ -1731,8 +1731,8 @@ int main(int argc,char **argv){
   /* The synthetic-state checksum tracks the complete serialized bytes,
    * including the resolved content and compatibility identifiers. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
-  if(deterministic_size!=19654 ||
-     deterministic_hash!=UINT64_C(0x0d9230e3f0fc0c15)){
+  if(deterministic_size!=19870 ||
+     deterministic_hash!=UINT64_C(0x6d0a2dfb73bd6598)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;
@@ -1804,6 +1804,79 @@ int main(int argc,char **argv){
     return 1;
   }
   free(deterministic);
+
+  /* A key held across a load boundary is a continuation, not a new press. The fixture counts
+   * keyboard_check_pressed edges into a global, so the uninterrupted run and a run restored
+   * mid-hold must serialize identically: on the defective core the load cleared the
+   * edge-detection buffers and the held key minted one extra press on the first resumed frame. */
+  {
+    AnygmInputFrame held=input;
+    held.keys[ANYGM_KEY_z]=1;
+    AnygmFrameOutput held_output={0};
+    held_output.struct_size=sizeof held_output;
+    if(anygm_run_frame(first,&held,&held_output)!=ANYGM_OK ||
+       anygm_run_frame(first,&held,&held_output)!=ANYGM_OK){
+      fprintf(stderr,"held-key frames failed\n");
+      return 1;
+    }
+    uint8_t *saved=NULL; size_t saved_size=0;
+    if(!save_state(first,&saved,&saved_size)) return 1;
+    if(anygm_run_frame(first,&held,&held_output)!=ANYGM_OK ||
+       anygm_run_frame(first,&held,&held_output)!=ANYGM_OK){
+      fprintf(stderr,"uninterrupted held frames failed\n");
+      return 1;
+    }
+    uint8_t *uninterrupted=NULL; size_t uninterrupted_size=0;
+    if(!save_state(first,&uninterrupted,&uninterrupted_size)) return 1;
+    if(anygm_state_load(first,saved,saved_size)!=ANYGM_OK ||
+       anygm_run_frame(first,&held,&held_output)!=ANYGM_OK || /* presentation-only pass */
+       anygm_run_frame(first,&held,&held_output)!=ANYGM_OK ||
+       anygm_run_frame(first,&held,&held_output)!=ANYGM_OK){
+      fprintf(stderr,"restored held frames failed\n");
+      return 1;
+    }
+    uint8_t *restored=NULL; size_t restored_size=0;
+    if(!save_state(first,&restored,&restored_size)) return 1;
+    if(restored_size!=uninterrupted_size ||
+       memcmp(restored,uninterrupted,restored_size)){
+      size_t limit=restored_size<uninterrupted_size?restored_size:uninterrupted_size;
+      size_t at=112; while(at<limit && restored[at]==uninterrupted[at]) at++;
+      fprintf(stderr,"a run restored mid-hold diverged from the uninterrupted one "
+                     "(sizes %zu vs %zu, first difference at %zu)\n",
+              restored_size,uninterrupted_size,at);
+      return 1;
+    }
+    free(saved); free(uninterrupted); free(restored);
+  }
+
+  /* The frame slot's cost must not scale with the presentation canvas: an upscale manufactures
+   * repeated rows and the row table removes them, so a monitor-sized state stays within the same
+   * order as the native one instead of carrying megabytes of magnified pixels. */
+  {
+    uint8_t *native_state=NULL; size_t native_size=0;
+    if(!save_state(second,&native_state,&native_size)) return 1;
+    AnygmConfigDelta monitor={0};
+    monitor.struct_size=sizeof monitor;
+    monitor.fields=ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT;
+    monitor.values.struct_size=sizeof monitor.values;
+    monitor.values.monitor_width=1920;
+    monitor.values.monitor_height=1080;
+    AnygmFrameOutput monitor_output={0};
+    monitor_output.struct_size=sizeof monitor_output;
+    if(anygm_set_config(second,&monitor)!=ANYGM_OK ||
+       anygm_run_frame(second,&input,&monitor_output)!=ANYGM_OK){
+      fprintf(stderr,"monitor-sized frame failed\n");
+      return 1;
+    }
+    uint8_t *monitor_state=NULL; size_t monitor_size=0;
+    if(!save_state(second,&monitor_state,&monitor_size)) return 1;
+    if(monitor_size>native_size*4+65536){
+      fprintf(stderr,"a monitor-sized state ballooned: %zu bytes against %zu native\n",
+              monitor_size,native_size);
+      return 1;
+    }
+    free(native_state); free(monitor_state);
+  }
 
   /* A completed frame is observable state in its own right. Post Draw may remove a transient that
    * was visible in that frame, so loading the post-frame simulation and executing Draw again is

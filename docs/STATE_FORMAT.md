@@ -9,14 +9,20 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `9`. It is the format transported by
+The current AnyGM save-state schema is `10`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
 
-Schema `9` adds a run-length encoded copy of the completed application frame to the root section.
-The first frontend frame after a load presents those pixels without running game code; this keeps
-transient Draw output exact while simulation resumes from the canonical post-frame state on the
-following call. Schema `8` adds the logical paths and SHA-256 identities of loaded portable
+Schema `10` re-encodes the completed frame as a row table plus run-length encoded literal rows,
+so the repetition an upscaled presentation canvas manufactures - integer scales repeat whole rows,
+letterboxes repeat black ones - no longer reaches the stored bytes, and the slot costs about the
+source raster whatever the monitor. It also carries the struct allocator's free list in its exact
+order, because the slot an allocation mints becomes part of every stored handle, and restores
+input-edge continuity: the first advancing frame after a load treats a key held now as held, not
+newly pressed. Schema `9` added a run-length encoded copy of the completed application frame to
+the root section. The first frontend frame after a load presents those pixels without running game
+code; this keeps transient Draw output exact while simulation resumes from the canonical
+post-frame state on the following call. Schema `8` adds the logical paths and SHA-256 identities of loaded portable
 Wwise banks to the canonical VM audio stage. Schema `7` adds portable external-audio asset identities plus the Saudio string-ID registry to the
 canonical VM audio stage. Every loose dynamic sound records its logical source path and dynamically
 computed source SHA-256; Saudio additionally records the extension-visible string ID. Schema
@@ -34,7 +40,7 @@ reader rejects the input after decoding begins, the engine restores an exact
 snapshot of its prior state before returning an error.
 
 If a future release deliberately breaks state compatibility, increment the
-schema to `10`, then `11`, and so on. Supporting an older schema requires an
+schema to `11`, then `12`, and so on. Supporting an older schema requires an
 explicit compatibility reader. A refactor does not require a bump when the
 canonical bytes and semantics remain unchanged.
 

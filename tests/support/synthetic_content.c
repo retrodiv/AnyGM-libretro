@@ -67,11 +67,13 @@ int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
   if(!write_text(startup,
                  "global.fixture_counter = 0;\n"
+                 "global.fixture_presses = 0;\n"
                  "randomize();\n"
                  "global.fixture_datetime = date_current_datetime();\n") ||
      !write_text(step,
                  "global.fixture_counter += 1;\n"
-                 "global.fixture_clock = current_time;\n")){
+                 "global.fixture_clock = current_time;\n"
+                 "if (keyboard_check_pressed(vk_anykey)) global.fixture_presses += 1;\n")){
     anygm_synthetic_content_destroy(fixture);
     return 0;
   }

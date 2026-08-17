@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=5 };
+enum { GML_VM_STATE_SCHEMA=6 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* Writing a state walks every instance's variables, and the names repeat across them: every
  * instance carries the same handful of built-in names, each time as the very same pointer into
@@ -777,6 +777,10 @@ static void sw_vm(StateW *s, GmlVM *vm){
     sw_i32(s,vm->structs[i]!=NULL);
     if(vm->structs[i]) sw_instance(s,vm->structs[i]);
   }
+  /* The allocator pops reclaimed slots newest-first, so free-list order determines the
+   * slot and handle produced by later allocations. Preserve that exact order in state. */
+  sw_i32(s,vm->n_struct_free);
+  for(int i=0;i<vm->n_struct_free;i++) sw_i32(s,vm->struct_free?vm->struct_free[i]:0);
   sw_d(s,vm->window_x); sw_d(s,vm->window_y);
   /* Runtime layers and elements must survive rewind and state restoration. */
   sw_i32(s,vm->rt_next_id);
@@ -989,9 +993,29 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
         st->id = GML_STRUCT_ID_BASE + ((unsigned)gen << GML_STRUCT_SLOT_BITS) + (unsigned)i;
         st->obj = -1; st->active = 1;
         vm->structs[i]=st;
-      } else {
-        gml_vm_struct_free_slot_push(vm,i);
       }
+    }
+    /* The free list is restored in its serialized order, not rebuilt by scanning: the allocator
+     * pops it newest-first and the slot it mints becomes part of every stored handle, so a run
+     * resumed from this state must draw slots in exactly the order the interrupted run would
+     * have. Untrusted input: every entry must name a dead slot, once. */
+    if(s.ok){
+      int nf=sr_i32(&s);
+      if(nf<0 || nf>ns){ state_debug(vm,"bad struct free count",s.pos,(uint32_t)nf); s.ok=0; }
+      unsigned char *seen=NULL;
+      if(s.ok && nf>0){
+        seen=calloc((size_t)ns,1);
+        if(!seen){ s.ok=0; }
+      }
+      for(int i=0;i<nf && s.ok;i++){
+        int slot=sr_i32(&s);
+        if(slot<0 || slot>=ns || vm->structs[slot]!=NULL || seen[slot]){
+          state_debug(vm,"bad struct free slot",s.pos,(uint32_t)slot); s.ok=0; break;
+        }
+        seen[slot]=1;
+        gml_vm_struct_free_slot_push(vm,slot);
+      }
+      free(seen);
     }
   }
   if(vdbg){ vt2=anygm_host_monotonic_time_ns(vm->host);

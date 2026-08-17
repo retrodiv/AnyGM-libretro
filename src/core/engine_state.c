@@ -47,6 +47,31 @@ static int64_t cr_i64(CoreR *s){ return (int64_t)cr_u64(s); }
 static int cr_i32(CoreR *s){ return (int)(int32_t)cr_u32(s); }
 static double cr_d(CoreR *s){ uint64_t bits=cr_u64(s); double value=0; memcpy(&value,&bits,sizeof value); return value; }
 
+/* The completed frame is stored as a row table plus run-length encoded literal rows. Presentation
+ * canvases are dominated by repetition an upscale manufactures - integer scales repeat whole rows,
+ * letterboxes repeat black ones - and the row table removes it before the runs are counted, so the
+ * slot costs about the source raster whatever the monitor, without a compressor and without new
+ * per-snapshot work beyond one row-compare pass. A row entry names an earlier identical row, or
+ * the literal marker when the row's pixels follow in the run stream, in row order. */
+#define ANYGM_FRAME_ROW_LITERAL UINT32_C(0xFFFFFFFF)
+
+size_t engine_state_frame_capacity(const AnygmEngine *engine){
+  /* Ceiling of state_write_completed_frame under the geometry this session is already known to
+   * reach: width, height, literal count and run count cost 16 bytes, the row table four per row,
+   * and a fully literal frame of single-pixel runs costs eight bytes per pixel. The configured
+   * virtual monitor counts even before the first frame presents, because a frontend that sizes a
+   * rewind ring does it once, at load, when none of the presentation has happened yet. */
+  size_t w=engine->output_width,h=engine->output_height;
+  if(engine->config.monitor_width>w) w=engine->config.monitor_width;
+  if(engine->config.monitor_height>h) h=engine->config.monitor_height;
+  if((size_t)engine->state_frame_width>w) w=engine->state_frame_width;
+  if((size_t)engine->state_frame_height>h) h=engine->state_frame_height;
+  if(!w || !h){ w=engine->width; h=engine->height; }
+  if(w>FB_MAX_W) w=FB_MAX_W;
+  if(h>FB_MAX_H) h=FB_MAX_H;
+  return 16u+4u*h+8u*w*h;
+}
+
 static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
   unsigned width=0,height=0;
   /* The state carries the exact completed frame. A frame that was produced somewhere other than
@@ -67,57 +92,109 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
   }
   cw_u32(state,width);
   cw_u32(state,height);
-  size_t pixels=(size_t)width*height;
+  if(!width || !height){ cw_u32(state,0); return; }
+  uint32_t *rows=malloc((size_t)height*sizeof(uint32_t));
+  uint64_t *row_hash=malloc((size_t)height*sizeof(uint64_t));
+  if(!rows || !row_hash){ free(rows); free(row_hash); state->ok=0; return; }
+  for(uint32_t y=0;y<height;y++){
+    const uint32_t *row=engine->screen+(size_t)y*width;
+    uint64_t hash=UINT64_C(1469598103934665603);
+    for(unsigned x=0;x<width;x++){ hash^=row[x]; hash*=UINT64_C(1099511628211); }
+    row_hash[y]=hash;
+  }
+  uint32_t literal_rows=0;
+  for(uint32_t y=0;y<height;y++){
+    /* An upscale repeats the row immediately above, so the match is nearly always at y-1. The
+     * hash filters the scan to one integer compare per earlier row; pixels are compared only on a
+     * hash hit, so a pathological frame never degenerates into quadratic row memcmps. */
+    uint32_t match=ANYGM_FRAME_ROW_LITERAL;
+    const uint32_t *row=engine->screen+(size_t)y*width;
+    for(uint32_t k=y;k-- >0;){
+      if(row_hash[k]!=row_hash[y]) continue;
+      if(!memcmp(engine->screen+(size_t)k*width,row,(size_t)width*sizeof(uint32_t))){ match=k; break; }
+    }
+    /* Store the resolved root so the reader never chases chains. */
+    if(match!=ANYGM_FRAME_ROW_LITERAL && rows[match]!=match) match=rows[match];
+    rows[y]=match==ANYGM_FRAME_ROW_LITERAL?y:match;
+    if(rows[y]==y) literal_rows++;
+    cw_u32(state,rows[y]==y?ANYGM_FRAME_ROW_LITERAL:rows[y]);
+  }
+  cw_u32(state,literal_rows);
+  /* Runs over the literal rows in row order; a run never crosses a row boundary, so the reader
+   * decodes straight into each destination row. */
   uint32_t runs=0;
-  for(size_t at=0;at<pixels;){
-    uint32_t value=engine->screen[at];
-    size_t end=at+1;
-    while(end<pixels && engine->screen[end]==value && end-at<UINT32_MAX) end++;
-    if(runs==UINT32_MAX){ state->ok=0; break; }
-    runs++;
-    at=end;
+  for(uint32_t y=0;y<height && state->ok;y++){
+    if(rows[y]!=y) continue;
+    const uint32_t *row=engine->screen+(size_t)y*width;
+    for(unsigned at=0;at<width;){
+      uint32_t value=row[at]; unsigned rend=at+1;
+      while(rend<width && row[rend]==value) rend++;
+      if(runs==UINT32_MAX){ state->ok=0; break; }
+      runs++; at=rend;
+    }
   }
   cw_u32(state,runs);
-  for(size_t at=0;at<pixels;){
-    uint32_t value=engine->screen[at];
-    size_t end=at+1;
-    while(end<pixels && engine->screen[end]==value && end-at<UINT32_MAX) end++;
-    cw_u32(state,(uint32_t)(end-at));
-    cw_u32(state,value);
-    at=end;
+  for(uint32_t y=0;y<height && state->ok;y++){
+    if(rows[y]!=y) continue;
+    const uint32_t *row=engine->screen+(size_t)y*width;
+    for(unsigned at=0;at<width;){
+      uint32_t value=row[at]; unsigned rend=at+1;
+      while(rend<width && row[rend]==value) rend++;
+      cw_u32(state,(uint32_t)(rend-at));
+      cw_u32(state,value);
+      at=rend;
+    }
   }
-}
-
-size_t engine_state_frame_capacity(const AnygmEngine *engine){
-  /* Ceiling of state_write_completed_frame under the geometry this session is already known to
-   * reach: width, height and run count cost 12 bytes, every run costs 8, and a run can cover a
-   * single pixel, so the frame slot can cost up to 8 bytes per output pixel. The configured
-   * virtual monitor counts even before the first frame presents, because a frontend that sizes
-   * a rewind ring does it once, at load, when none of the presentation has happened yet. */
-  size_t w=engine->output_width,h=engine->output_height;
-  if(engine->config.monitor_width>w) w=engine->config.monitor_width;
-  if(engine->config.monitor_height>h) h=engine->config.monitor_height;
-  if((size_t)engine->state_frame_width>w) w=engine->state_frame_width;
-  if((size_t)engine->state_frame_height>h) h=engine->state_frame_height;
-  if(!w || !h){ w=engine->width; h=engine->height; }
-  if(w>FB_MAX_W) w=FB_MAX_W;
-  if(h>FB_MAX_H) h=FB_MAX_H;
-  return 12u+8u*w*h;
+  free(rows);
+  free(row_hash);
 }
 
 static int state_read_completed_frame(AnygmEngine *engine,CoreR *state){
-  uint32_t width=cr_u32(state),height=cr_u32(state),runs=cr_u32(state);
+  uint32_t width=cr_u32(state),height=cr_u32(state);
   if(width>FB_MAX_W || height>FB_MAX_H || (!!width != !!height)) return 0;
   size_t pixels=(size_t)width*height;
-  if((!pixels && runs) || (pixels && (!runs || runs>pixels))) return 0;
-  size_t at=0;
-  for(uint32_t index=0;index<runs;index++){
-    uint32_t count=cr_u32(state),value=cr_u32(state);
-    if(!count || count>pixels-at) return 0;
-    for(uint32_t pixel=0;pixel<count;pixel++) engine->screen[at++]=value;
+  if(!pixels){
+    uint32_t runs=cr_u32(state);
+    if(runs || !state->ok) return 0;
+    engine->state_frame_available=0;
+    engine->state_frame_width=0;
+    engine->state_frame_height=0;
+    return 1;
   }
-  if(!state->ok || at!=pixels) return 0;
-  engine->state_frame_available=pixels?1:0;
+  uint32_t *rows=malloc((size_t)height*sizeof(uint32_t));
+  if(!rows) return 0;
+  uint32_t literal_declared=0;
+  for(uint32_t y=0;y<height;y++){
+    uint32_t reference=cr_u32(state);
+    if(reference==ANYGM_FRAME_ROW_LITERAL){ rows[y]=y; literal_declared++; }
+    else if(reference<y && rows[reference]==reference) rows[y]=reference;
+    else { free(rows); return 0; }
+  }
+  uint32_t literal_count=cr_u32(state);
+  uint32_t runs=cr_u32(state);
+  if(!state->ok || literal_count!=literal_declared || (literal_count && !runs) ||
+     (uint64_t)runs>(uint64_t)literal_count*width){ free(rows); return 0; }
+  uint32_t consumed=0;
+  for(uint32_t y=0;y<height;y++){
+    if(rows[y]!=y) continue;
+    uint32_t *row=engine->screen+(size_t)y*width;
+    unsigned at=0;
+    while(at<width){
+      if(consumed>=runs){ free(rows); return 0; }
+      uint32_t count=cr_u32(state),value=cr_u32(state);
+      consumed++;
+      if(!count || count>width-at){ free(rows); return 0; }
+      for(uint32_t pixel=0;pixel<count;pixel++) row[at++]=value;
+    }
+  }
+  if(!state->ok || consumed!=runs){ free(rows); return 0; }
+  for(uint32_t y=0;y<height;y++){
+    if(rows[y]==y) continue;
+    memcpy(engine->screen+(size_t)y*width,engine->screen+(size_t)rows[y]*width,
+           (size_t)width*sizeof(uint32_t));
+  }
+  free(rows);
+  engine->state_frame_available=1;
   engine->state_frame_width=width;
   engine->state_frame_height=height;
   return 1;
@@ -382,6 +459,9 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   memset(engine->mouse_button_current,0,sizeof(engine->mouse_button_current));
   memset(engine->mouse_button_previous,0,sizeof(engine->mouse_button_previous));
   engine->mouse_wheel = 0;
+  /* After restoration, seed edge detection from the first host poll rather than the
+   * cleared buffers. A key already held across the boundary is not a new press. */
+  engine->input_continuity_pending = 1;
   size_t offset=core_size;
   size_t render_used=0;
   if(!gml_render_state_load(&engine->render,payload+offset,render_size,&render_used) ||

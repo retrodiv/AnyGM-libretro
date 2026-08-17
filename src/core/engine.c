@@ -320,6 +320,7 @@ static void boot_runtime(AnygmEngine *engine) {
   { engine->vm.frame = 0; }
   engine->state_reapply_size = 0;
   engine->state_frame_available = 0;
+  engine->input_continuity_pending = 0;
   engine->state_frame_width = engine->state_frame_height = 0;
   memset(engine->pad_current, 0, sizeof(engine->pad_current));
   memset(engine->pad_previous, 0, sizeof(engine->pad_previous));
@@ -638,7 +639,7 @@ static void engine_unload(AnygmEngine *engine){
   classic_transition_release(engine);
   engine->have_presented_frame=0; engine->audio_accumulator=0.0; engine->fps=60.0; engine->fps_room=-1;
   engine->state_just_loaded=0; engine->state_reapply_size=0;
-  engine->state_frame_available=0;
+  engine->state_frame_available=0; engine->input_continuity_pending=0;
   engine->state_frame_width=engine->state_frame_height=0;
   engine->content_fingerprint=0; engine->compatibility_fingerprint=0;
   engine->runtime_ended=0; engine->shutdown_sent=0; engine->loaded=0;
@@ -739,6 +740,16 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     memset(engine->axis_previous, 0, sizeof(engine->axis_previous));
     memset(engine->mouse_button_current, 0, sizeof(engine->mouse_button_current));
     memset(engine->mouse_button_previous, 0, sizeof(engine->mouse_button_previous));
+    engine->mouse_wheel = 0;
+  } else if(engine->input_continuity_pending){
+    /* First advancing frame after a load: the current arrays were just polled from the live host,
+     * while the previous halves still hold the zeros the load wrote. A key held across the load is
+     * a continuation, not a new press, so previous mirrors current for exactly this frame. */
+    engine->input_continuity_pending = 0;
+    memcpy(engine->hardware_key_previous, engine->hardware_key_current, sizeof(engine->hardware_key_current));
+    memcpy(engine->event_vk_previous, engine->event_vk_current, sizeof(engine->event_vk_current));
+    memcpy(engine->event_key_previous, engine->event_key_current, sizeof(engine->event_key_current));
+    memcpy(engine->mouse_button_previous, engine->mouse_button_current, sizeof(engine->mouse_button_current));
     engine->mouse_wheel = 0;
   }
   if (anygm_host_development_setting(&engine->host,"GML_DBG_PAD")) { engine->diagnostics.pad_frame++;
