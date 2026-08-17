@@ -985,7 +985,11 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
 }
 
 unsigned anygm_content_path_hash(const char *s){
-  uint32_t h=2166136261u; for(;s&&*s;s++){ h^=(uint8_t)*s; h*=16777619u; } return h;
+  /* One resolved content path has one writable namespace. Anchor resolution and native host
+   * paths may spell the same separator differently; canonicalize it before hashing. */
+  uint32_t h=2166136261u;
+  for(;s&&*s;s++){ uint8_t c=(uint8_t)*s; if(c=='\\') c='/'; h^=c; h*=16777619u; }
+  return h;
 }
 static int sibling_payload(const AnygmContentRouter *router,const char *archive,char *out,size_t outsz){
   char parent[1024]; snprintf(parent,sizeof parent,"%s",archive);

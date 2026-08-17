@@ -1610,6 +1610,18 @@ int main(int argc,char **argv){
     fprintf(stderr,"container save label mismatch: %s\n",label);
     return 1;
   }
+  /* One resolved content path keeps one writable namespace under either separator spelling;
+   * a different path retains a separate namespace. */
+  if(anygm_content_path_hash("D:\\library\\fixture_bundle\\data.win")!=
+     anygm_content_path_hash("D:/library/fixture_bundle/data.win")){
+    fprintf(stderr,"equivalent paths produced different hashes\n");
+    return 1;
+  }
+  if(anygm_content_path_hash("D:/library/fixture_bundle/data.win")==
+     anygm_content_path_hash("D:/library/other_bundle/data.win")){
+    fprintf(stderr,"different paths produced the same hash\n");
+    return 1;
+  }
 
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_content_create(&fixture)) return 1;
@@ -1650,6 +1662,17 @@ int main(int argc,char **argv){
     return 1;
   }
 
+  /* The boot-time state is the one state with no completed frame in it, and it is exactly what a
+   * frontend measures when it sizes a rewind ring once, at load. The advised capacity taken at
+   * that moment has to cover the states every later frame produces, or the ring silently stops
+   * recording the run the moment the first frame presents. */
+  size_t boot_state_size=anygm_state_size(first);
+  size_t boot_capacity_hint=anygm_state_capacity_hint(first);
+  if(!boot_state_size || !boot_capacity_hint){
+    fprintf(stderr,"boot state size or capacity hint answered zero\n");
+    return 1;
+  }
+
   AnygmInputFrame input={0};
   input.struct_size=sizeof input;
   input.pointer_x=input.pointer_y=-1;
@@ -1660,6 +1683,12 @@ int main(int argc,char **argv){
      anygm_run_frame(second,&input,&second_output)!=ANYGM_OK ||
      !first_output.pixels || !second_output.pixels || first_output.pixels==second_output.pixels){
     fprintf(stderr,"interleaved frame ownership failed\n");
+    return 1;
+  }
+
+  if(anygm_state_size(first)>boot_state_size+boot_capacity_hint){
+    fprintf(stderr,"a presented state (%zu) outgrew the boot-time answer (%zu + hint %zu)\n",
+            anygm_state_size(first),boot_state_size,boot_capacity_hint);
     return 1;
   }
 
