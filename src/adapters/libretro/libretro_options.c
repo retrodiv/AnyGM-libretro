@@ -84,15 +84,16 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"Auto",NULL},{"Absolute (pointer)",NULL},{"Relative (delta)",NULL},{NULL,NULL}},
    "Auto"},
 #if ANYGM_HARDWARE_RENDER
-  {"anygm_hybrid_gpu","Hybrid GPU rendering",NULL,
-   "Draws eligible final passes with OpenGL or OpenGL ES instead of on the processor. Passes this "
-   "program cannot reproduce exactly on a graphics device keep using the software renderer, so the "
-   "picture is unchanged either way. Needs a frontend running an OpenGL or OpenGL ES video driver; "
-   "without one the software renderer is used. Frontend shaders keep working. Changing this takes "
-   "effect after closing and reopening the content.",
+  {"anygm_hybrid_gpu","Hybrid GPU rendering (Experimental)",NULL,
+   "Chooses the graphics API eligible final passes are drawn with instead of on the processor. "
+   "None keeps every pass on the processor. Passes this program cannot reproduce exactly on a "
+   "graphics device keep using the software renderer whatever is chosen here, so the picture is "
+   "unchanged either way. Needs a frontend running a video driver of the chosen family; without "
+   "one the software renderer is used. Frontend shaders keep working. Changing this takes effect "
+   "after closing and reopening the content.",
    NULL,"video",
-   {{"Off",NULL},{"On",NULL},{NULL,NULL}},
-   "Off"},
+   {{"None",NULL},{"OpenGL","OpenGL / OpenGL ES"},{NULL,NULL}},
+   "None"},
 #endif
   {"anygm_embedded_shaders","Embedded CRT shader",NULL,
    "Draws the built-in CRT effect over the frame. The settings below apply only while it is on; "

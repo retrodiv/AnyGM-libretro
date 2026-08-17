@@ -235,21 +235,29 @@ static bool load(void){
   return retro_load_game(&info);
 }
 
-static int option_off_negotiates_nothing(void){
+static int option_none_negotiates_nothing(void){
   begin(NULL,0,0,1,1);
   REQUIRE(load(),"content loads with the setting unset");
   REQUIRE(declared_count==0,"an unset setting asks for no graphics context");
   finish();
-  begin("Off",0,0,1,1);
-  REQUIRE(load(),"content loads with the setting off");
-  REQUIRE(declared_count==0,"the setting off asks for no graphics context");
+  begin("None",0,0,1,1);
+  REQUIRE(load(),"content loads with the setting at None");
+  REQUIRE(declared_count==0,"None asks for no graphics context");
+  REQUIRE(reset_calls==0,"no context is adopted");
+  finish();
+  /* The setting is a selector, so it can hold a backend this build does not implement -- a newer
+   * core's saved value read back by an older one. That must fall to the software renderer rather
+   * than to whichever backend this build happens to have. */
+  begin("Vulkan",0,0,1,1);
+  REQUIRE(load(),"content loads with a backend this build does not implement");
+  REQUIRE(declared_count==0,"an unimplemented backend asks for no graphics context");
   REQUIRE(reset_calls==0,"no context is adopted");
   finish();
   return 0;
 }
 
 static int rejection_keeps_software(void){
-  begin("On",0,0,0,0);
+  begin("OpenGL",0,0,0,0);
   REQUIRE(load(),"content still loads when no context is available");
   REQUIRE(declared_count==2,"both families are offered before giving up");
   REQUIRE(rejected_requests==2,"the frontend refused both");
@@ -263,7 +271,7 @@ static int rejection_keeps_software(void){
 }
 
 static int desktop_is_requested_first(void){
-  begin("On",0,0,1,1);
+  begin("OpenGL",0,0,1,1);
   REQUIRE(load(),"content loads");
   REQUIRE(declared_count==1,"the first request was accepted");
   REQUIRE(declared.context_type==RETRO_HW_CONTEXT_OPENGL_CORE,"desktop graphics were requested");
@@ -277,14 +285,14 @@ static int desktop_is_requested_first(void){
 }
 
 static int embedded_preference_is_followed(void){
-  begin("On",1,RETRO_HW_CONTEXT_OPENGLES3,1,1);
+  begin("OpenGL",1,RETRO_HW_CONTEXT_OPENGLES3,1,1);
   REQUIRE(load(),"content loads");
   REQUIRE(declared.context_type==RETRO_HW_CONTEXT_OPENGLES3,"the stated preference was followed");
   REQUIRE(declared.version_major==3,"an embedded major version is requested");
   finish();
   /* A host that prefers embedded graphics but cannot provide them still gets asked for the other
    * family before the core gives up. */
-  begin("On",1,RETRO_HW_CONTEXT_OPENGLES3,1,0);
+  begin("OpenGL",1,RETRO_HW_CONTEXT_OPENGLES3,1,0);
   REQUIRE(load(),"content loads");
   REQUIRE(declared_count==2,"the second family was offered");
   REQUIRE(declared.context_type==RETRO_HW_CONTEXT_OPENGL_CORE,"the fallback family was accepted");
@@ -293,7 +301,7 @@ static int embedded_preference_is_followed(void){
 }
 
 static int context_lifecycle_reaches_the_engine(void){
-  begin("On",0,0,1,1);
+  begin("OpenGL",0,0,1,1);
   REQUIRE(load(),"content loads");
   REQUIRE(declared.get_proc_address && declared.get_current_framebuffer,
           "the frontend filled in its resolvers");
@@ -322,7 +330,7 @@ static int context_lifecycle_reaches_the_engine(void){
 }
 
 static int failed_adoption_keeps_software(void){
-  begin("On",0,0,1,1);
+  begin("OpenGL",0,0,1,1);
   REQUIRE(load(),"content loads");
   reset_result=ANYGM_ERROR_UNSUPPORTED;
   declared.context_reset();
@@ -338,7 +346,7 @@ static int failed_adoption_keeps_software(void){
 }
 
 static int sentinel_selects_the_target(void){
-  begin("On",0,0,1,1);
+  begin("OpenGL",0,0,1,1);
   REQUIRE(load(),"content loads");
   frame_flags=ANYGM_FRAME_HARDWARE_TARGET;
   retro_run();
@@ -355,7 +363,7 @@ static int sentinel_selects_the_target(void){
 }
 
 static int unload_releases_without_a_current_context(void){
-  begin("On",0,0,1,1);
+  begin("OpenGL",0,0,1,1);
   REQUIRE(load(),"content loads");
   declared.context_reset();
   REQUIRE(reset_calls==1,"context adopted");
@@ -365,7 +373,7 @@ static int unload_releases_without_a_current_context(void){
           "content going away does not promise the context is still current");
   /* Reloading negotiates again from the setting as it stands now. */
   destroy_calls=0;
-  option_value="Off";
+  option_value="None";
   declared_count=0;
   REQUIRE(load(),"content loads again");
   REQUIRE(declared_count==0,"the setting is read again at load");
@@ -374,7 +382,7 @@ static int unload_releases_without_a_current_context(void){
 }
 
 int main(void){
-  if(option_off_negotiates_nothing()) return EXIT_FAILURE;
+  if(option_none_negotiates_nothing()) return EXIT_FAILURE;
   if(rejection_keeps_software()) return EXIT_FAILURE;
   if(desktop_is_requested_first()) return EXIT_FAILURE;
   if(embedded_preference_is_followed()) return EXIT_FAILURE;

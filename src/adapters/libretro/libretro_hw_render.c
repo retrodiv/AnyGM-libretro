@@ -91,7 +91,11 @@ void libretro_hw_render_request(void){
   g_hardware_requested=false;
   g_hardware_adopted=false;
   memset(&g_hardware,0,sizeof g_hardware);
-  if(!value || strcmp(value,"On")) return;
+  /* A selector rather than a switch, so a second backend is a new value beside this one. Match the
+   * chosen backend exactly: a value this build does not implement -- a newer core's setting read
+   * back by an older one -- must fall to the software renderer, never to whichever backend
+   * happens to exist here. */
+  if(!value || strcmp(value,"OpenGL")) return;
   if(!g_libretro.environment){
     libretro_log(RETRO_LOG_WARN,"Hybrid GPU rendering needs a frontend environment callback\n");
     return;
