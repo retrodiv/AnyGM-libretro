@@ -72,6 +72,22 @@ typedef uint64_t GmlRenderU64Alias __attribute__((__may_alias__));
 void gml_render_backend_fill_xrgb(uint32_t *dp, int n, uint32_t src){
   if(n<=0) return;
 #if defined(__SSE2__)
+  /* A fill the size of a virtual monitor is larger than any cache, and an ordinary store has to
+   * fetch each line before overwriting all of it -- twice the memory traffic the fill needs. A
+   * non-temporal store writes straight out. The values stored are unchanged. */
+  if(n>=32768){
+    __m128i v=_mm_set1_epi32((int)src);
+    while(n>0 && ((uintptr_t)dp & 15u)){ *dp++=src; n--; }
+    while(n>=16){
+      _mm_stream_si128((__m128i*)dp,v);
+      _mm_stream_si128((__m128i*)(dp+4),v);
+      _mm_stream_si128((__m128i*)(dp+8),v);
+      _mm_stream_si128((__m128i*)(dp+12),v);
+      dp+=16;
+      n-=16;
+    }
+    _mm_sfence();
+  }
   if(n>=4){
     __m128i v=_mm_set1_epi32((int)src);
     while(n>=4){
