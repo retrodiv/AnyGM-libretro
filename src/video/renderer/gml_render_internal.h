@@ -578,8 +578,13 @@ uint32_t *surface_pixels(GmlRender *r,int surface,int *width,int *height);
 int surface_known_opaque(GmlRender *r,int surface);
 int surface_known_transparent(GmlRender *r,int surface);
 int rect_covers_target(GmlRender *r,int x0,int y0,int x1,int y1);
-/* The surfaces owner holds the presentation kernel, so it owns writing a deferred one. */
+/* Keep deferred terminal presentation recording outside the composition kernels. */
 void render_write_deferred_presentation(GmlRender *r);
+int render_record_deferred_underlay(GmlRender *r,const uint32_t *src,int sw,int sh,
+                                    int x0,int y0,int W,int H,int source_all_opaque);
+void render_present_first_generation(GmlRender *r,int surf,const uint32_t *src,int sw,int sh,
+                                     int x0,int y0,int x1,int y1,
+                                     double dx,double dy,double dw,double dh);
 void draw_surface_region(GmlRender *r,int surface,double source_x,double source_y,
                          double source_width,double source_height,double destination_x,
                          double destination_y,double destination_width,

@@ -136,6 +136,7 @@ ANYGM_RENDERER_SOURCES := \
 	src/video/renderer/gml_render_effects.c \
 	src/video/renderer/gml_render_primitives.c \
 	src/video/renderer/gml_render_plan.c \
+	src/video/renderer/gml_render_presentation.c \
 	src/video/renderer/gml_render_plan_software.c \
 	src/video/renderer/gml_render_text.c \
 	src/video/renderer/gml_render_state.c
