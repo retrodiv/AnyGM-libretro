@@ -1570,13 +1570,17 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
             oi->x=oi->xprevious; oi->y=oi->yprevious; gml_colgrid_touch(vm,oi);
           }
         }
-        /* If the moving handler's Collision event stops it while it remains inside a
-         * stationary solid, restore its pre-contact position. An event that leaves
-         * motion active keeps its explicit resolution. */
+        /* If a stopped non-classic handler remains inside a stationary solid after its
+         * Collision event, restore its frame-start position even without prior motion.
+         * Classic retains the moved-into-contact condition; active post-event motion
+         * retains the event's explicit resolution. The stationary classic case remains
+         * outside this selected policy. */
         int si_stopped=si->hspeed==0.0 && si->vspeed==0.0;
+        int si_restorable=(vm->win && anygm_policy_uses_classic_runtime(vm->win))
+          ? (si_moved && (!si_kinematic || si_stopped)) : si_stopped;
         if(!fixture_pair && !rollback_pair && si->active && !si->marked &&
            oi->active && !oi->marked &&
-           oi->solid && !si->solid && si_moved && (!si_kinematic || si_stopped)){
+           oi->solid && !si->solid && si_restorable){
           double pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2;
           int post_hit=gml_vm_instances_bbox(vm,si,&pl1,&pt1,&pr1,&pb1) &&
                        gml_vm_instances_bbox(vm,oi,&pl2,&pt2,&pr2,&pb2) &&

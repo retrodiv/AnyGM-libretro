@@ -1360,6 +1360,142 @@ cleanup:
 }
 
 
+int expect_stationary_embed_nudge_reverted(void){
+  /* This synthetic stationary-overlap fixture dispatches six Collision events.
+   * Each event nudges a stopped handler by one pixel; post-event restoration
+   * keeps its frame-start position fixed while the event count advances. */
+  GmlcProject project={0};
+  GmlcSprite project_sprite={0};
+  GmlcObject objects[2]={{0}};
+  GmlcObjectEvent event={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance placed[2]={{0}};
+  int room_order[1]={0};
+  AnygmHostServices services={0};
+  char source_path[]="/tmp/gml-embed-nudge-source-XXXXXX";
+  char package_path[]="/tmp/gml-embed-nudge-package-XXXXXX";
+  int source_fd=-1,package_fd=-1;
+  int ok=0;
+
+  source_fd=mkstemp(source_path);
+  package_fd=mkstemp(package_path);
+  if(source_fd<0 || package_fd<0) goto cleanup;
+  close(source_fd); source_fd=-1;
+  close(package_fd); package_fd=-1;
+  if(!fixture_write_text(source_path,
+       "global.nudges = global.nudges + 1;\n"
+       "y = y - 1;\n")) goto cleanup;
+
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="embed-nudge-fixture";
+  project.host=&services;
+  project.sprites=&project_sprite;
+  project.n_sprites=project.cap_sprites=1;
+  project.objects=objects;
+  project.n_objects=project.cap_objects=2;
+  project.rooms=&room;
+  project.n_rooms=project.cap_rooms=1;
+  project.room_order=room_order;
+  project.n_room_order=1;
+
+  project_sprite.id=project_sprite.name=(char*)"spr_embed_nudge";
+  project_sprite.runtime_id=0;
+  project_sprite.width=project_sprite.height=16;
+  project_sprite.bbox_right=project_sprite.bbox_bottom=15;
+
+  objects[0].id=objects[0].name=(char*)"obj_stander";
+  objects[0].sprite_id=0;
+  objects[0].mask_id=objects[0].parent_id=-1;
+  objects[0].visible=1;
+  objects[0].events=&event;
+  objects[0].n_events=objects[0].cap_events=1;
+  event.event_type=4;              /* Collision */
+  event.collision_object_id=1;     /* with obj_block */
+  event.source_path=source_path;
+
+  objects[1].id=objects[1].name=(char*)"obj_block";
+  objects[1].sprite_id=0;
+  objects[1].mask_id=objects[1].parent_id=-1;
+  objects[1].visible=1;
+  objects[1].solid=1;
+
+  room.id=room.name=(char*)"room_embed_nudge";
+  room.width=320;
+  room.height=240;
+  room.speed=60;
+  placed[0].id=placed[0].name=(char*)"placed_stander";
+  placed[0].object_id=0;
+  placed[0].instance_id=100000;
+  placed[0].x=100;
+  placed[0].y=100;
+  placed[1].id=placed[1].name=(char*)"placed_block";
+  placed[1].object_id=1;
+  placed[1].instance_id=100001;
+  placed[1].x=100;
+  placed[1].y=108;
+  room.instances=placed;
+  room.n_instances=room.cap_instances=2;
+
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+      fprintf(stderr,"embed nudge package failed: %s\n",error);
+      goto cleanup;
+    }
+  }
+  {
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,package_path)) goto cleanup;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,&services)){
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    GmlSprite sprite={0};
+    GmlRender render={0};
+    sprite.n_frames=1;
+    sprite.w=sprite.h=16;
+    sprite.mr=sprite.mb=15;
+    render.win=&win;
+    render.spr=&sprite;
+    render.n_spr=1;
+    vm.render=&render;
+    gml_room_enter(&vm,0);
+    *gml_varmap_put(&vm.globals,"nudges")=vreal(0);
+    GmlInstance *stander=find_slot(&vm,100000);
+    if(stander){
+      gml_colgrid_invalidate(&vm);
+      /* embedded rows 108..115 the whole time: the event fires every step and its pixel of
+       * displacement is restored every step */
+      for(int frame=0;frame<6 && stander;frame++){
+        gml_vm_step(&vm);
+        stander=find_slot(&vm,100000);
+      }
+    }
+    GmlVal *nudges=gml_varmap_get(&vm.globals,"nudges");
+    ok=stander && stander->y==100.0 && stander->x==100.0 &&
+       nudges && nudges->t==V_REAL && nudges->d==6;
+    if(!ok)
+      fprintf(stderr,
+        "stationary embed nudge mismatch: x=%.2f y=%.2f nudges=%.0f\n",
+        stander?stander->x:-1.0,stander?stander->y:-1.0,
+        nudges&&nudges->t==V_REAL?nudges->d:-1.0);
+    vm.render=NULL;
+    gml_vm_free(&vm);
+    gml_win_free(&win);
+  }
+
+cleanup:
+  if(source_fd>=0) close(source_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(source_path);
+  unlink(package_path);
+  return ok;
+}
+
+
 int expect_hash_layer_gpu_gap_closure(void){
   GmlVM vm={0}; GmlRender render={0};
   vm.render=&render;
