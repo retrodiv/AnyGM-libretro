@@ -463,6 +463,10 @@ typedef struct GmlRender {
     int   grayscale, grayscale_has_alpha_uniform;
     char  grayscale_alpha_uniform[32];
     float grayscale_weight[3], grayscale_alpha;
+    /* A fragment that declares gm_BaseTexture but never reads it uses no covered pixels.
+     * Its output comes from other inputs, so an unshaded draw is not an approximation.
+     * Recognized software families still take precedence over this flag. */
+    int   procedural;
   } *shader_pal; int n_shader_pal;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
   int       active_shader;   /* shader_set asset id, -1 = none. Reset per frame. */

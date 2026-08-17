@@ -434,12 +434,23 @@ static void check_shader_recognition(void) {
            "complete sampled RGB channel-clear graph was not recognized exactly");
     expect(!channel_mask_near_match->channel_mask,
            "channel-clear graph with an extra colour operation was accepted");
-    /* The compile answer is host policy. The default reports every payload shader compiled, as a
-     * GPU would; the strict mode reports only recognized families, which is how content with an
-     * authored no-shader fallback selects it. Out-of-range ids stay uncompiled either way. */
-    expect(gml_render_shader_is_compiled(&render, 3) &&
-           gml_render_shader_is_compiled(&render, 5),
-           "the default answer stopped reporting unrecognized shaders as compiled");
+    /* The compile answer is host policy for one class of shader only. The default reports an
+     * unrecognized shader compiled, as a GPU would, so long as its fragment reads the pixels the
+     * draw covers: leaving that draw unshaded still paints those pixels, which is a weaker version
+     * of the effect rather than a different picture. Shader 3 is that case — an unrecognized
+     * fragment that samples gm_BaseTexture — and the strict mode is how content with an authored
+     * no-shader fallback opts out of it. */
+    expect(mask_near_match->procedural == 0 &&
+           gml_render_shader_is_compiled(&render, 3),
+           "the default answer stopped reporting unrecognized sampling shaders as compiled");
+    /* Shader 5 never reads the base texture, so no draw carries its output and the answer is not a
+     * policy question: this renderer cannot produce that program's picture by any route, and
+     * saying so is what lets content reach its own no-shader presentation. A shader-preamble declaration is not a read, and shader 4 proves recognition
+     * still wins over the rule — its palette family is procedural too and the evaluator executes it. */
+    expect(near_match->procedural == 1 &&
+           !gml_render_shader_is_compiled(&render, 5) &&
+           gml_render_shader_is_compiled(&render, 4),
+           "a fragment that never reads the base texture was answered from host policy");
     render.shader_report_all_compiled = 0;
     expect(!gml_render_shader_is_compiled(&render, 3) &&
            !gml_render_shader_is_compiled(&render, 5) &&

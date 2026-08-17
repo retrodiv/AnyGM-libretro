@@ -812,10 +812,16 @@ static int shader_pal_recognized(const struct GmlShaderPal *p){
 
 int gml_render_shader_is_compiled(const GmlRender *r,int shader){
   if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
-  /* Default policy reports declared shaders compiled; strict policy reports only
-   * software-recognized families. Invalid indices always report uncompiled. */
-  if(r->shader_report_all_compiled) return 1;
-  return shader_pal_recognized(&r->shader_pal[shader]);
+  /* A declared shader may be reported compiled even if the software renderer cannot execute
+   * it. The host option selects that policy for unrecognized shaders that sample the base
+   * picture, so authored fallback paths remain selectable when needed.
+   *
+   * A fragment that does not sample the base picture instead computes its output from other
+   * inputs. Leaving its draw unshaded paints unrelated pixels, so this class reports
+   * uncompiled unless a recognized software family can execute it. */
+  if(shader_pal_recognized(&r->shader_pal[shader])) return 1;
+  if(r->shader_pal[shader].procedural) return 0;
+  return r->shader_report_all_compiled?1:0;
 }
 
 int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *name){
