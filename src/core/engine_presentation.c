@@ -663,8 +663,10 @@ static int aspect_canvas_present_res(AnygmEngine *engine,unsigned base_w, unsign
   if (gw < 16) gw = (int)base_w;
   if (gh < 16) gh = (int)base_h;
   if (gw <= 0 || gh <= 0) return 0;
+  /* The authored request, not the configured monitor: the forced shape only reaches content that
+   * is rendering at its own raster, and the virtual monitor is offered on the other path alone. */
   int win_w,win_h;
-  content_window_extent(engine,
+  authored_window_extent(engine,
     (int)(engine->win.disp_w?engine->win.disp_w:base_w),
     (int)(engine->win.disp_h?engine->win.disp_h:base_h),&win_w,&win_h);
   if (win_w <= 0 || win_h <= 0) return 0;
@@ -986,28 +988,13 @@ void compute_present(AnygmEngine *engine) {
     int logical_gh = engine->vm.gui_h > 0 ? engine->vm.gui_h : (int)engine->base_height;
     if (logical_gw < 16) logical_gw = (int)engine->base_width;
     if (logical_gh < 16) logical_gh = (int)engine->base_height;
-    /* Un-forced, the window-raster path above presents at the extent the content requested when
-     * the logical-raster option is off. The force machinery reshapes views and ports, so those
-     * signals no longer say how large the un-forced picture presented — the window request
-     * still does. Present the forced frame at the same scale; collapsing it to the logical
-     * extent instead drops the picture's pixel density and the host upscale turns visibly
-     * coarse. The logical-raster default keeps scale 1 and is unchanged. */
-    double scale = 1.0;
-    if (!engine->config.present_logical_raster &&
-        engine->base_width > 0 && engine->base_height > 0 &&
-        screen_stage_window_w > 0 && screen_stage_window_h > 0) {
-      double scale_w = (double)screen_stage_window_w / (double)engine->base_width;
-      double scale_h = (double)screen_stage_window_h / (double)engine->base_height;
-      scale = scale_w < scale_h ? scale_w : scale_h;
-    }
-    if (scale < 1.0) scale = 1.0;
-    if (engine->width > 0 && scale > (double)FB_MAX_W / (double)engine->width)
-      scale = (double)FB_MAX_W / (double)engine->width;
-    if (engine->height > 0 && scale > (double)FB_MAX_H / (double)engine->height)
-      scale = (double)FB_MAX_H / (double)engine->height;
+    /* The forced shape is only reachable while the logical raster is what this program delivers,
+     * so the reshaped extent is the presented one: the host performs the scale. The window-raster
+     * path cannot arrive here, because the virtual monitor and the forced shape are offered on
+     * opposite sides of that choice. */
     engine->canvas_mode = 0;
-    engine->output_width = (unsigned)lround((double)engine->width * scale);
-    engine->output_height = (unsigned)lround((double)engine->height * scale);
+    engine->output_width = engine->width;
+    engine->output_height = engine->height;
     engine->gui_space_width = (int)engine->width;
     engine->gui_space_height = (int)engine->height;
     engine->gui_offset_x = (int)lround(((double)engine->width - (double)logical_gw) * 0.5) + engine->aspect_gui_ox;

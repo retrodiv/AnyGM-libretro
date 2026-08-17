@@ -325,6 +325,10 @@ typedef struct AnygmConfig {
    * These values do not resize the content's window or the framebuffer delivered to the host. */
   uint32_t monitor_width;
   uint32_t monitor_height;
+  /* Optional forced shape for the delivered raster. Zero keeps the shape the content draws. It
+   * reshapes the logical raster, so it belongs with present_logical_raster and excludes the
+   * virtual-monitor dimensions above: a host that sizes a presentation window has already stated
+   * the shape, and the two together describe no single frame. */
   uint32_t aspect_mode;
   uint32_t mouse_mode;
   uint32_t room_skip_button;

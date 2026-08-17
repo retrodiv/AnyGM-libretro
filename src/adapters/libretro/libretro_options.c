@@ -66,7 +66,9 @@ static struct retro_core_option_v2_definition g_definitions[]={
     {"1800",NULL},{"1920",NULL},{"2160",NULL},{NULL,NULL}},
    "Game Base"},
   {"anygm_aspect_ratio_force","Aspect Ratio force (Experimental)",NULL,
-   "Overrides the shape this program scales the frame to. None keeps the shape the game draws.",
+   "With Render at game resolution on, overrides the shape of the game's own raster before this "
+   "program hands it over. None keeps the shape the game draws. Off that path the monitor "
+   "dimensions already state the shape, so this neither acts nor is offered.",
    NULL,"video",
    {{"None",NULL},{"4:3",NULL},{"16:9",NULL},{"16:10",NULL},{"21:9",NULL},{NULL,NULL}},
    "None"},
@@ -458,9 +460,11 @@ void libretro_options_publish_rooms(void){
   update_option_visibility();
 }
 
-/* Options that cannot act are hidden rather than left to be tried: the monitor dimensions while
- * rendering at game resolution, the CRT parts while the shader that draws them is off, and the
- * range selector when every room already fits in one list.
+/* Options that cannot act are hidden rather than left to be tried: the CRT parts while the shader
+ * that draws them is off, the range selector when every room already fits in one list, and the two
+ * halves of the raster choice, which are offered on opposite paths. Rendering at game resolution
+ * delivers the game's own raster, so the forced shape has one to reshape and the monitor
+ * dimensions have nothing to size; rendering at the presentation window is the reverse.
  *
  * The shader's own setting is read here rather than taken from the applied configuration. A player
  * turns the shader off from inside the host's menu, which is exactly when no frame is running to
@@ -474,12 +478,12 @@ static int update_option_visibility(void){
   static const char *const monitor_dimensions[]={
     "anygm_width_resolution","anygm_height_resolution",NULL
   };
-  static int published_parts=-1, published_ranges=-1, published_monitor_dimensions=-1;
+  static int published_parts=-1, published_ranges=-1, published_logical_raster=-1;
   int parts=option_on("anygm_embedded_shaders",1)?1:0;
   int ranges=g_page_choice_count>1?1:0;
-  int monitor_dimensions_visible=option_on("anygm_render_game_resolution",1)?0:1;
+  int logical_raster=option_on("anygm_render_game_resolution",1)?1:0;
   if(parts==published_parts && ranges==published_ranges &&
-     monitor_dimensions_visible==published_monitor_dimensions)
+     logical_raster==published_logical_raster)
     return 0;
   struct retro_core_option_display display;
   display.visible=parts?true:false;
@@ -490,14 +494,17 @@ static int update_option_visibility(void){
   display.key="anygm_start_room_page";
   display.visible=ranges?true:false;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
-  display.visible=monitor_dimensions_visible?true:false;
+  display.visible=logical_raster?false:true;
   for(size_t i=0;monitor_dimensions[i];i++){
     display.key=monitor_dimensions[i];
     g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
   }
+  display.key="anygm_aspect_ratio_force";
+  display.visible=logical_raster?true:false;
+  g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
   published_parts=parts;
   published_ranges=ranges;
-  published_monitor_dimensions=monitor_dimensions_visible;
+  published_logical_raster=logical_raster;
   return 1;
 }
 
@@ -532,7 +539,11 @@ void libretro_options_apply(bool all_fields){
                         option_resolution("anygm_width_resolution");
   config->monitor_height=present_logical_raster?0u:
                          option_resolution("anygm_height_resolution");
-  const char *value=option_value("anygm_aspect_ratio_force");
+  /* The forced shape reshapes the game's own raster, which only the logical-raster path delivers.
+   * Off that path the monitor dimensions already state the shape, so a selection made earlier must
+   * not keep acting from a setting the player can no longer see. It is read again rather than
+   * cleared, so returning to this path restores it exactly as the monitor dimensions are restored. */
+  const char *value=present_logical_raster?option_value("anygm_aspect_ratio_force"):NULL;
   config->aspect_mode=value&&!strcmp(value,"4:3")?1u:
                       value&&!strcmp(value,"16:9")?2u:
                       value&&!strcmp(value,"21:9")?3u:

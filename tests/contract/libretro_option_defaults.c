@@ -19,6 +19,7 @@
 static const char *answered_value;
 static const char *answered_raster_value;
 static const char *answered_monitor_value;
+static const char *answered_aspect_value;
 static bool (*menu_time_visibility)(void);
 static const struct retro_core_option_v2_category *declared_categories;
 static const struct retro_core_option_v2_definition *declared_definitions;
@@ -79,6 +80,9 @@ static bool environment_callback(unsigned command,void *data){
          (!strcmp(variable->key,"anygm_width_resolution") ||
           !strcmp(variable->key,"anygm_height_resolution")) && answered_monitor_value)
         value=answered_monitor_value;
+      if(variable->key && !strcmp(variable->key,"anygm_aspect_ratio_force") &&
+         answered_aspect_value)
+        value=answered_aspect_value;
       variable->value=value;
       return value!=NULL; }
     default:
@@ -167,6 +171,7 @@ static void begin(unsigned version,uint32_t rooms){
   answered_value=NULL;
   answered_raster_value=NULL;
   answered_monitor_value=NULL;
+  answered_aspect_value=NULL;
   menu_time_visibility=NULL;
   memset(&applied_config,0,sizeof applied_config);
   config_apply_count=0;
@@ -296,6 +301,48 @@ static void monitor_dimensions_follow_the_window_raster(void){
   libretro_options_apply(false);
   expect("restored monitor width",applied_config.values.monitor_width,1920u);
   expect("restored monitor height",applied_config.values.monitor_height,1920u);
+}
+
+/* The forced shape reshapes the game's own raster, which only the logical-raster path delivers.
+ * It is therefore the exact complement of the monitor dimensions: one of the two is offered, never
+ * both and never neither. A selection made on one path must also stop acting once the player
+ * leaves it, or a shape they can no longer see keeps reshaping the frame. */
+static void the_forced_shape_follows_the_logical_raster(void){
+  begin(2,3);
+  if(!menu_time_visibility){
+    complain("no way was offered to update the forced shape's visibility");
+    return;
+  }
+  answered_value="On";
+  answered_aspect_value="16:9";
+  answered_monitor_value="1920";
+
+  answered_raster_value="Off";
+  menu_time_visibility();
+  answered_raster_value="On";
+  if(!menu_time_visibility())
+    complain("showing the forced shape was reported as no visibility change");
+  if(shown("anygm_aspect_ratio_force")!=1)
+    complain("the forced shape stays hidden while rendering at game resolution");
+  if(shown("anygm_width_resolution")!=0)
+    complain("the forced shape and the monitor dimensions are offered together");
+  libretro_options_apply(false);
+  expect("forced shape at game resolution",applied_config.values.aspect_mode,2u);
+
+  answered_raster_value="Off";
+  menu_time_visibility();
+  if(shown("anygm_aspect_ratio_force")!=0)
+    complain("the forced shape stays offered while rendering at the presentation window");
+  if(shown("anygm_width_resolution")!=1)
+    complain("neither the forced shape nor the monitor dimensions are offered");
+  libretro_options_apply(false);
+  expect("forced shape at the presentation window",applied_config.values.aspect_mode,0u);
+
+  /* The frontend keeps what the player chose, so returning recovers it without asking again. */
+  answered_raster_value="On";
+  menu_time_visibility();
+  libretro_options_apply(false);
+  expect("restored forced shape",applied_config.values.aspect_mode,2u);
 }
 
 /* The names describe how much is dropped, and the thresholds have to rise with them. */
@@ -446,6 +493,7 @@ int main(void){
   unset_settings_keep_content_reachable();
   monitor_dimensions_reach_the_virtual_monitor_fields();
   monitor_dimensions_follow_the_window_raster();
+  the_forced_shape_follows_the_logical_raster();
   culling_names_rise_with_their_thresholds();
   hidden_settings_are_the_ones_that_cannot_act();
   loaded_content_names_its_rooms();
