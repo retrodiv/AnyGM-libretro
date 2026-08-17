@@ -313,6 +313,99 @@ int gml_surface_target_lit(GmlRender *r){
   for(size_t i=0;i<(size_t)r->fbw*(size_t)r->fbh;i++) if(r->fb[i]&0x00FFFFFFu) lit++;
   return lit;
 }
+/* One band of the generic surface mapper. A row derives its source line and its destination row
+ * from the row index alone and writes only that row, so bands are independent and each row selects
+ * exactly the texel it would have selected on its own. */
+typedef struct ScaledBand {
+  GmlRender *r;
+  const uint32_t *src;
+  int sw,sh,W,H,x0,y0,px0,px1,py_first;
+  const int *xs0,*xs1;
+} ScaledBand;
+
+static void scaled_band(void *context,int row_start,int row_end,int slot){
+  const ScaledBand *b=(const ScaledBand*)context;
+  GmlRender *r=b->r;
+  const uint32_t *src=b->src;
+  const int sw=b->sw,sh=b->sh,H=b->H,x0=b->x0,y0=b->y0,px0=b->px0,px1=b->px1;
+  const int *xs0=b->xs0,*xs1=b->xs1;
+  (void)slot;
+  for(int py=b->py_first+row_start; py<b->py_first+row_end; py++){
+    int sy0, sy1;
+    if(!r->interp){
+      sy0=(int)(((int64_t)py*sh)/H);
+      sy1=sy0+1;
+    } else if(H>=sh){
+      sy0=(int)(((int64_t)py*sh)/H);
+      sy1=sy0+1;
+    } else {
+      sy0 = (int)(((int64_t)py * sh) / H);
+      sy1 = (int)((((int64_t)py + 1) * sh) / H);
+    }
+    if(sy1 <= sy0) sy1 = sy0 + 1;
+    if(sy0 < 0) sy0 = 0;
+    if(sy1 > sh) sy1 = sh;
+    uint32_t *dp = r->fb + (size_t)(y0 + py) * r->fbw + (x0 + px0);
+    for(int px=px0; px<px1; px++){
+      int sx0 = xs0[px], sx1 = xs1[px];
+      if(sx1 == sx0 + 1 && sy1 == sy0 + 1){
+        uint32_t s = src[(size_t)sy0 * sw + sx0];
+        uint32_t a = s >> 24;
+        if(a == 255){
+          *dp = s | 0xFF000000u;
+        } else if(a){
+          double pa = a / 255.0;
+          int sr = (s >> 16) & 0xFF, sg = (s >> 8) & 0xFF, sb = s & 0xFF;
+          if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
+          else {
+            int dr = (*dp >> 16) & 0xFF, dg = (*dp >> 8) & 0xFF, db = *dp & 0xFF;
+            int round_target=r->win && anygm_policy_uses_first_generation_studio(r->win) &&
+                             r->app_surface==src;
+            if(round_target){
+              uint32_t inverse=255u-a;
+              *dp=0xFF000000u|
+                ((uint32_t)(((uint32_t)sr*a+(uint32_t)dr*inverse+127u)/255u)<<16)|
+                ((uint32_t)(((uint32_t)sg*a+(uint32_t)dg*inverse+127u)/255u)<<8)|
+                (uint32_t)(((uint32_t)sb*a+(uint32_t)db*inverse+127u)/255u);
+            } else {
+              *dp = 0xFF000000u | ((int)(sr * pa + dr * (1.0 - pa)) << 16) |
+                    ((int)(sg * pa + dg * (1.0 - pa)) << 8) |
+                    (int)(sb * pa + db * (1.0 - pa));
+            }
+          }
+        }
+        dp++;
+        continue;
+      }
+      unsigned R=0, G=0, B=0, A=0, n=0;
+      for(int sy=sy0; sy<sy1; sy++){
+        const uint32_t *sp = src + (size_t)sy * sw + sx0;
+        for(int sx=sx0; sx<sx1; sx++){
+          uint32_t s = *sp++;
+          R += (s >> 16) & 0xFF;
+          G += (s >> 8) & 0xFF;
+          B += s & 0xFF;
+          A += s >> 24;
+          n++;
+        }
+      }
+      if(!n) n = 1;
+      double pa = (A / (double)n) / 255.0;
+      if(pa > 0.0){
+        int sr = (int)(R / n), sg = (int)(G / n), sb = (int)(B / n);
+        if(pa >= 1.0) *dp = 0xFF000000u | ((uint32_t)sr << 16) | ((uint32_t)sg << 8) | (uint32_t)sb;
+        else {
+          int dr = (*dp >> 16) & 0xFF, dg = (*dp >> 8) & 0xFF, db = *dp & 0xFF;
+          *dp = 0xFF000000u | ((int)(sr * pa + dr * (1.0 - pa)) << 16) |
+                ((int)(sg * pa + dg * (1.0 - pa)) << 8) |
+                (int)(sb * pa + db * (1.0 - pa));
+        }
+      }
+      dp++;
+    }
+    }
+}
+
 static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, int sw, int sh,
                                            int x0, int y0, int W, int H,
                                            int source_all_opaque){
@@ -499,6 +592,12 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
     xs1[px] = sx1;
   }
 
+  /* Independent rows of a sufficiently large composite can use the renderer's row-band pool;
+   * smaller composites retain the direct serial loop. */
+  if(py1-py0>=64 && (px1-px0)>=64){
+    ScaledBand band={r,src,sw,sh,W,H,x0,y0,px0,px1,py0,xs0,xs1};
+    gml_run_row_bands(r,py1-py0,scaled_band,&band);
+  } else
   for(int py=py0; py<py1; py++){
     int sy0, sy1;
     if(!r->interp){
