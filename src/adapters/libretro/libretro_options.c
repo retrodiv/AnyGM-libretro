@@ -107,12 +107,12 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},
   {"anygm_report_shaders_compiled","Report content shaders as compiled",NULL,
-   "How shader_is_compiled() answers for content shaders that read the picture "
-   "beneath their draw. On reports declared shaders as compiled even when an effect "
-   "cannot execute in software; Off reports only recognized software families, "
-   "allowing authored fallback paths. An unrecognized shader that reads no "
-   "picture reports uncompiled regardless of this option, since leaving its draw "
-   "unshaded paints unrelated pixels.",
+   "How shader_is_compiled() answers for content shaders that sample a picture. "
+   "On reports declared shaders as compiled even when an effect cannot execute "
+   "in software; Off reports only recognized software families, allowing authored "
+   "fallback paths. An unrecognized fragment that samples no texture reports "
+   "uncompiled regardless of this option, since leaving its draw unshaded paints "
+   "unrelated pixels.",
    NULL,"shaders",
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},

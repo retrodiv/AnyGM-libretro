@@ -812,13 +812,14 @@ static int shader_pal_recognized(const struct GmlShaderPal *p){
 
 int gml_render_shader_is_compiled(const GmlRender *r,int shader){
   if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
-  /* A declared shader may be reported compiled even if the software renderer cannot execute
-   * it. The host option selects that policy for unrecognized shaders that sample the base
-   * picture, so authored fallback paths remain selectable when needed.
+  /* A declared shader may be reported compiled even when the software renderer does not
+   * execute its effect. The host option selects that policy for unrecognized programs that
+   * sample a picture, so authored fallback paths remain selectable when needed.
    *
-   * A fragment that does not sample the base picture instead computes its output from other
-   * inputs. Leaving its draw unshaded paints unrelated pixels, so this class reports
-   * uncompiled unless a recognized software family can execute it. */
+   * A fragment that samples no texture computes its output from other inputs. Leaving its
+   * draw unshaded paints unrelated pixels, so this class reports uncompiled unless a
+   * recognized software family executes it. A picture may arrive through any bound sampler,
+   * not only gm_BaseTexture; the distinction is sampling, not the uniform name. */
   if(shader_pal_recognized(&r->shader_pal[shader])) return 1;
   if(r->shader_pal[shader].procedural) return 0;
   return r->shader_report_all_compiled?1:0;

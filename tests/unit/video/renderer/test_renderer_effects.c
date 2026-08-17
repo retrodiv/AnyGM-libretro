@@ -298,13 +298,20 @@ static void check_shader_recognition(void) {
     "gl_FragColor.gb=vec2(0.0,0.0);}",
     "void main(){gl_FragColor=v_vColour*"
     "texture2D(gm_BaseTexture,v_vTexcoord);"
-    "gl_FragColor.gb=vec2(0.0,0.0);gl_FragColor.r*=0.5;}"
+    "gl_FragColor.gb=vec2(0.0,0.0);gl_FragColor.r*=0.5;}",
+    /* Reads a picture through a content-bound sampler instead of the base texture. An
+     * unshaded draw still carries that picture, so this is a weaker-effect case rather
+     * than a fragment that paints without sampling. */
+    "uniform sampler2D samp_screen;varying vec2 v_vTexcoord;"
+    "void main(){vec4 sampled=texture2D(samp_screen,v_vTexcoord);"
+    "gl_FragColor=vec4(sampled.rgb*0.75,sampled.a);}"
   };
-  enum { SHADER_COUNT = 15, DATA_SIZE = 16384 };
+  enum { SHADER_COUNT = 16, DATA_SIZE = 16384 };
   uint8_t data[DATA_SIZE];
   GmlWin content;
   GmlRender render;
-  size_t fragment_offset = 512;
+  /* Fragment text starts past the last record, which is at 64 + (SHADER_COUNT-1) * 32. */
+  size_t fragment_offset = 1024;
 
   memset(data, 0, sizeof(data));
   memset(&content, 0, sizeof(content));
@@ -349,6 +356,7 @@ static void check_shader_recognition(void) {
     const struct GmlShaderPal *channel_mask = &render.shader_pal[12];
     const struct GmlShaderPal *channel_mask_near_match = &render.shader_pal[13];
     const struct GmlShaderPal *bounded = &render.shader_pal[14];
+    const struct GmlShaderPal *bound_sampler = &render.shader_pal[15];
     expect(alpha->alpha_discard && alpha->alpha_discard_inclusive &&
            alpha->alpha_discard_cutoff == 0.25f,
            "alpha-discard structure was not recognized exactly");
@@ -450,7 +458,13 @@ static void check_shader_recognition(void) {
     expect(near_match->procedural == 1 &&
            !gml_render_shader_is_compiled(&render, 5) &&
            gml_render_shader_is_compiled(&render, 4),
-           "a fragment that never reads the base texture was answered from host policy");
+           "a fragment that samples no texture was answered from host policy");
+    /* The test is sampling, not gm_BaseTexture. A fragment reading a picture through a sampler the
+     * content bound still transforms that picture, so leaving it unrun shows a weaker version and
+     * the answer stays the host's. */
+    expect(bound_sampler->procedural == 0 &&
+           gml_render_shader_is_compiled(&render, 15),
+           "a fragment sampling a content-bound sampler was treated as painting from nothing");
     render.shader_report_all_compiled = 0;
     expect(!gml_render_shader_is_compiled(&render, 3) &&
            !gml_render_shader_is_compiled(&render, 5) &&

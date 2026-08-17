@@ -463,9 +463,13 @@ typedef struct GmlRender {
     int   grayscale, grayscale_has_alpha_uniform;
     char  grayscale_alpha_uniform[32];
     float grayscale_weight[3], grayscale_alpha;
-    /* A fragment that declares gm_BaseTexture but never reads it uses no covered pixels.
-     * Its output comes from other inputs, so an unshaded draw is not an approximation.
-     * Recognized software families still take precedence over this flag. */
+    /* A fragment that calls no sampling function reads no pixels at all: it computes its colour
+     * from coordinates, time and its own uniforms. Such a program has no representation as an
+     * operation on anything that was drawn, so drawing it unshaded is not an approximation of it —
+     * it paints the primitive's own colour, which the shader would have thrown away. A fragment
+     * that samples anything, including a surface the content bound to a stage rather than the
+     * texture under the draw, is deliberately not in this class. Recognition still wins over the
+     * flag: the recognized paint family is procedural too and this renderer executes it. */
     int   procedural;
   } *shader_pal; int n_shader_pal;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
