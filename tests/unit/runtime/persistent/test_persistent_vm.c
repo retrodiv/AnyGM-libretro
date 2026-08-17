@@ -1096,6 +1096,270 @@ cleanup:
 }
 
 
+int expect_frozen_animation_wrap_fires_animation_end(void){
+  /* This synthetic fixture verifies that an out-of-range frozen non-classic index
+   * wraps and dispatches Animation End once, while an in-range frozen index
+   * neither moves nor dispatches the event. */
+  GmlcProject project={0};
+  GmlcSprite project_sprite={0};
+  GmlcObject object={0};
+  GmlcObjectEvent event={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance placed={0};
+  int room_order[1]={0};
+  AnygmHostServices services={0};
+  char source_path[]="/tmp/gml-frozen-animation-wrap-source-XXXXXX";
+  char package_path[]="/tmp/gml-frozen-animation-wrap-package-XXXXXX";
+  int source_fd=-1,package_fd=-1;
+  int ok=0;
+
+  source_fd=mkstemp(source_path);
+  package_fd=mkstemp(package_path);
+  if(source_fd<0 || package_fd<0) goto cleanup;
+  close(source_fd); source_fd=-1;
+  close(package_fd); package_fd=-1;
+  if(!fixture_write_text(source_path,
+       "global.frozen_wrap_ends = global.frozen_wrap_ends + 1;\n")) goto cleanup;
+
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="frozen-animation-wrap-fixture";
+  project.host=&services;
+  project.sprites=&project_sprite;
+  project.n_sprites=project.cap_sprites=1;
+  project.objects=&object;
+  project.n_objects=project.cap_objects=1;
+  project.rooms=&room;
+  project.n_rooms=project.cap_rooms=1;
+  project.room_order=room_order;
+  project.n_room_order=1;
+
+  project_sprite.id=project_sprite.name=(char*)"spr_frozen";
+  project_sprite.runtime_id=0;
+  project_sprite.width=project_sprite.height=1;
+  project_sprite.bbox_right=project_sprite.bbox_bottom=0;
+
+  object.id=object.name=(char*)"obj_frozen";
+  object.sprite_id=0;
+  object.mask_id=object.parent_id=-1;
+  object.visible=1;
+  object.events=&event;
+  object.n_events=object.cap_events=1;
+  event.event_type=7;      /* Other */
+  event.event_number=7;    /* Animation End */
+  event.source_path=source_path;
+
+  room.id=room.name=(char*)"room_frozen";
+  room.width=320;
+  room.height=240;
+  room.speed=60;
+  placed.id=placed.name=(char*)"placed_frozen";
+  placed.object_id=0;
+  placed.instance_id=100000;
+  room.instances=&placed;
+  room.n_instances=room.cap_instances=1;
+
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+      fprintf(stderr,"frozen animation wrap package failed: %s\n",error);
+      goto cleanup;
+    }
+  }
+  {
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,package_path)) goto cleanup;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,&services)){
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    GmlSprite sprite={0};
+    GmlRender render={0};
+    sprite.n_frames=2;
+    render.win=&win;
+    render.spr=&sprite;
+    render.n_spr=1;
+    vm.render=&render;
+    gml_room_enter(&vm,0);
+    *gml_varmap_put(&vm.globals,"frozen_wrap_ends")=vreal(0);
+    GmlInstance *frozen=find_slot(&vm,100000);
+    if(frozen){
+      /* frozen inside the sprite: nothing may fire and the index must hold */
+      frozen->image_speed=0;
+      frozen->image_index=1;
+      gml_vm_step(&vm);
+      frozen=find_slot(&vm,100000);
+    }
+    GmlVal *ends=gml_varmap_get(&vm.globals,"frozen_wrap_ends");
+    int held=frozen && frozen->image_index==1.0 &&
+             ends && ends->t==V_REAL && ends->d==0;
+    if(frozen){
+      /* frozen one past the last frame: wrap to the first frame and fire exactly once */
+      frozen->image_index=2;
+      gml_vm_step(&vm);
+      frozen=find_slot(&vm,100000);
+      gml_vm_step(&vm);
+      frozen=find_slot(&vm,100000);
+    }
+    ends=gml_varmap_get(&vm.globals,"frozen_wrap_ends");
+    ok=held && frozen && frozen->image_index==0.0 && frozen->image_speed==0 &&
+       ends && ends->t==V_REAL && ends->d==1;
+    if(!ok)
+      fprintf(stderr,
+        "frozen animation wrap mismatch: held=%d index=%.2f speed=%.2f ends=%.0f\n",
+        held,frozen?frozen->image_index:-1.0,frozen?frozen->image_speed:-1.0,
+        ends&&ends->t==V_REAL?ends->d:-1.0);
+    vm.render=NULL;
+    gml_vm_free(&vm);
+    gml_win_free(&win);
+  }
+
+cleanup:
+  if(source_fd>=0) close(source_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(source_path);
+  unlink(package_path);
+  return ok;
+}
+
+
+int expect_stopped_mover_restored_from_solid(void){
+  /* This synthetic contact fixture leaves a stopped mover inside a stationary
+   * solid. The post-event fallback restores its pre-contact position. */
+  GmlcProject project={0};
+  GmlcSprite project_sprite={0};
+  GmlcObject objects[2]={{0}};
+  GmlcObjectEvent event={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance placed[2]={{0}};
+  int room_order[1]={0};
+  AnygmHostServices services={0};
+  char source_path[]="/tmp/gml-solid-stop-restore-source-XXXXXX";
+  char package_path[]="/tmp/gml-solid-stop-restore-package-XXXXXX";
+  int source_fd=-1,package_fd=-1;
+  int ok=0;
+
+  source_fd=mkstemp(source_path);
+  package_fd=mkstemp(package_path);
+  if(source_fd<0 || package_fd<0) goto cleanup;
+  close(source_fd); source_fd=-1;
+  close(package_fd); package_fd=-1;
+  if(!fixture_write_text(source_path,
+       "global.solid_stops = global.solid_stops + 1;\n"
+       "vspeed = 0; speed = 0; gravity = 0; y = other.y;\n")) goto cleanup;
+
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="solid-stop-restore-fixture";
+  project.host=&services;
+  project.sprites=&project_sprite;
+  project.n_sprites=project.cap_sprites=1;
+  project.objects=objects;
+  project.n_objects=project.cap_objects=2;
+  project.rooms=&room;
+  project.n_rooms=project.cap_rooms=1;
+  project.room_order=room_order;
+  project.n_room_order=1;
+
+  project_sprite.id=project_sprite.name=(char*)"spr_solid_stop";
+  project_sprite.runtime_id=0;
+  project_sprite.width=project_sprite.height=16;
+  project_sprite.bbox_right=project_sprite.bbox_bottom=15;
+
+  objects[0].id=objects[0].name=(char*)"obj_faller";
+  objects[0].sprite_id=0;
+  objects[0].mask_id=objects[0].parent_id=-1;
+  objects[0].visible=1;
+  objects[0].events=&event;
+  objects[0].n_events=objects[0].cap_events=1;
+  event.event_type=4;              /* Collision */
+  event.collision_object_id=1;     /* with obj_block */
+  event.source_path=source_path;
+
+  objects[1].id=objects[1].name=(char*)"obj_block";
+  objects[1].sprite_id=0;
+  objects[1].mask_id=objects[1].parent_id=-1;
+  objects[1].visible=1;
+  objects[1].solid=1;
+
+  room.id=room.name=(char*)"room_solid_stop";
+  room.width=320;
+  room.height=240;
+  room.speed=60;
+  placed[0].id=placed[0].name=(char*)"placed_faller";
+  placed[0].object_id=0;
+  placed[0].instance_id=100000;
+  placed[0].x=100;
+  placed[0].y=100;
+  placed[1].id=placed[1].name=(char*)"placed_block";
+  placed[1].object_id=1;
+  placed[1].instance_id=100001;
+  placed[1].x=100;
+  placed[1].y=140;
+  room.instances=placed;
+  room.n_instances=room.cap_instances=2;
+
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+      fprintf(stderr,"solid stop restore package failed: %s\n",error);
+      goto cleanup;
+    }
+  }
+  {
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,package_path)) goto cleanup;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,&services)){
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    GmlSprite sprite={0};
+    GmlRender render={0};
+    sprite.n_frames=1;
+    sprite.w=sprite.h=16;
+    sprite.mr=sprite.mb=15;
+    render.win=&win;
+    render.spr=&sprite;
+    render.n_spr=1;
+    vm.render=&render;
+    gml_room_enter(&vm,0);
+    *gml_varmap_put(&vm.globals,"solid_stops")=vreal(0);
+    GmlInstance *faller=find_slot(&vm,100000);
+    if(faller){
+      faller->vspeed=4;
+      gml_colgrid_invalidate(&vm);
+      /* 100 -> 104 ... -> 124 free; the step to 128 overlaps the block at 140..155 */
+      for(int frame=0;frame<7 && faller;frame++){
+        gml_vm_step(&vm);
+        faller=find_slot(&vm,100000);
+      }
+    }
+    GmlVal *stops=gml_varmap_get(&vm.globals,"solid_stops");
+    ok=faller && faller->y==124.0 && faller->vspeed==0 && faller->gravity==0 &&
+       stops && stops->t==V_REAL && stops->d==1;
+    if(!ok)
+      fprintf(stderr,
+        "stopped mover restore mismatch: y=%.2f vspeed=%.2f gravity=%.2f stops=%.0f\n",
+        faller?faller->y:-1.0,faller?faller->vspeed:-1.0,faller?faller->gravity:-1.0,
+        stops&&stops->t==V_REAL?stops->d:-1.0);
+    vm.render=NULL;
+    gml_vm_free(&vm);
+    gml_win_free(&win);
+  }
+
+cleanup:
+  if(source_fd>=0) close(source_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(source_path);
+  unlink(package_path);
+  return ok;
+}
+
+
 int expect_hash_layer_gpu_gap_closure(void){
   GmlVM vm={0}; GmlRender render={0};
   vm.render=&render;

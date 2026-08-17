@@ -39,6 +39,8 @@ int expect_alarm_dispatch_order(void);
 int expect_automatic_motion_order(void);
 int expect_event_boundary_room_transition(void);
 int expect_room_transition_animation_phase(void);
+int expect_frozen_animation_wrap_fires_animation_end(void);
+int expect_stopped_mover_restored_from_solid(void);
 int expect_classic_timeline_index_activation(void);
 int expect_persistent_lifecycle(void);
 int expect_ds_list_text_roundtrip(void);

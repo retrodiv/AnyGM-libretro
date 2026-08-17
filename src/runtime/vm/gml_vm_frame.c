@@ -145,6 +145,17 @@ static void advance_instance_animation(GmlVM *vm,GmlInstance *in,
         (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",nf);
       gml_run_event(vm,in,"Other_7");
     }
+  } else if(!classic_runtime && nf>0 && (in->image_index>=nf || in->image_index<0)){
+    /* A frozen non-classic animation normalizes an out-of-range index at the animation
+     * point and dispatches Animation End. An in-range frozen index remains unchanged;
+     * classic animation retains its existing behavior. */
+    double ni=in->image_index;
+    while(ni>=nf) ni-=nf;
+    while(ni<0) ni+=nf;
+    in->image_index=ni;
+    if(anygm_host_development_setting(vm->host,"GML_LOG_ANIM")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[anim-end] %s frozen (nf=%d)\n",
+      (in->obj>=0&&in->obj<vm->n_objects)?vm->objects[in->obj].name:"?",nf);
+    gml_run_event(vm,in,"Other_7");
   }
 }
 

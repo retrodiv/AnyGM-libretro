@@ -33,6 +33,8 @@ int main(int argc,char **argv){
     {"automatic_motion_order",expect_automatic_motion_order},
     {"event_boundary_room_transition",expect_event_boundary_room_transition},
     {"room_transition_animation_phase",expect_room_transition_animation_phase},
+    {"frozen_animation_wrap_end",expect_frozen_animation_wrap_fires_animation_end},
+    {"stopped_mover_solid_restore",expect_stopped_mover_restored_from_solid},
     {"classic_timeline_index_activation",expect_classic_timeline_index_activation},
     {"hash_layer_gpu",expect_hash_layer_gpu_gap_closure},
     {"array_functions",expect_array_function_gap_closure},

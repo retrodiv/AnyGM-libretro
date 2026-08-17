@@ -1500,6 +1500,8 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
          * Collision code gets the first opportunity to resolve the overlap. */
         int oi_moved=oi->x!=oi->xprevious || oi->y!=oi->yprevious;
         int oi_kinematic=oi->hspeed!=0.0 || oi->vspeed!=0.0;
+        int si_moved=si->x!=si->xprevious || si->y!=si->yprevious;
+        int si_kinematic=si->hspeed!=0.0 || si->vspeed!=0.0;
         /* Transactional solid contacts present both participants at their pre-movement
          * positions. Event code may then resolve the contact explicitly. */
         if(rollback_pair){
@@ -1566,6 +1568,22 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
                        vm_masks_overlap(vm,si,oi,pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2);
           if(post_hit){
             oi->x=oi->xprevious; oi->y=oi->yprevious; gml_colgrid_touch(vm,oi);
+          }
+        }
+        /* If the moving handler's Collision event stops it while it remains inside a
+         * stationary solid, restore its pre-contact position. An event that leaves
+         * motion active keeps its explicit resolution. */
+        int si_stopped=si->hspeed==0.0 && si->vspeed==0.0;
+        if(!fixture_pair && !rollback_pair && si->active && !si->marked &&
+           oi->active && !oi->marked &&
+           oi->solid && !si->solid && si_moved && (!si_kinematic || si_stopped)){
+          double pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2;
+          int post_hit=gml_vm_instances_bbox(vm,si,&pl1,&pt1,&pr1,&pb1) &&
+                       gml_vm_instances_bbox(vm,oi,&pl2,&pt2,&pr2,&pb2) &&
+                       vm_overlap(pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2) &&
+                       vm_masks_overlap(vm,si,oi,pl1,pt1,pr1,pb1,pl2,pt2,pr2,pb2);
+          if(post_hit){
+            si->x=si->xprevious; si->y=si->yprevious; gml_colgrid_touch(vm,si);
           }
         }
         if(!si->active||si->marked) break;   /* self destroyed by the event */
