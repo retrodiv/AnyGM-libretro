@@ -85,6 +85,11 @@ The bzip2 files are recorded as an unmodified copy of release 1.0.8. Version
 labels and license texts identify the remaining vendored inputs; concrete
 verification values belong in external release evidence.
 
+The vendored `minimp3_ex.h` carries a marked local change in
+`mp3dec_detect_cb`: it initializes the free-format frame-size pair before
+`mp3d_find_frame` reads it. The mark preserves the modification's provenance
+for reviewers; the byte comparison belongs in external verification evidence.
+
 ## Embedded glyph coverage
 
 `src/generated/gml_default_font_data.h` and
@@ -134,6 +139,21 @@ origin is documented deliberately instead of discovered.
   `_YY_GLSLES_`/`_YY_GLSL_` dialect markers form an interoperability interface
   for authored shaders. The preamble function bodies and formatting here are
   first-party implementations; no proprietary shader program is bundled.
+
+## Graphics entry-point declarations
+
+`src/video/gpu/gml_gpu_gl_api.h` is a first-party declaration set for the
+OpenGL entry points the optional graphics backend uses. It names the required
+type widths, enumerants, and function signatures without incorporating a
+platform loader. The host supplies a callback that resolves each entry point
+for its current context; the core itself links no graphics library. Keeping
+the declaration set in one owner also makes the graphics boundary check
+enforceable. These values describe the Khronos interface, not a copied
+implementation.
+
+`src/video/gpu/gml_gpu_gl_shaders.h` contains the two first-party shader
+bodies compiled by that backend. They are checked in so an ordinary
+production build neither generates them nor accesses a network.
 
 ## Publication and validation
 
