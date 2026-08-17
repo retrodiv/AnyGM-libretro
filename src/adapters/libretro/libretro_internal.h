@@ -33,6 +33,7 @@ typedef struct LibretroAdapter {
   bool loaded;
   bool rumble_available;
   size_t fixed_state_capacity;
+  bool state_capacity_growth_reported;
   char save_directory[1024];
   char cache_directory[1024];
   char language[16];

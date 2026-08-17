@@ -510,12 +510,13 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta);
 AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_t enabled,
                                        const char *expression);
 size_t anygm_state_size(AnygmEngine *engine);
-/* The largest serialized size this content is known to reach, gathered from earlier sessions'
- * saves and remembered as a disposable cache entry in the content's writable namespace. 0 when
- * nothing is remembered. A host that must announce one state size for a whole session (a frontend
- * that sizes a rewind ring once, at load) can start from this instead of the boot-time size,
- * which content routinely dwarfs once gameplay allocates. A hint is advisory: the exact size of
- * the current state is always anygm_state_size. */
+/* The capacity the engine advises a host to provision for this session's states: at least the
+ * completed-frame slot's ceiling under the current output geometry — the boot-time state is the
+ * one state with no frame in it, and it is exactly what a frontend measures when it sizes a
+ * rewind ring once, at load — raised by the largest serialized size this content is known to
+ * have reached in earlier sessions, remembered as a disposable cache entry in the content's
+ * writable namespace. A hint is advisory: the exact size of the current state is always
+ * anygm_state_size. */
 size_t anygm_state_capacity_hint(const AnygmEngine *engine);
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written);
 AnygmResult anygm_state_load(AnygmEngine *engine,const void *data,size_t size);

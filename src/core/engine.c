@@ -2046,7 +2046,13 @@ size_t anygm_state_size(AnygmEngine *engine){
 
 size_t anygm_state_capacity_hint(const AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return 0;
-  return engine->state_peak_hint;
+  /* The boot-time state is the one state that carries no completed frame, and it is exactly the
+   * state a frontend measures when it sizes a rewind ring once, at load. Advising at least the
+   * frame slot's ceiling keeps that one answer covering the states every later frame produces;
+   * the remembered peak then raises it for content whose runtime allocation grows further. */
+  size_t hint=engine->state_peak_hint;
+  size_t frame=engine_state_frame_capacity(engine);
+  return frame>hint?frame:hint;
 }
 
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){

@@ -266,6 +266,7 @@ bool retro_load_game(const struct retro_game_info *info){
   }
   g_libretro.loaded=true;
   g_libretro.fixed_state_capacity=0;
+  g_libretro.state_capacity_growth_reported=false;
   /* Loading consults dozens of one-shot setting names; clear them out so the
    * per-frame names always find a free slot. */
   memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
@@ -287,6 +288,7 @@ void retro_unload_game(void){
   anygm_unload(g_libretro.engine);
   g_libretro.loaded=false;
   g_libretro.fixed_state_capacity=0;
+  g_libretro.state_capacity_growth_reported=false;
   memset(g_libretro.override_used,0,sizeof g_libretro.override_used);
   memset(&g_libretro.frame,0,sizeof g_libretro.frame);
   memset(&g_libretro.av,0,sizeof g_libretro.av);
@@ -376,8 +378,23 @@ size_t retro_serialize_size(void){
    * core-variable-size quirk without acknowledging it, yet re-queries this size on every save; a
    * frozen boot-time answer therefore made every mid-session save fail once content allocated,
    * while a frontend that truly allocates once is no worse off than under that hard failure. */
-  if(!g_libretro.fixed_state_capacity || actual>g_libretro.fixed_state_capacity)
+  if(!g_libretro.fixed_state_capacity || actual>g_libretro.fixed_state_capacity){
+    size_t previous=g_libretro.fixed_state_capacity;
     g_libretro.fixed_state_capacity=fixed_state_capacity(actual);
+    /* RetroArch sizes its rewind ring from the first answer and, from the moment a later answer
+     * exceeds it, drops every rewind snapshot without a word in release builds: rewinding then
+     * jumps to wherever the growth happened and walks on to the beginning of the run. The core
+     * cannot resize the frontend's ring; it can say out loud that the regime was entered. */
+    if(previous && !g_libretro.state_capacity_growth_reported){
+      g_libretro.state_capacity_growth_reported=true;
+      libretro_log(RETRO_LOG_WARN,
+                   "Serialized state outgrew the load-time capacity answer (%llu -> %llu bytes); "
+                   "a frontend that sized its rewind buffer at load stops recording rewind "
+                   "history until the content is reloaded\n",
+                   (unsigned long long)previous,
+                   (unsigned long long)g_libretro.fixed_state_capacity);
+    }
+  }
   return g_libretro.fixed_state_capacity;
 }
 

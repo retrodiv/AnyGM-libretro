@@ -88,6 +88,23 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
   }
 }
 
+size_t engine_state_frame_capacity(const AnygmEngine *engine){
+  /* Ceiling of state_write_completed_frame under the geometry this session is already known to
+   * reach: width, height and run count cost 12 bytes, every run costs 8, and a run can cover a
+   * single pixel, so the frame slot can cost up to 8 bytes per output pixel. The configured
+   * virtual monitor counts even before the first frame presents, because a frontend that sizes
+   * a rewind ring does it once, at load, when none of the presentation has happened yet. */
+  size_t w=engine->output_width,h=engine->output_height;
+  if(engine->config.monitor_width>w) w=engine->config.monitor_width;
+  if(engine->config.monitor_height>h) h=engine->config.monitor_height;
+  if((size_t)engine->state_frame_width>w) w=engine->state_frame_width;
+  if((size_t)engine->state_frame_height>h) h=engine->state_frame_height;
+  if(!w || !h){ w=engine->width; h=engine->height; }
+  if(w>FB_MAX_W) w=FB_MAX_W;
+  if(h>FB_MAX_H) h=FB_MAX_H;
+  return 12u+8u*w*h;
+}
+
 static int state_read_completed_frame(AnygmEngine *engine,CoreR *state){
   uint32_t width=cr_u32(state),height=cr_u32(state),runs=cr_u32(state);
   if(width>FB_MAX_W || height>FB_MAX_H || (!!width != !!height)) return 0;

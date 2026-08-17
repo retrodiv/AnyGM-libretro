@@ -438,6 +438,7 @@ void engine_input_poll_mouse(AnygmEngine *engine);
 
 uint64_t state_hash_bytes(const void *data,size_t size);
 void state_identity_refresh(AnygmEngine *engine);
+size_t engine_state_frame_capacity(const AnygmEngine *engine);
 void engine_state_peak_load(AnygmEngine *engine);
 void engine_state_peak_note(AnygmEngine *engine,size_t written);
 void engine_state_peak_flush(AnygmEngine *engine);
