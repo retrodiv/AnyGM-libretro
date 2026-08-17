@@ -1072,7 +1072,14 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
       free(copy);
       return;
     }
-    gml_render_maybe_prepare_draw(r);
+    /* A composite that covers the target with opaque pixels hides the fill in front of it exactly
+     * as an opaque rectangle does, and gml_render_prepare_opaque_rect already cancels a pending
+     * fill for the rectangle case. Taking the same route here stops the renderer flushing a
+     * monitor-sized write nothing will ever be seen through. */
+    if(src_all_opaque && !r->interp && rect_covers_target(r,x0,y0,x0+W,y0+H))
+      gml_render_maybe_prepare_opaque_rect(r,x0,y0,x0+W,y0+H);
+    else
+      gml_render_maybe_prepare_draw(r);
     if(draw_scaled_full_surface_normal(r,src,sw,sh,x0,y0,W,H,src_all_opaque)){
       free(copy);
       return;
