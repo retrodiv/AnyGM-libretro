@@ -915,6 +915,97 @@ static int alarm_pause_policy(void){
   return ok;
 }
 
+/* One frontend entry may carry several `;`-separated directives, so a cheat that needs a set of
+ * flags is one toggle rather than one per flag. The chain has to behave like the entries it
+ * replaces in both directions: every directive frozen while it is armed, and every directive's
+ * previous value put back when it is dropped — including the ones parked in continuation slots,
+ * which is where a chain can silently leak a forced value. */
+static int chained_override_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_draw_content_create(&fixture)){
+    fputs("chained-override fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+
+  /* Seed the last target so restoring has a value to return to that is not the empty default. */
+  if(ok) gml_set_global_scalar(&engine->vm,"fixture_chain_e",7);
+
+  ok=ok && anygm_set_runtime_override(
+             engine,0,1u,
+             "$fixture_chain_a=1;$fixture_chain_b=2;$fixture_chain_c=3;"
+             "$fixture_chain_d=4;$fixture_chain_e=5")==ANYGM_OK;
+  for(int frame=0;ok && frame<2;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  static const char *const names[5]={"fixture_chain_a","fixture_chain_b","fixture_chain_c",
+                                     "fixture_chain_d","fixture_chain_e"};
+  for(int n=0;ok && n<5;n++){
+    double held=gml_global_num(&engine->vm,names[n]);
+    if(held!=n+1){
+      fprintf(stderr,"chained override: %s froze at %.0f, expected %d\n",names[n],held,n+1);
+      ok=0;
+    }
+  }
+
+  /* Drop the entry the way the frontend does on Apply Changes with the box cleared. */
+  ok=ok && anygm_set_runtime_override(engine,0,0u,NULL)==ANYGM_OK;
+  for(int frame=0;ok && frame<2;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  static const double restored_to[5]={0,0,0,0,7};
+  for(int n=0;ok && n<5;n++){
+    double back=gml_global_num(&engine->vm,names[n]);
+    if(back!=restored_to[n]){
+      fprintf(stderr,"chained override: %s stayed at %.0f after the entry was dropped, "
+                     "expected %.0f\n",names[n],back,restored_to[n]);
+      ok=0;
+    }
+  }
+
+  /* Re-arming has to work a second time: the first arm consumed the slots the chain parks in. */
+  ok=ok && anygm_set_runtime_override(
+             engine,0,1u,"$fixture_chain_a=9;$fixture_chain_b=9")==ANYGM_OK;
+  for(int frame=0;ok && frame<2;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  if(ok && (gml_global_num(&engine->vm,"fixture_chain_a")!=9 ||
+            gml_global_num(&engine->vm,"fixture_chain_b")!=9)){
+    fprintf(stderr,"chained override: re-armed chain froze %.0f/%.0f, expected 9/9\n",
+            gml_global_num(&engine->vm,"fixture_chain_a"),
+            gml_global_num(&engine->vm,"fixture_chain_b"));
+    ok=0;
+  }
+  /* A directive the shortened chain no longer carries must not still be held by a stale slot. */
+  if(ok && gml_global_num(&engine->vm,"fixture_chain_c")!=0){
+    fprintf(stderr,"chained override: dropped directive kept writing (%.0f)\n",
+            gml_global_num(&engine->vm,"fixture_chain_c"));
+    ok=0;
+  }
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int framebuffer_retention_case(
     int (*create_fixture)(AnygmSyntheticContent *),const char *label){
   AnygmSyntheticContent fixture;
@@ -1543,6 +1634,8 @@ int main(int argc,char **argv){
       return game_restart_policy()?0:1;
     if(!strcmp(argv[2],"alarm_pause"))
       return alarm_pause_policy()?0:1;
+    if(!strcmp(argv[2],"chained_override"))
+      return chained_override_policy()?0:1;
     if(!strcmp(argv[2],"first_generation_dynamic_camera"))
       return first_generation_dynamic_camera_policy()?0:1;
     if(!strcmp(argv[2],"explicit_window_screen_stage"))
@@ -1604,6 +1697,7 @@ int main(int argc,char **argv){
   if(!automatic_surface_monitor_fit_policy()) return 1;
   if(!first_generation_oversized_gui_policy()) return 1;
   if(!draw_schedule_policy()) return 1;
+  if(!chained_override_policy()) return 1;
   if(!background_color_policy()) return 1;
   if(!framebuffer_retention_policy()) return 1;
   if(!clear_view_background_policy()) return 1;

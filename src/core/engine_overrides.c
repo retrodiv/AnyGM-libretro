@@ -76,6 +76,12 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  * Un-scoped freezes run every frame after the step (god mode, lives, ...). Aspect-scoped writes
  * run from the aspect hook while a force is active (screensizer / view / engine reshaping).
  *
+ * A line may chain several directives with ';', so one frontend cheat entry can drive more than
+ * one target from a single ON/OFF toggle:
+ *   $flag_1=1;$flag_2=1;$flag_3=1                       three freezes, one entry
+ * Each directive is validated, armed, captured, and restored on its own; the chain as a whole
+ * arms and disarms with the entry that carries it.
+ *
  * A value V is a NUMBER or a token expression, evaluated left-to-right with * / + - :
  *   $base_w  $base_h            the native room resolution
  *   $forced_w $forced_h         the forced-aspect framebuffer resolution
@@ -87,9 +93,33 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *       some_object:some_x=$forced_w-115            some_object:some_offset=$extra_w*0.5
  * ============================================================================================ */
 #define CHEAT_NAMECH(c) (((c)>='a'&&(c)<='z')||((c)>='A'&&(c)<='Z')||((c)>='0'&&(c)<='9')||(c)=='_')
+#define CHEAT_MAX_DIRECTIVES 8
+#define CHEAT_DIRECTIVE_BYTES 128
 
 static void cheat_monitor_dimensions(AnygmEngine *engine,double *monitor_w,double *monitor_h,
                                      double *view_w,double *view_h);
+
+/* Split a code into its `;`-separated directives, trimmed. Empty pieces are dropped, so a stray
+ * or trailing ';' costs nothing, and an unchained code simply yields one part. */
+static int cheat_split_directives(const char *code,
+                                  char parts[CHEAT_MAX_DIRECTIVES][CHEAT_DIRECTIVE_BYTES]){
+  int n=0;
+  const char *s=code?code:"";
+  while(*s && n<CHEAT_MAX_DIRECTIVES){
+    while(*s==';'||*s==' '||*s=='\t') s++;
+    if(!*s) break;
+    const char *end=strchr(s,';');
+    size_t length=end?(size_t)(end-s):strlen(s);
+    while(length && (s[length-1]==' '||s[length-1]=='\t'||s[length-1]=='\r')) length--;
+    if(length){
+      if(length>=CHEAT_DIRECTIVE_BYTES) length=CHEAT_DIRECTIVE_BYTES-1;
+      memcpy(parts[n],s,length); parts[n][length]=0; n++;
+    }
+    if(!end) break;
+    s=end+1;
+  }
+  return n;
+}
 
 static void cheat_parse_val(const char *s, CheatVal *v){
   memset(v,0,sizeof *v);
@@ -445,22 +475,39 @@ static int menu_directive_parse(AnygmEngine *engine,const char *code){
   }
   return 0;
 }
+/* True when any directive the code carries declares the menu. Chained codes are searched part by
+ * part so `menu|...` need not be the piece that happens to come first. */
 static int menu_decl_code(const char *code){
   if(!code) return 0;
-  while(*code==' '||*code=='\t') code++;
-  return !strncmp(code,"menu|",5);
+  char parts[CHEAT_MAX_DIRECTIVES][CHEAT_DIRECTIVE_BYTES];
+  int n=cheat_split_directives(code,parts);
+  for(int p=0;p<n;p++){
+    const char *s=parts[p];
+    while(*s==' '||*s=='\t') s++;
+    if(!strncmp(s,"menu|",5)) return 1;
+  }
+  return 0;
 }
 /* Rebuild the editor from enabled cheat slots. A host-supplied menu declaration replaces the
  * boot menu declaration and its directives; ordinary host cheats still layer over boot cheats.
- * This keeps manual override-file loading functional without duplicating boot rows. */
+ * This keeps manual override-file loading functional without duplicating boot rows.
+ *
+ * A chained code is read from the slot the caller addressed, whose code still holds every
+ * directive; its continuation slots are skipped so a chained menu row is not declared twice. */
 static void menu_rebuild(AnygmEngine *engine){
   int host_menu=0;
   for(int i=0;i<engine->cheat_count;i++)
-    if(engine->cheats[i].enabled && menu_decl_code(engine->cheats[i].code)){ host_menu=1; break; }
+    if(engine->cheats[i].enabled && !engine->cheats[i].continuation_of &&
+       menu_decl_code(engine->cheats[i].code)){ host_menu=1; break; }
   memset(&engine->menu,0,sizeof engine->menu);
   const CheatSlot *arr=host_menu?engine->cheats:engine->boot_cheats;
   int n=host_menu?engine->cheat_count:engine_boot_cheats_active(engine);
-  for(int i=0;i<n;i++) if(arr[i].enabled) menu_directive_parse(engine,arr[i].code);
+  for(int i=0;i<n;i++){
+    if(!arr[i].enabled || arr[i].continuation_of) continue;
+    char parts[CHEAT_MAX_DIRECTIVES][CHEAT_DIRECTIVE_BYTES];
+    int np=cheat_split_directives(arr[i].code,parts);
+    for(int p=0;p<np;p++) menu_directive_parse(engine,parts[p]);
+  }
 }
 void engine_override_reset(AnygmEngine *engine){
   engine->cheat_count = 0; memset(engine->cheats, 0, sizeof engine->cheats);
@@ -486,45 +533,59 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
     while(length && (cursor[length-1]==' '||cursor[length-1]=='\t'||cursor[length-1]=='\r'))
       length--;
     if(length && cursor[0]!='#'){
-      if(*count>=GML_MAX_CHEATS){
-        snprintf(error,error_capacity,"more than %d directives",GML_MAX_CHEATS);
-        return 0;
-      }
-      CheatSlot *slot=&slots[*count];
-      if(length>=sizeof slot->code){
+      /* A chained line fans out into one slot per directive, so every consumer below — the
+       * introskip anchor lookup, the menu builder, the per-frame passes — keeps reading exactly
+       * one directive per slot and needs no chain handling of its own. */
+      char line[CHEAT_DIRECTIVE_BYTES*CHEAT_MAX_DIRECTIVES];
+      if(length>=sizeof line){
         snprintf(error,error_capacity,"directive %d is longer than %llu bytes",
-                 line_number,(unsigned long long)(sizeof slot->code-1u));
+                 line_number,(unsigned long long)(sizeof line-1u));
         return 0;
       }
-      memcpy(slot->code,cursor,length);
-      slot->code[length]=0;
-      slot->enabled=1;
-      if(!strncmp(slot->code,"introskip|",10)){
-        const char *list=slot->code+10;
-        int digits=0,list_ok=list[0]!=0;
-        for(const char *scan=list;*scan && list_ok;scan++){
-          if(*scan>='0' && *scan<='9') digits=1;
-          else if(*scan!=',' && *scan!='-' && *scan!=' ' && *scan!='\t') list_ok=0;
-        }
-        if(!list_ok || !digits){
-          snprintf(error,error_capacity,
-                   "directive %d: introskip| takes a room index list such as 1,3-5",line_number);
+      memcpy(line,cursor,length);
+      line[length]=0;
+      char parts[CHEAT_MAX_DIRECTIVES][CHEAT_DIRECTIVE_BYTES];
+      int part_count=cheat_split_directives(line,parts);
+      for(int p=0;p<part_count;p++){
+        if(*count>=GML_MAX_CHEATS){
+          snprintf(error,error_capacity,"more than %d directives",GML_MAX_CHEATS);
           return 0;
         }
-      } else if(!boot_line_is_menu(slot->code)){
-        cheat_parse(slot->code,&slot->act);
-        if(slot->act.kind==CK_NONE){
-          snprintf(error,error_capacity,"directive %d is not a recognized override",line_number);
+        CheatSlot *slot=&slots[*count];
+        if(strlen(parts[p])>=sizeof slot->code){
+          snprintf(error,error_capacity,"directive %d is longer than %llu bytes",
+                   line_number,(unsigned long long)(sizeof slot->code-1u));
           return 0;
         }
-        if(slot->act.kind==CK_ROOM){
-          snprintf(error,error_capacity,
-                   "directive %d: room= is a one-shot warp; declare an mwarp menu entry instead",
-                   line_number);
-          return 0;
+        snprintf(slot->code,sizeof slot->code,"%s",parts[p]);
+        slot->enabled=1;
+        if(!strncmp(slot->code,"introskip|",10)){
+          const char *list=slot->code+10;
+          int digits=0,list_ok=list[0]!=0;
+          for(const char *scan=list;*scan && list_ok;scan++){
+            if(*scan>='0' && *scan<='9') digits=1;
+            else if(*scan!=',' && *scan!='-' && *scan!=' ' && *scan!='\t') list_ok=0;
+          }
+          if(!list_ok || !digits){
+            snprintf(error,error_capacity,
+                     "directive %d: introskip| takes a room index list such as 1,3-5",line_number);
+            return 0;
+          }
+        } else if(!boot_line_is_menu(slot->code)){
+          cheat_parse(slot->code,&slot->act);
+          if(slot->act.kind==CK_NONE){
+            snprintf(error,error_capacity,"directive %d is not a recognized override",line_number);
+            return 0;
+          }
+          if(slot->act.kind==CK_ROOM){
+            snprintf(error,error_capacity,
+                     "directive %d: room= is a one-shot warp; declare an mwarp menu entry instead",
+                     line_number);
+            return 0;
+          }
         }
+        (*count)++;
       }
-      (*count)++;
     }
     if(!line_end) break;
     cursor=line_end+1;
@@ -605,21 +666,71 @@ static void cheat_slot_restore(AnygmEngine *engine,CheatSlot *slot){
     gml_set_global_arr(&engine->vm, slot->act.obj, slot->act.idx, slot->saved);
 }
 
+/* Give back every slot the addressed entry chained, restoring what each of them froze. Dropping a
+ * chain has to undo the parked directives the same way disarming the entry undoes its first. */
+static void cheat_chain_release(AnygmEngine *engine,unsigned owner){
+  for(int k=0;k<engine->cheat_count;k++){
+    CheatSlot *link=&engine->cheats[k];
+    if(link->continuation_of != (int)owner+1) continue;
+    if(link->enabled) cheat_slot_restore(engine,link);
+    memset(link,0,sizeof *link);
+  }
+}
+/* Park a chained directive in a free slot, taken from the top of the table because the frontend
+ * addresses slots from 0 upwards — the two allocations meet only when a caller fills the table. */
+static CheatSlot *cheat_chain_alloc(AnygmEngine *engine,unsigned owner){
+  for(int k=GML_MAX_CHEATS-1;k>=0;k--){
+    if((unsigned)k==owner) continue;
+    CheatSlot *link=&engine->cheats[k];
+    if(link->enabled || link->code[0] || link->continuation_of) continue;
+    memset(link,0,sizeof *link);
+    link->continuation_of=(int)owner+1;
+    if(k >= engine->cheat_count) engine->cheat_count = k+1;
+    return link;
+  }
+  return NULL;   /* table full: the entry keeps the directives that did fit */
+}
 void engine_override_set(AnygmEngine *engine,unsigned i,bool e,const char *c){
   if(!c || i >= GML_MAX_CHEATS) return;
   if((int)i >= engine->cheat_count) engine->cheat_count = (int)i + 1;
   CheatSlot *slot=&engine->cheats[i];
+  /* An index the caller addresses is never a continuation. Reclaim it — undoing what it froze —
+   * so a chain that had parked here cannot be left half-owned by a slot it no longer holds. */
+  if(slot->continuation_of){
+    if(slot->enabled) cheat_slot_restore(engine,slot);
+    memset(slot,0,sizeof *slot);
+  }
   int was_enabled=slot->enabled;
   int repointed=strcmp(slot->code,c)!=0;
   /* Restore before the code is overwritten: the saved value belongs to the old target. */
   if(was_enabled && (!e || repointed)) cheat_slot_restore(engine,slot);
+  if(!e || repointed) cheat_chain_release(engine,i);
   slot->enabled = e ? 1 : 0;
   snprintf(slot->code, sizeof slot->code, "%s", c);
-  cheat_parse(slot->code, &slot->act);
-  if(slot->enabled && (!was_enabled || repointed)) cheat_slot_capture(engine,slot);
+  char parts[CHEAT_MAX_DIRECTIVES][CHEAT_DIRECTIVE_BYTES];
+  int part_count=cheat_split_directives(slot->code,parts);
+  cheat_parse(part_count>0?parts[0]:"", &slot->act);
+  if(slot->enabled && (!was_enabled || repointed)){
+    cheat_slot_capture(engine,slot);
+    /* Menu directives carry no action; menu_rebuild reads them straight off this slot's code. */
+    for(int p=1;p<part_count;p++){
+      if(boot_line_is_menu(parts[p])) continue;
+      CheatSlot *link=cheat_chain_alloc(engine,i);
+      if(!link) break;
+      link->enabled=1;
+      snprintf(link->code,sizeof link->code,"%s",parts[p]);
+      cheat_parse(link->code,&link->act);
+      cheat_slot_capture(engine,link);
+    }
+  }
   menu_rebuild(engine);
-  if(e && engine->loaded && slot->act.kind==CK_ROOM)
-    gml_cheat_apply(&engine->vm, slot->code);   /* fire the one-shot warp now */
+  if(e && engine->loaded){                        /* fire the one-shot warps now */
+    for(int p=0;p<part_count;p++){
+      CheatAct one;
+      cheat_parse(parts[p],&one);
+      if(one.kind==CK_ROOM) gml_cheat_apply(&engine->vm, parts[p]);
+    }
+  }
 }
 /* Consumer passes run over both API-provided overrides and boot overrides. Boot entries remain
  * active when the caller resets the API-provided slots. */

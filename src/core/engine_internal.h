@@ -154,8 +154,17 @@ typedef struct {
   double monitor_height,monitor_min_aspect,monitor_max_aspect;
 } CheatAct;
 /* saved/saved_valid hold what the target read before this slot was armed, so disarming it can
- * put the value back instead of leaving the last forced write behind. See cheat_slot_capture. */
-typedef struct { int enabled; char code[128]; CheatAct act; double saved; int saved_valid; } CheatSlot;
+ * put the value back instead of leaving the last forced write behind. See cheat_slot_capture.
+ *
+ * One caller-supplied code may carry several `;`-separated directives. Rather than growing every
+ * slot to hold N actions — the passes below run per instance per frame and the table is copied
+ * through a stack-resident prepared-content struct — a chained code keeps its first directive here
+ * and parks the rest in free slots of the same table. continuation_of is 0 for a slot the caller
+ * addressed directly and 1 + the owner's index for one of those parked directives, so releasing a
+ * chain is a scan and every pass still sees exactly one action per slot. */
+typedef struct {
+  int enabled; char code[128]; CheatAct act; double saved; int saved_valid; int continuation_of;
+} CheatSlot;
 
 typedef enum { MI_TOGGLE, MI_RANGE, MI_WARP } MenuItemKind;
 typedef struct {
