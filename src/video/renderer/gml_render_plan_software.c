@@ -6,6 +6,7 @@
  * cannot be executed exactly elsewhere is replayed here in full. The bodies are the established
  * ones, moved rather than rewritten. */
 #include "gml_render_plan.h"
+#include "gml_render_internal.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -25,20 +26,81 @@ static void execute_clear(const GmlPlanOp *op,uint32_t *target,uint32_t pitch){
   }
 }
 
-/* The column recurrence restarts identically on every row, and a destination row whose source row
- * repeats the previous one holds exactly the pixels already written. Walk the recurrence once into
- * a column map, expand one destination row per distinct source row, and copy the repeats. The
- * accumulators are the same recurrences the per-pixel form evaluated, so the result is unchanged. */
-static void execute_nearest_accumulator(const GmlPlanOp *op,const GmlPlanImage *image,
-                                        uint32_t *target,uint32_t pitch){
+/* The rows of the accumulator expansion, from an arbitrary starting row. The recurrence's state at
+ * that row is derived in the recurrence's own integers -- after y increments the total added is
+ * source_height*(2y+1) and the >= rule has subtracted twice the destination height exactly
+ * floor(total / (2*destination_height)) times -- so a band beginning mid-way holds exactly the
+ * accumulator the sequential walk would have carried there. Each band starts with no previous row,
+ * so a repeated source row at a band boundary is expanded instead of copied: identical pixels
+ * either way. */
+static void execute_nearest_accumulator_rows(const GmlPlanOp *op,const GmlPlanImage *image,
+                                             uint32_t *target,uint32_t pitch,
+                                             const unsigned *column,
+                                             unsigned row_start,unsigned row_end){
   const uint32_t *source=image->cpu_pixels;
-  const uint32_t source_width=op->axis_x.source_extent;
   const uint32_t source_height=op->axis_y.source_extent;
   const uint32_t destination_width=op->destination.width;
   const uint32_t destination_height=op->destination.height;
   const uint32_t destination_x=(uint32_t)op->destination.x;
   const uint32_t destination_y=(uint32_t)op->destination.y;
   const uint32_t alpha_write=op->alpha_write;
+  uint64_t total=(uint64_t)source_height+2ull*source_height*row_start;
+  unsigned source_y=(unsigned)(total/(2ull*destination_height));
+  unsigned y_accumulator=(unsigned)(total-2ull*destination_height*source_y);
+  unsigned previous_source_y=0;
+  const uint32_t *previous_row=NULL;
+  for(unsigned y=row_start;y<row_end;y++){
+    uint32_t *destination_row=target+(size_t)(destination_y+y)*pitch+destination_x;
+    if(previous_row && source_y==previous_source_y){
+      memcpy(destination_row,previous_row,
+             (size_t)destination_width*sizeof(*destination_row));
+    } else {
+      const uint32_t *source_row=source+(size_t)source_y*image->pitch_pixels;
+      unsigned run=0;
+      for(unsigned x=1;x<=destination_width;x++){
+        if(x<destination_width && column[x]==column[run]) continue;
+        uint32_t value=plan_pixel(source_row[column[run]],alpha_write);
+        for(unsigned i=run;i<x;i++) destination_row[i]=value;
+        run=x;
+      }
+      previous_row=destination_row;
+      previous_source_y=source_y;
+    }
+    y_accumulator+=source_height*2u;
+    if(y_accumulator>=destination_height*2u){
+      y_accumulator-=destination_height*2u;
+      source_y++;
+    }
+  }
+}
+
+typedef struct PlanAccumulatorBand {
+  const GmlPlanOp *op;
+  const GmlPlanImage *image;
+  uint32_t *target;
+  uint32_t pitch;
+  const unsigned *column;
+} PlanAccumulatorBand;
+
+static void plan_accumulator_band(void *context,int row_start,int row_end,int slot){
+  PlanAccumulatorBand *band=(PlanAccumulatorBand*)context;
+  (void)slot;
+  execute_nearest_accumulator_rows(band->op,band->image,band->target,band->pitch,band->column,
+                                   (unsigned)row_start,(unsigned)row_end);
+}
+
+/* The column recurrence restarts identically on every row, and a destination row whose source row
+ * repeats the previous one holds exactly the pixels already written. Walk the recurrence once into
+ * a column map, expand one destination row per distinct source row, and copy the repeats. The
+ * accumulators are the same recurrences the per-pixel form evaluated, so the result is unchanged.
+ * With a pool owner and a destination past the visible-pixel threshold the rows split across the
+ * renderer's band pool; rows are independent because each derives its whole state from its index. */
+static void execute_nearest_accumulator(const GmlPlanOp *op,const GmlPlanImage *image,
+                                        uint32_t *target,uint32_t pitch,
+                                        GmlRender *pool_owner){
+  const uint32_t source_width=op->axis_x.source_extent;
+  const uint32_t destination_width=op->destination.width;
+  const uint32_t destination_height=op->destination.height;
   unsigned column_stack[PLAN_COLUMN_STACK];
   unsigned *column=destination_width<=(unsigned)PLAN_COLUMN_STACK
     ?column_stack:(unsigned*)malloc((size_t)destination_width*sizeof(*column));
@@ -52,35 +114,22 @@ static void execute_nearest_accumulator(const GmlPlanOp *op,const GmlPlanImage *
         source_x++;
       }
     }
-    unsigned source_y=0,y_accumulator=source_height,previous_source_y=0;
-    const uint32_t *previous_row=NULL;
-    for(unsigned y=0;y<destination_height;y++){
-      uint32_t *destination_row=target+(size_t)(destination_y+y)*pitch+destination_x;
-      if(previous_row && source_y==previous_source_y){
-        memcpy(destination_row,previous_row,
-               (size_t)destination_width*sizeof(*destination_row));
-      } else {
-        const uint32_t *source_row=source+(size_t)source_y*image->pitch_pixels;
-        unsigned run=0;
-        for(unsigned x=1;x<=destination_width;x++){
-          if(x<destination_width && column[x]==column[run]) continue;
-          uint32_t value=plan_pixel(source_row[column[run]],alpha_write);
-          for(unsigned i=run;i<x;i++) destination_row[i]=value;
-          run=x;
-        }
-        previous_row=destination_row;
-        previous_source_y=source_y;
-      }
-      y_accumulator+=source_height*2u;
-      if(y_accumulator>=destination_height*2u){
-        y_accumulator-=destination_height*2u;
-        source_y++;
-      }
+    if(pool_owner &&
+       (uint64_t)destination_width*(uint64_t)destination_height>=262144ull){
+      PlanAccumulatorBand band={op,image,target,pitch,column};
+      gml_run_row_bands(pool_owner,(int)destination_height,plan_accumulator_band,&band);
+    } else {
+      execute_nearest_accumulator_rows(op,image,target,pitch,column,0,destination_height);
     }
     if(column!=column_stack) free(column);
     return;
   }
   {
+    const uint32_t *source=image->cpu_pixels;
+    const uint32_t source_height=op->axis_y.source_extent;
+    const uint32_t destination_x=(uint32_t)op->destination.x;
+    const uint32_t destination_y=(uint32_t)op->destination.y;
+    const uint32_t alpha_write=op->alpha_write;
     unsigned source_y=0,y_accumulator=source_height;
     for(unsigned y=0;y<destination_height;y++){
       const uint32_t *source_row=source+(size_t)source_y*image->pitch_pixels;
@@ -210,8 +259,9 @@ static void execute_present(const GmlPlanOp *op,const GmlPlanImage *image,
            (size_t)op->destination.width*sizeof(uint32_t));
 }
 
-int gml_render_plan_execute_software(const GmlRenderPlan *plan,uint32_t *target,
-                                     uint32_t target_pitch_pixels){
+int gml_render_plan_execute_software_pooled(const GmlRenderPlan *plan,uint32_t *target,
+                                            uint32_t target_pitch_pixels,
+                                            struct GmlRender *pool_owner){
   if(!plan || !target) return 0;
   if(target_pitch_pixels<plan->target_width) return 0;
   if(!gml_render_plan_validate(plan)) return 0;
@@ -224,7 +274,7 @@ int gml_render_plan_execute_software(const GmlRenderPlan *plan,uint32_t *target,
         break;
       case GML_PLAN_OP_BLIT_OPAQUE_NEAREST:
         if(op->axis_x.rule==GML_PLAN_AXIS_ACCUMULATOR)
-          execute_nearest_accumulator(op,image,target,target_pitch_pixels);
+          execute_nearest_accumulator(op,image,target,target_pitch_pixels,pool_owner);
         else
           execute_nearest_pixel_centre(op,image,target,target_pitch_pixels);
         break;
@@ -239,4 +289,9 @@ int gml_render_plan_execute_software(const GmlRenderPlan *plan,uint32_t *target,
     }
   }
   return 1;
+}
+
+int gml_render_plan_execute_software(const GmlRenderPlan *plan,uint32_t *target,
+                                     uint32_t target_pitch_pixels){
+  return gml_render_plan_execute_software_pooled(plan,target,target_pitch_pixels,NULL);
 }

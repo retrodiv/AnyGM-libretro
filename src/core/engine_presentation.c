@@ -127,7 +127,8 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
   }
   if(!engine_build_host_plan(engine,&engine->host_plan,GML_PLAN_TARGET_CPU_FRAME,
                              host_width,host_height,clear_required) ||
-     !gml_render_plan_execute_software(&engine->host_plan,engine->host_screen,host_width)){
+     !gml_render_plan_execute_software_pooled(&engine->host_plan,engine->host_screen,host_width,
+                                              &engine->render)){
     engine->host_clear_valid=0;
     return 0;
   }

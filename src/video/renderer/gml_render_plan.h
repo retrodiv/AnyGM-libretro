@@ -189,4 +189,13 @@ const char *gml_render_plan_fallback_name(uint32_t reason);
 int gml_render_plan_execute_software(const GmlRenderPlan *plan,uint32_t *target,
                                      uint32_t target_pitch_pixels);
 
+/* The same execution, with row-independent full-frame operations split across the renderer's
+ * row-band pool when one is offered and the destination is large enough to pay for the fork.
+ * The renderer is a pool owner here and nothing else; NULL executes on the calling thread and is
+ * exactly the function above. Identical bytes either way, at any band count. */
+struct GmlRender;
+int gml_render_plan_execute_software_pooled(const GmlRenderPlan *plan,uint32_t *target,
+                                            uint32_t target_pitch_pixels,
+                                            struct GmlRender *pool_owner);
+
 #endif
