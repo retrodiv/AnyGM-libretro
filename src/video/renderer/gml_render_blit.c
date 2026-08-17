@@ -1687,6 +1687,94 @@ void blit(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
                  uint32_t blend, double alpha);
 static void blit_background_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
                                   double xs, double ys, uint32_t blend, double alpha);
+/* One band of the point-sampled scaled sprite kernel. Every row derives its source line and its
+ * destination row from the row index alone and writes only that row, so bands are independent and
+ * each row samples exactly the texel it would have sampled on its own. */
+typedef struct AxisSpriteBand {
+  GmlRender *r;
+  const uint8_t *src;
+  const int *row_min,*row_max;
+  const uint32_t *a8_lut,*a16_lut;
+  double ax,ay,xs,invxs,invys,alpha;
+  int64_t dlx_fp;
+  int sw,sh,x0,x1,y0,originx,originy,bR,bG,bB,white,fast8_blend;
+  uint32_t round_bias;
+} AxisSpriteBand;
+
+static void axis_sprite_band(void *context,int row_start,int row_end,int slot){
+  const AxisSpriteBand *b=(const AxisSpriteBand*)context;
+  GmlRender *r=b->r;
+  const uint8_t *src=b->src;
+  const int *row_min=b->row_min,*row_max=b->row_max;
+  const uint32_t *a8_lut=b->a8_lut,*a16_lut=b->a16_lut;
+  const double ax=b->ax,ay=b->ay,xs=b->xs,invxs=b->invxs,invys=b->invys,alpha=b->alpha;
+  const int64_t dlx_fp=b->dlx_fp;
+  const int sw=b->sw,sh=b->sh,x0=b->x0,x1=b->x1,originx=b->originx,originy=b->originy;
+  const int y0=b->y0;
+  const int bR=b->bR,bG=b->bG,bB=b->bB,white=b->white,fast8_blend=b->fast8_blend;
+  const uint32_t round_bias=b->round_bias;
+  (void)slot; (void)invxs;
+  for(int py=y0+row_start; py<y0+row_end; py++){
+    int ly=(int)floor((py+0.5-ay)*invys + originy);
+    if(ly<0 || ly>=sh) continue;
+    int rmin=row_min?row_min[ly]:0, rmax=row_max?row_max[ly]:sw-1;
+    if(rmax<rmin) continue;
+    int px0=x0, px1=x1;
+    int span0=(int)ceil(ax + (rmin-originx)*xs - 0.5);
+    int span1=(int)ceil(ax + (rmax+1-originx)*xs - 0.5);
+    if(px0<span0) px0=span0;
+    if(px1>span1) px1=span1;
+    if(px0<0) px0=0;
+    if(px1>r->fbw) px1=r->fbw;
+    if(px1<=px0) continue;
+    const uint8_t *srow=src+(size_t)ly*sw*4;
+    uint32_t *row=&r->fb[(size_t)py*r->fbw];
+    double lx0=(px0+0.5-ax)*invxs + originx;
+    int64_t lx_fp=(int64_t)floor(lx0*(double)RFP_ONE);
+    for(int px=px0; px<px1; ){
+      int lx=floor_fixed20(lx_fp);
+      int maxrun=px1-px;
+      int run=fixed20_run_to_change(lx_fp,dlx_fp,lx,maxrun);
+      if(run<1) run=1;
+      if(lx>=0 && lx<sw){
+        const uint8_t *sp=srow+(size_t)lx*4;
+        int aa=sp[3];
+        if(aa){
+          int sr=white?sp[0]:sp[0]*bR/255, sg=white?sp[1]:sp[1]*bG/255, sb=white?sp[2]:sp[2]*bB/255;
+          uint32_t srcpx=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+          uint32_t *dp=&row[px];
+          if(!r->alphablend){
+            fill_u32_run(dp,run,srcpx);
+          } else {
+            if(fast8_blend){
+              uint32_t af=a8_lut[aa];
+              blend_fast8_run(dp,run,srcpx,af);
+            } else {
+              uint32_t af=a16_lut[aa];
+              if(af>=65536u){
+                fill_u32_run(dp,run,srcpx);
+              } else if(af){
+                uint32_t ia=65536u-af;
+                uint32_t srp=(uint32_t)sr*af, sgp=(uint32_t)sg*af, sbp=(uint32_t)sb*af;
+                for(int k=0;k<run;k++){
+                  uint32_t dv=dp[k];
+                  int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
+                  unsigned source_alpha=(unsigned)lround((double)aa*alpha);
+                  dp[k]=gml_sprite_target_alpha(r,dv,source_alpha)|
+                      (((srp+dr*ia+round_bias)>>16)<<16)|
+                      (((sgp+dg*ia+round_bias)>>16)<<8)|((sbp+db*ia+round_bias)>>16);
+                }
+              }
+            }
+          }
+        }
+      }
+      lx_fp += dlx_fp * (int64_t)run;
+      px += run;
+    }
+    }
+}
+
 static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw, int sh, double x, double y,
                                                 double xs, double ys, int originx, int originy,
                                                 uint32_t blend, double alpha, int world_space,
@@ -1892,6 +1980,12 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
         }
       }
     }
+    return 1;
+  }
+  if(vispix>=262144ull){
+    AxisSpriteBand band={r,src,row_min,row_max,a8_lut,a16_lut,ax,ay,xs,invxs,invys,alpha,dlx_fp,
+                         sw,sh,x0,x1,y0,originx,originy,bR,bG,bB,white,fast8_blend,round_bias};
+    gml_run_row_bands(r,y1-y0,axis_sprite_band,&band);
     return 1;
   }
   for(int py=y0; py<y1; py++){
