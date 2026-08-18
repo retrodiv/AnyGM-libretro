@@ -231,8 +231,9 @@ static void unset_settings_keep_content_reachable(void){
   begin(2,3);
   answered_value=NULL;
   libretro_options_apply(true);
-  /* Content that offers a gamepad-only path is unreachable when this reports no pad. */
-  expect("no host value for the pad",g_libretro.config.gamepad_connected,1u);
+  /* The default resolves per content: a modern title that can read a pad gets one, and a
+   * classic keyboard-era title keeps the RetroPad as its keyboard. */
+  expect("no host value for the pad",g_libretro.config.gamepad_connected,ANYGM_GAMEPAD_AUTO);
   /* Resolving an unknown amount to none would leave the slowest setting in place unasked. */
   expect("no host value for the culling",g_libretro.config.fast_alpha_cull,24u);
   expect("no host value for the raster",g_libretro.config.present_logical_raster,1u);

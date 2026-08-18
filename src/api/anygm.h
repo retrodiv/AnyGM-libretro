@@ -17,6 +17,8 @@ extern "C" {
 #define ANYGM_MAX_GAMEPADS 4u
 #define ANYGM_MAX_GAMEPAD_BUTTONS 16u
 #define ANYGM_MAX_GAMEPAD_AXES 4u
+/* gamepad_connected: beyond Off (0) and On (1), the default resolves per content. */
+#define ANYGM_GAMEPAD_AUTO 2u
 #define ANYGM_MAX_KEYS 512u
 #define ANYGM_MAX_RUNTIME_OVERRIDES 256u
 #define ANYGM_MAX_RUNTIME_OVERRIDE_EXPRESSION 127u
@@ -339,6 +341,10 @@ typedef struct AnygmConfig {
   int32_t crt_curvature;
   int32_t crt_vignette;
   uint32_t embedded_shaders;
+  /* 0 = no pad (RetroPad is a keyboard), 1 = connected pad (pad APIs own
+   * RetroPad input), ANYGM_GAMEPAD_AUTO = resolve from structural content:
+   * classic runtime keeps the keyboard bridge; modern runtime reports a pad
+   * only when a pad-reading builtin is referenced. */
   uint32_t gamepad_connected;
   uint32_t fast_alpha_cull;
   uint32_t fast_forward;

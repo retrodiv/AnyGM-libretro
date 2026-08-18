@@ -87,18 +87,30 @@ static int engine_input_key(void *userdata,int vk, int edge){
     dbg_key_log(engine,vk, edge, cur, prev, out);
     return out;
   }
-  int cur = 0, prev = 0;
+  /* Held state is the union of input sources, but edges are evaluated per source
+   * and then joined. A held simulated key cannot suppress a new physical-key
+   * transition of the same virtual key. */
+  int sim_c=0, sim_p=0, hw_c=0, hw_p=0, evk_c=0, evk_p=0, pad_c=0, pad_p=0;
   if(vk >= 0 && vk < NKEY){
-    cur |= engine->key_current[vk] | engine->hardware_key_current[vk] | engine->event_vk_current[vk];
-    prev |= engine->key_previous[vk] | engine->hardware_key_previous[vk] | engine->event_vk_previous[vk];
+    sim_c=engine->key_current[vk];      sim_p=engine->key_previous[vk];
+    hw_c=engine->hardware_key_current[vk]; hw_p=engine->hardware_key_previous[vk];
+    evk_c=engine->event_vk_current[vk]; evk_p=engine->event_vk_previous[vk];
   }
-  cur |= event_key_state_for_vk(engine,vk, 0);
-  prev |= event_key_state_for_vk(engine,vk, 1);
+  int key_c = event_key_state_for_vk(engine,vk, 0);
+  int key_p = event_key_state_for_vk(engine,vk, 1);
   if(!engine_pad_reserved_for_pad_api(engine)){
     int b = vk_to_pad(engine,vk);
-    if(b >= 0){ cur |= engine->pad_current[b]; prev |= engine->pad_previous[b]; }
+    if(b >= 0){ pad_c=engine->pad_current[b]; pad_p=engine->pad_previous[b]; }
   }
-  int out = edge==1 ? (cur && !prev) : edge==2 ? (!cur && prev) : cur;
+  int cur = sim_c|hw_c|evk_c|key_c|pad_c;
+  int prev = sim_p|hw_p|evk_p|key_p|pad_p;
+  int out;
+  if(edge==1)
+    out = (sim_c&&!sim_p)||(hw_c&&!hw_p)||(evk_c&&!evk_p)||(key_c&&!key_p)||(pad_c&&!pad_p);
+  else if(edge==2)
+    out = (!sim_c&&sim_p)||(!hw_c&&hw_p)||(!evk_c&&evk_p)||(!key_c&&key_p)||(!pad_c&&pad_p);
+  else
+    out = cur;
   dbg_key_log(engine,vk, edge, cur, prev, out);
   return out;
 }
@@ -369,6 +381,13 @@ static int core_opt_mouse_mode(AnygmEngine *engine) {
 
 
 static int core_opt_gamepad_connected(AnygmEngine *engine) {
+  if(engine->config.gamepad_connected==ANYGM_GAMEPAD_AUTO){
+    /* Auto retains the keyboard bridge for classic runtime content. For modern
+     * content it reports a connected pad only when normalized function references
+     * contain a pad-reading builtin. Explicit On and Off remain unchanged. */
+    if(anygm_policy_uses_classic_runtime(&engine->win)) return 0;
+    return gml_win_references_pad_input(&engine->win);
+  }
   return engine->config.gamepad_connected?1:0;
 }
 

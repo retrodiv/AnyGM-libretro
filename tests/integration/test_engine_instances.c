@@ -1510,6 +1510,48 @@ static int input_binding_ownership_policy(void){
   gamepad_mode.event_key_current[ANYGM_KEY_z]=1;
   ok=ok && gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,'Z',0) &&
      gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,1,0);
+
+  /* Auto keeps the keyboard bridge for a synthetic classic reference table
+   * even when it contains a joystick builtin name. */
+  AnygmEngine classic_auto={0};
+  classic_auto.win.classic_version=800;
+  classic_auto.win.ref_addr=&pad_ref_addr;
+  classic_auto.win.ref_name=&pad_ref_name;
+  classic_auto.win.ref_kind=&pad_ref_kind;
+  classic_auto.win.n_refs=1;
+  classic_auto.config.gamepad_connected=ANYGM_GAMEPAD_AUTO;
+  engine_input_bind(&classic_auto);
+  classic_auto.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  ok=ok &&
+     classic_auto.vm.input.key(classic_auto.vm.input.userdata,'Z',0) &&
+     !classic_auto.vm.input.gamepad_connected(classic_auto.vm.input.userdata,0);
+
+  /* A modern title under Auto answers connected exactly when it can hear a pad. */
+  static uint32_t modern_ref_addr=0;
+  static const char *modern_ref_name="gamepad_button_check";
+  static uint8_t modern_ref_kind=GML_REF_FUNCTION;
+  AnygmEngine modern_auto={0};
+  modern_auto.win.ref_addr=&modern_ref_addr;
+  modern_auto.win.ref_name=&modern_ref_name;
+  modern_auto.win.ref_kind=&modern_ref_kind;
+  modern_auto.win.n_refs=1;
+  modern_auto.config.gamepad_connected=ANYGM_GAMEPAD_AUTO;
+  engine_input_bind(&modern_auto);
+  modern_auto.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  ok=ok &&
+     !modern_auto.vm.input.key(modern_auto.vm.input.userdata,'Z',0) &&
+     modern_auto.vm.input.gamepad_connected(modern_auto.vm.input.userdata,0) &&
+     modern_auto.vm.input.gamepad(modern_auto.vm.input.userdata,32769,0);
+
+  AnygmEngine modern_auto_keyboard={0};
+  modern_auto_keyboard.config.gamepad_connected=ANYGM_GAMEPAD_AUTO;
+  engine_input_bind(&modern_auto_keyboard);
+  modern_auto_keyboard.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  ok=ok &&
+     modern_auto_keyboard.vm.input.key(modern_auto_keyboard.vm.input.userdata,'Z',0) &&
+     !modern_auto_keyboard.vm.input.gamepad_connected(
+         modern_auto_keyboard.vm.input.userdata,0);
+
   if(!ok)
     fputs("RetroPad ownership did not follow what the content can hear\n",stderr);
   return ok;
@@ -1542,6 +1584,19 @@ static int simulated_key_lifetime_policy(void){
   engine_input_poll_keyboard(&engine);
   ok=ok && !engine.vm.input.key(engine.vm.input.userdata,39,0) &&
      engine.vm.input.key(engine.vm.input.userdata,39,2);
+
+  /* The synthetic latch has no repeat edge. A later physical-key transition
+   * of the same virtual key still produces a press edge. */
+  memset(&engine,0,sizeof engine);
+  engine_input_bind(&engine);
+  engine.vm.input.key_press(engine.vm.input.userdata,'Z');
+  memcpy(engine.key_previous,engine.key_current,sizeof engine.key_current);
+  engine_input_poll_keyboard(&engine);
+  ok=ok && engine.vm.input.key(engine.vm.input.userdata,'Z',0) &&
+     !engine.vm.input.key(engine.vm.input.userdata,'Z',1);
+  engine.input.keys[ANYGM_KEY_z]=1;
+  engine_input_poll_keyboard(&engine);
+  ok=ok && engine.vm.input.key(engine.vm.input.userdata,'Z',1);
   if(!ok)
     fputs("simulated keyboard input did not retain and release its latched lifetime\n",stderr);
   return ok;

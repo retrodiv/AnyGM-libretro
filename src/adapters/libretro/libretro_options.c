@@ -73,11 +73,12 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"None",NULL},{"4:3",NULL},{"16:9",NULL},{"16:10",NULL},{"21:9",NULL},{NULL,NULL}},
    "None"},
   {"anygm_gamepad","Gamepad connected",NULL,
-   "Reports a connected pad to the game. Content that offers a pad-only path checks this before "
-   "the player can reach any menu.",
+   "Reports a connected pad to the game. Auto answers per title: classic keyboard-era games keep "
+   "the RetroPad as their keyboard, and a modern game reports a pad exactly when its code can "
+   "read one. On makes the pad APIs own RetroPad input; Off keeps it a keyboard everywhere.",
    NULL,"input",
-   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
-   "On"},
+   {{"Auto",NULL},{"On",NULL},{"Off",NULL},{NULL,NULL}},
+   "Auto"},
   {"anygm_mouse","Mouse input",NULL,
    "How pointer movement reaches the game. Auto follows what the content expects.",
    NULL,"input",
@@ -568,7 +569,8 @@ void libretro_options_apply(bool all_fields){
   config->content_overrides=option_on("anygm_content_overrides",1);
   /* Content that offers a gamepad-only path checks this before the player can reach any menu, so
    * a host that never sets the option must still report a pad. */
-  config->gamepad_connected=option_on("anygm_gamepad",1);
+  { int32_t pad=option_tristate("anygm_gamepad");
+    config->gamepad_connected=pad<0?ANYGM_GAMEPAD_AUTO:(uint32_t)pad; }
   /* The names describe how much is dropped, and the thresholds rise with them. An unrecognised
    * name resolves to the shipped amount rather than to none, so a value left behind by a host
    * cannot quietly land on the slowest setting. */
