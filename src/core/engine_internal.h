@@ -253,6 +253,11 @@ struct AnygmEngine {
   EngineDiagnostics diagnostics;
   uint8_t pad_current[NPAD],pad_previous[NPAD];
   uint8_t key_current[NKEY],key_previous[NKEY];
+  /* A simulated key pressed and released in one step must retain its press edge.
+   * raised records the current frame's edge and carry records only edges
+   * cancelled by a release in that frame. A held press uses its existing edge.
+   * These transient flags are not serialized between frames. */
+  uint8_t key_press_raised[NKEY],key_press_carry[NKEY];
   uint8_t hardware_key_current[NKEY],hardware_key_previous[NKEY];
   uint8_t event_vk_current[NKEY],event_vk_previous[NKEY];
   uint8_t event_key_current[ANYGM_KEY_LAST],event_key_previous[ANYGM_KEY_LAST];

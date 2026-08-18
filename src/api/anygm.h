@@ -341,10 +341,9 @@ typedef struct AnygmConfig {
   int32_t crt_curvature;
   int32_t crt_vignette;
   uint32_t embedded_shaders;
-  /* 0 = no pad (RetroPad is a keyboard), 1 = connected pad (pad APIs own
-   * RetroPad input), ANYGM_GAMEPAD_AUTO = resolve from structural content:
-   * classic runtime keeps the keyboard bridge; modern runtime reports a pad
-   * only when a pad-reading builtin is referenced. */
+  /* 0 routes RetroPad input through keyboard mappings; 1 reports a connected pad
+   * unconditionally. AUTO reports a pad only when the content references input
+   * functions or events that read one. The public option offers 0 and AUTO. */
   uint32_t gamepad_connected;
   uint32_t fast_alpha_cull;
   uint32_t fast_forward;

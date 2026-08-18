@@ -138,14 +138,31 @@ int gml_win_references_pad_input(const GmlWin *w){
   if(!w->pad_reference_scan){
     /* Every call site lands in the function-reference table, in the datafile and in the
      * classic-compiled package alike, so one scan answers for every generation. */
+    /* Match extension functions exactly to avoid confusing similarly named variables
+     * or scripts with pad input references. */
+    static const char *const joydll[]={
+      "joy_init","joy_update","joy_close","joy_count","joy_find","joy_name","joy_axes","joy_axis",
+      "joy_buttons","joy_button","joy_hats","joy_hat","joy_balls","joy_ball_x","joy_ball_y"
+    };
     int8_t found=1;
     if(w->ref_name && w->ref_kind)
-      for(int i=0;i<w->n_refs;i++)
-        if(w->ref_kind[i]==GML_REF_FUNCTION && w->ref_name[i] &&
-           (!strncmp(w->ref_name[i],"joystick_",9) || !strncmp(w->ref_name[i],"gamepad_",8))){
-          found=2;
-          break;
-        }
+      for(int i=0;i<w->n_refs && found==1;i++){
+        const char *name=w->ref_name[i];
+        if(w->ref_kind[i]!=GML_REF_FUNCTION || !name) continue;
+        if(!strncmp(name,"joystick_",9) || !strncmp(name,"gamepad_",8)){ found=2; break; }
+        for(size_t k=0;k<sizeof joydll/sizeof joydll[0];k++)
+          if(!strcmp(name,joydll[k])){ found=2; break; }
+      }
+    /* Classic joystick sub-events are encoded in the mouse event family: 16..28
+     * for joystick 1 and 31..43 for joystick 2. They carry no function name. */
+    for(int i=0;i<w->n_code && found==1;i++){
+      const char *name=w->code[i].name;
+      if(!name) continue;
+      const char *tag=strstr(name,"_Mouse_");
+      if(!tag) continue;
+      int sub=atoi(tag+7);
+      if((sub>=16 && sub<=28) || (sub>=31 && sub<=43)) found=2;
+    }
     ((GmlWin *)w)->pad_reference_scan=found;
   }
   return w->pad_reference_scan==2;

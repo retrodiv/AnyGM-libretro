@@ -102,11 +102,14 @@ static int engine_input_key(void *userdata,int vk, int edge){
     int b = vk_to_pad(engine,vk);
     if(b >= 0){ pad_c=engine->pad_current[b]; pad_p=engine->pad_previous[b]; }
   }
+  int sim_edge = vk>=0 && vk<NKEY ?
+      (engine->key_press_raised[vk]|engine->key_press_carry[vk]) : 0;
   int cur = sim_c|hw_c|evk_c|key_c|pad_c;
   int prev = sim_p|hw_p|evk_p|key_p|pad_p;
   int out;
   if(edge==1)
-    out = (sim_c&&!sim_p)||(hw_c&&!hw_p)||(evk_c&&!evk_p)||(key_c&&!key_p)||(pad_c&&!pad_p);
+    out = (sim_c&&!sim_p)||sim_edge||
+          (hw_c&&!hw_p)||(evk_c&&!evk_p)||(key_c&&!key_p)||(pad_c&&!pad_p);
   else if(edge==2)
     out = (!sim_c&&sim_p)||(!hw_c&&hw_p)||(!evk_c&&evk_p)||(!key_c&&key_p)||(!pad_c&&pad_p);
   else
@@ -120,11 +123,17 @@ static void engine_input_key_clear(void *userdata,int vk){
 }
 static void engine_input_key_press(void *userdata,int vk){
   AnygmEngine *engine=userdata;
-  if(vk >= 0 && vk < NKEY){ engine->key_current[vk]=1; engine->key_previous[vk]=0; }
+  if(vk >= 0 && vk < NKEY){
+    engine->key_current[vk]=1; engine->key_previous[vk]=0;
+    engine->key_press_raised[vk]=1;
+  }
 }
 static void engine_input_key_release(void *userdata,int vk){
   AnygmEngine *engine=userdata;
-  if(vk >= 0 && vk < NKEY){ engine->key_current[vk]=0; engine->key_previous[vk]=1; }
+  if(vk >= 0 && vk < NKEY){
+    if(engine->key_press_raised[vk]) engine->key_press_carry[vk]=1;
+    engine->key_current[vk]=0; engine->key_previous[vk]=1;
+  }
 }
 static int anygm_key_for_vk(int vk){
   if(vk >= 'A' && vk <= 'Z') return ANYGM_KEY_a + (vk - 'A');
@@ -165,6 +174,11 @@ static int event_key_state_for_vk(AnygmEngine *engine,int vk, int prev){
   return down;
 }
 void engine_input_poll_keyboard(AnygmEngine *engine){
+  /* The frame that raised a press has ended. One cancelled by its own frame's release is carried
+   * into this frame's event phase; every other trace of it goes. */
+  memset(engine->key_press_raised,0,sizeof engine->key_press_raised);
+  memcpy(engine->key_press_raised,engine->key_press_carry,sizeof engine->key_press_raised);
+  memset(engine->key_press_carry,0,sizeof engine->key_press_carry);
   memcpy(engine->hardware_key_previous, engine->hardware_key_current, sizeof(engine->hardware_key_current));
   memcpy(engine->event_key_previous,engine->event_key_current,sizeof engine->event_key_current);
   memset(engine->hardware_key_current, 0, sizeof(engine->hardware_key_current));
@@ -393,10 +407,8 @@ static int core_opt_mouse_mode(AnygmEngine *engine) {
 
 static int core_opt_gamepad_connected(AnygmEngine *engine) {
   if(engine->config.gamepad_connected==ANYGM_GAMEPAD_AUTO){
-    /* Auto retains the keyboard bridge for classic runtime content. For modern
-     * content it reports a connected pad only when normalized function references
-     * contain a pad-reading builtin. Explicit On and Off remain unchanged. */
-    if(anygm_policy_uses_classic_runtime(&engine->win)) return 0;
+    /* Apply the same structural input-reference rule to every generation. Content
+     * without a pad-reading reference retains keyboard emulation. */
     return gml_win_references_pad_input(&engine->win);
   }
   return engine->config.gamepad_connected?1:0;

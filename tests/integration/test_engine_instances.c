@@ -1537,8 +1537,8 @@ static int input_binding_ownership_policy(void){
   ok=ok && gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,'Z',0) &&
      gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,1,0);
 
-  /* Auto keeps the keyboard bridge for a synthetic classic reference table
-   * even when it contains a joystick builtin name. */
+  /* A synthetic classic reference table follows the same ownership policy
+   * as a modern reference table when it contains a joystick builtin. */
   AnygmEngine classic_auto={0};
   classic_auto.win.classic_version=800;
   classic_auto.win.ref_addr=&pad_ref_addr;
@@ -1549,8 +1549,19 @@ static int input_binding_ownership_policy(void){
   engine_input_bind(&classic_auto);
   classic_auto.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
   ok=ok &&
-     classic_auto.vm.input.key(classic_auto.vm.input.userdata,'Z',0) &&
-     !classic_auto.vm.input.gamepad_connected(classic_auto.vm.input.userdata,0);
+     !classic_auto.vm.input.key(classic_auto.vm.input.userdata,'Z',0) &&
+     classic_auto.vm.input.gamepad_connected(classic_auto.vm.input.userdata,0);
+
+  /* A synthetic classic table with no pad reference retains keyboard mapping. */
+  AnygmEngine classic_auto_keyboard={0};
+  classic_auto_keyboard.win.classic_version=800;
+  classic_auto_keyboard.config.gamepad_connected=ANYGM_GAMEPAD_AUTO;
+  engine_input_bind(&classic_auto_keyboard);
+  classic_auto_keyboard.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  ok=ok &&
+     classic_auto_keyboard.vm.input.key(classic_auto_keyboard.vm.input.userdata,'Z',0) &&
+     !classic_auto_keyboard.vm.input.gamepad_connected(
+         classic_auto_keyboard.vm.input.userdata,0);
 
   /* A modern title under Auto answers connected exactly when it can hear a pad. */
   static uint32_t modern_ref_addr=0;

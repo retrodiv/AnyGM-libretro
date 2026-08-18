@@ -72,13 +72,14 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"video",
    {{"None",NULL},{"4:3",NULL},{"16:9",NULL},{"16:10",NULL},{"21:9",NULL},{NULL,NULL}},
    "None"},
-  {"anygm_gamepad","Gamepad connected",NULL,
-   "Reports a connected pad to the game. Auto answers per title: classic keyboard-era games keep "
-   "the RetroPad as their keyboard, and a modern game reports a pad exactly when its code can "
-   "read one. On makes the pad APIs own RetroPad input; Off keeps it a keyboard everywhere.",
+  {"anygm_gamepad","RetroPad behavior",NULL,
+   "Game gamepad lets a game with joystick or gamepad support read the RetroPad itself, the way it "
+   "read a joystick originally, and falls back to keyboard emulation for a game with no pad "
+   "support. Keyboard emulation always presents the RetroPad as the game's keyboard controls: both "
+   "classic action rows (ZXCV and ASDF), the arrows, Enter, Space and Shift.",
    NULL,"input",
-   {{"Auto",NULL},{"On",NULL},{"Off",NULL},{NULL,NULL}},
-   "Auto"},
+   {{"Game gamepad",NULL},{"Keyboard emulation",NULL},{NULL,NULL}},
+   "Game gamepad"},
   {"anygm_mouse","Mouse input",NULL,
    "How pointer movement reaches the game. Auto follows what the content expects.",
    NULL,"input",
@@ -567,10 +568,12 @@ void libretro_options_apply(bool all_fields){
   config->embedded_shaders=option_on("anygm_embedded_shaders",1);
   config->report_all_shaders_compiled=option_on("anygm_report_shaders_compiled",1);
   config->content_overrides=option_on("anygm_content_overrides",1);
-  /* Content that offers a gamepad-only path checks this before the player can reach any menu, so
-   * a host that never sets the option must still report a pad. */
-  { int32_t pad=option_tristate("anygm_gamepad");
-    config->gamepad_connected=pad<0?ANYGM_GAMEPAD_AUTO:(uint32_t)pad; }
+  /* The default option resolves from content before any menu is available. */
+  /* The public option offers two states. An unconditional pad state remains available
+   * internally; automatic mode instead follows the reference scan. */
+  { const char *behavior=option_value("anygm_gamepad");
+    config->gamepad_connected=
+      (behavior && !strcmp(behavior,"Keyboard emulation")) ? 0u : ANYGM_GAMEPAD_AUTO; }
   /* The names describe how much is dropped, and the thresholds rise with them. An unrecognised
    * name resolves to the shipped amount rather than to none, so a value left behind by a host
    * cannot quietly land on the slowest setting. */
