@@ -197,11 +197,22 @@ void engine_input_poll_keyboard(AnygmEngine *engine){
 }
 /* GM gamepad button constant (gp_face1=32769 …) -> RetroPad button id (-1 = unmapped) */
 static int gp_to_pad(AnygmEngine *engine,int gp){
-  /* GMS2 bytecode stores the button enum as 1..16, while older formats also accept the 0..15
-   * indexes returned by button-count loops. Keep both layouts tied to the package generation. */
+  /* Modern function-value profiles encode button enums as 1..16. Earlier
+   * profiles also accept 0..15 raw indexes; the XInput-compatible slot maps
+   * these indexes to digital-button bit positions. Keep both interpretations
+   * tied to the resolved profile. */
   if(anygm_policy_has_modern_function_values(&engine->win)) {
     if(gp >= 1 && gp <= 16) gp += 32768;
-  } else if(gp >= 0 && gp < 16) gp += 32769;
+  } else if(gp >= 0 && gp < 16) {
+    static const int xinput_bit_to_gp[16]={
+      32781,32782,32783,32784,   /* 0..3   dpad up, down, left, right */
+      32778,32777,32779,32780,   /* 4..7   start, back, left thumb, right thumb */
+      32773,32774,-1,-1,         /* 8..11  shoulders, guide, reserved */
+      32769,32770,32771,32772    /* 12..15 A, B, X, Y */
+    };
+    gp=xinput_bit_to_gp[gp];
+    if(gp<0) return -1;
+  }
   switch(gp){
     case 32769: return ANYGM_PAD_FACE_BOTTOM;       /* gp_face1 */
     case 32770: return ANYGM_PAD_FACE_RIGHT;       /* gp_face2 */

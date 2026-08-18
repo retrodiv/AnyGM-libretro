@@ -1468,6 +1468,32 @@ static int state_input_history_roundtrip(void){
   return ok;
 }
 
+static int raw_gamepad_button_layout_policy(void){
+  /* Earlier profiles map raw 0..15 button indexes to XInput digital-button
+   * bit positions; modern profiles use 1..16 button enums. This synthetic
+   * frame checks both interpretations. */
+  AnygmEngine legacy={0};
+  engine_input_bind(&legacy);
+  legacy.pad_current[ANYGM_PAD_START]=1;
+  legacy.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  int ok=legacy.vm.input.gamepad(legacy.vm.input.userdata,4,0) &&
+     legacy.vm.input.gamepad(legacy.vm.input.userdata,32778,0) &&
+     legacy.vm.input.gamepad(legacy.vm.input.userdata,12,0) &&
+     !legacy.vm.input.gamepad(legacy.vm.input.userdata,0,0) &&
+     !legacy.vm.input.gamepad(legacy.vm.input.userdata,14,0) &&
+     !legacy.vm.input.gamepad(legacy.vm.input.userdata,10,0);
+
+  AnygmEngine modern={0};
+  modern.win.bytecode=17;
+  engine_input_bind(&modern);
+  modern.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  ok=ok && modern.vm.input.gamepad(modern.vm.input.userdata,1,0) &&
+     !modern.vm.input.gamepad(modern.vm.input.userdata,4,0);
+  if(!ok)
+    fputs("raw gamepad button indexes did not follow profile layouts\n",stderr);
+  return ok;
+}
+
 static int input_binding_ownership_policy(void){
   AnygmEngine keyboard_only={0};
   keyboard_only.win.classic_version=800;
@@ -1714,6 +1740,8 @@ int main(int argc,char **argv){
       return room_start_deactivation_policy()?0:1;
     if(!strcmp(argv[2],"input_binding_ownership"))
       return input_binding_ownership_policy()?0:1;
+    if(!strcmp(argv[2],"raw_gamepad_button_layout"))
+      return raw_gamepad_button_layout_policy()?0:1;
     if(!strcmp(argv[2],"simulated_key_lifetime"))
       return simulated_key_lifetime_policy()?0:1;
     if(!strcmp(argv[2],"simulated_key_frame_lifetime"))

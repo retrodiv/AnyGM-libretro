@@ -1299,7 +1299,10 @@ int builtin_input_kbgp(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out)
   if(!strcmp(nm,"gamepad_get_device_count")){      *out=vreal(gml_input_gamepad_device_count(vm)); return 1; }
   if(!strcmp(nm,"gamepad_button_count")){          *out=vreal(16); return 1; }
   if(!strcmp(nm,"gamepad_axis_count")){            *out=vreal(4); return 1; }
-  if(!strcmp(nm,"gamepad_get_description")){       *out=vstr(gml_input_gamepad_connected(vm,(int)N(a,n,0)) ? "AnyGM Gamepad" : ""); return 1; }
+  /* The GameMaker manual gives this XInput-compatible device description as
+   * an example. Content may choose a mapping from gamepad_get_description;
+   * the connected logical RetroPad advertises that compatible description. */
+  if(!strcmp(nm,"gamepad_get_description")){       *out=vstr(gml_input_gamepad_connected(vm,(int)N(a,n,0)) ? "Xbox 360 Controller (XInput STANDARD GAMEPAD)" : ""); return 1; }
   if(!strcmp(nm,"gamepad_set_axis_deadzone")){
     gp_deadzone_set(vm,(int)N(a,n,0),N(a,n,1)); *out=vreal(0); return 1;
   }
