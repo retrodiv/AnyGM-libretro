@@ -735,6 +735,54 @@ static int gamepad_axis_orientation_contract(GmlVM *vm){
   return ok;
 }
 
+/* A host that maps an analog stick onto the d-pad reports the stick centred and the pad pressed;
+ * a player on a real d-pad produces the same pair. The stick reading has to survive both, whichever
+ * name the content asks under. The right stick has no digital counterpart and stays silent. */
+static double gamepad_dpad_only_axis(void *userdata,int device,int axis){
+  (void)userdata; (void)device; (void)axis;
+  return 0.0;
+}
+
+static int gamepad_dpad_only_button(void *userdata,int button,int edge){
+  (void)userdata;
+  if(edge!=0) return 0;
+  return button==32784 || button==32782;   /* gp_padr and gp_padd held */
+}
+
+static int digital_pad_reaches_axis_readers(GmlVM *vm){
+  double (*saved_axis)(void*,int,int)=vm->input.gamepad_axis;
+  int (*saved_button)(void*,int,int)=vm->input.gamepad;
+  int (*saved_connected)(void*,int)=vm->input.gamepad_connected;
+  vm->input.gamepad_axis=gamepad_dpad_only_axis;
+  vm->input.gamepad=gamepad_dpad_only_button;
+  vm->input.gamepad_connected=gamepad_fixture_connected;
+  GmlVal device=vreal(0);
+  GmlVal left_h[]={device,vreal(32785)};
+  GmlVal left_v[]={device,vreal(32786)};
+  GmlVal right_h[]={device,vreal(32787)};
+  GmlVal joy_h[]={device,vreal(0)};
+  GmlVal joy_v[]={device,vreal(1)};
+  GmlVal joy_r[]={device,vreal(2)};
+  int ok=expect_real("gamepad_axis_value reads the pad horizontally",
+                     gml_builtin_call(vm,"gamepad_axis_value",left_h,2),1.0) &&
+         expect_real("gamepad_axis_value reads the pad vertically",
+                     gml_builtin_call(vm,"gamepad_axis_value",left_v,2),1.0) &&
+         expect_real("gamepad_axis_value leaves the right stick silent",
+                     gml_builtin_call(vm,"gamepad_axis_value",right_h,2),0.0) &&
+         expect_real("joy_axis reads the pad horizontally",
+                     gml_builtin_call(vm,"joy_axis",joy_h,2),1.0) &&
+         expect_real("joy_axis reads the pad vertically",
+                     gml_builtin_call(vm,"joy_axis",joy_v,2),1.0) &&
+         expect_real("joy_axis leaves the right stick silent",
+                     gml_builtin_call(vm,"joy_axis",joy_r,2),0.0) &&
+         expect_real("joystick_xpos reads the pad",
+                     gml_builtin_call(vm,"joystick_xpos",&device,1),1.0);
+  vm->input.gamepad_axis=saved_axis;
+  vm->input.gamepad=saved_button;
+  vm->input.gamepad_connected=saved_connected;
+  return ok;
+}
+
 static int portable_joystick_contract(GmlVM *vm){
   vm->input.gamepad_connected=gamepad_fixture_connected;
   vm->input.gamepad=gamepad_fixture_button;
@@ -830,6 +878,7 @@ int main(void){
          portable_service_contracts(&vm) &&
          portable_joystick_contract(&vm) &&
          gamepad_axis_orientation_contract(&vm) &&
+         digital_pad_reaches_axis_readers(&vm) &&
          layer_instance_move(&vm) &&
          layer_fx_answers_none(&vm) &&
          missing_stream_is_not_sound_zero(&vm) &&

@@ -90,6 +90,11 @@ static double joy_axis_value(GmlVM *vm,int device,int axis){
   int code=axis==0?32785:axis==1?32786:axis==2?32787:axis==3?32788:0;
   if(!code) return 0.0;
   double value=gml_input_gamepad_axis(vm,device,code);
+  /* A neutral axis can coexist with digital pad directions. Reuse the
+   * gamepad-axis digital fallback for this extension; the right stick has
+   * no digital counterpart. Do not apply the gamepad deadzone here: this
+   * adapter reports the normalized transport value without that filter. */
+  if(value==0.0) value=gp_axis_digital_fallback(vm,code);
   if(!isfinite(value)) return 0.0;
   if(value<-1.0) value=-1.0; else if(value>1.0) value=1.0;
   return value;

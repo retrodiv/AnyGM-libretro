@@ -640,7 +640,7 @@ void gp_deadzone_set(GmlVM *vm, int dev, double dz){
 void gml_gamepad_set_axis_deadzone_direct(GmlVM *vm, int device, double dz){
   gp_deadzone_set(vm,device,dz);
 }
-static double gp_axis_digital_fallback(GmlVM *vm,int ax){
+double gp_axis_digital_fallback(GmlVM *vm,int ax){
   if(ax == GML_GP_AXIS_LH) return gml_input_gamepad(vm,32784,0) - gml_input_gamepad(vm,32783,0);  /* R - L */
   if(ax == GML_GP_AXIS_LV) return gml_input_gamepad(vm,32782,0) - gml_input_gamepad(vm,32781,0);  /* D - U */
   return 0.0;
