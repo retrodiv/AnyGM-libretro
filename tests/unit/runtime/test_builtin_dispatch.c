@@ -693,6 +693,48 @@ static int portable_service_contracts(GmlVM *vm){
                      gml_builtin_call(vm,"BorderlessToggle",NULL,0),0);
 }
 
+/* Both vertical axes carry the screen convention here: a positive value means down, which is
+ * what the gp_axis* constants promise and what the raw device index must invert. */
+static double gamepad_axis_orientation_fixture(void *userdata,int device,int axis){
+  (void)userdata;
+  if(device!=0) return 0.0;
+  if(axis==32785) return 0.5;   /* gp_axislh: right */
+  if(axis==32786) return 0.75;  /* gp_axislv: down  */
+  if(axis==32787) return 0.25;  /* gp_axisrh: right */
+  if(axis==32788) return 0.5;   /* gp_axisrv: down  */
+  return 0.0;
+}
+
+static int gamepad_axis_orientation_contract(GmlVM *vm){
+  double (*saved_axis)(void*,int,int)=vm->input.gamepad_axis;
+  int (*saved_connected)(void*,int)=vm->input.gamepad_connected;
+  vm->input.gamepad_axis=gamepad_axis_orientation_fixture;
+  vm->input.gamepad_connected=gamepad_fixture_connected;
+  GmlVal device=vreal(0);
+  struct { const char *label; double axis; double expected; } cases[]={
+    /* The constants keep GameMaker's screen convention. */
+    {"gp_axislh reads right positive",32785,0.5},
+    {"gp_axislv reads down positive",32786,0.75},
+    {"gp_axisrh reads right positive",32787,0.25},
+    {"gp_axisrv reads down positive",32788,0.5},
+    /* A raw device index reads the device: XInput's thumbs grow upwards, so the vertical axes
+     * arrive negated while the horizontal ones agree with the screen. */
+    {"raw left horizontal keeps its sign",0,0.5},
+    {"raw left vertical carries the device sign",1,-0.75},
+    {"raw right horizontal keeps its sign",2,0.25},
+    {"raw right vertical carries the device sign",3,-0.5},
+  };
+  int ok=1;
+  for(size_t i=0;i<sizeof cases/sizeof cases[0];i++){
+    GmlVal args[]={device,vreal(cases[i].axis)};
+    ok=expect_real(cases[i].label,gml_builtin_call(vm,"gamepad_axis_value",args,2),
+                   cases[i].expected) && ok;
+  }
+  vm->input.gamepad_axis=saved_axis;
+  vm->input.gamepad_connected=saved_connected;
+  return ok;
+}
+
 static int portable_joystick_contract(GmlVM *vm){
   vm->input.gamepad_connected=gamepad_fixture_connected;
   vm->input.gamepad=gamepad_fixture_button;
@@ -787,6 +829,7 @@ int main(void){
          external_audio_definition_dispatch(&vm) &&
          portable_service_contracts(&vm) &&
          portable_joystick_contract(&vm) &&
+         gamepad_axis_orientation_contract(&vm) &&
          layer_instance_move(&vm) &&
          layer_fx_answers_none(&vm) &&
          missing_stream_is_not_sound_zero(&vm) &&

@@ -646,11 +646,18 @@ static double gp_axis_digital_fallback(GmlVM *vm,int ax){
   return 0.0;
 }
 double gp_axis_value_filtered(GmlVM *vm, int dev, int ax){
+  /* XInput thumbstick axes use positive-up vertical coordinates, while the
+   * normalized gp_axis* constants use positive-down screen coordinates.
+   * Raw indexes retain device coordinates; constant indexes retain normalized
+   * coordinates. Only vertical raw indexes are negated after the shared
+   * digital fallback. */
+  int raw_index = ax >= 0 && ax <= 3;
   ax = gp_axis_const(ax);
   if(!ax) return 0.0;
   double v = gml_input_gamepad_axis(vm,dev, ax);
   if(v == 0.0)
     v = gp_axis_digital_fallback(vm,ax);   /* Preserve the existing digital transport. */
+  if(raw_index && (ax == GML_GP_AXIS_LV || ax == GML_GP_AXIS_RV)) v = -v;
   if(!isfinite(v)) v = 0.0;
   if(v < -1.0) v = -1.0;
   if(v > 1.0) v = 1.0;
