@@ -754,6 +754,77 @@ static int world_raster_scale_case(void){
   return 0;
 }
 
+static int replace_and_classic_present_case(void){
+  /* The base canvas is wider than the surface so the whole-frame copy fast paths stand down
+   * and the per-run kernel — the one the defect lived in — is what this case exercises. */
+  enum { WIDTH=4,HEIGHT=3,BASEW=6,BASEH=5 };
+  GmlRender render;
+  uint32_t frame[BASEW*BASEH];
+  memset(&render,0,sizeof render);
+  memset(frame,0,sizeof frame);
+  render.fb=render.base_fb=frame;
+  render.fbw=render.base_fbw=BASEW;
+  render.fbh=render.base_fbh=BASEH;
+  render.target_id=-1;
+  render.next_surface_id=1;
+  render.alphablend=1;
+  render.alpha=1.0;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+
+  /* A compositor draws a translucent pass into its surface: the colour is resolved there and
+   * the destination-alpha arithmetic leaves partial coverage behind. */
+  int source=gml_surface_create(&render,WIDTH,HEIGHT);
+  REQUIRE(source==1,"replace case surface id");
+  REQUIRE(gml_surface_set_target(&render,source),"replace case surface target");
+  gml_render_clear(&render,0x000000u,1.0);
+  render.alpha=0.5;
+  gml_render_primitive_rectangle(&render,1,1,1,1,0x302010u,0);
+  render.alpha=1.0;
+  gml_surface_reset_target(&render);
+  uint32_t *pixels=surface_pixels(&render,source,NULL,NULL);
+  REQUIRE(pixels!=NULL,"replace case surface pixels");
+  uint32_t held=pixels[1*WIDTH+1];
+  REQUIRE((held>>24)>0u && (held>>24)<255u,
+          "replace case surface holds partial coverage");
+  render.surface[0].opaque_known=0;
+  render.surface[0].all_opaque=0;
+  render.surface[0].all_transparent=0;
+
+  /* (one, zero) copies what the surface holds, coverage included. */
+  render.blendmode=6;
+  memset(frame,0,sizeof frame);
+  gml_draw_surface_stretched(&render,source,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  REQUIRE(frame[1*BASEW+1]==held,
+          "one-zero surface copy lands the texel verbatim");
+  render.blendmode=0;
+
+  /* The classic automatic present models an alphaless backbuffer: the colour reaches the
+   * screen untouched however much coverage the surface accumulated. */
+  render.classic=1;
+  render.app_surface=pixels;
+  memset(frame,0,sizeof frame);
+  gml_draw_surface_stretched(&render,source,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  REQUIRE((frame[1*BASEW+1]&0x00FFFFFFu)==(held&0x00FFFFFFu),
+          "classic present keeps the composed colour");
+  REQUIRE((frame[1*BASEW+1]>>24)==0xFFu,
+          "classic present writes an opaque screen pixel");
+
+  /* An ordinary surface draw keeps blending by coverage: only the pad above is exempt. */
+  render.app_surface=NULL;
+  memset(frame,0,sizeof frame);
+  gml_draw_surface_stretched(&render,source,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  REQUIRE((frame[1*BASEW+1]&0x00FFFFFFu)!=(held&0x00FFFFFFu),
+          "an ordinary surface draw still blends partial coverage");
+
+  gml_surface_free(&render,source);
+  return 0;
+}
+
 int main(void){
   GmlRender render;
   uint32_t base[8*6];
@@ -830,6 +901,7 @@ int main(void){
   REQUIRE(subtract_surface_coverage_case()==0,"subtract surface coverage case");
   REQUIRE(masked_sprite_surface_case()==0,"masked sprite surface case");
   REQUIRE(world_raster_scale_case()==0,"world raster scale case");
+  REQUIRE(replace_and_classic_present_case()==0,"replace and classic present case");
   puts("renderer surfaces: ok");
   return 0;
 }

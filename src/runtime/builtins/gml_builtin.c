@@ -95,6 +95,10 @@ void builtin_set_blendmode_ext(GmlVM *vm,GmlRender *R,int src,int dst){
   else if(src==5 && dst==2) state.blend_mode=1;        /* additive src-alpha */
   else if(src==1 && dst==4) state.blend_mode=2;        /* zero, inverse source colour */
   else if(src==5 && dst==4) state.blend_mode=4;        /* source alpha, inverse source colour */
+  /* (one, zero) copies the source fragment, including partial coverage, over the
+   * destination. Surface kernels with a replace branch honor mode 6; other
+   * kernels retain their established normal path. */
+  else if(src==2 && dst==1) state.blend_mode=6;        /* one, zero: replace */
   /* The (source colour, one) factor pair adds source-colour-scaled colour
    * while preserving destination colour for a black source. */
   /* Hold this mapping until a surface target retained across Draw and the

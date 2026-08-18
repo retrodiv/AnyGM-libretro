@@ -492,11 +492,17 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
         uint32_t s=src[(size_t)sy*sw+sx],a=s>>24;
         if(a==255) *dp=s|0xFF000000u;
         else if(a){
-          uint32_t d=*dp,ia=255-a;
-          int sr=(s>>16)&0xFF,sg=(s>>8)&0xFF,sb=s&0xFF;
-          int dr=(d>>16)&0xFF,dg=(d>>8)&0xFF,db=d&0xFF;
-          *dp=0xFF000000u|((uint32_t)((sr*a+dr*ia)/255)<<16)|
-              ((uint32_t)((sg*a+dg*ia)/255)<<8)|(uint32_t)((sb*a+db*ia)/255);
+          if(r->classic && src==r->app_surface){
+            /* The classic automatic present models an alphaless backbuffer: partial coverage
+             * never dims the presented colour, at this scale as at any other. */
+            *dp=s|0xFF000000u;
+          } else {
+            uint32_t d=*dp,ia=255-a;
+            int sr=(s>>16)&0xFF,sg=(s>>8)&0xFF,sb=s&0xFF;
+            int dr=(d>>16)&0xFF,dg=(d>>8)&0xFF,db=d&0xFF;
+            *dp=0xFF000000u|((uint32_t)((sr*a+dr*ia)/255)<<16)|
+                ((uint32_t)((sg*a+dg*ia)/255)<<8)|(uint32_t)((sb*a+db*ia)/255);
+          }
         }
         dp++;
       }
@@ -773,10 +779,14 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   if(swd<=0||shd<=0||W==0||H==0) return;
   int flipx=W<0, flipy=H<0; if(W<0) W=-W; if(H<0) H=-H;
   if(alpha<=0) return;
+  /* Mode 6 is (one, zero): everywhere a gate admits the plain normal path below, it admits the
+   * replace pair too, because for the opaque pixels those paths copy the two are identical and
+   * only the partial-coverage runs branch on it. */
+  int replace=r->blendmode==6;
   if(surf==0 && r->classic && !r->interp && !flipx && !flipy && r->app_phase_y &&
      W==sw*2 && H==sh*2 && fabs(sx0d)<0.001 && fabs(sy0d)<0.001 &&
      fabs(swd-sw)<0.001 && fabs(shd-sh)<0.001 &&
-     alpha>=1.0 && (blend&0xFFFFFF)==0xFFFFFF && r->blendmode==0 &&
+     alpha>=1.0 && (blend&0xFFFFFF)==0xFFFFFF && (r->blendmode==0||replace) &&
      !shader_alpha_test_requires_filter(r)){
     gml_render_maybe_prepare_draw(r);
     for(int oy=0;oy<H;oy++){
@@ -847,7 +857,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
     if(cw>0 && ch>0){
       int sx_start=cx0-x0, sy_start=cy0-y0;
       int white=((blend & 0xFFFFFF) == 0xFFFFFF);
-      if(src_all_opaque && r->blendmode==0 && alpha>=1.0 && white && !spal && !slut && !sgrid && !squant &&
+      if(src_all_opaque && (r->blendmode==0||replace) && alpha>=1.0 && white && !spal && !slut && !sgrid && !squant &&
          r->color_write_mask==0x0F &&
          src!=r->fb && cx0==0 && cy0==0 && cw==r->fbw && ch==r->fbh &&
          sx_start==0 && sy_start==0 && sw==r->fbw && sh==r->fbh){
@@ -860,7 +870,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
         return;
       }
       gml_render_maybe_prepare_draw(r);
-      if(r->color_write_mask!=0x0F && r->blendmode==0 && alpha>=1.0 && white && !spal && !slut && !sgrid && !squant){
+      if(r->color_write_mask!=0x0F && (r->blendmode==0||replace) && alpha>=1.0 && white && !spal && !slut && !sgrid && !squant){
         /* Channel-masked surface copy. This is the common mask-construction idiom: draw an
          * opaque color/shape first, disable alpha writes, then copy scene RGB through it. */
         for(int yy=0; yy<ch; yy++){
@@ -1007,7 +1017,17 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             if(sa8==255){
               memcpy(dp+xx,sp+xx,(size_t)run*sizeof(uint32_t));
             } else if(sa8){
-              if(r->win && anygm_policy_uses_first_generation_studio(r->win) &&
+              if(replace){
+                /* Mode 6 copies each source texel, including partial coverage, without
+                 * destination blending. Zero-coverage runs retain the existing skip. */
+                memcpy(dp+xx,sp+xx,(size_t)run*sizeof(uint32_t));
+              } else if(r->classic && r->app_surface==src){
+                /* The classic automatic present models an alphaless backbuffer: whatever
+                 * coverage arithmetic our application surface accumulated, its colour reaches
+                 * the screen untouched. Content cannot name surface 0 in that generation, so
+                 * this composite is always the engine's own. */
+                for(int k=0;k<run;k++) dp[xx+k]=sp[xx+k]|0xFF000000u;
+              } else if(r->win && anygm_policy_uses_first_generation_studio(r->win) &&
                  r->app_surface==src){
                 uint32_t inverse=255u-sa8;
                 for(int k=0;k<run;k++){
@@ -1041,7 +1061,8 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             else if(sgrid) sv=grid_map_px_cached(r,sgrid,sv,&grid_cache);
             int sr=((sv>>16)&0xFF)*bR/255, sg=((sv>>8)&0xFF)*bG/255, sb=(sv&0xFF)*bB/255;
             double ea=alpha*pa; double eia=1.0-ea; (void)ia;
-            if((!r->alphablend || ea>=1.0)) dp[xx]=0xFF000000u|(sr<<16)|(sg<<8)|sb;
+            if(replace) dp[xx]=(sv&0xFF000000u)|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
+            else if((!r->alphablend || ea>=1.0)) dp[xx]=0xFF000000u|(sr<<16)|(sg<<8)|sb;
             else {
               uint32_t dv=dp[xx];
               int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
@@ -1050,7 +1071,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
           }
         }
       }
-      if(r->blendmode==0 && alpha>=1.0 && src_all_opaque && rect_covers_target(r,cx0,cy0,cx1,cy1)){
+      if((r->blendmode==0||replace) && alpha>=1.0 && src_all_opaque && rect_covers_target(r,cx0,cy0,cx1,cy1)){
         r->fb_opaque_known=1;
         r->fb_all_opaque=1;
         r->fb_all_transparent=0;
@@ -1062,7 +1083,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   if(!flipx && !flipy &&
      fabs(sx0d) < 0.001 && fabs(sy0d) < 0.001 &&
      fabs(swd - sw) < 0.001 && fabs(shd - sh) < 0.001 &&
-     r->blendmode==0 && alpha>=1.0 &&
+     (r->blendmode==0 || (replace && src_all_opaque)) && alpha>=1.0 &&
      ((blend & 0xFFFFFF) == 0xFFFFFF) && !spal && !slut && !sgrid &&
      (!alpha_test || opaque_alpha_test_passthrough)){
     /* Record it rather than write it, while the full-target fill in front of it is still deferred:
@@ -1138,6 +1159,13 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
         unsigned source_alpha=(unsigned)lround((A/(double)n)*alpha);
         *dp=color_write_merge(r,old,
           blend_max_preset_pixel(r,old,sr,sg,sb,source_alpha));
+      }
+      else if(replace || (r->classic && src==r->app_surface)){
+        /* (one, zero): the sampled fragment replaces the destination, its coverage carried
+         * rather than blended by. The classic automatic present takes the same route because
+         * the backbuffer it models has no alpha channel to blend with. */
+        uint32_t oa=replace?(uint32_t)lround((A/(double)n)):255u;
+        *dp=(oa<<24)|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
       }
       else if((!r->alphablend && pa>=1.0) || ea>=1.0){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; }
       else { int dr=(*dp>>16)&0xFF, dg=(*dp>>8)&0xFF, db=*dp&0xFF;
