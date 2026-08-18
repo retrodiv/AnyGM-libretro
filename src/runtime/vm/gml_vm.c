@@ -69,17 +69,15 @@ int gml_cheat_apply(GmlVM *vm, const char *code){
   return 1;   /* sticky: re-apply each frame to freeze */
 }
 
-/* The input API stores keyboard remapping as physical/source VK -> logical/destination VK.
- * The host exposes physical state by VK, so aggregate every source that currently maps
- * to the requested logical key. Aggregating current/previous state before testing an edge is
- * important when several physical keys map to the same logical key. */
-static void keyboard_source_state(GmlVM *vm,int source, int *cur, int *prev){
-  int c=gml_input_key(vm,source,0);
-  int pressed=gml_input_key(vm,source,1);
-  int released=gml_input_key(vm,source,2);
-  int p=released ? 1 : (pressed ? 0 : c);
-  if(cur) *cur=c;
-  if(prev) *prev=p;
+/* Keyboard remapping maps physical/source VK to logical/destination VK.
+ * Held state is the union of the mapped sources, while press and release edges
+ * are reported by each source and then joined. Differencing the held union
+ * would lose a cancelled simulated press and a second physical press while
+ * another mapped source already holds the same logical key. */
+static void keyboard_source_state(GmlVM *vm,int source, int *cur, int *pressed, int *released){
+  if(cur) *cur=gml_input_key(vm,source,0);
+  if(pressed) *pressed=gml_input_key(vm,source,1);
+  if(released) *released=gml_input_key(vm,source,2);
 }
 void gml_keyboard_unset_map(GmlVM *vm){
   if(!vm) return;
@@ -100,24 +98,29 @@ int gml_keyboard_get_map(GmlVM *vm, int source){
 int gml_keyboard_check(GmlVM *vm, int vk, int edge){
   if(!vm) return 0;
   if(edge<0 || edge>2) edge=0;
-  int any_cur=0, any_prev=0;
+  int any_cur=0, any_pressed=0, any_released=0;
   if(vk==0 || vk==1){
     for(int source=2;source<256;source++){
       if(vm->key_map[source]<2) continue; /* disabled and sentinel destinations are not keys */
-      int cur=0,prev=0;
-      keyboard_source_state(vm,source,&cur,&prev);
-      any_cur|=cur; any_prev|=prev;
+      int cur=0,pressed=0,released=0;
+      keyboard_source_state(vm,source,&cur,&pressed,&released);
+      any_cur|=cur; any_pressed|=pressed; any_released|=released;
     }
-    if(vk==0){ any_cur=!any_cur; any_prev=!any_prev; }
+    /* vk_nokey is the absence of every key rather than a key of its own, so it is the one state
+     * whose edges are transitions of the union: it goes down when the last key comes up and up
+     * when the first one goes down. */
+    if(vk==0)
+      return edge==1 ? (!any_cur && any_released) :
+             edge==2 ? (any_cur && any_pressed) : !any_cur;
   } else {
     if(vk<0 || vk>255) return 0;
     for(int source=2;source<256;source++) if(vm->key_map[source]==vk){
-      int cur=0,prev=0;
-      keyboard_source_state(vm,source,&cur,&prev);
-      any_cur|=cur; any_prev|=prev;
+      int cur=0,pressed=0,released=0;
+      keyboard_source_state(vm,source,&cur,&pressed,&released);
+      any_cur|=cur; any_pressed|=pressed; any_released|=released;
     }
   }
-  return edge==1 ? (any_cur && !any_prev) : edge==2 ? (!any_cur && any_prev) : any_cur;
+  return edge==1 ? any_pressed : edge==2 ? any_released : any_cur;
 }
 void gml_keyboard_clear(GmlVM *vm, int logical_vk){
   if(!vm) return;

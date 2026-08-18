@@ -102,8 +102,11 @@ static int engine_input_key(void *userdata,int vk, int edge){
     int b = vk_to_pad(engine,vk);
     if(b >= 0){ pad_c=engine->pad_current[b]; pad_p=engine->pad_previous[b]; }
   }
+  /* A simulated press cancelled by its own frame's release is not readable in that frame: the
+   * carry hands it to the following one, where the key events run. Reading it in both frames
+   * would answer one synthesized press twice. */
   int sim_edge = vk>=0 && vk<NKEY ?
-      (engine->key_press_raised[vk]|engine->key_press_carry[vk]) : 0;
+      (engine->key_press_raised[vk] && !engine->key_press_carry[vk]) : 0;
   int cur = sim_c|hw_c|evk_c|key_c|pad_c;
   int prev = sim_p|hw_p|evk_p|key_p|pad_p;
   int out;

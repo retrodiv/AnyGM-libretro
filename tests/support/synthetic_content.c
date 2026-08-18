@@ -239,6 +239,70 @@ int anygm_synthetic_simulated_key_content_create(AnygmSyntheticContent *fixture)
   return 1;
 }
 
+int anygm_synthetic_bridged_key_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+
+  char create[192],step[192],press[192];
+  snprintf(create,sizeof create,"%s/create.gml",fixture->directory);
+  snprintf(step,sizeof step,"%s/step.gml",fixture->directory);
+  snprintf(press,sizeof press,"%s/press.gml",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  if(!write_text(create,
+                 "global.fixture_steps = 0;\n"
+                 "global.fixture_presses = 0;\n"
+                 "global.fixture_press_step = -1;\n") ||
+     !write_text(step,
+                 "global.fixture_steps += 1;\n"
+                 "if (global.fixture_steps == 1)\n"
+                 "{\n"
+                 "    keyboard_key_press(vk_right);\n"
+                 "    keyboard_key_release(vk_right);\n"
+                 "}\n") ||
+     !write_text(press,
+                 "global.fixture_presses += 1;\n"
+                 "global.fixture_press_step = global.fixture_steps;\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+
+  GmlcProject project={0};
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  project.host=&file_services;
+  GmlcObject object={0};
+  GmlcObjectEvent events[3]={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance instance={0};
+  int room_order=0;
+  project.name=(char *)"bridged-key-fixture";
+  project.objects=&object; project.n_objects=project.cap_objects=1;
+  project.rooms=&room; project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order; project.n_room_order=1;
+
+  object.id=object.name=(char *)"obj_fixture";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.visible=0; object.events=events; object.n_events=object.cap_events=3;
+  events[0].event_type=0; events[0].event_number=0; events[0].source_path=create;
+  events[1].event_type=3; events[1].event_number=0; events[1].source_path=step;
+  events[2].event_type=9; events[2].event_number=39; events[2].source_path=press;
+  room.id=room.name=(char *)"room_fixture"; room.width=64; room.height=48; room.speed=60;
+  room.draw_background_color=1; room.instances=&instance; room.n_instances=room.cap_instances=1;
+  instance.id=instance.name=(char *)"instance_fixture"; instance.object_id=0;
+  instance.instance_id=100000; instance.sx=instance.sy=1.0f; instance.color=0xFFFFFFFFu;
+
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"bridged-key package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  return 1;
+}
+
 int anygm_synthetic_draw_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
