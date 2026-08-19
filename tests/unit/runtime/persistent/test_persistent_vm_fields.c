@@ -17,7 +17,11 @@ static const char *bbox_fixture_setting(void *userdata,const char *name){
   return name && !strcmp(name,"GML_NO_COLGRID")?"1":NULL;
 }
 
-int expect_inclusive_instance_bbox_fields(void){
+/* The synthetic fixture pins both language-visible readings of one inclusive collision box.
+ * A later-format marker selects one-past far edges unless the legacy option is set; marker
+ * absence retains inclusive values. Every edge and both access paths are checked. Collision
+ * operations remain inclusive under either reported reading. */
+int expect_bounding_box_far_edges_by_generation(void){
   GmlWin win={0};
   GmlVM vm={0};
   AnygmHostServices services={0};
@@ -26,7 +30,6 @@ int expect_inclusive_instance_bbox_fields(void){
   GmlObject objects[2]={{0}};
   GmlInstance instances[2]={{0}};
 
-  win.bytecode=16;
   render.n_spr=2;
   render.spr=sprites;
   sprites[0].w=20; sprites[0].h=30;
@@ -62,24 +65,59 @@ int expect_inclusive_instance_bbox_fields(void){
   instances[1].image_xscale=instances[1].image_yscale=1;
   vm.cur_self=&instances[0];
 
-  GmlVal right=gml_vm_variable_get_h(
-    &vm,IT_SELF,"bbox_right",gml_value_name_hash("bbox_right"));
-  GmlVal bottom=gml_vm_variable_get_h(
-    &vm,IT_SELF,"bbox_bottom",gml_value_name_hash("bbox_bottom"));
-  int found=0;
-  GmlVal referenced_bottom=gml_inst_var_get_val(
-    &vm,vreal((double)instances[0].id),"bbox_bottom",&found);
-  if(right.t!=V_REAL || right.d!=169 || bottom.t!=V_REAL || bottom.d!=449 ||
-     !found || referenced_bottom.t!=V_REAL || referenced_bottom.d!=449){
-    fprintf(stderr,
-      "inclusive instance bbox fields mismatch: right=%.0f bottom=%.0f referenced=%.0f found=%d\n",
-      right.t==V_REAL?right.d:-1.0,bottom.t==V_REAL?bottom.d:-1.0,
-      referenced_bottom.t==V_REAL?referenced_bottom.d:-1.0,found);
-    return 0;
+  const struct { const char *label; int bytecode; int classic_version;
+                 int release_marker; uint64_t option_flags;
+                 double right; double bottom; } readings[]={
+    {"first-generation-studio",16,0,0,0,169,449},
+    {"second-generation-without-later-marker",17,0,0,0,169,449},
+    {"second-generation-with-later-marker",17,0,1,0,170,450},
+    {"same-payload-with-the-old-collision-option",17,0,1,UINT64_C(1)<<27,169,449},
+    {"classic",14,810,0,0,169,449},
+  };
+  for(unsigned i=0;i<sizeof readings/sizeof readings[0];i++){
+    win.bytecode=readings[i].bytecode;
+    win.classic_version=readings[i].classic_version;
+    win.has_exclusive_bbox_marker=readings[i].release_marker;
+    win.option_flags=readings[i].option_flags;
+    GmlVal right=gml_vm_variable_get_h(
+      &vm,IT_SELF,"bbox_right",gml_value_name_hash("bbox_right"));
+    GmlVal bottom=gml_vm_variable_get_h(
+      &vm,IT_SELF,"bbox_bottom",gml_value_name_hash("bbox_bottom"));
+    GmlVal left=gml_vm_variable_get_h(
+      &vm,IT_SELF,"bbox_left",gml_value_name_hash("bbox_left"));
+    GmlVal top=gml_vm_variable_get_h(
+      &vm,IT_SELF,"bbox_top",gml_value_name_hash("bbox_top"));
+    int found=0;
+    GmlVal referenced_bottom=gml_inst_var_get_val(
+      &vm,vreal((double)instances[0].id),"bbox_bottom",&found);
+    GmlVal referenced_right=gml_inst_var_get_val(
+      &vm,vreal((double)instances[0].id),"bbox_right",&found);
+    if(right.t!=V_REAL || right.d!=readings[i].right ||
+       bottom.t!=V_REAL || bottom.d!=readings[i].bottom ||
+       left.t!=V_REAL || left.d!=150 || top.t!=V_REAL || top.d!=420 ||
+       !found || referenced_bottom.t!=V_REAL ||
+       referenced_bottom.d!=readings[i].bottom ||
+       referenced_right.t!=V_REAL || referenced_right.d!=readings[i].right){
+      fprintf(stderr,
+        "%s bbox fields mismatch: left=%.0f top=%.0f right=%.0f bottom=%.0f "
+        "referenced right=%.0f bottom=%.0f (expected right=%.0f bottom=%.0f)\n",
+        readings[i].label,
+        left.t==V_REAL?left.d:-1.0,top.t==V_REAL?top.d:-1.0,
+        right.t==V_REAL?right.d:-1.0,bottom.t==V_REAL?bottom.d:-1.0,
+        referenced_right.t==V_REAL?referenced_right.d:-1.0,
+        referenced_bottom.t==V_REAL?referenced_bottom.d:-1.0,
+        readings[i].right,readings[i].bottom);
+      return 0;
+    }
   }
 
+  /* The collision engine keeps the inclusive bounds whichever way they are reported. */
+  win.bytecode=17;
+  win.classic_version=0;
+  win.has_exclusive_bbox_marker=1;
+  win.option_flags=0;
   GmlVal adjacent_query[7]={
-    vreal(150),vreal(420),right,bottom,vreal(1),vreal(0),vreal(0)
+    vreal(150),vreal(420),vreal(169),vreal(449),vreal(1),vreal(0),vreal(0)
   };
   GmlVal adjacent_hit=gml_builtin_call(&vm,"collision_rectangle",adjacent_query,7);
   adjacent_query[3]=vreal(450);

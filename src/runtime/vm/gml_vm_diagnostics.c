@@ -475,8 +475,11 @@ void gml_vm_diagnostics_collision(GmlVM *vm,const GmlInstance *first,
 
 static const GmlInstance *trace_scope_instance(GmlVM *vm,int scope){
   if(!vm) return NULL;
-  if(scope==IT_SELF) return vm->cur_self;
   if(scope==IT_OTHER) return vm->cur_other;
+  /* Negative builtin scopes other than IT_ALL resolve through the current instance. Match
+   * that resolution so variable tracing observes the same writes. IT_ALL still returns NULL
+   * because it fans a write out and selecting one instance would be ambiguous. */
+  if(scope<0 && scope!=IT_ALL) return vm->cur_self;
   if(scope>=0){
     for(int index=0;index<vm->inst_count;index++){
       GmlInstance *instance=&vm->inst[index];

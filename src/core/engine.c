@@ -979,6 +979,40 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                   engine->diagnostics.object_frame, on, o->obj, o->id, o->x, o->y, o->hspeed, o->vspeed, o->direction, o->image_index,
                   (int)o->sprite_index, o->solid, o->visible, gml_code_index_by_name(&engine->win, dn) >= 0,
                   o->image_xscale, o->alarm[0], o->alarm[1]);
+          /* GML_LOG_OBJ_VARS names comma-separated instance variables to print beside the fixed
+           * fields, with "bbox" reserved for collision bounds. This exposes optional content-side
+           * state alongside the engine fields selected by GML_LOG_OBJ. */
+          {
+            const char *want = anygm_host_development_setting(&engine->host,"GML_LOG_OBJ_VARS");
+            if (want && *want) {
+              char line[1024]; size_t at = 0; line[0]=0;
+              const char *cursor = want;
+              while (*cursor && at + 64 < sizeof line) {
+                const char *comma = strchr(cursor, ',');
+                size_t len = comma ? (size_t)(comma - cursor) : strlen(cursor);
+                char key[96];
+                if (len >= sizeof key) len = sizeof key - 1;
+                memcpy(key, cursor, len); key[len] = 0;
+                if (!strcmp(key, "bbox")) {
+                  double bl,bt,br,bb;
+                  if (gml_vm_instance_bbox(&engine->vm,o,&bl,&bt,&br,&bb))
+                    at += (size_t)snprintf(line+at, sizeof line-at, " bbox=[%.1f %.1f %.1f %.1f]", bl,bt,br,bb);
+                  else at += (size_t)snprintf(line+at, sizeof line-at, " bbox=<none>");
+                  cursor = comma ? comma + 1 : cursor + strlen(cursor);
+                  continue;
+                }
+                GmlVal *slot = gml_varmap_get(&o->vars, key);
+                if (!slot) at += (size_t)snprintf(line+at, sizeof line-at, " %s=<absent>", key);
+                else if (slot->t == V_REAL) at += (size_t)snprintf(line+at, sizeof line-at, " %s=%.4g", key, slot->d);
+                else if (slot->t == V_STR) at += (size_t)snprintf(line+at, sizeof line-at, " %s=\"%s\"", key, slot->s?slot->s:"");
+                else if (slot->t == V_ARR) at += (size_t)snprintf(line+at, sizeof line-at, " %s=[%d]", key, gml_val_array_length(*slot));
+                else at += (size_t)snprintf(line+at, sizeof line-at, " %s=undefined", key);
+                cursor = comma ? comma + 1 : cursor + strlen(cursor);
+              }
+              engine_logf(engine,ANYGM_LOG_DEBUG, "[objv] f%d %s id=%u%s\n",
+                          engine->diagnostics.object_frame, on, o->id, line);
+            }
+          }
         }
       }
       engine->diagnostics.object_frame++;

@@ -9,11 +9,14 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `10`. It is the format transported by
+The current AnyGM save-state schema is `11`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
 
-Schema `10` re-encodes the completed frame as a row table plus run-length encoded literal rows,
+Schema `11` carries no new section. It marks the compatibility profile growing the policy that
+decides what GML reads for an instance's far bounding-box edges, which every state's compatibility
+fingerprint covers: a state written before it describes a run under a different reading of that
+policy, and is refused rather than resumed under this one. Schema `10` re-encodes the completed frame as a row table plus run-length encoded literal rows,
 so the repetition an upscaled presentation canvas manufactures - integer scales repeat whole rows,
 letterboxes repeat black ones - no longer reaches the stored bytes, and the slot costs about the
 source raster whatever the monitor. It also carries the struct allocator's free list in its exact

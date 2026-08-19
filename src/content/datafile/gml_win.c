@@ -502,6 +502,16 @@ uint32_t gml_room_layer_list(const GmlWin *w, int room_index, uint32_t *out_coun
   return 0;
 }
 
+/* These marker chunks establish the structural fact consumed by the far-edge reporting
+ * policy. Their absence leaves the fact unset. */
+static int has_exclusive_bbox_marker_chunk(const GmlWin *w){
+  static const char *const markers[]={"FEAT","PSEM","UILR"};
+  for(size_t index=0;index<sizeof markers/sizeof markers[0];index++)
+    if(gml_chunk(w,markers[index])) return 1;
+  return 0;
+}
+
+
 static int room_table_valid(const GmlWin *w){
   const GmlChunk *c=gml_chunk(w,"ROOM");
   if(!c) return 1;
@@ -614,6 +624,7 @@ int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
       break;
     }
   }
+  w->has_exclusive_bbox_marker=has_exclusive_bbox_marker_chunk(w);
   if(!parse_gen8(w))
     return discard_partial_win_because(w,"the general header (GEN8) could not be read");
   const GmlChunk *opt=gml_chunk(w,"OPTN");

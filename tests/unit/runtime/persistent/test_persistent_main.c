@@ -25,7 +25,7 @@ int main(int argc,char **argv){
     {"smooth_path_midpoint_interpolation",expect_smooth_path_midpoint_interpolation},
     {"early_native_layer_animation",expect_early_native_layer_animation},
     {"deactivated_instance_reference",expect_deactivated_instance_reference},
-    {"inclusive_instance_bbox_fields",expect_inclusive_instance_bbox_fields},
+    {"bounding_box_far_edges_by_generation",expect_bounding_box_far_edges_by_generation},
     {"room_camera_reservation",expect_room_camera_reservation},
     {"revision16_legacy_room_view",expect_revision16_room_uses_legacy_view},
     {"room_order_boundaries",expect_room_order_boundaries},

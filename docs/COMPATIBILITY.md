@@ -55,13 +55,16 @@ threshold, live versus frame-snapshot instance iteration, solid-collision
 coordinates, blend behavior, function/struct/layer semantics, animation
 timing, path velocity ownership, transformed collision bounds, creation-event
 ordering, frame retention without a background clear, classic presentation and
-interpolation, view slots, and related format behavior.
+interpolation, view slots, reported bounding-box far edges, and related format
+behavior.
 
 Frame retention is also independently resolved. Studio generations retain the
 completed previous frame when a room requests neither the background color nor
 the view clear. Classic generations clear the drawing target every frame and use
 the room fields only to decide what is painted over that clear, so
 half-transparent drawing cannot accumulate towards opacity across frames.
+
+The reported far edges of an instance's bounding box are independently resolved. A recognized later-format marker selects one-past far edges for modern inputs unless the legacy collision option is set. Inputs without that structural marker retain the stored inclusive reading. The collision engine always keeps inclusive bounds; this policy changes only the values exposed to the language.
 
 Alarm dispatch is an independently resolved policy: classic inputs and Studio
 bytecode 16 run each alarm subtype by ascending exact object resource and then

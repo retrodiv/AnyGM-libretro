@@ -69,6 +69,7 @@ typedef struct AnygmContentFacts {
   uint32_t bytecode_revision;
   uint64_t option_flags;
   uint32_t has_room_layers;
+  uint32_t has_exclusive_bbox_marker;
   uint32_t classic_scaling;
   uint32_t classic_interpolate;
   uint32_t classic_swap_creation_events;
@@ -95,6 +96,7 @@ typedef struct AnygmCompatibilityProfile {
   uint32_t preserves_frame_without_background_clear;
   uint32_t path_motion_owns_velocity;
   uint32_t round_transformed_collision_bounds;
+  uint32_t bounding_box_far_edges_exclusive;
   uint32_t creation_code_before_create;
   uint32_t classic_presentation;
   uint32_t classic_modern_presentation;
@@ -124,6 +126,16 @@ static inline const AnygmCompatibilityProfile *anygm_profile(const GmlWin *conte
 static inline int anygm_policy_uses_classic_runtime(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
   return p?(int)p->uses_classic_runtime:(content&&content->classic_version>0);
+}
+/* The collision engine keeps inclusive bounds. This policy controls only language-visible
+ * bbox_right and bbox_bottom: a recognized later-format marker selects one-past far edges
+ * for modern inputs unless the legacy collision option is set. Marker absence remains
+ * inclusive. */
+static inline int anygm_policy_bounding_box_far_edges_exclusive(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?(int)p->bounding_box_far_edges_exclusive:
+           (content && content->classic_version<=0 && content->bytecode>=17 &&
+            content->has_exclusive_bbox_marker && ((content->option_flags>>27)&1u)==0u);
 }
 static inline int anygm_policy_has_modern_function_values(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);

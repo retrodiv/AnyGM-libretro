@@ -622,6 +622,10 @@ int     gml_room_index_by_name(GmlWin *win, const char *name);
 
 /* save-state payload for the VM runtime only. Static data parsed from data.win is not included. */
 size_t  gml_vm_state_size(GmlVM *vm);
+/* The instance's collision bounds, inclusive on every edge — the bounds the collision engine
+ * itself works in, not the two readings GML sees for the far edges. */
+int     gml_vm_instance_bbox(GmlVM *vm, GmlInstance *instance,
+                             double *left, double *top, double *right, double *bottom);
 int     gml_vm_draw_pass_active(GmlVM *vm, const char *suffix);
 void    gml_vm_draw_pass(GmlVM *vm, const char *suffix); /* Draw_72-77 and Draw_65/66 stage events */
 int     gml_vm_state_save(GmlVM *vm, void *data, size_t len, size_t *written);

@@ -141,6 +141,7 @@ static uint64_t compatibility_fingerprint(const AnygmCompatibilityProfile *profi
   ENCODE_FIELD(preserves_frame_without_background_clear);
   ENCODE_FIELD(path_motion_owns_velocity);
   ENCODE_FIELD(round_transformed_collision_bounds);
+  ENCODE_FIELD(bounding_box_far_edges_exclusive);
   ENCODE_FIELD(creation_code_before_create);
   ENCODE_FIELD(classic_presentation);
   ENCODE_FIELD(classic_modern_presentation);
@@ -169,6 +170,7 @@ int anygm_content_facts_detect(const GmlWin *content,AnygmContentFacts *facts,
   facts->bytecode_revision=content->bytecode;
   facts->option_flags=content->option_flags;
   facts->has_room_layers=content->has_room_layers?1u:0u;
+  facts->has_exclusive_bbox_marker=content->has_exclusive_bbox_marker?1u:0u;
   facts->classic_scaling=content->classic_scaling>0?(uint32_t)content->classic_scaling:0;
   facts->classic_interpolate=content->classic_interpolate?1u:0u;
   facts->classic_swap_creation_events=content->classic_swap_creation_events?1u:0u;
@@ -209,6 +211,12 @@ int anygm_compatibility_resolve(const AnygmContentFacts *facts,
   profile->uses_classic_runtime=classic;
   profile->has_modern_function_values=modern;
   profile->has_modern_struct_semantics=modern;
+  /* Recognized later-format marker chunks select language-visible one-past far edges for
+   * modern inputs unless the legacy collision option is set. Marker absence retains the
+   * stored inclusive reading. */
+  profile->bounding_box_far_edges_exclusive=
+    !classic && modern && facts->has_exclusive_bbox_marker &&
+    ((facts->option_flags>>27)&1u)==0u;
   profile->has_modern_layer_semantics=second_generation_rendering;
   /* The screen stage stays with the instruction encoding: see the policy's own comment. */
   profile->has_modern_screen_stage=modern;

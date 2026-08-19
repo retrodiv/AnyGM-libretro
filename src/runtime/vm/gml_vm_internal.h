@@ -41,8 +41,6 @@ GmlVal gml_vm_variable_get_h(GmlVM *vm, int instance,
                              const char *name, uint32_t name_hash);
 int gml_vm_code_cache_ensure(GmlWin *win, int code_index);
 GmlInstance *gml_vm_instance_by_id(GmlVM *vm, double id);
-int gml_vm_instance_bbox(GmlVM *vm, GmlInstance *instance,
-                         double *left, double *top, double *right, double *bottom);
 int gml_vm_instances_bbox(GmlVM *vm, GmlInstance *instance,
                           double *left, double *top, double *right,
                           double *bottom);

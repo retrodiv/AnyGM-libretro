@@ -150,6 +150,7 @@ typedef struct GmlWin {
   int option_scaling;                /* OPTN scale: negative keeps the aspect ratio, 0 fills, >0 fixed */
   int classic_executable_layout;     /* CLSC tail: embedded rooms retain encoded chain order */
   int has_room_layers;               /* at least one structurally valid GMS2 ROOM layer list */
+  int has_exclusive_bbox_marker;       /* carries a marker chunk used by the far-edge reporting policy */
   const struct AnygmCompatibilityProfile *compatibility; /* immutable runtime policy, engine-owned */
   const struct AnygmHostServices *host; /* borrowed immutable service table, engine-owned */
   int8_t pad_reference_scan;         /* lazy: 0 unscanned, 1 no pad builtin referenced, 2 referenced */
