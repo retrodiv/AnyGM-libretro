@@ -669,7 +669,10 @@ static int masked_sprite_surface_case(void){
   render.color_write_mask=0x0F;
   gml_surface_reset_target(&render);
   gml_draw_surface_stretched(&render,surface,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
-  if(frame[0]!=0xFF00003Fu || frame[WIDTH+1]!=0xFF0000FFu){
+  /* 0x40, not 0x3F: the surface pixel is a full-strength blue under coverage 64 of 255, and
+   * 255 * 64/255 is 64 with nothing to round. This expectation carried the old blend shift's
+   * truncation, which was half a level low on every blended channel. */
+  if(frame[0]!=0xFF000040u || frame[WIDTH+1]!=0xFF0000FFu){
     fprintf(stderr,"renderer masked surface composite mismatch: %08x / %08x\n",
             frame[0],frame[WIDTH+1]);
     gml_render_free(&render);

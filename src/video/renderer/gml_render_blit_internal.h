@@ -34,9 +34,10 @@ static inline void render_modern_cardinal_anchor(const GmlRender *r,double degre
   if(-xs*sine < -1e-12 || ys*cosine < -1e-12) *y-=1.0;
 }
 
+/* Round the final eighth-bit blend shift to nearest. Source and destination weights sum to 256, so truncation otherwise biases each blended channel downward. */
 static inline uint32_t blend_fast8_cached(uint32_t dst, uint32_t srb, uint32_t sg, uint32_t ia){
-  uint32_t rb=((srb+(dst&0x00FF00FFu)*ia)>>8)&0x00FF00FFu;
-  uint32_t g=((sg+(dst&0x0000FF00u)*ia)>>8)&0x0000FF00u;
+  uint32_t rb=((srb+(dst&0x00FF00FFu)*ia+0x00800080u)>>8)&0x00FF00FFu;
+  uint32_t g=((sg+(dst&0x0000FF00u)*ia+0x00008000u)>>8)&0x0000FF00u;
   return 0xFF000000u|rb|g;
 }
 
@@ -108,6 +109,7 @@ static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run
     __m128i valpha=_mm_set1_epi32((int)0xFF000000u);
     __m128i vaf=_mm_set1_epi16((short)af);
     __m128i via=_mm_set1_epi16((short)ia);
+    __m128i vhalf=_mm_set1_epi16((short)128);
     while(run>=4){
       __m128i src=_mm_loadu_si128((const __m128i*)sp);
       __m128i dst=_mm_loadu_si128((const __m128i*)dp);
@@ -117,6 +119,8 @@ static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run
       __m128i dhi=_mm_unpackhi_epi8(dst,zero);
       slo=_mm_add_epi16(_mm_mullo_epi16(slo,vaf),_mm_mullo_epi16(dlo,via));
       shi=_mm_add_epi16(_mm_mullo_epi16(shi,vaf),_mm_mullo_epi16(dhi,via));
+      slo=_mm_add_epi16(slo,vhalf);
+      shi=_mm_add_epi16(shi,vhalf);
       slo=_mm_srli_epi16(slo,8);
       shi=_mm_srli_epi16(shi,8);
       _mm_storeu_si128((__m128i*)dp,_mm_or_si128(_mm_packus_epi16(slo,shi),valpha));
@@ -130,6 +134,7 @@ static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run
     uint8x16_t valpha8=vreinterpretq_u8_u32(vdupq_n_u32(0xFF000000u));
     uint16x8_t vaf=vdupq_n_u16((uint16_t)af);
     uint16x8_t via=vdupq_n_u16((uint16_t)ia);
+    uint16x8_t vhalf=vdupq_n_u16(128);
     while(run>=4){
       uint8x16_t src=vld1q_u8((const uint8_t*)sp);
       uint8x16_t dst=vld1q_u8((const uint8_t*)dp);
@@ -137,8 +142,8 @@ static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run
                               vmulq_u16(vmovl_u8(vget_low_u8(dst)),via));
       uint16x8_t hi=vaddq_u16(vmulq_u16(vmovl_u8(vget_high_u8(src)),vaf),
                               vmulq_u16(vmovl_u8(vget_high_u8(dst)),via));
-      lo=vshrq_n_u16(lo,8);
-      hi=vshrq_n_u16(hi,8);
+      lo=vshrq_n_u16(vaddq_u16(lo,vhalf),8);
+      hi=vshrq_n_u16(vaddq_u16(hi,vhalf),8);
       vst1q_u8((uint8_t*)dp,vorrq_u8(vcombine_u8(vmovn_u16(lo),vmovn_u16(hi)),valpha8));
       sp+=4;
       dp+=4;
