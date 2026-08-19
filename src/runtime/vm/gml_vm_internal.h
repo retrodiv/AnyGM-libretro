@@ -33,6 +33,8 @@ void gml_vm_motion_from_components(GmlVM *vm, GmlInstance *instance);
 void gml_vm_motion_from_speed_direction(GmlVM *vm, GmlInstance *instance);
 int gml_vm_instance_builtin_set(GmlVM *vm, GmlInstance *instance,
                                 const char *name, GmlVal value);
+int gml_vm_instance_builtin_get(GmlVM *vm, GmlInstance *instance,
+                                const char *name, GmlVal *out);
 int gml_vm_variable_name_maybe_special(GmlVM *vm, const char *name,
                                        uint32_t name_hash);
 GmlVal gml_vm_variable_get_h(GmlVM *vm, int instance,

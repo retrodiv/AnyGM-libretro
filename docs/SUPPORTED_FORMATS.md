@@ -51,6 +51,20 @@ join the save-state identity, so a state saved with them loads only while
 they are active; content without directives keeps its state identity
 unchanged.
 
+A `?gameres` directive applies only while *Render at game resolution* is selected. It declares an inner logical raster for presentation values that the content scales to a separate output raster. Each scoped directive captures the previous value before its first write and restores it when the selection closes. This also permits a scoped instance-variable or surface-resize directive when its target has one meaningful previous value. Room-owned `view_*` and `background_*` arrays are recaptured on room entry, and their directives settle before the frame's output geometry is published.
+
+The following is a synthetic grammar example:
+
+```
+[overrides]
+?gameres obj_presenter:canvas_scale=1
+?gameres view_wport[0]=320
+?gameres view_hport[0]=240
+```
+
+A scope prefix belongs to the directive that carries it, and a `;` chain fans out into one
+directive per slot, so each line in a chain that needs the scope has to state it.
+
 Content that reads the display once during initialization may declare how its cached presentation
 state follows later virtual-monitor changes. `monitorview|H|MIN|MAX` derives a logical height `H`
 and a width from the monitor aspect, clamped between the `W:H` ratios `MIN` and `MAX`. A

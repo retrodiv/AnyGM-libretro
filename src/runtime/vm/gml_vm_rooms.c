@@ -602,9 +602,19 @@ static const char *const room_view_fields[]={
   "view_camera"
 };
 
-/* Modern room-editor cameras occupy stable handles below the dynamic camera pool. Reserving
- * those handles prevents an early camera_create() from aliasing view_camera[0] before the first
- * room is entered. */
+/* Whether a global array is one the room owns: entering a room rewrites every element of these
+ * from the room's own record, so a value read out of one room says nothing about any other. A
+ * caller that overwrites one and later has to put it back has to re-read it per room rather than
+ * hold a reading from whichever room happened to be current when it started. */
+int gml_room_owned_global(const char *name){
+  if(!name) return 0;
+  for(size_t i=0;i<sizeof room_view_fields/sizeof *room_view_fields;i++)
+    if(!strcmp(name,room_view_fields[i])) return 1;
+  for(size_t i=0;i<sizeof room_background_fields/sizeof *room_background_fields;i++)
+    if(!strcmp(name,room_background_fields[i])) return 1;
+  return 0;
+}
+/* Modern room-editor cameras occupy stable handles below the dynamic camera pool. Reserving those handles prevents an early camera_create() from aliasing view_camera[0] before the first room is entered. */
 static void room_camera_resources_init(GmlVM *vm,int reset_bindings){
   if(!vm || !vm->win || !anygm_policy_has_modern_layer_semantics(vm->win)) return;
   /* Revision-16 Studio 1 packages can use the later render-target/layer layout

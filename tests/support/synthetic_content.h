@@ -35,6 +35,13 @@ int anygm_synthetic_game_restart_content_create(AnygmSyntheticContent *fixture);
 /* One instance whose Alarm 1 counts a tick and re-arms itself on a sixty-frame period, long enough
  * to tell a countdown that resumed from its remainder apart from one that started the period over. */
 int anygm_synthetic_alarm_content_create(AnygmSyntheticContent *fixture);
+/* Two rooms whose authored view ports differ - 128x96 then 192x144 - over one view of 64x48, and
+ * one instance whose Create sets a scale of 3 and whose Step advances a room when a global asks.
+ * Between them these are the two shapes a scoped override has to be able to give back: a value the
+ * content wrote once and never revisits, and a value entering a room rewrites from that room's own
+ * record. Advancing on a global rather than on input keeps the room change under the test's
+ * control without running any input path. */
+int anygm_synthetic_scoped_override_content_create(AnygmSyntheticContent *fixture);
 /* One instance whose Alarm 0 spins on sleep() until a global is set, and a Step event that counts
  * the frames it runs on. A wait like this cannot end inside the frame it starts on, so the counter
  * says what the runtime did with the event: held it and continued it later, or ran the whole loop

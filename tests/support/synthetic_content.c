@@ -131,6 +131,97 @@ int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
   return 1;
 }
 
+int anygm_synthetic_scoped_override_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+
+  char startup[192],create[192],step[192];
+  snprintf(startup,sizeof startup,"%s/startup.gml",fixture->directory);
+  snprintf(create,sizeof create,"%s/create.gml",fixture->directory);
+  snprintf(step,sizeof step,"%s/step.gml",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  if(!write_text(startup,"global.advance = 0;\n") ||
+     !write_text(create,"scale = 3;\n") ||
+     !write_text(step,
+                 "if (global.advance == 1) { global.advance = 0; room_goto_next(); }\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+
+  GmlcProject project={0};
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  project.host=&file_services;
+  GmlcObject object={0};
+  GmlcObjectEvent events[2]={0};
+  GmlcRoom rooms[2]={0};
+  GmlcRoomInstance instance={0};
+  int room_order[2]={0,1};
+  project.name=(char *)"scoped-override-fixture";
+  project.classic_version=800;
+  project.classic_scaling=0;
+  project.startup_code_path=startup;
+  project.objects=&object;
+  project.n_objects=project.cap_objects=1;
+  project.rooms=rooms;
+  project.n_rooms=project.cap_rooms=2;
+  project.room_order=room_order;
+  project.n_room_order=2;
+
+  object.id=object.name=(char *)"obj_canvas";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.visible=0;
+  object.events=events;
+  object.n_events=object.cap_events=2;
+  events[0].event_type=0;
+  events[0].event_number=0;
+  events[0].source_path=create;
+  events[1].event_type=3;
+  events[1].event_number=0;
+  events[1].source_path=step;
+
+  instance.id=instance.name=(char *)"instance_canvas";
+  instance.object_id=0;
+  instance.instance_id=100000;
+  instance.sx=instance.sy=1.0f;
+  instance.color=0xFFFFFFFFu;
+
+  static const int port_width[2]={128,192};
+  static const int port_height[2]={96,144};
+  static char *const room_name[2]={(char *)"room_near",(char *)"room_far"};
+  for(int room=0;room<2;room++){
+    rooms[room].id=rooms[room].name=room_name[room];
+    rooms[room].width=64;
+    rooms[room].height=48;
+    rooms[room].speed=60;
+    rooms[room].draw_background_color=1;
+    rooms[room].view_enabled=1;
+    rooms[room].n_views=1;
+    rooms[room].views[0].visible=1;
+    rooms[room].views[0].wview=64;
+    rooms[room].views[0].hview=48;
+    rooms[room].views[0].wport=port_width[room];
+    rooms[room].views[0].hport=port_height[room];
+    rooms[room].views[0].hspeed=rooms[room].views[0].vspeed=-1;
+    rooms[room].views[0].object_id=-1;
+  }
+  /* Only the first room carries the instance: the override has to survive a room change, not the
+   * object that happened to set the value. */
+  rooms[0].instances=&instance;
+  rooms[0].n_instances=rooms[0].cap_instances=1;
+
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"synthetic scoped-override package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  return 1;
+}
+
 int anygm_synthetic_alarm_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);

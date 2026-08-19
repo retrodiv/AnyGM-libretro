@@ -142,17 +142,27 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
   int classic_input=0;
   if(path_source){
     char content[1024];
-    size_t plen=strlen(source->path);
-    classic_input=
-        (plen>4 && !strcasecmp(source->path+plen-4,".gmk")) ||
-        (plen>5 && !strcasecmp(source->path+plen-5,".gm81")) ||
-        (plen>4 && !strcasecmp(source->path+plen-4,".gm6")) ||
-        (plen>4 && !strcasecmp(source->path+plen-4,".exe"));
     AnygmContentRouter router={0};
     router.host=&engine->host;
     router.cache_directory=source->cache_directory;
     router.log=content_router_log;
     router.log_userdata=engine;
+    /* Resolve an anchor's referenced payload identity before classifying classic format and choosing the content-file directory. Direct loads retain their own input path. */
+    char origin_path[1536];
+    const char *origin=source->path;
+    {
+      AnygmContentRouter origin_router={0};
+      origin_router.host=&engine->host;
+      origin_router.cache_directory=source->cache_directory;
+      if(anygm_content_identity_path(&origin_router,source->path,origin_path,sizeof origin_path))
+        origin=origin_path;
+    }
+    size_t plen=strlen(origin);
+    classic_input=
+        (plen>4 && !strcasecmp(origin+plen-4,".gmk")) ||
+        (plen>5 && !strcasecmp(origin+plen-5,".gm81")) ||
+        (plen>4 && !strcasecmp(origin+plen-4,".gm6")) ||
+        (plen>4 && !strcasecmp(origin+plen-4,".exe"));
     char asset_root[1024];
     if(!anygm_content_resolve_path(&router,source->path,content,sizeof content,
                                    asset_root,sizeof asset_root,
@@ -174,7 +184,7 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
     /* A generated payload does not sit beside the files the content opens by path. The classic
      * input keeps its own directory; a container reports where it left the extracted assets. */
     if(classic_input)
-      anygm_content_path_parent(source->path,prepared->win.content_dir,
+      anygm_content_path_parent(origin,prepared->win.content_dir,
                                 sizeof prepared->win.content_dir);
     else if(asset_root[0]){
       if(snprintf(prepared->win.content_dir,sizeof prepared->win.content_dir,"%s",asset_root)>=
@@ -821,6 +831,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
         gml_set_global_scalar(&engine->vm,"transition_kind",0);
     }
     aspect_view_overlay_end(engine,&step_ov, 1);
+    /* Before the geometry this frame publishes is read, not after: see the function's own note. */
+    engine_overrides_room_scope_apply(engine);
     sync_room_fps(engine,1);
     apply_sticky_cheats(engine);   /* generic freeze cheats (user-supplied global writes) */
     menu_run(engine);              /* generic pause-menu editor (inject entries + handle input) */

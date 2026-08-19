@@ -609,6 +609,10 @@ int     gml_alarm_paused(GmlVM *vm, int obj, int alarm_index);
 int     gml_camera_override_mask(GmlVM *vm, uint64_t camera_mask, int field, double value);
 int     gml_resize_inst_surface_all(GmlVM *vm, const char *object, const char *variable,
                                     int width, int height);
+int     gml_room_owned_global(const char *name);
+int     gml_inst_var_first_real(GmlVM *vm, const char *objname, const char *var, double *out);
+int     gml_inst_surface_size_first(GmlVM *vm, const char *objname, const char *var,
+                                    int *width, int *height);
 /* generic pause-menu injection helpers (host menu editor) */
 int     gml_inst_get_num(const GmlInstance *in, const char *var);
 int     gml_inst_array_count(const GmlInstance *in, const char *var);

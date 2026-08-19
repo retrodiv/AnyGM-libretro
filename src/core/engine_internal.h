@@ -143,6 +143,7 @@ typedef struct {
   CheatKind kind;
   int scope_aspect;
   int scope_monitor;
+  int scope_gameres;
   int scope_mode;
   char obj[64];
   char var[64];
@@ -164,7 +165,8 @@ typedef struct {
  * addressed directly and 1 + the owner's index for one of those parked directives, so releasing a
  * chain is a scan and every pass still sees exactly one action per slot. */
 typedef struct {
-  int enabled; char code[128]; CheatAct act; double saved; int saved_valid; int continuation_of;
+  int enabled; char code[128]; CheatAct act; double saved; double saved2; int saved_valid;
+  int applied; int continuation_of;
 } CheatSlot;
 
 typedef enum { MI_TOGGLE, MI_RANGE, MI_WARP } MenuItemKind;
@@ -306,6 +308,8 @@ struct AnygmEngine {
   int aspect_event_view_stack_pointer,aspect_event_view_overflow;
   CheatSlot cheats[GML_MAX_CHEATS],boot_cheats[GML_MAX_CHEATS];
   int cheat_count,boot_cheat_count;
+  /* Room the override passes last captured against; see cheat_room_scope_refresh. */
+  int override_room;
   /* Verbatim override text the loaded content's anchor carried; hashed into the state identity
    * while the content-override channel is active. boot_cheats holds its parsed form. */
   char content_overrides_text[4096];
@@ -371,6 +375,10 @@ void engine_override_set(AnygmEngine *engine,unsigned slot,bool enabled,const ch
  * rejects the whole block, and the caller fails the load rather than dropping lines. */
 int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
                                 char *error,size_t error_capacity);
+/* A state carries the values a scoped override forced into it. Loading one re-opens the question
+ * of whether those writes still apply, which only the live scope can answer. */
+void engine_overrides_room_scope_apply(AnygmEngine *engine);
+void engine_overrides_note_state_load(AnygmEngine *engine);
 int engine_boot_cheats_active(AnygmEngine *engine);
 void engine_override_menu_refresh(AnygmEngine *engine);
 void apply_sticky_cheats(AnygmEngine *engine);

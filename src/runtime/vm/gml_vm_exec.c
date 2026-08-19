@@ -213,6 +213,13 @@ int gml_vm_instance_builtin_set(GmlVM *vm, GmlInstance *instance,
                                 const char *name, GmlVal value){
   return inst_builtin_set(vm,instance,name,value);
 }
+/* The read counterpart. A caller that writes a built-in instance variable and later has to put the
+ * previous value back cannot find it in the instance variable map, because built-ins never live
+ * there. */
+int gml_vm_instance_builtin_get(GmlVM *vm, GmlInstance *instance,
+                                const char *name, GmlVal *out){
+  return inst_builtin_get(vm,instance,name,out);
+}
 
 /* ---------------- variable access by scope ---------------- */
 static GmlInstance *first_active_instance(GmlVM *vm){

@@ -848,6 +848,51 @@ int gml_set_inst_var_all(GmlVM *vm, const char *objname, const char *var, double
   }
   return n;
 }
+/* Read a numeric instance variable from the first active instance of an object or its
+ * descendants. This is what gml_set_inst_var_all lacks: a freeze that has to be given back needs
+ * the value the target held before it was armed, and the freeze itself fans out over every
+ * instance without recording one. Built-ins are read through the interpreter's own accessor,
+ * because they never live in the instance variable map. Returns 0 when no instance, no variable,
+ * or a non-numeric value makes the read meaningless, and leaves *out untouched. */
+int gml_inst_var_first_real(GmlVM *vm, const char *objname, const char *var, double *out){
+  if(!vm||!objname||!var) return 0;
+  int obj=gml_object_index_by_name(vm,objname); if(obj<0) return 0;
+  GmlInstance *in=gml_find_instance(vm,obj); if(!in) return 0;
+  GmlVal value;
+  if(gml_vm_instance_builtin_get(vm,in,var,&value)){
+    if(value.t!=V_REAL || !isfinite(value.d)) return 0;
+    if(out) *out=value.d;
+    return 1;
+  }
+  GmlVal *slot=gml_varmap_get(&in->vars,var);
+  if(!slot || slot->t!=V_REAL || !isfinite(slot->d)) return 0;
+  if(out) *out=slot->d;
+  return 1;
+}
+/* Current dimensions of the surface an instance variable names, read from the first instance of
+ * the object that holds a live one. The counterpart gml_resize_inst_surface_all needs to be
+ * reversible. */
+int gml_inst_surface_size_first(GmlVM *vm, const char *objname, const char *var,
+                               int *width, int *height){
+  if(!vm || !vm->render || !objname || !var) return 0;
+  int obj=gml_object_index_by_name(vm,objname); if(obj<0) return 0;
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *in=&vm->inst[i];
+    if(!in->active || in->marked || !gml_object_is(vm,in->obj,obj)) continue;
+    GmlVal *value=gml_varmap_get(&in->vars,var);
+    if(!value || value->t!=V_REAL || !isfinite(value->d) || value->d<0 || value->d>INT_MAX)
+      continue;
+    int surface=(int)value->d;
+    if(surface<0 || !gml_surface_exists((GmlRender*)vm->render,surface)) continue;
+    int w=gml_surface_width((GmlRender*)vm->render,surface);
+    int h=gml_surface_height((GmlRender*)vm->render,surface);
+    if(w<=0 || h<=0) continue;
+    if(width) *width=w;
+    if(height) *height=h;
+    return 1;
+  }
+  return 0;
+}
 int gml_resize_inst_surface_all(GmlVM *vm,const char *objname,const char *var,int width,int height){
   if(!vm || !vm->render || !objname || !var || width<=0 || height<=0) return 0;
   int obj=gml_object_index_by_name(vm,objname); if(obj<0) return 0;

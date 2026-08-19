@@ -73,8 +73,13 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   ?aspect      ...            only while an Aspect Ratio Force is active
  *   ?aspect=4:3  ...            only while that specific force mode is active (4:3|16:9|21:9)
  *   ?monitor     ...            once, on each live virtual-monitor size change
+ *   ?gameres     ...            only while the logical-raster presentation is selected
  * Un-scoped freezes run every frame after the step (god mode, lives, ...). Aspect-scoped writes
  * run from the aspect hook while a force is active (screensizer / view / engine reshaping).
+ *
+ * A ?gameres line scopes declared writes to logical-raster presentation. Targets may describe a presentation variable, view port or surface size. Closing the scope restores captured values.
+ * That round trip is what separates this scope from an un-scoped freeze, and it is why every
+ * scoped directive captures what it overwrote — see cheat_slot_capture.
  *
  * A line may chain several directives with ';', so one frontend cheat entry can drive more than
  * one target from a single ON/OFF toggle:
@@ -220,6 +225,9 @@ static void cheat_parse(const char *code, CheatAct *a){
     while(*s==' '||*s=='\t') s++;
   } else if(!strncmp(s,"?monitor",8)){
     a->scope_monitor=1; s+=8;
+    while(*s==' '||*s=='\t') s++;
+  } else if(!strncmp(s,"?gameres",8)){
+    a->scope_gameres=1; s+=8;
     while(*s==' '||*s=='\t') s++;
   }
   if(!strncmp(s,"monitorview|",12)){
@@ -396,6 +404,9 @@ static int cheat_scope_ok(AnygmEngine *engine,const CheatAct *a,int phase){
     if(a->scope_mode && a->scope_mode!=engine->aspect_force_mode) return 0;
     return 1;
   }
+  /* Read live rather than latched: the selection can change between two frames, and the pass that
+   * gives the content its own numbers back is the same pass that took them. */
+  if(a->scope_gameres) return phase==0 && engine->config.present_logical_raster!=0;
   return phase==0;
 }
 /* ============================================================================================
@@ -638,32 +649,63 @@ static void cheat_monitor_dimensions(AnygmEngine *engine,double *monitor_w,doubl
 void engine_override_menu_refresh(AnygmEngine *engine){
   menu_rebuild(engine);
 }
-/* A freeze overwrites whatever the game kept in the target and re-writes it every frame, so
- * simply dropping the slot stops the writes but leaves the last forced value in place — from
- * the player's side the cheat looks stuck on until the content is reset. Remembering the value
- * the target held when the slot was armed makes an un-toggle in the frontend a real un-toggle.
- *
- * Only the global kinds are captured. An instance freeze has no single previous value to return
- * to: it wrote to every instance of an object, and those instances may have been destroyed and
- * respawned while it was armed. */
+/* Frontend toggles capture scalar or array globals. Population-wide instance and surface writes have no single previous value. A scoped logical-raster declaration may capture a first active target when its address has one meaningful previous value. */
+
 static int cheat_slot_capturable(const CheatAct *a){
-  return a->kind==CK_GSCALAR || a->kind==CK_GARR;
+  if(a->kind==CK_GSCALAR || a->kind==CK_GARR) return 1;
+  return a->scope_gameres && (a->kind==CK_INST || a->kind==CK_SURFACE);
 }
 static void cheat_slot_capture(AnygmEngine *engine,CheatSlot *slot){
   slot->saved_valid=0;
   if(!engine->loaded || !cheat_slot_capturable(&slot->act)) return;
-  slot->saved = slot->act.kind==CK_GSCALAR
-    ? gml_global_num(&engine->vm, slot->act.obj)
-    : gml_global_arr(&engine->vm, slot->act.obj, slot->act.idx);
-  slot->saved_valid=1;
+  switch(slot->act.kind){
+    case CK_GSCALAR:
+      slot->saved=gml_global_num(&engine->vm, slot->act.obj);
+      slot->saved_valid=1;
+      break;
+    case CK_GARR:
+      slot->saved=gml_global_arr(&engine->vm, slot->act.obj, slot->act.idx);
+      slot->saved_valid=1;
+      break;
+    case CK_INST: {
+      double previous=0;
+      if(gml_inst_var_first_real(&engine->vm,slot->act.obj,slot->act.var,&previous)){
+        slot->saved=previous;
+        slot->saved_valid=1;
+      }
+      break; }
+    case CK_SURFACE: {
+      int width=0,height=0;
+      if(gml_inst_surface_size_first(&engine->vm,slot->act.obj,slot->act.var,&width,&height)){
+        slot->saved=(double)width;
+        slot->saved2=(double)height;
+        slot->saved_valid=1;
+      }
+      break; }
+    default: break;
+  }
+}
+/* keep: a scope that may swing back needs its captured value to survive the release, because the
+ * content will not recompute it. A frontend slot being dropped keeps the old behaviour of
+ * forgetting, so a re-armed slot captures the current value rather than a stale one. */
+static void cheat_slot_restore_keep(AnygmEngine *engine,CheatSlot *slot,int keep){
+  if(!slot->saved_valid) return;
+  if(!keep) slot->saved_valid=0;
+  if(!engine->loaded) return;
+  switch(slot->act.kind){
+    case CK_GSCALAR: gml_set_global_scalar(&engine->vm, slot->act.obj, slot->saved); break;
+    case CK_GARR:    gml_set_global_arr(&engine->vm, slot->act.obj, slot->act.idx, slot->saved);
+                     break;
+    case CK_INST:    gml_set_inst_var_all(&engine->vm, slot->act.obj, slot->act.var, slot->saved);
+                     break;
+    case CK_SURFACE: gml_resize_inst_surface_all(&engine->vm, slot->act.obj, slot->act.var,
+                                                 (int)slot->saved,(int)slot->saved2);
+                     break;
+    default: break;
+  }
 }
 static void cheat_slot_restore(AnygmEngine *engine,CheatSlot *slot){
-  if(!slot->saved_valid) return;
-  slot->saved_valid=0;
-  if(!engine->loaded) return;
-  if(slot->act.kind==CK_GSCALAR) gml_set_global_scalar(&engine->vm, slot->act.obj, slot->saved);
-  else if(slot->act.kind==CK_GARR)
-    gml_set_global_arr(&engine->vm, slot->act.obj, slot->act.idx, slot->saved);
+  cheat_slot_restore_keep(engine,slot,0);
 }
 
 /* Give back every slot the addressed entry chained, restoring what each of them froze. Dropping a
@@ -733,24 +775,87 @@ void engine_override_set(AnygmEngine *engine,unsigned i,bool e,const char *c){
   }
 }
 /* Consumer passes run over both API-provided overrides and boot overrides. Boot entries remain
- * active when the caller resets the API-provided slots. */
-static void cheat_sticky_pass(AnygmEngine *engine,const CheatSlot *arr, int n){
+ * active when the caller resets the API-provided slots.
+ *
+ * A scope that can be false is an edge, not a filter. Skipping the write is enough to stop forcing
+ * a value, but not to give the previous one back, and content that read its own setting once at
+ * startup never writes it again — so a scope going false has to put the captured value back on
+ * that same frame, exactly once. `applied` remembers whether this slot owes that. An un-scoped
+ * directive never leaves the true branch and reaches none of it. */
+static int cheat_slot_is_room_owned(const CheatAct *a){
+  return a->kind==CK_GARR && gml_room_owned_global(a->obj);
+}
+static void cheat_sticky_pass(AnygmEngine *engine,CheatSlot *arr, int n, int channel_on,
+                              int room_owned_only){
   for(int i=0;i<n;i++){
-    if(!arr[i].enabled) continue;
-    const CheatAct *a=&arr[i].act;
+    CheatSlot *slot=&arr[i];
+    const CheatAct *a=&slot->act;
     if(a->kind==CK_ROOM || a->kind==CK_NONE) continue;
-    if(!cheat_scope_ok(engine,a,0)) continue;
-    cheat_apply_one(engine,a);
+    if(room_owned_only && !cheat_slot_is_room_owned(a)) continue;
+    int applies=channel_on && slot->enabled && cheat_scope_ok(engine,a,0);
+    if(applies){
+      /* Capture once per content load, before the first write: what is being preserved is the
+       * value the content itself computed, not one an earlier arming already replaced. */
+      if(!slot->saved_valid) cheat_slot_capture(engine,slot);
+      slot->applied=1;
+      cheat_apply_one(engine,a);
+    } else if(slot->applied){
+      cheat_slot_restore_keep(engine,slot,1);
+      slot->applied=0;
+    }
   }
 }
 /* Re-apply un-scoped freeze cheats — called every frame after the game step. Alarm pauses are
  * rebuilt here rather than accumulated: they are the one directive that changes what the engine
  * does instead of what a variable holds, so the table has to describe the cheats enabled right
  * now. Clearing first is what makes disarming free — no captured value, nothing to put back. */
+/* Entering a room rewrites every room-owned global from that room's record, so a value captured
+ * in one room is not the value the next one would have held. Dropping those captures on a room
+ * change makes the next pass read the incoming room's own numbers before it overwrites them; the
+ * capture is taken before the write, so what is preserved is still the content's. Targets the room
+ * does not own — an object's own variable, a surface it created — are set once by the content and
+ * keep the reading they already have. */
+static void cheat_room_scope_refresh(CheatSlot *arr,int n){
+  for(int i=0;i<n;i++){
+    CheatSlot *slot=&arr[i];
+    if(!slot->saved_valid || slot->act.kind!=CK_GARR) continue;
+    if(gml_room_owned_global(slot->act.obj)) slot->saved_valid=0;
+  }
+}
+/* Room-owned overrides have to be settled before the frame's geometry is read rather than after
+ * it. Entering a room rewrites the view record a declaration is overriding, and the ordinary pass
+ * runs past the point where the presented size is decided, so the frame a room is entered on would
+ * publish the room's own numbers and the frame after it would publish the override — a resolution
+ * that flickers once per room change. Self-guarded on the room, so calling it costs a comparison. */
+void engine_overrides_room_scope_apply(AnygmEngine *engine){
+  if(!engine || engine->vm.room_index==engine->override_room) return;
+  engine->override_room=engine->vm.room_index;
+  cheat_room_scope_refresh(engine->cheats,engine->cheat_count);
+  cheat_room_scope_refresh(engine->boot_cheats,engine->boot_cheat_count);
+  cheat_sticky_pass(engine,engine->cheats,engine->cheat_count,1,1);
+  cheat_sticky_pass(engine,engine->boot_cheats,engine->boot_cheat_count,
+                    engine_boot_cheats_active(engine)>0,1);
+}
 void apply_sticky_cheats(AnygmEngine *engine){
   gml_alarm_pause_reset(&engine->vm);
-  cheat_sticky_pass(engine,engine->cheats, engine->cheat_count);
-  cheat_sticky_pass(engine,engine->boot_cheats, engine_boot_cheats_active(engine));
+  engine_overrides_room_scope_apply(engine);
+  cheat_sticky_pass(engine,engine->cheats, engine->cheat_count, 1, 0);
+  /* Boot slots are walked whole rather than up to the active count, and the channel is passed as a
+   * gate instead: a content-override channel switched off mid-run still has to hand back what it
+   * forced, and engine_boot_cheats_active reports zero the moment it is switched off — walking to
+   * that count would skip the very slots that owe a restore. */
+  cheat_sticky_pass(engine,engine->boot_cheats, engine->boot_cheat_count,
+                    engine_boot_cheats_active(engine)>0, 0);
+}
+/* Loading a state restores the values a scoped override wrote into the one being saved, so every
+ * slot that could have written owes an answer again. Marking them applied lets the next pass make
+ * it: the scope decides, and a directive that no longer applies gives its captured value back. */
+void engine_overrides_note_state_load(AnygmEngine *engine){
+  if(!engine) return;
+  for(int i=0;i<engine->cheat_count;i++)
+    if(engine->cheats[i].saved_valid) engine->cheats[i].applied=1;
+  for(int i=0;i<engine->boot_cheat_count;i++)
+    if(engine->boot_cheats[i].saved_valid) engine->boot_cheats[i].applied=1;
 }
 static void cheat_monitor_pass(AnygmEngine *engine,const CheatSlot *slots,int count){
   for(int i=0;i<count;i++){
