@@ -215,6 +215,12 @@ void gml_surface_resize(GmlRender *r, int id, int w, int h){
 int gml_surface_set_target(GmlRender *r, int id){
   int w=0,h=0; uint32_t *px=surface_pixels(r,id,&w,&h);
   if(!px || r->target_sp>=GML_SURFACE_STACK) return 0;
+  /* Classic target assignment replaces the current target; one reset returns to the base. Other runtime families retain nested targets. */
+  if(r->classic && r->target_id>=0){
+    gml_surface_reset_target(r);
+    px=surface_pixels(r,id,&w,&h);
+    if(!px || r->target_sp>=GML_SURFACE_STACK) return 0;
+  }
   int si=surface_slot(id);
   { if(si>=0) r->surface[si].dirty=1; }   /* about to be drawn into */
   r->target_stack[r->target_sp++]=(typeof(r->target_stack[0])){
@@ -319,6 +325,52 @@ void gml_surface_reset_target(GmlRender *r){
 }
 int gml_surface_get_target(GmlRender *r){
   return r ? r->target_id : -1;
+}
+/* Retain a bound program target across a new pass while replacing the base buffer that a later target reset returns to. With no target, use ordinary pass initialization. */
+void gml_render_begin_retaining_target(GmlRender *r, uint32_t *fb, int w, int h,
+                                       double cx, double cy){
+  if(!r || r->target_id<0 || r->target_sp<=0){ gml_render_begin(r,fb,w,h,cx,cy); return; }
+  int retained=r->target_id;
+  int depth=r->target_sp;
+  /* The coverage of a bound target is tracked live and only written back to the surface when the
+   * target closes, so it has to cross this call rather than be re-read: a surface the draw phase
+   * has just filled still reads transparent in its own record, and a later composite of it would
+   * be skipped as empty. */
+  int retained_opaque_known=r->fb_opaque_known;
+  int retained_all_opaque=r->fb_all_opaque;
+  int retained_all_transparent=r->fb_all_transparent;
+  typeof(r->target_stack[0]) saved[GML_SURFACE_STACK];
+  memcpy(saved,r->target_stack,sizeof(saved));
+  gml_render_begin(r,fb,w,h,cx,cy);
+  int sw=0,sh=0;
+  uint32_t *px=surface_pixels(r,retained,&sw,&sh);
+  if(!px) return;   /* the surface was freed under the binding: the pass owns the base buffer */
+  memcpy(r->target_stack,saved,sizeof(r->target_stack));
+  r->target_sp=depth;
+  /* The bottom entry described the base of the pass that pushed it, which no longer exists. */
+  r->target_stack[0].fb=fb;
+  r->target_stack[0].w=w;
+  r->target_stack[0].h=h;
+  r->target_stack[0].cx=cx;
+  r->target_stack[0].cy=cy;
+  r->target_stack[0].projection_cx=cx;
+  r->target_stack[0].projection_cy=cy;
+  r->target_stack[0].target_id=-1;
+  r->target_stack[0].opaque_known=0;
+  r->target_stack[0].all_opaque=0;
+  r->target_stack[0].all_transparent=0;
+  r->target_stack[0].pending_underlay=0;
+  r->target_stack[0].underlay_x=r->target_stack[0].underlay_y=0;
+  r->target_stack[0].underlay_w=r->target_stack[0].underlay_h=0;
+  r->target_stack[0].pending_fill=0;
+  r->target_stack[0].fill_color=0;
+  int si=surface_slot(retained);
+  r->fb=px; r->fbw=sw; r->fbh=sh;
+  r->target_id=retained;
+  r->fb_opaque_known=retained_opaque_known;
+  r->fb_all_opaque=retained_all_opaque;
+  r->fb_all_transparent=retained_all_transparent;
+  if(si>=0) r->surface[si].dirty=1;
 }
 int gml_surface_target_lit(GmlRender *r){
   /* Count nonzero RGB in the active surface; alpha is not part of this probe. */
@@ -1312,8 +1364,9 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
         if(py>maxy) maxy=py;
         nz++;
       }
-      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[surfdraw] target=%d surf=%d src=%dx%d nz=%d dst=(%.0f,%.0f %.0fx%.0f) blend=%06X alpha=%.2f bm=%d alphablend=%d\n",
-              r?r->target_id:-999,surf,sw,sh,nz,dx,dy,dw,dh,blend&0xFFFFFF,alpha,r?r->blendmode:-1,r?r->alphablend:-1);
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[surfdraw] target=%d surf=%d src=%dx%d nz=%d dst=(%.0f,%.0f %.0fx%.0f) blend=%06X alpha=%.2f bm=%d alphablend=%d into=%p %dx%d base=%p %dx%d\n",
+              r?r->target_id:-999,surf,sw,sh,nz,dx,dy,dw,dh,blend&0xFFFFFF,alpha,r?r->blendmode:-1,r?r->alphablend:-1,
+              (const void *)(r?r->fb:NULL),r?r->fbw:0,r?r->fbh:0,(const void *)(r?r->base_fb:NULL),r?r->base_fbw:0,r?r->base_fbh:0);
       if(nz>0) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[surfdraw]   first=(%d,%d) argb=%08X bbox=(%d,%d)-(%d,%d)\n",sx0,sy0,sv0,minx,miny,maxx,maxy);
       /* The figures above count alpha. Count nonzero colour separately so an
        * opaque black surface does not appear to hold coloured pixels. */
@@ -1335,6 +1388,12 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
   int prof=rprof_enabled();
   double t0=prof?rprof_now():0.0;
   draw_surface_region(r,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha);
+  /* Log destination coverage after the draw to distinguish a skipped draw from one that wrote no colored pixels. */
+  if(r && r->surface_draw_logging>0 && r->fb && r->fbw>0 && r->fbh>0){
+    int dlit=0; for(int i=0;i<r->fbw*r->fbh;i++) if(r->fb[i]&0x00FFFFFFu) dlit++;
+    anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
+      "[surfdraw]   destination lit=%d of %d after the draw\n",dlit,r->fbw*r->fbh);
+  }
   if(prof) rprof_add("surface",r,NULL,(rprof_now()-t0)*1000.0,(unsigned long long)llround(fabs(dw*dh)));
 }
 void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,

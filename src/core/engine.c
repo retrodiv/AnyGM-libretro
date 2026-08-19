@@ -806,6 +806,13 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if(run_step){
     AspectViewOverlay step_ov;
     aspect_view_overlay_begin(engine,&step_ov, 0, ASPECT_VIEW_TRACKING);
+    /* For a classic frame with a retained target, bind the new presented base before Step. The active target remains bound until the program resets it. */
+    if(anygm_policy_uses_classic_runtime(&engine->win) &&
+       gml_surface_get_target(&engine->render)>=0 && engine->screen &&
+       engine->output_width>0 && engine->output_height>0)
+      gml_render_begin_retaining_target(&engine->render,engine->screen,
+                                        (int)engine->output_width,(int)engine->output_height,
+                                        0.0,0.0);
     gml_vm_step(&engine->vm);
     if(anygm_policy_uses_classic_runtime(&engine->win) && room_before_step>=0 && engine->vm.room_index!=room_before_step){
       int kind=(int)lround(gml_global_num(&engine->vm,"transition_kind"));
@@ -852,6 +859,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
       (const void*)engine->fb,engine->width,engine->height,(const void*)engine->screen,
       engine->output_width,engine->output_height);
   }
+  /* A classic surface target held after Step directs the draw phase into that target. The base canvas retains the program's own composition for this frame. */
+  engine->composed_frame=anygm_policy_uses_classic_runtime(&engine->win) &&
+                         gml_surface_get_target(&engine->render)>=0 &&
+                         !anygm_host_development_setting(&engine->host,"GML_NO_CRT");
+  /* For this frame, neither fill the composed base nor blit the world over it. Keep normal application drawing enabled for later frames. */
+  if(engine->composed_frame) engine->content_presented=1;
   engine->vm.draw_phase=1;
   if(engine->vm.game_change_pending)
     return engine_apply_game_change_and_run_frame(engine);
@@ -1090,7 +1103,11 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   world_pixels=direct_owned_world?direct_world_view.pixels:engine->fb;
   world_width=direct_owned_world?direct_world_view.width:(int)engine->width;
   world_height=direct_owned_world?direct_world_view.height:(int)engine->height;
-  gml_render_begin(&engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
+  if(engine->composed_frame)
+    gml_render_begin_retaining_target(&engine->render,world_pixels,world_width,world_height,
+                                      cam_x,cam_y);
+  else
+    gml_render_begin(&engine->render,world_pixels,world_width,world_height,cam_x,cam_y);
   if(direct_owned_world)
     gml_render_world_set_logical_extent(
       &engine->render,(int)engine->width,(int)engine->height);
@@ -1291,9 +1308,18 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 			  uint32_t *gtarget = (aspect_gui_center || gui_indirect) ? engine->gui_buffer : engine->screen;
 			  int gtw = (aspect_gui_center || gui_indirect) ? gsw : (int)ow;
 			  int gth = (aspect_gui_center || gui_indirect) ? gsh : (int)oh;
-			  gml_render_begin(&engine->render, gtarget, gtw, gth,
-		                     (engine->aspect_force_active || aspect_gui_center) ? 0.0 : -(double)engine->gui_offset_x,
-		                     (engine->aspect_force_active || aspect_gui_center) ? 0.0 : -(double)engine->gui_offset_y);
+			  {
+			    double screen_cam_x=(engine->aspect_force_active || aspect_gui_center)
+			                        ? 0.0 : -(double)engine->gui_offset_x;
+			    double screen_cam_y=(engine->aspect_force_active || aspect_gui_center)
+			                        ? 0.0 : -(double)engine->gui_offset_y;
+			    if(engine->composed_frame)
+			      gml_render_begin_retaining_target(&engine->render, gtarget, gtw, gth,
+			                                        screen_cam_x, screen_cam_y);
+			    else
+			      gml_render_begin(&engine->render, gtarget, gtw, gth,
+			                       screen_cam_x, screen_cam_y);
+			  }
 	  if(!engine->content_presented) gml_render_set_pending_fill(&engine->render, 0);
 	  /* The app surface normally presents into the view PORT fitted into GUI space. A classic
 	   * runtime window resize preserves the declared port rectangle and clears the new margins. */
@@ -1447,7 +1473,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 		                                         * application-surface blit with a custom composite. */
 		  log_present_pass(engine,"post-draw",gtarget,gtw,gth);
 		  gml_render_presentation_metrics(&engine->render,&render_presentation);
-		  if (render_presentation.application_draw_enabled ||
+		  if ((render_presentation.application_draw_enabled && !engine->composed_frame) ||
 		      anygm_host_development_setting(&engine->host,"GML_NO_CRT"))
 		    gml_render_set_pending_underlay(&engine->render, prx, pry, prw, prh);
       if (engine->aspect_force_active)
@@ -1503,7 +1529,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
    * exactly when that surface has no lit pixel — which is the same condition the recovery below
    * then tests before doing anything. Both answers are therefore "do nothing", and scanning a
    * monitor-sized target to arrive at it would also force the frame back onto the processor. */
-  if (!render_presentation.application_draw_enabled &&
+  if (!render_presentation.application_draw_enabled && !engine->composed_frame &&
       !anygm_host_development_setting(&engine->host,"GML_NO_CRT") &&
       !gml_render_deferred_presentation(&engine->render,NULL)) {
     int screen_empty = 1;
@@ -1989,6 +2015,7 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
     engine_logf(engine,ANYGM_LOG_DEBUG,"[presented] screen lit=%zu presented=%d\n",lit,engine->content_presented);
   }
   engine->content_presented=0;
+  engine->composed_frame=0;
   gml_render_clear_content_composited_screen(&engine->render);
   output->pixels=presented_pixels;
   output->width=presented_width;

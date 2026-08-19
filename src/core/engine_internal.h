@@ -214,6 +214,12 @@ struct AnygmEngine {
   int full_game_on_initial_boot;
   uint32_t *fb,*screen,*gui_buffer,*app_crop,*host_screen;
   int content_presented;
+  /* Content that composes its own screen through a surface leaves that surface bound when its step
+   * events end. The draw phase then belongs to the surface rather than to the world buffer, and the
+   * frame presents what the content itself put on the base canvas. The binding itself is what
+   * carries this to the next frame, whose step events compose into the presented raster and which
+   * therefore has to name that raster before running them. */
+  int composed_frame;
   uint32_t *classic_phase_mem;
   size_t classic_phase_cap;
   unsigned width,height,base_width,base_height;
