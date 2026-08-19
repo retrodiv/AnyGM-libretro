@@ -74,10 +74,12 @@ static int engine_input_key(void *userdata,int vk, int edge){
       }
     }
     for(int i = 2; i < NKEY; i++){
+      if(engine->key_cleared[i]) continue;   /* cleared: not down again until it comes up first */
       any |= engine->key_current[i] | engine->hardware_key_current[i] | engine->event_vk_current[i];
       anyp |= engine->key_previous[i] | engine->hardware_key_previous[i] | engine->event_vk_previous[i];
     }  /* skip 0/1 (the sentinels) */
     for(int i = 1; i < ANYGM_KEY_LAST; i++){
+      if(engine->event_key_cleared[i]) continue;
       any |= engine->event_key_current[i];
       anyp |= engine->event_key_previous[i];
     }
@@ -87,9 +89,11 @@ static int engine_input_key(void *userdata,int vk, int edge){
     dbg_key_log(engine,vk, edge, cur, prev, out);
     return out;
   }
-  /* Held state is the union of input sources, but edges are evaluated per source
-   * and then joined. A held simulated key cannot suppress a new physical-key
-   * transition of the same virtual key. */
+  /* Held state joins the input sources, but edges are evaluated per source before joining. A latched simulated hold must not suppress a new physical-key transition. */
+  if(vk >= 0 && vk < NKEY && engine->key_cleared[vk]){
+    dbg_key_log(engine,vk, edge, 0, 0, 0);
+    return 0;
+  }
   int sim_c=0, sim_p=0, hw_c=0, hw_p=0, evk_c=0, evk_p=0, pad_c=0, pad_p=0;
   if(vk >= 0 && vk < NKEY){
     sim_c=engine->key_current[vk];      sim_p=engine->key_previous[vk];
@@ -122,7 +126,27 @@ static int engine_input_key(void *userdata,int vk, int edge){
 }
 static void engine_input_key_clear(void *userdata,int vk){
   AnygmEngine *engine=userdata;
-  if(vk >= 0 && vk < NKEY){ engine->key_current[vk]=0; engine->key_previous[vk]=0; }
+  if(vk >= 0 && vk < NKEY){
+    engine->key_current[vk]=0; engine->key_previous[vk]=0;
+    engine->key_press_raised[vk]=0; engine->key_press_carry[vk]=0;
+    /* Suppress a cleared held key until all mapped input sources release it. */
+    engine->key_cleared[vk]=1;
+    int mapped=anygm_key_for_vk(vk);
+    if(mapped>0 && mapped<ANYGM_KEY_LAST) engine->event_key_cleared[mapped]=1;
+  }
+}
+/* Release a suppression once nothing holds the key any more. Called after every source has been
+ * polled, so "up" means up everywhere rather than up in the source that happened to be read. */
+void engine_input_release_cleared_keys(AnygmEngine *engine){
+  for(int vk=0;vk<NKEY;vk++){
+    if(!engine->key_cleared[vk]) continue;
+    int mapped=anygm_key_for_vk(vk);
+    int held=engine->key_current[vk]|engine->hardware_key_current[vk]|engine->event_vk_current[vk];
+    if(!held && mapped>0 && mapped<ANYGM_KEY_LAST) held|=engine->event_key_current[mapped];
+    if(held) continue;
+    engine->key_cleared[vk]=0;
+    if(mapped>0 && mapped<ANYGM_KEY_LAST) engine->event_key_cleared[mapped]=0;
+  }
 }
 static void engine_input_key_press(void *userdata,int vk){
   AnygmEngine *engine=userdata;

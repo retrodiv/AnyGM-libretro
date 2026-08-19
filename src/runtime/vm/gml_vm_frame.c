@@ -353,9 +353,18 @@ static int gml_vm_finish_classic_room_request(GmlVM *vm,int previous_alloc_base)
 }
 
 void gml_vm_step(GmlVM *vm){
+  /* Before any modal hold, because the two variables a held frame is waiting on are exactly these. */
+  gml_keyboard_track(vm);
   if(vm && vm->classic_info_active){
     if(gml_keyboard_check(vm,1,1)) vm->classic_info_active=0;
     return;
+  }
+  /* Resume a parked event with current input. While it remains parked, skip all other simulation phases and retain the completed picture. */
+  if(vm && vm->wait.active){
+    /* Advance only the frame-derived clock during a parked wait, so bounded timeouts can expire without stepping events, alarms or animation. */
+    vm->frame++;
+    if(!gml_vm_wait_resume(vm)) return;
+    vm->frame--;   /* the ordinary step below counts this frame itself */
   }
   /* The classic animation advance owed by the previous frame's draw (see gml_vm_post_draw). */
   if(vm->animation_due){ vm->animation_due=0; advance_instance_animations(vm); }

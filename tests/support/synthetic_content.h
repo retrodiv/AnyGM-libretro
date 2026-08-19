@@ -35,6 +35,11 @@ int anygm_synthetic_game_restart_content_create(AnygmSyntheticContent *fixture);
 /* One instance whose Alarm 1 counts a tick and re-arms itself on a sixty-frame period, long enough
  * to tell a countdown that resumed from its remainder apart from one that started the period over. */
 int anygm_synthetic_alarm_content_create(AnygmSyntheticContent *fixture);
+/* One instance whose Alarm 0 spins on sleep() until a global is set, and a Step event that counts
+ * the frames it runs on. A wait like this cannot end inside the frame it starts on, so the counter
+ * says what the runtime did with the event: held it and continued it later, or ran the whole loop
+ * inside one frame and gave up on it. */
+int anygm_synthetic_blocking_wait_content_create(AnygmSyntheticContent *fixture);
 void anygm_synthetic_content_destroy(AnygmSyntheticContent *fixture);
 int anygm_synthetic_content_read(const AnygmSyntheticContent *fixture,uint8_t **data,size_t *size);
 

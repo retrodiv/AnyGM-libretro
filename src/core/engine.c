@@ -720,6 +720,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   engine_input_poll_keyboard(engine);
   for(int axis=0;axis<4;axis++) engine->axis_current[axis]=engine->input.gamepad_axes[0][axis];
   engine_input_poll_mouse(engine);
+  engine_input_release_cleared_keys(engine);   /* a cleared key comes back once it has been up */
   int room_before_step = engine->vm.room_index;
   unsigned transition_old_w = engine->output_width ? engine->output_width : engine->width;
   unsigned transition_old_h = engine->output_height ? engine->output_height : engine->height;
@@ -740,6 +741,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     memset(engine->event_vk_previous, 0, sizeof(engine->event_vk_previous));
     memset(engine->event_key_current, 0, sizeof(engine->event_key_current));
     memset(engine->event_key_previous, 0, sizeof(engine->event_key_previous));
+    memset(engine->key_cleared, 0, sizeof(engine->key_cleared));
+    memset(engine->event_key_cleared, 0, sizeof(engine->event_key_cleared));
     memset(engine->axis_current, 0, sizeof(engine->axis_current));
     memset(engine->axis_previous, 0, sizeof(engine->axis_previous));
     memset(engine->mouse_button_current, 0, sizeof(engine->mouse_button_current));
@@ -798,6 +801,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
         engine->wide_app_restore_width=engine->wide_app_restore_height=0;
       }
     } }
+  /* Record whether a wait preceded this frame. A newly parked event may complete its draw; later held frames retain the completed picture. */
+  int wait_held_frame = engine->vm.wait.active;
   if(run_step){
     AspectViewOverlay step_ov;
     aspect_view_overlay_begin(engine,&step_ov, 0, ASPECT_VIEW_TRACKING);
@@ -814,6 +819,20 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     menu_run(engine);              /* generic pause-menu editor (inject entries + handle input) */
     room_skip_hook(engine);        /* generic room-skip button (Select/Start, any room) */
     introskip_hook(engine);        /* A/B skip, only in a user-supplied intro-room list (GML_INTROSKIP) */
+  }
+  /* While a prior wait remains active, skip Step and Draw while mixing audio and updating input history. */
+  if(wait_held_frame && engine->vm.wait.active){
+    engine->audio_accumulator += 44100.0 / (engine->fps>0.0?engine->fps:60.0);
+    int held_frames = (int)engine->audio_accumulator;
+    engine->audio_accumulator -= held_frames;
+    if(held_frames>4096) held_frames=4096;
+    if(held_frames>0){
+      gml_audio_mix(engine->audio,engine->audio_output,held_frames);
+      engine->audio_frames=(size_t)held_frames;
+    }
+    memcpy(engine->event_vk_previous, engine->event_vk_current, sizeof(engine->event_vk_current));
+    memcpy(engine->event_key_previous, engine->event_key_current, sizeof(engine->event_key_current));
+    return ANYGM_OK;
   }
   /* Everything past the step draws. The deterministic clock keeps running through it so a Draw
    * event can still time out of a loop, but from here its advance is scratch: the frame a state

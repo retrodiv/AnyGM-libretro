@@ -62,10 +62,8 @@ static int action_health_component(double value){
 
 GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* drag-and-drop actions (compiled to builtin calls) acting on the current instance */
-  /* Desktop sleep (native or D&D) blocks only wall-clock time; no simulation ticks occur.
-   * A host core must not stall the host thread, so consuming it without advancing game
-   * state produces the same next rendered frame while preserving realtime performance. */
-  if(!strcmp(nm,"action_sleep") || !strcmp(nm,"sleep")) return vreal(0);
+  /* Sleep requests remain nonblocking. A repeated call site in one code run may yield to a later input poll; a one-off request retains the existing no-op. */
+  if(!strcmp(nm,"action_sleep") || !strcmp(nm,"sleep")){ if(vm) vm->wait_requested=1; return vreal(0); }
   /* action_if(expr): D&D single-expression conditional. expr was evaluated on the stack by the
    * bytecode before this call → arg0 is the truth value. Returns the value (0 or 1). */
   if(!strcmp(nm,"action_if")) return vreal(N(a,n,0));

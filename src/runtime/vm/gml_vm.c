@@ -95,6 +95,23 @@ int gml_keyboard_get_map(GmlVM *vm, int source){
   if(!vm || source<0 || source>255) return source;
   return vm->key_map[source];
 }
+/* Refresh keyboard_key from held logical keys and keyboard_lastkey from pressed logical keys once per frame. Simultaneous holds select the lowest logical key deterministically. Both language-visible variables remain assignable. */
+void gml_keyboard_track(GmlVM *vm){
+  if(!vm) return;
+  double held=0;
+  for(int source=2;source<256;source++){
+    int destination=vm->key_map[source];
+    if(destination<2) continue;
+    int cur=0,pressed=0;
+    if(vm->input.key){
+      cur=gml_input_key(vm,source,0);
+      pressed=gml_input_key(vm,source,1);
+    }
+    if(pressed) vm->last_key=destination;
+    if(cur && held==0) held=destination;
+  }
+  vm->current_key=held;
+}
 int gml_keyboard_check(GmlVM *vm, int vk, int edge){
   if(!vm) return 0;
   if(edge<0 || edge>2) edge=0;
@@ -345,6 +362,7 @@ void gml_vm_free(GmlVM *vm){
   if(vm){ free(vm->diagnostics.code_profile_ms); vm->diagnostics.code_profile_ms=NULL;
           free(vm->diagnostics.code_profile_hits); vm->diagnostics.code_profile_hits=NULL; }
   GML_VM_DIAGNOSTIC_DESTROY(vm);
+  gml_vm_wait_cancel(vm);   /* a run parked by a blocking input wait owns locals and strings */
   gml_colgrid_invalidate(vm);
   gml_vm_instances_reset_caches(vm);
   if(vm->obj_desc){ for(int i=0;i<vm->n_objects;i++) free(vm->obj_desc[i]); }

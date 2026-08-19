@@ -149,6 +149,7 @@ typedef struct {
   double  *code_profile_ms;   /* accumulated milliseconds per CODE entry */
   uint64_t*code_profile_hits; /* invocations per CODE entry */
   int watchdog_warnings;
+  int wait_warnings;   /* blocking waits that could not span a frame and ended their run */
   int pc_initialized;
   char pc_name[128];
   long pc_offset;
@@ -202,6 +203,34 @@ typedef struct {
   const char *trace_call;
 } GmlVmDiagnostics;
 
+/* A parked direct event run retains its operand stack, locals, arguments, resume point and owned strings across frames. Nested direct calls form an innermost-first bounded chain. */
+#define GML_WAIT_MAX_FRAMES 8
+#define GML_WAIT_MAX_STACK 512   /* the interpreter's operand stack: a parked frame copies as much */
+typedef struct GmlWaitFrame {
+  int       ci;                 /* CODE entry this frame is executing */
+  uint32_t  insn_index;         /* resume point in the decoded-instruction cache */
+  uint32_t  bytecode_pc;        /* the same point as a bytecode offset, for an uncached run */
+  uint32_t  self_id, other_id;  /* instance ids: pointers do not survive a pool growth or a state */
+  int       argc;
+  GmlVal    args[16];
+  GmlVal   *stack; uint8_t *stack_type; int stack_n;  /* the operand stack at the resume point */
+  uint32_t  wait_site;          /* the wait call site this run already visited, so the resumed run
+                                 * parks on its next visit instead of spinning one extra iteration */
+  GmlVarMap locals;
+  void    **strings; int n_strings;   /* the run's owned-string tracker, moved out of the run */
+  int       push_child_result;        /* the nested frame below returns a value this frame expects */
+  char      event[32];                /* the event suffix in scope, copied: callers spell it into a local */
+  int       event_obj, event_type, event_number;
+} GmlWaitFrame;
+
+typedef struct GmlWait {
+  int active;          /* a wait is outstanding: the simulation is frozen until it ends */
+  int parking;         /* a park is unwinding the C stack; each frame in the chain adds itself */
+  int expected_depth;  /* execution depth of the frame that must park next */
+  int n_frames;        /* frames[0] is the run that blocked; frames[n_frames-1] is the event's own */
+  GmlWaitFrame frames[GML_WAIT_MAX_FRAMES];
+} GmlWait;
+
 typedef struct GmlVM {
   /* Answers reused while writing a state; owned here so they outlive one state and die with the
    * content they describe. Opaque: only the state writer knows its shape. */
@@ -247,6 +276,15 @@ typedef struct GmlVM {
   uint32_t step_first_id;     /* Studio fixed snapshot: ids at/above this were created during this step */
   int      step_active;       /* lets alloc reuse only holes that were already free at frame start */
   int      execution_depth;   /* per-VM recursion guard for nested script calls */
+  /* Blocking input wait (see GmlWait). `wait_requested` is raised by the wait builtins and read by
+   * the interpreter at the next instruction boundary; `wait_chain` is the depth of the deepest run
+   * reachable by direct calls from an event's own code, which is the only chain a park may span;
+   * `wait_event_scope` marks a code run entered as an event handler. */
+  GmlWait  wait;
+  int      wait_requested;
+  int      wait_chain;
+  int      wait_event_scope;
+  int      wait_direct_marker;
   uint32_t *special_var_hash; /* per-VM acceleration table for builtin-variable lookup */
   uint64_t special_var_bloom;
   uint32_t next_id;
@@ -283,6 +321,8 @@ typedef struct GmlVM {
   int     *cg_candidate; int cg_candidate_cap;
   uint64_t *cg_candidate_bits; int cg_candidate_bits_words;
   double   last_key;          /* GM keyboard_lastkey: last vk pressed */
+  double   current_key;       /* GM keyboard_key: the vk held now, 0 for none. Refreshed once per
+                               * frame from the held keys and assignable, the way content clears it. */
   /* Physical virtual-key -> logical virtual-key remapping. Values are -1 (disabled)
    * or a Windows VK code; the default mapping is the identity. */
   int16_t  key_map[256];
@@ -414,6 +454,9 @@ int     gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
 void    gml_vm_free(GmlVM *vm);
 void    gml_vm_fire_game_end(GmlVM *vm);
 void    gml_vm_set_launch_parameters(GmlVM *vm,const char *executable,const char *parameters);
+void    gml_keyboard_track(GmlVM *vm);                  /* refresh keyboard_key/keyboard_lastkey */
+int     gml_vm_wait_resume(GmlVM *vm);                  /* 1 = the parked event finished, 0 = still waiting */
+void    gml_vm_wait_cancel(GmlVM *vm);                  /* discard a parked run and its frames */
 int     gml_keyboard_check(GmlVM *vm, int vk, int edge); /* remapped keyboard_check* semantics */
 int     gml_keyboard_get_map(GmlVM *vm, int source);
 void    gml_keyboard_set_map(GmlVM *vm, int source, int destination);

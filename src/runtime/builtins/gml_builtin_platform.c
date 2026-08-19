@@ -496,7 +496,13 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vstr(index?vm->parameter_value[index-1]:vm->parameter_executable);
   }
   if(!strcmp(nm,"exception_unhandled_handler")) return vreal(0);
-  if(!strcmp(nm,"io_clear")||!strcmp(nm,"keyboard_wait")) return vreal(0);
+  /* io_clear drops pending key observations and suppresses an already held key until release and repress. keyboard_key and keyboard_lastkey reset to zero; pointer state is unchanged. */
+  if(!strcmp(nm,"io_clear")){
+    gml_keyboard_clear(vm,1);
+    if(vm){ vm->current_key=0; vm->last_key=0; }
+    return vreal(0);
+  }
+  if(!strcmp(nm,"keyboard_wait")) return vreal(0);
   if(!strcmp(nm,"display_set_windows_alternate_sync")) return vreal(0);
   if(!strcmp(nm,"url_open")) return vreal(0);
   if(!strcmp(nm,"os_is_network_connected")) return vreal(host_network_connected(vm));

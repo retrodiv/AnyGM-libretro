@@ -2093,6 +2093,8 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"audio_set_master_gain")){ gml_audio_set_master_gain(AU,n>=2?N(a,n,1):N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_sound_gain")){ gml_audio_sound_gain(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"sound_volume")){ gml_audio_sound_gain(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
+    /* The classic name uses the mixer's master gain over the 0..1 control range. */
+    if(!strcmp(nm,"sound_global_volume")){ gml_audio_set_master_gain(AU,N(a,n,0)); return vreal(0); }
     if(!strcmp(nm,"audio_sound_pitch")){ gml_audio_sound_pitch(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"audio_sound_set_track_position")){ gml_audio_sound_set_track_position(AU,(int)N(a,n,0),N(a,n,1)); return vreal(0); }
     if(!strcmp(nm,"audio_play_sound")||!strcmp(nm,"sound_play")||!strcmp(nm,"sound_loop")){

@@ -18,7 +18,7 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=6 };
+enum { GML_VM_STATE_SCHEMA=7 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
 /* Writing a state walks every instance's variables, and the names repeat across them: every
  * instance carries the same handful of built-in names, each time as the very same pointer into
@@ -659,6 +659,7 @@ static void runtime_release_builtin_value(void *userdata,GmlVal value){
 }
 
 static void runtime_clear(GmlVM *vm){
+  gml_vm_wait_cancel(vm);   /* the state about to be read decides what is parked, if anything */
   GmlValueFreeContext free_context={0};
   gml_value_free_context_begin(&free_context);
   gml_varmap_free_with_context(&vm->globals,0,&free_context);
@@ -840,6 +841,21 @@ static void sw_vm(StateW *s, GmlVM *vm){
     sw_i32(s,o->view_x); sw_i32(s,o->view_y); sw_i32(s,o->view_w); sw_i32(s,o->view_h);
     sw_i32(s,o->hborder); sw_i32(s,o->vborder); sw_i32(s,o->hspeed); sw_i32(s,o->vspeed);
     sw_i32(s,o->object);
+  }
+  /* Serialize keyboard_key and every frame in an active parked event chain, including operand and local value state. */
+  sw_d(s,vm->current_key);
+  sw_i32(s,vm->wait.active?vm->wait.n_frames:0);
+  if(vm->wait.active) for(int i=0;i<vm->wait.n_frames;i++){
+    GmlWaitFrame *f=&vm->wait.frames[i];
+    sw_i32(s,f->ci); sw_u32(s,f->insn_index); sw_u32(s,f->bytecode_pc); sw_u32(s,f->wait_site);
+    sw_u32(s,f->self_id); sw_u32(s,f->other_id);
+    sw_i32(s,f->argc); for(int k=0;k<16;k++) sw_val(s,f->args[k],0);
+    sw_i32(s,f->push_child_result);
+    sw_str(s,f->event);
+    sw_i32(s,f->event_obj); sw_i32(s,f->event_type); sw_i32(s,f->event_number);
+    sw_i32(s,f->stack_n);
+    for(int k=0;k<f->stack_n;k++){ sw_u32(s,f->stack_type[k]); sw_val(s,f->stack[k],0); }
+    sw_varmap(s,&f->locals);
   }
   vm_state_profile_globals(vm);
 }
@@ -1154,6 +1170,48 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
         state_debug(vm,"bad view override",s.pos,(uint32_t)slot); s.ok=0;
       }
     }
+  }
+  /* The run parked by a blocking input wait, mirroring sw_vm. Anything unreadable leaves the wait
+   * cancelled rather than half-restored: a partly rebuilt frame would resume into nothing. */
+  vm->current_key=sr_d(&s);
+  {
+    int frames=sr_i32(&s);
+    if(frames<0 || frames>GML_WAIT_MAX_FRAMES){
+      state_debug(vm,"bad wait frame count",s.pos,(uint32_t)frames); s.ok=0; frames=0;
+    }
+    for(int i=0;i<frames && s.ok;i++){
+      GmlWaitFrame *f=&vm->wait.frames[i];
+      memset(f,0,sizeof *f);
+      f->ci=sr_i32(&s);
+      f->insn_index=sr_u32(&s); f->bytecode_pc=sr_u32(&s); f->wait_site=sr_u32(&s);
+      f->self_id=sr_u32(&s); f->other_id=sr_u32(&s);
+      f->argc=sr_i32(&s);
+      for(int k=0;k<16;k++) f->args[k]=sr_val(vm,&s,0);
+      f->push_child_result=sr_i32(&s);
+      { char *event=sr_str_dup(&s);
+        snprintf(f->event,sizeof f->event,"%s",event?event:"");
+        free(event); }
+      f->event_obj=sr_i32(&s); f->event_type=sr_i32(&s); f->event_number=sr_i32(&s);
+      int stack_n=sr_i32(&s);
+      if(f->argc<0 || f->argc>16 || stack_n<0 || stack_n>GML_WAIT_MAX_STACK ||
+         !vm->win || f->ci<0 || f->ci>=vm->win->n_code){
+        state_debug(vm,"bad wait frame",s.pos,(uint32_t)i); s.ok=0; break;
+      }
+      if(stack_n>0){
+        f->stack=(GmlVal*)calloc((size_t)stack_n,sizeof(GmlVal));
+        f->stack_type=(uint8_t*)calloc((size_t)stack_n,1);
+        if(!f->stack || !f->stack_type){ s.ok=0; break; }
+      }
+      for(int k=0;k<stack_n && s.ok;k++){
+        f->stack_type[k]=(uint8_t)sr_u32(&s);
+        f->stack[k]=sr_val(vm,&s,0);
+      }
+      f->stack_n=stack_n;
+      if(!sr_varmap(vm,&s,&f->locals)) break;
+      vm->wait.n_frames=i+1;
+    }
+    if(s.ok && frames>0){ vm->wait.active=1; vm->wait.n_frames=frames; }
+    else if(vm->wait.n_frames) gml_vm_wait_cancel(vm);
   }
   vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;
   vm->step_active=0; vm->step_alloc_base=0;

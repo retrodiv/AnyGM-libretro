@@ -267,6 +267,9 @@ struct AnygmEngine {
    * key_release_defer counts polls owed by its paired release so a held-key
    * query in the following frame can observe it. Both are transient. */
   uint8_t key_press_step[NKEY],key_release_defer[NKEY];
+  /* io_clear and keyboard_clear suppress a held key until all input sources next report it up. A later press is then observed normally. */
+  uint8_t key_cleared[NKEY];
+  uint8_t event_key_cleared[ANYGM_KEY_LAST];
   uint8_t hardware_key_current[NKEY],hardware_key_previous[NKEY];
   uint8_t event_vk_current[NKEY],event_vk_previous[NKEY];
   uint8_t event_key_current[ANYGM_KEY_LAST],event_key_previous[ANYGM_KEY_LAST];
@@ -461,6 +464,7 @@ void content_router_log(void *userdata,int level,const char *message);
 void engine_input_bind(AnygmEngine *engine);
 void engine_input_poll_keyboard(AnygmEngine *engine);
 void engine_input_poll_mouse(AnygmEngine *engine);
+void engine_input_release_cleared_keys(AnygmEngine *engine);
 
 uint64_t state_hash_bytes(const void *data,size_t size);
 void state_identity_refresh(AnygmEngine *engine);

@@ -2035,8 +2035,8 @@ int main(int argc,char **argv){
   /* The synthetic-state checksum tracks the complete serialized bytes,
    * including the resolved content and compatibility identifiers. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
-  if(deterministic_size!=19870 ||
-     deterministic_hash!=UINT64_C(0x6d0a2dfb73bd6598)){
+  if(deterministic_size!=19882 ||
+     deterministic_hash!=UINT64_C(0xae9892648560289c)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;

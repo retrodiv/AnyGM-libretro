@@ -279,7 +279,11 @@ static int run_event_code_from(GmlVM *vm, GmlInstance *in, GmlInstance *other,
   }
   vm->cur_event=suffix; vm->cur_event_obj=obj;
   vm->event_type=et; vm->event_number=en;
+  /* An event handler is the one run a blocking input wait may park all the way out to: the engine
+   * dispatched it and can dispatch its continuation again on a later frame. */
+  int wait_scope=vm->wait_event_scope; vm->wait_event_scope=1;
   GmlVal _r=gml_vm_run_code(vm,ci,in,other,NULL,0);
+  vm->wait_event_scope=wait_scope;
   if(_r.t==V_STR && _r.d!=0) free((char*)_r.s);   /* discarded owned return: free it */
   vm->cur_event=pe; vm->cur_event_obj=peo;
   vm->event_type=pet; vm->event_number=pen;

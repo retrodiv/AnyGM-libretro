@@ -1463,7 +1463,7 @@ GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n){
   { const char *sb=NULL;
     if(!strncmp(nm,"gml_GlobalScript_",17)) sb=nm+17;
     else if(!strncmp(nm,"gml_Script_",11)) sb=nm+11;
-    if(sb && !strcmp(sb,"sleep")) return vreal(0); }
+    if(sb && !strcmp(sb,"sleep")){ vm->wait_requested=1; return vreal(0); } }
   /* Native shadows of the stock GM8-compat tile scripts. tile_layer_find otherwise iterates
    * every runtime-layer element in bytecode with 3-6 accessor builtins per element, each doing
    * an O(n) id lookup, producing quadratic work on large runtime tile layers.

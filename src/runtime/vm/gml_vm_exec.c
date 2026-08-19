@@ -412,7 +412,7 @@ static int inst_sprite_metric_get(GmlVM *vm, GmlInstance *in, const char *name, 
  * read and write. Hash-hit => run the original chain (its strcmps confirm; collisions are
  * safe); miss => the name is provably not special, go straight to the varmap. */
 static const char *const g_special_var_names[]={
-  "undefined","infinity","room","room_first","room_last","keyboard_lastkey","room_speed","working_directory","program_directory",
+  "undefined","infinity","room","room_first","room_last","keyboard_lastkey","keyboard_key","room_speed","working_directory","program_directory",
   "fps","delta_time","view_current","view_enabled","room_persistent","background_color","background_colour",
   "view_left","view_top","view_width","view_height","view_x","view_y",
   "brush_color","brush_style","pen_color","pen_size",
@@ -529,6 +529,7 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
     return vreal((double)vm->win->room_order[order_index]);
   }
   if(!strcmp(name,"keyboard_lastkey")) return vreal(vm->last_key); /* GM: last key pressed */
+  if(!strcmp(name,"keyboard_key")) return vreal(vm->current_key);  /* GM: the key held right now */
   if(!strcmp(name,"room_speed")) return vreal(gml_room_speed(vm));
   if(!strcmp(name,"working_directory")){
     /* This is the installed file-bundle root. The file API overlays save_dir on reads and
@@ -695,6 +696,10 @@ static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal
     vm->pending_room=target;
     return; }  /* GM: room=X -> goto room */
   if(argument_set(vm,name,v)) return;
+  /* Content clears these by assignment ("keyboard_key = 0" after acting on a key), so they are
+   * writable variables and not read-only reports. */
+  if(!strcmp(name,"keyboard_key")){ vm->current_key=asnum(v); return; }
+  if(!strcmp(name,"keyboard_lastkey")){ vm->last_key=asnum(v); return; }
   if(!strcmp(name,"room_speed")||!strcmp(name,"view_current")||!strcmp(name,"room_persistent")){
     *gml_varmap_put_hashed(&vm->globals,name,nh)=v;
     return;
@@ -2472,7 +2477,12 @@ static int vm_try_array_draw_loop(
 }
 
 /* ---------------- interpreter ---------------- */
-#define STK 512
+#define STK GML_WAIT_MAX_STACK   /* one parked frame copies at most this much operand stack */
+/* A nested run reached straight from a call opcode. A blocking input wait may only park a chain of
+ * these: every other route into a run (a builtin that calls back, a with-block, room entry) keeps
+ * live C state between the two runs that no chain of parked frames can hold. */
+#define VM_DIRECT_CALL(dest,callexpr) do{ int _wsave=vm->wait_direct_marker; \
+    vm->wait_direct_marker=vm->execution_depth; (dest)=(callexpr); vm->wait_direct_marker=_wsave; }while(0)
 /* The encoded operand stack is byte-sized even though this interpreter stores every logical
  * value in one GmlVal slot. DUP operands use units of their encoded data type, so retain that
  * type beside each slot to duplicate mixed-width references correctly. */
@@ -2517,12 +2527,59 @@ static int with_newest_first_cmp(const void *aa, const void *bb){
   return a->id<b->id ? 1 : a->id>b->id ? -1 : 0;
 }
 
+/* Everything one parked frame owns: its copied operand stack, its locals and its string tracker. */
+static void wait_frame_release(GmlWaitFrame *frame){
+  if(!frame) return;
+  for(int i=0;i<frame->n_strings;i++) if(frame->strings[i]) free(frame->strings[i]);
+  free(frame->strings); frame->strings=NULL; frame->n_strings=0;
+  free(frame->stack); free(frame->stack_type);
+  frame->stack=NULL; frame->stack_type=NULL; frame->stack_n=0;
+  gml_varmap_free_ex(&frame->locals,1);
+  frame->ci=-1;
+}
+void gml_vm_wait_cancel(GmlVM *vm){
+  if(!vm) return;
+  for(int i=0;i<vm->wait.n_frames;i++) wait_frame_release(&vm->wait.frames[i]);
+  memset(&vm->wait,0,sizeof vm->wait);
+  vm->wait_requested=0;
+}
+
+static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
+                               GmlVal *args, int n_args,
+                               GmlWaitFrame *resume_frames, int resume_index);
 GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
                        GmlVal *args, int n_args){
+  return vm_run_code_impl(vm,ci,self,other,args,n_args,NULL,-1);
+}
+static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
+                               GmlVal *args, int n_args,
+                               GmlWaitFrame *resume_frames, int resume_index){
+  /* Resuming a run parked by a blocking input wait: the frame carries what the invocation had,
+   * so the identity arguments are taken from it rather than from the caller. */
+  GmlWaitFrame *resume = (resume_frames && resume_index>=0) ? &resume_frames[resume_index] : NULL;
+  if(resume){
+    ci=resume->ci; args=resume->args; n_args=resume->argc;
+    self=gml_vm_instance_by_id(vm,(double)resume->self_id);
+    other=resume->other_id ? gml_vm_instance_by_id(vm,(double)resume->other_id) : NULL;
+    if(!self){
+      /* The instance the event belonged to is gone. Nothing can continue it, so release the whole
+       * remaining chain rather than resuming half of it. */
+      for(int i=resume_index;i>=0;i--) wait_frame_release(&resume_frames[i]);
+      return vreal(0);
+    }
+  }
   if(ci<0||ci>=vm->win->n_code) return vreal(0);
   /* Each frame is roughly 18 KiB; 300 levels remain below a typical 8 MiB C stack. */
   if(vm->execution_depth>=300) return vreal(0);
   vm->execution_depth++;
+  /* A park may only span an unbroken chain of direct calls rooted in an event's own code run:
+   * every other way into a run (a builtin that calls back, a with-block, room creation code) has
+   * live C state between the frames that no chain of GmlWaitFrames can hold. */
+  int save_wait_chain=vm->wait_chain;
+  vm->wait_chain=(vm->execution_depth==1)
+    ? (vm->wait_event_scope ? 1 : 0)
+    : ((vm->wait_direct_marker==vm->execution_depth-1 && save_wait_chain==vm->execution_depth-1)
+         ? vm->execution_depth : 0);
   GmlWin *w=vm->win; const uint8_t *d=w->data;
   uint32_t start=w->code[ci].start, end=start+w->code[ci].length;
   GmlInstance *save_self=vm->cur_self, *save_other=vm->cur_other;
@@ -2597,6 +2654,39 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   uint64_t watchdog=0;
   const uint64_t WATCHDOG_MAX=64000000ull;
   uint32_t ip=0;
+  /* Blocking input wait: the call site this run has already waited at once, the resume point a
+   * park is being taken at, and whether this run left its state to a GmlWaitFrame. */
+  uint32_t wait_site=UINT32_MAX, park_ip=0, park_pc=0;
+  int parked=0;
+  if(resume){
+    /* Move the parked state back in: the locals map, the owned-string tracker and the operand
+     * stack are the same allocations the run had when it stopped, not copies of them. */
+    locals=resume->locals; memset(&resume->locals,0,sizeof resume->locals);
+    str_gc=resume->strings; str_gc_n=resume->n_strings; str_gc_cap=resume->n_strings;
+    resume->strings=NULL; resume->n_strings=0;
+    for(int i=0;i<resume->stack_n && i<STK;i++){ stk[i]=resume->stack[i]; stkt[i]=resume->stack_type[i]; }
+    sp=resume->stack_n<STK?resume->stack_n:STK;
+    free(resume->stack); free(resume->stack_type);
+    resume->stack=NULL; resume->stack_type=NULL; resume->stack_n=0;
+    ip=resume->insn_index; pc=resume->bytecode_pc;
+    wait_site=resume->wait_site;
+    vm->cur_event=resume->event[0]?resume->event:NULL;
+    vm->cur_event_obj=resume->event_obj;
+    vm->event_type=resume->event_type; vm->event_number=resume->event_number;
+    if(resume->push_child_result){
+      /* The frame below is the call this one was inside. Run it first and push what it answers. */
+      int save_direct=vm->wait_direct_marker;
+      vm->wait_direct_marker=vm->execution_depth;
+      GmlVal child=vm_run_code_impl(vm,0,NULL,NULL,NULL,0,resume_frames,resume_index-1);
+      vm->wait_direct_marker=save_direct;
+      if(vm->wait.parking && vm->wait.expected_depth==vm->execution_depth){
+        park_ip=ip; park_pc=pc; goto vm_wait_park;
+      }
+      if(vm->wait.parking){ gml_vm_wait_cancel(vm); goto vm_run_teardown; }
+      if(STR_IS_HEAP(child)) GC_TRACK(child.s);
+      if(sp<STK){ stk[sp]=child; stkt[sp]=DT_VAR; sp++; }
+    }
+  }
   while(use_cache ? ip<cached_n : pc<end){
     if(++watchdog>WATCHDOG_MAX){
       if(vm->diagnostics.watchdog_warnings<4){ vm->diagnostics.watchdog_warnings++;
@@ -3045,7 +3135,8 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
          * reaching the script fallback. */
         GmlVal rv;
         if(sci>=0 && !hp_builtin){
-          if(!code_micro_maybe(vm,sci,a,na,&rv)) rv=gml_vm_run_code(vm,sci,vm->cur_self,vm->cur_other,a,na);
+          if(!code_micro_maybe(vm,sci,a,na,&rv))
+            VM_DIRECT_CALL(rv,gml_vm_run_code(vm,sci,vm->cur_self,vm->cur_other,a,na));
         }
         else if(bid>0 && !hp_builtin) rv=gml_builtin_call_fast_id(vm,bid,nm,a,na);
         else {
@@ -3186,7 +3277,7 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
           vm->cur_self=call_self;
           int micro_ok=code_micro_maybe(vm,fci,a,na,&rv);
           vm->cur_self=old_self;
-          if(!micro_ok) rv=gml_vm_run_code(vm,fci,call_self,vm->cur_other,a,na);
+          if(!micro_ok) VM_DIRECT_CALL(rv,gml_vm_run_code(vm,fci,call_self,vm->cur_other,a,na));
         }
         /* track a heap-string result so it's freed at scope exit (mirror OP_CALL); args stay owned
          * by this frame's str_gc and are freed there, so don't touch them. */
@@ -3363,11 +3454,98 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
         break;
       default: break;
     }
-    /* Record post-instruction stack depth in the optional opcode trace. */
+    /* A wait builtin raises a request. First visit to a call site is a no-op; returning to the same site in one run parks it until a later input poll can change the loop condition. */
+    if(vm->wait_requested){
+      vm->wait_requested=0;
+      uint32_t site=use_cache?ip:pc;
+      if(site==wait_site){ park_ip=nextip; park_pc=nextpc; goto vm_wait_park; }
+      wait_site=site;
+    }
+    /* A nested run parked: this frame is the call it was made from, so it parks too. */
+    if(vm->wait.parking){
+      if(vm->wait.expected_depth==vm->execution_depth){ park_ip=nextip; park_pc=nextpc; goto vm_wait_park; }
+      gml_vm_wait_cancel(vm);
+      break;
+    }
+    /* Depth AFTER the instruction, so a diagnostic brackets each one instead of subtracting
+     * consecutive records. Deriving a delta from two records attributes the change to whichever
+     * instruction happened to be logged next, which is how an earlier reading blamed the wrong one. */
     GML_VM_DIAGNOSTIC_OPCODE_AFTER(vm,w->code[ci].name,pc-start,sp);
     if(use_cache) ip=nextip;
     else pc=nextpc;
   }
+  goto vm_run_teardown;
+
+ vm_wait_park:
+  /* Park this run: hand its live state to a GmlWaitFrame so the frame can end here and the run
+   * continue from the same instruction once input has had a chance to arrive.
+   *
+   * What cannot be parked falls back to ending the run at the wait. That is what the watchdog
+   * eventually did anyway, minus the tens of millions of instructions spent reaching it. */
+  {
+    GmlInstance *park_self=vm->cur_self, *park_other=vm->cur_other;
+    int parkable = !vm->wait.active && vm->wait_chain==vm->execution_depth &&
+                   vm->wait.n_frames<GML_WAIT_MAX_FRAMES && withsp==0 && aref_n==0 &&
+                   use_cache && sp<STK && park_self &&
+                   gml_vm_instance_by_id(vm,(double)park_self->id)==park_self &&
+                   (!park_other || gml_vm_instance_by_id(vm,(double)park_other->id)==park_other);
+    if(parkable){
+      GmlWaitFrame *frame=&vm->wait.frames[vm->wait.n_frames];
+      memset(frame,0,sizeof *frame);
+      frame->ci=ci;
+      frame->insn_index=park_ip; frame->bytecode_pc=park_pc;
+      frame->wait_site=wait_site;
+      frame->self_id=park_self->id;
+      frame->other_id=park_other?park_other->id:0;
+      frame->argc=argc;
+      for(int i=0;i<16;i++) frame->args[i]=vm->script_args[i];
+      frame->push_child_result=vm->wait.parking?1:0;
+      frame->locals=locals; memset(&locals,0,sizeof locals);
+      frame->strings=str_gc; frame->n_strings=str_gc_n;
+      str_gc=NULL; str_gc_n=0; str_gc_cap=0;
+      frame->stack_n=sp;
+      if(sp>0){
+        frame->stack=(GmlVal*)malloc((size_t)sp*sizeof(GmlVal));
+        frame->stack_type=(uint8_t*)malloc((size_t)sp);
+        if(frame->stack && frame->stack_type){
+          for(int i=0;i<sp;i++){ frame->stack[i]=stk[i]; frame->stack_type[i]=stkt[i]; }
+        } else { parkable=0; }
+      }
+      if(parkable){
+        snprintf(frame->event,sizeof frame->event,"%s",vm->cur_event?vm->cur_event:"");
+        frame->event_obj=vm->cur_event_obj;
+        frame->event_type=vm->event_type; frame->event_number=vm->event_number;
+        vm->wait.n_frames++;
+        parked=1;
+        if(vm->execution_depth>1){
+          vm->wait.parking=1;
+          vm->wait.expected_depth=vm->execution_depth-1;
+        } else {
+          vm->wait.parking=0; vm->wait.expected_depth=0; vm->wait.active=1;
+        }
+      } else {
+        /* the copy failed: put the run's own state back and end it like an unparkable wait */
+        locals=frame->locals; memset(&frame->locals,0,sizeof frame->locals);
+        str_gc=frame->strings; str_gc_n=frame->n_strings; str_gc_cap=frame->n_strings;
+        free(frame->stack); free(frame->stack_type);
+        memset(frame,0,sizeof *frame);
+      }
+    }
+    if(!parked){
+      /* Only a chain this park was building is discarded. A wait that is already outstanding owns
+       * its frames and has nothing to do with this run failing to join one. */
+      if(vm->wait.parking) gml_vm_wait_cancel(vm);
+      if(vm->diagnostics.wait_warnings<4){
+        vm->diagnostics.wait_warnings++;
+        anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,
+          "[gml] f%ld blocking wait in '%s' at offset %u cannot span a frame — ending the run\n",
+          vm->frame,w->code[ci].name,park_pc>start?park_pc-start:0);
+      }
+    }
+  }
+
+ vm_run_teardown:
+  if(parked) goto vm_run_restore;
   while(withsp>0){ withsp--; free(withstk[withsp].list); }  /* free any open with-frames */
   /* string GC: temporaries (builtin results / concatenations) are owned heap strings. Free every one
    * that wasn't transferred to a var (those were GC_UNTRACK'd on store, the var owns them now). The
@@ -3389,6 +3567,10 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   #undef GC_UNTRACK
   gml_arr_mark_escaped(ret);      /* a returned array escapes to the caller */
   gml_varmap_free_ex(&locals,1);      /* keep escaped arrays alive — persistent slots alias them */
+ vm_run_restore:
+  /* A parked run keeps its locals, strings and stack in its GmlWaitFrame; everything else about
+   * the invocation is unwound exactly as a completed one is, because it is no longer running. */
+  vm->wait_chain=save_wait_chain;
   vm->cur_self=save_self; vm->cur_other=save_other;
   vm->cur_code_index=save_code_index;
   vm->caller_code_index=save_caller_index;
@@ -3399,6 +3581,27 @@ GmlVal gml_vm_run_code(GmlVM *vm, int ci, GmlInstance *self, GmlInstance *other,
   if(cp) codeprof_add(vm,ci,codeprof_now_ms(vm)-cp_t0,watchdog);
   vm->execution_depth--;
   return ret;
+}
+
+/* Continue the event a blocking input wait parked. Answers 1 when the event has finished (the
+ * frame may simulate again) and 0 while the wait is still outstanding. */
+int gml_vm_wait_resume(GmlVM *vm){
+  if(!vm || !vm->wait.active) return 1;
+  /* Take the chain out of the VM before resuming it: the run may block again, and that park has to
+   * build a fresh chain rather than write into the one being consumed. */
+  GmlWait resumed=vm->wait;
+  memset(&vm->wait,0,sizeof vm->wait);
+  vm->wait_requested=0;
+  const char *save_event=vm->cur_event;
+  int save_scope=vm->wait_event_scope, save_event_obj=vm->cur_event_obj;
+  int save_type=vm->event_type, save_number=vm->event_number;
+  vm->wait_event_scope=1;   /* the outermost parked frame is the event's own code run */
+  GmlVal r=vm_run_code_impl(vm,0,NULL,NULL,NULL,0,resumed.frames,resumed.n_frames-1);
+  if(r.t==V_STR && r.d!=0) free((char*)r.s);   /* discarded owned return: free it */
+  vm->wait_event_scope=save_scope;
+  vm->cur_event=save_event; vm->cur_event_obj=save_event_obj;
+  vm->event_type=save_type; vm->event_number=save_number;
+  return vm->wait.active?0:1;
 }
 
 GmlVal gml_vm_call_callable(GmlVM *vm, GmlVal callable, GmlVal *args, int n_args){

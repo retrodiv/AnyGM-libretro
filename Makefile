@@ -133,7 +133,7 @@ AUDIO_TESTS := test_mp3_detect
 COMPATIBILITY_TESTS := test_compatibility
 CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TESTS) \
 	$(CONTENT_TESTS) $(MEDIA_TESTS) $(AUDIO_TESTS) $(COMPATIBILITY_TESTS))
-INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_host_setting_budget
+INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_host_setting_budget $(TEST_DIR)/test_engine_blocking_wait
 ifneq ($(HARDWARE_RENDER),0)
 INTEGRATION_TESTS += $(TEST_DIR)/test_graphics_state
 endif
@@ -515,6 +515,11 @@ $(TEST_DIR)/test_engine_instances: tests/integration/test_engine_instances.c \
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_host_setting_budget: tests/integration/test_host_setting_budget.c \
+	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
+
+$(TEST_DIR)/test_engine_blocking_wait: tests/integration/test_engine_blocking_wait.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
