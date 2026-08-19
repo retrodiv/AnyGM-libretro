@@ -17,6 +17,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Colour and coverage counted apart. A surface can be fully authored and hold no colour at all:
+ * a scanline or shadow mask is black with an alpha ramp, so a count of non-black RGB reads zero
+ * over a mask that drew perfectly, and reading that zero as "nothing was drawn" is a wrong answer
+ * an instrument handed out rather than a defect in the renderer. */
+static void surface_coverage_counts(const uint32_t *px,int w,int h,int *colour,int *covered){
+  int c=0,a=0;
+  for(size_t i=0;i<(size_t)w*(size_t)h;i++){
+    if(px[i]&0x00FFFFFFu) c++;
+    if(px[i]&0xFF000000u) a++;
+  }
+  *colour=c; *covered=a;
+}
 static int surface_slot(int id){ return id>0 && id<=GML_MAX_SURFACES ? id-1 : -1; }
 int surface_known_opaque(GmlRender *r, int id){
   if(!r) return 0;
@@ -212,11 +224,12 @@ int gml_surface_set_target(GmlRender *r, int id){
     r->pending_fill,r->pending_fill_color
   };
   if(render_setting(r,"GML_LOG_SURF")){
-    /* Count existing RGB before this surface becomes the active target. */
-    int lit_=0;
-    for(size_t i_=0;i_<(size_t)w*(size_t)h;i_++) if(px[i_]&0x00FFFFFFu) lit_++;
+    /* Count existing RGB and alpha before this surface becomes the active target. */
+    int lit_=0,cov_=0;
+    surface_coverage_counts(px,w,h,&lit_,&cov_);
     anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
-      "[surf] set_target %d px=%p lit_on_entry=%d of %d\n",id,(const void *)px,lit_,w*h);
+      "[surf] set_target %d px=%p lit_on_entry=%d covered_on_entry=%d of %d\n",
+      id,(const void *)px,lit_,cov_,w*h);
   }
   r->fb=px; r->fbw=w; r->fbh=h;
   r->target_id=id;
@@ -233,11 +246,11 @@ int gml_surface_set_target(GmlRender *r, int id){
   r->cam_x=0; r->cam_y=0;
   gml_d3_sync_render_camera(r);
   if(render_setting(r,"GML_LOG_SURF")){
-    /* Count RGB again at function exit, paired with the entry count. */
-    int lit_=0;
-    for(size_t i_=0;i_<(size_t)w*(size_t)h;i_++) if(px[i_]&0x00FFFFFFu) lit_++;
+    /* Count both channels again at function exit, paired with the entry counts. */
+    int lit_=0,cov_=0;
+    surface_coverage_counts(px,w,h,&lit_,&cov_);
     anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
-      "[surf] set_target %d lit_on_exit=%d of %d\n",id,lit_,w*h);
+      "[surf] set_target %d lit_on_exit=%d covered_on_exit=%d of %d\n",id,lit_,cov_,w*h);
   }
   return 1;
 }
@@ -245,9 +258,9 @@ void gml_surface_reset_target(GmlRender *r){
   /* Count colour coverage on both sides of the pending-draw flush while the
    * active surface is still the render target. */
   int dbg_=r && render_setting(r,"GML_LOG_SURF")!=NULL && r->fb && r->fbw>0 && r->fbh>0;
-  int released_=r?r->target_id:-1;   /* Capture the target before restoring the previous one. */
-  int before_=0;
-  if(dbg_) for(size_t i_=0;i_<(size_t)r->fbw*(size_t)r->fbh;i_++) if(r->fb[i_]&0x00FFFFFFu) before_++;
+  int released_=r?r->target_id:-1;   /* captured before the stack pop restores the previous one */
+  int before_=0,before_cov_=0;
+  if(dbg_) surface_coverage_counts(r->fb,r->fbw,r->fbh,&before_,&before_cov_);
   if(r && surface_slot(r->target_id)>=0){
     /* Remember that content really authored this surface before a deferred transparent clear is
      * resolved. A later screen blit of that now-transparent surface is still a compositor action;
@@ -259,11 +272,12 @@ void gml_surface_reset_target(GmlRender *r){
     surface_store_target_coverage(r);
   }
   if(dbg_){
-    int after_=0;
-    for(size_t i_=0;i_<(size_t)r->fbw*(size_t)r->fbh;i_++) if(r->fb[i_]&0x00FFFFFFu) after_++;
+    int after_=0,after_cov_=0;
+    surface_coverage_counts(r->fb,r->fbw,r->fbh,&after_,&after_cov_);
     anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_DEBUG,
-      "[surf] reset_target released=%d px=%p lit_before=%d lit_after=%d of %d\n",
-      released_,(const void *)r->fb,before_,after_,r->fbw*r->fbh);
+      "[surf] reset_target released=%d px=%p lit_before=%d lit_after=%d"
+      " covered_before=%d covered_after=%d of %d\n",
+      released_,(const void *)r->fb,before_,after_,before_cov_,after_cov_,r->fbw*r->fbh);
   }
   if(r->target_sp>0){
     typeof(r->target_stack[0]) t=r->target_stack[--r->target_sp];

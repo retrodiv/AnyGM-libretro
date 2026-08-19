@@ -819,6 +819,20 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
    * event can still time out of a loop, but from here its advance is scratch: the frame a state
    * draws must not depend on whether the step ran, because after a load it did not. */
   engine->vm.time_sample_draw_ms=engine->vm.time_sample_cpu_ms;
+  /* Content that composes its own screen leaves a surface bound when its step events end, so the
+   * draw phase is meant to fill that surface rather than the framebuffer. gml_render_begin drops
+   * the binding, and this line is how you see that it was there: a target other than -1 here names
+   * a frame whose author expected to compose it, and everything such content draws into its own
+   * surface is discarded. */
+  if(anygm_host_development_setting(&engine->host,"GML_LOG_STEPTARGET")){
+    GmlRenderTargetMetrics m_={0};
+    gml_render_target_metrics(&engine->render,&m_);
+    engine_logf(engine,ANYGM_LOG_DEBUG,
+      "[steptarget] f%ld target=%d fbsize=%dx%d enginefb=%p %ux%u screen=%p out=%ux%u\n",
+      engine->vm.frame,gml_surface_get_target(&engine->render),m_.width,m_.height,
+      (const void*)engine->fb,engine->width,engine->height,(const void*)engine->screen,
+      engine->output_width,engine->output_height);
+  }
   engine->vm.draw_phase=1;
   if(engine->vm.game_change_pending)
     return engine_apply_game_change_and_run_frame(engine);
