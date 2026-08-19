@@ -130,6 +130,7 @@ static char *program_keep(ProgramFile *p, char *text){
  * writer stays a container exercise and the tests that use it live elsewhere.
  *
  *   room <width> <height>
+ *   caption <text>|"<text>"      the room's authored caption; quote it to carry outer spaces
  *   sprite <edge>
  *   startup <source.gml>
  *   object <name> <sprite-slot|-1>
@@ -155,6 +156,17 @@ static int program_read(const char *path, ProgramFile *p){
     if(sscanf(line,"%31s",keyword)!=1) continue;
     if(!strcmp(keyword,"room")){
       if(sscanf(line,"%31s %d %d",keyword,&p->program.room_width,&p->program.room_height)!=3) ok=0;
+    } else if(!strcmp(keyword,"caption")){
+      /* Keep the complete line, including optional outer spaces; quotes preserve those spaces in a text fixture. */
+      char *text=line+strlen(keyword);
+      while(*text==' ' || *text=='\t') text++;
+      size_t length=strlen(text);
+      while(length && (text[length-1]=='\n' || text[length-1]=='\r')) length--;
+      if(length>=2 && text[0]=='"' && text[length-1]=='"'){ text++; length-=2; }
+      char *caption=(char*)malloc(length+1);
+      if(!caption) ok=0;
+      else { memcpy(caption,text,length); caption[length]='\0';
+             p->program.room_caption=program_keep(p,caption); ok=p->program.room_caption!=NULL; }
     } else if(!strcmp(keyword,"sprite")){
       if(sscanf(line,"%31s %d",keyword,&p->program.sprite_size)!=2) ok=0;
     } else if(!strcmp(keyword,"startup")){

@@ -78,6 +78,7 @@ typedef struct {
   const FixtureInstance *instances;
   int instance_count;
   int room_width, room_height;
+  const char *room_caption;   /* the room's authored caption; NULL writes an empty one */
 } FixtureProgram;
 
 int build_project_fixture_program(unsigned version, const FixtureProgram *program, Fixture *out);

@@ -1450,6 +1450,8 @@ void gml_room_enter(GmlVM *vm, int room_index){
   if(anygm_host_development_setting(vm->host,"GML_LOG_ROOM")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[room] enter %d\n",room_index);
   GmlRoom r; if(gml_vm_room_get(vm,room_index,&r)!=0) return;
   *gml_varmap_put(&vm->globals,"room_persistent")=vreal(r.persistent?1.0:0.0);
+  /* Publish the authored caption on room entry like other room-owned globals. A later assignment remains ordinary serialized global state. */
+  *gml_varmap_put(&vm->globals,"room_caption")=vstr(r.caption?r.caption:"");
   *gml_varmap_put(&vm->globals,"view_enabled")=vreal(r.view_enabled?1.0:0.0);
   if(anygm_policy_uses_classic_runtime(vm->win))
     *gml_varmap_put(&vm->globals,"room_speed")=vreal(r.speed>0?r.speed:30);

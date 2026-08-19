@@ -1086,7 +1086,7 @@ static int write_room(Pkg *pkg, const GmlcProject *p, const GmlcRoom *r, int roo
   *record_ptr=(uint32_t)pkg->b.len;
   int sid=intern(pkg,r->name);
   wstrptr(pkg,sid);
-  wu32(&pkg->b,0);
+  wstrptr(pkg,intern(pkg,r->caption?r->caption:""));
   wu32(&pkg->b,(uint32_t)r->width);
   wu32(&pkg->b,(uint32_t)r->height);
   wu32(&pkg->b,(uint32_t)(r->speed>0?r->speed:60));

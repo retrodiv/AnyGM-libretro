@@ -57,14 +57,17 @@ static int expect_room_import(void){
 #endif
   int ok = gmlc_classic_import_rooms(&manifest, &project, dir, err, sizeof(err));
   if(!ok) fprintf(stderr, "room import failed: %s\n", err);
-  if(ok) ok = project.n_rooms == 1 && project.rooms[0].width == 320 &&
+  /* An imported authored caption must remain available to room-entry publication. */
+  if(ok) ok = project.n_rooms == 1 && project.rooms[0].caption &&
+              !strcmp(project.rooms[0].caption, "caption") &&
+              project.rooms[0].width == 320 &&
               project.rooms[0].n_backgrounds == 1 && project.rooms[0].n_instances == 1 &&
               project.rooms[0].instances[0].instance_id == 100001 && project.rooms[0].n_tiles == 1 &&
               project.rooms[0].tiles[0].depth == 100 && project.next_instance_id == 100002;
   if(project.n_rooms){
     GmlcRoom *room = &project.rooms[0];
     if(room->creation_code_path) remove(room->creation_code_path);
-    free(room->creation_code_path); free(room->id); free(room->name);
+    free(room->creation_code_path); free(room->id); free(room->name); free(room->caption);
     for(int i = 0; i < room->n_instances; ++i){
       if(room->instances[i].creation_code_path) remove(room->instances[i].creation_code_path);
       free(room->instances[i].creation_code_path); free(room->instances[i].id); free(room->instances[i].name);

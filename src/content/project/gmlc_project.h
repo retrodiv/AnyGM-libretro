@@ -87,6 +87,7 @@ typedef struct {
 typedef struct {
   char *id;
   char *name;
+  char *caption;
   int width, height, speed, persistent;
   uint32_t background_color;
   int draw_background_color;

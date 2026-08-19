@@ -95,7 +95,10 @@ typedef struct {
 } GmlCode;
 
 typedef struct {
-  const char *name; uint32_t width, height, speed;
+  const char *name;
+  /* The room's authored caption is exposed as room_caption; empty when none is stored. */
+  const char *caption;
+  uint32_t width, height, speed;
   int persistent;
   uint32_t bgcolor;  /* 0xAARRGGBB-ish; GM stores 0xAABBGGRR, alpha forced 0xFF */
   int draw_bg;

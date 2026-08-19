@@ -450,6 +450,8 @@ int gml_room_get(const GmlWin *w, int idx, GmlRoom *o){
   if(p<(size_t)c->off+4u+(size_t)n*4u || !chunk_has(w,c,(size_t)p-c->off,56) ||
      !string_by_pointer(w,u32(d,p),&name)) return -1;
   o->name=name;
+  const char *caption=NULL;
+  o->caption=string_by_pointer(w,u32(d,p+4),&caption)?caption:"";
   o->width=u32(d,p+8); o->height=u32(d,p+12); o->speed=u32(d,p+16);
   o->persistent=(int)u32(d,p+20);
   o->bgcolor=u32(d,p+24); o->draw_bg=(int)u32(d,p+28);

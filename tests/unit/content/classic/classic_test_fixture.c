@@ -521,7 +521,7 @@ static void fixture_sprite_payload(Fixture *f, int size){
 }
 
 static void fixture_room_payload(Fixture *f, const FixtureProgram *program){
-  fixture_string(f,""); /* caption */
+  fixture_string(f,program->room_caption?program->room_caption:"");
   fixture_u32(f,(unsigned)program->room_width);
   fixture_u32(f,(unsigned)program->room_height);
   fixture_u32(f,16); fixture_u32(f,16); /* snap */

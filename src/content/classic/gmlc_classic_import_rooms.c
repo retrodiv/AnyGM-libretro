@@ -13,7 +13,7 @@
 static void free_imported_rooms(GmlcProject *project){
   for(int i = 0; i < project->n_rooms; ++i){
     GmlcRoom *room = &project->rooms[i];
-    free(room->id); free(room->name); free(room->creation_code_path);
+    free(room->id); free(room->name); free(room->caption); free(room->creation_code_path);
     free(room->backgrounds); free(room->tiles);
     for(int instance = 0; instance < room->n_instances; ++instance){
       free(room->instances[instance].id); free(room->instances[instance].name);
@@ -90,7 +90,13 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
     if(!import_skip_string(&r, &caption, &caption_length, "room caption")){
       free_imported_rooms(project); return 0;
     }
-    (void)caption; (void)caption_length;
+    room->caption = (char*)malloc((size_t)caption_length + 1u);
+    if(!room->caption){
+      if(err && errcap) snprintf(err, errcap, "classic import: out of memory captioning room %u", i);
+      free_imported_rooms(project); return 0;
+    }
+    if(caption_length) memcpy(room->caption, caption, caption_length);
+    room->caption[caption_length] = '\0';
     int compact_legacy=slots[i].legacy_layout && slots[i].executable_layout;
     int room_field_count=compact_legacy?6:9;
     for(int field = 0; field < room_field_count; ++field)
@@ -104,9 +110,9 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
     room->background_color = fields[runtime_fields+2] | 0xFF000000u;
     room->draw_background_color = fields[runtime_fields+3] != 0;
     if(anygm_host_development_setting(project->host,"GMLC_LOG_ROOM"))
-      anygm_host_logf(project ? project->host : NULL,ANYGM_LOG_DEBUG,"[classic-room] index=%u size=%dx%d speed=%d persistent=%d colour=%08x clear=%d\n",
+      anygm_host_logf(project ? project->host : NULL,ANYGM_LOG_DEBUG,"[classic-room] index=%u size=%dx%d speed=%d persistent=%d colour=%08x clear=%d caption=<%s>\n",
               i,room->width,room->height,room->speed,room->persistent,
-              room->background_color,room->draw_background_color);
+              room->background_color,room->draw_background_color,room->caption);
     char leaf[112];
     snprintf(leaf, sizeof(leaf), "classic_room_%06u_create.gml", i);
     if(!import_room_code(&r,project,cache_dir,leaf,&room->creation_code_path,err,errcap)){

@@ -224,7 +224,7 @@ static void free_room_layer_fields(GmlcRoomLayer *ly){
 
 static void free_room_fields(GmlcRoom *r){
   if(!r) return;
-  free(r->id); free(r->name); free(r->creation_code_path);
+  free(r->id); free(r->name); free(r->caption); free(r->creation_code_path);
   for(int i=0;i<r->n_instances;i++){
     free(r->instances[i].id);
     free(r->instances[i].name);

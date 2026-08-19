@@ -414,7 +414,7 @@ int main(int argc,char **argv){
 
   uint64_t digest=ok?package_digest(first_bytes,first_size):0;
   if(ok && (first_size!=3096 ||
-            digest!=UINT64_C(0xe90bb8963c8801c0))){
+            digest!=UINT64_C(0x0cb45aa3a9954196))){
     fprintf(stderr,
             "structural package golden changed: %zu bytes, fnv64=%016" PRIx64 "\n",
             first_size,digest);
