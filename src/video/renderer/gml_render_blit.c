@@ -3990,27 +3990,20 @@ static void blit_phase_plane_classic_y(GmlRender *r, uint32_t *plane, GmlTpag *t
     blit_phase_plane(r,plane,&rows,dx,(double)run_dest,xs,ys,blend,alpha);
   }
 }
+/* Every odd output sample of this transform lands exactly on a texel boundary, and coverage there
+ * belongs to the preceding texel: output row 2k+1 samples the edge of logical row k+1 and takes
+ * row k, which is the row the even sample beside it already took. The plane of odd samples is
+ * therefore the base plane, and a quad occupies output rows [2y, 2y+2h).
+ *
+ * It used to repeat the quad's first row one output row above it and drop its last row instead,
+ * which is the following-texel tie at both ends and leaves every quad an output row short at the
+ * bottom. Nothing shows that where the row below the quad is empty; where one layer covers
+ * another, the layer underneath stays visible along the whole bottom edge. */
 static void blit_phase_plane_previous(GmlRender *r, uint32_t *plane, GmlTpag *t,
                                       double dx, double dy, double xs, double ys,
                                       uint32_t blend, double alpha){
   if(!t || t->sh<=0) return;
-  if(fabs(ys-1.0)>0.001){
-    blit_phase_plane(r,plane,t,dx,dy,xs,ys,blend,alpha);
-    return;
-  }
-  /* A half-step sample on the top edge belongs to the quad, while its bottom edge does not.
-   * When a nearest-neighbour tie resolves toward the preceding texel, repeat the first row at
-   * that top sample and leave the last boundary for whatever is underneath (or the next quad). */
-  if(t->ty==0){
-    GmlTpag top=phase_tpag_rows(t,0,1);
-    blit_phase_plane(r,plane,&top,dx,dy-1.0,xs,ys,blend,alpha);
-  }
-  int rows=t->sh;
-  if(t->bh>0 && t->ty+t->sh>=t->bh) rows--;
-  if(rows>0){
-    GmlTpag body=phase_tpag_rows(t,0,rows);
-    blit_phase_plane(r,plane,&body,dx,dy,xs,ys,blend,alpha);
-  }
+  blit_phase_plane(r,plane,t,dx,dy,xs,ys,blend,alpha);
 }
 static void blit_with_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
                             double xs, double ys, uint32_t blend, double alpha,
@@ -4042,9 +4035,12 @@ void blit(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, double ys,
                  uint32_t blend, double alpha){
   blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4);
 }
+/* A room's background layer is rasterized by the same transform as everything drawn over it, so
+ * it answers to the same tie. Pinning the following-texel replay here instead left every layer
+ * half a logical row above the sprites sharing its frame. */
 static void blit_background_phase(GmlRender *r, GmlTpag *t, double dx, double dy,
                                   double xs, double ys, uint32_t blend, double alpha){
-  blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,1);
+  blit_with_phase(r,t,dx,dy,xs,ys,blend,alpha,4);
 }
 typedef struct {
   GmlRender *r;

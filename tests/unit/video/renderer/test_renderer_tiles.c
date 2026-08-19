@@ -583,6 +583,71 @@ static void check_first_generation_fractional_tile_projection(void){
   free(page.argb_cache);
 }
 
+/* At exact 2x the odd output rows come from a second sample plane, and a layer that covers the
+ * whole logical raster has to cover the whole of both. It used to lose its last row there — the
+ * quad was replayed one output row above itself and its bottom row dropped — so whatever another
+ * layer had drawn underneath stayed visible along the bottom edge of the screen. */
+static void check_classic_double_scale_layer_covers_its_last_row(void){
+  enum { WIDTH=1, HEIGHT=4, UNDER_HEIGHT=8 };
+  static const uint8_t under_rgba[UNDER_HEIGHT*4]={
+    255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255,
+    255,0,0,255, 255,0,0,255, 255,0,0,255, 255,0,0,255,
+  };
+  static const uint8_t over_rgba[HEIGHT*4]={
+    0,255,0,255, 0,255,0,255, 0,255,0,255, 0,255,0,255,
+  };
+  uint32_t base[WIDTH*HEIGHT]={0},phase[WIDTH*HEIGHT]={0};
+  GmlWin content;
+  GmlRender render;
+  GmlAtlas atlas[2];
+  GmlTpag page[2];
+  GmlBg background[2];
+
+  memset(&content,0,sizeof content);
+  memset(&render,0,sizeof render);
+  memset(atlas,0,sizeof atlas);
+  memset(page,0,sizeof page);
+  memset(background,0,sizeof background);
+  atlas[0].px=(uint8_t*)under_rgba; atlas[0].w=WIDTH; atlas[0].h=UNDER_HEIGHT;
+  atlas[1].px=(uint8_t*)over_rgba;  atlas[1].w=WIDTH; atlas[1].h=HEIGHT;
+  page[0].atlas=0; page[0].sw=page[0].bw=WIDTH; page[0].sh=page[0].bh=UNDER_HEIGHT;
+  page[1].atlas=1; page[1].sw=page[1].bw=WIDTH; page[1].sh=page[1].bh=HEIGHT;
+  for(int index=0;index<2;index++){
+    page[index].alpha_scanned=1;
+    page[index].alpha_max=255;
+    page[index].ay1=page[index].sh-1;
+    background[index].tpag=index;
+  }
+  render.win=&content;
+  render.classic=1;
+  render.atlas=atlas; render.n_atlas=2;
+  render.tpag=page; render.n_tpag=2;
+  render.bg=background; render.n_bg=2;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+  render.target_id=-1;
+  render.classic_phase_y=phase;
+  gml_render_begin(&render,base,WIDTH,HEIGHT,0.0,0.0);
+  render.classic_phase_y=phase;
+  /* The taller layer first, then the one that covers the raster exactly. */
+  gml_draw_background_tiled(&render,0,0.0,0.0,0,0);
+  gml_draw_background_tiled(&render,1,0.0,0.0,0,0);
+  for(int row=0;row<HEIGHT;row++){
+    if((base[row]&0x00FFFFFFu)!=0x0000FF00u){
+      fprintf(stderr,"renderer tiles: 2x base row %d is %08x, expected the covering layer\n",
+              row,base[row]);
+      failures++;
+    }
+    if((phase[row]&0x00FFFFFFu)!=0x0000FF00u){
+      fprintf(stderr,"renderer tiles: 2x odd-sample row %d is %08x, expected the covering layer\n",
+              row,phase[row]);
+      failures++;
+    }
+  }
+}
+
 static void check_modern_fractional_camera_tie(void){
   static const uint8_t rgba[4]={255,255,255,255};
   uint32_t application[4]={0,0,0,0};
@@ -905,6 +970,7 @@ int main(void){
   check_first_generation_default_font_metrics();
   check_render_pass_restores_normal_blending();
   check_first_generation_fractional_tile_projection();
+  check_classic_double_scale_layer_covers_its_last_row();
   check_modern_fractional_camera_tie();
   check_application_surface_partial_alpha_coverage();
   check_first_generation_filtered_minification();
