@@ -688,6 +688,10 @@ static void apply_aspect_force_to_res(AnygmEngine *engine,unsigned base_w, unsig
                                       unsigned *ow, unsigned *oh) {
   unsigned w = base_w, h = base_h;
   int mode = core_opt_aspect_force(engine);
+  /* Forced aspect changes camera geometry. An explicitly composed classic frame does not
+   * use that camera and already owns its authored raster, so bypass aspect forcing for this
+   * presentation path. */
+  if (engine->classic_compositor) mode = GMC_ASPECT_FORCE_NONE;
   engine->aspect_force_mode = mode;
   engine->aspect_force_active = 0;
   engine->aspect_cam_dx = engine->aspect_cam_dy = 0.0;
