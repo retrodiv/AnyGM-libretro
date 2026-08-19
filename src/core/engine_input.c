@@ -129,12 +129,19 @@ static void engine_input_key_press(void *userdata,int vk){
   if(vk >= 0 && vk < NKEY){
     engine->key_current[vk]=1; engine->key_previous[vk]=0;
     engine->key_press_raised[vk]=1;
+    engine->key_press_step[vk]=1;
+    engine->key_release_defer[vk]=0;
   }
 }
 static void engine_input_key_release(void *userdata,int vk){
   AnygmEngine *engine=userdata;
   if(vk >= 0 && vk < NKEY){
     if(engine->key_press_raised[vk]) engine->key_press_carry[vk]=1;
+    /* A release paired with a press in the running step is deferred. The key
+     * remains held through the following frame, including Begin Step; repeated
+     * paired presses sustain it. A release after an earlier-step press remains
+     * immediate. This distinguishes per-step hold from a single press/release. */
+    if(engine->key_press_step[vk]){ engine->key_release_defer[vk]=1; return; }
     engine->key_current[vk]=0; engine->key_previous[vk]=1;
   }
 }
@@ -182,6 +189,16 @@ void engine_input_poll_keyboard(AnygmEngine *engine){
   memset(engine->key_press_raised,0,sizeof engine->key_press_raised);
   memcpy(engine->key_press_raised,engine->key_press_carry,sizeof engine->key_press_raised);
   memset(engine->key_press_carry,0,sizeof engine->key_press_carry);
+  /* A release the pressing step deferred comes due one whole frame later, so the key is down for
+   * every phase of the frame after the press — Begin Step included — and a bridge pressing once a
+   * frame never lets it go. */
+  for(int vk=0;vk<NKEY;vk++){
+    if(!engine->key_release_defer[vk]) continue;
+    if(engine->key_release_defer[vk]==1){ engine->key_release_defer[vk]=2; continue; }
+    engine->key_current[vk]=0;
+    engine->key_release_defer[vk]=0;
+  }
+  memset(engine->key_press_step,0,sizeof engine->key_press_step);
   memcpy(engine->hardware_key_previous, engine->hardware_key_current, sizeof(engine->hardware_key_current));
   memcpy(engine->event_key_previous,engine->event_key_current,sizeof engine->event_key_current);
   memset(engine->hardware_key_current, 0, sizeof(engine->hardware_key_current));

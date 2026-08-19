@@ -1719,6 +1719,50 @@ static int bridged_key_press_delivery_policy(void){
   return ok;
 }
 
+/* A synthetic instance pairs press and release in Step, then checks held
+ * input in Begin Step. The fixture counts how many following frames observe
+ * the held key and checks that the key goes up after the pairs stop. */
+static int bridged_key_hold_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_bridged_hold_content_create(&fixture)){
+    fputs("bridged-hold fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK && anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  for(int frame=0;ok && frame<10;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  /* Five presses, five frames that read the key held, and the key up once the presses stop: the
+   * count rising with the presses is what separates a key that survives its step from one that
+   * never reaches Begin Step at all. */
+  ok=ok && gml_global_num(&engine->vm,"fixture_held")==5 &&
+     gml_global_num(&engine->vm,"fixture_steps")==10 &&
+     !engine->vm.input.key(engine->vm.input.userdata,39,0);
+  if(!ok)
+    fprintf(stderr,"a key pressed and released once per step did not read held: held=%.0f steps=%.0f\n",
+            engine?gml_global_num(&engine->vm,"fixture_held"):-1.0,
+            engine?gml_global_num(&engine->vm,"fixture_steps"):-1.0);
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidate,size_t size,
                                      const uint8_t *baseline,size_t baseline_size,
                                      const char *label){
@@ -1803,6 +1847,8 @@ int main(int argc,char **argv){
       return simulated_key_frame_lifetime_policy()?0:1;
     if(!strcmp(argv[2],"bridged_key_press_delivery"))
       return bridged_key_press_delivery_policy()?0:1;
+    if(!strcmp(argv[2],"bridged_key_hold"))
+      return bridged_key_hold_policy()?0:1;
     fprintf(stderr,"unknown integration case: %s\n",argv[2]);
     return 1;
   }
@@ -1820,7 +1866,7 @@ int main(int argc,char **argv){
           "first_generation_oversized_gui|"
           "background_color|multi_view_application_canvas|game_change|"
           "input_binding_ownership|simulated_key_lifetime|simulated_key_frame_lifetime|"
-          "bridged_key_press_delivery|"
+          "bridged_key_press_delivery|bridged_key_hold|"
           "room_start_deactivation]\n",stderr);
     return 1;
   }
@@ -1850,6 +1896,7 @@ int main(int argc,char **argv){
   if(!simulated_key_lifetime_policy()) return 1;
   if(!simulated_key_frame_lifetime_policy()) return 1;
   if(!bridged_key_press_delivery_policy()) return 1;
+  if(!bridged_key_hold_policy()) return 1;
   if(!alarm_pause_policy()) return 1;
   char label[128];
   anygm_content_save_label("/library/fixture_bundle/data.win",label,sizeof label);

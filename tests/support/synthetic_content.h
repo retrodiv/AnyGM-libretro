@@ -17,6 +17,9 @@ int anygm_synthetic_simulated_key_content_create(AnygmSyntheticContent *fixture)
 /* One synthetic instance presses and releases a key in one Step and owns
  * the matching Key Press event. The event records the Step count observed. */
 int anygm_synthetic_bridged_key_content_create(AnygmSyntheticContent *fixture);
+/* One synthetic instance pairs key press/release for five Steps and counts
+ * the following Begin Steps that observe the key held. */
+int anygm_synthetic_bridged_hold_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_draw_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_background_color_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture);

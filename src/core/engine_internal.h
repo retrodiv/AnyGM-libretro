@@ -258,6 +258,10 @@ struct AnygmEngine {
    * cancelled by a release in that frame. A held press uses its existing edge.
    * These transient flags are not serialized between frames. */
   uint8_t key_press_raised[NKEY],key_press_carry[NKEY];
+  /* key_press_step marks a simulated press in the running step.
+   * key_release_defer counts polls owed by its paired release so a held-key
+   * query in the following frame can observe it. Both are transient. */
+  uint8_t key_press_step[NKEY],key_release_defer[NKEY];
   uint8_t hardware_key_current[NKEY],hardware_key_previous[NKEY];
   uint8_t event_vk_current[NKEY],event_vk_previous[NKEY];
   uint8_t event_key_current[ANYGM_KEY_LAST],event_key_previous[ANYGM_KEY_LAST];
