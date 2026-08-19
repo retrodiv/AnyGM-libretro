@@ -77,13 +77,15 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
   /* The state carries the exact completed frame. A frame that was produced somewhere other than
    * the processor has to be produced here first: serializing the buffer as it stands would write
    * whatever the previous frame left in it. */
-  engine_materialize_completed_frame(engine);
-  if(engine->have_presented_frame && engine->screen && engine->output_width && engine->output_height){
-    width=engine->output_width;
-    height=engine->output_height;
-  } else if(engine->state_frame_available && engine->screen){
-    width=engine->state_frame_width;
-    height=engine->state_frame_height;
+  if(!engine->state_omit_frame){
+    engine_materialize_completed_frame(engine);
+    if(engine->have_presented_frame && engine->screen && engine->output_width && engine->output_height){
+      width=engine->output_width;
+      height=engine->output_height;
+    } else if(engine->state_frame_available && engine->screen){
+      width=engine->state_frame_width;
+      height=engine->state_frame_height;
+    }
   }
   if(width>FB_MAX_W || height>FB_MAX_H ||
      (width && (height==0 || (size_t)width>SIZE_MAX/(size_t)height))){
@@ -408,6 +410,30 @@ size_t engine_state_size(AnygmEngine *engine){
 bool engine_state_save(AnygmEngine *engine,void *d,size_t n,size_t *written){
   if(!engine->loaded || !d) return false;
   CoreW s={(uint8_t*)d,n,0,1}; state_write(engine,&s);
+  /* The completed frame is the one section a state can be restored without, and it is the section
+   * that grows by megabytes the moment a virtual monitor is selected. A frontend that fixed its
+   * rewind buffer from an earlier, smaller answer offers a buffer that can no longer hold one, and
+   * refusing the save there costs the whole rewind history rather than one picture: every later
+   * snapshot fails, the buffer keeps only the states from before the growth, and rewinding walks
+   * back to them. So write the state again without the frame and keep the history. The restored
+   * picture is then the one the next frame draws, which is what a state without a frame has always
+   * presented. */
+  if(s.pos > n && !engine->state_omit_frame){
+    engine->state_omit_frame=1;
+    CoreW retry={(uint8_t*)d,n,0,1}; state_write(engine,&retry);
+    engine->state_omit_frame=0;
+    if(retry.ok && retry.pos<=n){
+      if(written) *written=retry.pos;
+      if(!engine->diagnostics.state_frame_dropped_reported){
+        engine->diagnostics.state_frame_dropped_reported=1;
+        engine_logf(engine,ANYGM_LOG_WARN,
+                    "[anygm] the %llu-byte buffer offered for this state cannot hold its completed "
+                    "frame; saving without it so rewind history survives\n",
+                    (unsigned long long)n);
+      }
+      return true;
+    }
+  }
   if(written) *written=s.pos;
   if(s.pos > n){
     /* Log the first few overflows and then a heartbeat without flooding a host that retries. */

@@ -823,6 +823,16 @@ void screen_stage_gui_geometry(
   if(logical_width) *logical_width=width;
   if(logical_height) *logical_height=height;
 }
+/* Negative package scaling retains the authored aspect ratio within the destination;
+ * zero fills it and positive values choose a fixed percentage. Fit to the authored
+ * raster even when content composes into a virtual monitor of another shape. Logical
+ * raster and forced-aspect policy take precedence; classic input is selected separately. */
+static int content_keeps_aspect_ratio(const AnygmEngine *engine){
+  return !engine->config.present_logical_raster &&
+         !engine->aspect_force_active &&
+         !anygm_policy_uses_classic_runtime(&engine->win) &&
+         engine->win.option_scaling<0;
+}
 static void host_canvas_update(AnygmEngine *engine){
   unsigned source_width=engine->output_width;
   unsigned source_height=engine->output_height;
@@ -841,18 +851,26 @@ static void host_canvas_update(AnygmEngine *engine){
   engine->host_canvas_y=0;
   engine->host_canvas_width=(int)host_width;
   engine->host_canvas_height=(int)host_height;
-  if(!engine->host_canvas_active || !source_width || !source_height ||
-     !host_width || !host_height) return;
-  uint64_t width_limited=(uint64_t)host_width*source_height;
-  uint64_t height_limited=(uint64_t)host_height*source_width;
+  if(!source_width || !source_height || !host_width || !host_height) return;
+  unsigned shape_width=source_width;
+  unsigned shape_height=source_height;
+  if(content_keeps_aspect_ratio(engine) && engine->width && engine->height){
+    shape_width=engine->width;
+    shape_height=engine->height;
+  }
+  /* Nothing to fit when the destination already is the composed raster and carries its shape. */
+  if(!engine->host_canvas_active &&
+     (uint64_t)shape_width*host_height==(uint64_t)shape_height*host_width) return;
+  uint64_t width_limited=(uint64_t)host_width*shape_height;
+  uint64_t height_limited=(uint64_t)host_height*shape_width;
   if(width_limited<=height_limited){
     engine->host_canvas_width=(int)host_width;
-    engine->host_canvas_height=(int)(((uint64_t)source_height*host_width+
-                                      source_width/2u)/source_width);
+    engine->host_canvas_height=(int)(((uint64_t)shape_height*host_width+
+                                      shape_width/2u)/shape_width);
   } else {
     engine->host_canvas_height=(int)host_height;
-    engine->host_canvas_width=(int)(((uint64_t)source_width*host_height+
-                                     source_height/2u)/source_height);
+    engine->host_canvas_width=(int)(((uint64_t)shape_width*host_height+
+                                     shape_height/2u)/shape_height);
   }
   if(engine->host_canvas_width<1) engine->host_canvas_width=1;
   if(engine->host_canvas_height<1) engine->host_canvas_height=1;
@@ -860,6 +878,9 @@ static void host_canvas_update(AnygmEngine *engine){
   if(engine->host_canvas_height>(int)host_height) engine->host_canvas_height=(int)host_height;
   engine->host_canvas_x=((int)host_width-engine->host_canvas_width)/2;
   engine->host_canvas_y=((int)host_height-engine->host_canvas_height)/2;
+  engine->host_canvas_active=engine->host_canvas_active ||
+                             engine->host_canvas_width!=(int)host_width ||
+                             engine->host_canvas_height!=(int)host_height;
 }
 void compute_present(AnygmEngine *engine) {
   GmlRenderPresentationMetrics renderer;

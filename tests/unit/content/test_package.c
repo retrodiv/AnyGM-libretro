@@ -166,6 +166,68 @@ static int expect_classic_room_order_display_extent(const char *directory){
   return ok;
 }
 
+/* The package stores one signed display-scaling word in OPTN. A synthetic structural
+ * package supplies its surrounding layout; each policy value is written into that one
+ * word to check its offset and signed roundtrip through the reader. */
+static int expect_optn_scale_is_read(const char *directory){
+  static const int32_t policies[]={-1,0,100};
+  char package_path[256];
+  snprintf(package_path,sizeof package_path,"%s/optn-scale.win",directory);
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  GmlcRoom room={0};
+  room.id=room.name=(char *)"room_only";
+  room.width=320;
+  room.height=240;
+  room.speed=30;
+  int room_order[1]={0};
+  GmlcProject project={0};
+  project.host=&services;
+  project.name=(char *)"neutral-scaling-policy";
+  project.rooms=&room;
+  project.n_rooms=project.cap_rooms=1;
+  project.room_order=room_order;
+  project.n_room_order=1;
+  char error[256]={0};
+  uint8_t *data=NULL;
+  size_t size=0;
+  GmlWin win={0};
+  uint32_t scale_offset=0;
+  int ok=gmlc_package_write_structural(&project,package_path,error,sizeof error) &&
+         read_bytes(package_path,&data,&size) &&
+         gml_win_from_mem(&win,data,size,0)==0;
+  if(!ok){
+    fprintf(stderr,"scaling-policy fixture failed: %s\n",
+            error[0]?error:gml_win_last_load_error());
+  }else{
+    for(int i=0;i<win.n_chunks;i++)
+      if(!strcmp(win.chunks[i].name,"OPTN") && win.chunks[i].size>=20u)
+        scale_offset=win.chunks[i].off+16u;   /* marker, unknown word, 64-bit flags, then scale */
+    ok=scale_offset!=0;
+    if(!ok) fputs("the structural package carries no readable OPTN\n",stderr);
+  }
+  gml_win_free(&win);
+  for(size_t index=0;ok && index<sizeof policies/sizeof policies[0];index++){
+    int32_t wanted=policies[index];
+    uint32_t bits=(uint32_t)wanted;
+    data[scale_offset+0]=(uint8_t)bits;
+    data[scale_offset+1]=(uint8_t)(bits>>8);
+    data[scale_offset+2]=(uint8_t)(bits>>16);
+    data[scale_offset+3]=(uint8_t)(bits>>24);
+    GmlWin restated={0};
+    ok=gml_win_from_mem(&restated,data,size,0)==0 && restated.option_scaling==wanted;
+    if(!ok)
+      fprintf(stderr,"a scaling policy of %d was read back as %d\n",
+              wanted,restated.option_scaling);
+    gml_win_free(&restated);
+  }
+  free(data);
+  remove(package_path);
+  return ok;
+}
+
 static int expect_modern_project_room_schema(const char *directory){
   char yyp[256], sprite[256], sprite_png[256], object[256], font[256], font_png[256];
   char tileset[256], tileset_output[256];
@@ -368,6 +430,7 @@ int main(int argc,char **argv){
   if(ok && !expect_modern_project_room_schema(first.directory)) ok=0;
   if(ok && !expect_tileset_source_indices(first.directory)) ok=0;
   if(ok && !expect_classic_room_order_display_extent(first.directory)) ok=0;
+  if(ok && !expect_optn_scale_is_read(first.directory)) ok=0;
 
   free(first_bytes);
   free(second_bytes);

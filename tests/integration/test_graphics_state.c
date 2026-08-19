@@ -400,6 +400,39 @@ static int refused_context_case(void){
   return ok;
 }
 
+/* A frontend that sized its rewind buffer once, before a presentation option grew the state, keeps
+ * offering the buffer it fixed. The completed frame is the section that grew and the only section a
+ * restore can do without, so a save that cannot fit it writes the state without it rather than
+ * failing: a refusal costs every later snapshot, and with them the whole rewind history, while a
+ * state without a frame simply resumes by drawing one. A buffer one byte short of the whole state
+ * is the narrowest form of that situation, and the roomy buffer beside it shows the frame is only
+ * dropped when it has to be. */
+static int short_buffer_drops_the_frame_case(void){
+  Session session;
+  size_t whole=0,written=0,short_written=0;
+  uint8_t *data=NULL;
+  int ok;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&session),"the session loads");
+  REQUIRE(advance(session.engine,6,NULL),"the session runs");
+  whole=anygm_state_size(session.engine);
+  REQUIRE(whole>1,"the state has a size");
+  data=(uint8_t*)malloc(whole);
+  REQUIRE(data!=NULL,"the buffer is allocated");
+  ok=anygm_state_save(session.engine,data,whole,&written)==ANYGM_OK && written==whole;
+  if(!ok) fprintf(stderr,"the whole state did not fit its own size: %zu of %zu\n",written,whole);
+  ok=ok && anygm_state_save(session.engine,data,whole-1u,&short_written)==ANYGM_OK;
+  if(!ok) fprintf(stderr,"a save into %zu bytes failed instead of dropping the frame\n",whole-1u);
+  ok=ok && short_written<whole;
+  ok=ok && anygm_state_load(session.engine,data,short_written)==ANYGM_OK;
+  if(!ok)
+    fprintf(stderr,"the state written without its frame does not load back (%zu of %zu bytes)\n",
+            short_written,whole);
+  free(data);
+  session_close(&session);
+  return ok;
+}
+
 int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
     {"state bytes match with and without a target",state_bytes_match_case},
@@ -411,6 +444,7 @@ int main(void){
     {"a context lost while a frame is on it",context_lost_with_frame_pending_case},
     {"two interleaved engines stay independent",interleaved_engines_case},
     {"a refused context leaves a working software engine",refused_context_case},
+    {"a buffer too short for the frame still takes the state",short_buffer_drops_the_frame_case},
   };
   int failed=0;
   for(size_t index=0;index<sizeof cases/sizeof cases[0];index++)

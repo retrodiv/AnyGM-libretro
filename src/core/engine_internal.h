@@ -96,6 +96,7 @@ typedef struct {
   double profile_spike_ms;
   size_t state_profile_last_total;
   long state_overflow_count;
+  int state_frame_dropped_reported;
   int state_overflow_warned;
   int state_time_prints;
 } EngineDiagnostics;
@@ -236,6 +237,10 @@ struct AnygmEngine {
   int input_continuity_pending;
   int state_frame_available;
   unsigned state_frame_width,state_frame_height;
+  /* Set only while a save is being retried without its completed frame, because the buffer the
+   * host offered cannot hold one. Never set while a state is measured: the answer a frontend sizes
+   * itself from has to describe the whole state. */
+  int state_omit_frame;
   uint8_t *state_reapply;
   size_t state_reapply_capacity,state_reapply_size;
   /* Peak serialized size for this content: what the namespace cache remembered at load, the

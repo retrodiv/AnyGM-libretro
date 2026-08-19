@@ -615,9 +615,16 @@ int gml_win_from_mem(GmlWin *w, uint8_t *data, size_t size, int owns){
   if(!parse_gen8(w))
     return discard_partial_win_because(w,"the general header (GEN8) could not be read");
   const GmlChunk *opt=gml_chunk(w,"OPTN");
+  /* OPTN stores a signed display-scaling policy: negative retains the authored aspect,
+   * zero fills the destination, and positive values select a fixed percentage. The flagged
+   * layout stores it after the marker, reserved word and 64-bit flags; the older layout
+   * stores it after five boolean words. Classic input has a separate structural field. */
   if(opt && opt->size>=16 && u32(data,opt->off)==0x80000000u){
     w->option_flags=(uint64_t)u32(data,opt->off+8) |
                     (uint64_t)u32(data,opt->off+12)<<32;
+    if(opt->size>=20) w->option_scaling=(int32_t)u32(data,opt->off+16);
+  } else if(opt && opt->size>=24){
+    w->option_scaling=(int32_t)u32(data,opt->off+20);
   }
   const GmlChunk *classic=gml_chunk(w,"CLSC");
   if(classic && classic->size>=4){
