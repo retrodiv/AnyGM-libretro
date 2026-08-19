@@ -1225,6 +1225,131 @@ cleanup:
 }
 
 
+int expect_event_starts_with_the_relative_flag_clear(void){
+  /* A synthetic nested Create event must start with a clear action-relative flag even when its caller set the flag. The caller's flag resumes afterward. The fixture pins absolute and relative movement separately. */
+  GmlcProject project={0};
+  GmlcObject objects[2]={{0},{0}};
+  GmlcObjectEvent events[2]={{0},{0}};
+  GmlcRoom room={0};
+  GmlcRoomInstance placed={0};
+  int room_order[1]={0};
+  AnygmHostServices services={0};
+  char spawned_path[]="/tmp/gml-relative-spawned-source-XXXXXX";
+  char maker_path[]="/tmp/gml-relative-maker-source-XXXXXX";
+  char package_path[]="/tmp/gml-relative-package-XXXXXX";
+  int spawned_fd=-1,maker_fd=-1,package_fd=-1;
+  int ok=0;
+
+  spawned_fd=mkstemp(spawned_path);
+  maker_fd=mkstemp(maker_path);
+  package_fd=mkstemp(package_path);
+  if(spawned_fd<0 || maker_fd<0 || package_fd<0) goto cleanup;
+  close(spawned_fd); spawned_fd=-1;
+  close(maker_fd); maker_fd=-1;
+  close(package_fd); package_fd=-1;
+  /* The created instance's own list: one absolute jump, stated the way a normalized list states an
+   * action that did not ask for relative - by saying nothing about the flag at all. */
+  if(!fixture_write_text(spawned_path,
+       "action_move_to(100, 40);\n"
+       "global.spawned_x = x;\n"
+       "global.spawned_y = y;\n")) goto cleanup;
+  /* The creating list: relative, create, and one more relative action after the create. */
+  if(!fixture_write_text(maker_path,
+       "action_set_relative(1);\n"
+       "action_create_object(0, 0, 0);\n"
+       "action_move_to(10, 10);\n"
+       "action_set_relative(0);\n"
+       "global.maker_x = x;\n"
+       "global.maker_y = y;\n")) goto cleanup;
+
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="event-relative-flag-fixture";
+  project.host=&services;
+  project.objects=objects;
+  project.n_objects=project.cap_objects=2;
+  project.rooms=&room;
+  project.n_rooms=project.cap_rooms=1;
+  project.room_order=room_order;
+  project.n_room_order=1;
+
+  objects[0].id=objects[0].name=(char*)"obj_spawned";
+  objects[0].sprite_id=objects[0].mask_id=objects[0].parent_id=-1;
+  objects[0].visible=1;
+  objects[0].events=&events[0];
+  objects[0].n_events=objects[0].cap_events=1;
+  events[0].event_type=0;    /* Create */
+  events[0].event_number=0;
+  events[0].source_path=spawned_path;
+
+  objects[1].id=objects[1].name=(char*)"obj_maker";
+  objects[1].sprite_id=objects[1].mask_id=objects[1].parent_id=-1;
+  objects[1].visible=1;
+  objects[1].events=&events[1];
+  objects[1].n_events=objects[1].cap_events=1;
+  events[1].event_type=0;    /* Create */
+  events[1].event_number=0;
+  events[1].source_path=maker_path;
+
+  room.id=room.name=(char*)"room_relative";
+  room.width=320;
+  room.height=240;
+  room.speed=60;
+  placed.id=placed.name=(char*)"placed_maker";
+  placed.object_id=1;
+  placed.instance_id=100000;
+  placed.x=200;
+  placed.y=120;
+  room.instances=&placed;
+  room.n_instances=room.cap_instances=1;
+
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+      fprintf(stderr,"event relative flag package failed: %s\n",error);
+      goto cleanup;
+    }
+  }
+  {
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,package_path)) goto cleanup;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,&services)){
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    gml_room_enter(&vm,0);
+    GmlVal *spawned_x=gml_varmap_get(&vm.globals,"spawned_x");
+    GmlVal *spawned_y=gml_varmap_get(&vm.globals,"spawned_y");
+    GmlVal *maker_x=gml_varmap_get(&vm.globals,"maker_x");
+    GmlVal *maker_y=gml_varmap_get(&vm.globals,"maker_y");
+    ok=spawned_x && spawned_x->t==V_REAL && spawned_x->d==100 &&
+       spawned_y && spawned_y->t==V_REAL && spawned_y->d==40 &&
+       maker_x && maker_x->t==V_REAL && maker_x->d==210 &&
+       maker_y && maker_y->t==V_REAL && maker_y->d==130;
+    if(!ok)
+      fprintf(stderr,
+        "event relative flag mismatch: spawned=(%.2f,%.2f) expected (100,40), "
+        "maker=(%.2f,%.2f) expected (210,130)\n",
+        spawned_x&&spawned_x->t==V_REAL?spawned_x->d:-1.0,
+        spawned_y&&spawned_y->t==V_REAL?spawned_y->d:-1.0,
+        maker_x&&maker_x->t==V_REAL?maker_x->d:-1.0,
+        maker_y&&maker_y->t==V_REAL?maker_y->d:-1.0);
+    gml_vm_free(&vm);
+    gml_win_free(&win);
+  }
+
+cleanup:
+  if(spawned_fd>=0) close(spawned_fd);
+  if(maker_fd>=0) close(maker_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(spawned_path);
+  unlink(maker_path);
+  unlink(package_path);
+  return ok;
+}
+
 int expect_stopped_mover_restored_from_solid(void){
   /* This synthetic contact fixture leaves a stopped mover inside a stationary
    * solid. The post-event fallback restores its pre-contact position. */

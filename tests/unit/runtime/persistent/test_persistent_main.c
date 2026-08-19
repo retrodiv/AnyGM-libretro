@@ -34,6 +34,7 @@ int main(int argc,char **argv){
     {"event_boundary_room_transition",expect_event_boundary_room_transition},
     {"room_transition_animation_phase",expect_room_transition_animation_phase},
     {"frozen_animation_wrap_end",expect_frozen_animation_wrap_fires_animation_end},
+    {"event_relative_flag_clear",expect_event_starts_with_the_relative_flag_clear},
     {"stopped_mover_solid_restore",expect_stopped_mover_restored_from_solid},
     {"stationary_embed_nudge_reverted",expect_stationary_embed_nudge_reverted},
     {"classic_timeline_index_activation",expect_classic_timeline_index_activation},

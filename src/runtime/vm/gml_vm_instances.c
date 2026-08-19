@@ -282,7 +282,13 @@ static int run_event_code_from(GmlVM *vm, GmlInstance *in, GmlInstance *other,
   /* An event handler is the one run a blocking input wait may park all the way out to: the engine
    * dispatched it and can dispatch its continuation again on a later frame. */
   int wait_scope=vm->wait_event_scope; vm->wait_event_scope=1;
+  /* The relative flag belongs to the action list being executed, and one action list can start
+   * another: creating, changing or destroying an instance runs that instance's own events while
+   * the action that asked for it is still in flight. An action states its own relative bit, so a
+   * list whose first action does not ask for relative must not inherit the one its caller set. */
+  int relative=vm->action_relative; vm->action_relative=0;
   GmlVal _r=gml_vm_run_code(vm,ci,in,other,NULL,0);
+  vm->action_relative=relative;
   vm->wait_event_scope=wait_scope;
   if(_r.t==V_STR && _r.d!=0) free((char*)_r.s);   /* discarded owned return: free it */
   vm->cur_event=pe; vm->cur_event_obj=peo;
