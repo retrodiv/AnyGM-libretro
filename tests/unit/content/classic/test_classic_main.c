@@ -131,7 +131,7 @@ static char *program_keep(ProgramFile *p, char *text){
  *
  *   room <width> <height>
  *   caption <text>|"<text>"      the room's authored caption; quote it to carry outer spaces
- *   sprite <edge>
+ *   sprite <edge> [blank-second-frame]
  *   startup <source.gml>
  *   object <name> <sprite-slot|-1>
  *   event <type> <number> <source.gml>     applies to the most recent object
@@ -168,7 +168,9 @@ static int program_read(const char *path, ProgramFile *p){
       else { memcpy(caption,text,length); caption[length]='\0';
              p->program.room_caption=program_keep(p,caption); ok=p->program.room_caption!=NULL; }
     } else if(!strcmp(keyword,"sprite")){
-      if(sscanf(line,"%31s %d",keyword,&p->program.sprite_size)!=2) ok=0;
+      p->program.sprite_blank_frame=0;
+      if(sscanf(line,"%31s %d %d",keyword,&p->program.sprite_size,
+                &p->program.sprite_blank_frame)<2) ok=0;
     } else if(!strcmp(keyword,"startup")){
       if(sscanf(line,"%31s %255s",keyword,a)!=2){ ok=0; }
       else {

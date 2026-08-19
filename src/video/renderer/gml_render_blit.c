@@ -2722,6 +2722,30 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
                     shader_alpha_test_requires_filter(r) || wave!=NULL || uvwave!=NULL;
   if(!t->alpha_scanned) (void)tpag_alpha_bounds(r,t,a,NULL,NULL,NULL,NULL);
   gml_render_maybe_prepare_draw(r);
+  /* A replacement blend writes the whole authored quad, including transparent margins omitted by alpha-bound packing. Clear that cropped region before drawing the stored texels; ordinary source-over blending keeps its existing crop behavior. */
+  if(r->blendmode==6 && r->alphablend && r->fb &&
+     (t->tx>0 || t->ty>0 || t->sw<t->bw || t->sh<t->bh)){
+    int bx0=(int)floor(dx-(double)t->tx*axs+0.5);
+    int by0=(int)floor(dy-(double)t->ty*ays+0.5);
+    int bx1=bx0+(int)lround((double)t->bw*axs);
+    int by1=by0+(int)lround((double)t->bh*ays);
+    if(bx0<0) bx0=0;
+    if(by0<0) by0=0;
+    if(bx1>r->fbw) bx1=r->fbw;
+    if(by1>r->fbh) by1=r->fbh;
+    if(bx1>bx0 && by1>by0){
+      /* The empty source fragment: no coverage where the target keeps alpha, and the black it
+       * carries where the target has none, which is what the pair writes on a display. */
+      uint32_t empty=gml_render_target_preserves_alpha(r)?0x00000000u:0xFF000000u;
+      for(int yy=by0; yy<by1; yy++){
+        uint32_t *row=r->fb+(size_t)yy*r->fbw;
+        for(int xx=bx0; xx<bx1; xx++) row[xx]=empty;
+      }
+      r->fb_opaque_known=0;
+      r->fb_all_opaque=0;
+      r->fb_all_transparent=0;
+    }
+  }
   /* SRCALPHA/INVSRCALPHA also blends the destination alpha channel. A partially covered texel
    * therefore makes an opaque render target non-opaque even when the draw alpha is one. Keep the
    * coverage certificate honest so a later surface composite does not take an opaque-copy path.

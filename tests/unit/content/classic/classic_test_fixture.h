@@ -73,6 +73,7 @@ typedef struct {
 typedef struct {
   const char *startup;             /* library creation code, run once before the room; may be NULL */
   int sprite_size;                 /* edge of the one opaque sprite in slot 0; 0 writes no sprite */
+  int sprite_blank_frame;          /* add a second, fully transparent frame to that sprite */
   const FixtureObject *objects;
   int object_count;
   const FixtureInstance *instances;

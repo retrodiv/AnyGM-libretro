@@ -501,15 +501,23 @@ static void fixture_object_payload(Fixture *f, const FixtureObject *object){
 
 /* One opaque square. Collision needs a mask and a mask comes from a sprite, so the smallest sprite
  * that lets a collision event fire is a filled rectangle with a manual bounding box. */
-static void fixture_sprite_payload(Fixture *f, int size){
+/* A second fully transparent frame makes authored and packed extents differ so a synthetic raster rule can exercise the margin. */
+static void fixture_sprite_payload(Fixture *f, int size, int blank_frame){
   fixture_u32(f,0); fixture_u32(f,0); /* origin */
-  fixture_u32(f,1);                   /* one frame */
+  fixture_u32(f,blank_frame?2u:1u);   /* frames */
   fixture_u32(f,800);                 /* frame version */
   fixture_u32(f,(unsigned)size); fixture_u32(f,(unsigned)size);
   unsigned bytes=(unsigned)size*(unsigned)size*4u;
   if(f->size+4+bytes>sizeof(f->data)) abort();
   fixture_u32(f,bytes);
   for(unsigned i=0;i<bytes;i++) f->data[f->size++]=255; /* opaque white, BGRA */
+  if(blank_frame){
+    fixture_u32(f,800);
+    fixture_u32(f,(unsigned)size); fixture_u32(f,(unsigned)size);
+    if(f->size+4+bytes>sizeof(f->data)) abort();
+    fixture_u32(f,bytes);
+    for(unsigned i=0;i<bytes;i++) f->data[f->size++]=0;   /* no colour and no coverage */
+  }
   fixture_u32(f,1);                   /* collision kind: bounding box */
   fixture_u32(f,0);                   /* tolerance */
   fixture_u32(f,0);                   /* one mask for every frame */
@@ -582,7 +590,7 @@ static Fixture manifest_fixture_program(unsigned container_version, const Fixtur
     if(type == GMLC_CLASSIC_SPRITE && sprites){
       fixture_u32(&f, 1);
       Fixture payload={{0},0};
-      fixture_sprite_payload(&payload,program->sprite_size);
+      fixture_sprite_payload(&payload,program->sprite_size,program->sprite_blank_frame);
       fixture_manifest_resource(&f,"fixture_square",800,&payload);
     } else if(type == GMLC_CLASSIC_OBJECT && program->object_count){
       fixture_u32(&f,(unsigned)program->object_count);
