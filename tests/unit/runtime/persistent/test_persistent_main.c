@@ -53,6 +53,7 @@ int main(int argc,char **argv){
      expect_streamed_sound_without_sidecar_plays_embedded_compressed_blob},
     {"embedded_eight_bit_wave",expect_embedded_eight_bit_wave_matches_its_sixteen_bit_signal},
     {"embedded_ms_adpcm_wave",expect_embedded_ms_adpcm_wave_matches_its_sixteen_bit_signal},
+    {"classic_trailing_frame",expect_classic_sound_drops_its_trailing_frame},
     {"group_gain",expect_audio_group_gain},
     {"classic_dynamic_sound_lifecycle",expect_classic_dynamic_sound_lifecycle},
     {"dynamic_extension_state",expect_dynamic_audio_extension_state},

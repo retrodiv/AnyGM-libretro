@@ -422,6 +422,98 @@ int expect_embedded_ms_adpcm_wave_matches_its_sixteen_bit_signal(void){
 }
 
 
+/* A synthetic eight-bit signal is silent except for its terminal sample. Classic playback must omit that frame, while modern playback and classic sixteen-bit playback keep their terminal samples. */
+int expect_classic_sound_drops_its_trailing_frame(void){
+  enum { values=32, frames=64 };
+  unsigned char eight[128],data[1024];
+  unsigned char payload[values];
+  for(int index=0;index<values;index++) payload[index]=0x80;   /* digital silence throughout ... */
+  payload[values-1]=0x00;                                      /* ... except one full-scale sample */
+  size_t wave=fixture_wave(eight,sizeof eight,1,1,44100,8,1,NULL,0,payload,(uint32_t)sizeof payload);
+  uint32_t audo_chunk=0;
+  size_t size=wave?fixture_two_sound_container(data,sizeof data,eight,wave,eight,wave,&audo_chunk):0;
+  if(!size) return 0;
+
+  /* The same container read as classic content and as modern content. Only the first drops it. */
+  int16_t classic[frames*2],modern[frames*2];
+  GmlWin win={0};
+  win.data=data; win.size=(uint32_t)size; win.n_chunks=2;
+  memcpy(win.chunks[0].name,"SOND",4); win.chunks[0].off=0; win.chunks[0].size=audo_chunk;
+  memcpy(win.chunks[1].name,"AUDO",4); win.chunks[1].off=audo_chunk;
+  win.chunks[1].size=(uint32_t)size-audo_chunk;
+
+  win.classic_version=810;
+  GmlAudio *audio=gml_audio_create(&win);
+  if(!audio) return 0;
+  int played=gml_audio_play(audio,0,0)>=0;
+  memset(classic,0,sizeof classic);
+  gml_audio_mix(audio,classic,frames);
+  gml_audio_free(audio);
+
+  win.classic_version=0;
+  win.bytecode=17;
+  audio=gml_audio_create(&win);
+  if(!audio) return 0;
+  played=played && gml_audio_play(audio,0,0)>=0;
+  memset(modern,0,sizeof modern);
+  gml_audio_mix(audio,modern,frames);
+  gml_audio_free(audio);
+
+  int classic_peak=0,modern_peak=0;
+  for(int index=0;index<frames*2;index++){
+    int c=classic[index]<0?-classic[index]:classic[index];
+    int m=modern[index]<0?-modern[index]:modern[index];
+    if(c>classic_peak) classic_peak=c;
+    if(m>modern_peak) modern_peak=m;
+  }
+  /* The same signal written as sixteen-bit PCM, read as classic content. The rule is eight-bit
+   * only, so this one must keep its final sample: without this half, a later reading could widen
+   * the rule without noticing that nothing ever asked for it. */
+  int16_t wide_payload[values];
+  for(int index=0;index<values;index++) wide_payload[index]=0;
+  wide_payload[values-1]=-32768;
+  unsigned char sixteen[192],wide_data[1024];
+  unsigned char wide_bytes[values*2];
+  for(int index=0;index<values;index++)
+    fixture_write_u16(wide_bytes,(size_t)index*2u,(uint16_t)wide_payload[index]);
+  size_t wide_wave=fixture_wave(sixteen,sizeof sixteen,1,1,44100,16,2,NULL,0,
+                                wide_bytes,(uint32_t)sizeof wide_bytes);
+  uint32_t wide_chunk=0;
+  size_t wide_size=wide_wave?fixture_two_sound_container(wide_data,sizeof wide_data,sixteen,
+                                                         wide_wave,sixteen,wide_wave,&wide_chunk):0;
+  int16_t wide_mix[frames*2]; int wide_peak=0;
+  if(wide_size){
+    GmlWin wide_win={0};
+    wide_win.data=wide_data; wide_win.size=(uint32_t)wide_size; wide_win.n_chunks=2;
+    memcpy(wide_win.chunks[0].name,"SOND",4);
+    wide_win.chunks[0].off=0; wide_win.chunks[0].size=wide_chunk;
+    memcpy(wide_win.chunks[1].name,"AUDO",4); wide_win.chunks[1].off=wide_chunk;
+    wide_win.chunks[1].size=(uint32_t)wide_size-wide_chunk;
+    wide_win.classic_version=810;
+    audio=gml_audio_create(&wide_win);
+    if(audio){
+      played=played && gml_audio_play(audio,0,0)>=0;
+      memset(wide_mix,0,sizeof wide_mix);
+      gml_audio_mix(audio,wide_mix,frames);
+      gml_audio_free(audio);
+      for(int index=0;index<frames*2;index++){
+        int v=wide_mix[index]<0?-wide_mix[index]:wide_mix[index];
+        if(v>wide_peak) wide_peak=v;
+      }
+    }
+  }
+
+  /* Silence throughout except that one sample, so the peak is the whole assertion: the eight-bit
+   * classic reading must produce nothing at all, and both the modern reading of the same bytes and
+   * the sixteen-bit classic one must produce the sample their file holds. */
+  int ok = played && wide_size && classic_peak==0 && modern_peak>10000 && wide_peak>10000;
+  if(!ok) fprintf(stderr,
+    "classic trailing frame: played=%d peaks 8-bit-classic=%d 8-bit-modern=%d 16-bit-classic=%d"
+    " (want 0, loud, loud)\n",played,classic_peak,modern_peak,wide_peak);
+  return ok;
+}
+
+
 int expect_audio_group_gain(void){
   GmlWin win={0};
   GmlAudio *audio=gml_audio_create(&win);

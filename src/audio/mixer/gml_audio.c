@@ -22,6 +22,7 @@
 #include "gml_audio.h"
 #include "gml_fmod.h"
 #include "gml_hash.h"
+#include "anygm_compatibility.h"
 #include "anygm_host.h"
 #include "anygm_vfs.h"
 #include <limits.h>
@@ -384,11 +385,17 @@ static void wave_report_unsupported(GmlAudio *a,const GmlWave *w){
 }
 
 /* Take the samples of one parsed WAVE onto a sound, whatever the container it came from. */
+/* Classic eight-bit PCM omits one complete terminal frame after decoding. The branch is limited to classic policy and eight-bit PCM; other depths and modern content retain their full decoded frame count. The channel count is used so multichannel samples remain paired. */
 static void sound_take_wave(GmlAudio *a,GmlSound *s,const GmlWave *w){
   s->channels=w->channels;
   s->sample_rate=w->sample_rate;
   const int16_t *pcm=NULL; uint32_t nval=0; int16_t *owned=NULL;
   if(wave_to_pcm16(w,&pcm,&nval,&owned)){
+    if(a && w->format==GML_WAVE_PCM && w->bits==8 &&
+       anygm_policy_uses_classic_runtime(a->win)){
+      uint32_t frame=(uint32_t)(w->channels>0?w->channels:1);
+      if(nval>=frame) nval-=frame;   /* a whole frame, so the channels stay paired */
+    }
     s->pcm=pcm;
     s->nval=nval;
     if(owned){ free(s->own); s->own=owned; }
