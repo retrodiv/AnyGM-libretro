@@ -37,6 +37,35 @@ static const char *asstr_cmp(GmlVal v, char *buf, size_t n){
   snprintf(buf,n,"%g",v.t==V_REAL?v.d:0.0);
   return buf;
 }
+/* The cmp opcode and conditional actions use one comparison of values: undefined equality, string lexical ordering and policy-aware real comparison remain consistent between both call sites. */
+int gml_vm_value_compare(GmlVM *vm, GmlVal lhs, GmlVal rhs, int cmp){
+  if(lhs.t==V_UNDEF || rhs.t==V_UNDEF){
+    int both=(lhs.t==V_UNDEF && rhs.t==V_UNDEF);
+    switch(cmp){
+      case CMP_EQ: return both;
+      case CMP_NEQ: return !both;
+      default: return 0;
+    }
+  }
+  if(lhs.t==V_STR || rhs.t==V_STR){
+    char lb[64], rb[64];
+    int c=strcmp(asstr_cmp(lhs,lb,sizeof lb),asstr_cmp(rhs,rb,sizeof rb));
+    switch(cmp){
+      case CMP_LT: return c<0;
+      case CMP_LTE: return c<=0;
+      case CMP_EQ: return c==0;
+      case CMP_NEQ: return c!=0;
+      case CMP_GTE: return c>=0;
+      case CMP_GT: return c>0;
+      default: return 0;
+    }
+  }
+  /* The resolved comparison policy applies to real expressions, including ordered comparisons close to zero. */
+  {
+    double epsilon=(vm && anygm_policy_exact_comparisons(vm->win))?0.0:(vm?vm->math_epsilon:1e-5);
+    return gml_real_compare_epsilon(asnum(lhs),asnum(rhs),cmp,epsilon);
+  }
+}
 static void log_val_simple(GmlVM *vm,GmlVal v){
   if(v.t==V_STR){
     const char *s=v.s?v.s:"";
@@ -3065,25 +3094,8 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
       }
       case OP_CMP:{
         if(sp<2) break;
-        GmlVal r=stk[--sp], l=stk[--sp]; int res=0;
-        if(l.t==V_UNDEF || r.t==V_UNDEF){
-          int both=(l.t==V_UNDEF && r.t==V_UNDEF);
-          switch(in.cmp){
-            case CMP_EQ: res=both; break;
-            case CMP_NEQ: res=!both; break;
-            default: res=0; break;
-          }
-        } else if(l.t==V_STR || r.t==V_STR){ char lb[64], rb[64];
-          int c=strcmp(asstr_cmp(l,lb,sizeof lb),asstr_cmp(r,rb,sizeof rb));
-          switch(in.cmp){case CMP_LT:res=c<0;break;case CMP_LTE:res=c<=0;break;case CMP_EQ:res=c==0;break;
-            case CMP_NEQ:res=c!=0;break;case CMP_GTE:res=c>=0;break;case CMP_GT:res=c>0;break;} }
-        else {
-          /* Apply the selected compatibility comparison policy to real expressions. This matters
-           * for ordered comparisons too: repeated decimal steps can otherwise cross zero through a
-           * tiny floating-point residue instead of settling at the epsilon bound. */
-          double epsilon=anygm_policy_exact_comparisons(w)?0.0:vm->math_epsilon;
-          res=gml_real_compare_epsilon(asnum(l),asnum(r),in.cmp,epsilon);
-        }
+        GmlVal r=stk[--sp], l=stk[--sp];
+        int res=gml_vm_value_compare(vm,l,r,in.cmp);
         stk[sp]=vreal(res); stkt[sp++]=DT_BOOL; break;
       }
       case OP_B:

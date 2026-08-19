@@ -363,6 +363,38 @@ static int action_variable_comparisons(GmlVM *vm){
   return ok;
 }
 
+/* Synthetic string operands distinguish equal, unequal and ordered variable-action comparisons, including unknown selectors. */
+static int action_variable_string_comparisons(GmlVM *vm){
+  struct {
+    GmlVal variable;
+    GmlVal comparison;
+    int operation;
+    double expected;
+    const char *name;
+  } cases[]={
+    {vstr("neutral alpha"),vstr("neutral alpha"),0,1,"words equal"},
+    {vstr("neutral alpha"),vstr("neutral beta"),0,0,"different words are not equal"},
+    {vstr("neutral alpha"),vstr("neutral beta"),5,1,"different words are unequal"},
+    {vstr("neutral alpha"),vstr("neutral beta"),1,1,"words order below"},
+    {vstr("neutral beta"),vstr("neutral alpha"),2,1,"words order above"},
+    {vstr("neutral alpha"),vstr("neutral alpha"),3,1,"words at most inclusive"},
+    {vstr("neutral alpha"),vstr("neutral alpha"),4,1,"words at least inclusive"},
+    {vstr("neutral alpha"),vstr("neutral beta"),99,0,"words unknown selector"},
+  };
+  int ok=1;
+  for(size_t index=0;index<sizeof(cases)/sizeof(cases[0]);index++){
+    GmlVal arguments[]={
+      cases[index].variable,
+      cases[index].comparison,
+      vreal(cases[index].operation),
+    };
+    ok&=expect_real(cases[index].name,
+                    gml_builtin_call(vm,"action_if_variable",arguments,3),
+                    cases[index].expected);
+  }
+  return ok;
+}
+
 static int mouse_none_semantics(GmlVM *vm){
   MouseFixture fixture={0};
   GmlVal none=vreal(0);
@@ -870,6 +902,7 @@ int main(void){
          hsv_color_byte_wrapping(&vm) &&
          gain_conversion(&vm) &&
          action_variable_comparisons(&vm) &&
+         action_variable_string_comparisons(&vm) &&
          room_dimension_mutation(&vm) &&
          mouse_none_semantics(&vm) &&
          ds_fast_interface(&vm) &&

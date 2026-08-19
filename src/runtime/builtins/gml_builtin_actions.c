@@ -67,24 +67,16 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
   /* action_if(expr): D&D single-expression conditional. expr was evaluated on the stack by the
    * bytecode before this call → arg0 is the truth value. Returns the value (0 or 1). */
   if(!strcmp(nm,"action_if")) return vreal(N(a,n,0));
-  /* action_if_variable(var, value, op): D&D compare-a-variable conditional. The bytecode has
-   * already evaluated "var", so arg0 is the current value, not a variable name. */
+  /* action_if_variable(var, value, op): the bytecode evaluates the variable before this call, so arg0 is its current value. Use the shared language comparison rather than converting both operands to numbers. */
   if(!strcmp(nm,"action_if_variable")){
+    static const int selector[]={CMP_EQ,CMP_LT,CMP_GT,CMP_LTE,CMP_GTE,CMP_NEQ};
     int op=(int)N(a,n,2);
-    double vv=N(a,n,0), cv=N(a,n,1); int r=0;
-    /* Legacy D&D comparison selector: equal, below, above, at-most, at-least, unequal.
-     * Retained action calls can use the inclusive selectors directly. */
-    switch(op){
-      case 0: r=(vv==cv); break;
-      case 1: r=(vv<cv); break;
-      case 2: r=(vv>cv); break;
-      case 3: r=(vv<=cv); break;
-      case 4: r=(vv>=cv); break;
-      case 5: r=(vv!=cv); break;
-    }
-    return vreal(r); }
-  /* action_if_number(object, count, comparison) uses the legacy three-way selector — equal,
-   * smaller, larger — rather than the six-way selector used by variable comparisons. */
+    GmlVal vv=(n>0)?a[0]:vreal(0), cv=(n>1)?a[1]:vreal(0);
+    /* Legacy D&D comparison selector: equal, below, above, at-most, at-least, unequal.  Studio
+     * exports can retain these obsolete action calls and use the inclusive selectors directly. */
+    if(op<0 || op>=(int)(sizeof(selector)/sizeof(selector[0]))) return vreal(0);
+    return vreal(gml_vm_value_compare(vm,vv,cv,selector[op])); }
+  /* action_if_number uses a legacy three-way selector: equal, smaller or larger. It does not use the six-way selector of action_if_variable. */
   if(!strcmp(nm,"action_if_number")){
     double have=gml_instance_number(vm,(int)N(a,n,0)), want=N(a,n,1);
     switch((int)N(a,n,2)){

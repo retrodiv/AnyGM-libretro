@@ -484,6 +484,11 @@ uint64_t gml_rng_select(GmlVM *vm, uint64_t count);
 uint64_t gml_rng_integer(GmlVM *vm, uint64_t inclusive_max);
 int     gml_real_compare(double lhs, double rhs, int cmp, int classic);
 int     gml_real_compare_epsilon(double lhs, double rhs, int cmp, double epsilon);
+/* The language's comparison, for any pair of values: strings compare as strings, reals under the
+ * content's comparison policy. Both the `cmp` opcode and the drag-and-drop conditionals go
+ * through it, so a comparison written as an action and the same comparison written in code
+ * always answer alike. */
+int     gml_vm_value_compare(GmlVM *vm, GmlVal lhs, GmlVal rhs, int cmp);
 GmlVal  gml_vm_run_code(GmlVM *vm, int code_index, GmlInstance *self, GmlInstance *other,
                         GmlVal *args, int n_args);
 /* Invoke a function value or bound method using the same receiver rules as OP_CALLV.
