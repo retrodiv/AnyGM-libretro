@@ -128,6 +128,15 @@ ZIP-compatible containers use bounded extraction, reject unsafe paths and
 links, and select a normalized payload deterministically. See
 `SECURITY_MODEL.md` for exact limits.
 
+## Embedded audio
+
+A sound stored in a container is decoded from what its own header declares, not
+from its extension. RIFF/WAVE carries 16-bit PCM in place, and 8-bit PCM and
+four-bit MS ADPCM are decoded into a bounded per-sound buffer; OGG Vorbis and
+MP3 stay compressed until first playback. A WAVE in any other encoding is
+silent and reports itself under the audio log rather than being played as if
+its bytes were samples.
+
 ## Memory sources
 
 The public API accepts a borrowed in-memory normalized content image. The bytes

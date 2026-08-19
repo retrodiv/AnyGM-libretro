@@ -209,6 +209,192 @@ static int audio_sound_load_loose_file(GmlAudio *a,GmlSound *sound){
   }
   return 1;
 }
+/* One RIFF/WAVE header, read once and shared by every container that carries a WAVE. The bit
+ * depth and the format tag are part of it: a data chunk addressed as 16-bit samples without
+ * asking what it holds turns an 8-bit or an ADPCM effect into full-scale noise, and it does so
+ * at exactly the volume the game asked for. */
+enum { GML_WAVE_PCM=1, GML_WAVE_MS_ADPCM=2, GML_WAVE_COEF_MAX=16 };
+typedef struct {
+  const uint8_t *data;                 /* the data chunk's bytes */
+  uint32_t bytes;                      /* its size */
+  int format, channels, sample_rate, bits, block_align;
+  int coef_count;                      /* MS ADPCM predictor coefficients, from the header */
+  int16_t coef1[GML_WAVE_COEF_MAX], coef2[GML_WAVE_COEF_MAX];
+} GmlWave;
+
+/* The predictor coefficients every MS ADPCM encoder ships with. A file that declares its own in
+ * the format chunk overrides these; one that declares none is decoded against them. */
+static const int16_t gml_ms_adpcm_default_coef1[7]={256,512,0,192,240,460,392};
+static const int16_t gml_ms_adpcm_default_coef2[7]={0,-256,0,64,0,-208,-232};
+static const int16_t gml_ms_adpcm_adapt[16]=
+  {230,230,230,230,307,409,512,614,768,614,512,409,307,230,230,230};
+
+/* Walk the chunks of one RIFF/WAVE between `base` and `limit`, which is the end of the containing
+ * blob rather than whatever the header claims: a declared size larger than the container is a
+ * corrupt file, not permission to read past it. */
+static int wave_parse(const uint8_t *d,uint32_t base,uint32_t limit,GmlWave *w){
+  if(!d || !w || limit<base || limit-base<12u) return 0;
+  if(memcmp(d+base,"RIFF",4) || memcmp(d+base+8,"WAVE",4)) return 0;
+  memset(w,0,sizeof(*w));
+  w->channels=1;
+  w->sample_rate=44100;
+  uint64_t declared=(uint64_t)base+8u+rd32(d,base+4);
+  uint32_t end=declared<(uint64_t)limit ? (uint32_t)declared : limit;
+  int have_format=0;
+  for(uint32_t o=base+12; o+8<=end;){
+    uint32_t size=rd32(d,o+4);
+    uint32_t body=o+8;
+    if(size>end-body) break;
+    if(!memcmp(d+o,"fmt ",4) && size>=16){
+      w->format=(int)rd16(d,body);
+      w->channels=(int)rd16(d,body+2);
+      w->sample_rate=(int)rd32(d,body+4);
+      w->block_align=(int)rd16(d,body+12);
+      w->bits=(int)rd16(d,body+14);
+      if(w->format==GML_WAVE_MS_ADPCM && size>=22){
+        int count=(int)rd16(d,body+20);
+        if(count>GML_WAVE_COEF_MAX) count=GML_WAVE_COEF_MAX;
+        if(count>0 && size>=22u+(uint32_t)count*4u){
+          for(int i=0;i<count;i++){
+            w->coef1[i]=(int16_t)rd16(d,body+22+(uint32_t)i*4);
+            w->coef2[i]=(int16_t)rd16(d,body+24+(uint32_t)i*4);
+          }
+          w->coef_count=count;
+        }
+      }
+      have_format=1;
+    } else if(!memcmp(d+o,"data",4) && !w->data){
+      w->data=d+body;
+      w->bytes=size;
+    }
+    uint64_t next=(uint64_t)body+size+(size&1u);
+    if(next>end) break;
+    o=(uint32_t)next;
+  }
+  if(w->format==GML_WAVE_MS_ADPCM && !w->coef_count){
+    for(int i=0;i<7;i++){
+      w->coef1[i]=gml_ms_adpcm_default_coef1[i];
+      w->coef2[i]=gml_ms_adpcm_default_coef2[i];
+    }
+    w->coef_count=7;
+  }
+  return have_format && w->data!=NULL && w->channels>=1 && w->channels<=2 &&
+         w->sample_rate>0 && w->sample_rate<=384000;
+}
+
+/* Samples one MS ADPCM block holds per channel. The block opens with seven bytes of state per
+ * channel and every remaining nibble is one sample, on top of the two the state already primed. */
+static uint32_t ms_adpcm_block_samples(const GmlWave *w){
+  if(w->block_align<=7*w->channels) return 0;
+  return (uint32_t)((w->block_align-7*w->channels)*8/(4*w->channels))+2u;
+}
+static int16_t ms_adpcm_sample(int nibble,int *sample1,int *sample2,int *delta,
+                               int coef1,int coef2){
+  static const int signed_nibble[16]={0,1,2,3,4,5,6,7,-8,-7,-6,-5,-4,-3,-2,-1};
+  /* The coefficients come from the file when it carries its own table, so the product is bounded
+   * by two full int16 ranges rather than by the standard table's 512. */
+  int64_t wide=((int64_t)*sample1*coef1+(int64_t)*sample2*coef2)>>8;
+  wide+=(int64_t)signed_nibble[nibble]*(*delta);
+  int predictor=wide>32767?32767:(wide<-32768?-32768:(int)wide);
+  *sample2=*sample1;
+  *sample1=predictor;
+  /* The step size only ever triples, so an encoder's own stream stays in the low thousands. The
+   * ceiling is here because a corrupt block can ask for that growth without end. */
+  int next=(gml_ms_adpcm_adapt[nibble]*(*delta))>>8;
+  *delta=next<16?16:(next>(1<<20)?(1<<20):next);
+  return (int16_t)predictor;
+}
+static uint32_t ms_adpcm_decode(const GmlWave *w,int16_t *out,uint32_t capacity){
+  int channels=w->channels;
+  uint32_t block=(uint32_t)w->block_align;
+  uint32_t produced=0;
+  for(uint32_t offset=0; block>0 && w->bytes-offset>=block; offset+=block){
+    const uint8_t *b=w->data+offset;
+    int sample1[2]={0,0}, sample2[2]={0,0}, delta[2]={16,16}, index[2]={0,0};
+    uint32_t cursor=0;
+    for(int c=0;c<channels;c++){
+      int selector=b[cursor++];
+      index[c]=selector<w->coef_count?selector:w->coef_count-1;
+    }
+    for(int c=0;c<channels;c++){ delta[c]=(int16_t)rd16(b,cursor); cursor+=2; }
+    for(int c=0;c<channels;c++){ sample1[c]=(int16_t)rd16(b,cursor); cursor+=2; }
+    for(int c=0;c<channels;c++){ sample2[c]=(int16_t)rd16(b,cursor); cursor+=2; }
+    for(int c=0;c<channels && produced<capacity;c++) out[produced++]=(int16_t)sample2[c];
+    for(int c=0;c<channels && produced<capacity;c++) out[produced++]=(int16_t)sample1[c];
+    int channel=0;
+    for(;cursor<block && produced<capacity;cursor++)
+      for(int half=0;half<2 && produced<capacity;half++){
+        int nibble=half?(b[cursor]&15):(b[cursor]>>4);
+        out[produced++]=ms_adpcm_sample(nibble,&sample1[channel],&sample2[channel],
+                                        &delta[channel],w->coef1[index[channel]],
+                                        w->coef2[index[channel]]);
+        channel=channels>1?channel^1:0;
+      }
+  }
+  return produced;
+}
+
+/* One decoded sound may not exceed this. It bounds a corrupt header as much as a long effect:
+ * an ADPCM block count is read from the file and the expansion is four times the stored bytes. */
+#define GML_WAVE_DECODED_MAX (64u*1024u*1024u)
+
+/* Present a parsed WAVE as the mixer's interleaved 16-bit samples. 16-bit PCM is referenced where
+ * it already lies, so the common case still costs nothing; every other encoding is decoded into a
+ * buffer the caller owns. Answering 0 leaves the sound silent, which is what an encoding nobody
+ * has implemented should sound like. */
+static int wave_to_pcm16(const GmlWave *w,const int16_t **pcm,uint32_t *nval,int16_t **owned){
+  *pcm=NULL; *nval=0; *owned=NULL;
+  if(!w->data || !w->bytes) return 0;
+  if(w->format==GML_WAVE_PCM && w->bits==16){
+    *pcm=(const int16_t*)w->data;
+    *nval=w->bytes/2u;
+    return 1;
+  }
+  uint32_t values=0;
+  if(w->format==GML_WAVE_PCM && w->bits==8) values=w->bytes;
+  else if(w->format==GML_WAVE_MS_ADPCM && w->bits==4){
+    uint32_t per_block=ms_adpcm_block_samples(w);
+    uint32_t blocks=w->block_align>0?w->bytes/(uint32_t)w->block_align:0;
+    if(!per_block || !blocks) return 0;
+    if(per_block>GML_WAVE_DECODED_MAX/((uint32_t)w->channels*blocks)) return 0;
+    values=per_block*blocks*(uint32_t)w->channels;
+  } else return 0;
+  if(!values || values>GML_WAVE_DECODED_MAX/sizeof(int16_t)) return 0;
+  int16_t *out=(int16_t*)malloc((size_t)values*sizeof(*out));
+  if(!out) return 0;
+  if(w->format==GML_WAVE_PCM){
+    /* 8-bit WAVE samples are unsigned around a 128 midpoint. */
+    for(uint32_t i=0;i<values;i++) out[i]=(int16_t)(((int)w->data[i]-128)*256);
+  } else {
+    uint32_t produced=ms_adpcm_decode(w,out,values);
+    if(!produced){ free(out); return 0; }
+    values=produced;
+  }
+  *pcm=out; *nval=values; *owned=out;
+  return 1;
+}
+
+static void wave_report_unsupported(GmlAudio *a,const GmlWave *w){
+  /* An empty data chunk is an empty sound, which every reading of it plays as silence. Only an
+   * encoding carrying samples nobody decodes is worth a line. */
+  if(!w->bytes || !audio_setting(a,"GML_LOG_AUDIO")) return;
+  anygm_host_logf(a && a->win ? a->win->host : NULL,ANYGM_LOG_DEBUG,
+                  "[audio] WAVE format=%d bits=%d is not decoded; the sound stays silent\n",
+                  w->format,w->bits);
+}
+
+/* Take the samples of one parsed WAVE onto a sound, whatever the container it came from. */
+static void sound_take_wave(GmlAudio *a,GmlSound *s,const GmlWave *w){
+  s->channels=w->channels;
+  s->sample_rate=w->sample_rate;
+  const int16_t *pcm=NULL; uint32_t nval=0; int16_t *owned=NULL;
+  if(wave_to_pcm16(w,&pcm,&nval,&owned)){
+    s->pcm=pcm;
+    s->nval=nval;
+    if(owned){ free(s->own); s->own=owned; }
+  } else wave_report_unsupported(a,w);
+}
+
 /* Attach one data.win AUDO blob: RIFF PCM stays raw, OGG and MP3 stay compressed. */
 static void audio_sound_attach_embedded(GmlAudio *a,GmlSound *s,uint32_t audoid){
   const GmlWin *win=a->win;
@@ -219,18 +405,10 @@ static void audio_sound_attach_embedded(GmlAudio *a,GmlSound *s,uint32_t audoid)
   if(base+12>win->size) return;
   /* uncompressed RIFF/WAV */
   if(memcmp(d+base,"RIFF",4)==0){
-    uint32_t end=base+8+rd32(d,base+4); if(end>base+blen) end=base+blen;
-    uint32_t o=base+12; const uint8_t *pcm=NULL; uint32_t plen=0;
-    while(o+8<=end){
-      uint32_t csz=rd32(d,o+4);
-      if(memcmp(d+o,"fmt ",4)==0){
-        s->channels=rd16(d,o+10);
-        s->sample_rate=(int)rd32(d,o+12);
-      }
-      else if(memcmp(d+o,"data",4)==0){ pcm=d+o+8; plen=csz; }
-      o+=8+csz+(csz&1);
-    }
-    if(pcm){ s->pcm=(const int16_t*)pcm; s->nval=plen/2; }
+    uint64_t declared_end=(uint64_t)base+blen;
+    uint32_t limit=declared_end<(uint64_t)win->size ? (uint32_t)declared_end : (uint32_t)win->size;
+    GmlWave w;
+    if(wave_parse(d,base,limit,&w)) sound_take_wave(a,s,&w);
   }
   /* OGG Vorbis stays compressed until playback. */
   else if(memcmp(d+base,"OggS",4)==0){
@@ -290,20 +468,8 @@ GmlAudio *gml_audio_create(GmlWin *win){
         uint32_t gblen=rd32(gd,gap), gbase=gap+4;
         if(gblen>a->grp_size[group]-gbase || gblen<4) continue;
         if(gblen>=12 && memcmp(gd+gbase,"RIFF",4)==0){
-          uint64_t declared_end=(uint64_t)gbase+8u+rd32(gd,gbase+4);
-          uint32_t end=declared_end<(uint64_t)gbase+gblen ? (uint32_t)declared_end : gbase+gblen;
-          uint32_t o=gbase+12; const uint8_t *pcm=NULL; uint32_t plen=0;
-          while(o+8<=end){
-            uint32_t csz=rd32(gd,o+4);
-            if(csz>end-o-8) break;
-            if(memcmp(gd+o,"fmt ",4)==0 && csz>=8){
-              a->snd[i].channels=rd16(gd,o+10);
-              a->snd[i].sample_rate=(int)rd32(gd,o+12);
-            }
-            else if(memcmp(gd+o,"data",4)==0){ pcm=gd+o+8; plen=csz; }
-            o+=8+csz+(csz&1);
-          }
-          if(pcm){ a->snd[i].pcm=(const int16_t*)pcm; a->snd[i].nval=plen/2; }
+          GmlWave w;
+          if(wave_parse(gd,gbase,gbase+gblen,&w)) sound_take_wave(a,&a->snd[i],&w);
         } else if(memcmp(gd+gbase,"OggS",4)==0){
           a->snd[i].ogg=gd+gbase; a->snd[i].ogg_len=gblen;
         } else if(is_mp3_blob(gd+gbase,gblen)){

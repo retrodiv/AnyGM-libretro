@@ -232,6 +232,196 @@ int expect_flagged_external_sound_precedes_embedded_audio_id(void){
 }
 
 
+/* Build a WAVE around an already-encoded data chunk, declaring the format tag, channel count,
+ * bit depth and block alignment the samples were written with. The cases below use it to say the
+ * same signal twice in two encodings, so what they compare is the decoder rather than a constant
+ * somebody wrote down. */
+static size_t fixture_wave(unsigned char *out,size_t cap,uint16_t format,uint16_t channels,
+                           uint32_t rate,uint16_t bits,uint16_t block_align,
+                           const unsigned char *extra,uint16_t extra_size,
+                           const unsigned char *payload,uint32_t payload_size){
+  size_t header=36u+(size_t)extra_size+(extra_size?2u:0u);
+  size_t bytes=header+8u+payload_size;
+  if(!out || bytes>cap) return 0;
+  memset(out,0,bytes);
+  memcpy(out,"RIFF",4);
+  fixture_write_u32(out,4,(uint32_t)bytes-8u);
+  memcpy(out+8,"WAVEfmt ",8);
+  fixture_write_u32(out,16,(uint32_t)(16u+(extra_size?2u+extra_size:0u)));
+  fixture_write_u16(out,20,format);
+  fixture_write_u16(out,22,channels);
+  fixture_write_u32(out,24,rate);
+  fixture_write_u32(out,28,rate*block_align);
+  fixture_write_u16(out,32,block_align);
+  fixture_write_u16(out,34,bits);
+  if(extra_size){
+    fixture_write_u16(out,36,extra_size);
+    memcpy(out+38,extra,extra_size);
+  }
+  memcpy(out+header,"data",4);
+  fixture_write_u32(out,header+4u,payload_size);
+  memcpy(out+header+8u,payload,payload_size);
+  return bytes;
+}
+
+/* Two embedded sounds, one blob each, both marked embedded so the container's own bytes are what
+ * plays. Returns the container size actually used. */
+static size_t fixture_two_sound_container(unsigned char *data,size_t cap,
+                                          const unsigned char *first,size_t first_size,
+                                          const unsigned char *second,size_t second_size,
+                                          uint32_t *audo_chunk_out){
+  enum { first_record=64, second_record=first_record+40, audo_chunk=first_record+96 };
+  size_t first_blob=audo_chunk+12u;
+  size_t second_blob=first_blob+4u+first_size;
+  size_t total=second_blob+4u+second_size;
+  if(!data || total>cap) return 0;
+  memset(data,0,total);
+  fixture_write_u32(data,0,2);                          /* SOND count */
+  fixture_write_u32(data,4,first_record);
+  fixture_write_u32(data,8,second_record);
+  float one=1.0f;
+  const size_t records[2]={first_record,second_record};
+  for(int index=0;index<2;index++){
+    fixture_write_u32(data,records[index]+4,1);         /* IsEmbedded */
+    memcpy(data+records[index]+20,&one,sizeof one);     /* resource volume */
+    fixture_write_u32(data,records[index]+28,0);        /* default audio group */
+    fixture_write_u32(data,records[index]+32,(uint32_t)index);
+  }
+  fixture_write_u32(data,audo_chunk,2);                 /* AUDO count */
+  fixture_write_u32(data,audo_chunk+4,(uint32_t)first_blob);
+  fixture_write_u32(data,audo_chunk+8,(uint32_t)second_blob);
+  fixture_write_u32(data,first_blob,(uint32_t)first_size);
+  memcpy(data+first_blob+4u,first,first_size);
+  fixture_write_u32(data,second_blob,(uint32_t)second_size);
+  memcpy(data+second_blob+4u,second,second_size);
+  if(audo_chunk_out) *audo_chunk_out=(uint32_t)audo_chunk;
+  return total;
+}
+
+/* Mix one embedded sound of a two-sound container on its own. Each call builds its own mixer so
+ * the two sounds are never summed together. */
+static int fixture_mix_one_embedded(unsigned char *data,size_t size,uint32_t audo_chunk,
+                                    int sound,int16_t *out,int frames){
+  GmlWin win={0};
+  win.data=data; win.size=(uint32_t)size; win.n_chunks=2;
+  memcpy(win.chunks[0].name,"SOND",4); win.chunks[0].off=0; win.chunks[0].size=audo_chunk;
+  memcpy(win.chunks[1].name,"AUDO",4); win.chunks[1].off=audo_chunk;
+  win.chunks[1].size=(uint32_t)size-audo_chunk;
+  GmlAudio *audio=gml_audio_create(&win);
+  if(!audio) return 0;
+  int voice=gml_audio_play(audio,sound,0);
+  memset(out,0,(size_t)frames*2u*sizeof(*out));
+  gml_audio_mix(audio,out,frames);
+  gml_audio_free(audio);
+  return voice>=0;
+}
+
+/* An 8-bit WAVE says so in its format chunk, and its samples are unsigned around 128. Read as
+ * 16-bit little-endian pairs instead, a quiet run of 0x80 bytes becomes -32640 held for the whole
+ * effect: full-scale noise. The rule is stated as an equality between two
+ * encodings of one signal, so no constant of the mixer's own is written down here. */
+int expect_embedded_eight_bit_wave_matches_its_sixteen_bit_signal(void){
+  enum { values=64, frames=48 };
+  unsigned char eight[128],sixteen[192],data[1024];
+  unsigned char eight_payload[values];
+  unsigned char sixteen_payload[values*2];
+  for(int index=0;index<values;index++){
+    unsigned char sample=(unsigned char)(0x80+((index%8)-4)*16);
+    eight_payload[index]=sample;
+    int16_t widened=(int16_t)(((int)sample-128)*256);
+    fixture_write_u16(sixteen_payload,(size_t)index*2u,(uint16_t)widened);
+  }
+  size_t eight_size=fixture_wave(eight,sizeof eight,1,1,44100,8,1,NULL,0,
+                                 eight_payload,(uint32_t)sizeof eight_payload);
+  size_t sixteen_size=fixture_wave(sixteen,sizeof sixteen,1,1,44100,16,2,NULL,0,
+                                   sixteen_payload,(uint32_t)sizeof sixteen_payload);
+  uint32_t audo_chunk=0;
+  size_t size=eight_size && sixteen_size
+    ? fixture_two_sound_container(data,sizeof data,eight,eight_size,sixteen,sixteen_size,
+                                  &audo_chunk)
+    : 0;
+  if(!size) return 0;
+  int16_t narrow[frames*2],wide[frames*2];
+  int ok=fixture_mix_one_embedded(data,size,audo_chunk,0,narrow,frames) &&
+         fixture_mix_one_embedded(data,size,audo_chunk,1,wide,frames);
+  int audible=0;
+  for(int index=0;ok && index<frames*2;index++){
+    audible|=wide[index]!=0;
+    if(narrow[index]!=wide[index]){
+      fprintf(stderr,"8-bit WAVE differs from its 16-bit signal at %d: %d vs %d\n",
+              index,narrow[index],wide[index]);
+      ok=0;
+    }
+  }
+  if(ok && !audible){ fprintf(stderr,"the compared 8-bit fixture was silent\n"); ok=0; }
+  return ok;
+}
+
+/* MS ADPCM stores seven bytes of predictor state per channel and one sample per nibble after it.
+ * The same rule as above: the block below encodes a signal this test also writes as 16-bit PCM,
+ * and the two must mix identically. Without a decoder the compressed bytes were played as if they
+ * were samples, which is noise rather than the effect. */
+int expect_embedded_ms_adpcm_wave_matches_its_sixteen_bit_signal(void){
+  enum { block_align=32, primed=2, nibbles=(block_align-7)*2, values=primed+nibbles, frames=48 };
+  unsigned char block[block_align],sixteen[192],adpcm[192],data[1024];
+  unsigned char sixteen_payload[values*2];
+  /* Predictor set 0 is {256,0}: the next sample is the previous one plus the nibble times the
+   * delta, which makes the expected signal something this test can state in closed form. */
+  memset(block,0,sizeof block);
+  block[0]=0;                                        /* coefficient set */
+  fixture_write_u16(block,1,16);                     /* initial delta */
+  fixture_write_u16(block,3,(uint16_t)1000);         /* sample1: the second sample out */
+  fixture_write_u16(block,5,(uint16_t)2000);         /* sample2: the first sample out */
+  block[7]=0x10;                                     /* nibbles 1 then 0 */
+  static const int adaptation[16]=
+    {230,230,230,230,307,409,512,614,768,614,512,409,307,230,230,230};
+  int sample1=1000,sample2=2000,delta=16;
+  int16_t expected[values];
+  expected[0]=(int16_t)sample2;
+  expected[1]=(int16_t)sample1;
+  for(int index=0;index<nibbles;index++){
+    int nibble=(index==0)?1:0;                       /* one step up, then hold */
+    int predictor=sample1;                           /* (sample1*256 + sample2*0) >> 8 */
+    predictor+=nibble*delta;
+    if(predictor>32767) predictor=32767; else if(predictor<-32768) predictor=-32768;
+    sample2=sample1;
+    sample1=predictor;
+    int next=(adaptation[nibble]*delta)>>8;
+    delta=next<16?16:next;
+    expected[primed+index]=(int16_t)predictor;
+  }
+  for(int index=0;index<values;index++)
+    fixture_write_u16(sixteen_payload,(size_t)index*2u,(uint16_t)expected[index]);
+  unsigned char extra[4];
+  fixture_write_u16(extra,0,(uint16_t)((block_align-7)*2+2));   /* samples per block */
+  fixture_write_u16(extra,2,0);                                 /* no coefficient table */
+  size_t adpcm_size=fixture_wave(adpcm,sizeof adpcm,2,1,44100,4,block_align,extra,sizeof extra,
+                                 block,(uint32_t)sizeof block);
+  size_t sixteen_size=fixture_wave(sixteen,sizeof sixteen,1,1,44100,16,2,NULL,0,
+                                   sixteen_payload,(uint32_t)sizeof sixteen_payload);
+  uint32_t audo_chunk=0;
+  size_t size=adpcm_size && sixteen_size
+    ? fixture_two_sound_container(data,sizeof data,adpcm,adpcm_size,sixteen,sixteen_size,
+                                  &audo_chunk)
+    : 0;
+  if(!size) return 0;
+  int16_t compressed[frames*2],wide[frames*2];
+  int ok=fixture_mix_one_embedded(data,size,audo_chunk,0,compressed,frames) &&
+         fixture_mix_one_embedded(data,size,audo_chunk,1,wide,frames);
+  int audible=0;
+  for(int index=0;ok && index<frames*2;index++){
+    audible|=wide[index]!=0;
+    if(compressed[index]!=wide[index]){
+      fprintf(stderr,"MS ADPCM WAVE differs from its 16-bit signal at %d: %d vs %d\n",
+              index,compressed[index],wide[index]);
+      ok=0;
+    }
+  }
+  if(ok && !audible){ fprintf(stderr,"the compared ADPCM fixture was silent\n"); ok=0; }
+  return ok;
+}
+
+
 int expect_audio_group_gain(void){
   GmlWin win={0};
   GmlAudio *audio=gml_audio_create(&win);
