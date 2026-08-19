@@ -134,7 +134,8 @@ COMPATIBILITY_TESTS := test_compatibility
 CHECK_TARGETS := $(addprefix $(TEST_DIR)/,$(RUNTIME_TESTS) $(VIDEO_RENDERER_TESTS) \
 	$(CONTENT_TESTS) $(MEDIA_TESTS) $(AUDIO_TESTS) $(COMPATIBILITY_TESTS))
 INTEGRATION_TESTS := $(TEST_DIR)/test_engine_instances $(TEST_DIR)/test_host_setting_budget $(TEST_DIR)/test_engine_blocking_wait \
-	$(TEST_DIR)/test_engine_scoped_overrides
+	$(TEST_DIR)/test_engine_scoped_overrides \
+	$(TEST_DIR)/test_engine_composed_raster
 ifneq ($(HARDWARE_RENDER),0)
 INTEGRATION_TESTS += $(TEST_DIR)/test_graphics_state
 endif
@@ -526,6 +527,11 @@ $(TEST_DIR)/test_engine_blocking_wait: tests/integration/test_engine_blocking_wa
 	$(call link_runtime_test,$(TEST_CPPFLAGS))
 
 $(TEST_DIR)/test_engine_scoped_overrides: tests/integration/test_engine_scoped_overrides.c \
+	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(TEST_CPPFLAGS))
+
+$(TEST_DIR)/test_engine_composed_raster: tests/integration/test_engine_composed_raster.c \
 	tests/support/synthetic_content.c $(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(TEST_CPPFLAGS))

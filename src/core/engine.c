@@ -328,6 +328,7 @@ static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSou
 static void boot_runtime(AnygmEngine *engine) {
   /* A reset is a cold boot. Keep engine time on the same timeline as an initial load. */
   { engine->vm.frame = 0; }
+  engine->classic_compositor = 0;
   engine->state_reapply_size = 0;
   engine->state_frame_available = 0;
   engine->input_continuity_pending = 0;
@@ -875,8 +876,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   engine->composed_frame=anygm_policy_uses_classic_runtime(&engine->win) &&
                          gml_surface_get_target(&engine->render)>=0 &&
                          !anygm_host_development_setting(&engine->host,"GML_NO_CRT");
-  /* For this frame, neither fill the composed base nor blit the world over it. Keep normal application drawing enabled for later frames. */
-  if(engine->composed_frame) engine->content_presented=1;
+  /* A classic surface target held after Step directs the draw phase into that target. Preserve its explicit composition for the current frame while keeping automatic application drawing enabled for later frames. */
+  if(engine->composed_frame){ engine->content_presented=1; engine->classic_compositor=1; }
   engine->vm.draw_phase=1;
   if(engine->vm.game_change_pending)
     return engine_apply_game_change_and_run_frame(engine);

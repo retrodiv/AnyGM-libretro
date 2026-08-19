@@ -222,6 +222,10 @@ struct AnygmEngine {
    * carries this to the next frame, whose step events compose into the presented raster and which
    * therefore has to name that raster before running them. */
   int composed_frame;
+  /* Latched for the current load after a frame uses explicit composition.
+   * Presentation geometry is resolved before the step phase updates the frame-scoped flag,
+   * so the latched value selects the next frame's raster. */
+  int classic_compositor;
   uint32_t *classic_phase_mem;
   size_t classic_phase_cap;
   unsigned width,height,base_width,base_height;

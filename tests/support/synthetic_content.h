@@ -42,6 +42,10 @@ int anygm_synthetic_alarm_content_create(AnygmSyntheticContent *fixture);
  * record. Advancing on a global rather than on input keeps the room change under the test's
  * control without running any input path. */
 int anygm_synthetic_scoped_override_content_create(AnygmSyntheticContent *fixture);
+/* Paired synthetic classic fixtures use the same 64x48 view and 128x96 port. One leaves a
+ * matching surface bound after the step phase; the other uses ordinary room presentation. */
+int anygm_synthetic_classic_compositor_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_classic_plain_content_create(AnygmSyntheticContent *fixture);
 /* One instance whose Alarm 0 spins on sleep() until a global is set, and a Step event that counts
  * the frames it runs on. A wait like this cannot end inside the frame it starts on, so the counter
  * says what the runtime did with the event: held it and continued it later, or ran the whole loop

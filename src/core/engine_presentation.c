@@ -1029,7 +1029,13 @@ void compute_present(AnygmEngine *engine) {
     unsigned room_window_w, room_window_h;
     cur_classic_room_window_res(engine,&room_window_w, &room_window_h);
     int window_w,window_h;
-    content_window_extent(engine,(int)room_window_w,(int)room_window_h,&window_w,&window_h);
+    /* An explicitly composed classic frame retains its authored raster. The host-canvas pass
+     * then fits that raster uniformly into the virtual monitor. Frames without explicit
+     * composition continue to rasterize at the configured monitor extent. */
+    if(engine->classic_compositor)
+      authored_window_extent(engine,(int)room_window_w,(int)room_window_h,&window_w,&window_h);
+    else
+      content_window_extent(engine,(int)room_window_w,(int)room_window_h,&window_w,&window_h);
     if (window_w > 0 && window_h > 0 && window_w <= FB_MAX_W && window_h <= FB_MAX_H) {
       engine->screen_stage_window_raster=0;
       engine->canvas_mode = 0;

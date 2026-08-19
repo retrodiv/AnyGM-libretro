@@ -131,6 +131,107 @@ int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
   return 1;
 }
 
+static int synthetic_classic_present_content_create(AnygmSyntheticContent *fixture,int compositing){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+
+  char startup[192],create[192],step[192],endstep[192];
+  snprintf(startup,sizeof startup,"%s/startup.gml",fixture->directory);
+  snprintf(create,sizeof create,"%s/create.gml",fixture->directory);
+  snprintf(step,sizeof step,"%s/step.gml",fixture->directory);
+  snprintf(endstep,sizeof endstep,"%s/endstep.gml",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  /* The synthetic compositor blits a 64x48 surface at scale 2 into the room's authored
+   * 128x96 port. */
+  if(!write_text(startup,"global.fixture_frames = 0;\n") ||
+     !write_text(create,
+                 compositing ? "canvas_scale = 2;\ncanvas = surface_create(64,48);\n"
+                             : "canvas_scale = 2;\n") ||
+     !write_text(step,
+                 compositing
+                   ? "global.fixture_frames += 1;\n"
+                     "if (surface_exists(canvas)) {\n"
+                     "  surface_reset_target();\n"
+                     "  draw_clear(0);\n"
+                     "  draw_surface_stretched(canvas, 0, 0, 64*canvas_scale, 48*canvas_scale);\n"
+                     "}\n"
+                   : "global.fixture_frames += 1;\n") ||
+     !write_text(endstep,
+                 compositing ? "if (surface_exists(canvas)) surface_set_target(canvas);\n"
+                             : "\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+
+  GmlcProject project={0};
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  project.host=&file_services;
+  GmlcObject object={0};
+  GmlcObjectEvent events[3]={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance instance={0};
+  int room_order=0;
+  project.name=(char *)"classic-present-fixture";
+  project.classic_version=800;
+  project.classic_scaling=0;
+  project.startup_code_path=startup;
+  project.objects=&object;
+  project.n_objects=project.cap_objects=1;
+  project.rooms=&room;
+  project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order;
+  project.n_room_order=1;
+
+  object.id=object.name=(char *)"obj_presenter";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.visible=0;
+  object.events=events;
+  object.n_events=object.cap_events=3;
+  events[0].event_type=0; events[0].event_number=0; events[0].source_path=create;
+  events[1].event_type=3; events[1].event_number=0; events[1].source_path=step;
+  events[2].event_type=3; events[2].event_number=2; events[2].source_path=endstep;
+
+  room.id=room.name=(char *)"room_presented";
+  room.width=64;
+  room.height=48;
+  room.speed=60;
+  room.draw_background_color=1;
+  room.view_enabled=1;
+  room.n_views=1;
+  room.views[0].visible=1;
+  room.views[0].wview=64;
+  room.views[0].hview=48;
+  room.views[0].wport=128;
+  room.views[0].hport=96;
+  room.views[0].hspeed=room.views[0].vspeed=-1;
+  room.views[0].object_id=-1;
+  room.instances=&instance;
+  room.n_instances=room.cap_instances=1;
+  instance.id=instance.name=(char *)"instance_presenter";
+  instance.object_id=0;
+  instance.instance_id=100000;
+  instance.sx=instance.sy=1.0f;
+  instance.color=0xFFFFFFFFu;
+
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"synthetic classic present package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  return 1;
+}
+int anygm_synthetic_classic_compositor_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_classic_present_content_create(fixture,1);
+}
+int anygm_synthetic_classic_plain_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_classic_present_content_create(fixture,0);
+}
+
 int anygm_synthetic_scoped_override_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
