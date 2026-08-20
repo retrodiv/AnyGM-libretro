@@ -204,6 +204,17 @@ static unsigned g_options_version;
 static struct retro_variable *g_flat_variables;
 static char **g_flat_storage;
 static size_t g_flat_count;
+static int g_published_parts=-1;
+static int g_published_ranges=-1;
+static int g_published_logical_raster=-1;
+
+static int update_option_visibility(void);
+
+static void invalidate_published_visibility(void){
+  g_published_parts=-1;
+  g_published_ranges=-1;
+  g_published_logical_raster=-1;
+}
 
 static void free_flat_variables(void){
   if(g_flat_storage){
@@ -281,9 +292,11 @@ static void publish_options(void){
   if(g_options_version>=2){
     g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2,
                            (void *)&g_options_v2);
-    return;
   }
-  publish_flat_variables();
+  else publish_flat_variables();
+  /* Replacing a declaration gives the frontend a fresh default-visible copy. The values may be
+   * unchanged, but every display hint belongs to the replaced copy and has to be sent again. */
+  invalidate_published_visibility();
 }
 
 static bool options_update_display(void);
@@ -296,6 +309,7 @@ void libretro_options_register(void){
   publish_options();
   struct retro_core_options_update_display_callback update={options_update_display};
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK,&update);
+  update_option_visibility();
 }
 
 static const char *option_value(const char *key){
@@ -337,8 +351,6 @@ static uint32_t option_resolution(const char *key){
  * A categorized declaration holds a fixed number of values, which no game is obliged to fit
  * inside. Those are offered a stretch at a time, with a second option selecting the stretch;
  * the flat declaration has no such ceiling and receives every room at once. */
-static int update_option_visibility(void);
-
 static struct retro_core_option_v2_definition *definition_for(const char *key){
   for(size_t i=0;g_definitions[i].key;i++)
     if(!strcmp(g_definitions[i].key,key)) return &g_definitions[i];
@@ -349,7 +361,6 @@ static char **g_page_choice_text;
 static size_t g_page_choice_count;
 static uint32_t g_room_count;
 static uint32_t g_room_page;
-static char g_room_page_text[32];
 
 static void free_text_block(char ***block,size_t *count){
   if(*block) for(size_t i=0;i<*count;i++) free((*block)[i]);
@@ -366,6 +377,15 @@ static size_t room_page_total(void){
   size_t span=room_page_span();
   if(!span || !g_room_count) return 1;
   return ((size_t)g_room_count+span-1)/span;
+}
+
+static uint32_t room_page_from_value(const char *value){
+  if(!value) return 0;
+  char *end=NULL;
+  unsigned long low=strtoul(value,&end,10);
+  size_t span=room_page_span();
+  if(end==value || !span) return 0;
+  return (uint32_t)(low/span);
 }
 
 static void fill_values(struct retro_core_option_v2_definition *definition,
@@ -397,11 +417,7 @@ void libretro_options_publish_rooms(void){
   /* The stretch is read here rather than left to the settings pass: content is loaded after that
    * pass has already run, so on the first publication there is nothing for it to have read. */
   const char *selected=option_value("anygm_start_room_page");
-  if(selected){
-    snprintf(g_room_page_text,sizeof g_room_page_text,"%s",selected);
-    unsigned long low=strtoul(selected,NULL,10);
-    g_room_page=span?(uint32_t)(low/span):0u;
-  }
+  if(selected) g_room_page=room_page_from_value(selected);
   if(g_room_page>=total) g_room_page=0;
   size_t first=(size_t)g_room_page*span;
   size_t last=first+span;
@@ -481,12 +497,11 @@ static int update_option_visibility(void){
   static const char *const monitor_dimensions[]={
     "anygm_width_resolution","anygm_height_resolution",NULL
   };
-  static int published_parts=-1, published_ranges=-1, published_logical_raster=-1;
   int parts=option_on("anygm_embedded_shaders",1)?1:0;
   int ranges=g_page_choice_count>1?1:0;
   int logical_raster=option_on("anygm_render_game_resolution",1)?1:0;
-  if(parts==published_parts && ranges==published_ranges &&
-     logical_raster==published_logical_raster)
+  if(parts==g_published_parts && ranges==g_published_ranges &&
+     logical_raster==g_published_logical_raster)
     return 0;
   struct retro_core_option_display display;
   display.visible=parts?true:false;
@@ -505,9 +520,9 @@ static int update_option_visibility(void){
   display.key="anygm_aspect_ratio_force";
   display.visible=logical_raster?true:false;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
-  published_parts=parts;
-  published_ranges=ranges;
-  published_logical_raster=logical_raster;
+  g_published_parts=parts;
+  g_published_ranges=ranges;
+  g_published_logical_raster=logical_raster;
   return 1;
 }
 
@@ -527,7 +542,7 @@ void libretro_options_release(void){
   free_flat_variables();
   g_room_count=0;
   g_room_page=0;
-  g_room_page_text[0]='\0';
+  invalidate_published_visibility();
 }
 
 void libretro_options_apply(bool all_fields){
@@ -594,7 +609,7 @@ void libretro_options_apply(bool all_fields){
   /* Choosing another stretch of rooms changes which rooms the chooser holds, not any setting the
    * runtime reads, so the list is rebuilt before the player opens it again. */
   value=option_value("anygm_start_room_page");
-  if(value && g_page_choice_count>1 && strcmp(value,g_room_page_text))
+  if(value && g_page_choice_count>1 && room_page_from_value(value)!=g_room_page)
     libretro_options_publish_rooms();
   update_option_visibility();
 

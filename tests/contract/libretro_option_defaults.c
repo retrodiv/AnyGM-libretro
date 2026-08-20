@@ -20,11 +20,13 @@ static const char *answered_value;
 static const char *answered_raster_value;
 static const char *answered_monitor_value;
 static const char *answered_aspect_value;
+static const char *answered_page_value;
 static bool (*menu_time_visibility)(void);
 static const struct retro_core_option_v2_category *declared_categories;
 static const struct retro_core_option_v2_definition *declared_definitions;
 static const struct retro_variable *declared_variables;
 static unsigned host_options_version=2;
+static unsigned grouped_publish_count;
 static AnygmConfigDelta applied_config;
 static unsigned config_apply_count;
 
@@ -58,6 +60,10 @@ static bool environment_callback(unsigned command,void *data){
       const struct retro_core_options_v2 *options=data;
       declared_categories=options?options->categories:NULL;
       declared_definitions=options?options->definitions:NULL;
+      grouped_publish_count++;
+      /* A fresh declaration starts with every option visible. Frontends own their copy and are not
+       * required to carry display hints across replacement of that copy. */
+      visibility_count=0;
       return true; }
     case RETRO_ENVIRONMENT_SET_VARIABLES:
       declared_variables=(const struct retro_variable*)data;
@@ -83,6 +89,9 @@ static bool environment_callback(unsigned command,void *data){
       if(variable->key && !strcmp(variable->key,"anygm_aspect_ratio_force") &&
          answered_aspect_value)
         value=answered_aspect_value;
+      if(variable->key && !strcmp(variable->key,"anygm_start_room_page") &&
+         answered_page_value)
+        value=answered_page_value;
       variable->value=value;
       return value!=NULL; }
     default:
@@ -172,7 +181,9 @@ static void begin(unsigned version,uint32_t rooms){
   answered_raster_value=NULL;
   answered_monitor_value=NULL;
   answered_aspect_value=NULL;
+  answered_page_value=NULL;
   menu_time_visibility=NULL;
+  grouped_publish_count=0;
   memset(&applied_config,0,sizeof applied_config);
   config_apply_count=0;
   memset(&g_libretro.config,0,sizeof g_libretro.config);
@@ -450,6 +461,45 @@ static void rooms_past_one_list_stay_reachable(void){
   expect("the last room offered",(unsigned)final,rooms-1u);
 }
 
+/* Replacing the option definitions also replaces the frontend's default-visible display state.
+ * Loading content does exactly that to add its room choices, so every dependent visibility hint
+ * has to be sent again even when the selected values themselves did not move. */
+static void room_publication_reapplies_visibility(void){
+  begin(2,3);
+  answered_raster_value="On";
+  libretro_options_publish_rooms();
+  if(shown("anygm_width_resolution")!=0 || shown("anygm_height_resolution")!=0)
+    complain("monitor dimensions were not hidden before room publication");
+  libretro_options_publish_rooms();
+  if(shown("anygm_width_resolution")!=0 || shown("anygm_height_resolution")!=0)
+    complain("room publication reset the monitor dimensions to visible");
+  if(shown("anygm_aspect_ratio_force")!=1)
+    complain("room publication lost the logical-raster option visibility");
+}
+
+/* A paged room chooser changes its first declaration from the placeholder "0" to the canonical
+ * range label for page zero. They select the same page. Applying an unrelated live option must not
+ * replace the complete option table while a frontend menu is using it. */
+static void an_unrelated_update_keeps_paged_definitions_stable(void){
+  begin(2,300);
+  answered_page_value="0";
+  answered_raster_value="On";
+  libretro_options_publish_rooms();
+  const struct retro_core_option_v2_definition *ranges=definition("anygm_start_room_page");
+  if(!ranges || !ranges->default_value){
+    complain("the paged room chooser has no default range");
+    return;
+  }
+  char selected_range[64];
+  snprintf(selected_range,sizeof selected_range,"%s",ranges->default_value);
+  answered_page_value=selected_range;
+  unsigned publications=grouped_publish_count;
+  answered_raster_value="Off";
+  libretro_options_apply(false);
+  if(grouped_publish_count!=publications)
+    complain("an unrelated live option republished the paged definitions");
+}
+
 /* Hosts that never learned about groups are given the flat declaration, which carries no ceiling
  * on values and therefore needs no stretches. */
 static void older_hosts_get_every_room_at_once(void){
@@ -499,6 +549,8 @@ int main(void){
   hidden_settings_are_the_ones_that_cannot_act();
   loaded_content_names_its_rooms();
   rooms_past_one_list_stay_reachable();
+  room_publication_reapplies_visibility();
+  an_unrelated_update_keeps_paged_definitions_stable();
   older_hosts_get_every_room_at_once();
   a_restarted_core_declares_its_settings_again();
   /* Everything the declarations hold is released here, so a leak checker running this case sees
