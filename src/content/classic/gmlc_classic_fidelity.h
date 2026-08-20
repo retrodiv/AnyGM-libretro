@@ -7,7 +7,7 @@
 #include "anygm_host.h"
 #include "gmlc_classic.h"
 
-#define GMLC_CLASSIC_FIDELITY_SUFFIX ".anygm-classic-fidelity"
+#define GMLC_CLASSIC_FIDELITY_SUFFIX ".fidelity.patch"
 #define GMLC_CLASSIC_FIDELITY_FILE_LIMIT GMLC_CLASSIC_FILE_LIMIT
 
 enum {

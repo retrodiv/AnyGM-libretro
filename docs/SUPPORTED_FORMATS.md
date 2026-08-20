@@ -118,7 +118,7 @@ The editor-standard revision-530 project is accepted directly with its `.gmd` ex
 
 An editor-standard `.gmd`, `.gm6`, `.gmk`, or `.gm81` may have adjacent standard `.gex`
 packages, ordinary externally referenced included files (notably GM6), and an optional
-`.anygm-classic-fidelity` companion supplied alongside an editor project. The companion is
+`.fidelity.patch` companion supplied alongside an editor project. The companion is
 applied only when its
 generation, project length, and embedded SHA-256 match the exact project bytes;
 it restores compiled resource details and normalized game-information presence that the editor
