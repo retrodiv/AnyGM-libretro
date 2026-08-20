@@ -75,6 +75,7 @@ int expect_legacy_sprite_text_builtin(void);
 int expect_centred_real_font_line_starts_on_a_whole_pixel(void);
 int expect_carriage_return_and_line_feed_are_one_break(void);
 int expect_a_wrapped_line_drops_the_space_it_broke_at(void);
+int expect_a_font_kerning_pair_moves_the_pen(void);
 int expect_legacy_sprite_assign_builtin(void);
 int expect_runtime_sprite_state_preserves_collision_extent(void);
 int expect_renderer_semantics(void);

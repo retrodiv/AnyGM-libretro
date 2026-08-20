@@ -20,6 +20,68 @@
 #include <string.h>
 
 
+/* Read per-glyph (right character, signed amount) kerning pairs. Supported records place
+ * the pair count at one of two offsets. Select a layout only when every implied record stride
+ * reaches the next glyph pointer exactly; otherwise leave kerning disabled. */
+static void font_read_kerning(GmlRender *r, GmlFont *f, const uint8_t *d,
+                              uint32_t table, uint32_t count){
+  if(!r || !r->win || !f || !d || count<2) return;
+  static const struct { uint32_t at, step; } layouts[2]={ {14u,16u}, {16u,18u} };
+  int chosen=-1;
+  for(int candidate=0; candidate<2 && chosen<0; candidate++){
+    int holds=1;
+    for(uint32_t g=0; g+1<count && holds; g++){
+      uint32_t q=u32(d,table+g*4), next=u32(d,table+(g+1)*4);
+      if((size_t)q+layouts[candidate].at+2u>r->win->size){ holds=0; break; }
+      uint32_t pairs=u16(d,q+layouts[candidate].at);
+      if(pairs>4096u || q+layouts[candidate].step+4u*pairs!=next) holds=0;
+    }
+    if(holds) chosen=candidate;
+  }
+  if(chosen<0) return;
+  uint32_t total=0;
+  for(uint32_t g=0; g+1<count; g++) total+=u16(d,u32(d,table+g*4)+layouts[chosen].at);
+  if(!total || total>1000000u) return;
+  GmlFontKern *pairs=(GmlFontKern*)calloc(total,sizeof(*pairs));
+  if(!pairs) return;
+  uint32_t written=0;
+  for(uint32_t g=0; g+1<count && written<total; g++){
+    uint32_t q=u32(d,table+g*4);
+    uint32_t n=u16(d,q+layouts[chosen].at);
+    uint16_t left=u16(d,q);
+    for(uint32_t k=0;k<n && written<total;k++){
+      uint32_t at=q+layouts[chosen].step+4u*k;
+      if((size_t)at+4u>r->win->size) break;
+      pairs[written].left=left;
+      pairs[written].right=u16(d,at);
+      pairs[written].amount=(int16_t)u16(d,at+2);
+      written++;
+    }
+  }
+  f->kerning=pairs; f->n_kerning=(int)written;
+  /* Sort once so layout can find each pair by binary search. */
+  for(int i=1;i<f->n_kerning;i++){
+    GmlFontKern key=f->kerning[i]; int j=i-1;
+    while(j>=0 && (f->kerning[j].left>key.left ||
+                   (f->kerning[j].left==key.left && f->kerning[j].right>key.right))){
+      f->kerning[j+1]=f->kerning[j]; j--;
+    }
+    f->kerning[j+1]=key;
+  }
+}
+/* The pen advance from `left` to `right`, beyond the left glyph's own shift. */
+static int font_kerning(const GmlFont *f, unsigned left, unsigned right){
+  if(!f || !f->kerning || f->n_kerning<=0 || left>0xFFFFu || right>0xFFFFu) return 0;
+  int lo=0, hi=f->n_kerning-1;
+  while(lo<=hi){
+    int mid=lo+(hi-lo)/2;
+    const GmlFontKern *k=&f->kerning[mid];
+    if(k->left<left || (k->left==left && k->right<right)) lo=mid+1;
+    else if(k->left==left && k->right==right) return k->amount;
+    else hi=mid-1;
+  }
+  return 0;
+}
 /* FONT records reference a TPAG page and glyph rectangles with advance and bearing.
  * Parse these records from the loaded container. Resource fonts occupy the initial
  * font indices; dynamically added sprite fonts follow them. */
@@ -107,6 +169,7 @@ void parse_font(GmlRender *r){
       previous_ch=gl->ch;
       if(gl->ch<256) f->glyph_by_char[gl->ch]=(int)g;
     }
+    font_read_kerning(r,f,d,p+goff+4,gc);
     int mh=0;
     for(int g2=0;g2<f->n_glyphs;g2++) if(f->glyphs[g2].h>mh) mh=f->glyphs[g2].h;
     if(serialized_line_height){
@@ -477,7 +540,7 @@ void gml_font_delete(GmlRender *r, int font){
     memset(atlas,0,sizeof(*atlas));
   }
   if(f->runtime_face) gml_font_raster_face_close(f->runtime_face);
-  free(f->map); free(f->glyphs);
+  free(f->map); free(f->glyphs); free(f->kerning);
   memset(f,0,sizeof(*f));
   f->sprite=-1; f->atlas=-1;
   for(int i=0;i<256;i++) f->glyph_by_char[i]=-1;
@@ -668,13 +731,16 @@ static GmlGlyph *real_glyph_demand(GmlRender *r, GmlFont *f, unsigned cp){
 }
 /* advance width of one line (up to '#', LF, or NUL), '\#' counts as a literal '#'. */
 static int real_line_width(GmlRender *r, GmlFont *f, const char *p, const char **end){
-  int w=0;
+  int w=0; unsigned previous=0;
   while(*p && !text_is_linebreak(p)){
     unsigned cp;
     if(p[0]=='\\' && p[1]=='#'){ cp='#'; p+=2; }
     else cp=text_next_cp(&p);
     GmlGlyph *g=real_glyph_demand(r,f,cp);
+    /* Apply the pair adjustment before adding the current glyph's advance. */
+    if(previous) w+=font_kerning(f,previous,cp);
     if(g) w+=g->shift;
+    previous=cp;
   }
   *end=p; return w;
 }
@@ -762,9 +828,12 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
     if(log_glyphs) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
       "[tg] line=%d lw=%d cx0=%.2f x=%.2f y=%.2f xs=%.3f ys=%.3f interp=%d\n",
       li,lw,cx,x,y,xs,ys,r->interp);
+    unsigned previous=0;
     while(p<end){
       unsigned cp=text_next_cp(&p);
       GmlGlyph *g=real_glyph_demand(r,f,cp);
+      if(previous) cx+=font_kerning(f,previous,cp);
+      previous=cp;
       if(log_glyphs) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
         "[tg]   cp=%u('%c') cx=%.2f gx=%.2f src=(%d,%d %dx%d) shift=%d off=%d\n",
         cp,(cp>=32&&cp<127)?(char)cp:'?',cx,x+(cx+(g?g->offset:0))*xs,
@@ -1480,7 +1549,7 @@ void gml_draw_text(GmlRender *r, double x, double y, const char *str){
   gml_draw_text_transformed(r,x,y,str,1,1,0,r->color,r->alpha);
 }
 static int text_span_width(GmlRender *r,GmlFont *font,const char *begin,const char *end){
-  int width=0;
+  int width=0; unsigned previous=0;
   const char *p=begin;
   while(p<end){
     unsigned cp;
@@ -1488,6 +1557,8 @@ static int text_span_width(GmlRender *r,GmlFont *font,const char *begin,const ch
     else cp=text_next_cp(&p);
     if(font->real){
       GmlGlyph *glyph=real_glyph_demand(r,font,cp);
+      if(previous) width+=font_kerning(font,previous,cp);
+      previous=cp;
       if(glyph) width+=glyph->shift;
     } else {
       width+=glyph_w(r,font,glyph_frame(font,cp),cp)+font->sep;

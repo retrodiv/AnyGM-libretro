@@ -72,6 +72,7 @@ int main(int argc,char **argv){
     {"centred_real_font_line_pen",expect_centred_real_font_line_starts_on_a_whole_pixel},
     {"carriage_return_line_break",expect_carriage_return_and_line_feed_are_one_break},
     {"wrapped_line_space",expect_a_wrapped_line_drops_the_space_it_broke_at},
+    {"font_kerning_pair",expect_a_font_kerning_pair_moves_the_pen},
     {"legacy_sprite_assign_builtin",expect_legacy_sprite_assign_builtin},
     {"runtime_sprite_state_collision_extent",expect_runtime_sprite_state_preserves_collision_extent},
     {"font_primitive_blend",expect_renderer_semantics},

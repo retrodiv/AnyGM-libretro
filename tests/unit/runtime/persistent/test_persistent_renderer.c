@@ -922,3 +922,49 @@ int expect_a_wrapped_line_drops_the_space_it_broke_at(void){
   gml_render_free(&render);
   return ok;
 }
+
+int expect_a_font_kerning_pair_moves_the_pen(void){
+  /* A synthetic -1 pair must affect both the drawn pen and the reported line width. */
+  GmlWin win={0}; win.bytecode=17;
+  GmlRender render={0}; GmlAtlas atlas={0};
+  GmlGlyph glyphs[2]; uint8_t pixels[3*4]; uint32_t framebuffer[12*2];
+  GmlFontKern kerning[1]={ {'A','B',-1} };
+  for(int texel=0;texel<3;texel++){
+    pixels[texel*4+0]=0xFF; pixels[texel*4+1]=0xFF;
+    pixels[texel*4+2]=0xFF; pixels[texel*4+3]=0xFF;
+  }
+  atlas.px=pixels; atlas.w=3; atlas.h=1; atlas.decode_attempted=1;
+  glyphs[0]=(GmlGlyph){0,0,3,1,4,0,'A'};        /* three wide, advancing four */
+  glyphs[1]=(GmlGlyph){0,0,2,1,2,0,'B'};
+  gml_render_begin(&render,framebuffer,12,2,0,0);
+  render.win=&win;
+  render.atlas=&atlas; render.n_atlas=1;
+  render.color=0x0000FF; render.alpha=1; render.alphablend=1;
+  render.software_overlay=1; render.halign=0; render.valign=0;
+  render.n_fonts=1; render.font=0;
+  GmlFont *font=&render.fonts[0];
+  font->real=1; font->atlas=0; font->sprite=-1;
+  font->line_height=1; font->align_height=1;
+  font->glyphs=glyphs; font->n_glyphs=2; font->glyphs_sorted=1;
+  font->kerning=kerning; font->n_kerning=1;
+  for(int index=0;index<256;index++) font->glyph_by_char[index]=-1;
+  font->glyph_by_char['A']=0; font->glyph_by_char['B']=1;
+  static const uint32_t ink=UINT32_C(0xFFFF0000), paper=UINT32_C(0xFF000000);
+  for(size_t cell=0;cell<sizeof framebuffer/sizeof framebuffer[0];cell++) framebuffer[cell]=paper;
+  gml_draw_text(&render,0,0,"AB");
+  int ok=1;
+  /* A on 0..2, then the pair pulls B one back: 0+4-1 = 3, so its two columns are 3 and 4 and
+   * column 5 - where an unkerned pen would have put it - stays empty. */
+  for(int column=0;column<5;column++) if(framebuffer[column]!=ink) ok=0;
+  if(framebuffer[5]!=paper) ok=0;
+  int width=gml_text_width(&render,"AB");
+  if(width!=5) ok=0;
+  if(!ok)
+    fprintf(stderr,"kerning pair mismatch: width=%d 0=%08x 1=%08x 2=%08x 3=%08x 4=%08x 5=%08x\n",
+            width,framebuffer[0],framebuffer[1],framebuffer[2],framebuffer[3],framebuffer[4],
+            framebuffer[5]);
+  font->glyphs=NULL; font->n_glyphs=0; font->kerning=NULL; font->n_kerning=0;
+  render.atlas=NULL; render.n_atlas=0;
+  gml_render_free(&render);
+  return ok;
+}

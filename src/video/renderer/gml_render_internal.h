@@ -134,6 +134,8 @@ typedef struct {
   const uint8_t *tile_ids;                                      /* GMS2 BGND tileset id table (little-endian u32s) */
 } GmlBg;                                                        /* background/tileset -> texture page */
 typedef struct { int32_t sx, sy, w, h; int16_t shift, offset; uint16_t ch; } GmlGlyph;
+/* A signed pen adjustment for one left/right glyph pair. */
+typedef struct { uint16_t left, right; int16_t amount; } GmlFontKern;
 typedef struct {
   int sprite, first, prop, sep;
   uint32_t *map; int map_len;                                    /* font_add_sprite_ext explicit map */
@@ -147,6 +149,7 @@ typedef struct {
   int runtime_owned;                                             /* font + atlas created after load */
   int subpixel;                                                   /* per-channel GDI coverage for classic info */
   GmlGlyph *glyphs; int n_glyphs, glyphs_sorted;
+  GmlFontKern *kerning; int n_kerning;                           /* sorted by (left,right) */
   /* Runtime TTF fonts retain their rasterizer face so missing glyphs outside
    * the initial font_add range can be appended to the private atlas on demand. */
   struct GmlFontRasterFace *runtime_face;
