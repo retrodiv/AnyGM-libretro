@@ -39,6 +39,7 @@ typedef struct LibretroAdapter {
   size_t fixed_state_capacity;
   size_t startup_resume_capacity;
   bool state_capacity_growth_reported;
+  bool variable_state_supported;
   char save_directory[1024];
   char cache_directory[1024];
   char language[16];

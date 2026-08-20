@@ -155,7 +155,8 @@ static int begin_frontend(int variable_support){
   if(setenv("ANYGM_TEST_SETTING","visible",1)!=0) return 0;
   retro_set_environment(environment_callback);
   retro_init();
-  if(!serialization_query_seen || !development_setting_seen || !g_libretro.engine) return 0;
+  if(!serialization_query_seen || !development_setting_seen || !g_libretro.engine ||
+     g_libretro.variable_state_supported!=(variable_support>0)) return 0;
   g_libretro.loaded=true;
   return 1;
 }
@@ -183,22 +184,23 @@ static int stable_transport(int negotiation_result){
   return ok;
 }
 
-/* The size answer grows past its previous value whatever the frontend answered during quirk
- * negotiation. RetroArch stores the declared core-variable-size quirk without acknowledging it and
- * still re-queries the size on every save; when the answer stayed frozen at the boot-time
- * capacity, every mid-session save of content that had allocated failed. A serialize into a stale
- * older capacity — a rewind ring sized at load — must still fail cleanly rather than truncate. */
-static int growing_transport(int negotiation_result){
+/* Acknowledged variable-size frontends receive a larger answer when required. An unacknowledged
+ * frontend retains its first answer, as baseline libretro requires; RetroArch fixes its rewind
+ * allocation from that answer and refuses snapshots itself if a later query is larger. */
+static int growth_follows_frontend_acknowledgement(int negotiation_result){
   stub_state_bytes=113u;
   if(!begin_frontend(negotiation_result)) return 0;
   const size_t initial_capacity=retro_serialize_size();
   stub_state_bytes=initial_capacity+1u;
-  const size_t grown_capacity=retro_serialize_size();
-  if(grown_capacity<=initial_capacity || retro_serialize_size()!=grown_capacity) return 0;
-  uint8_t *state=(uint8_t *)malloc(grown_capacity);
+  const size_t current_capacity=retro_serialize_size();
+  if(negotiation_result>0){
+    if(current_capacity<=initial_capacity || retro_serialize_size()!=current_capacity) return 0;
+  } else if(current_capacity!=initial_capacity || retro_serialize_size()!=initial_capacity)
+    return 0;
+  uint8_t *state=(uint8_t *)malloc(current_capacity);
   if(!state) return 0;
-  int ok=retro_serialize(state,grown_capacity);
-  if(ok){
+  int ok=retro_serialize(state,current_capacity)==(negotiation_result>0);
+  if(ok && negotiation_result>0){
     uint8_t *stale=(uint8_t *)malloc(initial_capacity);
     ok=stale && !retro_serialize(stale,initial_capacity);
     free(stale);
@@ -225,10 +227,10 @@ static int remembered_peak_covers_first_answer(void){
   return ok;
 }
 
-/* A ring allocated before the first completed frame stays compact. Once a frame exists, the size
- * answer grows so an ordinary save can carry its exact picture; presenting the old ring slot is an
- * explicit request for the smaller canonical form and never attempts the doomed frame write. */
-static int startup_ring_and_complete_save_are_both_preserved(void){
+/* A frontend that does not acknowledge variable sizes sees one compact capacity for the complete
+ * loaded session. This is the RetroArch contract: its wrapper compares every current size query
+ * with the load-time rewind allocation before calling retro_serialize. */
+static int fixed_compact_ring_survives_frontend_size_checks(void){
   stub_state_bytes=9u*1024u*1024u;
   if(!begin_frontend(0)) return 0;
   stub_resume_state_bytes=96u*1024u;
@@ -238,25 +240,36 @@ static int startup_ring_and_complete_save_are_both_preserved(void){
   size_t expected_ring=stub_resume_hint_bytes*2u+512u*1024u;
   if(ring_capacity!=expected_ring || retro_serialize_size()!=ring_capacity) return 0;
   retro_run();
-  /* Some fixed-slot frontends write directly after the frame without querying again. Equality
-   * with the startup slot is still the compact path; a full encode would be doomed. */
-  uint8_t *direct=malloc(ring_capacity);
-  if(!direct) return 0;
-  int ok=retro_serialize(direct,ring_capacity) && resume_saves==1u && complete_saves==0u;
-  free(direct);
-  if(!ok) return 0;
+  if(retro_serialize_size()!=ring_capacity) return 0;
+  uint8_t *ring=malloc(ring_capacity);
+  if(!ring) return 0;
+  memset(ring,0xA5,ring_capacity);
+  int ok=retro_serialize(ring,ring_capacity) && resume_saves==1u && complete_saves==0u;
+  for(size_t i=0;ok && i<stub_resume_state_bytes;i++) if(ring[i]!=0x52) ok=0;
+  for(size_t i=stub_resume_state_bytes;ok && i<ring_capacity;i++) if(ring[i]) ok=0;
+  if(ok) ok=retro_unserialize(ring,ring_capacity) && last_load_bytes==ring_capacity;
+  free(ring);
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
+/* A frontend that explicitly accepts variable state sizes can grow past its compact startup ring.
+ * Old ring slots remain the frame-free form while a newly sized ordinary save carries its frame. */
+static int variable_frontend_keeps_compact_ring_and_complete_save(void){
+  stub_state_bytes=9u*1024u*1024u;
+  if(!begin_frontend(1)) return 0;
+  stub_resume_state_bytes=96u*1024u;
+  stub_resume_hint_bytes=128u*1024u;
+  stub_hint_bytes=16u*1024u*1024u;
+  size_t ring_capacity=retro_serialize_size();
+  retro_run();
   size_t save_capacity=retro_serialize_size();
   if(save_capacity<=ring_capacity || save_capacity<stub_hint_bytes) return 0;
   uint8_t *ring=malloc(ring_capacity),*save=malloc(save_capacity);
   if(!ring || !save){ free(ring); free(save); return 0; }
-  memset(ring,0xA5,ring_capacity);
-  memset(save,0xA5,save_capacity);
-  ok=retro_serialize(ring,ring_capacity) && resume_saves==2u && complete_saves==0u;
-  for(size_t i=0;ok && i<stub_resume_state_bytes;i++) if(ring[i]!=0x52) ok=0;
-  for(size_t i=stub_resume_state_bytes;ok && i<ring_capacity;i++) if(ring[i]) ok=0;
-  if(ok) ok=retro_serialize(save,save_capacity) && complete_saves==1u && resume_saves==2u;
-  for(size_t i=0;ok && i<stub_state_bytes;i++) if(save[i]!=0x4D) ok=0;
-  for(size_t i=stub_state_bytes;ok && i<save_capacity;i++) if(save[i]) ok=0;
+  int ok=retro_serialize(ring,ring_capacity) && resume_saves==1u && complete_saves==0u;
+  if(ok) ok=retro_serialize(save,save_capacity) && complete_saves==1u && resume_saves==1u;
   free(ring);
   free(save);
   retro_unload_game();
@@ -291,7 +304,7 @@ static int ordinary_raster_ring_keeps_the_complete_frame(void){
  * same ring state becomes loadable after that frame, preserving deliberate rewind. */
 static int restart_rejects_only_an_immediate_old_ring_state(void){
   stub_state_bytes=9u*1024u*1024u;
-  if(!begin_frontend(0)) return 0;
+  if(!begin_frontend(1)) return 0;
   stub_resume_state_bytes=96u*1024u;
   stub_resume_hint_bytes=128u*1024u;
   stub_hint_bytes=16u*1024u*1024u;
@@ -356,9 +369,12 @@ int main(void){
   memset(&g_libretro,0,sizeof g_libretro);
   if(retro_serialize_size()!=0 || retro_serialize(&byte,1) || retro_unserialize(&byte,1) ||
      !stable_transport(1) || !stable_transport(0) || !stable_transport(-1) ||
-     !growing_transport(1) || !growing_transport(0) || !growing_transport(-1) ||
+     !growth_follows_frontend_acknowledgement(1) ||
+     !growth_follows_frontend_acknowledgement(0) ||
+     !growth_follows_frontend_acknowledgement(-1) ||
      !remembered_peak_covers_first_answer() ||
-     !startup_ring_and_complete_save_are_both_preserved() ||
+     !fixed_compact_ring_survives_frontend_size_checks() ||
+     !variable_frontend_keeps_compact_ring_and_complete_save() ||
      !ordinary_raster_ring_keeps_the_complete_frame() ||
      !restart_rejects_only_an_immediate_old_ring_state() ||
      !restart_rereads_settings() || !starting_declares_the_settings()){

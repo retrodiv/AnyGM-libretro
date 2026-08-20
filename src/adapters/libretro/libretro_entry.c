@@ -105,13 +105,16 @@ static bool create_engine(void){
   return true;
 }
 
-/* Declares that this core's serialized size changes within a session. Nothing is read back:
- * retro_serialize_size grows past its previous answer either way, because frontends that store the
- * quirk without acknowledging it (RetroArch) still re-query the size on every save. */
+/* Declare the variable-size capability and remember whether the frontend accepts it. A frontend
+ * that does not set FRONT_VARIABLE_SIZE has the baseline libretro contract: the first capacity is
+ * a ceiling for the whole loaded session. */
 static void negotiate_serialization(void){
   uint64_t quirks=RETRO_SERIALIZATION_QUIRK_CORE_VARIABLE_SIZE;
-  if(g_libretro.environment)
-    g_libretro.environment(RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS,&quirks);
+  g_libretro.variable_state_supported=false;
+  if(g_libretro.environment &&
+     g_libretro.environment(RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS,&quirks))
+    g_libretro.variable_state_supported=
+      (quirks&RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE)!=0;
 }
 
 static size_t fixed_state_capacity(size_t actual){
@@ -408,23 +411,20 @@ size_t retro_serialize_size(void){
     size_t hint=anygm_state_capacity_hint(g_libretro.engine);
     if(hint>actual) actual=hint;
   }
-  /* The answer grows whenever the state outgrows the last one, whether or not the frontend
-   * acknowledged RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE. RetroArch stores the declared
-   * core-variable-size quirk without acknowledging it, yet re-queries this size on every save; a
-   * frozen boot-time answer therefore made every mid-session save fail once content allocated,
-   * while a frontend that truly allocates once is no worse off than under that hard failure. */
-  if(!g_libretro.fixed_state_capacity || actual>g_libretro.fixed_state_capacity){
+  /* Grow only after an explicit frontend acknowledgement. RetroArch re-queries this answer before
+   * every rewind snapshot but keeps the ring allocated from the first one; returning the complete
+   * frame ceiling later makes RetroArch reject the snapshot before it calls retro_serialize(), so
+   * the compact small-buffer path never gets a chance to run. */
+  if(!g_libretro.fixed_state_capacity ||
+     (g_libretro.variable_state_supported && actual>g_libretro.fixed_state_capacity)){
     size_t previous=g_libretro.fixed_state_capacity;
     g_libretro.fixed_state_capacity=fixed_state_capacity(actual);
-    /* RetroArch sizes its rewind ring from the first answer and, from the moment a later answer
-     * exceeds it, drops every rewind snapshot without a word in release builds: rewinding then
-     * jumps to wherever the growth happened and walks on to the beginning of the run. The core
-     * cannot resize the frontend's ring; it can say out loud that the regime was entered. */
+    /* Acknowledged growth is unusual enough to report once without flooding repeated queries. */
     if(previous && !g_libretro.state_capacity_growth_reported){
       g_libretro.state_capacity_growth_reported=true;
       libretro_log(RETRO_LOG_INFO,
-                   "Complete state capacity grew beyond the load-time rewind slot (%llu -> %llu "
-                   "bytes); older fixed slots continue with the frame-free state\n",
+                   "State capacity grew after variable-size frontend acknowledgement (%llu -> "
+                   "%llu bytes)\n",
                    (unsigned long long)previous,
                    (unsigned long long)g_libretro.fixed_state_capacity);
     }

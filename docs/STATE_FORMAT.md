@@ -126,14 +126,19 @@ frontend acknowledges it. Before the first completed frame, its transport answer
 current frame-free state and the remembered frame-free peak. When the completed-frame ceiling would
 add at least 8 MiB, a frontend that fixes its rewind ring from that answer receives explicit
 frame-free snapshots in those slots. Smaller rasters retain complete, visually exact rewind states.
-After a frame exists, the answer grows monotonically to the conservative complete-state capacity,
-so ordinary save-state requests continue to carry the exact completed picture. This capacity
-policy changes neither the logical size in the canonical header nor the portable state format.
+For a frontend that does not acknowledge variable sizes, that first answer remains fixed for the
+loaded session, as the baseline libretro contract requires. Ordinary save-state requests then use
+the same frame-free form when the compact high-resolution regime is active; loading one resumes
+from its canonical post-frame simulation state on the next run. A frontend that explicitly
+acknowledges variable sizes receives monotonic growth to the conservative complete-state capacity,
+so newly sized ordinary saves retain the exact completed picture while its older compact ring slots
+remain loadable. This capacity policy changes neither the logical size in the canonical header nor
+the portable state format.
 
-`make contract-check` exercises acknowledged and unacknowledged frontends, compact startup rings,
-complete save-state capacity, capacity growth, unload reset, exact roundtrips, and the transport
-blocks used by rewind-capable frontends. The graphics-state integration case separately proves that
-an explicit frame-free state roundtrips and resumes while the complete form remains available.
+`make contract-check` exercises acknowledged growth, fixed unacknowledged frontends, compact startup
+rings, complete save-state capacity, unload reset, exact roundtrips, and the transport blocks used
+by rewind-capable frontends. The graphics-state integration case separately proves that an explicit
+frame-free state roundtrips and resumes while the complete form remains available.
 
 ## Cache schema
 
