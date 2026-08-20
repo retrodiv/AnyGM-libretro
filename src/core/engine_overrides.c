@@ -94,6 +94,8 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   $monitor_w $monitor_h       configured virtual-monitor resolution
  *   $monitor_view_w/_h          logical view declared by monitorview|
  *   $monitor_extra_w/_h         monitor view minus the native room resolution
+ *   $view_w  $view_h            current room's authored view_wview/view_hview, read live
+ *                                before room-scoped geometry is decided
  * e.g.  some_object:some_width=$forced_w            view_wport[0]=$forced_w
  *       some_object:some_x=$forced_w-115            some_object:some_offset=$extra_w*0.5
  * ============================================================================================ */
@@ -144,6 +146,8 @@ static void cheat_parse_val(const char *s, CheatVal *v){
     else if(L==14 && !strncmp(n,"monitor_view_h",14)) v->tok=TK_MONITOR_VIEW_H;
     else if(L==15 && !strncmp(n,"monitor_extra_w",15)) v->tok=TK_MONITOR_EXTRA_W;
     else if(L==15 && !strncmp(n,"monitor_extra_h",15)) v->tok=TK_MONITOR_EXTRA_H;
+    else if(L==6 && !strncmp(n,"view_w",6)) v->tok=TK_VIEW_W;
+    else if(L==6 && !strncmp(n,"view_h",6)) v->tok=TK_VIEW_H;
     else { v->tok=TK_LIT; v->lit=0; return; }
     while(*s && v->nop<6){
       while(*s==' ') s++;
@@ -170,6 +174,10 @@ static double cheat_val_eval(AnygmEngine *engine,const CheatVal *v){
     case TK_MONITOR_VIEW_H: x=view_h; break;
     case TK_MONITOR_EXTRA_W: x=view_w-(double)engine->base_width; break;
     case TK_MONITOR_EXTRA_H: x=view_h-(double)engine->base_height; break;
+    /* Read the current room's authored view extent synchronously, before a room-owned
+     * override settles its geometry. */
+    case TK_VIEW_W: x=gml_global_arr(&engine->vm,"view_wview",0); break;
+    case TK_VIEW_H: x=gml_global_arr(&engine->vm,"view_hview",0); break;
     default:          return v->lit;
   }
   for(int i=0;i<v->nop;i++){ double n=v->num[i];

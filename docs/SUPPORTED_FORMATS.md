@@ -67,6 +67,17 @@ A `?gameres` directive applies only while *Render at game resolution* is selecte
 A scope prefix belongs to the directive that carries it, and a `;` chain fans out into one
 directive per slot, so each line in a chain that needs the scope has to state it.
 
+`$view_w` and `$view_h` read the current room's authored `view_wview`/`view_hview` live.
+Unlike `$base_w`/`$base_h`, they do not refer to the presentation pass's preceding output. Use them
+when a room-scoped directive must pin a port to that room's view before geometry is decided:
+
+```
+[overrides]
+# present each room at its own authored view, whatever its port declares
+?gameres view_wport[0]=$view_w
+?gameres view_hport[0]=$view_h
+```
+
 Content that reads the display once during initialization may declare how its cached presentation
 state follows later virtual-monitor changes. `monitorview|H|MIN|MAX` derives a logical height `H`
 and a width from the monitor aspect, clamped between the `W:H` ratios `MIN` and `MAX`. A
