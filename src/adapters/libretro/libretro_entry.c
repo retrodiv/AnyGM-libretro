@@ -389,6 +389,11 @@ void retro_run(void){
 
 size_t retro_serialize_size(void){
   if(!g_libretro.loaded) return 0;
+  /* A frontend that did not acknowledge variable sizes owns one fixed allocation for the loaded
+   * session. Re-measuring the complete runtime graph cannot change the answer in that contract,
+   * and doing it before every rewind snapshot duplicates the most expensive half of saving it. */
+  if(g_libretro.fixed_state_capacity && !g_libretro.variable_state_supported)
+    return g_libretro.fixed_state_capacity;
   /* A rewind ring established before the first frame needs only the required sections. The
    * completed frame is optional and can dwarf every one of them when a virtual monitor is active.
    * After a frame exists, ordinary saves receive a capacity covering both the current required

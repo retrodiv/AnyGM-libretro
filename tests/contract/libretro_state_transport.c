@@ -23,6 +23,9 @@ static size_t stub_resume_hint_bytes;
 static size_t last_load_bytes;
 static unsigned complete_saves;
 static unsigned resume_saves;
+static unsigned resume_size_queries;
+static unsigned complete_hint_queries;
+static unsigned resume_hint_queries;
 static int variable_frontend;
 static int serialization_query_seen;
 static int development_setting_seen;
@@ -73,11 +76,18 @@ AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_
 size_t anygm_state_size(AnygmEngine *engine){ (void)engine; return stub_state_bytes; }
 size_t anygm_state_resume_size(AnygmEngine *engine){
   (void)engine;
+  resume_size_queries++;
   return stub_resume_state_bytes?stub_resume_state_bytes:stub_state_bytes;
 }
-size_t anygm_state_capacity_hint(const AnygmEngine *engine){ (void)engine; return stub_hint_bytes; }
+size_t anygm_state_capacity_hint(const AnygmEngine *engine){
+  (void)engine;
+  complete_hint_queries++;
+  return stub_hint_bytes;
+}
 size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){
-  (void)engine; return stub_resume_hint_bytes;
+  (void)engine;
+  resume_hint_queries++;
+  return stub_resume_hint_bytes;
 }
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
   (void)engine;
@@ -152,12 +162,37 @@ static int begin_frontend(int variable_support){
   stub_resume_state_bytes=0;
   complete_saves=0;
   resume_saves=0;
+  resume_size_queries=0;
+  complete_hint_queries=0;
+  resume_hint_queries=0;
   if(setenv("ANYGM_TEST_SETTING","visible",1)!=0) return 0;
   retro_set_environment(environment_callback);
   retro_init();
   if(!serialization_query_seen || !development_setting_seen || !g_libretro.engine ||
      g_libretro.variable_state_supported!=(variable_support>0)) return 0;
   g_libretro.loaded=true;
+  return 1;
+}
+
+/* Once a fixed-size frontend has allocated its session ring, another size query must be a cheap
+ * read of that capacity. RetroArch makes this query before every rewind push; walking the runtime
+ * graph here would duplicate the traversal that retro_serialize performs immediately afterward. */
+static int fixed_frontend_reuses_the_measured_capacity(int negotiation_result){
+  stub_state_bytes=113u;
+  if(!begin_frontend(negotiation_result)) return 0;
+  size_t capacity=retro_serialize_size();
+  unsigned resume_sizes=resume_size_queries;
+  unsigned complete_hints=complete_hint_queries;
+  unsigned resume_hints=resume_hint_queries;
+  if(!capacity || !resume_sizes || !complete_hints || !resume_hints) return 0;
+  stub_state_bytes=capacity+1u;
+  if(retro_serialize_size()!=capacity || resume_size_queries!=resume_sizes ||
+     complete_hint_queries!=complete_hints || resume_hint_queries!=resume_hints) return 0;
+  retro_run();
+  if(retro_serialize_size()!=capacity || resume_size_queries!=resume_sizes ||
+     complete_hint_queries!=complete_hints || resume_hint_queries!=resume_hints) return 0;
+  retro_unload_game();
+  retro_deinit();
   return 1;
 }
 
@@ -372,6 +407,8 @@ int main(void){
      !growth_follows_frontend_acknowledgement(1) ||
      !growth_follows_frontend_acknowledgement(0) ||
      !growth_follows_frontend_acknowledgement(-1) ||
+     !fixed_frontend_reuses_the_measured_capacity(0) ||
+     !fixed_frontend_reuses_the_measured_capacity(-1) ||
      !remembered_peak_covers_first_answer() ||
      !fixed_compact_ring_survives_frontend_size_checks() ||
      !variable_frontend_keeps_compact_ring_and_complete_save() ||
