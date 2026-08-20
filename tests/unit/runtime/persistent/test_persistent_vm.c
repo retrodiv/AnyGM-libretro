@@ -2228,7 +2228,7 @@ static int expect_persistent_lifecycle_exit_code(void){
   GmlcTimeline timeline; GmlcTimelineMoment timeline_moments[3];
   GmlcRoomInstance placed_instance;
   int room_order[2]={0,1};
-  GmlcObjectEvent object_events[25];
+  GmlcObjectEvent object_events[26];
   GmlcProjectTrigger trigger;
   GmlcProjectIncludedFile included;
   unsigned char included_data[]={1,3,5,7};
@@ -2280,7 +2280,7 @@ static int expect_persistent_lifecycle_exit_code(void){
   objects[1].name="obj_changed"; objects[1].sprite_id=-1; objects[1].mask_id=-1; objects[1].parent_id=-1; objects[1].visible=1;
   objects[1].events=&object_events[10]; objects[1].n_events=objects[1].cap_events=11;
   objects[2].name="obj_create_order"; objects[2].sprite_id=-1; objects[2].mask_id=-1; objects[2].parent_id=-1; objects[2].visible=0;
-  objects[2].events=&object_events[21]; objects[2].n_events=objects[2].cap_events=4;
+  objects[2].events=&object_events[21]; objects[2].n_events=objects[2].cap_events=5;
   object_events[0].event_type=11; object_events[0].event_number=0;
   object_events[1].event_type=3; object_events[1].event_number=0;
   object_events[2].event_type=2; object_events[2].event_number=0;
@@ -2307,6 +2307,7 @@ static int expect_persistent_lifecycle_exit_code(void){
   object_events[23].event_type=4; object_events[23].event_number=1;
   object_events[23].collision_object_id=1;
   object_events[24].event_type=1; object_events[24].event_number=0;
+  object_events[25].event_type=12; object_events[25].event_number=0;
   trigger.name=(char*)"fixture_trigger"; trigger.moment=1; trigger.runtime_id=0;
   for(int i=0;i<2;i++){
     rooms[i].name=i?"room_b":"room_a"; rooms[i].width=320; rooms[i].height=240; rooms[i].speed=30;
@@ -2429,6 +2430,14 @@ static int expect_persistent_lifecycle_exit_code(void){
      fwrite(destroy_reentry_source,1,sizeof(destroy_reentry_source)-1,destroy_reentry_file)!=sizeof(destroy_reentry_source)-1 ||
      fclose(destroy_reentry_file)!=0)return 1;
   object_events[24].source_path=destroy_reentry;
+  char cleanup_counter[]="/tmp/gml-cleanup-counter-XXXXXX";
+  int cleanup_counter_fd=mkstemp(cleanup_counter); if(cleanup_counter_fd<0)return 1;
+  FILE *cleanup_counter_file=fdopen(cleanup_counter_fd,"wb");
+  const char cleanup_counter_source[]="global.cleanup_counter_hits += 1;\n";
+  if(!cleanup_counter_file ||
+     fwrite(cleanup_counter_source,1,sizeof(cleanup_counter_source)-1,cleanup_counter_file)!=sizeof(cleanup_counter_source)-1 ||
+     fclose(cleanup_counter_file)!=0)return 1;
+  object_events[25].source_path=cleanup_counter;
   char instance_order[]="/tmp/gml-instance-order-XXXXXX"; int instance_order_fd=mkstemp(instance_order); if(instance_order_fd<0)return 1;
   FILE *instance_order_file=fdopen(instance_order_fd,"wb");
   const char instance_order_source[]="global.create_order=global.create_order*10+1;\n";
@@ -2880,6 +2889,29 @@ static int expect_persistent_lifecycle_exit_code(void){
       image_single_indexed&&image_single_indexed->t==V_REAL?image_single_indexed->d:-1.0,
       user_crear_hits&&user_crear_hits->t==V_REAL?user_crear_hits->d:-1.0); return 1;
   }
+  /* The optional false flag suppresses Destroy without suppressing Clean Up. This is distinct from
+   * target selection: the requested instance must still become dead, and the normal one-argument
+   * form continues to use the event-producing wrapper exercised below. */
+  uint32_t destroy_flag_next_id=vm.next_id;
+  GmlInstance *destroy_flag_probe=gml_instance_create(&vm,40,40,2);
+  if(!destroy_flag_probe)return 1;
+  GmlVal destroy_flag_args[2]={vreal((double)destroy_flag_probe->id),vreal(0)};
+  (void)gml_builtin_call(&vm,"instance_destroy",destroy_flag_args,2);
+  GmlVal *destroy_flag_hits=gml_varmap_get(&vm.globals,"destroy_reentry_hits");
+  GmlVal *cleanup_counter_hits=gml_varmap_get(&vm.globals,"cleanup_counter_hits");
+  if(!destroy_flag_probe->marked ||
+     (destroy_flag_hits && (destroy_flag_hits->t!=V_REAL || destroy_flag_hits->d!=0)) ||
+     !cleanup_counter_hits || cleanup_counter_hits->t!=V_REAL || cleanup_counter_hits->d!=1){
+    fprintf(stderr,"instance_destroy false flag mismatch: marked=%d destroy=%.0f cleanup=%.0f\n",
+      destroy_flag_probe->marked,
+      destroy_flag_hits&&destroy_flag_hits->t==V_REAL?destroy_flag_hits->d:-1.0,
+      cleanup_counter_hits&&cleanup_counter_hits->t==V_REAL?cleanup_counter_hits->d:-1.0);
+    return 1;
+  }
+  gml_vm_instances_reap(&vm);
+  vm.next_id=destroy_flag_next_id;
+  *gml_varmap_put(&vm.globals,"destroy_reentry_hits")=vreal(0);
+  *gml_varmap_put(&vm.globals,"cleanup_counter_hits")=vreal(0);
   uint32_t path_next_id=vm.next_id;
   GmlInstance *path_probe=gml_instance_create(&vm,100,100,2); if(!path_probe)return 1;
   GmlInstance *path_control=gml_instance_create(&vm,100,100,2); if(!path_control)return 1;
@@ -4001,7 +4033,7 @@ static int expect_persistent_lifecycle_exit_code(void){
     }
     ok=ok&&transition_ok;
   }
-  gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(shadowed_alias_script); unlink(array_ext_callback); unlink(studio_with_order); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(solid_collision); unlink(destroy_reentry); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
+  gml_win_free(&win); unlink(path); unlink(startup); unlink(implicit_script); unlink(shadowed_alias_script); unlink(array_ext_callback); unlink(studio_with_order); unlink(condition); unlink(event); unlink(changed_trigger); unlink(create_order); unlink(joystick_event); unlink(solid_collision); unlink(destroy_reentry); unlink(cleanup_counter); unlink(instance_order); unlink(step); unlink(end_step); unlink(changed_step); unlink(included_path);
   for(int i=0;i<4;i++) unlink(alarm_files[i]);
   for(int i=0;i<2;i++) unlink(key_files[i]);
   for(int i=0;i<2;i++) unlink(mouse_files[i]);

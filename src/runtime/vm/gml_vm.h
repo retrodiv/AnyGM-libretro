@@ -531,6 +531,7 @@ GmlVal       gml_ds_map_find_next_direct(GmlVM *vm, int id, GmlVal keyv, int has
 int          gml_ds_map_size_direct(GmlVM *vm, int id);
 void         gml_gamepad_set_axis_deadzone_direct(GmlVM *vm, int device, double dz);
 void         gml_instance_destroy(GmlVM *vm, GmlInstance *in);
+void         gml_instance_destroy_with_event(GmlVM *vm, GmlInstance *in, int perform_destroy_event);
 int          gml_instance_number(GmlVM *vm, int target); /* object index, special scope, or real instance id */
 int          gml_object_is(GmlVM *vm, int obj, int target);  /* obj == target or descends from it */
 int          gml_object_set_parent(GmlVM *vm, int obj, int parent); /* cycle-safe runtime hierarchy mutation */

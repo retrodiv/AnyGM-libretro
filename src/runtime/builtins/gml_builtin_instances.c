@@ -425,11 +425,14 @@ static GmlVal gml_builtin_try_instances_timelines(GmlVM *vm, const char *nm, Gml
 GmlVal gml_builtin_try_instances_destroy(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"instance_destroy")){
     /* instance_destroy([id_or_obj, execute_event]): no argument selects self; an explicit
-     * target selects one instance or every instance in the matching object family. */
+     * target selects one instance or every instance in the matching object family. A false second
+     * argument suppresses Destroy while Clean Up still runs. */
+    int perform_destroy_event=n<2 || N(a,n,1)!=0;
     if(n>=1){ int target=(int)N(a,n,0);
       for(int i=0;i<vm->inst_count;i++){ GmlInstance *o=&vm->inst[i];
-        if(target_matches_instance(vm,vm->cur_self,o,target)) gml_instance_destroy(vm,o); } }
-    else if(vm->cur_self) gml_instance_destroy(vm,vm->cur_self);
+        if(target_matches_instance(vm,vm->cur_self,o,target))
+          gml_instance_destroy_with_event(vm,o,perform_destroy_event); } }
+    else if(vm->cur_self) gml_instance_destroy_with_event(vm,vm->cur_self,perform_destroy_event);
     return vreal(0); }
   return gml_builtin_try_actions_legacy(vm,nm,a,n);
 }
