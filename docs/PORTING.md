@@ -66,8 +66,10 @@ None of this is emulated state. It does not enter `AnygmConfig`, the state confi
 fingerprint, or any serialized section, and a state saved with a graphics target loads without one.
 A host that wants nothing to do with it simply never calls these two entry points, and a core built
 with `HARDWARE_RENDER=0` answers `ANYGM_ERROR_UNSUPPORTED` to the first of them.
-6. Store bytes returned by the public state API if the host offers save states
-   or rewind.
+6. Store bytes returned by the complete public state API for ordinary save states. A frequent
+   in-memory resume ring may use `anygm_state_resume_size`,
+   `anygm_state_resume_capacity_hint`, and `anygm_state_save_for_resume` to omit only the optional
+   completed picture; either form loads through `anygm_state_load`.
 7. Call `anygm_unload` before replacing content and destroy the engine before
    destroying anything referenced by host userdata.
 
@@ -83,7 +85,7 @@ created/empty --load--> loaded --run/reset/state/config--> loaded
       +------unload--------+
 ```
 
-The first API version requires unload before another load. A failed load from
+The API requires unload before another load. A failed load from
 the empty state remains empty. `AnygmEngine` owns all mutable execution state
 and borrows the copied service callbacks and their userdata. Each engine has
 thread affinity to the thread that creates it; calls on one engine are not

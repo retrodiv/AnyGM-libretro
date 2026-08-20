@@ -48,8 +48,10 @@ The lifecycle in `src/api/anygm.h` is deliberately small:
 3. It queries stable AV properties with `anygm_get_av_info`.
 4. Once per frame it calls `anygm_run_frame` with normalized input and consumes
    the returned video and audio views before the next call.
-5. It uses `anygm_state_size`, `anygm_state_save`, and `anygm_state_load` for
-   save states and rewind.
+5. It uses `anygm_state_size`, `anygm_state_save`, and `anygm_state_load` for complete save states.
+   A high-frequency in-memory resume ring may instead size and write the explicit frame-free form
+   with `anygm_state_resume_size` and `anygm_state_save_for_resume`; both forms load through the
+   same transactional reader.
 6. It calls `anygm_unload` and `anygm_destroy` at the corresponding lifecycle
    boundaries.
 

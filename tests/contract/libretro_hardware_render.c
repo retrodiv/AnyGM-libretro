@@ -160,8 +160,16 @@ AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_
   (void)engine; (void)slot; (void)enabled; (void)expression; return ANYGM_OK;
 }
 size_t anygm_state_size(AnygmEngine *engine){ (void)engine; return 0; }
+size_t anygm_state_resume_size(AnygmEngine *engine){ (void)engine; return 0; }
 size_t anygm_state_capacity_hint(const AnygmEngine *engine){ (void)engine; return 0; }
+size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){ (void)engine; return 0; }
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
+  (void)engine; (void)data; (void)capacity;
+  if(written) *written=0;
+  return ANYGM_OK;
+}
+AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
+                                        size_t *written){
   (void)engine; (void)data; (void)capacity;
   if(written) *written=0;
   return ANYGM_OK;

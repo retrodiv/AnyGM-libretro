@@ -32,7 +32,12 @@ typedef struct LibretroAdapter {
   unsigned pointer_seen;
   bool loaded;
   bool rumble_available;
+  bool frame_completed;
+  bool reset_pending_frame;
+  bool reset_ring_rejection_reported;
+  bool startup_ring_compact;
   size_t fixed_state_capacity;
+  size_t startup_resume_capacity;
   bool state_capacity_growth_reported;
   char save_directory[1024];
   char cache_directory[1024];

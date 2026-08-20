@@ -13,7 +13,11 @@ The current AnyGM save-state schema is `11`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
 
-Schema `11` carries no new section. It marks the compatibility profile growing the policy that
+Schema `11` carries no new section. The completed-frame section remains optional: ordinary save
+states carry it so the first frontend frame after a load is exact, while a host may deliberately
+write the frame-free form for a high-frequency in-memory resume point. Both forms use the same
+schema and restore the same canonical post-frame simulation state. Schema `11` marks the
+compatibility profile growing the policy that
 decides what GML reads for an instance's far bounding-box edges, which every state's compatibility
 fingerprint covers: a state written before it describes a run under a different reading of that
 policy, and is refused rather than resumed under this one. Schema `10` re-encodes the completed frame as a row table plus run-length encoded literal rows,
@@ -68,9 +72,10 @@ canonical bytes and semantics remain unchanged.
   graphics context is a transport choice rather than emulated state: it is absent from the
   configuration fingerprint, and a state saved with one loads without one and the reverse.
 
-`anygm_state_size` returns the exact size of the current canonical state.
-Repeated serialization without an intervening mutation produces identical
-bytes.
+`anygm_state_size` returns the exact size of the current complete canonical state.
+`anygm_state_resume_size` returns its frame-free size, and
+`anygm_state_save_for_resume` writes that form explicitly. Repeated serialization through the
+same form without an intervening mutation produces identical bytes.
 
 ## VM payload ownership
 
@@ -115,16 +120,18 @@ The state can grow as language-level containers grow. The portable API reports
 the exact current size and writes into a caller-owned buffer.
 
 The libretro adapter advertises the variable-size serialization quirk and records whether the
-frontend acknowledges it. Its transport size is a conservative capacity that remains stable until
-the logical state exceeds it. An acknowledging frontend can then query a larger monotonic capacity
-and retry. For a frontend that does not acknowledge variable states, the initial fallback capacity
-remains session-stable so fixed-slot rewind storage cannot silently change size. This capacity
-policy does not change the exact logical size stored in the canonical header or the portable state
-format.
+frontend acknowledges it. Before the first completed frame, its transport answer covers the
+current frame-free state and the remembered frame-free peak. When the completed-frame ceiling would
+add at least 8 MiB, a frontend that fixes its rewind ring from that answer receives explicit
+frame-free snapshots in those slots. Smaller rasters retain complete, visually exact rewind states.
+After a frame exists, the answer grows monotonically to the conservative complete-state capacity,
+so ordinary save-state requests continue to carry the exact completed picture. This capacity
+policy changes neither the logical size in the canonical header nor the portable state format.
 
-`make contract-check` exercises acknowledged and unacknowledged frontends, capacity growth and
-fixed-capacity rejection, unload reset, exact roundtrips, and the full transport blocks used by
-rewind-capable frontends.
+`make contract-check` exercises acknowledged and unacknowledged frontends, compact startup rings,
+complete save-state capacity, capacity growth, unload reset, exact roundtrips, and the transport
+blocks used by rewind-capable frontends. The graphics-state integration case separately proves that
+an explicit frame-free state roundtrips and resumes while the complete form remains available.
 
 ## Cache schema
 

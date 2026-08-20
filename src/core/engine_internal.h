@@ -262,6 +262,7 @@ struct AnygmEngine {
    * falls back to the content directory, and a cache file must never appear beside content. */
   int state_peak_enabled;
   size_t state_peak_hint,state_peak_persisted;
+  size_t state_resume_peak_hint,state_resume_peak_persisted;
   int runtime_ended,shutdown_sent;
   ClassicTransition classic_transition;
   int have_presented_frame;
@@ -489,11 +490,14 @@ void state_identity_refresh(AnygmEngine *engine);
 size_t engine_state_frame_capacity(const AnygmEngine *engine);
 void engine_state_peak_load(AnygmEngine *engine);
 void engine_state_peak_note(AnygmEngine *engine,size_t written);
+void engine_state_resume_peak_note(AnygmEngine *engine,size_t written);
 void engine_state_peak_flush(AnygmEngine *engine);
 bool state_unserialize_impl(AnygmEngine *engine,const void *data,size_t size,
                             int schedule_reapply);
 size_t engine_state_size(AnygmEngine *engine);
+size_t engine_state_resume_size(AnygmEngine *engine);
 bool engine_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written);
+bool engine_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,size_t *written);
 bool engine_state_load(AnygmEngine *engine,const void *data,size_t size);
 
 #endif

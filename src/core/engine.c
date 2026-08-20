@@ -1931,6 +1931,7 @@ void anygm_unload(AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return;
   /* A session that never saved still teaches the cache: measure once at teardown. */
   engine_state_peak_note(engine,engine_state_size(engine));
+  engine_state_resume_peak_note(engine,engine_state_resume_size(engine));
   engine_state_peak_flush(engine);
   engine_graphics_report(engine);
   engine_unload(engine);
@@ -2166,12 +2167,21 @@ size_t anygm_state_size(AnygmEngine *engine){
   return engine_state_size(engine);
 }
 
+size_t anygm_state_resume_size(AnygmEngine *engine){
+  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return 0;
+  return engine_state_resume_size(engine);
+}
+
+size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){
+  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return 0;
+  return engine->state_resume_peak_hint;
+}
+
 size_t anygm_state_capacity_hint(const AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return 0;
-  /* The boot-time state is the one state that carries no completed frame, and it is exactly the
-   * state a frontend measures when it sizes a rewind ring once, at load. Advising at least the
-   * frame slot's ceiling keeps that one answer covering the states every later frame produces;
-   * the remembered peak then raises it for content whose runtime allocation grows further. */
+  /* Complete states need the frame slot's ceiling even before the first frame exists. The
+   * remembered complete peak raises it for content whose runtime allocation grows further; hosts
+   * that explicitly want frame-free resume points have the separate compact hint above. */
   size_t hint=engine->state_peak_hint;
   size_t frame=engine_state_frame_capacity(engine);
   return frame>hint?frame:hint;
@@ -2185,6 +2195,19 @@ AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size
     return ANYGM_ERROR_INVALID_STATE;
   if(!engine_state_save(engine,data,capacity,written)) return ANYGM_ERROR_OUT_OF_MEMORY;
   engine_state_peak_note(engine,*written);
+  return ANYGM_OK;
+}
+
+AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
+                                        size_t *written){
+  size_t local_written=0;
+  if(!written) written=&local_written;
+  *written=0;
+  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED || !data)
+    return ANYGM_ERROR_INVALID_STATE;
+  if(!engine_state_save_for_resume(engine,data,capacity,written))
+    return ANYGM_ERROR_OUT_OF_MEMORY;
+  engine_state_resume_peak_note(engine,*written);
   return ANYGM_OK;
 }
 

@@ -17,8 +17,12 @@ bool retro_serialize(void *data,size_t size);
 bool retro_unserialize(const void *data,size_t size);
 
 static size_t stub_state_bytes;
+static size_t stub_resume_state_bytes;
 static size_t stub_hint_bytes;
+static size_t stub_resume_hint_bytes;
 static size_t last_load_bytes;
+static unsigned complete_saves;
+static unsigned resume_saves;
 static int variable_frontend;
 static int serialization_query_seen;
 static int development_setting_seen;
@@ -67,21 +71,43 @@ AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_
   (void)engine; (void)slot; (void)enabled; (void)expression; return ANYGM_OK;
 }
 size_t anygm_state_size(AnygmEngine *engine){ (void)engine; return stub_state_bytes; }
+size_t anygm_state_resume_size(AnygmEngine *engine){
+  (void)engine;
+  return stub_resume_state_bytes?stub_resume_state_bytes:stub_state_bytes;
+}
 size_t anygm_state_capacity_hint(const AnygmEngine *engine){ (void)engine; return stub_hint_bytes; }
+size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){
+  (void)engine; return stub_resume_hint_bytes;
+}
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
   (void)engine;
   if(written) *written=0;
   if(!data || !written || capacity<stub_state_bytes) return ANYGM_ERROR_INVALID_ARGUMENT;
   memset(data,0x4D,stub_state_bytes);
   *written=stub_state_bytes;
+  complete_saves++;
+  return ANYGM_OK;
+}
+AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
+                                        size_t *written){
+  (void)engine;
+  size_t required=stub_resume_state_bytes?stub_resume_state_bytes:stub_state_bytes;
+  if(written) *written=0;
+  if(!data || !written || capacity<required) return ANYGM_ERROR_INVALID_ARGUMENT;
+  memset(data,0x52,required);
+  *written=required;
+  resume_saves++;
   return ANYGM_OK;
 }
 AnygmResult anygm_state_load(AnygmEngine *engine,const void *data,size_t size){
   (void)engine;
-  if(!data || size<stub_state_bytes) return ANYGM_ERROR_INVALID_STATE;
+  if(!data || !size) return ANYGM_ERROR_INVALID_STATE;
   const uint8_t *bytes=(const uint8_t *)data;
-  for(size_t i=0;i<stub_state_bytes;i++) if(bytes[i]!=0x4D) return ANYGM_ERROR_INVALID_STATE;
-  for(size_t i=stub_state_bytes;i<size;i++) if(bytes[i]!=0) return ANYGM_ERROR_INVALID_STATE;
+  size_t logical=bytes[0]==0x52?stub_resume_state_bytes:stub_state_bytes;
+  uint8_t marker=bytes[0]==0x52?0x52:0x4D;
+  if(size<logical) return ANYGM_ERROR_INVALID_STATE;
+  for(size_t i=0;i<logical;i++) if(bytes[i]!=marker) return ANYGM_ERROR_INVALID_STATE;
+  for(size_t i=logical;i<size;i++) if(bytes[i]!=0) return ANYGM_ERROR_INVALID_STATE;
   last_load_bytes=size;
   return ANYGM_OK;
 }
@@ -122,6 +148,10 @@ static int begin_frontend(int variable_support){
   development_setting_seen=0;
   last_load_bytes=0;
   stub_hint_bytes=0;
+  stub_resume_hint_bytes=0;
+  stub_resume_state_bytes=0;
+  complete_saves=0;
+  resume_saves=0;
   if(setenv("ANYGM_TEST_SETTING","visible",1)!=0) return 0;
   retro_set_environment(environment_callback);
   retro_init();
@@ -179,17 +209,113 @@ static int growing_transport(int negotiation_result){
   return ok;
 }
 
-/* A remembered peak from an earlier session raises the first answer of a fresh load, so a
- * frontend that sizes a rewind ring once, at load, covers the gameplay the content is known to
- * reach instead of only its boot state. */
+/* A remembered compact peak from an earlier session raises the first answer of a fresh load, so a
+ * frontend that sizes a rewind ring once covers every required section without also reserving the
+ * optional monitor-sized frame. */
 static int remembered_peak_covers_first_answer(void){
   stub_state_bytes=113u;
   if(!begin_frontend(0)) return 0;
-  stub_hint_bytes=6u*1024u*1024u;
+  stub_resume_hint_bytes=6u*1024u*1024u;
   const size_t capacity=retro_serialize_size();
-  int ok=capacity>=stub_hint_bytes;
+  int ok=capacity>=stub_resume_hint_bytes;
   stub_state_bytes=197u;
   if(retro_serialize_size()!=capacity) ok=0;
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
+/* A ring allocated before the first completed frame stays compact. Once a frame exists, the size
+ * answer grows so an ordinary save can carry its exact picture; presenting the old ring slot is an
+ * explicit request for the smaller canonical form and never attempts the doomed frame write. */
+static int startup_ring_and_complete_save_are_both_preserved(void){
+  stub_state_bytes=9u*1024u*1024u;
+  if(!begin_frontend(0)) return 0;
+  stub_resume_state_bytes=96u*1024u;
+  stub_resume_hint_bytes=128u*1024u;
+  stub_hint_bytes=16u*1024u*1024u;
+  size_t ring_capacity=retro_serialize_size();
+  size_t expected_ring=stub_resume_hint_bytes*2u+512u*1024u;
+  if(ring_capacity!=expected_ring || retro_serialize_size()!=ring_capacity) return 0;
+  retro_run();
+  /* Some fixed-slot frontends write directly after the frame without querying again. Equality
+   * with the startup slot is still the compact path; a full encode would be doomed. */
+  uint8_t *direct=malloc(ring_capacity);
+  if(!direct) return 0;
+  int ok=retro_serialize(direct,ring_capacity) && resume_saves==1u && complete_saves==0u;
+  free(direct);
+  if(!ok) return 0;
+  size_t save_capacity=retro_serialize_size();
+  if(save_capacity<=ring_capacity || save_capacity<stub_hint_bytes) return 0;
+  uint8_t *ring=malloc(ring_capacity),*save=malloc(save_capacity);
+  if(!ring || !save){ free(ring); free(save); return 0; }
+  memset(ring,0xA5,ring_capacity);
+  memset(save,0xA5,save_capacity);
+  ok=retro_serialize(ring,ring_capacity) && resume_saves==2u && complete_saves==0u;
+  for(size_t i=0;ok && i<stub_resume_state_bytes;i++) if(ring[i]!=0x52) ok=0;
+  for(size_t i=stub_resume_state_bytes;ok && i<ring_capacity;i++) if(ring[i]) ok=0;
+  if(ok) ok=retro_serialize(save,save_capacity) && complete_saves==1u && resume_saves==2u;
+  for(size_t i=0;ok && i<stub_state_bytes;i++) if(save[i]!=0x4D) ok=0;
+  for(size_t i=stub_state_bytes;ok && i<save_capacity;i++) if(save[i]) ok=0;
+  free(ring);
+  free(save);
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
+/* A modest completed frame stays in rewind. The compact form is a targeted escape from a large
+ * virtual-monitor frame, not a global trade of exact rewind pictures for smaller slots. */
+static int ordinary_raster_ring_keeps_the_complete_frame(void){
+  stub_state_bytes=768u*1024u;
+  if(!begin_frontend(0)) return 0;
+  stub_resume_state_bytes=96u*1024u;
+  stub_resume_hint_bytes=128u*1024u;
+  stub_hint_bytes=2u*1024u*1024u;
+  size_t ring_capacity=retro_serialize_size();
+  if(ring_capacity<stub_hint_bytes || g_libretro.startup_ring_compact) return 0;
+  retro_run();
+  uint8_t *ring=malloc(ring_capacity);
+  if(!ring) return 0;
+  int ok=retro_serialize(ring,ring_capacity) && complete_saves==1u && resume_saves==0u;
+  free(ring);
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
+/* RetroArch retains its rewind manager across a core reset. If the rewind chord used while leaving
+ * its menu is still active, the frontend pops the old ring before it lets the newly reset core run
+ * even one frame. The one ambiguous operation is refused: a compact startup-ring state cannot
+ * replace a reset until its first frame has run. Complete manual states remain loadable, and the
+ * same ring state becomes loadable after that frame, preserving deliberate rewind. */
+static int restart_rejects_only_an_immediate_old_ring_state(void){
+  stub_state_bytes=9u*1024u*1024u;
+  if(!begin_frontend(0)) return 0;
+  stub_resume_state_bytes=96u*1024u;
+  stub_resume_hint_bytes=128u*1024u;
+  stub_hint_bytes=16u*1024u*1024u;
+  size_t ring_capacity=retro_serialize_size();
+  retro_run();
+  size_t save_capacity=retro_serialize_size();
+  uint8_t *ring=malloc(ring_capacity),*save=malloc(save_capacity);
+  if(!ring || !save){ free(ring); free(save); return 0; }
+  int ok=retro_serialize(ring,ring_capacity) && retro_serialize(save,save_capacity);
+  if(ok){
+    retro_reset();
+    ok=!retro_unserialize(ring,ring_capacity) && retro_unserialize(save,save_capacity);
+  }
+  if(ok){
+    retro_reset();
+    ok=!retro_unserialize(ring,ring_capacity);
+  }
+  if(ok){
+    retro_run();
+    ok=retro_unserialize(ring,ring_capacity);
+  }
+  if(!ok) fprintf(stderr,"restart accepted an old rewind state before its first frame\n");
+  free(ring);
+  free(save);
   retro_unload_game();
   retro_deinit();
   return ok;
@@ -232,6 +358,9 @@ int main(void){
      !stable_transport(1) || !stable_transport(0) || !stable_transport(-1) ||
      !growing_transport(1) || !growing_transport(0) || !growing_transport(-1) ||
      !remembered_peak_covers_first_answer() ||
+     !startup_ring_and_complete_save_are_both_preserved() ||
+     !ordinary_raster_ring_keeps_the_complete_frame() ||
+     !restart_rejects_only_an_immediate_old_ring_state() ||
      !restart_rereads_settings() || !starting_declares_the_settings()){
     fprintf(stderr,"libretro state transport contract failed\n");
     return 1;

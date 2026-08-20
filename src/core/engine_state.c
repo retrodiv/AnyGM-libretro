@@ -407,6 +407,16 @@ size_t engine_state_size(AnygmEngine *engine){
   state_write(engine,&measure);
   return measure.ok?measure.pos:0;
 }
+size_t engine_state_resume_size(AnygmEngine *engine){
+  if(!engine->loaded) return 0;
+  int previous=engine->state_omit_frame;
+  engine->state_omit_frame=1;
+  CoreW measure={0};
+  measure.ok=1;
+  state_write(engine,&measure);
+  engine->state_omit_frame=previous;
+  return measure.ok?measure.pos:0;
+}
 bool engine_state_save(AnygmEngine *engine,void *d,size_t n,size_t *written){
   if(!engine->loaded || !d) return false;
   CoreW s={(uint8_t*)d,n,0,1}; state_write(engine,&s);
@@ -441,6 +451,26 @@ bool engine_state_save(AnygmEngine *engine,void *d,size_t n,size_t *written){
     if(engine->diagnostics.state_overflow_count <= 3 || engine->diagnostics.state_overflow_count % 600 == 0)
       engine_logf(engine,ANYGM_LOG_WARN,
                   "[anygm] state needs %llu bytes but the supplied buffer holds %llu (x%ld)\n",
+                  (unsigned long long)s.pos,(unsigned long long)n,
+                  engine->diagnostics.state_overflow_count);
+  }
+  return s.ok && s.pos<=n;
+}
+bool engine_state_save_for_resume(AnygmEngine *engine,void *d,size_t n,size_t *written){
+  if(!engine->loaded || !d) return false;
+  int previous=engine->state_omit_frame;
+  engine->state_omit_frame=1;
+  CoreW s={(uint8_t*)d,n,0,1};
+  state_write(engine,&s);
+  engine->state_omit_frame=previous;
+  if(written) *written=s.pos;
+  if(s.pos>n){
+    engine->diagnostics.state_overflow_count++;
+    if(engine->diagnostics.state_overflow_count<=3 ||
+       engine->diagnostics.state_overflow_count%600==0)
+      engine_logf(engine,ANYGM_LOG_WARN,
+                  "[anygm] resumed state needs %llu bytes but the supplied buffer holds %llu "
+                  "(x%ld)\n",
                   (unsigned long long)s.pos,(unsigned long long)n,
                   engine->diagnostics.state_overflow_count);
   }
@@ -598,28 +628,27 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
   return true;
 }
 
-/* Peak serialized size, remembered across sessions as a disposable cache entry in the content's
- * writable namespace. A frontend that sizes a rewind ring once, at load, otherwise sizes it from
- * the boot-time state, which gameplay allocation routinely dwarfs; the remembered peak lets the
- * next session announce a capacity the whole run fits in. The entry is untrusted input: only a
- * short ASCII decimal with an optional trailing newline is believed, and the value is bounded. */
+/* Peak complete and frame-free sizes, remembered separately across sessions as disposable cache
+ * entries in the content's writable namespace. Gameplay allocation routinely dwarfs the boot-time
+ * required sections, so the frame-free peak lets a fixed resume ring cover the known run without
+ * inheriting the much larger completed-frame ceiling. Each entry is untrusted input: only a short
+ * ASCII decimal with an optional trailing newline is believed, and the value is bounded. */
 #define ENGINE_STATE_PEAK_FILE ".anygm-state-peak"
+#define ENGINE_STATE_RESUME_PEAK_FILE ".anygm-state-resume-peak"
 #define ENGINE_STATE_PEAK_LIMIT ((size_t)1u<<30)
 
-static int state_peak_path(const AnygmEngine *engine,char *out,size_t out_size){
+static int state_peak_path(const AnygmEngine *engine,const char *name,char *out,size_t out_size){
   if(!engine->state_peak_enabled || !engine->win.save_dir[0]) return 0;
-  int n=snprintf(out,out_size,"%s/%s",engine->win.save_dir,ENGINE_STATE_PEAK_FILE);
+  int n=snprintf(out,out_size,"%s/%s",engine->win.save_dir,name);
   return n>0 && (size_t)n<out_size;
 }
 
-void engine_state_peak_load(AnygmEngine *engine){
-  engine->state_peak_hint=0;
-  engine->state_peak_persisted=0;
+static size_t state_peak_read(AnygmEngine *engine,const char *name){
   char path[1088];
-  if(!state_peak_path(engine,path,sizeof path)) return;
+  if(!state_peak_path(engine,name,path,sizeof path)) return 0;
   uint8_t *data=NULL;
   size_t size=0;
-  if(!anygm_vfs_read_all(&engine->host,path,&data,&size,32)) return;
+  if(!anygm_vfs_read_all(&engine->host,path,&data,&size,32)) return 0;
   uint64_t value=0;
   size_t digits=0;
   while(digits<size && digits<12 && data[digits]>='0' && data[digits]<='9'){
@@ -629,20 +658,32 @@ void engine_state_peak_load(AnygmEngine *engine){
   int valid=digits>0 && value<=ENGINE_STATE_PEAK_LIMIT &&
             (digits==size || (data[digits]=='\n' && digits+1==size));
   free(data);
-  if(!valid) return;
-  engine->state_peak_hint=(size_t)value;
-  engine->state_peak_persisted=(size_t)value;
+  return valid?(size_t)value:0;
+}
+
+void engine_state_peak_load(AnygmEngine *engine){
+  engine->state_peak_hint=state_peak_read(engine,ENGINE_STATE_PEAK_FILE);
+  engine->state_peak_persisted=engine->state_peak_hint;
+  engine->state_resume_peak_hint=state_peak_read(engine,ENGINE_STATE_RESUME_PEAK_FILE);
+  engine->state_resume_peak_persisted=engine->state_resume_peak_hint;
+}
+
+static void state_peak_write(AnygmEngine *engine,const char *name,size_t hint,size_t *persisted){
+  if(hint<=*persisted) return;
+  char path[1088];
+  if(!state_peak_path(engine,name,path,sizeof path)) return;
+  char text[32];
+  int n=snprintf(text,sizeof text,"%llu\n",(unsigned long long)hint);
+  if(n<=0) return;
+  if(anygm_vfs_write_all(&engine->host,path,text,(size_t)n))
+    *persisted=hint;
 }
 
 void engine_state_peak_flush(AnygmEngine *engine){
-  if(engine->state_peak_hint<=engine->state_peak_persisted) return;
-  char path[1088];
-  if(!state_peak_path(engine,path,sizeof path)) return;
-  char text[32];
-  int n=snprintf(text,sizeof text,"%llu\n",(unsigned long long)engine->state_peak_hint);
-  if(n<=0) return;
-  if(anygm_vfs_write_all(&engine->host,path,text,(size_t)n))
-    engine->state_peak_persisted=engine->state_peak_hint;
+  state_peak_write(engine,ENGINE_STATE_PEAK_FILE,engine->state_peak_hint,
+                   &engine->state_peak_persisted);
+  state_peak_write(engine,ENGINE_STATE_RESUME_PEAK_FILE,engine->state_resume_peak_hint,
+                   &engine->state_resume_peak_persisted);
 }
 
 void engine_state_peak_note(AnygmEngine *engine,size_t written){
@@ -653,5 +694,14 @@ void engine_state_peak_note(AnygmEngine *engine,size_t written){
   size_t persisted=engine->state_peak_persisted;
   if(engine->state_peak_hint>persisted+(persisted>>2) ||
      engine->state_peak_hint-persisted>=((size_t)1u<<20))
+    engine_state_peak_flush(engine);
+}
+
+void engine_state_resume_peak_note(AnygmEngine *engine,size_t written){
+  if(written>ENGINE_STATE_PEAK_LIMIT || written<=engine->state_resume_peak_hint) return;
+  engine->state_resume_peak_hint=written;
+  size_t persisted=engine->state_resume_peak_persisted;
+  if(engine->state_resume_peak_hint>persisted+(persisted>>2) ||
+     engine->state_resume_peak_hint-persisted>=((size_t)1u<<20))
     engine_state_peak_flush(engine);
 }

@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define ANYGM_API_VERSION 2u
+#define ANYGM_API_VERSION 3u
 #define ANYGM_HOST_SERVICES_VERSION 1u
 #define ANYGM_STATE_SCHEMA 11u
 #define ANYGM_MAX_GAMEPADS 4u
@@ -515,15 +515,26 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta);
 AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_t enabled,
                                        const char *expression);
 size_t anygm_state_size(AnygmEngine *engine);
-/* The capacity the engine advises a host to provision for this session's states: at least the
- * completed-frame slot's ceiling under the current output geometry — the boot-time state is the
- * one state with no frame in it, and it is exactly what a frontend measures when it sizes a
- * rewind ring once, at load — raised by the largest serialized size this content is known to
- * have reached in earlier sessions, remembered as a disposable cache entry in the content's
- * writable namespace. A hint is advisory: the exact size of the current state is always
- * anygm_state_size. */
+/* The exact size of the same canonical state without its optional completed-frame section. A host
+ * that resumes simulation from frequent in-memory snapshots can provision this smaller form. It
+ * loads through anygm_state_load and the next run continues from the restored post-frame state. */
+size_t anygm_state_resume_size(AnygmEngine *engine);
+/* The largest frame-free state this content is known to have needed in an earlier session. It is
+ * a bounded advisory cache, just like anygm_state_capacity_hint; the current exact requirement is
+ * always anygm_state_resume_size. */
+size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine);
+/* The capacity the engine advises a host to provision for complete states: at least the completed
+ * frame's ceiling under the current output geometry, raised by the largest serialized size this
+ * content is known to have reached in earlier sessions and remembered as a disposable cache entry
+ * in the content's writable namespace. A hint is advisory: the exact size of the current complete
+ * state is always anygm_state_size. */
 size_t anygm_state_capacity_hint(const AnygmEngine *engine);
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written);
+/* Writes the canonical state without its optional completed frame. This is the explicit form of
+ * the fallback anygm_state_save already uses when the supplied capacity can hold every required
+ * section but not that frame. */
+AnygmResult anygm_state_save_for_resume(AnygmEngine *engine,void *data,size_t capacity,
+                                        size_t *written);
 AnygmResult anygm_state_load(AnygmEngine *engine,const void *data,size_t size);
 size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capacity);
 

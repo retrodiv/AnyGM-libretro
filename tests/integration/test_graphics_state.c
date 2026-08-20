@@ -433,6 +433,41 @@ static int short_buffer_drops_the_frame_case(void){
   return ok;
 }
 
+/* A host that explicitly asks for a frequent in-memory resume point gets the same canonical
+ * simulation state without the optional completed picture. The complete API remains unchanged,
+ * while the compact form roundtrips exactly and the restored engine keeps running. */
+static int explicit_resume_state_case(void){
+  Session session;
+  size_t whole=0,resume=0,whole_written=0,resume_written=0,again_written=0;
+  uint8_t *whole_data=NULL,*resume_data=NULL,*again=NULL;
+  int ok;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&session),"the session loads");
+  REQUIRE(advance(session.engine,6,NULL),"the session runs");
+  whole=anygm_state_size(session.engine);
+  resume=anygm_state_resume_size(session.engine);
+  REQUIRE(resume>0 && resume<whole,"the explicit resume state omits the completed frame");
+  whole_data=(uint8_t*)malloc(whole);
+  resume_data=(uint8_t*)malloc(resume);
+  again=(uint8_t*)malloc(resume);
+  REQUIRE(whole_data && resume_data && again,"the state buffers are allocated");
+  ok=anygm_state_save(session.engine,whole_data,whole,&whole_written)==ANYGM_OK &&
+     whole_written==whole;
+  ok=ok && anygm_state_save_for_resume(session.engine,resume_data,resume,&resume_written)==ANYGM_OK &&
+     resume_written==resume;
+  ok=ok && anygm_state_load(session.engine,resume_data,resume_written)==ANYGM_OK;
+  ok=ok && anygm_state_save_for_resume(session.engine,again,resume,&again_written)==ANYGM_OK &&
+     again_written==resume && memcmp(resume_data,again,resume)==0;
+  ok=ok && advance(session.engine,2,NULL);
+  if(!ok)
+    fprintf(stderr,"the explicit resume state failed (%zu compact, %zu complete)\n",resume,whole);
+  free(whole_data);
+  free(resume_data);
+  free(again);
+  session_close(&session);
+  return ok;
+}
+
 int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
     {"state bytes match with and without a target",state_bytes_match_case},
@@ -445,6 +480,7 @@ int main(void){
     {"two interleaved engines stay independent",interleaved_engines_case},
     {"a refused context leaves a working software engine",refused_context_case},
     {"a buffer too short for the frame still takes the state",short_buffer_drops_the_frame_case},
+    {"an explicit resume state omits only the completed frame",explicit_resume_state_case},
   };
   int failed=0;
   for(size_t index=0;index<sizeof cases/sizeof cases[0];index++)

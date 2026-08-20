@@ -219,7 +219,14 @@ void retro_reset(void){
      * the next reset. */
     update_locale();
     libretro_options_apply(true);
-    anygm_reset(g_libretro.engine);
+    if(anygm_reset(g_libretro.engine)==ANYGM_OK){
+      /* RetroArch keeps its rewind ring across Reset and checks its rewind chord before the newly
+       * reset core runs. If the chord used while leaving the menu is still active, an old compact
+       * ring state would replace the reset immediately. Complete manual states remain valid; only
+       * that distinguishable pre-frame compact-ring load is held behind the first new frame. */
+      g_libretro.reset_pending_frame=true;
+      g_libretro.reset_ring_rejection_reported=false;
+    }
   }
   libretro_update_av();
 }
@@ -265,7 +272,12 @@ bool retro_load_game(const struct retro_game_info *info){
     return false;
   }
   g_libretro.loaded=true;
+  g_libretro.frame_completed=false;
+  g_libretro.reset_pending_frame=false;
+  g_libretro.reset_ring_rejection_reported=false;
+  g_libretro.startup_ring_compact=false;
   g_libretro.fixed_state_capacity=0;
+  g_libretro.startup_resume_capacity=0;
   g_libretro.state_capacity_growth_reported=false;
   /* Loading consults dozens of one-shot setting names; clear them out so the
    * per-frame names always find a free slot. */
@@ -287,7 +299,12 @@ void retro_unload_game(void){
   libretro_hw_render_release();
   anygm_unload(g_libretro.engine);
   g_libretro.loaded=false;
+  g_libretro.frame_completed=false;
+  g_libretro.reset_pending_frame=false;
+  g_libretro.reset_ring_rejection_reported=false;
+  g_libretro.startup_ring_compact=false;
   g_libretro.fixed_state_capacity=0;
+  g_libretro.startup_resume_capacity=0;
   g_libretro.state_capacity_growth_reported=false;
   memset(g_libretro.override_used,0,sizeof g_libretro.override_used);
   memset(&g_libretro.frame,0,sizeof g_libretro.frame);
@@ -334,6 +351,8 @@ void retro_run(void){
     libretro_log(RETRO_LOG_ERROR,"Frame execution failed (%d)\n",result);
     return;
   }
+  g_libretro.frame_completed=true;
+  g_libretro.reset_pending_frame=false;
   if(g_libretro.video){
     /* The engine reports which target it rendered into. The hardware sentinel says the frame is
      * already on the frontend's own framebuffer; without it a complete CPU frame is available and
@@ -367,12 +386,28 @@ void retro_run(void){
 
 size_t retro_serialize_size(void){
   if(!g_libretro.loaded) return 0;
-  size_t actual=anygm_state_size(g_libretro.engine);
-  /* Sessions that already saw gameplay teach the first answer: a frontend that sizes a rewind
-   * ring once, at load, otherwise sizes it from the boot-time state, which gameplay routinely
-   * dwarfs. */
-  size_t hint=anygm_state_capacity_hint(g_libretro.engine);
-  if(hint>actual) actual=hint;
+  /* A rewind ring established before the first frame needs only the required sections. The
+   * completed frame is optional and can dwarf every one of them when a virtual monitor is active.
+   * After a frame exists, ordinary saves receive a capacity covering both the current required
+   * state and the conservative frame ceiling, while a ring holding the earlier smaller slots is
+   * recognized by the capacity it passes to retro_serialize. */
+  size_t actual=anygm_state_resume_size(g_libretro.engine);
+  size_t resume_hint=anygm_state_resume_capacity_hint(g_libretro.engine);
+  if(resume_hint>actual) actual=resume_hint;
+  bool compact_startup=false;
+  /* Preserve completed-frame rewind at ordinary rasters. The alternate transport exists for the
+   * regime where a virtual monitor makes that optional picture dominate every fixed slot, not as
+   * a blanket weakening of rewind fidelity. */
+  if(!g_libretro.frame_completed){
+    const size_t minimum_saving=8u*1024u*1024u;
+    size_t complete_hint=anygm_state_capacity_hint(g_libretro.engine);
+    compact_startup=complete_hint>actual && complete_hint-actual>=minimum_saving;
+    if(!compact_startup && complete_hint>actual) actual=complete_hint;
+  }
+  if(g_libretro.frame_completed){
+    size_t hint=anygm_state_capacity_hint(g_libretro.engine);
+    if(hint>actual) actual=hint;
+  }
   /* The answer grows whenever the state outgrows the last one, whether or not the frontend
    * acknowledged RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE. RetroArch stores the declared
    * core-variable-size quirk without acknowledging it, yet re-queries this size on every save; a
@@ -387,21 +422,30 @@ size_t retro_serialize_size(void){
      * cannot resize the frontend's ring; it can say out loud that the regime was entered. */
     if(previous && !g_libretro.state_capacity_growth_reported){
       g_libretro.state_capacity_growth_reported=true;
-      libretro_log(RETRO_LOG_WARN,
-                   "Serialized state outgrew the load-time capacity answer (%llu -> %llu bytes); "
-                   "a frontend that sized its rewind buffer at load stops recording rewind "
-                   "history until the content is reloaded\n",
+      libretro_log(RETRO_LOG_INFO,
+                   "Complete state capacity grew beyond the load-time rewind slot (%llu -> %llu "
+                   "bytes); older fixed slots continue with the frame-free state\n",
                    (unsigned long long)previous,
                    (unsigned long long)g_libretro.fixed_state_capacity);
     }
+  }
+  if(!g_libretro.frame_completed){
+    g_libretro.startup_resume_capacity=g_libretro.fixed_state_capacity;
+    g_libretro.startup_ring_compact=compact_startup;
   }
   return g_libretro.fixed_state_capacity;
 }
 
 bool retro_serialize(void *data,size_t size){
   size_t written=0;
-  if(!g_libretro.loaded ||
-     anygm_state_save(g_libretro.engine,data,size,&written)!=ANYGM_OK || written>size) return false;
+  if(!g_libretro.loaded) return false;
+  bool startup_slot=g_libretro.frame_completed && g_libretro.startup_ring_compact &&
+                    g_libretro.startup_resume_capacity &&
+                    size<=g_libretro.startup_resume_capacity;
+  AnygmResult result=(startup_slot || size<g_libretro.fixed_state_capacity)?
+    anygm_state_save_for_resume(g_libretro.engine,data,size,&written):
+    anygm_state_save(g_libretro.engine,data,size,&written);
+  if(result!=ANYGM_OK || written>size) return false;
   /* libretro persists the full advertised buffer, while AnyGM records its exact logical size in
    * the state header. Clear the capacity tail so files and rewind deltas never contain stale host
    * memory and remain deterministic for an identical runtime state. */
@@ -410,7 +454,19 @@ bool retro_serialize(void *data,size_t size){
 }
 
 bool retro_unserialize(const void *data,size_t size){
-  return g_libretro.loaded && anygm_state_load(g_libretro.engine,data,size)==ANYGM_OK;
+  if(!g_libretro.loaded) return false;
+  if(g_libretro.reset_pending_frame && g_libretro.startup_ring_compact &&
+     g_libretro.startup_resume_capacity &&
+     size<=g_libretro.startup_resume_capacity){
+    if(!g_libretro.reset_ring_rejection_reported){
+      g_libretro.reset_ring_rejection_reported=true;
+      libretro_log(RETRO_LOG_INFO,
+                   "Ignored a pre-reset rewind slot until the restarted runtime produced its "
+                   "first frame\n");
+    }
+    return false;
+  }
+  return anygm_state_load(g_libretro.engine,data,size)==ANYGM_OK;
 }
 
 void retro_cheat_reset(void){
