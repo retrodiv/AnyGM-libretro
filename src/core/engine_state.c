@@ -576,6 +576,15 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   engine->frame_authority = ENGINE_FRAME_CPU_MATERIALIZED;
   engine->have_presented_frame = 0;
   engine->state_just_loaded = schedule_reapply && engine->state_frame_available ? 1 : 0;
+  /* A completed frame made under another presentation policy cannot be handed to the host at its
+   * stored extent. Draw once without advancing instead; the existing reapply transaction then puts
+   * the canonical post-frame simulation back while leaving the newly composed pixels visible. */
+  if(schedule_reapply && engine->state_frame_available &&
+     (engine->state_frame_width!=engine->output_width ||
+      engine->state_frame_height!=engine->output_height)){
+    engine->state_frame_available=0;
+    engine->state_just_loaded=1;
+  }
   return offset==(size_t)header.payload_size;
 }
 bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
@@ -597,10 +606,20 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
     return false;
   }
 
+  CheatSlot prior_cheats[GML_MAX_CHEATS];
+  CheatSlot prior_boot_cheats[GML_MAX_CHEATS];
+  memcpy(prior_cheats,engine->cheats,sizeof prior_cheats);
+  memcpy(prior_boot_cheats,engine->boot_cheats,sizeof prior_boot_cheats);
+  int prior_override_room=engine->override_room;
+  engine_overrides_prepare_state_load(engine);
+
   int prior_just_loaded=engine->state_just_loaded;
   size_t prior_reapply_size=engine->state_reapply_size;
   if(!state_unserialize_impl(engine,d,target_size,1)){
     int restored=state_unserialize_impl(engine,snapshot,snapshot_size,0);
+    memcpy(engine->cheats,prior_cheats,sizeof prior_cheats);
+    memcpy(engine->boot_cheats,prior_boot_cheats,sizeof prior_boot_cheats);
+    engine->override_room=prior_override_room;
     engine->state_just_loaded=prior_just_loaded;
     engine->state_reapply_size=prior_reapply_size;
     free(snapshot);
@@ -612,6 +631,9 @@ bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
     uint8_t *next=realloc(engine->state_reapply,target_size?target_size:1);
     if(!next){
       int restored=state_unserialize_impl(engine,snapshot,snapshot_size,0);
+      memcpy(engine->cheats,prior_cheats,sizeof prior_cheats);
+      memcpy(engine->boot_cheats,prior_boot_cheats,sizeof prior_boot_cheats);
+      engine->override_room=prior_override_room;
       engine->state_just_loaded=prior_just_loaded;
       engine->state_reapply_size=prior_reapply_size;
       free(snapshot);

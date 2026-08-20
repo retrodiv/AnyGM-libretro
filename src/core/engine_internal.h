@@ -383,6 +383,8 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
 /* A state carries the values a scoped override forced into it. Loading one re-opens the question
  * of whether those writes still apply, which only the live scope can answer. */
 void engine_overrides_room_scope_apply(AnygmEngine *engine);
+void engine_overrides_presentation_apply(AnygmEngine *engine);
+void engine_overrides_prepare_state_load(AnygmEngine *engine);
 void engine_overrides_note_state_load(AnygmEngine *engine);
 int engine_boot_cheats_active(AnygmEngine *engine);
 void engine_override_menu_refresh(AnygmEngine *engine);

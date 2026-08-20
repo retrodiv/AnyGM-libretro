@@ -700,6 +700,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     engine->fps_room=-1;
     return ANYGM_OK;
   }
+  engine_overrides_presentation_apply(engine);
   /* A live monitor-size change arrives before input. Resolve its host-to-content transform now so
    * the first pointer sample under the new geometry is mapped through the same canvas as video. */
   if(engine->fps_room<0 || !engine->output_width || !engine->output_height)

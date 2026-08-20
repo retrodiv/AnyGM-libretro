@@ -65,6 +65,8 @@ canonical bytes and semantics remain unchanged.
   encoding it always had.
 - Presentation-only settings such as virtual-monitor dimensions, aspect ratio, and CRT effects are not
   state identity; the host's current presentation settings remain active when a state is loaded.
+  If the stored completed frame has another extent, the load redraws once without advancing the
+  simulation instead of publishing that stale extent and changing geometry on the following frame.
 - Diagnostics, host handles, and disposable caches are excluded.
 - Graphics-target resources are excluded under every schema. Textures, programs, framebuffer
   identifiers, entry-point tables, upload buffers, residency records, render plans and timing

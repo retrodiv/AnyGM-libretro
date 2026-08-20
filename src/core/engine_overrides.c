@@ -649,11 +649,14 @@ static void cheat_monitor_dimensions(AnygmEngine *engine,double *monitor_w,doubl
 void engine_override_menu_refresh(AnygmEngine *engine){
   menu_rebuild(engine);
 }
-/* Frontend toggles capture scalar or array globals. Population-wide instance and surface writes have no single previous value. A scoped logical-raster declaration may capture a first active target when its address has one meaningful previous value. */
-
+/* Frontend toggles capture scalar or array globals. Population-wide instance and surface writes have no single previous value. A scoped logical-raster declaration may capture a target when its address has one meaningful previous value, including the bounded mutable presentation fields below. */
+static int cheat_engine_field_mutable(const CheatAct *a){
+  return a->kind==CK_ENGINE && a->eng>=EF_WINDOW_W && a->eng<=EF_APPLICATION_H;
+}
 static int cheat_slot_capturable(const CheatAct *a){
   if(a->kind==CK_GSCALAR || a->kind==CK_GARR) return 1;
-  return a->scope_gameres && (a->kind==CK_INST || a->kind==CK_SURFACE);
+  return a->scope_gameres &&
+         (a->kind==CK_INST || a->kind==CK_SURFACE || cheat_engine_field_mutable(a));
 }
 static void cheat_slot_capture(AnygmEngine *engine,CheatSlot *slot){
   slot->saved_valid=0;
@@ -682,6 +685,30 @@ static void cheat_slot_capture(AnygmEngine *engine,CheatSlot *slot){
         slot->saved_valid=1;
       }
       break; }
+    case CK_ENGINE:
+      switch(slot->act.eng){
+        case EF_WINDOW_W: slot->saved=engine->vm.window_w; slot->saved_valid=1; break;
+        case EF_WINDOW_H: slot->saved=engine->vm.window_h; slot->saved_valid=1; break;
+        case EF_GUI_W: slot->saved=engine->vm.gui_w; slot->saved_valid=1; break;
+        case EF_GUI_H: slot->saved=engine->vm.gui_h; slot->saved_valid=1; break;
+        case EF_FBW: case EF_FBH: {
+          GmlRenderTargetMetrics target;
+          if(gml_render_target_metrics(&engine->render,&target)){
+            slot->saved=slot->act.eng==EF_FBW?target.width:target.height;
+            slot->saved_valid=1;
+          }
+          break; }
+        case EF_APPLICATION_W: case EF_APPLICATION_H: {
+          GmlRenderPresentationMetrics presentation;
+          if(gml_render_presentation_metrics(&engine->render,&presentation)){
+            slot->saved=slot->act.eng==EF_APPLICATION_W?presentation.application_width:
+                                                            presentation.application_height;
+            slot->saved_valid=1;
+          }
+          break; }
+        default: break;
+      }
+      break;
     default: break;
   }
 }
@@ -701,6 +728,13 @@ static void cheat_slot_restore_keep(AnygmEngine *engine,CheatSlot *slot,int keep
     case CK_SURFACE: gml_resize_inst_surface_all(&engine->vm, slot->act.obj, slot->act.var,
                                                  (int)slot->saved,(int)slot->saved2);
                      break;
+    case CK_ENGINE: {
+      CheatAct restored=slot->act;
+      restored.val.tok=TK_LIT;
+      restored.val.lit=slot->saved;
+      restored.val.nop=0;
+      cheat_apply_one(engine,&restored);
+      break; }
     default: break;
   }
 }
@@ -805,6 +839,21 @@ static void cheat_sticky_pass(AnygmEngine *engine,CheatSlot *arr, int n, int cha
     }
   }
 }
+static void cheat_gameres_pass(AnygmEngine *engine,CheatSlot *arr,int n,int channel_on){
+  for(int i=0;i<n;i++){
+    CheatSlot *slot=&arr[i];
+    if(!slot->act.scope_gameres || slot->act.kind==CK_NONE) continue;
+    int applies=channel_on && slot->enabled && cheat_scope_ok(engine,&slot->act,0);
+    if(applies){
+      if(!slot->saved_valid) cheat_slot_capture(engine,slot);
+      slot->applied=1;
+      cheat_apply_one(engine,&slot->act);
+    } else if(slot->applied){
+      cheat_slot_restore_keep(engine,slot,1);
+      slot->applied=0;
+    }
+  }
+}
 /* Re-apply un-scoped freeze cheats — called every frame after the game step. Alarm pauses are
  * rebuilt here rather than accumulated: they are the one directive that changes what the engine
  * does instead of what a variable holds, so the table has to describe the cheats enabled right
@@ -847,6 +896,29 @@ void apply_sticky_cheats(AnygmEngine *engine){
   cheat_sticky_pass(engine,engine->boot_cheats, engine->boot_cheat_count,
                     engine_boot_cheats_active(engine)>0, 0);
 }
+/* Presentation-scoped targets must settle before geometry is read. The ordinary sticky pass runs
+ * after Step so simulation freezes observe the usual event boundary; using this narrow pass at
+ * the start of a frame lets a live presentation switch affect that same frame without moving any
+ * unscoped gameplay write earlier. */
+void engine_overrides_presentation_apply(AnygmEngine *engine){
+  if(!engine) return;
+  cheat_gameres_pass(engine,engine->cheats,engine->cheat_count,1);
+  cheat_gameres_pass(engine,engine->boot_cheats,engine->boot_cheat_count,
+                     engine_boot_cheats_active(engine)>0);
+}
+/* A state restores VM and renderer fields, but presentation policy belongs to the live host. Read
+ * the current targets before those sections are replaced so a state made under the opposite scope
+ * can be reconciled without importing its window or application-surface geometry. */
+void engine_overrides_prepare_state_load(AnygmEngine *engine){
+  if(!engine) return;
+  for(int table=0;table<2;table++){
+    CheatSlot *slots=table?engine->boot_cheats:engine->cheats;
+    int count=table?engine->boot_cheat_count:engine->cheat_count;
+    for(int i=0;i<count;i++)
+      if(slots[i].enabled && slots[i].act.scope_gameres && !slots[i].saved_valid)
+        cheat_slot_capture(engine,&slots[i]);
+  }
+}
 /* Loading a state restores the values a scoped override wrote into the one being saved, so every
  * slot that could have written owes an answer again. Marking them applied lets the next pass make
  * it: the scope decides, and a directive that no longer applies gives its captured value back. */
@@ -856,6 +928,7 @@ void engine_overrides_note_state_load(AnygmEngine *engine){
     if(engine->cheats[i].saved_valid) engine->cheats[i].applied=1;
   for(int i=0;i<engine->boot_cheat_count;i++)
     if(engine->boot_cheats[i].saved_valid) engine->boot_cheats[i].applied=1;
+  engine_overrides_presentation_apply(engine);
 }
 static void cheat_monitor_pass(AnygmEngine *engine,const CheatSlot *slots,int count){
   for(int i=0;i<count;i++){

@@ -51,15 +51,17 @@ join the save-state identity, so a state saved with them loads only while
 they are active; content without directives keeps its state identity
 unchanged.
 
-A `?gameres` directive applies only while *Render at game resolution* is selected. It declares an inner logical raster for presentation values that the content scales to a separate output raster. Each scoped directive captures the previous value before its first write and restores it when the selection closes. This also permits a scoped instance-variable or surface-resize directive when its target has one meaningful previous value. Room-owned `view_*` and `background_*` arrays are recaptured on room entry, and their directives settle before the frame's output geometry is published.
-
-The following is a synthetic grammar example:
+A `?gameres` directive applies only while *Render at game resolution* is selected. It declares an inner logical raster for presentation values that the content scales to a separate output raster. Each scoped directive captures the previous value before its first write and restores it when the selection closes. This includes mutable presentation fields such as `@window_w`, `@window_h`, `@application_w`, and `@application_h`, and also permits a scoped instance-variable or surface-resize directive when its target has one meaningful previous value. Room-owned `view_*` and `background_*` arrays are recaptured on room entry, and their directives settle before the frame's output geometry is published.
 
 ```
 [overrides]
 ?gameres obj_presenter:canvas_scale=1
 ?gameres view_wport[0]=320
 ?gameres view_hport[0]=240
+?gameres @window_w=320
+?gameres @window_h=240
+?gameres @application_w=320
+?gameres @application_h=240
 ```
 
 A scope prefix belongs to the directive that carries it, and a `;` chain fans out into one
