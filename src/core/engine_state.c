@@ -204,9 +204,16 @@ static int state_read_completed_frame(AnygmEngine *engine,CoreR *state){
 
 enum {
   ANYGM_STATE_HEADER_SIZE=112,
+  ANYGM_STATE_CONTENT_LOCATOR_SIZE=1024,
+  ANYGM_STATE_LAUNCH_PARAMETERS_SIZE=1024,
   ANYGM_STATE_ENCODING_LITTLE_ENDIAN_IEEE754=1
 };
 #define ANYGM_STATE_MAGIC UINT32_C(0x54534741)
+
+_Static_assert(sizeof(((AnygmEngine *)0)->state_content_locator)==
+               ANYGM_STATE_CONTENT_LOCATOR_SIZE,"state content locator size");
+_Static_assert(sizeof(((AnygmEngine *)0)->launch_parameters)==
+               ANYGM_STATE_LAUNCH_PARAMETERS_SIZE,"state launch parameter size");
 
 typedef struct {
   uint64_t total_size;
@@ -220,6 +227,11 @@ typedef struct {
   uint64_t audio_size;
   uint64_t payload_size;
 } AnygmStateHeader;
+
+typedef struct {
+  char content_locator[ANYGM_STATE_CONTENT_LOCATOR_SIZE];
+  char launch_parameters[ANYGM_STATE_LAUNCH_PARAMETERS_SIZE];
+} AnygmStateLaunch;
 
 uint64_t state_hash_bytes(const void *data,size_t size){
   const uint8_t *bytes=data;
@@ -292,8 +304,7 @@ static void state_header_write(uint8_t *destination,const AnygmStateHeader *head
   cw_u64(&writer,0);
 }
 
-static int state_header_read(AnygmEngine *engine,const void *data,size_t size,
-                             AnygmStateHeader *header){
+static int state_header_read(const void *data,size_t size,AnygmStateHeader *header){
   if(!data || !header || size<ANYGM_STATE_HEADER_SIZE) return 0;
   CoreR reader={(const uint8_t*)data,ANYGM_STATE_HEADER_SIZE,0,1};
   uint32_t magic=cr_u32(&reader);
@@ -329,17 +340,69 @@ static int state_header_read(AnygmEngine *engine,const void *data,size_t size,
   if(UINT64_MAX-sections<header->audio_size) return 0;
   sections+=header->audio_size;
   if(sections!=header->payload_size || header->payload_size>SIZE_MAX) return 0;
-  if(header->content_fingerprint!=engine->content_fingerprint ||
-     header->compatibility_fingerprint!=engine->compatibility_fingerprint ||
-     header->config_fingerprint!=state_current_config_fingerprint(engine)) return 0;
   const uint8_t *payload=(const uint8_t*)data+ANYGM_STATE_HEADER_SIZE;
   return state_hash_bytes(payload,(size_t)header->payload_size)==header->payload_checksum;
+}
+
+static int state_header_matches_engine(AnygmEngine *engine,const AnygmStateHeader *header){
+  return engine && header &&
+    header->content_fingerprint==engine->content_fingerprint &&
+    header->compatibility_fingerprint==engine->compatibility_fingerprint &&
+    header->config_fingerprint==state_current_config_fingerprint(engine);
+}
+
+static int state_read_fixed_string(CoreR *reader,char *destination,size_t capacity){
+  if(!reader || !destination || !capacity) return 0;
+  cr_raw(reader,destination,capacity);
+  if(!reader->ok) return 0;
+  size_t length=0;
+  while(length<capacity && destination[length]) length++;
+  if(length==capacity) return 0;
+  for(size_t index=length+1;index<capacity;index++)
+    if(destination[index]) return 0;
+  return 1;
+}
+
+static void state_write_fixed_string(CoreW *writer,const char *value,size_t capacity){
+  uint8_t encoded[ANYGM_STATE_CONTENT_LOCATOR_SIZE]={0};
+  if(capacity>sizeof encoded){ writer->ok=0; return; }
+  size_t length=value?strlen(value):0;
+  if(length>=capacity){ writer->ok=0; return; }
+  if(length) memcpy(encoded,value,length);
+  cw_raw(writer,encoded,capacity);
+}
+
+static int state_read_launch(const void *data,const AnygmStateHeader *header,
+                             AnygmStateLaunch *launch){
+  if(!data || !header || !launch ||
+     header->core_size<ANYGM_STATE_CONTENT_LOCATOR_SIZE+
+                       ANYGM_STATE_LAUNCH_PARAMETERS_SIZE) return 0;
+  const uint8_t *payload=(const uint8_t *)data+ANYGM_STATE_HEADER_SIZE;
+  CoreR reader={payload,(size_t)header->core_size,0,1};
+  memset(launch,0,sizeof *launch);
+  if(!state_read_fixed_string(&reader,launch->content_locator,
+                              sizeof launch->content_locator) ||
+     !state_read_fixed_string(&reader,launch->launch_parameters,
+                              sizeof launch->launch_parameters) ||
+     !engine_state_content_locator_valid(launch->content_locator)) return 0;
+  return 1;
+}
+
+static int state_launch_matches_engine(const AnygmEngine *engine,
+                                       const AnygmStateLaunch *launch){
+  return engine && launch &&
+    !strcmp(engine->state_content_locator,launch->content_locator) &&
+    !strcmp(engine->launch_parameters,launch->launch_parameters);
 }
 
 static void state_write(AnygmEngine *engine,CoreW *s){
   uint8_t empty_header[ANYGM_STATE_HEADER_SIZE]={0};
   cw_raw(s,empty_header,sizeof empty_header);
   size_t core_start=s->pos;
+  state_write_fixed_string(s,engine->state_content_locator,
+                           ANYGM_STATE_CONTENT_LOCATOR_SIZE);
+  state_write_fixed_string(s,engine->launch_parameters,
+                           ANYGM_STATE_LAUNCH_PARAMETERS_SIZE);
   cw_u32(s,engine->width); cw_u32(s,engine->height); cw_u32(s,engine->background); cw_d(s,engine->fps);
   cw_i32(s,engine->follow_player); cw_i32(s,engine->player_object); cw_d(s,engine->audio_accumulator);
   { cw_i64(s,(int64_t)engine->vm.frame); }
@@ -479,7 +542,10 @@ bool engine_state_save_for_resume(AnygmEngine *engine,void *d,size_t n,size_t *w
 bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int schedule_reapply){
   if(!engine->loaded || !d) return false;
   AnygmStateHeader header={0};
-  if(!state_header_read(engine,d,n,&header)) return false;
+  AnygmStateLaunch launch={0};
+  if(!state_header_read(d,n,&header) || !state_header_matches_engine(engine,&header) ||
+     !state_read_launch(d,&header,&launch) || !state_launch_matches_engine(engine,&launch))
+    return false;
   uint64_t tp0=0,tp1=0,tp2=0,tp3=0;
   int st_time=anygm_host_development_setting(&engine->host,"GML_DBG_STATE_TIME")!=NULL;
   if(st_time) tp0=anygm_host_monotonic_time_ns(&engine->host);
@@ -489,6 +555,10 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
   size_t vm_size=(size_t)header.vm_size;
   size_t audio_size=(size_t)header.audio_size;
   CoreR core={payload,core_size,0,1};
+  char content_locator[ANYGM_STATE_CONTENT_LOCATOR_SIZE];
+  char launch_parameters[ANYGM_STATE_LAUNCH_PARAMETERS_SIZE];
+  if(!state_read_fixed_string(&core,content_locator,sizeof content_locator) ||
+     !state_read_fixed_string(&core,launch_parameters,sizeof launch_parameters)) return false;
   engine->width=cr_u32(&core); engine->height=cr_u32(&core); engine->background=cr_u32(&core); engine->fps=cr_d(&core);
   if(engine->width>FB_MAX_W || engine->height>FB_MAX_H || engine->width==0 || engine->height==0 || !isfinite(engine->fps) || engine->fps<=0) return false;
   engine->follow_player=cr_i32(&core); engine->player_object=cr_i32(&core); engine->audio_accumulator=cr_d(&core);
@@ -590,8 +660,31 @@ bool state_unserialize_impl(AnygmEngine *engine,const void *d, size_t n, int sch
 bool engine_state_load(AnygmEngine *engine,const void *d,size_t n){
   if(!engine->loaded || !d) return false;
   AnygmStateHeader target_header={0};
-  if(!state_header_read(engine,d,n,&target_header)) return false;
+  AnygmStateLaunch target_launch={0};
+  if(!state_header_read(d,n,&target_header) ||
+     !state_read_launch(d,&target_header,&target_launch)) return false;
   size_t target_size=(size_t)target_header.total_size;
+
+  if(!state_header_matches_engine(engine,&target_header) ||
+     !state_launch_matches_engine(engine,&target_launch)){
+    AnygmEngine *staged=NULL;
+    if(engine_state_stage_content(engine,target_launch.content_locator,
+                                  target_launch.launch_parameters,&staged)!=ANYGM_OK || !staged)
+      return false;
+    if(!state_header_matches_engine(staged,&target_header) ||
+       !state_launch_matches_engine(staged,&target_launch) ||
+       !engine_state_load(staged,d,target_size)){
+      anygm_destroy(staged);
+      return false;
+    }
+    staged->state_peak_enabled=engine->state_peak_enabled;
+    staged->state_peak_hint=engine->state_peak_hint;
+    staged->state_peak_persisted=engine->state_peak_persisted;
+    staged->state_resume_peak_hint=engine->state_resume_peak_hint;
+    staged->state_resume_peak_persisted=engine->state_resume_peak_persisted;
+    engine_state_commit_staged_content(engine,staged);
+    return true;
+  }
 
   CoreW measure={0}; measure.ok=1;
   state_write(engine,&measure);

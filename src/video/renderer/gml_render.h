@@ -305,6 +305,7 @@ typedef struct {
 
 int  gml_render_init(GmlRender *r, GmlWin *win);
 void gml_render_free(GmlRender *r);
+void gml_render_rebind_content(GmlRender *r,GmlWin *win);
 void gml_render_bind_software3d(GmlRender *r,GmlSoftware3D *software3d);
 GmlSoftware3D *gml_render_software3d(GmlRender *r);
 void gml_render_set_frame(GmlRender *r,long frame);

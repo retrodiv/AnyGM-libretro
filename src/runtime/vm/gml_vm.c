@@ -349,6 +349,14 @@ int gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
   return 0;
 }
 
+void gml_vm_rebind(GmlVM *vm,GmlWin *win,const AnygmHostServices *host){
+  if(!vm) return;
+  vm->win=win;
+  vm->host=host;
+  gml_particle_state_rebind(vm->particles,vm);
+  gml_builtin_state_rebind(vm->builtins,vm);
+}
+
 int gml_vm_init(GmlVM *vm,GmlWin *win,const AnygmHostServices *host){
   return gml_vm_init_launch(vm,win,host,NULL,NULL,NULL);
 }

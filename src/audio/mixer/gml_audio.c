@@ -81,6 +81,12 @@ struct GmlAudio {
   uint32_t audo_off, audo_n;   /* data.win AUDO chunk, for streamed-sound embedded fallbacks */
 };
 
+void gml_audio_rebind_content(GmlAudio *audio,GmlWin *win){
+  if(!audio) return;
+  audio->win=win;
+  gml_fmod_banks_rebind_host(audio->fmod,win?win->host:NULL);
+}
+
 static const char *audio_setting(const GmlAudio *audio,const char *name){
   return anygm_host_development_setting(audio&&audio->win?audio->win->host:NULL,name);
 }

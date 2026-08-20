@@ -452,6 +452,9 @@ int     gml_vm_init(GmlVM *vm, GmlWin *win,const AnygmHostServices *host);
 int     gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
                            const char *program_directory,const char *executable,
                            const char *parameters);
+/* Rebind owner pointers after a complete runtime is moved transactionally between engine shells.
+ * Allocated VM state stays intact; only the stable embedding address changes. */
+void    gml_vm_rebind(GmlVM *vm,GmlWin *win,const AnygmHostServices *host);
 void    gml_vm_free(GmlVM *vm);
 void    gml_vm_fire_game_end(GmlVM *vm);
 void    gml_vm_set_launch_parameters(GmlVM *vm,const char *executable,const char *parameters);

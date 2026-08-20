@@ -799,6 +799,12 @@ GmlFmodBanks *gml_fmod_banks_load(const AnygmHostServices *host,const char *dir)
   return b;
 }
 
+void gml_fmod_banks_rebind_host(GmlFmodBanks *b,const AnygmHostServices *host){
+  if(!b) return;
+  b->host=host;
+  for(int index=0;index<b->nbanks;index++) b->banks[index].host=host;
+}
+
 void gml_fmod_banks_free(GmlFmodBanks *b){
   if(!b) return;
   for(int i=0;i<b->nstrings;i++) free(b->paths[i]);

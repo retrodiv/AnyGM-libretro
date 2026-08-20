@@ -11,7 +11,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { STATE_HEADER_SIZE=112 };
+enum {
+  STATE_HEADER_SIZE=112,
+  STATE_CONTENT_LOCATOR_SIZE=1024,
+  STATE_LAUNCH_PARAMETERS_SIZE=1024,
+  STATE_CORE_FIELDS_OFFSET=STATE_HEADER_SIZE+STATE_CONTENT_LOCATOR_SIZE+
+                           STATE_LAUNCH_PARAMETERS_SIZE
+};
 
 static int fail(const char *message){
   fprintf(stderr,"state security: %s\n",message);
@@ -270,10 +276,10 @@ int main(void){
   }
 
   if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
-                               STATE_HEADER_SIZE,0,"zero frame width");
+                               STATE_CORE_FIELDS_OFFSET,0,"zero frame width");
   if(ok){
     memcpy(candidate,baseline,state_size);
-    write_u64(candidate+STATE_HEADER_SIZE+12,UINT64_C(0x7ff8000000000000));
+    write_u64(candidate+STATE_CORE_FIELDS_OFFSET+12,UINT64_C(0x7ff8000000000000));
     refresh_checksum(candidate);
     ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,"non-finite frame rate");
   }

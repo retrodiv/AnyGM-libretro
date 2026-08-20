@@ -1335,6 +1335,9 @@ static int game_change_policy(void){
     snprintf(original_program_directory,sizeof original_program_directory,"%s/",
              engine->win.content_dir);
   }
+  uint8_t *root_state=NULL;
+  size_t root_state_size=0;
+  ok=ok && save_state(engine,&root_state,&root_state_size);
   AnygmInputFrame input={0};
   input.struct_size=sizeof input;
   input.pointer_x=input.pointer_y=-1;
@@ -1371,6 +1374,29 @@ static int game_change_policy(void){
   uint8_t *state=NULL;
   size_t state_size=0;
   ok=ok && save_state(engine,&state,&state_size);
+  AnygmEngine *cold_engine=NULL;
+  AnygmResult cold_load_result=ANYGM_ERROR_INVALID_STATE;
+  ok=ok && anygm_create(&services,&cold_engine)==ANYGM_OK &&
+     anygm_set_config(cold_engine,&presentation)==ANYGM_OK &&
+     anygm_load(cold_engine,&source,NULL)==ANYGM_OK;
+  if(ok) cold_load_result=anygm_state_load(cold_engine,state,state_size);
+  output.struct_size=sizeof output;
+  ok=ok && cold_load_result==ANYGM_OK &&
+     anygm_run_frame(cold_engine,&input,&output)==ANYGM_OK &&
+     output.width==80 && output.height==50 &&
+     gml_global_num(&cold_engine->vm,"fixture_child_marker")==1 &&
+     gml_global_num(&cold_engine->vm,"fixture_anchor_marker")==7 &&
+     gml_global_num(&cold_engine->vm,"fixture_parameter_count")==4 &&
+     !strcmp(cold_engine->win.save_dir,original_save_directory) &&
+     !strcmp(cold_engine->state_content_locator,"secondary/data.win") &&
+     !strcmp(cold_engine->launch_parameters,
+             "-game data.win child_marker \"quoted value\"") &&
+     strstr(cold_engine->current_content_path,"secondary/data.win");
+  ok=ok && anygm_state_load(cold_engine,root_state,root_state_size)==ANYGM_OK &&
+     !cold_engine->state_content_locator[0] &&
+     !cold_engine->launch_parameters[0] &&
+     !strcmp(cold_engine->current_content_path,fixture.path) &&
+     anygm_state_load(cold_engine,state,state_size)==ANYGM_OK;
   presentation.values.present_logical_raster=0;
   output.struct_size=sizeof output;
   ok=ok && anygm_set_config(engine,&presentation)==ANYGM_OK &&
@@ -1403,14 +1429,16 @@ static int game_change_policy(void){
     if(engine) anygm_get_last_error(engine,error,sizeof error);
     fprintf(stderr,
       "game-change lifecycle mismatch: error=%s output=%ux%u room=%d marker=%.0f "
-      "anchor=%.0f end=%.0f params=%.0f save=%s\n",
+      "anchor=%.0f end=%.0f params=%.0f save=%s cold-load=%d\n",
       error,output.width,output.height,engine?engine->vm.room_index:-1,
       engine?gml_global_num(&engine->vm,"fixture_child_marker"):0,
       engine?gml_global_num(&engine->vm,"fixture_anchor_marker"):0,
       engine?gml_global_num(&engine->vm,"fixture_end_observed"):0,
       engine?gml_global_num(&engine->vm,"fixture_parameter_count"):0,
-      engine?engine->win.save_dir:"");
+      engine?engine->win.save_dir:"",(int)cold_load_result);
   }
+  anygm_destroy(cold_engine);
+  free(root_state);
   free(state);
   anygm_destroy(engine);
   remove(launch_path);
@@ -2075,8 +2103,8 @@ int main(int argc,char **argv){
   /* The synthetic-state checksum tracks the complete serialized bytes,
    * including the resolved content and compatibility identifiers. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
-  if(deterministic_size!=19906 ||
-     deterministic_hash!=UINT64_C(0xdf60c0b563d65b42)){
+  if(deterministic_size!=21954 ||
+     deterministic_hash!=UINT64_C(0x5cd6f1622b8cd742)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;
@@ -2097,10 +2125,24 @@ int main(int argc,char **argv){
                                 "payload checksum mismatch")) return 1;
 
   memcpy(damaged,first_state,first_written);
+  memset(damaged+112,0,1024);
+  memcpy(damaged+112,"../data.win",11);
+  write_u64(damaged+56,state_checksum(damaged+112,(size_t)read_u64(damaged+96)));
+  if(!expect_rejected_unchanged(first,damaged,first_written,first_state,first_written,
+                                "unsafe content locator")) return 1;
+
+  memcpy(damaged,first_state,first_written);
+  memset(damaged+112,0,1024);
+  memcpy(damaged+112,"missing/data.win",16);
+  write_u64(damaged+56,state_checksum(damaged+112,(size_t)read_u64(damaged+96)));
+  if(!expect_rejected_unchanged(first,damaged,first_written,first_state,first_written,
+                                "unavailable replacement content")) return 1;
+
+  memcpy(damaged,first_state,first_written);
   uint64_t core_size=read_u64(damaged+64);
   uint64_t render_size=read_u64(damaged+72);
   uint64_t payload_size=read_u64(damaged+96);
-  size_t frame_width_offset=112u+44u+
+  size_t frame_width_offset=112u+2048u+44u+
     sizeof first->pad_current+sizeof first->pad_previous+
     sizeof first->key_current+sizeof first->key_previous;
   if(frame_width_offset+12>112u+core_size) return 1;

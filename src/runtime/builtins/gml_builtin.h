@@ -14,6 +14,7 @@ typedef void (*GmlBuiltinValueVisitor)(void *userdata, GmlVal value);
 
 GmlBuiltinState *gml_builtin_state_create(GmlVM *vm);
 GmlBuiltinState *gml_builtin_state_ensure(GmlVM *vm);
+void gml_builtin_state_rebind(GmlBuiltinState *state,GmlVM *vm);
 void gml_builtin_state_reset(GmlBuiltinState *state);
 void gml_builtin_state_destroy(GmlBuiltinState *state);
 void gml_builtin_state_visit_values(const GmlBuiltinState *state,

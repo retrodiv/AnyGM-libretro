@@ -326,10 +326,13 @@ static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSou
   engine->win.compatibility=&engine->compatibility;
   snprintf(engine->content_cache_directory,sizeof engine->content_cache_directory,"%s",
            source->cache_directory?source->cache_directory:"");
+  snprintf(engine->content_launch_path,sizeof engine->content_launch_path,"%s",
+           source->kind==ANYGM_CONTENT_PATH && source->path?source->path:"");
   snprintf(engine->current_content_path,sizeof engine->current_content_path,"%s",
            prepared.loaded_path);
   snprintf(engine->content_program_directory,sizeof engine->content_program_directory,"%s",
            engine->win.content_dir);
+  engine->state_content_locator[0]='\0';
   engine->launch_parameters[0]='\0';
   engine_adopt_boot_overrides(engine,&prepared);
   state_identity_refresh(engine);
@@ -581,6 +584,180 @@ static int game_change_target_path(const char *content_directory,const char *dir
   return length>=0 && (size_t)length<capacity;
 }
 
+int engine_state_content_locator_valid(const char *locator){
+  if(!locator) return 0;
+  if(!locator[0]) return 1;
+  if(locator[0]=='/' || locator[0]=='\\') return 0;
+  const char *segment=locator;
+  for(const char *cursor=locator;;cursor++){
+    unsigned char c=(unsigned char)*cursor;
+    if(c && (c=='\\' || c<0x20 || c==':' || c==0x7f)) return 0;
+    if(c=='/' || !c){
+      size_t length=(size_t)(cursor-segment);
+      if(!length || (length==1 && segment[0]=='.') ||
+         (length==2 && segment[0]=='.' && segment[1]=='.')) return 0;
+      if(!c) break;
+      segment=cursor+1;
+    }
+  }
+  return 1;
+}
+
+static int engine_state_locator_from_target(const char *program_directory,const char *target,
+                                            char *locator,size_t capacity){
+  if(!program_directory || !program_directory[0] || !target || !locator || !capacity) return 0;
+  size_t prefix=strlen(program_directory);
+  while(prefix && (program_directory[prefix-1]=='/' || program_directory[prefix-1]=='\\'))
+    prefix--;
+  if(!prefix || strncmp(program_directory,target,prefix) ||
+     (target[prefix]!='/' && target[prefix]!='\\')) return 0;
+  const char *relative=target+prefix;
+  while(*relative=='/' || *relative=='\\') relative++;
+  size_t written=0;
+  int previous_separator=0;
+  for(;*relative;relative++){
+    char c=*relative;
+    if(c=='/' || c=='\\'){
+      if(previous_separator) continue;
+      c='/';
+      previous_separator=1;
+    } else previous_separator=0;
+    if(written+1>=capacity) return 0;
+    locator[written++]=c;
+  }
+  if(written && locator[written-1]=='/') written--;
+  locator[written]='\0';
+  return engine_state_content_locator_valid(locator);
+}
+
+static void engine_rebind_moved_runtime(AnygmEngine *engine){
+  if(!engine) return;
+  engine->win.host=&engine->host;
+  engine->win.compatibility=&engine->compatibility;
+  gml_vm_rebind(&engine->vm,&engine->win,&engine->host);
+  engine_input_bind(engine);
+  gml_render_rebind_content(&engine->render,&engine->win);
+  engine->vm.render=&engine->render;
+  gml_render_bind_software3d(&engine->render,engine->vm.software3d);
+  gml_audio_rebind_content(engine->audio,&engine->win);
+  engine->vm.audio=engine->audio;
+  engine->vm.draw_event_hook=aspect_draw_event_hook;
+  engine->vm.draw_event_hook_user=engine;
+  engine->vm.room_layer_hook=screen_redraw_room_layer_hook;
+  engine->vm.room_layer_hook_user=engine;
+  engine->vm.present_latch_hook=screen_refresh_present_latch_hook;
+  engine->vm.present_latch_hook_user=engine;
+}
+
+AnygmResult engine_state_stage_content(AnygmEngine *engine,const char *locator,
+                                       const char *parameters,AnygmEngine **out_staged){
+  if(!engine || !out_staged || !engine_state_content_locator_valid(locator))
+    return ANYGM_ERROR_INVALID_STATE;
+  *out_staged=NULL;
+  char target[2048];
+  if(locator[0]){
+    if(!game_change_target_path(engine->content_program_directory,"",locator,
+                                target,sizeof target))
+      return ANYGM_ERROR_INVALID_STATE;
+  } else {
+    if(!engine->content_launch_path[0]) return ANYGM_ERROR_INVALID_STATE;
+    snprintf(target,sizeof target,"%s",engine->content_launch_path);
+  }
+
+  AnygmEngine *staged=NULL;
+  AnygmResult result=anygm_create(&engine->host,&staged);
+  if(result!=ANYGM_OK) return result;
+  staged->config=engine->config;
+  staged->locale_from_host=engine->locale_from_host;
+  snprintf(staged->language,sizeof staged->language,"%s",engine->language);
+  snprintf(staged->region,sizeof staged->region,"%s",engine->region);
+  snprintf(staged->language_tag,sizeof staged->language_tag,"%s",engine->language_tag);
+  staged->frame_flags=engine->frame_flags;
+  staged->profile_enabled=engine->profile_enabled;
+  staged->profile=engine->profile;
+  staged->diagnostics=engine->diagnostics;
+  staged->host_frame_generation=engine->host_frame_generation;
+  staged->frame_materializations=engine->frame_materializations;
+  staged->screen_pass_frames=engine->screen_pass_frames;
+  staged->canvas_pass_frames=engine->canvas_pass_frames;
+  if(!ensure_primary_buffers(staged)){
+    anygm_destroy(staged);
+    return ANYGM_ERROR_OUT_OF_MEMORY;
+  }
+
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=target;
+  source.cache_directory=engine->content_cache_directory[0]
+    ?engine->content_cache_directory:NULL;
+  EnginePreparedContent prepared;
+  result=engine_prepare_content(staged,&source,&prepared);
+  if(result!=ANYGM_OK){
+    anygm_destroy(staged);
+    return result;
+  }
+  if(!engine_inherit_game_change_overrides(engine,&prepared)){
+    gml_win_free(&prepared.win);
+    anygm_destroy(staged);
+    return ANYGM_ERROR_INVALID_STATE;
+  }
+
+  staged->win=prepared.win;
+  staged->content_facts=prepared.facts;
+  staged->compatibility=prepared.compatibility;
+  staged->win.compatibility=&staged->compatibility;
+  snprintf(staged->win.save_dir,sizeof staged->win.save_dir,"%s",engine->win.save_dir);
+  snprintf(staged->content_cache_directory,sizeof staged->content_cache_directory,"%s",
+           engine->content_cache_directory);
+  snprintf(staged->content_launch_path,sizeof staged->content_launch_path,"%s",
+           engine->content_launch_path);
+  snprintf(staged->current_content_path,sizeof staged->current_content_path,"%s",
+           prepared.loaded_path);
+  snprintf(staged->content_program_directory,sizeof staged->content_program_directory,"%s",
+           engine->content_program_directory);
+  snprintf(staged->state_content_locator,sizeof staged->state_content_locator,"%s",locator);
+  snprintf(staged->launch_parameters,sizeof staged->launch_parameters,"%s",
+           parameters?parameters:"");
+  engine_adopt_boot_overrides(staged,&prepared);
+  state_identity_refresh(staged);
+  /* A rejected staging engine must not publish cache observations. The accepted engine receives
+   * the live session's cache state immediately before commit. */
+  staged->state_peak_enabled=0;
+  staged->state_peak_hint=engine->state_peak_hint;
+  staged->state_peak_persisted=engine->state_peak_persisted;
+  staged->state_resume_peak_hint=engine->state_resume_peak_hint;
+  staged->state_resume_peak_persisted=engine->state_resume_peak_persisted;
+  staged->loaded=1;
+  staged->lifecycle=ENGINE_LOADED;
+  staged->full_game_on_initial_boot=locator[0]?1:0;
+  boot_runtime(staged);
+  run_selftest(staged);
+  for(int index=0;index<engine->cheat_count;index++){
+    const CheatSlot *slot=&engine->cheats[index];
+    if(slot->continuation_of) continue;
+    engine_override_set(staged,(unsigned)index,slot->enabled!=0,slot->code);
+  }
+  *out_staged=staged;
+  return ANYGM_OK;
+}
+
+void engine_state_commit_staged_content(AnygmEngine *engine,AnygmEngine *staged){
+  if(!engine || !staged) return;
+  /* The graphics target belongs to the frontend session rather than to either content runtime.
+   * Move it to the accepted runtime; the rejected shell is then an ordinary software-only engine
+   * that can be destroyed without issuing calls into a frontend graphics context. */
+  staged->gpu=engine->gpu;
+  engine->gpu=NULL;
+  AnygmEngine previous=*engine;
+  AnygmEngine replacement=*staged;
+  *engine=replacement;
+  *staged=previous;
+  engine_rebind_moved_runtime(engine);
+  engine_rebind_moved_runtime(staged);
+  anygm_destroy(staged);
+}
+
 static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed){
   if(changed) *changed=0;
   if(!engine || !engine->vm.game_change_pending) return ANYGM_OK;
@@ -599,8 +776,11 @@ static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed){
   }
   char payload[GML_GAME_CHANGE_TEXT_MAX];
   char target[2048];
+  char state_locator[sizeof engine->state_content_locator];
   if(!game_change_payload_name(parameters,payload,sizeof payload) ||
-     !game_change_target_path(engine->win.content_dir,directory,payload,target,sizeof target)){
+     !game_change_target_path(engine->win.content_dir,directory,payload,target,sizeof target) ||
+     !engine_state_locator_from_target(engine->content_program_directory,target,
+                                       state_locator,sizeof state_locator)){
     engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,
                   "The requested game change path could not be resolved");
     return ANYGM_ERROR_INVALID_CONTENT;
@@ -635,6 +815,8 @@ static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed){
   snprintf(engine->win.save_dir,sizeof engine->win.save_dir,"%s",save_directory);
   snprintf(engine->current_content_path,sizeof engine->current_content_path,"%s",
            prepared.loaded_path);
+  snprintf(engine->state_content_locator,sizeof engine->state_content_locator,"%s",
+           state_locator);
   snprintf(engine->launch_parameters,sizeof engine->launch_parameters,"%s",parameters);
   engine_adopt_boot_overrides(engine,&prepared);
   state_identity_refresh(engine);

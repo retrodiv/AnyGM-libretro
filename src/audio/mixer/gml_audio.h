@@ -16,6 +16,7 @@ typedef struct GmlAudio GmlAudio;
 int gml_audio_group_file_path(const GmlWin *win, int group, char *out, size_t out_cap);
 
 GmlAudio *gml_audio_create(GmlWin *win);
+void gml_audio_rebind_content(GmlAudio *audio,GmlWin *win);
 struct GmlFmodBanks *gml_audio_get_fmod(GmlAudio *a);   /* FMOD bank set, or NULL when unused */
 void gml_audio_free(GmlAudio *a);
 

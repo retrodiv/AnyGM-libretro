@@ -9,11 +9,18 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `11`. It is the format transported by
+The current AnyGM save-state schema is `12`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
 
-Schema `11` carries no new section. The completed-frame section remains optional: ordinary save
+Schema `12` prefixes the root core section with two fixed-size, zero-padded launch fields: the
+portable path of the active internal replacement relative to the launched distribution, and its
+launch parameters. An empty path names the frontend-selected payload. When a state names another
+internal payload, restore prepares and validates that content in a separate engine transaction,
+loads the complete state there, and replaces the running content only after every section accepts
+it. Absolute machine paths are never serialized. Fixed field capacities keep this metadata from
+growing when content changes, including for a frontend whose rewind slot size was fixed before the
+first frame. Schema `11` carries no new section. The completed-frame section remains optional: ordinary save
 states carry it so the first frontend frame after a load is exact, while a host may deliberately
 write the frame-free form for a high-frequency in-memory resume point. Both forms use the same
 schema and restore the same canonical post-frame simulation state. Schema `11` marks the
@@ -47,7 +54,7 @@ reader rejects the input after decoding begins, the engine restores an exact
 snapshot of its prior state before returning an error.
 
 If a future release deliberately breaks state compatibility, increment the
-schema to `11`, then `12`, and so on. Supporting an older schema requires an
+schema to `13`, then `14`, and so on. Supporting an older schema requires an
 explicit compatibility reader. A refactor does not require a bump when the
 canonical bytes and semantics remain unchanged.
 

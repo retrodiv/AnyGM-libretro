@@ -198,8 +198,15 @@ struct AnygmEngine {
   /* Set when the load took these from the host's locale service; a reset then asks it again. */
   int locale_from_host;
   char content_cache_directory[1024];
+  /* The frontend-selected launch path remains the anchor for the whole session. Internal content
+   * replacement changes current_content_path, but a state for the original payload still has to
+   * be reconstructible from the same launch envelope. */
+  char content_launch_path[1024];
   char current_content_path[1024];
   char content_program_directory[512];
+  /* Portable path of the active replacement relative to content_program_directory. Empty names
+   * the launch payload itself; absolute machine paths never enter a state. */
+  char state_content_locator[1024];
   char launch_parameters[GML_GAME_CHANGE_TEXT_MAX];
   int game_change_depth;
   int16_t audio_output[4096*2];
@@ -489,6 +496,10 @@ void engine_input_release_cleared_keys(AnygmEngine *engine);
 
 uint64_t state_hash_bytes(const void *data,size_t size);
 void state_identity_refresh(AnygmEngine *engine);
+int engine_state_content_locator_valid(const char *locator);
+AnygmResult engine_state_stage_content(AnygmEngine *engine,const char *locator,
+                                       const char *parameters,AnygmEngine **staged);
+void engine_state_commit_staged_content(AnygmEngine *engine,AnygmEngine *staged);
 size_t engine_state_frame_capacity(const AnygmEngine *engine);
 void engine_state_peak_load(AnygmEngine *engine);
 void engine_state_peak_note(AnygmEngine *engine,size_t written);

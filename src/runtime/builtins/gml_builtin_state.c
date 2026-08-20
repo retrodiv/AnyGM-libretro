@@ -44,6 +44,10 @@ GmlBuiltinState *gml_builtin_state_ensure(GmlVM *vm){
   return vm->builtins;
 }
 
+void gml_builtin_state_rebind(GmlBuiltinState *state,GmlVM *vm){
+  if(state) state->vm=vm;
+}
+
 void file_find_reset(GmlBuiltinState *state){
   if(!state) return;
   for(int i=0;i<state->file_find_count;i++) free(state->file_find_name[i]);

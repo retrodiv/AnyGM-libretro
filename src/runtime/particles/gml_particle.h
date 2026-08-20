@@ -13,6 +13,7 @@ struct GmlVM;
 typedef struct GmlParticleState GmlParticleState;
 
 GmlParticleState *gml_particle_state_create(struct GmlVM *vm);
+void gml_particle_state_rebind(GmlParticleState *state,struct GmlVM *vm);
 void gml_particle_state_destroy(GmlParticleState *state);
 void gml_part_reset_all(GmlParticleState *state);
 void gml_part_update_all(GmlParticleState *state);

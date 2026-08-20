@@ -93,6 +93,10 @@ struct GmlParticleState {
   int ring_shape_mask_ready;
 };
 
+void gml_particle_state_rebind(GmlParticleState *state,GmlVM *vm){
+  if(state) state->vm=vm;
+}
+
 #define g_pt (state->type)
 #define g_ps (state->system)
 #define g_pe (state->emitter)

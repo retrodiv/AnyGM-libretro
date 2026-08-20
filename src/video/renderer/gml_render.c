@@ -437,6 +437,9 @@ int gml_render_init(GmlRender *r, GmlWin *win){
 void gml_render_bind_software3d(GmlRender *r,GmlSoftware3D *software3d){
   if(r) r->software3d=software3d;
 }
+void gml_render_rebind_content(GmlRender *r,GmlWin *win){
+  if(r) r->win=win;
+}
 GmlSoftware3D *gml_render_backend_software3d(GmlRender *r){
   return r?r->software3d:NULL;
 }

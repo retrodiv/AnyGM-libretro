@@ -33,6 +33,7 @@ typedef struct GmlFmodBanks GmlFmodBanks;   /* opaque */
 /* Load Master.strings.bank + every *.bank in `dir`. Returns NULL if no usable bank set is present
  * (e.g. a non-FMOD game) — callers treat NULL as "no FMOD audio", never an error. */
 GmlFmodBanks *gml_fmod_banks_load(const struct AnygmHostServices *host,const char *dir);
+void gml_fmod_banks_rebind_host(GmlFmodBanks *b,const struct AnygmHostServices *host);
 void gml_fmod_banks_free(GmlFmodBanks *b);
 
 /* Resolve an event path ("event:/<bank>/<event>") to a playable subsound.
