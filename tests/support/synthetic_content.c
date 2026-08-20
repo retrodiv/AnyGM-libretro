@@ -1008,6 +1008,7 @@ int anygm_synthetic_game_change_content_create(AnygmSyntheticContent *fixture){
                  "ini_open(\"transition.ini\");\n"
                  "global.fixture_end_observed = ini_read_real(\"state\", \"ended\", 0);\n"
                  "ini_close();\n"
+                 "global.fixture_anchor_marker = 3;\n"
                  "global.fixture_child_marker = 1;\n"
                  "global.fixture_parameter_count = parameter_count();\n"
                  "global.fixture_parameter_three = parameter_string(3);\n"

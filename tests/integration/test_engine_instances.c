@@ -1292,6 +1292,23 @@ static int game_change_policy(void){
     fputs("game-change fixture creation failed\n",stderr);
     return 0;
   }
+  char launch_path[256];
+  snprintf(launch_path,sizeof launch_path,"%s/launch.anygm",fixture.directory);
+  FILE *launch=fopen(launch_path,"wb");
+  static const char launch_text[]=
+    "[anygm]\n"
+    "payload=data.win\n"
+    "[overrides]\n"
+    "?gameres $fixture_anchor_marker=7\n";
+  int launch_ok=launch &&
+    fwrite(launch_text,1,sizeof launch_text-1,launch)==sizeof launch_text-1;
+  if(launch && fclose(launch)!=0) launch_ok=0;
+  if(!launch_ok){
+    remove(launch_path);
+    anygm_synthetic_content_destroy(&fixture);
+    fputs("game-change launch anchor creation failed\n",stderr);
+    return 0;
+  }
   AnygmHostServices services={0};
   services.struct_size=sizeof services;
   services.abi_version=ANYGM_HOST_SERVICES_VERSION;
@@ -1300,10 +1317,16 @@ static int game_change_policy(void){
   AnygmContentSource source={0};
   source.struct_size=sizeof source;
   source.kind=ANYGM_CONTENT_PATH;
-  source.path=fixture.path;
+  source.path=launch_path;
   source.cache_directory=fixture.directory;
   source.save_directory=fixture.directory;
+  AnygmConfigDelta presentation={0};
+  presentation.struct_size=sizeof presentation;
+  presentation.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER;
+  presentation.values.struct_size=sizeof presentation.values;
+  presentation.values.present_logical_raster=1;
   int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_set_config(engine,&presentation)==ANYGM_OK &&
          anygm_load(engine,&source,NULL)==ANYGM_OK;
   char original_save_directory[512]={0};
   char original_program_directory[1024]={0};
@@ -1332,6 +1355,7 @@ static int game_change_policy(void){
      output.pixels && output.width==80 && output.height==50 &&
      av_info.base_width==80 && av_info.base_height==50 &&
      gml_global_num(&engine->vm,"fixture_child_marker")==1 &&
+     gml_global_num(&engine->vm,"fixture_anchor_marker")==7 &&
      gml_global_num(&engine->vm,"fixture_end_observed")==1 &&
      gml_global_num(&engine->vm,"fixture_parameter_count")==4 &&
      parameter_three && parameter_three->t==V_STR && parameter_three->s &&
@@ -1346,8 +1370,21 @@ static int game_change_policy(void){
      strstr(engine->current_content_path,"secondary/data.win");
   uint8_t *state=NULL;
   size_t state_size=0;
-  ok=ok && save_state(engine,&state,&state_size) &&
+  ok=ok && save_state(engine,&state,&state_size);
+  presentation.values.present_logical_raster=0;
+  output.struct_size=sizeof output;
+  ok=ok && anygm_set_config(engine,&presentation)==ANYGM_OK &&
+     anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     gml_global_num(&engine->vm,"fixture_anchor_marker")==3 &&
      anygm_state_load(engine,state,state_size)==ANYGM_OK;
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     gml_global_num(&engine->vm,"fixture_anchor_marker")==3;
+  presentation.values.present_logical_raster=1;
+  output.struct_size=sizeof output;
+  ok=ok && anygm_set_config(engine,&presentation)==ANYGM_OK &&
+     anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     gml_global_num(&engine->vm,"fixture_anchor_marker")==7;
   if(ok){
     char child_path[sizeof engine->current_content_path];
     snprintf(child_path,sizeof child_path,"%s",engine->current_content_path);
@@ -1365,15 +1402,18 @@ static int game_change_policy(void){
     char error[512]={0};
     if(engine) anygm_get_last_error(engine,error,sizeof error);
     fprintf(stderr,
-      "game-change lifecycle mismatch: error=%s output=%ux%u room=%d marker=%.0f end=%.0f params=%.0f save=%s\n",
+      "game-change lifecycle mismatch: error=%s output=%ux%u room=%d marker=%.0f "
+      "anchor=%.0f end=%.0f params=%.0f save=%s\n",
       error,output.width,output.height,engine?engine->vm.room_index:-1,
       engine?gml_global_num(&engine->vm,"fixture_child_marker"):0,
+      engine?gml_global_num(&engine->vm,"fixture_anchor_marker"):0,
       engine?gml_global_num(&engine->vm,"fixture_end_observed"):0,
       engine?gml_global_num(&engine->vm,"fixture_parameter_count"):0,
       engine?engine->win.save_dir:"");
   }
   free(state);
   anygm_destroy(engine);
+  remove(launch_path);
   anygm_synthetic_content_destroy(&fixture);
   return ok;
 }

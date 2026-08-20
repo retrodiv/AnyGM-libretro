@@ -288,6 +288,29 @@ static void engine_adopt_boot_overrides(AnygmEngine *engine,
                 engine->config.content_overrides?"":" (disabled by configuration)");
 }
 
+/* An anchor describes the distribution the frontend launched, not only the first payload that
+ * distribution selects. game_change replaces executable content inside that launch envelope, so
+ * keep the outer directives across the replacement. Reparse their text into fresh slots: captured
+ * values belong to the VM being discarded and must never be handed to the incoming one. Content
+ * launched without an anchor may still change to an anchored target, in which case the prepared
+ * target's own directives remain authoritative. */
+static int engine_inherit_game_change_overrides(AnygmEngine *engine,
+                                                EnginePreparedContent *prepared){
+  if(!engine || !prepared || !engine->content_overrides_text[0]) return 1;
+  snprintf(prepared->content_overrides,sizeof prepared->content_overrides,"%s",
+           engine->content_overrides_text);
+  memset(prepared->boot_cheats,0,sizeof prepared->boot_cheats);
+  prepared->boot_cheat_count=0;
+  char error[256]={0};
+  if(engine_boot_overrides_parse(prepared->content_overrides,prepared->boot_cheats,
+                                 &prepared->boot_cheat_count,error,sizeof error))
+    return 1;
+  engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,
+                "Launch overrides could not be inherited: %s",
+                error[0]?error:"unrecognized directive");
+  return 0;
+}
+
 static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSource *source,
                                        const AnygmLoadConfig *config) {
   engine->state_just_loaded = 0;
@@ -591,6 +614,10 @@ static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed){
   EnginePreparedContent prepared;
   AnygmResult result=engine_prepare_content(engine,&source,&prepared);
   if(result!=ANYGM_OK) return result;
+  if(!engine_inherit_game_change_overrides(engine,&prepared)){
+    gml_win_free(&prepared.win);
+    return ANYGM_ERROR_INVALID_CONTENT;
+  }
 
   char save_directory[sizeof engine->win.save_dir];
   snprintf(save_directory,sizeof save_directory,"%s",engine->win.save_dir);
