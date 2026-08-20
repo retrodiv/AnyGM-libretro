@@ -3,6 +3,7 @@
  */
 #include "gml_render_internal.h"
 #include "gml_render_backend.h"
+#include "anygm.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -1129,6 +1130,236 @@ static void check_maximum_preset_sprite(void) {
          "maximum preset sprite factors changed");
 }
 
+typedef struct {
+  const char *row_threads;
+  const char *atlas_threads;
+} StretchBandSettings;
+
+static const char *stretch_band_setting(void *userdata, const char *name) {
+  StretchBandSettings *settings = (StretchBandSettings *)userdata;
+  if (!strcmp(name, "GML_ROW_THREADS")) return settings->row_threads;
+  if (!strcmp(name, "GML_ATLAS_THREADS")) return settings->atlas_threads;
+  return NULL;
+}
+
+static void fill_stretch_band_target(uint32_t *pixels, int width, int height) {
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      unsigned red = (unsigned)(x * 17 + y * 23 + 19) & 255u;
+      unsigned green = (unsigned)(x * 31 + y * 11 + 37) & 255u;
+      unsigned blue = (unsigned)(x * 7 + y * 43 + 53) & 255u;
+      pixels[(size_t)y * (size_t)width + (size_t)x] =
+        UINT32_C(0xff000000) | (red << 16) | (green << 8) | blue;
+    }
+  }
+}
+
+static void fill_stretch_band_source(uint8_t *source, int width, int height) {
+  for (int y = 0; y < height; y++) {
+    for (int x = 0; x < width; x++) {
+      size_t offset = ((size_t)y * (size_t)width + (size_t)x) * 4u;
+      source[offset + 0] = (uint8_t)(x * 29 + y * 7 + 11);
+      source[offset + 1] = (uint8_t)(x * 5 + y * 37 + 17);
+      source[offset + 2] = (uint8_t)(x * 41 + y * 13 + 23);
+      source[offset + 3] = (uint8_t)(32 + (x * 19 + y * 31) % 224);
+    }
+  }
+}
+
+static void check_stretched_band_identity(void) {
+  enum { SOURCE_WIDTH = 17, SOURCE_HEIGHT = 13, TARGET_WIDTH = 640, TARGET_HEIGHT = 480 };
+  static const char *thread_counts[] = {"1", "2", "4", "8", "16"};
+  size_t target_count = (size_t)TARGET_WIDTH * TARGET_HEIGHT;
+  uint32_t *target = malloc(target_count * sizeof(*target));
+  uint32_t *reference = malloc(target_count * sizeof(*reference));
+  GmlSprite *sprite = calloc(1, sizeof(*sprite));
+  GmlTpag *tpag = calloc(1, sizeof(*tpag));
+  GmlAtlas *atlas = calloc(1, sizeof(*atlas));
+  struct GmlShaderPal *palette = calloc(1, sizeof(*palette));
+  int *frame = calloc(1, sizeof(*frame));
+  uint8_t *source = malloc((size_t)SOURCE_WIDTH * SOURCE_HEIGHT * 4u);
+  GmlRender render;
+  GmlWin win;
+  AnygmHostServices host;
+  StretchBandSettings settings = {thread_counts[0], "0"};
+  memset(&render, 0, sizeof(render));
+  memset(&win, 0, sizeof(win));
+  memset(&host, 0, sizeof(host));
+  if (!target || !reference || !sprite || !tpag || !atlas || !palette || !frame || !source) {
+    expect(0, "stretched band identity fixture allocation failed");
+    free(target); free(reference); free(sprite); free(tpag); free(atlas); free(palette); free(frame);
+    free(source);
+    return;
+  }
+  fill_stretch_band_source(source, SOURCE_WIDTH, SOURCE_HEIGHT);
+  host.struct_size = sizeof(host);
+  host.userdata = &settings;
+  host.development_setting = stretch_band_setting;
+  win.host = &host;
+  sprite->w = SOURCE_WIDTH;
+  sprite->h = SOURCE_HEIGHT;
+  sprite->n_frames = 1;
+  sprite->frame = frame;
+  tpag->sw = tpag->bw = SOURCE_WIDTH;
+  tpag->sh = tpag->bh = SOURCE_HEIGHT;
+  tpag->atlas = 0;
+  atlas->w = SOURCE_WIDTH;
+  atlas->h = SOURCE_HEIGHT;
+  atlas->px = source;
+  atlas->decode_attempted = 1;
+  palette->has = 1;
+  palette->alpha_discard = 1;
+  palette->alpha_discard_cutoff = 0.22f;
+  palette->ordered_dither = 1;
+  palette->ordered_dither_alpha = 0.625f;
+  palette->L[0] = 240; palette->L[1] = 232; palette->L[2] = 224;
+  palette->M[0] = 208; palette->M[1] = 48; palette->M[2] = 32;
+  palette->S[0] = 24; palette->S[1] = 72; palette->S[2] = 216;
+  palette->D[0] = 8; palette->D[1] = 16; palette->D[2] = 24;
+  render.win = &win;
+  render.spr = sprite;
+  render.tpag = tpag;
+  render.atlas = atlas;
+  render.shader_pal = palette;
+  render.n_spr = render.n_tpag = render.n_atlas = render.n_shader_pal = 1;
+  render.fb = render.base_fb = target;
+  render.fbw = render.base_fbw = TARGET_WIDTH;
+  render.fbh = render.base_fbh = TARGET_HEIGHT;
+  render.target_id = -1;
+  render.alpha = 1.0;
+  render.alphablend = 1;
+  render.active_shader = 0;
+  render.lut_pal_sprite = -1;
+  fill_stretch_band_target(target, TARGET_WIDTH, TARGET_HEIGHT);
+  gml_draw_sprite_stretched(&render, 0, 0, -121.0, -83.0, 900.0, 700.0,
+                            0x90c0f0u, 0.73);
+  memcpy(reference, target, target_count * sizeof(*reference));
+  expect(!render.row_pool, "one-band general stretch unexpectedly created a row pool");
+  for (size_t count = 1; count < sizeof(thread_counts) / sizeof(thread_counts[0]); count++) {
+    settings.row_threads = thread_counts[count];
+    fill_stretch_band_target(target, TARGET_WIDTH, TARGET_HEIGHT);
+    gml_draw_sprite_stretched(&render, 0, 0, -121.0, -83.0, 900.0, 700.0,
+                              0x90c0f0u, 0.73);
+    expect(render.row_pool != NULL, "large general stretch did not create a row pool");
+    expect(!memcmp(reference, target, target_count * sizeof(*reference)),
+           "general stretch changed with its row-band count");
+  }
+  gml_render_free(&render);
+  free(target);
+  free(reference);
+}
+
+static void stretch_store_u16(uint8_t *at, unsigned value) {
+  at[0] = (uint8_t)(value & 255u);
+  at[1] = (uint8_t)((value >> 8) & 255u);
+}
+
+static size_t build_stretch_lut_fioq(uint8_t *output, size_t capacity) {
+  enum { LUT_WIDTH = 4, LUT_HEIGHT = 1 };
+  if (capacity < 18u) return 0;
+  memcpy(output, "fioq", 4);
+  stretch_store_u16(output + 4, LUT_WIDTH);
+  stretch_store_u16(output + 6, LUT_HEIGHT);
+  memset(output + 8, 0, 4);
+  size_t offset = 12;
+  output[offset++] = 0xff;
+  output[offset++] = 0xc0;
+  output[offset++] = 0x30;
+  output[offset++] = 0x60;
+  output[offset++] = 0xff;
+  output[offset++] = 0x42; /* Repeat the colour for the remaining three pixels. */
+  return offset;
+}
+
+static void check_stretched_band_lazy_lut(void) {
+  enum { SOURCE_WIDTH = 17, SOURCE_HEIGHT = 13, TARGET_WIDTH = 640, TARGET_HEIGHT = 480 };
+  size_t target_count = (size_t)TARGET_WIDTH * TARGET_HEIGHT;
+  uint32_t *target = malloc(target_count * sizeof(*target));
+  uint32_t *parallel = malloc(target_count * sizeof(*parallel));
+  GmlSprite *sprites = calloc(2, sizeof(*sprites));
+  GmlTpag *tpags = calloc(2, sizeof(*tpags));
+  GmlAtlas *atlases = calloc(2, sizeof(*atlases));
+  struct GmlShaderPal *shader = calloc(1, sizeof(*shader));
+  int *source_frame = calloc(1, sizeof(*source_frame));
+  int *lut_frame = calloc(1, sizeof(*lut_frame));
+  uint8_t *source = malloc((size_t)SOURCE_WIDTH * SOURCE_HEIGHT * 4u);
+  uint8_t *lut_blob = malloc(32u);
+  GmlRender render;
+  GmlWin win;
+  AnygmHostServices host;
+  StretchBandSettings settings = {"16", "0"};
+  memset(&render, 0, sizeof(render));
+  memset(&win, 0, sizeof(win));
+  memset(&host, 0, sizeof(host));
+  if (!target || !parallel || !sprites || !tpags || !atlases || !shader ||
+      !source_frame || !lut_frame || !source || !lut_blob) {
+    expect(0, "stretched lazy-LUT fixture allocation failed");
+    free(target); free(parallel); free(sprites); free(tpags); free(atlases); free(shader);
+    free(source_frame); free(lut_frame); free(source); free(lut_blob);
+    return;
+  }
+  size_t lut_size = build_stretch_lut_fioq(lut_blob, 32u);
+  fill_stretch_band_source(source, SOURCE_WIDTH, SOURCE_HEIGHT);
+  host.struct_size = sizeof(host);
+  host.userdata = &settings;
+  host.development_setting = stretch_band_setting;
+  win.host = &host;
+  sprites[0].w = SOURCE_WIDTH;
+  sprites[0].h = SOURCE_HEIGHT;
+  sprites[0].n_frames = 1;
+  sprites[0].frame = source_frame;
+  sprites[1].w = 4;
+  sprites[1].h = 1;
+  sprites[1].n_frames = 1;
+  sprites[1].frame = lut_frame;
+  lut_frame[0] = 1;
+  tpags[0].sw = tpags[0].bw = SOURCE_WIDTH;
+  tpags[0].sh = tpags[0].bh = SOURCE_HEIGHT;
+  tpags[0].atlas = 0;
+  tpags[1].sw = tpags[1].bw = 4;
+  tpags[1].sh = tpags[1].bh = 1;
+  tpags[1].atlas = 1;
+  atlases[0].w = SOURCE_WIDTH;
+  atlases[0].h = SOURCE_HEIGHT;
+  atlases[0].px = source;
+  atlases[0].decode_attempted = 1;
+  atlases[1].external_blob = lut_blob;
+  atlases[1].external_size = lut_size;
+  shader->lut = 1;
+  shader->lut_row = 0.0f;
+  render.win = &win;
+  render.spr = sprites;
+  render.tpag = tpags;
+  render.atlas = atlases;
+  render.shader_pal = shader;
+  render.n_spr = render.n_tpag = render.n_atlas = 2;
+  render.n_shader_pal = 1;
+  render.fb = render.base_fb = target;
+  render.fbw = render.base_fbw = TARGET_WIDTH;
+  render.fbh = render.base_fbh = TARGET_HEIGHT;
+  render.target_id = -1;
+  render.alpha = 1.0;
+  render.alphablend = 1;
+  render.active_shader = 0;
+  render.lut_pal_sprite = 1;
+  fill_stretch_band_target(target, TARGET_WIDTH, TARGET_HEIGHT);
+  gml_draw_sprite_stretched(&render, 0, 0, 0.0, 0.0, TARGET_WIDTH, TARGET_HEIGHT,
+                            0xffffffu, 1.0);
+  memcpy(parallel, target, target_count * sizeof(*parallel));
+  expect(render.row_pool != NULL, "lazy-LUT general stretch did not use row bands");
+  expect(atlases[1].decode_attempted && atlases[1].px,
+         "palette LUT was not decoded before parallel sampling");
+  settings.row_threads = "1";
+  fill_stretch_band_target(target, TARGET_WIDTH, TARGET_HEIGHT);
+  gml_draw_sprite_stretched(&render, 0, 0, 0.0, 0.0, TARGET_WIDTH, TARGET_HEIGHT,
+                            0xffffffu, 1.0);
+  expect(!memcmp(parallel, target, target_count * sizeof(*parallel)),
+         "parallel lazy-LUT stretch differs from one band");
+  gml_render_free(&render);
+  free(target);
+  free(parallel);
+}
+
 int main(void) {
   static const struct {
     const char *name;
@@ -1157,6 +1388,8 @@ int main(void) {
   check_optimized_primitives();
   check_batched_solid_mask_order();
   check_maximum_preset_sprite();
+  check_stretched_band_identity();
+  check_stretched_band_lazy_lut();
   expect(noise == UINT64_C(0xe9d7942b9ca5361e), "rgb-noise");
   expect(tint == UINT64_C(0x9ded760f28a3f2a0), "direct-tint");
   printf("rgb-noise %016llx\n", (unsigned long long)noise);

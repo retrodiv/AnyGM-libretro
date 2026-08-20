@@ -6155,6 +6155,71 @@ static void sprite_region_coarse_texel(GmlAtlas *a, int sx, int sy, int sw, int 
 
 /* draw_sprite_stretched: blit a sprite frame stretched into the screen rect (dx,dy,dw,dh), box-
  * averaging the source per dest pixel (matches the GPU's filtered down-stretch). Screen-space. */
+typedef struct {
+  GmlRender *r; GmlAtlas *a; GmlTpag *t;
+  int x0,y0,W,H,sw,sh,bR,bG,bB;
+  double alpha;
+} SprStretchGeneralBand;
+
+static void spr_stretch_general_band(void *context,int row_start,int row_end,int slot){
+  const SprStretchGeneralBand *band=(const SprStretchGeneralBand*)context;
+  (void)slot;
+  GmlRender *r=band->r;
+  GmlAtlas *a=band->a;
+  GmlTpag *t=band->t;
+  const int x0=band->x0, y0=band->y0, W=band->W, H=band->H;
+  const int sw=band->sw, sh=band->sh;
+  const int bR=band->bR, bG=band->bG, bB=band->bB;
+  const double alpha=band->alpha;
+  for(int py=row_start;py<row_end;py++){ int ty_=y0+py; if(ty_<0||ty_>=r->fbh) continue;
+    int sy0=(py*sh)/H, sy1=((py+1)*sh)/H; if(sy1<=sy0) sy1=sy0+1;
+    for(int px=0;px<W;px++){ int tx_=x0+px; if(tx_<0||tx_>=r->fbw) continue;
+      int sx0=(px*sw)/W, sx1=((px+1)*sw)/W; if(sx1<=sx0) sx1=sx0+1;
+      int R=0,G=0,B=0,A=0,n=0;
+      for(int sy=sy0;sy<sy1;sy++){ int iy=sy-t->ty; if(iy<0||iy>=t->sh) continue;
+        for(int sx=sx0;sx<sx1;sx++){ int ix=sx-t->tx; if(ix<0||ix>=t->sw) continue;
+          uint8_t *sp=a->px+((size_t)(t->sy+iy)*a->w+(t->sx+ix))*4;
+          R+=sp[0]; G+=sp[1]; B+=sp[2]; A+=sp[3]; n++; } }
+      if(!n) continue;
+      /* Filtered (interpolation=true) downscale matches the GPU: average the covered texels in
+       * FLOAT and convert float->8bit round-to-nearest. For an integer NxM box each covered texel
+       * carries equal weight, which is exactly GL's bilinear result when the destination straddles
+       * texel centres (e.g. an exact 2x downscale samples at frac=0.5 → 0.25 per texel = 2x2 mean).
+       * The old code truncated the channel average (int cast) and truncated the blend, which
+       * systematically DARKENED a bright overlay; keep full float precision and round at the end. */
+      double fA=A/(double)n;
+      if(shader_discards_alpha_value(r,fA)) continue;
+      if(shader_ordered_dither_drops(r,(double)tx_+0.5+r->cam_x,
+                                       (double)ty_+0.5+r->cam_y)) continue;
+      int sample_a=(int)floor(fA+0.5);
+      int sample_r=(int)floor(R/(double)n+0.5);
+      int sample_g=(int)floor(G/(double)n+0.5);
+      int sample_b=(int)floor(B/(double)n+0.5);
+      if(mapped_texture_active(r)){
+        uint32_t sampled=mapped_texture_pixel(r,((uint32_t)sample_a<<24)|
+          ((uint32_t)sample_r<<16)|((uint32_t)sample_g<<8)|(uint32_t)sample_b);
+        sample_a=(int)(sampled>>24);
+        sample_r=(sampled>>16)&255;
+        sample_g=(sampled>>8)&255;
+        sample_b=sampled&255;
+      }
+      double oa=(sample_a/255.0)*alpha; if(oa<=0) continue;
+      double srcR=sample_r*bR/255.0;
+      double srcG=sample_g*bG/255.0;
+      double srcB=sample_b*bB/255.0;
+      uint32_t *dp=&r->fb[(size_t)ty_*r->fbw+tx_];
+      if(!r->alphablend || oa>=1.0){
+        int sr=(int)(srcR+0.5), sg=(int)(srcG+0.5), sb=(int)(srcB+0.5);
+        *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue;
+      }
+      double ia=1.0-oa;
+      int dr=(*dp>>16)&0xFF, dg=(*dp>>8)&0xFF, db=*dp&0xFF;
+      *dp=0xFF000000u|((int)(srcR*oa+dr*ia+0.5)<<16)|
+          ((int)(srcG*oa+dg*ia+0.5)<<8)|(int)(srcB*oa+db*ia+0.5);
+    }
+  }
+}
+
 void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, double dy, double dw, double dh, uint32_t blend, double alpha){
   gml_render_draw_map_point(r,&dx,&dy);
   gml_render_draw_map_scale(r,&dw,&dh);
@@ -6304,52 +6369,11 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
     free(colA); free(colB); free(cfx); free(rowA); free(rowB); free(cfy);
     return;
   }
-  for(int py=0; py<H; py++){ int ty_=y0+py; if(ty_<0||ty_>=r->fbh) continue;
-    int sy0=(py*sh)/H, sy1=((py+1)*sh)/H; if(sy1<=sy0) sy1=sy0+1;
-    for(int px=0; px<W; px++){ int tx_=x0+px; if(tx_<0||tx_>=r->fbw) continue;
-      int sx0=(px*sw)/W, sx1=((px+1)*sw)/W; if(sx1<=sx0) sx1=sx0+1;
-      int R=0,G=0,B=0,A=0,n=0;
-      for(int sy=sy0;sy<sy1;sy++){ int iy=sy - t->ty; if(iy<0||iy>=t->sh) continue;
-        for(int sx=sx0;sx<sx1;sx++){ int ix=sx - t->tx; if(ix<0||ix>=t->sw) continue;
-          uint8_t *sp=a->px + ((size_t)(t->sy+iy)*a->w + (t->sx+ix))*4;
-          R+=sp[0]; G+=sp[1]; B+=sp[2]; A+=sp[3]; n++; } }
-      if(!n) continue;
-      /* Filtered (interpolation=true) downscale matches the GPU: average the covered texels in
-       * FLOAT and convert float->8bit round-to-nearest. For an integer NxM box each covered texel
-       * carries equal weight, which is exactly GL's bilinear result when the destination straddles
-       * texel centres (e.g. an exact 2x downscale samples at frac=0.5 → 0.25 per texel = 2x2 mean).
-       * The old code truncated the channel average (int cast) and truncated the blend, which
-       * systematically DARKENED a bright overlay; keep full float precision and round at the end. */
-      double fA=A/(double)n;
-      if(shader_discards_alpha_value(r,fA)) continue;
-      if(shader_ordered_dither_drops(r,(double)tx_+0.5+r->cam_x,
-                                       (double)ty_+0.5+r->cam_y)) continue;
-      int sample_a=(int)floor(fA+0.5);
-      int sample_r=(int)floor(R/(double)n+0.5);
-      int sample_g=(int)floor(G/(double)n+0.5);
-      int sample_b=(int)floor(B/(double)n+0.5);
-      if(mapped_texture_active(r)){
-        uint32_t sampled=mapped_texture_pixel(r,((uint32_t)sample_a<<24)|
-          ((uint32_t)sample_r<<16)|((uint32_t)sample_g<<8)|(uint32_t)sample_b);
-        sample_a=(int)(sampled>>24);
-        sample_r=(sampled>>16)&255;
-        sample_g=(sampled>>8)&255;
-        sample_b=sampled&255;
-      }
-      double oa=(sample_a/255.0)*alpha; if(oa<=0) continue;
-      double srcR=sample_r*bR/255.0;
-      double srcG=sample_g*bG/255.0;
-      double srcB=sample_b*bB/255.0;
-      uint32_t *dp=&r->fb[(size_t)ty_*r->fbw+tx_];
-      if(!r->alphablend || oa>=1.0){
-        int sr=(int)(srcR+0.5), sg=(int)(srcG+0.5), sb=(int)(srcB+0.5);
-        *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue;
-      }
-      double ia=1.0-oa;
-      int dr=(*dp>>16)&0xFF, dg=(*dp>>8)&0xFF, db=*dp&0xFF;
-      *dp = 0xFF000000u | ((int)(srcR*oa+dr*ia+0.5)<<16) | ((int)(srcG*oa+dg*ia+0.5)<<8) | (int)(srcB*oa+db*ia+0.5);
-    }
-  }
+  SprStretchGeneralBand band={r,a,t,x0,y0,W,H,sw,sh,bR,bG,bB,alpha};
+  if((int64_t)W*(int64_t)H>=262144 && mapped_texture_prepare_parallel(r))
+    gml_run_row_bands(r,H,spr_stretch_general_band,&band);
+  else
+    spr_stretch_general_band(&band,0,H,0);
 }
 
 typedef struct {

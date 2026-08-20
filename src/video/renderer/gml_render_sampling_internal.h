@@ -185,6 +185,22 @@ static inline uint32_t sprite_pixel_rgb(GmlRender *r, int sprite, int frame, int
   uint32_t v=sprite_pixel_argb(r,sprite,frame,lx,ly,fallback);
   return 0xFF000000u|(v&0x00FFFFFFu);
 }
+/* A palette LUT can live on a different atlas from the sprite being drawn. Resolve that atlas on
+ * the calling thread before a pixel kernel is split into row bands: the normal atlas pool already
+ * serializes on-demand decode, but its deliberately disabled mode has no worker-side mutex. */
+static inline int mapped_texture_prepare_parallel(GmlRender *r){
+  if(!lut_active(r) && !grid_active(r)) return 1;
+  int sprite=r->lut_pal_sprite;
+  if(sprite<0 || sprite>=r->n_spr) return 0;
+  GmlSprite *s=&r->spr[sprite];
+  if(s->runtime_rgba) return 1;
+  if(s->n_frames<=0 || !s->frame) return 0;
+  int sub=((r->lut_pal_frame%s->n_frames)+s->n_frames)%s->n_frames;
+  int texture=s->frame[sub];
+  if(texture<0 || texture>=r->n_tpag) return 0;
+  int atlas=r->tpag[texture].atlas;
+  return atlas>=0 && atlas<r->n_atlas && atlas_pixels(r,atlas)!=NULL;
+}
 static inline uint32_t lut_map_px(GmlRender *r, const struct GmlShaderPal *sp, uint32_t v){
   GmlSprite *s=&r->spr[r->lut_pal_sprite];
   int w=s->w>0?s->w:1, h=s->h>0?s->h:1;
