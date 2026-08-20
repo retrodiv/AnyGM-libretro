@@ -816,8 +816,22 @@ void gml_vm_instances_reap(GmlVM *vm){
     gml_varmap_free_ex(&vm->inst[i].vars,1); vm->inst[i].active=0; vm->inst[i].marked=0; }
 }
 
+/* Coordinator-facing setters accept names from mutable engine-owned declarations as well as
+ * literals. A newly inserted map key therefore has to outlive the caller: retaining the borrowed
+ * declaration pointer leaves the VM referring into an engine shell after a transactional move. */
+static GmlVal *gml_varmap_put_stable(GmlVarMap *map,const char *name){
+  if(!map || !name) return NULL;
+  GmlVal *existing=gml_varmap_get(map,name);
+  if(existing) return existing;
+  char *owned=strdup(name);
+  return owned?gml_varmap_put_owned(map,owned):NULL;
+}
+
 void gml_vm_global_array_set(GmlVM *vm, const char *nm, int idx, double val){
-  GmlVal *slot=gml_varmap_put(&vm->globals,nm); GmlArr *A=gml_arr_slot_ensure(slot); gml_arr_index_ensure(A,idx);
+  if(!vm || !nm) return;
+  GmlVal *slot=gml_varmap_put_stable(&vm->globals,nm);
+  if(!slot) return;
+  GmlArr *A=gml_arr_slot_ensure(slot); gml_arr_index_ensure(A,idx);
   A->escaped=1;
   if(idx>=0 && idx<A->cap) A->data[idx]=vreal(val);
 }
@@ -833,7 +847,7 @@ void gml_set_global_arr(GmlVM *vm, const char *nm, int idx, double val){ gml_vm_
  * so an array-write to a scalar-read global silently does nothing. Overwrites the slot in place. */
 void gml_set_global_scalar(GmlVM *vm, const char *nm, double val){
   if(!vm||!nm) return;
-  GmlVal *slot=gml_varmap_put(&vm->globals,nm); if(slot) *slot=vreal(val);
+  GmlVal *slot=gml_varmap_put_stable(&vm->globals,nm); if(slot) *slot=vreal(val);
 }
 /* Set a numeric instance variable on every active instance of an object or its descendants,
  * resolved by caller-supplied object and variable names. Returns the number of writes. */
@@ -847,7 +861,7 @@ int gml_set_inst_var_all(GmlVM *vm, const char *objname, const char *var, double
     if(!gml_object_is(vm,in->obj,obj)) continue;
     GmlVal v=vreal(val);
     if(gml_vm_instance_builtin_set(vm,in,var,v)){ n++; continue; }
-    GmlVal *slot=gml_varmap_put(&in->vars,var); if(slot){ *slot=v; n++; }
+    GmlVal *slot=gml_varmap_put_stable(&in->vars,var); if(slot){ *slot=v; n++; }
   }
   return n;
 }
@@ -930,7 +944,7 @@ int gml_inst_array_count(const GmlInstance *in, const char *var){
  * flat 2D layout + metadata path. Frees any prior owned string in the slot so repeated label
  * rewrites don't leak. */
 static void inst_array_set(GmlInstance *in, const char *var, int idx, GmlVal v){
-  GmlVal *slot=gml_varmap_put(&in->vars,var); if(!slot) return;
+  GmlVal *slot=gml_varmap_put_stable(&in->vars,var); if(!slot) return;
   GmlArr *A=gml_arr_slot_ensure(slot);
   A->escaped=1;
   gml_arr_note_legacy_2d_set(A,idx); gml_arr_index_ensure(A,idx);
