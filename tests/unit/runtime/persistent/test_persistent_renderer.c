@@ -832,3 +832,93 @@ int expect_centred_real_font_line_starts_on_a_whole_pixel(void){
   gml_render_free(&render);
   return ok;
 }
+
+/* A synthetic packed font with exact advances for the text-layout fixtures below. */
+static void real_font_layout_fixture(GmlRender *render, GmlWin *win, GmlAtlas *atlas,
+                                     GmlGlyph *glyphs, uint8_t *pixels,
+                                     uint32_t *framebuffer, int width, int height){
+  win->bytecode=17;
+  for(int texel=0;texel<3;texel++){
+    pixels[texel*4+0]=0xFF; pixels[texel*4+1]=0xFF;
+    pixels[texel*4+2]=0xFF; pixels[texel*4+3]=0xFF;
+  }
+  atlas->px=pixels; atlas->w=3; atlas->h=1; atlas->decode_attempted=1;
+  glyphs[0]=(GmlGlyph){0,0,3,1,3,0,'A'};
+  glyphs[1]=(GmlGlyph){0,0,2,1,2,0,'B'};
+  glyphs[2]=(GmlGlyph){0,0,0,0,2,0,' '};        /* advances two, paints nothing */
+  gml_render_begin(render,framebuffer,width,height,0,0);
+  render->win=win;
+  render->atlas=atlas; render->n_atlas=1;
+  render->color=0x0000FF; render->alpha=1; render->alphablend=1;
+  render->software_overlay=1;
+  render->halign=1; render->valign=0;
+  render->n_fonts=1; render->font=0;
+  GmlFont *font=&render->fonts[0];
+  font->real=1; font->atlas=0; font->sprite=-1;
+  font->line_height=1; font->align_height=1;
+  font->glyphs=glyphs; font->n_glyphs=3; font->glyphs_sorted=1;
+  for(int index=0;index<256;index++) font->glyph_by_char[index]=-1;
+  font->glyph_by_char['A']=0; font->glyph_by_char['B']=1; font->glyph_by_char[' ']=2;
+}
+
+int expect_carriage_return_and_line_feed_are_one_break(void){
+  /* In a modern profile, CR LF is one separator for both drawing and height queries. */
+  GmlWin win={0}; GmlRender render={0}; GmlAtlas atlas={0};
+  GmlGlyph glyphs[3]; uint8_t pixels[3*4]; uint32_t framebuffer[8*4];
+  real_font_layout_fixture(&render,&win,&atlas,glyphs,pixels,framebuffer,8,4);
+  render.halign=0;
+  int ok=1;
+  for(size_t cell=0;cell<sizeof framebuffer/sizeof framebuffer[0];cell++)
+    framebuffer[cell]=UINT32_C(0xFF000000);
+  gml_draw_text(&render,0,0,"A\r\nB");
+  int rows_painted=0;
+  for(int row=0;row<4;row++){
+    int painted=0;
+    for(int column=0;column<8;column++) if(framebuffer[row*8+column]&0xFFFFFFu) painted=1;
+    if(painted) rows_painted++;
+  }
+  if(rows_painted!=2) ok=0;
+  if(!(framebuffer[0*8+0]&0xFFFFFFu)) ok=0;        /* the first line on the first row */
+  if(!(framebuffer[1*8+0]&0xFFFFFFu)) ok=0;        /* the second on the row below it */
+  if(gml_text_height(&render,"A\r\nB")!=2) ok=0;   /* and the height the content asks for */
+  if(!ok)
+    fprintf(stderr,"carriage-return break mismatch: rows=%d height=%d r0=%08x r1=%08x r2=%08x\n",
+            rows_painted,gml_text_height(&render,"A\r\nB"),
+            framebuffer[0],framebuffer[8],framebuffer[16]);
+  /* The same fixture pins the classic profile's independent control characters. */
+  GmlWin classic=win; classic.bytecode=0; classic.classic_version=810;
+  render.win=&classic;
+  int classic_height=gml_text_height(&render,"A\r\nB");
+  if(classic_height!=3){
+    ok=0;
+    fprintf(stderr,"classic carriage-return break mismatch: height=%d, expected 3\n",classic_height);
+  }
+  render.win=&win;
+  render.fonts[0].glyphs=NULL; render.fonts[0].n_glyphs=0;
+  render.atlas=NULL; render.n_atlas=0;
+  gml_render_free(&render);
+  return ok;
+}
+
+int expect_a_wrapped_line_drops_the_space_it_broke_at(void){
+  /* The break-space in "AA AA" belongs to neither line. The first line therefore uses
+   * six advances and its centred ink occupies the exact expected columns. */
+  GmlWin win={0}; GmlRender render={0}; GmlAtlas atlas={0};
+  GmlGlyph glyphs[3]; uint8_t pixels[3*4]; uint32_t framebuffer[16*4];
+  real_font_layout_fixture(&render,&win,&atlas,glyphs,pixels,framebuffer,16,4);
+  for(size_t cell=0;cell<sizeof framebuffer/sizeof framebuffer[0];cell++)
+    framebuffer[cell]=UINT32_C(0xFF000000);
+  gml_draw_text_ext(&render,10,0,"AA AA",1,7);
+  int ok=1;
+  static const uint32_t ink=UINT32_C(0xFFFF0000), paper=UINT32_C(0xFF000000);
+  for(int column=7;column<13;column++) if(framebuffer[column]!=ink) ok=0;
+  if(framebuffer[6]!=paper || framebuffer[13]!=paper) ok=0;
+  if(!ok)
+    fprintf(stderr,"wrapped-line space mismatch: 6=%08x 7=%08x 8=%08x 11=%08x 12=%08x 13=%08x\n",
+            framebuffer[6],framebuffer[7],framebuffer[8],
+            framebuffer[11],framebuffer[12],framebuffer[13]);
+  render.fonts[0].glyphs=NULL; render.fonts[0].n_glyphs=0;
+  render.atlas=NULL; render.n_atlas=0;
+  gml_render_free(&render);
+  return ok;
+}

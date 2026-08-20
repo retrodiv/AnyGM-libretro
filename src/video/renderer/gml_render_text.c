@@ -562,6 +562,14 @@ static int glyph_frame(GmlFont *f, unsigned cp){
 static int text_is_linebreak(const char *p){
   return p && (*p=='#' || *p=='\r' || *p=='\n');
 }
+/* Return the byte width of a logical line separator. The compatibility profile decides
+ * whether a CR LF pair is consumed together or as two independent separators. */
+static int text_linebreak_bytes(GmlRender *r, const char *p){
+  if(!text_is_linebreak(p)) return 0;
+  if(p[0]=='\r' && p[1]=='\n' && r &&
+     anygm_policy_text_pairs_carriage_return_with_line_feed(r->win)) return 2;
+  return 1;
+}
 
 /* width of one line (up to '#', CR, LF, or NUL), counting '\#' as a literal '#'. */
 static int line_width(GmlRender *r, GmlFont *f, const char *p, const char **end){
@@ -737,7 +745,8 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
                            uint32_t blend, double alpha){
   int lh=f->line_height>0? f->line_height:12;
   int ah=f->align_height>0?f->align_height:lh;
-  int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;} if(text_is_linebreak(q)) nlines++; }
+  int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;}
+    if(text_is_linebreak(q)){ nlines++; q+=text_linebreak_bytes(r,q)-1; } }
   double base_y=0;
   double block_height=(nlines-1)*lh+ah;
   if(r->valign==1) base_y=-block_height/2.0; else if(r->valign==2) base_y=-block_height;
@@ -783,7 +792,7 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
       if(g) cx += g->shift;
     }
     base_y += lh;
-    if(text_is_linebreak(end)) p=end+1; else break;
+    if(text_is_linebreak(end)) p=end+text_linebreak_bytes(r,end); else break;
   }
 }
 
@@ -801,7 +810,7 @@ static int text_width_font(GmlRender *r, GmlFont *f, const char *str){
     const char *end; int w = f->real ? real_line_width(r,f,p,&end) : line_width(r,f,p,&end);
     if(w>best) best=w;
     if(!text_is_linebreak(end)) break;
-    p=end+1;
+    p=end+text_linebreak_bytes(r,end);
   }
   return best;
 }
@@ -827,7 +836,8 @@ static int text_height_font(GmlRender *r, GmlFont *f, const char *str){
   int lh, nlines=1;
   if(f->real) lh=f->line_height>0?f->line_height:12;
   else { GmlSprite *s=&r->spr[f->sprite]; lh=s->h>0?s->h:8; }
-  if(str) for(const char *p=str;*p;p++){ if(*p=='\\'&&p[1]=='#'){p++;continue;} if(text_is_linebreak(p)) nlines++; }
+  if(str) for(const char *p=str;*p;p++){ if(*p=='\\'&&p[1]=='#'){p++;continue;}
+    if(text_is_linebreak(p)){ nlines++; p+=text_linebreak_bytes(r,p)-1; } }
   return lh*nlines;
 }
 
@@ -1393,7 +1403,8 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
    * glyph's trimmed sub-rect sh — otherwise text lines collapse when glyphs are cropped). */
   int lh=s->h; if(lh<=0) lh=8;
   /* count lines for valign */
-  int nlines=1; for(const char *p=str;*p;p++){ if(*p=='\\'&&p[1]=='#'){p++;continue;} if(text_is_linebreak(p)) nlines++; }
+  int nlines=1; for(const char *p=str;*p;p++){ if(*p=='\\'&&p[1]=='#'){p++;continue;}
+    if(text_is_linebreak(p)){ nlines++; p+=text_linebreak_bytes(r,p)-1; } }
   double base_y=0;
   if(r->valign==1) base_y=-(nlines*lh)/2.0; else if(r->valign==2) base_y=-nlines*lh;
   const char *p=str;
@@ -1457,7 +1468,7 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
       cx += glyph_w(r,f,fr,cp)+f->sep;
     }
     base_y += lh;
-    if(text_is_linebreak(end)) p=end+1; else break;
+    if(text_is_linebreak(end)) p=end+text_linebreak_bytes(r,end); else break;
   }
 }
 void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str,
@@ -1522,7 +1533,11 @@ static const char *text_wrap_ext(GmlRender *r,GmlFont *font,const char *str,
         if(width>(int)w && *scan!=' '){
           const char *wrap_end=space_end && space_end>line_start ? space_end : fit_end;
           if(wrap_end==line_start) wrap_end=next;
-          text_wrap_copy(wrapped,cap,&offset,line_start,wrap_end);
+          /* A break-space belongs to neither output line. Excluding its advance keeps the
+           * visible first line centred by its painted content. */
+          const char *paint_end=wrap_end;
+          while(paint_end>line_start && paint_end[-1]==' ') paint_end--;
+          text_wrap_copy(wrapped,cap,&offset,line_start,paint_end);
           if(offset<cap-1) wrapped[offset++]='#';
           line_start=wrap_end;
           break;
@@ -1539,7 +1554,7 @@ static const char *text_wrap_ext(GmlRender *r,GmlFont *font,const char *str,
 
     if(!*explicit_end) break;
     if(offset<cap-1) wrapped[offset++]='#';
-    p=explicit_end+1;
+    p=explicit_end+text_linebreak_bytes(r,explicit_end);
   }
   wrapped[offset]=0;
   return wrapped;
@@ -1563,7 +1578,7 @@ double gml_text_height_ext(GmlRender *r,const char *str,double sep,double w){
   int lines=1;
   for(const char *p=layout;*p;p++){
     if(*p=='\\' && p[1]=='#'){ p++; continue; }
-    if(text_is_linebreak(p)) lines++;
+    if(text_is_linebreak(p)){ lines++; p+=text_linebreak_bytes(r,p)-1; }
   }
   double line_height=text_height_font(r,font,"");
   return line_height+(lines-1)*sep;
@@ -1578,7 +1593,8 @@ static void draw_text_ext_transformed_font(GmlRender *r, GmlFont *font,
   str=text_wrap_ext(r,font,str,w,wrapped,sizeof wrapped);
   if(sep<0){ draw_text_transformed_font(r,font,x,y,str,xs,ys,rot,blend,alpha); return; }
   /* custom line separation: draw line by line at y + i*sep */
-  int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;} if(text_is_linebreak(q)) nlines++; }
+  int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;}
+    if(text_is_linebreak(q)){ nlines++; q+=text_linebreak_bytes(r,q)-1; } }
   /* Separation is the distance between successive line origins, not the full block height.
    * The first line still occupies one font line-height; omitting it shifts even a single-line
    * centred or bottom-aligned string away from the requested anchor. */
@@ -1598,7 +1614,7 @@ static void draw_text_ext_transformed_font(GmlRender *r, GmlFont *font,
     draw_text_transformed_font(r,font,x+line_y*ys*sa,y+line_y*ys*ca,
                                lbuf,xs,ys,rr,blend,alpha);
     if(!text_is_linebreak(p)) break;
-    p++; li++;
+    p+=text_linebreak_bytes(r,p); li++;
   }
   r->valign=sv;
 }

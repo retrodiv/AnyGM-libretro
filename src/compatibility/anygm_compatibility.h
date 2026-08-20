@@ -97,6 +97,7 @@ typedef struct AnygmCompatibilityProfile {
   uint32_t path_motion_owns_velocity;
   uint32_t round_transformed_collision_bounds;
   uint32_t bounding_box_far_edges_exclusive;
+  uint32_t text_pairs_carriage_return_with_line_feed;
   uint32_t creation_code_before_create;
   uint32_t classic_presentation;
   uint32_t classic_modern_presentation;
@@ -136,6 +137,13 @@ static inline int anygm_policy_bounding_box_far_edges_exclusive(const GmlWin *co
   return p?(int)p->bounding_box_far_edges_exclusive:
            (content && content->classic_version<=0 && content->bytecode>=17 &&
             content->has_exclusive_bbox_marker && ((content->option_flags>>27)&1u)==0u);
+}
+/* Whether CR LF is one logical separator. Modern text layout pairs the bytes; classic
+ * and earlier profiles interpret each control character independently. */
+static inline int anygm_policy_text_pairs_carriage_return_with_line_feed(const GmlWin *content){
+  const AnygmCompatibilityProfile *p=anygm_profile(content);
+  return p?(int)p->text_pairs_carriage_return_with_line_feed:
+           (content && content->classic_version<=0 && content->bytecode>=17);
 }
 static inline int anygm_policy_has_modern_function_values(const GmlWin *content){
   const AnygmCompatibilityProfile *p=anygm_profile(content);
