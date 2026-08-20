@@ -742,13 +742,24 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
   double block_height=(nlines-1)*lh+ah;
   if(r->valign==1) base_y=-block_height/2.0; else if(r->valign==2) base_y=-block_height;
   const char *p=str;
+  int log_glyphs=render_setting(r,"GML_LOG_TEXT_GLYPHS")!=NULL;
   for(int li=0; *p || li==0; li++){
     const char *end; int lw=real_line_width(r,f,p,&end);
     double cx=0;
-    if(r->halign==1) cx=-lw/2.0; else if(r->halign==2) cx=-lw;
+    /* Use the same integer half-width as the sprite-font path. An odd advance centred
+     * on a fractional pen leaves destination rectangles fixed but changes the sampling phase
+     * within them, shifting texel selection in both sampling modes. */
+    if(r->halign==1) cx=-(double)(lw/2); else if(r->halign==2) cx=-lw;
+    if(log_glyphs) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
+      "[tg] line=%d lw=%d cx0=%.2f x=%.2f y=%.2f xs=%.3f ys=%.3f interp=%d\n",
+      li,lw,cx,x,y,xs,ys,r->interp);
     while(p<end){
       unsigned cp=text_next_cp(&p);
       GmlGlyph *g=real_glyph_demand(r,f,cp);
+      if(log_glyphs) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
+        "[tg]   cp=%u('%c') cx=%.2f gx=%.2f src=(%d,%d %dx%d) shift=%d off=%d\n",
+        cp,(cp>=32&&cp<127)?(char)cp:'?',cx,x+(cx+(g?g->offset:0))*xs,
+        g?g->sx:-1,g?g->sy:-1,g?g->w:-1,g?g->h:-1,g?g->shift:-1,g?g->offset:-1);
       if(g && g->w>0 && g->h>0){
         GmlTpag gt={ .sx=g->sx,.sy=g->sy,.sw=g->w,.sh=g->h,.tx=0,.ty=0,.bw=g->w,.bh=g->h,.atlas=f->atlas };
         double dx=(cx+g->offset)*xs, dy=(base_y-f->ascender_offset)*ys;

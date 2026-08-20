@@ -72,6 +72,7 @@ int expect_background_slot_dimensions(void);
 int expect_classic_view_array_aliases(void);
 int expect_classic_hollow_rectangle(void);
 int expect_legacy_sprite_text_builtin(void);
+int expect_centred_real_font_line_starts_on_a_whole_pixel(void);
 int expect_legacy_sprite_assign_builtin(void);
 int expect_runtime_sprite_state_preserves_collision_extent(void);
 int expect_renderer_semantics(void);

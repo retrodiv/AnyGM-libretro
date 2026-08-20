@@ -69,6 +69,7 @@ int main(int argc,char **argv){
     {"classic_view_array_aliases",expect_classic_view_array_aliases},
     {"classic_hollow_rectangle",expect_classic_hollow_rectangle},
     {"legacy_sprite_text_builtin",expect_legacy_sprite_text_builtin},
+    {"centred_real_font_line_pen",expect_centred_real_font_line_starts_on_a_whole_pixel},
     {"legacy_sprite_assign_builtin",expect_legacy_sprite_assign_builtin},
     {"runtime_sprite_state_collision_extent",expect_runtime_sprite_state_preserves_collision_extent},
     {"font_primitive_blend",expect_renderer_semantics},

@@ -779,3 +779,56 @@ static int expect_renderer_semantics_exit_code(void){
 int expect_renderer_semantics(void){
   return expect_renderer_semantics_exit_code()==0;
 }
+
+int expect_centred_real_font_line_starts_on_a_whole_pixel(void){
+  /* Exercise an odd-width centred real-font line in both sampling modes. The whole-pixel
+   * pen must preserve the authored alpha pattern; a half-pixel pen changes the sampling phase
+   * even when destination rectangles are unchanged. */
+  GmlWin win={0}; win.bytecode=17;                 /* modern layer semantics: the phased sampler */
+  GmlRender render={0};
+  uint32_t framebuffer[16*2];
+  /* Five glyph texels, white with an alpha pattern: two strokes and the gap between them. */
+  uint8_t atlas_pixels[5*4]={
+    0xFF,0xFF,0xFF,0xFF,  0xFF,0xFF,0xFF,0x00,  0xFF,0xFF,0xFF,0xFF,
+    0xFF,0xFF,0xFF,0xFF,  0xFF,0xFF,0xFF,0xFF,
+  };
+  GmlAtlas atlas={0}; atlas.px=atlas_pixels; atlas.w=5; atlas.h=1; atlas.decode_attempted=1;
+  GmlGlyph glyphs[2]={ {0,0,3,1,3,0,'A'}, {3,0,2,1,2,0,'B'} };
+  gml_render_begin(&render,framebuffer,16,2,0,0);
+  render.win=&win;
+  render.atlas=&atlas; render.n_atlas=1;
+  render.color=0x0000FF;                           /* Packed BBGGRR: red makes the tint visible. */
+  render.alpha=1; render.alphablend=1;
+  render.software_overlay=1;
+  render.halign=1; render.valign=0;
+  render.n_fonts=1; render.font=0;
+  GmlFont *font=&render.fonts[0];
+  font->real=1; font->atlas=0; font->sprite=-1;
+  font->line_height=1; font->align_height=1;
+  font->glyphs=glyphs; font->n_glyphs=2; font->glyphs_sorted=1;
+  for(int index=0;index<256;index++) font->glyph_by_char[index]=-1;
+  font->glyph_by_char['A']=0; font->glyph_by_char['B']=1;
+  static const uint32_t ink=UINT32_C(0xFFFF0000), paper=UINT32_C(0xFF000000);
+  static const uint32_t expected[7]={ paper, ink, paper, ink, ink, ink, paper };
+  int ok=1;
+  for(int filtered=0;filtered<2;filtered++){
+    for(size_t cell=0;cell<sizeof framebuffer/sizeof framebuffer[0];cell++)
+      framebuffer[cell]=paper;
+    render.interp=filtered;
+    /* Advances 3+2: an odd five. Centred on x=10, the pen belongs on 8, not on 7.5. */
+    gml_draw_text(&render,10,0,"AB");
+    int mode_ok=1;
+    for(int column=0;column<7;column++)
+      if(framebuffer[7+column]!=expected[column]) mode_ok=0;
+    if(!mode_ok)
+      fprintf(stderr,"centred real-font line mismatch (interp=%d): 7=%08x 8=%08x 9=%08x 10=%08x"
+              " 11=%08x 12=%08x 13=%08x\n",
+              filtered,framebuffer[7],framebuffer[8],framebuffer[9],framebuffer[10],
+              framebuffer[11],framebuffer[12],framebuffer[13]);
+    ok=ok&&mode_ok;
+  }
+  font->glyphs=NULL; font->n_glyphs=0;
+  render.atlas=NULL; render.n_atlas=0;
+  gml_render_free(&render);
+  return ok;
+}
