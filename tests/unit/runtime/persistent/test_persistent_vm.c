@@ -206,7 +206,9 @@ static int retired_builtin_script_shadow_case(const char *script_name){
 }
 
 int expect_retired_builtin_script_shadow(void){
-  return retired_builtin_script_shadow_case("draw_background") &&
+  return retired_builtin_script_shadow_case("background_get_height") &&
+         retired_builtin_script_shadow_case("background_get_width") &&
+         retired_builtin_script_shadow_case("draw_background") &&
          retired_builtin_script_shadow_case("draw_background_ext");
 }
 
