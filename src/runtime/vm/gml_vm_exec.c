@@ -2298,6 +2298,19 @@ static int classic_extension_script_code(GmlVM *vm,const char *name){
   return gml_code_index_by_name(vm->win,code_name);
 }
 
+/* A modern package may provide a compatibility script under a retired builtin name.
+ * Prefer the packaged script for the supported background calls while retaining native-builtin
+ * precedence elsewhere and the existing classic extension-script lookup. */
+static int payload_compatibility_script_code(GmlVM *vm,const char *name){
+  int classic=classic_extension_script_code(vm,name);
+  if(classic>=0) return classic;
+  if(!vm || !vm->win || anygm_policy_uses_classic_runtime(vm->win) || !name ||
+     (strcmp(name,"draw_background") && strcmp(name,"draw_background_ext"))) return -1;
+  char code_name[192];
+  snprintf(code_name,sizeof code_name,"gml_Script_%s",name);
+  return gml_code_index_by_name(vm->win,code_name);
+}
+
 typedef enum {
   GML_DRAW_LOOP_CONSTANT,
   GML_DRAW_LOOP_SCALAR,
@@ -2469,7 +2482,7 @@ static int vm_try_array_draw_loop(
     builtin_id=gml_builtin_fast_id(vm,call->refname);
     call->builtin_id=(int16_t)builtin_id;
   }
-  if(builtin_id<=0 || classic_extension_script_code(vm,call->refname)>=0) return 0;
+  if(builtin_id<=0 || payload_compatibility_script_code(vm,call->refname)>=0) return 0;
 
   double epsilon=anygm_policy_exact_comparisons(vm->win)?0.0:vm->math_epsilon;
   double probe=counter_slot->d;
@@ -3143,7 +3156,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
         for(int i=0;i<na;i++) a[i] = sp>0? stk[--sp] : vreal(0);
         int sci = pin ? pin->funcval_ci : -1;
         if(sci<0){
-          sci=classic_extension_script_code(vm,nm);
+          sci=payload_compatibility_script_code(vm,nm);
           if(pin && sci>=0) pin->funcval_ci=sci;
         }
         int bid = pin ? pin->builtin_id : -1;

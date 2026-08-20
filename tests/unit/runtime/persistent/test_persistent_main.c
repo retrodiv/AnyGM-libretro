@@ -24,6 +24,8 @@ int main(int argc,char **argv){
     {"builtin_numeric_constants",expect_builtin_numeric_constants},
     {"smooth_path_midpoint_interpolation",expect_smooth_path_midpoint_interpolation},
     {"early_native_layer_animation",expect_early_native_layer_animation},
+    {"authored_long_layer_background_binding",expect_authored_long_layer_background_binding},
+    {"retired_builtin_script_shadow",expect_retired_builtin_script_shadow},
     {"deactivated_instance_reference",expect_deactivated_instance_reference},
     {"bounding_box_far_edges_by_generation",expect_bounding_box_far_edges_by_generation},
     {"room_camera_reservation",expect_room_camera_reservation},

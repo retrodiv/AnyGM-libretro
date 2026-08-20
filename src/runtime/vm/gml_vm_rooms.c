@@ -912,16 +912,16 @@ int gml_tilemap_set_cell(GmlTileMap *tm, int cx, int cy, uint32_t datum){
 GmlTileMap *gml_tilemap_by_layer(GmlVM *vm, GmlVal v){
   if(v.t==V_STR && v.s){ for(int i=0;i<vm->n_tilemaps;i++) if(vm->tilemaps[i].used && !strcmp(vm->tilemaps[i].name,v.s)) return &vm->tilemaps[i]; return NULL; }
   int lid=(int)gml_vm_value_as_number(v);
-  GmlRtLayer *rl=gml_rt_layer_find(vm,lid);   /* a layer id → match tilemap by that layer's name */
-  if(rl){ for(int i=0;i<vm->n_tilemaps;i++) if(vm->tilemaps[i].used && !strcmp(vm->tilemaps[i].name,rl->name)) return &vm->tilemaps[i]; }
+  GmlRtLayer *rl=gml_rt_layer_find(vm,lid);   /* a layer id → match the authored layer order */
+  if(rl){ for(int i=0;i<vm->n_tilemaps;i++) if(vm->tilemaps[i].used && vm->tilemaps[i].order==rl->order) return &vm->tilemaps[i]; }
   return gml_tilemap_find(vm,lid);            /* or it's already a tilemap id */
 }
 void gml_tilemap_effective(GmlVM *vm, const GmlTileMap *tm,
                            double *x, double *y, double *depth, int *visible){
   double ex=tm?tm->x:0.0, ey=tm?tm->y:0.0, ed=tm?tm->depth:0.0;
   int ev=tm?tm->visible:0;
-  if(vm && tm && tm->name[0]){
-    GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,tm->name);
+  if(vm && tm){
+    GmlRtLayer *rl=gml_rt_layer_find_by_order(vm,tm->order);
     if(rl){
       ev=rl->visible;
       ed=rl->depth;
@@ -965,7 +965,7 @@ static void gml_room_bind_backgrounds(GmlVM *vm, int room_index){
     if(!lp || gml_vm_read_u32_le(rd,lp+8)!=1) continue;
     uint32_t np=gml_vm_read_u32_le(rd,lp);
     const char *lname=(np && np<vm->win->size)?(const char*)(rd+np):"";
-    GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,lname);
+    GmlRtLayer *rl=gml_rt_layer_find_by_order(vm,(int)i);
     if(!rl) continue;
     int exists=0;
     for(int j=0;j<vm->n_rte;j++){
@@ -1009,9 +1009,7 @@ static void gml_room_bind_asset_sprites(GmlVM *vm, int room_index){
     if(!lp || gml_vm_read_u32_le(rd,lp+8)!=3) continue; /* Assets */
     uint32_t tb=gml_room_layer_type_off(vm,lp);
     if(tb+8>vm->win->size) continue;
-    uint32_t np=gml_vm_read_u32_le(rd,lp+0);
-    const char *lname=(np&&np<vm->win->size)?(const char*)(rd+np):"";
-    GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,lname);
+    GmlRtLayer *rl=gml_rt_layer_find_by_order(vm,(int)i);
     if(!rl) continue;
     uint32_t sprites=gml_vm_read_u32_le(rd,tb+4);          /* LayerAssetsData.Sprites */
     uint32_t scnt=(sprites && sprites+4<vm->win->size)?gml_vm_read_u32_le(rd,sprites):0;
@@ -1081,7 +1079,7 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runti
       if(!lp || lp+40>vm->win->size) continue;
       uint32_t np=gml_vm_read_u32_le(rd,lp+0);
       if(np && np<vm->win->size){
-        GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,(const char*)(rd+np));
+        GmlRtLayer *rl=gml_rt_layer_find_by_order(vm,(int)i);
         if(rl) rl->order=(int)i;
       }
     }
@@ -1094,11 +1092,8 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runti
     uint32_t ic=gml_vm_read_u32_le(rd,tb);
     if(ic>100000) continue;
     int ord=(int)i;
-    uint32_t np=gml_vm_read_u32_le(rd,lp+0);
-    if(np && np<vm->win->size){
-      GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,(const char*)(rd+np));
-      if(rl) ord=rl->order;
-    }
+    GmlRtLayer *rl=gml_rt_layer_find_by_order(vm,(int)i);
+    if(rl) ord=rl->order;
     for(uint32_t k=0;k<ic;k++){
       uint32_t ip2=tb+4+k*4;
       if(ip2+4>vm->win->size) break;
@@ -1156,7 +1151,7 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index, int rebuild_runti
     tm->tiles=decoded?decoded:rd+tdata;
     tm->base_tiles=tm->tiles;
     tm->x=gml_vm_read_f32_le(rd,lp+16); tm->y=gml_vm_read_f32_le(rd,lp+20); tm->visible=gml_vm_read_u32_le(rd,lp+32)?1:0;
-      GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,tm->name);
+      GmlRtLayer *rl=gml_rt_layer_find_by_order(vm,tm->order);
       if(rl){
         tm->visible=rl->visible;
         tm->depth=rl->depth;
@@ -1607,7 +1602,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
         int lorder=(int)i;
         uint32_t lnp=gml_vm_read_u32_le(d,lp+0);
         if(lnp && lnp<vm->win->size){
-          GmlRtLayer *rl=gml_rt_layer_find_by_name(vm,(const char*)(d+lnp));
+          GmlRtLayer *rl=gml_rt_layer_find_by_order(vm,(int)i);
           if(rl) lorder=rl->order;
         }
         uint32_t ic=gml_vm_read_u32_le(d,tb);

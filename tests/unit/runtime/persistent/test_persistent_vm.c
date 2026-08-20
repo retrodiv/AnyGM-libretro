@@ -111,6 +111,105 @@ int expect_early_native_layer_animation(void){
   return 1;
 }
 
+int expect_authored_long_layer_background_binding(void){
+  uint8_t data[512]={0};
+  static const char layer_name[]="neutral_background_layer_name_longer_than_cache";
+  fixture_w32(data,0,1);
+  fixture_w32(data,4,16);
+  fixture_w32(data,16+88,180);
+  fixture_w32(data,180,1);
+  fixture_w32(data,184,200);
+  fixture_w32(data,200,400);
+  fixture_w32(data,208,1);
+  fixture_w32(data,212,7);
+  fixture_w32(data,232,1);
+  fixture_w32(data,236,1);
+  fixture_w32(data,244,0);
+  fixture_w32(data,260,0xFFFFFFFFu);
+  memcpy(data+400,layer_name,sizeof layer_name);
+
+  GmlWin win={0};
+  win.data=data;
+  win.size=sizeof data;
+  win.bytecode=17;
+  win.game_speed=60;
+  win.n_chunks=1;
+  memcpy(win.chunks[0].name,"ROOM",5);
+  win.chunks[0].off=0;
+  win.chunks[0].size=sizeof data;
+
+  GmlVM vm={0};
+  vm.win=&win;
+  vm.room_index=0;
+  gml_vm_room_reload_layers_mode(&vm,0,1);
+  GmlVal layer=vreal(vm.n_rtl==1?vm.rtl[0].id:-1);
+  GmlVal elements=gml_builtin_call(&vm,"layer_get_all_elements",&layer,1);
+  int element_count=gml_val_array_length(elements);
+  int ok=vm.n_rtl==1 && vm.n_rte==1 && element_count==1 &&
+    vm.rte[0].layer==vm.rtl[0].id && vm.rte[0].sprite==0;
+  if(!ok)
+    fprintf(stderr,
+      "authored long layer did not bind its background: layers=%d elements=%d listed=%d\n",
+      vm.n_rtl,vm.n_rte,element_count);
+  gml_values_release(&elements,1);
+  gml_vm_rooms_clear_tilemaps(&vm);
+  free(vm.tilemaps);
+  free(vm.rtl);
+  free(vm.rte);
+  return ok;
+}
+
+static int retired_builtin_script_shadow_case(const char *script_name){
+  uint8_t data[20]={0};
+  fixture_word(data,0,(OP_CALL<<24)|(DT_VAR<<16));
+  fixture_word(data,1,0);
+  fixture_word(data,2,(OP_RET<<24)|(DT_VAR<<16));
+  fixture_word(data,3,(OP_PUSH<<24)|(DT_INT16<<16)|91u);
+  fixture_word(data,4,(OP_RET<<24)|(DT_VAR<<16));
+  GmlCode code[2]={0};
+  code[0].name=(char*)"gml_Script_neutral_retired_builtin_caller";
+  code[0].start=0;
+  code[0].length=12;
+  char code_name[96];
+  snprintf(code_name,sizeof code_name,"gml_Script_%s",script_name);
+  code[1].name=code_name;
+  code[1].start=12;
+  code[1].length=8;
+  uint32_t reference_address=4;
+  const char *reference_name=script_name;
+  GmlWin win={0};
+  win.data=data;
+  win.size=sizeof data;
+  win.bytecode=17;
+  win.code=code;
+  win.n_code=2;
+  win.ref_addr=&reference_address;
+  win.ref_name=&reference_name;
+  win.n_refs=1;
+  GmlVM vm={0};
+  vm.win=&win;
+  vm.cur_code_index=-1;
+  vm.math_epsilon=1e-5;
+  GmlVal result=gml_vm_run_code(&vm,0,NULL,NULL,NULL,0);
+  int ok=result.t==V_REAL && result.d==91;
+  if(!ok)
+    fprintf(stderr,"retired builtin %s replaced the packaged compatibility script: %.0f\n",
+            script_name,result.t==V_REAL?result.d:-1.0);
+  for(int index=0;index<2;index++){
+    free(code[index].insn);
+    free(code[index].insn_pc);
+    free(code[index].branch_index);
+  }
+  free(win.code_hix);
+  free(win.ref_hix);
+  return ok;
+}
+
+int expect_retired_builtin_script_shadow(void){
+  return retired_builtin_script_shadow_case("draw_background") &&
+         retired_builtin_script_shadow_case("draw_background_ext");
+}
+
 int expect_deactivated_instance_reference(void){
   GmlInstance instance={0};
   instance.deactivated=1;

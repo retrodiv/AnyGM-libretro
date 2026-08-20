@@ -289,6 +289,14 @@ GmlRtLayer *gml_rt_layer_find_by_name(GmlVM *vm, const char *nm){
   for(int i=0;i<vm->n_rtl;i++) if(vm->rtl[i].used && !strcmp(vm->rtl[i].name,nm)) return &vm->rtl[i];
   return NULL;
 }
+/* Immutable ROOM records and their runtime layers share this authored order. Use it for internal
+ * joins because the public runtime name has a fixed-size cache and may be truncated. */
+GmlRtLayer *gml_rt_layer_find_by_order(GmlVM *vm, int order){
+  if(!vm || order<0) return NULL;
+  for(int i=0;i<vm->n_rtl;i++)
+    if(vm->rtl[i].used && vm->rtl[i].order==order) return &vm->rtl[i];
+  return NULL;
+}
 /* Studio layer functions accept either a numeric layer id or a layer name. Resolve both forms. */
 GmlRtLayer *rt_layer_resolve(GmlVM *vm, GmlVal *a, int n){
   if(n>0 && a[0].t==V_STR && a[0].s) return gml_rt_layer_find_by_name(vm,a[0].s);

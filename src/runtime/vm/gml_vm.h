@@ -443,6 +443,7 @@ double gml_legacy_view_follow_axis(double current, double target, double extent,
 int gml_room_instance_precreate_code(GmlVM *vm, uint32_t instance_record);
 GmlRtLayer *gml_rt_layer_find(GmlVM *vm, int id);
 GmlRtLayer *gml_rt_layer_find_by_name(GmlVM *vm, const char *nm);
+GmlRtLayer *gml_rt_layer_find_by_order(GmlVM *vm, int order);
 GmlRtLayer *gml_rt_layer_new(GmlVM *vm);
 GmlRtElem  *gml_rt_elem_find(GmlVM *vm, int id);
 GmlRtElem  *gml_rt_elem_new(GmlVM *vm);

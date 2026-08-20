@@ -1285,8 +1285,7 @@ void gml_vm_draw(GmlVM *vm){
         /* Runtime layer control: if the game moved this layer (layer_x/layer_hspeed by name), use its
          * live accumulated position; otherwise the exact room-def scroll model (byte-identical for
          * games that never script their layers). */
-        uint32_t lnp=gml_vm_read_u32_le(d,lp+0);
-        GmlRtLayer *rl=(lnp && lnp<vm->win->size)? gml_rt_layer_find_by_name(vm,(const char*)(d+lnp)):NULL;
+        GmlRtLayer *rl=rt_layer_by_order(vm,(int)i);
         if(rl) ldep=rl->depth;
         int lorder = rl ? rl->order : (int)i;
         int ltouch = rl && rl->touched;
