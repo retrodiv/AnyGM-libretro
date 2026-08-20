@@ -597,7 +597,7 @@ diagnostics-check-internal: core $(TEST_DIR)/test_vm_diagnostics
 
 $(TEST_DIR)/test_vm_diagnostics: tests/unit/runtime/test_vm_diagnostics.c \
 	tests/support/anygm_test_runner.c src/host/anygm_host.c \
-	src/runtime/vm/gml_vm_diagnostics.c
+	src/runtime/vm/gml_value.c src/runtime/vm/gml_vm_diagnostics.c
 	mkdir -p $(dir $@)
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) $^ -o $@ -lm
 

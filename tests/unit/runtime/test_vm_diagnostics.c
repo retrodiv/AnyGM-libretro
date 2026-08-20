@@ -63,20 +63,21 @@ static int expect_opcode_filter_and_limit(void){
   AnygmHostServices host;
   fixture_vm(&vm,&host,&fixture);
   vm.frame=9;
-  gml_vm_diagnostics_opcode(&vm,"neutral_code",0,"push",0);
+  gml_vm_diagnostics_opcode(&vm,"neutral_code",0,"push",0,0.0);
   vm.frame=10;
-  gml_vm_diagnostics_opcode(&vm,"other_code",0,"push",0);
-  gml_vm_diagnostics_opcode(&vm,"neutral_code",0,"push",0);
-  gml_vm_diagnostics_opcode(&vm,"neutral_code",4,"pop",1);
-  gml_vm_diagnostics_opcode(&vm,"neutral_code",8,"ret",0);
-  gml_vm_diagnostics_opcode(&vm,"neutral_code",12,"exit",0);
+  gml_vm_diagnostics_opcode(&vm,"other_code",0,"push",0,0.0);
+  gml_vm_diagnostics_opcode(&vm,"neutral_code",0,"push",0,0.0);
+  gml_vm_diagnostics_opcode(&vm,"neutral_code",4,"pop",1,3.25);
+  gml_vm_diagnostics_opcode(&vm,"neutral_code",8,"ret",0,0.0);
+  gml_vm_diagnostics_opcode(&vm,"neutral_code",12,"exit",0,0.0);
   int ok=fixture.log_count==3 &&
     strstr(fixture.logs[0],
       "\"sequence\":0,\"kind\":\"opcode\",\"frame\":10,"
       "\"code\":\"neutral_code\",\"offset\":0,\"opcode\":\"push\"") &&
     strstr(fixture.logs[1],
       "\"sequence\":1,\"kind\":\"opcode\",\"frame\":10,"
-      "\"code\":\"neutral_code\",\"offset\":4,\"opcode\":\"pop\"") &&
+      "\"code\":\"neutral_code\",\"offset\":4,\"opcode\":\"pop\","
+      "\"stack_depth\":1,\"stack_top\":3.25") &&
     strstr(fixture.logs[2],
       "\"sequence\":2,\"kind\":\"limit\",\"frame\":10,\"limit\":3");
   gml_vm_diagnostics_destroy(&vm);
@@ -167,8 +168,8 @@ static int expect_malformed_configuration_is_inert(void){
   GmlVM vm;
   AnygmHostServices host;
   fixture_vm(&vm,&host,&missing_limit);
-  gml_vm_diagnostics_opcode(&vm,"neutral_code",0,"push",0);
-  gml_vm_diagnostics_opcode(&vm,"neutral_code",4,"ret",0);
+  gml_vm_diagnostics_opcode(&vm,"neutral_code",0,"push",0,0.0);
+  gml_vm_diagnostics_opcode(&vm,"neutral_code",4,"ret",0,0.0);
   int ok=missing_limit.log_count==1 &&
     strstr(missing_limit.logs[0],"\"kind\":\"config_error\"") &&
     strstr(missing_limit.logs[0],

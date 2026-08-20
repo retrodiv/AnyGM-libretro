@@ -98,8 +98,9 @@ JSON-escaped and bounded. Real values use exact IEEE-754 bits instead of
 locale-sensitive decimal text. String values are bounded and carry a
 `truncated` flag; array writes report their logical length.
 
-Opcode records include code, byte offset, mnemonic, stack depth, and current
-self ID. Event records include instance, object, event, and resolved code.
+Opcode records include code, byte offset, mnemonic, stack depth, the numeric
+top-of-stack value, and current self ID. Event records include instance,
+object, event, and resolved code.
 Collision records include both instances and objects, the mask-qualified hit
 result, and resolved handler code. Variable records include scope, target,
 name, optional array index, current code, and the written value.
