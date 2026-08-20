@@ -437,6 +437,20 @@ static int classic_extension_suffix(const char *name){
          (name[length-1]=='x' || name[length-1]=='X');
 }
 
+static int classic_extension_ordinal_placeholder(const char *name){
+  static const char stem[]="classic-extension-";
+  size_t length=name?strlen(name):0;
+  size_t tail=(sizeof stem-1u)+3u+4u;
+  if(length<tail) return 0;
+  size_t at=length-tail;
+  if(at && name[at-1]!='.') return 0;
+  return !strncasecmp(name+at,stem,sizeof stem-1u) &&
+         name[at+sizeof stem-1u]>='0' && name[at+sizeof stem-1u]<='9' &&
+         name[at+sizeof stem]>='0' && name[at+sizeof stem]<='9' &&
+         name[at+sizeof stem+1u]>='0' && name[at+sizeof stem+1u]<='9' &&
+         !strcasecmp(name+length-4u,".gex");
+}
+
 static int classic_extension_name_compare(const void *left, const void *right){
   const char *a=*(const char * const*)left;
   const char *b=*(const char * const*)right;
@@ -465,7 +479,8 @@ static int classic_extension_names(const AnygmHostServices *host,const char *pro
     if(result==ANYGM_RESULT_END) break;
     if(result!=ANYGM_OK){ classic_extension_names_free(names,count);
       host->directory_close(host->userdata,directory); return 0; }
-    if(!classic_extension_suffix(entry.name)) continue;
+    if(!classic_extension_suffix(entry.name) ||
+       classic_extension_ordinal_placeholder(entry.name)) continue;
     if(count==capacity){
       size_t next=capacity ? capacity*2u : 8u;
       char **grown=(char**)realloc(names,next*sizeof(*grown));

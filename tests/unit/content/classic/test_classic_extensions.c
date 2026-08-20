@@ -41,7 +41,8 @@ static int expect_extension_alias_import(void){
     "tmp/classic_extension_fixture/unrelated.gex",
     "tmp/classic_extension_fixture/truncated.gex",
     "tmp/classic_extension_fixture/embedded.gex",
-    "tmp/classic_extension_fixture/binary.gex"
+    "tmp/classic_extension_fixture/binary.gex",
+    "tmp/classic_extension_fixture/project.gmk.classic-extension-000.gex"
   };
   Fixture fixtures[]={
     extension_fixture("fixtureextension","fixture.gml",2,2,
@@ -64,10 +65,13 @@ static int expect_extension_alias_import(void){
                       "#define helper_target\nreturn 6;\n#define embedded_target\nreturn 37;\n",
                       NULL,NULL),
     extension_fixture("Fixture Extension","saudio.dll",1,11,
-                      "package_audio_open","open","",NULL,NULL)
+                      "package_audio_open","open","",NULL,NULL),
+    extension_fixture("Fixture Extension","fixture.gml",2,2,
+                      "ordinal_placeholder_action","fixture_target",
+                      "#define fixture_target\nreturn 8;\n",NULL,NULL)
   };
   int files_ok=1;
-  for(int i=0;i<7;i++)
+  for(int i=0;i<8;i++)
     files_ok &= write_fixture_file(paths[i],&fixtures[i],
                                    i==4 ? fixtures[i].size-3u : SIZE_MAX);
   uint64_t dependency_before=0,dependency_repeat=0,dependency_after=0;
@@ -116,7 +120,7 @@ static int expect_extension_alias_import(void){
     gmlc_classic_import_extension_aliases(&manifest,&project,dir,err,sizeof(err));
   int found_action=0, found_ambiguous=0, found_unrelated=0, found_broken=0;
   int found_embedded=0, embedded_script=0, found_extension_constant=0;
-  int found_package_binary=0,found_direct_binary=0;
+  int found_package_binary=0,found_direct_binary=0,found_ordinal_placeholder=0;
   int found_project_constant=0, found_unrelated_constant=0, found_broken_constant=0;
   for(int i=0;i<project.n_function_aliases;i++){
     GmlcFunctionAlias *alias=&project.function_aliases[i];
@@ -127,6 +131,7 @@ static int expect_extension_alias_import(void){
     if(!strcmp(alias->public_name,"broken_action")) found_broken=1;
     if(!strcmp(alias->public_name,"embedded_action") &&
        !strcmp(alias->target_name,"embedded_target") && !alias->ambiguous) found_embedded=1;
+    if(!strcmp(alias->public_name,"ordinal_placeholder_action")) found_ordinal_placeholder=1;
     if(!strcmp(alias->target_name,
        "__anygm_external_73617564696f2e646c6c_6f70656e") && !alias->ambiguous){
       if(!strcmp(alias->public_name,"package_audio_open")) found_package_binary=1;
@@ -157,14 +162,15 @@ static int expect_extension_alias_import(void){
     dependency_after!=dependency_before;
   int ok=imported && !err[0] && project.n_function_aliases==5 && project.n_scripts==3 &&
          found_action && found_ambiguous && !found_unrelated && !found_broken &&
-         found_embedded && found_package_binary && found_direct_binary && embedded_script &&
+         found_embedded && !found_ordinal_placeholder &&
+         found_package_binary && found_direct_binary && embedded_script &&
          found_extension_constant && found_project_constant &&
          !found_unrelated_constant && !found_broken_constant && project.n_constants==2 &&
          dependency_ok;
   if(!ok) fprintf(stderr,"extension alias fixture failed: aliases=%d error=%s\n",
                   project.n_function_aliases,err);
   gmlc_project_free(&project);
-  for(int i=0;i<7;i++) remove(paths[i]);
+  for(int i=0;i<8;i++) remove(paths[i]);
 #ifdef _WIN32
   _rmdir(dir);
 #else

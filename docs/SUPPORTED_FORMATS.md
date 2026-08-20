@@ -124,6 +124,8 @@ generation, project length, and embedded SHA-256 match the exact project bytes;
 it restores compiled resource details and normalized game-information presence that the editor
 format cannot encode. Referenced included files are read through the host VFS and their complete
 bytes contribute to the derived-content cache key, so changing one cannot reuse a stale package.
+Adjacent extension packages use their encoded package names; filenames matching the ordinal
+placeholder pattern are ignored.
 
 Companion format 2 can restore a resource either from a complete payload or from an exact binary
 delta against the editor-project payload. Both sides of a delta carry SHA-256 checks, and a
