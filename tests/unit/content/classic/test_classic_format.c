@@ -216,7 +216,24 @@ static int expect_gm53_manifest(void){
   if(ok) ok=manifest.inventory.header.version==GMLC_CLASSIC_GM53 &&
              manifest.inventory.header.game_id==42 && !manifest.executable_layout;
   gmlc_classic_manifest_free(&manifest);
+  GmlcClassicBlob extracted={0}; GmlcClassicVersion version=GMLC_CLASSIC_UNKNOWN;
+  if(ok) ok=gmlc_classic_embedded_project(executable.data,executable.size,&extracted,&version,
+                                           err,sizeof(err)) &&
+            version==GMLC_CLASSIC_GM53 && extracted.size==plain.size &&
+            !memcmp(extracted.data,plain.data,plain.size);
+  free(extracted.data);
   if(!ok) fprintf(stderr,"Game Maker 5.3 manifest failed: %s\n",err);
+  return ok;
+}
+
+static int expect_embedded_project_rejects_compiled_layout(void){
+  Fixture executable={{0},0}; GmlcClassicBlob extracted={(uint8_t*)1,1};
+  GmlcClassicVersion version=GMLC_CLASSIC_GM53; char err[256]={0};
+  int ok=build_gm6_executable_fixture(&executable) &&
+    !gmlc_classic_embedded_project(executable.data,executable.size,&extracted,&version,
+                                   err,sizeof(err)) &&
+    !extracted.data && !extracted.size && version==GMLC_CLASSIC_UNKNOWN && err[0];
+  if(!ok) fprintf(stderr,"compiled-layout extraction was not rejected: %s\n",err);
   return ok;
 }
 
@@ -625,6 +642,7 @@ AnygmTestGroup classic_test_format_group(void){
     {"manifest-800",expect_manifest},
     {"manifest-810",expect_manifest_810},
     {"manifest-530-executable",expect_gm53_manifest},
+    {"embedded-project-rejects-compiled-layout",expect_embedded_project_rejects_compiled_layout},
     {"executable-manifest",expect_executable_manifest},
     {"executable-manifest-late-decoy",expect_executable_manifest_ignores_late_decoy},
     {"executable-candidate-flood",expect_executable_candidate_flood_rejected},

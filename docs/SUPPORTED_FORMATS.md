@@ -89,7 +89,7 @@ records into the shared content model before execution.
 
 ## Classic containers and projects
 
-Classic revisions 600, 701, 702, 800, and 810 are recognized by the classic
+Classic revisions 530, 600, 701, 702, 800, and 810 are recognized by the classic
 reader and normalized into the same content model. Classic origin and bytecode
 encoding are represented as separate structural facts; one is not inferred
 from the other.
@@ -103,7 +103,9 @@ Revision 600 compiled executables are parsed as user-supplied content and
 normalized through the same classic importer as `.gm6` projects. Native code
 and bundled support libraries are not executed.
 
-An editor-standard `.gm6`, `.gmk`, or `.gm81` may have adjacent standard `.gex`
+The editor-standard revision-530 project is accepted directly with its `.gmd` extension.
+
+An editor-standard `.gmd`, `.gm6`, `.gmk`, or `.gm81` may have adjacent standard `.gex`
 packages, ordinary externally referenced included files (notably GM6), and an optional
 `.anygm-classic-fidelity` companion supplied alongside an editor project. The companion is
 applied only when its
@@ -111,6 +113,12 @@ generation, project length, and embedded SHA-256 match the exact project bytes;
 it restores compiled resource details and normalized game-information presence that the editor
 format cannot encode. Referenced included files are read through the host VFS and their complete
 bytes contribute to the derived-content cache key, so changing one cannot reuse a stale package.
+
+Companion format 2 can restore a resource either from a complete payload or from an exact binary
+delta against the editor-project payload. Both sides of a delta carry SHA-256 checks, and a
+malformed or mismatched delta fails closed. The reader also accepts format 1 companions produced
+before delta support. This changes storage representation only: the normalized compiled manifest presented to the importer is unchanged.
+
 Extension binary calls are imported as self-describing encoded library/symbol
 aliases. Runtime support is selected from those names, never from a game title
 or hardcoded content hash, and native DLLs are not loaded. Portable Saudio, SGAudio, SuperSound,
@@ -136,7 +144,7 @@ not the libretro adapter.
 ## Containers
 
 Path-backed routing recognizes the extensions declared by the core:
-`win`, `droid`, `zip`, `port`, `apk`, `yyp`, `yyz`, `gmk`, `gm6`, `gm81`, and
+`win`, `droid`, `zip`, `port`, `apk`, `yyp`, `yyz`, `gmd`, `gmk`, `gm6`, `gm81`, and
 `exe`. Extension recognition selects a parser; magic and structural validation
 still determine whether the input is accepted.
 

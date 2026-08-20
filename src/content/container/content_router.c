@@ -632,8 +632,9 @@ static int zip_nested_score(const char *name){
  * executable, which is the least explicit of the classic containers. */
 static int zip_classic_score(const char *name){
   const char *base=zip_basename(name);
-  int score=zip_endswith(base,".gmk")?400:zip_endswith(base,".gm81")?300:
-            zip_endswith(base,".gm6")?200:zip_endswith(base,".exe")?100:0;
+  int score=zip_endswith(base,".gmk")?500:zip_endswith(base,".gm81")?400:
+            zip_endswith(base,".gm6")?300:zip_endswith(base,".gmd")?200:
+            zip_endswith(base,".exe")?100:0;
   if(score){ for(const char *p=name;*p;p++) if(*p=='/') score--; }
   return score;
 }
@@ -1349,8 +1350,9 @@ int anygm_content_resolve_path(const AnygmContentRouter *router,const char *inpu
     if(embedded) return embedded>0;
     return load_classic_project_content(router,input_path,resolved_path,resolved_path_size);
   }
-  if(path_ext_is(input_path,".gmk") || path_ext_is(input_path,".gm81") ||
-     path_ext_is(input_path,".gm6") || path_ext_is(input_path,".exe")){
+  if(path_ext_is(input_path,".gmd") || path_ext_is(input_path,".gmk") ||
+     path_ext_is(input_path,".gm81") || path_ext_is(input_path,".gm6") ||
+     path_ext_is(input_path,".exe")){
     return load_classic_project_content(router,input_path,resolved_path,resolved_path_size);
   }
   if(path_ext_is(input_path,".yyp") || path_ext_is(input_path,".yyz")){

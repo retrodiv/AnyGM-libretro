@@ -2520,7 +2520,7 @@ static int parse_executable_manifest(const uint8_t *file, size_t size,
   }
   if(matches){ *out=found; return 1; }
   if(parse_gm6_executable_manifest(file,size,out,err,errcap)) return 1;
-  if(parse_gm53_executable_manifest(file,size,out,err,errcap)) return 1;
+  if(parse_gm53_executable_manifest(file,size,out,NULL,err,errcap)) return 1;
 
   if((0 /* Revision-selected adapter omitted from unpublished history. */)) return 1;
   if(err && errcap && !err[0])
@@ -2595,6 +2595,26 @@ int gmlc_classic_manifest(const void *data, size_t size,
     return 0;
   }
   return 1;
+}
+
+int gmlc_classic_embedded_project(const void *data,size_t size,
+                                  GmlcClassicBlob *project,GmlcClassicVersion *version,
+                                  char *err,size_t errcap){
+  if(err && errcap) err[0]='\0';
+  if(project) memset(project,0,sizeof(*project));
+  if(version) *version=GMLC_CLASSIC_UNKNOWN;
+  if(!data || !project || size<2u || ((const uint8_t*)data)[0]!='M' ||
+     ((const uint8_t*)data)[1]!='Z'){
+    if(err && errcap) snprintf(err,errcap,"classic executable: invalid embedded-project arguments");
+    return 0;
+  }
+  GmlcClassicManifest manifest={0};
+  int ok=parse_gm53_executable_manifest((const uint8_t*)data,size,&manifest,project,err,errcap);
+  if(ok && version) *version=manifest.inventory.header.version;
+  gmlc_classic_manifest_free(&manifest);
+  if(!ok && err && errcap && !err[0])
+    snprintf(err,errcap,"classic executable: no embedded editor project");
+  return ok;
 }
 
 int gmlc_classic_manifest_file(const AnygmHostServices *host,const char *path,

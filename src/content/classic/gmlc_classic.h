@@ -231,6 +231,11 @@ int gmlc_classic_manifest(const void *data, size_t size,
 int gmlc_classic_manifest_file(const struct AnygmHostServices *host,const char *path,
                                GmlcClassicManifest *out,
                                char *err, size_t errcap);
+/* Extract an exact editor project carried in a revision-530 envelope. The returned bytes are
+ * owned by the caller; compiled-only layouts are rejected. */
+int gmlc_classic_embedded_project(const void *data,size_t size,
+                                  GmlcClassicBlob *project,GmlcClassicVersion *version,
+                                  char *err,size_t errcap);
 /* Normalize the versioned game-information blob to its bounded, uncompressed
  * record.  Empty projects produce an empty output blob. */
 int gmlc_classic_game_information_decode(const GmlcClassicBlob *source,

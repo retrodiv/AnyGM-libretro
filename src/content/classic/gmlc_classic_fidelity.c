@@ -58,6 +58,54 @@ static int fidelity_fail(char *err,size_t errcap,const char *detail){
   return 0;
 }
 
+static int fidelity_varint(FidelityReader *reader,uint64_t *value){
+  uint64_t result=0;
+  for(unsigned shift=0;shift<64;shift+=7){
+    const uint8_t *encoded=NULL;
+    if(!fidelity_read(reader,1,&encoded) || (shift==63 && *encoded>1u)) return 0;
+    result|=(uint64_t)(*encoded&127u)<<shift;
+    if(!(*encoded&128u)){ *value=result; return 1; }
+  }
+  return 0;
+}
+
+static int fidelity_apply_delta(const uint8_t *base,size_t base_size,
+                                const uint8_t *delta,size_t delta_size,
+                                uint8_t *target,size_t target_size){
+  enum { DELTA_HEADER_SIZE=96 };
+  if(delta_size<DELTA_HEADER_SIZE || memcmp(delta,"AGDP",4) ||
+     fidelity_u32_at(delta+4)!=1u ||
+     fidelity_u64_at(delta+8)!=(uint64_t)base_size ||
+     fidelity_u64_at(delta+16)!=(uint64_t)target_size) return 0;
+  uint8_t digest[32]; gml_sha256(base,base_size,digest);
+  if(memcmp(digest,delta+24,32)) return 0;
+  uint64_t command_count=fidelity_u64_at(delta+88);
+  if(command_count>(uint64_t)target_size+1u) return 0;
+  FidelityReader reader={delta,delta_size,DELTA_HEADER_SIZE};
+  size_t written=0;
+  for(uint64_t command=0;command<command_count;command++){
+    const uint8_t *opcode=NULL;
+    uint64_t offset=0,length=0;
+    if(!fidelity_read(&reader,1,&opcode)) return 0;
+    if(*opcode==0u){
+      if(!fidelity_varint(&reader,&offset) || !fidelity_varint(&reader,&length) ||
+         !length || offset>base_size || length>base_size-(size_t)offset ||
+         length>target_size-written) return 0;
+      memcpy(target+written,base+(size_t)offset,(size_t)length);
+    } else if(*opcode==1u){
+      const uint8_t *literal=NULL;
+      if(!fidelity_varint(&reader,&length) || !length ||
+         length>target_size-written ||
+         !fidelity_read(&reader,(size_t)length,&literal)) return 0;
+      memcpy(target+written,literal,(size_t)length);
+    } else return 0;
+    written+=(size_t)length;
+  }
+  if(written!=target_size || reader.pos!=reader.size) return 0;
+  gml_sha256(target,target_size,digest);
+  return !memcmp(digest,delta+56,32);
+}
+
 int gmlc_classic_fidelity_apply_data(GmlcClassicManifest *manifest,
                                      const void *companion_data,size_t companion_size,
                                      const void *project_data,size_t project_size,
@@ -74,7 +122,8 @@ int gmlc_classic_fidelity_apply_data(GmlcClassicManifest *manifest,
   uint32_t record_count=fidelity_u32_at(contents+20);
   uint64_t expected_size=fidelity_u64_at(contents+24);
   uint8_t digest[32]; gml_sha256(project_data,project_size,digest);
-  if(format!=GMLC_CLASSIC_FIDELITY_VERSION ||
+  if((format!=GMLC_CLASSIC_FIDELITY_VERSION_1 &&
+      format!=GMLC_CLASSIC_FIDELITY_VERSION) ||
      header_size!=GMLC_CLASSIC_FIDELITY_HEADER_SIZE ||
      (header_flags&~(GMLC_CLASSIC_FIDELITY_EXECUTABLE_LAYOUT|
                      GMLC_CLASSIC_FIDELITY_SETTINGS|
@@ -117,21 +166,33 @@ int gmlc_classic_fidelity_apply_data(GmlcClassicManifest *manifest,
       GmlcClassicResourceSlot *slot=&manifest->slots[expected_type][expected_slot];
       if(!slot->exists) continue;
       uint32_t type=0,index=0,version=0,flags=0;
-      uint64_t payload_size=0,decoded_payload_size=0,source_size=0;
+      uint64_t payload_size=0,decoded_payload_size=0,source_size=0,codec_size=0;
       if(!fidelity_u32(&reader,&type) || !fidelity_u32(&reader,&index) ||
          !fidelity_u32(&reader,&version) || !fidelity_u32(&reader,&flags) ||
          !fidelity_u64(&reader,&payload_size) ||
          !fidelity_u64(&reader,&decoded_payload_size) ||
          !fidelity_u64(&reader,&source_size) ||
-         type!=(uint32_t)expected_type || index!=expected_slot || version!=slot->version ||
-         (flags&~31u) ||
+         (format==GMLC_CLASSIC_FIDELITY_VERSION &&
+          !fidelity_u64(&reader,&codec_size)))
+        return fidelity_fail(err,errcap,"invalid resource record");
+      if(format==GMLC_CLASSIC_FIDELITY_VERSION_1)
+        codec_size=decoded_payload_size;
+      if(type!=(uint32_t)expected_type || index!=expected_slot || version!=slot->version ||
+         (flags&~(format==GMLC_CLASSIC_FIDELITY_VERSION?63u:31u)) ||
          (!(flags&GMLC_CLASSIC_FIDELITY_REPLACE_PAYLOAD) &&
-          (payload_size || decoded_payload_size ||
-           (flags&GMLC_CLASSIC_FIDELITY_PAYLOAD_BZIP2))) ||
+          (payload_size || decoded_payload_size || codec_size ||
+           (flags&(GMLC_CLASSIC_FIDELITY_PAYLOAD_BZIP2|
+                   GMLC_CLASSIC_FIDELITY_PAYLOAD_DELTA)))) ||
          (!(flags&GMLC_CLASSIC_FIDELITY_REPLACE_SOURCE) && source_size) ||
          ((flags&GMLC_CLASSIC_FIDELITY_PAYLOAD_BZIP2) &&
-          (!payload_size || !decoded_payload_size)) ||
-         payload_size>SIZE_MAX || decoded_payload_size>GMLC_CLASSIC_FIDELITY_FILE_LIMIT ||
+          (!payload_size || !codec_size)) ||
+         ((flags&GMLC_CLASSIC_FIDELITY_PAYLOAD_DELTA) && !codec_size) ||
+         (!(flags&GMLC_CLASSIC_FIDELITY_PAYLOAD_DELTA) &&
+          codec_size!=decoded_payload_size) ||
+         (!(flags&GMLC_CLASSIC_FIDELITY_PAYLOAD_BZIP2) &&
+          payload_size!=codec_size) ||
+         payload_size>SIZE_MAX || codec_size>GMLC_CLASSIC_FIDELITY_FILE_LIMIT ||
+         decoded_payload_size>GMLC_CLASSIC_FIDELITY_FILE_LIMIT ||
          source_size>=SIZE_MAX || decoded_payload_size>UINT64_MAX-decoded_total ||
          decoded_total+decoded_payload_size>GMLC_CLASSIC_FIDELITY_FILE_LIMIT){
         return fidelity_fail(err,errcap,"invalid resource record");
@@ -145,20 +206,31 @@ int gmlc_classic_fidelity_apply_data(GmlcClassicManifest *manifest,
       if(source_size && memchr(source,'\0',(size_t)source_size))
         return fidelity_fail(err,errcap,"invalid resource source text");
       if(flags&GMLC_CLASSIC_FIDELITY_REPLACE_PAYLOAD){
-        uint8_t *copy=(uint8_t*)malloc(decoded_payload_size?(size_t)decoded_payload_size:1u);
-        if(!copy) return fidelity_fail(err,errcap,"out of memory");
+        uint8_t *codec=(uint8_t*)malloc(codec_size?(size_t)codec_size:1u);
+        if(!codec) return fidelity_fail(err,errcap,"out of memory");
         int decoded=1;
         if(flags&GMLC_CLASSIC_FIDELITY_PAYLOAD_BZIP2){
-          unsigned int destination_size=(unsigned int)decoded_payload_size;
-          decoded=payload_size<=UINT32_MAX && decoded_payload_size<=UINT32_MAX &&
-            BZ2_bzBuffToBuffDecompress((char*)copy,&destination_size,(char*)payload,
+          unsigned int destination_size=(unsigned int)codec_size;
+          decoded=payload_size<=UINT32_MAX && codec_size<=UINT32_MAX &&
+            BZ2_bzBuffToBuffDecompress((char*)codec,&destination_size,(char*)payload,
               (unsigned int)payload_size,0,0)==BZ_OK &&
-            destination_size==(unsigned int)decoded_payload_size;
-        } else if(payload_size==decoded_payload_size){
-          if(payload_size) memcpy(copy,payload,(size_t)payload_size);
+            destination_size==(unsigned int)codec_size;
+        } else if(payload_size==codec_size){
+          if(payload_size) memcpy(codec,payload,(size_t)payload_size);
         } else decoded=0;
-        if(!decoded){ free(copy);
+        if(!decoded){ free(codec);
           return fidelity_fail(err,errcap,"invalid compressed resource payload"); }
+        uint8_t *copy=codec;
+        if(flags&GMLC_CLASSIC_FIDELITY_PAYLOAD_DELTA){
+          copy=(uint8_t*)malloc(decoded_payload_size?(size_t)decoded_payload_size:1u);
+          if(!copy){ free(codec); return fidelity_fail(err,errcap,"out of memory"); }
+          decoded=fidelity_apply_delta(slot->payload,slot->payload_size,codec,
+                                       (size_t)codec_size,copy,
+                                       (size_t)decoded_payload_size);
+          free(codec);
+        }
+        if(!decoded){ free(copy);
+          return fidelity_fail(err,errcap,"invalid resource payload delta"); }
         free(slot->payload); slot->payload=copy;
         slot->payload_size=(size_t)decoded_payload_size;
       }

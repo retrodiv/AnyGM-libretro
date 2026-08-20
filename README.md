@@ -15,10 +15,10 @@ or proprietary runtime components.
 
 ## Supported format families
 
-- Classic container revisions 600, 701, 702, 800, and 810.
+- Classic container revisions 530, 600, 701, 702, 800, and 810.
 - Studio bytecode revisions 14 through 17.
 - Path-backed content selected by the libretro extensions declared by the
-  core: `win`, `droid`, `zip`, `port`, `apk`, `yyp`, `yyz`, `gmk`, `gm6`,
+  core: `win`, `droid`, `zip`, `port`, `apk`, `yyp`, `yyz`, `gmd`, `gmk`, `gm6`,
   `gm81`, and `exe`.
 - Memory-backed content through the framework-neutral AnyGM API.
 

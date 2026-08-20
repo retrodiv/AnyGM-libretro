@@ -159,6 +159,7 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
     }
     size_t plen=strlen(origin);
     classic_input=
+        (plen>4 && !strcasecmp(origin+plen-4,".gmd")) ||
         (plen>4 && !strcasecmp(origin+plen-4,".gmk")) ||
         (plen>5 && !strcasecmp(origin+plen-5,".gm81")) ||
         (plen>4 && !strcasecmp(origin+plen-4,".gm6")) ||
