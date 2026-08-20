@@ -215,8 +215,16 @@ static void execute_nearest_pixel_centre(const GmlPlanOp *op,const GmlPlanImage 
 /* A real box average over the source pixels each destination pixel covers. An ordinary bilinear
  * sample is not equivalent, which is why this stays software until a GPU reduction reproduces the
  * integer channel sums and the division rounding. */
-static void execute_box(const GmlPlanOp *op,const GmlPlanImage *image,
-                        uint32_t *target,uint32_t pitch){
+typedef struct {
+  const GmlPlanOp *op;
+  const GmlPlanImage *image;
+  uint32_t *target;
+  uint32_t pitch;
+} PlanBoxBand;
+
+static void execute_box_rows(const GmlPlanOp *op,const GmlPlanImage *image,
+                             uint32_t *target,uint32_t pitch,
+                             unsigned row_start,unsigned row_end){
   const uint32_t *source=image->cpu_pixels;
   const unsigned source_width=image->width;
   const unsigned source_height=image->height;
@@ -225,7 +233,7 @@ static void execute_box(const GmlPlanOp *op,const GmlPlanImage *image,
   const unsigned destination_x=(uint32_t)op->destination.x;
   const unsigned destination_y=(uint32_t)op->destination.y;
   const uint32_t alpha_write=op->alpha_write;
-  for(unsigned y=0;y<destination_height;y++){
+  for(unsigned y=row_start;y<row_end;y++){
     unsigned source_y0=y*source_height/destination_height;
     unsigned source_y1=(y+1)*source_height/destination_height;
     if(source_y1<=source_y0) source_y1=source_y0+1;
@@ -249,6 +257,26 @@ static void execute_box(const GmlPlanOp *op,const GmlPlanImage *image,
         plan_pixel(((red/count)<<16)|((green/count)<<8)|(blue/count),alpha_write);
     }
   }
+}
+
+static void plan_box_band(void *context,int row_start,int row_end,int slot){
+  PlanBoxBand *band=(PlanBoxBand*)context;
+  (void)slot;
+  execute_box_rows(band->op,band->image,band->target,band->pitch,
+                   (unsigned)row_start,(unsigned)row_end);
+}
+
+static void execute_box(const GmlPlanOp *op,const GmlPlanImage *image,
+                        uint32_t *target,uint32_t pitch,GmlRender *pool_owner){
+  const unsigned destination_width=op->destination.width;
+  const unsigned destination_height=op->destination.height;
+  if(pool_owner &&
+     (uint64_t)destination_width*(uint64_t)destination_height>=262144ull){
+    PlanBoxBand band={op,image,target,pitch};
+    gml_run_row_bands(pool_owner,(int)destination_height,plan_box_band,&band);
+    return;
+  }
+  execute_box_rows(op,image,target,pitch,0,destination_height);
 }
 
 static void execute_present(const GmlPlanOp *op,const GmlPlanImage *image,
@@ -279,7 +307,7 @@ int gml_render_plan_execute_software_pooled(const GmlRenderPlan *plan,uint32_t *
           execute_nearest_pixel_centre(op,image,target,target_pitch_pixels);
         break;
       case GML_PLAN_OP_BLIT_OPAQUE_BOX:
-        execute_box(op,image,target,target_pitch_pixels);
+        execute_box(op,image,target,target_pitch_pixels,pool_owner);
         break;
       case GML_PLAN_OP_PRESENT_CPU_FRAME:
         execute_present(op,image,target,target_pitch_pixels);

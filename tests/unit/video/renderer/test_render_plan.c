@@ -12,6 +12,7 @@
 
 #include "gml_render_internal.h"
 #include "gml_render_plan.h"
+#include "anygm.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -553,6 +554,76 @@ static int host_canvas_reduce_case(void){
   return 1;
 }
 
+typedef struct {
+  const char *threads;
+} PlanBandSettings;
+
+static const char *plan_band_setting(void *userdata,const char *name){
+  PlanBandSettings *settings=(PlanBandSettings*)userdata;
+  return !strcmp(name,"GML_ROW_THREADS")?settings->threads:NULL;
+}
+
+static int pooled_box_identity_case(void){
+  enum { SOURCE_WIDTH=853,SOURCE_HEIGHT=641,HOST_WIDTH=640,HOST_HEIGHT=480 };
+  static const char *thread_counts[]={"1","2","4","8","16"};
+  const size_t source_count=(size_t)SOURCE_WIDTH*SOURCE_HEIGHT;
+  const size_t target_count=(size_t)HOST_WIDTH*HOST_HEIGHT;
+  uint32_t *source=(uint32_t*)malloc(source_count*sizeof *source);
+  uint32_t *reference=(uint32_t*)malloc(target_count*sizeof *reference);
+  uint32_t *actual=(uint32_t*)malloc(target_count*sizeof *actual);
+  GmlRenderPlan plan;
+  GmlPlanImage image;
+  GmlPlanRect whole={0,0,HOST_WIDTH,HOST_HEIGHT};
+  GmlRender pool_owner={0};
+  GmlWin content={0};
+  AnygmHostServices host={0};
+  PlanBandSettings settings={thread_counts[0]};
+  uint32_t image_index;
+  int passed=0;
+  if(!source || !reference || !actual){
+    fprintf(stderr,"render plan failed: pooled reduction allocation\n");
+    goto done;
+  }
+  fill_asymmetric(source,SOURCE_WIDTH,SOURCE_HEIGHT);
+  image=plan_image(source,SOURCE_WIDTH,SOURCE_HEIGHT);
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_CPU_FRAME,HOST_WIDTH,HOST_HEIGHT);
+  image_index=gml_render_plan_add_image(&plan,&image);
+  if(image_index==GML_PLAN_NO_IMAGE ||
+     !gml_render_plan_add_blit_box(&plan,image_index,whole,0u) ||
+     !gml_render_plan_validate(&plan)){
+    fprintf(stderr,"render plan failed: pooled reduction plan\n");
+    goto done;
+  }
+  host.struct_size=sizeof host;
+  host.userdata=&settings;
+  host.development_setting=plan_band_setting;
+  content.host=&host;
+  pool_owner.win=&content;
+  memset(reference,0xCD,target_count*sizeof *reference);
+  if(!gml_render_plan_execute_software_pooled(&plan,reference,HOST_WIDTH,&pool_owner) ||
+     pool_owner.row_pool){
+    fprintf(stderr,"render plan failed: single-band reduction\n");
+    goto done;
+  }
+  for(size_t count=1;count<sizeof thread_counts/sizeof thread_counts[0];count++){
+    settings.threads=thread_counts[count];
+    memset(actual,0xCD,target_count*sizeof *actual);
+    if(!gml_render_plan_execute_software_pooled(&plan,actual,HOST_WIDTH,&pool_owner) ||
+       !pool_owner.row_pool || memcmp(reference,actual,target_count*sizeof *actual)){
+      fprintf(stderr,"render plan failed: reduction differs at %s bands\n",
+              thread_counts[count]);
+      goto done;
+    }
+  }
+  passed=1;
+done:
+  gml_render_free(&pool_owner);
+  free(source);
+  free(reference);
+  free(actual);
+  return passed;
+}
+
 static int axis_map_case(void){
   enum { SOURCE=37,DESTINATION=277 };
   uint16_t map[DESTINATION];
@@ -696,6 +767,7 @@ int main(int argc,char **argv){
   static const AnygmTestCase plan_cases[]={
     {"host_canvas_magnify",host_canvas_magnify_case},
     {"host_canvas_reduce",host_canvas_reduce_case},
+    {"pooled_box_identity",pooled_box_identity_case},
     {"axis_map",axis_map_case},
     {"validation",plan_validation_case},
   };
