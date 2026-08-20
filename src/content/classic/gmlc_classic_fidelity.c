@@ -122,8 +122,7 @@ int gmlc_classic_fidelity_apply_data(GmlcClassicManifest *manifest,
   uint32_t record_count=fidelity_u32_at(contents+20);
   uint64_t expected_size=fidelity_u64_at(contents+24);
   uint8_t digest[32]; gml_sha256(project_data,project_size,digest);
-  if((format!=GMLC_CLASSIC_FIDELITY_VERSION_1 &&
-      format!=GMLC_CLASSIC_FIDELITY_VERSION) ||
+  if(format!=GMLC_CLASSIC_FIDELITY_VERSION ||
      header_size!=GMLC_CLASSIC_FIDELITY_HEADER_SIZE ||
      (header_flags&~(GMLC_CLASSIC_FIDELITY_EXECUTABLE_LAYOUT|
                      GMLC_CLASSIC_FIDELITY_SETTINGS|
@@ -172,13 +171,10 @@ int gmlc_classic_fidelity_apply_data(GmlcClassicManifest *manifest,
          !fidelity_u64(&reader,&payload_size) ||
          !fidelity_u64(&reader,&decoded_payload_size) ||
          !fidelity_u64(&reader,&source_size) ||
-         (format==GMLC_CLASSIC_FIDELITY_VERSION &&
-          !fidelity_u64(&reader,&codec_size)))
+         !fidelity_u64(&reader,&codec_size))
         return fidelity_fail(err,errcap,"invalid resource record");
-      if(format==GMLC_CLASSIC_FIDELITY_VERSION_1)
-        codec_size=decoded_payload_size;
       if(type!=(uint32_t)expected_type || index!=expected_slot || version!=slot->version ||
-         (flags&~(format==GMLC_CLASSIC_FIDELITY_VERSION?63u:31u)) ||
+         (flags&~63u) ||
          (!(flags&GMLC_CLASSIC_FIDELITY_REPLACE_PAYLOAD) &&
           (payload_size || decoded_payload_size || codec_size ||
            (flags&(GMLC_CLASSIC_FIDELITY_PAYLOAD_BZIP2|

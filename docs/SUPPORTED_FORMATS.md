@@ -127,8 +127,8 @@ bytes contribute to the derived-content cache key, so changing one cannot reuse 
 
 Companion format 2 can restore a resource either from a complete payload or from an exact binary
 delta against the editor-project payload. Both sides of a delta carry SHA-256 checks, and a
-malformed or mismatched delta fails closed. The reader also accepts format 1 companions produced
-before delta support. This changes storage representation only: the normalized compiled manifest presented to the importer is unchanged.
+malformed or mismatched delta fails closed. This changes storage representation only: the normalized compiled manifest presented to the
+importer is unchanged.
 
 Extension binary calls are imported as self-describing encoded library/symbol
 aliases. Runtime support is selected from those names, never from a game title
