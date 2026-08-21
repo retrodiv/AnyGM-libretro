@@ -145,7 +145,8 @@ static int joydll_find(GmlVM *vm){
   return -1;
 }
 
-/* Report the conventional controller layout represented by the RetroPad mapping. */
+/* Report the conventional virtual-pad layout: four face buttons, two shoulders,
+ * two sticks and a d-pad. */
 static const char *joydll_name(void){ return "Xbox 360 Controller"; }
 
 /* Convert d-pad state to clockwise compass degrees, with -1 for centred. */
