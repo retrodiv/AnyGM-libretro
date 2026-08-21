@@ -255,6 +255,16 @@ static int room_element_animation_speed_type(GmlVM *vm, const GmlRtElem *element
   return 0;
 }
 
+static double sequence_head_rate(const GmlVM *vm, const GmlSequence *sequence){
+  if(!sequence) return 1.0;
+  double rate=sequence->speed;
+  if(sequence->speed_type==0){
+    double room_rate=gml_room_speed((GmlVM *)vm);
+    rate=room_rate>0?sequence->speed/room_rate:1.0;
+  }
+  return rate>0 && isfinite(rate)?rate:1.0;
+}
+
 void gml_vm_frame_advance_layers(GmlVM *vm){
   if(!vm) return;
   /* GMS2 layers scroll by their hspeed/vspeed each step. Runtime-scripted layers accumulate here;
@@ -267,10 +277,7 @@ void gml_vm_frame_advance_layers(GmlVM *vm){
     GmlRtElem *e=&vm->rte[i];
     if(!e->used || e->type!=9 || e->sprite<0 || e->sprite>=vm->n_sequences) continue;
     const GmlSequence *s=&vm->sequences[e->sprite];
-    double rate=s->speed;
-    if(s->speed_type==0){ double rs=gml_room_speed(vm); rate=(rs>0)?s->speed/rs:1.0; }
-    if(!(rate>0)) rate=1.0;
-    e->image_index+=rate;
+    e->image_index+=sequence_head_rate(vm,s);
   }
   { GmlRender *R=(GmlRender*)vm->render;
     for(int i=0;i<vm->n_rte;i++){
@@ -1023,6 +1030,48 @@ struct LaySprite { int sprite, subimg,order; double x,y,xs,ys,angle; uint32_t bl
 struct LayEffect { GmlLayerFilter effect; int order; double depth; };
 struct LayAttachedFilter { GmlLayerFilter effect; int order; };
 struct ClassicBg { int def,th,tv,stretch; double x,y; uint32_t blend; double alpha,depth; };
+
+static unsigned sequence_multiply_byte(unsigned first, unsigned second){
+  return (first*second+127u)/255u;
+}
+
+static uint32_t sequence_blend_colour(uint32_t argb, uint32_t element_blend){
+  unsigned red=sequence_multiply_byte((argb>>16)&0xFFu,element_blend&0xFFu);
+  unsigned green=sequence_multiply_byte((argb>>8)&0xFFu,(element_blend>>8)&0xFFu);
+  unsigned blue=sequence_multiply_byte(argb&0xFFu,(element_blend>>16)&0xFFu);
+  return red|(green<<8)|(blue<<16);
+}
+
+static int sequence_subimage(GmlVM *vm, const GmlSequence *sequence,
+                             const GmlSeqGraphic *graphic, int sprite,
+                             double asset_head, double head){
+  double authored=gml_sequence_value(graphic,"image_index",0,head,NAN);
+  if(isfinite(authored)) return (int)floor(authored);
+  double image_speed=gml_sequence_value(graphic,"image_speed",0,head,1.0);
+  double head_rate=sequence_head_rate(vm,sequence);
+  double elapsed_steps=(head-asset_head)/head_rate;
+  double frame_delta=gml_sprite_animation_delta((GmlRender*)vm->render,sprite,image_speed,
+                                                 gml_room_speed(vm));
+  double frame=elapsed_steps*frame_delta;
+  return isfinite(frame)?(int)floor(frame):0;
+}
+
+static void sequence_track_anchor(GmlVM *vm, const GmlSequence *sequence,
+                                  const GmlSeqGraphic *graphic, int sprite, double head,
+                                  double base_x, double base_y, double xscale, double yscale,
+                                  double angle, double *x, double *y){
+  GmlRenderSpriteMetrics metrics={0};
+  (void)gml_render_sprite_metrics((GmlRender*)vm->render,sprite,&metrics);
+  double origin_x=gml_sequence_value(graphic,"origin",0,head,(double)metrics.origin_x);
+  double origin_y=gml_sequence_value(graphic,"origin",1,head,(double)metrics.origin_y);
+  double dx=((double)metrics.origin_x-origin_x)*xscale;
+  double dy=((double)metrics.origin_y-origin_y)*yscale;
+  double radians=angle*(M_PI/180.0);
+  double cosine=cos(radians), sine=sin(radians);
+  *x=base_x-(double)sequence->origin_x+dx*cosine+dy*sine;
+  *y=base_y-(double)sequence->origin_y-dx*sine+dy*cosine;
+}
+
 static void draw_event_hook(GmlVM *vm, GmlInstance *in, const char *suffix, int begin){
   if(vm && vm->draw_event_hook) vm->draw_event_hook(vm,in,suffix,begin,vm->draw_event_hook_user);
 }
@@ -1490,20 +1539,29 @@ void gml_vm_draw(GmlVM *vm){
        * sequence sprites take part in the same depth ordering as other layer elements. */
       const GmlSequence *s=&vm->sequences[e->sprite];
       double head=e->image_index;
-      for(int g=0;g<s->n_graphics;g++){
+      /* The track panel is front-to-back. Emit it in reverse so the ordinary layer-sprite
+       * back-to-front tie-break composites the last panel entry as the background. */
+      for(int g=s->n_graphics-1;g>=0;g--){
         const GmlSeqGraphic *gr=&s->graphics[g];
-        if(gr->sprite<0) continue;
+        double asset_head=0;
+        int sprite=gml_sequence_sprite_at(gr,head,&asset_head);
+        if(sprite<0) continue;
         if(!dl_grow((void**)&scratch->layer_sprite,
                     &scratch->layer_sprite_capacity,nls+1,sizeof(*lsp))) continue;
         lsp=scratch->layer_sprite;
-        lsp[nls].sprite=gr->sprite;
-        lsp[nls].subimg=(int)gml_sequence_value(gr,"image_index",0,head,0);
-        lsp[nls].x=lx+e->x+gml_sequence_value(gr,"position",0,head,0);
-        lsp[nls].y=ly+e->y+gml_sequence_value(gr,"position",1,head,0);
+        lsp[nls].sprite=sprite;
+        lsp[nls].subimg=sequence_subimage(vm,s,gr,sprite,asset_head,head);
         lsp[nls].xs=gml_sequence_value(gr,"scale",0,head,1);
         lsp[nls].ys=gml_sequence_value(gr,"scale",1,head,1);
         lsp[nls].angle=gml_sequence_value(gr,"rotation",0,head,0);
-        lsp[nls].blend=0xFFFFFFu; lsp[nls].alpha=e->alpha;
+        double base_x=lx+e->x+gml_sequence_value(gr,"position",0,head,0);
+        double base_y=ly+e->y+gml_sequence_value(gr,"position",1,head,0);
+        sequence_track_anchor(vm,s,gr,sprite,head,base_x,base_y,
+                              lsp[nls].xs,lsp[nls].ys,lsp[nls].angle,
+                              &lsp[nls].x,&lsp[nls].y);
+        uint32_t argb=gml_sequence_colour(gr,"blend_multiply",head,0xFFFFFFFFu);
+        lsp[nls].blend=sequence_blend_colour(argb,e->blend);
+        lsp[nls].alpha=e->alpha*(double)((argb>>24)&0xFFu)/255.0;
         lsp[nls].depth=l->depth; lsp[nls].order=l->order;
         nls++;
       }

@@ -55,18 +55,42 @@ typedef struct {
 typedef struct { double x, y, sp, clen; } GmlPathPt;   /* sp = point speed factor, clen = cumulative length */
 typedef struct { GmlPathPt *pts; int n; int kind, closed, precision; double len; } GmlPath;
 /* ---- sequences (SEQN chunk, GMS2.3+) ----
- * A sequence stores a length, playback speed and graphic tracks. Graphic subtracks supply held
- * values for image index, origin, position, rotation and scale. Origin, position and scale use
- * two independent channels, so the renderer samples each channel at the current head. */
+ * Asset keys decide which sprite is active over a bounded interval. Parameter keys describe that
+ * asset while it is active; real tracks have up to two directly sampled channels and colour tracks
+ * carry one packed ARGB value. The immutable parse tree is content metadata, not runtime state. */
 #define GML_SEQ_CHANNELS 2
-typedef struct { double key, value[GML_SEQ_CHANNELS]; int channels; } GmlSeqKey;
-typedef struct { char name[24]; GmlSeqKey *keys; int n_keys; } GmlSeqTrack;
-typedef struct { int sprite; GmlSeqTrack *tracks; int n_tracks; } GmlSeqGraphic;
-typedef struct { char *name; double length, speed; int speed_type;
+enum { GML_SEQ_TRACK_REAL=1, GML_SEQ_TRACK_COLOUR=2 };
+typedef struct {
+  double key, length, value[GML_SEQ_CHANNELS];
+  uint32_t colour;
+  unsigned channel_mask, disabled;
+} GmlSeqKey;
+typedef struct {
+  char name[24];
+  GmlSeqKey *keys;
+  int n_keys, interpolation, kind;
+} GmlSeqTrack;
+typedef struct {
+  double key, length;
+  int sprite;
+  unsigned stretch, disabled;
+} GmlSeqAssetKey;
+typedef struct {
+  GmlSeqAssetKey *keys;
+  int n_keys;
+  GmlSeqTrack *tracks;
+  int n_tracks;
+} GmlSeqGraphic;
+typedef struct { char *name; double length, speed; int playback, speed_type, origin_x, origin_y;
                  GmlSeqGraphic *graphics; int n_graphics; } GmlSequence;
-/* The held value of `channel` at `head`, or `fallback` when the track has no keys. */
+/* The evaluated value of `channel` at `head`, or `fallback` when the track has no usable keys. */
 double gml_sequence_value(const GmlSeqGraphic *g, const char *track, int channel, double head,
                           double fallback);
+/* The packed ARGB value at `head`, or `fallback` when the colour track is absent. */
+uint32_t gml_sequence_colour(const GmlSeqGraphic *g, const char *track, double head,
+                             uint32_t fallback);
+/* The active sprite at `head`, and optionally the head at which its asset key began. */
+int gml_sequence_sprite_at(const GmlSeqGraphic *g, double head, double *key_head);
 
 /* ---- timelines (parsed from native package and compiler-authored TMLN records) ---- */
 typedef struct { int step, code; } GmlTimelineMoment;

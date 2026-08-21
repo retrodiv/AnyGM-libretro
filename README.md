@@ -70,7 +70,7 @@ cadence, source-frame selection, and every mirror/flip/rotate combination.
 The D3 and persistent-room binaries are composed from ownership-mirrored
 translation units and expose named filters. A filtered software-3D case
 replays its bounded prerequisite stages from a clean fixture; persistent
-VM, DS, I/O, audio, timeline, state, and renderer cases are independently
+VM, sequence, DS, I/O, audio, timeline, state, and renderer cases are independently
 selectable.
 `diagnostics-check` builds and tests the separately compiled fine-tracing
 instrumentation. A normal build does not contain that instrumentation; see

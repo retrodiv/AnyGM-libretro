@@ -411,6 +411,7 @@ void gml_vm_free(GmlVM *vm){
   for(int i=0;i<vm->n_objects;i++) free(vm->objects[i].events);
   for(int i=0;i<vm->n_paths;i++) free(vm->paths[i].pts);
   free(vm->paths);
+  gml_vm_sequences_clear(vm);
   for(int i=0;i<vm->n_timelines;i++){
     free(vm->timelines[i].moments);
     free(vm->timelines[i].owned_name);
