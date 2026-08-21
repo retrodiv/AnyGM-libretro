@@ -81,11 +81,12 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"Game gamepad",NULL},{"Keyboard emulation",NULL},{NULL,NULL}},
    "Game gamepad"},
   {"anygm_gamepads","Gamepads",NULL,
-   "How many pad ports a game can read. Libretro cannot be asked which ports have a device on "
-   "them, so this is stated rather than detected: leave it at 1 for a single-player game, and "
-   "raise it to the number of pads plugged in for a game with local multiplayer, which cannot "
-   "reach the second player otherwise. Ports above the count read as nothing rather than "
-   "repeating the first pad.",
+   "How many pads a game can read. Leave it at 1 for a single-player game; raise it to the number "
+   "of pads plugged in for a game with local multiplayer, which cannot reach the second player "
+   "otherwise. Ports above the count read as nothing rather than repeating the first pad. This is "
+   "stated rather than detected because no frontend call here reports which ports are occupied: "
+   "the one that names a maximum reports the frontend's own setting, and an empty port answers "
+   "every button exactly as an idle one does.",
    NULL,"input",
    {{"1",NULL},{"2",NULL},{"3",NULL},{"4",NULL},{NULL,NULL}},
    "1"},

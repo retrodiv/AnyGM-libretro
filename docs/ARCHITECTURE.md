@@ -311,9 +311,9 @@ Saudio/SGAudio/SuperSound/BGM/GMFMODSimple/pxwrap adapters, and the ordered audi
 stage. `gml_builtin_platform.c` owns generic encoded external-call decoding and
 the deterministic no-op policy for offline-only platform libraries; the input
 owner maps GMXInput to the normalized host gamepads. Every gamepad and joystick reader takes
-an explicit device. The host contract carries one row of buttons and axes per supported port and
-states how many rows are active because the frontend protocol does not expose physical occupancy;
-an idle pad and an absent one both report no input. Shared string conversion, fixed-array construction, and
+an explicit device, and the host contract carries one row per supported port. The host states the
+active count: the maximum-user query reports configured capacity, the controller-port callback
+reflects the adapter's own declaration, and idle and absent ports both report no input. Shared string conversion, fixed-array construction, and
 content-relative path resolution remain single facade operations while exact
 and ordered lookup coexist. The stage delegates unrecognized names directly to
 the instance-path stage, preserving precedence without indirect dispatch.

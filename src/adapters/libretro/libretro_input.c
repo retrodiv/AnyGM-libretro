@@ -9,7 +9,12 @@ static const struct retro_controller_description g_controller_types[]={
   {"RetroPad",RETRO_DEVICE_JOYPAD}
 };
 
+/* Advertise one controller description for each supported port. This table states capacity,
+ * while the configured active count states use. */
 static const struct retro_controller_info g_controller_info[]={
+  {g_controller_types,sizeof g_controller_types/sizeof g_controller_types[0]},
+  {g_controller_types,sizeof g_controller_types/sizeof g_controller_types[0]},
+  {g_controller_types,sizeof g_controller_types/sizeof g_controller_types[0]},
   {g_controller_types,sizeof g_controller_types/sizeof g_controller_types[0]},
   {NULL,0}
 };
@@ -90,8 +95,9 @@ void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t heig
   input->pointer_y=-1;
   if(g_libretro.input_poll) g_libretro.input_poll();
 
-  /* Port occupancy is not observable: announced idle and absent ports both report zero input.
-   * Use the configured count, defaulting to one, and snapshot each stated port independently. */
+  /* Use the configured active count. The maximum-user query reports configured capacity, the
+   * controller-port callback reflects this adapter's declaration, and idle and absent ports both
+   * report zero input, so none of those signals establishes occupancy. */
   unsigned ports=g_libretro.gamepad_ports;
   if(ports<1u) ports=1u;
   if(ports>ANYGM_MAX_GAMEPADS) ports=ANYGM_MAX_GAMEPADS;
