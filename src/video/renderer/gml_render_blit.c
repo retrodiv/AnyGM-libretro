@@ -753,6 +753,18 @@ static int tpag_alpha_runs(GmlRender *r, GmlTpag *t, GmlAtlas *a,
   if(count) *count=t->alpha_run_count;
   return 1;
 }
+static const uint32_t *tpag_fully_opaque_argb(
+    GmlRender *r,GmlTpag *t,GmlAtlas *atlas){
+  const GmlTpagAlphaRun *runs=NULL;
+  int count=0;
+  if(!tpag_alpha_runs(r,t,atlas,&runs,&count) || count!=t->sh) return NULL;
+  for(int row=0;row<t->sh;row++){
+    const GmlTpagAlphaRun *run=&runs[row];
+    if(run->y!=(uint16_t)row || run->x!=0 || run->len!=(uint16_t)t->sw ||
+       run->alpha!=255) return NULL;
+  }
+  return t->argb_cache;
+}
 static uint32_t *tpag_fast8_draw_cache(GmlTpag *t, GmlAtlas *a, uint32_t blend, double alpha,
                                        int alpha_floor, int *copy_255){
   if(copy_255) *copy_255=0;
@@ -2469,6 +2481,77 @@ typedef struct GmlBlitOneBand {
   int bR,bG,bB;
 } GmlBlitOneBand;
 
+typedef struct GmlNearestOpaqueAlphaBand {
+  GmlRender *render;
+  const GmlTpag *tpag;
+  const uint32_t *source;
+  const int *source_x;
+  int flip_x,flip_y;
+  int anchor_x,anchor_y;
+  int output_x0,output_x1,output_y0;
+  double sample_y,scale_y;
+  double source_weight,destination_weight;
+  unsigned source_alpha;
+  int preserve_alpha;
+} GmlNearestOpaqueAlphaBand;
+
+static void nearest_opaque_alpha_band_rows(
+    void *context,int row_start,int row_end,int slot){
+  GmlNearestOpaqueAlphaBand *band=(GmlNearestOpaqueAlphaBand*)context;
+  GmlRender *render=band->render;
+  const GmlTpag *tpag=band->tpag;
+  const uint32_t *source=band->source;
+  const int *source_x=band->source_x;
+  const int flip_x=band->flip_x,flip_y=band->flip_y;
+  const int anchor_x=band->anchor_x,anchor_y=band->anchor_y;
+  const int output_x0=band->output_x0,output_x1=band->output_x1;
+  const int output_y0=band->output_y0;
+  const double sample_y=band->sample_y,scale_y=band->scale_y;
+  const double source_weight=band->source_weight;
+  const double destination_weight=band->destination_weight;
+  const unsigned source_alpha=band->source_alpha;
+  const int preserve_alpha=band->preserve_alpha;
+  const unsigned source_alpha_square=source_alpha*source_alpha+127u;
+  const unsigned inverse_alpha=255u-source_alpha;
+  (void)slot;
+  for(int row=row_start;row<row_end;row++){
+    int output_y=output_y0+row;
+    int local_y=(int)((output_y+sample_y)/scale_y);
+    if(local_y<0 || local_y>=tpag->sh) continue;
+    int destination_y=flip_y?anchor_y-output_y:anchor_y+output_y;
+    const uint32_t *source_row=source+(size_t)local_y*tpag->sw;
+    uint32_t *destination=render->fb+(size_t)destination_y*render->fbw+
+      (flip_x?anchor_x-output_x0:anchor_x+output_x0);
+    int destination_step=flip_x?-1:1;
+    for(int output_x=output_x0;output_x<output_x1;
+        output_x++,destination+=destination_step){
+      int local_x=source_x[output_x-output_x0];
+      if(local_x<0 || local_x>=tpag->sw) continue;
+      uint32_t source_pixel=source_row[local_x];
+      uint32_t destination_pixel=*destination;
+      int source_red=(source_pixel>>16)&255;
+      int source_green=(source_pixel>>8)&255;
+      int source_blue=source_pixel&255;
+      int destination_red=(destination_pixel>>16)&255;
+      int destination_green=(destination_pixel>>8)&255;
+      int destination_blue=destination_pixel&255;
+      int output_red=(int)(source_red*source_weight+
+                           destination_red*destination_weight+0.5);
+      int output_green=(int)(source_green*source_weight+
+                             destination_green*destination_weight+0.5);
+      int output_blue=(int)(source_blue*source_weight+
+                            destination_blue*destination_weight+0.5);
+      uint32_t output_alpha=UINT32_C(0xff000000);
+      if(preserve_alpha){
+        unsigned destination_alpha=destination_pixel>>24;
+        output_alpha=((source_alpha_square+destination_alpha*inverse_alpha)/255u)<<24;
+      }
+      *destination=output_alpha|((uint32_t)output_red<<16)|
+                   ((uint32_t)output_green<<8)|(uint32_t)output_blue;
+    }
+  }
+}
+
 static void blit_one_band_rows(void *context,int row_start,int row_end,int slot){
   GmlBlitOneBand *b=(GmlBlitOneBand*)context;
   GmlRender *r=b->r;
@@ -2943,6 +3026,32 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
         wave_map[(size_t)local_y*t->sw+local_x]=wave
           ? radial_wave_sample_index(wave,a->w,a->h,t->sx+local_x,t->sy+local_y)
           : uv_wave_sample_index(uvwave,a->w,a->h,t->sx+local_x,t->sy+local_y,position_y);
+    }
+  }
+  if(lxtab && vispix>=16384ull && !r->interp && r->active_shader<0 && !mapped_shader &&
+     r->alphablend && r->blendmode==0 && r->blend_equation==1 &&
+     r->blend_equation_alpha==1 && r->color_write_mask==0x0F &&
+     alpha<1.0 && (blend&0xFFFFFFu)==0xFFFFFFu &&
+     gml_blend_family(r)==GML_BLEND_STUDIO2){
+    const uint32_t *source=tpag_fully_opaque_argb(r,t,a);
+    if(source){
+      GmlNearestOpaqueAlphaBand band={
+        .render=r,.tpag=t,.source=source,.source_x=lxtab,
+        .flip_x=flipx,.flip_y=flipy,
+        .anchor_x=x0,.anchor_y=y0,
+        .output_x0=xx0,.output_x1=xx1,.output_y0=yy0,
+        .sample_y=sample_y,.scale_y=ays,
+        .source_weight=alpha,.destination_weight=1.0-alpha,
+        .source_alpha=(unsigned)lround(255.0*alpha),
+        .preserve_alpha=gml_render_target_preserves_alpha(r)
+      };
+      if(vispix>=262144ull)
+        gml_run_row_bands(r,yy1-yy0,nearest_opaque_alpha_band_rows,&band);
+      else
+        nearest_opaque_alpha_band_rows(&band,0,yy1-yy0,0);
+      free(wave_map);
+      if(lxtab!=lxbuf) free(lxtab);
+      return;
     }
   }
   if(lxtab && !flipx && !flipy && solid_mask && !solid_blur_alpha &&

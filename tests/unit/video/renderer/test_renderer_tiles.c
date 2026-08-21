@@ -941,6 +941,124 @@ static void check_repeated_filtered_draw_cache(void){
   free(cached_pixels);
 }
 
+static void init_modern_point_renderer(
+    GmlRender *render,GmlWin *content,GmlAtlas *atlas,GmlTpag *page,
+    GmlBg *background,uint32_t *framebuffer,int width,int height,int active_shader){
+  memset(render,0,sizeof(*render));
+  render->win=content;
+  render->fb=render->base_fb=framebuffer;
+  render->fbw=render->base_fbw=width;
+  render->fbh=render->base_fbh=height;
+  render->app_surface=framebuffer;
+  render->app_w=width;
+  render->app_h=height;
+  render->atlas=atlas;
+  render->n_atlas=1;
+  render->tpag=page;
+  render->n_tpag=1;
+  render->bg=background;
+  render->n_bg=1;
+  render->alpha=1.0;
+  render->alphablend=1;
+  render->blend_equation=1;
+  render->blend_equation_alpha=1;
+  render->color_write_mask=0x0f;
+  render->active_shader=active_shader;
+  render->target_id=-1;
+}
+
+static void fill_alpha_target(uint32_t *pixels,int width,int height,unsigned seed){
+  for(int y=0;y<height;y++) for(int x=0;x<width;x++){
+    unsigned alpha=(unsigned)(x*23+y*41+seed*13)&255u;
+    unsigned red=(unsigned)(x*13+y*3+seed*17)&255u;
+    unsigned green=(unsigned)(x*5+y*11+seed*29)&255u;
+    unsigned blue=(unsigned)(x*7+y*19+seed*31)&255u;
+    pixels[(size_t)y*width+x]=(alpha<<24)|(red<<16)|(green<<8)|blue;
+  }
+}
+
+static void check_modern_opaque_scaled_partial_alpha(void){
+  enum { SOURCE_WIDTH=80,SOURCE_HEIGHT=60,ATLAS_WIDTH=82,ATLAS_HEIGHT=62,
+         TARGET_WIDTH=640,TARGET_HEIGHT=480 };
+  static const double scale[4][2]={{4.25,4.25},{-4.25,4.25},
+                                    {-4.25,-4.25},{4.25,-4.25}};
+  static const double draw_alpha[3]={0.05,0.2,0.375};
+  size_t atlas_bytes=(size_t)ATLAS_WIDTH*ATLAS_HEIGHT*4u;
+  size_t target_bytes=(size_t)TARGET_WIDTH*TARGET_HEIGHT*sizeof(uint32_t);
+  uint8_t *rgba=calloc(atlas_bytes,1);
+  uint32_t *reference_pixels=malloc(target_bytes);
+  uint32_t *fast_pixels=malloc(target_bytes);
+  GmlWin content;
+  AnygmCompatibilityProfile compatibility;
+  GmlAtlas atlas;
+  GmlTpag reference_page,fast_page;
+  GmlBg background;
+  GmlRender reference,fast;
+  if(!rgba || !reference_pixels || !fast_pixels){
+    free(rgba);
+    free(reference_pixels);
+    free(fast_pixels);
+    expect(0,"modern opaque scaled-alpha fixture allocation failed");
+    return;
+  }
+  memset(&content,0,sizeof content);
+  memset(&compatibility,0,sizeof compatibility);
+  memset(&atlas,0,sizeof atlas);
+  memset(&reference_page,0,sizeof reference_page);
+  memset(&background,0,sizeof background);
+  compatibility.has_modern_layer_semantics=1;
+  compatibility.blend=ANYGM_BLEND_STUDIO_SECOND;
+  content.bytecode=17;
+  content.compatibility=&compatibility;
+  atlas.px=rgba;
+  atlas.w=ATLAS_WIDTH;
+  atlas.h=ATLAS_HEIGHT;
+  for(int y=0;y<SOURCE_HEIGHT;y++) for(int x=0;x<SOURCE_WIDTH;x++){
+    uint8_t *pixel=rgba+((size_t)(y+1)*ATLAS_WIDTH+x+1)*4u;
+    pixel[0]=(uint8_t)(x*29+y*7);
+    pixel[1]=(uint8_t)(x*11+y*31);
+    pixel[2]=(uint8_t)(x*17+y*13);
+    pixel[3]=255;
+  }
+  reference_page.sx=reference_page.sy=1;
+  reference_page.sw=reference_page.tw=SOURCE_WIDTH;
+  reference_page.sh=reference_page.th=SOURCE_HEIGHT;
+  reference_page.bw=SOURCE_WIDTH;
+  reference_page.bh=SOURCE_HEIGHT;
+  reference_page.atlas=0;
+  fast_page=reference_page;
+  background.tpag=0;
+  /* An out-of-range active shader leaves the general renderer unchanged while intentionally
+   * making it ineligible for the no-shader fast path. */
+  init_modern_point_renderer(
+    &reference,&content,&atlas,&reference_page,&background,
+    reference_pixels,TARGET_WIDTH,TARGET_HEIGHT,0);
+  init_modern_point_renderer(
+    &fast,&content,&atlas,&fast_page,&background,
+    fast_pixels,TARGET_WIDTH,TARGET_HEIGHT,-1);
+  for(int pass=0;pass<3;pass++){
+    fill_alpha_target(reference_pixels,TARGET_WIDTH,TARGET_HEIGHT,(unsigned)pass+1u);
+    memcpy(fast_pixels,reference_pixels,target_bytes);
+    for(int draw=0;draw<4;draw++){
+      gml_draw_background_ext(
+        &reference,0,320.0,240.0,scale[draw][0],scale[draw][1],
+        0xffffffu,draw_alpha[pass]);
+      gml_draw_background_ext(
+        &fast,0,320.0,240.0,scale[draw][0],scale[draw][1],
+        0xffffffu,draw_alpha[pass]);
+    }
+    expect(!memcmp(reference_pixels,fast_pixels,target_bytes),
+           "modern opaque scaled partial-alpha fast path changed a destination pixel");
+  }
+  expect(fast_page.alpha_runs_built && fast_page.alpha_run_count==SOURCE_HEIGHT,
+         "modern opaque scaled partial-alpha draw did not certify its texture coverage");
+  gml_render_texture_page_cache_clear(&reference,&reference_page);
+  gml_render_texture_page_cache_clear(&fast,&fast_page);
+  free(rgba);
+  free(reference_pixels);
+  free(fast_pixels);
+}
+
 int main(void){
   static const uint32_t transformed[8][4]={
     {0xffff0000,0xff00ff00,0xff0000ff,0xffffffff},
@@ -975,6 +1093,7 @@ int main(void){
   check_application_surface_partial_alpha_coverage();
   check_first_generation_filtered_minification();
   check_repeated_filtered_draw_cache();
+  check_modern_opaque_scaled_partial_alpha();
   if(failures){
     fprintf(stderr,"renderer tiles: %d failure(s)\n",failures);
     return 1;
