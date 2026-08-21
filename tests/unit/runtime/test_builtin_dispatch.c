@@ -4,6 +4,8 @@
 #include "gml_builtin.h"
 #include "gml_builtin_registry.h"
 #include "gml_vm.h"
+#include "gml_vm_internal.h"
+#include "gml_render_internal.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -628,6 +630,70 @@ static int layer_instance_move(GmlVM *vm){
   return ok;
 }
 
+static int scalar_shape_queries_accept_target_arrays(GmlVM *vm){
+  GmlObject *prior_objects=vm->objects;
+  int prior_n_objects=vm->n_objects;
+  int *prior_obj_alive=vm->obj_alive;
+  void *prior_render=vm->render;
+  int prior_inst_count=vm->inst_count;
+  GmlObject objects[2]={{0}};
+  int obj_alive[2]={1,1};
+  GmlRender render={0};
+  GmlSprite sprite={0};
+  GmlInstance *instances=realloc(vm->inst,
+    (size_t)(prior_inst_count+1)*sizeof(*instances));
+  if(!instances) return 0;
+  vm->inst=instances;
+  vm->inst_cap=prior_inst_count+1;
+  objects[0].parent=objects[1].parent=-1;
+  sprite.w=sprite.h=1;
+  sprite.ml=sprite.mt=sprite.mr=sprite.mb=0;
+  sprite.collision_kind=1;
+  render.n_spr=1;
+  render.spr=&sprite;
+  vm->objects=objects;
+  vm->n_objects=2;
+  vm->obj_alive=obj_alive;
+  vm->render=&render;
+  GmlInstance *target=&vm->inst[prior_inst_count];
+  memset(target,0,sizeof(*target));
+  target->active=1;
+  target->id=100002;
+  target->obj=1;
+  target->x=target->y=64;
+  target->sprite_index=0;
+  target->mask_index=-1;
+  target->image_xscale=target->image_yscale=1;
+  vm->inst_count=prior_inst_count+1;
+  gml_colgrid_invalidate(vm);
+
+  GmlVal scalar_args[7]={vreal(64),vreal(64),vreal(64),vreal(64),
+    vreal(1),vreal(0),vreal(0)};
+  GmlVal scalar_hit=gml_builtin_call(vm,"collision_rectangle",scalar_args,7);
+  GmlVal targets=gml_arr_new(2,vreal(0));
+  gml_arr_set(targets,0,vreal(0));
+  gml_arr_set(targets,1,vreal(1));
+  scalar_args[4]=targets;
+  GmlVal array_hit=gml_builtin_call(vm,"collision_rectangle",scalar_args,7);
+  GmlVal point_args[5]={vreal(64),vreal(64),targets,vreal(0),vreal(0)};
+  GmlVal point_hit=gml_builtin_call(vm,"collision_point",point_args,5);
+  GmlVal circle_args[6]={vreal(64),vreal(64),vreal(1),targets,vreal(0),vreal(0)};
+  GmlVal circle_hit=gml_builtin_call(vm,"collision_circle",circle_args,6);
+  int ok=expect_real("scalar collision object target",scalar_hit,100002) &&
+         expect_real("rectangle collision array target",array_hit,100002) &&
+         expect_real("point collision array target",point_hit,100002) &&
+         expect_real("circle collision array target",circle_hit,100002);
+  gml_values_release(&targets,1);
+
+  vm->inst_count=prior_inst_count;
+  vm->objects=prior_objects;
+  vm->n_objects=prior_n_objects;
+  vm->obj_alive=prior_obj_alive;
+  vm->render=prior_render;
+  gml_colgrid_invalidate(vm);
+  return ok;
+}
+
 /* Resolve a numeric collision suffix through a parent declaration when
  * no CODE name exists for that inherited handler. */
 static int inherited_collision_resolves_numeric_suffix(GmlVM *vm){
@@ -1031,6 +1097,7 @@ int main(void){
          gamepad_axis_orientation_contract(&vm) &&
          digital_pad_reaches_axis_readers(&vm) &&
          layer_instance_move(&vm) &&
+         scalar_shape_queries_accept_target_arrays(&vm) &&
          layer_fx_answers_none(&vm) &&
          missing_stream_is_not_sound_zero(&vm) &&
          inherited_collision_resolves_numeric_suffix(&vm);

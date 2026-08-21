@@ -844,6 +844,20 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
         double glyph_x=use_rot?x+dx*ca+dy*sa:x+dx;
         double glyph_y=use_rot?y-dx*sa+dy*ca:y+dy;
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;
+        int saved_interp=r->interp;
+        int saved_sdf_active=r->font_sdf_active;
+        double saved_sdf_width=r->font_sdf_width;
+        if(f->sdf_spread>0){
+          double scale=fmin(fabs(xs),fabs(ys));
+          if(scale<1.0/1024.0) scale=1.0/1024.0;
+          r->font_sdf_active=1;
+          r->font_sdf_width=255.0/(2.0*(double)f->sdf_spread*scale);
+          if(r->font_sdf_width<1.0) r->font_sdf_width=1.0;
+          else if(r->font_sdf_width>255.0) r->font_sdf_width=255.0;
+          /* Distance fields need a filtered distance sample even when ordinary textures are
+           * point sampled; coverage is still reconstructed at each output pixel. */
+          r->interp=1;
+        }
         if(use_rot){
           GmlSprite glyph_sprite={.w=g->w,.h=g->h,.originx=0,.originy=0};
           blit_rotated(r,&glyph_sprite,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,
@@ -857,6 +871,9 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
                                       glyph_x,glyph_y,xs,ys,glyph_blend,alpha)){
           blit(r,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
         }
+        r->interp=saved_interp;
+        r->font_sdf_active=saved_sdf_active;
+        r->font_sdf_width=saved_sdf_width;
       }
       if(g) cx += g->shift;
     }

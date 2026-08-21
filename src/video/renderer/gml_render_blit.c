@@ -2867,7 +2867,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     r->win && (anygm_policy_uses_first_generation_studio(r->win) ||
                anygm_policy_has_modern_layer_semantics(r->win));
   int exact_studio_white_copy=
-    studio_texture_filtering &&
+    studio_texture_filtering && !r->font_sdf_active &&
     !flipx && !flipy &&
     fabs(axs-1.0)<0.001 && fabs(ays-1.0)<0.001 &&
     fabs(dx-nearbyint(dx))<1e-9 && fabs(dy-nearbyint(dy))<1e-9 &&
@@ -3738,6 +3738,14 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
   double fsr,fsg,fsb,faa;
   interp_tpag_filtered_sample(
     atlas,t,ua,ub,va,vb,fx,fy,logical_margin,&fsr,&fsg,&fsb,&faa);
+  if(r->font_sdf_active){
+    double low=128.0-r->font_sdf_width*0.5;
+    double amount=(faa-low)/r->font_sdf_width;
+    if(amount<=0.0) faa=0.0;
+    else if(amount>=1.0) faa=255.0;
+    else faa=(amount*amount*(3.0-2.0*amount))*255.0;
+    fsr=fsg=fsb=255.0;
+  }
   if(shader_discards_alpha_value(r,faa) &&
      !(r->blendmode==2 && !shader_alpha_test_active(r))) return;
   /* A Studio 2 shader receives the filtered sample as floating-point colour. Keep that precision

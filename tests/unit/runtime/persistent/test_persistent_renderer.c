@@ -861,6 +861,50 @@ static void real_font_layout_fixture(GmlRender *render, GmlWin *win, GmlAtlas *a
   font->glyph_by_char['A']=0; font->glyph_by_char['B']=1; font->glyph_by_char[' ']=2;
 }
 
+int expect_signed_distance_font_reconstructs_coverage(void){
+  /* A distance-field atlas stores its contour around the alpha midpoint. Rendering that alpha as
+   * ordinary coverage leaves the entire distance ramp visible. At a spread of eight source pixels,
+   * one destination pixel spans sixteen alpha steps: 120 is outside, 128 is the antialiased edge,
+   * and 136 is inside. */
+  GmlWin win={0}; win.bytecode=17;
+  GmlRender render={0}; GmlAtlas atlas={0}; GmlGlyph glyph={0};
+  uint32_t framebuffer[7];
+  uint8_t pixels[5*4]={
+    255,255,255,0,
+    255,255,255,120,
+    255,255,255,128,
+    255,255,255,136,
+    255,255,255,255
+  };
+  for(size_t cell=0;cell<sizeof framebuffer/sizeof *framebuffer;cell++)
+    framebuffer[cell]=UINT32_C(0xFF000000);
+  gml_render_begin(&render,framebuffer,7,1,0,0);
+  render.win=&win; render.atlas=&atlas; render.n_atlas=1;
+  render.font=0; render.n_fonts=1; render.color=0x0000FF;
+  render.alpha=1; render.alphablend=1; render.interp=1; render.software_overlay=1;
+  atlas.px=pixels; atlas.w=5; atlas.h=1; atlas.decode_attempted=1;
+  GmlFont *font=&render.fonts[0];
+  memset(font->glyph_by_char,0xFF,sizeof font->glyph_by_char);
+  font->real=1; font->atlas=0; font->sprite=-1; font->line_height=1;
+  font->align_height=1; font->sdf_spread=8;
+  font->glyphs=&glyph; font->n_glyphs=1; font->glyphs_sorted=1;
+  font->glyph_by_char['A']=0;
+  glyph=(GmlGlyph){.sx=0,.sy=0,.w=5,.h=1,.shift=5,.offset=0,.ch='A'};
+  gml_draw_text(&render,1,0,"A");
+  int ok=framebuffer[1]==UINT32_C(0xFF000000) &&
+         framebuffer[2]==UINT32_C(0xFF000000) &&
+         framebuffer[3]==UINT32_C(0xFF800000) &&
+         framebuffer[4]==UINT32_C(0xFFFF0000) &&
+         framebuffer[5]==UINT32_C(0xFFFF0000);
+  if(!ok)
+    fprintf(stderr,"signed-distance font coverage mismatch: %08x %08x %08x %08x %08x\n",
+            framebuffer[1],framebuffer[2],framebuffer[3],framebuffer[4],framebuffer[5]);
+  font->glyphs=NULL; font->n_glyphs=0;
+  render.atlas=NULL; render.n_atlas=0;
+  gml_render_free(&render);
+  return ok;
+}
+
 int expect_carriage_return_and_line_feed_are_one_break(void){
   /* In a modern profile, CR LF is one separator for both drawing and height queries. */
   GmlWin win={0}; GmlRender render={0}; GmlAtlas atlas={0};

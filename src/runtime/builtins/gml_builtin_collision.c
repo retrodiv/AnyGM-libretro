@@ -790,6 +790,46 @@ static int collision_target_value_matches(GmlVM *vm, GmlInstance *instance,
   if(target.t!=V_REAL) return 0;
   return target_matches_instance(vm,vm->cur_self,instance,(int)target.d);
 }
+static GmlInstance *collision_shape_value_linear(GmlVM *vm, int kind, double *p,
+                                                  GmlVal target, int precise, int notme){
+  GmlInstance *skip=notme?vm->cur_self:NULL;
+  double sl,st,sr,sb; shape_bounds(kind,p,&sl,&st,&sr,&sb);
+  for(int i=0;i<vm->inst_count;i++){
+    GmlInstance *instance=&vm->inst[i];
+    if(!collision_target_value_matches(vm,instance,target,0)) continue;
+    if(shape_hits_instance(vm,instance,kind,p,IT_ALL,skip,precise,sl,st,sr,sb)) return instance;
+  }
+  return NULL;
+}
+static GmlInstance *collision_shape_value(GmlVM *vm, int kind, double *p,
+                                          GmlVal target, int precise, int notme){
+  if(target.t==V_REAL) return collision_shape(vm,kind,p,(int)target.d,precise,notme);
+  if(target.t!=V_ARR || !target.arr) return NULL;
+  GmlInstance *skip=notme?vm->cur_self:NULL;
+  double sl,st,sr,sb; shape_bounds(kind,p,&sl,&st,&sr,&sb);
+  int mode=gml_colgrid_mode(vm), *cand=NULL;
+  int count=mode==0?-1:gml_colgrid_collect(vm,sl,st,sr,sb,&cand);
+  if(count<0) return collision_shape_value_linear(vm,kind,p,target,precise,notme);
+  GmlInstance *result=NULL;
+  for(int k=0;k<count;k++){
+    int i=cand[k]; if(i<0 || i>=vm->inst_count) continue;
+    GmlInstance *instance=&vm->inst[i];
+    if(!collision_target_value_matches(vm,instance,target,0)) continue;
+    if(shape_hits_instance(vm,instance,kind,p,IT_ALL,skip,precise,sl,st,sr,sb)){
+      result=instance; break;
+    }
+  }
+  if(mode==2){
+    GmlInstance *linear=collision_shape_value_linear(vm,kind,p,target,precise,notme);
+    if(linear!=result){
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+        "[gridcheck] MISMATCH shape-array f%ld kind=%d grid=%d linear=%d\n",
+        vm->frame,kind,result?(int)(result-vm->inst):-1,linear?(int)(linear-vm->inst):-1);
+      result=linear;
+    }
+  }
+  return result;
+}
 int collision_shape_list_query(GmlVM *vm, int kind, double *p, GmlVal target,
                                       int precise, int notme, GmlDSList *list, int ordered){
   GmlInstance *skip=notme?vm->cur_self:NULL;
@@ -1068,10 +1108,10 @@ GmlVal gml_builtin_try_collision(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int target=n>=3?(int)N(a,n,2):IT_ALL;
     return vreal(!collision_at(vm,N(a,n,0),N(a,n,1),target,0));
   }
-  if(!strcmp(nm,"collision_point")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; GmlInstance *o=collision_shape(vm,0,p,(int)N(a,n,2),N(a,n,3)>=0.5,(int)N(a,n,4)); return vreal(o?(double)o->id:-4); }
+  if(!strcmp(nm,"collision_point")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; GmlInstance *o=collision_shape_value(vm,0,p,n>2?a[2]:vreal(IT_NOONE),N(a,n,3)>=0.5,(int)N(a,n,4)); return vreal(o?(double)o->id:-4); }
   /* position_meeting(x,y,obj): is the point (x,y) inside any instance of obj? (bool; checks all). */
   if(!strcmp(nm,"position_meeting")){ double p[4]={N(a,n,0),N(a,n,1),0,0}; return vreal(collision_shape(vm,0,p,(int)N(a,n,2),1,0)!=NULL); }
-  if(!strcmp(nm,"collision_rectangle")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)}; GmlInstance *o=collision_shape(vm,1,p,(int)N(a,n,4),N(a,n,5)>=0.5,(int)N(a,n,6)); return vreal(o?(double)o->id:-4); }
+  if(!strcmp(nm,"collision_rectangle")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)}; GmlInstance *o=collision_shape_value(vm,1,p,n>4?a[4]:vreal(IT_NOONE),N(a,n,5)>=0.5,(int)N(a,n,6)); return vreal(o?(double)o->id:-4); }
   if(!strcmp(nm,"collision_rectangle_list")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)};
     GmlDSList *list=ds_list_slot_repair(vm,(int)N(a,n,7));
     return vreal(collision_shape_list_query(vm,1,p,n>4?a[4]:vreal(IT_NOONE),
@@ -1085,7 +1125,7 @@ GmlVal gml_builtin_try_collision(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(by1>by2){ double t=by1; by1=by2; by2=t; }
     return vreal(!(ax2<bx1 || bx2<ax1 || ay2<by1 || by2<ay1));
   }
-  if(!strcmp(nm,"collision_circle")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)}; GmlInstance *o=collision_shape(vm,2,p,(int)N(a,n,3),N(a,n,4)>=0.5,(int)N(a,n,5)); return vreal(o?(double)o->id:-4); }
+  if(!strcmp(nm,"collision_circle")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)}; GmlInstance *o=collision_shape_value(vm,2,p,n>3?a[3]:vreal(IT_NOONE),N(a,n,4)>=0.5,(int)N(a,n,5)); return vreal(o?(double)o->id:-4); }
   if(!strcmp(nm,"collision_circle_list")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)};
     GmlDSList *list=ds_list_slot_repair(vm,(int)N(a,n,6));
     return vreal(collision_shape_list_query(vm,2,p,n>3?a[3]:vreal(IT_NOONE),

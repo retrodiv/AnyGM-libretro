@@ -255,8 +255,9 @@ typedef struct GmlRender {
    * reproduces a scaled classic viewport without requiring a GPU-sized render target. */
   uint32_t *classic_interp_phase[3];
   uint32_t *app_interp_phase[3];
-  int       interp;   /* texture_set_interpolation state: 0 nearest (GM default), 1 bilinear. Only
-                       * upscaling surface/sprite blits honor it (nearest is exact for pixel art). */
+  int       interp;   /* texture_set_interpolation state: 0 nearest (GM default), 1 bilinear. */
+  int       font_sdf_active;
+  double    font_sdf_width;
   int       composites_app;  /* set by a draw when the game blits the application_surface stretched in
                               * the GUI/post pass. Read
                               * next frame to supersample that pass so its bilinear bloom renders. */
