@@ -767,6 +767,56 @@ static int gamepad_axis_orientation_contract(GmlVM *vm){
   return ok;
 }
 
+/* Externally bound joystick symbols and named builtins must read the same host pad. The hat
+ * surface uses clockwise compass degrees and -1 for centred rather than an SDL bitmask. */
+static int joydll_pad_button(void *userdata,int button,int edge){
+  (void)userdata;
+  if(edge!=0) return 0;
+  return button==32784 || button==32769;   /* gp_padr and gp_face1 held */
+}
+
+static int external_joydll_binding_reaches_the_pad(GmlVM *vm){
+  int (*saved_button)(void*,int,int)=vm->input.gamepad;
+  int (*saved_connected)(void*,int)=vm->input.gamepad_connected;
+  vm->input.gamepad=joydll_pad_button;
+  vm->input.gamepad_connected=gamepad_fixture_connected;
+  GmlVal count_definition[]={
+    vstr("joydll.dll"),vstr("joy_count"),vreal(0),vreal(0),vreal(0)
+  };
+  GmlVal hat_definition[]={
+    vstr("joydll.dll"),vstr("joy_hat"),vreal(0),vreal(0),vreal(2)
+  };
+  GmlVal button_definition[]={
+    vstr("joydll.dll"),vstr("joy_button"),vreal(0),vreal(0),vreal(2)
+  };
+  GmlVal count_handle=gml_builtin_call(vm,"external_define",count_definition,5);
+  GmlVal hat_handle=gml_builtin_call(vm,"external_define",hat_definition,5);
+  GmlVal button_handle=gml_builtin_call(vm,"external_define",button_definition,5);
+  GmlVal count_call[]={count_handle};
+  GmlVal hat_call[]={hat_handle,vreal(0),vreal(0)};
+  GmlVal button_call[]={button_handle,vreal(0),vreal(0)};
+  int ok=1;
+  if(count_handle.d==0.0 || hat_handle.d==0.0 || button_handle.d==0.0){
+    fprintf(stderr,"joydll symbols did not bind to the input surface\n");
+    ok=0;
+  }
+  ok=expect_real("joydll joy_count sees the connected pad",
+                 gml_builtin_call(vm,"external_call",count_call,1),1) && ok;
+  ok=expect_real("joydll joy_button reads the face button",
+                 gml_builtin_call(vm,"external_call",button_call,3),1) && ok;
+  ok=expect_real("joydll joy_hat answers right as ninety degrees",
+                 gml_builtin_call(vm,"external_call",hat_call,3),90) && ok;
+  GmlVal named_hat[]={vreal(0),vreal(0)};
+  ok=expect_real("the named joy_hat answers the same ninety degrees",
+                 gml_builtin_call(vm,"joy_hat",named_hat,2),90) && ok;
+  vm->input.gamepad=NULL;
+  ok=expect_real("a resting hat is centred rather than up",
+                 gml_builtin_call(vm,"joy_hat",named_hat,2),-1) && ok;
+  vm->input.gamepad=saved_button;
+  vm->input.gamepad_connected=saved_connected;
+  return ok;
+}
+
 /* A host that maps an analog stick onto the d-pad reports the stick centred and the pad pressed;
  * a player on a real d-pad produces the same pair. The stick reading has to survive both, whichever
  * name the content asks under. The right stick has no digital counterpart and stays silent. */
@@ -824,8 +874,9 @@ static int portable_joystick_contract(GmlVM *vm){
   GmlVal axis_args[]={device,vreal(0)};
   int ok=expect_real("portable joystick count",
                      gml_builtin_call(vm,"joy_count",NULL,0),1) &&
+         /* The identifier describes the controller layout represented by the host mapping. */
          expect_string("portable joystick name",
-                       gml_builtin_call(vm,"joy_name",&device,1),"AnyGM Gamepad") &&
+                       gml_builtin_call(vm,"joy_name",&device,1),"Xbox 360 Controller") &&
          expect_real("portable joystick button",
                      gml_builtin_call(vm,"joy_button",button_args,2),1) &&
          expect_real("portable joystick axis",
@@ -910,6 +961,7 @@ int main(void){
          external_audio_definition_dispatch(&vm) &&
          portable_service_contracts(&vm) &&
          portable_joystick_contract(&vm) &&
+         external_joydll_binding_reaches_the_pad(&vm) &&
          gamepad_axis_orientation_contract(&vm) &&
          digital_pad_reaches_axis_readers(&vm) &&
          layer_instance_move(&vm) &&

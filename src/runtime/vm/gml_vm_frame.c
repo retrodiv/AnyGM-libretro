@@ -298,7 +298,7 @@ void gml_vm_frame_advance_layers(GmlVM *vm){
   }
 }
 
-static void gml_vm_apply_pending_room(GmlVM *vm){
+static void gml_vm_apply_one_pending_room(GmlVM *vm){
   int target=vm->pending_room;
   int previous_count=vm->inst_count;
   int advance_entered=vm->step_active && vm->win &&
@@ -336,6 +336,22 @@ static void gml_vm_apply_pending_room(GmlVM *vm){
     }
   }
   free(previous_active_ids);
+}
+
+/* Drain transitions requested during Room Start before presenting a frame. Bound the chain so
+ * a cycle cannot hang the runtime; leave any remaining target pending and report its room. */
+static void gml_vm_apply_pending_room(GmlVM *vm){
+  long applied=0;
+  long limit=vm->win ? (long)gml_room_count(vm->win)*2+8 : 64;
+  while(vm->pending_room>=0){
+    gml_vm_apply_one_pending_room(vm);
+    if(++applied<limit) continue;
+    if(vm->pending_room>=0)
+      anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_WARN,
+        "[gml] room change chain exceeded %ld transitions; room %d left pending for the next frame\n",
+        limit,vm->pending_room);
+    break;
+  }
 }
 
 static void gml_vm_finish_step(GmlVM *vm,int previous_alloc_base){

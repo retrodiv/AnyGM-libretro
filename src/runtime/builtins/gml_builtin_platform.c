@@ -510,13 +510,25 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"network_create_socket")||!strcmp(nm,"network_create_server")||
      !strcmp(nm,"network_connect")) return vreal(-1);
   if(!strcmp(nm,"network_send_packet")||!strcmp(nm,"network_destroy")) return vreal(0);
-  if(!strcmp(nm,"external_define"))
-    return vreal(builtin_external_define(
-        S(vm,a,n,0),S(vm,a,n,1)));
+  if(!strcmp(nm,"external_define")){
+    const char *library=S(vm,a,n,0), *symbol=S(vm,a,n,1);
+    int handle=builtin_external_define(library,symbol);
+    /* Optional diagnostics distinguish functional bindings from stub handles. */
+    if(builtin_setting(vm,"GML_LOG_EXTERNAL"))
+      anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,
+                      "[external] define %s:%s -> handle %d\n",
+                      library?library:"?",symbol?symbol:"?",handle);
+    return vreal(handle);
+  }
   if(!strcmp(nm,"external_call")){
     int handled=0;
     GmlVal result=builtin_external_call(
         vm,(int)N(a,n,0),n>1?a+1:NULL,n>1?n-1:0,&handled);
+    if(builtin_setting(vm,"GML_LOG_EXTERNAL"))
+      anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_DEBUG,
+                      "[external] call handle %d args %d -> %s %.4f\n",
+                      (int)N(a,n,0),n>1?n-1:0,handled?"handled":"unhandled",
+                      handled&&result.t==V_REAL?result.d:0.0);
     return handled?result:vreal(0);
   }
   if(!strcmp(nm,"external_free")) return vreal(0);

@@ -1546,7 +1546,10 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     /* GM returns the rest of the current line without its newline, then advances past the newline.
      * An advance-only implementation loses data for callers that consume readln directly. */
     return builtin_file_text_readln(vm,a,n); }
-  if(!strcmp(nm,"file_text_write_real")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i>=0) vm_file_writef(vm,i,"%g",N(a,n,1)); return vreal(0); }
+  if(!strcmp(nm,"file_text_write_real")){ int i=vm_file_slot(vm,(int)N(a,n,0));
+    /* Keep adjacent real values separable by the whitespace-delimited reader. */
+    if(i>=0) vm_file_writef(vm,i,"%g ",N(a,n,1));
+    return vreal(0); }
   if(!strcmp(nm,"file_text_write_string")){ int i=vm_file_slot(vm,(int)N(a,n,0)); const char *text=S(vm,a,n,1);
     if(i>=0) vm_file_write(vm,i,text,strlen(text));
     return vreal(0); }

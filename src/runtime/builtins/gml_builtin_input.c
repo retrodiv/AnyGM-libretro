@@ -21,6 +21,19 @@ enum {
   GML_EXTERNAL_INPUT_BUTTON_STATE,
   GML_EXTERNAL_INPUT_CHECK_BUTTON,
   GML_EXTERNAL_INPUT_CONTROLLER_STATE,
+  GML_EXTERNAL_INPUT_JOY_READY,
+  GML_EXTERNAL_INPUT_JOY_GREETING,
+  GML_EXTERNAL_INPUT_JOY_COUNT,
+  GML_EXTERNAL_INPUT_JOY_FIND,
+  GML_EXTERNAL_INPUT_JOY_NAME,
+  GML_EXTERNAL_INPUT_JOY_AXES,
+  GML_EXTERNAL_INPUT_JOY_AXIS,
+  GML_EXTERNAL_INPUT_JOY_BUTTONS,
+  GML_EXTERNAL_INPUT_JOY_BUTTON,
+  GML_EXTERNAL_INPUT_JOY_HATS,
+  GML_EXTERNAL_INPUT_JOY_HAT,
+  GML_EXTERNAL_INPUT_JOY_BALLS,
+  GML_EXTERNAL_INPUT_JOY_BALL,
   GML_EXTERNAL_INPUT_OPERATION_LIMIT
 };
 
@@ -38,6 +51,26 @@ static const GmlExternalInputSymbol external_input_symbols[]={
   {"getCtrlState",GML_EXTERNAL_INPUT_CONTROLLER_STATE},
 };
 
+/* Map externally bound joystick symbols to the same input surface as the named builtins. */
+static const GmlExternalInputSymbol external_joydll_symbols[]={
+  {"joy_init",GML_EXTERNAL_INPUT_JOY_READY},
+  {"joy_update",GML_EXTERNAL_INPUT_JOY_READY},
+  {"joy_close",GML_EXTERNAL_INPUT_JOY_READY},
+  {"joy_hi",GML_EXTERNAL_INPUT_JOY_GREETING},
+  {"joy_count",GML_EXTERNAL_INPUT_JOY_COUNT},
+  {"joy_find",GML_EXTERNAL_INPUT_JOY_FIND},
+  {"joy_name",GML_EXTERNAL_INPUT_JOY_NAME},
+  {"joy_axes",GML_EXTERNAL_INPUT_JOY_AXES},
+  {"joy_axis",GML_EXTERNAL_INPUT_JOY_AXIS},
+  {"joy_buttons",GML_EXTERNAL_INPUT_JOY_BUTTONS},
+  {"joy_button",GML_EXTERNAL_INPUT_JOY_BUTTON},
+  {"joy_hats",GML_EXTERNAL_INPUT_JOY_HATS},
+  {"joy_hat",GML_EXTERNAL_INPUT_JOY_HAT},
+  {"joy_balls",GML_EXTERNAL_INPUT_JOY_BALLS},
+  {"joy_ball_x",GML_EXTERNAL_INPUT_JOY_BALL},
+  {"joy_ball_y",GML_EXTERNAL_INPUT_JOY_BALL},
+};
+
 static int external_input_ascii_equal(const char *left,const char *right){
   if(!left || !right) return 0;
   while(*left && *right){
@@ -52,10 +85,18 @@ int builtin_external_input_define(const char *library,const char *symbol){
   const char *base=library;
   for(const char *cursor=library;*cursor;cursor++)
     if(*cursor=='/' || *cursor=='\\') base=cursor+1;
-  if(!external_input_ascii_equal(base,"GMXInput.dll")) return 0;
-  for(size_t i=0;i<sizeof(external_input_symbols)/sizeof(external_input_symbols[0]);i++)
-    if(!strcmp(symbol,external_input_symbols[i].name))
-      return GML_EXTERNAL_INPUT_HANDLE_BASE+external_input_symbols[i].operation;
+  const GmlExternalInputSymbol *table=NULL;
+  size_t count=0;
+  if(external_input_ascii_equal(base,"GMXInput.dll")){
+    table=external_input_symbols;
+    count=sizeof(external_input_symbols)/sizeof(external_input_symbols[0]);
+  } else if(external_input_ascii_equal(base,"joydll.dll")){
+    table=external_joydll_symbols;
+    count=sizeof(external_joydll_symbols)/sizeof(external_joydll_symbols[0]);
+  } else return 0;
+  for(size_t i=0;i<count;i++)
+    if(!strcmp(symbol,table[i].name))
+      return GML_EXTERNAL_INPUT_HANDLE_BASE+table[i].operation;
   return 0;
 }
 
@@ -86,6 +127,39 @@ static int joy_button_code(int button){
   return button>=0 && button<16 ? 32769+button : 0;
 }
 
+/* Share device queries between named and externally bound joystick calls. */
+static int joydll_count(GmlVM *vm){
+  int count=0;
+  for(int device=0;device<4;device++) if(gml_input_gamepad_connected(vm,device)) count++;
+  return count;
+}
+
+static int joydll_find(GmlVM *vm){
+  for(int device=0;device<4;device++) if(gml_input_gamepad_connected(vm,device)) return device;
+  return -1;
+}
+
+/* Report the conventional controller layout represented by the RetroPad mapping. */
+static const char *joydll_name(void){ return "Xbox 360 Controller"; }
+
+/* Convert d-pad state to clockwise compass degrees, with -1 for centred. */
+static double joydll_hat_degrees(GmlVM *vm,int device){
+  if(device!=0) return -1.0;
+  int up=gml_input_gamepad(vm,32781,0);
+  int down=gml_input_gamepad(vm,32782,0);
+  int left=gml_input_gamepad(vm,32783,0);
+  int right=gml_input_gamepad(vm,32784,0);
+  if(up&&right) return 45.0;
+  if(right&&down) return 135.0;
+  if(down&&left) return 225.0;
+  if(left&&up) return 315.0;
+  if(up) return 0.0;
+  if(right) return 90.0;
+  if(down) return 180.0;
+  if(left) return 270.0;
+  return -1.0;
+}
+
 static double joy_axis_value(GmlVM *vm,int device,int axis){
   int code=axis==0?32785:axis==1?32786:axis==2?32787:axis==3?32788:0;
   if(!code) return 0.0;
@@ -107,6 +181,31 @@ GmlVal builtin_external_input_call(GmlVM *vm,int handle,
   if(operation<=0 || operation>=GML_EXTERNAL_INPUT_OPERATION_LIMIT) return vreal(0);
   if(handled) *handled=1;
   int device=(int)N(args,count,0);
+  /* The joydll surface takes its device, axis and button numbers zero-based and answers exactly
+   * what the named builtins answer, so the two never disagree about a pad. */
+  switch(operation){
+    case GML_EXTERNAL_INPUT_JOY_READY:   return vreal(1);
+    case GML_EXTERNAL_INPUT_JOY_GREETING:return vstr("");
+    case GML_EXTERNAL_INPUT_JOY_COUNT:   return vreal(joydll_count(vm));
+    case GML_EXTERNAL_INPUT_JOY_FIND:    return vreal(joydll_find(vm));
+    case GML_EXTERNAL_INPUT_JOY_NAME:
+      return vstr(gml_input_gamepad_connected(vm,device)?joydll_name():"");
+    case GML_EXTERNAL_INPUT_JOY_AXES:    return vreal(4);
+    case GML_EXTERNAL_INPUT_JOY_AXIS:
+      return vreal(joy_axis_value(vm,device,(int)N(args,count,1)));
+    case GML_EXTERNAL_INPUT_JOY_BUTTONS: return vreal(16);
+    case GML_EXTERNAL_INPUT_JOY_BUTTON: {
+      int code=joy_button_code((int)N(args,count,1));
+      return vreal(device==0&&code?gml_input_gamepad(vm,code,0):0);
+    }
+    case GML_EXTERNAL_INPUT_JOY_HATS:    return vreal(1);
+    case GML_EXTERNAL_INPUT_JOY_HAT:     return vreal(joydll_hat_degrees(vm,device));
+    /* No trackball is reachable through the host input contract, so the count is zero and the
+     * deltas stay at rest rather than inventing motion content would integrate. */
+    case GML_EXTERNAL_INPUT_JOY_BALLS:
+    case GML_EXTERNAL_INPUT_JOY_BALL:    return vreal(0);
+    default: break;
+  }
   if(operation==GML_EXTERNAL_INPUT_RUMBLE){
     double low=N(args,count,1)/65535.0,high=N(args,count,2)/65535.0;
     gml_input_gamepad_set_vibration(vm,device,low,high);
@@ -187,17 +286,10 @@ GmlVal gml_builtin_try_input(GmlVM *vm, const char *nm, GmlVal *a, int n){
    * Trackballs are not represented by the host input contract and hats use the first d-pad. */
   if(!strcmp(nm,"joy_init")||!strcmp(nm,"joy_update")||!strcmp(nm,"joy_close"))
     return vreal(1);
-  if(!strcmp(nm,"joy_count")){
-    int count=0;
-    for(int device=0;device<4;device++) if(gml_input_gamepad_connected(vm,device)) count++;
-    return vreal(count);
-  }
-  if(!strcmp(nm,"joy_find")){
-    for(int device=0;device<4;device++) if(gml_input_gamepad_connected(vm,device)) return vreal(device);
-    return vreal(-1);
-  }
+  if(!strcmp(nm,"joy_count")) return vreal(joydll_count(vm));
+  if(!strcmp(nm,"joy_find")) return vreal(joydll_find(vm));
   if(!strcmp(nm,"joy_name"))
-    return vstr(gml_input_gamepad_connected(vm,joy_device(N(a,n,0)))?"AnyGM Gamepad":"");
+    return vstr(gml_input_gamepad_connected(vm,joy_device(N(a,n,0)))?joydll_name():"");
   if(!strcmp(nm,"joy_axes")) return vreal(4);
   if(!strcmp(nm,"joy_axis"))
     return vreal(joy_axis_value(vm,joy_device(N(a,n,0)),(int)N(a,n,1)));
@@ -208,22 +300,7 @@ GmlVal gml_builtin_try_input(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(device==0&&code?gml_input_gamepad(vm,code,0):0);
   }
   if(!strcmp(nm,"joy_hats")) return vreal(1);
-  if(!strcmp(nm,"joy_hat")){
-    int device=joy_device(N(a,n,0));
-    int up=device==0&&gml_input_gamepad(vm,32781,0);
-    int down=device==0&&gml_input_gamepad(vm,32782,0);
-    int left=device==0&&gml_input_gamepad(vm,32783,0);
-    int right=device==0&&gml_input_gamepad(vm,32784,0);
-    if(up&&right) return vreal(1);
-    if(right&&down) return vreal(3);
-    if(down&&left) return vreal(5);
-    if(left&&up) return vreal(7);
-    if(up) return vreal(0);
-    if(right) return vreal(2);
-    if(down) return vreal(4);
-    if(left) return vreal(6);
-    return vreal(-1);
-  }
+  if(!strcmp(nm,"joy_hat")) return vreal(joydll_hat_degrees(vm,joy_device(N(a,n,0))));
   if(!strcmp(nm,"joy_balls")) return vreal(0);
   if(!strcmp(nm,"joy_ball_x")||!strcmp(nm,"joy_ball_y")) return vreal(0);
   if(!strcmp(nm,"joystick_exists")){
