@@ -43,6 +43,7 @@ int expect_event_boundary_room_transition(void);
 int expect_room_transition_animation_phase(void);
 int expect_frozen_animation_wrap_fires_animation_end(void);
 int expect_event_starts_with_the_relative_flag_clear(void);
+int expect_event_perform_dispatches_mouse_event(void);
 int expect_stopped_mover_restored_from_solid(void);
 int expect_stationary_embed_nudge_reverted(void);
 int expect_classic_timeline_index_activation(void);

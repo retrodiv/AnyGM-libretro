@@ -344,11 +344,13 @@ static GmlVal gml_builtin_try_instances_events(GmlVM *vm, const char *nm, GmlVal
     if(vm->cur_self) gml_run_event(vm,vm->cur_self,s);
     return vreal(0); }
   /* event_perform(type,numb): manually run one of THIS instance's events. GM event types:
-   * 0 Create, 1 Destroy, 2 Alarm, 3 Step, 4 Collision, 7 Other, 8 Draw (numb = subtype/alarm/other obj). */
+   * 0 Create, 1 Destroy, 2 Alarm, 3 Step, 4 Collision, 6 Mouse, 7 Other, 8 Draw
+   * (numb = subtype/alarm/other obj). */
   if(!strcmp(nm,"event_perform")){
     if(vm->cur_self){ int ty=(int)N(a,n,0), nb=(int)N(a,n,1); const char *pre=0;
       switch(ty){ case 0:pre="Create";nb=0;break; case 1:pre="Destroy";nb=0;break; case 2:pre="Alarm";break;
-        case 3:pre="Step";break; case 4:pre="Collision";break; case 7:pre="Other";break; case 8:pre="Draw";break; }
+        case 3:pre="Step";break; case 4:pre="Collision";break; case 6:pre="Mouse";break;
+        case 7:pre="Other";break; case 8:pre="Draw";break; }
       if(pre){
         char s[24];
         snprintf(s,sizeof s,"%s_%d",pre,nb);

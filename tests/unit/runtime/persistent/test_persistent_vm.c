@@ -1383,6 +1383,104 @@ cleanup:
 }
 
 
+int expect_event_perform_dispatches_mouse_event(void){
+  GmlcProject project={0};
+  GmlcObject object={0};
+  GmlcObjectEvent events[2]={{0}};
+  GmlcRoom room={0};
+  GmlcRoomInstance placed={0};
+  int room_order[1]={0};
+  AnygmHostServices services={0};
+  char create_path[]="/tmp/gml-event-perform-create-XXXXXX";
+  char mouse_path[]="/tmp/gml-event-perform-mouse-XXXXXX";
+  char package_path[]="/tmp/gml-event-perform-package-XXXXXX";
+  int create_fd=-1,mouse_fd=-1,package_fd=-1;
+  int ok=0;
+
+  create_fd=mkstemp(create_path);
+  mouse_fd=mkstemp(mouse_path);
+  package_fd=mkstemp(package_path);
+  if(create_fd<0 || mouse_fd<0 || package_fd<0) goto cleanup;
+  close(create_fd); create_fd=-1;
+  close(mouse_fd); mouse_fd=-1;
+  close(package_fd); package_fd=-1;
+  if(!fixture_write_text(create_path,
+       "global.performed_mouse_hits=0; event_perform(ev_mouse,ev_left_press);\n") ||
+     !fixture_write_text(mouse_path,
+       "global.performed_mouse_hits+=1;\n"))
+    goto cleanup;
+
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="event-perform-mouse-fixture";
+  project.host=&services;
+  project.classic_version=800;
+  project.classic_executable_layout=1;
+  project.objects=&object;
+  project.n_objects=project.cap_objects=1;
+  project.rooms=&room;
+  project.n_rooms=project.cap_rooms=1;
+  project.room_order=room_order;
+  project.n_room_order=1;
+
+  object.id=object.name=(char*)"obj_event_probe";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.visible=1;
+  object.events=events;
+  object.n_events=object.cap_events=2;
+  events[0].event_type=0;
+  events[0].event_number=0;
+  events[0].source_path=create_path;
+  events[1].event_type=6;
+  events[1].event_number=4;
+  events[1].source_path=mouse_path;
+
+  room.id=room.name=(char*)"room_event_probe";
+  room.width=320;
+  room.height=240;
+  room.speed=60;
+  placed.id=placed.name=(char*)"placed_event_probe";
+  placed.object_id=0;
+  placed.instance_id=100000;
+  room.instances=&placed;
+  room.n_instances=room.cap_instances=1;
+
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+      fprintf(stderr,"event_perform mouse package failed: %s\n",error);
+      goto cleanup;
+    }
+  }
+  {
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,package_path)) goto cleanup;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,&services)){
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    gml_room_enter(&vm,0);
+    GmlVal *hits=gml_varmap_get(&vm.globals,"performed_mouse_hits");
+    ok=hits && hits->t==V_REAL && hits->d==1;
+    if(!ok)
+      fprintf(stderr,"event_perform did not dispatch Mouse_4: hits=%.0f\n",
+        hits&&hits->t==V_REAL?hits->d:-1.0);
+    gml_vm_free(&vm);
+    gml_win_free(&win);
+  }
+
+cleanup:
+  if(create_fd>=0) close(create_fd);
+  if(mouse_fd>=0) close(mouse_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(create_path);
+  unlink(mouse_path);
+  unlink(package_path);
+  return ok;
+}
+
 int expect_event_starts_with_the_relative_flag_clear(void){
   /* A synthetic nested Create event must start with a clear action-relative flag even when its caller set the flag. The caller's flag resumes afterward. The fixture pins absolute and relative movement separately. */
   GmlcProject project={0};
