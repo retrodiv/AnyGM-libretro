@@ -82,8 +82,10 @@ reference chains before returning a live object. Failed parsing releases all
 partial indexes and leaves ownership of the supplied memory with the caller.
 The fallback executable classifier accepts a Cabinet signature only inside a bounded PE section
 and only after validating its complete header extent, folder and file tables, and compressed-data
-block bounds. It uses that fact solely to return an unsupported-container diagnostic and never
-decodes Cabinet data.
+block bounds. Overlapping PE section ranges are merged before searching, so no executable byte is
+searched more than once. Each file range must be contiguous, non-overlapping, and covered by its
+folder's declared uncompressed CFDATA extent. It uses that fact solely to return an
+unsupported-container diagnostic and never decodes Cabinet data.
 Runtime bytecode decoding uses a bounded entry point. It retains the direct
 decoder when the maximum operand window is available and uses a zero-padded
 local window only at an input boundary, so the normal cached decode path does

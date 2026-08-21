@@ -403,6 +403,8 @@ static int cabinet_range_valid(const uint8_t *data,size_t available){
   uint16_t folder_count=zu16(data+26),file_count=zu16(data+28),flags=zu16(data+30);
   if(zu32(data+4) || zu32(data+12) || zu32(data+20) ||
      data[24]!=3 || data[25]!=1 || !folder_count || !file_count || (flags&~7u) ||
+     folder_count>ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES ||
+     file_count>ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES ||
      cabinet_size<36u || cabinet_size>available || files_offset>=cabinet_size)
     return 0;
 
@@ -451,24 +453,74 @@ static int cabinet_range_valid(const uint8_t *data,size_t available){
     cursor=(size_t)(name_end-data)+1u;
   }
   size_t file_table_end=cursor;
+  uint64_t *folder_uncompressed=calloc(folder_count,sizeof *folder_uncompressed);
+  uint64_t *folder_file_end=calloc(folder_count,sizeof *folder_file_end);
+  if(!folder_uncompressed || !folder_file_end){
+    free(folder_uncompressed);
+    free(folder_file_end);
+    return 0;
+  }
+  int valid=0;
   cursor=folders_start;
+  size_t previous_block_end=file_table_end;
   for(uint16_t i=0;i<folder_count;i++){
     const uint8_t *folder=data+cursor+(size_t)i*folder_record_size;
     size_t block_cursor=zu32(folder);
     uint16_t block_count=zu16(folder+4);
-    if(block_cursor<file_table_end) return 0;
+    if(block_cursor<previous_block_end) goto done;
     for(uint16_t block=0;block<block_count;block++){
       size_t block_header=8u+(size_t)data_reserve;
-      if(block_header<8u || block_header>cabinet_size-block_cursor) return 0;
+      if(block_header<8u || block_header>cabinet_size-block_cursor) goto done;
       uint16_t compressed_size=zu16(data+block_cursor+4u);
       uint16_t expanded_size=zu16(data+block_cursor+6u);
       block_cursor+=block_header;
       if(!compressed_size || !expanded_size || compressed_size>cabinet_size-block_cursor)
-        return 0;
+        goto done;
+      if(folder_uncompressed[i]>UINT64_MAX-(uint64_t)expanded_size) goto done;
+      folder_uncompressed[i]+=(uint64_t)expanded_size;
       block_cursor+=(size_t)compressed_size;
     }
+    previous_block_end=block_cursor;
   }
-  return 1;
+
+  cursor=files_offset;
+  uint16_t previous_folder=0;
+  int have_previous_folder=0;
+  for(uint16_t i=0;i<file_count;i++){
+    uint32_t file_size=zu32(data+cursor),folder_offset=zu32(data+cursor+4u);
+    uint16_t folder_index=zu16(data+cursor+8u),mapped_folder=folder_index;
+    if(folder_index==UINT16_C(0xfffd)){
+      if(i!=0) goto done;
+      mapped_folder=0;
+    }else if(folder_index==UINT16_C(0xfffe)){
+      if(i+1u!=file_count) goto done;
+      mapped_folder=(uint16_t)(folder_count-1u);
+    }else if(folder_index==UINT16_C(0xffff)){
+      if(file_count!=1u) goto done;
+      mapped_folder=0;
+    }else if(folder_index>=folder_count){
+      goto done;
+    }
+    if(have_previous_folder && mapped_folder<previous_folder) goto done;
+    uint64_t expected_offset=(have_previous_folder && mapped_folder==previous_folder)
+                               ?folder_file_end[mapped_folder]:0;
+    if((uint64_t)folder_offset!=expected_offset ||
+       (uint64_t)folder_offset>folder_uncompressed[mapped_folder] ||
+       (uint64_t)file_size>folder_uncompressed[mapped_folder]-(uint64_t)folder_offset)
+      goto done;
+    folder_file_end[mapped_folder]=(uint64_t)folder_offset+(uint64_t)file_size;
+    previous_folder=mapped_folder;
+    have_previous_folder=1;
+    cursor+=16u;
+    const uint8_t *name_end=memchr(data+cursor,0,cabinet_size-cursor);
+    if(!name_end) goto done;
+    cursor=(size_t)(name_end-data)+1u;
+  }
+  valid=1;
+done:
+  free(folder_file_end);
+  free(folder_uncompressed);
+  return valid;
 }
 
 static int pe_has_embedded_cabinet(const uint8_t *data,size_t size){
@@ -481,11 +533,35 @@ static int pe_has_embedded_cabinet(const uint8_t *data,size_t size){
   if(!section_count || section_count>96u) return 0;
   size_t section_table=(size_t)pe_offset+24u+(size_t)optional_size;
   if(section_table>size || (size_t)section_count>(size-section_table)/40u) return 0;
+  struct PeRange { size_t begin,end; } ranges[96];
+  size_t range_count=0;
   for(uint16_t section=0;section<section_count;section++){
     const uint8_t *header=data+section_table+(size_t)section*40u;
     uint32_t raw_size=zu32(header+16u),raw_offset=zu32(header+20u);
     if(!raw_size || raw_offset>size || raw_size>size-(size_t)raw_offset) continue;
-    size_t begin=(size_t)raw_offset,end=begin+(size_t)raw_size,cursor=begin;
+    ranges[range_count].begin=(size_t)raw_offset;
+    ranges[range_count++].end=(size_t)raw_offset+(size_t)raw_size;
+  }
+  for(size_t i=1;i<range_count;i++){
+    struct PeRange value=ranges[i];
+    size_t at=i;
+    while(at && ranges[at-1u].begin>value.begin){
+      ranges[at]=ranges[at-1u];
+      at--;
+    }
+    ranges[at]=value;
+  }
+  size_t merged_count=0;
+  for(size_t i=0;i<range_count;i++){
+    if(merged_count && ranges[i].begin<=ranges[merged_count-1u].end){
+      if(ranges[i].end>ranges[merged_count-1u].end)
+        ranges[merged_count-1u].end=ranges[i].end;
+    }else{
+      ranges[merged_count++]=ranges[i];
+    }
+  }
+  for(size_t i=0;i<merged_count;i++){
+    size_t begin=ranges[i].begin,end=ranges[i].end,cursor=begin;
     while(cursor+4u<=end){
       const uint8_t *candidate=memchr(data+cursor,'M',end-cursor-3u);
       if(!candidate) break;

@@ -296,6 +296,72 @@ static size_t build_pe_cabinet(uint8_t executable[1024]){
   return 1024;
 }
 
+static size_t build_pe_multifolder_cabinet(uint8_t executable[1024]){
+  memset(executable,0,1024);
+  executable[0]='M';
+  executable[1]='Z';
+  store_u32(executable,60,128);
+  memcpy(executable+128,"PE\0\0",4);
+  store_u16(executable,132,UINT16_C(0x014c));
+  store_u16(executable,134,1);
+  store_u16(executable,148,UINT16_C(0x00e0));
+  memcpy(executable+376,".rsrc",5);
+  store_u32(executable,376+16,512);
+  store_u32(executable,376+20,512);
+
+  uint8_t *cabinet=executable+512;
+  const uint32_t files_offset=52,data0_offset=118,data1_offset=134,cabinet_size=146;
+  memcpy(cabinet,"MSCF",4);
+  store_u32(cabinet,8,cabinet_size);
+  store_u32(cabinet,16,files_offset);
+  cabinet[24]=3;
+  cabinet[25]=1;
+  store_u16(cabinet,26,2);
+  store_u16(cabinet,28,3);
+  store_u32(cabinet,36,data0_offset);
+  store_u16(cabinet,40,1);
+  store_u32(cabinet,44,data1_offset);
+  store_u16(cabinet,48,1);
+  const char *names[]={"a.win","b.win","c.win"};
+  const uint32_t offsets[]={0,4,0};
+  const uint16_t folders[]={0,0,1};
+  size_t cursor=files_offset;
+  for(size_t i=0;i<3;i++){
+    store_u32(cabinet,cursor,4);
+    store_u32(cabinet,cursor+4u,offsets[i]);
+    store_u16(cabinet,cursor+8u,folders[i]);
+    memcpy(cabinet+cursor+16u,names[i],6);
+    cursor+=22u;
+  }
+  store_u16(cabinet,data0_offset+4u,8);
+  store_u16(cabinet,data0_offset+6u,8);
+  memcpy(cabinet+data0_offset+8u,"ABCDEFGH",8);
+  store_u16(cabinet,data1_offset+4u,4);
+  store_u16(cabinet,data1_offset+6u,4);
+  memcpy(cabinet+data1_offset+8u,"IJKL",4);
+  return 1024;
+}
+
+static size_t build_overlapping_section_cabinet(uint8_t executable[10240]){
+  uint8_t source[1024];
+  build_pe_cabinet(source);
+  memset(executable,0,10240);
+  executable[0]='M';
+  executable[1]='Z';
+  store_u32(executable,60,128);
+  memcpy(executable+128,"PE\0\0",4);
+  store_u16(executable,132,UINT16_C(0x014c));
+  store_u16(executable,134,96);
+  for(size_t i=0;i<96;i++){
+    size_t header=152u+i*40u;
+    store_u32(executable,header+16u,1024);
+    store_u32(executable,header+20u,8192);
+  }
+  memset(executable+8192,'M',1024);
+  memcpy(executable+9092,source+512,84);
+  return 10240;
+}
+
 static int embedded_cabinet_cases(const AnygmHostServices *services,const char *root){
   uint8_t executable[1024];
   size_t executable_size=build_pe_cabinet(executable);
@@ -328,6 +394,24 @@ static int embedded_cabinet_cases(const AnygmHostServices *services,const char *
             (int)result,diagnostic);
     return fail("executable Cabinet did not return the stable unsupported diagnostic");
   }
+  char direct_diagnostic[512];
+  memcpy(direct_diagnostic,diagnostic,sizeof direct_diagnostic);
+
+  char anchor[512];
+  static const char anchor_text[]="cabinet.exe\n";
+  if(snprintf(anchor,sizeof anchor,"%s/cabinet.anygm",root)>=(int)sizeof anchor ||
+     !write_file(anchor,anchor_text,sizeof anchor_text-1u))
+    return fail("could not stage executable Cabinet anchor");
+  source.path=anchor;
+  if(anygm_create(services,&engine)!=ANYGM_OK || !engine)
+    return fail("could not create engine for anchored Cabinet diagnostic");
+  result=anygm_load(engine,&source,NULL);
+  anygm_get_last_error(engine,diagnostic,sizeof diagnostic);
+  ok=result==ANYGM_ERROR_UNSUPPORTED && !strcmp(diagnostic,direct_diagnostic) &&
+     anygm_state_size(engine)==0;
+  anygm_destroy(engine);
+  if(!ok)
+    return fail("anchored executable Cabinet did not preserve the direct diagnostic");
 
   uint8_t malformed[1024];
   memcpy(malformed,executable,sizeof malformed);
@@ -348,6 +432,55 @@ static int embedded_cabinet_cases(const AnygmHostServices *services,const char *
   if(snprintf(path,sizeof path,"%s/truncated-cabinet.exe",root)>=(int)sizeof path ||
      !write_file(path,executable,580) || anygm_content_executable_has_cabinet(&router,path))
     return fail("truncated executable Cabinet was accepted");
+
+  memcpy(malformed,executable,sizeof malformed);
+  store_u32(malformed,512+44,5);
+  if(snprintf(path,sizeof path,"%s/uncovered-cabinet-file.exe",root)>=(int)sizeof path ||
+     !write_file(path,malformed,sizeof malformed) ||
+     anygm_content_executable_has_cabinet(&router,path))
+    return fail("Cabinet file beyond its folder stream was accepted");
+  source.path=path;
+  if(anygm_create(services,&engine)!=ANYGM_OK || !engine)
+    return fail("could not create engine for malformed Cabinet result");
+  result=anygm_load(engine,&source,NULL);
+  anygm_get_last_error(engine,diagnostic,sizeof diagnostic);
+  ok=result==ANYGM_ERROR_INVALID_CONTENT && !strstr(diagnostic,"Microsoft Cabinet (CAB)") &&
+     anygm_state_size(engine)==0;
+  anygm_destroy(engine);
+  if(!ok) return fail("uncovered Cabinet file did not remain invalid content");
+
+  uint8_t multifolder[1024];
+  build_pe_multifolder_cabinet(multifolder);
+  if(snprintf(path,sizeof path,"%s/multifolder-cabinet.exe",root)>=(int)sizeof path ||
+     !write_file(path,multifolder,sizeof multifolder) ||
+     !anygm_content_executable_has_cabinet(&router,path))
+    return fail("valid multi-file multi-folder Cabinet was rejected");
+  store_u32(multifolder,512+52+22+4,3);
+  if(snprintf(path,sizeof path,"%s/overlapping-cabinet-files.exe",root)>=(int)sizeof path ||
+     !write_file(path,multifolder,sizeof multifolder) ||
+     anygm_content_executable_has_cabinet(&router,path))
+    return fail("overlapping Cabinet files were accepted");
+  build_pe_multifolder_cabinet(multifolder);
+  store_u32(multifolder,512+52+44,5);
+  if(snprintf(path,sizeof path,"%s/multifolder-overrun.exe",root)>=(int)sizeof path ||
+     !write_file(path,multifolder,sizeof multifolder) ||
+     anygm_content_executable_has_cabinet(&router,path))
+    return fail("Cabinet file crossing its folder boundary was accepted");
+  build_pe_multifolder_cabinet(multifolder);
+  store_u32(multifolder,512+52+22+4,UINT32_MAX);
+  if(snprintf(path,sizeof path,"%s/overflowing-cabinet-file.exe",root)>=(int)sizeof path ||
+     !write_file(path,multifolder,sizeof multifolder) ||
+     anygm_content_executable_has_cabinet(&router,path))
+    return fail("overflowing Cabinet file range was accepted");
+
+  uint8_t *overlapping_sections=malloc(10240);
+  if(!overlapping_sections) return fail("could not allocate overlapping PE section fixture");
+  build_overlapping_section_cabinet(overlapping_sections);
+  ok=snprintf(path,sizeof path,"%s/overlapping-sections.exe",root)<(int)sizeof path &&
+     write_file(path,overlapping_sections,10240) &&
+     anygm_content_executable_has_cabinet(&router,path);
+  free(overlapping_sections);
+  if(!ok) return fail("merged overlapping PE sections lost their Cabinet");
   return 1;
 }
 
@@ -376,6 +509,20 @@ static int embedded_executable_cases(const AnygmHostServices *services,const cha
          extracted_size==sizeof form && !memcmp(extracted,form,sizeof form);
   free(extracted);
   if(!ok) return fail("embedded executable payload changed");
+
+  uint8_t supported_with_cabinet[1024];
+  build_pe_cabinet(supported_with_cabinet);
+  memcpy(supported_with_cabinet+700,form,sizeof form);
+  if(snprintf(path,sizeof path,"%s/supported-with-cabinet.exe",root)>=(int)sizeof path ||
+     !write_file(path,supported_with_cabinet,sizeof supported_with_cabinet) ||
+     !anygm_content_executable_has_cabinet(&router,path) ||
+     !anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0,NULL,0))
+    return fail("supported embedded executable did not outrank its incidental Cabinet");
+  extracted=NULL;
+  ok=read_file(resolved,&extracted,&extracted_size) &&
+     extracted_size==sizeof form && !memcmp(extracted,form,sizeof form);
+  free(extracted);
+  if(!ok) return fail("supported executable precedence changed its embedded payload");
 
   uint8_t ambiguous[424]={0};
   ambiguous[0]='M';
