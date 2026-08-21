@@ -843,12 +843,15 @@ static void cheat_sticky_pass(AnygmEngine *engine,CheatSlot *arr, int n, int cha
     if(a->kind==CK_ROOM || a->kind==CK_NONE) continue;
     if(room_owned_only && !cheat_slot_is_room_owned(a)) continue;
     int applies=channel_on && slot->enabled && cheat_scope_ok(engine,a,0);
+    /* A script override is an edge at fresh startup, not a value to restore when its channel is
+     * toggled.  Keep its completion marker so re-enabling content overrides cannot run setup a
+     * second time in the same load. */
+    if(a->kind==CK_SCRIPT){
+      if(applies && !slot->applied) (void)gml_vm_run_script_named(&engine->vm,a->obj);
+      if(applies) slot->applied=1;
+      continue;
+    }
     if(applies){
-      if(a->kind==CK_SCRIPT){
-        if(!slot->applied) (void)gml_vm_run_script_named(&engine->vm,a->obj);
-        slot->applied=1;
-        continue;
-      }
       /* Capture once per content load, before the first write: what is being preserved is the
        * value the content itself computed, not one an earlier arming already replaced. */
       if(!slot->saved_valid) cheat_slot_capture(engine,slot);
