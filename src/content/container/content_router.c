@@ -394,6 +394,117 @@ static void file_map_close(GmlFileMap *m){
   free(m->data);
   memset(m,0,sizeof(*m));
 }
+/* A Cabinet header alone is not a container. Validate the header extent, optional fields, folder
+ * table, file table and every compressed-data block before classifying a candidate. This is only
+ * a format diagnostic: compressed bytes are deliberately never interpreted here. */
+static int cabinet_range_valid(const uint8_t *data,size_t available){
+  if(!data || available<36u || memcmp(data,"MSCF",4)) return 0;
+  uint32_t cabinet_size=zu32(data+8),files_offset=zu32(data+16);
+  uint16_t folder_count=zu16(data+26),file_count=zu16(data+28),flags=zu16(data+30);
+  if(zu32(data+4) || zu32(data+12) || zu32(data+20) ||
+     data[24]!=3 || data[25]!=1 || !folder_count || !file_count || (flags&~7u) ||
+     cabinet_size<36u || cabinet_size>available || files_offset>=cabinet_size)
+    return 0;
+
+  size_t cursor=36u;
+  uint8_t folder_reserve=0,data_reserve=0;
+  if(flags&4u){
+    if(cursor+4u>cabinet_size) return 0;
+    uint16_t header_reserve=zu16(data+cursor);
+    folder_reserve=data[cursor+2u];
+    data_reserve=data[cursor+3u];
+    cursor+=4u;
+    if((size_t)header_reserve>cabinet_size-cursor) return 0;
+    cursor+=(size_t)header_reserve;
+  }
+  unsigned optional_names=(flags&1u?2u:0u)+(flags&2u?2u:0u);
+  for(unsigned i=0;i<optional_names;i++){
+    const uint8_t *end=memchr(data+cursor,0,cabinet_size-cursor);
+    if(!end) return 0;
+    cursor=(size_t)(end-data)+1u;
+  }
+
+  size_t folder_record_size=8u+(size_t)folder_reserve;
+  if(folder_record_size<8u || (size_t)folder_count>(cabinet_size-cursor)/folder_record_size ||
+     cursor+(size_t)folder_count*folder_record_size>files_offset)
+    return 0;
+  size_t folders_start=cursor;
+  for(uint16_t i=0;i<folder_count;i++){
+    const uint8_t *folder=data+cursor+(size_t)i*folder_record_size;
+    uint32_t blocks_offset=zu32(folder);
+    uint16_t compression=zu16(folder+6);
+    if((compression&0x000fu)>3u || blocks_offset>=cabinet_size) return 0;
+  }
+
+  cursor=files_offset;
+  for(uint16_t i=0;i<file_count;i++){
+    if(16u>cabinet_size-cursor) return 0;
+    uint32_t file_size=zu32(data+cursor),folder_offset=zu32(data+cursor+4u);
+    uint16_t folder_index=zu16(data+cursor+8u);
+    if(file_size>ANYGM_CONTENT_MAX_MEMBER_BYTES ||
+       (folder_index>=folder_count && folder_index<UINT16_C(0xfffd)) ||
+       folder_offset>UINT32_MAX-file_size)
+      return 0;
+    cursor+=16u;
+    const uint8_t *name_end=memchr(data+cursor,0,cabinet_size-cursor);
+    if(!name_end || name_end==data+cursor) return 0;
+    cursor=(size_t)(name_end-data)+1u;
+  }
+  size_t file_table_end=cursor;
+  cursor=folders_start;
+  for(uint16_t i=0;i<folder_count;i++){
+    const uint8_t *folder=data+cursor+(size_t)i*folder_record_size;
+    size_t block_cursor=zu32(folder);
+    uint16_t block_count=zu16(folder+4);
+    if(block_cursor<file_table_end) return 0;
+    for(uint16_t block=0;block<block_count;block++){
+      size_t block_header=8u+(size_t)data_reserve;
+      if(block_header<8u || block_header>cabinet_size-block_cursor) return 0;
+      uint16_t compressed_size=zu16(data+block_cursor+4u);
+      uint16_t expanded_size=zu16(data+block_cursor+6u);
+      block_cursor+=block_header;
+      if(!compressed_size || !expanded_size || compressed_size>cabinet_size-block_cursor)
+        return 0;
+      block_cursor+=(size_t)compressed_size;
+    }
+  }
+  return 1;
+}
+
+static int pe_has_embedded_cabinet(const uint8_t *data,size_t size){
+  if(!data || size<64u || data[0]!='M' || data[1]!='Z') return 0;
+  uint32_t pe_offset=zu32(data+60u);
+  if(pe_offset>size || size-(size_t)pe_offset<24u ||
+     memcmp(data+(size_t)pe_offset,"PE\0\0",4)) return 0;
+  const uint8_t *coff=data+(size_t)pe_offset+4u;
+  uint16_t section_count=zu16(coff+2u),optional_size=zu16(coff+16u);
+  if(!section_count || section_count>96u) return 0;
+  size_t section_table=(size_t)pe_offset+24u+(size_t)optional_size;
+  if(section_table>size || (size_t)section_count>(size-section_table)/40u) return 0;
+  for(uint16_t section=0;section<section_count;section++){
+    const uint8_t *header=data+section_table+(size_t)section*40u;
+    uint32_t raw_size=zu32(header+16u),raw_offset=zu32(header+20u);
+    if(!raw_size || raw_offset>size || raw_size>size-(size_t)raw_offset) continue;
+    size_t begin=(size_t)raw_offset,end=begin+(size_t)raw_size,cursor=begin;
+    while(cursor+4u<=end){
+      const uint8_t *candidate=memchr(data+cursor,'M',end-cursor-3u);
+      if(!candidate) break;
+      size_t offset=(size_t)(candidate-data);
+      cursor=offset+1u;
+      if(!memcmp(candidate,"MSCF",4) && cabinet_range_valid(candidate,end-offset)) return 1;
+    }
+  }
+  return 0;
+}
+
+int anygm_content_executable_has_cabinet(const AnygmContentRouter *router,const char *path){
+  if(!router || !path || !path_ext_is(path,".exe")) return 0;
+  GmlFileMap executable={0};
+  if(!file_map_readonly(router,path,&executable)) return 0;
+  int found=pe_has_embedded_cabinet(executable.data,executable.size);
+  file_map_close(&executable);
+  return found;
+}
 
 /* Select a single bounded FORM data image carried by an executable. Validation uses the ordinary
  * content reader; ambiguous or malformed candidates are never selected. */

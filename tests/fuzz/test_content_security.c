@@ -71,6 +71,11 @@ static int buffer_u32(Buffer *buffer,uint32_t value){
   return buffer_bytes(buffer,encoded,sizeof encoded);
 }
 
+static void store_u16(uint8_t *data,size_t offset,uint16_t value){
+  data[offset]=(uint8_t)value;
+  data[offset+1]=(uint8_t)(value>>8);
+}
+
 static void store_u32(uint8_t *data,size_t offset,uint32_t value){
   data[offset]=(uint8_t)value;
   data[offset+1]=(uint8_t)(value>>8);
@@ -251,6 +256,99 @@ static void build_no_code_form(uint8_t form[200]){
   memcpy(form+180,"FUNC",4);
   memcpy(form+188,"STRG",4);
   store_u32(form,192,4);
+}
+
+static size_t build_pe_cabinet(uint8_t executable[1024]){
+  memset(executable,0,1024);
+  executable[0]='M';
+  executable[1]='Z';
+  store_u32(executable,60,128);
+  memcpy(executable+128,"PE\0\0",4);
+  store_u16(executable,132,UINT16_C(0x014c));
+  store_u16(executable,134,1);
+  store_u16(executable,148,UINT16_C(0x00e0));
+  memcpy(executable+376,".rsrc",5);
+  store_u32(executable,376+16,512);
+  store_u32(executable,376+20,512);
+
+  uint8_t *cabinet=executable+512;
+  static const uint8_t member[]="DATA";
+  static const char name[]="payload.win";
+  const uint32_t files_offset=44;
+  const uint32_t data_offset=files_offset+16u+(uint32_t)sizeof name;
+  const uint32_t cabinet_size=data_offset+8u+(uint32_t)sizeof member-1u;
+  memcpy(cabinet,"MSCF",4);
+  store_u32(cabinet,8,cabinet_size);
+  store_u32(cabinet,16,files_offset);
+  cabinet[24]=3;
+  cabinet[25]=1;
+  store_u16(cabinet,26,1);
+  store_u16(cabinet,28,1);
+  store_u32(cabinet,36,data_offset);
+  store_u16(cabinet,40,1);
+  store_u16(cabinet,42,0);
+  store_u32(cabinet,files_offset,(uint32_t)sizeof member-1u);
+  store_u16(cabinet,files_offset+8u,0);
+  memcpy(cabinet+files_offset+16u,name,sizeof name);
+  store_u16(cabinet,data_offset+4u,(uint16_t)(sizeof member-1u));
+  store_u16(cabinet,data_offset+6u,(uint16_t)(sizeof member-1u));
+  memcpy(cabinet+data_offset+8u,member,sizeof member-1u);
+  return 1024;
+}
+
+static int embedded_cabinet_cases(const AnygmHostServices *services,const char *root){
+  uint8_t executable[1024];
+  size_t executable_size=build_pe_cabinet(executable);
+  char path[512];
+  if(snprintf(path,sizeof path,"%s/cabinet.exe",root)>=(int)sizeof path ||
+     !write_file(path,executable,executable_size))
+    return fail("could not stage executable Cabinet fixture");
+  AnygmContentRouter router={0};
+  router.host=services;
+  router.cache_directory=root;
+  if(!anygm_content_executable_has_cabinet(&router,path))
+    return fail("structural executable Cabinet was not recognized");
+
+  AnygmEngine *engine=NULL;
+  if(anygm_create(services,&engine)!=ANYGM_OK || !engine)
+    return fail("could not create engine for executable Cabinet diagnostic");
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=path;
+  source.cache_directory=root;
+  AnygmResult result=anygm_load(engine,&source,NULL);
+  char diagnostic[512];
+  anygm_get_last_error(engine,diagnostic,sizeof diagnostic);
+  int ok=result==ANYGM_ERROR_UNSUPPORTED && strstr(diagnostic,"Microsoft Cabinet (CAB)") &&
+         anygm_state_size(engine)==0;
+  anygm_destroy(engine);
+  if(!ok){
+    fprintf(stderr,"content security: executable Cabinet result=%d diagnostic=%s\n",
+            (int)result,diagnostic);
+    return fail("executable Cabinet did not return the stable unsupported diagnostic");
+  }
+
+  uint8_t malformed[1024];
+  memcpy(malformed,executable,sizeof malformed);
+  store_u32(malformed,512+16,UINT32_MAX);
+  if(snprintf(path,sizeof path,"%s/malformed-cabinet.exe",root)>=(int)sizeof path ||
+     !write_file(path,malformed,sizeof malformed) ||
+     anygm_content_executable_has_cabinet(&router,path))
+    return fail("malformed executable Cabinet was accepted");
+
+  memcpy(malformed,executable,sizeof malformed);
+  memset(malformed+512,0,128);
+  memcpy(malformed+512,"MSCF",4);
+  if(snprintf(path,sizeof path,"%s/incidental-cabinet-marker.exe",root)>=(int)sizeof path ||
+     !write_file(path,malformed,sizeof malformed) ||
+     anygm_content_executable_has_cabinet(&router,path))
+    return fail("incidental Cabinet marker was accepted");
+
+  if(snprintf(path,sizeof path,"%s/truncated-cabinet.exe",root)>=(int)sizeof path ||
+     !write_file(path,executable,580) || anygm_content_executable_has_cabinet(&router,path))
+    return fail("truncated executable Cabinet was accepted");
+  return 1;
 }
 
 static int embedded_executable_cases(const AnygmHostServices *services,const char *root){
@@ -737,6 +835,7 @@ int main(void){
 
   int ok=embedded_executable_cases(&services,root) &&
          cache_producer_change_case(&services,root) &&
+         embedded_cabinet_cases(&services,root) &&
          archive_anchor_cases(&services,root) &&
          archive_advanced_anchor_cases(&services,root) &&
          direct_anchor_cases(&services,root);

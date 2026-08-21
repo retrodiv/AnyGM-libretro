@@ -169,6 +169,13 @@ Path-backed routing recognizes the extensions declared by the core:
 `exe`. Extension recognition selects a parser; magic and structural validation
 still determine whether the input is accepted.
 
+An executable containing a structurally complete Microsoft Cabinet in one of its PE sections is
+reported as an unsupported container rather than as malformed content. The core only identifies
+this packaging layer: it does not extract or decompress Cabinet members. This classification uses
+the existing `ANYGM_ERROR_UNSUPPORTED` result because the input is well formed but its packaging
+layer is outside the core's content contract; malformed Cabinet-like bytes remain
+`ANYGM_ERROR_INVALID_CONTENT`.
+
 ZIP-compatible containers use bounded extraction, reject unsafe paths and
 links, and select a normalized payload deterministically. See
 `SECURITY_MODEL.md` for exact limits.

@@ -169,6 +169,14 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
                                    asset_root,sizeof asset_root,
                                    prepared->content_overrides,
                                    sizeof prepared->content_overrides)){
+      if(plen>4 && !strcasecmp(origin+plen-4,".exe") &&
+         anygm_content_executable_has_cabinet(&router,source->path)){
+        engine_errorf(engine,ANYGM_ERROR_UNSUPPORTED,
+                      "Unsupported executable container: embedded Microsoft Cabinet (CAB) "
+                      "archive: %s",
+                      source->path);
+        return ANYGM_ERROR_UNSUPPORTED;
+      }
       engine_errorf(engine,ANYGM_ERROR_INVALID_CONTENT,"Failed to resolve content path: %s",source->path);
       return ANYGM_ERROR_INVALID_CONTENT;
     }

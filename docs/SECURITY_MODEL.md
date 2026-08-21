@@ -80,6 +80,10 @@ The reader validates the exact FORM extent, unique and complete chunks,
 record tables, string termination, code spans, room records, room order, and
 reference chains before returning a live object. Failed parsing releases all
 partial indexes and leaves ownership of the supplied memory with the caller.
+The fallback executable classifier accepts a Cabinet signature only inside a bounded PE section
+and only after validating its complete header extent, folder and file tables, and compressed-data
+block bounds. It uses that fact solely to return an unsupported-container diagnostic and never
+decodes Cabinet data.
 Runtime bytecode decoding uses a bounded entry point. It retains the direct
 decoder when the maximum operand window is available and uses a zero-padded
 local window only at an input boundary, so the normal cached decode path does

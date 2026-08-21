@@ -44,6 +44,9 @@ int anygm_content_resolve_path(const AnygmContentRouter *router,const char *inpu
                                char *resolved_path,size_t resolved_path_size,
                                char *asset_root,size_t asset_root_size,
                                char *content_overrides,size_t content_overrides_size);
+/* Classify one bounded PE image after normal executable routing has rejected it. This recognizes
+ * a structurally complete Cabinet held in a PE section; it never extracts or decompresses it. */
+int anygm_content_executable_has_cabinet(const AnygmContentRouter *router,const char *path);
 int anygm_content_load_win(const AnygmContentRouter *router,GmlWin *win,const char *path,char *loaded_path,
                            size_t loaded_path_size);
 void anygm_content_path_stem(const char *path,char *output,size_t output_size);
