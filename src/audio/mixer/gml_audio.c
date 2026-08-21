@@ -1447,7 +1447,10 @@ int gml_audio_state_load(GmlAudio *a, const void *data, size_t len, size_t *used
     uint32_t external_type=ar_u32(&s);
     if(i<applied_limit){
       sound_state[i].gain=isfinite(g)&&g>=0.0?g:1.0;
-      sound_state[i].pitch=isfinite(p)&&p>0.0?p:1.0;
+      /* A released run-time slot is serialized as an all-zero record. Preserve that canonical
+       * record across a load; playback already treats a live sound's non-positive pitch as the
+       * default, while changing a free slot from zero to one makes save->load->save drift. */
+      sound_state[i].pitch=isfinite(p)&&p>=0.0?p:1.0;
       sound_state[i].loop_start=isfinite(l)&&l>=0.0?l:0.0;
       sound_state[i].gain_target=isfinite(target)&&target>=0.0
         ? target : sound_state[i].gain;

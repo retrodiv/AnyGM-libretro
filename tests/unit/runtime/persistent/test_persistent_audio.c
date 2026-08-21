@@ -649,6 +649,26 @@ int expect_state_load_releases_later_dynamic_sounds(void){
   ok=ok && again && gml_audio_state_save(audio,again,size,&rewritten) &&
      rewritten==size && !memcmp(again,state,size);
   free(again);
+
+  /* A released slot inside the table remains present so that the following handle keeps its
+   * identity. Its state record is deliberately all zeroes. Loading that record must not normalize
+   * only its pitch to one, or a byte-exact frontend roundtrip drifts despite identical playback. */
+  int retained=gml_audio_add_encoded(audio,wav,sizeof wav);
+  ok=ok && retained==second && gml_audio_exists(audio,retained);
+  gml_audio_caster_free(audio,first);
+  ok=ok && !gml_audio_exists(audio,first) && gml_audio_exists(audio,retained);
+  size_t sparse_size=gml_audio_state_size(audio),sparse_written=0,sparse_used=0;
+  void *sparse=malloc(sparse_size?sparse_size:1);
+  void *sparse_again=malloc(sparse_size?sparse_size:1);
+  ok=ok && sparse && sparse_again &&
+     gml_audio_state_save(audio,sparse,sparse_size,&sparse_written) &&
+     sparse_written==sparse_size &&
+     gml_audio_state_load(audio,sparse,sparse_size,&sparse_used) && sparse_used==sparse_size;
+  size_t sparse_rewritten=0;
+  ok=ok && gml_audio_state_save(audio,sparse_again,sparse_size,&sparse_rewritten) &&
+     sparse_rewritten==sparse_size && !memcmp(sparse_again,sparse,sparse_size);
+  free(sparse_again);
+  free(sparse);
   free(state);
   gml_audio_free(audio);
   if(!ok) fprintf(stderr,"state load did not release sounds created after the state\n");

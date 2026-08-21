@@ -117,9 +117,14 @@ static void negotiate_serialization(void){
       (quirks&RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE)!=0;
 }
 
-static size_t fixed_state_capacity(size_t actual){
+static size_t fixed_state_capacity(size_t actual,bool compact_startup){
   const size_t margin=512u*1024u;
-  const size_t floor=actual>1024u*1024u?4u*1024u*1024u:384u*1024u;
+  /* Before the first frame, a cold ordinary raster can still understate the render and run-time
+   * tables that gameplay will populate. Fixed frontends cannot enlarge the ring they allocate
+   * from this answer, so keep the established 4 MiB session reserve even when the cold state is
+   * small. A deliberately compact high-resolution ring is already sized from the frame-free hint;
+   * inflating every one of those slots would defeat the memory-saving transport. */
+  const size_t floor=compact_startup?384u*1024u:4u*1024u*1024u;
   if(actual>(SIZE_MAX-margin)/2u) return SIZE_MAX;
   size_t capacity=actual*2u+margin;
   return capacity<floor?floor:capacity;
@@ -423,7 +428,7 @@ size_t retro_serialize_size(void){
   if(!g_libretro.fixed_state_capacity ||
      (g_libretro.variable_state_supported && actual>g_libretro.fixed_state_capacity)){
     size_t previous=g_libretro.fixed_state_capacity;
-    g_libretro.fixed_state_capacity=fixed_state_capacity(actual);
+    g_libretro.fixed_state_capacity=fixed_state_capacity(actual,compact_startup);
     /* Acknowledged growth is unusual enough to report once without flooding repeated queries. */
     if(previous && !g_libretro.state_capacity_growth_reported){
       g_libretro.state_capacity_growth_reported=true;

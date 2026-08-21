@@ -199,7 +199,7 @@ static int fixed_frontend_reuses_the_measured_capacity(int negotiation_result){
 static int stable_transport(int negotiation_result){
   stub_state_bytes=113u;
   if(!begin_frontend(negotiation_result)) return 0;
-  const size_t expected_capacity=113u*2u+512u*1024u;
+  const size_t expected_capacity=4u*1024u*1024u;
   if(retro_serialize_size()!=expected_capacity ||
      retro_serialize_size()!=expected_capacity) return 0;
   stub_state_bytes=197u;
@@ -215,6 +215,25 @@ static int stable_transport(int negotiation_result){
   free(state);
   retro_unload_game();
   if(g_libretro.fixed_state_capacity!=0) ok=0;
+  retro_deinit();
+  return ok;
+}
+
+/* Content can populate render and language-level tables after a cold load has supplied the first
+ * size answer. A fixed frontend cannot enlarge that allocation, so an ordinary startup reserves
+ * enough room for the expected transition while still returning the exact same answer. */
+static int fixed_ordinary_ring_covers_expected_runtime_growth(int negotiation_result){
+  stub_state_bytes=113u;
+  if(!begin_frontend(negotiation_result)) return 0;
+  const size_t capacity=retro_serialize_size();
+  if(capacity!=4u*1024u*1024u) return 0;
+  stub_state_bytes=3u*1024u*1024u;
+  if(retro_serialize_size()!=capacity) return 0;
+  uint8_t *state=(uint8_t *)malloc(capacity);
+  if(!state) return 0;
+  int ok=retro_serialize(state,capacity) && complete_saves==1u && resume_saves==0u;
+  free(state);
+  retro_unload_game();
   retro_deinit();
   return ok;
 }
@@ -404,6 +423,8 @@ int main(void){
   memset(&g_libretro,0,sizeof g_libretro);
   if(retro_serialize_size()!=0 || retro_serialize(&byte,1) || retro_unserialize(&byte,1) ||
      !stable_transport(1) || !stable_transport(0) || !stable_transport(-1) ||
+     !fixed_ordinary_ring_covers_expected_runtime_growth(0) ||
+     !fixed_ordinary_ring_covers_expected_runtime_growth(-1) ||
      !growth_follows_frontend_acknowledgement(1) ||
      !growth_follows_frontend_acknowledgement(0) ||
      !growth_follows_frontend_acknowledgement(-1) ||

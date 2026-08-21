@@ -149,6 +149,11 @@ complete-state capacity, so newly sized ordinary saves retain the exact complete
 older compact ring slots remain loadable. This capacity policy changes neither the logical size in
 the canonical header nor the portable state format.
 
+An ordinary fixed-size session reserves at least 4 MiB in its first answer because a cold load can
+precede the render and language-level tables populated by gameplay. The explicit compact
+high-resolution path is exempt: its frame-free capacity hint already describes the intended ring,
+and applying the ordinary floor to every slot would erase the memory saving it exists to provide.
+
 `make contract-check` exercises acknowledged growth, fixed unacknowledged frontends, compact startup
 rings, complete save-state capacity, unload reset, exact roundtrips, and the transport blocks used
 by rewind-capable frontends. The graphics-state integration case separately proves that an explicit
