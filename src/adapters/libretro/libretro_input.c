@@ -19,7 +19,10 @@ static const struct retro_controller_info g_controller_info[]={
   {NULL,0}
 };
 
+/* Describe the same bindings for every supported pad port. Keyboard descriptors remain on
+ * port zero because the adapter exposes one keyboard. */
 static const struct retro_input_descriptor g_input_descriptors[]={
+  /* port 0 */
   {0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_UP,"Up"},
   {0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_DOWN,"Down"},
   {0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_LEFT,"Left"},
@@ -30,8 +33,6 @@ static const struct retro_input_descriptor g_input_descriptors[]={
   {0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X,"Button 4 / North"},
   {0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L,"Left Shoulder"},
   {0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R,"Right Shoulder"},
-  /* Content reaches these through gp_shoulderlb/rb and gp_stickl/r, so name them rather than
-   * leaving the frontend to label four bindings the content can read. */
   {0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L2,"Left Trigger"},
   {0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R2,"Right Trigger"},
   {0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L3,"Left Stick"},
@@ -42,6 +43,69 @@ static const struct retro_input_descriptor g_input_descriptors[]={
   {0,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_Y,"Right Stick Y"},
   {0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_SELECT,"Select"},
   {0,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START,"Start"},
+  /* port 1 */
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_UP,"Up"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_DOWN,"Down"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_LEFT,"Left"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_RIGHT,"Right"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B,"Button 1 / South"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A,"Button 2 / East"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y,"Button 3 / West"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X,"Button 4 / North"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L,"Left Shoulder"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R,"Right Shoulder"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L2,"Left Trigger"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R2,"Right Trigger"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L3,"Left Stick"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R3,"Right Stick"},
+  {1,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_LEFT,RETRO_DEVICE_ID_ANALOG_X,"Left Stick X"},
+  {1,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_LEFT,RETRO_DEVICE_ID_ANALOG_Y,"Left Stick Y"},
+  {1,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_X,"Right Stick X"},
+  {1,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_Y,"Right Stick Y"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_SELECT,"Select"},
+  {1,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START,"Start"},
+  /* port 2 */
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_UP,"Up"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_DOWN,"Down"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_LEFT,"Left"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_RIGHT,"Right"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B,"Button 1 / South"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A,"Button 2 / East"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y,"Button 3 / West"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X,"Button 4 / North"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L,"Left Shoulder"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R,"Right Shoulder"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L2,"Left Trigger"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R2,"Right Trigger"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L3,"Left Stick"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R3,"Right Stick"},
+  {2,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_LEFT,RETRO_DEVICE_ID_ANALOG_X,"Left Stick X"},
+  {2,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_LEFT,RETRO_DEVICE_ID_ANALOG_Y,"Left Stick Y"},
+  {2,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_X,"Right Stick X"},
+  {2,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_Y,"Right Stick Y"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_SELECT,"Select"},
+  {2,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START,"Start"},
+  /* port 3 */
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_UP,"Up"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_DOWN,"Down"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_LEFT,"Left"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_RIGHT,"Right"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_B,"Button 1 / South"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_A,"Button 2 / East"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_Y,"Button 3 / West"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_X,"Button 4 / North"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L,"Left Shoulder"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R,"Right Shoulder"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L2,"Left Trigger"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R2,"Right Trigger"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_L3,"Left Stick"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_R3,"Right Stick"},
+  {3,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_LEFT,RETRO_DEVICE_ID_ANALOG_X,"Left Stick X"},
+  {3,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_LEFT,RETRO_DEVICE_ID_ANALOG_Y,"Left Stick Y"},
+  {3,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_X,"Right Stick X"},
+  {3,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_Y,"Right Stick Y"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_SELECT,"Select"},
+  {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START,"Start"},
   {0,RETRO_DEVICE_KEYBOARD,0,RETROK_UP,"Keyboard Up"},
   {0,RETRO_DEVICE_KEYBOARD,0,RETROK_DOWN,"Keyboard Down"},
   {0,RETRO_DEVICE_KEYBOARD,0,RETROK_LEFT,"Keyboard Left"},
@@ -95,12 +159,10 @@ void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t heig
   input->pointer_y=-1;
   if(g_libretro.input_poll) g_libretro.input_poll();
 
-  /* Use the configured active count. The maximum-user query reports configured capacity, the
-   * controller-port callback reflects this adapter's declaration, and idle and absent ports both
-   * report zero input, so none of those signals establishes occupancy. */
-  unsigned ports=g_libretro.gamepad_ports;
-  if(ports<1u) ports=1u;
-  if(ports>ANYGM_MAX_GAMEPADS) ports=ANYGM_MAX_GAMEPADS;
+  /* Snapshot every supported port. Capacity and controller declarations do not establish
+   * occupancy, and idle and absent ports both report zero input. Ownership still controls whether
+   * pad rows are exposed; keyboard emulation reports none. */
+  unsigned ports=ANYGM_MAX_GAMEPADS;
   input->connected_gamepads=g_libretro.config.gamepad_connected?ports:0u;
   for(unsigned port=0;port<ports;port++){
     for(unsigned button=0;button<ANYGM_MAX_GAMEPAD_BUTTONS;button++)

@@ -80,16 +80,6 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"input",
    {{"Game gamepad",NULL},{"Keyboard emulation",NULL},{NULL,NULL}},
    "Game gamepad"},
-  {"anygm_gamepads","Gamepads",NULL,
-   "How many pads a game can read. Leave it at 1 for a single-player game; raise it to the number "
-   "of pads plugged in for a game with local multiplayer, which cannot reach the second player "
-   "otherwise. Ports above the count read as nothing rather than repeating the first pad. This is "
-   "stated rather than detected because no frontend call here reports which ports are occupied: "
-   "the one that names a maximum reports the frontend's own setting, and an empty port answers "
-   "every button exactly as an idle one does.",
-   NULL,"input",
-   {{"1",NULL},{"2",NULL},{"3",NULL},{"4",NULL},{NULL,NULL}},
-   "1"},
   {"anygm_mouse","Mouse input",NULL,
    "How pointer movement reaches the game. Auto follows what the content expects.",
    NULL,"input",
@@ -599,12 +589,6 @@ void libretro_options_apply(bool all_fields){
   { const char *behavior=option_value("anygm_gamepad");
     config->gamepad_connected=
       (behavior && !strcmp(behavior,"Keyboard emulation")) ? 0u : ANYGM_GAMEPAD_AUTO; }
-  /* An unrecognised or absent value preserves the previous single-port default. */
-  { const char *ports=option_value("anygm_gamepads");
-    unsigned count=ports?(unsigned)atoi(ports):1u;
-    if(count<1u) count=1u;
-    if(count>ANYGM_MAX_GAMEPADS) count=ANYGM_MAX_GAMEPADS;
-    g_libretro.gamepad_ports=count; }
   /* The names describe how much is dropped, and the thresholds rise with them. An unrecognised
    * name resolves to the shipped amount rather than to none, so a value left behind by a host
    * cannot quietly land on the slowest setting. */
