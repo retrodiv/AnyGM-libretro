@@ -1507,36 +1507,7 @@ static int parse_expr(Compiler *c){
   return 1;
 }
 
-static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv){
-  memset(lv,0,sizeof(*lv));
-  snprintf(lv->name,sizeof(lv->name),"%s",first);
-  snprintf(lv->receiver,sizeof(lv->receiver),"%s",first);
-  lv->inst=plain_scope(c,first);
-  lv->reftype=0xA0;
-  if(eat(c,".")){
-    if(c->lex.tok.kind!=TOK_ID){ c->unsupported=1; snprintf(c->lex.err,sizeof(c->lex.err),"expected field name"); return 0; }
-    char field[128]; snprintf(field,sizeof(field),"%s",c->lex.tok.text); lx_next(&c->lex);
-    double cv=0;
-    if(!strcmp(first,"self")) lv->inst=IT_SELF;
-    else if(!strcmp(first,"other")) lv->inst=IT_OTHER;
-    else if(!strcmp(first,"global")) lv->inst=IT_GLOBAL;
-    else if(resolve_asset(c,first,&cv)) lv->inst=(int)cv;
-    else { lv->is_stacktop=1; lv->inst=IT_STACK; }
-    snprintf(lv->name,sizeof(lv->name),"%s",field);
-    while(eat(c,".")){
-      if(c->lex.tok.kind!=TOK_ID){
-        c->unsupported=1;
-        snprintf(c->lex.err,sizeof(c->lex.err),"expected field name");
-        return 0;
-      }
-      if(!emit_lvalue_read(c,lv) || !emit_conv(c,DT_VAR,DT_INT32)) return 0;
-      snprintf(lv->name,sizeof(lv->name),"%s",c->lex.tok.text);
-      lv->inst=IT_STACK;
-      lv->is_stacktop=1;
-      lv->receiver_on_stack=1;
-      lx_next(&c->lex);
-    }
-  }
+static int parse_lvalue_tail(Compiler *c, LValue *lv){
   if(eat(c,"[")){
     size_t close_pos=0;
     if(!scan_square_span(c,c->lex.tok.start,&lv->index_span,&close_pos)) return 0;
@@ -1617,6 +1588,39 @@ static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv){
     }
   }
   return 1;
+}
+
+static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv){
+  memset(lv,0,sizeof(*lv));
+  snprintf(lv->name,sizeof(lv->name),"%s",first);
+  snprintf(lv->receiver,sizeof(lv->receiver),"%s",first);
+  lv->inst=plain_scope(c,first);
+  lv->reftype=0xA0;
+  if(eat(c,".")){
+    if(c->lex.tok.kind!=TOK_ID){ c->unsupported=1; snprintf(c->lex.err,sizeof(c->lex.err),"expected field name"); return 0; }
+    char field[128]; snprintf(field,sizeof(field),"%s",c->lex.tok.text); lx_next(&c->lex);
+    double cv=0;
+    if(!strcmp(first,"self")) lv->inst=IT_SELF;
+    else if(!strcmp(first,"other")) lv->inst=IT_OTHER;
+    else if(!strcmp(first,"global")) lv->inst=IT_GLOBAL;
+    else if(resolve_asset(c,first,&cv)) lv->inst=(int)cv;
+    else { lv->is_stacktop=1; lv->inst=IT_STACK; }
+    snprintf(lv->name,sizeof(lv->name),"%s",field);
+    while(eat(c,".")){
+      if(c->lex.tok.kind!=TOK_ID){
+        c->unsupported=1;
+        snprintf(c->lex.err,sizeof(c->lex.err),"expected field name");
+        return 0;
+      }
+      if(!emit_lvalue_read(c,lv) || !emit_conv(c,DT_VAR,DT_INT32)) return 0;
+      snprintf(lv->name,sizeof(lv->name),"%s",c->lex.tok.text);
+      lv->inst=IT_STACK;
+      lv->is_stacktop=1;
+      lv->receiver_on_stack=1;
+      lx_next(&c->lex);
+    }
+  }
+  return parse_lvalue_tail(c,lv);
 }
 
 static int emit_lvalue_base_read(Compiler *c, LValue *lv){
@@ -2065,6 +2069,7 @@ static int parse_simple_or_assign(Compiler *c){
         snprintf(lv.name,sizeof(lv.name),"%s",c->lex.tok.text);
         lx_next(&c->lex);
       }
+      if(!parse_lvalue_tail(c,&lv)) return 0;
       if(tok_is(c,"=")||tok_is(c,"+=")||tok_is(c,"-=")||tok_is(c,"*=")||
          tok_is(c,"/=")||tok_is(c,"%=")||tok_is(c,"++")||tok_is(c,"--"))
         return parse_assignment_tail(c,&lv);

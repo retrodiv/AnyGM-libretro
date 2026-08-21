@@ -385,6 +385,8 @@ int main(int argc, char **argv){
   ok &= compile_fixture(&project,
     "speed=0\n(instance_create(1,2,3)).hspeed=-.5\ninstance_create(4,5,6)\n"
     "(instance_create(7,8,9)).hspeed=.5\n",1);
+  ok &= compile_fixture(&project,
+    "(instance_create(1,2,3)).alarm[0]=32;\n",1);
   GmlcProjectConstant constants[]={
     {(char*)"fixture_base",(char*)"6*7"},
     {(char*)"fixture_nested",(char*)"fixture_base+1"},
