@@ -40,6 +40,7 @@ int main(int argc,char **argv){
     {"stopped_mover_solid_restore",expect_stopped_mover_restored_from_solid},
     {"stationary_embed_nudge_reverted",expect_stationary_embed_nudge_reverted},
     {"classic_timeline_index_activation",expect_classic_timeline_index_activation},
+    {"frame_clock_ignores_host_time",expect_frame_clock_ignores_host_time},
     {"hash_layer_gpu",expect_hash_layer_gpu_gap_closure},
     {"array_functions",expect_array_function_gap_closure},
     {"room_lifecycle",expect_persistent_lifecycle},

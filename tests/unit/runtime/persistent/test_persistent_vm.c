@@ -17,6 +17,63 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct FixtureHostClock {
+  uint64_t next_ns;
+  uint64_t stride_ns;
+  unsigned calls;
+} FixtureHostClock;
+
+static uint64_t fixture_host_clock_read(void *userdata){
+  FixtureHostClock *clock=userdata;
+  uint64_t value=clock->next_ns;
+  clock->next_ns+=clock->stride_ns;
+  clock->calls++;
+  return value;
+}
+
+static int sample_frame_clock(GmlVM *vm,double values[3]){
+  GmlVal first=gml_vm_identifier_get(vm,"current_time");
+  values[0]=first.t==V_REAL?first.d:-1.0;
+  values[1]=gml_vm_get_timer_us(vm);
+  GmlVal second=gml_vm_identifier_get(vm,"current_time");
+  values[2]=second.t==V_REAL?second.d:-1.0;
+  return first.t==V_REAL && second.t==V_REAL;
+}
+
+int expect_frame_clock_ignores_host_time(void){
+  GmlWin win={0};
+  win.game_speed=60;
+  FixtureHostClock first_clock={UINT64_C(7000000000),UINT64_C(13000000),0};
+  FixtureHostClock second_clock={UINT64_C(900000000000),UINT64_C(3000000000),0};
+  AnygmHostServices first_host={0},second_host={0};
+  first_host.struct_size=sizeof first_host;
+  first_host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  first_host.userdata=&first_clock;
+  first_host.monotonic_time_ns=fixture_host_clock_read;
+  second_host.struct_size=sizeof second_host;
+  second_host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  second_host.userdata=&second_clock;
+  second_host.monotonic_time_ns=fixture_host_clock_read;
+  GmlVM first={0},second={0};
+  first.win=second.win=&win;
+  first.host=&first_host;
+  second.host=&second_host;
+  first.frame=second.frame=90;
+  double first_values[3]={0},second_values[3]={0};
+  int sampled=sample_frame_clock(&first,first_values) &&
+              sample_frame_clock(&second,second_values);
+  int ok=sampled && first_clock.calls==0 && second_clock.calls==0 &&
+    first_values[0]==1500.0 && first_values[1]==1501000.0 && first_values[2]==1502.0 &&
+    memcmp(first_values,second_values,sizeof first_values)==0;
+  if(!ok)
+    fprintf(stderr,
+      "frame clock depended on host time: first=(%.0f,%.0f,%.0f calls=%u)"
+      " second=(%.0f,%.0f,%.0f calls=%u)\n",
+      first_values[0],first_values[1],first_values[2],first_clock.calls,
+      second_values[0],second_values[1],second_values[2],second_clock.calls);
+  return ok;
+}
+
 
 int expect_classic_timeline_index_activation(void){
   GmlWin win={0}; GmlVM vm={0}; GmlInstance instance={0};
