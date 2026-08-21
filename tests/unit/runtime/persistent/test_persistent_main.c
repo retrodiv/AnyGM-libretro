@@ -76,6 +76,7 @@ int main(int argc,char **argv){
     {"legacy_sprite_text_builtin",expect_legacy_sprite_text_builtin},
     {"centred_real_font_line_pen",expect_centred_real_font_line_starts_on_a_whole_pixel},
     {"signed_distance_font_coverage",expect_signed_distance_font_reconstructs_coverage},
+    {"signed_distance_font_position",expect_signed_distance_font_spread_does_not_shift_text},
     {"carriage_return_line_break",expect_carriage_return_and_line_feed_are_one_break},
     {"wrapped_line_space",expect_a_wrapped_line_drops_the_space_it_broke_at},
     {"font_kerning_pair",expect_a_font_kerning_pair_moves_the_pen},

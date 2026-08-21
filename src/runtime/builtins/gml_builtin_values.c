@@ -304,6 +304,29 @@ static int gm_string_count(const char *needle, const char *hay){
   return n;
 }
 
+static GmlVal gml_string_concat(GmlVal *args, int count){
+  size_t length=0;
+  for(int index=0;index<count;index++){
+    char formatted[64];
+    const char *value=gm_string_format(args[index],formatted);
+    size_t value_length=strlen(value);
+    if(value_length>SIZE_MAX-length-1) return vstr_owned(strdup(""));
+    length+=value_length;
+  }
+  char *output=malloc(length+1);
+  if(!output) return vstr_owned(strdup(""));
+  size_t used=0;
+  for(int index=0;index<count;index++){
+    char formatted[64];
+    const char *value=gm_string_format(args[index],formatted);
+    size_t value_length=strlen(value);
+    memcpy(output+used,value,value_length);
+    used+=value_length;
+  }
+  output[used]=0;
+  return vstr_owned(output);
+}
+
 static GmlVal gml_string_concat_ext(GmlVal *args, int count){
   if(count<1 || args[0].t!=V_ARR || !args[0].arr)
     return vstr_owned(strdup(""));
@@ -462,7 +485,14 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
     return n>1 ? gml_string_format(vm,a,n) : vstr_owned(strdup(S(vm,a,n,0)));
   if(!strcmp(nm,"string_length")) return vreal((double)strlen(S(vm,a,n,0)));
   if(!strcmp(nm,"string_byte_length")) return vreal((double)strlen(S(vm,a,n,0)));
+  if(!strcmp(nm,"string_concat")) return gml_string_concat(a,n);
   if(!strcmp(nm,"string_concat_ext")) return gml_string_concat_ext(a,n);
+  if(!strcmp(nm,"string_ends_with")){
+    const char *text=S(vm,a,n,0), *suffix=S(vm,a,n,1);
+    size_t text_length=strlen(text), suffix_length=strlen(suffix);
+    return vreal(suffix_length<=text_length &&
+                 !memcmp(text+text_length-suffix_length,suffix,suffix_length));
+  }
   if(!strcmp(nm,"string_foreach")){
     if(n<2) return vreal(0);
     const char *text=S(vm,a,n,0); size_t bytes=strlen(text);

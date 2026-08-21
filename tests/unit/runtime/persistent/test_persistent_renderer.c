@@ -890,7 +890,9 @@ int expect_signed_distance_font_reconstructs_coverage(void){
   font->glyphs=&glyph; font->n_glyphs=1; font->glyphs_sorted=1;
   font->glyph_by_char['A']=0;
   glyph=(GmlGlyph){.sx=0,.sy=0,.w=5,.h=1,.shift=5,.offset=0,.ch='A'};
-  gml_draw_text(&render,1,0,"A");
+  /* Place the padded cell at (1,0). The language-visible pen includes the eight-pixel spread,
+   * while this fixture is specifically about the reconstructed coverage within that cell. */
+  gml_draw_text(&render,9,8,"A");
   int ok=framebuffer[1]==UINT32_C(0xFF000000) &&
          framebuffer[2]==UINT32_C(0xFF000000) &&
          framebuffer[3]==UINT32_C(0xFF800000) &&
@@ -899,6 +901,46 @@ int expect_signed_distance_font_reconstructs_coverage(void){
   if(!ok)
     fprintf(stderr,"signed-distance font coverage mismatch: %08x %08x %08x %08x %08x\n",
             framebuffer[1],framebuffer[2],framebuffer[3],framebuffer[4],framebuffer[5]);
+  font->glyphs=NULL; font->n_glyphs=0;
+  render.atlas=NULL; render.n_atlas=0;
+  gml_render_free(&render);
+  return ok;
+}
+
+int expect_signed_distance_font_spread_does_not_shift_text(void){
+  /* The packed distance-field cell carries a transparent spread around the contour. That spread
+   * protects filtering; it is not authored layout. The reconstructed edge of a glyph drawn at
+   * (3,3) therefore begins at (3,3), independent of the two-pixel packing margin. */
+  GmlWin win={0}; win.bytecode=17;
+  GmlRender render={0}; GmlAtlas atlas={0}; GmlGlyph glyph={0};
+  uint32_t framebuffer[8*8];
+  uint8_t pixels[5*5*4];
+  for(size_t cell=0;cell<sizeof framebuffer/sizeof *framebuffer;cell++)
+    framebuffer[cell]=UINT32_C(0xFF000000);
+  for(int y=0;y<5;y++) for(int x=0;x<5;x++){
+    size_t offset=((size_t)y*5u+(size_t)x)*4u;
+    pixels[offset+0]=pixels[offset+1]=pixels[offset+2]=255;
+    pixels[offset+3]=(x>=2 && y>=2)?255:0;
+  }
+  gml_render_begin(&render,framebuffer,8,8,0,0);
+  render.win=&win; render.atlas=&atlas; render.n_atlas=1;
+  render.font=0; render.n_fonts=1; render.color=0xFFFFFF;
+  render.alpha=1; render.alphablend=1; render.software_overlay=1;
+  atlas.px=pixels; atlas.w=atlas.h=5; atlas.decode_attempted=1;
+  GmlFont *font=&render.fonts[0];
+  memset(font->glyph_by_char,0xFF,sizeof font->glyph_by_char);
+  font->real=1; font->atlas=0; font->sprite=-1; font->line_height=1;
+  font->align_height=1; font->sdf_spread=2;
+  font->glyphs=&glyph; font->n_glyphs=1; font->glyphs_sorted=1;
+  font->glyph_by_char['A']=0;
+  glyph=(GmlGlyph){.sx=0,.sy=0,.w=5,.h=5,.shift=1,.offset=0,.ch='A'};
+  gml_draw_text(&render,3,3,"A");
+  int ok=(framebuffer[3*8+3]&UINT32_C(0x00FFFFFF))!=0 &&
+         (framebuffer[5*8+5]&UINT32_C(0x00FFFFFF))!=0 &&
+         (framebuffer[2*8+3]&UINT32_C(0x00FFFFFF))==0 &&
+         (framebuffer[3*8+2]&UINT32_C(0x00FFFFFF))==0;
+  if(!ok)
+    fprintf(stderr,"signed-distance font packing spread shifted the authored text origin\n");
   font->glyphs=NULL; font->n_glyphs=0;
   render.atlas=NULL; render.n_atlas=0;
   gml_render_free(&render);

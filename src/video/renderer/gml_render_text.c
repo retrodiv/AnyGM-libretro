@@ -840,7 +840,12 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
         g?g->sx:-1,g?g->sy:-1,g?g->w:-1,g?g->h:-1,g?g->shift:-1,g?g->offset:-1);
       if(g && g->w>0 && g->h>0){
         GmlTpag gt={ .sx=g->sx,.sy=g->sy,.sw=g->w,.sh=g->h,.tx=0,.ty=0,.bw=g->w,.bh=g->h,.atlas=f->atlas };
-        double dx=(cx+g->offset)*xs, dy=(base_y-f->ascender_offset)*ys;
+        /* A signed-distance glyph cell carries one spread of filterable padding around its
+         * contour. Position the padded cell before the authored pen so the visible contour
+         * retains its intended location. */
+        double packing_spread=f->sdf_spread>0?(double)f->sdf_spread:0.0;
+        double dx=(cx+g->offset-packing_spread)*xs;
+        double dy=(base_y-f->ascender_offset-packing_spread)*ys;
         double glyph_x=use_rot?x+dx*ca+dy*sa:x+dx;
         double glyph_y=use_rot?y-dx*sa+dy*ca:y+dy;
         uint32_t glyph_blend=f->subpixel?0xFFFFFFu:blend;

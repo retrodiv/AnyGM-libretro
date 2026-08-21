@@ -18,6 +18,15 @@ static int expect(const char *label, GmlVal actual, double want){
   return 0;
 }
 
+static int expect_string(const char *label, GmlVal actual, const char *want){
+  int ok=actual.t==V_STR && actual.s && !strcmp(actual.s,want);
+  if(!ok)
+    fprintf(stderr,"%s: expected \"%s\", got %s\n",label,want,
+            actual.t==V_STR && actual.s?actual.s:"<non-string>");
+  gml_values_release(&actual,1);
+  return ok;
+}
+
 int main(void){
   GmlVM vm;
   memset(&vm,0,sizeof vm);
@@ -26,6 +35,21 @@ int main(void){
   GmlVal fwd0[]={vstr("o"),vstr("Hello World"),vreal(0)};
   ok &= expect("a zero start searches from the beginning",
                gml_builtin_call(&vm,"string_pos_ext",fwd0,3),5);
+
+  GmlVal concatenate[]={vstr("High "),vstr("Score "),vreal(17)};
+  ok &= expect_string("variadic concatenation formats every argument",
+                      gml_builtin_call(&vm,"string_concat",concatenate,3),
+                      "High Score 17");
+
+  GmlVal has_suffix[]={vstr("status-ready"),vstr("ready")};
+  ok &= expect("a matching suffix is reported",
+               gml_builtin_call(&vm,"string_ends_with",has_suffix,2),1);
+  GmlVal wrong_suffix[]={vstr("status-ready"),vstr("READY")};
+  ok &= expect("suffix matching is case-sensitive",
+               gml_builtin_call(&vm,"string_ends_with",wrong_suffix,2),0);
+  GmlVal empty_suffix[]={vstr("status-ready"),vstr("")};
+  ok &= expect("every string ends with the empty string",
+               gml_builtin_call(&vm,"string_ends_with",empty_suffix,2),1);
 
   GmlVal fwd5[]={vstr("o"),vstr("Hello World"),vreal(5)};
   ok &= expect("the first start_pos characters are skipped",
