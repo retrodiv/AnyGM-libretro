@@ -77,6 +77,17 @@ static void sequence_fixture_asset_key(SequenceFixtureWriter *writer,
   sequence_fixture_u32(writer,(uint32_t)sprite);
 }
 
+static void sequence_fixture_text_key(SequenceFixtureWriter *writer,
+                                      double frame, double length,
+                                      uint32_t text){
+  sequence_fixture_key_header(writer,frame,length,0,1);
+  sequence_fixture_u32(writer,0);    /* channel */
+  sequence_fixture_u32(writer,text);
+  sequence_fixture_u32(writer,1);    /* wrap */
+  sequence_fixture_u32(writer,1);    /* top-centre alignment */
+  sequence_fixture_u32(writer,2);    /* font asset */
+}
+
 static uint32_t sequence_fixture_string(uint8_t *data, size_t *cursor,
                                         const char *value){
   size_t length=strlen(value)+1;
@@ -95,14 +106,19 @@ int expect_sequence_asset_keys_and_parameters(void){
     STR_FRONT,
     STR_REAL_MODEL,
     STR_POSITION,
+    STR_ORIGIN,
     STR_COLOUR_MODEL,
     STR_BLEND,
+    STR_TEXT_MODEL,
+    STR_TEXT_TRACK,
+    STR_TEXT_VALUE,
     STR_BACK,
     STR_COUNT
   };
   static const char *const string_values[STR_COUNT]={
     "neutral_sequence","GMGraphicTrack","front_track","GMRealTrack",
-    "position","GMColourTrack","blend_multiply","back_track"
+    "position","origin","GMColourTrack","blend_multiply","GMTextTrack",
+    "caption_track","neutral caption","back_track"
   };
   uint32_t string_offsets[STR_COUNT]={0};
   char *strings[STR_COUNT]={0};
@@ -127,10 +143,10 @@ int expect_sequence_asset_keys_and_parameters(void){
   sequence_fixture_u32(&writer,7); /* sequence origin y */
   sequence_fixture_f32(&writer,1); /* volume */
   sequence_fixture_u32(&writer,0); /* broadcast keys */
-  sequence_fixture_u32(&writer,2); /* top-level tracks */
+  sequence_fixture_u32(&writer,3); /* top-level tracks */
 
   sequence_fixture_track_header(&writer,string_offsets[STR_GRAPHIC_MODEL],
-                                 string_offsets[STR_FRONT],0,2);
+                                 string_offsets[STR_FRONT],0,3);
   sequence_fixture_track_header(&writer,string_offsets[STR_REAL_MODEL],
                                  string_offsets[STR_FRONT],14,0);
   sequence_fixture_u32(&writer,1); /* linear interpolation */
@@ -151,10 +167,24 @@ int expect_sequence_asset_keys_and_parameters(void){
   sequence_fixture_key_header(&writer,10,1,0,1);
   sequence_fixture_colour_channel(&writer,0xFF0000FFu);
 
+  sequence_fixture_track_header(&writer,string_offsets[STR_REAL_MODEL],
+                                 string_offsets[STR_ORIGIN],16,0);
+  sequence_fixture_u32(&writer,1);
+  sequence_fixture_u32(&writer,1);
+  sequence_fixture_key_header(&writer,0,100,0,2);
+  sequence_fixture_real_channel(&writer,0,0);
+  sequence_fixture_real_channel(&writer,1,0);
+
   size_t asset_count_offset=writer.cursor;
   sequence_fixture_u32(&writer,2);
   sequence_fixture_asset_key(&writer,2,4,0,0);
   sequence_fixture_asset_key(&writer,20,3,1,2);
+
+  sequence_fixture_track_header(&writer,string_offsets[STR_TEXT_MODEL],
+                                 string_offsets[STR_TEXT_TRACK],0,0);
+  size_t text_count_offset=writer.cursor;
+  sequence_fixture_u32(&writer,1);
+  sequence_fixture_text_key(&writer,0,100,string_offsets[STR_TEXT_VALUE]);
 
   sequence_fixture_track_header(&writer,string_offsets[STR_GRAPHIC_MODEL],
                                  string_offsets[STR_BACK],0,0);
@@ -195,7 +225,7 @@ int expect_sequence_asset_keys_and_parameters(void){
     GmlSeqGraphic *front=&vm.sequences[0].graphics[0];
     GmlSeqGraphic *back=&vm.sequences[0].graphics[1];
     double key_head=-1;
-    ok=front->n_keys==2 && front->n_tracks==2 && back->n_keys==1 &&
+    ok=front->n_keys==2 && front->n_tracks==3 && back->n_keys==1 &&
       gml_sequence_sprite_at(front,1.999,NULL)==-1 &&
       gml_sequence_sprite_at(front,2,&key_head)==0 && key_head==2 &&
       gml_sequence_sprite_at(front,5.999,NULL)==0 &&
@@ -236,6 +266,8 @@ int expect_sequence_asset_keys_and_parameters(void){
         pages[i].sx=i; pages[i].sw=pages[i].sh=1;
         pages[i].bw=pages[i].bh=1; pages[i].atlas=0;
       }
+      sprites[0].originx=3;
+      sprites[0].originy=4;
       vm.render=&render; vm.room_index=0; vm.rtl=&layer; vm.n_rtl=1;
       vm.rte=&element; vm.n_rte=1;
       front->tracks[0].interpolation=1;
@@ -243,11 +275,13 @@ int expect_sequence_asset_keys_and_parameters(void){
       front->tracks[1].keys[0].colour=0xFFFF0000u;
       gml_render_begin(&render,framebuffer,32,32,0,0);
       gml_vm_draw(&vm);
-      ok=framebuffer[21*32+12]==UINT32_C(0xFFFF0000);
+      ok=framebuffer[17*32+9]==UINT32_C(0xFFFF0000);
       if(!ok)
         fprintf(stderr,"sequence position/origin draw mismatch: pixel=%08x\n",
-                framebuffer[21*32+12]);
+                framebuffer[17*32+9]);
 
+      sprites[0].originx=0;
+      sprites[0].originy=0;
       for(int key=0;key<front->tracks[0].n_keys;key++)
         front->tracks[0].keys[key].value[0]=front->tracks[0].keys[key].value[1]=0;
       vm.sequences[0].origin_x=vm.sequences[0].origin_y=0;
@@ -287,6 +321,15 @@ int expect_sequence_asset_keys_and_parameters(void){
   gml_vm_sequences_clear(&vm);
 
   fixture_w32(data,asset_count_offset,2);
+  fixture_w32(data,text_count_offset,4097);
+  gml_vm_rooms_init(&vm);
+  if(vm.n_sequences!=1 || !vm.sequences || vm.sequences[0].n_graphics!=0){
+    fputs("oversized sequence text-key store was not rejected\n",stderr);
+    ok=0;
+  }
+  gml_vm_sequences_clear(&vm);
+
+  fixture_w32(data,text_count_offset,1);
   win.chunks[0].size=(uint32_t)(sequence_end-chunk_offset-1);
   gml_vm_rooms_init(&vm);
   if(vm.n_sequences!=1 || !vm.sequences || vm.sequences[0].n_graphics!=0){

@@ -381,6 +381,31 @@ static int seq_parse_simple_store(SeqReader *reader, SeqParseBudget *budget){
   return 1;
 }
 
+static int seq_parse_text_store(SeqReader *reader, SeqParseBudget *budget){
+  uint32_t count=0;
+  if(!seq_reader_u32(reader,&count) || count>SEQ_MAX_KEYS_PER_TRACK ||
+     !seq_budget_take(&budget->keys,count,SEQ_MAX_KEYS_TOTAL)) return 0;
+  double previous_key=-INFINITY;
+  for(uint32_t i=0;i<count;i++){
+    double key=0, length=0;
+    uint32_t stretch=0, disabled=0, channels=0;
+    if(!seq_parse_key_header(reader,&key,&length,&stretch,&disabled,&channels) ||
+       key<previous_key || !seq_budget_take(&budget->channels,channels,SEQ_MAX_CHANNELS_TOTAL))
+      return 0;
+    previous_key=key;
+    for(uint32_t channel=0;channel<channels;channel++){
+      uint32_t index=0, text=0, wrap=0, alignment=0, font=0;
+      if(!seq_reader_u32(reader,&index) || !seq_reader_u32(reader,&text) ||
+         !seq_reader_u32(reader,&wrap) || wrap>1 || !seq_reader_u32(reader,&alignment) ||
+         !seq_reader_u32(reader,&font) || !seq_string_at(reader->win,text)) return 0;
+      (void)index;
+      (void)alignment;
+      (void)font;
+    }
+  }
+  return 1;
+}
+
 static int seq_parse_track_header(SeqReader *reader, SeqTrackHeader *header,
                                   SeqParseBudget *budget){
   uint32_t model_offset=0, name_offset=0, builtin=0, traits=0, creation=0;
@@ -453,6 +478,8 @@ static int seq_parse_track(SeqReader *reader, SeqParseBudget *budget, unsigned d
   } else if(!strcmp(header.model,"GMSpriteFramesTrack") ||
             !strcmp(header.model,"GMBoolTrack") || !strcmp(header.model,"GMStringTrack")){
     if(!seq_parse_simple_store(reader,budget)) goto fail;
+  } else if(!strcmp(header.model,"GMTextTrack")){
+    if(!seq_parse_text_store(reader,budget)) goto fail;
   } else if(strcmp(header.model,"GMGroupTrack") && strcmp(header.model,"GMClipMaskTrack")){
     goto fail;
   }

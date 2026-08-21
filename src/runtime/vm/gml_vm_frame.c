@@ -1056,16 +1056,14 @@ static int sequence_subimage(GmlVM *vm, const GmlSequence *sequence,
   return isfinite(frame)?(int)floor(frame):0;
 }
 
-static void sequence_track_anchor(GmlVM *vm, const GmlSequence *sequence,
-                                  const GmlSeqGraphic *graphic, int sprite, double head,
+static void sequence_track_anchor(const GmlSequence *sequence,
+                                  const GmlSeqGraphic *graphic, double head,
                                   double base_x, double base_y, double xscale, double yscale,
                                   double angle, double *x, double *y){
-  GmlRenderSpriteMetrics metrics={0};
-  (void)gml_render_sprite_metrics((GmlRender*)vm->render,sprite,&metrics);
-  double origin_x=gml_sequence_value(graphic,"origin",0,head,(double)metrics.origin_x);
-  double origin_y=gml_sequence_value(graphic,"origin",1,head,(double)metrics.origin_y);
-  double dx=((double)metrics.origin_x-origin_x)*xscale;
-  double dy=((double)metrics.origin_y-origin_y)*yscale;
+  double origin_x=gml_sequence_value(graphic,"origin",0,head,0);
+  double origin_y=gml_sequence_value(graphic,"origin",1,head,0);
+  double dx=-origin_x*xscale;
+  double dy=-origin_y*yscale;
   double radians=angle*(M_PI/180.0);
   double cosine=cos(radians), sine=sin(radians);
   *x=base_x-(double)sequence->origin_x+dx*cosine+dy*sine;
@@ -1556,7 +1554,7 @@ void gml_vm_draw(GmlVM *vm){
         lsp[nls].angle=gml_sequence_value(gr,"rotation",0,head,0);
         double base_x=lx+e->x+gml_sequence_value(gr,"position",0,head,0);
         double base_y=ly+e->y+gml_sequence_value(gr,"position",1,head,0);
-        sequence_track_anchor(vm,s,gr,sprite,head,base_x,base_y,
+        sequence_track_anchor(s,gr,head,base_x,base_y,
                               lsp[nls].xs,lsp[nls].ys,lsp[nls].angle,
                               &lsp[nls].x,&lsp[nls].y);
         uint32_t argb=gml_sequence_colour(gr,"blend_multiply",head,0xFFFFFFFFu);
