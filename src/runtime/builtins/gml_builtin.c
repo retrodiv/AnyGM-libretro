@@ -648,9 +648,9 @@ void gp_deadzone_set(GmlVM *vm, int dev, double dz){
 void gml_gamepad_set_axis_deadzone_direct(GmlVM *vm, int device, double dz){
   gp_deadzone_set(vm,device,dz);
 }
-double gp_axis_digital_fallback(GmlVM *vm,int ax){
-  if(ax == GML_GP_AXIS_LH) return gml_input_gamepad(vm,32784,0) - gml_input_gamepad(vm,32783,0);  /* R - L */
-  if(ax == GML_GP_AXIS_LV) return gml_input_gamepad(vm,32782,0) - gml_input_gamepad(vm,32781,0);  /* D - U */
+double gp_axis_digital_fallback(GmlVM *vm,int device,int ax){
+  if(ax == GML_GP_AXIS_LH) return gml_input_gamepad(vm,device,32784,0) - gml_input_gamepad(vm,device,32783,0);  /* R - L */
+  if(ax == GML_GP_AXIS_LV) return gml_input_gamepad(vm,device,32782,0) - gml_input_gamepad(vm,device,32781,0);  /* D - U */
   return 0.0;
 }
 double gp_axis_value_filtered(GmlVM *vm, int dev, int ax){
@@ -664,7 +664,7 @@ double gp_axis_value_filtered(GmlVM *vm, int dev, int ax){
   if(!ax) return 0.0;
   double v = gml_input_gamepad_axis(vm,dev, ax);
   if(v == 0.0)
-    v = gp_axis_digital_fallback(vm,ax);   /* Preserve the existing digital transport. */
+    v = gp_axis_digital_fallback(vm,dev,ax);   /* Preserve the existing digital transport. */
   if(raw_index && (ax == GML_GP_AXIS_LV || ax == GML_GP_AXIS_RV)) v = -v;
   if(!isfinite(v)) v = 0.0;
   if(v < -1.0) v = -1.0;
@@ -1304,11 +1304,11 @@ int builtin_input_kbgp(GmlVM *vm, const char *nm, GmlVal *a, int n, GmlVal *out)
     if(gp_debug_on(vm) && !strncmp(nm,"gamepad_button",14)){
 
       anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gp] f%ld %s n=%d a0=%.0f a1=%.0f -> %d\n",vm->frame,nm,n,N(a,n,0),N(a,n,1),
-        gml_input_gamepad(vm,(int)N(a,n,1),0)); } }
-  if(!strcmp(nm,"gamepad_button_check")){          *out=vreal(gml_input_gamepad(vm,(int)N(a,n,1),0)); return 1; }
-  if(!strcmp(nm,"gamepad_button_value")){          *out=vreal(gml_input_gamepad(vm,(int)N(a,n,1),0) ? 1.0 : 0.0); return 1; }
-  if(!strcmp(nm,"gamepad_button_check_pressed")){  *out=vreal(gml_input_gamepad(vm,(int)N(a,n,1),1)); return 1; }
-  if(!strcmp(nm,"gamepad_button_check_released")){ *out=vreal(gml_input_gamepad(vm,(int)N(a,n,1),2)); return 1; }
+        gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),0)); } }
+  if(!strcmp(nm,"gamepad_button_check")){          *out=vreal(gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),0)); return 1; }
+  if(!strcmp(nm,"gamepad_button_value")){          *out=vreal(gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),0) ? 1.0 : 0.0); return 1; }
+  if(!strcmp(nm,"gamepad_button_check_pressed")){  *out=vreal(gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),1)); return 1; }
+  if(!strcmp(nm,"gamepad_button_check_released")){ *out=vreal(gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),2)); return 1; }
   if(!strcmp(nm,"gamepad_is_connected")){          *out=vreal(gml_input_gamepad_connected(vm,(int)N(a,n,0))); return 1; }
   if(!strcmp(nm,"gamepad_is_supported")){          *out=vreal(1); return 1; }
   if(!strcmp(nm,"gamepad_get_device_count")){      *out=vreal(gml_input_gamepad_device_count(vm)); return 1; }

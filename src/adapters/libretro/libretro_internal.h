@@ -29,6 +29,7 @@ typedef struct LibretroAdapter {
   bool keyboard_events_accepted;
   uint8_t override_used[ANYGM_MAX_RUNTIME_OVERRIDES];
   uint32_t port_device[ANYGM_MAX_GAMEPADS];
+  uint32_t gamepad_ports;
   unsigned pointer_seen;
   bool loaded;
   bool rumble_available;

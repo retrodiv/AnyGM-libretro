@@ -100,27 +100,33 @@ int builtin_external_input_define(const char *library,const char *symbol){
   return 0;
 }
 
-static int external_input_button_mask(GmlVM *vm){
+static int external_input_button_mask(GmlVM *vm,int device){
   int mask=0;
-  if(gml_input_gamepad(vm,32781,0)) mask|=0x0001;
-  if(gml_input_gamepad(vm,32782,0)) mask|=0x0002;
-  if(gml_input_gamepad(vm,32783,0)) mask|=0x0004;
-  if(gml_input_gamepad(vm,32784,0)) mask|=0x0008;
-  if(gml_input_gamepad(vm,32778,0)) mask|=0x0010;
-  if(gml_input_gamepad(vm,32777,0)) mask|=0x0020;
-  if(gml_input_gamepad(vm,32779,0)) mask|=0x0040;
-  if(gml_input_gamepad(vm,32780,0)) mask|=0x0080;
-  if(gml_input_gamepad(vm,32773,0)) mask|=0x0100;
-  if(gml_input_gamepad(vm,32774,0)) mask|=0x0200;
-  if(gml_input_gamepad(vm,32769,0)) mask|=0x1000;
-  if(gml_input_gamepad(vm,32770,0)) mask|=0x2000;
-  if(gml_input_gamepad(vm,32771,0)) mask|=0x4000;
-  if(gml_input_gamepad(vm,32772,0)) mask|=0x8000;
+  if(gml_input_gamepad(vm,device,32781,0)) mask|=0x0001;
+  if(gml_input_gamepad(vm,device,32782,0)) mask|=0x0002;
+  if(gml_input_gamepad(vm,device,32783,0)) mask|=0x0004;
+  if(gml_input_gamepad(vm,device,32784,0)) mask|=0x0008;
+  if(gml_input_gamepad(vm,device,32778,0)) mask|=0x0010;
+  if(gml_input_gamepad(vm,device,32777,0)) mask|=0x0020;
+  if(gml_input_gamepad(vm,device,32779,0)) mask|=0x0040;
+  if(gml_input_gamepad(vm,device,32780,0)) mask|=0x0080;
+  if(gml_input_gamepad(vm,device,32773,0)) mask|=0x0100;
+  if(gml_input_gamepad(vm,device,32774,0)) mask|=0x0200;
+  if(gml_input_gamepad(vm,device,32769,0)) mask|=0x1000;
+  if(gml_input_gamepad(vm,device,32770,0)) mask|=0x2000;
+  if(gml_input_gamepad(vm,device,32771,0)) mask|=0x4000;
+  if(gml_input_gamepad(vm,device,32772,0)) mask|=0x8000;
   return mask;
 }
 
 static int joy_device(double value){
   return (int)value;
+}
+
+/* Convert the joystick family's one-based device number to a zero-based pad row. */
+static int joystick_device(double value){
+  int joy=(int)value;
+  return joy>0?joy-1:joy;
 }
 
 static int joy_button_code(int button){
@@ -144,11 +150,10 @@ static const char *joydll_name(void){ return "Xbox 360 Controller"; }
 
 /* Convert d-pad state to clockwise compass degrees, with -1 for centred. */
 static double joydll_hat_degrees(GmlVM *vm,int device){
-  if(device!=0) return -1.0;
-  int up=gml_input_gamepad(vm,32781,0);
-  int down=gml_input_gamepad(vm,32782,0);
-  int left=gml_input_gamepad(vm,32783,0);
-  int right=gml_input_gamepad(vm,32784,0);
+  int up=gml_input_gamepad(vm,device,32781,0);
+  int down=gml_input_gamepad(vm,device,32782,0);
+  int left=gml_input_gamepad(vm,device,32783,0);
+  int right=gml_input_gamepad(vm,device,32784,0);
   if(up&&right) return 45.0;
   if(right&&down) return 135.0;
   if(down&&left) return 225.0;
@@ -164,11 +169,14 @@ static double joy_axis_value(GmlVM *vm,int device,int axis){
   int code=axis==0?32785:axis==1?32786:axis==2?32787:axis==3?32788:0;
   if(!code) return 0.0;
   double value=gml_input_gamepad_axis(vm,device,code);
-  /* A neutral axis can coexist with digital pad directions. Reuse the
-   * gamepad-axis digital fallback for this extension; the right stick has
-   * no digital counterpart. Do not apply the gamepad deadzone here: this
-   * adapter reports the normalized transport value without that filter. */
-  if(value==0.0) value=gp_axis_digital_fallback(vm,code);
+  /* A stick is not the only transport for a stick reading. A player on a d-pad never moves an
+   * axis, and a host that maps an analog stick onto the d-pad reports the stick centred and the
+   * pad pressed in its place. gamepad_axis_value already answers from the pad when the axis reads
+   * neutral; this extension asks the same question under another name and answers from the same
+   * place, so a d-pad reaches content that reads its stick only through here.
+   * The gamepad deadzone is deliberately not applied: this surface reports the device's own
+   * values and content built on it filters them itself. */
+  if(value==0.0) value=gp_axis_digital_fallback(vm,device,code);
   if(!isfinite(value)) return 0.0;
   if(value<-1.0) value=-1.0; else if(value>1.0) value=1.0;
   return value;
@@ -196,7 +204,7 @@ GmlVal builtin_external_input_call(GmlVM *vm,int handle,
     case GML_EXTERNAL_INPUT_JOY_BUTTONS: return vreal(16);
     case GML_EXTERNAL_INPUT_JOY_BUTTON: {
       int code=joy_button_code((int)N(args,count,1));
-      return vreal(device==0&&code?gml_input_gamepad(vm,code,0):0);
+      return vreal(code?gml_input_gamepad(vm,device,code,0):0);
     }
     case GML_EXTERNAL_INPUT_JOY_HATS:    return vreal(1);
     case GML_EXTERNAL_INPUT_JOY_HAT:     return vreal(joydll_hat_degrees(vm,device));
@@ -214,16 +222,16 @@ GmlVal builtin_external_input_call(GmlVM *vm,int handle,
   if(operation==GML_EXTERNAL_INPUT_CONTROLLER_STATE)
     return vreal(gml_input_gamepad_connected(vm,device));
   if(operation==GML_EXTERNAL_INPUT_BUTTON_STATE)
-    return vreal(gml_input_gamepad_connected(vm,device)?external_input_button_mask(vm):0);
+    return vreal(gml_input_gamepad_connected(vm,device)?external_input_button_mask(vm,device):0);
   if(operation==GML_EXTERNAL_INPUT_CHECK_BUTTON){
     int requested=(int)N(args,count,1);
     return vreal(gml_input_gamepad_connected(vm,device) &&
-                 (external_input_button_mask(vm)&requested)!=0);
+                 (external_input_button_mask(vm,device)&requested)!=0);
   }
   if(operation==GML_EXTERNAL_INPUT_LEFT_TRIGGER ||
      operation==GML_EXTERNAL_INPUT_RIGHT_TRIGGER){
     int button=operation==GML_EXTERNAL_INPUT_LEFT_TRIGGER?32775:32776;
-    return vreal(gml_input_gamepad(vm,button,0)?255:0);
+    return vreal(gml_input_gamepad(vm,device,button,0)?255:0);
   }
   int axis=operation==GML_EXTERNAL_INPUT_LEFT_X?32785:
     operation==GML_EXTERNAL_INPUT_LEFT_Y?32786:
@@ -297,7 +305,7 @@ GmlVal gml_builtin_try_input(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"joy_button")){
     int device=joy_device(N(a,n,0));
     int code=joy_button_code((int)N(a,n,1));
-    return vreal(device==0&&code?gml_input_gamepad(vm,code,0):0);
+    return vreal(code?gml_input_gamepad(vm,device,code,0):0);
   }
   if(!strcmp(nm,"joy_hats")) return vreal(1);
   if(!strcmp(nm,"joy_hat")) return vreal(joydll_hat_degrees(vm,joy_device(N(a,n,0))));
@@ -312,12 +320,16 @@ GmlVal gml_builtin_try_input(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"joystick_buttons")) return vreal(16);
   if(!strcmp(nm,"joystick_axes")) return vreal(2);
   if(!strcmp(nm,"joystick_check_button")){ int b=(int)N(a,n,1);
-    return vreal((b>=1 && b<=16) ? gml_input_gamepad(vm,32768+b,0) : 0); }
-  if(!strcmp(nm,"joystick_xpos")) return vreal(gml_input_gamepad(vm,32784,0) - gml_input_gamepad(vm,32783,0));
-  if(!strcmp(nm,"joystick_ypos")) return vreal(gml_input_gamepad(vm,32782,0) - gml_input_gamepad(vm,32781,0));
+    int dev=joystick_device(N(a,n,0));
+    return vreal((b>=1 && b<=16) ? gml_input_gamepad(vm,dev,32768+b,0) : 0); }
+  if(!strcmp(nm,"joystick_xpos")){ int dev=joystick_device(N(a,n,0));
+    return vreal(gml_input_gamepad(vm,dev,32784,0) - gml_input_gamepad(vm,dev,32783,0)); }
+  if(!strcmp(nm,"joystick_ypos")){ int dev=joystick_device(N(a,n,0));
+    return vreal(gml_input_gamepad(vm,dev,32782,0) - gml_input_gamepad(vm,dev,32781,0)); }
   if(!strcmp(nm,"joystick_direction")){
-    int x=gml_input_gamepad(vm,32784,0) - gml_input_gamepad(vm,32783,0);
-    int y=gml_input_gamepad(vm,32782,0) - gml_input_gamepad(vm,32781,0);
+    int dev=joystick_device(N(a,n,0));
+    int x=gml_input_gamepad(vm,dev,32784,0) - gml_input_gamepad(vm,dev,32783,0);
+    int y=gml_input_gamepad(vm,dev,32782,0) - gml_input_gamepad(vm,dev,32781,0);
     if(x<0 && y<0) return vreal(103);
     if(x>0 && y<0) return vreal(105);
     if(x<0 && y>0) return vreal(97);

@@ -1513,22 +1513,22 @@ static int state_input_history_roundtrip(void){
   }
   uint8_t *state=NULL;
   size_t state_size=0;
-  ok=ok && engine->pad_current[ANYGM_PAD_RIGHT] &&
-     engine->pad_previous[ANYGM_PAD_RIGHT] &&
+  ok=ok && engine->pad_current[0][ANYGM_PAD_RIGHT] &&
+     engine->pad_previous[0][ANYGM_PAD_RIGHT] &&
      save_state(engine,&state,&state_size);
   input.gamepad_buttons[0][ANYGM_PAD_RIGHT]=0;
   output.struct_size=sizeof output;
   ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
-     !engine->pad_current[ANYGM_PAD_RIGHT] &&
-     engine->pad_previous[ANYGM_PAD_RIGHT] &&
+     !engine->pad_current[0][ANYGM_PAD_RIGHT] &&
+     engine->pad_previous[0][ANYGM_PAD_RIGHT] &&
      anygm_state_load(engine,state,state_size)==ANYGM_OK &&
-     engine->pad_current[ANYGM_PAD_RIGHT] &&
-     engine->pad_previous[ANYGM_PAD_RIGHT];
+     engine->pad_current[0][ANYGM_PAD_RIGHT] &&
+     engine->pad_previous[0][ANYGM_PAD_RIGHT];
   input.gamepad_buttons[0][ANYGM_PAD_RIGHT]=1;
   output.struct_size=sizeof output;
   ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
-     engine->pad_current[ANYGM_PAD_RIGHT] &&
-     engine->pad_previous[ANYGM_PAD_RIGHT];
+     engine->pad_current[0][ANYGM_PAD_RIGHT] &&
+     engine->pad_previous[0][ANYGM_PAD_RIGHT];
   free(state);
   anygm_destroy(engine);
   anygm_synthetic_content_destroy(&fixture);
@@ -1542,21 +1542,21 @@ static int raw_gamepad_button_layout_policy(void){
    * frame checks both interpretations. */
   AnygmEngine legacy={0};
   engine_input_bind(&legacy);
-  legacy.pad_current[ANYGM_PAD_START]=1;
-  legacy.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
-  int ok=legacy.vm.input.gamepad(legacy.vm.input.userdata,4,0) &&
-     legacy.vm.input.gamepad(legacy.vm.input.userdata,32778,0) &&
-     legacy.vm.input.gamepad(legacy.vm.input.userdata,12,0) &&
-     !legacy.vm.input.gamepad(legacy.vm.input.userdata,0,0) &&
-     !legacy.vm.input.gamepad(legacy.vm.input.userdata,14,0) &&
-     !legacy.vm.input.gamepad(legacy.vm.input.userdata,10,0);
+  legacy.pad_current[0][ANYGM_PAD_START]=1;
+  legacy.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
+  int ok=legacy.vm.input.gamepad(legacy.vm.input.userdata,0,4,0) &&
+     legacy.vm.input.gamepad(legacy.vm.input.userdata,0,32778,0) &&
+     legacy.vm.input.gamepad(legacy.vm.input.userdata,0,12,0) &&
+     !legacy.vm.input.gamepad(legacy.vm.input.userdata,0,0,0) &&
+     !legacy.vm.input.gamepad(legacy.vm.input.userdata,0,14,0) &&
+     !legacy.vm.input.gamepad(legacy.vm.input.userdata,0,10,0);
 
   AnygmEngine modern={0};
   modern.win.bytecode=17;
   engine_input_bind(&modern);
-  modern.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
-  ok=ok && modern.vm.input.gamepad(modern.vm.input.userdata,1,0) &&
-     !modern.vm.input.gamepad(modern.vm.input.userdata,4,0);
+  modern.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
+  ok=ok && modern.vm.input.gamepad(modern.vm.input.userdata,0,1,0) &&
+     !modern.vm.input.gamepad(modern.vm.input.userdata,0,4,0);
   if(!ok)
     fputs("raw gamepad button indexes did not follow profile layouts\n",stderr);
   return ok;
@@ -1566,7 +1566,7 @@ static int input_binding_ownership_policy(void){
   AnygmEngine keyboard_only={0};
   keyboard_only.win.classic_version=800;
   engine_input_bind(&keyboard_only);
-  keyboard_only.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  keyboard_only.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
   int ok=keyboard_only.vm.input.key(keyboard_only.vm.input.userdata,'Z',0) &&
          keyboard_only.vm.input.key(keyboard_only.vm.input.userdata,1,0);
 
@@ -1576,7 +1576,7 @@ static int input_binding_ownership_policy(void){
   keyboard_only_pad_connected.win.classic_version=800;
   keyboard_only_pad_connected.config.gamepad_connected=1;
   engine_input_bind(&keyboard_only_pad_connected);
-  keyboard_only_pad_connected.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  keyboard_only_pad_connected.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
   ok=ok &&
      keyboard_only_pad_connected.vm.input.key(
          keyboard_only_pad_connected.vm.input.userdata,'Z',0) &&
@@ -1595,11 +1595,11 @@ static int input_binding_ownership_policy(void){
   gamepad_mode.win.n_refs=1;
   gamepad_mode.config.gamepad_connected=1;
   engine_input_bind(&gamepad_mode);
-  gamepad_mode.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  gamepad_mode.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
   ok=ok &&
      !gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,'Z',0) &&
      !gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,1,0) &&
-     gamepad_mode.vm.input.gamepad(gamepad_mode.vm.input.userdata,32769,0);
+     gamepad_mode.vm.input.gamepad(gamepad_mode.vm.input.userdata,0,32769,0);
 
   gamepad_mode.event_key_current[ANYGM_KEY_z]=1;
   ok=ok && gamepad_mode.vm.input.key(gamepad_mode.vm.input.userdata,'Z',0) &&
@@ -1615,7 +1615,7 @@ static int input_binding_ownership_policy(void){
   classic_auto.win.n_refs=1;
   classic_auto.config.gamepad_connected=ANYGM_GAMEPAD_AUTO;
   engine_input_bind(&classic_auto);
-  classic_auto.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  classic_auto.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
   ok=ok &&
      !classic_auto.vm.input.key(classic_auto.vm.input.userdata,'Z',0) &&
      classic_auto.vm.input.gamepad_connected(classic_auto.vm.input.userdata,0);
@@ -1625,7 +1625,7 @@ static int input_binding_ownership_policy(void){
   classic_auto_keyboard.win.classic_version=800;
   classic_auto_keyboard.config.gamepad_connected=ANYGM_GAMEPAD_AUTO;
   engine_input_bind(&classic_auto_keyboard);
-  classic_auto_keyboard.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  classic_auto_keyboard.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
   ok=ok &&
      classic_auto_keyboard.vm.input.key(classic_auto_keyboard.vm.input.userdata,'Z',0) &&
      !classic_auto_keyboard.vm.input.gamepad_connected(
@@ -1642,16 +1642,16 @@ static int input_binding_ownership_policy(void){
   modern_auto.win.n_refs=1;
   modern_auto.config.gamepad_connected=ANYGM_GAMEPAD_AUTO;
   engine_input_bind(&modern_auto);
-  modern_auto.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  modern_auto.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
   ok=ok &&
      !modern_auto.vm.input.key(modern_auto.vm.input.userdata,'Z',0) &&
      modern_auto.vm.input.gamepad_connected(modern_auto.vm.input.userdata,0) &&
-     modern_auto.vm.input.gamepad(modern_auto.vm.input.userdata,32769,0);
+     modern_auto.vm.input.gamepad(modern_auto.vm.input.userdata,0,32769,0);
 
   AnygmEngine modern_auto_keyboard={0};
   modern_auto_keyboard.config.gamepad_connected=ANYGM_GAMEPAD_AUTO;
   engine_input_bind(&modern_auto_keyboard);
-  modern_auto_keyboard.pad_current[ANYGM_PAD_FACE_BOTTOM]=1;
+  modern_auto_keyboard.pad_current[0][ANYGM_PAD_FACE_BOTTOM]=1;
   ok=ok &&
      modern_auto_keyboard.vm.input.key(modern_auto_keyboard.vm.input.userdata,'Z',0) &&
      !modern_auto_keyboard.vm.input.gamepad_connected(
@@ -2100,11 +2100,16 @@ int main(int argc,char **argv){
     fprintf(stderr,"repeated serialization was not deterministic\n");
     return 1;
   }
-  /* The synthetic-state checksum tracks the complete serialized bytes,
-   * including the resolved content and compatibility identifiers. */
+  /* The state carries content and compatibility fingerprints. The synthetic content embeds the
+   * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
+   * and again whenever the serialized layout itself changes. */
+  /* Schema 13 widened the serialized pad rows from one to one per port, which is exactly
+   * 3 further ports x NPAD buttons x (held + previous) = 96 bytes and nothing else: the size
+   * moved from 21954 to 22050 by precisely that, which is what says the layout change was the
+   * intended one. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
-  if(deterministic_size!=21954 ||
-     deterministic_hash!=UINT64_C(0x5cd6f1622b8cd742)){
+  if(deterministic_size!=22050 ||
+     deterministic_hash!=UINT64_C(0x266e90d82d8ea492)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;

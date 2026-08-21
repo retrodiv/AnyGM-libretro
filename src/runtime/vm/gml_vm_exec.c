@@ -2035,8 +2035,8 @@ void gml_input_key_press(GmlVM *vm,int key){
 void gml_input_key_release(GmlVM *vm,int key){
   if(vm&&vm->input.key_release) vm->input.key_release(vm->input.userdata,key);
 }
-int gml_input_gamepad(GmlVM *vm,int button,int edge){
-  return vm&&vm->input.gamepad?vm->input.gamepad(vm->input.userdata,button,edge):0;
+int gml_input_gamepad(GmlVM *vm,int device,int button,int edge){
+  return vm&&vm->input.gamepad?vm->input.gamepad(vm->input.userdata,device,button,edge):0;
 }
 int gml_input_gamepad_connected(GmlVM *vm,int device){
   return vm&&vm->input.gamepad_connected?
@@ -2091,8 +2091,11 @@ static void micro_set_bool_fields(GmlVM *vm, GmlInstance *self,
   inst_set_any_h(vm,self,held_in->refname,held_in->refhash?held_in->refhash:gml_value_name_hash(held_in->refname),vreal(held?1:0));
   inst_set_any_h(vm,self,released_in->refname,released_in->refhash?released_in->refhash:gml_value_name_hash(released_in->refname),vreal(released?1:0));
 }
+/* This fast path recognises a content shape that carries a type and a key and no device, so the
+ * only pad it can honestly speak for is the first. Its caller declines the whole micro-op once a
+ * second pad is live, which sends the work to the generic path that does carry one. */
 static int micro_input_edge(GmlVM *vm, int type, int key, int edge){
-  return type==0 ? gml_keyboard_check(vm,key,edge) : gml_input_gamepad(vm,key,edge);
+  return type==0 ? gml_keyboard_check(vm,key,edge) : gml_input_gamepad(vm,0,key,edge);
 }
 static void micro_call_method_field1(GmlVM *vm, GmlVal targetv, const char *field, uint32_t hash, GmlVal arg0){
   if(!vm || !field) return;
@@ -2250,6 +2253,9 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
     int type=(int)asnum(typev);
     if(type!=0 && type!=1) return 0;
     if(type==1 && anygm_host_development_setting(vm->host,"GML_DBG_GP")) return 0;
+    /* The recognised shape names no device. With one pad that is the only pad and the answer is
+     * the same; with a second one live it would quietly answer for player one, so hand it back. */
+    if(type==1 && gml_input_gamepad_connected(vm,1)) return 0;
     GmlVal value=inst_get_any_h(vm,self,in[20].refname,in[20].refhash?in[20].refhash:gml_value_name_hash(in[20].refname));
     if(value.t==V_ARR && value.arr){
       int a0=(int)asnum(gml_arr_get(value,0));

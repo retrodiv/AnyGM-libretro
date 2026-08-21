@@ -26,8 +26,8 @@ static int fixture_input_key(void *userdata,int key, int edge){
   return edge==fixture_key_edge || (fixture_key_edge==1 && edge==0);
 }
 
-static int fixture_input_gamepad(void *userdata,int button, int edge){
-  (void)userdata; (void)button; (void)edge; return 0;
+static int fixture_input_gamepad(void *userdata,int device,int button, int edge){
+  (void)userdata; (void)device; (void)button; (void)edge; return 0;
 }
 
 static void fixture_input_mouse(void *userdata,double *rx,double *ry,double *gx,double *gy,

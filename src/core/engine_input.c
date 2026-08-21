@@ -69,8 +69,8 @@ static int engine_input_key(void *userdata,int vk, int edge){
     int any = 0, anyp = 0;
     if(!engine_pad_reserved_for_pad_api(engine)){
       for(int i = 0; i < NPAD; i++){
-        any |= engine->pad_current[i];
-        anyp |= engine->pad_previous[i];
+        any |= engine->pad_current[0][i];
+        anyp |= engine->pad_previous[0][i];
       }
     }
     for(int i = 2; i < NKEY; i++){
@@ -104,7 +104,7 @@ static int engine_input_key(void *userdata,int vk, int edge){
   int key_p = event_key_state_for_vk(engine,vk, 1);
   if(!engine_pad_reserved_for_pad_api(engine)){
     int b = vk_to_pad(engine,vk);
-    if(b >= 0){ pad_c=engine->pad_current[b]; pad_p=engine->pad_previous[b]; }
+    if(b >= 0){ pad_c=engine->pad_current[0][b]; pad_p=engine->pad_previous[0][b]; }
   }
   /* A simulated press cancelled by its own frame's release is not readable in that frame: the
    * carry hands it to the following one, where the key events run. Reading it in both frames
@@ -291,13 +291,14 @@ static int gp_to_pad(AnygmEngine *engine,int gp){
     default: return -1;
   }
 }
-static int engine_input_gamepad(void *userdata,int button, int edge){
+static int engine_input_gamepad(void *userdata,int device,int button, int edge){
   AnygmEngine *engine=userdata;
+  if(device < 0 || device >= (int)ANYGM_MAX_GAMEPADS) return 0;
   int b = gp_to_pad(engine,button); if(b < 0) return 0;
-  int cur = engine->pad_current[b], prev = engine->pad_previous[b];
+  int cur = engine->pad_current[device][b], prev = engine->pad_previous[device][b];
   if(anygm_host_development_setting(&engine->host,"GML_DBG_GP_STATE")){
-    engine_logf(engine,ANYGM_LOG_DEBUG,"[gpstate] f%ld button=%d pad=%d edge=%d cur=%d prev=%d\n",
-            engine->vm.frame,button,b,edge,cur,prev);
+    engine_logf(engine,ANYGM_LOG_DEBUG,"[gpstate] f%ld device=%d button=%d pad=%d edge=%d cur=%d prev=%d\n",
+            engine->vm.frame,device,button,b,edge,cur,prev);
   }
   switch(edge){ case 1: return cur && !prev; case 2: return !cur && prev; default: return cur; }
 }
@@ -313,8 +314,8 @@ static int gp_axis_slot(int axis){
 static double engine_input_gamepad_axis(void *userdata,int device, int axis){
   AnygmEngine *engine=userdata;
   int slot = gp_axis_slot(axis);
-  if(device != 0 || slot < 0) return 0.0;
-  return engine->axis_current[slot];
+  if(device < 0 || device >= (int)ANYGM_MAX_GAMEPADS || slot < 0) return 0.0;
+  return engine->axis_current[device][slot];
 }
 
 /* ---- mouse/pointer: absolute pointer plus relative mouse deltas and buttons. Position is kept in
@@ -459,9 +460,13 @@ static int core_opt_gamepad_connected(AnygmEngine *engine) {
 }
 
 
+/* Ownership decides whether the pad surface is enabled; the host count selects additional
+ * devices. Port zero remains available when an older host reports no count. */
 static int engine_input_gamepad_connected(void *userdata,int device) {
   AnygmEngine *engine=userdata;
-  return device == 0 && core_opt_gamepad_connected(engine);
+  if(device < 0 || device >= (int)ANYGM_MAX_GAMEPADS) return 0;
+  if(!core_opt_gamepad_connected(engine)) return 0;
+  return device == 0 || (unsigned)device < engine->input.connected_gamepads;
 }
 static int engine_input_gamepad_device_count(void *userdata) {
   (void)userdata;

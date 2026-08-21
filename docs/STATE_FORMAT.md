@@ -9,9 +9,14 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `12`. It is the format transported by
+The current AnyGM save-state schema is `13`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `13` widens the serialized pad state from one row to one per supported pad port. The held
+and previous button rows are what edge detection resumes from, so a state written when a single row
+existed describes a different shape and is refused rather than read as the first player's. Nothing
+else in the section moves, and no legacy reader is added.
 
 Schema `12` prefixes the root core section with two fixed-size, zero-padded launch fields: the
 portable path of the active internal replacement relative to the launched distribution, and its

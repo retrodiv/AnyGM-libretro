@@ -193,7 +193,9 @@ static int classic_joystick_event_fires(GmlVM *vm,int s){
   } else if(s>=36 && s<=43){
     device=1; control=32768+(s-35);
   }
-  return device==0 && gml_input_gamepad(vm,control,0);
+  /* The classic joystick sub-events name their device: 16..28 are joystick one and 31..43 are
+   * joystick two. The second one used to answer nothing because only one pad existed. */
+  return gml_input_gamepad(vm,device,control,0);
 }
 static int mouse_event_fires(GmlVM *vm,int s,int hov,int was,int held,int pressed,int released,int wheel){
   switch(s){

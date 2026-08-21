@@ -937,10 +937,18 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   memcpy(engine->pad_previous, engine->pad_current, sizeof(engine->pad_current));
   memcpy(engine->key_previous, engine->key_current, sizeof(engine->key_current));
   memcpy(engine->axis_previous, engine->axis_current, sizeof(engine->axis_current));
-  for (int b = 0; b < NPAD; b++)
-    engine->pad_current[b]=engine->input.gamepad_buttons[0][b]?1:0;
+  /* Copy every reported host port and leave all remaining rows at rest. */
+  unsigned pads=engine->input.connected_gamepads;
+  if(pads>ANYGM_MAX_GAMEPADS) pads=ANYGM_MAX_GAMEPADS;
+  for(unsigned device=0;device<ANYGM_MAX_GAMEPADS;device++){
+    for (int b = 0; b < NPAD; b++)
+      engine->pad_current[device][b]=
+        device<pads && engine->input.gamepad_buttons[device][b] ? 1 : 0;
+    for(int axis=0;axis<4;axis++)
+      engine->axis_current[device][axis]=
+        device<pads ? engine->input.gamepad_axes[device][axis] : 0.0;
+  }
   engine_input_poll_keyboard(engine);
-  for(int axis=0;axis<4;axis++) engine->axis_current[axis]=engine->input.gamepad_axes[0][axis];
   engine_input_poll_mouse(engine);
   engine_input_release_cleared_keys(engine);   /* a cleared key comes back once it has been up */
   int room_before_step = engine->vm.room_index;
@@ -982,7 +990,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
     engine->mouse_wheel = 0;
   }
   if (anygm_host_development_setting(&engine->host,"GML_DBG_PAD")) { engine->diagnostics.pad_frame++;
-    unsigned bits = 0; for (int b = 0; b < NPAD; b++) if (engine->pad_current[b]) bits |= 1u << b;
+    unsigned bits = 0; for (int b = 0; b < NPAD; b++) if (engine->pad_current[0][b]) bits |= 1u << b;
     if (bits) engine_logf(engine,ANYGM_LOG_DEBUG, "[pad] f%d bits=%04x\n", engine->diagnostics.pad_frame, bits); }
   if(prof){ t1 = profile_now_ms(engine); engine->profile.input_ms += t1 - t0; t0 = t1; }
   engine->state_just_loaded = 0;

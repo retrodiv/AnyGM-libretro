@@ -136,7 +136,7 @@ Extension binary calls are imported as self-describing encoded library/symbol
 aliases. Runtime support is selected from those names, never from a game title
 or hardcoded content hash, and native DLLs are not loaded. Portable Saudio, SGAudio, SuperSound,
 BGM, GMFMODSimple, FAudioGMS, and `caster_*` playback reads bounded WAV/OGG/MP3 assets through the host VFS;
-the pxwrap adapter renders Pxtone projects in memory, GMXInput and joydll map to the host gamepad,
+the pxwrap adapter renders Pxtone projects in memory, GMXInput and joydll map to the host gamepads,
 and nsfs plus color-key operations remain confined to the content/save VFS overlay. The portable
 Wwise adapter parses bounded sound banks, reconstructs embedded Wwise Vorbis media in memory, and
 supports event play/stop. Random, switch, and music containers choose the first reachable media

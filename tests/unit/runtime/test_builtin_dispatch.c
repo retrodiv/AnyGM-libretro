@@ -33,9 +33,9 @@ static int gamepad_fixture_connected(void *userdata,int device){
   return device==0;
 }
 
-static int gamepad_fixture_button(void *userdata,int button,int edge){
+static int gamepad_fixture_button(void *userdata,int device,int button,int edge){
   (void)userdata;
-  return button==32771 && edge==0;
+  return device==0 && button==32771 && edge==0;
 }
 
 static double gamepad_fixture_axis(void *userdata,int device,int axis){
@@ -769,14 +769,79 @@ static int gamepad_axis_orientation_contract(GmlVM *vm){
 
 /* Externally bound joystick symbols and named builtins must read the same host pad. The hat
  * surface uses clockwise compass degrees and -1 for centred rather than an SDL bitmask. */
-static int joydll_pad_button(void *userdata,int button,int edge){
+static int joydll_pad_button(void *userdata,int device,int button,int edge){
   (void)userdata;
-  if(edge!=0) return 0;
+  if(edge!=0 || device!=0) return 0;
   return button==32784 || button==32769;   /* gp_padr and gp_face1 held */
 }
 
+/* Two pads, holding different things, so an answer that came from the wrong one is visible rather
+ * than merely unproven: player one holds right and the bottom face button, player two holds left
+ * and the top one. A runtime that ignores the device answers player one for both. */
+static int two_pads_connected(void *userdata,int device){
+  (void)userdata;
+  return device==0 || device==1;
+}
+
+static int two_pads_button(void *userdata,int device,int button,int edge){
+  (void)userdata;
+  if(edge!=0) return 0;
+  if(device==0) return button==32784 || button==32769;   /* right, face1 */
+  if(device==1) return button==32783 || button==32772;   /* left,  face4 */
+  return 0;
+}
+
+static double two_pads_axis(void *userdata,int device,int axis){
+  (void)userdata;
+  if(device==1 && axis==32785) return -0.5;
+  return 0.0;
+}
+
+static int a_second_pad_is_its_own_device(GmlVM *vm){
+  int (*saved_button)(void*,int,int,int)=vm->input.gamepad;
+  int (*saved_connected)(void*,int)=vm->input.gamepad_connected;
+  double (*saved_axis)(void*,int,int)=vm->input.gamepad_axis;
+  vm->input.gamepad=two_pads_button;
+  vm->input.gamepad_connected=two_pads_connected;
+  vm->input.gamepad_axis=two_pads_axis;
+  GmlVal p1_right[]={vreal(0),vreal(32784)};
+  GmlVal p2_right[]={vreal(1),vreal(32784)};
+  GmlVal p2_left[] ={vreal(1),vreal(32783)};
+  GmlVal p1_face1[]={vreal(0),vreal(32769)};
+  GmlVal p2_face4[]={vreal(1),vreal(32772)};
+  GmlVal joy_p1[]={vreal(0),vreal(0)};
+  GmlVal joy_p2[]={vreal(1),vreal(0)};
+  GmlVal stick_p2[]={vreal(1),vreal(32785)};
+  GmlVal one=vreal(1), two=vreal(2);
+  int ok=expect_real("gamepad_button_check reads player one's own pad",
+                     gml_builtin_call(vm,"gamepad_button_check",p1_right,2),1) &&
+         expect_real("player two is not holding what player one holds",
+                     gml_builtin_call(vm,"gamepad_button_check",p2_right,2),0) &&
+         expect_real("player two's own direction reaches player two",
+                     gml_builtin_call(vm,"gamepad_button_check",p2_left,2),1) &&
+         expect_real("player one's face button stays player one's",
+                     gml_builtin_call(vm,"gamepad_button_check",p1_face1,2),1) &&
+         expect_real("player two's face button reaches player two",
+                     gml_builtin_call(vm,"gamepad_button_check",p2_face4,2),1) &&
+         expect_real("the extension hat answers each pad separately",
+                     gml_builtin_call(vm,"joy_hat",joy_p1,2),90) &&
+         expect_real("and answers the second pad its own direction",
+                     gml_builtin_call(vm,"joy_hat",joy_p2,2),270) &&
+         expect_real("gamepad_axis_value reads the second pad's stick",
+                     gml_builtin_call(vm,"gamepad_axis_value",stick_p2,2),-0.5) &&
+         /* The legacy joystick family numbers from one, so joystick 2 is device 1. */
+         expect_real("joystick_xpos follows the one-based joystick number",
+                     gml_builtin_call(vm,"joystick_xpos",&two,1),-1) &&
+         expect_real("and joystick 1 still reads the first pad",
+                     gml_builtin_call(vm,"joystick_xpos",&one,1),1);
+  vm->input.gamepad=saved_button;
+  vm->input.gamepad_connected=saved_connected;
+  vm->input.gamepad_axis=saved_axis;
+  return ok;
+}
+
 static int external_joydll_binding_reaches_the_pad(GmlVM *vm){
-  int (*saved_button)(void*,int,int)=vm->input.gamepad;
+  int (*saved_button)(void*,int,int,int)=vm->input.gamepad;
   int (*saved_connected)(void*,int)=vm->input.gamepad_connected;
   vm->input.gamepad=joydll_pad_button;
   vm->input.gamepad_connected=gamepad_fixture_connected;
@@ -825,15 +890,15 @@ static double gamepad_dpad_only_axis(void *userdata,int device,int axis){
   return 0.0;
 }
 
-static int gamepad_dpad_only_button(void *userdata,int button,int edge){
+static int gamepad_dpad_only_button(void *userdata,int device,int button,int edge){
   (void)userdata;
-  if(edge!=0) return 0;
+  if(edge!=0 || device!=0) return 0;
   return button==32784 || button==32782;   /* gp_padr and gp_padd held */
 }
 
 static int digital_pad_reaches_axis_readers(GmlVM *vm){
   double (*saved_axis)(void*,int,int)=vm->input.gamepad_axis;
-  int (*saved_button)(void*,int,int)=vm->input.gamepad;
+  int (*saved_button)(void*,int,int,int)=vm->input.gamepad;
   int (*saved_connected)(void*,int)=vm->input.gamepad_connected;
   vm->input.gamepad_axis=gamepad_dpad_only_axis;
   vm->input.gamepad=gamepad_dpad_only_button;
@@ -962,6 +1027,7 @@ int main(void){
          portable_service_contracts(&vm) &&
          portable_joystick_contract(&vm) &&
          external_joydll_binding_reaches_the_pad(&vm) &&
+         a_second_pad_is_its_own_device(&vm) &&
          gamepad_axis_orientation_contract(&vm) &&
          digital_pad_reaches_axis_readers(&vm) &&
          layer_instance_move(&vm) &&

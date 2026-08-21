@@ -126,7 +126,7 @@ typedef struct {
   void (*key_clear)(void *userdata,int key);
   void (*key_press)(void *userdata,int key);
   void (*key_release)(void *userdata,int key);
-  int (*gamepad)(void *userdata,int button,int edge);
+  int (*gamepad)(void *userdata,int device,int button,int edge);
   int (*gamepad_connected)(void *userdata,int device);
   int (*gamepad_device_count)(void *userdata);
   double (*gamepad_axis)(void *userdata,int device,int axis);
@@ -470,7 +470,7 @@ int     gml_input_key(GmlVM *vm,int key,int edge);
 void    gml_input_key_clear(GmlVM *vm,int key);
 void    gml_input_key_press(GmlVM *vm,int key);
 void    gml_input_key_release(GmlVM *vm,int key);
-int     gml_input_gamepad(GmlVM *vm,int button,int edge);
+int     gml_input_gamepad(GmlVM *vm,int device,int button,int edge);
 int     gml_input_gamepad_connected(GmlVM *vm,int device);
 int     gml_input_gamepad_device_count(GmlVM *vm);
 double  gml_input_gamepad_axis(GmlVM *vm,int device,int axis);

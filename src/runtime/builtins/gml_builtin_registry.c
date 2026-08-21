@@ -572,20 +572,20 @@ static GmlVal gml_builtin_call_fast_id_impl(GmlVM *vm, int id, const char *nm, G
       return vreal(0);
     case BID_GAMEPAD_BUTTON_CHECK:
       if(gp_debug_on(vm)){ 
-        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gp] f%ld gamepad_button_check n=%d a0=%.0f a1=%.0f -> %d\n",vm->frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad(vm,(int)N(a,n,1),0)); }
-      return vreal(gml_input_gamepad(vm,(int)N(a,n,1),0));
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gp] f%ld gamepad_button_check n=%d a0=%.0f a1=%.0f -> %d\n",vm->frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),0)); }
+      return vreal(gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),0));
     case BID_GAMEPAD_BUTTON_VALUE:
       if(gp_debug_on(vm)){ 
-        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gp] f%ld gamepad_button_value n=%d a0=%.0f a1=%.0f -> %d\n",vm->frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad(vm,(int)N(a,n,1),0)); }
-      return vreal(gml_input_gamepad(vm,(int)N(a,n,1),0) ? 1.0 : 0.0);
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gp] f%ld gamepad_button_value n=%d a0=%.0f a1=%.0f -> %d\n",vm->frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),0)); }
+      return vreal(gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),0) ? 1.0 : 0.0);
     case BID_GAMEPAD_BUTTON_CHECK_PRESSED:
       if(gp_debug_on(vm)){ 
-        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gp] f%ld gamepad_button_check_pressed n=%d a0=%.0f a1=%.0f -> %d\n",vm->frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad(vm,(int)N(a,n,1),1)); }
-      return vreal(gml_input_gamepad(vm,(int)N(a,n,1),1));
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gp] f%ld gamepad_button_check_pressed n=%d a0=%.0f a1=%.0f -> %d\n",vm->frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),1)); }
+      return vreal(gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),1));
     case BID_GAMEPAD_BUTTON_CHECK_RELEASED:
       if(gp_debug_on(vm)){ 
-        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gp] f%ld gamepad_button_check_released n=%d a0=%.0f a1=%.0f -> %d\n",vm->frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad(vm,(int)N(a,n,1),2)); }
-      return vreal(gml_input_gamepad(vm,(int)N(a,n,1),2));
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gp] f%ld gamepad_button_check_released n=%d a0=%.0f a1=%.0f -> %d\n",vm->frame,n,N(a,n,0),N(a,n,1),gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),2)); }
+      return vreal(gml_input_gamepad(vm,(int)N(a,n,0),(int)N(a,n,1),2));
     case BID_GAMEPAD_IS_CONNECTED:
       return vreal(gml_input_gamepad_connected(vm,(int)N(a,n,0)));
     case BID_GAMEPAD_IS_SUPPORTED:

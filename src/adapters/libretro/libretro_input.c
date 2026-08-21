@@ -90,18 +90,25 @@ void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t heig
   input->pointer_y=-1;
   if(g_libretro.input_poll) g_libretro.input_poll();
 
-  input->connected_gamepads=g_libretro.config.gamepad_connected?1u:0u;
-  for(unsigned button=0;button<ANYGM_MAX_GAMEPAD_BUTTONS;button++)
-    input->gamepad_buttons[0][button]=
-        input_state(0,RETRO_DEVICE_JOYPAD,0,button)?1u:0u;
-  input->gamepad_axes[0][0]=normalized_axis(input_state(
-      0,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_LEFT,RETRO_DEVICE_ID_ANALOG_X));
-  input->gamepad_axes[0][1]=normalized_axis(input_state(
-      0,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_LEFT,RETRO_DEVICE_ID_ANALOG_Y));
-  input->gamepad_axes[0][2]=normalized_axis(input_state(
-      0,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_X));
-  input->gamepad_axes[0][3]=normalized_axis(input_state(
-      0,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_Y));
+  /* Port occupancy is not observable: announced idle and absent ports both report zero input.
+   * Use the configured count, defaulting to one, and snapshot each stated port independently. */
+  unsigned ports=g_libretro.gamepad_ports;
+  if(ports<1u) ports=1u;
+  if(ports>ANYGM_MAX_GAMEPADS) ports=ANYGM_MAX_GAMEPADS;
+  input->connected_gamepads=g_libretro.config.gamepad_connected?ports:0u;
+  for(unsigned port=0;port<ports;port++){
+    for(unsigned button=0;button<ANYGM_MAX_GAMEPAD_BUTTONS;button++)
+      input->gamepad_buttons[port][button]=
+          input_state(port,RETRO_DEVICE_JOYPAD,0,button)?1u:0u;
+    input->gamepad_axes[port][0]=normalized_axis(input_state(
+        port,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_LEFT,RETRO_DEVICE_ID_ANALOG_X));
+    input->gamepad_axes[port][1]=normalized_axis(input_state(
+        port,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_LEFT,RETRO_DEVICE_ID_ANALOG_Y));
+    input->gamepad_axes[port][2]=normalized_axis(input_state(
+        port,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_X));
+    input->gamepad_axes[port][3]=normalized_axis(input_state(
+        port,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_Y));
+  }
 
   /* Reading the keyboard device directly returns every key the hardware reports, including the one
    * the frontend just used to open its menu, rewind, or write a state. Content that binds the same

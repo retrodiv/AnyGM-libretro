@@ -220,7 +220,7 @@ GmlSoftware3D *graphics_state_for_vm(GmlVM *vm);
 /* Registry-owner crossing operations. */
 void gp_deadzone_set(GmlVM *vm, int dev, double dz);
 double gp_axis_value_filtered(GmlVM *vm, int dev, int ax);
-double gp_axis_digital_fallback(GmlVM *vm, int ax);
+double gp_axis_digital_fallback(GmlVM *vm, int device, int ax);
 int gp_debug_on(GmlVM *vm);
 GmlVal builtin_call_impl(GmlVM *vm, const char *nm, GmlVal *a, int n);
 

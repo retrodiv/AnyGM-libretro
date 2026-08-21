@@ -1037,8 +1037,8 @@ int aspect_draw_full_view_gen(AnygmEngine *engine,const GmlInstance *in, const c
 }
 /* Fresh press this frame from either the RetroPad button or a keyboard key. */
 static int menu_edge(AnygmEngine *engine,int pad, int vk){
-  int cur  = engine->pad_current[pad]  | ((vk>=0&&vk<NKEY)?(engine->key_current[vk]|engine->hardware_key_current[vk]|engine->event_vk_current[vk]):0);
-  int prev = engine->pad_previous[pad] | ((vk>=0&&vk<NKEY)?(engine->key_previous[vk]|engine->hardware_key_previous[vk]|engine->event_vk_previous[vk]):0);
+  int cur  = engine->pad_current[0][pad]  | ((vk>=0&&vk<NKEY)?(engine->key_current[vk]|engine->hardware_key_current[vk]|engine->event_vk_current[vk]):0);
+  int prev = engine->pad_previous[0][pad] | ((vk>=0&&vk<NKEY)?(engine->key_previous[vk]|engine->hardware_key_previous[vk]|engine->event_vk_previous[vk]):0);
   return cur && !prev;
 }
 static void menu_set_target(AnygmEngine *engine,const MenuItem *it, double v){
@@ -1114,7 +1114,7 @@ void room_skip_hook(AnygmEngine *engine){
   if(engine->config.room_skip_button==1u) btn=ANYGM_PAD_SELECT;
   else if(engine->config.room_skip_button==2u) btn=ANYGM_PAD_START;
   if(btn < 0) return;
-  if(engine->pad_current[btn] && !engine->pad_previous[btn] && engine->vm.pending_room < 0){
+  if(engine->pad_current[0][btn] && !engine->pad_previous[0][btn] && engine->vm.pending_room < 0){
     int room = engine->vm.room_index, ord = -1;
     for(int i=0;i<engine->win.n_room_order;i++) if((int)engine->win.room_order[i]==room){ ord=i; break; }
     if(ord>=0 && ord+1<engine->win.n_room_order) gml_vm_goto_room_order(&engine->vm, ord+1);
@@ -1156,9 +1156,9 @@ void introskip_hook(AnygmEngine *engine){
   int room = engine->vm.room_index;
   if(room < 0 || room >= 1024) return;
   if(!(engine->introskip_set[room>>3] & (1u<<(room&7)))) return;   /* not a listed intro room */
-  int a = engine->pad_current[ANYGM_PAD_FACE_RIGHT] && !engine->pad_previous[ANYGM_PAD_FACE_RIGHT];
-  int b = engine->pad_current[ANYGM_PAD_FACE_BOTTOM] && !engine->pad_previous[ANYGM_PAD_FACE_BOTTOM];
-  int start = engine->pad_current[ANYGM_PAD_START] && !engine->pad_previous[ANYGM_PAD_START];
+  int a = engine->pad_current[0][ANYGM_PAD_FACE_RIGHT] && !engine->pad_previous[0][ANYGM_PAD_FACE_RIGHT];
+  int b = engine->pad_current[0][ANYGM_PAD_FACE_BOTTOM] && !engine->pad_previous[0][ANYGM_PAD_FACE_BOTTOM];
+  int start = engine->pad_current[0][ANYGM_PAD_START] && !engine->pad_previous[0][ANYGM_PAD_START];
   if((a||b||start) && engine->vm.pending_room < 0){
     int ord=-1; for(int i=0;i<engine->win.n_room_order;i++) if((int)engine->win.room_order[i]==room){ ord=i; break; }
     if(ord>=0 && ord+1<engine->win.n_room_order) gml_vm_goto_room_order(&engine->vm, ord+1);
