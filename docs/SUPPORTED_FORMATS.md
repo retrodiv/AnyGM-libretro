@@ -51,6 +51,14 @@ join the save-state identity, so a state saved with them loads only while
 they are active; content without directives keeps its state identity
 unchanged.
 
+`call|script_name` invokes the named zero-argument GMS script exactly once,
+after the first Step of a fresh content load. The name is the script asset
+name, not a CODE entry name: `call|configure_input` resolves only
+`gml_Script_configure_input`. It runs with an isolated scratch instance so it
+does not borrow an active game's instance. Restoring a state marks the call as
+already made: its effects are represented by the restored state and must not
+run a second time.
+
 A `?gameres` directive applies only while *Render at game resolution* is selected. It declares an inner logical raster for presentation values that the content scales to a separate output raster. Each scoped directive captures the previous value before its first write and restores it when the selection closes. This includes mutable presentation fields such as `@window_w`, `@window_h`, `@application_w`, and `@application_h`, and also permits a scoped instance-variable or surface-resize directive when its target has one meaningful previous value. Room-owned `view_*` and `background_*` arrays are recaptured on room entry, and their directives settle before the frame's output geometry is published.
 
 ```

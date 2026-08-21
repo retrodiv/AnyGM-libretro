@@ -1006,6 +1006,44 @@ static int chained_override_policy(void){
   return ok;
 }
 
+static int anchor_script_override_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_anchor_script_content_create(&fixture)){
+    fputs("anchor script override: fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK &&
+         anygm_set_runtime_override(engine,0,1u,"call|anchor_call")==ANYGM_OK;
+  for(int frame=0;ok && frame<3;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  double calls=ok?gml_global_num(&engine->vm,"fixture_anchor_calls"):-1;
+  if(calls!=1){
+    fprintf(stderr,"anchor script override: called %.0f times, expected one\n",calls);
+    ok=0;
+  }
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int framebuffer_retention_case(
     int (*create_fixture)(AnygmSyntheticContent *),const char *label){
   AnygmSyntheticContent fixture;
@@ -1884,6 +1922,8 @@ int main(int argc,char **argv){
       return alarm_pause_policy()?0:1;
     if(!strcmp(argv[2],"chained_override"))
       return chained_override_policy()?0:1;
+    if(!strcmp(argv[2],"anchor_script_override"))
+      return anchor_script_override_policy()?0:1;
     if(!strcmp(argv[2],"first_generation_dynamic_camera"))
       return first_generation_dynamic_camera_policy()?0:1;
     if(!strcmp(argv[2],"explicit_window_screen_stage"))
@@ -1926,6 +1966,7 @@ int main(int argc,char **argv){
           "application_surface_port_scale|"
           "first_generation_application_surface|"
           "game_restart|"
+          "anchor_script_override|"
           "first_generation_dynamic_camera|"
           "explicit_window_screen_stage|"
           "first_generation_window_raster|"
@@ -1953,6 +1994,7 @@ int main(int argc,char **argv){
   if(!first_generation_oversized_gui_policy()) return 1;
   if(!draw_schedule_policy()) return 1;
   if(!chained_override_policy()) return 1;
+  if(!anchor_script_override_policy()) return 1;
   if(!background_color_policy()) return 1;
   if(!framebuffer_retention_policy()) return 1;
   if(!clear_view_background_policy()) return 1;

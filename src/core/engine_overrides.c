@@ -63,6 +63,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   $name=V                     freeze global SCALAR          (GMS scalar reads; avoids V_ARR->0)
  *   obj:var=V | obj:var[i]=V    freeze a numeric var on every instance of object `obj`
  *   alarmpause|obj|i            hold alarm i still on every instance of `obj` and its descendants
+ *   call|script                 invoke a zero-argument content script once after the first Step
  *   camera[LIST]:field=V        write x, y, width, or height on selected live camera handles
  *   surface|obj|var|W|H         resize surfaces named by an instance variable
  *   monitorview|H|MIN|MAX       declare a monitor-derived logical view (ratios use W:H)
@@ -259,6 +260,13 @@ static void cheat_parse(const char *code, CheatAct *a){
     a->idx=atoi(s); while(*s>='0' && *s<='9') s++;
     if(*s || a->idx<0 || a->idx>=GML_ALARMS){ a->kind=CK_NONE; return; }
     a->kind=CK_ALARM_PAUSE; return;
+  }
+  if(!strncmp(s,"call|",5)){
+    s+=5; const char *name=s; while(*s && CHEAT_NAMECH(*s)) s++;
+    size_t length=(size_t)(s-name);
+    if(length==0 || length>=sizeof a->obj || *s){ a->kind=CK_NONE; return; }
+    memcpy(a->obj,name,length); a->obj[length]=0;
+    a->kind=CK_SCRIPT; return;
   }
   if(!strncmp(s,"surface|",8)){
     s+=8; const char *bar=strchr(s,'|');
@@ -836,6 +844,11 @@ static void cheat_sticky_pass(AnygmEngine *engine,CheatSlot *arr, int n, int cha
     if(room_owned_only && !cheat_slot_is_room_owned(a)) continue;
     int applies=channel_on && slot->enabled && cheat_scope_ok(engine,a,0);
     if(applies){
+      if(a->kind==CK_SCRIPT){
+        if(!slot->applied) (void)gml_vm_run_script_named(&engine->vm,a->obj);
+        slot->applied=1;
+        continue;
+      }
       /* Capture once per content load, before the first write: what is being preserved is the
        * value the content itself computed, not one an earlier arming already replaced. */
       if(!slot->saved_valid) cheat_slot_capture(engine,slot);
@@ -933,9 +946,11 @@ void engine_overrides_prepare_state_load(AnygmEngine *engine){
 void engine_overrides_note_state_load(AnygmEngine *engine){
   if(!engine) return;
   for(int i=0;i<engine->cheat_count;i++)
-    if(engine->cheats[i].saved_valid) engine->cheats[i].applied=1;
+    if(engine->cheats[i].saved_valid || engine->cheats[i].act.kind==CK_SCRIPT)
+      engine->cheats[i].applied=1;
   for(int i=0;i<engine->boot_cheat_count;i++)
-    if(engine->boot_cheats[i].saved_valid) engine->boot_cheats[i].applied=1;
+    if(engine->boot_cheats[i].saved_valid || engine->boot_cheats[i].act.kind==CK_SCRIPT)
+      engine->boot_cheats[i].applied=1;
   engine_overrides_presentation_apply(engine);
 }
 static void cheat_monitor_pass(AnygmEngine *engine,const CheatSlot *slots,int count){

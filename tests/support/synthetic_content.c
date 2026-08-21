@@ -56,14 +56,15 @@ static unsigned synthetic_path_hash(const char *path){
   return hash;
 }
 
-int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
+static int synthetic_content_create(AnygmSyntheticContent *fixture,int anchor_script){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
 
-  char startup[192],step[192];
+  char startup[192],step[192],anchor_call[192];
   snprintf(startup,sizeof startup,"%s/startup.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/step.gml",fixture->directory);
+  snprintf(anchor_call,sizeof anchor_call,"%s/anchor-call.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
   if(!write_text(startup,
                  "global.fixture_counter = 0;\n"
@@ -73,7 +74,8 @@ int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
      !write_text(step,
                  "global.fixture_counter += 1;\n"
                  "global.fixture_clock = current_time;\n"
-                 "if (keyboard_check_pressed(vk_anykey)) global.fixture_presses += 1;\n")){
+                 "if (keyboard_check_pressed(vk_anykey)) global.fixture_presses += 1;\n") ||
+     (anchor_script && !write_text(anchor_call,"global.fixture_anchor_calls += 1;\n"))){
     anygm_synthetic_content_destroy(fixture);
     return 0;
   }
@@ -99,6 +101,13 @@ int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
   project.n_rooms=project.cap_rooms=1;
   project.room_order=&room_order;
   project.n_room_order=1;
+  GmlcScript script={0};
+  if(anchor_script){
+    script.id=script.name=(char *)"anchor_call";
+    script.source_path=anchor_call;
+    project.scripts=&script;
+    project.n_scripts=project.cap_scripts=1;
+  }
 
   object.id=object.name=(char *)"obj_fixture";
   object.sprite_id=object.mask_id=object.parent_id=-1;
@@ -129,6 +138,12 @@ int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
     return 0;
   }
   return 1;
+}
+int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_content_create(fixture,0);
+}
+int anygm_synthetic_anchor_script_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_content_create(fixture,1);
 }
 
 static int synthetic_classic_present_content_create(AnygmSyntheticContent *fixture,int compositing){

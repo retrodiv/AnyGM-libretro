@@ -13,6 +13,7 @@ typedef struct AnygmSyntheticContent {
 } AnygmSyntheticContent;
 
 int anygm_synthetic_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_anchor_script_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_simulated_key_content_create(AnygmSyntheticContent *fixture);
 /* One synthetic instance presses and releases a key in one Step and owns
  * the matching Key Press event. The event records the Step count observed. */
