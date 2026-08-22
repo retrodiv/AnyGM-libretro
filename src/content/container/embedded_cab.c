@@ -811,9 +811,16 @@ static int cab_cache_reuse(const AnygmContentRouter *router,const char *root,
   if(ok) ok=cab_cache_walk(router,root,"",&manifest,&files,0) && files==manifest.count;
   if(ok){
     char selected[1536];
-    ok=cab_join(selected,sizeof selected,root,manifest.payload) &&
-       snprintf(payload,payload_size,"%s",selected)<(int)payload_size &&
-       snprintf(asset_root,asset_root_size,"%s",root)<(int)asset_root_size;
+    ok=cab_join(selected,sizeof selected,root,manifest.payload);
+    if(ok){
+      size_t selected_size=strlen(selected)+1u;
+      size_t root_size=strlen(root)+1u;
+      if(selected_size>payload_size || root_size>asset_root_size) ok=-1;
+      else{
+        memcpy(payload,selected,selected_size);
+        memcpy(asset_root,root,root_size);
+      }
+    }
   }
   cab_manifest_free(&manifest);
   return ok;
@@ -840,8 +847,9 @@ int anygm_embedded_cab_extract(const AnygmContentRouter *router,const char *sour
               (unsigned long long)cab->source_hash)>=(int)sizeof cache ||
      snprintf(staging,sizeof staging,"%s.staging-%llx",cache,
               (unsigned long long)(uintptr_t)router)>=(int)sizeof staging) return 0;
-  if(cab_cache_reuse(router,cache,cab,payload_path,payload_path_size,
-                     asset_root,asset_root_size)){
+  int reuse=cab_cache_reuse(router,cache,cab,payload_path,payload_path_size,
+                            asset_root,asset_root_size);
+  if(reuse){
     if(!cab_source_matches(router,source_path,cab)){
       payload_path[0]=0;
       asset_root[0]=0;
@@ -849,6 +857,7 @@ int anygm_embedded_cab_extract(const AnygmContentRouter *router,const char *sour
               "cabinet: input changed before verified cache reuse");
       return 0;
     }
+    if(reuse<0) return 0;
     cab_log(router,ANYGM_CONTENT_LOG_INFO,"cabinet: reusing verified cache at %s",cache);
     return 1;
   }
@@ -933,6 +942,17 @@ int anygm_embedded_cab_extract(const AnygmContentRouter *router,const char *sour
     failure="source stability";
     ok=0;
   }
+  char selected[1536];
+  size_t selected_size=0,asset_root_result_size=0;
+  if(ok){
+    failure="result path capacity";
+    ok=cab_join(selected,sizeof selected,cache,manifest.payload);
+    if(ok){
+      selected_size=strlen(selected)+1u;
+      asset_root_result_size=strlen(cache)+1u;
+      ok=selected_size<=payload_path_size && asset_root_result_size<=asset_root_size;
+    }
+  }
   uint8_t *marker=NULL; size_t marker_size=0;
   char marker_path[1536];
   if(ok){
@@ -954,13 +974,10 @@ int anygm_embedded_cab_extract(const AnygmContentRouter *router,const char *sour
     cab_manifest_free(&seen);
     return 0;
   }
-  char selected[1536];
-  ok=cab_join(selected,sizeof selected,cache,manifest.payload) &&
-     snprintf(payload_path,payload_path_size,"%s",selected)<(int)payload_path_size &&
-     snprintf(asset_root,asset_root_size,"%s",cache)<(int)asset_root_size;
+  memcpy(payload_path,selected,selected_size);
+  memcpy(asset_root,cache,asset_root_result_size);
   cab_manifest_free(&manifest);
   cab_manifest_free(&seen);
-  if(!ok) return 0;
   cab_log(router,ANYGM_CONTENT_LOG_INFO,"cabinet: extracted verified content to %s",cache);
   return 1;
 }

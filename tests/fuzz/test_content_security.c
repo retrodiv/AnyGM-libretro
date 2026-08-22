@@ -238,6 +238,13 @@ static size_t reject_write(void *userdata,void *file,const void *data,size_t siz
   return 0;
 }
 
+static size_t counted_reject_write_calls;
+
+static size_t counted_reject_write(void *userdata,void *file,const void *data,size_t size){
+  counted_reject_write_calls++;
+  return reject_write(userdata,file,data,size);
+}
+
 static AnygmFileWriteFn limited_write_original;
 static size_t limited_write_total;
 static size_t limited_write_limit;
@@ -605,6 +612,55 @@ static int embedded_cabinet_source_stability_case(const Buffer *executable){
   return ok?1:fail("a cold Cabinet cache was published under stale source bytes");
 }
 
+static int embedded_cabinet_result_capacity_case(const Buffer *executable){
+  const size_t source_size=256u*1024u;
+  uint8_t *source=calloc(source_size,1);
+  if(!source || executable->size>source_size){ free(source); return 0; }
+  memcpy(source,executable->data,executable->size);
+
+  AnygmMemoryVfs memory;
+  AnygmHostServices services;
+  AnygmContentRouter router={0};
+  AnygmEmbeddedCab cab={0};
+  char payload[1024]="sentinel",asset_root[1]={'x'};
+  anygm_memory_vfs_init(&memory,&services);
+  router.host=&services;
+  router.cache_directory="mem/cache";
+  int cold_ok=anygm_memory_vfs_add_file(&memory,"mem/source.exe",source,source_size) &&
+    anygm_embedded_cab_probe(&router,"mem/source.exe",&cab)==ANYGM_EMBEDDED_CAB_SUPPORTED &&
+    !anygm_embedded_cab_extract(&router,"mem/source.exe",&cab,payload,sizeof payload,
+                                asset_root,sizeof asset_root) &&
+    !payload[0] && !asset_root[0] && !memory_vfs_has_cabinet_transaction(&memory);
+  anygm_memory_vfs_destroy(&memory);
+
+  char expected_payload[1024],expected_root[1024];
+  payload[0]=0;
+  asset_root[0]='x';
+  anygm_memory_vfs_init(&memory,&services);
+  router.host=&services;
+  int warm_ok=anygm_memory_vfs_add_file(&memory,"mem/source.exe",source,source_size) &&
+    anygm_embedded_cab_probe(&router,"mem/source.exe",&cab)==ANYGM_EMBEDDED_CAB_SUPPORTED &&
+    anygm_embedded_cab_extract(&router,"mem/source.exe",&cab,expected_payload,
+                               sizeof expected_payload,expected_root,sizeof expected_root);
+  size_t warm_nodes=memory.node_count;
+  AnygmHostServices no_write=services;
+  no_write.file_write=counted_reject_write;
+  router.host=&no_write;
+  counted_reject_write_calls=0;
+  warm_ok=warm_ok &&
+    !anygm_embedded_cab_extract(&router,"mem/source.exe",&cab,payload,sizeof payload,
+                                asset_root,sizeof asset_root) &&
+    !payload[0] && !asset_root[0] && !counted_reject_write_calls &&
+    memory.node_count==warm_nodes;
+  anygm_memory_vfs_destroy(&memory);
+  free(source);
+
+  int ok=1;
+  if(!cold_ok) ok=fail("an undersized cold Cabinet result published output or cache state");
+  if(!warm_ok) ok=fail("an undersized warm Cabinet result rebuilt or published output");
+  return ok;
+}
+
 static int embedded_cabinet_entry_metadata_case(void){
   return anygm_embedded_cab_entry_allowed(ANYGM_EMBEDDED_CAB_ENTRY_REGULAR,0,0) &&
     !anygm_embedded_cab_entry_allowed(ANYGM_EMBEDDED_CAB_ENTRY_DIRECTORY,0,0) &&
@@ -655,6 +711,9 @@ static int embedded_lzx_cabinet_cases(const AnygmHostServices *services,const ch
     free(executable.data); free(cabinet); return 0;
   }
   if(!embedded_cabinet_source_stability_case(&executable)){
+    free(executable.data); free(cabinet); return 0;
+  }
+  if(!embedded_cabinet_result_capacity_case(&executable)){
     free(executable.data); free(cabinet); return 0;
   }
   if(!embedded_cabinet_entry_metadata_case()){
