@@ -20,6 +20,8 @@ or proprietary runtime components.
 - Path-backed content selected by the libretro extensions declared by the
   core: `win`, `droid`, `zip`, `port`, `apk`, `yyp`, `yyz`, `gmd`, `gmk`, `gm6`,
   `gm81`, and `exe`.
+- Single-runtime PE executables carrying one embedded, unfiltered LZX-21
+  Cabinet with a normalized Studio payload and external runtime assets.
 - Memory-backed content through the framework-neutral AnyGM API.
 
 Format recognition does not imply that every built-in operation used by every

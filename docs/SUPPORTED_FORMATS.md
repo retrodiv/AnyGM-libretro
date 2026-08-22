@@ -169,11 +169,16 @@ Path-backed routing recognizes the extensions declared by the core:
 `exe`. Extension recognition selects a parser; magic and structural validation
 still determine whether the input is accepted.
 
-An executable containing a structurally complete Microsoft Cabinet in one of its PE sections is
-reported as an unsupported container rather than as malformed content. The core only identifies
-this packaging layer: it does not extract or decompress Cabinet members. This classification uses
-the existing `ANYGM_ERROR_UNSUPPORTED` result because the input is well formed but its packaging
-layer is outside the core's content contract; malformed Cabinet-like bytes remain
+An `exe` may also carry one unfiltered Cabinet in a validated PE raw section. The supported
+single-runtime profile uses one Cabinet volume and LZX window 21, contains exactly one normalized
+Studio payload, and may contain regular external runtime assets. The core opens only the declared
+Cabinet subrange through host VFS callbacks, extracts it into a verified disposable cache, and
+passes the selected payload and asset root through the ordinary Studio loader and shared engine.
+It never runs the native executable or any executable member.
+
+Structurally complete multipart, continuation, or other compression profiles return
+`ANYGM_ERROR_UNSUPPORTED`. False signatures, ambiguity, truncation, malformed tables or blocks,
+checksum/decompression failures, unsafe members, and incomplete extraction return
 `ANYGM_ERROR_INVALID_CONTENT`.
 
 ZIP-compatible containers use bounded extraction, reject unsafe paths and

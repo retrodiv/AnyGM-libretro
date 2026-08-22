@@ -165,15 +165,13 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
         (plen>4 && !strcasecmp(origin+plen-4,".gm6")) ||
         (plen>4 && !strcasecmp(origin+plen-4,".exe"));
     char asset_root[1024];
-    if(!anygm_content_resolve_path(&router,source->path,content,sizeof content,
-                                   asset_root,sizeof asset_root,
-                                   prepared->content_overrides,
-                                   sizeof prepared->content_overrides)){
-      if(plen>4 && !strcasecmp(origin+plen-4,".exe") &&
-         anygm_content_executable_has_cabinet(&router,origin)){
+    AnygmContentResolveResult resolve_result=anygm_content_resolve_path(
+      &router,source->path,content,sizeof content,asset_root,sizeof asset_root,
+      prepared->content_overrides,sizeof prepared->content_overrides);
+    if(resolve_result!=ANYGM_CONTENT_RESOLVE_OK){
+      if(resolve_result==ANYGM_CONTENT_RESOLVE_UNSUPPORTED){
         engine_errorf(engine,ANYGM_ERROR_UNSUPPORTED,
-                      "Unsupported executable container: embedded Microsoft Cabinet (CAB) "
-                      "archive: %s",
+                      "Unsupported executable Cabinet profile: %s",
                       origin);
         return ANYGM_ERROR_UNSUPPORTED;
       }

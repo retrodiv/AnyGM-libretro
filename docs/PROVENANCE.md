@@ -3,6 +3,26 @@
 
 # Generated-data provenance
 
+## libarchive Cabinet read closure
+
+The bounded Cabinet reader retains the read-only CAB/LZX closure from the official
+[libarchive 3.8.9 release](https://www.libarchive.org/downloads/). The upstream
+copyright and license notices remain in the retained files and in
+`LICENSES/libarchive.txt`. `archive_entry.c` also carries its own UC Regents
+notice, which applies to the source copied within that file. Twenty-six
+upstream files are unmodified. `archive_util.c` preserves the upstream text
+and notices while excluding unused filename-opening and string-sort bodies
+from compilation. `archive_config_anygm.h` and `anygm_archive_windows_shim.c`
+are first-party MIT components, not upstream copies. The exact upstream
+archive, file-by-file comparisons, and local patch are recorded in external
+verification evidence; no external artifact fingerprints are embedded here.
+
+The checked-in LZX-21 Cabinet fixture contains only a first-party synthetic
+normalized payload and a neutral text asset. The archive was generated once
+with Cabinet compression and is consumed as immutable test data; production
+builds and tests do not invoke its generator. Its source-to-output comparison
+is retained in external verification evidence.
+
 Generated data checked into the core must be immutable at runtime, legally
 redistributable, and traceable without a proprietary content payload. Concrete
 artifact digests are intentionally kept in external verification records rather

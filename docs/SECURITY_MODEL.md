@@ -31,16 +31,17 @@ ambient process service.
 
 ## Content and archive limits
 
-ZIP-compatible routing enforces these compile-time limits:
+ZIP-compatible and embedded-Cabinet routing enforce these compile-time limits:
 
 | Resource | Limit |
 | --- | ---: |
 | Container bytes read into memory | 1 GiB |
+| Native executable scanned for embedded content | 1 GiB |
 | Central-directory entries | 32,768 |
 | Normalized member path | 511 bytes |
 | One extracted member | 1 GiB |
 | Total extracted bytes per level | 4 GiB |
-| Deflate expansion ratio after a small-output allowance | 1,000:1 |
+| Folder/archive expansion ratio after a 16 MiB allowance | 1,000:1 |
 | Nested archive levels | 4 |
 | Anchor (`.anygm`) file bytes | 4 KiB |
 
@@ -80,12 +81,17 @@ The reader validates the exact FORM extent, unique and complete chunks,
 record tables, string termination, code spans, room records, room order, and
 reference chains before returning a live object. Failed parsing releases all
 partial indexes and leaves ownership of the supplied memory with the caller.
-The fallback executable classifier accepts a Cabinet signature only inside a bounded PE section
-and only after validating its complete header extent, folder and file tables, and compressed-data
-block bounds. Overlapping PE section ranges are merged before searching, so no executable byte is
-searched more than once. Each file range must be contiguous, non-overlapping, and covered by its
-folder's declared uncompressed CFDATA extent. It uses that fact solely to return an
-unsupported-container diagnostic and never decodes Cabinet data.
+The embedded-Cabinet route accepts a signature only inside a bounded PE raw section and only after
+validating its complete header extent, folder and file tables, and CFDATA block bounds. Overlapping
+PE section ranges are merged before searching, so no executable byte is searched more than once.
+Each file range must be contiguous, non-overlapping, and covered by its folder's declared expanded
+extent. The supported single-volume LZX-21 profile is then read through callbacks whose logical
+zero and EOF are the validated Cabinet range; reads are at most 64 KiB and cannot reach adjacent PE
+bytes. Multipart, continuation, and other compression profiles are classified before extraction.
+The revision-selected adaptation interface is omitted from this unpublished
+history. Earlier snapshots with omitted implementations are not supported builds. Game Maker 6 archive entries, padding counts,
+compressed lengths, settings blobs, resource counts, and decoded integrity
+words are validated before the resource stream is accepted.
 Runtime bytecode decoding uses a bounded entry point. It retains the direct
 decoder when the maximum operand window is available and uses a zero-padded
 local window only at an input boundary, so the normal cached decode path does
@@ -148,6 +154,14 @@ explicit cache root. Cache markers are written completely to a temporary path
 and published with an atomic same-filesystem rename. The host should expose
 separate read and write capabilities where stronger confinement is required.
 Missing callbacks fail explicitly and never activate the test-only stdio VFS.
+
+Cabinet extraction additionally rejects native executable members, every non-regular entry,
+hardlinks, symlinks, special files, and exact or ASCII case-folded path collisions. Its cache key
+uses a streamed source-content hash. Warm reuse verifies schema and producer, source size/hash,
+Cabinet range/profile, selected payload, and the complete relative-path/size/content-hash manifest;
+missing, extra, stale, or corrupt files force regeneration. Members and the marker are flushed in
+an unpublished staging directory before one directory rename publishes them. Write, flush,
+decompression, marker, or rename failure removes staging and cannot publish a valid cache.
 
 ## State and cache
 

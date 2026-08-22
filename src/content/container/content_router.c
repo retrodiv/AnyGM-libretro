@@ -7,6 +7,7 @@
 #define _GNU_SOURCE 1
 #endif
 #include "content_router.h"
+#include "embedded_cab.h"
 #include "gmlc_package.h"
 #include "gmlc_classic_project.h"
 #include "gmlc_classic_import.h"
@@ -365,7 +366,7 @@ static int content_directory_remove_depth(const struct AnygmHostServices *host,c
         entry.struct_size=sizeof entry;
         if(host->directory_read(host->userdata,directory,&entry)!=ANYGM_OK) break;
         if(!entry.name[0] || !strcmp(entry.name,".") || !strcmp(entry.name,"..")) continue;
-        char child[1024];
+        char child[4096];
         if((size_t)snprintf(child,sizeof child,"%s/%s",path,entry.name)>=sizeof child) continue;
         if(entry.flags&ANYGM_FILE_INFO_DIRECTORY)
           content_directory_remove_depth(host,child,depth+1);
@@ -394,223 +395,73 @@ static void file_map_close(GmlFileMap *m){
   free(m->data);
   memset(m,0,sizeof(*m));
 }
-/* A Cabinet header alone is not a container. Validate the header extent, optional fields, folder
- * table, file table and every compressed-data block before classifying a candidate. This is only
- * a format diagnostic: compressed bytes are deliberately never interpreted here. */
-static int cabinet_range_valid(const uint8_t *data,size_t available){
-  if(!data || available<36u || memcmp(data,"MSCF",4)) return 0;
-  uint32_t cabinet_size=zu32(data+8),files_offset=zu32(data+16);
-  uint16_t folder_count=zu16(data+26),file_count=zu16(data+28),flags=zu16(data+30);
-  if(zu32(data+4) || zu32(data+12) || zu32(data+20) ||
-     data[24]!=3 || data[25]!=1 || !folder_count || !file_count || (flags&~7u) ||
-     folder_count>ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES ||
-     file_count>ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES ||
-     cabinet_size<36u || cabinet_size>available || files_offset>=cabinet_size)
-    return 0;
 
-  size_t cursor=36u;
-  uint8_t folder_reserve=0,data_reserve=0;
-  if(flags&4u){
-    if(cursor+4u>cabinet_size) return 0;
-    uint16_t header_reserve=zu16(data+cursor);
-    folder_reserve=data[cursor+2u];
-    data_reserve=data[cursor+3u];
-    cursor+=4u;
-    if((size_t)header_reserve>cabinet_size-cursor) return 0;
-    cursor+=(size_t)header_reserve;
-  }
-  unsigned optional_names=(flags&1u?2u:0u)+(flags&2u?2u:0u);
-  for(unsigned i=0;i<optional_names;i++){
-    const uint8_t *end=memchr(data+cursor,0,cabinet_size-cursor);
-    if(!end) return 0;
-    cursor=(size_t)(end-data)+1u;
-  }
+static int load_classic_project_content(const AnygmContentRouter *router,const char *srcpath,
+                                        char *content_path,size_t cpsz);
 
-  size_t folder_record_size=8u+(size_t)folder_reserve;
-  if(folder_record_size<8u || (size_t)folder_count>(cabinet_size-cursor)/folder_record_size ||
-     cursor+(size_t)folder_count*folder_record_size>files_offset)
-    return 0;
-  size_t folders_start=cursor;
-  for(uint16_t i=0;i<folder_count;i++){
-    const uint8_t *folder=data+cursor+(size_t)i*folder_record_size;
-    uint32_t blocks_offset=zu32(folder);
-    uint16_t compression=zu16(folder+6);
-    if((compression&0x000fu)>3u || blocks_offset>=cabinet_size) return 0;
+static int router_read_at(const AnygmContentRouter *router,void *file,uint64_t source_size,
+                          uint64_t offset,void *data,size_t size){
+  if(!router || !file || !router->host->file_seek || offset>source_size ||
+     (uint64_t)size>source_size-offset || offset>INT64_MAX ||
+     router->host->file_seek(router->host->userdata,file,(int64_t)offset,ANYGM_SEEK_START)!=
+       (int64_t)offset) return 0;
+  size_t used=0;
+  while(used<size){
+    size_t count=router->host->file_read(router->host->userdata,file,
+                                         (uint8_t *)data+used,size-used);
+    if(!count || count>size-used) return 0;
+    used+=count;
   }
-
-  cursor=files_offset;
-  for(uint16_t i=0;i<file_count;i++){
-    if(16u>cabinet_size-cursor) return 0;
-    uint32_t file_size=zu32(data+cursor),folder_offset=zu32(data+cursor+4u);
-    uint16_t folder_index=zu16(data+cursor+8u);
-    if(file_size>ANYGM_CONTENT_MAX_MEMBER_BYTES ||
-       (folder_index>=folder_count && folder_index<UINT16_C(0xfffd)) ||
-       folder_offset>UINT32_MAX-file_size)
-      return 0;
-    cursor+=16u;
-    const uint8_t *name_end=memchr(data+cursor,0,cabinet_size-cursor);
-    if(!name_end || name_end==data+cursor) return 0;
-    cursor=(size_t)(name_end-data)+1u;
-  }
-  size_t file_table_end=cursor;
-  uint64_t *folder_uncompressed=calloc(folder_count,sizeof *folder_uncompressed);
-  uint64_t *folder_file_end=calloc(folder_count,sizeof *folder_file_end);
-  if(!folder_uncompressed || !folder_file_end){
-    free(folder_uncompressed);
-    free(folder_file_end);
-    return 0;
-  }
-  int valid=0;
-  cursor=folders_start;
-  size_t previous_block_end=file_table_end;
-  for(uint16_t i=0;i<folder_count;i++){
-    const uint8_t *folder=data+cursor+(size_t)i*folder_record_size;
-    size_t block_cursor=zu32(folder);
-    uint16_t block_count=zu16(folder+4);
-    if(block_cursor<previous_block_end) goto done;
-    for(uint16_t block=0;block<block_count;block++){
-      size_t block_header=8u+(size_t)data_reserve;
-      if(block_header<8u || block_header>cabinet_size-block_cursor) goto done;
-      uint16_t compressed_size=zu16(data+block_cursor+4u);
-      uint16_t expanded_size=zu16(data+block_cursor+6u);
-      block_cursor+=block_header;
-      if(!compressed_size || !expanded_size || compressed_size>cabinet_size-block_cursor)
-        goto done;
-      if(folder_uncompressed[i]>UINT64_MAX-(uint64_t)expanded_size) goto done;
-      folder_uncompressed[i]+=(uint64_t)expanded_size;
-      block_cursor+=(size_t)compressed_size;
-    }
-    previous_block_end=block_cursor;
-  }
-
-  cursor=files_offset;
-  uint16_t previous_folder=0;
-  int have_previous_folder=0;
-  for(uint16_t i=0;i<file_count;i++){
-    uint32_t file_size=zu32(data+cursor),folder_offset=zu32(data+cursor+4u);
-    uint16_t folder_index=zu16(data+cursor+8u),mapped_folder=folder_index;
-    if(folder_index==UINT16_C(0xfffd)){
-      if(i!=0) goto done;
-      mapped_folder=0;
-    }else if(folder_index==UINT16_C(0xfffe)){
-      if(i+1u!=file_count) goto done;
-      mapped_folder=(uint16_t)(folder_count-1u);
-    }else if(folder_index==UINT16_C(0xffff)){
-      if(file_count!=1u) goto done;
-      mapped_folder=0;
-    }else if(folder_index>=folder_count){
-      goto done;
-    }
-    if(have_previous_folder && mapped_folder<previous_folder) goto done;
-    uint64_t expected_offset=(have_previous_folder && mapped_folder==previous_folder)
-                               ?folder_file_end[mapped_folder]:0;
-    if((uint64_t)folder_offset!=expected_offset ||
-       (uint64_t)folder_offset>folder_uncompressed[mapped_folder] ||
-       (uint64_t)file_size>folder_uncompressed[mapped_folder]-(uint64_t)folder_offset)
-      goto done;
-    folder_file_end[mapped_folder]=(uint64_t)folder_offset+(uint64_t)file_size;
-    previous_folder=mapped_folder;
-    have_previous_folder=1;
-    cursor+=16u;
-    const uint8_t *name_end=memchr(data+cursor,0,cabinet_size-cursor);
-    if(!name_end) goto done;
-    cursor=(size_t)(name_end-data)+1u;
-  }
-  valid=1;
-done:
-  free(folder_file_end);
-  free(folder_uncompressed);
-  return valid;
-}
-
-static int pe_has_embedded_cabinet(const uint8_t *data,size_t size){
-  if(!data || size<64u || data[0]!='M' || data[1]!='Z') return 0;
-  uint32_t pe_offset=zu32(data+60u);
-  if(pe_offset>size || size-(size_t)pe_offset<24u ||
-     memcmp(data+(size_t)pe_offset,"PE\0\0",4)) return 0;
-  const uint8_t *coff=data+(size_t)pe_offset+4u;
-  uint16_t section_count=zu16(coff+2u),optional_size=zu16(coff+16u);
-  if(!section_count || section_count>96u) return 0;
-  size_t section_table=(size_t)pe_offset+24u+(size_t)optional_size;
-  if(section_table>size || (size_t)section_count>(size-section_table)/40u) return 0;
-  struct PeRange { size_t begin,end; } ranges[96];
-  size_t range_count=0;
-  for(uint16_t section=0;section<section_count;section++){
-    const uint8_t *header=data+section_table+(size_t)section*40u;
-    uint32_t raw_size=zu32(header+16u),raw_offset=zu32(header+20u);
-    if(!raw_size || raw_offset>size || raw_size>size-(size_t)raw_offset) continue;
-    ranges[range_count].begin=(size_t)raw_offset;
-    ranges[range_count++].end=(size_t)raw_offset+(size_t)raw_size;
-  }
-  for(size_t i=1;i<range_count;i++){
-    struct PeRange value=ranges[i];
-    size_t at=i;
-    while(at && ranges[at-1u].begin>value.begin){
-      ranges[at]=ranges[at-1u];
-      at--;
-    }
-    ranges[at]=value;
-  }
-  size_t merged_count=0;
-  for(size_t i=0;i<range_count;i++){
-    if(merged_count && ranges[i].begin<=ranges[merged_count-1u].end){
-      if(ranges[i].end>ranges[merged_count-1u].end)
-        ranges[merged_count-1u].end=ranges[i].end;
-    }else{
-      ranges[merged_count++]=ranges[i];
-    }
-  }
-  for(size_t i=0;i<merged_count;i++){
-    size_t begin=ranges[i].begin,end=ranges[i].end,cursor=begin;
-    while(cursor+4u<=end){
-      const uint8_t *candidate=memchr(data+cursor,'M',end-cursor-3u);
-      if(!candidate) break;
-      size_t offset=(size_t)(candidate-data);
-      cursor=offset+1u;
-      if(!memcmp(candidate,"MSCF",4) && cabinet_range_valid(candidate,end-offset)) return 1;
-    }
-  }
-  return 0;
-}
-
-int anygm_content_executable_has_cabinet(const AnygmContentRouter *router,const char *path){
-  if(!router || !path || !path_ext_is(path,".exe")) return 0;
-  GmlFileMap executable={0};
-  if(!file_map_readonly(router,path,&executable)) return 0;
-  int found=pe_has_embedded_cabinet(executable.data,executable.size);
-  file_map_close(&executable);
-  return found;
+  return 1;
 }
 
 /* Select a single bounded FORM data image carried by an executable. Validation uses the ordinary
  * content reader; ambiguous or malformed candidates are never selected. */
-static int embedded_studio_form(const uint8_t *data,size_t size,size_t *offset_out,
-                                size_t *size_out){
-  if(offset_out) *offset_out=0;
-  if(size_out) *size_out=0;
-  if(!data || size<10 || data[0]!='M' || data[1]!='Z') return 0;
-  size_t cursor=2,found_offset=0,found_size=0;
-  while(cursor+8u<=size){
-    const uint8_t *candidate=memchr(data+cursor,'F',size-cursor-7u);
-    if(!candidate) break;
-    size_t offset=(size_t)(candidate-data);
-    cursor=offset+1u;
-    if(memcmp(candidate,"FORM",4)) continue;
-    uint32_t body_size=zu32(candidate+4);
-    if(body_size>GML_WIN_MAX_FILE_BYTES-8u) continue;
-    size_t extent=(size_t)body_size+8u;
-    if(extent>GML_WIN_MAX_FILE_BYTES || extent>size-offset) continue;
-    GmlWin probe;
-    if(gml_win_from_mem(&probe,(uint8_t *)(uintptr_t)candidate,extent,0)!=0) continue;
-    gml_win_free(&probe);
-    if(found_size) return -1;
-    found_offset=offset;
-    found_size=extent;
+static int embedded_studio_form_path(const AnygmContentRouter *router,const char *path,
+                                     uint64_t source_size,uint8_t **payload,size_t *payload_size){
+  *payload=NULL; *payload_size=0;
+  if(!router || !path || source_size<10u || !router->host->file_seek) return 0;
+  void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
+  if(!file) return 0;
+  uint8_t magic[8];
+  int answer=0;
+  if(!router_read_at(router,file,source_size,0,magic,2u) || magic[0]!='M' || magic[1]!='Z')
+    goto done;
+  uint8_t *scan=malloc(FILE_STREAM_BUFFER_BYTES);
+  if(!scan){ answer=-1; goto done; }
+  uint64_t cursor=2u,last_candidate=UINT64_MAX;
+  while(cursor+8u<=source_size){
+    size_t count=(uint64_t)FILE_STREAM_BUFFER_BYTES<source_size-cursor
+                   ?FILE_STREAM_BUFFER_BYTES:(size_t)(source_size-cursor);
+    if(!router_read_at(router,file,source_size,cursor,scan,count)){ answer=-1; break; }
+    for(size_t index=0;index+8u<=count;index++){
+      if(scan[index]!='F' || memcmp(scan+index,"FORM",4)) continue;
+      uint64_t offset=cursor+(uint64_t)index;
+      if(offset==last_candidate) continue;
+      last_candidate=offset;
+      uint32_t body=zu32(scan+index+4u);
+      uint64_t extent=(uint64_t)body+8u;
+      if(body>GML_WIN_MAX_FILE_BYTES-8u || extent>GML_WIN_MAX_FILE_BYTES ||
+         extent>source_size-offset || extent>SIZE_MAX) continue;
+      uint8_t *candidate=malloc((size_t)extent);
+      if(!candidate){ answer=-1; break; }
+      if(!router_read_at(router,file,source_size,offset,candidate,(size_t)extent)){
+        free(candidate); answer=-1; break;
+      }
+      GmlWin probe;
+      if(gml_win_from_mem(&probe,candidate,(size_t)extent,0)!=0){ free(candidate); continue; }
+      gml_win_free(&probe);
+      if(*payload){ free(candidate); answer=-1; break; }
+      *payload=candidate; *payload_size=(size_t)extent; answer=1;
+    }
+    if(answer<0 || count<8u) break;
+    cursor+=(uint64_t)count-7u;
   }
-  if(!found_size) return 0;
-  if(offset_out) *offset_out=found_offset;
-  if(size_out) *size_out=found_size;
-  return 1;
+  free(scan);
+done:
+  router->host->file_close(router->host->userdata,file);
+  if(answer<=0){ free(*payload); *payload=NULL; *payload_size=0; }
+  return answer;
 }
 
 static int load_studio_executable_content(const AnygmContentRouter *router,const char *srcpath,
@@ -645,36 +496,30 @@ static int load_studio_executable_content(const AnygmContentRouter *router,const
     return 1;
   }
 
-  GmlFileMap executable={0};
-  if(!anygm_vfs_read_all(router->host,srcpath,&executable.data,&executable.size,
-                         (size_t)ANYGM_CONTENT_MAX_EXECUTABLE_BYTES)) return 0;
-  if(executable.size!=(size_t)source_size ||
-     cache_hash_bytes(executable.data,executable.size)!=source_hash){
-    content_log(router,ANYGM_CONTENT_LOG_ERROR,
-                "executable: input changed while it was being inspected");
-    file_map_close(&executable);
-    return -1;
-  }
-  size_t form_offset=0,form_size=0;
-  int found=embedded_studio_form(executable.data,executable.size,&form_offset,&form_size);
+  uint8_t *form=NULL;
+  size_t form_size=0;
+  int found=embedded_studio_form_path(router,srcpath,source_size,&form,&form_size);
   if(found<0){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,
                 "executable: multiple normalized Studio payloads are ambiguous");
-    file_map_close(&executable);
     return -1;
   }
-  if(!found){
-    file_map_close(&executable);
-    return 0;
-  }
+  if(!found) return 0;
   if(!mkdirs_for(router,outdir,1) ||
-     !anygm_vfs_write_all(router->host,outwin,executable.data+form_offset,form_size)){
+     !anygm_vfs_write_all(router->host,outwin,form,form_size)){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,
                 "executable: could not materialize the normalized Studio payload");
-    file_map_close(&executable);
+    free(form);
     return -1;
   }
-  file_map_close(&executable);
+  free(form);
+  uint64_t verified_source_hash=0;
+  if(!file_hash64(router,srcpath,&verified_source_hash) || verified_source_hash!=source_hash){
+    anygm_vfs_remove(router->host,outwin);
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,
+                "executable: input changed while it was being inspected");
+    return -1;
+  }
   if(!file_size64(router,outwin,&actual_size) || actual_size!=form_size ||
      !file_hash64(router,outwin,&actual_hash)){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,
@@ -689,6 +534,66 @@ static int load_studio_executable_content(const AnygmContentRouter *router,const
   content_log(router,ANYGM_CONTENT_LOG_INFO,
               "executable: extracted Studio payload to %s",outwin);
   return 1;
+}
+
+/* Every supported Classic executable family carries one of these structural candidate markers.
+ * Looking for them outside an already validated CAB range keeps the higher-priority Classic route
+ * intact without making a CAB-only load allocate the complete executable merely to prove absence. */
+static int classic_executable_maybe(const AnygmContentRouter *router,const char *path,
+                                    uint64_t source_size,const AnygmEmbeddedCab *cab){
+  if(!router || !path || !router->host->file_seek || source_size<8u) return 0;
+  void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
+  if(!file) return 0;
+  uint8_t *buffer=malloc(FILE_STREAM_BUFFER_BYTES);
+  if(!buffer){ router->host->file_close(router->host->userdata,file); return 0; }
+  int found=0;
+  uint64_t cursor=0;
+  while(cursor+8u<=source_size && !found){
+    size_t count=(uint64_t)FILE_STREAM_BUFFER_BYTES<source_size-cursor
+                   ?FILE_STREAM_BUFFER_BYTES:(size_t)(source_size-cursor);
+    if(!router_read_at(router,file,source_size,cursor,buffer,count)) break;
+    for(size_t index=0;index+8u<=count;index++){
+      uint64_t absolute=cursor+(uint64_t)index;
+      if(cab && absolute>=cab->offset && absolute<cab->offset+cab->size) continue;
+      uint32_t first=zu32(buffer+index),second=zu32(buffer+index+4u);
+      if(first==UINT32_C(1234321)){
+        found=1;
+        break;
+      }
+    }
+    if(count<8u) break;
+    cursor+=(uint64_t)count-7u;
+  }
+  free(buffer);
+  router->host->file_close(router->host->userdata,file);
+  return found;
+}
+
+static AnygmContentResolveResult resolve_executable_content(
+    const AnygmContentRouter *router,const char *path,char *content_path,size_t content_size,
+    char *asset_root,size_t asset_root_size){
+  int embedded=load_studio_executable_content(router,path,content_path,content_size);
+  if(embedded) return embedded>0?ANYGM_CONTENT_RESOLVE_OK:ANYGM_CONTENT_RESOLVE_INVALID;
+  AnygmEmbeddedCab cab={0};
+  AnygmEmbeddedCabStatus status=anygm_embedded_cab_probe(router,path,&cab);
+  uint64_t source_size=0;
+  file_size64(router,path,&source_size);
+  if(status==ANYGM_EMBEDDED_CAB_NOT_FOUND ||
+     classic_executable_maybe(router,path,source_size,
+                              status==ANYGM_EMBEDDED_CAB_NOT_FOUND?NULL:&cab)){
+    if(load_classic_project_content(router,path,content_path,content_size))
+      return ANYGM_CONTENT_RESOLVE_OK;
+  }
+  if(status==ANYGM_EMBEDDED_CAB_UNSUPPORTED){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,
+                "cabinet: structurally valid executable uses an unsupported Cabinet profile");
+    return ANYGM_CONTENT_RESOLVE_UNSUPPORTED;
+  }
+  if(status!=ANYGM_EMBEDDED_CAB_SUPPORTED) return ANYGM_CONTENT_RESOLVE_INVALID;
+  if(!anygm_embedded_cab_extract(router,path,&cab,content_path,content_size,
+                                 asset_root,asset_root_size))
+    return ANYGM_CONTENT_RESOLVE_INVALID;
+  return ANYGM_CONTENT_RESOLVE_OK;
 }
 
 static int file_magic_kind(const AnygmContentRouter *router,const char *path){
@@ -1299,15 +1204,17 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
                                       content_overrides,content_overrides_size,depth+1);
   if(kind=='S'){
     /* The generated payload lands in the cache, so the extracted tree stays the asset root the
-     * content opens by path. Mirror the direct executable order: an embedded Studio payload wins
-     * over a classic import for the same file. */
+     * content opens by path. Route executable members through the same Classic/Cabinet boundary
+     * as a directly selected path. */
     int resolved_ok=0;
     if(path_ext_is(resolved,".exe")){
-      int embedded=load_studio_executable_content(router,resolved,content_path,cpsz);
-      if(embedded) resolved_ok=embedded>0;
-      else resolved_ok=load_classic_project_content(router,resolved,content_path,cpsz);
+      AnygmContentResolveResult executable=resolve_executable_content(
+        router,resolved,content_path,cpsz,asset_root,arsz);
+      if(executable==ANYGM_CONTENT_RESOLVE_UNSUPPORTED) return executable;
+      resolved_ok=executable==ANYGM_CONTENT_RESOLVE_OK;
     } else resolved_ok=load_classic_project_content(router,resolved,content_path,cpsz);
-    if(resolved_ok && asset_root && arsz) snprintf(asset_root,arsz,"%s",outdir);
+    if(resolved_ok && asset_root && arsz && !asset_root[0])
+      snprintf(asset_root,arsz,"%s",outdir);
     return resolved_ok;
   }
   if(kind!='C' || magic!=1) return 0;
@@ -1524,18 +1431,17 @@ int anygm_content_identity_path(const AnygmContentRouter *router,const char *inp
  * caller supplies a buffer. The buffer is only written while it is empty, which is what makes
  * the outermost anchor win across nested resolutions, so a caller starting a fresh resolution
  * clears it first. */
-int anygm_content_resolve_path(const AnygmContentRouter *router,const char *input_path,
-                               char *resolved_path,size_t resolved_path_size,
-                               char *asset_root,size_t asset_root_size,
-                               char *content_overrides,size_t content_overrides_size){
+AnygmContentResolveResult anygm_content_resolve_path(
+    const AnygmContentRouter *router,const char *input_path,
+    char *resolved_path,size_t resolved_path_size,
+    char *asset_root,size_t asset_root_size,
+    char *content_overrides,size_t content_overrides_size){
   if(!input_path || !input_path[0] || !resolved_path || resolved_path_size==0) return 0;
   resolved_path[0]=0;
   if(asset_root && asset_root_size) asset_root[0]=0;
   if(path_ext_is(input_path,".exe")){
-    int embedded=load_studio_executable_content(router,input_path,resolved_path,
-                                                resolved_path_size);
-    if(embedded) return embedded>0;
-    return load_classic_project_content(router,input_path,resolved_path,resolved_path_size);
+    return resolve_executable_content(router,input_path,resolved_path,resolved_path_size,
+                                      asset_root,asset_root_size);
   }
   if(path_ext_is(input_path,".gmd") || path_ext_is(input_path,".gmk") ||
      path_ext_is(input_path,".gm81") || path_ext_is(input_path,".gm6") ||

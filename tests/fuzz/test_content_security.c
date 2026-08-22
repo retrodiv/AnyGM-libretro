@@ -3,6 +3,8 @@
  */
 #include "anygm.h"
 #include "content_router.h"
+#include "embedded_cab.h"
+#include "memory_vfs.h"
 #include "stdio_vfs.h"
 
 #include <dirent.h>
@@ -35,6 +37,11 @@ typedef struct ZipEntry {
 static int fail(const char *message){
   fprintf(stderr,"content security: %s\n",message);
   return 0;
+}
+
+static void fixture_log(void *userdata,int level,const char *message){
+  (void)userdata;
+  if(level>=ANYGM_CONTENT_LOG_ERROR) fprintf(stderr,"content security log: %s\n",message);
 }
 
 static int buffer_reserve(Buffer *buffer,size_t add){
@@ -81,6 +88,15 @@ static void store_u32(uint8_t *data,size_t offset,uint32_t value){
   data[offset+1]=(uint8_t)(value>>8);
   data[offset+2]=(uint8_t)(value>>16);
   data[offset+3]=(uint8_t)(value>>24);
+}
+
+static uint32_t load_u32(const uint8_t *data){
+  return (uint32_t)data[0]|(uint32_t)data[1]<<8|(uint32_t)data[2]<<16|
+         (uint32_t)data[3]<<24;
+}
+
+static uint16_t load_u16(const uint8_t *data){
+  return (uint16_t)((uint16_t)data[0]|(uint16_t)((uint16_t)data[1]<<8));
 }
 
 static uint32_t crc32_bytes(const uint8_t *data,size_t size){
@@ -213,6 +229,55 @@ static AnygmResult reject_rename(void *userdata,const char *from,const char *to)
   return ANYGM_ERROR_IO;
 }
 
+static size_t reject_write(void *userdata,void *file,const void *data,size_t size){
+  (void)userdata;
+  (void)file;
+  (void)data;
+  (void)size;
+  return 0;
+}
+
+static AnygmFileWriteFn limited_write_original;
+static size_t limited_write_total;
+static size_t limited_write_limit;
+
+static size_t limited_write(void *userdata,void *file,const void *data,size_t size){
+  if(limited_write_total>=limited_write_limit) return 0;
+  size_t available=limited_write_limit-limited_write_total;
+  if(size>available) size=available;
+  size_t written=limited_write_original(userdata,file,data,size);
+  limited_write_total+=written;
+  return written;
+}
+
+static AnygmResult reject_flush(void *userdata,void *file){
+  (void)userdata;
+  (void)file;
+  return ANYGM_ERROR_IO;
+}
+
+static int root_has_directory_prefix(const char *root,const char *prefix){
+  DIR *directory=opendir(root);
+  if(!directory) return 0;
+  int found=0;
+  struct dirent *entry;
+  while((entry=readdir(directory))!=NULL){
+    if(strncmp(entry->d_name,prefix,strlen(prefix))) continue;
+    char path[1024]; struct stat info;
+    if(snprintf(path,sizeof path,"%s/%s",root,entry->d_name)<(int)sizeof path &&
+       lstat(path,&info)==0 && S_ISDIR(info.st_mode)){ found=1; break; }
+  }
+  closedir(directory);
+  return found;
+}
+
+static int anygm_content_executable_has_cabinet(const AnygmContentRouter *router,
+                                                const char *path){
+  AnygmEmbeddedCab cab={0};
+  AnygmEmbeddedCabStatus status=anygm_embedded_cab_probe(router,path,&cab);
+  return status==ANYGM_EMBEDDED_CAB_SUPPORTED || status==ANYGM_EMBEDDED_CAB_UNSUPPORTED;
+}
+
 static int resolve_archive(const AnygmHostServices *services,const char *root,
                            const char *name,const Buffer *archive,int expected){
   char path[512],resolved[1024];
@@ -221,6 +286,7 @@ static int resolve_archive(const AnygmHostServices *services,const char *root,
   AnygmContentRouter router={0};
   router.host=services;
   router.cache_directory=root;
+  router.log=fixture_log;
   int result=anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0,NULL,0);
   if((result!=0)!=expected) return fail(name);
   if(expected){
@@ -362,6 +428,498 @@ static size_t build_overlapping_section_cabinet(uint8_t executable[10240]){
   return 10240;
 }
 
+static int build_lzx_executable(const uint8_t *cabinet,size_t cabinet_size,Buffer *output){
+  if(!cabinet || !cabinet_size || !output || cabinet_size>UINT32_MAX-128u) return 0;
+  size_t size=640u+cabinet_size;
+  uint8_t *bytes=calloc(size,1);
+  if(!bytes) return 0;
+  bytes[0]='M'; bytes[1]='Z';
+  store_u32(bytes,60,128);
+  memcpy(bytes+128,"PE\0\0",4);
+  store_u16(bytes,132,UINT16_C(0x014c));
+  store_u16(bytes,134,1);
+  store_u16(bytes,148,UINT16_C(0x00e0));
+  memcpy(bytes+376,".rsrc",5);
+  store_u32(bytes,376+16,(uint32_t)(size-512u));
+  store_u32(bytes,376+20,512);
+  memcpy(bytes+520,"WEXTRACT",8);
+  memcpy(bytes+640,cabinet,cabinet_size);
+  output->data=bytes;
+  output->size=output->capacity=size;
+  return 1;
+}
+
+static int build_multipart_cabinet(const uint8_t *source,size_t source_size,Buffer *output){
+  static const uint8_t names[]={ 'p','a','r','t',0,'d','i','s','k',0 };
+  if(!source || source_size<44u || source_size>UINT32_MAX-sizeof names) return 0;
+  uint8_t *bytes=malloc(source_size+sizeof names);
+  if(!bytes) return 0;
+  memcpy(bytes,source,36u);
+  memcpy(bytes+36u,names,sizeof names);
+  memcpy(bytes+36u+sizeof names,source+36u,source_size-36u);
+  store_u32(bytes,8,(uint32_t)(source_size+sizeof names));
+  store_u32(bytes,16,(uint32_t)(44u+sizeof names));
+  store_u16(bytes,30,1u);
+  store_u32(bytes,36u+sizeof names,load_u32(source+36u)+(uint32_t)sizeof names);
+  output->data=bytes;
+  output->size=output->capacity=source_size+sizeof names;
+  return 1;
+}
+
+/* Add one empty regular member to the checked-in single-folder fixture without changing its LZX
+ * stream. This keeps collision and native-member cases structurally valid through CAB header
+ * parsing and makes them exercise extraction policy rather than malformed-table rejection. */
+static int cabinet_append_empty_member(const uint8_t *source,size_t source_size,
+                                       const char *name,Buffer *output){
+  if(!source || source_size<44u || !name || !name[0] || !output ||
+     memcmp(source,"MSCF\0\0\0\0",8u) || load_u32(source+8u)!=source_size ||
+     load_u16(source+26u)!=1u || !load_u16(source+28u) ||
+     load_u16(source+28u)==UINT16_MAX || load_u16(source+30u)!=0u) return 0;
+  uint32_t files_offset=load_u32(source+16u);
+  uint32_t data_offset=load_u32(source+36u);
+  uint16_t file_count=load_u16(source+28u);
+  if(files_offset<44u || data_offset<files_offset || data_offset>source_size) return 0;
+  size_t cursor=files_offset;
+  uint64_t expanded_end=0;
+  for(uint16_t index=0;index<file_count;index++){
+    if(cursor>data_offset || data_offset-cursor<16u || load_u16(source+cursor+8u)!=0u)
+      return 0;
+    uint64_t member_offset=load_u32(source+cursor+4u);
+    uint64_t member_size=load_u32(source+cursor);
+    if(member_offset!=expanded_end || member_size>UINT32_MAX-member_offset) return 0;
+    expanded_end=member_offset+member_size;
+    cursor+=16u;
+    const uint8_t *end=memchr(source+cursor,0,data_offset-cursor);
+    if(!end || end==source+cursor) return 0;
+    cursor=(size_t)(end-source)+1u;
+  }
+  if(cursor!=data_offset || expanded_end>UINT32_MAX) return 0;
+  size_t name_size=strlen(name);
+  if(name_size>ANYGM_CONTENT_MAX_MEMBER_PATH || name_size>SIZE_MAX-17u) return 0;
+  size_t inserted=16u+name_size+1u;
+  if(inserted>UINT32_MAX-source_size || source_size>SIZE_MAX-inserted) return 0;
+  uint8_t *bytes=malloc(source_size+inserted);
+  if(!bytes) return 0;
+  memcpy(bytes,source,data_offset);
+  memset(bytes+data_offset,0,16u);
+  store_u32(bytes,data_offset,(uint32_t)0u);
+  store_u32(bytes,data_offset+4u,(uint32_t)expanded_end);
+  store_u16(bytes,data_offset+8u,0u);
+  store_u16(bytes,data_offset+14u,UINT16_C(0x20));
+  memcpy(bytes+data_offset+16u,name,name_size+1u);
+  memcpy(bytes+data_offset+inserted,source+data_offset,source_size-data_offset);
+  store_u32(bytes,8u,(uint32_t)(source_size+inserted));
+  store_u16(bytes,28u,(uint16_t)(file_count+1u));
+  store_u32(bytes,36u,data_offset+(uint32_t)inserted);
+  output->data=bytes;
+  output->size=output->capacity=source_size+inserted;
+  return 1;
+}
+
+static int embedded_cabinet_memory_vfs_case(const Buffer *executable){
+  const size_t source_size=256u*1024u;
+  uint8_t *source=calloc(source_size,1);
+  if(!source || executable->size>source_size){ free(source); return 0; }
+  memcpy(source,executable->data,executable->size);
+  AnygmMemoryVfs memory;
+  AnygmHostServices services;
+  anygm_memory_vfs_init(&memory,&services);
+  int ok=anygm_memory_vfs_add_file(&memory,"mem/source.exe",source,source_size);
+  free(source);
+  AnygmContentRouter router={0};
+  router.host=&services;
+  router.cache_directory="mem/cache";
+  AnygmEmbeddedCab cab={0};
+  ok=ok && anygm_embedded_cab_probe(&router,"mem/source.exe",&cab)==
+             ANYGM_EMBEDDED_CAB_SUPPORTED &&
+     memory.max_read_request<=64u*1024u && memory.max_read_request<source_size;
+  anygm_memory_vfs_guard_reads(&memory,"mem/source.exe",cab.offset,cab.size);
+  char payload[1024],asset_root[1024],external[1200];
+  ok=ok && anygm_embedded_cab_extract(&router,"mem/source.exe",&cab,payload,sizeof payload,
+                                      asset_root,sizeof asset_root) &&
+     !memory.read_violation && memory.max_read_request<=64u*1024u;
+  if(ok){
+    uint8_t magic[4],asset[23];
+    void *file=services.file_open(services.userdata,payload,ANYGM_FILE_READ);
+    ok=file && services.file_read(services.userdata,file,magic,sizeof magic)==sizeof magic &&
+       !memcmp(magic,"FORM",4);
+    if(file) services.file_close(services.userdata,file);
+    ok=ok && snprintf(external,sizeof external,"%s/assets/external asset.txt",asset_root)<
+               (int)sizeof external;
+    file=ok?services.file_open(services.userdata,external,ANYGM_FILE_READ):NULL;
+    ok=ok && file && services.file_read(services.userdata,file,asset,sizeof asset)==sizeof asset &&
+       !memcmp(asset,"neutral external asset\n",sizeof asset);
+    if(file) services.file_close(services.userdata,file);
+  }
+  anygm_memory_vfs_destroy(&memory);
+  return ok?1:fail("the callback-only Cabinet route crossed its memory VFS bounds");
+}
+
+static int embedded_cabinet_entry_metadata_case(void){
+  return anygm_embedded_cab_entry_allowed(ANYGM_EMBEDDED_CAB_ENTRY_REGULAR,0,0) &&
+    !anygm_embedded_cab_entry_allowed(ANYGM_EMBEDDED_CAB_ENTRY_DIRECTORY,0,0) &&
+    !anygm_embedded_cab_entry_allowed(ANYGM_EMBEDDED_CAB_ENTRY_SYMLINK,0,1) &&
+    !anygm_embedded_cab_entry_allowed(ANYGM_EMBEDDED_CAB_ENTRY_SPECIAL,0,0) &&
+    !anygm_embedded_cab_entry_allowed(ANYGM_EMBEDDED_CAB_ENTRY_REGULAR,1,0) &&
+    !anygm_embedded_cab_entry_allowed(ANYGM_EMBEDDED_CAB_ENTRY_REGULAR,0,1);
+}
+
+static int embedded_cabinet_limit_policy_case(void){
+  return anygm_embedded_cab_limits_allowed(UINT64_C(65536),1,1024,1024) &&
+    !anygm_embedded_cab_limits_allowed(UINT64_C(65536),
+                                       ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES+1u,1,1) &&
+    !anygm_embedded_cab_limits_allowed(UINT64_C(65536),1,
+                                       ANYGM_CONTENT_MAX_MEMBER_BYTES+1u,1) &&
+    !anygm_embedded_cab_limits_allowed(UINT64_C(65536),1,1,
+                                       ANYGM_CONTENT_MAX_EXTRACTED_BYTES+1u) &&
+    !anygm_embedded_cab_limits_allowed(1,1,ANYGM_CONTENT_EXPANSION_ALLOWANCE+1u,
+                                       ANYGM_CONTENT_EXPANSION_ALLOWANCE+1u);
+}
+
+static int embedded_lzx_cabinet_cases(const AnygmHostServices *services,const char *root){
+  uint8_t *cabinet=NULL;
+  size_t cabinet_size=0;
+  Buffer executable={0};
+  if(!read_file("tests/fixtures/embedded_cab_lzx21.cab",&cabinet,&cabinet_size) ||
+     !build_lzx_executable(cabinet,cabinet_size,&executable)){
+    free(cabinet);
+    return fail("could not read the neutral LZX-21 fixture");
+  }
+  char path[512],resolved[1024],warm[1024],asset_root[1024];
+  if(snprintf(path,sizeof path,"%s/neutral-lzx.exe",root)>=(int)sizeof path ||
+     !write_file(path,executable.data,executable.size)){
+    free(executable.data); free(cabinet);
+    return fail("could not stage the neutral LZX executable");
+  }
+  AnygmContentRouter router={0};
+  router.host=services;
+  router.cache_directory=root;
+  router.log=fixture_log;
+  AnygmEmbeddedCab parsed={0};
+  if(anygm_embedded_cab_probe(&router,path,&parsed)!=ANYGM_EMBEDDED_CAB_SUPPORTED ||
+     parsed.offset!=640u || parsed.size!=cabinet_size || parsed.profile!=UINT32_C(0x001503)){
+    free(executable.data); free(cabinet);
+    return fail("the neutral LZX-21 Cabinet was not classified at its PE subrange");
+  }
+  if(!embedded_cabinet_memory_vfs_case(&executable)){
+    free(executable.data); free(cabinet); return 0;
+  }
+  if(!embedded_cabinet_entry_metadata_case()){
+    free(executable.data); free(cabinet);
+    return fail("Cabinet link or special-file metadata was accepted");
+  }
+  if(!embedded_cabinet_limit_policy_case()){
+    free(executable.data); free(cabinet);
+    return fail("Cabinet entry, member, total, or expansion limits were not enforced");
+  }
+  if(anygm_content_resolve_path(&router,path,resolved,sizeof resolved,asset_root,
+                                sizeof asset_root,NULL,0)!=ANYGM_CONTENT_RESOLVE_OK ||
+     !strstr(resolved,"data.win") || !asset_root[0]){
+    free(executable.data); free(cabinet);
+    return fail("cold LZX-21 extraction did not select the payload and asset root");
+  }
+  uint8_t magic[4];
+  char external[1280];
+  uint8_t *asset=NULL; size_t asset_size=0;
+  if(!read_prefix(resolved,magic,sizeof magic) || memcmp(magic,"FORM",4) ||
+     snprintf(external,sizeof external,"%s/assets/external asset.txt",asset_root)>=(int)sizeof external ||
+     !read_file(external,&asset,&asset_size) || asset_size!=23u ||
+     memcmp(asset,"neutral external asset\n",23u)){
+    free(asset); free(executable.data); free(cabinet);
+    return fail("cold LZX-21 extraction changed its payload or external asset");
+  }
+  free(asset);
+
+  AnygmHostServices no_write=*services;
+  no_write.file_write=reject_write;
+  router.host=&no_write;
+  if(anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_OK || strcmp(warm,resolved)){
+    free(executable.data); free(cabinet);
+    return fail("warm LZX-21 reuse attempted to decompress or rewrite");
+  }
+  router.host=services;
+
+  static const uint8_t corrupt[]="corrupt";
+  if(!write_file(external,corrupt,sizeof corrupt) ||
+     anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_OK || !read_file(external,&asset,&asset_size) ||
+     asset_size!=23u || memcmp(asset,"neutral external asset\n",23u)){
+    free(asset); free(executable.data); free(cabinet);
+    return fail("a corrupt external asset was reused");
+  }
+  free(asset);
+  if(!write_file(resolved,corrupt,sizeof corrupt) ||
+     anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_OK || !read_prefix(warm,magic,sizeof magic) || memcmp(magic,"FORM",4)){
+    free(executable.data); free(cabinet);
+    return fail("a corrupt cached payload was reused");
+  }
+  char marker[1280];
+  if(snprintf(marker,sizeof marker,"%s/.anygm_cab_cache",asset_root)>=(int)sizeof marker ||
+     !write_file(marker,corrupt,sizeof corrupt) ||
+     anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_OK || !read_prefix(warm,magic,sizeof magic) || memcmp(magic,"FORM",4)){
+    free(executable.data); free(cabinet);
+    return fail("a corrupt Cabinet marker was reused");
+  }
+  if(unlink(external)!=0 ||
+     anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_OK || !read_file(external,&asset,&asset_size) ||
+     asset_size!=23u || memcmp(asset,"neutral external asset\n",23u)){
+    free(asset); free(executable.data); free(cabinet);
+    return fail("a Cabinet cache with a missing manifest member was reused");
+  }
+  free(asset);
+  char extra[1280];
+  if(snprintf(extra,sizeof extra,"%s/untracked.bin",asset_root)>=(int)sizeof extra ||
+     !write_file(extra,"extra",5u) ||
+     anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_OK || access(extra,F_OK)==0 || errno!=ENOENT ||
+     !read_prefix(warm,magic,sizeof magic) || memcmp(magic,"FORM",4)){
+    free(executable.data); free(cabinet);
+    return fail("a Cabinet cache with an extra unmanifested member was reused");
+  }
+
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=path;
+  source.cache_directory=root;
+  if(anygm_create(services,&engine)!=ANYGM_OK || !engine ||
+     anygm_load(engine,&source,NULL)!=ANYGM_OK){
+    if(engine) anygm_destroy(engine);
+    free(executable.data); free(cabinet);
+    return fail("the extracted LZX-21 payload did not pass through the normal loader");
+  }
+  anygm_destroy(engine);
+
+  uint8_t *unsupported=malloc(executable.size);
+  if(!unsupported){ free(executable.data); free(cabinet); return 0; }
+  memcpy(unsupported,executable.data,executable.size);
+  store_u16(unsupported,640u+42u,UINT16_C(1));
+  if(snprintf(path,sizeof path,"%s/unsupported-compression.exe",root)>=(int)sizeof path ||
+     !write_file(path,unsupported,executable.size) ||
+     anygm_embedded_cab_probe(&router,path,&parsed)!=ANYGM_EMBEDDED_CAB_UNSUPPORTED){
+    free(unsupported); free(executable.data); free(cabinet);
+    return fail("a well-formed unsupported Cabinet compression was misclassified");
+  }
+  free(unsupported);
+
+  Buffer multipart={0},multipart_executable={0};
+  if(!build_multipart_cabinet(cabinet,cabinet_size,&multipart) ||
+     !build_lzx_executable(multipart.data,multipart.size,&multipart_executable) ||
+     snprintf(path,sizeof path,"%s/multipart-lzx.exe",root)>=(int)sizeof path ||
+     !write_file(path,multipart_executable.data,multipart_executable.size) ||
+     anygm_embedded_cab_probe(&router,path,&parsed)!=ANYGM_EMBEDDED_CAB_UNSUPPORTED){
+    free(multipart.data); free(multipart_executable.data);
+    free(executable.data); free(cabinet);
+    return fail("a well-formed multipart Cabinet was misclassified");
+  }
+  free(multipart.data); free(multipart_executable.data);
+
+  uint8_t *continuation=malloc(executable.size);
+  if(!continuation){ free(executable.data); free(cabinet); return 0; }
+  memcpy(continuation,executable.data,executable.size);
+  store_u16(continuation,640u+52u,UINT16_C(0xfffd));
+  if(snprintf(path,sizeof path,"%s/continuation-lzx.exe",root)>=(int)sizeof path ||
+     !write_file(path,continuation,executable.size) ||
+     anygm_embedded_cab_probe(&router,path,&parsed)!=ANYGM_EMBEDDED_CAB_UNSUPPORTED){
+    free(continuation); free(executable.data); free(cabinet);
+    return fail("a well-formed continuation Cabinet was misclassified");
+  }
+  free(continuation);
+
+  const struct { const char *filename; size_t folder_offset; uint16_t folder; } bad_continuations[]={
+    {"late-from-previous-lzx.exe",77u,UINT16_C(0xfffd)},
+    {"early-to-next-lzx.exe",52u,UINT16_C(0xfffe)},
+    {"multi-file-both-lzx.exe",52u,UINT16_C(0xffff)},
+  };
+  for(size_t index=0;index<sizeof bad_continuations/sizeof bad_continuations[0];index++){
+    uint8_t *malformed=malloc(executable.size);
+    if(!malformed){ free(executable.data); free(cabinet); return 0; }
+    memcpy(malformed,executable.data,executable.size);
+    store_u16(malformed,640u+bad_continuations[index].folder_offset,
+              bad_continuations[index].folder);
+    if(snprintf(path,sizeof path,"%s/%s",root,bad_continuations[index].filename)>=
+         (int)sizeof path || !write_file(path,malformed,executable.size) ||
+       anygm_embedded_cab_probe(&router,path,&parsed)!=ANYGM_EMBEDDED_CAB_INVALID){
+      free(malformed); free(executable.data); free(cabinet);
+      return fail("malformed Cabinet continuation placement was accepted as unsupported");
+    }
+    free(malformed);
+  }
+
+  uint8_t *checksum=malloc(executable.size);
+  if(!checksum){ free(executable.data); free(cabinet); return 0; }
+  memcpy(checksum,executable.data,executable.size);
+  uint32_t data_offset=load_u32(cabinet+36u);
+  checksum[640u+data_offset]^=UINT8_C(0x80);
+  if(snprintf(path,sizeof path,"%s/checksum-lzx.exe",root)>=(int)sizeof path ||
+     !write_file(path,checksum,executable.size) ||
+     anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_INVALID){
+    free(checksum); free(executable.data); free(cabinet);
+    return fail("a bad CFDATA checksum was accepted");
+  }
+  free(checksum);
+
+  if(snprintf(path,sizeof path,"%s/truncated-lzx.exe",root)>=(int)sizeof path ||
+     !write_file(path,executable.data,executable.size-1u) ||
+     anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_INVALID){
+    free(executable.data); free(cabinet);
+    return fail("truncated Cabinet data was accepted");
+  }
+
+  const struct { const char *filename; const char replacement[9]; } unsafe_names[]={
+    {"absolute-lzx.exe","/bad.win"},
+    {"device-lzx.exe","C:badwin"},
+  };
+  for(size_t index=0;index<sizeof unsafe_names/sizeof unsafe_names[0];index++){
+    uint8_t *unsafe=malloc(executable.size);
+    if(!unsafe){ free(executable.data); free(cabinet); return 0; }
+    memcpy(unsafe,executable.data,executable.size);
+    uint8_t *unsafe_name=memmem(unsafe+640,cabinet_size,"data.win",8);
+    if(!unsafe_name){ free(unsafe); free(executable.data); free(cabinet); return 0; }
+    memcpy(unsafe_name,unsafe_names[index].replacement,8);
+    if(snprintf(path,sizeof path,"%s/%s",root,unsafe_names[index].filename)>=(int)sizeof path ||
+       !write_file(path,unsafe,executable.size) ||
+       anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+         ANYGM_CONTENT_RESOLVE_INVALID){
+      free(unsafe); free(executable.data); free(cabinet);
+      return fail("an absolute or device Cabinet path was accepted");
+    }
+    free(unsafe);
+  }
+
+  const struct { const char *filename; const char *member; const char *message; } collisions[]={
+    {"exact-duplicate-lzx.exe","assets\\external asset.txt",
+     "an exact duplicate Cabinet member was accepted"},
+    {"casefold-duplicate-lzx.exe","ASSETS\\EXTERNAL ASSET.TXT",
+     "an ASCII case-folded Cabinet collision was accepted"},
+    {"reserved-marker-lzx.exe",".ANYGM_CAB_CACHE",
+     "a Cabinet member collided with the cache marker"},
+  };
+  for(size_t index=0;index<sizeof collisions/sizeof collisions[0];index++){
+    Buffer duplicate_cab={0},duplicate_executable={0};
+    if(!cabinet_append_empty_member(cabinet,cabinet_size,collisions[index].member,
+                                    &duplicate_cab) ||
+       !build_lzx_executable(duplicate_cab.data,duplicate_cab.size,&duplicate_executable) ||
+       snprintf(path,sizeof path,"%s/%s",root,collisions[index].filename)>=(int)sizeof path ||
+       !write_file(path,duplicate_executable.data,duplicate_executable.size) ||
+       anygm_embedded_cab_probe(&router,path,&parsed)!=ANYGM_EMBEDDED_CAB_SUPPORTED ||
+       anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+         ANYGM_CONTENT_RESOLVE_INVALID){
+      free(duplicate_cab.data); free(duplicate_executable.data);
+      free(executable.data); free(cabinet);
+      return fail(collisions[index].message);
+    }
+    free(duplicate_cab.data);
+    free(duplicate_executable.data);
+  }
+
+  Buffer native_cab={0},native_executable={0};
+  static const char native_member[]="assets\\native-member.exe";
+  if(!cabinet_append_empty_member(cabinet,cabinet_size,native_member,&native_cab) ||
+     !build_lzx_executable(native_cab.data,native_cab.size,&native_executable) ||
+     snprintf(path,sizeof path,"%s/native-member-lzx.exe",root)>=(int)sizeof path ||
+     !write_file(path,native_executable.data,native_executable.size)){
+    free(native_cab.data); free(native_executable.data);
+    free(executable.data); free(cabinet);
+    return fail("could not stage the native-member Cabinet case");
+  }
+  char native_payload[1024],native_root[1024],native_asset[1280],native_path[1280];
+  if(anygm_content_resolve_path(&router,path,native_payload,sizeof native_payload,native_root,
+                                sizeof native_root,NULL,0)!=ANYGM_CONTENT_RESOLVE_OK ||
+     !read_prefix(native_payload,magic,sizeof magic) || memcmp(magic,"FORM",4) ||
+     snprintf(native_asset,sizeof native_asset,"%s/assets/external asset.txt",native_root)>=
+       (int)sizeof native_asset ||
+     !read_file(native_asset,&asset,&asset_size) || asset_size!=23u ||
+     memcmp(asset,"neutral external asset\n",23u) ||
+     snprintf(native_path,sizeof native_path,"%s/assets/native-member.exe",native_root)>=
+       (int)sizeof native_path || access(native_path,F_OK)==0 || errno!=ENOENT){
+    free(asset); free(native_cab.data); free(native_executable.data);
+    free(executable.data); free(cabinet);
+    return fail("a native Cabinet member was published or displaced portable content");
+  }
+  free(asset);
+  source.path=path;
+  engine=NULL;
+  if(anygm_create(services,&engine)!=ANYGM_OK || !engine ||
+     anygm_load(engine,&source,NULL)!=ANYGM_OK){
+    if(engine) anygm_destroy(engine);
+    free(native_cab.data); free(native_executable.data);
+    free(executable.data); free(cabinet);
+    return fail("portable Cabinet content stopped loading when a native member was omitted");
+  }
+  anygm_destroy(engine);
+  AnygmHostServices native_no_write=*services;
+  native_no_write.file_write=reject_write;
+  router.host=&native_no_write;
+  if(anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_OK || strcmp(warm,native_payload) || access(native_path,F_OK)==0 ||
+     errno!=ENOENT){
+    router.host=services;
+    free(native_cab.data); free(native_executable.data);
+    free(executable.data); free(cabinet);
+    return fail("the native-member omission was not retained by verified cache reuse");
+  }
+  router.host=services;
+  free(native_cab.data);
+  free(native_executable.data);
+
+  const struct { const char *filename; unsigned byte; } failures[]={
+    {"write-failure.exe",1u}, {"flush-failure.exe",2u}, {"rename-failure.exe",3u}
+  };
+  for(size_t index=0;index<sizeof failures/sizeof failures[0];index++){
+    uint8_t *failed=malloc(executable.size);
+    if(!failed){ free(executable.data); free(cabinet); return 0; }
+    memcpy(failed,executable.data,executable.size);
+    failed[519]= (uint8_t)failures[index].byte;
+    if(snprintf(path,sizeof path,"%s/%s",root,failures[index].filename)>=(int)sizeof path ||
+       !write_file(path,failed,executable.size)){
+      free(failed); free(executable.data); free(cabinet); return 0;
+    }
+    free(failed);
+    AnygmHostServices fault=*services;
+    if(index==0){
+      limited_write_original=services->file_write;
+      limited_write_total=0; limited_write_limit=1024;
+      fault.file_write=limited_write;
+    }else if(index==1) fault.file_flush=reject_flush;
+    else fault.path_rename=reject_rename;
+    router.host=&fault;
+    if(anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+         ANYGM_CONTENT_RESOLVE_INVALID ||
+       root_has_directory_prefix(root,index==0?"write-failure-":
+                                  index==1?"flush-failure-":"rename-failure-")){
+      router.host=services; free(executable.data); free(cabinet);
+      return fail("a failed Cabinet transaction left a published or staging cache");
+    }
+    router.host=services;
+  }
+
+  uint8_t *dangerous=malloc(executable.size);
+  if(!dangerous){ free(executable.data); free(cabinet); return 0; }
+  memcpy(dangerous,executable.data,executable.size);
+  uint8_t *name=memmem(dangerous+640,cabinet_size,"data.win",8);
+  if(!name){ free(dangerous); free(executable.data); free(cabinet); return 0; }
+  memcpy(name,"../x.win",8);
+  if(snprintf(path,sizeof path,"%s/traversal-lzx.exe",root)>=(int)sizeof path ||
+     !write_file(path,dangerous,executable.size) ||
+     anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_INVALID){
+    free(dangerous); free(executable.data); free(cabinet);
+    return fail("a traversal path in LZX Cabinet content was accepted");
+  }
+  free(dangerous);
+  free(executable.data);
+  free(cabinet);
+  return 1;
+}
+
 static int embedded_cabinet_cases(const AnygmHostServices *services,const char *root){
   uint8_t executable[1024];
   size_t executable_size=build_pe_cabinet(executable);
@@ -386,7 +944,7 @@ static int embedded_cabinet_cases(const AnygmHostServices *services,const char *
   AnygmResult result=anygm_load(engine,&source,NULL);
   char diagnostic[512];
   anygm_get_last_error(engine,diagnostic,sizeof diagnostic);
-  int ok=result==ANYGM_ERROR_UNSUPPORTED && strstr(diagnostic,"Microsoft Cabinet (CAB)") &&
+  int ok=result==ANYGM_ERROR_UNSUPPORTED && strstr(diagnostic,"Cabinet profile") &&
          anygm_state_size(engine)==0;
   anygm_destroy(engine);
   if(!ok){
@@ -444,7 +1002,7 @@ static int embedded_cabinet_cases(const AnygmHostServices *services,const char *
     return fail("could not create engine for malformed Cabinet result");
   result=anygm_load(engine,&source,NULL);
   anygm_get_last_error(engine,diagnostic,sizeof diagnostic);
-  ok=result==ANYGM_ERROR_INVALID_CONTENT && !strstr(diagnostic,"Microsoft Cabinet (CAB)") &&
+  ok=result==ANYGM_ERROR_INVALID_CONTENT && !strstr(diagnostic,"Cabinet profile") &&
      anygm_state_size(engine)==0;
   anygm_destroy(engine);
   if(!ok) return fail("uncovered Cabinet file did not remain invalid content");
@@ -499,6 +1057,7 @@ static int embedded_executable_cases(const AnygmHostServices *services,const cha
   AnygmContentRouter router={0};
   router.host=services;
   router.cache_directory=root;
+  router.log=fixture_log;
   if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0,NULL,0) ||
      !anygm_content_resolve_path(&router,path,resolved_again,sizeof resolved_again,NULL,0,NULL,0) ||
      strcmp(resolved,resolved_again) || !strcmp(resolved,path))
@@ -523,6 +1082,51 @@ static int embedded_executable_cases(const AnygmHostServices *services,const cha
      extracted_size==sizeof form && !memcmp(extracted,form,sizeof form);
   free(extracted);
   if(!ok) return fail("supported executable precedence changed its embedded payload");
+
+  /* A structurally supported Cabinet does not supersede an older Classic runner.  Place a real
+   * neutral LZX-21 Cabinet in a PE section appended after the complete Classic envelope; the
+   * established Classic importer must still produce the selected FORM package. */
+  Fixture classic={{0},0};
+  uint8_t *cabinet=NULL;
+  size_t cabinet_size=0;
+  if(!build_gm6_executable_fixture(&classic) ||
+     !read_file("tests/fixtures/embedded_cab_lzx21.cab",&cabinet,&cabinet_size)){
+    free(cabinet);
+    return fail("could not build the Classic-plus-Cabinet precedence fixture");
+  }
+  uint8_t combined[sizeof classic.data]={0};
+  const size_t pe_offset=64u;
+  const size_t cab_offset=128u;
+  size_t combined_size=cab_offset+cabinet_size+classic.size-64u;
+  if(classic.size<64u || combined_size>sizeof combined){
+    free(cabinet);
+    return fail("Classic-plus-Cabinet precedence fixture exceeds its bound");
+  }
+  memcpy(combined,classic.data,64u);
+  store_u32(combined,60u,(uint32_t)pe_offset);
+  memcpy(combined+pe_offset,"PE\0\0",4u);
+  store_u16(combined,pe_offset+6u,1u);
+  store_u32(combined,pe_offset+24u+16u,(uint32_t)cabinet_size);
+  store_u32(combined,pe_offset+24u+20u,(uint32_t)cab_offset);
+  memcpy(combined+cab_offset,cabinet,cabinet_size);
+  memcpy(combined+cab_offset+cabinet_size,classic.data+64u,classic.size-64u);
+  free(cabinet);
+  char classic_asset_root[1024]="";
+  if(snprintf(path,sizeof path,"%s/classic-with-cabinet.exe",root)>=(int)sizeof path ||
+     !write_file(path,combined,combined_size))
+    return fail("could not stage the Classic-plus-Cabinet precedence fixture");
+  AnygmEmbeddedCab classic_cab={0};
+  if(anygm_embedded_cab_probe(&router,path,&classic_cab)!=ANYGM_EMBEDDED_CAB_SUPPORTED ||
+     classic_cab.offset!=cab_offset || classic_cab.size!=cabinet_size)
+    return fail("Classic-plus-Cabinet fixture did not retain its supported Cabinet");
+  if(anygm_content_resolve_path(&router,path,resolved,sizeof resolved,classic_asset_root,
+                                sizeof classic_asset_root,NULL,0)!=ANYGM_CONTENT_RESOLVE_OK ||
+     !strstr(resolved,"-anygm-classic/data.win") || classic_asset_root[0])
+    return fail("Classic executable did not outrank its embedded Cabinet");
+  uint8_t classic_magic[4];
+  if(!read_prefix(resolved,classic_magic,sizeof classic_magic) ||
+     memcmp(classic_magic,"FORM",sizeof classic_magic))
+    return fail("Classic precedence did not proceed through its normal package loader");
 
   uint8_t ambiguous[424]={0};
   ambiguous[0]='M';
@@ -953,7 +1557,6 @@ int main(void){
   services.struct_size=sizeof services;
   services.abi_version=ANYGM_HOST_SERVICES_VERSION;
   anygm_stdio_vfs_services_init(&services);
-
   static const uint8_t form[]="FORM";
   static const uint8_t one[]={0};
   static const uint8_t safe_name[]="data.win";
@@ -983,6 +1586,7 @@ int main(void){
   int ok=embedded_executable_cases(&services,root) &&
          cache_producer_change_case(&services,root) &&
          embedded_cabinet_cases(&services,root) &&
+         embedded_lzx_cabinet_cases(&services,root) &&
          archive_anchor_cases(&services,root) &&
          archive_advanced_anchor_cases(&services,root) &&
          direct_anchor_cases(&services,root);

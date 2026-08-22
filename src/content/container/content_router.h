@@ -9,6 +9,7 @@
 #include "gml_win.h"
 
 #define ANYGM_CONTENT_MAX_ARCHIVE_BYTES UINT64_C(1073741824)
+#define ANYGM_CONTENT_MAX_EXECUTABLE_BYTES UINT64_C(1073741824)
 #define ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES 32768u
 #define ANYGM_CONTENT_MAX_MEMBER_PATH 511u
 #define ANYGM_CONTENT_MAX_MEMBER_BYTES UINT64_C(1073741824)
@@ -33,6 +34,12 @@ enum {
   ANYGM_CONTENT_LOG_ERROR=3
 };
 
+typedef enum AnygmContentResolveResult {
+  ANYGM_CONTENT_RESOLVE_INVALID=0,
+  ANYGM_CONTENT_RESOLVE_OK=1,
+  ANYGM_CONTENT_RESOLVE_UNSUPPORTED=2
+} AnygmContentResolveResult;
+
 /* resolved_path receives the payload to load. asset_root, when supplied, receives the directory
  * holding the runtime assets the content opens by path, and is emptied whenever that is the
  * payload's own directory. An archive carrying a source project rather than a compiled payload
@@ -40,13 +47,11 @@ enum {
 /* content_overrides, when supplied, receives the override directives the resolved content's
  * anchor carried, written only while the buffer is empty so the outermost anchor of a nested
  * resolution wins. Callers starting a fresh resolution clear the buffer first. */
-int anygm_content_resolve_path(const AnygmContentRouter *router,const char *input_path,
-                               char *resolved_path,size_t resolved_path_size,
-                               char *asset_root,size_t asset_root_size,
-                               char *content_overrides,size_t content_overrides_size);
-/* Classify one bounded PE image after normal executable routing has rejected it. This recognizes
- * a structurally complete Cabinet held in a PE section; it never extracts or decompresses it. */
-int anygm_content_executable_has_cabinet(const AnygmContentRouter *router,const char *path);
+AnygmContentResolveResult anygm_content_resolve_path(
+    const AnygmContentRouter *router,const char *input_path,
+    char *resolved_path,size_t resolved_path_size,
+    char *asset_root,size_t asset_root_size,
+    char *content_overrides,size_t content_overrides_size);
 int anygm_content_load_win(const AnygmContentRouter *router,GmlWin *win,const char *path,char *loaded_path,
                            size_t loaded_path_size);
 void anygm_content_path_stem(const char *path,char *output,size_t output_size);

@@ -56,14 +56,15 @@ int gmlc_classic_import_rooms(const GmlcClassicManifest *classic,
     if(err && errcap) snprintf(err, errcap, "classic import: too many room slots");
     return 0;
   }
-  project->rooms = (GmlcRoom*)calloc(count ? count : 1, sizeof(*project->rooms));
+  project->next_instance_id = classic->inventory.last_instance_id < INT32_MAX
+    ? (int)classic->inventory.last_instance_id + 1 : INT32_MAX;
+  if(!count) return 1;
+  project->rooms = (GmlcRoom*)calloc(count, sizeof(*project->rooms));
   if(!project->rooms){
     if(err && errcap) snprintf(err, errcap, "classic import: out of memory allocating rooms");
     return 0;
   }
   project->n_rooms = project->cap_rooms = (int)count;
-  project->next_instance_id = classic->inventory.last_instance_id < INT32_MAX
-    ? (int)classic->inventory.last_instance_id + 1 : INT32_MAX;
   const GmlcClassicResourceSlot *slots = classic->slots[GMLC_CLASSIC_ROOM];
   for(uint32_t i = 0; i < count; ++i){
     GmlcRoom *room = &project->rooms[i];
