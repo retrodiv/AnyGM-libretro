@@ -47,6 +47,17 @@ static uint64_t cr_u64(CoreR *s){
 }
 static double cr_d(CoreR *s){ uint64_t bits=cr_u64(s); double value=0; memcpy(&value,&bits,sizeof value); return value; }
 
+static int state_bounded_product3(size_t first,size_t second,size_t third,
+                                  size_t available,size_t *result){
+  if(!result || (second && first>SIZE_MAX/second)) return 0;
+  size_t product=first*second;
+  if(third && product>SIZE_MAX/third) return 0;
+  product*=third;
+  if(product>available) return 0;
+  *result=product;
+  return 1;
+}
+
 static void state_store_u32(uint8_t *destination,uint32_t value){
   destination[0]=(uint8_t)value;
   destination[1]=(uint8_t)(value>>8);
@@ -350,9 +361,12 @@ static int render_state_read(GmlRender *render,CoreR *s){
          (mask_rowb && (mask_rowb!=expected_rowb || mask_count>frames))){
         free(seen_runtime); s->ok=0; return 0;
       }
-      size_t mask_bytes=(size_t)mask_rowb*(size_t)h*(size_t)mask_count;
       size_t remaining=s->pos<=s->cap ? s->cap-s->pos : 0;
-      if(mask_bytes>remaining){ free(seen_runtime); s->ok=0; return 0; }
+      size_t mask_bytes=0;
+      if(!state_bounded_product3((size_t)mask_rowb,(size_t)h,(size_t)mask_count,
+                                 remaining,&mask_bytes)){
+        free(seen_runtime); s->ok=0; return 0;
+      }
       uint8_t *mask=NULL;
       if(mask_bytes){
         mask=malloc(mask_bytes);

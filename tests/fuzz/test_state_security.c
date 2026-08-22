@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "anygm.h"
+#include "engine_internal.h"
 #include "stdio_vfs.h"
 #include "synthetic_content.h"
 
@@ -69,8 +70,17 @@ static int save_state(AnygmEngine *engine,uint8_t **bytes,size_t *size){
 static int engine_matches(AnygmEngine *engine,const uint8_t *baseline,size_t baseline_size){
   uint8_t *current=NULL;
   size_t current_size=0;
-  int same=save_state(engine,&current,&current_size)&&current_size==baseline_size&&
-           !memcmp(current,baseline,baseline_size);
+  int saved=save_state(engine,&current,&current_size);
+  int same=saved&&current_size==baseline_size&&!memcmp(current,baseline,baseline_size);
+  if(!same){
+    size_t difference=0;
+    while(difference<current_size && difference<baseline_size && current &&
+          current[difference]==baseline[difference]) difference++;
+    fprintf(stderr,"state security: engine bytes differ at %zu (sizes %zu/%zu, values %u/%u)\n",
+            difference,current_size,baseline_size,
+            difference<current_size && current?current[difference]:0,
+            difference<baseline_size?baseline[difference]:0);
+  }
   free(current);
   return same;
 }
@@ -91,6 +101,201 @@ static int reject_unchanged(AnygmEngine *engine,const uint8_t *candidate,size_t 
 static void refresh_checksum(uint8_t *state){
   size_t payload_size=(size_t)read_u64(state+96);
   write_u64(state+56,state_checksum(state+STATE_HEADER_SIZE,payload_size));
+}
+
+static int reject_payload_u32(AnygmEngine *engine,uint8_t *candidate,size_t size,
+                              const uint8_t *baseline,size_t baseline_size,size_t offset,
+                              uint32_t value,const char *label);
+
+typedef struct StateCursor {
+  const uint8_t *data;
+  size_t size;
+  size_t offset;
+  int ok;
+} StateCursor;
+
+typedef struct RuntimeMaskRecord {
+  size_t row_bytes_offset;
+  size_t count_offset;
+  size_t payload_offset;
+  int width;
+  int height;
+  int frames;
+  int row_bytes;
+  int count;
+} RuntimeMaskRecord;
+
+static uint32_t cursor_u32(StateCursor *cursor){
+  if(!cursor || !cursor->ok || cursor->offset>cursor->size ||
+     cursor->size-cursor->offset<4){
+    if(cursor) cursor->ok=0;
+    return 0;
+  }
+  uint32_t value=(uint32_t)cursor->data[cursor->offset]|
+                 ((uint32_t)cursor->data[cursor->offset+1]<<8)|
+                 ((uint32_t)cursor->data[cursor->offset+2]<<16)|
+                 ((uint32_t)cursor->data[cursor->offset+3]<<24);
+  cursor->offset+=4;
+  return value;
+}
+
+static int cursor_skip(StateCursor *cursor,size_t bytes){
+  if(!cursor || !cursor->ok || cursor->offset>cursor->size ||
+     bytes>cursor->size-cursor->offset){
+    if(cursor) cursor->ok=0;
+    return 0;
+  }
+  cursor->offset+=bytes;
+  return 1;
+}
+
+/* Locate the first runtime sprite's independently serialized collision plane. The scanner mirrors
+ * only enough of the renderer envelope to make each malformed-state mutation field-specific; the
+ * product under test remains owned and decoded solely by gml_render_state.c. */
+static int locate_runtime_mask_record(const uint8_t *state,size_t state_size,
+                                      RuntimeMaskRecord *record){
+  if(!state || !record || state_size<STATE_HEADER_SIZE) return 0;
+  uint64_t core_size=read_u64(state+64),render_size=read_u64(state+72);
+  if(core_size>SIZE_MAX || render_size>SIZE_MAX ||
+     (size_t)core_size>state_size-STATE_HEADER_SIZE ||
+     (size_t)render_size>state_size-STATE_HEADER_SIZE-(size_t)core_size) return 0;
+  size_t render_start=STATE_HEADER_SIZE+(size_t)core_size;
+  StateCursor cursor={state+render_start,(size_t)render_size,0,1};
+  (void)cursor_u32(&cursor); /* live font count */
+  for(int font=0;font<GML_MAX_FONTS && cursor.ok;font++){
+    if(!cursor_skip(&cursor,16)) return 0;
+    uint32_t map_count=cursor_u32(&cursor);
+    if(map_count>4096 || !cursor_skip(&cursor,(size_t)map_count*4)) return 0;
+  }
+  if(!cursor_skip(&cursor,40)) return 0;
+  for(int surface=0;surface<GML_MAX_SURFACES && cursor.ok;surface++){
+    int live=(int32_t)cursor_u32(&cursor);
+    (void)cursor_u32(&cursor);
+    (void)cursor_u32(&cursor);
+    if(live){
+      uint32_t run_count=cursor_u32(&cursor);
+      size_t run_bytes=(size_t)run_count;
+      if((run_bytes && 8u>SIZE_MAX/run_bytes) ||
+         !cursor_skip(&cursor,run_bytes*8u)) return 0;
+    }
+  }
+  uint32_t runtime_count=cursor_u32(&cursor);
+  if(!cursor.ok || !runtime_count) return 0;
+  (void)cursor_u32(&cursor); /* id */
+  (void)cursor_u32(&cursor); /* extra */
+  record->width=(int32_t)cursor_u32(&cursor);
+  record->height=(int32_t)cursor_u32(&cursor);
+  record->frames=(int32_t)cursor_u32(&cursor);
+  if(!cursor_skip(&cursor,32)) return 0; /* origin, bounds, collision policy */
+  int mode=(int32_t)cursor_u32(&cursor);
+  if(mode==0){
+    if(record->width<=0 || record->height<=0 || record->frames<=0) return 0;
+    uint64_t pixels=(uint64_t)(unsigned)record->width*(unsigned)record->height*
+                    (unsigned)record->frames;
+    if(pixels>SIZE_MAX/4 || !cursor_skip(&cursor,(size_t)pixels*4)) return 0;
+  } else if(mode==1){
+    (void)cursor_u32(&cursor); /* root */
+    uint32_t path_length=cursor_u32(&cursor);
+    if(path_length>4095 || !cursor_skip(&cursor,path_length) ||
+       !cursor_skip(&cursor,8)) return 0; /* image count and remove-background flag */
+  } else return 0;
+  record->row_bytes_offset=render_start+cursor.offset;
+  record->row_bytes=(int32_t)cursor_u32(&cursor);
+  record->count_offset=render_start+cursor.offset;
+  record->count=(int32_t)cursor_u32(&cursor);
+  record->payload_offset=render_start+cursor.offset;
+  return cursor.ok;
+}
+
+static int runtime_mask_state_cases(AnygmEngine *engine){
+  enum { WIDTH=9, HEIGHT=3, FRAMES=2, ROW_BYTES=(WIDTH+7)/8 };
+  uint8_t *rgba=calloc((size_t)WIDTH*HEIGHT*FRAMES,4);
+  if(!rgba) return fail("runtime sprite pixel allocation failed");
+  for(size_t pixel=0;pixel<(size_t)WIDTH*HEIGHT*FRAMES;pixel++) rgba[pixel*4+3]=255;
+  int sprite=gml_sprite_append_from_rgba_frames(
+      &engine->render,rgba,WIDTH,HEIGHT,FRAMES,0,0,"<state-security-sprite>");
+  if(sprite<0) return fail("runtime sprite creation failed");
+  GmlSprite *runtime=&engine->render.spr[sprite];
+  /* Shape the synthetic slot as a packaged sprite replaced at runtime. That is the ordinary
+   * mode-zero restore path and, unlike a project with no packaged sprite table at all, gives the
+   * runtime-extra deletion logic a real base boundary during rollback. */
+  runtime->runtime_extra=0;
+  engine->render.base_n_spr=engine->render.n_spr;
+  runtime->runtime_mask=malloc((size_t)ROW_BYTES*HEIGHT*FRAMES);
+  if(!runtime->runtime_mask) return fail("runtime sprite mask allocation failed");
+  memset(runtime->runtime_mask,0x5a,(size_t)ROW_BYTES*HEIGHT*FRAMES);
+  runtime->mask=runtime->runtime_mask;
+  runtime->mask_rowb=ROW_BYTES;
+  runtime->mask_count=FRAMES;
+
+  uint8_t *baseline=NULL,*candidate=NULL;
+  size_t state_size=0;
+  if(!save_state(engine,&baseline,&state_size)) return fail("runtime mask baseline failed");
+  candidate=malloc(state_size?state_size:1);
+  RuntimeMaskRecord record={0};
+  int ok=candidate && locate_runtime_mask_record(baseline,state_size,&record) &&
+         record.width==WIDTH && record.height==HEIGHT && record.frames==FRAMES &&
+         record.row_bytes==ROW_BYTES && record.count==FRAMES;
+  if(!ok) fail("runtime mask record could not be located");
+
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               record.row_bytes_offset,(uint32_t)(ROW_BYTES+1),
+                               "runtime mask row width");
+  if(ok) ok=reject_payload_u32(engine,candidate,state_size,baseline,state_size,
+                               record.count_offset,(uint32_t)(FRAMES+1),
+                               "runtime mask count beyond frames");
+  if(ok){
+    uint64_t render_size=read_u64(baseline+72),vm_size=read_u64(baseline+80);
+    memcpy(candidate,baseline,state_size);
+    if(!render_size || vm_size==UINT64_MAX) ok=fail("runtime mask section cannot be shortened");
+    else {
+      write_u64(candidate+72,render_size-1);
+      write_u64(candidate+80,vm_size+1);
+      ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,
+                          "truncated runtime mask payload");
+    }
+  }
+  free(candidate);
+  free(baseline);
+  if(!ok) return 0;
+
+  /* The maximum accepted dimensions make the mask product 8 GiB. It is merely larger than the
+   * remaining section on a 64-bit host, but wraps to zero on i686 unless both multiplications are
+   * checked. A source-backed record keeps this bounded fixture from allocating those pixels. The
+   * live record is deliberately shaped to let the transactional reader reuse it without opening
+   * the synthetic path. */
+  free(runtime->runtime_mask);
+  runtime->runtime_mask=NULL;
+  runtime->mask=NULL;
+  runtime->mask_rowb=0;
+  runtime->mask_count=0;
+  free(runtime->runtime_source_path);
+  runtime->runtime_source_path=strdup("synthetic-state-sprite.png");
+  if(!runtime->runtime_source_path) return fail("runtime sprite source allocation failed");
+  runtime->w=4096;
+  runtime->h=4096;
+  runtime->n_frames=4096;
+
+  baseline=NULL;
+  state_size=0;
+  if(!save_state(engine,&baseline,&state_size)) return fail("large mask-product baseline failed");
+  candidate=malloc(state_size?state_size:1);
+  memset(&record,0,sizeof record);
+  ok=candidate && locate_runtime_mask_record(baseline,state_size,&record) &&
+     record.width==4096 && record.height==4096 && record.frames==4096 &&
+     record.row_bytes==0 && record.count==0;
+  if(!ok) fail("large runtime mask record could not be located");
+  if(ok){
+    memcpy(candidate,baseline,state_size);
+    write_u32(candidate+record.row_bytes_offset,512);
+    write_u32(candidate+record.count_offset,4096);
+    refresh_checksum(candidate);
+    ok=reject_unchanged(engine,candidate,state_size,baseline,state_size,
+                        "overflowing runtime mask product");
+  }
+  free(candidate);
+  free(baseline);
+  return ok;
 }
 
 static int reject_payload_u32(AnygmEngine *engine,uint8_t *candidate,size_t size,
@@ -332,6 +537,8 @@ int main(void){
        engine_matches(engine,baseline,state_size);
     if(!ok) fail("runtime override bounds were not transactional");
   }
+
+  if(ok) ok=runtime_mask_state_cases(engine);
 
   if(ok) ok=content_override_state_cases(&services,&fixture);
 
