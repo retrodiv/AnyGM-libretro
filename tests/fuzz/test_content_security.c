@@ -4,6 +4,7 @@
 #include "anygm.h"
 #include "content_router.h"
 #include "embedded_cab.h"
+#include "engine_internal.h"
 #include "memory_vfs.h"
 #include "stdio_vfs.h"
 
@@ -555,6 +556,55 @@ static int embedded_cabinet_memory_vfs_case(const Buffer *executable){
   return ok?1:fail("the callback-only Cabinet route crossed its memory VFS bounds");
 }
 
+static int memory_vfs_has_cabinet_transaction(const AnygmMemoryVfs *memory){
+  for(size_t index=0;index<memory->node_count;index++)
+    if(strstr(memory->nodes[index].path,"-anygm-cab")) return 1;
+  return 0;
+}
+
+static int embedded_cabinet_source_stability_case(const Buffer *executable){
+  const size_t source_size=256u*1024u;
+  uint8_t *source=calloc(source_size,1);
+  if(!source || executable->size>source_size){ free(source); return 0; }
+  memcpy(source,executable->data,executable->size);
+
+  AnygmMemoryVfs memory;
+  AnygmHostServices services;
+  AnygmContentRouter router={0};
+  AnygmEmbeddedCab cab={0};
+  char payload[1024],asset_root[1024];
+  anygm_memory_vfs_init(&memory,&services);
+  router.host=&services;
+  router.cache_directory="mem/cache";
+  int ok=anygm_memory_vfs_add_file(&memory,"mem/source.exe",source,source_size) &&
+    anygm_embedded_cab_probe(&router,"mem/source.exe",&cab)==ANYGM_EMBEDDED_CAB_SUPPORTED &&
+    anygm_embedded_cab_extract(&router,"mem/source.exe",&cab,payload,sizeof payload,
+                               asset_root,sizeof asset_root) &&
+    anygm_embedded_cab_probe(&router,"mem/source.exe",&cab)==ANYGM_EMBEDDED_CAB_SUPPORTED &&
+    anygm_memory_vfs_xor_byte(&memory,"mem/source.exe",source_size-1u,UINT8_C(1));
+  payload[0]=0;
+  asset_root[0]=0;
+  ok=ok && !anygm_embedded_cab_extract(&router,"mem/source.exe",&cab,payload,sizeof payload,
+                                        asset_root,sizeof asset_root) &&
+     !payload[0] && !asset_root[0];
+  anygm_memory_vfs_destroy(&memory);
+  if(!ok){ free(source); return fail("a warm Cabinet cache outlived its probed source bytes"); }
+
+  anygm_memory_vfs_init(&memory,&services);
+  router.host=&services;
+  ok=anygm_memory_vfs_add_file(&memory,"mem/source.exe",source,source_size) &&
+    anygm_embedded_cab_probe(&router,"mem/source.exe",&cab)==ANYGM_EMBEDDED_CAB_SUPPORTED &&
+    anygm_memory_vfs_xor_byte(&memory,"mem/source.exe",source_size-1u,UINT8_C(1));
+  payload[0]=0;
+  asset_root[0]=0;
+  ok=ok && !anygm_embedded_cab_extract(&router,"mem/source.exe",&cab,payload,sizeof payload,
+                                        asset_root,sizeof asset_root) &&
+     !payload[0] && !asset_root[0] && !memory_vfs_has_cabinet_transaction(&memory);
+  anygm_memory_vfs_destroy(&memory);
+  free(source);
+  return ok?1:fail("a cold Cabinet cache was published under stale source bytes");
+}
+
 static int embedded_cabinet_entry_metadata_case(void){
   return anygm_embedded_cab_entry_allowed(ANYGM_EMBEDDED_CAB_ENTRY_REGULAR,0,0) &&
     !anygm_embedded_cab_entry_allowed(ANYGM_EMBEDDED_CAB_ENTRY_DIRECTORY,0,0) &&
@@ -602,6 +652,9 @@ static int embedded_lzx_cabinet_cases(const AnygmHostServices *services,const ch
     return fail("the neutral LZX-21 Cabinet was not classified at its PE subrange");
   }
   if(!embedded_cabinet_memory_vfs_case(&executable)){
+    free(executable.data); free(cabinet); return 0;
+  }
+  if(!embedded_cabinet_source_stability_case(&executable)){
     free(executable.data); free(cabinet); return 0;
   }
   if(!embedded_cabinet_entry_metadata_case()){
@@ -693,6 +746,38 @@ static int embedded_lzx_cabinet_cases(const AnygmHostServices *services,const ch
     free(executable.data); free(cabinet);
     return fail("the extracted LZX-21 payload did not pass through the normal loader");
   }
+  if(strcmp(engine->win.content_dir,asset_root) ||
+     snprintf(external,sizeof external,"%s/assets/external asset.txt",engine->win.content_dir)>=
+       (int)sizeof external || !read_file(external,&asset,&asset_size) || asset_size!=23u ||
+     memcmp(asset,"neutral external asset\n",23u)){
+    free(asset);
+    anygm_destroy(engine);
+    free(executable.data); free(cabinet);
+    return fail("a direct Cabinet engine load discarded its extracted asset root");
+  }
+  free(asset); asset=NULL;
+  anygm_destroy(engine);
+
+  char anchor[512];
+  static const char anchor_text[]="neutral-lzx.exe\n";
+  if(snprintf(anchor,sizeof anchor,"%s/neutral-lzx.anygm",root)>=(int)sizeof anchor ||
+     !write_file(anchor,anchor_text,sizeof anchor_text-1u)){
+    free(executable.data); free(cabinet);
+    return fail("could not stage the neutral Cabinet anchor");
+  }
+  source.path=anchor;
+  engine=NULL;
+  if(anygm_create(services,&engine)!=ANYGM_OK || !engine ||
+     anygm_load(engine,&source,NULL)!=ANYGM_OK || strcmp(engine->win.content_dir,asset_root) ||
+     snprintf(external,sizeof external,"%s/assets/external asset.txt",engine->win.content_dir)>=
+       (int)sizeof external || !read_file(external,&asset,&asset_size) || asset_size!=23u ||
+     memcmp(asset,"neutral external asset\n",23u)){
+    free(asset);
+    if(engine) anygm_destroy(engine);
+    free(executable.data); free(cabinet);
+    return fail("an anchored Cabinet engine load discarded its extracted asset root");
+  }
+  free(asset); asset=NULL;
   anygm_destroy(engine);
 
   uint8_t *unsupported=malloc(executable.size);

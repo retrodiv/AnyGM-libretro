@@ -32,6 +32,8 @@ void anygm_memory_vfs_init(AnygmMemoryVfs *memory,AnygmHostServices *services);
 void anygm_memory_vfs_destroy(AnygmMemoryVfs *memory);
 int anygm_memory_vfs_add_file(AnygmMemoryVfs *memory,const char *path,
                               const void *data,size_t size);
+int anygm_memory_vfs_xor_byte(AnygmMemoryVfs *memory,const char *path,
+                              size_t offset,uint8_t mask);
 void anygm_memory_vfs_guard_reads(AnygmMemoryVfs *memory,const char *path,
                                   uint64_t begin,uint64_t size);
 

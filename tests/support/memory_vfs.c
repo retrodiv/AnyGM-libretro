@@ -10,6 +10,7 @@ typedef struct MemoryFile {
   AnygmMemoryVfs *memory;
   AnygmMemoryVfsNode *node;
   size_t position;
+  int guarded_read_mode;
 } MemoryFile;
 
 typedef struct MemoryDirectory {
@@ -50,6 +51,14 @@ int anygm_memory_vfs_add_file(AnygmMemoryVfs *memory,const char *path,
   return 1;
 }
 
+int anygm_memory_vfs_xor_byte(AnygmMemoryVfs *memory,const char *path,
+                              size_t offset,uint8_t mask){
+  AnygmMemoryVfsNode *node=memory_find(memory,path);
+  if(!node || node->directory || offset>=node->size || !mask) return 0;
+  node->data[offset]^=mask;
+  return 1;
+}
+
 static void *memory_open(void *userdata,const char *path,AnygmFileMode mode){
   AnygmMemoryVfs *memory=userdata;
   AnygmMemoryVfsNode *node=memory_find(memory,path);
@@ -70,12 +79,18 @@ static size_t memory_read(void *userdata,void *opaque,void *data,size_t size){
   MemoryFile *file=opaque;
   if(!file || file->memory!=memory || (!data && size)) return 0;
   if(size>memory->max_read_request) memory->max_read_request=size;
-  if(memory->guard_active && !strcmp(file->node->path,memory->guarded_path) &&
-     ((uint64_t)file->position<memory->guard_begin ||
-      (uint64_t)file->position>memory->guard_end ||
-      (uint64_t)size>memory->guard_end-(uint64_t)file->position)){
-    memory->read_violation=1;
-    return 0;
+  if(memory->guard_active && !strcmp(file->node->path,memory->guarded_path)){
+    /* A source-stability hash is a separate handle whose first read starts at zero. Cabinet
+     * callbacks instead start inside the declared PE range and must remain confined there. */
+    if(!file->guarded_read_mode && size)
+      file->guarded_read_mode=file->position?1:2;
+    if(file->guarded_read_mode==1 &&
+       ((uint64_t)file->position<memory->guard_begin ||
+        (uint64_t)file->position>memory->guard_end ||
+        (uint64_t)size>memory->guard_end-(uint64_t)file->position)){
+      memory->read_violation=1;
+      return 0;
+    }
   }
   size_t remaining=file->node->size-file->position;
   if(size>remaining) size=remaining;

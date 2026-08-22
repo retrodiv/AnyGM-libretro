@@ -140,6 +140,13 @@ static int cab_hash_file(const AnygmContentRouter *router,const char *path,uint6
   return 1;
 }
 
+static int cab_source_matches(const AnygmContentRouter *router,const char *path,
+                              const AnygmEmbeddedCab *cab){
+  uint64_t size=0,hash=0;
+  return cab && cab_file_size(router,path,&size) && size==cab->source_size &&
+         cab_hash_file(router,path,size,&hash) && hash==cab->source_hash;
+}
+
 static int cab_read_cstring(const AnygmHostServices *host,void *file,uint64_t source_size,
                             uint64_t start,uint64_t end,uint64_t *next){
   uint8_t buffer[256];
@@ -835,6 +842,13 @@ int anygm_embedded_cab_extract(const AnygmContentRouter *router,const char *sour
               (unsigned long long)(uintptr_t)router)>=(int)sizeof staging) return 0;
   if(cab_cache_reuse(router,cache,cab,payload_path,payload_path_size,
                      asset_root,asset_root_size)){
+    if(!cab_source_matches(router,source_path,cab)){
+      payload_path[0]=0;
+      asset_root[0]=0;
+      cab_log(router,ANYGM_CONTENT_LOG_ERROR,
+              "cabinet: input changed before verified cache reuse");
+      return 0;
+    }
     cab_log(router,ANYGM_CONTENT_LOG_INFO,"cabinet: reusing verified cache at %s",cache);
     return 1;
   }
@@ -914,6 +928,10 @@ int anygm_embedded_cab_extract(const AnygmContentRouter *router,const char *sour
             "cabinet: payload selection saw %u entries, %u payloads, %llu extracted members",
             entries,payloads,(unsigned long long)manifest.count);
     failure="payload selection"; ok=0;
+  }
+  if(ok && !cab_source_matches(router,source_path,cab)){
+    failure="source stability";
+    ok=0;
   }
   uint8_t *marker=NULL; size_t marker_size=0;
   char marker_path[1536];
