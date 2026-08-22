@@ -95,6 +95,7 @@ typedef struct {
 typedef struct { const char *name; int originx, originy, w, h, n_frames; int *frame;
                  int ml, mr, mt, mb;                /* collision bbox coordinates: left,right,top,bottom */
                  const uint8_t *mask; int mask_rowb, mask_count;  /* SPRT collision mask: 1bpp */
+                 uint8_t *runtime_mask;                           /* owned copy for runtime assets */
                  int collision_kind, collision_tolerance;
                  float playback_speed; int playback_speed_type, playback_speed_valid;
                  uint8_t *runtime_rgba; int runtime_owned, runtime_extra, runtime_opaque; char *owned_name;

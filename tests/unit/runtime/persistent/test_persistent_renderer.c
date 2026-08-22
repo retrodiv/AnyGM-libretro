@@ -260,7 +260,13 @@ int expect_runtime_sprite_state_preserves_collision_extent(void){
   render.spr[sprite].mt=0;
   render.spr[sprite].mr=7;
   render.spr[sprite].mb=5;
-  render.spr[sprite].collision_kind=1;
+  render.spr[sprite].runtime_mask=calloc(5u,1u);
+  if(!render.spr[sprite].runtime_mask){ gml_render_free(&render); return 0; }
+  render.spr[sprite].runtime_mask[4]=0x80;
+  render.spr[sprite].mask=render.spr[sprite].runtime_mask;
+  render.spr[sprite].mask_rowb=1;
+  render.spr[sprite].mask_count=1;
+  render.spr[sprite].collision_kind=0;
   render.spr[sprite].collision_tolerance=58;
 
   size_t size=gml_render_state_size(&render,0),written=0,used=0,repeated=0;
@@ -270,6 +276,9 @@ int expect_runtime_sprite_state_preserves_collision_extent(void){
     gml_render_state_save(&render,0,before,size,&written) && written==size &&
     gml_render_state_load(&render,before,written,&used) && used==written &&
     render.spr[sprite].mr==7 && render.spr[sprite].mb==5 &&
+    render.spr[sprite].runtime_mask && render.spr[sprite].mask_count==1 &&
+    gml_sprite_collision(&render,sprite,0,0,4) &&
+    !gml_sprite_collision(&render,sprite,0,1,4) &&
     gml_render_state_save(&render,0,after,size,&repeated) && repeated==written &&
     !memcmp(before,after,written);
   if(!ok){
@@ -978,6 +987,15 @@ int expect_carriage_return_and_line_feed_are_one_break(void){
   if(classic_height!=3){
     ok=0;
     fprintf(stderr,"classic carriage-return break mismatch: height=%d, expected 3\n",classic_height);
+  }
+  /* Extended text is a distinct builtin family. It treats CR LF as one separator under the
+   * classic profile, while plain and sprite text retain separate breaks. This synthetic
+   * matrix guards the family distinction. */
+  int classic_extended_height=(int)gml_text_height_ext(&render,"A\r\nB",1,-1);
+  if(classic_extended_height!=2){
+    ok=0;
+    fprintf(stderr,"classic extended carriage-return break mismatch: height=%d, expected 2\n",
+            classic_extended_height);
   }
   render.win=&win;
   render.fonts[0].glyphs=NULL; render.fonts[0].n_glyphs=0;

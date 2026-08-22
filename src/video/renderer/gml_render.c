@@ -244,11 +244,13 @@ int gml_sprite_collision(GmlRender *r, int sprite, int frame, int lx, int ly){
     double cx=s->ml+hw-0.5, cy=s->mt+hh-0.5;
     return fabs((lx-cx)/hw)+fabs((ly-cy)/hh)<=1.0;
   }
+  if(s->mask && s->mask_count>0){
+    int mi=(s->mask_count>1 && frame>=0 && frame<s->mask_count)? frame : 0;
+    const uint8_t *m=s->mask + (size_t)mi*s->mask_rowb*s->h;
+    return (m[(size_t)ly*s->mask_rowb + lx/8] >> (7-(lx%8))) & 1;
+  }
   if(s->runtime_rgba) return gml_sprite_alpha(r,sprite,frame,lx,ly)>s->collision_tolerance;
-  if(!s->mask||s->mask_count<=0) return 1;
-  int mi=(s->mask_count>1 && frame>=0 && frame<s->mask_count)? frame : 0;
-  const uint8_t *m=s->mask + (size_t)mi*s->mask_rowb*s->h;
-  return (m[(size_t)ly*s->mask_rowb + lx/8] >> (7-(lx%8))) & 1;
+  return 1;
 }
 
 /* ---- BGND ---- */
@@ -1199,6 +1201,7 @@ void gml_render_free(GmlRender *r){
     gml_render_sprite_cache_free(&r->spr[i]);
     gml_render_free_spine(r->spr[i].spine);
     free(r->spr[i].runtime_rgba);
+    free(r->spr[i].runtime_mask);
     free(r->spr[i].runtime_row_min);
     free(r->spr[i].runtime_row_max);
     free(r->spr[i].owned_name);

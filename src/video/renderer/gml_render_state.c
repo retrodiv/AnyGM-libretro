@@ -187,6 +187,11 @@ static void render_state_write(GmlRender *render,int view_surface,CoreW *s){
       cw_i32(s,0);
       cw_raw(s,sp->runtime_rgba,(size_t)sp->w*sp->h*frames*4);
     }
+    int mask_rowb=sp->mask && sp->mask_rowb>0 && sp->mask_count>0 ? sp->mask_rowb : 0;
+    int mask_count=mask_rowb ? sp->mask_count : 0;
+    cw_i32(s,mask_rowb); cw_i32(s,mask_count);
+    if(mask_rowb)
+      cw_raw(s,sp->mask,(size_t)mask_rowb*(size_t)sp->h*(size_t)mask_count);
   }
 }
 
@@ -338,6 +343,27 @@ static int render_state_read(GmlRender *render,CoreR *s){
     }
     if(id>=0 && id<render->n_spr){
       GmlSprite *sp=&render->spr[id];
+      int mask_rowb=cr_i32(s), mask_count=cr_i32(s);
+      int expected_rowb=(w+7)/8;
+      if(mask_rowb<0 || mask_count<0 ||
+         ((mask_rowb==0)!=(mask_count==0)) ||
+         (mask_rowb && (mask_rowb!=expected_rowb || mask_count>frames))){
+        free(seen_runtime); s->ok=0; return 0;
+      }
+      size_t mask_bytes=(size_t)mask_rowb*(size_t)h*(size_t)mask_count;
+      size_t remaining=s->pos<=s->cap ? s->cap-s->pos : 0;
+      if(mask_bytes>remaining){ free(seen_runtime); s->ok=0; return 0; }
+      uint8_t *mask=NULL;
+      if(mask_bytes){
+        mask=malloc(mask_bytes);
+        if(!mask){ free(seen_runtime); s->ok=0; return 0; }
+        cr_raw(s,mask,mask_bytes);
+      }
+      free(sp->runtime_mask);
+      sp->runtime_mask=mask;
+      sp->mask=mask;
+      sp->mask_rowb=mask_rowb;
+      sp->mask_count=mask_count;
       /* These values came from the running renderer and are part of the canonical snapshot.
        * Classic assets may use the full width or height as their right/bottom extent. Rewriting
        * such an extent while loading makes save-load-save non-canonical and changes collisions
@@ -356,8 +382,8 @@ static int render_state_read(GmlRender *render,CoreR *s){
       gml_sprite_delete(render,i);
   for(int i=0;i<base;i++) if(render->spr[i].runtime_rgba && (i>=seen_cap || !seen_runtime[i])){
     GmlSprite *sp=&render->spr[i];
-    free(sp->runtime_rgba); free(sp->runtime_row_min); free(sp->runtime_row_max); free(sp->runtime_source_path);
-    sp->runtime_rgba=NULL; sp->runtime_row_min=NULL; sp->runtime_row_max=NULL; sp->runtime_source_path=NULL; sp->runtime_owned=0; sp->runtime_extra=0;
+    free(sp->runtime_rgba); free(sp->runtime_mask); free(sp->runtime_row_min); free(sp->runtime_row_max); free(sp->runtime_source_path);
+    sp->runtime_rgba=NULL; sp->runtime_mask=NULL; sp->runtime_row_min=NULL; sp->runtime_row_max=NULL; sp->runtime_source_path=NULL; sp->runtime_owned=0; sp->runtime_extra=0;
     sp->runtime_source_imgnum=0; sp->runtime_source_removeback=0;
   }
   free(seen_runtime);

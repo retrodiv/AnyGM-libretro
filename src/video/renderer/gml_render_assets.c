@@ -852,10 +852,12 @@ static void sprite_set_runtime_rgba(GmlSprite *s, uint8_t *rgba, int w, int h, i
   if(!extra) sprite_backup(s);
   gml_render_sprite_cache_free(s);
   free(s->runtime_rgba);
+  free(s->runtime_mask);
   free(s->runtime_row_min);
   free(s->runtime_row_max);
   free(s->runtime_source_path);
   s->runtime_rgba=rgba;
+  s->runtime_mask=NULL;
   s->runtime_row_min=NULL;
   s->runtime_row_max=NULL;
   s->runtime_source_path=NULL;
@@ -993,11 +995,22 @@ static uint8_t *sprite_copy_rgba(GmlRender *r,int sprite,
   return rgba;
 }
 
+static uint8_t *sprite_copy_collision_mask(const GmlSprite *sprite){
+  if(!sprite || !sprite->mask || sprite->mask_rowb<=0 ||
+     sprite->mask_count<=0 || sprite->h<=0) return NULL;
+  size_t bytes=(size_t)sprite->mask_rowb*(size_t)sprite->h*(size_t)sprite->mask_count;
+  uint8_t *copy=malloc(bytes);
+  if(copy) memcpy(copy,sprite->mask,bytes);
+  return copy;
+}
+
 int gml_sprite_duplicate(GmlRender *r, int sprite){
   int w=0,h=0,frames=0;
   uint8_t *rgba=sprite_copy_rgba(r,sprite,&w,&h,&frames);
   if(!rgba) return -1;
   GmlSprite *s=&r->spr[sprite];
+  uint8_t *mask=sprite_copy_collision_mask(s);
+  if(s->mask && !mask){ free(rgba); return -1; }
 
   int id=gml_sprite_append_from_rgba_frames(r,rgba,w,h,frames,s->originx,s->originy,
                                             s->name?s->name:"<sprite-copy>");
@@ -1005,12 +1018,16 @@ int gml_sprite_duplicate(GmlRender *r, int sprite){
     GmlSprite *src=&r->spr[sprite];
     GmlSprite *dst=&r->spr[id];
     dst->ml=src->ml; dst->mt=src->mt; dst->mr=src->mr; dst->mb=src->mb;
+    dst->runtime_mask=mask;
+    dst->mask=mask;
+    dst->mask_rowb=src->mask_rowb;
+    dst->mask_count=src->mask_count;
     dst->collision_kind=src->collision_kind;
     dst->collision_tolerance=src->collision_tolerance;
     dst->ns_enabled=src->ns_enabled;
     dst->ns_l=src->ns_l; dst->ns_t=src->ns_t; dst->ns_r=src->ns_r; dst->ns_b=src->ns_b;
     for(int i=0;i<5;i++) dst->ns_tile[i]=src->ns_tile[i];
-  }
+  } else free(mask);
   return id;
 }
 
@@ -1023,9 +1040,17 @@ int gml_sprite_assign(GmlRender *r,int destination,int source){
   if(!rgba) return 0;
   GmlSprite *src=&r->spr[source];
   GmlSprite *dst=&r->spr[destination];
+  uint8_t *mask=sprite_copy_collision_mask(src);
+  if(src->mask && !mask){ free(rgba); return 0; }
   int extra=dst->runtime_extra;
   sprite_set_runtime_rgba(dst,rgba,width,height,frames,src->originx,src->originy,extra);
   dst->ml=src->ml; dst->mt=src->mt; dst->mr=src->mr; dst->mb=src->mb;
+  /* sprite_assign replaces the whole sprite asset.  Its independently authored collision plane
+   * follows the visible frames; falling back to copied-frame alpha changes precise collisions. */
+  dst->runtime_mask=mask;
+  dst->mask=mask;
+  dst->mask_rowb=src->mask_rowb;
+  dst->mask_count=src->mask_count;
   dst->collision_kind=src->collision_kind;
   dst->collision_tolerance=src->collision_tolerance;
   dst->playback_speed=src->playback_speed;
@@ -1259,6 +1284,7 @@ void gml_sprite_delete(GmlRender *r, int sprite){
   if(!s->runtime_extra) return;
   gml_render_sprite_cache_free(s);
   free(s->runtime_rgba);
+  free(s->runtime_mask);
   free(s->runtime_row_min);
   free(s->runtime_row_max);
   free(s->owned_name);
@@ -1311,6 +1337,7 @@ int gml_sprite_collision_mask(GmlRender *r, int sprite, int sepmasks, int bboxmo
   } else {
     s->ml=0; s->mt=0; s->mr=s->w-1; s->mb=s->h-1;
   }
+  free(s->runtime_mask); s->runtime_mask=NULL;
   s->mask=NULL; s->mask_rowb=0; s->mask_count=0;
   s->collision_kind=kind;
   s->collision_tolerance=tolerance;
@@ -1322,14 +1349,15 @@ void gml_render_clear_runtime_sprites(GmlRender *r){
   for(int i=0;i<base;i++){
     GmlSprite *s=&r->spr[i];
     gml_render_sprite_cache_free(s);
-    free(s->runtime_rgba); free(s->runtime_row_min); free(s->runtime_row_max); free(s->runtime_source_path);
-    s->runtime_rgba=NULL; s->runtime_row_min=NULL; s->runtime_row_max=NULL; s->runtime_source_path=NULL; s->runtime_owned=0; s->runtime_extra=0;
+    free(s->runtime_rgba); free(s->runtime_mask); free(s->runtime_row_min); free(s->runtime_row_max); free(s->runtime_source_path);
+    s->runtime_rgba=NULL; s->runtime_mask=NULL; s->runtime_row_min=NULL; s->runtime_row_max=NULL; s->runtime_source_path=NULL; s->runtime_owned=0; s->runtime_extra=0;
     s->runtime_opaque=0;
     s->runtime_source_imgnum=0; s->runtime_source_removeback=0;
     sprite_restore_base(s);
   }
   for(int i=base;i<r->n_spr;i++){
     free(r->spr[i].runtime_rgba);
+    free(r->spr[i].runtime_mask);
     free(r->spr[i].runtime_row_min);
     free(r->spr[i].runtime_row_max);
     free(r->spr[i].owned_name);

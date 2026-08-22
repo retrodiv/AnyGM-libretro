@@ -13,7 +13,7 @@ extern "C" {
 
 #define ANYGM_API_VERSION 3u
 #define ANYGM_HOST_SERVICES_VERSION 1u
-#define ANYGM_STATE_SCHEMA 13u
+#define ANYGM_STATE_SCHEMA 14u
 #define ANYGM_MAX_GAMEPADS 4u
 #define ANYGM_MAX_GAMEPAD_BUTTONS 16u
 #define ANYGM_MAX_GAMEPAD_AXES 4u
@@ -512,6 +512,9 @@ AnygmResult anygm_get_room_name(const AnygmEngine *engine,uint32_t index,
 AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
                             AnygmFrameOutput *output);
 AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta);
+/* Runtime expressions are frontend input, not anchor declarations. `set|object|variable|value`
+ * immediately writes every matching live instance when enabled; it is not repeated, restored on
+ * disable, or serialized as active policy. */
 AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_t enabled,
                                        const char *expression);
 size_t anygm_state_size(AnygmEngine *engine);

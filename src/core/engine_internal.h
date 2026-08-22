@@ -126,7 +126,7 @@ enum {
 };
 
 typedef enum {
-  CK_NONE=0, CK_ROOM, CK_GARR, CK_GSCALAR, CK_INST, CK_ENGINE, CK_ROUTE,
+  CK_NONE=0, CK_ROOM, CK_GARR, CK_GSCALAR, CK_INST, CK_INST_SET, CK_ENGINE, CK_ROUTE,
   CK_CAMERA, CK_SURFACE, CK_MONITOR_VIEW, CK_ALARM_PAUSE, CK_SCRIPT
 } CheatKind;
 typedef enum {
@@ -285,9 +285,9 @@ struct AnygmEngine {
    * cancelled by a release in that frame. A held press uses its existing edge.
    * These transient flags are not serialized between frames. */
   uint8_t key_press_raised[NKEY],key_press_carry[NKEY];
-  /* key_press_step marks a simulated press in the running step.
-   * key_release_defer counts polls owed by its paired release so a held-key
-   * query in the following frame can observe it. Both are transient. */
+  /* key_press_step classifies a simulated press in the running step as a repeat or
+   * new edge. key_release_defer counts polls owed by its paired release so a
+   * held-key query in the following frame can observe it. Both are transient. */
   uint8_t key_press_step[NKEY],key_release_defer[NKEY];
   /* io_clear and keyboard_clear suppress a held key until all input sources next report it up. A later press is then observed normally. */
   uint8_t key_cleared[NKEY];

@@ -625,12 +625,20 @@ static int glyph_frame(GmlFont *f, unsigned cp){
 static int text_is_linebreak(const char *p){
   return p && (*p=='#' || *p=='\r' || *p=='\n');
 }
-/* Return the byte width of a logical line separator. The compatibility profile decides
- * whether a CR LF pair is consumed together or as two independent separators. */
-static int text_linebreak_bytes(GmlRender *r, const char *p){
+typedef enum {
+  ANYGM_TEXT_LAYOUT_PLAIN,
+  ANYGM_TEXT_LAYOUT_EXTENDED,
+  ANYGM_TEXT_LAYOUT_SPRITE
+} AnygmTextLayoutFamily;
+/* Return the byte width of a logical line separator. Extended text consumes a CR LF pair
+ * together; plain and sprite text follow the generation policy, including the classic rule
+ * that treats each control character as a separate break. */
+static int text_linebreak_bytes(GmlRender *r, const char *p,
+                                AnygmTextLayoutFamily family){
   if(!text_is_linebreak(p)) return 0;
   if(p[0]=='\r' && p[1]=='\n' && r &&
-     anygm_policy_text_pairs_carriage_return_with_line_feed(r->win)) return 2;
+     (family==ANYGM_TEXT_LAYOUT_EXTENDED ||
+      anygm_policy_text_pairs_carriage_return_with_line_feed(r->win))) return 2;
   return 1;
 }
 
@@ -808,11 +816,11 @@ static int classic_info_subpixel_glyph(GmlRender *r,GmlFont *font,GmlGlyph *glyp
  * A transformed draw rotates both the pen and each glyph quad around that pen. */
 static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const char *str,
                            double xs, double ys, double rotation, double ca, double sa, int use_rot,
-                           uint32_t blend, double alpha){
+                           uint32_t blend, double alpha, AnygmTextLayoutFamily family){
   int lh=f->line_height>0? f->line_height:12;
   int ah=f->align_height>0?f->align_height:lh;
   int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;}
-    if(text_is_linebreak(q)){ nlines++; q+=text_linebreak_bytes(r,q)-1; } }
+    if(text_is_linebreak(q)){ nlines++; q+=text_linebreak_bytes(r,q,family)-1; } }
   double base_y=0;
   double block_height=(nlines-1)*lh+ah;
   if(r->valign==1) base_y=-block_height/2.0; else if(r->valign==2) base_y=-block_height;
@@ -883,7 +891,7 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
       if(g) cx += g->shift;
     }
     base_y += lh;
-    if(text_is_linebreak(end)) p=end+text_linebreak_bytes(r,end); else break;
+    if(text_is_linebreak(end)) p=end+text_linebreak_bytes(r,end,family); else break;
   }
 }
 
@@ -894,21 +902,22 @@ static GmlFont *active_font(GmlRender *r){
   return r->font<r->n_fonts ? &r->fonts[r->font] : NULL;
 }
 
-static int text_width_font(GmlRender *r, GmlFont *f, const char *str){
+static int text_width_font(GmlRender *r, GmlFont *f, const char *str,
+                           AnygmTextLayoutFamily family){
   if(!f||!str) return 0;
   int best=0; const char *p=str;
   for(;;){
     const char *end; int w = f->real ? real_line_width(r,f,p,&end) : line_width(r,f,p,&end);
     if(w>best) best=w;
     if(!text_is_linebreak(end)) break;
-    p=end+text_linebreak_bytes(r,end);
+    p=end+text_linebreak_bytes(r,end,family);
   }
   return best;
 }
 
 int gml_text_width(GmlRender *r, const char *str){
   GmlFont *f=active_font(r);
-  int best=text_width_font(r,f,str);
+  int best=text_width_font(r,f,str,ANYGM_TEXT_LAYOUT_PLAIN);
   if(render_setting(r,"GML_LOG_WIDTH")){
     int max=200; const char *m=render_setting(r,"GML_LOG_WIDTH_MAX"); if(m) max=atoi(m);
     if(f && r->text_width_log_count<max){
@@ -922,18 +931,19 @@ int gml_text_width(GmlRender *r, const char *str){
   return best;
 }
 
-static int text_height_font(GmlRender *r, GmlFont *f, const char *str){
+static int text_height_font(GmlRender *r, GmlFont *f, const char *str,
+                            AnygmTextLayoutFamily family){
   if(!f) return 0;
   int lh, nlines=1;
   if(f->real) lh=f->line_height>0?f->line_height:12;
   else { GmlSprite *s=&r->spr[f->sprite]; lh=s->h>0?s->h:8; }
   if(str) for(const char *p=str;*p;p++){ if(*p=='\\'&&p[1]=='#'){p++;continue;}
-    if(text_is_linebreak(p)){ nlines++; p+=text_linebreak_bytes(r,p)-1; } }
+    if(text_is_linebreak(p)){ nlines++; p+=text_linebreak_bytes(r,p,family)-1; } }
   return lh*nlines;
 }
 
 int gml_text_height(GmlRender *r, const char *str){
-  return text_height_font(r,active_font(r),str);
+  return text_height_font(r,active_font(r),str,ANYGM_TEXT_LAYOUT_PLAIN);
 }
 
 #define CLASSIC_INFO_MAX_LINES 128
@@ -1475,7 +1485,8 @@ void gml_draw_classic_game_information(GmlRender *r,uint32_t *framebuffer,
 
 static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
                                double x, double y, const char *str,
-                               double xs, double ys, double rot, uint32_t blend, double alpha){
+                               double xs, double ys, double rot, uint32_t blend, double alpha,
+                               AnygmTextLayoutFamily family){
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
   if(!f||!str) return;
@@ -1486,7 +1497,10 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
   int use_rot = fabs(rr)>0.001 && fabs(rr-360.0)>0.001;
   if(render_setting(r,"GML_LOG_TEXT")) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[text] x=%.0f y=%.0f font=%d halign=%d valign=%d scale=(%.2f,%.2f) rot=%.1f col=%06X a=%.2f \"%s\"\n",
     x,y,r->font,r->halign,r->valign,xs,ys,rr,(unsigned)(blend&0xffffff),alpha,str);
-  if(f->real){ draw_text_real(r,f,x,y,str,xs,ys,rr,ca,sa,use_rot,blend,alpha); return; }
+  if(f->real){
+    draw_text_real(r,f,x,y,str,xs,ys,rr,ca,sa,use_rot,blend,alpha,family);
+    return;
+  }
   if(f->sprite<0 || f->sprite>=r->n_spr) return;
   GmlSprite *s=&r->spr[f->sprite];
   if(s->n_frames<=0) return;
@@ -1495,7 +1509,7 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
   int lh=s->h; if(lh<=0) lh=8;
   /* count lines for valign */
   int nlines=1; for(const char *p=str;*p;p++){ if(*p=='\\'&&p[1]=='#'){p++;continue;}
-    if(text_is_linebreak(p)){ nlines++; p+=text_linebreak_bytes(r,p)-1; } }
+    if(text_is_linebreak(p)){ nlines++; p+=text_linebreak_bytes(r,p,family)-1; } }
   double base_y=0;
   if(r->valign==1) base_y=-(nlines*lh)/2.0; else if(r->valign==2) base_y=-nlines*lh;
   const char *p=str;
@@ -1559,12 +1573,13 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
       cx += glyph_w(r,f,fr,cp)+f->sep;
     }
     base_y += lh;
-    if(text_is_linebreak(end)) p=end+text_linebreak_bytes(r,end); else break;
+    if(text_is_linebreak(end)) p=end+text_linebreak_bytes(r,end,family); else break;
   }
 }
 void gml_draw_text_transformed(GmlRender *r, double x, double y, const char *str,
                                double xs, double ys, double rot, uint32_t blend, double alpha){
-  draw_text_transformed_font(r,active_font(r),x,y,str,xs,ys,rot,blend,alpha);
+  draw_text_transformed_font(r,active_font(r),x,y,str,xs,ys,rot,blend,alpha,
+                             ANYGM_TEXT_LAYOUT_PLAIN);
 }
 void gml_draw_text(GmlRender *r, double x, double y, const char *str){
   if(!r) return;
@@ -1603,7 +1618,8 @@ static void text_wrap_copy(char *wrapped,size_t cap,size_t *offset,
 }
 
 static const char *text_wrap_ext(GmlRender *r,GmlFont *font,const char *str,
-                                 double w,char *wrapped,size_t cap){
+                                 double w,char *wrapped,size_t cap,
+                                 AnygmTextLayoutFamily family){
   if(!r || !font || !str || !wrapped || cap<2 || w<=0) return str;
   size_t offset=0;
   const char *p=str;
@@ -1647,7 +1663,7 @@ static const char *text_wrap_ext(GmlRender *r,GmlFont *font,const char *str,
 
     if(!*explicit_end) break;
     if(offset<cap-1) wrapped[offset++]='#';
-    p=explicit_end+text_linebreak_bytes(r,explicit_end);
+    p=explicit_end+text_linebreak_bytes(r,explicit_end,family);
   }
   wrapped[offset]=0;
   return wrapped;
@@ -1658,40 +1674,49 @@ double gml_text_width_ext(GmlRender *r,const char *str,double sep,double w){
   if(!r || !str) return 0;
   GmlFont *font=active_font(r);
   char wrapped[2048];
-  const char *layout=text_wrap_ext(r,font,str,w,wrapped,sizeof wrapped);
-  return text_width_font(r,font,layout);
+  const char *layout=text_wrap_ext(r,font,str,w,wrapped,sizeof wrapped,
+                                   ANYGM_TEXT_LAYOUT_EXTENDED);
+  return text_width_font(r,font,layout,ANYGM_TEXT_LAYOUT_EXTENDED);
 }
 
 double gml_text_height_ext(GmlRender *r,const char *str,double sep,double w){
   if(!r || !str) return 0;
   GmlFont *font=active_font(r);
   char wrapped[2048];
-  const char *layout=text_wrap_ext(r,font,str,w,wrapped,sizeof wrapped);
-  if(sep<0) return text_height_font(r,font,layout);
+  const char *layout=text_wrap_ext(r,font,str,w,wrapped,sizeof wrapped,
+                                   ANYGM_TEXT_LAYOUT_EXTENDED);
+  if(sep<0) return text_height_font(r,font,layout,ANYGM_TEXT_LAYOUT_EXTENDED);
   int lines=1;
   for(const char *p=layout;*p;p++){
     if(*p=='\\' && p[1]=='#'){ p++; continue; }
-    if(text_is_linebreak(p)){ lines++; p+=text_linebreak_bytes(r,p)-1; }
+    if(text_is_linebreak(p)){
+      lines++;
+      p+=text_linebreak_bytes(r,p,ANYGM_TEXT_LAYOUT_EXTENDED)-1;
+    }
   }
-  double line_height=text_height_font(r,font,"");
+  double line_height=text_height_font(r,font,"",ANYGM_TEXT_LAYOUT_EXTENDED);
   return line_height+(lines-1)*sep;
 }
 
 static void draw_text_ext_transformed_font(GmlRender *r, GmlFont *font,
                                    double x, double y, const char *str,
                                    double sep, double w, double xs, double ys, double rot,
-                                   uint32_t blend, double alpha){
+                                   uint32_t blend, double alpha,
+                                   AnygmTextLayoutFamily family){
   if(!r || !str || !font) return;
   char wrapped[2048];
-  str=text_wrap_ext(r,font,str,w,wrapped,sizeof wrapped);
-  if(sep<0){ draw_text_transformed_font(r,font,x,y,str,xs,ys,rot,blend,alpha); return; }
+  str=text_wrap_ext(r,font,str,w,wrapped,sizeof wrapped,family);
+  if(sep<0){
+    draw_text_transformed_font(r,font,x,y,str,xs,ys,rot,blend,alpha,family);
+    return;
+  }
   /* custom line separation: draw line by line at y + i*sep */
   int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;}
-    if(text_is_linebreak(q)){ nlines++; q+=text_linebreak_bytes(r,q)-1; } }
+    if(text_is_linebreak(q)){ nlines++; q+=text_linebreak_bytes(r,q,family)-1; } }
   /* Separation is the distance between successive line origins, not the full block height.
    * The first line still occupies one font line-height; omitting it shifts even a single-line
    * centred or bottom-aligned string away from the requested anchor. */
-  double block_height=text_height_font(r,font,"")+(nlines-1)*sep;
+  double block_height=text_height_font(r,font,"",family)+(nlines-1)*sep;
   double base=0;
   if(r->valign==1) base=-block_height/2.0; else if(r->valign==2) base=-block_height;
   double rr=fmod(rot,360.0); if(rr<0) rr+=360.0;
@@ -1705,9 +1730,9 @@ static void draw_text_ext_transformed_font(GmlRender *r, GmlFont *font,
     lbuf[k]=0;
     double line_y=base+li*sep;
     draw_text_transformed_font(r,font,x+line_y*ys*sa,y+line_y*ys*ca,
-                               lbuf,xs,ys,rr,blend,alpha);
+                               lbuf,xs,ys,rr,blend,alpha,family);
     if(!text_is_linebreak(p)) break;
-    p+=text_linebreak_bytes(r,p); li++;
+    p+=text_linebreak_bytes(r,p,family); li++;
   }
   r->valign=sv;
 }
@@ -1715,7 +1740,8 @@ static void draw_text_ext_transformed_font(GmlRender *r, GmlFont *font,
 void gml_draw_text_ext_transformed(GmlRender *r, double x, double y, const char *str,
                                    double sep, double w, double xs, double ys, double rot,
                                    uint32_t blend, double alpha){
-  draw_text_ext_transformed_font(r,active_font(r),x,y,str,sep,w,xs,ys,rot,blend,alpha);
+  draw_text_ext_transformed_font(r,active_font(r),x,y,str,sep,w,xs,ys,rot,blend,alpha,
+                                 ANYGM_TEXT_LAYOUT_EXTENDED);
 }
 
 /* draw_text_ext: word-wrap at pixel width `w` (-1 = none) with line separation `sep`
@@ -1729,5 +1755,6 @@ void gml_draw_text_sprite(GmlRender *r, double x, double y, const char *str,
                           double sep, double w, int sprite, int first, double scale){
   if(!r || sprite<0 || sprite>=r->n_spr || r->spr[sprite].n_frames<=0) return;
   GmlFont font={.sprite=sprite,.first=first,.prop=0,.sep=0};
-  draw_text_ext_transformed_font(r,&font,x,y,str,sep,w,scale,scale,0,0xFFFFFF,1);
+  draw_text_ext_transformed_font(r,&font,x,y,str,sep,w,scale,scale,0,0xFFFFFF,1,
+                                 ANYGM_TEXT_LAYOUT_SPRITE);
 }

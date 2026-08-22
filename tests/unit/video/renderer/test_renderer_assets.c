@@ -93,6 +93,45 @@ int main(void){
   REQUIRE(gml_sprite_frames(&render,strip_sprite)==2,
           "animated replacement did not take its subimage count from the file");
 
+  /* Runtime sprite pixels and their precise collision plane are independent. Assignment and
+   * duplication replace the whole asset, so both representations follow the source. */
+  GmlRender runtime_sprites={0};
+  runtime_sprites.n_spr=runtime_sprites.spr_cap=2;
+  runtime_sprites.spr=calloc(2,sizeof *runtime_sprites.spr);
+  REQUIRE(runtime_sprites.spr!=NULL,"runtime sprite fixture allocation");
+  GmlSprite *authored=&runtime_sprites.spr[0];
+  authored->w=4; authored->h=2; authored->n_frames=1;
+  authored->runtime_rgba=calloc(8,4);
+  REQUIRE(authored->runtime_rgba!=NULL,"runtime sprite pixel allocation");
+  authored->runtime_owned=1;
+  authored->ml=0; authored->mt=0; authored->mr=3; authored->mb=1;
+  authored->runtime_mask=malloc(2);
+  REQUIRE(authored->runtime_mask!=NULL,"runtime sprite collision allocation");
+  authored->runtime_mask[0]=0x00;
+  authored->runtime_mask[1]=0x80;
+  authored->mask=authored->runtime_mask;
+  authored->mask_rowb=1;
+  authored->mask_count=1;
+  REQUIRE(gml_sprite_collision(&runtime_sprites,0,0,0,1),
+          "runtime pixels replaced the independent collision plane");
+  REQUIRE(gml_sprite_assign(&runtime_sprites,1,0),
+          "assigning the runtime sprite failed");
+  REQUIRE(runtime_sprites.spr[1].mask_count==1 && runtime_sprites.spr[1].mask_rowb==1,
+          "sprite assignment did not retain the source collision plane");
+  REQUIRE(gml_sprite_collision(&runtime_sprites,1,0,0,1),
+          "sprite assignment replaced the source collision with copied-frame alpha");
+  int duplicate=gml_sprite_duplicate(&runtime_sprites,0);
+  REQUIRE(duplicate==2,"duplicating the runtime sprite failed");
+  runtime_sprites.spr[0].runtime_mask[1]=0x00;
+  REQUIRE(!gml_sprite_collision(&runtime_sprites,0,0,0,1),
+          "runtime sprite collision mutation was not visible to its owner");
+  REQUIRE(gml_sprite_collision(&runtime_sprites,1,0,0,1),
+          "sprite assignment retained an alias to the source collision plane");
+  REQUIRE(runtime_sprites.spr[duplicate].mask_count==1 &&
+          gml_sprite_collision(&runtime_sprites,duplicate,0,0,1),
+          "sprite duplication replaced the source collision with copied-frame alpha");
+  gml_render_free(&runtime_sprites);
+
   gml_render_free(&render);
   puts("renderer assets: ok");
   return 0;

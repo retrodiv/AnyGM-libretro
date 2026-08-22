@@ -9,9 +9,13 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `13`. It is the format transported by
+The current AnyGM save-state schema is `14`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `14` includes the independently authored collision plane of a runtime sprite in the
+renderer payload. Sprite assignment and duplication copy that plane separately from visible RGBA,
+so restore must retain both or precise collisions change after save, rewind, or run-ahead.
 
 Schema `13` widens the serialized pad state from one row to one per supported pad port. The held
 and previous button rows are what edge detection resumes from, so a state written when a single row
@@ -59,7 +63,7 @@ reader rejects the input after decoding begins, the engine restores an exact
 snapshot of its prior state before returning an error.
 
 If a future release deliberately breaks state compatibility, increment the
-schema to `13`, then `14`, and so on. Supporting an older schema requires an
+schema to `15`, then `16`, and so on. Supporting an older schema requires an
 explicit compatibility reader. A refactor does not require a bump when the
 canonical bytes and semantics remain unchanged.
 

@@ -59,6 +59,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  * A cheat code is one caller-supplied action per line:
  *
  *   room=N                      one-shot: warp to room index N
+ *   set|obj|var|V               one-shot: assign one instance variable on every matching instance
  *   name=V   | name[i]=V        freeze global ARRAY element   (GM8 / indexed reads)
  *   $name=V                     freeze global SCALAR          (GMS scalar reads; avoids V_ARR->0)
  *   obj:var=V | obj:var[i]=V    freeze a numeric var on every instance of object `obj`
@@ -268,6 +269,16 @@ static void cheat_parse(const char *code, CheatAct *a){
     memcpy(a->obj,name,length); a->obj[length]=0;
     a->kind=CK_SCRIPT; return;
   }
+  if(!strncmp(s,"set|",4)){
+    s+=4; const char *bar=strchr(s,'|');
+    if(!bar || bar==s || (size_t)(bar-s)>=sizeof a->obj){ a->kind=CK_NONE; return; }
+    memcpy(a->obj,s,(size_t)(bar-s)); a->obj[bar-s]=0; s=bar+1;
+    bar=strchr(s,'|');
+    if(!bar || bar==s || (size_t)(bar-s)>=sizeof a->var){ a->kind=CK_NONE; return; }
+    memcpy(a->var,s,(size_t)(bar-s)); a->var[bar-s]=0; s=bar+1;
+    if(!*s || strchr(s,'|')){ a->kind=CK_NONE; return; }
+    cheat_parse_val(s,&a->val); a->kind=CK_INST_SET; return;
+  }
   if(!strncmp(s,"surface|",8)){
     s+=8; const char *bar=strchr(s,'|');
     if(!bar || bar==s || (size_t)(bar-s)>=sizeof a->obj){ a->kind=CK_NONE; return; }
@@ -361,7 +372,9 @@ static void cheat_apply_one(AnygmEngine *engine,const CheatAct *a){
   switch(a->kind){
     case CK_GSCALAR: gml_set_global_scalar(&engine->vm, a->obj, cheat_val_eval(engine,&a->val)); break;
     case CK_GARR:    gml_set_global_arr(&engine->vm, a->obj, a->idx, cheat_val_eval(engine,&a->val)); break;
-    case CK_INST:    gml_set_inst_var_all(&engine->vm, a->obj, a->var, cheat_val_eval(engine,&a->val)); break;
+    case CK_INST:
+    case CK_INST_SET: gml_set_inst_var_all(&engine->vm, a->obj, a->var,
+                                           cheat_val_eval(engine,&a->val)); break;
     case CK_ALARM_PAUSE: gml_alarm_pause_add(&engine->vm, a->obj, a->idx); break;
     case CK_CAMERA:
       gml_camera_override_mask(&engine->vm,a->camera_mask,(int)a->camera_field,
@@ -604,9 +617,9 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
             snprintf(error,error_capacity,"directive %d is not a recognized override",line_number);
             return 0;
           }
-          if(slot->act.kind==CK_ROOM){
+          if(slot->act.kind==CK_ROOM || slot->act.kind==CK_INST_SET){
             snprintf(error,error_capacity,
-                     "directive %d: room= is a one-shot warp; declare an mwarp menu entry instead",
+                     "directive %d: one-shot actions are frontend runtime overrides, not anchors",
                      line_number);
             return 0;
           }
@@ -821,6 +834,7 @@ void engine_override_set(AnygmEngine *engine,unsigned i,bool e,const char *c){
       CheatAct one;
       cheat_parse(parts[p],&one);
       if(one.kind==CK_ROOM) gml_cheat_apply(&engine->vm, parts[p]);
+      else if(one.kind==CK_INST_SET) cheat_apply_one(engine,&one);
     }
   }
 }
@@ -840,7 +854,7 @@ static void cheat_sticky_pass(AnygmEngine *engine,CheatSlot *arr, int n, int cha
   for(int i=0;i<n;i++){
     CheatSlot *slot=&arr[i];
     const CheatAct *a=&slot->act;
-    if(a->kind==CK_ROOM || a->kind==CK_NONE) continue;
+    if(a->kind==CK_ROOM || a->kind==CK_INST_SET || a->kind==CK_NONE) continue;
     if(room_owned_only && !cheat_slot_is_room_owned(a)) continue;
     int applies=channel_on && slot->enabled && cheat_scope_ok(engine,a,0);
     /* A script override is an edge at fresh startup, not a value to restore when its channel is

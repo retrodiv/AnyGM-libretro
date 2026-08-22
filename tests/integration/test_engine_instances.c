@@ -1044,6 +1044,59 @@ static int anchor_script_override_policy(void){
   return ok;
 }
 
+/* A one-shot assignment is frontend runtime input, not a freeze or anchor declaration.
+ * It writes immediately, does not repeat on later frames, and disarming it does not
+ * restore the old value. */
+static int one_shot_instance_assignment_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_draw_content_create(&fixture)){
+    fputs("one-shot assignment fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  AnygmInputFrame input={0}; input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0}; output.struct_size=sizeof output;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK && engine->vm.inst_count==1 &&
+         anygm_set_runtime_override(engine,0,1u,"set|obj_fixture|x|37")==ANYGM_OK;
+  if(ok && engine->vm.inst[0].x!=37){
+    fprintf(stderr,"one-shot assignment wrote %.0f, expected 37\n",engine->vm.inst[0].x);
+    ok=0;
+  }
+  if(ok) engine->vm.inst[0].x=41;
+  if(ok) ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  if(ok && engine->vm.inst[0].x!=41){
+    fprintf(stderr,"one-shot assignment repeated on the next frame: %.0f\n",engine->vm.inst[0].x);
+    ok=0;
+  }
+  if(ok) ok=anygm_set_runtime_override(engine,0,0u,NULL)==ANYGM_OK;
+  if(ok && engine->vm.inst[0].x!=41){
+    fprintf(stderr,"one-shot assignment restored a prior value on disarm: %.0f\n",
+            engine->vm.inst[0].x);
+    ok=0;
+  }
+  CheatSlot anchor_slots[GML_MAX_CHEATS]; int anchor_count=0; char error[160]={0};
+  if(ok && engine_boot_overrides_parse("set|obj_fixture|x|9\n",anchor_slots,&anchor_count,
+                                       error,sizeof error)){
+    fputs("one-shot assignment was accepted in an anchor\n",stderr);
+    ok=0;
+  }
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int framebuffer_retention_case(
     int (*create_fixture)(AnygmSyntheticContent *),const char *label){
   AnygmSyntheticContent fixture;
@@ -1850,19 +1903,22 @@ static int bridged_key_hold_policy(void){
   input.struct_size=sizeof input;
   input.pointer_x=input.pointer_y=-1;
   AnygmFrameOutput output={0};
-  for(int frame=0;ok && frame<10;frame++){
+  for(int frame=0;ok && frame<12;frame++){
     output.struct_size=sizeof output;
     ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
   }
-  /* Five presses, five frames that read the key held, and the key up once the presses stop: the
-   * count rising with the presses is what separates a key that survives its step from one that
-   * never reaches Begin Step at all. */
-  ok=ok && gml_global_num(&engine->vm,"fixture_held")==5 &&
-     gml_global_num(&engine->vm,"fixture_steps")==10 &&
+  /* Five bridge writes sustain five held frames but raise one pressed edge; after a release, one
+   * later write supplies one further held frame and a second edge. Repeating
+   * keyboard_key_press while its simulated key is still held must not turn a sustained direction
+   * into an auto-repeat; a release followed by a later press remains a new edge. */
+  ok=ok && gml_global_num(&engine->vm,"fixture_held")==6 &&
+     gml_global_num(&engine->vm,"fixture_pressed")==2 &&
+     gml_global_num(&engine->vm,"fixture_steps")==12 &&
      !engine->vm.input.key(engine->vm.input.userdata,39,0);
   if(!ok)
-    fprintf(stderr,"a key pressed and released once per step did not read held: held=%.0f steps=%.0f\n",
+    fprintf(stderr,"a bridged key did not preserve one edge across a hold: held=%.0f pressed=%.0f steps=%.0f\n",
             engine?gml_global_num(&engine->vm,"fixture_held"):-1.0,
+            engine?gml_global_num(&engine->vm,"fixture_pressed"):-1.0,
             engine?gml_global_num(&engine->vm,"fixture_steps"):-1.0);
   anygm_destroy(engine);
   anygm_synthetic_content_destroy(&fixture);
@@ -1924,6 +1980,8 @@ int main(int argc,char **argv){
       return chained_override_policy()?0:1;
     if(!strcmp(argv[2],"anchor_script_override"))
       return anchor_script_override_policy()?0:1;
+    if(!strcmp(argv[2],"one_shot_instance_assignment"))
+      return one_shot_instance_assignment_policy()?0:1;
     if(!strcmp(argv[2],"first_generation_dynamic_camera"))
       return first_generation_dynamic_camera_policy()?0:1;
     if(!strcmp(argv[2],"explicit_window_screen_stage"))
@@ -1967,6 +2025,7 @@ int main(int argc,char **argv){
           "first_generation_application_surface|"
           "game_restart|"
           "anchor_script_override|"
+          "one_shot_instance_assignment|"
           "first_generation_dynamic_camera|"
           "explicit_window_screen_stage|"
           "first_generation_window_raster|"
@@ -1995,6 +2054,7 @@ int main(int argc,char **argv){
   if(!draw_schedule_policy()) return 1;
   if(!chained_override_policy()) return 1;
   if(!anchor_script_override_policy()) return 1;
+  if(!one_shot_instance_assignment_policy()) return 1;
   if(!background_color_policy()) return 1;
   if(!framebuffer_retention_policy()) return 1;
   if(!clear_view_background_policy()) return 1;
@@ -2145,13 +2205,12 @@ int main(int argc,char **argv){
   /* The state carries content and compatibility fingerprints. The synthetic content embeds the
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
-  /* Schema 13 widened the serialized pad rows from one to one per port, which is exactly
-   * 3 further ports x NPAD buttons x (held + previous) = 96 bytes and nothing else: the size
-   * moved from 21954 to 22050 by precisely that, which is what says the layout change was the
-   * intended one. */
+  /* Schema 14 adds an independently authored collision plane to runtime-sprite records. This
+   * fixture has no runtime sprites, so its size remains 22050 and only the root schema/header hash
+   * moves. A fixture that assigns a sprite covers the added renderer payload separately. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
   if(deterministic_size!=22050 ||
-     deterministic_hash!=UINT64_C(0x266e90d82d8ea492)){
+     deterministic_hash!=UINT64_C(0x4332862d2d8ea492)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;

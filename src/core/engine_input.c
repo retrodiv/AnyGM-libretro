@@ -8,6 +8,12 @@
 static int core_opt_mouse_mode(AnygmEngine *engine);
 static int core_opt_gamepad_connected(AnygmEngine *engine);
 
+enum {
+  ANYGM_SIM_PRESS_NONE=0,
+  ANYGM_SIM_PRESS_REPEAT=1,
+  ANYGM_SIM_PRESS_EDGE=2
+};
+
 /* ---- normalized input snapshot (held this frame plus prior-frame edges) ---- */
 static int anygm_key_for_vk(int vk);
 static int event_key_state_for_vk(AnygmEngine *engine,int vk, int prev);
@@ -151,20 +157,30 @@ void engine_input_release_cleared_keys(AnygmEngine *engine){
 static void engine_input_key_press(void *userdata,int vk){
   AnygmEngine *engine=userdata;
   if(vk >= 0 && vk < NKEY){
-    engine->key_current[vk]=1; engine->key_previous[vk]=0;
-    engine->key_press_raised[vk]=1;
-    engine->key_press_step[vk]=1;
+    int was_held=engine->key_current[vk]!=0;
+    engine->key_current[vk]=1;
+    /* Repeating keyboard_key_press sustains its simulated key; it does not manufacture another
+     * pressed edge while that source is still held. Device bridges deliberately call the builtin
+     * every step, and an idempotent press is what keeps a direction held without turning it into
+     * menu auto-repeat. Preserve EDGE if this step already established the transition. */
+    if(!engine->key_press_step[vk])
+      engine->key_press_step[vk]=was_held?ANYGM_SIM_PRESS_REPEAT:ANYGM_SIM_PRESS_EDGE;
+    if(!was_held){
+      engine->key_previous[vk]=0;
+      engine->key_press_raised[vk]=1;
+    }
     engine->key_release_defer[vk]=0;
   }
 }
 static void engine_input_key_release(void *userdata,int vk){
   AnygmEngine *engine=userdata;
   if(vk >= 0 && vk < NKEY){
-    if(engine->key_press_raised[vk]) engine->key_press_carry[vk]=1;
+    if(engine->key_press_step[vk]==ANYGM_SIM_PRESS_EDGE && engine->key_press_raised[vk])
+      engine->key_press_carry[vk]=1;
     /* A release paired with a press in the running step is deferred. The key
      * remains held through the following frame, including Begin Step; repeated
      * paired presses sustain it. A release after an earlier-step press remains
-     * immediate. This distinguishes per-step hold from a single press/release. */
+     * immediate. Only a new press raises another edge. */
     if(engine->key_press_step[vk]){ engine->key_release_defer[vk]=1; return; }
     engine->key_current[vk]=0; engine->key_previous[vk]=1;
   }
