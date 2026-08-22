@@ -26,6 +26,13 @@ typedef struct AnygmMemoryVfs {
   size_t max_read_request;
   int guard_active;
   int read_violation;
+  char replacement_path[1024];
+  const uint8_t *replacement_data;
+  size_t replacement_size;
+  unsigned replacement_open;
+  unsigned replacement_read_opens;
+  int replacement_active;
+  int replacement_complete;
 } AnygmMemoryVfs;
 
 void anygm_memory_vfs_init(AnygmMemoryVfs *memory,AnygmHostServices *services);
@@ -36,5 +43,7 @@ int anygm_memory_vfs_xor_byte(AnygmMemoryVfs *memory,const char *path,
                               size_t offset,uint8_t mask);
 void anygm_memory_vfs_guard_reads(AnygmMemoryVfs *memory,const char *path,
                                   uint64_t begin,uint64_t size);
+void anygm_memory_vfs_replace_on_read_open(AnygmMemoryVfs *memory,const char *path,
+                                           unsigned open_number,const void *data,size_t size);
 
 #endif

@@ -7,6 +7,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define ANYGM_EMBEDDED_CAB_MARKER_MAX_BYTES (20u*1024u*1024u)
+
 struct AnygmContentRouter;
 
 typedef enum AnygmEmbeddedCabStatus {
@@ -42,5 +44,8 @@ int anygm_embedded_cab_entry_allowed(AnygmEmbeddedCabEntryKind kind,
                                      int has_hardlink,int has_symlink);
 int anygm_embedded_cab_limits_allowed(uint64_t cabinet_size,unsigned entries,
                                       uint64_t member_size,uint64_t total_size);
+/* Checked serialization budget shared by the marker writer and synthetic boundary tests. */
+int anygm_embedded_cab_marker_budget_allowed(size_t payload_path_size,unsigned entries,
+                                              size_t member_path_bytes,size_t *budget_size);
 
 #endif

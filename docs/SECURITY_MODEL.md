@@ -44,6 +44,7 @@ ZIP-compatible and embedded-Cabinet routing enforce these compile-time limits:
 | Folder/archive expansion ratio after a 16 MiB allowance | 1,000:1 |
 | Nested archive levels | 4 |
 | Anchor (`.anygm`) file bytes | 4 KiB |
+| Embedded-Cabinet cache marker serialization budget | 20 MiB |
 
 Member paths are normalized before selection. Absolute paths, drive or stream
 syntax, empty and dot segments, parent traversal, embedded control bytes,
@@ -162,6 +163,9 @@ Cabinet range/profile, selected payload, and the complete relative-path/size/con
 missing, extra, stale, or corrupt files force regeneration. Members and the marker are flushed in
 an unpublished staging directory before one directory rename publishes them. Write, flush,
 decompression, marker, or rename failure removes staging and cannot publish a valid cache.
+The marker writer and reader share the serialization budget above; an over-budget manifest is
+rejected before publication, so every successfully published marker remains representable to the
+warm verifier.
 
 ## State and cache
 

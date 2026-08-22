@@ -26,7 +26,7 @@
 #define CAB_PROFILE_LZX21 UINT32_C(0x001503)
 #define CAB_CACHE_SCHEMA 1u
 #define CAB_CACHE_MARKER ".anygm_cab_cache"
-#define CAB_MARKER_MAX_BYTES (20u*1024u*1024u)
+#define CAB_MARKER_MAX_BYTES ANYGM_EMBEDDED_CAB_MARKER_MAX_BYTES
 
 typedef struct CabFolder {
   uint32_t data_offset;
@@ -114,11 +114,9 @@ static int cab_read_at(const AnygmHostServices *host,void *file,uint64_t source_
   return 1;
 }
 
-static int cab_hash_file(const AnygmContentRouter *router,const char *path,uint64_t expected_size,
-                         uint64_t *hash_out){
-  if(!router || !path || !hash_out || !anygm_vfs_can_read(router->host)) return 0;
-  void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
-  if(!file) return 0;
+static int cab_hash_handle(const AnygmHostServices *host,void *file,uint64_t expected_size,
+                           uint64_t *hash_out){
+  if(!host || !file || !hash_out || !host->file_read || !cab_seek_absolute(host,file,0)) return 0;
   uint8_t *buffer=malloc(CAB_SCAN_BYTES);
   uint8_t fallback[16384];
   size_t capacity=CAB_SCAN_BYTES;
@@ -126,7 +124,7 @@ static int cab_hash_file(const AnygmContentRouter *router,const char *path,uint6
   uint64_t hash=cab_hash_begin(),total=0;
   int ok=1;
   for(;;){
-    size_t count=router->host->file_read(router->host->userdata,file,buffer,capacity);
+    size_t count=host->file_read(host->userdata,file,buffer,capacity);
     if(!count) break;
     if(count>capacity || total>UINT64_MAX-(uint64_t)count){ ok=0; break; }
     total+=(uint64_t)count;
@@ -134,10 +132,20 @@ static int cab_hash_file(const AnygmContentRouter *router,const char *path,uint6
     hash=cab_hash_update(hash,buffer,count);
   }
   if(buffer!=fallback) free(buffer);
-  router->host->file_close(router->host->userdata,file);
   if(!ok || total!=expected_size) return 0;
   *hash_out=hash;
   return 1;
+}
+
+static int cab_hash_file(const AnygmContentRouter *router,const char *path,uint64_t expected_size,
+                         uint64_t *hash_out){
+  if(!router || !path || !hash_out || !anygm_vfs_can_read(router->host) ||
+     !router->host->file_seek) return 0;
+  void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
+  if(!file) return 0;
+  int ok=cab_hash_handle(router->host,file,expected_size,hash_out);
+  router->host->file_close(router->host->userdata,file);
+  return ok;
 }
 
 static int cab_source_matches(const AnygmContentRouter *router,const char *path,
@@ -325,6 +333,11 @@ AnygmEmbeddedCabStatus anygm_embedded_cab_probe(const AnygmContentRouter *router
   if(!file) return ANYGM_EMBEDDED_CAB_NOT_FOUND;
   uint8_t header[64];
   AnygmEmbeddedCabStatus answer=ANYGM_EMBEDDED_CAB_NOT_FOUND;
+  uint64_t source_hash_before=0;
+  if(!cab_hash_handle(router->host,file,source_size,&source_hash_before)){
+    answer=ANYGM_EMBEDDED_CAB_INVALID;
+    goto finish;
+  }
   if(source_size<64u || !cab_read_at(router->host,file,source_size,0,header,sizeof header) ||
      header[0]!='M' || header[1]!='Z') goto finish;
   uint64_t pe_offset=cab_u32(header+60u);
@@ -390,11 +403,14 @@ AnygmEmbeddedCabStatus anygm_embedded_cab_probe(const AnygmContentRouter *router
   free(scan);
   if(!valid && saw_magic) answer=ANYGM_EMBEDDED_CAB_INVALID;
   if(valid){
-    uint64_t source_hash=0;
-    if(!cab_hash_file(router,path,source_size,&source_hash)) answer=ANYGM_EMBEDDED_CAB_INVALID;
+    uint64_t source_hash_after=0;
+    if(!cab_hash_handle(router->host,file,source_size,&source_hash_after) ||
+       source_hash_after!=source_hash_before) answer=ANYGM_EMBEDDED_CAB_INVALID;
     else {
-      found.source_size=source_size; found.source_hash=source_hash;
-      if(cab) *cab=found;
+      found.source_size=source_size;
+      found.source_hash=source_hash_before;
+      if(!cab_source_matches(router,path,&found)) answer=ANYGM_EMBEDDED_CAB_INVALID;
+      else if(cab) *cab=found;
     }
   }
 finish:
@@ -492,6 +508,25 @@ int anygm_embedded_cab_limits_allowed(uint64_t cabinet_size,unsigned entries,
   if(total_size>ANYGM_CONTENT_EXPANSION_ALLOWANCE &&
      (!cabinet_size || cabinet_size>UINT64_MAX/ANYGM_CONTENT_MAX_EXPANSION_RATIO ||
       total_size>cabinet_size*ANYGM_CONTENT_MAX_EXPANSION_RATIO)) return 0;
+  return 1;
+}
+
+int anygm_embedded_cab_marker_budget_allowed(size_t payload_path_size,unsigned entries,
+                                              size_t member_path_bytes,size_t *budget_size){
+  if(budget_size) *budget_size=0;
+  if(!budget_size || !payload_path_size ||
+     payload_path_size>ANYGM_CONTENT_MAX_MEMBER_PATH || !entries ||
+     entries>ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES || member_path_bytes<(size_t)entries ||
+     member_path_bytes>(size_t)entries*ANYGM_CONTENT_MAX_MEMBER_PATH) return 0;
+  size_t budget=256u;
+  if(payload_path_size>(SIZE_MAX-budget)/2u) return 0;
+  budget+=payload_path_size*2u;
+  if((size_t)entries>(SIZE_MAX-budget)/80u) return 0;
+  budget+=(size_t)entries*80u;
+  if(member_path_bytes>(SIZE_MAX-budget)/2u) return 0;
+  budget+=member_path_bytes*2u;
+  if(budget>ANYGM_EMBEDDED_CAB_MARKER_MAX_BYTES) return 0;
+  *budget_size=budget;
   return 1;
 }
 
@@ -664,12 +699,17 @@ static int cab_path_decode(const char *encoded,char *path,size_t capacity){
 static int cab_marker_build(const AnygmEmbeddedCab *cab,const CabManifest *manifest,
                             uint8_t **bytes,size_t *size){
   *bytes=NULL; *size=0;
-  size_t capacity=256u+strlen(manifest->payload)*2u;
+  size_t member_path_bytes=0;
   for(size_t index=0;index<manifest->count;index++){
     size_t path_size=strlen(manifest->members[index].path);
-    if(path_size>(SIZE_MAX-capacity-80u)/2u) return 0;
-    capacity+=path_size*2u+80u;
+    if(member_path_bytes>SIZE_MAX-path_size) return 0;
+    member_path_bytes+=path_size;
   }
+  size_t capacity=0;
+  if(manifest->count>ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES ||
+     !anygm_embedded_cab_marker_budget_allowed(strlen(manifest->payload),
+                                                (unsigned)manifest->count,
+                                                member_path_bytes,&capacity)) return 0;
   uint8_t *buffer=malloc(capacity);
   if(!buffer) return 0;
   char encoded[ANYGM_CONTENT_MAX_MEMBER_PATH*2u+1u];
@@ -700,7 +740,7 @@ static int cab_marker_build(const AnygmEmbeddedCab *cab,const CabManifest *manif
 
 static int cab_marker_parse(const uint8_t *bytes,size_t size,const AnygmEmbeddedCab *cab,
                             CabManifest *manifest){
-  if(!bytes || !size || bytes[size-1u]!='\n') return 0;
+  if(!bytes || !size || size>CAB_MARKER_MAX_BYTES || bytes[size-1u]!='\n') return 0;
   char *text=malloc(size+1u);
   if(!text) return 0;
   memcpy(text,bytes,size); text[size]=0;

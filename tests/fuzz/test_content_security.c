@@ -612,6 +612,36 @@ static int embedded_cabinet_source_stability_case(const Buffer *executable){
   return ok?1:fail("a cold Cabinet cache was published under stale source bytes");
 }
 
+static int embedded_cabinet_probe_snapshot_case(const Buffer *executable){
+  const size_t source_size=256u*1024u;
+  uint8_t *source=calloc(source_size,1);
+  uint8_t *replacement=calloc(source_size,1);
+  if(!source || !replacement || executable->size>source_size){
+    free(source); free(replacement); return 0;
+  }
+  memcpy(source,executable->data,executable->size);
+  memcpy(replacement,source,source_size);
+  replacement[0]^=UINT8_C(1);
+
+  AnygmMemoryVfs memory;
+  AnygmHostServices services;
+  AnygmContentRouter router={0};
+  AnygmEmbeddedCab cab;
+  memset(&cab,0xa5,sizeof cab);
+  anygm_memory_vfs_init(&memory,&services);
+  router.host=&services;
+  router.cache_directory="mem/cache";
+  int ok=anygm_memory_vfs_add_file(&memory,"mem/source.exe",source,source_size);
+  anygm_memory_vfs_replace_on_read_open(&memory,"mem/source.exe",2u,replacement,source_size);
+  AnygmEmbeddedCabStatus status=anygm_embedded_cab_probe(&router,"mem/source.exe",&cab);
+  ok=ok && memory.replacement_complete && status==ANYGM_EMBEDDED_CAB_INVALID &&
+     !cab.source_size && !cab.source_hash && !cab.offset && !cab.size && !cab.profile;
+  anygm_memory_vfs_destroy(&memory);
+  free(source);
+  free(replacement);
+  return ok?1:fail("a Cabinet probe mixed structure and identity from different source snapshots");
+}
+
 static int embedded_cabinet_result_capacity_case(const Buffer *executable){
   const size_t source_size=256u*1024u;
   uint8_t *source=calloc(source_size,1);
@@ -682,6 +712,24 @@ static int embedded_cabinet_limit_policy_case(void){
                                        ANYGM_CONTENT_EXPANSION_ALLOWANCE+1u);
 }
 
+static int embedded_cabinet_marker_budget_case(void){
+  const unsigned entries=ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES;
+  const size_t payload_path_size=8u;
+  const size_t fixed=256u+payload_path_size*2u+(size_t)entries*80u;
+  if(fixed>=ANYGM_EMBEDDED_CAB_MARKER_MAX_BYTES ||
+     ((ANYGM_EMBEDDED_CAB_MARKER_MAX_BYTES-fixed)&1u)) return 0;
+  const size_t accepted_path_bytes=(ANYGM_EMBEDDED_CAB_MARKER_MAX_BYTES-fixed)/2u;
+  size_t accepted_budget=0,rejected_budget=1u;
+  return accepted_path_bytes>=(size_t)entries &&
+    accepted_path_bytes<(size_t)entries*ANYGM_CONTENT_MAX_MEMBER_PATH &&
+    anygm_embedded_cab_marker_budget_allowed(payload_path_size,entries,accepted_path_bytes,
+                                              &accepted_budget) &&
+    accepted_budget==ANYGM_EMBEDDED_CAB_MARKER_MAX_BYTES &&
+    !anygm_embedded_cab_marker_budget_allowed(payload_path_size,entries,
+                                               accepted_path_bytes+1u,&rejected_budget) &&
+    !rejected_budget;
+}
+
 static int embedded_lzx_cabinet_cases(const AnygmHostServices *services,const char *root){
   uint8_t *cabinet=NULL;
   size_t cabinet_size=0;
@@ -711,6 +759,13 @@ static int embedded_lzx_cabinet_cases(const AnygmHostServices *services,const ch
     free(executable.data); free(cabinet); return 0;
   }
   if(!embedded_cabinet_source_stability_case(&executable)){
+    free(executable.data); free(cabinet); return 0;
+  }
+  if(!embedded_cabinet_marker_budget_case()){
+    free(executable.data); free(cabinet);
+    return fail("the Cabinet marker writer exceeded the warm reader's shared budget");
+  }
+  if(!embedded_cabinet_probe_snapshot_case(&executable)){
     free(executable.data); free(cabinet); return 0;
   }
   if(!embedded_cabinet_result_capacity_case(&executable)){
