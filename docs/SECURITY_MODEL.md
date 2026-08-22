@@ -163,6 +163,11 @@ Cabinet range/profile, selected payload, and the complete relative-path/size/con
 missing, extra, stale, or corrupt files force regeneration. Members and the marker are flushed in
 an unpublished staging directory before one directory rename publishes them. Write, flush,
 decompression, marker, or rename failure removes staging and cannot publish a valid cache.
+Cold extraction, marker parsing, and warm tree validation share one folded-name index with two
+slots per accepted entry and a ceiling of 64 probes for every insertion or lookup. An input whose
+collisions exceed that ceiling is rejected, so predictable hash collisions cannot recover an
+all-pairs manifest scan. Duplicate rejection remains ASCII case-folded while warm-cache lookup
+still requires the exact serialized spelling and case.
 The marker writer and reader share the serialization budget above; an over-budget manifest is
 rejected before publication, so every successfully published marker remains representable to the
 warm verifier.

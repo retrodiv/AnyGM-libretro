@@ -730,6 +730,78 @@ static int embedded_cabinet_marker_budget_case(void){
     !rejected_budget;
 }
 
+static int embedded_cabinet_name_index_case(void){
+  const size_t entries=ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES-8u;
+  char **paths=calloc(entries,sizeof *paths);
+  if(!paths) return fail("could not allocate Cabinet name-index paths");
+  int built=1;
+  for(size_t index=0;index<entries;index++){
+    paths[index]=malloc(128u);
+    if(!paths[index] || snprintf(paths[index],128u,
+        "assets/common-prefix-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/%05zu.bin",
+        index)>=128){
+      built=0;
+      break;
+    }
+  }
+  static const char miss[]=
+    "assets/common-prefix-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/missing.bin";
+  const char *lookups[2]={built?paths[entries-1u]:NULL,miss};
+  AnygmEmbeddedCabNameMetrics near={0};
+  uint64_t operation_bound=(uint64_t)(entries+2u)*ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES;
+  int measured=built && anygm_embedded_cab_name_index_measure(
+    (const char *const *)paths,entries,lookups,2u,0,&near);
+
+  const char *exact_paths[]={"Folder/Asset.bin"};
+  const char *exact_lookups[]={"Folder/Asset.bin","folder/asset.bin"};
+  AnygmEmbeddedCabNameMetrics exact={0};
+  measured=measured && anygm_embedded_cab_name_index_measure(
+    exact_paths,1u,exact_lookups,2u,0,&exact);
+
+  const char *duplicate_paths[]={"Folder/Asset.bin","folder/ASSET.bin"};
+  AnygmEmbeddedCabNameMetrics duplicate={0};
+  measured=measured && anygm_embedded_cab_name_index_measure(
+    duplicate_paths,2u,NULL,0,0,&duplicate);
+
+  const size_t collision_count=ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES+1u;
+  const char **collisions=calloc(collision_count,sizeof *collisions);
+  int collisions_built=collisions!=NULL;
+  for(size_t index=0;collisions_built && index<collision_count;index++){
+    char *path=malloc(32u);
+    if(!path || snprintf(path,32u,"collision/%03zu.bin",index)>=32){
+      free(path);
+      collisions_built=0;
+      break;
+    }
+    collisions[index]=path;
+  }
+  AnygmEmbeddedCabNameMetrics collision={0};
+  measured=measured && collisions_built && anygm_embedded_cab_name_index_measure(
+    collisions,collision_count,NULL,0,1,&collision);
+
+  int ok=measured && !near.rejected && !near.work_exhausted && near.inserted==entries &&
+         near.hits==1u && near.probes<=operation_bound &&
+         near.equality_bytes<=operation_bound*(ANYGM_CONTENT_MAX_MEMBER_PATH+1u) &&
+         !exact.rejected && exact.inserted==1u && exact.hits==1u &&
+         duplicate.rejected && duplicate.inserted==1u && !duplicate.work_exhausted &&
+         collision.rejected && collision.inserted==ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES &&
+         !collision.work_exhausted &&
+         collision.probes<=((uint64_t)collision_count*ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES);
+  fprintf(stderr,
+    "content security: Cabinet name index near inserted=%zu hits=%zu probes=%llu bytes=%llu "
+    "rejected=%d exhausted=%d; exact hits=%zu; duplicate inserted=%zu rejected=%d; "
+    "collision inserted=%zu probes=%llu rejected=%d exhausted=%d\n",
+    near.inserted,near.hits,(unsigned long long)near.probes,
+    (unsigned long long)near.equality_bytes,near.rejected,near.work_exhausted,
+    exact.hits,duplicate.inserted,duplicate.rejected,collision.inserted,
+    (unsigned long long)collision.probes,collision.rejected,collision.work_exhausted);
+  for(size_t index=0;collisions && index<collision_count;index++) free((void *)collisions[index]);
+  free(collisions);
+  for(size_t index=0;index<entries;index++) free(paths[index]);
+  free(paths);
+  return ok?1:fail("Cabinet manifest name work was not linearly bounded");
+}
+
 static int embedded_lzx_cabinet_cases(const AnygmHostServices *services,const char *root){
   uint8_t *cabinet=NULL;
   size_t cabinet_size=0;
@@ -764,6 +836,9 @@ static int embedded_lzx_cabinet_cases(const AnygmHostServices *services,const ch
   if(!embedded_cabinet_marker_budget_case()){
     free(executable.data); free(cabinet);
     return fail("the Cabinet marker writer exceeded the warm reader's shared budget");
+  }
+  if(!embedded_cabinet_name_index_case()){
+    free(executable.data); free(cabinet); return 0;
   }
   if(!embedded_cabinet_probe_snapshot_case(&executable)){
     free(executable.data); free(cabinet); return 0;

@@ -27,6 +27,10 @@
 #define CAB_CACHE_SCHEMA 1u
 #define CAB_CACHE_MARKER ".anygm_cab_cache"
 #define CAB_MARKER_MAX_BYTES ANYGM_EMBEDDED_CAB_MARKER_MAX_BYTES
+#define CAB_MANIFEST_INDEX_SLOTS (ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES*2u)
+#if (CAB_MANIFEST_INDEX_SLOTS&(CAB_MANIFEST_INDEX_SLOTS-1u))!=0
+#error Cabinet manifest index slot count must be a power of two
+#endif
 
 typedef struct CabFolder {
   uint32_t data_offset;
@@ -40,13 +44,20 @@ typedef struct CabMember {
   char *path;
   uint64_t size;
   uint64_t hash;
+  uint64_t folded_hash;
 } CabMember;
 
 typedef struct CabManifest {
   CabMember *members;
   size_t count;
   size_t capacity;
+  uint32_t *name_slots;
   char payload[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
+  uint64_t probes;
+  uint64_t equality_bytes;
+  uint64_t probe_budget;
+  int work_exhausted;
+  int force_collisions;
 } CabManifest;
 
 typedef struct CabRangeClient {
@@ -443,27 +454,84 @@ static int cab_member_path(char *path){
   return 1;
 }
 
-static int cab_path_fold_equal(const char *left,const char *right){
+static int cab_path_fold_equal_measured(CabManifest *manifest,const char *left,const char *right){
   while(*left && *right){
     unsigned char a=(unsigned char)*left++,b=(unsigned char)*right++;
+    if(manifest) manifest->equality_bytes++;
     if(a>='A'&&a<='Z') a=(unsigned char)(a-'A'+'a');
     if(b>='A'&&b<='Z') b=(unsigned char)(b-'A'+'a');
     if(a!=b) return 0;
   }
+  if(manifest) manifest->equality_bytes++;
   return *left==*right;
+}
+
+static int cab_path_fold_equal(const char *left,const char *right){
+  return cab_path_fold_equal_measured(NULL,left,right);
+}
+
+static int cab_path_exact_equal_measured(CabManifest *manifest,const char *left,
+                                         const char *right){
+  while(*left && *right && *left==*right){
+    if(manifest) manifest->equality_bytes++;
+    left++; right++;
+  }
+  if(manifest) manifest->equality_bytes++;
+  return *left==*right;
+}
+
+static uint64_t cab_path_fold_hash(const CabManifest *manifest,const char *path){
+  if(manifest && manifest->force_collisions) return 0;
+  uint64_t hash=cab_hash_begin();
+  for(;*path;path++){
+    unsigned char byte=(unsigned char)*path;
+    if(byte>='A'&&byte<='Z') byte=(unsigned char)(byte-'A'+'a');
+    hash^=(uint64_t)byte;
+    hash*=UINT64_C(1099511628211);
+  }
+  return hash;
+}
+
+static int cab_manifest_probe(CabManifest *manifest){
+  if(!manifest) return 0;
+  if(manifest->probe_budget && manifest->probes>=manifest->probe_budget){
+    manifest->work_exhausted=1;
+    return 0;
+  }
+  manifest->probes++;
+  return 1;
 }
 
 static void cab_manifest_free(CabManifest *manifest){
   if(!manifest) return;
   for(size_t index=0;index<manifest->count;index++) free(manifest->members[index].path);
   free(manifest->members);
+  free(manifest->name_slots);
   memset(manifest,0,sizeof *manifest);
 }
 
 static int cab_manifest_add(CabManifest *manifest,const char *path,uint64_t size,uint64_t hash){
   if(!manifest || !path || manifest->count>=ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES) return 0;
-  for(size_t index=0;index<manifest->count;index++)
-    if(cab_path_fold_equal(manifest->members[index].path,path)) return 0;
+  if(!manifest->name_slots){
+    manifest->name_slots=calloc(CAB_MANIFEST_INDEX_SLOTS,sizeof *manifest->name_slots);
+    if(!manifest->name_slots) return 0;
+  }
+  uint64_t folded_hash=cab_path_fold_hash(manifest,path);
+  size_t slot=(size_t)folded_hash&(CAB_MANIFEST_INDEX_SLOTS-1u);
+  size_t empty_slot=SIZE_MAX;
+  for(size_t probe=0;probe<ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES;probe++){
+    if(!cab_manifest_probe(manifest)) return 0;
+    uint32_t member_slot=manifest->name_slots[slot];
+    if(!member_slot){
+      empty_slot=slot;
+      break;
+    }
+    const CabMember *member=&manifest->members[member_slot-1u];
+    if(member->folded_hash==folded_hash &&
+       cab_path_fold_equal_measured(manifest,member->path,path)) return 0;
+    slot=(slot+1u)&(CAB_MANIFEST_INDEX_SLOTS-1u);
+  }
+  if(empty_slot==SIZE_MAX) return 0;
   if(manifest->count==manifest->capacity){
     size_t capacity=manifest->capacity?manifest->capacity*2u:16u;
     if(capacity>ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES) capacity=ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES;
@@ -473,9 +541,13 @@ static int cab_manifest_add(CabManifest *manifest,const char *path,uint64_t size
   }
   char *copy=strdup(path);
   if(!copy) return 0;
-  manifest->members[manifest->count++]=(CabMember){copy,size,hash};
+  manifest->members[manifest->count]=(CabMember){copy,size,hash,folded_hash};
+  manifest->name_slots[empty_slot]=(uint32_t)(manifest->count+1u);
+  manifest->count++;
   return 1;
 }
+
+static const CabMember *cab_manifest_find(CabManifest *manifest,const char *path);
 
 static int cab_name_is_payload(const char *path){
   const char *name=strrchr(path,'/');
@@ -780,9 +852,7 @@ static int cab_marker_parse(const uint8_t *bytes,size_t size,const AnygmEmbedded
     }
     line=newline+1;
   }
-  int payload_found=0;
-  for(size_t index=0;index<manifest->count;index++)
-    if(!strcmp(manifest->members[index].path,manifest->payload)) payload_found=1;
+  int payload_found=cab_manifest_find(manifest,manifest->payload)!=NULL;
   int ok=*line==0 && manifest->count==(size_t)count && payload_found &&
          cab_name_is_payload(manifest->payload);
   free(text);
@@ -790,14 +860,75 @@ static int cab_marker_parse(const uint8_t *bytes,size_t size,const AnygmEmbedded
   return ok;
 }
 
-static const CabMember *cab_manifest_find(const CabManifest *manifest,const char *path){
-  for(size_t index=0;index<manifest->count;index++)
-    if(!strcmp(manifest->members[index].path,path)) return &manifest->members[index];
+static const CabMember *cab_manifest_find(CabManifest *manifest,const char *path){
+  if(!manifest || !manifest->name_slots || !path) return NULL;
+  uint64_t folded_hash=cab_path_fold_hash(manifest,path);
+  size_t slot=(size_t)folded_hash&(CAB_MANIFEST_INDEX_SLOTS-1u);
+  for(size_t probe=0;probe<ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES;probe++){
+    if(!cab_manifest_probe(manifest)) return NULL;
+    uint32_t member_slot=manifest->name_slots[slot];
+    if(!member_slot) return NULL;
+    const CabMember *member=&manifest->members[member_slot-1u];
+    if(member->folded_hash==folded_hash &&
+       cab_path_fold_equal_measured(manifest,member->path,path))
+      return cab_path_exact_equal_measured(manifest,member->path,path)?member:NULL;
+    slot=(slot+1u)&(CAB_MANIFEST_INDEX_SLOTS-1u);
+  }
   return NULL;
 }
 
+static int cab_measure_path_valid(const char *path){
+  if(!path) return 0;
+  size_t size=strlen(path);
+  if(!size || size>ANYGM_CONTENT_MAX_MEMBER_PATH) return 0;
+  char normalized[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
+  memcpy(normalized,path,size+1u);
+  return cab_member_path(normalized) && !strcmp(normalized,path);
+}
+
+int anygm_embedded_cab_name_index_measure(const char *const *insert_paths,size_t insert_count,
+                                           const char *const *lookup_paths,size_t lookup_count,
+                                           int force_collisions,
+                                           AnygmEmbeddedCabNameMetrics *metrics){
+  if(!metrics || (!insert_paths && insert_count) || (!lookup_paths && lookup_count) ||
+     insert_count>ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES ||
+     insert_count+lookup_count<insert_count ||
+     insert_count+lookup_count>UINT64_MAX/ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES) return 0;
+  memset(metrics,0,sizeof *metrics);
+  CabManifest manifest={0};
+  manifest.probe_budget=(uint64_t)(insert_count+lookup_count)*
+                        ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES;
+  manifest.force_collisions=force_collisions!=0;
+  for(size_t index=0;index<insert_count;index++){
+    if(!cab_measure_path_valid(insert_paths[index]) ||
+       !cab_manifest_add(&manifest,insert_paths[index],0,0)){
+      metrics->rejected=1;
+      break;
+    }
+    metrics->inserted++;
+  }
+  if(!metrics->rejected){
+    for(size_t index=0;index<lookup_count;index++){
+      if(!lookup_paths[index]){
+        metrics->rejected=1;
+        break;
+      }
+      if(cab_manifest_find(&manifest,lookup_paths[index])) metrics->hits++;
+      if(manifest.work_exhausted){
+        metrics->rejected=1;
+        break;
+      }
+    }
+  }
+  metrics->probes=manifest.probes;
+  metrics->equality_bytes=manifest.equality_bytes;
+  metrics->work_exhausted=manifest.work_exhausted;
+  cab_manifest_free(&manifest);
+  return 1;
+}
+
 static int cab_cache_walk(const AnygmContentRouter *router,const char *root,const char *relative,
-                          const CabManifest *manifest,size_t *files,unsigned depth){
+                          CabManifest *manifest,size_t *files,unsigned depth){
   if(depth>256u || !router->host->directory_open || !router->host->directory_read ||
      !router->host->directory_close) return 0;
   char directory[1536];

@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #define ANYGM_EMBEDDED_CAB_MARKER_MAX_BYTES (20u*1024u*1024u)
+#define ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES 64u
 
 struct AnygmContentRouter;
 
@@ -33,6 +34,15 @@ typedef enum AnygmEmbeddedCabEntryKind {
   ANYGM_EMBEDDED_CAB_ENTRY_SPECIAL=4
 } AnygmEmbeddedCabEntryKind;
 
+typedef struct AnygmEmbeddedCabNameMetrics {
+  size_t inserted;
+  size_t hits;
+  uint64_t probes;
+  uint64_t equality_bytes;
+  int rejected;
+  int work_exhausted;
+} AnygmEmbeddedCabNameMetrics;
+
 AnygmEmbeddedCabStatus anygm_embedded_cab_probe(const struct AnygmContentRouter *router,
                                                  const char *path,
                                                  AnygmEmbeddedCab *cab);
@@ -47,5 +57,10 @@ int anygm_embedded_cab_limits_allowed(uint64_t cabinet_size,unsigned entries,
 /* Checked serialization budget shared by the marker writer and synthetic boundary tests. */
 int anygm_embedded_cab_marker_budget_allowed(size_t payload_path_size,unsigned entries,
                                               size_t member_path_bytes,size_t *budget_size);
+/* Narrow production-operation seam for deterministic bounded-work security tests. */
+int anygm_embedded_cab_name_index_measure(const char *const *insert_paths,size_t insert_count,
+                                           const char *const *lookup_paths,size_t lookup_count,
+                                           int force_collisions,
+                                           AnygmEmbeddedCabNameMetrics *metrics);
 
 #endif
