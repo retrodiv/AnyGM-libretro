@@ -168,6 +168,9 @@ slots per accepted entry and a ceiling of 64 probes for every insertion or looku
 collisions exceed that ceiling is rejected, so predictable hash collisions cannot recover an
 all-pairs manifest scan. Duplicate rejection remains ASCII case-folded while warm-cache lookup
 still requires the exact serialized spelling and case.
+Their shared member-path validator also rejects components ending in a dot or space and ASCII
+case-insensitive DOS device basenames, with or without an extension. This keeps cold writes, marker
+identity, and warm tree verification consistent on Windows-backed VFS implementations.
 The marker writer and reader share the serialization budget above; an over-budget manifest is
 rejected before publication, so every successfully published marker remains representable to the
 warm verifier.

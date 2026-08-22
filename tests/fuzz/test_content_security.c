@@ -799,6 +799,27 @@ static int embedded_cabinet_name_index_case(void){
   measured=measured && anygm_embedded_cab_name_index_measure(
     duplicate_paths,2u,NULL,0,0,&duplicate);
 
+  const char *unsafe_policy_paths[]={
+    "CON","prn.ext","folder/AuX.bin","folder/nul","COM1.cfg","com9",
+    "LPT1.log","lpt9.tmp","asset.","asset ",
+  };
+  int policy_ok=1;
+  for(size_t index=0;
+      policy_ok && index<sizeof unsafe_policy_paths/sizeof unsafe_policy_paths[0];index++){
+    AnygmEmbeddedCabNameMetrics policy={0};
+    policy_ok=anygm_embedded_cab_name_index_measure(&unsafe_policy_paths[index],1u,NULL,0,0,
+                                                     &policy) &&
+              policy.rejected && !policy.inserted;
+  }
+  const char *portable_policy_paths[]={
+    "COM0","COM10.ext","LPT0","LPT10.ext","console","asset.name","asset name",
+  };
+  AnygmEmbeddedCabNameMetrics portable_policy={0};
+  policy_ok=policy_ok && anygm_embedded_cab_name_index_measure(
+    portable_policy_paths,sizeof portable_policy_paths/sizeof portable_policy_paths[0],
+    NULL,0,0,&portable_policy) && !portable_policy.rejected &&
+    portable_policy.inserted==sizeof portable_policy_paths/sizeof portable_policy_paths[0];
+
   const size_t collision_count=ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES+1u;
   const char **collisions=calloc(collision_count,sizeof *collisions);
   int collisions_built=collisions!=NULL;
@@ -820,6 +841,7 @@ static int embedded_cabinet_name_index_case(void){
          near.equality_bytes<=operation_bound*(ANYGM_CONTENT_MAX_MEMBER_PATH+1u) &&
          !exact.rejected && exact.inserted==1u && exact.hits==1u &&
          duplicate.rejected && duplicate.inserted==1u && !duplicate.work_exhausted &&
+         policy_ok &&
          collision.rejected && collision.inserted==ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES &&
          !collision.work_exhausted &&
          collision.probes<=((uint64_t)collision_count*ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES);
@@ -1105,6 +1127,42 @@ static int embedded_lzx_cabinet_cases(const AnygmHostServices *services,const ch
       return fail("an absolute or device Cabinet path was accepted");
     }
     free(unsafe);
+  }
+
+  const struct {
+    const char *filename;
+    const char *member;
+    const char *cache_prefix;
+    const char *message;
+  } unsafe_aliases[]={
+    {"reserved-nul-alias-lzx.exe","assets\\NuL.win","reserved-nul-alias-lzx-",
+     "a Windows reserved device basename with an extension was accepted"},
+    {"reserved-com-alias-lzx.exe","assets\\cOm1.txt","reserved-com-alias-lzx-",
+     "a Windows COM device basename with an extension was accepted"},
+    {"reserved-lpt-alias-lzx.exe","assets\\LpT9.dat","reserved-lpt-alias-lzx-",
+     "a Windows LPT device basename with an extension was accepted"},
+    {"trailing-dot-alias-lzx.exe","assets\\external asset.txt.",
+     "trailing-dot-alias-lzx-","a trailing-dot Cabinet path alias was accepted"},
+    {"trailing-space-alias-lzx.exe","assets\\external asset.txt ",
+     "trailing-space-alias-lzx-","a trailing-space Cabinet path alias was accepted"},
+  };
+  for(size_t index=0;index<sizeof unsafe_aliases/sizeof unsafe_aliases[0];index++){
+    Buffer unsafe_cab={0},unsafe_executable={0};
+    if(!cabinet_append_empty_member(cabinet,cabinet_size,unsafe_aliases[index].member,
+                                    &unsafe_cab) ||
+       !build_lzx_executable(unsafe_cab.data,unsafe_cab.size,&unsafe_executable) ||
+       snprintf(path,sizeof path,"%s/%s",root,unsafe_aliases[index].filename)>=(int)sizeof path ||
+       !write_file(path,unsafe_executable.data,unsafe_executable.size) ||
+       anygm_embedded_cab_probe(&router,path,&parsed)!=ANYGM_EMBEDDED_CAB_SUPPORTED ||
+       anygm_content_resolve_path(&router,path,warm,sizeof warm,NULL,0,NULL,0)!=
+         ANYGM_CONTENT_RESOLVE_INVALID ||
+       root_has_directory_prefix(root,unsafe_aliases[index].cache_prefix)){
+      free(unsafe_cab.data); free(unsafe_executable.data);
+      free(executable.data); free(cabinet);
+      return fail(unsafe_aliases[index].message);
+    }
+    free(unsafe_cab.data);
+    free(unsafe_executable.data);
   }
 
   const struct { const char *filename; const char *member; const char *message; } collisions[]={

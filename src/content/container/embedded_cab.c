@@ -429,6 +429,22 @@ finish:
   return answer;
 }
 
+static int cab_component_is_windows_device(const char *component,size_t length){
+  size_t basename=0;
+  while(basename<length && component[basename]!='.') basename++;
+  if(basename!=3u && basename!=4u) return 0;
+  char name[4];
+  for(size_t index=0;index<basename;index++){
+    unsigned char byte=(unsigned char)component[index];
+    name[index]=(char)(byte>='a'&&byte<='z'?byte-'a'+'A':byte);
+  }
+  if(basename==3u)
+    return !memcmp(name,"CON",3u) || !memcmp(name,"PRN",3u) ||
+           !memcmp(name,"AUX",3u) || !memcmp(name,"NUL",3u);
+  return (name[3]>='1' && name[3]<='9') &&
+         (!memcmp(name,"COM",3u) || !memcmp(name,"LPT",3u));
+}
+
 static int cab_member_path(char *path){
   if(!path || !path[0]) return 0;
   size_t size=strlen(path);
@@ -443,7 +459,9 @@ static int cab_member_path(char *path){
     if(byte=='/' || !byte){
       size_t length=(size_t)(cursor-segment);
       if(!length || (length==1u && segment[0]=='.') ||
-         (length==2u && segment[0]=='.' && segment[1]=='.')) return 0;
+         (length==2u && segment[0]=='.' && segment[1]=='.') ||
+         segment[length-1u]=='.' || segment[length-1u]==' ' ||
+         cab_component_is_windows_device(segment,length)) return 0;
       /* Generated namespaces are removed by a recursion-bounded VFS walker.  Keep members within
        * that same bound so every failed transaction remains removable on every host. */
       if(++components>9u) return 0;
