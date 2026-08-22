@@ -398,6 +398,7 @@ static void file_map_close(GmlFileMap *m){
 
 static int load_classic_project_content(const AnygmContentRouter *router,const char *srcpath,
                                         char *content_path,size_t cpsz);
+static int file_magic_kind(const AnygmContentRouter *router,const char *path);
 
 static int router_read_at(const AnygmContentRouter *router,void *file,uint64_t source_size,
                           uint64_t offset,void *data,size_t size){
@@ -569,6 +570,61 @@ static int classic_executable_maybe(const AnygmContentRouter *router,const char 
   return found;
 }
 
+/* The adjacent data.win convention requires a bounded PE envelope. Checking the
+ * PE envelope before following it keeps an arbitrary file named .exe from gaining sibling-file
+ * authority. The payload and its assets still pass through the ordinary host VFS and Studio
+ * loader; no native code is executed. */
+static int executable_pe_valid(const AnygmContentRouter *router,const char *path,
+                               uint64_t source_size){
+  if(!router || !path || !router->host || !router->host->file_open ||
+     !router->host->file_read || !router->host->file_seek || !router->host->file_close ||
+     source_size<64u) return 0;
+  void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
+  if(!file) return 0;
+  uint8_t header[64];
+  int valid=router_read_at(router,file,source_size,0,header,sizeof header) &&
+            header[0]=='M' && header[1]=='Z';
+  uint64_t pe_offset=valid?zu32(header+60u):0;
+  if(!valid || pe_offset>source_size || source_size-pe_offset<24u ||
+     !router_read_at(router,file,source_size,pe_offset,header,24u) ||
+     memcmp(header,"PE\0\0",4)) valid=0;
+  uint16_t section_count=valid?(uint16_t)(header[6]|(header[7]<<8)):0;
+  uint16_t optional_size=valid?(uint16_t)(header[20]|(header[21]<<8)):0;
+  if(!section_count || section_count>96u ||
+     pe_offset>UINT64_MAX-24u-(uint64_t)optional_size) valid=0;
+  uint64_t section_table=valid?pe_offset+24u+(uint64_t)optional_size:0;
+  if(valid && (section_table>source_size ||
+               (uint64_t)section_count>(source_size-section_table)/40u)) valid=0;
+  for(uint16_t index=0;valid && index<section_count;index++){
+    if(!router_read_at(router,file,source_size,section_table+(uint64_t)index*40u,header,40u)){
+      valid=0;
+      break;
+    }
+    uint64_t size=zu32(header+16u),offset=zu32(header+20u);
+    if(size && (offset>source_size || size>source_size-offset)) valid=0;
+  }
+  router->host->file_close(router->host->userdata,file);
+  return valid;
+}
+
+static AnygmContentResolveResult resolve_adjacent_studio_payload(
+    const AnygmContentRouter *router,const char *executable,uint64_t source_size,
+    char *content_path,size_t content_size){
+  if(!executable_pe_valid(router,executable,source_size))
+    return ANYGM_CONTENT_RESOLVE_INVALID;
+  char parent[1024],payload[1536];
+  anygm_content_path_parent(executable,parent,sizeof parent);
+  if(!path_join_bounded(payload,sizeof payload,parent,"data.win") ||
+     !file_exists(router,payload) || file_magic_kind(router,payload)!=1 ||
+     snprintf(content_path,content_size,"%s",payload)>=(int)content_size){
+    content_path[0]='\0';
+    return ANYGM_CONTENT_RESOLVE_INVALID;
+  }
+  content_log(router,ANYGM_CONTENT_LOG_INFO,
+              "executable: using adjacent Studio payload at %s",payload);
+  return ANYGM_CONTENT_RESOLVE_OK;
+}
+
 static AnygmContentResolveResult resolve_executable_content(
     const AnygmContentRouter *router,const char *path,char *content_path,size_t content_size,
     char *asset_root,size_t asset_root_size){
@@ -578,17 +634,20 @@ static AnygmContentResolveResult resolve_executable_content(
   AnygmEmbeddedCabStatus status=anygm_embedded_cab_probe(router,path,&cab);
   uint64_t source_size=0;
   file_size64(router,path,&source_size);
-  if(status==ANYGM_EMBEDDED_CAB_NOT_FOUND ||
-     classic_executable_maybe(router,path,source_size,
-                              status==ANYGM_EMBEDDED_CAB_NOT_FOUND?NULL:&cab)){
+  int classic_candidate=classic_executable_maybe(
+    router,path,source_size,status==ANYGM_EMBEDDED_CAB_NOT_FOUND?NULL:&cab);
+  if(status==ANYGM_EMBEDDED_CAB_NOT_FOUND || classic_candidate){
     if(load_classic_project_content(router,path,content_path,content_size))
       return ANYGM_CONTENT_RESOLVE_OK;
+    if(classic_candidate) return ANYGM_CONTENT_RESOLVE_INVALID;
   }
   if(status==ANYGM_EMBEDDED_CAB_UNSUPPORTED){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,
                 "cabinet: structurally valid executable uses an unsupported Cabinet profile");
     return ANYGM_CONTENT_RESOLVE_UNSUPPORTED;
   }
+  if(status==ANYGM_EMBEDDED_CAB_NOT_FOUND)
+    return resolve_adjacent_studio_payload(router,path,source_size,content_path,content_size);
   if(status!=ANYGM_EMBEDDED_CAB_SUPPORTED) return ANYGM_CONTENT_RESOLVE_INVALID;
   if(!anygm_embedded_cab_extract(router,path,&cab,content_path,content_size,
                                  asset_root,asset_root_size))

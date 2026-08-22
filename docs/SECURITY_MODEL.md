@@ -82,6 +82,9 @@ The reader validates the exact FORM extent, unique and complete chunks,
 record tables, string termination, code spans, room records, room order, and
 reference chains before returning a live object. Failed parsing releases all
 partial indexes and leaves ownership of the supplied memory with the caller.
+A PE launcher without an internal payload may select only the exact adjacent regular `data.win`,
+after its PE envelope is structurally bounded. The sibling must have `FORM` magic and is
+parsed as ordinary untrusted Studio content through the host VFS; no native code is run.
 The embedded-Cabinet route accepts a signature only inside a bounded PE raw section and only after
 validating its complete header extent, folder and file tables, and CFDATA block bounds. Overlapping
 PE section ranges are merged before searching, so no executable byte is searched more than once.

@@ -169,6 +169,11 @@ Path-backed routing recognizes the extensions declared by the core:
 `exe`. Extension recognition selects a parser; magic and structural validation
 still determine whether the input is accepted.
 
+When a structurally valid PE has no supported internal payload, the core may load the exact
+regular `data.win` beside it. The sibling passes through ordinary Studio validation. A
+malformed or unsupported internal container is terminal, not a reason to use the sibling.
+The executable remains the launch and save identity; content-relative files resolve from
+their shared directory. No native machine code is run.
 An `exe` may also carry one unfiltered Cabinet in a validated PE raw section. The supported
 single-runtime profile uses one Cabinet volume and LZX window 21, contains exactly one normalized
 Studio payload, and may contain regular external runtime assets. The core opens only the declared

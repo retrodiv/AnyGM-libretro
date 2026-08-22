@@ -6,6 +6,7 @@
 #include "embedded_cab.h"
 #include "engine_internal.h"
 #include "memory_vfs.h"
+#include "synthetic_content.h"
 #include "stdio_vfs.h"
 
 #include <dirent.h>
@@ -367,6 +368,12 @@ static size_t build_pe_cabinet(uint8_t executable[1024]){
   store_u16(cabinet,data_offset+4u,(uint16_t)(sizeof member-1u));
   store_u16(cabinet,data_offset+6u,(uint16_t)(sizeof member-1u));
   memcpy(cabinet+data_offset+8u,member,sizeof member-1u);
+  return 1024;
+}
+
+static size_t build_pe_launcher_only(uint8_t executable[1024]){
+  build_pe_cabinet(executable);
+  memset(executable+512,0,512);
   return 1024;
 }
 
@@ -1511,112 +1518,122 @@ static int embedded_executable_cases(const AnygmHostServices *services,const cha
   return 1;
 }
 
-/* An archive carrying a source container rather than a compiled payload must import it and still
- * report where the sidecar files it opens by path were extracted. A compiled payload beside a
- * source container keeps priority, so an executable shipped next to one is never selected. */
-static int archive_source_container_cases(const AnygmHostServices *services,const char *root){
-  uint8_t form[200],executable[224]={0};
-  build_no_code_form(form);
-  executable[0]='M';
-  executable[1]='Z';
-  memcpy(executable+4,"FORM",4);
-  store_u32(executable,8,UINT32_MAX);
-  memcpy(executable+24,form,sizeof form);
+static int adjacent_executable_payload_cases(const AnygmHostServices *services,const char *root){
+  char directory[512],launcher[640],payload[640],resolved[1024],asset_root[1024];
+  if(snprintf(directory,sizeof directory,"%s/adjacent-launcher",root)>=(int)sizeof directory ||
+     mkdir(directory,0700)!=0 ||
+     snprintf(launcher,sizeof launcher,"%s/launcher-only.exe",directory)>=(int)sizeof launcher ||
+     snprintf(payload,sizeof payload,"%s/data.win",directory)>=(int)sizeof payload)
+    return fail("could not create the adjacent-payload fixture directory");
 
-  static const uint8_t executable_name[]="bundle.exe";
-  static const uint8_t asset_name[]="assets/level.txt";
-  static const uint8_t payload_name[]="data.win";
-  static const uint8_t asset[]="fixture asset";
-  ZipEntry entries[3]={
-    {executable_name,sizeof executable_name-1,executable,sizeof executable,sizeof executable,0,0,0,0},
-    {asset_name,sizeof asset_name-1,asset,sizeof asset-1,sizeof asset-1,0,0,0,0},
-    {payload_name,sizeof payload_name-1,form,sizeof form,sizeof form,0,0,0,0}
-  };
+  AnygmSyntheticContent fixture={0};
+  uint8_t *form=NULL;
+  size_t form_size=0;
+  if(!anygm_synthetic_content_create(&fixture) ||
+     !anygm_synthetic_content_read(&fixture,&form,&form_size)){
+    anygm_synthetic_content_destroy(&fixture);
+    free(form);
+    return fail("could not create the adjacent Studio payload fixture");
+  }
+  anygm_synthetic_content_destroy(&fixture);
 
-  Buffer archive={0};
-  char path[512],resolved[1024],asset_root[1024],staged[1600];
-  int ok=build_zip(entries,2,&archive) &&
-         snprintf(path,sizeof path,"%s/source-container.zip",root)<(int)sizeof path &&
-         write_file(path,archive.data,archive.size);
-  free(archive.data);
-  if(!ok) return fail("could not write the source-container archive");
+  uint8_t executable[1024];
+  build_pe_launcher_only(executable);
+  if(!write_file(launcher,executable,sizeof executable) || !write_file(payload,form,form_size)){
+    free(form);
+    return fail("could not stage the adjacent Studio payload fixture");
+  }
   AnygmContentRouter router={0};
   router.host=services;
   router.cache_directory=root;
-  asset_root[0]=0;
-  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,
-                                 asset_root,sizeof asset_root,NULL,0) || !asset_root[0])
-    return fail("archive source container was not imported");
-  uint8_t magic[4];
-  if(!read_prefix(resolved,magic,sizeof magic) || memcmp(magic,"FORM",4))
-    return fail("archive source container did not produce a payload");
-  if(snprintf(staged,sizeof staged,"%s/assets/level.txt",asset_root)>=(int)sizeof staged)
-    return fail("reported asset root is too long");
-  uint8_t staged_prefix[7];
-  if(!read_prefix(staged,staged_prefix,sizeof staged_prefix) ||
-     memcmp(staged_prefix,"fixture",sizeof staged_prefix))
-    return fail("reported asset root does not hold the extracted sidecar");
+  router.log=fixture_log;
+  asset_root[0]='x';
+  if(anygm_content_resolve_path(&router,launcher,resolved,sizeof resolved,asset_root,
+                                sizeof asset_root,NULL,0)!=ANYGM_CONTENT_RESOLVE_OK ||
+     strcmp(resolved,payload) || asset_root[0]){
+    free(form);
+    return fail("a launcher-only PE did not resolve its exact adjacent data.win");
+  }
 
-  memset(&archive,0,sizeof archive);
-  ok=build_zip(entries,3,&archive) &&
-     snprintf(path,sizeof path,"%s/payload-and-source.zip",root)<(int)sizeof path &&
-     write_file(path,archive.data,archive.size);
-  free(archive.data);
-  if(!ok) return fail("could not write the payload-and-source archive");
-  asset_root[0]=0;
-  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,
-                                 asset_root,sizeof asset_root,NULL,0) || asset_root[0])
-    return fail("a compiled payload lost priority to a source container");
-  return 1;
-}
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=launcher;
+  source.cache_directory=root;
+  source.save_directory=directory;
+  int ok=anygm_create(services,&engine)==ANYGM_OK && engine &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK &&
+         !strcmp(engine->content_launch_path,launcher) &&
+         !strcmp(engine->current_content_path,payload) &&
+         !strcmp(engine->content_program_directory,directory) &&
+         anygm_reset(engine)==ANYGM_OK &&
+         !strcmp(engine->content_launch_path,launcher) &&
+         !strcmp(engine->current_content_path,payload) &&
+         !strcmp(engine->content_program_directory,directory);
+  anygm_destroy(engine);
+  if(!ok){
+    free(form);
+    return fail("an adjacent payload did not preserve launch identity and Reset paths");
+  }
 
-/* A cached payload is only reusable while the code that produced it is unchanged. The marker
- * therefore carries a producer fingerprint, and a marker written by a different producer must be
- * regenerated rather than trusted; the alternative is content silently running bytes that the
- * current revision would not produce. */
-static int cache_producer_change_case(const AnygmHostServices *services,const char *root){
-  uint8_t form[200],executable[224]={0};
-  build_no_code_form(form);
-  executable[0]='M';
-  executable[1]='Z';
-  memcpy(executable+4,"FORM",4);
-  store_u32(executable,8,UINT32_MAX);
-  memcpy(executable+24,form,sizeof form);
+  uint8_t no_code[200];
+  build_no_code_form(no_code);
+  build_pe_runner_only(executable);
+  memcpy(executable+700,no_code,sizeof no_code);
+  char embedded[640];
+  if(snprintf(embedded,sizeof embedded,"%s/embedded-first.exe",directory)>=(int)sizeof embedded ||
+     !write_file(embedded,executable,sizeof executable) ||
+     anygm_content_resolve_path(&router,embedded,resolved,sizeof resolved,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_OK || !strcmp(resolved,payload)){
+    free(form);
+    return fail("an adjacent payload outranked an embedded Studio payload");
+  }
 
-  char path[512],resolved[1024],marker[1200];
-  if(snprintf(path,sizeof path,"%s/producer.exe",root)>=(int)sizeof path ||
-     !write_file(path,executable,sizeof executable)) return fail("producer fixture");
-  AnygmContentRouter router={0};
-  router.host=services;
-  router.cache_directory=root;
-  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0,NULL,0))
-    return fail("producer fixture was not resolved");
-  char *slash=strrchr(resolved,'/');
-  if(!slash) return fail("resolved payload has no directory");
-  *slash=0;
-  int marker_size=snprintf(marker,sizeof marker,"%s/.anygm_cache",resolved);
-  *slash='/';
-  if(marker_size<0 || marker_size>=(int)sizeof marker) return fail("marker path is too long");
+  char rejected[640];
+  build_pe_cabinet(executable);
+  if(snprintf(rejected,sizeof rejected,"%s/unsupported-cabinet.exe",directory)>=
+       (int)sizeof rejected || !write_file(rejected,executable,sizeof executable)){
+    free(form);
+    return fail("could not stage the unsupported Cabinet precedence fixture");
+  }
+  strcpy(resolved,"dirty");
+  strcpy(asset_root,"dirty");
+  if(anygm_content_resolve_path(&router,rejected,resolved,sizeof resolved,asset_root,
+                                sizeof asset_root,NULL,0)!=ANYGM_CONTENT_RESOLVE_UNSUPPORTED ||
+     resolved[0] || asset_root[0]){
+    free(form);
+    return fail("an adjacent payload hid an unsupported Cabinet or published outputs");
+  }
 
-  uint8_t *stored=NULL;
-  size_t stored_size=0;
-  if(!read_file(marker,&stored,&stored_size) || stored_size<72)
-    return fail("cache marker was not published");
-  uint8_t original[8];
-  memcpy(original,stored+64,sizeof original);
-  for(size_t i=0;i<sizeof original;i++) stored[64+i]^=0xA5u;
-  int written=write_file(marker,stored,stored_size);
-  free(stored);
-  if(!written) return fail("could not rewrite the cache marker");
+  build_pe_cabinet(executable);
+  store_u32(executable,512+16,UINT32_MAX);
+  if(snprintf(rejected,sizeof rejected,"%s/malformed-cabinet.exe",directory)>=
+       (int)sizeof rejected || !write_file(rejected,executable,sizeof executable)){
+    free(form);
+    return fail("could not stage the malformed Cabinet precedence fixture");
+  }
+  strcpy(resolved,"dirty");
+  if(anygm_content_resolve_path(&router,rejected,resolved,sizeof resolved,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_INVALID || resolved[0]){
+    free(form);
+    return fail("an adjacent payload hid a malformed Cabinet or published output");
+  }
 
-  if(!anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0,NULL,0))
-    return fail("a marker from another producer was not regenerated");
-  stored=NULL;
-  stored_size=0;
-  int ok=read_file(marker,&stored,&stored_size) && stored_size>=72 &&
-         !memcmp(stored+64,original,sizeof original);
-  free(stored);
-  if(!ok) return fail("the regenerated marker did not restore this producer");
+  build_pe_launcher_only(executable);
+  executable[0]='N';
+  if(snprintf(rejected,sizeof rejected,"%s/not-a-pe.exe",directory)>=(int)sizeof rejected ||
+     !write_file(rejected,executable,sizeof executable)){
+    free(form);
+    return fail("could not stage the invalid executable fixture");
+  }
+  strcpy(resolved,"dirty");
+  if(anygm_content_resolve_path(&router,rejected,resolved,sizeof resolved,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_INVALID || resolved[0]){
+    free(form);
+    return fail("a non-PE executable gained adjacent-payload authority");
+  }
+  free(form);
   return 1;
 }
 
@@ -1958,6 +1975,7 @@ int main(void){
          cache_producer_change_case(&services,root) &&
          embedded_cabinet_cases(&services,root) &&
          embedded_lzx_cabinet_cases(&services,root) &&
+         adjacent_executable_payload_cases(&services,root) &&
          archive_anchor_cases(&services,root) &&
          archive_advanced_anchor_cases(&services,root) &&
          direct_anchor_cases(&services,root);

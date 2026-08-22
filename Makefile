@@ -476,6 +476,7 @@ security-check: $(SECURITY_TESTS)
 	$(TEST_DIR)/test_bytecode_security
 
 $(TEST_DIR)/test_content_security: tests/fuzz/test_content_security.c \
+	tests/support/synthetic_content.c \
 	tests/support/memory_vfs.c \
 	$(RUNTIME_OBJECTS) $(TEST_HOST_OBJECTS)
 	mkdir -p $(dir $@)
