@@ -642,6 +642,42 @@ static int embedded_cabinet_probe_snapshot_case(const Buffer *executable){
   return ok?1:fail("a Cabinet probe mixed structure and identity from different source snapshots");
 }
 
+static int embedded_cabinet_extraction_snapshot_case(const Buffer *executable){
+  const size_t source_size=256u*1024u;
+  uint8_t *source=calloc(source_size,1);
+  uint8_t *snapshot=calloc(source_size,1);
+  if(!source || !snapshot || executable->size>source_size){
+    free(source); free(snapshot); return 0;
+  }
+  memcpy(source,executable->data,executable->size);
+  memcpy(snapshot,source,source_size);
+  snapshot[source_size-1u]^=UINT8_C(1);
+
+  AnygmMemoryVfs memory;
+  AnygmHostServices services;
+  AnygmContentRouter router={0};
+  AnygmEmbeddedCab cab={0};
+  char payload[1024]="sentinel",asset_root[1024]="sentinel";
+  anygm_memory_vfs_init(&memory,&services);
+  router.host=&services;
+  router.cache_directory="mem/cache";
+  int ok=hash64_bytes(source,source_size)!=hash64_bytes(snapshot,source_size) &&
+    anygm_memory_vfs_add_file(&memory,"mem/source.exe",source,source_size);
+  anygm_memory_vfs_snapshot_on_read_open(&memory,"mem/source.exe",3u,snapshot,source_size);
+  ok=ok && anygm_embedded_cab_probe(&router,"mem/source.exe",&cab)==
+             ANYGM_EMBEDDED_CAB_SUPPORTED;
+  payload[0]=0;
+  asset_root[0]=0;
+  ok=ok && !anygm_embedded_cab_extract(&router,"mem/source.exe",&cab,payload,sizeof payload,
+                                        asset_root,sizeof asset_root) &&
+     memory.snapshot_complete && memory.snapshot_read_opens>=3u &&
+     !payload[0] && !asset_root[0] && !memory_vfs_has_cabinet_transaction(&memory);
+  anygm_memory_vfs_destroy(&memory);
+  free(source);
+  free(snapshot);
+  return ok?1:fail("a cold Cabinet extraction published a different per-open source snapshot");
+}
+
 static int embedded_cabinet_result_capacity_case(const Buffer *executable){
   const size_t source_size=256u*1024u;
   uint8_t *source=calloc(source_size,1);
@@ -841,6 +877,9 @@ static int embedded_lzx_cabinet_cases(const AnygmHostServices *services,const ch
     free(executable.data); free(cabinet); return 0;
   }
   if(!embedded_cabinet_probe_snapshot_case(&executable)){
+    free(executable.data); free(cabinet); return 0;
+  }
+  if(!embedded_cabinet_extraction_snapshot_case(&executable)){
     free(executable.data); free(cabinet); return 0;
   }
   if(!embedded_cabinet_result_capacity_case(&executable)){

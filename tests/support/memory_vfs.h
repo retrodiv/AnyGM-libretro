@@ -33,6 +33,13 @@ typedef struct AnygmMemoryVfs {
   unsigned replacement_read_opens;
   int replacement_active;
   int replacement_complete;
+  char snapshot_path[1024];
+  const uint8_t *snapshot_data;
+  size_t snapshot_size;
+  unsigned snapshot_open;
+  unsigned snapshot_read_opens;
+  int snapshot_active;
+  int snapshot_complete;
 } AnygmMemoryVfs;
 
 void anygm_memory_vfs_init(AnygmMemoryVfs *memory,AnygmHostServices *services);
@@ -45,5 +52,7 @@ void anygm_memory_vfs_guard_reads(AnygmMemoryVfs *memory,const char *path,
                                   uint64_t begin,uint64_t size);
 void anygm_memory_vfs_replace_on_read_open(AnygmMemoryVfs *memory,const char *path,
                                            unsigned open_number,const void *data,size_t size);
+void anygm_memory_vfs_snapshot_on_read_open(AnygmMemoryVfs *memory,const char *path,
+                                            unsigned open_number,const void *data,size_t size);
 
 #endif

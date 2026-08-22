@@ -64,6 +64,7 @@ int anygm_memory_vfs_xor_byte(AnygmMemoryVfs *memory,const char *path,
 static void *memory_open(void *userdata,const char *path,AnygmFileMode mode){
   AnygmMemoryVfs *memory=userdata;
   AnygmMemoryVfsNode *node=memory_find(memory,path);
+  int use_snapshot=0;
   if(mode&ANYGM_FILE_WRITE){
     if(!node) node=memory_add(memory,path,0);
     if(!node || node->directory) return NULL;
@@ -77,15 +78,21 @@ static void *memory_open(void *userdata,const char *path,AnygmFileMode mode){
     node=memory_find(memory,path);
     memory->replacement_complete=1;
   }
+  if(!(mode&ANYGM_FILE_WRITE) && memory->snapshot_active &&
+     !strcmp(path,memory->snapshot_path) &&
+     ++memory->snapshot_read_opens==memory->snapshot_open) use_snapshot=1;
   MemoryFile *file=calloc(1,sizeof *file);
   if(!file) return NULL;
   file->memory=memory;
   file->node=node;
   if(!(mode&ANYGM_FILE_WRITE)){
-    file->read_data=malloc(node->size?node->size:1u);
+    const uint8_t *read_data=use_snapshot?memory->snapshot_data:node->data;
+    size_t read_size=use_snapshot?memory->snapshot_size:node->size;
+    file->read_data=malloc(read_size?read_size:1u);
     if(!file->read_data){ free(file); return NULL; }
-    if(node->size) memcpy(file->read_data,node->data,node->size);
-    file->read_size=node->size;
+    if(read_size) memcpy(file->read_data,read_data,read_size);
+    file->read_size=read_size;
+    if(use_snapshot) memory->snapshot_complete=1;
   }
   return file;
 }
@@ -148,6 +155,13 @@ static int64_t memory_seek(void *userdata,void *opaque,int64_t offset,AnygmSeekO
                origin==ANYGM_SEEK_END?(int64_t)source_size:-1;
   if(base<0 || offset< -base || (uint64_t)(base+offset)>source_size) return -1;
   file->position=(size_t)(base+offset);
+  if(file->memory->guard_active &&
+     !strcmp(file->node->path,file->memory->guarded_path)){
+    if(!file->position) file->guarded_read_mode=0;
+    else if((uint64_t)file->position>=file->memory->guard_begin &&
+            (uint64_t)file->position<=file->memory->guard_end)
+      file->guarded_read_mode=1;
+  }
   return base+offset;
 }
 
@@ -294,6 +308,19 @@ void anygm_memory_vfs_replace_on_read_open(AnygmMemoryVfs *memory,const char *pa
   memory->replacement_read_opens=0;
   memory->replacement_active=1;
   memory->replacement_complete=0;
+}
+
+void anygm_memory_vfs_snapshot_on_read_open(AnygmMemoryVfs *memory,const char *path,
+                                            unsigned open_number,const void *data,size_t size){
+  if(!memory || !path || !path[0] || strlen(path)>=sizeof memory->snapshot_path ||
+     !open_number || (!data && size)) return;
+  memcpy(memory->snapshot_path,path,strlen(path)+1u);
+  memory->snapshot_data=data;
+  memory->snapshot_size=size;
+  memory->snapshot_open=open_number;
+  memory->snapshot_read_opens=0;
+  memory->snapshot_active=1;
+  memory->snapshot_complete=0;
 }
 
 void anygm_memory_vfs_destroy(AnygmMemoryVfs *memory){

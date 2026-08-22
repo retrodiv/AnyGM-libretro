@@ -718,12 +718,18 @@ static la_int64_t cab_client_seek(struct archive *archive,void *opaque,la_int64_
 
 static int cab_client_close(struct archive *archive,void *opaque){
   (void)archive;
-  CabRangeClient *client=opaque;
+  (void)opaque;
+  /* The core retains the exact VFS handle so it can verify the consumed source after libarchive
+   * has closed its logical range. */
+  return ARCHIVE_OK;
+}
+
+static void cab_client_release(CabRangeClient *client){
+  if(!client) return;
   if(client->file){
     client->host->file_close(client->host->userdata,client->file);
     client->file=NULL;
   }
-  return ARCHIVE_OK;
 }
 
 static uint64_t cab_producer(void){
@@ -1044,6 +1050,14 @@ int anygm_embedded_cab_extract(const AnygmContentRouter *router,const char *sour
   uint64_t total=0;
   const char *failure="reader initialization";
   int ok=client.file!=NULL;
+  if(ok){
+    uint64_t source_hash=0;
+    if(!cab_hash_handle(router->host,client.file,cab->source_size,&source_hash) ||
+       source_hash!=cab->source_hash){
+      failure="source identity";
+      ok=0;
+    }
+  }
   if(ok) ok=(archive=archive_read_new())!=NULL;
   if(ok) ok=archive_read_support_filter_none(archive)==ARCHIVE_OK &&
             archive_read_support_format_cab(archive)==ARCHIVE_OK &&
@@ -1101,7 +1115,14 @@ int anygm_embedded_cab_extract(const AnygmContentRouter *router,const char *sour
   if(archive){
     int close_result=archive_read_free(archive);
     if(close_result!=ARCHIVE_OK) ok=0;
-  }else if(client.file) cab_client_close(NULL,&client);
+  }
+  if(client.file){
+    uint64_t source_hash=0;
+    int stable=cab_hash_handle(router->host,client.file,cab->source_size,&source_hash) &&
+               source_hash==cab->source_hash;
+    if(ok && !stable){ failure="source stability"; ok=0; }
+  }
+  cab_client_release(&client);
   if(client.failed){ failure="bounded source callback"; ok=0; }
   if(ok && (payloads!=1u || !manifest.count)){
     cab_log(router,ANYGM_CONTENT_LOG_ERROR,
