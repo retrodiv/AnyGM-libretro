@@ -161,6 +161,65 @@ int expect_streamed_sound_without_sidecar_plays_embedded_compressed_blob(void){
   return ok;
 }
 
+/* An empty AGRP table cannot identify a group sidecar. This synthetic
+ * fixture checks that embedded RIFF PCM remains available at AudioID
+ * and that the first playback call succeeds. */
+int expect_undeclared_group_sound_plays_its_embedded_pcm(void){
+  enum { embedded_samples=4096, sound_record=32, agrp_chunk=72, audo_chunk=80, audo_blob=96,
+         file_string_pointer=900 };
+  unsigned char data[audo_blob+8+44+embedded_samples*2];
+  unsigned char embedded[44+embedded_samples*2];
+  memset(data,0,sizeof data);
+  size_t embedded_size=fixture_pcm16_wav(embedded,sizeof embedded,embedded_samples,1000);
+  if(!embedded_size) return 0;
+
+  fixture_write_u32(data,0,1);                         /* SOND count */
+  fixture_write_u32(data,4,sound_record);
+  fixture_write_u32(data,sound_record+4,100);          /* Regular, deliberately not IsEmbedded */
+  fixture_write_u32(data,sound_record+12,file_string_pointer);
+  float one=1.0f;
+  memcpy(data+sound_record+20,&one,sizeof one);
+  fixture_write_u32(data,sound_record+28,1);           /* claims group 1 */
+  fixture_write_u32(data,sound_record+32,0);           /* AudioID into the payload's own AUDO */
+  fixture_write_u32(data,agrp_chunk,0);                /* AGRP declares no group at all */
+  fixture_write_u32(data,audo_chunk,1);                /* AUDO count */
+  fixture_write_u32(data,audo_chunk+4,audo_blob);
+  fixture_write_u32(data,audo_blob,(uint32_t)embedded_size);
+  memcpy(data+audo_blob+4,embedded,embedded_size);
+
+  char directory[]="/tmp/anygm-undeclared-group-audio-XXXXXX";
+  if(!mkdtemp(directory)) return 0;                    /* empty: no sidecar and no group file */
+  char *strings[]={(char*)"music.wav"};
+  uint32_t string_offsets[]={file_string_pointer};
+  AnygmHostServices host={0};
+  host.struct_size=sizeof(host);
+  host.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&host);
+  GmlWin win={0};
+  win.data=data; win.size=sizeof data; win.n_chunks=3;
+  memcpy(win.chunks[0].name,"SOND",4); win.chunks[0].off=0; win.chunks[0].size=agrp_chunk;
+  memcpy(win.chunks[1].name,"AGRP",4); win.chunks[1].off=agrp_chunk; win.chunks[1].size=4;
+  memcpy(win.chunks[2].name,"AUDO",4); win.chunks[2].off=audo_chunk;
+  win.chunks[2].size=(uint32_t)(sizeof(data)-audo_chunk);
+  win.strs=strings; win.str_charoff=string_offsets; win.n_strs=1;
+  win.host=&host;
+  snprintf(win.content_dir,sizeof win.content_dir,"%s",directory);
+
+  GmlAudio *audio=gml_audio_create(&win);
+  int voice=audio?gml_audio_play(audio,0,0):-1;        /* the first and only play */
+  int16_t mixed[8192]={0};
+  if(audio) gml_audio_mix(audio,mixed,4096);
+  int audible=0;
+  for(size_t index=0;index<sizeof mixed/sizeof mixed[0];index++) audible|=mixed[index]!=0;
+  int ok=audio && voice>=1000000 && audible;
+  gml_audio_free(audio);
+  rmdir(directory);
+  if(!ok) fprintf(stderr,
+    "a sound claiming an undeclared audio group did not play its embedded PCM on its first play:"
+    " voice=%d audible=%d\n",voice,audible);
+  return ok;
+}
+
 int expect_flagged_external_sound_precedes_embedded_audio_id(void){
   enum { embedded_samples=4 };
   unsigned char data[256]={0},embedded[44+embedded_samples*2],external[576];

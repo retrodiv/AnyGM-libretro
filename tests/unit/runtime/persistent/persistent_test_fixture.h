@@ -55,6 +55,7 @@ int expect_ds_priority_lookup_mutation(void);
 int expect_audio_group_paths(void);
 int expect_flagged_external_sound_precedes_embedded_audio_id(void);
 int expect_streamed_sound_without_sidecar_plays_embedded_compressed_blob(void);
+int expect_undeclared_group_sound_plays_its_embedded_pcm(void);
 int expect_embedded_eight_bit_wave_matches_its_sixteen_bit_signal(void);
 int expect_embedded_ms_adpcm_wave_matches_its_sixteen_bit_signal(void);
 int expect_classic_sound_drops_its_trailing_frame(void);

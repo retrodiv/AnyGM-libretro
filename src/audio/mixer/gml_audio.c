@@ -111,6 +111,17 @@ static const char *audio_group_exact_string(const GmlWin *win, uint32_t ptr){
   return NULL;
 }
 
+/* An audio-group index selects a sidecar only when AGRP declares it.
+ * A declared group with a missing sidecar remains unresolved. */
+static int audio_group_declared(const GmlWin *win,int g){
+  if(!win || g<0) return 0;
+  const GmlChunk *gc=gml_chunk(win,"AGRP");
+  if(!gc || gc->size<4 || gc->off>win->size || gc->size>win->size-gc->off) return 0;
+  uint32_t n=rd32(win->data,gc->off);
+  uint32_t max_entries=(gc->size-4)/4;
+  if(n>max_entries) return 0;
+  return (uint32_t)g<n;
+}
 int gml_audio_group_file_path(const GmlWin *win, int g, char *out, size_t out_cap){
   if(!win || !out || out_cap<2 || g<0) return 0;
   const GmlChunk *gc=gml_chunk(win,"AGRP");
@@ -498,11 +509,15 @@ GmlAudio *gml_audio_create(GmlWin *win){
        * streamed sound. Audio-group sidecars retain their precedence. */
       const char *filename=gml_str_by_ptr(win,rd32(d,p+12));
       a->snd[i].external_filename=filename;
+      /* An undeclared group may use the embedded RIFF blob at AudioID.
+       * Keep the default-group raw-PCM refusal unchanged. */
+      int undeclared_group=group>0 && !audio_group_declared(win,group);
       if(audoid>=0 && (uint32_t)audoid<na){
         uint32_t fap=rd32(d,ac->off+4+(uint32_t)audoid*4);
         uint32_t fblen=rd32(d,fap), fbase=fap+4;
         if(fbase+12<=win->size && fblen>=4 && fblen<=win->size-fbase &&
-           (!memcmp(d+fbase,"OggS",4) || is_mp3_blob(d+fbase,fblen)))
+           (!memcmp(d+fbase,"OggS",4) || is_mp3_blob(d+fbase,fblen) ||
+            (undeclared_group && !memcmp(d+fbase,"RIFF",4))))
           a->snd[i].fallback_audoid=audoid;
       }
       continue;
@@ -818,6 +833,8 @@ static int sound_ensure_pcm(GmlAudio *a,GmlSound *s){
                       "[audio] streamed sound open failed: %s\n",s->external_filename);
     return 0;
   }
+  /* A direct PCM load is already ready for its first play. */
+  if(s->pcm) return 1;
   if(s->ogg && !s->ogg_failed){
     int ch=0, rate=0; int16_t *out=NULL;
     int nsamp=stb_vorbis_decode_memory(s->ogg,(int)s->ogg_len,&ch,&rate,&out);
