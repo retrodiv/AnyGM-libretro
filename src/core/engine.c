@@ -379,6 +379,8 @@ static void boot_runtime(AnygmEngine *engine) {
   memset(engine->event_key_previous, 0, sizeof(engine->event_key_previous));
   engine->mouse_pixel_x = -1; engine->mouse_pixel_y = -1;
   engine->pointer_active = 0;
+  engine->mouse_warped = 0;
+  engine->mouse_host_x = 0; engine->mouse_host_y = 0;
   memset(engine->mouse_button_current, 0, sizeof(engine->mouse_button_current));
   memset(engine->mouse_button_previous, 0, sizeof(engine->mouse_button_previous));
   engine->mouse_wheel = 0;
@@ -2089,6 +2091,7 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
   engine->fps=60.0; engine->fps_room=-1;
   engine->player_object=-1;
   engine->mouse_pixel_x=-1.0; engine->mouse_pixel_y=-1.0;
+  engine->mouse_warped=0; engine->mouse_host_x=0; engine->mouse_host_y=0;
   engine->profile_enabled=-1;
   engine->diagnostics.key_enabled=-1;
   engine->diagnostics.force_present_view=-1;

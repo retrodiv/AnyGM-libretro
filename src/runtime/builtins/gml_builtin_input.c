@@ -289,7 +289,8 @@ GmlVal gml_builtin_try_input(GmlVM *vm, const char *nm, GmlVal *a, int n){
    * Keep both calls as explicit platform operations instead of letting them fall through the
    * unknown-builtin path every frame. */
   if(!strcmp(nm,"display_mouse_lock")||!strcmp(nm,"display_mouse_unlock")) return vreal(0);
-  if(!strcmp(nm,"window_mouse_set")) return vreal(0);
+  /* Window-space coordinates address the presented frame directly. */
+  if(!strcmp(nm,"window_mouse_set")){ gml_input_mouse_set(vm,N(a,n,0),N(a,n,1)); return vreal(0); }
   /* The common SDL joydll extension uses zero-based devices, axes and buttons. Translate its
    * polling surface to the same normalized gamepad snapshot as GameMaker's joystick builtins.
    * Trackballs are not represented by the host input contract and hats use the first d-pad. */

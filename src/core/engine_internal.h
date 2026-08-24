@@ -314,6 +314,9 @@ struct AnygmEngine {
   int screen_stage_window_raster;
   double mouse_pixel_x,mouse_pixel_y;
   int pointer_active;
+  /* Track a virtual cursor warp against absolute host pointer readings. */
+  int mouse_warped;
+  double mouse_host_x,mouse_host_y;
   uint8_t mouse_button_current[3],mouse_button_previous[3];
   int mouse_wheel;
   int present_mouse_valid,present_mouse_x,present_mouse_y,present_mouse_width,present_mouse_height;

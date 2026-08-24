@@ -360,8 +360,17 @@ void engine_input_poll_mouse(AnygmEngine *engine){
   if(pointer_signal) engine->pointer_active = 1;
   int use_pointer = mmode != 2 && (mmode == 1 || engine->pointer_active);
   if(use_pointer && px>=0 && py>=0){
-    engine->mouse_pixel_x=px;
-    engine->mouse_pixel_y=py;
+    if(engine->mouse_warped){
+      /* Keep the virtual cursor at its warped position, then add the absolute host pointer's
+       * displacement since the preceding poll. Copying its position would erase the warp. */
+      engine->mouse_pixel_x+=px-engine->mouse_host_x;
+      engine->mouse_pixel_y+=py-engine->mouse_host_y;
+    } else {
+      engine->mouse_pixel_x=px;
+      engine->mouse_pixel_y=py;
+    }
+    engine->mouse_host_x=px;
+    engine->mouse_host_y=py;
   } else if(mmode != 1 && (dx || dy)){            /* RELATIVE — accumulate deltas from last position */
     if(engine->mouse_pixel_x < 0){ engine->mouse_pixel_x = ow / 2.0; engine->mouse_pixel_y = oh / 2.0; }
     engine->mouse_pixel_x += dx; engine->mouse_pixel_y += dy;
@@ -458,6 +467,8 @@ static void engine_input_mouse_set(void *userdata,double x, double y){
   unsigned ow=engine->output_width?engine->output_width:(engine->width?engine->width:1), oh=engine->output_height?engine->output_height:(engine->height?engine->height:1);
   engine->mouse_pixel_x=x<0?0:(x>(double)ow?ow:x);
   engine->mouse_pixel_y=y<0?0:(y>(double)oh?oh:y);
+  /* After a warp, absolute host readings supply displacement rather than position. */
+  engine->mouse_warped=1;
 }
 
 
