@@ -36,6 +36,16 @@ int anygm_synthetic_game_restart_content_create(AnygmSyntheticContent *fixture);
 /* One instance whose Alarm 1 counts a tick and re-arms itself on a sixty-frame period, long enough
  * to tell a countdown that resumed from its remainder apart from one that started the period over. */
 int anygm_synthetic_alarm_content_create(AnygmSyntheticContent *fixture);
+/* A spawner whose Alarm 1 creates a second object, a placed instance destroyed on room entry so a
+ * pool slot above the spawner's is free when that happens, and the created object's own Alarm 0
+ * armed for the very next frame. Each event records the frame it ran on, so the pair of numbers
+ * says whether the alarm phase reached an instance that did not exist when the phase began. */
+int anygm_synthetic_alarm_phase_content_create(AnygmSyntheticContent *fixture);
+/* Two instances answering different mouse subtypes on the same press: the first placed one owns
+ * the global-press subtype and the second owns global-held, which comes first by subtype and
+ * second by instance. Each records the order it ran in, so the pair says which of the two the
+ * dispatch follows. */
+int anygm_synthetic_mouse_order_content_create(AnygmSyntheticContent *fixture);
 /* Two rooms whose authored view ports differ - 128x96 then 192x144 - over one view of 64x48, and
  * one instance whose Create sets a scale of 3 and whose Step advances a room when a global asks.
  * Between them these are the two shapes a scoped override has to be able to give back: a value the

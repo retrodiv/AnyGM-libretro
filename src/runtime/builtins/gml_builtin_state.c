@@ -365,7 +365,7 @@ void gml_builtin_state_reset(GmlBuiltinState *state){
   memset(state->fallback_audio_global_parameter,0,
          sizeof(state->fallback_audio_global_parameter));
   state->fallback_audio_global_parameter_count=0;
-  for(int i=0;i<8;i++){
+  for(int i=0;i<GML_MP_GRID_MAX;i++){
     free(state->mp_grid[i].cell);
     memset(&state->mp_grid[i],0,sizeof(state->mp_grid[i]));
   }
@@ -625,6 +625,62 @@ int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
       grid->cell[j]=gml_vm_state_read_value(reader);
       gml_arr_mark_escaped(grid->cell[j]);
     }
+  }
+  return gml_vm_state_reader_ok(reader);
+}
+
+/* Preserve live motion-planning grids across state restoration. A grid may have been
+ * constructed at runtime and need not be reconstructed after loading a state. */
+void gml_builtin_state_write_mp_grids(const GmlBuiltinState *state,
+                                      GmlVmStateWriter *writer){
+  int live=0;
+  for(int i=0;i<GML_MP_GRID_MAX;i++) if(state->mp_grid[i].live) live++;
+  gml_vm_state_write_i32(writer,live);
+  for(int i=0;i<GML_MP_GRID_MAX;i++){
+    const GmlMpGrid *g=&state->mp_grid[i];
+    if(!g->live) continue;
+    gml_vm_state_write_i32(writer,i);
+    gml_vm_state_write_real(writer,g->left);
+    gml_vm_state_write_real(writer,g->top);
+    gml_vm_state_write_i32(writer,g->hc);
+    gml_vm_state_write_i32(writer,g->vc);
+    gml_vm_state_write_i32(writer,g->cw);
+    gml_vm_state_write_i32(writer,g->ch);
+    gml_vm_state_write_raw(writer,g->cell,(size_t)g->hc*(size_t)g->vc);
+  }
+}
+
+int gml_builtin_state_read_mp_grids(GmlBuiltinState *state,
+                                    GmlVmStateReader *reader){
+  if(!state || !gml_vm_state_reader_ok(reader)) return 0;
+  for(int i=0;i<GML_MP_GRID_MAX;i++){
+    free(state->mp_grid[i].cell);
+    memset(&state->mp_grid[i],0,sizeof(state->mp_grid[i]));
+  }
+  int live=gml_vm_state_read_i32(reader);
+  if(live<0 || live>GML_MP_GRID_MAX) return 0;
+  for(int k=0;k<live;k++){
+    int index=gml_vm_state_read_i32(reader);
+    if(index<0 || index>=GML_MP_GRID_MAX) return 0;
+    GmlMpGrid *g=&state->mp_grid[index];
+    if(g->live) return 0;                       /* one record per slot */
+    double left=gml_vm_state_read_real(reader);
+    double top=gml_vm_state_read_real(reader);
+    int hc=gml_vm_state_read_i32(reader);
+    int vc=gml_vm_state_read_i32(reader);
+    int cw=gml_vm_state_read_i32(reader);
+    int ch=gml_vm_state_read_i32(reader);
+    /* The same bound mp_grid_create refuses at, so a corrupt count cannot ask for an allocation
+     * the creating call would never have made. */
+    if(hc<1 || vc<1 || (long)hc*vc>GML_MP_GRID_MAX_CELLS) return 0;
+    if(cw<1) cw=1;
+    if(ch<1) ch=1;
+    uint8_t *cell=calloc((size_t)hc*(size_t)vc,1);
+    if(!cell) return 0;
+    gml_vm_state_read_raw(reader,cell,(size_t)hc*(size_t)vc);
+    if(!gml_vm_state_reader_ok(reader)){ free(cell); return 0; }
+    g->live=1; g->left=left; g->top=top;
+    g->hc=hc; g->vc=vc; g->cw=cw; g->ch=ch; g->cell=cell;
   }
   return gml_vm_state_reader_ok(reader);
 }

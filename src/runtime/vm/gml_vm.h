@@ -53,7 +53,9 @@ typedef struct {
 
 /* ---- path (parsed from PATH) ---- */
 typedef struct { double x, y, sp, clen; } GmlPathPt;   /* sp = point speed factor, clen = cumulative length */
-typedef struct { GmlPathPt *pts; int n; int kind, closed, precision; double len; } GmlPath;
+typedef struct { GmlPathPt *pts; int n; int kind, closed, precision; double len;
+                 unsigned char runtime_dirty; /* content differs from what PATH authored */
+               } GmlPath;
 /* ---- sequences (SEQN chunk, GMS2.3+) ----
  * Asset keys decide which sprite is active over a bounded interval. Parameter keys describe that
  * asset while it is active; real tracks have up to two directly sampled channels and colour tracks
@@ -218,6 +220,8 @@ typedef struct {
   /* Development settings resolved once per VM: these three sit on the per-array-write and
    * per-code-entry paths, where re-reading them made the host lookup itself measurable. */
   int arrayset_filter_initialized;
+  const char *varset_filter;
+  int varset_filter_initialized;
   const char *arrayset_filter;
   int arrayget_filter_initialized;
   const char *arrayget_filter;
@@ -286,6 +290,7 @@ typedef struct GmlVM {
   int *inst_next, *inst_prev;   /* doubly-linked per-type instance lists over pool slots */
   long obj_list_gen; /* bumped on any create/destroy/change — invalidates per-frame candidate caches */
   GmlPath *paths; int n_paths;
+  int n_authored_paths;      /* paths parsed from PATH; anything above came from path_add */
   GmlSequence *sequences; int n_sequences;
   GmlTimeline *timelines; int n_timelines, cap_timelines;
   GmlColEvent *col_events; int n_col_events;

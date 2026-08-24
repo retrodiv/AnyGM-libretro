@@ -32,6 +32,10 @@ void gml_builtin_state_write_ini_ds(const GmlBuiltinState *state,
                                     GmlVmStateWriter *writer);
 int gml_builtin_state_read_ini_ds(GmlBuiltinState *state,
                                   GmlVmStateReader *reader);
+void gml_builtin_state_write_mp_grids(const GmlBuiltinState *state,
+                                      GmlVmStateWriter *writer);
+int gml_builtin_state_read_mp_grids(GmlBuiltinState *state,
+                                    GmlVmStateReader *reader);
 void gml_builtin_state_write_physics(const GmlBuiltinState *state,
                                      GmlVmStateWriter *writer);
 int gml_builtin_state_read_physics(GmlBuiltinState *state,

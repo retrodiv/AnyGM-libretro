@@ -159,6 +159,17 @@ static void advance_instance_animation(GmlVM *vm,GmlInstance *in,
   }
 }
 
+/* A phase dispatches to the instances that existed when that phase began. An index bound cannot
+ * express that on its own: the allocator reuses holes that were already free at frame start, so an
+ * instance created inside the phase can be handed a slot the loop has not reached yet, and the
+ * phase then runs on an instance that did not exist when it started. Identity does express it -
+ * ids are minted in creation order - so each phase takes a watermark at its own boundary and
+ * dispatches only below it. The bounds themselves are unchanged: this only withholds the
+ * dispatches slot reuse was smuggling in. */
+static int gml_vm_phase_member(const GmlInstance *in, uint32_t phase_first_id){
+  return in->id < phase_first_id;
+}
+
 static void advance_instance_animations(GmlVM *vm){
   GmlRender *render=(GmlRender*)vm->render;
   const char *anim_dbg=anygm_host_development_setting(vm->host,"GML_ANIM_OBJ");
@@ -441,8 +452,10 @@ void gml_vm_step(GmlVM *vm){
     } }
   /* begin step */
   gml_vm_instances_run_classic_triggers(vm,1);
+  uint32_t begin_step_first_id=vm->next_id;
   if(vm->win && anygm_policy_uses_classic_runtime(vm->win)) gml_vm_instances_run_classic_event(vm,"Step_1");
   else for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked &&
+      gml_vm_phase_member(&vm->inst[i],begin_step_first_id) &&
       gml_vm_instances_step_snapshot_member(vm,&vm->inst[i])){
     gml_run_event(vm,&vm->inst[i],"Step_1");
     if(vm->pending_room>=0){
@@ -453,6 +466,7 @@ void gml_vm_step(GmlVM *vm){
       gml_vm_instances_prepare_step(vm,n);
       vm->step_alloc_base=n;
       vm->step_first_id=vm->next_id;
+      begin_step_first_id=vm->next_id;
       break;
     }
   }
@@ -472,6 +486,11 @@ void gml_vm_step(GmlVM *vm){
    * subtype by ascending exact object resource, then insertion order within that object. */
   int resource_major_alarm_order=anygm_policy_resource_major_alarm_dispatch(vm->win);
   int alarm_at_zero = anygm_policy_alarm_at_zero(vm->win);
+  /* An instance created by an alarm does not tick or fire its own alarms in the same pass. Where
+   * dispatch is instance-major the pass is the phase, so one watermark taken here covers it; the
+   * resource-major order takes its own per group, because there a group that has not started yet
+   * legitimately sees an instance an earlier group made. */
+  uint32_t alarm_first_id=vm->next_id;
   if(resource_major_alarm_order){
     for(int a=0;a<GML_ALARMS;a++){
       char s[16]; snprintf(s,sizeof s,"Alarm_%d",a);
@@ -484,12 +503,17 @@ void gml_vm_step(GmlVM *vm){
         int native_declared=gml_vm_instances_native_event_declared(
           vm,2,a,object,NULL,&declared_code);
         if(!native_declared && !gml_vm_instances_event_lookup(vm,s,object,NULL,NULL)) continue;
+        uint32_t group_first_id=vm->next_id;
         int count=gml_vm_instances_collect_object_slots(vm,object);
         if(count<0) continue;
         for(int k=count-1;k>=0;k--){ int i=vm->event_ord[k];
           if(i>=vm->inst_count) continue;
           GmlInstance *in=&vm->inst[i];
           if(!in->active||in->marked||in->obj!=object||!(in->alarm[a]>0)) continue;
+          /* The slot list was taken before this group ran: a slot it names may since have been
+           * recycled into a brand new instance of the same object, which the object check cannot
+           * tell apart from the one that was collected. */
+          if(!gml_vm_phase_member(in,group_first_id)) continue;
           if(gml_alarm_paused(vm,in->obj,a)) continue;   /* held still, not overwritten */
           in->alarm[a]-=1;
           if(in->alarm[a]<=0){ in->alarm[a]=-1;
@@ -501,6 +525,7 @@ void gml_vm_step(GmlVM *vm){
     }
   } else for(int i=0;i<n;i++){ GmlInstance *in=&vm->inst[i];
     if(!in->active||in->marked||!gml_vm_instances_step_snapshot_member(vm,in)) continue;
+    if(!gml_vm_phase_member(in,alarm_first_id)) continue;
     for(int a=0;a<GML_ALARMS;a++){
       if(alarm_at_zero){ if(!(in->alarm[a]>0)) continue; } else { if(!(in->alarm[a]>-1)) continue; }
       char s[16]; snprintf(s,sizeof s,"Alarm_%d",a);
@@ -585,14 +610,35 @@ void gml_vm_step(GmlVM *vm){
         if(gml_vm_instances_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
         in->mouse_over=(unsigned char)hov;
       }
-    } else for(int i=0;i<n;i++){
-      GmlInstance *in=&vm->inst[i];
-      if(!in->active||in->marked||in->deactivated||!gml_vm_instances_step_snapshot_member(vm,in)) continue;
-      double l,t,r2,b; int hov=0;
-      if(gml_vm_instances_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
-      unsigned char was=in->mouse_over; in->mouse_over=(unsigned char)hov;
-      for(int e=0;e<vm->n_mouse_events;e++) if(mouse_event_fires(vm,vm->mouse_events[e].sub,hov,was,mheld,mpressed,mreleased,mwheel))
-        gml_run_event(vm,in,vm->mouse_events[e].suffix);
+    } else {
+      /* One subtype at a time, ascending, exactly as the classic path above and as the event table
+       * itself is ordered - not one instance at a time. The two orders differ wherever a handler
+       * reads what another instance's handler wrote in the same phase: instance-major makes that
+       * depend on which pool slot each instance happens to occupy, which is not a property of the
+       * content.
+       *
+       * The hover flags are committed after the dispatch, for the same reason the classic path
+       * commits them there: enter and leave are edges against what the previous frame saw, and a
+       * later subtype must still see that edge. */
+      for(int e=0;e<vm->n_mouse_events;e++){
+        int s=vm->mouse_events[e].sub;
+        for(int i=0;i<n;i++){
+          GmlInstance *in=&vm->inst[i];
+          if(!in->active||in->marked||in->deactivated||
+             !gml_vm_instances_step_snapshot_member(vm,in)) continue;
+          double l,t,r2,b; int hov=0;
+          if(gml_vm_instances_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
+          if(mouse_event_fires(vm,s,hov,in->mouse_over,mheld,mpressed,mreleased,mwheel))
+            gml_run_event(vm,in,vm->mouse_events[e].suffix);
+        }
+      }
+      for(int i=0;i<vm->inst_count;i++){
+        GmlInstance *in=&vm->inst[i];
+        if(!in->active||in->marked||in->deactivated) continue;
+        double l,t,r2,b; int hov=0;
+        if(gml_vm_instances_bbox(vm,in,&l,&t,&r2,&b)) hov=mx>=l&&mx<=r2&&my>=t&&my<=b;
+        in->mouse_over=(unsigned char)hov;
+      }
     }
   }
   VMPROF_MARK(input);
@@ -603,6 +649,10 @@ void gml_vm_step(GmlVM *vm){
    * after Alarm and input, so instances created earlier in the frame join normal Step. The later
    * policy retains the frame-start snapshot. */
   gml_vm_instances_run_classic_triggers(vm,0);
+  /* Normal Step retains its existing index bound without an identity watermark. Slot
+   * reuse may affect whether a new instance runs in this phase; the required timing
+   * remains unverified, so this behavior is unchanged. */
+  uint32_t step_first_id=vm->next_id; (void)step_first_id;
   if(vm->win && anygm_policy_uses_classic_runtime(vm->win)) gml_vm_instances_run_classic_event(vm,"Step_0");
   else {
     int step_count=anygm_policy_snapshot_instance_iteration(vm->win)?n:vm->inst_count;
@@ -655,8 +705,10 @@ void gml_vm_step(GmlVM *vm){
   VMPROF_MARK(coll);
   /* end step */
   gml_vm_instances_run_classic_triggers(vm,2);
+  uint32_t end_step_first_id=vm->next_id;
   if(vm->win && anygm_policy_uses_classic_runtime(vm->win)) gml_vm_instances_run_classic_event(vm,"Step_2");
   else for(int i=0;i<n;i++) if(vm->inst[i].active && !vm->inst[i].marked &&
+      gml_vm_phase_member(&vm->inst[i],end_step_first_id) &&
       gml_vm_instances_step_snapshot_member(vm,&vm->inst[i]))
     gml_run_event(vm,&vm->inst[i],"Step_2");
   VMPROF_MARK(step2);

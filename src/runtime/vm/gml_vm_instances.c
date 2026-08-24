@@ -1303,11 +1303,12 @@ static void parse_mouse_events(GmlVM *vm){
       vm->n_mouse_events++;
     }
   }
-  if(vm->win && anygm_policy_uses_classic_runtime(vm->win))
-    for(int i=0;i<vm->n_mouse_events;i++) for(int j=i+1;j<vm->n_mouse_events;j++)
-      if(vm->mouse_events[j].sub<vm->mouse_events[i].sub){
-        typeof(vm->mouse_events[0]) t=vm->mouse_events[i]; vm->mouse_events[i]=vm->mouse_events[j]; vm->mouse_events[j]=t;
-      }
+  /* Sort by subtype for every generation. This table defines dispatch order; CODE
+   * entry order must not determine which subtype runs first. */
+  for(int i=0;i<vm->n_mouse_events;i++) for(int j=i+1;j<vm->n_mouse_events;j++)
+    if(vm->mouse_events[j].sub<vm->mouse_events[i].sub){
+      typeof(vm->mouse_events[0]) t=vm->mouse_events[i]; vm->mouse_events[i]=vm->mouse_events[j]; vm->mouse_events[j]=t;
+    }
 }
 static void parse_col_events(GmlVM *vm){
   GmlWin *w=vm->win; int cap=0;

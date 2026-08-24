@@ -9,9 +9,15 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `14`. It is the format transported by
+The current AnyGM save-state schema is `15`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
+
+Schema `15` carries live motion-planning grids and paths added or edited at runtime.
+An instance's `path_index` may refer to a runtime path, and grids need not be rebuilt
+after loading a state. Authored paths remain in the content; restore re-reads that table
+before applying runtime records, so an authored path with no saved edit is restored
+from its original definition.
 
 Schema `14` includes the independently authored collision plane of a runtime sprite in the
 renderer payload. Sprite assignment and duplication copy that plane separately from visible RGBA,

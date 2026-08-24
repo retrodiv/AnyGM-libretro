@@ -399,6 +399,217 @@ int anygm_synthetic_alarm_content_create(AnygmSyntheticContent *fixture){
   return 1;
 }
 
+int anygm_synthetic_alarm_phase_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+
+  char spawner_create[192],spawner_begin[192],spawner_alarm[192];
+  char hole_create[192],keeper_create[192],late_create[192],late_alarm[192];
+  snprintf(spawner_create,sizeof spawner_create,"%s/spawner_create.gml",fixture->directory);
+  snprintf(spawner_begin,sizeof spawner_begin,"%s/spawner_begin.gml",fixture->directory);
+  snprintf(spawner_alarm,sizeof spawner_alarm,"%s/spawner_alarm.gml",fixture->directory);
+  snprintf(hole_create,sizeof hole_create,"%s/hole_create.gml",fixture->directory);
+  snprintf(keeper_create,sizeof keeper_create,"%s/keeper_create.gml",fixture->directory);
+  snprintf(late_create,sizeof late_create,"%s/late_create.gml",fixture->directory);
+  snprintf(late_alarm,sizeof late_alarm,"%s/late_alarm.gml",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  if(!write_text(spawner_create,
+                 "global.fixture_frame = 0;\n"
+                 "global.fixture_spawned_frame = -1;\n"
+                 "global.fixture_late_alarm_frame = -1;\n"
+                 "alarm[1] = 3;\n") ||
+     /* Begin Step runs before alarms, so this number is the frame the alarm phase belongs to. */
+     !write_text(spawner_begin,
+                 "global.fixture_frame += 1;\n") ||
+     /* Object 2 is obj_late: a structural package numbers objects in declaration order, and a
+      * literal keeps the fixture independent of how a resource name resolves. */
+     !write_text(spawner_alarm,
+                 "global.fixture_spawned_frame = global.fixture_frame;\n"
+                 "instance_create(0, 0, 2);\n") ||
+     /* The hole. Destroying it during room entry frees a pool slot above the spawner's, which the
+      * allocator hands to the next instance created inside a step - and that is the arrangement
+      * that lets a phase bounded by an index reach an instance created after it started. */
+     !write_text(hole_create,
+                 "instance_destroy();\n") ||
+     /* Placed after the hole so the freed slot is never the last one: a trailing dead slot is
+      * trimmed off the pool instead of being kept as a hole, and then there is nothing to reuse. */
+     !write_text(keeper_create,
+                 "global.fixture_keeper = 1;\n") ||
+     !write_text(late_create,
+                 "alarm[0] = 1;\n") ||
+     !write_text(late_alarm,
+                 "global.fixture_late_alarm_frame = global.fixture_frame;\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+
+  GmlcProject project={0};
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  project.host=&file_services;
+  GmlcObject objects[4]={{0},{0},{0},{0}};
+  GmlcObjectEvent spawner_events[3]={0};
+  GmlcObjectEvent hole_events[1]={0};
+  GmlcObjectEvent keeper_events[1]={0};
+  GmlcObjectEvent late_events[2]={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance instances[3]={{0},{0},{0}};
+  int room_order=0;
+  project.name=(char *)"alarm-phase-fixture";
+  project.objects=objects; project.n_objects=project.cap_objects=4;
+  project.rooms=&room; project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order; project.n_room_order=1;
+
+  objects[0].id=objects[0].name=(char *)"obj_spawner";
+  objects[0].sprite_id=objects[0].mask_id=objects[0].parent_id=-1;
+  objects[0].visible=0;
+  objects[0].events=spawner_events;
+  objects[0].n_events=objects[0].cap_events=3;
+  spawner_events[0].event_type=0; spawner_events[0].event_number=0;
+  spawner_events[0].source_path=spawner_create;
+  spawner_events[1].event_type=3; spawner_events[1].event_number=1;
+  spawner_events[1].source_path=spawner_begin;
+  spawner_events[2].event_type=2; spawner_events[2].event_number=1;
+  spawner_events[2].source_path=spawner_alarm;
+
+  objects[1].id=objects[1].name=(char *)"obj_hole";
+  objects[1].sprite_id=objects[1].mask_id=objects[1].parent_id=-1;
+  objects[1].visible=0;
+  objects[1].events=hole_events;
+  objects[1].n_events=objects[1].cap_events=1;
+  hole_events[0].event_type=0; hole_events[0].event_number=0;
+  hole_events[0].source_path=hole_create;
+
+  objects[3].id=objects[3].name=(char *)"obj_keeper";
+  objects[3].sprite_id=objects[3].mask_id=objects[3].parent_id=-1;
+  objects[3].visible=0;
+  objects[3].events=keeper_events;
+  objects[3].n_events=objects[3].cap_events=1;
+  keeper_events[0].event_type=0; keeper_events[0].event_number=0;
+  keeper_events[0].source_path=keeper_create;
+
+  objects[2].id=objects[2].name=(char *)"obj_late";
+  objects[2].sprite_id=objects[2].mask_id=objects[2].parent_id=-1;
+  objects[2].visible=0;
+  objects[2].events=late_events;
+  objects[2].n_events=objects[2].cap_events=2;
+  late_events[0].event_type=0; late_events[0].event_number=0;
+  late_events[0].source_path=late_create;
+  late_events[1].event_type=2; late_events[1].event_number=0;
+  late_events[1].source_path=late_alarm;
+
+  room.id=room.name=(char *)"room_fixture"; room.width=64; room.height=48; room.speed=60;
+  room.draw_background_color=1;
+  room.instances=instances; room.n_instances=room.cap_instances=3;
+  instances[0].id=instances[0].name=(char *)"instance_spawner";
+  instances[0].object_id=0; instances[0].instance_id=100000;
+  instances[0].sx=instances[0].sy=1.0f; instances[0].color=0xFFFFFFFFu;
+  instances[1].id=instances[1].name=(char *)"instance_hole";
+  instances[1].object_id=1; instances[1].instance_id=100001;
+  instances[1].sx=instances[1].sy=1.0f; instances[1].color=0xFFFFFFFFu;
+  instances[2].id=instances[2].name=(char *)"instance_keeper";
+  instances[2].object_id=3; instances[2].instance_id=100002;
+  instances[2].sx=instances[2].sy=1.0f; instances[2].color=0xFFFFFFFFu;
+
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"alarm-phase package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  return 1;
+}
+
+int anygm_synthetic_mouse_order_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+
+  char boot[192],press[192],held[192];
+  snprintf(boot,sizeof boot,"%s/mouse_boot.gml",fixture->directory);
+  snprintf(press,sizeof press,"%s/mouse_press.gml",fixture->directory);
+  snprintf(held,sizeof held,"%s/mouse_held.gml",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  if(!write_text(boot,
+                 "global.fixture_order_seq = 1;\n"
+                 "global.fixture_press_order = 0;\n"
+                 "global.fixture_held_order = 0;\n") ||
+     !write_text(press,
+                 "if (global.fixture_press_order == 0)\n"
+                 "{\n"
+                 "    global.fixture_press_order = global.fixture_order_seq;\n"
+                 "    global.fixture_order_seq += 1;\n"
+                 "}\n") ||
+     !write_text(held,
+                 "if (global.fixture_held_order == 0)\n"
+                 "{\n"
+                 "    global.fixture_held_order = global.fixture_order_seq;\n"
+                 "    global.fixture_order_seq += 1;\n"
+                 "}\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+
+  GmlcProject project={0};
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  project.host=&file_services;
+  GmlcObject objects[2]={{0},{0}};
+  GmlcObjectEvent press_events[2]={0};
+  GmlcObjectEvent held_events[1]={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance instances[2]={{0},{0}};
+  int room_order=0;
+  project.name=(char *)"mouse-order-fixture";
+  project.objects=objects; project.n_objects=project.cap_objects=2;
+  project.rooms=&room; project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order; project.n_room_order=1;
+
+  /* The global-press responder is placed first, so instance order and subtype order disagree:
+   * subtype 50 (global button held) precedes subtype 53 (global button pressed), while this
+   * instance precedes the other one. */
+  objects[0].id=objects[0].name=(char *)"obj_press_watcher";
+  objects[0].sprite_id=objects[0].mask_id=objects[0].parent_id=-1;
+  objects[0].visible=0;
+  objects[0].events=press_events;
+  objects[0].n_events=objects[0].cap_events=2;
+  press_events[0].event_type=0; press_events[0].event_number=0;
+  press_events[0].source_path=boot;
+  press_events[1].event_type=6; press_events[1].event_number=53;
+  press_events[1].source_path=press;
+
+  objects[1].id=objects[1].name=(char *)"obj_held_watcher";
+  objects[1].sprite_id=objects[1].mask_id=objects[1].parent_id=-1;
+  objects[1].visible=0;
+  objects[1].events=held_events;
+  objects[1].n_events=objects[1].cap_events=1;
+  held_events[0].event_type=6; held_events[0].event_number=50;
+  held_events[0].source_path=held;
+
+  room.id=room.name=(char *)"room_fixture"; room.width=64; room.height=48; room.speed=60;
+  room.draw_background_color=1;
+  room.instances=instances; room.n_instances=room.cap_instances=2;
+  instances[0].id=instances[0].name=(char *)"instance_press";
+  instances[0].object_id=0; instances[0].instance_id=100000;
+  instances[0].sx=instances[0].sy=1.0f; instances[0].color=0xFFFFFFFFu;
+  instances[1].id=instances[1].name=(char *)"instance_held";
+  instances[1].object_id=1; instances[1].instance_id=100001;
+  instances[1].sx=instances[1].sy=1.0f; instances[1].color=0xFFFFFFFFu;
+
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"mouse-order package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  return 1;
+}
+
 int anygm_synthetic_blocking_wait_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);

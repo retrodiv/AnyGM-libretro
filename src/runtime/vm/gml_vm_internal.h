@@ -91,6 +91,7 @@ void gml_vm_instances_reset_caches(GmlVM *vm);
 void gml_vm_rooms_init(GmlVM *vm);
 void gml_vm_sequences_clear(GmlVM *vm);
 void gml_vm_rooms_step_paths(GmlVM *vm);
+void gml_vm_paths_reset_authored(GmlVM *vm);
 void gml_vm_rooms_step_timelines(GmlVM *vm, int snapshot_count);
 void gml_vm_frame_advance_layers(GmlVM *vm);
 uint32_t gml_vm_rooms_layer_list(GmlVM *vm, int room_index,

@@ -870,8 +870,8 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
     const char *sub=nm+8;
     if(!strcmp(sub,"create")){
       int hc=(int)N(a,n,2), vc=(int)N(a,n,3);
-      if(hc<1||vc<1||(long)hc*vc>1<<22) return vreal(-1);
-      for(int i=0;i<8;i++) if(!mp[i].live){
+      if(hc<1||vc<1||(long)hc*vc>GML_MP_GRID_MAX_CELLS) return vreal(-1);
+      for(int i=0;i<GML_MP_GRID_MAX;i++) if(!mp[i].live){
         mp[i].live=1; mp[i].left=N(a,n,0); mp[i].top=N(a,n,1);
         mp[i].hc=hc; mp[i].vc=vc; mp[i].cw=(int)N(a,n,4); mp[i].ch=(int)N(a,n,5);
         if(mp[i].cw<1) mp[i].cw=1;
@@ -882,7 +882,7 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
       return vreal(-1);
     }
     int gi=(int)N(a,n,0);
-    GmlMpGrid *g = (gi>=0 && gi<8 && mp[gi].live) ? &mp[gi] : NULL;
+    GmlMpGrid *g = (gi>=0 && gi<GML_MP_GRID_MAX && mp[gi].live) ? &mp[gi] : NULL;
     if(!g) return vreal(0);
     if(!strcmp(sub,"destroy")){ free(g->cell); memset(g,0,sizeof *g); return vreal(0); }
     if(!strcmp(sub,"clear_all")){ memset(g->cell,0,(size_t)g->hc*g->vc); return vreal(0); }
@@ -972,7 +972,7 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
         }
         pts[0].x=x0; pts[0].y=y0;                     /* exact endpoints, GM-style */
         pts[rn-1].x=x1; pts[rn-1].y=y1;
-        free(p->pts); p->pts=pts; p->n=rn; p->kind=0; p->closed=0;
+        free(p->pts); p->pts=pts; p->n=rn; p->kind=0; p->closed=0; p->runtime_dirty=1;
         double L=0; p->pts[0].clen=0;
         for(int k=1;k<p->n;k++){ double ddx=p->pts[k].x-p->pts[k-1].x, ddy=p->pts[k].y-p->pts[k-1].y;
           L+=sqrt(ddx*ddx+ddy*ddy); p->pts[k].clen=L; }
@@ -992,13 +992,13 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
     GmlPath *p=&vm->paths[vm->n_paths];
     memset(p,0,sizeof *p);
     p->pts=calloc(1,sizeof(GmlPathPt));
-    p->precision=4; p->closed=1;
+    p->precision=4; p->closed=1; p->runtime_dirty=1;
     return vreal(vm->n_paths++);
   }
   if(!strcmp(nm,"path_add_point")){
     int pi=(int)N(a,n,0);
     if(pi>=0 && pi<vm->n_paths){
-      GmlPath *p=&vm->paths[pi];
+      GmlPath *p=&vm->paths[pi]; p->runtime_dirty=1;
       GmlPathPt *np=realloc(p->pts,(size_t)(p->n+1)*sizeof(GmlPathPt));
       if(np){ p->pts=np;
         p->pts[p->n].x=N(a,n,1); p->pts[p->n].y=N(a,n,2); p->pts[p->n].sp=N(a,n,3); p->n++;
@@ -1014,7 +1014,7 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
   if(!strcmp(nm,"path_set_closed")){
     int pi=(int)N(a,n,0);
     if(pi>=0 && pi<vm->n_paths){
-      GmlPath *p=&vm->paths[pi]; p->closed=N(a,n,1)!=0;
+      GmlPath *p=&vm->paths[pi]; p->closed=N(a,n,1)!=0; p->runtime_dirty=1;
       double L=0; if(p->n>0) p->pts[0].clen=0;
       for(int k=1;k<p->n;k++){ double dx=p->pts[k].x-p->pts[k-1].x,dy=p->pts[k].y-p->pts[k-1].y;
         L+=sqrt(dx*dx+dy*dy); p->pts[k].clen=L; }
@@ -1026,7 +1026,8 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
   }
   if(!strcmp(nm,"path_clear_points")){
     int pi=(int)N(a,n,0);
-    if(pi>=0 && pi<vm->n_paths){ vm->paths[pi].n=0; vm->paths[pi].len=0; }
+    if(pi>=0 && pi<vm->n_paths){ vm->paths[pi].n=0; vm->paths[pi].len=0;
+      vm->paths[pi].runtime_dirty=1; }
     return vreal(0);
   }
   if(!strcmp(nm,"path_get_number")){ int pi=(int)N(a,n,0);
@@ -1052,7 +1053,8 @@ GmlVal gml_builtin_try_collision_planning(GmlVM *vm, const char *nm, GmlVal *a, 
     return vreal((pi>=0&&pi<vm->n_paths&&k>=0&&k<vm->paths[pi].n)?vm->paths[pi].pts[k].sp:0); }
   if(!strcmp(nm,"path_exists")){ int pi=(int)N(a,n,0); return vreal(pi>=0&&pi<vm->n_paths); }
   if(!strcmp(nm,"path_delete")){ int pi=(int)N(a,n,0);
-    if(pi>=0&&pi<vm->n_paths){ vm->paths[pi].n=0; vm->paths[pi].len=0; } return vreal(0); }
+    if(pi>=0&&pi<vm->n_paths){ vm->paths[pi].n=0; vm->paths[pi].len=0;
+      vm->paths[pi].runtime_dirty=1; } return vreal(0); }
   /* mp_linear_step(x,y,speed,checkall): step the current instance toward (x,y) by `speed`; returns 1
    * once it arrives. We move directly (no obstacle stop yet — better than the no-op that never moved). */
   if(!strcmp(nm,"mp_linear_step")){ GmlInstance*s=vm->cur_self; if(!s) return vreal(0);

@@ -683,8 +683,30 @@ GmlVal gml_vm_identifier_get(GmlVM *vm,const char *name){
  * returns only the first). inst_t in [0,n_objects) is an object index; a real instance id
  * is >=100000, so it never collides. Fans a write out to all instances of the object. */
 static int is_object_scope(GmlVM *vm, int inst_t){ return inst_t>=0 && inst_t<vm->n_objects; }
+/* GML_DBG_VARSET=<name>: every write to a variable of that name, with the code entry that made it.
+ * The per-frame value logs say what a variable ended a frame holding; when the question is which of
+ * several writers set it, and in what order inside the frame, only the writes answer. */
+static const char *vm_varset_filter(GmlVM *vm){
+  if(!vm->diagnostics.varset_filter_initialized){
+    vm->diagnostics.varset_filter=anygm_host_development_setting(vm->host,"GML_DBG_VARSET");
+    vm->diagnostics.varset_filter_initialized=1;
+  }
+  return vm->diagnostics.varset_filter;
+}
 static void var_set_h(GmlVM *vm, int inst, const char *name, uint32_t nh, GmlVal v){
   GML_VM_DIAGNOSTIC_VARIABLE_SCOPE(vm,inst,name,-1,v);
+  { const char *want=vm_varset_filter(vm);
+    if(want && name && !strcmp(want,name)){
+      const GmlWin *w=vm->win;
+      int ci=vm->cur_code_index;
+      const char *code=(w && ci>=0 && ci<w->n_code && w->code[ci].name)?w->code[ci].name:"?";
+      if(v.t==V_STR)
+        anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,"[varset] f%ld %s scope=%d = \"%.120s\" by %s\n",
+                        vm->frame,name,inst,v.s?v.s:"",code);
+      else
+        anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,"[varset] f%ld %s scope=%d = %.17g by %s\n",
+                        vm->frame,name,inst,v.t==V_REAL?v.d:0.0,code);
+    } }
   gml_arr_mark_escaped(v);   /* target is a global/instance slot: outlives the current scope */
   if(inst==IT_STATIC){
     int ci=vm?vm->cur_code_index:-1;

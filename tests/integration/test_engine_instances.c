@@ -915,6 +915,118 @@ static int alarm_pause_policy(void){
   return ok;
 }
 
+/* Mouse events are dispatched one subtype at a time, in ascending subtype order, not one instance
+ * at a time. The difference shows wherever one handler reads what another instance's handler wrote
+ * in the same phase: dispatching per instance makes that depend on the pool slot each instance
+ * happens to occupy, which can change when an unrelated instance is created or destroyed.
+ * The fixture makes instance order disagree with subtype order.
+ */
+static int mouse_subtype_dispatch_order_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_mouse_order_content_create(&fixture)){
+    fputs("mouse-order fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  for(int frame=0;ok && frame<2;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  input.mouse_buttons[0]=1;
+  for(int frame=0;ok && frame<2;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  double press=ok?gml_global_num(&engine->vm,"fixture_press_order"):0;
+  double held=ok?gml_global_num(&engine->vm,"fixture_held_order"):0;
+  if(ok && (press<1 || held<1)){
+    fprintf(stderr,"mouse order: a subtype never ran (press=%.0f held=%.0f)\n",press,held);
+    ok=0;
+  }
+  if(ok && held>press){
+    fprintf(stderr,
+            "mouse order: dispatch followed instance order, not subtype order "
+            "(global-held ran %.0f, global-pressed ran %.0f)\n",held,press);
+    ok=0;
+  }
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
+/* A phase runs on the instances that existed when that phase began. Bounding it by an index does
+ * not say that: the pool hands a new instance a slot that was already free at frame start, and if
+ * that slot sits above the loop's cursor the phase reaches an instance created inside it. The
+ * alarm phase is where it shows: an instance created by an alarm, whose own Create arms an alarm
+ * for the next frame, then has that alarm ticked and fired in the same phase that made it. One
+ * fixture records the creation and alarm frames to distinguish the two orders.
+ *
+ * The fixture places the hole above the spawner deliberately: below it the loop has already
+ * passed, and the behavior under test is unreachable. */
+static int alarm_phase_membership_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_alarm_phase_content_create(&fixture)){
+    fputs("alarm-phase fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  for(int frame=0;ok && frame<12;frame++){
+    output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  }
+  double spawned=ok?gml_global_num(&engine->vm,"fixture_spawned_frame"):-1;
+  double fired=ok?gml_global_num(&engine->vm,"fixture_late_alarm_frame"):-1;
+  if(ok && spawned<1){
+    fprintf(stderr,"alarm phase: the spawning alarm never ran\n");
+    ok=0;
+  }
+  if(ok && fired<0){
+    fprintf(stderr,"alarm phase: the created instance's alarm never fired\n");
+    ok=0;
+  }
+  if(ok && fired<=spawned){
+    fprintf(stderr,
+            "alarm phase: an instance created by an alarm fired its own alarm in the same phase "
+            "(created on frame %.0f, alarm fired on frame %.0f)\n",spawned,fired);
+    ok=0;
+  }
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 /* One frontend entry may carry several `;`-separated directives, so a cheat that needs a set of
  * flags is one toggle rather than one per flag. The chain has to behave like the entries it
  * replaces in both directions: every directive frozen while it is armed, and every directive's
@@ -2100,6 +2212,10 @@ int main(int argc,char **argv){
       return game_restart_policy()?0:1;
     if(!strcmp(argv[2],"alarm_pause"))
       return alarm_pause_policy()?0:1;
+    if(!strcmp(argv[2],"alarm_phase_membership"))
+      return alarm_phase_membership_policy()?0:1;
+    if(!strcmp(argv[2],"mouse_subtype_dispatch_order"))
+      return mouse_subtype_dispatch_order_policy()?0:1;
     if(!strcmp(argv[2],"chained_override"))
       return chained_override_policy()?0:1;
     if(!strcmp(argv[2],"anchor_script_override"))
@@ -2196,6 +2312,8 @@ int main(int argc,char **argv){
   if(!bridged_key_press_delivery_policy()) return 1;
   if(!bridged_key_hold_policy()) return 1;
   if(!alarm_pause_policy()) return 1;
+  if(!alarm_phase_membership_policy()) return 1;
+  if(!mouse_subtype_dispatch_order_policy()) return 1;
   char label[128];
   anygm_content_save_label("/library/fixture_bundle/data.win",label,sizeof label);
   if(strcmp(label,"fixture_bundle")){
@@ -2333,12 +2451,13 @@ int main(int argc,char **argv){
   /* The state carries content and compatibility fingerprints. The synthetic content embeds the
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
-  /* Schema 14 adds an independently authored collision plane to runtime-sprite records. This
-   * fixture has no runtime sprites, so its size remains 22050 and only the root schema/header hash
-   * moves. A fixture that assigns a sprite covers the added renderer payload separately. */
+  /* Schema 15 adds the runtime motion-planning state: a count of live grids, and the path table's
+   * total, authored count and how many of its entries the run wrote. This fixture creates no grid
+   * and edits no path, so those five words are the whole of the growth - 22050 to 22066 - and what
+   * a grid or a runtime path costs on top of that is covered by the builtin-state fixture. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
-  if(deterministic_size!=22050 ||
-     deterministic_hash!=UINT64_C(0x4332862d2d8ea492)){
+  if(deterministic_size!=22066 ||
+     deterministic_hash!=UINT64_C(0x459a47f932b62784)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;

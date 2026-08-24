@@ -18,8 +18,11 @@
 #include <limits.h>
 
 /* ---------------- save-state runtime serialization ---------------- */
-enum { GML_VM_STATE_SCHEMA=7 };
+enum { GML_VM_STATE_SCHEMA=8 };
 #define GML_VM_STATE_MAGIC UINT32_C(0x534D5641)
+/* A path a run can build: mp_grid_path fills one cell per step of a route, so the grid's cell
+ * count is the ceiling, and path_add_point cannot be asked for more than a state could hold. */
+#define GML_STATE_MAX_PATH_POINTS (1<<22)
 /* Writing a state walks every instance's variables, and the names repeat across them: every
  * instance carries the same handful of built-in names, each time as the very same pointer into
  * the content mapping. Resolving one costs a hash of the whole text, a comparison against the
@@ -857,6 +860,28 @@ static void sw_vm(StateW *s, GmlVM *vm){
     for(int k=0;k<f->stack_n;k++){ sw_u32(s,f->stack_type[k]); sw_val(s,f->stack[k],0); }
     sw_varmap(s,&f->locals);
   }
+  /* Save live grids and runtime-created or edited paths. Authored paths remain in the
+   * content and are re-read before these records are applied during restore. */
+  gml_builtin_state_write_mp_grids(builtin_state,s);
+  sw_i32(s,vm->n_paths);
+  sw_i32(s,vm->n_authored_paths);
+  { int dirty=0;
+    for(int i=0;i<vm->n_paths;i++)
+      if(i>=vm->n_authored_paths || vm->paths[i].runtime_dirty) dirty++;
+    sw_i32(s,dirty);
+    for(int i=0;i<vm->n_paths;i++){
+      GmlPath *p=&vm->paths[i];
+      if(i<vm->n_authored_paths && !p->runtime_dirty) continue;
+      sw_i32(s,i);
+      sw_i32(s,p->kind); sw_i32(s,p->closed); sw_i32(s,p->precision);
+      sw_d(s,p->len);
+      sw_i32(s,p->n);
+      for(int k=0;k<p->n;k++){
+        sw_d(s,p->pts[k].x); sw_d(s,p->pts[k].y);
+        sw_d(s,p->pts[k].sp); sw_d(s,p->pts[k].clen);
+      }
+    }
+  }
   vm_state_profile_globals(vm);
 }
 size_t gml_vm_state_size(GmlVM *vm){
@@ -1212,6 +1237,56 @@ int gml_vm_state_load(GmlVM *vm, const void *data, size_t len, size_t *used){
     }
     if(s.ok && frames>0){ vm->wait.active=1; vm->wait.n_frames=frames; }
     else if(vm->wait.n_frames) gml_vm_wait_cancel(vm);
+  }
+  /* Runtime motion planning, mirroring sw_vm. The authored path table is rebuilt from the content
+   * first, so a path this run had edited is clean again before the state's own records land on it,
+   * and a state that recorded none leaves exactly what PATH authored. */
+  if(s.ok && !gml_builtin_state_read_mp_grids(builtin_state,&s)){
+    state_debug(vm,"bad motion-planning grid",s.pos,0); s.ok=0;
+  }
+  if(s.ok){
+    int total=sr_i32(&s);
+    int authored=sr_i32(&s);
+    int dirty=sr_i32(&s);
+    if(total<0 || authored<0 || dirty<0 || authored>total || dirty>total ||
+       authored!=vm->n_authored_paths){
+      state_debug(vm,"bad path table",s.pos,(uint32_t)total); s.ok=0;
+    } else {
+      gml_vm_paths_reset_authored(vm);
+      if(total>vm->n_paths){
+        GmlPath *grown=realloc(vm->paths,(size_t)total*sizeof(GmlPath));
+        if(!grown) s.ok=0;
+        else {
+          memset(grown+vm->n_paths,0,(size_t)(total-vm->n_paths)*sizeof(GmlPath));
+          vm->paths=grown; vm->n_paths=total;
+        }
+      }
+      int last=-1;
+      for(int k=0;k<dirty && s.ok;k++){
+        int index=sr_i32(&s);
+        if(index<=last || index<0 || index>=vm->n_paths){
+          state_debug(vm,"bad path index",s.pos,(uint32_t)index); s.ok=0; break;
+        }
+        last=index;
+        GmlPath *p=&vm->paths[index];
+        int kind=sr_i32(&s), closed=sr_i32(&s), precision=sr_i32(&s);
+        double len=sr_d(&s);
+        int count=sr_i32(&s);
+        if(count<0 || count>GML_STATE_MAX_PATH_POINTS || !isfinite(len)){
+          state_debug(vm,"bad path point count",s.pos,(uint32_t)count); s.ok=0; break;
+        }
+        GmlPathPt *pts=calloc((size_t)(count>0?count:1),sizeof(GmlPathPt));
+        if(!pts){ s.ok=0; break; }
+        for(int j=0;j<count;j++){
+          pts[j].x=sr_d(&s); pts[j].y=sr_d(&s);
+          pts[j].sp=sr_d(&s); pts[j].clen=sr_d(&s);
+        }
+        if(!s.ok){ free(pts); break; }
+        free(p->pts);
+        p->pts=pts; p->n=count; p->kind=kind; p->closed=closed;
+        p->precision=precision; p->len=len; p->runtime_dirty=1;
+      }
+    }
   }
   vm->cur_self=vm->cur_other=NULL; vm->cur_event=NULL; vm->cur_event_obj=0;
   vm->step_active=0; vm->step_alloc_base=0;

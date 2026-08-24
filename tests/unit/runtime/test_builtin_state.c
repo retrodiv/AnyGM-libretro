@@ -20,6 +20,45 @@ static int expect_real(GmlVal value,double expected,const char *label){
   return 0;
 }
 
+/* Preserve a runtime grid and routed path when restoring state. The fixture
+ * checks both the blocked cells and the ability to route again. */
+static int populate_planning(GmlVM *vm,GmlVal *mp,GmlVal *route){
+  GmlVal create[6]={vreal(0),vreal(0),vreal(8),vreal(4),vreal(16),vreal(16)};
+  *mp=call(vm,"mp_grid_create",create,6);
+  if(!expect_real(*mp,0,"mp_grid_create")) return 0;
+  /* A wall down the middle with a gap on the bottom row, so the only route has to go around it
+   * and the restored grid has to still say which cells are blocked. */
+  GmlVal wall[5]={*mp,vreal(64),vreal(0),vreal(79),vreal(47)};
+  (void)call(vm,"mp_grid_add_rectangle",wall,5);
+  *route=call(vm,"path_add",NULL,0);
+  GmlVal path_args[7]={*mp,*route,vreal(8),vreal(8),vreal(120),vreal(8),vreal(0)};
+  if(!expect_real(call(vm,"mp_grid_path",path_args,7),1,"mp_grid_path")) return 0;
+  GmlVal blocked[3]={*mp,vreal(4),vreal(0)};
+  return expect_real(call(vm,"mp_grid_get_cell",blocked,3),-1,"blocked cell");
+}
+
+static int verify_planning(GmlVM *vm,GmlVal mp,GmlVal route,int points){
+  GmlVal blocked[3]={mp,vreal(4),vreal(0)};
+  GmlVal open[3]={mp,vreal(0),vreal(0)};
+  /* Reading only: the canonical-state comparison below this needs the restore to have changed
+   * nothing, so asking the grid to route again waits until those bytes have been compared. */
+  return expect_real(call(vm,"mp_grid_get_cell",blocked,3),-1,
+                     "restored blocked cell") &&
+         expect_real(call(vm,"mp_grid_get_cell",open,3),0,
+                     "restored open cell") &&
+         expect_real(call(vm,"path_get_number",&route,1),points,
+                     "restored path points");
+}
+
+/* Present is not the same as usable: a grid whose cells came back but whose extent or cell size
+ * did not would still refuse every route. */
+static int planning_still_routes(GmlVM *vm,GmlVal mp){
+  GmlVal again=call(vm,"path_add",NULL,0);
+  GmlVal path_args[7]={mp,again,vreal(8),vreal(40),vreal(120),vreal(40),vreal(0)};
+  return expect_real(call(vm,"mp_grid_path",path_args,7),1,
+                     "route found after restore");
+}
+
 static int populate_resources(GmlVM *vm,GmlVal *map,GmlVal *list,
                               GmlVal *grid,GmlVal *emitter,
                               GmlVal *fixture,GmlVal *joint,
@@ -139,8 +178,16 @@ int main(void){
 
   GmlVal map=vundef(),list=vundef(),grid=vundef(),emitter=vundef();
   GmlVal fixture=vundef(),joint=vundef(),timer=vundef(),buffer=vundef();
+  GmlVal mp=vundef(),route=vundef();
   if(!populate_resources(&vm,&map,&list,&grid,&emitter,
-                         &fixture,&joint,&timer,&buffer)){
+                         &fixture,&joint,&timer,&buffer) ||
+     !populate_planning(&vm,&mp,&route)){
+    gml_vm_free(&vm);
+    return 1;
+  }
+  int route_points=(int)call(&vm,"path_get_number",&route,1).d;
+  if(route_points<2){
+    fprintf(stderr,"planning fixture produced no route (%d points)\n",route_points);
     gml_vm_free(&vm);
     return 1;
   }
@@ -168,9 +215,15 @@ int main(void){
                 "reset time source") &&
     expect_real(call(&vm,"buffer_exists",&buffer,1),0,
                 "reset buffer");
+  /* A destroyed grid answers 0 for every cell, which is also what a free cell answers - so the
+   * coordinate asked about here is the one the wall blocked, where -1 and 0 do separate them. */
+  reset_ok=reset_ok &&
+    expect_real(call(&vm,"mp_grid_get_cell",(GmlVal[]){mp,vreal(4),vreal(0)},3),0,
+                "reset motion-planning grid");
   if(!reset_ok ||
      !gml_vm_state_load(&vm,before,written,&used) || used!=written ||
-     !verify_restored_resources(&vm,map,list,grid,emitter,timer,buffer)){
+     !verify_restored_resources(&vm,map,list,grid,emitter,timer,buffer) ||
+     !verify_planning(&vm,mp,route,route_points)){
     fprintf(stderr,"builtin-state reset/restore fixture failed\n");
     free(before);
     free(after);
@@ -189,6 +242,13 @@ int main(void){
             written,repeated,first,
             first<written?(unsigned)before[first]:0,
             first<repeated?(unsigned)after[first]:0);
+    free(before);
+    free(after);
+    gml_vm_free(&vm);
+    return 1;
+  }
+
+  if(!planning_still_routes(&vm,mp)){
     free(before);
     free(after);
     gml_vm_free(&vm);

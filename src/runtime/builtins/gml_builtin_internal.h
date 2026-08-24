@@ -88,6 +88,10 @@ typedef struct {
   GmlFallbackAudioParameter param[16];
   int nparam;
 } GmlFallbackAudioEvent;
+/* One bound for the grid table and one for a grid's cell count, so mp_grid_create and the state
+ * reader cannot disagree about what a valid grid is. */
+#define GML_MP_GRID_MAX 8
+#define GML_MP_GRID_MAX_CELLS (1L<<22)
 typedef struct {
   int live;
   double left, top;
@@ -164,7 +168,7 @@ struct GmlBuiltinState {
   GmlFallbackAudioEvent fallback_audio_event[512];
   GmlFallbackAudioParameter fallback_audio_global_parameter[16];
   int fallback_audio_global_parameter_count;
-  GmlMpGrid mp_grid[8];
+  GmlMpGrid mp_grid[GML_MP_GRID_MAX];
   int log_ds;
   int log_collision;
   int log_tile_collision;

@@ -580,6 +580,7 @@ static void parse_paths(GmlVM *vm){
   GmlWin *w=vm->win; const GmlChunk *c=gml_chunk(w,"PATH"); if(!c) return;
   const uint8_t *d=w->data; uint32_t base=c->off;
   uint32_t n=gml_vm_read_u32_le(d,base); vm->paths=calloc(n>0?n:1,sizeof(GmlPath)); vm->n_paths=n;
+  vm->n_authored_paths=(int)n;
   for(uint32_t i=0;i<n;i++){
     uint32_t ep=gml_vm_read_u32_le(d,base+4+i*4);
     GmlPath *p=&vm->paths[i];
@@ -603,6 +604,18 @@ static void parse_paths(GmlVM *vm){
       L+=sqrt(dx*dx+dy*dy); }
     p->len=L;
   }
+}
+
+/* A state restore rebuilds the authored path table from the content before applying whatever the
+ * state recorded on top of it. Content is immutable and already fingerprint-matched, so re-parsing
+ * is exact and costs nothing to keep: the alternative is holding a second copy of every authored
+ * path for the whole session so a restore can clean one the run had edited. */
+void gml_vm_paths_reset_authored(GmlVM *vm){
+  if(!vm) return;
+  for(int i=0;i<vm->n_paths;i++) free(vm->paths[i].pts);
+  free(vm->paths);
+  vm->paths=NULL; vm->n_paths=0; vm->n_authored_paths=0;
+  parse_paths(vm);
 }
 
 static int native_timeline_code(GmlWin *w, const char *timeline_name, int moment, int step,
