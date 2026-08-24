@@ -293,6 +293,20 @@ static int texture_interpolation_ext_alias(GmlVM *vm,LogFixture *log_fixture){
   return ok;
 }
 
+static int internal_instance_receiver_conversion(GmlVM *vm,
+                                                 LogFixture *log_fixture){
+  int logs_before=log_fixture->count;
+  int ok=1;
+  GmlVal receiver=vreal(100000);
+  GmlVal converted=call_fast(vm,"@@GetInstance@@",&receiver,1,&ok);
+  if(!expect_real("internal instance receiver conversion",converted,100000) ||
+     log_fixture->count!=logs_before){
+    fprintf(stderr,"@@GetInstance@@ did not preserve the receiver reference\n");
+    return 0;
+  }
+  return ok;
+}
+
 static int hsv_color_byte_wrapping(GmlVM *vm){
   static const struct {
     double hue;
@@ -1153,6 +1167,7 @@ int main(void){
          show_error_contract(&vm,&log_fixture) &&
          function_value_and_alias_resolution(&vm) &&
          texture_interpolation_ext_alias(&vm,&log_fixture) &&
+         internal_instance_receiver_conversion(&vm,&log_fixture) &&
          hsv_color_byte_wrapping(&vm) &&
          gain_conversion(&vm) &&
          action_variable_comparisons(&vm) &&

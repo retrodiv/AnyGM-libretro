@@ -1114,6 +1114,10 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
 }
 GmlVal gml_builtin_try_values_language(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* ---- GMS2.3 internal function/struct machinery (partial stubs — enough for common init paths) ---- */
+  /* The bytecode compiler uses this conversion before a StackTop member read. Its argument is
+   * already the concrete receiver reference; replacing it with a generic zero disconnects the
+   * following method lookup from the live instance. */
+  if(!strcmp(nm,"@@GetInstance@@")) return n>0?a[0]:vreal(0);
   if(!strcmp(nm,"@@This@@"))   return vreal(vm->cur_self ? (double)vm->cur_self->id : -1);
   if(!strcmp(nm,"@@Other@@"))  return vreal(vm->cur_other? (double)vm->cur_other->id : -2);
   if(!strcmp(nm,"@@Global@@")) return vreal(-5);      /* global scope sentinel */
