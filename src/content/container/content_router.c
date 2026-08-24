@@ -1410,6 +1410,12 @@ static int load_source_project_content(const AnygmContentRouter *router,const ch
   return 1;
 }
 
+static AnygmContentResolveResult content_resolve_path_direct(
+    const AnygmContentRouter *router,const char *input_path,
+    char *resolved_path,size_t resolved_path_size,
+    char *asset_root,size_t asset_root_size,
+    char *content_overrides,size_t content_overrides_size);
+
 /* A directly loaded anchor resolves its reference against its own directory and routes the
  * result as if that file had been loaded. The parser already refuses a reference to another
  * anchor, so this cannot recurse through itself; every other container keeps its own depth
@@ -1450,9 +1456,10 @@ static int load_anchor_content(const AnygmContentRouter *router,const char *anch
     return 0;
   }
   content_log(router,ANYGM_CONTENT_LOG_INFO,"anchor: %s -> %s",anchor_path,target);
-  return anygm_content_resolve_path(router,target,resolved_path,resolved_path_size,
-                                    asset_root,asset_root_size,
-                                    content_overrides,content_overrides_size);
+  /* A directly selected anchor takes precedence over nearby anchors. */
+  return content_resolve_path_direct(router,target,resolved_path,resolved_path_size,
+                                     asset_root,asset_root_size,
+                                     content_overrides,content_overrides_size);
 }
 
 int anygm_content_identity_path(const AnygmContentRouter *router,const char *input_path,
@@ -1490,7 +1497,7 @@ int anygm_content_identity_path(const AnygmContentRouter *router,const char *inp
  * caller supplies a buffer. The buffer is only written while it is empty, which is what makes
  * the outermost anchor win across nested resolutions, so a caller starting a fresh resolution
  * clears it first. */
-AnygmContentResolveResult anygm_content_resolve_path(
+static AnygmContentResolveResult content_resolve_path_direct(
     const AnygmContentRouter *router,const char *input_path,
     char *resolved_path,size_t resolved_path_size,
     char *asset_root,size_t asset_root_size,
@@ -1526,4 +1533,86 @@ AnygmContentResolveResult anygm_content_resolve_path(
     return 0;
   }
   return 1;
+}
+
+/* Adopt directives only when one unambiguous adjacent anchor is present.
+ * A direct or nested anchor retains precedence over this fallback. */
+#define ANYGM_CONTENT_SIBLING_ANCHOR_SCAN_MAX 4096u
+
+/* The lone anchor beside the input, or nothing when the directory holds none or several. */
+static int sibling_anchor_path(const AnygmContentRouter *router,const char *parent,
+                               char *selected,size_t selected_size){
+  const struct AnygmHostServices *host=router->host;
+  void *directory=host->directory_open(host->userdata,parent);
+  if(!directory) return 0;
+  unsigned found=0,scanned=0,truncated=0;
+  selected[0]=0;
+  for(;;){
+    AnygmDirectoryEntry entry;
+    memset(&entry,0,sizeof entry);
+    entry.struct_size=sizeof entry;
+    if(host->directory_read(host->userdata,directory,&entry)!=ANYGM_OK) break;
+    if(scanned++>=ANYGM_CONTENT_SIBLING_ANCHOR_SCAN_MAX){ truncated=1; break; }
+    if(!(entry.flags&ANYGM_FILE_INFO_REGULAR) || !path_ext_is(entry.name,".anygm")) continue;
+    if(++found>1u) break;
+    if(!path_join_bounded(selected,selected_size,parent,entry.name)) found=0;
+  }
+  host->directory_close(host->userdata,directory);
+  if(found>1u){
+    content_log(router,ANYGM_CONTENT_LOG_WARN,
+                "anchor: %s holds more than one anchor; adopting no directives",parent);
+    return 0;
+  }
+  /* Report when the scan limit prevents a complete search. */
+  if(!found && truncated)
+    content_log(router,ANYGM_CONTENT_LOG_WARN,
+                "anchor: stopped looking in %s after %u entries",parent,
+                ANYGM_CONTENT_SIBLING_ANCHOR_SCAN_MAX);
+  return found==1u && selected[0]!=0;
+}
+
+static void adopt_sibling_anchor_overrides(const AnygmContentRouter *router,const char *input_path,
+                                           char *overrides,size_t overrides_size){
+  const struct AnygmHostServices *host=router?router->host:NULL;
+  if(!host || !host->directory_open || !host->directory_read || !host->directory_close) return;
+  char parent[1024],selected[1536];
+  anygm_content_path_parent(input_path,parent,sizeof parent);
+  if(!parent[0] || !sibling_anchor_path(router,parent,selected,sizeof selected)) return;
+  uint8_t *bytes=NULL;
+  size_t size=0;
+  if(!anygm_vfs_read_all(router->host,selected,&bytes,&size,
+                         (size_t)ANYGM_CONTENT_MAX_ANCHOR_BYTES)){
+    free(bytes);
+    return;
+  }
+  char reference[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
+  int parsed=anchor_parse(bytes,size,reference,sizeof reference,overrides,overrides_size);
+  free(bytes);
+  /* Invalid adjacent anchors do not supply directives. */
+  if(!parsed){
+    overrides[0]=0;
+    content_log(router,ANYGM_CONTENT_LOG_WARN,"anchor: %s is not a valid anchor file",selected);
+    return;
+  }
+  if(overrides[0])
+    content_log(router,ANYGM_CONTENT_LOG_INFO,
+                "anchor: adopting the directives %s carries for %s",selected,input_path);
+}
+
+AnygmContentResolveResult anygm_content_resolve_path(
+    const AnygmContentRouter *router,const char *input_path,
+    char *resolved_path,size_t resolved_path_size,
+    char *asset_root,size_t asset_root_size,
+    char *content_overrides,size_t content_overrides_size){
+  /* Start a fresh override channel; nested resolution keeps the first block. */
+  if(content_overrides && content_overrides_size) content_overrides[0]=0;
+  AnygmContentResolveResult result=content_resolve_path_direct(
+    router,input_path,resolved_path,resolved_path_size,asset_root,asset_root_size,
+    content_overrides,content_overrides_size);
+  /* Consult adjacent anchors only after direct resolution supplied no directives. */
+  if(result==ANYGM_CONTENT_RESOLVE_OK && router && router->sibling_anchor_overrides &&
+     content_overrides && content_overrides_size && !content_overrides[0] &&
+     !path_ext_is(input_path,".anygm"))
+    adopt_sibling_anchor_overrides(router,input_path,content_overrides,content_overrides_size);
+  return result;
 }

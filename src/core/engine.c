@@ -147,6 +147,8 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
     router.cache_directory=source->cache_directory;
     router.log=content_router_log;
     router.log_userdata=engine;
+    /* Disabled overrides do not trigger adjacent-anchor discovery. */
+    router.sibling_anchor_overrides=engine->config.content_overrides?1:0;
     /* Resolve an anchor's referenced payload identity before classifying classic format and choosing the content-file directory. Direct loads retain their own input path. */
     char origin_path[1536];
     const char *origin=source->path;

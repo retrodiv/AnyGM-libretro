@@ -26,6 +26,9 @@ typedef struct AnygmContentRouter {
   const char *cache_directory;
   AnygmContentLogFn log;
   void *log_userdata;
+  /* Allow directives from one adjacent anchor when configured.
+   * Directly selected anchors retain their own parsing policy. */
+  int sibling_anchor_overrides;
 } AnygmContentRouter;
 
 enum {

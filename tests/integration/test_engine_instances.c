@@ -1925,6 +1925,130 @@ static int bridged_key_hold_policy(void){
   return ok;
 }
 
+/* A synthetic marker distinguishes adjacent-anchor adoption, disabled
+ * adoption, and an ambiguous directory with two anchors. */
+static int sibling_anchor_override_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_game_change_content_create(&fixture)){
+    fputs("sibling anchor fixture creation failed\n",stderr);
+    return 0;
+  }
+  char anchor_path[256],payload_path[256];
+  snprintf(anchor_path,sizeof anchor_path,"%s/beside.anygm",fixture.directory);
+  snprintf(payload_path,sizeof payload_path,"%s/data.win",fixture.directory);
+  static const char anchor_text[]=
+    "[anygm]\n"
+    "payload=data.win\n"
+    "[overrides]\n"
+    "?gameres $fixture_anchor_marker=7\n";
+  FILE *anchor=fopen(anchor_path,"wb");
+  int anchor_ok=anchor &&
+    fwrite(anchor_text,1,sizeof anchor_text-1,anchor)==sizeof anchor_text-1;
+  if(anchor && fclose(anchor)!=0) anchor_ok=0;
+  if(!anchor_ok){
+    remove(anchor_path);
+    anygm_synthetic_content_destroy(&fixture);
+    fputs("sibling anchor creation failed\n",stderr);
+    return 0;
+  }
+  /* Two loads of the same file, differing only in whether directives are wanted at all. */
+  double marker[2]={-1.0,-1.0};
+  int ok=1;
+  for(int adopt=1;ok && adopt>=0;adopt--){
+    AnygmHostServices services={0};
+    services.struct_size=sizeof services;
+    services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+    anygm_stdio_vfs_services_init(&services);
+    AnygmEngine *engine=NULL;
+    AnygmContentSource source={0};
+    source.struct_size=sizeof source;
+    source.kind=ANYGM_CONTENT_PATH;
+    source.path=payload_path;
+    source.cache_directory=fixture.directory;
+    source.save_directory=fixture.directory;
+    AnygmConfigDelta config={0};
+    config.struct_size=sizeof config;
+    config.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_CONTENT_OVERRIDES;
+    config.values.struct_size=sizeof config.values;
+    config.values.present_logical_raster=1;
+    config.values.content_overrides=(uint32_t)adopt;
+    int loaded=anygm_create(&services,&engine)==ANYGM_OK &&
+               anygm_set_config(engine,&config)==ANYGM_OK &&
+               anygm_load(engine,&source,NULL)==ANYGM_OK;
+    AnygmInputFrame input={0};
+    input.struct_size=sizeof input;
+    input.pointer_x=input.pointer_y=-1;
+    AnygmFrameOutput output={0};
+    output.struct_size=sizeof output;
+    loaded=loaded && anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+    if(loaded) marker[adopt]=gml_global_num(&engine->vm,"fixture_anchor_marker");
+    else ok=0;
+    anygm_destroy(engine);
+  }
+  if(ok && marker[1]!=7.0){
+    fprintf(stderr,"a payload loaded beside its anchor ignored the directives it carries: "
+            "marker=%.0f\n",marker[1]);
+    ok=0;
+  }
+  if(ok && marker[0]!=3.0){
+    fprintf(stderr,"directives were adopted from a sibling anchor while they were turned off: "
+            "marker=%.0f\n",marker[0]);
+    ok=0;
+  }
+  /* Two adjacent anchors make directive selection ambiguous. */
+  char second_path[256];
+  snprintf(second_path,sizeof second_path,"%s/also-beside.anygm",fixture.directory);
+  FILE *second=ok?fopen(second_path,"wb"):NULL;
+  int second_ok=second &&
+    fwrite(anchor_text,1,sizeof anchor_text-1,second)==sizeof anchor_text-1;
+  if(second && fclose(second)!=0) second_ok=0;
+  if(ok && !second_ok){
+    fputs("second sibling anchor creation failed\n",stderr);
+    ok=0;
+  }
+  if(ok){
+    AnygmHostServices services={0};
+    services.struct_size=sizeof services;
+    services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+    anygm_stdio_vfs_services_init(&services);
+    AnygmEngine *engine=NULL;
+    AnygmContentSource source={0};
+    source.struct_size=sizeof source;
+    source.kind=ANYGM_CONTENT_PATH;
+    source.path=payload_path;
+    source.cache_directory=fixture.directory;
+    source.save_directory=fixture.directory;
+    AnygmConfigDelta config={0};
+    config.struct_size=sizeof config;
+    config.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_CONTENT_OVERRIDES;
+    config.values.struct_size=sizeof config.values;
+    config.values.present_logical_raster=1;
+    config.values.content_overrides=1;
+    AnygmInputFrame input={0};
+    input.struct_size=sizeof input;
+    input.pointer_x=input.pointer_y=-1;
+    AnygmFrameOutput output={0};
+    output.struct_size=sizeof output;
+    double ambiguous=-1.0;
+    if(anygm_create(&services,&engine)==ANYGM_OK &&
+       anygm_set_config(engine,&config)==ANYGM_OK &&
+       anygm_load(engine,&source,NULL)==ANYGM_OK &&
+       anygm_run_frame(engine,&input,&output)==ANYGM_OK)
+      ambiguous=gml_global_num(&engine->vm,"fixture_anchor_marker");
+    else ok=0;
+    anygm_destroy(engine);
+    if(ok && ambiguous!=3.0){
+      fprintf(stderr,"directives were adopted from one of two sibling anchors: marker=%.0f\n",
+              ambiguous);
+      ok=0;
+    }
+  }
+  remove(second_path);
+  remove(anchor_path);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidate,size_t size,
                                      const uint8_t *baseline,size_t baseline_size,
                                      const char *label){
@@ -1980,6 +2104,8 @@ int main(int argc,char **argv){
       return chained_override_policy()?0:1;
     if(!strcmp(argv[2],"anchor_script_override"))
       return anchor_script_override_policy()?0:1;
+    if(!strcmp(argv[2],"sibling_anchor_override"))
+      return sibling_anchor_override_policy()?0:1;
     if(!strcmp(argv[2],"one_shot_instance_assignment"))
       return one_shot_instance_assignment_policy()?0:1;
     if(!strcmp(argv[2],"first_generation_dynamic_camera"))
@@ -2025,6 +2151,7 @@ int main(int argc,char **argv){
           "first_generation_application_surface|"
           "game_restart|"
           "anchor_script_override|"
+          "sibling_anchor_override|"
           "one_shot_instance_assignment|"
           "first_generation_dynamic_camera|"
           "explicit_window_screen_stage|"
@@ -2054,6 +2181,7 @@ int main(int argc,char **argv){
   if(!draw_schedule_policy()) return 1;
   if(!chained_override_policy()) return 1;
   if(!anchor_script_override_policy()) return 1;
+  if(!sibling_anchor_override_policy()) return 1;
   if(!one_shot_instance_assignment_policy()) return 1;
   if(!background_color_policy()) return 1;
   if(!framebuffer_retention_policy()) return 1;
