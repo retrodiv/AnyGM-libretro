@@ -2062,6 +2062,19 @@ void gml_room_enter(GmlVM *vm, int room_index){
   gml_vm_warm_audio_for_room(vm,vm->room_index);
   gml_vm_prefetch_room_assets(vm);
 }
+/* Run extension init script names supplied by the bounded data-file parser
+ * before the first room is entered. */
+void gml_vm_run_extension_init_scripts(GmlVM *vm){
+  if(!vm || !vm->win) return;
+  const char *names[GML_WIN_EXTENSION_INIT_MAX];
+  int count=gml_win_extension_init_scripts(vm->win,names,GML_WIN_EXTENSION_INIT_MAX);
+  for(int i=0;i<count;i++){
+    if(!names[i] || !names[i][0]) continue;
+    if(anygm_host_development_setting(vm->host,"GML_LOG_EXTENSION"))
+      anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,"[extn] init script %s\n",names[i]);
+    (void)gml_vm_run_script_named(vm,names[i]);
+  }
+}
 void gml_vm_goto_room_order(GmlVM *vm, int order_index){
   GmlWin *w=vm->win;
   int idx = (order_index>=0 && order_index<w->n_room_order)? (int)w->room_order[order_index] : order_index;

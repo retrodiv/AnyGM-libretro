@@ -434,6 +434,61 @@ static int parse_refs(GmlWin *w){
   return 1;
 }
 
+/* EXTN holds extension pointers and per-extension file tables. Each file supplies
+ * filename, cleanup script, init script and kind fields. Supported header layouts
+ * differ in whether the file table is inline or referenced and whether a version
+ * string precedes the class name. Bound each offset to the chunk before use. */
+static uint32_t extn_u32(const GmlWin *w, const GmlChunk *c, uint32_t off, int *ok){
+  if(!*ok || off<c->off || off+4>c->off+c->size){ *ok=0; return 0; }
+  return (uint32_t)w->data[off] | ((uint32_t)w->data[off+1]<<8) |
+         ((uint32_t)w->data[off+2]<<16) | ((uint32_t)w->data[off+3]<<24);
+}
+int gml_win_extension_init_scripts(const GmlWin *w, const char **out, int max){
+  if(!w || !out || max<=0) return 0;
+  const GmlChunk *c=gml_chunk(w,"EXTN");
+  if(!c || c->size<4) return 0;
+  int ok=1, found=0;
+  uint32_t count=extn_u32(w,c,c->off,&ok);
+  if(!ok || count==0 || count>4096) return 0;
+  uint32_t header=c->off+4;
+  int leading_strings=0;
+  if(w->bytecode>=17){
+    uint32_t first=extn_u32(w,c,header,&ok);
+    if(!ok) return 0;
+    if(extn_u32(w,c,first+12,&ok)==first+20 && ok) leading_strings=3;
+    else {
+      ok=1;
+      uint32_t at16=extn_u32(w,c,first+16,&ok);
+      uint32_t at12=extn_u32(w,c,first+12,&ok);
+      /* Distinguish this layout from an inline table with two files: the value
+       * at +12 may otherwise be its file count. */
+      if(ok && at16==first+24 && at12>=0x1000) leading_strings=4;
+    }
+    ok=1;
+  }
+  for(uint32_t e=0;e<count && found<max;e++){
+    uint32_t extension=extn_u32(w,c,header+e*4,&ok);
+    if(!ok) return found;
+    uint32_t files=extension+12;
+    if(leading_strings>=4) files+=4;
+    if(leading_strings>0){
+      files=extn_u32(w,c,files,&ok);
+      if(!ok) return found;
+    }
+    uint32_t file_count=extn_u32(w,c,files,&ok);
+    if(!ok || file_count>4096) return found;
+    for(uint32_t f=0;f<file_count && found<max;f++){
+      uint32_t file=extn_u32(w,c,files+4+f*4,&ok);
+      if(!ok) return found;
+      uint32_t init=extn_u32(w,c,file+8,&ok);
+      if(!ok) return found;
+      const char *name=init?gml_str_by_ptr(w,init):NULL;
+      if(name && name[0]) out[found++]=name;
+    }
+  }
+  return found;
+}
+
 int gml_room_count(const GmlWin *w){
   const GmlChunk *c=gml_chunk(w,"ROOM");
   uint32_t count=0;

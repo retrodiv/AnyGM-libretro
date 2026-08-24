@@ -610,6 +610,65 @@ int anygm_synthetic_mouse_order_content_create(AnygmSyntheticContent *fixture){
   return 1;
 }
 
+int anygm_synthetic_extension_init_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+
+  char init[192],create[192];
+  snprintf(init,sizeof init,"%s/extension_init.gml",fixture->directory);
+  snprintf(create,sizeof create,"%s/extension_create.gml",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  /* Use a nonzero sentinel so an unset global cannot satisfy the fixture. */
+  if(!write_text(init,
+                 "global.fixture_library_handle = -4;\n") ||
+     /* Record the value observed by the first room's Create event. */
+     !write_text(create,
+                 "global.fixture_handle_at_create = global.fixture_library_handle;\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+
+  GmlcProject project={0};
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  project.host=&file_services;
+  GmlcObject object={0};
+  GmlcObjectEvent events[1]={0};
+  GmlcScript script={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance instance={0};
+  int room_order=0;
+  project.name=(char *)"extension-init-fixture";
+  project.objects=&object; project.n_objects=project.cap_objects=1;
+  project.scripts=&script; project.n_scripts=project.cap_scripts=1;
+  project.rooms=&room; project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order; project.n_room_order=1;
+  project.extension_init_script=(char *)"library_init";
+
+  script.id=script.name=(char *)"library_init";
+  script.source_path=init;
+
+  object.id=object.name=(char *)"obj_fixture";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.visible=0; object.events=events; object.n_events=object.cap_events=1;
+  events[0].event_type=0; events[0].event_number=0; events[0].source_path=create;
+  room.id=room.name=(char *)"room_fixture"; room.width=64; room.height=48; room.speed=60;
+  room.draw_background_color=1; room.instances=&instance; room.n_instances=room.cap_instances=1;
+  instance.id=instance.name=(char *)"instance_fixture"; instance.object_id=0;
+  instance.instance_id=100000; instance.sx=instance.sy=1.0f; instance.color=0xFFFFFFFFu;
+
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"extension-init package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  return 1;
+}
+
 int anygm_synthetic_blocking_wait_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);

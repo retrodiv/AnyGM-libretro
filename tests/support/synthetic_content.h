@@ -46,6 +46,10 @@ int anygm_synthetic_alarm_phase_content_create(AnygmSyntheticContent *fixture);
  * second by instance. Each records the order it ran in, so the pair says which of the two the
  * dispatch follows. */
 int anygm_synthetic_mouse_order_content_create(AnygmSyntheticContent *fixture);
+/* One script named as an extension's init script, setting a library handle to a non-zero sentinel,
+ * and one placed instance whose Create records what that handle held. The pair says whether the
+ * init ran, and whether it ran before the first room. */
+int anygm_synthetic_extension_init_content_create(AnygmSyntheticContent *fixture);
 /* Two rooms whose authored view ports differ - 128x96 then 192x144 - over one view of 64x48, and
  * one instance whose Create sets a scale of 3 and whose Step advances a room when a global asks.
  * Between them these are the two shapes a scoped override has to be able to give back: a value the

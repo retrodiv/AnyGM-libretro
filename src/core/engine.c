@@ -469,6 +469,8 @@ static void boot_runtime(AnygmEngine *engine) {
       if(comma){ spawn_x=atof(position); spawn_y=atof(comma+1); }
     }
   }
+  /* Run declared extension initialization before entering the first room. */
+  gml_vm_run_extension_init_scripts(&engine->vm);
   int initial_boot_guard = engine->full_game_on_initial_boot;
   core_opt_redirect_room_order(engine);
   if(!initial_boot_guard) core_opt_start_room(engine,&selected_room);

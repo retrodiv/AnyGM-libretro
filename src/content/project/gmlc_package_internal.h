@@ -120,6 +120,7 @@ int add_frame_patch(Pkg *p, uint32_t pos, int frame);
 size_t chunk_begin(Pkg *p, const char name[4]);
 void chunk_end(Pkg *p, size_t szpos);
 int empty_list_chunk(Pkg *p, const char name[4]);
+int write_extn(Pkg *pkg, const GmlcProject *p);
 int fixed_zero_chunk(Pkg *p, const char name[4], size_t n);
 int intern(Pkg *p, const char *s);
 void patch32(Buf *b, size_t pos, uint32_t v);

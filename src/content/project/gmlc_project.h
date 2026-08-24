@@ -284,6 +284,8 @@ typedef struct {
   int n_sounds, cap_sounds;
   GmlcScript *scripts;
   int n_scripts, cap_scripts;
+  /* Optional extension init script name; an absent name leaves EXTN empty. */
+  const char *extension_init_script;
   GmlcFunctionAlias *function_aliases;
   int n_function_aliases, cap_function_aliases;
   GmlcPath *paths;

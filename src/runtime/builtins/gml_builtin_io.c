@@ -613,6 +613,9 @@ static void ini_add_kv(GmlVM *vm, const char *sec, const char *key, const char *
   vm->builtins->ini_n++;
 }
 static void ini_parse_text(GmlVM *vm, const char *text){
+  /* Skip an optional UTF-8 byte order mark before parsing the first section. */
+  if(text && (unsigned char)text[0]==0xEFu && (unsigned char)text[1]==0xBBu &&
+     (unsigned char)text[2]==0xBFu) text+=3;
   char *copy=strdup(text?text:"");
   char *sec=NULL, *p=copy;
   while(p && *p){

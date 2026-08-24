@@ -179,6 +179,9 @@ int          gml_ref_kind(const GmlWin *w, uint32_t addr);
  * gamepad_*). Content that never names one has no way to hear a pad, whatever the frontend
  * reports, and input ownership policy branches on that. */
 int          gml_win_references_pad_input(const GmlWin *w);
+/* Extension init scripts in declaration order, bounded to a fixed local array. */
+#define GML_WIN_EXTENSION_INIT_MAX 32
+int          gml_win_extension_init_scripts(const GmlWin *w, const char **out, int max);
 int          gml_room_count(const GmlWin *w);
 int          gml_room_get(const GmlWin *w, int room_index, GmlRoom *out);
 uint32_t     gml_room_layer_list(const GmlWin *w, int room_index, uint32_t *out_count);

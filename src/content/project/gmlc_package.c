@@ -135,7 +135,7 @@ int gmlc_package_write_structural(const GmlcProject *p, const char *out_path, ch
      !PACKAGE_STEP("classic marker",write_classic_marker(&pkg,p)) ||
      !PACKAGE_STEP("options",write_optn(&pkg)) ||
      !PACKAGE_STEP("language",fixed_zero_chunk(&pkg,"LANG",12)) ||
-     !PACKAGE_STEP("extensions",empty_list_chunk(&pkg,"EXTN")) ||
+     !PACKAGE_STEP("extensions",write_extn(&pkg,p)) ||
      !PACKAGE_STEP("sounds",write_sond(&pkg,p)) ||
      !PACKAGE_STEP("audio groups",write_agrp(&pkg)) ||
      !PACKAGE_STEP("sprites",write_sprt(&pkg,p,err,errcap)) ||

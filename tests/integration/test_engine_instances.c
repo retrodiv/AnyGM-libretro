@@ -915,6 +915,50 @@ static int alarm_pause_policy(void){
   return ok;
 }
 
+/* Assert that a declared extension init script runs before the first room's
+ * Create event. A nonzero sentinel distinguishes an unset global. */
+static int extension_init_script_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_extension_init_content_create(&fixture)){
+    fputs("extension-init fixture creation failed\n",stderr);
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK;
+  output.struct_size=sizeof output;
+  ok=ok && anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  double handle=ok?gml_global_num(&engine->vm,"fixture_library_handle"):0;
+  double at_create=ok?gml_global_num(&engine->vm,"fixture_handle_at_create"):0;
+  if(ok && handle!=-4){
+    fprintf(stderr,"extension init: the init script never ran (handle=%.0f)\n",handle);
+    ok=0;
+  }
+  if(ok && at_create!=-4){
+    fprintf(stderr,
+            "extension init: the first Create ran before the init script (it saw %.0f)\n",
+            at_create);
+    ok=0;
+  }
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 /* Mouse events are dispatched one subtype at a time, in ascending subtype order, not one instance
  * at a time. The difference shows wherever one handler reads what another instance's handler wrote
  * in the same phase: dispatching per instance makes that depend on the pool slot each instance
@@ -2216,6 +2260,8 @@ int main(int argc,char **argv){
       return alarm_phase_membership_policy()?0:1;
     if(!strcmp(argv[2],"mouse_subtype_dispatch_order"))
       return mouse_subtype_dispatch_order_policy()?0:1;
+    if(!strcmp(argv[2],"extension_init_script"))
+      return extension_init_script_policy()?0:1;
     if(!strcmp(argv[2],"chained_override"))
       return chained_override_policy()?0:1;
     if(!strcmp(argv[2],"anchor_script_override"))
@@ -2314,6 +2360,7 @@ int main(int argc,char **argv){
   if(!alarm_pause_policy()) return 1;
   if(!alarm_phase_membership_policy()) return 1;
   if(!mouse_subtype_dispatch_order_policy()) return 1;
+  if(!extension_init_script_policy()) return 1;
   char label[128];
   anygm_content_save_label("/library/fixture_bundle/data.win",label,sizeof label);
   if(strcmp(label,"fixture_bundle")){

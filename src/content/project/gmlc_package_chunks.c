@@ -158,6 +158,33 @@ void chunk_end(Pkg *p, size_t szpos){
   patch32(&p->b,szpos,(uint32_t)(p->b.len-(szpos+4)));
 }
 
+/* Encode one extension file with the declared init script. The EXTN layout
+ * contains an extension pointer table and a per-extension file table. Projects
+ * without an init script retain the empty chunk. */
+int write_extn(Pkg *pkg, const GmlcProject *p){
+  if(!p->extension_init_script || !p->extension_init_script[0])
+    return empty_list_chunk(pkg,"EXTN");
+  size_t s=chunk_begin(pkg,"EXTN");
+  wu32(&pkg->b,1);
+  size_t extension_table=pkg->b.len;
+  zfill(&pkg->b,4);
+  patch32(&pkg->b,extension_table,(uint32_t)pkg->b.len);
+  wstrptr(pkg,intern(pkg,""));                       /* folder */
+  wstrptr(pkg,intern(pkg,"extension"));              /* name */
+  wstrptr(pkg,intern(pkg,""));                       /* class name */
+  wu32(&pkg->b,1);
+  size_t file_table=pkg->b.len;
+  zfill(&pkg->b,4);
+  patch32(&pkg->b,file_table,(uint32_t)pkg->b.len);
+  wstrptr(pkg,intern(pkg,"extension.gml"));          /* file name */
+  wstrptr(pkg,intern(pkg,""));                       /* cleanup script */
+  wstrptr(pkg,intern(pkg,p->extension_init_script)); /* init script */
+  wu32(&pkg->b,2);                                   /* kind: a GML source file */
+  wu32(&pkg->b,0);                                   /* no declared functions */
+  chunk_end(pkg,s);
+  return 1;
+}
+
 int empty_list_chunk(Pkg *p, const char name[4]){
   size_t s=chunk_begin(p,name);
   if(!wu32(&p->b,0)) return 0;
