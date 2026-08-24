@@ -1397,6 +1397,11 @@ GmlVal gml_inst_var_get_val(GmlVM *vm, GmlVal ref, const char *name, int *ok){
   if(out.t==V_STR) out.d=0;
   return out;
 }
+/* Assign through the current scope's ordinary variable and built-in resolution. */
+void gml_vm_assign_current_scope(GmlVM *vm, const char *name, GmlVal v){
+  if(!vm || !name || !*name) return;
+  var_set_h(vm,IT_SELF,name,gml_value_name_hash(name),v);
+}
 int gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v){
   if(!vm || !name) return 0;
   GmlInstance *t=vm_inst_from_ref(vm,ref);

@@ -558,6 +558,7 @@ double       gml_inst_var_get(GmlVM *vm, GmlInstance *in, const char *name); /* 
 int          gml_inst_var_exists(GmlVM *vm, GmlVal ref, const char *name);
 GmlVal       gml_inst_var_get_val(GmlVM *vm, GmlVal ref, const char *name, int *ok);
 int          gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v);
+void         gml_vm_assign_current_scope(GmlVM *vm, const char *name, GmlVal v);
 GmlVal       gml_ds_map_find_value_direct(GmlVM *vm, int id, GmlVal keyv, int has_key);
 GmlVal       gml_ds_map_find_first_direct(GmlVM *vm, int id);
 GmlVal       gml_ds_map_find_next_direct(GmlVM *vm, int id, GmlVal keyv, int has_key);

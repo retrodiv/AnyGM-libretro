@@ -141,9 +141,12 @@ static int classic_execute_assignment(GmlVM *vm, const char *source){
     int sprite=gml_render_named_sprite(render,value_name);
     if(sprite>=0){ value=sprite; found=1; }
     if(!found){ int object=gml_object_index_by_name(vm,value_name); if(object>=0){ value=object; found=1; } }
+    if(!found){ int room=gml_room_index_by_name(vm->win,value_name); if(room>=0){ value=room; found=1; } }
     if(!found) return 0;
   }
   if(to_global){ *gml_varmap_put(&vm->globals,field)=vreal(value); return 1; }
+  /* A bare name uses current-scope assignment, including built-in setters. */
+  if(!dot){ gml_vm_assign_current_scope(vm,field,vreal(value)); return 1; }
   return gml_inst_var_set_val(vm,vreal(target->id),field,vreal(value));
 }
 static const char *classic_globalvar_keyword(const char *source){
