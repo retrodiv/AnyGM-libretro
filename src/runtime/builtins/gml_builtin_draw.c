@@ -698,6 +698,22 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         gml_draw_surface_stretched(R,s,N(a,n,1),N(a,n,2),gml_surface_width(R,s),gml_surface_height(R,s),0xFFFFFF,draw.alpha); } return vreal(0); }
     if(!strcmp(nm,"draw_surface_ext")){ if(R) gml_draw_surface_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),NU32(a,n,6),N(a,n,7)); return vreal(0); }
     if(!strcmp(nm,"draw_surface_part_ext")){ if(R) gml_draw_surface_part_ext(R,(int)N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),NU32(a,n,9),N(a,n,10)); return vreal(0); }
+    if(!strcmp(nm,"draw_surface_general")){
+      /* (surf,left,top,width,height,x,y,xscale,yscale,rot,c1,c2,c3,c4,alpha).
+       * Approximate corner colours by c1 as draw_sprite_general does. Route complete
+       * surfaces through rotation; partial regions retain the nonrotating part blit. */
+      if(R){ int surf=(int)N(a,n,0);
+        double left=N(a,n,1),top=N(a,n,2),width=N(a,n,3),height=N(a,n,4);
+        int whole=left<=0.0 && top<=0.0 &&
+          width>=(double)gml_surface_width(R,surf) && height>=(double)gml_surface_height(R,surf);
+        if(whole)
+          gml_draw_surface_ext(R,surf,N(a,n,5),N(a,n,6),N(a,n,7),N(a,n,8),N(a,n,9),
+                               NU32(a,n,10),N(a,n,14));
+        else
+          gml_draw_surface_part_ext(R,surf,left,top,width,height,N(a,n,5),N(a,n,6),
+                                    N(a,n,7),N(a,n,8),NU32(a,n,10),N(a,n,14));
+      }
+      return vreal(0); }
     if(!strcmp(nm,"draw_sprite_stretched")){ GmlRenderDrawState draw=builtin_draw_state(R); if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),0xFFFFFF,draw.alpha); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_stretched_ext")){ if(R) gml_draw_sprite_stretched(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),NU32(a,n,6),N(a,n,7)); return vreal(0); }
     if(!strcmp(nm,"draw_sprite_part")){ GmlRenderDrawState draw=builtin_draw_state(R); if(R) gml_draw_sprite_part_ext(R,(int)N(a,n,0),gml_draw_subimg(vm,N(a,n,1)),N(a,n,2),N(a,n,3),N(a,n,4),N(a,n,5),N(a,n,6),N(a,n,7),1,1,0xFFFFFF,draw.alpha); return vreal(0); }

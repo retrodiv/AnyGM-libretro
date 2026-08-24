@@ -694,6 +694,57 @@ static int scalar_shape_queries_accept_target_arrays(GmlVM *vm){
   return ok;
 }
 
+/* The generic draw_* fallback silently returns for unimplemented names. Assert that
+ * draw_surface_general reaches a blit instead of that fallback. */
+static int surface_general_reaches_the_screen(GmlVM *vm){
+  enum { WIDTH=4, HEIGHT=4 };
+  void *prior_render=vm->render;
+  GmlRender render;
+  uint32_t frame[WIDTH*HEIGHT];
+  memset(&render,0,sizeof render);
+  for(size_t index=0;index<WIDTH*HEIGHT;index++) frame[index]=0xFF000000u;
+  render.fb=render.base_fb=frame;
+  render.fbw=render.base_fbw=WIDTH;
+  render.fbh=render.base_fbh=HEIGHT;
+  render.target_id=-1;
+  render.next_surface_id=1;
+  render.alphablend=1;
+  render.alpha=1.0;
+  render.color=0xFFFFFF;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+  vm->render=&render;
+
+  GmlVal make[]={vreal(2),vreal(2)};
+  GmlVal surface=gml_builtin_call(vm,"surface_create",make,2);
+  GmlVal target[]={surface};
+  gml_builtin_call(vm,"surface_set_target",target,1);
+  GmlVal red[]={vreal(0x0000FF)};   /* GM packs colour as BGR, so this is red. */
+  gml_builtin_call(vm,"draw_clear",red,1);
+  gml_builtin_call(vm,"surface_reset_target",NULL,0);
+
+  GmlVal general[15]={surface,vreal(0),vreal(0),vreal(2),vreal(2),vreal(1),vreal(1),
+                      vreal(1),vreal(1),vreal(0),
+                      vreal(0xFFFFFF),vreal(0xFFFFFF),vreal(0xFFFFFF),vreal(0xFFFFFF),vreal(1)};
+  gml_builtin_call(vm,"draw_surface_general",general,15);
+
+  int ok=frame[(size_t)1*WIDTH+1]==0xFFFF0000u &&
+         frame[(size_t)2*WIDTH+2]==0xFFFF0000u &&
+         frame[0]==0xFF000000u &&
+         frame[(size_t)3*WIDTH+3]==0xFF000000u;
+  if(!ok) fprintf(stderr,
+    "draw_surface_general did not blit its region (in=%08x,%08x out=%08x,%08x)\n",
+    frame[(size_t)1*WIDTH+1],frame[(size_t)2*WIDTH+2],frame[0],frame[(size_t)3*WIDTH+3]);
+  GmlVal free_args[]={surface};
+  gml_builtin_call(vm,"surface_free",free_args,1);
+  vm->render=prior_render;
+  return ok;
+}
+
 /* Resolve a numeric collision suffix through a parent declaration when
  * no CODE name exists for that inherited handler. */
 static int inherited_collision_resolves_numeric_suffix(GmlVM *vm){
@@ -1100,7 +1151,8 @@ int main(void){
          scalar_shape_queries_accept_target_arrays(&vm) &&
          layer_fx_answers_none(&vm) &&
          missing_stream_is_not_sound_zero(&vm) &&
-         inherited_collision_resolves_numeric_suffix(&vm);
+         inherited_collision_resolves_numeric_suffix(&vm) &&
+         surface_general_reaches_the_screen(&vm);
   gml_vm_free(&vm);
   gml_win_free(&win);
   if(!ok) return 1;

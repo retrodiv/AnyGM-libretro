@@ -185,10 +185,64 @@ static int grid_region_mutators(void){
   return ok;
 }
 
+static int grid_row_sort(void){
+  GmlVM vm;
+  memset(&vm,0,sizeof(vm));
+
+  /* Two columns: the key the sort is asked about and a tag that identifies the row. The tag is
+   * what proves a row travelled whole rather than a column being reordered on its own, and the
+   * pair of equal keys is what proves the order of rows the key does not separate is kept. */
+  GmlVal make[]={vreal(2),vreal(4)};
+  GmlVal grid=call(&vm,"ds_grid_create",make,2);
+  const double key[4]={3,1,2,1};
+  const double tag[4]={30,10,20,11};
+  for(int row=0;row<4;row++){
+    GmlVal set_key[]={grid,vreal(0),vreal(row),vreal(key[row])};
+    GmlVal set_tag[]={grid,vreal(1),vreal(row),vreal(tag[row])};
+    call(&vm,"ds_grid_set",set_key,4);
+    call(&vm,"ds_grid_set",set_tag,4);
+  }
+
+  int ok=1;
+  GmlVal ascending[]={grid,vreal(0),vreal(1)};
+  call(&vm,"ds_grid_sort",ascending,3);
+  const double ascending_tag[4]={10,11,20,30};
+  const double ascending_key[4]={1,1,2,3};
+  for(int row=0;row<4;row++){
+    GmlVal at_key[]={grid,vreal(0),vreal(row)};
+    GmlVal at_tag[]={grid,vreal(1),vreal(row)};
+    ok&=expect_real("ascending sort orders the key column",
+                    call(&vm,"ds_grid_get",at_key,3),ascending_key[row]);
+    ok&=expect_real("ascending sort carries the whole row",
+                    call(&vm,"ds_grid_get",at_tag,3),ascending_tag[row]);
+  }
+
+  GmlVal descending[]={grid,vreal(0),vreal(0)};
+  call(&vm,"ds_grid_sort",descending,3);
+  const double descending_tag[4]={30,20,10,11};
+  for(int row=0;row<4;row++){
+    GmlVal at_tag[]={grid,vreal(1),vreal(row)};
+    ok&=expect_real("descending sort reverses only what the key separates",
+                    call(&vm,"ds_grid_get",at_tag,3),descending_tag[row]);
+  }
+
+  /* A column outside the grid names no key, so it reorders nothing. */
+  GmlVal out_of_range[]={grid,vreal(7),vreal(1)};
+  call(&vm,"ds_grid_sort",out_of_range,3);
+  GmlVal first_tag[]={grid,vreal(1),vreal(0)};
+  ok&=expect_real("a column outside the grid leaves the rows alone",
+                  call(&vm,"ds_grid_get",first_tag,3),30);
+
+  GmlVal destroy[]={grid};
+  call(&vm,"ds_grid_destroy",destroy,1);
+  return ok;
+}
+
 int main(void){
   if(!grid_value_fixtures()) return 1;
   if(!grid_region_aggregates()) return 1;
   if(!grid_region_mutators()) return 1;
-  puts("ds_grid value-search, resize, region-aggregate and region-mutator fixtures: ok");
+  if(!grid_row_sort()) return 1;
+  puts("ds_grid value-search, resize, region-aggregate, region-mutator and row-sort fixtures: ok");
   return 0;
 }

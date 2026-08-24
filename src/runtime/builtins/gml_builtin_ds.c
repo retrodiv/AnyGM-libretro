@@ -1113,6 +1113,29 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     return vreal(0);
   }
+  if(!strcmp(nm,"ds_grid_sort")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0));
+    int column=(int)N(a,n,1), ascending=n<3||N(a,n,2)!=0;
+    /* Sort whole rows by the named key column. Insertion sort preserves the
+     * relative order of rows with equal keys, as ds_list_sort does. */
+    if(g && g->cell && g->h>1 && column>=0 && column<g->w){
+      GmlVal *row=(GmlVal*)malloc((size_t)g->w*sizeof(*row));
+      if(row){
+        size_t stride=(size_t)g->w*sizeof(*row);
+        for(int y=1;y<g->h;y++){
+          memcpy(row,g->cell+(size_t)y*g->w,stride);
+          int j=y;
+          while(j>0){
+            int order=gml_val_sort_compare(g->cell[(size_t)(j-1)*g->w+column],row[column]);
+            if(ascending?order<=0:order>=0) break;
+            memcpy(g->cell+(size_t)j*g->w,g->cell+(size_t)(j-1)*g->w,stride);
+            j--;
+          }
+          memcpy(g->cell+(size_t)j*g->w,row,stride);
+        }
+        free(row);
+      }
+    }
+    return vreal(0); }
   if(!strcmp(nm,"ds_grid_clear")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); GmlVal v=n>=2?a[1]:vreal(0);
     if(g && g->cell) for(size_t i=0;i<(size_t)g->w*g->h;i++) g->cell[i]=v;
     return vreal(0); }
