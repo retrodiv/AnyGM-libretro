@@ -36,6 +36,8 @@ int  gml_audio_add_pcm16(GmlAudio *a,const int16_t *pcm,uint32_t frames,
  * The replacement is accepted only when the bytes match the state-owned SHA-256 identity. */
 int  gml_audio_restore_encoded(GmlAudio *a,int handle,const uint8_t *encoded,int len,
                                const uint8_t expected_sha256[32]);
+/* Replace an existing sound asset with caller-supplied encoded bytes. */
+int  gml_audio_replace_encoded(GmlAudio *a,int snd,const uint8_t *encoded,int len);
 int  gml_audio_restore_pcm16(GmlAudio *a,int handle,const int16_t *pcm,uint32_t frames,
                              int channels,int sample_rate,
                              const uint8_t *identity,size_t identity_size,

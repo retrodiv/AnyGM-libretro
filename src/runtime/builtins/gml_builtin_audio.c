@@ -2088,7 +2088,27 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
       (void)gml_audio_warm_sound(AU,(int)N(a,n,0));
       return vreal(0);
     }
-    if(!strcmp(nm,"sound_replace")) return vreal(0);
+    /* sound_replace(index, path, kind, loadonuse) reads encoded bytes through
+     * the host VFS and records their identity against the requested sound slot
+     * so state restoration retains the replacement. */
+    if(!strcmp(nm,"sound_replace")){
+      int sound=(int)N(a,n,0);
+      const char *relative=S(vm,a,n,1);
+      char *path=resolve_read_path(vm,relative);
+      uint8_t *encoded=NULL; size_t size=0; uint8_t identity[32];
+      int ok=sound>=0 && path &&
+             anygm_vfs_read_all(vm->host,path,&encoded,&size,64u*1024u*1024u) &&
+             size>0 && size<=INT_MAX &&
+             gml_audio_replace_encoded(AU,sound,encoded,(int)size) &&
+             gml_audio_sound_content_hash(AU,sound,identity) &&
+             builtin_state_external_audio_store(builtin_state_ensure(vm),sound,relative,identity);
+      if(builtin_setting(vm,"GML_LOG_AUDIO"))
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+                        "[sound-replace] sound=%d ok=%d asked='%s' path='%s' bytes=%zu\n",
+                        sound,ok,relative?relative:"",path?path:"",size);
+      free(encoded); free(path);
+      return vreal(ok);
+    }
     if(!strcmp(nm,"audio_get_master_gain")) return vreal(gml_audio_get_master_gain(AU));
     if(!strcmp(nm,"audio_sound_get_gain")) return vreal(gml_audio_sound_get_gain(AU,(int)N(a,n,0)));
     if(!strcmp(nm,"audio_sound_get_pitch")) return vreal(gml_audio_sound_get_pitch(AU,(int)N(a,n,0)));

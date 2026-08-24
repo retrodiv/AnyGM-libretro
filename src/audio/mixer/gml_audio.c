@@ -575,9 +575,13 @@ static int audio_dynamic_slot(GmlAudio *a){
 
 static int audio_dynamic_slot_at(GmlAudio *a,int requested){
   if(requested<0) return audio_dynamic_slot(a);
-  if(!a || requested<a->n_base_snd ||
-     (uint64_t)(unsigned)(requested-a->n_base_snd)>=GML_DYNAMIC_SOUND_LIMIT)
+  /* An existing content sound may be replaced by its asset index. Only new
+   * slots above the original sound range may be created here. */
+  if(!a || requested<0 ||
+     (requested>=a->n_base_snd &&
+      (uint64_t)(unsigned)(requested-a->n_base_snd)>=GML_DYNAMIC_SOUND_LIMIT))
     return -1;
+  if(requested<a->n_base_snd && requested>=a->n_snd) return -1;
   if(requested>=a->n_snd){
     size_t count=(size_t)requested+1u;
     GmlSound *sounds=(GmlSound*)realloc(a->snd,count*sizeof(*sounds));
@@ -797,6 +801,10 @@ int gml_audio_restore_encoded(GmlAudio *a,int handle,const uint8_t *encoded,int 
   return audio_add_encoded_at(a,encoded,len,handle,expected_sha256)==handle;
 }
 
+int gml_audio_replace_encoded(GmlAudio *a,int snd,const uint8_t *encoded,int len){
+  return audio_add_encoded_at(a,encoded,len,snd,NULL)==snd;
+}
+
 int gml_audio_restore_pcm16(GmlAudio *a,int handle,const int16_t *pcm,uint32_t frames,
                             int channels,int sample_rate,
                             const uint8_t *identity,size_t identity_size,
@@ -806,7 +814,9 @@ int gml_audio_restore_pcm16(GmlAudio *a,int handle,const int16_t *pcm,uint32_t f
 }
 
 int gml_audio_sound_content_hash(GmlAudio *a,int handle,uint8_t digest[32]){
-  if(!a || !digest || handle<a->n_base_snd || handle>=a->n_snd ||
+  /* Report an identity only for a sound with installed encoded bytes. An
+   * unmodified content sound has no replacement identity. */
+  if(!a || !digest || handle<0 || handle>=a->n_snd ||
      !a->snd[handle].content_hash_known) return 0;
   memcpy(digest,a->snd[handle].content_sha256,32);
   return 1;
