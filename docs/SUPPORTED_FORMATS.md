@@ -70,7 +70,16 @@ A `?gameres` directive applies only while *Render at game resolution* is selecte
 ?gameres @window_h=240
 ?gameres @application_w=320
 ?gameres @application_h=240
+# shift the delivered frame from a current global value
+?gameres @present_shift_y=$global.vertical_offset/2
 ```
+
+`@present_shift_x` and `@present_shift_y` move the delivered frame by whole pixels and fill the
+edge they leave with black. The shift reaches the copy handed over and never the
+completed frame, so it cannot move the bytes a savestate carries. `$global.<name>` reads what a
+global holds on the frame the directive is evaluated, and the presentation pass re-evaluates every
+`?gameres` directive before geometry is read, so a target declared this way follows the value live
+rather than freezing the reading it was written with.
 
 A scope prefix belongs to the directive that carries it, and a `;` chain fans out into one
 directive per slot, so each line in a chain that needs the scope has to state it.
