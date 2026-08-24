@@ -1607,6 +1607,16 @@ void gml_vm_instances_run_collisions(GmlVM *vm){
               (si->obj>=0&&si->obj<vm->n_objects)?vm->objects[si->obj].name:"?",
               (oi->obj>=0&&oi->obj<vm->n_objects)?vm->objects[oi->obj].name:"?",dt);
           } else run_event_code_from(vm,si,oi,suffix,handler_obj,code); }
+        /* If either participant was destroyed, dispatch the reciprocal handler
+         * now; otherwise its existing outer-loop turn remains authoritative. */
+        if(!(si->active && !si->marked && oi->active && !oi->marked)){
+          int lost_handler=-1, lost_target=-1, lost_code=-1;
+          if(col_event_for_pair(vm,oi->obj,si->obj,&lost_handler,&lost_target,&lost_code)){
+            char lost_suffix[32];
+            snprintf(lost_suffix,sizeof lost_suffix,"Collision_%d",lost_target);
+            run_event_code_from(vm,oi,si,lost_suffix,lost_handler,lost_code);
+          }
+        }
         if(classic_pair || fixture_pair){
           /* Classic solid collisions and physics contacts are pair transactions. The contact is
            * calculated once, then both directed handlers observe that same resolved contact. */
