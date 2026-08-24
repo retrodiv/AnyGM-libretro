@@ -239,6 +239,10 @@ void retro_reset(void){
   libretro_update_av();
 }
 
+/* Keep persistent content data under the save root and rebuildable loader data
+ * under a separate cache subdirectory. */
+#define ANYGM_CACHE_SUBDIRECTORY "anygm-cache"
+
 static void update_directories(void){
   const char *directory=NULL;
   g_libretro.save_directory[0]=0;
@@ -247,7 +251,11 @@ static void update_directories(void){
      g_libretro.environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY,&directory) &&
      directory && directory[0]){
     snprintf(g_libretro.save_directory,sizeof g_libretro.save_directory,"%s",directory);
-    snprintf(g_libretro.cache_directory,sizeof g_libretro.cache_directory,"%s",directory);
+    /* Never expose a truncated cache path as a valid root. */
+    if(snprintf(g_libretro.cache_directory,sizeof g_libretro.cache_directory,
+                "%s/%s",directory,ANYGM_CACHE_SUBDIRECTORY)>=
+       (int)sizeof g_libretro.cache_directory)
+      g_libretro.cache_directory[0]=0;
   }
 }
 

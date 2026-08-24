@@ -159,6 +159,13 @@ so equally named content at different paths does not share persistent files. A
 host should pass a stable identity path if it expects persistence to survive
 restarts or content relocation under its own VFS namespace.
 
+A host handed a single writable root should still give the two fields different
+directories. Persistent content data belongs in the save root. Rebuildable loader data
+belongs in a separate cache root. The libretro adapter passes the frontend's
+save directory as the save root unchanged and `save_directory/anygm-cache`
+as the cache root. The cache subdirectory can be removed without touching
+persistent data; it will be rebuilt when needed.
+
 ## Timing and optional services
 
 The monotonic callback returns nanoseconds from an arbitrary stable epoch.
