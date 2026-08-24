@@ -250,6 +250,135 @@ done:
   return ok;
 }
 
+
+static unsigned count_colour(const uint32_t *pixels,unsigned count,uint32_t rgb){
+  unsigned n=0;
+  for(unsigned i=0;i<count;i++) if((pixels[i]&0x00FFFFFFu)==rgb) n++;
+  return n;
+}
+
+/* Synthetic markers distinguish the value read during drawing from the
+ * value read during the step phase. */
+static int draw_hold_case(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_scoped_override_content_create(&fixture)){
+    fputs("scoped overrides: hold fixture creation failed\n",stderr);
+    return 0;
+  }
+  int ok=0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  AnygmEngine *engine=create_loaded_engine(&services,&source);
+  static uint32_t frame[32768];
+  unsigned w=0,h=0;
+  if(!engine) goto done;
+  if(anygm_set_runtime_override(engine,0,1,"?gameres drawhold|overlay_like|0")!=ANYGM_OK) goto done;
+
+  if(!capture_frame(engine,frame,&w,&h,"hold, scope closed")) goto done;
+  if(count_colour(frame,w*h,0x00FF0000u)!=0){
+    fputs("scoped overrides: the draw read the held value with the scope closed\n",stderr);
+    goto done;
+  }
+  if(count_colour(frame,w*h,0x0000FF00u)==0){
+    fputs("scoped overrides: the fixture never recorded what its step read\n",stderr);
+    goto done;
+  }
+
+  if(!select_logical_raster(engine,1)) goto done;
+  if(!capture_frame(engine,frame,&w,&h,"hold, scope open")) goto done;
+  if(count_colour(frame,w*h,0x00FF0000u)==0){
+    fputs("scoped overrides: the draw did not read the held value\n",stderr);
+    goto done;
+  }
+  /* The step must retain the original value. */
+  if(count_colour(frame,w*h,0x0000FF00u)==0){
+    fputs("scoped overrides: the hold reached the step as well as the drawing\n",stderr);
+    goto done;
+  }
+
+  if(!select_logical_raster(engine,0)) goto done;
+  if(!capture_frame(engine,frame,&w,&h,"hold withdrawn")) goto done;
+  if(count_colour(frame,w*h,0x00FF0000u)!=0){
+    fputs("scoped overrides: the hold outlived its scope\n",stderr);
+    goto done;
+  }
+  ok=1;
+done:
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
+/* A value scope reads a content global and restores the captured
+ * destination when that global becomes zero. */
+static int value_scope_case(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_scoped_override_content_create(&fixture)){
+    fputs("scoped overrides: value-scope fixture creation failed\n",stderr);
+    return 0;
+  }
+  int ok=0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  AnygmEngine *engine=create_loaded_engine(&services,&source);
+  static uint32_t closed[32768],open_[32768],reclosed[32768];
+  unsigned cw=0,ch=0,ow=0,oh=0,rw=0,rh=0;
+  if(!engine) goto done;
+  if(anygm_set_runtime_override(engine,0,1,"?gameres $gate=0")!=ANYGM_OK ||
+     anygm_set_runtime_override(engine,1,1,"?gameres ?global.gate @present_shift_y=1")!=ANYGM_OK)
+    goto done;
+  if(!select_logical_raster(engine,1)) goto done;
+  if(!capture_frame(engine,closed,&cw,&ch,"value scope closed")) goto done;
+
+  if(anygm_set_runtime_override(engine,0,1,"?gameres $gate=1")!=ANYGM_OK) goto done;
+  if(!capture_frame(engine,open_,&ow,&oh,"value scope open")) goto done;
+  if(cw!=ow || ch!=oh){
+    fputs("scoped overrides: the value scope changed the extent\n",stderr);
+    goto done;
+  }
+  {
+    int moved=0;
+    for(unsigned y=1;y<oh && !moved;y++)
+      for(unsigned x=0;x<ow;x++)
+        if(open_[(size_t)y*ow+x]!=closed[(size_t)y*cw+x]){ moved=1; break; }
+    if(!moved){
+      fputs("scoped overrides: the directive did not apply when its global went non-zero\n",stderr);
+      goto done;
+    }
+    for(unsigned y=1;y<oh;y++)
+      for(unsigned x=0;x<ow;x++)
+        if(open_[(size_t)y*ow+x]!=closed[(size_t)(y-1)*cw+x]){
+          fputs("scoped overrides: the scoped shift is not one row of the closed picture\n",stderr);
+          goto done;
+        }
+  }
+
+  if(anygm_set_runtime_override(engine,0,1,"?gameres $gate=0")!=ANYGM_OK) goto done;
+  if(!capture_frame(engine,reclosed,&rw,&rh,"value scope closed again")) goto done;
+  if(rw!=cw || rh!=ch) goto done;
+  for(unsigned i=0;i<rw*rh;i++) if(reclosed[i]!=closed[i]){
+    fputs("scoped overrides: the picture did not come back when the global went zero\n",stderr);
+    goto done;
+  }
+  ok=1;
+done:
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int scoped_override_case(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_scoped_override_content_create(&fixture)){
@@ -349,6 +478,8 @@ done:
 int main(void){
   if(!scoped_override_case()) return 1;
   if(!presentation_shift_case()) return 1;
+  if(!draw_hold_case()) return 1;
+  if(!value_scope_case()) return 1;
   puts("scoped overrides: ok");
   return 0;
 }

@@ -87,6 +87,22 @@ rather than freezing the reading it was written with.
 A scope prefix belongs to the directive that carries it, and a `;` chain fans out into one
 directive per slot, so each line in a chain that needs the scope has to state it.
 
+`drawhold|<name>|<value>` temporarily writes a global during frame drawing and
+restores its pre-draw value afterward. Other phases retain that value.
+`?global.<name>` may follow another scope on the same line and enables a
+directive only while the named global is non-zero. When it becomes zero,
+the scoped destination restores its captured value.
+
+```
+[overrides]
+# temporarily select the drawing branch
+?gameres drawhold|overlay|0
+?gameres @window_w=320
+?gameres @window_h=240
+# enable an offset only while the content global is non-zero
+?gameres ?global.overlay @present_shift_y=$global.screen_shake/2
+```
+
 `$view_w` and `$view_h` read the current room's authored `view_wview`/`view_hview` live.
 Unlike `$base_w`/`$base_h`, they do not refer to the presentation pass's preceding output. Use them
 when a room-scoped directive must pin a port to that room's view before geometry is decided:

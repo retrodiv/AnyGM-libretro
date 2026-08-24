@@ -1409,6 +1409,8 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   int pobj = (bg_renderer && *bg_renderer) ? gml_object_index_by_name(&engine->vm, bg_renderer) : -1;
   int gml_draws_bg = (pobj >= 0 && gml_find_instance(&engine->vm, pobj) != NULL);
   if (have_room && !gml_draws_bg) draw_runtime_backgrounds(engine,0);
+  /* Draw-phase overrides apply only until the draw pass ends. */
+  engine_overrides_draw_hold_begin(engine);
   gml_vm_draw_pass(&engine->vm, "Draw_72");   /* Draw Begin */
   gml_vm_draw(&engine->vm);   /* instances + room tiles, interleaved by depth */
   gml_vm_draw_pass(&engine->vm, "Draw_73");   /* Draw End */
@@ -1783,6 +1785,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 		    gml_vm_draw_pass(&engine->vm, "Draw_75");  /* Draw GUI End */
 		    log_present_pass(engine,"gui-end",gtarget,gtw,gth);
 		  }
+  engine_overrides_draw_hold_end(engine);
   if(screen_viewport_offset)
     gml_render_target_metrics_update(
       &engine->render,&screen_target,GML_RENDER_TARGET_CAMERA);

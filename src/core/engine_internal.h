@@ -127,7 +127,7 @@ enum {
 
 typedef enum {
   CK_NONE=0, CK_ROOM, CK_GARR, CK_GSCALAR, CK_INST, CK_INST_SET, CK_ENGINE, CK_ROUTE,
-  CK_CAMERA, CK_SURFACE, CK_MONITOR_VIEW, CK_ALARM_PAUSE, CK_SCRIPT
+  CK_CAMERA, CK_SURFACE, CK_MONITOR_VIEW, CK_ALARM_PAUSE, CK_SCRIPT, CK_DRAW_HOLD
 } CheatKind;
 typedef enum {
   TK_LIT=0, TK_BASE_W, TK_BASE_H, TK_FORCED_W, TK_FORCED_H, TK_EXTRA_W, TK_EXTRA_H,
@@ -145,6 +145,9 @@ typedef struct {
   int scope_aspect;
   int scope_monitor;
   int scope_gameres;
+  /* A value scope: the directive applies only while this content global is non-zero. Empty for a
+   * directive that carries no such condition. */
+  char scope_global[64];
   int scope_mode;
   char obj[64];
   char var[64];
@@ -168,6 +171,10 @@ typedef struct {
 typedef struct {
   int enabled; char code[128]; CheatAct act; double saved; double saved2; int saved_valid;
   int applied; int continuation_of;
+  /* A draw-phase hold is not a freeze: it writes its value for the length of one frame's drawing
+   * and puts back what content left there. These carry that one frame, separately from the
+   * arm-time capture above, which a hold never uses. */
+  double held; int held_valid;
 } CheatSlot;
 
 typedef enum { MI_TOGGLE, MI_RANGE, MI_WARP } MenuItemKind;
@@ -404,6 +411,8 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
  * of whether those writes still apply, which only the live scope can answer. */
 void engine_overrides_room_scope_apply(AnygmEngine *engine);
 void engine_overrides_presentation_apply(AnygmEngine *engine);
+void engine_overrides_draw_hold_begin(AnygmEngine *engine);
+void engine_overrides_draw_hold_end(AnygmEngine *engine);
 void engine_overrides_prepare_state_load(AnygmEngine *engine);
 void engine_overrides_note_state_load(AnygmEngine *engine);
 int engine_boot_cheats_active(AnygmEngine *engine);

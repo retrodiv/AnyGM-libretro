@@ -260,10 +260,22 @@ int anygm_synthetic_scoped_override_content_create(AnygmSyntheticContent *fixtur
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
   /* A band across the top rather than a flat field: a picture whose rows are all alike cannot show
    * a one-row presentation shift, so a case asserting one against it could never fail. */
-  if(!write_text(startup,"global.advance = 0;\n") ||
+  /* Two synthetic markers expose the draw-phase and step-phase readings
+   * of the same global in one frame. */
+  if(!write_text(startup,
+                 "global.advance = 0;\n"
+                 "global.overlay_like = 1;\n"
+                 "global.step_saw = -1;\n") ||
      !write_text(create,"scale = 3;\n") ||
-     !write_text(draw,"draw_set_color(16777215);\ndraw_rectangle(0,0,63,7,0);\n") ||
+     !write_text(draw,
+                 "draw_set_color(16777215);\n"
+                 "draw_rectangle(0,0,63,7,0);\n"
+                 "if (global.overlay_like == 0)"
+                 " { draw_set_color(255); draw_rectangle(0,0,7,7,0); }\n"
+                 "if (global.step_saw == 1)"
+                 " { draw_set_color(65280); draw_rectangle(56,0,63,7,0); }\n") ||
      !write_text(step,
+                 "global.step_saw = global.overlay_like;\n"
                  "if (global.advance == 1) { global.advance = 0; room_goto_next(); }\n")){
     anygm_synthetic_content_destroy(fixture);
     return 0;

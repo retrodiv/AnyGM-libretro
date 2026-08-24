@@ -64,6 +64,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   $name=V                     freeze global SCALAR          (GMS scalar reads; avoids V_ARR->0)
  *   obj:var=V | obj:var[i]=V    freeze a numeric var on every instance of object `obj`
  *   alarmpause|obj|i            hold alarm i still on every instance of `obj` and its descendants
+ *   drawhold|name|V             hold global `name` at V for the length of one frame's drawing
  *   call|script                 invoke a zero-argument content script once after the first Step
  *   camera[LIST]:field=V        write x, y, width, or height on selected live camera handles
  *   surface|obj|var|W|H         resize surfaces named by an instance variable
@@ -72,6 +73,8 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   obj@suffix->mode            Draw-GUI route: mode = full_view | backdrop | default
  *
  * A line may carry a SCOPE prefix:
+ *   ?global.name ...            only while that content global is non-zero (may follow another
+ *                               scope, e.g. `?gameres ?global.overlay @present_shift_y=...`)
  *   ?aspect      ...            only while an Aspect Ratio Force is active
  *   ?aspect=4:3  ...            only while that specific force mode is active (4:3|16:9|21:9)
  *   ?monitor     ...            once, on each live virtual-monitor size change
@@ -250,6 +253,15 @@ static void cheat_parse(const char *code, CheatAct *a){
     a->scope_gameres=1; s+=8;
     while(*s==' '||*s=='\t') s++;
   }
+  /* A value scope may follow the first scope. A zero global disables the
+   * directive and restores its captured destination value. */
+  if(!strncmp(s,"?global.",8)){
+    s+=8; const char *n=s; while(*s && CHEAT_NAMECH(*s)) s++;
+    size_t L=(size_t)(s-n);
+    if(L==0 || L>=sizeof a->scope_global){ a->kind=CK_NONE; return; }
+    memcpy(a->scope_global,n,L); a->scope_global[L]=0;
+    while(*s==' '||*s=='\t') s++;
+  }
   if(!strncmp(s,"monitorview|",12)){
     const char *height=s+12,*end=NULL;
     char *height_end=NULL;
@@ -271,6 +283,18 @@ static void cheat_parse(const char *code, CheatAct *a){
     a->idx=atoi(s); while(*s>='0' && *s<='9') s++;
     if(*s || a->idx<0 || a->idx>=GML_ALARMS){ a->kind=CK_NONE; return; }
     a->kind=CK_ALARM_PAUSE; return;
+  }
+  /* A draw hold temporarily substitutes a global only during the draw pass.
+   * Other execution phases retain the pre-draw value. */
+  if(!strncmp(s,"drawhold|",9)){
+    s+=9; const char *bar=strchr(s,'|');
+    if(!bar || bar==s || (size_t)(bar-s)>=sizeof a->obj){ a->kind=CK_NONE; return; }
+    for(const char *scan=s;scan<bar;scan++)
+      if(!CHEAT_NAMECH(*scan)){ a->kind=CK_NONE; return; }
+    memcpy(a->obj,s,(size_t)(bar-s)); a->obj[bar-s]=0; s=bar+1;
+    if(!*s){ a->kind=CK_NONE; return; }
+    cheat_parse_val(s,&a->val);
+    a->kind=CK_DRAW_HOLD; return;
   }
   if(!strncmp(s,"call|",5)){
     s+=5; const char *name=s; while(*s && CHEAT_NAMECH(*s)) s++;
@@ -441,6 +465,10 @@ static void cheat_apply_one(AnygmEngine *engine,const CheatAct *a){
 }
 /* phase: 0 = normal post-step sticky pass, 1 = aspect reshaping, 2 = monitor-change edge. */
 static int cheat_scope_ok(AnygmEngine *engine,const CheatAct *a,int phase){
+  /* Before content is loaded there is no global to read, and a directive that answers to one
+   * has nothing to answer yet. */
+  if(a->scope_global[0] &&
+     (!engine->loaded || gml_global_num(&engine->vm,a->scope_global)==0.0)) return 0;
   if(a->scope_monitor) return phase==2;
   if(a->scope_aspect){
     if(phase!=1 || !engine->aspect_force_active) return 0;
@@ -872,6 +900,9 @@ static void cheat_sticky_pass(AnygmEngine *engine,CheatSlot *arr, int n, int cha
     CheatSlot *slot=&arr[i];
     const CheatAct *a=&slot->act;
     if(a->kind==CK_ROOM || a->kind==CK_INST_SET || a->kind==CK_NONE) continue;
+    /* A hold belongs to the drawing, not to the post-step pass: writing it here would make it the
+     * freeze it exists not to be. */
+    if(a->kind==CK_DRAW_HOLD) continue;
     if(room_owned_only && !cheat_slot_is_room_owned(a)) continue;
     int applies=channel_on && slot->enabled && cheat_scope_ok(engine,a,0);
     /* A script override is an edge at fresh startup, not a value to restore when its channel is
@@ -960,6 +991,41 @@ void engine_overrides_presentation_apply(AnygmEngine *engine){
   cheat_gameres_pass(engine,engine->cheats,engine->cheat_count,1);
   cheat_gameres_pass(engine,engine->boot_cheats,engine->boot_cheat_count,
                      engine_boot_cheats_active(engine)>0);
+}
+/* A hold is written in front of the frame's drawing and taken back once the drawing is done. It
+ * needs no arm-time capture: what it puts back is what content left in the global on this frame,
+ * read one instruction before the hold replaces it, so a value the content recomputed since the
+ * scope opened survives. Nothing of it outlives the frame, which is why a scope change has nothing
+ * of its own to restore and why it never reaches a savestate. */
+static void cheat_draw_hold_pass(AnygmEngine *engine,CheatSlot *arr,int n,int channel_on,int begin){
+  for(int i=0;i<n;i++){
+    CheatSlot *slot=&arr[i];
+    if(slot->act.kind!=CK_DRAW_HOLD) continue;
+    if(begin){
+      slot->held_valid=0;
+      if(!channel_on || !slot->enabled || !engine->loaded) continue;
+      if(!cheat_scope_ok(engine,&slot->act,0)) continue;
+      slot->held=gml_global_num(&engine->vm,slot->act.obj);
+      slot->held_valid=1;
+      gml_set_global_scalar(&engine->vm,slot->act.obj,cheat_val_eval(engine,&slot->act.val));
+    } else if(slot->held_valid){
+      slot->held_valid=0;
+      gml_set_global_scalar(&engine->vm,slot->act.obj,slot->held);
+    }
+  }
+}
+void engine_overrides_draw_hold_begin(AnygmEngine *engine){
+  if(!engine) return;
+  cheat_draw_hold_pass(engine,engine->cheats,engine->cheat_count,1,1);
+  cheat_draw_hold_pass(engine,engine->boot_cheats,engine->boot_cheat_count,
+                       engine_boot_cheats_active(engine)>0,1);
+}
+void engine_overrides_draw_hold_end(AnygmEngine *engine){
+  if(!engine) return;
+  /* Both tables are walked whole and without the channel gate: this undoes only what begin marked,
+   * and a channel switched off between the two would otherwise leave the held value behind. */
+  cheat_draw_hold_pass(engine,engine->cheats,engine->cheat_count,1,0);
+  cheat_draw_hold_pass(engine,engine->boot_cheats,engine->boot_cheat_count,1,0);
 }
 /* A state restores VM and renderer fields, but presentation policy belongs to the live host. Read
  * the current targets before those sections are replaced so a state made under the opposite scope
