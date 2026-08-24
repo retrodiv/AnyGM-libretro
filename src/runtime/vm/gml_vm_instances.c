@@ -1417,6 +1417,9 @@ static void colcand_reset(GmlVM *vm){
   free(vm->collision_candidate_bits);
   vm->collision_candidate_bits=NULL;
   vm->collision_candidate_bits_words=0;
+  free(vm->collision_candidate_roots);
+  vm->collision_candidate_roots=NULL;
+  vm->collision_candidate_roots_cap=0;
 }
 void gml_vm_instances_reset_caches(GmlVM *vm){
   classic_dispatch_cache_reset(vm);
@@ -1458,13 +1461,24 @@ static int colcand_get(GmlVM *vm, int obj, int **out){
   GmlCollisionCandidateCache *cache=&vm->collision_candidate[slot];
   if(cache->obj==obj && cache->frame==vm->frame && cache->generation==vm->obj_list_gen){
     *out=cache->slots; return cache->count; }
-  /* target roots of this type's chain */
-  int roots[16]; int nr=0;
-  for(int p=obj; p>=0 && p<vm->n_objects && nr<16; p=vm->objects[p].parent)
-    for(int e=0;e<vm->n_col_events && nr<16;e++) if(vm->col_events[e].self_obj==p){
+  /* Target roots of this type's chain. The list holds every distinct target the chain declares a
+   * Collision handler for: a truncated list drops those pairs from the candidate set entirely, and
+   * the events they would have fired never run. A player object with dozens of Collision handlers
+   * is ordinary, so this grows rather than capping. */
+  int *roots=vm->collision_candidate_roots; int nr=0;
+  for(int p=obj; p>=0 && p<vm->n_objects; p=vm->objects[p].parent)
+    for(int e=0;e<vm->n_col_events;e++) if(vm->col_events[e].self_obj==p){
       int t=vm->col_events[e].target_obj, dup=0;
       for(int r=0;r<nr;r++) if(roots[r]==t){ dup=1; break; }
-      if(!dup) roots[nr++]=t; }
+      if(dup) continue;
+      if(nr>=vm->collision_candidate_roots_cap){
+        int nc=vm->collision_candidate_roots_cap?vm->collision_candidate_roots_cap*2:32;
+        int *grown=realloc(vm->collision_candidate_roots,(size_t)nc*sizeof(*grown));
+        if(!grown) return -1;
+        vm->collision_candidate_roots=grown; vm->collision_candidate_roots_cap=nc;
+        roots=grown;
+      }
+      roots[nr++]=t; }
   int words=(vm->inst_count+63)/64;
   if(words>vm->collision_candidate_bits_words){
     uint64_t *bits=realloc(vm->collision_candidate_bits,

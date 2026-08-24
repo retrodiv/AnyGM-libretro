@@ -291,6 +291,7 @@ typedef struct GmlVM {
   GmlEventCache *event_cache; int event_cache_cap;
   GmlCollisionCandidateCache collision_candidate[48];
   uint64_t *collision_candidate_bits; int collision_candidate_bits_words;
+  int *collision_candidate_roots; int collision_candidate_roots_cap;
   GmlInstance *inst; int inst_cap, inst_count;
   int *event_ord; int event_ord_cap; /* reusable classic per-object event-order scratch */
   struct GmlClassicDispatchCache *classic_dispatch;

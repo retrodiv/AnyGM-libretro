@@ -99,9 +99,11 @@ static char *read_source_file(const char *path){
   return text;
 }
 
-#define FIXTURE_MAX_OBJECTS 16
-#define FIXTURE_MAX_EVENTS 48
-#define FIXTURE_MAX_INSTANCES 32
+/* Wide enough for a program whose actor declares more collision targets than any per-object
+ * shortcut may quietly cap. */
+#define FIXTURE_MAX_OBJECTS 64
+#define FIXTURE_MAX_EVENTS 128
+#define FIXTURE_MAX_INSTANCES 96
 
 typedef struct {
   FixtureProgram program;
