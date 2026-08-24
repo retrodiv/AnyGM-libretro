@@ -920,11 +920,13 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
       for(int ox=0;ox<W;ox++){
         int tx=x0+ox; if(tx<0||tx>=r->fbw) continue;
         int sx=(ox+1)>>1;
-        /* The half-step at the right edge lands exactly one texel past the surface.  Classic
-         * texture repeat wraps that sample to the first column; clamping it to the last column
-         * leaves a one-pixel seam at exact 2x. */
-        if(sx>=sw) sx=0;
-        dp[tx]=sample_row[sx];
+        if(sx<sw){ dp[tx]=sample_row[sx]; continue; }
+        /* The half-texel phase leaves the far-edge sample one quarter beyond the
+         * surface. Treat the missing colour contribution as zero, keep three
+         * quarters of the adjacent colour, and preserve coverage. */
+        { uint32_t e=sample_row[sw-1];
+          unsigned a=e>>24, rr=(e>>16)&255u, gg=(e>>8)&255u, bb=e&255u;
+          dp[tx]=(a<<24)|(((rr*3u+2u)>>2)<<16)|(((gg*3u+2u)>>2)<<8)|((bb*3u+2u)>>2); }
       }
     }
     r->fb_opaque_known=1;
