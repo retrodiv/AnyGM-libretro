@@ -704,8 +704,11 @@ int gml_win_load_host(GmlWin *w,const struct AnygmHostServices *host,const char 
       if(n>=sizeof(w->content_dir)) n=sizeof(w->content_dir)-1;
       memcpy(w->content_dir,path,n);
       w->content_dir[n]=0;
+      memcpy(w->payload_dir,path,n);
+      w->payload_dir[n]=0;
     } else {
       snprintf(w->content_dir,sizeof(w->content_dir),".");
+      snprintf(w->payload_dir,sizeof(w->payload_dir),".");
     }
   }
   return rc;

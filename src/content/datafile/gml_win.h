@@ -154,6 +154,9 @@ typedef struct GmlWin {
   const struct AnygmCompatibilityProfile *compatibility; /* immutable runtime policy, engine-owned */
   const struct AnygmHostServices *host; /* borrowed immutable service table, engine-owned */
   int8_t pad_reference_scan;         /* lazy: 0 unscanned, 1 no pad builtin referenced, 2 referenced */
+  /* Directory of the loaded payload; generated payloads may have a distinct
+   * source content directory. Relative reads may consult both roots. */
+  char payload_dir[512];
 } GmlWin;
 
 int          gml_win_load_host(GmlWin *w,const struct AnygmHostServices *host,const char *path);

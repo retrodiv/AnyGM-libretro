@@ -181,13 +181,20 @@ char *resolve_read_path(GmlVM *vm, const char *p){
     }
     return strdup(p);
   }
-  /* Relative reads use an overlay: the writable copy wins, followed by installed assets.
-   * Never consult the host working directory while either sandbox is known. */
+  /* Relative reads check the writable root, the loaded payload's root,
+   * then the source content root. Do not use the host working directory
+   * when the configured roots are available. */
   if(vm && vm->win){
     if(vm->win->save_dir[0]){
       char *save=path_under_read(vm,vm->win->save_dir,p);
       if(path_present(vm,save)) return save;
       free(save);
+    }
+    if(vm->win->payload_dir[0] &&
+       (!vm->win->content_dir[0] || strcmp(vm->win->payload_dir,vm->win->content_dir))){
+      char *payload=path_under_read(vm,vm->win->payload_dir,p);
+      if(path_present(vm,payload)) return payload;
+      free(payload);
     }
     if(vm->win->content_dir[0]) return path_under_read(vm,vm->win->content_dir,p);
     if(vm->win->save_dir[0]) return path_under(vm->win->save_dir,p);

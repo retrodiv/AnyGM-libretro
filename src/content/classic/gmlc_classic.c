@@ -1196,7 +1196,10 @@ static int parse_legacy_executable_slot(ClassicReader *r,GmlcClassicResourceType
   return 1;
 }
 
-static int read_legacy_included_file(ClassicReader *r, GmlcClassicIncludedFile *out){
+/* Executable-layout included-file data may be a complete zlib stream; editor
+ * project data stays raw. Keep bytes unchanged if inflation does not succeed. */
+static int read_legacy_included_file(ClassicReader *r, GmlcClassicIncludedFile *out,
+                                     int executable_layout){
   uint32_t version=0,data_exists=0,stored=0,overwrite=0,free_memory=0,remove_at_end=0;
   GmlcClassicBlob embedded={0};
   memset(out,0,sizeof(*out));
@@ -1212,6 +1215,15 @@ static int read_legacy_included_file(ClassicReader *r, GmlcClassicIncludedFile *
     reader_u32(r,&overwrite,"legacy included-file overwrite flag") &&
     reader_u32(r,&free_memory,"legacy included-file free-memory flag") &&
     reader_u32(r,&remove_at_end,"legacy included-file remove flag");
+  if(ok && executable_layout && embedded.data && embedded.size && embedded.size<=INT_MAX){
+    int raw_size=0;
+    char *raw=classic_inflate_owned(embedded.data,embedded.size,GML_DEFLATE_ZLIB,&raw_size);
+    if(raw && raw_size>0){
+      free(embedded.data);
+      embedded.data=(uint8_t*)raw;
+      embedded.size=(size_t)raw_size;
+    } else free(raw);
+  }
   out->data_exists=data_exists!=0; out->stored_in_project=stored!=0;
   out->overwrite_file=overwrite!=0; out->free_memory=free_memory!=0;
   out->remove_at_end=remove_at_end!=0; out->data=embedded.data; out->data_size=embedded.size;
@@ -1294,7 +1306,8 @@ static int parse_legacy_tail(ClassicReader *r, uint32_t container_version,
       if(!manifest->included_files) return reader_fail(r,"legacy included-file allocation");
       manifest->included_file_count=count;
     }
-    for(uint32_t i=0;i<count;i++) if(!read_legacy_included_file(r,&manifest->included_files[i])) return 0;
+    for(uint32_t i=0;i<count;i++) if(!read_legacy_included_file(r,&manifest->included_files[i],
+                                                     manifest->executable_layout)) return 0;
 
     if(!reader_u32(r,&version,"legacy extension section version") || version<700 ||
        !reader_u32(r,&count,"legacy extension count")) return 0;
@@ -2043,7 +2056,7 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
       out->included_file_count=count;
     }
     for(uint32_t include=0;include<count;include++)
-      if(!read_legacy_included_file(&r,&out->included_files[include])) return 0;
+      if(!read_legacy_included_file(&r,&out->included_files[include],1)) return 0;
   }
 
   section_offset=r.pos;

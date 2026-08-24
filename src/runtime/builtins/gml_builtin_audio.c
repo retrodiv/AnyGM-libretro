@@ -1822,8 +1822,14 @@ GmlVal builtin_external_audio_call(GmlVM *vm,int handle,
   }
   /* Sound handles map onto mixer sound IDs. Volume is 0..10000 and
    * frequency is absolute hertz, so convert them to gain and pitch. */
-  if(operation==GML_EXTERNAL_AUDIO_SS_LOAD)
-    return vreal(external_audio_load(vm,S(vm,args,count,0)));
+  if(operation==GML_EXTERNAL_AUDIO_SS_LOAD){
+    /* Return the load handle as decimal text; accessors parse it numerically.
+     * The failure result is represented by the string "0". */
+    int loaded=external_audio_load(vm,S(vm,args,count,0));
+    char handle_text[32];
+    snprintf(handle_text,sizeof handle_text,"%d",loaded<0?0:loaded);
+    return vstr(handle_text);
+  }
   if(operation==GML_EXTERNAL_AUDIO_SS_PLAY || operation==GML_EXTERNAL_AUDIO_SS_LOOP ||
      operation==GML_EXTERNAL_AUDIO_SS_RESUME){
     int sound=(int)N(args,count,0);

@@ -372,6 +372,11 @@ static int expect_legacy_executable_manifest(void){
        manifest.existing[GMLC_CLASSIC_SCRIPT]==1 &&
        manifest.existing[GMLC_CLASSIC_FONT]==1 &&
        manifest.existing[GMLC_CLASSIC_ROOM]==1 &&
+       /* This synthetic executable fixture carries compressed included-file bytes. */
+       manifest.included_file_count==1 &&
+       !strcmp(manifest.included_files[0].file_name,"track1.ogg") &&
+       manifest.included_files[0].data_size==8 &&
+       !memcmp(manifest.included_files[0].data,"OggScass",8) &&
        !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source,"return 42;") &&
        manifest.room_order_count==1 && manifest.room_order[0]==0 &&
        manifest.library_creation_code_count==1;
