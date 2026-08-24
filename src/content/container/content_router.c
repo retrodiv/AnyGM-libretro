@@ -8,6 +8,7 @@
 #endif
 #include "content_router.h"
 #include "embedded_cab.h"
+#include "embedded_nsis.h"
 #include "gmlc_package.h"
 #include "gmlc_classic_project.h"
 #include "gmlc_classic_import.h"
@@ -632,11 +633,17 @@ static AnygmContentResolveResult resolve_executable_content(
   if(embedded) return embedded>0?ANYGM_CONTENT_RESOLVE_OK:ANYGM_CONTENT_RESOLVE_INVALID;
   AnygmEmbeddedCab cab={0};
   AnygmEmbeddedCabStatus status=anygm_embedded_cab_probe(router,path,&cab);
+  AnygmEmbeddedNsis nsis={0};
+  AnygmEmbeddedNsisStatus nsis_status=status==ANYGM_EMBEDDED_CAB_NOT_FOUND
+    ? anygm_embedded_nsis_probe(router,path,&nsis):ANYGM_EMBEDDED_NSIS_NOT_FOUND;
   uint64_t source_size=0;
   file_size64(router,path,&source_size);
-  int classic_candidate=classic_executable_maybe(
-    router,path,source_size,status==ANYGM_EMBEDDED_CAB_NOT_FOUND?NULL:&cab);
-  if(status==ANYGM_EMBEDDED_CAB_NOT_FOUND || classic_candidate){
+  int classic_candidate=status!=ANYGM_EMBEDDED_CAB_NOT_FOUND
+    ? classic_executable_maybe(router,path,source_size,&cab)
+    : (nsis_status==ANYGM_EMBEDDED_NSIS_NOT_FOUND
+       ? classic_executable_maybe(router,path,source_size,NULL):0);
+  if((status==ANYGM_EMBEDDED_CAB_NOT_FOUND &&
+      nsis_status==ANYGM_EMBEDDED_NSIS_NOT_FOUND) || classic_candidate){
     if(load_classic_project_content(router,path,content_path,content_size))
       return ANYGM_CONTENT_RESOLVE_OK;
     if(classic_candidate) return ANYGM_CONTENT_RESOLVE_INVALID;
@@ -647,7 +654,21 @@ static AnygmContentResolveResult resolve_executable_content(
     return ANYGM_CONTENT_RESOLVE_UNSUPPORTED;
   }
   if(status==ANYGM_EMBEDDED_CAB_NOT_FOUND)
+  {
+    if(nsis_status==ANYGM_EMBEDDED_NSIS_UNSUPPORTED){
+      content_log(router,ANYGM_CONTENT_LOG_ERROR,
+                  "nsis: structurally valid executable uses an unsupported NSIS profile");
+      return ANYGM_CONTENT_RESOLVE_UNSUPPORTED;
+    }
+    if(nsis_status==ANYGM_EMBEDDED_NSIS_SUPPORTED){
+      if(!anygm_embedded_nsis_extract(router,path,&nsis,content_path,content_size,
+                                      asset_root,asset_root_size))
+        return ANYGM_CONTENT_RESOLVE_INVALID;
+      return ANYGM_CONTENT_RESOLVE_OK;
+    }
+    if(nsis_status==ANYGM_EMBEDDED_NSIS_INVALID) return ANYGM_CONTENT_RESOLVE_INVALID;
     return resolve_adjacent_studio_payload(router,path,source_size,content_path,content_size);
+  }
   if(status!=ANYGM_EMBEDDED_CAB_SUPPORTED) return ANYGM_CONTENT_RESOLVE_INVALID;
   if(!anygm_embedded_cab_extract(router,path,&cab,content_path,content_size,
                                  asset_root,asset_root_size))

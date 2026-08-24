@@ -105,7 +105,6 @@ CORE_RUNTIME_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_CORE_SOURCES
 LIBRETRO_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_LIBRETRO_SOURCES))
 TEST_HOST_OBJECTS := $(patsubst %.c,$(BUILD_DIR)/obj/%.o,$(ANYGM_TEST_HOST_SOURCES))
 VENDORED_BZIP2_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/bzip2/%,$(RUNTIME_OBJECTS))
-VENDORED_LIBARCHIVE_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/libarchive/%,$(RUNTIME_OBJECTS))
 VENDORED_PXTONE_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/pxtone/%,$(RUNTIME_OBJECTS))
 VENDORED_WW2OGG_OBJECTS := $(filter $(BUILD_DIR)/obj/src/third_party/ww2ogg/%,$(RUNTIME_OBJECTS))
 WWISE_ADAPTER_OBJECT := $(BUILD_DIR)/obj/src/audio/banks/gml_wwise.o
@@ -190,11 +189,6 @@ $(LIBRETRO_OBJECTS): $(BUILD_DIR)/obj/%.o: %.c
 
 # Keep warnings from imported bzip2 sources isolated without weakening diagnostics for owned code.
 $(VENDORED_BZIP2_OBJECTS): CFLAGS += -Wno-unused-parameter -Wno-implicit-fallthrough
-
-# The retained read-only CAB closure uses a small, checked-in portable configuration instead of
-# probing the build host or enabling optional libraries.
-$(VENDORED_LIBARCHIVE_OBJECTS): CPPFLAGS += -DPLATFORM_CONFIG_H='"archive_config_anygm.h"'
-$(VENDORED_LIBARCHIVE_OBJECTS): CFLAGS += -Wno-unused-parameter -Wno-sign-compare
 
 # Keep imported pxtone warnings isolated without weakening diagnostics for owned runtime code.
 # The adapter includes upstream headers, whose declarations trigger these two diagnostics, but
@@ -435,6 +429,7 @@ architecture-check: builtin-registry-check
 	tests/architecture/check_graphics_boundaries.sh
 	python3 tests/architecture/check_content_boundaries.py
 	python3 tests/architecture/check_cab_boundaries.py
+	python3 tests/architecture/check_nsis_boundaries.py
 	tests/architecture/check_numeric_conversions.sh
 
 builtin-registry-check:

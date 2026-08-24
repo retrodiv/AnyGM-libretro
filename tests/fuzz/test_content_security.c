@@ -4,6 +4,7 @@
 #include "anygm.h"
 #include "content_router.h"
 #include "embedded_cab.h"
+#include "embedded_nsis.h"
 #include "engine_internal.h"
 #include "memory_vfs.h"
 #include "synthetic_content.h"
@@ -464,6 +465,35 @@ static int build_lzx_executable(const uint8_t *cabinet,size_t cabinet_size,Buffe
   return 1;
 }
 
+/* Divide the checked-in neutral compressed stream at a CFDATA boundary that falls inside the
+ * LZX bitstream. A decoder must continue its input state across the two records. */
+static int split_lzx_data_record(const uint8_t *source,size_t source_size,Buffer *output){
+  if(!source || source_size<52u || !output || memcmp(source,"MSCF",4u) ||
+     load_u16(source+26u)!=1u || load_u16(source+40u)!=1u) return 0;
+  uint32_t data_offset=load_u32(source+36u);
+  if(data_offset>source_size-9u) return 0;
+  uint16_t compressed=load_u16(source+data_offset+4u);
+  uint16_t expanded=load_u16(source+data_offset+6u);
+  if(compressed<2u || expanded<2u || data_offset+8u+(size_t)compressed!=source_size ||
+     source_size>UINT32_MAX-8u) return 0;
+  uint8_t *bytes=malloc(source_size+8u);
+  if(!bytes) return 0;
+  memcpy(bytes,source,data_offset);
+  memset(bytes+data_offset,0,8u);
+  store_u16(bytes,data_offset+4u,1u);
+  store_u16(bytes,data_offset+6u,1u);
+  bytes[data_offset+8u]=source[data_offset+8u];
+  memset(bytes+data_offset+9u,0,8u);
+  store_u16(bytes,data_offset+13u,(uint16_t)(compressed-1u));
+  store_u16(bytes,data_offset+15u,(uint16_t)(expanded-1u));
+  memcpy(bytes+data_offset+17u,source+data_offset+9u,(size_t)compressed-1u);
+  store_u32(bytes,8u,(uint32_t)(source_size+8u));
+  store_u16(bytes,40u,2u);
+  output->data=bytes;
+  output->size=output->capacity=source_size+8u;
+  return 1;
+}
+
 static int build_multipart_cabinet(const uint8_t *source,size_t source_size,Buffer *output){
   static const uint8_t names[]={ 'p','a','r','t',0,'d','i','s','k',0 };
   if(!source || source_size<44u || source_size>UINT32_MAX-sizeof names) return 0;
@@ -870,12 +900,18 @@ static int embedded_cabinet_name_index_case(void){
 static int embedded_lzx_cabinet_cases(const AnygmHostServices *services,const char *root){
   uint8_t *cabinet=NULL;
   size_t cabinet_size=0;
+  Buffer split={0};
   Buffer executable={0};
   if(!read_file("tests/fixtures/embedded_cab_lzx21.cab",&cabinet,&cabinet_size) ||
-     !build_lzx_executable(cabinet,cabinet_size,&executable)){
+     !split_lzx_data_record(cabinet,cabinet_size,&split) ||
+     !build_lzx_executable(split.data,split.size,&executable)){
+    free(split.data);
     free(cabinet);
     return fail("could not read the neutral LZX-21 fixture");
   }
+  free(cabinet);
+  cabinet=split.data;
+  cabinet_size=split.size;
   char path[512],resolved[1024],warm[1024],asset_root[1024];
   if(snprintf(path,sizeof path,"%s/neutral-lzx.exe",root)>=(int)sizeof path ||
      !write_file(path,executable.data,executable.size)){
@@ -1295,6 +1331,83 @@ static int embedded_lzx_cabinet_cases(const AnygmHostServices *services,const ch
   free(dangerous);
   free(executable.data);
   free(cabinet);
+  return 1;
+}
+
+static int build_nsis2_deflate_executable(Buffer *output){
+  enum { STUB=512, HEADER_SIZE=97, HEADER_PACKED=100, DATA_PACKED=7 };
+  size_t size=STUB+28u+4u+HEADER_PACKED+4u+DATA_PACKED;
+  uint8_t *bytes=calloc(size,1);
+  if(!bytes) return 0;
+  bytes[0]='M'; bytes[1]='Z';
+  store_u32(bytes,60u,128u);
+  memcpy(bytes+128u,"PE\0\0",4u);
+  store_u32(bytes,STUB,4u);
+  store_u32(bytes,STUB+4u,UINT32_C(0xdeadbeef));
+  store_u32(bytes,STUB+8u,UINT32_C(0x6c6c754e));
+  store_u32(bytes,STUB+12u,UINT32_C(0x74666f73));
+  store_u32(bytes,STUB+16u,UINT32_C(0x74736e49));
+  store_u32(bytes,STUB+20u,HEADER_SIZE);
+  store_u32(bytes,STUB+24u,(uint32_t)(size-STUB));
+  store_u32(bytes,STUB+28u,UINT32_C(0x80000000)|HEADER_PACKED);
+  uint8_t *packed_header=bytes+STUB+32u;
+  packed_header[0]=1u;
+  store_u16(packed_header,1u,HEADER_SIZE);
+  uint8_t *header=packed_header+3u;
+  store_u32(header,20u,60u);
+  store_u32(header,24u,1u);
+  store_u32(header,28u,88u);
+  store_u32(header,36u,HEADER_SIZE);
+  store_u32(header+60u,0u,20u);
+  store_u32(header+60u,8u,0u);
+  store_u32(header+60u,12u,0u);
+  memcpy(header+88u,"data.win",9u);
+  uint8_t *record=packed_header+HEADER_PACKED;
+  store_u32(record,0u,UINT32_C(0x80000000)|DATA_PACKED);
+  record[4u]=1u;
+  store_u16(record,5u,4u);
+  memcpy(record+7u,"FORM",4u);
+  output->data=bytes;
+  output->size=output->capacity=size;
+  return 1;
+}
+
+static int embedded_nsis_cases(const AnygmHostServices *services,const char *root){
+  Buffer executable={0};
+  if(!build_nsis2_deflate_executable(&executable)) return fail("could not build NSIS fixture");
+  char path[512],resolved[1024],assets[1024];
+  if(snprintf(path,sizeof path,"%s/neutral-nsis.exe",root)>=(int)sizeof path ||
+     !write_file(path,executable.data,executable.size)){
+    free(executable.data); return fail("could not stage NSIS fixture");
+  }
+  AnygmContentRouter router={0};
+  router.host=services;
+  router.cache_directory=root;
+  router.log=fixture_log;
+  AnygmEmbeddedNsis parsed={0};
+  uint8_t magic[4];
+  int ok=anygm_embedded_nsis_probe(&router,path,&parsed)==ANYGM_EMBEDDED_NSIS_SUPPORTED &&
+         parsed.header_offset==512u && parsed.header_size==97u &&
+         anygm_content_resolve_path(&router,path,resolved,sizeof resolved,assets,sizeof assets,
+                                    NULL,0)==ANYGM_CONTENT_RESOLVE_OK &&
+         assets[0] && read_prefix(resolved,magic,sizeof magic) && !memcmp(magic,"FORM",4u);
+  if(!ok){ free(executable.data); return fail("NSIS 2 Deflate payload did not resolve"); }
+
+  memcpy(executable.data+512u+32u+3u+88u,"../x.win",9u);
+  if(snprintf(path,sizeof path,"%s/traversal-nsis.exe",root)>=(int)sizeof path ||
+     !write_file(path,executable.data,executable.size) ||
+     anygm_content_resolve_path(&router,path,resolved,sizeof resolved,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_INVALID){
+    free(executable.data); return fail("NSIS traversal member was accepted");
+  }
+  memcpy(executable.data+512u+32u+3u+88u,"data.win",9u);
+  store_u32(executable.data,512u+28u,100u);
+  if(snprintf(path,sizeof path,"%s/solid-nsis.exe",root)>=(int)sizeof path ||
+     !write_file(path,executable.data,executable.size) ||
+     anygm_embedded_nsis_probe(&router,path,&parsed)!=ANYGM_EMBEDDED_NSIS_UNSUPPORTED){
+    free(executable.data); return fail("unsupported NSIS profile was not classified");
+  }
+  free(executable.data);
   return 1;
 }
 
@@ -1975,6 +2088,7 @@ int main(void){
          cache_producer_change_case(&services,root) &&
          embedded_cabinet_cases(&services,root) &&
          embedded_lzx_cabinet_cases(&services,root) &&
+         embedded_nsis_cases(&services,root) &&
          adjacent_executable_payload_cases(&services,root) &&
          archive_anchor_cases(&services,root) &&
          archive_advanced_anchor_cases(&services,root) &&

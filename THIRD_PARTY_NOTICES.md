@@ -9,7 +9,6 @@ including their original copyright years.
 
 | Component | Location | Terms |
 | --- | --- | --- |
-| libarchive Cabinet reader closure | `src/third_party/libarchive/` | Upstream terms in `LICENSES/libarchive.txt`; retained file-level notices, including the UC Regents notice in `archive_entry.c` |
 | bzip2 | `src/third_party/bzip2/` | bzip2 license in `LICENSES/bzip2.txt` |
 | libretro API header | `src/third_party/libretro/include/libretro.h` | MIT, reproduced in `LICENSES/libretro.txt` |
 | minimp3 | `src/third_party/minimp3/` | CC0, reproduced in `LICENSES/minimp3.txt` |

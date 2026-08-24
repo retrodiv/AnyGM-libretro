@@ -35,6 +35,58 @@
 #pragma GCC diagnostic pop
 #endif
 
+/* NSIS 2 uses ordinary raw Deflate except that a stored block carries LEN without NLEN. Keep the
+ * variation at this shared inflate seam instead of teaching a container parser compression. */
+static int gml_nsis_uncompressed_block(stbi__zbuf *stream){
+  if(stream->num_bits&7) stbi__zreceive(stream,stream->num_bits&7);
+  if(stream->num_bits<0) return 0;
+  stbi_uc low,high;
+#define GML_NSIS_ALIGNED_BYTE(target) do { \
+    if(stream->num_bits>=8){ \
+      (target)=(stbi_uc)(stream->code_buffer&255u); \
+      stream->code_buffer>>=8; stream->num_bits-=8; \
+    }else (target)=stbi__zget8(stream); \
+  } while(0)
+  GML_NSIS_ALIGNED_BYTE(low);
+  GML_NSIS_ALIGNED_BYTE(high);
+  int length=(int)low+((int)high<<8);
+  if(stream->zout+length>stream->zout_end) return 0;
+  while(length>0 && stream->num_bits>=8){
+    *stream->zout++=(char)(stream->code_buffer&255u);
+    stream->code_buffer>>=8;
+    stream->num_bits-=8;
+    length--;
+  }
+  if(stream->zbuffer+length>stream->zbuffer_end) return 0;
+  memcpy(stream->zout,stream->zbuffer,(size_t)length);
+  stream->zbuffer+=length;
+  stream->zout+=length;
+#undef GML_NSIS_ALIGNED_BYTE
+  return 1;
+}
+
+static int gml_nsis_parse_deflate(stbi__zbuf *stream){
+  int final;
+  stream->num_bits=0;
+  stream->code_buffer=0;
+  stream->hit_zeof_once=0;
+  do{
+    final=stbi__zreceive(stream,1);
+    int type=stbi__zreceive(stream,2);
+    if(type==0){
+      if(!gml_nsis_uncompressed_block(stream)) return 0;
+    }else if(type==3) return 0;
+    else{
+      if(type==1){
+        if(!stbi__zbuild_huffman(&stream->z_length,stbi__zdefault_length,STBI__ZNSYMS) ||
+           !stbi__zbuild_huffman(&stream->z_distance,stbi__zdefault_distance,32)) return 0;
+      }else if(!stbi__compute_huffman_codes(stream)) return 0;
+      if(!stbi__parse_huffman_block(stream)) return 0;
+    }
+  }while(!final);
+  return 1;
+}
+
 static void gml_media_buffer_reset(GmlMediaBuffer *buffer){
   if(buffer){
     buffer->data=NULL;
@@ -202,5 +254,24 @@ int gml_deflate_decode_to_buffer(const uint8_t *encoded, size_t encoded_size,
                               (const char*)encoded,(int)encoded_size);
   if(result<0) return 0;
   *decoded_size=(size_t)result;
+  return 1;
+}
+
+int gml_deflate_decode_nsis_to_buffer(const uint8_t *encoded,size_t encoded_size,
+                                      uint8_t *decoded,size_t decoded_capacity,
+                                      size_t *decoded_size){
+  if(decoded_size) *decoded_size=0;
+  if(!encoded || !decoded || !decoded_size || !encoded_size ||
+     encoded_size>(size_t)INT_MAX || decoded_capacity>(size_t)INT_MAX) return 0;
+  stbi__zbuf stream;
+  memset(&stream,0,sizeof stream);
+  stream.zbuffer=(stbi_uc *)encoded;
+  stream.zbuffer_end=(stbi_uc *)encoded+encoded_size;
+  stream.zout_start=(char *)decoded;
+  stream.zout=(char *)decoded;
+  stream.zout_end=(char *)decoded+decoded_capacity;
+  stream.z_expandable=0;
+  if(!gml_nsis_parse_deflate(&stream)) return 0;
+  *decoded_size=(size_t)(stream.zout-(char *)decoded);
   return 1;
 }

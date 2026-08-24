@@ -40,6 +40,11 @@ int gml_deflate_decode(const uint8_t *encoded, size_t encoded_size,
 int gml_deflate_decode_to_buffer(const uint8_t *encoded, size_t encoded_size,
                                  GmlDeflateFraming framing, uint8_t *decoded,
                                  size_t decoded_capacity, size_t *decoded_size);
+/* NSIS 2's Deflate variant omits the one's-complement length word from stored blocks. This
+ * bounded decoder accepts that one wire-format difference and no zlib wrapper. */
+int gml_deflate_decode_nsis_to_buffer(const uint8_t *encoded,size_t encoded_size,
+                                      uint8_t *decoded,size_t decoded_capacity,
+                                      size_t *decoded_size);
 
 void gml_media_buffer_release(GmlMediaBuffer *buffer);
 

@@ -12,21 +12,6 @@ ANYGM_BZIP2_SOURCES := \
 	src/third_party/bzip2/huffman.c \
 	src/third_party/bzip2/randtable.c
 
-ANYGM_LIBARCHIVE_SOURCES := \
-	src/third_party/libarchive/archive_acl.c \
-	src/third_party/libarchive/archive_check_magic.c \
-	src/third_party/libarchive/archive_entry.c \
-	src/third_party/libarchive/archive_entry_sparse.c \
-	src/third_party/libarchive/archive_entry_xattr.c \
-	src/third_party/libarchive/archive_read.c \
-	src/third_party/libarchive/archive_read_support_filter_none.c \
-	src/third_party/libarchive/archive_read_support_format_cab.c \
-	src/third_party/libarchive/archive_string.c \
-	src/third_party/libarchive/archive_string_sprintf.c \
-	src/third_party/libarchive/archive_util.c \
-	src/third_party/libarchive/archive_virtual.c \
-	src/third_party/libarchive/anygm_archive_windows_shim.c
-
 ANYGM_MEDIA_SOURCES := \
 	src/media/gml_hash.c \
 	src/media/gml_image_codec.c \
@@ -222,7 +207,7 @@ ANYGM_RUNTIME_SOURCES := \
 	src/compatibility/anygm_compatibility.c \
 	src/content/container/content_router.c \
 	src/content/container/embedded_cab.c \
-	$(ANYGM_LIBARCHIVE_SOURCES) \
+	src/content/container/embedded_nsis.c \
 	src/content/datafile/gml_win.c \
 	src/content/bytecode/gml_bytecode.c \
 	src/content/bytecode/gml_bc14.c \
@@ -286,7 +271,6 @@ ANYGM_RUNTIME_INCLUDE_DIRS := \
 	src/generated \
 	src/third_party \
 	src/third_party/bzip2 \
-	src/third_party/libarchive \
 	src/third_party/minimp3 \
 	src/third_party/stb
 
