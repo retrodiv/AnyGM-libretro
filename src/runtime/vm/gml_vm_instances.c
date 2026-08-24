@@ -1203,7 +1203,9 @@ static int vm_bbox_at(GmlVM *vm, GmlInstance *in, double atx, double aty,
     *l=gml_vm_classic_round_even(minx); *t=gml_vm_classic_round_even(miny);
     *r=gml_vm_classic_round_even(maxx); *b=gml_vm_classic_round_even(maxy);
   } else {
-    *l=floor(minx); *t=floor(miny); *r=ceil(maxx)-1.0; *b=ceil(maxy)-1.0;
+    /* Round both edges consistently; the far edge is inclusive. */
+    *l=gml_vm_classic_round_even(minx); *t=gml_vm_classic_round_even(miny);
+    *r=gml_vm_classic_round_even(maxx)-1.0; *b=gml_vm_classic_round_even(maxy)-1.0;
   }
   return 1;
 }

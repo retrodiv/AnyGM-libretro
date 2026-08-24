@@ -133,3 +133,87 @@ int expect_bounding_box_far_edges_by_generation(void){
   gml_builtin_state_destroy(vm.builtins);
   return 1;
 }
+
+/* A fractional-position box must round both edges consistently. The synthetic
+ * neighbour distinguishes the positions immediately around the half-pixel boundary. */
+int expect_bounding_box_far_edges_at_a_fractional_position(void){
+  GmlWin win={0};
+  GmlVM vm={0};
+  AnygmHostServices services={0};
+  GmlRender render={0};
+  GmlSprite sprites[2]={{0}};
+  GmlObject objects[2]={{0}};
+  GmlInstance instances[2]={{0}};
+
+  render.n_spr=2;
+  render.spr=sprites;
+  sprites[0].w=20; sprites[0].h=30;
+  sprites[0].mr=19; sprites[0].mb=29;
+  /* Rectangle masks: a per-pixel mask samples whole rows and answers a different question, which
+   * the case above already covers. This one is about the box. */
+  sprites[0].collision_kind=0;
+  sprites[1].w=20; sprites[1].h=20;
+  sprites[1].mr=19; sprites[1].mb=19;
+  sprites[1].collision_kind=0;
+  objects[0].parent=objects[1].parent=-1;
+  services.development_setting=bbox_fixture_setting;
+  vm.win=&win;
+  vm.host=&services;
+  vm.render=&render;
+  vm.objects=objects;
+  vm.n_objects=2;
+  vm.inst=instances;
+  vm.inst_count=vm.inst_cap=2;
+  /* Exercise the format configuration without the exclusive far-edge marker. */
+  win.bytecode=14;
+  win.classic_version=0;
+  win.has_exclusive_bbox_marker=0;
+  win.option_flags=0;
+
+  instances[0].active=1;
+  instances[0].id=100000;
+  instances[0].obj=0;
+  instances[0].x=150;
+  instances[0].sprite_index=instances[0].mask_index=0;
+  instances[0].image_xscale=instances[0].image_yscale=1;
+  instances[1].active=1;
+  instances[1].id=100001;
+  instances[1].obj=1;
+  instances[1].x=150;
+  instances[1].y=450;
+  instances[1].sprite_index=instances[1].mask_index=1;
+  instances[1].image_xscale=instances[1].image_yscale=1;
+  vm.cur_self=&instances[0];
+
+  /* This is about the collision box, not the reported one: bbox_bottom has its own reading, pinned
+   * by the case above. Both edges are read off the same rounded position, which is the position the
+   * reported box is read off too, so the collision box changes where the instance's own row changes
+   * - at the half pixel - and not a whole pixel early on one side of it. At 420 it ends on the row
+   * before the neighbour's first, which the case above pins; it goes on ending there while the
+   * instance rounds to 420, and reaches the neighbour once it rounds to 421. */
+  const struct { const char *label; double y; int touching; } readings[]={
+    {"whole",420.0,0},
+    {"a tenth above",419.9,0},
+    {"a tenth below",420.1,0},
+    {"just under the half",420.4,0},
+    {"the half itself, which rounds to even",420.5,0},
+    {"past the half",420.6,1},
+    {"the next whole row",421.0,1},
+  };
+  for(unsigned i=0;i<sizeof readings/sizeof readings[0];i++){
+    instances[0].y=readings[i].y;
+    gml_colgrid_invalidate(&vm);
+    GmlVal meeting_args[3]={vreal(instances[0].x),vreal(instances[0].y),
+                            vreal((double)instances[1].id)};
+    GmlVal meeting=gml_builtin_call(&vm,"place_meeting",meeting_args,3);
+    int touching=(meeting.t==V_REAL && meeting.d!=0);
+    if(touching!=readings[i].touching){
+      fprintf(stderr,"%s: y=%.2f touching=%d, expected %d\n",
+        readings[i].label,readings[i].y,touching,readings[i].touching);
+      gml_builtin_state_destroy(vm.builtins);
+      return 0;
+    }
+  }
+  gml_builtin_state_destroy(vm.builtins);
+  return 1;
+}

@@ -65,7 +65,9 @@ int inst_bbox(GmlVM *vm, GmlInstance *in, double atx, double aty,
     double py1=(sprite.collision_bottom+1.0-sprite.origin_y)*ys;
     double minx = px0<px1? px0:px1, maxx = px0<px1? px1:px0;
     double miny = py0<py1? py0:py1, maxy = py0<py1? py1:py0;
-    *l=floor(atx+minx); *t=floor(aty+miny); *r=ceil(atx+maxx)-1.0; *b=ceil(aty+maxy)-1.0; return 1;
+    /* Round both edges at the instance position. The far edge is inclusive, so
+     * subtract one after rounding its exclusive coordinate. */
+    *l=gm_round(atx+minx); *t=gm_round(aty+miny); *r=gm_round(atx+maxx)-1.0; *b=gm_round(aty+maxy)-1.0; return 1;
   }
   double ang=in->image_angle*M_PI/180.0, c=cos(ang), sn=sin(ang);
   double minx=1e30,miny=1e30,maxx=-1e30,maxy=-1e30;
@@ -82,7 +84,7 @@ int inst_bbox(GmlVM *vm, GmlInstance *in, double atx, double aty,
     if(wy<miny) miny=wy;
     if(wy>maxy) maxy=wy;
   }
-  *l=floor(minx); *t=floor(miny); *r=ceil(maxx)-1.0; *b=ceil(maxy)-1.0; return 1;
+  *l=gm_round(minx); *t=gm_round(miny); *r=gm_round(maxx)-1.0; *b=gm_round(maxy)-1.0; return 1;
 }
 double point_to_instance_distance(GmlVM *vm,GmlInstance *in,double x,double y){
   double l,t,r,b;

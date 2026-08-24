@@ -34,6 +34,7 @@ int expect_authored_long_layer_background_binding(void);
 int expect_retired_builtin_script_shadow(void);
 int expect_deactivated_instance_reference(void);
 int expect_bounding_box_far_edges_by_generation(void);
+int expect_bounding_box_far_edges_at_a_fractional_position(void);
 int expect_room_camera_reservation(void);
 int expect_revision16_room_uses_legacy_view(void);
 int expect_room_order_boundaries(void);

@@ -28,6 +28,8 @@ int main(int argc,char **argv){
     {"retired_builtin_script_shadow",expect_retired_builtin_script_shadow},
     {"deactivated_instance_reference",expect_deactivated_instance_reference},
     {"bounding_box_far_edges_by_generation",expect_bounding_box_far_edges_by_generation},
+    {"bounding_box_far_edges_at_a_fractional_position",
+     expect_bounding_box_far_edges_at_a_fractional_position},
     {"room_camera_reservation",expect_room_camera_reservation},
     {"revision16_legacy_room_view",expect_revision16_room_uses_legacy_view},
     {"room_order_boundaries",expect_room_order_boundaries},
