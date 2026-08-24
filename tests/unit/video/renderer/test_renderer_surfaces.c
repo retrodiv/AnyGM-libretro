@@ -833,6 +833,48 @@ static int replace_and_classic_present_case(void){
   return 0;
 }
 
+/* Sampling a cleared application surface while another target is bound
+ * must realize its pending fill before copying pixels. */
+static int suspended_clear_read_back_case(void){
+  enum { WIDTH=4,HEIGHT=3 };
+  GmlRender render;
+  uint32_t screen[WIDTH*HEIGHT];
+  memset(&render,0,sizeof render);
+  for(int i=0;i<WIDTH*HEIGHT;i++) screen[i]=0xFF3060A0u;
+  render.fb=render.base_fb=screen;
+  render.fbw=render.base_fbw=WIDTH;
+  render.fbh=render.base_fbh=HEIGHT;
+  render.app_surface=screen;
+  render.app_w=WIDTH;
+  render.app_h=HEIGHT;
+  render.target_id=-1;
+  render.next_surface_id=1;
+  render.alphablend=1;
+  render.alpha=1.0;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.active_shader=-1;
+  render.lut_pal_sprite=-1;
+
+  int composed=gml_surface_create(&render,WIDTH,HEIGHT);
+  REQUIRE(composed==1,"composed surface id");
+  gml_render_clear(&render,0x000000u,1.0);
+  REQUIRE(screen[0]==0xFF3060A0u,
+          "the clear was performed at once, so this case cannot observe the deferred one");
+  REQUIRE(gml_surface_set_target(&render,composed),"composed surface target");
+  gml_draw_surface_stretched(&render,0,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  const uint32_t *composed_pixels=surface_pixels(&render,composed,NULL,NULL);
+  REQUIRE(composed_pixels!=NULL,"composed surface pixels");
+  for(int i=0;i<WIDTH*HEIGHT;i++)
+    REQUIRE((composed_pixels[i]&0x00FFFFFFu)==0u,
+            "the composed surface carries the picture the clear replaced");
+  gml_surface_reset_target(&render);
+  gml_surface_free(&render,composed);
+  return 0;
+}
+
 int main(void){
   GmlRender render;
   uint32_t base[8*6];
@@ -910,6 +952,7 @@ int main(void){
   REQUIRE(masked_sprite_surface_case()==0,"masked sprite surface case");
   REQUIRE(world_raster_scale_case()==0,"world raster scale case");
   REQUIRE(replace_and_classic_present_case()==0,"replace and classic present case");
+  REQUIRE(suspended_clear_read_back_case()==0,"suspended clear read-back case");
   puts("renderer surfaces: ok");
   return 0;
 }

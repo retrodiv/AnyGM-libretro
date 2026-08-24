@@ -62,6 +62,23 @@ static void surface_store_target_coverage(GmlRender *r){
     r->surface[i].all_transparent=r->fb_all_transparent;
   }
 }
+/* A read must realize a deferred fill on a suspended target before sampling.
+ * Match the backing buffer: application surface 0 may alias base target -1. */
+static void realize_suspended_fill(GmlRender *r,const uint32_t *px){
+  if(!r || !px) return;
+  for(int i=0;i<r->target_sp;i++){
+    if(r->target_stack[i].fb!=px || !r->target_stack[i].pending_fill) continue;
+    if(r->target_stack[i].w<=0 || r->target_stack[i].h<=0) continue;
+    size_t n=(size_t)r->target_stack[i].w*(size_t)r->target_stack[i].h;
+    uint32_t *p=r->target_stack[i].fb;
+    while(n>0){
+      int run=n>(size_t)INT_MAX?INT_MAX:(int)n;
+      gml_render_backend_fill_xrgb(p,run,r->target_stack[i].fill_color);
+      p+=run; n-=(size_t)run;
+    }
+    r->target_stack[i].pending_fill=0;
+  }
+}
 uint32_t *surface_pixels(GmlRender *r, int id, int *w, int *h){
   if(id==0){
     if(!r->app_surface) return NULL;
@@ -69,12 +86,14 @@ uint32_t *surface_pixels(GmlRender *r, int id, int *w, int *h){
      * presentation canvas — using target dims here read the view buffer with the wrong stride */
     if(w) *w=r->app_w?r->app_w:(r->base_fbw?r->base_fbw:r->fbw);
     if(h) *h=r->app_h?r->app_h:(r->base_fbh?r->base_fbh:r->fbh);
+    realize_suspended_fill(r,r->app_surface);
     return r->app_surface;
   }
   int i=surface_slot(id);
   if(i<0 || !r->surface[i].live || !r->surface[i].px) return NULL;
   if(w) *w=r->surface[i].w;
   if(h) *h=r->surface[i].h;
+  realize_suspended_fill(r,r->surface[i].px);
   return r->surface[i].px;
 }
 
