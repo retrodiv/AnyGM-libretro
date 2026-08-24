@@ -2173,7 +2173,9 @@ GmlVal gml_builtin_try_audio(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"audio_resume_sound")){ gml_audio_pause_sound(AU,(int)N(a,n,0),0); return vreal(0); }
     if(!strcmp(nm,"audio_pause_all")){ gml_audio_pause_all(AU,1); return vreal(0); }
     if(!strcmp(nm,"audio_resume_all")){ gml_audio_pause_all(AU,0); return vreal(0); }
-    if(!strcmp(nm,"audio_is_playing")||!strcmp(nm,"sound_isplaying")) return vreal(gml_audio_is_playing(AU,(int)N(a,n,0)));
+    if(!strcmp(nm,"audio_is_playing")||!strcmp(nm,"sound_isplaying")||
+       !strcmp(nm,"action_if_sound"))
+      return vreal(gml_audio_is_playing(AU,(int)N(a,n,0)));
 
     /* Streams use the existing external-audio loader. An unavailable stream returns -1 so it
      * cannot alias the valid sound index zero. */

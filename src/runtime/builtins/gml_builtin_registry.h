@@ -968,6 +968,7 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(881, SOUND_ADD, "sound_add", AUDIO, AUDIO, ALWAYS) \
   ENTRY(882, SOUND_GET_LENGTH, "sound_get_length", AUDIO, AUDIO, ALWAYS) \
   ENTRY(883, SOUND_ISPLAYING, "sound_isplaying", AUDIO, AUDIO, ALWAYS) \
+  ALIAS(SOUND_ISPLAYING, "action_if_sound", AUDIO, AUDIO, ALWAYS) \
   ENTRY(884, SOUND_LOOP, "sound_loop", AUDIO, AUDIO, ALWAYS) \
   ENTRY(885, SOUND_PLAY, "sound_play", AUDIO, AUDIO, ALWAYS) \
   ENTRY(886, SOUND_REPLACE, "sound_replace", AUDIO, AUDIO, ALWAYS) \

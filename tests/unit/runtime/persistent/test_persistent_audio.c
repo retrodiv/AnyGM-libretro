@@ -1164,7 +1164,12 @@ int expect_faudio_gms_portable_playback(void){
   ok=ok && source>=0 && sound>=0 && source!=sound &&
     gml_audio_exists(audio,source) && gml_audio_exists(audio,sound);
 
+  GmlVal sound_argument=vreal(sound);
+  GmlVal action_before=gml_builtin_call(&vm,"action_if_sound",&sound_argument,1);
+  ok=ok && action_before.t==V_REAL && action_before.d==0.0;
+
   (void)gml_builtin_call(&vm,"FAudioGMS_SoundInstance_Play",&instance,1);
+  GmlVal action_during=gml_builtin_call(&vm,"action_if_sound",&sound_argument,1);
   GmlVal gain_args[]={instance,vreal(0.25)};
   GmlVal pitch_args[]={instance,vreal(1.5)};
   (void)gml_builtin_call(&vm,"FAudioGMS_SoundInstance_SetVolume",gain_args,2);
@@ -1176,10 +1181,14 @@ int expect_faudio_gms_portable_playback(void){
     &vm,"FAudioGMS_SoundInstance_GetTrackLengthInSeconds",&instance,1);
   int16_t mixed[128]={0};
   gml_audio_mix(audio,mixed,64);
-  ok=ok && gml_audio_is_playing(audio,sound) && gain.t==V_REAL && gain.d==0.25 &&
+  ok=ok && gml_audio_is_playing(audio,sound) &&
+    action_during.t==V_REAL && action_during.d==1.0 &&
+    gain.t==V_REAL && gain.d==0.25 &&
     pitch_value.t==V_REAL && pitch_value.d==1.5 && length.t==V_REAL && length.d>0.09;
 
   (void)gml_builtin_call(&vm,"FAudioGMS_SoundInstance_Stop",&instance,1);
+  GmlVal action_after=gml_builtin_call(&vm,"action_if_sound",&sound_argument,1);
+  ok=ok && action_after.t==V_REAL && action_after.d==0.0;
   (void)gml_builtin_call(&vm,"FAudioGMS_SoundInstance_Destroy",&instance,1);
   ok=ok && !gml_audio_exists(audio,sound) && gml_audio_exists(audio,source);
   (void)gml_builtin_call(&vm,"FAudioGMS_StaticSound_Destroy",&loaded,1);
