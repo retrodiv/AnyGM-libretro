@@ -958,6 +958,54 @@ static int read_legacy_settings_tail(ClassicReader *r,int gm7,GmlcClassicSetting
   return 1;
 }
 
+/* After the key flags, the executable settings hold loading images, display
+ * options, error-handling words and author-defined constants. A malformed
+ * tail stops parsing while retaining fields already read. */
+static int read_gm7_executable_settings_rest(ClassicReader *r,GmlcClassicSettings *settings,
+                                             GmlcClassicManifest *manifest){
+  uint32_t loading_bar=0;
+  if(!reader_u32(r,&loading_bar,"executable loading-bar mode") || loading_bar>2u) return 0;
+  settings->loading_bar=loading_bar;
+  if(loading_bar==2u &&
+     (!read_legacy_image(r,manifest?&manifest->loading_bar_background:NULL,
+                         "executable loading-bar background") ||
+      !read_legacy_image(r,manifest?&manifest->loading_bar_foreground:NULL,
+                         "executable loading-bar foreground"))) return 0;
+  if(!read_legacy_image(r,manifest?&manifest->loading_image:NULL,
+                        "executable loading image")) return 0;
+  uint32_t transparent=0,alpha=0,scale=0,show=0,log=0,abort_errors=0,uninitialized=0,constants=0;
+  if(!reader_u32(r,&transparent,"executable loading transparency") ||
+     !reader_u32(r,&alpha,"executable loading alpha") ||
+     !reader_u32(r,&scale,"executable loading scaling") ||
+     !reader_u32(r,&show,"executable display errors") ||
+     !reader_u32(r,&log,"executable log errors") ||
+     !reader_u32(r,&abort_errors,"executable abort errors") ||
+     !reader_u32(r,&uninitialized,"executable uninitialized variables") ||
+     !reader_u32(r,&constants,"executable constant count")) return 0;
+  settings->loading_transparent=transparent!=0; settings->loading_alpha=alpha;
+  settings->scale_progress_bar=scale!=0; settings->show_errors=show!=0;
+  settings->log_errors=log!=0; settings->abort_errors=abort_errors!=0;
+  settings->uninitialized_as_zero=(uninitialized&1u)!=0;
+  settings->error_on_uninitialized_arguments=(uninitialized&2u)!=0;
+  if(constants>(r->size-r->pos)/8u) return 0;
+  if(manifest && constants){
+    manifest->constant_defs=(GmlcClassicConstant*)calloc(constants,sizeof(*manifest->constant_defs));
+    if(!manifest->constant_defs) return 0;
+    manifest->constant_def_count=constants;
+  }
+  for(uint32_t i=0;i<constants;i++){
+    if(manifest){
+      if(!reader_string_copy(r,&manifest->constant_defs[i].name,"executable constant name") ||
+         !reader_string_copy(r,&manifest->constant_defs[i].value,"executable constant value")){
+        manifest->constant_def_count=i;
+        return 0;
+      }
+    } else if(!reader_string(r,"executable constant name") ||
+              !reader_string(r,"executable constant value")) return 0;
+  }
+  return 1;
+}
+
 static int skip_legacy_settings(ClassicReader *r, uint32_t container_version,
                                 uint32_t *settings_version, GmlcClassicSettings *settings,
                                 uint32_t *constant_count, GmlcClassicManifest *manifest){
@@ -2146,7 +2194,11 @@ static int parse_legacy_executable_manifest(const uint8_t *file,size_t size,size
   }
   if(settings_reader.pos<=compressed_pos-4u &&
      compressed_pos-4u-settings_reader.pos>=8u*4u){
-    (void)read_legacy_settings_tail(&settings_reader,1,&settings);
+    if(read_legacy_settings_tail(&settings_reader,1,&settings)){
+      ClassicReader rest=settings_reader;
+      rest.size=compressed_pos-4u;
+      (void)read_gm7_executable_settings_rest(&rest,&settings,out);
+    }
   }
   int envelope_size=0;
   char *envelope=classic_inflate_owned(file+compressed_pos,compressed_size,
