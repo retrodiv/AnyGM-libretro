@@ -219,6 +219,8 @@ typedef struct {
    * per-code-entry paths, where re-reading them made the host lookup itself measurable. */
   int arrayset_filter_initialized;
   const char *arrayset_filter;
+  int arrayget_filter_initialized;
+  const char *arrayget_filter;
   int view_log_initialized;
   const char *view_log;
   int trace_filter_initialized;

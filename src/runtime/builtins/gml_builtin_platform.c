@@ -118,9 +118,11 @@ static int classic_execute_assignment(GmlVM *vm, const char *source){
   memcpy(lhs,source,ln); lhs[ln]=0; memcpy(value_name,rhs,rn); value_name[rn]=0;
   char *dot=strrchr(lhs,'.'); const char *field=dot?dot+1:lhs;
   GmlInstance *target=vm->cur_self;
+  int to_global=0;
   if(dot){
     *dot=0; target=NULL;
-    if(!strcmp(lhs,"self")) target=vm->cur_self;
+    if(!strcmp(lhs,"global")){ to_global=1; }
+    else if(!strcmp(lhs,"self")) target=vm->cur_self;
     else if(!strcmp(lhs,"other")) target=vm->cur_other;
     else {
       GmlVal *ref=vm->cur_self?gml_varmap_get(&vm->cur_self->vars,lhs):NULL;
@@ -132,7 +134,7 @@ static int classic_execute_assignment(GmlVM *vm, const char *source){
       if(!target){ int object=gml_object_index_by_name(vm,lhs); if(object>=0) target=gml_find_instance(vm,object); }
     }
   }
-  if(!target || !*field) return 0;
+  if((!target && !to_global) || !*field) return 0;
   char *end=NULL; double value=strtod(value_name,&end);
   if(!end || *end){
     value=0; int found=0; GmlRender *render=(GmlRender*)vm->render;
@@ -141,6 +143,7 @@ static int classic_execute_assignment(GmlVM *vm, const char *source){
     if(!found){ int object=gml_object_index_by_name(vm,value_name); if(object>=0){ value=object; found=1; } }
     if(!found) return 0;
   }
+  if(to_global){ *gml_varmap_put(&vm->globals,field)=vreal(value); return 1; }
   return gml_inst_var_set_val(vm,vreal(target->id),field,vreal(value));
 }
 static const char *classic_globalvar_keyword(const char *source){
@@ -202,6 +205,22 @@ static int classic_execute_identifier(const char **cursor,char *name,size_t size
 static int classic_execute_call_value(GmlVM *vm,const char **cursor,GmlVal *value){
   const char *source=*cursor;
   while(isspace((unsigned char)*source)) source++;
+  /* A string literal ends at the next occurrence of its opening quote in this bounded
+   * classic expression path. Rejecting a literal rejects its containing call. */
+  if(*source=='\'' || *source=='"'){
+    char quote=*source++;
+    const char *start=source;
+    while(*source && *source!=quote) source++;
+    if(*source!=quote) return 0;
+    size_t length=(size_t)(source-start);
+    if(length>4096) return 0;
+    char *text=(char*)malloc(length+1);
+    if(!text) return 0;
+    memcpy(text,start,length); text[length]=0;
+    *value=vstr_owned(text);
+    *cursor=source+1;
+    return 1;
+  }
   char *end=NULL;
   double number=strtod(source,&end);
   if(end && end>source){
@@ -234,6 +253,15 @@ static int classic_execute_call_value(GmlVM *vm,const char **cursor,GmlVal *valu
     *value=vreal(0);
   } else {
     *value=gml_vm_identifier_get(vm,first);
+    /* A bare identifier may name a resource constant. A missing variable and a variable
+     * holding zero both read as zero here. Resource precedence in that ambiguous case is
+     * a chosen policy, not a measured language rule. */
+    if(value->t==V_UNDEF || (value->t==V_REAL && value->d==0.0)){
+      int index=gml_room_index_by_name(vm->win,first);
+      if(index<0) index=gml_object_index_by_name(vm,first);
+      if(index<0) index=gml_render_named_sprite((GmlRender*)vm->render,first);
+      if(index>=0) *value=vreal(index);
+    }
   }
   *cursor=source;
   return 1;
@@ -281,13 +309,25 @@ static int classic_execute_call(GmlVM *vm,const char *source){
     snprintf(code_name,sizeof code_name,"gml_GlobalScript_%s",name);
     code_index=gml_code_index_by_name(vm->win,code_name);
   }
-  if(code_index<0) return 0;
+  if(code_index<0){
+    /* If no script has this name, resolve a supported runtime function through the
+     * existing builtin dispatch path. */
+    if(gml_builtin_fast_id(vm,name)<0){ gml_values_release(arguments,count); return 0; }
+    if(builtin_setting(vm,"GML_LOG_AUDIO"))
+      anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+                      "[execute_string] builtin %s argc=%d\n",name,count);
+    GmlVal answer=gml_builtin_call(vm,name,arguments,count);
+    gml_values_release(&answer,1);
+    gml_values_release(arguments,count);
+    return 1;
+  }
   if(builtin_setting(vm,"GML_LOG_AUDIO"))
     anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
                     "[execute_string] call %s argc=%d\n",name,count);
   GmlVal result=gml_vm_run_code(
       vm,code_index,vm->cur_self,vm->cur_other,arguments,count);
   gml_values_release(&result,1);
+  gml_values_release(arguments,count);
   return 1;
 }
 static int gm_datetime_calendar(double serial,AnygmCalendarTime *out){
@@ -468,10 +508,38 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
   }
   if(!strcmp(nm,"execute_string")){
     const char *source=S(vm,a,n,0);
-    int handled=classic_execute_globalvar(vm,source) ||
-                classic_execute_assignment(vm,source) ||
-                classic_execute_call(vm,source);
-    if(!handled && builtin_setting(vm,"GML_LOG_UNKNOWN")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gml] unsupported execute_string: %s\n",S(vm,a,n,0));
+    /* A constructed source string can contain several statements. Split only on top-level
+     * semicolons and continue after an unsupported shape so later statements are considered.
+     * A globalvar declaration applies to the whole fragment before individual statements. */
+    if(!classic_execute_globalvar(vm,source)){
+      const char *cursor=source;
+      char statement[1024];
+      int unhandled=0, statements=0;
+      while(*cursor && statements<64){
+        while(isspace((unsigned char)*cursor) || *cursor==';') cursor++;
+        if(!*cursor) break;
+        const char *start=cursor; char quote=0;
+        while(*cursor && (quote || *cursor!=';')){
+          if(quote){ if(*cursor==quote) quote=0; }
+          else if(*cursor=='\'' || *cursor=='"') quote=*cursor;
+          cursor++;
+        }
+        size_t length=(size_t)(cursor-start);
+        while(length && isspace((unsigned char)start[length-1])) length--;
+        if(!length || length>=sizeof statement) continue;
+        memcpy(statement,start,length); statement[length]=0;
+        statements++;
+        if(!classic_execute_assignment(vm,statement) &&
+           !classic_execute_call(vm,statement)){
+          unhandled=1;
+          if(builtin_setting(vm,"GML_LOG_UNKNOWN"))
+            anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+                            "[gml] unsupported execute_string statement: %s\n",statement);
+        }
+      }
+      if(unhandled && builtin_setting(vm,"GML_LOG_UNKNOWN"))
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gml] unsupported execute_string: %s\n",source);
+    }
     return vreal(0); }
   if(!strcmp(nm,"show_message")||!strcmp(nm,"show_message_async")||!strcmp(nm,"show_question")||!strcmp(nm,"action_message")||
      !strcmp(nm,"wd_message_simple")||

@@ -134,7 +134,6 @@ GmlArr *gml_arr_slot_ensure(GmlVal *slot){
 }
 /* Reject oversized indices before capacity doubling can overflow and zero-fill an
  * unbounded allocation. Out-of-range requests leave the array unchanged. */
-#define GML_ARR_MAX_INDEX 64000000
 /* Optional callback configured by the VM diagnostics owner; normally NULL. */
 void (*gml_arr_growth_hook)(int index,int length)=NULL;
 void gml_arr_index_ensure(GmlArr *A, int idx){
@@ -310,8 +309,8 @@ void gml_val_free(GmlValueFreeContext *context,GmlVal v){
   if(A->escaped && (!context || context->skip_escaped || !context->active)) return;
   /* defend against a corrupt GmlArr (garbage len/cap/data from a bad savestate) — free only the
    * struct, never walk a garbage data pointer. */
-  if(A->len<0 || A->cap<A->len || A->cap>16000000 || (A->len>0 && !A->data)){
-    free(A->row_len); if((uintptr_t)A->data>0x1000 && A->cap>=0 && A->cap<=16000000) free(A->data); free(A); return;
+  if(A->len<0 || A->cap<A->len || A->cap>GML_ARR_MAX_CAP || (A->len>0 && !A->data)){
+    free(A->row_len); if((uintptr_t)A->data>0x1000 && A->cap>=0 && A->cap<=GML_ARR_MAX_CAP) free(A->data); free(A); return;
   }
   /* Walk occupied row spans in the flat row*32000+col array layout. */
   if(A->is_2d && A->row_len){

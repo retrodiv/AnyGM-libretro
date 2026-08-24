@@ -308,10 +308,19 @@ static int argument_index(const char *name){
   }
   return *p? -1 : idx;
 }
+/* What an argument slot the caller did not supply reads as. The classic language has no undefined
+ * at all: a script owns sixteen argument slots and the ones a call leaves out are the number zero,
+ * so content routinely calls a script with fewer arguments and then tests the rest against 0 or
+ * passes them through string(). Reading undefined there turns string(argument4) into "" instead of
+ * "0", which is a different answer to every such test. Modern runtimes do have undefined and keep
+ * it. */
+static GmlVal argument_missing(GmlVM *vm){
+  return (vm && vm->win && anygm_policy_uses_classic_runtime(vm->win)) ? vreal(0) : vundef();
+}
 static int argument_get(GmlVM *vm, const char *name, GmlVal *out){
   if(!strcmp(name,"argument_count")){ *out=vreal(vm->script_argc); return 1; }
   int idx=argument_index(name);
-  if(idx>=0){ *out=(idx<vm->script_argc)? vm->script_args[idx] : vundef(); return 1; }
+  if(idx>=0){ *out=(idx<vm->script_argc)? vm->script_args[idx] : argument_missing(vm); return 1; }
   return 0;
 }
 static int argument_set(GmlVM *vm, const char *name, GmlVal v){
@@ -860,6 +869,17 @@ static const char *vm_arrayset_filter(GmlVM *vm){
   }
   return vm->diagnostics.arrayset_filter;
 }
+/* GML_DBG_ARRAYGET=<name>: the read side of GML_DBG_ARRAYSET. A write log alone cannot settle a
+ * loop that scans an array for a sentinel, because what such a loop needs is what the read
+ * answered, and a read that answers the out-of-range default looks identical to a value the
+ * content stored. */
+static const char *vm_arrayget_filter(GmlVM *vm){
+  if(!vm->diagnostics.arrayget_filter_initialized){
+    vm->diagnostics.arrayget_filter=anygm_host_development_setting(vm->host,"GML_DBG_ARRAYGET");
+    vm->diagnostics.arrayget_filter_initialized=1;
+  }
+  return vm->diagnostics.arrayget_filter;
+}
 static const char *vm_view_log(GmlVM *vm){
   if(!vm->diagnostics.view_log_initialized){
     vm->diagnostics.view_log=anygm_host_development_setting(vm->host,"GML_LOG_VIEW");
@@ -888,8 +908,14 @@ static void array_set_h(GmlVM *vm, GmlVarMap *locals, int inst_t, const char *nm
   { const char *debug_name=vm_arrayset_filter(vm);
     if(debug_name && nm && !strcmp(debug_name,nm)){
       
-      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[arrayset] f%ld scope=%d %s[%d] type=%d value=%.17g\n",
-              vm->frame,inst_t,nm,idx,v.t,v.t==V_REAL?v.d:0.0);
+      /* A string element printed as its numeric field is always "0", which says nothing about the
+       * write being traced. Print the text instead, bounded, so a wrong string is visible here. */
+      if(v.t==V_STR)
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[arrayset] f%ld scope=%d %s[%d] type=%d len=%d value=\"%.200s\"\n",
+                vm->frame,inst_t,nm,idx,v.t,v.s?(int)strlen(v.s):-1,v.s?v.s:"");
+      else
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[arrayset] f%ld scope=%d %s[%d] type=%d value=%.17g\n",
+                vm->frame,inst_t,nm,idx,v.t,v.t==V_REAL?v.d:0.0);
     }
   }
   {
@@ -1014,11 +1040,11 @@ static GmlVal array_get_h(
     GmlVal *slot=gml_varmap_get_hashed(&vm->globals,nm,nh);
     return slot?*slot:vreal(0);
   }
-  if(!strcmp(nm,"argument")) return (idx>=0 && idx<vm->script_argc && idx<16) ? vm->script_args[idx] : vundef();
+  if(!strcmp(nm,"argument")) return (idx>=0 && idx<vm->script_argc && idx<16) ? vm->script_args[idx] : argument_missing(vm);
   { int aidx=argument_index(nm);   /* `argumentN[idx]`: index INTO an array-valued argument (distinct from
        `argument[idx]`, the Nth arg). Missing this, serialize's `with(actions[i])` over an array passed as
        argument0 read 0 for every element, so every input binding serialised to "" and lost its default key. */
-    if(aidx>=0){ GmlVal av=(aidx<vm->script_argc)? vm->script_args[aidx] : vundef();
+    if(aidx>=0){ GmlVal av=(aidx<vm->script_argc)? vm->script_args[aidx] : argument_missing(vm);
       if(av.t==V_ARR && av.arr){ GmlVal nested; if(gml_arr_nested_get_flat(av,idx,&nested)) return nested;
         GmlArr *A=av.arr; if(idx>=0 && idx<A->len) return A->data[idx]; }
       return vreal(0); } }
@@ -1027,7 +1053,7 @@ static GmlVal array_get_h(
     if(!slot || slot->t!=V_ARR || !slot->arr) return vreal(0);
     GmlArr *array=slot->arr;
     if(!array->data || array->len<0 || array->cap<array->len ||
-       array->cap>16000000) return vreal(0);
+       array->cap>GML_ARR_MAX_CAP) return vreal(0);
     GmlVal nested;
     if(gml_arr_nested_get_flat(*slot,idx,&nested)) return nested;
     return (idx>=0 && idx<array->len)?array->data[idx]:vreal(0);
@@ -1046,12 +1072,25 @@ static GmlVal array_get_h(
     GmlInstance *owner=resolve_inst(vm,inst_t);
     if(inst_is_struct_ref(owner)) slot=struct_field_get_h(vm,owner,nm,nh);
   }
-  if(!slot||slot->t!=V_ARR) return vreal(0);
-  GmlArr *A=slot->arr;
-  /* defend against a corrupt/garbage GmlArr (e.g. a cross-version savestate) — never deref blindly */
-  if(!A || !A->data || A->len<0 || A->cap<A->len || A->cap>16000000) return vreal(0);
-  { GmlVal nested; if(gml_arr_nested_get_flat(*slot,idx,&nested)) return nested; }
-  return (idx>=0 && idx<A->len)? A->data[idx] : vreal(0);
+  GmlVal answer=vreal(0); const char *why="default";
+  if(slot && slot->t==V_ARR){
+    GmlArr *A=slot->arr;
+    /* defend against a corrupt/garbage GmlArr (e.g. a cross-version savestate) — never deref blindly */
+    if(!A || !A->data || A->len<0 || A->cap<A->len || A->cap>GML_ARR_MAX_CAP){ why="rejected"; }
+    else { GmlVal nested;
+      if(gml_arr_nested_get_flat(*slot,idx,&nested)){ answer=nested; why="nested"; }
+      else if(idx>=0 && idx<A->len){ answer=A->data[idx]; why="flat"; }
+      else why="out-of-range"; }
+  } else why=slot?"not-array":"unset";
+  { const char *debug_name=vm_arrayget_filter(vm);
+    if(debug_name && nm && !strcmp(debug_name,nm))
+      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+        "[arrayget] f%ld scope=%d %s[%d] %s type=%d value=%.17g len=%d 2d=%d h=%d\n",
+        vm->frame,inst_t,nm,idx,why,answer.t,answer.t==V_REAL?answer.d:0.0,
+        (slot&&slot->t==V_ARR&&slot->arr)?((GmlArr*)slot->arr)->len:-1,
+        (slot&&slot->t==V_ARR&&slot->arr)?((GmlArr*)slot->arr)->is_2d:-1,
+        (slot&&slot->t==V_ARR&&slot->arr)?((GmlArr*)slot->arr)->height2d:-1); }
+  return answer;
 }
 static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, uint32_t nh, int idx){
   if(!s) return vreal(0);
@@ -1063,7 +1102,7 @@ static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, 
                                          :gml_varmap_get_hashed(&s->vars,nm,nh);
   if(!slot || slot->t!=V_ARR || !slot->arr) return vreal(0);
   GmlArr *A=slot->arr;
-  if(!A || !A->data || A->len<0 || A->cap<A->len || A->cap>16000000) return vreal(0);
+  if(!A || !A->data || A->len<0 || A->cap<A->len || A->cap>GML_ARR_MAX_CAP) return vreal(0);
   { GmlVal nested; if(gml_arr_nested_get_flat(*slot,idx,&nested)) return nested; }
   return (idx>=0 && idx<A->len)? A->data[idx] : vreal(0);
 }
@@ -2228,7 +2267,7 @@ static int code_micro_try(GmlVM *vm, int ci, GmlVal *args, int n_args, GmlVal *o
     if(arr.t==V_ARR && arr.arr){
       GmlArr *A=(GmlArr*)arr.arr;
       int len=A->len;
-      if(len<0 || A->cap<len || A->cap>16000000 || !A->data) return 0;
+      if(len<0 || A->cap<len || A->cap>GML_ARR_MAX_CAP || !A->data) return 0;
       for(int i=0;i<len;i++){
         GmlVal item=A->data[i];
         micro_call_method_field1(vm,item,method,method_hash,arg0);
@@ -2404,7 +2443,7 @@ static int draw_loop_parse_argument(
       if(!slot || slot->t!=V_ARR || !slot->arr) return 0;
       GmlArr *array=slot->arr;
       if(array->nested_2d || !array->data || array->len<0 ||
-         array->cap<array->len || array->cap>16000000) return 0;
+         array->cap<array->len || array->cap>GML_ARR_MAX_CAP) return 0;
       argument->kind=GML_DRAW_LOOP_ARRAY;
       argument->array=array;
       *cursor=index+1;
@@ -2657,7 +2696,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
   GmlVarMap locals={0};
   int argc=n_args<0?0:(n_args<16?n_args:16);
   vm->script_argc=argc;
-  for(int i=0;i<16;i++) vm->script_args[i]=(i<argc && args)? args[i] : vundef();
+  for(int i=0;i<16;i++) vm->script_args[i]=(i<argc && args)? args[i] : argument_missing(vm);
   const char *arglog=anygm_host_development_setting(vm->host,"GML_LOG_CODE_ARGS");
   if(arglog && *arglog && strstr(w->code[ci].name,arglog)){
     
