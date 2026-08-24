@@ -239,9 +239,12 @@ int gmlc_classic_import_sprites(const GmlcClassicManifest *classic,
       sprite->width=(int)fields[0]; sprite->height=(int)fields[1];
       sprite->bbox_left=(int32_t)fields[2]; sprite->bbox_right=(int32_t)fields[3];
       sprite->bbox_bottom=(int32_t)fields[4]; sprite->bbox_top=(int32_t)fields[5];
-      sprite->bbox_mode=(int32_t)fields[9];
-      /* Legacy GM6/7 stores a precise-collision boolean, not the later shape enum. */
-      sprite->col_kind=fields[10]?0:1;
+      /* Legacy sprites store a precise-collision boolean, not the later shape enum, and
+         GM5 orders the flags differently from GM6/7: it puts the bounding-box mode right
+         after the transparency flag, where GM6/7 keep smoothing and preloading. */
+      int legacy_gm5=source->version<500u;
+      sprite->bbox_mode=(int32_t)(legacy_gm5?fields[7]:fields[9]);
+      sprite->col_kind=(legacy_gm5?fields[9]:fields[10])?0:1;
       sprite->xorig=(int32_t)fields[11]; sprite->yorig=(int32_t)fields[12];
       sprite->n_frames=(int)frames;
       sprite->frame_paths=(char**)calloc(frames?frames:1,sizeof(*sprite->frame_paths));

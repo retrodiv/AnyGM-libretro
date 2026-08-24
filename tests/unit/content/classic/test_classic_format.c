@@ -366,7 +366,7 @@ static int expect_legacy_executable_manifest(void){
        manifest.inventory.header.version==GMLC_CLASSIC_GM7 &&
        manifest.inventory.header.game_id==0x24681357 && manifest.inventory.settings_version==702 &&
        manifest.inventory.settings.interpolate==1 && manifest.inventory.settings.scaling==150 &&
-       manifest.existing[GMLC_CLASSIC_SPRITE]==1 &&
+       manifest.existing[GMLC_CLASSIC_SPRITE]==2 &&
        manifest.existing[GMLC_CLASSIC_BACKGROUND]==1 &&
        manifest.existing[GMLC_CLASSIC_PATH]==1 &&
        manifest.existing[GMLC_CLASSIC_SCRIPT]==1 &&
@@ -390,14 +390,15 @@ static int expect_legacy_executable_manifest(void){
        gmlc_classic_import_fonts(&manifest,&project,"tmp",err,sizeof(err)) &&
        gmlc_classic_import_rooms(&manifest,&project,"tmp",err,sizeof(err));
     if(!ok) fprintf(stderr,"legacy executable import failed: %s\n",err);
-    if(ok) ok=project.n_sprites==2 && project.n_memory_files>=2 &&
+    if(ok) ok=project.n_sprites==3 && project.n_memory_files>=2 &&
       project.memory_files[0].kind==GMLC_MEMORY_RGBA && project.memory_files[0].size==8 &&
       project.memory_files[0].width==2 && project.memory_files[0].height==1 &&
       project.memory_files[0].data[0]==0 && project.memory_files[0].data[1]==192 &&
       project.memory_files[0].data[2]==0 && project.memory_files[0].data[3]==0 &&
       project.memory_files[0].data[4]==0 && project.memory_files[0].data[5]==192 &&
       project.memory_files[0].data[6]==0 && project.memory_files[0].data[7]==255 &&
-      project.sprites[0].col_kind==0 &&
+      project.sprites[0].col_kind==0 && project.sprites[0].bbox_mode==0 &&
+      project.sprites[1].col_kind==1 && project.sprites[1].bbox_mode==2 &&
       project.memory_files[1].data[0]==11 && project.memory_files[1].data[2]==13 &&
       project.n_paths==1 && project.paths[0].kind==1 && project.paths[0].closed &&
       project.paths[0].precision==4 && project.paths[0].n_points==2 &&
