@@ -763,8 +763,13 @@ static GmlInstance *instance_create_configured(GmlVM *vm, double x, double y, in
     anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[create] f%ld %s id=%u @(%.0f,%.0f) spr=%d caller=%s/%u event=%s\n",vm->frame,
       (obj>=0&&obj<vm->n_objects)?vm->objects[obj].name:"?",in->id,x,y,(int)in->sprite_index,
       caller_name?caller_name:"?",caller?caller->id:0,vm->cur_event?vm->cur_event:"?"); }
-  gml_run_event(vm,in,"PreCreate_0");   /* GMS2: runs before Create; sets IDE variable-definitions */
-  gml_run_event(vm,in,"Create_0");
+  /* An engine-fired Create has no calling instance. Clear the caller's `other`
+   * temporarily so event dispatch resolves it to the new instance. */
+  { GmlInstance *saved_other=vm->cur_other;
+    vm->cur_other=NULL;
+    gml_run_event(vm,in,"PreCreate_0");   /* GMS2: runs before Create; sets IDE variable-definitions */
+    gml_run_event(vm,in,"Create_0");
+    vm->cur_other=saved_other; }
   return in;
 }
 GmlInstance *gml_instance_create_depth(GmlVM *vm, double x, double y, int obj, int have_depth, double depth){
@@ -789,7 +794,12 @@ void gml_instance_change(GmlVM *vm, GmlInstance *in, int obj, int perform_events
   }
   apply_object_defaults(vm,in,obj);
   gml_vm_instances_link(vm,in);
-  if(perform_events && in->active && !in->marked){ gml_run_event(vm,in,"PreCreate_0"); gml_run_event(vm,in,"Create_0"); }
+  if(perform_events && in->active && !in->marked){
+    GmlInstance *saved_other=vm->cur_other;
+    vm->cur_other=NULL;                       /* as above: this Create has no caller either */
+    gml_run_event(vm,in,"PreCreate_0"); gml_run_event(vm,in,"Create_0");
+    vm->cur_other=saved_other;
+  }
 }
 void gml_instance_destroy_with_event(GmlVM *vm, GmlInstance *in, int perform_destroy_event){
   /* An instance stops being a live destruction target before its Destroy event runs.  Destroy
