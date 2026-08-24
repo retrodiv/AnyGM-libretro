@@ -245,7 +245,9 @@ int gml_sprite_collision(GmlRender *r, int sprite, int frame, int lx, int ly){
     return fabs((lx-cx)/hw)+fabs((ly-cy)/hh)<=1.0;
   }
   if(s->mask && s->mask_count>0){
-    int mi=(s->mask_count>1 && frame>=0 && frame<s->mask_count)? frame : 0;
+    /* Select the displayed subimage's mask, wrapping out-of-range indices. */
+    int mi=0;
+    if(s->mask_count>1){ mi=frame%s->mask_count; if(mi<0) mi+=s->mask_count; }
     const uint8_t *m=s->mask + (size_t)mi*s->mask_rowb*s->h;
     return (m[(size_t)ly*s->mask_rowb + lx/8] >> (7-(lx%8))) & 1;
   }

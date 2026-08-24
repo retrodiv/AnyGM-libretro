@@ -344,16 +344,26 @@ static int global_frame_index(const GmlcProject *p, int sprite, int frame){
   return n+frame;
 }
 
+/* Classic precise sprites before revision 800 use a mask per subimage.
+ * Shaped sprites retain one mask derived from their shared bounding box. */
+static int sprite_masks_are_per_subimage(const GmlcProject *project,const GmlcSprite *sprite){
+  if(sprite->sep_masks) return 1;
+  return project && project->classic_version && project->classic_version<800 &&
+         sprite->col_kind==0;
+}
+
 static uint8_t *load_sprite_mask_alpha(const GmlcProject *project,const GmlcSprite *sprite,
                                        int mask_index,char *err,size_t errcap){
   size_t pixels=(size_t)sprite->width*(size_t)sprite->height;
   uint8_t *alpha=(uint8_t*)calloc(pixels?pixels:1u,1u);
   if(!alpha){ snprintf(err,errcap,"out of memory while reading sprite mask images"); return NULL; }
-  /* Revision 800 combines all subimage alpha planes into one shared precise mask.
-   * Earlier classic layouts retain the last subimage instead. */
-  int first_frame=sprite->sep_masks?mask_index:
-                  (project->classic_version>=800?0:sprite->n_frames-1);
-  int end_frame=sprite->sep_masks?mask_index+1:sprite->n_frames;
+  /* Revision 800 shared precise masks combine subimage alpha planes. For an
+   * earlier shaped sprite, the final subimage supplies shared automatic bounds. */
+  int per_subimage=sprite_masks_are_per_subimage(project,sprite);
+  int first_frame=per_subimage?mask_index:
+                  (project && project->classic_version && project->classic_version<800?
+                   sprite->n_frames-1:0);
+  int end_frame=per_subimage?mask_index+1:sprite->n_frames;
   for(int frame=first_frame;frame<end_frame;frame++){
     int width=0,height=0,components=0;
     const char *path=(sprite->frame_paths && sprite->frame_paths[frame])?
@@ -409,7 +419,7 @@ static int write_sprite_masks(Pkg *pkg, const GmlcProject *project,
     wu32(&pkg->b,0);
     return 1;
   }
-  int mask_count=sp->sep_masks ? sp->n_frames : 1;
+  int mask_count=sprite_masks_are_per_subimage(project,sp) ? sp->n_frames : 1;
   if(mask_count<=0) mask_count=1;
   size_t mask_bytes=(size_t)rowb*(size_t)sp->height;
   if(sp->collision_mask_data && sp->collision_mask_stride==mask_bytes &&
@@ -490,7 +500,7 @@ int write_sprt(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
     wu32(&pkg->b,0);
     wu32(&pkg->b,1);
     wi32(&pkg->b,sp->bbox_mode);
-    wu32(&pkg->b,(uint32_t)(sp->sep_masks?1:0));
+    wu32(&pkg->b,(uint32_t)(sprite_masks_are_per_subimage(p,sp)?1:0));
     wi32(&pkg->b,sp->xorig);
     wi32(&pkg->b,sp->yorig);
     wi32(&pkg->b,-1);

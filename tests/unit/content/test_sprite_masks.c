@@ -1,11 +1,10 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
-/* GM8 builds a shared collision mask from all subimages when separate masks are disabled. This
- * test pins that union as well as automatic per-subimage bounds and sparse runtime sprite IDs.
- */
-/* A sprite without separate collision masks carries one shared mask. The shared-mask contract uses
- * the final subimage's silhouette, and this test distinguishes that result from a union. */
+/* Test shared revision-800 masks, per-subimage classic precise masks, shaped
+ * masks, automatic bounds, and sparse runtime sprite IDs. */
+/* Earlier shaped sprites use the final subimage for shared automatic bounds;
+ * revision-800 shared precise masks combine their subimages. */
 #include "gml_render_internal.h"
 #include "gmlc_package.h"
 #include "gmlc_project.h"
@@ -191,21 +190,55 @@ int main(void){
   REQUIRE(snprintf(legacy_path,sizeof legacy_path,"%s/legacy.win",directory)<
           (int)sizeof legacy_path,"legacy fixture path");
   project.classic_version=700;
+  /* Check precise per-subimage and shaped shared masks in one package. */
+  sprites[1].sep_masks=0;
   int legacy_packaged=gmlc_package_write_structural(&project,legacy_path,error,sizeof error);
   GmlWin legacy_win;
   GmlRender legacy_render;
   int legacy_loaded=legacy_packaged && anygm_stdio_load_win(&legacy_win,legacy_path)==0;
   int legacy_rendered=legacy_loaded && gml_render_init(&legacy_render,&legacy_win)==0;
   if(legacy_rendered){
+    /* Earlier precise sprites use per-subimage masks without a separate-mask flag. */
     const GmlSprite *legacy=&legacy_render.spr[1];
-    for(int y=0;y<SPRITE_SIZE;y++) for(int x=0;x<SPRITE_SIZE;x++){
-      int expected=x<2;
-      if(mask_bit(legacy,x,y)!=expected){
-        fprintf(stderr,"sprite masks failed: shared GM7 mask at %d,%d is %d, last says %d\n",
-                x,y,mask_bit(legacy,x,y),expected);
-        failures++;
-        y=SPRITE_SIZE; break;
-      }
+    const int legacy_columns[2]={SPRITE_SIZE,2};
+    if(legacy->mask_count!=2){
+      fprintf(stderr,"sprite masks failed: GM7 sprite carries %d masks, one per subimage says 2\n",
+              legacy->mask_count);
+      failures++;
+    }else{
+      for(int map=0;map<2;map++)
+        for(int y=0;y<SPRITE_SIZE;y++)
+          for(int x=0;x<SPRITE_SIZE;x++){
+            int expected=x<legacy_columns[map];
+            const uint8_t *mask=legacy->mask+(size_t)map*(size_t)legacy->mask_rowb*
+                                (size_t)SPRITE_SIZE;
+            int actual=(mask[(size_t)y*(size_t)legacy->mask_rowb+(size_t)x/8u]>>(7-(x&7)))&1;
+            if(actual!=expected){
+              fprintf(stderr,
+                      "sprite masks failed: GM7 mask %d at %d,%d is %d, subimage %d says %d\n",
+                      map,x,y,actual,map,expected);
+              failures++;
+              y=SPRITE_SIZE; break;
+            }
+          }
+    }
+    const GmlSprite *shaped=&legacy_render.spr[3];
+    if(shaped->mask_count!=1){
+      fprintf(stderr,"sprite masks failed: shaped GM7 sprite carries %d masks, one says 1\n",
+              shaped->mask_count);
+      failures++;
+    }else{
+      for(int y=0;y<SPRITE_SIZE;y++)
+        for(int x=0;x<SPRITE_SIZE;x++){
+          int expected=x>=4 && y>=5;
+          if(mask_bit(shaped,x,y)!=expected){
+            fprintf(stderr,
+                    "sprite masks failed: shaped GM7 mask at %d,%d is %d, last bounds say %d\n",
+                    x,y,mask_bit(shaped,x,y),expected);
+            failures++;
+            y=SPRITE_SIZE; break;
+          }
+        }
     }
     gml_render_free(&legacy_render);
   }
