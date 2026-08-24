@@ -218,6 +218,7 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(134, GPU_SET_TEXFILTER, "gpu_set_texfilter", PLATFORM, PLATFORM_NOOPS, ALWAYS) \
   ALIAS(GPU_SET_TEXFILTER, "gpu_set_tex_filter", PLATFORM, PLATFORM_NOOPS, ALWAYS) \
   ALIAS(GPU_SET_TEXFILTER, "gpu_set_texfilter_ext", PLATFORM, PLATFORM_NOOPS, ALWAYS) \
+  ALIAS(GPU_SET_TEXFILTER, "texture_set_interpolation_ext", PLATFORM, PLATFORM_NOOPS, ALWAYS) \
   ENTRY(135, WINDOW_HAS_FOCUS, "window_has_focus", PLATFORM, PLATFORM_EXTENSIONS, ALWAYS) \
   ENTRY(136, SPRITE_EXISTS, "sprite_exists", DRAW, DRAW, ALWAYS) \
   ENTRY(137, SPRITE_GET_WIDTH, "sprite_get_width", DRAW, DRAW, ALWAYS) \

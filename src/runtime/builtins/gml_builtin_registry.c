@@ -246,7 +246,9 @@ static GmlVal gml_builtin_call_fast_id_impl(GmlVM *vm, int id, const char *nm, G
     case BID_DS_LIST_CLEAR:
       gml_ds_list_clear_direct(vm,(int)N(a,n,0)); return vreal(0);
     case BID_GPU_SET_TEXFILTER:
-      builtin_set_interpolation(R,N(a,n,(!strcmp(nm,"gpu_set_texfilter_ext") && n>1)?1:0)!=0.0);
+      builtin_set_interpolation(R,N(a,n,
+        ((!strcmp(nm,"gpu_set_texfilter_ext") ||
+          !strcmp(nm,"texture_set_interpolation_ext")) && n>1)?1:0)!=0.0);
       return vreal(0);
     case BID_WINDOW_HAS_FOCUS:
       return vreal(1);

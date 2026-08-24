@@ -273,6 +273,26 @@ static int function_value_and_alias_resolution(GmlVM *vm){
          expect_real("alternate exact alias",colour,expected);
 }
 
+static int texture_interpolation_ext_alias(GmlVM *vm,LogFixture *log_fixture){
+  void *prior_render=vm->render;
+  GmlRender render={0};
+  vm->render=&render;
+  int logs_before=log_fixture->count;
+  int ok=1;
+  GmlVal enable[]={vreal(7),vreal(1)};
+  GmlVal disable[]={vreal(7),vreal(0)};
+  ok&=expect_real("texture interpolation ext enable return",
+                  call_fast(vm,"texture_set_interpolation_ext",enable,2,&ok),0);
+  ok&=render.interp==1;
+  ok&=expect_real("texture interpolation ext disable return",
+                  call_fast(vm,"texture_set_interpolation_ext",disable,2,&ok),0);
+  ok&=render.interp==0;
+  ok&=log_fixture->count==logs_before;
+  if(!ok) fprintf(stderr,"texture_set_interpolation_ext did not select its enable argument\n");
+  vm->render=prior_render;
+  return ok;
+}
+
 static int hsv_color_byte_wrapping(GmlVM *vm){
   static const struct {
     double hue;
@@ -1132,6 +1152,7 @@ int main(void){
          script_resolution_order(&vm,&log_fixture) &&
          show_error_contract(&vm,&log_fixture) &&
          function_value_and_alias_resolution(&vm) &&
+         texture_interpolation_ext_alias(&vm,&log_fixture) &&
          hsv_color_byte_wrapping(&vm) &&
          gain_conversion(&vm) &&
          action_variable_comparisons(&vm) &&

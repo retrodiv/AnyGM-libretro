@@ -881,8 +881,11 @@ GmlVal gml_builtin_try_platform_noops(GmlVM *vm, const char *nm, GmlVal *a, int 
     return vreal(0); }
   if(!strcmp(nm,"texture_set_repeat")) return vreal(0);
   if(!strcmp(nm,"gpu_set_texfilter")||!strcmp(nm,"gpu_set_texfilter_ext")||
+     !strcmp(nm,"texture_set_interpolation_ext")||
      !strcmp(nm,"gpu_set_tex_filter")||!strcmp(nm,"gpu_set_tex_filter_ext")){
-    int enable=(!strcmp(nm,"gpu_set_texfilter_ext")||!strcmp(nm,"gpu_set_tex_filter_ext")) && n>1 ? 1 : 0;
+    int enable=(!strcmp(nm,"gpu_set_texfilter_ext")||
+                !strcmp(nm,"gpu_set_tex_filter_ext")||
+                !strcmp(nm,"texture_set_interpolation_ext")) && n>1 ? 1 : 0;
     GmlRender *R=(GmlRender*)vm->render; builtin_set_interpolation(R,N(a,n,enable)!=0.0); return vreal(0); }
   if(!strcmp(nm,"gpu_get_texfilter")||!strcmp(nm,"gpu_get_tex_filter")){
     GmlRender *R=(GmlRender*)vm->render; return vreal(builtin_draw_state(R).interpolation); }
