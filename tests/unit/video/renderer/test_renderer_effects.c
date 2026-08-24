@@ -743,6 +743,71 @@ static void check_solid_alpha_mask_pixels(void) {
          "constant-colour alpha-mask pixel kernel diverged from its parsed graph");
 }
 
+/* A degenerate fog range produces a flat sprite silhouette at the fog
+ * colour while retaining texture coverage. The fixture also verifies the
+ * content-to-framebuffer channel order. */
+static uint32_t flat_fog_pixel(int fogged, unsigned texel_alpha) {
+  uint8_t rgba[4];
+  int frame_index = 0;
+  uint32_t pixels[1] = {0xff204060u};
+  GmlSprite sprite;
+  GmlTpag tpag;
+  GmlAtlas atlas;
+  GmlRender render;
+
+  memset(&sprite, 0, sizeof(sprite));
+  memset(&tpag, 0, sizeof(tpag));
+  memset(&atlas, 0, sizeof(atlas));
+  memset(&render, 0, sizeof(render));
+  rgba[0] = 16;
+  rgba[1] = 224;
+  rgba[2] = 96;
+  rgba[3] = (uint8_t)texel_alpha;
+  sprite.w = 1;
+  sprite.h = 1;
+  sprite.n_frames = 1;
+  sprite.frame = &frame_index;
+  tpag.sw = tpag.bw = 1;
+  tpag.sh = tpag.bh = 1;
+  tpag.atlas = 0;
+  atlas.w = 1;
+  atlas.h = 1;
+  atlas.px = rgba;
+  render.fb = render.base_fb = pixels;
+  render.fbw = render.base_fbw = 1;
+  render.fbh = render.base_fbh = 1;
+  render.spr = &sprite;
+  render.n_spr = 1;
+  render.tpag = &tpag;
+  render.n_tpag = 1;
+  render.atlas = &atlas;
+  render.n_atlas = 1;
+  render.active_shader = -1;
+  render.alpha = 1.0;
+  render.alphablend = 1;
+  render.color_write_mask = 0x0f;
+  render.target_id = -1;
+  gml_render_set_flat_fog(&render, fogged, 0x000000ffu);
+  /* A blend that is not white, so a result carrying the texel would be visibly not the fog. */
+  gml_draw_sprite_ext(&render, 0, 0, 0, 0, 1.0, 1.0, 0.0, 0x0000ff00u, 1.0);
+  return pixels[0];
+}
+
+static void check_flat_fog_silhouette_pixels(void) {
+  expect(flat_fog_pixel(1, 255) == 0xffff0000u,
+         "a fully covered fogged fragment did not land as the fog colour");
+  expect(flat_fog_pixel(0, 255) != 0xffff0000u,
+         "the unfogged draw already produced the fog colour, so the case proves nothing");
+  expect(flat_fog_pixel(1, 0) == 0xff204060u,
+         "fog painted where the sprite had no coverage, so the silhouette lost its shape");
+  {
+    uint32_t half = flat_fog_pixel(1, 128);
+    unsigned red = (half >> 16) & 0xffu, green = (half >> 8) & 0xffu, blue = half & 0xffu;
+    expect(red > 0x20u && red < 0xffu && green < 0x40u && blue < 0x60u,
+           "a half-covered fogged fragment did not blend the fog colour over the destination");
+  }
+}
+
 static void check_solid_blur_alpha_pixels(void) {
   uint8_t rgba[3 * 3 * 4];
   int frame_index = 0;
@@ -1383,6 +1448,7 @@ int main(void) {
   check_palette_alpha_threshold();
   check_zero_reference_alpha_test_pixels();
   check_solid_alpha_mask_pixels();
+  check_flat_fog_silhouette_pixels();
   check_solid_blur_alpha_pixels();
   check_skeleton_asset_and_pose();
   check_optimized_primitives();

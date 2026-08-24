@@ -690,6 +690,16 @@ int gml_render_surface_mirror_pixels(GmlRender *r,int destination,
     r,saved_pixels,saved_width,saved_height,saved_opaque);
   return mirrored;
 }
+/* Fully fogged fragments use the fog colour after texture and diffuse colour,
+ * retaining sprite coverage. A degenerate range applies at every depth; an
+ * ordinary range leaves near-plane sprite drawing unchanged. */
+void gml_render_set_flat_fog(GmlRender *r,int enabled,uint32_t colour){
+  if(!r) return;
+  r->fog_flat=enabled?1:0;
+  /* The caller hands a content colour, which orders its channels blue-green-red; the framebuffer
+   * orders them the other way. */
+  r->fog_flat_rgb=((colour&0xFFu)<<16)|(colour&0xFF00u)|((colour>>16)&0xFFu);
+}
 int gml_render_draw_state_get(const GmlRender *r,GmlRenderDrawState *state){
   if(!state) return 0;
   memset(state,0,sizeof(*state));
@@ -1263,6 +1273,7 @@ void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, doubl
   gml_d3_sync_render_camera(r);
   r->alphablend=1;
   r->blendmode=0;
+  r->fog_flat=0;
   r->blend_equation=r->blend_equation_alpha=1; r->gpu_state_sp=0; r->active_shader=-1;
   /* The fixed-function renderer restores normal source-alpha drawing when it begins a target
    * pass. A draw_enable_alphablend(false) still affects the rest of its current pass, but it must

@@ -279,6 +279,8 @@ typedef struct GmlRender {
   GmlSurface surface[GML_MAX_SURFACES]; int next_surface_id;
   /* draw state */
   uint32_t  color;  double alpha; int halign, valign, font, alphablend, circle_precision;
+  /* Fixed-function flat fog state for ordinary sprite drawing. */
+  int       fog_flat; uint32_t fog_flat_rgb;
   int       alpha_test_enable;      /* fixed-function alpha-test state (disabled by default) */
   uint8_t   alpha_test_ref;         /* inclusive 0..255 reference set by gpu_set_alphatestref */
   uint8_t   color_write_mask; /* gpu_set_colorwriteenable RGBA bits 0..3; defaults to all enabled */

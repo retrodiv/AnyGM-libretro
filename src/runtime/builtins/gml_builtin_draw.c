@@ -1475,6 +1475,9 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
     control.fog_end=N(a,n,3);
     gml_software3d_control_update(
       graphics,&control,GML_SOFTWARE3D_CONTROL_FOG);
+    /* A degenerate fog range fully fogs ordinary sprite fragments as well as
+     * three-dimensional geometry, regardless of depth. */
+    gml_render_set_flat_fog(R,control.fog && control.fog_end<=control.fog_start,control.fog_color);
     return vreal(0);
   }
   if(!strcmp(nm,"d3d_set_culling")){

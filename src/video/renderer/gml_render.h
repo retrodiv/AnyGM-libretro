@@ -362,6 +362,7 @@ int gml_render_application_surface_select_owned(GmlRender *r,int opaque);
 int gml_render_surface_mirror_pixels(GmlRender *r,int destination,
                                      uint32_t *pixels,int width,int height,
                                      int opaque);
+void gml_render_set_flat_fog(GmlRender *r,int enabled,uint32_t colour);
 int gml_render_draw_state_get(const GmlRender *r,GmlRenderDrawState *state);
 void gml_render_draw_state_update(GmlRender *r,const GmlRenderDrawState *state,
                                   unsigned fields);

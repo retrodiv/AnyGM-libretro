@@ -2653,20 +2653,27 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
       uint32_t *dp=&r->fb[(size_t)py*r->fbw+px];
       if(replace){
         unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
-        *dp=(gml_render_target_preserves_alpha(r)?(uint32_t)source_alpha<<24:0xFF000000u)|
-            (uint32_t)((((sampled>>16)&255)*bR/255)<<16)|
-            (uint32_t)((((sampled>>8)&255)*bG/255)<<8)|
-            (uint32_t)((sampled&255)*bB/255);
+        uint32_t rgb=r->fog_flat?r->fog_flat_rgb
+                    :(uint32_t)((((sampled>>16)&255)*bR/255)<<16)|
+                     (uint32_t)((((sampled>>8)&255)*bG/255)<<8)|
+                     (uint32_t)((sampled&255)*bB/255);
+        *dp=(gml_render_target_preserves_alpha(r)?(uint32_t)source_alpha<<24:0xFF000000u)|rgb;
         continue;
       }
       int family=gml_blend_family(r);
       int tint_bias=family==GML_BLEND_STUDIO2?127:0;
       /* A solid-blur fragment's colour is its uniform alone: v_vColour never reaches it. */
-      int sr=solid_blur_alpha?(int)((sampled>>16)&255)
+      /* A fully fogged fragment is the fog colour: fog is applied after the texture and the
+       * diffuse colour, so neither the texel nor the draw's blend reaches the result. Its own
+       * coverage is what still varies across the sprite, which is what makes the silhouette. */
+      int sr=r->fog_flat?(int)((r->fog_flat_rgb>>16)&255)
+            :solid_blur_alpha?(int)((sampled>>16)&255)
             :(int)((((sampled>>16)&255)*bR+tint_bias)/255);
-      int sg=solid_blur_alpha?(int)((sampled>>8)&255)
+      int sg=r->fog_flat?(int)((r->fog_flat_rgb>>8)&255)
+            :solid_blur_alpha?(int)((sampled>>8)&255)
             :(int)((((sampled>>8)&255)*bG+tint_bias)/255);
-      int sb=solid_blur_alpha?(int)(sampled&255)
+      int sb=r->fog_flat?(int)(r->fog_flat_rgb&255)
+            :solid_blur_alpha?(int)(sampled&255)
             :(int)(((sampled&255)*bB+tint_bias)/255);
       if(!r->alphablend){ *dp=0xFF000000u|(sr<<16)|(sg<<8)|sb; continue; }
       uint32_t destination=*dp;
@@ -2842,7 +2849,8 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   uint32_t *solid_blur_alpha=solid_blur
     ? tpag_solid_blur_alpha_cache(r,t,a,solid_blur) : NULL;
   int mapped_shader=mapped_texture_active(r) || solid_blur_alpha ||
-                    shader_alpha_test_requires_filter(r) || wave!=NULL || uvwave!=NULL;
+                    shader_alpha_test_requires_filter(r) || wave!=NULL || uvwave!=NULL ||
+                    r->fog_flat;
   if(!t->alpha_scanned) (void)tpag_alpha_bounds(r,t,a,NULL,NULL,NULL,NULL);
   gml_render_maybe_prepare_draw(r);
   gml_render_write_authored_margin(r,t,dx,dy,axs,ays);
@@ -2873,7 +2881,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     fabs(dx-nearbyint(dx))<1e-9 && fabs(dy-nearbyint(dy))<1e-9 &&
     alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu &&
     r->blendmode==0 && !mapped_shader;
-  if(r->interp && studio_texture_filtering &&
+  if(r->interp && studio_texture_filtering && !r->fog_flat &&
      !wave && !uvwave && !exact_studio_white_copy){
     int columns=xx1-xx0;
     int *source_a=columns>0?malloc((size_t)columns*sizeof(*source_a)):NULL;
