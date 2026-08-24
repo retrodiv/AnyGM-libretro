@@ -520,10 +520,9 @@ static void check_render_pass_restores_normal_blending(void){
          "a new render-target pass retained disabled or non-normal blending");
 }
 
-/* A first-generation application surface can be fractionally larger than the logical camera.
- * Tiles are independent quads, so their coverage must retain the fractional position of each
- * projected edge.  When outward rounding puts the final sample just beyond a subrectangle, the
- * first contiguous atlas texel supplies it rather than leaving a transparent line. */
+/* Independently projected tile quads retain their fractional position.
+ * Centre sampling keeps the selected rows inside the subrectangle and
+ * prevents an unfilled transparent line at its edge. */
 static void check_first_generation_fractional_tile_projection(void){
   enum { LOGICAL_HEIGHT=26, SURFACE_HEIGHT=30, WIDTH=1 };
   uint8_t rgba[LOGICAL_HEIGHT*4];
@@ -568,7 +567,7 @@ static void check_first_generation_fractional_tile_projection(void){
   gml_render_begin(&render,application,WIDTH,SURFACE_HEIGHT,0.0,0.0);
   gml_render_world_set_logical_extent(&render,WIDTH,LOGICAL_HEIGHT);
   gml_draw_background_tile(&render,0,0,1,1,3,0,1,1,1,0,0,0,0xffffff,1.0);
-  static const int expected_source[4]={1,2,3,4};
+  static const int expected_source[4]={1,2,3,3};
   for(int y=1;y<=4;y++){
     int source_y=expected_source[y-1];
     uint32_t expected=0xff000000u|((uint32_t)rgba[source_y*4]<<16)|
@@ -697,6 +696,76 @@ static void check_modern_fractional_camera_tie(void){
   gml_draw_background(&render,0,2.75,0.0);
   expect(application[3]==0xffffffffu && application[2]==0,
          "a non-half fractional camera changed ordinary half-up rounding");
+  free(page.argb_cache);
+}
+
+/* Under nearest-neighbour magnification, every source row must reach
+ * at least one destination pixel. Sweep every synthetic row position
+ * because a trailing-edge phase can fail only at some positions. */
+static void check_first_generation_magnification_keeps_every_source_row(void){
+  enum { LOGICAL_HEIGHT=208, SURFACE_HEIGHT=240, WIDTH=1, GLYPH=9 };
+  uint8_t rgba[LOGICAL_HEIGHT*4];
+  uint32_t application[SURFACE_HEIGHT];
+  GmlWin content;
+  GmlRender render;
+  GmlAtlas atlas;
+  GmlTpag page;
+  GmlBg background;
+
+  memset(&content,0,sizeof content);
+  memset(&atlas,0,sizeof atlas);
+  memset(&page,0,sizeof page);
+  memset(&background,0,sizeof background);
+  for(int y=0;y<LOGICAL_HEIGHT;y++){
+    rgba[y*4+0]=(uint8_t)(1+y);
+    rgba[y*4+1]=(uint8_t)(255-y);
+    rgba[y*4+2]=(uint8_t)(3+y*3);
+    rgba[y*4+3]=255;
+  }
+  content.bytecode=15;
+  atlas.px=rgba;
+  atlas.w=1; atlas.h=LOGICAL_HEIGHT;
+  page.atlas=0;
+  page.sw=page.bw=1;
+  page.sh=page.bh=LOGICAL_HEIGHT;
+  page.alpha_scanned=1;
+  page.alpha_max=255;
+  page.ax1=0; page.ay1=LOGICAL_HEIGHT-1;
+  background.tpag=0;
+
+  for(int top=0;top<=LOGICAL_HEIGHT-GLYPH;top++){
+    memset(&render,0,sizeof render);
+    memset(application,0,sizeof application);
+    render.win=&content;
+    render.atlas=&atlas; render.n_atlas=1;
+    render.tpag=&page; render.n_tpag=1;
+    render.bg=&background; render.n_bg=1;
+    render.app_surface=application;
+    render.alpha=1.0;
+    render.alphablend=1;
+    render.color_write_mask=0x0f;
+    render.active_shader=-1;
+    gml_render_begin(&render,application,WIDTH,SURFACE_HEIGHT,0.0,0.0);
+    gml_render_world_set_logical_extent(&render,WIDTH,LOGICAL_HEIGHT);
+    gml_draw_background_tile(&render,0,0,top,1,GLYPH,0,top,1,1,0,0,0,0xffffff,1.0);
+    int missing=-1;
+    for(int row=0;row<GLYPH && missing<0;row++){
+      int source_y=top+row;
+      uint32_t wanted=0xff000000u|((uint32_t)rgba[source_y*4]<<16)|
+        ((uint32_t)rgba[source_y*4+1]<<8)|rgba[source_y*4+2];
+      int seen=0;
+      for(int y=0;y<SURFACE_HEIGHT && !seen;y++) if(application[y]==wanted) seen=1;
+      if(!seen) missing=source_y;
+    }
+    if(missing>=0){
+      fprintf(stderr,"renderer tiles: magnifying rows %d..%d of a %d-row camera into %d never "
+              "rasterized source row %d\n",top,top+GLYPH-1,LOGICAL_HEIGHT,SURFACE_HEIGHT,missing);
+      failures++;
+      break;
+    }
+    free(page.argb_cache);
+    page.argb_cache=NULL;
+  }
   free(page.argb_cache);
 }
 
@@ -1088,6 +1157,7 @@ int main(void){
   check_first_generation_default_font_metrics();
   check_render_pass_restores_normal_blending();
   check_first_generation_fractional_tile_projection();
+  check_first_generation_magnification_keeps_every_source_row();
   check_classic_double_scale_layer_covers_its_last_row();
   check_modern_fractional_camera_tie();
   check_application_surface_partial_alpha_coverage();

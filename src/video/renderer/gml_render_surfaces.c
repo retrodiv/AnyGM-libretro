@@ -379,6 +379,22 @@ int gml_surface_target_lit(GmlRender *r){
   for(size_t i=0;i<(size_t)r->fbw*(size_t)r->fbh;i++) if(r->fb[i]&0x00FFFFFFu) lit++;
   return lit;
 }
+/* Select one source texel for a point-sampled destination pixel.
+ * Magnification retains the established leading-edge phase. Reduction
+ * samples the pixel centre, with an exact boundary assigned to the
+ * preceding texel, so fractional reductions do not shift source rows. */
+static inline int surface_point_index(int64_t destination,int64_t source_extent,
+                                      int64_t destination_extent){
+  if(destination_extent<=0) return 0;
+  if(source_extent<=destination_extent)
+    return (int)((destination*source_extent)/destination_extent);
+  /* Centre of the destination pixel, with a sample that lands exactly on a texel boundary
+   * belonging to the preceding texel -- the tie this renderer resolves the same way everywhere
+   * else. An exact 2:1 reduction is entirely ties, so it keeps selecting the even texels it
+   * always did; a fractional reduction has no ties at all and moves by the half pixel. */
+  return (int)((((destination*2+1)*source_extent)-1)/(destination_extent*2));
+}
+
 /* One band of the generic surface mapper. A row derives its source line and its destination row
  * from the row index alone and writes only that row, so bands are independent and each row selects
  * exactly the texel it would have selected on its own. */
@@ -399,7 +415,7 @@ static void scaled_band(void *context,int row_start,int row_end,int slot){
   for(int py=b->py_first+row_start; py<b->py_first+row_end; py++){
     int sy0, sy1;
     if(!r->interp){
-      sy0=(int)(((int64_t)py*sh)/H);
+      sy0=surface_point_index(py,sh,H);
       sy1=sy0+1;
     } else if(H>=sh){
       sy0=(int)(((int64_t)py*sh)/H);
@@ -605,15 +621,15 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
    * span directly; when coverage metadata is conservative, a vectorized alpha scan can certify
    * the sampled spans much more cheaply while preserving the exact sampled texels. */
   if(!r->interp && W<=sw){
-    int sx_first=(int)(((int64_t)px0*sw)/W);
-    int sx_last=(int)(((int64_t)(px1-1)*sw)/W);
+    int sx_first=surface_point_index(px0,sw,W);
+    int sx_last=surface_point_index(px1-1,sw,W);
     int copy_width=px1-px0;
     if(sx_last-sx_first==copy_width-1){
       int sampled_all_opaque=source_all_opaque;
       if(!sampled_all_opaque){
         sampled_all_opaque=1;
         for(int py=py0;py<py1;py++){
-          int sy=(int)(((int64_t)py*sh)/H);
+          int sy=surface_point_index(py,sh,H);
           if(!row_all_opaque32(src+(size_t)sy*sw+sx_first,copy_width)){
             sampled_all_opaque=0;
             break;
@@ -622,7 +638,7 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
       }
       if(sampled_all_opaque){
         for(int py=py0;py<py1;py++){
-          int sy=(int)(((int64_t)py*sh)/H);
+          int sy=surface_point_index(py,sh,H);
           memcpy(r->fb+(size_t)(y0+py)*r->fbw+(x0+px0),
                  src+(size_t)sy*sw+sx_first,
                  (size_t)copy_width*sizeof(*src));
@@ -643,10 +659,10 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
   for(int px=0; px<W; px++){
     int sx0, sx1;
     if(!r->interp){
-      /* Disabled texture interpolation is point sampling for both magnification and reduction.
-       * Preserve leading-edge phase instead of averaging every source texel covered by a reduced
-       * output pixel. */
-      sx0=(int)(((int64_t)px*sw)/W);
+      /* Disabled texture interpolation is point sampling for both magnification and reduction:
+       * one source texel per destination pixel, never an average of every texel a reduced output
+       * pixel covers. surface_point_index states which texel that is. */
+      sx0=surface_point_index(px,sw,W);
       sx1=sx0+1;
     } else if(W>=sw){
       /* Studio and classic full/fixed presentation anchor point magnification at the leading
@@ -673,7 +689,7 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
   for(int py=py0; py<py1; py++){
     int sy0, sy1;
     if(!r->interp){
-      sy0=(int)(((int64_t)py*sh)/H);
+      sy0=surface_point_index(py,sh,H);
       sy1=sy0+1;
     } else if(H>=sh){
       sy0=(int)(((int64_t)py*sh)/H);
@@ -742,6 +758,28 @@ static int draw_scaled_full_surface_normal(GmlRender *r, const uint32_t *src, in
         }
       }
       dp++;
+    }
+  }
+  /* An opaque source point-sampled across the whole target leaves the target opaque whichever
+   * texel each destination pixel selected. The contiguous-span shortcut above certifies that for
+   * the reductions whose columns happen to be adjacent; a fractional reduction skips columns and
+   * reaches this mapper instead, and must not lose the certificate the same blit used to carry.
+   * The sampled rows are checked the way that shortcut checks them when the surface itself
+   * carries no opaque certificate. */
+  if(!r->interp && rect_covers_target(r,x0+px0,y0+py0,x0+px1,y0+py1)){
+    int certified=source_all_opaque;
+    if(!certified){
+      certified=1;
+      for(int py=py0;py<py1 && certified;py++){
+        int sy=surface_point_index(py,sh,H);
+        if(sy<0) sy=0; else if(sy>=sh) sy=sh-1;
+        if(!row_all_opaque32(src+(size_t)sy*sw,sw)) certified=0;
+      }
+    }
+    if(certified){
+      r->fb_opaque_known=1;
+      r->fb_all_opaque=1;
+      r->fb_all_transparent=0;
     }
   }
   free(xspan);

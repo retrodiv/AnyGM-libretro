@@ -453,8 +453,13 @@ static int opaque_near_identity_reduction_case(void){
     gml_draw_surface_stretched(&render,source,0.0,0.0,
                                TARGET_WIDTH,TARGET_HEIGHT,0xFFFFFFu,1.0);
     for(int y=0;y<TARGET_HEIGHT;y++) for(int x=0;x<TARGET_WIDTH;x++){
-      int source_x=(int)(((int64_t)x*SOURCE_WIDTH)/TARGET_WIDTH);
-      int source_y=(int)(((int64_t)y*SOURCE_HEIGHT)/TARGET_HEIGHT);
+      /* A point-sampled reduction reads the texel under the destination pixel's CENTRE, with a
+       * sample landing exactly on a texel boundary belonging to the preceding texel. Stated here
+       * rather than copied from the kernel: the previous expectation was the kernel's own
+       * leading-edge expression, which reads half a destination pixel early and, once that
+       * exceeds one source texel, skips source rows outright. */
+      int source_x=(int)((((int64_t)x*2+1)*SOURCE_WIDTH-1)/((int64_t)TARGET_WIDTH*2));
+      int source_y=(int)((((int64_t)y*2+1)*SOURCE_HEIGHT-1)/((int64_t)TARGET_HEIGHT*2));
       uint32_t expected=source_pixels[(size_t)source_y*SOURCE_WIDTH+source_x];
       if(target[(size_t)y*TARGET_WIDTH+x]!=expected){
         fprintf(stderr,"renderer near-identity reduction mismatch at %d,%d: %08x != %08x\n",

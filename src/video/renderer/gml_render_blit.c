@@ -2473,7 +2473,7 @@ typedef struct GmlBlitOneBand {
   int x0,y0;
   int xx0,xx1,yy0;
   int sx_max;
-  int first_generation_edge_phase_x,first_generation_edge_phase_y;
+  int first_generation_quad_phase_x,first_generation_quad_phase_y;
   int reciprocal_x,reciprocal_y;
   double sample_x,sample_y;
   double axs,ays;
@@ -2569,8 +2569,8 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
   const int x0=b->x0,y0=b->y0;
   const int xx0=b->xx0,xx1=b->xx1,yy0=b->yy0;
   const int sx_max=b->sx_max;
-  const int first_generation_edge_phase_x=b->first_generation_edge_phase_x;
-  const int first_generation_edge_phase_y=b->first_generation_edge_phase_y;
+  const int first_generation_quad_phase_x=b->first_generation_quad_phase_x;
+  const int first_generation_quad_phase_y=b->first_generation_quad_phase_y;
   const int reciprocal_x=b->reciprocal_x,reciprocal_y=b->reciprocal_y;
   const double sample_x=b->sample_x,sample_y=b->sample_y;
   const double axs=b->axs,ays=b->ays;
@@ -2581,7 +2581,7 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
     int yy=yy0+row;
     int py = flipy ? (y0-yy) : (y0+yy);
     int ly=(int)((yy+sample_y)/ays);
-    int contiguous_y=fastcase && first_generation_edge_phase_y && ly==t->sh &&
+    int contiguous_y=fastcase && first_generation_quad_phase_y && ly==t->sh &&
                      t->sy+ly>=0 && t->sy+ly<a->h;
     if((ly<0||ly>=t->sh) && !contiguous_y) continue;
     int sy=t->sy+ly;
@@ -2592,7 +2592,7 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
       uint32_t *drow=&r->fb[(size_t)py*r->fbw];
       for(int xx=xx0; xx<xx1; xx++){
         int lx=lxtab[xx-xx0];
-        int contiguous_x=first_generation_edge_phase_x && lx==t->sw &&
+        int contiguous_x=first_generation_quad_phase_x && lx==t->sw &&
                          t->sx+lx>=0 && t->sx+lx<a->w;
         if((lx<0||lx>=t->sw) && !contiguous_x) continue;
         const uint8_t *sp=srow + (size_t)lx*4;
@@ -2996,20 +2996,20 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   int reciprocal_x=fabs(inv_x-nearbyint(inv_x))<1e-9;
   int reciprocal_y=fabs(inv_y-nearbyint(inv_y))<1e-9;
   int studio_point_phase=r->win && anygm_policy_has_modern_layer_semantics(r->win);
-  int first_generation_edge_phase_x=
+  int first_generation_quad_phase_x=
     gml_render_target_is_first_generation_application_surface(r) && !flipx && !reciprocal_x;
-  int first_generation_edge_phase_y=
+  int first_generation_quad_phase_y=
     gml_render_target_is_first_generation_application_surface(r) && !flipy && !reciprocal_y;
   double sample_x=!flipx && (studio_point_phase || (r->classic&&!reciprocal_x))
     ? x0+0.5-dx : 0.5;
   double sample_y=!flipy && (studio_point_phase || (r->classic&&!reciprocal_y))
     ? y0+0.5-dy : 0.5;
-  /* First-generation application surfaces keep the same authored-space sampling phase across
-   * independently submitted tiles; resetting to half a texel selects the neighbouring edge row.
-   * Coverage rounding can put the final pixel just beyond the selected subrectangle.  The hardware
-   * samples the contiguous atlas texel there; atlas padding is what normally supplies the edge. */
-  if(first_generation_edge_phase_x) sample_x=x0+1.0-dx-1e-9;
-  if(first_generation_edge_phase_y) sample_y=y0+1.0-dy-1e-9;
+  /* Keep each quad's subpixel origin when sampling a first-generation
+   * application surface. Destination pixel centres retain the source's
+   * leading row under fractional magnification; trailing edges can skip it
+   * and sample beyond the selected atlas subrectangle. */
+  if(first_generation_quad_phase_x) sample_x=x0+0.5-dx;
+  if(first_generation_quad_phase_y) sample_y=y0+0.5-dy;
   if(lxtab) for(int xx=xx0;xx<xx1;xx++)
     lxtab[xx-xx0]=(int)((xx+sample_x)/axs);
   /* The displacement is evaluated in texture coordinates, not output coordinates. Scaled pixel
@@ -3149,7 +3149,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       solid_blur_alpha,solid_blur,
       fastcase,flipx,flipy,x0,y0,xx0,xx1,yy0,
       a->w>0?a->w-1:0,
-      first_generation_edge_phase_x,first_generation_edge_phase_y,
+      first_generation_quad_phase_x,first_generation_quad_phase_y,
       reciprocal_x,reciprocal_y,
       sample_x,sample_y,axs,ays,alpha,bR,bG,bB
     };
