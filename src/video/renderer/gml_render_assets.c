@@ -571,6 +571,10 @@ int gml_render_background_metrics(const GmlRender *R,int background,
     metrics->tile_separation_x=source->tile_separation_x;
     metrics->tile_separation_y=source->tile_separation_y;
     metrics->tile_columns=source->tile_columns;
+    metrics->transparent=source->transparent;
+    metrics->smooth=source->smooth;
+    metrics->preload=source->preload;
+    metrics->name=source->name;
     if(source->tpag>=0 && source->tpag<R->n_tpag){
       const GmlTpag *page=&R->tpag[source->tpag];
       metrics->texture_page=source->tpag; metrics->atlas=page->atlas;

@@ -108,6 +108,8 @@ typedef struct {
   int logical_width, logical_height;
   int tile_width, tile_height, tile_border_x, tile_border_y;
   int tile_separation_x, tile_separation_y, tile_columns;
+  int transparent, smooth, preload;
+  const char *name;
 } GmlRenderBackgroundMetrics;
 
 enum {

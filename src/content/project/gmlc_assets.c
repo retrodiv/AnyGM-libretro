@@ -524,6 +524,7 @@ static int parse_tileset(GmlcProject *p, const GmlcResource *res, const GmlcJson
   t.sprite_id=gmlc_project_find_sprite(p,resource_reference_name(gmlc_json_obj(yy,"spriteId")));
   t.sprite_no_export=gmlc_json_bool(gmlc_json_obj(yy,"sprite_no_export"),
                                     gmlc_json_bool(gmlc_json_obj(yy,"spriteNoExport"),0));
+  t.preload=1;
   t.tile_width=gmlc_json_int(gmlc_json_obj(yy,"tilewidth"),gmlc_json_int(gmlc_json_obj(yy,"tileWidth"),16));
   t.tile_height=gmlc_json_int(gmlc_json_obj(yy,"tileheight"),gmlc_json_int(gmlc_json_obj(yy,"tileHeight"),16));
   t.border_x=gmlc_json_int(gmlc_json_obj(yy,"out_tilehborder"),gmlc_json_int(gmlc_json_obj(yy,"tilehborder"),0));

@@ -532,9 +532,11 @@ int write_bgnd(Pkg *pkg, const GmlcProject *p){
     size_t rec=pkg->b.len;
     int sid=intern(pkg,ts->name?ts->name:"");
     wstrptr(pkg,sid);
-    wu32(&pkg->b,0);
-    wu32(&pkg->b,0);
-    wu32(&pkg->b,1);
+    /* transparent, smooth, preload: content reads these back through background_get_*, and a
+       background that says it is transparent decides whether a caller strips its corner colour. */
+    wu32(&pkg->b,(uint32_t)(ts->transparent?1:0));
+    wu32(&pkg->b,(uint32_t)(ts->smooth?1:0));
+    wu32(&pkg->b,(uint32_t)(ts->preload?1:0));
     uint32_t tex_pos=(uint32_t)pkg->b.len;
     wu32(&pkg->b,0);
     if(ts->sprite_id>=0 && ts->sprite_id<p->n_sprites && p->sprites[ts->sprite_id].n_frames>0){

@@ -1768,7 +1768,11 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1680, ACTION_DRAW_ARROW, "action_draw_arrow", ACTIONS, ACTIONS_LEGACY, ALWAYS) \
   ENTRY(1681, ACTION_DRAW_GRADIENT_HOR, "action_draw_gradient_hor", ACTIONS, ACTIONS_LEGACY, ALWAYS) \
   ENTRY(1682, ACTION_DRAW_GRADIENT_VERT, "action_draw_gradient_vert", ACTIONS, ACTIONS_LEGACY, ALWAYS) \
-  ENTRY(1683, ACTION_DRAW_BACKGROUND, "action_draw_background", ACTIONS, ACTIONS_LEGACY, ALWAYS)
+  ENTRY(1683, ACTION_DRAW_BACKGROUND, "action_draw_background", ACTIONS, ACTIONS_LEGACY, ALWAYS) \
+  ENTRY(1684, BACKGROUND_GET_NAME, "background_get_name", DRAW, DRAW, ALWAYS) \
+  ENTRY(1685, BACKGROUND_GET_TRANSPARENT, "background_get_transparent", DRAW, DRAW, ALWAYS) \
+  ENTRY(1686, BACKGROUND_GET_SMOOTH, "background_get_smooth", DRAW, DRAW, ALWAYS) \
+  ENTRY(1687, BACKGROUND_GET_PRELOAD, "background_get_preload", DRAW, DRAW, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1783,7 +1787,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1684
+  GML_BUILTIN_ID_LIMIT = 1688
 } GmlBuiltinId;
 
 #endif

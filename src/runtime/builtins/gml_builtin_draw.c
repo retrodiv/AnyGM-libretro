@@ -1222,7 +1222,8 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
         (int)N(a,n,3),(int)N(a,n,4),(int)N(a,n,5),(int)N(a,n,6),(int)N(a,n,7),(int)N(a,n,8)):-1);
     }
     if(!strcmp(nm,"sprite_replace")){
-      char *path=resolve_read_path(vm,S(vm,a,n,1));
+      const char *requested=S(vm,a,n,1);
+      char *path=resolve_read_path(vm,requested);
       int classic=vm && vm->win && anygm_policy_uses_classic_runtime(vm->win);
       /* Classic content can use either the nine-argument form or the retained seven-argument
        * form. Select the ABI from the supplied arity without shifting the origin fields. */
@@ -1241,9 +1242,9 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       if(builtin_setting(vm,"GML_LOG_SPRREP"))
         anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
           "[sprite-replace] sprite=%d argc=%d frames=%d precise=%d removeback=%d "
-          "smooth=%d origin=%d,%d ok=%d path='%s'\n",
+          "smooth=%d origin=%d,%d ok=%d asked='%s' path='%s'\n",
           sprite,n,(int)N(a,n,2),precise,removeback,smooth,xorigin,yorigin,ok,
-          path?path:"");
+          requested?requested:"",path?path:"");
       free(path);
       return vreal(ok);
     }
@@ -1278,6 +1279,15 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     }
     if(!strcmp(nm,"background_get_width")){ GmlRenderBackgroundMetrics background; return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background)?background.logical_width:0); }
     if(!strcmp(nm,"background_get_height")){ GmlRenderBackgroundMetrics background; return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background)?background.logical_height:0); }
+    if(!strcmp(nm,"background_get_name")){ GmlRenderBackgroundMetrics background;
+      return vstr(gml_render_background_metrics(R,(int)N(a,n,0),&background)&&background.name?background.name:""); }
+    /* Return the authored background flags through the corresponding queries. */
+    if(!strcmp(nm,"background_get_transparent")){ GmlRenderBackgroundMetrics background;
+      return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background)?background.transparent:0); }
+    if(!strcmp(nm,"background_get_smooth")){ GmlRenderBackgroundMetrics background;
+      return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background)?background.smooth:0); }
+    if(!strcmp(nm,"background_get_preload")){ GmlRenderBackgroundMetrics background;
+      return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background)?background.preload:0); }
     if(!strcmp(nm,"background_get_texture")) return vreal(gml_render_background_texture_handle(R,(int)N(a,n,0)));
     if(!strcmp(nm,"draw_text")){ if(R) gml_draw_text(R,N(a,n,0),N(a,n,1),S(vm,a,n,2));
       if(builtin_setting(vm,"GML_DBG_TEXT")){ 

@@ -225,6 +225,7 @@ typedef struct {
   int tile_width, tile_height;
   int border_x, border_y;
   int columns, tile_count;
+  int transparent, smooth, preload;
 } GmlcTileset;
 
 typedef struct {

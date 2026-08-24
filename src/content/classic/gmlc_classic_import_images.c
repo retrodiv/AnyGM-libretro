@@ -464,6 +464,7 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
     background->name = copy_string(name);
     background->sprite_id = -1;
     background->tile_width = background->tile_height = 16;
+    background->preload = 1;
     if(!background->id || !background->name){
       if(err && errcap) snprintf(err, errcap, "classic import: out of memory naming background %u", i);
       free_imported_backgrounds(project, first_sprite);
@@ -489,6 +490,9 @@ int gmlc_classic_import_backgrounds(const GmlcClassicManifest *classic,
         free_imported_backgrounds(project,first_sprite); return 0;
       }
       if(r.pos!=r.size){ free(rgba); if(err && errcap) snprintf(err,errcap,"classic import: trailing legacy background payload"); free_imported_backgrounds(project,first_sprite); return 0; }
+      background->transparent=(int)(fields[2]!=0);
+      background->smooth=(int)(fields[3]!=0);
+      background->preload=(int)(fields[4]!=0);
       GmlcSprite *sprite=&project->sprites[project->n_sprites++];
       sprite->id=copy_string(name); sprite->name=copy_string(name);
       sprite->runtime_id=-1; sprite->tileset_source=1;

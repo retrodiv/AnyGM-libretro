@@ -131,6 +131,8 @@ typedef struct {
 } GmlInterpSubrectCache;
 typedef struct {
   int tpag;
+  const char *name;                                             /* BGND record name, for background_get_name */
+  int transparent, smooth, preload;
   int tile_w, tile_h, tile_border_x, tile_border_y, tile_separation_x, tile_separation_y;
   int tile_columns, tile_items_per_tile, tile_count;
   uint64_t tile_frame_length_us;

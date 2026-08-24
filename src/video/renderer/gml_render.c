@@ -266,6 +266,10 @@ static void parse_bgnd(GmlRender *r){
 	    /* name, transparent, smooth, preload, texture(TPAG ptr) */
 	    uint32_t tptr=u32(d,p+16);
 	    r->bg[i].tpag=tpag_index_for_ptr(r,tptr);
+	    r->bg[i].name=gml_str_by_ptr(r->win,u32(d,p));
+	    r->bg[i].transparent=(int)(u32(d,p+4)!=0);
+	    r->bg[i].smooth=(int)(u32(d,p+8)!=0);
+	    r->bg[i].preload=(int)(u32(d,p+12)!=0);
 	    if(anygm_policy_has_modern_layer_semantics(r->win) && p+64<c->off+c->size){
 	      int ver=(int)u32(d,p+20), tw=(int)u32(d,p+24), th=(int)u32(d,p+28);
           /* The separated-border layout inserts separationX/Y before the output-border fields.
