@@ -42,7 +42,10 @@ Each `[overrides]` line is one directive in the same grammar the host cheat
 interface uses, including development-menu declarations. An
 `introskip|1,3-5` directive lists room indices where A, B, or Start advances
 to the next room in play order; the `GML_INTROSKIP` development setting, when
-present, takes precedence over it. Directives load into
+present, takes precedence over it. `introauto|1,3-5` takes the same room list
+and advances the moment such a room is entered, with no button at all. Both forms
+advance the same way; a room listed by `introauto|` advances before
+`introskip|` is consulted for it. Directives load into
 a channel separate from host cheats: host cheat resets do not clear them, and
 the content-override configuration switch disables them without touching host
 cheats. Parsing is fail-closed — an unrecognized directive, or the one-shot

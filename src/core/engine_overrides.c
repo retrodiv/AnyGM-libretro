@@ -613,7 +613,7 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
         }
         snprintf(slot->code,sizeof slot->code,"%s",parts[p]);
         slot->enabled=1;
-        if(!strncmp(slot->code,"introskip|",10)){
+        if(!strncmp(slot->code,"introskip|",10) || !strncmp(slot->code,"introauto|",10)){
           const char *list=slot->code+10;
           int digits=0,list_ok=list[0]!=0;
           for(const char *scan=list;*scan && list_ok;scan++){
@@ -622,7 +622,8 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
           }
           if(!list_ok || !digits){
             snprintf(error,error_capacity,
-                     "directive %d: introskip| takes a room index list such as 1,3-5",line_number);
+                     "directive %d: %.10s takes a room index list such as 1,3-5",
+                     line_number,slot->code);
             return 0;
           }
         } else if(!boot_line_is_menu(slot->code)){
@@ -1174,6 +1175,20 @@ void room_skip_hook(AnygmEngine *engine){
  * play order. The list comes from the GML_INTROSKIP development setting, or — when the setting is
  * absent — from the loaded content's introskip| anchor directive, which follows the
  * content-override switch like every other content directive. */
+/* Rooms listed by introauto| advance without a button when entered. The directive
+ * shares introskip|'s list grammar and next-room-order operation. */
+static void introauto_parse(AnygmEngine *engine,const char *s){
+  memset(engine->introauto_set, 0, sizeof engine->introauto_set);
+  if(!s || !*s) return;
+  while(*s){
+    while(*s==' '||*s=='\t'||*s==',') s++;
+    if(!*s) break;
+    int a=atoi(s); while(*s>='0'&&*s<='9') s++;
+    int b=a;
+    if(*s=='-'){ s++; b=atoi(s); while(*s>='0'&&*s<='9') s++; }
+    for(int r=a; r<=b && r<1024; r++) if(r>=0) engine->introauto_set[r>>3] |= (uint8_t)(1u<<(r&7));
+  }
+}
 static void introskip_parse(AnygmEngine *engine,const char *s){
   memset(engine->introskip_set, 0, sizeof engine->introskip_set);
   engine->introskip_enabled = (s && *s) ? 1 : 0;
@@ -1199,10 +1214,25 @@ void introskip_hook(AnygmEngine *engine){
           setting=engine->boot_cheats[i].code+10;
     }
     introskip_parse(engine,setting);
+    { const char *automatic=NULL;
+      int active=engine_boot_cheats_active(engine);
+      for(int i=0;i<active && !automatic;i++)
+        if(engine->boot_cheats[i].enabled &&
+           !strncmp(engine->boot_cheats[i].code,"introauto|",10))
+          automatic=engine->boot_cheats[i].code+10;
+      introauto_parse(engine,automatic);
+      if(automatic) engine->introskip_enabled=1; }
   }
   if(!engine->introskip_enabled) return;
   int room = engine->vm.room_index;
   if(room < 0 || room >= 1024) return;
+  if(engine->introauto_set[room>>3] & (1u<<(room&7))){
+    if(engine->vm.pending_room < 0){
+      int ord=-1; for(int i=0;i<engine->win.n_room_order;i++) if((int)engine->win.room_order[i]==room){ ord=i; break; }
+      if(ord>=0 && ord+1<engine->win.n_room_order) gml_vm_goto_room_order(&engine->vm, ord+1);
+    }
+    return;
+  }
   if(!(engine->introskip_set[room>>3] & (1u<<(room&7)))) return;   /* not a listed intro room */
   int a = engine->pad_current[0][ANYGM_PAD_FACE_RIGHT] && !engine->pad_previous[0][ANYGM_PAD_FACE_RIGHT];
   int b = engine->pad_current[0][ANYGM_PAD_FACE_BOTTOM] && !engine->pad_previous[0][ANYGM_PAD_FACE_BOTTOM];

@@ -340,6 +340,7 @@ struct AnygmEngine {
   MenuState menu;
   uint8_t introskip_set[1024/8];
   int introskip_enabled;
+  uint8_t introauto_set[1024/8];      /* rooms an anchor answers without waiting for a button */
   /* A configured virtual-monitor edge is consumed once by ?monitor override directives. The
    * program is external content data; the core retains only this transient scheduling latch. */
   int monitor_override_pending;
