@@ -7,6 +7,8 @@
 
 #include "gml_render.h"
 
+#include "anygm_compatibility.h"
+
 typedef struct { uint16_t y, x, len; uint8_t alpha; } GmlTpagAlphaRun;
 typedef struct {
   int framebuffer_width, framebuffer_height;
@@ -546,12 +548,14 @@ typedef struct GmlRender {
   long     generated_sprite_log_count;
 } GmlRender;
 
-/* The application surface is a render target even when the host binds it without pushing the
- * explicit surface stack.  Its alpha is observable when Draw GUI later samples surface 0, so
- * fixed-function draws must preserve coverage there just as they do on an ordinary surface. */
+/* Preserve alpha on explicit surface targets and on a sampled application surface.
+ * A classic direct frame is not a sampled application surface; preserving its
+ * coverage would let subtract blending remove visible frame coverage. */
 static inline int gml_render_target_preserves_alpha(const GmlRender *render){
-  return render && (render->target_sp>0 ||
-    (render->app_surface && render->fb==render->app_surface));
+  if(!render) return 0;
+  if(render->target_sp>0) return 1;
+  return render->app_surface && render->fb==render->app_surface &&
+         !anygm_policy_uses_classic_runtime(render->win);
 }
 
 /* Renderer-private cross-unit operations. These are implementation seams, not
