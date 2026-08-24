@@ -1519,87 +1519,93 @@ static int parse_expr(Compiler *c){
   return 1;
 }
 
+/* Parse any sequence of index and field steps in an lvalue tail. */
 static int parse_lvalue_tail(Compiler *c, LValue *lv){
-  if(eat(c,"[")){
-    size_t close_pos=0;
-    if(!scan_square_span(c,c->lex.tok.start,&lv->index_span,&close_pos)) return 0;
-    lv->index_src=gmlc_strdup(c->lex.src);
-    if(!lv->index_src) return 0;
-    if(lv->index_span.start<lv->index_span.end){
-      char ch=c->lex.src[lv->index_span.start];
-      if(ch=='?' || ch=='|' || ch=='#'){
-        lv->accessor=(ch=='?')?ACCESS_MAP:(ch=='|')?ACCESS_LIST:ACCESS_GRID;
-        lv->index_span.start++;
-        trim_span(c->lex.src,&lv->index_span);
+  for(;;){
+    int progressed=0;
+    if(tok_is(c,"[")) progressed=1;
+    else if(tok_is(c,".") && (lv->is_array || lv->accessor!=ACCESS_NONE)) progressed=1;
+    if(!progressed) return 1;
+    if(eat(c,"[")){
+      size_t close_pos=0;
+      if(!scan_square_span(c,c->lex.tok.start,&lv->index_span,&close_pos)) return 0;
+      lv->index_src=gmlc_strdup(c->lex.src);
+      if(!lv->index_src) return 0;
+      if(lv->index_span.start<lv->index_span.end){
+        char ch=c->lex.src[lv->index_span.start];
+        if(ch=='?' || ch=='|' || ch=='#'){
+          lv->accessor=(ch=='?')?ACCESS_MAP:(ch=='|')?ACCESS_LIST:ACCESS_GRID;
+          lv->index_span.start++;
+          trim_span(c->lex.src,&lv->index_span);
+        }
       }
-    }
-    size_t comma=0;
-    if(lv->accessor==ACCESS_GRID){
-      if(!find_top_comma(c->lex.src,lv->index_span,&comma)){
-        c->unsupported=1;
-        snprintf(c->lex.err,sizeof(c->lex.err),"grid accessor requires two indices");
-        free(lv->index_src);
-        lv->index_src=NULL;
-        return 0;
-      }
-      lv->index2_span.start=comma+1;
-      lv->index2_span.end=lv->index_span.end;
-      lv->index_span.end=comma;
-      trim_span(c->lex.src,&lv->index_span);
-      trim_span(c->lex.src,&lv->index2_span);
-    } else if(lv->accessor==ACCESS_MAP || lv->accessor==ACCESS_LIST){
-      if(find_top_comma(c->lex.src,lv->index_span,&comma)){
-        c->unsupported=1;
-        snprintf(c->lex.err,sizeof(c->lex.err),"accessor requires one index");
-        free(lv->index_src);
-        lv->index_src=NULL;
-        return 0;
-      }
-    } else {
-      if(!strcmp(lv->name,"argument")) lv->inst=IT_SELF;
-      lv->is_array=1;
-      if(find_top_comma(c->lex.src,lv->index_span,&comma)){
-        lv->is_array_2d=1;
+      size_t comma=0;
+      if(lv->accessor==ACCESS_GRID){
+        if(!find_top_comma(c->lex.src,lv->index_span,&comma)){
+          c->unsupported=1;
+          snprintf(c->lex.err,sizeof(c->lex.err),"grid accessor requires two indices");
+          free(lv->index_src);
+          lv->index_src=NULL;
+          return 0;
+        }
         lv->index2_span.start=comma+1;
         lv->index2_span.end=lv->index_span.end;
         lv->index_span.end=comma;
         trim_span(c->lex.src,&lv->index_span);
         trim_span(c->lex.src,&lv->index2_span);
+      } else if(lv->accessor==ACCESS_MAP || lv->accessor==ACCESS_LIST){
+        if(find_top_comma(c->lex.src,lv->index_span,&comma)){
+          c->unsupported=1;
+          snprintf(c->lex.err,sizeof(c->lex.err),"accessor requires one index");
+          free(lv->index_src);
+          lv->index_src=NULL;
+          return 0;
+        }
+      } else {
+        if(!strcmp(lv->name,"argument")) lv->inst=IT_SELF;
+        lv->is_array=1;
+        if(find_top_comma(c->lex.src,lv->index_span,&comma)){
+          lv->is_array_2d=1;
+          lv->index2_span.start=comma+1;
+          lv->index2_span.end=lv->index_span.end;
+          lv->index_span.end=comma;
+          trim_span(c->lex.src,&lv->index_span);
+          trim_span(c->lex.src,&lv->index2_span);
+        }
+        lv->reftype=0x00;
       }
-      lv->reftype=0x00;
-    }
-    c->lex.pos=close_pos+1;
-    lx_next(&c->lex);
-  }
-  /* An array/accessor element can itself be an instance or struct receiver:
-   * entries[i].field and table[? key].field are both ordinary GML lvalues.
-   * Resolve the element once, then continue the existing stack-receiver path
-   * so reads, direct assignments, and compound assignments share semantics. */
-  if(tok_is(c,".") && (lv->is_array || lv->accessor!=ACCESS_NONE)){
-    if(!emit_lvalue_read(c,lv) || !emit_conv(c,DT_VAR,DT_INT32)) return 0;
-    free(lv->index_src);
-    lv->index_src=NULL;
-    lv->is_array=0;
-    lv->is_array_2d=0;
-    lv->accessor=ACCESS_NONE;
-    lv->reftype=0x80;
-    lv->inst=IT_STACK;
-    lv->is_stacktop=1;
-    lv->receiver_on_stack=1;
-    while(eat(c,".")){
-      if(c->lex.tok.kind!=TOK_ID){
-        c->unsupported=1;
-        snprintf(c->lex.err,sizeof(c->lex.err),"expected field name");
-        return 0;
-      }
-      snprintf(lv->name,sizeof(lv->name),"%s",c->lex.tok.text);
+      c->lex.pos=close_pos+1;
       lx_next(&c->lex);
-      if(tok_is(c,".")){
-        if(!emit_lvalue_read(c,lv) || !emit_conv(c,DT_VAR,DT_INT32)) return 0;
+    }
+    /* An array/accessor element can itself be an instance or struct receiver:
+     * entries[i].field and table[? key].field are both ordinary GML lvalues.
+     * Resolve the element once, then continue the existing stack-receiver path
+     * so reads, direct assignments, and compound assignments share semantics. */
+    if(tok_is(c,".") && (lv->is_array || lv->accessor!=ACCESS_NONE)){
+      if(!emit_lvalue_read(c,lv) || !emit_conv(c,DT_VAR,DT_INT32)) return 0;
+      free(lv->index_src);
+      lv->index_src=NULL;
+      lv->is_array=0;
+      lv->is_array_2d=0;
+      lv->accessor=ACCESS_NONE;
+      lv->reftype=0x80;
+      lv->inst=IT_STACK;
+      lv->is_stacktop=1;
+      lv->receiver_on_stack=1;
+      while(eat(c,".")){
+        if(c->lex.tok.kind!=TOK_ID){
+          c->unsupported=1;
+          snprintf(c->lex.err,sizeof(c->lex.err),"expected field name");
+          return 0;
+        }
+        snprintf(lv->name,sizeof(lv->name),"%s",c->lex.tok.text);
+        lx_next(&c->lex);
+        if(tok_is(c,".")){
+          if(!emit_lvalue_read(c,lv) || !emit_conv(c,DT_VAR,DT_INT32)) return 0;
+        }
       }
     }
   }
-  return 1;
 }
 
 static int parse_lvalue_from_name(Compiler *c, const char *first, LValue *lv){
@@ -1708,6 +1714,8 @@ static int parse_var_decl(Compiler *c){
    * named locals. */
   if(eat(c,";")) return 1;
   do {
+    /* A local declaration may have a trailing comma. */
+    if(c->lex.tok.kind!=TOK_ID && (tok_is(c,";") || c->lex.tok.kind==TOK_EOF)) break;
     if(c->lex.tok.kind!=TOK_ID){ c->unsupported=1; snprintf(c->lex.err,sizeof(c->lex.err),"expected local name"); return 0; }
     char name[128]; snprintf(name,sizeof(name),"%s",c->lex.tok.text); lx_next(&c->lex);
     add_local(c,name);

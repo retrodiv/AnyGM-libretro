@@ -122,6 +122,22 @@ void lx_next(Lexer *l){
     memcpy(l->tok.text,s,n); l->tok.text[n]=0;
     l->tok.kind=TOK_ID; l->pos+=(size_t)n; l->tok.end=l->pos; return;
   }
+  /* Recognize dollar-prefixed and 0x-prefixed hexadecimal literals as numbers. */
+  if((*s=='$' && isxdigit((unsigned char)s[1])) ||
+     ((*s=='0' && (s[1]=='x' || s[1]=='X')) && isxdigit((unsigned char)s[2]))){
+    size_t prefix=(*s=='$')?1:2, n=prefix;
+    unsigned long long value=0;
+    while(isxdigit((unsigned char)s[n])){
+      char c=s[n];
+      int digit=(c>='0'&&c<='9')?c-'0':((c>='a'&&c<='f')?c-'a'+10:c-'A'+10);
+      if(value<=(0xFFFFFFFFFFFFFFFFull-(unsigned long long)digit)/16ull) value=value*16ull+(unsigned long long)digit;
+      n++;
+    }
+    l->tok.num=(double)value;
+    size_t keep=n<sizeof(l->tok.text)?n:sizeof(l->tok.text)-1;
+    memcpy(l->tok.text,s,keep); l->tok.text[keep]=0;
+    l->tok.kind=TOK_NUM; l->pos+=n; l->tok.end=l->pos; return;
+  }
   if(isdigit((unsigned char)*s) || (*s=='.' && isdigit((unsigned char)s[1]))){
     /* The classic lexer accepts an extra dot in a numeric token (old action
      * editors can produce values such as `.5.25`).  Keep the final dot as the
@@ -165,10 +181,16 @@ void lx_next(Lexer *l){
     if(l->src[l->pos]==quote) l->pos++;
     l->tok.text[n]=0; l->tok.kind=TOK_STR; l->tok.end=l->pos; return;
   }
-  static const char *ops[]={"==","!=","<>","<=",">=","&&","||","<<",">>","+=","-=","*=","/=","%=","++","--",NULL};
+  /* Normalize the alternate assignment spelling before parsing. */
+  static const char *ops[]={"==","!=","<>","<=",">=","&&","||","<<",">>","+=","-=","*=","/=","%=","++","--",":=",NULL};
   for(int i=0;ops[i];i++){
     size_t n=strlen(ops[i]);
-    if(!strncmp(s,ops[i],n)){ snprintf(l->tok.text,sizeof(l->tok.text),"%s",!strcmp(ops[i],"<>")?"!=":ops[i]); l->tok.kind=TOK_SYM; l->pos+=n; l->tok.end=l->pos; return; }
+    if(!strncmp(s,ops[i],n)){
+      /* `<>` and `:=` are alternative spellings; report the ordinary one so every parser site
+       * that already handles `!=` and `=` handles them too. */
+      const char *spelling=!strcmp(ops[i],"<>")?"!=":(!strcmp(ops[i],":=")?"=":ops[i]);
+      snprintf(l->tok.text,sizeof(l->tok.text),"%s",spelling);
+      l->tok.kind=TOK_SYM; l->pos+=n; l->tok.end=l->pos; return; }
   }
   l->tok.kind=TOK_SYM; l->tok.text[0]=*s; l->tok.text[1]=0; l->pos++;
   l->tok.end=l->pos;
