@@ -140,7 +140,34 @@ void gml_arr_index_ensure(GmlArr *A, int idx){
   if(idx<0 || idx>=GML_ARR_MAX_INDEX) return;
   if(gml_arr_growth_hook && A && idx>=A->len) gml_arr_growth_hook(idx,A->len);
   if(idx>=A->cap){ int nc=A->cap?A->cap:8; while(nc<=idx) nc*=2;
-    A->data=realloc(A->data,nc*sizeof(GmlVal)); for(int i=A->cap;i<nc;i++) A->data[i]=vreal(0); A->cap=nc; }
+    /* A zeroed GmlVal IS vreal(0) — V_REAL is 0, 0.0 is all-zero bits and both pointers are null —
+     * so the grown region needs no initialising pass. That pass was the whole resident cost of a
+     * legacy 2D array: those live flat at row*32000+col, so a large table reaches a huge index and
+     * writing a zero into every hole faulted in a great many pages that hold nothing. calloc
+     * hands back untouched zero pages instead, and only the rows that carry data get copied. */
+    if(A->is_2d && A->row_len){
+      GmlVal *grown=(GmlVal*)calloc((size_t)nc,sizeof(GmlVal));
+      if(!grown) return;
+      if(A->data){
+        for(int r=0;r<A->height2d && r<A->row_cap;r++){
+          long base=(long)r*GML_2D_STRIDE;
+          long span=A->row_len[r];
+          if(base>=A->cap || span<=0) continue;
+          if(base+span>A->cap) span=A->cap-base;
+          memcpy(grown+base,A->data+base,(size_t)span*sizeof(GmlVal));
+        }
+        free(A->data);
+      }
+      A->data=grown;
+    } else {
+      /* A dense array has no holes to avoid: extend in place where the allocator can and write
+       * the zeros, which is cheaper than allocating a second block and copying the whole of it. */
+      GmlVal *grown=(GmlVal*)realloc(A->data,(size_t)nc*sizeof(GmlVal));
+      if(!grown) return;
+      A->data=grown;
+      for(int i=A->cap;i<nc;i++) A->data[i]=vreal(0);
+    }
+    A->cap=nc; }
   if(idx>=A->len) A->len=idx+1;
 }
 /* ---- GMS2.3 array FUNCTIONS (array_create/get/set/push/pop/resize/copy/...). The bytecode's
