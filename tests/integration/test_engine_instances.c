@@ -835,6 +835,66 @@ static int draw_schedule_policy(void){
  * asserting is not that the ticks stop — a value freeze does that too — but what disarming leaves:
  * the counter must carry on from its remainder, so the first tick after the pause arrives sooner
  * than a full period. A design that captured and restored a value would restart the period here. */
+/* An undefined object index must not create an instance. The fixture also checks that
+ * the defined placement still runs its Create event. */
+static int undefined_placement_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_undefined_placement_content_create(&fixture)){
+    fprintf(stderr,"undefined-placement fixture creation failed\n");
+    return 0;
+  }
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmEngine *engine=NULL;
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  source.cache_directory=fixture.directory;
+  source.save_directory=fixture.directory;
+  AnygmInputFrame input={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  AnygmFrameOutput output={0};
+  output.struct_size=sizeof output;
+  AnygmResult created=anygm_create(&services,&engine);
+  AnygmResult loaded=created==ANYGM_OK?anygm_load(engine,&source,NULL):created;
+  AnygmResult ran=loaded==ANYGM_OK?anygm_run_frame(engine,&input,&output):loaded;
+  int ok=ran==ANYGM_OK;
+  if(!ok)
+    fprintf(stderr,"undefined placement: create=%d load=%d frame=%d\n",
+            (int)created,(int)loaded,(int)ran);
+  if(ok){
+    int live=0,undefined=0;
+    for(int i=0;i<engine->vm.inst_count;i++){
+      GmlInstance *in=&engine->vm.inst[i];
+      if(!in->active || in->marked) continue;
+      live++;
+      if(in->obj<0 || in->obj>=engine->vm.n_objects) undefined++;
+    }
+    if(undefined!=0){
+      fprintf(stderr,"undefined placement: %d instance(s) of an object the payload does not define\n",
+              undefined);
+      ok=0;
+    }
+    if(ok && live!=1){
+      fprintf(stderr,"undefined placement: room holds %d live instances, expected the one defined\n",
+              live);
+      ok=0;
+    }
+    /* The defined placement beside it still ran, so the case cannot pass by loading nothing. */
+    if(ok && gml_global_num(&engine->vm,"fixture_created")!=1.0){
+      fputs("undefined placement: the defined placement never ran its Create\n",stderr);
+      ok=0;
+    }
+  }
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int alarm_pause_policy(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_alarm_content_create(&fixture)){
@@ -2303,6 +2363,8 @@ int main(int argc,char **argv){
       return bridged_key_press_delivery_policy()?0:1;
     if(!strcmp(argv[2],"bridged_key_hold"))
       return bridged_key_hold_policy()?0:1;
+    if(!strcmp(argv[2],"undefined_placement"))
+      return undefined_placement_policy()?0:1;
     fprintf(stderr,"unknown integration case: %s\n",argv[2]);
     return 1;
   }
@@ -2323,7 +2385,7 @@ int main(int argc,char **argv){
           "first_generation_oversized_gui|"
           "background_color|multi_view_application_canvas|game_change|"
           "input_binding_ownership|simulated_key_lifetime|simulated_key_frame_lifetime|"
-          "bridged_key_press_delivery|bridged_key_hold|"
+          "bridged_key_press_delivery|bridged_key_hold|undefined_placement|"
           "room_start_deactivation]\n",stderr);
     return 1;
   }
@@ -2357,6 +2419,7 @@ int main(int argc,char **argv){
   if(!simulated_key_frame_lifetime_policy()) return 1;
   if(!bridged_key_press_delivery_policy()) return 1;
   if(!bridged_key_hold_policy()) return 1;
+  if(!undefined_placement_policy()) return 1;
   if(!alarm_pause_policy()) return 1;
   if(!alarm_phase_membership_policy()) return 1;
   if(!mouse_subtype_dispatch_order_policy()) return 1;

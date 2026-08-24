@@ -1209,6 +1209,65 @@ int anygm_synthetic_classic_multiview_framebuffer_content_create(
 
 /* The first placed instance deactivates the second before its Create. The second must complete
  * creation once, remain inactive, and retain its variables after activation. */
+/* A room whose placement list names an object the project does not define. The record still
+ * carries a position and an instance id, which is what a project that deleted an object leaves
+ * behind, and the runtime has to put nothing there: there is no object to give the placement a
+ * sprite, a depth or an event. */
+int anygm_synthetic_undefined_placement_content_create(AnygmSyntheticContent *fixture){
+  if(!fixture) return 0;
+  memset(fixture,0,sizeof *fixture);
+  if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
+
+  char create[192];
+  snprintf(create,sizeof create,"%s/create.gml",fixture->directory);
+  snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  if(!write_text(create,"global.fixture_created = 1;\n")){
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+
+  GmlcProject project={0};
+  AnygmHostServices file_services={0};
+  file_services.struct_size=sizeof file_services;
+  file_services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&file_services);
+  project.host=&file_services;
+  GmlcObject object={0};
+  GmlcObjectEvent events[1]={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance instances[2]={0};
+  int room_order=0;
+  project.name=(char *)"undefined-placement-fixture";
+  project.objects=&object; project.n_objects=project.cap_objects=1;
+  project.rooms=&room; project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order; project.n_room_order=1;
+
+  object.id=object.name=(char *)"obj_defined";
+  object.sprite_id=object.mask_id=object.parent_id=-1;
+  object.visible=0;
+  object.events=events; object.n_events=object.cap_events=1;
+  events[0].event_type=0; events[0].event_number=0; events[0].source_path=create;
+
+  room.id=room.name=(char *)"room_fixture"; room.width=64; room.height=48; room.speed=60;
+  room.draw_background_color=1;
+  room.instances=instances; room.n_instances=room.cap_instances=2;
+  instances[0].id=instances[0].name=(char *)"instance_defined"; instances[0].object_id=0;
+  instances[0].instance_id=100000; instances[0].sx=instances[0].sy=1.0f;
+  instances[0].color=0xFFFFFFFFu;
+  /* The placement the project no longer defines. */
+  instances[1].id=instances[1].name=(char *)"instance_undefined"; instances[1].object_id=-1;
+  instances[1].instance_id=100001; instances[1].sx=instances[1].sy=1.0f;
+  instances[1].color=0xFFFFFFFFu;
+
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,fixture->path,error,sizeof error)){
+    fprintf(stderr,"undefined-placement package failed: %s\n",error);
+    anygm_synthetic_content_destroy(fixture);
+    return 0;
+  }
+  return 1;
+}
+
 int anygm_synthetic_room_deactivation_content_create(AnygmSyntheticContent *fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);

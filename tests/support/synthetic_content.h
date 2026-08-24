@@ -30,6 +30,7 @@ int anygm_synthetic_multiview_clear_view_content_create(AnygmSyntheticContent *f
 int anygm_synthetic_classic_framebuffer_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_classic_multiview_framebuffer_content_create(
     AnygmSyntheticContent *fixture);
+int anygm_synthetic_undefined_placement_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_room_deactivation_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_game_change_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_game_restart_content_create(AnygmSyntheticContent *fixture);

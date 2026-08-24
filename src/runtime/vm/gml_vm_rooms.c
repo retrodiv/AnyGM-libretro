@@ -1954,6 +1954,16 @@ void gml_room_enter(GmlVM *vm, int room_index){
   for(uint32_t i=0;i<cnt;i++){
     uint32_t ip=gml_vm_read_u32_le(d,op+4+i*4);
     int32_t x=(int32_t)gml_vm_read_u32_le(d,ip), y=(int32_t)gml_vm_read_u32_le(d,ip+4); int obj=(int32_t)gml_vm_read_u32_le(d,ip+8);
+    /* An undefined object index cannot supply instance properties or events. Keep the
+     * placement's id reserved by the pass above, but leave its room slot empty. */
+    if(obj<0 || obj>=vm->n_objects){
+      room_inst_idx[i]=-1;
+      if(anygm_host_development_setting(vm->host,"GML_LOG_INST"))
+        anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+                        "[inst] room %d placement %u names object %d, undefined here: not created\n",
+                        room_index,i,obj);
+      continue;
+    }
     GmlInstance *in=gml_vm_instances_alloc(vm); gml_vm_instances_initialize(vm,in,x,y,obj);
     in->id=gml_vm_read_u32_le(d,ip+12);  /* room-assigned instance id */
     gml_vm_instances_apply_room_transform(vm,in,ip);
