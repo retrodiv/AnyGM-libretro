@@ -160,6 +160,96 @@ static AnygmEngine *create_loaded_engine(const AnygmHostServices *services,
   return engine;
 }
 
+/* Exercise a scoped presentation shift driven by a global value. Compare the delivered
+ * pixels before, during and after the scope while leaving the completed frame intact. */
+static int capture_frame(AnygmEngine *engine,uint32_t *out,unsigned *width,unsigned *height,
+                         const char *stage){
+  AnygmInputFrame input={0};
+  AnygmFrameOutput output={0};
+  input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  output.struct_size=sizeof output;
+  if(anygm_run_frame(engine,&input,&output)!=ANYGM_OK || !output.pixels){
+    fprintf(stderr,"scoped overrides: %s: no delivered frame\n",stage);
+    return 0;
+  }
+  if(output.width==0 || output.height==0 || (size_t)output.width*output.height>32768){
+    fprintf(stderr,"scoped overrides: %s: unexpected extent %ux%u\n",stage,output.width,output.height);
+    return 0;
+  }
+  *width=output.width; *height=output.height;
+  for(unsigned y=0;y<output.height;y++)
+    memcpy(out+(size_t)y*output.width,
+           (const uint8_t*)output.pixels+(size_t)y*output.pitch,
+           (size_t)output.width*sizeof(uint32_t));
+  return 1;
+}
+static int presentation_shift_case(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_scoped_override_content_create(&fixture)){
+    fputs("scoped overrides: shift fixture creation failed\n",stderr);
+    return 0;
+  }
+  int ok=0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  AnygmEngine *engine=create_loaded_engine(&services,&source);
+  static uint32_t plain[32768],shifted[32768];
+  unsigned pw=0,ph=0,sw=0,sh=0;
+  if(!engine) goto done;
+  /* global.advance is zero here, so the declared value is one row. */
+  if(anygm_set_runtime_override(engine,0,1,"?gameres @present_shift_y=$global.advance+1")!=ANYGM_OK)
+    goto done;
+  if(!capture_frame(engine,plain,&pw,&ph,"shift off")) goto done;
+  /* A picture whose rows are all alike cannot show a one-row move, and a case that cannot fail is
+   * worse than none: say so rather than pass. */
+  {
+    int rows_differ=0;
+    for(unsigned y=1;y<ph && !rows_differ;y++)
+      for(unsigned x=0;x<pw;x++)
+        if(plain[(size_t)y*pw+x]!=plain[(size_t)(y-1)*pw+x]){ rows_differ=1; break; }
+    if(!rows_differ){
+      fputs("scoped overrides: the fixture's picture is row-uniform, so a shift is unobservable\n",
+            stderr);
+      goto done;
+    }
+  }
+  if(!select_logical_raster(engine,1)) goto done;
+  if(!capture_frame(engine,shifted,&sw,&sh,"shift on")) goto done;
+  if(pw!=sw || ph!=sh){
+    fprintf(stderr,"scoped overrides: the shift changed the extent %ux%u -> %ux%u\n",pw,ph,sw,sh);
+    goto done;
+  }
+  for(unsigned x=0;x<sw;x++) if((shifted[x]&0x00FFFFFFu)!=0){
+    fprintf(stderr,"scoped overrides: the vacated row is not black at column %u\n",x);
+    goto done;
+  }
+  for(unsigned y=1;y<sh;y++)
+    for(unsigned x=0;x<sw;x++)
+      if(shifted[(size_t)y*sw+x]!=plain[(size_t)(y-1)*pw+x]){
+        fprintf(stderr,"scoped overrides: row %u is not the row above it before the shift\n",y);
+        goto done;
+      }
+  /* Closing the scope gives the unshifted picture back. */
+  if(!select_logical_raster(engine,0)) goto done;
+  if(!capture_frame(engine,shifted,&sw,&sh,"shift withdrawn")) goto done;
+  for(unsigned i=0;i<sw*sh;i++) if(shifted[i]!=plain[i]){
+    fputs("scoped overrides: the picture did not come back when the scope closed\n",stderr);
+    goto done;
+  }
+  ok=1;
+done:
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int scoped_override_case(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_scoped_override_content_create(&fixture)){
@@ -258,6 +348,7 @@ done:
 
 int main(void){
   if(!scoped_override_case()) return 1;
+  if(!presentation_shift_case()) return 1;
   puts("scoped overrides: ok");
   return 0;
 }

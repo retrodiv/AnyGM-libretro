@@ -134,7 +134,9 @@ static void cheat_parse_val(const char *s, CheatVal *v){
   memset(v,0,sizeof *v);
   while(*s==' ') s++;
   if(*s=='$'){
-    s++; const char *n=s; while(*s && CHEAT_NAMECH(*s)) s++;
+    /* A dot separates the "global." prefix from the name it addresses; every other value token is
+     * a bare name, so accepting it here costs nothing and keeps one scanner. */
+    s++; const char *n=s; while(*s && (CHEAT_NAMECH(*s) || *s=='.')) s++;
     size_t L=(size_t)(s-n);
     if     (L==6 && !strncmp(n,"base_w",6))   v->tok=TK_BASE_W;
     else if(L==6 && !strncmp(n,"base_h",6))   v->tok=TK_BASE_H;
@@ -150,6 +152,13 @@ static void cheat_parse_val(const char *s, CheatVal *v){
     else if(L==15 && !strncmp(n,"monitor_extra_h",15)) v->tok=TK_MONITOR_EXTRA_H;
     else if(L==6 && !strncmp(n,"view_w",6)) v->tok=TK_VIEW_W;
     else if(L==6 && !strncmp(n,"view_h",6)) v->tok=TK_VIEW_H;
+    /* Global values are read when presentation directives are evaluated, so dependent
+     * targets follow the current frame's value. */
+    else if(L>7 && !strncmp(n,"global.",7)){
+      size_t len=L-7; if(len>=sizeof v->name) len=sizeof v->name-1;
+      memcpy(v->name,n+7,len); v->name[len]=0;
+      v->tok=TK_GLOBAL;
+    }
     else { v->tok=TK_LIT; v->lit=0; return; }
     while(*s && v->nop<6){
       while(*s==' ') s++;
@@ -180,6 +189,7 @@ static double cheat_val_eval(AnygmEngine *engine,const CheatVal *v){
      * override settles its geometry. */
     case TK_VIEW_W: x=gml_global_arr(&engine->vm,"view_wview",0); break;
     case TK_VIEW_H: x=gml_global_arr(&engine->vm,"view_hview",0); break;
+    case TK_GLOBAL: x=gml_global_num(&engine->vm,v->name); break;
     default:          return v->lit;
   }
   for(int i=0;i<v->nop;i++){ double n=v->num[i];
@@ -322,6 +332,8 @@ static void cheat_parse(const char *code, CheatAct *a){
     else if(!strcmp(f,"fbh"))      a->eng=EF_FBH;
     else if(!strcmp(f,"application_w")) a->eng=EF_APPLICATION_W;
     else if(!strcmp(f,"application_h")) a->eng=EF_APPLICATION_H;
+    else if(!strcmp(f,"present_shift_x")) a->eng=EF_PRESENT_SHIFT_X;
+    else if(!strcmp(f,"present_shift_y")) a->eng=EF_PRESENT_SHIFT_Y;
     else if(!strcmp(f,"compositor_fullwidth")) a->eng=EF_COMPOSITOR;
     else if(!strcmp(f,"center_view_target")) a->eng=EF_CENTER_VIEW_TARGET;
     else if(!strcmp(f,"wide_gameplay_view")) a->eng=EF_WIDE_GAMEPLAY_VIEW;
@@ -387,6 +399,8 @@ static void cheat_apply_one(AnygmEngine *engine,const CheatAct *a){
       break;
     case CK_ENGINE: { int iv=(int)cheat_val_eval(engine,&a->val);
       switch(a->eng){
+        case EF_PRESENT_SHIFT_X: engine->present_shift_x=iv; break;
+        case EF_PRESENT_SHIFT_Y: engine->present_shift_y=iv; break;
         case EF_WINDOW_W: engine->vm.window_w=iv; break;
         case EF_WINDOW_H: engine->vm.window_h=iv; break;
         case EF_GUI_W:    engine->vm.gui_w=iv; break;
@@ -680,7 +694,7 @@ void engine_override_menu_refresh(AnygmEngine *engine){
 }
 /* Frontend toggles capture scalar or array globals. Population-wide instance and surface writes have no single previous value. A scoped logical-raster declaration may capture a target when its address has one meaningful previous value, including the bounded mutable presentation fields below. */
 static int cheat_engine_field_mutable(const CheatAct *a){
-  return a->kind==CK_ENGINE && a->eng>=EF_WINDOW_W && a->eng<=EF_APPLICATION_H;
+  return a->kind==CK_ENGINE && a->eng>=EF_WINDOW_W && a->eng<=EF_PRESENT_SHIFT_Y;
 }
 static int cheat_slot_capturable(const CheatAct *a){
   if(a->kind==CK_GSCALAR || a->kind==CK_GARR) return 1;
@@ -716,6 +730,8 @@ static void cheat_slot_capture(AnygmEngine *engine,CheatSlot *slot){
       break; }
     case CK_ENGINE:
       switch(slot->act.eng){
+        case EF_PRESENT_SHIFT_X: slot->saved=engine->present_shift_x; slot->saved_valid=1; break;
+        case EF_PRESENT_SHIFT_Y: slot->saved=engine->present_shift_y; slot->saved_valid=1; break;
         case EF_WINDOW_W: slot->saved=engine->vm.window_w; slot->saved_valid=1; break;
         case EF_WINDOW_H: slot->saved=engine->vm.window_h; slot->saved_valid=1; break;
         case EF_GUI_W: slot->saved=engine->vm.gui_w; slot->saved_valid=1; break;

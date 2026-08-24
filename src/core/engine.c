@@ -2117,6 +2117,7 @@ void anygm_destroy(AnygmEngine *engine){
   free(engine->gui_buffer);
   free(engine->app_crop);
   free(engine->host_screen);
+  free(engine->present_shift_screen);
   /* Destroying an engine outside a current graphics context releases CPU metadata and forgets the
    * handles; it must not issue a call into a context that is gone. */
   engine_graphics_release(engine,0);

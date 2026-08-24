@@ -252,13 +252,17 @@ int anygm_synthetic_scoped_override_content_create(AnygmSyntheticContent *fixtur
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
 
-  char startup[192],create[192],step[192];
+  char startup[192],create[192],step[192],draw[192];
   snprintf(startup,sizeof startup,"%s/startup.gml",fixture->directory);
   snprintf(create,sizeof create,"%s/create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/step.gml",fixture->directory);
+  snprintf(draw,sizeof draw,"%s/draw.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
+  /* A band across the top rather than a flat field: a picture whose rows are all alike cannot show
+   * a one-row presentation shift, so a case asserting one against it could never fail. */
   if(!write_text(startup,"global.advance = 0;\n") ||
      !write_text(create,"scale = 3;\n") ||
+     !write_text(draw,"draw_set_color(16777215);\ndraw_rectangle(0,0,63,7,0);\n") ||
      !write_text(step,
                  "if (global.advance == 1) { global.advance = 0; room_goto_next(); }\n")){
     anygm_synthetic_content_destroy(fixture);
@@ -272,7 +276,7 @@ int anygm_synthetic_scoped_override_content_create(AnygmSyntheticContent *fixtur
   anygm_stdio_vfs_services_init(&file_services);
   project.host=&file_services;
   GmlcObject object={0};
-  GmlcObjectEvent events[2]={0};
+  GmlcObjectEvent events[3]={0};
   GmlcRoom rooms[2]={0};
   GmlcRoomInstance instance={0};
   int room_order[2]={0,1};
@@ -289,15 +293,18 @@ int anygm_synthetic_scoped_override_content_create(AnygmSyntheticContent *fixtur
 
   object.id=object.name=(char *)"obj_canvas";
   object.sprite_id=object.mask_id=object.parent_id=-1;
-  object.visible=0;
+  object.visible=1;
   object.events=events;
-  object.n_events=object.cap_events=2;
+  object.n_events=object.cap_events=3;
   events[0].event_type=0;
   events[0].event_number=0;
   events[0].source_path=create;
   events[1].event_type=3;
   events[1].event_number=0;
   events[1].source_path=step;
+  events[2].event_type=8;
+  events[2].event_number=0;
+  events[2].source_path=draw;
 
   instance.id=instance.name=(char *)"instance_canvas";
   instance.object_id=0;

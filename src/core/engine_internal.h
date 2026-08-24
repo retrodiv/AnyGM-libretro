@@ -132,13 +132,14 @@ typedef enum {
 typedef enum {
   TK_LIT=0, TK_BASE_W, TK_BASE_H, TK_FORCED_W, TK_FORCED_H, TK_EXTRA_W, TK_EXTRA_H,
   TK_MONITOR_W, TK_MONITOR_H, TK_MONITOR_VIEW_W, TK_MONITOR_VIEW_H,
-  TK_MONITOR_EXTRA_W, TK_MONITOR_EXTRA_H, TK_VIEW_W, TK_VIEW_H
+  TK_MONITOR_EXTRA_W, TK_MONITOR_EXTRA_H, TK_VIEW_W, TK_VIEW_H, TK_GLOBAL
 } CheatTok;
 typedef enum { EF_WINDOW_W=0, EF_WINDOW_H, EF_GUI_W, EF_GUI_H, EF_FBW, EF_FBH,
                EF_APPLICATION_W, EF_APPLICATION_H,
+               EF_PRESENT_SHIFT_X, EF_PRESENT_SHIFT_Y,
                EF_COMPOSITOR, EF_CENTER_VIEW_TARGET, EF_WIDE_GAMEPLAY_VIEW } EngField;
 typedef enum { CF_X=0, CF_Y, CF_WIDTH, CF_HEIGHT } CameraField;
-typedef struct { CheatTok tok; double lit; char op[6]; double num[6]; int nop; } CheatVal;
+typedef struct { CheatTok tok; double lit; char name[64]; char op[6]; double num[6]; int nop; } CheatVal;
 typedef struct {
   CheatKind kind;
   int scope_aspect;
@@ -302,6 +303,12 @@ struct AnygmEngine {
    * can still wrap its completed frame in the distinct host framebuffer below. */
   unsigned host_output_width,host_output_height;
   int host_canvas_active,host_canvas_x,host_canvas_y,host_canvas_width,host_canvas_height;
+  /* Whole-pixel offset applied to the delivered frame, and the buffer that holds the offset copy
+   * so the completed frame the state carries is never moved. Declared by a ?gameres directive and
+   * therefore zero unless the logical-raster presentation is selected and an anchor asks for it. */
+  int present_shift_x,present_shift_y;
+  uint32_t *present_shift_screen;
+  size_t present_shift_cap;
   /* Geometry the host scratch buffer was last cleared for. The canvas rectangle is rewritten in
    * full every frame, so the margins outside it survive until one of these changes. */
   int host_clear_valid;

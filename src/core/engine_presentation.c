@@ -90,6 +90,39 @@ int engine_build_host_plan(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t targ
   return gml_render_plan_validate(plan);
 }
 
+/* Move only the delivered frame by whole pixels and fill vacated edges with black.
+ * Keep the completed frame unchanged so serialization retains its canonical pixels. */
+static void present_shift_rows(uint32_t *destination,const uint32_t *source,
+                               unsigned width,unsigned height,int dx,int dy){
+  for(unsigned y=0;y<height;y++){
+    uint32_t *out=destination+(size_t)y*width;
+    long sy=(long)y-dy;
+    if(sy<0 || sy>=(long)height){ memset(out,0,(size_t)width*sizeof(*out)); continue; }
+    const uint32_t *in=source+(size_t)sy*width;
+    if(dx==0){ memcpy(out,in,(size_t)width*sizeof(*out)); continue; }
+    for(unsigned x=0;x<width;x++){
+      long sx=(long)x-dx;
+      out[x]=(sx<0 || sx>=(long)width)?0u:in[sx];
+    }
+  }
+}
+static const uint32_t *present_shift_frame(AnygmEngine *engine,const uint32_t *source,
+                                           unsigned width,unsigned height){
+  if(!engine || !source || width==0 || height==0) return source;
+  int dx=engine->present_shift_x, dy=engine->present_shift_y;
+  if(dx==0 && dy==0) return source;
+  if((unsigned)abs(dx)>=width || (unsigned)abs(dy)>=height) return source;
+  size_t need=(size_t)width*(size_t)height;
+  if(need>SIZE_MAX/sizeof(uint32_t)) return source;
+  if(engine->present_shift_cap<need){
+    uint32_t *grown=realloc(engine->present_shift_screen,need*sizeof(uint32_t));
+    if(!grown) return source;
+    engine->present_shift_screen=grown;
+    engine->present_shift_cap=need;
+  }
+  present_shift_rows(engine->present_shift_screen,source,width,height,dx,dy);
+  return engine->present_shift_screen;
+}
 int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
                        unsigned *width,unsigned *height){
   unsigned host_width=engine->host_output_width?engine->host_output_width:engine->output_width;
@@ -98,7 +131,7 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
   /* Every path from here reads the completed frame, so it has to be the canonical one. */
   engine_materialize_completed_frame(engine);
   if(!engine->host_canvas_active){
-    if(pixels) *pixels=engine->screen;
+    if(pixels) *pixels=present_shift_frame(engine,engine->screen,host_width,host_height);
     if(width) *width=host_width;
     if(height) *height=host_height;
     return 1;
@@ -133,7 +166,7 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
     return 0;
   }
   engine->host_plan_valid=1;
-  if(pixels) *pixels=engine->host_screen;
+  if(pixels) *pixels=present_shift_frame(engine,engine->host_screen,host_width,host_height);
   if(width) *width=host_width;
   if(height) *height=host_height;
   return 1;
