@@ -302,6 +302,44 @@ GmlVal gml_builtin_try_actions_legacy(GmlVM *vm, const char *nm, GmlVal *a, int 
   if(!strcmp(nm,"action_draw_variable")){ double x=N(a,n,1),y=N(a,n,2); action_relative_point(vm,&x,&y);
     GmlVal draw_args[3]={vreal(x),vreal(y),n>0?a[0]:vreal(0)};
     return gml_builtin_call(vm,"draw_text",draw_args,3); }
+  /* The drag-and-drop primitives on the Draw tab. Each is the corresponding function with the
+   * action's Relative flag applied to both of its points, which is what the action editor offers
+   * and the only thing these add over the function form. The fill argument keeps the function's
+   * own reading, where a true fifth argument means outline. */
+  if(!strcmp(nm,"action_draw_rectangle") || !strcmp(nm,"action_draw_ellipse")){
+    double x1=N(a,n,0),y1=N(a,n,1),x2=N(a,n,2),y2=N(a,n,3);
+    action_relative_point(vm,&x1,&y1); action_relative_point(vm,&x2,&y2);
+    GmlVal draw_args[5]={vreal(x1),vreal(y1),vreal(x2),vreal(y2),vreal(N(a,n,4))};
+    return gml_builtin_call(vm,
+      !strcmp(nm,"action_draw_rectangle")?"draw_rectangle":"draw_ellipse",draw_args,5); }
+  if(!strcmp(nm,"action_draw_line")){
+    double x1=N(a,n,0),y1=N(a,n,1),x2=N(a,n,2),y2=N(a,n,3);
+    action_relative_point(vm,&x1,&y1); action_relative_point(vm,&x2,&y2);
+    GmlVal draw_args[4]={vreal(x1),vreal(y1),vreal(x2),vreal(y2)};
+    return gml_builtin_call(vm,"draw_line",draw_args,4); }
+  if(!strcmp(nm,"action_draw_arrow")){
+    double x1=N(a,n,0),y1=N(a,n,1),x2=N(a,n,2),y2=N(a,n,3);
+    action_relative_point(vm,&x1,&y1); action_relative_point(vm,&x2,&y2);
+    GmlVal draw_args[5]={vreal(x1),vreal(y1),vreal(x2),vreal(y2),vreal(N(a,n,4))};
+    return gml_builtin_call(vm,"draw_arrow",draw_args,5); }
+  if(!strcmp(nm,"action_draw_gradient_hor") || !strcmp(nm,"action_draw_gradient_vert")){
+    double x1=N(a,n,0),y1=N(a,n,1),x2=N(a,n,2),y2=N(a,n,3);
+    action_relative_point(vm,&x1,&y1); action_relative_point(vm,&x2,&y2);
+    GmlVal first=vreal(N(a,n,4)), second=vreal(N(a,n,5));
+    int horizontal=!strcmp(nm,"action_draw_gradient_hor");
+    /* draw_rectangle_color takes its four corners clockwise from the top left. */
+    GmlVal draw_args[9]={vreal(x1),vreal(y1),vreal(x2),vreal(y2),
+                         first,
+                         horizontal?second:first,
+                         second,
+                         horizontal?first:second,
+                         vreal(0)};
+    return gml_builtin_call(vm,"draw_rectangle_color",draw_args,9); }
+  if(!strcmp(nm,"action_draw_background")){
+    double x=N(a,n,1),y=N(a,n,2); action_relative_point(vm,&x,&y);
+    GmlVal draw_args[3]={vreal(N(a,n,0)),vreal(x),vreal(y)};
+    return gml_builtin_call(vm,
+      N(a,n,3)!=0.0?"draw_background_tiled":"draw_background",draw_args,3); }
   if(!strcmp(nm,"action_draw_text")){
     double x=N(a,n,1),y=N(a,n,2); action_relative_point(vm,&x,&y);
     GmlRender *r=(GmlRender*)vm->render;
