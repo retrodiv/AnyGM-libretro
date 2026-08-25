@@ -1169,6 +1169,33 @@ GmlVal gml_builtin_try_io_ini(GmlVM *vm, const char *nm, GmlVal *a, int n){
 }
 
 
+/* The classic filename_* family is pure string arithmetic on a path: nothing is opened and nothing
+ * is resolved against the content root, so these stay here beside the other name operations rather
+ * than reaching for the read path. Both separators are recognised, because content authored on
+ * Windows and content authored anywhere else both arrive here. */
+static const char *filename_base_part(const char *path){
+  const char *base=path;
+  for(const char *cursor=path;*cursor;cursor++)
+    if(*cursor=='/'||*cursor=='\\') base=cursor+1;
+  return base;
+}
+
+/* The last dot in the name part, or NULL. Searching the name rather than the whole path keeps a
+ * dot in a directory - "./saves/file" - from being read as an extension. */
+static const char *filename_extension_part(const char *path){
+  const char *base=filename_base_part(path), *dot=NULL;
+  for(const char *cursor=base;*cursor;cursor++) if(*cursor=='.') dot=cursor;
+  return dot;
+}
+
+static GmlVal filename_prefix_value(const char *path, size_t length){
+  char *out=(char*)malloc(length+1);
+  if(!out) return vstr("");
+  if(length) memcpy(out,path,length);
+  out[length]=0;
+  return vstr_owned(out);
+}
+
 GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
   /* The high-score table retains ten places in score order. Reads beyond
    * populated places return zero or an empty string. */
@@ -1433,6 +1460,42 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(joined) joined[at]=0;
     for(int i=0;i<name_count;i++) free(names[i]);
     return joined?vstr_owned(joined):vstr("");
+  }
+  if(!strcmp(nm,"filename_name")){
+    const char *path=S(vm,a,n,0);
+    return vstr_owned(strdup(filename_base_part(path)));
+  }
+  if(!strcmp(nm,"filename_ext")){
+    const char *dot=filename_extension_part(S(vm,a,n,0));
+    return dot?vstr_owned(strdup(dot)):vstr("");
+  }
+  /* filename_path keeps the final separator and filename_dir drops it. A path with no separator at
+   * all has neither, and both answer the empty string rather than the name. */
+  if(!strcmp(nm,"filename_path")){
+    const char *path=S(vm,a,n,0), *base=filename_base_part(path);
+    return filename_prefix_value(path,(size_t)(base-path));
+  }
+  if(!strcmp(nm,"filename_dir")){
+    const char *path=S(vm,a,n,0), *base=filename_base_part(path);
+    size_t length=(size_t)(base-path);
+    if(length) length--;                       /* drop the separator filename_path keeps */
+    return filename_prefix_value(path,length);
+  }
+  if(!strcmp(nm,"filename_drive")){
+    const char *path=S(vm,a,n,0);
+    return (path[0] && path[1]==':')?filename_prefix_value(path,2):vstr("");
+  }
+  /* The new extension carries its own dot, and an empty one removes the extension entirely. */
+  if(!strcmp(nm,"filename_change_ext")){
+    const char *path=S(vm,a,n,0), *replacement=S(vm,a,n,1);
+    const char *dot=filename_extension_part(path);
+    size_t stem=dot?(size_t)(dot-path):strlen(path), tail=strlen(replacement);
+    char *out=(char*)malloc(stem+tail+1);
+    if(!out) return vstr("");
+    if(stem) memcpy(out,path,stem);
+    if(tail) memcpy(out+stem,replacement,tail);
+    out[stem+tail]=0;
+    return vstr_owned(out);
   }
   if(!strcmp(nm,"filename_absolute")){
     char *path=resolve_read_path(vm,S(vm,a,n,0));

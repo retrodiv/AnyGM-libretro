@@ -42,6 +42,27 @@ GmlVal gml_builtin_try_values_math(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"tan"))   return vreal(tan(N(a,n,0)));
   if(!strcmp(nm,"log10")) return vreal(log10(N(a,n,0)));
   if(!strcmp(nm,"logn"))  return vreal(log(N(a,n,1))/log(N(a,n,0)));
+  if(!strcmp(nm,"log2"))  return vreal(log2(N(a,n,0)));
+  if(!strcmp(nm,"ln"))    return vreal(log(N(a,n,0)));
+  if(!strcmp(nm,"exp"))   return vreal(exp(N(a,n,0)));
+  if(!strcmp(nm,"dot_product")) return vreal(N(a,n,0)*N(a,n,2)+N(a,n,1)*N(a,n,3));
+  if(!strcmp(nm,"dot_product_3d"))
+    return vreal(N(a,n,0)*N(a,n,3)+N(a,n,1)*N(a,n,4)+N(a,n,2)*N(a,n,5));
+  /* The normalised forms scale each vector to unit length first, so the answer is the cosine of
+   * the angle between them. A zero-length vector has no direction; return 0 instead
+   * of dividing by zero. */
+  if(!strcmp(nm,"dot_product_normalised")||!strcmp(nm,"dot_product_normalized")){
+    double x1=N(a,n,0),y1=N(a,n,1),x2=N(a,n,2),y2=N(a,n,3);
+    double l1=sqrt(x1*x1+y1*y1), l2=sqrt(x2*x2+y2*y2);
+    if(l1<=0.0||l2<=0.0) return vreal(0);
+    return vreal((x1*x2+y1*y2)/(l1*l2));
+  }
+  if(!strcmp(nm,"dot_product_3d_normalised")||!strcmp(nm,"dot_product_3d_normalized")){
+    double x1=N(a,n,0),y1=N(a,n,1),z1=N(a,n,2),x2=N(a,n,3),y2=N(a,n,4),z2=N(a,n,5);
+    double l1=sqrt(x1*x1+y1*y1+z1*z1), l2=sqrt(x2*x2+y2*y2+z2*z2);
+    if(l1<=0.0||l2<=0.0) return vreal(0);
+    return vreal((x1*x2+y1*y2+z1*z2)/(l1*l2));
+  }
   if(!strcmp(nm,"dsin"))  return vreal(sin(N(a,n,0)*M_PI/180.0));   /* degree trig (GM classics) */
   if(!strcmp(nm,"dcos"))  return vreal(cos(N(a,n,0)*M_PI/180.0));
   if(!strcmp(nm,"dtan"))  return vreal(tan(N(a,n,0)*M_PI/180.0));
@@ -487,6 +508,11 @@ GmlVal gml_builtin_try_values_strings(GmlVM *vm, const char *nm, GmlVal *a, int 
   if(!strcmp(nm,"string_byte_length")) return vreal((double)strlen(S(vm,a,n,0)));
   if(!strcmp(nm,"string_concat")) return gml_string_concat(a,n);
   if(!strcmp(nm,"string_concat_ext")) return gml_string_concat_ext(a,n);
+  if(!strcmp(nm,"string_starts_with")){
+    const char *text=S(vm,a,n,0), *prefix=S(vm,a,n,1);
+    size_t prefix_length=strlen(prefix);
+    return vreal(prefix_length<=strlen(text) && !memcmp(text,prefix,prefix_length));
+  }
   if(!strcmp(nm,"string_ends_with")){
     const char *text=S(vm,a,n,0), *suffix=S(vm,a,n,1);
     size_t text_length=strlen(text), suffix_length=strlen(suffix);
@@ -938,6 +964,10 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
   if(!strcmp(nm,"is_string")) return vreal(n>0 && a[0].t==V_STR);
   if(!strcmp(nm,"is_real")||!strcmp(nm,"is_numeric")) return vreal(n>0 && a[0].t==V_REAL);
   if(!strcmp(nm,"is_array")) return vreal(n>0 && a[0].t==V_ARR);
+  /* Only a real can be either: a string or an undefined is neither NaN nor infinite, and
+   * answering from a coerced number would call is_nan("") true. */
+  if(!strcmp(nm,"is_nan")) return vreal(n>0 && a[0].t==V_REAL && isnan(a[0].d));
+  if(!strcmp(nm,"is_infinity")) return vreal(n>0 && a[0].t==V_REAL && isinf(a[0].d));
   /* typeof() exposes the language-visible value category, not the C storage used by this VM.
    * Structs and bound methods deliberately share V_REAL with ordinary numbers because their
    * public handles must survive bytecode arithmetic/copies; recover their logical type from the
