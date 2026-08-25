@@ -1932,6 +1932,13 @@ void gml_room_enter(GmlVM *vm, int room_index){
     } }
   room_camera_resources_init(vm,1);
   room_camera_bindings_apply(vm,room_index);
+  if(vm->gui_boot_w<=0 || vm->gui_boot_h<=0){
+    double bw=gml_vm_global_array_number(vm,"view_wport",0);
+    double bh=gml_vm_global_array_number(vm,"view_hport",0);
+    int visible=gml_vm_global_array_number(vm,"view_visible",0)>=0.5;
+    vm->gui_boot_w=(visible && bw>0)?(int)bw:(int)r.width;
+    vm->gui_boot_h=(visible && bh>0)?(int)bh:(int)r.height;
+  }
   if(anygm_host_development_setting(vm->host,"GML_LOG_VIEW")) anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[view] room=%d dim=%ux%u view0 en=%.0f wview=%.0f hview=%.0f wport=%.0f hport=%.0f\n",
     vm->room_index, r.width, r.height, gml_vm_global_array_number(vm,"view_visible",0),
     gml_vm_global_array_number(vm,"view_wview",0), gml_vm_global_array_number(vm,"view_hview",0),

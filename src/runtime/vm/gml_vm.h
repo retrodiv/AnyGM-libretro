@@ -412,6 +412,8 @@ typedef struct GmlVM {
    * the optional screen-relative GUI transform (display_set_gui_maximise).  A zero maximise
    * scale means automatic fit; inactive restores the application-surface-relative default. */
   int window_w, window_h, gui_w, gui_h;
+  /* First-room view port captured before Create events for default GUI coordinates. */
+  int gui_boot_w, gui_boot_h;
   int gui_maximise_active;
   double gui_maximise_xscale, gui_maximise_yscale;
   double gui_maximise_xoffset, gui_maximise_yoffset;

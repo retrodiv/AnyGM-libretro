@@ -322,6 +322,8 @@ struct AnygmEngine {
   unsigned host_clear_host_width,host_clear_host_height;
   int host_clear_canvas_x,host_clear_canvas_y,host_clear_canvas_width,host_clear_canvas_height;
   int gui_offset_x,gui_offset_y,canvas_mode,gui_space_width,gui_space_height;
+  /* Initial logical GUI dimensions, independent of later room changes. */
+  int gui_space_boot_width,gui_space_boot_height;
   /* Derived presentation state: content owns the non-native window raster while automatic
    * application-surface drawing is disabled. The screen-stage GUI must use that same raster for
    * both its physical target and its logical coordinates. */

@@ -1724,6 +1724,20 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 	    if((anygm_policy_has_modern_layer_semantics(&engine->win) || gui_uses_window_target) &&
 	       engine->vm.gui_w>0 && engine->vm.gui_h>0)
 	      gml_render_gui_set_size(&engine->render,engine->vm.gui_w,engine->vm.gui_h);
+	    /* Without an explicit GUI size, first-generation layer semantics use the first
+	     * room's view port as logical GUI coordinates. The physical target and its
+	     * presentation extents remain unchanged; later layers use the live target. */
+	    else if(!anygm_policy_has_modern_layer_semantics(&engine->win) &&
+	            engine->vm.gui_w<=0 && engine->vm.gui_h<=0 &&
+	            engine->vm.gui_boot_w>=16 && engine->vm.gui_boot_h>=16 &&
+	            (engine->vm.gui_boot_w!=(gui_uses_window_target?gtw:gsw) ||
+	             engine->vm.gui_boot_h!=(gui_uses_window_target?gth:gsh))){
+	      gml_render_gui_set_size(&engine->render,engine->vm.gui_boot_w,engine->vm.gui_boot_h);
+	      if(anygm_host_development_setting(&engine->host,"GML_LOG_GUISIZE"))
+	        engine_logf(engine,ANYGM_LOG_DEBUG,"[guisize] f%ld logical %dx%d target %dx%d\n",
+	          engine->vm.frame,engine->vm.gui_boot_w,engine->vm.gui_boot_h,
+	          gui_uses_window_target?gtw:gsw,gui_uses_window_target?gth:gsh);
+	    }
 	  }
 	  if(engine->vm.gui_maximise_active)
 	    gml_render_gui_set_maximise(&engine->render,1,
