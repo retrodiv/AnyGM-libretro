@@ -2561,13 +2561,12 @@ int main(int argc,char **argv){
   /* The state carries content and compatibility fingerprints. The synthetic content embeds the
    * producer fingerprint, so this hash moves whenever reviewed producer behavior or policy changes,
    * and again whenever the serialized layout itself changes. */
-  /* Schema 15 adds the runtime motion-planning state: a count of live grids, and the path table's
-   * total, authored count and how many of its entries the run wrote. This fixture creates no grid
-   * and edits no path, so those five words are the whole of the growth - 22050 to 22066 - and what
-   * a grid or a runtime path costs on top of that is covered by the builtin-state fixture. */
+  /* Schema 16 adds one word selecting the lossless completed-frame encoding. This fixture's
+   * canonical state therefore grows from 22066 to 22070; its runtime motion-planning tables remain
+   * empty, and their non-empty cost stays covered by the builtin-state fixture. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
-  if(deterministic_size!=22066 ||
-     deterministic_hash!=UINT64_C(0x459a47f932b62784)){
+  if(deterministic_size!=22070 ||
+     deterministic_hash!=UINT64_C(0xe159133ecc1b372a)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;

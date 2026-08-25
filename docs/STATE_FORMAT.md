@@ -9,15 +9,24 @@ marketing version. It is a numeric field in a validated binary header.
 
 ## Save-state schema
 
-The current AnyGM save-state schema is `15`. It is the format transported by
+The current AnyGM save-state schema is `16`. It is the format transported by
 libretro frontends for manual save states, automatic state slots, and rewind
 snapshots. Those features remain supported.
 
-Schema `15` carries live motion-planning grids and paths added or edited at runtime.
-An instance's `path_index` may refer to a runtime path, and grids need not be rebuilt
-after loading a state. Authored paths remain in the content; restore re-reads that table
-before applying runtime records, so an authored path with no saved edit is restored
-from its original definition.
+Schema `16` selects the smaller of two lossless completed-frame encodings. Repeated-row RLE remains
+the compact form for integer-scaled canvases and letterboxes, while a frame whose run stream would
+be larger is stored as raw little-endian RGBA. The latter avoids scanning and expanding almost one
+run per pixel for detailed authored rasters. The encoding selector changes the root section layout,
+so schema `15` states are rejected cleanly rather than interpreted through a legacy reader.
+
+Schema `15` carries the runtime motion-planning state: the motion-planning grids a run created,
+and every path it added or edited. Both come into existence after content load, and an instance's
+`path_index` names one of them, so a state without them restores a run that has forgotten where
+anything walks. A room that builds its grid from placed blockers commonly destroys the instance
+that did it, which leaves nothing to rebuild the grid afterwards; the state is the only thing that
+can put it back. Authored paths are not written - the content holds them, and restore re-reads the
+authored table before applying the records above it, so a path the run had edited is authored again
+when the state says it was untouched.
 
 Schema `14` includes the independently authored collision plane of a runtime sprite in the
 renderer payload. Sprite assignment and duplication copy that plane separately from visible RGBA,
@@ -146,13 +155,17 @@ the exact current size and writes into a caller-owned buffer.
 The libretro adapter advertises the variable-size serialization quirk and records whether the
 frontend acknowledges it. Before the first completed frame, its transport answer covers the
 current frame-free state and the remembered frame-free peak. When the completed-frame ceiling would
-add at least 1 MiB, a frontend that fixes its rewind ring from that answer receives explicit
-frame-free snapshots in those slots. Smaller rasters retain complete, visually exact rewind states.
+add at least 1 MiB, a frontend that fixes its rewind ring from that answer receives a compact
+one-MiB-or-larger slot. Each snapshot first writes the complete encoded state; if that real state
+fits, rewind remains visually exact even though its conservative ceiling did not. Only a complete
+state that actually exceeds the slot falls back to the explicit frame-free form. Smaller rasters
+retain complete, visually exact rewind states directly.
 For a frontend that does not acknowledge variable sizes, that first answer remains fixed for the
 loaded session, as the baseline libretro contract requires. Later size queries return that cached
 capacity without traversing the runtime state again; the frontend cannot accept a different answer,
 and rewind immediately traverses the same state to serialize it. Ordinary save-state requests then
-use the same frame-free form when the compact high-resolution regime is active; loading one resumes
+may use the same frame-free form when the compact high-resolution regime is active and its complete
+encoded state does not fit; loading one resumes
 from its canonical post-frame simulation state on the next run. A frontend that explicitly
 acknowledges variable sizes continues measuring and receives monotonic growth to the conservative
 complete-state capacity, so newly sized ordinary saves retain the exact completed picture while its

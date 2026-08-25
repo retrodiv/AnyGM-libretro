@@ -309,7 +309,8 @@ static int fixed_compact_ring_survives_frontend_size_checks(void){
 }
 
 /* A frontend that explicitly accepts variable state sizes can grow past its compact startup ring.
- * Old ring slots remain the frame-free form while a newly sized ordinary save carries its frame. */
+ * An old ring slot attempts a complete state first and falls back when it cannot fit, while a
+ * newly sized ordinary save carries its frame directly. */
 static int variable_frontend_keeps_compact_ring_and_complete_save(void){
   stub_state_bytes=9u*1024u*1024u;
   if(!begin_frontend(1)) return 0;
@@ -353,8 +354,8 @@ static int ordinary_raster_ring_keeps_the_complete_frame(void){
 }
 
 /* A larger authored raster can dominate every high-frequency snapshot even without a virtual
- * monitor. Once omitting only that optional picture saves at least one MiB, the startup ring uses
- * the explicit frame-free transport and keeps a one-MiB growth reserve. */
+ * monitor. Its conservative ceiling selects the one-MiB compact ring, but an encoded complete
+ * state that actually fits keeps its frame instead of paying for a pessimistic bound. */
 static int large_raster_ring_uses_the_compact_form(void){
   stub_state_bytes=768u*1024u;
   if(!begin_frontend(0)) return 0;
@@ -366,7 +367,7 @@ static int large_raster_ring_uses_the_compact_form(void){
   retro_run();
   uint8_t *ring=malloc(ring_capacity);
   if(!ring) return 0;
-  int ok=retro_serialize(ring,ring_capacity) && resume_saves==1u && complete_saves==0u;
+  int ok=retro_serialize(ring,ring_capacity) && complete_saves==1u && resume_saves==0u;
   free(ring);
   retro_unload_game();
   retro_deinit();

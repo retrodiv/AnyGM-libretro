@@ -468,6 +468,55 @@ static int explicit_resume_state_case(void){
   return ok;
 }
 
+/* Detailed native rasters should take the bounded raw path instead of expanding to one eight-byte
+ * run per pixel, while presentation repetition should retain the much smaller row-RLE path. Both
+ * encodings are state bytes, so prove their exact pixels survive a real transactional load. */
+static int completed_frame_encodings_case(void){
+  Session session;
+  uint32_t *expected=NULL;
+  uint8_t *state=NULL;
+  size_t pixels=0,raw_size=0,rle_size=0,resume_size=0;
+  int ok=1;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&session),"the frame-encoding session loads");
+  REQUIRE(advance(session.engine,1,NULL),"the frame-encoding session presents");
+  pixels=(size_t)session.engine->output_width*session.engine->output_height;
+  REQUIRE(pixels>0 && session.engine->screen!=NULL,"the completed frame has pixels");
+  expected=(uint32_t*)malloc(pixels*sizeof(uint32_t));
+  REQUIRE(expected!=NULL,"the expected frame is allocated");
+
+  for(size_t index=0;index<pixels;index++)
+    expected[index]=UINT32_C(0xFF000000)|
+                    (uint32_t)((index*UINT32_C(2654435761))&UINT32_C(0x00FFFFFF));
+  memcpy(session.engine->screen,expected,pixels*sizeof(uint32_t));
+  resume_size=anygm_state_resume_size(session.engine);
+  state=serialize(session.engine,&raw_size);
+  ok=state && raw_size>resume_size && raw_size-resume_size<=pixels*4u+64u;
+  if(ok){
+    memset(session.engine->screen,0,pixels*sizeof(uint32_t));
+    ok=anygm_state_load(session.engine,state,raw_size)==ANYGM_OK &&
+       memcmp(session.engine->screen,expected,pixels*sizeof(uint32_t))==0;
+  }
+  free(state); state=NULL;
+
+  for(size_t index=0;index<pixels;index++) expected[index]=UINT32_C(0xFF24486C);
+  memcpy(session.engine->screen,expected,pixels*sizeof(uint32_t));
+  state=serialize(session.engine,&rle_size);
+  ok=ok && state && rle_size>resume_size && rle_size-resume_size<pixels;
+  if(ok){
+    memset(session.engine->screen,0,pixels*sizeof(uint32_t));
+    ok=anygm_state_load(session.engine,state,rle_size)==ANYGM_OK &&
+       memcmp(session.engine->screen,expected,pixels*sizeof(uint32_t))==0;
+  }
+  if(!ok)
+    fprintf(stderr,"completed-frame encodings failed: raw=%zu rle=%zu resume=%zu pixels=%zu\n",
+            raw_size,rle_size,resume_size,pixels);
+  free(state);
+  free(expected);
+  session_close(&session);
+  return ok;
+}
+
 int main(void){
   static const struct { const char *name; int (*run)(void); } cases[]={
     {"state bytes match with and without a target",state_bytes_match_case},
@@ -481,6 +530,7 @@ int main(void){
     {"a refused context leaves a working software engine",refused_context_case},
     {"a buffer too short for the frame still takes the state",short_buffer_drops_the_frame_case},
     {"an explicit resume state omits only the completed frame",explicit_resume_state_case},
+    {"raw and repeated-row completed frames roundtrip",completed_frame_encodings_case},
   };
   int failed=0;
   for(size_t index=0;index<sizeof cases/sizeof cases[0];index++)

@@ -462,9 +462,22 @@ bool retro_serialize(void *data,size_t size){
   bool startup_slot=g_libretro.frame_completed && g_libretro.startup_ring_compact &&
                     g_libretro.startup_resume_capacity &&
                     size<=g_libretro.startup_resume_capacity;
-  AnygmResult result=(startup_slot || size<g_libretro.fixed_state_capacity)?
-    anygm_state_save_for_resume(g_libretro.engine,data,size,&written):
-    anygm_state_save(g_libretro.engine,data,size,&written);
+  AnygmResult result;
+  if(startup_slot){
+    /* The conservative completed-frame ceiling chose this compact ring, but the encoded frame can
+     * still fit: repeated rows and runs often reduce a large raster below that ceiling. Preserve
+     * exact rewind whenever the real complete state fits the frontend's slot. Only fall back to
+     * the explicit frame-free form when the complete writer actually refuses the offered bytes. */
+    result=anygm_state_save(g_libretro.engine,data,size,&written);
+    if(result!=ANYGM_OK || written>size){
+      written=0;
+      result=anygm_state_save_for_resume(g_libretro.engine,data,size,&written);
+    }
+  } else if(size<g_libretro.fixed_state_capacity){
+    result=anygm_state_save_for_resume(g_libretro.engine,data,size,&written);
+  } else {
+    result=anygm_state_save(g_libretro.engine,data,size,&written);
+  }
   if(result!=ANYGM_OK || written>size) return false;
   /* libretro persists the full advertised buffer, while AnyGM records its exact logical size in
    * the state header. Clear the capacity tail so files and rewind deltas never contain stale host

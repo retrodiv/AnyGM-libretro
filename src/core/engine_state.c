@@ -26,6 +26,14 @@ static void cw_u32(CoreW *s, uint32_t v){
   uint8_t bytes[4]={(uint8_t)v,(uint8_t)(v>>8),(uint8_t)(v>>16),(uint8_t)(v>>24)};
   cw_raw(s,bytes,sizeof bytes);
 }
+static void cw_u32_array(CoreW *s,const uint32_t *values,size_t count){
+  if(count>SIZE_MAX/4u){ s->ok=0; s->pos=SIZE_MAX; return; }
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
+  cw_raw(s,values,count*4u);
+#else
+  for(size_t index=0;index<count;index++) cw_u32(s,values[index]);
+#endif
+}
 static void cw_u64(CoreW *s, uint64_t v){
   uint8_t bytes[8];
   for(unsigned i=0;i<8;i++) bytes[i]=(uint8_t)(v>>(i*8));
@@ -38,6 +46,14 @@ static uint32_t cr_u32(CoreR *s){
   uint8_t bytes[4]={0}; cr_raw(s,bytes,sizeof bytes);
   return (uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
 }
+static void cr_u32_array(CoreR *s,uint32_t *values,size_t count){
+  if(count>SIZE_MAX/4u){ s->ok=0; s->pos=SIZE_MAX; return; }
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
+  cr_raw(s,values,count*4u);
+#else
+  for(size_t index=0;index<count;index++) values[index]=cr_u32(s);
+#endif
+}
 static uint64_t cr_u64(CoreR *s){
   uint8_t bytes[8]={0}; cr_raw(s,bytes,sizeof bytes); uint64_t value=0;
   for(unsigned i=0;i<8;i++) value|=(uint64_t)bytes[i]<<(i*8);
@@ -47,17 +63,18 @@ static int64_t cr_i64(CoreR *s){ return (int64_t)cr_u64(s); }
 static int cr_i32(CoreR *s){ return (int)(int32_t)cr_u32(s); }
 static double cr_d(CoreR *s){ uint64_t bits=cr_u64(s); double value=0; memcpy(&value,&bits,sizeof value); return value; }
 
-/* The completed frame is stored as a row table plus run-length encoded literal rows. Presentation
- * canvases are dominated by repetition an upscale manufactures - integer scales repeat whole rows,
- * letterboxes repeat black ones - and the row table removes it before the runs are counted, so the
- * slot costs about the source raster whatever the monitor, without a compressor and without new
- * per-snapshot work beyond one row-compare pass. A row entry names an earlier identical row, or
- * the literal marker when the row's pixels follow in the run stream, in row order. */
+/* The completed frame selects raw pixels or a row table plus run-length encoded literal rows.
+ * Presentation canvases are dominated by repetition an upscale manufactures - integer scales
+ * repeat adjacent rows and letterboxes repeat black ones - and the row table removes it before the
+ * runs are counted. Detailed authored rasters use one bounded raw copy when their run stream would
+ * be larger. A row entry names the root of an adjacent identical row, or the literal marker when
+ * the row's pixels follow in the run stream, in row order. */
 #define ANYGM_FRAME_ROW_LITERAL UINT32_C(0xFFFFFFFF)
+enum { ANYGM_FRAME_ENCODING_RAW=1, ANYGM_FRAME_ENCODING_ROW_RLE=2 };
 
 size_t engine_state_frame_capacity(const AnygmEngine *engine){
   /* Ceiling of state_write_completed_frame under the geometry this session is already known to
-   * reach: width, height, literal count and run count cost 16 bytes, the row table four per row,
+   * reach: width, height, encoding, literal count and run count cost 20 bytes, the row table four per row,
    * and a fully literal frame of single-pixel runs costs eight bytes per pixel. The configured
    * virtual monitor counts even before the first frame presents, because a frontend that sizes a
    * rewind ring does it once, at load, when none of the presentation has happened yet. */
@@ -69,7 +86,7 @@ size_t engine_state_frame_capacity(const AnygmEngine *engine){
   if(!w || !h){ w=engine->width; h=engine->height; }
   if(w>FB_MAX_W) w=FB_MAX_W;
   if(h>FB_MAX_H) h=FB_MAX_H;
-  return 16u+4u*h+8u*w*h;
+  return 20u+4u*h+8u*w*h;
 }
 
 static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
@@ -96,36 +113,27 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
   cw_u32(state,height);
   if(!width || !height){ cw_u32(state,0); return; }
   uint32_t *rows=malloc((size_t)height*sizeof(uint32_t));
-  uint64_t *row_hash=malloc((size_t)height*sizeof(uint64_t));
-  if(!rows || !row_hash){ free(rows); free(row_hash); state->ok=0; return; }
-  for(uint32_t y=0;y<height;y++){
-    const uint32_t *row=engine->screen+(size_t)y*width;
-    uint64_t hash=UINT64_C(1469598103934665603);
-    for(unsigned x=0;x<width;x++){ hash^=row[x]; hash*=UINT64_C(1099511628211); }
-    row_hash[y]=hash;
-  }
+  if(!rows){ state->ok=0; return; }
   uint32_t literal_rows=0;
   for(uint32_t y=0;y<height;y++){
-    /* An upscale repeats the row immediately above, so the match is nearly always at y-1. The
-     * hash filters the scan to one integer compare per earlier row; pixels are compared only on a
-     * hash hit, so a pathological frame never degenerates into quadratic row memcmps. */
-    uint32_t match=ANYGM_FRAME_ROW_LITERAL;
+    /* Every repetition produced by an integer vertical scale or letterbox is adjacent. Retaining
+     * only that useful match avoids hashing every pixel and scanning all earlier row hashes for a
+     * detailed native frame which will be stored raw anyway. */
+    uint32_t match=y;
     const uint32_t *row=engine->screen+(size_t)y*width;
-    for(uint32_t k=y;k-- >0;){
-      if(row_hash[k]!=row_hash[y]) continue;
-      if(!memcmp(engine->screen+(size_t)k*width,row,(size_t)width*sizeof(uint32_t))){ match=k; break; }
-    }
-    /* Store the resolved root so the reader never chases chains. */
-    if(match!=ANYGM_FRAME_ROW_LITERAL && rows[match]!=match) match=rows[match];
-    rows[y]=match==ANYGM_FRAME_ROW_LITERAL?y:match;
+    if(y && !memcmp(row-width,row,(size_t)width*sizeof(uint32_t))) match=rows[y-1];
+    rows[y]=match;
     if(rows[y]==y) literal_rows++;
-    cw_u32(state,rows[y]==y?ANYGM_FRAME_ROW_LITERAL:rows[y]);
   }
-  cw_u32(state,literal_rows);
   /* Runs over the literal rows in row order; a run never crosses a row boundary, so the reader
    * decodes straight into each destination row. */
   uint32_t runs=0;
+  size_t pixels=(size_t)width*height;
+  size_t raw_bytes=pixels*4u;
+  size_t rle_base=(size_t)height*4u+8u;
+  int use_raw=raw_bytes<=rle_base;
   for(uint32_t y=0;y<height && state->ok;y++){
+    if(use_raw) break;
     if(rows[y]!=y) continue;
     const uint32_t *row=engine->screen+(size_t)y*width;
     for(unsigned at=0;at<width;){
@@ -133,8 +141,21 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
       while(rend<width && row[rend]==value) rend++;
       if(runs==UINT32_MAX){ state->ok=0; break; }
       runs++; at=rend;
+      /* Every remaining literal can only make the RLE larger. Stop as soon as its lower bound
+       * reaches raw size instead of scanning the rest of a detailed frame. */
+      if((size_t)runs>(raw_bytes-rle_base)/8u){ use_raw=1; break; }
     }
   }
+  if(use_raw || raw_bytes<=rle_base+(size_t)runs*8u){
+    cw_u32(state,ANYGM_FRAME_ENCODING_RAW);
+    cw_u32_array(state,engine->screen,pixels);
+    free(rows);
+    return;
+  }
+  cw_u32(state,ANYGM_FRAME_ENCODING_ROW_RLE);
+  for(uint32_t y=0;y<height;y++)
+    cw_u32(state,rows[y]==y?ANYGM_FRAME_ROW_LITERAL:rows[y]);
+  cw_u32(state,literal_rows);
   cw_u32(state,runs);
   for(uint32_t y=0;y<height && state->ok;y++){
     if(rows[y]!=y) continue;
@@ -148,7 +169,6 @@ static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){
     }
   }
   free(rows);
-  free(row_hash);
 }
 
 static int state_read_completed_frame(AnygmEngine *engine,CoreR *state){
@@ -163,6 +183,16 @@ static int state_read_completed_frame(AnygmEngine *engine,CoreR *state){
     engine->state_frame_height=0;
     return 1;
   }
+  uint32_t encoding=cr_u32(state);
+  if(encoding==ANYGM_FRAME_ENCODING_RAW){
+    cr_u32_array(state,engine->screen,pixels);
+    if(!state->ok) return 0;
+    engine->state_frame_available=1;
+    engine->state_frame_width=width;
+    engine->state_frame_height=height;
+    return 1;
+  }
+  if(encoding!=ANYGM_FRAME_ENCODING_ROW_RLE) return 0;
   uint32_t *rows=malloc((size_t)height*sizeof(uint32_t));
   if(!rows) return 0;
   uint32_t literal_declared=0;
