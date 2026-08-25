@@ -281,26 +281,28 @@ static int remembered_peak_covers_first_answer(void){
   return ok;
 }
 
-/* A frontend that does not acknowledge variable sizes sees one compact capacity for the complete
- * loaded session. This is the RetroArch contract: its wrapper compares every current size query
- * with the load-time rewind allocation before calling retro_serialize. */
-static int fixed_compact_ring_survives_frontend_size_checks(void){
+/* A frontend that does not acknowledge variable sizes receives one capacity covering the complete
+ * representation. A frame-free slot can restore simulation but cannot visibly rewind: the
+ * frontend presents restored slots without running a frame, and manual saves use the same ABI.
+ * The first answer must therefore remain fixed and large enough for the completed picture. */
+static int fixed_large_frame_ring_keeps_complete_states(void){
   stub_state_bytes=9u*1024u*1024u;
   if(!begin_frontend(0)) return 0;
   stub_resume_state_bytes=96u*1024u;
   stub_resume_hint_bytes=128u*1024u;
   stub_hint_bytes=16u*1024u*1024u;
   size_t ring_capacity=retro_serialize_size();
-  size_t expected_ring=1u*1024u*1024u;
-  if(ring_capacity!=expected_ring || retro_serialize_size()!=ring_capacity) return 0;
+  size_t expected_ring=32u*1024u*1024u+512u*1024u;
+  if(ring_capacity!=expected_ring || retro_serialize_size()!=ring_capacity ||
+     g_libretro.startup_ring_compact) return 0;
   retro_run();
   if(retro_serialize_size()!=ring_capacity) return 0;
   uint8_t *ring=malloc(ring_capacity);
   if(!ring) return 0;
   memset(ring,0xA5,ring_capacity);
-  int ok=retro_serialize(ring,ring_capacity) && resume_saves==1u && complete_saves==0u;
-  for(size_t i=0;ok && i<stub_resume_state_bytes;i++) if(ring[i]!=0x52) ok=0;
-  for(size_t i=stub_resume_state_bytes;ok && i<ring_capacity;i++) if(ring[i]) ok=0;
+  int ok=retro_serialize(ring,ring_capacity) && complete_saves==1u && resume_saves==0u;
+  for(size_t i=0;ok && i<stub_state_bytes;i++) if(ring[i]!=0x4D) ok=0;
+  for(size_t i=stub_state_bytes;ok && i<ring_capacity;i++) if(ring[i]) ok=0;
   if(ok) ok=retro_unserialize(ring,ring_capacity) && last_load_bytes==ring_capacity;
   free(ring);
   retro_unload_game();
@@ -309,17 +311,16 @@ static int fixed_compact_ring_survives_frontend_size_checks(void){
 }
 
 /* Required render allocations can be known at load even while their current serialized form is
- * tiny. The engine exposes that future frame-free cost through its hint; a compact fixed ring must
- * reserve it rather than applying the one-MiB floor as a cap. */
-static int compact_ring_covers_known_required_growth(void){
+ * tiny. A fixed ring covers both that required growth and the complete-frame ceiling. */
+static int fixed_ring_covers_known_required_growth(void){
   stub_state_bytes=32u*1024u;
   if(!begin_frontend(0)) return 0;
   stub_resume_hint_bytes=1280u*1024u;
   stub_hint_bytes=3u*1024u*1024u;
   size_t ring_capacity=retro_serialize_size();
-  if(ring_capacity<stub_resume_hint_bytes || !g_libretro.startup_ring_compact){
+  if(ring_capacity<stub_hint_bytes || g_libretro.startup_ring_compact){
     fprintf(stderr,"known-growth ring setup failed: capacity=%zu required=%zu compact=%d\n",
-            ring_capacity,stub_resume_hint_bytes,g_libretro.startup_ring_compact);
+            ring_capacity,stub_hint_bytes,g_libretro.startup_ring_compact);
     return 0;
   }
   retro_run();
@@ -328,7 +329,7 @@ static int compact_ring_covers_known_required_growth(void){
   uint8_t *ring=malloc(ring_capacity);
   if(!ring) return 0;
   int ok=retro_serialize_size()==ring_capacity && retro_serialize(ring,ring_capacity) &&
-         complete_saves+resume_saves==1u && retro_unserialize(ring,ring_capacity);
+         complete_saves==1u && resume_saves==0u && retro_unserialize(ring,ring_capacity);
   if(!ok)
     fprintf(stderr,"known-growth ring failed: capacity=%zu state=%zu resume=%zu saves=%u\n",
             ring_capacity,stub_state_bytes,stub_resume_state_bytes,resume_saves);
@@ -341,14 +342,14 @@ static int compact_ring_covers_known_required_growth(void){
 /* A moderate lossless picture can fit at startup yet leave no room for the ordinary VM growth
  * that follows it. The exact-frame compact floor is rounded to a stable MiB boundary, preserving
  * the picture later in the session without raising source-sized one-MiB rings. */
-static int compact_moderate_frame_keeps_growth_headroom(void){
+static int fixed_moderate_frame_keeps_growth_headroom(void){
   stub_state_bytes=75u*1024u;
   if(!begin_frontend(0)) return 0;
   stub_resume_hint_bytes=75u*1024u;
   stub_hint_bytes=1600u*1024u;
   const size_t ring_capacity=retro_serialize_size();
-  const size_t expected_capacity=2u*1024u*1024u;
-  if(ring_capacity!=expected_capacity || !g_libretro.startup_ring_compact){
+  const size_t expected_capacity=4u*1024u*1024u;
+  if(ring_capacity!=expected_capacity || g_libretro.startup_ring_compact){
     fprintf(stderr,"moderate-frame ring setup failed: capacity=%zu expected=%zu compact=%d\n",
             ring_capacity,expected_capacity,g_libretro.startup_ring_compact);
     return 0;
@@ -413,17 +414,16 @@ static int ordinary_raster_ring_keeps_the_complete_frame(void){
   return ok;
 }
 
-/* A larger authored raster can dominate every high-frequency snapshot even without a virtual
- * monitor. Its conservative ceiling selects the one-MiB compact ring, but an encoded complete
- * state that actually fits keeps its frame instead of paying for a pessimistic bound. */
-static int large_raster_ring_uses_the_compact_form(void){
+/* A larger authored raster still keeps its complete frame when the frontend fixes one size for
+ * every state consumer. */
+static int fixed_large_raster_ring_keeps_the_complete_form(void){
   stub_state_bytes=768u*1024u;
   if(!begin_frontend(0)) return 0;
   stub_resume_state_bytes=96u*1024u;
   stub_resume_hint_bytes=128u*1024u;
   stub_hint_bytes=2u*1024u*1024u;
   size_t ring_capacity=retro_serialize_size();
-  if(ring_capacity!=1u*1024u*1024u || !g_libretro.startup_ring_compact) return 0;
+  if(ring_capacity!=4608u*1024u || g_libretro.startup_ring_compact) return 0;
   retro_run();
   uint8_t *ring=malloc(ring_capacity);
   if(!ring) return 0;
@@ -514,12 +514,12 @@ int main(void){
      !fixed_frontend_reuses_the_measured_capacity(0) ||
      !fixed_frontend_reuses_the_measured_capacity(-1) ||
      !remembered_peak_covers_first_answer() ||
-     !fixed_compact_ring_survives_frontend_size_checks() ||
-     !compact_ring_covers_known_required_growth() ||
-     !compact_moderate_frame_keeps_growth_headroom() ||
+     !fixed_large_frame_ring_keeps_complete_states() ||
+     !fixed_ring_covers_known_required_growth() ||
+     !fixed_moderate_frame_keeps_growth_headroom() ||
      !variable_frontend_keeps_compact_ring_and_complete_save() ||
      !ordinary_raster_ring_keeps_the_complete_frame() ||
-     !large_raster_ring_uses_the_compact_form() ||
+     !fixed_large_raster_ring_keeps_the_complete_form() ||
      !restart_rejects_only_an_immediate_old_ring_state() ||
      !restart_rereads_settings() || !starting_declares_the_settings()){
     fprintf(stderr,"libretro state transport contract failed\n");

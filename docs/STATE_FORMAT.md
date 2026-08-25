@@ -153,38 +153,36 @@ The state can grow as language-level containers grow. The portable API reports
 the exact current size and writes into a caller-owned buffer.
 
 The libretro adapter advertises the variable-size serialization quirk and records whether the
-frontend acknowledges it. Before the first completed frame, its transport answer covers the
-current frame-free state and the remembered frame-free peak. When the completed-frame ceiling would
-add at least 768 KiB, a frontend that fixes its rewind ring from that answer receives a compact
-one-MiB-or-larger slot. Its floor always covers the predicted required state, including mutable
-surfaces already known at load. A moderate raw-frame ceiling below 2 MiB joins that floor so the
-complete picture remains exact; that combined floor rounds to the next MiB to retain bounded
-cold-to-gameplay growth. A larger virtual-monitor picture does not inflate every slot and may use
-the frame-free fallback. Each snapshot first writes the complete encoded state and falls
-back only when it actually exceeds the slot. Smaller rasters retain complete, visually exact
-rewind states directly.
-For a frontend that does not acknowledge variable sizes, that first answer remains fixed for the
-loaded session, as the baseline libretro contract requires. Later size queries return that cached
-capacity without traversing the runtime state again; the frontend cannot accept a different answer,
-and rewind immediately traverses the same state to serialize it. Ordinary save-state requests then
-may use the same frame-free form when the compact high-resolution regime is active and its complete
-encoded state does not fit; loading one resumes
-from its canonical post-frame simulation state on the next run. A frontend that explicitly
-acknowledges variable sizes continues measuring and receives monotonic growth to the conservative
-complete-state capacity, so newly sized ordinary saves retain the exact completed picture while its
-older compact ring slots remain loadable. This capacity policy changes neither the logical size in
-the canonical header nor the portable state format.
+frontend acknowledges it. Requesting the quirk is not sufficient: a declined or unsupported
+request has the baseline fixed-size contract. Its first answer covers the remembered frame-free
+peak, mutable render allocations already known at load, and the conservative completed-frame
+ceiling. That answer remains fixed for the loaded session. Later queries return it without
+traversing the runtime state again, and every save written into that capacity retains the completed
+picture. This is required for visible rewind because a frontend may present a restored slot without
+running a frame, and the libretro ABI does not identify whether an ordinary serialization call is a
+rewind push or a manual save.
 
-An ordinary fixed-size session reserves at least 4 MiB in its first answer because a cold load can
-precede the render and language-level tables populated by gameplay. The explicit compact
-large-frame path instead reserves at least 1 MiB: its frame-free capacity hint describes the
-intended ring, while that separate floor covers ordinary cold-to-gameplay growth without erasing
-the memory saving the transport exists to provide.
+A frontend that explicitly acknowledges variable sizes may receive a compact pre-frame ring. When
+the completed-frame ceiling would add at least 768 KiB, the startup capacity is one MiB or larger
+and always covers the predicted required state. A moderate raw-frame ceiling below 2 MiB joins that
+floor so the complete picture remains exact; that combined floor rounds to the next MiB to retain
+bounded cold-to-gameplay growth. Each snapshot first writes the complete encoded state and falls
+back to the explicit frame-free form only when the encoded picture exceeds that earlier slot. Later
+ordinary size queries grow monotonically to the conservative complete-state capacity, so newly
+sized saves retain the exact completed picture while older compact ring slots remain loadable.
 
-`make contract-check` exercises acknowledged growth, fixed unacknowledged frontends, compact startup
-rings, complete save-state capacity, unload reset, exact roundtrips, and the transport blocks used
-by rewind-capable frontends. The graphics-state integration case separately proves that an explicit
-frame-free state roundtrips and resumes while the complete form remains available.
+An ordinary complete-capacity session reserves at least 4 MiB because a cold load can precede the
+render and language-level tables populated by gameplay. The acknowledged compact large-frame path
+instead reserves at least 1 MiB; its frame-free capacity hint describes the startup ring while that
+separate floor covers bounded cold-to-gameplay growth. This adapter capacity policy changes neither
+the logical size in the canonical header nor the portable state format. Explicit portable hosts
+may still request the frame-free resume representation directly.
+
+`make contract-check` exercises acknowledged growth, fixed declined and unsupported frontends,
+compact variable-size startup rings, complete fixed save-state capacity, unload reset, exact
+roundtrips, and the transport blocks used by rewind-capable frontends. The graphics-state
+integration case separately proves that an explicit frame-free state roundtrips and resumes while
+the complete form remains available.
 
 ## Cache schema
 

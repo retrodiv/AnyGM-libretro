@@ -424,25 +424,34 @@ size_t retro_serialize_size(void){
    * and doing it before every rewind snapshot duplicates the most expensive half of saving it. */
   if(g_libretro.fixed_state_capacity && !g_libretro.variable_state_supported)
     return g_libretro.fixed_state_capacity;
-  /* A rewind ring established before the first frame needs only the required sections. The
-   * completed frame is optional and can dwarf every one of them when a virtual monitor is active.
-   * After a frame exists, ordinary saves receive a capacity covering both the current required
-   * state and the conservative frame ceiling, while a ring holding the earlier smaller slots is
-   * recognized by the capacity it passes to retro_serialize. */
+  /* An acknowledged variable-size frontend may establish a smaller pre-frame rewind ring from
+   * only the required sections; the completed frame can dwarf them when a virtual monitor is
+   * active. A fixed frontend instead receives the complete ceiling in this first answer. After a
+   * frame exists, acknowledged frontends receive a capacity covering both the current required
+   * state and the conservative frame ceiling, while an earlier smaller ring is recognized by the
+   * capacity it passes to retro_serialize. */
   size_t actual=anygm_state_resume_size(g_libretro.engine);
   size_t resume_hint=anygm_state_resume_capacity_hint(g_libretro.engine);
   if(resume_hint>actual) actual=resume_hint;
   bool compact_startup=false;
   size_t compact_frame_capacity=0;
-  /* Preserve completed-frame rewind while its worst-case storage is modest. Once the optional
-   * picture alone adds at least 768 KiB, copying a pessimistic run ceiling and its derived reserve
-   * into every fixed rewind slot dominates the high-frequency transport. The compact capacity is
-   * instead based on the lossless raw ceiling and known required allocations. */
+  /* Preserve completed-frame rewind while its worst-case storage is modest. For an acknowledged
+   * variable-size frontend, once the optional picture alone adds at least 768 KiB, copying a
+   * pessimistic run ceiling and its derived reserve into every startup rewind slot dominates the
+   * high-frequency transport. Its compact capacity is instead based on the lossless raw ceiling
+   * and known required allocations; an unacknowledged frontend never enters this branch. */
   if(!g_libretro.frame_completed){
     const size_t minimum_saving=768u*1024u;
     const size_t maximum_exact_compact_frame=2u*1024u*1024u;
     size_t complete_hint=anygm_state_capacity_hint(g_libretro.engine);
-    compact_startup=complete_hint>actual && complete_hint-actual>=minimum_saving;
+    /* A frame-free snapshot cannot visibly rewind in a fixed frontend: the frontend restores
+     * slots without advancing the core, so there is no draw in which to reconstruct the omitted
+     * picture. It also cannot distinguish a compact rewind push from a manual save. Reserve the
+     * complete ceiling in the one session capacity unless the frontend explicitly acknowledged
+     * variable sizes; only that contract can keep a separately sized compact startup ring while
+     * later ordinary saves grow to the complete representation. */
+    compact_startup=g_libretro.variable_state_supported &&
+      complete_hint>actual && complete_hint-actual>=minimum_saving;
     if(compact_startup && complete_hint<maximum_exact_compact_frame)
       compact_frame_capacity=complete_hint;
     if(!compact_startup && complete_hint>actual) actual=complete_hint;
