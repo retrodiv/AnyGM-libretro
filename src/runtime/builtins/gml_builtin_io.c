@@ -135,6 +135,18 @@ static char *path_under_read(GmlVM *vm,const char *directory,const char *relativ
   free(exact);
   return resolved;
 }
+/* Flatten separators for a fallback lookup of exported included files.
+ * A plain name has no alternate spelling. */
+static char *flattened_included_name(const char *p){
+  if(!p) return NULL;
+  int separated=0;
+  for(const char *c=p;*c;c++) if(*c=='/' || *c=='\\'){ separated=1; break; }
+  if(!separated) return NULL;
+  char *flat=strdup(p);
+  if(!flat) return NULL;
+  for(char *c=flat;*c;c++) if(*c=='/' || *c=='\\') *c='@';
+  return flat;
+}
 static int path_present(GmlVM *vm,const char *p){
   AnygmFileInfo info;
   return vm && p && anygm_vfs_stat(vm->host,p,&info);
@@ -185,17 +197,27 @@ char *resolve_read_path(GmlVM *vm, const char *p){
    * then the source content root. Do not use the host working directory
    * when the configured roots are available. */
   if(vm && vm->win){
-    if(vm->win->save_dir[0]){
-      char *save=path_under_read(vm,vm->win->save_dir,p);
-      if(path_present(vm,save)) return save;
-      free(save);
-    }
+    const char *roots[3]; int root_count=0;
+    if(vm->win->save_dir[0]) roots[root_count++]=vm->win->save_dir;
     if(vm->win->payload_dir[0] &&
-       (!vm->win->content_dir[0] || strcmp(vm->win->payload_dir,vm->win->content_dir))){
-      char *payload=path_under_read(vm,vm->win->payload_dir,p);
-      if(path_present(vm,payload)) return payload;
-      free(payload);
+       (!vm->win->content_dir[0] || strcmp(vm->win->payload_dir,vm->win->content_dir)))
+      roots[root_count++]=vm->win->payload_dir;
+    if(vm->win->content_dir[0]) roots[root_count++]=vm->win->content_dir;
+    for(int i=0;i<root_count;i++){
+      char *candidate=path_under_read(vm,roots[i],p);
+      if(path_present(vm,candidate)) return candidate;
+      free(candidate);
     }
+    /* Only once no root holds the name as written, so nothing that resolves today moves. */
+    { char *flat=flattened_included_name(p);
+      if(flat){
+        for(int i=0;i<root_count;i++){
+          char *candidate=path_under_read(vm,roots[i],flat);
+          if(path_present(vm,candidate)){ free(flat); return candidate; }
+          free(candidate);
+        }
+        free(flat);
+      } }
     if(vm->win->content_dir[0]) return path_under_read(vm,vm->win->content_dir,p);
     if(vm->win->save_dir[0]) return path_under(vm->win->save_dir,p);
   }
@@ -696,6 +718,8 @@ GmlVal builtin_file_text_read_string(GmlVM *vm, GmlVal *a, int n){
                     i+1,b);
   return vstr_owned(b);
 }
+/* Include the line terminator when one is present. Unlike file_text_read_string,
+ * this operation advances past and returns the separator. */
 GmlVal builtin_file_text_readln(GmlVM *vm, GmlVal *a, int n){
   int i=vm_file_slot(vm,(int)N(a,n,0));
   if(i<0) return vstr_owned(strdup(""));
@@ -703,8 +727,7 @@ GmlVal builtin_file_text_readln(GmlVM *vm, GmlVal *a, int n){
   int c;
   char *b=malloc(cap);
   if(!b) return vstr_owned(strdup(""));
-  while((c=vm_file_getc(vm,i))!=EOF && c!='\n'){
-    if(c=='\r') continue;
+  while((c=vm_file_getc(vm,i))!=EOF){
     if(k+1>=cap){
       cap*=2;
       char *nb=realloc(b,cap);
@@ -712,6 +735,7 @@ GmlVal builtin_file_text_readln(GmlVM *vm, GmlVal *a, int n){
       b=nb;
     }
     b[k++]=(char)c;
+    if(c=='\n') break;
   }
   b[k]=0;
   return vstr_owned(b);

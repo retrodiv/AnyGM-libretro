@@ -827,6 +827,124 @@ static int ds_list_read_text(GmlVM *vm,int dst_id,const char *text){
 
 
 
+/* Hex-encoded data-structure envelope: a kind marker, header, then typed values.
+ * Validate the entire buffer before changing the destination. */
+#define GML_DS_NATIVE_LIST_MARKER 301u
+#define GML_DS_NATIVE_GRID_MARKER 601u
+static int ds_native_nibble(int c){
+  if(c>='0' && c<='9') return c-'0';
+  if(c>='a' && c<='f') return c-'a'+10;
+  if(c>='A' && c<='F') return c-'A'+10;
+  return -1;
+}
+static uint8_t *ds_native_decode_hex(const char *text,size_t *out_size){
+  if(!text) return NULL;
+  size_t len=strlen(text);
+  while(len && (text[len-1]=='\r' || text[len-1]=='\n' || text[len-1]==' ')) len--;
+  if(len<8 || (len&1u)) return NULL;
+  uint8_t *bytes=malloc(len/2);
+  if(!bytes) return NULL;
+  for(size_t i=0;i<len;i+=2){
+    int hi=ds_native_nibble((unsigned char)text[i]);
+    int lo=ds_native_nibble((unsigned char)text[i+1]);
+    if(hi<0 || lo<0){ free(bytes); return NULL; }
+    bytes[i/2]=(uint8_t)((hi<<4)|lo);
+  }
+  *out_size=len/2;
+  return bytes;
+}
+static uint32_t ds_native_u32(const uint8_t *b,size_t off){
+  return (uint32_t)b[off]|((uint32_t)b[off+1]<<8)|
+         ((uint32_t)b[off+2]<<16)|((uint32_t)b[off+3]<<24);
+}
+/* Advances past one entry without building a value. Answers zero when the entry does not fit,
+ * which is what lets the caller reject a buffer whose entries do not add up. */
+static int ds_native_skip_value(const uint8_t *b,size_t size,size_t *off){
+  if(*off+12>size) return 0;
+  uint32_t type=ds_native_u32(b,*off);
+  if(type==0){ *off+=12; return 1; }
+  if(type==1){
+    uint32_t length=ds_native_u32(b,*off+4);
+    if(length>size || *off+8>size || (size_t)length>size-(*off+8)) return 0;
+    *off+=8+length;
+    return 1;
+  }
+  return 0;
+}
+/* Only called after the same walk has been validated, so the entry is known to fit. */
+static GmlVal ds_native_take_value(const uint8_t *b,size_t *off){
+  uint32_t type=ds_native_u32(b,*off);
+  if(type==1){
+    uint32_t length=ds_native_u32(b,*off+4);
+    char *text=malloc((size_t)length+1);
+    GmlVal out=vstr("");
+    if(text){
+      memcpy(text,b+*off+8,length);
+      text[length]=0;
+      out=vstr(text);
+      free(text);
+    }
+    *off+=8+length;
+    return out;
+  }
+  double value=0.0;
+  memcpy(&value,b+*off+4,sizeof value);
+  *off+=12;
+  return vreal(value);
+}
+/* A grid is written one column at a time: every cell of x=0 top to bottom, then x=1. */
+static int ds_grid_read_native(GmlVM *vm,int id,const char *text){
+  size_t size=0;
+  uint8_t *bytes=ds_native_decode_hex(text,&size);
+  if(!bytes) return 0;
+  int ok=0;
+  if(size>=12 && ds_native_u32(bytes,0)==GML_DS_NATIVE_GRID_MARKER){
+    uint32_t w=ds_native_u32(bytes,4), h=ds_native_u32(bytes,8);
+    if((double)w*(double)h<=8000000.0){
+      size_t off=12; ok=1;
+      for(uint32_t i=0;i<(uint32_t)w*h;i++) if(!ds_native_skip_value(bytes,size,&off)){ ok=0; break; }
+      if(ok && off!=size) ok=0;
+      if(ok){
+        GmlDSGrid *g=ds_grid_slot(vm,id);
+        if(!g || !ds_grid_resize_cells(g,(int)w,(int)h)) ok=0;
+        else {
+          off=12;
+          for(uint32_t x=0;x<w;x++)
+            for(uint32_t y=0;y<h;y++)
+              ds_grid_store(g,(int)x,(int)y,ds_native_take_value(bytes,&off));
+        }
+      }
+    }
+  }
+  free(bytes);
+  return ok;
+}
+static int ds_list_read_native(GmlVM *vm,int id,const char *text){
+  size_t size=0;
+  uint8_t *bytes=ds_native_decode_hex(text,&size);
+  if(!bytes) return 0;
+  int ok=0;
+  if(size>=8 && ds_native_u32(bytes,0)==GML_DS_NATIVE_LIST_MARKER){
+    uint32_t count=ds_native_u32(bytes,4);
+    if((double)count*12.0<=(double)size){
+      size_t off=8; ok=1;
+      for(uint32_t i=0;i<count;i++) if(!ds_native_skip_value(bytes,size,&off)){ ok=0; break; }
+      if(ok && off!=size) ok=0;
+      if(ok){
+        GmlDSList *list=ds_list_slot_repair(vm,id);
+        if(!list) ok=0;
+        else {
+          ds_list_clear_owned(vm,list);
+          off=8;
+          for(uint32_t i=0;i<count;i++) ds_list_push(list,ds_native_take_value(bytes,&off));
+        }
+      }
+    }
+  }
+  free(bytes);
+  return ok;
+}
+
 GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
   GmlRender *R=(GmlRender*)vm->render;
   (void)R;
@@ -841,7 +959,9 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0); }
   if(!strcmp(nm,"ds_list_write")) return ds_list_write_text(vm,(int)N(a,n,0));
   if(!strcmp(nm,"ds_list_read")){
-    (void)ds_list_read_text(vm,(int)N(a,n,0),S(vm,a,n,1));
+    /* Accept the external hex envelope before the runtime's text envelope. */
+    if(!ds_list_read_native(vm,(int)N(a,n,0),S(vm,a,n,1)))
+      (void)ds_list_read_text(vm,(int)N(a,n,0),S(vm,a,n,1));
     return vreal(0);
   }
   if(!strcmp(nm,"ds_list_size")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0)); return vreal(l?l->len:0); }
@@ -992,6 +1112,9 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_grid_set")||!strcmp(nm,"ds_grid_set_post")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
     if(n>=4) ds_grid_store(g,x,y,a[3]);
     return n>=4?a[3]:vreal(0); }
+  if(!strcmp(nm,"ds_grid_read")){
+    return vreal(ds_grid_read_native(vm,(int)N(a,n,0),S(vm,a,n,1)));
+  }
   if(!strcmp(nm,"ds_grid_copy")){ GmlDSGrid *d=ds_grid_slot(vm,(int)N(a,n,0)), *s=ds_grid_slot(vm,(int)N(a,n,1));
     if(!d || !s || d==s) return vreal(0);
     if(!ds_grid_resize_cells(d,s->w,s->h)) return vreal(0);

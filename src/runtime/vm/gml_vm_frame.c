@@ -479,6 +479,15 @@ void gml_vm_step(GmlVM *vm){
    * Step phases. Sources created by a callback join on the next tick via the scheduler snapshot. */
   gml_time_sources_tick(vm);
   gml_vm_rooms_step_timelines(vm,n);
+  /* Apply a timeline moment's pending room request before later step phases,
+   * including alarms, and refresh the instance snapshot for the entered room. */
+  if(vm->pending_room>=0){
+    gml_vm_apply_pending_room(vm);
+    n=vm->inst_count;
+    gml_vm_instances_prepare_step(vm,n);
+    vm->step_alloc_base=n;
+    vm->step_first_id=vm->next_id;
+  }
   /* Alarm dispatch order varies by format, but positive alarms fire on reaching zero:
    * alarm[i]=N fires N steps later. A below-zero policy adds one frame on every re-arm.
    * Fractional alarms fire on the first tick at or below zero. Set -1 before running the

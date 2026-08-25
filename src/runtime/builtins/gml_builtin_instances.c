@@ -178,6 +178,17 @@ GmlVal gml_builtin_try_instances_rooms(GmlVM *vm, const char *nm, GmlVal *a, int
     if(n>=2) (void)gml_vm_room_set_dimension(vm,(int)N(a,n,0),1,N(a,n,1));
     return vreal(0);
   }
+  /* Both edit the room record for its next entry. */
+  if(!strcmp(nm,"room_set_background_colour")||!strcmp(nm,"room_set_background_color")){
+    if(n>=2) (void)gml_vm_room_set_background_colour(vm,(int)N(a,n,0),
+                                                     NU32(a,n,1),
+                                                     n>=3?N(a,n,2)>=0.5:1);
+    return vreal(0);
+  }
+  if(!strcmp(nm,"room_instance_clear")){
+    if(n>=1) (void)gml_vm_room_instances_clear(vm,(int)N(a,n,0));
+    return vreal(0);
+  }
   if(!strcmp(nm,"room_set_view_enabled")){
     int rm=(int)N(a,n,0);
     struct GmlViewOvr *o=room_view_override(vm,rm,0,1);

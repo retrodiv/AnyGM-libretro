@@ -957,6 +957,15 @@ int gml_vm_room_get(GmlVM *vm, int room_index, GmlRoom *out){
   double height=room_state_restore_number(vm,room_index,"height",0);
   if(isfinite(width) && width>=1.0 && width<=(double)UINT32_MAX) out->width=(uint32_t)width;
   if(isfinite(height) && height>=1.0 && height<=(double)UINT32_MAX) out->height=(uint32_t)height;
+  /* A room's background colour is editable from content and applies when that room is entered,
+   * so it is stored per room rather than as the current-room global. The stored flag is what
+   * separates "set to black" from "never set", which the numeric store cannot say on its own. */
+  if(room_state_restore_number(vm,room_index,"bgcolour_set",0)>=0.5){
+    double colour=room_state_restore_number(vm,room_index,"bgcolour",0);
+    if(isfinite(colour) && colour>=0.0 && colour<=(double)0xFFFFFFu)
+      out->bgcolor=0xFF000000u|(uint32_t)colour;
+    out->draw_bg=room_state_restore_number(vm,room_index,"bgshow",0)>=0.5;
+  }
   return 0;
 }
 
@@ -966,6 +975,25 @@ int gml_vm_room_set_dimension(GmlVM *vm, int room_index, int height, double valu
   room_state_store_number(vm,room_index,height?"height":"width",0,
                           (double)(uint32_t)value);
   return 1;
+}
+
+/* Edit the room record for the next entry, not the current frame. */
+int gml_vm_room_set_background_colour(GmlVM *vm, int room_index, uint32_t colour, int show){
+  if(!vm || room_index<0 || room_index>=gml_room_count(vm->win)) return 0;
+  room_state_store_number(vm,room_index,"bgcolour",0,(double)(colour&0xFFFFFFu));
+  room_state_store_number(vm,room_index,"bgshow",0,show?1.0:0.0);
+  room_state_store_number(vm,room_index,"bgcolour_set",0,1.0);
+  return 1;
+}
+/* Clear authored placements on the room's next entry, leaving current instances untouched. */
+int gml_vm_room_instances_clear(GmlVM *vm, int room_index){
+  if(!vm || room_index<0 || room_index>=gml_room_count(vm->win)) return 0;
+  room_state_store_number(vm,room_index,"placements_cleared",0,1.0);
+  return 1;
+}
+int gml_vm_room_placements_cleared(GmlVM *vm, int room_index){
+  if(!vm || room_index<0 || room_index>=gml_room_count(vm->win)) return 0;
+  return room_state_restore_number(vm,room_index,"placements_cleared",0)>=0.5;
 }
 
 static const char *const room_background_fields[]={
@@ -1858,6 +1886,7 @@ void gml_room_enter(GmlVM *vm, int room_index){
     return;
   }
   const uint8_t *d=vm->win->data; uint32_t op=r.obj_ptr, cnt=gml_vm_read_u32_le(d,op);
+  if(gml_vm_room_placements_cleared(vm,room_index)) cnt=0;
   for(int i=0;anygm_policy_uses_classic_runtime(vm->win) && i<8;i++){
     gml_vm_global_array_set(vm,"background_visible",i,0); gml_vm_global_array_set(vm,"background_foreground",i,0);
     gml_vm_global_array_set(vm,"background_index",i,-1); gml_vm_global_array_set(vm,"background_x",i,0);

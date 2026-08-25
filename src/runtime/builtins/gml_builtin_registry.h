@@ -1782,7 +1782,11 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1690, GET_INSTANCE, "@@GetInstance@@", VALUES, VALUES_LANGUAGE, ALWAYS) \
   ENTRY(1691, MATRIX_BUILD_PROJECTION_PERSPECTIVE_FOV, "matrix_build_projection_perspective_fov", DRAW, DRAW_3D, ALWAYS) \
   ENTRY(1692, FILE_BIN_POSITION, "file_bin_position", IO, IO, ALWAYS) \
-  ENTRY(1693, FS_FILE_BIN_POSITION, "FS_file_bin_position", IO, IO, ALWAYS)
+  ENTRY(1693, FS_FILE_BIN_POSITION, "FS_file_bin_position", IO, IO, ALWAYS) \
+  ENTRY(1694, DS_GRID_READ, "ds_grid_read", DS, DS, ALWAYS) \
+  ENTRY(1695, ROOM_INSTANCE_CLEAR, "room_instance_clear", INSTANCES, INSTANCES_ROOMS, ALWAYS) \
+  ENTRY(1696, ROOM_SET_BACKGROUND_COLOUR, "room_set_background_colour", INSTANCES, INSTANCES_ROOMS, ALWAYS) \
+  ENTRY(1697, ROOM_SET_BACKGROUND_COLOR, "room_set_background_color", INSTANCES, INSTANCES_ROOMS, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1797,7 +1801,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1694
+  GML_BUILTIN_ID_LIMIT = 1698
 } GmlBuiltinId;
 
 #endif
