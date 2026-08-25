@@ -174,6 +174,12 @@ typedef struct {
   int      code_profile;      /* -1 unread, 0 off, 1 on: GML_PROFILE_CODE */
   double  *code_profile_ms;   /* accumulated milliseconds per CODE entry */
   uint64_t*code_profile_hits; /* invocations per CODE entry */
+  /* Which CODE entries a run has executed at all, behind GML_LOG_COVERAGE. One byte per entry and
+   * one store per invocation, which is why this is separate from the profiler above: that one reads
+   * a clock twice per call and cannot be left on, and the question "did this route ever reach this
+   * code" is worth asking on a diagnostic run. */
+  int      code_coverage;     /* -1 unread, 0 off, 1 on: GML_LOG_COVERAGE */
+  uint8_t *code_seen;         /* one byte per CODE entry, set on first execution */
   int watchdog_warnings;
   int wait_warnings;   /* blocking waits that could not span a frame and ended their run */
   int pc_initialized;

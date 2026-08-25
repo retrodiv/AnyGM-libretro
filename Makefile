@@ -119,7 +119,7 @@ CORE_TARGET := $(CORE_BASENAME).$(CORE_EXTENSION)
 endif
 
 TEST_DIR := $(BUILD_DIR)/tests
-RUNTIME_TESTS := test_rng test_persistent_room test_d3_state test_ds_grid \
+RUNTIME_TESTS := test_rng test_code_coverage test_persistent_room test_d3_state test_ds_grid \
 	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_string_search test_builtin_map_arrays test_builtin_struct_exists test_stacktop_scope
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets \
@@ -209,6 +209,10 @@ define link_runtime_test
 endef
 
 $(TEST_DIR)/test_rng: tests/unit/runtime/test_rng.c $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(CPPFLAGS))
+
+$(TEST_DIR)/test_code_coverage: tests/unit/runtime/test_code_coverage.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(CPPFLAGS))
 

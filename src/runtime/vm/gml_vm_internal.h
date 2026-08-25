@@ -110,6 +110,7 @@ void gml_vm_room_reload_layers_mode(GmlVM *vm, int room_index,
 void gml_vm_prefetch_room_assets(GmlVM *vm);
 void gml_vm_warm_audio_for_room_window(GmlVM *vm);
 void gml_vm_code_profile_report(GmlVM *vm);
+void gml_vm_coverage_report(GmlVM *vm);
 #if defined(ANYGM_DIAGNOSTICS) && ANYGM_DIAGNOSTICS
 #include "gml_vm_diagnostics.h"
 #define GML_VM_DIAGNOSTIC_OPCODE(...) \

@@ -110,6 +110,25 @@ performed wholly inside an opaque builtin-owned container are outside the VM
 variable trace and remain the responsibility of that subsystem's focused
 diagnostics.
 
+## Route coverage
+
+`GML_LOG_COVERAGE=1` reports, once when content is unloaded, how much of the payload's own code a
+run ever entered:
+
+```text
+[coverage] code=<entered>/<total> objects=<entered>/<total>
+```
+
+`code` counts CODE entries the VM began executing, each once however often it ran; `objects` counts
+objects at least one of whose event entries did. It answers the question a room count cannot: a
+route may enter several rooms while executing only a small fraction of its code entries.
+
+Kept apart from `GML_PROFILE_CODE`, which is beside it in the same structure and answers a different
+question. That one accumulates wall time and reads a clock twice per call, so it cannot be left on;
+this stores one byte per invocation when enabled. It does not change frame output.
+
+Off unless asked for, and it allocates nothing until the first entry runs.
+
 ## Hybrid GPU counters
 
 `GML_HYBRID_GPU_STATS` reports one bounded line when the graphics context is released or content is

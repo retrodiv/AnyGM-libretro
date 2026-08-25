@@ -2045,6 +2045,45 @@ int gml_vm_code_cache_ensure(GmlWin *win, int code_index){
 }
 
 /* Optional per-code wall time and invocation counts, owned by the VM. */
+/* Which CODE entries this run has executed. One store per invocation and no clock read, so unlike
+ * the profiler below it can be left on for a whole route. What it answers is the question a route's
+ * room count cannot: a route may enter rooms while executing little of its code. */
+static void coverage_mark(GmlVM *vm, int ci){
+  if(!vm || !vm->win) return;
+  if(vm->diagnostics.code_coverage<0){
+    const char *v=anygm_host_development_setting(vm->host,"GML_LOG_COVERAGE");
+    vm->diagnostics.code_coverage=(v && *v)?1:0;
+  }
+  if(!vm->diagnostics.code_coverage) return;
+  if(!vm->diagnostics.code_seen){
+    vm->diagnostics.code_seen=calloc((size_t)vm->win->n_code,1);
+    if(!vm->diagnostics.code_seen){ vm->diagnostics.code_coverage=0; return; }
+  }
+  if(ci>=0 && ci<vm->win->n_code) vm->diagnostics.code_seen[ci]=1;
+}
+
+void gml_vm_coverage_report(GmlVM *vm){
+  if(!vm || !vm->win || !vm->diagnostics.code_seen) return;
+  int total=vm->win->n_code, executed=0, objects_total=vm->n_objects, objects_seen=0;
+  for(int i=0;i<total;i++) if(vm->diagnostics.code_seen[i]) executed++;
+  /* An object counts as reached when any of its own event code ran. The core does not index code
+   * entries by object, so this asks the entry's name, which is the only place that relation is
+   * written down. An entry whose name does not follow the convention is simply not attributed. */
+  for(int o=0;o<objects_total;o++){
+    const char *name=vm->objects[o].name;
+    if(!name || !name[0]) continue;
+    size_t len=strlen(name);
+    for(int i=0;i<total;i++){
+      if(!vm->diagnostics.code_seen[i]) continue;
+      const char *entry=vm->win->code[i].name;
+      if(!entry || strncmp(entry,"gml_Object_",11)) continue;
+      if(!strncmp(entry+11,name,len) && entry[11+len]=='_'){ objects_seen++; break; }
+    }
+  }
+  anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,
+    "[coverage] code=%d/%d objects=%d/%d\n",executed,total,objects_seen,objects_total);
+}
+
 static int codeprof_on(GmlVM *vm){
   if(!vm) return 0;
   if(vm->diagnostics.code_profile<0){
@@ -2694,6 +2733,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
     }
   }
   if(ci<0||ci>=vm->win->n_code) return vreal(0);
+  coverage_mark(vm,ci);
   /* Each frame is roughly 18 KiB; 300 levels remain below a typical 8 MiB C stack. */
   if(vm->execution_depth>=300) return vreal(0);
   vm->execution_depth++;

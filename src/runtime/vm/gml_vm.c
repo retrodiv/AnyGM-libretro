@@ -269,6 +269,7 @@ int gml_vm_init_launch(GmlVM *vm,GmlWin *win,const AnygmHostServices *host,
   gml_vm_set_launch_parameters(vm,executable,parameters);
   vm->cur_code_index=-1;
   vm->diagnostics.code_profile=-1;   /* unread until the setting is asked for */
+  vm->diagnostics.code_coverage=-1;  /* likewise; see coverage_mark */
   GML_VM_DIAGNOSTIC_ARRAY_GROWTH_INIT(vm);
   vm->code_static_count=(win && win->n_code>0)?win->n_code:0;
   vm->code_static=vm->code_static_count?calloc((size_t)vm->code_static_count,sizeof(*vm->code_static)):NULL;
@@ -387,8 +388,10 @@ static void gml_vm_release_builtin_value(void *userdata,GmlVal value){
 void gml_vm_free(GmlVM *vm){
   /* Report optional per-code measurements before releasing VM state. */
   gml_vm_code_profile_report(vm);
+  gml_vm_coverage_report(vm);
   if(vm){ free(vm->diagnostics.code_profile_ms); vm->diagnostics.code_profile_ms=NULL;
-          free(vm->diagnostics.code_profile_hits); vm->diagnostics.code_profile_hits=NULL; }
+          free(vm->diagnostics.code_profile_hits); vm->diagnostics.code_profile_hits=NULL;
+          free(vm->diagnostics.code_seen); vm->diagnostics.code_seen=NULL; }
   GML_VM_DIAGNOSTIC_DESTROY(vm);
   gml_vm_wait_cancel(vm);   /* a run parked by a blocking input wait owns locals and strings */
   gml_colgrid_invalidate(vm);
