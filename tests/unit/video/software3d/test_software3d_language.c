@@ -468,10 +468,11 @@ int software3d_case_language(Software3dRasterFixture *fixture){
     fixture->render.win=&surface_win;
     fixture->render.app_surface=borrowed; fixture->render.app_w=3; fixture->render.app_h=2;
     surface_win.bytecode=15;
+    /* Explicit application-surface resize applies to this generation too. */
     { const double resize_args[3]={0,5,4}; call_numbers(&fixture->vm,"surface_resize",resize_args,3); }
-    if(fixture->render.app_surface_owned || fixture->render.app_surface!=borrowed ||
-       gml_surface_width(&fixture->render,0)!=3 || gml_surface_height(&fixture->render,0)!=2){
-      fprintf(stderr,"Studio 1.x application-surface resize was not ignored\n");
+    if(!fixture->render.app_surface_owned || fixture->render.app_surface!=fixture->render.app_surface_owned ||
+       gml_surface_width(&fixture->render,0)!=5 || gml_surface_height(&fixture->render,0)!=4){
+      fprintf(stderr,"Studio 1.x application-surface resize was ignored\n");
       return 0;
     }
     surface_win.bytecode=17;

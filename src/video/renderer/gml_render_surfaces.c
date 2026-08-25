@@ -210,11 +210,8 @@ int gml_render_application_surface_ensure_owned(GmlRender *r,int w,int h){
 void gml_surface_resize(GmlRender *r, int id, int w, int h){
   if(!r || w<=0 || h<=0 || w>4096 || h>4096) return;
   if(id==0){
-    /* Studio 1.x exposes surface 0 but its legacy presentation path does not turn
-     * surface_resize(application_surface, ...) into a persistent, separately allocated target.
-     * Doing so shrinks its fixed-width compositors into one corner of a forced-aspect frame.
-     * The independently resizable application surface is a modern-format behavior. */
-    if(!r->win || !anygm_policy_has_modern_layer_semantics(r->win)) return;
+    /* Surface zero follows the same explicit resize request in every generation. */
+    if(!r->win) return;
     if(render_setting(r,"GML_LOG_SURF")) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[surf] resize application_surface %dx%d (was %dx%d)\n",w,h,r->app_w,r->app_h);
     (void)application_surface_resize(r,w,h);
     return;
