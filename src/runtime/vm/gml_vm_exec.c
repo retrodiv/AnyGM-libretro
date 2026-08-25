@@ -47,6 +47,16 @@ int gml_vm_value_compare(GmlVM *vm, GmlVal lhs, GmlVal rhs, int cmp){
       default: return 0;
     }
   }
+  /* Arrays are references, not numbers. They compare equal only when they reference the same
+   * array; ordered comparisons are undefined, as for the undefined value. */
+  if(lhs.t==V_ARR || rhs.t==V_ARR){
+    int same=(lhs.t==V_ARR && rhs.t==V_ARR && lhs.arr==rhs.arr);
+    switch(cmp){
+      case CMP_EQ: return same;
+      case CMP_NEQ: return !same;
+      default: return 0;
+    }
+  }
   if(lhs.t==V_STR || rhs.t==V_STR){
     char lb[64], rb[64];
     int c=strcmp(asstr_cmp(lhs,lb,sizeof lb),asstr_cmp(rhs,rb,sizeof rb));
