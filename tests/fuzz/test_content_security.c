@@ -334,6 +334,70 @@ static void build_no_code_form(uint8_t form[200]){
   store_u32(form,192,4);
 }
 
+/* The identity fields and strings in this test image are authored here. */
+static size_t build_no_code_form_named(uint8_t *form,size_t capacity,const char *filename,
+                                       const char *name,uint32_t game_id){
+  size_t filename_length=strlen(filename),name_length=strlen(name);
+  size_t pool=196u;
+  size_t filename_offset=pool+16u;
+  size_t name_length_offset=filename_offset+filename_length+1u;
+  size_t name_offset=name_length_offset+4u;
+  size_t total=name_offset+name_length+1u;
+  if(!filename_length || !name_length || total>capacity) return 0;
+  memset(form,0,capacity);
+  memcpy(form,"FORM",4);
+  store_u32(form,4,(uint32_t)(total-8u));
+  memcpy(form+8,"GEN8",4);
+  store_u32(form,12,136);
+  form[17]=15;
+  store_u32(form,20,(uint32_t)filename_offset);
+  store_u32(form,36,game_id);
+  store_u32(form,56,(uint32_t)name_offset);
+  store_u32(form,76,320);
+  store_u32(form,80,240);
+  memcpy(form+152,"ROOM",4);
+  store_u32(form,156,4);
+  memcpy(form+164,"CODE",4);
+  memcpy(form+172,"VARI",4);
+  memcpy(form+180,"FUNC",4);
+  memcpy(form+188,"STRG",4);
+  store_u32(form,192,(uint32_t)(total-pool));
+  store_u32(form,pool,2);
+  store_u32(form,pool+4u,(uint32_t)(filename_offset-4u));
+  store_u32(form,pool+8u,(uint32_t)name_length_offset);
+  store_u32(form,filename_offset-4u,(uint32_t)filename_length);
+  memcpy(form+filename_offset,filename,filename_length);
+  store_u32(form,name_length_offset,(uint32_t)name_length);
+  memcpy(form+name_offset,name,name_length);
+  return total;
+}
+
+/* Read one payload's GEN8 identity straight out of its bytes, so the fixture can claim exactly the
+ * identity the neighbour published instead of assuming one. */
+static int read_form_identity(const uint8_t *data,size_t size,char *filename,size_t filename_size,
+                              char *name,size_t name_size,uint32_t *game_id){
+  if(size<12u || memcmp(data,"FORM",4)) return 0;
+  size_t end=8u+load_u32(data+4);
+  if(end>size) end=size;
+  size_t gen8=0;
+  for(size_t cursor=8u;cursor+8u<=end;){
+    uint32_t length=load_u32(data+cursor+4);
+    if((size_t)length>end-(cursor+8u)) return 0;
+    if(!memcmp(data+cursor,"GEN8",4)){ gen8=cursor+8u; break; }
+    cursor+=8u+length;
+  }
+  if(!gen8 || gen8+44u>size) return 0;
+  size_t filename_offset=load_u32(data+gen8+4),name_offset=load_u32(data+gen8+40);
+  *game_id=load_u32(data+gen8+20);
+  if(filename_offset<4u || name_offset<4u || filename_offset>size || name_offset>size) return 0;
+  uint32_t filename_length=load_u32(data+filename_offset-4),name_length=load_u32(data+name_offset-4);
+  if(!filename_length || !name_length || filename_length>=filename_size || name_length>=name_size ||
+     filename_offset+filename_length>size || name_offset+name_length>size) return 0;
+  memcpy(filename,data+filename_offset,filename_length); filename[filename_length]='\0';
+  memcpy(name,data+name_offset,name_length); name[name_length]='\0';
+  return 1;
+}
+
 static size_t build_pe_cabinet(uint8_t executable[1024]){
   memset(executable,0,1024);
   executable[0]='M';
@@ -1701,6 +1765,34 @@ static int adjacent_executable_payload_cases(const AnygmHostServices *services,c
        ANYGM_CONTENT_RESOLVE_OK || !strcmp(resolved,payload)){
     free(form);
     return fail("an adjacent payload outranked an embedded Studio payload");
+  }
+
+  /* The mirror image of that rule. An embedded payload that carries no code cannot be run at all,
+   * so refusing the neighbour protects no load; it only turns one that would work into an error.
+   * The neighbour is preferred only when it is demonstrably the same project, which is what the
+   * fixture above cannot claim and this one can. */
+  char neighbour_filename[128],neighbour_name[128];
+  uint32_t neighbour_id=0;
+  uint8_t named[512],named_executable[1024];
+  size_t named_size=0;
+  if(!read_form_identity(form,form_size,neighbour_filename,sizeof neighbour_filename,
+                         neighbour_name,sizeof neighbour_name,&neighbour_id) ||
+     !(named_size=build_no_code_form_named(named,sizeof named,neighbour_filename,neighbour_name,
+                                           neighbour_id))){
+    free(form);
+    return fail("could not stage the same-project embedded payload fixture");
+  }
+  memset(named_executable,0,sizeof named_executable);
+  build_pe_runner_only(named_executable);
+  memcpy(named_executable+700,named,named_size);
+  char same_project[640];
+  if(snprintf(same_project,sizeof same_project,"%s/embedded-same-project.exe",directory)>=
+       (int)sizeof same_project ||
+     !write_file(same_project,named_executable,sizeof named_executable) ||
+     anygm_content_resolve_path(&router,same_project,resolved,sizeof resolved,NULL,0,NULL,0)!=
+       ANYGM_CONTENT_RESOLVE_OK || strcmp(resolved,payload)){
+    free(form);
+    return fail("a codeless embedded payload did not defer to the same project beside it");
   }
 
   char rejected[640];

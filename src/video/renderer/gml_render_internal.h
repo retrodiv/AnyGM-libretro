@@ -617,6 +617,16 @@ typedef void (*GmlRowBandFn)(void *ctx,int row_start,int row_end,int slot);
 
 #define GML_ROW_THREADS_MAX 32
 #define GML_ROW_THREADS_AUTO 16
+/* How much of a textured draw has to be visible before its rows are worth splitting across the row
+ * workers. Each of these sites hands the SAME callback either to the pool or to the calling thread,
+ * so the choice moves no pixel; it only decides who writes them.
+ *
+ * Handover cost depends on whether workers are awake. Keep the higher threshold until
+ * several dispatches in the same frame show that the workers remain active. */
+#define GML_ROW_BAND_MIN_PIXELS_COLD 262144ull
+#define GML_ROW_BAND_MIN_PIXELS_HOT 8192ull
+#define GML_ROW_BAND_HOT_DISPATCHES 4
+int gml_render_row_bands_profitable(GmlRender *r,unsigned long long visible_pixels);
 
 const char *render_setting(const GmlRender *r,const char *name);
 int rprof_enabled(void);

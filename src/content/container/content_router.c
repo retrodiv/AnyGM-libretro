@@ -626,11 +626,110 @@ static AnygmContentResolveResult resolve_adjacent_studio_payload(
   return ANYGM_CONTENT_RESOLVE_OK;
 }
 
+/* A Studio payload identifies its project in GEN8: two string offsets into the payload's own
+ * string pool (the project file name and the display name) and one numeric game id. Reading those
+ * three fields answers "is this the same project?" without loading either payload, and reports
+ * whether the payload carries executable code at all.
+ *
+ * Walking the chunk table must not stop at the first zero-length chunk: several chunks are
+ * routinely empty in a normal payload, and stopping there never reaches CODE. */
+typedef struct {
+  char filename[128];
+  char name[128];
+  uint32_t game_id;
+  int has_code;
+} StudioPayloadIdentity;
+
+static int studio_payload_string(const AnygmContentRouter *router,void *file,uint64_t size,
+                                 uint64_t offset,char *out,size_t out_size){
+  uint8_t length_field[4];
+  out[0]='\0';
+  if(offset<4u || !router_read_at(router,file,size,offset-4u,length_field,4u)) return 0;
+  uint64_t length=zu32(length_field);
+  if(!length || length>=out_size) return 0;
+  if(!router_read_at(router,file,size,offset,out,(size_t)length)) return 0;
+  out[length]='\0';
+  for(uint64_t index=0;index<length;index++)
+    if((unsigned char)out[index]<0x20u) return 0;
+  return 1;
+}
+
+static int studio_payload_identity(const AnygmContentRouter *router,const char *path,
+                                   StudioPayloadIdentity *identity){
+  memset(identity,0,sizeof *identity);
+  uint64_t size=0;
+  if(!router || !anygm_vfs_can_read(router->host) || !file_size64(router,path,&size)) return 0;
+  void *file=router->host->file_open(router->host->userdata,path,ANYGM_FILE_READ);
+  if(!file) return 0;
+  int ok=0;
+  uint8_t header[8];
+  uint64_t gen8=0,gen8_length=0;
+  if(router_read_at(router,file,size,0,header,8u) && !memcmp(header,"FORM",4)){
+    uint64_t end=8u+(uint64_t)zu32(header+4u);
+    if(end>size) end=size;
+    for(uint64_t cursor=8u;cursor+8u<=end;){
+      if(!router_read_at(router,file,size,cursor,header,8u)) break;
+      uint64_t length=zu32(header+4u);
+      if(length>end-(cursor+8u)) break;
+      if(!memcmp(header,"GEN8",4)){ gen8=cursor+8u; gen8_length=length; }
+      else if(!memcmp(header,"CODE",4) && length) identity->has_code=1;
+      cursor+=8u+length;
+    }
+  }
+  /* GEN8 places the project file name at +4, the game id at +20 and the display name at +40. */
+  if(gen8 && gen8_length>=44u){
+    uint8_t fields[4];
+    uint64_t filename_offset=0,name_offset=0;
+    if(router_read_at(router,file,size,gen8+4u,fields,4u)) filename_offset=zu32(fields);
+    if(router_read_at(router,file,size,gen8+20u,fields,4u)) identity->game_id=zu32(fields);
+    if(router_read_at(router,file,size,gen8+40u,fields,4u)) name_offset=zu32(fields);
+    ok=studio_payload_string(router,file,size,filename_offset,
+                             identity->filename,sizeof identity->filename) &&
+       studio_payload_string(router,file,size,name_offset,identity->name,sizeof identity->name);
+  }
+  router->host->file_close(router->host->userdata,file);
+  return ok;
+}
+
+/* An executable whose embedded payload carries no code cannot be run at all: the choice is not
+ * between a safe load and an unsafe one, it is between the neighbour and nothing. Deferring to the
+ * neighbour is still a substitution, so it is allowed only when the neighbour is demonstrably the
+ * same project - same project file name, same display name, same game id - which a payload that
+ * merely sits in the same directory cannot claim. */
+static int embedded_payload_defers_to_adjacent(const AnygmContentRouter *router,
+                                               const char *executable,const char *extracted){
+  StudioPayloadIdentity embedded,adjacent;
+  if(!studio_payload_identity(router,extracted,&embedded) || embedded.has_code) return 0;
+  char parent[1024],payload[1536];
+  anygm_content_path_parent(executable,parent,sizeof parent);
+  if(!path_join_bounded(payload,sizeof payload,parent,"data.win") || !file_exists(router,payload))
+    return 0;
+  if(!studio_payload_identity(router,payload,&adjacent) || !adjacent.has_code) return 0;
+  if(strcmp(embedded.filename,adjacent.filename) || strcmp(embedded.name,adjacent.name) ||
+     embedded.game_id!=adjacent.game_id) return 0;
+  content_log(router,ANYGM_CONTENT_LOG_INFO,
+              "executable: the embedded payload carries no code and the adjacent payload is the "
+              "same project (%s, game id %u)",adjacent.name,(unsigned)adjacent.game_id);
+  return 1;
+}
+
 static AnygmContentResolveResult resolve_executable_content(
     const AnygmContentRouter *router,const char *path,char *content_path,size_t content_size,
     char *asset_root,size_t asset_root_size){
   int embedded=load_studio_executable_content(router,path,content_path,content_size);
-  if(embedded) return embedded>0?ANYGM_CONTENT_RESOLVE_OK:ANYGM_CONTENT_RESOLVE_INVALID;
+  if(embedded>0){
+    char extracted[1024];
+    if(snprintf(extracted,sizeof extracted,"%s",content_path)<(int)sizeof extracted &&
+       embedded_payload_defers_to_adjacent(router,path,extracted)){
+      uint64_t executable_size=0;
+      file_size64(router,path,&executable_size);
+      if(resolve_adjacent_studio_payload(router,path,executable_size,content_path,content_size)==
+         ANYGM_CONTENT_RESOLVE_OK) return ANYGM_CONTENT_RESOLVE_OK;
+      snprintf(content_path,content_size,"%s",extracted);
+    }
+    return ANYGM_CONTENT_RESOLVE_OK;
+  }
+  if(embedded) return ANYGM_CONTENT_RESOLVE_INVALID;
   AnygmEmbeddedCab cab={0};
   AnygmEmbeddedCabStatus status=anygm_embedded_cab_probe(router,path,&cab);
   AnygmEmbeddedNsis nsis={0};

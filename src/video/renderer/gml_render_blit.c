@@ -2970,7 +2970,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       free(fraction_x);
       return;
     }
-    if(vispix>=262144ull) gml_run_row_bands(r,yy1-yy0,interp_blit_band_rows,&band);
+    if(gml_render_row_bands_profitable(r,vispix)) gml_run_row_bands(r,yy1-yy0,interp_blit_band_rows,&band);
     else interp_blit_band_rows(&band,0,yy1-yy0,0);
     free(source_a);
     free(fraction_x);
@@ -3114,7 +3114,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
         .source_alpha=(unsigned)lround(255.0*alpha),
         .preserve_alpha=gml_render_target_preserves_alpha(r)
       };
-      if(vispix>=262144ull)
+      if(gml_render_row_bands_profitable(r,vispix))
         gml_run_row_bands(r,yy1-yy0,nearest_opaque_alpha_band_rows,&band);
       else
         nearest_opaque_alpha_band_rows(&band,0,yy1-yy0,0);
@@ -3150,7 +3150,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
              : mapped< solid_mask->solid_alpha_mask_cutoff_step)) mapped=0;
         band.mapped_alpha[raw]=(uint8_t)mapped;
       }
-      if(vispix>=262144ull)
+      if(gml_render_row_bands_profitable(r,vispix))
         gml_run_row_bands(r,yy1-yy0,nearest_solid_mask_band_rows,&band);
       else
         nearest_solid_mask_band_rows(&band,0,yy1-yy0,0);
@@ -3226,7 +3226,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
       reciprocal_x,reciprocal_y,
       sample_x,sample_y,axs,ays,alpha,bR,bG,bB
     };
-    if(vispix>=262144ull) gml_run_row_bands(r,yy1-yy0,blit_one_band_rows,&band);
+    if(gml_render_row_bands_profitable(r,vispix)) gml_run_row_bands(r,yy1-yy0,blit_one_band_rows,&band);
     else blit_one_band_rows(&band,0,yy1-yy0,0);
   }
   free(wave_map);
@@ -4875,7 +4875,7 @@ void GML_HOT_RENDER blit_rotated(GmlRender *r, GmlSprite *spr, GmlTpag *t, doubl
     double qarea_interp=fabs(qx[0]*qy[1]-qx[1]*qy[0] + qx[1]*qy[2]-qx[2]*qy[1] +
                              qx[2]*qy[3]-qx[3]*qy[2] + qx[3]*qy[0]-qx[0]*qy[3]) * 0.5;
     band.use_quad_span=(qarea_interp>0.0 && qarea_interp < (double)vispix * 0.85);
-    if(vispix>=262144ull) gml_run_row_bands(r,y1-y0,rot_interp_band_rows,&band);
+    if(gml_render_row_bands_profitable(r,vispix)) gml_run_row_bands(r,y1-y0,rot_interp_band_rows,&band);
     else rot_interp_band_rows(&band,0,y1-y0,0);
     return;
   }
