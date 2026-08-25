@@ -58,7 +58,6 @@ typedef struct {
 } GmlVoice;
 
 #define GML_MAX_VOICES 32
-#define GML_AUDIO_BUS_GAIN 0.55
 #define GML_MAX_AUDIOGROUPS 64
 #define GML_LOOSE_AUDIO_BYTES_MAX (64u*1024u*1024u)
 #define GML_DYNAMIC_SOUND_LIMIT 65536
@@ -1245,11 +1244,6 @@ static int16_t audio_soft_clip(int32_t v){
 }
 static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
   if(!a||a->paused) return;   /* paused: emit silence, voices keep their position */
-  const char *solo_text=audio_setting(a,"GML_AUDIO_SOLO_SOUND");
-  char *solo_end=NULL;
-  long solo_sound=solo_text?strtol(solo_text,&solo_end,10):-1;
-  int solo_enabled=solo_text && solo_end!=solo_text && !*solo_end &&
-                   solo_sound>=0 && solo_sound<=INT_MAX;
   int32_t stack_mix[4096];
   int nvals=frames*2;
   int32_t *mix = nvals <= (int)(sizeof(stack_mix)/sizeof(stack_mix[0])) ? stack_mix : calloc((size_t)nvals,sizeof(*mix));
@@ -1258,7 +1252,6 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
   int limit=audio_voice_limit(a);
   for(int v=0;v<limit;v++){
     GmlVoice *vo=&a->voice[v]; if(!vo->active || vo->paused) continue;
-    if(solo_enabled && vo->snd!=(int)solo_sound) continue;
     if(!audio_voice_prepare(a,vo)) continue;
     GmlSound *s=&a->snd[vo->snd];
     double vol=s->vol*vo->spatial_gain*a->master_gain; int ch=s->channels;
@@ -1322,7 +1315,7 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
     if(!a->group_fade_frames[g]) a->group_gain[g]=a->group_target[g];
   }
   for(int i=0;i<nvals;i++)
-    out[i]=audio_soft_clip((int32_t)lrint((double)mix[i]*GML_AUDIO_BUS_GAIN));
+    out[i]=audio_soft_clip(mix[i]);
   if(mix!=stack_mix) free(mix);
 }
 

@@ -375,6 +375,33 @@ static int fixture_mix_one_embedded(unsigned char *data,size_t size,uint32_t aud
   return voice>=0;
 }
 
+/* Resource volume is a linear mixer gain. Applying another fixed attenuation after summing
+ * voices would lower the asserted half-volume output. */
+int expect_resource_volume_is_linear_mixer_gain(void){
+  enum { frames=16 };
+  unsigned char wave[128],data[512];
+  unsigned char samples[frames*2];
+  for(int index=0;index<frames;index++)
+    fixture_write_u16(samples,(size_t)index*2u,12000);
+  size_t wave_size=fixture_wave(wave,sizeof wave,1,1,44100,16,2,NULL,0,
+                                samples,sizeof samples);
+  uint32_t audo_chunk=0;
+  size_t size=wave_size
+    ? fixture_two_sound_container(data,sizeof data,wave,wave_size,wave,wave_size,&audo_chunk)
+    : 0;
+  if(!size) return 0;
+  float half=0.5f;
+  memcpy(data+64+20,&half,sizeof half);
+  int16_t mixed[frames*2];
+  int ok=fixture_mix_one_embedded(data,size,audo_chunk,0,mixed,frames);
+  for(int index=0;ok && index<frames*2;index++)
+    if(mixed[index]!=6000){
+      fprintf(stderr,"resource volume mixed sample %d as %d instead of 6000\n",index,mixed[index]);
+      ok=0;
+    }
+  return ok;
+}
+
 /* An 8-bit WAVE says so in its format chunk, and its samples are unsigned around 128. Read as
  * 16-bit little-endian pairs instead, a quiet run of 0x80 bytes becomes -32640 held for the whole
  * effect: full-scale noise. The rule is stated as an equality between two

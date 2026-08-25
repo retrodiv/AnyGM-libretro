@@ -60,6 +60,7 @@ int main(int argc,char **argv){
      expect_streamed_sound_without_sidecar_plays_embedded_compressed_blob},
     {"undeclared_group_embedded_pcm",
      expect_undeclared_group_sound_plays_its_embedded_pcm},
+    {"resource_volume",expect_resource_volume_is_linear_mixer_gain},
     {"embedded_eight_bit_wave",expect_embedded_eight_bit_wave_matches_its_sixteen_bit_signal},
     {"embedded_ms_adpcm_wave",expect_embedded_ms_adpcm_wave_matches_its_sixteen_bit_signal},
     {"classic_trailing_frame",expect_classic_sound_drops_its_trailing_frame},
