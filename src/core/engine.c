@@ -289,6 +289,7 @@ static void engine_adopt_boot_overrides(AnygmEngine *engine,
   snprintf(engine->content_overrides_text,sizeof engine->content_overrides_text,"%s",
            prepared->content_overrides);
   engine->introskip_enabled=-1;
+  engine->vm.os_type_declared=engine_overrides_declared_os_type(engine);
   engine_override_menu_refresh(engine);
   if(engine->boot_cheat_count)
     engine_logf(engine,ANYGM_LOG_INFO,"Content overrides: %d directive(s) from the anchor%s\n",
@@ -398,6 +399,8 @@ static void boot_runtime(AnygmEngine *engine) {
   gml_vm_init_launch(&engine->vm,&engine->win,&engine->host,
                      engine->content_program_directory,engine->current_content_path,
                      engine->launch_parameters);
+  /* Launch resets VM fields, so install the declaration before the first event. */
+  engine->vm.os_type_declared=engine_overrides_declared_os_type(engine);
   engine_input_bind(engine);
   setup_platform_locale(engine,&engine->vm);
   gml_render_init(&engine->render, &engine->win);
@@ -2124,6 +2127,7 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
   engine->diagnostics.multiview_frame=-1;
   engine->diagnostics.profile_spike_ms=-2.0;
   engine->introskip_enabled=-1;
+  engine->vm.os_type_declared=engine_overrides_declared_os_type(engine);
   engine->last_error[0]=0;
   *out_engine=engine;
   return ANYGM_OK;
@@ -2387,6 +2391,7 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
       /* The development menu and the intro-skip list can be declared by content directives;
        * both follow the toggle. */
       engine->introskip_enabled=-1;
+      engine->vm.os_type_declared=engine_overrides_declared_os_type(engine);
       if(engine->lifecycle==ENGINE_LOADED){
         engine_override_menu_refresh(engine);
         /* Enabling a monitor program after a frontend transition brings its cached content state

@@ -591,7 +591,11 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
    * os_windows and content takes its desktop path. The os_* constants are also provided; GMS bakes some as literals
    * but references others as runtime constants; without them a `case os_windows` read undefined and
    * never matched). */
-  if(!strcmp(name,"os_type")){ const char *e=anygm_host_development_setting(vm->host,"GML_OS_TYPE"); return vreal(e?atof(e):0 /*os_windows*/); }
+  if(!strcmp(name,"os_type")){ const char *e=anygm_host_development_setting(vm->host,"GML_OS_TYPE");
+    if(e) return vreal(atof(e));
+    /* A declared platform takes precedence over the runtime default. */
+    if(vm->os_type_declared>=0) return vreal(vm->os_type_declared);
+    return vreal(0 /*os_windows*/); }
   if(!strcmp(name,"os_windows")) return vreal(0);
   if(!strcmp(name,"os_macosx")) return vreal(1);
   if(!strcmp(name,"os_ios")) return vreal(3);

@@ -690,7 +690,21 @@ int engine_boot_overrides_parse(const char *text,CheatSlot *slots,int *count,
         }
         snprintf(slot->code,sizeof slot->code,"%s",parts[p]);
         slot->enabled=1;
-        if(!strncmp(slot->code,"introskip|",10) || !strncmp(slot->code,"introauto|",10)){
+        if(!strncmp(slot->code,"ostype|",7)){
+          /* Declares which system this content is told it stands on: one non-negative os_* value,
+           * using the runtime's os_type numbering. */
+          const char *value=slot->code+7;
+          int digits=0,value_ok=value[0]!=0;
+          for(const char *scan=value;*scan && value_ok;scan++){
+            if(*scan>='0' && *scan<='9') digits=1;
+            else if(*scan!=' ' && *scan!='\t') value_ok=0;
+          }
+          if(!value_ok || !digits){
+            snprintf(error,error_capacity,
+                     "directive %d: ostype| takes one non-negative os_type value",line_number);
+            return 0;
+          }
+        } else if(!strncmp(slot->code,"introskip|",10) || !strncmp(slot->code,"introauto|",10)){
           const char *list=slot->code+10;
           int digits=0,list_ok=list[0]!=0;
           for(const char *scan=list;*scan && list_ok;scan++){
@@ -1319,6 +1333,14 @@ static void introskip_parse(AnygmEngine *engine,const char *s){
     if(a>b){ int t=a; a=b; b=t; }
     for(int r=a; r<=b && r<1024; r++) if(r>=0) engine->introskip_set[r>>3] |= (uint8_t)(1u<<(r&7));
   }
+}
+/* Return the declared os_type, or -1 when no active directive supplies one. */
+int engine_overrides_declared_os_type(AnygmEngine *engine){
+  int active=engine_boot_cheats_active(engine);
+  for(int i=0;i<active;i++)
+    if(engine->boot_cheats[i].enabled && !strncmp(engine->boot_cheats[i].code,"ostype|",7))
+      return atoi(engine->boot_cheats[i].code+7);
+  return -1;
 }
 void introskip_hook(AnygmEngine *engine){
   if(engine->introskip_enabled < 0){

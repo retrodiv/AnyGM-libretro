@@ -54,6 +54,14 @@ join the save-state identity, so a state saved with them loads only while
 they are active; content without directives keeps its state identity
 unchanged.
 
+`ostype|N` declares which operating system this content is told it is running on, using the same
+numbering used by `os_type` (0 Windows, 1 macOS, 6 Linux, and so on). Without it content is
+answered `os_windows`, which is the desktop path most content is written for. It is read once the
+anchor is installed and before the first frame, because content asks the question in the very first
+events it runs, and the `GML_OS_TYPE` development setting still takes precedence over it. Content
+that branches on `os_type` accordingly takes the branch written for the declared platform; the
+declared value is returned without changing any other condition.
+
 `call|script_name` invokes the named zero-argument GMS script exactly once,
 after the first Step of a fresh content load. The name is the script asset
 name, not a CODE entry name: `call|configure_input` resolves only

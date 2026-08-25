@@ -420,6 +420,8 @@ typedef struct GmlVM {
   int window_w, window_h, gui_w, gui_h;
   /* First-room view port captured before Create events for default GUI coordinates. */
   int gui_boot_w, gui_boot_h;
+  /* Declared os_type; a negative value selects the runtime default. */
+  int os_type_declared;
   int gui_maximise_active;
   double gui_maximise_xscale, gui_maximise_yscale;
   double gui_maximise_xoffset, gui_maximise_yoffset;
