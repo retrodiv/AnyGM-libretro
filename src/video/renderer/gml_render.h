@@ -370,6 +370,9 @@ void gml_render_draw_state_update(GmlRender *r,const GmlRenderDrawState *state,
 int gml_render_gpu_state_push(GmlRender *r);
 int gml_render_gpu_state_pop(GmlRender *r);
 void gml_render_application_surface_set_draw_enabled(GmlRender *r,int enabled);
+/* Mark the Post-Draw interval after the automatic presentation decision. */
+void gml_render_application_surface_presentation_settle(GmlRender *r,int settled);
+int gml_render_application_surface_presentation_settled(const GmlRender *r);
 int gml_render_target_pixel(GmlRender *r,int x,int y,uint32_t *pixel);
 void gml_render_shader_set_current(GmlRender *r,int shader);
 int gml_render_shader_current(const GmlRender *r);

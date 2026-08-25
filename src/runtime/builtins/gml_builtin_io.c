@@ -1533,6 +1533,9 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(sz<0?0:sz); }
   if(!strcmp(nm,"file_bin_seek")||!strcmp(nm,"FS_file_bin_seek")){ int i=vm_file_slot(vm,(int)N(a,n,0));
     if(i>=0){ int64_t p=(int64_t)N(a,n,1); if(p<0) p=0; vm_file_seek(vm,i,p,ANYGM_SEEK_START); } return vreal(0); }
+  /* Report the current binary-file cursor for bounded read loops. */
+  if(!strcmp(nm,"file_bin_position")||!strcmp(nm,"FS_file_bin_position")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(0);
+    int64_t p=vm_file_tell(vm,i); return vreal(p<0?0:(double)p); }
   if(!strcmp(nm,"file_bin_read_byte")||!strcmp(nm,"FS_file_bin_read_byte")){ int i=vm_file_slot(vm,(int)N(a,n,0)); if(i<0) return vreal(0);
     int c=vm_file_getc(vm,i); return vreal(c==EOF?0:(c&0xff)); }
   if(!strcmp(nm,"file_bin_write_byte")||!strcmp(nm,"FS_file_bin_write_byte")){ int i=vm_file_slot(vm,(int)N(a,n,0));

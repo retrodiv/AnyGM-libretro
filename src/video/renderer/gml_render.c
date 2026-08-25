@@ -783,6 +783,12 @@ int gml_render_gpu_state_pop(GmlRender *r){
 void gml_render_application_surface_set_draw_enabled(GmlRender *r,int enabled){
   if(r) r->app_draw_enable=enabled;
 }
+void gml_render_application_surface_presentation_settle(GmlRender *r,int settled){
+  if(r) r->app_draw_presentation_settled=settled?1:0;
+}
+int gml_render_application_surface_presentation_settled(const GmlRender *r){
+  return r?r->app_draw_presentation_settled:0;
+}
 int gml_render_target_pixel(GmlRender *r,int x,int y,uint32_t *pixel){
   if(pixel) *pixel=0;
   if(!r || !pixel) return 0;

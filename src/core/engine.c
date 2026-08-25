@@ -1763,8 +1763,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
 		    gml_render_target_metrics_update(
 		      &engine->render,&offset_target,GML_RENDER_TARGET_CAMERA);
 		  }
+		  gml_render_application_surface_presentation_settle(&engine->render,1);
 		  gml_vm_draw_pass(&engine->vm, "Draw_77");   /* Post-Draw (GMS2 event 77) can replace the default
 		                                         * application-surface blit with a custom composite. */
+		  gml_render_application_surface_presentation_settle(&engine->render,0);
 		  log_present_pass(engine,"post-draw",gtarget,gtw,gth);
 		  gml_render_presentation_metrics(&engine->render,&render_presentation);
 		  if ((render_presentation.application_draw_enabled && !engine->composed_frame) ||
