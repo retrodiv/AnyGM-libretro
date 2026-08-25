@@ -74,10 +74,11 @@ enum { ANYGM_FRAME_ENCODING_RAW=1, ANYGM_FRAME_ENCODING_ROW_RLE=2 };
 
 size_t engine_state_frame_capacity(const AnygmEngine *engine){
   /* Ceiling of state_write_completed_frame under the geometry this session is already known to
-   * reach: width, height, encoding, literal count and run count cost 20 bytes, the row table four per row,
-   * and a fully literal frame of single-pixel runs costs eight bytes per pixel. The configured
-   * virtual monitor counts even before the first frame presents, because a frontend that sizes a
-   * rewind ring does it once, at load, when none of the presentation has happened yet. */
+   * reach: width, height and encoding cost 12 bytes, then raw RGBA costs four bytes per pixel. The
+   * writer selects raw whenever row-RLE would be larger, so no selected encoding can exceed this
+   * bound. The configured virtual monitor counts even before the first frame presents, because a
+   * frontend that sizes a rewind ring does it once, at load, when none of the presentation has
+   * happened yet. */
   size_t w=engine->output_width,h=engine->output_height;
   if(engine->config.monitor_width>w) w=engine->config.monitor_width;
   if(engine->config.monitor_height>h) h=engine->config.monitor_height;
@@ -86,7 +87,7 @@ size_t engine_state_frame_capacity(const AnygmEngine *engine){
   if(!w || !h){ w=engine->width; h=engine->height; }
   if(w>FB_MAX_W) w=FB_MAX_W;
   if(h>FB_MAX_H) h=FB_MAX_H;
-  return 20u+4u*h+8u*w*h;
+  return 12u+4u*w*h;
 }
 
 static void state_write_completed_frame(AnygmEngine *engine,CoreW *state){

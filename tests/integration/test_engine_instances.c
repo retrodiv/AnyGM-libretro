@@ -2502,6 +2502,25 @@ int main(int argc,char **argv){
     fprintf(stderr,"boot state size or capacity hint answered zero\n");
     return 1;
   }
+  {
+    GmlSurface *surface=&first->render.surface[GML_MAX_SURFACES-1];
+    if(surface->live || surface->px){
+      fprintf(stderr,"synthetic content unexpectedly occupied the surface hint fixture\n");
+      return 1;
+    }
+    const size_t surface_bytes=512u*512u*sizeof(uint32_t);
+    surface->px=calloc(1,surface_bytes);
+    if(!surface->px) return 1;
+    surface->w=512; surface->h=512; surface->live=1;
+    size_t surface_hint=anygm_state_resume_capacity_hint(first);
+    free(surface->px);
+    memset(surface,0,sizeof *surface);
+    if(surface_hint<surface_bytes){
+      fprintf(stderr,"resume hint omitted a known runtime surface: %zu below %zu\n",
+              surface_hint,surface_bytes);
+      return 1;
+    }
+  }
 
   AnygmInputFrame input={0};
   input.struct_size=sizeof input;

@@ -8,6 +8,7 @@
 #include "gml_vm.h"
 #include "gml_builtin.h"
 #include "gml_render.h"
+#include "gml_render_state.h"
 #include "gml_audio.h"
 #include "gmlc_package.h"
 #include "gmlc_classic_project.h"
@@ -2423,7 +2424,20 @@ size_t anygm_state_resume_size(AnygmEngine *engine){
 
 size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return 0;
-  return engine->state_resume_peak_hint;
+  size_t hint=engine->state_resume_peak_hint;
+  GmlRenderStateProfileMetrics metrics={0};
+  if(gml_render_state_profile_metrics(&engine->render,&metrics)){
+    /* A surface can exist at load with its authored dimensions but an empty, cheaply encoded
+     * picture, then acquire all of its pixels in gameplay. A fixed frontend allocates its ring
+     * before that transition. Include the already-known mutable raster capacity in the required
+     * state hint so the compact completed-frame policy never makes the frame-free fallback itself
+     * too small. File-backed runtime sprites restore from their path and do not need inline RGBA. */
+    size_t dynamic=metrics.surface_bytes;
+    if(SIZE_MAX-dynamic<metrics.inline_runtime_sprite_bytes) dynamic=SIZE_MAX;
+    else dynamic+=metrics.inline_runtime_sprite_bytes;
+    if(dynamic>hint) hint=dynamic;
+  }
+  return hint;
 }
 
 size_t anygm_state_capacity_hint(const AnygmEngine *engine){

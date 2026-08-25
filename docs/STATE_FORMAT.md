@@ -155,11 +155,14 @@ the exact current size and writes into a caller-owned buffer.
 The libretro adapter advertises the variable-size serialization quirk and records whether the
 frontend acknowledges it. Before the first completed frame, its transport answer covers the
 current frame-free state and the remembered frame-free peak. When the completed-frame ceiling would
-add at least 1 MiB, a frontend that fixes its rewind ring from that answer receives a compact
-one-MiB-or-larger slot. Each snapshot first writes the complete encoded state; if that real state
-fits, rewind remains visually exact even though its conservative ceiling did not. Only a complete
-state that actually exceeds the slot falls back to the explicit frame-free form. Smaller rasters
-retain complete, visually exact rewind states directly.
+add at least 768 KiB, a frontend that fixes its rewind ring from that answer receives a compact
+one-MiB-or-larger slot. Its floor always covers the predicted required state, including mutable
+surfaces already known at load. A moderate raw-frame ceiling below 2 MiB joins that floor so the
+complete picture remains exact; that combined floor rounds to the next MiB to retain bounded
+cold-to-gameplay growth. A larger virtual-monitor picture does not inflate every slot and may use
+the frame-free fallback. Each snapshot first writes the complete encoded state and falls
+back only when it actually exceeds the slot. Smaller rasters retain complete, visually exact
+rewind states directly.
 For a frontend that does not acknowledge variable sizes, that first answer remains fixed for the
 loaded session, as the baseline libretro contract requires. Later size queries return that cached
 capacity without traversing the runtime state again; the frontend cannot accept a different answer,

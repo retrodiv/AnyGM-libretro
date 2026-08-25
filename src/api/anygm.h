@@ -522,8 +522,9 @@ size_t anygm_state_size(AnygmEngine *engine);
  * that resumes simulation from frequent in-memory snapshots can provision this smaller form. It
  * loads through anygm_state_load and the next run continues from the restored post-frame state. */
 size_t anygm_state_resume_size(AnygmEngine *engine);
-/* The largest frame-free state this content is known to have needed in an earlier session. It is
- * a bounded advisory cache, just like anygm_state_capacity_hint; the current exact requirement is
+/* The capacity advised for frame-free states: at least the largest size remembered from an earlier
+ * session, raised by mutable render allocations whose dimensions are already known at load. It is
+ * a bounded advisory hint, just like anygm_state_capacity_hint; the current exact requirement is
  * always anygm_state_resume_size. */
 size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine);
 /* The capacity the engine advises a host to provision for complete states: at least the completed

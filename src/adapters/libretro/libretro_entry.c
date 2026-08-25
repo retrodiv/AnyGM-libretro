@@ -117,15 +117,31 @@ static void negotiate_serialization(void){
       (quirks&RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE)!=0;
 }
 
-static size_t fixed_state_capacity(size_t actual,bool compact_startup){
+static size_t fixed_state_capacity(size_t actual,bool compact_startup,
+                                   size_t compact_frame_capacity){
   const size_t margin=512u*1024u;
   /* Before the first frame, a cold ordinary raster can still understate the render and run-time
    * tables that gameplay will populate. Fixed frontends cannot enlarge the ring they allocate
    * from this answer, so keep the established 4 MiB session reserve even when the cold state is
-   * small. A deliberately compact large-frame ring is already sized from the frame-free hint;
-   * give it one MiB for cold-to-gameplay growth without inflating every slot to the ordinary
-   * reserve that the omitted picture exists to avoid. */
-  const size_t floor=compact_startup?1u*1024u*1024u:4u*1024u*1024u;
+   * small. A deliberately compact large-frame ring starts at one MiB, then the lossless picture
+   * ceiling and any known mutable render allocations raise it only as required. */
+  size_t floor=compact_startup?1u*1024u*1024u:4u*1024u*1024u;
+  /* Compact means bounded by the lossless encoded picture, not frame-free by construction. Cover
+   * the required state plus that picture so a detailed raster can remain exact; the one-MiB floor
+   * handles smaller pictures, while the growth formula below handles required runtime tables. */
+  if(compact_startup){
+    size_t exact=SIZE_MAX-actual<compact_frame_capacity?
+      SIZE_MAX:actual+compact_frame_capacity;
+    /* A cold snapshot cannot predict small language-level growth. Round a moderate exact-frame
+     * floor to the next MiB so a fixed ring has useful headroom without changing the one-MiB
+     * result for compact source-sized pictures. */
+    const size_t granularity=1u*1024u*1024u;
+    if(exact!=SIZE_MAX){
+      exact=SIZE_MAX-exact<granularity-1u?
+        SIZE_MAX:(exact+granularity-1u)&~(granularity-1u);
+    }
+    if(exact>floor) floor=exact;
+  }
   if(actual>(SIZE_MAX-margin)/2u) return SIZE_MAX;
   size_t capacity=actual*2u+margin;
   return capacity<floor?floor:capacity;
@@ -417,14 +433,18 @@ size_t retro_serialize_size(void){
   size_t resume_hint=anygm_state_resume_capacity_hint(g_libretro.engine);
   if(resume_hint>actual) actual=resume_hint;
   bool compact_startup=false;
+  size_t compact_frame_capacity=0;
   /* Preserve completed-frame rewind while its worst-case storage is modest. Once the optional
-   * picture alone adds at least one MiB, copying it and the reserve derived from it into every
-   * fixed rewind slot dominates the high-frequency transport. The frame-free form retains the
-   * canonical post-frame simulation state and redraws on the next frontend frame. */
+   * picture alone adds at least 768 KiB, copying a pessimistic run ceiling and its derived reserve
+   * into every fixed rewind slot dominates the high-frequency transport. The compact capacity is
+   * instead based on the lossless raw ceiling and known required allocations. */
   if(!g_libretro.frame_completed){
-    const size_t minimum_saving=1u*1024u*1024u;
+    const size_t minimum_saving=768u*1024u;
+    const size_t maximum_exact_compact_frame=2u*1024u*1024u;
     size_t complete_hint=anygm_state_capacity_hint(g_libretro.engine);
     compact_startup=complete_hint>actual && complete_hint-actual>=minimum_saving;
+    if(compact_startup && complete_hint<maximum_exact_compact_frame)
+      compact_frame_capacity=complete_hint;
     if(!compact_startup && complete_hint>actual) actual=complete_hint;
   }
   if(g_libretro.frame_completed){
@@ -438,7 +458,8 @@ size_t retro_serialize_size(void){
   if(!g_libretro.fixed_state_capacity ||
      (g_libretro.variable_state_supported && actual>g_libretro.fixed_state_capacity)){
     size_t previous=g_libretro.fixed_state_capacity;
-    g_libretro.fixed_state_capacity=fixed_state_capacity(actual,compact_startup);
+    g_libretro.fixed_state_capacity=
+      fixed_state_capacity(actual,compact_startup,compact_frame_capacity);
     /* Acknowledged growth is unusual enough to report once without flooding repeated queries. */
     if(previous && !g_libretro.state_capacity_growth_reported){
       g_libretro.state_capacity_growth_reported=true;
