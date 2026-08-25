@@ -291,13 +291,14 @@ typedef struct {
 enum {
   GML_RENDER_SHADER_TEXTURE_NONE,
   GML_RENDER_SHADER_TEXTURE_PALETTE,
-  GML_RENDER_SHADER_TEXTURE_SAMPLED
+  GML_RENDER_SHADER_TEXTURE_SAMPLED,
+  GML_RENDER_SHADER_TEXTURE_SURFACE
 };
 
 /* Value-copy description of a texture-stage mutation. It exists so the
  * language adapter can emit diagnostics without borrowing shader storage. */
 typedef struct {
-  int kind, sampler, sprite, frame;
+  int kind, sampler, sprite, frame, surface;
 } GmlRenderShaderTextureBinding;
 
 #define GML_MAX_FONTS 48

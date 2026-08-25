@@ -603,8 +603,6 @@ static void check_modern_fractional_tile_grid_has_no_cracks(void){
   memset(&page,0,sizeof page);
   memset(&background,0,sizeof background);
   memset(rgba,255,sizeof rgba);
-  for(size_t i=0;i<sizeof application/sizeof application[0];i++)
-    application[i]=0xff999999u;
   compatibility.has_modern_layer_semantics=1;
   content.bytecode=17;
   content.compatibility=&compatibility;
@@ -620,16 +618,23 @@ static void check_modern_fractional_tile_grid_has_no_cracks(void){
   render.alpha=1.0; render.alphablend=1;
   render.color_write_mask=0x0f; render.active_shader=-1;
 
-  gml_render_begin(&render,application,WIDTH,HEIGHT,0.0,0.0);
-  gml_render_world_set_logical_extent(&render,SOURCE*CELLS,HEIGHT*3.0/5.0);
-  for(int cell=0;cell<CELLS;cell++)
-    gml_draw_background_tile(&render,0,0,0,SOURCE,SOURCE,
-                             cell*SOURCE,0,1,1,0,0,0,0xffffff,1.0);
-  for(int x=0;x<WIDTH;x++) if(application[x]!=0xffffffffu){
-    fprintf(stderr,"renderer tiles: fractional tile grid column %d retained %08x\n",
-            x,application[x]);
-    expect(0,"fractionally projected modern tile grid exposed a crack between cells");
-    break;
+  for(int mirror=0;mirror<=1;mirror++) for(int phase=0;phase<32;phase++){
+    for(size_t i=0;i<sizeof application/sizeof application[0];i++)
+      application[i]=0xff999999u;
+    gml_render_begin(&render,application,WIDTH,HEIGHT,(double)phase/32.0,0.0);
+    gml_render_world_set_logical_extent(&render,SOURCE*CELLS,HEIGHT*3.0/5.0);
+    /* One cell beyond each side keeps the viewport covered while the camera moves. The assertion
+     * then measures only seams between projected authored edges, never an intentional world edge. */
+    for(int cell=-1;cell<=CELLS;cell++)
+      gml_draw_background_tile(&render,0,0,0,SOURCE,SOURCE,
+                               cell*SOURCE,0,1,1,mirror,0,0,0xffffff,1.0);
+    for(int x=0;x<WIDTH;x++) if(application[x]!=0xffffffffu){
+      fprintf(stderr,
+              "renderer tiles: fractional %s tile grid phase %d column %d retained %08x\n",
+              mirror?"mirrored":"ordinary",phase,x,application[x]);
+      expect(0,"fractionally projected moving tile grid exposed a crack between cells");
+      break;
+    }
   }
   free(page.argb_cache);
 }

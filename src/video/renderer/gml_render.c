@@ -829,6 +829,7 @@ static int shader_pal_recognized(const struct GmlShaderPal *p){
          p->channel_mask || p->channel_alpha_key || p->alpha_discard ||
          p->ordered_dither || p->quantise4 ||
          p->solid_alpha_mask || p->solid_blur_alpha || p->lut || p->lut_indexed || p->grid ||
+         p->bloom_luminance || p->bloom_gaussian || p->bloom_blend ||
          p->crt || p->sampled_crt || p->dual_sample || p->hsv_scan || p->hsv_scan_binary_palette ||
          p->noise_jumble || p->radial_wave || p->uv_wave_mode || p->paint || p->grayscale;
 }
@@ -943,6 +944,18 @@ int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *n
     if(recognized->vertex_colour_blend &&
        !strcmp(name,recognized->vertex_colour_blend_uniform))
       return GML_RENDER_SHADER_HANDLE(shader,53);
+    if(recognized->bloom_luminance)
+      for(int index=0;index<2;index++)
+        if(!strcmp(name,recognized->bloom_luminance_uniform[index]))
+          return GML_RENDER_SHADER_HANDLE(shader,55+index);
+    if(recognized->bloom_gaussian)
+      for(int index=0;index<4;index++)
+        if(!strcmp(name,recognized->bloom_gaussian_uniform[index]))
+          return GML_RENDER_SHADER_HANDLE(shader,55+index);
+    if(recognized->bloom_blend)
+      for(int index=0;index<3;index++)
+        if(!strcmp(name,recognized->bloom_blend_uniform[index]))
+          return GML_RENDER_SHADER_HANDLE(shader,55+index);
   }
   return shader>=0?GML_RENDER_SHADER_HANDLE(shader,63):-1;
 }
@@ -954,6 +967,8 @@ int gml_render_shader_sampler_handle(const GmlRender *r,int shader,const char *n
       for(int index=0;index<3;index++)
         if(!strcmp(name,recognized->sampled_crt_sampler[index]))
           return GML_RENDER_SHADER_HANDLE(shader,40+index);
+    if(recognized->bloom_blend && !strcmp(name,recognized->bloom_blend_sampler))
+      return GML_RENDER_SHADER_HANDLE(shader,58);
   }
   return shader>=0?GML_RENDER_SHADER_HANDLE(shader,2):-1;
 }
@@ -964,6 +979,20 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
   int slot=handle%GML_RENDER_SHADER_HANDLE_STRIDE;
   if(shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return;
   struct GmlShaderPal *recognized=&r->shader_pal[shader];
+  if(recognized->bloom_luminance && slot>=55 && slot<57){
+    recognized->bloom_luminance_value[slot-55]=(float)values[0];
+    return;
+  }
+  if(recognized->bloom_gaussian && slot>=55 && slot<59){
+    int index=slot-55;
+    recognized->bloom_gaussian_value[index][0]=(float)values[0];
+    recognized->bloom_gaussian_value[index][1]=(float)values[1];
+    return;
+  }
+  if(recognized->bloom_blend && slot>=55 && slot<58){
+    recognized->bloom_blend_value[slot-55]=(float)values[0];
+    return;
+  }
   if(recognized->indexed_brightness && slot==54){
     recognized->indexed_brightness_value=(float)values[0];
     recognized->indexed_brightness_set=1;
@@ -1117,9 +1146,21 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
 int gml_render_shader_texture_stage_set(
   GmlRender *r,int stage,int texture,GmlRenderShaderTextureBinding *binding){
   if(binding) memset(binding,0,sizeof(*binding));
-  if(!r || (((uint32_t)texture&GML_TEX_KIND_MASK)!=GML_TEX_SPR_TAG)) return 0;
+  if(!r) return 0;
   int shader=stage/GML_RENDER_SHADER_HANDLE_STRIDE;
   int slot=stage%GML_RENDER_SHADER_HANDLE_STRIDE;
+  uint32_t kind=(uint32_t)texture&GML_TEX_KIND_MASK;
+  if(shader>=0 && shader<r->n_shader_pal && r->shader_pal &&
+     r->shader_pal[shader].bloom_blend && slot==58 && kind==GML_TEX_SURF_TAG){
+    int surface=texture&0xFFFF;
+    r->shader_pal[shader].bloom_blend_surface=surface;
+    if(binding){
+      binding->kind=GML_RENDER_SHADER_TEXTURE_SURFACE;
+      binding->surface=surface;
+    }
+    return 1;
+  }
+  if(kind!=GML_TEX_SPR_TAG) return 0;
   int sprite=(texture>>10)&0xFFFF;
   int frame=texture&0x3FF;
   if(shader>=0 && shader<r->n_shader_pal && r->shader_pal &&

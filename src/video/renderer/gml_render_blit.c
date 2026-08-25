@@ -2439,6 +2439,10 @@ static void nearest_solid_mask_band_rows(
   for(int row=row_start;row<row_end;row++){
     int yy=band->source_y0+row;
     int source_y=(int)((yy+band->sample_y)/band->abs_yscale);
+    if(band->tpag->project_authored_edges){
+      if(source_y<0) source_y=0;
+      else if(source_y>=band->tpag->sh) source_y=band->tpag->sh-1;
+    }
     if(source_y<0 || source_y>=band->tpag->sh) continue;
     const uint32_t *source_row=band->source+(size_t)source_y*band->tpag->sw;
     uint32_t *destination_row=
@@ -2537,6 +2541,10 @@ static void nearest_opaque_alpha_band_rows(
   for(int row=row_start;row<row_end;row++){
     int output_y=output_y0+row;
     int local_y=(int)((output_y+sample_y)/scale_y);
+    if(tpag->project_authored_edges){
+      if(local_y<0) local_y=0;
+      else if(local_y>=tpag->sh) local_y=tpag->sh-1;
+    }
     if(local_y<0 || local_y>=tpag->sh) continue;
     int destination_y=flip_y?anchor_y-output_y:anchor_y+output_y;
     const uint32_t *source_row=source+(size_t)local_y*tpag->sw;
@@ -2601,6 +2609,10 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
     int yy=yy0+row;
     int py = flipy ? (y0-yy) : (y0+yy);
     int ly=(int)((yy+sample_y)/ays);
+    if(t->project_authored_edges){
+      if(ly<0) ly=0;
+      else if(ly>=t->sh) ly=t->sh-1;
+    }
     int contiguous_y=fastcase && first_generation_quad_phase_y && ly==t->sh &&
                      t->sy+ly>=0 && t->sy+ly<a->h;
     if((ly<0||ly>=t->sh) && !contiguous_y) continue;
@@ -2646,6 +2658,10 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
     for(int xx=xx0; xx<xx1; xx++){
       int px = flipx ? (x0-xx) : (x0+xx);
       int lx=lxtab? lxtab[xx-xx0] : (int)((xx+sample_x)/axs);
+      if(t->project_authored_edges){
+        if(lx<0) lx=0;
+        else if(lx>=t->sw) lx=t->sw-1;
+      }
       if(lx<0||lx>=t->sw) continue;
       int sx=t->sx+lx;
       if(sx<0) sx=0; else if(sx>sx_max) sx=sx_max;      /* clamp, never sample past the texture */
@@ -2798,10 +2814,14 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
    * independent quad to the same size. */
   if(gml_render_target_is_first_generation_application_surface(r) ||
      t->project_authored_edges){
-    if(xs>0.0 && fabs(axs-nearbyint(axs))>1e-9)
-      w=(int)floor(dx+t->sw*axs+0.5)-x0;
-    if(ys>0.0 && fabs(ays-nearbyint(ays))>1e-9)
-      h=(int)floor(dy+t->sh*ays+0.5)-y0;
+    if(fabs(axs-nearbyint(axs))>1e-9){
+      int far_x=(int)floor(dx+t->sw*xs+0.5);
+      w=xs>0.0?far_x-x0:x0-far_x;
+    }
+    if(fabs(ays-nearbyint(ays))>1e-9){
+      int far_y=(int)floor(dy+t->sh*ys+0.5);
+      h=ys>0.0?far_y-y0:y0-far_y;
+    }
   }
   if(w<=0 || h<=0) return;
   /* Report blits whose destination rectangle overlaps an explicitly selected
@@ -3040,14 +3060,27 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     ? x0+0.5-dx : 0.5;
   double sample_y=!flipy && (studio_point_phase || (r->classic&&!reciprocal_y))
     ? y0+0.5-dy : 0.5;
+  /* A reflected authored-edge quad can gain one destination pixel from its accumulated far edge.
+   * Keep the inverse sample at the original subpixel anchor; the phase-free half texel selects one
+   * source index beyond the reflected edge and leaves that newly covered column unwritten. */
+  if(flipx && t->project_authored_edges && !reciprocal_x)
+    sample_x=dx-(double)x0-0.5;
+  if(flipy && t->project_authored_edges && !reciprocal_y)
+    sample_y=dy-(double)y0-0.5;
   /* Keep each quad's subpixel origin when sampling a first-generation
    * application surface. Destination pixel centres retain the source's
    * leading row under fractional magnification; trailing edges can skip it
    * and sample beyond the selected atlas subrectangle. */
   if(first_generation_quad_phase_x) sample_x=x0+0.5-dx;
   if(first_generation_quad_phase_y) sample_y=y0+0.5-dy;
-  if(lxtab) for(int xx=xx0;xx<xx1;xx++)
-    lxtab[xx-xx0]=(int)((xx+sample_x)/axs);
+  if(lxtab) for(int xx=xx0;xx<xx1;xx++){
+    int source_x=(int)((xx+sample_x)/axs);
+    if(t->project_authored_edges){
+      if(source_x<0) source_x=0;
+      else if(source_x>=t->sw) source_x=t->sw-1;
+    }
+    lxtab[xx-xx0]=source_x;
+  }
   /* The displacement is evaluated in texture coordinates, not output coordinates. Scaled pixel
    * art repeats each source texel many times, so precompute one warped atlas index per logical
    * source pixel instead of performing hypot/sin for every enlarged destination pixel. */
@@ -3135,6 +3168,10 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     for(int yy=yy0;yy<yy1;yy++){
       int py=y0+yy;
       int ly=(int)((yy+sample_y)/ays);
+      if(t->project_authored_edges){
+        if(ly<0) ly=0;
+        else if(ly>=t->sh) ly=t->sh-1;
+      }
       if(ly<0 || ly>=t->sh) continue;
       const uint8_t *source_row=a->px+((size_t)(t->sy+ly)*a->w+t->sx)*4u;
       uint32_t *destination_row=r->fb+(size_t)py*r->fbw+x0;

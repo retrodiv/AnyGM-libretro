@@ -411,6 +411,24 @@ static inline int surface_point_index(int64_t destination,int64_t source_extent,
   return (int)((((destination*2+1)*source_extent)-1)/(destination_extent*2));
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /* One band of the generic surface mapper. A row derives its source line and its destination row
  * from the row index alone and writes only that row, so bands are independent and each row selects
  * exactly the texel it would have selected on its own. */
@@ -901,6 +919,10 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   if(swd<=0||shd<=0||W==0||H==0) return;
   int flipx=W<0, flipy=H<0; if(W<0) W=-W; if(H<0) H=-H;
   if(alpha<=0) return;
+  if(fabs(sx0d)<0.001 && fabs(sy0d)<0.001 && fabs(swd-sw)<0.001 &&
+     fabs(shd-sh)<0.001 && alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu &&
+     (r->blendmode==0 || r->blendmode==6) &&
+     draw_surface_bloom_pass(r,src,sw,sh,dx+r->cam_x,dy+r->cam_y,dw,dh)) return;
   /* Mode 6 is (one, zero): everywhere a gate admits the plain normal path below, it admits the
    * replace pair too, because for the opaque pixels those paths copy the two are identical and
    * only the partial-coverage runs branch on it. */
@@ -1414,6 +1436,8 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
   /* Interpolated surface draws with default application-surface blitting disabled
    * signal self-composition. Sticky; the host reads this next frame to supersample that pass. */
   if(r && !r->app_draw_enable && r->interp) r->composites_app=1;
+  if(alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu && (r->blendmode==0 || r->blendmode==6) &&
+     draw_surface_bloom_pass(r,spx,sw,sh,dx,dy,dw,dh)) return;
   if(snoise){ draw_surface_noise_jumble(r,snoise,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
   if(sdual){ draw_surface_dual_sample(r,sdual,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
   if(shsv){ draw_surface_hsv_scan(r,shsv,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
