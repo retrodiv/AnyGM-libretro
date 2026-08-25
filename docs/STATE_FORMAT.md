@@ -146,7 +146,7 @@ the exact current size and writes into a caller-owned buffer.
 The libretro adapter advertises the variable-size serialization quirk and records whether the
 frontend acknowledges it. Before the first completed frame, its transport answer covers the
 current frame-free state and the remembered frame-free peak. When the completed-frame ceiling would
-add at least 8 MiB, a frontend that fixes its rewind ring from that answer receives explicit
+add at least 1 MiB, a frontend that fixes its rewind ring from that answer receives explicit
 frame-free snapshots in those slots. Smaller rasters retain complete, visually exact rewind states.
 For a frontend that does not acknowledge variable sizes, that first answer remains fixed for the
 loaded session, as the baseline libretro contract requires. Later size queries return that cached
@@ -161,8 +161,9 @@ the canonical header nor the portable state format.
 
 An ordinary fixed-size session reserves at least 4 MiB in its first answer because a cold load can
 precede the render and language-level tables populated by gameplay. The explicit compact
-high-resolution path is exempt: its frame-free capacity hint already describes the intended ring,
-and applying the ordinary floor to every slot would erase the memory saving it exists to provide.
+large-frame path instead reserves at least 1 MiB: its frame-free capacity hint describes the
+intended ring, while that separate floor covers ordinary cold-to-gameplay growth without erasing
+the memory saving the transport exists to provide.
 
 `make contract-check` exercises acknowledged growth, fixed unacknowledged frontends, compact startup
 rings, complete save-state capacity, unload reset, exact roundtrips, and the transport blocks used

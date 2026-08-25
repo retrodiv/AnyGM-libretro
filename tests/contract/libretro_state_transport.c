@@ -291,7 +291,7 @@ static int fixed_compact_ring_survives_frontend_size_checks(void){
   stub_resume_hint_bytes=128u*1024u;
   stub_hint_bytes=16u*1024u*1024u;
   size_t ring_capacity=retro_serialize_size();
-  size_t expected_ring=stub_resume_hint_bytes*2u+512u*1024u;
+  size_t expected_ring=1u*1024u*1024u;
   if(ring_capacity!=expected_ring || retro_serialize_size()!=ring_capacity) return 0;
   retro_run();
   if(retro_serialize_size()!=ring_capacity) return 0;
@@ -331,20 +331,42 @@ static int variable_frontend_keeps_compact_ring_and_complete_save(void){
   return ok;
 }
 
-/* A modest completed frame stays in rewind. The compact form is a targeted escape from a large
- * virtual-monitor frame, not a global trade of exact rewind pictures for smaller slots. */
+/* A modest completed frame stays in rewind. The compact form is a targeted escape from a picture
+ * large enough to dominate the fixed ring, not a global trade of exact rewind pictures for
+ * smaller slots. */
 static int ordinary_raster_ring_keeps_the_complete_frame(void){
-  stub_state_bytes=768u*1024u;
+  stub_state_bytes=256u*1024u;
   if(!begin_frontend(0)) return 0;
   stub_resume_state_bytes=96u*1024u;
   stub_resume_hint_bytes=128u*1024u;
-  stub_hint_bytes=2u*1024u*1024u;
+  stub_hint_bytes=768u*1024u;
   size_t ring_capacity=retro_serialize_size();
   if(ring_capacity<stub_hint_bytes || g_libretro.startup_ring_compact) return 0;
   retro_run();
   uint8_t *ring=malloc(ring_capacity);
   if(!ring) return 0;
   int ok=retro_serialize(ring,ring_capacity) && complete_saves==1u && resume_saves==0u;
+  free(ring);
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
+/* A larger authored raster can dominate every high-frequency snapshot even without a virtual
+ * monitor. Once omitting only that optional picture saves at least one MiB, the startup ring uses
+ * the explicit frame-free transport and keeps a one-MiB growth reserve. */
+static int large_raster_ring_uses_the_compact_form(void){
+  stub_state_bytes=768u*1024u;
+  if(!begin_frontend(0)) return 0;
+  stub_resume_state_bytes=96u*1024u;
+  stub_resume_hint_bytes=128u*1024u;
+  stub_hint_bytes=2u*1024u*1024u;
+  size_t ring_capacity=retro_serialize_size();
+  if(ring_capacity!=1u*1024u*1024u || !g_libretro.startup_ring_compact) return 0;
+  retro_run();
+  uint8_t *ring=malloc(ring_capacity);
+  if(!ring) return 0;
+  int ok=retro_serialize(ring,ring_capacity) && resume_saves==1u && complete_saves==0u;
   free(ring);
   retro_unload_game();
   retro_deinit();
@@ -434,6 +456,7 @@ int main(void){
      !fixed_compact_ring_survives_frontend_size_checks() ||
      !variable_frontend_keeps_compact_ring_and_complete_save() ||
      !ordinary_raster_ring_keeps_the_complete_frame() ||
+     !large_raster_ring_uses_the_compact_form() ||
      !restart_rejects_only_an_immediate_old_ring_state() ||
      !restart_rereads_settings() || !starting_declares_the_settings()){
     fprintf(stderr,"libretro state transport contract failed\n");

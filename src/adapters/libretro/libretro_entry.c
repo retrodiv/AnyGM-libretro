@@ -122,9 +122,10 @@ static size_t fixed_state_capacity(size_t actual,bool compact_startup){
   /* Before the first frame, a cold ordinary raster can still understate the render and run-time
    * tables that gameplay will populate. Fixed frontends cannot enlarge the ring they allocate
    * from this answer, so keep the established 4 MiB session reserve even when the cold state is
-   * small. A deliberately compact high-resolution ring is already sized from the frame-free hint;
-   * inflating every one of those slots would defeat the memory-saving transport. */
-  const size_t floor=compact_startup?384u*1024u:4u*1024u*1024u;
+   * small. A deliberately compact large-frame ring is already sized from the frame-free hint;
+   * give it one MiB for cold-to-gameplay growth without inflating every slot to the ordinary
+   * reserve that the omitted picture exists to avoid. */
+  const size_t floor=compact_startup?1u*1024u*1024u:4u*1024u*1024u;
   if(actual>(SIZE_MAX-margin)/2u) return SIZE_MAX;
   size_t capacity=actual*2u+margin;
   return capacity<floor?floor:capacity;
@@ -416,11 +417,12 @@ size_t retro_serialize_size(void){
   size_t resume_hint=anygm_state_resume_capacity_hint(g_libretro.engine);
   if(resume_hint>actual) actual=resume_hint;
   bool compact_startup=false;
-  /* Preserve completed-frame rewind at ordinary rasters. The alternate transport exists for the
-   * regime where a virtual monitor makes that optional picture dominate every fixed slot, not as
-   * a blanket weakening of rewind fidelity. */
+  /* Preserve completed-frame rewind while its worst-case storage is modest. Once the optional
+   * picture alone adds at least one MiB, copying it and the reserve derived from it into every
+   * fixed rewind slot dominates the high-frequency transport. The frame-free form retains the
+   * canonical post-frame simulation state and redraws on the next frontend frame. */
   if(!g_libretro.frame_completed){
-    const size_t minimum_saving=8u*1024u*1024u;
+    const size_t minimum_saving=1u*1024u*1024u;
     size_t complete_hint=anygm_state_capacity_hint(g_libretro.engine);
     compact_startup=complete_hint>actual && complete_hint-actual>=minimum_saving;
     if(!compact_startup && complete_hint>actual) actual=complete_hint;
