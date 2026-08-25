@@ -23,6 +23,8 @@ typedef struct {
 typedef struct {
   int sx,sy,sw,sh, tx,ty, tw,th, bw,bh, atlas;  /* texture page item; tw/th = logical extent of the
                                                    stored rectangle (differs when the page is scaled) */
+  int project_authored_edges;                    /* a tilemap cell is one quad in an authored grid;
+                                                   derive its far edge from its world coordinate */
   int alpha_scanned, ax0, ay0, ax1, ay1; /* nontransparent source bbox, cached after atlas decode */
   int alpha_max;                          /* max source alpha in the texture-page item */
   int alpha_partial;                      /* at least one source texel has alpha 1..254 */

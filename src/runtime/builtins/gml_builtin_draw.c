@@ -235,6 +235,22 @@ static GmlVal gm_matrix_builtin(GmlRender *R,const char *name,GmlVal *args,int c
     result[14]=-near_clip/(far_clip-near_clip);
     return gm_matrix_write(result,count>4?args[4]:vundef());
   }
+  if(!strcmp(name,"matrix_build_projection_perspective_fov")){
+    double fov=fabs(N(args,count,0)),aspect=fabs(N(args,count,1));
+    double near_clip=N(args,count,2),far_clip=N(args,count,3);
+    if(fov<1e-6) fov=1e-6;
+    if(fov>179.999999) fov=179.999999;
+    if(aspect<1e-12) aspect=1;
+    if(fabs(far_clip-near_clip)<1e-12) far_clip=near_clip+1;
+    double y_scale=1.0/tan(fov*M_PI/360.0);
+    memset(result,0,sizeof result);
+    result[0]=y_scale/aspect;
+    result[5]=y_scale;
+    result[10]=far_clip/(far_clip-near_clip);
+    result[11]=1.0;
+    result[14]=-(near_clip*far_clip)/(far_clip-near_clip);
+    return gm_matrix_write(result,count>4?args[4]:vundef());
+  }
   return vreal(0);
 }
 static uint32_t d3_vertex_color(GmlVM *vm,uint32_t color,int explicitly_colored){
@@ -1885,7 +1901,8 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"matrix_build_identity")||!strcmp(nm,"matrix_get")||!strcmp(nm,"matrix_set")||
      !strcmp(nm,"matrix_multiply")||!strcmp(nm,"matrix_build")||
      !strcmp(nm,"matrix_transform_vertex")||!strcmp(nm,"matrix_build_lookat")||
-     !strcmp(nm,"matrix_build_projection_ortho"))
+     !strcmp(nm,"matrix_build_projection_ortho")||
+     !strcmp(nm,"matrix_build_projection_perspective_fov"))
     return gm_matrix_builtin((GmlRender*)vm->render,nm,a,n);
   return gml_builtin_try_animation(vm,nm,a,n);
 }

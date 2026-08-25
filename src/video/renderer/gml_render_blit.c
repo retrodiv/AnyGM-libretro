@@ -2341,13 +2341,15 @@ static int tpag_part_view(const GmlTpag *t,
 static void blit_tpag_part_with_phase(GmlRender *r, GmlTpag *t,
                                       double sx, double sy, double sw, double sh,
                                       double dx, double dy, double xs, double ys,
-                                      uint32_t blend, double alpha, int advance_y){
+                                      uint32_t blend, double alpha, int advance_y,
+                                      int project_authored_edges){
   if(!t || sw<=0 || sh<=0 || xs==0 || ys==0) return;
   GmlTpag tt;
   int ix0=0,iy0=0;
   double overlap_x0=0.0,overlap_y0=0.0,overlap_x1=0.0,overlap_y1=0.0;
   if(!tpag_part_view(t,sx,sy,sw,sh,&tt,&ix0,&iy0,
                      &overlap_x0,&overlap_y0,&overlap_x1,&overlap_y1)) return;
+  tt.project_authored_edges=project_authored_edges;
   double anchor_x=ix0,anchor_y=iy0;
   double cell_xs=xs,cell_ys=ys;
   if(tt.sw==1){ anchor_x=overlap_x0; cell_xs=(overlap_x1-overlap_x0)*xs; }
@@ -2361,13 +2363,19 @@ static void blit_tpag_part_with_phase(GmlRender *r, GmlTpag *t,
 }
 static void blit_tpag_part(GmlRender *r, GmlTpag *t, double sx, double sy, double sw, double sh,
                            double dx, double dy, double xs, double ys, uint32_t blend, double alpha){
-  blit_tpag_part_with_phase(r,t,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,0);
+  blit_tpag_part_with_phase(r,t,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,0,0);
 }
 static void blit_tpag_part_background(GmlRender *r, GmlTpag *t,
                                       double sx, double sy, double sw, double sh,
                                       double dx, double dy, double xs, double ys,
                                       uint32_t blend, double alpha){
-  blit_tpag_part_with_phase(r,t,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,1);
+  blit_tpag_part_with_phase(r,t,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,1,0);
+}
+static void blit_tpag_part_tile(GmlRender *r, GmlTpag *t,
+                                double sx, double sy, double sw, double sh,
+                                double dx, double dy, double xs, double ys,
+                                uint32_t blend, double alpha){
+  blit_tpag_part_with_phase(r,t,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha,0,1);
 }
 /* alpha (0-255) of a sprite frame at SPRITE-LOCAL pixel (lx,ly) in [0,w)x[0,h); 0 outside the
  * trimmed image. Used for per-pixel (precise) collision masks. */
@@ -2785,9 +2793,11 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
   double y_tie=(modern_world_target && fabs(y_camera_half-0.5)<1e-9)?-1e-9:0.0;
   int x0=(int)floor(dx+0.5+x_tie), y0=(int)floor(dy+0.5+y_tie);
   int w=(int)lround(t->sw*axs), h=(int)lround(t->sh*ays);
-  /* First-generation application surfaces project each authored edge separately.  Preserve that
-   * accumulated fractional coverage instead of rounding every independent quad to the same size. */
-  if(gml_render_target_is_first_generation_application_surface(r)){
+  /* Tilemap grids and first-generation application surfaces project each authored edge
+   * separately. Preserve that accumulated fractional coverage instead of rounding every
+   * independent quad to the same size. */
+  if(gml_render_target_is_first_generation_application_surface(r) ||
+     t->project_authored_edges){
     if(xs>0.0 && fabs(axs-nearbyint(axs))>1e-9)
       w=(int)floor(dx+t->sw*axs+0.5)-x0;
     if(ys>0.0 && fabs(ays-nearbyint(ays))>1e-9)
@@ -5995,7 +6005,13 @@ void gml_draw_background_tile(GmlRender *r,int bg,
   if(!rotate){
     if(mirror){ x+=sw*xs; xs=-xs; }
     if(flip){ y+=sh*ys; ys=-ys; }
-    gml_draw_background_part_ext(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha);
+    gml_render_draw_map_point(r,&x,&y);
+    gml_render_draw_map_scale(r,&xs,&ys);
+    if(!r || bg<0 || bg>=r->n_bg || sw<=0 || sh<=0 || xs==0 || ys==0) return;
+    int ti=r->bg[bg].tpag; if(ti<0 || ti>=r->n_tpag) return;
+    if(gml_d3_draw_background_part_2d(r,bg,sx,sy,sw,sh,x,y,xs,ys,color,alpha)) return;
+    blit_tpag_part_tile(r,&r->tpag[ti],sx,sy,sw,sh,
+                        x-r->cam_x,y-r->cam_y,xs,ys,color,alpha);
     return;
   }
   gml_render_draw_map_point(r,&x,&y);
@@ -6201,6 +6217,11 @@ void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x
   if(gml_d3_draw_background_part_2d(r,def,sx,sy,w,h,x,y,draw_xscale,draw_yscale,0xFFFFFF,1)) return;
   GmlTpag *bt=&r->tpag[ti]; GmlTpag tt=*bt;
   tt.sx=bt->sx+sx; tt.sy=bt->sy+sy; tt.sw=w; tt.sh=h;
+  /* Adjacent tilemap cells are independent GPU quads whose authored edges are contiguous. At a
+   * fractional view scale, rounding every cell to one fixed width leaves a one-pixel crack each
+   * time the accumulated phase crosses a pixel boundary. Preserve both projected edges for this
+   * sub-rectangle; ordinary sprites retain their established extent rule. */
+  tt.project_authored_edges=1;
   tt.interp_phase_cache[0]=tt.interp_phase_cache[1]=tt.interp_phase_cache[2]=NULL;
   /* A sub-rectangle borrows atlas pixels but not the page's geometry-dependent
    * caches. Detach the row spans and pixel caches before drawing this view. */

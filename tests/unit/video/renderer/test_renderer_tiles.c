@@ -582,6 +582,58 @@ static void check_first_generation_fractional_tile_projection(void){
   free(page.argb_cache);
 }
 
+/* Three adjacent 32-pixel cells projected at 5/3 begin at output columns 0, 53 and 107. A fixed
+ * rounded width of 53 leaves column 106 untouched; projecting each quad's far authored edge makes
+ * the cells cover the target continuously. */
+static void check_modern_fractional_tile_grid_has_no_cracks(void){
+  enum { SOURCE=32, CELLS=3, WIDTH=160, HEIGHT=2 };
+  uint8_t rgba[SOURCE*SOURCE*4];
+  uint32_t application[WIDTH*HEIGHT];
+  GmlWin content;
+  AnygmCompatibilityProfile compatibility;
+  GmlRender render;
+  GmlAtlas atlas;
+  GmlTpag page;
+  GmlBg background;
+
+  memset(&content,0,sizeof content);
+  memset(&compatibility,0,sizeof compatibility);
+  memset(&render,0,sizeof render);
+  memset(&atlas,0,sizeof atlas);
+  memset(&page,0,sizeof page);
+  memset(&background,0,sizeof background);
+  memset(rgba,255,sizeof rgba);
+  for(size_t i=0;i<sizeof application/sizeof application[0];i++)
+    application[i]=0xff999999u;
+  compatibility.has_modern_layer_semantics=1;
+  content.bytecode=17;
+  content.compatibility=&compatibility;
+  atlas.px=rgba; atlas.w=atlas.h=SOURCE;
+  page.atlas=0; page.sw=page.sh=page.bw=page.bh=SOURCE;
+  page.alpha_scanned=1; page.alpha_max=255; page.ax1=page.ay1=SOURCE-1;
+  background.tpag=0;
+  render.win=&content;
+  render.atlas=&atlas; render.n_atlas=1;
+  render.tpag=&page; render.n_tpag=1;
+  render.bg=&background; render.n_bg=1;
+  render.app_surface=application;
+  render.alpha=1.0; render.alphablend=1;
+  render.color_write_mask=0x0f; render.active_shader=-1;
+
+  gml_render_begin(&render,application,WIDTH,HEIGHT,0.0,0.0);
+  gml_render_world_set_logical_extent(&render,SOURCE*CELLS,HEIGHT*3.0/5.0);
+  for(int cell=0;cell<CELLS;cell++)
+    gml_draw_background_tile(&render,0,0,0,SOURCE,SOURCE,
+                             cell*SOURCE,0,1,1,0,0,0,0xffffff,1.0);
+  for(int x=0;x<WIDTH;x++) if(application[x]!=0xffffffffu){
+    fprintf(stderr,"renderer tiles: fractional tile grid column %d retained %08x\n",
+            x,application[x]);
+    expect(0,"fractionally projected modern tile grid exposed a crack between cells");
+    break;
+  }
+  free(page.argb_cache);
+}
+
 /* At exact 2x the odd output rows come from a second sample plane, and a layer that covers the
  * whole logical raster has to cover the whole of both. It used to lose its last row there — the
  * quad was replayed one output row above itself and its bottom row dropped — so whatever another
@@ -1157,6 +1209,7 @@ int main(void){
   check_first_generation_default_font_metrics();
   check_render_pass_restores_normal_blending();
   check_first_generation_fractional_tile_projection();
+  check_modern_fractional_tile_grid_has_no_cracks();
   check_first_generation_magnification_keeps_every_source_row();
   check_classic_double_scale_layer_covers_its_last_row();
   check_modern_fractional_camera_tie();

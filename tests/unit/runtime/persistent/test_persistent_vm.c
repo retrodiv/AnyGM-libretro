@@ -2899,6 +2899,16 @@ static int expect_persistent_lifecycle_exit_code(void){
       fabs(gml_arr_get(eye,0).d)<1e-9 && fabs(gml_arr_get(eye,1).d)<1e-9 &&
       fabs(gml_arr_get(eye,2).d)<1e-9 && fabs(gml_arr_get(target,0).d)<1e-9 &&
       fabs(gml_arr_get(target,1).d)<1e-9 && fabs(gml_arr_get(target,2).d-1)<1e-9;
+    GmlVal perspective_args[4]={vreal(90),vreal(2),vreal(1),vreal(101)};
+    GmlVal perspective=gml_builtin_call(
+      &vm,"matrix_build_projection_perspective_fov",perspective_args,4);
+    matrix_ok=matrix_ok && perspective.t==V_ARR &&
+      fabs(gml_arr_get(perspective,0).d-.5)<1e-9 &&
+      fabs(gml_arr_get(perspective,5).d-1)<1e-9 &&
+      fabs(gml_arr_get(perspective,10).d-1.01)<1e-9 &&
+      fabs(gml_arr_get(perspective,11).d-1)<1e-9 &&
+      fabs(gml_arr_get(perspective,14).d+1.01)<1e-9 &&
+      fabs(gml_arr_get(perspective,15).d)<1e-9;
     if(!matrix_ok){ fprintf(stderr,"matrix construction/vertex transform fixture failed\n"); return 1; }
   }
   {
