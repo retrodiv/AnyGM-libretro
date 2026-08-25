@@ -197,19 +197,20 @@ void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gm
    * touching a pixel; otherwise the end-of-frame flush paints over the completed primitive.
    * Keep the check here so every such path has the same ordering semantics. */
   if(R->pending_underlay || R->pending_fill) gml_render_prepare_draw(R);
+  int preserve_alpha=gml_render_target_preserves_alpha(R);
   R->fb_all_transparent=0;
   /* The subtract preset also applies inverse source alpha to offscreen coverage. A surface
    * previously filled edge to edge therefore stops being provably opaque as soon as one of
    * these fragments lands on it. Keep the coverage certificate conservative so a later
    * surface composite does not take the opaque-copy fast path through punched-out pixels. */
-  if(R->target_sp>0 && R->alphablend && R->blendmode==2){
+  if(preserve_alpha && R->alphablend && R->blendmode==2){
     R->fb_opaque_known=0;
     R->fb_all_opaque=0;
   }
   uint32_t src=gml_render_backend_color_to_xrgb(gmcol), *dp=&R->fb[(size_t)y*R->fbw+x];
   if(R->alphablend && (R->blend_equation!=1 || R->blend_equation_alpha!=1)){
     int sc[4]={(src>>16)&255,(src>>8)&255,src&255,(int)lround(alpha*255.0)};
-    int dc[4]={(*dp>>16)&255,(*dp>>8)&255,*dp&255,R->target_sp>0?(int)(*dp>>24):255};
+    int dc[4]={(*dp>>16)&255,(*dp>>8)&255,*dp&255,preserve_alpha?(int)(*dp>>24):255};
     double sf=alpha, df=1.0-alpha;
     if(R->blendmode==1 || R->blendmode==2 || R->blendmode==5) df=1.0;
     int oc[4];
@@ -236,8 +237,13 @@ void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gm
     int sr=(src>>16)&0xff, sg=(src>>8)&0xff, sb=src&0xff;
     int dr=(*dp>>16)&0xff, dg=(*dp>>8)&0xff, db=*dp&0xff;
     int or_,og,ob;
-    uint32_t oc=R->target_sp>0 ? *dp>>24 : 0xff;
-    if(R->blendmode==4){
+    uint32_t oc=preserve_alpha ? *dp>>24 : 0xff;
+    if(R->blendmode==7){
+      unsigned source_alpha=(unsigned)lround(alpha*255.0);
+      *dp=color_write_merge(R,*dp,
+        blend_inverse_destination_alpha_pixel(R,*dp,sr,sg,sb,source_alpha));
+      return;
+    } else if(R->blendmode==4){
       unsigned source_alpha=(unsigned)lround(alpha*255.0);
       *dp=color_write_merge(R,*dp,
         blend_max_preset_pixel(R,*dp,sr,sg,sb,source_alpha));
@@ -247,7 +253,7 @@ void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gm
       if(or_>255) or_=255;
       if(og>255) og=255;
       if(ob>255) ob=255;
-      if(R->target_sp>0){ uint32_t a=oc+(uint32_t)(255*alpha); oc=a>255?255:a; }
+      if(preserve_alpha){ uint32_t a=oc+(uint32_t)(255*alpha); oc=a>255?255:a; }
     } else if(R->blendmode==5){
       /* Add source channels scaled by their own values. A black source
        * leaves destination colour unchanged while increasing coverage. */
@@ -258,7 +264,7 @@ void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gm
       if(or_>255) or_=255;
       if(og>255) og=255;
       if(ob>255) ob=255;
-      if(R->target_sp>0){
+      if(preserve_alpha){
         uint32_t a=oc+(uint32_t)((source_alpha*source_alpha+127u)/255u);
         oc=a>255?255:a;
       }
@@ -268,7 +274,7 @@ void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gm
       or_=(int)gml_blend_inv_source_u8((unsigned)dr,(unsigned)sr);
       og=(int)gml_blend_inv_source_u8((unsigned)dg,(unsigned)sg);
       ob=(int)gml_blend_inv_source_u8((unsigned)db,(unsigned)sb);
-      if(R->target_sp>0){
+      if(preserve_alpha){
         unsigned sa=(unsigned)lround(alpha*255.0);
         oc=gml_blend_inv_source_u8(oc,sa);
       }
@@ -277,7 +283,7 @@ void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gm
     return;
   }
   if(!R->alphablend || alpha>=1){
-    if(R->target_sp>0 && !R->alphablend){
+    if(preserve_alpha && !R->alphablend){
       uint32_t sa=(uint32_t)lround(alpha*255.0);
       src=(src&0x00FFFFFFu)|(sa<<24);
     }
@@ -289,7 +295,7 @@ void gml_render_backend_draw_pixel_alpha(GmlRender *R, int x, int y, uint32_t gm
   int og=(int)(sg*alpha+dg*(1-alpha)); if(og>255) og=255; else if(og<0) og=0;
   int ob=(int)(sb*alpha+db*(1-alpha)); if(ob>255) ob=255; else if(ob<0) ob=0;
   uint32_t oa=0xFF;
-  if(R->target_sp>0){
+  if(preserve_alpha){
     uint32_t sa=(uint32_t)lround(alpha*255.0), da=*dp>>24;
     oa=(sa*sa+da*(255u-sa)+127u)/255u;
   }
@@ -2171,6 +2177,12 @@ void blit_rgba_sprite(GmlRender *r, GmlSprite *owner, const uint8_t *src, int sw
           blend_max_preset_pixel(r,*dp,sr,sg,sb,source_alpha));
         continue;
       }
+      if(r->blendmode==7){
+        unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
+        *dp=color_write_merge(r,*dp,
+          blend_inverse_destination_alpha_pixel(r,*dp,sr,sg,sb,source_alpha));
+        continue;
+      }
       int or_=(int)(sr*sa+dr*(1-sa)); if(or_>255) or_=255; else if(or_<0) or_=0;
       int og=(int)(sg*sa+dg*(1-sa)); if(og>255) og=255; else if(og<0) og=0;
       int ob=(int)(sb*sa+db*(1-sa)); if(ob>255) ob=255; else if(ob<0) ob=0;
@@ -2691,6 +2703,12 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
         unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
         *dp=color_write_merge(r,*dp,
           blend_max_preset_pixel(r,*dp,sr,sg,sb,source_alpha));
+        continue;
+      }
+      if(r->blendmode==7){
+        unsigned source_alpha=(unsigned)lround((double)sample_a*alpha);
+        *dp=color_write_merge(r,*dp,
+          blend_inverse_destination_alpha_pixel(r,*dp,sr,sg,sb,source_alpha));
         continue;
       }
       /* clamp each channel to [0,255]: a blend>255 or a (legitimately clamped) alpha can still push
@@ -3810,6 +3828,11 @@ static void blit_interp_sample(GmlRender *r, uint32_t *dp, const GmlAtlas *atlas
     unsigned source_alpha=(unsigned)lround((precise_margin?faa:(double)aa)*alpha);
     uint32_t out=blend_max_preset_pixel(r,*dp,sr,sg,sb,source_alpha);
     *dp=color_write_merge(r,*dp,out);
+    return;
+  } else if(r->blendmode==7){
+    unsigned source_alpha=(unsigned)lround((precise_margin?faa:(double)aa)*alpha);
+    *dp=color_write_merge(r,*dp,
+      blend_inverse_destination_alpha_pixel(r,*dp,sr,sg,sb,source_alpha));
     return;
   } else if(sa>=1.0){
     rr=sr; rg=sg; rb=sb;
@@ -5346,6 +5369,12 @@ cached_rotated_fallback:
           blend_max_preset_pixel(r,*dp,sr,sg,sb,source_alpha));
         continue;
       }
+      if(r->blendmode==7){
+        unsigned source_alpha=(unsigned)lround((double)aa*alpha);
+        *dp=color_write_merge(r,*dp,
+          blend_inverse_destination_alpha_pixel(r,*dp,sr,sg,sb,source_alpha));
+        continue;
+      }
       double ia=ia_lut[aa];
       int or_=(int)(sr*sa+dr*ia); if(or_>255) or_=255; else if(or_<0) or_=0;
       int og=(int)(sg*sa+dg*ia); if(og>255) og=255; else if(og<0) og=0;
@@ -5508,6 +5537,12 @@ static void sprite_pos_pixel(GmlRender *r,int x,int y,const double sample[4],dou
     unsigned source_alpha=(unsigned)lround(sample[3]*alpha);
     *dst=color_write_merge(r,*dst,
       blend_max_preset_pixel(r,*dst,sr,sg,sb,source_alpha));
+    return;
+  }
+  if(r->blendmode==7){
+    unsigned source_alpha=(unsigned)lround(sample[3]*alpha);
+    *dst=color_write_merge(r,*dst,
+      blend_inverse_destination_alpha_pixel(r,*dst,sr,sg,sb,source_alpha));
     return;
   }
   if(sa>1) sa=1;

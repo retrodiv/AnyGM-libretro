@@ -321,7 +321,10 @@ static int content_override_state_cases(const AnygmHostServices *services,
   char anchor_text[512];
   int anchor_length=snprintf(anchor_text,sizeof anchor_text,
                              "[anygm]\npayload=%s\n[overrides]\n# freeze one probe global\n"
-                             "$anygm_probe=1\nintroskip|3-5,9\nintroauto|2\n",payload_name);
+                             "$anygm_probe=1\n"
+                             "listset|obj_fixture|fixture_lists[0]|1|40\n"
+                             "listset|global|fixture_global_list|1|41\n"
+                             "introskip|3-5,9\nintroauto|2\n",payload_name);
   if(anchor_length<0 || (size_t)anchor_length>=sizeof anchor_text)
     return fail("anchor text is too long");
   FILE *file=fopen(anchor,"wb");
@@ -347,7 +350,30 @@ static int content_override_state_cases(const AnygmHostServices *services,
   uint8_t *baseline=NULL;
   size_t state_size=0;
   ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
-     save_state(engine,&baseline,&state_size);
+     anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+     anygm_run_frame(engine,&input,&output)==ANYGM_OK;
+  if(!ok){ anygm_destroy(engine); return fail("override fixture frames failed"); }
+  double list_value=gml_global_num(&engine->vm,"fixture_list_value");
+  if(list_value!=40.0){
+    fprintf(stderr,"state security: list override produced %.17g, expected 40\n",list_value);
+    int object=gml_object_index_by_name(&engine->vm,"obj_fixture");
+    GmlInstance *instance=object>=0?gml_find_instance(&engine->vm,object):NULL;
+    int found=0;
+    GmlVal lists=instance?gml_inst_var_get_val(
+      &engine->vm,vreal((double)instance->id),"fixture_lists",&found):vundef();
+    GmlVal handle=found?gml_arr_get(lists,0):vundef();
+    fprintf(stderr,
+            "state security: list diagnostic object=%d instance=%d found=%d type=%d handle_type=%d handle=%.17g kind=%d applied=%d\n",
+            object,instance?1:0,found,(int)lists.t,(int)handle.t,handle.d,
+            (int)engine->boot_cheats[1].act.kind,engine->boot_cheats[1].applied);
+    anygm_destroy(engine);
+    return 0;
+  }
+  if(gml_global_num(&engine->vm,"fixture_global_list_value")!=41.0){
+    anygm_destroy(engine);
+    return fail("global list override did not survive a later content write");
+  }
+  ok=save_state(engine,&baseline,&state_size);
   if(!ok){ anygm_destroy(engine); return fail("override state baseline failed"); }
 
   AnygmConfigDelta delta;
@@ -411,7 +437,8 @@ static int content_override_state_cases(const AnygmHostServices *services,
 
 int main(void){
   AnygmSyntheticContent fixture;
-  if(!anygm_synthetic_content_create(&fixture)) return fail("fixture creation failed")?0:1;
+  if(!anygm_synthetic_list_override_content_create(&fixture))
+    return fail("fixture creation failed")?0:1;
   uint8_t *content=NULL;
   size_t content_size=0;
   if(!anygm_synthetic_content_read(&fixture,&content,&content_size))

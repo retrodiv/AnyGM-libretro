@@ -56,25 +56,46 @@ static unsigned synthetic_path_hash(const char *path){
   return hash;
 }
 
-static int synthetic_content_create(AnygmSyntheticContent *fixture,int anchor_script){
+static int synthetic_content_create(
+    AnygmSyntheticContent *fixture,int anchor_script,int list_fixture){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
 
-  char startup[192],step[192],anchor_call[192];
+  char startup[192],create[192],step[192],anchor_call[192];
   snprintf(startup,sizeof startup,"%s/startup.gml",fixture->directory);
+  snprintf(create,sizeof create,"%s/create.gml",fixture->directory);
   snprintf(step,sizeof step,"%s/step.gml",fixture->directory);
   snprintf(anchor_call,sizeof anchor_call,"%s/anchor-call.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
-  if(!write_text(startup,
-                 "global.fixture_counter = 0;\n"
-                 "global.fixture_presses = 0;\n"
-                 "randomize();\n"
-                 "global.fixture_datetime = date_current_datetime();\n") ||
-     !write_text(step,
-                 "global.fixture_counter += 1;\n"
-                 "global.fixture_clock = current_time;\n"
-                 "if (keyboard_check_pressed(vk_anykey)) global.fixture_presses += 1;\n") ||
+  const char *startup_text=list_fixture?
+    "global.fixture_counter = 0;\n"
+    "global.fixture_presses = 0;\n"
+    "global.fixture_global_list = ds_list_create();\n"
+    "ds_list_add(global.fixture_global_list, 0, 0);\n"
+    "randomize();\n"
+    "global.fixture_datetime = date_current_datetime();\n":
+    "global.fixture_counter = 0;\n"
+    "global.fixture_presses = 0;\n"
+    "randomize();\n"
+    "global.fixture_datetime = date_current_datetime();\n";
+  const char *step_text=list_fixture?
+    "global.fixture_counter += 1;\n"
+    "if (global.fixture_counter == 2) ds_list_replace(fixture_lists[0], 1, 7);\n"
+    "if (global.fixture_counter == 2) ds_list_replace(global.fixture_global_list, 1, 8);\n"
+    "global.fixture_clock = current_time;\n"
+    "global.fixture_list_value = ds_list_find_value(fixture_lists[0], 1);\n"
+    "global.fixture_global_list_value = ds_list_find_value(global.fixture_global_list, 1);\n"
+    "if (keyboard_check_pressed(vk_anykey)) global.fixture_presses += 1;\n":
+    "global.fixture_counter += 1;\n"
+    "global.fixture_clock = current_time;\n"
+    "if (keyboard_check_pressed(vk_anykey)) global.fixture_presses += 1;\n";
+  if(!write_text(startup,startup_text) ||
+     (list_fixture && !write_text(create,
+                  "fixture_list = ds_list_create();\n"
+                  "ds_list_add(fixture_list, 0, 0);\n"
+                  "fixture_lists[0] = fixture_list;\n")) ||
+     !write_text(step,step_text) ||
      (anchor_script && !write_text(anchor_call,"global.fixture_anchor_calls += 1;\n"))){
     anygm_synthetic_content_destroy(fixture);
     return 0;
@@ -87,7 +108,7 @@ static int synthetic_content_create(AnygmSyntheticContent *fixture,int anchor_sc
   anygm_stdio_vfs_services_init(&file_services);
   project.host=&file_services;
   GmlcObject object={0};
-  GmlcObjectEvent event={0};
+  GmlcObjectEvent events[2]={0};
   GmlcRoom room={0};
   GmlcRoomInstance instance={0};
   int room_order=0;
@@ -112,11 +133,16 @@ static int synthetic_content_create(AnygmSyntheticContent *fixture,int anchor_sc
   object.id=object.name=(char *)"obj_fixture";
   object.sprite_id=object.mask_id=object.parent_id=-1;
   object.visible=0;
-  object.events=&event;
-  object.n_events=object.cap_events=1;
-  event.event_type=3;
-  event.event_number=0;
-  event.source_path=step;
+  object.events=events;
+  object.n_events=object.cap_events=list_fixture?2:1;
+  if(list_fixture){
+    events[0].event_type=0;
+    events[0].event_number=0;
+    events[0].source_path=create;
+  }
+  events[list_fixture?1:0].event_type=3;
+  events[list_fixture?1:0].event_number=0;
+  events[list_fixture?1:0].source_path=step;
 
   room.id=room.name=(char *)"room_fixture";
   room.width=64;
@@ -140,10 +166,13 @@ static int synthetic_content_create(AnygmSyntheticContent *fixture,int anchor_sc
   return 1;
 }
 int anygm_synthetic_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_content_create(fixture,0);
+  return synthetic_content_create(fixture,0,0);
+}
+int anygm_synthetic_list_override_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_content_create(fixture,0,1);
 }
 int anygm_synthetic_anchor_script_content_create(AnygmSyntheticContent *fixture){
-  return synthetic_content_create(fixture,1);
+  return synthetic_content_create(fixture,1,0);
 }
 
 static int synthetic_classic_present_content_create(AnygmSyntheticContent *fixture,int compositing){

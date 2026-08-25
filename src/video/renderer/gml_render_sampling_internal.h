@@ -10,6 +10,67 @@
 #include <stdint.h>
 
 
+static inline const struct GmlShaderPal *threshold_palette_active(GmlRender *r){
+  if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
+  const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
+  return sp->threshold_palette && sp->threshold_palette_set==0x3ffu ? sp : NULL;
+}
+static inline uint32_t threshold_palette_map_px(
+    const struct GmlShaderPal *sp,uint32_t value){
+  float red=(float)((value>>16)&255)*(1.0f/255.0f);
+  float green=(float)((value>>8)&255)*(1.0f/255.0f);
+  int branch=red<sp->threshold_palette_red?0:1;
+  int band=4;
+  for(int threshold=0;threshold<4;threshold++)
+    if(green>sp->threshold_palette_green[branch][threshold]){ band=threshold; break; }
+  const uint8_t *colour=sp->threshold_palette_colour[branch*5+band];
+  return (value&0xff000000u)|((uint32_t)colour[0]<<16)|
+         ((uint32_t)colour[1]<<8)|(uint32_t)colour[2];
+}
+static inline const struct GmlShaderPal *indexed_brightness_active(GmlRender *r){
+  if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
+  const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
+  return sp->indexed_brightness && sp->indexed_brightness_set ? sp : NULL;
+}
+static inline uint32_t indexed_brightness_map_px(
+    const struct GmlShaderPal *sp,uint32_t value){
+  float red=(float)((value>>16)&255)*(1.0f/255.0f);
+  float green=(float)((value>>8)&255)*(1.0f/255.0f);
+  int branch=red<sp->indexed_brightness_red?0:1;
+  int band=4;
+  for(int threshold=0;threshold<4;threshold++)
+    if(green>sp->indexed_brightness_green[branch][threshold]){ band=threshold; break; }
+  float colour_id=(float)(branch?9-band:4-band);
+  const uint8_t *colour=NULL;
+  if(colour_id<sp->indexed_brightness_family_cut){
+    if(sp->indexed_brightness_value<sp->indexed_brightness_negative_cut &&
+       colour_id>sp->indexed_brightness_special_min &&
+       colour_id<sp->indexed_brightness_special_max){
+      colour_id+=sp->indexed_brightness_value;
+      int index=colour_id>sp->indexed_brightness_special_threshold[0]?0:
+                colour_id>sp->indexed_brightness_special_threshold[1]?1:2;
+      colour=sp->indexed_brightness_special_colour[index];
+    } else {
+      colour_id+=sp->indexed_brightness_value;
+      int index=6;
+      for(int threshold=0;threshold<6;threshold++)
+        if(colour_id<sp->indexed_brightness_low_threshold[threshold]){
+          index=threshold; break;
+        }
+      colour=sp->indexed_brightness_low_colour[index];
+    }
+  } else {
+    colour_id+=sp->indexed_brightness_value;
+    int index=7;
+    for(int threshold=0;threshold<7;threshold++)
+      if(colour_id<sp->indexed_brightness_high_threshold[threshold]){
+        index=threshold; break;
+      }
+    colour=sp->indexed_brightness_high_colour[index];
+  }
+  return (value&0xff000000u)|((uint32_t)colour[0]<<16)|
+         ((uint32_t)colour[1]<<8)|(uint32_t)colour[2];
+}
 const uint8_t *runtime_frame_rgba(GmlSprite *s, int frame);   /* fwd (defined below) */
 /* palette-LUT shader active and fully configured (row uniform set + palette texture staged) */
 static inline const struct GmlShaderPal *lut_active(GmlRender *r){
@@ -95,6 +156,11 @@ static inline const struct GmlShaderPal *channel_mask_active(GmlRender *r){
   if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
   const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
   return sp->channel_mask ? sp : NULL;
+}
+static inline const struct GmlShaderPal *channel_alpha_key_active(GmlRender *r){
+  if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
+  const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
+  return sp->channel_alpha_key ? sp : NULL;
 }
 static inline const struct GmlShaderPal *solid_alpha_mask_active(GmlRender *r){
   if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
@@ -300,18 +366,31 @@ static inline uint32_t quantise4_map_px(const struct GmlShaderPal *sp, uint32_t 
   return (value&0xFF000000u)|((uint32_t)red<<16)|((uint32_t)green<<8)|(uint32_t)blue;
 }
 static inline int mapped_texture_active(GmlRender *r){
-  return pal_active(r)!=NULL || lut_active(r)!=NULL || grid_active(r)!=NULL ||
+  return indexed_brightness_active(r)!=NULL || threshold_palette_active(r)!=NULL ||
+          lut_active(r)!=NULL || grid_active(r)!=NULL ||
          grayscale_active(r)!=NULL || solid_alpha_mask_active(r)!=NULL ||
-         quantise4_active(r)!=NULL || channel_mask_active(r)!=NULL;
+         quantise4_active(r)!=NULL || channel_mask_active(r)!=NULL ||
+         channel_alpha_key_active(r)!=NULL;
 }
 static inline uint32_t mapped_texture_pixel(GmlRender *r, uint32_t value){
   const struct GmlShaderPal *shader;
+  if((shader=indexed_brightness_active(r))) return indexed_brightness_map_px(shader,value);
+  if((shader=threshold_palette_active(r))) return threshold_palette_map_px(shader,value);
   if((shader=channel_mask_active(r))){
     uint32_t keep=0;
     if(shader->channel_mask_keep&4) keep|=UINT32_C(0x00ff0000);
     if(shader->channel_mask_keep&2) keep|=UINT32_C(0x0000ff00);
     if(shader->channel_mask_keep&1) keep|=UINT32_C(0x000000ff);
     return (value&UINT32_C(0xff000000))|(value&keep);
+  }
+  if((shader=channel_alpha_key_active(r))){
+    unsigned shift=shader->channel_alpha_key_channel==0?16u:
+                   shader->channel_alpha_key_channel==1?8u:0u;
+    float channel=(float)((value>>shift)&255u)*(1.0f/255.0f);
+    int clear=shader->channel_alpha_key_inclusive
+      ? channel<=shader->channel_alpha_key_cutoff
+      : channel< shader->channel_alpha_key_cutoff;
+    return clear ? value&UINT32_C(0x00ffffff) : value;
   }
   if((shader=solid_alpha_mask_active(r))){
     int alpha=(value>>24)&255;

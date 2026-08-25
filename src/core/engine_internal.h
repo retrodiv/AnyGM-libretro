@@ -127,7 +127,8 @@ enum {
 
 typedef enum {
   CK_NONE=0, CK_ROOM, CK_GARR, CK_GSCALAR, CK_INST, CK_INST_SET, CK_ENGINE, CK_ROUTE,
-  CK_CAMERA, CK_SURFACE, CK_MONITOR_VIEW, CK_ALARM_PAUSE, CK_SCRIPT, CK_DRAW_HOLD
+  CK_CAMERA, CK_SURFACE, CK_MONITOR_VIEW, CK_ALARM_PAUSE, CK_SCRIPT, CK_LIST_SET,
+  CK_DRAW_HOLD
 } CheatKind;
 typedef enum {
   TK_LIT=0, TK_BASE_W, TK_BASE_H, TK_FORCED_W, TK_FORCED_H, TK_EXTRA_W, TK_EXTRA_H,
@@ -151,7 +152,7 @@ typedef struct {
   int scope_mode;
   char obj[64];
   char var[64];
-  int idx;
+  int idx,idx2,has_index;
   EngField eng;
   CameraField camera_field;
   uint64_t camera_mask;

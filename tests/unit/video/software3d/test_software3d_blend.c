@@ -2,9 +2,25 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "software3d_test_fixture.h"
+#include "gml_render_backend.h"
 
 
 int software3d_case_blend_shader(Software3dRasterFixture *fixture){
+  fixture->render.fb=fixture->render.app_surface=fixture->pixels;
+  fixture->render.fbw=fixture->render.app_w=SOFTWARE3D_WIDTH;
+  fixture->render.fbh=fixture->render.app_h=SOFTWARE3D_HEIGHT;
+  fixture->render.target_sp=0;
+  fixture->render.alphablend=1;
+  fixture->render.blendmode=7;
+  fixture->pixels[0]=0x00000000u;
+  gml_render_backend_draw_pixel_alpha(&fixture->render,0,0,0x000000FFu,1.0);
+  if(fixture->pixels[0]!=0xFFFF0000u){
+    fprintf(stderr,"software D3 inverse destination alpha blend mismatch: %08x\n",
+            fixture->pixels[0]);
+    return 0;
+  }
+  fixture->render.app_surface=NULL;
+  fixture->render.blendmode=0;
   const double far_depth[]={10},farther_depth[]={20},near_depth[]={-10};
   call_numbers(&fixture->vm,"d3d_set_depth",far_depth,1);
   gml_draw_sprite_ext(&fixture->render,fixture->depth_sprite,0,24,12,8,8,0,0x0000FF,1);

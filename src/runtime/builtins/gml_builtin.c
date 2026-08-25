@@ -103,6 +103,7 @@ void builtin_set_blendmode_ext(GmlVM *vm,GmlRender *R,int src,int dst){
    * while preserving destination colour for a black source. */
   /* Mode 5 implements this factor pair. */
   else if(src==3 && dst==2) state.blend_mode=5;
+  else if(src==8 && dst==7) state.blend_mode=7;        /* inverse destination alpha, destination alpha */
   else state.blend_mode=0;                             /* includes normal (5,6) */
   gml_render_draw_state_update(R,&state,GML_RENDER_DRAW_STATE_BLEND_MODE);
   if(builtin_setting(vm,"GML_DBG_BM"))
@@ -1586,11 +1587,10 @@ GmlVal gml_builtin_try_platform_tail(GmlVM *vm, const char *nm, GmlVal *a, int n
     for(int i=0;i<4;i++) gml_arr_set(out,i,vreal((mask>>i)&1u));
     return out;
   }
-  if(!strcmp(nm,"gpu_set_colorwriteenable")){
+  if(!strcmp(nm,"gpu_set_colorwriteenable") ||
+     !strcmp(nm,"draw_set_color_write_enable") ||
+     !strcmp(nm,"draw_set_colour_write_enable")){
     GmlRender *R2=(GmlRender*)vm->render;
-    if(builtin_setting(vm,"GML_LOG_SURF")){
-      anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[cwe] gpu_set_colorwriteenable argc=%d\n",n);
-    }
     if(R2 && n>0){
       unsigned mask=0;
       if(a[0].t==V_ARR){
@@ -1604,6 +1604,9 @@ GmlVal gml_builtin_try_platform_tail(GmlVM *vm, const char *nm, GmlVal *a, int n
       GmlRenderDrawState draw={0};
       draw.color_write_mask=mask;
       gml_render_draw_state_update(R2,&draw,GML_RENDER_DRAW_STATE_COLOR_WRITE_MASK);
+      if(builtin_setting(vm,"GML_LOG_SURF"))
+        anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
+                        "[cwe] gpu_set_colorwriteenable argc=%d mask=%X\n",n,mask);
       GmlBuiltinState *state=builtin_state_ensure(vm);
       if(builtin_setting(vm,"GML_LOG_GPU") && (!state || state->gpu_log_count++<24))
         anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[gpu] f%ld colorwrite=%X\n",vm->frame,mask);

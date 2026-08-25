@@ -5,6 +5,7 @@
  * room-skip hooks, and intro-skip hooks. */
 #include "engine_internal.h"
 #include "anygm_host.h"
+#include "gml_builtin.h"
 
 #include <math.h>
 
@@ -66,6 +67,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   alarmpause|obj|i            hold alarm i still on every instance of `obj` and its descendants
  *   drawhold|name|V             hold global `name` at V for the length of one frame's drawing
  *   call|script                 invoke a zero-argument content script once after the first Step
+ *   listset|target|var[i]|j|V   keep a DS-list item at V; target is an object or `global`
  *   camera[LIST]:field=V        write x, y, width, or height on selected live camera handles
  *   surface|obj|var|W|H         resize surfaces named by an instance variable
  *   monitorview|H|MIN|MAX       declare a monitor-derived logical view (ratios use W:H)
@@ -303,6 +305,34 @@ static void cheat_parse(const char *code, CheatAct *a){
     memcpy(a->obj,name,length); a->obj[length]=0;
     a->kind=CK_SCRIPT; return;
   }
+  if(!strncmp(s,"listset|",8)){
+    s+=8; const char *bar=strchr(s,'|');
+    if(!bar || bar==s || (size_t)(bar-s)>=sizeof a->obj){ a->kind=CK_NONE; return; }
+    for(const char *scan=s;scan<bar;scan++)
+      if(!CHEAT_NAMECH(*scan)){ a->kind=CK_NONE; return; }
+    memcpy(a->obj,s,(size_t)(bar-s)); a->obj[bar-s]=0; s=bar+1;
+    const char *name=s; while(*s && CHEAT_NAMECH(*s)) s++;
+    size_t length=(size_t)(s-name);
+    if(length==0 || length>=sizeof a->var){ a->kind=CK_NONE; return; }
+    memcpy(a->var,name,length); a->var[length]=0;
+    if(*s=='['){
+      s++;
+      if(!parse_nonnegative_index(&s,&a->idx2) || *s!=']'){
+        a->kind=CK_NONE; return;
+      }
+      s++;
+      a->has_index=1;
+    }
+    if(*s!='|'){ a->kind=CK_NONE; return; }
+    s++;
+    if(!parse_nonnegative_index(&s,&a->idx) || *s!='|'){
+      a->kind=CK_NONE; return;
+    }
+    s++;
+    if(!*s || strchr(s,'|')){ a->kind=CK_NONE; return; }
+    cheat_parse_val(s,&a->val);
+    a->kind=CK_LIST_SET; return;
+  }
   if(!strncmp(s,"set|",4)){
     s+=4; const char *bar=strchr(s,'|');
     if(!bar || bar==s || (size_t)(bar-s)>=sizeof a->obj){ a->kind=CK_NONE; return; }
@@ -421,6 +451,25 @@ static void cheat_apply_one(AnygmEngine *engine,const CheatAct *a){
         &engine->vm,a->obj,a->var,(int)cheat_val_eval(engine,&a->val),
         (int)cheat_val_eval(engine,&a->val2));
       break;
+    case CK_LIST_SET: {
+      int found=0;
+      GmlVal list=vundef();
+      if(!strcmp(a->obj,"global")){
+        GmlVal *value=gml_varmap_get(&engine->vm.globals,a->var);
+        if(value){ list=*value; found=1; }
+      } else {
+        int object=gml_object_index_by_name(&engine->vm,a->obj);
+        GmlInstance *instance=object>=0?gml_find_instance(&engine->vm,object):NULL;
+        if(instance) list=gml_inst_var_get_val(
+          &engine->vm,vreal((double)instance->id),a->var,&found);
+      }
+      if(found && a->has_index) list=gml_arr_get(list,a->idx2);
+      if(found && list.t==V_REAL && isfinite(list.d) && list.d>=0 && list.d<=INT_MAX &&
+         floor(list.d)==list.d){
+        GmlVal args[3]={list,vreal((double)a->idx),vreal(cheat_val_eval(engine,&a->val))};
+        (void)gml_builtin_call(&engine->vm,"ds_list_replace",args,3);
+      }
+      break; }
     case CK_ENGINE: { int iv=(int)cheat_val_eval(engine,&a->val);
       switch(a->eng){
         case EF_PRESENT_SHIFT_X: engine->present_shift_x=iv; break;
@@ -909,7 +958,9 @@ static void cheat_sticky_pass(AnygmEngine *engine,CheatSlot *arr, int n, int cha
      * toggled.  Keep its completion marker so re-enabling content overrides cannot run setup a
      * second time in the same load. */
     if(a->kind==CK_SCRIPT){
-      if(applies && !slot->applied) (void)gml_vm_run_script_named(&engine->vm,a->obj);
+      if(applies && !slot->applied){
+        (void)gml_vm_run_script_named(&engine->vm,a->obj);
+      }
       if(applies) slot->applied=1;
       continue;
     }

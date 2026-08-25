@@ -3,6 +3,7 @@
  */
 #include "gml_render_internal.h"
 #include "gml_render_backend.h"
+#include "gml_render_sampling_internal.h"
 #include "anygm.h"
 
 #include <math.h>
@@ -305,20 +306,101 @@ static void check_shader_recognition(void) {
      * than a fragment that paints without sampling. */
     "uniform sampler2D samp_screen;varying vec2 v_vTexcoord;"
     "void main(){vec4 sampled=texture2D(samp_screen,v_vTexcoord);"
-    "gl_FragColor=vec4(sampled.rgb*0.75,sampled.a);}"
+    "gl_FragColor=vec4(sampled.rgb*0.75,sampled.a);}",
+    "uniform vec3 u_dark0;uniform vec3 u_dark1;uniform vec3 u_dark2;"
+    "uniform vec3 u_dark3;uniform vec3 u_dark4;uniform vec3 u_light0;"
+    "uniform vec3 u_light1;uniform vec3 u_light2;uniform vec3 u_light3;"
+    "uniform vec3 u_light4;varying vec2 sample_uv;varying vec4 vertex_tint;"
+    "void main(){vec4 sampled=texture2D(gm_BaseTexture,sample_uv);"
+    "gl_FragColor=vertex_tint*texture2D(gm_BaseTexture,sample_uv);"
+    "if(sampled.r<0.25)if(sampled.g>0.8)gl_FragColor.rgb=vec3(u_dark0);"
+    "else if(sampled.g>0.6)gl_FragColor.rgb=vec3(u_dark1);"
+    "else if(sampled.g>0.4)gl_FragColor.rgb=vec3(u_dark2);"
+    "else if(sampled.g>0.2)gl_FragColor.rgb=vec3(u_dark3);"
+    "else gl_FragColor.rgb=vec3(u_dark4);else "
+    "if(sampled.g>0.8)gl_FragColor.rgb=vec3(u_light0);"
+    "else if(sampled.g>0.6)gl_FragColor.rgb=vec3(u_light1);"
+    "else if(sampled.g>0.4)gl_FragColor.rgb=vec3(u_light2);"
+    "else if(sampled.g>0.2)gl_FragColor.rgb=vec3(u_light3);"
+    "else gl_FragColor.rgb=vec3(u_light4);}",
+    "uniform vec3 n0;uniform vec3 n1;uniform vec3 n2;uniform vec3 n3;"
+    "uniform vec3 n4;uniform vec3 n5;uniform vec3 n6;uniform vec3 n7;"
+    "uniform vec3 n8;uniform vec3 n9;varying vec2 uv;varying vec4 tint;"
+    "void main(){vec4 value=texture2D(gm_BaseTexture,uv);"
+    "gl_FragColor=tint*texture2D(gm_BaseTexture,uv);"
+    "if(value.r<0.25){if(value.g>0.8)gl_FragColor.rgb=n0;"
+    "else if(value.g>0.6)gl_FragColor.rgb=n1;else if(value.g>0.4)gl_FragColor.rgb=n2;"
+    "else if(value.g>0.2)gl_FragColor.rgb=n3;else gl_FragColor.rgb=n4;}else{"
+    "if(value.g>0.8)gl_FragColor.rgb=n5;else if(value.g>0.6)gl_FragColor.rgb=n6;"
+    "else if(value.g>0.4)gl_FragColor.rgb=n7;else if(value.g>0.2)gl_FragColor.rgb=n8;"
+    "else gl_FragColor.rgb=n9;}gl_FragColor.r*=0.5;}",
+    "",
+    "uniform float u_shift;varying vec2 uv_b;varying vec4 tint_b;"
+    "void main(){vec4 sampled_b=texture2D(gm_BaseTexture,uv_b);"
+    "gl_FragColor=tint_b*texture2D(gm_BaseTexture,uv_b);float index_b;"
+    "if(sampled_b.r<0.25){if(sampled_b.g>0.8)index_b=4.0;"
+    "else if(sampled_b.g>0.6)index_b=3.0;else if(sampled_b.g>0.4)index_b=2.0;"
+    "else if(sampled_b.g>0.2)index_b=1.0;else index_b=0.0;}else{"
+    "if(sampled_b.g>0.8)index_b=9.0;else if(sampled_b.g>0.6)index_b=8.0;"
+    "else if(sampled_b.g>0.4)index_b=7.0;else if(sampled_b.g>0.2)index_b=6.0;"
+    "else index_b=5.0;}if(index_b<4.1){if((u_shift<0.0)&&"
+    "(index_b>0.9&&index_b<2.1)){index_b+=u_shift;"
+    "if(index_b>1.0)gl_FragColor.rgb=vec3(0.11,0.12,0.13);"
+    "else if(index_b>-0.5)gl_FragColor.rgb=vec3(0.14,0.15,0.16);"
+    "else gl_FragColor.rgb=vec3(0.17,0.18,0.19);}else{index_b+=u_shift;"
+    "if(index_b<1.0)gl_FragColor.rgb=vec3(0.01,0.02,0.03);"
+    "else if(index_b<2.0)gl_FragColor.rgb=vec3(0.04,0.05,0.06);"
+    "else if(index_b<3.0)gl_FragColor.rgb=vec3(0.07,0.08,0.09);"
+    "else if(index_b<4.0)gl_FragColor.rgb=vec3(0.10,0.20,0.30);"
+    "else if(index_b<5.0)gl_FragColor.rgb=vec3(0.20,0.30,0.40);"
+    "else if(index_b<6.0)gl_FragColor.rgb=vec3(0.30,0.40,0.50);"
+    "else gl_FragColor.rgb=vec3(0.40,0.50,0.60);}}else{index_b+=u_shift;"
+    "if(index_b<3.0)gl_FragColor.rgb=vec3(0.01,0.02,0.03);"
+    "else if(index_b<4.0)gl_FragColor.rgb=vec3(0.04,0.05,0.06);"
+    "else if(index_b<5.0)gl_FragColor.rgb=vec3(0.07,0.08,0.09);"
+    "else if(index_b<6.0)gl_FragColor.rgb=vec3(0.10,0.20,0.30);"
+    "else if(index_b<7.0)gl_FragColor.rgb=vec3(0.20,0.30,0.40);"
+    "else if(index_b<8.0)gl_FragColor.rgb=vec3(0.30,0.40,0.50);"
+    "else if(index_b<9.0)gl_FragColor.rgb=vec3(0.40,0.50,0.60);"
+    "else gl_FragColor.rgb=vec3(0.70,0.80,0.90);}}",
+    "uniform float bad_shift;varying vec2 bad_uv;varying vec4 bad_tint;"
+    "void main(){vec4 bad=texture2D(gm_BaseTexture,bad_uv);"
+    "gl_FragColor=bad_tint*texture2D(gm_BaseTexture,bad_uv);float bad_id;"
+    "if(bad.r<0.25){if(bad.g>0.8)bad_id=4.0;else if(bad.g>0.6)bad_id=3.0;"
+    "else if(bad.g>0.4)bad_id=2.0;else if(bad.g>0.2)bad_id=1.0;else bad_id=0.0;}"
+    "else{if(bad.g>0.8)bad_id=9.0;else if(bad.g>0.6)bad_id=8.0;"
+    "else if(bad.g>0.4)bad_id=7.0;else if(bad.g>0.2)bad_id=6.0;else bad_id=5.0;}"
+    "if(bad_id<4.1){if((bad_shift<0.0)&&(bad_id>0.9&&bad_id<2.1)){"
+    "bad_id+=bad_shift;if(bad_id>1.0)gl_FragColor.rgb=vec3(0.1,0.1,0.1);"
+    "else if(bad_id>-0.5)gl_FragColor.rgb=vec3(0.2,0.2,0.2);else gl_FragColor.rgb=vec3(0.3,0.3,0.3);}"
+    "else{bad_id+=bad_shift;if(bad_id<1.0)gl_FragColor.rgb=vec3(0.1,0.1,0.1);"
+    "else if(bad_id<2.0)gl_FragColor.rgb=vec3(0.2,0.2,0.2);else if(bad_id<3.0)gl_FragColor.rgb=vec3(0.3,0.3,0.3);"
+    "else if(bad_id<4.0)gl_FragColor.rgb=vec3(0.4,0.4,0.4);else if(bad_id<5.0)gl_FragColor.rgb=vec3(0.5,0.5,0.5);"
+    "else if(bad_id<6.0)gl_FragColor.rgb=vec3(0.6,0.6,0.6);else gl_FragColor.rgb=vec3(0.7,0.7,0.7);}}"
+    "else{bad_id+=bad_shift;if(bad_id<3.0)gl_FragColor.rgb=vec3(0.1,0.1,0.1);"
+    "else if(bad_id<4.0)gl_FragColor.rgb=vec3(0.2,0.2,0.2);else if(bad_id<5.0)gl_FragColor.rgb=vec3(0.3,0.3,0.3);"
+    "else if(bad_id<6.0)gl_FragColor.rgb=vec3(0.4,0.4,0.4);else if(bad_id<7.0)gl_FragColor.rgb=vec3(0.5,0.5,0.5);"
+    "else if(bad_id<8.0)gl_FragColor.rgb=vec3(0.6,0.6,0.6);else if(bad_id<9.0)gl_FragColor.rgb=vec3(0.7,0.7,0.7);"
+    "else gl_FragColor.rgb=vec3(0.8,0.8,0.8);}gl_FragColor.b*=0.5;}",
+    "void main(){vec4 sampled=texture2D(gm_BaseTexture,v_vTexcoord);"
+    "gl_FragColor=v_vColour*texture2D(gm_BaseTexture,v_vTexcoord);"
+    "if(gl_FragColor.g<0.1)gl_FragColor.a=0.0;}",
+    "void main(){vec4 sampled=texture2D(gm_BaseTexture,v_vTexcoord);"
+    "gl_FragColor=v_vColour*texture2D(gm_BaseTexture,v_vTexcoord);"
+    "if(gl_FragColor.g<0.1)gl_FragColor.a=0.0;gl_FragColor.r*=0.5;}"
   };
-  enum { SHADER_COUNT = 16, DATA_SIZE = 16384 };
+  enum { SHADER_COUNT = 22, DATA_SIZE = 24576 };
   uint8_t data[DATA_SIZE];
   GmlWin content;
   GmlRender render;
-  /* Fragment text starts past the last record, which is at 64 + (SHADER_COUNT-1) * 32. */
+  /* Fragment text starts past the last record, which is at 128 + (SHADER_COUNT-1) * 32. */
   size_t fragment_offset = 1024;
 
   memset(data, 0, sizeof(data));
   memset(&content, 0, sizeof(content));
   write_u32(data, 0, SHADER_COUNT);
   for (size_t i = 0; i < sizeof(fragments) / sizeof(fragments[0]); i++) {
-    size_t record_offset = 64 + i * 32;
+    size_t record_offset = 128 + i * 32;
     size_t length = strlen(fragments[i]);
     expect(fragment_offset + length + 1 < sizeof(data),
            "synthetic shader fixture exceeded its owned buffer");
@@ -327,7 +409,7 @@ static void check_shader_recognition(void) {
     memcpy(data + fragment_offset, fragments[i], length + 1);
     fragment_offset += length + 1;
   }
-  write_u32(data, 4 + 14 * 4, DATA_SIZE - 8);
+  write_u32(data, 4 + 17 * 4, DATA_SIZE - 8);
 
   content.data = data;
   content.size = sizeof(data);
@@ -356,8 +438,14 @@ static void check_shader_recognition(void) {
     const struct GmlShaderPal *noise_jumble_near_match = &render.shader_pal[11];
     const struct GmlShaderPal *channel_mask = &render.shader_pal[12];
     const struct GmlShaderPal *channel_mask_near_match = &render.shader_pal[13];
-    const struct GmlShaderPal *bounded = &render.shader_pal[14];
-    const struct GmlShaderPal *bound_sampler = &render.shader_pal[15];
+    const struct GmlShaderPal *bound_sampler = &render.shader_pal[14];
+    struct GmlShaderPal *threshold_palette = &render.shader_pal[15];
+    const struct GmlShaderPal *threshold_near_match = &render.shader_pal[16];
+    const struct GmlShaderPal *bounded = &render.shader_pal[17];
+    struct GmlShaderPal *indexed_brightness = &render.shader_pal[18];
+    const struct GmlShaderPal *indexed_brightness_near_match = &render.shader_pal[19];
+    const struct GmlShaderPal *channel_alpha_key = &render.shader_pal[20];
+    const struct GmlShaderPal *channel_alpha_key_near_match = &render.shader_pal[21];
     expect(alpha->alpha_discard && alpha->alpha_discard_inclusive &&
            alpha->alpha_discard_cutoff == 0.25f,
            "alpha-discard structure was not recognized exactly");
@@ -441,6 +529,69 @@ static void check_shader_recognition(void) {
     expect(channel_mask->channel_mask && channel_mask->channel_mask_keep==4 &&
            gml_render_shader_is_compiled(&render,12),
            "complete sampled RGB channel-clear graph was not recognized exactly");
+    expect(threshold_palette->threshold_palette &&
+           threshold_palette->threshold_palette_red==0.25f &&
+           threshold_palette->threshold_palette_green[0][0]==0.8f &&
+           threshold_palette->threshold_palette_green[1][3]==0.2f &&
+           !strcmp(threshold_palette->threshold_palette_uniform[0],"u_dark0") &&
+           !strcmp(threshold_palette->threshold_palette_uniform[9],"u_light4") &&
+           gml_render_shader_is_compiled(&render,15),
+           "ten-colour threshold palette graph was not recognized exactly");
+    static const double threshold_colours[10][4]={
+      {0.0,0.8,0.8,1.0},{0.0,0.6,0.6,1.0},{0.0,0.4,0.4,1.0},
+      {0.0,0.2,0.2,1.0},{0.0,0.0,0.0,1.0},{1.0,1.0,1.0,1.0},
+      {1.0,0.7,0.4,1.0},{0.0,0.2,0.2,1.0},{0.8,0.2,0.0,1.0},
+      {0.4,0.1,0.0,1.0}
+    };
+    for(int index=0;index<10;index++){
+      int handle=gml_render_shader_uniform_handle(
+        &render,15,threshold_palette->threshold_palette_uniform[index]);
+      expect(handle==15*64+index,"ten-colour threshold palette uniform handle changed");
+      gml_render_shader_uniform_set(&render,handle,threshold_colours[index]);
+    }
+    render.active_shader=15;
+    expect(mapped_texture_active(&render) &&
+           mapped_texture_pixel(&render,UINT32_C(0xffff8000))==UINT32_C(0xff003333),
+           "ten-colour threshold palette pixel selection changed");
+    render.active_shader=-1;
+    expect(!threshold_near_match->threshold_palette,
+           "threshold palette graph with an extra colour operation was accepted");
+    expect(indexed_brightness->indexed_brightness &&
+           indexed_brightness->indexed_brightness_red==0.25f &&
+           indexed_brightness->indexed_brightness_green[0][0]==0.8f &&
+           indexed_brightness->indexed_brightness_green[1][3]==0.2f &&
+           !strcmp(indexed_brightness->indexed_brightness_uniform,"u_shift") &&
+           gml_render_shader_is_compiled(&render,18),
+           "indexed brightness palette graph was not recognized exactly");
+    int brightness_uniform=
+      gml_render_shader_uniform_handle(&render,18,"u_shift");
+    const double black_shift[4]={-7.0,0.0,0.0,0.0};
+    gml_render_shader_uniform_set(&render,brightness_uniform,black_shift);
+    render.active_shader=18;
+    expect(brightness_uniform==18*64+54 && mapped_texture_active(&render) &&
+           mapped_texture_pixel(&render,UINT32_C(0xffff8000))==UINT32_C(0xff030508),
+           "indexed brightness high-family selection changed");
+    const double special_shift[4]={-0.5,0.0,0.0,0.0};
+    gml_render_shader_uniform_set(&render,brightness_uniform,special_shift);
+    expect(mapped_texture_pixel(&render,UINT32_C(0xff004d00))==UINT32_C(0xff242629),
+           "indexed brightness negative special-family selection changed");
+    render.active_shader=-1;
+    expect(!indexed_brightness_near_match->indexed_brightness,
+           "indexed brightness graph with an extra colour operation was accepted");
+    expect(channel_alpha_key->channel_alpha_key &&
+           channel_alpha_key->channel_alpha_key_channel==1 &&
+           !channel_alpha_key->channel_alpha_key_inclusive &&
+           channel_alpha_key->channel_alpha_key_cutoff==0.1f &&
+           gml_render_shader_is_compiled(&render,20),
+           "sampled channel alpha-key graph was not recognized exactly");
+    render.active_shader=20;
+    expect(mapped_texture_active(&render) &&
+           mapped_texture_pixel(&render,UINT32_C(0xff124019))==UINT32_C(0xff124019) &&
+           mapped_texture_pixel(&render,UINT32_C(0xff120f19))==UINT32_C(0x00120f19),
+           "sampled channel alpha-key threshold changed");
+    render.active_shader=-1;
+    expect(!channel_alpha_key_near_match->channel_alpha_key,
+           "channel alpha-key graph with an extra colour operation was accepted");
     expect(!channel_mask_near_match->channel_mask,
            "channel-clear graph with an extra colour operation was accepted");
     /* The compile answer is host policy for one class of shader only. The default reports an
@@ -464,7 +615,7 @@ static void check_shader_recognition(void) {
      * content bound still transforms that picture, so leaving it unrun shows a weaker version and
      * the answer stays the host's. */
     expect(bound_sampler->procedural == 0 &&
-           gml_render_shader_is_compiled(&render, 15),
+           gml_render_shader_is_compiled(&render, 14),
            "a fragment sampling a content-bound sampler was treated as painting from nothing");
     render.shader_report_all_compiled = 0;
     expect(!gml_render_shader_is_compiled(&render, 3) &&

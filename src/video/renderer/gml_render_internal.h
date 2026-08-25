@@ -319,10 +319,41 @@ typedef struct GmlRender {
    * Parsed data-driven from the SHDR chunk's GLSL at init; shader_set activates one and the
    * surface-composite blit applies the map per pixel. has==0 -> unknown shader, no-op. */
   struct GmlShaderPal { int has; uint8_t L[3],M[3],D[3],S[3];
+    /* Ten-colour threshold palette. The fragment splits sampled pixels on red, then selects one
+     * of five uniform colours from descending green thresholds in either branch. Names,
+     * thresholds and values all come from the embedded shader and its uniform calls. */
+    int threshold_palette;
+    char threshold_palette_uniform[10][32];
+    float threshold_palette_red;
+    float threshold_palette_green[2][4];
+    uint8_t threshold_palette_colour[10][3];
+    unsigned threshold_palette_set;
+    /* Indexed-palette brightness shift. The fragment classifies a sampled colour into one of ten
+     * ordered ids, adds a scalar uniform, then selects a literal colour from separate ramps. */
+    int indexed_brightness;
+    char indexed_brightness_uniform[32];
+    float indexed_brightness_red;
+    float indexed_brightness_green[2][4];
+    float indexed_brightness_family_cut;
+    float indexed_brightness_negative_cut;
+    float indexed_brightness_special_min, indexed_brightness_special_max;
+    float indexed_brightness_special_threshold[2];
+    uint8_t indexed_brightness_special_colour[3][3];
+    float indexed_brightness_low_threshold[6];
+    uint8_t indexed_brightness_low_colour[7][3];
+    float indexed_brightness_high_threshold[7];
+    uint8_t indexed_brightness_high_colour[8][3];
+    float indexed_brightness_value;
+    int indexed_brightness_set;
     /* Passthrough texture fragments that clear a subset of sampled RGB channels after vertex
      * colour modulation (for example `.bg = vec2(0)`). The parser retains the channels that the
      * fragment leaves enabled; alpha is unaffected. */
     int channel_mask, channel_mask_keep;
+    /* Sampled colour-key alpha. The fragment preserves its modulated texture colour and clears
+     * alpha when one RGB channel falls below a literal threshold. The channel, comparison and
+     * threshold are parsed from SHDR rather than tied to an asset or shader identifier. */
+    int channel_alpha_key, channel_alpha_key_channel, channel_alpha_key_inclusive;
+    float channel_alpha_key_cutoff;
     /* Literal alpha-discard pass-through fragment. The threshold and comparison are parsed from
      * the embedded GLSL, so texture draws can preserve hard sprite edges without a GPU. */
     int alpha_discard, alpha_discard_inclusive;

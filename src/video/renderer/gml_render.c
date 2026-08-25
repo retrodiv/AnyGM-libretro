@@ -825,7 +825,9 @@ int gml_render_is_classic(const GmlRender *r){
 
 /* Whether the software evaluator recognizes a declared shader family. */
 static int shader_pal_recognized(const struct GmlShaderPal *p){
-  return p->has || p->channel_mask || p->alpha_discard || p->ordered_dither || p->quantise4 ||
+  return p->has || p->threshold_palette || p->indexed_brightness ||
+         p->channel_mask || p->channel_alpha_key || p->alpha_discard ||
+         p->ordered_dither || p->quantise4 ||
          p->solid_alpha_mask || p->solid_blur_alpha || p->lut || p->lut_indexed || p->grid ||
          p->crt || p->sampled_crt || p->dual_sample || p->hsv_scan || p->hsv_scan_binary_palette ||
          p->noise_jumble || p->radial_wave || p->uv_wave_mode || p->paint || p->grayscale;
@@ -849,6 +851,13 @@ int gml_render_shader_is_compiled(const GmlRender *r,int shader){
 int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *name){
   if(r && name && shader>=0 && shader<r->n_shader_pal && r->shader_pal){
     const struct GmlShaderPal *recognized=&r->shader_pal[shader];
+    if(recognized->threshold_palette)
+      for(int index=0;index<10;index++)
+        if(!strcmp(name,recognized->threshold_palette_uniform[index]))
+          return GML_RENDER_SHADER_HANDLE(shader,index);
+    if(recognized->indexed_brightness &&
+       !strcmp(name,recognized->indexed_brightness_uniform))
+      return GML_RENDER_SHADER_HANDLE(shader,54);
     if(recognized->noise_jumble)
       for(int index=0;index<GML_NOISE_JUMBLE_UNIFORM_COUNT;index++)
         if(!strcmp(name,recognized->noise_jumble_uniform[index]))
@@ -955,6 +964,23 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
   int slot=handle%GML_RENDER_SHADER_HANDLE_STRIDE;
   if(shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return;
   struct GmlShaderPal *recognized=&r->shader_pal[shader];
+  if(recognized->indexed_brightness && slot==54){
+    recognized->indexed_brightness_value=(float)values[0];
+    recognized->indexed_brightness_set=1;
+    return;
+  }
+  if(recognized->threshold_palette && slot>=0 && slot<10){
+    uint8_t colour[3];
+    for(int component=0;component<3;component++){
+      int channel=(int)floor(values[component]*255.0+0.5);
+      if(channel<0) channel=0;
+      else if(channel>255) channel=255;
+      colour[component]=(uint8_t)channel;
+    }
+    memcpy(recognized->threshold_palette_colour[slot],colour,sizeof colour);
+    recognized->threshold_palette_set|=1u<<slot;
+    return;
+  }
   if(recognized->noise_jumble &&
      slot>=GML_RENDER_NOISE_JUMBLE_HANDLE_BASE &&
      slot<GML_RENDER_NOISE_JUMBLE_HANDLE_BASE+GML_NOISE_JUMBLE_UNIFORM_COUNT){

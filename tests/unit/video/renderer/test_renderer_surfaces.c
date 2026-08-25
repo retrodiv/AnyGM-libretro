@@ -31,6 +31,75 @@ static uint64_t pixel_hash(const uint32_t *pixels,size_t count){
   return pixel_hash_update(UINT64_C(1469598103934665603),pixels,count);
 }
 
+static int threshold_palette_surface_case(void){
+  enum { WIDTH=3,HEIGHT=2 };
+  GmlRender render;
+  struct GmlShaderPal shader;
+  uint32_t frame[WIDTH*HEIGHT];
+  memset(&render,0,sizeof render);
+  memset(&shader,0,sizeof shader);
+  memset(frame,0,sizeof frame);
+  render.next_surface_id=1;
+  render.alphablend=1;
+  render.alpha=1.0;
+  render.color_write_mask=0x0F;
+  render.blend_equation=1;
+  render.blend_equation_alpha=1;
+  render.app_draw_enable=1;
+  render.lut_pal_sprite=-1;
+  render.shader_pal=&shader;
+  render.n_shader_pal=1;
+  shader.threshold_palette=1;
+  shader.threshold_palette_red=0.25f;
+  shader.threshold_palette_green[0][0]=0.8f;
+  shader.threshold_palette_green[0][1]=0.6f;
+  shader.threshold_palette_green[0][2]=0.4f;
+  shader.threshold_palette_green[0][3]=0.2f;
+  shader.threshold_palette_green[1][0]=0.86f;
+  shader.threshold_palette_green[1][1]=0.61f;
+  shader.threshold_palette_green[1][2]=0.43f;
+  shader.threshold_palette_green[1][3]=0.31f;
+  shader.threshold_palette_colour[7][1]=50;
+  shader.threshold_palette_colour[7][2]=50;
+  shader.threshold_palette_set=0x3ffu;
+
+  int source=gml_surface_create(&render,WIDTH,HEIGHT);
+  REQUIRE(source==1,"threshold palette surface id");
+  uint32_t *source_pixels=surface_pixels(&render,source,NULL,NULL);
+  REQUIRE(source_pixels!=NULL,"threshold palette source pixels");
+  for(int index=0;index<WIDTH*HEIGHT;index++) source_pixels[index]=0xFFFF8000u;
+  render.surface[0].opaque_known=1;
+  render.surface[0].all_opaque=1;
+  render.surface[0].all_transparent=0;
+  gml_render_begin(&render,frame,WIDTH,HEIGHT,0.0,0.0);
+  render.active_shader=0;
+  gml_draw_surface_stretched(
+    &render,source,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  for(int index=0;index<WIDTH*HEIGHT;index++)
+    REQUIRE(frame[index]==0xFF003232u,
+            "threshold palette maps a complete surface composite");
+
+  source_pixels[0]=0x00FF8000u;
+  render.surface[0].opaque_known=0;
+  render.surface[0].all_opaque=0;
+  render.surface[0].all_transparent=0;
+  frame[0]=0xFF112233u;
+  render.alphablend=0;
+  gml_draw_surface_stretched(
+    &render,source,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  REQUIRE(frame[0]==0x00003232u,
+          "disabled blending writes mapped transparent pixels");
+
+  frame[0]=0xFF112233u;
+  render.alphablend=1;
+  gml_draw_surface_stretched(
+    &render,source,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
+  REQUIRE(frame[0]==0xFF112233u,
+          "enabled blending skips mapped transparent pixels");
+  gml_surface_free(&render,source);
+  return 0;
+}
+
 static int presentation_latch_coverage_case(void){
   enum { WIDTH=4,HEIGHT=3 };
   GmlRender render;
@@ -935,6 +1004,8 @@ int main(void){
           !gml_surface_exists(&render,destination),"freed surfaces");
   REQUIRE(presentation_latch_coverage_case()==0,
           "presentation latch coverage case");
+  REQUIRE(threshold_palette_surface_case()==0,
+          "threshold palette surface case");
   REQUIRE(composition_cases()==0,"composition cases");
   REQUIRE(screen_raster_part_case()==0,"screen raster part case");
   REQUIRE(first_generation_point_sampling_case()==0,

@@ -817,6 +817,7 @@ static void draw_surface_interp_phase(GmlRender *r,uint32_t *plane,const uint32_
   if(px0>=px1||py0>=py1) return;
   if(alpha>1.0) alpha=1.0;
   int bR=blend&0xFF,bG=(blend>>8)&0xFF,bB=(blend>>16)&0xFF;
+  int sremap=indexed_brightness_active(r)!=NULL || threshold_palette_active(r)!=NULL;
   const struct GmlShaderPal *spal=pal_active(r);
   const struct GmlShaderPal *slut=lut_active(r);
   const struct GmlShaderPal *sgrid=grid_active(r);
@@ -845,7 +846,8 @@ static void draw_surface_interp_phase(GmlRender *r,uint32_t *plane,const uint32_
       int aa=(int)((p00>>24)*w00+(p01>>24)*w01+(p10>>24)*w10+(p11>>24)*w11);
       if(aa<=0 || shader_discards_alpha(r,(unsigned)aa)) continue;
       uint32_t sampled=((uint32_t)aa<<24)|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
-      if(spal) sampled=pal_map_px(spal,sampled);
+      if(sremap) sampled=mapped_texture_pixel(r,sampled);
+      else if(spal) sampled=pal_map_px(spal,sampled);
       else if(slut) sampled=lut_map_px(r,slut,sampled);
       else if(sgrid) sampled=grid_map_px(r,sgrid,sampled);
       sr=((sampled>>16)&0xFF)*bR/255;
@@ -952,6 +954,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   }
   int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
   int src_all_opaque=surface_known_opaque(r,surf);
+  int sremap=indexed_brightness_active(r)!=NULL || threshold_palette_active(r)!=NULL;
   const struct GmlShaderPal *spal=pal_active(r);
   const struct GmlShaderPal *slut=lut_active(r);
   const struct GmlShaderPal *sgrid=grid_active(r);
@@ -979,7 +982,8 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
     if(cw>0 && ch>0){
       int sx_start=cx0-x0, sy_start=cy0-y0;
       int white=((blend & 0xFFFFFF) == 0xFFFFFF);
-      if(src_all_opaque && (r->blendmode==0||replace) && alpha>=1.0 && white && !spal && !slut && !sgrid && !squant &&
+      if(src_all_opaque && (r->blendmode==0||replace) && alpha>=1.0 && white &&
+         !sremap && !spal && !slut && !sgrid && !squant &&
          r->color_write_mask==0x0F &&
          src!=r->fb && cx0==0 && cy0==0 && cw==r->fbw && ch==r->fbh &&
          sx_start==0 && sy_start==0 && sw==r->fbw && sh==r->fbh){
@@ -992,7 +996,8 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
         return;
       }
       gml_render_maybe_prepare_draw(r);
-      if(r->color_write_mask!=0x0F && (r->blendmode==0||replace) && alpha>=1.0 && white && !spal && !slut && !sgrid && !squant){
+      if(r->color_write_mask!=0x0F && (r->blendmode==0||replace) && alpha>=1.0 &&
+         white && !sremap && !spal && !slut && !sgrid && !squant){
         /* Channel-masked surface copy. This is the common mask-construction idiom: draw an
          * opaque color/shape first, disable alpha writes, then copy scene RGB through it. */
         for(int yy=0; yy<ch; yy++){
@@ -1024,7 +1029,8 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
           uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
           for(int xx=0; xx<cw; xx++){
             uint32_t sv=sp[xx],old=dp[xx];
-            if(spal) sv=pal_map_px(spal,sv);
+            if(sremap) sv=mapped_texture_pixel(r,sv);
+            else if(spal) sv=pal_map_px(spal,sv);
             else if(slut) sv=lut_map_px(r,slut,sv);
             else if(sgrid) sv=grid_map_px_cached(r,sgrid,sv,&grid_cache);
             int sr=((sv>>16)&255)*bR/255,sg=((sv>>8)&255)*bG/255,sb=(sv&255)*bB/255;
@@ -1042,7 +1048,8 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
           for(int xx=0; xx<cw; xx++){
             uint32_t sv=sp[xx],source_alpha=sv>>24,old=dp[xx];
             if(!source_alpha) continue;
-            if(spal) sv=pal_map_px(spal,sv);
+            if(sremap) sv=mapped_texture_pixel(r,sv);
+            else if(spal) sv=pal_map_px(spal,sv);
             else if(slut) sv=lut_map_px(r,slut,sv);
             else if(sgrid) sv=grid_map_px_cached(r,sgrid,sv,&grid_cache);
             int sr=((sv>>16)&255)*bR/255,sg=((sv>>8)&255)*bG/255,sb=(sv&255)*bB/255;
@@ -1089,6 +1096,13 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             }
             dp[xx]=(oc<<24)|((uint32_t)orr<<16)|((uint32_t)og<<8)|(uint32_t)ob;
           }
+        }
+      } else if((!r->alphablend || alpha>=1.0) && white && sremap){
+        for(int yy=0; yy<ch; yy++){
+          const uint32_t *sp=src+(size_t)(sy_start+yy)*sw+sx_start;
+          uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
+          for(int xx=0; xx<cw; xx++){ if(r->alphablend && !(sp[xx]>>24)) continue;
+            dp[xx]=mapped_texture_pixel(r,sp[xx]); }
         }
       } else if((!r->alphablend || alpha>=1.0) && white && squant){
         for(int yy=0; yy<ch; yy++){
@@ -1178,7 +1192,8 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             uint32_t sv=sp[xx];
             double pa=(sv>>24)/255.0;             /* per-pixel coverage x call alpha */
             if(pa<=0) continue;
-            if(spal) sv=pal_map_px(spal,sv);
+            if(sremap) sv=mapped_texture_pixel(r,sv);
+            else if(spal) sv=pal_map_px(spal,sv);
             else if(slut) sv=lut_map_px(r,slut,sv);
             else if(sgrid) sv=grid_map_px_cached(r,sgrid,sv,&grid_cache);
             int sr=((sv>>16)&0xFF)*bR/255, sg=((sv>>8)&0xFF)*bG/255, sb=(sv&0xFF)*bB/255;
@@ -1206,7 +1221,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
      fabs(sx0d) < 0.001 && fabs(sy0d) < 0.001 &&
      fabs(swd - sw) < 0.001 && fabs(shd - sh) < 0.001 &&
      (r->blendmode==0 || (replace && src_all_opaque)) && alpha>=1.0 &&
-     ((blend & 0xFFFFFF) == 0xFFFFFF) && !spal && !slut && !sgrid &&
+     ((blend & 0xFFFFFF) == 0xFFFFFF) && !sremap && !spal && !slut && !sgrid &&
      (!alpha_test || opaque_alpha_test_passthrough)){
     /* Record it rather than write it, while the full-target fill in front of it is still deferred:
      * the two are one operation as far as the target is concerned. The recording lives with its
@@ -1233,7 +1248,8 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
    * GM/GL sample 4 texels at the output pixel centre. Only the upscale case takes this; filtered
    * downscale keeps the box average, while non-interpolated draws use exact point sampling below.
    * This is what makes a full-screen compositor's soft "old TV" bloom render. */
-  if(r->interp && !flipx && !flipy && W>sw && H>sh && r->blendmode==0 && !spal && !slut){
+  if(r->interp && !flipx && !flipy && W>sw && H>sh && r->blendmode==0 &&
+     !sremap && !spal && !slut){
     /* per-column tap indices + weight are constant across rows: precompute once (hoists the div/floor
      * out of the inner loop) and run the taps in float. */
     int *cxa=malloc((size_t)W*sizeof(int)), *cxb=malloc((size_t)W*sizeof(int));
@@ -1270,7 +1286,8 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
       if(shader_discards_alpha_value(r,A/(double)n)) continue;
       double pa=(A/(double)n)/255.0; if(pa<=0) continue;   /* box-averaged coverage */
       uint32_t av=((uint32_t)(R/n)<<16)|((uint32_t)(G/n)<<8)|(uint32_t)(B/n);
-      if(spal) av=pal_map_px(spal,av);
+      if(sremap) av=mapped_texture_pixel(r,av);
+      else if(spal) av=pal_map_px(spal,av);
       else if(slut) av=lut_map_px(r,slut,av);
       int sr=((av>>16)&0xFF)*bR/255, sg=((av>>8)&0xFF)*bG/255, sb=(av&0xFF)*bB/255;
       uint32_t *dp=&r->fb[(size_t)ty_*r->fbw+tx_];
@@ -1368,7 +1385,8 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
       r->frame,r->active_shader,r->crt_shader_enable,shsv!=NULL,surf);
   }
   int d3w=gml_surface_width(r,surf),d3h=gml_surface_height(r,surf);
-  if(allow_software3d && !sdual && !shsv && !snoise && d3w>0&&d3h>0&&
+  if(allow_software3d && !sdual && !shsv && !snoise && !mapped_texture_active(r) &&
+     d3w>0&&d3h>0&&
      gml_d3_draw_surface_part_2d(r,surf,0,0,d3w,d3h,dx,dy,dw/d3w,dh/d3h,blend,alpha)) return;
   int sw=0, sh=0; uint32_t *spx=surface_pixels(r,surf,&sw,&sh); if(!spx) return;
   /* A full-width presentation compositor may retain an integer-scaled native-aspect destination
@@ -1516,6 +1534,7 @@ void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
   if(x1<=x0||y1<=y0){ free(copy); return; }
   gml_render_maybe_prepare_draw(r);
   int bR=blend&255,bG=(blend>>8)&255,bB=(blend>>16)&255;
+  int sremap=indexed_brightness_active(r)!=NULL || threshold_palette_active(r)!=NULL;
   const struct GmlShaderPal *spal=pal_active(r),*slut=lut_active(r),*sgrid=grid_active(r);
   /* Apply the active four-band mapper to sampled surface pixels. */
   const struct GmlShaderPal *squant=quantise4_active(r);
@@ -1537,7 +1556,8 @@ void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
         cb+=(int)((p[k]&255)*w[k]); ca+=(int)((p[k]>>24)*w[k]); }
       sv=((uint32_t)ca<<24)|((uint32_t)cr<<16)|((uint32_t)cg<<8)|(uint32_t)cb;
     } else sv=src[(size_t)(int)floor(v)*sw+(int)floor(u)];
-    if(squant) sv=quantise4_map_px(squant,sv);
+    if(sremap) sv=mapped_texture_pixel(r,sv);
+    else if(squant) sv=quantise4_map_px(squant,sv);
     else if(spal) sv=pal_map_px(spal,sv); else if(slut) sv=lut_map_px(r,slut,sv); else if(sgrid) sv=grid_map_px(r,sgrid,sv);
     int sr=((sv>>16)&255)*bR/255,sg=((sv>>8)&255)*bG/255,sb=(sv&255)*bB/255;
     uint32_t *dp=&r->fb[(size_t)py*r->fbw+px],old=*dp,out;
@@ -1583,7 +1603,7 @@ void gml_draw_surface_part_ext(GmlRender *r, int surf, double sx, double sy, dou
   const struct GmlShaderPal *sdual=dual_active(r);
   const struct GmlShaderPal *shsv=hsv_scan_active(r);
   const struct GmlShaderPal *snoise=noise_jumble_active(r);
-  if(!sdual && !shsv && !snoise &&
+  if(!sdual && !shsv && !snoise && !mapped_texture_active(r) &&
      gml_d3_draw_surface_part_2d(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;
   if(r && !r->app_draw_enable && r->interp) r->composites_app=1;
   if(snoise){ draw_surface_noise_jumble(r,snoise,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha); return; }

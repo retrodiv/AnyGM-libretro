@@ -62,6 +62,14 @@ does not borrow an active game's instance. Restoring a state marks the call as
 already made: its effects are represented by the restored state and must not
 run a second time.
 
+`listset|target|variable[index]|item|value` repairs one numeric item in a DS list. `target` is an
+object name for a list held by its first active instance, or the reserved word `global` for a list
+held by a global variable. The array index is optional when the variable holds the list handle
+directly. It is reapplied after every Step while content overrides are enabled, so a later
+configuration load cannot overwrite the repair. This is suitable for replacing invalid persisted
+configuration with a stable session policy; in-game changes to that list item take effect only
+after the content override is disabled.
+
 A `?gameres` directive applies only while *Render at game resolution* is selected. It declares an inner logical raster for presentation values that the content scales to a separate output raster. Each scoped directive captures the previous value before its first write and restores it when the selection closes. This includes mutable presentation fields such as `@window_w`, `@window_h`, `@application_w`, and `@application_h`, and also permits a scoped instance-variable or surface-resize directive when its target has one meaningful previous value. Room-owned `view_*` and `background_*` arrays are recaptured on room entry, and their directives settle before the frame's output geometry is published.
 
 ```

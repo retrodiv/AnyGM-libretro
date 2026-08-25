@@ -13,6 +13,9 @@ typedef struct AnygmSyntheticContent {
 } AnygmSyntheticContent;
 
 int anygm_synthetic_content_create(AnygmSyntheticContent *fixture);
+/* The neutral engine fixture with one object-held array of lists and one global list. Its Step
+ * deliberately rewrites both so a persistent content override can prove it runs after Step. */
+int anygm_synthetic_list_override_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_anchor_script_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_simulated_key_content_create(AnygmSyntheticContent *fixture);
 /* One synthetic instance presses and releases a key in one Step and owns

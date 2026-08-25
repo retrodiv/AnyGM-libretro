@@ -18,6 +18,24 @@ static inline uint32_t color_write_merge(const GmlRender *r, uint32_t old, uint3
   return (old&~bits)|(value&bits);
 }
 
+/* Fixed-function factors (inverse destination alpha, destination alpha). */
+static inline uint32_t blend_inverse_destination_alpha_pixel(
+    const GmlRender *render,uint32_t destination,
+    int source_red,int source_green,int source_blue,unsigned source_alpha){
+  unsigned destination_alpha=destination>>24;
+  unsigned inverse=255u-destination_alpha;
+  unsigned destination_red=(destination>>16)&255u;
+  unsigned destination_green=(destination>>8)&255u;
+  unsigned destination_blue=destination&255u;
+  unsigned red=((unsigned)source_red*inverse+destination_red*destination_alpha+127u)/255u;
+  unsigned green=((unsigned)source_green*inverse+
+                  destination_green*destination_alpha+127u)/255u;
+  unsigned blue=((unsigned)source_blue*inverse+destination_blue*destination_alpha+127u)/255u;
+  unsigned coverage=gml_render_target_preserves_alpha(render)?
+    (source_alpha*inverse+destination_alpha*destination_alpha+127u)/255u:255u;
+  return (coverage<<24)|(red<<16)|(green<<8)|blue;
+}
+
 /* Fixed-function blend factors (bm_dest_colour, bm_zero): source * destination. The source RGB
  * has already been texture/tint modulated by the caller. Preserve framebuffer coverage here;
  * GameMaker does not expose the main framebuffer alpha, while surface alpha remains conservative. */
