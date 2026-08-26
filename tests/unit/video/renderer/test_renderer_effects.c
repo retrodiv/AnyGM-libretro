@@ -975,6 +975,113 @@ static void check_solid_alpha_mask_pixels(void) {
          "constant-colour alpha-mask pixel kernel diverged from its parsed graph");
 }
 
+static void check_fast_scaled_sample_clamps_to_atlas(void) {
+  static uint8_t rgba[] = {
+    16, 32, 48, 255,
+    64, 96, 128, 255,
+    144, 16, 32, 255,
+    160, 32, 48, 255,
+    224, 192, 160, 255
+  };
+  int frame_index = 0;
+  uint32_t pixels[] = {0xff010203u, 0xff010203u};
+  GmlSprite sprite;
+  GmlTpag tpag;
+  GmlAtlas atlas;
+  GmlRender render;
+
+  memset(&sprite, 0, sizeof(sprite));
+  memset(&tpag, 0, sizeof(tpag));
+  memset(&atlas, 0, sizeof(atlas));
+  memset(&render, 0, sizeof(render));
+  sprite.w = 1;
+  sprite.h = 1;
+  sprite.n_frames = 1;
+  sprite.frame = &frame_index;
+  tpag.sx = 4;
+  tpag.sw = tpag.bw = 1;
+  tpag.sh = tpag.bh = 1;
+  tpag.atlas = 0;
+  atlas.w = 2;
+  atlas.h = 1;
+  atlas.px = rgba;
+  render.fb = render.base_fb = pixels;
+  render.fbw = render.base_fbw = 2;
+  render.fbh = render.base_fbh = 1;
+  render.spr = &sprite;
+  render.n_spr = 1;
+  render.tpag = &tpag;
+  render.n_tpag = 1;
+  render.atlas = &atlas;
+  render.n_atlas = 1;
+  render.alpha = 1.0;
+  render.alphablend = 1;
+  render.color_write_mask = 0x0f;
+  render.target_id = -1;
+  render.active_shader = -1;
+  render.lut_pal_sprite = -1;
+
+  gml_draw_sprite_ext(&render, 0, 0, 0, 0, 2, 1, 0, 0xffffffu, 1.0);
+  expect(pixels[0] == 0xff406080u && pixels[1] == 0xff406080u,
+         "fast scaled sprite sampled beyond the atlas edge");
+}
+
+static void check_stretched_sample_clamps_to_atlas(void) {
+  static uint8_t rgba[] = {
+    16, 32, 48, 255,
+    64, 96, 128, 255,
+    144, 16, 32, 255,
+    160, 32, 48, 255,
+    224, 192, 160, 255
+  };
+  int frame_index = 0;
+  uint32_t pixels[] = {0xff010203u, 0xff010203u};
+  GmlSprite sprite;
+  GmlTpag tpag;
+  GmlAtlas atlas;
+  GmlRender render;
+
+  memset(&sprite, 0, sizeof(sprite));
+  memset(&tpag, 0, sizeof(tpag));
+  memset(&atlas, 0, sizeof(atlas));
+  memset(&render, 0, sizeof(render));
+  sprite.w = 1;
+  sprite.h = 1;
+  sprite.n_frames = 1;
+  sprite.frame = &frame_index;
+  tpag.sx = 4;
+  tpag.sw = tpag.bw = 1;
+  tpag.sh = tpag.bh = 1;
+  tpag.atlas = 0;
+  atlas.w = 2;
+  atlas.h = 1;
+  atlas.px = rgba;
+  render.fb = render.base_fb = pixels;
+  render.fbw = render.base_fbw = 2;
+  render.fbh = render.base_fbh = 1;
+  render.spr = &sprite;
+  render.n_spr = 1;
+  render.tpag = &tpag;
+  render.n_tpag = 1;
+  render.atlas = &atlas;
+  render.n_atlas = 1;
+  render.alpha = 1.0;
+  render.alphablend = 1;
+  render.color_write_mask = 0x0f;
+  render.target_id = -1;
+  render.active_shader = -1;
+  render.lut_pal_sprite = -1;
+
+  gml_draw_sprite_stretched(&render, 0, 0, 0, 0, 2, 1, 0xffffffu, 1.0);
+  expect(pixels[0] == 0xff406080u && pixels[1] == 0xff406080u,
+         "stretched sprite sampled beyond the atlas edge");
+
+  pixels[0] = pixels[1] = 0xff010203u;
+  gml_draw_sprite_stretched(&render, 0, 0, 0, 0, 1, 1, 0xffffffu, 1.0);
+  expect(pixels[0] == 0xff406080u && pixels[1] == 0xff010203u,
+         "unit-size stretched sprite sampled beyond the atlas edge");
+}
+
 /* A degenerate fog range produces a flat sprite silhouette at the fog
  * colour while retaining texture coverage. The fixture also verifies the
  * content-to-framebuffer channel order. */
@@ -1681,6 +1788,8 @@ int main(void) {
   check_palette_alpha_threshold();
   check_zero_reference_alpha_test_pixels();
   check_solid_alpha_mask_pixels();
+  check_fast_scaled_sample_clamps_to_atlas();
+  check_stretched_sample_clamps_to_atlas();
   check_flat_fog_silhouette_pixels();
   check_solid_blur_alpha_pixels();
   check_skeleton_asset_and_pose();

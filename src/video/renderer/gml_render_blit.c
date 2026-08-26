@@ -2620,14 +2620,16 @@ static void blit_one_band_rows(void *context,int row_start,int row_end,int slot)
     /* Clamp the source row to atlas bounds rather than skipping the draw. */
     if(a->h>0){ if(sy<0) sy=0; else if(sy>=a->h) sy=a->h-1; }
     if(fastcase){
-      const uint8_t *srow=a->px + ((size_t)sy*a->w + t->sx)*4;
+      const uint8_t *srow=a->px + (size_t)sy*a->w*4u;
       uint32_t *drow=&r->fb[(size_t)py*r->fbw];
       for(int xx=xx0; xx<xx1; xx++){
         int lx=lxtab[xx-xx0];
         int contiguous_x=first_generation_quad_phase_x && lx==t->sw &&
                          t->sx+lx>=0 && t->sx+lx<a->w;
         if((lx<0||lx>=t->sw) && !contiguous_x) continue;
-        const uint8_t *sp=srow + (size_t)lx*4;
+        int sx=t->sx+lx;
+        if(sx<0) sx=0; else if(sx>sx_max) sx=sx_max;
+        const uint8_t *sp=srow + (size_t)sx*4u;
         int aa=sp[3]; if(!aa) continue;
         int px = flipx ? (x0-xx) : (x0+xx);
         uint32_t *dp=&drow[px];
@@ -6385,6 +6387,7 @@ static void spr_stretch_general_band(void *context,int row_start,int row_end,int
   GmlRender *r=band->r;
   GmlAtlas *a=band->a;
   GmlTpag *t=band->t;
+  if(a->w<=0 || a->h<=0) return;
   const int x0=band->x0, y0=band->y0, W=band->W, H=band->H;
   const int sw=band->sw, sh=band->sh;
   const int bR=band->bR, bG=band->bG, bB=band->bB;
@@ -6395,8 +6398,12 @@ static void spr_stretch_general_band(void *context,int row_start,int row_end,int
       int sx0=(px*sw)/W, sx1=((px+1)*sw)/W; if(sx1<=sx0) sx1=sx0+1;
       int R=0,G=0,B=0,A=0,n=0;
       for(int sy=sy0;sy<sy1;sy++){ int iy=sy-t->ty; if(iy<0||iy>=t->sh) continue;
+        int atlas_y=t->sy+iy;
+        if(atlas_y<0) atlas_y=0; else if(atlas_y>=a->h) atlas_y=a->h-1;
         for(int sx=sx0;sx<sx1;sx++){ int ix=sx-t->tx; if(ix<0||ix>=t->sw) continue;
-          uint8_t *sp=a->px+((size_t)(t->sy+iy)*a->w+(t->sx+ix))*4;
+          int atlas_x=t->sx+ix;
+          if(atlas_x<0) atlas_x=0; else if(atlas_x>=a->w) atlas_x=a->w-1;
+          uint8_t *sp=a->px+((size_t)atlas_y*a->w+atlas_x)*4u;
           R+=sp[0]; G+=sp[1]; B+=sp[2]; A+=sp[3]; n++; } }
       if(!n) continue;
       /* Filtered (interpolation=true) downscale matches the GPU: average the covered texels in
@@ -6481,7 +6488,10 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
       for(int xx=0; xx<cw; xx++){
         int ix=lx0+xx-t->tx;
         if(ix<0||ix>=t->sw) continue;
-        uint8_t *sp=a->px + ((size_t)(t->sy+iy)*a->w + (t->sx+ix))*4;
+        int atlas_x=t->sx+ix, atlas_y=t->sy+iy;
+        if(atlas_x<0) atlas_x=0; else if(atlas_x>=a->w) atlas_x=a->w-1;
+        if(atlas_y<0) atlas_y=0; else if(atlas_y>=a->h) atlas_y=a->h-1;
+        uint8_t *sp=a->px + ((size_t)atlas_y*a->w+atlas_x)*4u;
         if(shader_discards_alpha(r,sp[3])) continue;
         /* The destination is in framebuffer space and the camera was subtracted from the
          * destination origin above, so adding it back gives the object-space position the
