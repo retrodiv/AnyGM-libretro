@@ -360,8 +360,9 @@ static size_t fixture_two_sound_container(unsigned char *data,size_t cap,
 /* Mix one embedded sound of a two-sound container on its own. Each call builds its own mixer so
  * the two sounds are never summed together. */
 static int fixture_mix_one_embedded(unsigned char *data,size_t size,uint32_t audo_chunk,
-                                    int sound,int16_t *out,int frames){
+                                    int sound,int classic_version,int16_t *out,int frames){
   GmlWin win={0};
+  win.classic_version=classic_version;
   win.data=data; win.size=(uint32_t)size; win.n_chunks=2;
   memcpy(win.chunks[0].name,"SOND",4); win.chunks[0].off=0; win.chunks[0].size=audo_chunk;
   memcpy(win.chunks[1].name,"AUDO",4); win.chunks[1].off=audo_chunk;
@@ -375,8 +376,8 @@ static int fixture_mix_one_embedded(unsigned char *data,size_t size,uint32_t aud
   return voice>=0;
 }
 
-/* Resource volume is a linear mixer gain. Applying another fixed attenuation after summing
- * voices would lower the asserted half-volume output. */
+/* The synthetic signal checks Studio's linear resource gain and the
+ * separate classic post-mix bus attenuation. */
 int expect_resource_volume_is_linear_mixer_gain(void){
   enum { frames=16 };
   unsigned char wave[128],data[512];
@@ -392,11 +393,13 @@ int expect_resource_volume_is_linear_mixer_gain(void){
   if(!size) return 0;
   float half=0.5f;
   memcpy(data+64+20,&half,sizeof half);
-  int16_t mixed[frames*2];
-  int ok=fixture_mix_one_embedded(data,size,audo_chunk,0,mixed,frames);
+  int16_t modern[frames*2],classic[frames*2];
+  int ok=fixture_mix_one_embedded(data,size,audo_chunk,0,0,modern,frames) &&
+         fixture_mix_one_embedded(data,size,audo_chunk,0,810,classic,frames);
   for(int index=0;ok && index<frames*2;index++)
-    if(mixed[index]!=6000){
-      fprintf(stderr,"resource volume mixed sample %d as %d instead of 6000\n",index,mixed[index]);
+    if(modern[index]!=6000 || classic[index]!=3300){
+      fprintf(stderr,"resource volume mixed sample %d as modern=%d classic=%d instead of 6000/3300\n",
+              index,modern[index],classic[index]);
       ok=0;
     }
   return ok;
@@ -428,8 +431,8 @@ int expect_embedded_eight_bit_wave_matches_its_sixteen_bit_signal(void){
     : 0;
   if(!size) return 0;
   int16_t narrow[frames*2],wide[frames*2];
-  int ok=fixture_mix_one_embedded(data,size,audo_chunk,0,narrow,frames) &&
-         fixture_mix_one_embedded(data,size,audo_chunk,1,wide,frames);
+  int ok=fixture_mix_one_embedded(data,size,audo_chunk,0,0,narrow,frames) &&
+         fixture_mix_one_embedded(data,size,audo_chunk,1,0,wide,frames);
   int audible=0;
   for(int index=0;ok && index<frames*2;index++){
     audible|=wide[index]!=0;
@@ -492,8 +495,8 @@ int expect_embedded_ms_adpcm_wave_matches_its_sixteen_bit_signal(void){
     : 0;
   if(!size) return 0;
   int16_t compressed[frames*2],wide[frames*2];
-  int ok=fixture_mix_one_embedded(data,size,audo_chunk,0,compressed,frames) &&
-         fixture_mix_one_embedded(data,size,audo_chunk,1,wide,frames);
+  int ok=fixture_mix_one_embedded(data,size,audo_chunk,0,0,compressed,frames) &&
+         fixture_mix_one_embedded(data,size,audo_chunk,1,0,wide,frames);
   int audible=0;
   for(int index=0;ok && index<frames*2;index++){
     audible|=wide[index]!=0;

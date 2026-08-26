@@ -58,6 +58,7 @@ typedef struct {
 } GmlVoice;
 
 #define GML_MAX_VOICES 32
+#define GML_CLASSIC_AUDIO_BUS_GAIN 0.55
 #define GML_MAX_AUDIOGROUPS 64
 #define GML_LOOSE_AUDIO_BYTES_MAX (64u*1024u*1024u)
 #define GML_DYNAMIC_SOUND_LIMIT 65536
@@ -1314,8 +1315,13 @@ static void audio_mix_audo(GmlAudio *a, int16_t *out, int frames){
     a->group_fade_frames[g]-=advance;
     if(!a->group_fade_frames[g]) a->group_gain[g]=a->group_target[g];
   }
+  /* Apply the classic post-mix attenuation at the bus, after authored
+   * resource gain. Studio retains a linear bus so its half-volume
+   * resource is not attenuated again. */
+  double bus_gain=(a->win && anygm_policy_uses_classic_runtime(a->win))
+    ? GML_CLASSIC_AUDIO_BUS_GAIN : 1.0;
   for(int i=0;i<nvals;i++)
-    out[i]=audio_soft_clip(mix[i]);
+    out[i]=audio_soft_clip((int32_t)lrint((double)mix[i]*bus_gain));
   if(mix!=stack_mix) free(mix);
 }
 
