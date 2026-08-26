@@ -134,6 +134,7 @@ static char *program_keep(ProgramFile *p, char *text){
  *   room <width> <height>
  *   caption <text>|"<text>"      the room's authored caption; quote it to carry outer spaces
  *   sprite <edge> [blank-second-frame]
+ *   background <edge>
  *   startup <source.gml>
  *   object <name> <sprite-slot|-1>
  *   event <type> <number> <source.gml>     applies to the most recent object
@@ -173,6 +174,9 @@ static int program_read(const char *path, ProgramFile *p){
       p->program.sprite_blank_frame=0;
       if(sscanf(line,"%31s %d %d",keyword,&p->program.sprite_size,
                 &p->program.sprite_blank_frame)<2) ok=0;
+    } else if(!strcmp(keyword,"background")){
+      if(sscanf(line,"%31s %d",keyword,&p->program.background_size)!=2 ||
+         p->program.background_size<=0) ok=0;
     } else if(!strcmp(keyword,"startup")){
       if(sscanf(line,"%31s %255s",keyword,a)!=2){ ok=0; }
       else {

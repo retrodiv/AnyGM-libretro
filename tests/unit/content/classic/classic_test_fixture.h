@@ -50,8 +50,8 @@ int build_project_fixture_source(unsigned version, const char *gml, Fixture *out
  *
  * Startup code reaches every rule that does not need an instance. Event ordering and destruction
  * order do need one, because an object nobody placed never runs. A program describes the smallest
- * project that can exercise those: one square sprite so that collision has a mask to test, objects
- * whose events carry authored source, and a room holding instances of them. */
+ * project that can exercise those: optional authored image resources, objects whose events carry
+ * authored source, and a room holding instances of them. */
 typedef struct {
   int event_type;    /* 0 create, 3 step, 4 collision, 8 draw */
   int event_number;  /* collision: the other object's slot; otherwise the event's own number */
@@ -74,6 +74,7 @@ typedef struct {
   const char *startup;             /* library creation code, run once before the room; may be NULL */
   int sprite_size;                 /* edge of the one opaque sprite in slot 0; 0 writes no sprite */
   int sprite_blank_frame;          /* add a second, fully transparent frame to that sprite */
+  int background_size;             /* edge of the one opaque background in slot 0; manifest only */
   const FixtureObject *objects;
   int object_count;
   const FixtureInstance *instances;

@@ -83,6 +83,39 @@ int expect_background_slot_dimensions(void){
   return ok;
 }
 
+int expect_background_exists_builtin(void){
+  GmlBg backgrounds[2]={{0}};
+  GmlRender render={0};
+  render.bg=backgrounds;
+  render.n_bg=2;
+  GmlVM vm={0};
+  vm.render=&render;
+  GmlVal first=vreal(0);
+  GmlVal last=vreal(1);
+  GmlVal negative=vreal(-1);
+  GmlVal past_end=vreal(2);
+  GmlVal first_exists=gml_builtin_call(&vm,"background_exists",&first,1);
+  GmlVal last_exists=gml_builtin_call(&vm,"background_exists",&last,1);
+  GmlVal negative_exists=gml_builtin_call(&vm,"background_exists",&negative,1);
+  GmlVal past_end_exists=gml_builtin_call(&vm,"background_exists",&past_end,1);
+  vm.render=NULL;
+  GmlVal without_renderer=gml_builtin_call(&vm,"background_exists",&first,1);
+  int ok=first_exists.t==V_REAL && first_exists.d==1 &&
+         last_exists.t==V_REAL && last_exists.d==1 &&
+         negative_exists.t==V_REAL && negative_exists.d==0 &&
+         past_end_exists.t==V_REAL && past_end_exists.d==0 &&
+         without_renderer.t==V_REAL && without_renderer.d==0;
+  if(!ok)
+    fprintf(stderr,
+            "background_exists mismatch: first=%.0f last=%.0f negative=%.0f past=%.0f absent=%.0f\n",
+            first_exists.t==V_REAL?first_exists.d:-1.0,
+            last_exists.t==V_REAL?last_exists.d:-1.0,
+            negative_exists.t==V_REAL?negative_exists.d:-1.0,
+            past_end_exists.t==V_REAL?past_end_exists.d:-1.0,
+            without_renderer.t==V_REAL?without_renderer.d:-1.0);
+  return ok;
+}
+
 int expect_classic_view_array_aliases(void){
   GmlVM vm={0};
   const char *canonical[]={

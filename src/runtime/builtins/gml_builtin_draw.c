@@ -1317,6 +1317,8 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
       GmlRenderBackgroundMetrics background;
       return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background));
     }
+    if(!strcmp(nm,"background_exists"))
+      return vreal(gml_render_background_metrics(R,(int)N(a,n,0),NULL));
     if(!strcmp(nm,"background_get_width")){ GmlRenderBackgroundMetrics background; return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background)?background.logical_width:0); }
     if(!strcmp(nm,"background_get_height")){ GmlRenderBackgroundMetrics background; return vreal(gml_render_background_metrics(R,(int)N(a,n,0),&background)?background.logical_height:0); }
     if(!strcmp(nm,"background_get_name")){ GmlRenderBackgroundMetrics background;

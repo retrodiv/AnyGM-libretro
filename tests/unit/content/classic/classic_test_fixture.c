@@ -528,6 +528,19 @@ static void fixture_sprite_payload(Fixture *f, int size, int blank_frame){
   fixture_u32(f,0);                          /* top */
 }
 
+static void fixture_background_payload(Fixture *f,int size){
+  fixture_u32(f,0); /* ordinary background, not an exported tileset sprite */
+  fixture_u32(f,(unsigned)size); fixture_u32(f,(unsigned)size); /* tile dimensions */
+  fixture_u32(f,0); fixture_u32(f,0); /* borders */
+  fixture_u32(f,0); fixture_u32(f,0); /* separations */
+  fixture_u32(f,800); /* image version */
+  fixture_u32(f,(unsigned)size); fixture_u32(f,(unsigned)size);
+  unsigned bytes=(unsigned)size*(unsigned)size*4u;
+  if(f->size+4+bytes>sizeof(f->data)) abort();
+  fixture_u32(f,bytes);
+  for(unsigned i=0;i<bytes;i++) f->data[f->size++]=255;
+}
+
 static void fixture_room_payload(Fixture *f, const FixtureProgram *program){
   fixture_string(f,program->room_caption?program->room_caption:"");
   fixture_u32(f,(unsigned)program->room_width);
@@ -592,6 +605,11 @@ static Fixture manifest_fixture_program(unsigned container_version, const Fixtur
       Fixture payload={{0},0};
       fixture_sprite_payload(&payload,program->sprite_size,program->sprite_blank_frame);
       fixture_manifest_resource(&f,"fixture_square",800,&payload);
+    } else if(type == GMLC_CLASSIC_BACKGROUND && program->background_size>0){
+      fixture_u32(&f,1);
+      Fixture payload={{0},0};
+      fixture_background_payload(&payload,program->background_size);
+      fixture_manifest_resource(&f,"fixture_background",800,&payload);
     } else if(type == GMLC_CLASSIC_OBJECT && program->object_count){
       fixture_u32(&f,(unsigned)program->object_count);
       for(int i=0;i<program->object_count;i++){
@@ -627,7 +645,7 @@ int build_project_fixture_program(unsigned version, const FixtureProgram *progra
   /* A first-party GM5 rule can use the legacy inline object and room records. The compact legacy
    * sprite record is deliberately not synthesized here; a program requiring one must continue to
    * use a manifest generation until that distinct record is represented explicitly. */
-  if(version==530 && program->sprite_size==0){
+  if(version==530 && program->sprite_size==0 && program->background_size==0){
     *out=legacy_fixture_build(version,0,NULL,program);
     return 1;
   }
