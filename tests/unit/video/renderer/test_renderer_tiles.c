@@ -826,24 +826,28 @@ static void check_first_generation_magnification_keeps_every_source_row(void){
   free(page.argb_cache);
 }
 
-static void check_application_surface_partial_alpha_coverage(void){
+static void check_first_generation_application_surface_partial_alpha_coverage(void){
   static const uint8_t rgba[4]={255,255,255,128};
   uint32_t application=0xff000000u;
   uint32_t presentation=0xff000000u;
   GmlRender render;
+  GmlWin content;
   GmlAtlas atlas;
   GmlTpag page;
   GmlBg background;
 
   memset(&render,0,sizeof render);
+  memset(&content,0,sizeof content);
   memset(&atlas,0,sizeof atlas);
   memset(&page,0,sizeof page);
   memset(&background,0,sizeof background);
+  content.bytecode=14;
   atlas.px=(uint8_t*)rgba;
   atlas.w=atlas.h=1;
   page.atlas=0;
   page.sw=page.sh=page.bw=page.bh=1;
   background.tpag=0;
+  render.win=&content;
   render.atlas=&atlas; render.n_atlas=1;
   render.tpag=&page; render.n_tpag=1;
   render.bg=&background; render.n_bg=1;
@@ -860,14 +864,15 @@ static void check_application_surface_partial_alpha_coverage(void){
   gml_draw_background(&render,0,0.0,0.0);
   expect((application>>24)<255u,
          "a partial atlas texel did not change application-surface alpha");
-  expect(!render.app_surface_opaque &&
-         !(render.fb_opaque_known && render.fb_all_opaque),
-         "a partial atlas draw left an opaque application-surface certificate");
+  /* First-generation surface sampling retains partial coverage while automatic
+   * screen presentation remains opaque and does not apply it again. */
+  expect(render.app_surface_opaque && render.fb_opaque_known && render.fb_all_opaque,
+         "first-generation partial coverage invalidated opaque screen presentation");
 
   gml_render_begin(&render,&presentation,1,1,0.0,0.0);
   gml_draw_surface_stretched(&render,0,0.0,0.0,1.0,1.0,0xffffffu,1.0);
-  expect((presentation&0x00ffffffu)<(application&0x00ffffffu),
-         "application-surface presentation skipped its second alpha composition");
+  expect((presentation&0x00ffffffu)==(application&0x00ffffffu),
+         "first-generation application-surface presentation applied coverage twice");
   free(page.argb_cache);
 }
 
@@ -1218,7 +1223,7 @@ int main(void){
   check_first_generation_magnification_keeps_every_source_row();
   check_classic_double_scale_layer_covers_its_last_row();
   check_modern_fractional_camera_tie();
-  check_application_surface_partial_alpha_coverage();
+  check_first_generation_application_surface_partial_alpha_coverage();
   check_first_generation_filtered_minification();
   check_repeated_filtered_draw_cache();
   check_modern_opaque_scaled_partial_alpha();

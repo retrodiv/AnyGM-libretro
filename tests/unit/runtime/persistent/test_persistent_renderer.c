@@ -814,6 +814,31 @@ static int expect_renderer_semantics_exit_code(void){
       return 1;
     }
   }
+  {
+    /* Second-generation Studio renders its application target as an opaque screen stage. The same
+     * fixed-function operations above may change its colour, but must not leave partial coverage
+     * for the automatic presentation to apply a second time. */
+    GmlRender render={0}; GmlSprite sprite={0}; GmlTpag page={0}; GmlAtlas atlas={0};
+    GmlWin win={0};
+    uint32_t application=0xFF009DAEu; uint8_t black[4]={0,0,0,255}; int frame=0;
+    gml_render_begin(&render,&application,1,1,0,0);
+    render.win=&win; win.bytecode=17;
+    gml_render_application_surface_bind(&render,&application,1,1,1);
+    render.spr=&sprite; render.n_spr=1; render.tpag=&page; render.n_tpag=1;
+    render.atlas=&atlas; render.n_atlas=1; render.alpha=1; render.alphablend=1;
+    render.color_write_mask=0x0F;
+    sprite.w=sprite.h=1; sprite.n_frames=1; sprite.frame=&frame;
+    page.sw=page.sh=page.bw=page.bh=1; page.atlas=0;
+    atlas.px=black; atlas.w=atlas.h=1; atlas.decode_attempted=1;
+    gml_draw_sprite_ext(&render,0,0,0,0,1,1,0,0xFFFFFF,0.04);
+    render.blendmode=2;
+    gml_draw_sprite_ext(&render,0,0,0,0,1,1,0,0xFFFFFF,0.10);
+    if((application>>24)!=0xFFu){
+      fprintf(stderr,"second-generation application target lost opacity: pixel=%08x\n",
+              application);
+      return 1;
+    }
+  }
   return 0;
 }
 

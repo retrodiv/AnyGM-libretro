@@ -601,14 +601,17 @@ typedef struct GmlRender {
   long     generated_sprite_log_count;
 } GmlRender;
 
-/* Preserve alpha on explicit surface targets and on a sampled application surface.
- * A classic direct frame is not a sampled application surface; preserving its
- * coverage would let subtract blending remove visible frame coverage. */
+/* Preserve alpha on explicit surface targets and on a first-generation Studio
+ * application surface sampled by later GUI draws. The second-generation
+ * automatic application target is an opaque screen stage, so its fixed-function
+ * draws must not reapply partial coverage during presentation. A classic direct
+ * frame is not a sampled application surface; preserving its coverage would
+ * let subtract blending remove visible frame coverage. */
 static inline int gml_render_target_preserves_alpha(const GmlRender *render){
   if(!render) return 0;
   if(render->target_sp>0) return 1;
   return render->app_surface && render->fb==render->app_surface &&
-         !anygm_policy_uses_classic_runtime(render->win);
+         anygm_policy_uses_first_generation_studio(render->win);
 }
 
 /* Renderer-private cross-unit operations. These are implementation seams, not
