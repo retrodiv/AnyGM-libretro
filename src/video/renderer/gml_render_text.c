@@ -811,6 +811,15 @@ static int classic_info_subpixel_glyph(GmlRender *r,GmlFont *font,GmlGlyph *glyp
   return 1;
 }
 
+/* Text alignment is quantized after the horizontal transform. Convert the integer half of the
+ * destination width back to the font's local coordinates so odd source widths keep the measured
+ * whole-pixel placement at scale one without moving one pixel right at larger scales. */
+static double centred_line_offset(int line_width, double xscale){
+  double magnitude=fabs(xscale);
+  if(!(magnitude>0.0) || !isfinite(magnitude)) return -(double)(line_width/2);
+  return -floor((double)line_width*magnitude/2.0)/magnitude;
+}
+
 /* Draw a string with a real FONT-chunk font: each glyph is an atlas sub-rect drawn top-aligned
  * at the baseline-top (GM bakes the ascent whitespace into the glyph height), advancing by shift.
  * A transformed draw rotates both the pen and each glyph quad around that pen. */
@@ -829,10 +838,8 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
   for(int li=0; *p || li==0; li++){
     const char *end; int lw=real_line_width(r,f,p,&end);
     double cx=0;
-    /* Use the same integer half-width as the sprite-font path. An odd advance centred
-     * on a fractional pen leaves destination rectangles fixed but changes the sampling phase
-     * within them, shifting texel selection in both sampling modes. */
-    if(r->halign==1) cx=-(double)(lw/2); else if(r->halign==2) cx=-lw;
+    /* Destination-space quantization also preserves the whole-pixel rule at scale one. */
+    if(r->halign==1) cx=centred_line_offset(lw,xs); else if(r->halign==2) cx=-lw;
     if(log_glyphs) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
       "[tg] line=%d lw=%d cx0=%.2f x=%.2f y=%.2f xs=%.3f ys=%.3f interp=%d\n",
       li,lw,cx,x,y,xs,ys,r->interp);
@@ -1516,8 +1523,7 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
   for(int li=0; *p || li==0; li++){
     const char *end; int lw=line_width(r,f,p,&end);
     double base_x=0;
-    /* Centred text offsets by an integer half-width, keeping odd-width lines on whole pixels. */
-    if(r->halign==1) base_x=-(double)(lw/2); else if(r->halign==2) base_x=1-lw;
+    if(r->halign==1) base_x=centred_line_offset(lw,xs); else if(r->halign==2) base_x=1-lw;
     double cx=base_x;
     while(p<end){
       unsigned cp=text_next_cp(&p);

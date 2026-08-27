@@ -853,7 +853,7 @@ int expect_centred_real_font_line_starts_on_a_whole_pixel(void){
    * even when destination rectangles are unchanged. */
   GmlWin win={0}; win.bytecode=17;                 /* modern layer semantics: the phased sampler */
   GmlRender render={0};
-  uint32_t framebuffer[16*2];
+  uint32_t framebuffer[32*2];
   /* Five glyph texels, white with an alpha pattern: two strokes and the gap between them. */
   uint8_t atlas_pixels[5*4]={
     0xFF,0xFF,0xFF,0xFF,  0xFF,0xFF,0xFF,0x00,  0xFF,0xFF,0xFF,0xFF,
@@ -861,7 +861,7 @@ int expect_centred_real_font_line_starts_on_a_whole_pixel(void){
   };
   GmlAtlas atlas={0}; atlas.px=atlas_pixels; atlas.w=5; atlas.h=1; atlas.decode_attempted=1;
   GmlGlyph glyphs[2]={ {0,0,3,1,3,0,'A'}, {3,0,2,1,2,0,'B'} };
-  gml_render_begin(&render,framebuffer,16,2,0,0);
+  gml_render_begin(&render,framebuffer,32,2,0,0);
   render.win=&win;
   render.atlas=&atlas; render.n_atlas=1;
   render.color=0x0000FF;                           /* Packed BBGGRR: red makes the tint visible. */
@@ -893,6 +893,26 @@ int expect_centred_real_font_line_starts_on_a_whole_pixel(void){
               filtered,framebuffer[7],framebuffer[8],framebuffer[9],framebuffer[10],
               framebuffer[11],framebuffer[12],framebuffer[13]);
     ok=ok&&mode_ok;
+  }
+  {
+    static const uint32_t scaled_expected[12]={
+      paper, ink, ink, paper, paper, ink, ink, ink, ink, ink, ink, paper
+    };
+    for(size_t cell=0;cell<sizeof framebuffer/sizeof framebuffer[0];cell++)
+      framebuffer[cell]=paper;
+    render.interp=0;
+    /* The destination is ten pixels wide. Its integer half is five destination pixels, even
+     * though that corresponds to two and a half source pixels at this scale. */
+    gml_draw_text_transformed(&render,20,0,"AB",2,1,0,render.color,render.alpha);
+    int scaled_ok=1;
+    for(int column=0;column<12;column++)
+      if(framebuffer[14+column]!=scaled_expected[column]) scaled_ok=0;
+    if(!scaled_ok){
+      fprintf(stderr,"scaled centred real-font line mismatch:");
+      for(int column=14;column<26;column++) fprintf(stderr," %d=%08x",column,framebuffer[column]);
+      fputc('\n',stderr);
+    }
+    ok=ok&&scaled_ok;
   }
   font->glyphs=NULL; font->n_glyphs=0;
   render.atlas=NULL; render.n_atlas=0;
