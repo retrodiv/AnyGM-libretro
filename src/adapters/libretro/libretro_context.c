@@ -8,6 +8,7 @@
 #include <string.h>
 #include <time.h>
 #include <limits.h>
+#include <errno.h>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -134,9 +135,34 @@ static uint64_t host_monotonic_time_ns(void *userdata){
 #endif
 }
 
+static const char *host_development_setting(void *userdata,const char *name);
+
+static int fixed_wall_time(AnygmWallTime *wall){
+  const char *setting=host_development_setting(NULL,"GML_WALL_TIME");
+  if(!setting||!setting[0]) return 0;
+  errno=0;
+  char *separator=NULL;
+  long long seconds=strtoll(setting,&separator,10);
+  if(errno||separator==setting||*separator!=',') return 0;
+  const char *offset_text=separator+1;
+  errno=0;
+  char *end=NULL;
+  long offset=strtol(offset_text,&end,10);
+  if(errno||end==offset_text||*end||offset<-1440||offset>1440) return 0;
+  wall->flags=ANYGM_WALL_TIME_OFFSET_VALID;
+  wall->unix_seconds=(int64_t)seconds;
+  wall->utc_offset_minutes=(int32_t)offset;
+  wall->reserved=0;
+  return 1;
+}
+
 static AnygmResult host_wall_time(void *userdata,AnygmWallTime *wall){
   (void)userdata;
   if(!wall || wall->struct_size<sizeof *wall) return ANYGM_ERROR_INVALID_ARGUMENT;
+  /* A recorded route has to be able to state the external clock it observed. Without this, a
+   * payload branching on current_hour is two different runs under one case name. The offset is
+   * explicit as well as the Unix instant so the same route answers identically on every host. */
+  if(fixed_wall_time(wall)) return ANYGM_OK;
   time_t now=time(NULL);
   if(now==(time_t)-1) return ANYGM_ERROR_UNSUPPORTED;
   struct tm local_value,utc_value;

@@ -142,7 +142,7 @@ endif
 CONTRACT_TESTS := $(TEST_DIR)/dummy_host $(TEST_DIR)/test_libretro_state_transport \
 	$(TEST_DIR)/test_libretro_vfs_transport $(TEST_DIR)/test_libretro_option_defaults \
 	$(TEST_DIR)/test_libretro_keyboard_source $(TEST_DIR)/test_libretro_gamepad_ports \
-	$(TEST_DIR)/test_libretro_locale_variables \
+	$(TEST_DIR)/test_libretro_locale_variables $(TEST_DIR)/test_libretro_wall_time \
 	$(TEST_DIR)/test_libretro_content_directories
 ifneq ($(HARDWARE_RENDER),0)
 CONTRACT_TESTS += $(TEST_DIR)/test_libretro_hardware_render
@@ -481,6 +481,7 @@ contract-check: $(CONTRACT_TESTS)
 	$(TEST_DIR)/test_libretro_keyboard_source
 	$(TEST_DIR)/test_libretro_gamepad_ports
 	$(TEST_DIR)/test_libretro_locale_variables
+	$(TEST_DIR)/test_libretro_wall_time
 	$(TEST_DIR)/test_libretro_content_directories
 	$(if $(filter-out 0,$(HARDWARE_RENDER)),$(TEST_DIR)/test_libretro_hardware_render,true)
 
@@ -595,6 +596,11 @@ $(TEST_DIR)/test_libretro_gamepad_ports: tests/contract/libretro_gamepad_ports.c
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
 
 $(TEST_DIR)/test_libretro_locale_variables: tests/contract/libretro_locale_variables.c \
+	src/adapters/libretro/libretro_context.c
+	mkdir -p $(dir $@)
+	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
+
+$(TEST_DIR)/test_libretro_wall_time: tests/contract/libretro_wall_time.c \
 	src/adapters/libretro/libretro_context.c
 	mkdir -p $(dir $@)
 	$(CC) $(LIBRETRO_CPPFLAGS) $(CFLAGS) $^ -o $@
