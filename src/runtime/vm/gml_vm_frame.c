@@ -135,7 +135,11 @@ static void advance_instance_animation(GmlVM *vm,GmlInstance *in,
     double step=(vm->win && !classic_runtime && nf>0)
       ? gml_sprite_animation_delta(render,(int)in->sprite_index,in->image_speed,gml_room_speed(vm))
       : in->image_speed;
-    double ni=in->image_index+step;
+    /* Non-classic animation accumulates at float precision before range normalization.
+     * Fractional steps can reach a wrap boundary on a different update than double arithmetic;
+     * retain the existing >= boundary test for exact integer steps. */
+    double ni=classic_runtime ? (in->image_index+step)
+                              : (double)((float)in->image_index+(float)step);
     /* Preserve the accumulated fractional index until wrap and display-frame selection. */
     int wrapped=nf>0 && ((ni>=nf)||(ni<0));
     if(nf>0){ while(ni>=nf) ni-=nf; while(ni<0) ni+=nf; }
