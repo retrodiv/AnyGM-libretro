@@ -117,31 +117,14 @@ static void negotiate_serialization(void){
       (quirks&RETRO_SERIALIZATION_QUIRK_FRONT_VARIABLE_SIZE)!=0;
 }
 
-static size_t fixed_state_capacity(size_t actual,bool compact_startup,
-                                   size_t compact_frame_capacity){
+static size_t fixed_state_capacity(size_t actual,bool compact_startup){
   const size_t margin=512u*1024u;
   /* Before the first frame, a cold ordinary raster can still understate the render and run-time
    * tables that gameplay will populate. Fixed frontends cannot enlarge the ring they allocate
    * from this answer, so keep the established 4 MiB session reserve even when the cold state is
-   * small. A deliberately compact large-frame ring starts at one MiB, then the lossless picture
-   * ceiling and any known mutable render allocations raise it only as required. */
+   * small. A deliberately compact large-frame ring starts at one MiB, then its frame-free hint
+   * and any known mutable render allocations raise it only as required. */
   size_t floor=compact_startup?1u*1024u*1024u:4u*1024u*1024u;
-  /* Compact means bounded by the lossless encoded picture, not frame-free by construction. Cover
-   * the required state plus that picture so a detailed raster can remain exact; the one-MiB floor
-   * handles smaller pictures, while the growth formula below handles required runtime tables. */
-  if(compact_startup){
-    size_t exact=SIZE_MAX-actual<compact_frame_capacity?
-      SIZE_MAX:actual+compact_frame_capacity;
-    /* A cold snapshot cannot predict small language-level growth. Round a moderate exact-frame
-     * floor to the next MiB so a fixed ring has useful headroom without changing the one-MiB
-     * result for compact source-sized pictures. */
-    const size_t granularity=1u*1024u*1024u;
-    if(exact!=SIZE_MAX){
-      exact=SIZE_MAX-exact<granularity-1u?
-        SIZE_MAX:(exact+granularity-1u)&~(granularity-1u);
-    }
-    if(exact>floor) floor=exact;
-  }
   if(actual>(SIZE_MAX-margin)/2u) return SIZE_MAX;
   size_t capacity=actual*2u+margin;
   return capacity<floor?floor:capacity;
@@ -247,8 +230,9 @@ void retro_reset(void){
     if(anygm_reset(g_libretro.engine)==ANYGM_OK){
       /* RetroArch keeps its rewind ring across Reset and checks its rewind chord before the newly
        * reset core runs. If the chord used while leaving the menu is still active, an old compact
-       * ring state would replace the reset immediately. Complete manual states remain valid; only
-       * that distinguishable pre-frame compact-ring load is held behind the first new frame. */
+       * ring state would replace the reset immediately. A separately sized complete state remains
+       * distinguishable and valid; the ambiguous compact-capacity load is held behind the first
+       * new frame. */
       g_libretro.reset_pending_frame=true;
       g_libretro.reset_ring_rejection_reported=false;
     }
@@ -424,36 +408,23 @@ size_t retro_serialize_size(void){
    * and doing it before every rewind snapshot duplicates the most expensive half of saving it. */
   if(g_libretro.fixed_state_capacity && !g_libretro.variable_state_supported)
     return g_libretro.fixed_state_capacity;
-  /* An acknowledged variable-size frontend may establish a smaller pre-frame rewind ring from
-   * only the required sections; the completed frame can dwarf them when a virtual monitor is
-   * active. A fixed frontend instead receives the complete ceiling in this first answer. After a
-   * frame exists, acknowledged frontends receive a capacity covering both the current required
-   * state and the conservative frame ceiling, while an earlier smaller ring is recognized by the
-   * capacity it passes to retro_serialize. */
+  /* A large completed-frame ceiling may establish a smaller pre-frame rewind ring from only the
+   * required sections. A fixed frontend keeps that capacity for the complete loaded session;
+   * acknowledged variable-size frontends may grow later. In either contract, an earlier compact
+   * ring is recognized by the capacity it passes to retro_serialize. */
   size_t actual=anygm_state_resume_size(g_libretro.engine);
   size_t resume_hint=anygm_state_resume_capacity_hint(g_libretro.engine);
   if(resume_hint>actual) actual=resume_hint;
   bool compact_startup=false;
-  size_t compact_frame_capacity=0;
-  /* Preserve completed-frame rewind while its worst-case storage is modest. For an acknowledged
-   * variable-size frontend, once the optional picture alone adds at least 768 KiB, copying a
-   * pessimistic run ceiling and its derived reserve into every startup rewind slot dominates the
-   * high-frequency transport. Its compact capacity is instead based on the lossless raw ceiling
-   * and known required allocations; an unacknowledged frontend never enters this branch. */
+  /* Preserve completed-frame rewind while its worst-case storage is modest. Once the optional
+   * picture adds at least the ordinary four-MiB session reserve, copying its pessimistic ceiling
+   * into every fixed rewind slot dominates the high-frequency transport. A smaller picture stays
+   * in that ordinary reserve so a fixed frontend preserves exact visible rewind and still covers
+   * language-level growth that a cold state cannot predict. */
   if(!g_libretro.frame_completed){
-    const size_t minimum_saving=768u*1024u;
-    const size_t maximum_exact_compact_frame=2u*1024u*1024u;
+    const size_t minimum_saving=4u*1024u*1024u;
     size_t complete_hint=anygm_state_capacity_hint(g_libretro.engine);
-    /* A frame-free snapshot cannot visibly rewind in a fixed frontend: the frontend restores
-     * slots without advancing the core, so there is no draw in which to reconstruct the omitted
-     * picture. It also cannot distinguish a compact rewind push from a manual save. Reserve the
-     * complete ceiling in the one session capacity unless the frontend explicitly acknowledged
-     * variable sizes; only that contract can keep a separately sized compact startup ring while
-     * later ordinary saves grow to the complete representation. */
-    compact_startup=g_libretro.variable_state_supported &&
-      complete_hint>actual && complete_hint-actual>=minimum_saving;
-    if(compact_startup && complete_hint<maximum_exact_compact_frame)
-      compact_frame_capacity=complete_hint;
+    compact_startup=complete_hint>actual && complete_hint-actual>=minimum_saving;
     if(!compact_startup && complete_hint>actual) actual=complete_hint;
   }
   if(g_libretro.frame_completed){
@@ -467,8 +438,7 @@ size_t retro_serialize_size(void){
   if(!g_libretro.fixed_state_capacity ||
      (g_libretro.variable_state_supported && actual>g_libretro.fixed_state_capacity)){
     size_t previous=g_libretro.fixed_state_capacity;
-    g_libretro.fixed_state_capacity=
-      fixed_state_capacity(actual,compact_startup,compact_frame_capacity);
+    g_libretro.fixed_state_capacity=fixed_state_capacity(actual,compact_startup);
     /* Acknowledged growth is unusual enough to report once without flooding repeated queries. */
     if(previous && !g_libretro.state_capacity_growth_reported){
       g_libretro.state_capacity_growth_reported=true;

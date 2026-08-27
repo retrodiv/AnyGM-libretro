@@ -155,32 +155,34 @@ the exact current size and writes into a caller-owned buffer.
 The libretro adapter advertises the variable-size serialization quirk and records whether the
 frontend acknowledges it. Requesting the quirk is not sufficient: a declined or unsupported
 request has the baseline fixed-size contract. Its first answer covers the remembered frame-free
-peak, mutable render allocations already known at load, and the conservative completed-frame
-ceiling. That answer remains fixed for the loaded session. Later queries return it without
-traversing the runtime state again, and every save written into that capacity retains the completed
-picture. This is required for visible rewind because a frontend may present a restored slot without
-running a frame, and the libretro ABI does not identify whether an ordinary serialization call is a
-rewind push or a manual save.
+peak and mutable render allocations already known at load. When the conservative completed-frame
+ceiling is modest it is covered too. When that ceiling would dominate every rewind slot, the first
+answer instead selects one compact capacity that remains fixed for the loaded session. Later
+queries return it without traversing the runtime state again. Every save at that declared capacity
+first attempts the complete encoded picture and falls back to the explicit frame-free form only
+when the picture does not fit. The representation cannot depend on whether the caller is a rewind
+push or a manual save because the libretro ABI does not identify those consumers.
 
-A frontend that explicitly acknowledges variable sizes may receive a compact pre-frame ring. When
-the completed-frame ceiling would add at least 768 KiB, the startup capacity is one MiB or larger
-and always covers the predicted required state. A moderate raw-frame ceiling below 2 MiB joins that
-floor so the complete picture remains exact; that combined floor rounds to the next MiB to retain
-bounded cold-to-gameplay growth. Each snapshot first writes the complete encoded state and falls
-back to the explicit frame-free form only when the encoded picture exceeds that earlier slot. Later
-ordinary size queries grow monotonically to the conservative complete-state capacity, so newly
-sized saves retain the exact completed picture while older compact ring slots remain loadable.
+A frontend that explicitly acknowledges variable sizes uses the same compact pre-frame policy.
+The compact path begins only when omitting the conservative completed-frame ceiling saves at least
+the ordinary four-MiB session reserve. Smaller pictures remain in that ordinary capacity, keeping
+visible rewind exact while retaining headroom for required simulation state that grows after a
+cold load. A compact startup capacity is one MiB or larger and always covers the predicted required
+state. Later ordinary size queries grow monotonically to the conservative complete-state capacity,
+so newly sized saves retain the exact completed picture while older compact ring slots remain
+loadable.
 
 An ordinary complete-capacity session reserves at least 4 MiB because a cold load can precede the
-render and language-level tables populated by gameplay. The acknowledged compact large-frame path
-instead reserves at least 1 MiB; its frame-free capacity hint describes the startup ring while that
-separate floor covers bounded cold-to-gameplay growth. This adapter capacity policy changes neither
+render and language-level tables populated by gameplay. The compact large-frame path instead
+reserves at least 1 MiB; its frame-free capacity hint describes the startup ring while that separate
+floor covers bounded cold-to-gameplay growth. This adapter capacity policy changes neither
 the logical size in the canonical header nor the portable state format. Explicit portable hosts
 may still request the frame-free resume representation directly.
 
 `make contract-check` exercises acknowledged growth, fixed declined and unsupported frontends,
-compact variable-size startup rings, complete fixed save-state capacity, unload reset, exact
-roundtrips, and the transport blocks used by rewind-capable frontends. The graphics-state
+compact startup rings, exact-when-fitting and frame-free fallback representations, Reset under all
+three negotiations, unload reset, exact roundtrips, and the transport blocks used by
+rewind-capable frontends. The graphics-state
 integration case separately proves that an explicit frame-free state roundtrips and resumes while
 the complete form remains available.
 
