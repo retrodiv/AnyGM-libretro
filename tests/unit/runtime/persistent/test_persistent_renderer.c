@@ -953,6 +953,48 @@ int expect_centred_real_font_line_starts_on_a_whole_pixel(void){
     }
     ok=ok&&scaled_ok;
   }
+  {
+    for(size_t cell=0;cell<sizeof framebuffer/sizeof framebuffer[0];cell++)
+      framebuffer[cell]=paper;
+    render.interp=0;
+    /* A world-to-target map magnifies rasterization but is not an authored text transform. At
+     * authored scale one, the odd five-pixel line therefore keeps its integer source-space half:
+     * x=4 becomes target x=16 and the first glyph starts at target x=8, not x=6. */
+    gml_render_world_set_logical_extent(&render,8,2);
+    gml_draw_text(&render,4,0,"AB");
+    int mapped_ok=framebuffer[6]==paper && framebuffer[7]==paper &&
+                  framebuffer[8]==ink && framebuffer[11]==ink &&
+                  framebuffer[12]==paper && framebuffer[15]==paper &&
+                  framebuffer[16]==ink && framebuffer[27]==ink &&
+                  framebuffer[28]==paper;
+    if(!mapped_ok){
+      fprintf(stderr,"mapped centred real-font line mismatch:");
+      for(int column=6;column<30;column++) fprintf(stderr," %d=%08x",column,framebuffer[column]);
+      fputc('\n',stderr);
+    }
+    ok=ok&&mapped_ok;
+  }
+  {
+    for(size_t cell=0;cell<sizeof framebuffer/sizeof framebuffer[0];cell++)
+      framebuffer[cell]=paper;
+    render.interp=0;
+    /* A presentation map that cancels an authored reduction keeps the source-pixel layout grid.
+     * Here authored 0.25x and world 4x make an effective raster scale of one, so the odd line uses
+     * the ordinary integer half rather than jumping in four-source-pixel increments. */
+    gml_render_begin(&render,framebuffer,32,2,0,0);
+    gml_render_world_set_logical_extent(&render,8,2);
+    gml_draw_text_transformed(&render,4,0,"AB",0.25,1,0,render.color,render.alpha);
+    int reduced_ok=framebuffer[13]==paper && framebuffer[14]==ink &&
+                   framebuffer[15]==paper && framebuffer[16]==ink &&
+                   framebuffer[17]==ink && framebuffer[18]==ink &&
+                   framebuffer[19]==paper;
+    if(!reduced_ok){
+      fprintf(stderr,"reduced mapped centred real-font line mismatch:");
+      for(int column=12;column<21;column++) fprintf(stderr," %d=%08x",column,framebuffer[column]);
+      fputc('\n',stderr);
+    }
+    ok=ok&&reduced_ok;
+  }
   font->glyphs=NULL; font->n_glyphs=0;
   render.atlas=NULL; render.n_atlas=0;
   gml_render_free(&render);

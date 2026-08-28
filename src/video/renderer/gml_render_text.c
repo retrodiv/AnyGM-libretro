@@ -811,9 +811,12 @@ static int classic_info_subpixel_glyph(GmlRender *r,GmlFont *font,GmlGlyph *glyp
   return 1;
 }
 
-/* Text alignment is quantized after the horizontal transform. Convert the integer half of the
- * destination width back to the font's local coordinates so odd source widths keep the measured
- * whole-pixel placement at scale one without moving one pixel right at larger scales. */
+/* Text alignment is quantized after the authored horizontal transform. Convert the integer half
+ * of that transformed width back to the font's local coordinates so odd source widths keep the
+ * measured whole-pixel placement at scale one without moving one pixel right at larger scales.
+ * Presentation scaling does not magnify this layout scale. When it cancels an authored reduction
+ * and leaves at least a one-pixel raster, retain the source-pixel grid instead of quantizing in
+ * multi-source-pixel jumps. */
 static double centred_line_offset(int line_width, double xscale){
   double magnitude=fabs(xscale);
   if(!(magnitude>0.0) || !isfinite(magnitude)) return -(double)(line_width/2);
@@ -824,8 +827,9 @@ static double centred_line_offset(int line_width, double xscale){
  * at the baseline-top (GM bakes the ascent whitespace into the glyph height), advancing by shift.
  * A transformed draw rotates both the pen and each glyph quad around that pen. */
 static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const char *str,
-                           double xs, double ys, double rotation, double ca, double sa, int use_rot,
-                           uint32_t blend, double alpha, AnygmTextLayoutFamily family){
+                           double xs, double ys, double alignment_xscale, double rotation,
+                           double ca, double sa, int use_rot, uint32_t blend, double alpha,
+                           AnygmTextLayoutFamily family){
   int lh=f->line_height>0? f->line_height:12;
   int ah=f->align_height>0?f->align_height:lh;
   int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;}
@@ -838,8 +842,8 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
   for(int li=0; *p || li==0; li++){
     const char *end; int lw=real_line_width(r,f,p,&end);
     double cx=0;
-    /* Destination-space quantization also preserves the whole-pixel rule at scale one. */
-    if(r->halign==1) cx=centred_line_offset(lw,xs); else if(r->halign==2) cx=-lw;
+    if(r->halign==1) cx=centred_line_offset(lw,alignment_xscale);
+    else if(r->halign==2) cx=-lw;
     if(log_glyphs) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
       "[tg] line=%d lw=%d cx0=%.2f x=%.2f y=%.2f xs=%.3f ys=%.3f interp=%d\n",
       li,lw,cx,x,y,xs,ys,r->interp);
@@ -1494,8 +1498,12 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
                                double x, double y, const char *str,
                                double xs, double ys, double rot, uint32_t blend, double alpha,
                                AnygmTextLayoutFamily family){
+  double authored_xscale=xs;
   gml_render_draw_map_point(r,&x,&y);
   gml_render_draw_map_scale(r,&xs,&ys);
+  double alignment_xscale=authored_xscale;
+  if(fabs(authored_xscale)<1.0 && fabs(xs)>=1.0)
+    alignment_xscale=copysign(1.0,authored_xscale);
   if(!f||!str) return;
   if(alpha>1) alpha=1; else if(alpha<0) alpha=0;
   if(xs==0||ys==0||alpha<=0) return;
@@ -1505,7 +1513,7 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
   if(render_setting(r,"GML_LOG_TEXT")) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[text] x=%.0f y=%.0f font=%d halign=%d valign=%d scale=(%.2f,%.2f) rot=%.1f col=%06X a=%.2f \"%s\"\n",
     x,y,r->font,r->halign,r->valign,xs,ys,rr,(unsigned)(blend&0xffffff),alpha,str);
   if(f->real){
-    draw_text_real(r,f,x,y,str,xs,ys,rr,ca,sa,use_rot,blend,alpha,family);
+    draw_text_real(r,f,x,y,str,xs,ys,alignment_xscale,rr,ca,sa,use_rot,blend,alpha,family);
     return;
   }
   if(f->sprite<0 || f->sprite>=r->n_spr) return;
@@ -1523,7 +1531,8 @@ static void draw_text_transformed_font(GmlRender *r, GmlFont *f,
   for(int li=0; *p || li==0; li++){
     const char *end; int lw=line_width(r,f,p,&end);
     double base_x=0;
-    if(r->halign==1) base_x=centred_line_offset(lw,xs); else if(r->halign==2) base_x=1-lw;
+    if(r->halign==1) base_x=centred_line_offset(lw,alignment_xscale);
+    else if(r->halign==2) base_x=1-lw;
     double cx=base_x;
     while(p<end){
       unsigned cp=text_next_cp(&p);
