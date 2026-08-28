@@ -3268,6 +3268,12 @@ static void blit_phase_plane(GmlRender *r, uint32_t *plane, GmlTpag *t,
   r->fb_all_opaque=saved_opaque;
   r->fb_all_transparent=saved_transparent;
 }
+static inline const uint8_t *atlas_clamped_sample(
+    const GmlAtlas *atlas,int x,int y){
+  if(x<0) x=0; else if(x>=atlas->w) x=atlas->w-1;
+  if(y<0) y=0; else if(y>=atlas->h) y=atlas->h-1;
+  return atlas->px+((size_t)y*atlas->w+x)*4u;
+}
 static uint32_t *interp_phase_pixels(GmlRender *r, GmlTpag *t, GmlAtlas *atlas,
                                      int phase_x, int phase_y,
                                      int projected_x, int projected_y,
@@ -3275,7 +3281,7 @@ static uint32_t *interp_phase_pixels(GmlRender *r, GmlTpag *t, GmlAtlas *atlas,
                                      double edge_x0, double edge_x1,
                                      double edge_y0, double edge_y1){
   enum { INTERP_SUBRECT_MAX_ENTRIES=2048, INTERP_SUBRECT_MAX_BYTES=16*1024*1024 };
-  if(!r || !t) return NULL;
+  if(!r || !t || !atlas || !atlas->px || atlas->w<=0 || atlas->h<=0) return NULL;
   int slot=phase_x?(phase_y?2:0):1;
   int active_projected_x=phase_x && projected_x;
   int active_projected_y=phase_y && projected_y;
@@ -3353,10 +3359,10 @@ static uint32_t *interp_phase_pixels(GmlRender *r, GmlTpag *t, GmlAtlas *atlas,
         if(xa<0) xa=0; else if(xa>=t->sw) xa=t->sw-1;
         if(xb<0) xb=0; else if(xb>=t->sw) xb=t->sw-1;
       }
-      const uint8_t *p00=atlas->px+((size_t)(t->sy+ya)*atlas->w+t->sx+xa)*4;
-      const uint8_t *p01=atlas->px+((size_t)(t->sy+ya)*atlas->w+t->sx+xb)*4;
-      const uint8_t *p10=atlas->px+((size_t)(t->sy+yb)*atlas->w+t->sx+xa)*4;
-      const uint8_t *p11=atlas->px+((size_t)(t->sy+yb)*atlas->w+t->sx+xb)*4;
+      const uint8_t *p00=atlas_clamped_sample(atlas,t->sx+xa,t->sy+ya);
+      const uint8_t *p01=atlas_clamped_sample(atlas,t->sx+xb,t->sy+ya);
+      const uint8_t *p10=atlas_clamped_sample(atlas,t->sx+xa,t->sy+yb);
+      const uint8_t *p11=atlas_clamped_sample(atlas,t->sx+xb,t->sy+yb);
       int sr,sg,sb,aa;
       if(!active_projected){
         sr=p00[0];sg=p00[1];sb=p00[2];aa=p00[3];
@@ -3405,6 +3411,7 @@ static int classic_interp_projected_axis(double camera, int logical_size){
 static const uint8_t *interp_tpag_sample(const GmlAtlas *atlas, const GmlTpag *t,
                                          int x, int y, int logical_margin){
   static const uint8_t transparent[4]={0,0,0,0};
+  if(!atlas || !atlas->px || atlas->w<=0 || atlas->h<=0 || !t) return transparent;
   if(logical_margin){
     int right=t->bw-t->tx-t->sw;
     int bottom=t->bh-t->ty-t->sh;
@@ -3418,7 +3425,7 @@ static const uint8_t *interp_tpag_sample(const GmlAtlas *atlas, const GmlTpag *t
   }
   if(x<0) x=0; else if(x>=t->sw) x=t->sw-1;
   if(y<0) y=0; else if(y>=t->sh) y=t->sh-1;
-  return atlas->px+((size_t)(t->sy+y)*atlas->w+t->sx+x)*4;
+  return atlas_clamped_sample(atlas,t->sx+x,t->sy+y);
 }
 static inline void interp_tpag_filtered_sample(
     const GmlAtlas *atlas,const GmlTpag *tpag,
