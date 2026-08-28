@@ -289,7 +289,7 @@ static int render_state_read(GmlRender *render,CoreR *s){
     int w=cr_i32(s), h=cr_i32(s), frames=cr_i32(s), ox=cr_i32(s), oy=cr_i32(s);
     int ml=cr_i32(s), mt=cr_i32(s), mr=cr_i32(s), mb=cr_i32(s);
     int kind=cr_i32(s), tolerance=cr_i32(s);
-    if(id<0 || w<=0 || h<=0 || frames<=0 || frames>4096 || w>4096 || h>4096){ s->ok=0; return 0; }
+    if(id<0 || w<=0 || h<=0 || frames<=0){ s->ok=0; return 0; }
     if(id>=seen_cap){
       int nc=id+256;
       uint8_t *ns=realloc(seen_runtime,(size_t)nc);
@@ -300,6 +300,10 @@ static int render_state_read(GmlRender *render,CoreR *s){
     seen_runtime[id]=1;
     int mode = cr_i32(s);
     if(mode==1){
+      /* File-backed runtime sprites must remain within the image decoder's dimensions. Inline
+       * sprites can be taller: scaled authored pages and surface copies already produce them, so
+       * their bound is the complete pixel product carried by this section rather than one axis. */
+      if(w>4096 || h>4096 || frames>4096){ free(seen_runtime); s->ok=0; return 0; }
       int root=cr_i32(s);
       int plen=cr_i32(s);
       if(plen<0 || plen>4095 || root<GML_RUNTIME_PATH_ABSOLUTE || root>GML_RUNTIME_PATH_SAVE){
@@ -335,10 +339,12 @@ static int render_state_read(GmlRender *render,CoreR *s){
       GmlSprite *chk=&render->spr[got];
       if(chk->w!=w || chk->h!=h || chk->n_frames!=frames){ free(seen_runtime); s->ok=0; return 0; }
     } else if(mode==0){
-      uint64_t pixn=(uint64_t)w*(uint64_t)h*(uint64_t)frames;
       size_t rem=s->pos<=s->cap ? s->cap-s->pos : 0;
-      if(pixn > SIZE_MAX/4 || (size_t)pixn*4 > rem){ free(seen_runtime); s->ok=0; return 0; }
-      size_t bytes=(size_t)pixn*4;
+      size_t pixels=0;
+      if(!state_bounded_product3((size_t)w,(size_t)h,(size_t)frames,rem/4,&pixels)){
+        free(seen_runtime); s->ok=0; return 0;
+      }
+      size_t bytes=pixels*4;
       uint8_t *rgba=malloc(bytes);
       if(!rgba){ free(seen_runtime); s->ok=0; return 0; }
       cr_raw(s,rgba,bytes);
@@ -355,7 +361,7 @@ static int render_state_read(GmlRender *render,CoreR *s){
     if(id>=0 && id<render->n_spr){
       GmlSprite *sp=&render->spr[id];
       int mask_rowb=cr_i32(s), mask_count=cr_i32(s);
-      int expected_rowb=(w+7)/8;
+      int expected_rowb=(int)(((unsigned)w+7u)/8u);
       if(mask_rowb<0 || mask_count<0 ||
          ((mask_rowb==0)!=(mask_count==0)) ||
          (mask_rowb && (mask_rowb!=expected_rowb || mask_count>frames))){

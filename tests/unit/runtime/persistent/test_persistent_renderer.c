@@ -331,6 +331,45 @@ int expect_runtime_sprite_state_preserves_collision_extent(void){
   return ok;
 }
 
+int expect_runtime_sprite_state_accepts_large_inline_dimension(void){
+  enum { WIDTH=2, HEIGHT=4097 };
+  GmlRender render={0};
+  render.alpha=1;
+  render.font=-1;
+  render.alphablend=1;
+  render.circle_precision=24;
+  render.app_draw_enable=1;
+  render.next_surface_id=1;
+  uint8_t *rgba=calloc((size_t)WIDTH*HEIGHT,4u);
+  render.spr=calloc(1,sizeof(*render.spr));
+  render.n_spr=render.base_n_spr=render.spr_cap=render.spr?1:0;
+  int sprite=rgba && render.spr &&
+    gml_sprite_replace_from_rgba_frames(&render,0,rgba,WIDTH,HEIGHT,1,0,0)?0:-1;
+  if(sprite<0) free(rgba);
+  size_t size=gml_render_state_size(&render,0),written=0,used=0,repeated=0;
+  uint8_t *before=malloc(size?size:1u);
+  uint8_t *after=malloc(size?size:1u);
+  int ok=sprite==0 && before && after &&
+    gml_render_state_save(&render,0,before,size,&written) && written==size &&
+    gml_render_state_load(&render,before,written,&used) && used==written &&
+    render.spr[sprite].w==WIDTH && render.spr[sprite].h==HEIGHT &&
+    render.spr[sprite].n_frames==1 &&
+    gml_render_state_save(&render,0,after,size,&repeated) && repeated==written &&
+    !memcmp(before,after,written);
+  if(!ok)
+    fprintf(stderr,
+            "large inline runtime sprite state mismatch: sprite=%d dimensions=%d,%d,%d "
+            "size=%zu/%zu/%zu used=%zu\n",
+            sprite,sprite>=0 && sprite<render.n_spr?render.spr[sprite].w:-1,
+            sprite>=0 && sprite<render.n_spr?render.spr[sprite].h:-1,
+            sprite>=0 && sprite<render.n_spr?render.spr[sprite].n_frames:-1,
+            size,written,repeated,used);
+  free(before);
+  free(after);
+  gml_render_free(&render);
+  return ok;
+}
+
 
 
 static int expect_renderer_semantics_exit_code(void){

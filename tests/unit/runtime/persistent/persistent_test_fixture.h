@@ -90,6 +90,7 @@ int expect_a_wrapped_line_drops_the_space_it_broke_at(void);
 int expect_a_font_kerning_pair_moves_the_pen(void);
 int expect_legacy_sprite_assign_builtin(void);
 int expect_runtime_sprite_state_preserves_collision_extent(void);
+int expect_runtime_sprite_state_accepts_large_inline_dimension(void);
 int expect_renderer_semantics(void);
 
 #endif
