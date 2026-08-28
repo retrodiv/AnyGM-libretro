@@ -52,6 +52,7 @@ int main(int argc,char **argv){
   static const AnygmTestCase ds_cases[]={
     {"text_roundtrip",expect_ds_list_text_roundtrip},
     {"priority_mutation",expect_ds_priority_lookup_mutation},
+    {"priority_native_read",expect_ds_priority_native_read},
   };
   static const AnygmTestCase audio_cases[]={
     {"group_paths",expect_audio_group_paths},

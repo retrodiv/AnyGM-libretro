@@ -73,3 +73,48 @@ int expect_ds_priority_lookup_mutation(void){
   if(!ok) fprintf(stderr,"ds_priority lookup/mutation fixture failed\n");
   return ok;
 }
+
+
+int expect_ds_priority_native_read(void){
+  GmlVM vm={0};
+  GmlVal queue=gml_builtin_call(&vm,"ds_priority_create",NULL,0);
+  GmlVal sentinel[3]={queue,vstr("sentinel"),vreal(99)};
+  (void)gml_builtin_call(&vm,"ds_priority_add",sentinel,3);
+
+  /* Native marker 503, two priorities first, then their values. */
+  GmlVal read_args[2]={
+    queue,
+    vstr("f701000002000000"
+         "000000000000000000001440"
+         "0000000000000000000004c0"
+         "000000000000000000001c40"
+         "010000000100000061")
+  };
+  (void)gml_builtin_call(&vm,"ds_priority_read",read_args,2);
+  GmlVal first[2]={queue,vstr("a")};
+  GmlVal seven[2]={queue,vreal(7)};
+  GmlVal size=gml_builtin_call(&vm,"ds_priority_size",&queue,1);
+  GmlVal first_priority=gml_builtin_call(&vm,"ds_priority_find_priority",first,2);
+  GmlVal seven_priority=gml_builtin_call(&vm,"ds_priority_find_priority",seven,2);
+  GmlVal maximum=gml_builtin_call(&vm,"ds_priority_find_max",&queue,1);
+
+  GmlVal malformed[2]={queue,vstr("f70100000200000000000000")};
+  (void)gml_builtin_call(&vm,"ds_priority_read",malformed,2);
+  GmlVal size_after=gml_builtin_call(&vm,"ds_priority_size",&queue,1);
+  GmlVal first_after=gml_builtin_call(&vm,"ds_priority_find_priority",first,2);
+
+  int ok=size.t==V_REAL && size.d==2 &&
+    first_priority.t==V_REAL && first_priority.d==-2.5 &&
+    seven_priority.t==V_REAL && seven_priority.d==5 &&
+    maximum.t==V_REAL && maximum.d==7 &&
+    size_after.t==V_REAL && size_after.d==2 &&
+    first_after.t==V_REAL && first_after.d==-2.5;
+  (void)gml_builtin_call(&vm,"ds_priority_destroy",&queue,1);
+  if(!ok) fprintf(stderr,
+    "ds_priority native read fixture failed: size=%d/%.17g first=%d/%.17g "
+    "seven=%d/%.17g max=%d/%.17g after=%d/%.17g first_after=%d/%.17g\n",
+    size.t,size.d,first_priority.t,first_priority.d,seven_priority.t,seven_priority.d,
+    maximum.t,maximum.d,
+    size_after.t,size_after.d,first_after.t,first_after.d);
+  return ok;
+}
