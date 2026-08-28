@@ -826,6 +826,60 @@ static void check_first_generation_magnification_keeps_every_source_row(void){
   free(page.argb_cache);
 }
 
+/* A fractionally positioned quad at integer viewport magnification can put a destination
+ * sample exactly on a source boundary. Keep that trailing-edge tie distinct from the
+ * pixel-centre phase used at non-integer magnification. */
+static void check_first_generation_integer_magnification_tie(void){
+  static const uint8_t rgba[3*4]={
+    255,0,0,255, 0,255,0,255, 0,0,255,255
+  };
+  uint32_t application[6]={0};
+  GmlWin content;
+  GmlRender render;
+  GmlAtlas atlas;
+  GmlTpag page;
+  GmlBg background;
+
+  memset(&content,0,sizeof content);
+  memset(&render,0,sizeof render);
+  memset(&atlas,0,sizeof atlas);
+  memset(&page,0,sizeof page);
+  memset(&background,0,sizeof background);
+  content.bytecode=15;
+  atlas.px=(uint8_t*)rgba;
+  atlas.w=3; atlas.h=1;
+  page.atlas=0;
+  page.sw=page.bw=2;
+  page.sh=page.bh=1;
+  page.alpha_scanned=1;
+  page.alpha_max=255;
+  page.ax1=1; page.ay1=0;
+  background.tpag=0;
+  render.win=&content;
+  render.atlas=&atlas; render.n_atlas=1;
+  render.tpag=&page; render.n_tpag=1;
+  render.bg=&background; render.n_bg=1;
+  render.app_surface=application;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+
+  gml_render_begin(&render,application,6,1,0.0,0.0);
+  gml_render_world_set_logical_extent(&render,3,1);
+  gml_draw_background_tile(&render,0,0,0,2,1,5.0/16.0,0,1,1,0,0,0,0xffffff,1.0);
+  static const uint32_t expected[4]={
+    0xffff0000u,0xff00ff00u,0xff00ff00u,0xff00ff00u
+  };
+  for(int x=0;x<4;x++) if(application[x+1]!=expected[x]){
+    fprintf(stderr,"renderer tiles: integer magnification tie pixel %d was %08x, expected %08x\n",
+            x,application[x+1],expected[x]);
+    failures++;
+    break;
+  }
+  free(page.argb_cache);
+}
+
 static void check_first_generation_application_surface_partial_alpha_coverage(void){
   static const uint8_t rgba[4]={255,255,255,128};
   uint32_t application=0xff000000u;
@@ -1221,6 +1275,7 @@ int main(void){
   check_first_generation_fractional_tile_projection();
   check_modern_fractional_tile_grid_has_no_cracks();
   check_first_generation_magnification_keeps_every_source_row();
+  check_first_generation_integer_magnification_tie();
   check_classic_double_scale_layer_covers_its_last_row();
   check_modern_fractional_camera_tie();
   check_first_generation_application_surface_partial_alpha_coverage();

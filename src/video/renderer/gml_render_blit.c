@@ -3058,6 +3058,10 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     gml_render_target_is_first_generation_application_surface(r) && !flipx && !reciprocal_x;
   int first_generation_quad_phase_y=
     gml_render_target_is_first_generation_application_surface(r) && !flipy && !reciprocal_y;
+  int first_generation_integer_magnification_x=
+    first_generation_quad_phase_x && axs>1.0 && fabs(axs-nearbyint(axs))<1e-9;
+  int first_generation_integer_magnification_y=
+    first_generation_quad_phase_y && ays>1.0 && fabs(ays-nearbyint(ays))<1e-9;
   double sample_x=!flipx && (studio_point_phase || (r->classic&&!reciprocal_x))
     ? x0+0.5-dx : 0.5;
   double sample_y=!flipy && (studio_point_phase || (r->classic&&!reciprocal_y))
@@ -3069,12 +3073,14 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     sample_x=dx-(double)x0-0.5;
   if(flipy && t->project_authored_edges && !reciprocal_y)
     sample_y=dy-(double)y0-0.5;
-  /* Keep each quad's subpixel origin when sampling a first-generation
-   * application surface. Destination pixel centres retain the source's
-   * leading row under fractional magnification; trailing edges can skip it
-   * and sample beyond the selected atlas subrectangle. */
-  if(first_generation_quad_phase_x) sample_x=x0+0.5-dx;
-  if(first_generation_quad_phase_y) sample_y=y0+0.5-dy;
+  /* Keep each quad's subpixel origin when sampling a first-generation application surface.
+   * Destination pixel centres retain the leading source row under fractional magnification.
+   * At exact integer magnification, use the trailing-edge tie for a boundary sample without
+   * changing the fractional-scale rule. */
+  if(first_generation_quad_phase_x)
+    sample_x=first_generation_integer_magnification_x?x0+1.0-dx-1e-9:x0+0.5-dx;
+  if(first_generation_quad_phase_y)
+    sample_y=first_generation_integer_magnification_y?y0+1.0-dy-1e-9:y0+0.5-dy;
   if(lxtab) for(int xx=xx0;xx<xx1;xx++){
     int source_x=(int)((xx+sample_x)/axs);
     if(t->project_authored_edges){
