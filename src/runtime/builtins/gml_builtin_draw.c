@@ -967,6 +967,9 @@ GmlVal gml_builtin_try_draw(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(!strcmp(nm,"surface_reset_target")){ if(builtin_setting(vm,"GML_LOG_SURF"))anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,"[surf] reset_target\n"); if(R) gml_surface_reset_target(R); return vreal(0); }
     if(!strcmp(nm,"surface_resize")){ if(R) gml_surface_resize(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2)); return vreal(0); }
     if(!strcmp(nm,"surface_copy")){ if(R) gml_surface_copy(R,(int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),(int)N(a,n,3)); return vreal(0); }
+    if(!strcmp(nm,"surface_copy_part")){ if(R) gml_surface_copy_part(R,
+      (int)N(a,n,0),(int)N(a,n,1),(int)N(a,n,2),(int)N(a,n,3),
+      (int)N(a,n,4),(int)N(a,n,5),(int)N(a,n,6),(int)N(a,n,7)); return vreal(0); }
     if(!strcmp(nm,"surface_save")||!strcmp(nm,"surface_save_part")) return vreal(0);
     /* Without a per-surface depth buffer, store the toggle as a latch.
      * Its getter reads back the most recently set value. */

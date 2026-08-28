@@ -159,6 +159,64 @@ void gml_surface_copy(GmlRender *r, int dst, int x, int y, int src){
     r->fb_all_transparent=0;
   }
 }
+void gml_surface_copy_part(GmlRender *r, int dst, int x, int y, int src,
+                           int source_x, int source_y, int width, int height){
+  if(!r || width<=0 || height<=0) return;
+  int sw=0,sh=0,dw=0,dh=0;
+  uint32_t *sp=surface_pixels(r,src,&sw,&sh);
+  uint32_t *dp=surface_pixels(r,dst,&dw,&dh);
+  if(!sp || !dp || sw<=0 || sh<=0 || dw<=0 || dh<=0) return;
+  if((r->fb && (sp==r->fb || dp==r->fb)) || src==r->target_id || dst==r->target_id){
+    gml_render_maybe_prepare_draw(r);
+    sp=surface_pixels(r,src,&sw,&sh);
+    dp=surface_pixels(r,dst,&dw,&dh);
+    if(!sp || !dp) return;
+  }
+
+  int64_t sx=source_x,sy=source_y,dx=x,dy=y,cw=width,ch=height;
+  if(sx<0){ int64_t skip=-sx; sx=0; dx+=skip; cw-=skip; }
+  if(sy<0){ int64_t skip=-sy; sy=0; dy+=skip; ch-=skip; }
+  if(dx<0){ int64_t skip=-dx; dx=0; sx+=skip; cw-=skip; }
+  if(dy<0){ int64_t skip=-dy; dy=0; sy+=skip; ch-=skip; }
+  if(cw<=0 || ch<=0 || sx>=sw || sy>=sh || dx>=dw || dy>=dh) return;
+  if(cw>(int64_t)sw-sx) cw=(int64_t)sw-sx;
+  if(ch>(int64_t)sh-sy) ch=(int64_t)sh-sy;
+  if(cw>(int64_t)dw-dx) cw=(int64_t)dw-dx;
+  if(ch>(int64_t)dh-dy) ch=(int64_t)dh-dy;
+  if(cw<=0 || ch<=0) return;
+
+  if(sp==dp){
+    uint32_t *tmp=malloc((size_t)cw*(size_t)ch*sizeof(uint32_t));
+    if(!tmp) return;
+    for(int64_t yy=0;yy<ch;yy++)
+      memcpy(tmp+(size_t)yy*(size_t)cw,
+             sp+(size_t)(sy+yy)*(size_t)sw+(size_t)sx,
+             (size_t)cw*sizeof(uint32_t));
+    for(int64_t yy=0;yy<ch;yy++)
+      memcpy(dp+(size_t)(dy+yy)*(size_t)dw+(size_t)dx,
+             tmp+(size_t)yy*(size_t)cw,(size_t)cw*sizeof(uint32_t));
+    free(tmp);
+  } else {
+    for(int64_t yy=0;yy<ch;yy++)
+      memcpy(dp+(size_t)(dy+yy)*(size_t)dw+(size_t)dx,
+             sp+(size_t)(sy+yy)*(size_t)sw+(size_t)sx,
+             (size_t)cw*sizeof(uint32_t));
+  }
+
+  int di=surface_slot(dst);
+  if(di>=0 && r->surface[di].live){
+    r->surface[di].dirty=1;
+    r->surface[di].opaque_known=0;
+    r->surface[di].all_opaque=0;
+    r->surface[di].all_transparent=0;
+  }
+  if(dst==0) r->app_surface_opaque=0;
+  if(dst==r->target_id){
+    r->fb_opaque_known=0;
+    r->fb_all_opaque=0;
+    r->fb_all_transparent=0;
+  }
+}
 int gml_surface_create(GmlRender *r, int w, int h){
   if(w<=0||h<=0||w>4096||h>4096) return -1;
   for(int k=0;k<GML_MAX_SURFACES;k++){

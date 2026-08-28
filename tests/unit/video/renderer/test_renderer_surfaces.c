@@ -984,6 +984,31 @@ int main(void){
           "restored target state");
   REQUIRE(surface_known_opaque(&render,source),"opaque coverage");
 
+  int part_destination=gml_surface_create(&render,6,5);
+  REQUIRE(part_destination>0,"copy-part destination surface");
+  uint32_t *destination_before=surface_pixels(&render,part_destination,NULL,NULL);
+  REQUIRE(destination_before!=NULL,"copy-part destination pixels");
+  for(int i=0;i<6*5;i++) destination_before[i]=0xFF010203u;
+  gml_surface_copy_part(&render,part_destination,2,1,source,1,1,2,2);
+  REQUIRE(destination_before[(size_t)1*6+2]==source_pixels[(size_t)1*4+1] &&
+          destination_before[(size_t)1*6+3]==source_pixels[(size_t)1*4+2] &&
+          destination_before[(size_t)2*6+2]==source_pixels[(size_t)2*4+1] &&
+          destination_before[(size_t)2*6+3]==source_pixels[(size_t)2*4+2] &&
+          destination_before[(size_t)1*6+1]==0xFF010203u &&
+          destination_before[(size_t)3*6+2]==0xFF010203u,
+          "surface_copy_part copies only the selected rectangle");
+  uint32_t overlap_source[4]={
+    destination_before[(size_t)1*6+2], destination_before[(size_t)1*6+3],
+    destination_before[(size_t)2*6+2], destination_before[(size_t)2*6+3]
+  };
+  gml_surface_copy_part(&render,part_destination,3,1,part_destination,2,1,2,2);
+  REQUIRE(destination_before[(size_t)1*6+3]==overlap_source[0] &&
+          destination_before[(size_t)1*6+4]==overlap_source[1] &&
+          destination_before[(size_t)2*6+3]==overlap_source[2] &&
+          destination_before[(size_t)2*6+4]==overlap_source[3],
+          "surface_copy_part snapshots overlapping source pixels");
+  gml_surface_free(&render,part_destination);
+
   gml_surface_copy(&render,destination,1,1,source);
   REQUIRE(gml_surface_width(&render,destination)==6 &&
           gml_surface_height(&render,destination)==5,"copy dimensions");
