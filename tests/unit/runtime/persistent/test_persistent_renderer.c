@@ -934,6 +934,23 @@ int expect_centred_real_font_line_starts_on_a_whole_pixel(void){
     ok=ok&&mode_ok;
   }
   {
+    for(size_t cell=0;cell<sizeof framebuffer/sizeof framebuffer[0];cell++)
+      framebuffer[cell]=paper;
+    render.interp=0;
+    /* Below one, retain half the real font's source width. Quantizing the odd line after
+     * reduction would move this 0.75x raster one pixel right and erase its gap. */
+    gml_draw_text_transformed(&render,20,0,"AB",0.75,1,0,render.color,render.alpha);
+    int reduced_subpixel_ok=framebuffer[17]==paper && framebuffer[18]==ink &&
+                            framebuffer[19]==paper && framebuffer[20]==ink &&
+                            framebuffer[21]==ink && framebuffer[22]==paper;
+    if(!reduced_subpixel_ok){
+      fprintf(stderr,"subpixel centred real-font line mismatch:");
+      for(int column=16;column<24;column++) fprintf(stderr," %d=%08x",column,framebuffer[column]);
+      fputc('\n',stderr);
+    }
+    ok=ok&&reduced_subpixel_ok;
+  }
+  {
     static const uint32_t scaled_expected[12]={
       paper, ink, ink, paper, paper, ink, ink, ink, ink, ink, ink, paper
     };

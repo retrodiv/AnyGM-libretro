@@ -1257,7 +1257,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
                 }
               } else {
                 uint32_t af=(uint32_t)((sa8*256u)/255u);
-                if(af) blend_fast8_src_run(dp+xx,sp+xx,run,af);
+                if(af) blend_fast8_src_run(dp+xx,sp+xx,run,af,blend_fast8_rounds(r));
               }
             }
             xx+=run;

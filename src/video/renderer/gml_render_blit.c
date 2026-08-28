@@ -469,7 +469,7 @@ static inline void fill_u32_run(uint32_t *dp, int run, uint32_t src){
 #if defined(__GNUC__) || defined(__clang__)
 typedef uint64_t GmlU64Alias __attribute__((__may_alias__));
 #endif
-static inline void blend_fast8_run(uint32_t *dp, int run, uint32_t src, uint32_t af){
+static inline void blend_fast8_run(uint32_t *dp, int run, uint32_t src, uint32_t af, int round){
   if(run<=0) return;
   if(af>=256u){ fill_u32_run(dp,run,src); return; }
   if(!af) return;
@@ -523,7 +523,7 @@ static inline void blend_fast8_run(uint32_t *dp, int run, uint32_t src, uint32_t
 #if defined(__GNUC__) || defined(__clang__)
   if(run>=4){
     if(((uintptr_t)dp & 7u) != 0){
-      *dp=blend_fast8_cached(*dp,srb,sg,ia);
+      *dp=blend_fast8_cached(*dp,srb,sg,ia,round);
       dp++;
       run--;
     }
@@ -541,7 +541,7 @@ static inline void blend_fast8_run(uint32_t *dp, int run, uint32_t src, uint32_t
     run -= pairs*2;
   }
 #endif
-  for(int k=0;k<run;k++) dp[k]=blend_fast8_cached(dp[k],srb,sg,ia);
+  for(int k=0;k<run;k++) dp[k]=blend_fast8_cached(dp[k],srb,sg,ia,round);
 }
 static int tpag_alpha_bounds(GmlRender *r, GmlTpag *t, GmlAtlas *a,
                              int *x0, int *y0, int *x1, int *y1){
@@ -900,7 +900,7 @@ static inline void blend_argb_src_over_exact(GmlRender *r,uint32_t *dp,const uin
   }
 }
 static inline void blend_solid_fast8_4(uint32_t *destination, uint32_t source,
-                                       const uint32_t alpha[4]){
+                                       const uint32_t alpha[4], int round){
 #if defined(__SSE2__)
   __m128i zero=_mm_setzero_si128();
   __m128i src=_mm_set1_epi32((int)source);
@@ -921,6 +921,9 @@ static inline void blend_solid_fast8_4(uint32_t *destination, uint32_t source,
                                _mm_mullo_epi16(dst_lo,inverse_lo));
   __m128i out_hi=_mm_add_epi16(_mm_mullo_epi16(src_hi,alpha_hi),
                                _mm_mullo_epi16(dst_hi,inverse_hi));
+  __m128i bias=_mm_set1_epi16((short)(round?128:0));
+  out_lo=_mm_add_epi16(out_lo,bias);
+  out_hi=_mm_add_epi16(out_hi,bias);
   out_lo=_mm_srli_epi16(out_lo,8);
   out_hi=_mm_srli_epi16(out_hi,8);
   __m128i packed=_mm_packus_epi16(out_lo,out_hi);
@@ -931,7 +934,7 @@ static inline void blend_solid_fast8_4(uint32_t *destination, uint32_t source,
     (__m128i*)destination,
     _mm_or_si128(_mm_and_si128(packed,active),_mm_andnot_si128(active,dst)));
 #else
-  for(int i=0;i<4;i++) blend_fast8_run(destination+i,1,source,alpha[i]);
+  for(int i=0;i<4;i++) blend_fast8_run(destination+i,1,source,alpha[i],round);
 #endif
 }
 static inline void blend_additive_rgb_run(uint32_t *destination,int count,uint32_t increment){
@@ -1007,7 +1010,7 @@ static inline void blend_solid_trunc255_4(
 #endif
 }
 static inline void blend_pixels_fast8_4(uint32_t *destination, const uint32_t source[4],
-                                        const uint32_t alpha[4]){
+                                        const uint32_t alpha[4], int round){
 #if defined(__SSE2__)
   __m128i zero=_mm_setzero_si128();
   __m128i src=_mm_loadu_si128((const __m128i*)source);
@@ -1028,6 +1031,9 @@ static inline void blend_pixels_fast8_4(uint32_t *destination, const uint32_t so
                                _mm_mullo_epi16(dst_lo,inverse_lo));
   __m128i out_hi=_mm_add_epi16(_mm_mullo_epi16(src_hi,alpha_hi),
                                _mm_mullo_epi16(dst_hi,inverse_hi));
+  __m128i bias=_mm_set1_epi16((short)(round?128:0));
+  out_lo=_mm_add_epi16(out_lo,bias);
+  out_hi=_mm_add_epi16(out_hi,bias);
   out_lo=_mm_srli_epi16(out_lo,8);
   out_hi=_mm_srli_epi16(out_hi,8);
   __m128i packed=_mm_packus_epi16(out_lo,out_hi);
@@ -1038,7 +1044,7 @@ static inline void blend_pixels_fast8_4(uint32_t *destination, const uint32_t so
     (__m128i*)destination,
     _mm_or_si128(_mm_and_si128(packed,active),_mm_andnot_si128(active,dst)));
 #else
-  for(int i=0;i<4;i++) blend_fast8_run(destination+i,1,source[i],alpha[i]);
+  for(int i=0;i<4;i++) blend_fast8_run(destination+i,1,source[i],alpha[i],round);
 #endif
 }
 static inline void blend_pixels_exact16_4(
@@ -1511,7 +1517,8 @@ static void GML_HOT_RENDER runtime_axis_cache_copy(GmlRender *r, GmlSprite *s){
     uint32_t *sp=s->runtime_axis_cache_px;
     int n=k->w*k->h;
     if(s->runtime_axis_cache_uniform_alpha && !s->runtime_axis_cache_copy_255)
-      blend_fast8_src_run(dp,sp,n,(uint32_t)s->runtime_axis_cache_uniform_alpha);
+      blend_fast8_src_run(dp,sp,n,(uint32_t)s->runtime_axis_cache_uniform_alpha,
+                          blend_fast8_rounds(r));
     else if(!s->runtime_axis_cache_alpha)
       memcpy(dp,sp,(size_t)n*sizeof(uint32_t));
     return;
@@ -1523,7 +1530,7 @@ static void GML_HOT_RENDER runtime_axis_cache_copy(GmlRender *r, GmlSprite *s){
       uint32_t *sp=s->runtime_axis_cache_px+(size_t)run->y*k->w+run->x;
       uint32_t af=run->alpha;
       if(s->runtime_axis_cache_copy_255 && af==255u) memcpy(dp,sp,(size_t)run->len*sizeof(uint32_t));
-      else blend_fast8_src_run(dp,sp,run->len,af);
+      else blend_fast8_src_run(dp,sp,run->len,af,blend_fast8_rounds(r));
     }
     return;
   }
@@ -1536,7 +1543,8 @@ static void GML_HOT_RENDER runtime_axis_cache_copy(GmlRender *r, GmlSprite *s){
     if(!ap){
       int run=mx-mn+1;
       if(s->runtime_axis_cache_uniform_alpha && !s->runtime_axis_cache_copy_255)
-        blend_fast8_src_run(dp,sp,run,(uint32_t)s->runtime_axis_cache_uniform_alpha);
+        blend_fast8_src_run(dp,sp,run,(uint32_t)s->runtime_axis_cache_uniform_alpha,
+                            blend_fast8_rounds(r));
       else
         memcpy(dp,sp,(size_t)run*sizeof(uint32_t));
       continue;
@@ -1549,7 +1557,7 @@ static void GML_HOT_RENDER runtime_axis_cache_copy(GmlRender *r, GmlSprite *s){
       if(s->runtime_axis_cache_copy_255 && af==255u){
         memcpy(dp,sp,(size_t)run*sizeof(uint32_t));
       } else {
-        blend_fast8_src_run(dp,sp,run,af);
+        blend_fast8_src_run(dp,sp,run,af,blend_fast8_rounds(r));
       }
       dp+=run;
       sp+=run;
@@ -1766,7 +1774,7 @@ static void axis_sprite_band(void *context,int row_start,int row_end,int slot){
           } else {
             if(fast8_blend){
               uint32_t af=a8_lut[aa];
-              blend_fast8_run(dp,run,srcpx,af);
+              blend_fast8_run(dp,run,srcpx,af,blend_fast8_rounds(r));
             } else {
               uint32_t af=a16_lut[aa];
               if(af>=65536u){
@@ -1908,7 +1916,7 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
           uint32_t ia=256u-af;
           uint32_t srb=(srcpx & 0x00FF00FFu)*af;
           uint32_t sgc=(srcpx & 0x0000FF00u)*af;
-          *dp=blend_fast8_cached(*dp,srb,sgc,ia);
+          *dp=blend_fast8_cached(*dp,srb,sgc,ia,blend_fast8_rounds(r));
         } else {
           uint32_t af=a16_lut[aa];
           if(af>=65536u){ *dp=srcpx; continue; }
@@ -1982,7 +1990,7 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
           uint32_t ia=256u-af;
           uint32_t srb=(srcpx & 0x00FF00FFu)*af;
           uint32_t sgc=(srcpx & 0x0000FF00u)*af;
-          *dp=blend_fast8_cached(*dp,srb,sgc,ia);
+          *dp=blend_fast8_cached(*dp,srb,sgc,ia,blend_fast8_rounds(r));
         } else {
           uint32_t af=a16_lut[aa];
           if(af>=65536u){ *dp=srcpx; continue; }
@@ -2040,7 +2048,7 @@ static int GML_HOT_RENDER blit_rgba_sprite_axis(GmlRender *r, GmlSprite *owner, 
           } else {
             if(fast8_blend){
               uint32_t af=a8_lut[aa];
-              blend_fast8_run(dp,run,srcpx,af);
+              blend_fast8_run(dp,run,srcpx,af,blend_fast8_rounds(r));
             } else {
               uint32_t af=a16_lut[aa];
               if(af>=65536u){
@@ -4348,7 +4356,8 @@ static void GML_HOT_RENDER solid_mask_alpha8_vector_rows(
            factors[2]>=256u && factors[3]>=256u)
           fill_u32_run(&row[px],4,band->source);
         else if(factors[0]||factors[1]||factors[2]||factors[3])
-          blend_solid_fast8_4(&row[px],band->source,factors);
+          blend_solid_fast8_4(&row[px],band->source,factors,
+                              blend_fast8_rounds(band->r));
         lx_fp+=band->delta_x*4;
         ly_fp+=band->delta_y*4;
         px+=4;
@@ -4361,7 +4370,8 @@ static void GML_HOT_RENDER solid_mask_alpha8_vector_rows(
       if(source_x>=0 && source_y>=0 && source_x<t->sw && source_y<t->sh){
         uint32_t alpha=band->alpha_lut[
           band->alpha8[(size_t)source_y*t->sw+source_x]];
-        if(alpha) blend_fast8_run(&row[px],run,band->source,alpha);
+        if(alpha) blend_fast8_run(&row[px],run,band->source,alpha,
+                                  blend_fast8_rounds(band->r));
       }
       lx_fp+=band->delta_x*(int64_t)run;
       ly_fp+=band->delta_y*(int64_t)run;
@@ -4417,7 +4427,8 @@ static void GML_HOT_RENDER solid_mask_rotated_band_rows(
           }
         }
         if(factors[0]||factors[1]||factors[2]||factors[3])
-          blend_solid_fast8_4(&row[px],band->source,factors);
+          blend_solid_fast8_4(&row[px],band->source,factors,
+                              blend_fast8_rounds(band->r));
         lx_fp+=band->delta_x*4;
         ly_fp+=band->delta_y*4;
         px+=4;
@@ -4432,7 +4443,8 @@ static void GML_HOT_RENDER solid_mask_rotated_band_rows(
         uint32_t source_alpha=band->alpha8
           ? band->alpha8[source_index] : band->argb[source_index]>>24;
         uint32_t alpha=band->alpha_lut[source_alpha];
-        if(alpha) blend_fast8_run(&row[px],run,band->source,alpha);
+        if(alpha) blend_fast8_run(&row[px],run,band->source,alpha,
+                                  blend_fast8_rounds(band->r));
       }
       lx_fp+=band->delta_x*(int64_t)run;
       ly_fp+=band->delta_y*(int64_t)run;
@@ -4510,7 +4522,8 @@ static void GML_HOT_RENDER cached_rotated_band_rows(
           }
         }
         if(factors[0]||factors[1]||factors[2]||factors[3])
-          blend_pixels_fast8_4(&row[px],sources,factors);
+          blend_pixels_fast8_4(&row[px],sources,factors,
+                               blend_fast8_rounds(band->r));
         lx_fp+=band->delta_x*4;
         ly_fp+=band->delta_y*4;
         px+=4;
@@ -4538,7 +4551,7 @@ static void GML_HOT_RENDER cached_rotated_band_rows(
           if(band->draw_cache && band->copy_255 && alpha==255u)
             fill_u32_run(&row[px],run,source);
           else
-            blend_fast8_run(&row[px],run,source,alpha);
+            blend_fast8_run(&row[px],run,source,alpha,blend_fast8_rounds(band->r));
         }
       }
       lx_fp+=band->delta_x*(int64_t)run;
@@ -5187,7 +5200,7 @@ cached_rotated_fallback:
             if(af){
               uint32_t src=0xFF000000u|(packed&0x00FFFFFFu);
               if(fast8_cache_copy_255 && af==255u) fill_u32_run(dp,run,src);
-              else blend_fast8_run(dp,run,src,af);
+              else blend_fast8_run(dp,run,src,af,blend_fast8_rounds(r));
             }
           } else {
             uint32_t packed=argb_cache[si];
@@ -5205,7 +5218,7 @@ cached_rotated_fallback:
                 int sb=(packed&0xFF)*bB/255;
                 src=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
               }
-              blend_fast8_run(dp,run,src,af);
+              blend_fast8_run(dp,run,src,af,blend_fast8_rounds(r));
             }
           }
           }
@@ -5273,7 +5286,7 @@ cached_rotated_fallback:
               int sb=white?mapped_b:mapped_b*bB/255;
               uint32_t src=0xFF000000u|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
               uint32_t *dp=&row[px];
-              blend_fast8_run(dp,run,src,af);
+              blend_fast8_run(dp,run,src,af,blend_fast8_rounds(r));
             }
           }
         }
@@ -5332,7 +5345,7 @@ cached_rotated_fallback:
               } else {
                 if(fast8_blend){
                   uint32_t af=a8_lut[aa];
-                  if(af) blend_fast8_run(dp,run,src,af);
+                  if(af) blend_fast8_run(dp,run,src,af,blend_fast8_rounds(r));
                 } else {
                   uint32_t af=a16_lut[aa];
                   if(af>=65536u){

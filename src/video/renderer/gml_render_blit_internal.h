@@ -34,10 +34,19 @@ static inline void render_modern_cardinal_anchor(const GmlRender *r,double degre
   if(-xs*sine < -1e-12 || ys*cosine < -1e-12) *y-=1.0;
 }
 
-/* Round the final eighth-bit blend shift to nearest. Source and destination weights sum to 256, so truncation otherwise biases each blended channel downward. */
-static inline uint32_t blend_fast8_cached(uint32_t dst, uint32_t srb, uint32_t sg, uint32_t ia){
-  uint32_t rb=((srb+(dst&0x00FF00FFu)*ia+0x00800080u)>>8)&0x00FF00FFu;
-  uint32_t g=((sg+(dst&0x0000FF00u)*ia+0x00008000u)>>8)&0x0000FF00u;
+/* Classic blending rounds the complete weighted channel; modern blending truncates it.
+ * Keep the choice on the compatibility policy so optimized helpers agree. */
+static inline int blend_fast8_rounds(const GmlRender *render){
+  if(!render) return 0;
+  if(!render->win) return render->classic;
+  return anygm_policy_blend(render->win)==ANYGM_BLEND_CLASSIC;
+}
+static inline uint32_t blend_fast8_cached(uint32_t dst, uint32_t srb, uint32_t sg, uint32_t ia,
+                                          int round){
+  uint32_t rb_bias=round?0x00800080u:0u;
+  uint32_t g_bias=round?0x00008000u:0u;
+  uint32_t rb=((srb+(dst&0x00FF00FFu)*ia+rb_bias)>>8)&0x00FF00FFu;
+  uint32_t g=((sg+(dst&0x0000FF00u)*ia+g_bias)>>8)&0x0000FF00u;
   return 0xFF000000u|rb|g;
 }
 
@@ -98,7 +107,8 @@ static inline int row_all_transparent32(const uint32_t *sp, int run){
   return 1;
 }
 
-static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run, uint32_t af){
+static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run, uint32_t af,
+                                       int round){
   if(run<=0) return;
   if(af>=256u){ memcpy(dp,sp,(size_t)run*sizeof(uint32_t)); return; }
   if(!af) return;
@@ -109,7 +119,7 @@ static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run
     __m128i valpha=_mm_set1_epi32((int)0xFF000000u);
     __m128i vaf=_mm_set1_epi16((short)af);
     __m128i via=_mm_set1_epi16((short)ia);
-    __m128i vhalf=_mm_set1_epi16((short)128);
+    __m128i vhalf=_mm_set1_epi16((short)(round?128:0));
     while(run>=4){
       __m128i src=_mm_loadu_si128((const __m128i*)sp);
       __m128i dst=_mm_loadu_si128((const __m128i*)dp);
@@ -134,7 +144,7 @@ static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run
     uint8x16_t valpha8=vreinterpretq_u8_u32(vdupq_n_u32(0xFF000000u));
     uint16x8_t vaf=vdupq_n_u16((uint16_t)af);
     uint16x8_t via=vdupq_n_u16((uint16_t)ia);
-    uint16x8_t vhalf=vdupq_n_u16(128);
+    uint16x8_t vhalf=vdupq_n_u16((uint16_t)(round?128:0));
     while(run>=4){
       uint8x16_t src=vld1q_u8((const uint8_t*)sp);
       uint8x16_t dst=vld1q_u8((const uint8_t*)dp);
@@ -155,7 +165,7 @@ static inline void blend_fast8_src_run(uint32_t *dp, const uint32_t *sp, int run
     uint32_t src=sp[k];
     uint32_t srb=(src & 0x00FF00FFu)*af;
     uint32_t sg=(src & 0x0000FF00u)*af;
-    dp[k]=blend_fast8_cached(dp[k],srb,sg,ia);
+    dp[k]=blend_fast8_cached(dp[k],srb,sg,ia,round);
   }
 }
 

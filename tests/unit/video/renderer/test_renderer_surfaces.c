@@ -690,7 +690,7 @@ static int subtract_surface_coverage_case(void){
   return 0;
 }
 
-static int masked_sprite_surface_case(void){
+static int masked_sprite_surface_case(int classic,uint32_t expected_blue){
   enum { WIDTH=4,HEIGHT=3 };
   GmlRender render;
   uint32_t frame[WIDTH*HEIGHT];
@@ -709,6 +709,7 @@ static int masked_sprite_surface_case(void){
   render.app_draw_enable=1;
   render.active_shader=-1;
   render.lut_pal_sprite=-1;
+  render.classic=classic;
   render.n_spr=1;
   render.spr=calloc(1,sizeof(*render.spr));
   REQUIRE(render.spr!=NULL,"masked sprite allocation");
@@ -743,10 +744,9 @@ static int masked_sprite_surface_case(void){
   render.color_write_mask=0x0F;
   gml_surface_reset_target(&render);
   gml_draw_surface_stretched(&render,surface,0.0,0.0,WIDTH,HEIGHT,0xFFFFFFu,1.0);
-  /* 0x40, not 0x3F: the surface pixel is a full-strength blue under coverage 64 of 255, and
-   * 255 * 64/255 is 64 with nothing to round. This expectation carried the old blend shift's
-   * truncation, which was half a level low on every blended channel. */
-  if(frame[0]!=0xFF000040u || frame[WIDTH+1]!=0xFF0000FFu){
+  /* The same channel operands distinguish classic rounding from modern truncation of
+   * the final eighth-bit blend shift. */
+  if(frame[0]!=expected_blue || frame[WIDTH+1]!=0xFF0000FFu){
     fprintf(stderr,"renderer masked surface composite mismatch: %08x / %08x\n",
             frame[0],frame[WIDTH+1]);
     gml_render_free(&render);
@@ -1045,7 +1045,10 @@ int main(void){
           "zero-reference alpha-test case");
   REQUIRE(max_preset_surface_case()==0,"maximum preset surface case");
   REQUIRE(subtract_surface_coverage_case()==0,"subtract surface coverage case");
-  REQUIRE(masked_sprite_surface_case()==0,"masked sprite surface case");
+  REQUIRE(masked_sprite_surface_case(1,0xFF000040u)==0,
+          "classic masked sprite surface case");
+  REQUIRE(masked_sprite_surface_case(0,0xFF00003Fu)==0,
+          "modern masked sprite surface case");
   REQUIRE(world_raster_scale_case()==0,"world raster scale case");
   REQUIRE(replace_and_classic_present_case()==0,"replace and classic present case");
   REQUIRE(suspended_clear_read_back_case()==0,"suspended clear read-back case");

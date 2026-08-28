@@ -823,6 +823,17 @@ static double centred_line_offset(int line_width, double xscale){
   return -floor((double)line_width*magnitude/2.0)/magnitude;
 }
 
+/* A real font under an authored reduction keeps half of its source width. At scale one,
+ * alignment uses the source-pixel grid; at enlargement, it quantizes the transformed width.
+ * Quantizing each reduced scale would move the centre across unrelated source phases. Keep
+ * sprite-font reductions on their established path. */
+static double centred_real_line_offset(int line_width, double xscale){
+  double magnitude=fabs(xscale);
+  if(magnitude>0.0 && magnitude<1.0 && isfinite(magnitude))
+    return -(double)line_width/2.0;
+  return centred_line_offset(line_width,xscale);
+}
+
 /* Draw a string with a real FONT-chunk font: each glyph is an atlas sub-rect drawn top-aligned
  * at the baseline-top (GM bakes the ascent whitespace into the glyph height), advancing by shift.
  * A transformed draw rotates both the pen and each glyph quad around that pen. */
@@ -842,7 +853,7 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
   for(int li=0; *p || li==0; li++){
     const char *end; int lw=real_line_width(r,f,p,&end);
     double cx=0;
-    if(r->halign==1) cx=centred_line_offset(lw,alignment_xscale);
+    if(r->halign==1) cx=centred_real_line_offset(lw,alignment_xscale);
     else if(r->halign==2) cx=-lw;
     if(log_glyphs) anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
       "[tg] line=%d lw=%d cx0=%.2f x=%.2f y=%.2f xs=%.3f ys=%.3f interp=%d\n",
