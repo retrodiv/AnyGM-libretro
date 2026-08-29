@@ -287,12 +287,41 @@ static void publish_flat_variables(void){
     g_libretro.environment(RETRO_ENVIRONMENT_SET_VARIABLES,g_flat_variables);
 }
 
+static struct retro_core_option_definition *g_v1_definitions;
+
+static void free_v1_definitions(void){
+  free(g_v1_definitions);
+  g_v1_definitions=NULL;
+}
+
+/* The version-1 declaration is the version-2 one without categories: same keys, same descriptions,
+ * same value lists and defaults. A version-1 frontend given the flat form instead loses every
+ * per-option description, which is the whole difference between a settings screen a player can
+ * read and a list of names. */
+static void publish_v1_options(void){
+  free_v1_definitions();
+  size_t count=0;
+  while(g_definitions[count].key) count++;
+  g_v1_definitions=calloc(count+1,sizeof *g_v1_definitions);
+  if(!g_v1_definitions){ publish_flat_variables(); return; }
+  for(size_t i=0;i<count;i++){
+    g_v1_definitions[i].key=g_definitions[i].key;
+    g_v1_definitions[i].desc=g_definitions[i].desc;
+    g_v1_definitions[i].info=g_definitions[i].info;
+    g_v1_definitions[i].default_value=g_definitions[i].default_value;
+    memcpy(g_v1_definitions[i].values,g_definitions[i].values,
+           sizeof g_v1_definitions[i].values);
+  }
+  g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS,(void *)g_v1_definitions);
+}
+
 static void publish_options(void){
   if(!g_libretro.environment) return;
   if(g_options_version>=2){
     g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2,
                            (void *)&g_options_v2);
   }
+  else if(g_options_version==1) publish_v1_options();
   else publish_flat_variables();
   /* Replacing a declaration gives the frontend a fresh default-visible copy. The values may be
    * unchanged, but every display hint belongs to the replaced copy and has to be sent again. */
@@ -532,11 +561,38 @@ static bool options_update_display(void){
   return update_option_visibility()?true:false;
 }
 
+/* Put the two room selectors back to the single value each was declared with. The strings are
+ * literals in the declaration table, so the restored entries own nothing. */
+static void restore_room_declarations(void){
+  struct retro_core_option_v2_definition *rooms=definition_for("anygm_start_room");
+  struct retro_core_option_v2_definition *pages=definition_for("anygm_start_room_page");
+  if(rooms){
+    rooms->values[0].value="Full game";
+    rooms->values[0].label=NULL;
+    rooms->values[1].value=NULL;
+    rooms->values[1].label=NULL;
+  }
+  if(pages){
+    pages->values[0].value="0";
+    pages->values[0].label=NULL;
+    pages->values[1].value=NULL;
+    pages->values[1].label=NULL;
+  }
+}
+
 /* The room names and the flat declaration are held for as long as a host may read them, which is
  * until the core is torn down. Content loaded again replaces them; a core shut down releases
  * them, so a host that opens one game after another does not accumulate the names of all of them.
  */
 void libretro_options_release(void){
+  /* The two room selectors point their value lists at the heap blocks freed below. The
+   * declaration table itself is static and outlives this call: a host that keeps the library
+   * resident across deinit and init - which STATIC_LINKING makes the normal case, and which any
+   * frontend that does not close the library does too - republishes that same table on the next
+   * init. Restoring the declared single value is what keeps the republished table from carrying
+   * pointers into memory this function has already returned. */
+  restore_room_declarations();
+  free_v1_definitions();
   free_text_block(&g_room_choice_text,&g_room_choice_count);
   free_text_block(&g_page_choice_text,&g_page_choice_count);
   free_flat_variables();
