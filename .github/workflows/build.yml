@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+
+name: build
+
+# The compile-and-test signal every change gets, on a CI host that needs nothing configured. The
+# level-0 workflow beside this one needs a fixture source and is skipped without it, so without
+# this job a contributor's pull request would arrive with no check at all.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: linux-x64 build and check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the core
+        run: make -j"$(nproc)" core
+      - name: Run the full check suite
+        run: make -j"$(nproc)" check
+
+  mingw:
+    name: windows cross build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the MinGW toolchains
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64 g++-mingw-w64
+      - name: Build win-x64
+        run: make -j"$(nproc)" platform=win CROSS_COMPILE=x86_64-w64-mingw32- core
+      - name: Build win-i686
+        run: make -j"$(nproc)" platform=win CROSS_COMPILE=i686-w64-mingw32- BUILD_DIR=build/win32 core

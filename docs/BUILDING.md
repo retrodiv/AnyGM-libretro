@@ -10,6 +10,19 @@ and a standard `make` implementation. The production build does not download
 dependencies, run generators, or require a content corpus. All required
 headers and third-party sources are present in this checkout.
 
+**The compiler must be GCC or Clang.** The runtime uses GNU C extensions that
+C11 does not define -- `typeof`, `__builtin_ctzll`, `__attribute__((vector_size))`
+and `may_alias` among them -- so MSVC cannot build it. Cross-compilation uses
+the usual `CROSS_COMPILE` prefix, except on Apple targets, where the libretro
+templates pass `CROSS_COMPILE=1` as a flag and name the target in
+`LIBRETRO_APPLE_PLATFORM`; the build recognizes that spelling and turns it into
+`-target`/`-isysroot` instead of prefixing the compiler.
+
+**The test suite is POSIX-only** even though the core cross-builds for Windows:
+the harness uses `mkstemp` templates under `/tmp`, and `nm` and `cmp` for the
+contract checks. Build for Windows from a POSIX host and run `make check`
+there.
+
 ## Core and portable runtime
 
 Build the libretro core sequentially with:

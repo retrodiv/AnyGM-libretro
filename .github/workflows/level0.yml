@@ -21,6 +21,12 @@ permissions:
 
 jobs:
   semantics:
+    # A fork, and a fresh checkout of this repository, has no fixture source configured and no
+    # credential to read one. Such a run is reported as skipped rather than failed: a red mark on
+    # every commit of a repository nobody has configured says nothing, while a skipped job that
+    # names its condition says exactly what is missing. A configured repository still fails loudly
+    # if the source is half-configured, which is the case this guard cannot reach.
+    if: vars.ANYGM_FIXTURES_REPOSITORY != ''
     runs-on: ubuntu-latest
     steps:
       - name: Check out this repository
@@ -38,6 +44,10 @@ jobs:
         with:
           repository: ${{ vars.ANYGM_FIXTURES_REPOSITORY }}
           ref: ${{ vars.ANYGM_FIXTURES_REF }}
+          # The default job credential cannot read another private repository, so a private
+          # fixture source needs a token of its own. An empty secret leaves the default in place,
+          # which is correct for a public one.
+          token: ${{ secrets.ANYGM_FIXTURES_TOKEN || github.token }}
           path: .fixtures
 
       - name: Set up Python

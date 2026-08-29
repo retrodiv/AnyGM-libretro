@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+
+name: Defect report
+description: Something this core does that it should not, or does not do that it should.
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not attach game files, extracted assets, or screenshots of copyrighted
+        material.** This project ships no content and cannot accept any. Describe the
+        behaviour instead; a synthetic reproducer built from first-party sources is
+        always welcome.
+  - type: input
+    id: version
+    attributes:
+      label: Core version
+      description: The version string shown by the frontend.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: frontend
+    attributes:
+      label: Frontend and platform
+      placeholder: "RetroArch 1.21.0, linux-x64"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reach it
+      description: The shortest sequence that gets there, and whether it happens every time.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log output
+      description: The frontend's log around the failure, if it says anything.
+      render: text

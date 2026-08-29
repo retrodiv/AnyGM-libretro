@@ -29,6 +29,15 @@ Format recognition does not imply that every built-in operation used by every
 piece of content is implemented. Unsupported or malformed input is rejected
 with a diagnostic instead of selecting a different engine.
 
+## Independence and trademarks
+
+AnyGM is an independent project. It is not affiliated with or endorsed by
+YoYo Games Ltd, Opera Norway AS, or the owners of the other interfaces named
+in this documentation. "GameMaker", "FMOD", "Wwise", and "Steam" are trademarks
+of their respective owners. Their names identify supported formats or
+interfaces and imply no sponsorship. This repository contains no proprietary
+runtime components or user content. Use only content you are authorized to use.
+
 ## Build
 
 A release build on a Unix-like host is:
