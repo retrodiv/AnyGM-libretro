@@ -19,6 +19,9 @@ enum {
   GML_EXTERNAL_NOOP_STRING=2
 };
 
+/* Owned by this translation unit for the life of the process; replaced, never grown. */
+static char *clipboard_text;
+
 static int external_hex_value(unsigned char value){
   if(value>='0' && value<='9') return value-'0';
   if(value>='a' && value<='f') return value-'a'+10;
@@ -482,8 +485,34 @@ GmlVal gml_builtin_try_platform(GmlVM *vm, const char *nm, GmlVal *a, int n){
       ds_map_put(vm,id,vstr(pointer_keys[i]),vreal(0),1);
     return vreal(id);
   }
-  /* No native extension is present. Return false so callers can select portable paths; an
-   * unknown builtin returns undefined instead of boolean false. */
+  /* No native extension is present, and content asks before taking an extension-specific path.
+   * Answering false is the truth here and lets it choose the portable branch; an unknown builtin
+   * answers undefined, which is neither. */
+  /* This clipboard buffer is process-local host state, not serialized VM state.
+   * Set, get and has share it; has_text reports only nonempty text. */
+  if(!strcmp(nm,"clipboard_set_text")){
+    const char *text=n>=1?S(vm,a,n,0):"";
+    char *copy=NULL;
+    if(text){
+      size_t size=strlen(text)+1u;
+      copy=(char*)malloc(size);
+      if(copy) memcpy(copy,text,size);
+    }
+    free(clipboard_text);
+    clipboard_text=copy;
+    return vreal(0);
+  }
+  if(!strcmp(nm,"clipboard_get_text")){
+    /* Return an owned copy: the next set replaces the process buffer, while vstr()
+     * would leave the VM borrowing storage that may then be freed. */
+    const char *text=clipboard_text?clipboard_text:"";
+    size_t size=strlen(text)+1u;
+    char *copy=(char*)malloc(size);
+    if(!copy) return vstr("");
+    memcpy(copy,text,size);
+    return vstr_owned(copy);
+  }
+  if(!strcmp(nm,"clipboard_has_text")) return vreal(clipboard_text && clipboard_text[0] ? 1 : 0);
   if(!strcmp(nm,"extension_exists")) return vreal(0);
   if(!strcmp(nm,"extension_stubfunc_real")) return vreal(0);
   if(!strcmp(nm,"extension_stubfunc_string")) return vstr("");

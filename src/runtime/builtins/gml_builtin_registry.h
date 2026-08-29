@@ -1807,7 +1807,10 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1713, FILENAME_CHANGE_EXT, "filename_change_ext", IO, IO, ALWAYS) \
   ENTRY(1714, BACKGROUND_EXISTS, "background_exists", DRAW, DRAW, ALWAYS) \
   ENTRY(1715, DS_PRIORITY_READ, "ds_priority_read", DS, DS, ALWAYS) \
-  ENTRY(1716, SURFACE_COPY_PART, "surface_copy_part", DRAW, DRAW, ALWAYS)
+  ENTRY(1716, SURFACE_COPY_PART, "surface_copy_part", DRAW, DRAW, ALWAYS) \
+  ENTRY(1717, CLIPBOARD_SET_TEXT, "clipboard_set_text", PLATFORM, PLATFORM, ALWAYS) \
+  ENTRY(1718, CLIPBOARD_GET_TEXT, "clipboard_get_text", PLATFORM, PLATFORM, ALWAYS) \
+  ENTRY(1719, CLIPBOARD_HAS_TEXT, "clipboard_has_text", PLATFORM, PLATFORM, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1822,7 +1825,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1717
+  GML_BUILTIN_ID_LIMIT = 1720
 } GmlBuiltinId;
 
 #endif
