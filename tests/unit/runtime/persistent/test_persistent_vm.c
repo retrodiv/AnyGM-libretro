@@ -1235,11 +1235,12 @@ int expect_room_transition_animation_phase(void){
     GmlInstance *carried=find_slot(&vm,100000);
     GmlInstance *entered=find_slot(&vm,100001);
     ok=vm.room_index==1 && carried && carried->active && entered && entered->active &&
-       carried->image_index==1 && entered->image_index==1;
+       carried->image_index==1 && entered->image_index==0;
     if(!ok)
       fprintf(stderr,
-        "Studio room animation phase mismatch: room=%d carried=%.2f entered=%.2f\n",
-        vm.room_index,carried?carried->image_index:-1.0,entered?entered->image_index:-1.0);
+        "Studio Step room animation phase mismatch: room=%d carried=%.2f entered=%.2f\n",
+        vm.room_index,
+        carried?carried->image_index:-1.0,entered?entered->image_index:-1.0);
     vm.render=NULL;
     gml_vm_free(&vm);
     gml_win_free(&win);

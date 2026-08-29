@@ -322,10 +322,10 @@ void gml_vm_frame_advance_layers(GmlVM *vm){
   }
 }
 
-static void gml_vm_apply_one_pending_room(GmlVM *vm){
+static void gml_vm_apply_one_pending_room(GmlVM *vm,int advance_entered_phase){
   int target=vm->pending_room;
   int previous_count=vm->inst_count;
-  int advance_entered=vm->step_active && vm->win &&
+  int advance_entered=advance_entered_phase && vm->step_active && vm->win &&
     !anygm_policy_animation_before_step(vm->win);
   uint32_t *previous_active_ids=NULL;
   if(advance_entered && previous_count>0){
@@ -341,9 +341,9 @@ static void gml_vm_apply_one_pending_room(GmlVM *vm){
   vm->step_alloc_base=0;
   gml_room_enter(vm,target);
   if(advance_entered){
-    /* Newly bound layer assets receive the first animation tick at the same room-entry step
-     * boundary as new instances. Scrolling still derives from room_enter_frame, so only stateful
-     * layer elements advance here. */
+    /* A transition already pending before the animation phase lets the entered room consume
+     * that phase. A request made during or after it leaves entered instances at their authored
+     * index until the next frame. */
     if(anygm_policy_has_modern_layer_semantics(vm->win))
       gml_vm_frame_advance_layers(vm);
     GmlRender *render=(GmlRender*)vm->render;
@@ -364,11 +364,11 @@ static void gml_vm_apply_one_pending_room(GmlVM *vm){
 
 /* Drain transitions requested during Room Start before presenting a frame. Bound the chain so
  * a cycle cannot hang the runtime; leave any remaining target pending and report its room. */
-static void gml_vm_apply_pending_room(GmlVM *vm){
+static void gml_vm_apply_pending_room(GmlVM *vm,int advance_entered_phase){
   long applied=0;
   long limit=vm->win ? (long)gml_room_count(vm->win)*2+8 : 64;
   while(vm->pending_room>=0){
-    gml_vm_apply_one_pending_room(vm);
+    gml_vm_apply_one_pending_room(vm,advance_entered_phase);
     if(++applied<limit) continue;
     if(vm->pending_room>=0)
       anygm_host_logf(vm?vm->host:NULL,ANYGM_LOG_WARN,
@@ -387,7 +387,7 @@ static void gml_vm_finish_step(GmlVM *vm,int previous_alloc_base){
 
 static int gml_vm_finish_classic_room_request(GmlVM *vm,int previous_alloc_base){
   if(vm->pending_room<0 || !vm->win || !anygm_policy_uses_classic_runtime(vm->win)) return 0;
-  gml_vm_apply_pending_room(vm);
+  gml_vm_apply_pending_room(vm,1);
   gml_vm_finish_step(vm,previous_alloc_base);
   return 1;
 }
@@ -431,7 +431,9 @@ void gml_vm_step(GmlVM *vm){
   }
   /* Studio advances animation before Step. GM6-8 advances it after the draw phase; the host
    * calls gml_vm_post_draw() once the complete classic frame has been rendered. */
+  int pending_before_animation=vm->pending_room;
   if(!anygm_policy_animation_before_step(vm->win)) advance_instance_animations(vm);
+  int pending_owes_animation=pending_before_animation>=0;
   VMPROF_MARK(anim);
   /* GML_GOD: development capture aid for content that exposes a cooldown through an alarm. */
   {
@@ -463,9 +465,10 @@ void gml_vm_step(GmlVM *vm){
       gml_vm_instances_step_snapshot_member(vm,&vm->inst[i])){
     gml_run_event(vm,&vm->inst[i],"Step_1");
     if(vm->pending_room>=0){
-      /* Commit a Begin Step room request after the requesting event. The target room skips Begin
-       * Step but participates in every remaining phase of this same frame. */
-      gml_vm_apply_pending_room(vm);
+      /* Studio commits a Begin Step room request after the requesting event. The target room
+       * skips Begin Step but participates in every remaining phase of this same frame. */
+      gml_vm_apply_pending_room(vm,pending_owes_animation);
+      pending_owes_animation=0;
       n=vm->inst_count;
       gml_vm_instances_prepare_step(vm,n);
       vm->step_alloc_base=n;
@@ -486,7 +489,7 @@ void gml_vm_step(GmlVM *vm){
   /* Apply a timeline moment's pending room request before later step phases,
    * including alarms, and refresh the instance snapshot for the entered room. */
   if(vm->pending_room>=0){
-    gml_vm_apply_pending_room(vm);
+    gml_vm_apply_pending_room(vm,pending_owes_animation);
     n=vm->inst_count;
     gml_vm_instances_prepare_step(vm,n);
     vm->step_alloc_base=n;
@@ -562,7 +565,7 @@ void gml_vm_step(GmlVM *vm){
    * requesting event still completes, so assignments after room_goto remain visible, but a
    * newly created persistent instance must not run Step against the old room dimensions. */
   if(vm->pending_room>=0 && vm->win && anygm_policy_uses_classic_runtime(vm->win)){
-    gml_vm_apply_pending_room(vm);
+    gml_vm_apply_pending_room(vm,0);
     gml_vm_finish_step(vm,prev_alloc_base);
     VMPROF_MARK(rest);
     return;
@@ -675,7 +678,7 @@ void gml_vm_step(GmlVM *vm){
       /* Commit a room request after the requesting event completes. Do not let later members
        * of the old room's Step snapshot run before the room lifecycle boundary. */
       if(vm->pending_room>=0){
-        gml_vm_apply_pending_room(vm);
+        gml_vm_apply_pending_room(vm,0);
         gml_vm_finish_step(vm,prev_alloc_base);
         VMPROF_MARK(rest);
         return;
@@ -906,7 +909,7 @@ void gml_vm_step(GmlVM *vm){
   /* deferred async HTTP failure events (Other_62) queued by http_* this step (offline core) */
   gml_fire_async_http(vm);
   /* room transition requested during the step */
-  if(vm->pending_room>=0) gml_vm_apply_pending_room(vm);
+  if(vm->pending_room>=0) gml_vm_apply_pending_room(vm,0);
   /* Game End (Other_3): fire on all active instances when game_end was set. */
   if(vm->game_end) gml_vm_fire_game_end(vm);
   gml_vm_finish_step(vm,prev_alloc_base);
