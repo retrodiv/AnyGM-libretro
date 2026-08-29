@@ -464,7 +464,22 @@ static double explicit_game_speed_fps(AnygmEngine *engine) {
   }
   return fps > 0.0 ? fps : 0.0;
 }
-static double cur_room_fps(AnygmEngine *engine) {
+/* Content decides the frame rate, and content can be wrong: a game_set_speed of zero, of a
+ * negative, or of a five-figure cadence reaches SET_SYSTEM_AV_INFO and makes a frontend tear down
+ * and rebuild its whole audio and video pipeline for a rate no display has. The bound keeps the
+ * reported timing inside what a frontend can act on without changing anything the runtime does
+ * with the authored value. */
+#define ANYGM_MIN_REPORTED_FPS 1.0
+#define ANYGM_MAX_REPORTED_FPS 300.0
+
+static double clamp_reported_fps(double fps){
+  if(!(fps>0.0)) return 60.0;
+  if(fps<ANYGM_MIN_REPORTED_FPS) return ANYGM_MIN_REPORTED_FPS;
+  if(fps>ANYGM_MAX_REPORTED_FPS) return ANYGM_MAX_REPORTED_FPS;
+  return fps;
+}
+
+static double cur_room_fps_unclamped(AnygmEngine *engine) {
   /* Keep the reported frame rate stable. Studio projects can change room_speed mid-play for
    * effects, so modern content uses its GEN8 global cadence instead of repeatedly reconfiguring
    * the host. game_set_speed() remains authoritative when code explicitly changes that cadence.
@@ -485,6 +500,10 @@ static double cur_room_fps(AnygmEngine *engine) {
   if (gml_vm_room_get(&engine->vm, engine->vm.room_index, &r) == 0 && r.speed > 0) return (double)r.speed;
   if(engine->win.game_speed > 0.0) return engine->win.game_speed;
   return 60.0;
+}
+
+static double cur_room_fps(AnygmEngine *engine) {
+  return clamp_reported_fps(cur_room_fps_unclamped(engine));
 }
 /* Resolve a view through its opaque GMS camera handle.  Camera resources are maintained by the VM
  * builtins in reserved, serialized global arrays; rooms and classic games that only use view_*
