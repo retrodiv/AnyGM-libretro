@@ -46,16 +46,40 @@ static AnygmResult host_rich_text_render(void *userdata,const void *rtf,size_t r
   SetThreadDpiAwarenessContextFn set_thread_dpi=user32?
     (SetThreadDpiAwarenessContextFn)(void*)GetProcAddress(
       user32,"SetThreadDpiAwarenessContext"):NULL;
-  HANDLE previous_dpi=set_thread_dpi?set_thread_dpi((HANDLE)(intptr_t)-1):NULL;
-  HMODULE rich_edit=LoadLibraryA("riched20.dll");
+  int dpi_changed=0;
+  HANDLE previous_dpi=NULL;
+  if(set_thread_dpi){
+    previous_dpi=set_thread_dpi((HANDLE)(intptr_t)-1);
+    dpi_changed=1;
+  }
+  /* An unqualified LoadLibrary searches the directory the frontend was started from before
+   * System32, which is a DLL-planting surface in someone else's process. The system copy is
+   * named outright. */
+  HMODULE rich_edit=NULL;
+  {
+    char system_path[MAX_PATH];
+    UINT length=GetSystemDirectoryA(system_path,(UINT)sizeof system_path);
+    if(length>0&&length<sizeof system_path-sizeof "\\riched20.dll"){
+      memcpy(system_path+length,"\\riched20.dll",sizeof "\\riched20.dll");
+      rich_edit=LoadLibraryA(system_path);
+    }
+  }
   if(!rich_edit){
-    if(set_thread_dpi&&previous_dpi) set_thread_dpi(previous_dpi);
+    if(dpi_changed) set_thread_dpi(previous_dpi);
     return ANYGM_ERROR_UNSUPPORTED;
   }
   int w=(int)width,h=(int)height;
   HINSTANCE instance=GetModuleHandleA(NULL);
-  HWND window=CreateWindowExA(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE,"STATIC","",
-    WS_POPUP,0,0,w,h,NULL,NULL,instance,NULL);
+  /* Rich text is rasterized through a Rich Edit control, which needs a window to exist. The
+   * window is parked far outside the coordinate space of any monitor, is a tool window that never
+   * activates, and is transparent to hit testing, so it cannot appear on the player's screen or
+   * take a click from the frontend even for the frame it lives.
+   *
+   * ANYGM_RICH_TEXT_OFFSCREEN is below the smallest coordinate any real display arrangement
+   * reaches; Windows itself parks minimized windows at -32000. */
+  #define ANYGM_RICH_TEXT_OFFSCREEN (-32000)
+  HWND window=CreateWindowExA(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_TRANSPARENT,"STATIC","",
+    WS_POPUP,ANYGM_RICH_TEXT_OFFSCREEN,ANYGM_RICH_TEXT_OFFSCREEN,w,h,NULL,NULL,instance,NULL);
   HWND edit=window?CreateWindowExA(WS_EX_CLIENTEDGE,RICHEDIT_CLASSA,"",
     WS_CHILD|WS_VISIBLE|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
     0,0,w,h,window,NULL,instance,NULL):NULL;
@@ -71,7 +95,8 @@ static AnygmResult host_rich_text_render(void *userdata,const void *rtf,size_t r
     if(edit_stream.dwError) ok=0;
   }
   if(ok){
-    SetWindowPos(window,HWND_BOTTOM,0,0,w,h,SWP_NOACTIVATE|SWP_SHOWWINDOW);
+    SetWindowPos(window,HWND_BOTTOM,ANYGM_RICH_TEXT_OFFSCREEN,ANYGM_RICH_TEXT_OFFSCREEN,w,h,
+                 SWP_NOACTIVATE|SWP_SHOWWINDOW);
     RedrawWindow(window,NULL,NULL,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);
     HDC screen=GetDC(window);
     HDC copy=screen?CreateCompatibleDC(screen):NULL;
@@ -105,7 +130,9 @@ static AnygmResult host_rich_text_render(void *userdata,const void *rtf,size_t r
   }
   if(window) DestroyWindow(window);
   FreeLibrary(rich_edit);
-  if(set_thread_dpi&&previous_dpi) set_thread_dpi(previous_dpi);
+  /* Restored whenever it was changed. A legitimate NULL previous context is still a context the
+   * frontend's thread had, and leaving our own in place alters a thread this core does not own. */
+  if(dpi_changed) set_thread_dpi(previous_dpi);
   return ok?ANYGM_OK:ANYGM_ERROR_UNSUPPORTED;
 }
 #endif
