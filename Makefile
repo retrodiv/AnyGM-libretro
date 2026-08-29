@@ -35,14 +35,40 @@ endif
 
 BUILD_DIR ?= build/$(platform)
 
+# The libretro Apple templates set CROSS_COMPILE=1 as a boolean and name the target in
+# LIBRETRO_APPLE_PLATFORM, while everywhere else CROSS_COMPILE is a toolchain prefix. Prefixing the
+# compiler with "1" there would ask for a compiler called 1gcc, so the Apple convention is
+# recognized and turned into the -target/-isysroot pair those builds actually need.
+ANYGM_APPLE_CROSS := 0
+ifneq (,$(filter osx ios tvos,$(platform)))
+ifeq ($(CROSS_COMPILE),1)
+ANYGM_APPLE_CROSS := 1
+endif
+endif
+
+ifeq ($(ANYGM_APPLE_CROSS),1)
+TOOLCHAIN_PREFIX :=
+else
+TOOLCHAIN_PREFIX := $(CROSS_COMPILE)
+endif
+
 ifeq ($(origin CC),default)
-CC := $(CROSS_COMPILE)gcc
+CC := $(TOOLCHAIN_PREFIX)gcc
 endif
 ifeq ($(origin AR),default)
-AR := $(CROSS_COMPILE)ar
+AR := $(TOOLCHAIN_PREFIX)ar
 endif
 ifeq ($(origin CXX),default)
-CXX := $(CROSS_COMPILE)g++
+CXX := $(TOOLCHAIN_PREFIX)g++
+endif
+
+ifeq ($(ANYGM_APPLE_CROSS),1)
+ANYGM_APPLE_SYSROOT := $(shell xcodebuild -version -sdk macosx Path 2>/dev/null)
+APPLE_TARGET_FLAGS := $(if $(LIBRETRO_APPLE_PLATFORM),-target $(LIBRETRO_APPLE_PLATFORM)) \
+	$(if $(ANYGM_APPLE_SYSROOT),-isysroot $(ANYGM_APPLE_SYSROOT))
+CFLAGS += $(APPLE_TARGET_FLAGS)
+CXXFLAGS += $(APPLE_TARGET_FLAGS)
+LDFLAGS += $(APPLE_TARGET_FLAGS)
 endif
 
 ifeq ($(origin ARFLAGS),default)
