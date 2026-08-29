@@ -970,7 +970,10 @@ int anygm_embedded_cab_name_index_measure(const char *const *insert_paths,size_t
   if(!metrics || (!insert_paths && insert_count) || (!lookup_paths && lookup_count) ||
      insert_count>ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES ||
      insert_count+lookup_count<insert_count ||
-     insert_count+lookup_count>UINT64_MAX/ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES) return 0;
+     /* Widened deliberately: the product below is computed in 64 bits, and on a 32-bit target a
+      * size_t comparison against a 64-bit bound is a comparison the compiler can fold away. */
+     (uint64_t)insert_count+(uint64_t)lookup_count>
+       UINT64_MAX/ANYGM_EMBEDDED_CAB_NAME_MAX_PROBES) return 0;
   memset(metrics,0,sizeof *metrics);
   CabManifest manifest={0};
   manifest.probe_budget=(uint64_t)(insert_count+lookup_count)*
