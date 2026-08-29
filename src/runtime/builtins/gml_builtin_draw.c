@@ -1478,14 +1478,17 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
     gml_software3d_end(graphics);
     return vreal(1);
   }
-  if(!strcmp(nm,"d3d_set_hidden")){
+  /* The GPU and D3D names share one depth-comparison control; the rasterizer's
+   * hidden flag decides whether a fragment behind the depth buffer is dropped. */
+  if(!strcmp(nm,"d3d_set_hidden")||!strcmp(nm,"gpu_set_ztestenable")){
     control.hidden=N(a,n,0)!=0.0 &&
       !builtin_setting(vm,"GML_D3D_NO_DEPTH");
     gml_software3d_control_update(
       graphics,&control,GML_SOFTWARE3D_CONTROL_HIDDEN);
     return vreal(0);
   }
-  if(!strcmp(nm,"d3d_set_zwriteenable")){
+  /* Both names set the flag checked before storing a depth value. */
+  if(!strcmp(nm,"d3d_set_zwriteenable")||!strcmp(nm,"gpu_set_zwriteenable")){
     control.zwrite=N(a,n,0)!=0;
     gml_software3d_control_update(
       graphics,&control,GML_SOFTWARE3D_CONTROL_ZWRITE);
