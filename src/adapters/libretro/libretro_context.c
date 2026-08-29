@@ -70,23 +70,22 @@ static AnygmResult host_rich_text_render(void *userdata,const void *rtf,size_t r
   }
   int w=(int)width,h=(int)height;
   HINSTANCE instance=GetModuleHandleA(NULL);
-  /* Rich text is rasterized through a Rich Edit control, which needs a window to exist. The
-   * window is parked far outside the coordinate space of any monitor, is a tool window that never
-   * activates, and is transparent to hit testing, so it cannot appear on the player's screen or
-   * take a click from the frontend even for the frame it lives.
+  /* Rich text is rasterized through a Rich Edit control, which needs a window to hold the
+   * document. That window is a child of HWND_MESSAGE: a message-only parent has no screen
+   * presence at all -- it is never mapped, never composited, cannot be captured and cannot take
+   * a click -- so a frontend hosting this core never has an operating-system window of ours on
+   * its display. The picture is taken with EM_FORMATRANGE straight into a memory device
+   * context rather than by showing the window and photographing it.
    *
-   * ANYGM_RICH_TEXT_OFFSCREEN is below the smallest coordinate any real display arrangement
-   * reaches; Windows itself parks minimized windows at -32000. */
-  #define ANYGM_RICH_TEXT_OFFSCREEN (-32000)
-  HWND window=CreateWindowExA(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_TRANSPARENT,"STATIC","",
-    WS_POPUP,ANYGM_RICH_TEXT_OFFSCREEN,ANYGM_RICH_TEXT_OFFSCREEN,w,h,NULL,NULL,instance,NULL);
-  HWND edit=window?CreateWindowExA(WS_EX_CLIENTEDGE,RICHEDIT_CLASSA,"",
-    WS_CHILD|WS_VISIBLE|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
-    0,0,w,h,window,NULL,instance,NULL):NULL;
-  int ok=window&&edit;
+   * Rendering uses the control's in-memory formatting path. */
+  HWND parent=CreateWindowExA(0,"STATIC","",0,0,0,0,0,HWND_MESSAGE,NULL,instance,NULL);
+  HWND edit=parent?CreateWindowExA(WS_EX_CLIENTEDGE,RICHEDIT_CLASSA,"",
+    WS_CHILD|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,
+    0,0,w,h,parent,NULL,instance,NULL):NULL;
+  int ok=parent&&edit;
+  COLORREF background=RGB((background_xrgb>>16)&255u,(background_xrgb>>8)&255u,
+                          background_xrgb&255u);
   if(ok){
-    COLORREF background=RGB((background_xrgb>>16)&255u,(background_xrgb>>8)&255u,
-                            background_xrgb&255u);
     SendMessageA(edit,EM_SETBKGNDCOLOR,0,(LPARAM)background);
     SendMessageA(edit,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,MAKELPARAM(1,1));
     LibretroRichTextStream stream={(const uint8_t*)rtf,rtf_size,0};
@@ -95,40 +94,77 @@ static AnygmResult host_rich_text_render(void *userdata,const void *rtf,size_t r
     if(edit_stream.dwError) ok=0;
   }
   if(ok){
-    SetWindowPos(window,HWND_BOTTOM,ANYGM_RICH_TEXT_OFFSCREEN,ANYGM_RICH_TEXT_OFFSCREEN,w,h,
-                 SWP_NOACTIVATE|SWP_SHOWWINDOW);
-    RedrawWindow(window,NULL,NULL,RDW_INVALIDATE|RDW_UPDATENOW|RDW_ALLCHILDREN);
-    HDC screen=GetDC(window);
-    HDC copy=screen?CreateCompatibleDC(screen):NULL;
-    HBITMAP bitmap=screen?CreateCompatibleBitmap(screen,w,h):NULL;
-    if(!screen||!copy||!bitmap) ok=0;
+    BITMAPINFO information;
+    memset(&information,0,sizeof information);
+    information.bmiHeader.biSize=sizeof information.bmiHeader;
+    information.bmiHeader.biWidth=w;
+    information.bmiHeader.biHeight=-h;
+    information.bmiHeader.biPlanes=1;
+    information.bmiHeader.biBitCount=32;
+    information.bmiHeader.biCompression=BI_RGB;
+    HDC screen=GetDC(NULL);
+    HDC memory=screen?CreateCompatibleDC(screen):NULL;
+    void *bits=NULL;
+    HBITMAP bitmap=memory?CreateDIBSection(memory,&information,DIB_RGB_COLORS,&bits,NULL,0):NULL;
+    if(!memory||!bitmap||!bits) ok=0;
     HGDIOBJ previous=NULL;
     if(ok){
-      previous=SelectObject(copy,bitmap);
-      ok=PrintWindow(window,copy,PW_CLIENTONLY)!=0;
-      SelectObject(copy,previous);
-    }
-    if(ok){
-      BITMAPINFO information;
-      memset(&information,0,sizeof information);
-      information.bmiHeader.biSize=sizeof information.bmiHeader;
-      information.bmiHeader.biWidth=w;
-      information.bmiHeader.biHeight=-h;
-      information.bmiHeader.biPlanes=1;
-      information.bmiHeader.biBitCount=32;
-      information.bmiHeader.biCompression=BI_RGB;
-      ok=GetDIBits(copy,bitmap,0,(UINT)h,pixels,&information,DIB_RGB_COLORS)!=0;
+      previous=SelectObject(memory,bitmap);
+      RECT area={0,0,w,h};
+      HBRUSH brush=CreateSolidBrush(background);
+      FillRect(memory,&area,brush);
+      DeleteObject(brush);
+      /* The control drew its own sunken client edge into the old capture; draw the same edge so
+       * the picture is the one the player saw before. */
+      RECT edge=area;
+      DrawEdge(memory,&edge,EDGE_SUNKEN,BF_RECT);
+      /* EM_FORMATRANGE speaks twips against the target device, and lays the text out inside the
+       * rectangle it is given. That rectangle is the control's own client box translated by its
+       * border, and the first character's position is asked of the control rather than assembled
+       * from border and margin constants that a Windows release is free to change. */
+      RECT window_rect,client_rect;
+      GetWindowRect(edit,&window_rect);
+      GetClientRect(edit,&client_rect);
+      int border_x=((window_rect.right-window_rect.left)-
+                    (client_rect.right-client_rect.left))/2;
+      int border_y=((window_rect.bottom-window_rect.top)-
+                    (client_rect.bottom-client_rect.top))/2;
+      POINTL origin={0,0};
+      SendMessageA(edit,EM_POSFROMCHAR,(WPARAM)&origin,0);
+      int dpi_x=GetDeviceCaps(memory,LOGPIXELSX), dpi_y=GetDeviceCaps(memory,LOGPIXELSY);
+      int box_left=border_x+(int)origin.x;
+      int box_top=border_y+(int)origin.y;
+      int box_right=border_x+(int)(client_rect.right-client_rect.left)-(int)origin.x;
+      int box_bottom=border_y+(int)(client_rect.bottom-client_rect.top);
+      FORMATRANGE range;
+      memset(&range,0,sizeof range);
+      range.hdc=range.hdcTarget=memory;
+      range.rc.left=MulDiv(box_left,1440,dpi_x);
+      range.rc.top=MulDiv(box_top,1440,dpi_y);
+      range.rc.right=MulDiv(box_right,1440,dpi_x);
+      range.rc.bottom=MulDiv(box_bottom,1440,dpi_y);
+      range.rcPage=range.rc;
+      range.chrg.cpMin=0;
+      range.chrg.cpMax=-1;
+      SendMessageA(edit,EM_FORMATRANGE,0,0);
+      ok=SendMessageA(edit,EM_FORMATRANGE,TRUE,(LPARAM)&range)>=0;
+      /* Releases the formatting information the control cached for the target device. */
+      SendMessageA(edit,EM_FORMATRANGE,0,0);
+      GdiFlush();
       if(ok){
+        memcpy(pixels,bits,(size_t)width*height*4u);
         size_t count=(size_t)width*height;
         uint32_t *output=(uint32_t*)pixels;
         for(size_t i=0;i<count;i++) output[i]|=0xFF000000u;
       }
+      SelectObject(memory,previous);
     }
     if(bitmap) DeleteObject(bitmap);
-    if(copy) DeleteDC(copy);
-    if(screen) ReleaseDC(window,screen);
+    if(memory) DeleteDC(memory);
+    if(screen) ReleaseDC(NULL,screen);
   }
-  if(window) DestroyWindow(window);
+  if(edit) DestroyWindow(edit);
+  if(parent) DestroyWindow(parent);
   FreeLibrary(rich_edit);
   /* Restored whenever it was changed. A legitimate NULL previous context is still a context the
    * frontend's thread had, and leaving our own in place alters a thread this core does not own. */
