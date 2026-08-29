@@ -106,17 +106,10 @@ static const struct retro_input_descriptor g_input_descriptors[]={
   {3,RETRO_DEVICE_ANALOG,RETRO_DEVICE_INDEX_ANALOG_RIGHT,RETRO_DEVICE_ID_ANALOG_Y,"Right Stick Y"},
   {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_SELECT,"Select"},
   {3,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_START,"Start"},
-  {0,RETRO_DEVICE_KEYBOARD,0,RETROK_UP,"Keyboard Up"},
-  {0,RETRO_DEVICE_KEYBOARD,0,RETROK_DOWN,"Keyboard Down"},
-  {0,RETRO_DEVICE_KEYBOARD,0,RETROK_LEFT,"Keyboard Left"},
-  {0,RETRO_DEVICE_KEYBOARD,0,RETROK_RIGHT,"Keyboard Right"},
-  {0,RETRO_DEVICE_KEYBOARD,0,RETROK_z,"Keyboard Z"},
-  {0,RETRO_DEVICE_KEYBOARD,0,RETROK_x,"Keyboard X"},
-  {0,RETRO_DEVICE_KEYBOARD,0,RETROK_c,"Keyboard C"},
-  {0,RETRO_DEVICE_KEYBOARD,0,RETROK_SPACE,"Keyboard Space"},
-  {0,RETRO_DEVICE_KEYBOARD,0,RETROK_RETURN,"Keyboard Enter"},
-  {0,RETRO_DEVICE_KEYBOARD,0,RETROK_ESCAPE,"Keyboard Escape"},
-  {0,RETRO_DEVICE_KEYBOARD,0,RETROK_LSHIFT,"Keyboard Shift"},
+  /* No keyboard entries. SET_INPUT_DESCRIPTORS describes what a player may remap, and frontends
+   * drop RETRO_DEVICE_KEYBOARD rows from that list without saying so, so listing them described
+   * nothing while suggesting the keys were configurable. Content still receives every key through
+   * the keyboard callback below, which is not a remapping surface and does not need one. */
   {0}
 };
 
@@ -165,7 +158,14 @@ void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t heig
   unsigned ports=ANYGM_MAX_GAMEPADS;
   input->connected_gamepads=g_libretro.config.gamepad_connected?ports:0u;
   for(unsigned port=0;port<ports;port++){
-    for(unsigned button=0;button<ANYGM_MAX_GAMEPAD_BUTTONS;button++)
+    /* One call per port where the frontend offers it, sixteen where it does not. The values are
+     * the same either way: the mask is the frontend's own answer for each of those buttons. */
+    if(g_libretro.input_bitmasks){
+      int16_t mask=input_state(port,RETRO_DEVICE_JOYPAD,0,RETRO_DEVICE_ID_JOYPAD_MASK);
+      for(unsigned button=0;button<ANYGM_MAX_GAMEPAD_BUTTONS;button++)
+        input->gamepad_buttons[port][button]=(mask&(1<<button))?1u:0u;
+    }
+    else for(unsigned button=0;button<ANYGM_MAX_GAMEPAD_BUTTONS;button++)
       input->gamepad_buttons[port][button]=
           input_state(port,RETRO_DEVICE_JOYPAD,0,button)?1u:0u;
     input->gamepad_axes[port][0]=normalized_axis(input_state(
