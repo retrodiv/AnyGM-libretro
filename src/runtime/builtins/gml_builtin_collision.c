@@ -737,6 +737,17 @@ static int shape_hits_instance(GmlVM *vm, GmlInstance *o, int kind, double *p, i
   if(y1==y0) y1++;
   for(int wy=y0; wy<y1; wy++) for(int wx=x0; wx<x1; wx++){
     if(kind==2){ double dx=wx-p[0], dy=wy-p[1]; if(dx*dx+dy*dy>p[2]*p[2]) continue; }
+    /* An ellipse inscribed in the rectangle the caller gave, which is what collision_ellipse
+     * means: centre at the midpoint, radii at half the extent, and a point inside when the
+     * normalised distance is at most one. A zero-width or zero-height rectangle has no inside,
+     * and dividing by it would answer "everything" rather than "nothing". */
+    if(kind==3){
+      double cx=(p[0]+p[2])*0.5, cy=(p[1]+p[3])*0.5;
+      double rx=fabs(p[2]-p[0])*0.5, ry=fabs(p[3]-p[1])*0.5;
+      if(rx<=0.0 || ry<=0.0) continue;
+      double nx=(wx-cx)/rx, ny=(wy-cy)/ry;
+      if(nx*nx+ny*ny>1.0) continue;
+    }
     if(precise && R){ int si=inst_mask_sprite_index(o);
       GmlRenderSpriteMetrics sprite;
       if(gml_render_sprite_metrics(R,si,&sprite) &&
@@ -748,7 +759,9 @@ static int shape_hits_instance(GmlVM *vm, GmlInstance *o, int kind, double *p, i
 }
 static void shape_bounds(int kind, double *p, double *sl,double *st,double *sr,double *sb){
   if(kind==0){ *sl=p[0]; *st=p[1]; *sr=p[0]; *sb=p[1]; }
-  else if(kind==1){ *sl=fmin(p[0],p[2]); *st=fmin(p[1],p[3]); *sr=fmax(p[0],p[2]); *sb=fmax(p[1],p[3]); }
+  /* A rectangle and an inscribed ellipse are bounded by the same rectangle: the ellipse is
+   * narrowed by the per-point test above, not here. */
+  else if(kind==1||kind==3){ *sl=fmin(p[0],p[2]); *st=fmin(p[1],p[3]); *sr=fmax(p[0],p[2]); *sb=fmax(p[1],p[3]); }
   else { *sl=p[0]-p[2]; *st=p[1]-p[2]; *sr=p[0]+p[2]; *sb=p[1]+p[2]; }
 }
 static GmlInstance *collision_shape_linear(GmlVM *vm, int kind, double *p, int obj,
@@ -1129,6 +1142,8 @@ GmlVal gml_builtin_try_collision(GmlVM *vm, const char *nm, GmlVal *a, int n){
     if(by1>by2){ double t=by1; by1=by2; by2=t; }
     return vreal(!(ax2<bx1 || bx2<ax1 || ay2<by1 || by2<ay1));
   }
+  /* Ellipse queries use rectangle-coordinate order and the shared shape search. */
+  if(!strcmp(nm,"collision_ellipse")){ double p[4]={N(a,n,0),N(a,n,1),N(a,n,2),N(a,n,3)}; GmlInstance *o=collision_shape_value(vm,3,p,n>4?a[4]:vreal(IT_NOONE),N(a,n,5)>=0.5,(int)N(a,n,6)); return vreal(o?(double)o->id:-4); }
   if(!strcmp(nm,"collision_circle")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)}; GmlInstance *o=collision_shape_value(vm,2,p,n>3?a[3]:vreal(IT_NOONE),N(a,n,4)>=0.5,(int)N(a,n,5)); return vreal(o?(double)o->id:-4); }
   if(!strcmp(nm,"collision_circle_list")){ double p[3]={N(a,n,0),N(a,n,1),N(a,n,2)};
     GmlDSList *list=ds_list_slot_repair(vm,(int)N(a,n,6));
