@@ -180,6 +180,7 @@ API_TEST_OBJECTS := $(TEST_DIR)/public_header_c.o $(TEST_DIR)/public_header_cpp.
 
 .PHONY: all core runtime check warnings-check api-check contract-check integration-check security-check \
 	sanitizer-check architecture-check isolation-check export-check diagnostic-tests \
+	provenance-check builtin-registry-check \
 	diagnostics-check diagnostics-check-internal \
 	clean
 
@@ -493,7 +494,7 @@ endif
 warnings-check: CFLAGS += -Werror
 warnings-check: core
 
-architecture-check: builtin-registry-check
+architecture-check: builtin-registry-check provenance-check
 	tests/architecture/check_compatibility_boundaries.sh
 	tests/architecture/check_code_map.sh
 	tests/architecture/check_graphics_boundaries.sh
@@ -501,6 +502,10 @@ architecture-check: builtin-registry-check
 	python3 tests/architecture/check_cab_boundaries.py
 	python3 tests/architecture/check_nsis_boundaries.py
 	tests/architecture/check_numeric_conversions.sh
+
+# Check the internal files named by provenance directives against their recorded digests.
+provenance-check:
+	python3 tests/architecture/check_provenance.py
 
 builtin-registry-check:
 	python3 tests/architecture/check_builtin_registry.py check

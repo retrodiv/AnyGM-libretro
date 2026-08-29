@@ -35,8 +35,13 @@ python3 tests/architecture/check_builtin_registry.py generate
 `make builtin-registry-check` independently reconstructs the index, compares
 it byte-for-byte, and also proves that the canonical exact-name set matches the
 implementation branches. A production build consumes the immutable header and
-does not run the generator. Concrete verification values belong in external
-release evidence rather than this repository.
+does not run the generator. External verification values belong in private
+release evidence. The following SHA-256 directives pin only the two
+first-party files in this repository; `make provenance-check` verifies
+their current bytes.
+
+<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = b0ab6e799295deb77dc47e39fb82587de4e6fc638a7649c44cb3ee9a7dd0688b -->
+<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = fdfb5714da0b05e269f759364cb615ea14208966a1dd1f3a68643e568fbad284 -->
 
 ## Audio setup packets
 
