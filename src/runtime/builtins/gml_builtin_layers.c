@@ -351,6 +351,13 @@ GmlVal gml_builtin_try_layers(GmlVM *vm, const char *nm, GmlVal *a, int n){
     return vreal(0); }
   if(!strcmp(nm,"tilemap_get_width")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->cols:0); }
   if(!strcmp(nm,"tilemap_get_height")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->rows:0); }
+  /* Set the field read by tilemap_get_tileset and return the tileset now in force.
+   * A missing tilemap has the same -1 result as the getter. */
+  if(!strcmp(nm,"tilemap_tileset")){
+    GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0));
+    if(tm && n>1) tm->tileset=(int)N(a,n,1);
+    return vreal(tm?tm->tileset:-1);
+  }
   if(!strcmp(nm,"tilemap_get_tileset")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->tileset:-1); }
   if(!strcmp(nm,"tilemap_get_tile_width")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->tw:0); }
   if(!strcmp(nm,"tilemap_get_tile_height")){ GmlTileMap *tm=gml_tilemap_find(vm,(int)N(a,n,0)); return vreal(tm?tm->th:0); }
