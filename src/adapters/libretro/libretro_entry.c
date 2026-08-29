@@ -133,8 +133,9 @@ static size_t fixed_state_capacity(size_t actual,bool compact_startup){
 void retro_set_environment(retro_environment_t callback){
   g_libretro.environment=callback;
   if(!callback) return;
-  bool supports_no_content=false;
-  callback(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME,&supports_no_content);
+  /* SET_SUPPORT_NO_GAME is deliberately not sent: it is only meaningful when asserting that the
+   * core runs with no content, and this one always needs a payload. Sending false is a no-op that
+   * reads like a decision. */
   libretro_options_register();
   libretro_input_register();
 }
@@ -144,6 +145,20 @@ void retro_set_audio_sample(retro_audio_sample_t callback){ g_libretro.audio_sam
 void retro_set_audio_sample_batch(retro_audio_sample_batch_t callback){ g_libretro.audio_batch=callback; }
 void retro_set_input_poll(retro_input_poll_t callback){ g_libretro.input_poll=callback; }
 void retro_set_input_state(retro_input_state_t callback){ g_libretro.input_state=callback; }
+
+/* The renderer emits XRGB8888 and has no other output format. A frontend that refuses it reads
+ * whatever we send as 0RGB1555, which is not a degraded picture but a garbled one, so a refusal is
+ * carried to retro_load_game and answered there with a message the player can act on rather than
+ * with a warning in a log nobody opens. The request is made in retro_init because that is where
+ * RetroArch expects it, and repeated at load because libretro.h says load or get_system_av_info is
+ * the correct place and a stricter frontend may only honour it there. */
+static bool request_pixel_format(void){
+  if(!g_libretro.environment) return false;
+  enum retro_pixel_format format=RETRO_PIXEL_FORMAT_XRGB8888;
+  if(g_libretro.environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,&format)) return true;
+  libretro_log(RETRO_LOG_ERROR,"The frontend rejected XRGB8888, the only format this core emits\n");
+  return false;
+}
 
 void retro_init(void){
   /* The settings are declared when the host hands over its callback, and released when the core is
@@ -155,13 +170,25 @@ void retro_init(void){
     struct retro_log_callback log_callback;
     if(g_libretro.environment(RETRO_ENVIRONMENT_GET_LOG_INTERFACE,&log_callback))
       g_libretro.log=log_callback.log;
-    enum retro_pixel_format format=RETRO_PIXEL_FORMAT_XRGB8888;
-    if(!g_libretro.environment(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT,&format))
-      libretro_log(RETRO_LOG_WARN,"The frontend rejected XRGB8888 output\n");
+    g_libretro.pixel_format_accepted=request_pixel_format();
     memset(&g_libretro.rumble,0,sizeof g_libretro.rumble);
     g_libretro.rumble_available=
         g_libretro.environment(RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE,&g_libretro.rumble) &&
         g_libretro.rumble.set_rumble_state;
+    /* A software rasterizer that also runs a bytecode interpreter is not a light core; saying so
+     * lets a frontend choose its scheduling before the first frame instead of after a stutter. */
+    unsigned performance=8;
+    g_libretro.environment(RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL,&performance);
+    /* Whether a repeated frame may be sent as a null pointer. Without it every skipped or failed
+     * frame has to carry a full framebuffer the frontend is going to discard. */
+    bool can_dupe=false;
+    g_libretro.can_dupe=
+        g_libretro.environment(RETRO_ENVIRONMENT_GET_CAN_DUPE,&can_dupe) && can_dupe;
+    g_libretro.video_enabled=true;
+    g_libretro.audio_enabled=true;
+    /* One environment call per port instead of one per button. */
+    g_libretro.input_bitmasks=
+        g_libretro.environment(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS,NULL)!=false;
   }
   negotiate_serialization();
   libretro_vfs_request();
@@ -244,24 +271,61 @@ void retro_reset(void){
  * under a separate cache subdirectory. */
 #define ANYGM_CACHE_SUBDIRECTORY "anygm-cache"
 
-static void update_directories(void){
+/* Join a frontend-named root and one suffix, refusing the result rather than truncating it. A
+ * truncated join names a prefix of the root, which is how a cache directory ends up being the save
+ * root itself. */
+static bool join_root(char *out,size_t size,const char *root,const char *suffix){
+  if(!root || !root[0]) return false;
+  int written=snprintf(out,size,"%s/%s",root,suffix);
+  if(written<0 || (size_t)written>=size){ out[0]=0; return false; }
+  return true;
+}
+
+static const char *frontend_directory(unsigned command){
   const char *directory=NULL;
+  if(g_libretro.environment && g_libretro.environment(command,&directory) &&
+     directory && directory[0])
+    return directory;
+  return NULL;
+}
+
+/* Where this core is allowed to write. The save root is the frontend's, and the extracted-payload
+ * cache is a subdirectory of it so that deleting the cache costs re-extraction and nothing else.
+ *
+ * When a frontend answers neither, the loader's own last-resort roots are a relative tmp/ under
+ * the frontend's working directory and the directory the content sits in - read-only on many
+ * setups and impossible under Android's scoped storage. The system directory is the conventional
+ * answer for that case, so it is asked for before the loader is left to fall back. */
+static void update_directories(void){
   g_libretro.save_directory[0]=0;
   g_libretro.cache_directory[0]=0;
-  if(g_libretro.environment &&
-     g_libretro.environment(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY,&directory) &&
-     directory && directory[0]){
-    snprintf(g_libretro.save_directory,sizeof g_libretro.save_directory,"%s",directory);
-    /* Never expose a truncated cache path as a valid root. */
-    if(snprintf(g_libretro.cache_directory,sizeof g_libretro.cache_directory,
-                "%s/%s",directory,ANYGM_CACHE_SUBDIRECTORY)>=
-       (int)sizeof g_libretro.cache_directory)
-      g_libretro.cache_directory[0]=0;
+  const char *saves=frontend_directory(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY);
+  const char *system=frontend_directory(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY);
+  if(saves){
+    snprintf(g_libretro.save_directory,sizeof g_libretro.save_directory,"%s",saves);
+    join_root(g_libretro.cache_directory,sizeof g_libretro.cache_directory,
+              saves,ANYGM_CACHE_SUBDIRECTORY);
   }
+  else if(system){
+    libretro_log(RETRO_LOG_WARN,
+                 "The frontend named no save directory; using the system directory instead\n");
+    join_root(g_libretro.save_directory,sizeof g_libretro.save_directory,system,"anygm");
+    join_root(g_libretro.cache_directory,sizeof g_libretro.cache_directory,
+              system,ANYGM_CACHE_SUBDIRECTORY);
+  }
+  if(!g_libretro.cache_directory[0] && system)
+    join_root(g_libretro.cache_directory,sizeof g_libretro.cache_directory,
+              system,ANYGM_CACHE_SUBDIRECTORY);
 }
 
 bool retro_load_game(const struct retro_game_info *info){
   if(!info || !info->path || !create_engine()) return false;
+  if(!g_libretro.pixel_format_accepted) g_libretro.pixel_format_accepted=request_pixel_format();
+  if(!g_libretro.pixel_format_accepted){
+    libretro_log(RETRO_LOG_ERROR,
+                 "Refusing to load: this core renders XRGB8888 and the frontend will not take it\n");
+    return false;
+  }
   if(g_libretro.loaded) retro_unload_game();
   memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
   g_libretro.setting_cache_count=0;
@@ -286,6 +350,25 @@ bool retro_load_game(const struct retro_game_info *info){
     char error[512];
     anygm_get_last_error(g_libretro.engine,error,sizeof error);
     libretro_log(RETRO_LOG_ERROR,"Content load failed (%d): %s\n",result,error);
+    /* A refusal that only reaches the log is a black screen as far as the player is concerned.
+     * SET_MESSAGE_EXT puts the reason on screen where a frontend supports it; a frontend that
+     * does not simply leaves the log entry, which is what happened before. */
+    if(g_libretro.environment){
+      struct retro_message_ext message;
+      memset(&message,0,sizeof message);
+      /* Deliberately truncating: a notification has room for a sentence, and the whole
+       * diagnostic is in the log line above. */
+      char shown[576];
+      snprintf(shown,sizeof shown,"AnyGM cannot load this content: %s",error);
+      message.msg=shown;
+      message.duration=6000;
+      message.priority=3;
+      message.level=RETRO_LOG_ERROR;
+      message.target=RETRO_MESSAGE_TARGET_ALL;
+      message.type=RETRO_MESSAGE_TYPE_NOTIFICATION;
+      message.progress=-1;
+      g_libretro.environment(RETRO_ENVIRONMENT_SET_MESSAGE_EXT,&message);
+    }
     return false;
   }
   g_libretro.loaded=true;
@@ -323,9 +406,14 @@ void retro_unload_game(void){
   g_libretro.fixed_state_capacity=0;
   g_libretro.startup_resume_capacity=0;
   g_libretro.state_capacity_growth_reported=false;
+  g_libretro.frame_failure_reports=0;
   memset(g_libretro.override_used,0,sizeof g_libretro.override_used);
   memset(&g_libretro.frame,0,sizeof g_libretro.frame);
   memset(&g_libretro.av,0,sizeof g_libretro.av);
+  /* A key held while one game is unloaded is not held by the next one. Left latched, the second
+   * load starts with input the player never gave it. */
+  memset(g_libretro.keyboard_events,0,sizeof g_libretro.keyboard_events);
+  g_libretro.pointer_seen=0;
 }
 
 unsigned retro_get_region(void){ return RETRO_REGION_NTSC; }
@@ -357,6 +445,16 @@ void retro_run(void){
     return;
   }
   apply_live_options();
+  /* Fast-forward and run-ahead throw frames away. A frontend that says so in advance saves this
+   * core the most expensive work it does, and there is no other way for a software rasterizer to
+   * find out. Both default to on, so a frontend that answers nothing loses nothing. */
+  if(g_libretro.environment){
+    int enable=0;
+    if(g_libretro.environment(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE,&enable)){
+      g_libretro.video_enabled=(enable&1)!=0;
+      g_libretro.audio_enabled=(enable&2)!=0;
+    }
+  }
   AnygmInputFrame input;
   uint32_t width=g_libretro.frame.width?g_libretro.frame.width:g_libretro.av.base_width;
   uint32_t height=g_libretro.frame.height?g_libretro.frame.height:g_libretro.av.base_height;
@@ -365,12 +463,40 @@ void retro_run(void){
   g_libretro.frame.struct_size=sizeof g_libretro.frame;
   AnygmResult result=anygm_run_frame(g_libretro.engine,&input,&g_libretro.frame);
   if(result!=ANYGM_OK){
-    libretro_log(RETRO_LOG_ERROR,"Frame execution failed (%d)\n",result);
+    /* Reported a bounded number of times: a frame that fails usually fails on every frame after
+     * it too, and a message per frame buries the first one under thousands of copies. */
+    const unsigned report_limit=8;
+    if(g_libretro.frame_failure_reports<report_limit){
+      g_libretro.frame_failure_reports++;
+      libretro_log(RETRO_LOG_ERROR,"Frame execution failed (%d)%s\n",result,
+                   g_libretro.frame_failure_reports==report_limit?
+                     "; further failures of this kind are not reported":"");
+    }
+    /* The frontend still needs a frame. Starving it stalls its own timing, so the previous
+     * picture is repeated where the frontend accepts a duplicate and resent otherwise. */
+    if(g_libretro.video)
+      g_libretro.video(g_libretro.can_dupe?NULL:g_libretro.frame.pixels,
+                       g_libretro.av.base_width,g_libretro.av.base_height,
+                       g_libretro.can_dupe?0:g_libretro.frame.pitch);
     return;
   }
+  g_libretro.frame_failure_reports=0;
   g_libretro.frame_completed=true;
   g_libretro.reset_pending_frame=false;
-  if(g_libretro.video){
+  /* Announced before the frame it describes, not after it: the frontend sizes what it is about
+   * to receive from the geometry it currently holds. The dimensions here are bounded by the
+   * constant maxima declared in retro_get_system_av_info, so this can never enlarge them. */
+  if((g_libretro.frame.flags&(ANYGM_FRAME_GEOMETRY_CHANGED|ANYGM_FRAME_TIMING_CHANGED)) &&
+     g_libretro.environment){
+    libretro_update_av();
+    struct retro_system_av_info av;
+    fill_av_info(&av);
+    if(g_libretro.frame.flags&ANYGM_FRAME_TIMING_CHANGED)
+      g_libretro.environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
+    else
+      g_libretro.environment(RETRO_ENVIRONMENT_SET_GEOMETRY,&av.geometry);
+  }
+  if(g_libretro.video && g_libretro.video_enabled){
     /* The engine reports which target it rendered into. The hardware sentinel says the frame is
      * already on the frontend's own framebuffer; without it a complete CPU frame is available and
      * the ordinary pixel callback carries it. The two are never both authoritative. */
@@ -381,21 +507,14 @@ void retro_run(void){
       g_libretro.video(g_libretro.frame.pixels,g_libretro.frame.width,g_libretro.frame.height,
                        g_libretro.frame.pitch);
   }
-  if(g_libretro.frame.audio && g_libretro.frame.audio_frames){
+  else if(g_libretro.video && g_libretro.can_dupe)
+    g_libretro.video(NULL,g_libretro.frame.width,g_libretro.frame.height,0);
+  if(g_libretro.frame.audio && g_libretro.frame.audio_frames && g_libretro.audio_enabled){
     if(g_libretro.audio_batch)
       g_libretro.audio_batch(g_libretro.frame.audio,g_libretro.frame.audio_frames);
     else if(g_libretro.audio_sample)
       for(size_t i=0;i<g_libretro.frame.audio_frames;i++)
         g_libretro.audio_sample(g_libretro.frame.audio[i*2],g_libretro.frame.audio[i*2+1]);
-  }
-  if(g_libretro.frame.flags&(ANYGM_FRAME_GEOMETRY_CHANGED|ANYGM_FRAME_TIMING_CHANGED)){
-    libretro_update_av();
-    struct retro_system_av_info av;
-    fill_av_info(&av);
-    if(g_libretro.frame.flags&ANYGM_FRAME_TIMING_CHANGED)
-      g_libretro.environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
-    else
-      g_libretro.environment(RETRO_ENVIRONMENT_SET_GEOMETRY,&av.geometry);
   }
   if((g_libretro.frame.flags&ANYGM_FRAME_SHUTDOWN_REQUESTED) && g_libretro.environment)
     g_libretro.environment(RETRO_ENVIRONMENT_SHUTDOWN,NULL);

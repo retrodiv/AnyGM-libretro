@@ -40,6 +40,12 @@ typedef struct LibretroAdapter {
   size_t startup_resume_capacity;
   bool state_capacity_growth_reported;
   bool variable_state_supported;
+  bool pixel_format_accepted;
+  bool can_dupe;
+  bool input_bitmasks;
+  bool video_enabled;
+  bool audio_enabled;
+  unsigned frame_failure_reports;
   char save_directory[1024];
   char cache_directory[1024];
   char language[16];
