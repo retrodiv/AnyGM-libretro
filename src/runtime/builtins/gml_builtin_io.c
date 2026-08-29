@@ -1253,7 +1253,12 @@ GmlVal gml_builtin_try_io(GmlVM *vm, const char *nm, GmlVal *a, int n){
       size_t need=base_len+strlen(mid)+strlen(ext)+1;
       char *cand=malloc(need);
       if(!cand) return vstr_owned(strdup(raw));
-      memcpy(cand,raw,base_len); strcpy(cand+base_len,mid); strcat(cand,ext);
+      /* Bounded by construction, and written as three memcpy so that no reader or scanner has
+       * to prove that about a strcpy standing next to content-derived text. */
+      size_t mid_len=strlen(mid), ext_len=strlen(ext);
+      memcpy(cand,raw,base_len);
+      memcpy(cand+base_len,mid,mid_len);
+      memcpy(cand+base_len+mid_len,ext,ext_len+1);
       char *full=resolve_read_path(vm,cand);
       int exists=full && path_present(vm,full);
       free(full);

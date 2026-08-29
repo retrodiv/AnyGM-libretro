@@ -12,7 +12,10 @@ fi
 
 temporary=$(mktemp)
 trap 'rm -f -- "$temporary"' EXIT HUP INT TERM
-nm -D --defined-only "$binary" | awk '$2 ~ /^[TW]$/ && $3 ~ /^retro_/ { print $3 }' | \
+# Every defined dynamic symbol, not only the retro_ ones. Filtering to the prefix first would
+# have let a leaked vendored symbol - the stbi_* interposition link.T exists to prevent - pass
+# this check unnoticed, which is the exact failure this file is here to catch.
+nm -D --defined-only "$binary" | awk '$2 ~ /^[TWDBR]$/ { print $3 }' | \
   LC_ALL=C sort -u >"$temporary"
 expected=$(mktemp)
 trap 'rm -f -- "$temporary" "$expected"' EXIT HUP INT TERM

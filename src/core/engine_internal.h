@@ -258,7 +258,6 @@ struct AnygmEngine {
   double fps;
   int fps_room,follow_player,player_object;
   double audio_accumulator;
-  char start_room_option[65536];
   int state_just_loaded;
   /* The first advancing frame after a load begins from input continuity: a key held now was held
    * as far as edge detection is concerned, or a load re-presses every held button. */
