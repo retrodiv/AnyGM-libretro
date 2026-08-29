@@ -127,10 +127,12 @@ generator and C declarations retain their separate MIT terms. Concrete
 input and output verification values belong in external evidence, not in
 this repository.
 
-This revision still does not include generators for the two Liberation
-headers. Their checked-in declarations and licence record identify the
-declared source and terms, but this tree alone does not provide
-byte-for-byte regeneration evidence for those two artifacts.
+The classic fallback generator is in `tools/fontgen/`, with fixed layout
+parameters and an explicit font-file input. The input font is not bundled,
+and this tree alone does not prove that the checked-in header was reproduced
+byte-for-byte. The classic information table has no generator in this
+revision; its declared source and terms remain subject to the same
+external verification requirement.
 
 ## Interoperability constants
 
