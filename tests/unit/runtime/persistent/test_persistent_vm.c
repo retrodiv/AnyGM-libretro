@@ -1255,6 +1255,208 @@ cleanup:
 }
 
 
+int expect_animation_end_room_transition_reuses_step_slot(void){
+  GmlcProject project={0};
+  GmlcSprite project_sprite={0};
+  GmlcObject objects[4]={{0}};
+  GmlcObjectEvent events[4]={{0}};
+  GmlcRoom rooms[2]={{0}};
+  GmlcRoomInstance placed[4]={{0}};
+  int room_order[2]={0,1};
+  AnygmHostServices services={0};
+  char transition_path[]="/tmp/gml-animation-room-transition-XXXXXX";
+  char entered_step_path[]="/tmp/gml-animation-room-entered-step-XXXXXX";
+  char new_type_step_path[]="/tmp/gml-animation-room-new-type-step-XXXXXX";
+  char inherited_step_path[]="/tmp/gml-animation-room-inherited-step-XXXXXX";
+  char package_path[]="/tmp/gml-animation-room-package-XXXXXX";
+  int transition_fd=-1,entered_step_fd=-1,new_type_step_fd=-1,inherited_step_fd=-1,package_fd=-1;
+  int ok=0;
+
+  transition_fd=mkstemp(transition_path);
+  entered_step_fd=mkstemp(entered_step_path);
+  new_type_step_fd=mkstemp(new_type_step_path);
+  inherited_step_fd=mkstemp(inherited_step_path);
+  package_fd=mkstemp(package_path);
+  if(transition_fd<0 || entered_step_fd<0 || new_type_step_fd<0 ||
+     inherited_step_fd<0 || package_fd<0) goto cleanup;
+  close(transition_fd); transition_fd=-1;
+  close(entered_step_fd); entered_step_fd=-1;
+  close(new_type_step_fd); new_type_step_fd=-1;
+  close(inherited_step_fd); inherited_step_fd=-1;
+  close(package_fd); package_fd=-1;
+  if(!fixture_write_text(transition_path,"room_goto_next();\n") ||
+     !fixture_write_text(entered_step_path,
+       "global.entered_step_hits = global.entered_step_hits + 1;\n"
+       "global.step_order = global.step_order * 10 + 1;\n") ||
+     !fixture_write_text(new_type_step_path,
+       "global.new_type_step_hits = global.new_type_step_hits + 1;\n"
+       "global.step_order = global.step_order * 10 + 2;\n") ||
+     !fixture_write_text(inherited_step_path,
+       "global.inherited_step_hits = global.inherited_step_hits + 1;\n")) goto cleanup;
+
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  project.name="animation-room-transition-fixture";
+  project.host=&services;
+  project.sprites=&project_sprite;
+  project.n_sprites=project.cap_sprites=1;
+  project.objects=objects;
+  project.n_objects=project.cap_objects=4;
+  project.rooms=rooms;
+  project.n_rooms=project.cap_rooms=2;
+  project.room_order=room_order;
+  project.n_room_order=2;
+
+  project_sprite.id=project_sprite.name=(char*)"spr_transition";
+  project_sprite.runtime_id=0;
+  project_sprite.width=project_sprite.height=1;
+  project_sprite.bbox_right=project_sprite.bbox_bottom=0;
+
+  objects[0].id=objects[0].name=(char*)"obj_transition";
+  objects[0].sprite_id=0;
+  objects[0].mask_id=objects[0].parent_id=-1;
+  objects[0].visible=1;
+  objects[0].events=&events[0];
+  objects[0].n_events=objects[0].cap_events=2;
+  events[0].event_type=7;
+  events[0].event_number=7;
+  events[0].source_path=transition_path;
+  events[1].event_type=3;
+  events[1].event_number=0;
+  events[1].source_path=entered_step_path;
+
+  objects[1].id=objects[1].name=(char*)"obj_direct_entered";
+  objects[1].sprite_id=0;
+  objects[1].mask_id=objects[1].parent_id=-1;
+  objects[1].visible=1;
+  objects[1].events=&events[2];
+  objects[1].n_events=objects[1].cap_events=1;
+  events[2].event_type=3;
+  events[2].event_number=0;
+  events[2].source_path=new_type_step_path;
+
+  objects[2].id=objects[2].name=(char*)"obj_inherited_handler";
+  objects[2].sprite_id=0;
+  objects[2].mask_id=objects[2].parent_id=-1;
+  objects[2].visible=1;
+  objects[2].events=&events[3];
+  objects[2].n_events=objects[2].cap_events=1;
+  events[3].event_type=3;
+  events[3].event_number=0;
+  events[3].source_path=inherited_step_path;
+
+  objects[3].id=objects[3].name=(char*)"obj_inherited_entered";
+  objects[3].sprite_id=0;
+  objects[3].mask_id=-1;
+  objects[3].parent_id=2;
+  objects[3].visible=1;
+
+  for(int index=0;index<2;index++){
+    rooms[index].id=rooms[index].name=index?(char*)"room_target":(char*)"room_source";
+    rooms[index].width=320;
+    rooms[index].height=240;
+    rooms[index].speed=60;
+  }
+  placed[0].id=placed[0].name=(char*)"placed_transition";
+  placed[0].object_id=0;
+  placed[0].instance_id=100000;
+  placed[1].id=placed[1].name=(char*)"placed_new_type";
+  placed[1].object_id=1;
+  placed[1].instance_id=100002;
+  placed[2].id=placed[2].name=(char*)"placed_entered";
+  placed[2].object_id=0;
+  placed[2].instance_id=100001;
+  placed[3].id=placed[3].name=(char*)"placed_inherited_type";
+  placed[3].object_id=3;
+  placed[3].instance_id=100003;
+  rooms[0].instances=&placed[0];
+  rooms[0].n_instances=rooms[0].cap_instances=1;
+  rooms[1].instances=&placed[1];
+  rooms[1].n_instances=rooms[1].cap_instances=3;
+
+  {
+    char error[256]={0};
+    if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+      fprintf(stderr,"animation room transition package failed: %s\n",error);
+      goto cleanup;
+    }
+  }
+  {
+    GmlWin win;
+    if(anygm_stdio_load_win(&win,package_path)) goto cleanup;
+    GmlVM vm;
+    if(gml_vm_init(&vm,&win,&services)){
+      gml_win_free(&win);
+      goto cleanup;
+    }
+    GmlSprite sprite={0};
+    GmlRender render={0};
+    sprite.n_frames=2;
+    render.win=&win;
+    render.spr=&sprite;
+    render.n_spr=1;
+    vm.render=&render;
+    gml_room_enter(&vm,0);
+    *gml_varmap_put(&vm.globals,"entered_step_hits")=vreal(0);
+    *gml_varmap_put(&vm.globals,"new_type_step_hits")=vreal(0);
+    *gml_varmap_put(&vm.globals,"inherited_step_hits")=vreal(0);
+    *gml_varmap_put(&vm.globals,"step_order")=vreal(0);
+    GmlInstance *source=find_slot(&vm,100000);
+    if(source){
+      source->image_index=1;
+      source->image_speed=1;
+      gml_vm_step(&vm);
+    }
+    GmlInstance *entered=find_slot(&vm,100001);
+    GmlVal *hits=gml_varmap_get(&vm.globals,"entered_step_hits");
+    GmlVal *new_type_hits=gml_varmap_get(&vm.globals,"new_type_step_hits");
+    GmlVal *inherited_hits=gml_varmap_get(&vm.globals,"inherited_step_hits");
+    GmlVal *step_order=gml_varmap_get(&vm.globals,"step_order");
+    int first_ok=vm.room_index==1 && entered && entered->active &&
+      entered->image_index==1 && hits && hits->t==V_REAL && hits->d==1 &&
+      new_type_hits && new_type_hits->t==V_REAL && new_type_hits->d==1 &&
+      inherited_hits && inherited_hits->t==V_REAL && inherited_hits->d==0 &&
+      step_order && step_order->t==V_REAL && step_order->d==21;
+    if(first_ok){
+      gml_vm_step(&vm);
+      entered=find_slot(&vm,100001);
+      hits=gml_varmap_get(&vm.globals,"entered_step_hits");
+      new_type_hits=gml_varmap_get(&vm.globals,"new_type_step_hits");
+      inherited_hits=gml_varmap_get(&vm.globals,"inherited_step_hits");
+    }
+    ok=first_ok && entered && entered->active &&
+      hits && hits->t==V_REAL && hits->d==2 &&
+      new_type_hits && new_type_hits->t==V_REAL && new_type_hits->d==2 &&
+      inherited_hits && inherited_hits->t==V_REAL && inherited_hits->d==1;
+    if(!ok)
+      fprintf(stderr,
+        "Animation End room transition phase mismatch: room=%d entered=%d index=%.2f reused=%.0f direct=%.0f inherited=%.0f order=%.0f\n",
+        vm.room_index,entered&&entered->active,entered?entered->image_index:-1.0,
+        hits&&hits->t==V_REAL?hits->d:-1.0,
+        new_type_hits&&new_type_hits->t==V_REAL?new_type_hits->d:-1.0,
+        inherited_hits&&inherited_hits->t==V_REAL?inherited_hits->d:-1.0,
+        step_order&&step_order->t==V_REAL?step_order->d:-1.0);
+    vm.render=NULL;
+    gml_vm_free(&vm);
+    gml_win_free(&win);
+  }
+
+cleanup:
+  if(transition_fd>=0) close(transition_fd);
+  if(entered_step_fd>=0) close(entered_step_fd);
+  if(new_type_step_fd>=0) close(new_type_step_fd);
+  if(inherited_step_fd>=0) close(inherited_step_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(transition_path);
+  unlink(entered_step_path);
+  unlink(new_type_step_path);
+  unlink(inherited_step_path);
+  unlink(package_path);
+  return ok;
+}
+
+
 int expect_frozen_animation_wrap_fires_animation_end(void){
   /* This synthetic fixture verifies that an out-of-range frozen non-classic index
    * wraps and dispatches Animation End once, while an in-range frozen index

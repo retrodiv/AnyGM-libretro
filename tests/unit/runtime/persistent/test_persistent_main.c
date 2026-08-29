@@ -37,6 +37,8 @@ int main(int argc,char **argv){
     {"automatic_motion_order",expect_automatic_motion_order},
     {"event_boundary_room_transition",expect_event_boundary_room_transition},
     {"room_transition_animation_phase",expect_room_transition_animation_phase},
+    {"animation_end_room_transition_slot",
+     expect_animation_end_room_transition_reuses_step_slot},
     {"frozen_animation_wrap_end",expect_frozen_animation_wrap_fires_animation_end},
     {"event_perform_mouse",expect_event_perform_dispatches_mouse_event},
     {"event_relative_flag_clear",expect_event_starts_with_the_relative_flag_clear},

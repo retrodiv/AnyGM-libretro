@@ -379,6 +379,7 @@ static void gml_vm_apply_pending_room(GmlVM *vm,int advance_entered_phase){
 }
 
 static void gml_vm_finish_step(GmlVM *vm,int previous_alloc_base){
+  for(int i=0;i<vm->inst_count;i++) vm->inst[i].room_transition_survivor=0;
   vm->step_alloc_base=previous_alloc_base;
   vm->step_active=0;
   vm->step_free_n=vm->step_free_pos=0;
@@ -434,7 +435,34 @@ void gml_vm_step(GmlVM *vm){
   int pending_before_animation=vm->pending_room;
   if(!anygm_policy_animation_before_step(vm->win)) advance_instance_animations(vm);
   int pending_owes_animation=pending_before_animation>=0;
+  int animation_transition_limits_normal_step=0;
   VMPROF_MARK(anim);
+  if(vm->pending_room>=0 && pending_before_animation<0){
+    /* A Studio room request made by Animation End commits at that event boundary. The target
+     * receives its first animation phase and joins Begin Step and the later phases. Existing
+     * instances retain their normal-Step membership. Newly entered instances join only when
+     * their concrete object declares Step directly; inherited-only handlers wait one frame. */
+    animation_transition_limits_normal_step=1;
+    for(int i=0;i<vm->inst_count;i++)
+      if(vm->inst[i].active && !vm->inst[i].marked){
+        vm->inst[i].room_transition_survivor=1;
+      }
+    gml_vm_apply_pending_room(vm,1);
+    n=vm->inst_count;
+    /* The animation phase already advanced persistent instances before the transition request.
+     * Give those survivors the entered room's phase too; new instances receive it at room entry. */
+    {
+      GmlRender *render=(GmlRender*)vm->render;
+      const char *anim_dbg=anygm_host_development_setting(vm->host,"GML_ANIM_OBJ");
+      for(int i=0;i<n;i++)
+        if(vm->inst[i].active && !vm->inst[i].marked &&
+           vm->inst[i].room_transition_survivor)
+          advance_instance_animation(vm,&vm->inst[i],render,anim_dbg);
+    }
+    gml_vm_instances_prepare_step(vm,n);
+    vm->step_alloc_base=n;
+    vm->step_first_id=vm->next_id;
+  }
   /* GML_GOD: development capture aid for content that exposes a cooldown through an alarm. */
   {
     if(!vm->diagnostics.god_initialized){
@@ -672,11 +700,17 @@ void gml_vm_step(GmlVM *vm){
   if(vm->win && anygm_policy_uses_classic_runtime(vm->win)) gml_vm_instances_run_classic_event(vm,"Step_0");
   else {
     int step_count=anygm_policy_snapshot_instance_iteration(vm->win)?n:vm->inst_count;
-    for(int i=0;i<step_count;i++) if(vm->inst[i].active && !vm->inst[i].marked &&
-        gml_vm_instances_step_snapshot_member(vm,&vm->inst[i])){
-      gml_run_event(vm,&vm->inst[i],"Step_0");
-      /* Commit a room request after the requesting event completes. Do not let later members
-       * of the old room's Step snapshot run before the room lifecycle boundary. */
+    for(int i=0;i<step_count;i++){
+      GmlInstance *in=&vm->inst[i];
+      if(!in->active || in->marked || !gml_vm_instances_step_snapshot_member(vm,in)) continue;
+      if(animation_transition_limits_normal_step && !in->room_transition_survivor){
+        int handler_obj=-1;
+        if(!gml_vm_instances_event_lookup(vm,"Step_0",in->obj,&handler_obj,NULL) ||
+           handler_obj!=in->obj) continue;
+      }
+      gml_run_event(vm,in,"Step_0");
+      /* Studio commits a room request after the requesting event completes.  Do not let later
+       * members of the old room's Step snapshot run before the room lifecycle boundary. */
       if(vm->pending_room>=0){
         gml_vm_apply_pending_room(vm,0);
         gml_vm_finish_step(vm,prev_alloc_base);
