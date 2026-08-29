@@ -44,6 +44,8 @@ typedef struct LibretroDirectory {
   int first_pending;
 #else
   DIR *stdio_handle;
+  /* Kept so an entry whose kind readdir does not know can be stat'ed by its full path. */
+  char stdio_path[2048];
 #endif
 } LibretroDirectory;
 
@@ -303,6 +305,8 @@ static AnygmResult host_directory_create(void *userdata,const char *path){
   (void)userdata;
   if(!path) return ANYGM_ERROR_INVALID_ARGUMENT;
   int result;
+  /* A value left over from an unrelated call would otherwise satisfy the EEXIST test below. */
+  errno=0;
   if(g_libretro.vfs && g_libretro.vfs->mkdir){
     char normalized[4096];
     const char *vfs_path=frontend_path(path,normalized,sizeof normalized);
@@ -313,7 +317,12 @@ static AnygmResult host_directory_create(void *userdata,const char *path){
 #else
   else result=mkdir(path,0755);
 #endif
-  return result==0 || result==-2 || errno==EEXIST?ANYGM_OK:ANYGM_ERROR_IO;
+  /* -2 is the frontend VFS spelling of "already there". errno only means anything on the stdio
+   * branch: the frontend's mkdir is not required to set it, so consulting it after a VFS failure
+   * reads a value from whatever ran last. */
+  if(result==0 || result==-2) return ANYGM_OK;
+  int used_vfs=g_libretro.vfs && g_libretro.vfs->mkdir;
+  return (!used_vfs && errno==EEXIST)?ANYGM_OK:ANYGM_ERROR_IO;
 }
 
 static AnygmResult host_path_rename(void *userdata,const char *from,const char *to){
@@ -365,7 +374,15 @@ static void *host_directory_open(void *userdata,const char *path){
   }
   if(!directory->vfs_handle && directory->find_handle==-1){ free(directory); return NULL; }
 #else
-  else directory->stdio_handle=opendir(path);
+  else {
+    directory->stdio_handle=opendir(path);
+    if(directory->stdio_handle){
+      int written=snprintf(directory->stdio_path,sizeof directory->stdio_path,"%s",path);
+      /* A path too long to keep is a path the d_type fallback below cannot use; the walk still
+       * works, it just has nothing better than d_type to answer with. */
+      if(written<0 || (size_t)written>=sizeof directory->stdio_path) directory->stdio_path[0]=0;
+    }
+  }
   if(!directory->vfs_handle && !directory->stdio_handle){ free(directory); return NULL; }
 #endif
   return directory;
@@ -394,7 +411,17 @@ static AnygmResult host_directory_read(void *userdata,void *handle,AnygmDirector
     struct dirent *item=readdir(directory->stdio_handle);
     if(!item) return ANYGM_RESULT_END;
     name=item->d_name;
-    is_directory=item->d_type==DT_DIR;
+    /* d_type is optional. XFS, several FUSE filesystems and some Android volumes answer
+     * DT_UNKNOWN for everything, and reading that as "not a directory" makes every directory
+     * on such a volume look like a file. */
+    if(item->d_type!=DT_UNKNOWN) is_directory=item->d_type==DT_DIR;
+    else if(directory->stdio_path[0]){
+      char full[3072];
+      struct stat info;
+      int written=snprintf(full,sizeof full,"%s/%s",directory->stdio_path,item->d_name);
+      if(written>0 && (size_t)written<sizeof full && stat(full,&info)==0)
+        is_directory=S_ISDIR(info.st_mode);
+    }
   }
 #endif
   if(!name) return ANYGM_ERROR_IO;
