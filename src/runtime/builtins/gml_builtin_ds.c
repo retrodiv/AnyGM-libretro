@@ -854,6 +854,11 @@ static uint8_t *ds_native_decode_hex(const char *text,size_t *out_size){
   *out_size=len/2;
   return bytes;
 }
+static void ds_native_put_u32(uint8_t *b,size_t *off,uint32_t v){
+  b[*off]=(uint8_t)(v&255u); b[*off+1]=(uint8_t)((v>>8)&255u);
+  b[*off+2]=(uint8_t)((v>>16)&255u); b[*off+3]=(uint8_t)((v>>24)&255u);
+  *off+=4;
+}
 static uint32_t ds_native_u32(const uint8_t *b,size_t off){
   return (uint32_t)b[off]|((uint32_t)b[off+1]<<8)|
          ((uint32_t)b[off+2]<<16)|((uint32_t)b[off+3]<<24);
@@ -896,6 +901,50 @@ static GmlVal ds_native_take_value(const uint8_t *b,size_t *off){
   memcpy(&value,b+*off+4,sizeof value);
   *off+=12;
   return vreal(value);
+}
+/* Encode the layout accepted by the reader below. A real uses a typed double;
+ * a string uses a tag, length and bytes. Other types use the numeric fallback because the
+ * reader admits only these two value types. */
+static GmlVal ds_grid_write_native(GmlVM *vm,int id){
+  GmlDSGrid *g=ds_grid_slot(vm,id);
+  if(!g || !g->cell || g->w<0 || g->h<0) return vstr_owned(strdup(""));
+  size_t total=12;
+  for(int x=0;x<g->w;x++) for(int y=0;y<g->h;y++){
+    GmlVal v=g->cell[(size_t)y*g->w+x];
+    total += (v.t==V_STR) ? 8u+(v.s?strlen(v.s):0u) : 12u;
+  }
+  uint8_t *bytes=malloc(total?total:1);
+  if(!bytes) return vstr_owned(strdup(""));
+  size_t off=0;
+  ds_native_put_u32(bytes,&off,GML_DS_NATIVE_GRID_MARKER);
+  ds_native_put_u32(bytes,&off,(uint32_t)g->w);
+  ds_native_put_u32(bytes,&off,(uint32_t)g->h);
+  for(int x=0;x<g->w;x++) for(int y=0;y<g->h;y++){
+    GmlVal v=g->cell[(size_t)y*g->w+x];
+    if(v.t==V_STR){
+      const char *text=v.s?v.s:"";
+      size_t length=strlen(text);
+      ds_native_put_u32(bytes,&off,1u);
+      ds_native_put_u32(bytes,&off,(uint32_t)length);
+      memcpy(bytes+off,text,length);
+      off+=length;
+    } else {
+      double value=v.t==V_REAL?v.d:0.0;
+      ds_native_put_u32(bytes,&off,0u);
+      memcpy(bytes+off,&value,sizeof value);
+      off+=sizeof value;
+    }
+  }
+  char *hex=malloc(total*2u+1u);
+  if(!hex){ free(bytes); return vstr_owned(strdup("")); }
+  static const char digits[]="0123456789ABCDEF";
+  for(size_t i=0;i<total;i++){
+    hex[i*2]=digits[bytes[i]>>4];
+    hex[i*2+1]=digits[bytes[i]&15u];
+  }
+  hex[total*2]=0;
+  free(bytes);
+  return vstr_owned(hex);
 }
 /* A grid is written one column at a time: every cell of x=0 top to bottom, then x=1. */
 static int ds_grid_read_native(GmlVM *vm,int id,const char *text){
@@ -1173,6 +1222,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_grid_set")||!strcmp(nm,"ds_grid_set_post")){ GmlDSGrid *g=ds_grid_slot(vm,(int)N(a,n,0)); int x=(int)N(a,n,1),y=(int)N(a,n,2);
     if(n>=4) ds_grid_store(g,x,y,a[3]);
     return n>=4?a[3]:vreal(0); }
+  if(!strcmp(nm,"ds_grid_write")) return ds_grid_write_native(vm,(int)N(a,n,0));
   if(!strcmp(nm,"ds_grid_read")){
     return vreal(ds_grid_read_native(vm,(int)N(a,n,0),S(vm,a,n,1)));
   }
