@@ -998,6 +998,59 @@ static int ds_list_read_native(GmlVM *vm,int id,const char *text){
   free(bytes);
   return ok;
 }
+/* Encode the layout accepted by the reader below. Peek at each entry without
+ * cloning it; emit typed-real priorities first and then the values in the reader's
+ * two-pass order. */
+static GmlVal ds_priority_entry_peek(GmlVal e){
+  if(e.t==V_ARR && e.arr){
+    GmlArr *A=(GmlArr*)e.arr;
+    if(A->len>0) return A->data[0];
+  }
+  return e;
+}
+static GmlVal ds_priority_write_native(GmlVM *vm,int id){
+  GmlDSList *l=ds_list_slot_repair(vm,id);
+  if(!l) return vstr_owned(strdup(""));
+  size_t total=8+(size_t)l->len*12u;
+  for(int i=0;i<l->len;i++){
+    GmlVal v=ds_priority_entry_peek(l->item[i]);
+    total += (v.t==V_STR) ? 8u+(v.s?strlen(v.s):0u) : 12u;
+  }
+  uint8_t *bytes=malloc(total?total:1);
+  if(!bytes) return vstr_owned(strdup(""));
+  size_t off=0;
+  ds_native_put_u32(bytes,&off,GML_DS_NATIVE_PRIORITY_MARKER);
+  ds_native_put_u32(bytes,&off,(uint32_t)l->len);
+  for(int i=0;i<l->len;i++){
+    double p=ds_priority_priority(l->item[i]);
+    ds_native_put_u32(bytes,&off,0u);
+    memcpy(bytes+off,&p,sizeof p);
+    off+=sizeof p;
+  }
+  for(int i=0;i<l->len;i++){
+    GmlVal v=ds_priority_entry_peek(l->item[i]);
+    if(v.t==V_STR){
+      const char *text=v.s?v.s:"";
+      size_t length=strlen(text);
+      ds_native_put_u32(bytes,&off,1u);
+      ds_native_put_u32(bytes,&off,(uint32_t)length);
+      memcpy(bytes+off,text,length);
+      off+=length;
+    } else {
+      double value=v.t==V_REAL?v.d:0.0;
+      ds_native_put_u32(bytes,&off,0u);
+      memcpy(bytes+off,&value,sizeof value);
+      off+=sizeof value;
+    }
+  }
+  char *hex=malloc(total*2u+1u);
+  if(!hex){ free(bytes); return vstr_owned(strdup("")); }
+  static const char digits[]="0123456789ABCDEF";
+  for(size_t i=0;i<total;i++){ hex[i*2]=digits[bytes[i]>>4]; hex[i*2+1]=digits[bytes[i]&15u]; }
+  hex[total*2]=0;
+  free(bytes);
+  return vstr_owned(hex);
+}
 static int ds_priority_read_native(GmlVM *vm,int id,const char *text){
   size_t size=0;
   uint8_t *bytes=ds_native_decode_hex(text,&size);
@@ -1160,6 +1213,7 @@ GmlVal gml_builtin_try_ds(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"ds_priority_add")){ GmlDSList *l=ds_list_slot_repair(vm,(int)N(a,n,0));
     if(l && n>=3) ds_list_push(l,ds_priority_entry(a[1],N(a,n,2)));
     return vreal(0); }
+  if(!strcmp(nm,"ds_priority_write")) return ds_priority_write_native(vm,(int)N(a,n,0));
   if(!strcmp(nm,"ds_priority_read")){
     (void)ds_priority_read_native(vm,(int)N(a,n,0),S(vm,a,n,1));
     return vreal(0); }

@@ -65,6 +65,43 @@ int main(void){
   }
 
   gml_values_release(&written,1);
-  if(ok) printf("ds_grid: a written grid reads back cell for cell, text included\n");
+
+  /* The priority queue shares the encoder and the same two value types, and its reader walks the
+   * buffer in two passes - every priority first, then every value - so a writer that interleaved
+   * them would produce something only it could read. Round-trip it the same way. */
+  GmlVal pq=gml_builtin_call(&vm,"ds_priority_create",NULL,0);
+  if(pq.t!=V_REAL){ fprintf(stderr,"could not create a priority queue\n"); return 1; }
+  GmlVal add_a[]={pq,vstr("low"),vreal(1)};
+  GmlVal add_b[]={pq,vreal(42),vreal(9)};
+  gml_builtin_call(&vm,"ds_priority_add",add_a,3);
+  gml_builtin_call(&vm,"ds_priority_add",add_b,3);
+
+  GmlVal pq_one[]={pq};
+  GmlVal pq_written=gml_builtin_call(&vm,"ds_priority_write",pq_one,1);
+  if(!(pq_written.t==V_STR && pq_written.s && pq_written.s[0])){
+    fprintf(stderr,"ds_priority_write produced nothing\n");
+    ok=0;
+  } else {
+    GmlVal pq_clear[]={pq};
+    gml_builtin_call(&vm,"ds_priority_clear",pq_clear,1);
+    GmlVal pq_read[]={pq,pq_written};
+    gml_builtin_call(&vm,"ds_priority_read",pq_read,2);
+    GmlVal size=gml_builtin_call(&vm,"ds_priority_size",pq_one,1);
+    if(!(size.t==V_REAL && size.d==2.0)){
+      fprintf(stderr,"the priority queue came back holding %g entries\n",
+              size.t==V_REAL?size.d:-1.0);
+      ok=0;
+    }
+    /* The highest priority must still be the one that was added with it, so the values did not
+     * drift against the priorities across the two passes. */
+    GmlVal top=gml_builtin_call(&vm,"ds_priority_find_max",pq_one,1);
+    if(!(top.t==V_REAL && top.d==42.0)){
+      fprintf(stderr,"the top entry came back as type %d\n",(int)top.t);
+      ok=0;
+    }
+    gml_values_release(&pq_written,1);
+  }
+
+  if(ok) printf("ds_grid and ds_priority: written and read back, values against priorities\n");
   return ok?0:1;
 }
