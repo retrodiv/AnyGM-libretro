@@ -1422,6 +1422,13 @@ int gml_inst_var_exists(GmlVM *vm, GmlVal ref, const char *name){
   GmlInstance *t=vm_inst_from_ref(vm,ref);
   return inst_has_any_h(vm,t,name,gml_value_name_hash(name));
 }
+/* Return the instance's own variable map. Built-in instance variables are fields on
+ * the instance, not entries in this map. */
+GmlVarMap *gml_inst_varmap(GmlVM *vm, GmlVal ref){
+  if(!vm) return NULL;
+  GmlInstance *t=vm_inst_from_ref(vm,ref);
+  return t?&t->vars:NULL;
+}
 GmlVal gml_inst_var_get_val(GmlVM *vm, GmlVal ref, const char *name, int *ok){
   if(ok) *ok=0;
   if(!vm || !name) return vundef();

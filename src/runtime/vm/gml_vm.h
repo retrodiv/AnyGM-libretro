@@ -574,6 +574,7 @@ GmlTileMap  *gml_tilemap_by_layer(GmlVM *vm, GmlVal layer);
 int          gml_event_inherited(GmlVM *vm);   /* run the current event on the parent object */
 double       gml_inst_var_get(GmlVM *vm, GmlInstance *in, const char *name); /* read a builtin or custom var */
 int          gml_inst_var_exists(GmlVM *vm, GmlVal ref, const char *name);
+GmlVarMap   *gml_inst_varmap(GmlVM *vm, GmlVal ref);
 GmlVal       gml_inst_var_get_val(GmlVM *vm, GmlVal ref, const char *name, int *ok);
 int          gml_inst_var_set_val(GmlVM *vm, GmlVal ref, const char *name, GmlVal v);
 void         gml_vm_assign_current_scope(GmlVM *vm, const char *name, GmlVal v);

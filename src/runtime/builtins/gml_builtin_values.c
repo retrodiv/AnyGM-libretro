@@ -1058,6 +1058,16 @@ GmlVal gml_builtin_try_values_variables(GmlVM *vm, const char *nm, GmlVal *a, in
     if(n>2) gml_inst_var_set_val(vm,a[0],key,var_store_clone(a[2]));
     return vreal(0);
   }
+  /* Instance counterparts of the struct-name queries below. Both use the same
+   * public-name filter so the returned array and count describe the same map. */
+  if(!strcmp(nm,"variable_instance_get_names")){
+    GmlVarMap *map=n>0?gml_inst_varmap(vm,a[0]):NULL;
+    return struct_public_names(map);
+  }
+  if(!strcmp(nm,"variable_instance_names_count")){
+    GmlVarMap *map=n>0?gml_inst_varmap(vm,a[0]):NULL;
+    return vreal(struct_public_name_count(map));
+  }
   if(!strcmp(nm,"variable_struct_get_names")||!strcmp(nm,"struct_get_names")){
     GmlVarMap *map=n>0?struct_public_map(vm,a[0],NULL):NULL;
     return struct_public_names(map);

@@ -120,7 +120,7 @@ endif
 
 TEST_DIR := $(BUILD_DIR)/tests
 RUNTIME_TESTS := test_rng test_code_coverage test_persistent_room test_d3_state test_ds_grid \
-	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_string_search test_builtin_value_math test_builtin_filename_parts test_builtin_map_arrays test_builtin_struct_exists test_builtin_clipboard test_stacktop_scope test_value_compare
+	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_string_search test_builtin_value_math test_builtin_filename_parts test_builtin_map_arrays test_builtin_struct_exists test_builtin_clipboard test_builtin_instance_names test_stacktop_scope test_value_compare
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_crt test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets \
 	test_renderer_texture_shells test_render_plan
@@ -258,6 +258,10 @@ $(TEST_DIR)/test_builtin_string_search: tests/unit/runtime/test_builtin_string_s
 	$(call link_runtime_test,$(CPPFLAGS))
 
 $(TEST_DIR)/test_builtin_clipboard: tests/unit/runtime/test_builtin_clipboard.c $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(CPPFLAGS))
+
+$(TEST_DIR)/test_builtin_instance_names: tests/unit/runtime/test_builtin_instance_names.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(CPPFLAGS))
 
@@ -425,6 +429,7 @@ check: warnings-check architecture-check api-check contract-check integration-ch
 	$(TEST_DIR)/test_builtin_string_format
 	$(TEST_DIR)/test_builtin_string_search
 	$(TEST_DIR)/test_builtin_clipboard
+	$(TEST_DIR)/test_builtin_instance_names
 	$(TEST_DIR)/test_builtin_value_math
 	$(TEST_DIR)/test_builtin_filename_parts
 	$(TEST_DIR)/test_builtin_map_arrays
