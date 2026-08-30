@@ -72,9 +72,9 @@ make check
 adapter. `contract-check` exercises the public API with a dummy host, and
 `integration-check` proves that two engine instances can run and serialize
 independently. `check TEST=renderer_effects` verifies exact synthetic raster
-results for the non-CRT room-layer effects. `check TEST=renderer_crt` verifies
-the geometric CRT fast and curved paths plus the dual-sample, HSV-scan, and
-sampled-CRT display post-processors against synthetic exact-output hashes.
+results for the non-CRT room-layer effects. `check TEST=renderer_postprocess` verifies
+the two-sample channel-offset display post-processor against a synthetic
+exact-output hash.
 `check TEST=renderer_surfaces` verifies deterministic surface allocation,
 copy, resize, coverage metadata, and target-stack restoration.
 `check TEST=renderer_tiles` verifies modern tileset layout parsing, animation

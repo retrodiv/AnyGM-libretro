@@ -762,15 +762,6 @@ if [ "$renderer_surface_definition_files" != "src/video/renderer/gml_render_surf
   exit 1
 fi
 
-renderer_crt_geometry_definition_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?((double|void|CrtWeightRow|float|uint8_t)[[:space:]]+|(GmlCrtTables|void)[[:space:]]*\*[[:space:]]*|const[[:space:]]+(float|uint8_t)[[:space:]]*\*[[:space:]]*)(crt_(tex|scanline_weights|tables|tables_free|gamma_lut|weight_table|weight_row|weight_values|weight_value|powout_lut|powout|u8_table|u8|scratch_grow|conv_row|band_run|band_rows)|draw_surface_crt)[[:space:]]*\(' \
-  {} + 2>/dev/null || true)
-if [ "$renderer_crt_geometry_definition_files" != "src/video/renderer/gml_render_crt.c" ]; then
-  printf '%s\n' "Geometric CRT definitions belong only to gml_render_crt.c:" >&2
-  printf '%s\n' "$renderer_crt_geometry_definition_files" >&2
-  exit 1
-fi
-
 renderer_final_pixel_definition_files=$(find src/video/renderer -type f \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
   '^[[:space:]]*static[[:space:]]+inline[[:space:]]+uint32_t[[:space:]]+(color_write_merge|blend_multiply_pixel)[[:space:]]*\(' \
@@ -811,20 +802,20 @@ if [ "$renderer_blit_record_files" != "src/video/renderer/gml_render_blit_intern
 fi
 
 renderer_postprocess_definition_files=$(find src/video/renderer -type f -name '*.c' -exec grep -l -E \
-  '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(dual_(u8|texel|fast_band)|draw_surface_dual_sample|hsv_scan_(rgb|fast_band|blend_pixel)|draw_surface_hsv_scan|sampled_crt_(texture_init|texture_pixel|texture_sample|surface|quintic|axis_index|geometry|prepare_axes|surface_pixel|band)|draw_surface_sampled_crt)[[:space:]]*\(' \
+  '^[[:space:]]*(static[[:space:]]+)?(inline[[:space:]]+)?(int|void|uint32_t)[[:space:]]+(dual_(u8|texel|fast_band)|draw_surface_dual_sample)[[:space:]]*\(' \
   {} + 2>/dev/null || true)
-if [ "$renderer_postprocess_definition_files" != "src/video/renderer/gml_render_crt.c" ]; then
-  printf '%s\n' "Recognized display post-process definitions belong only to gml_render_crt.c:" >&2
+if [ "$renderer_postprocess_definition_files" != "src/video/renderer/gml_render_postprocess.c" ]; then
+  printf '%s\n' "Recognized display post-process definitions belong only to gml_render_postprocess.c:" >&2
   printf '%s\n' "$renderer_postprocess_definition_files" >&2
   exit 1
 fi
 
 renderer_postprocess_record_files=$(find src/video/renderer -type f \
   \( -name '*.c' -o -name '*.h' \) -exec grep -l -E \
-  '}[[:space:]]+(DualFastCtx|HsvScanFastCtx|SampledCrtTexture|SampledCrtCtx);' \
+  '}[[:space:]]+DualFastCtx;' \
   {} + 2>/dev/null || true)
-if [ "$renderer_postprocess_record_files" != "src/video/renderer/gml_render_crt.c" ]; then
-  printf '%s\n' "Recognized display post-process records belong only to gml_render_crt.c:" >&2
+if [ "$renderer_postprocess_record_files" != "src/video/renderer/gml_render_postprocess.c" ]; then
+  printf '%s\n' "Recognized display post-process records belong only to gml_render_postprocess.c:" >&2
   printf '%s\n' "$renderer_postprocess_record_files" >&2
   exit 1
 fi
@@ -1039,7 +1030,7 @@ fail_matches "Builtins must treat renderer shader records and handles as private
 
 builtin_renderer_shader_field_access=$(find src/runtime/builtins -type f \
   \( -name '*.c' -o -name '*.h' \) -exec grep -n -H -E -- \
-  '(^|[^[:alnum:]_])(R|R2|r|render|renderer)[[:space:]]*->[[:space:]]*(n_shader_pal|shader_pal|crt_shader_enable|lut_pal_sprite|lut_pal_frame)([^[:alnum:]_]|$)' \
+  '(^|[^[:alnum:]_])(R|R2|r|render|renderer)[[:space:]]*->[[:space:]]*(n_shader_pal|shader_pal|lut_pal_sprite|lut_pal_frame)([^[:alnum:]_]|$)' \
   {} + 2>/dev/null || true)
 fail_matches "Builtins must use opaque renderer shader control operations:" \
   "$builtin_renderer_shader_field_access"

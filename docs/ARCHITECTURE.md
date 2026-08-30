@@ -456,7 +456,21 @@ renderer-private row-band executor only at pass granularity. Inner pixel loops
 and the main sprite/surface mappers remain direct and do not cross an indirect
 dispatch boundary.
 
-
+`gml_render_postprocess.c` owns the recognized display post-process kept in
+software, the two-sample channel offset, with its complete sampler, row-band
+context, fast/general paths, and pixel kernel. A recognized family is an
+operation whose parameters are read from the content; a kernel that would
+reproduce a content shader's own expression is not a software family and is
+left to the shader executing on the host's graphics context. Complete sprite and surface kernels share the
+canonical header-local recognized-shader sampling operations in
+`gml_render_sampling_internal.h`; the general surface mapper and post-process
+kernels additionally share the two final-pixel operations in
+`gml_render_pixel_internal.h`. Sprite and surface composition also share the
+canonical header-local cardinal-anchor, opacity-run, fast-alpha, and
+bilinear-band helpers in `gml_render_blit_internal.h`. These private definitions
+remain direct and header-local, so coarse draw preparation, opacity queries,
+profiling hooks, and row-band dispatch may cross renderer implementation units
+but no sampling, blending, or final-pixel call does.
 
 An optional graphics target sits beside that plan rather than inside the renderer.
 `src/video/gpu/` owns the context lifetime, the capability and resource generations, and one direct

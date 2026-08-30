@@ -1896,14 +1896,7 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
     int tex=(int)N(a,n,1);
     GmlRenderShaderTextureBinding binding;
     if(gml_render_shader_texture_stage_set(R,stage,tex,&binding)){
-      if(binding.kind==GML_RENDER_SHADER_TEXTURE_SAMPLED){
-        GmlBuiltinState *state=builtin_state_ensure(vm);
-        if(builtin_setting(vm,"GML_LOG_SHADER") &&
-           (!state || state->shader_texture_log_count++<9))
-          anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
-            "[shader] sampled-crt texture[%d]: sprite %d frame %d\n",
-            binding.sampler,binding.sprite,binding.frame);
-      } else if(binding.kind==GML_RENDER_SHADER_TEXTURE_PALETTE &&
+      if(binding.kind==GML_RENDER_SHADER_TEXTURE_PALETTE &&
                 builtin_setting(vm,"GML_LOG_SHADER")){
         anygm_host_logf(vm ? vm->host : NULL,ANYGM_LOG_DEBUG,
           "[shader] palette texture: sprite %d frame %d\n",

@@ -291,10 +291,6 @@ static void check_shader_recognition(void) {
     "sum+=texture2D(gm_BaseTexture,uv-1.0*delta)*0.1*sum;"
     "sum+=texture2D(gm_BaseTexture,uv+1.0*delta)*0.1*sum;"
     "sum.rgb*=0.5;gl_FragColor=vec4(u_near_blur.rgb,sum.a);}",
-    "float quantize(float v,float r){return floor(v*r)/r;}"
-    "float wrap_value(float v,float d){return mod(mod(v,d)+d,d);}"
-    "float near_quantize(float v,float r){return floor(v*r)/r;}"
-    "float near_wrap(float v,float d){return mod(mod(v,d)+d,d);}"
     "void main(){gl_FragColor=v_vColour*"
     "texture2D(gm_BaseTexture,v_vTexcoord);"
     "gl_FragColor.gb=vec2(0.0,0.0);}",
@@ -439,7 +435,7 @@ static void check_shader_recognition(void) {
     "<shader operation fragment>"
     "<shader operation fragment>"
   };
-  enum { SHADER_COUNT = 28, DATA_SIZE = 32768 };
+  enum { SHADER_COUNT = 24, DATA_SIZE = 32768 };
   uint8_t data[DATA_SIZE];
   GmlWin content;
   GmlRender render;
@@ -482,26 +478,22 @@ static void check_shader_recognition(void) {
     const struct GmlShaderPal *near_match = &render.shader_pal[5];
     struct GmlShaderPal *blur = &render.shader_pal[6];
     const struct GmlShaderPal *blur_near_match = &render.shader_pal[7];
-    const struct GmlShaderPal *binary_hsv = &render.shader_pal[8];
-    const struct GmlShaderPal *binary_hsv_near_match = &render.shader_pal[9];
-    struct GmlShaderPal *noise_jumble = &render.shader_pal[10];
-    const struct GmlShaderPal *noise_jumble_near_match = &render.shader_pal[11];
-    const struct GmlShaderPal *channel_mask = &render.shader_pal[12];
-    const struct GmlShaderPal *channel_mask_near_match = &render.shader_pal[13];
-    const struct GmlShaderPal *bound_sampler = &render.shader_pal[14];
-    struct GmlShaderPal *threshold_palette = &render.shader_pal[15];
-    const struct GmlShaderPal *threshold_near_match = &render.shader_pal[16];
-    const struct GmlShaderPal *bounded = &render.shader_pal[17];
-    struct GmlShaderPal *indexed_brightness = &render.shader_pal[18];
-    const struct GmlShaderPal *indexed_brightness_near_match = &render.shader_pal[19];
-    const struct GmlShaderPal *channel_alpha_key = &render.shader_pal[20];
-    const struct GmlShaderPal *channel_alpha_key_near_match = &render.shader_pal[21];
-    struct GmlShaderPal *bloom_luminance = &render.shader_pal[22];
-    const struct GmlShaderPal *bloom_luminance_near_match = &render.shader_pal[23];
-    struct GmlShaderPal *bloom_gaussian = &render.shader_pal[24];
-    const struct GmlShaderPal *bloom_gaussian_near_match = &render.shader_pal[25];
-    struct GmlShaderPal *bloom_blend = &render.shader_pal[26];
-    const struct GmlShaderPal *bloom_blend_near_match = &render.shader_pal[27];
+    const struct GmlShaderPal *channel_mask = &render.shader_pal[8];
+    const struct GmlShaderPal *channel_mask_near_match = &render.shader_pal[9];
+    const struct GmlShaderPal *bound_sampler = &render.shader_pal[10];
+    struct GmlShaderPal *threshold_palette = &render.shader_pal[11];
+    const struct GmlShaderPal *threshold_near_match = &render.shader_pal[12];
+    const struct GmlShaderPal *bounded = &render.shader_pal[13];
+    struct GmlShaderPal *indexed_brightness = &render.shader_pal[14];
+    const struct GmlShaderPal *indexed_brightness_near_match = &render.shader_pal[15];
+    const struct GmlShaderPal *channel_alpha_key = &render.shader_pal[16];
+    const struct GmlShaderPal *channel_alpha_key_near_match = &render.shader_pal[17];
+    struct GmlShaderPal *bloom_luminance = &render.shader_pal[18];
+    const struct GmlShaderPal *bloom_luminance_near_match = &render.shader_pal[19];
+    struct GmlShaderPal *bloom_gaussian = &render.shader_pal[20];
+    const struct GmlShaderPal *bloom_gaussian_near_match = &render.shader_pal[21];
+    struct GmlShaderPal *bloom_blend = &render.shader_pal[22];
+    const struct GmlShaderPal *bloom_blend_near_match = &render.shader_pal[23];
     expect(alpha->alpha_discard && alpha->alpha_discard_inclusive &&
            alpha->alpha_discard_cutoff == 0.25f,
            "alpha-discard structure was not recognized exactly");
@@ -546,44 +538,13 @@ static void check_shader_recognition(void) {
            palette->D[2] == 0 && palette->S[0] == 0 &&
            palette->S[1] == 0 && palette->S[2] == 255,
            "palette structure or constants were not preserved");
-    expect(binary_hsv->hsv_scan && binary_hsv->hsv_scan_binary_palette &&
-           fabsf(binary_hsv->hsv_scan_uv_scale - 0.875f) < 0.000001f &&
-           fabsf(binary_hsv->hsv_scan_binary_threshold - 0.375f) < 0.000001f &&
-           fabsf(binary_hsv->hsv_scan_binary_high[0] - 0.2f) < 0.000001f &&
-           fabsf(binary_hsv->hsv_scan_binary_low[2] - 0.1f) < 0.000001f &&
-           fabsf(binary_hsv->hsv_scan_row_frequency - 381.0f) < 0.001f &&
-           gml_render_shader_is_compiled(&render, 8),
-           "binary-palette HSV graph or constants were not preserved");
     expect(!mask_near_match->solid_alpha_mask &&
            !blur_near_match->solid_blur_alpha &&
-           !binary_hsv_near_match->hsv_scan &&
-           !noise_jumble_near_match->noise_jumble &&
            !near_match->has && !bounded->has &&
            !near_match->alpha_discard && !bounded->alpha_discard,
            "partial or out-of-bounds shader record was accepted");
-    expect(noise_jumble->noise_jumble &&
-           !strcmp(noise_jumble->noise_jumble_uniform[GML_NOISE_JUMBLE_INTENSITY],
-                   "u_strength") &&
-           !strcmp(noise_jumble->noise_jumble_uniform[GML_NOISE_JUMBLE_RESOLUTION],
-                   "u_extent") &&
-           !strcmp(noise_jumble->noise_jumble_uniform[GML_NOISE_JUMBLE_SHAKINESS],
-                   "u_wobble") &&
-           gml_render_shader_is_compiled(&render,10),
-           "noise/jumble operation graph or semantic controls were not preserved");
-    int extent_uniform=gml_render_shader_uniform_handle(&render,10,"u_extent");
-    int noise_uniform=gml_render_shader_uniform_handle(&render,10,"u_noise");
-    const double extent_values[4]={320.0,180.0,0.0,0.0};
-    const double noise_values[4]={0.625,0.0,0.0,0.0};
-    gml_render_shader_uniform_set(&render,extent_uniform,extent_values);
-    gml_render_shader_uniform_set(&render,noise_uniform,noise_values);
-    expect(extent_uniform==10*64+20+GML_NOISE_JUMBLE_RESOLUTION &&
-           noise_uniform==10*64+20+GML_NOISE_JUMBLE_NOISE_LEVEL &&
-           noise_jumble->noise_jumble_value[GML_NOISE_JUMBLE_RESOLUTION][0]==320.0f &&
-           noise_jumble->noise_jumble_value[GML_NOISE_JUMBLE_RESOLUTION][1]==180.0f &&
-           noise_jumble->noise_jumble_value[GML_NOISE_JUMBLE_NOISE_LEVEL][0]==0.625f,
-           "noise/jumble uniform handles did not retain scalar and vector values");
     expect(channel_mask->channel_mask && channel_mask->channel_mask_keep==4 &&
-           gml_render_shader_is_compiled(&render,12),
+           gml_render_shader_is_compiled(&render,8),
            "complete sampled RGB channel-clear graph was not recognized exactly");
     expect(threshold_palette->threshold_palette &&
            threshold_palette->threshold_palette_red==0.25f &&
@@ -591,7 +552,7 @@ static void check_shader_recognition(void) {
            threshold_palette->threshold_palette_green[1][3]==0.2f &&
            !strcmp(threshold_palette->threshold_palette_uniform[0],"u_dark0") &&
            !strcmp(threshold_palette->threshold_palette_uniform[9],"u_light4") &&
-           gml_render_shader_is_compiled(&render,15),
+           gml_render_shader_is_compiled(&render,11),
            "ten-colour threshold palette graph was not recognized exactly");
     static const double threshold_colours[10][4]={
       {0.0,0.8,0.8,1.0},{0.0,0.6,0.6,1.0},{0.0,0.4,0.4,1.0},
@@ -601,11 +562,11 @@ static void check_shader_recognition(void) {
     };
     for(int index=0;index<10;index++){
       int handle=gml_render_shader_uniform_handle(
-        &render,15,threshold_palette->threshold_palette_uniform[index]);
-      expect(handle==15*64+index,"ten-colour threshold palette uniform handle changed");
+        &render,11,threshold_palette->threshold_palette_uniform[index]);
+      expect(handle==11*64+index,"ten-colour threshold palette uniform handle changed");
       gml_render_shader_uniform_set(&render,handle,threshold_colours[index]);
     }
-    render.active_shader=15;
+    render.active_shader=11;
     expect(mapped_texture_active(&render) &&
            mapped_texture_pixel(&render,UINT32_C(0xffff8000))==UINT32_C(0xff003333),
            "ten-colour threshold palette pixel selection changed");
@@ -617,14 +578,14 @@ static void check_shader_recognition(void) {
            indexed_brightness->indexed_brightness_green[0][0]==0.8f &&
            indexed_brightness->indexed_brightness_green[1][3]==0.2f &&
            !strcmp(indexed_brightness->indexed_brightness_uniform,"u_shift") &&
-           gml_render_shader_is_compiled(&render,18),
+           gml_render_shader_is_compiled(&render,14),
            "indexed brightness palette graph was not recognized exactly");
     int brightness_uniform=
-      gml_render_shader_uniform_handle(&render,18,"u_shift");
+      gml_render_shader_uniform_handle(&render,14,"u_shift");
     const double black_shift[4]={-7.0,0.0,0.0,0.0};
     gml_render_shader_uniform_set(&render,brightness_uniform,black_shift);
-    render.active_shader=18;
-    expect(brightness_uniform==18*64+54 && mapped_texture_active(&render) &&
+    render.active_shader=14;
+    expect(brightness_uniform==14*64+54 && mapped_texture_active(&render) &&
            mapped_texture_pixel(&render,UINT32_C(0xffff8000))==UINT32_C(0xff030508),
            "indexed brightness high-family selection changed");
     const double special_shift[4]={-0.5,0.0,0.0,0.0};
@@ -638,9 +599,9 @@ static void check_shader_recognition(void) {
            channel_alpha_key->channel_alpha_key_channel==1 &&
            !channel_alpha_key->channel_alpha_key_inclusive &&
            channel_alpha_key->channel_alpha_key_cutoff==0.1f &&
-           gml_render_shader_is_compiled(&render,20),
+           gml_render_shader_is_compiled(&render,16),
            "sampled channel alpha-key graph was not recognized exactly");
-    render.active_shader=20;
+    render.active_shader=16;
     expect(mapped_texture_active(&render) &&
            mapped_texture_pixel(&render,UINT32_C(0xff124019))==UINT32_C(0xff124019) &&
            mapped_texture_pixel(&render,UINT32_C(0xff120f19))==UINT32_C(0x00120f19),
@@ -661,12 +622,12 @@ static void check_shader_recognition(void) {
            !strcmp(bloom_blend->bloom_blend_sampler,"<shader operation fragment>"),
            "two-surface bloom blend graph or near-match boundary changed");
     const double bloom_values[4]={0.625,0.25,0.0,0.0};
-    int bloom_handle=gml_render_shader_uniform_handle(&render,26,"<shader operation fragment>");
-    int sampler_handle=gml_render_shader_sampler_handle(&render,26,"<shader operation fragment>");
+    int bloom_handle=gml_render_shader_uniform_handle(&render,22,"<shader operation fragment>");
+    int sampler_handle=gml_render_shader_sampler_handle(&render,22,"<shader operation fragment>");
     GmlRenderShaderTextureBinding surface_binding;
     gml_render_shader_uniform_set(&render,bloom_handle,bloom_values);
-    expect(bloom_handle==26*64+55 && bloom_blend->bloom_blend_value[0]==0.625f &&
-           sampler_handle==26*64+58 &&
+    expect(bloom_handle==22*64+55 && bloom_blend->bloom_blend_value[0]==0.625f &&
+           sampler_handle==22*64+58 &&
            gml_render_shader_texture_stage_set(&render,sampler_handle,
              (int)(GML_TEX_SURF_TAG|7u),&surface_binding) &&
            bloom_blend->bloom_blend_surface==7 &&
@@ -694,14 +655,14 @@ static void check_shader_recognition(void) {
      * content bound still transforms that picture, so leaving it unrun shows a weaker version and
      * the answer stays the host's. */
     expect(bound_sampler->procedural == 0 &&
-           gml_render_shader_is_compiled(&render, 14),
+           gml_render_shader_is_compiled(&render, 10),
            "a fragment sampling a content-bound sampler was treated as painting from nothing");
     render.shader_report_all_compiled = 0;
     expect(!gml_render_shader_is_compiled(&render, 3) &&
            !gml_render_shader_is_compiled(&render, 5) &&
            gml_render_shader_is_compiled(&render, 2) &&
            gml_render_shader_is_compiled(&render, 8) &&
-           gml_render_shader_is_compiled(&render, 10),
+           gml_render_shader_is_compiled(&render, 11),
            "the strict answer did not follow family recognition");
     expect(!gml_render_shader_is_compiled(&render, SHADER_COUNT) &&
            !gml_render_shader_is_compiled(&render, -1),
@@ -1856,7 +1817,6 @@ int main(void) {
   check_shader_recognition();
   check_channel_mask_pixels();
   check_bloom_surface_pixels();
-  check_binary_hsv_pixels();
   check_palette_alpha_threshold();
   check_zero_reference_alpha_test_pixels();
   check_solid_alpha_mask_pixels();

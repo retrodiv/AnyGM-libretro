@@ -425,12 +425,6 @@ static void boot_runtime(AnygmEngine *engine) {
   GmlRenderControl render_control={
     .monitor_width=core_opt_monitor_size(engine,0),
     .monitor_height=core_opt_monitor_size(engine,1),
-    .crt_shader_enabled=core_opt_embedded_shaders(engine),
-    .crt_mask_enabled=core_opt_crt_mask(engine),
-    .crt_scanlines_enabled=core_opt_onoff(engine,"anygm_crt_scanlines", "ANYGM_CRT_SCANLINES", 1),
-    .crt_gamma_enabled=core_opt_onoff(engine,"anygm_crt_gamma", "ANYGM_CRT_GAMMA", 1),
-    .crt_curvature=core_opt_crt_tristate(engine,"anygm_crt_curvature", "ANYGM_CRT_CURVATURE"),
-    .crt_vignette=core_opt_crt_tristate(engine,"anygm_crt_vignette", "ANYGM_CRT_VIGNETTE"),
     .shader_report_all_compiled=core_opt_onoff(engine,"anygm_report_shaders_compiled",
                                                "ANYGM_REPORT_SHADERS_COMPILED",1)
   };
@@ -887,12 +881,6 @@ static void poll_option_updates(AnygmEngine *engine) {
   GmlRenderControl control={
     .monitor_width=core_opt_monitor_size(engine,0),
     .monitor_height=core_opt_monitor_size(engine,1),
-    .crt_shader_enabled=core_opt_embedded_shaders(engine),
-    .crt_mask_enabled=core_opt_crt_mask(engine),
-    .crt_scanlines_enabled=core_opt_onoff(engine,"anygm_crt_scanlines", "ANYGM_CRT_SCANLINES", 1),
-    .crt_gamma_enabled=core_opt_onoff(engine,"anygm_crt_gamma", "ANYGM_CRT_GAMMA", 1),
-    .crt_curvature=core_opt_crt_tristate(engine,"anygm_crt_curvature", "ANYGM_CRT_CURVATURE"),
-    .crt_vignette=core_opt_crt_tristate(engine,"anygm_crt_vignette", "ANYGM_CRT_VIGNETTE"),
     .shader_report_all_compiled=core_opt_onoff(engine,"anygm_report_shaders_compiled",
                                                "ANYGM_REPORT_SHADERS_COMPILED",1)
   };
@@ -2101,12 +2089,6 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
   else memset(&engine->host,0,sizeof engine->host);
   memset(&engine->config,0,sizeof engine->config);
   engine->config.struct_size=sizeof engine->config;
-  engine->config.embedded_shaders=1;
-  engine->config.crt_mask=1;
-  engine->config.crt_scanlines=1;
-  engine->config.crt_gamma=1;
-  engine->config.crt_curvature=-1;
-  engine->config.crt_vignette=-1;
   engine->config.fast_alpha_cull=0;
   engine->config.start_room=-1;
   engine->config.report_all_shaders_compiled=1;
@@ -2358,12 +2340,6 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   if(f&ANYGM_CONFIG_MOUSE_MODE) engine->config.mouse_mode=delta->values.mouse_mode;
   if(f&ANYGM_CONFIG_ROOM_SKIP_BUTTON) engine->config.room_skip_button=delta->values.room_skip_button;
   if(f&ANYGM_CONFIG_GOD_MODE) engine->config.god_mode=delta->values.god_mode;
-  if(f&ANYGM_CONFIG_CRT_MASK) engine->config.crt_mask=delta->values.crt_mask;
-  if(f&ANYGM_CONFIG_CRT_SCANLINES) engine->config.crt_scanlines=delta->values.crt_scanlines;
-  if(f&ANYGM_CONFIG_CRT_GAMMA) engine->config.crt_gamma=delta->values.crt_gamma;
-  if(f&ANYGM_CONFIG_CRT_CURVATURE) engine->config.crt_curvature=delta->values.crt_curvature;
-  if(f&ANYGM_CONFIG_CRT_VIGNETTE) engine->config.crt_vignette=delta->values.crt_vignette;
-  if(f&ANYGM_CONFIG_EMBEDDED_SHADERS) engine->config.embedded_shaders=delta->values.embedded_shaders;
   if(f&ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED)
     engine->config.report_all_shaders_compiled=delta->values.report_all_shaders_compiled?1u:0u;
   if(f&ANYGM_CONFIG_GAMEPAD_CONNECTED) engine->config.gamepad_connected=delta->values.gamepad_connected;

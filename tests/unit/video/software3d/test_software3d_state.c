@@ -298,20 +298,6 @@ int renderer_state_boundary_fixture(void){
     gml_render_free(&render);
     return 0;
   }
-  shader->sampled_crt=1;
-  snprintf(shader->sampled_crt_sampler[0],sizeof(shader->sampled_crt_sampler[0]),
-           "u_sample");
-  int sampler=gml_render_shader_sampler_handle(&render,0,"u_sample");
-  if(sampler!=40 ||
-     !gml_render_shader_texture_stage_set(&render,sampler,texture,&binding) ||
-     binding.kind!=GML_RENDER_SHADER_TEXTURE_SAMPLED ||
-     binding.sampler!=0 || binding.sprite!=sprite_id || binding.frame!=0 ||
-     shader->sampled_crt_sprite[0]!=sprite_id ||
-     shader->sampled_crt_frame[0]!=0){
-    fprintf(stderr,"renderer sampled texture-stage boundary mismatch\n");
-    gml_render_free(&render);
-    return 0;
-  }
   gml_render_free(&render);
   return 1;
 }

@@ -13,7 +13,7 @@
 static const struct retro_core_option_v2_category g_categories[]={
   {"video","Video","Virtual monitor, shape and rasterization of the delivered frame."},
   {"input","Input","Controllers and pointer."},
-  {"shaders","Shaders","The built-in CRT shader and the parts it draws."},
+  {"shaders","Shaders","How the game's own shaders are reported to it."},
   {"development","Development","Tools for exercising content."},
   {NULL,NULL,NULL}
 };
@@ -97,12 +97,6 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"None",NULL},{"OpenGL","OpenGL / OpenGL ES"},{NULL,NULL}},
    "None"},
 #endif
-  {"anygm_embedded_shaders","Embedded CRT shader",NULL,
-   "Draws the built-in CRT effect over the frame. The settings below apply only while it is on; "
-   "shaders the game itself asks for are unaffected.",
-   NULL,"shaders",
-   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
-   "On"},
   {"anygm_content_overrides","Content override directives",NULL,
    "Applies the override directives the loaded content carries in its .anygm anchor (frozen "
    "variables, aspect patches, a development menu). Off ignores only this anchor "
@@ -121,31 +115,6 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"shaders",
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},
-  {"anygm_crt_scanlines","CRT scanlines",NULL,
-   "Darkens alternating lines the way a tube did.",
-   NULL,"shaders",
-   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
-   "On"},
-  {"anygm_crt_mask","CRT aperture mask",NULL,
-   "Adds the phosphor stripe pattern of a shadow mask.",
-   NULL,"shaders",
-   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
-   "On"},
-  {"anygm_crt_gamma","CRT gamma",NULL,
-   "Applies the tube's brightness curve instead of a flat one.",
-   NULL,"shaders",
-   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
-   "On"},
-  {"anygm_crt_curvature","CRT curvature",NULL,
-   "Bends the image as a curved screen would. Auto follows the shader preset.",
-   NULL,"shaders",
-   {{"Auto",NULL},{"On",NULL},{"Off",NULL},{NULL,NULL}},
-   "Auto"},
-  {"anygm_crt_vignette","CRT corner vignette",NULL,
-   "Darkens the corners the way a tube fell off at its edges. Auto follows the shader preset.",
-   NULL,"shaders",
-   {{"Auto",NULL},{"On",NULL},{"Off",NULL},{NULL,NULL}},
-   "Auto"},
   /* These are the exact locale strings exposed by the runtime: lowercase language and uppercase
    * region. Auto follows the frontend language and its paired region. Locale environment variables
    * expose the same values for content without the locale builtins. */
@@ -204,14 +173,12 @@ static unsigned g_options_version;
 static struct retro_variable *g_flat_variables;
 static char **g_flat_storage;
 static size_t g_flat_count;
-static int g_published_parts=-1;
 static int g_published_ranges=-1;
 static int g_published_logical_raster=-1;
 
 static int update_option_visibility(void);
 
 static void invalidate_published_visibility(void){
-  g_published_parts=-1;
   g_published_ranges=-1;
   g_published_logical_raster=-1;
 }
@@ -358,11 +325,6 @@ static uint32_t option_on(const char *key,uint32_t fallback){
   return !strcmp(value,"On")?1u:0u;
 }
 
-static int32_t option_tristate(const char *key){
-  const char *value=option_value(key);
-  if(!value || !strcmp(value,"Auto")) return -1;
-  return !strcmp(value,"On")?1:0;
-}
 
 static uint32_t option_resolution(const char *key){
   const char *value=option_value(key);
@@ -508,36 +470,22 @@ void libretro_options_publish_rooms(void){
   update_option_visibility();
 }
 
-/* Options that cannot act are hidden rather than left to be tried: the CRT parts while the shader
- * that draws them is off, the range selector when every room already fits in one list, and the two
- * halves of the raster choice, which are offered on opposite paths. Rendering at game resolution
+/* Options that cannot act are hidden rather than left to be tried: the range selector when every
+ * room already fits in one list, and the two halves of the raster choice, which are offered on
+ * opposite paths. Rendering at game resolution
  * delivers the game's own raster, so the forced shape has one to reshape and the monitor
  * dimensions have nothing to size; rendering at the presentation window is the reverse.
- *
- * The shader's own setting is read here rather than taken from the applied configuration. A player
- * turns the shader off from inside the host's menu, which is exactly when no frame is running to
- * apply anything, and the five parts have to leave the menu the player is still looking at. */
+ */
 static int update_option_visibility(void){
   if(!g_libretro.environment) return 0;
-  static const char *const crt_parts[]={
-    "anygm_crt_scanlines","anygm_crt_mask","anygm_crt_gamma",
-    "anygm_crt_curvature","anygm_crt_vignette",NULL
-  };
   static const char *const monitor_dimensions[]={
     "anygm_width_resolution","anygm_height_resolution",NULL
   };
-  int parts=option_on("anygm_embedded_shaders",1)?1:0;
   int ranges=g_page_choice_count>1?1:0;
   int logical_raster=option_on("anygm_render_game_resolution",1)?1:0;
-  if(parts==g_published_parts && ranges==g_published_ranges &&
-     logical_raster==g_published_logical_raster)
+  if(ranges==g_published_ranges && logical_raster==g_published_logical_raster)
     return 0;
   struct retro_core_option_display display;
-  display.visible=parts?true:false;
-  for(size_t i=0;crt_parts[i];i++){
-    display.key=crt_parts[i];
-    g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
-  }
   display.key="anygm_start_room_page";
   display.visible=ranges?true:false;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
@@ -549,7 +497,6 @@ static int update_option_visibility(void){
   display.key="anygm_aspect_ratio_force";
   display.visible=logical_raster?true:false;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
-  g_published_parts=parts;
   g_published_ranges=ranges;
   g_published_logical_raster=logical_raster;
   return 1;
@@ -631,12 +578,6 @@ void libretro_options_apply(bool all_fields){
    * survive as a setting nothing in the menu explains. */
   config->god_mode=0u;
   config->room_skip_button=0u;
-  config->crt_mask=option_on("anygm_crt_mask",1);
-  config->crt_scanlines=option_on("anygm_crt_scanlines",1);
-  config->crt_gamma=option_on("anygm_crt_gamma",1);
-  config->crt_curvature=option_tristate("anygm_crt_curvature");
-  config->crt_vignette=option_tristate("anygm_crt_vignette");
-  config->embedded_shaders=option_on("anygm_embedded_shaders",1);
   config->report_all_shaders_compiled=option_on("anygm_report_shaders_compiled",1);
   config->content_overrides=option_on("anygm_content_overrides",1);
   /* The default option resolves from content before any menu is available. */
@@ -676,9 +617,7 @@ void libretro_options_apply(bool all_fields){
   delta.fields=all_fields?UINT64_MAX:
       ANYGM_CONFIG_MONITOR_WIDTH|ANYGM_CONFIG_MONITOR_HEIGHT|ANYGM_CONFIG_ASPECT_MODE|
       ANYGM_CONFIG_MOUSE_MODE|ANYGM_CONFIG_ROOM_SKIP_BUTTON|ANYGM_CONFIG_GOD_MODE|
-      ANYGM_CONFIG_CRT_MASK|ANYGM_CONFIG_CRT_SCANLINES|ANYGM_CONFIG_CRT_GAMMA|
-      ANYGM_CONFIG_CRT_CURVATURE|ANYGM_CONFIG_CRT_VIGNETTE|
-      ANYGM_CONFIG_EMBEDDED_SHADERS|ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED|
+      ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED|
       ANYGM_CONFIG_GAMEPAD_CONNECTED|
       ANYGM_CONFIG_FAST_ALPHA_CULL|ANYGM_CONFIG_START_ROOM|
       ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_CLEAR_LOCAL_DATA|

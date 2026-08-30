@@ -509,7 +509,7 @@ int gml_render_init(GmlRender *r, GmlWin *win){
   r->alpha=1; r->font=-1; r->alphablend=1; r->circle_precision=24; r->color_write_mask=0x0F;
   r->alpha_test_enable=0; r->alpha_test_ref=0;
   r->blend_equation=r->blend_equation_alpha=1;
-  r->app_draw_enable=1; r->next_surface_id=1; r->crt_shader_enable=1; r->crt_mask_enable=1; r->crt_scanlines_enable=1; r->crt_gamma_enable=1; r->crt_curvature=-1; r->crt_vignette=-1;
+  r->app_draw_enable=1; r->next_surface_id=1;
   r->shader_report_all_compiled=1;
   r->interp=anygm_policy_classic_interpolate(win);
   r->composites_app=0;
@@ -564,17 +564,8 @@ void gml_render_control_update(GmlRender *r,const GmlRenderControl *control,
     r->monitor_w=control->monitor_width;
     r->monitor_h=control->monitor_height;
   }
-  if(fields&GML_RENDER_CONTROL_CRT){
-    r->crt_shader_enable=control->crt_shader_enabled;
-    r->crt_mask_enable=control->crt_mask_enabled;
-    r->crt_scanlines_enable=control->crt_scanlines_enabled;
-    r->crt_gamma_enable=control->crt_gamma_enabled;
-    r->crt_curvature=control->crt_curvature;
-    r->crt_vignette=control->crt_vignette;
+  if(fields&GML_RENDER_CONTROL_SHADERS)
     r->shader_report_all_compiled=control->shader_report_all_compiled;
-  }
-  if(fields&GML_RENDER_CONTROL_FAST_FORWARD)
-    r->crt_ff=control->fast_forward;
   if(fields&GML_RENDER_CONTROL_FAST_ALPHA)
     r->fast_alpha_cull=control->fast_alpha_cull;
   if(fields&GML_RENDER_CONTROL_WIDE_ASPECT){
@@ -906,7 +897,6 @@ int gml_render_is_classic(const GmlRender *r){
 #define GML_RENDER_SHADER_HANDLE_STRIDE 64
 #define GML_RENDER_SHADER_HANDLE(shader,slot) \
   ((shader)*GML_RENDER_SHADER_HANDLE_STRIDE+(slot))
-#define GML_RENDER_NOISE_JUMBLE_HANDLE_BASE 20
 
 /* Whether the software evaluator recognizes a declared shader family. */
 static int shader_pal_recognized(const struct GmlShaderPal *p){
@@ -915,8 +905,7 @@ static int shader_pal_recognized(const struct GmlShaderPal *p){
          p->ordered_dither || p->quantise4 ||
          p->solid_alpha_mask || p->solid_blur_alpha || p->lut || p->lut_indexed || p->grid ||
          p->bloom_luminance || p->bloom_gaussian || p->bloom_blend ||
-         p->crt || p->sampled_crt || p->dual_sample || p->hsv_scan || p->hsv_scan_binary_palette ||
-         p->noise_jumble || p->radial_wave || p->uv_wave_mode || p->paint || p->grayscale;
+         p->dual_sample || p->radial_wave || p->uv_wave_mode || p->grayscale;
 }
 
 int gml_render_shader_is_compiled(const GmlRender *r,int shader){
@@ -944,11 +933,6 @@ int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *n
     if(recognized->indexed_brightness &&
        !strcmp(name,recognized->indexed_brightness_uniform))
       return GML_RENDER_SHADER_HANDLE(shader,54);
-    if(recognized->noise_jumble)
-      for(int index=0;index<GML_NOISE_JUMBLE_UNIFORM_COUNT;index++)
-        if(!strcmp(name,recognized->noise_jumble_uniform[index]))
-          return GML_RENDER_SHADER_HANDLE(
-            shader,GML_RENDER_NOISE_JUMBLE_HANDLE_BASE+index);
     if(recognized->ordered_dither && !strcmp(name,recognized->ordered_dither_uniform))
       return GML_RENDER_SHADER_HANDLE(shader,40);
     if(recognized->quantise4)
@@ -979,25 +963,6 @@ int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *n
       if(!strcmp(name,recognized->grid_id_uniform))
         return GML_RENDER_SHADER_HANDLE(shader,9);
     }
-    if(recognized->crt){
-      if(recognized->crt_sizes_uniform[0] &&
-         !strcmp(name,recognized->crt_sizes_uniform))
-        return GML_RENDER_SHADER_HANDLE(shader,3);
-      if(recognized->crt_distortion_uniform[0] &&
-         !strcmp(name,recognized->crt_distortion_uniform))
-        return GML_RENDER_SHADER_HANDLE(shader,4);
-      if(recognized->crt_distort_uniform[0] &&
-         !strcmp(name,recognized->crt_distort_uniform))
-        return GML_RENDER_SHADER_HANDLE(shader,5);
-      if(recognized->crt_border_uniform[0] &&
-         !strcmp(name,recognized->crt_border_uniform))
-        return GML_RENDER_SHADER_HANDLE(shader,6);
-    }
-    if(recognized->sampled_crt){
-      for(int index=0;index<20;index++)
-        if(!strcmp(name,recognized->sampled_crt_uniform[index]))
-          return GML_RENDER_SHADER_HANDLE(shader,20+index);
-    }
     if(recognized->dual_sample){
       if(!strcmp(name,recognized->dual_uniform[0]))
         return GML_RENDER_SHADER_HANDLE(shader,10);
@@ -1010,12 +975,6 @@ int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *n
           return GML_RENDER_SHADER_HANDLE(shader,44+index);
     if(recognized->uv_wave_mode && !strcmp(name,recognized->uv_wave_uniform))
       return GML_RENDER_SHADER_HANDLE(shader,50);
-    if(recognized->paint){
-      if(!strcmp(name,recognized->paint_resolution_uniform))
-        return GML_RENDER_SHADER_HANDLE(shader,12);
-      if(!strcmp(name,recognized->paint_time_uniform))
-        return GML_RENDER_SHADER_HANDLE(shader,13);
-    }
     if(recognized->grayscale &&
        recognized->grayscale_has_alpha_uniform &&
        !strcmp(name,recognized->grayscale_alpha_uniform))
@@ -1048,10 +1007,6 @@ int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *n
 int gml_render_shader_sampler_handle(const GmlRender *r,int shader,const char *name){
   if(r && name && shader>=0 && shader<r->n_shader_pal && r->shader_pal){
     const struct GmlShaderPal *recognized=&r->shader_pal[shader];
-    if(recognized->sampled_crt)
-      for(int index=0;index<3;index++)
-        if(!strcmp(name,recognized->sampled_crt_sampler[index]))
-          return GML_RENDER_SHADER_HANDLE(shader,40+index);
     if(recognized->bloom_blend && !strcmp(name,recognized->bloom_blend_sampler))
       return GML_RENDER_SHADER_HANDLE(shader,58);
   }
@@ -1093,21 +1048,6 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
     }
     memcpy(recognized->threshold_palette_colour[slot],colour,sizeof colour);
     recognized->threshold_palette_set|=1u<<slot;
-    return;
-  }
-  if(recognized->noise_jumble &&
-     slot>=GML_RENDER_NOISE_JUMBLE_HANDLE_BASE &&
-     slot<GML_RENDER_NOISE_JUMBLE_HANDLE_BASE+GML_NOISE_JUMBLE_UNIFORM_COUNT){
-    int index=slot-GML_RENDER_NOISE_JUMBLE_HANDLE_BASE;
-    recognized->noise_jumble_value[index][0]=(float)values[0];
-    if(index==GML_NOISE_JUMBLE_RESOLUTION)
-      recognized->noise_jumble_value[index][1]=(float)values[1];
-    return;
-  }
-  if(recognized->sampled_crt && slot>=20 && slot<40){
-    int index=slot-20;
-    for(int component=0;component<4;component++)
-      recognized->sampled_crt_value[index][component]=(float)values[component];
     return;
   }
   if(slot==40){
@@ -1169,14 +1109,6 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
     recognized->uv_wave_time=(float)values[0];
     return;
   }
-  if(recognized->paint){
-    if(slot==12){
-      for(int component=0;component<3;component++)
-        recognized->paint_resolution[component]=(float)values[component];
-      return;
-    }
-    if(slot==13){ recognized->paint_time=(float)values[0]; return; }
-  }
   if(recognized->grayscale && slot==14){
     recognized->grayscale_alpha=(float)values[0];
     return;
@@ -1215,17 +1147,6 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
     recognized->solid_blur_alpha_rgb=packed;
     return;
   }
-  if(!recognized->crt) return;
-  switch(slot){
-    case 3:
-      for(int component=0;component<4;component++)
-        recognized->crt_sizes[component]=(float)values[component];
-      break;
-    case 4: recognized->crt_distortion=(float)values[0]; break;
-    case 5: recognized->crt_distort=values[0]!=0.0; break;
-    case 6: recognized->crt_border=values[0]!=0.0; break;
-    default: break;
-  }
 }
 
 int gml_render_shader_texture_stage_set(
@@ -1248,32 +1169,19 @@ int gml_render_shader_texture_stage_set(
   if(kind!=GML_TEX_SPR_TAG) return 0;
   int sprite=(texture>>10)&0xFFFF;
   int frame=texture&0x3FF;
-  if(shader>=0 && shader<r->n_shader_pal && r->shader_pal &&
-     r->shader_pal[shader].sampled_crt && slot>=40 && slot<43){
-    int sampler=slot-40;
-    r->shader_pal[shader].sampled_crt_sprite[sampler]=sprite;
-    r->shader_pal[shader].sampled_crt_frame[sampler]=frame;
-    if(binding){
-      binding->kind=GML_RENDER_SHADER_TEXTURE_SAMPLED;
-      binding->sampler=sampler;
-      binding->sprite=sprite;
-      binding->frame=frame;
-    }
-  } else {
-    r->lut_pal_sprite=sprite;
-    r->lut_pal_frame=frame;
-    if(binding){
-      binding->kind=GML_RENDER_SHADER_TEXTURE_PALETTE;
-      binding->sprite=sprite;
-      binding->frame=frame;
-    }
+  (void)shader; (void)slot;
+  r->lut_pal_sprite=sprite;
+  r->lut_pal_frame=frame;
+  if(binding){
+    binding->kind=GML_RENDER_SHADER_TEXTURE_PALETTE;
+    binding->sprite=sprite;
+    binding->frame=frame;
   }
   return 1;
 }
 
 #undef GML_RENDER_SHADER_HANDLE
 #undef GML_RENDER_SHADER_HANDLE_STRIDE
-#undef GML_RENDER_NOISE_JUMBLE_HANDLE_BASE
 int gml_render_backend_draw_view(GmlRender *r,GmlRenderBackendDrawView *view){
   if(view) memset(view,0,sizeof(*view));
   if(!r || !view) return 0;
@@ -1386,10 +1294,6 @@ void gml_render_free(GmlRender *r){
   for(int i=0;i<r->n_spr;i++) free(r->spr[i].frame);
   free(r->spr_name_hix); r->spr_name_hix=NULL; r->spr_name_hix_cap=0;
   free(r->classic_info_native_pixels);
-  free(r->crt_gamma_scratch); free(r->crt_cols_scratch); free(r->crt_conv_scratch);
-  crt_tables_free(r);
-  crt_warp_geometry_cache_free(r);
-  hsv_binary_lut_cache_free(r);
   free(r->layer_noise_rgb); r->layer_noise_rgb=NULL;
   free(r->layer_filter_src); free(r->layer_filter_work); free(r->layer_filter_aux);
   free(r->layer_blur_taps);

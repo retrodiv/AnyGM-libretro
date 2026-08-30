@@ -335,12 +335,6 @@ typedef struct AnygmConfig {
   uint32_t mouse_mode;
   uint32_t room_skip_button;
   uint32_t god_mode;
-  uint32_t crt_mask;
-  uint32_t crt_scanlines;
-  uint32_t crt_gamma;
-  int32_t crt_curvature;
-  int32_t crt_vignette;
-  uint32_t embedded_shaders;
   /* 0 routes RetroPad input through keyboard mappings; 1 reports a connected pad
    * unconditionally. AUTO reports a pad only when the content references input
    * functions or events that read one. The public option offers 0 and AUTO. */
@@ -378,12 +372,6 @@ enum {
   ANYGM_CONFIG_MOUSE_MODE=1ull<<3,
   ANYGM_CONFIG_ROOM_SKIP_BUTTON=1ull<<4,
   ANYGM_CONFIG_GOD_MODE=1ull<<5,
-  ANYGM_CONFIG_CRT_MASK=1ull<<6,
-  ANYGM_CONFIG_CRT_SCANLINES=1ull<<7,
-  ANYGM_CONFIG_CRT_GAMMA=1ull<<8,
-  ANYGM_CONFIG_CRT_CURVATURE=1ull<<9,
-  ANYGM_CONFIG_CRT_VIGNETTE=1ull<<10,
-  ANYGM_CONFIG_EMBEDDED_SHADERS=1ull<<11,
   ANYGM_CONFIG_GAMEPAD_CONNECTED=1ull<<12,
   ANYGM_CONFIG_FAST_ALPHA_CULL=1ull<<13,
   ANYGM_CONFIG_FAST_FORWARD=1ull<<14,

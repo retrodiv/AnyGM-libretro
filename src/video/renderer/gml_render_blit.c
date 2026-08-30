@@ -6629,10 +6629,3 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
   else
     spr_stretch_general_band(&band,0,H,0);
 }
-
-typedef struct {
-  GmlRender *r; const struct GmlShaderPal *sp;
-  int x0, y0, width, opaque;
-  float pixel_size;
-  uint32_t *scratch;
-} PaintBand;

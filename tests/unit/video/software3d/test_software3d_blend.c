@@ -503,56 +503,6 @@ int software3d_case_blend_shader(Software3dRasterFixture *fixture){
       return 0;
     }
   }
-  {
-    /* A recognized untextured procedural fragment must replace the primitive's flat colour and
-     * vary across quantized coordinates.  Constants are deliberately generic fixture values. */
-    if(!fixture->render.shader_pal || fixture->render.n_shader_pal<1){
-      fprintf(stderr,"software procedural-shader fixture state missing\n");
-      return 0;
-    }
-    memset(fixture->render.shader_pal,0,sizeof(*fixture->render.shader_pal));
-    struct GmlShaderPal *shader=&fixture->render.shader_pal[0];
-    shader->paint=1; shader->paint_opaque=1;
-    shader->paint_resolution[0]=64; shader->paint_resolution[1]=48;
-    shader->paint_pixel_factor=64; shader->paint_spin_ease=.5f;
-    shader->paint_spin_amount=.1f; shader->paint_contrast=1.5f;
-    shader->paint_time=2.25f;
-    for(int c=0;c<4;c++){
-      shader->paint_color[0][c]=c==3?1.0f:.1f;
-      shader->paint_color[1][c]=c==3?1.0f:.2f;
-      shader->paint_color[2][c]=c==3?1.0f:0.0f;
-    }
-    memset(fixture->pixels,0,sizeof(fixture->pixels));
-    gml_render_begin(&fixture->render,fixture->pixels,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0);
-    fixture->render.active_shader=0;
-    if(!gml_render_shader_fill_rect(&fixture->render,0,0,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT)){
-      fprintf(stderr,"software procedural-shader draw was not handled\n");
-      return 0;
-    }
-    uint32_t first=fixture->pixels[0]; int differs=0;
-    for(int i=1;i<SOFTWARE3D_WIDTH*SOFTWARE3D_HEIGHT;i++) if(fixture->pixels[i]!=first){ differs=1; break; }
-    if(!differs || (first>>24)!=255){
-      fprintf(stderr,"software procedural-shader raster mismatch: first=%08x varies=%d\n",first,differs);
-      return 0;
-    }
-    shader->paint_resolution_mediump=1;
-    shader->paint_resolution[0]=720;
-    shader->paint_resolution[1]=640;
-    memset(fixture->pixels,0,sizeof(fixture->pixels));
-    gml_render_begin(&fixture->render,fixture->pixels,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0);
-    fixture->render.active_shader=0;
-    if(!gml_render_shader_fill_rect(&fixture->render,0,0,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT)){
-      fprintf(stderr,"software mediump procedural-shader draw was not handled\n");
-      return 0;
-    }
-    first=fixture->pixels[0]; differs=0;
-    for(int i=1;i<SOFTWARE3D_WIDTH*SOFTWARE3D_HEIGHT;i++) if(fixture->pixels[i]!=first){ differs=1; break; }
-    if(differs || first!=0xFF949494u){
-      fprintf(stderr,"software mediump procedural-shader overflow mismatch: first=%08x varies=%d\n",
-              first,differs);
-      return 0;
-    }
-  }
   flipped->originx=flipped->originy=0;
   return 1;
 }

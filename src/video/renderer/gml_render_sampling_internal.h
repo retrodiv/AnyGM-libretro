@@ -83,16 +83,11 @@ static inline const struct GmlShaderPal *grid_active(GmlRender *r){
   const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
   return (sp->grid && sp->grid_id>=0.0f && r->lut_pal_sprite>=0) ? sp : NULL;
 }
-/* CRT-geom post-process active and configured (recognized fragment + its size uniform has been set). */
-
-
 static inline const struct GmlShaderPal *dual_active(GmlRender *r){
   if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
   const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
   return sp->dual_sample ? sp : NULL;
 }
-
-
 static inline const struct GmlShaderPal *radial_wave_active(GmlRender *r){
   if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
   const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
@@ -141,11 +136,6 @@ static inline int uv_wave_sample_index(const struct GmlShaderPal *sp,int width,i
   int x=(int)floorf((u+offset)*width);
   if(x<0)x=0;else if(x>=width)x=width-1;
   return source_y*width+x;
-}
-static inline const struct GmlShaderPal *paint_active(GmlRender *r){
-  if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
-  const struct GmlShaderPal *sp=&r->shader_pal[r->active_shader];
-  return (sp->paint && sp->paint_resolution[0]>0.0f && sp->paint_resolution[1]>0.0f) ? sp : NULL;
 }
 static inline const struct GmlShaderPal *grayscale_active(GmlRender *r){
   if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;

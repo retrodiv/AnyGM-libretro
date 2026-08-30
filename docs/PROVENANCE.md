@@ -146,11 +146,23 @@ origin is documented deliberately instead of discovered.
   reading order, element-list encodings and node kinds inform the C adaptation;
   the upstream Apache-2.0 grant and notice remain in `LICENSES/` and `NOTICE`.
   Project-original contributions retain their separate MIT terms.
-- **GLSL effect-recognition patterns** (`src/video/renderer/`). Renderer
-  policy records describe narrow shader families through structural
-  operations and parameterized identifiers. The repository does not bundle
-  content shader programs. This historical revision does not yet provide a
-  complete recognition implementation.
+- **GLSL family recognition**
+  (`src/video/renderer/gml_render_effects.c`). The software renderer
+  recognizes narrow families of fragment shaders and reads their parameters -
+  uniform names, literal thresholds, palette colours, tap weights - from the
+  GLSL that ships inside the content. The matchers key on operation shape and,
+  for some families, on identifier names that appear in that shader text; no
+  shader source is stored. What a recognized family then *executes* is an
+  operation those parameters configure (a lookup, a threshold, a weighted
+  sum, an offset), never a kernel that reproduces the shader's own
+  expression. Families that answered a content shader with a fixed stand-in
+  kernel - the CRT-geom post-process, a sampled CRT, an HSV scan, a
+  noise/jumble and a procedural paint fragment - were removed rather than
+  kept: a stand-in can only ever approximate the program it answers for. Such shaders now answer as unrecognized, and the
+  place for them is the shader itself executing on the host's graphics
+  context. This historical tree does not yet contain the complete
+  recognition implementation; this boundary is not a claim that those
+  families already execute here or reproduce any content shader.
 - **GMS2 shader preambles**
   (`src/content/project/gmlc_package_chunks.c`). The gm_* uniform names,
   MATRIX_*/MAX_VS_LIGHTS macros, helper-function signatures and the

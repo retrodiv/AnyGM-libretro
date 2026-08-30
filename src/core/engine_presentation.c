@@ -359,29 +359,11 @@ int core_opt_monitor_size(AnygmEngine *engine,int height) {
   uint32_t maximum=height?FB_MAX_H:FB_MAX_W;
   return (int)(value>maximum?maximum:value);
 }
-int core_opt_embedded_shaders(AnygmEngine *engine) {
-  return engine->config.embedded_shaders?1:0;
-}
-/* CRT aperture-mask toggle. The mask is per-raster-pixel chroma and assumes integer scaling.
- * Turning it off substitutes the neutral average so
- * scaled presentations keep scanlines without two-tone banding. GML_CRT_MASK=0 for headless. */
-int core_opt_crt_mask(AnygmEngine *engine) {
-  return engine->config.crt_mask?1:0;
-}
-/* Per-component CRT toggles. Curvature and vignette also accept Auto to follow shader uniforms. */
 int core_opt_onoff(AnygmEngine *engine,const char *key, const char *env, int def) {
   (void)env;
-  if(!strcmp(key,"anygm_crt_scanlines")) return engine->config.crt_scanlines?1:0;
-  if(!strcmp(key,"anygm_crt_gamma")) return engine->config.crt_gamma?1:0;
   if(!strcmp(key,"anygm_report_shaders_compiled"))
     return engine->config.report_all_shaders_compiled?1:0;
   return def;
-}
-int core_opt_crt_tristate(AnygmEngine *engine,const char *key, const char *env) { /* -1 auto / 0 off / 1 on */
-  (void)env;
-  if(!strcmp(key,"anygm_crt_curvature")) return engine->config.crt_curvature;
-  if(!strcmp(key,"anygm_crt_vignette")) return engine->config.crt_vignette;
-  return -1;
 }
 static int core_opt_aspect_force(AnygmEngine *engine) {
   return engine->config.aspect_mode<=GMC_ASPECT_FORCE_16_10?(int)engine->config.aspect_mode:GMC_ASPECT_FORCE_NONE;

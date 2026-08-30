@@ -377,30 +377,6 @@ static void culling_names_rise_with_their_thresholds(void){
   expect("a name this revision does not know",g_libretro.config.fast_alpha_cull,24u);
 }
 
-/* The parts of an effect cannot act while the effect that draws them is off. A player turns that
- * effect off from inside the host's menu, which is precisely when no frame is running to notice,
- * so the answer has to be reachable without one: the five parts must leave the menu still open in
- * front of the player, not the next one they open. */
-static void hidden_settings_are_the_ones_that_cannot_act(void){
-  begin(2,3);
-  if(!menu_time_visibility){
-    complain("no way was offered to answer while the host's menu is open");
-    return;
-  }
-  answered_value="On";
-  menu_time_visibility();
-  if(shown("anygm_crt_scanlines")!=1 || shown("anygm_crt_vignette")!=1)
-    complain("the CRT parts stay hidden while the shader that draws them is on");
-
-  /* Nothing is applied here on purpose: this is the state a paused core is in. */
-  answered_value="Off";
-  if(!menu_time_visibility())
-    complain("a changed visibility was reported as no change");
-  if(shown("anygm_crt_scanlines")!=0 || shown("anygm_crt_vignette")!=0)
-    complain("the CRT parts stay offered while the shader that draws them is off");
-  if(menu_time_visibility())
-    complain("an unchanged visibility was reported as a change");
-}
 
 /* The choices only exist once content is loaded, and the index a player picks has to survive the
  * trip through the value text back to the engine. */
@@ -546,7 +522,6 @@ int main(void){
   monitor_dimensions_follow_the_window_raster();
   the_forced_shape_follows_the_logical_raster();
   culling_names_rise_with_their_thresholds();
-  hidden_settings_are_the_ones_that_cannot_act();
   loaded_content_names_its_rooms();
   rooms_past_one_list_stay_reachable();
   room_publication_reapplies_visibility();

@@ -259,9 +259,6 @@ typedef struct {
  * without exposing renderer storage. */
 typedef struct {
   int monitor_width, monitor_height;
-  int crt_shader_enabled, crt_mask_enabled;
-  int crt_scanlines_enabled, crt_gamma_enabled;
-  int crt_curvature, crt_vignette;
   /* Non-zero: shader_is_compiled answers yes for every payload shader, as a GPU would.
    * Zero: only recognized shader families answer yes, so content that carries its own
    * no-shader presentation selects it. */
@@ -272,12 +269,12 @@ typedef struct {
 
 enum {
   GML_RENDER_CONTROL_MONITOR_SIZE   = 1u<<0,
-  GML_RENDER_CONTROL_CRT            = 1u<<1,
+  GML_RENDER_CONTROL_SHADERS            = 1u<<1,
   GML_RENDER_CONTROL_FAST_FORWARD   = 1u<<2,
   GML_RENDER_CONTROL_FAST_ALPHA     = 1u<<3,
   GML_RENDER_CONTROL_WIDE_ASPECT    = 1u<<4,
   GML_RENDER_CONTROL_HOST_OPTIONS =
-    GML_RENDER_CONTROL_MONITOR_SIZE | GML_RENDER_CONTROL_CRT
+    GML_RENDER_CONTROL_MONITOR_SIZE | GML_RENDER_CONTROL_SHADERS
 };
 
 typedef struct {
@@ -291,7 +288,6 @@ typedef struct {
 enum {
   GML_RENDER_SHADER_TEXTURE_NONE,
   GML_RENDER_SHADER_TEXTURE_PALETTE,
-  GML_RENDER_SHADER_TEXTURE_SAMPLED,
   GML_RENDER_SHADER_TEXTURE_SURFACE
 };
 
@@ -426,7 +422,6 @@ void gml_render_prepare_draw(GmlRender *r);
 void gml_render_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1);
 /* Apply a recognized untextured procedural fragment to a filled screen-space rectangle.  Returns
  * nonzero only when the active shader handled the draw. */
-int gml_render_shader_fill_rect(GmlRender *r, int x0, int y0, int x1, int y1);
 void gml_render_maybe_prepare_draw(GmlRender *r);
 void gml_render_maybe_prepare_opaque_rect(GmlRender *r, int x0, int y0, int x1, int y1);
 

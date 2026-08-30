@@ -121,7 +121,6 @@ static void draw_rect_prim_alpha(GmlRender *R, int x1, int y1, int x2, int y2, u
   if(!outline && alpha<=0) return;
   /* An untextured fragment shader receives the primitive coordinates and produces its own colour;
    * draw_set_color/alpha need not affect it when the shader source does not consume vertex colour. */
-  if(!outline && gml_render_shader_fill_rect(R,x1,y1,x2+1,y2+1)) return;
   if(!outline && R->blendmode==0 && (alpha>=1 || !R->alphablend)){   /* opaque filled rect: fast per-row fill */
     gml_render_maybe_prepare_opaque_rect(R,x1,y1,x2+1,y2+1);
     uint32_t src=gml_render_backend_color_to_xrgb(gmcol);

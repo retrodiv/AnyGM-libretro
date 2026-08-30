@@ -2200,23 +2200,6 @@ int expect_hash_layer_gpu_gap_closure(void){
   int surface_alpha_ok=target[0]==0xFF102030u && target[1]==0xFFFF0000u;
   ok=ok && surface_alpha_ok;
 
-  /* Neutral value/saturation controls isolate the three independently offset channel lookups of
-   * the structurally parsed HSV/scanline surface family for an exact, asset-independent oracle. */
-  uint32_t hsv_source[4]={0xFFFF0000u,0xFF00FF00u,0xFF0000FFu,0xFFFFFFFFu};
-  uint32_t hsv_target[4]={0,0,0,0}; struct GmlShaderPal hsv_shader={0};
-  hsv_shader.hsv_scan=1; hsv_shader.hsv_scan_channel_offset=0.5f;
-  hsv_shader.hsv_scan_vignette_base=1.0f; hsv_shader.hsv_scan_row_base=1.0f;
-  gml_render_begin(&render,hsv_target,2,2,0,0);
-  render.app_surface=hsv_source; render.app_w=2; render.app_h=2;
-  render.shader_pal=&hsv_shader; render.n_shader_pal=1; render.active_shader=0;
-  render.crt_shader_enable=1; render.interp=0; render.alphablend=1;
-  render.color_write_mask=0x0F;
-  gml_draw_surface_stretched(&render,0,0,0,2,2,0xFFFFFF,1);
-  int hsv_surface_ok=(hsv_target[0]&0xFFFFFFu)==0x000000u &&
-    (hsv_target[1]&0xFFFFFFu)==0x00FF00u &&
-    (hsv_target[2]&0xFFFFFFu)==0xFF00FFu &&
-    (hsv_target[3]&0xFFFFFFu)==0xFFFFFFu;
-  ok=ok && hsv_surface_ok;
   render.shader_pal=NULL; render.n_shader_pal=0; render.app_surface=NULL;
 
   /* Object setters mutate the asset default for future instances, not instances already alive. */
@@ -2230,9 +2213,9 @@ int expect_hash_layer_gpu_gap_closure(void){
      object_visible.t==V_REAL && object_visible.d==0;
   vm.objects=NULL; vm.n_objects=0;
   free(vm.rtl); free(vm.inst);
-  if(!ok) fprintf(stderr,"hash/layer/GPU gap-closure fixture failed (filter=%d camera=%d matrix=%d layer_shader=%d interp=%d get=%.0f surface=%d hsv=%d pixels=%08X,%08X)\n",
+  if(!ok) fprintf(stderr,"hash/layer/GPU gap-closure fixture failed (filter=%d camera=%d matrix=%d layer_shader=%d interp=%d get=%.0f surface=%d pixels=%08X,%08X)\n",
     filter_ok,camera_ok,matrix_camera_ok,layer_shader_ok,render.interp,texfilter_get.t==V_REAL?texfilter_get.d:-1.0,
-    surface_alpha_ok,hsv_surface_ok,target[0],target[1]);
+    surface_alpha_ok,target[0],target[1]);
   return ok;
 }
 

@@ -168,7 +168,7 @@ typedef struct { uint32_t *px; int w, h, live;
                  int dirty;                       /* px changed since the RLE cache was built */
                  int opaque_known, all_opaque, all_transparent;  /* conservative coverage metadata */
                  uint8_t *rle; size_t rle_len, rle_cap;  /* cached savestate RLE (u32 nrun + pairs) */
-} GmlSurface;
+} GmlSurface;      /* XRGB8888 runtime surface */
 
 /* Renderer implementation and the engine composition root may include this
  * header to obtain storage size. Subsystem callers remain on gml_render.h and
@@ -419,34 +419,6 @@ typedef struct GmlRender {
     int grid;
     char grid_sampler[32], grid_uvs_uniform[32], grid_id_uniform[32], grid_pixel_uniform[32];
     float grid_uvs[4], grid_id, grid_pixel[2];
-    /* CRT-geom post-process template (scanline + aperture-mask + gamma + optional radial warp and
-     * corner vignette). Detected structurally from the SHDR GLSL; tunable constants parsed from it
-     * so it stays data-driven. The full-
-     * screen fragment runs per OUTPUT pixel in draw_surface_* when this shader is active. */
-    int   crt;                  /* 1 = recognized CRT-geom fragment */
-    float crt_input_gamma;      /* GLSL inputGamma  (e.g. 2.8) */
-    float crt_output_gamma;     /* GLSL outputGamma (e.g. 3.2) */
-    float crt_overscan_x, crt_overscan_y; /* GLSL overscan (e.g. 0.99,0.99) */
-    float crt_cornersize;       /* GLSL cornersize   (e.g. 0.03) */
-    float crt_cornersmooth;     /* GLSL cornersmooth (e.g. 80.0) */
-    char  crt_sizes_uniform[32];      /* vec4 (src_w,src_h,out_w,out_h) uniform name */
-    char  crt_distortion_uniform[32]; /* float distortion-amount uniform name */
-    char  crt_distort_uniform[32];    /* bool  enable-radial-warp uniform name */
-    char  crt_border_uniform[32];     /* bool  enable-corner-vignette uniform name */
-    float crt_sizes[4];         /* current uniform value: (src_w,src_h,out_w,out_h) */
-    float crt_distortion;       /* current distortion amount */
-    int   crt_distort;          /* current bool: radial warp on */
-    int   crt_border;           /* current bool: corner vignette on */
-    /* All-in-one sampled CRT family: quintic source reconstruction, channel convergence,
-     * phosphor texture, periodic scanlines, glow, optional reflection/interlace/overlay. The
-     * operation graph and uniforms are discovered from GLSL; values and staged textures remain
-     * per-shader runtime state. Indices 0..19 have stable semantic meanings in gml_builtin.c and
-     * gml_render.c, while sampler slots 0..2 are mask/noise/backdrop. */
-    int   sampled_crt;
-    char  sampled_crt_uniform[20][32];
-    float sampled_crt_value[20][4];
-    char  sampled_crt_sampler[3][32];
-    int   sampled_crt_sprite[3], sampled_crt_frame[3];
     /* Three-pass bloom pipeline. Each family is recognized from its complete fragment graph:
      * luminance threshold, separable Gaussian convolution, then two-surface additive blend.
      * Uniform and sampler identifiers remain payload-defined runtime state. */
@@ -472,29 +444,6 @@ typedef struct GmlRender {
     float dual_shift_gain[4];   /* RGBA multipliers for the shifted lookup */
     char  dual_uniform[2][32];  /* the two float factors in the normalized-coordinate shift */
     float dual_value[2];        /* values supplied through shader_set_uniform_f */
-    /* Three-channel HSV scan post-process. Each RGB channel comes from an independently offset
-     * base-texture lookup; value is shaped by a separable vignette and a periodic row term, then
-     * saturation compensates for the value loss. The complete graph and every literal below are
-     * parsed structurally from GLSL, keeping the software implementation asset-independent. */
-    int   hsv_scan;
-    float hsv_scan_channel_offset;
-    float hsv_scan_vignette_base, hsv_scan_vignette_gain, hsv_scan_vignette_scale;
-    float hsv_scan_row_base, hsv_scan_row_value_gain, hsv_scan_row_sine_gain;
-    float hsv_scan_row_frequency, hsv_scan_saturation_gain;
-    /* Binary-palette HSV variant. It samples an inset UV, maps the sampled red channel through a
-     * literal threshold into two parsed colours, applies the HSV value/saturation graph above,
-     * then mixes toward an unwarped sample at the horizontal edges. */
-    int   hsv_scan_binary_palette;
-    float hsv_scan_uv_scale, hsv_scan_binary_threshold;
-    float hsv_scan_binary_high[3], hsv_scan_binary_low[3];
-    float hsv_scan_mix_center, hsv_scan_mix_min, hsv_scan_mix_max;
-    /* Multi-stage noise/jumble post-process. The fragment combines line displacement, block
-     * displacement, channel-separated samples, and seeded multiplicative noise. Recognition
-     * retains the complete custom-uniform interface in semantic declaration order; runtime
-     * values stay per shader and the software display pass evaluates the parsed graph. */
-    int   noise_jumble;
-    char  noise_jumble_uniform[GML_NOISE_JUMBLE_UNIFORM_COUNT][32];
-    float noise_jumble_value[GML_NOISE_JUMBLE_UNIFORM_COUNT][2];
     /* Radial sine displacement: samples the base texture at uv + direction*wave(distance,time).
      * The six controls are discovered from the fragment declarations/operation graph and remain
      * generic runtime state: time, centre vec2, resolution vec2, amount, divisor and speed. */
@@ -510,14 +459,6 @@ typedef struct GmlRender {
     float uv_wave_time;
     float uv_wave_uv_factor, uv_wave_time_factor, uv_wave_divisor;
     float uv_wave_size_x, uv_wave_spatial, uv_wave_amplitude, uv_wave_taper;
-    /* Quantized swirling-paint procedural fragment family.  This is recognized from the GLSL's
-     * operations and its constants/uniforms are read from SHDR; filled primitives can therefore
-     * execute it in the software renderer without baking an asset or shader name into the core. */
-    int   paint, paint_opaque, paint_resolution_mediump;
-    char  paint_time_uniform[32], paint_resolution_uniform[32];
-    float paint_time, paint_resolution[3];
-    float paint_pixel_factor, paint_spin_ease, paint_spin_amount, paint_contrast;
-    float paint_color[3][4];
     /* Luminance shader family: RGB becomes a parsed weighted dot product; an optional user float
      * scales source alpha (used by cross-fading variants of the same fragment). */
     int   grayscale, grayscale_has_alpha_uniform;
@@ -528,8 +469,7 @@ typedef struct GmlRender {
      * operation on anything that was drawn, so drawing it unshaded is not an approximation of it —
      * it paints the primitive's own colour, which the shader would have thrown away. A fragment
      * that samples anything, including a surface the content bound to a stage rather than the
-     * texture under the draw, is deliberately not in this class. Recognition still wins over the
-     * flag: the recognized paint family is procedural too and this renderer executes it. */
+     * texture under the draw, is deliberately not in this class. */
     int   procedural;
   } *shader_pal; int n_shader_pal;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
@@ -538,42 +478,15 @@ typedef struct GmlRender {
   int       monitor_h;       /* virtual monitor height reported to content, or 0 for fallback. */
   int       presentation_w;  /* effective final width after presentation policies. */
   int       presentation_h;  /* effective final height; recomputed by the host wrapper. */
-  int       crt_shader_enable; /* run recognized embedded CRT post-process shaders (default 1). 0 =
-                              * report them not-compiled and never execute them, so content falls back
-                              * to their no-shader video modes (pre-emulation behavior). Palette/LUT
-                              * shaders are not gated because they are integral to rendering. */
-  int       crt_shader_present; /* set at init when the SHDR chunk contains a recognized CRT-geom
-                              * fragment. */
-  /* Individually toggleable components of the recognized CRT-geom fragment (the 5 features intrinsic
-   * to that shader family). Each defaults to reproducing the shader as shipped.
-   * crt_curvature/crt_vignette are -1=auto (follow the content-provided distort/border uniforms),
-   * 0=force off, 1=force on; the others are 0/1 with default 1. */
-  int       crt_mask_enable;      /* aperture (dot) mask (the aperture mask). Off -> flat 0.9 average:
-                                   * same brightness, no chroma, so non-1:1 scaling shows no bands. */
-  int       crt_scanlines_enable; /* scanline beam profile (the scanline profile). Off -> flat vertical. */
-  int       crt_gamma_enable;     /* input/output gamma curve. Off -> linear (no CRT gamma). */
-  int       crt_curvature;        /* radial warp (distort uniform): -1 auto / 0 off / 1 on. */
-  int       crt_vignette;         /* corner darkening (border uniform): -1 auto / 0 off / 1 on. */
   int       shader_report_all_compiled; /* non-zero (default): shader_is_compiled answers yes for
                                    * every payload shader, as a GPU would, and an unrecognized one
                                    * draws unshaded. 0: only recognized families answer yes, so
                                    * content carrying its own no-shader presentation selects it. */
-  int       crt_ff;               /* host is fast-forwarding. Presentation resolution and CRT
-                                   * state remain unchanged; this is only an optimization hint. */
   int       aspect_fullwidth;     /* a forced-wide aspect is active and the compositor should
                                    * span the whole frame: window_get_width/height report the widened
-                                   * dimensions (below) so the CRT surface spans the full width
+                                   * dimensions (below) so the content's compositing surface spans the full width
                                    * instead of a centered 4:3 sub-rect. 0 = normal. */
   int       aspect_wide_w, aspect_wide_h; /* the forced-wide base dimensions. */
-  /* Reusable software-CRT workspaces. High-resolution compositing used to allocate tens of
-   * megabytes plus two convolution rows per worker every frame. These grow on demand and live
-   * with the renderer. */
-  void     *crt_gamma_scratch; size_t crt_gamma_scratch_cap;
-  void     *crt_cols_scratch;  size_t crt_cols_scratch_cap;
-  void     *crt_conv_scratch;  size_t crt_conv_scratch_cap;
-  void     *crt_tables;        /* per-renderer lookup tables for the software CRT path */
-  void     *crt_warp_geometry_cache; /* invariant curved-CRT sampling geometry */
-  void     *hsv_binary_lut_cache;       /* derived binary-palette post-process colours */
   /* async atlas prefetch pool (opaque; see gml_render_atlas.c). Decodes atlases on worker threads so
    * first-use of a texture page does not stall a frame for a full BZ2+QOI atlas decode. */
   void     *prefetch; int prefetch_checked;
@@ -592,10 +505,6 @@ typedef struct GmlRender {
   int      surface_draw_log_count;
   int      text_width_log_count;
   int      dual_shader_fast_log_count;
-  int      noise_jumble_log_count;
-  int      hsv_shader_log_count;
-  int      hsv_shader_fast_log_count;
-  int      sampled_crt_log_count;
   int      lut_shader_log_count;
   int      stretched_shader_log_count;
   long     generated_sprite_log_count;
@@ -672,18 +581,11 @@ void draw_surface_region(GmlRender *r,int surface,double source_x,double source_
                          double source_width,double source_height,double destination_x,
                          double destination_y,double destination_width,
                          double destination_height,uint32_t blend,double alpha);
-void crt_tables_free(GmlRender *r);
-void crt_warp_geometry_cache_free(GmlRender *r);
-void hsv_binary_lut_cache_free(GmlRender *r);
-
 void draw_surface_dual_sample(GmlRender *r,const struct GmlShaderPal *shader,int surface,
                               double source_x,double source_y,double source_width,
                               double source_height,double destination_x,double destination_y,
                               double destination_width,double destination_height,
                               uint32_t blend,double alpha);
-
-
-
 
 void parse_font(GmlRender *r);
 int build_default_font(GmlRender *r);

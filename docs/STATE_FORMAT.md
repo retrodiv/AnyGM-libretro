@@ -94,7 +94,7 @@ canonical bytes and semantics remain unchanged.
 - Active content-override directives join the configuration fingerprint, so a state saved with
   them loads only while they are active. Content without directives keeps the configuration
   encoding it always had.
-- Presentation-only settings such as virtual-monitor dimensions, aspect ratio, and CRT effects are not
+- Presentation-only settings such as virtual-monitor dimensions and aspect ratio are not
   state identity; the host's current presentation settings remain active when a state is loaded.
   If the stored completed frame has another extent, the load redraws once without advancing the
   simulation instead of publishing that stale extent and changing geometry on the following frame.

@@ -1457,15 +1457,13 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
     gml_render_draw_map_scale(r,&dw,&dh);
   }
   const struct GmlShaderPal *sdual=dual_active(r);
-  const struct GmlShaderPal *shsv=hsv_scan_active(r);
-  const struct GmlShaderPal *snoise=noise_jumble_active(r);
   if(render_setting(r,"GML_LOG_SHADER") && r && r->active_shader>=0 && r->stretched_shader_log_count++<8){
     
-    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[shader] f%ld stretched active=%d embedded=%d hsv=%d surface=%d\n",
-      r->frame,r->active_shader,r->crt_shader_enable,shsv!=NULL,surf);
+    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[shader] f%ld stretched active=%d surface=%d\n",
+      r->frame,r->active_shader,surf);
   }
   int d3w=gml_surface_width(r,surf),d3h=gml_surface_height(r,surf);
-  if(allow_software3d && !sdual && !shsv && !snoise && !mapped_texture_active(r) &&
+  if(allow_software3d && !sdual && !mapped_texture_active(r) &&
      d3w>0&&d3h>0&&
      gml_d3_draw_surface_part_2d(r,surf,0,0,d3w,d3h,dx,dy,dw/d3w,dh/d3h,blend,alpha)) return;
   int sw=0, sh=0; uint32_t *spx=surface_pixels(r,surf,&sw,&sh); if(!spx) return;
@@ -1496,13 +1494,7 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
   if(r && !r->app_draw_enable && r->interp) r->composites_app=1;
   if(alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu && (r->blendmode==0 || r->blendmode==6) &&
      draw_surface_bloom_pass(r,spx,sw,sh,dx,dy,dw,dh)) return;
-  if(snoise){ draw_surface_noise_jumble(r,snoise,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
   if(sdual){ draw_surface_dual_sample(r,sdual,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
-  if(shsv){ draw_surface_hsv_scan(r,shsv,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
-  { const struct GmlShaderPal *sampled=sampled_crt_active(r);
-    if(sampled){ draw_surface_sampled_crt(r,sampled,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; } }
-  { const struct GmlShaderPal *scrt=crt_active(r);
-    if(scrt){ draw_surface_crt(r,scrt,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; } }
   if(draw_first_generation_gui_app_surface(r,surf,spx,sw,sh,dx,dy,dw,dh,blend,alpha)) return;
   if(r->surface_draw_logging < 0) r->surface_draw_logging = render_setting(r,"GML_LOG_SURF_DRAW") != NULL;
   const char *log_surf_frame = r->surface_draw_logging ? render_setting(r,"GML_LOG_SURF_DRAW_FRAME") : NULL;
@@ -1683,18 +1675,10 @@ void gml_draw_surface_part_ext(GmlRender *r, int surf, double sx, double sy, dou
     gml_render_draw_map_scale(r,&xs,&ys);
   }
   const struct GmlShaderPal *sdual=dual_active(r);
-  const struct GmlShaderPal *shsv=hsv_scan_active(r);
-  const struct GmlShaderPal *snoise=noise_jumble_active(r);
-  if(!sdual && !shsv && !snoise && !mapped_texture_active(r) &&
+  if(!sdual && !mapped_texture_active(r) &&
      gml_d3_draw_surface_part_2d(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;
   if(r && !r->app_draw_enable && r->interp) r->composites_app=1;
-  if(snoise){ draw_surface_noise_jumble(r,snoise,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha); return; }
   if(sdual){ draw_surface_dual_sample(r,sdual,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha); return; }
-  if(shsv){ draw_surface_hsv_scan(r,shsv,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha); return; }
-  { const struct GmlShaderPal *sampled=sampled_crt_active(r);
-    if(sampled){ draw_surface_sampled_crt(r,sampled,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha); return; } }
-  { const struct GmlShaderPal *scrt=crt_active(r);
-    if(scrt){ draw_surface_crt(r,scrt,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha); return; } }
   int prof=rprof_enabled();
   double t0=prof?rprof_now():0.0;
   draw_surface_region(r,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha);

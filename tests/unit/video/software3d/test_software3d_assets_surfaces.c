@@ -40,33 +40,6 @@ int software3d_case_assets(Software3dRasterFixture *fixture){
         fixture->pixels[21*SOFTWARE3D_WIDTH+20]&0xFFFFFFu,fixture->pixels[21*SOFTWARE3D_WIDTH+21]&0xFFFFFFu);
       return 0;
     }
-    /* The sampled post-process family must execute as a portable surface pass. Keep all optional
-     * branches disabled and use half brightness so this fixture has an exact, cheap oracle. */
-    memset(shader,0,sizeof(*shader));
-    shader->sampled_crt=1;
-    shader->sampled_crt_value[0][0]=2; shader->sampled_crt_value[0][1]=2;
-    shader->sampled_crt_value[1][0]=2; shader->sampled_crt_value[1][1]=2;
-    shader->sampled_crt_value[2][0]=1;
-    shader->sampled_crt_value[7][0]=1;
-    shader->sampled_crt_value[17][0]=1;
-    shader->sampled_crt_value[18][0]=0.5f;
-    for(int sampler=0;sampler<3;sampler++) shader->sampled_crt_sprite[sampler]=-1;
-    fixture->render.crt_shader_enable=1;
-    memset(fixture->pixels,0,sizeof(fixture->pixels));
-    /* begin restores source-alpha drawing, so the no-blend intent must follow it */
-    gml_render_begin(&fixture->render,fixture->pixels,SOFTWARE3D_WIDTH,SOFTWARE3D_HEIGHT,0,0);
-    fixture->render.alphablend=0; fixture->render.active_shader=0;
-    gml_draw_surface_stretched(&fixture->render,fixture->surface,20,20,2,2,0xFFFFFFu,1.0);
-    fixture->render.active_shader=-1; fixture->render.alphablend=1;
-    if((fixture->pixels[20*SOFTWARE3D_WIDTH+20]&0xFFFFFFu)!=0x800000u ||
-       (fixture->pixels[20*SOFTWARE3D_WIDTH+21]&0xFFFFFFu)!=0x008000u ||
-       (fixture->pixels[21*SOFTWARE3D_WIDTH+20]&0xFFFFFFu)!=0x000080u ||
-       (fixture->pixels[21*SOFTWARE3D_WIDTH+21]&0xFFFFFFu)!=0x808080u){
-      fprintf(stderr,"sampled post-process raster mismatch: %06x %06x %06x %06x\n",
-        fixture->pixels[20*SOFTWARE3D_WIDTH+20]&0xFFFFFFu,fixture->pixels[20*SOFTWARE3D_WIDTH+21]&0xFFFFFFu,
-        fixture->pixels[21*SOFTWARE3D_WIDTH+20]&0xFFFFFFu,fixture->pixels[21*SOFTWARE3D_WIDTH+21]&0xFFFFFFu);
-      return 0;
-    }
   }
   GmlVal surface_arg=vreal(fixture->surface);
   GmlVal surface_texture=call_values(&fixture->vm,"surface_get_texture",&surface_arg,1);
