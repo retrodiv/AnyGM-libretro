@@ -374,8 +374,12 @@ struct AnygmEngine {
    * work, so a diagnostic that reported only "accelerated" could not say which one a session
    * actually reached. */
   uint32_t screen_pass_frames;
-  /* Content programs executed off-screen and read back in the middle of a frame. */
+  /* Content programs executed off-screen and read back in the middle of a frame; the time the
+   * first passes took, which decides whether this device may keep doing it; and the refusal. */
   uint32_t readback_pass_count;
+  uint64_t readback_pass_ns;
+  uint32_t readback_pass_measured;
+  int readback_refused;
   uint32_t canvas_pass_frames;
 };
 
@@ -467,6 +471,14 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
 int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned *height);
 /* The renderer's mid-frame content-program executor; installed while a graphics context is active. */
 int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *request);
+/* The read-back budget: whether `passes` read-backs that took `total_ns` between them are too slow
+ * for the device to keep running content programs in the middle of a frame. Pure, so the policy
+ * can be tested without a device. */
+int engine_readback_over_budget(uint64_t total_ns,uint32_t passes);
+enum {
+  ENGINE_READBACK_CALIBRATION_PASSES=16,
+  ENGINE_READBACK_BUDGET_US_PER_PASS=1000
+};
 /* Report the opt-in hardware counters once, as one bounded content-neutral line. */
 void engine_graphics_report(AnygmEngine *engine);
 /* Whether a host graphics target is adopted right now. The one question core coordination asks

@@ -475,7 +475,10 @@ program anywhere else in the frame goes through the renderer's executor hook ins
 size, `engine_graphics.c` executes that as a plan whose target is read back, and the answer is
 composed in software as a surface of that size with the draw's own blend and alpha; the software
 renderer remains the complete implementation, and a host without a context, or a program the
-device refuses, draws plain. Complete sprite and surface kernels share the
+device refuses, draws plain. A read-back stalls the device, and its cost is the device's: the
+engine times the first passes and, on a device where they average more than a millisecond,
+draws the mid-frame ones plain for the rest of the session and says so once; the terminal
+presentation stays on the device. Complete sprite and surface kernels share the
 canonical header-local recognized-shader sampling operations in
 `gml_render_sampling_internal.h`; the general surface mapper and post-process
 kernels additionally share the two final-pixel operations in

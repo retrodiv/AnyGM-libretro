@@ -101,7 +101,7 @@ struct GmlGpuBackend {
   GlContentProgram content[GL_CONTENT_PROGRAMS];
   GLuint content_buffer;
   /* The off-screen target a read-back plan executes into, kept at the last size asked for. */
-  GLuint readback_framebuffer,readback_texture;
+  GLuint readback_framebuffer,readback_texture,readback_attached;
   uint32_t readback_width,readback_height;
   uint8_t *readback_scratch;
   size_t readback_scratch_capacity;
@@ -151,6 +151,7 @@ void gml_gpu_gl_forget(GmlGpuBackend *backend){
   backend->content_buffer=0;
   backend->readback_framebuffer=0;
   backend->readback_texture=0;
+  backend->readback_attached=0;
   backend->readback_width=backend->readback_height=0;
 }
 
@@ -931,11 +932,16 @@ static int bind_readback_target(GmlGpuBackend *backend,uint32_t width,uint32_t h
     backend->readback_height=height;
   }
   backend->gl.BindFramebuffer(GL_FRAMEBUFFER,backend->readback_framebuffer);
-  backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
-                                   backend->readback_texture,0);
-  if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE){
-    record_error(error,error_capacity,"graphics read-back target is incomplete");
-    return 0;
+  /* The attachment persists on the framebuffer object; it is re-made, and the completeness
+   * checked, only when the texture behind it changed. Both calls can be slow on some drivers. */
+  if(backend->readback_attached!=backend->readback_texture){
+    backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+                                     backend->readback_texture,0);
+    if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE){
+      record_error(error,error_capacity,"graphics read-back target is incomplete");
+      return 0;
+    }
+    backend->readback_attached=backend->readback_texture;
   }
   return 1;
 }

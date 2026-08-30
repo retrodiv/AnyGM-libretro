@@ -139,7 +139,7 @@ unloaded:
              destroys=N losses=N program_failures=N fallback_unsupported=N fallback_box=N
              fallback_context=N fallback_upload=N fallback_overflow=N fallback_shader=N
              materializations=N screen_passes=N canvas_passes=N readback_passes=N
-             last_error="..."
+             readback_avg_ms=N readback_refused=N last_error="..."
 ```
 
 `fallback_shader` counts passes refused because the content's own program did not compile or
@@ -147,7 +147,10 @@ link on the device; the first refusal retires that program for the session, so t
 the number of frames that reached the device before the retirement took effect. `last_error` is
 the backend's most recent diagnostic, verbatim, and empty when nothing failed. `readback_passes`
 counts content programs executed off-screen in the middle of a frame and read back for the
-software renderer to compose; each is one device round trip.
+software renderer to compose; each is one device round trip. `readback_avg_ms` is the average
+cost of the first sixteen of them, and `readback_refused` is 1 when that average was over the
+one-millisecond budget, after which such draws proceed plain for the session; the refusal is also
+logged once, with the measured cost, as a warning. The terminal presentation is not affected.
 
 `accepted` counts passes the device executed and `replayed` counts passes the software executor had
 to take back. `transport` is the subset of accepted passes that merely carried a complete software

@@ -260,6 +260,18 @@ static int context_lifecycle_around_state_case(void){
 /* A corrupt state is refused, and refusing it leaves the engine exactly as it was — including while
  * a frame has been presented through a graphics target and the processor's copy of it has not been
  * rebuilt yet. Restoring the bytes it would have written is the part that has to survive. */
+/* The read-back budget decides once, from the first passes, and never from fewer than it needs. */
+static int readback_budget_case(void){
+  anygm_test_graphics_reset();
+  REQUIRE(!engine_readback_over_budget(0,0),"no passes, no verdict");
+  REQUIRE(!engine_readback_over_budget(15u*5000000u,15),"fifteen slow passes are not yet a verdict");
+  REQUIRE(engine_readback_over_budget(16u*5000000u,16),"sixteen passes at five milliseconds are over budget");
+  REQUIRE(!engine_readback_over_budget(16u*300000u,16),"sixteen passes at a third of a millisecond are within it");
+  REQUIRE(!engine_readback_over_budget(16u*1000000u,16),"the budget itself is within it");
+  REQUIRE(engine_readback_over_budget(16u*1000001u,16),"a nanosecond over is over");
+  return 1;
+}
+
 static int rejected_state_is_transactional_case(void){
   Session session;
   uint8_t *good=NULL,*damaged=NULL,*after=NULL;
@@ -525,6 +537,7 @@ int main(void){
     {"every frame serializes under a target",per_frame_serialization_case},
     {"the context lifecycle around state operations",context_lifecycle_around_state_case},
     {"a refused state leaves the engine as it was",rejected_state_is_transactional_case},
+    {"readback_budget",readback_budget_case},
     {"a context lost while a frame is on it",context_lost_with_frame_pending_case},
     {"two interleaved engines stay independent",interleaved_engines_case},
     {"a refused context leaves a working software engine",refused_context_case},
