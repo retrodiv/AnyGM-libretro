@@ -204,6 +204,7 @@ runtime. See [Architecture](docs/ARCHITECTURE.md) for ownership rules and
 - [Compatibility](docs/COMPATIBILITY.md)
 - [State format](docs/STATE_FORMAT.md)
 - [Supported formats](docs/SUPPORTED_FORMATS.md)
+- [Room-layer effects](docs/EFFECT_LAYERS.md)
 - [Security model](docs/SECURITY_MODEL.md)
 - [Development and validation](docs/DEVELOPMENT.md)
 - [Opt-in VM diagnostics](docs/DIAGNOSTICS.md)

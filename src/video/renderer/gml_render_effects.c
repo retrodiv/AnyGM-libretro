@@ -24,6 +24,67 @@ static uint8_t effect_unorm8(float value){
   if(value>=255.0f) return 255;
   return (uint8_t)floorf(value+0.5f);
 }
+/* Room-layer effects. Each kernel is a standard image operation configured by the properties the
+ * room record carries; docs/EFFECT_LAYERS.md says what every effect does and which properties it
+ * reads. */
+
+/* A 32-bit integer hash over a position and a seed: three rounds of multiply-and-fold with large
+ * odd constants, which is enough to decorrelate neighbouring pixels and successive seeds. */
+static inline uint32_t effect_hash(uint32_t x,uint32_t y,uint32_t seed){
+  uint32_t h=x*0x9E3779B1u ^ (y+0x7F4A7C15u)*0x85EBCA77u ^ seed*0xC2B2AE3Du;
+  h^=h>>15; h*=0x2C1B3C6Du; h^=h>>12; h*=0x297A2D39u; h^=h>>15;
+  return h;
+}
+static inline float effect_hash_unit(uint32_t h){ return (float)(h&0xFFFFFFu)*(1.0f/16777216.0f); }
+
+/* RGB noise: every pixel takes an independent random colour, scaled by the effect colour and
+ * mixed in by the intensity and the pixel's own coverage. The pattern is a function of position
+ * and animation phase only, so the plane is cached until either changes. The sampler the room
+ * names is not read. */
+void gml_render_layer_rgb_noise(GmlRender *r, uint32_t sampler_tpag_ptr,
+                                double intensity_d, double animation_d, uint32_t rgb){
+  (void)sampler_tpag_ptr;
+  if(!r || !r->fb || r->fbw<=0 || r->fbh<=0 || intensity_d<=0.0) return;
+  float animation=(float)animation_d;
+  uint32_t seed=(uint32_t)(int32_t)llround((double)animation*4096.0);
+  int rebuild=!r->layer_noise_rgb || r->layer_noise_w!=r->fbw || r->layer_noise_h!=r->fbh ||
+              r->layer_noise_animation!=animation || r->layer_noise_colour!=(rgb&0xFFFFFFu);
+  size_t count=(size_t)r->fbw*(size_t)r->fbh;
+  if(count==0 || count>67108864u) return;
+  if(rebuild){
+    uint32_t *cache=realloc(r->layer_noise_rgb,count*sizeof(uint32_t));
+    if(!cache) return;
+    r->layer_noise_rgb=cache;
+    const unsigned tint[3]={(rgb>>16)&255u,(rgb>>8)&255u,rgb&255u};
+    for(int y=0;y<r->fbh;y++) for(int x=0;x<r->fbw;x++){
+      uint32_t h=effect_hash((uint32_t)x,(uint32_t)y,seed);
+      uint32_t packed=0;
+      for(int c=0;c<3;c++){
+        unsigned value=(h>>(c*8))&255u;
+        packed|=(uint32_t)((value*tint[c]+127u)/255u)<<(16-c*8);
+      }
+      cache[(size_t)y*r->fbw+x]=packed;
+    }
+    r->layer_noise_w=r->fbw; r->layer_noise_h=r->fbh;
+    r->layer_noise_tpag_ptr=0;
+    r->layer_noise_animation=animation;
+    r->layer_noise_colour=rgb&0xFFFFFFu;
+  }
+  gml_render_prepare_draw(r);
+  float intensity=(float)intensity_d;
+  if(intensity>1.0f) intensity=1.0f;
+  for(size_t i=0;i<count;i++){
+    uint32_t base=r->fb[i], noise=r->layer_noise_rgb[i];
+    float mix=((base>>24)&255)/255.0f*intensity;
+    int br=(base>>16)&255, bg=(base>>8)&255, bb=base&255;
+    int nr=(noise>>16)&255, ng=(noise>>8)&255, nb=noise&255;
+    uint32_t rr=effect_unorm8(br+(nr-br)*mix);
+    uint32_t rg=effect_unorm8(bg+(ng-bg)*mix);
+    uint32_t rb=effect_unorm8(bb+(nb-bb)*mix);
+    r->fb[i]=(base&0xFF000000u)|(rr<<16)|(rg<<8)|rb;
+  }
+  r->fb_all_transparent=0;
+}
 void gml_render_layer_tint(GmlRender *r, uint32_t rgba){
   if(!r || !r->fb || r->fbw<=0 || r->fbh<=0 || rgba==0xFFFFFFFFu) return;
   gml_render_prepare_draw(r);
@@ -239,27 +300,303 @@ static void layer_filter_tint_pixels(const uint32_t *src,uint32_t *dst,size_t co
     float c[4]; layer_unpack(src[i],c); for(int k=0;k<4;k++) c[k]*=tint[k]; dst[i]=layer_pack(c);
   }
 }
+/* Colourise: a duotone. Each pixel's luminance picks a point on the black -> tint -> white ramp,
+ * with the tint sitting at its own luminance, and the intensity mixes that with the original. The
+ * capture is premultiplied, so the ramp is applied to the straight colour and re-weighted. */
+static const float LAYER_LUMA[3]={0.299f,0.587f,0.114f};
+static inline float layer_luma(const float c[3]){ return c[0]*LAYER_LUMA[0]+c[1]*LAYER_LUMA[1]+c[2]*LAYER_LUMA[2]; }
+static void layer_filter_colourise_pixels(const uint32_t *src,uint32_t *dst,size_t count,
+                                          const GmlLayerFilter *f){
+  float tint[4]; layer_unpack_colour(f->u.colourise.tint_colour,tint);
+  float tint_luma=layer_luma(tint);
+  float intensity=layer_clamp01((float)f->u.colourise.intensity);
+  for(size_t i=0;i<count;i++){
+    float c[4]; layer_unpack(src[i],c); float a=c[3];
+    if(a<=0.0f){ dst[i]=src[i]; continue; }
+    float straight[3]={c[0]/a,c[1]/a,c[2]/a};
+    float luma=layer_luma(straight),ramp[3];
+    if(luma<=tint_luma){
+      float t=tint_luma>0.0f?luma/tint_luma:0.0f;
+      for(int k=0;k<3;k++) ramp[k]=tint[k]*t;
+    } else {
+      float t=tint_luma<1.0f?(luma-tint_luma)/(1.0f-tint_luma):1.0f;
+      for(int k=0;k<3;k++) ramp[k]=layer_mix(tint[k],1.0f,t);
+    }
+    for(int k=0;k<3;k++) c[k]=layer_mix(straight[k],ramp[k],intensity)*a;
+    dst[i]=layer_pack(c);
+  }
+}
 
 /* Forward declaration for the persistent compositor worker pool defined below. Filter shaders can
  * be much heavier per row than a normal blit even at a small authored resolution. */
 typedef void (*GmlRowBandFn)(void *ctx, int py0, int py1, int slot);
 void gml_run_row_bands_n(GmlRender *r,int H,int nt,GmlRowBandFn fn,void *ctx);
 
+/* Value noise in 0..1 from the sampler: the sampler's red channel read bilinearly with repeat at
+ * a point in noise units, two octaves, the second at twice the frequency and a fixed offset. */
+static float layer_value_noise(GmlRender *r,int sprite,float px,float py){
+  int tw=(sprite>=0&&sprite<r->n_spr)?r->spr[sprite].w:1;
+  int th=(sprite>=0&&sprite<r->n_spr)?r->spr[sprite].h:1;
+  if(tw<=0) tw=1;
+  if(th<=0) th=1;
+  float a[4],b[4];
+  layer_sprite_sample(r,sprite,px/(float)tw,py/(float)th,1,1,a);
+  layer_sprite_sample(r,sprite,(px*2.0f+0.37f*tw)/(float)tw,(py*2.0f+0.61f*th)/(float)th,1,1,b);
+  return layer_clamp01(0.65f*a[0]+0.35f*b[0]);
+}
+
+/* Clouds: a drifting, churning noise field thresholded into coverage, lit from one colour and
+ * shaded from another where a second read at the shade offset is denser. */
 typedef struct { GmlRender *r; const uint32_t *src; uint32_t *dst; int w,h;
   const GmlLayerFilter *f; float time,camx,camy; } LayerCloudCtx;
+static void layer_filter_clouds_band(void *opaque,int y0,int y1,int slot){
+  (void)slot;
+  LayerCloudCtx *ctx=(LayerCloudCtx*)opaque; GmlRender *r=ctx->r;
+  const uint32_t *src=ctx->src; uint32_t *dst=ctx->dst; int w=ctx->w;
+  const GmlLayerFilter *f=ctx->f; float time=ctx->time;
+  const typeof(f->u.clouds) *c=&f->u.clouds;
+  float lit[4],shade[4]; layer_unpack_colour(c->light_colour,lit); layer_unpack_colour(c->shade_colour,shade);
+  float scale=(float)c->scale; if(fabsf(scale)<1e-6f) scale=1.0f;
+  float density=(float)c->density; if(density<1e-4f) density=1e-4f;
+  float fade=(float)c->fade; if(fade<1e-4f) fade=1e-4f;
+  float shade_fade=(float)c->shade_fade; if(shade_fade<1e-4f) shade_fade=1e-4f;
+  float level=(float)c->level,waves=(float)c->waves,turbulence=(float)c->turbulence;
+  float edge=fade/density,shade_edge=shade_fade/density;
+  float churn_x=turbulence*0.25f*sinf(time*0.7f),churn_y=turbulence*0.25f*cosf(time*0.9f);
+  for(int y=y0;y<y1;y++) for(int x=0;x<w;x++){
+    float px=((float)x+0.5f+ctx->camx-(float)c->velocity[0]*time)/scale*(float)c->shape[0];
+    float py=((float)y+0.5f+ctx->camy-(float)c->velocity[1]*time)/scale*(float)c->shape[1];
+    px+=churn_x*sinf(py*0.5f+time); py+=churn_y*cosf(px*0.5f+time*1.3f);
+    py+=waves*sinf(px*3.0f);
+    float field=layer_value_noise(r,f->sampler_sprite,px,py);
+    float coverage=layer_smoothstep(level,level+edge,field);
+    float shaded_field=layer_value_noise(r,f->sampler_sprite,
+      px+(float)c->shade_offset[0],py+(float)c->shade_offset[1]);
+    float shaded=layer_smoothstep(level,level+shade_edge,shaded_field);
+    float base[4]; layer_unpack(src[(size_t)y*w+x],base);
+    float paint=coverage*base[3];
+    for(int k=0;k<3;k++) base[k]=layer_mix(base[k],layer_mix(lit[k],shade[k],shaded)*base[3],paint);
+    dst[(size_t)y*w+x]=layer_pack(base);
+  }
+}
+static void layer_filter_clouds(GmlRender *r,const uint32_t *src,uint32_t *dst,int w,int h,
+                                const GmlLayerFilter *f,float time,float camx,float camy){
+  LayerCloudCtx ctx={r,src,dst,w,h,f,time,camx,camy};
+  gml_run_row_bands_n(r,h,h>=32?4:1,layer_filter_clouds_band,&ctx);
+}
 
+/* Boxes: one rounded box per cell, whose size, spin, wander phase and palette entry come from a
+ * hash of the cell, orbiting its centre and spinning around the base angle. */
+typedef struct { GmlRender *r; const uint32_t *src; uint32_t *dst; int w,h;
+  const GmlLayerFilter *f; float time,camx,camy; } LayerBoxCtx;
+static void layer_filter_boxes_band(void *opaque,int y0,int y1,int slot){
+  (void)slot;
+  LayerBoxCtx *ctx=(LayerBoxCtx*)opaque; GmlRender *r=ctx->r;
+  const uint32_t *src=ctx->src; uint32_t *dst=ctx->dst; int w=ctx->w;
+  const GmlLayerFilter *f=ctx->f; float time=ctx->time;
+  const typeof(f->u.boxes) *b=&f->u.boxes;
+  float scale=(float)b->scale,sharp=(float)b->sharpness;
+  float palette_count=(float)b->colours; if(palette_count<1.0f) palette_count=1.0f;
+  float edge=sharp>1e-4f?scale/sharp:scale; if(edge<0.5f) edge=0.5f;
+  float roundness=layer_clamp01((float)b->roundness);
+  for(int y=y0;y<y1;y++) for(int x=0;x<w;x++){
+    float px=(float)x+0.5f-ctx->camx,py=(float)y+0.5f-ctx->camy;
+    int cell_x=(int)floorf(px/scale),cell_y=(int)floorf(py/scale);
+    float colour[4]; layer_unpack(src[(size_t)y*w+x],colour);
+    if(colour[3]<=0.0f){ dst[(size_t)y*w+x]=src[(size_t)y*w+x]; continue; }
+    for(int oy=-1;oy<=1;oy++) for(int ox=-1;ox<=1;ox++){
+      int cx=cell_x+ox,cy=cell_y+oy;
+      uint32_t h0=effect_hash((uint32_t)cx,(uint32_t)cy,0x1B0C5Du);
+      uint32_t h1=effect_hash((uint32_t)cx,(uint32_t)cy,0x2A7F31u);
+      float r0=effect_hash_unit(h0),r1=effect_hash_unit(h0>>8),r2=effect_hash_unit(h1),r3=effect_hash_unit(h1>>8);
+      float size=layer_mix((float)b->size[0],(float)b->size[1],r0)*scale;
+      float phase=r2*6.2831853f,wander=(float)b->displacement*scale*0.5f;
+      float centre_x=((float)cx+0.5f)*scale+wander*sinf((float)b->speed*time+phase);
+      float centre_y=((float)cy+0.5f)*scale+wander*cosf((float)b->speed*time*0.8f+phase*1.7f);
+      float spin=layer_mix((float)b->rotation[0],(float)b->rotation[1],r1)*time;
+      float theta=-((float)b->angle+spin)*0.01745329252f,ct=cosf(theta),st=sinf(theta);
+      float dx=px-centre_x,dy=py-centre_y;
+      float lx=fabsf(dx*ct-dy*st),ly=fabsf(dx*st+dy*ct);
+      float radius=roundness*size*0.5f,half=size*0.5f-radius;
+      float qx=fmaxf(lx-half,0.0f),qy=fmaxf(ly-half,0.0f);
+      float distance=hypotf(qx,qy)-radius;
+      float coverage=layer_clamp01(0.5f-distance/edge);
+      if(coverage<=0.0f) continue;
+      float entry=(floorf(r3*palette_count)+0.5f)/palette_count;
+      float pal[4]; layer_sprite_sample(r,f->sampler_sprite,entry,layer_fract(time*(float)b->colour_speed+r0),1,r->interp,pal);
+      float alpha=coverage*pal[3]*colour[3];
+      for(int k=0;k<3;k++) colour[k]=layer_mix(colour[k],pal[k]*colour[3],alpha);
+    }
+    dst[(size_t)y*w+x]=layer_pack(colour);
+  }
+}
+static void layer_filter_boxes(GmlRender *r,const uint32_t *src,uint32_t *dst,int w,int h,
+                               const GmlLayerFilter *f,float time,float camx,float camy){
+  float scale=(float)f->u.boxes.scale;
+  if(scale<=0.0f){ memcpy(dst,src,(size_t)w*h*sizeof(uint32_t)); return; }
+  LayerBoxCtx ctx={r,src,dst,w,h,f,time,camx,camy};
+  gml_run_row_bands_n(r,h,h>=32?4:1,layer_filter_boxes_band,&ctx);
+}
 
-typedef struct { int16_t ix,iy; uint16_t w00,w10,w01,w11; } LayerBlurTap;
-typedef struct { GmlRender *r; const uint32_t *src; uint32_t *dst; int w,h,nw,nh;
-  const GmlLayerFilter *f; const LayerBlurTap *tap; } LayerLargeBlurCtx;
+/* A separable box blur of the given radius over premultiplied pixels, three passes, which is a
+ * close approximation of a Gaussian. `scratch` holds one full-size plane between the passes. */
+static void layer_box_blur_axis(const uint32_t *src,uint32_t *dst,int w,int h,int radius,int vertical){
+  int length=vertical?h:w,lines=vertical?w:h;
+  size_t step=vertical?(size_t)w:1u,line_step=vertical?1u:(size_t)w;
+  float window=(float)(2*radius+1);
+  for(int line=0;line<lines;line++){
+    const uint32_t *s=src+(size_t)line*line_step; uint32_t *d=dst+(size_t)line*line_step;
+    float sum[4]={0,0,0,0};
+    for(int i=-radius;i<=radius;i++){
+      int j=i<0?0:(i>=length?length-1:i);
+      float c[4]; layer_unpack(s[(size_t)j*step],c); for(int k=0;k<4;k++) sum[k]+=c[k];
+    }
+    for(int i=0;i<length;i++){
+      float c[4]; for(int k=0;k<4;k++) c[k]=sum[k]/window;
+      d[(size_t)i*step]=layer_pack(c);
+      int leave=i-radius,enter=i+radius+1;
+      if(leave<0) leave=0; else if(leave>=length) leave=length-1;
+      if(enter>=length) enter=length-1;
+      float out[4],in[4]; layer_unpack(s[(size_t)leave*step],out); layer_unpack(s[(size_t)enter*step],in);
+      for(int k=0;k<4;k++) sum[k]+=in[k]-out[k];
+    }
+  }
+}
+static void layer_blur(const uint32_t *src,uint32_t *dst,uint32_t *scratch,int w,int h,float radius,int passes){
+  int r=(int)floorf(fabsf(radius)+0.5f);
+  if(r<=0 || passes<=0){ if(dst!=src) memcpy(dst,src,(size_t)w*h*sizeof(uint32_t)); return; }
+  const uint32_t *from=src;
+  for(int pass=0;pass<passes;pass++){
+    layer_box_blur_axis(from,scratch,w,h,r,0);
+    layer_box_blur_axis(scratch,dst,w,h,r,1);
+    from=dst;
+  }
+}
+static void layer_filter_large_blur(const uint32_t *src,uint32_t *dst,uint32_t *scratch,int w,int h,
+                                    const GmlLayerFilter *f){
+  layer_blur(src,dst,scratch,w,h,(float)f->u.large_blur.radius,3);
+}
 
-typedef struct {
-  const uint32_t *src; uint32_t *dst; int w,h;
-  int ix[36],iy[36]; float weight00[36],weight10[36],weight01[36],weight11[36];
-  float inv_radius[36],exp_lut[1025];
-  float nearest_numerator[36][256],nearest_denominator[36][256];
-} LayerGlowCtx;
+/* Zoom blur: samples along the segment from the pixel toward the centre, whose length grows with
+ * the intensity and the distance from the centre and is zero inside the focus radius. */
+typedef struct { const uint32_t *src; uint32_t *dst; int w,h; const GmlLayerFilter *f; int linear; } LayerZoomCtx;
+static void layer_filter_zoom_blur_band(void *opaque,int y0,int y1,int slot){
+  (void)slot;
+  LayerZoomCtx *ctx=(LayerZoomCtx*)opaque; const uint32_t *src=ctx->src; uint32_t *dst=ctx->dst;
+  int w=ctx->w,h=ctx->h; const GmlLayerFilter *f=ctx->f;
+  const int samples=16;
+  float cx=(float)f->u.zoom_blur.centre[0]*w,cy=(float)f->u.zoom_blur.centre[1]*h;
+  float intensity=(float)f->u.zoom_blur.intensity,focus=(float)f->u.zoom_blur.focus_radius;
+  for(int y=y0;y<y1;y++) for(int x=0;x<w;x++){
+    float px=(float)x+0.5f,py=(float)y+0.5f;
+    float dist=hypotf(px-cx,py-cy);
+    float reach=intensity*layer_smoothstep(focus,focus+fmaxf(dist,1.0f),dist);
+    float sum[4]={0,0,0,0};
+    for(int i=0;i<samples;i++){
+      float t=reach*(float)i/(float)samples;
+      float sample[4]; layer_surface_sample(src,w,h,layer_mix(px,cx,t)/w,layer_mix(py,cy,t)/h,ctx->linear,sample);
+      for(int k=0;k<4;k++) sum[k]+=sample[k];
+    }
+    for(int k=0;k<4;k++) sum[k]/=(float)samples;
+    dst[(size_t)y*w+x]=layer_pack(sum);
+  }
+}
+static void layer_filter_zoom_blur(GmlRender *r,const uint32_t *src,uint32_t *dst,int w,int h,
+                                   const GmlLayerFilter *f){
+  LayerZoomCtx ctx={src,dst,w,h,f,r->interp};
+  gml_run_row_bands_n(r,h,h>=32?4:1,layer_filter_zoom_blur_band,&ctx);
+}
 
+/* Underwater: two scrolled reads of the sampler give a displacement in pixels; each channel
+ * samples the capture at its own spread of that displacement; a glint is added where the
+ * displacement is strongest, then the tint multiplies and the add colour is added. */
+typedef struct { GmlRender *r; const uint32_t *src; uint32_t *dst; int w,h;
+  const GmlLayerFilter *f; float time,camx,camy; } LayerWaterCtx;
+static void layer_filter_underwater_band(void *opaque,int y0,int y1,int slot){
+  (void)slot;
+  LayerWaterCtx *ctx=(LayerWaterCtx*)opaque; GmlRender *r=ctx->r;
+  const uint32_t *src=ctx->src; uint32_t *dst=ctx->dst; int w=ctx->w,h=ctx->h;
+  const GmlLayerFilter *f=ctx->f; float time=ctx->time;
+  const typeof(f->u.underwater) *u=&f->u.underwater;
+  int nw=(f->sampler_sprite>=0&&f->sampler_sprite<r->n_spr)?r->spr[f->sampler_sprite].w:1;
+  int nh=(f->sampler_sprite>=0&&f->sampler_sprite<r->n_spr)?r->spr[f->sampler_sprite].h:1;
+  if(nw<=0) nw=1;
+  if(nh<=0) nh=1;
+  float glint[4],tint[4],add[4]; layer_unpack_colour(u->glint_colour,glint);
+  layer_unpack_colour(u->tint_colour,tint); layer_unpack_colour(u->add_colour,add);
+  float amount_total=fabsf((float)u->amount[0])+fabsf((float)u->amount[1]);
+  float chroma=(float)u->chroma;
+  for(int y=y0;y<y1;y++) for(int x=0;x<w;x++){
+    float px=(float)x+0.5f,py=(float)y+0.5f,disp_x=0.0f,disp_y=0.0f;
+    for(int q=0;q<2;q++){
+      float sx=(float)u->scale[q][0],sy=(float)u->scale[q][1];
+      if(fabsf(sx)<1e-6f) sx=1.0f;
+      if(fabsf(sy)<1e-6f) sy=1.0f;
+      float nu=(px+ctx->camx*(float)u->camera_scale)/(sx*(float)nw);
+      float nv=(py+ctx->camy*(float)u->camera_scale)/(sy*(float)nh)+(float)u->speed[q]*time;
+      float n[4]; layer_sprite_sample(r,f->sampler_sprite,nu,nv,1,1,n);
+      disp_x+=(n[0]-0.5f)*2.0f*(float)u->amount[q];
+      disp_y+=(n[1]-0.5f)*2.0f*(float)u->amount[q];
+    }
+    float red[4],green[4],blue[4];
+    layer_surface_sample(src,w,h,(px+disp_x*(1.0f+chroma))/w,(py+disp_y*(1.0f+chroma))/h,r->interp,red);
+    layer_surface_sample(src,w,h,(px+disp_x*(1.0f+chroma*0.5f))/w,(py+disp_y*(1.0f+chroma*0.5f))/h,r->interp,green);
+    layer_surface_sample(src,w,h,(px+disp_x)/w,(py+disp_y)/h,r->interp,blue);
+    float out[4]={red[0],green[1],blue[2],blue[3]};
+    float strength=amount_total>1e-6f?hypotf(disp_x,disp_y)/amount_total:0.0f;
+    float shine=layer_smoothstep(0.55f,1.0f,strength)*out[3];
+    for(int k=0;k<3;k++) out[k]=(out[k]+glint[k]*shine)*tint[k]+add[k]*out[3];
+    dst[(size_t)y*w+x]=layer_pack(out);
+  }
+}
+static void layer_filter_underwater(GmlRender *r,const uint32_t *src,uint32_t *dst,int w,int h,
+                                    const GmlLayerFilter *f,float time,double camx,double camy){
+  LayerWaterCtx ctx={r,src,dst,w,h,f,time,(float)camx,(float)camy};
+  gml_run_row_bands_n(r,h,h>=32?4:1,layer_filter_underwater_band,&ctx);
+}
+
+/* Glow: the capture, raised to the gamma so only its bright parts survive, blurred by the radius
+ * as many times as the quality asks, scaled by the intensity, and merged by the brighter channel. */
+static void layer_glow_prepare(const uint32_t *src,uint32_t *dst,size_t count,float gamma){
+  float exponent=gamma>1e-3f?gamma:1e-3f;
+  for(size_t i=0;i<count;i++){
+    float c[4]; layer_unpack(src[i],c);
+    for(int k=0;k<3;k++) c[k]=powf(layer_clamp01(c[k]),exponent);
+    dst[i]=layer_pack(c);
+  }
+}
+
+void gml_render_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,double time_seconds){
+  if(!r || !filter || !r->layer_filter_active) return;
+  int w=r->fbw,h=r->fbh; size_t count=(size_t)w*h;
+  uint32_t *src=r->layer_filter_src,*work=r->layer_filter_work,*aux=r->layer_filter_aux;
+  double camx=r->cam_x,camy=r->cam_y;
+  int source_empty=r->fb_all_transparent;
+  if(render_setting(r,"GML_LOG_LAYER_EFFECT") && (r->frame<4 || (r->frame%60)==0))
+    anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,"[layer-filter] f%ld kind=%d empty=%d size=%dx%d cam=%.3f,%.3f time=%.6f linear=%d\n",
+            r->frame,filter->kind,source_empty,w,h,camx,camy,time_seconds,r->interp);
+  layer_filter_restore_target(r); r->layer_filter_active=0;
+  if(source_empty || !r->fb || r->fbw!=w || r->fbh!=h) return;
+  if(filter->kind==GML_LAYER_FILTER_GLOW){
+    layer_composite_normal(r,src,w,h,filter->u.glow.alpha);
+    int quality=(int)floor(filter->u.glow.quality+0.5); if(quality<1)quality=1;if(quality>16)quality=16;
+    layer_glow_prepare(src,work,count,(float)filter->u.glow.gamma);
+    layer_blur(work,work,aux,w,h,(float)filter->u.glow.radius,quality);
+    layer_composite_max(r,work,w,h,filter->u.glow.intensity);
+    return;
+  }
+  switch(filter->kind){
+    case GML_LAYER_FILTER_TINT: layer_filter_tint_pixels(src,work,count,filter->u.tint.colour); break;
+    case GML_LAYER_FILTER_COLOURISE: layer_filter_colourise_pixels(src,work,count,filter); break;
+    case GML_LAYER_FILTER_CLOUDS: layer_filter_clouds(r,src,work,w,h,filter,(float)time_seconds,(float)camx,(float)camy); break;
+    case GML_LAYER_FILTER_BOXES: layer_filter_boxes(r,src,work,w,h,filter,(float)time_seconds,(float)camx,(float)camy); break;
+    case GML_LAYER_FILTER_LARGE_BLUR: layer_filter_large_blur(src,work,aux,w,h,filter); break;
+    case GML_LAYER_FILTER_ZOOM_BLUR: layer_filter_zoom_blur(r,src,work,w,h,filter); break;
+    case GML_LAYER_FILTER_UNDERWATER: layer_filter_underwater(r,src,work,w,h,filter,(float)time_seconds,camx,camy); break;
+    default: memcpy(work,src,count*sizeof(uint32_t)); break;
+  }
+  layer_composite_premultiplied(r,work,w,h,1.0);
+}
 
 /* ---- recognized display post-processes: none retained in this revision ---- */
 

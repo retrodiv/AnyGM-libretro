@@ -1296,11 +1296,9 @@ void gml_render_free(GmlRender *r){
   free(r->classic_info_native_pixels);
   free(r->layer_noise_rgb); r->layer_noise_rgb=NULL;
   free(r->layer_filter_src); free(r->layer_filter_work); free(r->layer_filter_aux);
-  free(r->layer_blur_taps);
   free(r->color_write_scratch); r->color_write_scratch=NULL;
   r->color_write_scratch_capacity=0;
   r->layer_filter_src=r->layer_filter_work=r->layer_filter_aux=NULL;
-  r->layer_blur_taps=NULL; r->layer_blur_tap_capacity=0;
   r->layer_filter_capacity=0; r->layer_filter_active=0;
   free(r->app_surface_owned); r->app_surface_owned=NULL;
   free(r->rotated_batch); r->rotated_batch=NULL;

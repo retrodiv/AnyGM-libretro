@@ -163,6 +163,10 @@ origin is documented deliberately instead of discovered.
   context. This historical tree does not yet contain the complete
   recognition implementation; this boundary is not a claim that those
   families already execute here or reproduce any content shader.
+- **Room-layer effects** (`src/video/renderer/gml_render_effects.c`).
+  Effect identifiers and property keys are read from room records. The
+  renderer applies the image operations specified in `docs/EFFECT_LAYERS.md`;
+  its unit checksums pin only this implementation's synthetic output.
 - **GMS2 shader preambles**
   (`src/content/project/gmlc_package_chunks.c`). The gm_* uniform names,
   MATRIX_*/MAX_VS_LIGHTS macros, helper-function signatures and the

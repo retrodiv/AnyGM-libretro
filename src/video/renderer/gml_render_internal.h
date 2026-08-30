@@ -314,10 +314,6 @@ typedef struct GmlRender {
    * the source target keeps alpha through blur and glow compositing. */
   uint32_t *layer_filter_src, *layer_filter_work, *layer_filter_aux;
   size_t    layer_filter_capacity;
-  void     *layer_blur_taps;
-  size_t    layer_blur_tap_capacity;
-  int       layer_blur_sampler, layer_blur_noise_w, layer_blur_noise_h, layer_blur_interp;
-  double    layer_blur_radius;
   int       layer_filter_active;
   /* GM palette-template shaders threshold a canonical render and remap it to palette colors.
    * Parsed data-driven from the SHDR chunk's GLSL at init; shader_set activates one and the
