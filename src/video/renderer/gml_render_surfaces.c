@@ -15,6 +15,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 /* Colour and coverage counted apart. A surface can be fully authored and hold no colour at all:
@@ -1495,6 +1496,25 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
   if(alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu && (r->blendmode==0 || r->blendmode==6) &&
      draw_surface_bloom_pass(r,spx,sw,sh,dx,dy,dw,dh)) return;
   if(sdual){ draw_surface_dual_sample(r,sdual,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
+  /* A surface presented through a program this renderer does not execute: the frame's last
+   * operation, recorded for the host's graphics context when one is adopted, and otherwise drawn
+   * plain below exactly as before. The shape is the content-owned presentation's: base target,
+   * opaque, unblended, covering the target or sitting on a fill that does. */
+  if(r->active_shader>=0 && gml_render_shader_content_candidate(r,r->active_shader) &&
+     r->presentation_deferral_enabled && r->target_sp==0 && r->target_id<0 && r->fb==r->base_fb &&
+     spx!=r->fb && alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu && r->blendmode==0 &&
+     r->color_write_mask==0x0F && dw>0.0 && dh>0.0){
+    double ldx=dx-r->cam_x,ldy=dy-r->cam_y;
+    int x0=(int)ceil(ldx-0.5),y0=(int)ceil(ldy-0.5);
+    int x1=(int)ceil(ldx+dw-0.5),y1=(int)ceil(ldy+dh-0.5);
+    if(x0<0) x0=0;
+    if(y0<0) y0=0;
+    if(x1>r->fbw) x1=r->fbw;
+    if(y1>r->fbh) y1=r->fbh;
+    if(x0<x1 && y0<y1 &&
+       render_present_content_shader(r,surf,spx,sw,sh,x0,y0,x1,y1,ldx,ldy,dw,dh,r->active_shader))
+      return;
+  }
   if(draw_first_generation_gui_app_surface(r,surf,spx,sw,sh,dx,dy,dw,dh,blend,alpha)) return;
   if(r->surface_draw_logging < 0) r->surface_draw_logging = render_setting(r,"GML_LOG_SURF_DRAW") != NULL;
   const char *log_surf_frame = r->surface_draw_logging ? render_setting(r,"GML_LOG_SURF_DRAW_FRAME") : NULL;

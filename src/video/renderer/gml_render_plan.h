@@ -26,7 +26,11 @@ typedef enum GmlPlanPixelFormat {
 typedef enum GmlPlanImageClass {
   GML_PLAN_IMAGE_NONE=0,
   GML_PLAN_IMAGE_COMPLETED_FRAME=1,
-  GML_PLAN_IMAGE_APPLICATION_SURFACE=2
+  GML_PLAN_IMAGE_APPLICATION_SURFACE=2,
+  /* A runtime surface other than the application surface, by surface id. */
+  GML_PLAN_IMAGE_SURFACE=3,
+  /* A sprite frame the content bound to a shader sampler, identity = sprite<<10 | frame. */
+  GML_PLAN_IMAGE_SPRITE=4
 } GmlPlanImageClass;
 
 typedef struct GmlPlanImage {
@@ -78,7 +82,12 @@ typedef enum GmlPlanOpcode {
    * no GPU reduction has been characterized against its integer channel sums and division. */
   GML_PLAN_OP_BLIT_OPAQUE_BOX=2,
   /* Fallback transport: present a complete CPU frame unchanged. */
-  GML_PLAN_OP_PRESENT_CPU_FRAME=3
+  GML_PLAN_OP_PRESENT_CPU_FRAME=3,
+  /* Draw the source through the content's own shader program, described by the plan's shader
+   * record: the program text the content ships, the uniforms the content set, and the samplers it
+   * bound. GPU-only: there is no software equivalent, and a plan carrying it that cannot run on
+   * the device is replayed as the unshaded presentation the renderer recorded. */
+  GML_PLAN_OP_SHADER_DRAW=4
 } GmlPlanOpcode;
 
 typedef struct GmlPlanRect {
@@ -99,7 +108,49 @@ typedef struct GmlPlanOp {
    * magnification clears it and the application-surface presentation sets it; neither is read as
    * coverage, and stating it keeps a GPU execution from having to guess. */
   uint32_t alpha_write;
+  /* SHADER_DRAW: the source is sampled linearly rather than by nearest texel. */
+  uint32_t linear;
 } GmlPlanOp;
+
+enum {
+  GML_PLAN_UNIFORM_NAME=32,
+  GML_PLAN_MAX_UNIFORMS=32,
+  GML_PLAN_MAX_SAMPLERS=4,
+  GML_PLAN_UNIFORM_VALUES=16
+};
+
+/* One uniform the content set on its shader: by name, because the program is the content's own and
+ * the runtime knows none of its controls. `count` is the number of components (1..4 for a vector,
+ * 16 for a matrix); `integer` says the values were set through the integer setter. */
+typedef struct GmlPlanUniform {
+  char name[GML_PLAN_UNIFORM_NAME];
+  float value[GML_PLAN_UNIFORM_VALUES];
+  uint32_t count;
+  uint32_t integer;
+} GmlPlanUniform;
+
+/* A sampler declared by the content's fragment program and the plan image bound to it. */
+typedef struct GmlPlanSampler {
+  char name[GML_PLAN_UNIFORM_NAME];
+  uint32_t image;
+} GmlPlanSampler;
+
+/* The content's shader program as the plan carries it. The four sources are lent from the content
+ * image, NUL-terminated: the OpenGL ES 1.00 pair every Studio payload ships and the desktop GLSL
+ * pair beside it. The backend picks the pair its context accepts and translates when neither is
+ * accepted as written. The identity keys the compiled program's cache. */
+typedef struct GmlPlanShader {
+  uint32_t identity;
+  uint32_t content_generation;
+  const char *vertex_es;
+  const char *fragment_es;
+  const char *vertex_gl;
+  const char *fragment_gl;
+  uint32_t uniform_count;
+  GmlPlanUniform uniforms[GML_PLAN_MAX_UNIFORMS];
+  uint32_t sampler_count;
+  GmlPlanSampler samplers[GML_PLAN_MAX_SAMPLERS];
+} GmlPlanShader;
 
 typedef enum GmlPlanTarget {
   GML_PLAN_TARGET_CPU_FRAME=0,
@@ -119,11 +170,13 @@ typedef enum GmlPlanFallback {
   GML_PLAN_FALLBACK_PLAN_OVERFLOW=7,
   GML_PLAN_FALLBACK_CONTEXT_UNAVAILABLE=8,
   GML_PLAN_FALLBACK_RESOURCE_UPLOAD_FAILURE=9,
-  GML_PLAN_FALLBACK_COUNT=10
+  /* The content's shader program did not compile or link on this context. */
+  GML_PLAN_FALLBACK_SHADER_FAILURE=10,
+  GML_PLAN_FALLBACK_COUNT=11
 } GmlPlanFallback;
 
 enum {
-  GML_PLAN_MAX_IMAGES=4,
+  GML_PLAN_MAX_IMAGES=8,
   GML_PLAN_MAX_OPERATIONS=8,
   GML_PLAN_NO_IMAGE=0xFFFFFFFFu,
   /* Every extent a plan may describe. Larger than the engine's own framebuffer bound, so the plan
@@ -142,6 +195,9 @@ typedef struct GmlRenderPlan {
   GmlPlanOp operations[GML_PLAN_MAX_OPERATIONS];
   uint32_t overflowed;
   uint32_t fallback_reason;
+  /* Present when an operation is SHADER_DRAW. One per plan: the frame's terminal presentation. */
+  uint32_t has_shader;
+  GmlPlanShader shader;
 } GmlRenderPlan;
 
 void gml_render_plan_reset(GmlRenderPlan *plan,uint32_t target,
@@ -159,6 +215,10 @@ int gml_render_plan_add_blit_nearest(GmlRenderPlan *plan,uint32_t source,
                                      uint32_t alpha_write);
 int gml_render_plan_add_blit_box(GmlRenderPlan *plan,uint32_t source,
                                  GmlPlanRect destination,uint32_t alpha_write);
+/* The terminal presentation drawn through the content's own program. The shader record is copied
+ * into the plan; its source pointers stay lent. */
+int gml_render_plan_add_shader_draw(GmlRenderPlan *plan,uint32_t source,GmlPlanRect destination,
+                                    const GmlPlanShader *shader,uint32_t linear);
 int gml_render_plan_add_present_cpu_frame(GmlRenderPlan *plan,uint32_t source,
                                           GmlPlanRect destination);
 

@@ -76,7 +76,8 @@ void engine_graphics_report(AnygmEngine *engine){
     "[hybrid-gpu] frames=%u accepted=%u replayed=%u transport=%u draws=%u uploads=%u "
     "bytes=%llu resets=%u destroys=%u losses=%u program_failures=%u "
     "fallback_unsupported=%u fallback_box=%u fallback_context=%u fallback_upload=%u "
-    "fallback_overflow=%u materializations=%u screen_passes=%u canvas_passes=%u\n",
+    "fallback_overflow=%u fallback_shader=%u materializations=%u screen_passes=%u canvas_passes=%u"
+    " last_error=\"%s\"\n",
     counters.frames_offered,counters.passes_accepted,counters.passes_replayed,
     counters.cpu_upload_frames,counters.draw_calls,counters.full_uploads,
     (unsigned long long)counters.uploaded_bytes,
@@ -87,7 +88,9 @@ void engine_graphics_report(AnygmEngine *engine){
     counters.fallbacks[GML_PLAN_FALLBACK_CONTEXT_UNAVAILABLE],
     counters.fallbacks[GML_PLAN_FALLBACK_RESOURCE_UPLOAD_FAILURE],
     counters.fallbacks[GML_PLAN_FALLBACK_PLAN_OVERFLOW],
-    engine->frame_materializations,engine->screen_pass_frames,engine->canvas_pass_frames);
+    counters.fallbacks[GML_PLAN_FALLBACK_SHADER_FAILURE],
+    engine->frame_materializations,engine->screen_pass_frames,engine->canvas_pass_frames,
+    gml_gpu_last_error(engine->gpu)?gml_gpu_last_error(engine->gpu):"");
 }
 
 /* The frame's last operation, executed where it lands instead of on the processor.
@@ -97,6 +100,69 @@ void engine_graphics_report(AnygmEngine *engine){
  * screen, that screen is the frame the host receives, and nothing wraps it. Everything else keeps
  * the software path, and the record stays available so the canonical pixels can still be produced
  * for anything that needs them. */
+/* A content program's presentation: the frame drawn through the content's own shader, with the
+ * values and pictures the content bound. Everything comes from the renderer by name; nothing here
+ * knows what the program computes. Returns the plan-building result; a refusal is the caller's
+ * unshaded blit. */
+static int engine_plan_content_shader(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t image,
+                                      GmlPlanRect destination,
+                                      const GmlRenderDeferredPresentation *record){
+  GmlPlanShader shader;
+  GmlRenderShaderSources sources;
+  GmlRenderShaderUniform uniforms[GML_PLAN_MAX_UNIFORMS];
+  GmlRenderShaderSampler samplers[GML_PLAN_MAX_SAMPLERS];
+  uint32_t count;
+  if(!gml_render_shader_sources(&engine->render,record->shader,&sources)) return 0;
+  memset(&shader,0,sizeof shader);
+  shader.identity=(uint32_t)record->shader;
+  shader.content_generation=record->generation;
+  shader.vertex_es=sources.vertex_es;
+  shader.fragment_es=sources.fragment_es;
+  shader.vertex_gl=sources.vertex_gl;
+  shader.fragment_gl=sources.fragment_gl;
+  count=gml_render_shader_uniforms(&engine->render,record->shader,uniforms,GML_PLAN_MAX_UNIFORMS);
+  for(uint32_t index=0;index<count;index++){
+    GmlPlanUniform *value=&shader.uniforms[shader.uniform_count++];
+    memcpy(value->name,uniforms[index].name,sizeof value->name);
+    memcpy(value->value,uniforms[index].value,sizeof value->value);
+    value->count=uniforms[index].count;
+    value->integer=uniforms[index].integer;
+  }
+  count=gml_render_shader_samplers(&engine->render,record->shader,samplers,GML_PLAN_MAX_SAMPLERS);
+  for(uint32_t index=0;index<count;index++){
+    GmlPlanSampler *sampler=&shader.samplers[shader.sampler_count++];
+    GmlPlanImage picture;
+    int w=0,h=0;
+    const uint32_t *pixels=NULL;
+    memcpy(sampler->name,samplers[index].name,sizeof sampler->name);
+    sampler->image=GML_PLAN_NO_IMAGE;
+    memset(&picture,0,sizeof picture);
+    if(samplers[index].surface>=0){
+      if(!gml_render_surface_plane(&engine->render,samplers[index].surface,&w,&h,&pixels)) return 0;
+      picture.image_class=GML_PLAN_IMAGE_SURFACE;
+      picture.identity=(uint32_t)samplers[index].surface;
+    } else if(samplers[index].sprite>=0){
+      if(!gml_render_sprite_frame_plane(&engine->render,samplers[index].sprite,
+                                        samplers[index].frame,&w,&h,&pixels)) return 0;
+      picture.image_class=GML_PLAN_IMAGE_SPRITE;
+      picture.identity=((uint32_t)samplers[index].sprite<<10)|((uint32_t)samplers[index].frame&0x3FFu);
+    } else continue;
+    /* A sampler picture is re-uploaded every frame: neither a surface nor a scratch plane carries
+     * a generation the backend could trust across frames. */
+    picture.content_generation=record->generation;
+    picture.pixel_generation=record->generation;
+    picture.width=(uint32_t)w;
+    picture.height=(uint32_t)h;
+    picture.pitch_pixels=(uint32_t)w;
+    picture.pixel_format=GML_PLAN_PIXEL_XRGB8888;
+    picture.opaque=0u;
+    picture.cpu_pixels=pixels;
+    sampler->image=gml_render_plan_add_image(plan,&picture);
+    if(sampler->image==GML_PLAN_NO_IMAGE) return 0;
+  }
+  return gml_render_plan_add_shader_draw(plan,image,destination,&shader,record->linear?1u:0u);
+}
+
 int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned *height){
   GmlRenderDeferredPresentation record;
   GmlRenderPlan *plan;
@@ -170,9 +236,25 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
     axis_y.origin=record.origin_y;
     axis_y.extent=record.extent_y;
   }
+  if(record.shader>=0){
+    /* The content drew its frame through its own program. Run that program on the device; when
+     * the device refuses it, the renderer is told so the next frame draws unshaded rather than
+     * asking again, and this frame falls back to the unshaded blit below. */
+    if(engine_plan_content_shader(engine,plan,image,destination,&record)){
+      if(gml_gpu_execute_plan(engine->gpu,plan)) goto presented;
+      if(plan->fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE)
+        gml_render_shader_mark_failed(&engine->render,record.shader);
+    }
+    gml_render_plan_reset(plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,
+                          engine->output_width,engine->output_height);
+    if(!gml_render_plan_add_clear(plan,whole,record.has_fill?record.fill_color:0x000000u)) return 0;
+    image=gml_render_plan_add_image(plan,&source);
+    if(image==GML_PLAN_NO_IMAGE) return 0;
+  }
   /* The presentation writes an opaque frame: the top byte is set, not carried. */
   if(!gml_render_plan_add_blit_nearest(plan,image,destination,axis_x,axis_y,0xFFu)) return 0;
   if(!gml_gpu_execute_plan(engine->gpu,plan)) return 0;
+presented:
   engine->host_plan_valid=1;
   engine->screen_pass_frames++;
   /* The processor's copy of the frame was not written. Saying so is what keeps anything that needs

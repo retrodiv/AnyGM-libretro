@@ -198,6 +198,8 @@ int render_record_deferred_underlay(GmlRender *r,const uint32_t *src,int sw,int 
     r->presentation.has_fill=captured_fill;
     r->presentation.fill_color=captured_colour;
     r->presentation.identity=0u;
+    r->presentation.shader=-1;
+    r->presentation.linear=0;
     r->presentation.generation++;
     r->pending_presentation=1;
     if(covers){
@@ -243,6 +245,8 @@ void render_present_first_generation(GmlRender *r,int surf,const uint32_t *src,i
   r->presentation.has_fill=captured_fill;
   r->presentation.fill_color=captured_colour;
   r->presentation.identity=(uint32_t)surf;
+  r->presentation.shader=-1;
+  r->presentation.linear=0;
   r->presentation.generation++;
   r->pending_presentation=1;
   if(covers){
@@ -251,4 +255,52 @@ void render_present_first_generation(GmlRender *r,int surf,const uint32_t *src,i
     r->fb_all_transparent=0;
   }
   if(!deferrable) render_write_deferred_presentation(r);
+}
+
+/* A surface drawn through the content's own program as the frame's last operation. Recorded only:
+ * when something other than the processor takes the record it executes the program, and when the
+ * processor writes it, it writes the plain blit, which is what this runtime draws for a program it
+ * does not execute. Returns whether the draw was taken; when it was not, the caller draws it. */
+int render_present_content_shader(GmlRender *r,int surf,const uint32_t *src,int sw,int sh,
+                                  int x0,int y0,int x1,int y1,
+                                  double dx,double dy,double dw,double dh,int shader){
+  int covers=rect_covers_target(r,x0,y0,x1,y1);
+  int deferrable=r->presentation_deferral_enabled && !r->pending_underlay;
+  int captured_fill=deferrable && r->pending_fill;
+  uint32_t captured_colour=captured_fill?r->pending_fill_color:0u;
+  if(!deferrable) return 0;
+  if(!captured_fill && !covers) return 0;
+  if(captured_fill) gml_render_cancel_pending_fill(r);
+  gml_render_maybe_prepare_draw(r);
+  r->presentation.sampling_rule=GML_RENDER_PRESENTATION_PIXEL_CENTRE;
+  r->presentation.target_pixels=r->fb;
+  r->presentation.target_width=r->fbw;
+  r->presentation.target_height=r->fbh;
+  r->presentation.source_pixels=src;
+  r->presentation.source_width=sw;
+  r->presentation.source_height=sh;
+  r->presentation.source_pitch=sw;
+  r->presentation.destination_x=x0;
+  r->presentation.destination_y=y0;
+  r->presentation.destination_width=x1-x0;
+  r->presentation.destination_height=y1-y0;
+  r->presentation.origin_x=dx;
+  r->presentation.origin_y=dy;
+  r->presentation.extent_x=dw;
+  r->presentation.extent_y=dh;
+  r->presentation.local_offset_x=0;
+  r->presentation.local_offset_y=0;
+  r->presentation.has_fill=captured_fill;
+  r->presentation.fill_color=captured_colour;
+  r->presentation.identity=(uint32_t)surf;
+  r->presentation.shader=shader;
+  r->presentation.linear=r->interp?1:0;
+  r->presentation.generation++;
+  r->pending_presentation=1;
+  if(covers){
+    r->fb_opaque_known=1;
+    r->fb_all_opaque=1;
+    r->fb_all_transparent=0;
+  }
+  return 1;
 }

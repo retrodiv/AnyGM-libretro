@@ -137,9 +137,14 @@ unloaded:
 ```text
 [hybrid-gpu] frames=N accepted=N replayed=N transport=N draws=N uploads=N bytes=N resets=N
              destroys=N losses=N program_failures=N fallback_unsupported=N fallback_box=N
-             fallback_context=N fallback_upload=N fallback_overflow=N materializations=N
-             screen_passes=N canvas_passes=N
+             fallback_context=N fallback_upload=N fallback_overflow=N fallback_shader=N
+             materializations=N screen_passes=N canvas_passes=N last_error="..."
 ```
+
+`fallback_shader` counts passes refused because the content's own program did not compile or
+link on the device; the first refusal retires that program for the session, so the count stays at
+the number of frames that reached the device before the retirement took effect. `last_error` is
+the backend's most recent diagnostic, verbatim, and empty when nothing failed.
 
 `accepted` counts passes the device executed and `replayed` counts passes the software executor had
 to take back. `transport` is the subset of accepted passes that merely carried a complete software

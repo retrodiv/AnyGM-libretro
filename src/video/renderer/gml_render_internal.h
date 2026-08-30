@@ -164,6 +164,17 @@ typedef struct {
   int runtime_pen_x, runtime_pen_y, runtime_row_h, runtime_glyph_cap;
   int glyph_by_char[256];                                        /* fast ASCII lookup, -1 = none */
 } GmlFont;                                                        /* sprite font or real FONT-chunk font */
+enum { GML_SHADER_GENERIC_UNIFORMS=32, GML_SHADER_GENERIC_SAMPLERS=4 };
+/* Handles for the content's own uniforms and samplers live outside the recognized families' slot
+ * space: bit 20 marks them, bits 8..19 carry the shader, bit 7 marks a sampler, bits 0..6 the
+ * index. */
+#define GML_RENDER_GENERIC_HANDLE_FLAG 0x100000
+#define GML_RENDER_GENERIC_SAMPLER_FLAG 0x80
+#define GML_RENDER_GENERIC_HANDLE(shader,index) \
+  (GML_RENDER_GENERIC_HANDLE_FLAG|(((shader)&0xFFF)<<8)|((index)&0x7F))
+#define GML_RENDER_GENERIC_SAMPLER_HANDLE(shader,index) \
+  (GML_RENDER_GENERIC_HANDLE(shader,index)|GML_RENDER_GENERIC_SAMPLER_FLAG)
+
 typedef struct { uint32_t *px; int w, h, live;
                  int dirty;                       /* px changed since the RLE cache was built */
                  int opaque_known, all_opaque, all_transparent;  /* conservative coverage metadata */
@@ -467,7 +478,23 @@ typedef struct GmlRender {
      * that samples anything, including a surface the content bound to a stage rather than the
      * texture under the draw, is deliberately not in this class. */
     int   procedural;
+    /* The content's own program, kept for the host's graphics context to execute. The four source
+     * texts are lent from the SHDR chunk. What the game sets through shader_set_uniform_* and
+     * texture_set_stage is kept by name: the program is the game's, so the runtime knows none of
+     * its controls and forwards all of them. Not serialized: content sets them each frame or at
+     * load, and a restored session re-runs whichever code did. */
+    const char *source_vertex_es,*source_fragment_es,*source_vertex_gl,*source_fragment_gl;
+    struct { char name[32]; float value[16]; int count; int integer; }
+      generic_uniform[GML_SHADER_GENERIC_UNIFORMS];
+    int generic_uniform_count;
+    struct { char name[32]; int texture; } generic_sampler[GML_SHADER_GENERIC_SAMPLERS];
+    int generic_sampler_count;
+    /* The host's graphics context refused the program; shader_is_compiled answers no from then on,
+     * exactly as a driver that rejects it would make the original answer. */
+    int gpu_failed;
   } *shader_pal; int n_shader_pal;
+  /* Scratch plane a sprite frame is expanded into when a content shader samples it. */
+  uint32_t *content_sampler_plane; size_t content_sampler_plane_capacity;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
   int       active_shader;   /* shader_set asset id, -1 = none. Reset per frame. */
   int       monitor_w;       /* virtual monitor width reported to content, or 0 for fallback. */
@@ -568,6 +595,9 @@ int surface_known_transparent(GmlRender *r,int surface);
 int rect_covers_target(GmlRender *r,int x0,int y0,int x1,int y1);
 /* Keep deferred terminal presentation recording outside the composition kernels. */
 void render_write_deferred_presentation(GmlRender *r);
+int render_present_content_shader(GmlRender *r,int surf,const uint32_t *src,int sw,int sh,
+                                  int x0,int y0,int x1,int y1,
+                                  double dx,double dy,double dw,double dh,int shader);
 int render_record_deferred_underlay(GmlRender *r,const uint32_t *src,int sw,int sh,
                                     int x0,int y0,int W,int H,int source_all_opaque);
 void render_present_first_generation(GmlRender *r,int surf,const uint32_t *src,int sw,int sh,

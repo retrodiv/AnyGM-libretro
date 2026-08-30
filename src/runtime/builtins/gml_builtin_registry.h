@@ -1818,7 +1818,8 @@ typedef enum GmlBuiltinCachePolicy {
   ENTRY(1724, GPU_SET_ZTESTENABLE, "gpu_set_ztestenable", DRAW, DRAW_3D, ALWAYS) \
   ENTRY(1725, GPU_SET_ZWRITEENABLE, "gpu_set_zwriteenable", DRAW, DRAW_3D, ALWAYS) \
   ENTRY(1726, COLLISION_ELLIPSE, "collision_ellipse", COLLISION, COLLISION, ALWAYS) \
-  ENTRY(1727, TILEMAP_TILESET, "tilemap_tileset", LAYERS, LAYERS_LATE, ALWAYS)
+  ENTRY(1727, TILEMAP_TILESET, "tilemap_tileset", LAYERS, LAYERS_LATE, ALWAYS) \
+  ENTRY(1728, SHADER_SET_UNIFORM_MATRIX_ARRAY, "shader_set_uniform_matrix_array", DRAW, DRAW_3D, ALWAYS)
 
 /* Dynamic prefix IDs retain the previously characterized slow-path order. */
 #define GML_BUILTIN_DYNAMIC_REGISTRY(ENTRY) \
@@ -1833,7 +1834,7 @@ typedef enum GmlBuiltinId {
   GML_BUILTIN_DYNAMIC_REGISTRY(GML_BUILTIN_ID_ENTRY)
 #undef GML_BUILTIN_ID_ALIAS
 #undef GML_BUILTIN_ID_ENTRY
-  GML_BUILTIN_ID_LIMIT = 1728
+  GML_BUILTIN_ID_LIMIT = 1729
 } GmlBuiltinId;
 
 #endif

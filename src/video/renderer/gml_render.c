@@ -910,6 +910,7 @@ static int shader_pal_recognized(const struct GmlShaderPal *p){
 
 int gml_render_shader_is_compiled(const GmlRender *r,int shader){
   if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
+  if(r->shader_pal[shader].gpu_failed) return 0;
   /* A declared shader may be reported compiled even when the software renderer does not
    * execute its effect. The host option selects that policy for unrecognized programs that
    * sample a picture, so authored fallback paths remain selectable when needed.
@@ -923,7 +924,7 @@ int gml_render_shader_is_compiled(const GmlRender *r,int shader){
   return r->shader_report_all_compiled?1:0;
 }
 
-int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *name){
+int gml_render_shader_uniform_handle(GmlRender *r,int shader,const char *name){
   if(r && name && shader>=0 && shader<r->n_shader_pal && r->shader_pal){
     const struct GmlShaderPal *recognized=&r->shader_pal[shader];
     if(recognized->threshold_palette)
@@ -1001,20 +1002,71 @@ int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *n
         if(!strcmp(name,recognized->bloom_blend_uniform[index]))
           return GML_RENDER_SHADER_HANDLE(shader,55+index);
   }
+  if(r && name && name[0] && shader>=0 && shader<r->n_shader_pal && r->shader_pal){
+    /* No recognized family owns this name: keep it for the content's own program. A name the
+     * program does not declare costs one unused entry, which the device ignores. A recognized
+     * family runs in software and has no such program, so its unknown names stay ignored. */
+    struct GmlShaderPal *recognized=&r->shader_pal[shader];
+    if(shader_pal_recognized(recognized)) return GML_RENDER_SHADER_HANDLE(shader,63);
+    for(int index=0;index<recognized->generic_uniform_count;index++)
+      if(!strcmp(name,recognized->generic_uniform[index].name))
+        return GML_RENDER_GENERIC_HANDLE(shader,index);
+    if(recognized->generic_uniform_count<GML_SHADER_GENERIC_UNIFORMS){
+      int index=recognized->generic_uniform_count++;
+      memset(&recognized->generic_uniform[index],0,sizeof recognized->generic_uniform[index]);
+      snprintf(recognized->generic_uniform[index].name,
+               sizeof recognized->generic_uniform[index].name,"%s",name);
+      return GML_RENDER_GENERIC_HANDLE(shader,index);
+    }
+  }
   return shader>=0?GML_RENDER_SHADER_HANDLE(shader,63):-1;
 }
 
-int gml_render_shader_sampler_handle(const GmlRender *r,int shader,const char *name){
+int gml_render_shader_sampler_handle(GmlRender *r,int shader,const char *name){
   if(r && name && shader>=0 && shader<r->n_shader_pal && r->shader_pal){
     const struct GmlShaderPal *recognized=&r->shader_pal[shader];
     if(recognized->bloom_blend && !strcmp(name,recognized->bloom_blend_sampler))
       return GML_RENDER_SHADER_HANDLE(shader,58);
   }
+  if(r && name && shader>=0 && shader<r->n_shader_pal && r->shader_pal){
+    const struct GmlShaderPal *recognized=&r->shader_pal[shader];
+    for(int index=0;index<recognized->generic_sampler_count;index++)
+      if(!strcmp(name,recognized->generic_sampler[index].name))
+        return GML_RENDER_GENERIC_SAMPLER_HANDLE(shader,index);
+  }
   return shader>=0?GML_RENDER_SHADER_HANDLE(shader,2):-1;
+}
+
+static int generic_handle_parts(const GmlRender *r,int handle,int *shader,int *index,int *sampler){
+  if(handle<0 || !(handle&GML_RENDER_GENERIC_HANDLE_FLAG)) return 0;
+  *shader=(handle>>8)&0xFFF;
+  *index=handle&0x7F;
+  *sampler=(handle&GML_RENDER_GENERIC_SAMPLER_FLAG)!=0;
+  return r && *shader<r->n_shader_pal && r->shader_pal;
+}
+
+void gml_render_shader_uniform_set_values(GmlRender *r,int handle,const double *values,
+                                          uint32_t count,int integer){
+  int shader,index,sampler;
+  if(!r || !values || count==0) return;
+  if(!generic_handle_parts(r,handle,&shader,&index,&sampler) || sampler) return;
+  {
+    struct GmlShaderPal *recognized=&r->shader_pal[shader];
+    if(index>=recognized->generic_uniform_count) return;
+    if(count>16u) count=16u;
+    for(uint32_t component=0;component<count;component++)
+      recognized->generic_uniform[index].value[component]=(float)values[component];
+    recognized->generic_uniform[index].count=(int)count;
+    recognized->generic_uniform[index].integer=integer?1:0;
+  }
 }
 
 void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4]){
   if(!r || !values || handle<0) return;
+  if(handle&GML_RENDER_GENERIC_HANDLE_FLAG){
+    gml_render_shader_uniform_set_values(r,handle,values,4u,0);
+    return;
+  }
   int shader=handle/GML_RENDER_SHADER_HANDLE_STRIDE;
   int slot=handle%GML_RENDER_SHADER_HANDLE_STRIDE;
   if(shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return;
@@ -1166,6 +1218,23 @@ int gml_render_shader_texture_stage_set(
     }
     return 1;
   }
+  {
+    int generic_shader,generic_index,generic_sampler;
+    if(generic_handle_parts(r,stage,&generic_shader,&generic_index,&generic_sampler) &&
+       generic_sampler){
+      struct GmlShaderPal *recognized=&r->shader_pal[generic_shader];
+      if(generic_index>=recognized->generic_sampler_count) return 0;
+      if(kind!=GML_TEX_SPR_TAG && kind!=GML_TEX_SURF_TAG) return 0;
+      recognized->generic_sampler[generic_index].texture=texture;
+      if(binding){
+        binding->kind=GML_RENDER_SHADER_TEXTURE_CONTENT;
+        binding->sampler=generic_index;
+        if(kind==GML_TEX_SPR_TAG){ binding->sprite=(texture>>10)&0xFFFF; binding->frame=texture&0x3FF; }
+        else binding->surface=texture&0xFFFF;
+      }
+      return 1;
+    }
+  }
   if(kind!=GML_TEX_SPR_TAG) return 0;
   int sprite=(texture>>10)&0xFFFF;
   int frame=texture&0x3FF;
@@ -1182,6 +1251,140 @@ int gml_render_shader_texture_stage_set(
 
 #undef GML_RENDER_SHADER_HANDLE
 #undef GML_RENDER_SHADER_HANDLE_STRIDE
+int gml_render_shader_content_candidate(const GmlRender *r,int shader){
+  if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
+  {
+    const struct GmlShaderPal *p=&r->shader_pal[shader];
+    if(p->gpu_failed || p->procedural) return 0;
+    if(!p->source_vertex_es || !p->source_fragment_es) return 0;
+    return !shader_pal_recognized(p);
+  }
+}
+int gml_render_shader_sources(const GmlRender *r,int shader,GmlRenderShaderSources *out){
+  if(!out) return 0;
+  memset(out,0,sizeof *out);
+  if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
+  out->vertex_es=r->shader_pal[shader].source_vertex_es;
+  out->fragment_es=r->shader_pal[shader].source_fragment_es;
+  out->vertex_gl=r->shader_pal[shader].source_vertex_gl;
+  out->fragment_gl=r->shader_pal[shader].source_fragment_gl;
+  return out->vertex_es && out->fragment_es;
+}
+uint32_t gml_render_shader_uniforms(const GmlRender *r,int shader,
+                                    GmlRenderShaderUniform *out,uint32_t capacity){
+  uint32_t written=0;
+  if(!r || !out || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
+  {
+    const struct GmlShaderPal *p=&r->shader_pal[shader];
+    for(int index=0;index<p->generic_uniform_count && written<capacity;index++){
+      if(p->generic_uniform[index].count<=0) continue;
+      memset(&out[written],0,sizeof out[written]);
+      snprintf(out[written].name,sizeof out[written].name,"%s",p->generic_uniform[index].name);
+      memcpy(out[written].value,p->generic_uniform[index].value,sizeof out[written].value);
+      out[written].count=(uint32_t)p->generic_uniform[index].count;
+      out[written].integer=(uint32_t)p->generic_uniform[index].integer;
+      written++;
+    }
+  }
+  return written;
+}
+uint32_t gml_render_shader_samplers(const GmlRender *r,int shader,
+                                    GmlRenderShaderSampler *out,uint32_t capacity){
+  uint32_t written=0;
+  if(!r || !out || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
+  {
+    const struct GmlShaderPal *p=&r->shader_pal[shader];
+    for(int index=0;index<p->generic_sampler_count && written<capacity;index++){
+      memset(&out[written],0,sizeof out[written]);
+      snprintf(out[written].name,sizeof out[written].name,"%s",p->generic_sampler[index].name);
+      out[written].texture=p->generic_sampler[index].texture;
+      out[written].sprite=-1;
+      out[written].frame=-1;
+      out[written].surface=-1;
+      if(out[written].texture>0){
+        unsigned code=(unsigned)out[written].texture;
+        if((code&GML_TEX_KIND_MASK)==GML_TEX_SURF_TAG) out[written].surface=(int)(code&0xFFFFu);
+        else if((code&GML_TEX_KIND_MASK)==GML_TEX_SPR_TAG){
+          out[written].sprite=(int)((code>>10)&0xFFFFu);
+          out[written].frame=(int)(code&0x3FFu);
+        }
+      }
+      written++;
+    }
+  }
+  return written;
+}
+void gml_render_shader_mark_failed(GmlRender *r,int shader){
+  if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return;
+  r->shader_pal[shader].gpu_failed=1;
+}
+int gml_render_sprite_frame_plane(GmlRender *r,int sprite,int frame,int *width,int *height,
+                                  const uint32_t **pixels){
+  if(!r || !pixels || sprite<0 || sprite>=r->n_spr) return 0;
+  {
+    GmlSprite *s=&r->spr[sprite];
+    int w=s->w,h=s->h;
+    if(w<=0 || h<=0 || s->n_frames<=0) return 0;
+    if(frame<0 || frame>=s->n_frames) frame=0;
+    {
+      size_t count=(size_t)w*(size_t)h;
+      const uint8_t *rgba=NULL;
+      int atlas_w=0,ax0=0,ay0=0,lx0=0,ly0=0,lw=0,lh=0;
+      if(count>16777216u) return 0;
+      if(count>r->content_sampler_plane_capacity){
+        uint32_t *grown=realloc(r->content_sampler_plane,count*sizeof *grown);
+        if(!grown) return 0;
+        r->content_sampler_plane=grown;
+        r->content_sampler_plane_capacity=count;
+      }
+      memset(r->content_sampler_plane,0,count*sizeof *r->content_sampler_plane);
+      if(s->runtime_rgba){ rgba=s->runtime_rgba; atlas_w=w; lw=w; lh=h; }
+      else if(s->frame){
+        int ti=s->frame[frame];
+        if(ti>=0 && ti<r->n_tpag){
+          GmlTpag *t=&r->tpag[ti];
+          if(t->atlas>=0 && t->atlas<r->n_atlas){
+            uint8_t *ap=atlas_pixels(r,t->atlas);
+            GmlAtlas *a=&r->atlas[t->atlas];
+            if(ap && a->w>0 && a->h>0){
+              rgba=ap; atlas_w=a->w; ax0=t->sx; ay0=t->sy; lx0=t->tx; ly0=t->ty;
+              lw=t->sw; lh=t->sh;
+              if(ax0<0 || ay0<0 || ax0+lw>a->w || ay0+lh>a->h) rgba=NULL;
+            }
+          }
+        }
+      }
+      if(rgba){
+        for(int y=0;y<lh;y++){
+          int dy=ly0+y; if(dy<0 || dy>=h) continue;
+          for(int x=0;x<lw;x++){
+            int dx=lx0+x; if(dx<0 || dx>=w) continue;
+            const uint8_t *px=rgba+((size_t)(ay0+y)*atlas_w+(ax0+x))*4u;
+            r->content_sampler_plane[(size_t)dy*w+dx]=
+              ((uint32_t)px[3]<<24)|((uint32_t)px[0]<<16)|((uint32_t)px[1]<<8)|(uint32_t)px[2];
+          }
+        }
+      }
+      if(width) *width=w;
+      if(height) *height=h;
+      *pixels=r->content_sampler_plane;
+      return 1;
+    }
+  }
+}
+int gml_render_surface_plane(GmlRender *r,int surface,int *width,int *height,
+                             const uint32_t **pixels){
+  int w=0,h=0;
+  uint32_t *px;
+  if(!r || !pixels) return 0;
+  px=surface_pixels(r,surface,&w,&h);
+  if(!px || w<=0 || h<=0) return 0;
+  if(width) *width=w;
+  if(height) *height=h;
+  *pixels=px;
+  return 1;
+}
+
 int gml_render_backend_draw_view(GmlRender *r,GmlRenderBackendDrawView *view){
   if(view) memset(view,0,sizeof(*view));
   if(!r || !view) return 0;
@@ -1295,6 +1498,7 @@ void gml_render_free(GmlRender *r){
   free(r->spr_name_hix); r->spr_name_hix=NULL; r->spr_name_hix_cap=0;
   free(r->classic_info_native_pixels);
   free(r->layer_noise_rgb); r->layer_noise_rgb=NULL;
+  free(r->content_sampler_plane); r->content_sampler_plane=NULL; r->content_sampler_plane_capacity=0;
   free(r->layer_filter_src); free(r->layer_filter_work); free(r->layer_filter_aux);
   free(r->color_write_scratch); r->color_write_scratch=NULL;
   r->color_write_scratch_capacity=0;

@@ -8,6 +8,7 @@
 #include "gml_gpu_gl_api.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum { FAKE_MAX_TEXTURES=32,FAKE_MAX_CALLS=4096,FAKE_MAX_PIXELS=1u<<16 };
@@ -53,6 +54,18 @@ typedef struct FakeDriver {
   GLint clear_calls;
   GLfloat clear_colour[4];
   GLint draw_calls;
+  unsigned shader_stage[256];
+  /* The uniforms the last linked program declares, read from the text it was linked from. */
+  struct { char name[48]; GLenum type; GLint size; } uniform[64];
+  int uniform_declared;
+  char shader_source[2][4096];
+  GLint strip_draw_calls;
+  int no_attributes;
+  int attributes_enabled;
+  GLuint bound_buffer;
+  size_t buffer_bytes;
+  unsigned float_uniforms;
+  unsigned matrix_uniforms;
   GLint unpack_row_length;
   GLint unpack_alignment;
   GLint uniforms[8];
@@ -179,9 +192,19 @@ static void fake_PixelStorei(GLenum name,GLint value){
   if(name==GL_UNPACK_ROW_LENGTH) g_fake.unpack_row_length=value;
   if(name==GL_UNPACK_ALIGNMENT) g_fake.unpack_alignment=value;
 }
-static GLuint fake_CreateShader(GLenum stage){ (void)stage; note_call(); return g_fake.next_name++; }
+static GLuint fake_CreateShader(GLenum stage){
+  GLuint name=g_fake.next_name++;
+  note_call();
+  if(name<256) g_fake.shader_stage[name]=stage;
+  return name;
+}
+/* The text is kept, so a test can read what the backend handed the driver: which is the only
+ * way to check a rewrite without restating it. */
 static void fake_ShaderSource(GLuint s,GLsizei n,const GLchar *const *source,const GLint *length){
-  (void)s;(void)n;(void)source;(void)length; note_call();
+  int fragment=s<256 && g_fake.shader_stage[s]==GL_FRAGMENT_SHADER;
+  (void)length; note_call();
+  g_fake.shader_source[fragment][0]='\0';
+  if(n>0 && source && source[0]) snprintf(g_fake.shader_source[fragment],sizeof g_fake.shader_source[fragment],"%s",source[0]);
 }
 static void fake_CompileShader(GLuint s){ (void)s; note_call(); }
 static void fake_GetShaderiv(GLuint s,GLenum name,GLint *out){
@@ -201,10 +224,70 @@ static GLuint fake_CreateProgram(void){
   return g_fake.program;
 }
 static void fake_AttachShader(GLuint p,GLuint s){ (void)p;(void)s; note_call(); }
-static void fake_LinkProgram(GLuint p){ (void)p; note_call(); }
+/* Linking reads the uniform declarations out of both stages, so the backend's query for the
+ * program's active uniforms answers with what the text declares: name, type and array size. */
+static GLenum fake_uniform_type(const char *word){
+  static const struct { const char *word; GLenum type; } types[]={
+    {"float",GL_FLOAT},{"vec2",GL_FLOAT_VEC2},{"vec3",GL_FLOAT_VEC3},{"vec4",GL_FLOAT_VEC4},
+    {"int",GL_INT},{"ivec2",GL_INT_VEC2},{"ivec3",GL_INT_VEC3},{"ivec4",GL_INT_VEC4},
+    {"bool",GL_BOOL},{"mat2",GL_FLOAT_MAT2},{"mat3",GL_FLOAT_MAT3},{"mat4",GL_FLOAT_MAT4},
+    {"sampler2D",GL_SAMPLER_2D},
+  };
+  for(size_t index=0;index<sizeof types/sizeof types[0];index++)
+    if(!strcmp(word,types[index].word)) return types[index].type;
+  return 0;
+}
+static void fake_declare_uniforms(const char *text){
+  const char *cursor=text;
+  while((cursor=strstr(cursor,"uniform "))!=NULL){
+    char qualifier[32]="",type_word[32]="",name[64]="";
+    const char *p=cursor+8;
+    int consumed=0;
+    cursor=p;
+    if(sscanf(p,"%31s %63[^; \t\n]%n",type_word,name,&consumed)<2) continue;
+    if(!fake_uniform_type(type_word)){
+      /* A precision qualifier before the type. */
+      snprintf(qualifier,sizeof qualifier,"%s",type_word);
+      if(sscanf(p,"%31s %31s %63[^; \t\n]%n",qualifier,type_word,name,&consumed)<3) continue;
+    }
+    if(g_fake.uniform_declared<64){
+      char *bracket=strchr(name,'[');
+      GLint size=1;
+      if(bracket){ size=atoi(bracket+1); *bracket='\0'; }
+      snprintf(g_fake.uniform[g_fake.uniform_declared].name,48,"%s%s",name,bracket?"[0]":"");
+      g_fake.uniform[g_fake.uniform_declared].type=fake_uniform_type(type_word);
+      g_fake.uniform[g_fake.uniform_declared].size=size;
+      g_fake.uniform_declared++;
+    }
+  }
+}
+static void fake_LinkProgram(GLuint p){
+  (void)p; note_call();
+  g_fake.uniform_declared=0;
+  fake_declare_uniforms(g_fake.shader_source[0]);
+  fake_declare_uniforms(g_fake.shader_source[1]);
+}
+static void fake_GetActiveUniform(GLuint p,GLuint index,GLsizei buffer_size,GLsizei *length,
+                                  GLint *size,GLenum *type,GLchar *name){
+  (void)p; note_call();
+  if(buffer_size>0) name[0]='\0';
+  if((int)index<g_fake.uniform_declared){
+    snprintf(name,(size_t)buffer_size,"%s",g_fake.uniform[index].name);
+    *size=g_fake.uniform[index].size;
+    *type=g_fake.uniform[index].type;
+  } else { *size=0; *type=0; }
+  if(length) *length=(GLsizei)strlen(name);
+}
+static void fake_UniformMatrix3fv(GLint l,GLsizei n,GLboolean t,const GLfloat *v){
+  (void)l;(void)t;(void)v; note_call(); g_fake.matrix_uniforms+=(unsigned)n;
+}
+static void fake_UniformMatrix2fv(GLint l,GLsizei n,GLboolean t,const GLfloat *v){
+  (void)l;(void)t;(void)v; note_call(); g_fake.matrix_uniforms+=(unsigned)n;
+}
 static void fake_GetProgramiv(GLuint p,GLenum name,GLint *out){
   (void)p; note_call();
   if(name==GL_LINK_STATUS) *out=g_fake.link_fails?GL_FALSE:GL_TRUE;
+  else if(name==GL_ACTIVE_UNIFORMS) *out=g_fake.uniform_declared;
   else *out=0;
 }
 static void fake_GetProgramInfoLog(GLuint p,GLsizei size,GLsizei *written,GLchar *log){
@@ -234,6 +317,46 @@ static void fake_DeleteVertexArrays(GLsizei n,const GLuint *names){
 static void fake_DrawArrays(GLenum mode,GLint first,GLsizei count){
   note_call();
   if(mode==GL_TRIANGLES && first==0 && count==3) g_fake.draw_calls++;
+  if(mode==GL_TRIANGLE_STRIP && first==0 && count==4) g_fake.strip_draw_calls++;
+}
+/* The entry points only a content program uses. The fixture records what a test can ask about:
+ * how many quads were drawn, and which attribute names were resolved. */
+static GLint fake_GetAttribLocation(GLuint p,const GLchar *name){
+  (void)p; note_call();
+  if(g_fake.no_attributes) return -1;
+  if(!strcmp(name,"in_Position")) return 0;
+  if(!strcmp(name,"in_Colour")) return 1;
+  if(!strcmp(name,"in_TextureCoord")) return 2;
+  return -1;
+}
+static void fake_VertexAttribPointer(GLuint index,GLint size,GLenum type,GLboolean normalized,
+                                     GLsizei stride,const void *pointer){
+  (void)index;(void)size;(void)type;(void)normalized;(void)stride;(void)pointer; note_call();
+}
+static void fake_EnableVertexAttribArray(GLuint index){ (void)index; note_call(); g_fake.attributes_enabled++; }
+static void fake_DisableVertexAttribArray(GLuint index){ (void)index; note_call(); g_fake.attributes_enabled--; }
+static void fake_GenBuffers(GLsizei n,GLuint *names){
+  note_call();
+  for(GLsizei index=0;index<n;index++) names[index]=g_fake.next_name++;
+}
+static void fake_BindBuffer(GLenum target,GLuint name){ (void)target; note_call(); g_fake.bound_buffer=name; }
+static void fake_BufferData(GLenum target,GLsizeiptr size,const void *data,GLenum usage){
+  (void)target;(void)data;(void)usage; note_call(); g_fake.buffer_bytes=(size_t)size;
+}
+static void fake_DeleteBuffers(GLsizei n,const GLuint *names){ (void)names; note_call(); g_fake.deletes_issued+=n; }
+static void fake_Uniform1fv(GLint l,GLsizei n,const GLfloat *v){ (void)l;(void)n;(void)v; note_call(); g_fake.float_uniforms++; }
+static void fake_Uniform2fv(GLint l,GLsizei n,const GLfloat *v){ (void)l;(void)n;(void)v; note_call(); g_fake.float_uniforms++; }
+static void fake_Uniform3fv(GLint l,GLsizei n,const GLfloat *v){ (void)l;(void)n;(void)v; note_call(); g_fake.float_uniforms++; }
+static void fake_Uniform4fv(GLint l,GLsizei n,const GLfloat *v){ (void)l;(void)n;(void)v; note_call(); g_fake.float_uniforms++; }
+static void fake_Uniform1iv(GLint l,GLsizei n,const GLint *v){
+  (void)n; note_call();
+  if(l>=0 && l<8) g_fake.uniforms[l]=v[0];
+}
+static void fake_Uniform2iv(GLint l,GLsizei n,const GLint *v){ (void)l;(void)n;(void)v; note_call(); }
+static void fake_Uniform3iv(GLint l,GLsizei n,const GLint *v){ (void)l;(void)n;(void)v; note_call(); }
+static void fake_Uniform4iv(GLint l,GLsizei n,const GLint *v){ (void)l;(void)n;(void)v; note_call(); }
+static void fake_UniformMatrix4fv(GLint l,GLsizei n,GLboolean t,const GLfloat *v){
+  (void)l;(void)t;(void)v; note_call(); g_fake.matrix_uniforms+=(unsigned)n;
 }
 
 void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
@@ -276,6 +399,26 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
     {"glBindVertexArray",(void*)fake_BindVertexArray},
     {"glDeleteVertexArrays",(void*)fake_DeleteVertexArrays},
     {"glDrawArrays",(void*)fake_DrawArrays},
+    {"glGetAttribLocation",(void*)fake_GetAttribLocation},
+    {"glVertexAttribPointer",(void*)fake_VertexAttribPointer},
+    {"glEnableVertexAttribArray",(void*)fake_EnableVertexAttribArray},
+    {"glDisableVertexAttribArray",(void*)fake_DisableVertexAttribArray},
+    {"glGenBuffers",(void*)fake_GenBuffers},
+    {"glBindBuffer",(void*)fake_BindBuffer},
+    {"glBufferData",(void*)fake_BufferData},
+    {"glDeleteBuffers",(void*)fake_DeleteBuffers},
+    {"glUniform1fv",(void*)fake_Uniform1fv},
+    {"glUniform2fv",(void*)fake_Uniform2fv},
+    {"glUniform3fv",(void*)fake_Uniform3fv},
+    {"glUniform4fv",(void*)fake_Uniform4fv},
+    {"glUniform1iv",(void*)fake_Uniform1iv},
+    {"glUniform2iv",(void*)fake_Uniform2iv},
+    {"glUniform3iv",(void*)fake_Uniform3iv},
+    {"glUniform4iv",(void*)fake_Uniform4iv},
+    {"glUniformMatrix4fv",(void*)fake_UniformMatrix4fv},
+    {"glUniformMatrix3fv",(void*)fake_UniformMatrix3fv},
+    {"glUniformMatrix2fv",(void*)fake_UniformMatrix2fv},
+    {"glGetActiveUniform",(void*)fake_GetActiveUniform},
     {NULL,NULL}
   };
   (void)userdata;
@@ -303,6 +446,13 @@ void anygm_test_graphics_forbid_calls(void){ g_fake.allow_calls=0; }
 int anygm_test_graphics_deletes(void){ return g_fake.deletes_issued; }
 int anygm_test_graphics_calls_after_forget(void){ return g_fake.calls_after_forget; }
 int anygm_test_graphics_draw_calls(void){ return g_fake.draw_calls; }
+int anygm_test_graphics_quad_draw_calls(void){ return g_fake.strip_draw_calls; }
+const char *anygm_test_graphics_shader_source(int fragment){ return g_fake.shader_source[fragment?1:0]; }
+void anygm_test_graphics_withhold_attributes(int withhold){ g_fake.no_attributes=withhold; }
+int anygm_test_graphics_attributes_enabled(void){ return g_fake.attributes_enabled; }
+unsigned anygm_test_graphics_bound_buffer(void){ return g_fake.bound_buffer; }
+unsigned anygm_test_graphics_float_uniforms(void){ return g_fake.float_uniforms; }
+unsigned anygm_test_graphics_matrix_uniforms(void){ return g_fake.matrix_uniforms; }
 int anygm_test_graphics_clear_calls(void){ return g_fake.clear_calls; }
 unsigned anygm_test_graphics_framebuffer_queries(void){ return g_fake.framebuffer_queries; }
 int anygm_test_graphics_blend_enabled(void){ return g_fake.blend_enabled; }

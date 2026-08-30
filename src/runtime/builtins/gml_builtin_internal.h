@@ -518,6 +518,7 @@ void builtin_set_draw_valign(GmlRender *render,int alignment);
 int display_size(const GmlVM *vm, const GmlRender *r, int height);
 double gml_shader_get_uniform(GmlRender *R, int sh, const char *un);
 void gml_shader_set_uniform_f(GmlRender *R, int h, GmlVal *a, int n);
+void gml_shader_set_uniform_values(GmlRender *R, int h, GmlVal *a, int n, int integer);
 int gml_draw_subimg(GmlVM *vm, double raw);
 int texture_info(GmlRender *R, int tex, double *uw, double *uh, double *tw, double *th);
 char *resolve_write_path(GmlVM *vm, const char *p);

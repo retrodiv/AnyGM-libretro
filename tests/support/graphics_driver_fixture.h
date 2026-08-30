@@ -39,6 +39,17 @@ uintptr_t anygm_test_graphics_framebuffer(void *userdata);
 int anygm_test_graphics_deletes(void);
 int anygm_test_graphics_calls_after_forget(void);
 int anygm_test_graphics_draw_calls(void);
+/* Quads drawn through a content program, as opposed to the presentation triangle. */
+int anygm_test_graphics_quad_draw_calls(void);
+/* The most recent source text handed to the driver for the vertex (0) or fragment (1) stage. */
+const char *anygm_test_graphics_shader_source(int fragment);
+/* Resolve no vertex attribute, so a program without in_Position can be tested. */
+void anygm_test_graphics_withhold_attributes(int withhold);
+/* Attribute arrays left enabled: a content draw must leave none behind. */
+int anygm_test_graphics_attributes_enabled(void);
+unsigned anygm_test_graphics_bound_buffer(void);
+unsigned anygm_test_graphics_float_uniforms(void);
+unsigned anygm_test_graphics_matrix_uniforms(void);
 int anygm_test_graphics_clear_calls(void);
 unsigned anygm_test_graphics_framebuffer_queries(void);
 int anygm_test_graphics_blend_enabled(void);

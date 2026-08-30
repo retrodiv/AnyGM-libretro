@@ -369,6 +369,218 @@ static int no_context_falls_back_case(void){
   return 1;
 }
 
+/* ---- The content's own programs ---- */
+
+static const char CONTENT_VERTEX_ES[]=
+  "attribute vec3 in_Position;\n"
+  "attribute vec4 in_Colour;\n"
+  "attribute vec2 in_TextureCoord;\n"
+  "varying vec2 v_vTexcoord;\n"
+  "varying vec4 v_vColour;\n"
+  "void main(){\n"
+  "  gl_Position = gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION] * vec4(in_Position, 1.0);\n"
+  "  v_vColour = in_Colour;\n"
+  "  v_vTexcoord = in_TextureCoord;\n"
+  "}\n";
+static const char CONTENT_FRAGMENT_ES[]=
+  "precision mediump float;\n"
+  "varying vec2 v_vTexcoord;\n"
+  "varying vec4 v_vColour;\n"
+  "uniform vec2 u_size;\n"
+  "uniform float u_time;\n"
+  "uniform int u_mode;\n"
+  "uniform mat4 u_transform;\n"
+  "uniform sampler2D samp_mask;\n"
+  "void main(){\n"
+  "  vec4 base = texture2D(gm_BaseTexture, v_vTexcoord);\n"
+  "  vec4 mask = texture2D(samp_mask, v_vTexcoord * u_size);\n"
+  "  gl_FragColor = v_vColour * base * mask;\n"
+  "}\n";
+
+/* A plan that presents a frame through a content program with one extra sampler, the shape the
+ * screen pass builds when the content drew its frame through its own shader. */
+static int build_content_plan(GmlRenderPlan *plan,const uint32_t *frame,const uint32_t *mask){
+  GmlPlanImage image;
+  GmlPlanRect whole={0,0,16,12};
+  GmlPlanShader shader;
+  uint32_t source,sampler;
+  memset(&image,0,sizeof image);
+  image.image_class=GML_PLAN_IMAGE_APPLICATION_SURFACE;
+  image.identity=1u;
+  image.content_generation=1u;
+  image.pixel_generation=1u;
+  image.width=8u;
+  image.height=6u;
+  image.pitch_pixels=8u;
+  image.pixel_format=GML_PLAN_PIXEL_XRGB8888;
+  image.opaque=1u;
+  image.cpu_pixels=frame;
+  gml_render_plan_reset(plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,16,12);
+  if(!gml_render_plan_add_clear(plan,whole,0u)) return 0;
+  source=gml_render_plan_add_image(plan,&image);
+  if(source==GML_PLAN_NO_IMAGE) return 0;
+  image.image_class=GML_PLAN_IMAGE_SPRITE;
+  image.identity=(3u<<10)|0u;
+  image.width=4u;
+  image.height=4u;
+  image.pitch_pixels=4u;
+  image.opaque=0u;
+  image.cpu_pixels=mask;
+  sampler=gml_render_plan_add_image(plan,&image);
+  if(sampler==GML_PLAN_NO_IMAGE) return 0;
+  memset(&shader,0,sizeof shader);
+  shader.identity=0u;
+  shader.content_generation=1u;
+  shader.vertex_es=CONTENT_VERTEX_ES;
+  shader.fragment_es=CONTENT_FRAGMENT_ES;
+  snprintf(shader.uniforms[0].name,sizeof shader.uniforms[0].name,"u_size");
+  shader.uniforms[0].value[0]=4.0f; shader.uniforms[0].value[1]=4.0f; shader.uniforms[0].count=2u;
+  snprintf(shader.uniforms[1].name,sizeof shader.uniforms[1].name,"u_time");
+  shader.uniforms[1].value[0]=0.5f; shader.uniforms[1].count=1u;
+  snprintf(shader.uniforms[2].name,sizeof shader.uniforms[2].name,"u_mode");
+  shader.uniforms[2].value[0]=2.0f; shader.uniforms[2].count=1u; shader.uniforms[2].integer=1u;
+  snprintf(shader.uniforms[3].name,sizeof shader.uniforms[3].name,"u_transform");
+  for(int index=0;index<16;index++) shader.uniforms[3].value[index]=(index%5)?0.0f:1.0f;
+  shader.uniforms[3].count=16u;
+  shader.uniform_count=4u;
+  snprintf(shader.samplers[0].name,sizeof shader.samplers[0].name,"samp_mask");
+  shader.samplers[0].image=sampler;
+  shader.sampler_count=1u;
+  return gml_render_plan_add_shader_draw(plan,source,whole,&shader,1u);
+}
+
+static int content_program_case(void){
+  uint32_t frame[8*6],mask[4*4];
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  GmlRenderPlan plan;
+  const char *text;
+  anygm_test_graphics_reset();
+  for(size_t index=0;index<8*6;index++) frame[index]=0xFF000000u|(uint32_t)index;
+  for(size_t index=0;index<4*4;index++) mask[index]=0x80FFFFFFu;
+  gpu=gml_gpu_create();
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
+  REQUIRE(build_content_plan(&plan,frame,mask),"content plan built");
+  REQUIRE(gml_render_plan_validate(&plan),"content plan validates");
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan),"the content program presents the frame");
+  REQUIRE(anygm_test_graphics_quad_draw_calls()==1,"one quad is drawn through the content program");
+  REQUIRE(anygm_test_graphics_attributes_enabled()==0,"no attribute array is left enabled");
+  REQUIRE(anygm_test_graphics_bound_buffer()==0,"no vertex buffer is left bound");
+  REQUIRE(anygm_test_graphics_float_uniforms()==2,"the vector and scalar values are set as floats");
+  REQUIRE(anygm_test_graphics_matrix_uniforms()==6,"the five runtime matrices and the content's own are set");
+  /* The text handed to the driver is the content's, spelled in the dialect the context accepts:
+   * the older storage qualifiers, sampling call and fragment output are the only words that
+   * change, and a channel-order helper is the only line that is added. */
+  text=anygm_test_graphics_shader_source(0);
+  REQUIRE(strstr(text,"#version 330 core")==text,"the vertex text targets the core dialect");
+  REQUIRE(strstr(text,"in vec3 in_Position;")!=NULL,"the attribute qualifier is respelled");
+  REQUIRE(strstr(text,"out vec2 v_vTexcoord;")!=NULL,"a vertex varying becomes an output");
+  REQUIRE(strstr(text,"attribute")==NULL && strstr(text,"varying")==NULL,"no older qualifier remains");
+  REQUIRE(strstr(text,"gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION] * vec4(in_Position, 1.0)")!=NULL,
+          "the content's own expression is untouched");
+  text=anygm_test_graphics_shader_source(1);
+  REQUIRE(strstr(text,"#version 330 core")==text,"the fragment text targets the core dialect");
+  REQUIRE(strstr(text,"precision mediump float;")==NULL,"a precision statement is dropped for the desktop dialect");
+  REQUIRE(strstr(text,"out vec4 anygm_fragment;")!=NULL,"the fragment output is declared");
+  REQUIRE(strstr(text,"anygm_fragment = v_vColour * base * mask;")!=NULL,"the fragment output is respelled");
+  REQUIRE(strstr(text,"anygm_sample(gm_BaseTexture, v_vTexcoord)")!=NULL,"sampling goes through the channel-order helper");
+  REQUIRE(strstr(text,"anygm_sample(samp_mask, v_vTexcoord * u_size)")!=NULL,"the content's sampler goes through the helper too");
+  REQUIRE(strstr(text,"texture2D")==NULL && strstr(text,"gl_FragColor")==NULL,"no older sampling call or output remains");
+  REQUIRE(strstr(text,"in vec2 v_vTexcoord;")!=NULL,"a fragment varying becomes an input");
+  REQUIRE(strstr(text,".bgra")!=NULL || strstr(text,".gbar")!=NULL,"the helper reorders the channels of the uploaded word");
+  /* A second presentation reuses the program: nothing is compiled again, and it draws again. */
+  {
+    int deletes=anygm_test_graphics_deletes();
+    REQUIRE(build_content_plan(&plan,frame,mask),"content plan rebuilt");
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),"the cached program presents the frame");
+    REQUIRE(anygm_test_graphics_quad_draw_calls()==2,"a second quad is drawn");
+    REQUIRE(anygm_test_graphics_deletes()==deletes,"the cached program is not rebuilt");
+  }
+  {
+    GmlGpuCounters counters;
+    gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.program_failures==0,"no program failed");
+    REQUIRE(counters.fallbacks[GML_PLAN_FALLBACK_SHADER_FAILURE]==0,"no shader fallback was taken");
+  }
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
+static int content_program_embedded_dialect_case(void){
+  uint32_t frame[8*6],mask[4*4];
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  GmlRenderPlan plan;
+  const char *text;
+  anygm_test_graphics_reset();
+  memset(frame,0,sizeof frame);
+  memset(mask,0,sizeof mask);
+  gpu=gml_gpu_create();
+  context=fake_context(GML_GPU_API_OPENGLES3);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"embedded context adopted");
+  REQUIRE(build_content_plan(&plan,frame,mask),"content plan built");
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan),"the content program presents the frame");
+  text=anygm_test_graphics_shader_source(1);
+  REQUIRE(strstr(text,"#version 300 es")==text,"the fragment text targets the embedded dialect");
+  REQUIRE(strstr(text,"precision highp float;")!=NULL,"a default precision is declared for the embedded dialect");
+  REQUIRE(strstr(text,"precision mediump float;")!=NULL,"the content's own precision statement is kept for the embedded dialect");
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
+/* A program the context refuses is a shader failure, named as such, so the runtime can retire the
+ * shader rather than pay the refusal every frame; and the refusal is not repeated for the same
+ * text. */
+static int content_program_refused_case(void){
+  uint32_t frame[8*6],mask[4*4];
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  GmlRenderPlan plan;
+  anygm_test_graphics_reset();
+  memset(frame,0,sizeof frame);
+  memset(mask,0,sizeof mask);
+  gpu=gml_gpu_create();
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
+  anygm_test_graphics_fail_compile(1);
+  REQUIRE(build_content_plan(&plan,frame,mask),"content plan built");
+  REQUIRE(!gml_gpu_execute_plan(gpu,&plan),"a program that will not compile is refused");
+  REQUIRE(plan.fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE,"the refusal is the shader's");
+  REQUIRE(anygm_test_graphics_quad_draw_calls()==0,"nothing is drawn through a refused program");
+  {
+    const char *error=gml_gpu_last_error(gpu);
+    REQUIRE(error && strstr(error,"compile")!=NULL,"the reason names the failing stage");
+  }
+  anygm_test_graphics_fail_compile(0);
+  {
+    /* The same text is not compiled again: the answer stands for the context's lifetime. */
+    int deletes=anygm_test_graphics_deletes();
+    REQUIRE(build_content_plan(&plan,frame,mask),"content plan rebuilt");
+    REQUIRE(!gml_gpu_execute_plan(gpu,&plan),"the refusal stands");
+    REQUIRE(plan.fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE,"and is still the shader's");
+    REQUIRE(anygm_test_graphics_deletes()==deletes,"no second attempt was made");
+  }
+  {
+    GmlGpuCounters counters;
+    gml_gpu_counters(gpu,&counters);
+    REQUIRE(counters.program_failures==2,"each refused presentation is counted");
+    REQUIRE(counters.fallbacks[GML_PLAN_FALLBACK_SHADER_FAILURE]==2,"as a shader fallback");
+    REQUIRE(counters.fallbacks[GML_PLAN_FALLBACK_RESOURCE_UPLOAD_FAILURE]==0,"not as an upload failure");
+  }
+  /* A program without the position attribute cannot be fed a quad. */
+  anygm_test_graphics_withhold_attributes(1);
+  {
+    GmlRenderPlan other;
+    REQUIRE(build_content_plan(&other,frame,mask),"content plan built");
+    other.shader.identity=7u;
+    REQUIRE(!gml_gpu_execute_plan(gpu,&other),"a program without in_Position is refused");
+    REQUIRE(other.fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE,"as a shader failure");
+  }
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   for(int index=1;index<argc;++index){
@@ -391,6 +603,9 @@ int main(int argc,char **argv){
     {"upload_and_reuse",upload_and_reuse_case},
     {"reduction_falls_back",reduction_falls_back_case},
     {"no_context_falls_back",no_context_falls_back_case},
+    {"content_program",content_program_case},
+    {"content_program_embedded_dialect",content_program_embedded_dialect_case},
+    {"content_program_refused",content_program_refused_case},
   };
   const AnygmTestGroup groups[]={
     {"lifecycle",lifecycle_cases,sizeof lifecycle_cases/sizeof lifecycle_cases[0]},

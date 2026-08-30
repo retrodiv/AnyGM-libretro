@@ -81,6 +81,35 @@ typedef void GLvoid;
 #define GL_VERSION 0x1F02
 #define GL_RENDERER 0x1F01
 #define GL_COLOR_WRITEMASK 0x0C23
+#define GL_ARRAY_BUFFER 0x8892
+#define GL_STREAM_DRAW 0x88E0
+#define GL_FLOAT 0x1406
+#define GL_TRIANGLE_STRIP 0x0005
+#define GL_LINEAR 0x2601
+#define GL_TEXTURE3 0x84C3
+#define GL_TEXTURE4 0x84C4
+#define GL_SRC_ALPHA 0x0302
+#define GL_ONE_MINUS_SRC_ALPHA 0x0303
+#define GL_ACTIVE_UNIFORMS 0x8B86
+#define GL_INT 0x1404
+#define GL_UNSIGNED_INT 0x1405
+#define GL_FLOAT_VEC2 0x8B50
+#define GL_FLOAT_VEC3 0x8B51
+#define GL_FLOAT_VEC4 0x8B52
+#define GL_INT_VEC2 0x8B53
+#define GL_INT_VEC3 0x8B54
+#define GL_INT_VEC4 0x8B55
+#define GL_BOOL 0x8B56
+#define GL_BOOL_VEC2 0x8B57
+#define GL_BOOL_VEC3 0x8B58
+#define GL_BOOL_VEC4 0x8B59
+#define GL_FLOAT_MAT2 0x8B5A
+#define GL_FLOAT_MAT3 0x8B5B
+#define GL_FLOAT_MAT4 0x8B5C
+#define GL_SAMPLER_2D 0x8B5E
+#define GL_UNSIGNED_INT_VEC2 0x8DC6
+#define GL_UNSIGNED_INT_VEC3 0x8DC7
+#define GL_UNSIGNED_INT_VEC4 0x8DC8
 #define GL_DEPTH_WRITEMASK 0x0B72
 
 /* Every entry point the backend uses, resolved once per context reset into an engine-owned table.
@@ -130,6 +159,29 @@ typedef struct GmlGlApi {
   void     (*BindVertexArray)(GLuint array);
   void     (*DeleteVertexArrays)(GLsizei n,const GLuint *arrays);
   void     (*DrawArrays)(GLenum mode,GLint first,GLsizei count);
+  /* Used only to execute the content's own programs. */
+  GLint    (*GetAttribLocation)(GLuint program,const GLchar *name);
+  void     (*VertexAttribPointer)(GLuint index,GLint size,GLenum type,GLboolean normalized,
+                                  GLsizei stride,const void *pointer);
+  void     (*EnableVertexAttribArray)(GLuint index);
+  void     (*DisableVertexAttribArray)(GLuint index);
+  void     (*GenBuffers)(GLsizei n,GLuint *buffers);
+  void     (*BindBuffer)(GLenum target,GLuint buffer);
+  void     (*BufferData)(GLenum target,GLsizeiptr size,const void *data,GLenum usage);
+  void     (*DeleteBuffers)(GLsizei n,const GLuint *buffers);
+  void     (*Uniform1fv)(GLint location,GLsizei count,const GLfloat *value);
+  void     (*Uniform2fv)(GLint location,GLsizei count,const GLfloat *value);
+  void     (*Uniform3fv)(GLint location,GLsizei count,const GLfloat *value);
+  void     (*Uniform4fv)(GLint location,GLsizei count,const GLfloat *value);
+  void     (*Uniform1iv)(GLint location,GLsizei count,const GLint *value);
+  void     (*Uniform2iv)(GLint location,GLsizei count,const GLint *value);
+  void     (*Uniform3iv)(GLint location,GLsizei count,const GLint *value);
+  void     (*Uniform4iv)(GLint location,GLsizei count,const GLint *value);
+  void     (*UniformMatrix4fv)(GLint location,GLsizei count,GLboolean transpose,const GLfloat *value);
+  void     (*UniformMatrix3fv)(GLint location,GLsizei count,GLboolean transpose,const GLfloat *value);
+  void     (*UniformMatrix2fv)(GLint location,GLsizei count,GLboolean transpose,const GLfloat *value);
+  void     (*GetActiveUniform)(GLuint program,GLuint index,GLsizei buffer_size,GLsizei *length,
+                               GLint *size,GLenum *type,GLchar *name);
 } GmlGlApi;
 
 #endif

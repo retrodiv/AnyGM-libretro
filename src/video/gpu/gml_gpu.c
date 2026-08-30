@@ -75,10 +75,13 @@ int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan){
     gpu->counters.passes_replayed++;
     return 0;
   }
+  plan->fallback_reason=GML_PLAN_FALLBACK_NONE;
   if(!gml_gpu_gl_execute(gpu->backend,&gpu->context,plan,&gpu->counters,
                          gpu->error,sizeof gpu->error)){
-    plan->fallback_reason=GML_PLAN_FALLBACK_RESOURCE_UPLOAD_FAILURE;
-    gpu->counters.fallbacks[GML_PLAN_FALLBACK_RESOURCE_UPLOAD_FAILURE]++;
+    if(plan->fallback_reason!=GML_PLAN_FALLBACK_SHADER_FAILURE)
+      plan->fallback_reason=GML_PLAN_FALLBACK_RESOURCE_UPLOAD_FAILURE;
+    else gpu->counters.program_failures++;
+    gpu->counters.fallbacks[plan->fallback_reason]++;
     gpu->counters.passes_replayed++;
     return 0;
   }

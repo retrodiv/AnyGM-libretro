@@ -1887,9 +1887,10 @@ GmlVal gml_builtin_try_draw_3d(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"shader_get_sampler_index")){
     return vreal(gml_shader_get_sampler((GmlRender*)vm->render,(int)N(a,n,0),S(vm,a,n,1))); }
   if(!strcmp(nm,"shader_set_uniform_f")||!strcmp(nm,"shader_set_uniform_f_array")||
-     !strcmp(nm,"shader_set_uniform_i")||!strcmp(nm,"shader_set_uniform_i_array")){
+     !strcmp(nm,"shader_set_uniform_i")||!strcmp(nm,"shader_set_uniform_i_array")||
+     !strcmp(nm,"shader_set_uniform_matrix_array")){
     GmlRender *R=(GmlRender*)vm->render;
-    gml_shader_set_uniform_f(R,(int)N(a,n,0),a,n);
+    gml_shader_set_uniform_values(R,(int)N(a,n,0),a,n,nm[18]=='i');
     return vreal(0); }
   if(!strcmp(nm,"texture_set_stage")){ GmlRender *R=(GmlRender*)vm->render;
     int stage=(int)N(a,n,0);

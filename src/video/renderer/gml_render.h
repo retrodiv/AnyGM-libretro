@@ -233,7 +233,32 @@ typedef struct {
   uint32_t fill_color;
   /* Stable identity of the source resource and a generation that advances when its pixels do. */
   uint32_t identity, generation;
+  /* The content shader the presentation was drawn through, or -1 for the plain blit. The
+   * software write of the record is always the plain blit: that is what the runtime draws when no
+   * device executes the program. */
+  int shader;
+  /* Whether the content asked for interpolated sampling when it drew. */
+  int linear;
 } GmlRenderDeferredPresentation;
+
+/* The content's own program and what the content set on it, as the graphics backend needs them.
+ * Sources are lent from the content image and stay valid while the content is loaded. */
+typedef struct {
+  const char *vertex_es,*fragment_es,*vertex_gl,*fragment_gl;
+} GmlRenderShaderSources;
+typedef struct {
+  char name[32];
+  float value[16];
+  uint32_t count;
+  uint32_t integer;
+} GmlRenderShaderUniform;
+typedef struct {
+  char name[32];
+  /* The texture handle texture_set_stage bound, or 0 for none, decoded into what it names: a
+   * sprite frame, or a surface. Whichever does not apply is -1. */
+  int texture;
+  int sprite,frame,surface;
+} GmlRenderShaderSampler;
 
 enum {
   GML_RENDER_COVERAGE_OPAQUE_KNOWN   = 1u<<0,
@@ -288,6 +313,8 @@ typedef struct {
 enum {
   GML_RENDER_SHADER_TEXTURE_NONE,
   GML_RENDER_SHADER_TEXTURE_PALETTE,
+  /* Bound to one of the content program's own samplers. */
+  GML_RENDER_SHADER_TEXTURE_CONTENT,
   GML_RENDER_SHADER_TEXTURE_SURFACE
 };
 
@@ -374,11 +401,32 @@ void gml_render_shader_set_current(GmlRender *r,int shader);
 int gml_render_shader_current(const GmlRender *r);
 int gml_render_is_classic(const GmlRender *r);
 int gml_render_shader_is_compiled(const GmlRender *r,int shader);
-int gml_render_shader_uniform_handle(const GmlRender *r,int shader,const char *name);
-int gml_render_shader_sampler_handle(const GmlRender *r,int shader,const char *name);
+int gml_render_shader_uniform_handle(GmlRender *r,int shader,const char *name);
+int gml_render_shader_sampler_handle(GmlRender *r,int shader,const char *name);
 void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4]);
 int gml_render_shader_texture_stage_set(
   GmlRender *r,int stage,int texture,GmlRenderShaderTextureBinding *binding);
+/* Content shaders executed on the host's graphics context. A candidate is a program this renderer
+ * recognizes no family in, that samples a picture, whose sources are present and that the device
+ * has not refused. The state answers what the content set, by name. */
+int gml_render_shader_content_candidate(const GmlRender *r,int shader);
+int gml_render_shader_sources(const GmlRender *r,int shader,GmlRenderShaderSources *out);
+uint32_t gml_render_shader_uniforms(const GmlRender *r,int shader,
+                                    GmlRenderShaderUniform *out,uint32_t capacity);
+uint32_t gml_render_shader_samplers(const GmlRender *r,int shader,
+                                    GmlRenderShaderSampler *out,uint32_t capacity);
+void gml_render_shader_mark_failed(GmlRender *r,int shader);
+/* Multi-component setter for the content's own uniforms: up to sixteen values, integer or float. */
+void gml_render_shader_uniform_set_values(GmlRender *r,int handle,const double *values,
+                                          uint32_t count,int integer);
+/* A sprite frame as one ARGB plane in renderer-owned scratch, for a sampler upload. Valid until the
+ * next call. */
+int gml_render_sprite_frame_plane(GmlRender *r,int sprite,int frame,int *width,int *height,
+                                  const uint32_t **pixels);
+/* A runtime surface's pixels, for a sampler upload. */
+int gml_render_surface_plane(GmlRender *r,int surface,int *width,int *height,
+                             const uint32_t **pixels);
+
 /* Convert an instance/layer image_speed multiplier into subimages per runtime step. Modern sprites
  * serialize their own rate as either frames/second or frames/game-frame; older/runtime sprites
  * retain the legacy one-subimage-per-step multiplier. */

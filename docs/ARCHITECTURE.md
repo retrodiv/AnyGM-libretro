@@ -461,7 +461,15 @@ software, the two-sample channel offset, with its complete sampler, row-band
 context, fast/general paths, and pixel kernel. A recognized family is an
 operation whose parameters are read from the content; a kernel that would
 reproduce a content shader's own expression is not a software family and is
-left to the shader executing on the host's graphics context. Complete sprite and surface kernels share the
+left to the shader executing on the host's graphics context. That execution is the content-program
+path: `gml_render.c` keeps, per shader the renderer recognizes no family in, the values and
+samplers the content sets by name; `gml_render_presentation.c` records a frame the content drew
+through such a shader as a deferred presentation that names the program; `engine_graphics.c` turns
+that record into a `SHADER_DRAW` plan operation carrying the program's lent sources, values and
+sampler pictures; and `gml_gpu_gl.c` compiles the program once per context, respells it into the
+dialect the context accepts, and draws the frame through it. A program the device refuses is
+retired by the renderer for the session, so the frame is presented unshaded and `shader_is_compiled`
+answers no for it, as it would under a driver that refused it. Complete sprite and surface kernels share the
 canonical header-local recognized-shader sampling operations in
 `gml_render_sampling_internal.h`; the general surface mapper and post-process
 kernels additionally share the two final-pixel operations in

@@ -121,6 +121,32 @@ int gml_render_plan_add_blit_box(GmlRenderPlan *plan,uint32_t source,
   return 1;
 }
 
+int gml_render_plan_add_shader_draw(GmlRenderPlan *plan,uint32_t source,GmlPlanRect destination,
+                                    const GmlPlanShader *shader,uint32_t linear){
+  GmlPlanOp *op;
+  if(!plan || !shader) return 0;
+  /* A program without both stages has nothing to compile: refused here, not at validation. */
+  if(!shader->vertex_es || !shader->fragment_es) return 0;
+  if(plan->has_shader){
+    /* One program per plan: a second would need its own record. */
+    plan->overflowed=1;
+    plan->fallback_reason=GML_PLAN_FALLBACK_PLAN_OVERFLOW;
+    return 0;
+  }
+  op=append(plan);
+  if(!op) return 0;
+  op->opcode=GML_PLAN_OP_SHADER_DRAW;
+  op->source=source;
+  op->destination=destination;
+  op->alpha_write=0xFFu;
+  op->linear=linear?1u:0u;
+  plan->shader=*shader;
+  if(plan->shader.uniform_count>GML_PLAN_MAX_UNIFORMS) plan->shader.uniform_count=GML_PLAN_MAX_UNIFORMS;
+  if(plan->shader.sampler_count>GML_PLAN_MAX_SAMPLERS) plan->shader.sampler_count=GML_PLAN_MAX_SAMPLERS;
+  plan->has_shader=1;
+  return 1;
+}
+
 int gml_render_plan_add_present_cpu_frame(GmlRenderPlan *plan,uint32_t source,
                                           GmlPlanRect destination){
   GmlPlanOp *op=append(plan);
@@ -171,6 +197,22 @@ int gml_render_plan_validate(const GmlRenderPlan *plan){
         break;
       case GML_PLAN_OP_PRESENT_CPU_FRAME:
         if(op->destination.width!=image->width || op->destination.height!=image->height) return 0;
+        break;
+      case GML_PLAN_OP_SHADER_DRAW:
+        if(!plan->has_shader) return 0;
+        if(!plan->shader.vertex_es || !plan->shader.fragment_es) return 0;
+        if(plan->shader.uniform_count>GML_PLAN_MAX_UNIFORMS ||
+           plan->shader.sampler_count>GML_PLAN_MAX_SAMPLERS) return 0;
+        for(uint32_t sampler=0;sampler<plan->shader.sampler_count;sampler++){
+          uint32_t bound=plan->shader.samplers[sampler].image;
+          if(bound!=GML_PLAN_NO_IMAGE && (bound>=plan->image_count || !plan->images[bound].cpu_pixels))
+            return 0;
+        }
+        for(uint32_t uniform=0;uniform<plan->shader.uniform_count;uniform++){
+          const GmlPlanUniform *value=&plan->shader.uniforms[uniform];
+          if(value->count==0 || value->count>GML_PLAN_UNIFORM_VALUES) return 0;
+          if(!value->name[0]) return 0;
+        }
         break;
       default:
         return 0;
@@ -245,7 +287,8 @@ int gml_render_plan_gpu_eligible(GmlRenderPlan *plan){
     }
     if(op->opcode!=GML_PLAN_OP_CLEAR_XRGB &&
        op->opcode!=GML_PLAN_OP_BLIT_OPAQUE_NEAREST &&
-       op->opcode!=GML_PLAN_OP_PRESENT_CPU_FRAME){
+       op->opcode!=GML_PLAN_OP_PRESENT_CPU_FRAME &&
+       op->opcode!=GML_PLAN_OP_SHADER_DRAW){
       plan->fallback_reason=GML_PLAN_FALLBACK_UNSUPPORTED_OPERATION;
       return 0;
     }
@@ -280,6 +323,7 @@ const char *gml_render_plan_fallback_name(uint32_t reason){
     case GML_PLAN_FALLBACK_PLAN_OVERFLOW: return "plan_overflow";
     case GML_PLAN_FALLBACK_CONTEXT_UNAVAILABLE: return "context_unavailable";
     case GML_PLAN_FALLBACK_RESOURCE_UPLOAD_FAILURE: return "resource_upload_failure";
+    case GML_PLAN_FALLBACK_SHADER_FAILURE: return "shader_failure";
     default: return "unknown";
   }
 }

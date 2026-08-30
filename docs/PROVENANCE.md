@@ -40,8 +40,8 @@ release evidence. The following SHA-256 directives pin only the two
 first-party files in this repository; `make provenance-check` verifies
 their current bytes.
 
-<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = b0ab6e799295deb77dc47e39fb82587de4e6fc638a7649c44cb3ee9a7dd0688b -->
-<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = fdfb5714da0b05e269f759364cb615ea14208966a1dd1f3a68643e568fbad284 -->
+<!-- PROVENANCE-CHECK: src/runtime/builtins/gml_builtin_registry.h = 601fe3b27830a3d703803c028fc620638c521dd676afbddb1e01b0ac7f91533a -->
+<!-- PROVENANCE-CHECK: src/generated/gml_builtin_registry_index.h = 0ea97d8b5cfbaf6383e82140a5608ab0e2ce8feadf3d93f2592f0b8386ff56aa -->
 
 ## Audio setup packets
 
@@ -163,6 +163,26 @@ origin is documented deliberately instead of discovered.
   context. This historical tree does not yet contain the complete
   recognition implementation; this boundary is not a claim that those
   families already execute here or reproduce any content shader.
+- **Content programs on the host's graphics context**
+  (`src/video/gpu/gml_gpu_gl.c`, `src/video/renderer/gml_render_presentation.c`,
+  `src/core/engine_graphics.c`). A shader the software renderer recognizes no
+  family in can execute as the content's own program on an eligible graphics
+  path: the GLSL ES text the
+  content ships is lent from the loaded image at draw time, compiled on the
+  host's context, and run over the frame the content drew with it, with the
+  values and pictures the content bound by name. No content shader source is
+  checked into this repository. At runtime the source is borrowed from the
+  loaded image, copied into a temporary dialect-adjusted buffer, compiled on
+  the host context, and the temporary copy is released. The transformation is a
+  first-party dialect rewrite written for this runtime: the older storage
+  qualifiers, sampling call and fragment output are respelled the way the
+  core-profile or embedded 3.0 dialect requires, a fragment output is
+  declared, and a sampling helper that reorders the channels of the uploaded
+  word is added; no content-specific replacement program is supplied.
+  The standard inputs a Studio program expects (`gm_Matrices`,
+  `gm_BaseTexture`, `in_Position`, `in_Colour`, `in_TextureCoord`, the
+  alpha-test and fog switches) are interoperability facts and are supplied by
+  name.
 - **Room-layer effects** (`src/video/renderer/gml_render_effects.c`).
   Effect identifiers and property keys are read from room records. The
   renderer applies the image operations specified in `docs/EFFECT_LAYERS.md`;

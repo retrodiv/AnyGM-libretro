@@ -374,6 +374,84 @@ static int deferred_presentation_flushes_case(void){
   return 1;
 }
 
+/* A presentation drawn through a content program is deferred with the program named, so the
+ * host's graphics context can run it; flushed in software, or once the device has refused the
+ * program, it is the plain presentation. */
+static int deferred_content_shader_case(void){
+  enum { SOURCE_WIDTH=4,SOURCE_HEIGHT=4,TARGET_WIDTH=24,TARGET_HEIGHT=20 };
+  uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
+  uint32_t immediate[TARGET_WIDTH*TARGET_HEIGHT];
+  uint32_t deferred[TARGET_WIDTH*TARGET_HEIGHT];
+  GmlWin content={0};
+  GmlRender render;
+  struct GmlShaderPal pal[1];
+  GmlRenderDeferredPresentation record;
+  content.bytecode=14;
+  fill_asymmetric(source,SOURCE_WIDTH,SOURCE_HEIGHT);
+  memset(pal,0,sizeof pal);
+  pal[0].source_vertex_es="attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
+  pal[0].source_fragment_es="varying vec2 v_vTexcoord; void main(){ gl_FragColor=texture2D(gm_BaseTexture,v_vTexcoord); }";
+  for(int pass=0;pass<2;pass++){
+    uint32_t *target=pass?deferred:immediate;
+    for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++) target[index]=0xFF5A5A5Au;
+    render_reset(&render,&content,source,SOURCE_WIDTH,SOURCE_HEIGHT,
+                 target,TARGET_WIDTH,TARGET_HEIGHT,0);
+    render.shader_pal=pal;
+    render.n_shader_pal=1;
+    gml_render_set_deferred_presentation(&render,pass);
+    gml_render_gui_begin(&render,TARGET_WIDTH,TARGET_HEIGHT);
+    gml_render_gui_set_size(&render,TARGET_WIDTH,TARGET_HEIGHT);
+    gml_render_shader_set_current(&render,0);
+    gml_draw_surface_stretched(&render,0,0.0,0.0,TARGET_WIDTH,TARGET_HEIGHT,0xFFFFFFu,1.0);
+    gml_render_shader_set_current(&render,-1);
+    if(pass){
+      REQUIRE(gml_render_deferred_presentation(&render,&record),"a shaded presentation is deferred");
+      REQUIRE(record.shader==0,"the record names the content program");
+      REQUIRE(record.destination_width==TARGET_WIDTH && record.destination_height==TARGET_HEIGHT,
+              "the record covers the target");
+    } else {
+      REQUIRE(!gml_render_deferred_presentation(&render,&record),"nothing is deferred when deferral is off");
+    }
+    /* A later draw flushes the deferred presentation through the software executor. */
+    gml_render_primitive_rectangle(&render,5,4,14,11,0x3A3A3Au,0);
+    REQUIRE(!gml_render_deferred_presentation(&render,NULL),"a later draw leaves nothing deferred");
+    gml_render_gui_end(&render);
+    render.shader_pal=NULL;
+    render.n_shader_pal=0;
+  }
+  for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++)
+    if(immediate[index]!=deferred[index]){
+      fprintf(stderr,"render plan shaded flush differs at %zu: %08x != %08x\n",
+              index,deferred[index],immediate[index]);
+      return 0;
+    }
+  /* Once the device has refused the program, the presentation is deferred unshaded. */
+  render_reset(&render,&content,source,SOURCE_WIDTH,SOURCE_HEIGHT,
+               deferred,TARGET_WIDTH,TARGET_HEIGHT,0);
+  render.shader_pal=pal;
+  render.n_shader_pal=1;
+  gml_render_shader_mark_failed(&render,0);
+  gml_render_set_deferred_presentation(&render,1);
+  gml_render_gui_begin(&render,TARGET_WIDTH,TARGET_HEIGHT);
+  gml_render_gui_set_size(&render,TARGET_WIDTH,TARGET_HEIGHT);
+  gml_render_shader_set_current(&render,0);
+  gml_draw_surface_stretched(&render,0,0.0,0.0,TARGET_WIDTH,TARGET_HEIGHT,0xFFFFFFu,1.0);
+  gml_render_shader_set_current(&render,-1);
+  REQUIRE(!gml_render_deferred_presentation(&render,&record) || record.shader<0,
+          "a refused program is not named again");
+  gml_render_primitive_rectangle(&render,5,4,14,11,0x3A3A3Au,0);
+  gml_render_gui_end(&render);
+  for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++)
+    if(immediate[index]!=deferred[index]){
+      fprintf(stderr,"render plan refused-program flush differs at %zu: %08x != %08x\n",
+              index,deferred[index],immediate[index]);
+      return 0;
+    }
+  render.shader_pal=NULL;
+  render.n_shader_pal=0;
+  return 1;
+}
+
 /* The automatic presentation the runtime performs itself. It samples at the leading output edge
  * rather than at destination pixel centres, and it is recorded together with the full-target fill
  * that makes the margins around it defined: separately they describe half a frame each. */
@@ -741,6 +819,61 @@ static int plan_validation_case(void){
   return 1;
 }
 
+/* A content-program draw carries names and text the plan cannot check, and indices it can. */
+static int shader_draw_validation_case(void){
+  uint32_t source[8*8];
+  uint32_t target[8*8];
+  GmlRenderPlan plan;
+  GmlPlanImage image=plan_image(source,8,8);
+  GmlPlanRect whole={0,0,8,8};
+  GmlPlanShader shader;
+  uint32_t index;
+  memset(source,0,sizeof source);
+  memset(&shader,0,sizeof shader);
+  shader.vertex_es="attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
+  shader.fragment_es="void main(){ gl_FragColor=vec4(1.0); }";
+
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,8,8);
+  index=gml_render_plan_add_image(&plan,&image);
+  REQUIRE(gml_render_plan_add_shader_draw(&plan,index,whole,&shader,0u),"a shader draw is recorded");
+  REQUIRE(gml_render_plan_validate(&plan),"a shader draw with both sources validates");
+  REQUIRE(plan.has_shader && plan.operation_count==1 && plan.operations[0].opcode==GML_PLAN_OP_SHADER_DRAW,
+          "the plan carries the program and the operation");
+  REQUIRE(!gml_render_plan_execute_software(&plan,target,8),
+          "the software executor does not run a content program");
+
+  /* Without text there is nothing to compile. */
+  {
+    GmlPlanShader blank=shader;
+    blank.fragment_es=NULL;
+    gml_render_plan_reset(&plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,8,8);
+    index=gml_render_plan_add_image(&plan,&image);
+    REQUIRE(!gml_render_plan_add_shader_draw(&plan,index,whole,&blank,0u),
+            "a program without a fragment stage is not recorded");
+  }
+  /* A sampler bound to an image the plan does not hold. */
+  {
+    GmlPlanShader bound=shader;
+    snprintf(bound.samplers[0].name,sizeof bound.samplers[0].name,"samp_mask");
+    bound.samplers[0].image=5u;
+    bound.sampler_count=1u;
+    gml_render_plan_reset(&plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,8,8);
+    index=gml_render_plan_add_image(&plan,&image);
+    REQUIRE(gml_render_plan_add_shader_draw(&plan,index,whole,&bound,0u),"a bound sampler is recorded");
+    REQUIRE(!gml_render_plan_validate(&plan),"a sampler naming an absent image is rejected");
+  }
+  /* A second program in one plan: the plan holds one. */
+  {
+    gml_render_plan_reset(&plan,GML_PLAN_TARGET_HOST_FRAMEBUFFER,8,8);
+    index=gml_render_plan_add_image(&plan,&image);
+    REQUIRE(gml_render_plan_add_shader_draw(&plan,index,whole,&shader,0u),"first program recorded");
+    REQUIRE(!gml_render_plan_add_shader_draw(&plan,index,whole,&shader,0u),"a second program is refused");
+  }
+  REQUIRE(!strcmp(gml_render_plan_fallback_name(GML_PLAN_FALLBACK_SHADER_FAILURE),"shader_failure"),
+          "the shader fallback has a name");
+  return 1;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   for(int index=1;index<argc;++index){
@@ -762,6 +895,7 @@ int main(int argc,char **argv){
     {"software_replay",presentation_software_replay_case},
     {"deferred_matches",deferred_presentation_matches_case},
     {"deferred_flushes",deferred_presentation_flushes_case},
+    {"deferred_content_shader",deferred_content_shader_case},
     {"deferred_underlay",deferred_underlay_case},
   };
   static const AnygmTestCase plan_cases[]={
@@ -770,6 +904,7 @@ int main(int argc,char **argv){
     {"pooled_box_identity",pooled_box_identity_case},
     {"axis_map",axis_map_case},
     {"validation",plan_validation_case},
+    {"shader_draw_validation",shader_draw_validation_case},
   };
   const AnygmTestGroup groups[]={
     {"presentation",presentation_cases,

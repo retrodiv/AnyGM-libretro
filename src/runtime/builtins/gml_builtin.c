@@ -193,19 +193,35 @@ const char *S(GmlVM *vm,GmlVal *a,int n,int i){
 double gml_shader_get_uniform(GmlRender *R, int sh, const char *un){
   return gml_render_shader_uniform_handle(R,sh,un);
 }
-static double gml_shader_uniform_component(GmlVal *args, int count, int component){
-  if(count==2 && args[1].t==V_ARR){
-    GmlVal value=gml_arr_get(args[1],component);
-    return N(&value,1,0);
-  }
-  return N(args,count,component+1);
-}
 void gml_shader_set_uniform_f(GmlRender *R, int h, GmlVal *a, int n){
+  gml_shader_set_uniform_values(R,h,a,n,0);
+}
+/* Every value the call carries, as the content's own program will read it: the components of a
+ * vector call, or the elements of an array call, up to a matrix's sixteen. */
+void gml_shader_set_uniform_values(GmlRender *R, int h, GmlVal *a, int n, int integer){
   if(!R || h<0) return;
-  double values[4];
-  for(int component=0;component<4;component++)
-    values[component]=gml_shader_uniform_component(a,n,component);
-  gml_render_shader_uniform_set(R,h,values);
+  double values[16];
+  uint32_t count=0;
+  if(n==2 && a[1].t==V_ARR){
+    int length=a[1].arr?((GmlArr*)a[1].arr)->len:0;
+    if(length>16) length=16;
+    for(int component=0;component<length;component++){
+      GmlVal value=gml_arr_get(a[1],component);
+      values[count++]=N(&value,1,0);
+    }
+  } else {
+    for(int component=1;component<n && count<16u;component++) values[count++]=N(a,n,component);
+  }
+  if(count==0) return;
+  if(h&0x100000){
+    gml_render_shader_uniform_set_values(R,h,values,count,integer);
+    return;
+  }
+  {
+    double four[4]={0,0,0,0};
+    for(uint32_t component=0;component<4u && component<count;component++) four[component]=values[component];
+    gml_render_shader_uniform_set(R,h,four);
+  }
 }
 /* the event path argument of an fmod_* call: first "event:/..." string, else first non-empty string */
 static const char *fmod_path_arg(GmlVal *a, int n){

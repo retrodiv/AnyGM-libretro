@@ -434,7 +434,29 @@ static void check_shader_recognition(void) {
     "<shader operation fragment>"
     "<shader operation fragment>"
   };
-  enum { SHADER_COUNT = 24, DATA_SIZE = 32768 };
+  /* Record 24 is a program this renderer recognizes no family in, laid out as a Studio record:
+   * the OpenGL ES pair at +8/+12. It is what the host's graphics context runs. */
+  static const char content_vertex[] =
+    "attribute vec3 in_Position;\n"
+    "attribute vec2 in_TextureCoord;\n"
+    "varying vec2 v_vTexcoord;\n"
+    "void main(){\n"
+    "  gl_Position = gm_Matrices[MATRIX_WORLD_VIEW_PROJECTION] * vec4(in_Position, 1.0);\n"
+    "  v_vTexcoord = in_TextureCoord;\n"
+    "}\n";
+  static const char content_fragment[] =
+    "precision mediump float;\n"
+    "varying vec2 v_vTexcoord;\n"
+    "uniform vec4 u_crt_sizes;\n"
+    "uniform sampler2D samp_overlay;\n"
+    "void main(){\n"
+    "  vec2 cell = fract(v_vTexcoord * u_crt_sizes.xy);\n"
+    "  vec4 col = texture2D(gm_BaseTexture, v_vTexcoord);\n"
+    "  vec4 mask = texture2D(samp_overlay, cell);\n"
+    "  float weight = 0.5 + 0.5 * sin(cell.y * 6.2831 * u_crt_sizes.z);\n"
+    "  gl_FragColor = vec4(col.rgb * mask.rgb * weight, col.a);\n"
+    "}\n";
+  enum { SHADER_COUNT = 25, DATA_SIZE = 32768 };
   uint8_t data[DATA_SIZE];
   GmlWin content;
   GmlRender render;
@@ -455,6 +477,18 @@ static void check_shader_recognition(void) {
     fragment_offset += length + 1;
   }
   write_u32(data, 4 + 17 * 4, DATA_SIZE - 8);
+  {
+    size_t record_offset = 128 + 24 * 32;
+    expect(fragment_offset + sizeof content_vertex + sizeof content_fragment < sizeof(data),
+           "synthetic content program exceeded its owned buffer");
+    write_u32(data, 4 + 24 * 4, (uint32_t)record_offset);
+    write_u32(data, record_offset + 8, (uint32_t)fragment_offset);
+    memcpy(data + fragment_offset, content_vertex, sizeof content_vertex);
+    fragment_offset += sizeof content_vertex;
+    write_u32(data, record_offset + 12, (uint32_t)fragment_offset);
+    memcpy(data + fragment_offset, content_fragment, sizeof content_fragment);
+    fragment_offset += sizeof content_fragment;
+  }
 
   content.data = data;
   content.size = sizeof(data);
@@ -656,6 +690,50 @@ static void check_shader_recognition(void) {
     expect(bound_sampler->procedural == 0 &&
            gml_render_shader_is_compiled(&render, 10),
            "a fragment sampling a content-bound sampler was treated as painting from nothing");
+    {
+      /* The content program: sources lent, values and samplers kept by name, and a device
+       * refusal that retires it. */
+      GmlRenderShaderSources sources;
+      GmlRenderShaderUniform values[4];
+      GmlRenderShaderSampler samplers[4];
+      GmlRenderShaderTextureBinding binding;
+      const double sizes[4] = {288.0, 216.0, 3.0, 1.0};
+      int handle = gml_render_shader_uniform_handle(&render, 24, "u_crt_sizes");
+      int sampler = gml_render_shader_sampler_handle(&render, 24, "samp_overlay");
+      memset(&binding, 0, sizeof binding);
+      expect(gml_render_shader_content_candidate(&render, 24) &&
+             gml_render_shader_sources(&render, 24, &sources) &&
+             sources.vertex_es && sources.fragment_es && !sources.vertex_gl && !sources.fragment_gl &&
+             !strncmp(sources.vertex_es, "attribute vec3 in_Position;", 27) &&
+             !strncmp(sources.fragment_es, "precision mediump float;", 24),
+             "a content program's sources were not lent from the record");
+      expect(!gml_render_shader_content_candidate(&render, 2) &&
+             !gml_render_shader_content_candidate(&render, 10),
+             "a recognized family or a sampler-less fragment offered itself as a content program");
+      expect(handle > 0 && (handle & GML_RENDER_GENERIC_HANDLE_FLAG),
+             "a content uniform was not named");
+      gml_render_shader_uniform_set_values(&render, handle, sizes, 4, 0);
+      expect(gml_render_shader_uniforms(&render, 24, values, 4) == 1 &&
+             !strcmp(values[0].name, "u_crt_sizes") && values[0].count == 4 &&
+             values[0].value[0] == 288.0f && values[0].value[1] == 216.0f &&
+             values[0].value[2] == 3.0f && values[0].value[3] == 1.0f && !values[0].integer,
+             "a content uniform's values were not kept by name");
+      expect(gml_render_shader_uniform_handle(&render, 24, "u_crt_sizes") == handle,
+             "a second lookup of the same name gave a different handle");
+      expect(sampler > 0, "the content's sampler was not named");
+      expect(gml_render_shader_texture_stage_set(&render, sampler,
+                                                 gml_render_sprite_texture_handle(3, 1), &binding) &&
+             binding.kind == GML_RENDER_SHADER_TEXTURE_CONTENT,
+             "a sprite bound to the content's sampler was not accepted");
+      expect(gml_render_shader_samplers(&render, 24, samplers, 4) == 1 &&
+             !strcmp(samplers[0].name, "samp_overlay") && samplers[0].sprite == 3 &&
+             samplers[0].frame == 1 && samplers[0].surface == -1,
+             "the bound sampler was not reported as the sprite frame it names");
+      gml_render_shader_mark_failed(&render, 24);
+      expect(!gml_render_shader_content_candidate(&render, 24) &&
+             !gml_render_shader_is_compiled(&render, 24),
+             "a program the device refused still offered itself");
+    }
     render.shader_report_all_compiled = 0;
     expect(!gml_render_shader_is_compiled(&render, 3) &&
            !gml_render_shader_is_compiled(&render, 5) &&
