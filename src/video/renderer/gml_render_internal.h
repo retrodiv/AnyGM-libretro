@@ -495,6 +495,12 @@ typedef struct GmlRender {
   } *shader_pal; int n_shader_pal;
   /* Scratch plane a sprite frame is expanded into when a content shader samples it. */
   uint32_t *content_sampler_plane; size_t content_sampler_plane_capacity;
+  /* A content program executed in the middle of a frame by the host, and the plane its result
+   * lands in, drawn as surface GML_RENDER_SHADED_SURFACE. */
+  GmlRenderShaderExecutor shader_executor; void *shader_executor_context;
+  uint32_t *shaded_plane; size_t shaded_plane_capacity;
+  int shaded_plane_width,shaded_plane_height;
+  uint32_t shaded_requests,shaded_draws;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
   int       active_shader;   /* shader_set asset id, -1 = none. Reset per frame. */
   int       monitor_w;       /* virtual monitor width reported to content, or 0 for fallback. */

@@ -374,6 +374,8 @@ struct AnygmEngine {
    * work, so a diagnostic that reported only "accelerated" could not say which one a session
    * actually reached. */
   uint32_t screen_pass_frames;
+  /* Content programs executed off-screen and read back in the middle of a frame. */
+  uint32_t readback_pass_count;
   uint32_t canvas_pass_frames;
 };
 
@@ -463,6 +465,8 @@ int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned 
  * on the processor. Returns zero unless the pass has the narrow structural shape that is
  * reproduced exactly, and the completed frame is then produced the way it always was. */
 int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned *height);
+/* The renderer's mid-frame content-program executor; installed while a graphics context is active. */
+int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *request);
 /* Report the opt-in hardware counters once, as one bounded content-neutral line. */
 void engine_graphics_report(AnygmEngine *engine);
 /* Whether a host graphics target is adopted right now. The one question core coordination asks

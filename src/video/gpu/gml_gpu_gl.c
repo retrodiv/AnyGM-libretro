@@ -100,6 +100,11 @@ struct GmlGpuBackend {
   uint32_t use_clock;
   GlContentProgram content[GL_CONTENT_PROGRAMS];
   GLuint content_buffer;
+  /* The off-screen target a read-back plan executes into, kept at the last size asked for. */
+  GLuint readback_framebuffer,readback_texture;
+  uint32_t readback_width,readback_height;
+  uint8_t *readback_scratch;
+  size_t readback_scratch_capacity;
 };
 
 static void record_error(char *error,size_t capacity,const char *format,...);
@@ -144,6 +149,9 @@ void gml_gpu_gl_forget(GmlGpuBackend *backend){
   }
   memset(backend->content,0,sizeof backend->content);
   backend->content_buffer=0;
+  backend->readback_framebuffer=0;
+  backend->readback_texture=0;
+  backend->readback_width=backend->readback_height=0;
 }
 
 static void delete_objects(GmlGpuBackend *backend){
@@ -159,6 +167,9 @@ static void delete_objects(GmlGpuBackend *backend){
     if(backend->content[index].program) backend->gl.DeleteProgram(backend->content[index].program);
   if(backend->content_buffer && backend->gl.DeleteBuffers)
     backend->gl.DeleteBuffers(1,&backend->content_buffer);
+  if(backend->readback_framebuffer && backend->gl.DeleteFramebuffers)
+    backend->gl.DeleteFramebuffers(1,&backend->readback_framebuffer);
+  if(backend->readback_texture) backend->gl.DeleteTextures(1,&backend->readback_texture);
   if(backend->vertex_array && backend->gl.DeleteVertexArrays)
     backend->gl.DeleteVertexArrays(1,&backend->vertex_array);
 }
@@ -167,6 +178,9 @@ void gml_gpu_gl_destroy(GmlGpuBackend *backend,int context_is_current){
   if(!backend) return;
   if(context_is_current) delete_objects(backend);
   free(backend->map_scratch);
+  free(backend->readback_scratch);
+  backend->readback_scratch=NULL;
+  backend->readback_scratch_capacity=0;
   free(backend);
 }
 
@@ -230,7 +244,12 @@ void gml_gpu_gl_destroy(GmlGpuBackend *backend,int context_is_current){
   X(UniformMatrix4fv,"glUniformMatrix4fv") \
   X(UniformMatrix3fv,"glUniformMatrix3fv") \
   X(UniformMatrix2fv,"glUniformMatrix2fv") \
-  X(GetActiveUniform,"glGetActiveUniform")
+  X(GetActiveUniform,"glGetActiveUniform") \
+  X(GenFramebuffers,"glGenFramebuffers") \
+  X(DeleteFramebuffers,"glDeleteFramebuffers") \
+  X(FramebufferTexture2D,"glFramebufferTexture2D") \
+  X(CheckFramebufferStatus,"glCheckFramebufferStatus") \
+  X(ReadPixels,"glReadPixels")
 
 static int load_entry_points(GmlGpuBackend *backend,const GmlGpuContext *context,
                              char *error,size_t error_capacity){
@@ -883,6 +902,72 @@ static GmlPlanAxis identity_axis(uint32_t extent){
   return axis;
 }
 
+/* Bind an off-screen target of the plan's extent, creating or resizing it as needed. */
+static int bind_readback_target(GmlGpuBackend *backend,uint32_t width,uint32_t height,
+                                char *error,size_t error_capacity){
+  if(!backend->readback_framebuffer){
+    backend->gl.GenFramebuffers(1,&backend->readback_framebuffer);
+    if(!backend->readback_framebuffer){
+      record_error(error,error_capacity,"graphics read-back target could not be created");
+      return 0;
+    }
+  }
+  if(!backend->readback_texture || backend->readback_width!=width || backend->readback_height!=height){
+    if(!backend->readback_texture) backend->gl.GenTextures(1,&backend->readback_texture);
+    if(!backend->readback_texture){
+      record_error(error,error_capacity,"graphics read-back texture could not be created");
+      return 0;
+    }
+    backend->gl.ActiveTexture(GL_TEXTURE0);
+    backend->gl.BindTexture(GL_TEXTURE_2D,backend->readback_texture);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+    backend->gl.TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+    backend->gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,(GLsizei)width,(GLsizei)height,0,GL_RGBA,
+                           GL_UNSIGNED_BYTE,NULL);
+    backend->gl.BindTexture(GL_TEXTURE_2D,0);
+    backend->readback_width=width;
+    backend->readback_height=height;
+  }
+  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,backend->readback_framebuffer);
+  backend->gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+                                   backend->readback_texture,0);
+  if(backend->gl.CheckFramebufferStatus(GL_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE){
+    record_error(error,error_capacity,"graphics read-back target is incomplete");
+    return 0;
+  }
+  return 1;
+}
+
+/* Read the off-screen target into the plan's plane. The device hands rows from the bottom and
+ * channels in memory order R,G,B,A; the plane wants rows from the top and the runtime's word. */
+static int read_back_target(GmlGpuBackend *backend,GmlRenderPlan *plan,char *error,size_t error_capacity){
+  size_t needed=(size_t)plan->target_width*(size_t)plan->target_height*4u;
+  if(needed>backend->readback_scratch_capacity){
+    uint8_t *grown=(uint8_t*)realloc(backend->readback_scratch,needed);
+    if(!grown){
+      record_error(error,error_capacity,"graphics read-back scratch could not be allocated");
+      return 0;
+    }
+    backend->readback_scratch=grown;
+    backend->readback_scratch_capacity=needed;
+  }
+  backend->gl.PixelStorei(GL_PACK_ALIGNMENT,1);
+  backend->gl.ReadPixels(0,0,(GLsizei)plan->target_width,(GLsizei)plan->target_height,GL_RGBA,
+                         GL_UNSIGNED_BYTE,backend->readback_scratch);
+  for(uint32_t row=0;row<plan->target_height;row++){
+    const uint8_t *source=backend->readback_scratch+
+      (size_t)(plan->target_height-1u-row)*(size_t)plan->target_width*4u;
+    uint32_t *target=plan->readback_pixels+(size_t)row*plan->readback_pitch_pixels;
+    for(uint32_t column=0;column<plan->target_width;column++){
+      const uint8_t *px=source+(size_t)column*4u;
+      target[column]=((uint32_t)px[3]<<24)|((uint32_t)px[0]<<16)|((uint32_t)px[1]<<8)|(uint32_t)px[2];
+    }
+  }
+  return 1;
+}
+
 int gml_gpu_gl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
                        GmlRenderPlan *plan,GmlGpuCounters *counters,
                        char *error,size_t error_capacity){
@@ -890,8 +975,13 @@ int gml_gpu_gl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
   int failed=0;
   if(!backend || !backend->loaded || !context || !plan) return 0;
   framebuffer=context->get_current_framebuffer(context->userdata);
-  /* Handle zero is a valid target: some frontends hand over the default framebuffer. */
-  backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
+  if(plan->target==GML_PLAN_TARGET_READBACK){
+    if(!bind_readback_target(backend,plan->target_width,plan->target_height,error,error_capacity))
+      return 0;
+  } else {
+    /* Handle zero is a valid target: some frontends hand over the default framebuffer. */
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
+  }
 
   /* The frontend and this core share one context, so every piece of state a pass depends on is set
    * rather than assumed, and nothing is left enabled that the frontend did not enable itself. */
@@ -982,5 +1072,10 @@ int gml_gpu_gl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
   }
   /* A pass that stopped part way has written something the plan does not describe. Report the
    * failure so the caller replays the complete pass, which overwrites it. */
+  if(!failed && plan->target==GML_PLAN_TARGET_READBACK){
+    if(!read_back_target(backend,plan,error,error_capacity)) failed=1;
+    /* The frontend's own framebuffer is what a pass leaves bound. */
+    backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
+  }
   return failed?0:1;
 }

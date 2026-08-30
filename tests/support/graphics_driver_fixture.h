@@ -50,6 +50,9 @@ int anygm_test_graphics_attributes_enabled(void);
 unsigned anygm_test_graphics_bound_buffer(void);
 unsigned anygm_test_graphics_float_uniforms(void);
 unsigned anygm_test_graphics_matrix_uniforms(void);
+/* Read-backs performed, and the texture attached to the off-screen target (0 for none). */
+unsigned anygm_test_graphics_read_pixels(void);
+unsigned anygm_test_graphics_attached_texture(void);
 int anygm_test_graphics_clear_calls(void);
 unsigned anygm_test_graphics_framebuffer_queries(void);
 int anygm_test_graphics_blend_enabled(void);

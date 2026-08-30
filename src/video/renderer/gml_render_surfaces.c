@@ -81,6 +81,12 @@ static void realize_suspended_fill(GmlRender *r,const uint32_t *px){
   }
 }
 uint32_t *surface_pixels(GmlRender *r, int id, int *w, int *h){
+  if(id==GML_RENDER_SHADED_SURFACE){
+    if(!r->shaded_plane || r->shaded_plane_width<=0 || r->shaded_plane_height<=0) return NULL;
+    if(w) *w=r->shaded_plane_width;
+    if(h) *h=r->shaded_plane_height;
+    return r->shaded_plane;
+  }
   if(id==0){
     if(!r->app_surface) return NULL;
     /* the app surface has its own dims (the view render); the current target may be the larger
@@ -1449,6 +1455,53 @@ static int draw_first_generation_gui_app_surface(GmlRender *r,int surf,
 }
 
 /* draw_surface_stretched[_ext]: blit a runtime surface into the current target, box-averaged. */
+/* A surface drawn through a program this renderer does not execute, somewhere other than the
+ * frame's terminal presentation: the host runs the program over the surface at the destination's
+ * size, and the result is composed here as a surface of that size, with the blend, alpha and
+ * flips the draw asked for. Returns 0 when the host could not, and the draw proceeds unshaded. */
+static int draw_surface_through_program(GmlRender *r,int surf,const uint32_t *spx,int sw,int sh,
+                                        double dx,double dy,double dw,double dh,
+                                        uint32_t blend,double alpha){
+  enum { SHADED_MAX_EXTENT=4096, SHADED_MAX_PIXELS=16u<<20 };
+  GmlRenderShaderRequest request;
+  int width=(int)lround(fabs(dw)),height=(int)lround(fabs(dh));
+  size_t pixels;
+  int saved;
+  if(width<=0 || height<=0 || width>SHADED_MAX_EXTENT || height>SHADED_MAX_EXTENT) return 0;
+  pixels=(size_t)width*(size_t)height;
+  if(pixels>SHADED_MAX_PIXELS) return 0;
+  if(pixels>r->shaded_plane_capacity){
+    uint32_t *grown=(uint32_t*)realloc(r->shaded_plane,pixels*sizeof *grown);
+    if(!grown) return 0;
+    r->shaded_plane=grown;
+    r->shaded_plane_capacity=pixels;
+  }
+  memset(&request,0,sizeof request);
+  request.shader=r->active_shader;
+  request.source=spx;
+  request.source_width=sw;
+  request.source_height=sh;
+  request.source_pitch=sw;
+  request.source_identity=(uint32_t)(surf<0?0x7FFFFFFF:surf);
+  request.serial=++r->shaded_requests;
+  request.width=width;
+  request.height=height;
+  request.linear=r->interp?1:0;
+  request.output=r->shaded_plane;
+  if(!r->shader_executor(r->shader_executor_context,&request)) return 0;
+  r->shaded_plane_width=width;
+  r->shaded_plane_height=height;
+  r->shaded_draws++;
+  /* The program has been applied; the composition below is the plain one. */
+  saved=r->active_shader;
+  r->active_shader=-1;
+  draw_surface_region(r,GML_RENDER_SHADED_SURFACE,0,0,width,height,dx,dy,
+                      dw<0?-(double)width:(double)width,dh<0?-(double)height:(double)height,
+                      blend,alpha);
+  r->active_shader=saved;
+  return 1;
+}
+
 static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double dy,
                                         double dw,double dh,uint32_t blend,double alpha,
                                         int allow_software3d){
@@ -1515,6 +1568,9 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
        render_present_content_shader(r,surf,spx,sw,sh,x0,y0,x1,y1,ldx,ldy,dw,dh,r->active_shader))
       return;
   }
+  if(r->active_shader>=0 && r->shader_executor && spx!=r->fb &&
+     gml_render_shader_content_candidate(r,r->active_shader) &&
+     draw_surface_through_program(r,surf,spx,sw,sh,dx,dy,dw,dh,blend,alpha)) return;
   if(draw_first_generation_gui_app_surface(r,surf,spx,sw,sh,dx,dy,dw,dh,blend,alpha)) return;
   if(r->surface_draw_logging < 0) r->surface_draw_logging = render_setting(r,"GML_LOG_SURF_DRAW") != NULL;
   const char *log_surf_frame = r->surface_draw_logging ? render_setting(r,"GML_LOG_SURF_DRAW_FRAME") : NULL;

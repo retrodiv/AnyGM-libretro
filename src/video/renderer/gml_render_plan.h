@@ -154,7 +154,11 @@ typedef struct GmlPlanShader {
 
 typedef enum GmlPlanTarget {
   GML_PLAN_TARGET_CPU_FRAME=0,
-  GML_PLAN_TARGET_HOST_FRAMEBUFFER=1
+  GML_PLAN_TARGET_HOST_FRAMEBUFFER=1,
+  /* An off-screen target of the plan's extent whose pixels are read back into the caller's plane
+   * once the plan has executed: a content program run in the middle of a frame, whose result the
+   * software renderer composes like any other picture. */
+  GML_PLAN_TARGET_READBACK=2
 } GmlPlanTarget;
 
 /* Why a pass was not executed on a GPU. A stable internal enum; the strings exist only for
@@ -198,6 +202,9 @@ typedef struct GmlRenderPlan {
   /* Present when an operation is SHADER_DRAW. One per plan: the frame's terminal presentation. */
   uint32_t has_shader;
   GmlPlanShader shader;
+  /* READBACK target only: where the executed target lands, rows from the top, in XRGB/ARGB words. */
+  uint32_t *readback_pixels;
+  uint32_t readback_pitch_pixels;
 } GmlRenderPlan;
 
 void gml_render_plan_reset(GmlRenderPlan *plan,uint32_t target,

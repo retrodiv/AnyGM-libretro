@@ -452,6 +452,98 @@ static int deferred_content_shader_case(void){
   return 1;
 }
 
+/* A surface drawn through a content program somewhere other than the terminal presentation is
+ * handed to the host's executor at the destination's size, and its answer is composed like any
+ * surface. Without an executor, or when it declines, the draw proceeds unshaded. */
+static struct { int calls; int width,height,shader,linear; int source_width,source_height; } executor_seen;
+static int green_executor(void *context,const GmlRenderShaderRequest *request){
+  (void)context;
+  executor_seen.calls++;
+  executor_seen.width=request->width;
+  executor_seen.height=request->height;
+  executor_seen.shader=request->shader;
+  executor_seen.linear=request->linear;
+  executor_seen.source_width=request->source_width;
+  executor_seen.source_height=request->source_height;
+  for(int index=0;index<request->width*request->height;index++) request->output[index]=0xFF00FF00u;
+  return 1;
+}
+static int declining_executor(void *context,const GmlRenderShaderRequest *request){
+  (void)context; (void)request;
+  executor_seen.calls++;
+  return 0;
+}
+static int mid_frame_content_shader_case(void){
+  enum { SOURCE_WIDTH=4,SOURCE_HEIGHT=4,TARGET_WIDTH=24,TARGET_HEIGHT=20 };
+  uint32_t source[SOURCE_WIDTH*SOURCE_HEIGHT];
+  uint32_t plain[TARGET_WIDTH*TARGET_HEIGHT];
+  uint32_t shaded[TARGET_WIDTH*TARGET_HEIGHT];
+  GmlWin content={0};
+  GmlRender render;
+  struct GmlShaderPal pal[1];
+  content.bytecode=14;
+  fill_asymmetric(source,SOURCE_WIDTH,SOURCE_HEIGHT);
+  memset(pal,0,sizeof pal);
+  pal[0].source_vertex_es="attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
+  pal[0].source_fragment_es="varying vec2 v_vTexcoord; void main(){ gl_FragColor=texture2D(gm_BaseTexture,v_vTexcoord); }";
+  for(int pass=0;pass<3;pass++){
+    uint32_t *target=pass==1?shaded:plain;
+    for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++) target[index]=0xFF5A5A5Au;
+    render_reset(&render,&content,source,SOURCE_WIDTH,SOURCE_HEIGHT,
+                 target,TARGET_WIDTH,TARGET_HEIGHT,0);
+    render.shader_pal=pal;
+    render.n_shader_pal=1;
+    memset(&executor_seen,0,sizeof executor_seen);
+    /* Deferral off: the terminal path does not apply, so the draw is a mid-frame one. */
+    gml_render_set_deferred_presentation(&render,0);
+    gml_render_set_shader_executor(&render,pass==1?green_executor:pass==2?declining_executor:NULL,NULL);
+    gml_render_gui_begin(&render,TARGET_WIDTH,TARGET_HEIGHT);
+    gml_render_gui_set_size(&render,TARGET_WIDTH,TARGET_HEIGHT);
+    gml_render_shader_set_current(&render,0);
+    gml_draw_surface_stretched(&render,0,2.0,3.0,16.0,10.0,0xFFFFFFu,1.0);
+    gml_render_shader_set_current(&render,-1);
+    gml_render_gui_end(&render);
+    if(pass==0) REQUIRE(executor_seen.calls==0,"no executor, no request");
+    if(pass==1){
+      REQUIRE(executor_seen.calls==1,"the executor is asked once");
+      REQUIRE(executor_seen.width==16 && executor_seen.height==10,"the request is the destination's size");
+      REQUIRE(executor_seen.shader==0 && executor_seen.source_width==SOURCE_WIDTH &&
+              executor_seen.source_height==SOURCE_HEIGHT,"the request names the program and the source");
+      REQUIRE(shaded[3*TARGET_WIDTH+2]==0xFF00FF00u && shaded[12*TARGET_WIDTH+17]==0xFF00FF00u,
+              "the executor's answer is composed at the destination");
+      REQUIRE(shaded[0]==0xFF5A5A5Au && shaded[13*TARGET_WIDTH+18]==0xFF5A5A5Au,
+              "outside the destination nothing is touched");
+    }
+    if(pass==2){
+      REQUIRE(executor_seen.calls==1,"a declining executor is asked once");
+      for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++)
+        if(plain[index]==0xFF00FF00u){ fprintf(stderr,"render plan: a declined program left a shaded pixel\n"); return 0; }
+    }
+    render.shader_pal=NULL;
+    render.n_shader_pal=0;
+    gml_render_set_shader_executor(&render,NULL,NULL);
+  }
+  /* The declined draw is the plain draw: compare against a pass with no shader at all. */
+  {
+    uint32_t reference[TARGET_WIDTH*TARGET_HEIGHT];
+    for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++) reference[index]=0xFF5A5A5Au;
+    render_reset(&render,&content,source,SOURCE_WIDTH,SOURCE_HEIGHT,
+                 reference,TARGET_WIDTH,TARGET_HEIGHT,0);
+    gml_render_set_deferred_presentation(&render,0);
+    gml_render_gui_begin(&render,TARGET_WIDTH,TARGET_HEIGHT);
+    gml_render_gui_set_size(&render,TARGET_WIDTH,TARGET_HEIGHT);
+    gml_draw_surface_stretched(&render,0,2.0,3.0,16.0,10.0,0xFFFFFFu,1.0);
+    gml_render_gui_end(&render);
+    for(size_t index=0;index<TARGET_WIDTH*TARGET_HEIGHT;index++)
+      if(reference[index]!=plain[index]){
+        fprintf(stderr,"render plan declined draw differs at %zu: %08x != %08x\n",index,plain[index],reference[index]);
+        return 0;
+      }
+  }
+  gml_render_free(&render);
+  return 1;
+}
+
 /* The automatic presentation the runtime performs itself. It samples at the leading output edge
  * rather than at destination pixel centres, and it is recorded together with the full-target fill
  * that makes the margins around it defined: separately they describe half a frame each. */
@@ -896,6 +988,7 @@ int main(int argc,char **argv){
     {"deferred_matches",deferred_presentation_matches_case},
     {"deferred_flushes",deferred_presentation_flushes_case},
     {"deferred_content_shader",deferred_content_shader_case},
+    {"mid_frame_content_shader",mid_frame_content_shader_case},
     {"deferred_underlay",deferred_underlay_case},
   };
   static const AnygmTestCase plan_cases[]={

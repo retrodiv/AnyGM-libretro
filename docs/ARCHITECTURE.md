@@ -469,7 +469,13 @@ that record into a `SHADER_DRAW` plan operation carrying the program's lent sour
 sampler pictures; and `gml_gpu_gl.c` compiles the program once per context, respells it into the
 dialect the context accepts, and draws the frame through it. A program the device refuses is
 retired by the renderer for the session, so the frame is presented unshaded and `shader_is_compiled`
-answers no for it, as it would under a driver that refused it. Complete sprite and surface kernels share the
+answers no for it, as it would under a driver that refused it. A surface drawn through such a
+program anywhere else in the frame goes through the renderer's executor hook instead:
+`gml_render_surfaces.c` asks the host to run the program over the surface at the destination's
+size, `engine_graphics.c` executes that as a plan whose target is read back, and the answer is
+composed in software as a surface of that size with the draw's own blend and alpha; the software
+renderer remains the complete implementation, and a host without a context, or a program the
+device refuses, draws plain. Complete sprite and surface kernels share the
 canonical header-local recognized-shader sampling operations in
 `gml_render_sampling_internal.h`; the general surface mapper and post-process
 kernels additionally share the two final-pixel operations in

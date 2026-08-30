@@ -164,7 +164,10 @@ int gml_render_plan_validate(const GmlRenderPlan *plan){
   if(plan->operation_count==0u || plan->operation_count>GML_PLAN_MAX_OPERATIONS) return 0;
   if(plan->image_count>GML_PLAN_MAX_IMAGES) return 0;
   if(plan->target!=GML_PLAN_TARGET_CPU_FRAME &&
-     plan->target!=GML_PLAN_TARGET_HOST_FRAMEBUFFER) return 0;
+     plan->target!=GML_PLAN_TARGET_HOST_FRAMEBUFFER &&
+     plan->target!=GML_PLAN_TARGET_READBACK) return 0;
+  if(plan->target==GML_PLAN_TARGET_READBACK &&
+     (!plan->readback_pixels || plan->readback_pitch_pixels<plan->target_width)) return 0;
   for(uint32_t index=0;index<plan->image_count;index++){
     const GmlPlanImage *image=&plan->images[index];
     if(image->pixel_format!=GML_PLAN_PIXEL_XRGB8888) return 0;

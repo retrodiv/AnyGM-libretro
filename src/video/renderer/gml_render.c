@@ -1372,6 +1372,11 @@ int gml_render_sprite_frame_plane(GmlRender *r,int sprite,int frame,int *width,i
     }
   }
 }
+void gml_render_set_shader_executor(GmlRender *r,GmlRenderShaderExecutor executor,void *context){
+  if(!r) return;
+  r->shader_executor=executor;
+  r->shader_executor_context=executor?context:NULL;
+}
 int gml_render_surface_plane(GmlRender *r,int surface,int *width,int *height,
                              const uint32_t **pixels){
   int w=0,h=0;
@@ -1498,7 +1503,8 @@ void gml_render_free(GmlRender *r){
   free(r->spr_name_hix); r->spr_name_hix=NULL; r->spr_name_hix_cap=0;
   free(r->classic_info_native_pixels);
   free(r->layer_noise_rgb); r->layer_noise_rgb=NULL;
-  free(r->content_sampler_plane); r->content_sampler_plane=NULL; r->content_sampler_plane_capacity=0;
+  free(r->content_sampler_plane);
+  free(r->shaded_plane); r->shaded_plane=NULL; r->shaded_plane_capacity=0; r->content_sampler_plane=NULL; r->content_sampler_plane_capacity=0;
   free(r->layer_filter_src); free(r->layer_filter_work); free(r->layer_filter_aux);
   free(r->color_write_scratch); r->color_write_scratch=NULL;
   r->color_write_scratch_capacity=0;

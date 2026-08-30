@@ -77,7 +77,7 @@ void engine_graphics_report(AnygmEngine *engine){
     "bytes=%llu resets=%u destroys=%u losses=%u program_failures=%u "
     "fallback_unsupported=%u fallback_box=%u fallback_context=%u fallback_upload=%u "
     "fallback_overflow=%u fallback_shader=%u materializations=%u screen_passes=%u canvas_passes=%u"
-    " last_error=\"%s\"\n",
+    " readback_passes=%u last_error=\"%s\"\n",
     counters.frames_offered,counters.passes_accepted,counters.passes_replayed,
     counters.cpu_upload_frames,counters.draw_calls,counters.full_uploads,
     (unsigned long long)counters.uploaded_bytes,
@@ -90,6 +90,7 @@ void engine_graphics_report(AnygmEngine *engine){
     counters.fallbacks[GML_PLAN_FALLBACK_PLAN_OVERFLOW],
     counters.fallbacks[GML_PLAN_FALLBACK_SHADER_FAILURE],
     engine->frame_materializations,engine->screen_pass_frames,engine->canvas_pass_frames,
+    engine->readback_pass_count,
     gml_gpu_last_error(engine->gpu)?gml_gpu_last_error(engine->gpu):"");
 }
 
@@ -104,23 +105,23 @@ void engine_graphics_report(AnygmEngine *engine){
  * values and pictures the content bound. Everything comes from the renderer by name; nothing here
  * knows what the program computes. Returns the plan-building result; a refusal is the caller's
  * unshaded blit. */
-static int engine_plan_content_shader(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t image,
-                                      GmlPlanRect destination,
-                                      const GmlRenderDeferredPresentation *record){
+static int engine_plan_content_program(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t image,
+                                       GmlPlanRect destination,int shader_id,uint32_t generation,
+                                       int linear){
   GmlPlanShader shader;
   GmlRenderShaderSources sources;
   GmlRenderShaderUniform uniforms[GML_PLAN_MAX_UNIFORMS];
   GmlRenderShaderSampler samplers[GML_PLAN_MAX_SAMPLERS];
   uint32_t count;
-  if(!gml_render_shader_sources(&engine->render,record->shader,&sources)) return 0;
+  if(!gml_render_shader_sources(&engine->render,shader_id,&sources)) return 0;
   memset(&shader,0,sizeof shader);
-  shader.identity=(uint32_t)record->shader;
-  shader.content_generation=record->generation;
+  shader.identity=(uint32_t)shader_id;
+  shader.content_generation=generation;
   shader.vertex_es=sources.vertex_es;
   shader.fragment_es=sources.fragment_es;
   shader.vertex_gl=sources.vertex_gl;
   shader.fragment_gl=sources.fragment_gl;
-  count=gml_render_shader_uniforms(&engine->render,record->shader,uniforms,GML_PLAN_MAX_UNIFORMS);
+  count=gml_render_shader_uniforms(&engine->render,shader_id,uniforms,GML_PLAN_MAX_UNIFORMS);
   for(uint32_t index=0;index<count;index++){
     GmlPlanUniform *value=&shader.uniforms[shader.uniform_count++];
     memcpy(value->name,uniforms[index].name,sizeof value->name);
@@ -128,7 +129,7 @@ static int engine_plan_content_shader(AnygmEngine *engine,GmlRenderPlan *plan,ui
     value->count=uniforms[index].count;
     value->integer=uniforms[index].integer;
   }
-  count=gml_render_shader_samplers(&engine->render,record->shader,samplers,GML_PLAN_MAX_SAMPLERS);
+  count=gml_render_shader_samplers(&engine->render,shader_id,samplers,GML_PLAN_MAX_SAMPLERS);
   for(uint32_t index=0;index<count;index++){
     GmlPlanSampler *sampler=&shader.samplers[shader.sampler_count++];
     GmlPlanImage picture;
@@ -149,8 +150,8 @@ static int engine_plan_content_shader(AnygmEngine *engine,GmlRenderPlan *plan,ui
     } else continue;
     /* A sampler picture is re-uploaded every frame: neither a surface nor a scratch plane carries
      * a generation the backend could trust across frames. */
-    picture.content_generation=record->generation;
-    picture.pixel_generation=record->generation;
+    picture.content_generation=generation;
+    picture.pixel_generation=generation;
     picture.width=(uint32_t)w;
     picture.height=(uint32_t)h;
     picture.pitch_pixels=(uint32_t)w;
@@ -160,7 +161,53 @@ static int engine_plan_content_shader(AnygmEngine *engine,GmlRenderPlan *plan,ui
     sampler->image=gml_render_plan_add_image(plan,&picture);
     if(sampler->image==GML_PLAN_NO_IMAGE) return 0;
   }
-  return gml_render_plan_add_shader_draw(plan,image,destination,&shader,record->linear?1u:0u);
+  return gml_render_plan_add_shader_draw(plan,image,destination,&shader,linear?1u:0u);
+}
+
+/* The renderer's request to run a content program in the middle of a frame: the source is
+ * uploaded as it is now, the program runs over it into an off-screen target of the requested
+ * size, and the result is read back into the renderer's plane. */
+int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *request){
+  AnygmEngine *engine=(AnygmEngine*)context;
+  GmlRenderPlan plan;
+  GmlPlanImage source;
+  GmlPlanRect whole;
+  uint32_t image;
+  if(!engine || !request || !engine->gpu || !gml_gpu_context_active(engine->gpu)) return 0;
+  if(request->width<=0 || request->height<=0 || !request->output || !request->source) return 0;
+  if(request->source_width<=0 || request->source_height<=0 || request->source_pitch<request->source_width) return 0;
+  gml_render_plan_reset(&plan,GML_PLAN_TARGET_READBACK,(uint32_t)request->width,(uint32_t)request->height);
+  plan.readback_pixels=request->output;
+  plan.readback_pitch_pixels=(uint32_t)request->width;
+  whole.x=0;
+  whole.y=0;
+  whole.width=(uint32_t)request->width;
+  whole.height=(uint32_t)request->height;
+  if(!gml_render_plan_add_clear(&plan,whole,0u)) return 0;
+  memset(&source,0,sizeof source);
+  source.image_class=GML_PLAN_IMAGE_SURFACE;
+  source.identity=request->source_identity;
+  /* A surface's pixels change between requests with the same identity, so every request carries
+   * a generation of its own and the backend uploads it afresh. */
+  source.content_generation=request->serial;
+  source.pixel_generation=request->serial;
+  source.width=(uint32_t)request->source_width;
+  source.height=(uint32_t)request->source_height;
+  source.pitch_pixels=(uint32_t)request->source_pitch;
+  source.pixel_format=GML_PLAN_PIXEL_XRGB8888;
+  source.opaque=0u;
+  source.cpu_pixels=request->source;
+  image=gml_render_plan_add_image(&plan,&source);
+  if(image==GML_PLAN_NO_IMAGE) return 0;
+  if(!engine_plan_content_program(engine,&plan,image,whole,request->shader,request->serial,
+                                  request->linear)) return 0;
+  if(!gml_gpu_execute_plan(engine->gpu,&plan)){
+    if(plan.fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE)
+      gml_render_shader_mark_failed(&engine->render,request->shader);
+    return 0;
+  }
+  engine->readback_pass_count++;
+  return 1;
 }
 
 int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned *height){
@@ -240,7 +287,8 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
     /* The content drew its frame through its own program. Run that program on the device; when
      * the device refuses it, the renderer is told so the next frame draws unshaded rather than
      * asking again, and this frame falls back to the unshaded blit below. */
-    if(engine_plan_content_shader(engine,plan,image,destination,&record)){
+    if(engine_plan_content_program(engine,plan,image,destination,record.shader,record.generation,
+                                   record.linear)){
       if(gml_gpu_execute_plan(engine->gpu,plan)) goto presented;
       if(plan->fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE)
         gml_render_shader_mark_failed(&engine->render,record.shader);
@@ -358,6 +406,12 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   (void)engine;
   (void)width;
   (void)height;
+  return 0;
+}
+
+int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *request){
+  (void)context;
+  (void)request;
   return 0;
 }
 

@@ -69,6 +69,7 @@ typedef void GLvoid;
 #define GL_RED_INTEGER 0x8D94
 #define GL_R16UI 0x8234
 #define GL_UNPACK_ALIGNMENT 0x0CF5
+#define GL_PACK_ALIGNMENT 0x0D05
 #define GL_UNPACK_ROW_LENGTH 0x0CF2
 #define GL_UNPACK_SKIP_ROWS 0x0CF3
 #define GL_UNPACK_SKIP_PIXELS 0x0CF4
@@ -91,6 +92,8 @@ typedef void GLvoid;
 #define GL_SRC_ALPHA 0x0302
 #define GL_ONE_MINUS_SRC_ALPHA 0x0303
 #define GL_ACTIVE_UNIFORMS 0x8B86
+#define GL_COLOR_ATTACHMENT0 0x8CE0
+#define GL_FRAMEBUFFER_COMPLETE 0x8CD5
 #define GL_INT 0x1404
 #define GL_UNSIGNED_INT 0x1405
 #define GL_FLOAT_VEC2 0x8B50
@@ -182,6 +185,14 @@ typedef struct GmlGlApi {
   void     (*UniformMatrix2fv)(GLint location,GLsizei count,GLboolean transpose,const GLfloat *value);
   void     (*GetActiveUniform)(GLuint program,GLuint index,GLsizei buffer_size,GLsizei *length,
                                GLint *size,GLenum *type,GLchar *name);
+  /* Used only for a plan whose target is read back. */
+  void     (*GenFramebuffers)(GLsizei n,GLuint *framebuffers);
+  void     (*DeleteFramebuffers)(GLsizei n,const GLuint *framebuffers);
+  void     (*FramebufferTexture2D)(GLenum target,GLenum attachment,GLenum textarget,GLuint texture,
+                                   GLint level);
+  GLenum   (*CheckFramebufferStatus)(GLenum target);
+  void     (*ReadPixels)(GLint x,GLint y,GLsizei width,GLsizei height,GLenum format,GLenum type,
+                         void *pixels);
 } GmlGlApi;
 
 #endif

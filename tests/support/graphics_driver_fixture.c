@@ -66,6 +66,8 @@ typedef struct FakeDriver {
   size_t buffer_bytes;
   unsigned float_uniforms;
   unsigned matrix_uniforms;
+  GLuint attached_texture;
+  unsigned read_pixels;
   GLint unpack_row_length;
   GLint unpack_alignment;
   GLint uniforms[8];
@@ -278,6 +280,27 @@ static void fake_GetActiveUniform(GLuint p,GLuint index,GLsizei buffer_size,GLsi
   } else { *size=0; *type=0; }
   if(length) *length=(GLsizei)strlen(name);
 }
+static void fake_GenFramebuffers(GLsizei n,GLuint *names){
+  note_call();
+  for(GLsizei index=0;index<n;index++) names[index]=g_fake.next_name++;
+}
+static void fake_DeleteFramebuffers(GLsizei n,const GLuint *names){ (void)names; note_call(); g_fake.deletes_issued+=n; }
+static void fake_FramebufferTexture2D(GLenum target,GLenum attachment,GLenum textarget,GLuint texture,GLint level){
+  (void)target;(void)attachment;(void)textarget;(void)level; note_call(); g_fake.attached_texture=texture;
+}
+static GLenum fake_CheckFramebufferStatus(GLenum target){ (void)target; note_call(); return GL_FRAMEBUFFER_COMPLETE; }
+/* Rows from the bottom, bytes R,G,B,A: the red byte carries the device row and the green byte the
+ * column, so a reader that forgets to flip or reorder is caught. */
+static void fake_ReadPixels(GLint x,GLint y,GLsizei width,GLsizei height,GLenum format,GLenum type,void *pixels){
+  uint8_t *out=(uint8_t*)pixels;
+  (void)x;(void)y;(void)format;(void)type; note_call();
+  g_fake.read_pixels++;
+  for(GLsizei row=0;row<height;row++)
+    for(GLsizei column=0;column<width;column++){
+      uint8_t *px=out+((size_t)row*(size_t)width+(size_t)column)*4u;
+      px[0]=(uint8_t)row; px[1]=(uint8_t)column; px[2]=0x33; px[3]=0xFF;
+    }
+}
 static void fake_UniformMatrix3fv(GLint l,GLsizei n,GLboolean t,const GLfloat *v){
   (void)l;(void)t;(void)v; note_call(); g_fake.matrix_uniforms+=(unsigned)n;
 }
@@ -419,6 +442,11 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
     {"glUniformMatrix3fv",(void*)fake_UniformMatrix3fv},
     {"glUniformMatrix2fv",(void*)fake_UniformMatrix2fv},
     {"glGetActiveUniform",(void*)fake_GetActiveUniform},
+    {"glGenFramebuffers",(void*)fake_GenFramebuffers},
+    {"glDeleteFramebuffers",(void*)fake_DeleteFramebuffers},
+    {"glFramebufferTexture2D",(void*)fake_FramebufferTexture2D},
+    {"glCheckFramebufferStatus",(void*)fake_CheckFramebufferStatus},
+    {"glReadPixels",(void*)fake_ReadPixels},
     {NULL,NULL}
   };
   (void)userdata;
@@ -453,6 +481,8 @@ int anygm_test_graphics_attributes_enabled(void){ return g_fake.attributes_enabl
 unsigned anygm_test_graphics_bound_buffer(void){ return g_fake.bound_buffer; }
 unsigned anygm_test_graphics_float_uniforms(void){ return g_fake.float_uniforms; }
 unsigned anygm_test_graphics_matrix_uniforms(void){ return g_fake.matrix_uniforms; }
+unsigned anygm_test_graphics_read_pixels(void){ return g_fake.read_pixels; }
+unsigned anygm_test_graphics_attached_texture(void){ return g_fake.attached_texture; }
 int anygm_test_graphics_clear_calls(void){ return g_fake.clear_calls; }
 unsigned anygm_test_graphics_framebuffer_queries(void){ return g_fake.framebuffer_queries; }
 int anygm_test_graphics_blend_enabled(void){ return g_fake.blend_enabled; }

@@ -419,6 +419,25 @@ void gml_render_shader_mark_failed(GmlRender *r,int shader);
 /* Multi-component setter for the content's own uniforms: up to sixteen values, integer or float. */
 void gml_render_shader_uniform_set_values(GmlRender *r,int handle,const double *values,
                                           uint32_t count,int integer);
+/* A content program run in the middle of a frame: the host executes the program over the source
+ * at the destination's size and writes the result, rows from the top, into `output` (width*height
+ * ARGB words). The renderer then composes that picture like any other surface. Returns 0 when the
+ * host cannot (no context, or the program was refused), and the draw proceeds unshaded. */
+typedef struct {
+  int shader;
+  const uint32_t *source;
+  int source_width,source_height,source_pitch;
+  /* A stable identity for the source picture and a serial the host may use to tell one request
+   * from the next; the source may change between requests with the same identity. */
+  uint32_t source_identity,serial;
+  int width,height;
+  int linear;
+  uint32_t *output;
+} GmlRenderShaderRequest;
+typedef int (*GmlRenderShaderExecutor)(void *context,const GmlRenderShaderRequest *request);
+void gml_render_set_shader_executor(GmlRender *r,GmlRenderShaderExecutor executor,void *context);
+/* The surface id that names the renderer's plane holding the last executed program's result. */
+enum { GML_RENDER_SHADED_SURFACE=-2 };
 /* A sprite frame as one ARGB plane in renderer-owned scratch, for a sampler upload. Valid until the
  * next call. */
 int gml_render_sprite_frame_plane(GmlRender *r,int sprite,int frame,int *width,int *height,

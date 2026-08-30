@@ -581,6 +581,54 @@ static int content_program_refused_case(void){
   return 1;
 }
 
+/* A plan whose target is read back: the program runs into an off-screen target of the plan's
+ * extent, and the result lands in the caller's plane rows-from-the-top in the runtime's word. */
+static int content_program_readback_case(void){
+  enum { WIDTH=5,HEIGHT=3 };
+  uint32_t frame[8*6],mask[4*4];
+  uint32_t output[WIDTH*HEIGHT];
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  GmlRenderPlan plan;
+  anygm_test_graphics_reset();
+  memset(frame,0,sizeof frame);
+  memset(mask,0,sizeof mask);
+  memset(output,0xAA,sizeof output);
+  gpu=gml_gpu_create();
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
+  REQUIRE(build_content_plan(&plan,frame,mask),"content plan built");
+  /* The same operations over an off-screen target of another extent. */
+  plan.target=GML_PLAN_TARGET_READBACK;
+  plan.target_width=WIDTH;
+  plan.target_height=HEIGHT;
+  plan.operations[0].destination.width=WIDTH;
+  plan.operations[0].destination.height=HEIGHT;
+  plan.operations[1].destination.width=WIDTH;
+  plan.operations[1].destination.height=HEIGHT;
+  REQUIRE(!gml_render_plan_validate(&plan),"a read-back target without a plane does not validate");
+  plan.readback_pixels=output;
+  plan.readback_pitch_pixels=WIDTH;
+  REQUIRE(gml_render_plan_validate(&plan),"a read-back target with a plane validates");
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan),"the program executes into the off-screen target");
+  REQUIRE(anygm_test_graphics_quad_draw_calls()==1,"one quad is drawn");
+  REQUIRE(anygm_test_graphics_read_pixels()==1,"the target is read back once");
+  REQUIRE(anygm_test_graphics_attached_texture()!=0,"a texture is attached to the off-screen target");
+  /* The driver hands rows from the bottom with the device row in the red byte and the column in
+   * the green byte; the plane holds rows from the top in ARGB words. */
+  for(int row=0;row<HEIGHT;row++)
+    for(int column=0;column<WIDTH;column++){
+      uint32_t expected=0xFF000000u|((uint32_t)(HEIGHT-1-row)<<16)|((uint32_t)column<<8)|0x33u;
+      if(output[row*WIDTH+column]!=expected){
+        fprintf(stderr,"gpu read-back at %d,%d: %08x != %08x\n",column,row,output[row*WIDTH+column],expected);
+        return 0;
+      }
+    }
+  REQUIRE(anygm_test_graphics_attributes_enabled()==0,"no attribute array is left enabled");
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   for(int index=1;index<argc;++index){
@@ -606,6 +654,7 @@ int main(int argc,char **argv){
     {"content_program",content_program_case},
     {"content_program_embedded_dialect",content_program_embedded_dialect_case},
     {"content_program_refused",content_program_refused_case},
+    {"content_program_readback",content_program_readback_case},
   };
   const AnygmTestGroup groups[]={
     {"lifecycle",lifecycle_cases,sizeof lifecycle_cases/sizeof lifecycle_cases[0]},

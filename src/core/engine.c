@@ -2256,6 +2256,10 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
   /* Deferring the frame's last operation only pays when something else can perform it. */
   gml_render_set_deferred_presentation(&engine->render,engine_graphics_active(engine));
+  /* Likewise a content program in the middle of a frame runs only where something can run it. */
+  gml_render_set_shader_executor(&engine->render,
+                                 engine_graphics_active(engine)?engine_execute_content_shader:NULL,
+                                 engine);
   engine->frame_flags=0;
   AnygmResult result=engine_run_frame(engine);
   if(result!=ANYGM_OK) return result;
