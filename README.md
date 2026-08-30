@@ -38,6 +38,11 @@ of their respective owners. Their names identify supported formats or
 interfaces and imply no sponsorship. This repository contains no proprietary
 runtime components or user content. Use only content you are authorized to use.
 
+The core independently implements supported content formats.
+[Generated-data provenance](docs/PROVENANCE.md) records
+the known sources and verification limits of non-obvious interoperability
+constants and generated data used here.
+
 ## Build
 
 A release build on a Unix-like host is:
