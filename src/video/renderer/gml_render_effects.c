@@ -236,20 +236,20 @@ static void layer_composite_premultiplied(GmlRender *r,const uint32_t *src,int w
   }
   r->fb_opaque_known=0; r->fb_all_transparent=0;
 }
-static void layer_composite_max(GmlRender *r,const uint32_t *src,int w,int h,double tint){
-  if(!r || !r->fb || !src || w!=r->fbw || h!=r->fbh) return;
-  float t=(float)tint; if(t<0)t=0; if(t>1)t=1;
-  size_t count=(size_t)w*h;
+/* Additive merge: the halo's premultiplied colour, scaled, is added to the scene and clipped. */
+static void layer_composite_add(GmlRender *r,const uint32_t *src,int w,int h,double scale){
+  if(!r || !r->fb || !src || w!=r->fbw || h!=r->fbh || scale<=0.0) return;
+  float t=(float)scale; size_t count=(size_t)w*h;
   for(size_t i=0;i<count;i++){
     uint32_t s=src[i],d=r->fb[i];
-    unsigned sr=(unsigned)floorf(((s>>16)&255)*t+0.5f),sg=(unsigned)floorf(((s>>8)&255)*t+0.5f);
-    unsigned sb=(unsigned)floorf((s&255)*t+0.5f),sa=s>>24;
-    unsigned dr=(d>>16)&255,dg=(d>>8)&255,db=d&255,da=d>>24;
-    if(sr<dr) sr=dr;
-    if(sg<dg) sg=dg;
-    if(sb<db) sb=db;
-    if(sa<da) sa=da;
-    r->fb[i]=(sa<<24)|(sr<<16)|(sg<<8)|sb;
+    unsigned rr=((d>>16)&255)+(unsigned)floorf(((s>>16)&255)*t+0.5f);
+    unsigned gg=((d>>8)&255)+(unsigned)floorf(((s>>8)&255)*t+0.5f);
+    unsigned bb=(d&255)+(unsigned)floorf((s&255)*t+0.5f);
+    unsigned aa=(d>>24); unsigned sa=(unsigned)floorf((s>>24)*t+0.5f); if(sa>aa) aa=sa;
+    if(rr>255) rr=255;
+    if(gg>255) gg=255;
+    if(bb>255) bb=255;
+    r->fb[i]=(aa<<24)|(rr<<16)|(gg<<8)|bb;
   }
   r->fb_opaque_known=0; r->fb_all_transparent=0;
 }
@@ -440,6 +440,7 @@ static void layer_filter_boxes(GmlRender *r,const uint32_t *src,uint32_t *dst,in
 
 /* A separable box blur of the given radius over premultiplied pixels, three passes, which is a
  * close approximation of a Gaussian. `scratch` holds one full-size plane between the passes. */
+/* One axis of a box blur over premultiplied pixels, as a running window. */
 static void layer_box_blur_axis(const uint32_t *src,uint32_t *dst,int w,int h,int radius,int vertical){
   int length=vertical?h:w,lines=vertical?w:h;
   size_t step=vertical?(size_t)w:1u,line_step=vertical?1u:(size_t)w;
@@ -471,6 +472,22 @@ static void layer_blur(const uint32_t *src,uint32_t *dst,uint32_t *scratch,int w
     layer_box_blur_axis(scratch,dst,w,h,r,1);
     from=dst;
   }
+}
+/* A one-pass blur whose destination doubles as its scratch: the horizontal pass lands in dst and
+ * the vertical pass reads dst line by line into a row buffer, so no third plane is needed. */
+static void layer_blur_in_place(const uint32_t *src,uint32_t *dst,int w,int h,float radius){
+  int r=(int)floorf(fabsf(radius)+0.5f);
+  if(r<=0){ if(dst!=src) memcpy(dst,src,(size_t)w*h*sizeof(uint32_t)); return; }
+  layer_box_blur_axis(src,dst,w,h,r,0);
+  uint32_t *column=malloc((size_t)h*sizeof(uint32_t)*2u);
+  if(!column) return;
+  uint32_t *blurred=column+h;
+  for(int x=0;x<w;x++){
+    for(int y=0;y<h;y++) column[y]=dst[(size_t)y*w+x];
+    layer_box_blur_axis(column,blurred,1,h,r,1);
+    for(int y=0;y<h;y++) dst[(size_t)y*w+x]=blurred[y];
+  }
+  free(column);
 }
 static void layer_filter_large_blur(const uint32_t *src,uint32_t *dst,uint32_t *scratch,int w,int h,
                                     const GmlLayerFilter *f){
@@ -555,16 +572,6 @@ static void layer_filter_underwater(GmlRender *r,const uint32_t *src,uint32_t *d
   gml_run_row_bands_n(r,h,h>=32?4:1,layer_filter_underwater_band,&ctx);
 }
 
-/* Glow: the capture, raised to the gamma so only its bright parts survive, blurred by the radius
- * as many times as the quality asks, scaled by the intensity, and merged by the brighter channel. */
-static void layer_glow_prepare(const uint32_t *src,uint32_t *dst,size_t count,float gamma){
-  float exponent=gamma>1e-3f?gamma:1e-3f;
-  for(size_t i=0;i<count;i++){
-    float c[4]; layer_unpack(src[i],c);
-    for(int k=0;k<3;k++) c[k]=powf(layer_clamp01(c[k]),exponent);
-    dst[i]=layer_pack(c);
-  }
-}
 
 void gml_render_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,double time_seconds){
   if(!r || !filter || !r->layer_filter_active) return;
@@ -578,11 +585,40 @@ void gml_render_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,doubl
   layer_filter_restore_target(r); r->layer_filter_active=0;
   if(source_empty || !r->fb || r->fbw!=w || r->fbh!=h) return;
   if(filter->kind==GML_LAYER_FILTER_GLOW){
+    /* The halo is built from the inside out: one blur per quality step, each reaching further
+     * toward the radius than the last, added to the scene as it goes, each step carrying its share of the intensity. A blur averages
+     * a small source away, so each step is lifted by a gain that keeps a source a few pixels wide
+     * at full brightness at its centre while its skirt fades with distance; the gamma raises the
+     * result so the skirt falls off harder or softer. */
     layer_composite_normal(r,src,w,h,filter->u.glow.alpha);
     int quality=(int)floor(filter->u.glow.quality+0.5); if(quality<1)quality=1;if(quality>16)quality=16;
-    layer_glow_prepare(src,work,count,(float)filter->u.glow.gamma);
-    layer_blur(work,work,aux,w,h,(float)filter->u.glow.radius,quality);
-    layer_composite_max(r,work,w,h,filter->u.glow.intensity);
+    float radius=fabsf((float)filter->u.glow.radius);
+    float gamma=(float)filter->u.glow.gamma; if(gamma<0.1f) gamma=0.1f;
+    if(render_setting(r,"GML_LOG_LAYER_EFFECT") && r->frame<4)
+      anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
+        "[layer-filter] glow radius=%.3f quality=%d intensity=%.3f gamma=%.3f alpha=%.3f\n",
+        radius,quality,filter->u.glow.intensity,gamma,filter->u.glow.alpha);
+    for(int step=1;step<=quality;step++){
+      float reach=radius*(float)step/(float)quality*0.5f;
+      int rounded=(int)floorf(reach+0.5f); if(rounded<1) rounded=1;
+      layer_blur_in_place(src,work,w,h,(float)rounded);
+      layer_blur_in_place(work,aux,w,h,(float)rounded);
+      /* The gain restores part of what the blur averaged away - the square root of the ratio
+       * between the source's peak and the blurred peak - so a narrow reach keeps the core bright
+       * and a wide reach leaves a dimmer skirt, which is the falloff of a halo. */
+      float source_peak=0.0f,blurred_peak=0.0f;
+      for(size_t i=0;i<count;i++){
+        float c[4]; layer_unpack(src[i],c); source_peak=fmaxf(source_peak,fmaxf(c[0],fmaxf(c[1],c[2])));
+        layer_unpack(aux[i],c); blurred_peak=fmaxf(blurred_peak,fmaxf(c[0],fmaxf(c[1],c[2])));
+      }
+      float gain=blurred_peak>1e-6f?sqrtf(source_peak/blurred_peak):1.0f; if(gain<1.0f) gain=1.0f;
+      for(size_t i=0;i<count;i++){
+        float c[4]; layer_unpack(aux[i],c);
+        for(int k=0;k<4;k++) c[k]=powf(layer_clamp01(c[k]*gain),gamma);
+        aux[i]=layer_pack(c);
+      }
+      layer_composite_add(r,aux,w,h,filter->u.glow.intensity/sqrt((double)quality));
+    }
     return;
   }
   switch(filter->kind){

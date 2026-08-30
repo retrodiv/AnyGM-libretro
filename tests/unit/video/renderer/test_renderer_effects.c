@@ -1804,7 +1804,7 @@ int main(void) {
   } cases[] = {
     {"tint-filter", GML_LAYER_FILTER_TINT, UINT64_C(0x46f70534d7271242)},
     {"clouds", GML_LAYER_FILTER_CLOUDS, UINT64_C(0x8e8b64012db83268)},
-    {"glow", GML_LAYER_FILTER_GLOW, UINT64_C(0x3d51227c4fa2fd4a)},
+    {"glow", GML_LAYER_FILTER_GLOW, UINT64_C(0xcdaa693236c61fbc)},
     {"underwater", GML_LAYER_FILTER_UNDERWATER, UINT64_C(0xc65107bfe6b0a477)},
     {"zoom-blur", GML_LAYER_FILTER_ZOOM_BLUR, UINT64_C(0x66e8d17975acc77b)},
     {"large-blur", GML_LAYER_FILTER_LARGE_BLUR, UINT64_C(0xf4b59ad494e8ba6b)},

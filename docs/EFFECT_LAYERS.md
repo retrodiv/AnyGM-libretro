@@ -58,10 +58,13 @@ coverage, limited to where the capture has pixels.
 `g_GlowRadius`: blur radius in pixels; `g_GlowQuality`: 1..16 blur passes; `g_GlowIntensity`:
 0..; `g_GlowGamma`: brightness curve; `g_GlowAlpha`: 0..1 alpha of the layer itself.
 
-The layer is composited normally with its alpha. Then the capture, with each channel raised to the
-gamma so that only the bright parts survive, is blurred by the radius as many times as the
-quality asks, scaled by the intensity and merged into the scene by taking the brighter of the two
-per channel.
+The layer is composited normally with its alpha. Then a halo is built from the inside out: one
+blur per quality step, each reaching further toward the radius than the last. A blur averages a
+small source away, so each step is lifted by the square root of the ratio between the source's
+peak and the blurred peak: a narrow reach keeps the core bright and a wide reach leaves a dimmer
+skirt, which is the falloff of a halo, and the gamma raises the result so the skirt falls off
+harder or softer. Each step carries its share of the intensity and is added
+to the scene, clipped at white.
 
 ## Underwater (`_filter_underwater`)
 
