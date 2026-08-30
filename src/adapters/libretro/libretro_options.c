@@ -87,12 +87,12 @@ static struct retro_core_option_v2_definition g_definitions[]={
    "Auto"},
 #if ANYGM_HARDWARE_RENDER
   {"anygm_hybrid_gpu","Hybrid GPU rendering (Experimental)",NULL,
-   "Chooses the graphics API eligible final passes are drawn with instead of on the processor. "
-   "None keeps every pass on the processor. Passes this program cannot reproduce exactly on a "
-   "graphics device keep using the software renderer whatever is chosen here, so the picture is "
-   "unchanged either way. Needs a frontend running a video driver of the chosen family; without "
-   "one the software renderer is used. Frontend shaders keep working. Changing this takes effect "
-   "after closing and reopening the content.",
+   "Chooses the graphics API eligible final passes are drawn with instead of on the processor, "
+   "and the one the content's own shaders run on. None keeps every pass on the processor and "
+   "draws such shaders plain. Passes this program cannot reproduce exactly on a graphics device "
+   "keep using the software renderer whatever is chosen here. Needs a frontend running a video "
+   "driver of the chosen family; without one the software renderer is used. Frontend shaders "
+   "keep working. Changing this takes effect after closing and reopening the content.",
    NULL,"video",
    {{"None",NULL},{"OpenGL","OpenGL / OpenGL ES"},{NULL,NULL}},
    "None"},
