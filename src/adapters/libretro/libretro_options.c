@@ -106,13 +106,15 @@ static struct retro_core_option_v2_definition g_definitions[]={
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},
   {"anygm_content_shader_readback","Content shaders inside a frame",NULL,
-   "Controls execution of content shaders on the graphics device for draws before the frame's "
-   "last operation. Such a draw executes off-screen and is read back, which can stall the "
-   "device. Budgeted samples early frames and falls back to an unshaded draw when the "
-   "frame-time budget is exceeded. Always keeps this path enabled regardless of measured "
-   "cost. The Never setting disables intermediate shader execution and leaves the draws "
-   "unshaded. The frame's final operation is unaffected. Requires Hybrid GPU rendering set to a "
-   "graphics API.",
+   "Controls content shaders on the graphics device for draws before the "
+   "frame's last operation. Such a draw executes off-screen and is read back, and reading back "
+   "stalls the device, and the waiting is most of what it costs. Budgeted does not wait: a draw "
+   "takes the answer the previous draw of the same shader left, which is one frame old and "
+   "several times cheaper, and a draw is given up only if even that costs more than a frame can "
+   "afford. Always asks for the exact answer and waits for it. Never draws them unshaded, as "
+   "a build with no device does. The frame's "
+   "last operation is unaffected and always runs on the device. Needs hybrid GPU rendering set to "
+   "a graphics API.",
    NULL,"shaders",
    {{"Budgeted",NULL},{"Always",NULL},{"Never",NULL},{NULL,NULL}},
    "Budgeted"},

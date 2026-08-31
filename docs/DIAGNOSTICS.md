@@ -168,9 +168,9 @@ those passes cost the frames that paid for them, and `readback_refused` is 1 whe
 over the per-frame budget, after which such draws proceed plain for the session; the refusal is
 also logged once, with the measured cost, as a warning. The budget is per frame rather than per
 pass because what a frame can afford is a frame's time: three passes of 2.5 milliseconds fit and
-six do not. `readback_pipelined` is 1 once the measured policy stopped waiting for the device and began taking
-the previous pass's answer instead — correct, one frame late, and it is tried before a draw is
-given up. The `anygm_content_shader_readback` option selects the policy — measured, always
+six do not. `readback_pipelined` is 1 while the measured policy is taking the previous pass's answer rather
+than waiting for the device — correct, one frame late, and what the measured policy does from its
+first pass, because waiting is most of what a read-back costs and none of what it produces. The `anygm_content_shader_readback` option selects the policy — measured, always
 (exact, waits), or never. The terminal presentation is not affected by any of it.
 
 `accepted` counts passes the device executed and `replayed` counts passes the software executor had
