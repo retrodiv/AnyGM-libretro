@@ -5824,6 +5824,16 @@ static void draw_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, doubl
   if(sprite<0||sprite>=r->n_spr) return;
   if(alpha<=0) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
+  /* A sprite drawn through a program this renderer does not execute goes to the same executor as
+   * a surface, evaluated at the destination's size. Unrotated, unflipped draws only: the composed
+   * plane is axis-aligned, and a rotated or mirrored draw keeps today's plain path. */
+  if(rot==0.0 && xs>0 && ys>0 && r->active_shader>=0 && r->shader_executor &&
+     gml_render_shader_content_candidate(r,r->active_shader)){
+    int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
+    if(gml_render_shade_target_sprite(r,sprite,sub,
+                                      x-s->originx*xs,y-s->originy*ys,
+                                      s->w*xs,s->h*ys,blend,alpha)) return;
+  }
   int sprof=sprof_enabled();
   double sprof_t0=sprof?rprof_now():0.0;
   if(s->runtime_rgba){
