@@ -29,6 +29,9 @@ static inline float gml_vm_read_f32_le(const uint8_t *data, uint32_t offset){
 double gml_vm_classic_round_even(double value);
 double gml_vm_value_as_number(GmlVal value);
 int gml_vm_value_is_true(GmlVal value);
+/* The value a CONV opcode should leave on the stack. Only a conversion to bool changes the value:
+   GML's bool is 0 or 1, and the ops that consume one read the number, not the type tag. */
+GmlVal gml_vm_conv_value(GmlVal value, unsigned char to_type);
 void gml_vm_motion_from_components(GmlVM *vm, GmlInstance *instance);
 void gml_vm_motion_from_speed_direction(GmlVM *vm, GmlInstance *instance);
 int gml_vm_instance_builtin_set(GmlVM *vm, GmlInstance *instance,

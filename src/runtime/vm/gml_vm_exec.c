@@ -2751,6 +2751,14 @@ static int vm_stack_type_bias(uint8_t type){
   return 0;
 }
 
+/* The value a CONV opcode should leave on the stack. Only a conversion to bool changes
+   the value: branch opcodes test truthiness, but arithmetic and bitwise opcodes read the
+   numeric result. */
+GmlVal gml_vm_conv_value(GmlVal value, unsigned char to_type){
+  if(to_type!=DT_BOOL || value.t==V_UNDEF) return value;
+  return vreal(astrue(value)?1:0);
+}
+
 static uint8_t vm_math_result_type(uint8_t left, uint8_t right){
   int lb=vm_stack_type_bias(left), rb=vm_stack_type_bias(right);
   if(lb!=rb) return lb>rb?left:right;
@@ -3288,7 +3296,7 @@ static GmlVal vm_run_code_impl(GmlVM *vm, int ci, GmlInstance *self, GmlInstance
         }
         break; }
       case OP_CONV: /* values are dynamically typed; retain the encoded stack width. */
-        if(sp>0) stkt[sp-1]=in.type2;
+        if(sp>0){ stk[sp-1]=gml_vm_conv_value(stk[sp-1],in.type2); stkt[sp-1]=in.type2; }
         break;
       case OP_NEG: if(sp>0){ stk[sp-1]=(stk[sp-1].t==V_UNDEF)?vundef():vreal(-asnum(stk[sp-1])); stkt[sp-1]=in.type1; } break;
       case OP_NOT: if(sp>0){ stk[sp-1]=vreal(!astrue(stk[sp-1])); stkt[sp-1]=in.type1==DT_BOOL?DT_BOOL:in.type1; } break;
