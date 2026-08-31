@@ -929,6 +929,10 @@ int gml_render_shader_is_compiled(const GmlRender *r,int shader){
    * primitive is painted flat in a colour the shader was going to discard, which is why the
    * refusal stands whenever there is no device. */
   if(r->shader_pal[shader].procedural) return r->shader_device_expected?1:0;
+  /* With a graphics API selected, content programs with both sources can execute on
+   * the device. Use expected-device state because queries may precede context adoption. */
+  if(r->shader_device_expected &&
+     r->shader_pal[shader].source_vertex_es && r->shader_pal[shader].source_fragment_es) return 1;
   return r->shader_report_all_compiled?1:0;
 }
 

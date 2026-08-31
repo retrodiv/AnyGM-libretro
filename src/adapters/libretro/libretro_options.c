@@ -120,9 +120,10 @@ static struct retro_core_option_v2_definition g_definitions[]={
    "Budgeted"},
   {"anygm_report_shaders_compiled","Report content shaders as compiled",NULL,
    "How shader_is_compiled() answers for content shaders that sample a picture. "
-   "On reports declared shaders as compiled even when an effect cannot execute "
-   "in software; Off reports only recognized software families, allowing authored "
-   "fallback paths. An unrecognized fragment that samples no texture reports "
+   "On reports declared shaders as compiled even when an effect cannot execute. "
+   "Off reports only effects this renderer can execute, including content programs "
+   "when a graphics API is selected, while allowing authored fallback paths otherwise. "
+   "With no graphics API, an unrecognized fragment that samples no texture reports "
    "uncompiled regardless of this option, since leaving its draw unshaded paints "
    "unrelated pixels.",
    NULL,"shaders",

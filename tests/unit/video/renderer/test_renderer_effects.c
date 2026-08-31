@@ -729,6 +729,19 @@ static void check_shader_recognition(void) {
              !strcmp(samplers[0].name, "samp_overlay") && samplers[0].sprite == 3 &&
              samplers[0].frame == 1 && samplers[0].surface == -1,
              "the bound sampler was not reported as the sprite frame it names");
+      /* The strict answer follows what the renderer can execute, and a device widens that. Told
+       * there will be one, a lent program qualifies for the strict yes; told there will not, it
+       * falls back to the host's policy exactly as before. */
+      render.shader_device_expected = 1;
+      render.shader_report_all_compiled = 0;
+      expect(gml_render_shader_is_compiled(&render, 24) &&
+             gml_render_shader_is_compiled(&render, 5),
+             "the strict answer refused a program the device would have executed");
+      render.shader_device_expected = 0;
+      expect(!gml_render_shader_is_compiled(&render, 24) &&
+             !gml_render_shader_is_compiled(&render, 5),
+             "a program was called executable with no device to execute it");
+      render.shader_report_all_compiled = 1;
       gml_render_shader_mark_failed(&render, 24);
       expect(!gml_render_shader_content_candidate(&render, 24) &&
              !gml_render_shader_is_compiled(&render, 24),
