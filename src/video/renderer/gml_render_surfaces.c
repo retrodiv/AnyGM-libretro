@@ -1475,6 +1475,8 @@ static int shade_source_to_target(GmlRender *r,const uint32_t *source,int sw,int
   request.dest_x=(int)lround(dx-r->cam_x);
   request.dest_y=(int)lround(dy-r->cam_y);
   request.linear=r->interp?1:0;
+  if(r->shade_vertex_colour_valid)
+    memcpy(request.vertex_colour,r->shade_vertex_colour,sizeof request.vertex_colour);
   request.output=r->shaded_plane;
   if(!r->shader_executor(r->shader_executor_context,&request)) return 0;
   r->shaded_plane_borrowed=NULL;
@@ -1715,6 +1717,74 @@ int gml_render_compose_shaded_plane(GmlRender *r,const uint32_t *plane,int w,int
 int gml_render_sprite_frame_rect(GmlRender *r,int sprite,int frame,int *atlas,int *sx,int *sy,
                                  int *w,int *h){
   return gml_render_sprite_frame_rect_full(r,sprite,frame,atlas,sx,sy,w,h,NULL,NULL);
+}
+
+int gml_render_shaded_run_wanted(GmlRender *r){
+  if(!r || r->run_plane_active) return 0;
+  if(r->active_shader<0 || !r->shader_executor) return 0;
+  if(!gml_render_shader_content_candidate(r,r->active_shader)) return 0;
+  if(!r->shader_pal || !r->shader_pal[r->active_shader].position_dependent) return 0;
+  return r->fb && r->fbw>0 && r->fbh>0;
+}
+
+int gml_render_shaded_run_begin(GmlRender *r,uint32_t **saved_fb,int *saved_shader){
+  size_t count;
+  if(!gml_render_shaded_run_wanted(r)) return 0;
+  count=(size_t)r->fbw*(size_t)r->fbh;
+  if(count>r->run_plane_capacity){
+    uint32_t *grown=(uint32_t*)realloc(r->run_plane,count*sizeof *grown);
+    if(!grown) return 0;
+    r->run_plane=grown;
+    r->run_plane_capacity=count;
+  }
+  memset(r->run_plane,0,count*sizeof *r->run_plane);
+  gml_render_maybe_prepare_draw(r);
+  *saved_fb=r->fb;
+  *saved_shader=r->active_shader;
+  r->fb=r->run_plane;
+  r->active_shader=-1;      /* the gathering is plain; the program runs once over the result */
+  r->run_plane_active=1;
+  return 1;
+}
+
+void gml_render_shaded_run_end(GmlRender *r,uint32_t *saved_fb,int saved_shader,
+                               int x0,int y0,int x1,int y1,uint32_t blend,double alpha){
+  /* Gathering omits colour; the program applies vertex colour after evaluating the
+   * sampled image, which matters when its result saturates. */
+  uint32_t xrgb=gml_render_backend_color_to_xrgb(blend);
+  float colour[4]={((xrgb>>16)&0xFFu)/255.0f,((xrgb>>8)&0xFFu)/255.0f,(xrgb&0xFFu)/255.0f,
+                   (float)(alpha>1.0?1.0:(alpha<0.0?0.0:alpha))};
+  const uint32_t *plane=r->run_plane;
+  int w,h;
+  r->fb=saved_fb;
+  r->active_shader=saved_shader;
+  r->run_plane_active=0;
+  if(x0<0) x0=0;
+  if(y0<0) y0=0;
+  if(x1>r->fbw) x1=r->fbw;
+  if(y1>r->fbh) y1=r->fbh;
+  w=x1-x0; h=y1-y0;
+  if(w<=0 || h<=0) return;
+  /* One pass over what the run put down, at the place it put it, so a fragment reading its own
+   * position gets the answer it would get drawing each piece there. */
+  r->shade_vertex_colour_valid=1;
+  memcpy(r->shade_vertex_colour,colour,sizeof colour);
+  if(!shade_source_to_target(r,plane,r->fbw,r->fbh,x0,y0,w,h,0xFFFFFFFEu,
+                             (double)x0+r->cam_x,(double)y0+r->cam_y,(double)w,(double)h,
+                             0xFFFFFFu,1.0)){
+    r->shade_vertex_colour_valid=0;
+    /* The device could not: put the gathered picture down unshaded rather than lose it. */
+    int saved=r->active_shader;
+    r->active_shader=-1;
+    r->shaded_plane_borrowed=plane;
+    r->shaded_plane_width=r->fbw;
+    r->shaded_plane_height=r->fbh;
+    draw_surface_region(r,GML_RENDER_SHADED_SURFACE,x0,y0,w,h,
+                        (double)x0+r->cam_x,(double)y0+r->cam_y,(double)w,(double)h,blend,alpha);
+    r->shaded_plane_borrowed=NULL;
+    r->active_shader=saved;
+  }
+  r->shade_vertex_colour_valid=0;
 }
 
 /* Draw one atlas rectangle through the content's program at a destination. A program whose answer

@@ -56,6 +56,8 @@ unsigned anygm_test_graphics_read_pixels(void);
 unsigned anygm_test_graphics_async_read_pixels(void);
 /* The texture coordinate of one corner of the last quad drawn through a content program. */
 int anygm_test_graphics_quad_texcoord(int corner,float *u,float *v);
+/* The vertex colour of one corner of the last quad drawn through a content program. */
+int anygm_test_graphics_quad_colour(int corner,float *rgba);
 unsigned anygm_test_graphics_attached_texture(void);
 int anygm_test_graphics_clear_calls(void);
 unsigned anygm_test_graphics_framebuffer_queries(void);

@@ -509,8 +509,13 @@ follows the software renderer until a context is available.
 One class of program cannot be kept: a fragment that reads gl_FragCoord derives its answer from
 where the pixel lands on the render target, so the answer is not a property of the picture it
 samples. Such a program is evaluated where it is drawn — the device draws into a target the size
-of the render target, at the draw's own offset inside it, and reads back only that rectangle — which
-costs a round trip per draw and is the only way it can be right. Complete sprite and surface kernels share the
+of the render target, at the draw's own offset inside it, and reads back only that rectangle. That
+is a round trip per draw, which a run of small draws cannot afford: a line of text is drawn onto a
+target-sized plane without colour first and the program run once over the rectangle the line
+covered, which is the same picture for one pass instead of one per glyph. The colour the drawing
+carried reaches the program as the quad's own colour rather than being applied to the picture
+beforehand, because a program multiplies its answer by it and the order shows wherever the program
+saturates. Complete sprite and surface kernels share the
 canonical header-local recognized-shader sampling operations in
 `gml_render_sampling_internal.h`; the general surface mapper and post-process
 kernels additionally share the two final-pixel operations in

@@ -710,6 +710,44 @@ static int content_program_pipelined_readback_case(void){
   return 1;
 }
 
+/* The drawing colour reaches the program as quad vertex colour; applying it after
+ * program evaluation matters when the result saturates. */
+static int content_program_vertex_colour_case(void){
+  uint32_t frame[8*6],mask[4*4];
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  GmlRenderPlan plan;
+  float rgba[4];
+  anygm_test_graphics_reset();
+  memset(frame,0,sizeof frame);
+  memset(mask,0,sizeof mask);
+  gpu=gml_gpu_create();
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
+  REQUIRE(build_content_plan(&plan,frame,mask),"content plan built");
+  REQUIRE(anygm_test_graphics_quad_colour(0,rgba)==0 || 1,"fixture ready");
+  plan.shader.vertex_colour[0]=0.25f;
+  plan.shader.vertex_colour[1]=0.50f;
+  plan.shader.vertex_colour[2]=0.75f;
+  plan.shader.vertex_colour[3]=0.5f;
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan),"the program presents the frame");
+  for(int corner=0;corner<4;corner++){
+    REQUIRE(anygm_test_graphics_quad_colour(corner,rgba),"the quad was handed to the driver");
+    REQUIRE(rgba[0]>0.24f && rgba[0]<0.26f && rgba[1]>0.49f && rgba[1]<0.51f &&
+            rgba[2]>0.74f && rgba[2]<0.76f && rgba[3]>0.49f && rgba[3]<0.51f,
+            "every corner carries the drawing's colour");
+  }
+  /* A caller with nothing to say leaves the quad white, so a program that multiplies by it is
+   * unchanged. */
+  REQUIRE(build_content_plan(&plan,frame,mask),"content plan rebuilt");
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan),"the program presents again");
+  REQUIRE(anygm_test_graphics_quad_colour(0,rgba),"the quad was handed over");
+  REQUIRE(rgba[0]>0.99f && rgba[1]>0.99f && rgba[2]>0.99f && rgba[3]>0.99f,
+          "an unstated colour is white");
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   for(int index=1;index<argc;++index){
@@ -738,6 +776,7 @@ int main(int argc,char **argv){
     {"content_program_readback",content_program_readback_case},
     {"content_program_source_region",content_program_source_region_case},
     {"content_program_pipelined_readback",content_program_pipelined_readback_case},
+    {"content_program_vertex_colour",content_program_vertex_colour_case},
   };
   const AnygmTestGroup groups[]={
     {"lifecycle",lifecycle_cases,sizeof lifecycle_cases/sizeof lifecycle_cases[0]},

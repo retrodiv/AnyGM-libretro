@@ -145,7 +145,7 @@ CORE_TARGET := $(CORE_BASENAME).$(CORE_EXTENSION)
 endif
 
 TEST_DIR := $(BUILD_DIR)/tests
-RUNTIME_TESTS := test_vm_unset_reads test_rng test_code_coverage test_persistent_room test_d3_state test_ds_grid \
+RUNTIME_TESTS := test_vm_conv_bool test_vm_unset_reads test_rng test_code_coverage test_persistent_room test_d3_state test_ds_grid \
 	test_builtin_dispatch test_builtin_state test_vm_hotpath test_builtin_args test_vm_gc test_builtin_string_format test_builtin_string_search test_builtin_value_math test_builtin_filename_parts test_builtin_map_arrays test_builtin_struct_exists test_builtin_clipboard test_builtin_instance_names test_builtin_grid_roundtrip test_builtin_gpu_zstate test_builtin_tilemap_tileset test_stacktop_scope test_value_compare
 VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_postprocess test_renderer_surfaces \
 	test_renderer_tiles test_renderer_primitives test_renderer_assets \
@@ -713,5 +713,9 @@ clean:
 -include $(RUNTIME_OBJECTS:.o=.d) $(LIBRETRO_OBJECTS:.o=.d) $(TEST_HOST_OBJECTS:.o=.d)
 
 $(TEST_DIR)/test_vm_unset_reads: tests/unit/runtime/test_vm_unset_reads.c $(UNIT_RUNTIME_OBJECTS)
+	mkdir -p $(dir $@)
+	$(call link_runtime_test,$(CPPFLAGS))
+
+$(TEST_DIR)/test_vm_conv_bool: tests/unit/runtime/test_vm_conv_bool.c $(UNIT_RUNTIME_OBJECTS)
 	mkdir -p $(dir $@)
 	$(call link_runtime_test,$(CPPFLAGS))

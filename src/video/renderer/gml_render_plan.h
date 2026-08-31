@@ -152,6 +152,10 @@ typedef struct GmlPlanShader {
   uint32_t uniform_count;
   GmlPlanUniform uniforms[GML_PLAN_MAX_UNIFORMS];
   uint32_t sampler_count;
+  /* The colour the drawing carried, as the quad's vertex colour: a program multiplies its answer
+   * by it after program evaluation rather than before. RGBA in
+   * 0..1; all ones when the caller has nothing to say. */
+  float vertex_colour[4];
   GmlPlanSampler samplers[GML_PLAN_MAX_SAMPLERS];
 } GmlPlanShader;
 

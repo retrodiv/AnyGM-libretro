@@ -873,7 +873,8 @@ static int execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,const 
     for(int v=0;v<4;v++){
       float *row=vertices+v*9;
       row[0]=corners[v][0]; row[1]=corners[v][1]; row[2]=0.0f;
-      row[3]=1.0f; row[4]=1.0f; row[5]=1.0f; row[6]=1.0f;
+      row[3]=shader->vertex_colour[0]; row[4]=shader->vertex_colour[1];
+      row[5]=shader->vertex_colour[2]; row[6]=shader->vertex_colour[3];
       row[7]=u0+(u1-u0)*(corners[v][0]/w);
       row[8]=v0+(v1-v0)*(corners[v][1]/h);
     }

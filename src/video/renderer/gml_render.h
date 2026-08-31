@@ -441,6 +441,8 @@ typedef struct {
    * into a target of this size at this offset and reads back only the rectangle. */
   int target_width,target_height,dest_x,dest_y;
   int linear;
+  /* The colour the drawing carried, for the program to multiply by. All ones for none. */
+  float vertex_colour[4];
   uint32_t *output;
 } GmlRenderShaderRequest;
 typedef int (*GmlRenderShaderExecutor)(void *context,const GmlRenderShaderRequest *request);

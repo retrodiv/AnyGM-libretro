@@ -516,6 +516,13 @@ typedef struct GmlRender {
   const uint32_t *shaded_plane_borrowed;
   /* The shaded plane in the byte order a decoded page uses, for the blits that read one. */
   uint8_t *shaded_bytes; size_t shaded_bytes_capacity;
+  /* A target-sized plane a run of draws is put on plain, so one program pass covers all of them
+   * instead of one per draw. Only for a program whose answer moves with the draw, which cannot be
+   * kept for a rectangle and would otherwise pay a device round trip per glyph. */
+  uint32_t *run_plane; size_t run_plane_capacity;
+  /* The colour a gathered run hands the program, rather than having baked it in. */
+  float shade_vertex_colour[4]; int shade_vertex_colour_valid;
+  int run_plane_active;
   /* Shaded sprite frames. A program applied to a sprite transforms its texels, so its answer
    * depends on the frame, the program and the values set on it — not on where the frame is drawn.
    * Evaluating it once per frame and reusing it turns a per-draw device round trip into one per
@@ -657,6 +664,14 @@ int gml_render_compose_shaded_rotated(GmlRender *r,GmlSprite *owner,const uint32
                                       int w,int h,double x,double y,double xs,double ys,
                                       double rot,int origin_x,int origin_y,
                                       uint32_t blend,double alpha);
+/* Whether a run of draws should be gathered onto one plane and shaded in one pass: a program that
+ * reads its place on the target, which cannot be kept, and is not already being gathered. */
+int gml_render_shaded_run_wanted(GmlRender *r);
+/* Begin gathering. Returns 0 when it cannot, and the caller draws as it would have. */
+int gml_render_shaded_run_begin(GmlRender *r,uint32_t **saved_fb,int *saved_shader);
+/* Shade what was gathered, over the given target rectangle, and compose it. */
+void gml_render_shaded_run_end(GmlRender *r,uint32_t *saved_fb,int saved_shader,
+                               int x0,int y0,int x1,int y1,uint32_t blend,double alpha);
 int gml_render_shade_atlas_rect_at(GmlRender *r,int atlas,int sx,int sy,int w,int h,
                                    double dx,double dy,double dw,double dh,
                                    uint32_t blend,double alpha);

@@ -114,7 +114,8 @@ void engine_graphics_report(AnygmEngine *engine){
  * unshaded blit. */
 static int engine_plan_content_program_part(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t image,
                                             GmlPlanRect destination,GmlPlanRect source_rect,
-                                            int shader_id,uint32_t generation,int linear){
+                                            int shader_id,uint32_t generation,int linear,
+                                            const float colour[4]){
   GmlPlanShader shader;
   GmlRenderShaderSources sources;
   GmlRenderShaderUniform uniforms[GML_PLAN_MAX_UNIFORMS];
@@ -124,6 +125,7 @@ static int engine_plan_content_program_part(AnygmEngine *engine,GmlRenderPlan *p
   memset(&shader,0,sizeof shader);
   shader.identity=(uint32_t)shader_id;
   shader.content_generation=generation;
+  memcpy(shader.vertex_colour,colour,sizeof shader.vertex_colour);
   shader.vertex_es=sources.vertex_es;
   shader.fragment_es=sources.fragment_es;
   shader.vertex_gl=sources.vertex_gl;
@@ -175,9 +177,10 @@ static int engine_plan_content_program_part(AnygmEngine *engine,GmlRenderPlan *p
 static int engine_plan_content_program(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t image,
                                        GmlPlanRect destination,int shader_id,uint32_t generation,
                                        int linear){
+  static const float white[4]={1.0f,1.0f,1.0f,1.0f};
   GmlPlanRect whole={0,0,0,0};
   return engine_plan_content_program_part(engine,plan,image,destination,whole,shader_id,generation,
-                                          linear);
+                                          linear,white);
 }
 
 /* The renderer's request to run a content program in the middle of a frame: the source is
@@ -267,8 +270,11 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
       region.width=(uint32_t)request->region_width;
       region.height=(uint32_t)request->region_height;
     }
+    static const float white[4]={1.0f,1.0f,1.0f,1.0f};
+    const float *colour=(request->vertex_colour[3]>0.0f||request->vertex_colour[0]>0.0f)
+                        ?request->vertex_colour:white;
     if(!engine_plan_content_program_part(engine,&plan,image,whole,region,request->shader,
-                                         request->serial,request->linear)) return 0;
+                                         request->serial,request->linear,colour)) return 0;
   }
   started=anygm_host_monotonic_time_ns(&engine->host);
   if(!gml_gpu_execute_plan(engine->gpu,&plan)){

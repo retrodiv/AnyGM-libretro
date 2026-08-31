@@ -519,6 +519,11 @@ unsigned anygm_test_graphics_float_uniforms(void){ return g_fake.float_uniforms;
 unsigned anygm_test_graphics_matrix_uniforms(void){ return g_fake.matrix_uniforms; }
 unsigned anygm_test_graphics_read_pixels(void){ return g_fake.read_pixels; }
 unsigned anygm_test_graphics_async_read_pixels(void){ return g_fake.async_read_pixels; }
+int anygm_test_graphics_quad_colour(int corner,float *rgba){
+  if(corner<0 || corner>3 || g_fake.buffer_bytes<(size_t)(4*9*sizeof(float))) return 0;
+  for(int i=0;i<4;i++) rgba[i]=g_fake.buffer_data[corner*9+3+i];
+  return 1;
+}
 int anygm_test_graphics_quad_texcoord(int corner,float *u,float *v){
   /* Nine floats a vertex: position, colour, texture coordinate. */
   if(corner<0 || corner>3 || g_fake.buffer_bytes<(size_t)(4*9*sizeof(float))) return 0;

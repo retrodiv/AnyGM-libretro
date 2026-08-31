@@ -837,10 +837,47 @@ static double centred_real_line_offset(int line_width, double xscale){
 /* Draw a string with a real FONT-chunk font: each glyph is an atlas sub-rect drawn top-aligned
  * at the baseline-top (GM bakes the ascent whitespace into the glyph height), advancing by shift.
  * A transformed draw rotates both the pen and each glyph quad around that pen. */
+static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, const char *str,
+                                 double xs, double ys, double alignment_xscale, double rotation,
+                                 double ca, double sa, int use_rot, uint32_t blend, double alpha,
+                                 AnygmTextLayoutFamily family);
+
+/* A run drawn through a program that reads its place on the target would pay a device round trip
+ * per glyph. Gathering the run onto a plane first and running the program once over the rectangle
+ * it covered is the same picture — the program sees the same positions — for one pass. */
 static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const char *str,
                            double xs, double ys, double alignment_xscale, double rotation,
                            double ca, double sa, int use_rot, uint32_t blend, double alpha,
                            AnygmTextLayoutFamily family){
+  uint32_t *saved_fb=NULL;
+  int saved_shader=-1;
+  if(gml_render_shaded_run_wanted(r) && !use_rot &&
+     gml_render_shaded_run_begin(r,&saved_fb,&saved_shader)){
+    /* The rectangle the run can reach: its own extent, grown by a line either way so a glyph that
+     * hangs above or below its cell is inside it, and clipped to the target. */
+    double width=gml_text_width(r,str)*(xs>0?xs:1.0);
+    int lh=f->line_height>0?f->line_height:12;
+    int nlines=1;
+    int x0,y0,x1,y1,margin;
+    for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;}
+      if(text_is_linebreak(q)){ nlines++; q+=text_linebreak_bytes(r,q,family)-1; } }
+    margin=(int)(lh*(ys>0?ys:1.0))+8;
+    x0=(int)floor(x-r->cam_x-width-margin);
+    y0=(int)floor(y-r->cam_y-margin);
+    x1=(int)ceil(x-r->cam_x+width+margin);
+    y1=(int)ceil(y-r->cam_y+nlines*lh*(ys>0?ys:1.0)+margin);
+    /* Gather plain pixels; pass the drawing colour separately as quad vertex colour. */
+    draw_text_real_plain(r,f,x,y,str,xs,ys,alignment_xscale,rotation,ca,sa,use_rot,0xFFFFFFu,1.0,family);
+    gml_render_shaded_run_end(r,saved_fb,saved_shader,x0,y0,x1,y1,blend,alpha);
+    return;
+  }
+  draw_text_real_plain(r,f,x,y,str,xs,ys,alignment_xscale,rotation,ca,sa,use_rot,blend,alpha,family);
+}
+
+static void draw_text_real_plain(GmlRender *r, GmlFont *f, double x, double y, const char *str,
+                                 double xs, double ys, double alignment_xscale, double rotation,
+                                 double ca, double sa, int use_rot, uint32_t blend, double alpha,
+                                 AnygmTextLayoutFamily family){
   int lh=f->line_height>0? f->line_height:12;
   int ah=f->align_height>0?f->align_height:lh;
   int nlines=1; for(const char *q=str;*q;q++){ if(*q=='\\'&&q[1]=='#'){q++;continue;}

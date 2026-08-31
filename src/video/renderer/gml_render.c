@@ -1616,6 +1616,7 @@ void gml_render_free(GmlRender *r){
   free(r->shader_account); r->shader_account=NULL; r->shader_account_shaders=0;
   for(int i=0;i<GML_SHADED_FRAME_CACHE;i++){ free(r->shaded_frame[i].px); r->shaded_frame[i].px=NULL; }
   free(r->shaded_bytes); r->shaded_bytes=NULL; r->shaded_bytes_capacity=0;
+  free(r->run_plane); r->run_plane=NULL; r->run_plane_capacity=0;
   free(r->content_sampler_plane);
   free(r->shaded_plane); r->shaded_plane=NULL; r->shaded_plane_capacity=0; r->content_sampler_plane=NULL; r->content_sampler_plane_capacity=0;
   free(r->layer_filter_src); free(r->layer_filter_work); free(r->layer_filter_aux);
