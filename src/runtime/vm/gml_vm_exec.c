@@ -532,6 +532,41 @@ int gml_vm_variable_name_maybe_special(GmlVM *vm, const char *name,
 static int is_room_global_array(const char *n);
 static const char *classic_room_global_array_alias(GmlVM *vm,const char *name);
 static int background_dimension_get(GmlVM *vm,const char *name,int index,GmlVal *out);
+/* Count a missing variable or non-array index read while preserving the existing
+ * zero-valued fallback. Optional GML_LOG_UNSET output names each scope, variable
+ * and code-entry site once; the counter records every read. */
+static void unset_read(GmlVM *vm,const char *kind,int global,
+                       const GmlInstance *instance,const char *name){
+  if(!vm || !name) return;
+  vm->diagnostics.unset_reads++;
+  if(!vm->diagnostics.unset_reads_logging)
+    vm->diagnostics.unset_reads_logging=
+      anygm_host_development_setting(vm->host,"GML_LOG_UNSET")?2u:1u;
+  if(vm->diagnostics.unset_reads_logging!=2u) return;
+  const char *code_name=(vm->win && vm->cur_code_index>=0 &&
+                         vm->cur_code_index<vm->win->n_code &&
+                         vm->win->code[vm->cur_code_index].name)
+                        ? vm->win->code[vm->cur_code_index].name : "?";
+  const char *object=global?"global":
+    ((instance && instance->obj>=0 && instance->obj<vm->n_objects &&
+      vm->objects[instance->obj].name)?vm->objects[instance->obj].name:"?");
+  uint32_t hash=2166136261u;
+  const char *c;
+  for(c=name;*c;c++){ hash^=(unsigned char)*c; hash*=16777619u; }
+  for(c=object;*c;c++){ hash^=(unsigned char)*c; hash*=16777619u; }
+  for(c=code_name;*c;c++){ hash^=(unsigned char)*c; hash*=16777619u; }
+  int capacity=(int)(sizeof vm->diagnostics.unset_seen/sizeof vm->diagnostics.unset_seen[0]);
+  for(int i=0;i<vm->diagnostics.unset_seen_count;i++) if(vm->diagnostics.unset_seen[i]==hash) return;
+  if(vm->diagnostics.unset_seen_count>=capacity) return;
+  vm->diagnostics.unset_seen[vm->diagnostics.unset_seen_count++]=hash;
+  anygm_host_logf(vm->host,ANYGM_LOG_DEBUG,"[unset] %s %s.%s in %s\n",
+                  kind,object,name,code_name);
+}
+
+unsigned long gml_vm_unset_reads(const GmlVM *vm){
+  return vm?vm->diagnostics.unset_reads:0ul;
+}
+
 static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   GmlVal out;
   if(inst==IT_STATIC){
@@ -544,7 +579,9 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   }
   if(is_dynamic_globalvar(vm,inst,name,nh)){
     GmlVal *slot=gml_varmap_get_hashed(&vm->globals,name,nh);
-    return slot?*slot:vreal(0);
+    if(slot) return *slot;
+    unset_read(vm,"unset",1,NULL,name);
+    return vreal(0);
   }
   if(vm->win && anygm_policy_uses_classic_runtime(vm->win) &&
      background_dimension_get(vm,name,0,&out)) return out;
@@ -566,13 +603,19 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
     return (a->data && a->len>0)?a->data[0]:vreal(0);
   }
   if(!var_name_maybe_special(vm,name,nh)){
-    if(inst==IT_GLOBAL){ GmlVal *p=gml_varmap_get_hashed(&vm->globals,name,nh); return p?*p:vreal(0); }
+    if(inst==IT_GLOBAL){
+      GmlVal *p=gml_varmap_get_hashed(&vm->globals,name,nh);
+      if(p) return *p;
+      unset_read(vm,"unset",1,NULL,name);
+      return vreal(0);
+    }
     GmlInstance *self=var_target(vm,inst);
     if(self){
       GmlVal *p=inst_is_struct_ref(self)?struct_field_get_h(vm,self,name,nh)
                                              :gml_varmap_get_hashed(&self->vars,name,nh);
       if(p) return *p;
     }
+    unset_read(vm,"unset",0,self,name);
     return vreal(0);
   }
   if(!strcmp(name,"undefined")) return vundef();   /* GMS2.3 builtin literal used by optional-arg prologues */
@@ -1086,7 +1129,10 @@ static GmlVal array_get_h(
       return vreal(0); } }
   if(is_dynamic_globalvar(vm,inst_t,nm,nh)){
     GmlVal *slot=gml_varmap_get_hashed(&vm->globals,nm,nh);
-    if(!slot || slot->t!=V_ARR || !slot->arr) return vreal(0);
+    if(!slot || slot->t!=V_ARR || !slot->arr){
+      unset_read(vm,slot?"not-an-array":"unset",1,NULL,nm);
+      return vreal(0);
+    }
     GmlArr *array=slot->arr;
     if(!array->data || array->len<0 || array->cap<array->len ||
        array->cap>GML_ARR_MAX_CAP) return vreal(0);
@@ -1136,7 +1182,10 @@ static GmlVal array_get_inst_field_h(GmlVM *vm, GmlInstance *s, const char *nm, 
   if(!inst_is_struct_ref(s) && inst_builtin_get(vm,s,nm,&out)) return out;
   GmlVal *slot=inst_is_struct_ref(s)?struct_field_get_h(vm,s,nm,nh)
                                          :gml_varmap_get_hashed(&s->vars,nm,nh);
-  if(!slot || slot->t!=V_ARR || !slot->arr) return vreal(0);
+  if(!slot || slot->t!=V_ARR || !slot->arr){
+    unset_read(vm,slot?"not-an-array":"unset",0,s,nm);
+    return vreal(0);
+  }
   GmlArr *A=slot->arr;
   if(!A || !A->data || A->len<0 || A->cap<A->len || A->cap>GML_ARR_MAX_CAP) return vreal(0);
   { GmlVal nested; if(gml_arr_nested_get_flat(*slot,idx,&nested)) return nested; }

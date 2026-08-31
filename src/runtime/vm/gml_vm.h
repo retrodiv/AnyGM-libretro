@@ -224,6 +224,12 @@ typedef struct {
   int state_variable_load_debug;
   size_t state_profile_last_total;
   int state_time_log_count;
+  /* Count unset variables and non-array indexing without changing the existing
+   * zero-valued fallback. Optional logging names each site once. */
+  unsigned long unset_reads;
+  unsigned char unset_reads_logging;  /* 0 not resolved yet, 1 off, 2 on: the VM starts zeroed */
+  uint32_t unset_seen[128];
+  int unset_seen_count;
   /* Development settings resolved once per VM: these three sit on the per-array-write and
    * per-code-entry paths, where re-reading them made the host lookup itself measurable. */
   int arrayset_filter_initialized;
@@ -478,6 +484,8 @@ int gml_tilemap_set_cell(GmlTileMap *tm, int cx, int cy, uint32_t datum);
 void gml_tilemap_effective(GmlVM *vm, const GmlTileMap *tm,
                            double *x, double *y, double *depth, int *visible);
 int gml_room_layer_data_off(GmlVM *vm);
+/* Number of unset-variable and non-array index reads so far this run. */
+unsigned long gml_vm_unset_reads(const GmlVM *vm);
 uint32_t gml_room_layer_type_off(GmlVM *vm, uint32_t lp);  /* per-layer type-data offset with effect fields */
 void gml_struct_gc(GmlVM *vm);
 void gml_path_eval_public(GmlVM *vm, int pi, double t, double *ox, double *oy);
