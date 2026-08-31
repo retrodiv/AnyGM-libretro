@@ -105,6 +105,17 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"development",
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},
+  {"anygm_content_shader_readback","Content shaders inside a frame",NULL,
+   "Controls execution of content shaders on the graphics device for draws before the frame's "
+   "last operation. Such a draw executes off-screen and is read back, which can stall the "
+   "device. Budgeted samples early frames and falls back to an unshaded draw when the "
+   "frame-time budget is exceeded. Always keeps this path enabled regardless of measured "
+   "cost. The Never setting disables intermediate shader execution and leaves the draws "
+   "unshaded. The frame's final operation is unaffected. Requires Hybrid GPU rendering set to a "
+   "graphics API.",
+   NULL,"shaders",
+   {{"Budgeted",NULL},{"Always",NULL},{"Never",NULL},{NULL,NULL}},
+   "Budgeted"},
   {"anygm_report_shaders_compiled","Report content shaders as compiled",NULL,
    "How shader_is_compiled() answers for content shaders that sample a picture. "
    "On reports declared shaders as compiled even when an effect cannot execute "
@@ -579,6 +590,13 @@ void libretro_options_apply(bool all_fields){
   config->god_mode=0u;
   config->room_skip_button=0u;
   config->report_all_shaders_compiled=option_on("anygm_report_shaders_compiled",1);
+  {
+    const char *readback=option_value("anygm_content_shader_readback");
+    config->content_shader_readback=
+      (readback && !strcmp(readback,"Always"))?ANYGM_SHADER_READBACK_ALWAYS:
+      (readback && !strcmp(readback,"Never"))?ANYGM_SHADER_READBACK_NEVER:
+      ANYGM_SHADER_READBACK_BUDGETED;
+  }
   config->content_overrides=option_on("anygm_content_overrides",1);
   /* The default option resolves from content before any menu is available. */
   /* The public option offers two states. An unconditional pad state remains available

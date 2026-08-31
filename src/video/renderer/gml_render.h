@@ -427,6 +427,8 @@ typedef struct {
   int shader;
   const uint32_t *source;
   int source_width,source_height,source_pitch;
+  /* The region of the source the draw shows, in source pixels; a zero extent means all of it. */
+  int region_x,region_y,region_width,region_height;
   /* A stable identity for the source picture and a serial the host may use to tell one request
    * from the next; the source may change between requests with the same identity. */
   uint32_t source_identity,serial;

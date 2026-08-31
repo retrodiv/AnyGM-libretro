@@ -121,7 +121,8 @@ int gml_render_plan_add_blit_box(GmlRenderPlan *plan,uint32_t source,
   return 1;
 }
 
-int gml_render_plan_add_shader_draw(GmlRenderPlan *plan,uint32_t source,GmlPlanRect destination,
+int gml_render_plan_add_shader_draw_part(GmlRenderPlan *plan,uint32_t source,GmlPlanRect destination,
+                                         GmlPlanRect source_rect,
                                     const GmlPlanShader *shader,uint32_t linear){
   GmlPlanOp *op;
   if(!plan || !shader) return 0;
@@ -140,11 +141,18 @@ int gml_render_plan_add_shader_draw(GmlRenderPlan *plan,uint32_t source,GmlPlanR
   op->destination=destination;
   op->alpha_write=0xFFu;
   op->linear=linear?1u:0u;
+  op->source_rect=source_rect;
   plan->shader=*shader;
   if(plan->shader.uniform_count>GML_PLAN_MAX_UNIFORMS) plan->shader.uniform_count=GML_PLAN_MAX_UNIFORMS;
   if(plan->shader.sampler_count>GML_PLAN_MAX_SAMPLERS) plan->shader.sampler_count=GML_PLAN_MAX_SAMPLERS;
   plan->has_shader=1;
   return 1;
+}
+
+int gml_render_plan_add_shader_draw(GmlRenderPlan *plan,uint32_t source,GmlPlanRect destination,
+                                    const GmlPlanShader *shader,uint32_t linear){
+  GmlPlanRect whole={0,0,0,0};
+  return gml_render_plan_add_shader_draw_part(plan,source,destination,whole,shader,linear);
 }
 
 int gml_render_plan_add_present_cpu_frame(GmlRenderPlan *plan,uint32_t source,
@@ -206,6 +214,15 @@ int gml_render_plan_validate(const GmlRenderPlan *plan){
         if(!plan->shader.vertex_es || !plan->shader.fragment_es) return 0;
         if(plan->shader.uniform_count>GML_PLAN_MAX_UNIFORMS ||
            plan->shader.sampler_count>GML_PLAN_MAX_SAMPLERS) return 0;
+        {
+          const GmlPlanRect *sr=&op->source_rect;
+          const GmlPlanImage *img=&plan->images[op->source];
+          if(sr->width || sr->height){
+            if(sr->x<0 || sr->y<0 || !sr->width || !sr->height) return 0;
+            if((uint32_t)sr->x+sr->width>img->width) return 0;
+            if((uint32_t)sr->y+sr->height>img->height) return 0;
+          }
+        }
         for(uint32_t sampler=0;sampler<plan->shader.sampler_count;sampler++){
           uint32_t bound=plan->shader.samplers[sampler].image;
           if(bound!=GML_PLAN_NO_IMAGE && (bound>=plan->image_count || !plan->images[bound].cpu_pixels))

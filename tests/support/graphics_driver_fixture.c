@@ -64,6 +64,7 @@ typedef struct FakeDriver {
   int attributes_enabled;
   GLuint bound_buffer;
   size_t buffer_bytes;
+  float buffer_data[64];
   unsigned float_uniforms;
   unsigned matrix_uniforms;
   GLuint attached_texture;
@@ -364,7 +365,11 @@ static void fake_GenBuffers(GLsizei n,GLuint *names){
 }
 static void fake_BindBuffer(GLenum target,GLuint name){ (void)target; note_call(); g_fake.bound_buffer=name; }
 static void fake_BufferData(GLenum target,GLsizeiptr size,const void *data,GLenum usage){
-  (void)target;(void)data;(void)usage; note_call(); g_fake.buffer_bytes=(size_t)size;
+  size_t floats=(size_t)size/sizeof(float);
+  (void)target;(void)usage; note_call();
+  g_fake.buffer_bytes=(size_t)size;
+  if(floats>64) floats=64;
+  if(data) memcpy(g_fake.buffer_data,data,floats*sizeof(float));
 }
 static void fake_DeleteBuffers(GLsizei n,const GLuint *names){ (void)names; note_call(); g_fake.deletes_issued+=n; }
 static void fake_Uniform1fv(GLint l,GLsizei n,const GLfloat *v){ (void)l;(void)n;(void)v; note_call(); g_fake.float_uniforms++; }
@@ -482,6 +487,13 @@ unsigned anygm_test_graphics_bound_buffer(void){ return g_fake.bound_buffer; }
 unsigned anygm_test_graphics_float_uniforms(void){ return g_fake.float_uniforms; }
 unsigned anygm_test_graphics_matrix_uniforms(void){ return g_fake.matrix_uniforms; }
 unsigned anygm_test_graphics_read_pixels(void){ return g_fake.read_pixels; }
+int anygm_test_graphics_quad_texcoord(int corner,float *u,float *v){
+  /* Nine floats a vertex: position, colour, texture coordinate. */
+  if(corner<0 || corner>3 || g_fake.buffer_bytes<(size_t)(4*9*sizeof(float))) return 0;
+  if(u) *u=g_fake.buffer_data[corner*9+7];
+  if(v) *v=g_fake.buffer_data[corner*9+8];
+  return 1;
+}
 unsigned anygm_test_graphics_attached_texture(void){ return g_fake.attached_texture; }
 int anygm_test_graphics_clear_calls(void){ return g_fake.clear_calls; }
 unsigned anygm_test_graphics_framebuffer_queries(void){ return g_fake.framebuffer_queries; }

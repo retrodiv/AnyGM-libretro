@@ -379,6 +379,9 @@ struct AnygmEngine {
   uint32_t readback_pass_count;
   uint64_t readback_pass_ns;
   uint32_t readback_pass_measured;
+  uint32_t readback_frames_measured;
+  uint64_t readback_frame_ns;
+  int readback_frame_spent;
   int readback_refused;
   uint32_t canvas_pass_frames;
 };
@@ -474,10 +477,15 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
 /* The read-back budget: whether `passes` read-backs that took `total_ns` between them are too slow
  * for the device to keep running content programs in the middle of a frame. Pure, so the policy
  * can be tested without a device. */
-int engine_readback_over_budget(uint64_t total_ns,uint32_t passes);
+/* The read-back budget is a per-frame one, because what a frame can afford is a frame's time and
+ * not a pass's: one pass costing three milliseconds fits, and six costing three each do not. It
+ * decides only after enough whole frames to be a measurement rather than a first-frame accident. */
+int engine_readback_over_budget(uint64_t frame_total_ns,uint32_t frames);
+/* Close the frame the read-back budget is measuring. Called once where a frame begins. */
+void engine_readback_open_frame(AnygmEngine *engine);
 enum {
-  ENGINE_READBACK_CALIBRATION_PASSES=16,
-  ENGINE_READBACK_BUDGET_US_PER_PASS=1000
+  ENGINE_READBACK_CALIBRATION_FRAMES=8,
+  ENGINE_READBACK_BUDGET_US_PER_FRAME=8000
 };
 /* Report the opt-in hardware counters once, as one bounded content-neutral line. */
 void engine_graphics_report(AnygmEngine *engine);

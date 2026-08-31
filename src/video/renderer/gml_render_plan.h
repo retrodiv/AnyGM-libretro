@@ -110,6 +110,9 @@ typedef struct GmlPlanOp {
   uint32_t alpha_write;
   /* SHADER_DRAW: the source is sampled linearly rather than by nearest texel. */
   uint32_t linear;
+  /* SHADER_DRAW: the region of the source image the destination shows, in source pixels. A zero
+   * width or height means the whole image, which is what a plain surface presentation wants. */
+  GmlPlanRect source_rect;
 } GmlPlanOp;
 
 enum {
@@ -224,6 +227,11 @@ int gml_render_plan_add_blit_box(GmlRenderPlan *plan,uint32_t source,
                                  GmlPlanRect destination,uint32_t alpha_write);
 /* The terminal presentation drawn through the content's own program. The shader record is copied
  * into the plan; its source pointers stay lent. */
+/* `source_rect` names the part of the source the destination shows; pass a zero-sized rectangle
+ * for the whole image. */
+int gml_render_plan_add_shader_draw_part(GmlRenderPlan *plan,uint32_t source,GmlPlanRect destination,
+                                         GmlPlanRect source_rect,const GmlPlanShader *shader,
+                                         uint32_t linear);
 int gml_render_plan_add_shader_draw(GmlRenderPlan *plan,uint32_t source,GmlPlanRect destination,
                                     const GmlPlanShader *shader,uint32_t linear);
 int gml_render_plan_add_present_cpu_frame(GmlRenderPlan *plan,uint32_t source,

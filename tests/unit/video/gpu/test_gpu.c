@@ -629,6 +629,43 @@ static int content_program_readback_case(void){
   return 1;
 }
 
+/* A draw showing part of its source shades that part: the quad's texture coordinates span the
+ * named region rather than the whole image. */
+static int content_program_source_region_case(void){
+  uint32_t frame[8*6],mask[4*4];
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  GmlRenderPlan plan;
+  float u=0.0f,v=0.0f;
+  anygm_test_graphics_reset();
+  memset(frame,0,sizeof frame);
+  memset(mask,0,sizeof mask);
+  gpu=gml_gpu_create();
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
+  REQUIRE(build_content_plan(&plan,frame,mask),"content plan built");
+  /* The source is 8x6; show the 4x3 quadrant at (2,3). */
+  plan.operations[1].source_rect.x=2;
+  plan.operations[1].source_rect.y=3;
+  plan.operations[1].source_rect.width=4u;
+  plan.operations[1].source_rect.height=3u;
+  REQUIRE(gml_render_plan_validate(&plan),"a region inside the source validates");
+  REQUIRE(gml_gpu_execute_plan(gpu,&plan),"the program runs over the region");
+  REQUIRE(anygm_test_graphics_quad_texcoord(0,&u,&v),"the quad was handed to the driver");
+  REQUIRE(u>0.249f && u<0.251f && v>0.499f && v<0.501f,"the first corner is the region's origin");
+  REQUIRE(anygm_test_graphics_quad_texcoord(3,&u,&v),"the opposite corner too");
+  REQUIRE(u>0.749f && u<0.751f && v>0.999f && v<1.001f,"which ends where the region ends");
+  /* A region that leaves the source is refused before anything is uploaded. */
+  REQUIRE(build_content_plan(&plan,frame,mask),"content plan rebuilt");
+  plan.operations[1].source_rect.x=6;
+  plan.operations[1].source_rect.y=0;
+  plan.operations[1].source_rect.width=4u;
+  plan.operations[1].source_rect.height=3u;
+  REQUIRE(!gml_render_plan_validate(&plan),"a region running past the source is rejected");
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   for(int index=1;index<argc;++index){
@@ -655,6 +692,7 @@ int main(int argc,char **argv){
     {"content_program_embedded_dialect",content_program_embedded_dialect_case},
     {"content_program_refused",content_program_refused_case},
     {"content_program_readback",content_program_readback_case},
+    {"content_program_source_region",content_program_source_region_case},
   };
   const AnygmTestGroup groups[]={
     {"lifecycle",lifecycle_cases,sizeof lifecycle_cases/sizeof lifecycle_cases[0]},

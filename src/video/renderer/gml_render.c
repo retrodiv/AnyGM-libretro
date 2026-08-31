@@ -920,7 +920,12 @@ int gml_render_shader_is_compiled(const GmlRender *r,int shader){
    * recognized software family executes it. A picture may arrive through any bound sampler,
    * not only gm_BaseTexture; the distinction is sampling, not the uniform name. */
   if(shader_pal_recognized(&r->shader_pal[shader])) return 1;
-  if(r->shader_pal[shader].procedural) return 0;
+  /* The paragraph above was written when nothing here could run a fragment. A device that can is
+   * the case it excludes: told yes with one present, the program is executed and the content gets
+   * the picture it wrote, which is the whole point of the answer. Told yes with none, the
+   * primitive is painted flat in a colour the shader was going to discard, which is why the
+   * refusal stands whenever there is no device. */
+  if(r->shader_pal[shader].procedural) return r->shader_executor?1:0;
   return r->shader_report_all_compiled?1:0;
 }
 
@@ -1255,7 +1260,11 @@ int gml_render_shader_content_candidate(const GmlRender *r,int shader){
   if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
   {
     const struct GmlShaderPal *p=&r->shader_pal[shader];
-    if(p->gpu_failed || p->procedural) return 0;
+    if(p->gpu_failed) return 0;
+    /* A fragment that samples nothing carries none of the picture it is drawn over, so leaving it
+     * unrun is not a weaker version of the effect but an unrelated one. It is a candidate only
+     * where something can actually execute it. */
+    if(p->procedural && !r->shader_executor) return 0;
     if(!p->source_vertex_es || !p->source_fragment_es) return 0;
     return !shader_pal_recognized(p);
   }

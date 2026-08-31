@@ -838,12 +838,22 @@ static int execute_shader_draw(GmlGpuBackend *backend,GmlRenderPlan *plan,const 
   /* Two triangles as a strip: top-left, top-right, bottom-left, bottom-right, each with a white
    * vertex colour and the texture coordinate of its corner. */
   {
+    /* The texture coordinates span the part of the source the operation names, so a draw showing
+     * a region of a surface shades that region and nothing else. */
     const float corners[4][2]={{0.0f,0.0f},{w,0.0f},{0.0f,h},{w,h}};
+    float u0=0.0f,v0=0.0f,u1=1.0f,v1=1.0f;
+    if(op->source_rect.width && op->source_rect.height && image->width && image->height){
+      u0=(float)op->source_rect.x/(float)image->width;
+      v0=(float)op->source_rect.y/(float)image->height;
+      u1=(float)((uint32_t)op->source_rect.x+op->source_rect.width)/(float)image->width;
+      v1=(float)((uint32_t)op->source_rect.y+op->source_rect.height)/(float)image->height;
+    }
     for(int v=0;v<4;v++){
       float *row=vertices+v*9;
       row[0]=corners[v][0]; row[1]=corners[v][1]; row[2]=0.0f;
       row[3]=1.0f; row[4]=1.0f; row[5]=1.0f; row[6]=1.0f;
-      row[7]=corners[v][0]/w; row[8]=corners[v][1]/h;
+      row[7]=u0+(u1-u0)*(corners[v][0]/w);
+      row[8]=v0+(v1-v0)*(corners[v][1]/h);
     }
   }
   if(!backend->content_buffer){

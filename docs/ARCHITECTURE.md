@@ -476,9 +476,16 @@ size, `engine_graphics.c` executes that as a plan whose target is read back, and
 composed in software as a surface of that size with the draw's own blend and alpha; the software
 renderer remains the complete implementation, and a host without a context, or a program the
 device refuses, draws plain. A read-back stalls the device, and its cost is the device's: the
-engine times the first passes and, on a device where they average more than a millisecond,
-draws the mid-frame ones plain for the rest of the session and says so once; the terminal
-presentation stays on the device. Complete sprite and surface kernels share the
+engine times what those passes cost the frames that paid for them and, on a device where that
+exceeds the per-frame budget, draws the mid-frame ones plain for the rest of the session and says
+so once; the terminal presentation stays on the device, and the policy is a host option so a
+comparison against the original can ask for every shader however slow.
+
+A fragment that samples no picture is a case of its own. It derives every pixel from coordinates,
+time and its own uniforms, so leaving it unrun paints the primitive flat in a colour the shader was
+going to discard — an unrelated picture rather than a weaker one. That is why such a shader answers
+that it did not compile, and why the answer is now conditional: with a device present it is
+executed and the answer is yes, without one it is still no. Complete sprite and surface kernels share the
 canonical header-local recognized-shader sampling operations in
 `gml_render_sampling_internal.h`; the general surface mapper and post-process
 kernels additionally share the two final-pixel operations in

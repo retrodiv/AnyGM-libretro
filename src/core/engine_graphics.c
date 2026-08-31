@@ -77,7 +77,7 @@ void engine_graphics_report(AnygmEngine *engine){
     "bytes=%llu resets=%u destroys=%u losses=%u program_failures=%u "
     "fallback_unsupported=%u fallback_box=%u fallback_context=%u fallback_upload=%u "
     "fallback_overflow=%u fallback_shader=%u materializations=%u screen_passes=%u canvas_passes=%u"
-    " readback_passes=%u readback_avg_ms=%.3f readback_refused=%d last_error=\"%s\"\n",
+    " readback_passes=%u readback_ms_per_frame=%.3f readback_refused=%d last_error=\"%s\"\n",
     counters.frames_offered,counters.passes_accepted,counters.passes_replayed,
     counters.cpu_upload_frames,counters.draw_calls,counters.full_uploads,
     (unsigned long long)counters.uploaded_bytes,
@@ -91,8 +91,8 @@ void engine_graphics_report(AnygmEngine *engine){
     counters.fallbacks[GML_PLAN_FALLBACK_SHADER_FAILURE],
     engine->frame_materializations,engine->screen_pass_frames,engine->canvas_pass_frames,
     engine->readback_pass_count,
-    engine->readback_pass_measured
-      ?(double)engine->readback_pass_ns/(double)engine->readback_pass_measured/1e6:0.0,
+    engine->readback_frames_measured
+      ?(double)engine->readback_frame_ns/(double)engine->readback_frames_measured/1e6:0.0,
     engine->readback_refused,
     gml_gpu_last_error(engine->gpu)?gml_gpu_last_error(engine->gpu):"");
 }
@@ -108,9 +108,9 @@ void engine_graphics_report(AnygmEngine *engine){
  * values and pictures the content bound. Everything comes from the renderer by name; nothing here
  * knows what the program computes. Returns the plan-building result; a refusal is the caller's
  * unshaded blit. */
-static int engine_plan_content_program(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t image,
-                                       GmlPlanRect destination,int shader_id,uint32_t generation,
-                                       int linear){
+static int engine_plan_content_program_part(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t image,
+                                            GmlPlanRect destination,GmlPlanRect source_rect,
+                                            int shader_id,uint32_t generation,int linear){
   GmlPlanShader shader;
   GmlRenderShaderSources sources;
   GmlRenderShaderUniform uniforms[GML_PLAN_MAX_UNIFORMS];
@@ -164,7 +164,16 @@ static int engine_plan_content_program(AnygmEngine *engine,GmlRenderPlan *plan,u
     sampler->image=gml_render_plan_add_image(plan,&picture);
     if(sampler->image==GML_PLAN_NO_IMAGE) return 0;
   }
-  return gml_render_plan_add_shader_draw(plan,image,destination,&shader,linear?1u:0u);
+  return gml_render_plan_add_shader_draw_part(plan,image,destination,source_rect,&shader,
+                                             linear?1u:0u);
+}
+
+static int engine_plan_content_program(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t image,
+                                       GmlPlanRect destination,int shader_id,uint32_t generation,
+                                       int linear){
+  GmlPlanRect whole={0,0,0,0};
+  return engine_plan_content_program_part(engine,plan,image,destination,whole,shader_id,generation,
+                                          linear);
 }
 
 /* The renderer's request to run a content program in the middle of a frame: the source is
@@ -176,9 +185,17 @@ static int engine_plan_content_program(AnygmEngine *engine,GmlRenderPlan *plan,u
  * draws a frame cost four times the software renderer's whole frame. So the first passes are timed,
  * and a device that cannot afford them keeps the terminal presentation on the device and draws
  * the mid-frame ones plain for the rest of the session, saying so once. */
-int engine_readback_over_budget(uint64_t total_ns,uint32_t passes){
-  if(passes<ENGINE_READBACK_CALIBRATION_PASSES) return 0;
-  return total_ns/passes>(uint64_t)ENGINE_READBACK_BUDGET_US_PER_PASS*1000u;
+int engine_readback_over_budget(uint64_t frame_total_ns,uint32_t frames){
+  if(frames<ENGINE_READBACK_CALIBRATION_FRAMES) return 0;
+  return frame_total_ns/frames>(uint64_t)ENGINE_READBACK_BUDGET_US_PER_FRAME*1000u;
+}
+
+void engine_readback_open_frame(AnygmEngine *engine){
+  if(!engine) return;
+  if(engine->readback_frame_spent){
+    engine->readback_frames_measured++;
+    engine->readback_frame_spent=0;
+  }
 }
 
 int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *request){
@@ -189,6 +206,7 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
   uint32_t image;
   uint64_t started;
   if(!engine || !request || !engine->gpu || !gml_gpu_context_active(engine->gpu)) return 0;
+  if(engine->config.content_shader_readback==ANYGM_SHADER_READBACK_NEVER) return 0;
   if(engine->readback_refused) return 0;
   if(request->width<=0 || request->height<=0 || !request->output || !request->source) return 0;
   if(request->source_width<=0 || request->source_height<=0 || request->source_pitch<request->source_width) return 0;
@@ -215,8 +233,17 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
   source.cpu_pixels=request->source;
   image=gml_render_plan_add_image(&plan,&source);
   if(image==GML_PLAN_NO_IMAGE) return 0;
-  if(!engine_plan_content_program(engine,&plan,image,whole,request->shader,request->serial,
-                                  request->linear)) return 0;
+  {
+    GmlPlanRect region={0,0,0,0};
+    if(request->region_width>0 && request->region_height>0){
+      region.x=request->region_x;
+      region.y=request->region_y;
+      region.width=(uint32_t)request->region_width;
+      region.height=(uint32_t)request->region_height;
+    }
+    if(!engine_plan_content_program_part(engine,&plan,image,whole,region,request->shader,
+                                         request->serial,request->linear)) return 0;
+  }
   started=anygm_host_monotonic_time_ns(&engine->host);
   if(!gml_gpu_execute_plan(engine->gpu,&plan)){
     if(plan.fallback_reason==GML_PLAN_FALLBACK_SHADER_FAILURE)
@@ -224,16 +251,22 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
     return 0;
   }
   engine->readback_pass_count++;
-  if(engine->readback_pass_measured<ENGINE_READBACK_CALIBRATION_PASSES){
-    engine->readback_pass_ns+=anygm_host_monotonic_time_ns(&engine->host)-started;
+  {
+    uint64_t spent=anygm_host_monotonic_time_ns(&engine->host)-started;
+    engine->readback_pass_ns+=spent;
     engine->readback_pass_measured++;
-    if(engine_readback_over_budget(engine->readback_pass_ns,engine->readback_pass_measured)){
+    /* Accumulate by frame: the passes of one frame are what that frame pays. */
+    engine->readback_frame_spent=1;
+    engine->readback_frame_ns+=spent;
+    if(engine->config.content_shader_readback==ANYGM_SHADER_READBACK_BUDGETED &&
+       engine_readback_over_budget(engine->readback_frame_ns,engine->readback_frames_measured)){
       engine->readback_refused=1;
       engine_logf(engine,ANYGM_LOG_WARN,
-        "[hybrid-gpu] content shaders inside a frame draw plain on this device: a read-back costs "
-        "%.2f ms per pass, over the %.2f ms budget\n",
-        (double)engine->readback_pass_ns/(double)engine->readback_pass_measured/1e6,
-        ENGINE_READBACK_BUDGET_US_PER_PASS/1000.0);
+        "[hybrid-gpu] content shaders inside a frame draw plain on this device: they cost %.2f ms "
+        "a frame, over the %.2f ms budget. Set the game-shaders-inside-a-frame option to Always to "
+        "run them anyway.\n",
+        (double)engine->readback_frame_ns/(double)engine->readback_frames_measured/1e6,
+        ENGINE_READBACK_BUDGET_US_PER_FRAME/1000.0);
     }
   }
   return 1;
@@ -444,9 +477,11 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
   return 0;
 }
 
-int engine_readback_over_budget(uint64_t total_ns,uint32_t passes){
-  if(passes<ENGINE_READBACK_CALIBRATION_PASSES) return 0;
-  return total_ns/passes>(uint64_t)ENGINE_READBACK_BUDGET_US_PER_PASS*1000u;
+void engine_readback_open_frame(AnygmEngine *engine){ (void)engine; }
+
+int engine_readback_over_budget(uint64_t frame_total_ns,uint32_t frames){
+  if(frames<ENGINE_READBACK_CALIBRATION_FRAMES) return 0;
+  return frame_total_ns/frames>(uint64_t)ENGINE_READBACK_BUDGET_US_PER_FRAME*1000u;
 }
 
 void engine_graphics_report(AnygmEngine *engine){ (void)engine; }

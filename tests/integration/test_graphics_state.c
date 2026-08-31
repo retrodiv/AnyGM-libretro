@@ -263,12 +263,16 @@ static int context_lifecycle_around_state_case(void){
 /* The read-back budget decides once, from the first passes, and never from fewer than it needs. */
 static int readback_budget_case(void){
   anygm_test_graphics_reset();
-  REQUIRE(!engine_readback_over_budget(0,0),"no passes, no verdict");
-  REQUIRE(!engine_readback_over_budget(15u*5000000u,15),"fifteen slow passes are not yet a verdict");
-  REQUIRE(engine_readback_over_budget(16u*5000000u,16),"sixteen passes at five milliseconds are over budget");
-  REQUIRE(!engine_readback_over_budget(16u*300000u,16),"sixteen passes at a third of a millisecond are within it");
-  REQUIRE(!engine_readback_over_budget(16u*1000000u,16),"the budget itself is within it");
-  REQUIRE(engine_readback_over_budget(16u*1000001u,16),"a nanosecond over is over");
+  REQUIRE(!engine_readback_over_budget(0,0),"no frames, no verdict");
+  REQUIRE(!engine_readback_over_budget(7u*20000000u,7),"seven expensive frames are not yet a verdict");
+  REQUIRE(engine_readback_over_budget(8u*20000000u,8),"eight frames at twenty milliseconds are over budget");
+  REQUIRE(!engine_readback_over_budget(8u*3000000u,8),"one three-millisecond pass a frame is within it");
+  REQUIRE(!engine_readback_over_budget(8u*8000000u,8),"the budget itself is within it");
+  REQUIRE(engine_readback_over_budget(8u*8000001u,8),"a nanosecond over is over");
+  /* What the rule is for: the cost of a frame, not of a pass. Three passes of three milliseconds
+   * fit in a frame; six of the same size do not. */
+  REQUIRE(!engine_readback_over_budget(8u*(3u*2500000u),8),"three passes at 2.5 ms a frame fit");
+  REQUIRE(engine_readback_over_budget(8u*(6u*2500000u),8),"six of the same passes do not");
   return 1;
 }
 

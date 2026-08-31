@@ -1460,6 +1460,7 @@ static int draw_first_generation_gui_app_surface(GmlRender *r,int surf,
  * size, and the result is composed here as a surface of that size, with the blend, alpha and
  * flips the draw asked for. Returns 0 when the host could not, and the draw proceeds unshaded. */
 static int draw_surface_through_program(GmlRender *r,int surf,const uint32_t *spx,int sw,int sh,
+                                        double rx,double ry,double rw,double rh,
                                         double dx,double dy,double dw,double dh,
                                         uint32_t blend,double alpha){
   enum { SHADED_MAX_EXTENT=4096, SHADED_MAX_PIXELS=16u<<20 };
@@ -1482,6 +1483,16 @@ static int draw_surface_through_program(GmlRender *r,int surf,const uint32_t *sp
   request.source_width=sw;
   request.source_height=sh;
   request.source_pitch=sw;
+  /* The region the draw shows. A whole-surface draw passes the whole extent, which the plan reads
+   * as "all of it" either way. */
+  request.region_x=(int)lround(rx);
+  request.region_y=(int)lround(ry);
+  request.region_width=(int)lround(rw);
+  request.region_height=(int)lround(rh);
+  if(request.region_x<0 || request.region_y<0 ||
+     request.region_width<=0 || request.region_height<=0 ||
+     request.region_x+request.region_width>sw || request.region_y+request.region_height>sh)
+    return 0;
   request.source_identity=(uint32_t)(surf<0?0x7FFFFFFF:surf);
   request.serial=++r->shaded_requests;
   request.width=width;
@@ -1570,7 +1581,7 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
   }
   if(r->active_shader>=0 && r->shader_executor && spx!=r->fb &&
      gml_render_shader_content_candidate(r,r->active_shader) &&
-     draw_surface_through_program(r,surf,spx,sw,sh,dx,dy,dw,dh,blend,alpha)) return;
+     draw_surface_through_program(r,surf,spx,sw,sh,0,0,sw,sh,dx,dy,dw,dh,blend,alpha)) return;
   if(draw_first_generation_gui_app_surface(r,surf,spx,sw,sh,dx,dy,dw,dh,blend,alpha)) return;
   if(r->surface_draw_logging < 0) r->surface_draw_logging = render_setting(r,"GML_LOG_SURF_DRAW") != NULL;
   const char *log_surf_frame = r->surface_draw_logging ? render_setting(r,"GML_LOG_SURF_DRAW_FRAME") : NULL;
@@ -1755,6 +1766,17 @@ void gml_draw_surface_part_ext(GmlRender *r, int surf, double sx, double sy, dou
      gml_d3_draw_surface_part_2d(r,surf,sx,sy,sw,sh,dx,dy,xs,ys,blend,alpha)) return;
   if(r && !r->app_draw_enable && r->interp) r->composites_app=1;
   if(sdual){ draw_surface_dual_sample(r,sdual,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha); return; }
+  /* A region of a surface drawn through a program this renderer does not execute: the host shades
+   * that region at the destination's size and the answer is composed here, exactly as for a whole
+   * surface. */
+  if(r->active_shader>=0 && r->shader_executor &&
+     gml_render_shader_content_candidate(r,r->active_shader)){
+    int psw=0,psh=0;
+    uint32_t *ppx=surface_pixels(r,surf,&psw,&psh);
+    if(ppx && ppx!=r->fb && psw>0 && psh>0 &&
+       draw_surface_through_program(r,surf,ppx,psw,psh,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha))
+      return;
+  }
   int prof=rprof_enabled();
   double t0=prof?rprof_now():0.0;
   draw_surface_region(r,surf,sx,sy,sw,sh,dx,dy,sw*xs,sh*ys,blend,alpha);

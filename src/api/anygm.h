@@ -357,7 +357,22 @@ typedef struct AnygmConfig {
   /* Apply the override directives the loaded content carried in its anchor file. Enabled by
    * default; disabling ignores this channel without changing host cheats. */
   uint32_t content_overrides;
+  /* How far to go running the content's own shaders on a graphics device for draws that are not
+   * the frame's last operation. Such a draw is executed off-screen and read back, and the read
+   * back stalls the device, so the cost is the device's rather than the picture's:
+   * ANYGM_SHADER_READBACK_BUDGETED measures the first frames and stops when they cost more than
+   * a frame can afford, ANYGM_SHADER_READBACK_ALWAYS keeps going however slow, and
+   * ANYGM_SHADER_READBACK_NEVER draws them unshaded as a build without a device does. */
+  uint32_t content_shader_readback;
 } AnygmConfig;
+
+/* Zero is the default a host that never sets the field gets, so it is the measured one rather than
+ * the one that turns the feature off. */
+enum {
+  ANYGM_SHADER_READBACK_BUDGETED=0,
+  ANYGM_SHADER_READBACK_ALWAYS=1,
+  ANYGM_SHADER_READBACK_NEVER=2
+};
 
 typedef struct AnygmConfigDelta {
   uint32_t struct_size;
