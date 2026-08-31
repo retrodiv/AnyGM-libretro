@@ -491,6 +491,8 @@ static const char *const g_special_var_names[]={
   "path_orientation","path_scale","path_positionprevious","path_endaction",
   "timeline_index","timeline_position","timeline_speed","timeline_running","timeline_loop",
   "transition_kind","transition_steps",
+  "application_surface","debug_mode","display_aa","browser_width","browser_height",
+  "pointer_null","dll_cdecl","dll_stdcall","ty_real","ty_string","NaN","fps_real",
 };
 #define N_SPECIAL_VAR (int)(sizeof g_special_var_names/sizeof *g_special_var_names)
 /* Open-addressed set of the special-name hashes.  A 64-bit bloom cannot gate 109 names — it
@@ -636,6 +638,20 @@ static GmlVal var_get_h(GmlVM *vm, int inst, const char *name, uint32_t nh){
   if(!strcmp(name,"program_directory")){
     return vstr(vm->program_directory); }
   if(!strcmp(name,"fps")) return vreal(gml_room_speed(vm));
+  /* These built-in variables have explicit values instead of using the unset-variable
+   * fallback. The surface identifier and several capability/type constants are zero;
+   * NaN, string type, the alternate calling convention and frame cadence are not. */
+  if(!strcmp(name,"application_surface")) return vreal(0);
+  if(!strcmp(name,"debug_mode")) return vreal(0);
+  if(!strcmp(name,"display_aa")) return vreal(0);
+  if(!strcmp(name,"browser_width") || !strcmp(name,"browser_height")) return vreal(0);
+  if(!strcmp(name,"pointer_null")) return vreal(0);
+  if(!strcmp(name,"dll_cdecl")) return vreal(0);
+  if(!strcmp(name,"dll_stdcall")) return vreal(1);
+  if(!strcmp(name,"ty_real")) return vreal(0);
+  if(!strcmp(name,"ty_string")) return vreal(1);
+  if(!strcmp(name,"NaN")) return vreal(NAN);
+  if(!strcmp(name,"fps_real")) return vreal(gml_room_speed(vm));
   /* Studio exposes the previous frame duration in microseconds. A host frame is scheduled at
    * the declared cadence, so a fixed deterministic interval is both the closest steady-run
    * value and keeps time-based gameplay reproducible across host load and fast-forward. */
