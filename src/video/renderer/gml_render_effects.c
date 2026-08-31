@@ -634,5 +634,7 @@ void gml_render_layer_filter_end(GmlRender *r,const GmlLayerFilter *filter,doubl
   layer_composite_premultiplied(r,work,w,h,1.0);
 }
 
-/* ---- recognized display post-processes: none retained in this revision ---- */
-
+void parse_shader_palettes(GmlRender *r){
+  (void)r;
+  (void)(0 /* Revision-selected adapter omitted from unpublished history. */);
+}

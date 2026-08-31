@@ -82,9 +82,10 @@ static void realize_suspended_fill(GmlRender *r,const uint32_t *px){
 }
 uint32_t *surface_pixels(GmlRender *r, int id, int *w, int *h){
   if(id==GML_RENDER_SHADED_SURFACE){
-    if(!r->shaded_plane || r->shaded_plane_width<=0 || r->shaded_plane_height<=0) return NULL;
+    if(r->shaded_plane_width<=0 || r->shaded_plane_height<=0) return NULL;
     if(w) *w=r->shaded_plane_width;
     if(h) *h=r->shaded_plane_height;
+    if(r->shaded_plane_borrowed) return (uint32_t*)(uintptr_t)r->shaded_plane_borrowed;
     return r->shaded_plane;
   }
   if(id==0){
@@ -475,23 +476,6 @@ static inline int surface_point_index(int64_t destination,int64_t source_extent,
    * always did; a fractional reduction has no ties at all and moves by the half pixel. */
   return (int)((((destination*2+1)*source_extent)-1)/(destination_extent*2));
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 /* One band of the generic surface mapper. A row derives its source line and its destination row
@@ -901,7 +885,6 @@ static void draw_surface_interp_phase(GmlRender *r,uint32_t *plane,const uint32_
   if(alpha>1.0) alpha=1.0;
   int bR=blend&0xFF,bG=(blend>>8)&0xFF,bB=(blend>>16)&0xFF;
   int sremap=indexed_brightness_active(r)!=NULL || threshold_palette_active(r)!=NULL;
-  const struct GmlShaderPal *spal=pal_active(r);
   const struct GmlShaderPal *slut=lut_active(r);
   const struct GmlShaderPal *sgrid=grid_active(r);
   for(int py=py0;py<py1;py++){
@@ -930,7 +913,6 @@ static void draw_surface_interp_phase(GmlRender *r,uint32_t *plane,const uint32_
       if(aa<=0 || shader_discards_alpha(r,(unsigned)aa)) continue;
       uint32_t sampled=((uint32_t)aa<<24)|((uint32_t)sr<<16)|((uint32_t)sg<<8)|(uint32_t)sb;
       if(sremap) sampled=mapped_texture_pixel(r,sampled);
-      else if(spal) sampled=pal_map_px(spal,sampled);
       else if(slut) sampled=lut_map_px(r,slut,sampled);
       else if(sgrid) sampled=grid_map_px(r,sgrid,sampled);
       sr=((sampled>>16)&0xFF)*bR/255;
@@ -984,10 +966,6 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   if(swd<=0||shd<=0||W==0||H==0) return;
   int flipx=W<0, flipy=H<0; if(W<0) W=-W; if(H<0) H=-H;
   if(alpha<=0) return;
-  if(fabs(sx0d)<0.001 && fabs(sy0d)<0.001 && fabs(swd-sw)<0.001 &&
-     fabs(shd-sh)<0.001 && alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu &&
-     (r->blendmode==0 || r->blendmode==6) &&
-     draw_surface_bloom_pass(r,src,sw,sh,dx+r->cam_x,dy+r->cam_y,dw,dh)) return;
   /* Mode 6 is (one, zero): everywhere a gate admits the plain normal path below, it admits the
    * replace pair too, because for the opaque pixels those paths copy the two are identical and
    * only the partial-coverage runs branch on it. */
@@ -1042,7 +1020,6 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
   int bR=blend&0xFF, bG=(blend>>8)&0xFF, bB=(blend>>16)&0xFF;
   int src_all_opaque=surface_known_opaque(r,surf);
   int sremap=indexed_brightness_active(r)!=NULL || threshold_palette_active(r)!=NULL;
-  const struct GmlShaderPal *spal=pal_active(r);
   const struct GmlShaderPal *slut=lut_active(r);
   const struct GmlShaderPal *sgrid=grid_active(r);
   /* The one-to-one surface kernel needs a dedicated four-band branch so
@@ -1070,7 +1047,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
       int sx_start=cx0-x0, sy_start=cy0-y0;
       int white=((blend & 0xFFFFFF) == 0xFFFFFF);
       if(src_all_opaque && (r->blendmode==0||replace) && alpha>=1.0 && white &&
-         !sremap && !spal && !slut && !sgrid && !squant &&
+         !sremap && !slut && !sgrid && !squant &&
          r->color_write_mask==0x0F &&
          src!=r->fb && cx0==0 && cy0==0 && cw==r->fbw && ch==r->fbh &&
          sx_start==0 && sy_start==0 && sw==r->fbw && sh==r->fbh){
@@ -1084,7 +1061,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
       }
       gml_render_maybe_prepare_draw(r);
       if(r->color_write_mask!=0x0F && (r->blendmode==0||replace) && alpha>=1.0 &&
-         white && !sremap && !spal && !slut && !sgrid && !squant){
+         white && !sremap && !slut && !sgrid && !squant){
         /* Channel-masked surface copy. This is the common mask-construction idiom: draw an
          * opaque color/shape first, disable alpha writes, then copy scene RGB through it. */
         for(int yy=0; yy<ch; yy++){
@@ -1117,7 +1094,6 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
           for(int xx=0; xx<cw; xx++){
             uint32_t sv=sp[xx],old=dp[xx];
             if(sremap) sv=mapped_texture_pixel(r,sv);
-            else if(spal) sv=pal_map_px(spal,sv);
             else if(slut) sv=lut_map_px(r,slut,sv);
             else if(sgrid) sv=grid_map_px_cached(r,sgrid,sv,&grid_cache);
             int sr=((sv>>16)&255)*bR/255,sg=((sv>>8)&255)*bG/255,sb=(sv&255)*bB/255;
@@ -1136,7 +1112,6 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             uint32_t sv=sp[xx],source_alpha=sv>>24,old=dp[xx];
             if(!source_alpha) continue;
             if(sremap) sv=mapped_texture_pixel(r,sv);
-            else if(spal) sv=pal_map_px(spal,sv);
             else if(slut) sv=lut_map_px(r,slut,sv);
             else if(sgrid) sv=grid_map_px_cached(r,sgrid,sv,&grid_cache);
             int sr=((sv>>16)&255)*bR/255,sg=((sv>>8)&255)*bG/255,sb=(sv&255)*bB/255;
@@ -1197,12 +1172,6 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
           uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
           for(int xx=0; xx<cw; xx++){ if(!(sp[xx]>>24)) continue;
             dp[xx]=quantise4_map_px(squant,sp[xx]); }
-        }
-      } else if((!r->alphablend || alpha>=1.0) && white && spal){
-        for(int yy=0; yy<ch; yy++){
-          const uint32_t *sp=src+(size_t)(sy_start+yy)*sw+sx_start;
-          uint32_t *dp=r->fb+(size_t)(cy0+yy)*r->fbw+cx0;
-          for(int xx=0; xx<cw; xx++){ if(!(sp[xx]>>24)) continue; dp[xx]=pal_map_px(spal,sp[xx]); }
         }
       } else if((!r->alphablend || alpha>=1.0) && white && slut){
         for(int yy=0; yy<ch; yy++){
@@ -1280,7 +1249,6 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
             double pa=(sv>>24)/255.0;             /* per-pixel coverage x call alpha */
             if(pa<=0) continue;
             if(sremap) sv=mapped_texture_pixel(r,sv);
-            else if(spal) sv=pal_map_px(spal,sv);
             else if(slut) sv=lut_map_px(r,slut,sv);
             else if(sgrid) sv=grid_map_px_cached(r,sgrid,sv,&grid_cache);
             int sr=((sv>>16)&0xFF)*bR/255, sg=((sv>>8)&0xFF)*bG/255, sb=(sv&0xFF)*bB/255;
@@ -1308,7 +1276,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
      fabs(sx0d) < 0.001 && fabs(sy0d) < 0.001 &&
      fabs(swd - sw) < 0.001 && fabs(shd - sh) < 0.001 &&
      (r->blendmode==0 || (replace && src_all_opaque)) && alpha>=1.0 &&
-     ((blend & 0xFFFFFF) == 0xFFFFFF) && !sremap && !spal && !slut && !sgrid &&
+     ((blend & 0xFFFFFF) == 0xFFFFFF) && !sremap && !slut && !sgrid &&
      (!alpha_test || opaque_alpha_test_passthrough)){
     /* Record it rather than write it, while the full-target fill in front of it is still deferred:
      * the two are one operation as far as the target is concerned. The recording lives with its
@@ -1336,7 +1304,7 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
    * downscale keeps the box average, while non-interpolated draws use exact point sampling below.
    * This is what makes a full-screen compositor's soft "old TV" bloom render. */
   if(r->interp && !flipx && !flipy && W>sw && H>sh && r->blendmode==0 &&
-     !sremap && !spal && !slut){
+     !sremap && !slut){
     /* per-column tap indices + weight are constant across rows: precompute once (hoists the div/floor
      * out of the inner loop) and run the taps in float. */
     int *cxa=malloc((size_t)W*sizeof(int)), *cxb=malloc((size_t)W*sizeof(int));
@@ -1374,7 +1342,6 @@ void draw_surface_region(GmlRender *r, int surf, double sx0d, double sy0d, doubl
       double pa=(A/(double)n)/255.0; if(pa<=0) continue;   /* box-averaged coverage */
       uint32_t av=((uint32_t)(R/n)<<16)|((uint32_t)(G/n)<<8)|(uint32_t)(B/n);
       if(sremap) av=mapped_texture_pixel(r,av);
-      else if(spal) av=pal_map_px(spal,av);
       else if(slut) av=lut_map_px(r,slut,av);
       int sr=((av>>16)&0xFF)*bR/255, sg=((av>>8)&0xFF)*bG/255, sb=(av&0xFF)*bB/255;
       uint32_t *dp=&r->fb[(size_t)ty_*r->fbw+tx_];
@@ -1504,6 +1471,7 @@ static int shade_source_to_target(GmlRender *r,const uint32_t *source,int sw,int
   request.linear=r->interp?1:0;
   request.output=r->shaded_plane;
   if(!r->shader_executor(r->shader_executor_context,&request)) return 0;
+  r->shaded_plane_borrowed=NULL;
   r->shaded_plane_width=width;
   r->shaded_plane_height=height;
   r->shaded_draws++;
@@ -1568,8 +1536,6 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
   /* Interpolated surface draws with default application-surface blitting disabled
    * signal self-composition. Sticky; the host reads this next frame to supersample that pass. */
   if(r && !r->app_draw_enable && r->interp) r->composites_app=1;
-  if(alpha>=1.0 && (blend&0xFFFFFFu)==0xFFFFFFu && (r->blendmode==0 || r->blendmode==6) &&
-     draw_surface_bloom_pass(r,spx,sw,sh,dx,dy,dw,dh)) return;
   if(sdual){ draw_surface_dual_sample(r,sdual,surf,0,0,sw,sh,dx,dy,dw,dh,blend,alpha); return; }
   /* A surface presented through a program this renderer does not execute: the frame's last
    * operation, recorded for the host's graphics context when one is adopted, and otherwise drawn
@@ -1657,17 +1623,99 @@ int gml_render_shade_target_rect(GmlRender *r,int x1,int y1,int x2,int y2,uint32
                                 (double)(x2-x1),(double)(y2-y1),0xFFFFFFu,alpha);
 }
 
+/* The shaded frame for this sprite, program and set of values, evaluated on the device once and
+ * kept. Returns NULL when the device cannot produce it. */
+static const uint32_t *shaded_frame_get(GmlRender *r,int sprite,int frame,int *out_w,int *out_h){
+  int w=0,h=0,shader=r->active_shader,spare=-1;
+  const uint32_t *px=NULL;
+  uint64_t fingerprint=gml_render_shader_uniform_fingerprint(r,shader);
+  uint32_t oldest=0xFFFFFFFFu;
+  GmlRenderShaderRequest request;
+  for(int i=0;i<GML_SHADED_FRAME_CACHE;i++){
+    if(r->shaded_frame[i].px && r->shaded_frame[i].sprite==sprite &&
+       r->shaded_frame[i].frame==frame && r->shaded_frame[i].shader==shader &&
+       r->shaded_frame[i].fingerprint==fingerprint){
+      r->shaded_frame[i].last_used=++r->shaded_frame_clock;
+      *out_w=r->shaded_frame[i].w;
+      *out_h=r->shaded_frame[i].h;
+      return r->shaded_frame[i].px;
+    }
+  }
+  if(!gml_render_sprite_frame_plane(r,sprite,frame,&w,&h,&px) || !px || w<=0 || h<=0) return NULL;
+  for(int i=0;i<GML_SHADED_FRAME_CACHE;i++){
+    if(!r->shaded_frame[i].px){ spare=i; break; }
+    if(r->shaded_frame[i].last_used<oldest){ oldest=r->shaded_frame[i].last_used; spare=i; }
+  }
+  if(spare<0) return NULL;
+  if(r->shaded_frame[spare].w*r->shaded_frame[spare].h!=w*h || !r->shaded_frame[spare].px){
+    uint32_t *grown=(uint32_t*)realloc(r->shaded_frame[spare].px,(size_t)w*h*sizeof *grown);
+    if(!grown) return NULL;
+    r->shaded_frame[spare].px=grown;
+  }
+  memset(&request,0,sizeof request);
+  request.shader=shader;
+  request.source=px;
+  request.source_width=w;
+  request.source_height=h;
+  request.source_pitch=w;
+  request.region_width=w;
+  request.region_height=h;
+  request.source_identity=((uint32_t)sprite<<10)|((uint32_t)frame&0x3FFu);
+  request.serial=++r->shaded_requests;
+  request.width=w;
+  request.height=h;
+  request.output=r->shaded_frame[spare].px;
+  if(!r->shader_executor(r->shader_executor_context,&request)) return NULL;
+  r->shaded_frame[spare].sprite=sprite;
+  r->shaded_frame[spare].frame=frame;
+  r->shaded_frame[spare].shader=shader;
+  r->shaded_frame[spare].fingerprint=fingerprint;
+  r->shaded_frame[spare].w=w;
+  r->shaded_frame[spare].h=h;
+  r->shaded_frame[spare].last_used=++r->shaded_frame_clock;
+  *out_w=w;
+  *out_h=h;
+  return r->shaded_frame[spare].px;
+}
+
+int gml_render_shade_target_sprite_part(GmlRender *r,int sprite,int frame,
+                                        double rx,double ry,double rw,double rh,
+                                        double dx,double dy,double dw,double dh,
+                                        uint32_t blend,double alpha){
+  int w=0,h=0,saved;
+  const uint32_t *shaded;
+  if(!r || r->active_shader<0 || !r->shader_executor ||
+     !gml_render_shader_content_candidate(r,r->active_shader)) return 0;
+  shaded=shaded_frame_get(r,sprite,frame,&w,&h);
+  if(!shaded) return 0;
+  if(rx<0){ rw+=rx; rx=0; }
+  if(ry<0){ rh+=ry; ry=0; }
+  if(rw<=0 || rh<=0 || rx>=w || ry>=h) return 0;
+  if(rx+rw>w) rw=w-rx;
+  if(ry+rh>h) rh=h-ry;
+  /* The program has been applied to the frame; the composition below is the plain one. */
+  saved=r->active_shader;
+  r->active_shader=-1;
+  r->shaded_plane_borrowed=shaded;
+  r->shaded_plane_width=w;
+  r->shaded_plane_height=h;
+  draw_surface_region(r,GML_RENDER_SHADED_SURFACE,rx,ry,rw,rh,dx,dy,dw,dh,blend,alpha);
+  r->shaded_plane_borrowed=NULL;
+  r->active_shader=saved;
+  /* A draw composed from a kept frame carried the device's answer as much as the one that
+   * produced it, and the accounting counts what reached the picture. */
+  r->shaded_draws++;
+  return 1;
+}
+
 int gml_render_shade_target_sprite(GmlRender *r,int sprite,int frame,
                                     double dx,double dy,double dw,double dh,
                                     uint32_t blend,double alpha){
   int w=0,h=0;
   const uint32_t *px=NULL;
-  if(!r || r->active_shader<0 || !r->shader_executor ||
-     !gml_render_shader_content_candidate(r,r->active_shader)) return 0;
+  if(!r || r->active_shader<0) return 0;
   if(!gml_render_sprite_frame_plane(r,sprite,frame,&w,&h,&px) || !px || w<=0 || h<=0) return 0;
-  return shade_source_to_target(r,px,w,h,0,0,w,h,
-                                ((uint32_t)sprite<<10)|((uint32_t)frame&0x3FFu),
-                                dx,dy,dw,dh,blend,alpha);
+  return gml_render_shade_target_sprite_part(r,sprite,frame,0,0,w,h,dx,dy,dw,dh,blend,alpha);
 }
 
 void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
@@ -1735,8 +1783,8 @@ void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
   gml_render_maybe_prepare_draw(r);
   int bR=blend&255,bG=(blend>>8)&255,bB=(blend>>16)&255;
   int sremap=indexed_brightness_active(r)!=NULL || threshold_palette_active(r)!=NULL;
-  const struct GmlShaderPal *spal=pal_active(r),*slut=lut_active(r),*sgrid=grid_active(r);
-  /* Apply the active four-band mapper to sampled surface pixels. */
+  const struct GmlShaderPal *slut=lut_active(r),*sgrid=grid_active(r);
+  /* A four-colour quantiser is bound for a whole-surface pass, not for sprite draws. */
   const struct GmlShaderPal *squant=quantise4_active(r);
   for(int py=y0;py<y1;py++) for(int px=x0;px<x1;px++){
     double rx=px+0.5-ax,ry=py+0.5-ay;
@@ -1758,7 +1806,7 @@ void gml_draw_surface_ext(GmlRender *r,int surf,double x,double y,
     } else sv=src[(size_t)(int)floor(v)*sw+(int)floor(u)];
     if(sremap) sv=mapped_texture_pixel(r,sv);
     else if(squant) sv=quantise4_map_px(squant,sv);
-    else if(spal) sv=pal_map_px(spal,sv); else if(slut) sv=lut_map_px(r,slut,sv); else if(sgrid) sv=grid_map_px(r,sgrid,sv);
+    else if(slut) sv=lut_map_px(r,slut,sv); else if(sgrid) sv=grid_map_px(r,sgrid,sv);
     int sr=((sv>>16)&255)*bR/255,sg=((sv>>8)&255)*bG/255,sb=(sv&255)*bB/255;
     uint32_t *dp=&r->fb[(size_t)py*r->fbw+px],old=*dp,out;
     double sa=((sv>>24)/255.0)*alpha;

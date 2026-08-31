@@ -185,6 +185,8 @@ typedef struct { uint32_t *px; int w, h, live;
  * header to obtain storage size. Subsystem callers remain on gml_render.h and
  * must not dereference these records. */
 
+enum { GML_SHADED_FRAME_CACHE=32 };
+
 typedef struct GmlRender {
   GmlWin   *win;
   /* Borrowed engine-owned fixed-function context. */
@@ -505,7 +507,25 @@ typedef struct GmlRender {
   int shader_device_expected;
   uint32_t *shaded_plane; size_t shaded_plane_capacity;
   int shaded_plane_width,shaded_plane_height;
+  /* A plane the composition reads instead of shaded_plane, so a cached result composes without
+   * being copied first. */
+  const uint32_t *shaded_plane_borrowed;
+  /* Shaded sprite frames. A program applied to a sprite transforms its texels, so its answer
+   * depends on the frame, the program and the values set on it — not on where the frame is drawn.
+   * Evaluating it once per frame and reusing it turns a per-draw device round trip into one per
+   * distinct frame and avoids repeated device evaluations. */
+  struct {
+    int sprite,frame,shader;
+    uint64_t fingerprint;
+    int w,h;
+    uint32_t *px;
+    uint32_t last_used;
+  } shaded_frame[GML_SHADED_FRAME_CACHE];
+  uint32_t shaded_frame_clock;
   uint32_t shaded_requests,shaded_draws;
+  /* Per-shader, per-shape accounting: [shader][kind][executed]. Allocated only when asked for. */
+  uint32_t *shader_account;
+  int shader_account_shaders;
   int       lut_pal_sprite, lut_pal_frame;   /* texture_set_stage palette source (-1 = unset) */
   int       active_shader;   /* shader_set asset id, -1 = none. Reset per frame. */
   int       monitor_w;       /* virtual monitor width reported to content, or 0 for fallback. */
@@ -617,6 +637,11 @@ void render_present_first_generation(GmlRender *r,int surf,const uint32_t *src,i
 int gml_render_shade_target_rect(GmlRender *r,int x1,int y1,int x2,int y2,uint32_t colour,double alpha);
 int gml_render_shade_target_sprite(GmlRender *r,int sprite,int frame,
                                    double dx,double dy,double dw,double dh,uint32_t blend,double alpha);
+uint64_t gml_render_shader_uniform_fingerprint(const GmlRender *r,int shader);
+int gml_render_shade_target_sprite_part(GmlRender *r,int sprite,int frame,
+                                        double rx,double ry,double rw,double rh,
+                                        double dx,double dy,double dw,double dh,
+                                        uint32_t blend,double alpha);
 void draw_surface_region(GmlRender *r,int surface,double source_x,double source_y,
                          double source_width,double source_height,double destination_x,
                          double destination_y,double destination_width,

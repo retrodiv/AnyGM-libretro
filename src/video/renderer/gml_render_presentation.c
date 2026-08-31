@@ -294,6 +294,9 @@ int render_present_content_shader(GmlRender *r,int surf,const uint32_t *src,int 
   r->presentation.fill_color=captured_colour;
   r->presentation.identity=(uint32_t)surf;
   r->presentation.shader=shader;
+  /* Recorded for the device to run: the accounting counts it as reaching the device, because it
+   * does — the engine executes it at the presentation rather than here. */
+  r->shaded_draws++;
   r->presentation.linear=r->interp?1:0;
   r->presentation.generation++;
   r->pending_presentation=1;

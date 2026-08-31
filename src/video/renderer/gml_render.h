@@ -448,6 +448,22 @@ int gml_render_shader_device_present(const GmlRender *r);
 /* Whether the session requested a device. Set before the first content events, so a shader-support
  * query a game makes at boot is answered from the session rather than from the frame. */
 void gml_render_set_shader_device_expected(GmlRender *r,int expected);
+/* Per-shader accounting of what reached the graphics device. `kind` buckets the draw by shape;
+ * `executed` says whether that draw ran the content's program there. Enabled by a development
+ * setting, reported once when the content is unloaded, and the instrument the shader-coverage
+ * work is measured with. */
+enum {
+  GML_RENDER_SHADER_DRAW_SURFACE=0,
+  GML_RENDER_SHADER_DRAW_SPRITE=1,
+  GML_RENDER_SHADER_DRAW_RECT=2,
+  GML_RENDER_SHADER_DRAW_TEXT=3,
+  GML_RENDER_SHADER_DRAW_OTHER=4,
+  GML_RENDER_SHADER_DRAW_KINDS=5
+};
+void gml_render_shader_account(GmlRender *r,int shader,int kind,int executed);
+/* The number of content-program draws executed on the device so far, so a caller can tell whether
+ * the draw it just made reached it. */
+uint32_t gml_render_shader_executed_count(const GmlRender *r);
 /* The surface id that names the renderer's plane holding the last executed program's result. */
 enum { GML_RENDER_SHADED_SURFACE=-2 };
 /* A sprite frame as one ARGB plane in renderer-owned scratch, for a sampler upload. Valid until the

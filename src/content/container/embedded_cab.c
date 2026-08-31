@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  *
- * Bounded PE-section Cabinet discovery and transactional VFS extraction.
- * Cabinet reads are confined to this owner.
+ * Bounded PE-section Cabinet discovery and transactional VFS extraction, with a
+ * first-party single-folder LZX-21 decompressor (cab_lzx.c).
  */
 #include "embedded_cab.h"
 
 #include "content_router.h"
+#include "anygm_producer_fingerprint.h"
 #include "anygm_vfs.h"
-#include "mspack.h"
+#include "cab_lzx.h"
 
 #include <ctype.h>
 #include <stdarg.h>
@@ -58,39 +59,6 @@ typedef struct CabManifest {
   int work_exhausted;
   int force_collisions;
 } CabManifest;
-
-typedef enum CabMspackFileKind {
-  CAB_MSPACK_INPUT=1,
-  CAB_MSPACK_OUTPUT=2
-} CabMspackFileKind;
-
-typedef struct CabMspackContext CabMspackContext;
-
-typedef struct CabMspackFile {
-  struct mspack_file base;
-  CabMspackContext *context;
-  CabMspackFileKind kind;
-  void *handle;
-  uint64_t position;
-  int failed;
-} CabMspackFile;
-
-struct CabMspackContext {
-  struct mspack_system system;
-  const AnygmContentRouter *router;
-  const AnygmEmbeddedCab *cab;
-  const char *source_path;
-  void *source_handle;
-  unsigned input_handles;
-  const char *output_path;
-  uint64_t expected_output;
-  uint64_t written_output;
-  uint64_t output_hash;
-  int discard_output;
-  int output_opened;
-  int output_closed_ok;
-  int failed;
-};
 
 static uint16_t cab_u16(const uint8_t *p){
   return (uint16_t)((uint16_t)p[0]|(uint16_t)((uint16_t)p[1]<<8));
@@ -656,156 +624,9 @@ static int cab_join(char *out,size_t capacity,const char *root,const char *relat
   return length>=0 && (size_t)length<capacity;
 }
 
-static struct mspack_file *cab_mspack_open(struct mspack_system *system,
-                                           const char *filename,int mode){
-  CabMspackContext *context=(CabMspackContext *)system;
-  if(!context || !filename) return NULL;
-  CabMspackFile *file=calloc(1,sizeof *file);
-  if(!file) return NULL;
-  file->context=context;
-  if(mode==MSPACK_SYS_OPEN_READ && !strcmp(filename,context->source_path)){
-    file->kind=CAB_MSPACK_INPUT;
-    file->handle=context->source_handle;
-    if(file->handle){ context->input_handles++; return &file->base; }
-  }else if(mode==MSPACK_SYS_OPEN_WRITE && context->output_path &&
-           !strcmp(filename,context->output_path) && !context->output_opened){
-    file->kind=CAB_MSPACK_OUTPUT;
-    context->output_opened=1;
-    context->written_output=0;
-    context->output_hash=cab_hash_begin();
-    if(context->discard_output) return &file->base;
-    file->handle=context->router->host->file_open(
-      context->router->host->userdata,context->output_path,
-      ANYGM_FILE_WRITE|ANYGM_FILE_CREATE|ANYGM_FILE_TRUNCATE);
-    if(file->handle) return &file->base;
-  }
-  context->failed=1;
-  free(file);
-  return NULL;
-}
-
-static void cab_mspack_close(struct mspack_file *opaque){
-  CabMspackFile *file=(CabMspackFile *)opaque;
-  if(!file) return;
-  CabMspackContext *context=file->context;
-  if(file->kind==CAB_MSPACK_OUTPUT){
-    int ok=!file->failed && !context->failed &&
-           context->written_output==context->expected_output;
-    if(file->handle && ok && context->router->host->file_flush)
-      ok=context->router->host->file_flush(context->router->host->userdata,file->handle)==ANYGM_OK;
-    if(file->handle) context->router->host->file_close(context->router->host->userdata,file->handle);
-    if(!ok && !context->discard_output) anygm_vfs_remove(context->router->host,context->output_path);
-    context->output_closed_ok=ok;
-    if(!ok) context->failed=1;
-  }else if(file->handle){
-    if(context->input_handles) context->input_handles--;
-  }
-  free(file);
-}
-
-static int cab_mspack_read(struct mspack_file *opaque,void *buffer,int bytes){
-  CabMspackFile *file=(CabMspackFile *)opaque;
-  if(!file || file->kind!=CAB_MSPACK_INPUT || !buffer || bytes<0 || file->failed) return -1;
-  CabMspackContext *context=file->context;
-  uint64_t remaining=context->cab->size-file->position;
-  size_t wanted=(uint64_t)bytes<remaining?(size_t)bytes:(size_t)remaining;
-  if(!wanted) return 0;
-  if(!cab_seek_absolute(context->router->host,file->handle,
-                        context->cab->offset+file->position)){
-    file->failed=context->failed=1;
-    return -1;
-  }
-  size_t read=0;
-  while(read<wanted){
-    size_t count=context->router->host->file_read(context->router->host->userdata,file->handle,
-                                                  (uint8_t *)buffer+read,wanted-read);
-    if(!count || count>wanted-read){ file->failed=context->failed=1; return -1; }
-    read+=count;
-  }
-  file->position+=(uint64_t)read;
-  return (int)read;
-}
-
-static int cab_mspack_write(struct mspack_file *opaque,void *buffer,int bytes){
-  CabMspackFile *file=(CabMspackFile *)opaque;
-  if(!file || file->kind!=CAB_MSPACK_OUTPUT || (!buffer && bytes) || bytes<0 || file->failed)
-    return -1;
-  CabMspackContext *context=file->context;
-  if((uint64_t)bytes>context->expected_output-context->written_output){
-    file->failed=context->failed=1;
-    return -1;
-  }
-  if(!context->discard_output){
-    size_t written=0,wanted=(size_t)bytes;
-    while(written<wanted){
-      size_t count=context->router->host->file_write(
-        context->router->host->userdata,file->handle,(uint8_t *)buffer+written,wanted-written);
-      if(!count || count>wanted-written){ file->failed=context->failed=1; return -1; }
-      written+=count;
-    }
-  }
-  context->output_hash=cab_hash_update(context->output_hash,buffer,(size_t)bytes);
-  context->written_output+=(uint64_t)bytes;
-  file->position+=(uint64_t)bytes;
-  return bytes;
-}
-
-static int cab_mspack_seek(struct mspack_file *opaque,off_t request,int origin){
-  CabMspackFile *file=(CabMspackFile *)opaque;
-  if(!file || file->kind!=CAB_MSPACK_INPUT || file->failed) return -1;
-  uint64_t size=file->context->cab->size;
-  uint64_t base=origin==MSPACK_SYS_SEEK_START?0u:
-                origin==MSPACK_SYS_SEEK_CUR?file->position:
-                origin==MSPACK_SYS_SEEK_END?size:UINT64_MAX;
-  uint64_t magnitude=request<0?(uint64_t)(-(request+1))+1u:(uint64_t)request;
-  if(base==UINT64_MAX || (request<0 && magnitude>base) ||
-     (request>=0 && magnitude>size-base)) return -1;
-  file->position=request<0?base-magnitude:base+magnitude;
-  return 0;
-}
-
-static off_t cab_mspack_tell(struct mspack_file *opaque){
-  CabMspackFile *file=(CabMspackFile *)opaque;
-  return file && file->position<=INT64_MAX?(off_t)file->position:(off_t)-1;
-}
-
-static void cab_mspack_message(struct mspack_file *file,const char *format,...){
-  (void)file;
-  (void)format;
-}
-
-static void *cab_mspack_alloc(struct mspack_system *system,size_t bytes){
-  (void)system;
-  return malloc(bytes);
-}
-
-static void cab_mspack_free(void *memory){ free(memory); }
-
-static void cab_mspack_copy(void *source,void *destination,size_t bytes){
-  memcpy(destination,source,bytes);
-}
-
-static void cab_mspack_init(CabMspackContext *context,const AnygmContentRouter *router,
-                            const AnygmEmbeddedCab *cab,const char *source_path){
-  memset(context,0,sizeof *context);
-  context->system.open=cab_mspack_open;
-  context->system.close=cab_mspack_close;
-  context->system.read=cab_mspack_read;
-  context->system.write=cab_mspack_write;
-  context->system.seek=cab_mspack_seek;
-  context->system.tell=cab_mspack_tell;
-  context->system.message=cab_mspack_message;
-  context->system.alloc=cab_mspack_alloc;
-  context->system.free=cab_mspack_free;
-  context->system.copy=cab_mspack_copy;
-  context->router=router;
-  context->cab=cab;
-  context->source_path=source_path;
-}
-
 static uint64_t cab_producer(void){
-  static const char recipe[]="AnyGM embedded Cabinet cache; CAB LZX-21";
-  return cab_hash_update(cab_hash_begin(),recipe,sizeof recipe-1u);
+  static const char recipe[]="AnyGM embedded Cabinet cache; local LZX-21 decoder v2";
+  return cab_hash_update(cab_hash_begin(),recipe,sizeof recipe-1u)^ANYGM_PRODUCER_FINGERPRINT;
 }
 
 static char cab_hex_digit(unsigned value){
@@ -1077,6 +898,138 @@ static int cab_cache_reuse(const AnygmContentRouter *router,const char *root,
   return ok;
 }
 
+/* The Cabinet CFDATA block checksum: XOR of the data as 32-bit little-endian words, folded
+ * with a tail run, then folded again over the block's own size fields. A stored value of zero
+ * marks a block the producer left unchecked. */
+static uint32_t cab_cfdata_sum(const uint8_t *data,size_t bytes,uint32_t csum){
+  const uint8_t *p=data;
+  for(size_t words=bytes>>2;words;words--){
+    csum^=(uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);
+    p+=4;
+  }
+  uint32_t tail=0;
+  switch(bytes&3u){
+    case 3: tail=((uint32_t)p[0]<<16)|((uint32_t)p[1]<<8)|p[2]; break;
+    case 2: tail=((uint32_t)p[0]<<8)|p[1]; break;
+    case 1: tail=p[0]; break;
+    default: break;
+  }
+  return csum^tail;
+}
+
+/* First-party single-folder LZX-21 extraction. Reads the validated cabinet into a bounded
+ * buffer, gathers its CFDATA payloads, decompresses the folder with cab_lzx21_decompress, and
+ * writes each member into the staging tree with its content hash. Every read is bounded to the
+ * cabinet buffer and every write to the staged path; any inconsistency fails without publishing.
+ * Native member names are validated but not written, as before. */
+static int cab_extract_lzx_folder(const AnygmContentRouter *router,const AnygmEmbeddedCab *cab,
+                                  void *source_handle,const char *staging,
+                                  CabManifest *manifest,CabManifest *seen,const char **failure){
+  const AnygmHostServices *host=router->host;
+  if(cab->size<36u || cab->size>UINT32_MAX){ *failure="cabinet size"; return 0; }
+  size_t n=(size_t)cab->size;
+  uint8_t *buf=(uint8_t*)malloc(n);
+  if(!buf){ *failure="cabinet buffer"; return 0; }
+  if(!cab_read_at(host,source_handle,cab->source_size,cab->offset,buf,n)){
+    *failure="cabinet read"; free(buf); return 0;
+  }
+#define CAB_RD16(o) ((uint16_t)(buf[o] | (buf[(o)+1]<<8)))
+#define CAB_RD32(o) ((uint32_t)(buf[o] | (buf[(o)+1]<<8) | (buf[(o)+2]<<16) | ((uint32_t)buf[(o)+3]<<24)))
+  int rc=0;
+  uint8_t *comp_buf=NULL,*out=NULL;
+  if(memcmp(buf,"MSCF",4)){ *failure="cabinet magic"; goto done; }
+  uint32_t coff_files=CAB_RD32(16);
+  uint16_t folder_count=CAB_RD16(26),file_count=CAB_RD16(28),flags=CAB_RD16(30);
+  if(folder_count!=1u || (flags&3u)){ *failure="unsupported cabinet shape"; goto done; }
+  size_t cur=36u; uint8_t folder_reserve=0,data_reserve=0;
+  if(flags&4u){
+    if(cur+4u>n){ *failure="reserve header"; goto done; }
+    uint16_t header_reserve=CAB_RD16(cur); folder_reserve=buf[cur+2]; data_reserve=buf[cur+3];
+    cur+=4u; if((size_t)header_reserve>n-cur){ *failure="reserve size"; goto done; } cur+=header_reserve;
+  }
+  if(cur+8u+(size_t)folder_reserve>n){ *failure="folder record"; goto done; }
+  uint32_t coff_data=CAB_RD32(cur); uint16_t block_count=CAB_RD16(cur+4u); uint16_t comp=CAB_RD16(cur+6u);
+  if((comp&0xfu)!=3u || ((comp>>8)&0x1fu)!=21u){ *failure="compression profile"; goto done; }
+  size_t block=coff_data,clen=0,ulen=0;
+  for(uint16_t i=0;i<block_count;i++){
+    size_t bh=8u+(size_t)data_reserve,bstart=block;
+    if(block>n || bh>n-block){ *failure="data block header"; goto done; }
+    uint32_t stored_sum=CAB_RD32(block);
+    uint16_t cb=CAB_RD16(block+4u),cu=CAB_RD16(block+6u);
+    block+=bh;
+    if(!cb || !cu || (size_t)cb>n-block || clen>SIZE_MAX-cb || ulen>SIZE_MAX-cu){
+      *failure="data block size"; goto done;
+    }
+    if(stored_sum){
+      uint32_t cs=cab_cfdata_sum(buf+block,cb,0);
+      cs=cab_cfdata_sum(buf+bstart+4u,4u,cs);
+      if(cs!=stored_sum){ *failure="cabinet checksum"; goto done; }
+    }
+    clen+=cb; ulen+=cu; block+=cb;
+  }
+  if(!ulen || ulen>ANYGM_CONTENT_MAX_EXTRACTED_BYTES){ *failure="expanded size"; goto done; }
+  comp_buf=(uint8_t*)malloc(clen?clen:1u); out=(uint8_t*)malloc(ulen);
+  if(!comp_buf || !out){ *failure="decode buffers"; goto done; }
+  block=coff_data; size_t cp=0;
+  for(uint16_t i=0;i<block_count;i++){
+    size_t bh=8u+(size_t)data_reserve; uint16_t cb=CAB_RD16(block+4u);
+    block+=bh; memcpy(comp_buf+cp,buf+block,cb); cp+=cb; block+=cb;
+  }
+  if(cab_lzx21_decompress(comp_buf,clen,out,ulen)!=0){ *failure="cabinet decompression"; goto done; }
+  free(comp_buf); comp_buf=NULL;
+
+  size_t fp=coff_files; unsigned entries=0,payloads=0; uint64_t total=0;
+  rc=1;
+  for(uint16_t i=0;i<file_count;i++){
+    if(fp>n || 16u>n-fp){ *failure="member header"; rc=0; break; }
+    uint32_t cb_file=CAB_RD32(fp); uint32_t uoff=CAB_RD32(fp+4u); uint16_t member_folder=CAB_RD16(fp+8u);
+    size_t nstart=fp+16u,nn=0;
+    while(nstart+nn<n && buf[nstart+nn]) nn++;
+    if(nstart+nn>=n){ *failure="member name"; rc=0; break; }
+    const char *name=(const char*)(buf+nstart);
+    fp=nstart+nn+1u;
+    if(member_folder!=0u){ *failure="member folder"; rc=0; break; }
+    if(++entries>ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES){ *failure="member count"; rc=0; break; }
+    if(nn>=sizeof ((CabManifest*)0)->payload){ *failure="member path length"; rc=0; break; }
+    if(!anygm_embedded_cab_limits_allowed(cab->size,entries,(uint64_t)cb_file,total+(uint64_t)cb_file)){
+      *failure="member size"; rc=0; break;
+    }
+    if((uint64_t)uoff+(uint64_t)cb_file>ulen){ *failure="member extent"; rc=0; break; }
+    char relative[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
+    if(nn>=sizeof relative){ *failure="member path length"; rc=0; break; }
+    snprintf(relative,sizeof relative,"%s",name);
+    if(!cab_member_path(relative) || cab_path_fold_equal(relative,CAB_CACHE_MARKER)){
+      *failure="member path"; rc=0; break;
+    }
+    if(total>ANYGM_CONTENT_MAX_EXTRACTED_BYTES-(uint64_t)cb_file){ *failure="total size limit"; rc=0; break; }
+    if(!cab_manifest_add(seen,relative,0,0)){ *failure="member collision"; rc=0; break; }
+    total+=(uint64_t)cb_file;
+    if(cab_name_is_native(relative)) continue;
+    uint64_t member_hash=cab_hash_update(cab_hash_begin(),out+uoff,cb_file);
+    char output[1536];
+    if(!cab_join(output,sizeof output,staging,relative)){ *failure="member output path"; rc=0; break; }
+    if(!cab_mkdir_parent(router,output) || !anygm_vfs_write_all(host,output,out+uoff,cb_file)){
+      *failure="member data write"; rc=0; break;
+    }
+    if(!cab_manifest_add(manifest,relative,(uint64_t)cb_file,member_hash)){ *failure="member manifest"; rc=0; break; }
+    if(cab_name_is_payload(relative)){
+      if(++payloads>1u){ *failure="payload ambiguity"; rc=0; break; }
+      snprintf(manifest->payload,sizeof manifest->payload,"%s",relative);
+    }
+  }
+  if(rc && (payloads!=1u || !manifest->count)){
+    cab_log(router,ANYGM_CONTENT_LOG_ERROR,
+            "cabinet: payload selection saw %u entries, %u payloads, %zu extracted members",
+            entries,payloads,manifest->count);
+    *failure="payload selection"; rc=0;
+  }
+done:
+  free(comp_buf); free(out); free(buf);
+#undef CAB_RD16
+#undef CAB_RD32
+  return rc;
+}
+
 int anygm_embedded_cab_extract(const AnygmContentRouter *router,const char *source_path,
                                const AnygmEmbeddedCab *cab,char *payload_path,
                                size_t payload_path_size,char *asset_root,size_t asset_root_size){
@@ -1115,102 +1068,23 @@ int anygm_embedded_cab_extract(const AnygmContentRouter *router,const char *sour
   anygm_content_directory_remove(router->host,staging);
   if(!anygm_vfs_mkdirs(router->host,staging)) return 0;
 
-  CabMspackContext context;
-  cab_mspack_init(&context,router,cab,source_path);
-  context.source_handle=router->host->file_open(router->host->userdata,source_path,
-                                                ANYGM_FILE_READ);
-  struct mscab_decompressor *decoder=NULL;
-  struct mscabd_cabinet *cabinet=NULL;
   CabManifest manifest={0};
   CabManifest seen={0};
-  uint64_t total=0;
   const char *failure="reader initialization";
-  int ok=context.source_handle!=NULL && cab->size<=UINT32_MAX;
+  void *source_handle=router->host->file_open(router->host->userdata,source_path,ANYGM_FILE_READ);
+  int ok=source_handle!=NULL && cab->size<=UINT32_MAX;
   if(ok){
     uint64_t source_hash=0;
-    if(!cab_hash_handle(router->host,context.source_handle,cab->source_size,&source_hash) ||
-       source_hash!=cab->source_hash){
-      failure="source identity";
-      ok=0;
-    }
+    if(!cab_hash_handle(router->host,source_handle,cab->source_size,&source_hash) ||
+       source_hash!=cab->source_hash){ failure="source identity"; ok=0; }
   }
-  int selftest=MSPACK_ERR_ARGS;
-  MSPACK_SYS_SELFTEST(selftest);
-  if(ok && selftest!=MSPACK_ERR_OK){ failure="platform self-test"; ok=0; }
-  if(ok && !(decoder=mspack_create_cab_decompressor(&context.system))){
-    failure="decoder creation"; ok=0;
-  }
-  if(ok && !(cabinet=decoder->open(decoder,source_path))){ failure="cabinet header"; ok=0; }
-  if(ok && (context.failed || cabinet->next || cabinet->prevcab || cabinet->nextcab ||
-            cabinet->prevname || cabinet->nextname || cabinet->base_offset!=0 ||
-            cabinet->length!=cab->size || cabinet->set_index!=0 || !cabinet->folders ||
-            cabinet->folders->next ||
-            MSCABD_COMP_METHOD(cabinet->folders->comp_type)!=MSCAB_COMP_LZX ||
-            MSCABD_COMP_LEVEL(cabinet->folders->comp_type)!=21)){
-    failure="cabinet profile"; ok=0;
-  }
-  unsigned entries=0,payloads=0;
-  for(struct mscabd_file *entry=ok?cabinet->files:NULL;ok && entry;entry=entry->next){
-    if(++entries>ANYGM_CONTENT_MAX_ARCHIVE_ENTRIES || !entry->filename ||
-       entry->folder!=cabinet->folders ||
-       !anygm_embedded_cab_limits_allowed(cab->size,entries,(uint64_t)entry->length,
-                                           total+(uint64_t)entry->length)){
-      failure="member type or size"; ok=0; break;
-    }
-    char relative[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
-    if(strlen(entry->filename)>=sizeof relative){ failure="member path length"; ok=0; break; }
-    snprintf(relative,sizeof relative,"%s",entry->filename);
-    if(!cab_member_path(relative) || cab_path_fold_equal(relative,CAB_CACHE_MARKER)){
-      failure="member path"; ok=0; break;
-    }
-    if(total>ANYGM_CONTENT_MAX_EXTRACTED_BYTES-(uint64_t)entry->length){
-      failure="total size limit"; ok=0; break;
-    }
-    if(!cab_manifest_add(&seen,relative,0,0)){ failure="member collision"; ok=0; break; }
-    total+=(uint64_t)entry->length;
-    char output[1536];
-    if(!cab_join(output,sizeof output,staging,relative)){
-      failure="member output path"; ok=0; break;
-    }
-    context.output_path=output;
-    context.expected_output=(uint64_t)entry->length;
-    context.written_output=0;
-    context.output_hash=cab_hash_begin();
-    context.discard_output=cab_name_is_native(relative);
-    context.output_opened=0;
-    context.output_closed_ok=0;
-    if((!context.discard_output && !cab_mkdir_parent(router,output)) ||
-       decoder->extract(decoder,entry,output)!=MSPACK_ERR_OK || context.failed ||
-       !context.output_opened || !context.output_closed_ok ||
-       context.written_output!=(uint64_t)entry->length){
-      failure="member data write"; ok=0; break;
-    }
-    if(context.discard_output) continue;
-    if(!cab_manifest_add(&manifest,relative,(uint64_t)entry->length,context.output_hash)){
-      failure="member manifest"; ok=0; break;
-    }
-    if(cab_name_is_payload(relative)){
-      if(++payloads>1u){ failure="payload ambiguity"; ok=0; break; }
-      snprintf(manifest.payload,sizeof manifest.payload,"%s",relative);
-    }
-  }
-  if(cabinet) decoder->close(decoder,cabinet);
-  if(decoder) mspack_destroy_cab_decompressor(decoder);
-  if(context.source_handle){
+  if(ok) ok=cab_extract_lzx_folder(router,cab,source_handle,staging,&manifest,&seen,&failure);
+  if(source_handle){
     uint64_t source_hash=0;
-    int stable=cab_hash_handle(router->host,context.source_handle,cab->source_size,&source_hash) &&
+    int stable=cab_hash_handle(router->host,source_handle,cab->source_size,&source_hash) &&
                source_hash==cab->source_hash;
     if(ok && !stable){ failure="source stability"; ok=0; }
-    router->host->file_close(router->host->userdata,context.source_handle);
-    context.source_handle=NULL;
-  }
-  if(context.input_handles){ failure="bounded source callback"; ok=0; }
-  if(context.failed && ok){ failure="bounded system callback"; ok=0; }
-  if(ok && (payloads!=1u || !manifest.count)){
-    cab_log(router,ANYGM_CONTENT_LOG_ERROR,
-            "cabinet: payload selection saw %u entries, %u payloads, %llu extracted members",
-            entries,payloads,(unsigned long long)manifest.count);
-    failure="payload selection"; ok=0;
+    router->host->file_close(router->host->userdata,source_handle);
   }
   if(ok && !cab_source_matches(router,source_path,cab)){
     failure="source stability";

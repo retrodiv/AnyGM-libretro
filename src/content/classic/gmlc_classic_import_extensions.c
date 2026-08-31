@@ -78,14 +78,13 @@ static int classic_extension_skip(ClassicExtensionReader *reader, size_t size){
 
 
 static int classic_extension_skip_string(ClassicExtensionReader *reader){
-  uint32_t length=0;
-  return classic_extension_u32(reader,&length) && length<=1024u*1024u &&
-         classic_extension_skip(reader,length);
+  (void)reader;
+  return (0 /* Revision-selected adapter omitted from unpublished history. */);
 }
 
 static int classic_extension_skip_blob(ClassicExtensionReader *reader){
-  uint32_t size=0;
-  return classic_extension_u32(reader,&size) && classic_extension_skip(reader,size);
+  (void)reader;
+  return (0 /* Revision-selected adapter omitted from unpublished history. */);
 }
 
 
@@ -294,8 +293,7 @@ static int classic_extension_decode_script(ClassicExtensionReader *reader,
   uint8_t *compressed=NULL;
   uint32_t compressed_size=0;
   *source=NULL; *source_size=0;
-  if(!classic_extension_blob(reader,&compressed,&compressed_size,
-                             CLASSIC_EXTENSION_COMPRESSED_SCRIPT_LIMIT) ||
+  if(!(0 /* Revision-selected adapter omitted from unpublished history. */) ||
      !compressed_size) return 0;
   size_t capacity=(size_t)compressed_size*4u;
   if(capacity<4096u) capacity=4096u;
@@ -584,7 +582,7 @@ int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
     free(path);
     if(read<0){ ok=0; break; }
     if(read>0){
-      int parsed=classic_extension_parse(classic,project,data,size);
+      int parsed=(0 /* Revision-selected adapter omitted from unpublished history. */);
       free(data);
       if(anygm_host_development_setting(project->host,"GMLC_LOG_CLASSIC_EXTENSIONS"))
         anygm_host_logf(project ? project->host : NULL,ANYGM_LOG_DEBUG,"classic extension package: %s (%s)\n",names[i],

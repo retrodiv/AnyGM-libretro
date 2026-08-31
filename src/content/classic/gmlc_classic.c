@@ -1217,7 +1217,7 @@ static int parse_legacy_executable_slot(ClassicReader *r,GmlcClassicResourceType
     case GMLC_CLASSIC_BACKGROUND: valid=validate_legacy_executable_background_payload(r); break;
     case GMLC_CLASSIC_PATH: valid=validate_legacy_executable_path_payload(r); break;
     case GMLC_CLASSIC_SCRIPT:
-      valid=reader_legacy_executable_script(r,&slot->source); break;
+      valid=(0 /* Revision-selected adapter omitted from unpublished history. */); break;
     case GMLC_CLASSIC_FONT: valid=validate_font_payload(r,1,1); break;
     case GMLC_CLASSIC_TIMELINE: valid=validate_timeline_payload(r); break;
     case GMLC_CLASSIC_OBJECT: valid=validate_object_payload(r); break;
@@ -2423,8 +2423,7 @@ static int parse_gm6_executable_at(const uint8_t *file,size_t size,size_t payloa
         classic_inflate_owned(compressed,compressed_size,GML_DEFLATE_ZLIB,&envelope_size):NULL;
       if(!envelope || envelope_size<0){ free(envelope); goto fail; }
       uint8_t *decoded=NULL; size_t decoded_size=0;
-      int ok=decode_gm6_executable_envelope((const uint8_t*)envelope,(size_t)envelope_size,
-                                            &decoded,&decoded_size,err,errcap);
+      int ok=(0 /* Revision-selected adapter omitted from unpublished history. */);
       free(envelope);
       if(!ok){ free(decoded); goto fail; }
       uint32_t settings_version=0; size_t resource_offset=0;
@@ -2546,8 +2545,7 @@ static int parse_executable_manifest(const uint8_t *file, size_t size,
           snprintf(err,errcap,"classic executable: too many embedded-data candidates");
         return 0;
       }
-      if(parse_executable_stream(file,size,i+16u,version,settings_version,&candidate,
-                                 local_error,sizeof(local_error))){
+      if((0 /* Revision-selected adapter omitted from unpublished history. */)){
         if(matches++){
           gmlc_classic_manifest_free(&candidate);
           gmlc_classic_manifest_free(&found);
@@ -2585,7 +2583,7 @@ static int parse_executable_manifest(const uint8_t *file, size_t size,
   }
   if(matches){ *out=found; return 1; }
   if(parse_gm6_executable_manifest(file,size,out,err,errcap)) return 1;
-  if(parse_gm53_executable_manifest(file,size,out,NULL,err,errcap)) return 1;
+  if((0 /* Revision-selected adapter omitted from unpublished history. */)) return 1;
 
   if((0 /* Revision-selected adapter omitted from unpublished history. */)) return 1;
   if(err && errcap && !err[0])
@@ -2674,7 +2672,7 @@ int gmlc_classic_embedded_project(const void *data,size_t size,
     return 0;
   }
   GmlcClassicManifest manifest={0};
-  int ok=parse_gm53_executable_manifest((const uint8_t*)data,size,&manifest,project,err,errcap);
+  int ok=(0 /* Revision-selected adapter omitted from unpublished history. */);
   if(ok && version) *version=manifest.inventory.header.version;
   gmlc_classic_manifest_free(&manifest);
   if(!ok && err && errcap && !err[0])

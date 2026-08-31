@@ -208,6 +208,7 @@ ANYGM_RUNTIME_SOURCES := \
 	src/compatibility/anygm_compatibility.c \
 	src/content/container/content_router.c \
 	src/content/container/embedded_cab.c \
+	src/content/container/cab_lzx.c \
 	src/content/container/embedded_nsis.c \
 	src/content/datafile/gml_win.c \
 	src/content/bytecode/gml_bytecode.c \

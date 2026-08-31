@@ -489,7 +489,11 @@ that it did not compile, and why the answer is now conditional: when the session
 graphics device it is executed and the answer is yes, otherwise it is still no. An early query can occur before the frontend has adopted the context, so the
 answer is taken from whether a device was requested (a stable session fact) rather than from
 whether the context is ready this instant. A filled rectangle or a sprite drawn through such a
-program reaches the same executor as a surface does. Complete sprite and surface kernels share the
+program reaches the same executor as a surface does. A program applied to a sprite transforms that
+sprite's texels, so its answer depends on the frame, the program and the values set on it rather
+than on where the frame is drawn: the answer is evaluated once and kept, and every later draw of
+the same frame composes from it. This replaces repeated device evaluations with one evaluation per distinct
+frame. Complete sprite and surface kernels share the
 canonical header-local recognized-shader sampling operations in
 `gml_render_sampling_internal.h`; the general surface mapper and post-process
 kernels additionally share the two final-pixel operations in

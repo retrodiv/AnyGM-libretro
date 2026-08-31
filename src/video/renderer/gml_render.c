@@ -511,6 +511,7 @@ int gml_render_init(GmlRender *r, GmlWin *win){
   r->blend_equation=r->blend_equation_alpha=1;
   r->app_draw_enable=1; r->next_surface_id=1;
   r->shader_report_all_compiled=1;
+  for(int i=0;i<GML_SHADED_FRAME_CACHE;i++) r->shaded_frame[i].sprite=-1;
   r->interp=anygm_policy_classic_interpolate(win);
   r->composites_app=0;
   r->fast_alpha_cull=env_fast_alpha_cull(r);
@@ -1393,6 +1394,69 @@ void gml_render_set_shader_device(GmlRender *r,int present){
 }
 int gml_render_shader_device_present(const GmlRender *r){ return r?r->shader_device_present:0; }
 void gml_render_set_shader_device_expected(GmlRender *r,int expected){ if(r) r->shader_device_expected=expected?1:0; }
+
+uint32_t gml_render_shader_executed_count(const GmlRender *r){ return r?r->shaded_draws:0u; }
+
+/* What the content has set on a program, as one number. Two draws with the same fingerprint get
+ * the same picture out of the same source, which is what lets a shaded frame be reused. */
+uint64_t gml_render_shader_uniform_fingerprint(const GmlRender *r,int shader){
+  uint64_t hash=1469598103934665603ull;
+  if(!r || shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return 0;
+  {
+    const struct GmlShaderPal *p=&r->shader_pal[shader];
+    const unsigned char *bytes;
+    size_t count;
+    bytes=(const unsigned char*)p->generic_uniform;
+    count=(size_t)p->generic_uniform_count*sizeof p->generic_uniform[0];
+    for(size_t i=0;i<count;i++){ hash^=bytes[i]; hash*=1099511628211ull; }
+    for(int i=0;i<p->generic_sampler_count;i++){
+      unsigned t=(unsigned)p->generic_sampler[i].texture;
+      for(int b=0;b<4;b++){ hash^=(unsigned char)(t>>(b*8)); hash*=1099511628211ull; }
+    }
+  }
+  return hash;
+}
+
+void gml_render_shader_account(GmlRender *r,int shader,int kind,int executed){
+  if(!r || shader<0 || shader>=r->n_shader_pal) return;
+  if(kind<0 || kind>=GML_RENDER_SHADER_DRAW_KINDS) kind=GML_RENDER_SHADER_DRAW_OTHER;
+  if(!r->shader_account){
+    size_t cells=(size_t)r->n_shader_pal*GML_RENDER_SHADER_DRAW_KINDS*2u;
+    if(!cells) return;
+    r->shader_account=(uint32_t*)calloc(cells,sizeof *r->shader_account);
+    if(!r->shader_account) return;
+    r->shader_account_shaders=r->n_shader_pal;
+  }
+  if(shader>=r->shader_account_shaders) return;
+  r->shader_account[((size_t)shader*GML_RENDER_SHADER_DRAW_KINDS+(size_t)kind)*2u+(executed?1u:0u)]++;
+}
+
+/* One line per shader that was drawn with, naming what reached the device and what did not. */
+static void shader_account_report(GmlRender *r){
+  static const char *kinds[GML_RENDER_SHADER_DRAW_KINDS]={"surface","sprite","rect","text","other"};
+  if(!r || !r->shader_account) return;
+  for(int shader=0;shader<r->shader_account_shaders;shader++){
+    uint32_t executed=0,plain=0;
+    char detail[240];
+    size_t used=0;
+    for(int kind=0;kind<GML_RENDER_SHADER_DRAW_KINDS;kind++){
+      uint32_t no=r->shader_account[((size_t)shader*GML_RENDER_SHADER_DRAW_KINDS+(size_t)kind)*2u];
+      uint32_t yes=r->shader_account[((size_t)shader*GML_RENDER_SHADER_DRAW_KINDS+(size_t)kind)*2u+1u];
+      executed+=yes;
+      plain+=no;
+      if((yes||no) && used<sizeof detail-40)
+        used+=(size_t)snprintf(detail+used,sizeof detail-used," %s=%u/%u",kinds[kind],yes,yes+no);
+    }
+    if(!executed && !plain) continue;
+    detail[used]='\0';
+    anygm_host_logf(r->win?r->win->host:NULL,ANYGM_LOG_INFO,
+      "[shader-account] shader=%d executed=%u plain=%u recognized=%d procedural=%d device=%d%s\n",
+      shader,executed,plain,
+      r->shader_pal?shader_pal_recognized(&r->shader_pal[shader]):0,
+      r->shader_pal?r->shader_pal[shader].procedural:0,
+      r->shader_device_present,detail);
+  }
+}
 int gml_render_surface_plane(GmlRender *r,int surface,int *width,int *height,
                              const uint32_t **pixels){
   int w=0,h=0;
@@ -1519,6 +1583,9 @@ void gml_render_free(GmlRender *r){
   free(r->spr_name_hix); r->spr_name_hix=NULL; r->spr_name_hix_cap=0;
   free(r->classic_info_native_pixels);
   free(r->layer_noise_rgb); r->layer_noise_rgb=NULL;
+  if(render_setting(r,"GML_SHADER_ACCOUNT")) shader_account_report(r);
+  free(r->shader_account); r->shader_account=NULL; r->shader_account_shaders=0;
+  for(int i=0;i<GML_SHADED_FRAME_CACHE;i++){ free(r->shaded_frame[i].px); r->shaded_frame[i].px=NULL; }
   free(r->content_sampler_plane);
   free(r->shaded_plane); r->shaded_plane=NULL; r->shaded_plane_capacity=0; r->content_sampler_plane=NULL; r->content_sampler_plane_capacity=0;
   free(r->layer_filter_src); free(r->layer_filter_work); free(r->layer_filter_aux);

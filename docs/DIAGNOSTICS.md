@@ -129,6 +129,22 @@ this stores one byte per invocation when enabled. It does not change frame outpu
 
 Off unless asked for, and it allocates nothing until the first entry runs.
 
+## Shader accounting
+
+`GML_SHADER_ACCOUNT` reports, once when content is unloaded, one line per content program that was
+drawn with:
+
+```text
+[shader-account] shader=N executed=N plain=N recognized=N procedural=N device=N surface=N/N sprite=N/N ...
+```
+
+`executed` counts draws that carried the device's answer — including those composed from a kept
+shaded frame, which carried it as much as the draw that produced it — and `plain` counts draws that
+fell back to the software renderer. The per-shape figures say which draw shapes those were, so a
+gap names itself. A shader whose `recognized` is 1 belongs to a family implemented in
+software; that flag alone does not establish output fidelity. State-setting builtins
+whose names begin with `draw_` are not counted as draws.
+
 ## Hybrid GPU counters
 
 `GML_HYBRID_GPU_STATS` reports one bounded line when the graphics context is released or content is

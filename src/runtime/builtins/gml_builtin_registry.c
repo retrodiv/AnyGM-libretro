@@ -204,7 +204,56 @@ static GmlVal gml_builtin_call_registered_stage(
 }
 
 static GmlVal gml_builtin_call_fast_id_impl(GmlVM *vm, int id, const char *nm, GmlVal *a, int n);
+static GmlVal gml_builtin_call_fast_id_original(GmlVM *vm, int id, const char *nm, GmlVal *a, int n);
+
+/* Which shape of draw a builtin name is, for the shader accounting. */
+/* A name that begins with draw_ but sets state rather than putting anything on the target. These names do not represent target-writing draws. */
+static int shader_account_is_draw(const char *nm){
+  static const char *not_draws[]={"draw_set","draw_get","draw_enable","draw_clear","draw_flush",
+                                  "draw_primitive_begin","draw_vertex","draw_texture_flush"};
+  for(size_t i=0;i<sizeof not_draws/sizeof not_draws[0];i++)
+    if(!strncmp(nm,not_draws[i],strlen(not_draws[i]))) return 0;
+  return 1;
+}
+
+static int shader_account_kind(const char *nm){
+  if(!strncmp(nm,"draw_surface",12)) return GML_RENDER_SHADER_DRAW_SURFACE;
+  if(!strncmp(nm,"draw_sprite",11) || !strcmp(nm,"draw_self")) return GML_RENDER_SHADER_DRAW_SPRITE;
+  if(!strncmp(nm,"draw_rectangle",14)) return GML_RENDER_SHADER_DRAW_RECT;
+  if(!strncmp(nm,"draw_text",9)) return GML_RENDER_SHADER_DRAW_TEXT;
+  return GML_RENDER_SHADER_DRAW_OTHER;
+}
+
+/* A draw made with a content program active is accounted by whether it reached the device, which
+ * the executed counter answers: it moves only when a program ran there. */
+static int shader_account_begin(GmlVM *vm,const char *nm,GmlRender **render,int *kind,uint32_t *mark){
+  GmlRender *r;
+  if(!vm || !nm || strncmp(nm,"draw_",5) || !shader_account_is_draw(nm)) return 0;
+  if(!builtin_setting(vm,"GML_SHADER_ACCOUNT")) return 0;
+  r=(GmlRender*)vm->render;
+  if(!r || gml_render_shader_current(r)<0) return 0;
+  *render=r;
+  *kind=shader_account_kind(nm);
+  *mark=gml_render_shader_executed_count(r);
+  return 1;
+}
+
 GmlVal gml_builtin_call_fast_id(GmlVM *vm, int id, const char *nm, GmlVal *a, int n){
+  GmlRender *account_render=NULL;
+  int account_kind=0;
+  uint32_t account_mark=0;
+  int account=shader_account_begin(vm,nm,&account_render,&account_kind,&account_mark);
+  if(account){
+    int shader=gml_render_shader_current(account_render);
+    GmlVal answer=gml_builtin_call_fast_id_original(vm,id,nm,a,n);
+    gml_render_shader_account(account_render,shader,account_kind,
+                              gml_render_shader_executed_count(account_render)!=account_mark);
+    return answer;
+  }
+  return gml_builtin_call_fast_id_original(vm,id,nm,a,n);
+}
+
+static GmlVal gml_builtin_call_fast_id_original(GmlVM *vm, int id, const char *nm, GmlVal *a, int n){
   if(!gml_builtin_state_ensure(vm)) return vundef();
   GmlRender *R=(GmlRender*)vm->render;
   (void)graphics_state_for_vm(vm);

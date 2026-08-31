@@ -5827,7 +5827,8 @@ static void draw_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, doubl
   /* A sprite drawn through a program this renderer does not execute goes to the same executor as
    * a surface, evaluated at the destination's size. Unrotated, unflipped draws only: the composed
    * plane is axis-aligned, and a rotated or mirrored draw keeps today's plain path. */
-  if(rot==0.0 && xs>0 && ys>0 && r->active_shader>=0 && r->shader_executor &&
+  /* Unrotated draws, mirrored or not: the composition takes a negative extent for a flip. */
+  if(rot==0.0 && xs!=0 && ys!=0 && r->active_shader>=0 && r->shader_executor &&
      gml_render_shader_content_candidate(r,r->active_shader)){
     int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
     if(gml_render_shade_target_sprite(r,sprite,sub,
@@ -6045,6 +6046,14 @@ void gml_draw_sprite_part_ext(GmlRender *r, int sprite, int subimg, double sx, d
   if(sprite<0||sprite>=r->n_spr) return;
   if(gml_d3_draw_sprite_part_2d(r,sprite,subimg,sx,sy,sw,sh,x,y,xs,ys,blend,alpha)) return;
   GmlSprite *s=&r->spr[sprite]; if(s->n_frames<=0) return;
+  /* A region of a sprite drawn through a program this renderer does not execute reaches the same
+   * executor; unflipped only, because the composed plane is axis-aligned. */
+  if(xs!=0 && ys!=0 && r->active_shader>=0 && r->shader_executor &&
+     gml_render_shader_content_candidate(r,r->active_shader)){
+    int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
+    if(gml_render_shade_target_sprite_part(r,sprite,sub,sx,sy,sw,sh,
+                                           x-r->cam_x,y-r->cam_y,sw*xs,sh*ys,blend,alpha)) return;
+  }
   if(s->runtime_rgba){
     const uint8_t *fr=runtime_frame_rgba(s,subimg); if(!fr) return;
     blit_rgba_region(r,fr,s->w,s->h,sx,sy,sw,sh,x-r->cam_x,y-r->cam_y,sw*xs,sh*ys,blend,alpha);

@@ -3,6 +3,17 @@
 
 # Generated-data provenance
 
+## Embedded Cabinet decompressor
+
+The embedded Cabinet path uses `src/content/container/cab_lzx.c` for
+the supported single-folder LZX-21 profile. The new source is declared
+first-party MIT code and receives the repository's attribution from its
+first public appearance. Its bitstream behavior, input bounds and output
+bounds are exercised by the focused content-security tests. This repository
+does not include an external decoder comparison record; the historical
+claim of bit-for-bit agreement over a wide corpus requires separate
+provenance evidence before it is used as a publication assurance.
+
 ## Removed libarchive Cabinet read closure
 
 Earlier revisions retained a bounded CAB/LZX reader from the official libarchive
