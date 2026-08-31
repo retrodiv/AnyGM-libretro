@@ -982,12 +982,24 @@ static int bind_readback_target(GmlGpuBackend *backend,uint32_t width,uint32_t h
  * channels in memory order R,G,B,A; the plane wants rows from the top and the runtime's word. */
 /* Rows arrive from the bottom with channels in memory order R,G,B,A; the plane wants rows from the
  * top in the runtime's word. One place does that conversion. */
+/* The rectangle the plan reads back, defaulting to the whole target. */
+static void readback_extent(const GmlRenderPlan *plan,int *x,int *y,uint32_t *w,uint32_t *h){
+  if(plan->readback_rect.width && plan->readback_rect.height){
+    *x=plan->readback_rect.x; *y=plan->readback_rect.y;
+    *w=plan->readback_rect.width; *h=plan->readback_rect.height;
+    return;
+  }
+  *x=0; *y=0; *w=plan->target_width; *h=plan->target_height;
+}
+
 static void readback_convert(GmlRenderPlan *plan,const uint8_t *source_bytes){
-  for(uint32_t row=0;row<plan->target_height;row++){
-    const uint8_t *source=source_bytes+
-      (size_t)(plan->target_height-1u-row)*(size_t)plan->target_width*4u;
+  int rx,ry; uint32_t rw,rh;
+  readback_extent(plan,&rx,&ry,&rw,&rh);
+  (void)rx; (void)ry;
+  for(uint32_t row=0;row<rh;row++){
+    const uint8_t *source=source_bytes+(size_t)(rh-1u-row)*(size_t)rw*4u;
     uint32_t *target=plan->readback_pixels+(size_t)row*plan->readback_pitch_pixels;
-    for(uint32_t column=0;column<plan->target_width;column++){
+    for(uint32_t column=0;column<rw;column++){
       const uint8_t *px=source+(size_t)column*4u;
       target[column]=((uint32_t)px[3]<<24)|((uint32_t)px[0]<<16)|((uint32_t)px[1]<<8)|(uint32_t)px[2];
     }
@@ -1010,11 +1022,15 @@ static int readback_scratch_ready(GmlGpuBackend *backend,size_t needed,char *err
 
 /* Read the off-screen target now, waiting for the device. */
 static int read_back_target(GmlGpuBackend *backend,GmlRenderPlan *plan,char *error,size_t error_capacity){
-  size_t needed=(size_t)plan->target_width*(size_t)plan->target_height*4u;
+  int rx,ry; uint32_t rw,rh;
+  size_t needed;
+  readback_extent(plan,&rx,&ry,&rw,&rh);
+  needed=(size_t)rw*(size_t)rh*4u;
   if(!readback_scratch_ready(backend,needed,error,error_capacity)) return 0;
   backend->gl.PixelStorei(GL_PACK_ALIGNMENT,1);
-  backend->gl.ReadPixels(0,0,(GLsizei)plan->target_width,(GLsizei)plan->target_height,GL_RGBA,
-                         GL_UNSIGNED_BYTE,backend->readback_scratch);
+  /* The device addresses rows from the bottom, so the rectangle's own origin is measured there. */
+  backend->gl.ReadPixels(rx,(GLint)(plan->target_height-(uint32_t)ry-rh),(GLsizei)rw,(GLsizei)rh,
+                         GL_RGBA,GL_UNSIGNED_BYTE,backend->readback_scratch);
   readback_convert(plan,backend->readback_scratch);
   return 1;
 }
@@ -1058,11 +1074,14 @@ static GlReadbackSlot *readback_slot(GmlGpuBackend *backend,uint32_t identity,
  * and start this one. The answer is one frame old, which is what buys the frame time back. */
 static int read_back_target_pipelined(GmlGpuBackend *backend,GmlRenderPlan *plan,
                                       char *error,size_t error_capacity){
-  size_t bytes=(size_t)plan->target_width*(size_t)plan->target_height*4u;
+  int rx,ry; uint32_t rw,rh;
+  size_t bytes;
   GlReadbackSlot *slot;
+  readback_extent(plan,&rx,&ry,&rw,&rh);
+  bytes=(size_t)rw*(size_t)rh*4u;
   if(!backend->gl.MapBufferRange || !backend->gl.UnmapBuffer)
     return read_back_target(backend,plan,error,error_capacity);
-  slot=readback_slot(backend,plan->shader.identity,plan->target_width,plan->target_height);
+  slot=readback_slot(backend,plan->shader.identity,rw,rh);
   if(!slot) return read_back_target(backend,plan,error,error_capacity);
   slot->last_used=++backend->use_clock;
   backend->gl.PixelStorei(GL_PACK_ALIGNMENT,1);
@@ -1083,8 +1102,8 @@ static int read_back_target_pipelined(GmlGpuBackend *backend,GmlRenderPlan *plan
   }
   /* Start this pass's read; nothing waits on it. */
   backend->gl.BindBuffer(GL_PIXEL_PACK_BUFFER,slot->buffer[slot->cursor]);
-  backend->gl.ReadPixels(0,0,(GLsizei)plan->target_width,(GLsizei)plan->target_height,GL_RGBA,
-                         GL_UNSIGNED_BYTE,(void*)0);
+  backend->gl.ReadPixels(rx,(GLint)(plan->target_height-(uint32_t)ry-rh),(GLsizei)rw,(GLsizei)rh,
+                         GL_RGBA,GL_UNSIGNED_BYTE,(void*)0);
   backend->gl.BindBuffer(GL_PIXEL_PACK_BUFFER,0);
   slot->cursor^=1;
   slot->primed=1;

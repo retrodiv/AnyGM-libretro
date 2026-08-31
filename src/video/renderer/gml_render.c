@@ -511,7 +511,7 @@ int gml_render_init(GmlRender *r, GmlWin *win){
   r->blend_equation=r->blend_equation_alpha=1;
   r->app_draw_enable=1; r->next_surface_id=1;
   r->shader_report_all_compiled=1;
-  for(int i=0;i<GML_SHADED_FRAME_CACHE;i++) r->shaded_frame[i].sprite=-1;
+  for(int i=0;i<GML_SHADED_FRAME_CACHE;i++) r->shaded_frame[i].atlas=-1;
   r->interp=anygm_policy_classic_interpolate(win);
   r->composites_app=0;
   r->fast_alpha_cull=env_fast_alpha_cull(r);
@@ -1384,6 +1384,35 @@ int gml_render_sprite_frame_plane(GmlRender *r,int sprite,int frame,int *width,i
     }
   }
 }
+/* An atlas rectangle as one ARGB plane in renderer-owned scratch. A sprite frame and a font glyph
+ * are both this, which is why one function serves both. Valid until the next call. */
+int gml_render_atlas_rect_plane(GmlRender *r,int atlas,int sx,int sy,int w,int h,
+                                const uint32_t **pixels){
+  if(!r || !pixels || atlas<0 || atlas>=r->n_atlas || w<=0 || h<=0) return 0;
+  {
+    size_t count=(size_t)w*(size_t)h;
+    uint8_t *ap=atlas_pixels(r,atlas);
+    GmlAtlas *a=&r->atlas[atlas];
+    if(!ap || a->w<=0 || a->h<=0) return 0;
+    if(sx<0 || sy<0 || sx+w>a->w || sy+h>a->h) return 0;
+    if(count>16777216u) return 0;
+    if(count>r->content_sampler_plane_capacity){
+      uint32_t *grown=realloc(r->content_sampler_plane,count*sizeof *grown);
+      if(!grown) return 0;
+      r->content_sampler_plane=grown;
+      r->content_sampler_plane_capacity=count;
+    }
+    for(int y=0;y<h;y++)
+      for(int x=0;x<w;x++){
+        const uint8_t *px=ap+((size_t)(sy+y)*a->w+(sx+x))*4u;
+        r->content_sampler_plane[(size_t)y*w+x]=
+          ((uint32_t)px[3]<<24)|((uint32_t)px[0]<<16)|((uint32_t)px[1]<<8)|(uint32_t)px[2];
+      }
+    *pixels=r->content_sampler_plane;
+    return 1;
+  }
+}
+
 void gml_render_set_shader_executor(GmlRender *r,GmlRenderShaderExecutor executor,void *context){
   if(!r) return;
   r->shader_executor=executor;
@@ -1586,6 +1615,7 @@ void gml_render_free(GmlRender *r){
   if(render_setting(r,"GML_SHADER_ACCOUNT")) shader_account_report(r);
   free(r->shader_account); r->shader_account=NULL; r->shader_account_shaders=0;
   for(int i=0;i<GML_SHADED_FRAME_CACHE;i++){ free(r->shaded_frame[i].px); r->shaded_frame[i].px=NULL; }
+  free(r->shaded_bytes); r->shaded_bytes=NULL; r->shaded_bytes_capacity=0;
   free(r->content_sampler_plane);
   free(r->shaded_plane); r->shaded_plane=NULL; r->shaded_plane_capacity=0; r->content_sampler_plane=NULL; r->content_sampler_plane_capacity=0;
   free(r->layer_filter_src); free(r->layer_filter_work); free(r->layer_filter_aux);

@@ -480,6 +480,10 @@ typedef struct GmlRender {
      * that samples anything, including a surface the content bound to a stage rather than the
      * texture under the draw, is deliberately not in this class. */
     int   procedural;
+    /* The fragment reads the pixel's place on the render target, so its answer depends on where
+     * the draw lands and not only on the texels it samples: it cannot be evaluated once for a
+     * texture-page rectangle and reused. */
+    int   position_dependent;
     /* The content's own program, kept for the host's graphics context to execute. The four source
      * texts are lent from the SHDR chunk. What the game sets through shader_set_uniform_* and
      * texture_set_stage is kept by name: the program is the game's, so the runtime knows none of
@@ -510,12 +514,14 @@ typedef struct GmlRender {
   /* A plane the composition reads instead of shaded_plane, so a cached result composes without
    * being copied first. */
   const uint32_t *shaded_plane_borrowed;
+  /* The shaded plane in the byte order a decoded page uses, for the blits that read one. */
+  uint8_t *shaded_bytes; size_t shaded_bytes_capacity;
   /* Shaded sprite frames. A program applied to a sprite transforms its texels, so its answer
    * depends on the frame, the program and the values set on it — not on where the frame is drawn.
    * Evaluating it once per frame and reusing it turns a per-draw device round trip into one per
    * distinct frame and avoids repeated device evaluations. */
   struct {
-    int sprite,frame,shader;
+    int atlas,sx,sy,shader;
     uint64_t fingerprint;
     int w,h;
     uint32_t *px;
@@ -638,6 +644,26 @@ int gml_render_shade_target_rect(GmlRender *r,int x1,int y1,int x2,int y2,uint32
 int gml_render_shade_target_sprite(GmlRender *r,int sprite,int frame,
                                    double dx,double dy,double dw,double dh,uint32_t blend,double alpha);
 uint64_t gml_render_shader_uniform_fingerprint(const GmlRender *r,int shader);
+int gml_render_atlas_rect_plane(GmlRender *r,int atlas,int sx,int sy,int w,int h,
+                                const uint32_t **pixels);
+/* The program's answer for one atlas rectangle, evaluated on the device once and kept. Returns the
+ * plane, or NULL when the device cannot produce it. */
+const uint32_t *gml_render_shaded_atlas_rect(GmlRender *r,int atlas,int sx,int sy,int w,int h);
+int gml_render_sprite_frame_rect(GmlRender *r,int sprite,int frame,int *atlas,int *sx,int *sy,
+                                 int *w,int *h);
+int gml_render_sprite_frame_rect_full(GmlRender *r,int sprite,int frame,int *atlas,int *sx,int *sy,
+                                      int *w,int *h,int *tx,int *ty);
+int gml_render_compose_shaded_rotated(GmlRender *r,GmlSprite *owner,const uint32_t *plane,
+                                      int w,int h,double x,double y,double xs,double ys,
+                                      double rot,int origin_x,int origin_y,
+                                      uint32_t blend,double alpha);
+int gml_render_shade_atlas_rect_at(GmlRender *r,int atlas,int sx,int sy,int w,int h,
+                                   double dx,double dy,double dw,double dh,
+                                   uint32_t blend,double alpha);
+int gml_render_compose_shaded_plane(GmlRender *r,const uint32_t *plane,int w,int h,
+                                    double rx,double ry,double rw,double rh,
+                                    double dx,double dy,double dw,double dh,
+                                    uint32_t blend,double alpha);
 int gml_render_shade_target_sprite_part(GmlRender *r,int sprite,int frame,
                                         double rx,double ry,double rw,double rh,
                                         double dx,double dy,double dw,double dh,

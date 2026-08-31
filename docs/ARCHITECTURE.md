@@ -493,7 +493,16 @@ program reaches the same executor as a surface does. A program applied to a spri
 sprite's texels, so its answer depends on the frame, the program and the values set on it rather
 than on where the frame is drawn: the answer is evaluated once and kept, and every later draw of
 the same frame composes from it. This replaces repeated device evaluations with one evaluation per distinct
-frame. Complete sprite and surface kernels share the
+frame. A font glyph is the same thing, a
+rectangle of a texture page, so a screen of text costs one evaluation per distinct glyph; and a
+rotated draw composes the kept answer through the ordinary sprite blit, which already has the
+pivot and the edge rules.
+
+One class of program cannot be kept: a fragment that reads gl_FragCoord derives its answer from
+where the pixel lands on the render target, so the answer is not a property of the picture it
+samples. Such a program is evaluated where it is drawn — the device draws into a target the size
+of the render target, at the draw's own offset inside it, and reads back only that rectangle — which
+costs a round trip per draw and is the only way it can be right. Complete sprite and surface kernels share the
 canonical header-local recognized-shader sampling operations in
 `gml_render_sampling_internal.h`; the general surface mapper and post-process
 kernels additionally share the two final-pixel operations in

@@ -214,13 +214,28 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
   if(engine->readback_refused) return 0;
   if(request->width<=0 || request->height<=0 || !request->output || !request->source) return 0;
   if(request->source_width<=0 || request->source_height<=0 || request->source_pitch<request->source_width) return 0;
-  gml_render_plan_reset(&plan,GML_PLAN_TARGET_READBACK,(uint32_t)request->width,(uint32_t)request->height);
-  plan.readback_pixels=request->output;
-  plan.readback_pitch_pixels=(uint32_t)request->width;
-  whole.x=0;
-  whole.y=0;
-  whole.width=(uint32_t)request->width;
-  whole.height=(uint32_t)request->height;
+  {
+    /* A fragment that reads its place on the render target must be evaluated there, so the target
+     * is the render target's own size and the draw lands at its own offset inside it; only the
+     * rectangle is read back. A request that names no target keeps the destination-sized one. */
+    uint32_t tw=request->target_width>0?(uint32_t)request->target_width:(uint32_t)request->width;
+    uint32_t th=request->target_height>0?(uint32_t)request->target_height:(uint32_t)request->height;
+    int dx=request->target_width>0?request->dest_x:0;
+    int dy=request->target_height>0?request->dest_y:0;
+    if(dx<0 || dy<0 || (uint32_t)dx+(uint32_t)request->width>tw ||
+       (uint32_t)dy+(uint32_t)request->height>th){ tw=(uint32_t)request->width; th=(uint32_t)request->height; dx=dy=0; }
+    gml_render_plan_reset(&plan,GML_PLAN_TARGET_READBACK,tw,th);
+    plan.readback_pixels=request->output;
+    plan.readback_pitch_pixels=(uint32_t)request->width;
+    plan.readback_rect.x=dx;
+    plan.readback_rect.y=dy;
+    plan.readback_rect.width=(uint32_t)request->width;
+    plan.readback_rect.height=(uint32_t)request->height;
+    whole.x=dx;
+    whole.y=dy;
+    whole.width=(uint32_t)request->width;
+    whole.height=(uint32_t)request->height;
+  }
   if(!gml_render_plan_add_clear(&plan,whole,0u)) return 0;
   memset(&source,0,sizeof source);
   source.image_class=GML_PLAN_IMAGE_SURFACE;

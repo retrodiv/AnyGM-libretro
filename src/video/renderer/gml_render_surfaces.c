@@ -1468,6 +1468,12 @@ static int shade_source_to_target(GmlRender *r,const uint32_t *source,int sw,int
   request.serial=++r->shaded_requests;
   request.width=width;
   request.height=height;
+  /* Where this draw lands on the current render target, so a fragment reading its own place gets
+   * the answer it would get drawing there. */
+  request.target_width=r->fbw;
+  request.target_height=r->fbh;
+  request.dest_x=(int)lround(dx-r->cam_x);
+  request.dest_y=(int)lround(dy-r->cam_y);
   request.linear=r->interp?1:0;
   request.output=r->shaded_plane;
   if(!r->shader_executor(r->shader_executor_context,&request)) return 0;
@@ -1623,25 +1629,30 @@ int gml_render_shade_target_rect(GmlRender *r,int x1,int y1,int x2,int y2,uint32
                                 (double)(x2-x1),(double)(y2-y1),0xFFFFFFu,alpha);
 }
 
-/* The shaded frame for this sprite, program and set of values, evaluated on the device once and
- * kept. Returns NULL when the device cannot produce it. */
-static const uint32_t *shaded_frame_get(GmlRender *r,int sprite,int frame,int *out_w,int *out_h){
-  int w=0,h=0,shader=r->active_shader,spare=-1;
+/* The program's answer for one atlas rectangle, evaluated on the device once and kept. A sprite
+ * frame and a font glyph are the same thing here — a rectangle of a texture page — so both reuse
+ * one answer, which is what turns a device round trip per draw into one per distinct rectangle. */
+const uint32_t *gml_render_shaded_atlas_rect(GmlRender *r,int atlas,int sx,int sy,int w,int h){
+  int shader,spare=-1;
   const uint32_t *px=NULL;
-  uint64_t fingerprint=gml_render_shader_uniform_fingerprint(r,shader);
+  uint64_t fingerprint;
   uint32_t oldest=0xFFFFFFFFu;
   GmlRenderShaderRequest request;
+  if(!r || r->active_shader<0 || !r->shader_executor || w<=0 || h<=0) return NULL;
+  if(!gml_render_shader_content_candidate(r,r->active_shader)) return NULL;
+  /* A program whose answer moves with the draw cannot be kept for a rectangle. */
+  if(r->shader_pal && r->shader_pal[r->active_shader].position_dependent) return NULL;
+  shader=r->active_shader;
+  fingerprint=gml_render_shader_uniform_fingerprint(r,shader);
   for(int i=0;i<GML_SHADED_FRAME_CACHE;i++){
-    if(r->shaded_frame[i].px && r->shaded_frame[i].sprite==sprite &&
-       r->shaded_frame[i].frame==frame && r->shaded_frame[i].shader==shader &&
-       r->shaded_frame[i].fingerprint==fingerprint){
+    if(r->shaded_frame[i].px && r->shaded_frame[i].atlas==atlas && r->shaded_frame[i].sx==sx &&
+       r->shaded_frame[i].sy==sy && r->shaded_frame[i].w==w && r->shaded_frame[i].h==h &&
+       r->shaded_frame[i].shader==shader && r->shaded_frame[i].fingerprint==fingerprint){
       r->shaded_frame[i].last_used=++r->shaded_frame_clock;
-      *out_w=r->shaded_frame[i].w;
-      *out_h=r->shaded_frame[i].h;
       return r->shaded_frame[i].px;
     }
   }
-  if(!gml_render_sprite_frame_plane(r,sprite,frame,&w,&h,&px) || !px || w<=0 || h<=0) return NULL;
+  if(!gml_render_atlas_rect_plane(r,atlas,sx,sy,w,h,&px) || !px) return NULL;
   for(int i=0;i<GML_SHADED_FRAME_CACHE;i++){
     if(!r->shaded_frame[i].px){ spare=i; break; }
     if(r->shaded_frame[i].last_used<oldest){ oldest=r->shaded_frame[i].last_used; spare=i; }
@@ -1660,52 +1671,188 @@ static const uint32_t *shaded_frame_get(GmlRender *r,int sprite,int frame,int *o
   request.source_pitch=w;
   request.region_width=w;
   request.region_height=h;
-  request.source_identity=((uint32_t)sprite<<10)|((uint32_t)frame&0x3FFu);
+  request.source_identity=((uint32_t)atlas<<20)^((uint32_t)sx<<10)^(uint32_t)sy;
   request.serial=++r->shaded_requests;
   request.width=w;
   request.height=h;
   request.output=r->shaded_frame[spare].px;
   if(!r->shader_executor(r->shader_executor_context,&request)) return NULL;
-  r->shaded_frame[spare].sprite=sprite;
-  r->shaded_frame[spare].frame=frame;
+  r->shaded_frame[spare].atlas=atlas;
+  r->shaded_frame[spare].sx=sx;
+  r->shaded_frame[spare].sy=sy;
   r->shaded_frame[spare].shader=shader;
   r->shaded_frame[spare].fingerprint=fingerprint;
   r->shaded_frame[spare].w=w;
   r->shaded_frame[spare].h=h;
   r->shaded_frame[spare].last_used=++r->shaded_frame_clock;
-  *out_w=w;
-  *out_h=h;
   return r->shaded_frame[spare].px;
+}
+
+/* Compose an already-shaded plane at the target, with the draw's own blend, alpha and flips. */
+int gml_render_compose_shaded_plane(GmlRender *r,const uint32_t *plane,int w,int h,
+                                    double rx,double ry,double rw,double rh,
+                                    double dx,double dy,double dw,double dh,
+                                    uint32_t blend,double alpha){
+  int saved;
+  if(!r || !plane || w<=0 || h<=0) return 0;
+  if(rx<0){ rw+=rx; rx=0; }
+  if(ry<0){ rh+=ry; ry=0; }
+  if(rw<=0 || rh<=0 || rx>=w || ry>=h) return 0;
+  if(rx+rw>w) rw=w-rx;
+  if(ry+rh>h) rh=h-ry;
+  saved=r->active_shader;
+  r->active_shader=-1;
+  r->shaded_plane_borrowed=plane;
+  r->shaded_plane_width=w;
+  r->shaded_plane_height=h;
+  draw_surface_region(r,GML_RENDER_SHADED_SURFACE,rx,ry,rw,rh,dx,dy,dw,dh,blend,alpha);
+  r->shaded_plane_borrowed=NULL;
+  r->active_shader=saved;
+  r->shaded_draws++;
+  return 1;
+}
+
+int gml_render_sprite_frame_rect(GmlRender *r,int sprite,int frame,int *atlas,int *sx,int *sy,
+                                 int *w,int *h){
+  return gml_render_sprite_frame_rect_full(r,sprite,frame,atlas,sx,sy,w,h,NULL,NULL);
+}
+
+/* Draw one atlas rectangle through the content's program at a destination. A program whose answer
+ * is a property of the texels is evaluated once for the rectangle and kept; one whose answer moves
+ * with the draw is evaluated where it lands, which costs a device round trip per draw and is the
+ * only way it can be right. Returns 0 when nothing can run it. */
+int gml_render_shade_atlas_rect_at(GmlRender *r,int atlas,int sx,int sy,int w,int h,
+                                   double dx,double dy,double dw,double dh,
+                                   uint32_t blend,double alpha){
+  if(!r || r->active_shader<0 || !r->shader_executor || w<=0 || h<=0) return 0;
+  if(!gml_render_shader_content_candidate(r,r->active_shader)) return 0;
+  if(r->shader_pal && r->shader_pal[r->active_shader].position_dependent){
+    const uint32_t *px=NULL;
+    if(!gml_render_atlas_rect_plane(r,atlas,sx,sy,w,h,&px) || !px) return 0;
+    return shade_source_to_target(r,px,w,h,0,0,w,h,
+                                  ((uint32_t)atlas<<20)^((uint32_t)sx<<10)^(uint32_t)sy,
+                                  dx,dy,dw,dh,blend,alpha);
+  }
+  {
+    const uint32_t *shaded=gml_render_shaded_atlas_rect(r,atlas,sx,sy,w,h);
+    if(!shaded) return 0;
+    return gml_render_compose_shaded_plane(r,shaded,w,h,0,0,w,h,dx,dy,dw,dh,blend,alpha);
+  }
+}
+
+/* Compose an already-shaded plane as a rotated sprite. The ordinary sprite blit already has the
+ * pivot, the filtering and the edge rules, and it reads the byte order a decoded page uses, so the
+ * plane is handed over in that order rather than a second rotation being written here. */
+int gml_render_compose_shaded_rotated(GmlRender *r,GmlSprite *owner,const uint32_t *plane,
+                                      int w,int h,double x,double y,double xs,double ys,
+                                      double rot,int origin_x,int origin_y,
+                                      uint32_t blend,double alpha){
+  size_t count;
+  if(!r || !plane || w<=0 || h<=0) return 0;
+  count=(size_t)w*(size_t)h;
+  if(count>SIZE_MAX/4u) return 0;
+  if(count*4u>r->shaded_bytes_capacity){
+    uint8_t *grown=(uint8_t*)realloc(r->shaded_bytes,count*4u);
+    if(!grown) return 0;
+    r->shaded_bytes=grown;
+    r->shaded_bytes_capacity=count*4u;
+  }
+  for(size_t i=0;i<count;i++){
+    uint32_t px=plane[i];
+    r->shaded_bytes[i*4u+0]=(uint8_t)(px>>16);
+    r->shaded_bytes[i*4u+1]=(uint8_t)(px>>8);
+    r->shaded_bytes[i*4u+2]=(uint8_t)px;
+    r->shaded_bytes[i*4u+3]=(uint8_t)(px>>24);
+  }
+  {
+    int saved=r->active_shader;
+    r->active_shader=-1;
+    blit_rgba_sprite(r,owner,r->shaded_bytes,w,h,x,y,xs,ys,rot,origin_x,origin_y,blend,alpha,1,
+                     NULL,NULL,0);
+    r->active_shader=saved;
+  }
+  r->shaded_draws++;
+  return 1;
+}
+
+/* The sprite frame's own texture-page rectangle, or a refusal for a runtime-built sprite. */
+int gml_render_sprite_frame_rect_full(GmlRender *r,int sprite,int frame,int *atlas,int *sx,int *sy,
+                                      int *w,int *h,int *tx,int *ty){
+  GmlSprite *s;
+  int ti;
+  if(!r || sprite<0 || sprite>=r->n_spr) return 0;
+  s=&r->spr[sprite];
+  if(s->runtime_rgba || !s->frame || s->n_frames<=0) return 0;
+  if(frame<0 || frame>=s->n_frames) frame=0;
+  ti=s->frame[frame];
+  if(ti<0 || ti>=r->n_tpag) return 0;
+  {
+    GmlTpag *t=&r->tpag[ti];
+    if(t->atlas<0 || t->atlas>=r->n_atlas || t->sw<=0 || t->sh<=0) return 0;
+    *atlas=t->atlas; *sx=t->sx; *sy=t->sy; *w=t->sw; *h=t->sh;
+    if(tx) *tx=t->tx;
+    if(ty) *ty=t->ty;
+    return 1;
+  }
 }
 
 int gml_render_shade_target_sprite_part(GmlRender *r,int sprite,int frame,
                                         double rx,double ry,double rw,double rh,
                                         double dx,double dy,double dw,double dh,
                                         uint32_t blend,double alpha){
-  int w=0,h=0,saved;
+  int atlas=0,sx=0,sy=0,w=0,h=0;
   const uint32_t *shaded;
   if(!r || r->active_shader<0 || !r->shader_executor ||
      !gml_render_shader_content_candidate(r,r->active_shader)) return 0;
-  shaded=shaded_frame_get(r,sprite,frame,&w,&h);
-  if(!shaded) return 0;
-  if(rx<0){ rw+=rx; rx=0; }
-  if(ry<0){ rh+=ry; ry=0; }
-  if(rw<=0 || rh<=0 || rx>=w || ry>=h) return 0;
-  if(rx+rw>w) rw=w-rx;
-  if(ry+rh>h) rh=h-ry;
-  /* The program has been applied to the frame; the composition below is the plain one. */
-  saved=r->active_shader;
-  r->active_shader=-1;
-  r->shaded_plane_borrowed=shaded;
-  r->shaded_plane_width=w;
-  r->shaded_plane_height=h;
-  draw_surface_region(r,GML_RENDER_SHADED_SURFACE,rx,ry,rw,rh,dx,dy,dw,dh,blend,alpha);
-  r->shaded_plane_borrowed=NULL;
-  r->active_shader=saved;
-  /* A draw composed from a kept frame carried the device's answer as much as the one that
-   * produced it, and the accounting counts what reached the picture. */
-  r->shaded_draws++;
-  return 1;
+  /* A sprite whose frame is a texture-page rectangle shares the cache with every other rectangle;
+   * one built at runtime has no page, and keeps the per-frame path below. */
+  {
+    /* A stored frame is cropped: the region a draw names is in the sprite's own space, and the
+     * page holds only the part that carried colour, placed at the crop offset. Translating by that
+     * offset — and clipping the destination to the part the page actually has — is what makes a
+     * region of a cropped frame land where the plain blit puts it. */
+    int tx=0,ty=0;
+    if(gml_render_sprite_frame_rect_full(r,sprite,frame,&atlas,&sx,&sy,&w,&h,&tx,&ty)){
+      double scale_x=rw>0?dw/rw:0.0, scale_y=rh>0?dh/rh:0.0;
+      double lx0=rx>tx?rx:tx, ly0=ry>ty?ry:ty;
+      double lx1=rx+rw<tx+w?rx+rw:tx+w, ly1=ry+rh<ty+h?ry+rh:ty+h;
+      if(lx1<=lx0 || ly1<=ly0) return 0;
+      dx+=(lx0-rx)*scale_x;
+      dy+=(ly0-ry)*scale_y;
+      dw=(lx1-lx0)*scale_x;
+      dh=(ly1-ly0)*scale_y;
+      rx=lx0-tx; ry=ly0-ty; rw=lx1-lx0; rh=ly1-ly0;
+    }
+  }
+  if(gml_render_sprite_frame_rect(r,sprite,frame,&atlas,&sx,&sy,&w,&h)){
+    if(r->shader_pal && r->shader_pal[r->active_shader].position_dependent){
+      const uint32_t *px=NULL;
+      if(!gml_render_atlas_rect_plane(r,atlas,sx,sy,w,h,&px) || !px) return 0;
+      if(rx<0){ rw+=rx; rx=0; }
+      if(ry<0){ rh+=ry; ry=0; }
+      if(rw<=0 || rh<=0 || rx>=w || ry>=h) return 0;
+      if(rx+rw>w) rw=w-rx;
+      if(ry+rh>h) rh=h-ry;
+      return shade_source_to_target(r,px,w,h,rx,ry,rw,rh,
+                                    ((uint32_t)atlas<<20)^((uint32_t)sx<<10)^(uint32_t)sy,
+                                    dx,dy,dw,dh,blend,alpha);
+    }
+    shaded=gml_render_shaded_atlas_rect(r,atlas,sx,sy,w,h);
+    if(!shaded) return 0;
+    return gml_render_compose_shaded_plane(r,shaded,w,h,rx,ry,rw,rh,dx,dy,dw,dh,blend,alpha);
+  }
+  {
+    const uint32_t *px=NULL;
+    if(!gml_render_sprite_frame_plane(r,sprite,frame,&w,&h,&px) || !px || w<=0 || h<=0) return 0;
+    if(rx<0){ rw+=rx; rx=0; }
+    if(ry<0){ rh+=ry; ry=0; }
+    if(rw<=0 || rh<=0 || rx>=w || ry>=h) return 0;
+    if(rx+rw>w) rw=w-rx;
+    if(ry+rh>h) rh=h-ry;
+    return shade_source_to_target(r,px,w,h,rx,ry,rw,rh,
+                                  ((uint32_t)sprite<<10)|((uint32_t)frame&0x3FFu),
+                                  dx,dy,dw,dh,blend,alpha);
+  }
 }
 
 int gml_render_shade_target_sprite(GmlRender *r,int sprite,int frame,

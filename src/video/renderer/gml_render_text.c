@@ -904,7 +904,15 @@ static void draw_text_real(GmlRender *r, GmlFont *f, double x, double y, const c
         } else if(r->software_overlay ||
            !gml_d3_draw_atlas_part_2d(r,f->atlas,g->sx,g->sy,g->w,g->h,
                                       glyph_x,glyph_y,xs,ys,glyph_blend,alpha)){
-          blit(r,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
+          /* A glyph drawn through a program this renderer does not execute is a rectangle of a
+           * texture page like any other: the program's answer for it is evaluated once and kept,
+           * so a screen of text costs one device evaluation per distinct glyph rather than one
+           * per glyph drawn. The plain blit stands when there is nothing to run it. */
+          if(!(xs>0 && ys>0 &&
+               gml_render_shade_atlas_rect_at(r,gt.atlas,gt.sx,gt.sy,gt.sw,gt.sh,
+                                              glyph_x,glyph_y,gt.sw*xs,gt.sh*ys,
+                                              glyph_blend,alpha)))
+            blit(r,&gt,glyph_x-r->cam_x,glyph_y-r->cam_y,xs,ys,glyph_blend,alpha);
         }
         r->interp=saved_interp;
         r->font_sdf_active=saved_sdf_active;

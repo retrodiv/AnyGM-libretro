@@ -208,6 +208,8 @@ typedef struct GmlRenderPlan {
   /* READBACK target only: where the executed target lands, rows from the top, in XRGB/ARGB words. */
   uint32_t *readback_pixels;
   uint32_t readback_pitch_pixels;
+  /* The part of the target that is read back. A zero extent means the whole target. */
+  GmlPlanRect readback_rect;
 } GmlRenderPlan;
 
 void gml_render_plan_reset(GmlRenderPlan *plan,uint32_t target,

@@ -436,6 +436,10 @@ typedef struct {
    * from the next; the source may change between requests with the same identity. */
   uint32_t source_identity,serial;
   int width,height;
+  /* Where the draw lands inside the render target, and how big that target is. A fragment that
+   * reads its place on the target must be evaluated there and nowhere else, so the device draws
+   * into a target of this size at this offset and reads back only the rectangle. */
+  int target_width,target_height,dest_x,dest_y;
   int linear;
   uint32_t *output;
 } GmlRenderShaderRequest;

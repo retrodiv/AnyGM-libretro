@@ -5827,6 +5827,20 @@ static void draw_sprite_ext_unmasked(GmlRender *r, int sprite, int subimg, doubl
   /* A sprite drawn through a program this renderer does not execute goes to the same executor as
    * a surface, evaluated at the destination's size. Unrotated, unflipped draws only: the composed
    * plane is axis-aligned, and a rotated or mirrored draw keeps today's plain path. */
+  /* A rotated draw composes through the ordinary sprite blit, which already has the pivot. Only a
+   * program whose answer is a property of the texels can be kept for it; one that reads its place
+   * on the target is evaluated where it lands, and a rotated one of those keeps the plain path. */
+  if(rot!=0.0 && xs!=0 && ys!=0 && r->active_shader>=0 && r->shader_executor &&
+     gml_render_shader_content_candidate(r,r->active_shader) &&
+     r->shader_pal && !r->shader_pal[r->active_shader].position_dependent){
+    int sub=((subimg%s->n_frames)+s->n_frames)%s->n_frames;
+    int atlas=0,ax=0,ay=0,aw=0,ah=0;
+    if(gml_render_sprite_frame_rect(r,sprite,sub,&atlas,&ax,&ay,&aw,&ah)){
+      const uint32_t *shaded=gml_render_shaded_atlas_rect(r,atlas,ax,ay,aw,ah);
+      if(shaded && gml_render_compose_shaded_rotated(r,s,shaded,aw,ah,x,y,xs,ys,rot,
+                                                     s->originx,s->originy,blend,alpha)) return;
+    }
+  }
   /* Unrotated draws, mirrored or not: the composition takes a negative extent for a flip. */
   if(rot==0.0 && xs!=0 && ys!=0 && r->active_shader>=0 && r->shader_executor &&
      gml_render_shader_content_candidate(r,r->active_shader)){
