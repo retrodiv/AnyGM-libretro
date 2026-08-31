@@ -492,6 +492,7 @@ void engine_graphics_report(AnygmEngine *engine);
 /* Whether a host graphics target is adopted right now. The one question core coordination asks
  * about the feature, so it has an answer in a build without the backend as well. */
 int engine_graphics_active(const AnygmEngine *engine);
+int engine_graphics_device_expected(const AnygmEngine *engine);
 /* Release everything created in the host graphics context. Objects are deleted only while that
  * context is still current; otherwise the handles are forgotten. */
 void engine_graphics_release(AnygmEngine *engine,int context_is_current);

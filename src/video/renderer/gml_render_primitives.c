@@ -8,6 +8,7 @@
 #include <emmintrin.h>
 #endif
 
+#include <stdio.h>
 #include "gml_render.h"
 #include "gml_render_backend.h"
 #include "gml_render_internal.h"
@@ -675,6 +676,8 @@ void gml_render_primitive_point(GmlRender *render,
 void gml_render_primitive_rectangle(GmlRender *render,
                                     int x1,int y1,int x2,int y2,
                                     uint32_t color,int outline){
+  if(!outline && gml_render_shade_target_rect(render,x1,y1,x2,y2,color,render?render->alpha:1.0))
+    return;
   draw_rect_prim(render,x1,y1,x2,y2,color,outline);
 }
 
@@ -683,6 +686,8 @@ void gml_render_primitive_rectangle_color(GmlRender *render,
                                           uint32_t color1,uint32_t color2,
                                           uint32_t color3,uint32_t color4,
                                           int outline){
+  if(!outline && color1==color2 && color2==color3 && color3==color4 &&
+     gml_render_shade_target_rect(render,x1,y1,x2,y2,color1,render?render->alpha:1.0)) return;
   draw_rect_colour_prim(render,x1,y1,x2,y2,color1,color2,color3,color4,outline);
 }
 

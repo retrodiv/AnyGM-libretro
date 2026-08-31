@@ -44,6 +44,8 @@ AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphics
     /* The software engine is untouched and remains the complete implementation. */
     return ANYGM_ERROR_UNSUPPORTED;
   }
+  /* A game that queries shader support during its first boot frame must already see the device. */
+  gml_render_set_shader_device(&engine->render,1);
   return ANYGM_OK;
 }
 
@@ -58,6 +60,7 @@ int engine_graphics_active(const AnygmEngine *engine){
 
 void engine_graphics_release(AnygmEngine *engine,int context_is_current){
   if(!engine || !engine->gpu) return;
+  gml_render_set_shader_device(&engine->render,0);
   /* Report before the counters go away with the object. A host releases the context when content
    * closes, which is before the engine's own teardown. */
   engine_graphics_report(engine);

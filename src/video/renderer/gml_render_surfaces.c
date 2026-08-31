@@ -1459,15 +1459,21 @@ static int draw_first_generation_gui_app_surface(GmlRender *r,int surf,
  * frame's terminal presentation: the host runs the program over the surface at the destination's
  * size, and the result is composed here as a surface of that size, with the blend, alpha and
  * flips the draw asked for. Returns 0 when the host could not, and the draw proceeds unshaded. */
-static int draw_surface_through_program(GmlRender *r,int surf,const uint32_t *spx,int sw,int sh,
-                                        double rx,double ry,double rw,double rh,
-                                        double dx,double dy,double dw,double dh,
-                                        uint32_t blend,double alpha){
+/* Run the content's active program over a destination through the host's executor and compose the
+ * result at the current target with the given blend, alpha and flips. `source` is the picture the
+ * program samples (its region names the part shown); a procedural program ignores it. `dx,dy` are
+ * in target pixels — the caller resolved any camera offset — and the composition adds the camera
+ * back before draw_surface_region takes it off again. Returns 0 when the host cannot. */
+static int shade_source_to_target(GmlRender *r,const uint32_t *source,int sw,int sh,
+                                   double rx,double ry,double rw,double rh,uint32_t identity,
+                                   double dx,double dy,double dw,double dh,
+                                   uint32_t blend,double alpha){
   enum { SHADED_MAX_EXTENT=4096, SHADED_MAX_PIXELS=16u<<20 };
   GmlRenderShaderRequest request;
   int width=(int)lround(fabs(dw)),height=(int)lround(fabs(dh));
   size_t pixels;
   int saved;
+  if(!source || sw<=0 || sh<=0) return 0;
   if(width<=0 || height<=0 || width>SHADED_MAX_EXTENT || height>SHADED_MAX_EXTENT) return 0;
   pixels=(size_t)width*(size_t)height;
   if(pixels>SHADED_MAX_PIXELS) return 0;
@@ -1479,12 +1485,10 @@ static int draw_surface_through_program(GmlRender *r,int surf,const uint32_t *sp
   }
   memset(&request,0,sizeof request);
   request.shader=r->active_shader;
-  request.source=spx;
+  request.source=source;
   request.source_width=sw;
   request.source_height=sh;
   request.source_pitch=sw;
-  /* The region the draw shows. A whole-surface draw passes the whole extent, which the plan reads
-   * as "all of it" either way. */
   request.region_x=(int)lround(rx);
   request.region_y=(int)lround(ry);
   request.region_width=(int)lround(rw);
@@ -1493,7 +1497,7 @@ static int draw_surface_through_program(GmlRender *r,int surf,const uint32_t *sp
      request.region_width<=0 || request.region_height<=0 ||
      request.region_x+request.region_width>sw || request.region_y+request.region_height>sh)
     return 0;
-  request.source_identity=(uint32_t)(surf<0?0x7FFFFFFF:surf);
+  request.source_identity=identity;
   request.serial=++r->shaded_requests;
   request.width=width;
   request.height=height;
@@ -1503,7 +1507,6 @@ static int draw_surface_through_program(GmlRender *r,int surf,const uint32_t *sp
   r->shaded_plane_width=width;
   r->shaded_plane_height=height;
   r->shaded_draws++;
-  /* The program has been applied; the composition below is the plain one. */
   saved=r->active_shader;
   r->active_shader=-1;
   draw_surface_region(r,GML_RENDER_SHADED_SURFACE,0,0,width,height,dx,dy,
@@ -1511,6 +1514,14 @@ static int draw_surface_through_program(GmlRender *r,int surf,const uint32_t *sp
                       blend,alpha);
   r->active_shader=saved;
   return 1;
+}
+
+static int draw_surface_through_program(GmlRender *r,int surf,const uint32_t *spx,int sw,int sh,
+                                        double rx,double ry,double rw,double rh,
+                                        double dx,double dy,double dw,double dh,
+                                        uint32_t blend,double alpha){
+  return shade_source_to_target(r,spx,sw,sh,rx,ry,rw,rh,
+                                (uint32_t)(surf<0?0x7FFFFFFF:surf),dx,dy,dw,dh,blend,alpha);
 }
 
 static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double dy,
@@ -1631,6 +1642,34 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
   }
   if(prof) rprof_add("surface",r,NULL,(rprof_now()-t0)*1000.0,(unsigned long long)llround(fabs(dw*dh)));
 }
+int gml_render_shade_target_rect(GmlRender *r,int x1,int y1,int x2,int y2,uint32_t colour,double alpha){
+  uint32_t source;
+  if(!r || r->active_shader<0 || !r->shader_executor ||
+     !gml_render_shader_content_candidate(r,r->active_shader)) return 0;
+  if(x1>x2){ int t=x1; x1=x2; x2=t; }
+  if(y1>y2){ int t=y1; y1=y2; y2=t; }
+  if(x2<=x1 || y2<=y1) return 0;
+  /* A one-texel source of the primitive's colour: a program that samples gm_BaseTexture reads the
+   * flat colour a rectangle carries, and a procedural one ignores it. */
+  source=gml_render_backend_color_to_xrgb(colour)|0xFF000000u;
+  return shade_source_to_target(r,&source,1,1,0,0,1,1,0xFFFFFFFFu,
+                                (double)x1+r->cam_x,(double)y1+r->cam_y,
+                                (double)(x2-x1),(double)(y2-y1),0xFFFFFFu,alpha);
+}
+
+int gml_render_shade_target_sprite(GmlRender *r,int sprite,int frame,
+                                    double dx,double dy,double dw,double dh,
+                                    uint32_t blend,double alpha){
+  int w=0,h=0;
+  const uint32_t *px=NULL;
+  if(!r || r->active_shader<0 || !r->shader_executor ||
+     !gml_render_shader_content_candidate(r,r->active_shader)) return 0;
+  if(!gml_render_sprite_frame_plane(r,sprite,frame,&w,&h,&px) || !px || w<=0 || h<=0) return 0;
+  return shade_source_to_target(r,px,w,h,0,0,w,h,
+                                ((uint32_t)sprite<<10)|((uint32_t)frame&0x3FFu),
+                                dx,dy,dw,dh,blend,alpha);
+}
+
 void gml_draw_surface_stretched(GmlRender *r,int surf,double dx,double dy,
                                 double dw,double dh,uint32_t blend,double alpha){
   /* A surface drawn onto the base canvas, rather than into another surface, is content compositing

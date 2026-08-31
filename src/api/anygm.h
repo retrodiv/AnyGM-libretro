@@ -364,6 +364,10 @@ typedef struct AnygmConfig {
    * a frame can afford, ANYGM_SHADER_READBACK_ALWAYS keeps going however slow, and
    * ANYGM_SHADER_READBACK_NEVER draws them unshaded as a build without a device does. */
   uint32_t content_shader_readback;
+  /* Whether the session requested a graphics device (hybrid GPU option not None). A game that
+   * queries shader support on its first boot frame is answered from this rather than from whether
+   * the context has finished being adopted, which a frontend does after content is loaded. */
+  uint32_t content_shader_device_expected;
 } AnygmConfig;
 
 /* Zero is the default a host that never sets the field gets, so it is the measured one rather than
@@ -394,7 +398,9 @@ enum {
   ANYGM_CONFIG_PRESENT_LOGICAL_RASTER=1ull<<16,
   ANYGM_CONFIG_CLEAR_LOCAL_DATA=1ull<<17,
   ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED=1ull<<18,
-  ANYGM_CONFIG_CONTENT_OVERRIDES=1ull<<19
+  ANYGM_CONFIG_CONTENT_OVERRIDES=1ull<<19,
+  ANYGM_CONFIG_CONTENT_SHADER_READBACK=1ull<<20,
+  ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED=1ull<<21
 };
 
 typedef struct AnygmInputFrame {

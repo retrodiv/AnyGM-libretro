@@ -288,6 +288,9 @@ typedef struct {
    * Zero: only recognized shader families answer yes, so content that carries its own
    * no-shader presentation selects it. */
   int shader_report_all_compiled;
+  /* Whether the session requested a graphics device (hybrid GPU option not None). Read at boot,
+   * so a shader-support query a game makes on its first frame answers the session, not the frame. */
+  int shader_device_expected;
   int fast_forward, fast_alpha_cull;
   int wide_aspect_active, wide_width, wide_height;
 } GmlRenderControl;
@@ -438,6 +441,13 @@ typedef struct {
 } GmlRenderShaderRequest;
 typedef int (*GmlRenderShaderExecutor)(void *context,const GmlRenderShaderRequest *request);
 void gml_render_set_shader_executor(GmlRender *r,GmlRenderShaderExecutor executor,void *context);
+/* Whether a graphics device is present for the session. Stable across frames, so a shader-support
+ * query answers the session rather than the current frame's executor state. */
+void gml_render_set_shader_device(GmlRender *r,int present);
+int gml_render_shader_device_present(const GmlRender *r);
+/* Whether the session requested a device. Set before the first content events, so a shader-support
+ * query a game makes at boot is answered from the session rather than from the frame. */
+void gml_render_set_shader_device_expected(GmlRender *r,int expected);
 /* The surface id that names the renderer's plane holding the last executed program's result. */
 enum { GML_RENDER_SHADED_SURFACE=-2 };
 /* A sprite frame as one ARGB plane in renderer-owned scratch, for a sampler upload. Valid until the

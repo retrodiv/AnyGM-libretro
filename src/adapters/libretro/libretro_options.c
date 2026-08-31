@@ -598,6 +598,10 @@ void libretro_options_apply(bool all_fields){
       ANYGM_SHADER_READBACK_BUDGETED;
   }
   config->content_overrides=option_on("anygm_content_overrides",1);
+  {
+    const char *api=option_value("anygm_hybrid_gpu");
+    config->content_shader_device_expected=(api && strcmp(api,"None"))?1u:0u;
+  }
   /* The default option resolves from content before any menu is available. */
   /* The public option offers two states. An unconditional pad state remains available
    * internally; automatic mode instead follows the reference scan. */
@@ -639,6 +643,7 @@ void libretro_options_apply(bool all_fields){
       ANYGM_CONFIG_GAMEPAD_CONNECTED|
       ANYGM_CONFIG_FAST_ALPHA_CULL|ANYGM_CONFIG_START_ROOM|
       ANYGM_CONFIG_PRESENT_LOGICAL_RASTER|ANYGM_CONFIG_CLEAR_LOCAL_DATA|
-      ANYGM_CONFIG_CONTENT_OVERRIDES;
+      ANYGM_CONFIG_CONTENT_OVERRIDES|ANYGM_CONFIG_CONTENT_SHADER_READBACK|
+      ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED;
   anygm_set_config(g_libretro.engine,&delta);
 }

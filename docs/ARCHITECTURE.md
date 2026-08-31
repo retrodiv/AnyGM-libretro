@@ -484,8 +484,11 @@ comparison against the original can ask for every shader however slow.
 A fragment that samples no picture is a case of its own. It derives every pixel from coordinates,
 time and its own uniforms, so leaving it unrun paints the primitive flat in a colour the shader was
 going to discard — an unrelated picture rather than a weaker one. That is why such a shader answers
-that it did not compile, and why the answer is now conditional: with a device present it is
-executed and the answer is yes, without one it is still no. Complete sprite and surface kernels share the
+that it did not compile, and why the answer is now conditional: when the session requested a
+graphics device it is executed and the answer is yes, otherwise it is still no. An early query can occur before the frontend has adopted the context, so the
+answer is taken from whether a device was requested (a stable session fact) rather than from
+whether the context is ready this instant. A filled rectangle or a sprite drawn through such a
+program reaches the same executor as a surface does. Complete sprite and surface kernels share the
 canonical header-local recognized-shader sampling operations in
 `gml_render_sampling_internal.h`; the general surface mapper and post-process
 kernels additionally share the two final-pixel operations in

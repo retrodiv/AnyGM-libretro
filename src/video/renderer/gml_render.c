@@ -564,8 +564,10 @@ void gml_render_control_update(GmlRender *r,const GmlRenderControl *control,
     r->monitor_w=control->monitor_width;
     r->monitor_h=control->monitor_height;
   }
-  if(fields&GML_RENDER_CONTROL_SHADERS)
+  if(fields&GML_RENDER_CONTROL_SHADERS){
     r->shader_report_all_compiled=control->shader_report_all_compiled;
+    r->shader_device_expected=control->shader_device_expected;
+  }
   if(fields&GML_RENDER_CONTROL_FAST_ALPHA)
     r->fast_alpha_cull=control->fast_alpha_cull;
   if(fields&GML_RENDER_CONTROL_WIDE_ASPECT){
@@ -925,7 +927,7 @@ int gml_render_shader_is_compiled(const GmlRender *r,int shader){
    * the picture it wrote, which is the whole point of the answer. Told yes with none, the
    * primitive is painted flat in a colour the shader was going to discard, which is why the
    * refusal stands whenever there is no device. */
-  if(r->shader_pal[shader].procedural) return r->shader_executor?1:0;
+  if(r->shader_pal[shader].procedural) return r->shader_device_expected?1:0;
   return r->shader_report_all_compiled?1:0;
 }
 
@@ -1263,8 +1265,8 @@ int gml_render_shader_content_candidate(const GmlRender *r,int shader){
     if(p->gpu_failed) return 0;
     /* A fragment that samples nothing carries none of the picture it is drawn over, so leaving it
      * unrun is not a weaker version of the effect but an unrelated one. It is a candidate only
-     * where something can actually execute it. */
-    if(p->procedural && !r->shader_executor) return 0;
+     * where a device is present to execute it. */
+    if(p->procedural && !r->shader_device_present) return 0;
     if(!p->source_vertex_es || !p->source_fragment_es) return 0;
     return !shader_pal_recognized(p);
   }
@@ -1386,6 +1388,11 @@ void gml_render_set_shader_executor(GmlRender *r,GmlRenderShaderExecutor executo
   r->shader_executor=executor;
   r->shader_executor_context=executor?context:NULL;
 }
+void gml_render_set_shader_device(GmlRender *r,int present){
+  if(r) r->shader_device_present=present?1:0;
+}
+int gml_render_shader_device_present(const GmlRender *r){ return r?r->shader_device_present:0; }
+void gml_render_set_shader_device_expected(GmlRender *r,int expected){ if(r) r->shader_device_expected=expected?1:0; }
 int gml_render_surface_plane(GmlRender *r,int surface,int *width,int *height,
                              const uint32_t **pixels){
   int w=0,h=0;

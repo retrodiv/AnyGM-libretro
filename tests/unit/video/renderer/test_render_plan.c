@@ -966,6 +966,58 @@ static int shader_draw_validation_case(void){
   return 1;
 }
 
+/* A rectangle and a sprite drawn through a content program go to the executor, and a procedural
+ * shader answers shader_is_compiled by whether a device was expected, not by the frame's state. */
+static int shaded_primitive_and_device_case(void){
+  enum { W=16,H=12 };
+  uint32_t source[4*4],target[W*H];
+  GmlWin content={0};
+  GmlRender render;
+  struct GmlShaderPal pal[2];
+  content.bytecode=14;
+  memset(source,0,sizeof source);
+  memset(pal,0,sizeof pal);
+  /* pal[0]: a sampling shader (unrecognized); pal[1]: procedural (samples nothing). */
+  pal[0].source_vertex_es="attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
+  pal[0].source_fragment_es="varying vec2 v; void main(){ gl_FragColor=texture2D(gm_BaseTexture,v); }";
+  pal[1].source_vertex_es="attribute vec3 in_Position; void main(){ gl_Position=vec4(in_Position,1.0); }";
+  pal[1].source_fragment_es="void main(){ gl_FragColor=vec4(1.0); }";
+  pal[1].procedural=1;
+  for(size_t i=0;i<W*H;i++) target[i]=0xFF202020u;
+  render_reset(&render,&content,source,4,4,target,W,H,0);
+  render.shader_pal=pal;
+  render.n_shader_pal=2;
+  memset(&executor_seen,0,sizeof executor_seen);
+  gml_render_set_shader_executor(&render,green_executor,NULL);
+
+  /* Without a device expected, the procedural shader reports not compiled. */
+  gml_render_set_shader_device_expected(&render,0);
+  REQUIRE(!gml_render_shader_is_compiled(&render,1),"a procedural shader without a device is not compiled");
+  gml_render_set_shader_device_expected(&render,1);
+  REQUIRE(gml_render_shader_is_compiled(&render,1),"with a device expected it is compiled");
+  /* content_candidate gates on a device actually being present, which the engine sets per frame. */
+  gml_render_set_shader_device(&render,1);
+
+  gml_render_gui_begin(&render,W,H);
+  gml_render_gui_set_size(&render,W,H);
+  gml_render_shader_set_current(&render,1);
+  /* A filled rectangle under the procedural shader reaches the executor. */
+  gml_render_primitive_rectangle(&render,2,3,10,9,0x3399ccu,0);
+  REQUIRE(executor_seen.calls==1,"the rectangle was shaded through the executor");
+  REQUIRE(executor_seen.width==8 && executor_seen.height==6,"at the rectangle's size");
+  REQUIRE(target[3*W+2]==0xFF00FF00u,"the executor's answer is composed at the rectangle");
+  /* An outline is not a fill and is not shaded. */
+  memset(&executor_seen,0,sizeof executor_seen);
+  gml_render_primitive_rectangle(&render,2,3,10,9,0x3399ccu,1);
+  REQUIRE(executor_seen.calls==0,"an outline rectangle is not shaded");
+  gml_render_shader_set_current(&render,-1);
+  gml_render_gui_end(&render);
+  render.shader_pal=NULL; render.n_shader_pal=0;
+  gml_render_set_shader_executor(&render,NULL,NULL);
+  gml_render_free(&render);
+  return 1;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   for(int index=1;index<argc;++index){
@@ -989,6 +1041,7 @@ int main(int argc,char **argv){
     {"deferred_flushes",deferred_presentation_flushes_case},
     {"deferred_content_shader",deferred_content_shader_case},
     {"mid_frame_content_shader",mid_frame_content_shader_case},
+    {"shaded_primitive_and_device",shaded_primitive_and_device_case},
     {"deferred_underlay",deferred_underlay_case},
   };
   static const AnygmTestCase plan_cases[]={

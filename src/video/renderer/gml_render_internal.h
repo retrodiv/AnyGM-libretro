@@ -498,6 +498,11 @@ typedef struct GmlRender {
   /* A content program executed in the middle of a frame by the host, and the plane its result
    * lands in, drawn as surface GML_RENDER_SHADED_SURFACE. */
   GmlRenderShaderExecutor shader_executor; void *shader_executor_context;
+  /* Whether a graphics device is actually present now (adoption succeeded), refined per frame — used
+   * to decide whether a program actually runs. And whether one was requested at all, read at boot
+   * and stable — used to answer a shader-support query a game caches on its first frame. */
+  int shader_device_present;
+  int shader_device_expected;
   uint32_t *shaded_plane; size_t shaded_plane_capacity;
   int shaded_plane_width,shaded_plane_height;
   uint32_t shaded_requests,shaded_draws;
@@ -609,6 +614,9 @@ int render_record_deferred_underlay(GmlRender *r,const uint32_t *src,int sw,int 
 void render_present_first_generation(GmlRender *r,int surf,const uint32_t *src,int sw,int sh,
                                      int x0,int y0,int x1,int y1,
                                      double dx,double dy,double dw,double dh);
+int gml_render_shade_target_rect(GmlRender *r,int x1,int y1,int x2,int y2,uint32_t colour,double alpha);
+int gml_render_shade_target_sprite(GmlRender *r,int sprite,int frame,
+                                   double dx,double dy,double dw,double dh,uint32_t blend,double alpha);
 void draw_surface_region(GmlRender *r,int surface,double source_x,double source_y,
                          double source_width,double source_height,double destination_x,
                          double destination_y,double destination_width,

@@ -396,6 +396,10 @@ static void boot_runtime(AnygmEngine *engine) {
   classic_transition_reset(engine);
   engine->have_presented_frame = 0;
   setup_display(engine);
+  /* A game asks whether shaders are supported in its very first events, so the session's answer —
+   * whether a graphics device was requested — has to be in place before the launch, like the
+   * anchor's os_type below. */
+  gml_render_set_shader_device_expected(&engine->render,engine_graphics_device_expected(engine));
   gml_vm_init_launch(&engine->vm,&engine->win,&engine->host,
                      engine->content_program_directory,engine->current_content_path,
                      engine->launch_parameters);
@@ -426,7 +430,8 @@ static void boot_runtime(AnygmEngine *engine) {
     .monitor_width=core_opt_monitor_size(engine,0),
     .monitor_height=core_opt_monitor_size(engine,1),
     .shader_report_all_compiled=core_opt_onoff(engine,"anygm_report_shaders_compiled",
-                                               "ANYGM_REPORT_SHADERS_COMPILED",1)
+                                               "ANYGM_REPORT_SHADERS_COMPILED",1),
+    .shader_device_expected=engine_graphics_device_expected(engine)
   };
   gml_render_control_update(&engine->render,&render_control,GML_RENDER_CONTROL_HOST_OPTIONS);
   if(anygm_host_development_setting(&engine->host,"GML_LOG_MONITOR"))
@@ -2260,6 +2265,7 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   gml_render_set_shader_executor(&engine->render,
                                  engine_graphics_active(engine)?engine_execute_content_shader:NULL,
                                  engine);
+  gml_render_set_shader_device(&engine->render,engine_graphics_active(engine)?1:0);
   /* A frame that spent anything on read-backs is one frame of the budget's measurement; the count
    * is closed here, where the frame begins, rather than from the renderer's own counter. */
   engine_readback_open_frame(engine);
@@ -2329,6 +2335,10 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   return ANYGM_OK;
 }
 
+int engine_graphics_device_expected(const AnygmEngine *engine){
+  return engine && engine->config.content_shader_device_expected?1:0;
+}
+
 AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || !delta) return ANYGM_ERROR_INVALID_ARGUMENT;
   if(delta->struct_size<sizeof *delta || delta->values.struct_size<sizeof delta->values)
@@ -2349,6 +2359,10 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   if(f&ANYGM_CONFIG_GOD_MODE) engine->config.god_mode=delta->values.god_mode;
   if(f&ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED)
     engine->config.report_all_shaders_compiled=delta->values.report_all_shaders_compiled?1u:0u;
+  if(f&ANYGM_CONFIG_CONTENT_SHADER_READBACK)
+    engine->config.content_shader_readback=delta->values.content_shader_readback;
+  if(f&ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED)
+    engine->config.content_shader_device_expected=delta->values.content_shader_device_expected?1u:0u;
   if(f&ANYGM_CONFIG_GAMEPAD_CONNECTED) engine->config.gamepad_connected=delta->values.gamepad_connected;
   if(f&ANYGM_CONFIG_FAST_ALPHA_CULL) engine->config.fast_alpha_cull=delta->values.fast_alpha_cull;
   if(f&ANYGM_CONFIG_FAST_FORWARD) engine->config.fast_forward=delta->values.fast_forward;
