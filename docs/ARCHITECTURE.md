@@ -498,6 +498,14 @@ rectangle of a texture page, so a screen of text costs one evaluation per distin
 rotated draw composes the kept answer through the ordinary sprite blit, which already has the
 pivot and the edge rules.
 
+Every shape a draw can take reaches the executor: a surface and a region of one, a filled
+rectangle, a sprite whole or in part, stretched, mirrored or rotated, and a font glyph. A region
+naming part of a frame that carried no colour has nothing stored for it and nothing to draw, which
+is an answer rather than a refusal.
+
+A draw made before a graphics context exists cannot use this executor; it
+follows the software renderer until a context is available.
+
 One class of program cannot be kept: a fragment that reads gl_FragCoord derives its answer from
 where the pixel lands on the render target, so the answer is not a property of the picture it
 samples. Such a program is evaluated where it is drawn — the device draws into a target the size

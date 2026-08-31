@@ -1816,7 +1816,10 @@ int gml_render_shade_target_sprite_part(GmlRender *r,int sprite,int frame,
       double scale_x=rw>0?dw/rw:0.0, scale_y=rh>0?dh/rh:0.0;
       double lx0=rx>tx?rx:tx, ly0=ry>ty?ry:ty;
       double lx1=rx+rw<tx+w?rx+rw:tx+w, ly1=ry+rh<ty+h?ry+rh:ty+h;
-      if(lx1<=lx0 || ly1<=ly0) return 0;
+      /* The region names part of the sprite that carried no colour, so the stored page holds
+       * nothing for it: there is nothing to shade and nothing to draw, and saying so is the
+       * answer rather than handing the draw to a path that would also draw nothing. */
+      if(lx1<=lx0 || ly1<=ly0){ r->shaded_draws++; return 1; }
       dx+=(lx0-rx)*scale_x;
       dy+=(ly0-ry)*scale_y;
       dw=(lx1-lx0)*scale_x;
@@ -1838,12 +1841,15 @@ int gml_render_shade_target_sprite_part(GmlRender *r,int sprite,int frame,
                                     dx,dy,dw,dh,blend,alpha);
     }
     shaded=gml_render_shaded_atlas_rect(r,atlas,sx,sy,w,h);
-    if(!shaded) return 0;
-    return gml_render_compose_shaded_plane(r,shaded,w,h,rx,ry,rw,rh,dx,dy,dw,dh,blend,alpha);
+    if(!shaded){ return 0; }
+    if(!gml_render_compose_shaded_plane(r,shaded,w,h,rx,ry,rw,rh,dx,dy,dw,dh,blend,alpha)){
+      return 0; }
+    return 1;
   }
   {
     const uint32_t *px=NULL;
-    if(!gml_render_sprite_frame_plane(r,sprite,frame,&w,&h,&px) || !px || w<=0 || h<=0) return 0;
+    if(!gml_render_sprite_frame_plane(r,sprite,frame,&w,&h,&px) || !px || w<=0 || h<=0){
+      return 0; }
     if(rx<0){ rw+=rx; rx=0; }
     if(ry<0){ rh+=ry; ry=0; }
     if(rw<=0 || rh<=0 || rx>=w || ry>=h) return 0;

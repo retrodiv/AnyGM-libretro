@@ -6513,6 +6513,14 @@ void gml_draw_sprite_stretched(GmlRender *r, int sprite, int frame, double dx, d
     double xs=dw/s->w,ys=dh/s->h;
     if(gml_d3_draw_sprite_2d(r,sprite,frame,dx+s->originx*xs,dy+s->originy*ys,xs,ys,0,blend,alpha)) return;
   }
+  /* A stretched sprite drawn through a program this renderer does not execute reaches the same
+   * executor as any other sprite draw; the region is the whole frame and the extent is the one
+   * asked for, so a flip is carried as a negative extent exactly as elsewhere. */
+  if(dw!=0.0 && dh!=0.0 && r->active_shader>=0 && r->shader_executor &&
+     gml_render_shader_content_candidate(r,r->active_shader)){
+    int sub=((frame%s->n_frames)+s->n_frames)%s->n_frames;
+    if(gml_render_shade_target_sprite(r,sprite,sub,dx,dy,dw,dh,blend,alpha)) return;
+  }
   dx-=r->cam_x; dy-=r->cam_y;
   if(s->runtime_rgba){
     const uint8_t *fr=runtime_frame_rgba(s,frame); if(!fr) return;
