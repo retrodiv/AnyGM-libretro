@@ -477,8 +477,9 @@ composed in software as a surface of that size with the draw's own blend and alp
 renderer remains the complete implementation, and a host without a context, or a program the
 device refuses, draws plain. A read-back stalls the device, and its cost is the device's: the
 engine times what those passes cost the frames that paid for them and, on a device where that
-exceeds the per-frame budget, draws the mid-frame ones plain for the rest of the session and says
-so once; the terminal presentation stays on the device, and the policy is a host option so a
+exceeds the per-frame budget, stops waiting: the pass takes what the previous pass of the same
+program left, one frame old, and starts its own without waiting, which is what the stall actually
+costs. Only if that is still too slow are the mid-frame draws given up for the session; the terminal presentation stays on the device, and the policy is a host option so a
 comparison against the original can ask for every shader however slow.
 
 A fragment that samples no picture is a case of its own. It derives every pixel from coordinates,

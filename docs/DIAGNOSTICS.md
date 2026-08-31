@@ -139,7 +139,7 @@ unloaded:
              destroys=N losses=N program_failures=N fallback_unsupported=N fallback_box=N
              fallback_context=N fallback_upload=N fallback_overflow=N fallback_shader=N
              materializations=N screen_passes=N canvas_passes=N readback_passes=N
-             readback_ms_per_frame=N readback_refused=N last_error="..."
+             readback_ms_per_frame=N readback_pipelined=N readback_refused=N last_error="..."
 ```
 
 `fallback_shader` counts passes refused because the content's own program did not compile or
@@ -152,8 +152,10 @@ those passes cost the frames that paid for them, and `readback_refused` is 1 whe
 over the per-frame budget, after which such draws proceed plain for the session; the refusal is
 also logged once, with the measured cost, as a warning. The budget is per frame rather than per
 pass because what a frame can afford is a frame's time: three passes of 2.5 milliseconds fit and
-six do not. The `anygm_content_shader_readback` option selects the policy — measured, always, or
-never. The terminal presentation is not affected by any of it.
+six do not. `readback_pipelined` is 1 once the measured policy stopped waiting for the device and began taking
+the previous pass's answer instead — correct, one frame late, and it is tried before a draw is
+given up. The `anygm_content_shader_readback` option selects the policy — measured, always
+(exact, waits), or never. The terminal presentation is not affected by any of it.
 
 `accepted` counts passes the device executed and `replayed` counts passes the software executor had
 to take back. `transport` is the subset of accepted passes that merely carried a complete software

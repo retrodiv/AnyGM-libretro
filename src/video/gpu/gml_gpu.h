@@ -74,6 +74,9 @@ int gml_gpu_execute_plan(GmlGpu *gpu,GmlRenderPlan *plan);
 
 void gml_gpu_counters(const GmlGpu *gpu,GmlGpuCounters *counters);
 /* The most recent lifecycle failure, as a bounded, content-neutral string, or NULL. */
+/* Take the pipelined read-back for shaded draws inside a frame: correct, one frame late, and it
+ * does not stall the device. */
+void gml_gpu_set_readback_pipelined(GmlGpu *gpu,int pipelined);
 const char *gml_gpu_last_error(const GmlGpu *gpu);
 
 #endif

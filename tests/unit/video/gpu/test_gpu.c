@@ -666,6 +666,50 @@ static int content_program_source_region_case(void){
   return 1;
 }
 
+/* Taking the pipelined read-back: the first pass primes by waiting once, and every pass after it
+ * hands back what the previous one left and starts its own without waiting. */
+static int content_program_pipelined_readback_case(void){
+  enum { W=5,H=3 };
+  uint32_t frame[8*6],mask[4*4],output[W*H];
+  GmlGpu *gpu;
+  GmlGpuContext context;
+  GmlRenderPlan plan;
+  anygm_test_graphics_reset();
+  memset(frame,0,sizeof frame);
+  memset(mask,0,sizeof mask);
+  gpu=gml_gpu_create();
+  context=fake_context(GML_GPU_API_OPENGL_CORE);
+  REQUIRE(gml_gpu_context_reset(gpu,&context),"context adopted");
+  gml_gpu_set_readback_pipelined(gpu,1);
+  {
+    /* First pass: nothing to take yet, so it reads the waiting way exactly once. */
+    REQUIRE(build_content_plan(&plan,frame,mask),"content plan built");
+    plan.target=GML_PLAN_TARGET_READBACK;
+    plan.target_width=W; plan.target_height=H;
+    plan.readback_pixels=output; plan.readback_pitch_pixels=W;
+    plan.operations[0].destination.width=W; plan.operations[0].destination.height=H;
+    plan.operations[1].destination.width=W; plan.operations[1].destination.height=H;
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),"the first pass executes");
+    REQUIRE(anygm_test_graphics_read_pixels()==1,"it waits for the device once");
+    REQUIRE(anygm_test_graphics_async_read_pixels()==1,"and starts its own read without waiting");
+  }
+  {
+    /* Second pass: it takes what the first left and waits for nothing. */
+    unsigned waited=(unsigned)anygm_test_graphics_read_pixels();
+    REQUIRE(build_content_plan(&plan,frame,mask),"content plan rebuilt");
+    plan.target=GML_PLAN_TARGET_READBACK;
+    plan.target_width=W; plan.target_height=H;
+    plan.readback_pixels=output; plan.readback_pitch_pixels=W;
+    plan.operations[0].destination.width=W; plan.operations[0].destination.height=H;
+    plan.operations[1].destination.width=W; plan.operations[1].destination.height=H;
+    REQUIRE(gml_gpu_execute_plan(gpu,&plan),"the second pass executes");
+    REQUIRE((unsigned)anygm_test_graphics_read_pixels()==waited,"nothing waited for the device");
+    REQUIRE(anygm_test_graphics_async_read_pixels()==2,"and its own read was started");
+  }
+  gml_gpu_destroy(gpu,1);
+  return 1;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   for(int index=1;index<argc;++index){
@@ -693,6 +737,7 @@ int main(int argc,char **argv){
     {"content_program_refused",content_program_refused_case},
     {"content_program_readback",content_program_readback_case},
     {"content_program_source_region",content_program_source_region_case},
+    {"content_program_pipelined_readback",content_program_pipelined_readback_case},
   };
   const AnygmTestGroup groups[]={
     {"lifecycle",lifecycle_cases,sizeof lifecycle_cases/sizeof lifecycle_cases[0]},

@@ -70,6 +70,9 @@ typedef void GLvoid;
 #define GL_R16UI 0x8234
 #define GL_UNPACK_ALIGNMENT 0x0CF5
 #define GL_PACK_ALIGNMENT 0x0D05
+#define GL_PIXEL_PACK_BUFFER 0x88EB
+#define GL_STREAM_READ 0x88E1
+#define GL_MAP_READ_BIT 0x0001
 #define GL_UNPACK_ROW_LENGTH 0x0CF2
 #define GL_UNPACK_SKIP_ROWS 0x0CF3
 #define GL_UNPACK_SKIP_PIXELS 0x0CF4
@@ -193,6 +196,10 @@ typedef struct GmlGlApi {
   GLenum   (*CheckFramebufferStatus)(GLenum target);
   void     (*ReadPixels)(GLint x,GLint y,GLsizei width,GLsizei height,GLenum format,GLenum type,
                          void *pixels);
+  /* Asynchronous read-back: the result of a draw is fetched into a buffer object the device fills
+   * on its own schedule, and mapped a frame later, so nothing waits on the device. */
+  void    *(*MapBufferRange)(GLenum target,GLintptr offset,GLsizeiptr length,GLbitfield access);
+  GLboolean (*UnmapBuffer)(GLenum target);
 } GmlGlApi;
 
 #endif

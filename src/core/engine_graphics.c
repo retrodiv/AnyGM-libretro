@@ -80,7 +80,8 @@ void engine_graphics_report(AnygmEngine *engine){
     "bytes=%llu resets=%u destroys=%u losses=%u program_failures=%u "
     "fallback_unsupported=%u fallback_box=%u fallback_context=%u fallback_upload=%u "
     "fallback_overflow=%u fallback_shader=%u materializations=%u screen_passes=%u canvas_passes=%u"
-    " readback_passes=%u readback_ms_per_frame=%.3f readback_refused=%d last_error=\"%s\"\n",
+    " readback_passes=%u readback_ms_per_frame=%.3f readback_pipelined=%d readback_refused=%d"
+    " last_error=\"%s\"\n",
     counters.frames_offered,counters.passes_accepted,counters.passes_replayed,
     counters.cpu_upload_frames,counters.draw_calls,counters.full_uploads,
     (unsigned long long)counters.uploaded_bytes,
@@ -96,7 +97,7 @@ void engine_graphics_report(AnygmEngine *engine){
     engine->readback_pass_count,
     engine->readback_frames_measured
       ?(double)engine->readback_frame_ns/(double)engine->readback_frames_measured/1e6:0.0,
-    engine->readback_refused,
+    engine->readback_is_pipelined,engine->readback_refused,
     gml_gpu_last_error(engine->gpu)?gml_gpu_last_error(engine->gpu):"");
 }
 
@@ -263,13 +264,28 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
     engine->readback_frame_ns+=spent;
     if(engine->config.content_shader_readback==ANYGM_SHADER_READBACK_BUDGETED &&
        engine_readback_over_budget(engine->readback_frame_ns,engine->readback_frames_measured)){
-      engine->readback_refused=1;
-      engine_logf(engine,ANYGM_LOG_WARN,
-        "[hybrid-gpu] content shaders inside a frame draw plain on this device: they cost %.2f ms "
-        "a frame, over the %.2f ms budget. Set the game-shaders-inside-a-frame option to Always to "
-        "run them anyway.\n",
-        (double)engine->readback_frame_ns/(double)engine->readback_frames_measured/1e6,
-        ENGINE_READBACK_BUDGET_US_PER_FRAME/1000.0);
+      if(!engine->readback_is_pipelined){
+        /* Waiting for the device is what costs; taking the previous pass's answer instead does
+         * not. A shader one frame late is nearer the content than no shader at all, so that is
+         * tried before the draw is given up. */
+        engine_logf(engine,ANYGM_LOG_INFO,
+          "[hybrid-gpu] content shaders inside a frame cost %.2f ms a frame waiting for the "
+          "device; taking the previous frame's answer instead\n",
+          (double)engine->readback_frame_ns/(double)engine->readback_frames_measured/1e6);
+        engine->readback_is_pipelined=1;
+        gml_gpu_set_readback_pipelined(engine->gpu,1);
+        engine->readback_frame_ns=0;
+        engine->readback_frames_measured=0;
+        engine->readback_pass_measured=0;
+      } else {
+        engine->readback_refused=1;
+        engine_logf(engine,ANYGM_LOG_WARN,
+          "[hybrid-gpu] content shaders inside a frame draw plain on this device: even without "
+          "waiting they cost %.2f ms a frame, over the %.2f ms budget. Set the "
+          "game-shaders-inside-a-frame option to Always to run them anyway.\n",
+          (double)engine->readback_frame_ns/(double)engine->readback_frames_measured/1e6,
+          ENGINE_READBACK_BUDGET_US_PER_FRAME/1000.0);
+      }
     }
   }
   return 1;

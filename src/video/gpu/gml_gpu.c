@@ -103,6 +103,10 @@ void gml_gpu_counters(const GmlGpu *gpu,GmlGpuCounters *counters){
   *counters=gpu->counters;
 }
 
+void gml_gpu_set_readback_pipelined(GmlGpu *gpu,int pipelined){
+  if(gpu && gpu->backend) gml_gpu_gl_set_readback_pipelined(gpu->backend,pipelined);
+}
+
 const char *gml_gpu_last_error(const GmlGpu *gpu){
   if(!gpu || !gpu->error[0]) return NULL;
   return gpu->error;

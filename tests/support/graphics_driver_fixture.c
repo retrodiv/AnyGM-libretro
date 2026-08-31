@@ -69,6 +69,11 @@ typedef struct FakeDriver {
   unsigned matrix_uniforms;
   GLuint attached_texture;
   unsigned read_pixels;
+  unsigned async_read_pixels;
+  GLuint bound_pack_buffer;
+  unsigned char pack_store[2][64*64*4];
+  unsigned pack_slot_for[8];
+  unsigned pack_fill;
   GLint unpack_row_length;
   GLint unpack_alignment;
   GLint uniforms[8];
@@ -292,9 +297,29 @@ static void fake_FramebufferTexture2D(GLenum target,GLenum attachment,GLenum tex
 static GLenum fake_CheckFramebufferStatus(GLenum target){ (void)target; note_call(); return GL_FRAMEBUFFER_COMPLETE; }
 /* Rows from the bottom, bytes R,G,B,A: the red byte carries the device row and the green byte the
  * column, so a reader that forgets to flip or reorder is caught. */
+/* A pack buffer bound means the read is asynchronous: the pattern goes into the fixture's own
+ * storage for that buffer and is handed back when the backend maps it, which is what lets a test
+ * see that a pass took the previous pass's answer. */
+static void *fake_MapBufferRange(GLenum target,GLintptr offset,GLsizeiptr length,GLbitfield access){
+  (void)target;(void)offset;(void)length;(void)access; note_call();
+  return g_fake.pack_store[g_fake.bound_pack_buffer&1u];
+}
+static GLboolean fake_UnmapBuffer(GLenum target){ (void)target; note_call(); return GL_TRUE; }
 static void fake_ReadPixels(GLint x,GLint y,GLsizei width,GLsizei height,GLenum format,GLenum type,void *pixels){
   uint8_t *out=(uint8_t*)pixels;
   (void)x;(void)y;(void)format;(void)type; note_call();
+  if(g_fake.bound_pack_buffer){
+    /* Asynchronous: fill the fixture's storage for the bound buffer, hand nothing back now. */
+    uint8_t *store=g_fake.pack_store[g_fake.bound_pack_buffer&1u];
+    size_t bytes=(size_t)width*(size_t)height*4u;
+    if(bytes>sizeof g_fake.pack_store[0]) bytes=sizeof g_fake.pack_store[0];
+    g_fake.async_read_pixels++;
+    g_fake.pack_fill++;
+    for(size_t i=0;i+3<bytes;i+=4){
+      store[i]=(uint8_t)(g_fake.pack_fill); store[i+1]=(uint8_t)(i/4); store[i+2]=0x33; store[i+3]=0xFF;
+    }
+    return;
+  }
   g_fake.read_pixels++;
   for(GLsizei row=0;row<height;row++)
     for(GLsizei column=0;column<width;column++){
@@ -363,7 +388,11 @@ static void fake_GenBuffers(GLsizei n,GLuint *names){
   note_call();
   for(GLsizei index=0;index<n;index++) names[index]=g_fake.next_name++;
 }
-static void fake_BindBuffer(GLenum target,GLuint name){ (void)target; note_call(); g_fake.bound_buffer=name; }
+static void fake_BindBuffer(GLenum target,GLuint name){
+  note_call();
+  if(target==GL_PIXEL_PACK_BUFFER){ g_fake.bound_pack_buffer=name; return; }
+  g_fake.bound_buffer=name;
+}
 static void fake_BufferData(GLenum target,GLsizeiptr size,const void *data,GLenum usage){
   size_t floats=(size_t)size/sizeof(float);
   (void)target;(void)usage; note_call();
@@ -452,6 +481,8 @@ void (*anygm_test_graphics_proc(void *userdata,const char *name))(void){
     {"glFramebufferTexture2D",(void*)fake_FramebufferTexture2D},
     {"glCheckFramebufferStatus",(void*)fake_CheckFramebufferStatus},
     {"glReadPixels",(void*)fake_ReadPixels},
+    {"glMapBufferRange",(void*)fake_MapBufferRange},
+    {"glUnmapBuffer",(void*)fake_UnmapBuffer},
     {NULL,NULL}
   };
   (void)userdata;
@@ -487,6 +518,7 @@ unsigned anygm_test_graphics_bound_buffer(void){ return g_fake.bound_buffer; }
 unsigned anygm_test_graphics_float_uniforms(void){ return g_fake.float_uniforms; }
 unsigned anygm_test_graphics_matrix_uniforms(void){ return g_fake.matrix_uniforms; }
 unsigned anygm_test_graphics_read_pixels(void){ return g_fake.read_pixels; }
+unsigned anygm_test_graphics_async_read_pixels(void){ return g_fake.async_read_pixels; }
 int anygm_test_graphics_quad_texcoord(int corner,float *u,float *v){
   /* Nine floats a vertex: position, colour, texture coordinate. */
   if(corner<0 || corner>3 || g_fake.buffer_bytes<(size_t)(4*9*sizeof(float))) return 0;

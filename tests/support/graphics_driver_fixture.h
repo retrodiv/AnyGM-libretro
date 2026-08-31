@@ -52,6 +52,8 @@ unsigned anygm_test_graphics_float_uniforms(void);
 unsigned anygm_test_graphics_matrix_uniforms(void);
 /* Read-backs performed, and the texture attached to the off-screen target (0 for none). */
 unsigned anygm_test_graphics_read_pixels(void);
+/* Read-backs issued into a pack buffer, which do not wait for the device. */
+unsigned anygm_test_graphics_async_read_pixels(void);
 /* The texture coordinate of one corner of the last quad drawn through a content program. */
 int anygm_test_graphics_quad_texcoord(int corner,float *u,float *v);
 unsigned anygm_test_graphics_attached_texture(void);

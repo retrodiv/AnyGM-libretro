@@ -382,6 +382,7 @@ struct AnygmEngine {
   uint32_t readback_frames_measured;
   uint64_t readback_frame_ns;
   int readback_frame_spent;
+  int readback_is_pipelined;
   int readback_refused;
   uint32_t canvas_pass_frames;
 };

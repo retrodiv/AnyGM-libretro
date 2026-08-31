@@ -31,6 +31,9 @@ int gml_gpu_gl_reset(GmlGpuBackend *backend,const GmlGpuContext *context,
 /* Executes the plan. A refusal that is the content program's - it did not compile or link - is
  * reported in the plan's fallback reason as well as the return value, so the caller can retire the
  * program rather than retry it every frame. */
+/* Take the pipelined read-back: a pass reads what the previous pass of the same program left and
+ * starts its own without waiting. The answer is one frame old, which is what removes the stall. */
+void gml_gpu_gl_set_readback_pipelined(GmlGpuBackend *backend,int pipelined);
 int gml_gpu_gl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
                        GmlRenderPlan *plan,GmlGpuCounters *counters,
                        char *error,size_t error_capacity);

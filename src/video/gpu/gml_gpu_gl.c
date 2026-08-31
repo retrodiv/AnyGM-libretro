@@ -22,7 +22,8 @@ enum {
   GL_MAP_SLOTS=GML_PLAN_MAX_OPERATIONS*2,
   GL_INFO_LOG_LIMIT=512,
   GL_CONTENT_PROGRAMS=16,
-  GL_CONTENT_UNIFORMS=64
+  GL_CONTENT_UNIFORMS=64,
+  GL_READBACK_SLOTS=8
 };
 
 /* One uniform the content's program declares, as the context reports it after linking. A value
@@ -35,6 +36,19 @@ typedef struct GlContentUniform {
   GLint size;
   GLenum type;
 } GlContentUniform;
+
+/* One pipelined read-back: two buffer objects the device fills in turn. A pass reads what the
+ * previous pass of the same program left — one frame old — and issues the current one without
+ * waiting, which is what removes the stall. A slot is primed by one ordinary read the first time
+ * it is used, so the first frame is correct rather than empty. */
+typedef struct GlReadbackSlot {
+  uint32_t identity;
+  uint32_t width,height;
+  GLuint buffer[2];
+  int cursor;
+  int primed;
+  uint32_t last_used;
+} GlReadbackSlot;
 
 /* A content program compiled for this context, keyed by the shader's identity and the text it was
  * compiled from. `failed` retires a program the context refused, so a frame does not pay the
@@ -105,6 +119,8 @@ struct GmlGpuBackend {
   uint32_t readback_width,readback_height;
   uint8_t *readback_scratch;
   size_t readback_scratch_capacity;
+  GlReadbackSlot readback_slots[GL_READBACK_SLOTS];
+  int readback_pipelined;
 };
 
 static void record_error(char *error,size_t capacity,const char *format,...);
@@ -149,6 +165,7 @@ void gml_gpu_gl_forget(GmlGpuBackend *backend){
   }
   memset(backend->content,0,sizeof backend->content);
   backend->content_buffer=0;
+  memset(backend->readback_slots,0,sizeof backend->readback_slots);
   backend->readback_framebuffer=0;
   backend->readback_texture=0;
   backend->readback_attached=0;
@@ -168,6 +185,9 @@ static void delete_objects(GmlGpuBackend *backend){
     if(backend->content[index].program) backend->gl.DeleteProgram(backend->content[index].program);
   if(backend->content_buffer && backend->gl.DeleteBuffers)
     backend->gl.DeleteBuffers(1,&backend->content_buffer);
+  for(size_t index=0;index<GL_READBACK_SLOTS;index++)
+    if(backend->readback_slots[index].buffer[0] && backend->gl.DeleteBuffers)
+      backend->gl.DeleteBuffers(2,backend->readback_slots[index].buffer);
   if(backend->readback_framebuffer && backend->gl.DeleteFramebuffers)
     backend->gl.DeleteFramebuffers(1,&backend->readback_framebuffer);
   if(backend->readback_texture) backend->gl.DeleteTextures(1,&backend->readback_texture);
@@ -250,7 +270,9 @@ void gml_gpu_gl_destroy(GmlGpuBackend *backend,int context_is_current){
   X(DeleteFramebuffers,"glDeleteFramebuffers") \
   X(FramebufferTexture2D,"glFramebufferTexture2D") \
   X(CheckFramebufferStatus,"glCheckFramebufferStatus") \
-  X(ReadPixels,"glReadPixels")
+  X(ReadPixels,"glReadPixels") \
+  X(MapBufferRange,"glMapBufferRange") \
+  X(UnmapBuffer,"glUnmapBuffer")
 
 static int load_entry_points(GmlGpuBackend *backend,const GmlGpuContext *context,
                              char *error,size_t error_capacity){
@@ -958,9 +980,23 @@ static int bind_readback_target(GmlGpuBackend *backend,uint32_t width,uint32_t h
 
 /* Read the off-screen target into the plan's plane. The device hands rows from the bottom and
  * channels in memory order R,G,B,A; the plane wants rows from the top and the runtime's word. */
-static int read_back_target(GmlGpuBackend *backend,GmlRenderPlan *plan,char *error,size_t error_capacity){
-  size_t needed=(size_t)plan->target_width*(size_t)plan->target_height*4u;
-  if(needed>backend->readback_scratch_capacity){
+/* Rows arrive from the bottom with channels in memory order R,G,B,A; the plane wants rows from the
+ * top in the runtime's word. One place does that conversion. */
+static void readback_convert(GmlRenderPlan *plan,const uint8_t *source_bytes){
+  for(uint32_t row=0;row<plan->target_height;row++){
+    const uint8_t *source=source_bytes+
+      (size_t)(plan->target_height-1u-row)*(size_t)plan->target_width*4u;
+    uint32_t *target=plan->readback_pixels+(size_t)row*plan->readback_pitch_pixels;
+    for(uint32_t column=0;column<plan->target_width;column++){
+      const uint8_t *px=source+(size_t)column*4u;
+      target[column]=((uint32_t)px[3]<<24)|((uint32_t)px[0]<<16)|((uint32_t)px[1]<<8)|(uint32_t)px[2];
+    }
+  }
+}
+
+static int readback_scratch_ready(GmlGpuBackend *backend,size_t needed,char *error,size_t error_capacity){
+  if(needed<=backend->readback_scratch_capacity) return 1;
+  {
     uint8_t *grown=(uint8_t*)realloc(backend->readback_scratch,needed);
     if(!grown){
       record_error(error,error_capacity,"graphics read-back scratch could not be allocated");
@@ -969,18 +1005,89 @@ static int read_back_target(GmlGpuBackend *backend,GmlRenderPlan *plan,char *err
     backend->readback_scratch=grown;
     backend->readback_scratch_capacity=needed;
   }
+  return 1;
+}
+
+/* Read the off-screen target now, waiting for the device. */
+static int read_back_target(GmlGpuBackend *backend,GmlRenderPlan *plan,char *error,size_t error_capacity){
+  size_t needed=(size_t)plan->target_width*(size_t)plan->target_height*4u;
+  if(!readback_scratch_ready(backend,needed,error,error_capacity)) return 0;
   backend->gl.PixelStorei(GL_PACK_ALIGNMENT,1);
   backend->gl.ReadPixels(0,0,(GLsizei)plan->target_width,(GLsizei)plan->target_height,GL_RGBA,
                          GL_UNSIGNED_BYTE,backend->readback_scratch);
-  for(uint32_t row=0;row<plan->target_height;row++){
-    const uint8_t *source=backend->readback_scratch+
-      (size_t)(plan->target_height-1u-row)*(size_t)plan->target_width*4u;
-    uint32_t *target=plan->readback_pixels+(size_t)row*plan->readback_pitch_pixels;
-    for(uint32_t column=0;column<plan->target_width;column++){
-      const uint8_t *px=source+(size_t)column*4u;
-      target[column]=((uint32_t)px[3]<<24)|((uint32_t)px[0]<<16)|((uint32_t)px[1]<<8)|(uint32_t)px[2];
-    }
+  readback_convert(plan,backend->readback_scratch);
+  return 1;
+}
+
+void gml_gpu_gl_set_readback_pipelined(GmlGpuBackend *backend,int pipelined){
+  if(backend) backend->readback_pipelined=pipelined?1:0;
+}
+
+static GlReadbackSlot *readback_slot(GmlGpuBackend *backend,uint32_t identity,
+                                     uint32_t width,uint32_t height){
+  GlReadbackSlot *spare=NULL;
+  uint32_t oldest=0xFFFFFFFFu;
+  for(size_t index=0;index<GL_READBACK_SLOTS;index++){
+    GlReadbackSlot *slot=&backend->readback_slots[index];
+    if(slot->buffer[0] && slot->identity==identity && slot->width==width && slot->height==height)
+      return slot;
   }
+  for(size_t index=0;index<GL_READBACK_SLOTS;index++){
+    GlReadbackSlot *slot=&backend->readback_slots[index];
+    if(!slot->buffer[0]){ spare=slot; break; }
+    if(slot->last_used<oldest){ oldest=slot->last_used; spare=slot; }
+  }
+  if(!spare) return NULL;
+  if(spare->buffer[0]) backend->gl.DeleteBuffers(2,spare->buffer);
+  memset(spare,0,sizeof *spare);
+  backend->gl.GenBuffers(2,spare->buffer);
+  if(!spare->buffer[0] || !spare->buffer[1]) return NULL;
+  spare->identity=identity;
+  spare->width=width;
+  spare->height=height;
+  for(int which=0;which<2;which++){
+    backend->gl.BindBuffer(GL_PIXEL_PACK_BUFFER,spare->buffer[which]);
+    backend->gl.BufferData(GL_PIXEL_PACK_BUFFER,
+                           (GLsizeiptr)((size_t)width*height*4u),NULL,GL_STREAM_READ);
+  }
+  backend->gl.BindBuffer(GL_PIXEL_PACK_BUFFER,0);
+  return spare;
+}
+
+/* Read the off-screen target without waiting: take what the previous pass of this program left,
+ * and start this one. The answer is one frame old, which is what buys the frame time back. */
+static int read_back_target_pipelined(GmlGpuBackend *backend,GmlRenderPlan *plan,
+                                      char *error,size_t error_capacity){
+  size_t bytes=(size_t)plan->target_width*(size_t)plan->target_height*4u;
+  GlReadbackSlot *slot;
+  if(!backend->gl.MapBufferRange || !backend->gl.UnmapBuffer)
+    return read_back_target(backend,plan,error,error_capacity);
+  slot=readback_slot(backend,plan->shader.identity,plan->target_width,plan->target_height);
+  if(!slot) return read_back_target(backend,plan,error,error_capacity);
+  slot->last_used=++backend->use_clock;
+  backend->gl.PixelStorei(GL_PACK_ALIGNMENT,1);
+  if(!slot->primed){
+    /* Nothing to take yet: read once the waiting way, so the first frame is right. */
+    if(!read_back_target(backend,plan,error,error_capacity)) return 0;
+  } else {
+    const uint8_t *mapped;
+    backend->gl.BindBuffer(GL_PIXEL_PACK_BUFFER,slot->buffer[slot->cursor^1]);
+    mapped=(const uint8_t*)backend->gl.MapBufferRange(GL_PIXEL_PACK_BUFFER,0,(GLsizeiptr)bytes,
+                                                      GL_MAP_READ_BIT);
+    if(!mapped){
+      backend->gl.BindBuffer(GL_PIXEL_PACK_BUFFER,0);
+      return read_back_target(backend,plan,error,error_capacity);
+    }
+    readback_convert(plan,mapped);
+    backend->gl.UnmapBuffer(GL_PIXEL_PACK_BUFFER);
+  }
+  /* Start this pass's read; nothing waits on it. */
+  backend->gl.BindBuffer(GL_PIXEL_PACK_BUFFER,slot->buffer[slot->cursor]);
+  backend->gl.ReadPixels(0,0,(GLsizei)plan->target_width,(GLsizei)plan->target_height,GL_RGBA,
+                         GL_UNSIGNED_BYTE,(void*)0);
+  backend->gl.BindBuffer(GL_PIXEL_PACK_BUFFER,0);
+  slot->cursor^=1;
+  slot->primed=1;
   return 1;
 }
 
@@ -1089,7 +1196,9 @@ int gml_gpu_gl_execute(GmlGpuBackend *backend,const GmlGpuContext *context,
   /* A pass that stopped part way has written something the plan does not describe. Report the
    * failure so the caller replays the complete pass, which overwrites it. */
   if(!failed && plan->target==GML_PLAN_TARGET_READBACK){
-    if(!read_back_target(backend,plan,error,error_capacity)) failed=1;
+    if(!(backend->readback_pipelined
+           ?read_back_target_pipelined(backend,plan,error,error_capacity)
+           :read_back_target(backend,plan,error,error_capacity))) failed=1;
     /* The frontend's own framebuffer is what a pass leaves bound. */
     backend->gl.BindFramebuffer(GL_FRAMEBUFFER,(GLuint)framebuffer);
   }
