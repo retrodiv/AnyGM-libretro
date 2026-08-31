@@ -53,6 +53,7 @@ int main(int argc,char **argv){
   };
   static const AnygmTestCase ds_cases[]={
     {"text_roundtrip",expect_ds_list_text_roundtrip},
+    {"capacity_and_state_roundtrip",expect_ds_list_capacity_and_state_roundtrip},
     {"priority_mutation",expect_ds_priority_lookup_mutation},
     {"priority_native_read",expect_ds_priority_native_read},
   };

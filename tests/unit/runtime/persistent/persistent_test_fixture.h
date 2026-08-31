@@ -53,6 +53,7 @@ int expect_frame_clock_ignores_host_time(void);
 int expect_sequence_asset_keys_and_parameters(void);
 int expect_persistent_lifecycle(void);
 int expect_ds_list_text_roundtrip(void);
+int expect_ds_list_capacity_and_state_roundtrip(void);
 int expect_ds_priority_lookup_mutation(void);
 int expect_ds_priority_native_read(void);
 int expect_audio_group_paths(void);

@@ -4,6 +4,7 @@
 #include "persistent_test_fixture.h"
 
 #include "gml_builtin.h"
+#include "gml_particle.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +43,47 @@ int expect_ds_list_text_roundtrip(void){
   (void)gml_builtin_call(&vm,"ds_list_destroy",&parent,1);
   (void)gml_builtin_call(&vm,"ds_list_destroy",&restored,1);
   if(!ok) fprintf(stderr,"ds_list text round-trip fixture failed\n");
+  return ok;
+}
+
+
+int expect_ds_list_capacity_and_state_roundtrip(void){
+  enum { list_count=300 };
+  GmlWin win={0};
+  GmlVM vm={0};
+  vm.win=&win;
+  vm.particles=gml_particle_state_create(&vm);
+  if(!vm.particles || !gml_vm_software3d_ensure(&vm)){
+    gml_vm_free(&vm);
+    return 0;
+  }
+  GmlVal lists[list_count];
+  int ok=1;
+  for(int i=0;i<list_count;i++){
+    lists[i]=gml_builtin_call(&vm,"ds_list_create",NULL,0);
+    if(lists[i].t!=V_REAL || lists[i].d<0 ||
+       (i>0 && lists[i].d<=lists[i-1].d)) ok=0;
+  }
+  GmlVal add_args[2]={lists[list_count-1],vreal(37)};
+  (void)gml_builtin_call(&vm,"ds_list_add",add_args,2);
+  size_t state_size=gml_vm_state_size(&vm),written=0,used=0;
+  unsigned char *state=malloc(state_size?state_size:1u);
+  ok=ok && state && gml_vm_state_save(&vm,state,state_size,&written) && written==state_size;
+
+  for(int i=0;i<list_count;i++)
+    (void)gml_builtin_call(&vm,"ds_list_destroy",&lists[i],1);
+  if(ok) ok=gml_vm_state_load(&vm,state,written,&used) && used==written;
+  GmlVal size=gml_builtin_call(&vm,"ds_list_size",&lists[list_count-1],1);
+  GmlVal find_args[2]={lists[list_count-1],vreal(0)};
+  GmlVal value=gml_builtin_call(&vm,"ds_list_find_value",find_args,2);
+  ok=ok && size.t==V_REAL && size.d==1 && value.t==V_REAL && value.d==37;
+  if(!ok) fprintf(stderr,
+    "more than 256 live ds lists did not survive creation and state round-trip: "
+    "last=%d/%.17g state=%zu/%zu used=%zu size=%d/%.17g value=%d/%.17g\n",
+    lists[list_count-1].t,lists[list_count-1].d,state_size,written,used,
+    size.t,size.d,value.t,value.d);
+  free(state);
+  gml_vm_free(&vm);
   return ok;
 }
 

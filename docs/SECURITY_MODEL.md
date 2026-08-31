@@ -193,6 +193,8 @@ and dimensions before allocation or indexed access. It cannot change the root fr
 outside the VM section, or publish an independently restored object. Decoding
 occurs in the engine's scratch transaction, so any resource-stage failure
 discards the candidate and preserves the prior live engine exactly.
+The list/queue/stack pool accepts at most 1,024 simultaneously live containers; this remains a
+state-reader bound as well as a runtime resource bound.
 
 Cache data is never authoritative. A schema, producer, source, output, size,
 or checksum mismatch discards the cache marker and regenerates from the source.
