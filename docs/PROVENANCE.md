@@ -141,9 +141,11 @@ this repository.
 The classic fallback generator is in `tools/fontgen/`, with fixed layout
 parameters and an explicit font-file input. The input font is not bundled,
 and this tree alone does not prove that the checked-in header was reproduced
-byte-for-byte. The classic information table has no generator in this
-revision; its declared source and terms remain subject to the same
-external verification requirement.
+byte-for-byte. The classic information table now has a Windows GDI generator in
+`tools/fontgen/`, with four explicit font-file inputs and fixed
+layout parameters. Its source and the declared OFL terms are present,
+but the input files and byte-for-byte regeneration evidence are not
+bundled; verify them externally before claiming reproduction.
 
 ## Interoperability constants
 

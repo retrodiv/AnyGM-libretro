@@ -51,6 +51,11 @@ The input release and its OFL terms are recorded in `docs/PROVENANCE.md`.
 
 ## The classic Game Information table
 
-The checked-in coverage has declared Liberation Sans provenance, but this
-revision does not include its generator or a complete byte-for-byte
-regeneration check. See `docs/PROVENANCE.md` for the remaining limitation.
+The checked-in coverage has declared Liberation Sans provenance.
+`gen_classic_info_font.c` takes the four font styles and a family name
+as explicit inputs, checks the selected font bytes, and writes the
+coverage header using Windows GDI ClearType. The generator carries
+fixed layout parameters and emits MIT/OFL notices. The input fonts
+are not bundled, and this repository alone does not prove that the
+checked-in table was reproduced byte-for-byte. See
+`docs/PROVENANCE.md` for the remaining verification boundary.
