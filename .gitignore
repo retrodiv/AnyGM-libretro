@@ -13,6 +13,10 @@
 *.profdata
 compile_commands.json
 .DS_Store
+__pycache__/
+*.pyc
+*.rej
+*.orig
 
 # Ignore temporary local content staging so inputs cannot enter the public tree.
 /tmp/
