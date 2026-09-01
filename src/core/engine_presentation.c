@@ -995,9 +995,10 @@ void compute_present(AnygmEngine *engine) {
         && engine->gui_space_width <= FB_MAX_W && engine->gui_space_height <= FB_MAX_H) {
       engine->output_width = (unsigned)engine->gui_space_width; engine->output_height = (unsigned)engine->gui_space_height; engine->gui_offset_x = engine->gui_offset_y = 0;
     } }
-  /* A non-uniform declared or runtime window size can coexist with one view port that remains
-   * the screen-stage raster. Exposing only the port would discard the final presentation
-   * transform, so retain the port as GUI space and let the indirect presentation path scale it. */
+  /* A declared or runtime window size can persist when at most one view supplies the
+   * screen-stage raster. A viewless room still presents its automatic surface through
+   * that window rather than adopting the room extent. Retain the source as GUI space
+   * so the indirect presentation path performs the final scale. */
   int screen_stage_window_w=content_window_width;
   int screen_stage_window_h=content_window_height;
   /* A virtual monitor is the destination of the automatic application-surface presentation,
@@ -1025,7 +1026,7 @@ void compute_present(AnygmEngine *engine) {
       !anygm_policy_uses_classic_runtime(&engine->win) &&
       !engine->vm.gui_maximise_active && !engine->canvas_mode && !gui_window_mode &&
       engine->vm.gui_w <= 0 && engine->vm.gui_h <= 0 &&
-      present_view_count(engine,NULL,NULL,NULL) == 1 &&
+      present_view_count(engine,NULL,NULL,NULL) <= 1 &&
       screen_stage_window_w > 0 && screen_stage_window_h > 0 &&
       screen_stage_window_w <= FB_MAX_W && screen_stage_window_h <= FB_MAX_H &&
       engine->gui_space_width == (int)engine->output_width &&

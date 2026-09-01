@@ -598,6 +598,58 @@ static int explicit_window_screen_stage_policy(void){
   return ok;
 }
 
+static int viewless_window_extent_case(
+  unsigned room_width,unsigned room_height,int window_width,int window_height,
+  unsigned expected_output_width,unsigned expected_output_height,
+  const char *stage){
+  AnygmEngine engine={0};
+  engine.win.bytecode=15;
+  engine.win.disp_w=room_width;
+  engine.win.disp_h=room_height;
+  engine.width=room_width;
+  engine.height=room_height;
+  engine.vm.win=&engine.win;
+  engine.vm.window_w=window_width;
+  engine.vm.window_h=window_height;
+  engine.config.present_logical_raster=0;
+  gml_render_application_surface_set_draw_enabled(&engine.render,1);
+
+  compute_present(&engine);
+
+  int ok=present_view_count(&engine,NULL,NULL,NULL)==0 &&
+         !engine.screen_stage_window_raster &&
+         engine.gui_space_width==(int)room_width && engine.gui_space_height==(int)room_height &&
+         engine.output_width==expected_output_width && engine.output_height==expected_output_height &&
+         engine.host_output_width==expected_output_width && engine.host_output_height==expected_output_height &&
+         !engine.host_canvas_active &&
+         engine.host_canvas_x==0 && engine.host_canvas_y==0 &&
+         engine.host_canvas_width==(int)expected_output_width &&
+         engine.host_canvas_height==(int)expected_output_height;
+  if(!ok)
+    fprintf(stderr,
+      "viewless Studio window did not retain its requested presentation extent:"
+      " stage=%s views=%d flag=%d gui=%dx%d output=%ux%u host=%ux%u"
+      " fit=(%d,%d %dx%d)\n",
+      stage,
+      present_view_count(&engine,NULL,NULL,NULL),
+      engine.screen_stage_window_raster,
+      engine.gui_space_width,engine.gui_space_height,
+      engine.output_width,engine.output_height,
+      engine.host_output_width,engine.host_output_height,
+      engine.host_canvas_x,engine.host_canvas_y,
+      engine.host_canvas_width,engine.host_canvas_height);
+  gml_vm_free(&engine.vm);
+  return ok;
+}
+
+static int viewless_window_screen_stage_policy(void){
+  int explicit_resize=
+    viewless_window_extent_case(256,240,768,720,768,720,"explicit-resize");
+  int retained_window=
+    viewless_window_extent_case(1366,768,320,240,320,240,"retained-window");
+  return explicit_resize && retained_window;
+}
+
 static int first_generation_window_raster_policy(void){
   AnygmEngine engine={0};
   engine.win.bytecode=15;
@@ -2334,6 +2386,8 @@ int main(int argc,char **argv){
       return first_generation_dynamic_camera_policy()?0:1;
     if(!strcmp(argv[2],"explicit_window_screen_stage"))
       return explicit_window_screen_stage_policy()?0:1;
+    if(!strcmp(argv[2],"viewless_window_screen_stage"))
+      return viewless_window_screen_stage_policy()?0:1;
     if(!strcmp(argv[2],"first_generation_window_raster"))
       return first_generation_window_raster_policy()?0:1;
     if(!strcmp(argv[2],"modern_self_compositor_window_raster"))
@@ -2379,6 +2433,7 @@ int main(int argc,char **argv){
           "one_shot_instance_assignment|"
           "first_generation_dynamic_camera|"
           "explicit_window_screen_stage|"
+          "viewless_window_screen_stage|"
           "first_generation_window_raster|"
           "modern_self_compositor_window_raster|"
           "automatic_surface_monitor_fit|"
@@ -2398,6 +2453,7 @@ int main(int argc,char **argv){
   if(!first_generation_application_surface_policy()) return 1;
   if(!first_generation_dynamic_camera_policy()) return 1;
   if(!explicit_window_screen_stage_policy()) return 1;
+  if(!viewless_window_screen_stage_policy()) return 1;
   if(!first_generation_window_raster_policy()) return 1;
   if(!modern_self_compositor_window_raster_policy()) return 1;
   if(!automatic_surface_monitor_fit_policy()) return 1;
