@@ -1328,6 +1328,24 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      gml_render_application_surface_ensure_owned(
        &engine->render,frame_views[0].pw,frame_views[0].ph))
     gml_render_presentation_metrics(&engine->render,&render_presentation);
+  /* With the application surface enabled, Studio's Draw events target that surface and the runner
+   * presents it. We used to fill the base canvas and leave surface 0 untouched, so content that
+   * composites surface 0 itself composited a surface nothing had painted. GML_NO_APP_SURFACE_TARGET
+   * restores the older narrowing, which is kept because a policy this wide should be answerable
+   * without a rebuild. */
+  int app_surface_is_draw_target =
+    anygm_host_development_setting(&engine->host,"GML_NO_APP_SURFACE_TARGET")==NULL;
+  /* The block above forces ownership only for the one shape it recognises, a sole view whose port
+   * covers the default surface. This widens it to every enabled application surface with modern
+   * layer semantics, which is what the policy above says. Owning the surface is only half of it:
+   * the world still renders into the base canvas unless direct_owned_world fires below. */
+  if(!render_presentation.application_owned &&
+     render_presentation.application_draw_enabled &&
+     anygm_policy_has_modern_layer_semantics(&engine->win) &&
+     app_surface_is_draw_target &&
+     gml_render_application_surface_ensure_owned(
+       &engine->render,(int)engine->width,(int)engine->height))
+    gml_render_presentation_metrics(&engine->render,&render_presentation);
   GmlRenderSamplePlanes sample_planes={0};
   gml_render_sample_planes_update(
     &engine->render,&sample_planes,GML_RENDER_SAMPLE_PLANES_APPLICATION);
@@ -1360,7 +1378,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      * smaller logical framebuffer can leave retained pixels outside that raster. */
     int viewless_owned_world = frame_view_count==0 &&
       anygm_policy_has_modern_layer_semantics(&engine->win);
-    direct_owned_world=(viewless_owned_world ||
+    /* The port predicates below are the narrowing this policy removes: an enabled application
+     * surface is the draw target whatever its view port looks like. */
+    direct_owned_world=(viewless_owned_world || app_surface_is_draw_target ||
       (frame_view_count==1 &&
       (default_application_surface_uses_full_view_port(
       engine,frame_view_count,view->px,view->py,view->pw,view->ph,
@@ -1374,6 +1394,12 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
         render_presentation.application_width,render_presentation.application_height)))) &&
       gml_render_application_surface_owned_view(&engine->render,&direct_world_view);
   }
+  if(engine->vm.frame<6 &&
+     anygm_host_development_setting(&engine->host,"GML_LOG_APPTARGET"))
+    engine_logf(engine,ANYGM_LOG_DEBUG,
+      "[apptarget] f%ld direct_owned_world=%d multiview=%d view_surface=%d views=%d owned=%d\n",
+      engine->vm.frame,direct_owned_world,multiview_rendered,view_surface,frame_view_count,
+      render_presentation.application_owned);
   world_pixels=direct_owned_world?direct_world_view.pixels:engine->fb;
   world_width=direct_owned_world?direct_world_view.width:(int)engine->width;
   world_height=direct_owned_world?direct_world_view.height:(int)engine->height;
