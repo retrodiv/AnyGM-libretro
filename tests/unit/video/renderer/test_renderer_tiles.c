@@ -930,6 +930,128 @@ static void check_first_generation_application_surface_partial_alpha_coverage(vo
   free(page.argb_cache);
 }
 
+static void check_first_generation_automatic_presentation_ignores_retained_alpha(void){
+  static const uint8_t rgba[4]={0,0,0,255};
+  uint32_t application[2]={0xffc08040u,0xff604020u};
+  uint32_t automatic[2]={0xff000000u,0xff000000u};
+  uint32_t explicit_draw[2]={0xff000000u,0xff000000u};
+  GmlRender render;
+  GmlWin content;
+  GmlAtlas atlas;
+  GmlTpag page;
+  GmlBg background;
+
+  memset(&render,0,sizeof render);
+  memset(&content,0,sizeof content);
+  memset(&atlas,0,sizeof atlas);
+  memset(&page,0,sizeof page);
+  memset(&background,0,sizeof background);
+  content.bytecode=14;
+  atlas.px=(uint8_t*)rgba;
+  atlas.w=atlas.h=1;
+  page.atlas=0;
+  page.sw=page.sh=page.bw=page.bh=1;
+  background.tpag=0;
+  render.win=&content;
+  render.atlas=&atlas; render.n_atlas=1;
+  render.tpag=&page; render.n_tpag=1;
+  render.bg=&background; render.n_bg=1;
+  render.app_surface=application;
+  render.app_w=2; render.app_h=1;
+  render.app_surface_opaque=1;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+
+  gml_render_begin(&render,application,2,1,0.0,0.0);
+  gml_draw_background_ext(&render,0,0.0,0.0,1.0,1.0,0xffffffu,0.5);
+  expect(!render.app_surface_opaque && (application[0]>>24)<255u,
+         "a translucent application-surface draw did not retain partial coverage");
+  uint32_t resolved_application[2]={application[0],application[1]};
+
+  gml_render_begin(&render,automatic,2,1,0.0,0.0);
+  gml_render_set_pending_underlay(&render,0,0,2,1);
+  gml_render_flush_pending_underlay(&render);
+  expect((automatic[0]&0x00ffffffu)==(resolved_application[0]&0x00ffffffu) &&
+         (automatic[1]&0x00ffffffu)==(resolved_application[1]&0x00ffffffu),
+         "first-generation automatic presentation applied retained coverage twice");
+  expect(!render.app_surface_opaque && application[0]==resolved_application[0] &&
+         application[1]==resolved_application[1],
+         "automatic presentation changed application-surface pixels or coverage metadata");
+
+  gml_render_begin(&render,explicit_draw,2,1,0.0,0.0);
+  gml_draw_surface_stretched(&render,0,0.0,0.0,2.0,1.0,0xffffffu,1.0);
+  expect((explicit_draw[0]&0x00ffffffu)!=(resolved_application[0]&0x00ffffffu),
+         "an explicit surface-0 draw ignored the retained application-surface coverage");
+  free(page.argb_cache);
+}
+
+static void check_first_generation_complete_black_mask_reaches_presentation(void){
+  static const uint8_t rgba[4]={0,0,0,128};
+  uint32_t application=0xffc08040u;
+  uint32_t automatic=0xff000000u;
+  GmlRender render;
+  GmlWin content;
+  GmlAtlas atlas;
+  GmlTpag page;
+  GmlBg background;
+
+  memset(&render,0,sizeof render);
+  memset(&content,0,sizeof content);
+  memset(&atlas,0,sizeof atlas);
+  memset(&page,0,sizeof page);
+  memset(&background,0,sizeof background);
+  content.bytecode=14;
+  atlas.px=(uint8_t*)rgba;
+  atlas.w=atlas.h=1;
+  page.atlas=0;
+  page.sw=page.sh=page.bw=page.bh=1;
+  background.tpag=0;
+  render.win=&content;
+  render.atlas=&atlas; render.n_atlas=1;
+  render.tpag=&page; render.n_tpag=1;
+  render.bg=&background; render.n_bg=1;
+  render.app_surface=&application;
+  render.app_w=render.app_h=1;
+  render.app_surface_opaque=1;
+  render.alpha=1.0;
+  render.alphablend=1;
+  render.color_write_mask=0x0f;
+  render.active_shader=-1;
+
+  gml_render_begin(&render,&application,1,1,0.0,0.0);
+  gml_draw_background(&render,0,0.0,0.0);
+  uint32_t resolved_application=application;
+  expect(render.app_presentation_coverage_active,
+         "a complete translucent black mask did not record presentation coverage");
+  gml_render_application_surface_bind(&render,&application,1,1,render.app_surface_opaque);
+  expect(render.app_presentation_coverage_active,
+         "rebinding the same application surface discarded presentation coverage");
+
+  gml_render_begin(&render,&automatic,1,1,0.0,0.0);
+  gml_render_set_pending_underlay(&render,0,0,1,1);
+  gml_render_flush_pending_underlay(&render);
+  for(int shift=0;shift<=16;shift+=8){
+    int resolved=(int)((resolved_application>>shift)&0xffu);
+    int presented=(int)((automatic>>shift)&0xffu);
+    expect(abs(presented*255-resolved*127)<=255,
+           "a complete black mask did not carry its exact coverage to presentation");
+  }
+  expect(application==resolved_application,
+         "masked automatic presentation changed stored surface-0 pixels");
+  gml_render_begin(&render,&application,1,1,0.0,0.0);
+  gml_draw_background(&render,0,0.0,0.0);
+  expect(render.app_presentation_coverage_active,
+         "a replacement mask did not record presentation coverage");
+  gml_render_clear(&render,0,1.0);
+  expect(!render.app_presentation_coverage_active,
+         "a whole-target clear retained superseded presentation coverage");
+  free(render.app_presentation_coverage);
+  free(render.app_presentation_alpha_scratch);
+  free(page.argb_cache);
+}
+
 static void check_first_generation_filtered_minification(void){
   static const uint8_t rgba[16]={
     255,0,0,255, 0,255,0,255,
@@ -1279,6 +1401,8 @@ int main(void){
   check_classic_double_scale_layer_covers_its_last_row();
   check_modern_fractional_camera_tie();
   check_first_generation_application_surface_partial_alpha_coverage();
+  check_first_generation_automatic_presentation_ignores_retained_alpha();
+  check_first_generation_complete_black_mask_reaches_presentation();
   check_first_generation_filtered_minification();
   check_repeated_filtered_draw_cache();
   check_modern_opaque_scaled_partial_alpha();

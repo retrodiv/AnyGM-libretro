@@ -870,6 +870,69 @@ static inline void gml_sprite_target_may_change_alpha(GmlRender *r){
   r->fb_all_opaque=0;
   if(r->app_surface && r->fb==r->app_surface) r->app_surface_opaque=0;
 }
+
+/* A complete translucent black sheet is an authored screen-coverage mask, not incidental alpha
+ * from a sprite edge or tint. Automatic first-generation presentation uses that mask while
+ * leaving unrelated application-target alpha available only to explicit surface reads. Keep
+ * this deliberately narrow: exact one-to-one coverage, normal white blending, no shader or
+ * filter transform, and no source colour. */
+static int first_generation_complete_black_mask(GmlRender *r,GmlTpag *t,GmlAtlas *atlas,
+                                                 int x0,int y0,int width,int height,
+                                                 double xs,double ys,double alpha,uint32_t blend){
+  if(!r || !t || !atlas || !atlas->px || !r->win ||
+     !anygm_policy_uses_first_generation_studio(r->win) ||
+     !r->app_surface || r->fb!=r->app_surface ||
+     x0!=0 || y0!=0 || width!=r->fbw || height!=r->fbh ||
+     t->sw!=width || t->sh!=height || t->sx<0 || t->sy<0 ||
+     t->sx+t->sw>atlas->w || t->sy+t->sh>atlas->h ||
+     fabs(xs-1.0)>1e-9 || fabs(ys-1.0)>1e-9 ||
+     alpha<=0.0 || r->blendmode!=0 || !r->alphablend ||
+     (blend&0x00ffffffu)!=0x00ffffffu || r->active_shader>=0 || r->interp)
+    return 0;
+  if(!t->black_scanned){
+    t->all_black=1;
+    for(int y=0;y<t->sh && t->all_black;y++){
+      const uint8_t *source=atlas->px+((size_t)(t->sy+y)*atlas->w+t->sx)*4u;
+      for(int x=0;x<t->sw;x++,source+=4){
+        if(source[3] && (source[0] || source[1] || source[2])){
+          t->all_black=0;
+          break;
+        }
+      }
+    }
+    t->black_scanned=1;
+  }
+  return t->all_black && (t->alpha_partial || alpha<1.0);
+}
+
+static void record_first_generation_complete_black_mask(GmlRender *r,GmlTpag *t,GmlAtlas *atlas,
+                                                         double alpha){
+  size_t count=(size_t)r->fbw*(size_t)r->fbh;
+  if(count>r->app_presentation_coverage_capacity){
+    uint8_t *coverage=malloc(count);
+    uint8_t *scratch=malloc(count);
+    if(!coverage || !scratch){ free(coverage); free(scratch); return; }
+    free(r->app_presentation_coverage);
+    free(r->app_presentation_alpha_scratch);
+    r->app_presentation_coverage=coverage;
+    r->app_presentation_alpha_scratch=scratch;
+    r->app_presentation_coverage_capacity=count;
+  }
+  if(!r->app_presentation_coverage_active){
+    memset(r->app_presentation_coverage,255,count);
+    r->app_presentation_coverage_active=1;
+  }
+  if(alpha>1.0) alpha=1.0;
+  for(int y=0;y<t->sh;y++){
+    const uint8_t *source=atlas->px+((size_t)(t->sy+y)*atlas->w+t->sx)*4u;
+    uint8_t *coverage=r->app_presentation_coverage+(size_t)y*r->fbw;
+    for(int x=0;x<t->sw;x++,source+=4){
+      unsigned source_alpha=(unsigned)lround((double)source[3]*alpha);
+      if(source_alpha>255u) source_alpha=255u;
+      coverage[x]=(uint8_t)(((unsigned)coverage[x]*(255u-source_alpha)+127u)/255u);
+    }
+  }
+}
 static inline void blend_argb_src_over_exact(GmlRender *r,uint32_t *dp,const uint32_t *sp,
                                              int run,uint32_t aa,int family){
   if(run<=0 || !aa) return;
@@ -2323,6 +2386,7 @@ static int tpag_part_view(const GmlTpag *t,
   view->ax0=0; view->ay0=0; view->ax1=view->sw-1; view->ay1=view->sh-1;
   view->alpha_max=t->alpha_scanned ? t->alpha_max : 255;
   view->alpha_partial=t->alpha_scanned ? t->alpha_partial : 1;
+  view->black_scanned=0; view->all_black=0;
   view->alpha_row_min=view->alpha_row_max=NULL;
   view->alpha_qrow_min=view->alpha_qrow_max=NULL; view->alpha_qrow_built=NULL;
   view->alpha_runs=NULL; view->alpha_run_count=0; view->alpha_runs_built=0;
@@ -2911,6 +2975,9 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
                     r->fog_flat;
   if(!t->alpha_scanned) (void)tpag_alpha_bounds(r,t,a,NULL,NULL,NULL,NULL);
   gml_render_maybe_prepare_draw(r);
+  if(!flipx && !flipy && !mapped_shader &&
+     first_generation_complete_black_mask(r,t,a,x0,y0,w,h,xs,ys,alpha,blend))
+    record_first_generation_complete_black_mask(r,t,a,alpha);
   gml_render_write_authored_margin(r,t,dx,dy,axs,ays);
   /* SRCALPHA/INVSRCALPHA also blends the destination alpha channel. A partially covered texel
    * therefore makes an opaque render target non-opaque even when the draw alpha is one. Keep the
@@ -4116,6 +4183,7 @@ static GmlTpag phase_tpag_rows(const GmlTpag *src, int row, int count){
   /* This short-lived view must not inherit geometry-dependent caches from the full item. */
   t.alpha_scanned=1;
   t.ax0=0; t.ay0=0; t.ax1=t.sw-1; t.ay1=count-1;
+  t.black_scanned=0; t.all_black=0;
   t.alpha_row_min=t.alpha_row_max=NULL;
   t.alpha_qrow_min=t.alpha_qrow_max=NULL; t.alpha_qrow_built=NULL;
   t.alpha_runs=NULL; t.alpha_run_count=0; t.alpha_runs_built=0;
@@ -6324,6 +6392,7 @@ void gml_draw_tile(GmlRender *r, int def, int sx, int sy, int w, int h, double x
   /* A sub-rectangle borrows atlas pixels but not the page's geometry-dependent
    * caches. Detach the row spans and pixel caches before drawing this view. */
   tt.alpha_scanned=0; tt.ax0=tt.ay0=0; tt.ax1=tt.ay1=-1; tt.alpha_max=0;
+  tt.black_scanned=0; tt.all_black=0;
   tt.alpha_row_min=tt.alpha_row_max=NULL;
   tt.alpha_qrow_min=tt.alpha_qrow_max=NULL; tt.alpha_qrow_built=NULL;
   tt.alpha_runs=NULL; tt.alpha_run_count=0; tt.alpha_runs_built=0;
@@ -6367,6 +6436,7 @@ void gml_draw_room_tiles(GmlRender *r, uint32_t tile_ptr){
     /* A sub-rectangle borrows atlas pixels but not the page's geometry-dependent
      * caches. Detach the row spans and pixel caches before drawing this view. */
     tt.alpha_scanned=0; tt.ax0=tt.ay0=0; tt.ax1=tt.ay1=-1; tt.alpha_max=0;
+    tt.black_scanned=0; tt.all_black=0;
     tt.alpha_row_min=tt.alpha_row_max=NULL;
     tt.alpha_qrow_min=tt.alpha_qrow_max=NULL; tt.alpha_qrow_built=NULL;
     tt.alpha_runs=NULL; tt.alpha_run_count=0; tt.alpha_runs_built=0;

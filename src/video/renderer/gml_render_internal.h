@@ -28,6 +28,7 @@ typedef struct {
   int alpha_scanned, ax0, ay0, ax1, ay1; /* nontransparent source bbox, cached after atlas decode */
   int alpha_max;                          /* max source alpha in the texture-page item */
   int alpha_partial;                      /* at least one source texel has alpha 1..254 */
+  int black_scanned, all_black;           /* cached source-colour classification */
   int *alpha_row_min, *alpha_row_max;     /* per-source-row nontransparent span, optional */
   uint16_t *alpha_qrow_min, *alpha_qrow_max; /* per-alpha-threshold row spans, built lazily */
   uint8_t *alpha_qrow_built;
@@ -285,6 +286,12 @@ typedef struct GmlRender {
                               * next frame to supersample that pass so its bilinear bloom renders. */
   int app_w, app_h;                             /* app_surface dims (the view render size) */
   int app_surface_opaque;                       /* host/render metadata: every app pixel has alpha 255 */
+  /* Coverage for the automatic first-generation screen composite. Explicit surface-0 draws read
+   * the ordinary alpha stored in app_surface instead. */
+  uint8_t *app_presentation_coverage;
+  uint8_t *app_presentation_alpha_scratch;
+  size_t app_presentation_coverage_capacity;
+  int app_presentation_coverage_active;
   int pending_underlay, underlay_x, underlay_y, underlay_w, underlay_h;  /* deferred default app-surface blit */
   int pending_fill; uint32_t pending_fill_color; /* deferred full-target overwrite */
   /* Deferred terminal application-surface presentation. Recorded only when it covers the whole

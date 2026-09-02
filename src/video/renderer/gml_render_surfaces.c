@@ -267,6 +267,7 @@ static int application_surface_resize(GmlRender *r,int w,int h){
   r->app_surface_owned=px;
   r->app_surface=px; r->app_w=w; r->app_h=h;
   r->app_surface_opaque=0;
+  r->app_presentation_coverage_active=0;
   free(owned);
   return 1;
 }

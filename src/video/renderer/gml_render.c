@@ -706,10 +706,12 @@ void gml_render_target_coverage_update(GmlRender *r,
 void gml_render_application_surface_bind(GmlRender *r,uint32_t *pixels,
                                          int width,int height,int opaque){
   if(!r) return;
+  int changed=r->app_surface!=pixels || r->app_w!=width || r->app_h!=height;
   r->app_surface=pixels;
   r->app_w=width;
   r->app_h=height;
   r->app_surface_opaque=opaque!=0;
+  if(changed) r->app_presentation_coverage_active=0;
 }
 int gml_render_application_surface_owned_clear(
   GmlRender *r,uint32_t color,GmlRenderApplicationWriteView *view){
@@ -717,6 +719,7 @@ int gml_render_application_surface_owned_clear(
   if(!r || !r->app_surface_owned || r->app_w<=0 || r->app_h<=0) return 0;
   size_t count=(size_t)r->app_w*(size_t)r->app_h;
   for(size_t i=0;i<count;i++) r->app_surface_owned[i]=color;
+  r->app_presentation_coverage_active=0;
   if(view){
     view->pixels=r->app_surface_owned;
     view->width=r->app_w;
@@ -737,8 +740,10 @@ int gml_render_application_surface_owned_view(
 }
 int gml_render_application_surface_select_owned(GmlRender *r,int opaque){
   if(!r || !r->app_surface_owned) return 0;
+  int changed=r->app_surface!=r->app_surface_owned;
   r->app_surface=r->app_surface_owned;
   r->app_surface_opaque=opaque!=0;
+  if(changed) r->app_presentation_coverage_active=0;
   return 1;
 }
 int gml_render_surface_mirror_pixels(GmlRender *r,int destination,
@@ -750,6 +755,7 @@ int gml_render_surface_mirror_pixels(GmlRender *r,int destination,
   int saved_width=r->app_w;
   int saved_height=r->app_h;
   int saved_opaque=r->app_surface_opaque;
+  int saved_presentation_coverage_active=r->app_presentation_coverage_active;
   gml_render_application_surface_bind(r,pixels,width,height,opaque);
   int mirrored=0;
   if(gml_surface_set_target(r,destination)){
@@ -761,6 +767,7 @@ int gml_render_surface_mirror_pixels(GmlRender *r,int destination,
   }
   gml_render_application_surface_bind(
     r,saved_pixels,saved_width,saved_height,saved_opaque);
+  r->app_presentation_coverage_active=saved_presentation_coverage_active;
   return mirrored;
 }
 /* Fully fogged fragments use the fog colour after texture and diffuse colour,
@@ -1582,6 +1589,11 @@ void gml_render_free(GmlRender *r){
   free(r->content_sampler_plane);
   free(r->shaded_plane); r->shaded_plane=NULL; r->shaded_plane_capacity=0; r->content_sampler_plane=NULL; r->content_sampler_plane_capacity=0;
   free(r->layer_filter_src); free(r->layer_filter_work); free(r->layer_filter_aux);
+  free(r->app_presentation_coverage);
+  free(r->app_presentation_alpha_scratch);
+  r->app_presentation_coverage=r->app_presentation_alpha_scratch=NULL;
+  r->app_presentation_coverage_capacity=0;
+  r->app_presentation_coverage_active=0;
   free(r->color_write_scratch); r->color_write_scratch=NULL;
   r->color_write_scratch_capacity=0;
   r->layer_filter_src=r->layer_filter_work=r->layer_filter_aux=NULL;
@@ -1624,6 +1636,8 @@ void gml_render_begin(GmlRender *r, uint32_t *fb, int w, int h, double cx, doubl
   /* The target is about to be rebuilt, so a presentation recorded against the previous one
    * describes pixels that no longer belong anywhere. */
   r->pending_presentation=0;
+  if(r->app_surface && fb==r->app_surface)
+    r->app_presentation_coverage_active=0;
 }
 int gml_render_content_composited_screen(GmlRender *r){ return r?r->content_composited_screen:0; }
 void gml_render_clear_content_composited_screen(GmlRender *r){
@@ -1836,6 +1850,8 @@ void gml_render_set_pending_fill(GmlRender *r, uint32_t color){
     r->content_authored_surfaces|=UINT64_C(1)<<(r->target_id-1);
   r->pending_fill=1;
   r->pending_fill_color=color;
+  if(r->app_surface && r->fb==r->app_surface)
+    r->app_presentation_coverage_active=0;
   r->fb_opaque_known=1;
   r->fb_all_opaque=((color>>24)==255u);
   r->fb_all_transparent=((color>>24)==0u);
@@ -1886,7 +1902,36 @@ void gml_render_flush_pending_underlay(GmlRender *r){
    * content shaders and projection, and perform the ordinary screen-space copy directly. */
   if(w>0 && h>0){
     int sw=r->app_w,sh=r->app_h;
-    if(sw>0 && sh>0) draw_surface_region(r,0,0,0,sw,sh,x,y,w,h,0xFFFFFF,1.0);
+    if(sw>0 && sh>0){
+      int saved_application_opaque=r->app_surface_opaque;
+      int first_generation=r->win && anygm_policy_uses_first_generation_studio(r->win);
+      size_t count=(size_t)sw*(size_t)sh;
+      int use_presentation_coverage=first_generation &&
+        r->app_presentation_coverage_active &&
+        r->app_presentation_coverage && r->app_presentation_alpha_scratch &&
+        count<=r->app_presentation_coverage_capacity;
+      if(use_presentation_coverage){
+        /* Surface 0 retains the target alpha that explicit surface draws read.
+         * Automatic first-generation presentation instead uses coverage authored by a
+         * complete black mask. Borrow the alpha byte for that draw, then restore it. */
+        for(size_t i=0;i<count;i++){
+          r->app_presentation_alpha_scratch[i]=(uint8_t)(r->app_surface[i]>>24);
+          r->app_surface[i]=(r->app_surface[i]&0x00ffffffu)|
+                            ((uint32_t)r->app_presentation_coverage[i]<<24);
+        }
+        r->app_surface_opaque=0;
+      } else if(first_generation){
+        /* Partial texture coverage remains available to explicit surface-0 draws but does not
+         * attenuate automatic first-generation presentation a second time. */
+        r->app_surface_opaque=1;
+      }
+      draw_surface_region(r,0,0,0,sw,sh,x,y,w,h,0xFFFFFF,1.0);
+      if(use_presentation_coverage)
+        for(size_t i=0;i<count;i++)
+          r->app_surface[i]=(r->app_surface[i]&0x00ffffffu)|
+                            ((uint32_t)r->app_presentation_alpha_scratch[i]<<24);
+      r->app_surface_opaque=saved_application_opaque;
+    }
   }
 }
 int rect_covers_target(GmlRender *r, int x0, int y0, int x1, int y1){
