@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 retrodiv <retrodiv@proton.me>
+
+# Software Information
+display_name = "AnyGM"
+authors = "retrodiv"
+supported_extensions = "win|droid|zip|port|apk|yyp|yyz|gmd|gmk|gm6|gm81|exe|anygm"
+corename = "AnyGM"
+categories = "Game engine"
+license = "Multiple (MIT and third-party terms)"
+permissions = ""
+display_version = "0.1.0"
+
+# Hardware Information
+systemname = "GameMaker"
+systemid = "anygm"
+
+# Libretro Features
+supports_no_game = "false"
+savestate = "true"
+savestate_features = "serialized"
+cheats = "true"
+input_descriptors = "true"
+memory_descriptors = "false"
+libretro_saves = "true"
+core_options = "true"
+core_options_version = "2"
+load_subsystem = "false"
+hw_render = "true"
+needs_fullpath = "true"
+disk_control = "false"
+is_experimental = "true"
+
+# Notes
+description = "Portable runtime and libretro core for supported GameMaker content formats. First-party code uses MIT; bundled components and generated data retain their own terms, detailed in THIRD_PARTY_NOTICES.md."
