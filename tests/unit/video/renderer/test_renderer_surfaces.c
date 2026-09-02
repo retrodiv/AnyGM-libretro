@@ -203,25 +203,6 @@ static int composition_cases(void){
   render.interp=1;
   gml_draw_surface_stretched(&render,source,3.0,0.0,8.0,7.0,0xFFFFFFu,0.6);
 
-  struct GmlShaderPal palette;
-  memset(&palette,0,sizeof palette);
-  palette.has=1;
-  palette.alpha_discard=1;
-  palette.alpha_discard_inclusive=1;
-  palette.alpha_discard_cutoff=0.25f;
-  palette.L[0]=240; palette.L[1]=224; palette.L[2]=208;
-  palette.M[0]=176; palette.M[1]=48;  palette.M[2]=32;
-  palette.D[0]=12;  palette.D[1]=20;  palette.D[2]=28;
-  palette.S[0]=40;  palette.S[1]=96;  palette.S[2]=208;
-  render.shader_pal=&palette;
-  render.n_shader_pal=1;
-  render.active_shader=0;
-  gml_draw_surface_part_ext(&render,source,0.5,0.0,3.0,3.0,
-                            0.5,5.0,1.8,1.2,0xFFFFFFu,0.85);
-  render.active_shader=-1;
-  render.shader_pal=NULL;
-  render.n_shader_pal=0;
-
   render.interp=0;
   gml_draw_surface_ext(&render,source,8.0,4.0,1.15,0.9,33.0,0x80C0FFu,0.7);
   render.blendmode=3;
@@ -244,7 +225,7 @@ static int composition_cases(void){
 
   uint64_t hash=pixel_hash(frame,sizeof frame/sizeof frame[0]);
   hash=pixel_hash_update(hash,target_pixels,(size_t)target_width*target_height);
-  if(hash!=UINT64_C(0x1006bcd38a65037c)){
+  if(hash!=UINT64_C(0xb3f2b2d525ff4b17)){
     fprintf(stderr,"renderer surface composition hash: %016llx\n",
             (unsigned long long)hash);
     gml_surface_free(&render,source);

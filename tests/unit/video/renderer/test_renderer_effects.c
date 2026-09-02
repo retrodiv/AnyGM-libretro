@@ -263,15 +263,8 @@ static void check_shader_recognition(void) {
     "texture2D(gm_BaseTexture, v_vTexcoord); if(sampled.a < 0.25){ "
     "sampled.a = 0.0; } sampled.r *= 0.5; "
     "gl_FragColor = vec4(u_partial.rgb, sampled.a); }",
-    "const vec3 toneA = vec3(256.0/256.0,256.0/256.0,256.0/256.0);"
-    "const vec3 toneB = vec3(256.0/256.0,0.0/256.0,0.0/256.0);"
-    "const vec3 toneC = vec3(0.0/256.0,0.0/256.0,0.0/256.0);"
-    "const vec3 toneD = vec3(0.0/256.0,0.0/256.0,256.0/256.0);"
-    "void main(){ float classifierUniform=1.0; gl_FragColor=vec4(classifierUniform); }",
-    "const vec3 toneA = vec3(256.0/256.0,256.0/256.0,256.0/256.0);"
-    "const vec3 toneB = vec3(256.0/256.0,0.0/256.0,0.0/256.0);"
-    "const vec3 toneC = vec3(0.0/256.0,0.0/256.0,0.0/256.0);"
-    "void main(){ float classifierUniform=1.0; gl_FragColor=vec4(classifierUniform); }",
+    "void main(){ gl_FragColor = texture2D(gm_BaseTexture, v_vTexcoord); }",
+    "uniform float u_t; void main(){ gl_FragColor = vec4(u_t,0.5,0.25,1.0); }",
     "uniform vec3 u_blur_colour; void main(){ mediump vec4 sum=vec4(0.0,0.0,0.0,0.0);"
     "vec2 delta=vec2(0.01,0.0);"
     "sum+=texture2D(gm_BaseTexture,uv-1.0*delta)*0.25;"
@@ -507,7 +500,6 @@ static void check_shader_recognition(void) {
     const struct GmlShaderPal *gray = &render.shader_pal[1];
     struct GmlShaderPal *mask = &render.shader_pal[2];
     const struct GmlShaderPal *mask_near_match = &render.shader_pal[3];
-    const struct GmlShaderPal *palette = &render.shader_pal[4];
     const struct GmlShaderPal *near_match = &render.shader_pal[5];
     struct GmlShaderPal *blur = &render.shader_pal[6];
     const struct GmlShaderPal *blur_near_match = &render.shader_pal[7];
@@ -564,16 +556,8 @@ static void check_shader_recognition(void) {
     expect(blur_uniform == 6 * 64 + 52 &&
            blur->solid_blur_alpha_rgb == 0x0020609fu,
            "constant-colour alpha-convolution uniform did not retain its values");
-    expect(palette->has && palette->L[0] == 255 && palette->L[1] == 255 &&
-           palette->L[2] == 255 && palette->M[0] == 255 &&
-           palette->M[1] == 0 && palette->M[2] == 0 &&
-           palette->D[0] == 0 && palette->D[1] == 0 &&
-           palette->D[2] == 0 && palette->S[0] == 0 &&
-           palette->S[1] == 0 && palette->S[2] == 255,
-           "palette structure or constants were not preserved");
     expect(!mask_near_match->solid_alpha_mask &&
            !blur_near_match->solid_blur_alpha &&
-           !near_match->has && !bounded->has &&
            !near_match->alpha_discard && !bounded->alpha_discard,
            "partial or out-of-bounds shader record was accepted");
     expect(channel_mask->channel_mask && channel_mask->channel_mask_keep==4 &&
@@ -678,8 +662,8 @@ static void check_shader_recognition(void) {
            "the default answer stopped reporting unrecognized sampling shaders as compiled");
     /* Shader 5 never reads the base texture, so no draw carries its output and the answer is not a
      * policy question: this renderer cannot produce that program's picture by any route, and
-     * saying so is what lets content reach its own no-shader presentation. A shader-preamble declaration is not a read, and shader 4 proves recognition
-     * still wins over the rule — its palette family is procedural too and the evaluator executes it. */
+     * saying so is what lets content reach its own no-shader presentation. Shader 4 samples the
+     * base texture, so its unshaded draw still paints the sampled pixels. */
     expect(near_match->procedural == 1 &&
            !gml_render_shader_is_compiled(&render, 5) &&
            gml_render_shader_is_compiled(&render, 4),
@@ -806,87 +790,6 @@ static void check_channel_mask_pixels(void) {
 
 
 
-
-static void check_palette_alpha_threshold(void) {
-  static uint8_t rgba[] = {
-    0, 128, 0, 0,
-    255, 0, 0, 127,
-    255, 0, 0, 128
-  };
-  int frame_index = 0;
-  uint32_t pixels[] = {0xff102030u, 0xff102030u, 0xff102030u};
-  GmlSprite sprite;
-  GmlSprite stretched_sprite;
-  GmlTpag tpag;
-  GmlTpag stretched_tpag;
-  GmlAtlas atlas;
-  struct GmlShaderPal palette;
-  GmlRender render;
-
-  memset(&sprite, 0, sizeof(sprite));
-  memset(&stretched_sprite, 0, sizeof(stretched_sprite));
-  memset(&tpag, 0, sizeof(tpag));
-  memset(&stretched_tpag, 0, sizeof(stretched_tpag));
-  memset(&atlas, 0, sizeof(atlas));
-  memset(&palette, 0, sizeof(palette));
-  memset(&render, 0, sizeof(render));
-  sprite.w = 3;
-  sprite.h = 1;
-  sprite.n_frames = 1;
-  sprite.frame = &frame_index;
-  tpag.sw = tpag.bw = 3;
-  tpag.sh = tpag.bh = 1;
-  tpag.atlas = 0;
-  stretched_sprite.w = 1;
-  stretched_sprite.h = 1;
-  stretched_sprite.n_frames = 1;
-  stretched_sprite.frame = &frame_index;
-  stretched_tpag.sx = 2;
-  stretched_tpag.sw = stretched_tpag.bw = 1;
-  stretched_tpag.sh = stretched_tpag.bh = 1;
-  stretched_tpag.atlas = 0;
-  atlas.w = 3;
-  atlas.h = 1;
-  atlas.px = rgba;
-  palette.has = 1;
-  palette.L[0] = palette.L[1] = palette.L[2] = 240;
-  palette.M[0] = 224;
-  palette.M[1] = 32;
-  palette.M[2] = 16;
-  palette.D[0] = palette.D[1] = palette.D[2] = 8;
-  palette.S[0] = 16;
-  palette.S[1] = 64;
-  palette.S[2] = 224;
-  render.fb = render.base_fb = pixels;
-  render.fbw = render.base_fbw = 3;
-  render.fbh = render.base_fbh = 1;
-  render.spr = &sprite;
-  render.n_spr = 1;
-  render.tpag = &tpag;
-  render.n_tpag = 1;
-  render.atlas = &atlas;
-  render.n_atlas = 1;
-  render.shader_pal = &palette;
-  render.n_shader_pal = 1;
-  render.active_shader = 0;
-  render.alpha = 1.0;
-  render.alphablend = 1;
-  render.color_write_mask = 0x0f;
-  render.target_id = -1;
-
-  gml_draw_sprite(&render, 0, 0, 0, 0);
-  expect(pixels[0] == 0xff102030u && pixels[1] == 0xff102030u &&
-         pixels[2] == 0xffe02010u,
-         "palette alpha threshold exposed residual RGB");
-
-  pixels[0] = pixels[1] = pixels[2] = 0xff102030u;
-  render.spr = &stretched_sprite;
-  render.tpag = &stretched_tpag;
-  gml_draw_sprite_stretched(&render, 0, 0, 0, 0, 3, 1, 0xffffffu, 1.0);
-  expect(pixels[0] == 0xffe02010u && pixels[1] == 0xffe02010u &&
-         pixels[2] == 0xffe02010u,
-         "stretched sprite bypassed the active palette");
-}
 
 static void check_zero_reference_alpha_test_pixels(void) {
   static uint8_t rgba[] = {
@@ -1734,15 +1637,10 @@ static void check_stretched_band_identity(void) {
   atlas->h = SOURCE_HEIGHT;
   atlas->px = source;
   atlas->decode_attempted = 1;
-  palette->has = 1;
   palette->alpha_discard = 1;
   palette->alpha_discard_cutoff = 0.22f;
   palette->ordered_dither = 1;
   palette->ordered_dither_alpha = 0.625f;
-  palette->L[0] = 240; palette->L[1] = 232; palette->L[2] = 224;
-  palette->M[0] = 208; palette->M[1] = 48; palette->M[2] = 32;
-  palette->S[0] = 24; palette->S[1] = 72; palette->S[2] = 216;
-  palette->D[0] = 8; palette->D[1] = 16; palette->D[2] = 24;
   render.win = &win;
   render.spr = sprite;
   render.tpag = tpag;
@@ -1908,7 +1806,6 @@ int main(void) {
   check_shader_recognition();
   check_channel_mask_pixels();
   check_bloom_surface_pixels();
-  check_palette_alpha_threshold();
   check_zero_reference_alpha_test_pixels();
   check_solid_alpha_mask_pixels();
   check_fast_scaled_sample_clamps_to_atlas();

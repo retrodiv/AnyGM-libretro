@@ -9,6 +9,11 @@
 #include <math.h>
 #include <stdint.h>
 
+/* Header-local recognized-shader sampling operations shared by complete
+ * renderer pixel kernels. Include only from renderer implementation owners
+ * after this family-private boundary; these operations retain no state of
+ * their own.
+ */
 
 static inline const struct GmlShaderPal *threshold_palette_active(GmlRender *r){
   if(r->active_shader<0 || r->active_shader>=r->n_shader_pal || !r->shader_pal) return NULL;
@@ -357,7 +362,7 @@ static inline uint32_t quantise4_map_px(const struct GmlShaderPal *sp, uint32_t 
 }
 static inline int mapped_texture_active(GmlRender *r){
   return indexed_brightness_active(r)!=NULL || threshold_palette_active(r)!=NULL ||
-          lut_active(r)!=NULL || grid_active(r)!=NULL ||
+         lut_active(r)!=NULL || grid_active(r)!=NULL ||
          grayscale_active(r)!=NULL || solid_alpha_mask_active(r)!=NULL ||
          quantise4_active(r)!=NULL || channel_mask_active(r)!=NULL ||
          channel_alpha_key_active(r)!=NULL;

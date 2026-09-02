@@ -903,7 +903,7 @@ int gml_render_is_classic(const GmlRender *r){
 
 /* Whether the software evaluator recognizes a declared shader family. */
 static int shader_pal_recognized(const struct GmlShaderPal *p){
-  return p->has || p->threshold_palette || p->indexed_brightness ||
+  return p->threshold_palette || p->indexed_brightness ||
          p->channel_mask || p->channel_alpha_key || p->alpha_discard ||
          p->ordered_dither || p->quantise4 ||
          p->solid_alpha_mask || p->solid_blur_alpha || p->lut || p->lut_indexed || p->grid ||
