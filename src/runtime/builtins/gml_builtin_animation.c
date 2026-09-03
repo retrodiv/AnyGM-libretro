@@ -268,9 +268,20 @@ GmlVal gml_builtin_try_animation(GmlVM *vm, const char *nm, GmlVal *a, int n){
   if(!strcmp(nm,"gc_collect") || !strcmp(nm,"gc_enable")) return vreal(0);
   if(!strcmp(nm,"gc_is_enabled")) return vreal(1);
   if(!strncmp(nm,"shader_",7)) return vreal(0);
-  if(!strcmp(nm,"steam_current_game_language")) return vstr("english");
+  if(!strcmp(nm,"steam_current_game_language")){
+    /* Report the language the core resolved (the Language core option / frontend GET_LANGUAGE,
+     * the same source os_get_language reads), mapped to the lowercase names this call returns.
+     * Locales without a distinct name here answer english, which is also the no-option default. */
+    const char *iso=vm->os_language[0]?vm->os_language:"en";
+    static const struct { const char *iso, *name; } lang[]={
+      {"en","english"},{"es","spanish"},{"fr","french"},{"de","german"},{"it","italian"},
+      {"ja","japanese"},{"ko","koreana"},{"zh","schinese"},{"pt","portuguese"},{"ru","russian"},
+      {"nl","dutch"},{"pl","polish"},{"cs","czech"},{"fi","finnish"},{"sv","swedish"},
+      {"tr","turkish"},{"uk","ukrainian"},{"el","greek"},{"ar","arabic"},{"vi","vietnamese"} };
+    for(int i=0;i<(int)(sizeof lang/sizeof lang[0]);i++)
+      if(!strcmp(iso,lang[i].iso)) return vstr(lang[i].name);
+    return vstr("english"); }
   if(!strcmp(nm,"steam_initialised")||!strcmp(nm,"steam_initialized")) return vreal(0);
-  if(!strncmp(nm,"steam_",6)) return vreal(0);
   if(!strncmp(nm,"psn_",4)) return vreal(0);
   return gml_builtin_try_physics(vm,nm,a,n);
 }
