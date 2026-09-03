@@ -758,6 +758,7 @@ static int write_gen8_uid_block(Buf *b){
   if(!wf32(b,60.0f) || !wu8(b,1) || !zfill(b,16)) return 0;
   return 1;
 }
+
 static char *identifier_from_name(const char *name){
   if(!name || !*name) return gmlc_strdup("source_project");
   size_t n=strlen(name);

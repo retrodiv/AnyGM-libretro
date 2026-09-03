@@ -2641,7 +2641,7 @@ int main(int argc,char **argv){
    * empty, and their non-empty cost stays covered by the builtin-state fixture. */
   uint64_t deterministic_hash=state_checksum(deterministic,deterministic_size);
   if(deterministic_size!=22070 ||
-     deterministic_hash!=UINT64_C(0xe159133ecc1b372a)){
+     deterministic_hash!=UINT64_C(0x93f381ff17414513)){
     fprintf(stderr,"canonical engine state changed: size=%zu hash=%016llx\n",
             deterministic_size,(unsigned long long)deterministic_hash);
     return 1;
