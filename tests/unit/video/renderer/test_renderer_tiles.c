@@ -1023,6 +1023,8 @@ static void check_first_generation_complete_black_mask_reaches_presentation(void
   gml_render_begin(&render,&application,1,1,0.0,0.0);
   gml_draw_background(&render,0,0.0,0.0);
   uint32_t resolved_application=application;
+  expect((resolved_application&0x00ffffffu)==0x00604020u,
+         "a complete black mask truncated first-generation target colour");
   expect(render.app_presentation_coverage_active,
          "a complete translucent black mask did not record presentation coverage");
   gml_render_application_surface_bind(&render,&application,1,1,render.app_surface_opaque);

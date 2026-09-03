@@ -950,10 +950,12 @@ static inline void blend_argb_src_over_exact(GmlRender *r,uint32_t *dp,const uin
       if(rg>255u) rg=255u;
       if(rb>255u) rb=255u;
       dp[k]=gml_sprite_target_alpha(r,dst,aa)|(rr<<16)|(rg<<8)|rb;
-    } else if(family==GML_BLEND_STUDIO2) {
-      /* The Studio 2 format uses a UNORM target: the complete source-over sum is rounded to the
-       * nearest representable channel. Classic rounds the terms independently above, while
-       * Studio 1 truncates the combined result below. */
+    } else if(family==GML_BLEND_STUDIO2 ||
+              (family==GML_BLEND_STUDIO1 &&
+               gml_render_target_is_first_generation_application_surface(r))) {
+      /* Studio 2 and first-generation application targets round the complete source-over sum
+       * to the nearest representable channel. Classic rounds the terms independently above,
+       * while a first-generation draw outside that target truncates the result below. */
       dp[k]=gml_sprite_target_alpha(r,dst,aa)|(((sr*aa+dr*ia+127u)/255u)<<16)|
             (((sg*aa+dg*ia+127u)/255u)<<8)|((sb*aa+db*ia+127u)/255u);
     } else {
@@ -3061,6 +3063,7 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
     int cw=cx1-cx0, ch=cy1-cy0;
     if(cw<=0 || ch<=0) return;
     if(!blit_tpag_scale1_white_exact(r,t,a,x0,y0,cx0-x0,cx1-x0,cy0-y0,cy1-y0)){
+      int family=gml_blend_family(r);
       int sx0=t->sx + (cx0-x0), sy0=t->sy + (cy0-y0);
       for(int yy=0; yy<ch; yy++){
         const uint8_t *sp=a->px+((size_t)(sy0+yy)*a->w+sx0)*4;
@@ -3074,7 +3077,6 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
             uint32_t dv=dp[xx];
             int ia=255-aa;
             int dr=(dv>>16)&0xFF, dg=(dv>>8)&0xFF, db=dv&0xFF;
-            int family=gml_blend_family(r);
             if(family==GML_BLEND_CLASSIC){
               /* Fixed-function GM8 blending rounds the source and destination
                * products independently before adding them.  Rounding only the
@@ -3087,7 +3089,9 @@ static void blit_one(GmlRender *r, GmlTpag *t, double dx, double dy, double xs, 
               if(rb>255) rb=255;
               dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
                      ((uint32_t)rr<<16)|((uint32_t)rg<<8)|(uint32_t)rb;
-            } else if(family==GML_BLEND_STUDIO2) {
+            } else if(family==GML_BLEND_STUDIO2 ||
+                      (family==GML_BLEND_STUDIO1 &&
+                       gml_render_target_is_first_generation_application_surface(r))) {
               dp[xx]=gml_sprite_target_alpha(r,dv,(unsigned)aa)|
                      (((sr*aa+dr*ia+127)/255)<<16)|
                      (((sg*aa+dg*ia+127)/255)<<8)|((sb*aa+db*ia+127)/255);
