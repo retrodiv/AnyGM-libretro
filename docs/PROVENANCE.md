@@ -163,16 +163,19 @@ origin is documented deliberately instead of discovered.
   (`src/video/renderer/gml_render_effects.c`). The software renderer
   recognizes narrow families of fragment shaders and reads their parameters -
   uniform names, literal thresholds, palette colours, tap weights - from the
-  GLSL that ships inside the content. The matchers key on operation shape,
-  deriving user identifiers from that shader text rather than requiring
-  particular user-chosen names; no
-  shader source is stored. What a recognized family then *executes* is an
+  GLSL that ships inside the content. The matchers key on operation shape:
+  sampler reads, coordinate shifts, thresholds and short generic fragments
+  for operations such as luminance weighting and channel scaling. They derive
+  user identifiers from the shader text rather than requiring particular
+  user-chosen names. No full content shader source is stored here. What a
+  recognized family then *executes* is an
   operation those parameters configure (a lookup, a threshold, a weighted
   sum, an offset), never a kernel that reproduces the shader's own
   expression. Families that answered a content shader with a fixed stand-in
-  kernel - the CRT-geom post-process, a sampled CRT, an HSV scan, a
-  noise/jumble, a procedural paint fragment, and a four-colour template
-  palette keyed on user-chosen uniform names - were removed rather than
+  kernel - a CRT post-process, a sampled CRT, an HSV scan, a
+  noise/jumble, a procedural paint fragment, a four-colour template
+  palette keyed on user-chosen uniform names, and a three-pass surface bloom
+  tied to literal shader fragments - were removed rather than
   kept: a stand-in can only ever approximate the program it answers for. Such shaders now answer as unrecognized, and the
   place for them is the shader itself executing on the host's graphics
   context. The structural recognizers in this tree do not establish that

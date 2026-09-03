@@ -907,7 +907,6 @@ static int shader_pal_recognized(const struct GmlShaderPal *p){
          p->channel_mask || p->channel_alpha_key || p->alpha_discard ||
          p->ordered_dither || p->quantise4 ||
          p->solid_alpha_mask || p->solid_blur_alpha || p->lut || p->lut_indexed || p->grid ||
-         p->bloom_luminance || p->bloom_gaussian || p->bloom_blend ||
          p->dual_sample || p->radial_wave || p->uv_wave_mode || p->grayscale;
 }
 
@@ -1001,18 +1000,6 @@ int gml_render_shader_uniform_handle(GmlRender *r,int shader,const char *name){
     if(recognized->vertex_colour_blend &&
        !strcmp(name,recognized->vertex_colour_blend_uniform))
       return GML_RENDER_SHADER_HANDLE(shader,53);
-    if(recognized->bloom_luminance)
-      for(int index=0;index<2;index++)
-        if(!strcmp(name,recognized->bloom_luminance_uniform[index]))
-          return GML_RENDER_SHADER_HANDLE(shader,55+index);
-    if(recognized->bloom_gaussian)
-      for(int index=0;index<4;index++)
-        if(!strcmp(name,recognized->bloom_gaussian_uniform[index]))
-          return GML_RENDER_SHADER_HANDLE(shader,55+index);
-    if(recognized->bloom_blend)
-      for(int index=0;index<3;index++)
-        if(!strcmp(name,recognized->bloom_blend_uniform[index]))
-          return GML_RENDER_SHADER_HANDLE(shader,55+index);
   }
   if(r && name && name[0] && shader>=0 && shader<r->n_shader_pal && r->shader_pal){
     /* No recognized family owns this name: keep it for the content's own program. A name the
@@ -1035,11 +1022,6 @@ int gml_render_shader_uniform_handle(GmlRender *r,int shader,const char *name){
 }
 
 int gml_render_shader_sampler_handle(GmlRender *r,int shader,const char *name){
-  if(r && name && shader>=0 && shader<r->n_shader_pal && r->shader_pal){
-    const struct GmlShaderPal *recognized=&r->shader_pal[shader];
-    if(recognized->bloom_blend && !strcmp(name,recognized->bloom_blend_sampler))
-      return GML_RENDER_SHADER_HANDLE(shader,58);
-  }
   if(r && name && shader>=0 && shader<r->n_shader_pal && r->shader_pal){
     const struct GmlShaderPal *recognized=&r->shader_pal[shader];
     for(int index=0;index<recognized->generic_sampler_count;index++)
@@ -1083,20 +1065,6 @@ void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4
   int slot=handle%GML_RENDER_SHADER_HANDLE_STRIDE;
   if(shader<0 || shader>=r->n_shader_pal || !r->shader_pal) return;
   struct GmlShaderPal *recognized=&r->shader_pal[shader];
-  if(recognized->bloom_luminance && slot>=55 && slot<57){
-    recognized->bloom_luminance_value[slot-55]=(float)values[0];
-    return;
-  }
-  if(recognized->bloom_gaussian && slot>=55 && slot<59){
-    int index=slot-55;
-    recognized->bloom_gaussian_value[index][0]=(float)values[0];
-    recognized->bloom_gaussian_value[index][1]=(float)values[1];
-    return;
-  }
-  if(recognized->bloom_blend && slot>=55 && slot<58){
-    recognized->bloom_blend_value[slot-55]=(float)values[0];
-    return;
-  }
   if(recognized->indexed_brightness && slot==54){
     recognized->indexed_brightness_value=(float)values[0];
     recognized->indexed_brightness_set=1;
@@ -1220,16 +1188,6 @@ int gml_render_shader_texture_stage_set(
   int shader=stage/GML_RENDER_SHADER_HANDLE_STRIDE;
   int slot=stage%GML_RENDER_SHADER_HANDLE_STRIDE;
   uint32_t kind=(uint32_t)texture&GML_TEX_KIND_MASK;
-  if(shader>=0 && shader<r->n_shader_pal && r->shader_pal &&
-     r->shader_pal[shader].bloom_blend && slot==58 && kind==GML_TEX_SURF_TAG){
-    int surface=texture&0xFFFF;
-    r->shader_pal[shader].bloom_blend_surface=surface;
-    if(binding){
-      binding->kind=GML_RENDER_SHADER_TEXTURE_SURFACE;
-      binding->surface=surface;
-    }
-    return 1;
-  }
   {
     int generic_shader,generic_index,generic_sampler;
     if(generic_handle_parts(r,stage,&generic_shader,&generic_index,&generic_sampler) &&

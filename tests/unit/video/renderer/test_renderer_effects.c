@@ -376,56 +376,12 @@ static void check_shader_recognition(void) {
     "void main(){vec4 sampled=texture2D(gm_BaseTexture,v_vTexcoord);"
     "gl_FragColor=v_vColour*texture2D(gm_BaseTexture,v_vTexcoord);"
     "if(gl_FragColor.g<0.1)gl_FragColor.a=0.0;gl_FragColor.r*=0.5;}",
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>",
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>",
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>",
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>",
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>",
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
-    "<shader operation fragment>"
+    "void main(){gl_FragColor=v_vColour*texture2D(gm_BaseTexture,v_vTexcoord);gl_FragColor.r*=0.90;}",
+    "void main(){gl_FragColor=v_vColour*texture2D(gm_BaseTexture,v_vTexcoord);gl_FragColor.r*=0.80;}",
+    "void main(){gl_FragColor=v_vColour*texture2D(gm_BaseTexture,v_vTexcoord);gl_FragColor.g*=0.90;}",
+    "void main(){gl_FragColor=v_vColour*texture2D(gm_BaseTexture,v_vTexcoord);gl_FragColor.g*=0.80;}",
+    "void main(){gl_FragColor=v_vColour*texture2D(gm_BaseTexture,v_vTexcoord);gl_FragColor.b*=0.90;}",
+    "void main(){gl_FragColor=v_vColour*texture2D(gm_BaseTexture,v_vTexcoord);gl_FragColor.b*=0.80;}"
   };
   /* Record 24 is a program this renderer recognizes no family in, laid out as a Studio record:
    * the OpenGL ES pair at +8/+12. It is what the host's graphics context runs. */
@@ -513,12 +469,6 @@ static void check_shader_recognition(void) {
     const struct GmlShaderPal *indexed_brightness_near_match = &render.shader_pal[15];
     const struct GmlShaderPal *channel_alpha_key = &render.shader_pal[16];
     const struct GmlShaderPal *channel_alpha_key_near_match = &render.shader_pal[17];
-    struct GmlShaderPal *bloom_luminance = &render.shader_pal[18];
-    const struct GmlShaderPal *bloom_luminance_near_match = &render.shader_pal[19];
-    struct GmlShaderPal *bloom_gaussian = &render.shader_pal[20];
-    const struct GmlShaderPal *bloom_gaussian_near_match = &render.shader_pal[21];
-    struct GmlShaderPal *bloom_blend = &render.shader_pal[22];
-    const struct GmlShaderPal *bloom_blend_near_match = &render.shader_pal[23];
     expect(alpha->alpha_discard && alpha->alpha_discard_inclusive &&
            alpha->alpha_discard_cutoff == 0.25f,
            "alpha-discard structure was not recognized exactly");
@@ -628,29 +578,6 @@ static void check_shader_recognition(void) {
            "channel alpha-key graph with an extra colour operation was accepted");
     expect(!channel_mask_near_match->channel_mask,
            "channel-clear graph with an extra colour operation was accepted");
-    expect(bloom_luminance->bloom_luminance &&
-           fabsf(bloom_luminance->bloom_luminance_weight[0]-0.299f)<0.000001f &&
-           !bloom_luminance_near_match->bloom_luminance,
-           "luminance-threshold bloom graph or near-match boundary changed");
-    expect(bloom_gaussian->bloom_gaussian &&
-           !bloom_gaussian_near_match->bloom_gaussian,
-           "separable Gaussian bloom graph or near-match boundary changed");
-    expect(bloom_blend->bloom_blend && !bloom_blend_near_match->bloom_blend &&
-           !strcmp(bloom_blend->bloom_blend_sampler,"<shader operation fragment>"),
-           "two-surface bloom blend graph or near-match boundary changed");
-    const double bloom_values[4]={0.625,0.25,0.0,0.0};
-    int bloom_handle=gml_render_shader_uniform_handle(&render,22,"<shader operation fragment>");
-    int sampler_handle=gml_render_shader_sampler_handle(&render,22,"<shader operation fragment>");
-    GmlRenderShaderTextureBinding surface_binding;
-    gml_render_shader_uniform_set(&render,bloom_handle,bloom_values);
-    expect(bloom_handle==22*64+55 && bloom_blend->bloom_blend_value[0]==0.625f &&
-           sampler_handle==22*64+58 &&
-           gml_render_shader_texture_stage_set(&render,sampler_handle,
-             (int)(GML_TEX_SURF_TAG|7u),&surface_binding) &&
-           bloom_blend->bloom_blend_surface==7 &&
-           surface_binding.kind==GML_RENDER_SHADER_TEXTURE_SURFACE &&
-           surface_binding.surface==7,
-           "bloom uniforms or staged surface binding were not retained");
     /* The compile answer is host policy for one class of shader only. The default reports an
      * unrecognized shader compiled, as a GPU would, so long as its fragment reads the pixels the
      * draw covers: leaving that draw unshaded still paints those pixels, which is a weaker version
@@ -787,8 +714,6 @@ static void check_channel_mask_pixels(void) {
   expect(target==UINT32_C(0xff780000),
          "sampled RGB channel clear did not preserve only the requested red channel");
 }
-
-
 
 
 static void check_zero_reference_alpha_test_pixels(void) {
@@ -1805,7 +1730,6 @@ int main(void) {
   uint64_t tint = run_tint();
   check_shader_recognition();
   check_channel_mask_pixels();
-  check_bloom_surface_pixels();
   check_zero_reference_alpha_test_pixels();
   check_solid_alpha_mask_pixels();
   check_fast_scaled_sample_clamps_to_atlas();

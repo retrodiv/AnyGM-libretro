@@ -428,20 +428,6 @@ typedef struct GmlRender {
     int grid;
     char grid_sampler[32], grid_uvs_uniform[32], grid_id_uniform[32], grid_pixel_uniform[32];
     float grid_uvs[4], grid_id, grid_pixel[2];
-    /* Three-pass bloom pipeline. Each family is recognized from its complete fragment graph:
-     * luminance threshold, separable Gaussian convolution, then two-surface additive blend.
-     * Uniform and sampler identifiers remain payload-defined runtime state. */
-    int bloom_luminance;
-    char bloom_luminance_uniform[2][32];
-    float bloom_luminance_value[2];
-    float bloom_luminance_weight[3];
-    int bloom_gaussian;
-    char bloom_gaussian_uniform[4][32];
-    float bloom_gaussian_value[4][2];
-    int bloom_blend;
-    char bloom_blend_uniform[3][32], bloom_blend_sampler[32];
-    float bloom_blend_value[3], bloom_blend_weight[3];
-    int bloom_blend_surface;
     /* Two-sample channel-offset post-process. The fragment samples the base texture twice, shifts
      * the second lookup along one texture axis by the product of two float uniforms, scales the
      * samples per channel, then adds them. The parser derives identifiers and coefficients from

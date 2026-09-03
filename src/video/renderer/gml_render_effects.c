@@ -1788,14 +1788,6 @@ static int glsl_token_count(const char *source,const char *token){
 }
 
 
-
-
-
-
-
-
-
-
 void parse_shader_palettes(GmlRender *r){
   r->active_shader=-1;
   const GmlChunk *c=gml_chunk(r->win,"SHDR"); if(!c) return;
@@ -1912,27 +1904,6 @@ void parse_shader_palettes(GmlRender *r){
      * something whose value moves with the draw, so its answer is not a property of the picture it
      * samples and cannot be evaluated once for a texture-page rectangle and reused. */
     r->shader_pal[i].position_dependent=strstr(src,"gl_FragCoord")?1:0;
-    if(glsl_parse_bloom_luminance(src,&r->shader_pal[i])){
-      if(render_setting(r,"GML_LOG_SHADER"))
-        anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
-          "[shader] bloom-luminance[%u] controls='%s','%s'\n",i,
-          r->shader_pal[i].bloom_luminance_uniform[0],
-          r->shader_pal[i].bloom_luminance_uniform[1]);
-      continue;
-    }
-    if(glsl_parse_bloom_gaussian(src,&r->shader_pal[i])){
-      if(render_setting(r,"GML_LOG_SHADER"))
-        anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
-          "[shader] bloom-gaussian[%u] controls=4\n",i);
-      continue;
-    }
-    if(glsl_parse_bloom_blend(src,&r->shader_pal[i])){
-      if(render_setting(r,"GML_LOG_SHADER"))
-        anygm_host_logf(r && r->win ? r->win->host : NULL,ANYGM_LOG_DEBUG,
-          "[shader] bloom-blend[%u] controls=3 sampler='%s'\n",i,
-          r->shader_pal[i].bloom_blend_sampler);
-      continue;
-    }
     if(glsl_parse_indexed_brightness(src,&r->shader_pal[i])){
       const struct GmlShaderPal *sp=&r->shader_pal[i];
       if(render_setting(r,"GML_LOG_SHADER"))
