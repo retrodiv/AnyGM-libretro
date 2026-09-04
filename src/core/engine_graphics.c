@@ -296,7 +296,7 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
       engine_logf(engine,ANYGM_LOG_WARN,
         "[hybrid-gpu] content shaders inside a frame draw plain on this device: even without "
         "waiting for it they cost %.2f ms a frame, over the %.2f ms budget. Set the "
-        "game-shaders-inside-a-frame option to Always to run them anyway.\n",
+        "Game shaders option to Exact to run them anyway.\n",
         (double)engine->readback_frame_ns/(double)engine->readback_frames_measured/1e6,
         ENGINE_READBACK_BUDGET_US_PER_FRAME/1000.0);
     }

@@ -21,6 +21,9 @@ static const char *answered_raster_value;
 static const char *answered_monitor_value;
 static const char *answered_aspect_value;
 static const char *answered_page_value;
+static const char *answered_hybrid_gpu_value;
+static const char *answered_game_shaders_value;
+static const char *answered_unsupported_shaders_value;
 static bool (*menu_time_visibility)(void);
 static const struct retro_core_option_v2_category *declared_categories;
 static const struct retro_core_option_v2_definition *declared_definitions;
@@ -92,6 +95,15 @@ static bool environment_callback(unsigned command,void *data){
       if(variable->key && !strcmp(variable->key,"anygm_start_room_page") &&
          answered_page_value)
         value=answered_page_value;
+      if(variable->key && !strcmp(variable->key,"anygm_hybrid_gpu") &&
+         answered_hybrid_gpu_value)
+        value=answered_hybrid_gpu_value;
+      if(variable->key && !strcmp(variable->key,"anygm_content_shader_readback") &&
+         answered_game_shaders_value)
+        value=answered_game_shaders_value;
+      if(variable->key && !strcmp(variable->key,"anygm_report_shaders_compiled") &&
+         answered_unsupported_shaders_value)
+        value=answered_unsupported_shaders_value;
       variable->value=value;
       return value!=NULL; }
     default:
@@ -182,6 +194,9 @@ static void begin(unsigned version,uint32_t rooms){
   answered_monitor_value=NULL;
   answered_aspect_value=NULL;
   answered_page_value=NULL;
+  answered_hybrid_gpu_value=NULL;
+  answered_game_shaders_value=NULL;
+  answered_unsupported_shaders_value=NULL;
   menu_time_visibility=NULL;
   grouped_publish_count=0;
   memset(&applied_config,0,sizeof applied_config);
@@ -200,7 +215,7 @@ static void every_setting_sits_in_a_group(void){
     complain("the grouped declaration was never made");
     return;
   }
-  static const char *const expected[]={"video","input","shaders","development",NULL};
+  static const char *const expected[]={"video","input","development",NULL};
   size_t index=0;
   for(const struct retro_core_option_v2_category *c=declared_categories;c->key;c++,index++){
     if(!expected[index] || strcmp(c->key,expected[index])){
@@ -236,6 +251,128 @@ static void every_setting_sits_in_a_group(void){
       failures++;
     }
   }
+}
+
+/* The graphics-device choice makes these two settings exact complements. With a device, its
+ * shaders are available and the useful choice is how mid-frame results are read back. Without
+ * one, no read-back policy can act and the useful choice is what unsupported shaders tell the
+ * content. Hidden selections stay with the frontend, but they must not keep acting in the engine. */
+static void shader_settings_follow_the_graphics_device(void){
+  begin(2,3);
+  const struct retro_core_option_v2_definition *game=definition("anygm_content_shader_readback");
+  const struct retro_core_option_v2_definition *unsupported=
+    definition("anygm_report_shaders_compiled");
+  if(!unsupported){ complain("the unsupported-shader setting is missing"); return; }
+#if ANYGM_HARDWARE_RENDER
+  if(!game){ complain("a hardware build offers no game-shader setting"); return; }
+  if(!definition("anygm_hybrid_gpu")) complain("a hardware build offers no graphics device");
+#else
+  if(game) complain("a software-only build offers an inoperative game-shader setting");
+  if(definition("anygm_hybrid_gpu")) complain("a software-only build offers a graphics device");
+#endif
+#if ANYGM_HARDWARE_RENDER
+  if(strcmp(game->desc,"Game shaders") || strcmp(game->category_key,"video") ||
+     value_count(game)!=3 || strcmp(game->values[0].value,"Performance") ||
+     strcmp(game->values[1].value,"Exact") || strcmp(game->values[2].value,"Off") ||
+     strcmp(game->default_value,"Performance"))
+    complain("the game-shader setting does not expose Performance, Exact and Off in Video");
+  if(!strstr(game->info,"previous frame") || !strstr(game->info,"Exact waits") ||
+     !strstr(game->info,"Off draws") || !strstr(game->info,"frontend shaders are unaffected"))
+    complain("the game-shader setting does not explain its three policies and boundaries");
+#endif
+  if(strcmp(unsupported->desc,"Unsupported game shaders") ||
+     strcmp(unsupported->category_key,"video") || value_count(unsupported)!=2 ||
+     strcmp(unsupported->values[0].value,"Report available") ||
+     strcmp(unsupported->values[1].value,"Report unavailable") ||
+     strcmp(unsupported->default_value,"Report available"))
+    complain("the unsupported-shader setting does not expose its reporting policy in Video");
+  if(!strstr(unsupported->info,"shader_is_compiled()") ||
+     !strstr(unsupported->info,"Report available") ||
+     !strstr(unsupported->info,"Report unavailable") ||
+     !strstr(unsupported->info,"Hybrid GPU rendering is None"))
+    complain("the unsupported-shader setting does not explain its reporting policies and scope");
+  if(!menu_time_visibility){ complain("no way was offered to update shader-option visibility"); return; }
+
+  answered_hybrid_gpu_value="None";
+  answered_game_shaders_value="Exact";
+  answered_unsupported_shaders_value="Report unavailable";
+  menu_time_visibility();
+#if ANYGM_HARDWARE_RENDER
+  if(shown("anygm_content_shader_readback")!=0 ||
+     shown("anygm_report_shaders_compiled")!=1)
+    complain("the shader settings are not split onto the no-device path");
+#else
+  if(shown("anygm_content_shader_readback")!=-1 ||
+     shown("anygm_report_shaders_compiled")!=1)
+    complain("the software-only build publishes an inoperative shader setting");
+#endif
+  libretro_options_apply(true);
+  expect("no-device shader execution",applied_config.values.content_shader_readback,
+         ANYGM_SHADER_READBACK_NEVER);
+  expect("restored unavailable report",applied_config.values.report_all_shaders_compiled,0u);
+  expect("no graphics device expected",applied_config.values.content_shader_device_expected,0u);
+
+#if !ANYGM_HARDWARE_RENDER
+  /* A frontend can retain a value once published by another build. It cannot turn support which
+   * was compiled out back on, expose an inoperative setting, or change what content is told. */
+  answered_hybrid_gpu_value="OpenGL";
+  if(menu_time_visibility())
+    complain("a stale graphics-device value changed software-only option visibility");
+  libretro_options_apply(false);
+  expect("software-only shader execution",applied_config.values.content_shader_readback,
+         ANYGM_SHADER_READBACK_NEVER);
+  expect("software-only unavailable report",applied_config.values.report_all_shaders_compiled,0u);
+  expect("software-only graphics device",applied_config.values.content_shader_device_expected,0u);
+  return;
+#else
+  /* The menu exposes the choice for the next load immediately, but the loaded software session
+   * cannot acquire a graphics device halfway through its frame pipeline. */
+  g_libretro.loaded=true;
+  answered_hybrid_gpu_value="OpenGL";
+  if(!menu_time_visibility())
+    complain("changing graphics device was reported as no visibility change");
+  if(shown("anygm_content_shader_readback")!=1 ||
+     shown("anygm_report_shaders_compiled")!=0)
+    complain("the shader settings are not split onto the graphics-device path");
+  libretro_options_apply(false);
+  expect("loaded software shader execution",applied_config.values.content_shader_readback,
+         ANYGM_SHADER_READBACK_NEVER);
+  expect("loaded software report",applied_config.values.report_all_shaders_compiled,0u);
+  expect("loaded software device",applied_config.values.content_shader_device_expected,0u);
+
+  /* Closing the content makes the selected graphics path effective and recovers its saved mode. */
+  g_libretro.loaded=false;
+  libretro_options_apply(true);
+  expect("exact shader execution",applied_config.values.content_shader_readback,
+         ANYGM_SHADER_READBACK_ALWAYS);
+  expect("hidden unavailable report",applied_config.values.report_all_shaders_compiled,1u);
+  expect("graphics device expected",applied_config.values.content_shader_device_expected,1u);
+
+  answered_game_shaders_value="Performance";
+  libretro_options_apply(false);
+  expect("performance shader execution",applied_config.values.content_shader_readback,
+         ANYGM_SHADER_READBACK_BUDGETED);
+  answered_game_shaders_value="Off";
+  libretro_options_apply(false);
+  expect("disabled shader execution",applied_config.values.content_shader_readback,
+         ANYGM_SHADER_READBACK_NEVER);
+
+  /* Returning to software exposes its reporting choice, but a loaded GPU session keeps running
+   * until content closes. The next load recovers the choice which was hidden, not overwritten. */
+  g_libretro.loaded=true;
+  answered_hybrid_gpu_value="None";
+  menu_time_visibility();
+  libretro_options_apply(false);
+  expect("loaded GPU shader execution",applied_config.values.content_shader_readback,
+         ANYGM_SHADER_READBACK_NEVER);
+  expect("loaded GPU report",applied_config.values.report_all_shaders_compiled,1u);
+  expect("loaded GPU device",applied_config.values.content_shader_device_expected,1u);
+  g_libretro.loaded=false;
+  libretro_options_apply(true);
+  expect("recovered unavailable report",applied_config.values.report_all_shaders_compiled,0u);
+  expect("hidden disabled shader execution",applied_config.values.content_shader_readback,
+         ANYGM_SHADER_READBACK_NEVER);
+#endif
 }
 
 static void unset_settings_keep_content_reachable(void){
@@ -451,6 +588,15 @@ static void room_publication_reapplies_visibility(void){
     complain("room publication reset the monitor dimensions to visible");
   if(shown("anygm_aspect_ratio_force")!=1)
     complain("room publication lost the logical-raster option visibility");
+#if ANYGM_HARDWARE_RENDER
+  if(shown("anygm_content_shader_readback")!=0 ||
+     shown("anygm_report_shaders_compiled")!=1)
+    complain("room publication lost the software shader-option visibility");
+#else
+  if(shown("anygm_content_shader_readback")!=-1 ||
+     shown("anygm_report_shaders_compiled")!=1)
+    complain("room publication introduced a software-only shader option");
+#endif
 }
 
 /* A paged room chooser changes its first declaration from the placeholder "0" to the canonical
@@ -517,6 +663,7 @@ static void a_restarted_core_declares_its_settings_again(void){
 
 int main(void){
   every_setting_sits_in_a_group();
+  shader_settings_follow_the_graphics_device();
   unset_settings_keep_content_reachable();
   monitor_dimensions_reach_the_virtual_monitor_fields();
   monitor_dimensions_follow_the_window_raster();

@@ -170,8 +170,9 @@ also logged once, with the measured cost, as a warning. The budget is per frame 
 pass because what a frame can afford is a frame's time: three passes of 2.5 milliseconds fit and
 six do not. `readback_pipelined` is 1 while the measured policy is taking the previous pass's answer rather
 than waiting for the device — correct, one frame late, and what the measured policy does from its
-first pass, because waiting is most of what a read-back costs and none of what it produces. The `anygm_content_shader_readback` option selects the policy — measured, always
-(exact, waits), or never. The terminal presentation is not affected by any of it.
+first pass, because waiting is most of what a read-back costs and none of what it produces. The
+`anygm_content_shader_readback` option presents these policies as Performance (measured,
+pipelined), Exact (waits), and Off. The terminal presentation is not affected by any of them.
 
 `accepted` counts passes the device executed and `replayed` counts passes the software executor had
 to take back. `transport` is the subset of accepted passes that merely carried a complete software

@@ -11,9 +11,8 @@
  * understand is derived from that same table. Two hand-maintained lists drift, and the one that
  * drifts is always the one the host in front of the player happens to read. */
 static const struct retro_core_option_v2_category g_categories[]={
-  {"video","Video","Virtual monitor, shape and rasterization of the delivered frame."},
+  {"video","Video","Frame geometry, rendering and content shaders."},
   {"input","Input","Controllers and pointer."},
-  {"shaders","Shaders","How the game's own shaders are reported to it."},
   {"development","Development","Tools for exercising content."},
   {NULL,NULL,NULL}
 };
@@ -105,30 +104,28 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"development",
    {{"On",NULL},{"Off",NULL},{NULL,NULL}},
    "On"},
-  {"anygm_content_shader_readback","Content shaders inside a frame",NULL,
-   "Controls content shaders on the graphics device for draws before the "
-   "frame's last operation. Such a draw executes off-screen and is read back, and reading back "
-   "stalls the device, and the waiting is most of what it costs. Budgeted does not wait: a draw "
-   "takes the answer the previous draw of the same shader left, which is one frame old and "
-   "several times cheaper, and a draw is given up only if even that costs more than a frame can "
-   "afford. Always asks for the exact answer and waits for it. Never draws them unshaded, as "
-   "a build with no device does. The frame's "
-   "last operation is unaffected and always runs on the device. Needs hybrid GPU rendering set to "
-   "a graphics API.",
-   NULL,"shaders",
-   {{"Budgeted",NULL},{"Always",NULL},{"Never",NULL},{NULL,NULL}},
-   "Budgeted"},
-  {"anygm_report_shaders_compiled","Report content shaders as compiled",NULL,
-   "How shader_is_compiled() answers for content shaders that sample a picture. "
-   "On reports declared shaders as compiled even when an effect cannot execute. "
-   "Off reports only effects this renderer can execute, including content programs "
-   "when a graphics API is selected, while allowing authored fallback paths otherwise. "
-   "With no graphics API, an unrecognized fragment that samples no texture reports "
-   "uncompiled regardless of this option, since leaving its draw unshaded paints "
-   "unrelated pixels.",
-   NULL,"shaders",
-   {{"On",NULL},{"Off",NULL},{NULL,NULL}},
-   "On"},
+#if ANYGM_HARDWARE_RENDER
+  {"anygm_content_shader_readback","Game shaders",NULL,
+   "How content shaders run for draws before the frame's last operation. Performance uses the "
+   "previous frame's result instead of waiting for the graphics device, and draws without the "
+   "shader for the rest of the session if even that exceeds a frame's budget. Exact waits for the "
+   "current result and avoids readback lag but can be much slower. Off draws these intermediate "
+   "operations without shaders. The frame's last operation and frontend shaders are unaffected. "
+   "This setting is available only when Hybrid GPU rendering uses a graphics API.",
+   NULL,"video",
+   {{"Performance",NULL},{"Exact",NULL},{"Off",NULL},{NULL,NULL}},
+   "Performance"},
+#endif
+  {"anygm_report_shaders_compiled","Unsupported game shaders",NULL,
+   "What shader_is_compiled() reports for shaders this core cannot run without a graphics device. "
+   "Report available lets valid sampling shaders select their shader path and draws an unsupported "
+   "effect plain. Report unavailable lets content with an authored no-shader fallback select it. "
+   "A shader that paints from scratch without sampling a picture reports unavailable either way, "
+   "because drawing it plain would show an unrelated picture. This setting is available only "
+   "when Hybrid GPU rendering is None.",
+   NULL,"video",
+   {{"Report available",NULL},{"Report unavailable",NULL},{NULL,NULL}},
+   "Report available"},
   /* These are the exact locale strings exposed by the runtime: lowercase language and uppercase
    * region. Auto follows the frontend language and its paired region. Locale environment variables
    * expose the same values for content without the locale builtins. */
@@ -189,12 +186,14 @@ static char **g_flat_storage;
 static size_t g_flat_count;
 static int g_published_ranges=-1;
 static int g_published_logical_raster=-1;
+static int g_published_hybrid_gpu=-1;
 
 static int update_option_visibility(void);
 
 static void invalidate_published_visibility(void){
   g_published_ranges=-1;
   g_published_logical_raster=-1;
+  g_published_hybrid_gpu=-1;
 }
 
 static void free_flat_variables(void){
@@ -332,6 +331,15 @@ static const char *option_value(const char *key){
 /* Locale resolution happens beside the frontend language query. The returned string belongs to
  * the frontend and only until the next query, so callers copy values they retain. */
 const char *libretro_options_value(const char *key){ return option_value(key); }
+
+static int hybrid_gpu_selected(void){
+#if ANYGM_HARDWARE_RENDER
+  const char *value=option_value("anygm_hybrid_gpu");
+  return value && !strcmp(value,"OpenGL");
+#else
+  return 0;
+#endif
+}
 
 static uint32_t option_on(const char *key,uint32_t fallback){
   const char *value=option_value(key);
@@ -485,10 +493,12 @@ void libretro_options_publish_rooms(void){
 }
 
 /* Options that cannot act are hidden rather than left to be tried: the range selector when every
- * room already fits in one list, and the two halves of the raster choice, which are offered on
- * opposite paths. Rendering at game resolution
+ * room already fits in one list, and the two halves of the raster and shader choices, which are
+ * offered on opposite paths. Rendering at game resolution
  * delivers the game's own raster, so the forced shape has one to reshape and the monitor
  * dimensions have nothing to size; rendering at the presentation window is the reverse.
+ * A graphics device runs content shader programs, so it offers their read-back policy and has
+ * no unsupported-program answer to choose; the software path is the reverse.
  */
 static int update_option_visibility(void){
   if(!g_libretro.environment) return 0;
@@ -497,7 +507,9 @@ static int update_option_visibility(void){
   };
   int ranges=g_page_choice_count>1?1:0;
   int logical_raster=option_on("anygm_render_game_resolution",1)?1:0;
-  if(ranges==g_published_ranges && logical_raster==g_published_logical_raster)
+  int hybrid_gpu=hybrid_gpu_selected();
+  if(ranges==g_published_ranges && logical_raster==g_published_logical_raster &&
+     hybrid_gpu==g_published_hybrid_gpu)
     return 0;
   struct retro_core_option_display display;
   display.key="anygm_start_room_page";
@@ -511,8 +523,17 @@ static int update_option_visibility(void){
   display.key="anygm_aspect_ratio_force";
   display.visible=logical_raster?true:false;
   g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+#if ANYGM_HARDWARE_RENDER
+  display.key="anygm_content_shader_readback";
+  display.visible=hybrid_gpu?true:false;
+  g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
+#endif
+  display.key="anygm_report_shaders_compiled";
+  display.visible=hybrid_gpu?false:true;
+  g_libretro.environment(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY,&display);
   g_published_ranges=ranges;
   g_published_logical_raster=logical_raster;
+  g_published_hybrid_gpu=hybrid_gpu;
   return 1;
 }
 
@@ -592,19 +613,27 @@ void libretro_options_apply(bool all_fields){
    * survive as a setting nothing in the menu explains. */
   config->god_mode=0u;
   config->room_skip_button=0u;
-  config->report_all_shaders_compiled=option_on("anygm_report_shaders_compiled",1);
   {
+    int selected_hybrid_gpu=hybrid_gpu_selected();
+    /* A menu selection requests the device for the next content load. While content is running,
+     * preserve the mode that load established: exposing the other path's option immediately is
+     * useful for configuring that next load, but cannot make its hidden counterpart act now. */
+    int effective_hybrid_gpu=g_libretro.loaded?
+      (config->content_shader_device_expected?1:0):selected_hybrid_gpu;
     const char *readback=option_value("anygm_content_shader_readback");
-    config->content_shader_readback=
-      (readback && !strcmp(readback,"Always"))?ANYGM_SHADER_READBACK_ALWAYS:
-      (readback && !strcmp(readback,"Never"))?ANYGM_SHADER_READBACK_NEVER:
+    const char *unsupported=option_value("anygm_report_shaders_compiled");
+    /* The frontend retains both selections while they are hidden, but only the one offered on the
+     * active path may reach the engine. A requested graphics device can run the authored program,
+     * so content is told it is available. With no device, no read-back policy can act. */
+    config->report_all_shaders_compiled=effective_hybrid_gpu?1u:
+      (unsupported && !strcmp(unsupported,"Report unavailable")?0u:1u);
+    config->content_shader_readback=!effective_hybrid_gpu?ANYGM_SHADER_READBACK_NEVER:
+      (readback && !strcmp(readback,"Exact"))?ANYGM_SHADER_READBACK_ALWAYS:
+      (readback && !strcmp(readback,"Off"))?ANYGM_SHADER_READBACK_NEVER:
       ANYGM_SHADER_READBACK_BUDGETED;
+    config->content_shader_device_expected=effective_hybrid_gpu?1u:0u;
   }
   config->content_overrides=option_on("anygm_content_overrides",1);
-  {
-    const char *api=option_value("anygm_hybrid_gpu");
-    config->content_shader_device_expected=(api && strcmp(api,"None"))?1u:0u;
-  }
   /* The default option resolves from content before any menu is available. */
   /* The public option offers two states. An unconditional pad state remains available
    * internally; automatic mode instead follows the reference scan. */
