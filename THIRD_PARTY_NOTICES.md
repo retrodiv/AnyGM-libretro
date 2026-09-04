@@ -47,6 +47,7 @@ The bzip2 source headers refer to material in the upstream distribution. The
 complete license is retained locally, and the repository's `NOTICE` identifies
 the upstream release and source location.
 
-This revision does not embed the notice bundle into the compiled core. A binary
-distributed without this source repository must therefore be accompanied by
-`THIRD_PARTY_NOTICES.md`, `NOTICE`, and the applicable files under `LICENSES/`.
+The compiled core contains a copy of this file, `NOTICE`, and every regular
+file under `LICENSES/`. Distributors must still present the applicable texts
+in a form that satisfies their licenses; including the companion files is the
+clearest route when the delivery channel allows it.

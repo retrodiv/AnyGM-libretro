@@ -226,6 +226,24 @@ implementation.
 bodies compiled by that backend. They are checked in so an ordinary
 production build neither generates them nor accesses a network.
 
+## Embedded third-party notices
+
+`src/generated/anygm_third_party_notices.h` contains the bytes of `NOTICE`,
+`THIRD_PARTY_NOTICES.md`, and every regular file under `LICENSES/`, in the
+listed order. `src/host/anygm_notices.c` retains that table in the compiled
+core. The generator uses only those repository files:
+
+```sh
+python3 tests/architecture/check_notices.py generate
+```
+
+`make notices-check` regenerates the table in memory and compares it against
+the checked-in header. The production build consumes the header without
+running the generator. Embedded bytes help preserve the texts when a binary
+travels alone, but they do not establish that every distributor has presented
+the applicable notices as each license requires. Inspect the actual delivery
+route and supply accessible companion notices where needed.
+
 ## Publication and validation
 
 Generated data is kept under `src/generated/` and is not regenerated as part of
