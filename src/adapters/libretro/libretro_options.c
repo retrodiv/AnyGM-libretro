@@ -92,8 +92,8 @@ static struct retro_core_option_v2_definition g_definitions[]={
    "for the current result and can be much slower. Terminal GLSL presentations are exact in both "
    "modes. "
 #endif
-   "Off (but report available) does not run them, but shader_is_compiled() reports valid "
-   "sampling programs available, so unsupported effects draw plain. Off does not run them and "
+   "OFF (but report available) does not run them, but shader_is_compiled() reports valid "
+   "sampling programs available, so unsupported effects draw plain. OFF does not run them and "
    "reports only software-recognized families available, allowing the game to choose its fallback. "
    "Procedural programs that sample no picture remain unavailable without a device. Recognized "
    "families keep running on the processor in every mode. "
@@ -109,7 +109,8 @@ static struct retro_core_option_v2_definition g_definitions[]={
 #if ANYGM_HARDWARE_RENDER
     {"Performance",NULL},{"Exact",NULL},
 #endif
-    {"Off (but report available)",NULL},{"Off","Off"},{NULL,NULL}},
+    /* Stored values remain stable while the labels follow the frontend's canonical boolean style. */
+    {"Off (but report available)","OFF (but report available)"},{"Off","OFF"},{NULL,NULL}},
    "Off (but report available)"},
 #if ANYGM_HARDWARE_RENDER
   {"anygm_hybrid_gpu","Hybrid GPU rendering (Experimental)",NULL,

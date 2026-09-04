@@ -173,7 +173,7 @@ six do not. `readback_pipelined` is 1 while the measured policy is taking the pr
 than waiting for the device — correct, one frame late, and what the measured policy does from its
 first pass, because waiting is most of what a read-back costs and none of what it produces.
 `Shaders (GLSL)` presents these policies as Performance (measured, pipelined), Exact (waits), and
-its two Off reporting variants. Terminal GLSL is exact in both active modes; the Off variants do
+its two OFF reporting variants. Terminal GLSL is exact in both active modes; the OFF variants do
 not execute it.
 
 `accepted` counts passes the device executed and `replayed` counts passes the software executor had
