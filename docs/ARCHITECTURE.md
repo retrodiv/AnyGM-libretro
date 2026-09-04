@@ -44,8 +44,11 @@ public AnyGM types, but those framework types never cross `src/api/anygm.h`.
 The lifecycle in `src/api/anygm.h` is deliberately small:
 
 1. The host fills `AnygmHostServices` and calls `anygm_create`.
-2. It supplies an `AnygmContentSource` to `anygm_load`.
-3. It queries stable AV properties with `anygm_get_av_info`.
+2. It either supplies an `AnygmContentSource` to the one-shot `anygm_load`, or calls
+   `anygm_load_prepare`, inspects `AnygmContentInfo`, settles any session-long graphics context and
+   policy, then calls `anygm_load_start`. Preparation parses and initializes content resources but
+   runs no extension, room, or instance event.
+3. It queries stable AV properties with `anygm_get_av_info` after startup.
 4. Once per frame it calls `anygm_run_frame` with normalized input and consumes
    the returned video and audio views before the next call.
 5. It uses `anygm_state_size`, `anygm_state_save`, and `anygm_state_load` for complete save states.
@@ -475,36 +478,36 @@ program anywhere else in the frame goes through the renderer's executor hook ins
 size, `engine_graphics.c` executes that as a plan whose target is read back, and the answer is
 composed in software as a surface of that size with the draw's own blend and alpha; the software
 renderer remains the complete implementation, and a host without a context, or a program the
-device refuses, draws plain. A read-back stalls the device, and its cost is the device's: the
-engine times what those passes cost the frames that paid for them and, on a device where that
-exceeds the per-frame budget, stops waiting: the pass takes what the previous pass of the same
-program left, one frame old, and starts its own without waiting, which is what the stall actually
-costs. Only if that is still too slow are the mid-frame draws given up for the session; the terminal presentation stays on the device, and the policy is a host option so a
-comparison against the original can ask for every shader however slow.
+device refuses, draws plain. A read-back stalls the device, and its cost is the device's. The
+engine therefore exposes two policies. Performance takes the previous completed answer from the
+first eligible pass instead of waiting for the new one, measures the pipelined work at frame
+boundaries, and gives up mid-frame device execution for the session if even that exceeds the frame
+budget. Exact waits for the current answer regardless of cost. A terminal content-program
+presentation needs no read-back and remains exact in both policies.
 
 A fragment that samples no picture is a case of its own. It derives every pixel from coordinates,
 time and its own uniforms, so leaving it unrun paints the primitive flat in a colour the shader was
 going to discard — an unrelated picture rather than a weaker one. That is why such a shader answers
-that it did not compile, and why the answer is now conditional: when the session requested a
-graphics device it is executed and the answer is yes, otherwise it is still no. An early query can occur before the frontend has adopted the context, so the
-answer is taken from whether a device was requested (a stable session fact) rather than from
-whether the context is ready this instant. A filled rectangle or a sprite drawn through such a
+that it did not compile, and why the answer is conditional: when content GLSL has an adopted
+graphics context it is executed and the answer is yes; without one it is still no. The initial
+load prepares the shader catalogue, negotiates the context, and finalizes this policy before any
+authored boot event can ask the question. A filled rectangle or a sprite drawn through such a
 program reaches the same executor as a surface does. A program applied to a sprite transforms that
 sprite's texels, so its answer depends on the frame, the program and the values set on it rather
 than on where the frame is drawn: the answer is evaluated once and kept, and every later draw of
-the same frame composes from it. This replaces repeated device evaluations with one evaluation per distinct
-frame. A font glyph is the same thing, a
+the same frame composes from it. This uses one device evaluation per distinct frame instead of
+one per draw. A font glyph is the same thing, a
 rectangle of a texture page, so a screen of text costs one evaluation per distinct glyph; and a
 rotated draw composes the kept answer through the ordinary sprite blit, which already has the
 pivot and the edge rules.
 
-Every shape a draw can take reaches the executor: a surface and a region of one, a filled
+Every shape a draw can take reaches the executor after startup: a surface and a region of one, a filled
 rectangle, a sprite whole or in part, stretched, mirrored or rotated, and a font glyph. A region
 naming part of a frame that carried no colour has nothing stored for it and nothing to draw, which
-is an answer rather than a refusal.
-
-A draw made before a graphics context exists cannot use this executor; it
-follows the software renderer until a context is available.
+is an answer rather than a refusal. Preparation can establish only that the shipped catalogue
+contains at least one valid device candidate; it cannot predict whether later authored control
+flow will ever select that program. This is enough to avoid requesting a context for content whose
+catalogue has no such program while keeping the context ready before a candidate can first run.
 
 One class of program cannot be kept: a fragment that reads gl_FragCoord derives its answer from
 where the pixel lands on the render target, so the answer is not a property of the picture it
@@ -526,7 +529,12 @@ remain direct and header-local, so coarse draw preparation, opacity queries,
 profiling hooks, and row-band dispatch may cross renderer implementation units
 but no sampling, blending, or final-pixel call does.
 
-An optional graphics target sits beside that plan rather than inside the renderer.
+An optional graphics target sits beside that plan rather than inside the renderer. It serves two
+independent host policies: content GLSL may execute unrecognized authored programs, while hybrid
+presentation may execute eligible final scaling and composition. Enabling either one does not
+enable the other; when both are enabled they share the same context. A context required only for
+content GLSL may still carry a completed software frame to the frontend when no program owns that
+frame, but that transport is counted separately and is not final-pass acceleration.
 `src/video/gpu/` owns the context lifetime, the capability and resource generations, and one direct
 OpenGL / OpenGL ES backend; `src/core/engine_graphics.c` is the only core file that knows it exists,
 and the whole feature reaches the rest of the engine through one pointer on `AnygmEngine`. Eligible
@@ -580,8 +588,11 @@ API seam is expensive.
 ## Libretro adapter
 
 `src/adapters/libretro/libretro_entry.c` owns the official `retro_*` entry
-points. `libretro_hw_render.c` negotiates the optional frontend graphics context and forwards its
-lifecycle through the public graphics seam; it holds the one ABI-level record the adapter owns and
+points. At load it freezes both graphics settings, prepares content, and requests a context when
+hybrid presentation is enabled or when an enabled content-GLSL policy finds a catalogue candidate.
+`libretro_hw_render.c` negotiates that optional frontend context and forwards its lifecycle through
+the public graphics seam; after reset succeeds or fails, it finalizes the policies and starts the
+prepared runtime before authored events run. It holds the one ABI-level record the adapter owns and
 names no graphics API type. The other files in that directory translate libretro environment/VFS,
 options, and input facilities into the public API. The linked core exports only
 the official libretro surface.

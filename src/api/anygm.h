@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define ANYGM_API_VERSION 3u
+#define ANYGM_API_VERSION 4u
 #define ANYGM_HOST_SERVICES_VERSION 1u
 #define ANYGM_STATE_SCHEMA 16u
 #define ANYGM_MAX_GAMEPADS 4u
@@ -321,6 +321,19 @@ typedef struct AnygmLoadConfig {
   const char *language_tag;
 } AnygmLoadConfig;
 
+/* Facts discovered while preparing content, before any extension, room or instance event runs.
+ * A host may use them to negotiate facilities whose lifetime has to cover the whole session. */
+typedef struct AnygmContentInfo {
+  uint32_t struct_size;
+  uint32_t flags;
+} AnygmContentInfo;
+
+enum {
+  /* The payload contains at least one valid GLSL program that the software renderer does not
+   * recognize. This says the program may be used, not that later game code will select it. */
+  ANYGM_CONTENT_GLSL_DEVICE_CANDIDATE=1u<<0
+};
+
 typedef struct AnygmConfig {
   uint32_t struct_size;
   /* Optional virtual-monitor dimensions reported to content. Zero selects the runtime fallback.
@@ -348,11 +361,11 @@ typedef struct AnygmConfig {
   uint32_t present_logical_raster;
   /* Delete this content's generated local data (saves, extracted archive cache) and reload. */
   uint32_t clear_local_data;
-  /* How shader_is_compiled answers for the game's own shaders. Non-zero matches a GPU: every
-   * shader in the payload reports compiled, and one the software evaluator does not recognize
-   * draws unshaded. Zero reports only recognized shader families as compiled, so content that
-   * carries its own no-shader presentation selects it. Hosts default to non-zero; some content
-   * ends itself when told a shader did not compile. */
+  /* How shader_is_compiled answers for content shaders. Non-zero reports valid sampling shaders
+   * in the payload available, while an unsupported effect draws plain. Zero reports only
+   * software-recognized families as available, so authored fallback paths can be selected.
+   * Procedural shaders that sample no picture remain unavailable without a device under either
+   * policy. The host default is non-zero. */
   uint32_t report_all_shaders_compiled;
   /* Apply the override directives the loaded content carried in its anchor file. Enabled by
    * default; disabling ignores this channel without changing host cheats. */
@@ -364,10 +377,14 @@ typedef struct AnygmConfig {
    * a frame can afford, ANYGM_SHADER_READBACK_ALWAYS keeps going however slow, and
    * ANYGM_SHADER_READBACK_NEVER draws them unshaded as a build without a device does. */
   uint32_t content_shader_readback;
-  /* Whether the session requested a graphics device (hybrid GPU option not None). A game that
-   * queries shader support on its first boot frame is answered from this rather than from whether
-   * the context has finished being adopted, which a frontend does after content is loaded. */
+  /* Whether content GLSL may use the host graphics device. Set this only after content inspection
+   * and context negotiation; shader support queries made by the first game events then see the
+   * final session policy. */
   uint32_t content_shader_device_expected;
+  /* Whether eligible final scaling and composition passes may run on the host graphics device.
+   * This is independent of content_shader_device_expected: either policy may use a context alone,
+   * and both share it when enabled together. */
+  uint32_t hybrid_gpu_presentation;
 } AnygmConfig;
 
 /* Zero is the default a host that never sets the field gets, so it is the measured one rather than
@@ -400,7 +417,8 @@ enum {
   ANYGM_CONFIG_REPORT_ALL_SHADERS_COMPILED=1ull<<18,
   ANYGM_CONFIG_CONTENT_OVERRIDES=1ull<<19,
   ANYGM_CONFIG_CONTENT_SHADER_READBACK=1ull<<20,
-  ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED=1ull<<21
+  ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED=1ull<<21,
+  ANYGM_CONFIG_HYBRID_GPU_PRESENTATION=1ull<<22
 };
 
 typedef struct AnygmInputFrame {
@@ -455,8 +473,8 @@ enum {
  * ANYGM_FRAME_HARDWARE_TARGET; everything else keeps the software renderer and the CPU frame. No
  * graphics API type appears here: the host resolves entry points itself through the callback it
  * supplies, and identifies the target by an opaque handle whose meaning belongs to the chosen API.
- * This is a transport choice, not emulated state: it does not enter AnygmConfig, the state
- * configuration fingerprint, or any serialized section. */
+ * The context and its host-selected execution policies are transport choices rather than emulated
+ * state: neither enters the state configuration fingerprint or any serialized section. */
 typedef uint32_t AnygmGraphicsApi;
 enum {
   ANYGM_GRAPHICS_OPENGL_CORE=1,
@@ -505,6 +523,14 @@ typedef struct AnygmAvInfo {
 uint32_t anygm_api_version(void);
 AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **engine);
 void anygm_destroy(AnygmEngine *engine);
+/* Prepare and validate content without running extension, room or instance events. The renderer's
+ * shader catalogue is available in `info`, allowing a host to request a session-long graphics
+ * context only when the payload contains a candidate. Call anygm_load_start after the context
+ * decision is final. A prepared load may be abandoned with anygm_unload or anygm_destroy. */
+AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *source,
+                               const AnygmLoadConfig *config,AnygmContentInfo *info);
+AnygmResult anygm_load_start(AnygmEngine *engine);
+/* One-shot form for hosts that need no negotiation between preparation and startup. */
 AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
                        const AnygmLoadConfig *config);
 void anygm_unload(AnygmEngine *engine);

@@ -359,12 +359,6 @@ int core_opt_monitor_size(AnygmEngine *engine,int height) {
   uint32_t maximum=height?FB_MAX_H:FB_MAX_W;
   return (int)(value>maximum?maximum:value);
 }
-int core_opt_onoff(AnygmEngine *engine,const char *key, const char *env, int def) {
-  (void)env;
-  if(!strcmp(key,"anygm_report_shaders_compiled"))
-    return engine->config.report_all_shaders_compiled?1:0;
-  return def;
-}
 static int core_opt_aspect_force(AnygmEngine *engine) {
   return engine->config.aspect_mode<=GMC_ASPECT_FORCE_16_10?(int)engine->config.aspect_mode:GMC_ASPECT_FORCE_NONE;
 }

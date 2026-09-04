@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 retrodiv <retrodiv@proton.me>
 #
-# The hybrid GPU path is bounded by construction, not by intention. These rules exist so that its
-# weight can grow without the software renderer becoming entangled with it: removing the GPU
-# directory and the hardware bridge must stay a deletion rather than a reversal.
+# The optional graphics-device path is bounded by construction, not by intention. These rules exist
+# so that its weight can grow without the software renderer becoming entangled with it: removing
+# the GPU directory and the hardware bridge must stay a deletion rather than a reversal.
 
 set -eu
 

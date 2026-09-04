@@ -52,6 +52,13 @@ static void hardware_context_reset(void){
                  "Hardware rendering was accepted but could not be initialised (%d): %s\n",
                  result,error);
   }
+  /* Frontends create the requested context only after retro_load_game returns. Keep authored boot
+   * code behind that boundary so its first shader query and draw see the final outcome. */
+  if(g_libretro.prepared && !g_libretro.loaded){
+    libretro_options_finalize_graphics(g_hardware_adopted);
+    if(!libretro_content_start())
+      libretro_log(RETRO_LOG_ERROR,"Prepared content could not be started after context reset\n");
+  }
 }
 
 static void hardware_context_destroy(void){
@@ -84,8 +91,7 @@ static bool request_context(enum retro_hw_context_type type,unsigned major,unsig
          g_libretro.environment(RETRO_ENVIRONMENT_SET_HW_RENDER,&g_hardware);
 }
 
-void libretro_hw_render_request(void){
-  const char *value=libretro_options_value("anygm_hybrid_gpu");
+bool libretro_hw_render_request(bool needed){
   unsigned preferred=RETRO_HW_CONTEXT_NONE;
   bool prefers_embedded=false;
   g_hardware_requested=false;
@@ -95,10 +101,10 @@ void libretro_hw_render_request(void){
    * chosen backend exactly: a value this build does not implement -- a newer core's setting read
    * back by an older one -- must fall to the software renderer, never to whichever backend
    * happens to exist here. */
-  if(!value || strcmp(value,"OpenGL")) return;
+  if(!needed) return false;
   if(!g_libretro.environment){
-    libretro_log(RETRO_LOG_WARN,"Hybrid GPU rendering needs a frontend environment callback\n");
-    return;
+    libretro_log(RETRO_LOG_WARN,"The selected graphics features need a frontend environment callback\n");
+    return false;
   }
   if(g_libretro.environment(RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER,&preferred))
     prefers_embedded=preferred==RETRO_HW_CONTEXT_OPENGLES2 ||
@@ -120,6 +126,7 @@ void libretro_hw_render_request(void){
                  "The frontend did not provide an OpenGL or OpenGL ES context; "
                  "continuing with the software renderer\n");
   }
+  return g_hardware_requested;
 }
 
 void libretro_hw_render_release(void){

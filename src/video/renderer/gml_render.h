@@ -288,8 +288,8 @@ typedef struct {
    * Zero: only recognized shader families answer yes, so content that carries its own
    * no-shader presentation selects it. */
   int shader_report_all_compiled;
-  /* Whether the session requested a graphics device (hybrid GPU option not None). Read at boot,
-   * so a shader-support query a game makes on its first frame answers the session, not the frame. */
+  /* Whether content GLSL has a graphics device for this session. Read at boot, so a shader-support
+   * query made on the first frame answers the final session policy, not transient context state. */
   int shader_device_expected;
   int fast_forward, fast_alpha_cull;
   int wide_aspect_active, wide_width, wide_height;
@@ -409,10 +409,15 @@ int gml_render_shader_sampler_handle(GmlRender *r,int shader,const char *name);
 void gml_render_shader_uniform_set(GmlRender *r,int handle,const double values[4]);
 int gml_render_shader_texture_stage_set(
   GmlRender *r,int stage,int texture,GmlRenderShaderTextureBinding *binding);
-/* Content shaders executed on the host's graphics context. A candidate is a program this renderer
- * recognizes no family in, that samples a picture, whose sources are present and that the device
- * has not refused. The state answers what the content set, by name. */
+/* Content shaders executed on the host's graphics context. A draw-time candidate is a program this
+ * renderer recognizes no family in, whose sources are present and that the device has not refused.
+ * Procedural programs require the device to be present because no plain sampled picture can stand
+ * in for their answer. The state records what content set, by name. */
 int gml_render_shader_content_candidate(const GmlRender *r,int shader);
+/* Whether the loaded catalogue contains any valid GLSL program outside the software-recognized
+ * families. Unlike the per-draw query, this inspection deliberately includes procedural programs
+ * before a graphics device is present. */
+int gml_render_content_device_candidate_present(const GmlRender *r);
 int gml_render_shader_sources(const GmlRender *r,int shader,GmlRenderShaderSources *out);
 uint32_t gml_render_shader_uniforms(const GmlRender *r,int shader,
                                     GmlRenderShaderUniform *out,uint32_t capacity);

@@ -110,6 +110,8 @@ static void setup_platform_locale(AnygmEngine *engine,GmlVM *vm){
   vm->language_tag[tag_size]='\0';
 }
 
+static void boot_runtime_prepare(AnygmEngine *engine);
+static void boot_runtime_start(AnygmEngine *engine);
 static void boot_runtime(AnygmEngine *engine);
 static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed);
 
@@ -320,8 +322,10 @@ static int engine_inherit_game_change_overrides(AnygmEngine *engine,
   return 0;
 }
 
-static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSource *source,
-                                       const AnygmLoadConfig *config) {
+static AnygmResult engine_load_content_prepare(AnygmEngine *engine,
+                                               const AnygmContentSource *source,
+                                               const AnygmLoadConfig *config,
+                                               AnygmContentInfo *info) {
   engine->state_just_loaded = 0;
   snprintf(engine->language,sizeof engine->language,"%s",config&&config->language&&config->language[0]?config->language:"en");
   snprintf(engine->region,sizeof engine->region,"%s",config&&config->region&&config->region[0]?config->region:"US");
@@ -350,18 +354,17 @@ static AnygmResult engine_load_content(AnygmEngine *engine,const AnygmContentSou
   engine_logf(engine,ANYGM_LOG_INFO,"Loaded content: bytecode=%u rooms=%d code=%d\n",
               engine->win.bytecode,gml_room_count(&engine->win),engine->win.n_code);
   engine->full_game_on_initial_boot=0;
-  boot_runtime(engine);
-  run_selftest(engine);
-  GmlRenderResourceMetrics render_resources;
-  gml_render_resource_metrics(&engine->render,&render_resources);
-  engine_logf(engine,ANYGM_LOG_INFO,"Runtime booted: atlases=%d sprites=%d texture-pages=%d\n",
-              render_resources.atlas_count,render_resources.sprite_count,
-              render_resources.texture_page_count);
+  boot_runtime_prepare(engine);
+  if(info){
+    info->flags=gml_render_content_device_candidate_present(&engine->render)
+      ?ANYGM_CONTENT_GLSL_DEVICE_CANDIDATE:0u;
+  }
   return ANYGM_OK;
 }
-/* Cold-boot the runtime from the already-loaded data.win: fresh VM/render/audio + the same
- * configured start-room logic as first load. */
-static void boot_runtime(AnygmEngine *engine) {
+/* Prepare the runtime from the already-loaded data.win without executing content events. Keeping
+ * this boundary before extension scripts and room entry lets a host inspect the shader catalogue,
+ * negotiate a session-long context, and only then expose the final shader policy to Create. */
+static void boot_runtime_prepare(AnygmEngine *engine) {
   /* A reset is a cold boot. Keep engine time on the same timeline as an initial load. */
   { engine->vm.frame = 0; }
   engine->classic_compositor = 0;
@@ -396,10 +399,6 @@ static void boot_runtime(AnygmEngine *engine) {
   classic_transition_reset(engine);
   engine->have_presented_frame = 0;
   setup_display(engine);
-  /* A game asks whether shaders are supported in its very first events, so the session's answer —
-   * whether a graphics device was requested — has to be in place before the launch, like the
-   * anchor's os_type below. */
-  gml_render_set_shader_device_expected(&engine->render,engine_graphics_device_expected(engine));
   gml_vm_init_launch(&engine->vm,&engine->win,&engine->host,
                      engine->content_program_directory,engine->current_content_path,
                      engine->launch_parameters);
@@ -429,8 +428,7 @@ static void boot_runtime(AnygmEngine *engine) {
   GmlRenderControl render_control={
     .monitor_width=core_opt_monitor_size(engine,0),
     .monitor_height=core_opt_monitor_size(engine,1),
-    .shader_report_all_compiled=core_opt_onoff(engine,"anygm_report_shaders_compiled",
-                                               "ANYGM_REPORT_SHADERS_COMPILED",1),
+    .shader_report_all_compiled=engine->config.report_all_shaders_compiled?1:0,
     .shader_device_expected=engine_graphics_device_expected(engine)
   };
   gml_render_control_update(&engine->render,&render_control,GML_RENDER_CONTROL_HOST_OPTIONS);
@@ -447,6 +445,10 @@ static void boot_runtime(AnygmEngine *engine) {
   engine->vm.present_latch_hook_user = engine;
   engine->audio = gml_audio_create(&engine->win);
   engine->vm.audio = engine->audio;
+}
+
+/* Start the prepared runtime. Everything below this boundary can execute authored code. */
+static void boot_runtime_start(AnygmEngine *engine) {
   /* Boot the normal entry point unless the host supplied a neutral start-room override. */
   int start_order=0,selected_room=-1,spawn=0;
   double spawn_x=64.0,spawn_y=100.0;
@@ -515,6 +517,13 @@ static void boot_runtime(AnygmEngine *engine) {
                 engine->player_object,spawn_x,spawn_y);
   }
   engine->background = cur_room_bg(engine);
+}
+
+/* A reset and an in-content game change already own their session policy and context, so they run
+ * the two phases back to back. Initial host loading uses the phases separately. */
+static void boot_runtime(AnygmEngine *engine) {
+  boot_runtime_prepare(engine);
+  boot_runtime_start(engine);
 }
 
 static int game_change_next_argument(const char **cursor,char *output,size_t capacity){
@@ -886,8 +895,8 @@ static void poll_option_updates(AnygmEngine *engine) {
   GmlRenderControl control={
     .monitor_width=core_opt_monitor_size(engine,0),
     .monitor_height=core_opt_monitor_size(engine,1),
-    .shader_report_all_compiled=core_opt_onoff(engine,"anygm_report_shaders_compiled",
-                                               "ANYGM_REPORT_SHADERS_COMPILED",1)
+    .shader_report_all_compiled=engine->config.report_all_shaders_compiled?1:0,
+    .shader_device_expected=engine_graphics_device_expected(engine)
   };
   gml_render_control_update(&engine->render,&control,GML_RENDER_CONTROL_HOST_OPTIONS);
   if(anygm_host_development_setting(&engine->host,"GML_LOG_MONITOR"))
@@ -2148,7 +2157,7 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **out_eng
 
 void anygm_destroy(AnygmEngine *engine){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD) return;
-  if(engine->lifecycle==ENGINE_LOADED) anygm_unload(engine);
+  if(engine->lifecycle!=ENGINE_EMPTY) anygm_unload(engine);
   free(engine->state_reapply);
   free(engine->classic_phase_mem);
   free(engine->fb);
@@ -2164,13 +2173,15 @@ void anygm_destroy(AnygmEngine *engine){
   free(engine);
 }
 
-AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
-                       const AnygmLoadConfig *config){
+AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *source,
+                               const AnygmLoadConfig *config,AnygmContentInfo *info){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || !source ||
      source->struct_size<sizeof(AnygmContentSource)) return ANYGM_ERROR_INVALID_ARGUMENT;
   if(config && config->struct_size<sizeof(AnygmLoadConfig)) return ANYGM_ERROR_INCOMPATIBLE_ABI;
+  if(info && info->struct_size<sizeof *info) return ANYGM_ERROR_INCOMPATIBLE_ABI;
   if(engine->lifecycle!=ENGINE_EMPTY)
     return ANYGM_ERROR_INVALID_STATE;
+  if(info) info->flags=0;
   if(!ensure_primary_buffers(engine)){
     engine_errorf(engine,ANYGM_ERROR_OUT_OF_MEMORY,"Could not allocate the primary frame buffers");
     return ANYGM_ERROR_OUT_OF_MEMORY;
@@ -2188,20 +2199,48 @@ AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
       load_config=&resolved_config;
     }
   }
-  AnygmResult result=engine_load_content(engine,source,load_config);
+  AnygmResult result=engine_load_content_prepare(engine,source,load_config,info);
   if(result==ANYGM_OK){
-    engine->lifecycle=ENGINE_LOADED;
+    engine->lifecycle=ENGINE_PREPARED;
     engine->locale_from_host=(load_config==&resolved_config);
   }
   return result;
 }
 
+AnygmResult anygm_load_start(AnygmEngine *engine){
+  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_PREPARED)
+    return ANYGM_ERROR_INVALID_STATE;
+  boot_runtime_start(engine);
+  run_selftest(engine);
+  {
+    GmlRenderResourceMetrics render_resources;
+    gml_render_resource_metrics(&engine->render,&render_resources);
+    engine_logf(engine,ANYGM_LOG_INFO,
+                "Runtime booted: atlases=%d sprites=%d texture-pages=%d\n",
+                render_resources.atlas_count,render_resources.sprite_count,
+                render_resources.texture_page_count);
+  }
+  engine->lifecycle=ENGINE_LOADED;
+  return ANYGM_OK;
+}
+
+AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
+                       const AnygmLoadConfig *config){
+  AnygmResult result=anygm_load_prepare(engine,source,config,NULL);
+  if(result!=ANYGM_OK) return result;
+  result=anygm_load_start(engine);
+  if(result!=ANYGM_OK) anygm_unload(engine);
+  return result;
+}
+
 void anygm_unload(AnygmEngine *engine){
-  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle!=ENGINE_LOADED) return;
-  /* A session that never saved still teaches the cache: measure once at teardown. */
-  engine_state_peak_note(engine,engine_state_size(engine));
-  engine_state_resume_peak_note(engine,engine_state_resume_size(engine));
-  engine_state_peak_flush(engine);
+  if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || engine->lifecycle==ENGINE_EMPTY) return;
+  if(engine->lifecycle==ENGINE_LOADED){
+    /* A session that never saved still teaches the cache: measure once at teardown. */
+    engine_state_peak_note(engine,engine_state_size(engine));
+    engine_state_resume_peak_note(engine,engine_state_resume_size(engine));
+    engine_state_peak_flush(engine);
+  }
   engine_graphics_report(engine);
   engine_unload(engine);
   engine_override_reset(engine);
@@ -2285,13 +2324,16 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
    * content code runs before anything would flush it. Forget it here, ahead of all of that. */
   gml_render_discard_deferred_presentation(&engine->render);
   engine->frame_authority=ENGINE_FRAME_CPU_MATERIALIZED;
-  /* Deferring the frame's last operation only pays when something else can perform it. */
-  gml_render_set_deferred_presentation(&engine->render,engine_graphics_active(engine));
-  /* Likewise a content program in the middle of a frame runs only where something can run it. */
+  /* Hybrid presentation and content GLSL may each need the terminal draw, independently. */
+  gml_render_set_deferred_presentation(
+    &engine->render,
+    engine_hybrid_presentation_active(engine)||engine_content_shaders_active(engine));
+  /* A content program in the middle of a frame runs only when that separate policy is active. */
   gml_render_set_shader_executor(&engine->render,
-                                 engine_graphics_active(engine)?engine_execute_content_shader:NULL,
+                                 engine_content_shaders_active(engine)
+                                   ?engine_execute_content_shader:NULL,
                                  engine);
-  gml_render_set_shader_device(&engine->render,engine_graphics_active(engine)?1:0);
+  gml_render_set_shader_device(&engine->render,engine_content_shaders_active(engine));
   /* A frame that spent anything on read-backs is one frame of the budget's measurement; the count
    * is closed here, where the frame begins, rather than from the renderer's own counter. */
   engine_readback_open_frame(engine);
@@ -2389,6 +2431,8 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
     engine->config.content_shader_readback=delta->values.content_shader_readback;
   if(f&ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED)
     engine->config.content_shader_device_expected=delta->values.content_shader_device_expected?1u:0u;
+  if(f&ANYGM_CONFIG_HYBRID_GPU_PRESENTATION)
+    engine->config.hybrid_gpu_presentation=delta->values.hybrid_gpu_presentation?1u:0u;
   if(f&ANYGM_CONFIG_GAMEPAD_CONNECTED) engine->config.gamepad_connected=delta->values.gamepad_connected;
   if(f&ANYGM_CONFIG_FAST_ALPHA_CULL) engine->config.fast_alpha_cull=delta->values.fast_alpha_cull;
   if(f&ANYGM_CONFIG_FAST_FORWARD) engine->config.fast_forward=delta->values.fast_forward;
@@ -2422,6 +2466,16 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
         if(want) engine->monitor_override_pending=1;
       }
     }
+  }
+  if(engine->lifecycle==ENGINE_PREPARED){
+    GmlRenderControl control={
+      .monitor_width=core_opt_monitor_size(engine,0),
+      .monitor_height=core_opt_monitor_size(engine,1),
+      .shader_report_all_compiled=engine->config.report_all_shaders_compiled?1:0,
+      .shader_device_expected=engine_graphics_device_expected(engine)
+    };
+    gml_render_control_update(&engine->render,&control,GML_RENDER_CONTROL_HOST_OPTIONS);
+    gml_render_set_shader_device(&engine->render,engine_content_shaders_active(engine));
   }
   if(engine->lifecycle==ENGINE_LOADED){
     poll_option_updates(engine);

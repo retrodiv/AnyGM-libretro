@@ -4,11 +4,11 @@
 /* What the adapter asks the frontend for, what it does with the answer, and which video callback
  * carries the frame.
  *
- * Every scenario here is one a real frontend produces: the setting left alone, the setting turned
- * on with no context available, a host that prefers embedded graphics, a host that prefers desktop
- * graphics, a context that arrives and then arrives again without going away in between, and a
- * context that is taken away properly. The engine is stubbed, so what is under test is the
- * translation and nothing else. */
+ * Every scenario here is one a real frontend produces: the settings left alone, a request with no
+ * context available, a host that prefers embedded graphics, a host that prefers desktop graphics,
+ * a context that arrives synchronously or later, one that arrives again without going away in
+ * between, and a context that is taken away properly. The engine is stubbed, so what is under test
+ * is the translation and nothing else. */
 #include "libretro_internal.h"
 
 #include <stdint.h>
@@ -23,6 +23,7 @@ void retro_deinit(void);
 void retro_run(void);
 bool retro_load_game(const struct retro_game_info *info);
 void retro_unload_game(void);
+void retro_get_system_av_info(struct retro_system_av_info *info);
 
 #define REQUIRE(condition,label) do{ \
   if(!(condition)){ \
@@ -32,13 +33,25 @@ void retro_unload_game(void);
 }while(0)
 
 static const char *option_value;
+static const char *shader_option_value;
+static int content_candidate;
 static int preferred_available;
 static unsigned preferred_context;
 static int accept_desktop;
 static int accept_embedded;
+static int reset_during_request;
 static struct retro_hw_render_callback declared;
 static int declared_count;
 static unsigned rejected_requests;
+static unsigned sequence;
+static unsigned prepare_sequence;
+static unsigned request_sequence;
+static unsigned start_sequence;
+static unsigned start_calls;
+static AnygmConfigDelta latest_config;
+static unsigned geometry_updates;
+static unsigned system_av_updates;
+static struct retro_game_geometry latest_geometry;
 
 static int reset_calls;
 static int destroy_calls;
@@ -75,6 +88,10 @@ static bool environment_callback(unsigned command,void *data){
         variable->value=option_value;
         return option_value!=NULL;
       }
+      if(!strcmp(variable->key,"anygm_content_shader_readback")){
+        variable->value=shader_option_value;
+        return shader_option_value!=NULL;
+      }
       variable->value=NULL;
       return false; }
     case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
@@ -86,12 +103,14 @@ static bool environment_callback(unsigned command,void *data){
        * which is how the core reaches its entry points and its target. */
       struct retro_hw_render_callback *request=data;
       if(!request) return false;
+      if(!request_sequence) request_sequence=++sequence;
       declared_count++;
       if((request->context_type==RETRO_HW_CONTEXT_OPENGL_CORE && accept_desktop) ||
          (request->context_type==RETRO_HW_CONTEXT_OPENGLES3 && accept_embedded)){
         request->get_proc_address=frontend_get_proc;
         request->get_current_framebuffer=frontend_get_framebuffer;
         declared=*request;
+        if(reset_during_request) request->context_reset();
         return true;
       }
       rejected_requests++;
@@ -99,6 +118,14 @@ static bool environment_callback(unsigned command,void *data){
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT:
     case RETRO_ENVIRONMENT_SET_SERIALIZATION_QUIRKS:
     case RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME:
+      return true;
+    case RETRO_ENVIRONMENT_SET_GEOMETRY:
+      geometry_updates++;
+      if(data) latest_geometry=*(const struct retro_game_geometry*)data;
+      return true;
+    case RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO:
+      system_av_updates++;
+      if(data) latest_geometry=((const struct retro_system_av_info*)data)->geometry;
       return true;
     default:
       return false;
@@ -121,6 +148,19 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **engine)
   return ANYGM_OK;
 }
 void anygm_destroy(AnygmEngine *engine){ (void)engine; }
+AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *source,
+                               const AnygmLoadConfig *config,AnygmContentInfo *info){
+  (void)engine; (void)source; (void)config;
+  prepare_sequence=++sequence;
+  if(info) info->flags=content_candidate?ANYGM_CONTENT_GLSL_DEVICE_CANDIDATE:0u;
+  return ANYGM_OK;
+}
+AnygmResult anygm_load_start(AnygmEngine *engine){
+  (void)engine;
+  start_calls++;
+  if(!start_sequence) start_sequence=++sequence;
+  return ANYGM_OK;
+}
 AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
                        const AnygmLoadConfig *config){
   (void)engine; (void)source; (void)config;
@@ -133,8 +173,8 @@ AnygmResult anygm_get_av_info(const AnygmEngine *engine,AnygmAvInfo *info){
   if(!info) return ANYGM_ERROR_INVALID_ARGUMENT;
   info->base_width=320;
   info->base_height=240;
-  info->max_width=320;
-  info->max_height=240;
+  info->max_width=3840;
+  info->max_height=2160;
   info->aspect_ratio=4.0/3.0;
   info->frames_per_second=60.0;
   info->audio_rate=44100;
@@ -153,7 +193,9 @@ AnygmResult anygm_run_frame(AnygmEngine *engine,const AnygmInputFrame *input,
   return ANYGM_OK;
 }
 AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
-  (void)engine; (void)delta; return ANYGM_OK;
+  (void)engine;
+  if(delta) latest_config=*delta;
+  return ANYGM_OK;
 }
 AnygmResult anygm_set_runtime_override(AnygmEngine *engine,uint32_t slot,uint32_t enabled,
                                        const char *expression){
@@ -197,6 +239,7 @@ uint32_t anygm_api_version(void){ return ANYGM_API_VERSION; }
 
 AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphicsContext *context){
   (void)engine;
+  ++sequence;
   reset_calls++;
   if(context) adopted=*context;
   return reset_result;
@@ -209,12 +252,24 @@ void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_curr
 
 static void begin(const char *value,int available,unsigned preferred,int desktop,int embedded){
   option_value=value;
+  shader_option_value=NULL;
+  content_candidate=0;
   preferred_available=available;
   preferred_context=preferred;
   accept_desktop=desktop;
   accept_embedded=embedded;
+  reset_during_request=0;
   declared_count=0;
   rejected_requests=0;
+  sequence=0;
+  prepare_sequence=0;
+  request_sequence=0;
+  start_sequence=0;
+  start_calls=0;
+  memset(&latest_config,0,sizeof latest_config);
+  geometry_updates=0;
+  system_av_updates=0;
+  memset(&latest_geometry,0,sizeof latest_geometry);
   reset_calls=0;
   destroy_calls=0;
   destroy_current=0xFFFFFFFFu;
@@ -247,11 +302,13 @@ static int option_none_negotiates_nothing(void){
   begin(NULL,0,0,1,1);
   REQUIRE(load(),"content loads with the setting unset");
   REQUIRE(declared_count==0,"an unset setting asks for no graphics context");
+  REQUIRE(start_calls==1,"software content starts during load");
   finish();
   begin("None",0,0,1,1);
   REQUIRE(load(),"content loads with the setting at None");
   REQUIRE(declared_count==0,"None asks for no graphics context");
   REQUIRE(reset_calls==0,"no context is adopted");
+  REQUIRE(start_calls==1,"None starts without waiting for a context");
   finish();
   /* The setting is a selector, so it can hold a backend this build does not implement -- a newer
    * core's saved value read back by an older one. That must fall to the software renderer rather
@@ -270,6 +327,7 @@ static int rejection_keeps_software(void){
   REQUIRE(declared_count==2,"both families are offered before giving up");
   REQUIRE(rejected_requests==2,"the frontend refused both");
   REQUIRE(reset_calls==0,"nothing was adopted");
+  REQUIRE(start_calls==1,"a rejected request starts the software runtime");
   /* The ordinary pixel callback still carries the frame. */
   retro_run();
   REQUIRE(video_calls==1,"a frame was presented");
@@ -282,6 +340,9 @@ static int desktop_is_requested_first(void){
   begin("OpenGL",0,0,1,1);
   REQUIRE(load(),"content loads");
   REQUIRE(declared_count==1,"the first request was accepted");
+  REQUIRE(prepare_sequence && request_sequence && prepare_sequence<request_sequence,
+          "content is inspected before a context is requested");
+  REQUIRE(start_calls==0,"authored events wait for the accepted context");
   REQUIRE(declared.context_type==RETRO_HW_CONTEXT_OPENGL_CORE,"desktop graphics were requested");
   REQUIRE(declared.version_major==3 && declared.version_minor==3,"the requested version is stated");
   REQUIRE(declared.bottom_left_origin,"the frame is declared in the framebuffer's own row order");
@@ -315,6 +376,8 @@ static int context_lifecycle_reaches_the_engine(void){
           "the frontend filled in its resolvers");
   declared.context_reset();
   REQUIRE(reset_calls==1,"the reset reached the engine");
+  REQUIRE(start_calls==1 && start_sequence>request_sequence,
+          "authored events start only after context adoption");
   REQUIRE(adopted.struct_size==sizeof adopted,"the context declares its own size");
   REQUIRE(adopted.api==ANYGM_GRAPHICS_OPENGL_CORE,"the graphics family was translated");
   REQUIRE(adopted.get_proc_address && adopted.get_current_framebuffer,
@@ -329,10 +392,41 @@ static int context_lifecycle_reaches_the_engine(void){
    * context is gone. */
   declared.context_reset();
   REQUIRE(reset_calls==2,"a repeated reset is forwarded");
+  REQUIRE(start_calls==1,"a context recreation does not boot content twice");
   REQUIRE(destroy_calls==0,"a repeated reset is not a destroy");
   declared.context_destroy();
   REQUIRE(destroy_calls==1,"the destroy reached the engine");
   REQUIRE(destroy_current==1u,"a controlled destroy says the context is still current");
+  finish();
+  return 0;
+}
+
+static int synchronous_context_starts_once(void){
+  begin("OpenGL",0,0,1,1);
+  reset_during_request=1;
+  REQUIRE(load(),"content loads when the frontend creates the context synchronously");
+  REQUIRE(reset_calls==1 && start_calls==1,
+          "a synchronous context starts the prepared runtime exactly once");
+  retro_run();
+  REQUIRE(video_calls==1,"the synchronously started runtime presents a frame");
+  finish();
+  return 0;
+}
+
+static int provisional_av_is_corrected(void){
+  struct retro_system_av_info av;
+  begin("OpenGL",0,0,1,1);
+  REQUIRE(load(),"content prepares before the deferred AV query");
+  memset(&av,0,sizeof av);
+  retro_get_system_av_info(&av);
+  REQUIRE(av.geometry.base_width==288u && av.geometry.base_height==216u,
+          "a prepared runtime exposes the bounded fallback geometry");
+  declared.context_reset();
+  REQUIRE(start_calls==1,"the deferred context starts content after the AV query");
+  retro_run();
+  REQUIRE(geometry_updates==1 && system_av_updates==0 &&
+          latest_geometry.base_width==320u && latest_geometry.base_height==240u,
+          "the first frame replaces provisional geometry with the started runtime's geometry");
   finish();
   return 0;
 }
@@ -343,6 +437,7 @@ static int failed_adoption_keeps_software(void){
   reset_result=ANYGM_ERROR_UNSUPPORTED;
   declared.context_reset();
   REQUIRE(reset_calls==1,"the reset was attempted");
+  REQUIRE(start_calls==1,"failed adoption starts the documented software fallback");
   /* The engine reports a CPU frame, so the ordinary callback carries it even though the frontend
    * granted a context. */
   frame_flags=0;
@@ -356,6 +451,7 @@ static int failed_adoption_keeps_software(void){
 static int sentinel_selects_the_target(void){
   begin("OpenGL",0,0,1,1);
   REQUIRE(load(),"content loads");
+  declared.context_reset();
   frame_flags=ANYGM_FRAME_HARDWARE_TARGET;
   retro_run();
   REQUIRE(video_calls==1,"a frame was presented");
@@ -366,6 +462,51 @@ static int sentinel_selects_the_target(void){
   retro_run();
   REQUIRE(last_video_pixels==(const void*)(uintptr_t)0x1000u,
           "a CPU frame in the same session uses the pixel callback");
+  finish();
+  return 0;
+}
+
+static int content_glsl_requests_only_for_candidates(void){
+  begin("None",0,0,1,1);
+  shader_option_value="Performance";
+  content_candidate=0;
+  REQUIRE(load(),"content with no GLSL candidate loads");
+  REQUIRE(declared_count==0,"GLSL mode alone requests no context without a candidate");
+  REQUIRE(start_calls==1,"candidate-free content starts immediately");
+  finish();
+
+  begin("None",0,0,1,1);
+  shader_option_value="Exact";
+  content_candidate=1;
+  REQUIRE(load(),"content with a GLSL candidate prepares");
+  REQUIRE(declared_count==1,"GLSL mode requests a context for a candidate");
+  REQUIRE(start_calls==0,"candidate content waits for context adoption");
+  REQUIRE(latest_config.values.content_shader_device_expected==1u &&
+          latest_config.values.hybrid_gpu_presentation==0u,
+          "GLSL can select the device without hybrid presentation");
+  declared.context_reset();
+  REQUIRE(start_calls==1,"candidate content starts after adoption");
+  finish();
+
+  begin("None",0,0,0,0);
+  shader_option_value="Performance";
+  content_candidate=1;
+  REQUIRE(load(),"candidate content falls back after rejection");
+  REQUIRE(start_calls==1 && latest_config.values.content_shader_device_expected==0u &&
+          latest_config.values.content_shader_readback==ANYGM_SHADER_READBACK_NEVER &&
+          latest_config.values.report_all_shaders_compiled==1u,
+          "a rejected GLSL request uses Off but report available");
+  finish();
+
+  begin("OpenGL",0,0,1,1);
+  shader_option_value="Off";
+  content_candidate=1;
+  REQUIRE(load(),"hybrid-only content prepares");
+  REQUIRE(latest_config.values.content_shader_device_expected==0u &&
+          latest_config.values.hybrid_gpu_presentation==1u &&
+          latest_config.values.report_all_shaders_compiled==0u,
+          "hybrid presentation does not enable GLSL or change strict Off reporting");
+  declared.context_reset();
   finish();
   return 0;
 }
@@ -395,8 +536,11 @@ int main(void){
   if(desktop_is_requested_first()) return EXIT_FAILURE;
   if(embedded_preference_is_followed()) return EXIT_FAILURE;
   if(context_lifecycle_reaches_the_engine()) return EXIT_FAILURE;
+  if(synchronous_context_starts_once()) return EXIT_FAILURE;
+  if(provisional_av_is_corrected()) return EXIT_FAILURE;
   if(failed_adoption_keeps_software()) return EXIT_FAILURE;
   if(sentinel_selects_the_target()) return EXIT_FAILURE;
+  if(content_glsl_requests_only_for_candidates()) return EXIT_FAILURE;
   if(unload_releases_without_a_current_context()) return EXIT_FAILURE;
   printf("libretro hardware render contract: ok\n");
   return EXIT_SUCCESS;

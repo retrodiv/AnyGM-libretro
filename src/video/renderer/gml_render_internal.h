@@ -497,9 +497,9 @@ typedef struct GmlRender {
   /* A content program executed in the middle of a frame by the host, and the plane its result
    * lands in, drawn as surface GML_RENDER_SHADED_SURFACE. */
   GmlRenderShaderExecutor shader_executor; void *shader_executor_context;
-  /* Whether a graphics device is actually present now (adoption succeeded), refined per frame — used
-   * to decide whether a program actually runs. And whether one was requested at all, read at boot
-   * and stable — used to answer a shader-support query a game caches on its first frame. */
+  /* Whether a graphics device is actually present now (adoption succeeded), refined per frame —
+   * used to decide whether a program actually runs. And the finalized session policy, stable
+   * across context resets — used to answer a shader-support query content may cache. */
   int shader_device_present;
   int shader_device_expected;
   uint32_t *shaded_plane; size_t shaded_plane_capacity;

@@ -456,7 +456,19 @@ int main(void){
   source.size=content_size;
   if(anygm_load(engine,&source,&short_load_config)!=ANYGM_ERROR_INCOMPATIBLE_ABI)
     return fail("short load configuration was accepted");
-  if(anygm_load(engine,&source,NULL)!=ANYGM_OK) return fail("memory load failed");
+  AnygmContentInfo short_content_info={0};
+  short_content_info.struct_size=sizeof short_content_info-1;
+  if(anygm_load_prepare(engine,&source,NULL,&short_content_info)!=ANYGM_ERROR_INCOMPATIBLE_ABI)
+    return fail("short prepared-content information was accepted");
+  AnygmContentInfo content_info={0};
+  content_info.struct_size=sizeof content_info;
+  if(anygm_load_prepare(engine,&source,NULL,&content_info)!=ANYGM_OK)
+    return fail("memory load preparation failed");
+  if(anygm_run_frame(engine,&input,&output)!=ANYGM_ERROR_INVALID_STATE ||
+     anygm_state_size(engine)!=0 || anygm_load_prepare(engine,&source,NULL,&content_info)!=
+       ANYGM_ERROR_INVALID_STATE)
+    return fail("a prepared load was treated as a started runtime");
+  if(anygm_load_start(engine)!=ANYGM_OK) return fail("prepared memory load did not start");
   if(dummy.locale_calls!=1) return fail("locale was not captured exactly once at load");
 
   if(anygm_load(engine,&source,NULL)!=ANYGM_ERROR_INVALID_STATE)

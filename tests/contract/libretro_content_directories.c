@@ -39,9 +39,10 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **engine)
   return ANYGM_OK;
 }
 void anygm_destroy(AnygmEngine *engine){ (void)engine; }
-AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
-                       const AnygmLoadConfig *config){
+AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *source,
+                               const AnygmLoadConfig *config,AnygmContentInfo *info){
   (void)engine; (void)config;
+  if(info) info->flags=0;
   if(!source) return ANYGM_ERROR_INVALID_ARGUMENT;
   loaded_save_present=source->save_directory!=NULL;
   loaded_cache_present=source->cache_directory!=NULL;
@@ -50,6 +51,11 @@ AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
   snprintf(loaded_cache_directory,sizeof loaded_cache_directory,"%s",
            source->cache_directory?source->cache_directory:"");
   return ANYGM_OK;
+}
+AnygmResult anygm_load_start(AnygmEngine *engine){ (void)engine; return ANYGM_OK; }
+AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
+                       const AnygmLoadConfig *config){
+  return anygm_load_prepare(engine,source,config,NULL);
 }
 void anygm_unload(AnygmEngine *engine){ (void)engine; }
 AnygmResult anygm_reset(AnygmEngine *engine){ (void)engine; return ANYGM_OK; }
@@ -97,7 +103,7 @@ size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capac
 
 /* The rest of the adapter is out of frame; only the directories the loader receives are on test. */
 #if ANYGM_HARDWARE_RENDER
-void libretro_hw_render_request(void){}
+bool libretro_hw_render_request(bool needed){ (void)needed; return false; }
 void libretro_hw_render_release(void){}
 bool libretro_hw_render_requested(void){ return false; }
 #endif
@@ -105,6 +111,7 @@ void libretro_vfs_request(void){}
 void libretro_vfs_services_init(AnygmHostServices *services){ (void)services; }
 void libretro_options_register(void){}
 void libretro_options_apply(bool all_fields){ (void)all_fields; }
+void libretro_options_finalize_graphics(bool available){ (void)available; }
 const char *libretro_options_value(const char *key){ (void)key; return NULL; }
 void libretro_options_publish_rooms(void){}
 void libretro_options_release(void){}

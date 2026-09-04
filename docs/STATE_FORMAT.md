@@ -99,11 +99,12 @@ canonical bytes and semantics remain unchanged.
   If the stored completed frame has another extent, the load redraws once without advancing the
   simulation instead of publishing that stale extent and changing geometry on the following frame.
 - Diagnostics, host handles, and disposable caches are excluded.
-- Graphics-target resources are excluded under every schema. Textures, programs, framebuffer
-  identifiers, entry-point tables, upload buffers, residency records, render plans and timing
-  queries are derived caches, so they are rebuilt rather than restored, and whether a host lent a
-  graphics context is a transport choice rather than emulated state: it is absent from the
-  configuration fingerprint, and a state saved with one loads without one and the reverse.
+- Graphics-target resources and host execution policies are excluded under every schema. Textures,
+  programs, framebuffer identifiers, entry-point tables, upload buffers, residency records,
+  render plans and timing queries are derived caches, while content-GLSL and hybrid-presentation
+  selection belong to the host session. They are rebuilt or reapplied rather than restored, are
+  absent from the configuration fingerprint, and a state saved under one graphics policy loads
+  under another.
 
 `anygm_state_size` returns the exact size of the current complete canonical state.
 `anygm_state_resume_size` returns its frame-free size, and

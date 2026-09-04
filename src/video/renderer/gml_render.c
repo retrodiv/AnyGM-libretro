@@ -935,8 +935,10 @@ int gml_render_shader_is_compiled(const GmlRender *r,int shader){
    * primitive is painted flat in a colour the shader was going to discard, which is why the
    * refusal stands whenever there is no device. */
   if(r->shader_pal[shader].procedural) return r->shader_device_expected?1:0;
-  /* With a graphics API selected, content programs with both sources can execute on
-   * the device. Use expected-device state because queries may precede context adoption. */
+  /* With an adopted graphics context, content programs with both sources can execute on the
+   * device. Use the finalized session flag rather than transient per-frame presence, so a
+   * context reset does not change a support answer content may have cached. Initial loading
+   * starts authored events only after context adoption has its final answer. */
   if(r->shader_device_expected &&
      r->shader_pal[shader].source_vertex_es && r->shader_pal[shader].source_fragment_es) return 1;
   return r->shader_report_all_compiled?1:0;
@@ -1240,6 +1242,14 @@ int gml_render_shader_content_candidate(const GmlRender *r,int shader){
     if(!p->source_vertex_es || !p->source_fragment_es) return 0;
     return !shader_pal_recognized(p);
   }
+}
+int gml_render_content_device_candidate_present(const GmlRender *r){
+  if(!r || !r->shader_pal) return 0;
+  for(int shader=0;shader<r->n_shader_pal;shader++){
+    const struct GmlShaderPal *p=&r->shader_pal[shader];
+    if(p->source_vertex_es && p->source_fragment_es && !shader_pal_recognized(p)) return 1;
+  }
+  return 0;
 }
 int gml_render_shader_sources(const GmlRender *r,int shader,GmlRenderShaderSources *out){
   if(!out) return 0;

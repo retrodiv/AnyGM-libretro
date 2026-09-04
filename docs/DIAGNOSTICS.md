@@ -145,13 +145,14 @@ gap names itself. A shader whose `recognized` is 1 belongs to a family implement
 software; that flag alone does not establish output fidelity. State-setting builtins
 whose names begin with `draw_` are not counted as draws.
 
-## Hybrid GPU counters
+## Graphics-device counters
 
-`GML_HYBRID_GPU_STATS` reports one bounded line when the graphics context is released or content is
-unloaded:
+`GML_GRAPHICS_DEVICE_STATS` reports one bounded line when the graphics context is released or
+content is unloaded. It covers the shared context used by the independent content-GLSL and hybrid
+presentation policies:
 
 ```text
-[hybrid-gpu] frames=N accepted=N replayed=N transport=N draws=N uploads=N bytes=N resets=N
+[graphics-device] frames=N accepted=N replayed=N transport=N draws=N uploads=N bytes=N resets=N
              destroys=N losses=N program_failures=N fallback_unsupported=N fallback_box=N
              fallback_context=N fallback_upload=N fallback_overflow=N fallback_shader=N
              materializations=N screen_passes=N canvas_passes=N readback_passes=N
@@ -170,20 +171,21 @@ also logged once, with the measured cost, as a warning. The budget is per frame 
 pass because what a frame can afford is a frame's time: three passes of 2.5 milliseconds fit and
 six do not. `readback_pipelined` is 1 while the measured policy is taking the previous pass's answer rather
 than waiting for the device — correct, one frame late, and what the measured policy does from its
-first pass, because waiting is most of what a read-back costs and none of what it produces. The
-`anygm_content_shader_readback` option presents these policies as Performance (measured,
-pipelined), Exact (waits), and Off. The terminal presentation is not affected by any of them.
+first pass, because waiting is most of what a read-back costs and none of what it produces.
+`Shaders (GLSL)` presents these policies as Performance (measured, pipelined), Exact (waits), and
+its two Off reporting variants. Terminal GLSL is exact in both active modes; the Off variants do
+not execute it.
 
 `accepted` counts passes the device executed and `replayed` counts passes the software executor had
 to take back. `transport` is the subset of accepted passes that merely carried a complete software
 frame to the device, which is not acceleration: a session whose `accepted` equals its `transport`
 never accelerated anything, and a diagnostic that blurred the two would report it as a success.
 `bytes` distinguishes the two just as plainly — an accelerated presentation uploads its small
-source, while transport uploads the whole host-sized frame. `screen_passes` and `canvas_passes`
-separate the two accelerated shapes, because they remove different work: the first is the frame's
-last operation performed on the device so the processor's copy is never written, and the second is
-the fit of a completed frame into a larger host framebuffer. `materializations` counts the times
-something needed the processor's copy after all and it had to be rebuilt.
+source, while transport uploads the whole host-sized frame. `screen_passes` includes terminal GLSL
+and eligible hybrid presentation; `canvas_passes` is the hybrid fit of a completed frame into a
+larger host framebuffer. `materializations` counts the times something needed the processor's copy
+after all and it had to be rebuilt. A content-GLSL-only session can therefore have device shader
+passes and transport without enabling generic hybrid final-pass acceleration.
 
 A normal build pays nothing for this when the setting is absent: the counters are increments at
 pass granularity and no line is formatted.

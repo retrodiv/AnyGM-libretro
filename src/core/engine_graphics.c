@@ -44,8 +44,8 @@ AnygmResult anygm_graphics_context_reset(AnygmEngine *engine,const AnygmGraphics
     /* The software engine is untouched and remains the complete implementation. */
     return ANYGM_ERROR_UNSUPPORTED;
   }
-  /* A game that queries shader support during its first boot frame must already see the device. */
-  gml_render_set_shader_device(&engine->render,1);
+  /* Hybrid presentation and content GLSL share this context but are independent policies. */
+  gml_render_set_shader_device(&engine->render,engine_content_shaders_active(engine));
   return ANYGM_OK;
 }
 
@@ -56,6 +56,15 @@ void anygm_graphics_context_destroy(AnygmEngine *engine,uint32_t context_is_curr
 
 int engine_graphics_active(const AnygmEngine *engine){
   return engine && engine->gpu && gml_gpu_context_active(engine->gpu);
+}
+
+int engine_hybrid_presentation_active(const AnygmEngine *engine){
+  return engine_graphics_active(engine) && engine->config.hybrid_gpu_presentation?1:0;
+}
+
+int engine_content_shaders_active(const AnygmEngine *engine){
+  return engine_graphics_active(engine) && engine->config.content_shader_device_expected &&
+         engine->config.content_shader_readback!=ANYGM_SHADER_READBACK_NEVER?1:0;
 }
 
 void engine_graphics_release(AnygmEngine *engine,int context_is_current){
@@ -73,10 +82,10 @@ void engine_graphics_release(AnygmEngine *engine,int context_is_current){
 void engine_graphics_report(AnygmEngine *engine){
   GmlGpuCounters counters;
   if(!engine || !engine->gpu) return;
-  if(!anygm_host_development_setting(&engine->host,"GML_HYBRID_GPU_STATS")) return;
+  if(!anygm_host_development_setting(&engine->host,"GML_GRAPHICS_DEVICE_STATS")) return;
   gml_gpu_counters(engine->gpu,&counters);
   engine_logf(engine,ANYGM_LOG_INFO,
-    "[hybrid-gpu] frames=%u accepted=%u replayed=%u transport=%u draws=%u uploads=%u "
+    "[graphics-device] frames=%u accepted=%u replayed=%u transport=%u draws=%u uploads=%u "
     "bytes=%llu resets=%u destroys=%u losses=%u program_failures=%u "
     "fallback_unsupported=%u fallback_box=%u fallback_context=%u fallback_upload=%u "
     "fallback_overflow=%u fallback_shader=%u materializations=%u screen_passes=%u canvas_passes=%u"
@@ -212,8 +221,7 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
   GmlPlanRect whole;
   uint32_t image;
   uint64_t started;
-  if(!engine || !request || !engine->gpu || !gml_gpu_context_active(engine->gpu)) return 0;
-  if(engine->config.content_shader_readback==ANYGM_SHADER_READBACK_NEVER) return 0;
+  if(!engine || !request || !engine_content_shaders_active(engine)) return 0;
   if(engine->readback_refused) return 0;
   /* Start pipelined read-back with the first pass. Waiting for the device adds latency;
    * the prior pass's answer is one frame old, while Always requests the exact answer. */
@@ -294,9 +302,9 @@ int engine_execute_content_shader(void *context,const GmlRenderShaderRequest *re
        engine_readback_over_budget(engine->readback_frame_ns,engine->readback_frames_measured)){
       engine->readback_refused=1;
       engine_logf(engine,ANYGM_LOG_WARN,
-        "[hybrid-gpu] content shaders inside a frame draw plain on this device: even without "
+        "[content-glsl] shaders inside a frame draw plain on this device: even without "
         "waiting for it they cost %.2f ms a frame, over the %.2f ms budget. Set the "
-        "Game shaders option to Exact to run them anyway.\n",
+        "Shaders (GLSL) option to Exact to run them anyway.\n",
         (double)engine->readback_frame_ns/(double)engine->readback_frames_measured/1e6,
         ENGINE_READBACK_BUDGET_US_PER_FRAME/1000.0);
     }
@@ -311,7 +319,9 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
   GmlPlanRect whole,destination;
   GmlPlanAxis axis_x,axis_y;
   uint32_t image;
-  if(!engine || !engine->gpu || !gml_gpu_context_active(engine->gpu)) return 0;
+  int hybrid=engine_hybrid_presentation_active(engine);
+  int shaders=engine_content_shaders_active(engine);
+  if(!engine || (!hybrid && !shaders)) return 0;
   if(engine->host_canvas_active) return 0;
   if(!gml_render_deferred_presentation(&engine->render,&record)) return 0;
   if(record.target_pixels!=engine->screen) return 0;
@@ -377,7 +387,7 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
     axis_y.origin=record.origin_y;
     axis_y.extent=record.extent_y;
   }
-  if(record.shader>=0){
+  if(record.shader>=0 && shaders){
     /* The content drew its frame through its own program. Run that program on the device; when
      * the device refuses it, the renderer is told so the next frame draws unshaded rather than
      * asking again, and this frame falls back to the unshaded blit below. */
@@ -393,6 +403,9 @@ int engine_present_hardware_screen(AnygmEngine *engine,unsigned *width,unsigned 
     image=gml_render_plan_add_image(plan,&source);
     if(image==GML_PLAN_NO_IMAGE) return 0;
   }
+  /* With only content GLSL enabled, an ineligible or refused program returns to the complete
+   * software presentation. The final-pass acceleration belongs exclusively to Hybrid GPU. */
+  if(!hybrid) return 0;
   /* The presentation writes an opaque frame: the top byte is set, not carried. */
   if(!gml_render_plan_add_blit_nearest(plan,image,destination,axis_x,axis_y,0xFFu)) return 0;
   if(!gml_gpu_execute_plan(engine->gpu,plan)) return 0;
@@ -410,7 +423,7 @@ presented:
 
 int engine_present_hardware_canvas(AnygmEngine *engine,unsigned *width,unsigned *height){
   unsigned host_width=0,host_height=0;
-  if(!engine || !engine->gpu || !gml_gpu_context_active(engine->gpu)) return 0;
+  if(!engine_hybrid_presentation_active(engine)) return 0;
   if(!engine->screen || !engine->output_width || !engine->output_height) return 0;
   /* This pass reads the completed frame, so it has to be the canonical one. */
   engine_materialize_completed_frame(engine);
@@ -519,6 +532,16 @@ int engine_readback_over_budget(uint64_t frame_total_ns,uint32_t frames){
 void engine_graphics_report(AnygmEngine *engine){ (void)engine; }
 
 int engine_graphics_active(const AnygmEngine *engine){
+  (void)engine;
+  return 0;
+}
+
+int engine_hybrid_presentation_active(const AnygmEngine *engine){
+  (void)engine;
+  return 0;
+}
+
+int engine_content_shaders_active(const AnygmEngine *engine){
   (void)engine;
   return 0;
 }

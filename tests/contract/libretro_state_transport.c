@@ -53,9 +53,16 @@ AnygmResult anygm_create(const AnygmHostServices *services,AnygmEngine **engine)
 }
 
 void anygm_destroy(AnygmEngine *engine){ (void)engine; }
+AnygmResult anygm_load_prepare(AnygmEngine *engine,const AnygmContentSource *source,
+                               const AnygmLoadConfig *config,AnygmContentInfo *info){
+  (void)engine; (void)source; (void)config;
+  if(info) info->flags=0;
+  return ANYGM_OK;
+}
+AnygmResult anygm_load_start(AnygmEngine *engine){ (void)engine; return ANYGM_OK; }
 AnygmResult anygm_load(AnygmEngine *engine,const AnygmContentSource *source,
                        const AnygmLoadConfig *config){
-  (void)engine; (void)source; (void)config; return ANYGM_OK;
+  return anygm_load_prepare(engine,source,config,NULL);
 }
 void anygm_unload(AnygmEngine *engine){ (void)engine; }
 AnygmResult anygm_reset(AnygmEngine *engine){ (void)engine; return ANYGM_OK; }
@@ -130,7 +137,7 @@ size_t anygm_get_last_error(const AnygmEngine *engine,char *message,size_t capac
 /* The hardware bridge is part of the adapter's lifecycle, so its entry points exist here too.
  * This scenario never turns the setting on, so they do nothing. */
 #if ANYGM_HARDWARE_RENDER
-void libretro_hw_render_request(void){}
+bool libretro_hw_render_request(bool needed){ (void)needed; return false; }
 void libretro_hw_render_release(void){}
 bool libretro_hw_render_requested(void){ return false; }
 #endif
@@ -140,6 +147,7 @@ static unsigned options_registered;
 void libretro_options_register(void){ options_registered++; }
 static unsigned options_applied;
 void libretro_options_apply(bool all_fields){ (void)all_fields; options_applied++; }
+void libretro_options_finalize_graphics(bool available){ (void)available; }
 /* Unset, as a frontend answers before the player touches anything: the locale stays on Auto. */
 const char *libretro_options_value(const char *key){ (void)key; return NULL; }
 void libretro_options_publish_rooms(void){}

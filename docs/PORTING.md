@@ -40,15 +40,25 @@ cut: it neither compiles nor links the libretro adapter.
 4. Call `anygm_run_frame`, present its borrowed XRGB8888 video view, and queue
    its interleaved signed PCM before the next call on that engine.
 5. Translate window or device settings into `AnygmConfigDelta`; do not modify
-   renderer internals.
+   renderer internals. When a graphics decision depends on content, use `anygm_load_prepare`, read
+   `AnygmContentInfo`, settle the context and configuration, and call `anygm_load_start`. The
+   one-shot `anygm_load` remains the ordinary path when no negotiation is needed.
+6. Store bytes returned by the complete public state API for ordinary save states. A frequent
+   in-memory resume ring may use `anygm_state_resume_size`,
+   `anygm_state_resume_capacity_hint`, and `anygm_state_save_for_resume` to omit only the optional
+   completed picture; either form loads through `anygm_state_load`.
+7. Call `anygm_unload` before replacing content and destroy the engine before
+   destroying anything referenced by host userdata.
 
 ## Optional host graphics target
 
 A host that owns an OpenGL or OpenGL ES 3 context may lend it to the engine with
 `anygm_graphics_context_reset`, supplying an entry-point resolver and a callback that answers with
-the current framebuffer. The engine then renders eligible final passes into that framebuffer and
-says so by setting `ANYGM_FRAME_HARDWARE_TARGET` in the frame output; a frame without that flag
-still carries complete CPU pixels, and the two are never both authoritative.
+the current framebuffer. `content_shader_device_expected` permits unrecognized content GLSL to use
+that context; `hybrid_gpu_presentation` separately permits eligible final scaling and composition.
+Either may be enabled alone, and neither is implied merely by adopting a context. When a frame is
+placed in the current framebuffer, the engine sets `ANYGM_FRAME_HARDWARE_TARGET`; a frame without
+that flag still carries complete CPU pixels, and the two are never both authoritative.
 
 The rules a host has to honour:
 
@@ -62,17 +72,11 @@ The rules a host has to honour:
 - an unusable context returns `ANYGM_ERROR_UNSUPPORTED` and leaves the engine fully usable in
   software.
 
-None of this is emulated state. It does not enter `AnygmConfig`, the state configuration
-fingerprint, or any serialized section, and a state saved with a graphics target loads without one.
-A host that wants nothing to do with it simply never calls these two entry points, and a core built
-with `HARDWARE_RENDER=0` answers `ANYGM_ERROR_UNSUPPORTED` to the first of them.
-6. Store bytes returned by the complete public state API for ordinary save states. A frequent
-   in-memory resume ring may use `anygm_state_resume_size`,
-   `anygm_state_resume_capacity_hint`, and `anygm_state_save_for_resume` to omit only the optional
-   completed picture; either form loads through `anygm_state_load`.
-7. Call `anygm_unload` before replacing content and destroy the engine before
-   destroying anything referenced by host userdata.
-
+The context and both execution policies are not emulated state. The policies live in
+`AnygmConfig`, but neither they nor the context enter the state configuration fingerprint or any
+serialized section, and a state saved with a graphics target loads without one. A host that wants
+nothing to do with it simply never calls these two entry points, and a core built with
+`HARDWARE_RENDER=0` answers `ANYGM_ERROR_UNSUPPORTED` to the first of them.
 The dummy host in `tests/contract/dummy_host.c` is the smallest executable
 contract example. `src/host/stdio_vfs.c` is a development and test VFS, not a
 requirement for a production host.
@@ -80,13 +84,14 @@ requirement for a production host.
 ## Lifecycle and ownership
 
 ```text
-created/empty --load--> loaded --run/reset/state/config--> loaded
-      ^                    |
-      +------unload--------+
+created/empty --load_prepare--> prepared --load_start--> loaded
+      ^                            |                      |
+      +------------unload----------+----------unload------+
 ```
 
-The API requires unload before another load. A failed load from
-the empty state remains empty. `AnygmEngine` owns all mutable execution state
+The API requires unload before another load. `anygm_load` crosses both intermediate arrows. A
+failed preparation from the empty state remains empty; a prepared load may be abandoned with
+unload without ever executing authored code. `AnygmEngine` owns all mutable execution state
 and borrows the copied service callbacks and their userdata. Each engine has
 thread affinity to the thread that creates it; calls on one engine are not
 reentrant. Separate engines may be advanced independently.

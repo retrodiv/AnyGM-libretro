@@ -612,6 +612,23 @@ static void check_shader_recognition(void) {
       int handle = gml_render_shader_uniform_handle(&render, 24, "u_crt_sizes");
       int sampler = gml_render_shader_sampler_handle(&render, 24, "samp_overlay");
       memset(&binding, 0, sizeof binding);
+      expect(gml_render_content_device_candidate_present(&render),
+             "the loaded catalogue did not expose its device GLSL candidate");
+      {
+        GmlRender recognized_catalog={0},procedural_catalog={0};
+        struct GmlShaderPal procedural=render.shader_pal[5];
+        recognized_catalog.shader_pal=&render.shader_pal[2];
+        recognized_catalog.n_shader_pal=1;
+        procedural.source_vertex_es=render.shader_pal[24].source_vertex_es;
+        procedural.source_fragment_es=render.shader_pal[24].source_fragment_es;
+        procedural.procedural=1;
+        procedural_catalog.shader_pal=&procedural;
+        procedural_catalog.n_shader_pal=1;
+        expect(!gml_render_content_device_candidate_present(&recognized_catalog),
+               "a software-recognized family requested a graphics device");
+        expect(gml_render_content_device_candidate_present(&procedural_catalog),
+               "a procedural GLSL program was omitted from pre-context inspection");
+      }
       expect(gml_render_shader_content_candidate(&render, 24) &&
              gml_render_shader_sources(&render, 24, &sources) &&
              sources.vertex_es && sources.fragment_es && !sources.vertex_gl && !sources.fragment_gl &&

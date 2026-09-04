@@ -388,7 +388,7 @@ struct AnygmEngine {
 };
 
 #define ANYGM_ENGINE_GUARD 0x45474E41u
-enum { ENGINE_EMPTY=0,ENGINE_LOADED=1 };
+enum { ENGINE_EMPTY=0,ENGINE_PREPARED=1,ENGINE_LOADED=2 };
 
 /* Narrow core-internal interfaces shared by coordinator owners. */
 void engine_logf(AnygmEngine *engine,AnygmLogLevel level,const char *fmt,...);
@@ -493,6 +493,8 @@ void engine_graphics_report(AnygmEngine *engine);
 /* Whether a host graphics target is adopted right now. The one question core coordination asks
  * about the feature, so it has an answer in a build without the backend as well. */
 int engine_graphics_active(const AnygmEngine *engine);
+int engine_hybrid_presentation_active(const AnygmEngine *engine);
+int engine_content_shaders_active(const AnygmEngine *engine);
 int engine_graphics_device_expected(const AnygmEngine *engine);
 /* Release everything created in the host graphics context. Objects are deleted only while that
  * context is still current; otherwise the handles are forgotten. */
@@ -504,7 +506,6 @@ int classic_transition_start(AnygmEngine *engine,unsigned width,unsigned height,
 void classic_transition_apply(AnygmEngine *engine,uint32_t *frame,unsigned width,unsigned height);
 void draw_game_cursor(AnygmEngine *engine,unsigned width,unsigned height);
 int core_opt_monitor_size(AnygmEngine *engine,int height);
-int core_opt_onoff(AnygmEngine *engine,const char *key,const char *environment,int default_value);
 void clamp_camera_to_current_room(AnygmEngine *engine,double *x,double *y,int center_when_smaller);
 int core_opt_fast_alpha_cull(AnygmEngine *engine);
 int present_view_get(AnygmEngine *engine,int index,GmlPresentView *out);

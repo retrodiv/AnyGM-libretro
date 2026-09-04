@@ -30,7 +30,13 @@ typedef struct LibretroAdapter {
   uint8_t override_used[ANYGM_MAX_RUNTIME_OVERRIDES];
   uint32_t port_device[ANYGM_MAX_GAMEPADS];
   unsigned pointer_seen;
+  bool prepared;
   bool loaded;
+  bool provisional_av_exposed;
+  bool startup_av_notification_pending;
+  bool hybrid_gpu_selected;
+  bool content_glsl_selected;
+  bool content_glsl_candidate;
   bool rumble_available;
   bool frame_completed;
   bool reset_pending_frame;
@@ -68,20 +74,22 @@ void libretro_vfs_request(void);
 void libretro_vfs_services_init(AnygmHostServices *services);
 void libretro_options_register(void);
 void libretro_options_apply(bool all_fields);
+void libretro_options_finalize_graphics(bool device_available);
 const char *libretro_options_value(const char *key);
 void libretro_options_publish_rooms(void);
 void libretro_options_release(void);
 #if ANYGM_HARDWARE_RENDER
-/* Read the hybrid-GPU option and negotiate a frontend graphics context. Called once before content
- * is loaded, because changing the choice mid-session would leave half the frame on one path. */
-void libretro_hw_render_request(void);
+/* Negotiate the context selected after content preparation. Startup waits for context_reset when
+ * this succeeds, so authored boot events see an adopted device rather than a provisional one. */
+bool libretro_hw_render_request(bool needed);
 void libretro_hw_render_release(void);
 bool libretro_hw_render_requested(void);
 #else
-static inline void libretro_hw_render_request(void){}
+static inline bool libretro_hw_render_request(bool needed){ (void)needed; return false; }
 static inline void libretro_hw_render_release(void){}
 static inline bool libretro_hw_render_requested(void){ return false; }
 #endif
+bool libretro_content_start(void);
 void libretro_input_register(void);
 void libretro_input_snapshot(AnygmInputFrame *input,uint32_t width,uint32_t height);
 void libretro_update_av(void);

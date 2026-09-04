@@ -69,6 +69,13 @@ static int session_open(Session *session){
   source.cache_directory=session->fixture.directory;
   source.save_directory=session->fixture.directory;
   if(anygm_create(&session->services,&session->engine)!=ANYGM_OK) return 0;
+  /* Adopting a context is transport; final-pass acceleration is a separate explicit policy. */
+  AnygmConfigDelta graphics={0};
+  graphics.struct_size=sizeof graphics;
+  graphics.values.struct_size=sizeof graphics.values;
+  graphics.fields=ANYGM_CONFIG_HYBRID_GPU_PRESENTATION;
+  graphics.values.hybrid_gpu_presentation=1u;
+  if(anygm_set_config(session->engine,&graphics)!=ANYGM_OK) return 0;
   return anygm_load(session->engine,&source,NULL)==ANYGM_OK;
 }
 
@@ -416,6 +423,63 @@ static int refused_context_case(void){
   return ok;
 }
 
+/* A context is shared transport, not permission to turn every graphics policy on. Disabling the
+ * hybrid policy keeps eligible final passes on the processor, and leaving content GLSL disabled
+ * keeps the renderer from reporting a shader device even while that context carries the frame. */
+static int independent_graphics_policy_case(void){
+  Session session;
+  AnygmConfigDelta graphics={0};
+  uint32_t flags=0;
+  int ok;
+  anygm_test_graphics_reset();
+  REQUIRE(session_open(&session),"the independent-policy session loads");
+  graphics.struct_size=sizeof graphics;
+  graphics.values.struct_size=sizeof graphics.values;
+  graphics.fields=ANYGM_CONFIG_HYBRID_GPU_PRESENTATION;
+  graphics.values.hybrid_gpu_presentation=0u;
+  REQUIRE(anygm_set_config(session.engine,&graphics)==ANYGM_OK,
+          "hybrid presentation can be disabled independently");
+  REQUIRE(graphics_adopt(session.engine,ANYGM_GRAPHICS_OPENGLES3)==ANYGM_OK,
+          "the shared context is adopted");
+  ok=advance(session.engine,1,&flags) &&
+     (flags&ANYGM_FRAME_HARDWARE_TARGET)!=0 &&
+     session.engine->screen_pass_frames==0 && session.engine->canvas_pass_frames==0 &&
+     !engine_hybrid_presentation_active(session.engine) &&
+     !engine_content_shaders_active(session.engine) &&
+     !gml_render_shader_device_present(&session.engine->render);
+  if(!ok) fputs("an adopted context enabled a graphics policy implicitly\n",stderr);
+  graphics.fields=ANYGM_CONFIG_CONTENT_SHADER_DEVICE_EXPECTED|
+                  ANYGM_CONFIG_CONTENT_SHADER_READBACK;
+  graphics.values.content_shader_device_expected=1u;
+  graphics.values.content_shader_readback=ANYGM_SHADER_READBACK_BUDGETED;
+  ok=ok && anygm_set_config(session.engine,&graphics)==ANYGM_OK &&
+     engine_content_shaders_active(session.engine) &&
+     session.engine->render.shader_device_expected==1;
+  if(!ok) fputs("content GLSL did not activate without hybrid presentation\n",stderr);
+  {
+    AnygmConfigDelta monitor={0};
+    monitor.struct_size=sizeof monitor;
+    monitor.values.struct_size=sizeof monitor.values;
+    monitor.fields=ANYGM_CONFIG_MONITOR_WIDTH;
+    monitor.values.monitor_width=640u;
+    ok=ok && anygm_set_config(session.engine,&monitor)==ANYGM_OK &&
+       session.engine->render.shader_device_expected==1;
+  }
+  if(!ok) fputs("an unrelated configuration update cleared the GLSL session policy\n",stderr);
+  graphics.values.content_shader_device_expected=0u;
+  graphics.values.content_shader_readback=ANYGM_SHADER_READBACK_NEVER;
+  ok=ok && anygm_set_config(session.engine,&graphics)==ANYGM_OK &&
+     !engine_content_shaders_active(session.engine);
+  graphics.values.hybrid_gpu_presentation=1u;
+  graphics.fields=ANYGM_CONFIG_HYBRID_GPU_PRESENTATION;
+  ok=ok && anygm_set_config(session.engine,&graphics)==ANYGM_OK &&
+     engine_hybrid_presentation_active(session.engine) &&
+     !engine_content_shaders_active(session.engine) && advance(session.engine,1,NULL);
+  if(!ok) fputs("the explicit hybrid policy did not activate independently\n",stderr);
+  session_close(&session);
+  return ok;
+}
+
 /* A frontend that sized its rewind buffer once, before a presentation option grew the state, keeps
  * offering the buffer it fixed. The completed frame is the section that grew and the only section a
  * restore can do without, so a save that cannot fit it writes the state without it rather than
@@ -545,6 +609,7 @@ int main(void){
     {"a context lost while a frame is on it",context_lost_with_frame_pending_case},
     {"two interleaved engines stay independent",interleaved_engines_case},
     {"a refused context leaves a working software engine",refused_context_case},
+    {"content GLSL and hybrid presentation remain independent",independent_graphics_policy_case},
     {"a buffer too short for the frame still takes the state",short_buffer_drops_the_frame_case},
     {"an explicit resume state omits only the completed frame",explicit_resume_state_case},
     {"raw and repeated-row completed frames roundtrip",completed_frame_encodings_case},

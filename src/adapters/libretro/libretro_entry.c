@@ -205,7 +205,10 @@ void retro_deinit(void){
   libretro_options_release();
   memset(g_libretro.keyboard_events,0,sizeof g_libretro.keyboard_events);
   memset(g_libretro.override_used,0,sizeof g_libretro.override_used);
+  g_libretro.prepared=false;
   g_libretro.loaded=false;
+  g_libretro.provisional_av_exposed=false;
+  g_libretro.startup_av_notification_pending=false;
 }
 
 unsigned retro_api_version(void){ return RETRO_API_VERSION; }
@@ -237,7 +240,13 @@ void libretro_update_av(void){
   anygm_get_av_info(g_libretro.engine,&g_libretro.av);
 }
 
-void retro_get_system_av_info(struct retro_system_av_info *info){ fill_av_info(info); }
+void retro_get_system_av_info(struct retro_system_av_info *info){
+  /* A hardware frontend may ask for AV information after retro_load_game returns but before it
+   * creates the requested context. The prepared runtime cannot run authored boot code yet, so the
+   * fallback answer is provisional and the exact result is published from the first frame. */
+  if(g_libretro.prepared) g_libretro.provisional_av_exposed=true;
+  fill_av_info(info);
+}
 
 void retro_set_controller_port_device(unsigned port,unsigned device){
   if(port<ANYGM_MAX_GAMEPADS) g_libretro.port_device[port]=device;
@@ -318,6 +327,37 @@ static void update_directories(void){
               system,ANYGM_CACHE_SUBDIRECTORY);
 }
 
+bool libretro_content_start(void){
+  if(g_libretro.loaded) return true;
+  if(!g_libretro.prepared || !g_libretro.engine) return false;
+  bool provisional_av_exposed=g_libretro.provisional_av_exposed;
+  AnygmResult result=anygm_load_start(g_libretro.engine);
+  if(result!=ANYGM_OK){
+    char error[512];
+    anygm_get_last_error(g_libretro.engine,error,sizeof error);
+    libretro_log(RETRO_LOG_ERROR,"Prepared content startup failed (%d): %s\n",result,error);
+    return false;
+  }
+  g_libretro.prepared=false;
+  g_libretro.loaded=true;
+  g_libretro.provisional_av_exposed=false;
+  g_libretro.frame_completed=false;
+  g_libretro.reset_pending_frame=false;
+  g_libretro.reset_ring_rejection_reported=false;
+  g_libretro.startup_ring_compact=false;
+  g_libretro.fixed_state_capacity=0;
+  g_libretro.startup_resume_capacity=0;
+  g_libretro.state_capacity_growth_reported=false;
+  /* Preparation consulted one-shot setting names. Clear them before the first frame so live names
+   * always find a free cache slot. */
+  memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
+  g_libretro.setting_cache_count=0;
+  libretro_options_publish_rooms();
+  libretro_update_av();
+  g_libretro.startup_av_notification_pending=provisional_av_exposed;
+  return true;
+}
+
 bool retro_load_game(const struct retro_game_info *info){
   if(!info || !info->path || !create_engine()) return false;
   if(!g_libretro.pixel_format_accepted) g_libretro.pixel_format_accepted=request_pixel_format();
@@ -326,16 +366,14 @@ bool retro_load_game(const struct retro_game_info *info){
                  "Refusing to load: this core renders XRGB8888 and the frontend will not take it\n");
     return false;
   }
-  if(g_libretro.loaded) retro_unload_game();
+  if(g_libretro.loaded || g_libretro.prepared) retro_unload_game();
+  g_libretro.provisional_av_exposed=false;
+  g_libretro.startup_av_notification_pending=false;
   memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
   g_libretro.setting_cache_count=0;
   update_directories();
   update_locale();
   libretro_options_apply(true);
-  /* The graphics context is negotiated before the engine sees the content: a frontend decides
-   * whether it can provide one at load time, and the answer changes which video path every frame
-   * of this session takes. */
-  libretro_hw_render_request();
   AnygmContentSource source;
   memset(&source,0,sizeof source);
   source.struct_size=sizeof source;
@@ -345,7 +383,10 @@ bool retro_load_game(const struct retro_game_info *info){
   source.save_directory=g_libretro.save_directory[0]?g_libretro.save_directory:NULL;
   /* With no explicit locale, the engine queries the host service and refreshes it on reset.
    * Passing these current fields instead would pin the first answer for the lifetime of the load. */
-  AnygmResult result=anygm_load(g_libretro.engine,&source,NULL);
+  AnygmContentInfo content_info;
+  memset(&content_info,0,sizeof content_info);
+  content_info.struct_size=sizeof content_info;
+  AnygmResult result=anygm_load_prepare(g_libretro.engine,&source,NULL,&content_info);
   if(result!=ANYGM_OK){
     char error[512];
     anygm_get_last_error(g_libretro.engine,error,sizeof error);
@@ -371,22 +412,19 @@ bool retro_load_game(const struct retro_game_info *info){
     }
     return false;
   }
-  g_libretro.loaded=true;
-  g_libretro.frame_completed=false;
-  g_libretro.reset_pending_frame=false;
-  g_libretro.reset_ring_rejection_reported=false;
-  g_libretro.startup_ring_compact=false;
-  g_libretro.fixed_state_capacity=0;
-  g_libretro.startup_resume_capacity=0;
-  g_libretro.state_capacity_growth_reported=false;
-  /* Loading consults dozens of one-shot setting names; clear them out so the
-   * per-frame names always find a free slot. */
-  memset(g_libretro.setting_cache,0,sizeof g_libretro.setting_cache);
-  g_libretro.setting_cache_count=0;
-  /* The room names only exist now, and the chooser is worth nothing without them. */
-  libretro_options_publish_rooms();
-  libretro_update_av();
-  return true;
+  g_libretro.prepared=true;
+  g_libretro.content_glsl_candidate=
+    (content_info.flags&ANYGM_CONTENT_GLSL_DEVICE_CANDIDATE)!=0;
+  bool needs_context=g_libretro.hybrid_gpu_selected ||
+    (g_libretro.content_glsl_selected && g_libretro.content_glsl_candidate);
+  if(needs_context){
+    /* Some frontends may invoke context_reset before the environment call returns. Publish the
+     * accepted policy first; a rejection below replaces it before software startup. */
+    libretro_options_finalize_graphics(true);
+    if(libretro_hw_render_request(true)) return true;
+  }
+  libretro_options_finalize_graphics(false);
+  return libretro_content_start();
 }
 
 bool retro_load_game_special(unsigned type,const struct retro_game_info *info,size_t count){
@@ -395,10 +433,14 @@ bool retro_load_game_special(unsigned type,const struct retro_game_info *info,si
 }
 
 void retro_unload_game(void){
-  if(!g_libretro.loaded) return;
+  if(!g_libretro.loaded && !g_libretro.prepared) return;
   libretro_hw_render_release();
   anygm_unload(g_libretro.engine);
+  g_libretro.prepared=false;
   g_libretro.loaded=false;
+  g_libretro.provisional_av_exposed=false;
+  g_libretro.startup_av_notification_pending=false;
+  g_libretro.content_glsl_candidate=false;
   g_libretro.frame_completed=false;
   g_libretro.reset_pending_frame=false;
   g_libretro.reset_ring_rejection_reported=false;
@@ -486,12 +528,28 @@ void retro_run(void){
   /* Announced before the frame it describes, not after it: the frontend sizes what it is about
    * to receive from the geometry it currently holds. The dimensions here are bounded by the
    * constant maxima declared in retro_get_system_av_info, so this can never enlarge them. */
-  if((g_libretro.frame.flags&(ANYGM_FRAME_GEOMETRY_CHANGED|ANYGM_FRAME_TIMING_CHANGED)) &&
-     g_libretro.environment){
+  bool timing_changed=(g_libretro.frame.flags&ANYGM_FRAME_TIMING_CHANGED)!=0;
+  bool geometry_changed=(g_libretro.frame.flags&ANYGM_FRAME_GEOMETRY_CHANGED)!=0;
+  bool av_refreshed=false;
+  if(g_libretro.startup_av_notification_pending){
+    /* The only AV answer available before context adoption was fill_av_info's documented
+     * fallback. Correct it once authored startup and the first frame have settled. A max-size or
+     * timing change needs the full callback; a nominal-size/aspect change uses the lighter one. */
     libretro_update_av();
+    av_refreshed=true;
+    timing_changed=timing_changed ||
+      g_libretro.av.max_width!=3840u || g_libretro.av.max_height!=2160u ||
+      g_libretro.av.frames_per_second!=60.0 || g_libretro.av.audio_rate!=44100u;
+    geometry_changed=geometry_changed ||
+      g_libretro.av.base_width!=288u || g_libretro.av.base_height!=216u ||
+      (float)g_libretro.av.aspect_ratio!=4.0f/3.0f;
+    g_libretro.startup_av_notification_pending=false;
+  }
+  if((geometry_changed || timing_changed) && g_libretro.environment){
+    if(!av_refreshed) libretro_update_av();
     struct retro_system_av_info av;
     fill_av_info(&av);
-    if(g_libretro.frame.flags&ANYGM_FRAME_TIMING_CHANGED)
+    if(timing_changed)
       g_libretro.environment(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO,&av);
     else
       g_libretro.environment(RETRO_ENVIRONMENT_SET_GEOMETRY,&av.geometry);
