@@ -270,6 +270,7 @@ static void graphics_settings_are_independent(void){
      strcmp(shaders->values[1].value,"Exact") ||
      strcmp(shaders->values[2].value,"Off (but report available)") ||
      strcmp(shaders->values[3].value,"Off") ||
+     !shaders->values[3].label || strcmp(shaders->values[3].label,"Off") ||
      strcmp(shaders->default_value,"Off (but report available)"))
     complain("the GLSL setting does not expose the four agreed policies in Video");
   if(strcmp(hybrid->desc,"Hybrid GPU rendering (Experimental)") ||
@@ -285,7 +286,8 @@ static void graphics_settings_are_independent(void){
   if(definition("anygm_hybrid_gpu")) complain("a software-only build offers a graphics device");
   if(value_count(shaders)!=2 ||
      strcmp(shaders->values[0].value,"Off (but report available)") ||
-     strcmp(shaders->values[1].value,"Off"))
+     strcmp(shaders->values[1].value,"Off") ||
+     !shaders->values[1].label || strcmp(shaders->values[1].label,"Off"))
     complain("a software-only build offers executable GLSL modes");
 #endif
   if(!strstr(shaders->info,"Off (but report available)") ||

@@ -109,7 +109,7 @@ static struct retro_core_option_v2_definition g_definitions[]={
 #if ANYGM_HARDWARE_RENDER
     {"Performance",NULL},{"Exact",NULL},
 #endif
-    {"Off (but report available)",NULL},{"Off",NULL},{NULL,NULL}},
+    {"Off (but report available)",NULL},{"Off","Off"},{NULL,NULL}},
    "Off (but report available)"},
 #if ANYGM_HARDWARE_RENDER
   {"anygm_hybrid_gpu","Hybrid GPU rendering (Experimental)",NULL,
