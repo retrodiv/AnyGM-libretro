@@ -152,6 +152,26 @@ source-group inventory.
 | `src/video/software3d/gml_software3d_models.c` | Opaque model lifecycle, bounded batch/vertex value-copy inspection, fixed-function model construction/drawing, and canonical model-state serialization | Software-3D private model storage, typed raster operations, and renderer backend leaves | Builtin implementation, VM scheduling, borrowed model storage, or root-state ordering | Mutates model resources in the caller's `GmlSoftware3D` context without exposing their allocation | Canonical model subpayload | `make check TEST=d3_state` |
 | `src/video/software3d/gml_software3d_state.c` | Canonical fixed-function state mapping to and from the VM serializer's bounded arrays | Context reset and matrix initialization operations | VM scheduling, root-state framing, or model payload bytes | Restores one caller-owned `GmlSoftware3D` transaction input | Canonical fixed-function subpayload | `make check TEST=d3_state` |
 
+## Build-time audio data
+
+`tools/audiogen/` owns the optional, standalone reproduction of
+`src/generated/audio_setup_data.h` and `src/generated/wwise_codebooks.h` from
+externally verified BSD Xiph sources. `emit_setups.c` owns reference setup selection and
+header emission; `emit_books.c` owns named source-book export; `packed_books.py`
+owns compact wire packing; `generate.py` owns verified acquisition, serial builds
+and whole-output checking. `recipes.json` contains interoperability parameters and
+source-symbol mappings, not copied codebook vectors. None of these build-time
+owners is linked into the core or changes the runtime audio-bank boundary.
+
+`make audio-data-check` checks both catalogs' structure and lookup metadata
+offline and runs negative drift controls. Complete byte identity requires an
+external verification manifest passed to `check_audio_data.py`, or independent
+regeneration and comparison; the default structural check cannot establish it.
+Full regeneration, including optional ASan/UBSan, is
+documented in `tools/audiogen/README.md`. `make provenance-check notices-check`
+checks the declared first-party provenance directives and embedded-notice
+table consistency; it does not authenticate an external source archive.
+
 ## Common change routes
 
 ### Add or correct a serialized input field
