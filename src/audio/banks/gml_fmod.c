@@ -113,35 +113,71 @@ static uint8_t *rebuild_ogg(int channels, int rate, uint32_t setup_crc,
   *out_len=o.len; return o.b;
 }
 
+/* Read one complete sample header and metadata chain within the header table.
+ * The caller has already proved that `end` is inside its real input buffer. */
+static int fsb5_read_sample_header(const uint8_t *data,size_t end,size_t *cursor,
+                                   uint64_t *out_raw,uint32_t *out_crc){
+  size_t p=*cursor;
+  if(p>end || 8>end-p) return 0;
+  uint64_t raw=0;
+  for(int k=0;k<8;k++) raw|=(uint64_t)data[p+k]<<(8*k);
+  p+=8;
+  int next=(int)(raw&1);
+  uint32_t crc=0;
+  while(next){
+    if(4>end-p) return 0;
+    uint32_t chunk=rd_u32(data+p); p+=4;
+    uint32_t size=(chunk>>1)&0xFFFFFF, type=(chunk>>25)&0x7F;
+    if(size>end-p) return 0;
+    if(type==11){
+      if(size<4) return 0;
+      crc=rd_u32(data+p);
+    }
+    p+=size;
+    next=(int)(chunk&1);
+  }
+  *cursor=p; *out_raw=raw; *out_crc=crc;
+  return 1;
+}
+
+static int fsb5_size_add(size_t left,size_t right,size_t *out){
+  if(right>SIZE_MAX-left) return 0;
+  *out=left+right;
+  return 1;
+}
+
 /* Parse an FSB5 chunk and return one subsound's metadata + a pointer to its raw packet data. */
 int gml_fmod_fsb5_sample(const uint8_t *fsb5, size_t fsb5_len, int index, GmlFmodSample *out){
-  if(fsb5_len<60 || memcmp(fsb5,"FSB5",4)!=0) return 0;
+  if(!fsb5 || !out || fsb5_len<60 || memcmp(fsb5,"FSB5",4)!=0) return 0;
   uint32_t ns=rd_u32(fsb5+8), shs=rd_u32(fsb5+12), nts=rd_u32(fsb5+16), ds=rd_u32(fsb5+20), mode=rd_u32(fsb5+24);
   if(index<0 || (uint32_t)index>=ns) return 0;
-  size_t hoff=60, names_off=hoff+shs, data_off=names_off+nts;
+  size_t hoff=60;
+  if(shs>fsb5_len-hoff || ns>shs/8) return 0;
+  size_t names_off=hoff+shs;
+  if(nts>fsb5_len-names_off) return 0;
+  size_t data_off=names_off+nts;
+  if(ds>fsb5_len-data_off) return 0;
   /* walk sample headers to the requested index, capturing (dataOffset, samples, rate, chans) */
   size_t p=hoff; uint32_t doff=0, samples=0; int chans=1, rate=44100; uint32_t crc=0;
   static const int RATES[]={4000,8000,11025,16000,22050,24000,32000,44100,48000,96000};
-  for(uint32_t s=0;s<=(uint32_t)index && p+8<=hoff+shs;s++){
-    uint64_t raw=0; for(int k=0;k<8;k++) raw|=(uint64_t)fsb5[p+k]<<(8*k); p+=8;
-    int nxt=raw&1; int fq=(raw>>1)&0xf; chans=((raw>>5)&1)+1; doff=(uint32_t)(((raw>>6)&0x0FFFFFFF)*16); samples=(uint32_t)(raw>>34);
+  for(uint32_t s=0;s<=(uint32_t)index;s++){
+    uint64_t raw;
+    if(!fsb5_read_sample_header(fsb5,names_off,&p,&raw,&crc)) return 0;
+    int fq=(raw>>1)&0xf; chans=((raw>>5)&1)+1; doff=(uint32_t)(((raw>>6)&0x0FFFFFFF)*16); samples=(uint32_t)(raw>>34);
     rate = (fq>=1 && fq<=10)? RATES[fq-1] : 44100;
-    crc=0;
-    while(nxt && p+4<=hoff+shs){ uint32_t c=rd_u32(fsb5+p); p+=4; nxt=c&1; uint32_t csz=(c>>1)&0xFFFFFF; uint32_t ctype=(c>>25)&0x7F;
-      if(ctype==11 && p+4<=fsb5_len) crc=rd_u32(fsb5+p);  /* VORBISDATA: setup CRC32 */
-      p+=csz; }
   }
+  if(doff>ds) return 0;
   /* sub-sound data range: from its dataOffset to the next sample's dataOffset (or end) */
   uint32_t next_doff=ds;
-  { size_t q=hoff; for(uint32_t s=0;s<ns && q+8<=hoff+shs;s++){ uint64_t raw=0; for(int k=0;k<8;k++) raw|=(uint64_t)fsb5[q+k]<<(8*k); q+=8;
-      int nxt=raw&1; uint32_t o2=(uint32_t)(((raw>>6)&0x0FFFFFFF)*16);
-      while(nxt && q+4<=hoff+shs){ uint32_t c=rd_u32(fsb5+q); q+=4; nxt=c&1; q+=(c>>1)&0xFFFFFF; }
+  { size_t q=hoff; for(uint32_t s=0;s<ns;s++){
+      uint64_t raw; uint32_t ignored_crc;
+      if(!fsb5_read_sample_header(fsb5,names_off,&q,&raw,&ignored_crc)) return 0;
+      uint32_t o2=(uint32_t)(((raw>>6)&0x0FFFFFFF)*16);
+      if(o2>ds) return 0;
       if(o2>doff && o2<next_doff) next_doff=o2; } }
   (void)mode;
-  out->channels=chans; out->rate=rate; out->num_samples=samples; out->setup_crc=crc;
-  out->data = fsb5 + data_off + doff;
-  out->data_len = (next_doff>doff)? (next_doff-doff) : (ds>doff? ds-doff : 0);
-  if(data_off+doff+out->data_len > fsb5_len) return 0;
+  GmlFmodSample sample={chans,rate,(int)samples,crc,fsb5+data_off+doff,next_doff-doff};
+  *out=sample;
   return 1;
 }
 
@@ -343,30 +379,29 @@ static void fmod_voice_free_audio(FVoice *v);   /* frees a voice's stream/owned-
 
 static const int FSB5_RATES[]={4000,8000,11025,16000,22050,24000,32000,44100,48000,96000};
 
-/* Parse an in-RAM FSB5 header region (magic + sample-header table). Fills *bank->subs. `hdr` must
- * contain at least the first 60+shs bytes. `data_region_off` is the file offset where FSB5 data
- * begins. Returns 1 on success. */
-static int fmod_fsb5_parse_table(FBank *bank, const uint8_t *hdr, size_t hdrlen, size_t data_region_off){
-  if(hdrlen<60 || memcmp(hdr,"FSB5",4)!=0) return 0;
+/* Parse the complete in-RAM FSB5 header and name regions. The bank opener validates
+ * the on-disk data extent before calling. Publish only a complete sample table. */
+static int fmod_fsb5_parse_table(FBank *bank, const uint8_t *hdr, size_t hdrlen,
+                                 size_t data_region_off, size_t data_region_len){
+  if(!bank || !hdr || hdrlen<60 || memcmp(hdr,"FSB5",4)!=0) return 0;
   uint32_t ns=rd_u32(hdr+8), shs=rd_u32(hdr+12), nts=rd_u32(hdr+16), ds=rd_u32(hdr+20);
   size_t hoff=60;
-  size_t names_off=60+(size_t)shs;
-  if(60+(size_t)shs>hdrlen) return 0;
+  if(shs>hdrlen-hoff || ns>shs/8) return 0;
+  size_t names_off=hoff+shs;
+  if(nts>hdrlen-names_off || (nts && ns>nts/4) || ds>data_region_len) return 0;
   FSub *subs=calloc(ns?ns:1,sizeof(FSub));
   if(!subs) return 0;
+  char **names=NULL;
   size_t p=hoff;
-  for(uint32_t s=0;s<ns && p+8<=hoff+shs;s++){
-    uint64_t raw=0; for(int k=0;k<8;k++) raw|=(uint64_t)hdr[p+k]<<(8*k); p+=8;
-    int nxt=raw&1; int fq=(raw>>1)&0xf;
+  for(uint32_t s=0;s<ns;s++){
+    uint64_t raw;
+    if(!fsb5_read_sample_header(hdr,names_off,&p,&raw,&subs[s].crc)) goto invalid;
+    int fq=(raw>>1)&0xf;
     subs[s].ch=((raw>>5)&1)+1;
     subs[s].doff=(uint32_t)(((raw>>6)&0x0FFFFFFF)*16);
+    if(subs[s].doff>ds) goto invalid;
     subs[s].samples=(uint32_t)(raw>>34);
     subs[s].rate=(fq>=1&&fq<=10)?FSB5_RATES[fq-1]:44100;
-    subs[s].crc=0;
-    while(nxt && p+4<=hoff+shs){ uint32_t c=rd_u32(hdr+p); p+=4; nxt=c&1;
-      uint32_t csz=(c>>1)&0xFFFFFF; uint32_t ctype=(c>>25)&0x7F;
-      if(ctype==11 && p+4<=hdrlen) subs[s].crc=rd_u32(hdr+p);
-      p+=csz; }
   }
   /* compressed length = gap to the next subsound's data offset (or to end of data) */
   for(uint32_t s=0;s<ns;s++){
@@ -374,23 +409,34 @@ static int fmod_fsb5_parse_table(FBank *bank, const uint8_t *hdr, size_t hdrlen,
     for(uint32_t t=0;t<ns;t++) if(subs[t].doff>subs[s].doff && subs[t].doff<nd) nd=subs[t].doff;
     subs[s].dlen=(nd>subs[s].doff)?(nd-subs[s].doff):0;
   }
-  bank->subs=subs; bank->nsubs=(int)ns; bank->data_file_off=data_region_off;
   /* optional name table: ns u32 offsets (relative to the name region) → null-terminated names */
-  if(nts>0 && names_off+(size_t)ns*4<=hdrlen && names_off+nts<=hdrlen){
-    char **names=calloc(ns?ns:1,sizeof(char*));
-    if(names){
-      for(uint32_t s=0;s<ns;s++){
-        uint32_t noff=rd_u32(hdr+names_off+(size_t)s*4);
-        size_t np=names_off+noff;
-        if(np<names_off+nts && np<hdrlen){
-          size_t nl=0; while(np+nl<hdrlen && np+nl<names_off+nts && hdr[np+nl]) nl++;
-          names[s]=malloc(nl+1); if(names[s]){ memcpy(names[s],hdr+np,nl); names[s][nl]=0; }
-        }
-      }
-      bank->names=names;
+  if(nts){
+    names=calloc(ns?ns:1,sizeof(char*));
+    if(!names) goto invalid;
+    for(uint32_t s=0;s<ns;s++){
+      uint32_t noff=rd_u32(hdr+names_off+(size_t)s*4);
+      if(noff<(size_t)ns*4 || noff>=nts) goto invalid;
+      const uint8_t *name=hdr+names_off+noff;
+      const uint8_t *end=memchr(name,0,nts-noff);
+      if(!end) goto invalid;
+      size_t nl=(size_t)(end-name);
+      names[s]=malloc(nl+1);
+      if(!names[s]) goto invalid;
+      memcpy(names[s],name,nl+1);
     }
   }
+  if(bank->names){
+    for(int s=0;s<bank->nsubs;s++) free(bank->names[s]);
+    free(bank->names);
+  }
+  free(bank->subs);
+  bank->subs=subs; bank->names=names; bank->nsubs=(int)ns;
+  bank->data_file_off=data_region_off;
   return 1;
+invalid:
+  if(names){ for(uint32_t s=0;s<ns;s++) free(names[s]); free(names); }
+  free(subs);
+  return 0;
 }
 
 /* Event metadata readers adapted from FModBankParser (Apache-2.0).
@@ -701,18 +747,25 @@ static int fmod_bank_open(FBank *bank,const AnygmHostServices *host,const char *
       for(size_t i=0;i+4<=pr;i++) if(memcmp(probe+i,"FSB5",4)==0){ fsb5_off=payload+i; break; }
       if(fsb5_off!=UINT64_MAX){
         uint8_t h0[60];
-        if(fsb5_off<=fsz-sizeof h0 && fmod_bank_read(bank,fsb5_off,h0,sizeof h0) &&
+        uint64_t payload_end=payload+csz;
+        if(payload_end>=sizeof h0 && fsb5_off<=payload_end-sizeof h0 &&
+           fmod_bank_read(bank,fsb5_off,h0,sizeof h0) &&
            memcmp(h0,"FSB5",4)==0){
           uint32_t shs=rd_u32(h0+12), nts=rd_u32(h0+16);
-          size_t hdrlen=60+(size_t)shs+(size_t)nts;   /* include the name table */
-          uint8_t *hdr=hdrlen<=64u*1024u*1024u?malloc(hdrlen):NULL;
-          if(hdr){
-            if(fsb5_off<=SIZE_MAX && hdrlen<=fsz-fsb5_off &&
-               fmod_bank_read(bank,fsb5_off,hdr,hdrlen)){
-              size_t data_region=(size_t)fsb5_off+60u+shs+nts;
-              if(fmod_fsb5_parse_table(bank,hdr,hdrlen,data_region)) have_snd=1;
+          size_t hdrlen;
+          if(fsb5_size_add(60u,(size_t)shs,&hdrlen) &&
+             fsb5_size_add(hdrlen,(size_t)nts,&hdrlen)){ /* include the name table */
+            uint8_t *hdr=hdrlen<=64u*1024u*1024u?malloc(hdrlen):NULL;
+            if(hdr){
+              if(fsb5_off<=SIZE_MAX && payload_end<=SIZE_MAX && hdrlen<=payload_end-fsb5_off &&
+                 fmod_bank_read(bank,fsb5_off,hdr,hdrlen)){
+                size_t data_region=(size_t)fsb5_off+hdrlen;
+                size_t data_len=(size_t)(payload_end-fsb5_off-hdrlen);
+                if(fmod_fsb5_parse_table(bank,hdr,hdrlen,data_region,data_len)) have_snd=1;
+              }
+              free(hdr);
             }
-            free(hdr); }
+          }
         }
       }
     }

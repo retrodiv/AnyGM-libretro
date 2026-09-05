@@ -126,6 +126,11 @@ records. Every chunk, media slice, hierarchy object, and recursive event walk
 is bounded before use. Savestates retain only bank paths and SHA-256 identities;
 changed or missing banks reject restoration transactionally.
 
+FSB5 sample-header and metadata chains are bounded by their declared header
+region before any field is read. The declared name and data regions must fit the
+containing buffer or bank chunk, each subsound offset must fit the data region,
+and malformed input is rejected before it can publish a sample descriptor.
+
 Classic fidelity companions are untrusted inputs. Their fixed header, project
 generation, exact byte length, SHA-256, record counts, resource identities,
 compressed and expanded lengths, duplicates, and trailing bytes are validated

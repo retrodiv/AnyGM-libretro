@@ -16,7 +16,8 @@ typedef struct {
   size_t data_len;
 } GmlFmodSample;
 
-/* Locate subsound `index` inside an FSB5 chunk; fills *out. Returns 1 on success. */
+/* Locate subsound `index` inside an FSB5 chunk; fills *out only on success.
+ * Returns 0 for malformed input without modifying *out. */
 int gml_fmod_fsb5_sample(const uint8_t *fsb5, size_t fsb5_len, int index, GmlFmodSample *out);
 
 /* Decode FSB5 Vorbis subsound `index` to interleaved S16. Returns frames (per-channel sample count);

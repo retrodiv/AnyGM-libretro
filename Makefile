@@ -175,7 +175,7 @@ CONTRACT_TESTS += $(TEST_DIR)/test_libretro_hardware_render
 endif
 SECURITY_TESTS := $(TEST_DIR)/test_content_security $(TEST_DIR)/test_state_security \
 	$(TEST_DIR)/test_vfs $(TEST_DIR)/test_datafile_security \
-	$(TEST_DIR)/test_bytecode_security
+	$(TEST_DIR)/test_bytecode_security $(TEST_DIR)/test_fmod_security
 API_TEST_OBJECTS := $(TEST_DIR)/public_header_c.o $(TEST_DIR)/public_header_cpp.o
 
 .PHONY: all core runtime check warnings-check api-check contract-check integration-check security-check \
@@ -492,7 +492,8 @@ check: architecture-check $(FOCUSED_TEST_TARGET)
 	$(FOCUSED_TEST_TARGET) \
 		$(if $(filter classic,$(TEST)),$(CLASSIC_TEST_ARGS),) \
 		$(if $(filter d3_state,$(TEST)),$(D3_TEST_ARGS),) \
-		$(if $(filter persistent_room,$(TEST)),$(PERSISTENT_TEST_ARGS),)
+		$(if $(filter persistent_room,$(TEST)),$(PERSISTENT_TEST_ARGS),) \
+		$(if $(filter fmod_security,$(TEST)),$(FMOD_TEST_ARGS),)
 endif
 
 # Target-specific variables propagate to the production objects. A fresh checkout compiles the
@@ -560,6 +561,21 @@ security-check: $(SECURITY_TESTS)
 	$(TEST_DIR)/test_vfs
 	$(TEST_DIR)/test_datafile_security
 	$(TEST_DIR)/test_bytecode_security
+	$(TEST_DIR)/test_fmod_security
+
+$(TEST_DIR)/test_fmod_security: tests/fuzz/test_fmod_security.c \
+	tests/support/anygm_test_runner.c src/audio/banks/gml_fmod.c \
+	src/host/anygm_host.c src/host/anygm_vfs.c $(TEST_DIR)/stb_vorbis_fmod_test.o
+	mkdir -p $(dir $@)
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) -DSTB_VORBIS_NO_STDIO \
+		-DSTB_VORBIS_NO_PUSHDATA_API $^ -o $@ -lm
+
+# The test links the unchanged imported implementation separately so its
+# upstream warnings cannot mask warnings in the FSB5 reader under test.
+$(TEST_DIR)/stb_vorbis_fmod_test.o: src/third_party/stb/stb_vorbis.c
+	mkdir -p $(dir $@)
+	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) -w -DSTB_VORBIS_NO_STDIO \
+		-DSTB_VORBIS_NO_PUSHDATA_API -c $< -o $@
 
 $(TEST_DIR)/test_content_security: tests/fuzz/test_content_security.c \
 	tests/support/synthetic_content.c \
