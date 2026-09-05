@@ -358,6 +358,7 @@ CLASSIC_EXTENSION_OPERATIONS = (
     "classic_extension_add_project_constant",
     "classic_extension_free_aliases",
     "classic_extension_parse",
+    "classic_extension_parse_plain",
     "classic_extension_suffix",
     "classic_extension_ordinal_placeholder",
     "classic_extension_name_compare",

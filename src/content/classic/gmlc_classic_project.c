@@ -39,14 +39,14 @@ static void classic_included_hash_u64(uint64_t *hash,uint64_t value){
   classic_included_hash_bytes(hash,bytes,sizeof(bytes));
 }
 
-int gmlc_classic_included_dependency_hash(const AnygmHostServices *host,
+int gmlc_classic_included_dependency_hash(const AnygmContentTransforms *transforms,const AnygmHostServices *host,
                                           const char *project_path,
                                           uint64_t seed,uint64_t *hash_out){
   if(!project_path || !*project_path || !hash_out) return 0;
   uint8_t *project_data=NULL; size_t project_size=0;
   if(!classic_read_file(host,project_path,&project_data,&project_size)) return 0;
   GmlcClassicManifest manifest={0}; char error[1];
-  int ok=gmlc_classic_manifest(project_data,project_size,&manifest,error,sizeof(error));
+  int ok=gmlc_classic_manifest(transforms,project_data,project_size,&manifest,error,sizeof(error));
   free(project_data);
   char *root=ok?gmlc_path_dirname(project_path):NULL;
   if(ok && !root) ok=0;
@@ -258,7 +258,7 @@ static int classic_add_empty_room(GmlcProject *project, const char *cache_dir,
   return 1;
 }
 
-int gmlc_classic_project_load(GmlcProject *project,const AnygmHostServices *host,
+int gmlc_classic_project_load(const AnygmContentTransforms *transforms,GmlcProject *project,const AnygmHostServices *host,
                               const char *project_path,
                               const char *cache_dir, char *err, size_t errcap){
   if(err && errcap) err[0] = '\0';
@@ -275,7 +275,7 @@ int gmlc_classic_project_load(GmlcProject *project,const AnygmHostServices *host
     return 0;
   }
   GmlcClassicManifest manifest;
-  if(!gmlc_classic_manifest(project_data,project_size,&manifest,err,errcap)){
+  if(!gmlc_classic_manifest(transforms,project_data,project_size,&manifest,err,errcap)){
     free(project_data); return 0;
   }
   if(!gmlc_classic_fidelity_apply(&manifest,host,project_path,project_data,project_size,
@@ -300,7 +300,7 @@ int gmlc_classic_project_load(GmlcProject *project,const AnygmHostServices *host
   int ok = game_information_ok && project->name && project->root_dir && project->yyp_path &&
     classic_import_metadata(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_scripts(&manifest, project, cache_dir, err, errcap) &&
-    gmlc_classic_import_extension_aliases(&manifest, project, project->root_dir, err, errcap) &&
+    gmlc_classic_import_extension_aliases(transforms,&manifest, project, project->root_dir, err, errcap) &&
     gmlc_classic_import_sprites(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_backgrounds(&manifest, project, cache_dir, err, errcap) &&
     gmlc_classic_import_sounds(&manifest, project, cache_dir, err, errcap) &&

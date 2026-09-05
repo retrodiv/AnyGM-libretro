@@ -153,6 +153,9 @@ A small number of literal constants in first-party source are facts of the
 formats being read rather than derived data. They are recorded here so their
 origin is documented deliberately instead of discovered.
 
+- **External content transforms** (`src/content/container/content_transform.c`)
+  are bounded user-supplied buffer programs. No format-specific program is
+  included in this repository.
 - **FMOD Studio bank layout** (`src/audio/banks/gml_fmod.c`). The FEV metadata
   reader is adapted from the public
   [FModBankParser](https://github.com/Masusder/FModBankParser) project. Its
@@ -171,14 +174,9 @@ origin is documented deliberately instead of discovered.
   recognized family then *executes* is an
   operation those parameters configure (a lookup, a threshold, a weighted
   sum, an offset), never a kernel that reproduces the shader's own
-  expression. Families that answered a content shader with a fixed stand-in
-  kernel - a CRT post-process, a sampled CRT, an HSV scan, a
-  noise/jumble, a procedural paint fragment, a four-colour template
-  palette keyed on user-chosen uniform names, and a three-pass surface bloom
-  tied to literal shader fragments - were removed rather than
-  kept: a stand-in can only ever approximate the program it answers for. Such shaders now answer as unrecognized, and the
-  place for them is the shader itself executing on the host's graphics
-  context. The structural recognizers in this tree do not establish that
+  expression. Other shaders execute from the content's own text on the host
+  graphics context rather than through fixed template kernels. The structural
+  recognizers in this tree do not establish that
   every content shader is supported or faithfully reproduced.
 - **Content programs on the host's graphics context**
   (`src/video/gpu/gml_gpu_gl.c`, `src/video/renderer/gml_render_presentation.c`,

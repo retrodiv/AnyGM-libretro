@@ -43,8 +43,15 @@ ZIP-compatible and embedded-Cabinet routing enforce these compile-time limits:
 | Total extracted bytes per level | 4 GiB |
 | Folder/archive expansion ratio after a 16 MiB allowance | 1,000:1 |
 | Nested archive levels | 4 |
-| Anchor (`.anygm`) file bytes | 4 KiB |
+| Anchor (`.anygm`) file bytes | 64 KiB |
+| Runtime-override text within an anchor | 4 KiB |
+| External transform configuration | 512 KiB |
 | Embedded-Cabinet cache marker serialization budget | 20 MiB |
+
+External content transforms are bounded buffer programs with no host capabilities. Their format,
+selection, memory limits and proportional instruction budget are documented in
+`CONTENT_TRANSFORMS.md`. A work bound is not a wall-clock deadline; a frontend accepting untrusted
+content and programs should still enforce process resource and time limits.
 
 Member paths are normalized before selection. Absolute paths, drive or stream
 syntax, empty and dot segments, parent traversal, embedded control bytes,

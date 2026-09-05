@@ -13,7 +13,50 @@
 #include <unistd.h>
 #endif
 
+static Fixture extension_fixture(const char *package_name,
+                                 const char *file_name,
+                                 unsigned kind,
+                                 unsigned convention,
+                                 const char *public_name,
+                                 const char *target_name,
+                                 const char *source,
+                                 const char *constant_name,
+                                 const char *constant_value){
+  Fixture plain={{0},0}, encoded={{0},0};
+  fixture_u32(&plain,653); fixture_u32(&plain,0);
+  fixture_string(&plain,package_name);
+  for(int i=1;i<8;i++) fixture_string(&plain,"");
+  fixture_u32(&plain,0); /* hidden */
+  fixture_u32(&plain,0); /* uses */
+  fixture_u32(&plain,1); /* files */
+  fixture_u32(&plain,700);
+  fixture_string(&plain,file_name); fixture_string(&plain,file_name);
+  fixture_u32(&plain,kind);
+  fixture_string(&plain,""); fixture_string(&plain,"");
+  fixture_u32(&plain,1); /* functions */
+  fixture_u32(&plain,700);
+  fixture_string(&plain,public_name); fixture_string(&plain,target_name);
+  fixture_u32(&plain,convention);
+  fixture_string(&plain,"");
+  fixture_u32(&plain,0); fixture_u32(&plain,0);
+  fixture_zero(&plain,18u*4u);
+  fixture_u32(&plain,constant_name ? 1u : 0u); /* constants */
+  if(constant_name){
+    fixture_u32(&plain,700);
+    fixture_string(&plain,constant_name);
+    fixture_string(&plain,constant_value ? constant_value : "");
+    fixture_u32(&plain,0); /* visible */
+  }
+  fixture_compressed(&plain,(const unsigned char*)source,(int)strlen(source));
 
+  fixture_u32(&encoded,GMLC_CLASSIC_MAGIC);
+  fixture_u32(&encoded,701);
+  fixture_u32(&encoded,0); /* Synthetic prefix ignored by the test slice program. */
+  if(encoded.size+plain.size>sizeof(encoded.data)) abort();
+  memcpy(encoded.data+encoded.size,plain.data,plain.size);
+  encoded.size+=plain.size;
+  return encoded;
+}
 
 static int write_fixture_file(const char *path, const Fixture *fixture, size_t limit){
   FILE *file=fopen(path,"wb");
@@ -117,7 +160,7 @@ static int expect_extension_alias_import(void){
   char err[256]={0};
   int imported=files_ok && project.scripts && project.scripts[0].name && project.scripts[1].name &&
     project.constants && project.constants[0].name && project.constants[0].expression &&
-    gmlc_classic_import_extension_aliases(&manifest,&project,dir,err,sizeof(err));
+    gmlc_classic_import_extension_aliases(test_transforms(),&manifest,&project,dir,err,sizeof(err));
   int found_action=0, found_ambiguous=0, found_unrelated=0, found_broken=0;
   int found_embedded=0, embedded_script=0, found_extension_constant=0;
   int found_package_binary=0,found_direct_binary=0,found_ordinal_placeholder=0;

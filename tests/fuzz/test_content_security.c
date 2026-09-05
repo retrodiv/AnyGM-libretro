@@ -1642,6 +1642,12 @@ static int embedded_executable_cases(const AnygmHostServices *services,const cha
    * neutral LZX-21 Cabinet in a PE section appended after the complete Classic envelope; the
    * established Classic importer must still produce the selected FORM package. */
   Fixture classic={{0},0};
+  char config_path[600];
+  const char *declarations=test_transform_declarations();
+  if(snprintf(config_path,sizeof config_path,"%s/anygm.ini",root)>=(int)sizeof config_path ||
+     !write_file(config_path,declarations,strlen(declarations)))
+    return fail("could not write the synthetic transform configuration");
+  router.system_directory=root;
   uint8_t *cabinet=NULL;
   size_t cabinet_size=0;
   if(!build_gm6_executable_fixture(&classic) ||
@@ -2071,7 +2077,7 @@ static int direct_anchor_cases(const AnygmHostServices *services,const char *roo
       return fail("a broken direct anchor was accepted");
   }
   {
-    uint8_t oversized[4097];
+    uint8_t oversized[ANYGM_CONTENT_MAX_ANCHOR_FILE_BYTES+1u];
     memset(oversized,'a',sizeof oversized);
     if(snprintf(anchor,sizeof anchor,"%s/oversized.anygm",dir)>=(int)sizeof anchor ||
        !write_file(anchor,oversized,sizeof oversized))
@@ -2143,6 +2149,58 @@ static int cache_producer_change_case(const AnygmHostServices *services,const ch
   return ok?1:fail("regenerated marker did not restore this producer");
 }
 
+
+static int transform_configuration_cases(const AnygmHostServices *services,const char *root){
+  char directory[600],system[700],ini[800],payload[800],anchor[800],second[800],resolved[1024];
+  if(snprintf(directory,sizeof directory,"%s/transform-cases",root)>=(int)sizeof directory ||
+     mkdir(directory,0700) ||
+     snprintf(system,sizeof system,"%s/system",directory)>=(int)sizeof system || mkdir(system,0700) ||
+     snprintf(ini,sizeof ini,"%s/anygm.ini",system)>=(int)sizeof ini ||
+     snprintf(payload,sizeof payload,"%s/project.gmk",directory)>=(int)sizeof payload ||
+     snprintf(anchor,sizeof anchor,"%s/content.anygm",directory)>=(int)sizeof anchor ||
+     snprintf(second,sizeof second,"%s/second.anygm",directory)>=(int)sizeof second)
+    return fail("could not prepare the transform configuration paths");
+  Fixture project={{0},0};
+  if(!build_project_fixture(701,&project) || !write_file(payload,project.data,project.size))
+    return fail("could not write the normalized project fixture");
+  AnygmContentRouter router={0};
+  router.host=services;
+  router.cache_directory=directory;
+  router.system_directory=system;
+  router.log=fixture_log;
+  const char identity[]="[transforms]\nclassic.project.7=00001f000000000000000000:\n";
+  const char reject_program[]="[transforms]\nclassic.project.7=010000000000000000000000:\n";
+  const char selected[]="[anygm]\npayload=project.gmk\n[transforms]\nclassic.project.7=00001f000000000000000000:\n";
+  if(anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,NULL,0,NULL,0))
+    return fail("an input requiring a program loaded without one");
+  if(!write_file(ini,identity,sizeof identity-1u) ||
+     !anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,NULL,0,NULL,0))
+    return fail("the system configuration did not supply the test program");
+  if(!write_file(ini,reject_program,sizeof reject_program-1u) ||
+     anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,NULL,0,NULL,0))
+    return fail("a warm cache bypassed the changed transform program");
+  if(!write_file(anchor,selected,sizeof selected-1u) ||
+     !anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,NULL,0))
+    return fail("the explicit anchor did not override the system program");
+  /* Runtime overrides remain disabled; transform requirements are independent. */
+  if(!anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,NULL,0,NULL,0))
+    return fail("the lone sibling anchor did not supply its transform");
+  if(!write_file(second,selected,sizeof selected-1u) ||
+     anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,NULL,0,NULL,0))
+    return fail("ambiguous sibling anchors selected a transform");
+  if(!anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,NULL,0))
+    return fail("an explicit anchor was superseded by ambiguous sibling anchors");
+  const char invalid[]="[transforms]\nclassic.project.7=not-a-program:\n";
+  if(!write_file(ini,invalid,sizeof invalid-1u)) return fail("could not write invalid configuration");
+  strcpy(resolved,"stale");
+  if(anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,NULL,0) || resolved[0])
+    return fail("malformed global configuration did not reject transactionally");
+  if(unlink(ini) ||
+     !anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,NULL,0))
+    return fail("an explicit anchor required a global configuration file");
+  return 1;
+}
+
 int main(void){
   char root[]="build/content-security-XXXXXX";
   if(!mkdtemp(root)) return fail("could not create temporary root")?0:1;
@@ -2184,7 +2242,8 @@ int main(void){
          adjacent_executable_payload_cases(&services,root) &&
          archive_anchor_cases(&services,root) &&
          archive_advanced_anchor_cases(&services,root) &&
-         direct_anchor_cases(&services,root);
+         direct_anchor_cases(&services,root) &&
+         transform_configuration_cases(&services,root);
   ZipEntry pair[2]={traversal,safe};
   ok=ok&&invalid_case(&services,root,"traversal.zip",pair,2);
   pair[0]=absolute;

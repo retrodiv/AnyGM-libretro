@@ -85,14 +85,14 @@ static int expect_room_import(void){
 static int expect_sparse_room_order(void){
   Fixture plain=legacy_fixture_variant(701,1);
   size_t encoded_size=0;
-  unsigned char *encoded=encode_gm7(plain.data,plain.size,&encoded_size);
+  unsigned char *encoded=fixture_project_image(plain.data,plain.size,&encoded_size);
   if(!encoded) return 0;
   GmlcClassicManifest manifest;
   GmlcProject project;
   memset(&manifest,0,sizeof(manifest));
   fixture_project_clear(&project);
   char err[256]={0};
-  int ok=gmlc_classic_manifest(encoded,encoded_size,&manifest,err,sizeof(err));
+  int ok=gmlc_classic_manifest(test_transforms(),encoded,encoded_size,&manifest,err,sizeof(err));
   if(!ok) fprintf(stderr,"sparse room-order manifest failed: %s\n",err);
   if(ok) ok=manifest.existing[GMLC_CLASSIC_ROOM]==2 && manifest.room_order_count==2 &&
             manifest.room_order[0]==6 && manifest.room_order[1]==2 &&

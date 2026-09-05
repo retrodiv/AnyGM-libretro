@@ -940,7 +940,7 @@ static int anchor_next_line(const uint8_t *data,size_t size,size_t *cursor,
     *cursor=next;
     while(begin<end && (data[begin]==' '||data[begin]=='\t')) begin++;
     while(end>begin && (data[end-1]==' '||data[end-1]=='\t')) end--;
-    if(begin==end || data[begin]=='#') continue;
+    if(begin==end || data[begin]=='#' || data[begin]==';') continue;
     *line=data+begin;
     *length=end-begin;
     return 1;
@@ -960,7 +960,7 @@ static int anchor_reference_normalize(const uint8_t *line,size_t length,char *ou
 static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t refsz,
                         char *overrides,size_t overrides_size){
   if(overrides && overrides_size) overrides[0]=0;
-  if(!data || !size || size>ANYGM_CONTENT_MAX_ANCHOR_BYTES) return 0;
+  if(!data || !size || size>ANYGM_CONTENT_MAX_ANCHOR_FILE_BYTES) return 0;
   size_t cursor=0;
   if(size>=3 && data[0]==0xefu && data[1]==0xbbu && data[2]==0xbfu) cursor=3;
   const uint8_t *line=NULL;
@@ -970,14 +970,19 @@ static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t r
     if(!anchor_reference_normalize(line,length,reference,refsz)) return 0;
     return !anchor_next_line(data,size,&cursor,&line,&length);
   }
-  int in_overrides=0,have_payload=0;
+  int section=0,have_payload=0,have_overrides=0,have_transforms=0;
   size_t used=0;
   while(anchor_next_line(data,size,&cursor,&line,&length)){
     if(line[0]=='['){
-      if(length==11 && !memcmp(line,"[overrides]",11) && !in_overrides){ in_overrides=1; continue; }
+      if(length==11 && !memcmp(line,"[overrides]",11) && !have_overrides){
+        section=1; have_overrides=1; continue;
+      }
+      if(length==12 && !memcmp(line,"[transforms]",12) && !have_transforms){
+        section=2; have_transforms=1; continue;
+      }
       return 0;
     }
-    if(!in_overrides){
+    if(section==0){
       if(have_payload || length<7 || memcmp(line,"payload",7)) return 0;
       const uint8_t *value=line+7;
       size_t value_length=length-7;
@@ -987,7 +992,7 @@ static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t r
       while(value_length && (value[0]==' '||value[0]=='\t')){ value++; value_length--; }
       if(!anchor_reference_normalize(value,value_length,reference,refsz)) return 0;
       have_payload=1;
-    } else if(overrides){
+    } else if(section==1 && overrides){
       if(overrides_size-used<length+2u) return 0;
       memcpy(overrides+used,line,length);
       used+=length;
@@ -995,7 +1000,27 @@ static int anchor_parse(const uint8_t *data,size_t size,char *reference,size_t r
       overrides[used]=0;
     }
   }
-  return have_payload;
+  if(!have_payload) return 0;
+  if(have_transforms){
+    AnygmContentTransforms *validation=anygm_content_transforms_create();
+    int valid=validation && anygm_content_transforms_parse(validation,data,size,NULL,0);
+    anygm_content_transforms_destroy(validation);
+    if(!valid) return 0;
+  }
+  return 1;
+}
+
+/* Declarations are interpreted only during an owned resolution transaction. */
+static int anchor_apply_transforms(const AnygmContentRouter *router,
+                                   const uint8_t *data,size_t size,unsigned priority){
+  char error[256]={0};
+  if(!router || !router->transforms ||
+     !anygm_content_transforms_parse_layer(router->transforms,data,size,priority,error,sizeof error)){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,"%s",
+                error[0]?error:"anchor: transform context is unavailable");
+    return 0;
+  }
+  return 1;
 }
 
 static uint32_t zip_crc32(const uint8_t *data,size_t size){
@@ -1111,7 +1136,7 @@ static int zip_extract_all(const AnygmContentRouter *router,const char *zpath,co
    * archive instead of quietly losing to the scores, because silently loading something other
    * than what the archive declared is worse than not loading it. */
   if(valid && content_rel && anchor_best){
-    uint8_t anchor_data[ANYGM_CONTENT_MAX_ANCHOR_BYTES];
+    uint8_t anchor_data[ANYGM_CONTENT_MAX_ANCHOR_FILE_BYTES];
     char reference[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
     char target[ANYGM_CONTENT_MAX_MEMBER_PATH+1u]="";
     int anchor_ok=0;
@@ -1357,7 +1382,7 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
    * the outermost anchor wins. The staged copy is untrusted input reparsed on every load; a copy
    * that no longer parses is a corrupted cache entry and rejects the load rather than dropping
    * directives the archive declared. */
-  if(content_overrides && content_overrides_size && !content_overrides[0]){
+  {
     AnygmFileInfo anchor_info;
     if(anygm_vfs_stat(router->host,anchor_copy,&anchor_info) &&
        (anchor_info.flags&ANYGM_FILE_INFO_EXISTS) &&
@@ -1366,9 +1391,12 @@ static int load_archive_content_depth(const AnygmContentRouter *router,const cha
       size_t anchor_size=0;
       char anchor_ref[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
       int parsed=anygm_vfs_read_all(router->host,anchor_copy,&anchor_bytes,&anchor_size,
-                                    (size_t)ANYGM_CONTENT_MAX_ANCHOR_BYTES) &&
+                                    (size_t)ANYGM_CONTENT_MAX_ANCHOR_FILE_BYTES) &&
                  anchor_parse(anchor_bytes,anchor_size,anchor_ref,sizeof anchor_ref,
-                              content_overrides,content_overrides_size);
+                              content_overrides && !content_overrides[0]?content_overrides:NULL,
+                              content_overrides_size);
+      if(parsed) parsed=anchor_apply_transforms(router,anchor_bytes,anchor_size,
+        ANYGM_CONTENT_MAX_NESTING_LEVELS+1u-(unsigned)depth);
       free(anchor_bytes);
       if(!parsed){
         content_log(router,ANYGM_CONTENT_LOG_ERROR,
@@ -1417,11 +1445,16 @@ static int load_classic_project_content(const AnygmContentRouter *router,const c
   if(!file_hash64(router,srcpath,&src_hash)) return 0;
   uint64_t src_size=0;
   if(!file_size64(router,srcpath,&src_size)) return 0;
+  uint8_t transform_hash[32];
+  anygm_content_transforms_hash(router->transforms,transform_hash);
+  for(size_t i=0;i<sizeof transform_hash;i++){
+    src_hash^=transform_hash[i]; src_hash*=UINT64_C(1099511628211);
+  }
   char source_dir[4096];
   anygm_content_path_parent(srcpath,source_dir,sizeof(source_dir));
   if(!gmlc_classic_extension_dependency_hash(router->host,source_dir,src_hash,&src_hash)) return 0;
   if(!gmlc_classic_fidelity_dependency_hash(router->host,srcpath,src_hash,&src_hash)) return 0;
-  if(!gmlc_classic_included_dependency_hash(router->host,srcpath,src_hash,&src_hash)) return 0;
+  if(!gmlc_classic_included_dependency_hash(router->transforms,router->host,srcpath,src_hash,&src_hash)) return 0;
   char outdir[768];
   snprintf(outdir,sizeof outdir,"%s/%s-%016llx-anygm-classic",base,stem,
            (unsigned long long)src_hash);
@@ -1441,7 +1474,7 @@ static int load_classic_project_content(const AnygmContentRouter *router,const c
   if(!mkdirs_for(router,outdir,1)) return 0;
   GmlcProject project;
   char err[1024]={0};
-  if(!gmlc_classic_project_load(&project,router->host,srcpath,outdir,err,sizeof err)){
+  if(!gmlc_classic_project_load(router->transforms,&project,router->host,srcpath,outdir,err,sizeof err)){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"classic: %s",err[0]?err:"project load failed");
     return 0;
   }
@@ -1547,7 +1580,7 @@ static int load_anchor_content(const AnygmContentRouter *router,const char *anch
   uint8_t *bytes=NULL;
   size_t size=0;
   if(!router || !anygm_vfs_read_all(router->host,anchor_path,&bytes,&size,
-                                    (size_t)ANYGM_CONTENT_MAX_ANCHOR_BYTES)){
+                                    (size_t)ANYGM_CONTENT_MAX_ANCHOR_FILE_BYTES)){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,"anchor: cannot read %s",anchor_path);
     free(bytes);
     return 0;
@@ -1555,6 +1588,7 @@ static int load_anchor_content(const AnygmContentRouter *router,const char *anch
   char reference[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
   int ok=anchor_parse(bytes,size,reference,sizeof reference,
                       content_overrides,content_overrides_size);
+  if(ok) ok=anchor_apply_transforms(router,bytes,size,ANYGM_CONTENT_MAX_NESTING_LEVELS+2u);
   free(bytes);
   if(!ok){
     content_log(router,ANYGM_CONTENT_LOG_ERROR,
@@ -1591,7 +1625,7 @@ int anygm_content_identity_path(const AnygmContentRouter *router,const char *inp
   uint8_t *bytes=NULL;
   size_t size=0;
   if(!router || !anygm_vfs_read_all(router->host,input_path,&bytes,&size,
-                                    (size_t)ANYGM_CONTENT_MAX_ANCHOR_BYTES)){
+                                    (size_t)ANYGM_CONTENT_MAX_ANCHOR_FILE_BYTES)){
     free(bytes);
     return 0;
   }
@@ -1701,7 +1735,7 @@ static void adopt_sibling_anchor_overrides(const AnygmContentRouter *router,cons
   uint8_t *bytes=NULL;
   size_t size=0;
   if(!anygm_vfs_read_all(router->host,selected,&bytes,&size,
-                         (size_t)ANYGM_CONTENT_MAX_ANCHOR_BYTES)){
+                         (size_t)ANYGM_CONTENT_MAX_ANCHOR_FILE_BYTES)){
     free(bytes);
     return;
   }
@@ -1719,11 +1753,72 @@ static void adopt_sibling_anchor_overrides(const AnygmContentRouter *router,cons
                 "anchor: adopting the directives %s carries for %s",selected,input_path);
 }
 
+/* User declarations are selected for one resolution and never inherited by another load. */
+static int adopt_sibling_anchor_transforms(const AnygmContentRouter *router,const char *input_path){
+  const struct AnygmHostServices *host=router->host;
+  if(!input_path || path_ext_is(input_path,".anygm") || !host ||
+     !host->directory_open || !host->directory_read || !host->directory_close) return 1;
+  char parent[1024],selected[1536];
+  anygm_content_path_parent(input_path,parent,sizeof parent);
+  if(!parent[0] || !sibling_anchor_path(router,parent,selected,sizeof selected)) return 1;
+  uint8_t *bytes=NULL; size_t size=0;
+  if(!anygm_vfs_read_all(host,selected,&bytes,&size,ANYGM_CONTENT_MAX_ANCHOR_FILE_BYTES)){
+    free(bytes);
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,"anchor: cannot read %s",selected);
+    return 0;
+  }
+  size_t cursor=0,length=0;
+  const uint8_t *line=NULL;
+  int declared=0;
+  while(anchor_next_line(bytes,size,&cursor,&line,&length))
+    if(length==12 && !memcmp(line,"[transforms]",12)){ declared=1; break; }
+  char reference[ANYGM_CONTENT_MAX_MEMBER_PATH+1u];
+  int ok=!declared || (anchor_parse(bytes,size,reference,sizeof reference,NULL,0) &&
+                       anchor_apply_transforms(router,bytes,size,1u));
+  free(bytes);
+  if(!ok) content_log(router,ANYGM_CONTENT_LOG_ERROR,"anchor: invalid transform declarations in %s",selected);
+  return ok;
+}
+
+static int load_transform_defaults(const AnygmContentRouter *router){
+  if(!router->system_directory || !router->system_directory[0]) return 1;
+  char path[1536];
+  if(!path_join_bounded(path,sizeof path,router->system_directory,"anygm.ini")){
+    content_log(router,ANYGM_CONTENT_LOG_ERROR,"transform configuration path is too long");
+    return 0;
+  }
+  AnygmFileInfo info;
+  /* Hosts that cannot distinguish absence from inaccessibility supply no defaults. */
+  if(!anygm_vfs_stat(router->host,path,&info)) return 1;
+  if(!(info.flags&ANYGM_FILE_INFO_EXISTS)) return 1;
+  uint8_t *data=NULL; size_t size=0; char error[256]={0};
+  int ok=(info.flags&ANYGM_FILE_INFO_REGULAR) &&
+    anygm_vfs_read_all(router->host,path,&data,&size,ANYGM_TRANSFORM_MAX_CONFIG_BYTES) &&
+    anygm_content_transforms_parse(router->transforms,data,size,error,sizeof error);
+  free(data);
+  if(!ok) content_log(router,ANYGM_CONTENT_LOG_ERROR,"configuration %s: %s",path,
+                      error[0]?error:"cannot read bounded regular file");
+  return ok;
+}
+
 AnygmContentResolveResult anygm_content_resolve_path(
     const AnygmContentRouter *router,const char *input_path,
     char *resolved_path,size_t resolved_path_size,
     char *asset_root,size_t asset_root_size,
     char *content_overrides,size_t content_overrides_size){
+  if(resolved_path && resolved_path_size) resolved_path[0]=0;
+  if(asset_root && asset_root_size) asset_root[0]=0;
+  if(content_overrides && content_overrides_size) content_overrides[0]=0;
+  if(!router || !input_path || !resolved_path || !resolved_path_size)
+    return ANYGM_CONTENT_RESOLVE_INVALID;
+  AnygmContentRouter scoped=*router;
+  scoped.transforms=anygm_content_transforms_create();
+  if(!scoped.transforms) return ANYGM_CONTENT_RESOLVE_INVALID;
+  if(!load_transform_defaults(&scoped) || !adopt_sibling_anchor_transforms(&scoped,input_path)){
+    anygm_content_transforms_destroy(scoped.transforms);
+    return ANYGM_CONTENT_RESOLVE_INVALID;
+  }
+  router=&scoped;
   /* Start a fresh override channel; nested resolution keeps the first block. */
   if(content_overrides && content_overrides_size) content_overrides[0]=0;
   AnygmContentResolveResult result=content_resolve_path_direct(
@@ -1734,5 +1829,6 @@ AnygmContentResolveResult anygm_content_resolve_path(
      content_overrides && content_overrides_size && !content_overrides[0] &&
      !path_ext_is(input_path,".anygm"))
     adopt_sibling_anchor_overrides(router,input_path,content_overrides,content_overrides_size);
+  anygm_content_transforms_destroy(scoped.transforms);
   return result;
 }

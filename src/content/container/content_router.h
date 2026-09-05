@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "gml_win.h"
+#include "content_transform.h"
 
 #define ANYGM_CONTENT_MAX_ARCHIVE_BYTES UINT64_C(1073741824)
 #define ANYGM_CONTENT_MAX_EXECUTABLE_BYTES UINT64_C(1073741824)
@@ -18,6 +19,8 @@
 #define ANYGM_CONTENT_EXPANSION_ALLOWANCE UINT64_C(16777216)
 #define ANYGM_CONTENT_MAX_NESTING_LEVELS 4u
 #define ANYGM_CONTENT_MAX_ANCHOR_BYTES 4096u
+/* Transform declarations have their own file budget; override text remains 4 KiB. */
+#define ANYGM_CONTENT_MAX_ANCHOR_FILE_BYTES 65536u
 
 typedef void (*AnygmContentLogFn)(void *userdata,int level,const char *message);
 
@@ -29,6 +32,9 @@ typedef struct AnygmContentRouter {
   /* Allow directives from one adjacent anchor when configured.
    * Directly selected anchors retain their own parsing policy. */
   int sibling_anchor_overrides;
+  const char *system_directory;
+  /* Borrowed only for one resolution transaction. */
+  AnygmContentTransforms *transforms;
 } AnygmContentRouter;
 
 enum {

@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gmlc_classic_import_internal.h"
+#include "content_transform.h"
 
 #include "anygm_host.h"
 #include "anygm_vfs.h"
@@ -67,7 +68,16 @@ static char *classic_extension_external_target(const char *library,
   return target;
 }
 
-
+static int classic_extension_u32(ClassicExtensionReader *reader, uint32_t *value){
+  if(reader->pos>reader->size || reader->size-reader->pos<4) return 0;
+  const uint8_t *source=reader->data+reader->pos;
+  *value=(uint32_t)source[0] |
+         (uint32_t)source[1]<<8 |
+         (uint32_t)source[2]<<16 |
+         (uint32_t)source[3]<<24;
+  reader->pos+=4;
+  return 1;
+}
 
 static int classic_extension_skip(ClassicExtensionReader *reader, size_t size){
   if(reader->pos>reader->size || size>reader->size-reader->pos) return 0;
@@ -75,19 +85,45 @@ static int classic_extension_skip(ClassicExtensionReader *reader, size_t size){
   return 1;
 }
 
-
+static int classic_extension_string(ClassicExtensionReader *reader, char **out){
+  uint32_t length=0;
+  *out=NULL;
+  if(!classic_extension_u32(reader,&length) || length>1024u*1024u ||
+     reader->pos>reader->size || length>reader->size-reader->pos) return 0;
+  char *text=(char*)malloc((size_t)length+1u);
+  if(!text){ reader->oom=1; return 0; }
+  if(length) memcpy(text,reader->data+reader->pos,length);
+  text[length]='\0';
+  reader->pos+=length;
+  if(memchr(text,'\0',length)){ free(text); return 0; }
+  *out=text;
+  return 1;
+}
 
 static int classic_extension_skip_string(ClassicExtensionReader *reader){
-  (void)reader;
-  return (0 /* Revision-selected adapter omitted from unpublished history. */);
+  uint32_t length=0;
+  return classic_extension_u32(reader,&length) && length<=1024u*1024u &&
+         classic_extension_skip(reader,length);
 }
 
 static int classic_extension_skip_blob(ClassicExtensionReader *reader){
-  (void)reader;
-  return (0 /* Revision-selected adapter omitted from unpublished history. */);
+  uint32_t size=0;
+  return classic_extension_u32(reader,&size) && classic_extension_skip(reader,size);
 }
 
-
+static int classic_extension_blob(ClassicExtensionReader *reader,
+                                  uint8_t **out, uint32_t *size,
+                                  uint32_t limit){
+  *out=NULL; *size=0;
+  if(!classic_extension_u32(reader,size) || *size>limit ||
+     reader->pos>reader->size || *size>reader->size-reader->pos) return 0;
+  uint8_t *decoded=(uint8_t*)malloc(*size ? *size : 1u);
+  if(!decoded){ reader->oom=1; return 0; }
+  if(*size) memcpy(decoded,reader->data+reader->pos,*size);
+  reader->pos+=*size;
+  *out=decoded;
+  return 1;
+}
 
 static int classic_extension_identifier_equal(const char *left, const char *right){
   while(left && right && *left && *right){
@@ -293,7 +329,8 @@ static int classic_extension_decode_script(ClassicExtensionReader *reader,
   uint8_t *compressed=NULL;
   uint32_t compressed_size=0;
   *source=NULL; *source_size=0;
-  if(!(0 /* Revision-selected adapter omitted from unpublished history. */) ||
+  if(!classic_extension_blob(reader,&compressed,&compressed_size,
+                             CLASSIC_EXTENSION_COMPRESSED_SCRIPT_LIMIT) ||
      !compressed_size) return 0;
   size_t capacity=(size_t)compressed_size*4u;
   if(capacity<4096u) capacity=4096u;
@@ -425,7 +462,196 @@ static void classic_extension_free_aliases(ClassicExtensionAlias *aliases, int c
 }
 
 /* Return 1 for a parsed/irrelevant package, 0 for malformed input, and -1 for OOM. */
+static int classic_extension_parse_plain(const GmlcClassicManifest *classic,
+                                   GmlcProject *project,
+                                   const uint8_t *file_data, size_t file_size){
+  ClassicExtensionReader reader;
+  memset(&reader,0,sizeof reader);
+  reader.data=file_data;
+  reader.size=file_size;
 
+  uint32_t value=0;
+  char *package_name=NULL;
+  if(!classic_extension_u32(&reader,&value) || value<500 || value>GMLC_CLASSIC_GM81 ||
+     !classic_extension_u32(&reader,&value) ||
+     !classic_extension_string(&reader,&package_name)){
+    free(package_name);
+    return reader.oom ? -1 : 0;
+  }
+  int relevant=classic_extension_named_by_project(classic,package_name);
+  free(package_name);
+  if(!relevant) return 1;
+  int scripts_before=project->n_scripts;
+  int order_before=project->n_script_order;
+  int memory_before=project->n_memory_files;
+  int constants_before=project->n_constants;
+  int project_aliases_before=project->n_function_aliases;
+  for(int i=1;i<8;i++) if(!classic_extension_skip_string(&reader)) return 0;
+  uint32_t uses=0, files=0;
+  if(!classic_extension_u32(&reader,&value) ||
+     !classic_extension_u32(&reader,&uses) || uses>65536u) return 0;
+  for(uint32_t i=0;i<uses;i++) if(!classic_extension_skip_string(&reader)) return 0;
+  if(!classic_extension_u32(&reader,&files) || files>65536u) return 0;
+
+  ClassicExtensionAlias *aliases=NULL;
+  int count=0, capacity=0;
+  for(uint32_t file=0;file<files;file++){
+    uint32_t kind=0, functions=0, constants=0;
+    char *library_name=NULL;
+    if(!classic_extension_u32(&reader,&value) ||
+       !classic_extension_string(&reader,&library_name) ||
+       !classic_extension_skip_string(&reader) ||
+       !classic_extension_u32(&reader,&kind) ||
+       !classic_extension_skip_string(&reader) ||
+       !classic_extension_skip_string(&reader) ||
+       !classic_extension_u32(&reader,&functions) || functions>65536u){
+      free(library_name);
+      goto malformed;
+    }
+    for(uint32_t function=0;function<functions;function++){
+      char *public_name=NULL, *target_name=NULL;
+      uint32_t convention=0;
+      if(!classic_extension_u32(&reader,&value) ||
+         !classic_extension_string(&reader,&public_name) ||
+         !classic_extension_string(&reader,&target_name) ||
+         !classic_extension_u32(&reader,&convention) ||
+         !classic_extension_skip_string(&reader) ||
+         !classic_extension_u32(&reader,&value) ||
+         !classic_extension_u32(&reader,&value) ||
+         !classic_extension_skip(&reader,18u*4u)){
+        free(public_name); free(target_name);
+        free(library_name);
+        goto malformed;
+      }
+      int needs_script=kind==2 && convention==2;
+      int binary=kind==1;
+      if((needs_script || binary) && public_name[0] && target_name[0]){
+        if(binary){
+          char *encoded=classic_extension_external_target(library_name,target_name);
+          free(target_name);
+          target_name=encoded;
+          if(!target_name){
+            free(public_name); free(library_name);
+            reader.oom=1;
+            goto malformed;
+          }
+        }
+        if(count>=capacity){
+          int next=capacity ? capacity*2 : 16;
+          ClassicExtensionAlias *grown=(ClassicExtensionAlias*)realloc(
+            aliases,(size_t)next*sizeof(*grown));
+          if(!grown){
+            free(public_name); free(target_name);
+            free(library_name);
+            reader.oom=1;
+            goto malformed;
+          }
+          aliases=grown; capacity=next;
+        }
+        aliases[count].public_name=public_name;
+        aliases[count].target_name=target_name;
+        aliases[count].file_index=file;
+        aliases[count].needs_script=needs_script;
+        count++;
+      } else {
+        free(public_name); free(target_name);
+      }
+    }
+    free(library_name);
+    if(!classic_extension_u32(&reader,&constants) || constants>65536u) goto malformed;
+    for(uint32_t constant=0;constant<constants;constant++){
+      char *constant_name=NULL, *constant_value=NULL;
+      if(!classic_extension_u32(&reader,&value) ||
+         !classic_extension_string(&reader,&constant_name) ||
+         !classic_extension_string(&reader,&constant_value) ||
+         !classic_extension_u32(&reader,&value)){
+        free(constant_name); free(constant_value);
+        goto malformed;
+      }
+      if(!classic_extension_add_project_constant(project,constant_name,constant_value)){
+        free(constant_name); free(constant_value);
+        reader.oom=1;
+        goto malformed;
+      }
+      free(constant_name); free(constant_value);
+    }
+  }
+  for(uint32_t file=0;file<files;file++){
+    int needs_source=0;
+    for(int i=0;i<count;i++){
+      if(aliases[i].needs_script && aliases[i].file_index==file &&
+         !classic_extension_script_target(project,aliases[i].target_name)){
+        needs_source=1;
+        break;
+      }
+    }
+    if(!needs_source){
+      if(!classic_extension_skip_blob(&reader)) goto malformed;
+      continue;
+    }
+    char *source=NULL;
+    size_t source_size=0;
+    if(!classic_extension_decode_script(&reader,&source,&source_size)) goto malformed;
+    for(int i=0;i<count;i++){
+      if(!aliases[i].needs_script || aliases[i].file_index!=file ||
+         classic_extension_script_target(project,aliases[i].target_name)) continue;
+      const char *body=NULL;
+      size_t body_size=0;
+      if(classic_extension_definition(source,source_size,aliases[i].target_name,
+                                      &body,&body_size) &&
+         !classic_extension_add_project_script(project,aliases[i].target_name,
+                                               body,body_size)){
+        free(source);
+        reader.oom=1;
+        goto malformed;
+      }
+    }
+    free(source);
+  }
+  for(int i=0;i<count;i++){
+    const char *target=aliases[i].needs_script
+      ? classic_extension_script_target(project,aliases[i].target_name)
+      : aliases[i].target_name;
+    if(target && !classic_extension_add_project_alias(project,aliases[i].public_name,target)){
+      reader.oom=1;
+      goto malformed;
+    }
+  }
+  classic_extension_free_aliases(aliases,count);
+  return 1;
+
+malformed:
+  classic_extension_rollback_scripts(project,scripts_before,order_before,memory_before);
+  for(int i=constants_before;i<project->n_constants;i++){
+    free(project->constants[i].name);
+    free(project->constants[i].expression);
+    memset(&project->constants[i],0,sizeof(project->constants[i]));
+  }
+  project->n_constants=constants_before;
+  for(int i=project_aliases_before;i<project->n_function_aliases;i++){
+    free(project->function_aliases[i].public_name);
+    free(project->function_aliases[i].target_name);
+    memset(&project->function_aliases[i],0,sizeof(project->function_aliases[i]));
+  }
+  project->n_function_aliases=project_aliases_before;
+  classic_extension_free_aliases(aliases,count);
+  return reader.oom ? -1 : 0;
+}
+
+/* The parser below this boundary sees only plain, untrusted package bytes. */
+static int classic_extension_parse(const AnygmContentTransforms *transforms,
+                                   const GmlcClassicManifest *classic,GmlcProject *project,
+                                   const uint8_t *file_data,size_t file_size,
+                                   char *err,size_t errcap){
+  if(file_size<12 || import_u32_at(file_data)!=GMLC_CLASSIC_MAGIC) return 1;
+  uint32_t version=import_u32_at(file_data+4);
+  if(version<700 || version>GMLC_CLASSIC_GM81) return 1;
+  uint8_t *plain=NULL; size_t plain_size=0;
+  if(!(0 /* Revision-selected adapter omitted from unpublished history. */)) return -2;
+  int result=classic_extension_parse_plain(classic,project,plain,plain_size);
+  free(plain);
+  return result;
+}
 
 static int classic_extension_suffix(const char *name){
   size_t length=name?strlen(name):0;
@@ -555,7 +781,7 @@ int gmlc_classic_extension_dependency_hash(const AnygmHostServices *host,
   return 1;
 }
 
-int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
+int gmlc_classic_import_extension_aliases(const AnygmContentTransforms *transforms,const GmlcClassicManifest *classic,
                                           GmlcProject *project,
                                           const char *project_dir,
                                           char *err, size_t errcap){
@@ -582,16 +808,16 @@ int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
     free(path);
     if(read<0){ ok=0; break; }
     if(read>0){
-      int parsed=(0 /* Revision-selected adapter omitted from unpublished history. */);
+      int parsed=classic_extension_parse(transforms,classic,project,data,size,err,errcap);
       free(data);
       if(anygm_host_development_setting(project->host,"GMLC_LOG_CLASSIC_EXTENSIONS"))
         anygm_host_logf(project ? project->host : NULL,ANYGM_LOG_DEBUG,"classic extension package: %s (%s)\n",names[i],
-                parsed>0?"parsed":parsed<0?"out of memory":"ignored malformed metadata");
+                parsed>0?"parsed":parsed==-2?"transform rejected":parsed<0?"out of memory":"ignored malformed metadata");
       if(parsed<0){ ok=0; break; }
     }
   }
   classic_extension_names_free(names,count);
-  if(!ok && err && errcap)
+  if(!ok && err && errcap && !err[0])
     snprintf(err,errcap,"classic import: out of memory reading extension metadata");
   if(ok && anygm_host_development_setting(project->host,"GMLC_LOG_CLASSIC_EXTENSIONS")){
     anygm_host_logf(project ? project->host : NULL,ANYGM_LOG_DEBUG,"classic extensions: imported %d script(s), retained %d alias(es) from %s\n",

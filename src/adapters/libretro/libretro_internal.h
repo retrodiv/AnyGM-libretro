@@ -54,6 +54,7 @@ typedef struct LibretroAdapter {
   unsigned frame_failure_reports;
   char save_directory[1024];
   char cache_directory[1024];
+  char system_directory[1024];
   char language[16];
   char region[16];
   char language_tag[32];

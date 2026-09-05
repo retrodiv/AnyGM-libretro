@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
-/* Non-CRT room-layer effects and their complete software pixel kernels. */
+/* Room-layer effects and their complete software pixel kernels. */
 #include "gml_render.h"
 #include "gml_render_internal.h"
 
@@ -641,7 +641,7 @@ static const void *mem_find(const void *hay, size_t hn, const void *nee, size_t 
   for(size_t i=0;i+nn<=hn;i++) if(h[i]==ne[0] && !memcmp(h+i,ne,nn)) return h+i;
   return NULL;
 }
-
+/* ---- generic GLSL-ES fragment parsing ---- */
 /* Parse `<name> = vec2(a, b)` (or vecN); fills a,b. */
 static int glsl_parse_vec2(const char *src, const char *name, float *a, float *b){
   size_t nl=strlen(name); const char *p=src;

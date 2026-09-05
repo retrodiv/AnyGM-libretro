@@ -148,6 +148,7 @@ static AnygmResult engine_prepare_content(AnygmEngine *engine,
     AnygmContentRouter router={0};
     router.host=&engine->host;
     router.cache_directory=source->cache_directory;
+    router.system_directory=source->system_directory;
     router.log=content_router_log;
     router.log_userdata=engine;
     /* Disabled overrides do not trigger adjacent-anchor discovery. */
@@ -339,6 +340,8 @@ static AnygmResult engine_load_content_prepare(AnygmEngine *engine,
   engine->win.compatibility=&engine->compatibility;
   snprintf(engine->content_cache_directory,sizeof engine->content_cache_directory,"%s",
            source->cache_directory?source->cache_directory:"");
+  snprintf(engine->content_system_directory,sizeof engine->content_system_directory,"%s",
+           source->system_directory?source->system_directory:"");
   snprintf(engine->content_launch_path,sizeof engine->content_launch_path,"%s",
            source->kind==ANYGM_CONTENT_PATH && source->path?source->path:"");
   snprintf(engine->current_content_path,sizeof engine->current_content_path,"%s",
@@ -714,6 +717,8 @@ AnygmResult engine_state_stage_content(AnygmEngine *engine,const char *locator,
   source.path=target;
   source.cache_directory=engine->content_cache_directory[0]
     ?engine->content_cache_directory:NULL;
+  source.system_directory=engine->content_system_directory[0]
+    ?engine->content_system_directory:NULL;
   EnginePreparedContent prepared;
   result=engine_prepare_content(staged,&source,&prepared);
   if(result!=ANYGM_OK){
@@ -733,6 +738,8 @@ AnygmResult engine_state_stage_content(AnygmEngine *engine,const char *locator,
   snprintf(staged->win.save_dir,sizeof staged->win.save_dir,"%s",engine->win.save_dir);
   snprintf(staged->content_cache_directory,sizeof staged->content_cache_directory,"%s",
            engine->content_cache_directory);
+  snprintf(staged->content_system_directory,sizeof staged->content_system_directory,"%s",
+           engine->content_system_directory);
   snprintf(staged->content_launch_path,sizeof staged->content_launch_path,"%s",
            engine->content_launch_path);
   snprintf(staged->current_content_path,sizeof staged->current_content_path,"%s",
@@ -814,6 +821,8 @@ static AnygmResult engine_apply_game_change(AnygmEngine *engine,int *changed){
   source.path=target;
   source.cache_directory=engine->content_cache_directory[0]
     ?engine->content_cache_directory:NULL;
+  source.system_directory=engine->content_system_directory[0]
+    ?engine->content_system_directory:NULL;
   EnginePreparedContent prepared;
   AnygmResult result=engine_prepare_content(engine,&source,&prepared);
   if(result!=ANYGM_OK) return result;

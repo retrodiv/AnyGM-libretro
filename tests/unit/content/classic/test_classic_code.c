@@ -24,7 +24,7 @@ static int expect_script_import(void){
 #else
   mkdir(dir, 0777);
 #endif
-  if(!gmlc_classic_manifest(fixture.data, fixture.size, &manifest, err, sizeof(err))){
+  if(!gmlc_classic_manifest(test_transforms(),fixture.data, fixture.size, &manifest, err, sizeof(err))){
     fprintf(stderr, "script import manifest failed: %s\n", err);
     return 0;
   }

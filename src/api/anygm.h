@@ -302,11 +302,14 @@ typedef struct AnygmContentSource {
   size_t size;
   const char *cache_directory;
   const char *save_directory;
+  const char *system_directory;
 } AnygmContentSource;
 
 /* Path sources are opened during anygm_load. Memory sources are borrowed and must remain valid
  * until anygm_unload or anygm_destroy; the optional path is an identity and directory hint.
- * cache_directory and save_directory are roots in the host VFS. When a save root is present,
+ * cache_directory, save_directory and system_directory are roots in the host VFS.
+ * system_directory optionally supplies anygm.ini for user-provided content transforms.
+ * When a save root is present,
  * writable content files live below save_directory/anygm/<sanitized-label>-<path-hash>. */
 
 /* Locale strings are what os_get_language and its relatives expose: lowercase language ("en"),

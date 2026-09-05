@@ -60,7 +60,8 @@ answered `os_windows`, which is the desktop path most content is written for. It
 anchor is installed and before the first frame, because content asks the question in the very first
 events it runs, and the `GML_OS_TYPE` development setting still takes precedence over it. Content
 that branches on `os_type` accordingly takes the branch written for the declared platform; the
-declared value is returned without changing any other condition.
+declared value is returned without changing any other condition. It does not establish
+permission to run the content or override its license terms.
 
 `call|script_name` invokes the named zero-argument GMS script exactly once,
 after the first Step of a fresh content load. The name is the script asset
@@ -165,6 +166,10 @@ revision writes the short form.
 Revision 600 compiled executables are parsed as user-supplied content and
 normalized through the same classic importer as `.gm6` projects. Native code
 and bundled support libraries are not executed.
+
+Where a content layout requires an external transform, the core accepts an
+explicitly supplied buffer program through `anygm.ini` or an `.anygm` anchor.
+The program format and selection rules are in `CONTENT_TRANSFORMS.md`.
 
 The editor-standard revision-530 project is accepted directly with its `.gmd` extension.
 

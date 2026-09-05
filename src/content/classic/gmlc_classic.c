@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "gmlc_classic.h"
+#include "content_transform.h"
 #include "anygm_vfs.h"
 #include "gml_image_codec.h"
 
@@ -49,6 +50,7 @@ typedef struct {
   size_t pos;
   char *err;
   size_t errcap;
+  const AnygmContentTransforms *transforms;
 } ClassicReader;
 
 static int reader_fail(ClassicReader *r, const char *what){
@@ -382,7 +384,7 @@ static int read_compressed_settings(const uint8_t *compressed, uint32_t compress
     free(raw);
     return 0;
   }
-  ClassicReader settings={(const uint8_t*)raw,(size_t)raw_size,0,err,errcap};
+  ClassicReader settings={(const uint8_t*)raw,(size_t)raw_size,0,err,errcap,NULL};
   int ok=read_settings_prefix(&settings,out);
   if(ok) ok=read_settings_tail(&settings,executable_layout,out,manifest);
   free(raw);
@@ -406,7 +408,7 @@ static int reader_trigger(ClassicReader *outer, GmlcClassicTrigger *out, const c
     if(outer->err && outer->errcap) snprintf(outer->err,outer->errcap,"classic project: invalid %s",what);
     return 0;
   }
-  ClassicReader r={(const uint8_t*)raw,(size_t)raw_size,0,outer->err,outer->errcap};
+  ClassicReader r={(const uint8_t*)raw,(size_t)raw_size,0,outer->err,outer->errcap,NULL};
   uint32_t exists=0,version=0;
   int ok=reader_u32(&r,&exists,"trigger existence flag");
   out->exists=exists!=0;
@@ -449,7 +451,7 @@ static int reader_included_file(ClassicReader *outer, GmlcClassicIncludedFile *o
     if(outer->err && outer->errcap) snprintf(outer->err,outer->errcap,"classic project: invalid %s",what);
     return 0;
   }
-  ClassicReader r={(const uint8_t*)raw,(size_t)raw_size,0,outer->err,outer->errcap};
+  ClassicReader r={(const uint8_t*)raw,(size_t)raw_size,0,outer->err,outer->errcap,NULL};
   uint32_t version=0,data_exists=0,stored=0,overwrite=0,free_memory=0,remove_at_end=0;
   GmlcClassicBlob embedded={0};
   int ok=(!has_timestamp || reader_skip(&r,8,"included-file timestamp")) &&
@@ -701,7 +703,7 @@ static int repair_executable_object(char **raw_io, int *raw_size_io){
   if(!raw) return 0;
   memset(raw+original,0,64);
   *raw_io=raw;
-  ClassicReader r={(const uint8_t*)raw,(size_t)original+64,0,NULL,0};
+  ClassicReader r={(const uint8_t*)raw,(size_t)original+64,0,NULL,0,NULL};
   uint32_t exists,version,event;
   if(!reader_u32(&r,&exists,"object exists") || !exists ||
      !reader_string(&r,"object name") || !reader_u32(&r,&version,"object version") ||
@@ -731,7 +733,7 @@ static int repair_executable_object(char **raw_io, int *raw_size_io){
 static int normalize_executable_room(char **raw_io, int *raw_size_io){
   int original=*raw_size_io;
   if(original<0 || (size_t)original>SIZE_MAX-76u) return 0;
-  ClassicReader r={(const uint8_t*)*raw_io,(size_t)original,0,NULL,0};
+  ClassicReader r={(const uint8_t*)*raw_io,(size_t)original,0,NULL,0,NULL};
   uint32_t exists,version;
   if(!reader_u32(&r,&exists,"room exists")) return 0;
   if(!exists) return r.pos==(size_t)original;
@@ -749,7 +751,7 @@ static int normalize_executable_room(char **raw_io, int *raw_size_io){
   memcpy(normalized+insert_at+12,*raw_io+insert_at,(size_t)original-insert_at);
   memset(normalized+original+12,0,64);
   size_t data_size=(size_t)original+12;
-  ClassicReader compact={(const uint8_t*)normalized,data_size,0,NULL,0};
+  ClassicReader compact={(const uint8_t*)normalized,data_size,0,NULL,0,NULL};
   uint32_t count=0,instances=0;
   if(!reader_u32(&compact,&exists,"room exists") || !reader_string(&compact,"room name") ||
      !reader_u32(&compact,&version,"room version") || !reader_string(&compact,"room caption") ||
@@ -791,7 +793,7 @@ static int normalize_executable_room(char **raw_io, int *raw_size_io){
 
   /* Compiled rooms omit the editor-only lock flag from every tile record.  Expand the compact
    * nine-word records before handing the room to the shared project-layout validator/importer. */
-  ClassicReader tile_probe={(const uint8_t*)normalized,data_size,0,NULL,0};
+  ClassicReader tile_probe={(const uint8_t*)normalized,data_size,0,NULL,0,NULL};
   uint32_t tiles=0;
   if(!reader_u32(&tile_probe,&exists,"room exists") ||
      !reader_string(&tile_probe,"room name") || !reader_u32(&tile_probe,&version,"room version") ||
@@ -833,7 +835,7 @@ static int normalize_executable_room(char **raw_io, int *raw_size_io){
   data_size+=tile_growth;
   memset(normalized+data_size,0,64);
 
-  ClassicReader body={(const uint8_t*)normalized,working_size,0,NULL,0};
+  ClassicReader body={(const uint8_t*)normalized,working_size,0,NULL,0,NULL};
   if(!reader_u32(&body,&exists,"room exists") || !reader_string(&body,"room name") ||
      !reader_u32(&body,&version,"room version") ||
      !validate_room_gameplay_payload(&body,version)){
@@ -892,7 +894,8 @@ int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
   }
   memset(out, 0, sizeof(*out));
   out->version = (GmlcClassicVersion)version;
-  
+  /* GM7 leaves only magic/version unobfuscated. Its game id and GUID become
+   * available after the user-supplied project transform. */
   if(version != GMLC_CLASSIC_GM7 && version != GMLC_CLASSIC_GM7_ALT){
     size_t header_size=version==GMLC_CLASSIC_GM53?32u:28u;
     size_t game_id_offset=version==GMLC_CLASSIC_GM53?12u:8u;
@@ -1199,7 +1202,31 @@ static int parse_legacy_slot(ClassicReader *r, GmlcClassicResourceType type,
   return valid;
 }
 
-
+static int reader_legacy_executable_script(ClassicReader *r,char **out){
+  uint32_t compressed_size=0;
+  *out=NULL;
+  if(!reader_u32(r,&compressed_size,"compiled legacy script length") ||
+     compressed_size>INT_MAX || compressed_size>r->size-r->pos) return 0;
+  int raw_size=0;
+  char *raw=classic_inflate_owned(r->data+r->pos,compressed_size,
+                                  GML_DEFLATE_ZLIB,&raw_size);
+  if(!raw || raw_size<4){
+    free(raw);
+    if(r->err && r->errcap) snprintf(r->err,r->errcap,"classic executable: invalid compiled legacy script");
+    return 0;
+  }
+  uint8_t *decoded=NULL;
+  size_t decoded_size=0;
+  int ok=(0 /* Revision-selected adapter omitted from unpublished history. */);
+  free(raw);
+  if(!ok) return 0;
+  char *source=(char*)realloc(decoded,decoded_size+1u);
+  if(!source){ free(decoded); return reader_fail(r,"compiled legacy script allocation"); }
+  source[decoded_size]='\0';
+  r->pos+=compressed_size;
+  *out=source;
+  return 1;
+}
 
 static int parse_legacy_executable_slot(ClassicReader *r,GmlcClassicResourceType type,
                                         GmlcClassicResourceSlot *slot){
@@ -1217,7 +1244,7 @@ static int parse_legacy_executable_slot(ClassicReader *r,GmlcClassicResourceType
     case GMLC_CLASSIC_BACKGROUND: valid=validate_legacy_executable_background_payload(r); break;
     case GMLC_CLASSIC_PATH: valid=validate_legacy_executable_path_payload(r); break;
     case GMLC_CLASSIC_SCRIPT:
-      valid=(0 /* Revision-selected adapter omitted from unpublished history. */); break;
+      valid=reader_legacy_executable_script(r,&slot->source); break;
     case GMLC_CLASSIC_FONT: valid=validate_font_payload(r,1,1); break;
     case GMLC_CLASSIC_TIMELINE: valid=validate_timeline_payload(r); break;
     case GMLC_CLASSIC_OBJECT: valid=validate_object_payload(r); break;
@@ -1468,7 +1495,7 @@ static int read_gm53_data_file(ClassicReader *r,GmlcClassicIncludedFile *out,
   return 1;
 }
 
-static int parse_legacy_project(const void *data, size_t size,
+static int parse_legacy_project(const AnygmContentTransforms *transforms,const void *data, size_t size,
                                 GmlcClassicInventory *inventory,
                                 GmlcClassicManifest *manifest,
                                 char *err, size_t errcap){
@@ -1482,8 +1509,9 @@ static int parse_legacy_project(const void *data, size_t size,
   }
   size_t header_size=container_version==GMLC_CLASSIC_GM53?32u:28u;
   size_t game_id_offset=container_version==GMLC_CLASSIC_GM53?12u:8u;
-  if(plain_size < header_size || read_u32le(plain) != GMLC_CLASSIC_MAGIC){
-    if(err && errcap) snprintf(err, errcap, "classic project: truncated legacy project header");
+  if(plain_size < header_size || read_u32le(plain) != GMLC_CLASSIC_MAGIC ||
+     read_u32le(plain+4u)!=container_version){
+    if(err && errcap) snprintf(err, errcap, "classic project: invalid normalized project header");
     free(decoded);
     return 0;
   }
@@ -1491,7 +1519,7 @@ static int parse_legacy_project(const void *data, size_t size,
   inventory->header.version = (GmlcClassicVersion)container_version;
   inventory->header.game_id = read_u32le(plain + game_id_offset);
   memcpy(inventory->header.guid, plain + game_id_offset + 4u, 16);
-  ClassicReader r = {plain, plain_size, header_size, err, errcap};
+  ClassicReader r = {plain, plain_size, header_size, err, errcap,NULL};
   if(!skip_legacy_settings(&r, container_version, &inventory->settings_version,
                            &inventory->settings,&inventory->constants,manifest)){
     free(decoded);
@@ -1552,7 +1580,7 @@ fail:
   return 0;
 }
 
-int gmlc_classic_inventory(const void *data, size_t size,
+int gmlc_classic_inventory(const AnygmContentTransforms *transforms,const void *data, size_t size,
                            GmlcClassicInventory *out, char *err, size_t errcap){
   if(err && errcap) err[0] = '\0';
   if(!data || !out){
@@ -1564,7 +1592,7 @@ int gmlc_classic_inventory(const void *data, size_t size,
   if(out->header.version == GMLC_CLASSIC_GM53 || out->header.version == GMLC_CLASSIC_GM6 ||
      out->header.version == GMLC_CLASSIC_GM7 ||
      out->header.version == GMLC_CLASSIC_GM7_ALT)
-    return parse_legacy_project(data, size, out, NULL, err, errcap);
+    return parse_legacy_project(transforms,data, size, out, NULL, err, errcap);
   if(out->header.version != GMLC_CLASSIC_GM8 && out->header.version != GMLC_CLASSIC_GM81){
     if(err && errcap)
       snprintf(err, errcap, "classic project: inventory for container version %u is not implemented yet",
@@ -1572,7 +1600,7 @@ int gmlc_classic_inventory(const void *data, size_t size,
     return 0;
   }
 
-  ClassicReader r = {(const uint8_t*)data, size, 28, err, errcap};
+  ClassicReader r = {(const uint8_t*)data, size, 28, err, errcap,NULL};
   uint32_t compressed_length, section_version;
   if(!reader_u32(&r, &out->settings_version, "settings version") ||
      !reader_u32(&r, &compressed_length, "compressed settings length")) return 0;
@@ -1640,7 +1668,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
     if(!p){ free(raw); return 0; }
     raw=p; raw[raw_size++]=0; /* tolerate the compact form's elided final zero byte */
     if(type==GMLC_CLASSIC_OBJECT){
-      ClassicReader probe={(const uint8_t*)raw,(size_t)raw_size,0,NULL,0};
+      ClassicReader probe={(const uint8_t*)raw,(size_t)raw_size,0,NULL,0,NULL};
       uint32_t exists=0,version=0;
       int complete=reader_u32(&probe,&exists,"object exists") &&
         (!exists || (reader_string(&probe,"object name") && reader_u32(&probe,&version,"object version") &&
@@ -1658,7 +1686,7 @@ static int parse_manifest_slot_layout(GmlcClassicResourceType type,
       }
     }
   }
-  ClassicReader r = {(const uint8_t*)raw, (size_t)raw_size, 0, err, errcap};
+  ClassicReader r = {(const uint8_t*)raw, (size_t)raw_size, 0, err, errcap,NULL};
   slot->executable_layout=raw_deflate;
   uint32_t exists;
   if(!reader_u32(&r, &exists, "resource existence flag")){
@@ -1805,7 +1833,7 @@ void gmlc_classic_manifest_free(GmlcClassicManifest *manifest){
 static int parse_modern_metadata(const void *data, size_t size,
                                  GmlcClassicManifest *manifest,
                                  char *err, size_t errcap){
-  ClassicReader r={(const uint8_t*)data,size,28,err,errcap};
+  ClassicReader r={(const uint8_t*)data,size,28,err,errcap,NULL};
   uint32_t version,count,compressed_length;
   if(!reader_u32(&r,&version,"settings version") ||
      !reader_u32(&r,&compressed_length,"compressed settings length") ||
@@ -1841,7 +1869,7 @@ static int parse_modern_metadata(const void *data, size_t size,
 static int parse_modern_tail(const void *data, size_t size,
                              GmlcClassicManifest *manifest,
                              char *err, size_t errcap){
-  ClassicReader r = {(const uint8_t*)data, size, manifest->inventory.payload_end, err, errcap};
+  ClassicReader r = {(const uint8_t*)data, size, manifest->inventory.payload_end, err, errcap,NULL};
   uint32_t version, count;
   if(!reader_u32(&r, &version, "included-file section version") || version < 620 ||
      !reader_u32(&r, &count, "included-file count")) return 0;
@@ -2020,14 +2048,20 @@ static int parse_executable_extensions(ClassicReader *r, GmlcClassicManifest *ou
 
 
 
-static int parse_legacy_executable_data(const uint8_t *data,size_t size,
+static int decode_legacy_executable_envelope(const AnygmContentTransforms *transforms,const uint8_t *input,size_t size,
+                                             uint8_t **out_data,size_t *out_size,
+                                             char *err,size_t errcap){
+  return (0 /* Revision-selected adapter omitted from unpublished history. */);
+}
+
+static int parse_legacy_executable_data(const AnygmContentTransforms *transforms,const uint8_t *data,size_t size,
                                         GmlcClassicVersion project_version,
                                         uint32_t settings_version,
                                         const GmlcClassicSettings *settings,
                                         size_t resource_offset,
                                         int has_extensions,int has_includes,
                                         GmlcClassicManifest *out,char *err,size_t errcap){
-  ClassicReader r={data,size,0,err,errcap};
+  ClassicReader r={data,size,0,err,errcap,transforms};
   uint32_t runner_id=0,version=0,count=0;
   if(!reader_u32(&r,&runner_id,"legacy executable runtime id") ||
      !reader_u32(&r,&out->inventory.header.game_id,"legacy executable game id") ||
@@ -2168,7 +2202,7 @@ static int parse_legacy_executable_data(const uint8_t *data,size_t size,
   return 1;
 }
 
-static int parse_legacy_executable_manifest(const uint8_t *file,size_t size,size_t payload,
+static int parse_legacy_executable_manifest(const AnygmContentTransforms *transforms,const uint8_t *file,size_t size,size_t payload,
                                             GmlcClassicManifest *out,char *err,size_t errcap){
   if(payload>size || size-payload<16u){
     if(err && errcap) snprintf(err,errcap,"classic executable: truncated legacy header");
@@ -2176,7 +2210,7 @@ static int parse_legacy_executable_manifest(const uint8_t *file,size_t size,size
   }
   uint32_t settings_version=read_u32le(file+payload+12u);
   GmlcClassicSettings settings={0};
-  ClassicReader settings_reader={file,size,payload+16u,NULL,0};
+  ClassicReader settings_reader={file,size,payload+16u,NULL,0,NULL};
   (void)read_settings_prefix(&settings_reader,&settings);
 
   size_t compressed_pos=(size_t)-1;
@@ -2209,9 +2243,10 @@ static int parse_legacy_executable_manifest(const uint8_t *file,size_t size,size
     return 0;
   }
   uint8_t *decoded=NULL; size_t decoded_size=0;
-  int ok=0; /* This operation is unavailable. */
+  int ok=decode_legacy_executable_envelope(transforms,(const uint8_t*)envelope,(size_t)envelope_size,
+                                           &decoded,&decoded_size,err,errcap);
   free(envelope);
-  if(ok) ok=parse_legacy_executable_data(decoded,decoded_size,GMLC_CLASSIC_GM7,
+  if(ok) ok=parse_legacy_executable_data(transforms,decoded,decoded_size,GMLC_CLASSIC_GM7,
                                          settings_version,&settings,0,1,1,out,err,errcap);
   free(decoded);
   if(!ok) gmlc_classic_manifest_free(out);
@@ -2221,7 +2256,7 @@ static int parse_legacy_executable_manifest(const uint8_t *file,size_t size,size
 static int parse_executable_data(const uint8_t *data, size_t size,
                                  uint32_t version, uint32_t settings_version,
                                  GmlcClassicManifest *out, char *err, size_t errcap){
-  ClassicReader r={data,size,0,err,errcap};
+  ClassicReader r={data,size,0,err,errcap,NULL};
   uint32_t count,section_version,pro;
   if(!reader_u32(&r,&count,"executable leading junk count") ||
      count>(r.size-r.pos)/4 || !reader_words(&r,count,"executable leading junk") ||
@@ -2347,8 +2382,43 @@ static int parse_executable_data(const uint8_t *data, size_t size,
 /* Returns zero without a diagnostic when the marker is absent, so the caller keeps its own. */
 
 
+/* Validate each externally transformed editor project completely so an incidental
+ * marker in native code cannot be mistaken for content. Native code is never run. */
 
 
+/* The normalized stream retains its fixed structural prefix. */
+static int parse_executable_stream(const AnygmContentTransforms *transforms,const uint8_t *file,size_t size,size_t pos,
+                                   uint32_t version,uint32_t settings_version,
+                                   GmlcClassicManifest *out,char *err,size_t errcap){
+  if(pos+4>size) return 0;
+  uint32_t settings_size=read_u32le(file+pos); pos+=4;
+  if(settings_size>size-pos){ if(err&&errcap)snprintf(err,errcap,"classic executable: truncated settings"); return 0; }
+  if(settings_size){
+    GmlcClassicSettings settings={0};
+    char settings_err[128]={0};
+    if(read_compressed_settings(file+pos,settings_size,1,&settings,out,
+                                settings_err,sizeof(settings_err))){
+      out->inventory.settings=settings;
+    } else {
+      ClassicReader raw_settings={file+pos,settings_size,0,NULL,0,NULL};
+      if(read_settings_prefix(&raw_settings,&settings)) out->inventory.settings=settings;
+    }
+  }
+  pos+=settings_size;
+  for(int blob=0;blob<2;blob++){
+    if(pos+4>size) return 0;
+    uint32_t n=read_u32le(file+pos); pos+=4;
+    if(n>size-pos) return 0;
+    pos+=n;
+  }
+  uint8_t *decoded=NULL;
+  size_t decoded_size=0;
+  if(!(0 /* Revision-selected adapter omitted from unpublished history. */)) return 0;
+  int ok=parse_executable_data(decoded,decoded_size,version,settings_version,out,err,errcap);
+  free(decoded);
+  if(!ok) gmlc_classic_manifest_free(out);
+  return ok;
+}
 
 static int read_gm6_executable_settings(const uint8_t *data,size_t size,
                                         uint32_t *settings_version,
@@ -2356,7 +2426,7 @@ static int read_gm6_executable_settings(const uint8_t *data,size_t size,
                                         size_t *resource_offset,
                                         GmlcClassicManifest *manifest,
                                         char *err,size_t errcap){
-  ClassicReader r={data,size,24u,err,errcap};
+  ClassicReader r={data,size,24u,err,errcap,NULL};
   uint32_t loading_images=0,constants=0;
   if(size<24u || !reader_u32(&r,settings_version,"Game Maker 6 executable settings version") ||
      *settings_version!=GMLC_CLASSIC_GM6) return 0;
@@ -2398,10 +2468,25 @@ static int read_gm6_executable_settings(const uint8_t *data,size_t size,
 
 
 
-static int parse_gm6_executable_at(const uint8_t *file,size_t size,size_t payload,
+static int decode_gm6_executable_envelope(const AnygmContentTransforms *transforms,const uint8_t *input,size_t size,
+                                          uint8_t **out_data,size_t *out_size,
+                                          char *err,size_t errcap){
+  if(!(0 /* Revision-selected adapter omitted from unpublished history. */)) return 0;
+  const uint8_t *decoded=*out_data;
+  if(*out_size<40u || read_u32le(decoded)!=read_u32le(decoded+4u) ||
+     read_u32le(decoded+8u)!=GMLC_CLASSIC_MAGIC ||
+     read_u32le(decoded+12u)!=GMLC_CLASSIC_GM6){
+    free(*out_data); *out_data=NULL; *out_size=0;
+    if(err && errcap) snprintf(err,errcap,"classic executable: invalid transformed revision 600 payload");
+    return 0;
+  }
+  return 1;
+}
+
+static int parse_gm6_executable_at(const AnygmContentTransforms *transforms,const uint8_t *file,size_t size,size_t payload,
                                    GmlcClassicManifest *out,char *err,size_t errcap){
   if(payload>size || size-payload<24u) return 0;
-  ClassicReader outer={file,size,payload+8u,err,errcap};
+  ClassicReader outer={file,size,payload+8u,err,errcap,NULL};
   if(!reader_words(&outer,3u,"classic revision 600 archive header")) return 0;
   GmlcClassicManifest extras={0}; int ready_found=0;
   for(uint32_t entry=0;entry<1024u && outer.pos<outer.size;entry++){
@@ -2423,7 +2508,8 @@ static int parse_gm6_executable_at(const uint8_t *file,size_t size,size_t payloa
         classic_inflate_owned(compressed,compressed_size,GML_DEFLATE_ZLIB,&envelope_size):NULL;
       if(!envelope || envelope_size<0){ free(envelope); goto fail; }
       uint8_t *decoded=NULL; size_t decoded_size=0;
-      int ok=(0 /* Revision-selected adapter omitted from unpublished history. */);
+      int ok=decode_gm6_executable_envelope(transforms,(const uint8_t*)envelope,(size_t)envelope_size,
+                                            &decoded,&decoded_size,err,errcap);
       free(envelope);
       if(!ok){ free(decoded); goto fail; }
       uint32_t settings_version=0; size_t resource_offset=0;
@@ -2432,7 +2518,7 @@ static int parse_gm6_executable_at(const uint8_t *file,size_t size,size_t payloa
       size_t game_size=decoded_size-16u;
       ok=read_gm6_executable_settings(game,game_size,&settings_version,&settings,
                                       &resource_offset,out,err,errcap);
-      if(ok) ok=parse_legacy_executable_data(game,game_size,GMLC_CLASSIC_GM6,
+      if(ok) ok=parse_legacy_executable_data(transforms,game,game_size,GMLC_CLASSIC_GM6,
                                              settings_version,&settings,resource_offset,
                                              0,0,out,err,errcap);
       free(decoded);
@@ -2487,7 +2573,7 @@ fail:
   return 0;
 }
 
-static int parse_gm6_executable_manifest(const uint8_t *file,size_t size,
+static int parse_gm6_executable_manifest(const AnygmContentTransforms *transforms,const uint8_t *file,size_t size,
                                          GmlcClassicManifest *out,char *err,size_t errcap){
   enum { GM6_CANDIDATE_LIMIT=64 };
   GmlcClassicManifest found={0};
@@ -2503,7 +2589,7 @@ static int parse_gm6_executable_manifest(const uint8_t *file,size_t size,
       return 0;
     }
     GmlcClassicManifest candidate={0}; char candidate_err[256]={0};
-    if(parse_gm6_executable_at(file,size,i,&candidate,candidate_err,sizeof candidate_err)){
+    if(parse_gm6_executable_at(transforms,file,size,i,&candidate,candidate_err,sizeof candidate_err)){
       if(matches++){
         gmlc_classic_manifest_free(&candidate);
         gmlc_classic_manifest_free(&found);
@@ -2524,7 +2610,7 @@ static int parse_gm6_executable_manifest(const uint8_t *file,size_t size,
   return 0;
 }
 
-static int parse_executable_manifest(const uint8_t *file, size_t size,
+static int parse_executable_manifest(const AnygmContentTransforms *transforms,const uint8_t *file, size_t size,
                                      GmlcClassicManifest *out, char *err, size_t errcap){
   enum { PLAINTEXT_CANDIDATE_LIMIT=64 };
   GmlcClassicManifest found={0};
@@ -2545,7 +2631,8 @@ static int parse_executable_manifest(const uint8_t *file, size_t size,
           snprintf(err,errcap,"classic executable: too many embedded-data candidates");
         return 0;
       }
-      if((0 /* Revision-selected adapter omitted from unpublished history. */)){
+      if(parse_executable_stream(transforms,file,size,i+16u,version,settings_version,&candidate,
+                                 local_error,sizeof(local_error))){
         if(matches++){
           gmlc_classic_manifest_free(&candidate);
           gmlc_classic_manifest_free(&found);
@@ -2566,7 +2653,7 @@ static int parse_executable_manifest(const uint8_t *file, size_t size,
           snprintf(err,errcap,"classic executable: too many embedded-data candidates");
         return 0;
       }
-      if(parse_legacy_executable_manifest(file,size,i,&candidate,
+      if(parse_legacy_executable_manifest(transforms,file,size,i,&candidate,
                                           local_error,sizeof(local_error))){
         if(matches++){
           gmlc_classic_manifest_free(&candidate);
@@ -2582,9 +2669,9 @@ static int parse_executable_manifest(const uint8_t *file, size_t size,
     }
   }
   if(matches){ *out=found; return 1; }
-  if(parse_gm6_executable_manifest(file,size,out,err,errcap)) return 1;
-  if((0 /* Revision-selected adapter omitted from unpublished history. */)) return 1;
-
+  if(parse_gm6_executable_manifest(transforms,file,size,out,err,errcap)) return 1;
+  if(parse_gm53_executable_manifest(transforms,file,size,out,NULL,err,errcap)) return 1;
+  /* An absent normalized header is not conclusive for other encoded layouts. */
   if((0 /* Revision-selected adapter omitted from unpublished history. */)) return 1;
   if(err && errcap && !err[0])
     snprintf(err,errcap,"%s",candidates && candidate_error[0]?candidate_error:
@@ -2592,7 +2679,7 @@ static int parse_executable_manifest(const uint8_t *file, size_t size,
   return 0;
 }
 
-int gmlc_classic_manifest(const void *data, size_t size,
+int gmlc_classic_manifest(const AnygmContentTransforms *transforms,const void *data, size_t size,
                           GmlcClassicManifest *out, char *err, size_t errcap){
   if(err && errcap) err[0] = '\0';
   if(!data || !out){
@@ -2601,7 +2688,7 @@ int gmlc_classic_manifest(const void *data, size_t size,
   }
   memset(out, 0, sizeof(*out));
   if(size>=2 && ((const uint8_t*)data)[0]=='M' && ((const uint8_t*)data)[1]=='Z'){
-    int ok=parse_executable_manifest((const uint8_t*)data,size,out,err,errcap);
+    int ok=parse_executable_manifest(transforms,(const uint8_t*)data,size,out,err,errcap);
     if(ok && out->inventory.header.version!=GMLC_CLASSIC_GM53) out->executable_layout=1;
     return ok;
   }
@@ -2610,8 +2697,8 @@ int gmlc_classic_manifest(const void *data, size_t size,
   if(header.version == GMLC_CLASSIC_GM53 || header.version == GMLC_CLASSIC_GM6 ||
      header.version == GMLC_CLASSIC_GM7 ||
      header.version == GMLC_CLASSIC_GM7_ALT)
-    return parse_legacy_project(data, size, &out->inventory, out, err, errcap);
-  if(!gmlc_classic_inventory(data, size, &out->inventory, err, errcap)) return 0;
+    return parse_legacy_project(transforms,data, size, &out->inventory, out, err, errcap);
+  if(!gmlc_classic_inventory(transforms,data, size, &out->inventory, err, errcap)) return 0;
   if(!parse_modern_metadata(data,size,out,err,errcap)){
     gmlc_classic_manifest_free(out);
     return 0;
@@ -2627,7 +2714,7 @@ int gmlc_classic_manifest(const void *data, size_t size,
         return 0;
       }
     }
-    ClassicReader r = {(const uint8_t*)data, size, out->inventory.resource_section_offsets[type], err, errcap};
+    ClassicReader r = {(const uint8_t*)data, size, out->inventory.resource_section_offsets[type], err, errcap,NULL};
     uint32_t section_version, observed_count;
     if(!reader_u32(&r, &section_version, "resource section version") ||
        !reader_u32(&r, &observed_count, "resource count") || observed_count != count){
@@ -2660,7 +2747,7 @@ int gmlc_classic_manifest(const void *data, size_t size,
   return 1;
 }
 
-int gmlc_classic_embedded_project(const void *data,size_t size,
+int gmlc_classic_embedded_project(const AnygmContentTransforms *transforms,const void *data,size_t size,
                                   GmlcClassicBlob *project,GmlcClassicVersion *version,
                                   char *err,size_t errcap){
   if(err && errcap) err[0]='\0';
@@ -2672,7 +2759,7 @@ int gmlc_classic_embedded_project(const void *data,size_t size,
     return 0;
   }
   GmlcClassicManifest manifest={0};
-  int ok=(0 /* Revision-selected adapter omitted from unpublished history. */);
+  int ok=parse_gm53_executable_manifest(transforms,(const uint8_t*)data,size,&manifest,project,err,errcap);
   if(ok && version) *version=manifest.inventory.header.version;
   gmlc_classic_manifest_free(&manifest);
   if(!ok && err && errcap && !err[0])
@@ -2680,24 +2767,24 @@ int gmlc_classic_embedded_project(const void *data,size_t size,
   return ok;
 }
 
-int gmlc_classic_manifest_file(const AnygmHostServices *host,const char *path,
+int gmlc_classic_manifest_file(const AnygmContentTransforms *transforms,const AnygmHostServices *host,const char *path,
                                GmlcClassicManifest *out,
                                char *err, size_t errcap){
   uint8_t *data;
   size_t size;
   if(!read_file(host,path, &data, &size, err, errcap)) return 0;
-  int ok = gmlc_classic_manifest(data, size, out, err, errcap);
+  int ok = gmlc_classic_manifest(transforms,data, size, out, err, errcap);
   free(data);
   return ok;
 }
 
-int gmlc_classic_inventory_file(const AnygmHostServices *host,const char *path,
+int gmlc_classic_inventory_file(const AnygmContentTransforms *transforms,const AnygmHostServices *host,const char *path,
                                 GmlcClassicInventory *out,
                                 char *err, size_t errcap){
   uint8_t *data;
   size_t size;
   if(!read_file(host,path, &data, &size, err, errcap)) return 0;
-  int ok = gmlc_classic_inventory(data, size, out, err, errcap);
+  int ok = gmlc_classic_inventory(transforms,data, size, out, err, errcap);
   free(data);
   return ok;
 }

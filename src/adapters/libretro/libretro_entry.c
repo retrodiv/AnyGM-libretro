@@ -308,8 +308,10 @@ static const char *frontend_directory(unsigned command){
 static void update_directories(void){
   g_libretro.save_directory[0]=0;
   g_libretro.cache_directory[0]=0;
+  g_libretro.system_directory[0]=0;
   const char *saves=frontend_directory(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY);
   const char *system=frontend_directory(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY);
+  if(system) snprintf(g_libretro.system_directory,sizeof g_libretro.system_directory,"%s",system);
   if(saves){
     snprintf(g_libretro.save_directory,sizeof g_libretro.save_directory,"%s",saves);
     join_root(g_libretro.cache_directory,sizeof g_libretro.cache_directory,
@@ -381,6 +383,7 @@ bool retro_load_game(const struct retro_game_info *info){
   source.path=info->path;
   source.cache_directory=g_libretro.cache_directory[0]?g_libretro.cache_directory:NULL;
   source.save_directory=g_libretro.save_directory[0]?g_libretro.save_directory:NULL;
+  source.system_directory=g_libretro.system_directory[0]?g_libretro.system_directory:NULL;
   /* With no explicit locale, the engine queries the host service and refreshes it on reset.
    * Passing these current fields instead would pin the first answer for the lifetime of the load. */
   AnygmContentInfo content_info;

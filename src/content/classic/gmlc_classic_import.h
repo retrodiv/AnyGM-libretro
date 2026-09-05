@@ -18,7 +18,7 @@ int gmlc_classic_import_scripts(const GmlcClassicManifest *classic,
 /* Load GML scripts and public-to-internal function mappings from extension
  * packages next to a classic project. Project scripts take priority; missing,
  * unrelated or malformed packages are a non-fatal compatibility fallback. */
-int gmlc_classic_import_extension_aliases(const GmlcClassicManifest *classic,
+int gmlc_classic_import_extension_aliases(const AnygmContentTransforms *transforms,const GmlcClassicManifest *classic,
                                           GmlcProject *project,
                                           const char *project_dir,
                                           char *err, size_t errcap);

@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "classic_test_fixture.h"
+#include "content_transform.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +25,38 @@
 #endif
 
 static AnygmHostServices fixture_host;
+static AnygmContentTransforms *fixture_transforms;
+
+void test_transforms_release(void){
+  anygm_content_transforms_destroy(fixture_transforms);
+  fixture_transforms=NULL;
+}
+
+const char *test_transform_declarations(void){
+    /* Identity and parameter-selected slicing only. No real container codec is
+     * distributed with these tests; the plaintext fixtures are authored here. */
+    static const char declarations[]=
+      "[transforms]\n"
+      /* Retired adapter declaration omitted from unpublished history. */ ""
+      /* Retired adapter declaration omitted from unpublished history. */ ""
+      /* Retired adapter declaration omitted from unpublished history. */ ""
+      /* Retired adapter declaration omitted from unpublished history. */ ""
+      /* Retired adapter declaration omitted from unpublished history. */ ""
+      /* Retired adapter declaration omitted from unpublished history. */ ""
+      /* Retired adapter declaration omitted from unpublished history. */ "";
+  return declarations;
+}
+
+const AnygmContentTransforms *test_transforms(void){
+  if(!fixture_transforms){
+    const char *declarations=test_transform_declarations();
+    fixture_transforms=anygm_content_transforms_create();
+    if(!fixture_transforms || !anygm_content_transforms_parse(fixture_transforms,
+        declarations,strlen(declarations),NULL,0)) abort();
+    if(atexit(test_transforms_release)) abort();
+  }
+  return fixture_transforms;
+}
 
 void classic_fixture_host_init(void){
   fixture_host.struct_size=sizeof fixture_host;
@@ -66,7 +99,16 @@ unsigned get_u32le(const unsigned char *p){
          (unsigned)p[2] << 16 | (unsigned)p[3] << 24;
 }
 
-
+/* Fixtures exercise the parser after an explicitly supplied identity transform.
+ * This is a copied normalized image, not an encoder for a protected container. */
+unsigned char *fixture_project_image(const unsigned char *plain,size_t plain_size,
+                                      size_t *image_size){
+  unsigned char *image=(unsigned char*)malloc(plain_size?plain_size:1u);
+  if(!image) return NULL;
+  if(plain_size) memcpy(image,plain,plain_size);
+  *image_size=plain_size;
+  return image;
+}
 
 void fixture_compressed(Fixture *f, const unsigned char *raw, int raw_size);
 
@@ -198,7 +240,7 @@ int build_executable_fixture(Fixture *executable){
     fixture_u32(&decoded,100u+word);
   fixture_u32(&decoded,1); /* constants */
   fixture_u32(&decoded,700); fixture_string(&decoded,"fixture_extension_constant"); fixture_string(&decoded,"7*6");
-  fixture_u32(&decoded,4); fixture_u32(&decoded,0); 
+  fixture_u32(&decoded,4); fixture_u32(&decoded,0); /* encrypted data envelope and seed */
   fixture_u32(&decoded,800); fixture_u32(&decoded,1); /* triggers */
   { Fixture trigger={{0},0};
     fixture_u32(&trigger,1); fixture_u32(&trigger,800);
@@ -303,30 +345,178 @@ int build_executable_fixture(Fixture *executable){
     fixture_u32(&settings,0); fixture_u32(&settings,1); /* WebGL, creation order */
     fixture_compressed(executable,settings.data,(int)settings.size); }
   fixture_u32(executable,0); fixture_u32(executable,0); /* wrapper strings */
-  fixture_u32(executable,0); fixture_u32(executable,0); /* junk counts */
-  unsigned char table[256];
-  for(unsigned i=0;i<256;i++){
-    table[i]=(unsigned char)(i*73u+41u);
-    executable->data[executable->size++]=table[i];
-  }
-  fixture_u32(executable,(unsigned)decoded.size);
-  unsigned char encoded_data[sizeof(decoded.data)];
-  memcpy(encoded_data,decoded.data,decoded.size);
-  for(size_t i=0;i<decoded.size;i++){
-    size_t offset=table[i&255u];
-    size_t other=i>offset?i-offset:0;
-    unsigned char swap=encoded_data[i]; encoded_data[i]=encoded_data[other]; encoded_data[other]=swap;
-  }
-  unsigned char previous=encoded_data[0];
-  executable->data[executable->size++]=previous;
-  for(size_t i=1;i<decoded.size;i++){
-    previous=table[(unsigned char)(encoded_data[i]+previous+(unsigned char)i)];
-    executable->data[executable->size++]=previous;
-  }
+  /* The test program returns the authored resource stream unchanged. */
+  if(executable->size+decoded.size>sizeof(executable->data)) return 0;
+  memcpy(executable->data+executable->size,decoded.data,decoded.size);
+  executable->size+=decoded.size;
   return 1;
 }
 
+int build_legacy_executable_fixture(Fixture *executable){
+  Fixture decoded={{0},0},envelope={{0},0};
+  fixture_u32(&decoded,17); fixture_u32(&decoded,0x24681357); fixture_zero(&decoded,16);
+  fixture_u32(&decoded,700); fixture_u32(&decoded,0); /* extensions */
+  for(unsigned type=0;type<GMLC_CLASSIC_RESOURCE_TYPES;type++){
+    fixture_u32(&decoded,type==GMLC_CLASSIC_FONT?540:type==GMLC_CLASSIC_ROOM?420:400);
+    if(type==GMLC_CLASSIC_SPRITE){
+      Fixture sprite={{0},0};
+      const unsigned char bgra[]={0,192,0,0, 0,192,0,255};
+      fixture_u32(&decoded,2); fixture_u32(&sprite,1);
+      fixture_string(&sprite,"fixture_legacy_executable_sprite"); fixture_u32(&sprite,542);
+      fixture_u32(&sprite,2); fixture_u32(&sprite,1);
+      fixture_u32(&sprite,0); fixture_u32(&sprite,1); fixture_u32(&sprite,0); fixture_u32(&sprite,0);
+      fixture_u32(&sprite,1); fixture_u32(&sprite,0); fixture_u32(&sprite,1);
+      fixture_u32(&sprite,0); fixture_u32(&sprite,1); fixture_u32(&sprite,0); fixture_u32(&sprite,0);
+      fixture_u32(&sprite,1); /* frames */
+      fixture_u32(&sprite,540); fixture_u32(&sprite,1); fixture_u32(&sprite,2); fixture_u32(&sprite,1);
+      fixture_compressed(&sprite,bgra,sizeof(bgra));
+      memcpy(decoded.data+decoded.size,sprite.data,sprite.size); decoded.size+=sprite.size;
+      /* GameMaker 5 writes the same thirteen fields in a different order: the bounding-box mode
+       * follows the transparency flag, where 6/7 keep smoothing and preloading, and the precise
+       * flag sits two places earlier. Read with the 6/7 order this sprite reports an automatic
+       * box and precise collision — the opposite of both authored values. It carries no frame so
+       * the memory-file indices the rest of this fixture asserts on stay put. */
+      Fixture legacy5={{0},0};
+      fixture_u32(&legacy5,1);
+      fixture_string(&legacy5,"fixture_legacy_gm5_sprite"); fixture_u32(&legacy5,400);
+      fixture_u32(&legacy5,2); fixture_u32(&legacy5,1);
+      fixture_u32(&legacy5,0); fixture_u32(&legacy5,1); fixture_u32(&legacy5,0); fixture_u32(&legacy5,0);
+      fixture_u32(&legacy5,1); fixture_u32(&legacy5,2); fixture_u32(&legacy5,0);
+      fixture_u32(&legacy5,0); fixture_u32(&legacy5,1); fixture_u32(&legacy5,0); fixture_u32(&legacy5,0);
+      fixture_u32(&legacy5,0); /* frames */
+      memcpy(decoded.data+decoded.size,legacy5.data,legacy5.size); decoded.size+=legacy5.size;
+    } else if(type==GMLC_CLASSIC_BACKGROUND){
+      Fixture background={{0},0}; const unsigned char bgra[]={13,12,11,255,19,18,17,255};
+      fixture_u32(&decoded,1); fixture_u32(&background,1);
+      fixture_string(&background,"fixture_legacy_executable_background"); fixture_u32(&background,543);
+      fixture_u32(&background,2); fixture_u32(&background,1); fixture_u32(&background,1);
+      fixture_u32(&background,0); fixture_u32(&background,1); fixture_u32(&background,1);
+      fixture_u32(&background,540); fixture_u32(&background,1);
+      fixture_u32(&background,2); fixture_u32(&background,1);
+      fixture_compressed(&background,bgra,sizeof(bgra));
+      memcpy(decoded.data+decoded.size,background.data,background.size); decoded.size+=background.size;
+    } else if(type==GMLC_CLASSIC_PATH){
+      fixture_u32(&decoded,1); fixture_u32(&decoded,1);
+      fixture_string(&decoded,"fixture_legacy_executable_path"); fixture_u32(&decoded,530);
+      fixture_u32(&decoded,1); fixture_u32(&decoded,1); fixture_u32(&decoded,4);
+      fixture_u32(&decoded,2);
+      fixture_double(&decoded,1.5); fixture_double(&decoded,2.5); fixture_double(&decoded,100.0);
+      fixture_double(&decoded,9.5); fixture_double(&decoded,8.5); fixture_double(&decoded,50.0);
+    } else if(type==GMLC_CLASSIC_SCRIPT){
+      fixture_u32(&decoded,1); fixture_u32(&decoded,1);
+      fixture_string(&decoded,"fixture_legacy_executable_script"); fixture_u32(&decoded,500);
+      Fixture source={{0},0}; const char text[]="return 42;";
+      memcpy(source.data,text,sizeof(text)-1u);
+      source.size=sizeof(text)-1u;
+      fixture_compressed(&decoded,source.data,(int)source.size);
+    } else if(type==GMLC_CLASSIC_FONT){
+      fixture_u32(&decoded,1); fixture_u32(&decoded,1);
+      fixture_string(&decoded,"fixture_legacy_executable_font"); fixture_u32(&decoded,540);
+      fixture_string(&decoded,"fixture face");
+      fixture_u32(&decoded,10); fixture_u32(&decoded,0); fixture_u32(&decoded,0);
+      fixture_u32(&decoded,65); fixture_u32(&decoded,66);
+      for(unsigned entry=0;entry<256u*6u;entry++){
+        unsigned value=0;
+        if(entry==65u*6u+2u || entry==65u*6u+3u) value=1;
+        else if(entry==65u*6u+4u) value=3;
+        else if(entry==66u*6u) value=1;
+        else if(entry==66u*6u+2u || entry==66u*6u+3u) value=1;
+        else if(entry==66u*6u+4u) value=4;
+        else if(entry==66u*6u+5u) value=(unsigned)-1;
+        fixture_u32(&decoded,value);
+      }
+      fixture_u32(&decoded,2); fixture_u32(&decoded,1);
+      { const unsigned char alpha[]={23,211};
+        fixture_compressed(&decoded,alpha,sizeof(alpha)); }
+    } else if(type==GMLC_CLASSIC_ROOM){
+      fixture_u32(&decoded,1); fixture_u32(&decoded,1);
+      fixture_string(&decoded,"fixture_legacy_executable_room"); fixture_u32(&decoded,541);
+      fixture_string(&decoded,"Fixture");
+      fixture_u32(&decoded,320); fixture_u32(&decoded,240); fixture_u32(&decoded,60);
+      fixture_u32(&decoded,0); fixture_u32(&decoded,0x112233); fixture_u32(&decoded,1);
+      fixture_string(&decoded,"global.room_started = 1;");
+      fixture_u32(&decoded,0); /* backgrounds */
+      fixture_u32(&decoded,0); fixture_u32(&decoded,0); /* views */
+      fixture_u32(&decoded,1); fixture_u32(&decoded,10); fixture_u32(&decoded,20);
+      fixture_u32(&decoded,0); fixture_u32(&decoded,100001);
+      fixture_string(&decoded,"global.instance_started = 1;");
+      fixture_u32(&decoded,1); /* tiles */
+      fixture_u32(&decoded,30); fixture_u32(&decoded,40); fixture_u32(&decoded,0);
+      fixture_u32(&decoded,0); fixture_u32(&decoded,0); fixture_u32(&decoded,2);
+      fixture_u32(&decoded,1); fixture_u32(&decoded,100); fixture_u32(&decoded,1000001);
+    } else fixture_u32(&decoded,0);
+  }
+  fixture_u32(&decoded,100001); fixture_u32(&decoded,1000001);
+  /* One included file whose data is compressed the way a GameMaker 6/7 executable stores it. The
+   * record itself is not compressed; only the file's own bytes are. */
+  fixture_u32(&decoded,620); fixture_u32(&decoded,1); /* includes */
+  fixture_u32(&decoded,620);
+  fixture_string(&decoded,"track1.ogg"); fixture_string(&decoded,"source/track1.ogg");
+  fixture_u32(&decoded,1); fixture_u32(&decoded,8); fixture_u32(&decoded,1);
+  fixture_compressed(&decoded,(const unsigned char *)"OggScass",8);
+  fixture_u32(&decoded,2); fixture_string(&decoded,"");
+  fixture_u32(&decoded,1); fixture_u32(&decoded,0); fixture_u32(&decoded,0);
+  fixture_u32(&decoded,600); fixture_u32(&decoded,0xffffff); fixture_u32(&decoded,1);
+  fixture_string(&decoded,"Game Information"); fixture_zero(&decoded,8u*4u); fixture_u32(&decoded,0);
+  fixture_u32(&decoded,500); fixture_u32(&decoded,1);
+  fixture_string(&decoded,"global.legacy_executable_started = 1;");
+  fixture_u32(&decoded,700); fixture_u32(&decoded,1); fixture_u32(&decoded,0);
 
+  envelope=decoded;
+
+  memset(executable,0,sizeof(*executable)); executable->data[0]='M'; executable->data[1]='Z';
+  executable->size=16;
+  fixture_u32(executable,GMLC_CLASSIC_MAGIC); fixture_u32(executable,700);
+  fixture_u32(executable,0); fixture_u32(executable,702);
+  for(unsigned field=0;field<14;field++)
+    fixture_u32(executable,field==1?1:field==4?150:0);
+  fixture_compressed(executable,envelope.data,(int)envelope.size);
+  return 1;
+}
+
+int build_gm6_executable_fixture(Fixture *executable){
+  Fixture game={{0},0},plain={{0},0},envelope={{0},0};
+  fixture_u32(&game,0); fixture_u32(&game,0x31415926); fixture_zero(&game,16);
+  fixture_u32(&game,GMLC_CLASSIC_GM6);
+  for(unsigned field=0;field<20;field++)
+    fixture_u32(&game,field==1?1u:field==4?150u:0u);
+  fixture_u32(&game,0); /* no paired loading-bar images */
+  fixture_u32(&game,0); /* no custom loading image */
+  fixture_zero(&game,7u*4u); fixture_u32(&game,1); /* error settings and constants */
+  fixture_string(&game,"fixture_gm6_constant"); fixture_string(&game,"6*7");
+  for(unsigned type=0;type<GMLC_CLASSIC_RESOURCE_TYPES;type++){
+    fixture_u32(&game,400); fixture_u32(&game,0);
+  }
+  fixture_u32(&game,100001); fixture_u32(&game,1000001);
+  fixture_u32(&game,600); fixture_zero(&game,2u*4u);
+  fixture_string(&game,"Game Maker 6 fixture"); fixture_zero(&game,8u*4u);
+  fixture_u32(&game,0); /* empty game-information blob */
+  fixture_u32(&game,500); fixture_u32(&game,1);
+  fixture_string(&game,"global.gm6_executable_started = 1;");
+  fixture_u32(&game,600); fixture_u32(&game,0); /* room order */
+
+  fixture_u32(&plain,33); fixture_u32(&plain,33);
+  fixture_u32(&plain,GMLC_CLASSIC_MAGIC); fixture_u32(&plain,GMLC_CLASSIC_GM6);
+  memcpy(plain.data+plain.size,game.data,game.size); plain.size+=game.size;
+
+  envelope=plain;
+
+  memset(executable,0,sizeof(*executable)); executable->data[0]='M'; executable->data[1]='Z';
+  executable->size=64;
+  fixture_u32(executable,GMLC_CLASSIC_MAGIC); fixture_u32(executable,GMLC_CLASSIC_GM6);
+  fixture_zero(executable,3u*4u);
+  unsigned char renderer[68]={0};
+  renderer[0]='M'; renderer[1]='Z'; renderer[60]=64; renderer[64]='P'; renderer[65]='E';
+  fixture_string(executable,"renderer.bin");
+  fixture_compressed(executable,renderer,sizeof(renderer));
+  fixture_string(executable,"before.dat");
+  fixture_compressed(executable,(const unsigned char *)"before",6);
+  fixture_string(executable,"READY");
+  fixture_compressed(executable,envelope.data,(int)envelope.size);
+  fixture_string(executable,"after.dat");
+  fixture_compressed(executable,(const unsigned char *)"after",5);
+  return 1;
+}
 
 void fixture_legacy_room(Fixture *f, const char *name){
   fixture_u32(f,1); fixture_string(f,name); fixture_u32(f,541);
@@ -663,7 +853,7 @@ int build_project_fixture_source(unsigned version, const char *gml, Fixture *out
   if(version==701 || version==702){
     Fixture plain=legacy_fixture_source(version,gml);
     size_t encoded_size=0;
-    unsigned char *encoded=encode_gm7(plain.data,plain.size,&encoded_size);
+    unsigned char *encoded=fixture_project_image(plain.data,plain.size,&encoded_size);
     if(!encoded || encoded_size>sizeof(out->data)){ free(encoded); return 0; }
     memset(out,0,sizeof(*out));
     memcpy(out->data,encoded,encoded_size);

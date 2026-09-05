@@ -18,27 +18,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(_MSC_VER)
-#define GML_CRT_FORCE_INLINE static __forceinline
-#elif defined(__GNUC__) || defined(__clang__)
-#define GML_CRT_FORCE_INLINE static inline __attribute__((always_inline))
-#else
-#define GML_CRT_FORCE_INLINE static inline
-#endif
-
-/* These private four-lane types only group independent scalar operations. Unsupported compilers
- * retain the same algorithm through the scalar branch below. */
-#if (defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 9)) && \
-    (!defined(__i386__) || defined(__SSE__))
-#define GML_CRT_VECTOR4 1
-typedef float GmlCrtF32x4 __attribute__((vector_size(16)));
-typedef int32_t GmlCrtI32x4 __attribute__((vector_size(16)));
-typedef uint32_t GmlCrtU32x4 __attribute__((vector_size(16)));
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define GML_CRT_VECTOR4_RGBA_LOAD 1
-#endif
-#endif
-
 static inline int dual_u8(float v){
   int n=(int)floorf(v*255.0f+0.5f);
   return n<0?0:(n>255?255:n);

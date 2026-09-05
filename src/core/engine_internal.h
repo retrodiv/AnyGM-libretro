@@ -207,6 +207,8 @@ struct AnygmEngine {
   /* Set when the load took these from the host's locale service; a reset then asks it again. */
   int locale_from_host;
   char content_cache_directory[1024];
+  /* Host configuration path, never part of serialized state. */
+  char content_system_directory[1024];
   /* The frontend-selected launch path remains the anchor for the whole session. Internal content
    * replacement changes current_content_path, but a state for the original payload still has to
    * be reconstructible from the same launch envelope. */

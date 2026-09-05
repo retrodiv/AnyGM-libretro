@@ -153,7 +153,7 @@ VIDEO_RENDERER_TESTS := test_renderer_effects test_renderer_postprocess test_ren
 ifneq ($(HARDWARE_RENDER),0)
 VIDEO_RENDERER_TESTS += test_gpu
 endif
-CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks
+CONTENT_TESTS := test_bytecode test_package test_classic test_sprite_masks test_content_transform
 MEDIA_TESTS := test_hash test_image_codec test_font_raster
 AUDIO_TESTS := test_mp3_detect
 COMPATIBILITY_TESTS := test_compatibility
@@ -405,6 +405,7 @@ $(TEST_DIR)/test_classic: $(ANYGM_CLASSIC_TEST_SOURCES) \
 	src/content/bytecode/gml_bc14.c src/content/bytecode/gml_bc15.c \
 	src/content/bytecode/gml_bc17.c \
 	src/content/classic/gmlc_classic.c $(ANYGM_CLASSIC_IMPORT_SOURCES) \
+	src/content/container/content_transform.c src/media/gml_hash.c \
 	src/content/project/gmlc_project.c src/content/project/gmlc_json.c \
 	src/content/project/gmlc_assets.c
 	mkdir -p $(dir $@)
@@ -416,6 +417,11 @@ $(TEST_DIR)/test_image_codec: tests/unit/media/test_image_codec.c \
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
 
 $(TEST_DIR)/test_hash: tests/unit/media/test_hash.c src/media/gml_hash.c
+	mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
+
+$(TEST_DIR)/test_content_transform: tests/unit/content/test_content_transform.c \
+	src/content/container/content_transform.c src/media/gml_hash.c
 	mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
 

@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 struct AnygmHostServices;
+typedef struct AnygmContentTransforms AnygmContentTransforms;
 
 #define GMLC_CLASSIC_MAGIC 1234321u
 /* Keep direct classic-project reads aligned with the public content-router member limit. */
@@ -219,21 +220,21 @@ int gmlc_classic_probe_file(const struct AnygmHostServices *host,const char *pat
 
 /* Parse the length-delimited top-level inventory used by GM8/8.1 projects.
  * Individual resource payloads are not interpreted by this function. */
-int gmlc_classic_inventory(const void *data, size_t size,
+int gmlc_classic_inventory(const AnygmContentTransforms *transforms,const void *data, size_t size,
                            GmlcClassicInventory *out, char *err, size_t errcap);
-int gmlc_classic_inventory_file(const struct AnygmHostServices *host,const char *path,
+int gmlc_classic_inventory_file(const AnygmContentTransforms *transforms,const struct AnygmHostServices *host,const char *path,
                                 GmlcClassicInventory *out,
                                 char *err, size_t errcap);
 /* Inflate enough of each GM8/8.1 resource block to validate its envelope and
  * read its existence flag, name, and resource-format version. */
-int gmlc_classic_manifest(const void *data, size_t size,
+int gmlc_classic_manifest(const AnygmContentTransforms *transforms,const void *data, size_t size,
                           GmlcClassicManifest *out, char *err, size_t errcap);
-int gmlc_classic_manifest_file(const struct AnygmHostServices *host,const char *path,
+int gmlc_classic_manifest_file(const AnygmContentTransforms *transforms,const struct AnygmHostServices *host,const char *path,
                                GmlcClassicManifest *out,
                                char *err, size_t errcap);
 /* Extract an exact editor project carried in a revision-530 envelope. The returned bytes are
  * owned by the caller; compiled-only layouts are rejected. */
-int gmlc_classic_embedded_project(const void *data,size_t size,
+int gmlc_classic_embedded_project(const AnygmContentTransforms *transforms,const void *data,size_t size,
                                   GmlcClassicBlob *project,GmlcClassicVersion *version,
                                   char *err,size_t errcap);
 /* Normalize the versioned game-information blob to its bounded, uncompressed
