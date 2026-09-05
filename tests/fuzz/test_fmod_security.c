@@ -3,9 +3,16 @@
  */
 #include "gml_fmod.h"
 #include "anygm_test_runner.h"
+#include "memory_vfs.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+/* Compile the private FSB5-bank parser with this synthetic security corpus. This keeps
+ * parser internals private to production while allowing its transactional guarantees to
+ * be checked directly. */
+#include "../../src/audio/banks/gml_fmod.c"
 
 static void write_u32(uint8_t *data,size_t offset,uint32_t value){
   for(size_t byte=0;byte<4;byte++) data[offset+byte]=(uint8_t)(value>>(8*byte));
@@ -82,6 +89,95 @@ static int vorbis_metadata_crc(void){
          output.setup_crc==0xDEADBEEFu && output.data==sample+76 && output.data_len==0;
 }
 
+static int extreme_sizes(void){
+  uint8_t bad[60];
+  make_sample(bad,sizeof bad,UINT32_MAX,UINT32_MAX,UINT32_MAX,0);
+  return rejected_without_output(bad,sizeof bad);
+}
+
+static int short_vorbis_metadata_crc(void){
+  uint8_t bad[75];
+  make_sample(bad,sizeof bad,15,0,0,((uint64_t)8<<1)|1);
+  write_u32(bad,68,((uint32_t)11<<25)|6); /* VORBISDATA metadata with only three CRC bytes. */
+  return rejected_without_output(bad,sizeof bad);
+}
+
+static int malformed_later_sample(void){
+  uint8_t bad[76];
+  make_sample(bad,sizeof bad,16,0,0,((uint64_t)8<<1));
+  write_u32(bad,8,2);
+  write_u64(bad,68,((uint64_t)8<<1)|1); /* The second header requires absent metadata. */
+  return rejected_without_output(bad,sizeof bad);
+}
+
+static void free_table(FBank *bank){
+  if(!bank) return;
+  if(bank->names){
+    for(int index=0;index<bank->nsubs;index++) free(bank->names[index]);
+    free(bank->names);
+  }
+  free(bank->subs);
+  bank->names=NULL;
+  bank->subs=NULL;
+  bank->nsubs=0;
+}
+
+static void make_named_table(uint8_t *data,const char *name){
+  make_sample(data,74,8,6,4,((uint64_t)8<<1));
+  write_u32(data,68,4);
+  data[72]=(uint8_t)name[0];
+  data[73]=(uint8_t)name[1];
+}
+
+static int table_rejection_preserves_state(void){
+  uint8_t valid[74],invalid_offset[74],unterminated[74];
+  make_named_table(valid,"x");
+  make_named_table(invalid_offset,"x");
+  make_named_table(unterminated,"xy");
+  write_u32(invalid_offset,68,0);
+  FBank bank={0};
+  if(!fmod_fsb5_parse_table(&bank,valid,sizeof valid,123,4)){
+    free_table(&bank);
+    return 0;
+  }
+  FSub *subs=bank.subs;
+  char **names=bank.names;
+  FSub first=bank.subs[0];
+  int ok=!fmod_fsb5_parse_table(&bank,invalid_offset,sizeof invalid_offset,456,4) &&
+         !fmod_fsb5_parse_table(&bank,unterminated,sizeof unterminated,789,4) &&
+         bank.subs==subs && bank.names==names && bank.nsubs==1 &&
+         bank.data_file_off==123 && !memcmp(&bank.subs[0],&first,sizeof first) &&
+         bank.names && bank.names[0] && !strcmp(bank.names[0],"x");
+  free_table(&bank);
+  return ok;
+}
+
+static int snd_extent_is_enforced(void){
+  uint8_t bytes[92]={0};
+  memcpy(bytes,"RIFF",4);
+  memcpy(bytes+8,"FEV ",4);
+  memcpy(bytes+12,"SND ",4);
+  write_u32(bytes,16,68);
+  make_sample(bytes+20,72,8,0,4,((uint64_t)8<<1));
+  memset(bytes+88,0x5A,4); /* Present in the file but outside the SND chunk. */
+  AnygmMemoryVfs memory;
+  AnygmHostServices services;
+  anygm_memory_vfs_init(&memory,&services);
+  int added=anygm_memory_vfs_add_file(&memory,"mem/overflow.bank",bytes,sizeof bytes);
+  anygm_memory_vfs_guard_reads(&memory,"mem/overflow.bank",0,88);
+  FBank bank={0};
+  int opened=added && fmod_bank_open(&bank,&services,"mem/overflow.bank");
+  if(bank.nsubs>0){
+    uint8_t data[4];
+    (void)fmod_bank_read(&bank,bank.data_file_off,data,sizeof data);
+  }
+  int ok=opened && bank.nsubs==0 && !memory.read_violation;
+  if(bank.file) services.file_close(services.userdata,bank.file);
+  free_table(&bank);
+  anygm_memory_vfs_destroy(&memory);
+  return ok;
+}
+
 int main(int argc,char **argv){
   const char *filter=NULL;
   if(argc==3 && !strcmp(argv[1],"--case")) filter=argv[2];
@@ -93,6 +189,11 @@ int main(int argc,char **argv){
     {"incomplete_sample_table",incomplete_sample_table},
     {"out_of_range_data_offset",out_of_range_data_offset},
     {"vorbis_metadata_crc",vorbis_metadata_crc},
+    {"extreme_sizes",extreme_sizes},
+    {"short_vorbis_metadata_crc",short_vorbis_metadata_crc},
+    {"malformed_later_sample",malformed_later_sample},
+    {"table_rejection_preserves_state",table_rejection_preserves_state},
+    {"snd_extent_is_enforced",snd_extent_is_enforced},
   };
   static const AnygmTestGroup groups[]={
     {"fsb5",cases,sizeof cases/sizeof cases[0]},

@@ -564,11 +564,15 @@ security-check: $(SECURITY_TESTS)
 	$(TEST_DIR)/test_fmod_security
 
 $(TEST_DIR)/test_fmod_security: tests/fuzz/test_fmod_security.c \
-	tests/support/anygm_test_runner.c src/audio/banks/gml_fmod.c \
-	src/host/anygm_host.c src/host/anygm_vfs.c $(TEST_DIR)/stb_vorbis_fmod_test.o
+	src/audio/banks/gml_fmod.c tests/support/anygm_test_runner.c \
+	tests/support/memory_vfs.c src/host/anygm_host.c src/host/anygm_vfs.c \
+	$(TEST_DIR)/stb_vorbis_fmod_test.o
 	mkdir -p $(dir $@)
 	$(CC) $(TEST_CPPFLAGS) $(CFLAGS) -DSTB_VORBIS_NO_STDIO \
-		-DSTB_VORBIS_NO_PUSHDATA_API $^ -o $@ -lm
+		-DSTB_VORBIS_NO_PUSHDATA_API tests/fuzz/test_fmod_security.c \
+		tests/support/anygm_test_runner.c tests/support/memory_vfs.c \
+		src/host/anygm_host.c src/host/anygm_vfs.c \
+		$(TEST_DIR)/stb_vorbis_fmod_test.o -o $@ -lm
 
 # The test links the unchanged imported implementation separately so its
 # upstream warnings cannot mask warnings in the FSB5 reader under test.
