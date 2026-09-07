@@ -2437,6 +2437,20 @@ int engine_graphics_device_expected(const AnygmEngine *engine){
   return engine && engine->config.content_shader_device_expected?1:0;
 }
 
+static void release_fullwidth_gui_extent(AnygmEngine *engine,unsigned next_mode){
+  if(engine->lifecycle!=ENGINE_LOADED || next_mode==engine->config.aspect_mode ||
+     anygm_policy_has_modern_layer_semantics(&engine->win) ||
+     !engine->aspect_force_active || !aspect_compositor_fullwidth_gen(engine) ||
+     engine->vm.gui_w!=(int)engine->width || engine->vm.gui_h!=(int)engine->height ||
+     engine->vm.gui_boot_w<16 || engine->vm.gui_boot_h<16) return;
+  /* A first-generation compositor may derive display_set_gui_size() from the live window during
+   * Draw GUI. That declaration is authoritative for the frame being drawn, but its forced extent
+   * is stale as soon as the frontend selects another mode. Restore the pre-force drawing space
+   * before presentation is recomputed; the next GUI event can then declare the new live extent. */
+  engine->vm.gui_w=engine->vm.gui_boot_w;
+  engine->vm.gui_h=engine->vm.gui_boot_h;
+}
+
 AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
   if(!engine || engine->guard!=ANYGM_ENGINE_GUARD || !delta) return ANYGM_ERROR_INVALID_ARGUMENT;
   if(delta->struct_size<sizeof *delta || delta->values.struct_size<sizeof delta->values)
@@ -2451,7 +2465,10 @@ AnygmResult anygm_set_config(AnygmEngine *engine,const AnygmConfigDelta *delta){
     presentation_changed|=engine->config.monitor_height!=delta->values.monitor_height;
     engine->config.monitor_height=delta->values.monitor_height;
   }
-  if(f&ANYGM_CONFIG_ASPECT_MODE) engine->config.aspect_mode=delta->values.aspect_mode;
+  if(f&ANYGM_CONFIG_ASPECT_MODE){
+    release_fullwidth_gui_extent(engine,delta->values.aspect_mode);
+    engine->config.aspect_mode=delta->values.aspect_mode;
+  }
   if(f&ANYGM_CONFIG_MOUSE_MODE) engine->config.mouse_mode=delta->values.mouse_mode;
   if(f&ANYGM_CONFIG_ROOM_SKIP_BUTTON) engine->config.room_skip_button=delta->values.room_skip_button;
   if(f&ANYGM_CONFIG_GOD_MODE) engine->config.god_mode=delta->values.god_mode;

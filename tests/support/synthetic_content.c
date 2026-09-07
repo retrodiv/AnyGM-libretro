@@ -1094,7 +1094,7 @@ int anygm_synthetic_shifted_port_content_create(AnygmSyntheticContent *fixture){
   return 1;
 }
 
-int anygm_synthetic_window_gui_content_create(AnygmSyntheticContent *fixture){
+static int synthetic_window_gui_content_create(AnygmSyntheticContent *fixture,int explicit_gui_size){
   if(!fixture) return 0;
   memset(fixture,0,sizeof *fixture);
   if(!create_fixture_directory(fixture->directory,sizeof fixture->directory)) return 0;
@@ -1102,11 +1102,18 @@ int anygm_synthetic_window_gui_content_create(AnygmSyntheticContent *fixture){
   snprintf(create,sizeof create,"%s/window-create.gml",fixture->directory);
   snprintf(gui,sizeof gui,"%s/window-gui.gml",fixture->directory);
   snprintf(fixture->path,sizeof fixture->path,"%s/data.win",fixture->directory);
-  if(!write_text(create,
+  if(!write_text(create,explicit_gui_size?
+      "window_set_size(64,48);\n"
+      "surface_resize(application_surface,64,48);\n"
+      "application_surface_draw_enable(false);\n":
       "window_set_size(320,180);\n"
       "surface_resize(application_surface,64,48);\n"
       "application_surface_draw_enable(false);\n") ||
-     !write_text(gui,
+     !write_text(gui,explicit_gui_size?
+      "var w = window_get_width(); var h = window_get_height();\n"
+      "display_set_gui_size(w,h);\n"
+      "draw_set_color(c_blue); draw_rectangle(0,0,w-1,h-1,false);\n"
+      "draw_set_color(c_white); draw_rectangle(w/2-2,20,w/2+1,23,false);\n":
       "var w = window_get_width(); var h = window_get_height();\n"
       "draw_set_color(c_blue); draw_rectangle(0,0,w-1,h-1,false);\n"
       "draw_set_color(c_white); draw_rectangle(w/2-2,20,w/2+1,23,false);\n")){
@@ -1141,6 +1148,14 @@ int anygm_synthetic_window_gui_content_create(AnygmSyntheticContent *fixture){
     anygm_synthetic_content_destroy(fixture); return 0;
   }
   return 1;
+}
+
+int anygm_synthetic_window_gui_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,0);
+}
+
+int anygm_synthetic_window_gui_size_content_create(AnygmSyntheticContent *fixture){
+  return synthetic_window_gui_content_create(fixture,1);
 }
 
 int anygm_synthetic_background_color_content_create(AnygmSyntheticContent *fixture){
