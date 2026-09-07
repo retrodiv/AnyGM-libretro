@@ -1388,8 +1388,13 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   int world_height=(int)engine->height;
   if (!multiview_rendered) {
   *gml_varmap_put(&engine->vm.globals,"view_current")=vreal(frame_view_index);
+  int translated_full_port=frame_view_count==1 &&
+    (frame_views[0].px!=0 || frame_views[0].py!=0) &&
+    frame_views[0].pw==(int)engine->width && frame_views[0].ph==(int)engine->height &&
+    render_presentation.application_width==(int)engine->width &&
+    render_presentation.application_height==(int)engine->height;
   if(!engine->aspect_force_active && frame_view_count<=1 &&
-     (frame_view_count==0 || (frame_views[0].px==0 && frame_views[0].py==0)) &&
+     !translated_full_port &&
      render_presentation.application_owned &&
      !(view_surface>0 && gml_surface_exists(&engine->render,view_surface))){
     GmlPresentView *view=&frame_views[0];
@@ -1397,9 +1402,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      * smaller logical framebuffer can leave retained pixels outside that raster. */
     int viewless_owned_world = frame_view_count==0 &&
       anygm_policy_has_modern_layer_semantics(&engine->win);
-    /* An enabled application surface remains the final draw target. A translated port uses the
-     * staged composition below so its offset is applied once, rather than lost by drawing
-     * directly over the whole owned surface. Origin-aligned ports keep the direct path. */
+    /* An enabled application surface remains the final draw target. A translated full-size port
+     * uses the staged composition below so its offset is applied once, rather than lost by
+     * drawing directly over the whole owned surface. This 1:1 translation does not change the
+     * established target selection for resized application surfaces or partial ports. */
     direct_owned_world=(viewless_owned_world || app_surface_is_draw_target ||
       (frame_view_count==1 &&
       (default_application_surface_uses_full_view_port(
