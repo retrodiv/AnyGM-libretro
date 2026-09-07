@@ -238,7 +238,11 @@ Where a content layout requires an external transform, the core accepts an
 explicitly supplied buffer program through `anygm.ini` or an `.anygm` anchor.
 The program format and selection rules are in `CONTENT_TRANSFORMS.md`.
 
-The editor-standard revision-530 project is accepted directly with its `.gmd` extension.
+The editor-standard revision-530 project is accepted directly with its `.gmd` extension
+and inside an inert executable wrapper when its normalized header and complete structure
+validate. The executable reader does not choose a source operation from a revision;
+configured input pipelines and candidate selection prepare other source representations
+before the same structural reader. Native code is never executed.
 
 An editor-standard `.gmd`, `.gm6`, `.gmk`, or `.gm81` may have adjacent standard `.gex`
 packages, ordinary externally referenced included files (notably GM6), and an optional

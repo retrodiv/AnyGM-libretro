@@ -269,7 +269,7 @@ static void candidate_inputs(void){
   snprintf(path,sizeof path,"%s/indexed.bin",fixture.directory);
   snprintf(config,sizeof config,"[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
     "[sha256:%s.transforms]\ninput.probe=buffer ranges(){write64(scratch,8,8);"
-    "write64(scratch,16,8);write64(scratch,24,input_size-8);return scratch_slice(0,32);}\n"
+    "write64(scratch,80,8);write64(scratch,88,input_size-8);return scratch_slice(0,160);}\n"
     "[sha256:%s.overrides]\n$anygm_probe=29\n",hex,hex);
   write_text(ini,config); write_bytes(path,container,size+8);
   AnygmHostServices services={0}; services.struct_size=sizeof services;
@@ -289,8 +289,8 @@ static void candidate_inputs(void){
   /* Both valid ranges must reject before either image becomes the live engine. */
   memcpy(container,content,size); memcpy(container+size,content,size);
   snprintf(config,sizeof config,"[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
-    "input.probe=buffer ranges(){write64(scratch,8,%zu);write64(scratch,16,%zu);"
-    "write64(scratch,24,%zu);return scratch_slice(0,32);}\n",size,size,size);
+    "input.probe=buffer ranges(){write64(scratch,8,%zu);write64(scratch,80,%zu);"
+    "write64(scratch,88,%zu);return scratch_slice(0,160);}\n",size,size,size);
   write_text(ini,config); write_bytes(path,container,size*2);
   source.kind=ANYGM_CONTENT_MEMORY; source.path=NULL; source.size=size*2;
   for(int path_input=0;path_input<2;path_input++){

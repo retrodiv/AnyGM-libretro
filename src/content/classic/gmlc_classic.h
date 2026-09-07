@@ -235,8 +235,9 @@ int gmlc_classic_manifest(const AnygmContentTransforms *transforms,const void *d
 int gmlc_classic_manifest_file(const AnygmContentTransforms *transforms,const struct AnygmHostServices *host,const char *path,
                                GmlcClassicManifest *out,
                                char *err, size_t errcap);
-/* Extract an exact editor project carried in a revision-530 envelope. The returned bytes are
- * owned by the caller; compiled-only layouts are rejected. */
+/* Extract an exact normalized editor project inside a Classic executable. The returned bytes are
+ * owned by the caller. Source preparation belongs to the caller; this entry point only scans
+ * ordinary project headers. */
 int gmlc_classic_embedded_project(const AnygmContentTransforms *transforms,const void *data,size_t size,
                                   GmlcClassicBlob *project,GmlcClassicVersion *version,
                                   char *err,size_t errcap);

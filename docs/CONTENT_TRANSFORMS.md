@@ -148,29 +148,36 @@ archive selection. An ordinary, unadapted ZIP still uses its selected member's i
 
 ### Selecting among source ranges
 
-An optional `input.probe` entry enumerates byte ranges before `input` runs. Its output is a table
-of little-endian `(uint64_t offset, uint64_t length)` pairs into the unchanged source. It may return
-zero pairs to decline preparation, or at most 64 pairs with strictly increasing offsets. Every
-range and the complete table are checked before any candidate is transformed or validated.
+An optional `input.probe` entry enumerates byte ranges and their operations. Each 80-byte record
+contains a little-endian `uint64_t offset`, `uint64_t length`, and a zero-padded 64-byte operation
+name; an empty name selects `input`. Names must terminate within their field and resolve to a
+declared function/pipeline or built-in step. The probe may return zero records to decline
+preparation, or at most 64 records with nondecreasing offsets. Identical ranges may use different
+operations; exact duplicate records reject. Every range, operation and the complete table are
+checked before any candidate is transformed or validated.
 Overlapping ranges are allowed: each reads the original bytes and owns its separate work buffer.
 
-Each candidate passes through `input` and the existing complete structural reader. Exactly one
+Each candidate passes through its selected operation and the existing complete structural reader. Exactly one
 valid image succeeds; invalid candidates do not hide a later valid candidate, and two valid images
 reject as ambiguous even when their bytes agree. A fatal validator failure also rejects selection.
 The candidate callback belongs to compiled reader code and is never accessible to a transform.
 No module, format signature or recovery algorithm is part of the generic range selector.
 
-Candidate selection requires both `input` and a reader. Memory consumers validate data images;
+Candidate selection requires a reader; `input` is only required by records with an empty operation
+name. Memory consumers validate data images;
 path consumers validate data or Classic images. Candidate ZIP extraction is not supported; the
 single-source `input` path still supports ZIP normally. A sole whole-source range whose result is
 byte-identical declines preparation before validation, retaining ordinary container/member routing
 and borrowed memory ownership. Candidate selection never reruns `input` on its chosen result.
 
 The distributed `indexed_candidates` example reads an authored `IDX1` envelope: four magic bytes,
-a little-endian 32-bit count, then the range pairs. Select it as `input.probe` and `copy_payload`
+a little-endian 32-bit count, then 16-byte offset/length pairs. It constructs the candidate records
+with empty operation names. Select it as `input.probe` and `copy_payload`
 as `input` in an anchor's `[pipelines]` section. This demonstrates directory-based extraction of
 an ordinary embedded data image without any format recovery. A custom probe can construct its
-table in scratch memory and return `scratch_slice(0, count * 16)` instead.
+table in scratch memory and return `scratch_slice(0, count * 80)` instead. Selecting different
+operations for the same range permits alternative interpretations, such as ordinary and swapped
+word order, while retaining complete validation and ambiguity rejection.
 
 The ordinary per-execution limits apply separately to the probe and each of the at most 64
 candidates; the bound is not a short-running-time guarantee. The selector retains the original,

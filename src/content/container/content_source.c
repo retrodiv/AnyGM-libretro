@@ -37,35 +37,51 @@ int anygm_content_source_prepare(const AnygmContentTransforms *transforms,
   if(!anygm_content_transforms_has(transforms,"input.probe"))
     return anygm_content_transform_run(transforms,"input",data,size,
       output,output_size,error,error_size);
-  if(!validate || !anygm_content_transform_validate(transforms,"input",error,error_size)){
-    if(error && error_size && error[0]) return 0;
-    return source_error(error,error_size,"candidate selection requires input and a validator");
-  }
+  if(!validate) return source_error(error,error_size,"candidate selection requires a validator");
   uint8_t *table=NULL,*selected=NULL;
   size_t table_size=0,selected_size=0;
   if(!anygm_content_transform_run(transforms,"input.probe",data,size,
        &table,&table_size,error,error_size)) return 0;
-  if(table_size%16u || table_size/16u>ANYGM_SOURCE_MAX_CANDIDATES){
+  const size_t stride=ANYGM_SOURCE_CANDIDATE_BYTES;
+  if(table_size%stride || table_size/stride>ANYGM_SOURCE_MAX_CANDIDATES){
     free(table);
     return source_error(error,error_size,"malformed or oversized candidate table");
   }
-  size_t count=table_size/16u;
+  size_t count=table_size/stride;
   uint64_t previous=0;
   for(size_t i=0;i<count;i++){
-    uint64_t offset=source_u64(table+i*16u),length=source_u64(table+i*16u+8u);
-    if(offset>size || length>size-offset || (i && offset<=previous)){
+    const uint8_t *record=table+i*stride;
+    uint64_t offset=source_u64(record),length=source_u64(record+8u);
+    if(offset>size || length>size-offset || (i && offset<previous)){
       free(table);
       return source_error(error,error_size,"invalid candidate range or ordering");
+    }
+    size_t end=16u;
+    while(end<stride && record[end]) end++;
+    if(end==stride){
+      free(table); return source_error(error,error_size,"unterminated candidate operation");
+    }
+    for(size_t pad=end;pad<stride;pad++) if(record[pad]){
+      free(table); return source_error(error,error_size,"nonzero candidate operation padding");
+    }
+    for(size_t earlier=0;earlier<i;earlier++) if(!memcmp(record,table+earlier*stride,stride)){
+      free(table); return source_error(error,error_size,"duplicate candidate record");
+    }
+    const char *operation=record[16]?(const char*)record+16u:"input";
+    if(!anygm_content_transform_validate(transforms,operation,error,error_size)){
+      free(table); return 0;
     }
     previous=offset;
   }
   char last_error[256]={0};
   for(size_t i=0;i<count;i++){
-    size_t offset=(size_t)source_u64(table+i*16u),length=(size_t)source_u64(table+i*16u+8u);
+    const uint8_t *record=table+i*stride;
+    size_t offset=(size_t)source_u64(record),length=(size_t)source_u64(record+8u);
+    const char *operation=record[16]?(const char*)record+16u:"input";
     uint8_t *candidate=NULL; size_t candidate_size=0;
     const uint8_t *start=data?(const uint8_t*)data+offset:NULL;
     char detail[256]={0};
-    if(!anygm_content_transform_run(transforms,"input",start,length,
+    if(!anygm_content_transform_run(transforms,operation,start,length,
          &candidate,&candidate_size,detail,sizeof detail)){
       snprintf(last_error,sizeof last_error,"%s",detail);
       continue;

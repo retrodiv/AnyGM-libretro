@@ -41,7 +41,6 @@ const char *test_transform_declarations(void){
       /* Retired adapter declaration omitted from unpublished history. */ ""
       /* Retired adapter declaration omitted from unpublished history. */ ""
       /* Retired adapter declaration omitted from unpublished history. */ ""
-      /* Retired adapter declaration omitted from unpublished history. */ ""
       /* Retired adapter declaration omitted from unpublished history. */ "";
   return declarations;
 }
@@ -637,6 +636,17 @@ Fixture legacy_fixture_source(unsigned container_version, const char *gml){
 
 Fixture legacy_fixture(unsigned container_version){
   return legacy_fixture_variant(container_version,0);
+}
+
+int build_gm53_executable_fixture(Fixture *executable){
+  if(!executable) return 0;
+  Fixture project=legacy_fixture(530);
+  memset(executable,0,sizeof(*executable));
+  fixture_zero(executable,64); executable->data[0]='M'; executable->data[1]='Z';
+  if(executable->size+project.size>sizeof(executable->data)) return 0;
+  memcpy(executable->data+executable->size,project.data,project.size);
+  executable->size+=project.size;
+  return 1;
 }
 
 /* One Execute Code action. The source is stored in the first argument when the action's own code

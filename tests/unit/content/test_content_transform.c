@@ -420,20 +420,27 @@ static int validate_candidate(void *context,const void *data,size_t size,char *e
 
 static void candidate_sources(void){
   static const struct { const char *probe; const char *data; int ok; unsigned calls; const char *result; } cases[]={
-    {"write64(scratch,0,0);write64(scratch,8,8);write64(scratch,16,4);write64(scratch,24,4);"
-     "return scratch_slice(0,32);","bad!GOOD",1,2,"GOOD"},
-    {"write64(scratch,0,0);write64(scratch,8,4);write64(scratch,16,4);write64(scratch,24,4);"
-     "return scratch_slice(0,32);","GOODGOOD",0,2,NULL},
-    {"write64(scratch,0,4);write64(scratch,8,4);return scratch_slice(0,16);","bad!bad!",0,1,NULL},
+    {"write64(scratch,0,0);write64(scratch,8,8);write64(scratch,80,4);write64(scratch,88,4);"
+     "return scratch_slice(0,160);","bad!GOOD",1,2,"GOOD"},
+    {"write64(scratch,0,0);write64(scratch,8,4);write64(scratch,80,4);write64(scratch,88,4);"
+     "return scratch_slice(0,160);","GOODGOOD",0,2,NULL},
+    {"write64(scratch,0,4);write64(scratch,8,4);return scratch_slice(0,80);","bad!bad!",0,1,NULL},
     {"return scratch_slice(0,0);","ignored",1,0,NULL},
-    {"write64(scratch,8,input_size);return scratch_slice(0,16);","unchanged",1,0,NULL},
+    {"write64(scratch,8,input_size);return scratch_slice(0,80);","unchanged",1,0,NULL},
     /* Whole-table checks precede every callback, even when the first row is valid. */
-    {"write64(scratch,8,4);write64(scratch,16,99);return scratch_slice(0,32);","GOOD",0,0,NULL},
-    {"write64(scratch,8,4);return scratch_slice(0,32);","GOOD",0,0,NULL},
-    {"write64(scratch,0,3);write64(scratch,8,2);return scratch_slice(0,16);","GOOD",0,0,NULL},
-    {"write64(scratch,0,0xffffffffffffffff);return scratch_slice(0,16);","GOOD",0,0,NULL},
-    {"return scratch_slice(0,15);","GOOD",0,0,NULL},
-    {"return scratch_slice(0,1040);","GOOD",0,0,NULL},
+    {"write64(scratch,8,4);write64(scratch,80,99);return scratch_slice(0,160);","GOOD",0,0,NULL},
+    {"write64(scratch,8,4);write64(scratch,88,4);return scratch_slice(0,160);","GOOD",0,0,NULL},
+    {"write64(scratch,0,1);write64(scratch,8,3);write64(scratch,88,4);"
+     "return scratch_slice(0,160);","GOOD",0,0,NULL},
+    {"write64(scratch,0,3);write64(scratch,8,2);return scratch_slice(0,80);","GOOD",0,0,NULL},
+    {"write64(scratch,0,0xffffffffffffffff);return scratch_slice(0,80);","GOOD",0,0,NULL},
+    {"return scratch_slice(0,79);","GOOD",0,0,NULL},
+    {"return scratch_slice(0,5200);","GOOD",0,0,NULL},
+    {"write64(scratch,8,4);for(uint64_t i=0;i<64;i++)write8(scratch,16+i,'a');"
+     "return scratch_slice(0,80);","GOOD",0,0,NULL},
+    {"write64(scratch,8,4);write8(scratch,16,'a');write8(scratch,18,'b');"
+     "return scratch_slice(0,80);","GOOD",0,0,NULL},
+    {"write64(scratch,8,4);write8(scratch,16,'x');return scratch_slice(0,80);","GOOD",0,0,NULL},
   };
   for(size_t i=0;i<sizeof cases/sizeof cases[0];i++){
     char config[2048],error[256];
@@ -453,8 +460,8 @@ static void candidate_sources(void){
   }
   /* A fatal validator result cannot silently choose a previously valid candidate. */
   const char fatal_config[]="[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
-    "input.probe=buffer probe(){write64(scratch,8,4);write64(scratch,16,4);write64(scratch,24,4);"
-    "return scratch_slice(0,32);}\n";
+    "input.probe=buffer probe(){write64(scratch,8,4);write64(scratch,80,4);write64(scratch,88,4);"
+    "return scratch_slice(0,160);}\n";
   char error[256]; AnygmContentTransforms *set=anygm_content_transforms_create();
   assert(set && anygm_content_transforms_parse(set,fatal_config,sizeof fatal_config-1,error,sizeof error));
   CandidateCheck check={0,2}; uint8_t *output=NULL; size_t size=0;
@@ -463,7 +470,7 @@ static void candidate_sources(void){
   assert(strstr(error,"fatal validator"));
   assert(!anygm_content_source_prepare(set,"bad!GOOD",8,NULL,NULL,&output,&size,error,sizeof error));
   anygm_content_transforms_destroy(set);
-  const char missing[]="[transforms]\ninput.probe=buffer none(){return scratch_slice(0,0);}\n";
+  const char missing[]="[transforms]\ninput.probe=buffer none(){write64(scratch,8,4);return scratch_slice(0,80);}\n";
   set=anygm_content_transforms_create();
   assert(set && anygm_content_transforms_parse(set,missing,sizeof missing-1,error,sizeof error));
   check.calls=0;
@@ -471,8 +478,8 @@ static void candidate_sources(void){
     &output,&size,error,sizeof error) && !check.calls && !output && !size);
   anygm_content_transforms_destroy(set);
   const char maximum[]="[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
-    "input.probe=buffer ranges(){for(uint64_t i=0;i<64;i++){write64(scratch,16*i,i);"
-    "write64(scratch,16*i+8,1);}return scratch_slice(0,1024);}\n";
+    "input.probe=buffer ranges(){for(uint64_t i=0;i<64;i++){write64(scratch,80*i,i);"
+    "write64(scratch,80*i+8,1);}return scratch_slice(0,5120);}\n";
   uint8_t bytes[64]={0};
   set=anygm_content_transforms_create();
   assert(set && anygm_content_transforms_parse(set,maximum,sizeof maximum-1,error,sizeof error));
@@ -482,6 +489,23 @@ static void candidate_sources(void){
   anygm_content_transforms_destroy(set);
   assert(anygm_content_source_prepare(NULL,NULL,0,NULL,NULL,&output,&size,error,sizeof error));
   assert(!output && !size);
+  /* The same bytes may have two possible byte orders. Selection belongs to the
+   * structural validator, not a format/cipher rule in the generic source owner. */
+  const char alternatives[]="[transforms]\ninput=buffer copy(){return slice(0,input_size);}\n"
+    "input.probe=buffer orders(){parameters(\"builtin.byteswap32\");"
+    "write64(scratch,8,input_size);write64(scratch,88,input_size);"
+    "for(uint64_t i=0;i<parameter_size;i++)write8(scratch,96+i,read8(parameters,i));"
+    "return scratch_slice(0,160);}\n";
+  set=anygm_content_transforms_create();
+  assert(set && anygm_content_transforms_parse(set,alternatives,sizeof alternatives-1,error,sizeof error));
+  const char *orders[]={"GOOD","DOOG"};
+  for(size_t i=0;i<2;i++){
+    check.calls=0;
+    assert(anygm_content_source_prepare(set,orders[i],4,validate_candidate,&check,
+      &output,&size,error,sizeof error) && check.calls==2 && size==4 && !memcmp(output,"GOOD",4));
+    free(output);
+  }
+  anygm_content_transforms_destroy(set);
 }
 
 int main(void){

@@ -224,7 +224,20 @@ static int expect_gm53_manifest(void){
   return ok;
 }
 
-
+static int expect_project_candidate_flood_rejected(void){
+  unsigned char input[16u+65u*8u+32u]={0};
+  input[0]='M'; input[1]='Z';
+  for(size_t i=0;i<65u;i++){
+    put_u32le(input+16u+i*8u,GMLC_CLASSIC_MAGIC);
+    put_u32le(input+20u+i*8u,GMLC_CLASSIC_GM53);
+  }
+  GmlcClassicBlob project={0}; char error[256]={0};
+  int ok=!gmlc_classic_embedded_project(NULL,input,sizeof input,&project,NULL,error,sizeof error) &&
+         !project.data && !project.size && strstr(error,"too many project candidates");
+  if(!ok) fprintf(stderr,"project candidate flood was not rejected: %s\n",error);
+  free(project.data);
+  return ok;
+}
 
 static int expect_embedded_project_rejects_compiled_layout(void){
   Fixture executable={{0},0}; GmlcClassicBlob extracted={(uint8_t*)1,1};

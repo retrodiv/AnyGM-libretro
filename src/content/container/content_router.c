@@ -586,8 +586,7 @@ static int classic_executable_maybe(const AnygmContentRouter *router,const char 
     for(size_t index=0;index+8u<=count;index++){
       uint64_t absolute=cursor+(uint64_t)index;
       if(cab && absolute>=cab->offset && absolute<cab->offset+cab->size) continue;
-      uint32_t first=zu32(buffer+index),second=zu32(buffer+index+4u);
-      if(first==UINT32_C(1234321)){
+      if(zu32(buffer+index)==GMLC_CLASSIC_MAGIC){
         found=1;
         break;
       }

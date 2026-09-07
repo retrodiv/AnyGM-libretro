@@ -2369,11 +2369,56 @@ static int parse_executable_data(const uint8_t *data, size_t size,
 
 
 
-/* Returns zero without a diagnostic when the marker is absent, so the caller keeps its own. */
-
-
-/* Validate each externally transformed editor project completely so an incidental
- * marker in native code cannot be mistaken for content. Native code is never run. */
+/* Validate normalized embedded projects completely. Native code is never run. */
+static int parse_gm53_executable_manifest(const AnygmContentTransforms *transforms,const uint8_t *file,size_t size,
+                                          GmlcClassicManifest *out,
+                                          GmlcClassicBlob *embedded_project,
+                                          char *err,size_t errcap){
+  GmlcClassicManifest found={0};
+  GmlcClassicBlob found_project={0};
+  int matches=0;
+  unsigned candidates=0;
+  for(size_t at=0;at+32u<=size;at++){
+    if(read_u32le(file+at)!=GMLC_CLASSIC_MAGIC ||
+       read_u32le(file+at+4u)!=GMLC_CLASSIC_GM53) continue;
+    if(++candidates>64u){
+      free(found_project.data);
+      gmlc_classic_manifest_free(&found);
+      if(err && errcap) snprintf(err,errcap,"classic executable: too many project candidates");
+      return 0;
+    }
+    size_t project_size=size-at;
+    uint8_t *project=project_size<=GMLC_CLASSIC_FILE_LIMIT?malloc(project_size):NULL;
+    if(!project){
+      free(found_project.data); gmlc_classic_manifest_free(&found);
+      if(err && errcap) snprintf(err,errcap,"classic executable: cannot allocate bounded project image");
+      return 0;
+    }
+    memcpy(project,file+at,project_size);
+    GmlcClassicManifest candidate={0}; char candidate_err[256]={0};
+    int valid=parse_legacy_project(transforms,project,project_size,&candidate.inventory,&candidate,
+                                   candidate_err,sizeof(candidate_err));
+    if(!valid){ free(project); gmlc_classic_manifest_free(&candidate); continue; }
+    if(matches++){
+      free(project);
+      free(found_project.data);
+      gmlc_classic_manifest_free(&candidate);
+      gmlc_classic_manifest_free(&found);
+      if(err && errcap) snprintf(err,errcap,"classic executable: ambiguous normalized project");
+      return 0;
+    }
+    found=candidate;
+    found_project.data=project;
+    found_project.size=project_size;
+  }
+  if(matches){
+    *out=found;
+    if(embedded_project) *embedded_project=found_project;
+    else free(found_project.data);
+    return 1;
+  }
+  return 0;
+}
 
 
 /* The normalized stream retains its fixed structural prefix. */
@@ -2661,8 +2706,6 @@ static int parse_executable_manifest(const AnygmContentTransforms *transforms,co
   if(matches){ *out=found; return 1; }
   if(parse_gm6_executable_manifest(transforms,file,size,out,err,errcap)) return 1;
   if(parse_gm53_executable_manifest(transforms,file,size,out,NULL,err,errcap)) return 1;
-  /* An absent normalized header is not conclusive for other encoded layouts. */
-  if((0 /* Revision-selected adapter omitted from unpublished history. */)) return 1;
   if(err && errcap && !err[0])
     snprintf(err,errcap,"%s",candidates && candidate_error[0]?candidate_error:
              "classic executable: embedded-data marker not found");

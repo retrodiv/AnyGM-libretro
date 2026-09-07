@@ -51,6 +51,7 @@ ZIP-compatible and embedded-Cabinet routing enforce these compile-time limits:
 | Effective overrides / launch-anchor envelope | 4 KiB / 64 directives each |
 | One transform source function | 64 KiB |
 | Transform syntax nesting | 64 levels |
+| Source-candidate records | 64 records, 80 bytes each |
 | Embedded-Cabinet cache marker serialization budget | 20 MiB |
 
 External content transforms compile bounded C-like source into buffer programs with no host capabilities. Their format,
