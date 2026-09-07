@@ -84,7 +84,7 @@ static struct retro_core_option_v2_definition g_definitions[]={
    NULL,"input",
    {{"Auto",NULL},{"Absolute (pointer)",NULL},{"Relative (delta)",NULL},{NULL,NULL}},
    "Auto"},
-  {"anygm_content_shader_readback","Shaders (GLSL)",NULL,
+  {"anygm_content_shader_readback","Game shaders (GLSL)",NULL,
    "Controls the game's GLSL programs that the software renderer does not already recognize. "
 #if ANYGM_HARDWARE_RENDER
    "Performance runs them on OpenGL, uses the previous frame's result for draws inside a frame, "

@@ -265,7 +265,7 @@ static void graphics_settings_are_independent(void){
 #if ANYGM_HARDWARE_RENDER
   const struct retro_core_option_v2_definition *hybrid=definition("anygm_hybrid_gpu");
   if(!hybrid){ complain("a hardware build offers no hybrid GPU setting"); return; }
-  if(strcmp(shaders->desc,"Shaders (GLSL)") || strcmp(shaders->category_key,"video") ||
+  if(strcmp(shaders->desc,"Game shaders (GLSL)") || strcmp(shaders->category_key,"video") ||
      value_count(shaders)!=4 || strcmp(shaders->values[0].value,"Performance") ||
      strcmp(shaders->values[1].value,"Exact") ||
      strcmp(shaders->values[2].value,"Off (but report available)") ||

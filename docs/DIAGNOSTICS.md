@@ -172,7 +172,7 @@ pass because what a frame can afford is a frame's time: three passes of 2.5 mill
 six do not. `readback_pipelined` is 1 while the measured policy is taking the previous pass's answer rather
 than waiting for the device — correct, one frame late, and what the measured policy does from its
 first pass, because waiting is most of what a read-back costs and none of what it produces.
-`Shaders (GLSL)` presents these policies as Performance (measured, pipelined), Exact (waits), and
+`Game shaders (GLSL)` presents these policies as Performance (measured, pipelined), Exact (waits), and
 its two OFF reporting variants. Terminal GLSL is exact in both active modes; the OFF variants do
 not execute it.
 
