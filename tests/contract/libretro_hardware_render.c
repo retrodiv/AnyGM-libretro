@@ -205,6 +205,7 @@ size_t anygm_state_size(AnygmEngine *engine){ (void)engine; return 0; }
 size_t anygm_state_resume_size(AnygmEngine *engine){ (void)engine; return 0; }
 size_t anygm_state_capacity_hint(const AnygmEngine *engine){ (void)engine; return 0; }
 size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){ (void)engine; return 0; }
+uint32_t anygm_state_capacity_flags(const AnygmEngine *engine){ (void)engine; return 0; }
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
   (void)engine; (void)data; (void)capacity;
   if(written) *written=0;

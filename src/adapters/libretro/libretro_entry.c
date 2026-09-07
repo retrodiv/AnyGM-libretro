@@ -603,8 +603,19 @@ size_t retro_serialize_size(void){
    * language-level growth that a cold state cannot predict. */
   if(!g_libretro.frame_completed){
     const size_t minimum_saving=4u*1024u*1024u;
+    const size_t small_complete_capacity=1u*1024u*1024u;
     size_t complete_hint=anygm_state_capacity_hint(g_libretro.engine);
     compact_startup=complete_hint>actual && complete_hint-actual>=minimum_saving;
+    /* The optional picture is already a raw-pixel ceiling, not a cold simulation estimate. If
+     * that ceiling plus twice the known required state fits the small ring, reserving four MiB
+     * just doubles an already bounded picture. Keep the simulation growth allowance separate.
+     * A missing ceiling, a larger required-state hint, or calls that can create surfaces later
+     * retain the ordinary policy. The same
+     * complete-first writer also handles later presentation growth within this fixed capacity. */
+    if(complete_hint && complete_hint<=small_complete_capacity &&
+       actual<=(small_complete_capacity-complete_hint)/2u &&
+       !(anygm_state_capacity_flags(g_libretro.engine)&ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES))
+      compact_startup=true;
     if(!compact_startup && complete_hint>actual) actual=complete_hint;
   }
   if(g_libretro.frame_completed){

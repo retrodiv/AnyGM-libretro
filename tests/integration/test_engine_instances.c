@@ -2718,6 +2718,39 @@ int main(int argc,char **argv){
    * recording the run the moment the first frame presents. */
   size_t boot_state_size=anygm_state_size(first);
   size_t boot_capacity_hint=anygm_state_capacity_hint(first);
+  {
+    const char **saved_names=first->win.ref_name;
+    uint8_t *saved_kinds=first->win.ref_kind;
+    int saved_count=first->win.n_refs;
+    const char *names[]={"surface_create"};
+    uint8_t kinds[]={GML_REF_FUNCTION};
+    first->win.ref_name=names;
+    first->win.ref_kind=kinds;
+    first->win.n_refs=1;
+    int ok=anygm_state_capacity_flags(first)==ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;
+    names[0]="surface_create_ext";
+    ok=ok && anygm_state_capacity_flags(first)==ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;
+    names[0]="surface_resize";
+    ok=ok && anygm_state_capacity_flags(first)==ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;
+    kinds[0]=GML_REF_VARIABLE;
+    ok=ok && anygm_state_capacity_flags(first)==0;
+    kinds[0]=GML_REF_FUNCTION;
+    names[0]="execute_string";
+    ok=ok && anygm_state_capacity_flags(first)==ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;
+    names[0]="execute_file";
+    ok=ok && anygm_state_capacity_flags(first)==ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;
+    names[0]="game_change";
+    ok=ok && anygm_state_capacity_flags(first)==ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;
+    names[0]="draw_surface";
+    ok=ok && anygm_state_capacity_flags(first)==0;
+    first->win.ref_name=saved_names;
+    first->win.ref_kind=saved_kinds;
+    first->win.n_refs=saved_count;
+    if(!ok){
+      fprintf(stderr,"cold state capacity omitted deferred surface allocation references\n");
+      return 1;
+    }
+  }
   if(!boot_state_size || !boot_capacity_hint){
     fprintf(stderr,"boot state size or capacity hint answered zero\n");
     return 1;

@@ -20,6 +20,7 @@ static size_t stub_state_bytes;
 static size_t stub_resume_state_bytes;
 static size_t stub_hint_bytes;
 static size_t stub_resume_hint_bytes;
+static uint32_t stub_capacity_flags;
 static size_t last_load_bytes;
 static unsigned complete_saves;
 static unsigned resume_saves;
@@ -96,6 +97,10 @@ size_t anygm_state_resume_capacity_hint(const AnygmEngine *engine){
   resume_hint_queries++;
   return stub_resume_hint_bytes;
 }
+uint32_t anygm_state_capacity_flags(const AnygmEngine *engine){
+  (void)engine;
+  return stub_capacity_flags;
+}
 AnygmResult anygm_state_save(AnygmEngine *engine,void *data,size_t capacity,size_t *written){
   (void)engine;
   if(written) *written=0;
@@ -167,6 +172,7 @@ static int begin_frontend(int variable_support){
   last_load_bytes=0;
   stub_hint_bytes=0;
   stub_resume_hint_bytes=0;
+  stub_capacity_flags=0;
   stub_resume_state_bytes=0;
   complete_saves=0;
   resume_saves=0;
@@ -411,12 +417,77 @@ static int ordinary_raster_ring_keeps_the_complete_frame(void){
   stub_resume_hint_bytes=128u*1024u;
   stub_hint_bytes=768u*1024u;
   size_t ring_capacity=retro_serialize_size();
-  if(ring_capacity<stub_hint_bytes || g_libretro.startup_ring_compact) return 0;
+  if(ring_capacity<stub_hint_bytes) return 0;
   retro_run();
   uint8_t *ring=malloc(ring_capacity);
   if(!ring) return 0;
   int ok=retro_serialize(ring,ring_capacity) && complete_saves==1u && resume_saves==0u;
   free(ring);
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
+/* A raw completed-picture ceiling and twice the known required state can fit in one small slot.
+ * Query before the first frame, grow the simulation, change presentation, and cross Reset using
+ * a fixed frontend's size check before each push. The variable branch also probes the codec's old
+ * compact slot directly; a wrapper which refuses a growing answer cannot use that direct path. */
+static int small_complete_ring_covers_growth_and_reset(int negotiation_result){
+  stub_state_bytes=43u*1024u;
+  if(!begin_frontend(negotiation_result)) return 0;
+  stub_resume_state_bytes=stub_state_bytes;
+  stub_resume_hint_bytes=stub_state_bytes;
+  stub_hint_bytes=900u*1024u;
+  const size_t capacity=retro_serialize_size();
+  if(capacity!=1024u*1024u) return 0;
+  uint8_t *state=malloc(capacity);
+  if(!state) return 0;
+  int ok=retro_serialize_size()<=capacity && retro_serialize(state,capacity);
+  retro_run();
+  stub_resume_state_bytes=86u*1024u;
+  stub_state_bytes=stub_hint_bytes+stub_resume_state_bytes;
+  if(negotiation_result<=0 && retro_serialize_size()!=capacity) ok=0;
+  if(ok) ok=retro_serialize(state,capacity) && complete_saves==2u && resume_saves==0u &&
+            retro_unserialize(state,capacity);
+  if(negotiation_result<=0 && retro_serialize_size()!=capacity) ok=0;
+  /* A larger live monitor can exceed the old picture's ceiling without growing required state. */
+  stub_hint_bytes=8u*1024u*1024u;
+  stub_state_bytes=stub_hint_bytes+stub_resume_state_bytes;
+  size_t current=retro_serialize_size();
+  if(negotiation_result<=0 && current!=capacity) ok=0;
+  if(negotiation_result>0 && current<=capacity) ok=0;
+  if(ok) ok=retro_serialize(state,capacity) && resume_saves==1u &&
+            retro_unserialize(state,capacity);
+  retro_reset();
+  if(ok) ok=!retro_unserialize(state,capacity);
+  retro_run();
+  if(ok) ok=retro_unserialize(state,capacity);
+  free(state);
+  retro_unload_game();
+  retro_deinit();
+  return ok;
+}
+
+/* A small cold frame is not a small session when authored calls create surfaces later. Keep the
+ * ordinary reserve before any surface exists; a fixed frontend cannot grow its ring afterwards. */
+static int deferred_surfaces_keep_the_ordinary_reserve(int negotiation_result){
+  stub_state_bytes=64u*1024u;
+  if(!begin_frontend(negotiation_result)) return 0;
+  stub_resume_state_bytes=stub_state_bytes;
+  stub_resume_hint_bytes=0;
+  stub_hint_bytes=320u*1024u;
+  stub_capacity_flags=ANYGM_STATE_CAPACITY_DYNAMIC_SURFACES;
+  size_t capacity=retro_serialize_size();
+  int ok=capacity==4u*1024u*1024u;
+  retro_run();
+  stub_state_bytes=3400u*1024u;
+  stub_resume_state_bytes=3100u*1024u;
+  uint8_t *state=malloc(capacity);
+  if(!state) ok=0;
+  if(ok) ok=retro_serialize_size()==capacity && retro_serialize(state,capacity) &&
+            complete_saves==1u && resume_saves==0u && retro_unserialize(state,capacity);
+  free(state);
+  stub_capacity_flags=0;
   retro_unload_game();
   retro_deinit();
   return ok;
@@ -534,6 +605,11 @@ int main(void){
      !moderate_frame_keeps_complete_growth_headroom() ||
      !variable_frontend_keeps_compact_ring_and_complete_save() ||
      !ordinary_raster_ring_keeps_the_complete_frame() ||
+     !small_complete_ring_covers_growth_and_reset(1) ||
+     !small_complete_ring_covers_growth_and_reset(0) ||
+     !small_complete_ring_covers_growth_and_reset(-1) ||
+     !deferred_surfaces_keep_the_ordinary_reserve(0) ||
+     !deferred_surfaces_keep_the_ordinary_reserve(-1) ||
      !authored_raster_below_session_reserve_keeps_complete_form() ||
      !restart_rejects_only_an_immediate_old_ring_state(1) ||
      !restart_rejects_only_an_immediate_old_ring_state(0) ||

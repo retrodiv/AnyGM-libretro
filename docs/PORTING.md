@@ -46,7 +46,9 @@ cut: it neither compiles nor links the libretro adapter.
 6. Store bytes returned by the complete public state API for ordinary save states. A frequent
    in-memory resume ring may use `anygm_state_resume_size`,
    `anygm_state_resume_capacity_hint`, and `anygm_state_save_for_resume` to omit only the optional
-   completed picture; either form loads through `anygm_state_load`.
+   completed picture; either form loads through `anygm_state_load`. Consult
+   `anygm_state_capacity_flags` before reducing a fixed session's ordinary reserve: referenced
+   surface creation can grow required render storage after the cold allocation was measured.
 7. Call `anygm_unload` before replacing content and destroy the engine before
    destroying anything referenced by host userdata.
 

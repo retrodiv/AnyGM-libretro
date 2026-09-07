@@ -170,11 +170,23 @@ when the picture does not fit. The representation cannot depend on whether the c
 push or a manual save because the libretro ABI does not identify those consumers.
 
 A frontend that explicitly acknowledges variable sizes uses the same compact pre-frame policy.
-The compact path begins only when omitting the conservative completed-frame ceiling saves at least
-the ordinary four-MiB session reserve. Smaller pictures remain in that ordinary capacity, keeping
-visible rewind exact while retaining headroom for required simulation state that grows after a
-cold load. A compact startup capacity is one MiB or larger and always covers the predicted required
-state. Later ordinary size queries grow monotonically to the conservative complete-state capacity,
+A one-MiB ring is also sufficient when the complete-frame ceiling plus twice the known required
+state fits within it. This keeps the bounded raw-picture cost separate from the simulation growth
+allowance instead of doubling both and then applying the ordinary four-MiB floor. A missing frame
+ceiling, a larger remembered required peak, or a larger mutable render allocation does not qualify.
+Content that references surface creation/resizing, dynamic source execution or payload replacement
+retains the ordinary
+reserve even if no surface exists at load. Those references make the cold allocation count an
+incomplete estimate of later render storage. The complete-first writer retains the exact encoded
+picture whenever it fits; later geometry
+growth may use the frame-free form in the same slot. This is an advisory reserve, not a proof that
+arbitrary future language allocations are bounded by the cold state.
+
+Otherwise the compact path begins when omitting the conservative completed-frame ceiling saves at
+least the ordinary four-MiB session reserve. Moderate pictures remain in the ordinary capacity,
+retaining its larger allowance for required simulation state that grows after a cold load. A compact
+startup capacity is one MiB or larger and covers the predicted required state. Later ordinary size
+queries grow monotonically to the conservative complete-state capacity,
 so newly sized saves retain the exact completed picture while older compact ring slots remain
 loadable.
 
