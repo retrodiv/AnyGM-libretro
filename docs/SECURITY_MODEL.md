@@ -106,10 +106,11 @@ Each file range must be contiguous, non-overlapping, and covered by its folder's
 extent. The supported single-volume LZX-21 profile is then read through callbacks whose logical
 zero and EOF are the validated Cabinet range; reads are at most 64 KiB and cannot reach adjacent PE
 bytes. Multipart, continuation, and other compression profiles are classified before extraction.
-The revision-selected adaptation interface is omitted from this unpublished
-history. Earlier snapshots with omitted implementations are not supported builds. Game Maker 6 archive entries, padding counts,
-compressed lengths, settings blobs, resource counts, and decoded integrity
-words are validated before the resource stream is accepted.
+Classic readers consume normalized structural representations. Optional configured source and
+record operations return bounded owned buffers; they do not modify the supplied image or confer
+host capabilities. The readers validate the complete returned structure. Archive entries,
+padding counts, compressed lengths, settings blobs, resource counts and integrity words remain
+subject to their existing checks before acceptance.
 Runtime bytecode decoding uses a bounded entry point. It retains the direct
 decoder when the maximum operand window is available and uses a zero-padded
 local window only at an input boundary, so the normal cached decode path does
