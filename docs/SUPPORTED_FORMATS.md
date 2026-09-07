@@ -175,6 +175,26 @@ This opt-in policy describes a self-compositor that redraws its singleton
 surface each frame, with an unscaled HUD beside an application image. It is not
 a general transformation for arbitrary cached surfaces or multiple views.
 
+### Event-local visible-view layout
+
+An aspect draw route can give one object's event a different layout rectangle:
+
+```
+?aspect obj_notice@Draw_0->visible_view
+```
+
+Like `full_view`, this exposes the forced gameplay origin and extent through
+view zero's `view_xview`, `view_yview`, view size and port size during that
+event only. `visible_view` intersects that rectangle with the current room's
+bounds first. A right- or bottom-anchored notice therefore stays inside a
+room narrower or shorter than the forced viewport, instead of landing in a
+clipped side band. An empty intersection has zero extent. It does not add
+padding, move geometry, change renderer projection or enlarge a literal fill.
+The event must calculate its own placement from those view values; cached
+coordinates require their own declaration. Nested events restore the prior
+values, and the ordinary HUD and gameplay camera remain unchanged. Routes
+apply only while the forced frame is wider than its native view.
+
 ## Normalized data containers
 
 Studio data containers using bytecode revisions 14, 15, 16, and 17 are

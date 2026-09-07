@@ -1267,12 +1267,29 @@ void aspect_draw_event_hook(GmlVM *vm, GmlInstance *in, const char *suffix,
     ov.hview = gml_global_arr(ctx, "view_hview", 0);
     ov.wport = gml_global_arr(ctx, "view_wport", 0);
     ov.hport = gml_global_arr(ctx, "view_hport", 0);
-    gml_set_global_arr(ctx, "view_xview", 0, engine->aspect_draw_full_x);
-    gml_set_global_arr(ctx, "view_yview", 0, engine->aspect_draw_full_y);
-    gml_set_global_arr(ctx, "view_wview", 0, (double)engine->width);
-    gml_set_global_arr(ctx, "view_hview", 0, (double)engine->height);
-    gml_set_global_arr(ctx, "view_wport", 0, (double)engine->width);
-    gml_set_global_arr(ctx, "view_hport", 0, (double)engine->height);
+    double x=engine->aspect_draw_full_x, y=engine->aspect_draw_full_y;
+    double width=engine->width, height=engine->height;
+    if(custom_draw==GMC_ASPECT_DRAW_VISIBLE_VIEW){
+      GmlRoom room;
+      if(gml_vm_room_get(ctx,ctx->room_index,&room)==0){
+        if(room.width>0){
+          double right=fmax(0.0,fmin((double)room.width,x+width));
+          x=fmax(0.0,fmin((double)room.width,x));
+          width=fmax(0.0,right-x);
+        }
+        if(room.height>0){
+          double bottom=fmax(0.0,fmin((double)room.height,y+height));
+          y=fmax(0.0,fmin((double)room.height,y));
+          height=fmax(0.0,bottom-y);
+        }
+      }
+    }
+    gml_set_global_arr(ctx, "view_xview", 0, x);
+    gml_set_global_arr(ctx, "view_yview", 0, y);
+    gml_set_global_arr(ctx, "view_wview", 0, width);
+    gml_set_global_arr(ctx, "view_hview", 0, height);
+    gml_set_global_arr(ctx, "view_wport", 0, width);
+    gml_set_global_arr(ctx, "view_hport", 0, height);
     if (custom_draw == GMC_ASPECT_DRAW_FULL_VIEW_BACKDROP)
       gml_render_set_pending_fill(&engine->render, 0);
   }

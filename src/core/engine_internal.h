@@ -39,7 +39,8 @@ static inline double gmc_aspect_force_ratio(int mode){
 enum {
   GMC_ASPECT_DRAW_DEFAULT            = 0,
   GMC_ASPECT_DRAW_FULL_VIEW          = 1,
-  GMC_ASPECT_DRAW_FULL_VIEW_BACKDROP = 2
+  GMC_ASPECT_DRAW_FULL_VIEW_BACKDROP = 2,
+  GMC_ASPECT_DRAW_VISIBLE_VIEW       = 3
 };
 #include <stdlib.h>
 #include <string.h>

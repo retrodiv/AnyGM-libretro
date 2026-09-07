@@ -73,7 +73,7 @@ int core_opt_redirect_room_order(AnygmEngine *engine) {
  *   surface_canvas|obj|var|W|H  centred native HUD and full-width application composition
  *   monitorview|H|MIN|MAX       declare a monitor-derived logical view (ratios use W:H)
  *   @field=V                    engine state and data-declared aspect behavior
- *   obj@suffix->mode            Draw-GUI route: mode = full_view | backdrop | default
+ *   obj@suffix->mode            event route: full_view | visible_view | backdrop | default
  *
  * A line may carry a SCOPE prefix:
  *   ?global.name ...            only while that content global is non-zero (may follow another
@@ -441,6 +441,7 @@ static void cheat_parse(const char *code, CheatAct *a){
     if(s[0]=='-' && s[1]=='>'){ s+=2; while(*s==' ') s++;
       if     (!strncmp(s,"backdrop",8))  a->route_mode=GMC_ASPECT_DRAW_FULL_VIEW_BACKDROP;
       else if(!strncmp(s,"full_view",9)) a->route_mode=GMC_ASPECT_DRAW_FULL_VIEW;
+      else if(!strcmp(s,"visible_view")) a->route_mode=GMC_ASPECT_DRAW_VISIBLE_VIEW;
       else                                a->route_mode=GMC_ASPECT_DRAW_DEFAULT;
       a->kind=CK_ROUTE; return;
     }

@@ -940,6 +940,66 @@ static int fullwidth_gui_transition_policy(void){
   return ok;
 }
 
+static int visible_view_event_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_surface_canvas_content_create(&fixture)) return 0;
+  AnygmHostServices services={0}; services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0}; source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH; source.path=fixture.path;
+  source.cache_directory=source.save_directory=fixture.directory;
+  AnygmEngine *engine=NULL;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK &&
+         anygm_load(engine,&source,NULL)==ANYGM_OK &&
+         anygm_set_runtime_override(engine,0,1u,
+           "?aspect obj_fixture@Draw_0->visible_view")==ANYGM_OK;
+  GmlInstance *instance=ok?gml_find_instance(&engine->vm,0):NULL;
+  ok=ok && instance;
+  /* Room intersection, not the native HUD rectangle or the full forced extent. */
+  const double cases[][8]={
+    {64,40,-24,0,0,0,64,40},
+    {320,200,32,12,32,12,112,40},
+    {320,200,280,180,280,180,40,20},
+    {64,40,-200,-100,0,0,0,0},
+    {64,40,200,100,64,40,0,0}
+  };
+  for(unsigned i=0;ok && i<sizeof cases/sizeof *cases;i++){
+    const double *c=cases[i];
+    ok=gml_vm_room_set_dimension(&engine->vm,0,0,c[0])==1 &&
+       gml_vm_room_set_dimension(&engine->vm,0,1,c[1])==1;
+    engine->aspect_force_active=1; engine->aspect_draw_full_context=1;
+    engine->width=112; engine->height=40;
+    engine->base_width=64; engine->base_height=40;
+    engine->aspect_draw_full_x=c[2]; engine->aspect_draw_full_y=c[3];
+    const char *fields[]={"view_xview","view_yview","view_wview","view_hview",
+                          "view_wport","view_hport"};
+    const double before[]={111,222,64,40,64,48};
+    const double expected[]={c[4],c[5],c[6],c[7],c[6],c[7]};
+    for(unsigned j=0;j<6;j++) gml_set_global_arr(&engine->vm,fields[j],0,before[j]);
+    aspect_draw_event_hook(&engine->vm,instance,"Draw_0",1,engine);
+    for(unsigned j=0;ok && j<6;j++){
+      double actual=gml_global_arr(&engine->vm,fields[j],0);
+      if(actual!=expected[j]){
+        fprintf(stderr,"visible view case %u %s: %.1f != %.1f\n",i,fields[j],actual,expected[j]);
+        ok=0;
+      }
+    }
+    /* An unrelated nested event must neither change the route nor lose its restoration. */
+    aspect_draw_event_hook(&engine->vm,instance,"Draw_64",1,engine);
+    aspect_draw_event_hook(&engine->vm,instance,"Draw_64",0,engine);
+    aspect_draw_event_hook(&engine->vm,instance,"Draw_0",0,engine);
+    for(unsigned j=0;ok && j<6;j++) ok=gml_global_arr(&engine->vm,fields[j],0)==before[j];
+    engine->aspect_force_active=0;
+    aspect_draw_event_hook(&engine->vm,instance,"Draw_0",1,engine);
+    for(unsigned j=0;ok && j<6;j++) ok=gml_global_arr(&engine->vm,fields[j],0)==before[j];
+    aspect_draw_event_hook(&engine->vm,instance,"Draw_0",0,engine);
+  }
+  if(!ok) fputs("visible view event policy failed\n",stderr);
+  anygm_destroy(engine); anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int surface_canvas_transition_policy(void){
   const char *invalid[]={"surface_canvas|obj_fixture|canvas|64|48",
     "?aspect surface_canvas|obj_fixture|canvas|0|48",
@@ -2578,6 +2638,8 @@ int main(int argc,char **argv){
       return fullwidth_explicit_gui_transition_policy()?0:1;
     if(!strcmp(argv[2],"surface_canvas_transition"))
       return surface_canvas_transition_policy()?0:1;
+    if(!strcmp(argv[2],"visible_view_event"))
+      return visible_view_event_policy()?0:1;
     if(!strcmp(argv[2],"shifted_view_port"))
       return shifted_view_port_policy()?0:1;
     if(!strcmp(argv[2],"virtual_monitor_geometry"))
@@ -2658,7 +2720,7 @@ int main(int argc,char **argv){
           "shifted_view_port|"
           "fullwidth_gui_transition|"
           "fullwidth_explicit_gui_transition|"
-          "surface_canvas_transition|"
+          "surface_canvas_transition|visible_view_event|"
           "game_restart|"
           "anchor_script_override|"
           "sibling_anchor_override|"
@@ -2687,6 +2749,7 @@ int main(int argc,char **argv){
   if(!fullwidth_gui_transition_policy()) return 1;
   if(!fullwidth_explicit_gui_transition_policy()) return 1;
   if(!surface_canvas_transition_policy()) return 1;
+  if(!visible_view_event_policy()) return 1;
   if(!first_generation_dynamic_camera_policy()) return 1;
   if(!explicit_window_screen_stage_policy()) return 1;
   if(!viewless_window_screen_stage_policy()) return 1;
