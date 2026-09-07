@@ -139,6 +139,8 @@ typedef enum {
 typedef enum { EF_WINDOW_W=0, EF_WINDOW_H, EF_GUI_W, EF_GUI_H, EF_FBW, EF_FBH,
                EF_APPLICATION_W, EF_APPLICATION_H,
                EF_PRESENT_SHIFT_X, EF_PRESENT_SHIFT_Y,
+               EF_PRESENT_CROP_LEFT, EF_PRESENT_CROP_TOP,
+               EF_PRESENT_CROP_RIGHT, EF_PRESENT_CROP_BOTTOM,
                EF_COMPOSITOR, EF_CENTER_VIEW_TARGET, EF_WIDE_GAMEPLAY_VIEW } EngField;
 typedef enum { CF_X=0, CF_Y, CF_WIDTH, CF_HEIGHT } CameraField;
 typedef struct { CheatTok tok; double lit; char name[64]; char op[6]; double num[6]; int nop; } CheatVal;
@@ -319,6 +321,9 @@ struct AnygmEngine {
   int present_shift_x,present_shift_y;
   uint32_t *present_shift_screen;
   size_t present_shift_cap;
+  /* Insets removed from the completed composition before host scaling. The compositor and state
+   * retain their full raster; only the frame transport and pointer mapping see this source view. */
+  int present_crop_left,present_crop_top,present_crop_right,present_crop_bottom;
   /* Geometry the host scratch buffer was last cleared for. The canvas rectangle is rewritten in
    * full every frame, so the margins outside it survive until one of these changes. */
   int host_clear_valid;
@@ -452,6 +457,11 @@ int resolve_host_frame(AnygmEngine *engine,const uint32_t **pixels,
 /* The extent the host is presented, which is the completed frame's own extent unless a distinct
  * host framebuffer wraps it. */
 void engine_host_extent(const AnygmEngine *engine,unsigned *width,unsigned *height);
+/* Resolve the valid source rectangle selected from the completed frame. A zero return means the
+ * whole frame; invalid or empty inset combinations fail closed to that whole frame as well. */
+int engine_present_crop_rect(const AnygmEngine *engine,unsigned source_width,
+                             unsigned source_height,unsigned *x,unsigned *y,
+                             unsigned *width,unsigned *height);
 /* Describe the final host presentation as a neutral plan against the given target class. */
 int engine_build_host_plan(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t target,
                            unsigned host_width,unsigned host_height,int include_clear);

@@ -405,6 +405,10 @@ static void cheat_parse(const char *code, CheatAct *a){
     else if(!strcmp(f,"application_h")) a->eng=EF_APPLICATION_H;
     else if(!strcmp(f,"present_shift_x")) a->eng=EF_PRESENT_SHIFT_X;
     else if(!strcmp(f,"present_shift_y")) a->eng=EF_PRESENT_SHIFT_Y;
+    else if(!strcmp(f,"present_crop_left")) a->eng=EF_PRESENT_CROP_LEFT;
+    else if(!strcmp(f,"present_crop_top")) a->eng=EF_PRESENT_CROP_TOP;
+    else if(!strcmp(f,"present_crop_right")) a->eng=EF_PRESENT_CROP_RIGHT;
+    else if(!strcmp(f,"present_crop_bottom")) a->eng=EF_PRESENT_CROP_BOTTOM;
     else if(!strcmp(f,"compositor_fullwidth")) a->eng=EF_COMPOSITOR;
     else if(!strcmp(f,"center_view_target")) a->eng=EF_CENTER_VIEW_TARGET;
     else if(!strcmp(f,"wide_gameplay_view")) a->eng=EF_WIDE_GAMEPLAY_VIEW;
@@ -492,6 +496,10 @@ static void cheat_apply_one(AnygmEngine *engine,const CheatAct *a){
       switch(a->eng){
         case EF_PRESENT_SHIFT_X: engine->present_shift_x=iv; break;
         case EF_PRESENT_SHIFT_Y: engine->present_shift_y=iv; break;
+        case EF_PRESENT_CROP_LEFT: engine->present_crop_left=iv; break;
+        case EF_PRESENT_CROP_TOP: engine->present_crop_top=iv; break;
+        case EF_PRESENT_CROP_RIGHT: engine->present_crop_right=iv; break;
+        case EF_PRESENT_CROP_BOTTOM: engine->present_crop_bottom=iv; break;
         case EF_WINDOW_W: engine->vm.window_w=iv; break;
         case EF_WINDOW_H: engine->vm.window_h=iv; break;
         case EF_GUI_W:    engine->vm.gui_w=iv; break;
@@ -850,7 +858,7 @@ void engine_override_menu_refresh(AnygmEngine *engine){
 }
 /* Frontend toggles capture scalar or array globals. Population-wide instance and surface writes have no single previous value. A scoped logical-raster declaration may capture a target when its address has one meaningful previous value, including the bounded mutable presentation fields below. */
 static int cheat_engine_field_mutable(const CheatAct *a){
-  return a->kind==CK_ENGINE && a->eng>=EF_WINDOW_W && a->eng<=EF_PRESENT_SHIFT_Y;
+  return a->kind==CK_ENGINE && a->eng>=EF_WINDOW_W && a->eng<=EF_PRESENT_CROP_BOTTOM;
 }
 static int cheat_slot_capturable(const CheatAct *a){
   if(a->kind==CK_SURFACE_CANVAS) return 1;
@@ -890,6 +898,14 @@ static void cheat_slot_capture(AnygmEngine *engine,CheatSlot *slot){
       switch(slot->act.eng){
         case EF_PRESENT_SHIFT_X: slot->saved=engine->present_shift_x; slot->saved_valid=1; break;
         case EF_PRESENT_SHIFT_Y: slot->saved=engine->present_shift_y; slot->saved_valid=1; break;
+        case EF_PRESENT_CROP_LEFT:
+          slot->saved=engine->present_crop_left; slot->saved_valid=1; break;
+        case EF_PRESENT_CROP_TOP:
+          slot->saved=engine->present_crop_top; slot->saved_valid=1; break;
+        case EF_PRESENT_CROP_RIGHT:
+          slot->saved=engine->present_crop_right; slot->saved_valid=1; break;
+        case EF_PRESENT_CROP_BOTTOM:
+          slot->saved=engine->present_crop_bottom; slot->saved_valid=1; break;
         case EF_WINDOW_W: slot->saved=engine->vm.window_w; slot->saved_valid=1; break;
         case EF_WINDOW_H: slot->saved=engine->vm.window_h; slot->saved_valid=1; break;
         case EF_GUI_W: slot->saved=engine->vm.gui_w; slot->saved_valid=1; break;

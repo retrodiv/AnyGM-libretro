@@ -184,6 +184,86 @@ static int capture_frame(AnygmEngine *engine,uint32_t *out,unsigned *width,unsig
            (size_t)output.width*sizeof(uint32_t));
   return 1;
 }
+
+/* A content-owned compositor can surround its logical picture with decoration while drawing both
+ * into one completed frame. Native-raster presentation may retain that decoration but expose only
+ * the inner rectangle. The delivered pixels must be an exact crop of the completed frame: scaling
+ * the whole compositor down to the requested extent would satisfy geometry while damaging every
+ * pixel in the picture and its retained decoration. */
+static int presentation_crop_case(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_scoped_override_content_create(&fixture)){
+    fputs("scoped overrides: crop fixture creation failed\n",stderr);
+    return 0;
+  }
+  int ok=0;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0};
+  source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH;
+  source.path=fixture.path;
+  AnygmEngine *engine=create_loaded_engine(&services,&source);
+  static uint32_t full[32768],cropped[32768],restored[32768];
+  unsigned fw=0,fh=0,cw=0,ch=0,rw=0,rh=0;
+  if(!engine) goto done;
+  if(anygm_set_runtime_override(engine,0,1,"?gameres @present_crop_left=8")!=ANYGM_OK ||
+     anygm_set_runtime_override(engine,1,1,"?gameres @present_crop_top=4")!=ANYGM_OK ||
+     anygm_set_runtime_override(engine,2,1,"?gameres @present_crop_right=8")!=ANYGM_OK ||
+     anygm_set_runtime_override(engine,3,1,"?gameres @present_crop_bottom=4")!=ANYGM_OK)
+    goto done;
+  if(!capture_frame(engine,full,&fw,&fh,"crop, scope closed")) goto done;
+  if(fw<=16 || fh<=8){
+    fprintf(stderr,"scoped overrides: crop fixture is too small at %ux%u\n",fw,fh);
+    goto done;
+  }
+  if(!select_logical_raster(engine,1) ||
+     !capture_frame(engine,cropped,&cw,&ch,"crop, scope open")) goto done;
+  if(cw!=fw-16 || ch!=fh-8){
+    fprintf(stderr,"scoped overrides: cropped extent is %ux%u, expected %ux%u\n",
+            cw,ch,fw-16,fh-8);
+    goto done;
+  }
+  for(unsigned y=0;y<ch;y++) for(unsigned x=0;x<cw;x++)
+    if((cropped[(size_t)y*cw+x]&0x00FFFFFFu)!=
+       (full[(size_t)(y+4)*fw+x+8]&0x00FFFFFFu)){
+      fprintf(stderr,
+              "scoped overrides: crop pixel %u,%u is %06x, expected source pixel %06x\n",
+              x,y,cropped[(size_t)y*cw+x]&0x00FFFFFFu,
+              full[(size_t)(y+4)*fw+x+8]&0x00FFFFFFu);
+      goto done;
+    }
+  if(anygm_set_runtime_override(engine,3,1,"?gameres @present_crop_bottom=99999")!=ANYGM_OK ||
+     !capture_frame(engine,restored,&rw,&rh,"invalid crop rejected")) goto done;
+  if(rw!=fw || rh!=fh){
+    fprintf(stderr,"scoped overrides: invalid crop published %ux%u instead of %ux%u\n",
+            rw,rh,fw,fh);
+    goto done;
+  }
+  if(anygm_set_runtime_override(engine,3,1,"?gameres @present_crop_bottom=4")!=ANYGM_OK ||
+     !capture_frame(engine,cropped,&cw,&ch,"valid crop restored") || cw!=fw-16 || ch!=fh-8){
+    fputs("scoped overrides: a valid crop did not recover after invalid margins\n",stderr);
+    goto done;
+  }
+  if(!select_logical_raster(engine,0) ||
+     !capture_frame(engine,restored,&rw,&rh,"crop withdrawn")) goto done;
+  if(rw!=fw || rh!=fh){
+    fprintf(stderr,"scoped overrides: withdrawn crop extent is %ux%u, expected %ux%u\n",
+            rw,rh,fw,fh);
+    goto done;
+  }
+  for(unsigned i=0;i<rw*rh;i++) if(restored[i]!=full[i]){
+    fputs("scoped overrides: completed frame did not return when the crop withdrew\n",stderr);
+    goto done;
+  }
+  ok=1;
+done:
+  anygm_destroy(engine);
+  anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
 static int presentation_shift_case(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_scoped_override_content_create(&fixture)){
@@ -477,6 +557,7 @@ done:
 
 int main(void){
   if(!scoped_override_case()) return 1;
+  if(!presentation_crop_case()) return 1;
   if(!presentation_shift_case()) return 1;
   if(!draw_hold_case()) return 1;
   if(!value_scope_case()) return 1;

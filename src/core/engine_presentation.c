@@ -39,10 +39,31 @@ int ensure_scratch_buffer(AnygmEngine *engine,uint32_t **buffer){
   return *buffer!=NULL;
 }
 
-/* Describe the final host presentation as a neutral plan. The completed frame is the source, the
- * host canvas rectangle is the destination, and the margins around it are a clear. Whether the
- * canvas magnifies or reduces selects the operation, because the reduction is a real box average
- * and not an information-free nearest scale.
+int engine_present_crop_rect(const AnygmEngine *engine,unsigned source_width,
+                             unsigned source_height,unsigned *x,unsigned *y,
+                             unsigned *width,unsigned *height){
+  if(x) *x=0;
+  if(y) *y=0;
+  if(width) *width=source_width;
+  if(height) *height=source_height;
+  if(!engine || !source_width || !source_height) return 0;
+  int left=engine->present_crop_left,top=engine->present_crop_top;
+  int right=engine->present_crop_right,bottom=engine->present_crop_bottom;
+  if(left<0 || top<0 || right<0 || bottom<0 ||
+     (uint64_t)(unsigned)left+(unsigned)right>=source_width ||
+     (uint64_t)(unsigned)top+(unsigned)bottom>=source_height) return 0;
+  if(left==0 && top==0 && right==0 && bottom==0) return 0;
+  if(x) *x=(unsigned)left;
+  if(y) *y=(unsigned)top;
+  if(width) *width=source_width-(unsigned)left-(unsigned)right;
+  if(height) *height=source_height-(unsigned)top-(unsigned)bottom;
+  return 1;
+}
+
+/* Describe the final host presentation as a neutral plan. The selected rectangle of the completed
+ * frame is the source, the host canvas rectangle is the destination, and the margins around it are
+ * a clear. Whether the canvas magnifies or reduces selects the operation, because the reduction is
+ * a real box average and not an information-free nearest scale.
  *
  * `include_clear` states whether this plan has to produce the margins itself. A CPU scratch buffer
  * keeps them from the previous frame until the geometry that defines them changes, which is why
@@ -61,12 +82,15 @@ int engine_build_host_plan(AnygmEngine *engine,GmlRenderPlan *plan,uint32_t targ
   source.identity=0u;
   source.content_generation=engine->host_frame_generation;
   source.pixel_generation=engine->host_frame_generation;
+  unsigned source_x=0,source_y=0;
   source.width=engine->output_width;
   source.height=engine->output_height;
+  (void)engine_present_crop_rect(engine,engine->output_width,engine->output_height,
+                                 &source_x,&source_y,&source.width,&source.height);
   source.pitch_pixels=engine->output_width;
   source.pixel_format=GML_PLAN_PIXEL_XRGB8888;
   source.opaque=1u;
-  source.cpu_pixels=engine->screen;
+  source.cpu_pixels=engine->screen+(size_t)source_y*engine->output_width+source_x;
   uint32_t image=gml_render_plan_add_image(plan,&source);
   if(image==GML_PLAN_NO_IMAGE) return 0;
   GmlPlanRect canvas;
@@ -870,6 +894,8 @@ static int content_keeps_aspect_ratio(const AnygmEngine *engine){
 static void host_canvas_update(AnygmEngine *engine){
   unsigned source_width=engine->output_width;
   unsigned source_height=engine->output_height;
+  int cropped=engine_present_crop_rect(engine,engine->output_width,engine->output_height,
+                                       NULL,NULL,&source_width,&source_height);
   unsigned host_width=source_width;
   unsigned host_height=source_height;
   if(!engine->config.present_logical_raster){
@@ -880,7 +906,7 @@ static void host_canvas_update(AnygmEngine *engine){
   }
   engine->host_output_width=host_width;
   engine->host_output_height=host_height;
-  engine->host_canvas_active=source_width!=host_width || source_height!=host_height;
+  engine->host_canvas_active=cropped || source_width!=host_width || source_height!=host_height;
   engine->host_canvas_x=0;
   engine->host_canvas_y=0;
   engine->host_canvas_width=(int)host_width;

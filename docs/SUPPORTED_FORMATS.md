@@ -104,6 +104,23 @@ global holds on the frame the directive is evaluated, and the presentation pass 
 `?gameres` directive before geometry is read, so a target declared this way follows the value live
 rather than freezing the reading it was written with.
 
+`@present_crop_left`, `@present_crop_top`, `@present_crop_right`, and
+`@present_crop_bottom` remove whole-pixel margins from the completed composition before it is
+scaled or handed to the host. They retain the exact pixels inside the selected rectangle: a
+content-owned decoration drawn across the complete frame is cropped with the picture instead of
+being disabled or resampled. The compositor and the completed frame carried by a savestate keep
+their full raster. Negative margins, or margins which leave an empty axis, disable the complete
+crop rather than publishing a partial or invalid rectangle. Pointer input maps back through the
+crop origin into the compositor's coordinate system.
+
+```
+[overrides]
+?gameres @present_crop_left=16
+?gameres @present_crop_top=12
+?gameres @present_crop_right=16
+?gameres @present_crop_bottom=12
+```
+
 A scope prefix belongs to the directive that carries it, and a `;` chain fans out into one
 directive per slot, so each line in a chain that needs the scope has to state it.
 

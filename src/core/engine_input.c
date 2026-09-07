@@ -347,13 +347,17 @@ void engine_input_poll_mouse(AnygmEngine *engine){
   int pp=engine->input.pointer_pressed?1:0;
   int dx=engine->input.mouse_delta_x,dy=engine->input.mouse_delta_y;
   unsigned ow = engine->output_width ? engine->output_width : engine->width, oh = engine->output_height ? engine->output_height : engine->height;
+  unsigned crop_x=0,crop_y=0,crop_width=ow,crop_height=oh;
+  int cropped=engine_present_crop_rect(engine,ow,oh,&crop_x,&crop_y,&crop_width,&crop_height);
   if(engine->host_canvas_active && engine->host_canvas_width>0 && engine->host_canvas_height>0){
     if(px>=0)
-      px=(int)lround((px-engine->host_canvas_x)*(double)ow/engine->host_canvas_width);
+      px=(int)lround((px-engine->host_canvas_x)*(double)crop_width/engine->host_canvas_width)+
+         (cropped?(int)crop_x:0);
     if(py>=0)
-      py=(int)lround((py-engine->host_canvas_y)*(double)oh/engine->host_canvas_height);
-    dx=(int)lround(dx*(double)ow/engine->host_canvas_width);
-    dy=(int)lround(dy*(double)oh/engine->host_canvas_height);
+      py=(int)lround((py-engine->host_canvas_y)*(double)crop_height/engine->host_canvas_height)+
+         (cropped?(int)crop_y:0);
+    dx=(int)lround(dx*(double)crop_width/engine->host_canvas_width);
+    dy=(int)lround(dy*(double)crop_height/engine->host_canvas_height);
   }
   int mmode = core_opt_mouse_mode(engine);              /* 0 auto, 1 absolute, 2 relative */
   int pointer_signal=(px>=0 && py>=0) || pp;
