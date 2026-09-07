@@ -148,8 +148,6 @@ comma-separated handles and inclusive ranges. These operations affect only runti
 already exist; they do not rerun content initialization or manufacture missing objects, cameras, or
 surfaces.
 
-## Normalized data containers
-
 ### Fixed-coordinate surface compositors
 
 An aspect-scoped `surface_canvas|OBJECT|VARIABLE|W|H` declares the native canvas
@@ -176,6 +174,8 @@ their ordinary semantics.
 This opt-in policy describes a self-compositor that redraws its singleton
 surface each frame, with an unscaled HUD beside an application image. It is not
 a general transformation for arbitrary cached surfaces or multiple views.
+
+## Normalized data containers
 
 Studio data containers using bytecode revisions 14, 15, 16, and 17 are
 recognized. Revision-specific bytecode readers normalize instructions and

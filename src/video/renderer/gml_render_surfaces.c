@@ -1508,7 +1508,9 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
                                         int allow_software3d){
   int canvas_present=r && r->surface_canvas>0 && surf==r->surface_canvas &&
                      r->target_sp==0 && r->target_id<0 &&
-                     fabs(dx)<0.001 && fabs(dy)<0.001 && dw>0 && dh>0;
+                     fabs(dx)<0.001 && fabs(dy)<0.001 &&
+                     dw>=gml_surface_width(r,surf) && dh>=gml_surface_height(r,surf) &&
+                     fabs(dw*gml_surface_height(r,surf)-dh*gml_surface_width(r,surf))<0.001;
   int explicit_target_raster=canvas_present || surface_draw_targets_screen_raster(r,surf,dw,dh);
   if(!explicit_target_raster){
     gml_render_draw_map_point(r,&dx,&dy);
@@ -1532,8 +1534,8 @@ static void draw_surface_stretched_impl(GmlRender *r,int surf,double dx,double d
     if(!surface_pixels(r,surf,&sw,&sh) || sw<=0 || sh<=0) return;
     double rx=(double)r->surface_canvas_room_x*sw/r->surface_canvas_world_width;
     double rw=(double)r->surface_canvas_room_width*sw/r->surface_canvas_world_width;
-    if(rw>0) draw_surface_region(r,surf,rx,0,rw,sh,
-                               dx+rx*dw/sw,dy,rw*dw/sw,dh,blend,alpha);
+    if(rw>0) gml_draw_surface_part_ext(r,surf,rx,0,rw,sh,
+                                     dx+rx*dw/sw,dy,dw/sw,dh/sh,blend,alpha);
     return;
   }
   const struct GmlShaderPal *sdual=dual_active(r);

@@ -31,6 +31,32 @@ static uint64_t pixel_hash(const uint32_t *pixels,size_t count){
   return pixel_hash_update(UINT64_C(1469598103934665603),pixels,count);
 }
 
+static int declared_canvas_preview_case(void){
+  GmlRender render={0};
+  uint32_t frame[16*8]={0};
+  render.next_surface_id=1;
+  render.alpha=1.0;
+  render.color_write_mask=0x0F;
+  int source=gml_surface_create(&render,16,8);
+  REQUIRE(source>0,"canvas source");
+  uint32_t *pixels=surface_pixels(&render,source,NULL,NULL);
+  for(int i=0;i<16*8;i++) pixels[i]=0xFFFFFFFFu;
+  render.surface[source-1].opaque_known=1;
+  render.surface[source-1].all_opaque=1;
+  render.surface[source-1].all_transparent=0;
+  render.surface_canvas=source;
+  render.surface_canvas_width=8;
+  render.surface_canvas_height=8;
+  gml_render_begin(&render,frame,16,8,0,0);
+  render.active_shader=-1;
+  gml_draw_surface_stretched(&render,source,0,0,8,4,0xFFFFFF,1);
+  for(int y=0;y<8;y++) for(int x=0;x<16;x++)
+    REQUIRE((frame[y*16+x]&0xFFFFFFu)==(x<8 && y<4 ? 0xFFFFFFu : 0u),
+            "a reduced canvas preview retains its requested destination");
+  gml_surface_free(&render,source);
+  return 0;
+}
+
 static int threshold_palette_surface_case(void){
   enum { WIDTH=3,HEIGHT=2 };
   GmlRender render;
@@ -1012,6 +1038,7 @@ int main(void){
           "presentation latch coverage case");
   REQUIRE(threshold_palette_surface_case()==0,
           "threshold palette surface case");
+  REQUIRE(declared_canvas_preview_case()==0,"declared canvas preview case");
   REQUIRE(composition_cases()==0,"composition cases");
   REQUIRE(screen_raster_part_case()==0,"screen raster part case");
   REQUIRE(first_generation_point_sampling_case()==0,

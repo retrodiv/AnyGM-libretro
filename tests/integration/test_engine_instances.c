@@ -995,6 +995,12 @@ static int surface_canvas_transition_policy(void){
       }
       if(!ok) fprintf(stderr,"surface canvas mode %u frame %d extent %ux%u\n",
                        modes[stage],frame,output.width,output.height);
+      if(ok && frame==1){
+        uint8_t *state=NULL; size_t written=0;
+        ok=save_state(engine,&state,&written) &&
+           anygm_state_load(engine,state,written)==ANYGM_OK;
+        free(state);
+      }
     }
   }
   if(!ok) fprintf(stderr,"surface canvas transition failed\n");
