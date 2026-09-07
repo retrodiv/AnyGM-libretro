@@ -841,6 +841,47 @@ static int first_generation_oversized_gui_policy(void){
   return ok;
 }
 
+static int shifted_view_port_policy(void){
+  AnygmSyntheticContent fixture;
+  if(!anygm_synthetic_shifted_port_content_create(&fixture)) return 0;
+  AnygmHostServices services={0}; services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  AnygmContentSource source={0}; source.struct_size=sizeof source;
+  source.kind=ANYGM_CONTENT_PATH; source.path=fixture.path;
+  source.cache_directory=source.save_directory=fixture.directory;
+  AnygmEngine *engine=NULL;
+  int ok=anygm_create(&services,&engine)==ANYGM_OK;
+  AnygmConfigDelta config={0}; config.struct_size=sizeof config;
+  config.fields=ANYGM_CONFIG_PRESENT_LOGICAL_RASTER;
+  config.values.struct_size=sizeof config.values;
+  config.values.present_logical_raster=1;
+  ok=ok && anygm_set_config(engine,&config)==ANYGM_OK &&
+           anygm_load(engine,&source,NULL)==ANYGM_OK;
+  AnygmInputFrame input={0}; input.struct_size=sizeof input;
+  input.pointer_x=input.pointer_y=-1;
+  const int shifts[]={0,2,0,-2,0};
+  for(unsigned i=0;ok && i<sizeof shifts/sizeof shifts[0];i++){
+    gml_set_global_scalar(&engine->vm,"fixture_shift",shifts[i]);
+    AnygmFrameOutput output={0}; output.struct_size=sizeof output;
+    ok=anygm_run_frame(engine,&input,&output)==ANYGM_OK &&
+       output.pixels && output.width==64 && output.height==48;
+    for(unsigned y=0;ok && y<48;y++) for(unsigned x=0;ok && x<64;x++){
+      uint32_t expected=0;
+      if(x>=10 && x<=19 && (int)y>=20+shifts[i] && (int)y<=29+shifts[i])
+        expected=0xFFFFFF;
+      if(x>=30 && x<=39 && y>=6 && y<=9) expected=0x00FF00;
+      uint32_t actual=((const uint32_t *)((const uint8_t *)output.pixels+y*output.pitch))[x]&0xFFFFFF;
+      if(actual!=expected){
+        fprintf(stderr,"shifted port %d pixel %u,%u: %06x != %06x\n",shifts[i],x,y,actual,expected);
+        ok=0;
+      }
+    }
+  }
+  anygm_destroy(engine); anygm_synthetic_content_destroy(&fixture);
+  return ok;
+}
+
 static int draw_schedule_policy(void){
   AnygmSyntheticContent fixture;
   if(!anygm_synthetic_draw_content_create(&fixture)){
@@ -2352,6 +2393,8 @@ static int expect_rejected_unchanged(AnygmEngine *engine,const uint8_t *candidat
 
 int main(int argc,char **argv){
   if(argc==3 && !strcmp(argv[1],"--case")){
+    if(!strcmp(argv[2],"shifted_view_port"))
+      return shifted_view_port_policy()?0:1;
     if(!strcmp(argv[2],"virtual_monitor_geometry"))
       return virtual_monitor_geometry_policy()?0:1;
     if(!strcmp(argv[2],"live_monitor_override"))
@@ -2427,6 +2470,7 @@ int main(int argc,char **argv){
           "virtual_monitor_geometry|live_monitor_override|host_canvas_scale|"
           "application_surface_port_scale|"
           "first_generation_application_surface|"
+          "shifted_view_port|"
           "game_restart|"
           "anchor_script_override|"
           "sibling_anchor_override|"
@@ -2451,6 +2495,7 @@ int main(int argc,char **argv){
   if(!screen_refresh_present_latch_policy()) return 1;
   if(!application_surface_port_scale_policy()) return 1;
   if(!first_generation_application_surface_policy()) return 1;
+  if(!shifted_view_port_policy()) return 1;
   if(!first_generation_dynamic_camera_policy()) return 1;
   if(!explicit_window_screen_stage_policy()) return 1;
   if(!viewless_window_screen_stage_policy()) return 1;

@@ -1389,6 +1389,7 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
   if (!multiview_rendered) {
   *gml_varmap_put(&engine->vm.globals,"view_current")=vreal(frame_view_index);
   if(!engine->aspect_force_active && frame_view_count<=1 &&
+     (frame_view_count==0 || (frame_views[0].px==0 && frame_views[0].py==0)) &&
      render_presentation.application_owned &&
      !(view_surface>0 && gml_surface_exists(&engine->render,view_surface))){
     GmlPresentView *view=&frame_views[0];
@@ -1396,8 +1397,9 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
      * smaller logical framebuffer can leave retained pixels outside that raster. */
     int viewless_owned_world = frame_view_count==0 &&
       anygm_policy_has_modern_layer_semantics(&engine->win);
-    /* The port predicates below are the narrowing this policy removes: an enabled application
-     * surface is the draw target whatever its view port looks like. */
+    /* An enabled application surface remains the final draw target. A translated port uses the
+     * staged composition below so its offset is applied once, rather than lost by drawing
+     * directly over the whole owned surface. Origin-aligned ports keep the direct path. */
     direct_owned_world=(viewless_owned_world || app_surface_is_draw_target ||
       (frame_view_count==1 &&
       (default_application_surface_uses_full_view_port(
@@ -1546,6 +1548,10 @@ static AnygmResult engine_run_frame(AnygmEngine *engine) {
                                 (port_is_logical || oversized_full_port || resized_full_port ||
                                  scaled_full_port || wide_window_raster);
         if(full_logical_view){ dx=dy=0; dw=aw; dh=ah; }
+        /* Camera shake may translate a sole widened port. Its extent still represents the whole
+         * widened raster; preserve the translation without fitting that raster back into the
+         * authored narrow width. */
+        if(one_view && wide_window_raster){ dw=aw; dh=ah; }
         compose_view_rect(engine->fb,(int)engine->width,(int)engine->height,app_view.pixels,aw,ah,
                           dx,dy,dw,dh);
       } else

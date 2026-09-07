@@ -25,6 +25,7 @@ int anygm_synthetic_bridged_key_content_create(AnygmSyntheticContent *fixture);
  * the following Begin Steps that observe the key held. */
 int anygm_synthetic_bridged_hold_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_draw_content_create(AnygmSyntheticContent *fixture);
+int anygm_synthetic_shifted_port_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_background_color_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_framebuffer_content_create(AnygmSyntheticContent *fixture);
 int anygm_synthetic_multiview_framebuffer_content_create(AnygmSyntheticContent *fixture);
