@@ -435,11 +435,22 @@ static int function_body_uses_outer_local(const char *src, Span body, const Name
   return 0;
 }
 
-static int detect_unsupported_function_capture(const char *src, size_t len, Span params, Span body, char *capture, size_t cap){
+static int detect_unsupported_function_capture(const GmlcFunctionRegistry *registry,
+    const char *path, const char *src, size_t len, Span params, Span body, char *capture, size_t cap){
   NameList outer={0}, own={0};
   Span full={0,len};
   int rc=-1;
   if(!collect_var_decls(src,full,1,&outer)) goto done;
+  /* Definitions are indexed outer-first. A nested function must also reject
+   * captures from its enclosing functions, not just from the source's root. */
+  for(int i=0;i<registry->n_defs;i++){
+    const GmlcFunctionDef *parent=&registry->defs[i];
+    if(!path || !parent->source_path || strcmp(path,parent->source_path) ||
+       parent->start>params.start || parent->end<body.end) continue;
+    Span parent_params={0,strlen(parent->params)}, parent_body={0,strlen(parent->body)};
+    if(!collect_param_names(parent->params,parent_params,&outer) ||
+       !collect_var_decls(parent->body,parent_body,1,&outer)) goto done;
+  }
   if(!outer.n){ rc=0; goto done; }
   if(!collect_param_names(src,params,&own)) goto done;
   if(!collect_var_decls(src,body,1,&own)) goto done;
@@ -478,7 +489,7 @@ static int collect_functions_from_text(GmlcFunctionRegistry *r, const char *path
         Span before={0,pos}, after={end,len};
         int is_wrapper=script_name && *script_name && name[0] && !strcmp(name,script_name) && span_empty(src,before) && span_empty(src,after);
         char capture[128]={0};
-        int cap=detect_unsupported_function_capture(src,len,params,body,capture,sizeof(capture));
+        int cap=detect_unsupported_function_capture(r,path,src,len,params,body,capture,sizeof(capture));
         if(cap<0){
           snprintf(err,errcap,"function capture analysis allocation failed");
           return 0;
@@ -489,7 +500,9 @@ static int collect_functions_from_text(GmlcFunctionRegistry *r, const char *path
         }
         int code_index=is_wrapper ? script_code_index : appended_base + registry_extra_so_far(r);
         if(!registry_add_function(r,path,name,params,body,src,code_index,is_wrapper)) return 0;
-        pos=end;
+        /* Scan the body too: imported action predicates can contain another
+         * function literal, which needs its own code entry before compilation. */
+        pos=body.start;
         continue;
       }
     }

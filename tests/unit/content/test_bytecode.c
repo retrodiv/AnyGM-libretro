@@ -264,6 +264,36 @@ static int compile_fixture_named_constant(const GmlcProject *project, const char
   return ok && matched;
 }
 
+static int compile_nested_functions(const GmlcProject *project, const char *source, int expected_count){
+  char path[]="/tmp/gmlc-nested-functions-XXXXXX";
+  int fd=mkstemp(path);
+  if(fd<0) return 0;
+  FILE *file=fdopen(fd,"wb");
+  if(!file){ close(fd); remove(path); return 0; }
+  size_t length=strlen(source);
+  int wrote=fwrite(source,1,length,file)==length;
+  if(fclose(file)!=0) wrote=0;
+  GmlcRoom room={0}; room.creation_code_path=path;
+  GmlcProject fixture=*project; fixture.rooms=&room; fixture.n_rooms=1;
+  GmlcFunctionRegistry registry={0};
+  char error[256]={0};
+  int collected=wrote && gmlc_bytecode_collect_functions(&fixture,1,&registry,error,sizeof error);
+  int ok=expected_count<0 ? !collected && strstr(error,"unsupported function closure capture")!=NULL :
+    collected && registry.n_defs==expected_count;
+  for(int i=0;ok && expected_count>=0 && i<registry.n_defs;i++){
+    GmlcCodeBlob blob={0};
+    ok=registry.defs[i].code_index==i+1 &&
+      gmlc_bytecode_compile_function_body(&fixture,&registry,&registry.defs[i],&blob,error,sizeof error) &&
+      !blob.is_placeholder && blob.size>0;
+    gmlc_bytecode_free(&blob);
+  }
+  if(!ok) fprintf(stderr,"nested function registry: count=%d expected=%d: %s\n",
+                 registry.n_defs,expected_count,error);
+  gmlc_function_registry_free(&registry);
+  remove(path);
+  return ok;
+}
+
 int main(int argc, char **argv){
   GmlcProject project;
   memset(&project,0,sizeof(project));
@@ -288,6 +318,18 @@ int main(int argc, char **argv){
     return all_ok?0:1;
   }
   int ok=1;
+  ok &= compile_nested_functions(&project,
+    "result=(function(){return (function(){return 7;})();})();",2);
+  ok &= compile_nested_functions(&project,
+    "result=(function(){return (function(){return (function(){return 7;})();})();})();",3);
+  ok &= compile_nested_functions(&project,
+    "result=(function(){var held=7; return (function(){return held;})();})();",-1);
+  ok &= compile_nested_functions(&project,
+    "result=(function(held){return (function(){return held;})();})(7);",-1);
+  ok &= compile_nested_functions(&project,
+    "var held=7; result=(function(){return (function(){return held;})();})();",-1);
+  ok &= compile_nested_functions(&project,
+    "result=(function(held){return (function(held){return held;})(7);})(3);",2);
   ok &= compile_fixture(&project,
     "result=(instance_place(1,2,3)).object_index;\n",1);
   ok &= compile_fixture(&project,
