@@ -532,6 +532,7 @@ int gml_render_sprite_metrics(const GmlRender *R,int sprite,
     metrics->frame_count=source->n_frames;
     metrics->collision_left=source->ml; metrics->collision_top=source->mt;
     metrics->collision_right=source->mr; metrics->collision_bottom=source->mb;
+    metrics->collision_box=source->collision_kind==1;
     metrics->playback_speed=source->playback_speed;
     metrics->playback_speed_type=source->playback_speed_type;
     metrics->playback_speed_valid=source->playback_speed_valid;

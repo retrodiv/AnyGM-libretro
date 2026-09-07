@@ -142,9 +142,12 @@ static void parse_sprt(GmlRender *r){
     s->playback_speed=1.0f; s->playback_speed_type=1; s->playback_speed_valid=0;
     s->w=(int)u32(d,p+4); s->h=(int)u32(d,p+8);
     s->ml=(int)u32(d,p+12); s->mr=(int)u32(d,p+16); s->mb=(int)u32(d,p+20); s->mt=(int)u32(d,p+24);
-    s->collision_kind=0; s->collision_tolerance=63; /* preserve the old alpha>=64 fallback */
-    /* margins(16) transparent/smooth/preload(12) bboxmode(4) sepmasks(4) -> originX/Y */
-    /* GMS1 sprite header: ...,BBoxMode(40),SepMasks(44),OriginX(48),OriginY(52),frameList(56) */
+    /* The native mask type selects an axis-aligned box (0) or a precise plane (1).
+     * It is not a separate-subimage flag: one shared plane can still be precise.
+     * Other native types retain their existing sampled geometry. */
+    s->collision_kind=u32(d,p+44)==0?1:0;
+    s->collision_tolerance=63; /* preserve the old alpha>=64 fallback */
+    /* Header: ...,BBoxMode(40),MaskType(44),OriginX(48),OriginY(52),frameList(56). */
     s->originx=(int)u32(d,p+48); s->originy=(int)u32(d,p+52);
     uint32_t list=p+56;             /* GMS1: SimpleList<TextureEntry> here (count + pointers) */
     /* GMS2 sprite: a -1 marker at +56, then SVersion(+60), SpriteType(+64), and for a normal sprite

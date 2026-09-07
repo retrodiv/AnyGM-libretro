@@ -8,13 +8,127 @@
 #include "gml_value_internal.h"
 #include "gml_vm_internal.h"
 #include "gml_render_internal.h"
+#include "gmlc_package.h"
+#include "gmlc_project.h"
+#include "stdio_vfs.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static const char *bbox_fixture_setting(void *userdata,const char *name){
   (void)userdata;
   return name && !strcmp(name,"GML_NO_COLGRID")?"1":NULL;
+}
+
+/* A shared integer edge is sufficient for two rectangular masks. Precise masks still sample
+ * their authored planes; a shared plane must not become rectangular just because its count is one.
+ * Exercise the query and Collision event paths with the same fractional, reflected geometry. */
+int expect_rectangular_mask_edge_contacts(void){
+  char source_path[]="/tmp/gml-rectangle-contact-source-XXXXXX";
+  char package_path[]="/tmp/gml-rectangle-contact-package-XXXXXX";
+  int source_fd=mkstemp(source_path),package_fd=mkstemp(package_path),ok=0;
+  if(source_fd<0 || package_fd<0) goto cleanup;
+  close(source_fd); source_fd=-1;
+  close(package_fd); package_fd=-1;
+  if(!fixture_write_text(source_path,"global.contacts += 1;\n")) goto cleanup;
+  AnygmHostServices services={0};
+  services.struct_size=sizeof services;
+  services.abi_version=ANYGM_HOST_SERVICES_VERSION;
+  anygm_stdio_vfs_services_init(&services);
+  services.development_setting=bbox_fixture_setting;
+  GmlcProject project={0};
+  GmlcObject objects[2]={{0}};
+  GmlcObjectEvent event={0};
+  GmlcRoom room={0};
+  GmlcRoomInstance placed[2]={{0}};
+  int room_order=0;
+  project.host=&services;
+  project.name="rectangle-contact-fixture";
+  project.objects=objects; project.n_objects=project.cap_objects=2;
+  project.rooms=&room; project.n_rooms=project.cap_rooms=1;
+  project.room_order=&room_order; project.n_room_order=1;
+  objects[0].id=objects[0].name="obj_probe";
+  objects[1].id=objects[1].name="obj_target";
+  for(int i=0;i<2;i++){
+    objects[i].sprite_id=objects[i].mask_id=objects[i].parent_id=-1;
+    placed[i].id=placed[i].name=i?"placed_target":"placed_probe";
+    placed[i].object_id=i; placed[i].instance_id=100000u+(unsigned)i;
+  }
+  objects[0].events=&event; objects[0].n_events=objects[0].cap_events=1;
+  event.event_type=4; event.collision_object_id=1; event.source_path=source_path;
+  room.id=room.name="room_contact";
+  room.width=room.height=64; room.speed=60;
+  room.instances=placed; room.n_instances=room.cap_instances=2;
+  char error[256]={0};
+  if(!gmlc_package_write_structural(&project,package_path,error,sizeof error)){
+    fprintf(stderr,"rectangle contact package failed: %s\n",error); goto cleanup;
+  }
+  GmlWin win;
+  if(anygm_stdio_load_win(&win,package_path)) goto cleanup;
+  GmlVM vm;
+  if(gml_vm_init(&vm,&win,&services)){ gml_win_free(&win); goto cleanup; }
+  win.bytecode=15;
+  GmlSprite sprites[2]={{0}};
+  GmlRender render={0};
+  uint8_t full[4]={0xf0,0xf0,0xf0,0xf0},empty[4]={0};
+  render.win=&win; render.spr=sprites; render.n_spr=2;
+  for(int i=0;i<2;i++){
+    sprites[i].w=sprites[i].h=4;
+    sprites[i].mr=sprites[i].mb=3;
+    sprites[i].n_frames=sprites[i].mask_count=sprites[i].mask_rowb=1;
+    sprites[i].mask=full;
+  }
+  vm.render=&render;
+  gml_room_enter(&vm,0);
+  GmlInstance *a=find_slot(&vm,100000),*b=find_slot(&vm,100001);
+  const struct { const char *label; double ax,ay,asx,bx,by,bsx;
+                 int akind,bkind,empty_target,hit; } cases[]={
+    {"fractional shared row",0,0.5,1,0,3.1,1,1,1,0,1},
+    {"reflected shared row",4,0.5,-1,4,3.1,-1,1,1,0,1},
+    {"fractional shared column",0.5,0,1,3.1,0,1,1,1,0,1},
+    {"negative shared row",-4,-3.5,1,-4,-0.9,1,1,1,0,1},
+    {"separated row",0,0.5,1,0,4.1,1,1,1,0,0},
+    {"precise target hole",0,0,1,0,3,1,1,0,1,0},
+    {"precise target contact",0,0,1,0,3,1,1,0,0,1},
+    {"precise source and target hole",0,0,1,0,3,1,0,0,1,0},
+    {"shared precise planes",0,0,1,0,3,1,0,0,0,1},
+  };
+  ok=a && b;
+  for(unsigned i=0;ok && i<sizeof cases/sizeof cases[0];i++){
+    a->sprite_index=-1; a->mask_index=0;
+    b->sprite_index=-1; b->mask_index=1;
+    a->x=cases[i].ax; a->y=cases[i].ay; a->image_xscale=cases[i].asx;
+    b->x=cases[i].bx; b->y=cases[i].by; b->image_xscale=cases[i].bsx;
+    a->image_yscale=b->image_yscale=1;
+    sprites[0].collision_kind=cases[i].akind;
+    sprites[1].collision_kind=cases[i].bkind;
+    sprites[1].mask=cases[i].empty_target?empty:full;
+    gml_colgrid_invalidate(&vm);
+    vm.cur_self=a;
+    GmlVal query[3]={vreal(a->x),vreal(a->y),vreal((double)b->id)};
+    GmlVal meeting=gml_builtin_call(&vm,"place_meeting",query,3);
+    GmlVal found=gml_builtin_call(&vm,"instance_place",query,3);
+    *gml_varmap_put(&vm.globals,"contacts")=vreal(0);
+    gml_vm_instances_run_collisions(&vm);
+    GmlVal *contacts=gml_varmap_get(&vm.globals,"contacts");
+    if(meeting.t!=V_REAL || meeting.d!=cases[i].hit || found.t!=V_REAL ||
+       found.d!=(cases[i].hit?(double)b->id:IT_NOONE) ||
+       !contacts || contacts->t!=V_REAL || contacts->d!=cases[i].hit){
+      fprintf(stderr,"%s: meeting=%.0f instance=%.0f events=%.0f expected hit=%d\n",
+        cases[i].label,meeting.t==V_REAL?meeting.d:-1.0,found.t==V_REAL?found.d:-1.0,
+        contacts && contacts->t==V_REAL?contacts->d:-1.0,cases[i].hit);
+      ok=0;
+    }
+  }
+  vm.render=NULL;
+  gml_vm_free(&vm); gml_win_free(&win);
+cleanup:
+  if(source_fd>=0) close(source_fd);
+  if(package_fd>=0) close(package_fd);
+  unlink(source_path); unlink(package_path);
+  return ok;
 }
 
 /* The synthetic fixture pins both language-visible readings of one inclusive collision box.

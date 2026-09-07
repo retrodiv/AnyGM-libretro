@@ -154,6 +154,10 @@ static int masks_overlap(GmlVM *vm, GmlInstance *self, double sx, double sy, Gml
   double sl,st,sr,sb,ol,ot,orr,ob;
   if(!inst_bbox(vm,self,sx,sy,&sl,&st,&sr,&sb)) return 0;
   if(!inst_bbox(vm,o,o->x,o->y,&ol,&ot,&orr,&ob)) return 0;
+  /* Rectangles answer from their inclusive bounds, not a second inverse pixel sample that
+   * loses a shared edge at fractional coordinates. Precise and rotated pairs retain sampling. */
+  if(sp.collision_box && op.collision_box && self->image_angle==0 && o->image_angle==0)
+    return bbox_overlap(sl,st,sr,sb,ol,ot,orr,ob);
   int x0=(int)floor(fmax(sl,ol)), x1=(int)ceil(fmin(sr,orr)+1.0);
   int y0=(int)floor(fmax(st,ot)), y1=(int)ceil(fmin(sb,ob)+1.0);
   /* GM bbox coordinates are inclusive. A common grounding probe is place_meeting(x,y+1,...),

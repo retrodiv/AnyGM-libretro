@@ -62,6 +62,7 @@ typedef struct {
 typedef struct {
   int width, height, origin_x, origin_y, frame_count;
   int collision_left, collision_top, collision_right, collision_bottom;
+  int collision_box; /* explicitly rectangular, not inferred from plane count or alpha */
   double playback_speed;
   int playback_speed_type, playback_speed_valid;
   const char *name;

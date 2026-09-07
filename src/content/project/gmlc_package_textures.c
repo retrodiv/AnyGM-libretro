@@ -500,7 +500,9 @@ int write_sprt(Pkg *pkg, const GmlcProject *p, char *err, size_t errcap){
     wu32(&pkg->b,0);
     wu32(&pkg->b,1);
     wi32(&pkg->b,sp->bbox_mode);
-    wu32(&pkg->b,(uint32_t)(sprite_masks_are_per_subimage(p,sp)?1:0));
+    /* Normalized sprites carry explicit collision planes, including shared and shaped masks.
+     * This native field selects precise collision; the later mask count owns subimage sharing. */
+    wu32(&pkg->b,1);
     wi32(&pkg->b,sp->xorig);
     wi32(&pkg->b,sp->yorig);
     wi32(&pkg->b,-1);

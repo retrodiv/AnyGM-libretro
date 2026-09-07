@@ -1253,6 +1253,10 @@ static int vm_masks_overlap(GmlVM *vm, GmlInstance *a, GmlInstance *b,
   int as=inst_mask_sprite_index(a), bs=inst_mask_sprite_index(b); if(as<0||bs<0) return 1;
   GmlRenderSpriteMetrics ap,bp;
   if(!gml_render_sprite_metrics(R,as,&ap) || !gml_render_sprite_metrics(R,bs,&bp)) return 1;
+  /* The caller has established inclusive bbox overlap. Sampling that edge again relative to
+   * fractional origins can incorrectly discard it. Keep mixed/rotated masks on the pixel path. */
+  if(ap.collision_box && bp.collision_box && a->image_angle==0 && b->image_angle==0)
+    return 1;
   int x0=(int)floor(fmax(l1,l2)), x1=(int)ceil(fmin(r1,r2)+1.0);
   int y0=(int)floor(fmax(t1,t2)), y1=(int)ceil(fmin(b1,b2)+1.0);
   if(x1==x0) x1++;

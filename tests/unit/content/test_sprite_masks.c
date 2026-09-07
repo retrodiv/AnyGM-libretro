@@ -51,6 +51,10 @@ static int mask_bit(const GmlSprite *sprite,int x,int y){
   return (sprite->mask[(size_t)y*(size_t)sprite->mask_rowb+(size_t)x/8u]>>(7-(x&7)))&1;
 }
 
+static uint32_t read_u32le(const uint8_t *p){
+  return (uint32_t)p[0] | ((uint32_t)p[1]<<8) | ((uint32_t)p[2]<<16) | ((uint32_t)p[3]<<24);
+}
+
 int main(void){
   uint8_t wide[SPRITE_SIZE*SPRITE_SIZE*4],narrow[SPRITE_SIZE*SPRITE_SIZE*4];
   uint8_t upper_left[SPRITE_SIZE*SPRITE_SIZE*4],lower_right[SPRITE_SIZE*SPRITE_SIZE*4];
@@ -140,6 +144,14 @@ int main(void){
       failures++;
     }
     const GmlSprite *packed=&render.spr[1];
+    const GmlChunk *chunk=gml_chunk(&win,"SPRT");
+    uint32_t sprite_offset=read_u32le(win.data+chunk->off+8);
+    GmlRenderSpriteMetrics metrics;
+    if(read_u32le(win.data+sprite_offset+44)!=1 ||
+       !gml_render_sprite_metrics(&render,1,&metrics) || metrics.collision_box){
+      fputs("sprite masks failed: a normalized shared plane lost its precise type\n",stderr);
+      failures++;
+    }
     if(packed->mask_count!=1){
       fprintf(stderr,"sprite masks failed: shared sprite carries %d masks\n",packed->mask_count);
       failures++;
@@ -182,6 +194,19 @@ int main(void){
           }
     }
     gml_render_free(&render);
+    /* A native rectangular record can carry the same one-plane layout. Its type, not the
+     * number or contents of those planes, is what selects rectangular collision geometry. */
+    win.data[sprite_offset+44]=0;
+    if(gml_render_init(&render,&win)!=0){
+      fputs("sprite masks failed: native rectangular fixture did not initialize\n",stderr);
+      failures++;
+    }else{
+      if(!gml_render_sprite_metrics(&render,1,&metrics) || !metrics.collision_box){
+        fputs("sprite masks failed: native rectangular type was not retained\n",stderr);
+        failures++;
+      }
+      gml_render_free(&render);
+    }
   }
 
   if(loaded) gml_win_free(&win);
