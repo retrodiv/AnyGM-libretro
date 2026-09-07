@@ -321,7 +321,9 @@ int import_actions(ImportReader *r, ImportText *text){
       if(wrapped_target){
         ok = text_append(text, "with (") && text_append_int(text, (int32_t)target) && text_append(text, ") {\n");
       }
-      if(ok && relative && !question) ok = text_append(text, "action_set_relative(1);\n");
+      /* A relative action lowers to setup, execution and reset. Keep them one
+       * statement so a preceding question or repeat owns all three. */
+      if(ok && relative && !question) ok = text_append(text, "{\naction_set_relative(1);\n");
       if(ok && question) ok = text_append(text, "if (") && (!negate || text_append(text, "!"));
       if(ok){
         if(type == 2 || kind == 7){
@@ -344,7 +346,7 @@ int import_actions(ImportReader *r, ImportText *text){
       }
       if(ok && question) ok = text_append(text, ")\n");
       else if(ok) ok = text_append(text, ";\n");
-      if(ok && relative && !question) ok = text_append(text, "action_set_relative(0);\n");
+      if(ok && relative && !question) ok = text_append(text, "action_set_relative(0);\n}\n");
       if(ok && wrapped_target) ok = text_append(text, "}\n");
     }
 action_done:
