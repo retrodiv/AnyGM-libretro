@@ -319,17 +319,26 @@ int import_actions(ImportReader *r, ImportText *text){
     } else {
       int wrapped_target = applies && !question && (int32_t)target != -1;
       int other_question = applies && question && (int32_t)target == -2;
+      int object_question = applies && question && (int32_t)target >= 0;
       if(wrapped_target){
         ok = text_append(text, "with (") && text_append_int(text, (int32_t)target) && text_append(text, ") {\n");
       }
       /* A relative action lowers to setup, execution and reset. Keep them one
        * statement so a preceding question or repeat owns all three. */
       if(ok && relative && !question) ok = text_append(text, "{\naction_set_relative(1);\n");
-      if(ok && question) ok = text_append(text, "if (") && (!negate || text_append(text, "!"));
+      if(ok && question) ok = text_append(text, "if (") &&
+        (!negate || object_question || text_append(text, "!"));
       /* An other-target question reads its arguments in the collision partner's
        * context, but the following action still owns its independent target.
        * Return the condition from that context before selecting the branch. */
       if(ok && other_question) ok = text_append(text, "(function(){\nwith (-2) {\nreturn ");
+      /* Object-target questions require every selected instance to satisfy the
+       * condition. Negation belongs to each instance, not to the reduction:
+       * an empty selection succeeds either way. Stop at the first failure and
+       * restore the caller before executing the independently targeted branch. */
+      if(ok && object_question) ok = text_append(text, "(function(){\nwith (") &&
+        text_append_int(text,(int32_t)target) && text_append(text,") {\nif (") &&
+        (negate || text_append(text,"!")) && text_append(text,"(");
       if(ok){
         if(type == 2 || kind == 7){
           if(code && *code)
@@ -350,6 +359,7 @@ int import_actions(ImportReader *r, ImportText *text){
                                    question, relative!=0);
       }
       if(ok && other_question) ok = text_append(text, ";\n}\nreturn false;\n})()");
+      if(ok && object_question) ok = text_append(text, ")) return false;\n}\nreturn true;\n})()");
       if(ok && question) ok = text_append(text, ")\n");
       else if(ok) ok = text_append(text, ";\n");
       if(ok && relative && !question) ok = text_append(text, "action_set_relative(0);\n}\n");
