@@ -42,7 +42,6 @@ const char *test_transform_declarations(void){
       /* Retired adapter declaration omitted from unpublished history. */ ""
       /* Retired adapter declaration omitted from unpublished history. */ ""
       /* Retired adapter declaration omitted from unpublished history. */ ""
-      /* Retired adapter declaration omitted from unpublished history. */ ""
       /* Retired adapter declaration omitted from unpublished history. */ "";
   return declarations;
 }

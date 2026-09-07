@@ -894,9 +894,9 @@ int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
   }
   memset(out, 0, sizeof(*out));
   out->version = (GmlcClassicVersion)version;
-  /* GM7 leaves only magic/version unobfuscated. Its game id and GUID become
-   * available after the user-supplied project transform. */
-  if(version != GMLC_CLASSIC_GM7 && version != GMLC_CLASSIC_GM7_ALT){
+  /* Every revision reaches the structural reader in normalized form. Source
+   * preparation is selected by the caller, not by the project's revision. */
+  {
     size_t header_size=version==GMLC_CLASSIC_GM53?32u:28u;
     size_t game_id_offset=version==GMLC_CLASSIC_GM53?12u:8u;
     if(size < header_size){
@@ -908,8 +908,6 @@ int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
   }
   return 1;
 }
-
-
 
 int gmlc_classic_probe_file(const AnygmHostServices *host,const char *path,
                             GmlcClassicHeader *out,
@@ -1501,28 +1499,21 @@ static int parse_legacy_project(const AnygmContentTransforms *transforms,const v
                                 char *err, size_t errcap){
   const uint8_t *plain = (const uint8_t*)data;
   size_t plain_size = size;
-  uint8_t *decoded = NULL;
   uint32_t container_version = size >= 8 ? read_u32le(plain + 4) : 0;
-  if(container_version == GMLC_CLASSIC_GM7 || container_version == GMLC_CLASSIC_GM7_ALT){
-    if(!(0 /* This operation is unavailable. */)) return 0;
-    plain = decoded;
-  }
   size_t header_size=container_version==GMLC_CLASSIC_GM53?32u:28u;
   size_t game_id_offset=container_version==GMLC_CLASSIC_GM53?12u:8u;
   if(plain_size < header_size || read_u32le(plain) != GMLC_CLASSIC_MAGIC ||
      read_u32le(plain+4u)!=container_version){
     if(err && errcap) snprintf(err, errcap, "classic project: invalid normalized project header");
-    free(decoded);
     return 0;
   }
   memset(inventory, 0, sizeof(*inventory));
   inventory->header.version = (GmlcClassicVersion)container_version;
   inventory->header.game_id = read_u32le(plain + game_id_offset);
   memcpy(inventory->header.guid, plain + game_id_offset + 4u, 16);
-  ClassicReader r = {plain, plain_size, header_size, err, errcap,NULL};
+  ClassicReader r = {plain, plain_size, header_size, err, errcap,transforms};
   if(!skip_legacy_settings(&r, container_version, &inventory->settings_version,
                            &inventory->settings,&inventory->constants,manifest)){
-    free(decoded);
     return 0;
   }
   for(int type = 0; type < GMLC_CLASSIC_RESOURCE_TYPES; ++type){
@@ -1572,10 +1563,8 @@ static int parse_legacy_project(const AnygmContentTransforms *transforms,const v
      !reader_u32(&r, &inventory->last_tile_id, "last legacy tile id")) goto fail;
   inventory->payload_end = r.pos;
   if(!parse_legacy_tail(&r,container_version,manifest)) goto fail;
-  free(decoded);
   return 1;
 fail:
-  free(decoded);
   if(manifest) gmlc_classic_manifest_free(manifest);
   return 0;
 }
@@ -2767,12 +2756,23 @@ int gmlc_classic_embedded_project(const AnygmContentTransforms *transforms,const
   return ok;
 }
 
+static int read_prepared_file(const AnygmContentTransforms *transforms,const AnygmHostServices *host,
+                               const char *path,uint8_t **data,size_t *size,char *err,size_t errcap){
+  if(!read_file(host,path,data,size,err,errcap)) return 0;
+  if(!anygm_content_transforms_has(transforms,"input")) return 1;
+  uint8_t *prepared=NULL; size_t prepared_size=0;
+  int ok=anygm_content_transform_run(transforms,"input",*data,*size,
+    &prepared,&prepared_size,err,errcap);
+  free(*data); *data=prepared; *size=prepared_size;
+  return ok;
+}
+
 int gmlc_classic_manifest_file(const AnygmContentTransforms *transforms,const AnygmHostServices *host,const char *path,
                                GmlcClassicManifest *out,
                                char *err, size_t errcap){
   uint8_t *data;
   size_t size;
-  if(!read_file(host,path, &data, &size, err, errcap)) return 0;
+  if(!read_prepared_file(transforms,host,path,&data,&size,err,errcap)) return 0;
   int ok = gmlc_classic_manifest(transforms,data, size, out, err, errcap);
   free(data);
   return ok;
@@ -2783,7 +2783,7 @@ int gmlc_classic_inventory_file(const AnygmContentTransforms *transforms,const A
                                 char *err, size_t errcap){
   uint8_t *data;
   size_t size;
-  if(!read_file(host,path, &data, &size, err, errcap)) return 0;
+  if(!read_prepared_file(transforms,host,path,&data,&size,err,errcap)) return 0;
   int ok = gmlc_classic_inventory(transforms,data, size, out, err, errcap);
   free(data);
   return ok;

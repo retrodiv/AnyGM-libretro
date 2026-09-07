@@ -272,6 +272,12 @@ scheduling as described in `SECURITY_MODEL.md`.
 The revision-selected adaptation interface is omitted from this unpublished
 history. Earlier snapshots with omitted implementations are not supported builds.
 
+Editor-project memory readers accept normalized headers and records directly for every supported
+revision. They do not select a source operation by revision or rerun `input`. File inventory and
+manifest entry points may apply their caller's explicit `input` entry once before invoking the
+same reader. A caller importing an already prepared image uses the image entry point and retains
+its original path for assets and companions.
+
 `make check TEST=content_transform` exercises source compilation, scopes, short-circuit control
 flow, diagnostics, arithmetic, buffer isolation, malformed source/instructions, execution
 exhaustion, missing programs, transactional overrides, and identity changes. Content-security

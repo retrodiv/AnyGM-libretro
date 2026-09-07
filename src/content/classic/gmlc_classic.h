@@ -210,16 +210,16 @@ typedef struct {
   uint32_t room_order_count;
 } GmlcClassicManifest;
 
-/* Inspect only the unencrypted common project header. This deliberately does
+/* Inspect only a normalized common project header. This deliberately does
  * not claim that the rest of the project is loadable. */
 int gmlc_classic_probe(const void *data, size_t size, GmlcClassicHeader *out,
                        char *err, size_t errcap);
 int gmlc_classic_probe_file(const struct AnygmHostServices *host,const char *path,
                             GmlcClassicHeader *out,
                             char *err, size_t errcap);
-
-/* Parse the length-delimited top-level inventory used by GM8/8.1 projects.
- * Individual resource payloads are not interpreted by this function. */
+/* Parse a normalized project inventory. Memory readers never select the source
+ * input adapter; file inventory/manifest entry points prepare that source once.
+ * Individual modern resource payloads are not interpreted by this function. */
 int gmlc_classic_inventory(const AnygmContentTransforms *transforms,const void *data, size_t size,
                            GmlcClassicInventory *out, char *err, size_t errcap);
 int gmlc_classic_inventory_file(const AnygmContentTransforms *transforms,const struct AnygmHostServices *host,const char *path,

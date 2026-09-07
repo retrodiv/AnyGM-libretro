@@ -8,6 +8,8 @@
 #include "gmlc_classic.h"
 #include <stddef.h>
 
+/* Import an already normalized file. Source adapters belong to the caller's
+ * preparation stage; this importer uses transforms only for nested records. */
 int gmlc_classic_project_load(const AnygmContentTransforms *transforms,GmlcProject *project,const AnygmHostServices *host,
                               const char *project_path,
                               const char *cache_dir, char *err, size_t errcap);

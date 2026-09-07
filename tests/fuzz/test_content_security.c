@@ -2282,6 +2282,13 @@ static int input_pipeline_cases(const AnygmHostServices *services,const char *ro
     return fail("normalized source project lost its structural importer or original assets");
   return 1;
 }
+static int build_wrapped_project(Fixture *project){
+  if(!build_project_fixture(701,project) || project->size>sizeof project->data-4u) return 0;
+  memmove(project->data+4u,project->data,project->size);
+  memcpy(project->data,"WRAP",4u); project->size+=4u;
+  return 1;
+}
+
 static int transform_configuration_cases(const AnygmHostServices *services,const char *root){
   char directory[600],system[700],ini[800],payload[800],anchor[800],second[800],resolved[1024];
   if(snprintf(directory,sizeof directory,"%s/transform-cases",root)>=(int)sizeof directory ||
@@ -2293,20 +2300,20 @@ static int transform_configuration_cases(const AnygmHostServices *services,const
      snprintf(second,sizeof second,"%s/second.anygm",directory)>=(int)sizeof second)
     return fail("could not prepare the transform configuration paths");
   Fixture project={{0},0};
-  if(!build_project_fixture(701,&project) || !write_file(payload,project.data,project.size))
-    return fail("could not write the normalized project fixture");
+  if(!build_wrapped_project(&project) || !write_file(payload,project.data,project.size))
+    return fail("could not write the wrapped project fixture");
   AnygmContentRouter router={0};
   router.host=services;
   router.cache_directory=directory;
   router.system_directory=system;
   router.log=fixture_log;
-  const char identity[]="[transforms]\nclassic.project.7=buffer copy() {\n return slice(0,input_size);\n}\n";
-  const char reject_program[]="[transforms]\nclassic.project.7=buffer stop() { reject(); }\n";
-  const char selected[]="[anygm]\npayload=project.gmk\n[transforms]\nclassic.project.7=buffer copy() {\n"
-    "/*\n[overrides]\n$sentinel=999\n*/\n return slice(0,input_size);\n}\n";
+  const char adapter[]="[transforms]\ninput=buffer unwrap() {\n return slice(4,input_size-4);\n}\n";
+  const char reject_program[]="[transforms]\ninput=buffer stop() { reject(); }\n";
+  const char selected[]="[anygm]\npayload=project.gmk\n[transforms]\ninput=buffer unwrap() {\n"
+    "/*\n[overrides]\n$sentinel=999\n*/\n return slice(4,input_size-4);\n}\n";
   if(anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,NULL,0,NULL,0))
-    return fail("an input requiring a program loaded without one");
-  if(!write_file(ini,identity,sizeof identity-1u) ||
+    return fail("a wrapped project loaded without its source adapter");
+  if(!write_file(ini,adapter,sizeof adapter-1u) ||
      !anygm_content_resolve_path(&router,payload,resolved,sizeof resolved,NULL,0,NULL,0))
     return fail("the system configuration did not supply the test program");
   if(!write_file(ini,reject_program,sizeof reject_program-1u) ||
@@ -2327,18 +2334,19 @@ static int transform_configuration_cases(const AnygmHostServices *services,const
   if(!anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,NULL,0))
     return fail("an explicit anchor was superseded by ambiguous sibling anchors");
   const char pipeline[]="[anygm]\npayload=project.gmk\n[transforms]\n"
+    "unwrap=buffer unwrap(){return slice(4,input_size-4);}\n"
     "copy=buffer copy(){ /* [overrides] is only a comment */ return slice(0,input_size); }\n"
-    "[pipelines]\nclassic.project.7=copy|copy\n";
+    "[pipelines]\ninput=unwrap|copy\n";
   if(!write_file(anchor,pipeline,sizeof pipeline-1u) ||
      !anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides) ||
      overrides[0]) return fail("an anchor pipeline failed or injected an override");
   const char broken_pipeline[]="[anygm]\npayload=project.gmk\n[pipelines]\n"
-    /* Retired adapter declaration omitted from unpublished history. */ "";
+    "input=builtin.zlib:0\n";
   if(!write_file(anchor,broken_pipeline,sizeof broken_pipeline-1u) ||
      anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides) ||
      resolved[0] || overrides[0]) return fail("a malformed anchor pipeline published a result");
   if(!write_file(anchor,pipeline,sizeof pipeline-1u)) return fail("could not restore the anchor pipeline");
-  const char invalid[]="[transforms]\nclassic.project.7=not-a-program:\n";
+  const char invalid[]="[transforms]\ninput=not-a-program:\n";
   if(!write_file(ini,invalid,sizeof invalid-1u)) return fail("could not write invalid configuration");
   strcpy(resolved,"stale");
   if(anygm_content_resolve_path(&router,anchor,resolved,sizeof resolved,NULL,0,NULL,0) || resolved[0])
@@ -2358,17 +2366,19 @@ static int selected_configuration_cases(const AnygmHostServices *services,const 
   snprintf(anchor,sizeof anchor,"%s/content.anygm",directory);
   snprintf(archive_path,sizeof archive_path,"%s/content.zip",directory);
   Fixture project={{0},0};
-  if(!build_project_fixture(701,&project) || !write_file(payload,project.data,project.size))
+  if(!build_wrapped_project(&project) || !write_file(payload,project.data,project.size))
     return fail("could not write selected configuration project");
   uint8_t digest[32]; char hex[65],config[2048],overrides[4096];
   gml_sha256(project.data,project.size,digest);
   for(size_t i=0;i<32;i++) snprintf(hex+i*2,3,"%02x",digest[i]);
   snprintf(config,sizeof config,
-    "[overrides]\n$default=1\n[transforms]\nclassic.project.7=buffer stop(){ reject(); }\n"
-    "[sha256:%s.transforms]\nclassic.project.7=buffer copy(){ return slice(0,input_size); }\n"
+    "[overrides]\n$default=1\n[transforms]\ninput=buffer stop(){"
+    "if(input_size>=4 && read32(input,0)==0x50415257) reject(); return slice(0,input_size); }\n"
+    "[sha256:%s.transforms]\ninput=buffer unwrap(){ return slice(4,input_size-4); }\n"
     "[sha256:%s.overrides]\n$selected=3\n",hex,hex);
   static const uint8_t anchor_text[]="[anygm]\npayload=project.gmk\n[overrides]\n$anchor=2\n"
-    "[transforms]\nclassic.project.7=buffer stop(){ reject(); }\n";
+    "[transforms]\ninput=buffer stop(){"
+    "if(input_size>=4 && read32(input,0)==0x50415257) reject(); return slice(0,input_size); }\n";
   if(!write_file(ini,config,strlen(config)) || !write_file(anchor,anchor_text,sizeof anchor_text-1))
     return fail("could not write selected configuration declarations");
   AnygmContentRouter router={0}; router.host=services; router.cache_directory=directory;
@@ -2376,7 +2386,7 @@ static int selected_configuration_cases(const AnygmHostServices *services,const 
   for(int direct=0;direct<2;direct++){
     if(!anygm_content_resolve_path(&router,direct?payload:anchor,resolved,sizeof resolved,
          NULL,0,overrides,sizeof overrides) || strcmp(overrides,"$default=1\n$anchor=2\n$selected=3\n"))
-      return fail("SHA-256 selection did not override an anchor before protected import");
+      return fail("SHA-256 selection did not override an anchor before source preparation");
   }
   ZipEntry entries[2]={
     {(const uint8_t*)"project.gmk",11,project.data,(uint32_t)project.size,(uint32_t)project.size,0,0,0,0},
@@ -2398,8 +2408,9 @@ static int selected_configuration_cases(const AnygmHostServices *services,const 
   /* A different original fingerprint cannot reuse the prior derived result. */
   config[0]=0;
   hex[0]=hex[0]=='0'?'1':'0';
-  snprintf(config,sizeof config,"[transforms]\nclassic.project.7=buffer stop(){reject();}\n"
-    "[sha256:%s.transforms]\nclassic.project.7=buffer copy(){return slice(0,input_size);}\n",hex);
+  snprintf(config,sizeof config,"[transforms]\ninput=buffer stop(){"
+    "if(input_size>=4 && read32(input,0)==0x50415257) reject(); return slice(0,input_size);}\n"
+    "[sha256:%s.transforms]\ninput=buffer unwrap(){return slice(4,input_size-4);}\n",hex);
   if(!write_file(ini,config,strlen(config)) ||
      anygm_content_resolve_path(&router,archive_path,resolved,sizeof resolved,NULL,0,overrides,sizeof overrides) ||
      overrides[0] || resolved[0]) return fail("unmatched hash selected a cached transform result");

@@ -28,11 +28,8 @@ static int expect_header(unsigned version){
     fprintf(stderr, "probe %u failed: %s\n", version, err);
     return 0;
   }
-  int encrypted = version == 701 || version == 702;
   if((unsigned)h.version != version ||
-     (!encrypted && (h.game_id != 0x12345678u ||
-                     memcmp(h.guid, data + game_id_offset + 4u, 16))) ||
-     (encrypted && h.game_id != 0)){
+     h.game_id != 0x12345678u || memcmp(h.guid, data + game_id_offset + 4u, 16)){
     fprintf(stderr, "probe %u returned incorrect fields\n", version);
     return 0;
   }
@@ -48,22 +45,22 @@ static int expect_rejected(unsigned magic, unsigned version, size_t size){
   return !gmlc_classic_probe(data, size, &h, err, sizeof(err)) && err[0];
 }
 
-static int expect_project_transform(void){
-  unsigned char plain[64] = {0};
-  put_u32le(plain, GMLC_CLASSIC_MAGIC);
-  put_u32le(plain + 4, 701);
-  for(size_t i = 8; i < sizeof(plain); ++i) plain[i] = (unsigned char)(i * 3 + 1);
-  size_t encoded_size = 0;
-  unsigned char *encoded = fixture_project_image(plain, sizeof(plain), &encoded_size);
-  if(!encoded) return 0;
-  uint8_t *decoded = NULL;
-  size_t decoded_size = 0;
-  char err[128];
-  int ok = (0 /* Revision-selected adapter omitted from unpublished history. */) &&
-           decoded_size == sizeof(plain) && !memcmp(decoded, plain, sizeof(plain));
-  if(!ok) fprintf(stderr, "Project transform fixture failed: %s\n", err);
-  free(decoded);
-  free(encoded);
+static int expect_normalized_project(void){
+  Fixture project={{0},0};
+  GmlcClassicManifest manifest={0};
+  char err[128]={0};
+  int ok=build_project_fixture(701,&project) &&
+    gmlc_classic_manifest(NULL,project.data,project.size,&manifest,err,sizeof err);
+  gmlc_classic_manifest_free(&manifest);
+  /* Source selection belongs to preparation. A structural memory reader must
+   * not apply it a second time to bytes its caller already normalized. */
+  const char declaration[]="[transforms]\ninput=buffer stop(){reject();}\n";
+  AnygmContentTransforms *set=anygm_content_transforms_create();
+  ok=ok && set && anygm_content_transforms_parse(set,declaration,sizeof declaration-1,err,sizeof err) &&
+    gmlc_classic_manifest(set,project.data,project.size,&manifest,err,sizeof err);
+  gmlc_classic_manifest_free(&manifest);
+  anygm_content_transforms_destroy(set);
+  if(!ok) fprintf(stderr,"Normalized project fixture failed: %s\n",err);
   return ok;
 }
 
@@ -659,7 +656,7 @@ AnygmTestGroup classic_test_format_group(void){
     {"gm6-executable-manifest",expect_gm6_executable_manifest},
     {"legacy-executable-manifest",expect_legacy_executable_manifest},
     {"legacy-executable-font-corruption",expect_legacy_executable_font_corruption},
-    {"project-transform",expect_project_transform},
+    {"normalized-project",expect_normalized_project},
     {"legacy-manifest-600",test_legacy_manifest_600},
     {"legacy-manifest-701",test_legacy_manifest_701},
   };
