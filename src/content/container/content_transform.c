@@ -46,7 +46,7 @@ static int valid_program(const uint8_t *code,size_t size){
     if(op>ANYGM_TRANSFORM_JUMP_NONZERO || d>=32 || a>=32 || b>=32) return 0;
     if(op==ANYGM_TRANSFORM_CONSTANT){ if(a || b) return 0; }
     else if(op>=ANYGM_TRANSFORM_LOAD8 && op<=ANYGM_TRANSFORM_STORE64){
-      if(b>=4 || (op>=ANYGM_TRANSFORM_STORE8 && b!=1 && b!=3)) return 0;
+      if(b>=5 || (op>=ANYGM_TRANSFORM_STORE8 && b!=1 && b!=3)) return 0;
     } else if(op>=ANYGM_TRANSFORM_JUMP){
       if(imm>=count || d || b || (op==ANYGM_TRANSFORM_JUMP && a)) return 0;
     } else {
@@ -61,7 +61,8 @@ static int valid_program(const uint8_t *code,size_t size){
 
 int anygm_content_transform_execute(const void *program,size_t program_size,
                                      const void *parameters,size_t parameter_size,
-                                     const void *input,size_t input_size,uint64_t step_limit,
+                                     const void *input,size_t input_size,
+                                     const void *metadata,size_t metadata_size,uint64_t step_limit,
                                      uint8_t **output,size_t *output_size,
                                      char *error,size_t error_size){
   if(error && error_size) error[0]=0;
@@ -69,6 +70,7 @@ int anygm_content_transform_execute(const void *program,size_t program_size,
   if(output_size) *output_size=0;
   if(!output || !output_size || (input_size && !input) ||
      (parameter_size && !parameters) || input_size>ANYGM_TRANSFORM_MAX_INPUT_BYTES ||
+     (metadata_size && !metadata) || metadata_size>ANYGM_TRANSFORM_MAX_METADATA_BYTES ||
      parameter_size>ANYGM_TRANSFORM_MAX_PARAMETER_BYTES ||
      !valid_program((const uint8_t*)program,program_size))
     return fail(error,error_size,"invalid program or buffer");
@@ -76,10 +78,11 @@ int anygm_content_transform_execute(const void *program,size_t program_size,
   uint8_t *scratch=(uint8_t*)calloc(ANYGM_TRANSFORM_SCRATCH_BYTES,1u);
   if(!work || !scratch){ free(work); free(scratch); return fail(error,error_size,"allocation failed"); }
   if(input_size) memcpy(work,input,input_size);
-  const uint8_t *memory[4]={(const uint8_t*)input,work,(const uint8_t*)parameters,scratch};
-  size_t lengths[4]={input_size,input_size,parameter_size,ANYGM_TRANSFORM_SCRATCH_BYTES};
+  const uint8_t *memory[5]={(const uint8_t*)input,work,(const uint8_t*)parameters,scratch,metadata};
+  size_t lengths[5]={input_size,input_size,parameter_size,ANYGM_TRANSFORM_SCRATCH_BYTES,metadata_size};
   uint64_t registers[32]={0};
   registers[0]=input_size; registers[1]=parameter_size;
+  registers[2]=metadata_size;
   uint64_t budget=UINT64_C(1000000)+(uint64_t)input_size*128u;
   if(budget>ANYGM_TRANSFORM_MAX_STEPS) budget=ANYGM_TRANSFORM_MAX_STEPS;
   if(step_limit && step_limit<budget) budget=step_limit;
@@ -357,13 +360,15 @@ int anygm_content_transform_validate(const AnygmContentTransforms *set,const cha
 
 int anygm_content_transform_run(const AnygmContentTransforms *set,const char *name,
                                  const void *input,size_t input_size,
+                                 const void *metadata,size_t metadata_size,
                                  uint8_t **output,size_t *output_size,
                                  char *error,size_t error_size){
   if(error && error_size) error[0]=0;
   if(output) *output=NULL;
   if(output_size) *output_size=0;
   if(!output || !output_size || (input_size && !input) ||
-     input_size>ANYGM_TRANSFORM_MAX_INPUT_BYTES)
+     input_size>ANYGM_TRANSFORM_MAX_INPUT_BYTES || (metadata_size && !metadata) ||
+     metadata_size>ANYGM_TRANSFORM_MAX_METADATA_BYTES)
     return fail(error,error_size,"invalid pipeline input");
   PipelineLeaf leaves[ANYGM_TRANSFORM_MAX_PIPELINE_STEPS];
   size_t count=0;
@@ -375,7 +380,8 @@ int anygm_content_transform_run(const AnygmContentTransforms *set,const char *na
     const TransformEntry *entry=leaves[i].program;
     uint8_t *next=NULL; size_t next_size=0;
     int ok=entry?anygm_content_transform_execute(entry->program,entry->program_size,
-      entry->parameters,entry->parameter_size,current,size,0,&next,&next_size,error,error_size):
+      entry->parameters,entry->parameter_size,current,size,metadata,metadata_size,0,
+      &next,&next_size,error,error_size):
       anygm_content_pipeline_builtin_run(leaves[i].builtin,current,size,&next,&next_size);
     free(owned);
     if(!ok){

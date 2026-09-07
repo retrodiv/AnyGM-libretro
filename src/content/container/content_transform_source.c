@@ -145,7 +145,7 @@ static void patch(SourceParser *p,size_t at){
   for(unsigned i=0;i<8;i++) p->code[at+4+i]=(uint8_t)(target>>(8u*i));
 }
 static unsigned reg_new(SourceParser *p){
-  for(unsigned i=2;i<32;i++) if(!(p->used&(UINT32_C(1)<<i))){ p->used|=UINT32_C(1)<<i; return i; }
+  for(unsigned i=3;i<32;i++) if(!(p->used&(UINT32_C(1)<<i))){ p->used|=UINT32_C(1)<<i; return i; }
   source_fail(p,"too many live variables or expression values"); return 2;
 }
 static void reg_free(SourceParser *p,unsigned reg){ p->used&=~(UINT32_C(1)<<reg); }
@@ -160,9 +160,9 @@ static void scope_end(SourceParser *p,unsigned count){
   while(p->local_count>count) reg_free(p,p->locals[--p->local_count].reg);
 }
 static int memory(SourceParser *p){
-  static const char *names[]={"input","work","parameters","scratch"};
-  for(int i=0;i<4;i++) if(take(p,names[i])) return i;
-  source_fail(p,"expected input, work, parameters or scratch"); return 0;
+  static const char *names[]={"input","work","parameters","scratch","metadata"};
+  for(int i=0;i<5;i++) if(take(p,names[i])) return i;
+  source_fail(p,"expected input, work, parameters, scratch or metadata"); return 0;
 }
 static unsigned expression(SourceParser *p,unsigned minimum);
 static unsigned unary(SourceParser *p){
@@ -233,6 +233,7 @@ static unsigned expression(SourceParser *p,unsigned minimum){
 }
 static int reserved(const char *name){
   static const char *words[]={"input","work","parameters","scratch","input_size","parameter_size",
+    "metadata","metadata_size",
     "buffer","uint64_t","if","else","while","for","break","continue","return","true","false",
     "read8","read32","read64","write8","write32","write64","slice","scratch_slice","reject"};
   for(size_t i=0;i<sizeof words/sizeof words[0];i++) if(!strcmp(words[i],name)) return 1;
@@ -251,7 +252,7 @@ static void simple(SourceParser *p,int declaration){
     emit(p,ANYGM_TRANSFORM_MOVE,reg,value,0,0); reg_free(p,value); return;
   }
   int found=local(p,p->token);
-  if(found<2){ source_fail(p,"assignment requires a mutable local variable"); return; }
+  if(found<3){ source_fail(p,"assignment requires a mutable local variable"); return; }
   reg=(unsigned)found; next(p);
   char op[64]; strcpy(op,p->token); next(p);
   if(!strcmp(op,"++") || !strcmp(op,"--")){
@@ -336,9 +337,10 @@ int anygm_content_transform_compile(const char *source,size_t size,size_t *consu
   *program=NULL; *parameters=NULL; *program_size=*parameter_size=*consumed=0;
   if(error && error_size) error[0]=0;
   SourceParser p={0}; p.source=p.at=p.start=source;
-  p.end=source+(size<SOURCE_LIMIT?size:SOURCE_LIMIT); p.used=3; p.error=error; p.error_size=error_size;
+  p.end=source+(size<SOURCE_LIMIT?size:SOURCE_LIMIT); p.used=7; p.error=error; p.error_size=error_size;
   strcpy(p.locals[0].name,"input_size"); p.locals[0].reg=0;
-  strcpy(p.locals[1].name,"parameter_size"); p.locals[1].reg=1; p.local_count=2;
+  strcpy(p.locals[1].name,"parameter_size"); p.locals[1].reg=1;
+  strcpy(p.locals[2].name,"metadata_size"); p.locals[2].reg=2; p.local_count=3;
   next(&p); expect(&p,"buffer");
   if(!ident_start((unsigned char)p.token[0]) || reserved(p.token)) source_fail(&p,"expected a function name");
   next(&p); expect(&p,"("); expect(&p,")"); expect(&p,"{");

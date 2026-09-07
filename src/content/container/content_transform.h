@@ -10,6 +10,7 @@
 #define ANYGM_TRANSFORM_MAX_CONFIG_BYTES 524288u
 #define ANYGM_TRANSFORM_MAX_PROGRAM_BYTES 12288u
 #define ANYGM_TRANSFORM_MAX_PARAMETER_BYTES 4096u
+#define ANYGM_TRANSFORM_MAX_METADATA_BYTES 256u
 #define ANYGM_TRANSFORM_MAX_PROGRAMS 16u
 #define ANYGM_TRANSFORM_MAX_PIPELINE_STEPS 16u
 #define ANYGM_TRANSFORM_SCRATCH_BYTES 65536u
@@ -60,16 +61,20 @@ int anygm_content_transform_validate(const AnygmContentTransforms *set,const cha
 void anygm_content_transforms_hash(const AnygmContentTransforms *set,uint8_t digest[32]);
 int anygm_content_transform_run(const AnygmContentTransforms *set,const char *name,
                                  const void *input,size_t input_size,
+                                 const void *metadata,size_t metadata_size,
                                  uint8_t **output,size_t *output_size,
                                  char *error,size_t error_size);
 
 /* Execute one program with no host capabilities. The optional lower step limit is
  * useful to callers with tighter scheduling requirements; zero selects the default.
- * Output is independently owned, and input/parameters are never modified. On every
+ * Metadata is bounded caller-supplied context, independent of program parameters.
+ * Every pipeline stage receives the same metadata; the interpreter assigns no meaning to it.
+ * Output is independently owned, and input/parameters/metadata are never modified. On every
  * failure output is NULL and output_size is zero. */
 int anygm_content_transform_execute(const void *program,size_t program_size,
                                      const void *parameters,size_t parameter_size,
-                                     const void *input,size_t input_size,uint64_t step_limit,
+                                     const void *input,size_t input_size,
+                                     const void *metadata,size_t metadata_size,uint64_t step_limit,
                                      uint8_t **output,size_t *output_size,
                                      char *error,size_t error_size);
 

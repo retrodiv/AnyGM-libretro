@@ -37,14 +37,14 @@ static void layers(void){
   assert(anygm_content_config_apply(config,digest,set,100,overrides,sizeof overrides,error,sizeof error));
   assert(!strcmp(overrides,"ostype|6\n"));
   uint8_t *output=NULL; size_t size=0;
-  assert(anygm_content_transform_run(set,"copy","abc",3,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(set,"copy","abc",3,NULL,0,&output,&size,error,sizeof error));
   assert(size==3 && !memcmp(output,"zbc",3)); free(output);
   assert(anygm_content_transforms_has(set,"keep"));
-  assert(anygm_content_transform_run(set,"input","abc",3,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(set,"input","abc",3,NULL,0,&output,&size,error,sizeof error));
   assert(size==3 && !memcmp(output,"zbc",3)); free(output);
-  assert(anygm_content_transform_run(copy,"copy","abc",3,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(copy,"copy","abc",3,NULL,0,&output,&size,error,sizeof error));
   assert(size==3 && !memcmp(output,"abc",3)); free(output);
-  assert(anygm_content_transform_run(copy,"input","abc",3,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(copy,"input","abc",3,NULL,0,&output,&size,error,sizeof error));
   assert(size==3 && !memcmp(output,"abc",3)); free(output);
   digest[0]^=1;
   assert(anygm_content_config_apply(config,digest,copy,100,overrides,sizeof overrides,error,sizeof error));

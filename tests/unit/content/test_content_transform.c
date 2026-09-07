@@ -28,7 +28,7 @@ static int execute(Program *program,uint64_t limit,uint8_t **output,size_t *size
   memcpy(mutable_input,input,sizeof input);
   char error[128];
   int ok=anygm_content_transform_execute(program->bytes,program->size,
-    parameter,sizeof parameter,mutable_input,sizeof mutable_input,limit,output,size,error,sizeof error);
+    parameter,sizeof parameter,mutable_input,sizeof mutable_input,NULL,0,limit,output,size,error,sizeof error);
   assert(!memcmp(mutable_input,input,sizeof input));
   if(!ok){ assert(error[0]); assert(!*output && !*size); }
   return ok;
@@ -100,9 +100,9 @@ static void failures(void){
   uint8_t *output=NULL; size_t size=0; char error[128];
   p.size=0; return_all(&p);
   assert(!anygm_content_transform_execute(p.bytes,p.size,NULL,0,NULL,
-    (size_t)ANYGM_TRANSFORM_MAX_INPUT_BYTES+1u,0,&output,&size,error,sizeof error));
+    (size_t)ANYGM_TRANSFORM_MAX_INPUT_BYTES+1u,NULL,0,0,&output,&size,error,sizeof error));
   assert(!output && !size);
-  assert(anygm_content_transform_execute(p.bytes,p.size,NULL,0,NULL,0,0,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_execute(p.bytes,p.size,NULL,0,NULL,0,NULL,0,0,&output,&size,error,sizeof error));
   assert(output && !size); free(output);
 }
 static void configuration(void){
@@ -115,29 +115,29 @@ static void configuration(void){
   AnygmContentTransforms *set=anygm_content_transforms_create(),*other=anygm_content_transforms_create();
   assert(set && other);
   char error[128]; uint8_t before[32],after[32],*output=NULL; size_t size=0;
-  assert(!anygm_content_transform_run(set,"identity","abc",3,&output,&size,error,sizeof error));
+  assert(!anygm_content_transform_run(set,"identity","abc",3,NULL,0,&output,&size,error,sizeof error));
   assert(!output && !size && strstr(error,"missing user program"));
   assert(anygm_content_transforms_parse(set,identity,strlen(identity),error,sizeof error));
   assert(anygm_content_transforms_has(set,"identity")); anygm_content_transforms_hash(set,before);
   assert(!anygm_content_transforms_parse(set,duplicate,strlen(duplicate),error,sizeof error));
   assert(!anygm_content_transforms_parse(set,malformed,strlen(malformed),error,sizeof error));
   anygm_content_transforms_hash(set,after); assert(!memcmp(before,after,32));
-  assert(anygm_content_transform_run(set,"identity","abc",3,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(set,"identity","abc",3,NULL,0,&output,&size,error,sizeof error));
   assert(size==3 && !memcmp(output,"abc",3)); free(output);
   assert(anygm_content_transforms_parse(set,reject_program,strlen(reject_program),error,sizeof error));
   anygm_content_transforms_hash(set,after); assert(memcmp(before,after,32));
-  assert(!anygm_content_transform_run(set,"identity","abc",3,&output,&size,error,sizeof error));
+  assert(!anygm_content_transform_run(set,"identity","abc",3,NULL,0,&output,&size,error,sizeof error));
   anygm_content_transforms_destroy(set); set=anygm_content_transforms_create();
   assert(anygm_content_transforms_parse_layer(set,identity,strlen(identity),2,error,sizeof error));
   assert(anygm_content_transforms_parse_layer(set,reject_program,strlen(reject_program),1,error,sizeof error));
-  assert(anygm_content_transform_run(set,"identity","abc",3,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(set,"identity","abc",3,NULL,0,&output,&size,error,sizeof error));
   assert(size==3 && !memcmp(output,"abc",3)); free(output);
   assert(anygm_content_transforms_parse_layer(set,reject_program,strlen(reject_program),2,error,sizeof error));
-  assert(!anygm_content_transform_run(set,"identity","abc",3,&output,&size,error,sizeof error));
+  assert(!anygm_content_transform_run(set,"identity","abc",3,NULL,0,&output,&size,error,sizeof error));
   anygm_content_transforms_destroy(set); set=anygm_content_transforms_create();
   const char bom_cr[]="\xef\xbb\xbf[transforms]\ridentity=buffer copy() { return slice(0,input_size); }\r";
   assert(anygm_content_transforms_parse(set,bom_cr,strlen(bom_cr),error,sizeof error));
-  assert(anygm_content_transform_run(set,"identity","abc",3,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(set,"identity","abc",3,NULL,0,&output,&size,error,sizeof error));
   assert(size==3 && !memcmp(output,"abc",3)); free(output);
   anygm_content_transforms_destroy(set); set=anygm_content_transforms_create();
   assert(set && anygm_content_transforms_parse(set,ordered,strlen(ordered),error,sizeof error));
@@ -172,7 +172,7 @@ static void source_programs(void){
   const uint8_t expected[]={8,28,255,26,'A',0,'\\','"'};
   size_t size=0; char error[256];
   assert(set && anygm_content_transforms_parse(set,source,strlen(source),error,sizeof error));
-  assert(anygm_content_transform_run(set,"edit",input,sizeof input,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(set,"edit",input,sizeof input,NULL,0,&output,&size,error,sizeof error));
   assert(size==sizeof expected && !memcmp(output,expected,size)); free(output);
   assert(input[0]==1 && input[7]==8);
   uint8_t before[32],after[32]; anygm_content_transforms_hash(set,before);
@@ -208,7 +208,7 @@ static void source_programs(void){
   for(size_t i=0;i<sizeof runtime_failures/sizeof runtime_failures[0];i++){
     char config[256]; snprintf(config,sizeof config,"[transforms]\nbad=buffer bad() { %s }\n",runtime_failures[i]);
     assert(anygm_content_transforms_parse(set,config,strlen(config),error,sizeof error));
-    assert(!anygm_content_transform_run(set,"bad",input,sizeof input,&output,&size,error,sizeof error));
+    assert(!anygm_content_transform_run(set,"bad",input,sizeof input,NULL,0,&output,&size,error,sizeof error));
     assert(!output && !size && input[0]==1 && input[7]==8);
   }
   const char diagnostic[]="[transforms]\nbad=buffer bad() {\n  uint64_t x = missing;\n}\n";
@@ -280,25 +280,25 @@ static void pipelines(void){
   uint8_t *wrapped=malloc(compressed.size+4); assert(wrapped);
   memcpy(wrapped,"WRAP",4); memcpy(wrapped+4,compressed.data,compressed.size);
   uint8_t *output=NULL; size_t size=0;
-  assert(anygm_content_transform_run(copy,"input",wrapped,compressed.size+4,
+  assert(anygm_content_transform_run(copy,"input",wrapped,compressed.size+4,NULL,0,
     &output,&size,error,sizeof error));
   assert(size==sizeof expected && !memcmp(output,expected,size)); free(output);
   assert(!memcmp(wrapped,"WRAP",4) && !memcmp(wrapped+4,compressed.data,compressed.size));
   wrapped[compressed.size+3u]^=1u;
-  assert(!anygm_content_transform_run(copy,"input",wrapped,compressed.size+4,
+  assert(!anygm_content_transform_run(copy,"input",wrapped,compressed.size+4,NULL,0,
     &output,&size,error,sizeof error));
   assert(!output && !size); wrapped[compressed.size+3u]^=1u;
-  assert(anygm_content_transform_run(copy,"builtin.deflate:64",compressed.data+2u,compressed.size-6u,
+  assert(anygm_content_transform_run(copy,"builtin.deflate:64",compressed.data+2u,compressed.size-6u,NULL,0,
     &output,&size,error,sizeof error));
   assert(size==sizeof plain && !memcmp(output,plain,size)); free(output);
   const char small[]="[pipelines]\ndecompress=builtin.zlib:4\n";
   assert(anygm_content_transforms_parse_layer(set,small,sizeof small-1,2,error,sizeof error));
   anygm_content_transforms_hash(set,after); assert(memcmp(before,after,32));
-  assert(!anygm_content_transform_run(set,"input",wrapped,compressed.size+4,
+  assert(!anygm_content_transform_run(set,"input",wrapped,compressed.size+4,NULL,0,
     &output,&size,error,sizeof error));
   assert(!output && !size && error[0]);
   assert(anygm_content_transforms_parse_layer(set,config,sizeof config-1,1,error,sizeof error));
-  assert(!anygm_content_transform_run(set,"input",wrapped,compressed.size+4,
+  assert(!anygm_content_transform_run(set,"input",wrapped,compressed.size+4,NULL,0,
     &output,&size,error,sizeof error));
   assert(!output && !size);
   free(wrapped); gml_media_buffer_release(&compressed);
@@ -320,22 +320,22 @@ static void pipelines(void){
   const char cycle[]="[pipelines]\nx=y\ny=x\n";
   assert(anygm_content_transforms_parse(set,cycle,sizeof cycle-1,error,sizeof error));
   assert(!anygm_content_transform_validate(set,"x",error,sizeof error));
-  assert(!anygm_content_transform_run(set,"x",plain,sizeof plain,&output,&size,error,sizeof error));
+  assert(!anygm_content_transform_run(set,"x",plain,sizeof plain,NULL,0,&output,&size,error,sizeof error));
   assert(!output && !size);
   const char excess[]="[pipelines]\nx=patch|patch|patch|patch|patch|patch|patch|patch|patch\n"
     "y=x|x\n";
   assert(anygm_content_transforms_parse(set,excess,sizeof excess-1,error,sizeof error));
   assert(!anygm_content_transform_validate(set,"y",error,sizeof error));
-  assert(!anygm_content_transform_run(set,"y",plain,sizeof plain,&output,&size,error,sizeof error));
+  assert(!anygm_content_transform_run(set,"y",plain,sizeof plain,NULL,0,&output,&size,error,sizeof error));
   assert(!output && !size);
   const char missing[]="[pipelines]\nx=patch|missing\n";
   assert(anygm_content_transforms_parse(set,missing,sizeof missing-1,error,sizeof error));
   assert(!anygm_content_transform_validate(set,"x",error,sizeof error));
-  assert(!anygm_content_transform_run(set,"x",plain,sizeof plain,&output,&size,error,sizeof error));
+  assert(!anygm_content_transform_run(set,"x",plain,sizeof plain,NULL,0,&output,&size,error,sizeof error));
   assert(!output && !size);
-  assert(!anygm_content_transform_run(set,"builtin.byteswap16",plain,3,&output,&size,error,sizeof error));
+  assert(!anygm_content_transform_run(set,"builtin.byteswap16",plain,3,NULL,0,&output,&size,error,sizeof error));
   assert(!output && !size);
-  assert(anygm_content_transform_run(set,"builtin.byteswap32",plain,sizeof plain,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(set,"builtin.byteswap32",plain,sizeof plain,NULL,0,&output,&size,error,sizeof error));
   assert(size==sizeof plain && output[4]==3 && output[5]==4 && output[6]==1 && output[7]==2);
   free(output);
   anygm_content_transforms_destroy(set); anygm_content_transforms_destroy(copy);
@@ -367,7 +367,7 @@ static void distributed_adapters(void){
   input[end+8]=input[end+10]=1;
   input[end+12]=(uint8_t)central_size; input[end+16]=(uint8_t)local_size;
   uint8_t *output=NULL; size_t size=0;
-  assert(anygm_content_transform_run(set,"embedded_zip",input,end+22,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(set,"embedded_zip",input,end+22,NULL,0,&output,&size,error,sizeof error));
   assert(size==end+22-prefix && !memcmp(output,input+prefix,size)); free(output);
   assert(!memcmp(input,"WRAP",4));
   /* Changing the locator, directory framing or terminal comment length must not
@@ -375,16 +375,16 @@ static void distributed_adapters(void){
   const size_t corruptions[]={end+4,end+8,end+10,end+12,end+16,end+20,prefix+local_size,prefix};
   for(size_t i=0;i<sizeof corruptions/sizeof corruptions[0];i++){
     input[corruptions[i]]^=128;
-    assert(!anygm_content_transform_run(set,"embedded_zip",input,end+22,&output,&size,error,sizeof error));
+    assert(!anygm_content_transform_run(set,"embedded_zip",input,end+22,NULL,0,&output,&size,error,sizeof error));
     assert(!output && !size); input[corruptions[i]]^=128;
   }
-  assert(anygm_content_transform_run(set,"little_endian_words","abcd",4,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(set,"little_endian_words","abcd",4,NULL,0,&output,&size,error,sizeof error));
   assert(size==4 && !memcmp(output,"dcba",4)); free(output);
   GmlMediaBuffer compressed={0};
   assert(gml_deflate_encode_zlib((const uint8_t*)"payload",7,&compressed));
   assert(compressed.size+4<=sizeof input);
   memset(input,0,4); input[0]=4; memcpy(input+4,compressed.data,compressed.size);
-  assert(anygm_content_transform_run(set,"sized_zlib",input,compressed.size+4,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(set,"sized_zlib",input,compressed.size+4,NULL,0,&output,&size,error,sizeof error));
   assert(size==7 && !memcmp(output,"payload",7)); free(output);
   gml_media_buffer_release(&compressed); anygm_content_transforms_destroy(set);
 }
@@ -396,11 +396,11 @@ static void scratch_results(void){
   AnygmContentTransforms *set=anygm_content_transforms_create();
   uint8_t *output=NULL; size_t size=0; char error[256];
   assert(set && anygm_content_transforms_parse(set,config,sizeof config-1,error,sizeof error));
-  assert(anygm_content_transform_run(set,"expand",NULL,0,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(set,"expand",NULL,0,NULL,0,&output,&size,error,sizeof error));
   assert(size==4 && !memcmp(output,"ABCD",4)); free(output);
-  assert(anygm_content_transform_run(set,"empty",NULL,0,&output,&size,error,sizeof error));
+  assert(anygm_content_transform_run(set,"empty",NULL,0,NULL,0,&output,&size,error,sizeof error));
   assert(output && !size); free(output);
-  assert(!anygm_content_transform_run(set,"bad",NULL,0,&output,&size,error,sizeof error));
+  assert(!anygm_content_transform_run(set,"bad",NULL,0,NULL,0,&output,&size,error,sizeof error));
   assert(!output && !size);
   anygm_content_transforms_destroy(set);
   Program p={0}; emit(&p,ANYGM_TRANSFORM_RETURN,2,31,0,0); reject(&p);
@@ -508,10 +508,73 @@ static void candidate_sources(void){
   anygm_content_transforms_destroy(set);
 }
 
+static void caller_metadata(void){
+  uint8_t metadata[ANYGM_TRANSFORM_MAX_METADATA_BYTES]={2,'X','Y'};
+  metadata[sizeof metadata-1]=7;
+  uint8_t before[sizeof metadata]; memcpy(before,metadata,sizeof before);
+  char error[256]; uint8_t *output=NULL; size_t size=0;
+  const char input[]="abcd";
+  const char config[]="[transforms]\n"
+    "first=buffer first(){if(metadata_size!=256 || read8(metadata,255)!=7)reject();"
+    "write8(work,0,read8(metadata,1));return slice(read8(metadata,0),2);}\n"
+    "last=buffer last(){if(metadata_size!=256 || input_size!=2)reject();"
+    "write8(work,1,read8(metadata,2));return slice(0,input_size);}\n"
+    "empty=buffer empty(){if(metadata_size)reject();return slice(0,input_size);}\n"
+    "bounds=buffer bounds(){write8(work,0,read8(metadata,metadata_size));return slice(0,input_size);}\n"
+    "[pipelines]\ncontext=first|builtin.byteswap16|last\n";
+  AnygmContentTransforms *set=anygm_content_transforms_create(); assert(set);
+  assert(anygm_content_transforms_parse(set,config,sizeof config-1,error,sizeof error));
+  assert(anygm_content_transform_run(set,"context",input,4,metadata,sizeof metadata,
+    &output,&size,error,sizeof error) && size==2 && !memcmp(output,"dY",2));
+  free(output);
+  assert(!memcmp(metadata,before,sizeof metadata) && !memcmp(input,"abcd",5));
+  assert(anygm_content_transform_run(set,"empty",input,4,NULL,0,&output,&size,error,sizeof error));
+  free(output);
+  assert(!anygm_content_transform_run(set,"bounds",input,4,metadata,sizeof metadata,
+    &output,&size,error,sizeof error) && !output && !size);
+  for(unsigned direct=0;direct<2;direct++){
+    Program p={0}; return_all(&p);
+    for(unsigned invalid=0;invalid<2;invalid++){
+      const void *data=invalid?metadata:NULL;
+      size_t length=invalid?sizeof metadata+1u:1u;
+      int ok=direct?anygm_content_transform_execute(p.bytes,p.size,NULL,0,input,4,data,length,0,
+        &output,&size,error,sizeof error):
+        anygm_content_transform_run(set,"builtin.byteswap16",input,4,data,length,
+          &output,&size,error,sizeof error);
+      assert(!ok && !output && !size);
+    }
+  }
+  for(unsigned width=0;width<3;width++){
+    unsigned bytes=width==0?1u:width==1?4u:8u;
+    Program p={0};
+    emit(&p,ANYGM_TRANSFORM_LOAD8+width,3,31,4,sizeof metadata-bytes);
+    emit(&p,ANYGM_TRANSFORM_STORE8+width,3,31,1,0); return_all(&p);
+    assert(anygm_content_transform_execute(p.bytes,p.size,NULL,0,before,8,metadata,sizeof metadata,0,
+      &output,&size,error,sizeof error));
+    assert(size==8 && !memcmp(output,metadata+sizeof metadata-bytes,bytes)); free(output);
+    p.bytes[4]=(uint8_t)(sizeof metadata-bytes+1u);
+    p.bytes[5]=(uint8_t)((sizeof metadata-bytes+1u)>>8);
+    assert(!anygm_content_transform_execute(p.bytes,p.size,NULL,0,before,8,metadata,sizeof metadata,0,
+      &output,&size,error,sizeof error) && !output && !size);
+    p.size=0; emit(&p,ANYGM_TRANSFORM_STORE8+width,0,31,4,0); return_all(&p);
+    assert(!anygm_content_transform_execute(p.bytes,p.size,NULL,0,before,8,metadata,sizeof metadata,0,
+      &output,&size,error,sizeof error) && !output && !size);
+  }
+  assert(!memcmp(metadata,before,sizeof metadata));
+  const char *invalid[]={"write8(metadata,0,1);", "write32(metadata,0,1);",
+    "write64(metadata,0,1);", "metadata_size=0;", "uint64_t metadata=0;",
+    "uint64_t metadata_size=0;"};
+  for(size_t i=0;i<sizeof invalid/sizeof invalid[0];i++){
+    char text[256]; snprintf(text,sizeof text,"[transforms]\nx=buffer x(){%s return slice(0,0);}\n",invalid[i]);
+    assert(!anygm_content_transforms_parse(set,text,strlen(text),error,sizeof error));
+  }
+  anygm_content_transforms_destroy(set);
+}
+
 int main(void){
   arithmetic(); buffers_and_branches(); failures(); configuration(); source_programs(); source_limits();
   pipelines();
   distributed_adapters();
-  scratch_results(); candidate_sources();
+  scratch_results(); candidate_sources(); caller_metadata();
   puts("Content transform isolation, validation, and configuration: ok"); return 0;
 }

@@ -35,12 +35,12 @@ int anygm_content_source_prepare(const AnygmContentTransforms *transforms,
     return source_error(error,error_size,"invalid arguments");
   if(!anygm_content_source_configured(transforms)) return 1;
   if(!anygm_content_transforms_has(transforms,"input.probe"))
-    return anygm_content_transform_run(transforms,"input",data,size,
+    return anygm_content_transform_run(transforms,"input",data,size,NULL,0,
       output,output_size,error,error_size);
   if(!validate) return source_error(error,error_size,"candidate selection requires a validator");
   uint8_t *table=NULL,*selected=NULL;
   size_t table_size=0,selected_size=0;
-  if(!anygm_content_transform_run(transforms,"input.probe",data,size,
+  if(!anygm_content_transform_run(transforms,"input.probe",data,size,NULL,0,
        &table,&table_size,error,error_size)) return 0;
   const size_t stride=ANYGM_SOURCE_CANDIDATE_BYTES;
   if(table_size%stride || table_size/stride>ANYGM_SOURCE_MAX_CANDIDATES){
@@ -81,7 +81,7 @@ int anygm_content_source_prepare(const AnygmContentTransforms *transforms,
     uint8_t *candidate=NULL; size_t candidate_size=0;
     const uint8_t *start=data?(const uint8_t*)data+offset:NULL;
     char detail[256]={0};
-    if(!anygm_content_transform_run(transforms,operation,start,length,
+    if(!anygm_content_transform_run(transforms,operation,start,length,NULL,0,
          &candidate,&candidate_size,detail,sizeof detail)){
       snprintf(last_error,sizeof last_error,"%s",detail);
       continue;

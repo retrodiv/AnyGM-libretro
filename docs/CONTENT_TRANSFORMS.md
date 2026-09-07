@@ -237,14 +237,21 @@ Assignments support `= += -= *= /= %= &= |= ^=`; statement updates also support 
 and `name--`. In a `for`, initialization and update each accept one assignment or update;
 initialization may instead declare a local. Empty clauses are allowed.
 
-`input_size` and `parameter_size` are read-only byte counts. `read8`, `read32`, and `read64`
+`input_size`, `parameter_size` and `metadata_size` are read-only byte counts. `read8`, `read32`, and `read64`
 take a memory name and byte offset; `write8`, `write32`, and `write64` also take a value.
 Multi-byte accesses are little-endian and need no alignment. Memory names are `input`
-(read-only), `work` (an input-sized private copy), `parameters` (read-only), and `scratch`
-(zero-initialized, 64 KiB). Writes store the low bits of the value. `slice` returns a byte
+(read-only), `work` (an input-sized private copy), `parameters` (read-only), `scratch`
+(zero-initialized, 64 KiB), and `metadata` (read-only caller context, at most 256 bytes).
+Writes store the low bits of the value. `slice` returns a byte
 range from work; `scratch_slice` returns a range from scratch, allowing small constructed results
 larger than the original input. Either transfers ownership only on success and frees the other
 private buffer. Slice bounds apply to the selected buffer, including zero-length slices at its end.
+
+Metadata is separate from configured parameters and from the bytes being transformed. The caller
+defines its layout; the interpreter assigns it no format or algorithm meaning. Every pipeline
+stage receives the same metadata even after its input changes. Absent metadata has size zero;
+reading it rejects normally. Source preparation currently supplies no metadata. This is a bounded
+data channel, not access to parser objects, host state, filenames, pointers or native callbacks.
 
 `parameters("...");` is optional and allowed only before executable statements in the
 function. Strings and character literals accept printable ASCII and the escapes `\n`, `\r`,
@@ -255,7 +262,7 @@ allocation, native functions and host capabilities are unavailable.
 
 Limits are 512 KiB per configuration, 16 programs, 64 KiB of source per function, 12 KiB of
 compiled instructions, and 4 KiB of parameters per program. The compiler bounds syntax nesting
-to 64 levels and `break` sites to 128 per loop. Its 32 registers hold the two read-only sizes,
+to 64 levels and `break` sites to 128 per loop. Its 32 registers hold the three read-only sizes,
 live locals, and expression temporaries; overly complex expressions or too many live variables
 are rejected. Compilation validates all source, including unreachable code, before selecting
 an entry. Diagnostics identify the transform key and line/column relative to its function value.
@@ -268,7 +275,7 @@ execution contract remain available for synthetic low-level validation.
 
 Each instruction is exactly twelve bytes: `opcode, d, a, b, immediate[8]`. The immediate is
 unsigned little-endian. There are 32 unsigned 64-bit registers. Initially `r0` is the input
-length, `r1` is the parameter length, and all other registers are zero. Arithmetic wraps at
+length, `r1` is the parameter length, `r2` is the metadata length, and all other registers are zero. Arithmetic wraps at
 64 bits; programs requiring narrower words must mask explicitly. Comparisons are unsigned.
 
 | Opcode | Operation |
@@ -284,9 +291,10 @@ length, `r1` is the parameter length, and all other registers are zero. Arithmet
 | 23–24 | Jump to instruction `immediate` when `r[a]` is zero/nonzero; `d=b=0` |
 
 Immediates must be zero outside constant, memory, and jump instructions. All register fields
-must be below 32 even when unused. The four memory spaces are input (0, read-only), work (1,
-input-sized private copy), parameters (2, read-only), and zero-initialized 64 KiB scratch (3).
-Only work and scratch permit stores. Output must fit entirely inside work; no instruction
+must be below 32 even when unused. The five memory spaces are input (0, read-only), work (1,
+input-sized private copy), parameters (2, read-only), zero-initialized 64 KiB scratch (3),
+and metadata (4, read-only, at most 256 bytes).
+Only work and scratch permit stores. Output must fit entirely inside the selected result buffer; no instruction
 grows a buffer. Returned bytes are owned by the caller.
 
 ## Rejection and execution bounds

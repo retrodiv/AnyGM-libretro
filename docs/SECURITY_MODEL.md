@@ -52,6 +52,7 @@ ZIP-compatible and embedded-Cabinet routing enforce these compile-time limits:
 | One transform source function | 64 KiB |
 | Transform syntax nesting | 64 levels |
 | Source-candidate records | 64 records, 80 bytes each |
+| Transform caller metadata | 256 read-only bytes per execution |
 | Embedded-Cabinet cache marker serialization budget | 20 MiB |
 
 External content transforms compile bounded C-like source into buffer programs with no host capabilities. Their format,
