@@ -40,7 +40,8 @@ static int source_fail(SourceParser *p,const char *message){
       if(*s=='\r' || (*s=='\n' && (s==p->source || s[-1]!='\r'))){ line++; column=1; }
       else if(*s!='\n') column++;
     }
-    snprintf(p->error,p->error_size,"line %zu, column %zu: %s",line,column,message);
+    snprintf(p->error,p->error_size,"line %u, column %u: %s",
+             (unsigned)line,(unsigned)column,message);
   }
   p->failed=1; return 0;
 }
