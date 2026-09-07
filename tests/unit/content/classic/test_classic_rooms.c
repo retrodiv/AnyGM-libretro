@@ -92,7 +92,7 @@ static int expect_sparse_room_order(void){
   memset(&manifest,0,sizeof(manifest));
   fixture_project_clear(&project);
   char err[256]={0};
-  int ok=gmlc_classic_manifest(test_transforms(),encoded,encoded_size,&manifest,err,sizeof(err));
+  int ok=gmlc_classic_manifest(NULL,encoded,encoded_size,&manifest,err,sizeof(err));
   if(!ok) fprintf(stderr,"sparse room-order manifest failed: %s\n",err);
   if(ok) ok=manifest.existing[GMLC_CLASSIC_ROOM]==2 && manifest.room_order_count==2 &&
             manifest.room_order[0]==6 && manifest.room_order[1]==2 &&

@@ -2,6 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "classic_test_fixture.h"
+#include "content_transform.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,7 +52,6 @@ static Fixture extension_fixture(const char *package_name,
 
   fixture_u32(&encoded,GMLC_CLASSIC_MAGIC);
   fixture_u32(&encoded,701);
-  fixture_u32(&encoded,0); /* Synthetic prefix ignored by the test slice program. */
   if(encoded.size+plain.size>sizeof(encoded.data)) abort();
   memcpy(encoded.data+encoded.size,plain.data,plain.size);
   encoded.size+=plain.size;
@@ -66,7 +66,7 @@ static int write_fixture_file(const char *path, const Fixture *fixture, size_t l
   return ok;
 }
 
-static int expect_extension_alias_import(void){
+static int check_extension_alias_import(const AnygmContentTransforms *transforms){
   AnygmHostServices host={0};
   host.struct_size=sizeof host;
   host.abi_version=ANYGM_HOST_SERVICES_VERSION;
@@ -160,7 +160,7 @@ static int expect_extension_alias_import(void){
   char err[256]={0};
   int imported=files_ok && project.scripts && project.scripts[0].name && project.scripts[1].name &&
     project.constants && project.constants[0].name && project.constants[0].expression &&
-    gmlc_classic_import_extension_aliases(test_transforms(),&manifest,&project,dir,err,sizeof(err));
+    gmlc_classic_import_extension_aliases(transforms,&manifest,&project,dir,err,sizeof(err));
   int found_action=0, found_ambiguous=0, found_unrelated=0, found_broken=0;
   int found_embedded=0, embedded_script=0, found_extension_constant=0;
   int found_package_binary=0,found_direct_binary=0,found_ordinal_placeholder=0;
@@ -222,9 +222,24 @@ static int expect_extension_alias_import(void){
   return ok;
 }
 
+static int expect_extension_alias_import(void){ return check_extension_alias_import(NULL); }
+
+static int expect_extension_record_context(void){
+  const char config[]="[transforms]\nrecord=buffer package(){"
+    "if(metadata_size!=16 || read32(metadata,0)!=0x43534c43 || read32(metadata,4)!=3 ||"
+    "read32(metadata,8)!=701 || read32(metadata,12))reject();return slice(0,input_size);}\n";
+  AnygmContentTransforms *set=anygm_content_transforms_create(); char error[256]={0};
+  int ok=set && anygm_content_transforms_parse(set,config,sizeof config-1,error,sizeof error) &&
+    check_extension_alias_import(set);
+  anygm_content_transforms_destroy(set);
+  if(!ok) fprintf(stderr,"extension record context: %s\n",error);
+  return ok;
+}
+
 AnygmTestGroup classic_test_extensions_group(void){
   static const AnygmTestCase cases[]={
     {"alias-import",expect_extension_alias_import},
+    {"record-context",expect_extension_record_context},
   };
   const AnygmTestGroup group={
     "classic.extensions",cases,sizeof cases/sizeof cases[0]

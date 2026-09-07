@@ -291,15 +291,6 @@ static int prepare_test_directory(void){
 
 int main(int argc, char **argv){
   classic_fixture_host_init();
-  if(argc==3 && !strcmp(argv[1],"--write-transform-fixture")){
-    const char *declarations=test_transform_declarations();
-    size_t size=strlen(declarations);
-    FILE *file=fopen(argv[2],"wb");
-    int ok=file && fwrite(declarations,1,size,file)==size;
-    if(file && fclose(file)!=0) ok=0;
-    if(!ok) fprintf(stderr,"cannot write synthetic transform fixture: %s\n",argv[2]);
-    return ok?0:1;
-  }
   if(argc==3 && !strcmp(argv[1],"--write-legacy-exe-fixture")){
     Fixture executable;
     if(!build_legacy_executable_fixture(&executable)) return 1;
@@ -395,7 +386,7 @@ int main(int argc, char **argv){
     GmlcClassicHeader h;
     GmlcClassicManifest manifest;
     char err[512];
-    if(!gmlc_classic_manifest_file(test_transforms(),classic_fixture_host(),argv[i],
+    if(!gmlc_classic_manifest_file(NULL,classic_fixture_host(),argv[i],
                                    &manifest,err,sizeof(err))){
       fprintf(stderr, "%s: %s\n", argv[i], err);
       ++failed;

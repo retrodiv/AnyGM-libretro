@@ -1667,10 +1667,10 @@ static int embedded_executable_cases(const AnygmHostServices *services,const cha
    * established Classic importer must still produce the selected FORM package. */
   Fixture classic={{0},0};
   char config_path[600];
-  const char *declarations=test_transform_declarations();
+  const char *declarations="[transforms]\n";
   if(snprintf(config_path,sizeof config_path,"%s/anygm.ini",root)>=(int)sizeof config_path ||
      !write_file(config_path,declarations,strlen(declarations)))
-    return fail("could not write the synthetic transform configuration");
+    return fail("could not write the empty configuration");
   router.system_directory=root;
   uint8_t *cabinet=NULL;
   size_t cabinet_size=0;

@@ -643,12 +643,19 @@ static int classic_extension_parse(const AnygmContentTransforms *transforms,
                                    const GmlcClassicManifest *classic,GmlcProject *project,
                                    const uint8_t *file_data,size_t file_size,
                                    char *err,size_t errcap){
-  if(file_size<12 || import_u32_at(file_data)!=GMLC_CLASSIC_MAGIC) return 1;
+  if(file_size<8 || import_u32_at(file_data)!=GMLC_CLASSIC_MAGIC) return 1;
   uint32_t version=import_u32_at(file_data+4);
   if(version<700 || version>GMLC_CLASSIC_GM81) return 1;
   uint8_t *plain=NULL; size_t plain_size=0;
-  if(!(0 /* Revision-selected adapter omitted from unpublished history. */)) return -2;
-  int result=classic_extension_parse_plain(classic,project,plain,plain_size);
+  if(!gmlc_classic_prepare_record(transforms,GMLC_CLASSIC_RECORD_PACKAGE,version,file_data,file_size,
+                                   &plain,&plain_size,err,errcap)) return -2;
+  if(plain_size<8u || import_u32_at(plain)!=GMLC_CLASSIC_MAGIC ||
+     import_u32_at(plain+4u)<700 || import_u32_at(plain+4u)>GMLC_CLASSIC_GM81){
+    free(plain);
+    if(err && errcap) snprintf(err,errcap,"classic package: invalid normalized header");
+    return -2;
+  }
+  int result=classic_extension_parse_plain(classic,project,plain+8u,plain_size-8u);
   free(plain);
   return result;
 }

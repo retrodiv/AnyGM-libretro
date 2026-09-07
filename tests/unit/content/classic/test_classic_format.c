@@ -115,7 +115,7 @@ static int expect_inventory(unsigned version){
   Fixture f = inventory_fixture(version);
   GmlcClassicInventory in;
   char err[128];
-  if(!gmlc_classic_inventory(test_transforms(),f.data, f.size, &in, err, sizeof(err))){
+  if(!gmlc_classic_inventory(NULL,f.data, f.size, &in, err, sizeof(err))){
     fprintf(stderr, "inventory %u failed: %s\n", version, err);
     return 0;
   }
@@ -132,7 +132,7 @@ static int expect_manifest(void){
   Fixture f = manifest_fixture(800);
   GmlcClassicManifest manifest;
   char err[128];
-  if(!gmlc_classic_manifest(test_transforms(),f.data, f.size, &manifest, err, sizeof(err))){
+  if(!gmlc_classic_manifest(NULL,f.data, f.size, &manifest, err, sizeof(err))){
     fprintf(stderr, "manifest failed: %s\n", err);
     return 0;
   }
@@ -190,7 +190,7 @@ static int expect_manifest_810(void){
   Fixture f = manifest_fixture(810);
   GmlcClassicManifest manifest;
   char err[128];
-  if(!gmlc_classic_manifest(test_transforms(),f.data, f.size, &manifest, err, sizeof(err))){
+  if(!gmlc_classic_manifest(NULL,f.data, f.size, &manifest, err, sizeof(err))){
     fprintf(stderr, "manifest 810 failed: %s\n", err);
     return 0;
   }
@@ -203,19 +203,19 @@ static int expect_manifest_810(void){
 static int expect_gm53_manifest(void){
   Fixture plain=legacy_fixture(530),executable={{0},0};
   GmlcClassicManifest manifest={0}; char err[256]={0};
-  int ok=gmlc_classic_manifest(test_transforms(),plain.data,plain.size,&manifest,err,sizeof(err));
+  int ok=gmlc_classic_manifest(NULL,plain.data,plain.size,&manifest,err,sizeof(err));
   if(ok) ok=manifest.inventory.header.version==GMLC_CLASSIC_GM53 &&
              manifest.inventory.header.game_id==42 &&
              manifest.inventory.settings_version==530 &&
              manifest.inventory.settings.scaling==100 && !manifest.executable_layout;
   gmlc_classic_manifest_free(&manifest);
   if(ok) ok=build_gm53_executable_fixture(&executable) &&
-            gmlc_classic_manifest(test_transforms(),executable.data,executable.size,&manifest,err,sizeof(err));
+            gmlc_classic_manifest(NULL,executable.data,executable.size,&manifest,err,sizeof(err));
   if(ok) ok=manifest.inventory.header.version==GMLC_CLASSIC_GM53 &&
              manifest.inventory.header.game_id==42 && !manifest.executable_layout;
   gmlc_classic_manifest_free(&manifest);
   GmlcClassicBlob extracted={0}; GmlcClassicVersion version=GMLC_CLASSIC_UNKNOWN;
-  if(ok) ok=gmlc_classic_embedded_project(test_transforms(),executable.data,executable.size,&extracted,&version,
+  if(ok) ok=gmlc_classic_embedded_project(NULL,executable.data,executable.size,&extracted,&version,
                                            err,sizeof(err)) &&
             version==GMLC_CLASSIC_GM53 && extracted.size==plain.size &&
             !memcmp(extracted.data,plain.data,plain.size);
@@ -243,7 +243,7 @@ static int expect_embedded_project_rejects_compiled_layout(void){
   Fixture executable={{0},0}; GmlcClassicBlob extracted={(uint8_t*)1,1};
   GmlcClassicVersion version=GMLC_CLASSIC_GM53; char err[256]={0};
   int ok=build_gm6_executable_fixture(&executable) &&
-    !gmlc_classic_embedded_project(test_transforms(),executable.data,executable.size,&extracted,&version,
+    !gmlc_classic_embedded_project(NULL,executable.data,executable.size,&extracted,&version,
                                    err,sizeof(err)) &&
     !extracted.data && !extracted.size && version==GMLC_CLASSIC_UNKNOWN && err[0];
   if(!ok) fprintf(stderr,"compiled-layout extraction was not rejected: %s\n",err);
@@ -253,7 +253,7 @@ static int expect_embedded_project_rejects_compiled_layout(void){
 static int expect_executable_manifest_variant(const Fixture *executable){
   GmlcClassicManifest manifest;
   char err[256]={0};
-  int ok=gmlc_classic_manifest(test_transforms(),executable->data,executable->size,&manifest,err,sizeof(err));
+  int ok=gmlc_classic_manifest(NULL,executable->data,executable->size,&manifest,err,sizeof(err));
   if(!ok) fprintf(stderr,"executable manifest failed: %s\n",err);
   if(ok){
     ok=manifest.executable_layout &&
@@ -360,7 +360,7 @@ static int expect_executable_candidate_flood_rejected(void){
     fixture_u32(&executable,0);
   }
   GmlcClassicManifest manifest={0}; char error[256]={0};
-  int ok=!gmlc_classic_manifest(test_transforms(),executable.data,executable.size,&manifest,
+  int ok=!gmlc_classic_manifest(NULL,executable.data,executable.size,&manifest,
                                 error,sizeof(error)) &&
     strstr(error,"too many embedded-data candidates");
   gmlc_classic_manifest_free(&manifest);
@@ -372,7 +372,7 @@ static int expect_legacy_executable_manifest(void){
   Fixture executable;
   if(!build_legacy_executable_fixture(&executable)) return 0;
   GmlcClassicManifest manifest={0}; char err[256]={0};
-  int ok=gmlc_classic_manifest(test_transforms(),executable.data,executable.size,&manifest,err,sizeof(err));
+  int ok=gmlc_classic_manifest(NULL,executable.data,executable.size,&manifest,err,sizeof(err));
   if(!ok) fprintf(stderr,"legacy executable manifest failed: %s\n",err);
   if(ok){
     ok=manifest.executable_layout &&
@@ -452,7 +452,7 @@ static int expect_gm6_executable_manifest(void){
   Fixture executable;
   if(!build_gm6_executable_fixture(&executable)) return 0;
   GmlcClassicManifest manifest={0}; char err[256]={0};
-  int ok=gmlc_classic_manifest(test_transforms(),executable.data,executable.size,&manifest,err,sizeof(err));
+  int ok=gmlc_classic_manifest(NULL,executable.data,executable.size,&manifest,err,sizeof(err));
   if(ok) ok=manifest.executable_layout &&
     manifest.inventory.header.version==GMLC_CLASSIC_GM6 &&
     manifest.inventory.header.game_id==0x31415926 &&
@@ -479,7 +479,7 @@ static int expect_legacy_executable_font_corruption(void){
   Fixture executable;
   if(!build_legacy_executable_fixture(&executable)) return 0;
   GmlcClassicManifest manifest={0}; char err[256]={0};
-  if(!gmlc_classic_manifest(test_transforms(),executable.data,executable.size,&manifest,err,sizeof(err))){
+  if(!gmlc_classic_manifest(NULL,executable.data,executable.size,&manifest,err,sizeof(err))){
     fprintf(stderr,"legacy executable corruption fixture failed to parse: %s\n",err);
     return 0;
   }
@@ -531,7 +531,7 @@ static int expect_legacy_manifest(unsigned version){
   }
   GmlcClassicManifest manifest;
   char err[128];
-  int ok = gmlc_classic_manifest(test_transforms(),data, size, &manifest, err, sizeof(err));
+  int ok = gmlc_classic_manifest(NULL,data, size, &manifest, err, sizeof(err));
   if(!ok) fprintf(stderr, "legacy manifest %u failed: %s\n", version, err);
   if(ok){
     ok = manifest.inventory.settings_version == (version == 600 ? 600u : 702u) &&
@@ -645,6 +645,72 @@ static int test_inventory_810(void){ return expect_inventory(810); }
 static int test_legacy_manifest_600(void){ return expect_legacy_manifest(600); }
 static int test_legacy_manifest_701(void){ return expect_legacy_manifest(701); }
 
+static int expect_optional_record_preparation(void){
+  char error[256]={0}; uint8_t *output=NULL; size_t size=0;
+  const char input[]="x\r\ny\rz\n";
+  int ok=gmlc_classic_prepare_record(NULL,GMLC_CLASSIC_RECORD_TEXT,500,input,sizeof input-1,
+    &output,&size,error,sizeof error) && size==sizeof input-1 && !memcmp(output,input,size);
+  free(output); output=NULL;
+  ok=ok && gmlc_classic_prepare_record(NULL,GMLC_CLASSIC_RECORD_TEXT,500,NULL,0,
+    &output,&size,error,sizeof error) && output && !size;
+  free(output); output=NULL;
+  ok=ok && !gmlc_classic_prepare_record(NULL,GMLC_CLASSIC_RECORD_TEXT,500,NULL,1,
+    &output,&size,error,sizeof error) && !output && !size;
+  ok=ok && !gmlc_classic_prepare_record(NULL,GMLC_CLASSIC_RECORD_TEXT,500,input,
+    (size_t)GMLC_CLASSIC_FILE_LIMIT+1u,&output,&size,error,sizeof error) && !output && !size;
+  ok=ok && !gmlc_classic_prepare_record(NULL,0,500,input,sizeof input-1,
+    &output,&size,error,sizeof error) && !output && !size;
+  FILE *file=fopen("examples/input_transforms.ini","rb");
+  char config[8192]; size_t length=file?fread(config,1,sizeof config,file):0;
+  int read_ok=file && length<sizeof config && !ferror(file);
+  if(file && fclose(file)) read_ok=0;
+  AnygmContentTransforms *set=anygm_content_transforms_create();
+  const char select[]="[pipelines]\nrecord=text_newlines\n";
+  ok=ok && read_ok && set && anygm_content_transforms_parse(set,config,length,error,sizeof error) &&
+    anygm_content_transforms_parse(set,select,sizeof select-1,error,sizeof error);
+  for(unsigned kind=1;ok && kind<=3;kind++){
+    const char *expected=kind==GMLC_CLASSIC_RECORD_TEXT?"x\ny\rz\n":input;
+    ok=gmlc_classic_prepare_record(set,(GmlcClassicRecordKind)kind,500,input,sizeof input-1,
+      &output,&size,error,sizeof error) && size==strlen(expected) && !memcmp(output,expected,size);
+    free(output);
+  }
+  anygm_content_transforms_destroy(set);
+  if(!ok) fprintf(stderr,"optional record preparation: %s\n",error);
+  return ok;
+}
+
+static int expect_record_context_and_rejection(void){
+  const char patch[]="[transforms]\nedit=buffer edit(){"
+    "if(metadata_size!=16 || read32(metadata,0)!=0x43534c43 || read32(metadata,12))reject();"
+    "if(read32(metadata,4)==2){if(read32(metadata,8)!=500)reject();"
+    "write8(work,7,'1');write8(work,8,'7');}"
+    "else if(read32(metadata,4)!=1 || read32(metadata,8)!=700)reject();"
+    "return slice(0,input_size);}\n[pipelines]\nrecord=edit\n";
+  const char rejected[]="[transforms]\nrecord=buffer empty(){return slice(0,0);}\n";
+  Fixture executable={{0},0}; GmlcClassicManifest manifest={0}; char error[256]={0};
+  AnygmContentTransforms *set=anygm_content_transforms_create();
+  int ok=build_legacy_executable_fixture(&executable) && set &&
+    anygm_content_transforms_parse(set,patch,sizeof patch-1,error,sizeof error) &&
+    gmlc_classic_manifest(set,executable.data,executable.size,&manifest,error,sizeof error) &&
+    manifest.existing[GMLC_CLASSIC_SCRIPT]==1 &&
+    !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source,"return 17;");
+  gmlc_classic_manifest_free(&manifest);
+  ok=ok && gmlc_classic_manifest(NULL,executable.data,executable.size,&manifest,error,sizeof error) &&
+    !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source,"return 42;");
+  gmlc_classic_manifest_free(&manifest);
+  ok=ok && anygm_content_transforms_parse(set,rejected,sizeof rejected-1,error,sizeof error) &&
+    !gmlc_classic_manifest(set,executable.data,executable.size,&manifest,error,sizeof error) &&
+    !manifest.slots[GMLC_CLASSIC_SCRIPT] && !manifest.room_order;
+  gmlc_classic_manifest_free(&manifest); anygm_content_transforms_destroy(set);
+  ok=ok && build_legacy_executable_fixture_source(&executable,"") &&
+    gmlc_classic_manifest(NULL,executable.data,executable.size,&manifest,error,sizeof error) &&
+    manifest.existing[GMLC_CLASSIC_SCRIPT]==1 &&
+    !strcmp(manifest.slots[GMLC_CLASSIC_SCRIPT][0].source,"");
+  gmlc_classic_manifest_free(&manifest);
+  if(!ok) fprintf(stderr,"record context/rejection: %s\n",error);
+  return ok;
+}
+
 AnygmTestGroup classic_test_format_group(void){
   static const AnygmTestCase cases[]={
     {"header-530",test_header_530},
@@ -670,6 +736,8 @@ AnygmTestGroup classic_test_format_group(void){
     {"legacy-executable-manifest",expect_legacy_executable_manifest},
     {"legacy-executable-font-corruption",expect_legacy_executable_font_corruption},
     {"normalized-project",expect_normalized_project},
+    {"optional-record-preparation",expect_optional_record_preparation},
+    {"record-context-and-rejection",expect_record_context_and_rejection},
     {"legacy-manifest-600",test_legacy_manifest_600},
     {"legacy-manifest-701",test_legacy_manifest_701},
   };

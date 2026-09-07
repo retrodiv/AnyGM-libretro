@@ -230,8 +230,10 @@ project it was built from, omitting fields only an editor uses. That difference
 belongs to the compiled layout and is not a revision fact: every compiled
 revision writes the short form.
 
-Revision 600 compiled executables are parsed as user-supplied content and
-normalized through the same classic importer as `.gm6` projects. Native code
+Revision 600 compiled executables are parsed as user-supplied content. Their
+archive entry is inflated; an explicitly configured optional record pipeline
+can prepare another representation before the same classic importer as `.gm6`
+projects. Otherwise the normalized record is consumed directly. Native code
 and bundled support libraries are not executed.
 
 Where a content layout requires an external transform, the core accepts an
@@ -243,6 +245,11 @@ and inside an inert executable wrapper when its normalized header and complete s
 validate. The executable reader does not choose a source operation from a revision;
 configured input pipelines and candidate selection prepare other source representations
 before the same structural reader. Native code is never executed.
+
+Adjacent `.gex` packages share the optional record boundary: their normalized
+representation retains the ordinary common header followed by package data.
+The reader does not supply a decoder for other representations. See
+`CONTENT_TRANSFORMS.md` for the structural context contract.
 
 An editor-standard `.gmd`, `.gm6`, `.gmk`, or `.gm81` may have adjacent standard `.gex`
 packages, ordinary externally referenced included files (notably GM6), and an optional

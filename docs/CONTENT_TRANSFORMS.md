@@ -304,7 +304,7 @@ unreachable instructions. Unknown operations, invalid registers, invalid memory 
 to read-only spaces, misaligned program lengths, and out-of-range jump targets fail closed.
 Every load/store checks address overflow and the complete access width. Division by zero,
 shifts of 64 or more, an invalid output slice, falling off the program, and exhausting the
-instruction budget reject the entire result. Input and parameters are unchanged on success
+instruction budget reject the entire result. Input, parameters and metadata are unchanged on success
 and failure, and failure never returns partial output.
 
 Inputs are bounded to 1 GiB. Execution allows at most `1,000,000 + 128 * input_bytes`
@@ -315,10 +315,44 @@ bound work but do not promise a short wall-clock deadline. They do not make the 
 a process sandbox; hosts still own process isolation and
 scheduling as described in `SECURITY_MODEL.md`.
 
-## Parser boundaries
+## Optional record preparation
 
-The revision-selected adaptation interface is omitted from this unpublished
-history. Earlier snapshots with omitted implementations are not supported builds.
+A format reader may delimit a nested record before its contents are ready for that reader.
+Classic exposes the explicitly configured `record` function or pipeline at those boundaries.
+Without that entry, it consumes normalized records unchanged; no identity program is required.
+The reader supplies structural context, not a program name selected from a revision.
+The interpreter still knows only bytes in and bytes out. It cannot call back into a reader.
+
+Classic's metadata is exactly 16 bytes: ASCII `CLSC`, little-endian u32 kind at offset 4,
+little-endian u32 layout revision at offset 8, and a reserved zero word at offset 12.
+
+| Kind | Delimited input and expected normalized representation | Revision |
+| --- | --- | --- |
+| 1: stream | Inflated archive/legacy record, or the remaining compiled record after settings and wrapper strings; the result has the existing settings/resource grammar | The executable layout header: 600, 700, 800 or 810 |
+| 2: text | Inflated compiled script record; result is source text, including empty text | The script record's own revision, not the enclosing project revision |
+| 3: package | Complete adjacent package; result retains its ordinary 8-byte common header followed by normalized package data | The package header's revision |
+
+This context permits selective compatibility patches and text normalization as well as caller-
+defined representation conversion. The distributed `text_newlines` function removes CR before LF
+only in a text record and leaves other contexts unchanged. Select it explicitly, for example in
+an original-file SHA scope or an anchor:
+
+```ini
+[pipelines]
+record=text_newlines
+```
+
+The same metadata reaches each pipeline stage. A configured function must handle every context
+to which its scope applies, normally returning other records unchanged. Selecting a program does
+not make it an automatic detector for every possible representation. Rejection fails that record;
+there is no retry with a different private algorithm. The complete returned structure is still
+validated by the owning reader and invalid bytes do not become an accepted image. Source-text
+syntax is checked by the existing source compiler when imported; buffer preparation alone is not
+a language validator. Input bytes and their original identity remain unchanged.
+
+The public classic fixture writer emits authored normalized projects, executables and packages for
+parser tests. All load without source or record programs. No revision-specific dispatch keys or
+fixture identity registry are needed.
 
 Editor-project memory readers accept normalized headers and records directly for every supported
 revision. They do not select a source operation by revision or rerun `input`. File inventory and

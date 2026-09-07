@@ -38,6 +38,37 @@ static void write_u32le(uint8_t *p,uint32_t value){
   p[2]=(uint8_t)(value>>16); p[3]=(uint8_t)(value>>24);
 }
 
+int gmlc_classic_prepare_record(const AnygmContentTransforms *transforms,
+                                 GmlcClassicRecordKind kind,uint32_t revision,
+                                 const void *input,size_t input_size,
+                                 uint8_t **output,size_t *output_size,
+                                 char *error,size_t error_size){
+  if(error && error_size) error[0]=0;
+  if(output) *output=NULL;
+  if(output_size) *output_size=0;
+  if(!output || !output_size || (input_size && !input) ||
+     input_size>GMLC_CLASSIC_FILE_LIMIT || kind<GMLC_CLASSIC_RECORD_STREAM ||
+     kind>GMLC_CLASSIC_RECORD_PACKAGE){
+    if(error && error_size) snprintf(error,error_size,"classic record: invalid bounded input");
+    return 0;
+  }
+  if(anygm_content_transforms_has(transforms,"record")){
+    uint8_t metadata[16]={'C','L','S','C'};
+    write_u32le(metadata+4u,(uint32_t)kind);
+    write_u32le(metadata+8u,revision);
+    return anygm_content_transform_run(transforms,"record",input,input_size,metadata,sizeof metadata,
+      output,output_size,error,error_size);
+  }
+  uint8_t *copy=malloc(input_size?input_size:1u);
+  if(!copy){
+    if(error && error_size) snprintf(error,error_size,"classic record: allocation failed");
+    return 0;
+  }
+  if(input_size) memcpy(copy,input,input_size);
+  *output=copy; *output_size=input_size;
+  return 1;
+}
+
 static int known_version(uint32_t version){
   return version == GMLC_CLASSIC_GM53 || version == GMLC_CLASSIC_GM6 ||
          version == GMLC_CLASSIC_GM7 ||
@@ -1201,7 +1232,7 @@ static int parse_legacy_slot(ClassicReader *r, GmlcClassicResourceType type,
   return valid;
 }
 
-static int reader_legacy_executable_script(ClassicReader *r,char **out){
+static int reader_legacy_executable_script(ClassicReader *r,uint32_t revision,char **out){
   uint32_t compressed_size=0;
   *out=NULL;
   if(!reader_u32(r,&compressed_size,"compiled legacy script length") ||
@@ -1209,14 +1240,15 @@ static int reader_legacy_executable_script(ClassicReader *r,char **out){
   int raw_size=0;
   char *raw=classic_inflate_owned(r->data+r->pos,compressed_size,
                                   GML_DEFLATE_ZLIB,&raw_size);
-  if(!raw || raw_size<4){
+  if(!raw || raw_size<0){
     free(raw);
     if(r->err && r->errcap) snprintf(r->err,r->errcap,"classic executable: invalid compiled legacy script");
     return 0;
   }
   uint8_t *decoded=NULL;
   size_t decoded_size=0;
-  int ok=(0 /* Revision-selected adapter omitted from unpublished history. */);
+  int ok=gmlc_classic_prepare_record(r->transforms,GMLC_CLASSIC_RECORD_TEXT,revision,raw,(size_t)raw_size,
+                                      &decoded,&decoded_size,r->err,r->errcap);
   free(raw);
   if(!ok) return 0;
   char *source=(char*)realloc(decoded,decoded_size+1u);
@@ -1243,7 +1275,7 @@ static int parse_legacy_executable_slot(ClassicReader *r,GmlcClassicResourceType
     case GMLC_CLASSIC_BACKGROUND: valid=validate_legacy_executable_background_payload(r); break;
     case GMLC_CLASSIC_PATH: valid=validate_legacy_executable_path_payload(r); break;
     case GMLC_CLASSIC_SCRIPT:
-      valid=reader_legacy_executable_script(r,&slot->source); break;
+      valid=reader_legacy_executable_script(r,slot->version,&slot->source); break;
     case GMLC_CLASSIC_FONT: valid=validate_font_payload(r,1,1); break;
     case GMLC_CLASSIC_TIMELINE: valid=validate_timeline_payload(r); break;
     case GMLC_CLASSIC_OBJECT: valid=validate_object_payload(r); break;
@@ -2038,12 +2070,6 @@ static int parse_executable_extensions(ClassicReader *r, GmlcClassicManifest *ou
 
 
 
-static int decode_legacy_executable_envelope(const AnygmContentTransforms *transforms,const uint8_t *input,size_t size,
-                                             uint8_t **out_data,size_t *out_size,
-                                             char *err,size_t errcap){
-  return (0 /* Revision-selected adapter omitted from unpublished history. */);
-}
-
 static int parse_legacy_executable_data(const AnygmContentTransforms *transforms,const uint8_t *data,size_t size,
                                         GmlcClassicVersion project_version,
                                         uint32_t settings_version,
@@ -2233,7 +2259,8 @@ static int parse_legacy_executable_manifest(const AnygmContentTransforms *transf
     return 0;
   }
   uint8_t *decoded=NULL; size_t decoded_size=0;
-  int ok=decode_legacy_executable_envelope(transforms,(const uint8_t*)envelope,(size_t)envelope_size,
+  int ok=gmlc_classic_prepare_record(transforms,GMLC_CLASSIC_RECORD_STREAM,read_u32le(file+payload+4u),
+                                           envelope,(size_t)envelope_size,
                                            &decoded,&decoded_size,err,errcap);
   free(envelope);
   if(ok) ok=parse_legacy_executable_data(transforms,decoded,decoded_size,GMLC_CLASSIC_GM7,
@@ -2448,7 +2475,8 @@ static int parse_executable_stream(const AnygmContentTransforms *transforms,cons
   }
   uint8_t *decoded=NULL;
   size_t decoded_size=0;
-  if(!(0 /* Revision-selected adapter omitted from unpublished history. */)) return 0;
+  if(!gmlc_classic_prepare_record(transforms,GMLC_CLASSIC_RECORD_STREAM,version,file+pos,size-pos,
+                                   &decoded,&decoded_size,err,errcap)) return 0;
   int ok=parse_executable_data(decoded,decoded_size,version,settings_version,out,err,errcap);
   free(decoded);
   if(!ok) gmlc_classic_manifest_free(out);
@@ -2503,16 +2531,17 @@ static int read_gm6_executable_settings(const uint8_t *data,size_t size,
 
 
 
-static int decode_gm6_executable_envelope(const AnygmContentTransforms *transforms,const uint8_t *input,size_t size,
+static int prepare_gm6_executable_record(const AnygmContentTransforms *transforms,const uint8_t *input,size_t size,
                                           uint8_t **out_data,size_t *out_size,
                                           char *err,size_t errcap){
-  if(!(0 /* Revision-selected adapter omitted from unpublished history. */)) return 0;
+  if(!gmlc_classic_prepare_record(transforms,GMLC_CLASSIC_RECORD_STREAM,GMLC_CLASSIC_GM6,input,size,
+                                   out_data,out_size,err,errcap)) return 0;
   const uint8_t *decoded=*out_data;
   if(*out_size<40u || read_u32le(decoded)!=read_u32le(decoded+4u) ||
      read_u32le(decoded+8u)!=GMLC_CLASSIC_MAGIC ||
      read_u32le(decoded+12u)!=GMLC_CLASSIC_GM6){
     free(*out_data); *out_data=NULL; *out_size=0;
-    if(err && errcap) snprintf(err,errcap,"classic executable: invalid transformed revision 600 payload");
+    if(err && errcap) snprintf(err,errcap,"classic executable: invalid normalized revision 600 payload");
     return 0;
   }
   return 1;
@@ -2543,7 +2572,7 @@ static int parse_gm6_executable_at(const AnygmContentTransforms *transforms,cons
         classic_inflate_owned(compressed,compressed_size,GML_DEFLATE_ZLIB,&envelope_size):NULL;
       if(!envelope || envelope_size<0){ free(envelope); goto fail; }
       uint8_t *decoded=NULL; size_t decoded_size=0;
-      int ok=decode_gm6_executable_envelope(transforms,(const uint8_t*)envelope,(size_t)envelope_size,
+      int ok=prepare_gm6_executable_record(transforms,(const uint8_t*)envelope,(size_t)envelope_size,
                                             &decoded,&decoded_size,err,errcap);
       free(envelope);
       if(!ok){ free(decoded); goto fail; }

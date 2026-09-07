@@ -10,6 +10,23 @@
 struct AnygmHostServices;
 typedef struct AnygmContentTransforms AnygmContentTransforms;
 
+typedef enum {
+  GMLC_CLASSIC_RECORD_STREAM=1,
+  GMLC_CLASSIC_RECORD_TEXT=2,
+  GMLC_CLASSIC_RECORD_PACKAGE=3
+} GmlcClassicRecordKind;
+
+/* Optional user-selected record preparation. Metadata is 16 bytes: "CLSC", a
+ * little-endian kind, layout revision and reserved zero word. These are structural
+ * facts, not algorithm selectors. No record entry means an unchanged owned copy.
+ * The caller validates the complete result using its existing structural reader.
+ * Input is immutable; failure always clears output and output_size. */
+int gmlc_classic_prepare_record(const AnygmContentTransforms *transforms,
+                                 GmlcClassicRecordKind kind,uint32_t revision,
+                                 const void *input,size_t input_size,
+                                 uint8_t **output,size_t *output_size,
+                                 char *error,size_t error_size);
+
 #define GMLC_CLASSIC_MAGIC 1234321u
 /* Keep direct classic-project reads aligned with the public content-router member limit. */
 #define GMLC_CLASSIC_FILE_LIMIT UINT64_C(1073741824)

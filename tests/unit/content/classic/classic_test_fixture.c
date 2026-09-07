@@ -2,7 +2,7 @@
  * Copyright (c) 2026 retrodiv <retrodiv@proton.me>
  */
 #include "classic_test_fixture.h"
-#include "content_transform.h"
+#include "gml_image_codec.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,37 +25,6 @@
 #endif
 
 static AnygmHostServices fixture_host;
-static AnygmContentTransforms *fixture_transforms;
-
-void test_transforms_release(void){
-  anygm_content_transforms_destroy(fixture_transforms);
-  fixture_transforms=NULL;
-}
-
-const char *test_transform_declarations(void){
-    /* Identity and parameter-selected slicing only. No real container codec is
-     * distributed with these tests; the plaintext fixtures are authored here. */
-    static const char declarations[]=
-      "[transforms]\n"
-      /* Retired adapter declaration omitted from unpublished history. */ ""
-      /* Retired adapter declaration omitted from unpublished history. */ ""
-      /* Retired adapter declaration omitted from unpublished history. */ ""
-      /* Retired adapter declaration omitted from unpublished history. */ ""
-      /* Retired adapter declaration omitted from unpublished history. */ "";
-  return declarations;
-}
-
-const AnygmContentTransforms *test_transforms(void){
-  if(!fixture_transforms){
-    const char *declarations=test_transform_declarations();
-    fixture_transforms=anygm_content_transforms_create();
-    if(!fixture_transforms || !anygm_content_transforms_parse(fixture_transforms,
-        declarations,strlen(declarations),NULL,0)) abort();
-    if(atexit(test_transforms_release)) abort();
-  }
-  return fixture_transforms;
-}
-
 void classic_fixture_host_init(void){
   fixture_host.struct_size=sizeof fixture_host;
   fixture_host.abi_version=ANYGM_HOST_SERVICES_VERSION;
@@ -97,8 +66,7 @@ unsigned get_u32le(const unsigned char *p){
          (unsigned)p[2] << 16 | (unsigned)p[3] << 24;
 }
 
-/* Fixtures exercise the parser after an explicitly supplied identity transform.
- * This is a copied normalized image, not an encoder for a protected container. */
+/* Fixtures exercise the parser with authored normalized images. */
 unsigned char *fixture_project_image(const unsigned char *plain,size_t plain_size,
                                       size_t *image_size){
   unsigned char *image=(unsigned char*)malloc(plain_size?plain_size:1u);
@@ -140,13 +108,13 @@ void fixture_double(Fixture *f, double value){
 }
 
 void fixture_compressed(Fixture *f, const unsigned char *raw, int raw_size){
-  int compressed_size = 0;
-  unsigned char *compressed = stbi_zlib_compress((unsigned char*)raw, raw_size, &compressed_size, 8);
-  if(!compressed || compressed_size <= 0 || f->size + 4 + (size_t)compressed_size > sizeof(f->data)) abort();
-  fixture_u32(f, (unsigned)compressed_size);
-  memcpy(f->data + f->size, compressed, (size_t)compressed_size);
-  f->size += (size_t)compressed_size;
-  STBIW_FREE(compressed);
+  GmlMediaBuffer compressed={0};
+  if(raw_size<0 || !gml_deflate_encode_zlib(raw,(size_t)raw_size,&compressed) ||
+     f->size+4u+compressed.size>sizeof f->data) abort();
+  fixture_u32(f,(unsigned)compressed.size);
+  memcpy(f->data+f->size,compressed.data,compressed.size);
+  f->size+=compressed.size;
+  gml_media_buffer_release(&compressed);
 }
 
 Fixture game_information_fixture(void){
@@ -350,7 +318,7 @@ int build_executable_fixture(Fixture *executable){
   return 1;
 }
 
-int build_legacy_executable_fixture(Fixture *executable){
+int build_legacy_executable_fixture_source(Fixture *executable,const char *text){
   Fixture decoded={{0},0},envelope={{0},0};
   fixture_u32(&decoded,17); fixture_u32(&decoded,0x24681357); fixture_zero(&decoded,16);
   fixture_u32(&decoded,700); fixture_u32(&decoded,0); /* extensions */
@@ -403,9 +371,10 @@ int build_legacy_executable_fixture(Fixture *executable){
     } else if(type==GMLC_CLASSIC_SCRIPT){
       fixture_u32(&decoded,1); fixture_u32(&decoded,1);
       fixture_string(&decoded,"fixture_legacy_executable_script"); fixture_u32(&decoded,500);
-      Fixture source={{0},0}; const char text[]="return 42;";
-      memcpy(source.data,text,sizeof(text)-1u);
-      source.size=sizeof(text)-1u;
+      Fixture source={{0},0};
+      if(!text || strlen(text)>sizeof source.data) return 0;
+      source.size=strlen(text);
+      memcpy(source.data,text,source.size);
       fixture_compressed(&decoded,source.data,(int)source.size);
     } else if(type==GMLC_CLASSIC_FONT){
       fixture_u32(&decoded,1); fixture_u32(&decoded,1);
@@ -470,6 +439,10 @@ int build_legacy_executable_fixture(Fixture *executable){
     fixture_u32(executable,field==1?1:field==4?150:0);
   fixture_compressed(executable,envelope.data,(int)envelope.size);
   return 1;
+}
+
+int build_legacy_executable_fixture(Fixture *executable){
+  return build_legacy_executable_fixture_source(executable,"return 42;");
 }
 
 int build_gm6_executable_fixture(Fixture *executable){
